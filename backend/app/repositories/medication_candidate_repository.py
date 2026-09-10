@@ -84,12 +84,10 @@ class MedicationCandidateRepository:
         if prescription is None:
             return None
         result = await self.session.execute(
-            select(PrescriptionVersionMedication)
-            .where(
+            select(PrescriptionVersionMedication).where(
                 PrescriptionVersionMedication.id == prescription_version_medication_id,
                 PrescriptionVersionMedication.prescription_version_id == prescription.active_version_id,
             )
-            .with_for_update(of=PrescriptionVersionMedication)
         )
         return result.scalar_one_or_none()
 
@@ -244,13 +242,12 @@ class MedicationCandidateRepository:
         if search is None:
             return None
 
+        # The Search parent is locked; immutable result rows require no UPDATE privilege.
         result = await self.session.execute(
-            select(MedicationCandidateSearchResult)
-            .where(
+            select(MedicationCandidateSearchResult).where(
                 MedicationCandidateSearchResult.id == candidate_search_result_id,
                 MedicationCandidateSearchResult.search_id == search.id,
             )
-            .with_for_update(of=MedicationCandidateSearchResult)
         )
         candidate_result = result.scalar_one_or_none()
         if candidate_result is None:
@@ -339,7 +336,6 @@ class MedicationCandidateRepository:
             select(PrescriptionVersionMedication.id)
             .where(PrescriptionVersionMedication.prescription_version_id == prescription_version_id)
             .order_by(PrescriptionVersionMedication.display_order)
-            .with_for_update(of=PrescriptionVersionMedication)
         )
         return list(result.scalars().all())
 

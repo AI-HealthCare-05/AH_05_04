@@ -234,7 +234,7 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
             )
         )
     failed = subprocess.run(
-        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "398c3d4e5f60"],
         cwd=ROOT,
         env={**os.environ, "DB_NAME": database},
         capture_output=True,
@@ -258,7 +258,7 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
         )
         await connection.execute(text("DROP VIEW source_cutover_dependency"))
     result = subprocess.run(
-        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "398c3d4e5f60"],
         cwd=ROOT,
         env={**os.environ, "DB_NAME": database},
         capture_output=True,
@@ -326,6 +326,10 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
         assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "398c3d4e5f60"
         assert await connection.scalar(text("SELECT verification_status FROM rag_source_snapshot")) == "CURRENT"
 
+    await _exercise_audit_cutover(admin, reader, producer, environment)
+
+    await _exercise_prescription_candidate_cutover(admin, reader, environment)
+
     # A fresh database follows the same complete history to the trigger-free Source head.
     await reader.dispose()
     await producer.dispose()
@@ -344,3 +348,284 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
     await run_provisioning(environment)
     async with reader.connect() as connection:
         assert await connection.scalar(text("SELECT count(*) FROM rag_source_snapshot")) == 0
+
+
+async def _exercise_audit_cutover(admin, reader, producer, environment):
+    tables = (
+        "rag_runtime_environment_transition",
+        "checkin_audit",
+        "rag_citation",
+        "rag_evidence_guideline",
+        "rag_evidence_rule",
+        "rag_evidence",
+        "rag_evidence_knowledge",
+    )
+    runtime = environment["DB_APP_USER"]
+    env_id, transition_id = str(uuid4()), str(uuid4())
+    async with admin.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO rag_runtime_environment (id,environment_code,environment_status) "
+                "VALUES (:id,'synthetic-audit','SUSPENDED')"
+            ),
+            {"id": env_id},
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO rag_runtime_environment_transition "
+                "(id,environment_id,transition_kind,environment_revision,safety_epoch,guard_decision_ref) "
+                "VALUES (:id,:environment,'SUSPEND',1,1,'synthetic-guard')"
+            ),
+            {"id": transition_id, "environment": env_id},
+        )
+        for table in tables:
+            await connection.execute(text(f'GRANT ALL ON {table} TO PUBLIC, "{runtime}"'))
+            await connection.execute(text(f'GRANT UPDATE (id) ON {table} TO "{runtime}"'))
+    migration = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "398d4e5f6071"],
+        cwd=ROOT,
+        env={**os.environ, "DB_NAME": environment["DB_NAME"]},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert migration.returncode == 0, "Synthetic audit removal migration failed"
+    async with admin.connect() as connection:
+        assert (
+            await connection.scalar(
+                text(
+                    "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid "
+                    "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' "
+                    "AND c.relname=ANY(:tables) AND NOT t.tgisinternal"
+                ),
+                {"tables": list(tables)},
+            )
+            == 0
+        )
+        assert (
+            await connection.scalar(
+                text(
+                    "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
+                    "WHERE n.nspname='public' AND p.proname IN ('prevent_rag_runtime_transition_mutation', "
+                    "'prevent_checkin_audit_mutation','prevent_rag_evidence_citation_mutation')"
+                )
+            )
+            == 0
+        )
+    # No application privileges survive the interval before provisioning.
+    with pytest.raises(DBAPIError) as error:
+        async with reader.begin() as connection:
+            await connection.execute(text("UPDATE rag_runtime_environment_transition SET environment_revision=9"))
+    assert error.value.orig.sqlstate == "42501"
+    for _ in range(2):
+        await run_provisioning(environment)
+        for table in tables:
+            for sql in (f"UPDATE {table} SET id=id", f"DELETE FROM {table}", f"TRUNCATE {table}"):
+                with pytest.raises(DBAPIError) as error:
+                    async with reader.begin() as connection:
+                        await connection.execute(text(sql))
+                assert error.value.orig.sqlstate == "42501"
+    async with reader.begin() as connection:
+        assert await connection.scalar(text("SELECT environment_revision FROM rag_runtime_environment_transition")) == 1
+        await connection.execute(
+            text(
+                "INSERT INTO rag_runtime_environment_transition "
+                "(id,environment_id,transition_kind,environment_revision,safety_epoch,guard_decision_ref) "
+                "VALUES (:id,:environment,'SUSPEND',2,1,'synthetic-guard-next')"
+            ),
+            {"id": str(uuid4()), "environment": env_id},
+        )
+    with pytest.raises(DBAPIError) as error:
+        async with producer.begin() as connection:
+            await connection.execute(text("DELETE FROM rag_runtime_environment_transition"))
+    assert error.value.orig.sqlstate == "42501"
+    rollback = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "downgrade", "398c3d4e5f60"],
+        cwd=ROOT,
+        env={**os.environ, "DB_NAME": environment["DB_NAME"]},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert rollback.returncode != 0
+    assert "Audit trigger removal cannot be downgraded" in rollback.stderr
+
+
+async def _exercise_prescription_candidate_cutover(admin, reader, environment):
+    from app.models.rag_candidate import MedicationCandidateSearchStatus
+    from app.repositories.medication_candidate_repository import MedicationCandidateRepository
+    from app.repositories.prescription_repository import PrescriptionRepository
+    from app.tests.rag.test_medication_candidate_repository import _ready_result
+    from app.tests.repositories.test_medication_schedule_repository_integration import (
+        _create_active_version_medication,
+        _create_user_with_self_profile,
+    )
+
+    sessions = async_sessionmaker(admin, expire_on_commit=False)
+    async with sessions.begin() as session:
+        owner, profile = await _create_user_with_self_profile(session, label="cutover-prescription")
+        prescription, medication = await _create_active_version_medication(session, owner=owner, profile=profile)
+        repository = MedicationCandidateRepository(session)
+        search = await repository.create_search(
+            prescription_version_medication_id=medication.id,
+            medication_name_snapshot=medication.medication_name,
+            strength_text_snapshot=None,
+            query_digest="a" * 64,
+            runtime_release_bundle_id=None,
+            candidate_index_version_id=None,
+            expires_at=None,
+        )
+        _, results = await repository.assemble_and_finalize_search(
+            search=search,
+            results=[_ready_result()],
+            status=MedicationCandidateSearchStatus.READY,
+            finalized_at=datetime.now(UTC),
+        )
+        result_id = results[0].id
+        owner_id = owner.id
+        prescription_id = prescription.id
+        active_version_id = prescription.active_version_id
+        medication_id = medication.id
+        search_id = search.id
+        original_hash = await session.scalar(
+            text("SELECT content_hash FROM prescription_version WHERE id=:id"),
+            {"id": str(active_version_id)},
+        )
+
+    # Stored graph validation must fail before removing any trigger or column.
+    async with admin.begin() as connection:
+        await connection.execute(text("ALTER TABLE prescription_version DISABLE TRIGGER ALL"))
+        await connection.execute(
+            text("UPDATE prescription_version SET content_hash=repeat('f',64) WHERE id=:id"),
+            {"id": str(active_version_id)},
+        )
+        await connection.execute(text("ALTER TABLE prescription_version ENABLE TRIGGER ALL"))
+    invalid_prescription = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "head"],
+        cwd=ROOT,
+        env={**os.environ, "DB_NAME": environment["DB_NAME"]},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert invalid_prescription.returncode != 0
+    async with admin.begin() as connection:
+        assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "398d4e5f6071"
+        assert (
+            await connection.scalar(
+                text(
+                    "SELECT count(*) FROM pg_trigger WHERE tgrelid='prescription_version'::regclass "
+                    "AND NOT tgisinternal"
+                )
+            )
+            == 4
+        )
+        assert await connection.scalar(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' "
+                "AND table_name='prescription_version' AND column_name='assembly_xid')"
+            )
+        )
+        await connection.execute(text("ALTER TABLE prescription_version DISABLE TRIGGER ALL"))
+        await connection.execute(
+            text("UPDATE prescription_version SET content_hash=:hash WHERE id=:id"),
+            {"hash": original_hash, "id": str(active_version_id)},
+        )
+        await connection.execute(text("ALTER TABLE prescription_version ENABLE TRIGGER ALL"))
+
+        # Reproduce an invalid committed Candidate graph that an old privileged tool
+        # could have left behind. The forward migration must detect and refuse it.
+        await connection.execute(text("ALTER TABLE medication_candidate_search DISABLE TRIGGER ALL"))
+        await connection.execute(
+            text("UPDATE medication_candidate_search SET candidate_count=candidate_count+1 WHERE id=:id"),
+            {"id": str(search_id)},
+        )
+        await connection.execute(text("ALTER TABLE medication_candidate_search ENABLE TRIGGER ALL"))
+    invalid_candidate = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "head"],
+        cwd=ROOT,
+        env={**os.environ, "DB_NAME": environment["DB_NAME"]},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert invalid_candidate.returncode != 0
+    async with admin.begin() as connection:
+        assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "398d4e5f6071"
+        await connection.execute(text("ALTER TABLE medication_candidate_search DISABLE TRIGGER ALL"))
+        await connection.execute(
+            text("UPDATE medication_candidate_search SET candidate_count=candidate_count-1 WHERE id=:id"),
+            {"id": str(search_id)},
+        )
+        await connection.execute(text("ALTER TABLE medication_candidate_search ENABLE TRIGGER ALL"))
+    migration = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "upgrade", "head"],
+        cwd=ROOT,
+        env={**os.environ, "DB_NAME": environment["DB_NAME"]},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert migration.returncode == 0, "Synthetic Prescription/Candidate removal failed"
+    async with admin.connect() as connection:
+        assert (
+            await connection.scalar(
+                text(
+                    "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid "
+                    "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND NOT t.tgisinternal"
+                )
+            )
+            == 0
+        )
+        assert not await connection.scalar(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' "
+                "AND table_name='prescription_version' AND column_name='assembly_xid')"
+            )
+        )
+    await run_provisioning(environment)
+    runtime_sessions = async_sessionmaker(reader, expire_on_commit=False)
+    async with runtime_sessions.begin() as session:
+        candidates = MedicationCandidateRepository(session)
+        assert (
+            await candidates.get_medication_for_candidate_search_owned(
+                prescription_version_medication_id=medication_id,
+                user_id=owner_id,
+            )
+            is not None
+        )
+        assert (
+            await candidates.get_result_selection_for_update_owned(
+                candidate_search_result_id=result_id,
+                user_id=owner_id,
+            )
+            is not None
+        )
+        prescriptions = PrescriptionRepository(session)
+        current = await prescriptions.get_owned_for_version_update(prescription_id=prescription_id, user_id=owner_id)
+        assert current is not None
+        version = await prescriptions.create_version(
+            prescription=current,
+            prescribed_date=current.prescribed_date,
+            confirmed_at=datetime.now(UTC),
+            medications=[{"medication_name": "합성정정약", "frequency_per_day": 1, "display_order": 1}],
+        )
+        loaded = await prescriptions.get_version_medications(prescription_version_id=version.id)
+        assert len(loaded) == version.medication_count == 1
+        assert loaded[0].medication_name == "합성정정약"
+    for table in ("prescription_version", "prescription_version_medication", "medication_candidate_search_result"):
+        for sql in (f"UPDATE {table} SET id=id", f"DELETE FROM {table}", f"TRUNCATE {table}"):
+            with pytest.raises(DBAPIError) as error:
+                async with reader.begin() as connection:
+                    await connection.execute(text(sql))
+            assert error.value.orig.sqlstate == "42501"
+    rollback = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(ROOT / "backend/alembic.ini"), "downgrade", "398d4e5f6071"],
+        cwd=ROOT,
+        env={**os.environ, "DB_NAME": environment["DB_NAME"]},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert rollback.returncode != 0
+    assert "Prescription/Candidate trigger removal cannot be downgraded" in rollback.stderr

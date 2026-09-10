@@ -1,6 +1,6 @@
 # PD-398: Python Prescription 무결성
 
-상태: count/hash 저장·Backend 소비 검증·NOT NULL 강화 구현. 멱등성·권한·Trigger 제거 및 리뷰 대기.
+상태: count/hash 저장·Backend 소비 검증·NOT NULL·최소 권한·Trigger 제거 구현. 최종 리뷰 대기.
 구현: 김지혜. 검토: 송은영(Backend·DB), 정현우(후속 소비), 권가빈(제품 수용).
 
 ## 저장 경계
@@ -16,10 +16,10 @@ Service에서 수행하는 기존 버전의 Job·일정·Outbox 무효화를 포
 - [x] 부모 medication_count/content_hash, 자식 count 결속·슬롯 제약, 기존 데이터 검증 및 NOT NULL 강화 (398a/398b)
 - [x] hash 직렬화 계약과 Backend 저장·소비 경로의 공통 count/hash 검증
 - [ ] DB unique 기반 요청 멱등성 확장 (기존 동시 정정 검증 유지)
-- [ ] 불변 테이블 UPDATE·DELETE·TRUNCATE 제한, Writer 실행 경로
-- [ ] 기존 assembly_xid·Trigger·함수의 forward migration 제거
+- [x] 불변 테이블 UPDATE·DELETE·TRUNCATE 제한 및 Runtime 저장 경로
+- [x] 기존 assembly_xid·Trigger·함수의 forward migration 제거
 
-과거 migration은 변경하지 않는다. 이 부분 구현만으로 Trigger 제거·배포를 진행하지 않는다.
+과거 migration은 변경하지 않는다. 제거는 저장·소비·권한 전환 뒤 별도 398e forward migration에서만 수행한다.
 
 ## 내용 hash v1 (저장 직후 대조 구현)
 
@@ -59,4 +59,12 @@ Repository는 저장 전 입력을 검증하고 실제 저장 열들을 다시 �
 
 다른 사용자 또는 없는 리소스에 대한 기존 404는 무결성 검증보다 먼저 적용한다. 일정 발생 생성은 입력 대상의 버전별로 중복 검증을 제거한다. 현재 Worker에는 직접 처방 DB 내용 읽기 adapter가 없으며 가상의 실행 경로를 추가하지 않는다. 추후 Worker에 직접 읽기를 연결할 때 같은 공통 fingerprint 계약을 적용해야 한다.
 
-NOT NULL은 누락 metadata를 DB에서 차단하는 보조 제약이다. 기존 Trigger·assembly_xid 제거와 최소 권한 배포 전환은 별도 작업으로 남아 있다. 새 Trigger/RLS 정의를 추가하지 않는다.
+NOT NULL은 누락 metadata를 DB에서 차단하는 보조 제약이다. 새 Trigger/RLS 정의를 추가하지 않는다.
+
+## Trigger 제거와 실행 권한
+
+398e5f607182는 처방·후보 테이블을 배타 잠근 뒤 저장된 모든 처방 fingerprint와 Candidate 결과 수를 Python 계약으로 검증한다. 하나라도 다르면 아무 정의도 제거하지 않고 migration 전체를 rollback한다. 검증이 끝나면 기존 Trigger 10개와 함수 6개를 제거하고 `prescription_version.assembly_xid`를 삭제한다. 일반 FK·UNIQUE·CHECK는 유지한다.
+
+Runtime 역할은 처방 버전과 약 행에 SELECT·INSERT만 가진다. 새 버전 저장은 변경 가능한 `prescription` 부모 행을 잠그고, 불변 자식 행은 읽기 잠금 없이 조회한다. 정정 저장·실제 목록 검증·활성 포인터 변경은 Repository savepoint 안에서 완료된다. 제한 역할 로그인으로 새 버전 저장과 fingerprint 재조회가 성공하고, 불변 두 테이블의 UPDATE·DELETE·TRUNCATE가 거부되는 것을 통합 검증한다.
+
+이 migration은 downgrade 시 과거 Trigger를 되살리지 않고 실패한다. 되돌림은 검토된 forward-fix 또는 적용 전 백업 복구로 수행한다.

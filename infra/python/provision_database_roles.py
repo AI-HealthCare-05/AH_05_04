@@ -16,18 +16,19 @@ from infra.python.source_role_policy import SOURCE_TABLES, apply_source_role_pol
 RUNTIME_MUTABLE_TABLES = frozenset(
     "user profile medical_document prescription medication guide guide_citation "
     "ai_job ai_job_attempt outbox_event idempotency_record message_quarantine dlq_outbox_event "
-    "medication_candidate_search medication_candidate_search_result medication_identification "
+    "medication_candidate_search medication_identification "
     "ocr_job extracted_field chat_session chat_message chat_citation "
     "medication_schedule medication_schedule_time medication_occurrence medication_checkin "
     "knowledge_document knowledge_chunk "
     "rag_medication_product rag_medication_ingredient rag_medication_alias rag_medication_product_component "
     "eval_dataset eval_case eval_experiment eval_variant eval_run eval_case_result eval_metric eval_failure "
     "rag_runtime_execution_manifest rag_runtime_release_bundle rag_runtime_bundle_source "
-    "rag_runtime_environment rag_runtime_environment_transition rag_release_evaluation_approval".split()
+    "rag_runtime_environment rag_release_evaluation_approval".split()
 )
 RUNTIME_APPEND_ONLY_TABLES = frozenset(
     "prescription_version prescription_version_medication checkin_audit rag_citation "
-    "rag_evidence_guideline rag_evidence_rule rag_evidence rag_evidence_knowledge".split()
+    "rag_evidence_guideline rag_evidence_rule rag_evidence rag_evidence_knowledge "
+    "rag_runtime_environment_transition medication_candidate_search_result".split()
 )
 
 

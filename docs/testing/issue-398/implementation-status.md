@@ -2,7 +2,7 @@
 
 기준 develop: `bd201c36f3be677558cccba02b27601a8c7ce52b`
 
-상태: 진행 중. Trigger 제거 및 대체 무결성 구현 완료를 의미하지 않는다.
+상태: 진행 중. 애플리케이션 public 스키마 전환 완료, 합성 정리 도구 전환과 최종 종합 검증 대기.
 
 ## 금지 원칙
 
@@ -34,17 +34,17 @@
 - [x] 여러 줄·주석 분리 정의, 기존 파일 변경 우회, 제거 구문 허용 테스트
 - [x] Candidate 결과 추가·최종화 시 부모 잠금 및 RUNNING 상태 재검증
 - [x] Candidate 최종화에서 실제 저장된 전체 결과·표시 결과 집계 검증
-- [ ] Python 대체 저장 경로 및 계약 구현
+- [x] Python 대체 저장 경로 및 계약 구현
   - Snapshot DB 함수 호출을 Python 잠금·전이 검증·조건부 UPDATE·감사 INSERT로 대체
   - 상태 변경과 선택 감사의 savepoint rollback 추가
   - 작업자 없는 CURRENT 선택 차단 및 PD-398 제안 계약 작성
-  - 아직 Writer 권한·제거 migration 연결 전으로 이 브랜치 배포 금지
-- [ ] 실제 Runtime/Writer 권한·프로세스·배포 구성
+  - Writer 권한과 Source·감사·처방·Candidate 제거 migration 연결 완료
+- [x] 실제 Runtime/Writer 권한·프로세스·배포 구성
   - Source 역할 정책 함수 및 서로 다른 실제 로그인 credential 통합 테스트 구현
   - Runtime 직접 쓰기/SET ROLE, Writer 감사 변경, 신규 테이블 쓰기 차단 확인
-  - 별도 Writer 명령·opt-in Compose 서비스 구현. 초기화 스크립트·운영 배포 전환은 미완료
-- [ ] 기존 데이터 검증과 forward migration
-- [ ] 최종 스키마 검사·PostgreSQL 통합 및 회귀 검증
+  - 별도 Writer 명령·opt-in Compose 서비스와 배포 전 역할 provisioning 구현
+- [x] 애플리케이션 public 스키마의 기존 데이터 검증과 forward migration
+- [ ] 합성 정리 도구 전환 후 최종 스키마 검사·PostgreSQL 통합 및 회귀 검증
 
 아직 운영 DB나 배포 설정을 변경하지 않았으며 기존 Trigger를 제거하지 않았다. 대체 경로와 권한이 준비되기 전에는 제거 migration을 실행하지 않는다.
 
@@ -217,3 +217,17 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 - Ruff/format, 생산 코드·migration Mypy 3개, shell 구문, Trigger/RLS 재도입 검사, diff 검사 통과
 
 기존 데이터 보존·빈 DB 전체 upgrade·Source 트리거/함수 0개·실제 분리 계정 권한·예상 밖 의존성 rollback·downgrade 거부를 폐기 DB에서 검증했다. 398b의 Source 함수 잔존 때문에 provisioning이 막히던 조건은 398c 적용 후 해소된다. 전체 #398 또는 AWS 배포 준비 완료를 의미하지 않는다. Source 관리 수정/삭제·승인/철회와 다른 도메인 제거, #404 병합 후 통합은 남아 있다. AWS 배포와 운영 DB 변경은 실행하지 않았다.
+
+## 398d/398e 감사·처방·Candidate 함수·트리거 제거
+
+- 398d: Runtime 전이·Check-in 감사·Evidence/Citation의 기존 Trigger 12개와 함수 3개 제거
+- 398e: 저장된 처방 fingerprint와 Candidate 집계를 먼저 검증한 뒤 기존 Trigger 10개와 함수 6개, `assembly_xid` 제거
+- 각 migration은 대상 테이블 잠금, 소유자 외 테이블·컬럼 권한 회수, 예상 밖 잔여 Trigger 확인을 같은 transaction에서 수행
+- Runtime은 이력·불변 행에 SELECT·INSERT만 사용하며 Writer 접근은 차단
+- Candidate의 불변 결과/처방 약 조회 잠금을 변경 가능한 부모 행으로 통일해 제한 역할에서도 정상 소비
+- Check-in 상태 변경과 감사 append를 savepoint로 묶어 flush 실패 후 부분 저장 차단 및 재시도 확인
+- 손상된 기존 처방 hash 또는 Candidate count가 있으면 정의 제거 전 migration 전체 rollback
+- 최신 head의 public 애플리케이션 테이블 사용자 Trigger 0개 확인
+- downgrade는 Trigger를 재도입하지 않고 명시적으로 거부
+
+폐기 PostgreSQL 17에서 bootstrap→398b→398c→398d→398e→provisioning을 실제 분리 계정으로 검증했다. 운영 DB와 AWS 배포는 변경하지 않았다. 다음 단계는 `tools/source_cleanup/synthetic_control.sql`의 함수·Trigger를 Python transaction으로 전환하고 최종 전체 회귀를 실행하는 것이다.
