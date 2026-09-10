@@ -80,3 +80,50 @@ AWS·팀 개발 DB·운영 DB는 적용하지 않는다.
 
 #362 자체 종료 전 담당 리뷰, 전체 CI와 소비자 인계를 확인해야 한다. #165의 allowlist 미확정과
 normalization 실행 참조의 미확정 경계는 그대로 유지한다. #166의 v2 hash나 실행 ID를 임의로 대체하지 않는다.
+
+## 푸시 전 #362 이슈 본문 대조
+
+2026-09-10 GitHub #362 본문과 댓글을 재조회했다. 댓글은 없으며 본문은 최초 요구사항을
+유지하고 있다. 구현 판정은 본문과 함께 승인된 `PD-362-20260909` 및 #361의 후속 순서를
+대조한다. 아래 완료는 해당 코드·문서의 구현 상태이며 이슈 전체 Close나 승인 상태가 아니다.
+
+| 이슈 요구 | 대조 결과 | 근거 |
+| --- | --- | --- |
+| source_version 문법·생산자 검증 | 구현됨 — 선행 병합분 + 이번 저장 연결 | `source_version.py`, `persistence.py`, `failure_runs.py`; invalid 원문 대신 hash·길이·reason 저장 |
+| 외부 Version 보존 위치 | 구현됨 | Snapshot `external_version`, Run `attempted_external_version`; 새 version의 NO_CHANGE 관측은 Run에 보존 |
+| 200/255 길이 통일 | 구현됨 | Snapshot·Citation 모델 및 `362a1b2c3d4e`; 기존 201자 데이터는 무변경 중단 |
+| #178 선행을 #361 적용 순서에 반영 | 선행 문서에 반영됨 | #361 본문 및 PD-315의 후속 순서에 #362 Source 생산 경계 → #178 명시 |
+| CURRENT/STALE와 파생 Freshness 정합성 | 의미 분리 문서화됨 | PD-362: 저장 상태는 선택·승인 이력, Freshness는 승인 Policy와 평가 시각의 파생 결과; #178 계산은 제외 |
+| Source별 거부 정책 컬럼 | 구현됨 | Source 모델·생성 입력·migration·DB 정책 조회; 요청 정책으로 DB 정책 완화 불가 |
+| 임계치·자동 승인 경계 | 승인 Decision 기준 구현됨 | Hard Limit 초과는 FAILED·Snapshot 없음, 한도 내 거부는 PENDING·별도 publication 승인 필요 |
+| empty_result_policy | REJECT만 구현됨 | Source 기본값·DB CHECK·Python 정책 판정; 빈 결과는 실패 |
+| migration 단일 head | 구현·전용 DB 검증됨 | `3984b5c6d7e8 → 362a1b2c3d4e → 362b2c3d4e5f` |
+| downgrade 왕복 | 요구와 차이 있음 — 검토 필요 | provenance 보존을 위해 명시적으로 중단하고 forward-fix 요구; downgrade 왕복 통과로 표시하지 않음 |
+| 회귀 테스트와 CI | 관련 검사는 통과, 전체 CI는 미완료 | 아래 재검증 및 앞 절의 환경 제한 참조 |
+
+### 초기 본문과 구분할 사항
+
+- 본문의 “기본값은 기존 동작과 동일”은 PD-362가 거부 0건·0비율·REJECT 기본값으로
+  명시적으로 대체했다. 기존의 묵시적 거부 허용을 복원하지 않는다.
+- 본문의 “임계치 초과 시 수동 검수 대기”는 PD-362에서 **한도 초과 시 실행 실패**,
+  **한도 내 거부 시 PENDING 후보**로 구분됐다.
+- `manual_review_required_on_rejection`을 가변 정책 컬럼으로 만들지 않았다.
+  거부 레코드가 있으면 publication 승인이 필요하다는 Python 규칙을 유지한다.
+- downgrade는 본문의 왕복 요구를 충족하지 않는다. 저장 이력을 지우는 역방향 migration을
+  만들지 않았으며, 리뷰에서 forward-fix 방식과 이슈 검증 기준의 정렬을 확인해야 한다.
+- Snapshot Receipt 제공·Source Writer 검증까지 구현했으나 Catalog/Runtime 실제 소비
+  연결은 #166/#372 및 해당 Runtime 담당 작업에 남아 있다. #362 전체 완료를 선언하지 않는다.
+
+### 이번 재검증
+
+- Source ingestion 단위 테스트: **366 passed**.
+- Source lifecycle·DB 왕복·migration 보존 검사: **27 passed, 2 deselected**.
+  제외한 두 건은 앞서 기록한 역할 생성 권한 검사이며 새 권한을 부여하지 않았다.
+- Ruff 검사와 format: 통과, **682 files already formatted**.
+- DB 함수·프로시저·Trigger·RLS 재도입 검사와 보호 테이블 Python 쓰기 경계 검사: 통과.
+- 전체 변경 diff의 공백 오류 검사: 통과.
+- 최신 `origin/develop`은 `c97f20f`이며 기반 `0eedc8d` 이후 추가 변경은 #427 Frontend와
+  관련 테스트 문서다. 이번 변경 파일 및 migration과 겹치지 않는다.
+
+GitHub 이슈 체크박스·본문은 수정하지 않았다. 리뷰 시 이 대조표와 승인 Decision을 함께
+사용하고, #165 reject_code 초안은 이번 #362 브랜치에 포함하지 않는다.
