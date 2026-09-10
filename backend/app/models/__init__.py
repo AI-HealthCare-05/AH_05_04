@@ -85,6 +85,9 @@ from app.models.rag_evidence import (
     RagEvidenceType,
 )
 from app.models.rag_runtime import (
+    AiJobExecutionContext,
+    AiJobExecutionIdentification,
+    AiJobIntakeContext,
     RagReleaseEvaluationApproval,
     RagRuntimeApprovalStatus,
     RagRuntimeBundleSource,
@@ -123,6 +126,9 @@ __all__ = [
     "AiJobAttemptStatus",
     "AiJobStatus",
     "AiJobType",
+    "AiJobExecutionContext",
+    "AiJobExecutionIdentification",
+    "AiJobIntakeContext",
     "ChatCitation",
     "ChatMessage",
     "ChatSession",

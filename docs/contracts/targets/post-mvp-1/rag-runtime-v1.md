@@ -18,6 +18,8 @@
 
 #164 Runtime Bundle 최소 DB 기반 분할 PR은 `rag_runtime_execution_manifest`, `rag_runtime_release_bundle`, `rag_runtime_bundle_source`, `rag_runtime_environment`, `rag_runtime_environment_transition`, `rag_release_evaluation_approval`의 저장 구조와 FK/unique/CHECK/append-only 이력 기반만 추가한다. 이 변경은 Runtime Bundle 활성화, 환경 포인터 전환, drain, mixed worker rollback, Production 공개 승인을 수행하거나 Current Runtime 동작으로 해석하지 않는다.
 
+#174_1 Preflight Context 저장 기반 분할 PR은 `ai_job_intake_context`, `ai_job_execution_context`, `ai_job_execution_identification`의 저장 구조와 FK/unique/CHECK 기반만 추가한다. Guard 물리 테이블이 아직 없으므로 구현 컬럼은 `runtime_guard_decision_ref`를 사용한다. 이 변경은 Guide/Chat `202 + Job` 접수 전환, Worker 실행, 결과 commit currentness 재검증, `STALE` 종결, 공개 DTO 연결을 수행하거나 Current Runtime 동작으로 해석하지 않는다.
+
 - 자유 ReAct Agent, 열린 웹 검색, Graph DB와 승인되지 않은 Source 자동 편입은 사용하지 않는다.
 - 고위험·응급·금지 행동 분기는 일반 Retrieval보다 먼저 수행한다.
 - OTC는 별도 Job·API·Track이 아니라 기존 `CHAT` Job의 질문 유형이다.
@@ -219,7 +221,7 @@ Chat은 접수 시점과 일반 RAG 실행 시점의 Snapshot을 분리한다.
 
 - Chat 접수 Transaction에서는 Full Execution Context를 미리 만들지 않는다. `URGENT`, `EMERGENCY`, `UNKNOWN`은 Full Context 없이 승인 Safety 결과로 종료할 수 있다.
 - Chat `ROUTINE` 확장 시 Intake의 Prescription Version·환경·Bundle 참조와 잠금 재검증한 현재값이 다르면 Full Context를 만들지 않고 `AI_JOB=STALE`, `release_decision=STALE`로 종료하며 일반 RAG를 실행하지 않는다.
-- 각 Intake·Full Context는 해당 단계의 `runtime_guard_decision_id`를 필수로 저장한다. Full Guard, Full Context 생성과 Identification member 저장은 하나의 Transaction이며 부분 Snapshot은 허용하지 않는다.
+- 각 Intake·Full Context는 해당 단계의 `runtime_guard_decision_id`를 필수로 저장한다. Full Guard, Full Context 생성과 Identification member 저장은 하나의 Transaction이며 부분 Snapshot은 허용하지 않는다. #174_1 최소 DB 기반에서는 Guard 물리 테이블 도입 전까지 같은 의미의 stable reference인 `runtime_guard_decision_ref`를 저장한다.
 - Worker 재시도는 이미 고정된 Intake/Full Context만 읽고 현재 상태를 다시 선택하지 않는다. Full Context가 없는 `ROUTINE` 재시도는 같은 원자적 확장 절차를 다시 수행한다.
 - Worker의 Preflight·결과 commit Transaction은 [처방 버전 계약의 전역 잠금 순서](./prescription-version-v1.md#동시-수정)인 `PRESCRIPTION → CHAT_SESSION(해당 시) → AI_JOB → 도메인 row → OUTBOX(해당 시)`를 따른다.
 - 결과 commit 직전에도 위 순서로 고정 Context와 현재 Prescription·Patient Context·Identification·Bundle·Execution Manifest·runtime revision을 재검증한다. 불일치 시 생성 결과를 공개하지 않고 `AI_JOB=STALE`, `release_decision=STALE`, `is_current=false`로 저장한다.
