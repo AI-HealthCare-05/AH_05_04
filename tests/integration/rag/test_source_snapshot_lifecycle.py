@@ -936,6 +936,12 @@ async def test_writer_entrypoint_with_actual_restricted_credentials():
         reader_config = WriterConfig(TEST_DATABASE_URL.set(username=runtime, password=password), "synthetic-operator")
         with pytest.raises(ValueError, match="non-owner"):
             await run_selection(WriterConfig(TEST_DATABASE_URL, "synthetic-operator"), args)
+        async with admin.begin() as connection:
+            await connection.execute(text(f'ALTER ROLE "{writer}" REPLICATION'))
+        with pytest.raises(ValueError, match="non-owner"):
+            await run_selection(writer_config, args)
+        async with admin.begin() as connection:
+            await connection.execute(text(f'ALTER ROLE "{writer}" NOREPLICATION'))
         with pytest.raises(DBAPIError):
             await run_selection(reader_config, args)
         async with admin.begin() as connection:

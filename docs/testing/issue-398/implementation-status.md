@@ -166,3 +166,14 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 - 과거 Trigger 계약 테스트는 #398 이전 schema에서 유지하고 최신 migration은 전체 이력 위에서 별도 검증
 
 다음 남은 작업: 요청 멱등성 확장, 불변 테이블 최소 권한·실행 계정/배포 연결, assembly_xid·Trigger 제거. 이 작업의 소비 경로 연결 및 NOT NULL 강화는 완료했으며 운영 migration은 실행하지 않았다.
+
+## Source 권한 전환 사전 보강 — 컬럼 ACL 및 복제 권한
+
+- 테이블 REVOKE 이후에도 컬럼 INSERT/UPDATE/REFERENCES 권한이 남는 PostgreSQL 경로 차단
+- Source의 PUBLIC/Runtime/Writer 컬럼 ACL 및 Writer가 다른 테이블에 직접 받은 컬럼 ACL 회수
+- Runtime/Writer provisioning과 Writer 실행 시 REPLICATION 역할 거부
+- 실제 별도 로그인으로 정책 재실행, 감사 변경 차단, 다른 테이블 컬럼 쓰기 차단, 정상 선택 및 rollback 검증
+- 관련 Source lifecycle·역할·Writer 테스트 33 passed, 변경 파일 Ruff/format 및 생산 코드 2개 Mypy 통과
+- Trigger/RLS 재도입 검사와 diff 검사 통과
+
+이번 단계는 권한 정책의 우회 경로 보강이다. 기존 Trigger는 아직 제거하지 않았고 운영 DB도 변경하지 않았다. 배포 bootstrap의 광범위 DML/default grant와 전용 Writer provisioning을 먼저 정렬해야 제거 migration을 안전하게 연결할 수 있다. #404는 머지 후 통합 대상으로 유지한다.

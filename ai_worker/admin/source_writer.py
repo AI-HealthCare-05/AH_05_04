@@ -95,7 +95,7 @@ async def run_selection(config: WriterConfig, args: argparse.Namespace) -> Snaps
         async with sessions.begin() as session:
             unsafe_role = await session.scalar(
                 text(
-                    "SELECT r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls "
+                    "SELECT r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls OR r.rolreplication "
                     "OR EXISTS (SELECT 1 FROM pg_auth_members WHERE member=r.oid) "
                     "OR EXISTS (SELECT 1 FROM pg_database WHERE datname=current_database() AND datdba=r.oid) "
                     "OR EXISTS (SELECT 1 FROM pg_namespace WHERE nspname=current_schema() AND nspowner=r.oid) "

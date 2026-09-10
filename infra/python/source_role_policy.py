@@ -56,6 +56,7 @@ async def apply_source_role_policy(
         raise ValueError("Apply Source migrations before provisioning Writer privileges")
     await connection.execute(text(f"REVOKE CREATE ON SCHEMA {schema_sql} FROM PUBLIC"))
     await connection.execute(text(f"REVOKE ALL ON ALL TABLES IN SCHEMA {schema_sql} FROM {writer_sql}"))
+    await _revoke_column_grants(connection, schema=schema, runtime=runtime, writer=writer)
     for role_sql in (runtime_sql, writer_sql):
         await connection.execute(text(f"REVOKE CREATE ON SCHEMA {schema_sql} FROM {role_sql}"))
         await connection.execute(text(f"GRANT USAGE ON SCHEMA {schema_sql} TO {role_sql}"))
@@ -81,13 +82,14 @@ async def apply_source_role_policy(
 async def _validate_role_boundary(connection: AsyncConnection, *, schema: str, runtime: str, writer: str) -> None:
     roles = await connection.execute(
         text(
-            "SELECT rolname, rolsuper, rolcreaterole, rolcreatedb, rolbypassrls FROM pg_roles WHERE rolname IN (:runtime, :writer)"
+            "SELECT rolname, rolsuper, rolcreaterole, rolcreatedb, rolbypassrls, rolreplication FROM pg_roles WHERE rolname IN (:runtime, :writer)"
         ),
         {"runtime": runtime, "writer": writer},
     )
     rows = roles.mappings().all()
     if len(rows) != 2 or any(
-        any(row[key] for key in ("rolsuper", "rolcreaterole", "rolcreatedb", "rolbypassrls")) for row in rows
+        any(row[key] for key in ("rolsuper", "rolcreaterole", "rolcreatedb", "rolbypassrls", "rolreplication"))
+        for row in rows
     ):
         raise ValueError("Runtime and Writer must exist without administrative privileges")
     memberships = await connection.scalar(
@@ -128,3 +130,25 @@ async def _validate_role_boundary(connection: AsyncConnection, *, schema: str, r
     )
     if legacy_function:
         raise ValueError("Remove the legacy Source transition function before role cutover")
+
+
+async def _revoke_column_grants(connection: AsyncConnection, *, schema: str, runtime: str, writer: str) -> None:
+    # Table REVOKE does not remove independently granted column privileges.
+    # Writer loses column access across the schema; Source also closes PUBLIC/Runtime access.
+    statements = await connection.scalars(
+        text(
+            "SELECT DISTINCT format('REVOKE ALL PRIVILEGES (%I) ON TABLE %I.%I FROM %s', "
+            "a.attname, n.nspname, c.relname, "
+            "CASE WHEN acl.grantee=0 THEN 'PUBLIC' ELSE quote_ident(r.rolname) END) "
+            "FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid "
+            "JOIN pg_namespace n ON n.oid=c.relnamespace "
+            "CROSS JOIN LATERAL aclexplode(a.attacl) acl "
+            "LEFT JOIN pg_roles r ON r.oid=acl.grantee "
+            "WHERE n.nspname=:schema AND a.attnum>0 AND NOT a.attisdropped "
+            "AND (r.rolname=:writer OR "
+            "(c.relname=ANY(:tables) AND (acl.grantee=0 OR r.rolname=:runtime)))"
+        ),
+        {"schema": schema, "runtime": runtime, "writer": writer, "tables": list(SOURCE_TABLES)},
+    )
+    for statement in statements:
+        await connection.execute(text(statement))

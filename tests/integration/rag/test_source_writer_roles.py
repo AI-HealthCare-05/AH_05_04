@@ -50,9 +50,37 @@ async def test_separate_credentials_and_future_tables_are_fail_closed() -> None:
                     connection, schema=schema, owner=config.DB_USER, runtime=runtime, writer=writer
                 )
             await connection.execute(text(f'ALTER DEFAULT PRIVILEGES REVOKE INSERT ON TABLES FROM "{writer}"'))
-            await apply_source_role_policy(
-                connection, schema=schema, owner=config.DB_USER, runtime=runtime, writer=writer
+            await connection.execute(text(f'CREATE TABLE "{schema}".unrelated (id integer)'))
+            await connection.execute(text(f'GRANT USAGE ON SCHEMA "{schema}" TO "{runtime}", "{writer}"'))
+            await connection.execute(text(f'GRANT INSERT (id), UPDATE (id) ON "{schema}".unrelated TO "{writer}"'))
+            for table in SOURCE_TABLES:
+                await connection.execute(
+                    text(
+                        f'GRANT INSERT (id), UPDATE (id), REFERENCES (id) ON "{schema}"."{table}" '
+                        f'TO PUBLIC, "{runtime}", "{writer}"'
+                    )
+                )
+            # These are independent grants, despite the absence of table-level UPDATE.
+            assert await connection.scalar(
+                text(f"SELECT has_column_privilege('{runtime}', '{schema}.rag_source_snapshot', 'id', 'UPDATE')")
             )
+            await connection.execute(text(f'ALTER ROLE "{writer}" REPLICATION'))
+            with pytest.raises(ValueError, match="administrative privileges"):
+                await apply_source_role_policy(
+                    connection, schema=schema, owner=config.DB_USER, runtime=runtime, writer=writer
+                )
+            await connection.execute(text(f'ALTER ROLE "{writer}" NOREPLICATION'))
+            for _ in range(2):
+                await apply_source_role_policy(
+                    connection, schema=schema, owner=config.DB_USER, runtime=runtime, writer=writer
+                )
+            for role in (runtime, writer):
+                assert not await connection.scalar(
+                    text(
+                        f"SELECT has_column_privilege('{role}', "
+                        f"'{schema}.rag_source_snapshot_verification', 'id', 'REFERENCES')"
+                    )
+                )
             await connection.execute(text(f'CREATE TABLE "{schema}".future_table (id integer)'))
         async with producer.begin() as connection:
             await connection.execute(text(f'INSERT INTO "{schema}".rag_source_snapshot VALUES (1)'))
@@ -71,6 +99,8 @@ async def test_separate_credentials_and_future_tables_are_fail_closed() -> None:
             (producer, f'TRUNCATE "{schema}".rag_source_snapshot_verification'),
             (reader, f'INSERT INTO "{schema}".future_table VALUES (1)'),
             (producer, f'INSERT INTO "{schema}".future_table VALUES (1)'),
+            (producer, f'INSERT INTO "{schema}".unrelated (id) VALUES (1)'),
+            (producer, f'UPDATE "{schema}".unrelated SET id=2'),
         ]
         for engine, sql in denied:
             with pytest.raises(DBAPIError) as error:

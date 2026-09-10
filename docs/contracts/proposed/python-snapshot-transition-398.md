@@ -72,3 +72,7 @@ Operation→Snapshot 잠금 후 checksum을 대조하고 기존 Python 선택 �
 ### 검증 이력과 전환의 잠금 일치
 
 Worker의 append_verification 및 Backend Source/Catalog Repository의 create_snapshot_verification은 INSERT 전 해당 Snapshot의 Operation 행을 잠근다. 상태 전환과 승인 이력이 서로 다른 잠금 경로로 경합하지 않도록 한다. 대상이 없으면 기록하지 않는다. 이는 작업자의 승인 권한을 대신하지 않으며 관리 승인·회수 API와 배포 권한 연결은 별도로 남아 있다.
+
+### 권한 전환 전 컬럼 권한 정리
+
+테이블 단위 REVOKE는 기존 컬럼 ACL을 제거하지 않는다. Source 정책 적용 시 Source 테이블의 PUBLIC/Runtime/Writer 컬럼 권한을 회수하고, Writer가 다른 테이블에 직접 받은 컬럼 권한도 회수한다. 이후 기존 명시적 테이블 권한만 다시 부여한다. 정책 재실행 후에도 감사 UPDATE 및 Runtime 쓰기는 허용하지 않는다. 역할 provisioning과 Writer 실행 진입점 모두 REPLICATION 역할을 거부한다. 별도 로그인 테스트에서 실제 컬럼 권한 우회 및 복제 권한 계정 거부를 검증한다.
