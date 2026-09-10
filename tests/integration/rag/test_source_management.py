@@ -743,7 +743,7 @@ async def test_merge_and_snapshot_seal_preserve_historical_rows(database, previo
         RagSourceEndpointCreate,
         RagSourceOperationCreate,
     )
-    from scripts.ci.verify_database_head import read_database_head_state, validation_errors
+    from scripts.ci.verify_database_head import migration_heads, read_database_head_state, validation_errors
 
     engine, url, _ = database
     root = Path(__file__).resolve().parents[3]
@@ -794,7 +794,9 @@ async def test_merge_and_snapshot_seal_preserve_historical_rows(database, previo
             assert snapshot.management_lock_marker == 0
             assert row_hash(snapshot) == old_hashes[str(snapshot.id)]
     async with engine.connect() as connection:
-        assert validation_errors("423a1b2c3d4e", await read_database_head_state(connection)) == []
+        # 기대 head를 하드코딩하지 않는다. migration이 추가될 때마다(#175가 그 예다) 깨지지
+        # 않으면서도 "DB 상태 == 코드 head"라는 본래 의미는 유지된다.
+        assert validation_errors(migration_heads()[0], await read_database_head_state(connection)) == []
         rows = (
             (
                 await connection.execute(

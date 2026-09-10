@@ -15,6 +15,7 @@ from app.models.rag_evaluation import (
 )
 from app.models.rag_runtime import (
     RagRuntimeApprovalStatus,
+    RagRuntimeBundleSource,
     RagRuntimeBundleStatus,
     RagRuntimeEnvironmentStatus,
     RagRuntimeEnvironmentTransition,
@@ -31,7 +32,6 @@ from app.repositories.rag_evaluation_repository import (
 )
 from app.repositories.rag_runtime_repository import (
     RagReleaseEvaluationApprovalCreate,
-    RagRuntimeBundleSourceCreate,
     RagRuntimeEnvironmentCreate,
     RagRuntimeEnvironmentTransitionCreate,
     RagRuntimeExecutionManifestCreate,
@@ -181,18 +181,29 @@ async def test_runtime_bundle_repository_can_save_minimum_graph(db_session: Asyn
             bundle_status=RagRuntimeBundleStatus.READY,
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=_hash("3"),
+            environment_code="local",
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
             candidate_index_ref="candidate-index:pending-fk",
+            candidate_index_version="1.0.0",
             candidate_index_manifest_hash=_hash("4"),
             created_by="backend-test",
         )
     )
-    bundle_source = await repository.create_bundle_source(
-        RagRuntimeBundleSourceCreate(
-            bundle_id=bundle.id,
-            source_snapshot_id=snapshot.id,
-            source_purpose=RagRuntimeSourcePurpose.CATALOG,
-        )
+    # #164 저장 구조 자체를 확인하는 테스트다. member write 경로는 #175에서
+    # build_runtime_bundle 안으로 닫혔으므로, 여기서는 ORM으로 직접 넣어 컬럼·제약만 검증한다.
+    bundle_source = RagRuntimeBundleSource(
+        bundle_id=bundle.id,
+        source_snapshot_id=snapshot.id,
+        source_purpose=RagRuntimeSourcePurpose.CATALOG,
+        source_version=snapshot.source_version,
+        canonical_checksum=snapshot.canonical_checksum,
+        approval_version="approval-v1",
+        scope_policy_hash=_hash("c"),
+        freshness_policy_hash=_hash("d"),
     )
+    db_session.add(bundle_source)
+    await db_session.flush()
     environment = await repository.create_environment(
         RagRuntimeEnvironmentCreate(
             environment_code="local",
@@ -245,6 +256,9 @@ async def test_environment_active_bundle_hash_must_match_bundle(db_session: Asyn
             bundle_version="1.0.0",
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=_hash("6"),
+            environment_code="local",
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
         )
     )
 
@@ -276,6 +290,9 @@ async def test_approved_evaluation_requires_passed_eval_run(db_session: AsyncSes
             bundle_version="1.0.0",
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=_hash("9"),
+            environment_code="local",
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
         )
     )
 
@@ -312,6 +329,9 @@ async def test_evaluation_approval_bundle_hash_must_match_bundle(db_session: Asy
             bundle_version="1.0.0",
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=_hash("d"),
+            environment_code="local",
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
         )
     )
 
@@ -368,6 +388,9 @@ async def test_environment_transition_preserves_activation_history(db_session: A
             bundle_manifest_hash=_hash("b"),
             bundle_status=RagRuntimeBundleStatus.READY,
             governance_revision_ref="governance:test-a",
+            environment_code="local",
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
         )
     )
     environment = await repository.create_environment(
@@ -444,6 +467,9 @@ async def test_environment_transition_preserves_activation_history(db_session: A
             bundle_manifest_hash=_hash("c"),
             bundle_status=RagRuntimeBundleStatus.READY,
             governance_revision_ref="governance:test-b",
+            environment_code="local",
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
         )
     )
     with pytest.raises(RuntimeEnvironmentTransitionConflictError):
@@ -633,6 +659,9 @@ async def _freshness_resources(session):
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=uuid4().hex * 2,
             bundle_status=RagRuntimeBundleStatus.READY,
+            environment_code="local",
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
         )
     )
     environment = await repository.create_environment(

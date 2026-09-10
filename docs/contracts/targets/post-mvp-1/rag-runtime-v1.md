@@ -7,8 +7,8 @@
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
 | Normative Source | `post-mvp-patient-rule-first-curated-evidence-rag-v1.7.md@1.50` · SHA-256 `e83415326dd08cda61353d7cd8bf4e6d591bb99f51a8a3daa498421d8772535a` |
 | Physical Target | `rag-detailed-db-schema-v1.md@1.47` · SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
-| 후속 결정 | [`PD-315-20260908`](../../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md) · Review pending |
-| Last verified | 2026-09-08 |
+| 후속 결정 | [`PD-315-20260908`](../../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md) · Review pending · [`PD-175-20260910`](../../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md) · Review pending |
+| Last verified | 2026-09-10 |
 
 ## 목적과 적용 범위
 
@@ -240,6 +240,19 @@ Runtime Release Bundle은 다음 version을 함께 고정한다.
 Guide Job 접수 Transaction은 Full Execution Context 전체를 고정한다. Chat Job 접수 Transaction은 Intake Context만 고정하고, `ROUTINE` 분기에서 Identification Preflight 후 Full Execution Context를 원자적으로 확장한다. Worker 재시도는 각 단계에서 이미 고정된 Snapshot만 읽는다.
 
 처방·Patient Context·Identification·Bundle·Execution Manifest·runtime revision이 달라지면 이전 결과는 `AI_JOB=STALE`, `release_decision=STALE`, `is_current=false`이며 현재 답변으로 공개하지 않는다.
+
+### Bundle Manifest Hash와 저장 정합
+
+`bundle_manifest_hash`는 저장된 행만으로 **재계산·검증 가능해야** 한다. 그렇지 않으면 위 「활성화·Rollback·Resume Guard」의 「포인터 교체 직전 Bundle Manifest 재검증」을 수행할 수 없다.
+
+- 해시 입력은 canonical 구성 하나이며, 그 전체가 영속화된다: 환경, Execution Manifest hash, Medication Catalog `version`·`manifest_hash`, 전체 Source member(`source_version`·`canonical_checksum`·`approval_version`·`scope_policy_hash`·`freshness_policy_hash`·`required`·`selected_for_operation`), 전체 Artifact member(`kind`·`ref`·`version`·`manifest_hash`).
+- 해시에 값을 추가하려면 같은 변경에서 저장 컬럼도 추가한다. 해시 입력과 저장 컬럼의 불일치는 계약 위반이다.
+- member 목록은 canonical JSON 바이트 기준 정렬로 순서 독립이다.
+- Bundle 이름(`bundle_key`·`bundle_version`)·`created_by`·`governance_revision_ref`는 내용 identity가 아니므로 제외한다. 따라서 `uq_rag_runtime_bundle_manifest_hash`는 「내용당 한 행」을 뜻하며, 동일 Manifest 평가의 재사용 근거가 된다.
+- 승인·freshness 관측값은 제외한다. 고정된 member set은 관측 상태와 무관하게 동일 해시여야 한다.
+- member set 불변은 Trigger가 아니라 재계산 해시 비교로 탐지한다.
+
+세부 근거와 컬럼 목록은 [`PD-175-20260910`](../../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md)를 따른다. 이 항목은 `BUILDING` 범위의 저장 계약이며, `READY`·active pointer 전환 권한을 부여하지 않는다.
 
 `RETRY_WAIT` 중 Active Bundle 변경과 구·신 Worker 동시 실행의 호환성·drain 방식은 아직 미정이다. [문서 권위의 후속 Product Decision 항목](../../../governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌)이 승인되기 전에는 Runtime Bundle을 Current로 승격하지 않는다.
 

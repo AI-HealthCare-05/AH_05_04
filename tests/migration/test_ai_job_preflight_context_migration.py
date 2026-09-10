@@ -519,15 +519,20 @@ def test_preflight_context_downgrade_empty_schema_removes_tables() -> None:
 
 
 def test_preflight_tables_join_existing_integrity_head() -> None:
-    from scripts.ci.verify_database_head import read_database_head_state, validation_errors
+    from scripts.ci.verify_database_head import migration_heads, read_database_head_state, validation_errors
 
     cfg = create_alembic_config()
     command.upgrade(cfg, "398293a4b5c6")
     command.upgrade(cfg, "head")
     assert asyncio.run(_fetch_table_names()) == PREFLIGHT_CONTEXT_TABLES
 
+    # 기대 head를 하드코딩하지 않고 코드에서 읽는다. migration이 추가될 때마다
+    # (#175가 그 예다) 이 단정이 깨지지 않도록 verify_database_head와 같은 방식을 쓴다.
+    heads = migration_heads()
+    assert len(heads) == 1, heads
+
     async def verify() -> None:
         async with _connection() as connection:
-            assert validation_errors("423a1b2c3d4e", await read_database_head_state(connection)) == []
+            assert validation_errors(heads[0], await read_database_head_state(connection)) == []
 
     asyncio.run(verify())
