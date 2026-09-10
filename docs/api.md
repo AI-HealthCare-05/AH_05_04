@@ -232,7 +232,7 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 | B | `GET` | `/api/v1/medication-occurrences?date=YYYY-MM-DD` | KST 날짜별 일정·occurrence·현재 Check-in 조회 |
 | B | `PUT` | `/api/v1/prescription-version-medications/{prescription_version_medication_id}/schedule` | 일정 생성·변경 |
 | B | `PATCH` | `/api/v1/prescription-version-medications/{prescription_version_medication_id}/schedule` | 일정 취소 |
-| B | `PUT` | `/api/v1/medication-occurrences/{occurrence_id}/check-in` | Check-in 생성·정정 |
+| B | `PUT` | `/api/v1/medication-occurrences/{occurrence_id}/check-in` | #202 Draft 부분 구현: 생성·정정·snapshot 재현 (`200`), 책임 리뷰 대기 |
 | B | `GET` | `/api/v1/medication-occurrences/{occurrence_id}/check-in-history` | 범위 승인 시 정정 이력 조회 |
 | B | `POST` | `/api/v1/medication-occurrences/{occurrence_id}/reminders` | 앱 내부 재알림 1회 요청 |
 | C | `POST` | `/api/v1/safety-assessments` | 구조화 증상 Safety assessment 저장 |
@@ -243,6 +243,43 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 | C | `POST` | `/api/v1/support-action-plans/{id}/followups` | follow-up 저장 |
 
 Track B·C 쓰기 API는 [멱등성 계약](./contracts/targets/post-mvp-1/idempotency-v1.md)의 동기 snapshot 재현 규칙을 따릅니다. 세부 요청·응답, revision과 오류 의미는 [Check-in 계약](./contracts/targets/post-mvp-1/checkin-v1.md)과 [Safety Result 계약](./contracts/targets/post-mvp-1/safety-result-v1.md)을 기준으로 합니다.
+
+### #202 Check-in PUT — Draft 구현, Current 승격 전
+
+기존 B3와 동기 멱등 서비스를 연결한 Check-in PUT만 이 브랜치에 등록했다.
+[PD-202-20260910](./governance/decisions/2026-09-10-checkin-api-202.md)의 HTTP·DTO 제안은
+책임 리뷰 대기이며 Track B 전체 완료 또는 Production 공개를 의미하지 않는다.
+
+요청 예시(비식별 합성):
+
+```json
+{"status":"TAKEN","taken_at":"2026-09-10T03:00:00Z","expected_revision":0}
+```
+
+`Idempotency-Key`가 필요하다. 최초 생성·정정 모두 성공 status는 `200`이다.
+
+```json
+{
+  "data": {
+    "checkin_id": "66666666-6666-4666-8666-666666666666",
+    "occurrence_id": "44444444-4444-4444-8444-444444444444",
+    "status": "TAKEN",
+    "taken_at": "2026-09-10T03:00:00Z",
+    "revision": 1,
+    "corrected": false
+  }
+}
+```
+
+정정은 현재 revision과 새 키를 사용한다. 같은 키·같은 지문은 최초 응답을 재현한다.
+`reason_code`는 거부한다. 사용자 `UNCONFIRMED` 제출은
+`422 CHECKIN_STATUS_NOT_USER_SETTABLE`, 다른 입력 오류는 `422 VALIDATION_FAILED`다.
+없는 ID와 타 사용자 ID는 동일한 `404 MEDICATION_OCCURRENCE_NOT_FOUND`로 숨긴다.
+`409 CHECKIN_REVISION_CONFLICT`, `OCCURRENCE_CANCELLED`, `IDEMPOTENCY_KEY_CONFLICT`와
+snapshot cap 오류 `503 IDEMPOTENCY_RESPONSE_TOO_LARGE`는 공통 오류 형식을 사용한다.
+
+날짜별 조회·일정 PUT/PATCH·history·backlog·Reminder route는 이번 부분 구현에 포함하지 않는다.
+상세 사유와 후속 범위는 Decision과 [검증 기록](./validation/track-b/issue-202-checkin-api.md)을 따른다.
 
 ### Track E·F 목표 API 경계
 
