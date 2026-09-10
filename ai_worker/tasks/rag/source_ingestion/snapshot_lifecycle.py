@@ -167,6 +167,37 @@ class SnapshotReference:
 
 
 @dataclass(frozen=True, slots=True)
+class SnapshotProvenanceReceipt:
+    source_id: UUID
+    source_code: str
+    endpoint_id: UUID
+    operation_id: UUID
+    source_snapshot_id: UUID
+    source_version: str
+    external_version: str | None
+    canonical_checksum: str
+    canonicalization_spec_version: str
+    endpoint_receipt_hash: str | None
+    verification_seal_id: UUID | None
+    verification_status: SnapshotVerificationStatus
+    rejected_record_count: int
+    publication_verification_id: UUID | None
+
+    def validate_provenance(self) -> None:
+        validate_source_version(
+            source_version=self.source_version,
+            external_version=self.external_version,
+            canonical_checksum=self.canonical_checksum,
+        )
+        if self.endpoint_receipt_hash is None or re.fullmatch(r"[0-9a-f]{64}", self.endpoint_receipt_hash) is None:
+            raise ValueError("Snapshot Endpoint Receipt is missing or invalid")
+        if not self.canonicalization_spec_version.strip():
+            raise ValueError("Snapshot canonicalization version is missing")
+        if self.verification_status is not SnapshotVerificationStatus.PENDING and self.verification_seal_id is None:
+            raise ValueError("Snapshot verification seal is missing")
+
+
+@dataclass(frozen=True, slots=True)
 class SnapshotIngestionMetadata:
     """검증 결과 외에 Source 수집 실행 계층이 선택하는 저장 메타데이터입니다."""
 

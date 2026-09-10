@@ -11,7 +11,8 @@ Source·Catalog 계약 리뷰 정현우. 승인된 PD-362-20260909를 구현한�
 | Snapshot external_version 보존 | 1단계 구현 | 새 Snapshot exact roundtrip, 기존 값 추정·소급 수정 없음 |
 | Snapshot·Citation version 200자 | 1단계 구현 | forward migration, 201자 기존 데이터 무변경 중단, FK 보존 |
 | Run 시도 provenance | 2단계 구현 | CREATED/NO_CHANGE/충돌/invalid version별 DB Receipt |
-| Catalog·Runtime 사용 Receipt | 미완료 | #398 기존 검증과 저장 version/hash/승인 근거 연결 |
+| Snapshot Receipt·Writer 선택 검증 | 3단계 구현 | DB identity/version/hash/승인 참조 조회, 외부 version 변조 선택 차단 |
+| Catalog·Runtime 실제 소비 연결 | 인계 대기 | #166/#372 및 Runtime 담당 작업에서 승인·Freshness와 함께 소비 |
 | #165 reject_code allowlist·version | 계약 미확정 | 정현우 Source 계약 확인 필요, 임의 목록 생성 금지 |
 | #165 Source→#166 Catalog 인계 | 미완료 | #166 실제 소비 통합 검증까지 추적 |
 | #178 Freshness 계산 | 별도 담당 범위 | #362에서 계산 구현·완료를 선언하지 않음 |
@@ -49,3 +50,33 @@ AWS·팀 개발 DB·운영 DB는 적용하지 않는다.
 - 기존 role policy는 Source Run lifecycle 컬럼만 UPDATE하도록 축소한다.
 - 신규 migration은 기존 비소유자의 테이블 단위 Run UPDATE 권한도 같은 컬럼 범위로 축소한다.
 - 기존 Run의 미관측 시도 version을 Snapshot에서 추정·소급 채우지 않는다.
+
+## 3단계 및 최종 검증
+
+- Snapshot Receipt는 Source/Endpoint/Operation/Snapshot ID, Source code, version/external version,
+  canonical checksum·canonicalization version·Endpoint Receipt hash, 상태·거부 건수와 검증 seal을 반환한다.
+- 사람의 publication 승인 Verification ID는 seal과 별도로 반환한다. seal 자체는 publication 승인이 아니다.
+- Source Writer는 CURRENT 선택 전에 저장된 version·external version·checksum·Receipt 결속을 검증한다.
+- 과거 외부 version이 누락된 Snapshot을 추정 승인하지 않는다. 사용 전에 별도 검토·정상 재수집이 필요하다.
+- Catalog 실제 DB 연결은 #166/#372, Runtime 소비·Freshness 계산은 해당 담당 범위다.
+  이 Receipt만으로 Source 활성화·Freshness 적합·Runtime 공개를 선언하지 않는다.
+
+검증 결과:
+
+| 검사 | 결과 |
+| --- | --- |
+| 전체 Worker 단위 테스트 | 2,714 passed, 8 skipped |
+| Source lifecycle 및 migration 데이터 보존 | 27 passed, 2 deselected (역할 생성 권한 필요) |
+| publication 참조 추가 후 Receipt 재검증 | 2 passed |
+| DB 역할·관리 배포·Source Governance·재도입·쓰기 경계 계약 | 28 passed |
+| 전체 Backend/Worker mypy | 535개 파일 통과 |
+| Ruff / format / diff | 통과 |
+| 실제 Alembic head | `362b2c3d4e5f` 단일 head |
+| 최종 DB 사용자 정의 Trigger / RLS / 제거 대상 함수 | 0개 |
+
+`run_test.sh` 전체 CI와 역할 생성이 필요한 검사를 전부 통과한 것으로 보고하지 않는다.
+전용 DB의 일반 계정에서는 CREATEROLE·REPLICATION 권한 테스트를 실행할 수 없으며,
+새 워크트리에서 `run_test.sh`는 정적 gate 통과 후 `envs/.local.env` 부재로 중단됐다. 새 SUPERUSER 계정은 생성하지 않았다.
+
+#362 자체 종료 전 담당 리뷰, 전체 CI와 소비자 인계를 확인해야 한다. #165의 allowlist 미확정과
+normalization 실행 참조의 미확정 경계는 그대로 유지한다. #166의 v2 hash나 실행 ID를 임의로 대체하지 않는다.

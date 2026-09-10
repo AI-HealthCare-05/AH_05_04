@@ -72,6 +72,10 @@ async def select_snapshot(
     )
     if checksum != expected_checksum:
         raise ValueError("Snapshot checksum changed or target is missing")
+    receipt = await repository.get_snapshot_receipt(snapshot_id=snapshot_id)
+    if receipt is None:
+        raise ValueError("Snapshot provenance is missing")
+    receipt.validate_provenance()
     selected_at = datetime.now(UTC)
     result = await select_current_snapshot(
         repository=repository, snapshot_id=snapshot_id, selected_at=selected_at, selected_by=actor

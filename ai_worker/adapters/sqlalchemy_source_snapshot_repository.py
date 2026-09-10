@@ -17,6 +17,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
     SnapshotCreateRequest,
     SnapshotLifecycleRepository,
+    SnapshotProvenanceReceipt,
     SnapshotReference,
     SnapshotRunRecord,
     SnapshotStatusReference,
@@ -209,6 +210,66 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
             .limit(1)
         )
         return observed is not None and observed != canonical_contract
+
+    async def get_snapshot_receipt(self, *, snapshot_id: UUID) -> SnapshotProvenanceReceipt | None:
+        publication_id = (
+            select(_VERIFICATION.c.id)
+            .where(
+                _VERIFICATION.c.snapshot_id == _SNAPSHOT.c.id,
+                _VERIFICATION.c.check_name == SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
+                _VERIFICATION.c.verification_result == "PASSED",
+                _VERIFICATION.c.verified_by.is_not(None),
+                func.length(func.trim(_VERIFICATION.c.verified_by)) > 0,
+            )
+            .order_by(_VERIFICATION.c.verified_at.desc(), _VERIFICATION.c.id.desc())
+            .limit(1)
+            .correlate(_SNAPSHOT)
+            .scalar_subquery()
+        )
+        row = (
+            (
+                await self._session.execute(
+                    select(
+                        _SOURCE.c.id.label("source_id"),
+                        _SOURCE.c.source_code,
+                        _ENDPOINT.c.id.label("endpoint_id"),
+                        _SNAPSHOT.c.operation_id,
+                        _SNAPSHOT.c.id.label("source_snapshot_id"),
+                        _SNAPSHOT.c.source_version,
+                        _SNAPSHOT.c.external_version,
+                        _SNAPSHOT.c.canonical_checksum,
+                        _SNAPSHOT.c.canonicalization_spec_version,
+                        _SNAPSHOT.c.endpoint_receipt_hash,
+                        _SNAPSHOT.c.verification_seal_id,
+                        _SNAPSHOT.c.verification_status,
+                        _SNAPSHOT.c.rejected_record_count,
+                        publication_id.label("publication_verification_id"),
+                    )
+                    .select_from(
+                        _SNAPSHOT.join(_OPERATION, _SNAPSHOT.c.operation_id == _OPERATION.c.id)
+                        .join(_ENDPOINT, _OPERATION.c.endpoint_id == _ENDPOINT.c.id)
+                        .join(_SOURCE, _ENDPOINT.c.source_id == _SOURCE.c.id)
+                    )
+                    .where(_SNAPSHOT.c.id == str(snapshot_id))
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            return None
+        values = dict(row)
+        for key in (
+            "source_id",
+            "endpoint_id",
+            "operation_id",
+            "source_snapshot_id",
+            "verification_seal_id",
+            "publication_verification_id",
+        ):
+            values[key] = UUID(values[key]) if values[key] is not None else None
+        values["verification_status"] = SnapshotVerificationStatus(values["verification_status"])
+        return SnapshotProvenanceReceipt(**values)
 
     async def get_attempt_receipt(self, *, ingestion_run_id: UUID) -> SnapshotRunRecord | None:
         row = (

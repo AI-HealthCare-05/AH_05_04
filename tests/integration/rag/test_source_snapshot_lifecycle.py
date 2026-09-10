@@ -1216,3 +1216,39 @@ async def test_attempt_is_rolled_back_with_the_snapshot_transaction() -> None:
             is None
         )
         assert await session.get(RagSourceSnapshot, result.snapshot_id) is None
+
+
+async def test_snapshot_receipt_keeps_identity_and_blocks_tampered_external_version_selection() -> None:
+    from ai_worker.admin.source_writer import select_snapshot
+    from ai_worker.tasks.rag.source_ingestion.source_version import SourceVersionValidationError
+
+    identity = await _seed_operation("RECEIPT_BINDING")
+    async with session_factory.begin() as session:
+        result = await persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=_metadata("external:receipt-version"),
+            artifacts=_stored_artifacts(),
+        )
+    async with session_factory.begin() as session:
+        receipt = await SqlAlchemySourceSnapshotRepository(session).get_snapshot_receipt(snapshot_id=result.snapshot_id)
+        assert receipt is not None
+        receipt.validate_provenance()
+        assert receipt.source_code == identity.source_code
+        assert receipt.source_snapshot_id == result.snapshot_id
+        assert receipt.endpoint_receipt_hash == "c" * 64
+        assert receipt.verification_status is SnapshotVerificationStatus.PENDING
+        snapshot = await session.get(RagSourceSnapshot, result.snapshot_id)
+        snapshot.external_version = "tampered"
+    async with session_factory.begin() as session:
+        with pytest.raises(SourceVersionValidationError):
+            await select_snapshot(
+                session,
+                snapshot_id=result.snapshot_id,
+                expected_checksum=_CHECKSUM_A,
+                actor="synthetic-reviewer",
+                reason_code="VERIFIED_RELEASE",
+            )
+    async with session_factory() as session:
+        snapshot = await session.get(RagSourceSnapshot, result.snapshot_id)
+        assert snapshot.verification_status is RagSnapshotVerificationStatus.PENDING
