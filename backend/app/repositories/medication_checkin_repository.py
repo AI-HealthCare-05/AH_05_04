@@ -94,22 +94,23 @@ class MedicationCheckinRepository:
         """현재값을 한 revision 전진시키며 이전 상태를 Audit에 append한다."""
 
         changed_at_utc = as_utc_instant(changed_at, field="changed_at")
-        from_revision = checkin.revision
-        audit = CheckinAudit(
-            checkin_id=checkin.id,
-            from_status=checkin.status,
-            to_status=status,
-            from_revision=from_revision,
-            to_revision=from_revision + 1,
-            changed_by=changed_by,
-            changed_at=changed_at_utc,
-        )
-        self.session.add(audit)
-        checkin.status = status
-        checkin.taken_at = taken_at
-        checkin.revision = from_revision + 1
-        await self.session.flush()
-        return audit
+        async with self.session.begin_nested():
+            from_revision = checkin.revision
+            audit = CheckinAudit(
+                checkin_id=checkin.id,
+                from_status=checkin.status,
+                to_status=status,
+                from_revision=from_revision,
+                to_revision=from_revision + 1,
+                changed_by=changed_by,
+                changed_at=changed_at_utc,
+            )
+            self.session.add(audit)
+            checkin.status = status
+            checkin.taken_at = taken_at
+            checkin.revision = from_revision + 1
+            await self.session.flush()
+            return audit
 
     async def close_occurrence(self, *, occurrence: MedicationOccurrence) -> None:
         occurrence.status = MedicationOccurrenceStatus.CLOSED

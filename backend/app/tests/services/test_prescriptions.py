@@ -27,7 +27,7 @@ from app.models.medication_schedules import (
     MedicationScheduleSource,
 )
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
+from app.models.prescriptions import Prescription, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.rag_candidate import MedicationCandidateSearch, MedicationCandidateSearchStatus
 from app.models.users import Gender, User
@@ -104,37 +104,13 @@ async def _create_confirmed_prescription(session: AsyncSession, *, user: User) -
     session.add(ocr_job)
     await session.flush()
 
-    version_id = uuid4()
-    prescription = Prescription(
-        active_version_id=version_id,
-        document_id=document.id,
-        source_ocr_job_id=ocr_job.id,
-        profile_id=profile.id,
+    return await PrescriptionRepository(session).create_with_medications(
+        document=document,
+        source_ocr_job=ocr_job,
         prescribed_date=date.today(),
         confirmed_at=datetime.now(UTC),
+        medications=[{"medication_name": "타이레놀", "display_order": 1}],
     )
-    session.add(prescription)
-    await session.flush()
-
-    version = PrescriptionVersion(
-        id=version_id,
-        prescription_id=prescription.id,
-        version_number=1,
-        prescribed_date=prescription.prescribed_date,
-        confirmed_at=prescription.confirmed_at,
-    )
-    session.add(version)
-    await session.flush()
-    session.add(
-        PrescriptionVersionMedication(
-            prescription_version_id=version_id,
-            medication_name="타이레놀",
-            display_order=1,
-        )
-    )
-    await session.flush()
-
-    return prescription
 
 
 async def test_get_latest_prescription_returns_owned_prescription(db_session: AsyncSession) -> None:
@@ -467,3 +443,104 @@ async def test_correction_cancels_only_future_pending_occurrences_without_copyin
         .where(PrescriptionVersionMedication.prescription_version_id == result.prescription_version_id)
     )
     assert new_schedule is None
+
+
+@pytest.mark.parametrize("corruption", ["content", "medication_missing"])
+async def test_corrupted_prescription_is_not_returned(db_session, corruption):
+    from sqlalchemy import delete, update
+
+    owner = await _create_user(db_session, email=f"seal-{corruption}@test.local")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    version_id = prescription.active_version_id
+    if corruption == "content":
+        await db_session.execute(
+            update(PrescriptionVersionMedication)
+            .where(PrescriptionVersionMedication.prescription_version_id == version_id)
+            .values(medication_name="Synthetic changed")
+        )
+    else:
+        await db_session.execute(
+            delete(PrescriptionVersionMedication).where(
+                PrescriptionVersionMedication.prescription_version_id == version_id
+            )
+        )
+    db_session.expire_all()
+    await db_session.refresh(owner)
+    with pytest.raises(ApiError) as error:
+        await _service(db_session).get_latest_prescription(user=owner)
+    assert error.value.status_code == 409
+    assert error.value.code == "PRESCRIPTION_VERSION_UNAVAILABLE"
+
+
+def _correction_request(base_version_id, *, revision=1, name="합성 정정약"):
+    return CorrectPrescriptionRequest(
+        base_version_id=base_version_id,
+        expected_revision=revision,
+        prescribed_date=date(2026, 9, 10),
+        medications=[PrescriptionMedicationCorrectionRequest(medication_name=name, display_order=1)],
+    )
+
+
+async def test_correction_replays_original_response_after_a_later_correction(db_session):
+    from sqlalchemy import func
+
+    from app.models.async_jobs import IdempotencyRecord
+    from app.models.prescriptions import PrescriptionVersion
+    from app.services.idempotency import IdempotencyKeyConflictError
+
+    owner = await _create_user(db_session, email="correction-replay@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    request = _correction_request(prescription.active_version_id)
+    service = _service(db_session)
+    first = await service.correct_prescription(user=owner, prescription_id=prescription.id, request=request)
+    latest = await service.correct_prescription(
+        user=owner,
+        prescription_id=prescription.id,
+        request=_correction_request(first.prescription_version_id, revision=2),
+    )
+    replay = await service.correct_prescription(user=owner, prescription_id=prescription.id, request=request)
+    assert replay == first
+    assert latest.revision == 3
+    assert await db_session.scalar(select(func.count()).select_from(PrescriptionVersion)) == 3
+    assert await db_session.scalar(select(func.count()).select_from(IdempotencyRecord)) == 2
+    with pytest.raises(IdempotencyKeyConflictError):
+        await service.correct_prescription(
+            user=owner,
+            prescription_id=prescription.id,
+            request=_correction_request(request.base_version_id, name="다른 합성약"),
+        )
+    stranger = await _create_user(db_session, email="correction-replay-stranger@example.com")
+    with pytest.raises(ApiError) as error:
+        await service.correct_prescription(user=stranger, prescription_id=prescription.id, request=request)
+    assert error.value.status_code == 404
+
+
+async def test_correction_response_storage_failure_rolls_back_version_and_invalidation(db_session, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import func
+
+    from app.models.prescriptions import PrescriptionVersion
+    from app.services.idempotency import FernetSnapshotCipher
+
+    owner = await _create_user(db_session, email="correction-response-failure@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    prescription_id, base_id = prescription.id, prescription.active_version_id
+    service = _service(db_session)
+    invalidation = AsyncMock()
+    service._schedule_invalidation = invalidation
+
+    def fail(_self, _plaintext):
+        raise RuntimeError("synthetic snapshot failure")
+
+    monkeypatch.setattr(FernetSnapshotCipher, "encrypt", fail)
+    with pytest.raises(RuntimeError, match="synthetic snapshot failure"):
+        await service.correct_prescription(
+            user=owner, prescription_id=prescription_id, request=_correction_request(base_id)
+        )
+    assert invalidation.cancel_future_for_prescription_version.await_count == 1
+    assert await db_session.scalar(select(func.count()).select_from(PrescriptionVersion)) == 1
+    assert (
+        await db_session.scalar(select(Prescription.active_version_id).where(Prescription.id == prescription_id))
+        == base_id
+    )

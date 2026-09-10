@@ -15,7 +15,9 @@ from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.guide_repository import GuideRepository
+from app.repositories.prescription_repository import PrescriptionRepository
 from app.tests.conftest import test_engine
+from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 
 @pytest_asyncio.fixture
@@ -87,6 +89,7 @@ async def _create_confirmed_prescription(session: AsyncSession, *, user: User) -
     session.add(prescription)
     await session.flush()
     version = PrescriptionVersion(
+        **fingerprint_values(prescription.prescribed_date, [{"medication_name": "타이레놀", "display_order": 1}]),
         id=version_id,
         prescription_id=prescription.id,
         version_number=1,
@@ -98,6 +101,7 @@ async def _create_confirmed_prescription(session: AsyncSession, *, user: User) -
     session.add(Medication(prescription_id=prescription.id, medication_name="타이레놀", display_order=1))
     session.add(
         PrescriptionVersionMedication(
+            medication_count=1,
             prescription_version_id=version_id,
             medication_name="타이레놀",
             display_order=1,
@@ -124,27 +128,18 @@ async def test_get_prescription_owned_rejects_other_users_prescription(db_sessio
 
 async def test_get_prescription_owned_orders_medications_by_display_order(db_session: AsyncSession) -> None:
     owner = await _create_user(db_session, email="ordered-medications@example.com")
-    # _create_confirmed_prescription이 display_order=1 약물을 먼저 저장하므로,
-    # 삽입 순서와 display_order 순서가 어긋나도록 3번을 2번보다 먼저 저장합니다.
-    # 정렬 없이 삽입(행 생성) 순서로만 조회하면 [1, 3, 2]가 나오고,
-    # display_order 기준으로 정렬해야만 [1, 2, 3]이 나옵니다.
     prescription = await _create_confirmed_prescription(db_session, user=owner)
-    db_session.add(
-        PrescriptionVersionMedication(
-            prescription_version_id=prescription.active_version_id,
-            medication_name="세번째 약",
-            display_order=3,
-        )
+    # 완성된 새 버전을 1, 3, 2 삽입 순서로 구성해 읽기 정렬을 검증합니다.
+    await PrescriptionRepository(db_session).create_version(
+        prescription=prescription,
+        prescribed_date=date.today(),
+        confirmed_at=datetime.now(UTC),
+        medications=[
+            {"medication_name": "첫번째 약", "display_order": 1},
+            {"medication_name": "세번째 약", "display_order": 3},
+            {"medication_name": "두번째 약", "display_order": 2},
+        ],
     )
-    await db_session.flush()
-    db_session.add(
-        PrescriptionVersionMedication(
-            prescription_version_id=prescription.active_version_id,
-            medication_name="두번째 약",
-            display_order=2,
-        )
-    )
-    await db_session.flush()
 
     repo = GuideRepository(db_session)
     loaded = await repo.get_prescription_owned(prescription_id=prescription.id, user_id=owner.id)

@@ -560,6 +560,8 @@ Header:
 
 ## 처방 정보 확정
 
+PR #429 / #398 변경: 동일 문서의 성공 재시도는 보존기간 내 저장된 최초 201을 재현한다. 정정 `PATCH /api/v1/prescriptions/{prescription_id}`도 같은 기준 버전·revision·내용이면 최초 200을 재현하고, 같은 기준의 다른 내용은 409 `IDEMPOTENCY_KEY_CONFLICT`다. 요청 형식은 유지한다. 소유권은 매번 확인하며 최신 상태는 GET으로 확인한다. 보존기간·도입 이전 자료·원자성은 [PD-398 구현 계약](contracts/proposed/python-prescription-integrity-398.md#확정정정-요청-멱등성-pd-398-r1)을 따른다.
+
 ### Endpoint
 
 | Method | Path | 성공 상태 | 동작 |

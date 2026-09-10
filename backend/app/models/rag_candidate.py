@@ -262,6 +262,11 @@ class MedicationIdentification(Base):
             unique=True,
             postgresql_where=text("status = 'MATCHED'"),
         ),
+        UniqueConstraint(
+            "id",
+            "prescription_version_medication_id",
+            name="uq_medication_identification_id_medication",
+        ),
         UniqueConstraint("candidate_search_id", name="uq_medication_identification_search"),
         CheckConstraint(
             f"status IN ({_sql_in_list(MedicationIdentificationStatus)})",

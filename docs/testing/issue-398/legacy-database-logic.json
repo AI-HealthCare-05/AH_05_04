@@ -1,0 +1,16 @@
+{
+  "baseline_commit": "bd201c36f3be677558cccba02b27601a8c7ce52b",
+  "purpose": "Applied migration history and temporary source_cleanup removal inventory. Never add exceptions for new definitions.",
+  "files": {
+    "backend/alembic/versions/164b6c7d8e9f_create_rag_runtime_bundle_tables.py": "0fcb71524d8af9c0df342bf0a682adcfb04cf45c2494003a9f32696ce181a967",
+    "backend/alembic/versions/164c5d6e7f8a_create_rag_evidence_citation_tables.py": "104f581536b8d8ebd0157530741a3a634a1ca63c51e5d2d8b06620a13af9c974",
+    "backend/alembic/versions/164f3a2b1c0d_create_rag_source_catalog_tables.py": "20af05540d791ed112aae0623abe341c6002d1e829cba3d5a9ee0b3fcc63cdd7",
+    "backend/alembic/versions/165a4b3c2d1e_add_rag_source_ingestion_artifacts.py": "2c49c7b50c092b424a4a63b8eb31d52f366e022f844743b940bfc3fb89af37ea",
+    "backend/alembic/versions/165c6d5e4f30_add_snapshot_receipt_and_retry.py": "1d9a3907e7d71db4a216230e84acd5f345504942dc219db5caa26e39c0a9f8f7",
+    "backend/alembic/versions/165d7e6f5041_protect_snapshot_verification.py": "7875a67e80b82c26017a5f962bf958488cff37dddef3b4e164a608fcce26036a",
+    "backend/alembic/versions/165e8f706152_guard_snapshot_transitions.py": "1c9ab247acc17aec439d39bc04a2134a2b5fd866fbdeb7cfe3410ab147d28bac",
+    "backend/alembic/versions/169a1b2c3d4e_create_prescription_version_foundation.py": "8a9d8c32c938f1c0591e5de0ddf35a36bec2350e90c4e67b12153be366c9bd5c",
+    "backend/alembic/versions/171c0f751206_add_candidate_search_displayed_count_deferred_constraint.py": "d5a202c11c90c996259710e692bf0059e3872b2c8f0c3dca2e6bb1a68aefaa04",
+    "backend/alembic/versions/201a1b2c3d4e_create_medication_checkin_audit.py": "ab8892e4116c6854302a544b5484c30becd0b8fb7663ebfae5ffc2cf6bce40e0"
+  }
+}

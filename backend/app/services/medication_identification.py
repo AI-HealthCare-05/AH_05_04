@@ -131,14 +131,10 @@ class MedicationIdentificationService:
             raise self._stale_error(field="search_id", reason="NOT_RUNNING")
 
         self._validate_finalize_payload(status=status, results=results, status_reason=status_reason)
-        created_results = await self._repository.add_results(search=search, results=results)
-        displayed_candidate_count = sum(1 for result in results if result.is_displayed)
-
-        finalized = await self._repository.finalize_search(
+        finalized, created_results = await self._repository.assemble_and_finalize_search(
             search=search,
+            results=results,
             status=status,
-            candidate_count=len(results),
-            displayed_candidate_count=displayed_candidate_count,
             finalized_at=finalized_at or datetime.now(config.TIMEZONE),
             status_reason=status_reason,
         )

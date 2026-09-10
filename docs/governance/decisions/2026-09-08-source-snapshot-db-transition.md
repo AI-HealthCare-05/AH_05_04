@@ -1,6 +1,12 @@
 # Source Snapshot DB-owned 상태 전이 (#165 / #323)
 
-상태: 현우님 변경 요청에 따른 구현·재리뷰 대상. 실제 Runtime 활성화 승인이 아니다.
+상태: **Superseded — #398 / PD-398-R1로 대체됨. 아래는 과거 구현 결정의 기록이며 신규 구현의 근거가 아니다.**
+
+대체 근거는 Issue #398, PR #429 리뷰, 현재 `CONTRIBUTING.md`·`AGENTS.md`의 DB Trigger·RLS·업무 저장 함수 금지 원칙이다. 현재 구현·이행 계약은 [PD-398-R1](2026-09-10-python-integrity-review-429.md)과 [Python Snapshot 전이](../../contracts/proposed/python-snapshot-transition-398.md)를 따른다. 일반 Runtime 쓰기 권한 회수, 분리된 Python Writer, 명시적 transaction과 일반 제약으로 전환한다. 기존 Source 함수·Trigger는 398c forward migration에서 제거한다.
+
+이 문서 및 `165e8f706152` migration을 SECURITY DEFINER의 승인된 선례나 신규 예외 근거로 인용하지 않는다. 이를 인용한 #386의 protected retrieval 결정 §4·§14도 본 PR에서 정렬한다. 변경 검토: 정현우(Source·RAG), 송은영(DB·보안), 권가빈(제품). 담당 리뷰 승인은 PR #429에서 확인하며 운영 적용·공개 승인을 의미하지 않는다.
+
+## 과거 결정 기록
 
 근거: https://github.com/AI-HealthCare-05/AH_05_04/pull/323#pullrequestreview-5137532884
 

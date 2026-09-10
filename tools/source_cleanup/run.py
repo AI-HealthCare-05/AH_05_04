@@ -19,7 +19,9 @@ from ai_worker.adapters.postgresql_source_cleanup import (
     PostgresLocalCleanupGuard,
     create_synthetic_workspace,
     load_batch,
+    record_review,
     require_synthetic_database,
+    revoke_review_batch,
     survey_workspace,
 )
 from ai_worker.tasks.rag.source_cleanup.execution import execute_synthetic_batch
@@ -108,29 +110,21 @@ async def handle_batch(engine: AsyncEngine, args: argparse.Namespace) -> int:
     if args.command == "review":
         if not args.review_role or not args.executor:
             raise ValueError("Review role and executor required")
-        async with engine.begin() as connection:
-            await connection.execute(
-                text("""INSERT INTO source_cleanup.review
-                (batch_hash,role,executor,policy_version,valid_from,expires_at)
-                VALUES (:hash,:role,:executor,:policy,:start,:end)"""),
-                {
-                    "hash": batch.digest(),
-                    "role": args.review_role,
-                    "executor": args.executor,
-                    "policy": batch.scope.policy_version,
-                    "start": now - timedelta(minutes=1),
-                    "end": now + timedelta(hours=1),
-                },
-            )
+        await record_review(
+            engine,
+            batch_hash=batch.digest(),
+            role=args.review_role,
+            executor=args.executor,
+            policy_version=batch.scope.policy_version,
+            valid_from=now - timedelta(minutes=1),
+            expires_at=now + timedelta(hours=1),
+        )
         print(json.dumps({"batch_hash": batch.digest(), "status": "REVIEW_RECORDED"}))
         return 0
     if args.command == "revoke":
         if not args.batch_hash or re.fullmatch(r"[0-9a-f]{64}", args.batch_hash) is None:
             raise ValueError("Exact revocation digest required")
-        async with engine.begin() as connection:
-            await connection.execute(
-                text("INSERT INTO source_cleanup.revocation(batch_hash) VALUES (:hash)"), {"hash": args.batch_hash}
-            )
+        await revoke_review_batch(engine, batch_hash=args.batch_hash)
         print(json.dumps({"status": "REVOKED"}))
         return 0
     if args.command == "audit":

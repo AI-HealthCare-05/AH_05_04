@@ -1,146 +1,52 @@
 \set ON_ERROR_STOP on
-
--- 비밀번호를 SQL 파일이나 명령행 인수에 직접 기록하지 않고
--- PostgreSQL 컨테이너 환경변수에서 읽습니다.
 \getenv migration_user DB_MIGRATION_USER
 \getenv migration_password DB_MIGRATION_PASSWORD
 \getenv app_user DB_APP_USER
 \getenv app_password DB_APP_PASSWORD
+\getenv writer_user SOURCE_WRITER_USER
+\getenv writer_password SOURCE_WRITER_PASSWORD
 
--- Alembic 전용 Migration 역할을 생성합니다.
-SELECT format(
-    'CREATE ROLE %I LOGIN PASSWORD %L',
-    :'migration_user',
-    :'migration_password'
-)
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM pg_roles
-    WHERE rolname = :'migration_user'
-)
+-- 계정 이름 충돌 시 관리 계정 변경을 포함한 어떤 변경도 하지 않습니다.
+SELECT count(DISTINCT name)=4 AND bool_and(length(name)>0) AS roles_valid
+FROM (VALUES (current_user), (:'migration_user'), (:'app_user'), (:'writer_user')) AS roles(name)
+\gset
+\if :roles_valid
+\else
+  \echo 'Admin, Migration, Runtime and Writer roles must be distinct and nonempty'
+  -- SQL 오류로 ON_ERROR_STOP을 발동합니다 (psql 17의 \quit는 종료 코드를 받지 않음).
+  SELECT 1 / 0;
+\endif
+
+BEGIN;
+-- Bootstrap은 로그인 계정과 DDL 경계만 준비합니다. 테이블 권한은 migration 이후
+-- Python provisioning이 명시적 목록으로 부여하며, 재실행 시 DML을 다시 열지 않습니다.
+SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', name, password)
+FROM (VALUES (:'migration_user', :'migration_password'),
+             (:'app_user', :'app_password'), (:'writer_user', :'writer_password')) AS roles(name, password)
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=name)
+\gexec
+SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', name, password)
+FROM (VALUES (:'migration_user', :'migration_password'),
+             (:'app_user', :'app_password'), (:'writer_user', :'writer_password')) AS roles(name, password)
+\gexec
+SELECT format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), name)
+FROM (VALUES (:'migration_user'), (:'app_user'), (:'writer_user')) AS roles(name)
+\gexec
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+SELECT format('GRANT USAGE, CREATE ON SCHEMA public TO %I', :'migration_user')
+\gexec
+SELECT format('REVOKE CREATE ON SCHEMA public FROM %I', name)
+FROM (VALUES (:'app_user'), (:'writer_user')) AS roles(name)
+\gexec
+SELECT format('GRANT USAGE ON SCHEMA public TO %I', name)
+FROM (VALUES (:'app_user'), (:'writer_user')) AS roles(name)
 \gexec
 
--- 기존 Migration 역할도 최소 권한 정책과 현재 비밀번호로 정렬합니다.
-SELECT format(
-    'ALTER ROLE %I WITH LOGIN PASSWORD %L
-     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION',
-    :'migration_user',
-    :'migration_password'
-)
+-- 이전 테이블·sequence 기본 권한을 global/schema 양쪽에서 회수합니다.
+-- 기존 테이블 ACL은 확장하지 않고 migration 이후 명시적으로 재구성합니다.
+SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I %s REVOKE ALL ON %s FROM PUBLIC, %I, %I',
+              :'migration_user', scope, object_type, :'app_user', :'writer_user')
+FROM (VALUES (''), ('IN SCHEMA public')) AS scopes(scope)
+CROSS JOIN (VALUES ('TABLES'), ('SEQUENCES')) AS objects(object_type)
 \gexec
-
-SELECT format(
-    'GRANT CONNECT ON DATABASE %I TO %I',
-    current_database(),
-    :'migration_user'
-)
-\gexec
-
--- Alembic이 public schema의 객체를 생성할 수 있도록 허용합니다.
-SELECT format(
-    'GRANT USAGE, CREATE ON SCHEMA public TO %I',
-    :'migration_user'
-)
-\gexec
-
--- FastAPI와 Worker가 사용할 Runtime 역할을 생성합니다.
-SELECT format(
-    'CREATE ROLE %I LOGIN PASSWORD %L',
-    :'app_user',
-    :'app_password'
-)
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM pg_roles
-    WHERE rolname = :'app_user'
-)
-\gexec
-
--- Runtime 역할에는 관리·DDL 권한을 부여하지 않습니다.
-SELECT format(
-    'ALTER ROLE %I WITH LOGIN PASSWORD %L
-     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION',
-    :'app_user',
-    :'app_password'
-)
-\gexec
-
-SELECT format(
-    'GRANT CONNECT ON DATABASE %I TO %I',
-    current_database(),
-    :'app_user'
-)
-\gexec
-
-SELECT format(
-    'GRANT USAGE ON SCHEMA public TO %I',
-    :'app_user'
-)
-\gexec
-
-SELECT format(
-    'REVOKE CREATE ON SCHEMA public FROM %I',
-    :'app_user'
-)
-\gexec
-
--- 이미 존재하는 애플리케이션 테이블에는 DML 권한만 부여합니다.
-SELECT format(
-    'GRANT SELECT, INSERT, UPDATE, DELETE
-     ON ALL TABLES IN SCHEMA public TO %I',
-    :'app_user'
-)
-\gexec
-
--- Migration 이후 생성한 Runtime 역할에도 승인된 Snapshot 전이 함수만 인계합니다.
--- Migration 전에는 함수가 없으므로 건너뛰며, migration 자체가 기존 역할에 부여합니다.
-SELECT format(
-    'GRANT EXECUTE ON FUNCTION %s TO %I',
-    to_regprocedure('public.transition_rag_source_snapshot(text,text,text,timestamptz,timestamptz,text)'),
-    :'app_user'
-)
-WHERE to_regprocedure('public.transition_rag_source_snapshot(text,text,text,timestamptz,timestamptz,text)') IS NOT NULL
-\gexec
-
--- PR #72 또는 이전 배포에서 부여됐을 수 있는 sequence UPDATE 권한을
--- 명시적으로 회수하여 setval() 사용을 차단합니다.
-SELECT format(
-    'REVOKE UPDATE
-     ON ALL SEQUENCES IN SCHEMA public FROM %I',
-    :'app_user'
-)
-\gexec
-
--- identity/serial 값 생성을 위한 권한만 부여합니다.
-SELECT format(
-    'GRANT USAGE, SELECT
-     ON ALL SEQUENCES IN SCHEMA public TO %I',
-    :'app_user'
-)
-\gexec
-
--- 이후 Migration 역할이 생성할 테이블에도 Runtime DML 권한을 적용합니다.
-SELECT format(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public
-     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I',
-    :'migration_user',
-    :'app_user'
-)
-\gexec
-
--- 기존 default privilege에 sequence UPDATE가 설정됐을 가능성도 제거합니다.
-SELECT format(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public
-     REVOKE UPDATE ON SEQUENCES FROM %I',
-    :'migration_user',
-    :'app_user'
-)
-\gexec
-
-SELECT format(
-    'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public
-     GRANT USAGE, SELECT ON SEQUENCES TO %I',
-    :'migration_user',
-    :'app_user'
-)
-\gexec
+COMMIT;
