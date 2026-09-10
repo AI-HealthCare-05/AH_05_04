@@ -541,12 +541,76 @@ class SqlAlchemyCatalogWriteSupport:
                 "alias_id": None if alias_ref is None else alias_ids[alias_ref],
                 "normalized_text": _text(record, "normalized_text"),
             }
+            await self._require_search_entry_eligible(values)
             result[row.member_ref] = await self._upsert_row(
                 _SEARCH_ENTRY,
                 values=values,
                 key_columns=("product_id", "entry_type", "normalized_text"),
             )
         return result
+
+    async def _require_search_entry_eligible(self, values: dict[str, object]) -> None:
+        product_rows = (
+            (
+                await self._session.execute(
+                    select(
+                        _PRODUCT.c.normalized_product_name,
+                        _PRODUCT.c.product_status,
+                    )
+                    .where(
+                        _PRODUCT.c.id == str(values["product_id"]),
+                        _PRODUCT.c.entity_identity_id == str(values["product_identity_id"]),
+                        _PRODUCT.c.identity_entity_type == "PRODUCT",
+                    )
+                    .with_for_update(of=_PRODUCT)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        if len(product_rows) != 1 or product_rows[0]["product_status"] != "ACTIVE":
+            raise CatalogDatabaseBindingError()
+
+        entry_type = values["entry_type"]
+        alias_id = values["alias_id"]
+        normalized_text = values["normalized_text"]
+        if entry_type == "PRODUCT_NAME":
+            if alias_id is not None or normalized_text != product_rows[0]["normalized_product_name"]:
+                raise CatalogDatabaseBindingError()
+            return
+        if entry_type != "APPROVED_ALIAS" or alias_id is None:
+            raise CatalogDatabaseBindingError()
+
+        alias_rows = (
+            (
+                await self._session.execute(
+                    select(
+                        _ALIAS.c.normalized_alias_text,
+                        _ALIAS.c.review_status,
+                        _ALIAS.c.record_status,
+                        _ALIAS.c.is_effective,
+                    )
+                    .where(
+                        _ALIAS.c.id == str(alias_id),
+                        _ALIAS.c.target_identity_id == str(values["product_identity_id"]),
+                        _ALIAS.c.target_type == "PRODUCT",
+                    )
+                    .with_for_update(of=_ALIAS)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        if len(alias_rows) != 1:
+            raise CatalogDatabaseBindingError()
+        alias = alias_rows[0]
+        if (
+            alias["review_status"] != "APPROVED"
+            or alias["record_status"] != "ACTIVE"
+            or alias["is_effective"] is not True
+            or normalized_text != alias["normalized_alias_text"]
+        ):
+            raise CatalogDatabaseBindingError()
 
     async def _stage_set(self, plan: CatalogStoragePlan, staged: CatalogDatabaseStageResult) -> UUID:
         manifest = _record(plan.manifest_json)
@@ -578,7 +642,7 @@ class SqlAlchemyCatalogWriteSupport:
             key_columns=("schema_version", "manifest_spec_version", "envelope_hash"),
         )
         if existing:
-            await self.verify_set(set_id, plan)
+            await self.verify_set(set_id, plan, staged)
             return set_id
         for source_ref in plan.source_refs:
             await self._insert_exact(
@@ -631,11 +695,19 @@ class SqlAlchemyCatalogWriteSupport:
                 },
                 key_columns=("set_id", "hash_kind"),
             )
-        await self.verify_set(set_id, plan)
+        await self.verify_set(set_id, plan, staged)
         return set_id
 
-    async def verify_set(self, set_id: UUID, plan: CatalogStoragePlan) -> None:
+    async def verify_set(
+        self,
+        set_id: UUID,
+        plan: CatalogStoragePlan,
+        staged: CatalogDatabaseStageResult,
+    ) -> None:
         manifest = _record(plan.manifest_json)
+        envelope = tuple(item for item in plan.hashes if item.kind == "CATALOG_ENVELOPE")
+        if len(envelope) != 1:
+            raise CatalogDatabaseBindingError()
         statement = select(_CATALOG_SET).where(_CATALOG_SET.c.id == str(set_id))
         rows = (await self._session.execute(statement)).mappings().all()
         if len(rows) != 1:
@@ -645,23 +717,99 @@ class SqlAlchemyCatalogWriteSupport:
             "catalog_version": plan.catalog_version,
             "schema_version": _text(manifest, "schema_version"),
             "normalization_version": _text(manifest, "normalization_version"),
+            "manifest_spec_version": envelope[0].contract_spec_version,
             "envelope_hash": _text(manifest, "catalog_manifest_hash"),
             "manifest_json": plan.manifest_json,
         }
         if any(stored[name] != value for name, value in expected.items()):
             raise CatalogDatabaseBindingError()
-        for target, expected_count in (
-            (_CATALOG_SET_SOURCE, len(plan.source_refs)),
-            (_CATALOG_SET_MEMBER, len(plan.rows)),
-            (_CATALOG_SET_HASH, len(plan.hashes)),
-        ):
-            count = (
+        source_rows = (
+            (
                 await self._session.execute(
-                    select(func.count()).select_from(target).where(target.c.set_id == str(set_id))
+                    select(_CATALOG_SET_SOURCE).where(_CATALOG_SET_SOURCE.c.set_id == str(set_id))
                 )
-            ).scalar_one()
-            if count != expected_count:
-                raise CatalogDatabaseBindingError()
+            )
+            .mappings()
+            .all()
+        )
+        actual_sources = {(str(row["source_snapshot_id"]), str(row["source_version"])) for row in source_rows}
+        expected_sources = {
+            (str(staged.bindings.source_snapshot_ids[item.snapshot_id]), item.source_version)
+            for item in plan.source_refs
+        }
+        if actual_sources != expected_sources or len(source_rows) != len(expected_sources):
+            raise CatalogDatabaseBindingError()
+
+        member_ids = {
+            "PRODUCT": ("product_id", staged.product_ids),
+            "INGREDIENT": ("ingredient_id", staged.ingredient_ids),
+            "COMPONENT": ("component_id", staged.component_ids),
+            "ALIAS": ("alias_id", staged.alias_ids),
+            "SEARCH_ENTRY": ("search_entry_id", staged.search_entry_ids),
+        }
+        target_columns = ("product_id", "ingredient_id", "component_id", "alias_id", "search_entry_id")
+        expected_members: set[tuple[object, ...]] = set()
+        for item in plan.rows:
+            target_column, ids = member_ids[item.kind]
+            targets = tuple(str(ids[item.member_ref]) if name == target_column else None for name in target_columns)
+            expected_members.add(
+                (
+                    item.kind,
+                    item.member_ref,
+                    str(staged.bindings.source_snapshot_ids[item.source_ref.snapshot_id]),
+                    *targets,
+                )
+            )
+        member_rows = (
+            (
+                await self._session.execute(
+                    select(_CATALOG_SET_MEMBER).where(_CATALOG_SET_MEMBER.c.set_id == str(set_id))
+                )
+            )
+            .mappings()
+            .all()
+        )
+        actual_members = {
+            (
+                str(row["member_kind"]),
+                str(row["member_ref"]),
+                str(row["source_snapshot_id"]),
+                *(None if row[name] is None else str(row[name]) for name in target_columns),
+            )
+            for row in member_rows
+        }
+        if actual_members != expected_members or len(member_rows) != len(expected_members):
+            raise CatalogDatabaseBindingError()
+
+        hash_rows = (
+            (await self._session.execute(select(_CATALOG_SET_HASH).where(_CATALOG_SET_HASH.c.set_id == str(set_id))))
+            .mappings()
+            .all()
+        )
+        actual_hashes = {
+            (
+                str(row["hash_kind"]),
+                str(row["schema_version"]),
+                str(row["contract_spec_version"]),
+                str(row["digest"]),
+                str(row["target"]),
+                bytes(row["canonical_bytes"]),
+            )
+            for row in hash_rows
+        }
+        expected_hashes = {
+            (
+                item.kind,
+                item.schema_version,
+                item.contract_spec_version,
+                item.digest,
+                item.target,
+                item.canonical_bytes,
+            )
+            for item in plan.hashes
+        }
+        if actual_hashes != expected_hashes or len(hash_rows) != len(expected_hashes):
+            raise CatalogDatabaseBindingError()
 
 
 class SqlAlchemyCatalogBuildRepository:
@@ -679,4 +827,4 @@ class SqlAlchemyCatalogBuildRepository:
                     raise CatalogDatabaseBindingError()
                 set_id = staged.set_id
         async with self._session_factory() as session:
-            await SqlAlchemyCatalogWriteSupport(session).verify_set(set_id, plan)
+            await SqlAlchemyCatalogWriteSupport(session).verify_set(set_id, plan, staged)

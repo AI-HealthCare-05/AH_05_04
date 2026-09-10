@@ -1,8 +1,10 @@
+import json
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -471,6 +473,46 @@ async def test_search_entry_rejects_ineligible_alias(db_session: AsyncSession) -
         )
 
 
+@pytest.mark.parametrize("member_kind", ("PRODUCT", "INGREDIENT"))
+async def test_catalog_member_rejects_identity_with_different_official_code(
+    db_session: AsyncSession,
+    member_kind: str,
+) -> None:
+    repository = RagSourceCatalogRepository(db_session)
+    snapshot = await _create_snapshot(repository)
+    entity_type = (
+        RagMedicationAliasTargetType.PRODUCT if member_kind == "PRODUCT" else RagMedicationAliasTargetType.INGREDIENT
+    )
+    identity = await repository.create_identity(RagEntityIdentityCreate(entity_type, "MFDS_TEST_CODE", "EXPECTED"))
+
+    with pytest.raises(ValueError, match="identity does not match"):
+        if member_kind == "PRODUCT":
+            await repository.create_product(
+                RagMedicationProductCreate(
+                    entity_identity_id=identity.id,
+                    source_snapshot_id=snapshot.id,
+                    source_record_key="ITEM_SEQ:MISMATCH",
+                    code_system="MFDS_TEST_CODE",
+                    canonical_code="DIFFERENT",
+                    product_name="식별자불일치제품",
+                    normalized_product_name="식별자불일치제품",
+                    product_status="ACTIVE",
+                )
+            )
+        else:
+            await repository.create_ingredient(
+                RagMedicationIngredientCreate(
+                    entity_identity_id=identity.id,
+                    source_snapshot_id=snapshot.id,
+                    source_record_key="INGREDIENT:MISMATCH",
+                    ingredient_code_system="MFDS_TEST_CODE",
+                    ingredient_code="DIFFERENT",
+                    ingredient_name="식별자불일치성분",
+                    normalized_ingredient_name="식별자불일치성분",
+                )
+            )
+
+
 async def test_catalog_write_support_binds_source_and_upserts_identity_once(db_session: AsyncSession) -> None:
     repository = RagSourceCatalogRepository(db_session)
     snapshot = await _create_snapshot(repository)
@@ -602,6 +644,117 @@ async def test_catalog_write_support_stages_compatible_members_idempotently(db_s
     assert len(first.product_ids) == len(first.ingredient_ids) == len(first.alias_ids) == len(first.component_ids) == 1
     assert len(first.search_entry_ids) == 2
     assert first.set_id == second.set_id
+
+
+@pytest.mark.parametrize(
+    ("record_kind", "field_name", "invalid_value"),
+    (
+        ("SEARCH_ENTRY", "normalized_text", "다른정규화값"),
+        ("ALIAS", "review_status", "PENDING"),
+    ),
+)
+async def test_catalog_write_support_revalidates_search_entry_eligibility(
+    db_session: AsyncSession,
+    record_kind: str,
+    field_name: str,
+    invalid_value: str,
+) -> None:
+    repository = RagSourceCatalogRepository(db_session)
+    snapshot = await _create_snapshot(repository)
+    members = build_catalog_members(
+        products=(
+            CatalogProductInput(
+                source_snapshot_id=str(snapshot.id),
+                source_record_key="ITEM_SEQ:200012355",
+                code_system="MFDS_ITEM_SEQ",
+                canonical_code="200012355",
+                product_name="검색재검증제품",
+                product_status=CandidateRecordStatus.ACTIVE,
+            ),
+        ),
+        components=(),
+        aliases=(
+            CatalogAliasInput(
+                source_snapshot_id=str(snapshot.id),
+                source_alias_ref="ALIAS:200012355:1",
+                target_type=CandidateEntityType.PRODUCT,
+                target_code_system="MFDS_ITEM_SEQ",
+                target_canonical_code="200012355",
+                alias_source="MFDS_PRODUCT_APPROVAL",
+                alias_text="검색 재검증정",
+                review_status=CandidateAliasReviewStatus.APPROVED,
+                status=CandidateRecordStatus.ACTIVE,
+                is_effective=True,
+            ),
+        ),
+    )
+    artifacts = create_catalog_export(
+        catalog_version="catalog-search-revalidation-v1",
+        source_refs=(CandidateCatalogSourceRef(str(snapshot.id), snapshot.source_version),),
+        members=members,
+    )
+    plan = prepare_catalog_storage(members=members, artifacts=artifacts)
+    changed_rows = []
+    changed = False
+    for row in plan.rows:
+        if not changed and row.kind == record_kind:
+            record = json.loads(row.canonical_record)
+            record[field_name] = invalid_value
+            changed_rows.append(
+                replace(
+                    row,
+                    canonical_record=json.dumps(
+                        record,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8"),
+                )
+            )
+            changed = True
+        else:
+            changed_rows.append(row)
+    assert changed
+
+    with pytest.raises(CatalogDatabaseBindingError):
+        await SqlAlchemyCatalogWriteSupport(db_session).stage_compatible_members(
+            replace(plan, rows=tuple(changed_rows))
+        )
+
+
+async def test_catalog_set_verification_compares_exact_hash_material(db_session: AsyncSession) -> None:
+    repository = RagSourceCatalogRepository(db_session)
+    snapshot = await _create_snapshot(repository)
+    members = build_catalog_members(
+        products=(
+            CatalogProductInput(
+                source_snapshot_id=str(snapshot.id),
+                source_record_key="ITEM_SEQ:200012356",
+                code_system="MFDS_ITEM_SEQ",
+                canonical_code="200012356",
+                product_name="셋검증제품",
+                product_status=CandidateRecordStatus.ACTIVE,
+            ),
+        ),
+        components=(),
+        aliases=(),
+    )
+    artifacts = create_catalog_export(
+        catalog_version="catalog-exact-set-verification-v1",
+        source_refs=(CandidateCatalogSourceRef(str(snapshot.id), snapshot.source_version),),
+        members=members,
+    )
+    plan = prepare_catalog_storage(members=members, artifacts=artifacts)
+    support = SqlAlchemyCatalogWriteSupport(db_session)
+    staged = await support.stage_compatible_members(plan)
+    assert staged.set_id is not None
+    await db_session.execute(
+        update(RagCatalogSetHash).where(RagCatalogSetHash.set_id == staged.set_id).values(canonical_bytes=b"tampered")
+    )
+
+    with pytest.raises(CatalogDatabaseBindingError):
+        await support.verify_set(staged.set_id, plan, staged)
 
 
 async def test_catalog_build_repository_commits_one_complete_set_and_reuses_it(db_session: AsyncSession) -> None:

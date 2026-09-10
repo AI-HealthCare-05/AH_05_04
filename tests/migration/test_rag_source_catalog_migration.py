@@ -815,11 +815,11 @@ def test_rag_source_catalog_unique_constraints_are_enforced_after_alembic_upgrad
             _execute_expect_db_error(
                 """
                 INSERT INTO rag_medication_product (
-                    id, source_snapshot_id, source_record_key, code_system,
+                    id, source_snapshot_id, entity_identity_id, source_record_key, code_system,
                     canonical_code, product_name, normalized_product_name, product_status
                 )
                 VALUES (
-                    :duplicate_product_id, :snapshot_id, 'ITEM_SEQ:DUPLICATE',
+                    :duplicate_product_id, :snapshot_id, :product_identity_id, 'ITEM_SEQ:DUPLICATE',
                     'MFDS_ITEM_SEQ', '200000001',
                     '중복제품', '중복제품', 'ACTIVE'
                 )
@@ -1090,12 +1090,12 @@ def test_rag_source_catalog_component_snapshot_fk_is_enforced_after_alembic_upgr
                         text(
                             """
                             INSERT INTO rag_medication_product (
-                                id, source_snapshot_id, source_record_key, code_system,
+                                id, source_snapshot_id, entity_identity_id, source_record_key, code_system,
                                 canonical_code, product_name, normalized_product_name, product_status
                             )
                             VALUES (
-                                :stale_product_id, :stale_snapshot_id, 'ITEM_SEQ:200000002',
-                                'MFDS_ITEM_SEQ', '200000002', '다른스냅샷제품',
+                                :stale_product_id, :stale_snapshot_id, :product_identity_id,
+                                'ITEM_SEQ:200000001', 'MFDS_ITEM_SEQ', '200000001', '다른스냅샷제품',
                                 '다른스냅샷제품', 'ACTIVE'
                             )
                             """
@@ -1106,12 +1106,13 @@ def test_rag_source_catalog_component_snapshot_fk_is_enforced_after_alembic_upgr
                         text(
                             """
                             INSERT INTO rag_medication_ingredient (
-                                id, source_snapshot_id, source_record_key, ingredient_code_system,
+                                id, source_snapshot_id, entity_identity_id, source_record_key, ingredient_code_system,
                                 ingredient_code, ingredient_name, normalized_ingredient_name
                             )
                             VALUES (
-                                :stale_ingredient_id, :stale_snapshot_id, 'INGREDIENT:IBUPROFEN',
-                                'MFDS_INGREDIENT', 'I0002', '이부프로펜', '이부프로펜'
+                                :stale_ingredient_id, :stale_snapshot_id, :ingredient_identity_id,
+                                'INGREDIENT:ACETAMINOPHEN', 'MFDS_INGREDIENT', 'I0001',
+                                '다른스냅샷성분', '다른스냅샷성분'
                             )
                             """
                         ),

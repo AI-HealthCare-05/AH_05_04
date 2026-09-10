@@ -453,6 +453,12 @@ class RagSourceCatalogRepository:
         return verification
 
     async def create_product(self, item: RagMedicationProductCreate) -> RagMedicationProduct:
+        await self._require_identity_match(
+            identity_id=item.entity_identity_id,
+            entity_type=RagMedicationAliasTargetType.PRODUCT,
+            code_system=item.code_system,
+            canonical_code=item.canonical_code,
+        )
         product = RagMedicationProduct(
             source_snapshot_id=item.source_snapshot_id,
             entity_identity_id=item.entity_identity_id,
@@ -471,6 +477,12 @@ class RagSourceCatalogRepository:
         return product
 
     async def create_ingredient(self, item: RagMedicationIngredientCreate) -> RagMedicationIngredient:
+        await self._require_identity_match(
+            identity_id=item.entity_identity_id,
+            entity_type=RagMedicationAliasTargetType.INGREDIENT,
+            code_system=item.ingredient_code_system,
+            canonical_code=item.ingredient_code,
+        )
         ingredient = RagMedicationIngredient(
             source_snapshot_id=item.source_snapshot_id,
             entity_identity_id=item.entity_identity_id,
@@ -483,6 +495,27 @@ class RagSourceCatalogRepository:
         self.session.add(ingredient)
         await self.session.flush()
         return ingredient
+
+    async def _require_identity_match(
+        self,
+        *,
+        identity_id: UUID,
+        entity_type: RagMedicationAliasTargetType,
+        code_system: str,
+        canonical_code: str,
+    ) -> None:
+        result = await self.session.execute(
+            select(RagEntityIdentity.id)
+            .where(
+                RagEntityIdentity.id == identity_id,
+                RagEntityIdentity.entity_type == entity_type,
+                RagEntityIdentity.code_system == code_system,
+                RagEntityIdentity.canonical_code == canonical_code,
+            )
+            .with_for_update()
+        )
+        if result.scalar_one_or_none() is None:
+            raise ValueError("Catalog member identity does not match its official code")
 
     async def create_alias(self, item: RagMedicationAliasCreate) -> RagMedicationAlias:
         alias = RagMedicationAlias(
@@ -502,10 +535,12 @@ class RagSourceCatalogRepository:
 
     async def create_search_entry(self, item: RagMedicationSearchEntryCreate) -> RagMedicationSearchEntry:
         product_result = await self.session.execute(
-            select(RagMedicationProduct).where(
+            select(RagMedicationProduct)
+            .where(
                 RagMedicationProduct.id == item.product_id,
                 RagMedicationProduct.entity_identity_id == item.product_identity_id,
             )
+            .with_for_update()
         )
         product = product_result.scalar_one_or_none()
         if product is None or product.product_status != RagMedicationRecordStatus.ACTIVE:
@@ -518,11 +553,13 @@ class RagSourceCatalogRepository:
             raise ValueError("Approved-alias Search Entry requires an Alias")
         else:
             alias_result = await self.session.execute(
-                select(RagMedicationAlias).where(
+                select(RagMedicationAlias)
+                .where(
                     RagMedicationAlias.id == item.alias_id,
                     RagMedicationAlias.target_identity_id == item.product_identity_id,
                     RagMedicationAlias.target_type == RagMedicationAliasTargetType.PRODUCT,
                 )
+                .with_for_update()
             )
             alias = alias_result.scalar_one_or_none()
             if (

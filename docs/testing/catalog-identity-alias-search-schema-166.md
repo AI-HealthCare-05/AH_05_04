@@ -14,7 +14,8 @@
 - Alias의 exact btree와 `pg_trgm` GIN 검색 인덱스를 둔다.
 - Search Entry는 Product publication과 안정 Identity를 함께 참조하고, Alias형이면 같은 Product Identity의 Alias를 참조한다.
 - Product 이름 Entry와 승인 Alias Entry의 타입별 nullable 규칙과 정규화 문자열을 검증한다.
-- 승인 Alias Entry는 Writer가 승인·활성·유효 Product Alias만 저장하도록 검증한다.
+- 승인 Alias Entry는 Writer가 Product와 Alias를 잠금 조회해 안정 Identity와 정규화 문자열을 다시 맞추고,
+  승인·활성·유효 Product Alias만 저장하도록 검증한다.
 - Component의 기존 동일 Snapshot composite FK는 유지한다.
 - Worker DB 결속 보조 계층은 Source Snapshot ID·version을 잠금 조회하고 안정 Identity를 자연키로
   재사용한 뒤 Product·Ingredient·Alias·Component·Search Entry 순서로 현재 최소 schema에 적재한다.
@@ -23,7 +24,7 @@
 - 내용 주소 기반 Catalog Set은 manifest 원문, 전체 Source Snapshot/version, 종류별 구성원 실제 FK,
   `EXPORT_CHECKSUM`·`CATALOG_ENVELOPE`의 schema/spec/digest/계산 bytes를 함께 저장한다.
 - `SqlAlchemyCatalogBuildRepository.save_build()`가 전체 transaction을 소유하고 commit 뒤 새 session에서
-  Set·Source·member·hash count와 manifest 결속을 재검사한다. 동일한 v2 내용은 기존 Set을 재사용한다.
+  Set 본문과 Source·member·hash 전체 행을 저장 계획과 대조한다. 동일한 v2 내용은 기존 Set을 재사용한다.
 
 Product와 Alias는 서로 다른 Snapshot에서 관찰될 수 있다. Alias 자체의 Source Snapshot은 유지하면서
 대상은 안정 Identity로 결속한다. 이 허용을 Component의 동일 Snapshot 규칙으로 확대하지 않는다.
@@ -41,10 +42,10 @@ Product와 Alias는 서로 다른 Snapshot에서 관찰될 수 있다. Alias 자
 
 ```text
 uv run pytest backend/app/tests/rag/test_rag_source_catalog_repository.py -q
-15 passed
+20 passed
 
 uv run pytest tests/migration/test_rag_source_catalog_migration.py -q
-34 passed
+35 passed
 
 uv run pytest tests/migration -q
 105 passed
@@ -76,7 +77,8 @@ Adapter 검증은 전체 구성원·Set 적재 재실행 시 같은 DB ID 재사
 현재 schema가 보존하지 못하는 비활성 Ingredient 입력에서 Product·Identity까지 함께 rollback하는
 시나리오를 포함한다. `release_profile`이 있는 Component도 현재 schema에 조용히 누락하지 않고 거부한다.
 Migration 검증은 Set의 구성원 target CHECK·FK를 실제 PostgreSQL에서 확인한다. Catalog migration은 DB
-Trigger·PL/pgSQL 함수·transaction ID 열을 만들지 않으며, Writer가 저장 transaction과 사후 검증을 맡는다.
+Trigger·PL/pgSQL 함수·transaction ID 열을 만들지 않으며, Writer가 Identity 결속, Search Entry 적격성,
+저장 transaction과 전체 Set 사후 검증을 맡는다.
 
 ## 이번 revision에서 확정하지 않은 범위
 
