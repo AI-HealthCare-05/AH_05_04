@@ -87,6 +87,7 @@ export function AssistantMessageContent({ content }: { content: string }) {
           allowedElements={[...allowedMarkdownElements]}
           components={unsupportedMarkdownText}
           unwrapDisallowed
+          // Links and images stay as inert text, so preserve their original URLs without the default sanitize transform.
           urlTransform={(url) => url}
         >
           {content}

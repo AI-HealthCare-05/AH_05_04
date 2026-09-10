@@ -538,9 +538,8 @@ function ChatPage({
 
     const compositionState = compositionStateRef.current
     if (
-      compositionState === 'composing' ||
-      (compositionState === 'idle' &&
-        (event.nativeEvent.isComposing || event.keyCode === 229))
+      event.nativeEvent.isComposing ||
+      (event.keyCode === 229 && compositionState !== 'ended')
     ) {
       return
     }

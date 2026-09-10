@@ -395,7 +395,7 @@ describe('ChatPage', () => {
     expect(sendChatMessage).not.toHaveBeenCalled()
   })
 
-  it('한글 composition 종료 후 사용자가 누른 Enter는 정확히 한 번 전송한다', async () => {
+  it('composition 종료 후에도 isComposing=true Enter는 submit하지 않는다', async () => {
     renderPage()
 
     const input = await screen.findByLabelText('복약 질문')
@@ -408,11 +408,39 @@ describe('ChatPage', () => {
       isComposing: true,
       keyCode: 229,
     })
+    fireEvent.compositionEnd(input)
+
+    expect(
+      fireEvent.keyDown(input, {
+        key: 'Enter',
+        code: 'Enter',
+        isComposing: true,
+      }),
+    ).toBe(true)
+    expect(sendChatMessage).not.toHaveBeenCalled()
+  })
+
+  it('composition 종료 후 이어지는 isComposing=false Enter는 정확히 한 번 전송한다', async () => {
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: '조합을 끝낸 질문' } })
+    fireEvent.compositionEnd(input)
+
+    fireEvent.keyDown(input, {
+      key: 'Enter',
+      code: 'Enter',
+      isComposing: true,
+    })
     expect(sendChatMessage).not.toHaveBeenCalled()
 
-    fireEvent.compositionEnd(input)
     expect(
-      fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' }),
+      fireEvent.keyDown(input, {
+        key: 'Enter',
+        code: 'Enter',
+        isComposing: false,
+      }),
     ).toBe(false)
 
     await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(1))
