@@ -7,7 +7,7 @@ Revises: 398a1b2c3d4e
 import sqlalchemy as sa
 from alembic import op
 
-from provider_contracts.prescription_integrity import MEDICATION_CONTENT_FIELDS, verify_prescription_fingerprint
+from provider_contracts.prescription_integrity_v1 import MEDICATION_CONTENT_FIELDS, verify_prescription_fingerprint
 
 revision = "398b2c3d4e5f"
 down_revision = "398a1b2c3d4e"

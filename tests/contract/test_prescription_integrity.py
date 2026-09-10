@@ -1,5 +1,6 @@
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -7,6 +8,7 @@ from pydantic import ValidationError
 
 from app.dtos.prescriptions import CorrectPrescriptionRequest
 from provider_contracts.prescription_integrity import prescription_fingerprint
+from provider_contracts.prescription_integrity_v1 import prescription_fingerprint as migration_fingerprint
 
 _DATE = date(2026, 9, 10)
 _ROW = {"medication_name": "합성검증정", "display_order": 1, "dose_value": Decimal("1")}
@@ -17,6 +19,22 @@ def test_round_trip_decimal_and_missing_null_fields_have_same_hash():
     after = prescription_fingerprint(_DATE, [{**_ROW, "dose_value": Decimal("1.000"), "strength_text": None}])
     assert before == after
     assert before.medication_count == 1
+
+
+def test_public_contract_matches_frozen_migration_v1() -> None:
+    assert prescription_fingerprint(_DATE, [_ROW]) == migration_fingerprint(_DATE, [_ROW])
+
+
+def test_issue_398_migrations_import_frozen_v1() -> None:
+    root = Path(__file__).resolve().parents[2]
+    for name in (
+        "398a1b2c3d4e_expand_prescription_fingerprint.py",
+        "398b2c3d4e5f_require_prescription_fingerprint.py",
+        "398e5f607182_remove_prescription_candidate_database_logic.py",
+    ):
+        source = (root / "backend/alembic/versions" / name).read_text()
+        assert "provider_contracts.prescription_integrity_v1" in source
+        assert "from provider_contracts.prescription_integrity import" not in source
 
 
 @pytest.mark.parametrize(

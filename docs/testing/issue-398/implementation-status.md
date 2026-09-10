@@ -292,3 +292,11 @@ Source cleanup 검증 후 최신 head 종합 검사를 다시 실행해 public/s
 - 정적 금지 범위를 Trigger/RLS에서 새 DB 함수와 프로시저 정의까지 확장했다. 정확한 hash로 고정된 과거 migration만 임시 허용된다.
 
 검증 결과: 관련 배포·입력·DB 정책 계약 39 passed, 핵심 신규 계약 12 passed, Compose 설정 파싱, Ruff, shell 구문, DB 로직·보호 writer 검사와 diff 검사가 모두 통과했다. AWS 배포와 운영 DB는 변경하지 않았다.
+
+## 최종 diff 감사: migration hash 재현성
+
+- 398a/398b/398e가 현재 공용 모듈의 향후 변경에 영향받지 않도록 처방 hash v1 구현을 버전 고정 모듈로 분리했다.
+- 기존 공개 import 경로는 v1을 그대로 다시 내보내므로 Backend와 테스트의 현재 동작은 유지된다.
+- 세 migration이 버전 고정 경로만 참조하고 공개 경로와 v1 결과가 같은지 계약 테스트로 확인한다.
+
+검증 결과: 처방 hash 계약 18 passed, Ruff와 Mypy 통과. 빈 폐기 PostgreSQL 17 DB에서 전체 migration을 최초 revision부터 최신 head까지 재실행했고 최종 카탈로그 검증도 통과했다. AWS 배포와 운영 DB는 변경하지 않았다.
