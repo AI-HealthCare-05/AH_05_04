@@ -30,7 +30,9 @@ Source·Catalog 계약 리뷰 정현우. 승인된 PD-362-20260909를 구현한�
   `manual_review_required_on_rejection=false` 같은 승인 우회 설정을 도입하지 않는다.
 - 외부 버전은 새 Snapshot에 입력값 그대로 저장한다. 과거 Snapshot의 외부 버전을 추정하지 않는다.
 - migration은 기존 Snapshot·Citation 중 200자 초과 값이 있으면 원문을 출력하거나 자르지 않고 중단한다.
-- downgrade는 provenance 손실을 막기 위해 중단하고 forward-fix를 요구한다.
+- downgrade는 데이터 손실이 없는 조건에서 허용한다. `362a`는 Source 정책이 기본값이고
+  Snapshot external_version이 모두 NULL이어야 하며, `362b`는 새 시도 provenance 컬럼이
+  모두 NULL이어야 한다. 검사는 쓰기 잠금 이후 컬럼 제거 전에 수행한다.
 - Python Service/Repository가 업무 판정과 transaction을 담당한다. 일반 CHECK/FK와 최소 권한은 보조 방어다.
 - 신규 DB 함수·Trigger·RLS 정의 및 재도입 검사 예외 추가는 없다.
 
@@ -98,7 +100,7 @@ normalization 실행 참조의 미확정 경계는 그대로 유지한다. #166�
 | 임계치·자동 승인 경계 | 승인 Decision 기준 구현됨 | Hard Limit 초과는 FAILED·Snapshot 없음, 한도 내 거부는 PENDING·별도 publication 승인 필요 |
 | empty_result_policy | REJECT만 구현됨 | Source 기본값·DB CHECK·Python 정책 판정; 빈 결과는 실패 |
 | migration 단일 head | 구현·전용 DB 검증됨 | `3984b5c6d7e8 → 362a1b2c3d4e → 362b2c3d4e5f` |
-| downgrade 왕복 | 요구와 차이 있음 — 검토 필요 | provenance 보존을 위해 명시적으로 중단하고 forward-fix 요구; downgrade 왕복 통과로 표시하지 않음 |
+| downgrade 왕복 | 조건부 구현 | 기본 정책·미기록 provenance에서 왕복 허용; 손실 가능 데이터가 있으면 schema 변경 전에 중단 |
 | 회귀 테스트와 CI | 관련 검사는 통과, 전체 CI는 미완료 | 아래 재검증 및 앞 절의 환경 제한 참조 |
 
 ### 초기 본문과 구분할 사항
@@ -109,8 +111,8 @@ normalization 실행 참조의 미확정 경계는 그대로 유지한다. #166�
   **한도 내 거부 시 PENDING 후보**로 구분됐다.
 - `manual_review_required_on_rejection`을 가변 정책 컬럼으로 만들지 않았다.
   거부 레코드가 있으면 publication 승인이 필요하다는 Python 규칙을 유지한다.
-- downgrade는 본문의 왕복 요구를 충족하지 않는다. 저장 이력을 지우는 역방향 migration을
-  만들지 않았으며, 리뷰에서 forward-fix 방식과 이슈 검증 기준의 정렬을 확인해야 한다.
+- 최초 구현의 일괄 downgrade 차단은 재검토 후 조건부 downgrade로 수정했다.
+  기존 정책·외부 Version·시도 이력을 삭제하지 않고 되돌릴 수 있는 경우만 허용한다.
 - Snapshot Receipt 제공·Source Writer 검증까지 구현했으나 Catalog/Runtime 실제 소비
   연결은 #166/#372 및 해당 Runtime 담당 작업에 남아 있다. #362 전체 완료를 선언하지 않는다.
 
@@ -127,3 +129,38 @@ normalization 실행 참조의 미확정 경계는 그대로 유지한다. #166�
 
 GitHub 이슈 체크박스·본문은 수정하지 않았다. 리뷰 시 이 대조표와 승인 Decision을 함께
 사용하고, #165 reject_code 초안은 이번 #362 브랜치에 포함하지 않는다.
+
+## downgrade 재검토 및 수정
+
+#362 전체를 forward-fix 전용으로 제한하지 않는다. 아직 병합되지 않은 두 migration의
+downgrade를 수정했으며 upgrade와 revision 연결은 변경하지 않았다.
+
+| 대상 | downgrade 허용 조건 | 처리 |
+| --- | --- | --- |
+| `362b2c3d4e5f` → `362a1b2c3d4e` | 모든 Run의 새 provenance 6개 컬럼이 NULL | 해당 컬럼·CHECK·인덱스 제거, 기존 Run 보존 |
+| `362a1b2c3d4e` → `3984b5c6d7e8` | 모든 Source가 0건·0비율·REJECT이고 모든 Snapshot external_version이 NULL | 정책·외부 Version 컬럼 제거, Snapshot/Citation 길이 255 복원, 복합 FK 유지 |
+
+- 사용 중인 정책이나 외부 Version·시도 기록이 하나라도 있으면 상수 오류로 중단한다.
+  빈 JSON이나 0 byte 길이의 감사 기록도 기록된 데이터이므로 삭제하지 않는다.
+- 쓰기 잠금을 먼저 획득하여 검사 이후 데이터가 추가되는 경합을 막는다.
+- PostgreSQL의 기존 Alembic transaction 안에서 실행한다. 여러 revision을 함께 되돌리다
+  후속 검사에서 실패하면 앞 revision의 DDL도 rollback한다.
+- downgrade 후에도 Run의 제한된 UPDATE 권한을 유지한다. 기존의 광범위한 테이블 권한이나
+  PUBLIC 권한을 복원하지 않는다. 따라서 schema 왕복이 과거 ACL 전체 복원을 뜻하지 않는다.
+- 기본 정책의 제거는 이전 Python의 동일 기본 정책으로 돌아가는 경우다. downgrade 후에는
+  해당 schema와 호환되는 이전 애플리케이션을 사용해야 한다.
+- 되돌릴 수 있는 하한은 이번 두 revision의 부모 `3984b5c6d7e8`이다. #398의 Trigger 제거·seal
+  보호 등 기존 downgrade 금지 구간을 변경하거나 넘어서지 않는다. 새 Trigger·RLS·업무 DB 함수는 없다.
+- 모든 migration을 forward-fix로 운영한다는 팀 정책을 새로 도입하지 않는다.
+
+검증은 테스트 전용 schema의 합성 데이터에서 migration 코드를 실제 PostgreSQL에 실행한다.
+기본 정책/기존 Run의 upgrade → downgrade → upgrade, Citation FK 보존, 각 데이터 손실 조건의
+무변경 중단, 중간 revision rollback, PUBLIC UPDATE 비복원을 포함한다.
+
+수정 후 검증 결과:
+
+- Source lifecycle + migration: **37 passed, 2 deselected** (기존 역할 생성 권한 검사).
+- Ruff / format: 통과. mypy: **535개 파일 통과**.
+- Trigger·RLS 등 재도입 검사, Python 쓰기 경계 및 테스트 분류 검사: 통과.
+- 전체 CI 재시도는 정적 검사 후 기존과 동일하게 `envs/.local.env` 부재로 중단했다.
+  전체 migration suite나 역할 생성 테스트를 통과했다고 표시하지 않는다.

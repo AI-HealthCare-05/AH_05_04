@@ -55,4 +55,22 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError("Source attempt provenance must be preserved; use a reviewed forward-fix")
+    connection = op.get_bind()
+    connection.execute(sa.text("LOCK TABLE rag_source_ingestion_run IN ACCESS EXCLUSIVE MODE"))
+    columns = (
+        "attempted_source_version",
+        "attempted_external_version",
+        "attempted_canonical_contract",
+        "invalid_source_version_sha256",
+        "invalid_source_version_byte_length",
+        "validation_reason_code",
+    )
+    populated = " OR ".join(f"{name} IS NOT NULL" for name in columns)
+    if connection.scalar(sa.text(f"SELECT EXISTS (SELECT 1 FROM rag_source_ingestion_run WHERE {populated})")):
+        raise RuntimeError("Source attempt provenance would be lost; downgrade refused")
+
+    op.drop_index("idx_rag_ingestion_attempt_version", table_name="rag_source_ingestion_run")
+    op.drop_constraint("chk_rag_ingestion_invalid_version_audit", "rag_source_ingestion_run", type_="check")
+    for name in columns:
+        op.drop_column("rag_source_ingestion_run", name)
+    # Keep lifecycle-only UPDATE grants; do not restore broad table/PUBLIC privileges.
