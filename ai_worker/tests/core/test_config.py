@@ -333,6 +333,84 @@ def test_config_rejects_blank_storage_dir() -> None:
         _config(STORAGE_DIR="   ")
 
 
+def _protected_settings(**overrides: Any) -> dict[str, Any]:
+    return {
+        "PROTECTED_RETRIEVAL_ENABLED": True,
+        "PROTECTED_DB_HOST": "protected-db.test",
+        "PROTECTED_DB_NAME": "protected_test",
+        "PROTECTED_DB_USER": "protected-runner",
+        "PROTECTED_DB_PASSWORD": "synthetic-protected-password",
+        "PROTECTED_DB_SCHEMA": "protected_test_schema",
+        **overrides,
+    }
+
+
+def test_protected_retrieval_database_is_disabled_by_default() -> None:
+    config = _config()
+
+    assert config.PROTECTED_RETRIEVAL_ENABLED is False
+    with pytest.raises(RuntimeError, match="PROTECTED_RETRIEVAL_DISABLED"):
+        _ = config.protected_database_url
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "PROTECTED_DB_HOST",
+        "PROTECTED_DB_NAME",
+        "PROTECTED_DB_USER",
+        "PROTECTED_DB_PASSWORD",
+        "PROTECTED_DB_SCHEMA",
+    ],
+)
+def test_enabled_protected_retrieval_requires_a_complete_separate_connection(missing_field: str) -> None:
+    settings = _protected_settings()
+    settings[missing_field] = None
+
+    with pytest.raises(ValidationError, match=missing_field):
+        _config(**settings)
+
+
+def test_protected_retrieval_never_falls_back_to_the_worker_connection() -> None:
+    with pytest.raises(ValidationError, match="separate database identity"):
+        _config(
+            **_protected_settings(
+                PROTECTED_DB_HOST=_REQUIRED_SETTINGS["DB_HOST"],
+                PROTECTED_DB_NAME=_REQUIRED_SETTINGS["DB_NAME"],
+                PROTECTED_DB_USER=_REQUIRED_SETTINGS["DB_USER"],
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("PROTECTED_DB_HOST", "replace-with-protected-host"),
+        ("PROTECTED_DB_NAME", "replace-with-protected-database"),
+        ("PROTECTED_DB_USER", "replace-with-protected-user"),
+        ("PROTECTED_DB_PASSWORD", "replace-with-protected-password"),
+        ("PROTECTED_DB_SCHEMA", "replace-with-protected-schema"),
+    ],
+)
+def test_non_local_protected_retrieval_rejects_placeholders(field_name: str, value: str) -> None:
+    with pytest.raises(ValidationError, match=field_name):
+        _config(
+            ENV=DeploymentEnvironment.PRODUCTION,
+            REDIS_PASSWORD="synthetic-redis-password",
+            **_protected_settings(**{field_name: value}),
+        )
+
+
+def test_protected_database_url_handles_reserved_password_characters_without_exposing_schema() -> None:
+    config = _config(**_protected_settings(PROTECTED_DB_PASSWORD="synthetic@pass/word%value"))
+
+    assert config.protected_database_url.password == "synthetic@pass/word%value"
+    assert config.protected_database_url.username == "protected-runner"
+    assert config.PROTECTED_DB_SCHEMA is not None
+    assert config.PROTECTED_DB_SCHEMA.get_secret_value() == "protected_test_schema"
+    assert "protected_test_schema" not in repr(config)
+
+
 def test_source_artifact_storage_is_disabled_by_default() -> None:
     config = _config()
 

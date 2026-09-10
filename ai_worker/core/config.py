@@ -103,6 +103,16 @@ class Config(BaseSettings):
     DB_CONNECTION_POOL_MAXSIZE: int = Field(default=10, gt=0)
     SQLALCHEMY_ECHO: bool = False
 
+    # Protected Retrieval은 일반 Worker DB identity를 재사용하지 않습니다. 실제 연결값은
+    # 승인된 실행 환경에서만 단기 주입하며 기본 runtime assembly에는 연결하지 않습니다.
+    PROTECTED_RETRIEVAL_ENABLED: bool = False
+    PROTECTED_DB_HOST: str | None = None
+    PROTECTED_DB_PORT: int = Field(default=5432, ge=1, le=65535)
+    PROTECTED_DB_NAME: str | None = None
+    PROTECTED_DB_USER: str | None = None
+    PROTECTED_DB_PASSWORD: SecretStr | None = None
+    PROTECTED_DB_SCHEMA: SecretStr | None = None
+
     # Source ingestion은 #166 runtime 연결 전까지 기본 비활성입니다. S3 credential은
     # 여기 저장하지 않고 AWS SDK의 실행 역할·Web Identity·환경 주입 chain을 사용합니다.
     SOURCE_ARTIFACT_STORAGE_BACKEND: Literal["DISABLED", "LOCAL_PRIVATE", "S3_PRIVATE"] = "DISABLED"
@@ -251,6 +261,44 @@ class Config(BaseSettings):
         self._validate_s3_source_artifact_storage()
         return self
 
+    @model_validator(mode="after")
+    def _validate_protected_retrieval_connection(self) -> Self:
+        if not self.PROTECTED_RETRIEVAL_ENABLED:
+            return self
+
+        values: dict[str, str] = {}
+        for field_name in (
+            "PROTECTED_DB_HOST",
+            "PROTECTED_DB_NAME",
+            "PROTECTED_DB_USER",
+        ):
+            configured = getattr(self, field_name)
+            if configured is None or not configured.strip():
+                raise ValueError(f"{field_name} is required when protected retrieval is enabled")
+            values[field_name] = configured.strip()
+
+        for field_name in ("PROTECTED_DB_PASSWORD", "PROTECTED_DB_SCHEMA"):
+            configured = getattr(self, field_name)
+            if configured is None or not configured.get_secret_value().strip():
+                raise ValueError(f"{field_name} is required when protected retrieval is enabled")
+            values[field_name] = configured.get_secret_value().strip()
+
+        if self.ENV is not DeploymentEnvironment.LOCAL:
+            for field_name, configured in values.items():
+                if configured.startswith("replace-with-"):
+                    raise ValueError(f"{field_name} must not use a placeholder outside Local")
+
+        protected_identity = (
+            values["PROTECTED_DB_HOST"],
+            self.PROTECTED_DB_PORT,
+            values["PROTECTED_DB_NAME"],
+            values["PROTECTED_DB_USER"],
+        )
+        worker_identity = (self.DB_HOST, self.DB_PORT, self.DB_NAME, self.DB_USER)
+        if protected_identity == worker_identity:
+            raise ValueError("protected retrieval requires a separate database identity")
+        return self
+
     def _validate_local_source_artifact_storage(self) -> None:
         if self.SOURCE_ARTIFACT_LOCAL_ROOT is None or not self.SOURCE_ARTIFACT_LOCAL_ROOT.strip():
             raise ValueError("LOCAL_PRIVATE Source artifact storage에는 local root가 필요합니다.")
@@ -299,6 +347,31 @@ class Config(BaseSettings):
             host=self.DB_HOST,
             port=self.DB_PORT,
             database=self.DB_NAME,
+        )
+
+    @property
+    def protected_database_url(self) -> URL:
+        if not self.PROTECTED_RETRIEVAL_ENABLED:
+            raise RuntimeError("PROTECTED_RETRIEVAL_DISABLED")
+        if any(
+            value is None
+            for value in (
+                self.PROTECTED_DB_HOST,
+                self.PROTECTED_DB_NAME,
+                self.PROTECTED_DB_USER,
+                self.PROTECTED_DB_PASSWORD,
+                self.PROTECTED_DB_SCHEMA,
+            )
+        ):
+            raise RuntimeError("PROTECTED_RETRIEVAL_CONFIG_INVALID")
+        assert self.PROTECTED_DB_PASSWORD is not None
+        return URL.create(
+            drivername="postgresql+asyncpg",
+            username=self.PROTECTED_DB_USER,
+            password=self.PROTECTED_DB_PASSWORD.get_secret_value(),
+            host=self.PROTECTED_DB_HOST,
+            port=self.PROTECTED_DB_PORT,
+            database=self.PROTECTED_DB_NAME,
         )
 
     @property

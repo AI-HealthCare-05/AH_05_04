@@ -129,7 +129,8 @@ git commit -m "♻️ refactor: protected retrieval DB 경계 비동기화"
 **Files:**
 - Modify: `ai_worker/core/config.py`
 - Modify: `ai_worker/tests/core/test_config.py`
-- Modify: `envs/.env.example`
+- Modify: `envs/example.local.env`
+- Modify: `envs/example.prod.env`
 
 **Interfaces:**
 - Produces: `Config.protected_database_url: URL` and disabled-by-default protected settings.
@@ -174,7 +175,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ai_worker/core/config.py ai_worker/tests/core/test_config.py envs/.env.example
+git add ai_worker/core/config.py ai_worker/tests/core/test_config.py envs/example.local.env envs/example.prod.env
 git commit -m "✨ feat: protected retrieval 연결 설정 차단 경계 추가"
 ```
 
