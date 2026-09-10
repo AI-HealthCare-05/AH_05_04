@@ -154,12 +154,21 @@ class AuthService:
         (PR #404 리뷰) 실제 쓰기를 끝내고 커밋해 커넥션을 반납한 뒤, 응답을
         `PASSWORD_RESET_RESPONSE_TARGET_SECONDS`까지 채우는 padding으로 없앤다 —
         커밋 전에 대기하면 그동안 커넥션·트랜잭션을 붙든 채로 있게 되므로 순서가
-        중요하다."""
+        중요하다.
+
+        같은 사용자에게 거의 동시에 두 요청이 오면, 잠금 없이 쿨다운을 조회할 경우
+        둘 다 "최근 토큰 없음"을 보고 각각 커밋해 쿨다운을 우회한 중복 토큰이
+        발급될 수 있다(PR #404 리뷰). `reset_password()`·`login()`과 동일하게
+        대상 user row를 먼저 `FOR UPDATE`로 잠가, 쿨다운 조회~토큰 생성을 이
+        사용자 기준으로 직렬화한다."""
         start = time.monotonic()
         now = datetime.now(config.TIMEZONE)
         cooldown_since = now - timedelta(seconds=config.PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS)
 
         user = await self.user_repo.get_user_by_email(str(email))
+        if user is not None:
+            user = await self.user_repo.get_user_for_update(user.id)
+
         # 계정이 없으면 실재하지 않을 무작위 user_id로 같은 조회를 수행해 쿼리 횟수를
         # 맞춘다 — 결과는 항상 없고 아무 것도 저장하지 않는다.
         lookup_user_id = user.id if user is not None else uuid4()

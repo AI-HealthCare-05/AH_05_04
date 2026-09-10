@@ -231,6 +231,86 @@ async def test_reset_password_concurrent_confirm_only_succeeds_once() -> None:
     assert loser_error.details == [ErrorDetail(field="token", reason="RESET_TOKEN_INVALID", rejected_value=None)]
 
 
+async def test_request_password_reset_concurrent_requests_only_create_one_token() -> None:
+    """PR #404 리뷰: user row를 잠그지 않고 쿨다운을 조회하면, 거의 동시에 온 두
+    요청이 둘 다 "최근 토큰 없음"을 보고 각각 커밋해 60초 쿨다운을 우회한 중복
+    토큰을 만들어낼 수 있었다. `request_password_reset()`이 대상 user row를 먼저
+    `FOR UPDATE`로 잠가 쿨다운 조회~토큰 생성을 이 사용자 기준으로 직렬화하는지,
+    진짜 두 DB 커넥션의 동시 요청에서도 검증한다(savepoint 격리로는 이 race를
+    재현할 수 없다)."""
+    user = await _create_committed_user(email=f"cooldown-race-{uuid4().hex[:10]}@example.com")
+
+    winner_session = AsyncSession(bind=test_engine, expire_on_commit=False)
+    loser_session = AsyncSession(bind=test_engine, expire_on_commit=False)
+    loser_task: asyncio.Task | None = None
+    loser_result: str | None = None
+    try:
+        # winner가 request_password_reset()과 동일하게 user row를 먼저 잠근 뒤
+        # 아직 커밋 전인 상태(row lock 보유)를 만들어, 아직 끝나지 않은 동시
+        # 요청을 재현한다.
+        winner_user = await UserRepository(winner_session).get_user_for_update(user.id)
+        assert winner_user is not None
+
+        loser_service = AuthService(
+            UserRepository(loser_session),
+            PasswordResetRepository(loser_session),
+            RefreshSessionRepository(loser_session),
+        )
+        loser_task = asyncio.create_task(loser_service.request_password_reset(user.email))
+
+        blocked = False
+        for _ in range(100):
+            if await _is_blocked_on_query_matching('"user"'):
+                blocked = True
+                break
+            await asyncio.sleep(0.05)
+
+        assert not loser_task.done()
+        assert blocked, "동시 재설정 요청이 row lock에서 대기하지 않았습니다."
+
+        # winner가 실제로 쿨다운 조회 + 토큰 생성을 수행하고 커밋한다 — loser는
+        # 그 뒤에 깨어나 이미 발급된 토큰을 "최근 토큰 있음"으로 봐야 한다.
+        cooldown_since = datetime.now(config.TIMEZONE) - timedelta(
+            seconds=config.PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS
+        )
+        winner_recent_token = await PasswordResetRepository(winner_session).find_recent_token_for_user(
+            user_id=winner_user.id, since=cooldown_since
+        )
+        assert winner_recent_token is None
+        await PasswordResetRepository(winner_session).create_token(
+            user_id=winner_user.id,
+            token_hash=hash_password_reset_token(generate_password_reset_token()),
+            expires_at=datetime.now(config.TIMEZONE) + timedelta(minutes=config.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES),
+        )
+        await winner_session.commit()
+
+        loser_result = await asyncio.wait_for(loser_task, timeout=10)
+        loser_task = None
+    finally:
+        if loser_task is not None:
+            loser_task.cancel()
+            with contextlib.suppress(BaseException):
+                await loser_task
+        if winner_session.in_transaction():
+            await winner_session.rollback()
+        await winner_session.close()
+        await loser_session.close()
+
+        async with AsyncSession(bind=test_engine, expire_on_commit=False) as verify_session:
+            token_count_result = await verify_session.execute(
+                text("SELECT count(*) FROM password_reset_token WHERE user_id = :user_id"),
+                {"user_id": str(user.id)},
+            )
+            token_count = token_count_result.scalar_one()
+
+        await _delete_user(user.id)
+
+    # winner가 이미 토큰을 만들어 커밋했으므로, loser는 쿨다운 중으로 처리돼 새
+    # 토큰을 만들지 않아야 한다(둘 다 생성되는 lost update가 아니어야 한다).
+    assert loser_result is None
+    assert token_count == 1
+
+
 async def test_rotate_jti_concurrent_same_expected_jti_only_one_succeeds() -> None:
     """#206: 같은 refresh token(jti)으로 거의 동시에 두 rotation 요청이 와도 정확히
     하나만 성공해야 한다. `RefreshSessionRepository.rotate_jti()`의 UPDATE 기반 CAS가
