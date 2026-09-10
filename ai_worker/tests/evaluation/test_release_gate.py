@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from ai_worker.tasks.evaluation.canonical import canonical_sha256
 from ai_worker.tasks.evaluation.release_gate import (
     ControlSettingEvidence,
     GateEvidence,
@@ -15,7 +16,7 @@ from ai_worker.tasks.evaluation.release_gate import (
     paired_case_manifest_hash,
     release_gate_exit_code,
 )
-from ai_worker.tasks.evaluation.schemas.artifacts import MetricResult, SuiteResults
+from ai_worker.tasks.evaluation.schemas.artifacts import MetricResult, MetricResults, SuiteResults
 from ai_worker.tasks.evaluation.schemas.common import (
     DecisionStatus,
     ExecutionStatus,
@@ -368,6 +369,30 @@ def _required_metric(decision: str = "PASS", denominator: int = 2) -> MetricResu
     )
 
 
+def _metric_evidence(
+    metric: MetricResult,
+    *,
+    run_id: str = RUN_ID,
+    artifact_hash: str | None = None,
+) -> MetricEvidence:
+    artifact = MetricResults(
+        schema_id="rag-eval.metrics",
+        schema_version="1.0.0",
+        run_id=run_id,
+        metrics=(metric,),
+    )
+    digest = canonical_sha256(artifact.model_dump(mode="json"))
+    return MetricEvidence(
+        metric=metric,
+        artifact=artifact,
+        artifact_ref=ImmutableReference(
+            id="critical-safety-metric",
+            version="1.0.0",
+            hash=artifact_hash or digest,
+        ),
+    )
+
+
 def _metric_policy() -> ReleaseGatePolicy:
     return replace(
         _policy(),
@@ -408,14 +433,7 @@ def test_required_metric_zero_denominator_is_completed_inconclusive() -> None:
     metric = _required_metric(decision="INCONCLUSIVE", denominator=0)
     evidence = replace(
         _evidence(),
-        metrics=(
-            MetricEvidence(
-                metric=metric,
-                run_id=RUN_ID,
-                artifact_hash="5" * 64,
-                artifact_ref=_ref("critical-safety-metric", "5"),
-            ),
-        ),
+        metrics=(_metric_evidence(metric),),
     )
 
     gate = build_release_gate(_metric_policy(), evidence)
@@ -428,14 +446,7 @@ def test_required_metric_cannot_pass_with_non_required_artifact_metadata() -> No
     metric = _required_metric().model_copy(update={"required": False})
     evidence = replace(
         _evidence(),
-        metrics=(
-            MetricEvidence(
-                metric=metric,
-                run_id=RUN_ID,
-                artifact_hash="5" * 64,
-                artifact_ref=_ref("critical-safety-metric", "5"),
-            ),
-        ),
+        metrics=(_metric_evidence(metric),),
     )
 
     gate = build_release_gate(_metric_policy(), evidence)
@@ -457,14 +468,7 @@ def test_required_metric_decision_is_checked_against_threshold() -> None:
     )
     evidence = replace(
         _evidence(),
-        metrics=(
-            MetricEvidence(
-                metric=metric,
-                run_id=RUN_ID,
-                artifact_hash="5" * 64,
-                artifact_ref=_ref("critical-safety-metric", "5"),
-            ),
-        ),
+        metrics=(_metric_evidence(metric),),
     )
 
     gate = build_release_gate(_metric_policy(), evidence)
@@ -477,14 +481,7 @@ def test_required_metric_missing_ci_is_completed_inconclusive() -> None:
     metric = _required_metric().model_copy(update={"ci_lower": None, "ci_upper": None})
     evidence = replace(
         _evidence(),
-        metrics=(
-            MetricEvidence(
-                metric=metric,
-                run_id=RUN_ID,
-                artifact_hash="5" * 64,
-                artifact_ref=_ref("critical-safety-metric", "5"),
-            ),
-        ),
+        metrics=(_metric_evidence(metric),),
     )
 
     gate = build_release_gate(_metric_policy(), evidence)
@@ -494,12 +491,7 @@ def test_required_metric_missing_ci_is_completed_inconclusive() -> None:
 
 
 def test_duplicate_required_metric_identity_is_invalid() -> None:
-    metric = MetricEvidence(
-        metric=_required_metric(),
-        run_id=RUN_ID,
-        artifact_hash="5" * 64,
-        artifact_ref=_ref("critical-safety-metric", "5"),
-    )
+    metric = _metric_evidence(_required_metric())
 
     gate = build_release_gate(_metric_policy(), replace(_evidence(), metrics=(metric, metric)))
 
@@ -511,14 +503,7 @@ def test_required_metric_value_must_match_counts() -> None:
     metric = _required_metric().model_copy(update={"numerator": 1, "metric_value": "0"})
     evidence = replace(
         _evidence(),
-        metrics=(
-            MetricEvidence(
-                metric=metric,
-                run_id=RUN_ID,
-                artifact_hash="5" * 64,
-                artifact_ref=_ref("critical-safety-metric", "5"),
-            ),
-        ),
+        metrics=(_metric_evidence(metric),),
     )
 
     gate = build_release_gate(_metric_policy(), evidence)
@@ -527,18 +512,42 @@ def test_required_metric_value_must_match_counts() -> None:
     assert "REQUIRED_METRIC_VALUE_MISMATCH:CRITICAL_SAFETY_FAILURE_COUNT:HOLDOUT:ALL" in gate.blocking_reason_codes
 
 
+def test_case_mean_uses_canonical_artifact_without_pooled_ratio_false_blocking() -> None:
+    for numerator, denominator, value, lower, upper in (
+        (2, 3, "0.75", "0.7", "0.8"),
+        (1, 3, "0.333333", "0.3", "0.4"),
+    ):
+        metric = _required_metric().model_copy(
+            update={
+                "estimator_id": "CASE_MEAN",
+                "numerator": numerator,
+                "denominator": denominator,
+                "metric_value": value,
+                "ci_lower": lower,
+                "ci_upper": upper,
+                "threshold": "1",
+            }
+        )
+        requirement = replace(
+            _metric_policy().required_metrics[0],
+            estimator_id="CASE_MEAN",
+            threshold="1",
+        )
+
+        gate = build_release_gate(
+            replace(_metric_policy(), required_metrics=(requirement,)),
+            replace(_evidence(), metrics=(_metric_evidence(metric),)),
+        )
+
+        assert gate.aggregate_execution_status is ExecutionStatus.COMPLETED
+        assert gate.aggregate_decision_status is DecisionStatus.PASS
+
+
 def test_required_metric_rejects_invalid_ci_bounds() -> None:
     metric = _required_metric().model_copy(update={"ci_lower": "0.1", "ci_upper": "0"})
     evidence = replace(
         _evidence(),
-        metrics=(
-            MetricEvidence(
-                metric=metric,
-                run_id=RUN_ID,
-                artifact_hash="5" * 64,
-                artifact_ref=_ref("critical-safety-metric", "5"),
-            ),
-        ),
+        metrics=(_metric_evidence(metric),),
     )
 
     gate = build_release_gate(_metric_policy(), evidence)
@@ -548,11 +557,10 @@ def test_required_metric_rejects_invalid_ci_bounds() -> None:
 
 
 def test_required_metric_must_match_gate_run_and_artifact_hash() -> None:
-    metric = MetricEvidence(
-        metric=_required_metric(),
+    metric = _metric_evidence(
+        _required_metric(),
         run_id="22222222-2222-4222-8222-222222222222",
         artifact_hash="0" * 64,
-        artifact_ref=_ref("critical-safety-metric", "5"),
     )
 
     gate = build_release_gate(_metric_policy(), replace(_evidence(), metrics=(metric,)))
@@ -564,12 +572,7 @@ def test_required_metric_must_match_gate_run_and_artifact_hash() -> None:
 def test_unsupported_required_metric_decision_basis_is_not_implemented() -> None:
     policy = _metric_policy()
     requirement = replace(policy.required_metrics[0], decision_basis="NON_INFERIORITY")
-    metric = MetricEvidence(
-        metric=_required_metric(),
-        run_id=RUN_ID,
-        artifact_hash="5" * 64,
-        artifact_ref=_ref("critical-safety-metric", "5"),
-    )
+    metric = _metric_evidence(_required_metric())
 
     gate = build_release_gate(
         replace(policy, required_metrics=(requirement,)),
@@ -580,7 +583,7 @@ def test_unsupported_required_metric_decision_basis_is_not_implemented() -> None
     assert gate.aggregate_decision_status is None
 
 
-def _suite_evidence(value: str) -> SuiteEvidence:
+def _suite_evidence() -> SuiteEvidence:
     suite = SuiteResults.model_validate(
         {
             "schema_id": "rag-eval.suite-results",
@@ -605,15 +608,19 @@ def _suite_evidence(value: str) -> SuiteEvidence:
             "aggregate_execution_status": "COMPLETED",
             "aggregate_decision_status": "PASS",
             "blocking_execution_statuses": [],
-            "artifact_hash": value * 64,
+            "artifact_hash": None,
         }
     )
-    return SuiteEvidence(suite=suite, artifact_ref=_ref("required-suite", value))
+    digest = canonical_sha256(suite.model_dump(mode="json"))
+    return SuiteEvidence(
+        suite=suite,
+        artifact_ref=ImmutableReference(id="required-suite", version="1.0.0", hash=digest),
+    )
 
 
 def test_required_suite_definition_hash_mismatch_is_invalid() -> None:
     policy = replace(_policy(), required_suites=(_ref("required-suite", "6"),))
-    suite_evidence = _suite_evidence("7")
+    suite_evidence = _suite_evidence()
     mismatched = replace(
         suite_evidence,
         suite=suite_evidence.suite.model_copy(update={"suite_definition_hash": "7" * 64}),
@@ -629,7 +636,7 @@ def test_required_suite_definition_hash_mismatch_is_invalid() -> None:
 
 def test_required_suite_internal_identity_cannot_be_spoofed_by_wrapper_ref() -> None:
     policy = replace(_policy(), required_suites=(_ref("required-suite", "7"),))
-    suite_evidence = _suite_evidence("7")
+    suite_evidence = _suite_evidence()
     spoofed = replace(
         suite_evidence,
         suite=suite_evidence.suite.model_copy(update={"suite_id": "unrelated-suite"}),
@@ -644,7 +651,7 @@ def test_required_suite_internal_identity_cannot_be_spoofed_by_wrapper_ref() -> 
 
 def test_required_suite_must_be_required_and_cover_expected_cases() -> None:
     policy = replace(_policy(), required_suites=(_ref("required-suite", "6"),))
-    suite_evidence = _suite_evidence("7")
+    suite_evidence = _suite_evidence()
     invalid_suite = replace(
         suite_evidence,
         suite=suite_evidence.suite.model_copy(update={"required": False, "executed_case_set_hash": "0" * 64}),
@@ -666,7 +673,10 @@ def test_invalid_profile_evidence_is_not_overwritten_by_missing_execution() -> N
     gate = build_release_gate(_policy(), evidence)
 
     assert gate.aggregate_execution_status is ExecutionStatus.INVALID
-    assert gate.blocking_execution_statuses == (ExecutionStatus.INVALID,)
+    assert gate.blocking_execution_statuses == (
+        ExecutionStatus.INVALID,
+        ExecutionStatus.NOT_EVALUATED,
+    )
     assert "REQUIRED_EXPERIMENT_NOT_COMPLETED" in gate.blocking_reason_codes
 
 
@@ -687,6 +697,28 @@ def test_completed_receipt_requires_exact_artifact_reference() -> None:
     assert gate.aggregate_decision_status is None
 
 
+def test_malformed_receipt_state_becomes_invalid_gate_result() -> None:
+    for execution_status, decision_status in (
+        (ExecutionStatus.COMPLETED, None),
+        (ExecutionStatus.NOT_EVALUATED, DecisionStatus.PASS),
+        (ExecutionStatus.COMPLETED, DecisionStatus.NOT_APPLICABLE),
+    ):
+        evidence = _evidence()
+        receipt = replace(
+            evidence.receipts[0],
+            execution_status=execution_status,
+            decision_status=decision_status,
+        )
+
+        gate = build_release_gate(
+            _policy(),
+            replace(evidence, receipts=(receipt, evidence.receipts[1])),
+        )
+
+        assert gate.aggregate_execution_status is ExecutionStatus.INVALID
+        assert "REQUIRED_RECEIPT_STATE_INVALID:baseline-freeze-receipt" in gate.blocking_reason_codes
+
+
 def test_expired_required_receipt_is_invalid() -> None:
     evidence = _evidence()
     receipt = replace(evidence.receipts[0], is_current=False)
@@ -699,7 +731,7 @@ def test_expired_required_receipt_is_invalid() -> None:
 
 def test_duplicate_required_suite_identity_is_invalid() -> None:
     policy = replace(_policy(), required_suites=(_ref("required-suite", "7"),))
-    suite = _suite_evidence("7")
+    suite = _suite_evidence()
 
     gate = build_release_gate(policy, replace(_evidence(), suites=(suite, suite)))
 

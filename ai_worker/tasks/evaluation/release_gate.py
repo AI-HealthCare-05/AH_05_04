@@ -9,6 +9,7 @@ from ai_worker.tasks.evaluation.schemas.artifacts import (
     GateMemberType,
     GateResult,
     MetricResult,
+    MetricResults,
     RequiredGateMember,
     SuiteResults,
 )
@@ -74,8 +75,7 @@ class ReleaseGatePolicy:
 @dataclass(frozen=True, slots=True)
 class MetricEvidence:
     metric: MetricResult
-    run_id: str
-    artifact_hash: str
+    artifact: MetricResults
     artifact_ref: ImmutableReference
 
 
@@ -156,10 +156,30 @@ def _reason(prefix: str, identifier: str) -> str:
     return f"REQUIRED_RECEIPT_{prefix}:{identifier}"
 
 
-def _profile_member(policy: ReleaseGatePolicy, evidence: GateEvidence, reasons: set[str]) -> RequiredGateMember:
-    blocking_statuses: set[ExecutionStatus] = set()
+def _readiness_member(
+    policy: ReleaseGatePolicy,
+    member_id: str,
+    status: ExecutionStatus,
+) -> RequiredGateMember:
+    return RequiredGateMember(
+        member_type=GateMemberType.CONTRACT_RECEIPT,
+        member_id=member_id,
+        member_version=policy.evaluation_profile_ref.version,
+        member_hash=policy.evaluation_profile_ref.hash,
+        execution_status=status,
+        decision_status=DecisionStatus.PASS if status is ExecutionStatus.COMPLETED else None,
+        receipt_or_artifact_ref=policy.evaluation_profile_ref,
+    )
+
+
+def _profile_members(
+    policy: ReleaseGatePolicy,
+    evidence: GateEvidence,
+    reasons: set[str],
+) -> list[RequiredGateMember]:
+    profile_status = ExecutionStatus.COMPLETED
     if not policy.runtime_eligible:
-        blocking_statuses.add(ExecutionStatus.NOT_EVALUATED)
+        profile_status = ExecutionStatus.NOT_EVALUATED
         reasons.add("PROFILE_NOT_RUNTIME_ELIGIBLE")
     elif (
         policy.paired_comparison_receipt_id is None
@@ -169,34 +189,30 @@ def _profile_member(policy: ReleaseGatePolicy, evidence: GateEvidence, reasons: 
         or not policy.controlled_variable_keys
         or len(policy.controlled_variable_keys) != len(set(policy.controlled_variable_keys))
     ):
-        blocking_statuses.add(ExecutionStatus.INVALID)
+        profile_status = ExecutionStatus.INVALID
         reasons.add("RELEASE_POLICY_PAIRED_REQUIREMENTS_INVALID")
+
+    scope_status = ExecutionStatus.COMPLETED
     if evidence.required_scope_manifest_hash != policy.required_scope_manifest_hash:
-        blocking_statuses.add(ExecutionStatus.INVALID)
+        scope_status = ExecutionStatus.INVALID
         reasons.add("REQUIRED_SCOPE_MANIFEST_HASH_MISMATCH")
-    missing_experiments = set(policy.required_experiment_types) - set(evidence.completed_experiment_types)
-    missing_partitions = set(policy.required_partitions) - set(evidence.completed_partitions)
-    if missing_experiments:
-        blocking_statuses.add(ExecutionStatus.NOT_EVALUATED)
+
+    experiment_status = ExecutionStatus.COMPLETED
+    if set(policy.required_experiment_types) - set(evidence.completed_experiment_types):
+        experiment_status = ExecutionStatus.NOT_EVALUATED
         reasons.add("REQUIRED_EXPERIMENT_NOT_COMPLETED")
-    if missing_partitions:
-        blocking_statuses.add(ExecutionStatus.NOT_EVALUATED)
+
+    partition_status = ExecutionStatus.COMPLETED
+    if set(policy.required_partitions) - set(evidence.completed_partitions):
+        partition_status = ExecutionStatus.NOT_EVALUATED
         reasons.add("REQUIRED_PARTITION_NOT_COMPLETED")
-    status = (
-        min(blocking_statuses, key=lambda item: _BLOCKING_STATUS_ORDER[item])
-        if blocking_statuses
-        else ExecutionStatus.COMPLETED
-    )
-    decision = DecisionStatus.PASS if status is ExecutionStatus.COMPLETED else None
-    return RequiredGateMember(
-        member_type=GateMemberType.CONTRACT_RECEIPT,
-        member_id="release-profile-readiness",
-        member_version=policy.evaluation_profile_ref.version,
-        member_hash=policy.evaluation_profile_ref.hash,
-        execution_status=status,
-        decision_status=decision,
-        receipt_or_artifact_ref=policy.evaluation_profile_ref,
-    )
+
+    return [
+        _readiness_member(policy, "release-profile-readiness", profile_status),
+        _readiness_member(policy, "required-scope-manifest-readiness", scope_status),
+        _readiness_member(policy, "required-experiment-readiness", experiment_status),
+        _readiness_member(policy, "required-partition-readiness", partition_status),
+    ]
 
 
 def _metric_member(
@@ -221,7 +237,12 @@ def _metric_member(
             receipt_or_artifact_ref=None,
         )
     metric = metric_evidence.metric
-    if metric_evidence.run_id != evidence_run_id or metric_evidence.artifact_hash != metric_evidence.artifact_ref.hash:
+    artifact_payload = cast(JsonValue, metric_evidence.artifact.model_dump(mode="json"))
+    if (
+        metric_evidence.artifact.run_id != evidence_run_id
+        or metric not in metric_evidence.artifact.metrics
+        or canonical_sha256(artifact_payload) != metric_evidence.artifact_ref.hash
+    ):
         reasons.add(f"REQUIRED_METRIC_ARTIFACT_MISMATCH:{requirement.member_id}")
         return _metric_result_member(requirement, metric_evidence, ExecutionStatus.INVALID, None)
     if not _metric_metadata_matches(requirement, metric):
@@ -310,8 +331,11 @@ def _metric_value_matches_counts(metric: MetricResult) -> bool | None:
         return False
     if metric.estimator_id == "COUNT":
         expected = Decimal(metric.numerator)
-    elif metric.metric_id in {"RECALL_AT_5", "PRECISION_AT_5", "NO_HIT_RATE"}:
+    elif metric.estimator_id in {"PROPORTION", "RATE"}:
         expected = Decimal(metric.numerator) / Decimal(metric.denominator)
+    elif metric.estimator_id == "CASE_MEAN":
+        value = Decimal(metric.metric_value)
+        return Decimal(0) <= value <= Decimal(1) and metric.numerator <= metric.denominator
     else:
         return None
     return Decimal(metric.metric_value) == expected
@@ -404,16 +428,7 @@ def _suite_members(policy: ReleaseGatePolicy, evidence: GateEvidence, reasons: s
             artifact_ref = None
             member_hash = expected.hash
             reasons.add(f"REQUIRED_SUITE_MISSING:{expected.id}")
-        elif (
-            suite_evidence.suite.run_id != evidence.run_id
-            or suite_evidence.suite.suite_id != expected.id
-            or suite_evidence.suite.suite_version != expected.version
-            or suite_evidence.suite.suite_definition_hash != expected.hash
-            or not suite_evidence.suite.required
-            or suite_evidence.suite.expected_case_set_hash != suite_evidence.suite.executed_case_set_hash
-            or suite_evidence.suite.artifact_hash is None
-            or suite_evidence.suite.artifact_hash != suite_evidence.artifact_ref.hash
-        ):
+        elif not _suite_binding_matches(expected, evidence.run_id, suite_evidence):
             status = ExecutionStatus.INVALID
             decision = None
             artifact_ref = suite_evidence.artifact_ref
@@ -444,6 +459,24 @@ def _suite_members(policy: ReleaseGatePolicy, evidence: GateEvidence, reasons: s
     return members
 
 
+def _suite_binding_matches(
+    expected: ImmutableReference,
+    run_id: str,
+    suite_evidence: SuiteEvidence,
+) -> bool:
+    suite = suite_evidence.suite
+    payload = cast(JsonValue, suite.model_dump(mode="json"))
+    return not (
+        suite.run_id != run_id
+        or suite.suite_id != expected.id
+        or suite.suite_version != expected.version
+        or suite.suite_definition_hash != expected.hash
+        or not suite.required
+        or suite.expected_case_set_hash != suite.executed_case_set_hash
+        or canonical_sha256(payload) != suite_evidence.artifact_ref.hash
+    )
+
+
 def _receipt_member(
     expected: ImmutableReference,
     evidence: ReceiptEvidence | None,
@@ -464,6 +497,20 @@ def _receipt_member(
         )
     if not evidence.is_current:
         reasons.add(f"REQUIRED_RECEIPT_EXPIRED:{expected.id}")
+        return _receipt_result_member(
+            expected, evidence.reference.hash, ExecutionStatus.INVALID, None, evidence.artifact_ref
+        )
+    receipt_state_invalid = (
+        evidence.execution_status is ExecutionStatus.COMPLETED
+        and evidence.decision_status
+        not in {
+            DecisionStatus.PASS,
+            DecisionStatus.FAIL,
+            DecisionStatus.INCONCLUSIVE,
+        }
+    ) or (evidence.execution_status is not ExecutionStatus.COMPLETED and evidence.decision_status is not None)
+    if receipt_state_invalid:
+        reasons.add(f"REQUIRED_RECEIPT_STATE_INVALID:{expected.id}")
         return _receipt_result_member(
             expected, evidence.reference.hash, ExecutionStatus.INVALID, None, evidence.artifact_ref
         )
@@ -615,7 +662,7 @@ def build_release_gate(policy: ReleaseGatePolicy, evidence: GateEvidence) -> Gat
     suites = tuple(sorted(_suite_members(policy, evidence, reasons), key=lambda item: item.member_id))
     receipts = _receipt_members(policy, evidence, reasons)
     receipts = _apply_paired_case_checks(policy, receipts, evidence.paired_case_evidence, reasons)
-    receipts.append(_profile_member(policy, evidence, reasons))
+    receipts.extend(_profile_members(policy, evidence, reasons))
     receipt_members = tuple(sorted(receipts, key=lambda item: item.member_id))
     aggregate_status, aggregate_decision, blockers = _aggregate((*metrics, *suites, *receipt_members))
     if aggregate_decision is DecisionStatus.PASS and reasons:
