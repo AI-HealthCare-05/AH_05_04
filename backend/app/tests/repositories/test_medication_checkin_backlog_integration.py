@@ -20,6 +20,7 @@ from app.models.prescriptions import Prescription, PrescriptionVersion, Prescrip
 from app.repositories.medication_checkin_repository import MedicationCheckinRepository
 from app.services.medication_checkin_backlog import MedicationCheckinBacklogService
 from app.services.medication_checkins import MedicationCheckinService, NoopCheckinRevisionInvalidation
+from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 from app.tests.repositories.test_medication_checkin_repository_integration import _create_occurrence
 from app.tests.repositories.test_medication_schedule_repository_integration import _create_user_with_self_profile
 
@@ -106,13 +107,23 @@ async def test_historical_snapshot_and_refetch_after_stale_revision(db_session: 
     assert version is not None
     prescription = await db_session.get(Prescription, version.prescription_id)
     assert prescription is not None
+    replacement_medication_values = {"medication_name": "합성교체약", "frequency_per_day": 1, "display_order": 1}
     replacement = PrescriptionVersion(
+        **fingerprint_values(version.prescribed_date, [replacement_medication_values]),
         prescription_id=prescription.id,
         version_number=2,
         prescribed_date=version.prescribed_date,
         confirmed_at=version.confirmed_at,
     )
     db_session.add(replacement)
+    await db_session.flush()
+    db_session.add(
+        PrescriptionVersionMedication(
+            prescription_version_id=replacement.id,
+            medication_count=replacement.medication_count,
+            **replacement_medication_values,
+        )
+    )
     await db_session.flush()
     prescription.active_version_id = replacement.id
     checkin.revision = 3

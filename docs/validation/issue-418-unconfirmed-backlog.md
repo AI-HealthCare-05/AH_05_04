@@ -52,3 +52,14 @@
 - 실제 앱 route/OpenAPI 미등록·HTTP 404 및 테스트 앱의 #413 PUT→GET 통합
 
 [PD-418](../governance/decisions/2026-09-10-unconfirmed-backlog-418.md) 및 [Proposed 계약](../contracts/proposed/unconfirmed-backlog-v1.md)은 Backend/Frontend 승인 대기다. 실제 앱 등록은 보류하며 테스트 앱에서만 #413 PUT-GET HTTP 연동을 검증했다. 두 담당 리뷰어의 계약 승인 후 등록·실제 앱 검증을 추가하고 해당 HEAD의 승인을 받아야 한다. #138 Frontend 소비 검증과 계약 상태 전환 전에는 #418 완료로 판정하지 않는다. 새 migration과 Frontend 구현은 없다.
+
+
+## #429 병합 후 CI fixture 호환성 수정
+
+`6a6939eb`의 CI에서 `test_historical_snapshot_and_refetch_after_stale_revision`이 `medication_count` NOT NULL 위반으로 실패했다. #429에서 필수가 된 `medication_count`·`content_hash`를 기존 replacement fixture가 누락한 것이 원인이다.
+
+공용 `fingerprint_values`로 교체 버전의 fingerprint를 계산하고 같은 합성 약품 데이터로 `PrescriptionVersionMedication` 행을 생성한다. 필수 컬럼만 임의 값으로 채우거나 DB 제약을 완화하지 않는다. 기존 과거 version snapshot·stale revision 검증과 승인 전 router 미등록 경계는 유지한다.
+
+- backlog·Check-in repository·PUT HTTP: **34 passed** (전용 임시 PostgreSQL, 합성 설정).
+- Ruff check/format: **PASS (683 files)**, Mypy: **PASS (539 source files)**.
+- `git diff --check`: PASS. 전체 CI는 이 수정 커밋의 GitHub Actions 결과로 확인한다.
