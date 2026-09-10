@@ -58,7 +58,7 @@ Check-in `PUT` 요청은 `Idempotency-Key` 헤더와 `expected_revision`을 요�
 
 처방 version이 바뀌면 `effective_at` 이후에 예정된 이전 version의 `PENDING` occurrence와 미전달 알림만 취소한다. 이전 일정·시각을 새 version에 복사·재귀속하거나 참고 후보로 자동 제공하지 않고, 새 occurrence도 자동 생성하지 않는다. 새 version의 모든 `prescription_version_medication`은 이전 version과 약명·용량·횟수가 같더라도 사용자가 해당 version의 일정을 다시 확인하기 전까지 `SETUP_REQUIRED`다.
 
-처방 version 확정과 이전 version의 `PENDING` occurrence·미전달 알림 취소를 하나의 DB transaction, Outbox 또는 다른 비동기 경계 중 어떤 방식으로 결합할지는 이 문서에서 고정하지 않는다. Track A 비동기 인프라가 확정된 뒤 후속 Issue와 별도 Decision에서 transaction 경계, 실패 복구와 재처리 방식을 정한다.
+처방 version 활성화 write service가 transaction owner이며, B의 동기 `cancel_future_for_prescription_version` port를 같은 DB transaction에서 호출한다. Outbox나 사후 보상으로 결합하지 않는다. 승인 원본과 [처방 버전 계약](./prescription-version-v1.md)에 맞춰 오래된 미정 요약을 동기화했으며, 근거와 #203 알림 adapter의 구현 상태는 [PD-203](../../../governance/decisions/2026-09-10-track-b-notifications.md)을 따른다.
 
 이전 version의 schedule·time revision, `effective_at` 이전 occurrence, 이미 생성된 Check-in과 Check-in audit은 생성 당시 `prescription_version_id`에 그대로 보존하고 새 version으로 재귀속하지 않는다. `effective_at` 이전에 예정되었지만 아직 결과가 없는 occurrence도 취소하지 않으며, deadline이 지났다면 Scheduler가 기존 기준에 따라 `UNCONFIRMED`를 생성한다.
 

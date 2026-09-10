@@ -46,7 +46,9 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 - [Track B UNCONFIRMED backlog v1](./proposed/unconfirmed-backlog-v1.md): PD-418 URL·cursor·DTO·오류 제안. 실제 v1 router 등록 보류, 테스트 앱의 #413 PUT→GET HTTP 통합 검증. Cursor 404의 첫 페이지 재조회 명시, 계약 및 등록 HEAD의 Backend/Frontend 승인 필요.
 
-- [Track B Notification 계약 v1 (#203)](./proposed/track-b-notifications-v1.md): 알림 저장·게시·읽음·재알림 상세 제안. PD-203 도메인 조율 대기·미구현이며 #202와의 통합 접점 및 검증 계획 포함.
+- [Track B Notification 계약 v1 (#203)](./proposed/track-b-notifications-v1.md): PD-203 기반 알림 저장·목록·읽음·재알림 구현 브랜치. 지정 리뷰어 승인 및 #202 일정 API 통합 전이며 current 계약 아님.
+
+- [Track B 일정 정합화 제안 v1 (#417)](./proposed/track-b-schedule-reconciliation-v1.md): setup reason·일정 Audit·time retire·revision·알림 취소 transaction의 승인 요청안. DB 후속 #423과 #202·#203 인계 기준; 승인 전 구현 근거 아님.
 
 - [Source Artifact·REJECTS 보존·삭제 정책 초안 (#335)](./proposed/post-mvp-1/source-artifact-retention-cleanup.md): PM 30일 유예·참조 보존·수동 배치 승인 반영, 통합 검토 대상, 후속 구현 [#347](https://github.com/AI-HealthCare-05/AH_05_04/issues/347)·김지혜 담당. Local 합성 #347의 승인 순서·revision·경합 잠금·DB 감사 근거·참조 범위 보완 연결 포함. 운영 삭제·활성화 승인 아님.
 
