@@ -10,7 +10,11 @@
 
 ## 1. 원본·target·현재 구현 차이
 
-원본 절과 열람 해시는 Decision에 기록한다. 이 표의 현재 구현은 Decision에 고정한 develop 기준이다.
+원본 절·열람 해시와 주장별 `target 교차 확인됨 / 열람본만` 판정은
+[Decision의 교차 확인 표](../../governance/decisions/2026-09-10-track-b-schedule-contract.md)에 기록한다.
+아래 원본 인용 전체가 repository target으로 확인됐다는 의미는 아니다. 특히 물리 time status·schedule
+audit·종료 revision 증가는 열람본만의 세부 요구로 분리해 승인 요청한다.
+이 표의 현재 구현은 Decision에 고정한 develop 기준이다.
 
 | 항목 | 원본 / repository target | 현재 구현 근거 | 제안 결과 / 후속 |
 | --- | --- | --- | --- |
