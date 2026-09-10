@@ -45,6 +45,10 @@ def load_release_policy(
     evaluation_policy_path: Path,
     evaluation_profile_path: Path,
     comparison_policy_path: Path,
+    *,
+    paired_comparison_receipt_id: str | None = None,
+    required_case_ids: tuple[str, ...] = (),
+    required_scope_manifest_hash: str | None = None,
 ) -> ReleaseGatePolicy:
     """Load and exact-bind the existing versioned Evaluation policy graph for release gating."""
 
@@ -91,10 +95,26 @@ def load_release_policy(
             partition=scope.partition,
             slice_id=scope.slice_id,
             requirement_hash=canonical_sha256(cast(JsonValue, scope.model_dump(mode="json"))),
+            unit_of_analysis=scope.unit_of_analysis,
+            estimator_id=scope.estimator_id,
+            estimator_version=scope.estimator_version,
+            minimum_case_count=scope.minimum_case_count,
+            independence_unit=scope.independence_unit,
+            cluster_dimension=None if scope.cluster_dimension is None else scope.cluster_dimension.value,
+            minimum_independent_group_count=scope.minimum_independent_group_count,
+            threshold=scope.threshold,
+            decision_basis=scope.decision_basis,
+            ci_method_id=scope.ci_method_id,
+            ci_method_version=scope.ci_method_version,
+            ci_level=cast(str | None, dict(scope.ci_parameters).get("confidence_level")),
         )
         for scope in comparison.scopes
         if scope.required
     )
+    if paired_comparison_receipt_id is not None and paired_comparison_receipt_id not in {
+        reference.id for reference in policy_gates
+    }:
+        raise EvaluationValidationError(EvaluationErrorCode.MANIFEST_INVALID)
     return ReleaseGatePolicy(
         evaluation_policy_ref=policy_ref,
         evaluation_profile_ref=profile_ref,
@@ -105,4 +125,8 @@ def load_release_policy(
         required_metrics=required_metrics,
         required_suites=policy_suites,
         required_receipts=policy_gates,
+        paired_comparison_receipt_id=paired_comparison_receipt_id,
+        required_case_ids=required_case_ids,
+        controlled_variable_keys=comparison.controlled_variable_keys,
+        required_scope_manifest_hash=required_scope_manifest_hash or policy.member_manifest_hash,
     )

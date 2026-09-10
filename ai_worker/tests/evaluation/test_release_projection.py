@@ -21,6 +21,10 @@ def test_release_gate_markdown_is_a_deterministic_projection_of_gate_json() -> N
         required_metrics=(),
         required_suites=(),
         required_receipts=(),
+        paired_comparison_receipt_id=None,
+        required_case_ids=(),
+        controlled_variable_keys=(),
+        required_scope_manifest_hash="d" * 64,
     )
     evidence = GateEvidence(
         run_id="11111111-1111-4111-8111-111111111111",
