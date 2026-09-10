@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from scripts.ci.verify_database_head import DatabaseHeadState, migration_heads, validation_errors
+from scripts.ci.verify_database_head import DatabaseHeadState, alembic_paths, migration_heads, validation_errors
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -19,6 +19,13 @@ def valid_state() -> DatabaseHeadState:
 
 def test_current_migration_tree_has_one_head() -> None:
     assert migration_heads() == ("398f60718293",)
+
+
+def test_finds_alembic_tree_in_repository_and_app_image_layout(tmp_path: Path) -> None:
+    assert alembic_paths(ROOT) == (ROOT / "backend/alembic.ini", ROOT / "backend/alembic")
+    (tmp_path / "alembic.ini").touch()
+    (tmp_path / "alembic").mkdir()
+    assert alembic_paths(tmp_path) == (tmp_path / "alembic.ini", tmp_path / "alembic")
 
 
 def test_accepts_complete_final_database_state() -> None:

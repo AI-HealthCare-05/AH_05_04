@@ -282,3 +282,13 @@ CI와 같은 로컬 전체 runner를 깨끗한 `test` DB에서 처음부터 끝�
 - 전용 `source_cleanup347_test` DB 통합 검증: 57 passed
 
 Source cleanup 검증 후 최신 head 종합 검사를 다시 실행해 public/source_cleanup 사용자 Trigger 0개, RLS 활성·정책 0개, 제거 대상 함수 0개를 확인했다. skip은 외부 provider가 필요한 smoke와 별도 DB에서 수행하는 Source cleanup 범위이며, Source cleanup은 위 전용 실행에서 모두 통과했다. AWS 배포와 운영 DB는 변경하지 않았다.
+
+## 최종 diff 감사: 배포 전 DB 상태 차단
+
+- 운영 배포는 migration 성공 직후 제한된 Migration 계정으로 최신 코드 head와 실제 DB 카탈로그를 대조한다.
+- DB revision 불일치, 사용자 Trigger, RLS 활성·정책, 제거 대상 함수, 폐기 컬럼 또는 Runtime revision UNIQUE 누락이 있으면 권한 provisioning과 API 시작 전에 배포가 중단된다.
+- 같은 검증 스크립트가 저장소와 app 이미지의 Alembic 경로를 모두 지원하며 app 이미지에 포함된다.
+- 로컬 전체 runner도 DB 로직 재도입 검사를 실행한다.
+- 정적 금지 범위를 Trigger/RLS에서 새 DB 함수와 프로시저 정의까지 확장했다. 정확한 hash로 고정된 과거 migration만 임시 허용된다.
+
+검증 결과: 관련 배포·입력·DB 정책 계약 39 passed, 핵심 신규 계약 12 passed, Compose 설정 파싱, Ruff, shell 구문, DB 로직·보호 writer 검사와 diff 검사가 모두 통과했다. AWS 배포와 운영 DB는 변경하지 않았다.

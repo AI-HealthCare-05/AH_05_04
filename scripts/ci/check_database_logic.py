@@ -1,4 +1,4 @@
-"""새 Trigger·RLS 정의를 차단하고 기존 제거 대상을 정확한 파일 hash로 한정합니다."""
+"""새 DB 함수·Trigger·RLS 정의를 차단하고 기존 제거 대상을 hash로 한정합니다."""
 
 import hashlib
 import json
@@ -9,7 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "docs/testing/issue-398/legacy-database-logic.json"
 FORBIDDEN = re.compile(
-    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\b"
+    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\b"
+    r"|\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\b"
     r"|\bRETURNS\s+(?:EVENT_)?TRIGGER\b"
     r"|\b(?:ENABLE|FORCE)\s+ROW\s+LEVEL\s+SECURITY\b"
     r"|\bCREATE\s+POLICY\b",
@@ -47,10 +48,10 @@ def main() -> int:
     )
     failures = violations(ROOT, paths, baseline["files"])
     if failures:
-        print("새 Trigger/RLS 정의 또는 기존 제거 대상 변경을 발견했습니다:")
+        print("새 DB 함수/프로시저/Trigger/RLS 정의 또는 기존 제거 대상 변경을 발견했습니다:")
         print("\n".join(failures))
         return 1
-    print("Trigger/RLS 재도입 검사 통과 (기존 제거 대상은 고정 hash로만 임시 허용)")
+    print("DB 함수/프로시저/Trigger/RLS 재도입 검사 통과 (기존 제거 대상은 고정 hash로만 임시 허용)")
     return 0
 
 

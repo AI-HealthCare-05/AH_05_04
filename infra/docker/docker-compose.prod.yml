@@ -108,6 +108,24 @@ services:
 
     restart: "no"
 
+  # Migration 직후 코드 head와 실제 DB 카탈로그가 일치하는지 읽기 전용으로 검증합니다.
+  verify-db-head:
+    profiles: ["database-maintenance"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "scripts.ci.verify_database_head"]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_MIGRATION_USER}
+      DB_PASSWORD: ${DB_MIGRATION_PASSWORD}
+      DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-5}
+      DB_CONNECTION_POOL_MAXSIZE: ${DB_CONNECTION_POOL_MAXSIZE:-10}
+      SQLALCHEMY_ECHO: ${SQLALCHEMY_ECHO:-false}
+    networks:
+      - ws
+
   # Admin credentials exist only in this explicit one-shot provisioning service.
   provision-db-roles:
     profiles: ["database-admin"]

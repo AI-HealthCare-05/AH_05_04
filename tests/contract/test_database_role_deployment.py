@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_credentials_and_admin_process_are_separated() -> None:
     services = yaml.safe_load((ROOT / "infra/docker/docker-compose.prod.yml").read_text())["services"]
-    for name in ("fastapi", "ai-worker", "migrate"):
+    for name in ("fastapi", "ai-worker", "migrate", "verify-db-head"):
         environment = services[name]["environment"]
         assert "env_file" not in services[name]
         assert not any(
@@ -19,13 +19,20 @@ def test_credentials_and_admin_process_are_separated() -> None:
     assert provisioner["restart"] == "no"
     assert provisioner["environment"]["DB_ADMIN_PASSWORD"] == "${DB_ADMIN_PASSWORD}"
     assert not any("SOURCE_WRITER_PASSWORD" in str(value) for value in provisioner["environment"].values())
+    verifier = services["verify-db-head"]
+    assert verifier["profiles"] == ["database-maintenance"]
+    assert verifier["restart"] == "no"
+    assert verifier["environment"]["DB_USER"] == "${DB_MIGRATION_USER}"
+    assert verifier["environment"]["DB_PASSWORD"] == "${DB_MIGRATION_PASSWORD}"
     writer = services["source-writer"]
     assert writer["profiles"] == ["source-admin"]
     assert writer["environment"]["SOURCE_WRITER_PASSWORD"] == "${SOURCE_WRITER_PASSWORD:-}"
     assert not any(
         "DB_ADMIN_PASSWORD" in str(value) or "DB_APP_PASSWORD" in str(value) for value in writer["environment"].values()
     )
-    assert "COPY ./infra/python ./infra/python" in (ROOT / "backend/app/Dockerfile").read_text()
+    dockerfile = (ROOT / "backend/app/Dockerfile").read_text()
+    assert "COPY ./infra/python ./infra/python" in dockerfile
+    assert "COPY ./scripts/ci/verify_database_head.py ./scripts/ci/verify_database_head.py" in dockerfile
 
 
 def test_deployment_stops_writers_and_provisions_before_starting_api() -> None:
@@ -33,6 +40,9 @@ def test_deployment_stops_writers_and_provisions_before_starting_api() -> None:
     stop = script.index("docker compose --profile source-admin stop")
     bootstrap = script.index("-f /docker-entrypoint-initdb.d/configure-app-role.sql")
     migration = script.index('migration_exit_code="$(docker wait migrate)"')
+    verification = script.index(
+        "docker compose --profile database-maintenance run --rm --no-deps --pull always verify-db-head"
+    )
     provisioning = script.index(
         "docker compose --profile database-admin run --rm --no-deps --pull always provision-db-roles"
     )
@@ -41,8 +51,8 @@ def test_deployment_stops_writers_and_provisions_before_starting_api() -> None:
         if 'echo "Starting application services"' in script
         else script.index("docker compose up", provisioning)
     )
-    assert stop < bootstrap < migration < provisioning < startup
-    assert "set -euo pipefail" in script[script.index("ssh", script.index("configure-app-role.sql")) : provisioning]
+    assert stop < bootstrap < migration < verification < provisioning < startup
+    assert "set -euo pipefail" in script[script.index("ssh", script.index("configure-app-role.sql")) : verification]
     bootstrap_sql = (ROOT / "infra/docker/postgres/configure-app-role.sql").read_text()
     assert "GRANT SELECT, INSERT, UPDATE, DELETE" not in bootstrap_sql
     assert "GRANT EXECUTE" not in bootstrap_sql

@@ -9,8 +9,6 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
-from app.core import config as app_config
-
 ROOT = Path(__file__).resolve().parents[2]
 APPLICATION_SCHEMAS = ("public", "source_cleanup")
 REMOVED_FUNCTIONS = (
@@ -42,9 +40,22 @@ class DatabaseHeadState:
     runtime_revision_unique_present: bool
 
 
+def alembic_paths(root: Path = ROOT) -> tuple[Path, Path]:
+    """저장소와 app 이미지에서 Alembic 설정 경로를 찾습니다."""
+    candidates = (
+        (root / "backend/alembic.ini", root / "backend/alembic"),
+        (root / "alembic.ini", root / "alembic"),
+    )
+    for config_path, script_path in candidates:
+        if config_path.is_file() and script_path.is_dir():
+            return config_path, script_path
+    raise FileNotFoundError(f"Alembic 설정과 migration 디렉터리를 찾을 수 없습니다: {root}")
+
+
 def migration_heads(root: Path = ROOT) -> tuple[str, ...]:
-    alembic_config = Config(root / "backend/alembic.ini")
-    alembic_config.set_main_option("script_location", str(root / "backend/alembic"))
+    config_path, script_path = alembic_paths(root)
+    alembic_config = Config(config_path)
+    alembic_config.set_main_option("script_location", str(script_path))
     return tuple(ScriptDirectory.from_config(alembic_config).get_heads())
 
 
@@ -155,6 +166,8 @@ async def read_database_head_state(connection: AsyncConnection) -> DatabaseHeadS
 
 
 async def verify_database_head() -> int:
+    from app.core import config as app_config
+
     heads = migration_heads()
     if len(heads) != 1:
         print(f"Alembic head가 하나가 아닙니다: {heads!r}")

@@ -632,6 +632,9 @@ if [ "$migration_exit_code" -ne 0 ]; then
 fi
 
 echo "Alembic migration completed successfully."
+echo "Verifying final database head and catalog state"
+docker compose --profile database-maintenance run --rm --no-deps --pull always verify-db-head
+
 echo "Applying explicit Runtime and Source Writer permissions"
 docker compose --profile database-admin run --rm --no-deps --pull always provision-db-roles
 

@@ -26,6 +26,7 @@ COPY ./rag_runtime ./rag_runtime
 COPY ./infra/python ./infra/python
 COPY ./backend/alembic ./alembic
 COPY ./backend/alembic.ini ./alembic.ini
+COPY ./scripts/ci/verify_database_head.py ./scripts/ci/verify_database_head.py
 
 # STORAGE_DIR 기본값을 이미지 자체에 고정합니다. Config의 Path(__file__) 기반 기본값은
 # 로컬 실행(backend/app/core/config.py 기준 저장소 루트) 기준이라, docker-compose 없이
