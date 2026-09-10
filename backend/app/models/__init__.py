@@ -19,6 +19,9 @@ from app.models.guides import Guide, GuideCitation
 from app.models.knowledge import KnowledgeChunk, KnowledgeDocument
 from app.models.medical_documents import MedicalDocument
 from app.models.medication_schedules import (
+    CheckinAudit,
+    MedicationCheckin,
+    MedicationCheckinStatus,
     MedicationOccurrence,
     MedicationOccurrenceStatus,
     MedicationSchedule,
@@ -123,6 +126,7 @@ __all__ = [
     "ChatCitation",
     "ChatMessage",
     "ChatSession",
+    "CheckinAudit",
     "DlqOutboxEvent",
     "DlqOutboxEventKind",
     "DlqOutboxEventStatus",
@@ -164,6 +168,8 @@ __all__ = [
     "MedicationIdentification",
     "MedicationIdentificationSource",
     "MedicationIdentificationStatus",
+    "MedicationCheckin",
+    "MedicationCheckinStatus",
     "MedicalDocument",
     "MessageQuarantine",
     "OcrJob",
