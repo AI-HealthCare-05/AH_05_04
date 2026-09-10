@@ -20,3 +20,13 @@ Service에서 수행하는 기존 버전의 Job·일정·Outbox 무효화를 포
 - 기존 assembly_xid·Trigger·함수의 forward migration 제거
 
 과거 migration은 변경하지 않는다. 이 부분 구현만으로 Trigger 제거·배포를 진행하지 않는다.
+
+## 내용 hash v1 (저장 직후 대조 구현)
+
+`provider_contracts.prescription_integrity.prescription_fingerprint()`는 `medication_count`와 SHA-256을 반환한다. `spec=prescription-content@1`, ISO prescribed_date, display_order 오름차순 medications를 JSON object로 직렬화한다. JSON은 key 정렬·공백 없는 separator·UTF-8·ensure_ascii=False이며 NaN을 허용하지 않는다.
+
+약 필드는 display_order, medication_name, strength_text, dose_value, dose_unit, frequency_per_day, timing_text, duration_days이다. 생략한 optional 필드는 null로 취급한다. null과 빈 문자열은 구분한다. 문자열의 공백·Unicode를 hash 함수에서 정규화하지 않으며 정확한 저장 값을 사용한다. dose_value는 유한한 양수·Numeric(10,3) 범위를 확인하고 소수 셋째 자리 문자열로 표현한다. 반올림이 필요한 입력은 거부한다. 날짜·내용 hash이므로 DB surrogate ID와 생성 시각은 포함하지 않는다.
+
+Repository는 저장 전 입력을 검증하고 실제 저장 열들을 다시 읽어 입력 fingerprint와 비교한다. DB에 hash를 영구 저장하는 단계는 아직 아니며, 이 비교만으로 저장 이후의 불변성이 보장되지는 않는다. count/hash 컬럼 및 소비 검증은 후속 migration과 함께 연결한다.
+
+정정 DTO도 display_order 1..N을 강제하여 간격이 있는 요청은 기존 validation 응답(422)으로 거부한다. API가 통과시킨 입력이 Repository의 구성 검증에서 500으로 실패하지 않도록 경계를 일치시킨다.

@@ -223,20 +223,27 @@ async def test_empty_or_invalid_medication_slots_leave_version_and_pointer_uncha
     )
 
 
-async def test_failed_medication_insert_does_not_leave_new_version_even_if_caller_commits(db_session):
+async def test_failed_medication_verification_does_not_leave_new_version_even_if_caller_commits(
+    db_session, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
     import pytest
     from sqlalchemy import func
-    from sqlalchemy.exc import IntegrityError
 
     owner = await _create_user(db_session, email="synthetic-rollback398@example.com")
     prescription = await _create_confirmed_prescription(db_session, user=owner)
     prescription_id, original_id = prescription.id, prescription.active_version_id
-    with pytest.raises(IntegrityError):
-        await PrescriptionRepository(db_session).create_version(
+    repository = PrescriptionRepository(db_session)
+    monkeypatch.setattr(
+        repository, "_verify_medication_membership", AsyncMock(side_effect=ValueError("synthetic mismatch"))
+    )
+    with pytest.raises(ValueError, match="synthetic mismatch"):
+        await repository.create_version(
             prescription=prescription,
             prescribed_date=date.today(),
             confirmed_at=datetime.now(UTC),
-            medications=[{"medication_name": "Synthetic", "display_order": 1, "dose_value": -1}],
+            medications=[{"medication_name": "Synthetic", "display_order": 1, "dose_value": 1}],
         )
     await db_session.commit()
     assert (

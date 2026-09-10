@@ -16,6 +16,7 @@ from app.models.prescriptions import (
 )
 from app.models.rag_candidate import MedicationCandidateSearch, MedicationCandidateSearchStatus
 from app.repositories.profile_ownership import owned_by_self
+from provider_contracts.prescription_integrity import MEDICATION_CONTENT_FIELDS, prescription_fingerprint
 
 
 class PrescriptionRepository:
@@ -56,14 +57,6 @@ class PrescriptionRepository:
         )
         return result.scalar_one_or_none()
 
-    @staticmethod
-    def _validate_medication_membership(medications: list[dict]) -> None:
-        if not medications:
-            raise ValueError("Prescription version requires at least one medication")
-        orders = [item.get("display_order") for item in medications]
-        if any(type(order) is not int for order in orders) or set(orders) != set(range(1, len(medications) + 1)):
-            raise ValueError("Prescription medication slots must be exactly 1 through medication count")
-
     async def create_with_medications(
         self,
         *,
@@ -73,7 +66,7 @@ class PrescriptionRepository:
         confirmed_at: datetime,
         medications: list[dict],
     ) -> Prescription:
-        self._validate_medication_membership(medications)
+        prescription_fingerprint(prescribed_date, medications)
         async with self.session.begin_nested():
             return await self._create_with_medications(
                 document=document,
@@ -91,7 +84,7 @@ class PrescriptionRepository:
         confirmed_at: datetime,
         medications: list[dict],
     ) -> PrescriptionVersion:
-        self._validate_medication_membership(medications)
+        prescription_fingerprint(prescribed_date, medications)
         async with self.session.begin_nested():
             # Service의 expected revision 검사도 이 부모 잠금 안에서 수행해야 합니다.
             locked = await self.session.scalar(
@@ -145,21 +138,27 @@ class PrescriptionRepository:
                 )
             )
         await self.session.flush()
-        await self._verify_medication_membership(version.id, len(medications))
+        await self._verify_medication_membership(version.id, prescribed_date, medications)
         return prescription
 
-    async def _verify_medication_membership(self, version_id: UUID, expected_count: int) -> None:
-        orders = list(
+    async def _verify_medication_membership(
+        self, version_id: UUID, prescribed_date: date, medications: list[dict]
+    ) -> None:
+        rows = (
             (
-                await self.session.scalars(
-                    select(PrescriptionVersionMedication.display_order)
-                    .where(PrescriptionVersionMedication.prescription_version_id == version_id)
-                    .order_by(PrescriptionVersionMedication.display_order)
+                await self.session.execute(
+                    select(*(getattr(PrescriptionVersionMedication, key) for key in MEDICATION_CONTENT_FIELDS)).where(
+                        PrescriptionVersionMedication.prescription_version_id == version_id
+                    )
                 )
-            ).all()
+            )
+            .mappings()
+            .all()
         )
-        if orders != list(range(1, expected_count + 1)):
-            raise ValueError("Persisted prescription medication membership is incomplete")
+        if prescription_fingerprint(prescribed_date, [dict(row) for row in rows]) != prescription_fingerprint(
+            prescribed_date, medications
+        ):
+            raise ValueError("Persisted prescription medication content differs from requested content")
 
     async def get_version_medications(self, *, prescription_version_id: UUID) -> list[PrescriptionVersionMedication]:
         result = await self.session.execute(
@@ -213,7 +212,7 @@ class PrescriptionRepository:
                 )
             )
         await self.session.flush()
-        await self._verify_medication_membership(version.id, len(medications))
+        await self._verify_medication_membership(version.id, prescribed_date, medications)
         prescription.active_version_id = version.id
         await self.session.flush()
         return version

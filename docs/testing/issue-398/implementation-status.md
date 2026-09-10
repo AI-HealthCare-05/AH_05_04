@@ -96,3 +96,11 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 - 잘못된 슬롯 입력 및 약 INSERT 실패 후 호출자 commit에도 기존 버전 유지 검증
 - Repository·Service·확정 동시성 테스트 20 passed
 - count/hash 저장·소비 검증, 슬롯 DB 제약, 멱등 키, 권한·제거 migration은 후속 단계
+
+## Prescription 내용 hash 2단계
+
+- 공통 prescription-content@1 fingerprint 구현, 최소 구성 및 숫자·문자열 검증
+- 입력과 실제 DB 저장 내용의 count/hash 대조를 savepoint 안에서 수행
+- 정정 DTO의 순서 누락을 입력 단계에서 차단
+- hash·DTO·Repository·Service·확정 동시성 검증 39 passed
+- hash 영구 저장·소비 경로·DB 슬롯 제약·권한·migration은 미완료
