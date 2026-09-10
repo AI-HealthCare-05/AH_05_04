@@ -3,11 +3,13 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-175-20260910` |
-| 상태 | **Proposed** — 지정 책임 리뷰어 승인 대기 |
+| 상태 | **Approved** — PR #416 최신 HEAD(`96fd4693`)에서 지정 책임 리뷰어 3인 전원 승인 (2026-09-10) |
+| 승인일 | 2026-09-10 (최종 승인 `2026-09-10T14:38:31Z`) |
 | 제안일 | 2026-09-10 |
 | 제안·구현 | 정현우 (`@ceohwj`) — AI/RAG 구현 담당 |
 | 책임 리뷰 | 송은영 (`@phina-io`) — persistence·FK·transaction / 권가빈 (`@hazelnutflavoured`) — Product·Safety |
-| 추적 Issue·PR | [#175](https://github.com/AI-HealthCare-05/AH_05_04/issues/175) · [PR #416](https://github.com/AI-HealthCare-05/AH_05_04/pull/416) |
+| 추적 Issue·PR | [#175](https://github.com/AI-HealthCare-05/AH_05_04/issues/175) · [PR #416](https://github.com/AI-HealthCare-05/AH_05_04/pull/416) (merge `086b2aa0`) |
+| 승인 Evidence | [`docs/validation/rag/issue-175/decision-approval-evidence.json`](../../validation/rag/issue-175/decision-approval-evidence.json) |
 | 관련 계약 | [`rag-runtime-v1.md`](../../contracts/targets/post-mvp-1/rag-runtime-v1.md) — `Approved Target · Not implemented` |
 | Migration | `175a1b2c3d4e` (`201a1b2c3d4e` 후속) |
 | 선행 Decision | 없음. #164 저장 구조를 추정 없이 확장한다. |
@@ -145,9 +147,30 @@ import 체인(`runtime_bundle_builder` → `catalog.types`, `source_ingestion.sn
 - **Graph·Validator version 고정.** `rag-runtime-v1.md`는 Bundle이 Graph·Validator를 고정한다고 적었으나 manifest 테이블에 `graph_ref`·`validator_ref`가 없다. 컬럼 추가와 계약 문장 개정 중 어느 쪽인지 미결이다.
 - **`current/` 승격.** 위 두 항목과 외부 승인 게이트가 남아 있어 `rag-runtime-v1.md`는 `targets/`에 유지한다.
 
-## 승인 및 적용 조건
+## 승인 및 적용 조건 — 충족
 
-1. `@phina-io`가 migration·복합 FK·CHECK·transaction 경계와 「해시 입력 = 저장 컬럼」 원칙을 승인한다.
-2. `@hazelnutflavoured`가 backfill 금지와 fail-closed 기본값 금지를 승인한다.
-3. 두 승인 모두 PR #416 최신 HEAD 기준으로 기록한다. 승인 전에는 이 Decision을 `Approved`로 전이하지 않으며, PR 병합만으로 승인을 대체하지 않는다.
-4. `backend` → `ai_worker` 경계 결정을 함께 기록한다. 배포 이미지 COPY 방식(현재)과 `rag_runtime/` 이전 중 어느 쪽인지 명시한다. 이 경계는 service뿐 아니라 **repository까지** 확장된다 — §6의 행 기준 재계산 검증이 kernel의 `canonical_runtime_bundle_manifest_hash`를 필요로 한다.
+| # | 조건 | 상태 |
+| --- | --- | --- |
+| 1 | `@phina-io`가 migration·복합 FK·CHECK·transaction 경계와 「해시 입력 = 저장 컬럼」 원칙을 승인 | ✅ `APPROVED` |
+| 2 | `@hazelnutflavoured`가 backfill 금지와 fail-closed 기본값 금지를 승인 | ✅ `APPROVED` |
+| 3 | 두 승인 모두 PR #416 최신 HEAD 기준으로 기록 | ✅ 3인 전원 `96fd4693` 대상, 승인 이후 추가 커밋 0건 |
+| 4 | `backend` → `ai_worker` 경계 결정을 함께 기록 | ✅ (A)안 확정 (§「함께 결정할 사항」) |
+
+### 승인 Evidence
+
+| 리뷰어 | 역할 | 상태 | 제출 시각 | 대상 commit |
+| --- | --- | --- | --- | --- |
+| `@hazelnutflavoured` | Product·Safety | `APPROVED` | 2026-09-10T14:16:16Z | `96fd4693` |
+| `@phina-io` | persistence·FK·transaction | `APPROVED` | 2026-09-10T14:17:15Z | `96fd4693` |
+| `@Jye-rookie` | #398 DB 무결성 정합 | `APPROVED` | 2026-09-10T14:38:31Z | `96fd4693` |
+
+- PR #416 check run 7종(`test`, `lint`, `frontend`, `test-backend`, `test-worker`, `test-migration`, `test-inventory`) 모두 `success`
+- 병합: 2026-09-10T14:43:46Z, merge commit `086b2aa0`
+- 상세 immutable evidence(review ID·node ID·URL·문서 SHA-256)는 [`decision-approval-evidence.json`](../../validation/rag/issue-175/decision-approval-evidence.json)에 있다. `#173` 선례의 수집 기준을 따른다.
+
+### 이 승인이 부여하지 않는 것
+
+- **`current/` 승격 아님.** `rag-runtime-v1.md`는 `Approved Target · Not implemented`로 `targets/`에 유지한다. 위 「미해소로 남기는 항목」의 Worker 호환성 검사와 Graph·Validator 고정이 남아 있다.
+- **공개 게이트 해제 아님.** `PUBLIC_TRACK_F=false`를 유지한다.
+- **`READY`·active pointer 권한 아님.** 이 Decision은 `BUILDING` 범위의 저장 계약만 확정한다. `READY`·`RETIRED`·환경 포인터 전환·Rollback 실행은 RAG-17(#180) 소유다.
+- **Issue #175 Close 근거 아님.** 차단 코드 `BLOCKED_BY_RUNTIME_BUNDLE_WORKER_DEPLOYMENT_DECISION`이 남아 Open을 유지한다.

@@ -7,7 +7,7 @@
 | 담당 리뷰어 | 송은영 (`@phina-io`) — persistence·FK·transaction |
 | Product/Safety 리뷰 | 권가빈 (`@hazelnutflavoured`) |
 | 상위 계약 | [`targets/post-mvp-1/rag-runtime-v1.md`](../../contracts/targets/post-mvp-1/rag-runtime-v1.md) (Approved Target · Not implemented) |
-| 문서 상태 | 구현 설계 · Migration `175a1b2c3d4e` · [`PD-175-20260910`](../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md) Review pending |
+| 문서 상태 | 구현 설계 · Migration `175a1b2c3d4e` · [`PD-175-20260910`](../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md) Approved · 구현 PR #416 병합(`086b2aa0`) |
 
 ## 1. 착수 판단 근거
 
