@@ -546,3 +546,7 @@ OCR Candidate Index와 의료 Evidence Index는 별도 version과 물리 경계�
 ### Source Snapshot 상태 전이 보호 (#165 / #323)
 
 Revision `165e8f706152`는 일반 비소유자 Runtime 역할의 Snapshot 상태·검증/선택 timestamp 직접 UPDATE와 non-PENDING INSERT를 차단한다. `transition_rag_source_snapshot` DB 함수만 허용 전이와 rejected Snapshot의 named publication 승인을 검사한 뒤 CURRENT 상태와 immutable selection Verification을 함께 기록한다. migration owner와 Runtime 역할은 분리한다. 실제 Source Runtime·외부 승인 활성화는 여전히 후속 범위다. 상세 계약은 Source Target의 DB-owned 경계 절과 2026-09-08 Source Snapshot DB transition Decision을 따른다.
+
+## #398 관리 권한·감사 확장 (브랜치 구현, 리뷰 대기)
+
+`3980718293a4`는 `source_management_permission`과 `source_management_audit`를 추가한다. 권한은 user_id별 서버 설정이며 감사는 actor/request_id UNIQUE, 대상별 변경 revision UNIQUE를 갖는다. 감사 대상·작업자는 삭제 후 증거 보존을 위해 대상 FK로 연결하지 않는다. 일반 Runtime/Source Writer는 이 테이블을 수정하지 못하고 관리 Writer는 감사 INSERT만 가능하다. 상세 컬럼 의미와 삭제 후 provenance 보존은 [PD-398-M1](contracts/proposed/source-catalog-management-398.md)을 따른다. Trigger·RLS·업무 DB 함수는 추가하지 않는다.

@@ -141,6 +141,7 @@ services:
       DB_MIGRATION_USER: ${DB_MIGRATION_USER}
       DB_APP_USER: ${DB_APP_USER}
       SOURCE_WRITER_USER: ${SOURCE_WRITER_USER}
+      SOURCE_MANAGEMENT_USER: ${SOURCE_MANAGEMENT_USER:-}
     networks:
       - ws
 
@@ -306,6 +307,65 @@ services:
       nginx:
         condition: service_healthy
 
+
+  # Explicit management profile only; ordinary API/Worker never receive this password.
+  source-management:
+    profiles: ["source-management"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "uvicorn", "app.admin.source_management_api:management_app", "--host", "0.0.0.0", "--port", "8010"]
+    ports:
+      - "127.0.0.1:8010:8010"
+    environment:
+      ENV: ${ENV}
+      SECRET_KEY: ${SECRET_KEY}
+      IDEMPOTENCY_HMAC_KEY: ${IDEMPOTENCY_HMAC_KEY}
+      IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY: ${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${SOURCE_MANAGEMENT_USER:-}
+      DB_PASSWORD: ${SOURCE_MANAGEMENT_PASSWORD:-}
+      SOURCE_MANAGEMENT_USER: ${SOURCE_MANAGEMENT_USER:-}
+      SQLALCHEMY_ECHO: "false"
+    networks:
+      - ws
+
+  source-management-bootstrap:
+    profiles: ["source-management-admin"]
+    image: postgres:17
+    restart: "no"
+    entrypoint: ["psql", "-X", "-v", "ON_ERROR_STOP=1", "-f", "/admin/configure-management-role.sql"]
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${DB_NAME}
+      PGUSER: ${DB_ADMIN_USER}
+      PGPASSWORD: ${DB_ADMIN_PASSWORD}
+      DB_MIGRATION_USER: ${DB_MIGRATION_USER}
+      DB_APP_USER: ${DB_APP_USER}
+      SOURCE_WRITER_USER: ${SOURCE_WRITER_USER}
+      SOURCE_MANAGEMENT_USER: ${SOURCE_MANAGEMENT_USER:-}
+      SOURCE_MANAGEMENT_PASSWORD: ${SOURCE_MANAGEMENT_PASSWORD:-}
+    volumes:
+      - ./postgres/configure-management-role.sql:/admin/configure-management-role.sql:ro
+    networks:
+      - ws
+
+  source-management-permission:
+    profiles: ["source-management-admin"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "app.admin.source_management_permissions"]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_MIGRATION_USER}
+      DB_PASSWORD: ${DB_MIGRATION_PASSWORD}
+      SQLALCHEMY_ECHO: "false"
+    networks:
+      - ws
 
   # 운영자가 명시적으로 실행하는 일회성 작업. 일반 배포에서는 시작하지 않습니다.
   source-writer:

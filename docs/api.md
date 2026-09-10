@@ -561,3 +561,7 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 | 2026-08-24 | Issue #68 | 현재 동기 API와 Post-MVP-1 목표 비동기 API를 분리해 문서화 |
 | 2026-08-24 | Issue #59 / PR #65 | 회원가입 MVP 입력값, OCR 실패 `error_message`, 처방 확정 필수값·DB 경계값 검증, OCR 최신 작업 정렬 기준을 반영 |
 | 2026-08-21 | Issue #51 / PR #52 | OCR 결과 조회 응답에 `normalized_value`와 `normalization_version`을 추가하고, `raw_value`, `normalized_value`, `confirmed_value`의 역할을 명시 |
+
+## #398 분리된 Source·Catalog 관리 API (브랜치 구현, 리뷰 대기)
+
+일반 API에 mount하지 않는 별도 관리 앱의 GET/PATCH/DELETE 계약과 401/403/409/422 의미는 [PD-398-M1](contracts/proposed/source-catalog-management-398.md)을 따른다. 회원 가입과 is_admin만으로는 접근 권한을 얻지 않는다. 일반 회원 화면에는 관리 기능을 추가하지 않는다.

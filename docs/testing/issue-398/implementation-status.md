@@ -2,7 +2,7 @@
 
 기준 develop: `99bb2597afb0b0b2d4514bf44b5e7b9f66cd6643`
 
-상태: Trigger 제거와 Python 무결성 전환 완료. 누락됐던 Source·Catalog 관리 API·권한·감사 경로를 추가하고 PostgreSQL 검증 완료(23 passed). 관리 실행 설정·최종 인수 문서는 진행 중. #398 → #291 연계 → #372 순서이며 #404는 병합 후 후속 작업.
+상태: Trigger 제거와 Python 무결성 전환 완료. 누락됐던 Source·Catalog 관리 API·권한·감사 경로와 분리된 실행 설정·인수 문서를 완료했다. 최종 검증: 관리/권한/실행 계약 26 passed, 전체 migration 150 passed, 실제 이미지 2 passed. Ruff 전체 및 Backend/Worker mypy 516개 파일 통과. #398 → #291 연계 → #372 순서이며 #404는 병합 후 후속 작업.
 
 아래 단계별 기록은 당시 상태를 보존한 이력이다. 과거 “미완료” 표시는 최신 상태를 의미하지 않는다. 관리 경계의 최신 계약은 [PD-398-M1](../../contracts/proposed/source-catalog-management-398.md)을 따른다.
 
@@ -328,3 +328,12 @@ Source cleanup 검증 후 최신 head 종합 검사를 다시 실행해 public/s
 - 이동 중인 PR #372 코드는 현재 브랜치에 cherry-pick하지 않았다. PR #404와 마찬가지로 병합 또는 head 확정 후 통합 구현·전체 migration 검증을 수행한다.
 
 검증 결과: PR #372 제거 함수·보호 Writer 계약을 포함한 관련 계약 12 passed, Ruff, DB 로직 재도입·보호 Writer·diff 검사 통과. GitHub 브라우저 보안 정책 확인 실패로 #398 원격 이슈 본문 편집은 아직 적용하지 못했고, 붙여 넣을 정확한 문구를 Catalog 전환 문서에 기록했다.
+
+
+## Source·Catalog 관리 경계 완료 (2026-09-10)
+
+- `c48c268`: 인증 사용자+서버 권한의 API/Service 이중 검증, 같은 transaction의 관리 변경·감사, stale/retry/동시성, 권한 부여·회수, 전용 DB 역할과 `3980718293a4` migration.
+- 별도 관리 프로필·loopback 포트·one-shot 역할 초기화/권한 명령. 일반 API/Worker credential·라우트 분리. Source 원본·version·checksum·identity·승인 상태는 일반 PATCH로 변경하지 않는다.
+- 관리 기능은 미사용 초안에 한정한다. 참조·승인·사용 중인 자료와 provenance가 없는 Snapshot/Catalog는 거부한다. Source 계층 메타데이터에는 존재하지 않는 Snapshot provenance를 만들지 않고 null로 기록한다.
+- [관리 인수 절차](management-handoff.md)와 [PD-398-M1](../../contracts/proposed/source-catalog-management-398.md)에 실제 지원 범위와 적용 순서를 기록했다.
+- AWS/운영 DB 미적용. 담당 리뷰·병합은 별도. #372는 #398/#291 이후 migration·신규 Writer 정책을 연결하며 #404는 병합 후 처리한다.

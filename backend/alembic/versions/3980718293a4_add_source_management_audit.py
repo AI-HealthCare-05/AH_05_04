@@ -51,6 +51,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Permission removal must not silently destroy management evidence.
     connection = op.get_bind()
+    connection.execute(sa.text("LOCK TABLE source_management_audit IN ACCESS EXCLUSIVE MODE"))
     if connection.scalar(sa.text("SELECT EXISTS (SELECT 1 FROM source_management_audit)")):
         raise RuntimeError("Management audit exists; preserve evidence before downgrade")
     op.drop_table("source_management_audit")

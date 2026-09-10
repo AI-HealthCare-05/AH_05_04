@@ -323,6 +323,16 @@ async def test_api_requires_real_auth_permission_and_rejects_payload_roles(datab
             assert (await client.get(path)).status_code == 401
             headers = {"Authorization": f"Bearer {token}"}
             assert (await client.get(path, headers=headers)).status_code == 403
+            forbidden = command(0, "0" * 64).model_dump(mode="json")
+            assert (await client.patch(path, headers=headers, json=forbidden)).status_code == 403
+            assert (
+                await client.request(
+                    "DELETE",
+                    path,
+                    headers=headers,
+                    json={key: value for key, value in forbidden.items() if key != "changes"},
+                )
+            ).status_code == 403
             async with async_sessionmaker(engine).begin() as session:
                 session.add(SourceManagementPermission(user_id=actor.user_id, enabled=True, approval_hash="a" * 64))
             response = await client.get(path, headers=headers)
@@ -330,6 +340,10 @@ async def test_api_requires_real_auth_permission_and_rejects_payload_roles(datab
             request = command(0, response.json()["hash"]).model_dump(mode="json")
             assert (await client.patch(path, headers=headers, json={**request, "role": "admin"})).status_code == 422
             assert (await client.patch(path, headers=headers, json=request)).status_code == 200
+            async with async_sessionmaker(engine).begin() as session:
+                permission = await session.get(SourceManagementPermission, actor.user_id)
+                permission.enabled = False
+            assert (await client.patch(path, headers=headers, json=request)).status_code == 403
     finally:
         management_app.dependency_overrides.clear()
 
@@ -398,8 +412,110 @@ async def test_forward_migration_and_audit_preserving_downgrade(database):
     assert (await migrate("upgrade", "head")).returncode == 0
     actor, target_id = await seed(engine)
     current = await inspect_target(engine, actor, TargetKind.SOURCE, target_id)
-    await mutate(engine, actor, TargetKind.SOURCE, target_id, command(0, current.hash))
-    assert (await migrate("downgrade", "398f60718293")).returncode != 0
+    async with async_sessionmaker(engine).begin() as session:
+        await SourceManagementService(session).mutate(actor, TargetKind.SOURCE, target_id, command(0, current.hash))
+        downgrade = asyncio.create_task(migrate("downgrade", "398f60718293"))
+        waiting = False
+        for _ in range(100):
+            async with engine.connect() as connection:
+                waiting = bool(
+                    await connection.scalar(
+                        text(
+                            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() "
+                            "AND query LIKE 'LOCK TABLE source_management_audit%' AND wait_event_type='Lock')"
+                        )
+                    )
+                )
+            if waiting or downgrade.done():
+                break
+            await asyncio.sleep(0.05)
+        assert waiting and not downgrade.done()
+    assert (await downgrade).returncode != 0
     async with engine.connect() as connection:
         assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "3980718293a4"
         assert await connection.scalar(text("SELECT count(*) FROM source_management_audit")) == 1
+
+
+async def test_permission_revocation_waits_for_inflight_change(database):
+    engine, _, _ = database
+    actor, target_id = await seed(engine)
+    current = await inspect_target(engine, actor, TargetKind.SOURCE, target_id)
+    revoke = PermissionChange(
+        user_id=actor.user_id, actor_id=actor.user_id, enabled=False, approval_hash="d" * 64, request_id=uuid4()
+    )
+    started = asyncio.Event()
+
+    async def revoke_permission():
+        async with async_sessionmaker(engine).begin() as session:
+            started.set()
+            await set_permission(session, revoke)
+
+    async with async_sessionmaker(engine).begin() as session:
+        await SourceManagementService(session).authorize(actor, lock=True)
+        task = asyncio.create_task(revoke_permission())
+        await started.wait()
+        result = await SourceManagementService(session).mutate(
+            actor, TargetKind.SOURCE, target_id, command(0, current.hash)
+        )
+        assert not task.done()
+    await asyncio.wait_for(task, timeout=5)
+    with pytest.raises(ApiError) as error:
+        await mutate(engine, actor, TargetKind.SOURCE, target_id, command(1, result.hash))
+    assert error.value.status_code == 403
+
+
+async def test_management_bootstrap_is_opt_in_and_redeploy_does_not_expand_rights(database):
+    container = os.environ.get("ISSUE398_TEST_POSTGRES_CONTAINER")
+    if not container:
+        pytest.skip("Explicit disposable PostgreSQL container required")
+    engine, url, (runtime, writer, manager) = database
+    root = Path(__file__).resolve().parents[3]
+    environment = {
+        **os.environ,
+        "SOURCE_MANAGEMENT_USER": manager,
+        "SOURCE_MANAGEMENT_PASSWORD": "synthetic-management-only",
+        "DB_MIGRATION_USER": "synthetic_owner",
+        "DB_APP_USER": runtime,
+        "SOURCE_WRITER_USER": writer,
+    }
+    arguments = ["docker", "exec", "-i"]
+    for name in (
+        "SOURCE_MANAGEMENT_USER",
+        "SOURCE_MANAGEMENT_PASSWORD",
+        "DB_MIGRATION_USER",
+        "DB_APP_USER",
+        "SOURCE_WRITER_USER",
+    ):
+        arguments.extend(["-e", name])
+    arguments.extend([container, "psql", "-X", "-U", config.DB_USER, "-d", url.database])
+    source = (root / "infra/docker/postgres/configure-management-role.sql").read_text()
+
+    async def bootstrap(overrides=None):
+        return await asyncio.to_thread(
+            subprocess.run,
+            arguments,
+            input=source,
+            env={**environment, **(overrides or {})},
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+
+    assert (await bootstrap({"SOURCE_MANAGEMENT_USER": config.DB_USER})).returncode != 0
+    assert (await bootstrap()).returncode == 0
+    async with engine.begin() as connection:
+        for role in (runtime, writer):
+            await connection.execute(text(f'CREATE ROLE "{role}" LOGIN'))
+        assert not await connection.scalar(
+            text("SELECT has_table_privilege(:role, 'rag_source', 'UPDATE')"), {"role": manager}
+        )
+        await apply_management_role_policy(
+            connection, owner=config.DB_USER, runtime=runtime, writer=writer, management=manager
+        )
+    assert (await bootstrap()).returncode == 0
+    managed = create_async_engine(url.set(username=manager, password="synthetic-management-only"), hide_parameters=True)
+    try:
+        async with managed.connect() as connection:
+            await validate_management_connection(connection)
+    finally:
+        await managed.dispose()

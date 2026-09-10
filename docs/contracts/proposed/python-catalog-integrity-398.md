@@ -12,7 +12,7 @@ Draft PR #372가 추가하는 `166a7b8c9d0e`와 `166b8c9d0e1f` migration의 Post
 - Set에 포함된 Catalog 구성원 변경 차단: 함수 1개, Trigger 5개
 - Catalog Set·Source·Member·Hash 변경 차단: 함수 1개, Trigger 4개
 
-PR #372는 2026-09-10 확인 시 `develop`보다 28개 commit 뒤에 있으며 migration 부모가 `164b6c7d8e9f`다. 그대로 병합하면 현재 `398f60718293`과 별도 Alembic head가 생기므로 최신 `develop` 위에서 migration 순서를 다시 연결해야 한다.
+2026-09-10 후속 작업으로 #372에 `c263698`(Trigger 제거), `7e1c113`(Python 검증), `6f1acc9`(develop 통합)이 반영되었다. 166a migration 부모는 당시 develop head `201a1b2c3d4e`로 연결했다. #398을 먼저 병합하므로 #372 진행 시 #291 정보 계약과 함께 최신 migration 부모·전용 Writer 권한을 다시 연결해야 한다. 위 Trigger/함수 수는 수정 전 제거 대상 목록이다.
 
 ## Python 대체 기준
 
@@ -40,6 +40,8 @@ PR #372는 2026-09-10 확인 시 `develop`보다 28개 commit 뒤에 있으며 m
 - Runtime 계정은 Catalog를 읽기만 하며, 검토된 Catalog Writer만 필요한 INSERT를 수행한다. UPDATE·DELETE·TRUNCATE는 부여하지 않는다.
 
 ## 병합 순서
+
+#398을 먼저 병합한다. 아래 #372 단계 중 함수·Trigger 제거와 Python Adapter 검증, 당시 develop 통합은 위 세 커밋에서 완료했다. 남은 #291 계약 연계·최신 migration 부모·신규 Catalog 역할 정책은 #372에서 진행한다.
 
 1. PR #372를 최신 `develop`에 맞춰 갱신하고 Alembic 부모를 단일 최신 head에 연결한다.
 2. 두 신규 migration에서 함수·Trigger 생성과 `assembly_xid`를 제거한다.

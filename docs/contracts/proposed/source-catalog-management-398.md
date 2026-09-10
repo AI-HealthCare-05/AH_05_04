@@ -28,4 +28,4 @@ revision은 해당 대상의 마지막 감사 revision이며 최초 0이다. has
 
 ## 검증 근거
 
-`tests/integration/rag/test_source_management.py`: 관리 API/Service, 실제 제한 역할, 권한 부여·회수, stale, 멱등 재시도, 감사 실패 rollback, 동시 수정·삭제, Snapshot 상태와 Receipt, migration 및 감사 보존 downgrade 거부를 검증한다. 기존 role provisioning/head 계약 검사와 합계 23 passed (2026-09-10). 배포 실행 설정은 다음 단계에서 검증한다.
+`tests/integration/rag/test_source_management.py`: 관리 API/Service, 실제 제한 역할, 권한 부여·회수, stale, 멱등 재시도, 감사 실패 rollback, 동시 수정·삭제, Snapshot 상태와 Receipt, migration 및 감사 보존 downgrade 거부를 검증한다. 기존 role provisioning/head/관리 실행 설정 검사와 합계 26 passed (2026-09-10). 전체 migration 150 passed, 실제 Backend 이미지 검증 2 passed. Ruff 전체 검사·format 및 Backend/Worker 516개 파일 mypy 통과. 관리 실행 절차는 [인수 문서](../../testing/issue-398/management-handoff.md)를 따른다.

@@ -1,6 +1,6 @@
 # PD-398: Python Snapshot 상태 전이
 
-상태: Source 제거 migration·Writer 권한 연결 구현. 관리 경로 완성·종합 배포 검증·리뷰 대기. 현재 배포 계약으로 승격하지 않는다.
+상태: Source 제거 migration·분리된 Writer·관리 경로 구현 및 로컬 종합 검증 완료. 담당 리뷰와 실제 운영 적용 대기. 현재 배포 계약으로 승격하지 않는다.
 
 구현: 김지혜. 검토: 송은영(DB·권한), 정현우(Source), 권가빈(제품 수용).
 
@@ -97,4 +97,8 @@ Snapshot 생성은 두 Repository 모두 PENDING이며 verified_at/effective_at�
 
 삭제는 정확한 이름으로 수행하며 CASCADE를 사용하지 않는다. 예상 밖 의존성이나 잔여 Source 트리거가 있으면 권한 회수까지 전체 rollback한다. downgrade는 트리거를 재도입하지 않으며 명시적으로 거부한다. 복구는 검토한 forward-fix 또는 배포 전 백업 절차로 처리한다.
 
-과거 migration 계약 테스트는 되돌릴 수 있는 398b까지 고정한다. 최신 head의 기존 자료 보존·빈 DB upgrade·트리거/함수 0개·실제 Writer 선택·재시도·권한 거부·downgrade 차단은 별도 폐기 DB 통합 테스트에서 확인한다. 여기서 0개는 Source 범위이며 Prescription/Candidate/Runtime/Evidence/Check-in/정리 도구까지 모두 제거됐다는 의미는 아니다. Source 관리 수정·삭제·승인/철회 경로 완성 및 #404 병합 후 통합은 남아 있다.
+과거 migration 계약 테스트는 되돌릴 수 있는 398b까지 고정한다. 최신 head의 기존 자료 보존·빈 DB upgrade·트리거/함수 0개·실제 Writer 선택·재시도·권한 거부·downgrade 차단은 별도 폐기 DB 통합 테스트에서 확인한다. 여기서 0개는 Source 범위이며 Prescription/Candidate/Runtime/Evidence/Check-in/정리 도구까지 모두 제거됐다는 의미는 아니다. 당시 남겨둔 Source 관리 수정·삭제·권한 부여/회수는 아래 PD-398-M1에서 보완했다. #404는 병합 후 별도로 통합한다.
+
+## Source·Catalog 관리 경로 후속 구현
+
+기존 문서의 관리 API·권한·감사 “미완료” 항목은 [PD-398-M1](source-catalog-management-398.md) 구현으로 보완했다. Snapshot 원본 변경은 허용하지 않고 새 version으로 처리한다. 관리 실행 환경과 인수 절차는 [관리 인수 문서](../../testing/issue-398/management-handoff.md)를 따른다. 운영 적용·담당 리뷰는 별도다.

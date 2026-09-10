@@ -24,3 +24,34 @@ def test_backend_container_can_import_runtime_and_load_migration_head(storage_di
         text=True,
     )
     assert completed.stdout.strip() == "ok"
+
+
+def test_backend_image_contains_isolated_management_entrypoints(storage_dir_built_image: str) -> None:
+    completed = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-e",
+            "DB_HOST=synthetic",
+            "-e",
+            "DB_USER=synthetic",
+            "-e",
+            "DB_PASSWORD=synthetic",
+            "-e",
+            "DB_NAME=synthetic",
+            storage_dir_built_image,
+            "uv",
+            "run",
+            "--no-sync",
+            "python",
+            "-c",
+            "from app.admin.source_management_api import management_app; "
+            "from app.admin.source_management_permissions import PermissionChange; "
+            "assert '/management/{kind}/{target_id}' in management_app.openapi()['paths']; print('ok')",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.stdout.strip() == "ok"

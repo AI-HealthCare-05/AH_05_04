@@ -10,7 +10,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [PD-398 Python Candidate 결과 저장](./proposed/python-candidate-integrity-398.md): 결과 저장·최종화 원자성, 최소 권한, 기존 Trigger 제거 구현.
 - [PD-398 Python Prescription 무결성](./proposed/python-prescription-integrity-398.md): count/hash 저장·소비 검증·NOT NULL·최소 권한·기존 Trigger 제거 구현.
 - [PD-398 Python append-only 이력](./proposed/python-append-only-integrity-398.md): Runtime 전이·Check-in·Evidence 이력의 Python transaction과 INSERT 전용 권한.
-- [PD-398 Python Snapshot 상태 전이](./proposed/python-snapshot-transition-398.md): 작업 브랜치 부분 구현. Source 제거 migration·Writer 배포 권한 연결 구현. 잔여 관리 경로·종합 검증·최종 리뷰 전까지 배포 금지.
+- [PD-398 Python Snapshot 상태 전이](./proposed/python-snapshot-transition-398.md): 작업 브랜치 구현·로컬 검증 완료. Source 제거 migration·Writer·관리 경로는 연결됐으며 담당 리뷰·운영 적용은 별도.
 - [PD-398 Python Catalog 무결성](./proposed/python-catalog-integrity-398.md): Draft PR #372의 Identity·Search Entry·Catalog Set 함수 5개와 Trigger 15개를 Python 저장 경계로 전환하는 병합 기준.
 
 계약 문서는 승인·구현 상태에 따라 다음 경로에서 관리합니다.

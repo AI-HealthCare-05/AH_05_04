@@ -85,7 +85,9 @@ async def validate_management_connection(connection: AsyncConnection) -> None:
             "SELECT has_column_privilege(current_user, 'source_management_permission', 'enabled', 'UPDATE') "
             "OR has_table_privilege(current_user, 'source_management_permission', 'INSERT,DELETE,TRUNCATE') "
             "OR has_table_privilege(current_user, 'source_management_audit', 'UPDATE,DELETE,TRUNCATE') "
-            "OR has_column_privilege(current_user, 'user', 'is_admin', 'UPDATE')"
+            "OR has_column_privilege(current_user, 'user', 'is_admin', 'UPDATE') "
+            "OR has_column_privilege(current_user, 'user', 'hashed_password', 'SELECT') "
+            "OR has_schema_privilege(current_user, 'public', 'CREATE')"
         )
     )
     required = await connection.scalar(
