@@ -69,7 +69,7 @@ async def login(
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> Response:
     user = await auth_service.authenticate(request)
-    tokens = await auth_service.login(user)
+    tokens = await auth_service.login(user, password=request.password)
     resp = Response(
         content=LoginResponse(access_token=str(tokens["access_token"])).model_dump(), status_code=status.HTTP_200_OK
     )
@@ -109,9 +109,15 @@ async def token_refresh(
     )
     if not rotation_succeeded:
         # 이미 rotation으로 교체된 refresh token이 다시 제출됐다 — 탈취 의심 신호이므로
-        # 이 사용자의 모든 access/refresh token을 강제로 무효화한다(다른 기기의 다른
-        # 세션은 각자의 refresh_session row로 스코프되어 있어 영향받지 않는다). 아래에서
-        # 바로 invalid_token_error()를 raise하면 get_db_session이 세션 전체를 rollback해
+        # 이 사용자의 token_version을 전역으로 올려 모든 access/refresh token을 강제로
+        # 무효화한다(PR #404 후속 리뷰). refresh_session의 세션별 스코프는 CAS 판정
+        # 자체를 이 세션으로 좁혀 "다른 기기의 정상 로그인을 재사용으로 오판하지
+        # 않는다"는 뜻일 뿐이다 — CAS가 실패한 뒤의 결과(token_version 전역 증가)는
+        # 그 세션으로 한정되지 않고 다른 기기의 세션도 함께 로그아웃시킨다. 이 CAS는
+        # 진짜 탈취뿐 아니라 같은 세션에 대한 단순 동시 rotation 경쟁으로도 실패할 수
+        # 있으므로, Frontend가 동시 401 요청에 single-flight refresh를 적용하지 않으면
+        # 정상 사용 중에도 다른 기기까지 의도치 않게 로그아웃될 수 있다. 아래에서 바로
+        # invalid_token_error()를 raise하면 get_db_session이 세션 전체를 rollback해
         # 이 증가분도 함께 사라지므로 즉시 commit한다(ocr_repository.mark_failed와 동일 패턴).
         await user_repository.increment_token_version(user)
         await user_repository.session.commit()

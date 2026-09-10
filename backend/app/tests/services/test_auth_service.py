@@ -121,7 +121,7 @@ async def test_login_waits_for_concurrent_logout_and_issues_latest_token_version
         )
         assert authenticated_user.token_version == 0
 
-        login_task = asyncio.create_task(login_auth_service.login(authenticated_user))
+        login_task = asyncio.create_task(login_auth_service.login(authenticated_user, password=_TEST_PASSWORD))
 
         blocked = False
         for _ in range(100):
@@ -152,6 +152,74 @@ async def test_login_waits_for_concurrent_logout_and_issues_latest_token_version
     assert tokens is not None
     assert tokens["access_token"]["token_version"] == 1
     assert tokens["refresh_token"]["token_version"] == 1
+
+
+async def test_login_rejects_when_password_reset_commits_before_lock_is_acquired() -> None:
+    """PR #404 후속 리뷰: `login()`이 row lock 획득 후 `token_version`만 다시 읽고
+    비밀번호는 재검증하지 않으면, `authenticate()`가 이전(곧 무효화될) 비밀번호로
+    통과한 뒤 그 사이 비밀번호 재설정이 커밋돼도 최신 `token_version`으로 유효한
+    토큰이 발급된다 — 이전 비밀번호를 아는 요청이 재설정 이후에도 접근을 유지해
+    재설정의 보안 목적을 무력화한다. `login()`이 lock 획득 후 현재 비밀번호로
+    다시 검증해 거부하는지, 진짜 두 DB 커넥션의 경쟁으로 검증한다."""
+    user = await _create_committed_user(email=f"login-reset-race-{uuid4().hex[:10]}@example.com")
+
+    reset_session = AsyncSession(bind=test_engine, expire_on_commit=False)
+    login_session = AsyncSession(bind=test_engine, expire_on_commit=False)
+    login_task: asyncio.Task | None = None
+    login_error: ApiError | None = None
+    try:
+        # 재설정 트랜잭션이 비밀번호 변경 + token_version 증가를 커밋 전 상태로
+        # 유지해, 아직 진행 중인 동시 재설정을 재현한다.
+        reset_user = await UserRepository(reset_session).get_user_for_update(user.id)
+        assert reset_user is not None
+        reset_user.hashed_password = hash_password("NewPassword456!")
+        await UserRepository(reset_session).increment_token_version(reset_user)
+        await reset_session.flush()
+
+        # 실제 로그인 요청처럼 이전(곧 무효화될) 비밀번호로 authenticate()가 먼저
+        # 통과한다 — 아직 재설정이 commit 전이라(READ COMMITTED) 이전 비밀번호가
+        # 여전히 유효하게 보인다.
+        login_auth_service = AuthService(
+            UserRepository(login_session),
+            PasswordResetRepository(login_session),
+            RefreshSessionRepository(login_session),
+        )
+        authenticated_user = await login_auth_service.authenticate(
+            LoginRequest(email=user.email, password=_TEST_PASSWORD)
+        )
+
+        login_task = asyncio.create_task(login_auth_service.login(authenticated_user, password=_TEST_PASSWORD))
+
+        blocked = False
+        for _ in range(100):
+            if await _is_blocked_on_query_matching('"user"'):
+                blocked = True
+                break
+            await asyncio.sleep(0.05)
+
+        assert not login_task.done()
+        assert blocked, "로그인이 row lock에서 대기하지 않았습니다."
+
+        await reset_session.commit()
+
+        try:
+            await asyncio.wait_for(login_task, timeout=10)
+        except ApiError as exc:
+            login_error = exc
+        login_task = None
+    finally:
+        if reset_session.in_transaction():
+            await reset_session.rollback()
+        if login_task is not None:
+            login_task.cancel()
+            with contextlib.suppress(BaseException):
+                await login_task
+        await login_session.close()
+        await reset_session.close()
+        await _delete_user(user.id)
+
+    assert login_error is not None
+    assert login_error.status_code == 401
 
 
 async def test_reset_password_concurrent_confirm_only_succeeds_once() -> None:

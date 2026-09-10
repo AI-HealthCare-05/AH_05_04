@@ -109,16 +109,26 @@ class AuthService:
     async def login(
         self,
         user: User,
+        *,
+        password: str,
     ) -> dict[str, AccessToken | RefreshToken]:
-        await self.user_repo.update_last_login(user.id)
-
-        # 인증(authenticate()) 시점에 읽은 user.token_version은 그 이후 동시 로그아웃이
-        # 커밋하면 이미 낡은 값일 수 있습니다. 토큰 발급 직전에 row lock으로 다시 읽어,
-        # 동시 로그아웃 커밋 전이면 그 커밋을 기다렸다가 최신 token_version으로 발급하고,
-        # 이미 커밋됐으면 그 값을 바로 반영합니다.
+        # 인증(authenticate()) 시점에 읽은 user.token_version은 그 이후 동시 로그아웃이나
+        # 비밀번호 재설정이 커밋하면 이미 낡은 값일 수 있습니다. 토큰 발급 직전에 row
+        # lock으로 다시 읽어, 그 커밋을 기다렸다가 최신 token_version으로 발급합니다.
         fresh_user = await self.user_repo.get_user_for_update(user.id)
         if fresh_user is None:
             raise _invalid_credentials_error()
+
+        # PR #404 후속 리뷰: authenticate()가 검증한 비밀번호는 이 지점에서 이미 낡았을
+        # 수 있습니다 — 그 사이 비밀번호 재설정이 커밋되면, row lock은 최신
+        # token_version을 반영할 뿐 자격 증명 자체는 다시 확인하지 않아, 이전
+        # 비밀번호를 아는 요청이 재설정 이후에도 유효한 토큰을 발급받아 재설정의
+        # 보안 목적(이전 비밀번호로의 접근 차단)을 무력화할 수 있었습니다. lock을
+        # 획득한 뒤 현재 비밀번호로 다시 검증합니다.
+        if not verify_password(password, fresh_user.hashed_password):
+            raise _invalid_credentials_error()
+
+        await self.user_repo.update_last_login(fresh_user.id)
 
         tokens = self.jwt_service.issue_jwt_pair(fresh_user)
         refresh_token = tokens["refresh_token"]
