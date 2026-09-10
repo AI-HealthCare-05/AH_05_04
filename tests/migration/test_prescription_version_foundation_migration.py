@@ -28,12 +28,12 @@ PRESCRIPTION_VERSION_BASE_REVISION = "164a9c8e7d6f"
 def legacy_foundation_schema():
     """169a Trigger 계약 자체는 #398 이전 schema에서 검증한다."""
     configuration = create_alembic_config()
-    command.upgrade(configuration, "head")
+    command.upgrade(configuration, "398b2c3d4e5f")
     command.downgrade(configuration, "201a1b2c3d4e")
     try:
         yield
     finally:
-        command.upgrade(configuration, "head")
+        command.upgrade(configuration, "398b2c3d4e5f")
 
 
 def create_alembic_config() -> Config:

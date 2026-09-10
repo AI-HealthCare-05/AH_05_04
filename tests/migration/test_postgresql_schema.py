@@ -10,7 +10,6 @@ import pytest
 import pytest_asyncio
 from alembic import command
 from alembic.config import Config
-from alembic.script import ScriptDirectory
 from sqlalchemy import URL, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
@@ -637,7 +636,7 @@ def test_profile_migration_preserves_existing_resource_graph_and_roundtrips() ->
                     chat_session_id=chat_session_id,
                 )
             )
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -655,13 +654,11 @@ async def migrated_engine() -> AsyncIterator[AsyncEngine]:
 
 
 @pytest.mark.asyncio
-async def test_database_is_at_alembic_head(
+async def test_database_is_at_pre_source_cutover_revision(
     migrated_engine: AsyncEngine,
 ) -> None:
-    """DB에 적용된 revision이 저장소의 Alembic head와 일치하는지 확인합니다."""
-    alembic_config = Config(str(PROJECT_ROOT / "backend" / "alembic.ini"))
-    script_directory = ScriptDirectory.from_config(alembic_config)
-    expected_heads = set(script_directory.get_heads())
+    """Historical schema tests use the revision before irreversible Source cutover."""
+    expected_heads = {"398b2c3d4e5f"}
 
     async with migrated_engine.connect() as connection:
         result = await connection.execute(text("SELECT version_num FROM alembic_version"))
@@ -1311,13 +1308,13 @@ def test_ocr_ai_job_mapping_migration_roundtrips_and_preserves_existing_rows() -
 
         user_id, document_id, ocr_job_id = asyncio.run(_insert_pre_mapping_ocr_job())
 
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         assert asyncio.run(_fetch_ocr_ai_job_column_exists()) is True
         assert asyncio.run(_fetch_ocr_ai_job_id(ocr_job_id)) is None
 
         # 이미 head인 상태에서 다시 실행해도 추가 변경 없이 성공해야 합니다.
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         assert asyncio.run(_fetch_ocr_ai_job_id(ocr_job_id)) is None
 
@@ -1327,12 +1324,12 @@ def test_ocr_ai_job_mapping_migration_roundtrips_and_preserves_existing_rows() -
         )
         assert asyncio.run(_fetch_ocr_ai_job_column_exists()) is False
 
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         assert asyncio.run(_fetch_ocr_ai_job_column_exists()) is True
         assert asyncio.run(_fetch_ocr_ai_job_id(ocr_job_id)) is None
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         if user_id and document_id and ocr_job_id:
             asyncio.run(
@@ -1538,7 +1535,7 @@ def test_ocr_ai_job_mapping_downgrade_blocks_concurrent_link_write() -> None:
     downgrade_future: Future[None] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             writer_future = executor.submit(
@@ -1592,7 +1589,7 @@ def test_ocr_ai_job_mapping_downgrade_blocks_concurrent_link_write() -> None:
             except RuntimeError:
                 pass
 
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         if user_id and document_id and ocr_job_id and ai_job_id:
             asyncio.run(
@@ -1613,7 +1610,7 @@ def test_ocr_ai_job_mapping_downgrade_rejects_linked_data() -> None:
     ai_job_id = ""
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         user_id, document_id, ocr_job_id, ai_job_id = asyncio.run(_insert_linked_ocr_ai_job())
 
@@ -1629,7 +1626,7 @@ def test_ocr_ai_job_mapping_downgrade_rejects_linked_data() -> None:
         assert asyncio.run(_fetch_ocr_ai_job_column_exists()) is True
         assert asyncio.run(_fetch_ocr_ai_job_id(ocr_job_id)) == ai_job_id
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         if user_id and document_id and ocr_job_id and ai_job_id:
             asyncio.run(
@@ -2270,7 +2267,7 @@ def test_guide_ai_job_mapping_migration_roundtrips_and_preserves_existing_rows()
                     guide_id=guide_id,
                 )
             )
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 async def _insert_linked_guide_ai_job() -> tuple[str, str, str, str, str, str]:
@@ -2535,7 +2532,7 @@ def test_guide_ai_job_mapping_downgrade_blocks_concurrent_link_write() -> None:
                     ai_job_id=ai_job_id,
                 )
             )
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_guide_ai_job_mapping_downgrade_rejects_linked_data() -> None:
@@ -2577,7 +2574,7 @@ def test_guide_ai_job_mapping_downgrade_rejects_linked_data() -> None:
                     ai_job_id=ai_job_id,
                 )
             )
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 @pytest.mark.asyncio

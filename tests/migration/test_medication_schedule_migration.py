@@ -270,7 +270,7 @@ async def _execute_expect_constraint(sql: str, values: Mapping[str, object], *, 
 
 def test_schedule_migration_upgrade_and_downgrade() -> None:
     alembic_config = create_alembic_config()
-    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "398b2c3d4e5f")
     try:
         command.downgrade(alembic_config, SCHEDULE_BASE_REVISION)
         assert asyncio.run(_fetch_table_names()) == set()
@@ -288,11 +288,11 @@ def test_schedule_migration_upgrade_and_downgrade() -> None:
             "idx_medication_occurrence_deadline_status",
         } <= schema_objects
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_schedule_constraints_and_utc_storage() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
     ids = asyncio.run(_seed_graph())
     try:
         asyncio.run(
@@ -385,7 +385,7 @@ def test_schedule_constraints_and_utc_storage() -> None:
 
 def test_schedule_downgrade_rejects_existing_history() -> None:
     alembic_config = create_alembic_config()
-    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "398b2c3d4e5f")
     ids = asyncio.run(_seed_graph())
     try:
         with pytest.raises(RuntimeError, match=f"Cannot downgrade revision {SCHEDULE_REVISION}"):
@@ -393,4 +393,4 @@ def test_schedule_downgrade_rejects_existing_history() -> None:
         assert asyncio.run(_fetch_table_names()) == SCHEDULE_TABLES
     finally:
         asyncio.run(_cleanup_graph(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")

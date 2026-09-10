@@ -103,7 +103,7 @@ jobs:
       - name: Run PostgreSQL migrations
         env:
           PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
-        run: uv run alembic -c backend/alembic.ini upgrade head
+        run: uv run alembic -c backend/alembic.ini upgrade 398b2c3d4e5f
       # backend/app/tests/conftest.py가 스키마를 재생성하기 전에
       # Alembic이 만든 실제 PostgreSQL 구조를 검증합니다.
       - name: Validate migrated PostgreSQL schema
@@ -111,8 +111,14 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
         run: uv run pytest tests/migration -v
 
+      - name: Apply irreversible Source cutover
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
+        run: uv run alembic -c backend/alembic.ini upgrade head
+
       - name: Run Backend Tests with Coverage
         env:
+          ISSUE398_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
           PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
         run: |
           uv run coverage run -m pytest backend/app tests/contract tests/integration/rag tests/integration/test_worker_ocr_persistence.py tests/integration/test_outbox_publisher.py tests/integration/test_worker_job_execution_repository.py::test_handler_permanent_failure_marks_real_ocr_job_failed tests/integration/test_worker_job_execution_repository.py::test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle tests/integration/test_worker_dlq_outbox_repository.py tests/integration/test_worker_recovery_repository.py

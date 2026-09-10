@@ -346,6 +346,12 @@ class RagSourceCatalogRepository:
         return operation
 
     async def create_snapshot(self, item: RagSourceSnapshotCreate) -> RagSourceSnapshot:
+        if (
+            item.verification_status != RagSnapshotVerificationStatus.PENDING
+            or item.verified_at is not None
+            or item.effective_at is not None
+        ):
+            raise ValueError("Snapshot must start PENDING without publication timestamps")
         snapshot = RagSourceSnapshot(
             operation_id=item.operation_id,
             source_version=item.source_version,

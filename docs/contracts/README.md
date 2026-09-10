@@ -8,7 +8,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 - [PD-398 Python Candidate 결과 저장](./proposed/python-candidate-integrity-398.md): 결과 저장·최종화 원자성 부분 구현. 권한·migration 대기.
 - [PD-398 Python Prescription 무결성](./proposed/python-prescription-integrity-398.md): count/hash 저장·Backend 소비 검증·NOT NULL 구현. 멱등성·권한·Trigger 제거 대기.
-- [PD-398 Python Snapshot 상태 전이](./proposed/python-snapshot-transition-398.md): 작업 브랜치 부분 구현. Writer 배포 권한 연결 구현. 제거 migration·최종 리뷰 전까지 배포 금지.
+- [PD-398 Python Snapshot 상태 전이](./proposed/python-snapshot-transition-398.md): 작업 브랜치 부분 구현. Source 제거 migration·Writer 배포 권한 연결 구현. 잔여 관리 경로·종합 검증·최종 리뷰 전까지 배포 금지.
 
 계약 문서는 승인·구현 상태에 따라 다음 경로에서 관리합니다.
 

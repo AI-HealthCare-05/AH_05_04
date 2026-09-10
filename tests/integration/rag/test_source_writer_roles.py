@@ -50,6 +50,11 @@ async def test_separate_credentials_and_future_tables_are_fail_closed() -> None:
                     connection, schema=schema, owner=config.DB_USER, runtime=runtime, writer=writer
                 )
             await connection.execute(text(f'ALTER DEFAULT PRIVILEGES REVOKE INSERT ON TABLES FROM "{writer}"'))
+            await connection.execute(
+                text(
+                    f'ALTER TABLE "{schema}".rag_source_snapshot ADD COLUMN verification_status text, ADD COLUMN verified_at timestamptz, ADD COLUMN effective_at timestamptz'
+                )
+            )
             await connection.execute(text(f'CREATE TABLE "{schema}".unrelated (id integer)'))
             await connection.execute(text(f'GRANT USAGE ON SCHEMA "{schema}" TO "{runtime}", "{writer}"'))
             await connection.execute(text(f'GRANT INSERT (id), UPDATE (id) ON "{schema}".unrelated TO "{writer}"'))
@@ -83,13 +88,13 @@ async def test_separate_credentials_and_future_tables_are_fail_closed() -> None:
                 )
             await connection.execute(text(f'CREATE TABLE "{schema}".future_table (id integer)'))
         async with producer.begin() as connection:
-            await connection.execute(text(f'INSERT INTO "{schema}".rag_source_snapshot VALUES (1)'))
-            await connection.execute(text(f'UPDATE "{schema}".rag_source_snapshot SET id=2 WHERE id=1'))
+            await connection.execute(text(f'INSERT INTO "{schema}".rag_source_snapshot (id) VALUES (1)'))
+            await connection.execute(text(f'UPDATE "{schema}".rag_source_snapshot SET verified_at=now() WHERE id=1'))
             await connection.execute(text(f'INSERT INTO "{schema}".rag_source_snapshot_verification VALUES (1)'))
         async with reader.connect() as connection:
-            assert await connection.scalar(text(f'SELECT id FROM "{schema}".rag_source_snapshot')) == 2
+            assert await connection.scalar(text(f'SELECT id FROM "{schema}".rag_source_snapshot')) == 1
         denied = [
-            (reader, f'INSERT INTO "{schema}".rag_source_snapshot VALUES (3)'),
+            (reader, f'INSERT INTO "{schema}".rag_source_snapshot (id) VALUES (3)'),
             (reader, f'UPDATE "{schema}".rag_source_snapshot SET id=3'),
             (reader, f'DELETE FROM "{schema}".rag_source_snapshot'),
             (reader, f'SET ROLE "{writer}"'),

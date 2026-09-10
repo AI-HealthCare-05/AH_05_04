@@ -193,3 +193,27 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 검증: Source/Writer/실제 bootstrap·provisioning 34 passed, 배포 계약·입력 검증 29 passed, 과거 Source migration 계약 4 passed (총 67개, 재실행 제외). Ruff/format, 생산 코드 Mypy, shell 구문, Trigger/RLS 재도입 검사, diff 검사 통과. 현재 ORM의 모든 테이블과 명시적 목록 대조 완료.
 
 폐기 DB에서 bootstrap → provisioning → 재배포 반복과 계정별 실제 DML/sequence 거부, 실패 rollback을 검증했다. 전체 migration 이력에는 아직 기존 Source 전이 함수가 남아 있으므로 provisioning이 의도대로 거부되는 것도 확인했다. 기존 Trigger를 제거하지 않았고, 운영 배포·컨테이너 이미지 빌드/실행·운영 DB 변경은 하지 않았다. 다른 도메인의 명시적 호환 DML 목록은 해당 도메인 Writer 전환 완료를 의미하지 않는다. 제거 migration과 도메인별 남은 전환, #404 병합 후 통합이 필요하다.
+
+## 398c Source 함수·트리거 제거
+
+- 398c3d4e5f60 forward migration: Source 트리거 6개, 함수 5개 제거. 적용된 과거 migration은 변경하지 않음
+- Source 7개 테이블 잠금 및 소유자 외 테이블·컬럼 권한 회수를 제거와 같은 transaction에서 수행
+- 권한 provisioning 전 구간에서 Runtime/Writer 쓰기 차단, provisioning 후 실제 Writer 선택·재실행 성공
+- Snapshot Writer UPDATE를 상태·verified_at·effective_at으로 한정; 원본 hash/identity 직접 수정 차단
+- Backend Snapshot 생성도 PENDING 및 게시 시각 없음만 허용 (Worker는 이미 고정 생성)
+- 예상 밖 함수 의존성이 있으면 제거·권한 회수 전체 rollback. DROP CASCADE 없음
+- Source 0개 판정은 Source 범위에 한정. 다른 도메인 및 정리 도구 Trigger 제거는 후속 작업
+- downgrade는 새 Trigger를 재도입하지 않고 명시적으로 거부. forward-fix/배포 전 백업 복구 정책 문서화
+- 과거 migration 테스트는 398b로 고정, CI/로컬 runner는 과거 downgrade 검증 후 최신 head 적용
+- CI에서도 실제 bootstrap/provisioning 테스트가 실행되도록 PostgreSQL 서비스 컨테이너 ID 전달
+
+검증:
+
+- 전체 Backend: 1262 passed, 2 skipped
+- Source/Writer/관련 Repository 선별: 57 passed (Backend와 일부 중복)
+- 과거 migration 전체: 149 passed, revision 기대값 1개 실패 후 기준 수정·별도 준비 DB 재검증 1 passed
+- 확대된 최신 head 통합 시나리오: 1 passed (위 선별 테스트의 동일 테스트 재실행)
+- CI/배포·환경 계약: 18 passed
+- Ruff/format, 생산 코드·migration Mypy 3개, shell 구문, Trigger/RLS 재도입 검사, diff 검사 통과
+
+기존 데이터 보존·빈 DB 전체 upgrade·Source 트리거/함수 0개·실제 분리 계정 권한·예상 밖 의존성 rollback·downgrade 거부를 폐기 DB에서 검증했다. 398b의 Source 함수 잔존 때문에 provisioning이 막히던 조건은 398c 적용 후 해소된다. 전체 #398 또는 AWS 배포 준비 완료를 의미하지 않는다. Source 관리 수정/삭제·승인/철회와 다른 도메인 제거, #404 병합 후 통합은 남아 있다. AWS 배포와 운영 DB 변경은 실행하지 않았다.

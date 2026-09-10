@@ -1,6 +1,6 @@
 # PD-398: Python Snapshot 상태 전이
 
-상태: 작업 브랜치 부분 구현, 리뷰·권한 구성·migration 대기. 현재 배포 계약으로 승격하지 않는다.
+상태: Source 제거 migration·Writer 권한 연결 구현. 관리 경로 완성·종합 배포 검증·리뷰 대기. 현재 배포 계약으로 승격하지 않는다.
 
 구현: 김지혜. 검토: 송은영(DB·권한), 정현우(Source), 권가빈(제품 수용).
 
@@ -50,7 +50,7 @@ CURRENT 선택은 공백이 아닌 100자 이하 작업자 식별자가 필요�
 
 Source 관리용 수정·삭제 권한과 Catalog/Prescription/Runtime 권한은 이 Source Writer에 자동으로 포함하지 않는다. 각 도메인 구현과 함께 명시적으로 추가한다.
 
-`configure-app-role.sql`은 계정 준비와 기본 권한 회수만 수행하며 기존 DML/전이 함수 실행 권한을 다시 부여하지 않는다. migration 뒤 전용 관리자 컨테이너에서 `infra.python.provision_database_roles`를 실행한다. 기존 Source 전이 함수가 남아 있으면 전체 권한 transaction을 rollback하고 서비스 시작 전에 배포를 중단한다. 따라서 제거 migration이 없는 현재 브랜치는 여전히 배포 가능 상태가 아니다.
+`configure-app-role.sql`은 계정 준비와 기본 권한 회수만 수행하며 기존 DML/전이 함수 실행 권한을 다시 부여하지 않는다. migration 뒤 전용 관리자 컨테이너에서 `infra.python.provision_database_roles`를 실행한다. 기존 Source 전이 함수가 남아 있으면 전체 권한 transaction을 rollback하고 서비스 시작 전에 배포를 중단한다. 398c 적용 후에는 해당 함수가 없어 권한 전환이 가능하다. 이것만으로 모든 도메인의 전환이나 전체 배포 준비가 완료됐다고 판정하지 않는다.
 
 `test_source_writer_roles.py`는 서로 다른 로그인 자격 증명으로 실제 INSERT/UPDATE/DELETE/TRUNCATE 및 SET ROLE 차단, Writer 허용 작업, 신규 테이블 기본 권한, 역할 상속 거부를 확인한다.
 
@@ -88,3 +88,13 @@ Runtime 테이블 목록은 `RUNTIME_MUTABLE_TABLES`와 `RUNTIME_APPEND_ONLY_TAB
 PUBLIC과 두 실행 역할의 기존 테이블·컬럼·sequence 권한을 회수하고 명시적 권한을 부여하는 과정은 단일 transaction이다. Migration 역할의 전역·public 기본 테이블/sequence 권한은 bootstrap에서 회수한다. 새 테이블 추가 시 권한 목록을 별도로 리뷰해야 한다. 필수 테이블 누락 또는 기존 Source 함수 존재는 전환 실패이며 우회 옵션을 제공하지 않는다.
 
 현재 검증은 실제 psql bootstrap, 별도 계정과 폐기 DB에서의 재실행, 권한 실패 rollback, 전체 기존 migration 이력에서의 전환 거부까지다. 운영 컨테이너 이미지 실행과 모든 도메인 Trigger 제거 후 종합 배포 검증은 남아 있다. #404는 병합 후 통합한다.
+
+### 398c Source 함수·트리거 제거
+
+398c3d4e5f60은 Source Snapshot/Artifact/Verification의 사용자 정의 트리거 6개와 전이·방어 함수 5개를 제거한다. 이미 적용된 migration 및 고정 hash 예외 목록은 변경하지 않는다. 제거 전 Source 7개 테이블을 잠그고 소유자 이외의 기존 테이블·컬럼 권한을 회수하며, 이 과정은 제거와 함께 commit된다. 이후 provisioning이 실패해도 기존 Runtime의 광범위 DML이 남지 않는다. 관리/소유자 계정은 신뢰된 migration 경계이며 애플리케이션 실행 계정으로 사용할 수 없다.
+
+Snapshot 생성은 두 Repository 모두 PENDING이며 verified_at/effective_at이 없는 상태로 제한한다. Backend의 기존 DTO에 다른 상태·시각이 있으면 INSERT 이전에 ValueError로 거부한다. 게시된 자료 조회 테스트의 상태 준비는 별도의 관리자 fixture이며 운영 생성 경로가 아니다. Writer의 Snapshot UPDATE는 verification_status/verified_at/effective_at 컬럼으로만 제한하여 원본 hash·Receipt·구성·identity의 직접 변경을 막는다. 상태 전이·승인·감사는 기존 Python 전이 코드가 수행한다. Artifact/Verification은 Writer에서도 UPDATE/DELETE/TRUNCATE 권한이 없다.
+
+삭제는 정확한 이름으로 수행하며 CASCADE를 사용하지 않는다. 예상 밖 의존성이나 잔여 Source 트리거가 있으면 권한 회수까지 전체 rollback한다. downgrade는 트리거를 재도입하지 않으며 명시적으로 거부한다. 복구는 검토한 forward-fix 또는 배포 전 백업 절차로 처리한다.
+
+과거 migration 계약 테스트는 되돌릴 수 있는 398b까지 고정한다. 최신 head의 기존 자료 보존·빈 DB upgrade·트리거/함수 0개·실제 Writer 선택·재시도·권한 거부·downgrade 차단은 별도 폐기 DB 통합 테스트에서 확인한다. 여기서 0개는 Source 범위이며 Prescription/Candidate/Runtime/Evidence/Check-in/정리 도구까지 모두 제거됐다는 의미는 아니다. Source 관리 수정·삭제·승인/철회 경로 완성 및 #404 병합 후 통합은 남아 있다.

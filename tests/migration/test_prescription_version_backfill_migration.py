@@ -775,11 +775,11 @@ def test_backfill_creates_exact_version_one_snapshot_and_is_rerunnable() -> None
         assert asyncio.run(_version_counts(ids)) == original_counts == (1, 1)
     finally:
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_repository_version_only_write_commits_against_migrated_postgresql() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
     ids = asyncio.run(_create_via_repository())
     try:
         snapshot = asyncio.run(_snapshot(ids))
@@ -795,7 +795,7 @@ def test_repository_version_only_write_commits_against_migrated_postgresql() -> 
 
 
 def test_repository_correction_commits_complete_version_against_migrated_postgresql() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
     ids = asyncio.run(_create_via_repository())
     try:
         corrected_version_id = asyncio.run(_correct_via_repository(ids))
@@ -810,7 +810,7 @@ def test_repository_correction_commits_complete_version_against_migrated_postgre
 
 
 def test_concurrent_corrections_allow_only_one_new_active_version_on_migrated_postgresql() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
     ids = asyncio.run(_create_via_repository())
     try:
         snapshot = asyncio.run(_snapshot(ids))
@@ -845,7 +845,7 @@ def test_read_cutover_rebackfills_and_remaps_dependents_on_migrated_postgresql()
         assert snapshot["cutover_fk_count"] == 5
     finally:
         asyncio.run(_cleanup_cutover(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_read_cutover_rejects_candidate_snapshot_that_disagrees_with_pvm() -> None:
@@ -858,12 +858,12 @@ def test_read_cutover_rejects_candidate_snapshot_that_disagrees_with_pvm() -> No
             command.upgrade(alembic_config, CUTOVER_REVISION)
     finally:
         asyncio.run(_cleanup_cutover(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_read_cutover_downgrade_rejects_guide_and_chat_provenance() -> None:
     alembic_config = create_alembic_config()
-    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "398b2c3d4e5f")
     ids = asyncio.run(_create_via_repository())
     ids.update(asyncio.run(_seed_guide_chat_provenance(ids)))
     try:
@@ -872,7 +872,7 @@ def test_read_cutover_downgrade_rejects_guide_and_chat_provenance() -> None:
     finally:
         asyncio.run(_cleanup_guide_chat_provenance(ids))
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_hardening_refuses_remaining_null_runtime_version_link() -> None:
@@ -886,7 +886,7 @@ def test_hardening_refuses_remaining_null_runtime_version_link() -> None:
     finally:
         asyncio.run(_delete_guide(guide_id))
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 @pytest.mark.parametrize("job_type", ["GUIDE", "CHAT"])
@@ -901,7 +901,7 @@ def test_hardening_refuses_job_without_required_version(job_type: str) -> None:
     finally:
         asyncio.run(_delete_ai_job(job_id))
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_hardening_refuses_ocr_job_with_version() -> None:
@@ -916,7 +916,7 @@ def test_hardening_refuses_ocr_job_with_version() -> None:
     finally:
         asyncio.run(_delete_ai_job(job_id))
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 @pytest.mark.parametrize(
@@ -927,7 +927,7 @@ def test_hardening_constraint_prevents_invalid_job_from_bypassing_version_fencin
     job_type: str,
     use_active_version: bool,
 ) -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
     ids = asyncio.run(_create_via_repository())
     version_id = asyncio.run(_active_version_id(ids)) if use_active_version else None
     try:
@@ -944,7 +944,7 @@ def test_hardening_constraint_prevents_invalid_job_from_bypassing_version_fencin
 
 
 def test_prescription_delete_cannot_cascade_candidate_audit_history() -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
     ids = asyncio.run(_create_via_repository())
     search_id = asyncio.run(_seed_active_candidate(ids))
     try:
@@ -982,7 +982,7 @@ def test_backfill_rejects_invalid_legacy_graph_without_partial_snapshot(
         assert asyncio.run(_version_counts(ids)) == (0, 0)
     finally:
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_backfill_rejects_blank_legacy_medication_name_before_copy() -> None:
@@ -996,7 +996,7 @@ def test_backfill_rejects_blank_legacy_medication_name_before_copy() -> None:
         assert asyncio.run(_version_counts(ids)) == (0, 0)
     finally:
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_backfill_rejects_partial_version_graph() -> None:
@@ -1011,4 +1011,4 @@ def test_backfill_rejects_partial_version_graph() -> None:
         assert asyncio.run(_version_counts(ids)) == (1, 1)
     finally:
         asyncio.run(_cleanup(ids))
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")

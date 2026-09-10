@@ -346,7 +346,7 @@ def _clean_runtime_data_after_test() -> Iterator[None]:
 
 def _upgrade_to_runtime() -> None:
     cfg = create_alembic_config()
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "398b2c3d4e5f")
     asyncio.run(_cleanup_runtime_tables())
     command.downgrade(cfg, RAG_RUNTIME_BASE_REVISION)
     command.upgrade(cfg, RAG_RUNTIME_REVISION)
@@ -676,7 +676,7 @@ def test_rag_runtime_downgrade_empty_schema_removes_tables() -> None:
     command.downgrade(cfg, RAG_RUNTIME_BASE_REVISION)
 
     assert not asyncio.run(_table_exists("rag_runtime_release_bundle"))
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "398b2c3d4e5f")
 
 
 def test_rag_runtime_downgrade_blocks_when_data_exists() -> None:
@@ -690,7 +690,7 @@ def test_rag_runtime_downgrade_blocks_when_data_exists() -> None:
     finally:
         asyncio.run(_cleanup_runtime_tables())
         command.downgrade(cfg, RAG_RUNTIME_BASE_REVISION)
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "398b2c3d4e5f")
 
 
 def test_rag_runtime_downgrade_blocks_concurrent_runtime_writes() -> None:
@@ -731,7 +731,7 @@ def test_rag_runtime_downgrade_blocks_concurrent_runtime_writes() -> None:
             downgrade_future.cancel()
         asyncio.run(_cleanup_runtime_tables())
         command.downgrade(cfg, RAG_RUNTIME_BASE_REVISION)
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "398b2c3d4e5f")
 
 
 def test_rag_runtime_transition_history_is_append_only() -> None:

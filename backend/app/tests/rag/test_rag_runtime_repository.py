@@ -43,6 +43,7 @@ from app.repositories.rag_source_catalog_repository import (
     RagSourceOperationCreate,
     RagSourceSnapshotCreate,
 )
+from app.tests.fixtures.source_snapshot import seed_snapshot
 
 
 def _hash(char: str) -> str:
@@ -73,7 +74,8 @@ async def _create_source_snapshot(session: AsyncSession):
             display_name="List Products",
         )
     )
-    return await repository.create_snapshot(
+    return await seed_snapshot(
+        repository,
         RagSourceSnapshotCreate(
             operation_id=operation.id,
             source_version=f"api:2026-09-08:{suffix}",
@@ -88,7 +90,7 @@ async def _create_source_snapshot(session: AsyncSession):
             verification_status=RagSnapshotVerificationStatus.CURRENT,
             collected_at=datetime.now(config.TIMEZONE),
             verified_at=datetime.now(config.TIMEZONE),
-        )
+        ),
     )
 
 

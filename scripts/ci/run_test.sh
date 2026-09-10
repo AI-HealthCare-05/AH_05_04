@@ -45,11 +45,14 @@ prepare_test_environment
 
 echo "Apply Alembic migrations to test database"
 
-run_with_backend_test_database alembic -c backend/alembic.ini upgrade head
+run_with_backend_test_database alembic -c backend/alembic.ini upgrade 398b2c3d4e5f
 
 echo "Validate migrated PostgreSQL schema"
 
 run_with_backend_test_database pytest tests/migration -v
+
+# Historical downgrade tests finish before the irreversible Source cutover.
+run_with_backend_test_database alembic -c backend/alembic.ini upgrade head
 
 echo "Run Pytest with Coverage"
 

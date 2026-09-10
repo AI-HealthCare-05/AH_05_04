@@ -444,21 +444,21 @@ def test_rag_source_catalog_empty_downgrade_roundtrips() -> None:
     alembic_config = create_alembic_config()
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
         command.downgrade(alembic_config, RAG_SOURCE_CATALOG_BASE_REVISION)
         assert asyncio.run(_table_exists("rag_source")) is False
 
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         assert asyncio.run(_table_exists("rag_source")) is True
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
 
 
 def test_rag_source_catalog_schema_constraints_exist_after_alembic_upgrade() -> None:
     alembic_config = create_alembic_config()
 
-    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "398b2c3d4e5f")
 
     schema_objects = asyncio.run(_fetch_schema_object_names())
 
@@ -511,7 +511,7 @@ def test_rag_source_ingestion_artifact_is_append_only_and_run_scoped() -> None:
         return artifact_id
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         ids = asyncio.run(_seed_source_catalog_chain())
         artifact_id = asyncio.run(insert_artifact(ids))
 
@@ -540,7 +540,7 @@ def test_rag_source_ingestion_artifact_is_append_only_and_run_scoped() -> None:
             )
         )
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
 
@@ -550,7 +550,7 @@ def test_rag_source_ingestion_artifact_downgrade_preserves_existing_references()
     ids: dict[str, str] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         command.downgrade(alembic_config, "165d7e6f5041")
         ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
 
@@ -582,7 +582,7 @@ def test_rag_source_ingestion_artifact_downgrade_preserves_existing_references()
 
         assert asyncio.run(_count_table("rag_source_ingestion_artifact")) == 1
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
 
@@ -616,7 +616,7 @@ def test_rag_source_reject_artifact_metadata_and_downgrade_are_fail_closed() -> 
                 )
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         command.downgrade(alembic_config, "165d7e6f5041")
         ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
         asyncio.run(insert_rejection(ids))
@@ -647,7 +647,7 @@ def test_rag_source_reject_artifact_metadata_and_downgrade_are_fail_closed() -> 
 
         assert asyncio.run(_count_table("rag_source_ingestion_artifact")) == 1
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
 
@@ -657,7 +657,7 @@ def test_rag_source_catalog_unique_constraints_are_enforced_after_alembic_upgrad
     ids: dict[str, str] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         ids = asyncio.run(_seed_source_catalog_chain())
 
         asyncio.run(
@@ -706,7 +706,7 @@ def test_rag_source_catalog_unique_constraints_are_enforced_after_alembic_upgrad
             )
         )
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
 
@@ -716,7 +716,7 @@ def test_rag_source_catalog_snapshot_is_append_only_in_alembic_schema() -> None:
     ids: dict[str, str] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         ids = asyncio.run(_seed_source_catalog_chain())
 
         asyncio.run(
@@ -755,7 +755,7 @@ def test_rag_source_catalog_snapshot_is_append_only_in_alembic_schema() -> None:
             )
         )
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
 
@@ -809,11 +809,11 @@ def test_failed_snapshot_allows_same_version_retry_after_alembic_upgrade() -> No
                 await transaction.rollback()
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         ids = asyncio.run(_seed_source_catalog_chain())
         asyncio.run(insert_failed_and_retry(ids))
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
 
@@ -855,7 +855,7 @@ def test_snapshot_receipt_provenance_blocks_unsafe_downgrade() -> None:
                 )
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         command.downgrade(alembic_config, "165d7e6f5041")
         ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
         asyncio.run(insert_snapshot_with_receipt(ids))
@@ -863,7 +863,7 @@ def test_snapshot_receipt_provenance_blocks_unsafe_downgrade() -> None:
         with pytest.raises(RuntimeError, match="Cannot downgrade revision 165c6d5e4f30"):
             command.downgrade(alembic_config, "165b5c4d3e2f")
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
 
@@ -874,7 +874,7 @@ def test_rag_source_ingestion_attempt_is_scoped_by_run_group_after_alembic_upgra
     collected_at = datetime.now(UTC)
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         ids = asyncio.run(_seed_source_catalog_chain())
 
         asyncio.run(
@@ -923,7 +923,7 @@ def test_rag_source_ingestion_attempt_is_scoped_by_run_group_after_alembic_upgra
 
         assert asyncio.run(create_next_run()) == 2
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
 
@@ -933,7 +933,7 @@ def test_rag_source_catalog_downgrade_blocks_non_empty_tables_and_preserves_data
     ids: dict[str, str] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         command.downgrade(alembic_config, "165d7e6f5041")
         ids = asyncio.run(_seed_source_catalog_chain(include_verification=False))
 
@@ -943,7 +943,7 @@ def test_rag_source_catalog_downgrade_blocks_non_empty_tables_and_preserves_data
         assert asyncio.run(_table_exists("rag_source_snapshot")) is True
         assert asyncio.run(_count_table("rag_source")) >= 1
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
 
@@ -953,7 +953,7 @@ def test_rag_source_catalog_cross_snapshot_fk_is_enforced_after_alembic_upgrade(
     ids: dict[str, str] | None = None
 
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         ids = asyncio.run(_seed_source_catalog_chain())
 
         stale_snapshot_id = asyncio.run(_create_stale_snapshot_for_same_operation(ids))
@@ -1064,7 +1064,7 @@ def test_rag_source_catalog_cross_snapshot_fk_is_enforced_after_alembic_upgrade(
             )
         )
     finally:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         if ids is not None:
             asyncio.run(_cleanup_source_catalog_chain(ids))
 
@@ -1073,7 +1073,7 @@ def test_verification_history_is_immutable_and_publication_requires_actor() -> N
     alembic_config = create_alembic_config()
     ids: dict[str, str] | None = None
     try:
-        command.upgrade(alembic_config, "head")
+        command.upgrade(alembic_config, "398b2c3d4e5f")
         command.downgrade(alembic_config, "165d7e6f5041")
         ids = asyncio.run(_seed_source_catalog_chain())
         for sql in (
@@ -1117,7 +1117,7 @@ def test_verification_history_is_immutable_and_publication_requires_actor() -> N
 
 @pytest.mark.parametrize("status", ["PENDING", "FAILED"])
 def test_runtime_cannot_write_snapshot_publication_state_directly(status: str) -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
     ids = asyncio.run(_seed_source_catalog_chain(status=status))
 
     async def verify() -> None:
@@ -1203,7 +1203,7 @@ def test_runtime_cannot_write_snapshot_publication_state_directly(status: str) -
 
 @pytest.mark.parametrize("approved", [False, True])
 def test_runtime_publication_function_requires_approval_and_appends_immutable_selection(approved: bool) -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
     ids = asyncio.run(_seed_source_catalog_chain(status="PENDING", rejected_count=1))
 
     async def verify() -> None:
@@ -1313,7 +1313,7 @@ def test_runtime_publication_function_requires_approval_and_appends_immutable_se
 
 def test_snapshot_state_protection_downgrade_preserves_existing_snapshots() -> None:
     configuration = create_alembic_config()
-    command.upgrade(configuration, "head")
+    command.upgrade(configuration, "398b2c3d4e5f")
     ids = asyncio.run(_seed_source_catalog_chain(status="PENDING"))
     try:
         with pytest.raises(RuntimeError, match="Cannot downgrade revision 165e8f706152"):
@@ -1335,7 +1335,7 @@ def test_snapshot_state_protection_downgrade_preserves_existing_snapshots() -> N
     ],
 )
 def test_ingestion_run_snapshot_status_check(run_status: str, has_snapshot: bool, allowed: bool) -> None:
-    command.upgrade(create_alembic_config(), "head")
+    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
     ids = asyncio.run(_seed_source_catalog_chain())
 
     async def verify() -> None:
