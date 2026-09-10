@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from ai_worker.admin.source_writer import WriterConfig
 

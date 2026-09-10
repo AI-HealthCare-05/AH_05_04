@@ -162,6 +162,7 @@ async def _create_medication(
 ) -> PrescriptionVersionMedication:
     assert prescription.active_version_id is not None
     version = await session.get(PrescriptionVersion, prescription.active_version_id)
+    assert version is not None
     medication = PrescriptionVersionMedication(
         medication_count=version.medication_count,
         prescription_version_id=prescription.active_version_id,

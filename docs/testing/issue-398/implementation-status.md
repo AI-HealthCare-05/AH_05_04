@@ -300,3 +300,10 @@ Source cleanup 검증 후 최신 head 종합 검사를 다시 실행해 public/s
 - 세 migration이 버전 고정 경로만 참조하고 공개 경로와 v1 결과가 같은지 계약 테스트로 확인한다.
 
 검증 결과: 처방 hash 계약 18 passed, Ruff와 Mypy 통과. 빈 폐기 PostgreSQL 17 DB에서 전체 migration을 최초 revision부터 최신 head까지 재실행했고 최종 카탈로그 검증도 통과했다. AWS 배포와 운영 DB는 변경하지 않았다.
+
+## 최종 diff 감사: CI 타입 검사
+
+- 전체 CI와 같은 Mypy 범위에서 새 Source Writer 테스트의 PyYAML stub 경고와 테스트 fixture 두 곳의 Optional narrowing 누락을 발견해 수정했다.
+- fixture는 실제 조회 결과가 존재함을 명시적으로 확인하므로 기존 테스트 의미와 실행 경로는 바뀌지 않는다.
+
+검증 결과: Backend·Worker 510개 source 전체 Mypy 통과, Source Writer 테스트 12 passed, Ruff·test inventory·diff 검사 통과.
