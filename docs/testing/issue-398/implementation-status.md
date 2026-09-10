@@ -67,3 +67,14 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 - Source ingestion 전체 수집은 기존 실행 환경의 boto3 부재로 실패. S3 관련 2개 모듈은 제외했으며 해당 테스트 통과를 주장하지 않는다.
 
 브랜치 생성 reflog: `bd201c3 branch: Created from origin/develop`. #362 작업 브랜치에서 분기하지 않았다. #362 미병합 정책과 통합할 때는 별도로 최신 develop 및 해당 PR의 병합 여부를 확인한다.
+
+## Source Writer 일회성 실행 경로
+
+- 별도 credential만 받는 Snapshot 선택 명령과 opt-in Compose 서비스 추가
+- 일반 배포에서는 `source-admin` profile 서비스를 시작하지 않음
+- 잠금 후 예상 checksum 확인, 상태 변경과 사유 코드 감사의 단일 transaction
+- 재실행 시 중복 감사 방지, 감사 실패 시 전체 rollback
+- 전용 환경 변수·secret 혼합 차단·Compose 경계 단위 검증: 12 passed
+- Snapshot lifecycle PostgreSQL 검증: 17 passed (기존 14 + 새 Writer 시나리오 3)
+- Ruff·Mypy·재도입 검사·diff 검사 통과
+- 실제 제한 역할로 CLI 전체 실행, 역할 provisioning 및 migration/bootstrap 연결은 남아 있음

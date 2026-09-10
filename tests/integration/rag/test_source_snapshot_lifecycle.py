@@ -837,3 +837,66 @@ async def test_python_transition_rolls_back_when_selection_audit_fails(monkeypat
             )
         )
         assert count == 0
+
+
+@pytest.mark.parametrize("scenario", ["success", "checksum_mismatch", "request_audit_failure"])
+async def test_writer_selection_transaction(scenario, monkeypatch):
+    from ai_worker.admin.source_writer import select_snapshot
+
+    identity = await _seed_operation(f"WRITER_{scenario}")
+    async with session_factory.begin() as session:
+        created = await persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=_metadata(f"external:writer-{scenario}", minute=1),
+            artifacts=_stored_artifacts(minute=1),
+        )
+    assert created.snapshot_id is not None
+    original = SqlAlchemySourceSnapshotRepository.append_verification
+
+    async def append(repository, **kwargs):
+        if kwargs["check_name"] == "snapshot-selection-request":
+            raise RuntimeError("synthetic audit failure")
+        return await original(repository, **kwargs)
+
+    if scenario == "request_audit_failure":
+        monkeypatch.setattr(SqlAlchemySourceSnapshotRepository, "append_verification", append)
+
+    async def execute():
+        async with session_factory.begin() as session:
+            return await select_snapshot(
+                session,
+                snapshot_id=created.snapshot_id,
+                expected_checksum=_CHECKSUM_B if scenario == "checksum_mismatch" else _CHECKSUM_A,
+                actor="synthetic-operator",
+                reason_code="VERIFIED_RELEASE",
+            )
+
+    if scenario == "success":
+        assert (await execute()).decision is SnapshotSelectionDecision.ACTIVATED
+        assert (await execute()).decision is SnapshotSelectionDecision.ALREADY_CURRENT
+    else:
+        with pytest.raises((ValueError, RuntimeError)):
+            await execute()
+    async with session_factory() as session:
+        snapshot = await session.get(RagSourceSnapshot, created.snapshot_id)
+        assert snapshot.verification_status == (
+            RagSnapshotVerificationStatus.CURRENT if scenario == "success" else RagSnapshotVerificationStatus.PENDING
+        )
+        audits = (
+            (
+                await session.execute(
+                    select(RagSourceSnapshotVerification.check_name).where(
+                        RagSourceSnapshotVerification.snapshot_id == created.snapshot_id,
+                        RagSourceSnapshotVerification.check_name.in_(
+                            ("snapshot-current-selection", "snapshot-selection-request")
+                        ),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert sorted(audits) == (
+            ["snapshot-current-selection", "snapshot-selection-request"] if scenario == "success" else []
+        )

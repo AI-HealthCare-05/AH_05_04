@@ -268,6 +268,23 @@ services:
       nginx:
         condition: service_healthy
 
+
+  # 운영자가 명시적으로 실행하는 일회성 작업. 일반 배포에서는 시작하지 않습니다.
+  source-writer:
+    profiles: ["source-admin"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "ai_worker.admin.source_writer"]
+    environment:
+      SOURCE_WRITER_HOST: postgres
+      SOURCE_WRITER_PORT: "5432"
+      SOURCE_WRITER_NAME: ${DB_NAME}
+      SOURCE_WRITER_USER: ${SOURCE_WRITER_USER:-}
+      SOURCE_WRITER_PASSWORD: ${SOURCE_WRITER_PASSWORD:-}
+      SOURCE_WRITER_ACTOR: ${SOURCE_WRITER_ACTOR:-}
+    networks:
+      - ws
+
 volumes:
   # PostgreSQL 운영 데이터를 컨테이너 재생성 후에도 유지합니다.
   postgres_data:

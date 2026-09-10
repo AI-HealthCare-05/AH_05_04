@@ -55,3 +55,13 @@ Source 관리용 수정·삭제 권한과 Catalog/Prescription/Runtime 권한은
 `test_source_writer_roles.py`는 서로 다른 로그인 자격 증명으로 실제 INSERT/UPDATE/DELETE/TRUNCATE 및 SET ROLE 차단, Writer 허용 작업, 신규 테이블 기본 권한, 역할 상속 거부를 확인한다.
 
 `tests/integration/rag/test_source_snapshot_lifecycle.py`는 모델 스키마만 생성하고 과거 전이 함수·Trigger 설치 없이 Python 저장 경로를 검증한다. 최종 migration과 실제 역할 분리 검증은 별도로 남아 있다.
+
+### 일회성 Source Writer 실행 경로
+
+`python -m ai_worker.admin.source_writer <snapshot UUID> --expected-checksum <SHA-256> --reason-code <고정 코드>`로 검증된 Snapshot을 선택한다. `SOURCE_WRITER_HOST/PORT/NAME/USER/PASSWORD/ACTOR`를 모두 별도로 주입한다. 기존 Runtime·Migration·Admin 비밀번호 환경 변수가 함께 있으면 실행을 거부한다. ACTOR는 운영자가 확인한 작업자 식별자이며 사용자 요청에서 그대로 받지 않는다. 실행 권한과 secret 배포 권한은 운영자에게만 부여해야 한다.
+
+Operation→Snapshot 잠금 후 checksum을 대조하고 기존 Python 선택 서비스를 호출한다. 상태 변경·선택 감사·사유 코드 감사는 실행 명령이 소유한 하나의 transaction에서 commit한다. 실패하면 전체 rollback하며 오류 원문이나 SQL parameter는 출력하지 않는다. 이미 CURRENT인 대상의 재선택은 감사 행을 추가하지 않는다. 사유는 원문 대신 100자 이하 대문자·숫자·밑줄 코드로 제한한다.
+
+운영 Compose의 `source-writer`는 `source-admin` profile의 일회성 서비스이며 기본 배포에 포함되지 않는다. 기존 AI 이미지의 별도 진입점을 사용하고 Writer 환경 변수만 전달한다. 예시: `docker compose -f docker-compose.prod.yml run --rm --no-deps source-writer <UUID> --expected-checksum <SHA-256> --reason-code VERIFIED_RELEASE`.
+
+이 실행 경로 추가는 운영 전환 완료가 아니다. 전용 역할 provisioning, 기존 함수·Trigger 제거, bootstrap 권한 정렬이 완료되기 전에는 운영 실행하지 않는다. 이번 통합 테스트는 Python transaction을 검증하며, 제한 역할로 이 명령 전체를 실행하는 배포 통합 검증은 후속 단계에 남아 있다.
