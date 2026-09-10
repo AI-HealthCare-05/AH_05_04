@@ -180,12 +180,21 @@ hash·length, 비교 canonical contract, `CREATED|NO_CHANGE|SOURCE_VERSION_CONFL
 판정을 제공한다. Snapshot Receipt만으로 `NO_CHANGE`, conflict, invalid 시도의 provenance를
 대체하지 않는다.
 
-## PR #377 단계 경계
+## PD-362 단계 경계
 
-이 PR의 현재 단계는 Source version 생성·검증과 Candidate 계약 검토까지다. failure Run,
-거부 Hard Limit, `empty_result_policy`, 승인·사용 가능 판정, fail-closed reason code 소비자,
-`external_version`·attempt provenance DB migration, DB 왕복 Receipt와 PostgreSQL 통합 검증은
-#362를 열린 상태로 유지하고 후속 PR에서 구현한다. 현재 단계 병합만으로 #362 완료나
+이 Decision의 구현은 다음 세 단계로 나눈다.
+
+1. **#377 완료** — Production `source_version` 생성·검증과 Candidate 계약 검토.
+2. **#393 구현 완료** — failure Run 저장 연결, 거부 건수·비율 Hard Limit,
+   `empty_result_policy`, Snapshot 승인·사용 가능 판정과 fail-closed reason code 산출.
+3. **후속** — fail-closed reason code의 Catalog·Runtime 실제 소비자 연결, Source별 정책값과
+   `external_version`·attempt provenance DB 저장, DB 왕복 Receipt와 PostgreSQL 통합 검증,
+   #178 Freshness 계산.
+
+#393까지는 판정을 산출해 실패 Run과 보존 Artifact에 연결하는 데까지이며, Catalog·Runtime
+소비자는 아직 이 판정을 호출하지 않는다.
+
+#362는 3단계가 끝날 때까지 열린 상태로 유지한다. #393 병합만으로 #362 완료나
 Production Source·Catalog·Runtime 활성화를 선언하지 않는다.
 
 ## 구현 순서
