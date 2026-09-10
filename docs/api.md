@@ -88,7 +88,37 @@ Version의 `PENDING`·`PROCESSING`·`RETRY_WAIT` Job을 `STALE`, 미발행·예�
 처방별 최신 Guide·Chat 재접속 조회에서는 이전 Version 결과를 반환하지 않는다. 완료된 이전 Version
 Job의 상태와 provenance는 보존하지만 `result_url`은 `null`이다.
 
-Candidate 조회·확정·거절 API(#172)는 라우트·DTO·service adapter까지 구현되어 있지만, `PUBLIC_TRACK_F_ENABLED` 환경변수(기본값 `false`)로 게이트됩니다. 비활성 환경에서는 세 endpoint 모두 인증만 통과하면 도메인 조회 이전에 `503 SERVICE_UNAVAILABLE`(`reason: PUBLIC_TRACK_F_DISABLED`)로 fail-closed됩니다. RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는 이 값을 `true`로 바꾸지 않습니다. 계약 상세는 [MFDS 공식 의약품 식별·Candidate 계약 v1](./contracts/targets/post-mvp-1/medication-identification-v1.md)을 따릅니다.
+Candidate 조회·확정·거절 API(#172)는 라우트·DTO·service adapter까지 구현되어 있지만, `PUBLIC_TRACK_F_ENABLED` 환경변수(기본값 `false`)로 게이트됩니다. 비활성 환경에서는 조회·확정·거절 endpoint가 인증만 통과하면 도메인 조회 이전에 `503 SERVICE_UNAVAILABLE`(`reason: PUBLIC_TRACK_F_DISABLED`)로 fail-closed됩니다. Search 생성 endpoint는 아직 resolver/index 연결 전 stub이며 `503 SERVICE_UNAVAILABLE`로 닫혀 있습니다. RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는 이 값을 `true`로 바꾸지 않습니다. 계약 상세는 [MFDS 공식 의약품 식별·Candidate 계약 v1](./contracts/targets/post-mvp-1/medication-identification-v1.md)을 따릅니다.
+
+## Candidate API
+
+### Endpoint
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `POST` | `/api/v1/medication-candidate-searches` | `202 Accepted` | Candidate Search 생성 목표 route입니다. 현재는 resolver/index 연결 전 stub으로 `503 SERVICE_UNAVAILABLE`을 반환합니다. |
+| `GET` | `/api/v1/medication-candidate-searches/{prescription_version_medication_id}` | `200 OK` | 활성 Prescription Version 약제의 최신 Candidate Search 공개 상태를 조회합니다. |
+| `POST` | `/api/v1/medication-candidates/confirm` | `200 OK` | 화면에 표시된 Candidate Result를 사용자가 확정합니다. |
+| `POST` | `/api/v1/medication-candidates/reject` | `200 OK` | 화면에 표시된 Candidate Result를 사용자가 거절합니다. |
+
+`confirm` / `reject` 요청에는 `Idempotency-Key` header가 필수입니다. 새 약물 확인·거절 시도마다 새 key를 만들고, 같은 요청을 재시도할 때는 같은 key를 재사용합니다. 같은 key로 다른 body를 보내면 `409 IDEMPOTENCY_KEY_CONFLICT`입니다. Search 생성과 조회는 `Idempotency-Key`를 요구하지 않습니다.
+
+조회 응답의 `data.status`는 `RUNNING | READY | AMBIGUOUS | NO_CANDIDATE | INGREDIENT_ONLY | INVALID_INPUT | INVALIDATED_INPUT_CHANGED | INVALIDATED_USER_REJECTED | EXPIRED | FAILED | CONSUMED`입니다. `READY`에서만 `candidate_search_result_id`와 `candidate`가 채워질 수 있고, 그 외 상태에서는 둘 다 `null`입니다. 공개 Candidate DTO는 `product_name`, `strength_text`, `dosage_form`, `manufacturer_name`, `product_status`만 포함하며 내부 `score`, `rank`, Top-K, `query_digest`, `candidate_count`, `status_reason`은 노출하지 않습니다.
+
+### 주요 오류
+
+| 상태 | `code` | 설명 |
+| ---: | --- | --- |
+| `400` | `IDEMPOTENCY_KEY_REQUIRED` | `confirm` / `reject` 요청에 `Idempotency-Key` header가 없거나 빈 값입니다. |
+| `400` | `IDEMPOTENCY_KEY_INVALID` | `Idempotency-Key`가 길이 또는 허용 문자 규칙을 만족하지 않습니다. |
+| `404` | `PRESCRIPTION_MEDICATION_NOT_FOUND` | 요청한 처방 약제가 없거나 인증 사용자의 SELF Profile 소유가 아닙니다. |
+| `404` | `CANDIDATE_SEARCH_NOT_FOUND` | Candidate Search 또는 Result가 없거나 인증 사용자가 접근할 수 없습니다. |
+| `409` | `CANDIDATE_SEARCH_STALE` | Candidate Search가 만료·입력 변경·소비 등으로 더 이상 확인·거절 대상이 아닙니다. |
+| `409` | `IDENTIFICATION_CONTEXT_STALE` | 현재 구현에서는 기존 Identification이 이미 존재해 신규 Identification을 저장하지 않는 경우입니다(`details.reason=IDENTIFICATION_ALREADY_EXISTS`). Runtime Bundle·Candidate Index currentness 불일치 발생 조건은 #168/#181 연결 후 추가합니다. |
+| `409` | `IDEMPOTENCY_KEY_CONFLICT` | 같은 `Idempotency-Key`로 이전과 다른 요청 body가 접수되었습니다. |
+| `503` | `SERVICE_UNAVAILABLE` | `PUBLIC_TRACK_F_ENABLED=false`이거나 Search 생성 stub이 아직 공개되지 않은 상태입니다. |
+
+Frontend는 `PUBLIC_TRACK_F_ENABLED=false` 기본 상태에서 실제 UI 연결이 막히는 것을 전제로 해야 합니다. RAG-11에서 후보 표시, 직접 입력 전환, 재업로드 전환, 오류 CTA와 gate 해제 조건을 별도 화면 범위로 연결합니다.
 
 OCR 실행 endpoint는 `202 Accepted`를 반환하며, 현재 구현은 공통 Job 접수입니다. 같은 요청에서는 CLOVA OCR을 호출하지 않고 `AI_JOB`, `IDEMPOTENCY_RECORD`, `OUTBOX_EVENT`, `OCR_JOB` placeholder를 같은 transaction에 저장한 뒤 `JobStatusResponse`를 반환합니다. 실제 OCR 실행은 Worker가 처리합니다.
 

@@ -9,6 +9,11 @@ ENVIRONMENT_ERROR_EXIT_CODE="${ENVIRONMENT_ERROR_EXIT_CODE:-1}"
 TEST_DATABASE_NAME="test"
 TEST_SERVICE_READY_ATTEMPTS=15
 TEST_SERVICE_READY_INTERVAL_SECONDS=2
+# 상속된 경로를 정리 대상으로 오인하지 않도록 현재 프로세스의 소유 상태를 초기화합니다.
+TEST_STORAGE_DIR=""
+TEST_STORAGE_DIR_OWNED=false
+TEST_RUNNER_STATE_DIR=""
+TEST_RUNNER_STATE_DIR_OWNED=false
 
 test_environment_error() {
   echo
@@ -19,11 +24,44 @@ test_environment_error() {
 cleanup_test_environment() {
   local original_status="$?"
 
-  if [ -n "${TEST_STORAGE_DIR:-}" ] && [ -d "$TEST_STORAGE_DIR" ]; then
+  if [ "$TEST_STORAGE_DIR_OWNED" = true ] && [ -n "$TEST_STORAGE_DIR" ] && [ -d "$TEST_STORAGE_DIR" ]; then
     rm -rf -- "$TEST_STORAGE_DIR"
   fi
 
+  if [ "$TEST_RUNNER_STATE_DIR_OWNED" = true ] && [ -n "$TEST_RUNNER_STATE_DIR" ] && [ -d "$TEST_RUNNER_STATE_DIR" ]; then
+    rm -rf -- "$TEST_RUNNER_STATE_DIR"
+  fi
+
   return "$original_status"
+}
+
+_exit_test_environment_on_signal() {
+  exit "$1"
+}
+
+install_test_environment_cleanup_traps() {
+  trap cleanup_test_environment EXIT
+  trap '_exit_test_environment_on_signal 129' HUP
+  trap '_exit_test_environment_on_signal 130' INT
+  trap '_exit_test_environment_on_signal 143' TERM
+}
+
+prepare_test_runner_state_directory() {
+  install_test_environment_cleanup_traps
+  TEST_RUNNER_STATE_DIR_OWNED=true
+  TEST_RUNNER_STATE_DIR="$(
+    trap '' HUP INT TERM
+    exec mktemp -d
+  )"
+}
+
+prepare_test_storage_directory() {
+  install_test_environment_cleanup_traps
+  TEST_STORAGE_DIR_OWNED=true
+  TEST_STORAGE_DIR="$(
+    trap '' HUP INT TERM
+    exec mktemp -d
+  )"
 }
 
 run_with_backend_test_database() {
@@ -38,6 +76,7 @@ run_with_backend_test_database() {
     STORAGE_DIR="$TEST_STORAGE_DIR" \
     RELEASE_VALIDATION_ALLOWED=false \
     OCR_STRUCTURE_LLM_ENABLED=false \
+    PYTEST_ADDOPTS= \
     uv run --env-file "$ENV_FILE" "$@"
 }
 
@@ -46,13 +85,14 @@ run_with_worker_test_environment() {
     -u DB_USER \
     -u DB_PASSWORD \
     DB_HOST=127.0.0.1 \
-    DB_PORT="$HOST_DB_PORT" \
-    DB_EXPOSE_PORT="$HOST_DB_PORT" \
-    DB_NAME="$TEST_DATABASE_NAME" \
+    DB_PORT=1 \
+    DB_EXPOSE_PORT=1 \
+    DB_NAME=worker_unit_tests_must_not_use_database \
     PYTHONPATH="$REPOSITORY_ROOT" \
     STORAGE_DIR="$TEST_STORAGE_DIR" \
     RELEASE_VALIDATION_ALLOWED=false \
     OCR_STRUCTURE_LLM_ENABLED=false \
+    PYTEST_ADDOPTS= \
     uv run --env-file "$ENV_FILE" "$@"
 }
 
@@ -74,6 +114,7 @@ run_with_integration_test_environment() {
     STORAGE_DIR="$TEST_STORAGE_DIR" \
     RELEASE_VALIDATION_ALLOWED=false \
     OCR_STRUCTURE_LLM_ENABLED=false \
+    PYTEST_ADDOPTS= \
     uv run --env-file "$ENV_FILE" "$@"
 }
 
@@ -246,6 +287,5 @@ SQL
     test_environment_error "격리된 test 데이터베이스를 재생성하지 못했습니다."
   fi
 
-  TEST_STORAGE_DIR="$(mktemp -d)"
-  trap cleanup_test_environment EXIT
+  prepare_test_storage_directory
 }

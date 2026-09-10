@@ -32,6 +32,12 @@ class MedicationOccurrenceStatus(StrEnum):
     CLOSED = "CLOSED"
 
 
+class MedicationCheckinStatus(StrEnum):
+    TAKEN = "TAKEN"
+    NOT_TAKEN = "NOT_TAKEN"
+    UNCONFIRMED = "UNCONFIRMED"
+
+
 class MedicationSchedule(Base):
     """Track B 복약 일정.
 
@@ -200,3 +206,94 @@ class MedicationOccurrence(Base):
 
     schedule: Mapped[MedicationSchedule] = relationship(back_populates="occurrences")
     schedule_time: Mapped[MedicationScheduleTime] = relationship(back_populates="occurrences")
+    checkin: Mapped["MedicationCheckin | None"] = relationship(back_populates="occurrence", uselist=False)
+
+
+class MedicationCheckin(Base):
+    """Occurrence별 단 하나의 현재 Check-in 결과."""
+
+    __tablename__ = "medication_checkin"
+    __table_args__ = (
+        UniqueConstraint("occurrence_id", name="uq_medication_checkin_occurrence_id"),
+        CheckConstraint("status IN ('TAKEN', 'NOT_TAKEN', 'UNCONFIRMED')", name="chk_medication_checkin_status"),
+        CheckConstraint("revision > 0", name="chk_medication_checkin_revision"),
+        CheckConstraint(
+            "status = 'TAKEN' OR taken_at IS NULL",
+            name="chk_medication_checkin_taken_at_status",
+        ),
+        Index("idx_medication_checkin_status_updated", "status", "updated_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    occurrence_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey(
+            "medication_occurrence.id",
+            name="fk_medication_checkin_occurrence",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    status: Mapped[MedicationCheckinStatus] = mapped_column(
+        Enum(MedicationCheckinStatus, native_enum=False, length=20),
+        nullable=False,
+    )
+    taken_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    occurrence: Mapped[MedicationOccurrence] = relationship(back_populates="checkin")
+    audits: Mapped[list["CheckinAudit"]] = relationship(
+        back_populates="checkin",
+        order_by=lambda: CheckinAudit.to_revision,
+    )
+
+
+class CheckinAudit(Base):
+    """Check-in 정정마다 추가되는 불변 감사 이력."""
+
+    __tablename__ = "checkin_audit"
+    __table_args__ = (
+        UniqueConstraint("checkin_id", "to_revision", name="uq_checkin_audit_checkin_to_revision"),
+        CheckConstraint(
+            "from_status IN ('TAKEN', 'NOT_TAKEN', 'UNCONFIRMED')",
+            name="chk_checkin_audit_from_status",
+        ),
+        CheckConstraint(
+            "to_status IN ('TAKEN', 'NOT_TAKEN', 'UNCONFIRMED')",
+            name="chk_checkin_audit_to_status",
+        ),
+        CheckConstraint("from_revision > 0", name="chk_checkin_audit_from_revision"),
+        CheckConstraint("to_revision = from_revision + 1", name="chk_checkin_audit_revision_step"),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    checkin_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey("medication_checkin.id", name="fk_checkin_audit_checkin", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    from_status: Mapped[MedicationCheckinStatus] = mapped_column(
+        Enum(MedicationCheckinStatus, native_enum=False, length=20),
+        nullable=False,
+    )
+    to_status: Mapped[MedicationCheckinStatus] = mapped_column(
+        Enum(MedicationCheckinStatus, native_enum=False, length=20),
+        nullable=False,
+    )
+    from_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    to_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    changed_by: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey("user.id", name="fk_checkin_audit_changed_by", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    checkin: Mapped[MedicationCheckin] = relationship(back_populates="audits")

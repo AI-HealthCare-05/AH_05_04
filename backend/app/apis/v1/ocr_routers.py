@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, status
 from fastapi.responses import JSONResponse as Response
 
+from app.core.utils.idempotency import build_idempotency_key_openapi_parameter
 from app.dependencies.security import get_request_user
 from app.dependencies.services import get_ocr_service, get_sync_mutation_idempotency_service
 from app.dtos.ocr import CreateManualMedicationRequest, OcrJobResponse
@@ -14,18 +15,9 @@ from app.services.ocr import OcrService
 ocr_router = APIRouter(prefix="/ocr-jobs", tags=["ocr"])
 
 
-_IDEMPOTENCY_KEY_OPENAPI_PARAMETER = {
-    "name": "Idempotency-Key",
-    "in": "header",
-    "required": True,
-    "schema": {
-        "type": "string",
-        "minLength": 16,
-        "maxLength": 255,
-        "pattern": r"^[A-Za-z0-9._:-]+$",
-    },
-    "description": "OCR 수동 약물 추가 멱등성 키입니다. 원문 값은 저장하지 않습니다.",
-}
+_IDEMPOTENCY_KEY_OPENAPI_PARAMETER = build_idempotency_key_openapi_parameter(
+    description="OCR 수동 약물 추가 멱등성 키입니다. 원문 값은 저장하지 않습니다."
+)
 
 
 @ocr_router.get(

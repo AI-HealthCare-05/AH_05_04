@@ -3,10 +3,10 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 검증 |
-| 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
+| 구현·리뷰 | B1/B2 Schedule·Occurrence와 B3 Check-in DB·Repository·Service 구현 · B4 API/OpenAPI 및 지정 리뷰어 검토 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-b-adherence-v1.md`, `track-c-support-v1.md` |
 | Proposed delta | 아래 `setup_reason` 신규 값·우선순위는 Decision/Contract Freeze 승인 전 TBD이며 Approved v4에 포함되지 않음 |
-| Last verified | 2026-08-27 |
+| Last verified | 2026-09-09 |
 
 ## 소유권 경계
 
