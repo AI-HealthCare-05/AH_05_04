@@ -15,8 +15,9 @@
 
 ## 검증
 
-- Kernel·config·runtime focused suite: `154 passed`
+- Kernel·config·runtime focused suite: `160 passed`
 - Disposable PostgreSQL migration·ACL·adapter suite: `5 passed`
+- Database logic policy and protected Alembic single head: `passed`
 - 실제 환경 좌표와 보호 데이터는 사용하지 않았습니다.
 
 ## 활성화 전 필수 조건
@@ -26,4 +27,4 @@
 - backup·restore·rotation 운영 증빙
 - Track F external gate 충족
 
-Evidence self hash: `cfd38b95403c5ec4f1b1b49b8f19feedd4e33a139fd1a1a8f91bd81b017630dc`
+Evidence self hash: `56a62453b6ec70fb18e94281153561b412ecd74e02f61ee38d43b34b640c0be9`

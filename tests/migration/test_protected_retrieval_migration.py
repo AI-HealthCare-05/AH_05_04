@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,17 +15,25 @@ from sqlalchemy import URL, make_url, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from infra.python.protected_retrieval_role_policy import (
+    apply_protected_retrieval_role_policy,
+    validate_protected_control_connection,
+    validate_protected_data_connection,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_CONFIG = PROJECT_ROOT / "infra" / "protected_retrieval" / "alembic.ini"
 
 
 @dataclass(frozen=True)
 class _ProtectedDatabase:
-    url: str
+    url: str = field(repr=False)
     schema: str
     owner: str
     access: str
+    control: str
     actor_login: str
+    control_login: str
     denied_login: str
     password: str
 
@@ -42,6 +50,7 @@ def test_protected_migration_refuses_missing_environment(
         "PROTECTED_DB_SCHEMA",
         "PROTECTED_DB_OWNER_ROLE",
         "PROTECTED_DB_ACCESS_ROLE",
+        "PROTECTED_DB_CONTROL_ROLE",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -61,7 +70,9 @@ def protected_database() -> Iterator[_ProtectedDatabase]:
         schema=f"pr368_{suffix}",
         owner=f"pr368_owner_{suffix}",
         access=f"pr368_access_{suffix}",
+        control=f"pr368_control_{suffix}",
         actor_login=f"pr368_actor_{suffix}",
+        control_login=f"pr368_controller_{suffix}",
         denied_login=f"pr368_denied_{suffix}",
         password="synthetic-only-password",
     )
@@ -70,6 +81,7 @@ def protected_database() -> Iterator[_ProtectedDatabase]:
         "PROTECTED_DB_SCHEMA": database.schema,
         "PROTECTED_DB_OWNER_ROLE": database.owner,
         "PROTECTED_DB_ACCESS_ROLE": database.access,
+        "PROTECTED_DB_CONTROL_ROLE": database.control,
     }
     previous = {name: os.environ.get(name) for name in environment}
     os.environ.update(environment)
@@ -82,12 +94,22 @@ def protected_database() -> Iterator[_ProtectedDatabase]:
         engine = create_async_engine(database.url)
         try:
             async with engine.begin() as connection:
-                for login in (database.actor_login, database.denied_login):
+                for login in (database.actor_login, database.control_login, database.denied_login):
                     await connection.exec_driver_sql(
                         f"CREATE ROLE {_quote(login)} LOGIN PASSWORD '{database.password}' "
                         "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
                     )
                 await connection.exec_driver_sql(f"GRANT {_quote(database.access)} TO {_quote(database.actor_login)}")
+                await connection.exec_driver_sql(
+                    f"GRANT {_quote(database.control)} TO {_quote(database.control_login)}"
+                )
+                await apply_protected_retrieval_role_policy(
+                    connection,
+                    schema=database.schema,
+                    owner=database.owner,
+                    data_access=database.access,
+                    control=database.control,
+                )
                 await connection.execute(
                     text(
                         f"""
@@ -114,8 +136,10 @@ def protected_database() -> Iterator[_ProtectedDatabase]:
                 async with engine.begin() as connection:
                     await connection.exec_driver_sql(f"DROP SCHEMA IF EXISTS {_quote(database.schema)} CASCADE")
                     await connection.exec_driver_sql(f"DROP ROLE IF EXISTS {_quote(database.actor_login)}")
+                    await connection.exec_driver_sql(f"DROP ROLE IF EXISTS {_quote(database.control_login)}")
                     await connection.exec_driver_sql(f"DROP ROLE IF EXISTS {_quote(database.denied_login)}")
                     await connection.exec_driver_sql(f"DROP ROLE IF EXISTS {_quote(database.access)}")
+                    await connection.exec_driver_sql(f"DROP ROLE IF EXISTS {_quote(database.control)}")
                     await connection.exec_driver_sql(f"DROP ROLE IF EXISTS {_quote(database.owner)}")
             finally:
                 await engine.dispose()
@@ -129,7 +153,7 @@ def protected_database() -> Iterator[_ProtectedDatabase]:
 
 
 @pytest.mark.asyncio
-async def test_protected_roles_functions_and_default_privileges_are_locked_down(
+async def test_protected_schema_uses_only_ordinary_relations_and_constraints(
     protected_database: _ProtectedDatabase,
 ) -> None:
     database = protected_database
@@ -145,11 +169,12 @@ async def test_protected_roles_functions_and_default_privileges_are_locked_down(
                     WHERE rolname = ANY(:roles)
                     """
                 ),
-                {"roles": [database.owner, database.access]},
+                {"roles": [database.owner, database.access, database.control]},
             )
             assert {tuple(row) for row in role_rows} == {
                 (database.owner, False, False, False, False, False, False),
                 (database.access, False, False, False, False, False, False),
+                (database.control, False, False, False, False, False, False),
             }
 
             functions = await connection.execute(
@@ -166,50 +191,38 @@ async def test_protected_roles_functions_and_default_privileges_are_locked_down(
                 ),
                 {"schema": database.schema},
             )
-            function_rows = list(functions)
-            assert function_rows
-            approved_functions = {
-                "resolve_principal",
-                "load_dataset",
-                "load_approval",
-                "audit_checkpoint",
-                "find_grant",
-                "require_grant",
-                "operation_history",
-                "append_operation",
-                "lock_operation",
-                "issue_capability",
-                "consume_capability",
-                "read_artifact",
-                "write_artifact",
+            assert list(functions) == []
+
+            relation_names = set(
+                await connection.scalars(
+                    text("SELECT tablename FROM pg_tables WHERE schemaname = :schema"),
+                    {"schema": database.schema},
+                )
+            )
+            assert relation_names == {
+                "alembic_version",
+                "protected_identity",
+                "protected_dataset",
+                "protected_artifact",
+                "approval_evidence",
+                "authorization_grant",
+                "operation_capability",
+                "audit_entry",
+                "audit_head",
             }
-            for function_oid, name, owner, security_definer, configuration in function_rows:
-                assert owner == database.owner
-                assert security_definer is True
-                assert configuration == [f"search_path=pg_catalog, {database.schema}, pg_temp"]
-                public_execute = await connection.scalar(
+            lock_markers = set(
+                await connection.scalars(
                     text(
                         """
-                        SELECT EXISTS (
-                            SELECT 1
-                            FROM aclexplode(
-                                COALESCE(
-                                    (SELECT proacl FROM pg_catalog.pg_proc WHERE oid = :function_oid),
-                                    acldefault('f', (SELECT proowner FROM pg_catalog.pg_proc WHERE oid = :function_oid))
-                                )
-                            ) AS acl
-                            WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'
-                        )
+                        SELECT table_name
+                        FROM information_schema.columns
+                        WHERE table_schema = :schema AND column_name = 'lock_marker'
                         """
                     ),
-                    {"function_oid": function_oid},
+                    {"schema": database.schema},
                 )
-                assert public_execute is False
-                access_execute = await connection.scalar(
-                    text("SELECT has_function_privilege(:role, CAST(:function_oid AS oid), 'EXECUTE')"),
-                    {"role": database.access, "function_oid": function_oid},
-                )
-                assert access_execute is (name in approved_functions)
+            )
+            assert lock_markers == {"protected_dataset", "authorization_grant"}
 
             public_default_privileges = await connection.scalar(
                 text(
@@ -250,38 +263,66 @@ def _login_url(database: _ProtectedDatabase, login: str) -> URL:
 
 
 @pytest.mark.asyncio
-async def test_access_identity_can_only_execute_approved_functions(
+async def test_limited_logins_have_plane_specific_column_privileges(
     protected_database: _ProtectedDatabase,
 ) -> None:
     database = protected_database
     actor_engine = create_async_engine(_login_url(database, database.actor_login))
+    control_engine = create_async_engine(_login_url(database, database.control_login))
     denied_engine = create_async_engine(_login_url(database, database.denied_login))
     try:
         async with actor_engine.connect() as connection:
-            principal = await connection.scalar(text(f"SELECT {_quote(database.schema)}.resolve_principal()"))
-            assert principal == {
-                "actor": {"actor_id": "synthetic-author", "namespace": "SERVICE_IDENTITY"},
-                "role": "HOLDOUT_AUTHOR",
-            }
+            await validate_protected_data_connection(
+                connection,
+                schema=database.schema,
+                data_access=database.access,
+                control=database.control,
+            )
+            principal = await connection.execute(
+                text(
+                    f"SELECT actor_id, actor_namespace, principal_role "
+                    f"FROM {_quote(database.schema)}.protected_identity WHERE database_login = session_user"
+                )
+            )
+            assert principal.one() == ("synthetic-author", "SERVICE_IDENTITY", "HOLDOUT_AUTHOR")
 
         forbidden_statements = (
-            f"SELECT * FROM {_quote(database.schema)}.protected_dataset",
+            f"SELECT * FROM {_quote(database.schema)}.approval_evidence",
             f"INSERT INTO {_quote(database.schema)}.audit_head DEFAULT VALUES",
-            f"UPDATE {_quote(database.schema)}.audit_head SET sequence = 1",
+            f"UPDATE {_quote(database.schema)}.protected_dataset SET state = 'FROZEN'",
             f"DELETE FROM {_quote(database.schema)}.audit_head",
             f"TRUNCATE {_quote(database.schema)}.audit_entry",
             f"CREATE TABLE {_quote(database.schema)}.forbidden (id integer)",
-            f"SELECT nextval('{database.schema}.audit_entry_sequence_seq')",
-            f"SELECT {_quote(database.schema)}.internal_audit_checkpoint()",
         )
         for statement in forbidden_statements:
             async with actor_engine.connect() as connection:
                 with pytest.raises(DBAPIError):
                     await connection.execute(text(statement))
 
+        async with control_engine.connect() as connection:
+            await validate_protected_control_connection(
+                connection,
+                schema=database.schema,
+                data_access=database.access,
+                control=database.control,
+            )
+            await connection.execute(
+                text(
+                    f"INSERT INTO {_quote(database.schema)}.approval_evidence "
+                    "(source_event_id, evidence, canonical_raw_sha256, recorded_at) "
+                    "VALUES ('synthetic-control-event', '{}'::jsonb, :digest, clock_timestamp())"
+                ),
+                {"digest": "a" * 64},
+            )
+            await connection.rollback()
+        async with control_engine.connect() as connection:
+            with pytest.raises(DBAPIError):
+                await connection.execute(text(f"SELECT envelope FROM {_quote(database.schema)}.protected_artifact"))
+
         async with denied_engine.connect() as connection:
             with pytest.raises(DBAPIError):
-                await connection.execute(text(f"SELECT {_quote(database.schema)}.resolve_principal()"))
+                await connection.execute(text(f"SELECT * FROM {_quote(database.schema)}.protected_identity"))
     finally:
         await actor_engine.dispose()
+        await control_engine.dispose()
         await denied_engine.dispose()

@@ -15,6 +15,8 @@ _IMPLEMENTATION_FILES = (
     ("POSTGRESQL_ADAPTER", "ai_worker/adapters/postgresql_protected_retrieval.py"),
     ("FAIL_CLOSED_CONFIG", "ai_worker/core/config.py"),
     ("EXPLICIT_RUNTIME_ASSEMBLY", "ai_worker/core/runtime_assembly.py"),
+    ("PROTECTED_ROLE_POLICY", "infra/python/protected_retrieval_role_policy.py"),
+    ("ISOLATED_MIGRATION_ENV", "infra/protected_retrieval/env.py"),
     ("ISOLATED_MIGRATION", "infra/protected_retrieval/versions/368000000001_create_protected_retrieval.py"),
 )
 
@@ -87,11 +89,15 @@ def build_protected_retrieval_infrastructure_evidence(repository_root: Path) -> 
         "verification": [
             {
                 "command_id": "KERNEL_CONFIG_RUNTIME",
-                "result": "154_PASSED",
+                "result": "160_PASSED",
             },
             {
                 "command_id": "DISPOSABLE_POSTGRESQL_MIGRATION_ADAPTER",
                 "result": "5_PASSED",
+            },
+            {
+                "command_id": "DATABASE_LOGIC_POLICY_AND_SINGLE_HEAD",
+                "result": "PASSED",
             },
         ],
     }
@@ -121,8 +127,9 @@ def render_protected_retrieval_infrastructure_evidence(evidence: dict[str, JsonV
             "",
             "## 검증",
             "",
-            "- Kernel·config·runtime focused suite: `154 passed`",
+            "- Kernel·config·runtime focused suite: `160 passed`",
             "- Disposable PostgreSQL migration·ACL·adapter suite: `5 passed`",
+            "- Database logic policy and protected Alembic single head: `passed`",
             "- 실제 환경 좌표와 보호 데이터는 사용하지 않았습니다.",
             "",
             "## 활성화 전 필수 조건",

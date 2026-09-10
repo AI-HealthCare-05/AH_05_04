@@ -268,27 +268,7 @@ class Config(BaseSettings):
         if not self.PROTECTED_RETRIEVAL_ENABLED:
             return self
 
-        values: dict[str, str] = {}
-        for field_name in (
-            "PROTECTED_DB_HOST",
-            "PROTECTED_DB_NAME",
-            "PROTECTED_DB_USER",
-            "PROTECTED_DB_CONTROL_USER",
-        ):
-            configured = getattr(self, field_name)
-            if configured is None or not configured.strip():
-                raise ValueError(f"{field_name} is required when protected retrieval is enabled")
-            values[field_name] = configured.strip()
-
-        for field_name in (
-            "PROTECTED_DB_PASSWORD",
-            "PROTECTED_DB_CONTROL_PASSWORD",
-            "PROTECTED_DB_SCHEMA",
-        ):
-            configured = getattr(self, field_name)
-            if configured is None or not configured.get_secret_value().strip():
-                raise ValueError(f"{field_name} is required when protected retrieval is enabled")
-            values[field_name] = configured.get_secret_value().strip()
+        values = self._required_protected_values()
 
         if self.ENV is not DeploymentEnvironment.LOCAL:
             for field_name, configured in values.items():
@@ -313,6 +293,27 @@ class Config(BaseSettings):
         if protected_identity == worker_identity or control_identity == worker_identity:
             raise ValueError("protected retrieval requires a separate database identity")
         return self
+
+    def _required_protected_values(self) -> dict[str, str]:
+        values: dict[str, str] = {}
+        plain_fields = (
+            "PROTECTED_DB_HOST",
+            "PROTECTED_DB_NAME",
+            "PROTECTED_DB_USER",
+            "PROTECTED_DB_CONTROL_USER",
+        )
+        secret_fields = ("PROTECTED_DB_PASSWORD", "PROTECTED_DB_CONTROL_PASSWORD", "PROTECTED_DB_SCHEMA")
+        for field_name in plain_fields:
+            configured = getattr(self, field_name)
+            if configured is None or not configured.strip():
+                raise ValueError(f"{field_name} is required when protected retrieval is enabled")
+            values[field_name] = configured.strip()
+        for field_name in secret_fields:
+            configured = getattr(self, field_name)
+            if configured is None or not configured.get_secret_value().strip():
+                raise ValueError(f"{field_name} is required when protected retrieval is enabled")
+            values[field_name] = configured.get_secret_value().strip()
+        return values
 
     def _validate_local_source_artifact_storage(self) -> None:
         if self.SOURCE_ARTIFACT_LOCAL_ROOT is None or not self.SOURCE_ARTIFACT_LOCAL_ROOT.strip():

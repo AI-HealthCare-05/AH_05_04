@@ -15,6 +15,7 @@ _REQUIRED = (
     "PROTECTED_DB_SCHEMA",
     "PROTECTED_DB_OWNER_ROLE",
     "PROTECTED_DB_ACCESS_ROLE",
+    "PROTECTED_DB_CONTROL_ROLE",
 )
 
 
@@ -28,7 +29,7 @@ def _required_environment() -> dict[str, str]:
     for name in _REQUIRED[1:]:
         if _IDENTIFIER.fullmatch(values[name]) is None:
             raise RuntimeError(f"{name} must be a safe PostgreSQL identifier")
-    if len({values[name] for name in _REQUIRED[1:]}) != 3:
+    if len({values[name] for name in _REQUIRED[1:]}) != 4:
         raise RuntimeError("protected schema and role identifiers must be distinct")
     return values
 
@@ -49,8 +50,9 @@ def _quoted(identifier: str) -> str:
 async def _bootstrap(connection: AsyncConnection) -> None:
     owner = settings["PROTECTED_DB_OWNER_ROLE"]
     access = settings["PROTECTED_DB_ACCESS_ROLE"]
+    control = settings["PROTECTED_DB_CONTROL_ROLE"]
     schema = settings["PROTECTED_DB_SCHEMA"]
-    for role in (owner, access):
+    for role in (owner, access, control):
         await connection.exec_driver_sql(
             "DO $bootstrap$ BEGIN "
             f"IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '{role}') THEN "
@@ -64,8 +66,12 @@ async def _bootstrap(connection: AsyncConnection) -> None:
         )
     await connection.exec_driver_sql(f"CREATE SCHEMA IF NOT EXISTS {_quoted(schema)} AUTHORIZATION {_quoted(owner)}")
     await connection.exec_driver_sql(f"ALTER SCHEMA {_quoted(schema)} OWNER TO {_quoted(owner)}")
-    await connection.exec_driver_sql(f"REVOKE ALL ON SCHEMA {_quoted(schema)} FROM PUBLIC, {_quoted(access)}")
-    await connection.exec_driver_sql(f"GRANT USAGE ON SCHEMA {_quoted(schema)} TO {_quoted(access)}")
+    await connection.exec_driver_sql(
+        f"REVOKE ALL ON SCHEMA {_quoted(schema)} FROM PUBLIC, {_quoted(access)}, {_quoted(control)}"
+    )
+    await connection.exec_driver_sql(
+        f"GRANT USAGE ON SCHEMA {_quoted(schema)} TO {_quoted(access)}, {_quoted(control)}"
+    )
     await connection.commit()
 
 

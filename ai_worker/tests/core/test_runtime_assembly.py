@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import URL
 from sqlalchemy.pool import NullPool
 
 from ai_worker.core import runtime_assembly
@@ -178,7 +179,7 @@ def test_protected_engines_use_distinct_short_lived_non_logging_connections(
     engine = factory(config)
 
     assert engine is expected_engine
-    assert captured["url"].username == expected_user
+    assert cast(URL, captured["url"]).username == expected_user
     assert captured["url"] != config.database_url
     assert captured["echo"] is False
     assert captured["pool_pre_ping"] is True

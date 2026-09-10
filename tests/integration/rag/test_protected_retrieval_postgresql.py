@@ -32,8 +32,10 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     ProtectedDatasetBinding,
     ProtectedDatasetState,
     ProtectedOperationRequest,
+    ProtectedOperationResult,
     ProtectedPrincipal,
     ProtectedPrincipalRole,
+    ProtectedSecurityError,
     execute_protected_operation,
 )
 from tests.migration.test_protected_retrieval_migration import (
@@ -192,6 +194,20 @@ async def test_author_write_is_atomic_opaque_and_idempotent(
             async with PostgresqlAuthorizationGuard(diagnostic_session, database.schema).hold(
                 request, grant
             ) as diagnostic_guard:
+                with pytest.raises(ProtectedSecurityError, match="AUDIT_TRANSITION_INVALID"):
+                    await diagnostic_journal.append_operation(
+                        request,
+                        grant,
+                        OperationAuditOutcome.SUCCEEDED,
+                        ProtectedAuditReason.COMPLETED,
+                        result=ProtectedOperationResult(
+                            result_ref=OpaqueLogicalRef(
+                                namespace=OpaqueRefNamespace.RUN_RESULT,
+                                value=str(uuid4()),
+                            ),
+                            reason_code="PROTECTED_OPERATION_SUCCEEDED",
+                        ),
+                    )
                 intent = await diagnostic_journal.append_operation(
                     request,
                     grant,
@@ -200,12 +216,38 @@ async def test_author_write_is_atomic_opaque_and_idempotent(
                 )
                 assert intent.outcome is OperationAuditOutcome.INTENT
                 capability = await diagnostic_guard.issue_capability(request, grant)
+                forged_capability = capability.model_copy(update={"request_id": str(uuid4())})
+                with pytest.raises(ProtectedSecurityError, match="CAPABILITY_BINDING_MISMATCH"):
+                    await diagnostic_guard.consume(forged_capability)
                 await diagnostic_guard.consume(capability)
+                forged_target_capability = capability.model_copy(
+                    update={
+                        "target_ref": OpaqueLogicalRef(
+                            namespace=OpaqueRefNamespace.HOLDOUT_SET,
+                            value=str(uuid4()),
+                        )
+                    }
+                )
+                with pytest.raises(ProtectedSecurityError, match="CAPABILITY_BINDING_MISMATCH"):
+                    await PostgresqlProtectedArtifactOperation(
+                        diagnostic_session,
+                        database.schema,
+                        write_payload=payload,
+                    ).execute(request, forged_target_capability)
                 diagnostic_result = await PostgresqlProtectedArtifactOperation(
                     diagnostic_session,
                     database.schema,
                     write_payload=payload,
                 ).execute(request, capability)
+                with pytest.raises(ProtectedSecurityError, match="AUDIT_BINDING_MISMATCH"):
+                    await diagnostic_journal.append_operation(
+                        request.model_copy(update={"request_id": str(uuid4())}),
+                        grant,
+                        OperationAuditOutcome.SUCCEEDED,
+                        ProtectedAuditReason.COMPLETED,
+                        capability,
+                        diagnostic_result,
+                    )
                 terminal = await diagnostic_journal.append_operation(
                     request,
                     grant,
@@ -215,6 +257,8 @@ async def test_author_write_is_atomic_opaque_and_idempotent(
                     diagnostic_result,
                 )
                 assert terminal.outcome is OperationAuditOutcome.SUCCEEDED
+                with pytest.raises(ProtectedSecurityError, match="CAPABILITY_ALREADY_CONSUMED"):
+                    await diagnostic_guard.consume(capability)
             await diagnostic_transaction.rollback()
 
         async with session_factory() as session, session.begin():
@@ -253,6 +297,27 @@ async def test_author_write_is_atomic_opaque_and_idempotent(
         assert payload.decode() not in repr(result)
         assert payload.decode() not in caplog.text
 
+        mismatched = request.model_copy(
+            update={
+                "request_id": str(uuid4()),
+                "operation_key": f"synthetic-mismatch-{uuid4()}",
+                "principal": principal.model_copy(
+                    update={"actor": ActorIdentity(actor_id="claimed-other", namespace="SERVICE_IDENTITY")}
+                ),
+            }
+        )
+        async with session_factory() as session, session.begin():
+            mismatch_clock = await PostgresqlTrustedClock.from_session(session)
+            with pytest.raises(ProtectedSecurityError, match="GUARD_BINDING_MISMATCH"):
+                await execute_protected_operation(
+                    mismatched,
+                    ledger=PostgresqlAuthorizationLedger(session, database.schema),
+                    guard=PostgresqlAuthorizationGuard(session, database.schema),
+                    journal=PostgresqlProtectedAuditJournal(session, database.schema, mismatch_clock),
+                    operation=PostgresqlProtectedArtifactOperation(session, database.schema),
+                    clock=mismatch_clock,
+                )
+
         async with admin_engine.connect() as connection:
             stored = await connection.execute(
                 text(
@@ -273,6 +338,16 @@ async def test_author_write_is_atomic_opaque_and_idempotent(
             assert envelope == payload
             assert outcomes == ["INTENT", "SUCCEEDED"]
             assert capability_count == 1
+
+        async with admin_engine.begin() as connection:
+            await connection.execute(
+                text(f'UPDATE "{database.schema}".audit_head SET sequence = 0, entry_sha256 = NULL WHERE singleton')
+            )
+        async with session_factory() as session, session.begin():
+            tamper_clock = await PostgresqlTrustedClock.from_session(session)
+            tamper_journal = PostgresqlProtectedAuditJournal(session, database.schema, tamper_clock)
+            with pytest.raises(ProtectedSecurityError, match="AUDIT_TAIL_TRUNCATED"):
+                await tamper_journal.operation_history(request)
     finally:
         await actor_engine.dispose()
         await admin_engine.dispose()

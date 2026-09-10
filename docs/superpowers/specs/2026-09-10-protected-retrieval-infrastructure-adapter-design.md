@@ -2,7 +2,7 @@
 
 ## Status and authority
 
-- Status: Revised design awaiting requester and designated reviewer approval.
+- Status: Requester-approved revised design; designated reviewer approval remains required before merge.
 - Tracking: Issue #368, PR #432.
 - Governing decisions: `PD-368-20260909`, `PD-398-R1`, and `PD-398-R2`.
 - Implementation owner: 정현우 (`@ceohwj`).

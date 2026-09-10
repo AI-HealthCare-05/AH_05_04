@@ -2,7 +2,9 @@
 
 import json
 from pathlib import Path
+from typing import cast
 
+from ai_worker.tasks.evaluation.canonical import JsonValue
 from ai_worker.tasks.evaluation.protected_retrieval_infrastructure_evidence import (
     EVIDENCE_JSON_PATH,
     EVIDENCE_MARKDOWN_PATH,
@@ -24,6 +26,21 @@ def test_infrastructure_evidence_separates_implementation_from_activation() -> N
     assert evidence["actual_run_ref"] is None
     assert evidence["disposal_status"] == "BLOCKED_BY_ISSUE_425"
     assert evidence["release_eligible"] is False
+    implementation_files = cast(list[dict[str, JsonValue]], evidence["implementation_files"])
+    assert [item["component"] for item in implementation_files] == [
+        "ASYNC_KERNEL_SEAM",
+        "POSTGRESQL_ADAPTER",
+        "FAIL_CLOSED_CONFIG",
+        "EXPLICIT_RUNTIME_ASSEMBLY",
+        "PROTECTED_ROLE_POLICY",
+        "ISOLATED_MIGRATION_ENV",
+        "ISOLATED_MIGRATION",
+    ]
+    verification = cast(list[dict[str, JsonValue]], evidence["verification"])
+    assert verification[-1] == {
+        "command_id": "DATABASE_LOGIC_POLICY_AND_SINGLE_HEAD",
+        "result": "PASSED",
+    }
 
 
 def test_infrastructure_evidence_contains_only_non_sensitive_scalars() -> None:
