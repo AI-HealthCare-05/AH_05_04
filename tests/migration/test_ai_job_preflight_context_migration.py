@@ -526,10 +526,13 @@ def test_preflight_tables_join_existing_integrity_head() -> None:
     command.upgrade(cfg, "head")
     assert asyncio.run(_fetch_table_names()) == PREFLIGHT_CONTEXT_TABLES
 
+    # 기대 head를 하드코딩하지 않고 코드에서 읽는다. migration이 추가될 때마다
+    # (#175가 그 예다) 이 단정이 깨지지 않도록 verify_database_head와 같은 방식을 쓴다.
+    heads = migration_heads()
+    assert len(heads) == 1, heads
+
     async def verify() -> None:
         async with _connection() as connection:
-            expected_heads = migration_heads()
-            assert len(expected_heads) == 1
-            assert validation_errors(expected_heads[0], await read_database_head_state(connection)) == []
+            assert validation_errors(heads[0], await read_database_head_state(connection)) == []
 
     asyncio.run(verify())

@@ -216,3 +216,25 @@ downgrade를 수정했으며 upgrade와 revision 연결은 변경하지 않았�
 - 새 migration·Trigger·RLS·업무 DB 함수·권한 확대 없음. 기존 downgrade 및 미확정 후속 범위 유지.
 
 리뷰 수정 검증: Source ingestion 단위 384 passed, 실제 DB lifecycle·Receipt 31 passed, mypy 536개 파일 및 Ruff·format·재도입 방지·쓰기 경계·테스트 분류 검사 통과. 원격 CI 결과는 해당 커밋의 실행 결과로 별도 확인한다.
+
+
+### 최신 develop / #416 충돌 해결
+
+기반 develop `086b2aa`(#416 포함)를 병합했다. Source 계약 설명과 Runtime 계약 설명을 함께 보존하고,
+공통 migration·Docker 검사는 단일 코드 head와 실제 DB/이미지를 비교한다.
+`362c3d4e5f60`은 `(362b2c3d4e5f, 175a1b2c3d4e)`를 잇는 DDL 없는 merge revision이다.
+기존 #362 및 이미 병합된 #416 migration 파일은 수정하지 않았다.
+두 기존 head에서 새 head로 upgrade할 때 기존 Source 행을 보존하고 Trigger·RLS·제거 대상 함수가
+없는지 검사한다. downgrade에서 merge revision 자체는 부모 두 경로만 복원하며,
+각 부모 migration의 데이터 보존 guard는 계속 적용된다.
+
+#416의 downgrade 검사는 최신 head에 대한 상대 `-1` 대신 해당 `175a1b2c3d4e`에서
+부모 `3984b5c6d7e8`까지 명시하여 검사한다. 부모 revision 자체의 downgrade는 실행하지 않는다.
+행이 있으면 거부, 비어 있으면 identity 컬럼 제거 후 복원이 되는 기존 검증 의미를 유지한다.
+
+충돌 해결 후 Source·Runtime·관리·양쪽 head 병합 연관 검사: **482 passed**.
+전체 CI runner는 `envs/.local.env`가 없어 환경 준비 단계에서 중단했다. 직접 실행한 검사와 원격 CI를 구분한다.
+
+최종 검증: 전체 migration **177 passed**, Runtime Repository·Docker 이미지·head·Writer/역할 권한 **40 passed**.
+작업 전용 DB의 실제 head upgrade 및 종합 검사도 **362c3d4e5f60; Trigger/RLS/제거 함수 0개**로 통과했다.
+Ruff·format, mypy 540개 파일, 재도입 방지·보호 테이블 쓰기 경계·테스트 분류·diff 검사를 통과했다.
