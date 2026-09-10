@@ -97,6 +97,8 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 
 ### CI와 secret
 
+Backend에는 빈 문자열을 기본값으로 갖는 CLOVA 설정과 `get_ocr_engine` wiring이 남아 있다. 현재 OCR 라우트는 이 dependency를 사용하지 않으며 정리는 후속 작업이다(`backend/app/dependencies/services.py`). 이를 다시 연결할 때는 Worker의 필수 설정 검증이 Backend에도 적용된다고 가정하지 말고, endpoint·secret 검증을 별도로 확인해야 한다.
+
 현재 CI workflow는 `secrets.*`를 직접 참조하지 않는다. 기본 CI는 실제 `OPENAI_API_KEY` 또는 `CLOVA_OCR_SECRET` 등록 여부와 무관하게 통과할 수 있으며, 실제 Provider 호출 테스트는 opt-in 방식으로 분리되어 있다.
 
 이 동작은 기본 테스트를 안정적으로 유지하는 데에는 맞지만, 실제 Provider 호출을 자동화하려면 별도 secret 등록, 실행 환경 분리, secret 비노출 guard가 필요하다.
