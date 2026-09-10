@@ -24,6 +24,7 @@ from ai_worker.tasks.evaluation.schemas.common import (
     ImmutableReference,
     Partition,
 )
+from ai_worker.tasks.evaluation.schemas.policy import SuiteDefinition
 
 RUN_ID = "11111111-1111-4111-8111-111111111111"
 
@@ -543,6 +544,33 @@ def test_case_mean_uses_canonical_artifact_without_pooled_ratio_false_blocking()
         assert gate.aggregate_decision_status is DecisionStatus.PASS
 
 
+def test_ratio_metric_accepts_canonical_six_place_rounding() -> None:
+    metric = _required_metric().model_copy(
+        update={
+            "estimator_id": "PROPORTION",
+            "numerator": 1,
+            "denominator": 3,
+            "metric_value": "0.333333",
+            "ci_lower": "0.3",
+            "ci_upper": "0.4",
+            "threshold": "1",
+        }
+    )
+    requirement = replace(
+        _metric_policy().required_metrics[0],
+        estimator_id="PROPORTION",
+        threshold="1",
+    )
+
+    gate = build_release_gate(
+        replace(_metric_policy(), required_metrics=(requirement,)),
+        replace(_evidence(), metrics=(_metric_evidence(metric),)),
+    )
+
+    assert gate.aggregate_execution_status is ExecutionStatus.COMPLETED
+    assert gate.aggregate_decision_status is DecisionStatus.PASS
+
+
 def test_required_metric_rejects_invalid_ci_bounds() -> None:
     metric = _required_metric().model_copy(update={"ci_lower": "0.1", "ci_upper": "0"})
     evidence = replace(
@@ -584,6 +612,54 @@ def test_unsupported_required_metric_decision_basis_is_not_implemented() -> None
 
 
 def _suite_evidence() -> SuiteEvidence:
+    case_set_hash = canonical_sha256({"case_ids": ["case-001"]})
+    definition = SuiteDefinition.model_validate(
+        {
+            "schema_id": "rag-eval.suite-definition",
+            "schema_version": "1.0.0",
+            "suite_id": "required-suite",
+            "suite_version": "1.0.0",
+            "suite_hash": "0" * 64,
+            "adapter_id": "synthetic-gate-test",
+            "command": ["synthetic-noop"],
+            "input_selector": {
+                "dataset_code": "synthetic-release-gate",
+                "dataset_version": "1.0.0",
+                "partitions": ["HOLDOUT"],
+                "task_types": ["END_TO_END_RAG"],
+            },
+            "expected_case_set_hash": case_set_hash,
+            "critical_invariant_ids": ["SYNTHETIC_REQUIRED_CASE_COVERAGE"],
+            "pass_rule": "ALL_REQUIRED_CASES_PASS",
+            "artifact_contract_version": "1.0.0",
+            "required": True,
+            "review_provenance": {
+                "authored_by": {
+                    "namespace": "GITHUB_LOGIN",
+                    "actor_id": "synthetic-author",
+                    "role": "EVALUATION_IMPLEMENTER",
+                },
+                "authored_at": "2026-09-10T00:00:00.000000Z",
+                "reviewed_by": {
+                    "namespace": "GITHUB_LOGIN",
+                    "actor_id": "synthetic-reviewer",
+                    "role": "DATASET_CUSTODIAN",
+                },
+                "reviewed_at": "2026-09-10T00:01:00.000000Z",
+                "approved_by": None,
+                "approved_at": None,
+                "team_gold_status": "DRAFT",
+                "external_medical_review_status": "NOT_REQUESTED",
+                "external_medical_approval_receipt_ref": None,
+                "evidence_review_refs": [],
+            },
+        }
+    )
+    definition_hash = canonical_sha256(
+        definition.model_dump(mode="json"),
+        excluded_top_level_keys=frozenset({"suite_hash"}),
+    )
+    definition = definition.model_copy(update={"suite_hash": definition_hash})
     suite = SuiteResults.model_validate(
         {
             "schema_id": "rag-eval.suite-results",
@@ -591,10 +667,10 @@ def _suite_evidence() -> SuiteEvidence:
             "run_id": RUN_ID,
             "suite_id": "required-suite",
             "suite_version": "1.0.0",
-            "suite_definition_hash": "6" * 64,
+            "suite_definition_hash": definition_hash,
             "required": True,
-            "expected_case_set_hash": "7" * 64,
-            "executed_case_set_hash": "7" * 64,
+            "expected_case_set_hash": case_set_hash,
+            "executed_case_set_hash": case_set_hash,
             "case_results": [
                 {
                     "case_code": "case-001",
@@ -614,13 +690,22 @@ def _suite_evidence() -> SuiteEvidence:
     digest = canonical_sha256(suite.model_dump(mode="json"))
     return SuiteEvidence(
         suite=suite,
+        definition=definition,
         artifact_ref=ImmutableReference(id="required-suite", version="1.0.0", hash=digest),
     )
 
 
+def _suite_ref(evidence: SuiteEvidence) -> ImmutableReference:
+    return ImmutableReference(
+        id=evidence.definition.suite_id,
+        version=evidence.definition.suite_version,
+        hash=evidence.definition.suite_hash,
+    )
+
+
 def test_required_suite_definition_hash_mismatch_is_invalid() -> None:
-    policy = replace(_policy(), required_suites=(_ref("required-suite", "6"),))
     suite_evidence = _suite_evidence()
+    policy = replace(_policy(), required_suites=(_suite_ref(suite_evidence),))
     mismatched = replace(
         suite_evidence,
         suite=suite_evidence.suite.model_copy(update={"suite_definition_hash": "7" * 64}),
@@ -635,8 +720,8 @@ def test_required_suite_definition_hash_mismatch_is_invalid() -> None:
 
 
 def test_required_suite_internal_identity_cannot_be_spoofed_by_wrapper_ref() -> None:
-    policy = replace(_policy(), required_suites=(_ref("required-suite", "7"),))
     suite_evidence = _suite_evidence()
+    policy = replace(_policy(), required_suites=(_suite_ref(suite_evidence),))
     spoofed = replace(
         suite_evidence,
         suite=suite_evidence.suite.model_copy(update={"suite_id": "unrelated-suite"}),
@@ -650,14 +735,40 @@ def test_required_suite_internal_identity_cannot_be_spoofed_by_wrapper_ref() -> 
 
 
 def test_required_suite_must_be_required_and_cover_expected_cases() -> None:
-    policy = replace(_policy(), required_suites=(_ref("required-suite", "6"),))
     suite_evidence = _suite_evidence()
+    policy = replace(_policy(), required_suites=(_suite_ref(suite_evidence),))
     invalid_suite = replace(
         suite_evidence,
         suite=suite_evidence.suite.model_copy(update={"required": False, "executed_case_set_hash": "0" * 64}),
     )
 
     gate = build_release_gate(policy, replace(_evidence(), suites=(invalid_suite,)))
+
+    assert gate.aggregate_execution_status is ExecutionStatus.INVALID
+    assert "REQUIRED_SUITE_BINDING_MISMATCH:required-suite" in gate.blocking_reason_codes
+
+
+def test_required_suite_case_hashes_are_bound_to_signed_definition() -> None:
+    suite_evidence = _suite_evidence()
+    policy = replace(_policy(), required_suites=(_suite_ref(suite_evidence),))
+    tampered_suite = suite_evidence.suite.model_copy(
+        update={
+            "expected_case_set_hash": "0" * 64,
+            "executed_case_set_hash": "0" * 64,
+        }
+    )
+    tampered_hash = canonical_sha256(tampered_suite.model_dump(mode="json"))
+    tampered = replace(
+        suite_evidence,
+        suite=tampered_suite,
+        artifact_ref=ImmutableReference(
+            id="required-suite",
+            version="1.0.0",
+            hash=tampered_hash,
+        ),
+    )
+
+    gate = build_release_gate(policy, replace(_evidence(), suites=(tampered,)))
 
     assert gate.aggregate_execution_status is ExecutionStatus.INVALID
     assert "REQUIRED_SUITE_BINDING_MISMATCH:required-suite" in gate.blocking_reason_codes
@@ -678,6 +789,22 @@ def test_invalid_profile_evidence_is_not_overwritten_by_missing_execution() -> N
         ExecutionStatus.NOT_EVALUATED,
     )
     assert "REQUIRED_EXPERIMENT_NOT_COMPLETED" in gate.blocking_reason_codes
+
+
+def test_runtime_policy_without_baseline_freeze_receipt_is_invalid() -> None:
+    policy = replace(
+        _policy(),
+        required_receipts=tuple(item for item in _policy().required_receipts if item.id != "baseline-freeze-receipt"),
+    )
+    evidence = replace(
+        _evidence(),
+        receipts=tuple(item for item in _evidence().receipts if item.reference.id != "baseline-freeze-receipt"),
+    )
+
+    gate = build_release_gate(policy, evidence)
+
+    assert gate.aggregate_execution_status is ExecutionStatus.INVALID
+    assert "RELEASE_POLICY_PAIRED_REQUIREMENTS_INVALID" in gate.blocking_reason_codes
 
 
 def test_exit_code_rejects_pass_with_blocking_reasons() -> None:
@@ -730,8 +857,8 @@ def test_expired_required_receipt_is_invalid() -> None:
 
 
 def test_duplicate_required_suite_identity_is_invalid() -> None:
-    policy = replace(_policy(), required_suites=(_ref("required-suite", "7"),))
     suite = _suite_evidence()
+    policy = replace(_policy(), required_suites=(_suite_ref(suite),))
 
     gate = build_release_gate(policy, replace(_evidence(), suites=(suite, suite)))
 

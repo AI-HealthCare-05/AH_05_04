@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_HALF_EVEN, Decimal
 from typing import cast
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_sha256
@@ -20,6 +20,7 @@ from ai_worker.tasks.evaluation.schemas.common import (
     ImmutableReference,
     Partition,
 )
+from ai_worker.tasks.evaluation.schemas.policy import SuiteDefinition
 
 _BLOCKING_STATUS_ORDER = {
     ExecutionStatus.INVALID: 0,
@@ -27,6 +28,7 @@ _BLOCKING_STATUS_ORDER = {
     ExecutionStatus.NOT_IMPLEMENTED: 2,
     ExecutionStatus.NOT_EVALUATED: 3,
 }
+_SIX_PLACES = Decimal("0.000001")
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +84,7 @@ class MetricEvidence:
 @dataclass(frozen=True, slots=True)
 class SuiteEvidence:
     suite: SuiteResults
+    definition: SuiteDefinition
     artifact_ref: ImmutableReference
 
 
@@ -157,18 +160,20 @@ def _reason(prefix: str, identifier: str) -> str:
 
 
 def _readiness_member(
-    policy: ReleaseGatePolicy,
     member_id: str,
+    member_version: str,
+    member_hash: str,
+    artifact_ref: ImmutableReference | None,
     status: ExecutionStatus,
 ) -> RequiredGateMember:
     return RequiredGateMember(
         member_type=GateMemberType.CONTRACT_RECEIPT,
         member_id=member_id,
-        member_version=policy.evaluation_profile_ref.version,
-        member_hash=policy.evaluation_profile_ref.hash,
+        member_version=member_version,
+        member_hash=member_hash,
         execution_status=status,
         decision_status=DecisionStatus.PASS if status is ExecutionStatus.COMPLETED else None,
-        receipt_or_artifact_ref=policy.evaluation_profile_ref,
+        receipt_or_artifact_ref=artifact_ref,
     )
 
 
@@ -184,6 +189,7 @@ def _profile_members(
     elif (
         policy.paired_comparison_receipt_id is None
         or policy.paired_comparison_receipt_id not in {item.id for item in policy.required_receipts}
+        or "baseline-freeze-receipt" not in {item.id for item in policy.required_receipts}
         or not policy.required_case_ids
         or len(policy.required_case_ids) != len(set(policy.required_case_ids))
         or not policy.controlled_variable_keys
@@ -208,10 +214,34 @@ def _profile_members(
         reasons.add("REQUIRED_PARTITION_NOT_COMPLETED")
 
     return [
-        _readiness_member(policy, "release-profile-readiness", profile_status),
-        _readiness_member(policy, "required-scope-manifest-readiness", scope_status),
-        _readiness_member(policy, "required-experiment-readiness", experiment_status),
-        _readiness_member(policy, "required-partition-readiness", partition_status),
+        _readiness_member(
+            "release-profile-readiness",
+            policy.evaluation_profile_ref.version,
+            policy.evaluation_profile_ref.hash,
+            policy.evaluation_profile_ref,
+            profile_status,
+        ),
+        _readiness_member(
+            "required-scope-manifest-readiness",
+            policy.evaluation_policy_ref.version,
+            policy.required_scope_manifest_hash,
+            None,
+            scope_status,
+        ),
+        _readiness_member(
+            "required-experiment-readiness",
+            policy.evaluation_profile_ref.version,
+            policy.evaluation_profile_ref.hash,
+            policy.evaluation_profile_ref,
+            experiment_status,
+        ),
+        _readiness_member(
+            "required-partition-readiness",
+            policy.evaluation_profile_ref.version,
+            policy.evaluation_profile_ref.hash,
+            policy.evaluation_profile_ref,
+            partition_status,
+        ),
     ]
 
 
@@ -332,7 +362,10 @@ def _metric_value_matches_counts(metric: MetricResult) -> bool | None:
     if metric.estimator_id == "COUNT":
         expected = Decimal(metric.numerator)
     elif metric.estimator_id in {"PROPORTION", "RATE"}:
-        expected = Decimal(metric.numerator) / Decimal(metric.denominator)
+        expected = (Decimal(metric.numerator) / Decimal(metric.denominator)).quantize(
+            _SIX_PLACES,
+            rounding=ROUND_HALF_EVEN,
+        )
     elif metric.estimator_id == "CASE_MEAN":
         value = Decimal(metric.metric_value)
         return Decimal(0) <= value <= Decimal(1) and metric.numerator <= metric.denominator
@@ -465,14 +498,29 @@ def _suite_binding_matches(
     suite_evidence: SuiteEvidence,
 ) -> bool:
     suite = suite_evidence.suite
+    definition = suite_evidence.definition
     payload = cast(JsonValue, suite.model_dump(mode="json"))
+    definition_payload = cast(JsonValue, definition.model_dump(mode="json"))
+    case_codes = [item.case_code for item in suite.case_results]
+    executed_case_set_hash = canonical_sha256(cast(JsonValue, {"case_ids": sorted(case_codes)}))
     return not (
         suite.run_id != run_id
         or suite.suite_id != expected.id
         or suite.suite_version != expected.version
         or suite.suite_definition_hash != expected.hash
+        or definition.suite_id != expected.id
+        or definition.suite_version != expected.version
+        or definition.suite_hash != expected.hash
+        or canonical_sha256(
+            definition_payload,
+            excluded_top_level_keys=frozenset({"suite_hash"}),
+        )
+        != expected.hash
         or not suite.required
-        or suite.expected_case_set_hash != suite.executed_case_set_hash
+        or not definition.required
+        or len(case_codes) != len(set(case_codes))
+        or suite.expected_case_set_hash != definition.expected_case_set_hash
+        or suite.executed_case_set_hash != executed_case_set_hash
         or canonical_sha256(payload) != suite_evidence.artifact_ref.hash
     )
 
