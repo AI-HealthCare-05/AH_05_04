@@ -1,0 +1,103 @@
+{
+  "format_id": "issue-173.decision-approval-evidence",
+  "format_version": "1.0.0",
+  "issue": "#173",
+  "decision_id": "PD-173-20260909",
+  "decision_status": "APPROVED",
+  "approval_recorded": true,
+  "contract_status": "REPOSITORY_LOCAL_NON_RUNTIME_PROJECTION",
+  "purpose": "DECISION_STATUS_TRANSITION",
+  "pull_request": {
+    "number": 382,
+    "url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/382",
+    "base_ref": "develop",
+    "state": "MERGED",
+    "head_commit_sha": "3d63fc5a59a4ce4d66b0bb0ae5d16742e9c0fc3d",
+    "merge_commit_sha": "7d79c6b1720c2b5e06cecda0ccd38526899406f6",
+    "merged_at": "2026-09-09T16:50:53.000000Z",
+    "merged_by": {
+      "actor_id": "ceohwj",
+      "namespace": "GITHUB_LOGIN",
+      "role": "IMPLEMENTATION_OWNER"
+    }
+  },
+  "implementation_owner": {
+    "actor_id": "ceohwj",
+    "namespace": "GITHUB_LOGIN",
+    "role": "IMPLEMENTATION_OWNER"
+  },
+  "approval_events": [
+    {
+      "evidence_id": "github-pr-382-review-5155621419",
+      "review_id": 5155621419,
+      "review_node_id": "PRR_kwDOT3EWNs8AAAABM0yKKw",
+      "review_state": "APPROVED",
+      "review_submitted_at": "2026-09-09T14:21:39.000000Z",
+      "review_url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/382#pullrequestreview-5155621419",
+      "reviewed_commit_sha": "3d63fc5a59a4ce4d66b0bb0ae5d16742e9c0fc3d",
+      "reviewer": {
+        "actor_id": "hazelnutflavoured",
+        "namespace": "GITHUB_LOGIN",
+        "role": "SAFETY_PRODUCT_REVIEWER"
+      }
+    },
+    {
+      "evidence_id": "github-pr-382-review-5155878658",
+      "review_id": 5155878658,
+      "review_node_id": "PRR_kwDOT3EWNs8AAAABM1B3Ag",
+      "review_state": "APPROVED",
+      "review_submitted_at": "2026-09-09T14:41:52.000000Z",
+      "review_url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/382#pullrequestreview-5155878658",
+      "reviewed_commit_sha": "3d63fc5a59a4ce4d66b0bb0ae5d16742e9c0fc3d",
+      "reviewer": {
+        "actor_id": "phina-io",
+        "namespace": "GITHUB_LOGIN",
+        "role": "BACKEND_PUBLIC_DTO_REVIEWER"
+      }
+    }
+  ],
+  "head_freshness_check": {
+    "approvals_target_head": true,
+    "commits_after_last_approval": 0,
+    "last_approval_submitted_at": "2026-09-09T14:41:52.000000Z",
+    "note": "두 APPROVED 리뷰 모두 PR의 최종 headRefOid(3d63fc5a)를 대상으로 제출되었으며, 승인 이후 추가 커밋이 없어 '최신 HEAD 승인' 조건이 충족된다."
+  },
+  "scope_exclusion": {
+    "excluded_reviewer": {
+      "actor_id": "ansol-nam",
+      "namespace": "GITHUB_LOGIN",
+      "role": "PATIENT_DISPLAY_ERROR_UX_REVIEWER"
+    },
+    "participation": "NONE",
+    "participation_detail": "PR #382 리뷰·PR 코멘트·Issue #173 코멘트 모두에서 기록 없음. 병합 시점 requested_reviewers 비어 있음.",
+    "decision": "OUT_OF_SCOPE",
+    "rationale": "PD-173은 공개 fallback_code 어휘의 사영 우선순위와 내부 stale_reason 분리만 확정한다. 확정 대상 어휘는 safety-result-v2.md가 이미 승인한 9개 코드 집합 내부이며 신규 공개 코드를 추가하지 않는다. 환자 표시 문구·오류 UX 렌더링은 본 Decision이 규정하지 않는 후속 구현 범위이므로, 해당 책임 리뷰는 PD-173 승인의 필수 요건에서 제외한다.",
+    "follow_up": "환자 표시 문구 및 오류 UX 구현 시 남한솔(@ansol-nam) 책임 리뷰를 별도 요건으로 유지한다."
+  },
+  "automated_checks": {
+    "checked_commit_sha": "3d63fc5a59a4ce4d66b0bb0ae5d16742e9c0fc3d",
+    "check_runs": [
+      { "name": "test", "conclusion": "success" },
+      { "name": "lint", "conclusion": "success" },
+      { "name": "frontend", "conclusion": "success" }
+    ],
+    "all_passed": true
+  },
+  "reviewed_documents": [
+    {
+      "path": "docs/governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md",
+      "role": "DECISION",
+      "sha256_at_reviewed_commit": "ecba43d003aa37b3dd8cd41b2ed265027540a4e66d8c41442f5fd424f85d940e"
+    },
+    {
+      "path": "docs/contracts/proposed/post-mvp-1/safety-result-compound-stale-priority-v1.md",
+      "role": "PROPOSED_CONTRACT",
+      "sha256_at_reviewed_commit": "df3969d4ecadfc5bd0be4cd7580c688662831ef768f5d1dbb6fe95920fd2beac"
+    }
+  ],
+  "precedent": {
+    "issue": "#273",
+    "path": "docs/validation/rag/issue-273/dataset-approval-request.json",
+    "note": "구두 합의·Issue 코멘트가 아닌 GitHub review ID·actor·submitted timestamp·commit OID를 immutable evidence로 수집하는 기준을 따른다."
+  }
+}
