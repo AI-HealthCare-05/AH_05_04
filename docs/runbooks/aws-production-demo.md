@@ -10,8 +10,16 @@
 실제 환자 정보·처방전·진료기록은 입력하지 않고 승인된 비식별 합성 데이터만
 사용합니다. 이 구성은 일반 사용자 대상 의료 서비스 공개 승인이 아닙니다.
 `PUBLIC_TRACK_C`와 `PUBLIC_TRACK_F` 공개 게이트는 닫아 두고, 현재 runtime 설정인
-`PUBLIC_TRACK_F_ENABLED`도 `false`로 유지합니다. 실제 Consumer가 연결되지 않은
-`ai-worker`는 배포하지 않습니다.
+`PUBLIC_TRACK_F_ENABLED`도 `false`로 유지합니다.
+
+현재 MVP의 OCR 요청은 Outbox·Redis Stream·`ai-worker`를 사용하는 비동기 경로이며,
+Consumer, 실제 CLOVA OCR Provider와 Outbox Publisher 주기 실행까지 구현되어 있습니다.
+다만 이 Runbook이 사용하는 `scripts/deployment.sh`는 Worker health check·운영 관제와
+Production 배포 조립을 아직 포함하지 않아 `ai-worker` image를 build·push·시작하지
+않습니다. 따라서 이 제한된 AWS 데모 구성만으로는 OCR Job을 terminal 상태까지 처리할
+수 없으며, 아래 전체 MVP browser smoke를 통과했다고 기록할 수 없습니다. Worker를
+Production 배포 대상에 추가하는 작업은 해당 운영 조건과 검증을 함께 완료하는 별도
+구현 범위입니다.
 
 ## 책임과 배포 차단
 
@@ -101,9 +109,23 @@ CLOUDFRONT_ORIGIN_VERIFY_SECRET=<CloudFront-X-Origin-Verify와-같은-무작위-
 CERTBOT_EMAIL=
 ```
 
-`CLOUDFRONT_ORIGIN_VERIFY_SECRET`, API Key, DB·Redis 비밀번호, Docker PAT과 계정
-비밀번호를 터미널 출력이나 PR 증빙에 남기지 않습니다. CloudFront custom header와 env의
-origin secret이 다르면 모든 Frontend/API origin 요청이 `403`으로 실패합니다.
+FastAPI idempotency snapshot 암호화 key ring도 함께 준비합니다.
+
+```dotenv
+IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY=<Fernet.generate_key로-생성한-실제-키>
+IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION=v1
+IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS={}
+```
+
+active key는 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`로
+생성하고 `envs/example.prod.env`의 공개 placeholder를 그대로 사용하지 않습니다. 최초 배포는
+version `v1`, retired keys `{}`로 시작합니다. 키 교체 시에는 version을 올리고 TTL이 남은
+snapshot의 이전 key를 원래 version과 함께 retired keys에 보관합니다. 실제 key는 공유
+터미널 기록이나 PR 증빙에 남기지 않습니다.
+
+`CLOUDFRONT_ORIGIN_VERIFY_SECRET`, snapshot 암호화 key, API Key, DB·Redis 비밀번호,
+Docker PAT과 계정 비밀번호를 터미널 출력이나 PR 증빙에 남기지 않습니다. CloudFront custom
+header와 env의 origin secret이 다르면 모든 Frontend/API origin 요청이 `403`으로 실패합니다.
 
 ## 4. 배포
 
@@ -147,7 +169,16 @@ EC2 public DNS의 `/`, `/assets/*`, `/api/*`에 `X-Origin-Verify` 없이 직접 
 컨테이너 health check를 위해 header를 요구하지 않지만 Security Group이 CloudFront 외
 접근을 차단해야 합니다.
 
-브라우저 smoke는 동일한 합성 계정으로 아래 순서를 중간 생략 없이 수행합니다.
+위 검사는 현재 Worker 미포함 배포 범위의 인프라·Frontend·Backend 기본 smoke입니다.
+로그인과 보호 route 접근까지 확인할 수 있지만, 비동기 OCR 완료를 전제로 하는 전체 MVP
+흐름의 통과 증빙은 아닙니다.
+
+### 전체 MVP browser smoke — Worker Production 조립 전 실행 차단
+
+아래 절차는 Worker를 Production 배포 대상에 포함하고 health check·관제·Provider
+secret·공유 storage 검증까지 완료한 뒤에만 동일한 합성 계정으로 중간 생략 없이
+수행합니다. 현재 `scripts/deployment.sh`의 배포 결과에서는 2단계 OCR Job이 terminal
+상태에 도달하지 않으므로 이후 단계를 실행하거나 PASS로 기록하지 않습니다.
 
 1. 루트 URL과 새로고침에서 SPA route가 404가 되지 않는지 확인합니다.
 2. 합성 계정으로 로그인하고 합성 처방전을 업로드한 뒤 OCR 결과를 검수·확정합니다.
@@ -173,8 +204,10 @@ path·status, 배포 commit과 image digest를 `deployment-evidence/<timestamp>/
 기록합니다. 요청·응답 body, Authorization/Cookie header, Secret, 비밀번호와 원본 의료
 데이터는 캡처하지 않습니다.
 
-이 실제 AWS smoke는 배포 후 Issue #338에서 수행합니다.
-Runbook에 절차가 있다는 사실만으로 smoke를 통과한 것으로 간주하지 않습니다.
+기본 배포 smoke는 배포 후 Issue #338에서 수행합니다. 전체 MVP browser smoke는 Worker
+Production 조립을 완료한 후 별도 배포 Issue 또는 PR에서 수행합니다.
+Runbook에 절차가 있다는 사실만으로 smoke를 통과한 것으로 간주하지 않습니다. Worker의
+Local·통합 테스트 통과도 AWS Production smoke를 대신하지 않습니다.
 
 ## 6. 이후 재배포
 

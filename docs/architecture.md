@@ -2,7 +2,7 @@
 
 ## 목적과 범위
 
-현재 MVP의 실제 실행 구조와 Approved Contract Freeze v4의 Post-MVP 목표 구조를 구분해 기록합니다. 현재 MVP는 FastAPI Backend가 외부 AI 제공자를 직접 호출하는 동기 one-cycle 구조입니다. OCR의 feature flag 기반 비-RAG LLM 구조화는 PR #96에서 이 동기 경로에 구현됐고 기본 비활성화다. Redis 기반 비동기 AI Worker, OCR LLM의 v4 최소전송·provenance·Worker 확장, MFDS 공식 Identity·Preflight, Rule-first RAG·Citation·Safety와 AI 평가는 아직 실행 경로에 포함되지 않습니다.
+현재 MVP의 실제 실행 구조와 Approved Contract Freeze v4의 Post-MVP 목표 구조를 구분해 기록합니다. 현재 OCR은 FastAPI 접수 → Outbox → Redis Stream → AI Worker의 비동기 경로로 처리하고, 가이드·챗봇은 FastAPI 요청 안에서 외부 AI 호출까지 완료합니다. PR #96의 feature flag 기반 비-RAG LLM 구조화는 Backend에 구현된 기본 비활성 기능이며 Worker OCR 경로에는 연결되지 않았습니다. OCR LLM의 v4 최소전송·provenance·Worker 확장과 전체 MFDS Identity·RAG·Citation·Safety 실행 흐름은 별도 목표입니다. Worker 구현 완료와 Production 배포 조립 상태는 [배포 문서](./deployment.md)에서 구분합니다.
 
 ## 현재 MVP 구성요소
 
@@ -10,41 +10,41 @@
 | --- | --- |
 | Frontend | 회원가입·로그인, 처방전 업로드·OCR 조회, OCR 필드 검수·수정, 처방 확정, Guide 생성·조회, Chat 세션·이력·메시지를 실제 API에 연결하고 각 실제 화면에 표시 |
 | Nginx | FastAPI 요청을 전달하는 리버스 프록시 |
-| FastAPI Backend | 인증·인가, 파일·처방·대화 상태 관리, 동기 OCR·가이드·챗봇 orchestration |
-| `backend/app/services/ocr.py` | 같은 HTTP 요청 안에서 CLOVA OCR 호출, feature flag 기반 LLM 또는 규칙 구조화, grounding, 결과 저장·오류 매핑 |
+| FastAPI Backend | 인증·인가, 파일·처방·대화 상태 관리, OCR Job 접수·조회·검수, 동기 가이드·챗봇 orchestration |
+| `backend/app/services/ocr.py` | 문서 소유권 확인과 OCR Job·Outbox 접수, 결과 조회·검수. 접수 API는 Provider를 직접 호출하지 않음 |
 | `backend/app/services/guide_ai/` | 확정 처방만 입력받아 OpenAI 복약 가이드 생성 |
-| `backend/app/services/chat_ai/` | 현재 질문과 확정 약물 목록만 입력받아 OpenAI 단일 응답 생성 |
+| `backend/app/services/chat_ai/` | 현재 질문, history 배열(기본 빈 배열)과 확정 약물 목록을 입력받아 OpenAI 단일 응답 생성 |
 | PostgreSQL | 사용자, 의료문서, OCR 결과, 확정 처방, 가이드, 채팅 상태 저장 |
 | 로컬 파일시스템 | `STORAGE_DIR` 아래 처방전 원본 저장. 현재 Compose의 영속 volume과 기본 경로가 일치하지 않아 배포 전 확인 필요 |
-| Redis | Compose에 준비되어 있으나 현재 MVP AI 처리 경로에서는 사용하지 않음 |
-| AI Worker | 실행 진입점만 있는 placeholder이며 현재 MVP 요청을 처리하지 않음 |
+| Redis | OCR 작업을 Redis Stream으로 전달하고 Consumer Group으로 소비 |
+| AI Worker | Outbox Publisher·Consumer·복구 Scheduler 실행, CLOVA OCR·규칙 구조화, lease·fencing 검증 후 결과 commit·ACK |
 
 Backend는 SQLAlchemy asyncio와 `asyncpg`를 사용합니다. OpenAI 클라이언트는 FastAPI lifespan에서 프로세스 단위로 생성하고 가이드·챗봇이 공유합니다.
 
-## 현재 동기 데이터 흐름
+## 현재 데이터 흐름
 
 1. 로컬 Frontend는 기본적으로 `http://localhost:8000`의 FastAPI를 직접 호출합니다. 배포 환경에서는 Nginx의 `/api/` proxy를 통해 FastAPI에 전달합니다.
 2. FastAPI가 사용자 권한을 확인하고 처방전 파일과 메타데이터를 저장합니다.
-3. OCR 실행 API는 CLOVA OCR을 같은 요청 안에서 호출하고, feature flag에 따라 구현된 OpenAI Structured Outputs 구조화 또는 규칙 기반 구조화를 수행한 뒤 작업 상태와 추출 필드를 PostgreSQL에 저장합니다. 응답 상태가 `202 Accepted`여도 현재 구현은 queue나 Worker에 위임하지 않습니다.
+3. OCR 접수 API는 Job·Outbox를 transaction으로 저장하고 `202 Accepted`를 반환합니다. Worker runtime의 Publisher가 Redis Stream에 발행하면 Consumer가 CLOVA OCR·규칙 기반 구조화를 실행하고 fencing 검증 후 결과와 완료 상태를 commit한 뒤 ACK합니다. Frontend는 Job 상태를 polling하고 완료 후 OCR 결과를 조회합니다.
 4. 사용자가 OCR 필드를 검수·수정한 뒤 확정 처방을 생성합니다.
 5. Frontend는 처방 확정 응답의 `prescription_id`로 가이드 생성 API를 호출합니다. Backend는 확정 처방을 읽고 OpenAI를 직접 호출한 뒤 생성 결과를 저장하고 `201 Created`로 응답하며, Frontend는 응답의 `guide_id` 화면으로 이동합니다.
 6. 챗봇 메시지 API는 USER 메시지를 저장하고 OpenAI 단일 응답을 생성한 뒤 ASSISTANT 메시지를 저장하고 `201 Created`로 응답합니다. 같은 세션의 요청은 DB row lock으로 직렬화합니다.
-7. timeout, 제공자 장애 또는 응답 처리 실패는 정해진 API 오류로 변환하고 실패 상태를 저장합니다.
+7. OCR 실행 실패는 Worker의 재시도·최종 실패 정책과 Job 상태 조회로 전달됩니다. 동기 가이드·챗봇의 timeout·제공자 장애·응답 처리 실패는 정해진 API 오류로 반환합니다.
 
-현재 AI 입력에는 기능 수행에 필요한 최소 데이터만 전달합니다. 처방전 이미지, OCR 원문·미검수 값, 사용자·세션 식별자와 이전 대화는 가이드·챗봇 AI 경계를 넘지 않습니다.
+현재 AI 입력에는 기능 수행에 필요한 최소 데이터만 전달합니다. 처방전 이미지, OCR 원문·미검수 값과 사용자·세션 식별자는 가이드·챗봇 AI 경계를 넘지 않습니다. 챗봇의 이전 대화는 기본적으로 조회하지 않고 `history: []`를 전달하며, 비식별 합성 Local에서 `CHAT_HISTORY_CONTEXT_ENABLED=true`일 때만 현재 질문 이전의 완료 대화를 최대 3쌍 전달합니다.
 
 ## 구현 수준 구분
 
-- **Backend MVP 구현**: 인증, 업로드, 동기 OCR, OCR 필드 수정, 처방 확정, 가이드와 챗봇 API
+- **Backend·Worker MVP 구현**: 인증, 업로드, 비동기 OCR 접수·처리·조회, OCR 필드 수정, 처방 확정, 동기 가이드와 챗봇 API
 - **Frontend API 연결**: 인증, 처방전 업로드, OCR 실행·조회, OCR 필드 검수·수정, 처방 확정, Guide 생성·조회, Chat 세션·이력·메시지
 - **PostgreSQL 실제 E2E 완료 범위**: 회원가입 → 로그인 → 업로드 → OCR → 검수·수정 → 처방 확정
 - **전체 AI E2E 확인 필요**: Guide 생성 → Guide 조회 → Chat 진입과 실제 OpenAI 응답까지의 전체 흐름은 최종 완료로 표시하지 않음
 - **Schema-only Post-MVP 골격**: `knowledge_document`, `knowledge_chunk`, `guide_citation`, `chat_citation` 모델과 migration은 존재하지만 repository·service·API 실행 경로에는 연결되지 않음
-- **미구현 Post-MVP 실행 영역**: OCR LLM의 최소전송·provenance·Worker 확장, MFDS Source/Catalog·Candidate Resolver·Identification·Preflight, Rule-first RAG·Citation·Safety, AI 평가와 비동기 Worker
+- **Post-MVP 전체 실행 흐름의 잔여 범위**: OCR LLM의 최소전송·provenance·Worker 확장, MFDS Source/Catalog·Candidate Resolver·Identification·Preflight, Rule-first RAG·Citation·Safety와 AI 평가의 통합 및 Guide·Chat 비동기 확장. 개별 구성요소 구현 여부는 각 계약·구현 증빙에서 확인
 
 ## Post-MVP-1 목표 구조 — Approved v4·RAG-00 target / Not implemented
 
-아래 구조와 계약은 승인됐지만 현재 실행 경로에는 연결되지 않았다.
+아래는 전체 목표 구조입니다. OCR의 Job·Outbox·Redis·Worker 경로는 이미 구현되었으며, 이것만으로 Guide·Chat 비동기 확장과 전체 목표 계약의 구현을 완료했다고 보지 않습니다.
 
 - OCR·Guide·Chat을 공통 `AI_JOB`의 `PENDING`, `PROCESSING`, `RETRY_WAIT`, `COMPLETED`, `FAILED`, `STALE` 상태로 처리한다.
 - API는 PostgreSQL transaction에서 Job과 Transactional Outbox를 함께 commit하고, publisher가 Redis Stream에 at-least-once로 전달한다. Worker는 lease·fencing token을 사용하며 결과 DB commit 뒤에만 ACK한다.
@@ -58,7 +58,7 @@ Backend는 SQLAlchemy asyncio와 `asyncpg`를 사용합니다. OpenAI 클라이�
 - 의미 기반 NLI와 고급 reranking은 Post-MVP-1 완료·공개 게이트에서 제외한다. Post-MVP-1은 결정적 Citation 완전성과 정책 검증을 적용한다.
 - `ASYNC_OCR`, `ASYNC_GUIDE`, `ASYNC_CHAT`으로 신규 접수 경로를 단계 전환한다. `PUBLIC_TRACK_C`, `PUBLIC_TRACK_F`는 별도 외부 승인 게이트 전까지 닫으며 OTC는 F 게이트를 공유한다.
 
-현재 동기 one-cycle은 각 전환 조건이 충족될 때까지 Current다. 목표를 구현하는 PR은 관련 계약, migration, OpenAPI/DTO, 계약·통합 테스트와 운영 증빙을 함께 갱신해야 한다.
+현재 OCR 비동기 경로와 Guide·Chat 동기 one-cycle을 기준으로 후속 확장 범위를 구분합니다. 목표를 구현하는 PR은 관련 계약, migration, OpenAPI/DTO, 계약·통합 테스트와 운영 증빙을 함께 갱신해야 한다.
 
 ## 주요 결정
 

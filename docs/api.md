@@ -65,6 +65,7 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | 의료문서 | `GET` | `/api/v1/documents/{document_id}/file` | `200` |
 | OCR | `GET` | `/api/v1/ocr-jobs/{domain_id}` | `200` |
 | OCR 검수 | `PATCH` | `/api/v1/extracted-fields/{field_id}` | `200` |
+| OCR 검수 | `POST` | `/api/v1/ocr-jobs/{job_id}/manual-medications` | `201` |
 | 처방 | `GET` | `/api/v1/prescriptions/latest` | `200` |
 | 처방 | `PATCH` | `/api/v1/prescriptions/{prescription_id}` | `200` |
 | 처방 | `GET` | `/api/v1/prescriptions/{prescription_id}` | `200` |
@@ -80,11 +81,44 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | Candidate | `POST` | `/api/v1/medication-candidates/confirm` | `200` |
 | Candidate | `POST` | `/api/v1/medication-candidates/reject` | `200` |
 
-`PATCH /api/v1/prescriptions/{prescription_id}`는 PR 4의 이전 Version 결과 `STALE` 전이와 현재 노출
-차단이 병합될 때까지 `PRESCRIPTION_CORRECTION_ENABLED=false`가 기본이다. 비활성 상태에서는 인증 이후
-도메인 조회나 mutation 전에 `503 SERVICE_UNAVAILABLE` / `PRESCRIPTION_CORRECTION_DISABLED`로 차단한다.
+`PATCH /api/v1/prescriptions/{prescription_id}`는 처방 row를 잠근 뒤 새 Version 생성과 함께 이전
+Version의 `PENDING`·`PROCESSING`·`RETRY_WAIT` Job을 `STALE`, 미발행·예약 Outbox를 `CANCELLED`,
+`RUNNING`·`READY` Candidate Search를 `INVALIDATED_INPUT_CHANGED`로 같은 transaction에서 전환한다.
+이전 Version의 Guide·Chat 직접 조회·메시지 전송은 `409 PRESCRIPTION_VERSION_CONFLICT`로 거부하고,
+처방별 최신 Guide·Chat 재접속 조회에서는 이전 Version 결과를 반환하지 않는다. 완료된 이전 Version
+Job의 상태와 provenance는 보존하지만 `result_url`은 `null`이다.
 
-Candidate 조회·확정·거절 API(#172)는 라우트·DTO·service adapter까지 구현되어 있지만, `PUBLIC_TRACK_F_ENABLED` 환경변수(기본값 `false`)로 게이트됩니다. 비활성 환경에서는 세 endpoint 모두 인증만 통과하면 도메인 조회 이전에 `503 SERVICE_UNAVAILABLE`(`reason: PUBLIC_TRACK_F_DISABLED`)로 fail-closed됩니다. RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는 이 값을 `true`로 바꾸지 않습니다. 계약 상세는 [MFDS 공식 의약품 식별·Candidate 계약 v1](./contracts/targets/post-mvp-1/medication-identification-v1.md)을 따릅니다.
+Candidate 조회·확정·거절 API(#172)는 라우트·DTO·service adapter까지 구현되어 있지만, `PUBLIC_TRACK_F_ENABLED` 환경변수(기본값 `false`)로 게이트됩니다. 비활성 환경에서는 조회·확정·거절 endpoint가 인증만 통과하면 도메인 조회 이전에 `503 SERVICE_UNAVAILABLE`(`reason: PUBLIC_TRACK_F_DISABLED`)로 fail-closed됩니다. Search 생성 endpoint는 아직 resolver/index 연결 전 stub이며 `503 SERVICE_UNAVAILABLE`로 닫혀 있습니다. RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는 이 값을 `true`로 바꾸지 않습니다. 계약 상세는 [MFDS 공식 의약품 식별·Candidate 계약 v1](./contracts/targets/post-mvp-1/medication-identification-v1.md)을 따릅니다.
+
+## Candidate API
+
+### Endpoint
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `POST` | `/api/v1/medication-candidate-searches` | `202 Accepted` | Candidate Search 생성 목표 route입니다. 현재는 resolver/index 연결 전 stub으로 `503 SERVICE_UNAVAILABLE`을 반환합니다. |
+| `GET` | `/api/v1/medication-candidate-searches/{prescription_version_medication_id}` | `200 OK` | 활성 Prescription Version 약제의 최신 Candidate Search 공개 상태를 조회합니다. |
+| `POST` | `/api/v1/medication-candidates/confirm` | `200 OK` | 화면에 표시된 Candidate Result를 사용자가 확정합니다. |
+| `POST` | `/api/v1/medication-candidates/reject` | `200 OK` | 화면에 표시된 Candidate Result를 사용자가 거절합니다. |
+
+`confirm` / `reject` 요청에는 `Idempotency-Key` header가 필수입니다. 새 약물 확인·거절 시도마다 새 key를 만들고, 같은 요청을 재시도할 때는 같은 key를 재사용합니다. 같은 key로 다른 body를 보내면 `409 IDEMPOTENCY_KEY_CONFLICT`입니다. Search 생성과 조회는 `Idempotency-Key`를 요구하지 않습니다.
+
+조회 응답의 `data.status`는 `RUNNING | READY | AMBIGUOUS | NO_CANDIDATE | INGREDIENT_ONLY | INVALID_INPUT | INVALIDATED_INPUT_CHANGED | INVALIDATED_USER_REJECTED | EXPIRED | FAILED | CONSUMED`입니다. `READY`에서만 `candidate_search_result_id`와 `candidate`가 채워질 수 있고, 그 외 상태에서는 둘 다 `null`입니다. 공개 Candidate DTO는 `product_name`, `strength_text`, `dosage_form`, `manufacturer_name`, `product_status`만 포함하며 내부 `score`, `rank`, Top-K, `query_digest`, `candidate_count`, `status_reason`은 노출하지 않습니다.
+
+### 주요 오류
+
+| 상태 | `code` | 설명 |
+| ---: | --- | --- |
+| `400` | `IDEMPOTENCY_KEY_REQUIRED` | `confirm` / `reject` 요청에 `Idempotency-Key` header가 없거나 빈 값입니다. |
+| `400` | `IDEMPOTENCY_KEY_INVALID` | `Idempotency-Key`가 길이 또는 허용 문자 규칙을 만족하지 않습니다. |
+| `404` | `PRESCRIPTION_MEDICATION_NOT_FOUND` | 요청한 처방 약제가 없거나 인증 사용자의 SELF Profile 소유가 아닙니다. |
+| `404` | `CANDIDATE_SEARCH_NOT_FOUND` | Candidate Search 또는 Result가 없거나 인증 사용자가 접근할 수 없습니다. |
+| `409` | `CANDIDATE_SEARCH_STALE` | Candidate Search가 만료·입력 변경·소비 등으로 더 이상 확인·거절 대상이 아닙니다. |
+| `409` | `IDENTIFICATION_CONTEXT_STALE` | 현재 구현에서는 기존 Identification이 이미 존재해 신규 Identification을 저장하지 않는 경우입니다(`details.reason=IDENTIFICATION_ALREADY_EXISTS`). Runtime Bundle·Candidate Index currentness 불일치 발생 조건은 #168/#181 연결 후 추가합니다. |
+| `409` | `IDEMPOTENCY_KEY_CONFLICT` | 같은 `Idempotency-Key`로 이전과 다른 요청 body가 접수되었습니다. |
+| `503` | `SERVICE_UNAVAILABLE` | `PUBLIC_TRACK_F_ENABLED=false`이거나 Search 생성 stub이 아직 공개되지 않은 상태입니다. |
+
+Frontend는 `PUBLIC_TRACK_F_ENABLED=false` 기본 상태에서 실제 UI 연결이 막히는 것을 전제로 해야 합니다. RAG-11에서 후보 표시, 직접 입력 전환, 재업로드 전환, 오류 CTA와 gate 해제 조건을 별도 화면 범위로 연결합니다.
 
 OCR 실행 endpoint는 `202 Accepted`를 반환하며, 현재 구현은 공통 Job 접수입니다. 같은 요청에서는 CLOVA OCR을 호출하지 않고 `AI_JOB`, `IDEMPOTENCY_RECORD`, `OUTBOX_EVENT`, `OCR_JOB` placeholder를 같은 transaction에 저장한 뒤 `JobStatusResponse`를 반환합니다. 실제 OCR 실행은 Worker가 처리합니다.
 
@@ -245,7 +279,7 @@ Track B·C 쓰기 API는 [멱등성 계약](./contracts/targets/post-mvp-1/idemp
     "generation_status": "COMPLETED",
     "content": "합성 답변",
     "model_name": "synthetic-model",
-    "prompt_version": "chat-prompt-v2",
+    "prompt_version": "chat-prompt-v3",
     "created_at": "2026-08-21T10:00:00Z",
     "completed_at": "2026-08-21T10:00:01Z"
   }
@@ -264,13 +298,23 @@ AI 생성 오류는 [공통 오류 응답 형식](#공통-오류-응답-형식)�
 
 ### AI 데이터 경계
 
-AI에는 현재 요청의 질문과 해당 세션에 연결된 확정 처방의 약물 정보만 전달합니다. 사용자·세션·처방·메시지 식별자, 이전 대화, 처방전 이미지, OCR 원문과 미검수 데이터는 AI 경계를 넘지 않습니다.
+AI에는 현재 요청의 질문, 해당 세션에 연결된 확정 처방의 약물 정보와 `history` 배열만 전달합니다. `CHAT_HISTORY_CONTEXT_ENABLED=false`이거나 Staging·Production이면 이전 대화를 조회하지 않고 빈 배열을 전달합니다. 비식별 합성 Local에서만 flag를 활성화해 현재 질문 이전의 완료 대화를 최대 3쌍 전달할 수 있습니다. 사용자·세션·처방·메시지 식별자, 처방전 이미지, OCR 원문과 미검수 데이터는 AI 경계를 넘지 않습니다.
 
 ### 동시 전송과 대기시간
 
 같은 세션의 메시지 전송은 세션 row lock으로 직렬화합니다. 두 요청이 동시에 시작한 참고 시나리오에서 두 번째 요청의 지연은 `2 × T + M`입니다. `T`는 배포 환경의 OpenAI 전체 timeout, `M`은 애플리케이션 처리 여유입니다. 이 값은 참고 지연이지 최대 대기시간 계약이 아닙니다.
 
 같은 세션에 세 개 이상의 요청이 겹치면 뒤 요청은 앞선 요청 수에 비례해 더 오래 대기합니다. 현재 설계는 동시 요청 수를 제한하지 않으므로 세 개 이상에 대한 유한한 end-to-end 최대시간을 보장하지 않습니다.
+
+서로 다른 Chat session은 같은 처방에 속하더라도 Provider 호출을 병렬로 수행할 수 있습니다. Provider 호출
+구간에는 처방 row lock을 유지하지 않으며, 결과 저장 직전에 생성 기준 `prescription_version_id`가
+현재 `active_version_id`인지 처방 row를 잠가 다시 확인합니다. 호출 중 처방 정정이 commit되었다면 생성
+결과를 저장하지 않고 ASSISTANT placeholder를 `PRESCRIPTION_VERSION_STALE` 실패 이력으로 남긴 뒤
+`409 PRESCRIPTION_VERSION_CONFLICT`를 반환합니다.
+
+이 결과 저장 직전 Prescription row lock은 transaction 범위 `lock_timeout = 3s`를 사용해 무한 대기를
+방지합니다. timeout은 AI 오류로 변환하지 않으며 기존 DB 오류 경계대로 transaction을 rollback하고 공통
+`500 INTERNAL_SERVER_ERROR`를 반환합니다.
 
 DB lock wait timeout이 발생하면 공통 `500 INTERNAL_SERVER_ERROR`를 반환합니다. 잠금을 얻어 USER·ASSISTANT를 만들기 전에 transaction이 rollback되므로 새 메시지가 생성되지 않으며, 메시지 목록을 다시 조회해도 이전 결과와 같습니다.
 
@@ -296,7 +340,7 @@ OCR 작업 응답에는 OCR 엔진과 LLM 구조화 실행 정보를 포함합�
     "error_message": null,
     "engine_name": "CLOVA_OCR",
     "model_version": "gpt-4o-mini",
-    "prompt_version": "ocr-structure-prompt-v2",
+    "prompt_version": "ocr-structure-prompt-v3",
     "created_at": "2026-08-26T09:00:00Z",
     "completed_at": "2026-08-26T09:00:05Z",
     "fields": [
@@ -391,6 +435,82 @@ PATCH와 처방 확정은 대상 문서 row를 잠가 직렬화합니다. 두 `4
 
 잠금 대기 상한은 3초이므로 이 응답은 요청 후 약 3초 뒤에 반환될 수 있습니다. 거부된 요청은 기존 `confirmed_value`를 변경하지 않습니다.
 
+## OCR 수동 약물 추가
+
+### Endpoint
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `POST` | `/api/v1/ocr-jobs/{job_id}/manual-medications` | `201 Created` | OCR 검수 결과에 사용자가 약물 1개를 수동 추가합니다. |
+
+### 요청
+
+Header:
+
+| 이름 | 필수 | 규칙 |
+| --- | --- | --- |
+| `Idempotency-Key` | 예 | 16~255자의 ASCII 영숫자와 `-._:`만 허용 |
+
+같은 `Idempotency-Key`와 같은 요청 body로 다시 요청하면 새 약물을 만들지 않고 최초 성공 응답을 재현합니다. 같은 key로 다른 body를 보내면 `409 IDEMPOTENCY_KEY_CONFLICT`를 반환합니다.
+
+```json
+{
+  "medication_name": "직접입력약정",
+  "medication_strength": "50mg",
+  "dose_value": "0.5",
+  "dose_unit": "정",
+  "frequency_per_day": "2",
+  "timing": "저녁 식후",
+  "duration_days": "5"
+}
+```
+
+- 사용자는 자신이 소유한 OCR Job에만 수동 약물을 추가할 수 있습니다.
+- OCR Job이 `COMPLETED`인 경우에만 추가할 수 있습니다.
+- 처방 확정 전까지만 추가할 수 있습니다. 처방 확정 이후에는 OCR 검수값과 확정 처방의 불일치를 막기 위해 거부합니다.
+- 수동 입력값은 OCR 원문이나 자동 정규화 결과가 아니므로 `raw_value`, `normalized_value`, `confidence_score`는 `null`로 저장합니다.
+- `normalization_version="manual-entry@1"`은 정규화 수행 결과가 아니라 사용자 수동 입력 필드임을 구분하는 표식입니다.
+- 수동 입력값은 사용자 확정값이므로 `confirmed_value`에 저장하고 `confirmation_status=CONFIRMED`로 응답합니다.
+- 생성되는 field 집합은 `MEDICATION_NAME`, `MEDICATION_STRENGTH`, `DOSE_VALUE`, `DOSE_UNIT`, `FREQUENCY_PER_DAY`, `TIMING`, `DURATION_DAYS`입니다.
+- `MEDICATION_NAME`, `DOSE_VALUE`, `FREQUENCY_PER_DAY`, `DURATION_DAYS`는 필수입니다.
+- `MEDICATION_STRENGTH`, `DOSE_UNIT`, `TIMING`은 선택값이며 없으면 `null`로 저장할 수 있습니다.
+- `DOSE_VALUE`는 `NUMERIC(10,3)` 범위의 양수, `FREQUENCY_PER_DAY`와 `DURATION_DAYS`는 `INTEGER(32비트)` 범위의 양수 정수여야 합니다.
+
+### 응답
+
+성공 응답은 `OcrJobResponse`입니다. 응답에는 기존 OCR 추출 필드와 새로 추가된 수동 약물 필드가 함께 포함됩니다.
+
+수동 약물 필드 예시는 다음과 같습니다.
+
+```json
+{
+  "field_type": "MEDICATION_NAME",
+  "medication_index": 2,
+  "raw_value": null,
+  "normalized_value": null,
+  "confirmed_value": "직접입력약정",
+  "confidence_score": null,
+  "confirmation_status": "CONFIRMED",
+  "normalization_version": "manual-entry@1"
+}
+```
+
+수동 추가된 약물은 이후 `POST /api/v1/documents/{document_id}/prescription` 처방 확정 시 기존 OCR 검수 필드와 같은 방식으로 확정 처방에 포함됩니다.
+
+### 주요 오류
+
+| 상태 | `code` | 설명 |
+| ---: | --- | --- |
+| `400` | `IDEMPOTENCY_KEY_REQUIRED` | `Idempotency-Key` header가 없거나 빈 값입니다. |
+| `400` | `IDEMPOTENCY_KEY_INVALID` | `Idempotency-Key`가 길이 또는 허용 문자 규칙을 만족하지 않습니다. |
+| `404` | `OCR_JOB_NOT_FOUND` | OCR Job이 없거나 사용자가 접근할 수 없습니다. |
+| `404` | `MEDICAL_DOCUMENT_NOT_FOUND` | 연결된 의료문서가 없거나 사용자가 접근할 수 없습니다. |
+| `409` | `OCR_JOB_NOT_COMPLETED` | OCR Job이 아직 완료되지 않아 수동 약물을 추가할 수 없습니다. |
+| `409` | `PRESCRIPTION_ALREADY_CONFIRMED` | 해당 문서의 처방이 이미 확정되어 약물을 추가할 수 없습니다. |
+| `409` | `CONCURRENT_UPDATE_IN_PROGRESS` | 같은 문서의 OCR 접수, 검수, 처방 확정 또는 다른 수정 요청이 처리 중입니다. 재시도할 수 있습니다. |
+| `409` | `IDEMPOTENCY_KEY_CONFLICT` | 같은 `Idempotency-Key`로 이전과 다른 요청 body가 접수되었습니다. |
+| `422` | `VALIDATION_FAILED` | 필수값이 비어 있거나 숫자·길이 제한을 만족하지 않습니다. |
+
 ## 처방 정보 확정
 
 ### Endpoint
@@ -410,7 +530,7 @@ PATCH와 처방 확정은 대상 문서 row를 잠가 직렬화합니다. 두 `4
 - `MEDICATION_STRENGTH`는 최대 100자이며 확정 시 `medication.strength_text`로 저장합니다.
 - `PRESCRIBED_DATE`는 `date.fromisoformat()`이 허용하는 ISO 8601 날짜 형식(예: `YYYY-MM-DD`, 하이픈 없는 `YYYYMMDD`, ISO week-date `YYYY-Www-D`), `MEDICATION_NAME`은 `VARCHAR(255)`, `DOSE_VALUE`는 `NUMERIC(10,3)`, `FREQUENCY_PER_DAY`와 `DURATION_DAYS`는 `INTEGER(32비트)` 범위에 맞게 Backend에서 사전 검증합니다.
 - `DOSE_UNIT`은 `VARCHAR(50)`, `TIMING`은 `VARCHAR(255)` 길이를 초과하면 저장 전에 `422 VALIDATION_FAILED`로 거부합니다.
-- 검수 작업을 명시적으로 식별하는 `job_id` 연결은 Post-MVP 범위입니다.
+- 처방 확정 요청 body에서 검수 대상 OCR Job을 명시적으로 지정하는 `job_id` 연결은 Post-MVP 범위입니다.
 - 값이 없는 선택 필드는 검수 화면에 빈 입력란으로 표시될 수 있으며, 저장하지 않아도 처방 확정을 차단하지 않습니다.
 - 선택 필드에 OCR 값이 있거나 사용자가 직접 값을 입력한 경우에는 `confirmed_value`로 저장해야 처방을 확정할 수 있습니다.
 
@@ -433,10 +553,11 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 
 | 날짜 | 관련 Issue/PR | 변경 내용 |
 | --- | --- | --- |
+| 2026-09-09 | Issue #374 | OCR 검수 결과에 약물 1개를 수동 추가하는 API를 반영 |
 | 2026-09-01 | PR #107 후속 | 기본 404/405 공통 오류 형식, `/api/v1/*` 성공·오류 응답 `Cache-Control: no-store`, CORS preflight 제외 범위와 처방 OCR 원문 비노출 정책을 반영 |
 | 2026-09-01 | Issue #101 | 처방 확정·extracted-field PATCH 직렬화와 신규 `409 CONCURRENT_UPDATE_IN_PROGRESS` 공개 오류 코드를 반영 |
 | 2026-08-27 | Issue #94 / PR #96 | OCR LLM 구조화 metadata, 제품 함량 필드, 확정 후 extracted-field PATCH 409 차단 계약을 반영 |
+| 2026-08-27 | Issue #91 | Approved v4의 OCR 비-RAG LLM→사용자 처방 확정→MFDS Candidate·Identification·Preflight와 Track F OTC Chat 경계를 목표 API에 반영 |
 | 2026-08-24 | Issue #68 | 현재 동기 API와 Post-MVP-1 목표 비동기 API를 분리해 문서화 |
 | 2026-08-24 | Issue #59 / PR #65 | 회원가입 MVP 입력값, OCR 실패 `error_message`, 처방 확정 필수값·DB 경계값 검증, OCR 최신 작업 정렬 기준을 반영 |
-| 2026-08-27 | Issue #91 | Approved v4의 OCR 비-RAG LLM→사용자 처방 확정→MFDS Candidate·Identification·Preflight와 Track F OTC Chat 경계를 목표 API에 반영 |
 | 2026-08-21 | Issue #51 / PR #52 | OCR 결과 조회 응답에 `normalized_value`와 `normalization_version`을 추가하고, `raw_value`, `normalized_value`, `confirmed_value`의 역할을 명시 |

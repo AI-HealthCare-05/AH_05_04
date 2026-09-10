@@ -14,12 +14,12 @@ if [ ! -f "$PROD_ENV_FILE" ]; then
 fi
 
 # ---------- 필수 키 선언 검증 (source 이전) ----------
-# source는 파일에 없는 변수를 초기화하지 않는다. 실행 셸에 REDIS_PASSWORD나 ENV가
-# 이미 설정돼 있으면 파일에 값이 없어도 아래 검증을 통과할 수 있는데, 원격 배포는
+# source는 파일에 없는 변수를 초기화하지 않는다. 실행 셸에 REDIS_PASSWORD, ENV 또는
+# snapshot 암호화 key가 이미 설정돼 있으면 파일에 값이 없어도 아래 검증을 통과할 수 있는데, 원격 배포는
 # 이 파일 원문만 서버로 복사하므로(하단 scp 참고) 로컬 검증과 실제 전송 설정이
 # 어긋나 필수 값이 없는 채로 배포될 수 있다(#321 리뷰). source 전에 파일 자체가
-# 두 값을 직접 선언하는지 먼저 확인한다.
-for required_key in REDIS_PASSWORD ENV; do
+# 필수 값을 직접 선언하는지 먼저 확인한다.
+for required_key in REDIS_PASSWORD ENV IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY; do
   if ! grep -Eq "^${required_key}=" "$PROD_ENV_FILE"; then
     echo "$PROD_ENV_FILE에 $required_key가 선언되어 있지 않습니다."
     exit 1
@@ -31,6 +31,24 @@ done
 set -a
 source "$PROD_ENV_FILE"
 set +a
+
+# ---------- Idempotency snapshot 암호화 key 검증 ----------
+# 운영 Backend가 기동된 뒤 Config validation으로 발견하면 image build/push와 원격 compose
+# 반영이 이미 진행된 뒤다. 필수 active key의 누락·공백·공개 placeholder를 외부 작업 전에
+# 차단하고, 실제 값 자체는 출력하지 않는다. version과 retired key ring은 선택값이며
+# Compose에서 Backend 기본값(v1, {})과 같은 fallback을 적용한다.
+if [ -z "${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY:-}" ]; then
+  echo "필수 운영 환경변수가 비어 있습니다: IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY"
+  exit 1
+fi
+
+case "$IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY" in
+  MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA= | replace-with* | replace_with*)
+    echo "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY가 아직 placeholder 값입니다: $PROD_ENV_FILE 안의 값을 교체해야 합니다."
+    exit 1
+    ;;
+esac
+
 # CloudFront origin 검증 secret은 이후 실행되는 docker/ssh/scp 프로세스 환경에
 # 불필요하게 상속하지 않습니다. Nginx 설정을 만들 때 현재 Bash 안에서만 씁니다.
 export -n CLOUDFRONT_ORIGIN_VERIFY_SECRET 2>/dev/null || true
@@ -274,7 +292,7 @@ echo "${COLOR_GREEN}Docker 로그인 성공!${COLOR_NC}"
 echo ""
 
 # ---------- 데모 배포 image build 및 push ----------
-# Worker Consumer 공개는 #338 범위 밖입니다. 기간 한정 데모는 FastAPI와 Frontend만
+# Worker health check·운영 관제·Production 배포 조립은 후속 범위입니다. FastAPI와 Frontend만
 # 새 immutable image로 배포하고, migration 전 기존 ai-worker 중지 확인은 유지합니다.
 build_and_push \
   "$docker_user" \

@@ -23,7 +23,7 @@ from app.dtos.medication_candidates import RejectMedicationCandidateRequest
 from app.models.async_jobs import IdempotencyRecord
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
-from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
+from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.rag_candidate import (
     MedicationCandidateSearch,
@@ -144,31 +144,37 @@ async def _create_user(session: AsyncSession, *, email: str) -> User:
 async def _create_version_medication(
     session: AsyncSession,
     *,
-    prescription: Prescription,
-    medication: Medication,
+    document_id: UUID,
+    ocr_job_id: UUID,
+    profile_id: UUID,
 ) -> PrescriptionVersionMedication:
+    prescription_id = uuid4()
+    version_id = uuid4()
+    prescribed_date = date.today()
+    confirmed_at = datetime.now(config.TIMEZONE)
+    prescription = Prescription(
+        id=prescription_id,
+        active_version_id=version_id,
+        document_id=document_id,
+        source_ocr_job_id=ocr_job_id,
+        profile_id=profile_id,
+        prescribed_date=prescribed_date,
+        confirmed_at=confirmed_at,
+    )
     version = PrescriptionVersion(
-        prescription_id=prescription.id,
+        id=version_id,
+        prescription_id=prescription_id,
         version_number=1,
-        prescribed_date=prescription.prescribed_date,
-        confirmed_at=prescription.confirmed_at,
+        prescribed_date=prescribed_date,
+        confirmed_at=confirmed_at,
     )
-    session.add(version)
-    await session.flush()
     version_medication = PrescriptionVersionMedication(
-        prescription_version_id=version.id,
-        medication_name=medication.medication_name,
-        strength_text=medication.strength_text,
-        dose_value=medication.dose_value,
-        dose_unit=medication.dose_unit,
-        frequency_per_day=medication.frequency_per_day,
-        timing_text=medication.timing_text,
-        duration_days=medication.duration_days,
-        display_order=medication.display_order,
+        prescription_version_id=version_id,
+        medication_name="테스트약",
+        strength_text="500mg",
+        display_order=1,
     )
-    session.add(version_medication)
-    await session.flush()
-    prescription.active_version_id = version.id
+    session.add_all([prescription, version, version_medication])
     await session.flush()
     return version_medication
 
@@ -197,28 +203,11 @@ async def _create_ready_search() -> tuple[UUID, UUID, UUID, UUID]:
         session.add(ocr_job)
         await session.flush()
 
-        prescription = Prescription(
-            document_id=document.id,
-            source_ocr_job_id=ocr_job.id,
-            profile_id=profile.id,
-            prescribed_date=date.today(),
-            confirmed_at=datetime.now(config.TIMEZONE),
-        )
-        session.add(prescription)
-        await session.flush()
-
-        medication = Medication(
-            prescription_id=prescription.id,
-            medication_name="테스트약",
-            strength_text="500mg",
-            display_order=1,
-        )
-        session.add(medication)
-        await session.flush()
         version_medication = await _create_version_medication(
             session,
-            prescription=prescription,
-            medication=medication,
+            document_id=document.id,
+            ocr_job_id=ocr_job.id,
+            profile_id=profile.id,
         )
 
         service = _service(session)
@@ -263,28 +252,11 @@ async def _create_replaced_and_current_ready_searches() -> tuple[UUID, UUID, UUI
         session.add(ocr_job)
         await session.flush()
 
-        prescription = Prescription(
-            document_id=document.id,
-            source_ocr_job_id=ocr_job.id,
-            profile_id=profile.id,
-            prescribed_date=date.today(),
-            confirmed_at=datetime.now(config.TIMEZONE),
-        )
-        session.add(prescription)
-        await session.flush()
-
-        medication = Medication(
-            prescription_id=prescription.id,
-            medication_name="테스트약",
-            strength_text="500mg",
-            display_order=1,
-        )
-        session.add(medication)
-        await session.flush()
         version_medication = await _create_version_medication(
             session,
-            prescription=prescription,
-            medication=medication,
+            document_id=document.id,
+            ocr_job_id=ocr_job.id,
+            profile_id=profile.id,
         )
 
         service = _service(session)
@@ -395,28 +367,11 @@ async def _create_two_ready_searches_for_same_medication() -> tuple[UUID, UUID, 
         session.add(ocr_job)
         await session.flush()
 
-        prescription = Prescription(
-            document_id=document.id,
-            source_ocr_job_id=ocr_job.id,
-            profile_id=profile.id,
-            prescribed_date=date.today(),
-            confirmed_at=datetime.now(config.TIMEZONE),
-        )
-        session.add(prescription)
-        await session.flush()
-
-        medication = Medication(
-            prescription_id=prescription.id,
-            medication_name="테스트약",
-            strength_text="500mg",
-            display_order=1,
-        )
-        session.add(medication)
-        await session.flush()
         version_medication = await _create_version_medication(
             session,
-            prescription=prescription,
-            medication=medication,
+            document_id=document.id,
+            ocr_job_id=ocr_job.id,
+            profile_id=profile.id,
         )
 
         searches: list[MedicationCandidateSearch] = []
@@ -424,8 +379,8 @@ async def _create_two_ready_searches_for_same_medication() -> tuple[UUID, UUID, 
         for index in range(2):
             search = MedicationCandidateSearch(
                 prescription_version_medication_id=version_medication.id,
-                medication_name_snapshot=medication.medication_name,
-                strength_text_snapshot=medication.strength_text,
+                medication_name_snapshot=version_medication.medication_name,
+                strength_text_snapshot=version_medication.strength_text,
                 query_digest=f"query-digest-two-ready-{index}",
                 runtime_release_bundle_id=None,
                 candidate_index_version_id=None,
@@ -759,8 +714,7 @@ async def test_concurrent_confirm_allows_only_one_identification() -> None:
 
     assert results.count(("ok", None)) == 1
     assert any(
-        code in {"CANDIDATE_SEARCH_STALE", "IDENTIFICATION_CONTEXT_STALE"}
-        and reason in {"SEARCH_NOT_READY", "ALREADY_MATCHED"}
+        code in {"CANDIDATE_SEARCH_STALE", "IDENTIFICATION_CONTEXT_STALE"} and reason in {"STALE", "ALREADY_MATCHED"}
         for code, reason in results
     )
 
@@ -802,7 +756,7 @@ async def test_concurrent_confirm_different_searches_allows_only_current_search(
     )
 
     assert results.count(("ok", None)) == 1
-    assert ("CANDIDATE_SEARCH_STALE", "SEARCH_NOT_READY") in results
+    assert ("CANDIDATE_SEARCH_STALE", "STALE") in results
 
     async with session_factory() as session:
         identifications = (
@@ -864,7 +818,8 @@ async def test_concurrent_confirm_two_ready_searches_allows_only_one_matched_ide
 
         assert results.count(("ok", None)) == 1
         assert any(
-            code in {"CANDIDATE_SEARCH_STALE", "IDENTIFICATION_CONTEXT_STALE"} and reason == "ALREADY_MATCHED"
+            (code == "IDENTIFICATION_CONTEXT_STALE" and reason == "ALREADY_MATCHED")
+            or (code == "CANDIDATE_SEARCH_STALE" and reason == "STALE")
             for code, reason in results
         )
 

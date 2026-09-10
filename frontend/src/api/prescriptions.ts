@@ -164,6 +164,8 @@ export async function getOcrJob(
 }
 
 export type Medication = {
+  prescription_version_medication_id: string
+
   // 처방전에서 사용자가 확인한 이름입니다.
   medication_name: string
 
@@ -181,6 +183,9 @@ export type Medication = {
 export type PrescriptionResponse = {
   data: {
     prescription_id: string
+    prescription_version_id: string
+    revision: number
+    current: boolean
     document_id: string
     prescribed_date: string
     confirmed_at: string
@@ -194,6 +199,34 @@ export async function getLatestPrescription(): Promise<PrescriptionResponse> {
 
 export type ExtractedFieldResponse = {
   data: ExtractedField
+}
+
+export type CreateManualMedicationRequest = {
+  medication_name: string
+  medication_strength?: string | null
+  dose_value: string
+  dose_unit?: string | null
+  frequency_per_day: string
+  timing?: string | null
+  duration_days: string
+}
+
+export async function createManualMedication(
+  jobId: string,
+  request: CreateManualMedicationRequest,
+  idempotencyKey: string,
+): Promise<OcrJobResponse> {
+  return apiRequest<OcrJobResponse>(
+    `/api/v1/ocr-jobs/${jobId}/manual-medications`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: JSON.stringify(request),
+    },
+  )
 }
 
 export async function updateExtractedField(

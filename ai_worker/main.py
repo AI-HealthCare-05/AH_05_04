@@ -52,7 +52,7 @@ async def _run_worker_services(
     assembled: AssembledWorkerRuntime,
     stop_event: asyncio.Event,
 ) -> None:
-    """Consumer와 복구 Scheduler를 하나의 프로세스 경계에서 실행합니다."""
+    """Consumer와 Outbox·복구 Scheduler를 하나의 프로세스 경계에서 실행합니다."""
 
     service_tasks: set[asyncio.Task[None]] = {asyncio.create_task(assembled.runtime.run(stop_event))}
 

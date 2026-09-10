@@ -171,6 +171,19 @@ async def test_recovery_logger_reports_scheduler_failure_safely() -> None:
 
 
 @pytest.mark.asyncio
+async def test_recovery_logger_reports_outbox_publisher_failure_safely() -> None:
+    stream = io.StringIO()
+    reporter = RecoveryMetricLogger(build_logger(stream))
+
+    await reporter.report_failure(task_name="outbox_publisher")
+
+    assert read_event(stream) == {
+        "event": "worker_recovery_cycle_failed",
+        "task_name": "outbox_publisher",
+    }
+
+
+@pytest.mark.asyncio
 async def test_recovery_logger_emits_dlq_alert_without_payload() -> None:
     stream = io.StringIO()
     reporter = RecoveryMetricLogger(build_logger(stream))

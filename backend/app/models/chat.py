@@ -71,8 +71,7 @@ class ChatSession(Base):
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     prescription_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
-    # PR 3 read cutover 동안 nullable expand 상태를 유지하고 새 session은 항상 채웁니다.
-    prescription_version_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    prescription_version_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     profile_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("profile.id"), nullable=False)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     session_status: Mapped[ChatSessionStatus] = mapped_column(

@@ -1,7 +1,7 @@
 """add Catalog identity, alias state, and search entry foundation
 
 Revision ID: 166a7b8c9d0e
-Revises: 164b6c7d8e9f
+Revises: 201a1b2c3d4e
 Create Date: 2026-09-08
 
 D-02 normalization/build execution provenance remains unresolved. This revision
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "166a7b8c9d0e"
-down_revision: str | Sequence[str] | None = "164b6c7d8e9f"
+down_revision: str | Sequence[str] | None = "201a1b2c3d4e"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

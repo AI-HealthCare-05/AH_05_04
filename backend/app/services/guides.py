@@ -22,13 +22,6 @@ _GENERATION_FAILED_ERROR_MESSAGE = "가이드 생성 처리 중 오류가 발생
 
 
 def _to_guide_data(guide: Guide) -> GuideData:
-    if guide.prescription_version_id is None:
-        raise ApiError(
-            status_code=409,
-            code="PRESCRIPTION_VERSION_UNAVAILABLE",
-            message="처방 버전 정보를 사용할 수 없습니다.",
-            details=[ErrorDetail(field="prescription_version_id", reason="INVALID_VERSION_GRAPH")],
-        )
     return GuideData(
         guide_id=guide.id,
         prescription_id=guide.prescription_id,
@@ -40,6 +33,16 @@ def _to_guide_data(guide: Guide) -> GuideData:
         requested_at=guide.requested_at,
         completed_at=guide.completed_at,
     )
+
+
+def _ensure_current_version(guide: Guide) -> None:
+    if guide.prescription_version_id != guide.prescription.active_version_id:
+        raise ApiError(
+            status_code=409,
+            code="PRESCRIPTION_VERSION_CONFLICT",
+            message="처방 정보가 변경되어 이전 가이드를 현재 결과로 사용할 수 없습니다.",
+            details=[ErrorDetail(field="guide_id", reason="ACTIVE_VERSION_MISMATCH")],
+        )
 
 
 class GuideService:
@@ -152,6 +155,19 @@ class GuideService:
                 details=[ErrorDetail(field="guide", reason="GENERATION_REQUEST_FAILED")],
             )
         else:
+            if not await self._repo.lock_if_current_version(guide=guide):
+                await self._repo.mark_failed(
+                    guide,
+                    error_code="PRESCRIPTION_VERSION_STALE",
+                    error_message="처방 정보가 변경되어 생성 결과를 현재 결과로 사용할 수 없습니다.",
+                    completed_at=datetime.now(UTC),
+                )
+                raise ApiError(
+                    status_code=409,
+                    code="PRESCRIPTION_VERSION_CONFLICT",
+                    message="처방 정보가 변경되었습니다. 최신 처방으로 다시 생성해 주세요.",
+                    details=[ErrorDetail(field="prescription_id", reason="ACTIVE_VERSION_MISMATCH")],
+                )
             guide = await self._repo.mark_completed(
                 guide,
                 content=result.content,
@@ -174,6 +190,7 @@ class GuideService:
                 message="가이드를 찾을 수 없습니다.",
                 details=[ErrorDetail(field="guide_id", reason="NOT_FOUND", rejected_value=str(guide_id))],
             )
+        _ensure_current_version(guide)
         return _to_guide_data(guide)
 
     async def get_latest_guide_for_prescription(self, *, user: User, prescription_id: UUID) -> GuideData:
@@ -192,4 +209,5 @@ class GuideService:
                 message="가이드를 찾을 수 없습니다.",
                 details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND", rejected_value=str(prescription_id))],
             )
+        _ensure_current_version(guide)
         return _to_guide_data(guide)

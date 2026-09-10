@@ -23,7 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAG_SOURCE_CATALOG_REVISION = "164f3a2b1c0d"
 RAG_SOURCE_CATALOG_BASE_REVISION = "171c0f751206"
 # 166a7b8c9d0e의 직전 revision. develop head가 바뀌면 함께 갱신한다.
-CATALOG_IDENTITY_BASE_REVISION = "164b6c7d8e9f"
+CATALOG_IDENTITY_BASE_REVISION = "201a1b2c3d4e"
 CATALOG_IDENTITY_REVISION = "166a7b8c9d0e"
 CATALOG_MIGRATION_PATHS = (
     PROJECT_ROOT / "backend/alembic/versions/166a7b8c9d0e_add_catalog_identity_alias_search.py",

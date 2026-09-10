@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import type { NavigateFunction } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
   getGuide,
@@ -19,6 +20,24 @@ import {
 import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
 import './GuidePage.css'
+
+export type GuidePageServices = {
+  getGuide: typeof getGuide
+  getGuideForPrescription: typeof getGuideForPrescription
+  getLatestPrescription: typeof getLatestPrescription
+}
+
+export type GuidePageProps = {
+  services?: GuidePageServices
+  previewGuideId?: string | null
+  navigation?: NavigateFunction
+}
+
+const defaultGuidePageServices: GuidePageServices = {
+  getGuide,
+  getGuideForPrescription,
+  getLatestPrescription,
+}
 
 function formatCompletedAt(value: string | null) {
   if (!value) return null
@@ -197,9 +216,17 @@ function StructuredGuideContent({ guide }: { guide: StructuredGuide }) {
   )
 }
 
-function GuidePage() {
-  const navigate = useNavigate()
-  const { guideId } = useParams<{ guideId: string }>()
+function GuidePage({
+  services = defaultGuidePageServices,
+  previewGuideId,
+  navigation,
+}: GuidePageProps = {}) {
+  const routerNavigate = useNavigate()
+  const navigate = navigation ?? routerNavigate
+  const { guideId: routeParamGuideId } = useParams<{ guideId: string }>()
+  const guideId = previewGuideId === undefined
+    ? routeParamGuideId
+    : previewGuideId ?? undefined
   const [guide, setGuide] = useState<GuideData | null>(null)
   const [message, setMessage] = useState('')
   const [isLoading, setIsLoading] = useState(true)
@@ -222,7 +249,7 @@ function GuidePage() {
         let prescriptionResponse
 
         try {
-          prescriptionResponse = await getLatestPrescription()
+          prescriptionResponse = await services.getLatestPrescription()
         } catch (error) {
           if (!isCurrentRequest()) return
           if (isNotFound(error)) return
@@ -233,7 +260,7 @@ function GuidePage() {
         const prescriptionId = prescriptionResponse.data.prescription_id
 
         try {
-          const response = await getGuideForPrescription(prescriptionId)
+          const response = await services.getGuideForPrescription(prescriptionId)
           if (!isCurrentRequest()) return
 
           if (response.data.prescription_id !== prescriptionId) {
@@ -251,7 +278,7 @@ function GuidePage() {
         return
       }
 
-      const response = await getGuide(requestedGuideId)
+      const response = await services.getGuide(requestedGuideId)
       if (!isCurrentRequest()) return
 
       if (response.data.guide_id !== requestedGuideId) {
@@ -274,7 +301,7 @@ function GuidePage() {
         setIsLoading(false)
       }
     }
-  }, [guideId, navigate])
+  }, [guideId, navigate, services])
 
   useEffect(() => {
     void loadGuide()

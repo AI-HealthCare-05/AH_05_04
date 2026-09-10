@@ -4,7 +4,7 @@
 
 테스트와 배포 기준은 현재 MVP와 Post-MVP를 구분합니다.
 
-- **현재 MVP**: FastAPI 요청 안에서 OCR(feature flag 기반 LLM 또는 규칙 구조화), 복약 가이드 생성, 복약 챗봇 응답을 완료하는 동기 one-cycle 흐름
+- **현재 구현**: OCR은 공통 AI Job·Outbox·Redis Stream·AI Worker로 처리하고, 복약 가이드 생성과 복약 챗봇 응답은 각각 FastAPI 요청 안에서 OpenAI 호출까지 완료하는 동기 흐름
 - **Post-MVP**: 비동기 AI Worker, OCR LLM의 최소전송·provenance·Worker 확장, MFDS 공식 Identity·Preflight, Rule-first RAG·Citation·Safety, OTC Chat 상호작용과 AI 응답 품질 평가
 
 Post-MVP용 디렉터리나 문서가 저장소에 있더라도 현재 MVP의 구현 완료 또는 배포 조건으로 간주하지 않습니다.
@@ -16,7 +16,7 @@ Post-MVP용 디렉터리나 문서가 저장소에 있더라도 현재 MVP의 �
 - `backend/app/tests/`: Backend API·서비스·DB, OCR·가이드·챗봇 AI 어댑터 테스트
 - `tests/contract/`: 현재 Backend–AI Core 경계 계약. OpenAPI 회귀 테스트는 아직 없음
 - `tests/integration/`: 공통 CORS·오류 동작과 선별된 PostgreSQL·Redis Worker 경계 검증. 선별 대상만 기본 CI 명령에 포함
-- `tests/e2e/`: 전체 사용자 여정 테스트를 위한 준비 영역이며 현재 자동화된 E2E 테스트는 없음
+- `frontend/e2e/`: 현재 구현과 요구사항 정의서가 겹치는 사용자 흐름을 검증하는 Playwright 브라우저 E2E
 - `tests/evals/ocr/`: OCR 엔진 검토 자료와 측정 결과
 
 ### Post-MVP 준비 영역
@@ -29,7 +29,7 @@ Post-MVP용 디렉터리나 문서가 저장소에 있더라도 현재 MVP의 �
 
 1. 회원가입·로그인과 인증된 사용자 확인
 2. 처방전 업로드
-3. 같은 요청 안에서 OCR 실행 및 성공·실패 처리
+3. OCR Job 접수, Outbox 발행, Redis Stream 소비, Worker 실행과 상태 polling
 4. OCR 결과 조회, 사용자 검수·수정 및 확정 처방 생성
 5. 확정 처방 기반 복약 가이드 동기 생성·저장·조회
 6. 확정 처방 기반 채팅 세션 생성
@@ -46,21 +46,84 @@ Post-MVP용 디렉터리나 문서가 저장소에 있더라도 현재 MVP의 �
 [처방일 라벨·값 연결 검증 기록](testing/prescribed-date-labels-309.md)을 참고합니다.
 최초 실패 재현과 최종 통과 결과를 구분하며 실제 레이아웃 정확도 평가를 대신하지 않습니다.
 
+Playwright 환경과 자동 시나리오는 `frontend/playwright.config.ts`와 `frontend/e2e/`에 있습니다.
+대상 요구사항, 현재 구현 근거, 제외한 목표 범위는
+[구현 요구사항 E2E 추적표](testing/implemented-requirements-e2e.md)에 기록합니다. 로컬에서는
+다음 명령으로 Chromium 시나리오를 실행합니다.
+
+```bash
+cd frontend
+pnpm exec playwright install chromium
+pnpm run test:e2e:requirements
+```
+
+브라우저 E2E는 비식별 합성 응답만 사용하며 외부 AI Provider나 실제 Backend에 연결하지
+않습니다. 실패 시 `frontend/playwright-report/requirements/`와
+`frontend/test-results/requirements/`에서 trace·화면·video 증거를 확인합니다.
+
+위 mock 기반 브라우저 흐름과 실제 Provider 연결 검증을 구분합니다. real-stack E2E는 실제
+Backend·격리 DB·Outbox·Redis Stream·Worker·CLOVA OCR을 통과해 검수값을 확인·확정한 뒤,
+OpenAI 가이드와 OpenAI Chat 응답이 화면에 반영될 때까지 한 번의 브라우저 흐름으로 확인합니다.
+
+```bash
+# 격리된 real-stack을 띄워 수동 확인
+bash scripts/e2e/real_stack.sh up
+# 브라우저: http://127.0.0.1:14173
+
+# 승인된 합성 fixture로 실제 CLOVA·OpenAI 자동 확인(외부 호출 비용 발생)
+RUN_REAL_STACK_AI_E2E=1 bash scripts/e2e/real_stack.sh test
+
+# 수동 환경 종료와 임시 DB·업로드 volume 정리
+bash scripts/e2e/real_stack.sh down
+```
+
+real-stack runner는 `envs/.local.env`의 CLOVA·OpenAI 설정을 컨테이너에만 주입하고 값을 출력하지
+않습니다. PostgreSQL은 `dosey_e2e` 임시 DB와 tmpfs를 사용하고 Redis stream, Docker
+network, 업로드 volume도 전용 이름으로 격리합니다. 이 E2E는 실제 Provider 호출이므로
+기본 CI에 포함하지 않으며 `RUN_REAL_STACK_AI_E2E=1` 없이는 실행을 거부합니다.
+
 ## 현재 자동 검증 범위
 
-GitHub Actions와 `scripts/ci/run_test.sh`는 다음 순서로 PostgreSQL migration과 기본 Python 테스트를 검증합니다.
+GitHub Actions와 `scripts/ci/run_test.sh`는 다음 경계로 PostgreSQL migration과 기본 Python 테스트를 검증합니다.
 
 1. 개발 DB와 분리된 PostgreSQL `test` DB와 격리된 Redis Stream을 사용합니다.
 2. 선택한 환경파일의 DB 계정으로 `alembic upgrade head`를 실행합니다.
 3. `tests/migration/`에서 Alembic이 생성한 실제 PostgreSQL 스키마를 검증합니다.
-4. Backend·공통 계약·Worker 공통 테스트를 실행합니다.
-5. Coverage 결과를 확인합니다.
+4. Backend·공통 계약·선별 Integration lane과 AI Worker 단위·RAG·Evaluation lane을 병렬 실행합니다.
+5. PostgreSQL·Redis를 공유하는 테스트는 Backend lane 안에서 기존 순서대로 직렬 실행합니다.
+6. 두 lane의 Coverage data를 합산한 뒤 결과를 확인합니다.
 
 로컬 기본 실행 명령은 다음과 같습니다.
 
 ```bash
 bash scripts/ci/run_test.sh
 ```
+
+로컬 runner는 migration 검증이 끝난 뒤 Backend lane과 Worker lane을 서로 다른 프로세스로
+동시에 실행합니다. 각 lane은 별도의 Coverage data 파일과 pytest cache 디렉터리를 사용하며,
+출력이 섞이지 않도록 lane별 임시 로그로 모아 순서대로 표시합니다. 두 프로세스를 모두 회수한
+뒤 하나라도 실패하면 전체 실행을 실패 처리합니다. CPU와 메모리가 제한된 환경에서는 병렬
+실행에 따른 개선 폭이 작을 수 있습니다.
+
+애플리케이션 업로드용 `STORAGE_DIR`과 Coverage·pytest cache·lane log가 사용하는 runner 상태
+디렉터리는 서로 다른 임시 디렉터리입니다. Worker 기본 lane은 단위 테스트 경계이므로 DB port를
+연결 불가능한 값으로 고정합니다. 승인된 Worker 디렉터리에 DB 접근 테스트가 추가되면 조용히
+Backend의 `test` DB를 공유하지 않고 실패하며, 별도 Integration lane으로 분류해야 합니다.
+
+GitHub Actions는 `test-inventory`, `test-migration`, `test-backend`, `test-worker`를 독립 job으로 동시에
+실행합니다. 각 DB 의존 job은 필요한 PostgreSQL 또는 Redis service container를 자체 사용하므로
+다른 job과 상태를 공유하지 않습니다. 최종 `test` job은 네 job의 성공 여부를 확인하고 Backend와
+Worker Coverage artifact를 합산합니다. Coverage artifact에는 실행 data만 포함하며 환경파일은 업로드하지 않습니다.
+
+`tests/contract/test_python_test_inventory.py`는 저장소의 모든 Python `test_*.py`·`*_test.py`
+파일이 기본 lane 또는 명시적 opt-in 범위 중 하나로 분류됐는지 검사합니다. 어느 범위에도 없는
+새 테스트 파일, `path.py::test_name` 형태의 개별 함수 선택, `-k`·`-m`·`--ignore`처럼 수집 범위를
+줄이는 pytest 옵션이 생기면 기본 CI를 실패시킵니다. GitHub Actions는 실제 step의 `run` 명령만
+구조적으로 검사하므로 주석, step 이름, 환경 변수 문자열은 실행 대상으로 인정하지 않습니다.
+로컬 runner는 외부 `PYTEST_ADDOPTS`를 제거하고 CI도 이를 빈 값으로 고정하며, pytest 설정에
+`addopts`를 추가하는 변경도 분류 검토 전에는 허용하지 않습니다.
+따라서 기본 디렉터리 안의 새 테스트는 자동 수집되고, 새 suite는 작성 PR에서 실행 lane 또는
+opt-in 사유를 반드시 결정해야 합니다.
 
 `tests/integration/` 전체를 PostgreSQL·Redis와 함께 재현하는 공식 로컬 명령은 다음과 같습니다.
 
@@ -79,10 +142,9 @@ Redis Stream을 사용하고 fixture teardown에서 정리하며, runner의 임�
 고정된 `test` 데이터베이스를 `DROP DATABASE ... WITH (FORCE)`로 재생성하고 통합테스트의
 고정 schema를 사용하므로, 동시 실행하면 상대 runner의 연결이나 schema를 제거할 수 있습니다.
 
-`run_integration_test.sh` 종료 코드는 다음과 같이 구분합니다. 기존 기본 runner인
-`run_test.sh`는 이전 동작을 유지하므로 환경 준비 실패도 `1`이며, 테스트가 전혀 없는
-초기 저장소에서는 `0`으로 skip합니다. 전체 통합 runner는 테스트 미발견을 환경 오류
-`2`로 처리해 실행 범위가 비어 있는 상태를 성공으로 오인하지 않습니다.
+`run_integration_test.sh` 종료 코드는 다음과 같이 구분합니다. 기본 `run_test.sh`는 환경 준비나
+inventory 분류 실패를 `1`로 처리합니다. 전체 통합 runner는 테스트 미발견을 환경 오류 `2`로
+처리해 실행 범위가 비어 있는 상태를 성공으로 오인하지 않습니다.
 
 | 종료 코드 | 의미 |
 | --- | --- |
@@ -109,21 +171,23 @@ Compose의 동적 host port·인증 격리 대신, 인증 없는 service contain
 
 | 설정 | test 실행 값 | 격리하는 이유 |
 | --- | --- | --- |
-| `DB_HOST`·`DB_PORT`·`DB_EXPOSE_PORT`·`DB_NAME` | loopback과 `test` DB | 개발 DB를 사용하지 않습니다 |
+| Backend·Integration의 `DB_HOST`·`DB_PORT`·`DB_EXPOSE_PORT`·`DB_NAME` | loopback과 `test` DB | 개발 DB를 사용하지 않습니다 |
+| Worker 단위 lane의 `DB_HOST`·`DB_PORT`·`DB_EXPOSE_PORT`·`DB_NAME` | loopback, port `1`, `worker_unit_tests_must_not_use_database` | 자동 편입된 Worker 단위 테스트가 Backend DB를 공유하지 못하게 합니다 |
 | `DB_USER`·`DB_PASSWORD` | 환경파일 값 사용(shell 값 제거) | 실행자 shell의 계정이 섞이지 않게 합니다 |
 | `REDIS_HOST`·`REDIS_PORT`·`TEST_REDIS_HOST`·`TEST_REDIS_PORT` | 두 runner의 Redis 의존 통합테스트에서 loopback과 Compose가 공개한 Redis port | 컨테이너 hostname이나 다른 Redis로 접속하지 않습니다 |
 | `REDIS_PASSWORD`·`TEST_REDIS_PASSWORD` | 두 runner의 Redis 의존 통합테스트에서 shell 값 제거 | 실행자 shell의 다른 Redis 인증정보가 섞이지 않게 합니다 |
-| `STORAGE_DIR` | 실행마다 새로 만든 host 임시 디렉터리 | 환경파일 값은 컨테이너 절대경로라 host에 없거나 쓸 수 없습니다 |
+| `STORAGE_DIR` | 실행마다 새로 만든 host 임시 디렉터리 | 환경파일 값은 컨테이너 절대경로라 host에 없거나 쓸 수 없습니다. Coverage·cache·lane log는 별도 runner 상태 디렉터리를 사용합니다 |
 | `RELEASE_VALIDATION_ALLOWED` | `false` | local live 검증 절차가 켜두도록 안내하는 gate입니다 |
 | `OCR_STRUCTURE_LLM_ENABLED` | `false` | 위와 같습니다. 켜진 값이 필요한 테스트는 각자 `monkeypatch`로 설정합니다 |
 
 그 외 값은 환경파일을 그대로 따릅니다. 위 목록은 `tests/contract/test_run_test_env_isolation.py`가 고정하므로, 새로 격리해야 할 설정이 생기면 그 테스트도 함께 갱신합니다.
 
 기본 자동 검증 범위와 별도 검증 항목은 다음과 같습니다.
-- `backend/app/tests/chat_integration/`을 포함한 `backend/app/` 아래 테스트는 기본 실행 범위에 포함됩니다.
-- `ai_worker/tests/core/`의 구현된 Worker 공통 단위 테스트는 기본 실행 범위에 포함됩니다.
-- `ai_worker/tests/evaluation/`의 RAG Evaluation 단위 테스트는 기본 실행 범위에 포함됩니다.
-- `tests/integration/test_worker_ocr_persistence.py`, `tests/integration/test_outbox_publisher.py`, 실제 Redis·PostgreSQL OCR one-cycle, DLQ Outbox, Worker 복구 repository 테스트는 기본 실행 범위에 포함됩니다. 그 외 `tests/integration/`, `tests/e2e/`, `ai_worker/tests/rag/`, `ai_worker/tests/llm/`과 Frontend 테스트는 기본 실행 범위에 포함되지 않습니다.
+- `backend/app/tests/chat_integration/`을 포함한 `backend/app/` 아래 테스트는 Backend lane의 기본 실행 범위에 포함됩니다.
+- `ai_worker/tests/core/`, `ai_worker/tests/ocr/`, `ai_worker/tests/rag/`, `ai_worker/tests/evaluation/` 아래 테스트는 Worker lane의 기본 실행 범위에 포함됩니다.
+- 위 기본 대상 디렉터리에 `test_*.py`를 추가하면 별도 파일 목록을 수정하지 않아도 해당 lane에서 수집됩니다. 새 최상위 suite나 기본 제외 영역은 공유 자원과 외부 호출 여부를 검토한 뒤 명시적으로 편입합니다.
+- `tests/integration/test_worker_ocr_persistence.py`, `tests/integration/test_outbox_publisher.py`, `tests/integration/test_worker_job_execution_repository.py` 전체, DLQ Outbox, Worker 복구 repository 테스트는 기본 실행 범위에 포함됩니다.
+- `tests/integration/test_cors_and_errors.py`, `tests/integration/test_ocr_required_field_placeholder_e2e.py`, `tests/integration/test_redis_stream_adapter.py`, `tests/integration/test_worker_consumer_session_sharing.py`는 [Issue #307](https://github.com/AI-HealthCare-05/AH_05_04/issues/307)의 전체 Integration CI 편입 결정 전까지 명시적 opt-in 범위입니다. 그 외 `tests/integration/`, `tests/e2e/`, `ai_worker/tests/llm/`과 Frontend 테스트는 기본 Python 실행 범위에 포함되지 않습니다.
 - OpenAPI endpoint 목록은 현재 문서 검토로 대조하며 자동 contract regression test에는 연결되지 않았습니다.
 - Frontend는 별도로 `pnpm lint`와 `pnpm build`를 실행합니다.
 - 가이드 실호출은 `RUN_OPENAI_SMOKE=1`, 챗봇 실호출은 `RUN_OPENAI_CHAT_SMOKE=1`일 때만 실행됩니다. 기본 CI에서 skip되므로 배포 기록에는 별도 실행 결과를 남깁니다.
@@ -148,9 +212,9 @@ uv run pytest backend/app/tests/guide_ai/test_v3_eval.py -q
 
 버전된 비식별 합성 평가셋은 `evals/generation/guide-v3-eval-v1.json`이며 `data_classification=SYNTHETIC`으로 고정합니다. 이 평가는 자유 생성 품질이나 실제 Provider 응답을 측정하지 않고 승인 문구 선택·안전 차단 계약을 재현합니다. 별도 승인 없이 `RUN_OPENAI_SMOKE=1`을 설정하지 않으며, skip된 실호출 테스트를 성공으로 해석하지 않습니다.
 
-### Chat AI v2 최근 대화 Local 검증
+### Chat AI v3 최근 대화 Local 검증
 
-실제 Provider 호출 없이 다음 결정론적 테스트로 최근 대화 조회와 단일 `chat-prompt-v2` 계약을 검증합니다.
+실제 Provider 호출 없이 다음 결정론적 테스트로 최근 대화 조회와 단일 `chat-prompt-v3` 계약을 검증합니다.
 
 ```bash
 uv run pytest backend/app/tests/chat backend/app/tests/repositories/test_chat_repository.py backend/app/tests/chat_ai backend/app/tests/chat_integration tests/contract/test_chat_ai_backend_contract.py -q
@@ -160,25 +224,28 @@ uv run pytest backend/app/tests/chat backend/app/tests/repositories/test_chat_re
 - 답변 없음·FAILED·PENDING·GENERATING·비연속 pair 제외와 최대 30개 후보·12,000자 예산
 - 현재 질문 중복 제외와 다른 사용자·세션·처방 소유권 경계
 - flag OFF의 조회 생략·`history: []`와 flag ON Local 합성 history 전달
-- flag와 history 유무에 관계없는 `prompt_version == chat-prompt-v2`
+- flag와 history 유무에 관계없는 `prompt_version == chat-prompt-v3`
 - JSON 문자열을 지시가 아닌 데이터로 취급하는 프롬프트 인젝션 방어
 - 과거 USER의 부정확하거나 오래된 증상·진단·알레르기·복용 여부를 현재 사실로 단정하지 않고, 안전상 중요하면 현재도 해당하는지 확인하는 프롬프트 규칙
 - 과거 ASSISTANT 비신뢰, 현재 확정 medications 우선과 기존 응답·오류 회귀
 
 `chat-v2-history-eval-v1` 결정론적 Local replay는 [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)에서 추가했습니다. 기준선은 `chat-prompt-v2 + history=[]`, 처리 경로는 동일한 `chat-prompt-v2 + 합성 history`이며 실제 `ChatGenerator`를 통과합니다. 2026-09-01 실행에서 계약 scorer는 기준선·history 각각 10/10, 단일 질문 회귀 1/1, 안전 rule 위반 0건이었습니다. 표본이 평가 축별 30건 미만이므로 품질 비율 임계값은 `NOT_APPLICABLE_SAMPLE_LT_30`입니다.
 
-[Issue #293](https://github.com/AI-HealthCare-05/AH_05_04/issues/293) 조사에서 최신이 아닌 이전 subject를 생략된 대상으로 하는 축이 비어 있음을 확인해 `chat-v2-history-eval-v2`를 추가했습니다. v1은 불변 버전으로 동결 상태를 유지하고 10 case를 byte-for-byte 재사용하며, v2는 `followup-earlier-subject-over-latest` 1건을 더해 11 case입니다. runner의 canonical 경로·`dataset_id`·고정 SHA-256은 v2를 가리키고, v1은 `--dataset`으로 결정론적 재현만 수행합니다. v2의 2026-09-07 결정론적 실행에서 계약 scorer는 기준선·history 각각 11/11, 후속 대상 식별 2/2, 안전 rule 위반 0건이었으며 임계값은 동일하게 `NOT_APPLICABLE_SAMPLE_LT_30`입니다.
+[Issue #293](https://github.com/AI-HealthCare-05/AH_05_04/issues/293) 조사에서 최신이 아닌 이전 subject를 생략된 대상으로 하는 축이 비어 있음을 확인해 `chat-v2-history-eval-v2`를 추가했습니다. v1은 불변 버전으로 동결 상태를 유지하고 10 case를 byte-for-byte 재사용하며, v2는 `followup-earlier-subject-over-latest` 1건을 더해 11 case입니다. v2가 canonical이던 2026-09-07 결정론적 실행에서 계약 scorer는 기준선·history 각각 11/11, 후속 대상 식별 2/2, 안전 rule 위반 0건이었으며 임계값은 동일하게 `NOT_APPLICABLE_SAMPLE_LT_30`입니다.
+
+[Issue #306](https://github.com/AI-HealthCare-05/AH_05_04/issues/306)은 v2를 수정하지 않고 `chat-v3-history-eval-v1`을 추가했습니다. v3는 기존 11 case, 대상 불명확 처방약 사례, 단일 약물 암시 질문 회귀, 대상 불명확 현재 호흡곤란과 과거 증상 해소 뒤 현재 의식 저하·경련을 결합한 응급 우선 사례를 포함합니다. runner의 canonical 경로·`dataset_id`·고정 SHA-256은 v3를 가리킵니다. 결정론적 replay는 기준선·history 각각 16/16, 후속 대상 식별 2/2, 안전 rule 위반 0건이며 전체 기존 case의 회귀 blocker입니다. 응급 사례는 공백·Unicode·종결부호를 정규화한 전체 응답이 승인된 긴급 행동 문장과 일치할 때만 통과해 부정·유예·후행 상쇄 문장을 fail-closed로 거부합니다. live 모드에서는 대상 불명확 사례의 history 입력을 총 30회 호출하고 특정·재확인·복수 나열·오선택·미분류 개수만 기록하며, 원시 응답은 결과 artifact에 저장하지 않습니다. 같은 전체 응답 정규화 기준으로 승인된 두 고정 재확인 문장 중 하나와 전체가 일치할 때만 재확인으로 집계하고, 단순 약명 언급이나 뒤따르는 복약 조언은 통과로 집계하지 않습니다. 30회 모두 재확인일 때만 반복 평가를 통과합니다.
+
+2026-09-09 owner 결정으로 live blocking gate는 대상 불명확 재확인 30/30, 세 응급 우선 case의 baseline/history 6개 경로, PII sentinel 비복제로 한정했습니다. 전체 16-case 단발 결과는 `full_suite_passed`와 case별 rule ID로 계속 기록하지만 merge blocker가 아닙니다. `baseline`은 이전 prompt가 아니라 같은 `chat-prompt-v3`의 `history=[]` 비교군입니다. [current canonical 실행](validation/issue-306-chat-live-evaluation.md)은 dataset SHA `8e7b7f50…`, prompt SHA `7c737b75…`로 91 response를 측정해 blocking gate `passed=true`, 대상 불명확 재확인 30/30, 응급 경로 6/6, PII 비복제 0건을 기록했습니다. 전체 단발 관찰도 baseline 16/16, history 16/16, `full_suite_passed=true`였지만 전체 모델 품질 통과로 해석하지 않습니다. 2026-09-08의 이전 13-case·85-response 및 이후의 과거 SHA 실행은 current 근거로 사용하지 않습니다. 모든 합성 Local 실행은 Production 공개나 Privacy 승인의 근거가 아닙니다.
 
 최대 3쌍·12,000자 입력을 30회 실행한 결정론적 application-path 관찰값은 payload 36,217 bytes, p95 0.059 ms였습니다. 이 값은 즉시 응답하는 replay Provider를 사용한 해당 Local 실행의 메시지 조립·검증 시간이며 실제 네트워크·Provider latency가 아닙니다. 승인된 Provider tokenizer가 없어 token 수는 `NOT_RUN`입니다. 합성 PII sentinel은 허용된 `history[].question`·`answer`에서 2회, payload의 다른 필드·instructions·응답·로그·오류·결과 metadata에서 0회였고, trace pipeline이 없어 trace는 `NOT_APPLICABLE_NO_TRACE_PIPELINE`입니다.
 
 ```bash
-cd backend
-uv run python -m app.evaluation.chat_history_runner \
+PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
   --mode deterministic \
-  --output ../evals/results/chat-v2-history-eval-v2-local-deterministic.json
+  --output evals/results/chat-v3-history-eval-v1-local-deterministic.json
 ```
 
-실제 OpenAI 평가는 명시적 Local opt-in을 요청하지 않아 `NOT_RUN`입니다. `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 없으면 live runner가 실행을 거부합니다. live 모드는 canonical `chat-v2-history-eval-v2` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며, 임의 `--dataset` 또는 변경된 fixture는 OpenAI client 생성 전에 거부합니다. SHA-256 입력은 CRLF를 LF로 정규화해 Windows와 Unix checkout을 동일하게 처리하고, CRLF 상태에서도 fixture 내용 변경은 거부하는 회귀 테스트를 유지합니다. 결정론적 결과는 PR #128 또는 Production 공개·Privacy 승인 근거가 아닙니다.
+실제 OpenAI 평가는 별도 Local opt-in 없이는 `NOT_RUN`입니다. `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 없으면 live runner가 실행을 거부합니다. live 모드는 canonical `chat-v3-history-eval-v1` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며, 임의 `--dataset` 또는 변경된 fixture는 OpenAI client 생성 전에 거부합니다. SHA-256 입력은 CRLF를 LF로 정규화해 Windows와 Unix checkout을 동일하게 처리하고, CRLF 상태에서도 fixture 내용 변경은 거부하는 회귀 테스트를 유지합니다. 결과 artifact에는 dataset·prompt SHA-256, `live_gate_evaluation`, `full_suite_passed`와 전체 `passed`를 기록합니다. live blocking 기준 미달은 artifact를 남기고 exit code 1, 구성·Provider 실행 오류는 exit code 2를 반환합니다. 결정론적 결과는 Production 공개·Privacy 승인 근거가 아닙니다.
 
 ### MVP 공통 오류·no-store 회귀
 

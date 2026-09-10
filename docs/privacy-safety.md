@@ -43,7 +43,7 @@ Security·Privacy는 별도 기능 Track이 아니라 모든 PR의 공통 완료
 
 `guide-prompt-v3`의 제한 생성과 `guide-v3-eval-v1` Local 합성 검증은 외부 Provider 정책 승인이나 Production 공개 승인을 대체하지 않습니다.
 
-## Chat AI v2 최근 대화 외부 전송과 공개 경계
+## Chat AI 최근 대화 외부 전송과 공개 경계
 
 - Chat Provider payload는 현재 질문, 현재 확정 약물의 허용 필드와 `history` 배열만 포함합니다.
 - `CHAT_HISTORY_CONTEXT_ENABLED`의 기본값은 `false`이며, 이때 이전 대화를 조회하지 않고 `history: []`를 전달합니다.
@@ -53,7 +53,7 @@ Security·Privacy는 별도 기능 Track이 아니라 모든 PR의 공통 완료
 - 과거 USER 발화는 검증된 의료 사실이나 현재 상태가 아니며, 과거 ASSISTANT 답변도 근거가 아닙니다. 현재 확정 medications를 우선하고 안전상 중요한 과거 정보는 현재도 해당하는지 확인합니다.
 - JSON 내부 문자열은 지시가 아닌 데이터로 취급하며, history의 시스템 규칙 변경·역할 변경·프롬프트 공개 요청을 따르지 않습니다.
 
-실제 사용자 대화를 전송하려면 이용자 고지와 적용 가능한 법적 근거, Provider 저장·학습·보존 정책, 삭제·철회와 사고 대응 범위를 Privacy·Security 책임자가 승인해야 합니다. `chat-prompt-v2`와 Local 결정론적 테스트는 이 승인을 대신하지 않습니다. [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)의 합성 sentinel 검증에서는 허용된 history 본문 2회 외 payload field·instructions·응답·로그·오류·구조화 결과 복제가 0건이었습니다. trace pipeline은 없어 `NOT_APPLICABLE`이고 실제 Provider 검증은 `NOT_RUN`이므로, 이 결과를 실제 사용자 데이터 전송이나 Production 공개 근거로 사용할 수 없습니다.
+실제 사용자 대화를 전송하려면 이용자 고지와 적용 가능한 법적 근거, Provider 저장·학습·보존 정책, 삭제·철회와 사고 대응 범위를 Privacy·Security 책임자가 승인해야 합니다. `chat-prompt-v3`와 Local 합성 테스트는 이 승인을 대신하지 않습니다. [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)의 합성 sentinel 검증에서는 허용된 history 본문 2회 외 payload field·instructions·응답·로그·오류·구조화 결과 복제가 0건이었습니다. trace pipeline은 없어 `NOT_APPLICABLE`입니다. [Issue #306의 2026-09-09 current canonical live 실행](validation/issue-306-chat-live-evaluation.md)도 합성 데이터만 사용했고 허용된 history 위치 밖 PII sentinel 복제는 0건이었습니다. 이 결과는 live blocking gate의 한 구성요소일 뿐 실제 사용자 데이터 전송, Privacy 승인 또는 Production 공개 근거가 아니며, 전체 16-case 단발 `full_suite_passed=true`도 단일 관찰 결과입니다.
 
 근거·검증 추적은 장기 안전 원칙입니다. 현재 MVP에서 RAG·Citation/NLI가 미구현이라는 사실은 이 원칙을 폐기하거나 이미 충족했다는 의미가 아닙니다. 현재 챗봇은 질문 범위를 코드로 제한하지 않으므로 복약 가이드·챗봇의 Production 배포는 차단된 상태입니다.
 

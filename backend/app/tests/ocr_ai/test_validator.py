@@ -8,6 +8,7 @@ from app.services.ocr_ai.schemas import (
 )
 from app.services.ocr_ai.validator import validate_and_convert_draft
 from app.services.ocr_engine import OcrProcessingError, RawRecognizedField
+from app.services.prescription_ocr_structurer import PrescriptionOcrStructurer
 
 
 def _raw(
@@ -405,10 +406,83 @@ def test_validator_replaces_ungrounded_frequency_with_empty_field() -> None:
     assert frequency.confidence_score is None
 
 
-def test_validator_allows_equivalent_date_separators() -> None:
+def test_validator_replaces_birthdate_returned_as_prescribed_date_with_empty_field() -> None:
     raw_fields = [
-        _raw("2026.08.26"),
-        _raw("합성의약품에이정"),
+        _raw("생년월일", center_x=80, center_y=100),
+        _raw("2010-03-15", center_x=200, center_y=100),
+        _raw("교부일자", center_x=80, center_y=140),
+        _raw("2026-08-26", center_x=200, center_y=140),
+        _raw("합성의약품에이정", center_x=100, center_y=200),
+    ]
+    draft = GeneratedPrescriptionDraft(
+        prescribed_date=GeneratedSourceValue(
+            # LLM이 OCR 원문에 존재하는 생년월일을 처방일로 반환한 상황입니다.
+            value="2010-03-15",
+            source_ids=[2],
+        ),
+        medications=[
+            GeneratedMedication(
+                medication_name=GeneratedSourceValue(
+                    value="합성의약품에이정",
+                    source_ids=[5],
+                ),
+            )
+        ],
+    )
+
+    result = validate_and_convert_draft(
+        draft=draft,
+        raw_fields=raw_fields,
+        normalizer=MedicationNameNormalizer(),
+    )
+
+    prescribed_date = next(field for field in result if field.field_type == "PRESCRIBED_DATE")
+
+    assert prescribed_date.raw_value is None
+    assert prescribed_date.normalized_value is None
+    assert prescribed_date.normalization_version is None
+    assert prescribed_date.confidence_score is None
+
+
+def test_validator_allows_equivalent_date_separators_with_preferred_label() -> None:
+    raw_fields = [
+        _raw("교부일자", center_x=80, center_y=100),
+        _raw("2026.08.26", center_x=200, center_y=100),
+        _raw("합성의약품에이정", center_x=100, center_y=200),
+    ]
+    draft = GeneratedPrescriptionDraft(
+        prescribed_date=GeneratedSourceValue(
+            value="2026-08-26",
+            source_ids=[2],
+        ),
+        medications=[
+            GeneratedMedication(
+                medication_name=GeneratedSourceValue(
+                    value="합성의약품에이정",
+                    source_ids=[3],
+                ),
+            )
+        ],
+    )
+
+    result = validate_and_convert_draft(
+        draft=draft,
+        raw_fields=raw_fields,
+        normalizer=MedicationNameNormalizer(),
+    )
+
+    prescribed_date = next(field for field in result if field.field_type == "PRESCRIBED_DATE")
+
+    assert prescribed_date.raw_value == "2026-08-26"
+    assert prescribed_date.normalized_value == "2026-08-26"
+    assert prescribed_date.normalization_version == "date-rule-v1"
+    assert prescribed_date.confidence_score == 0.99
+
+
+def test_validator_replaces_unlabeled_prescribed_date_with_empty_field() -> None:
+    raw_fields = [
+        _raw("2026-08-26", center_x=200, center_y=100),
+        _raw("합성의약품에이정", center_x=100, center_y=200),
     ]
     draft = GeneratedPrescriptionDraft(
         prescribed_date=GeneratedSourceValue(
@@ -433,8 +507,61 @@ def test_validator_allows_equivalent_date_separators() -> None:
 
     prescribed_date = next(field for field in result if field.field_type == "PRESCRIBED_DATE")
 
-    assert prescribed_date.raw_value == "2026-08-26"
-    assert prescribed_date.normalized_value == "2026-08-26"
+    assert prescribed_date.raw_value is None
+    assert prescribed_date.normalized_value is None
+    assert prescribed_date.normalization_version is None
+    assert prescribed_date.confidence_score is None
+
+
+@pytest.mark.parametrize(
+    ("label", "expected_raw_value"),
+    [
+        ("교부일자", "2026-08-26"),
+        ("교부일짜", "2026-08-26"),
+        ("생년월일", None),
+        ("생년훨일", None),
+    ],
+)
+def test_validator_matches_rule_based_prescribed_date_label_decision(
+    label: str,
+    expected_raw_value: str | None,
+) -> None:
+    raw_fields = [
+        _raw(label, center_x=80, center_y=100),
+        _raw("2026-08-26", center_x=200, center_y=100),
+        _raw("합성의약품에이정", center_x=100, center_y=200),
+    ]
+
+    rule_result = PrescriptionOcrStructurer().structure(raw_fields)
+
+    draft = GeneratedPrescriptionDraft(
+        prescribed_date=GeneratedSourceValue(
+            value="2026-08-26",
+            source_ids=[2],
+        ),
+        medications=[
+            GeneratedMedication(
+                medication_name=GeneratedSourceValue(
+                    value="합성의약품에이정",
+                    source_ids=[3],
+                ),
+            )
+        ],
+    )
+
+    llm_result = validate_and_convert_draft(
+        draft=draft,
+        raw_fields=raw_fields,
+        normalizer=MedicationNameNormalizer(),
+    )
+
+    rule_date = next(field for field in rule_result if field.field_type == "PRESCRIBED_DATE")
+    llm_date = next(field for field in llm_result if field.field_type == "PRESCRIBED_DATE")
+
+    assert rule_date.raw_value == expected_raw_value
+    assert llm_date.raw_value == expected_raw_value
+    assert llm_date.normalized_value == rule_date.normalized_value
+    assert llm_date.normalization_version == rule_date.normalization_version
 
 
 def test_validator_rejects_numeric_substring_from_larger_ocr_number() -> None:

@@ -41,6 +41,7 @@ async def test_confirm_prescription_rejects_when_ocr_is_not_completed() -> None:
         document_repository=document_repository,
         ocr_repository=ocr_repository,
         prescription_repository=prescription_repository,
+        schedule_invalidation=AsyncMock(),
     )
 
     with pytest.raises(ApiError) as exc_info:

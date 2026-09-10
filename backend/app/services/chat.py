@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from app.core.errors import ApiError, ErrorDetail
 from app.dtos.chat import ChatMessageData, ChatRole, ChatSessionData, SendChatMessageData, SendChatMessageRequest
-from app.models.chat import ChatGenerationStatus, ChatMessage, ChatSessionStatus
+from app.models.chat import ChatGenerationStatus, ChatMessage, ChatSession, ChatSessionStatus
 from app.models.chat import ChatRole as ModelChatRole
 from app.models.users import User
 from app.repositories.chat_repository import ChatRepository
@@ -39,6 +39,16 @@ def _to_message_data(message: ChatMessage) -> ChatMessageData:
     )
 
 
+def _ensure_current_version(chat_session: ChatSession) -> None:
+    if chat_session.prescription_version_id != chat_session.prescription.active_version_id:
+        raise ApiError(
+            status_code=409,
+            code="PRESCRIPTION_VERSION_CONFLICT",
+            message="처방 정보가 변경되어 이전 대화를 현재 결과로 사용할 수 없습니다.",
+            details=[ErrorDetail(field="session_id", reason="ACTIVE_VERSION_MISMATCH")],
+        )
+
+
 class ChatService:
     def __init__(
         self,
@@ -52,6 +62,28 @@ class ChatService:
         self._prescription_repo = prescription_repository
         self._chat_repo = chat_repository
         self._history_context_enabled = history_context_enabled
+
+    async def _reject_stale_generation(
+        self,
+        *,
+        chat_session: ChatSession,
+        assistant_message: ChatMessage,
+        completed_at: datetime,
+    ) -> None:
+        if await self._chat_repo.lock_if_current_version(chat_session=chat_session):
+            return
+        await self._chat_repo.commit_failed_message_pair(
+            assistant_message,
+            error_code="PRESCRIPTION_VERSION_STALE",
+            error_message="처방 정보가 변경되어 생성 결과를 현재 결과로 사용할 수 없습니다.",
+            completed_at=completed_at,
+        )
+        raise ApiError(
+            status_code=409,
+            code="PRESCRIPTION_VERSION_CONFLICT",
+            message="처방 정보가 변경되었습니다. 최신 처방으로 다시 질문해 주세요.",
+            details=[ErrorDetail(field="session_id", reason="ACTIVE_VERSION_MISMATCH")],
+        )
 
     @staticmethod
     def _select_history(
@@ -78,7 +110,10 @@ class ChatService:
 
     async def create_session(self, *, user: User, prescription_id: UUID) -> ChatSessionData:
         # 채팅 세션 생성 Backend 계약: 확정 처방을 기준으로 챗봇 세션을 만듭니다.
-        prescription = await self._prescription_repo.get_owned(prescription_id=prescription_id, user_id=user.id)
+        prescription = await self._prescription_repo.get_owned_for_version_update(
+            prescription_id=prescription_id,
+            user_id=user.id,
+        )
         if prescription is None:
             raise ApiError(
                 status_code=404,
@@ -88,8 +123,6 @@ class ChatService:
             )
 
         chat_session = await self._chat_repo.create_session(prescription=prescription)
-        if chat_session.prescription_version_id is None:
-            raise RuntimeError("chat session prescription version is required")
         return ChatSessionData(
             session_id=chat_session.id,
             prescription_id=prescription.id,
@@ -121,13 +154,7 @@ class ChatService:
                 details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND", rejected_value=str(prescription_id))],
             )
 
-        if chat_session.prescription_version_id is None:
-            raise ApiError(
-                status_code=409,
-                code="PRESCRIPTION_VERSION_UNAVAILABLE",
-                message="대화 세션의 처방 버전 정보를 사용할 수 없습니다.",
-                details=[ErrorDetail(field="session_id", reason="INVALID_VERSION_GRAPH")],
-            )
+        _ensure_current_version(chat_session)
 
         return ChatSessionData(
             session_id=chat_session.id,
@@ -146,6 +173,7 @@ class ChatService:
                 message="대화 세션을 찾을 수 없습니다.",
                 details=[ErrorDetail(field="session_id", reason="NOT_FOUND", rejected_value=str(session_id))],
             )
+        _ensure_current_version(chat_session)
         messages = await self._chat_repo.list_messages(session=chat_session)
         return [_to_message_data(message) for message in messages]
 
@@ -174,13 +202,7 @@ class ChatService:
                 details=[ErrorDetail(field="session_id", reason="CHAT_SESSION_CLOSED", rejected_value=str(session_id))],
             )
 
-        if chat_session.prescription_version_id is None:
-            raise ApiError(
-                status_code=409,
-                code="PRESCRIPTION_VERSION_UNAVAILABLE",
-                message="대화 세션의 처방 버전 정보를 사용할 수 없습니다.",
-                details=[ErrorDetail(field="session_id", reason="INVALID_VERSION_GRAPH")],
-            )
+        _ensure_current_version(chat_session)
 
         medications = await self._prescription_repo.get_version_medications(
             prescription_version_id=chat_session.prescription_version_id
@@ -280,6 +302,11 @@ class ChatService:
 
         assert result is not None
         completed_at = datetime.now(UTC)
+        await self._reject_stale_generation(
+            chat_session=chat_session,
+            assistant_message=assistant_message,
+            completed_at=completed_at,
+        )
         assistant_message = await self._chat_repo.mark_completed(
             assistant_message,
             content=result.content,

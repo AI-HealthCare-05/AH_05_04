@@ -12,6 +12,7 @@ export type ChatSessionResponse = {
   data: {
     session_id: string
     prescription_id: string
+    prescription_version_id: string
     session_status: string
     created_at: string
   }

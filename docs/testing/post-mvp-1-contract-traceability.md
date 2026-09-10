@@ -19,16 +19,16 @@
 
 ## RAG-08·RAG-09 상류 OCR 입력 Receipt Gate
 
-| 후속 Issue | 필수 Receipt | Canonical hash | 미해결 차단 코드 | 현재 판정 |
-| --- | --- | --- | --- | --- |
-| RAG-08 (#170) | [RAG-01 OCR 확정 입력 Contract Receipt](../validation/rag/rag-01-ocr-input-contract-receipt.md) | `sha256:e134ad8ff700050456d5d77976336b61a795207cafbe12f385cb7c9bba2c92fe` | `PRESCRIPTION_VERSION_NOT_IMPLEMENTED` | `READY=false` |
-| RAG-09 (#171) | [RAG-01 OCR 확정 입력 Contract Receipt](../validation/rag/rag-01-ocr-input-contract-receipt.md) | `sha256:e134ad8ff700050456d5d77976336b61a795207cafbe12f385cb7c9bba2c92fe` | `PRESCRIPTION_VERSION_NOT_IMPLEMENTED` | `READY=false` |
+| 후속 Issue | 필수 Receipt | Canonical hash | Prescription 입력 | 남은 차단 코드 | 전체 판정 |
+| --- | --- | --- | --- | --- | --- |
+| RAG-08 (#170) | [RAG-01 OCR 확정 입력 Contract Receipt](../validation/rag/rag-01-ocr-input-contract-receipt.md) | `sha256:2363868c1856e55be0230bf23b9150aa76e5f60534dd8f2df2beb739bddf104a` | `READY=true` | `BLOCKED_BY_RAG_08_PREREQUISITE` | `READY=false` |
+| RAG-09 (#171) | [RAG-01 OCR 확정 입력 Contract Receipt](../validation/rag/rag-01-ocr-input-contract-receipt.md) | `sha256:2363868c1856e55be0230bf23b9150aa76e5f60534dd8f2df2beb739bddf104a` | `READY=true` | `BLOCKED_BY_RAG_09_PREREQUISITE` | `READY=false` |
 
-RAG-08과 RAG-09는 위 hash의 Receipt를 상류 입력 경계로 사용한다. 다만 `PRESCRIPTION_VERSION_NOT_IMPLEMENTED`가 해소되고 Receipt가 새 상태로 재생성되기 전에는 착수 가능 또는 완료로 표시하지 않는다.
+RAG-08과 RAG-09는 위 hash의 Receipt를 상류 입력 경계로 사용한다. `PRESCRIPTION_VERSION_NOT_IMPLEMENTED`와 `TARGET_STRENGTH_MAPPING_NOT_FROZEN`은 #169 구현으로 해소됐다. 다만 #170의 Source·Index·Resolver 선행조건과 #171의 정책·멱등성·평가 선행조건은 별도이므로 각 Issue 전체를 착수 가능 또는 완료로 자동 승격하지 않는다.
 
 ## RAG Source Governance (#185) Receipt
 
-Source 적합성·Resolver 입력 경계의 합성 Receipt는 [RAG Source Governance Contract Receipt](../validation/rag/rag-source-governance-contract-receipt.md)와 [JSON fixture](../../tests/fixtures/rag/source_contract_receipt.json)에 고정하며 canonical hash는 `sha256:bdd22b8231806c8da343ff4e607da1f35d740a1dde7f27d5dc4dfce72330f2e4`다. #155의 [MFDS P0 Endpoint Receipt](../validation/rag/endpoints/README.md)는 연결됐고 #164는 Source/Snapshot/Catalog 최소 DB 기반을 추가하지만, DUR·환자용 복약정보의 자연키 검증이 fail-closed이고 #165/#166 Source Snapshot·Catalog Receipt가 연결되지 않아 실제 Source readiness는 계속 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`다. 실제 Source 활성화나 `PUBLIC_TRACK_F` 해제의 근거로 사용하지 않는다.
+Source 적합성·Resolver 입력 경계의 합성 Receipt는 [RAG Source Governance Contract Receipt](../validation/rag/rag-source-governance-contract-receipt.md)와 [JSON fixture](../../tests/fixtures/rag/source_contract_receipt.json)에 고정하며 canonical hash는 `sha256:a89d5bd2eb70edefcfae20fc4e330089a2e650a6d4a916a4fd8843dfe708f02a`다. #155의 [MFDS P0 Endpoint Receipt](../validation/rag/endpoints/README.md)는 연결됐고 #164는 Source/Snapshot/Catalog 최소 DB 기반을 추가하지만, DUR·환자용 복약정보의 자연키 검증이 fail-closed이고 #165/#166 Source Snapshot·Catalog Receipt가 연결되지 않아 실제 Source readiness는 계속 `BLOCKED_BY_SOURCE_GOVERNANCE_RECEIPT`다. 실제 Source 활성화나 `PUBLIC_TRACK_F` 해제의 근거로 사용하지 않는다.
 
 | 후속 Issue | #185 Receipt 입력 | 현재 판정 |
 | --- | --- | --- |

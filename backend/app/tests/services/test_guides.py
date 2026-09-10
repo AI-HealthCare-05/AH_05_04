@@ -8,13 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
-from app.models.guides import Guide, GuideGenerationStatus
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.guide_repository import GuideRepository
+from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.guide_ai.client import ProviderGuideResponse
 from app.services.guide_ai.generator import GuideGenerator
 from app.services.guides import GuideService
@@ -150,26 +150,6 @@ async def test_get_latest_guide_for_prescription_returns_completed_guide(db_sess
     assert result.content == "복약 가이드 본문"
 
 
-async def test_get_guide_rejects_missing_prescription_version_as_conflict(db_session: AsyncSession) -> None:
-    service = _service(db_session)
-    owner = await _create_user(db_session, email="guide-version-missing@example.com")
-    prescription = await _create_confirmed_prescription(db_session, user=owner)
-    guide = Guide(
-        prescription_id=prescription.id,
-        prescription_version_id=None,
-        profile_id=prescription.profile_id,
-        generation_status=GuideGenerationStatus.COMPLETED,
-    )
-    db_session.add(guide)
-    await db_session.flush()
-
-    with pytest.raises(ApiError) as exc_info:
-        await service.get_guide_detail(user=owner, guide_id=guide.id)
-
-    assert exc_info.value.status_code == 409
-    assert exc_info.value.code == "PRESCRIPTION_VERSION_UNAVAILABLE"
-
-
 async def test_get_latest_guide_for_prescription_raises_not_found_when_no_guide_exists(
     db_session: AsyncSession,
 ) -> None:
@@ -205,3 +185,33 @@ async def test_get_latest_guide_for_prescription_rejects_other_users_prescriptio
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.code == "GUIDE_NOT_FOUND"
+
+
+async def test_previous_version_guide_is_not_exposed_as_current(db_session: AsyncSession) -> None:
+    service = _service(db_session)
+    owner = await _create_user(db_session, email="guide-stale-version@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    guide = await GuideRepository(db_session).create(prescription=prescription)
+    await GuideRepository(db_session).mark_completed(
+        guide,
+        content="이전 버전 합성 가이드",
+        model_name="test-model",
+        prompt_version="guide-prompt-v1",
+        completed_at=datetime.now(UTC),
+    )
+    await PrescriptionRepository(db_session).create_version(
+        prescription=prescription,
+        prescribed_date=date.today(),
+        confirmed_at=datetime.now(UTC),
+        medications=[{"medication_name": "새 버전 합성약", "display_order": 1}],
+    )
+
+    with pytest.raises(ApiError) as detail_error:
+        await service.get_guide_detail(user=owner, guide_id=guide.id)
+    assert detail_error.value.status_code == 409
+    assert detail_error.value.code == "PRESCRIPTION_VERSION_CONFLICT"
+
+    with pytest.raises(ApiError) as latest_error:
+        await service.get_latest_guide_for_prescription(user=owner, prescription_id=prescription.id)
+    assert latest_error.value.status_code == 404
+    assert latest_error.value.code == "GUIDE_NOT_FOUND"

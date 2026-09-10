@@ -20,11 +20,6 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.create_unique_constraint(
-        "uq_rag_source_snapshot_id_version",
-        "rag_source_snapshot",
-        ["id", "source_version"],
-    )
     op.create_table(
         "rag_catalog_set",
         sa.Column("id", sa.CHAR(length=36), nullable=False),
@@ -157,4 +152,3 @@ def downgrade() -> None:
         "rag_catalog_set",
     ):
         op.drop_table(table_name)
-    op.drop_constraint("uq_rag_source_snapshot_id_version", "rag_source_snapshot", type_="unique")

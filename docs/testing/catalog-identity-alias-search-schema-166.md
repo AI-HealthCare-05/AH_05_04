@@ -89,6 +89,5 @@ Trigger·PL/pgSQL 함수·transaction ID 열을 만들지 않으며, Writer가 I
 - 실제 승인 저장소와 결속된 실패 감사
 - Runtime Bundle 활성화
 
-현재 migration의 `down_revision=169b2c3d4e5f`는 작성 시점의 단일 head다. 합의된 선행
-Evidence/Citation migration이 병합되면 PR 제출 전에 최신 head와 중복 변경을 다시 대조하고
-`down_revision`을 재연결한다. 이 재연결 전 결과를 최종 migration 순서 증빙으로 사용하지 않는다.
+현재 migration의 `down_revision=201a1b2c3d4e`는 2026-09-10 최신 `develop`의 단일 head에
+재연결했다. 이후 선행 migration이 추가되면 병합 전에 다시 최신 단일 head와 대조한다.

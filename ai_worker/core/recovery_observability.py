@@ -1,4 +1,4 @@
-"""Pending 복구와 DLQ 처리의 안전한 운영 메트릭 경계입니다."""
+"""Outbox 발행과 복구 처리의 안전한 운영 메트릭 경계입니다."""
 
 import json
 import logging
@@ -9,6 +9,7 @@ from ai_worker.core.dlq import DlqPublishReport
 from ai_worker.core.reconciler import ReconciliationReport
 
 type RecoveryTaskName = Literal[
+    "outbox_publisher",
     "pending_reconciler",
     "dlq_publisher",
 ]
@@ -204,6 +205,7 @@ class RecoveryMetricLogger:
         task_name: RecoveryTaskName,
     ) -> None:
         if task_name not in {
+            "outbox_publisher",
             "pending_reconciler",
             "dlq_publisher",
         }:
@@ -223,8 +225,11 @@ class RecoveryMetricLogger:
     ) -> None:
         """Scheduler 실패를 예외 원문 없이 기록합니다."""
 
-        if task_name == "pending_reconciler":
-            safe_task_name: RecoveryTaskName = "pending_reconciler"
+        safe_task_name: RecoveryTaskName
+        if task_name == "outbox_publisher":
+            safe_task_name = "outbox_publisher"
+        elif task_name == "pending_reconciler":
+            safe_task_name = "pending_reconciler"
         elif task_name == "dlq_publisher":
             safe_task_name = "dlq_publisher"
         else:

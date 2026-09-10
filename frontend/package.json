@@ -12,6 +12,9 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "vitest run",
+    "test:e2e:requirements": "playwright test",
+    "test:e2e:requirements:ui": "playwright test --ui",
+    "test:e2e:real-stack:browser": "playwright test --config=playwright.real-stack.config.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -20,6 +23,7 @@
     "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@testing-library/react": "^16.3.0",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",

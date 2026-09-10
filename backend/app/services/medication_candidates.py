@@ -21,11 +21,10 @@ from app.repositories.medication_candidate_repository import MedicationCandidate
 from app.services.idempotency import RUNTIME_RELEASE_BUNDLE_PLACEHOLDER, SyncMutationIdempotencyService
 from app.services.medication_identification import MedicationIdentificationService
 
-# idempotency-v1.md "동기 상태 변경 처리 규칙": F Candidate 확인·거절은 OpenAPI operation_id가
-# 아니라 이 값으로 scope를 구분한다(operation_id 문자열 자체는 계약이 강제하는 특정 형식이
-# 없어, 다른 Track과 충돌하지 않도록 도메인.동작 형태로 고정한다).
-_CONFIRM_OPERATION_ID = "medication-candidate.confirm"
-_REJECT_OPERATION_ID = "medication-candidate.reject"
+# idempotency-v1.md "동기 상태 변경 처리 규칙": F Candidate 확인·거절의
+# OpenAPI operation_id와 멱등성 operation_id는 같은 값을 사용한다.
+MEDICATION_CANDIDATE_CONFIRM_OPERATION_ID = "medication-candidate.confirm"
+MEDICATION_CANDIDATE_REJECT_OPERATION_ID = "medication-candidate.reject"
 
 
 class MedicationCandidateService:
@@ -146,7 +145,7 @@ class MedicationCandidateService:
 
         result = await self._idempotency_service.execute(
             user_id=user.id,
-            operation_id=_CONFIRM_OPERATION_ID,
+            operation_id=MEDICATION_CANDIDATE_CONFIRM_OPERATION_ID,
             parent_resource_id=request.prescription_version_medication_id,
             idempotency_key=idempotency_key,
             fingerprint={
@@ -190,7 +189,7 @@ class MedicationCandidateService:
 
         result = await self._idempotency_service.execute(
             user_id=user.id,
-            operation_id=_REJECT_OPERATION_ID,
+            operation_id=MEDICATION_CANDIDATE_REJECT_OPERATION_ID,
             parent_resource_id=parent_resource_id,
             idempotency_key=idempotency_key,
             fingerprint={
