@@ -1137,15 +1137,14 @@ def test_runtime_cannot_write_snapshot_publication_state_directly(status: str) -
                     {"role": role},
                 )
                 assert permitted.scalar_one() is False
-                # This isolated Runtime role is created after migration.
-                # Execute the actual provisioning query for roles created after migration.
-                provisioning = (PROJECT_ROOT / "infra/docker/postgres/configure-app-role.sql").read_text()
-                grant_query = provisioning.split("-- Migration 이후", 1)[1].split("SELECT format(", 1)[1]
-                grant_query = "SELECT format(" + grant_query.split("\\gexec", 1)[0]
-                grant = await connection.execute(
-                    text(grant_query.replace(":'app_user'", "CAST(:app_user AS text)")), {"app_user": role}
+                # Historical transition contract only. Deployment provisioning no longer
+                # grants this function; the Python cutover rejects its presence.
+                await connection.execute(
+                    text(
+                        "GRANT EXECUTE ON FUNCTION transition_rag_source_snapshot"
+                        f"(text,text,text,timestamptz,timestamptz,text) TO {role}"
+                    )
                 )
-                await connection.execute(text(grant.scalar_one()))
                 await connection.execute(text(f"SET LOCAL ROLE {role}"))
                 # Custom session flags must never confer transition authority.
                 await connection.execute(text("SET LOCAL app.snapshot_transition = 'allowed'"))
@@ -1233,15 +1232,14 @@ def test_runtime_publication_function_requires_approval_and_appends_immutable_se
                     {"role": role},
                 )
                 assert permitted.scalar_one() is False
-                # This isolated Runtime role is created after migration.
-                # Execute the actual provisioning query for roles created after migration.
-                provisioning = (PROJECT_ROOT / "infra/docker/postgres/configure-app-role.sql").read_text()
-                grant_query = provisioning.split("-- Migration 이후", 1)[1].split("SELECT format(", 1)[1]
-                grant_query = "SELECT format(" + grant_query.split("\\gexec", 1)[0]
-                grant = await connection.execute(
-                    text(grant_query.replace(":'app_user'", "CAST(:app_user AS text)")), {"app_user": role}
+                # Historical transition contract only. Deployment provisioning no longer
+                # grants this function; the Python cutover rejects its presence.
+                await connection.execute(
+                    text(
+                        "GRANT EXECUTE ON FUNCTION transition_rag_source_snapshot"
+                        f"(text,text,text,timestamptz,timestamptz,text) TO {role}"
+                    )
                 )
-                await connection.execute(text(grant.scalar_one()))
                 await connection.execute(text(f"SET LOCAL ROLE {role}"))
                 if not approved:
                     async with connection.begin_nested() as savepoint:

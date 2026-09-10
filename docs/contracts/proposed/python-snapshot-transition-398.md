@@ -50,7 +50,7 @@ CURRENT 선택은 공백이 아닌 100자 이하 작업자 식별자가 필요�
 
 Source 관리용 수정·삭제 권한과 Catalog/Prescription/Runtime 권한은 이 Source Writer에 자동으로 포함하지 않는다. 각 도메인 구현과 함께 명시적으로 추가한다.
 
-현재 `configure-app-role.sql`의 기존 광범위 권한 부여 및 배포 호출 경로는 아직 전환하지 않았다. 새 정책 적용 후 기존 스크립트를 실행하면 권한이 다시 열릴 수 있으므로, 이 모듈을 운영에 단독 적용하지 않는다. 제거 migration·초기화 스크립트·별도 Writer 실행 구성을 같은 배포에서 연결해야 한다.
+`configure-app-role.sql`은 계정 준비와 기본 권한 회수만 수행하며 기존 DML/전이 함수 실행 권한을 다시 부여하지 않는다. migration 뒤 전용 관리자 컨테이너에서 `infra.python.provision_database_roles`를 실행한다. 기존 Source 전이 함수가 남아 있으면 전체 권한 transaction을 rollback하고 서비스 시작 전에 배포를 중단한다. 따라서 제거 migration이 없는 현재 브랜치는 여전히 배포 가능 상태가 아니다.
 
 `test_source_writer_roles.py`는 서로 다른 로그인 자격 증명으로 실제 INSERT/UPDATE/DELETE/TRUNCATE 및 SET ROLE 차단, Writer 허용 작업, 신규 테이블 기본 권한, 역할 상속 거부를 확인한다.
 
@@ -64,7 +64,7 @@ Operation→Snapshot 잠금 후 checksum을 대조하고 기존 Python 선택 �
 
 운영 Compose의 `source-writer`는 `source-admin` profile의 일회성 서비스이며 기본 배포에 포함되지 않는다. 기존 AI 이미지의 별도 진입점을 사용하고 Writer 환경 변수만 전달한다. 예시: `docker compose -f docker-compose.prod.yml run --rm --no-deps source-writer <UUID> --expected-checksum <SHA-256> --reason-code VERIFIED_RELEASE`.
 
-이 실행 경로 추가는 운영 전환 완료가 아니다. 전용 역할 provisioning, 기존 함수·Trigger 제거, bootstrap 권한 정렬이 완료되기 전에는 운영 실행하지 않는다. 통합 테스트는 실제 제한 역할로 명령의 DB 실행 함수(run_selection)를 호출하여 성공·재실행·Runtime 차단·감사 권한 실패 rollback을 확인한다. 컨테이너 실행 및 운영 provisioning을 포함하는 배포 통합 검증은 후속 단계에 남아 있다.
+이 실행 경로 추가는 운영 전환 완료가 아니다. 전용 역할 provisioning과 bootstrap 연결은 아래 배포 권한 절에 구현 상태를 기록한다. 기존 함수·Trigger 제거와 종합 검증이 완료되기 전에는 운영 실행하지 않는다. 통합 테스트는 실제 제한 역할로 명령의 DB 실행 함수(run_selection)를 호출하여 성공·재실행·Runtime 차단·감사 권한 실패 rollback을 확인한다. 컨테이너 실행 및 운영 provisioning을 포함하는 배포 통합 검증은 후속 단계에 남아 있다.
 
 
 실행 시 실제 로그인 역할의 관리자 권한·다른 역할 membership·DB/schema/객체 소유권을 다시 검사하여 잘못 주입된 고권한 계정을 거부한다. Source 역할 정책은 Migration owner가 PUBLIC 또는 Runtime/Writer에 부여한 전역 테이블 default grant가 있으면 적용을 거부한다. Schema 범위의 REVOKE로 전역 grant를 취소할 수 없기 때문이다. 다른 schema에 영향을 주는 전역 권한을 자동 변경하지 않으며, 운영 provisioning에서 먼저 정렬해야 한다.
@@ -76,3 +76,15 @@ Worker의 append_verification 및 Backend Source/Catalog Repository의 create_sn
 ### 권한 전환 전 컬럼 권한 정리
 
 테이블 단위 REVOKE는 기존 컬럼 ACL을 제거하지 않는다. Source 정책 적용 시 Source 테이블의 PUBLIC/Runtime/Writer 컬럼 권한을 회수하고, Writer가 다른 테이블에 직접 받은 컬럼 권한도 회수한다. 이후 기존 명시적 테이블 권한만 다시 부여한다. 정책 재실행 후에도 감사 UPDATE 및 Runtime 쓰기는 허용하지 않는다. 역할 provisioning과 Writer 실행 진입점 모두 REPLICATION 역할을 거부한다. 별도 로그인 테스트에서 실제 컬럼 권한 우회 및 복제 권한 계정 거부를 검증한다.
+
+### 배포 권한 연결
+
+`SOURCE_WRITER_USER/PASSWORD`를 Admin/Migration/Runtime과 다른 로그인으로 준비한다. Bootstrap에서 생성하지만 일반 FastAPI·Worker·migrate에는 이 비밀번호를 전달하지 않는다. `provision-db-roles`는 `database-admin` profile의 일회성 작업으로 Admin 비밀번호와 대상 역할 이름만 받는다. Source Writer는 기존 `source-admin` profile로 운영자가 명시적으로 실행한다.
+
+배포는 API·Worker·Source Writer 중지 확인 → bootstrap → backup → migration → 권한 provisioning → 기존 데이터 검증 → 서비스 시작 순서다. provisioning 실패 시 서비스 시작까지 진행하지 않는다. Worker 포함 여부의 기존 배포 선택은 유지한다.
+
+Runtime 테이블 목록은 `RUNTIME_MUTABLE_TABLES`와 `RUNTIME_APPEND_ONLY_TABLES`로 명시한다. Source는 별도 기존 정책(읽기만 Runtime, 제한된 쓰기 Writer)을 적용한다. Prescription 버전·약 및 Check-in/Evidence 감사는 SELECT/INSERT만 허용한다. 다른 도메인은 기존 동작을 위한 명시적 DML 목록이며 이 목록 자체가 해당 도메인의 Writer 전환 완료를 뜻하지 않는다. 신규·미등록 테이블은 권한이 없으며 schema version 관리 테이블도 Runtime에 열지 않는다. sequence는 등록된 Runtime 테이블에 종속된 것의 USAGE/SELECT만 허용하고 setval 권한은 부여하지 않는다.
+
+PUBLIC과 두 실행 역할의 기존 테이블·컬럼·sequence 권한을 회수하고 명시적 권한을 부여하는 과정은 단일 transaction이다. Migration 역할의 전역·public 기본 테이블/sequence 권한은 bootstrap에서 회수한다. 새 테이블 추가 시 권한 목록을 별도로 리뷰해야 한다. 필수 테이블 누락 또는 기존 Source 함수 존재는 전환 실패이며 우회 옵션을 제공하지 않는다.
+
+현재 검증은 실제 psql bootstrap, 별도 계정과 폐기 DB에서의 재실행, 권한 실패 rollback, 전체 기존 migration 이력에서의 전환 거부까지다. 운영 컨테이너 이미지 실행과 모든 도메인 Trigger 제거 후 종합 배포 검증은 남아 있다. #404는 병합 후 통합한다.

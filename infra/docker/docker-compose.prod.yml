@@ -54,6 +54,8 @@ services:
       DB_MIGRATION_PASSWORD: ${DB_MIGRATION_PASSWORD}
       DB_APP_USER: ${DB_APP_USER}
       DB_APP_PASSWORD: ${DB_APP_PASSWORD}
+      SOURCE_WRITER_USER: ${SOURCE_WRITER_USER}
+      SOURCE_WRITER_PASSWORD: ${SOURCE_WRITER_PASSWORD}
     networks:
       - ws
     volumes:
@@ -105,6 +107,24 @@ services:
         condition: service_healthy
 
     restart: "no"
+
+  # Admin credentials exist only in this explicit one-shot provisioning service.
+  provision-db-roles:
+    profiles: ["database-admin"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "infra.python.provision_database_roles"]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME}
+      DB_ADMIN_USER: ${DB_ADMIN_USER}
+      DB_ADMIN_PASSWORD: ${DB_ADMIN_PASSWORD}
+      DB_MIGRATION_USER: ${DB_MIGRATION_USER}
+      DB_APP_USER: ${DB_APP_USER}
+      SOURCE_WRITER_USER: ${SOURCE_WRITER_USER}
+    networks:
+      - ws
 
   # 4. API Server (FastAPI)
   fastapi:

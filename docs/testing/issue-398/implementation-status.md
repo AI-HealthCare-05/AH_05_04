@@ -177,3 +177,19 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 - Trigger/RLS 재도입 검사와 diff 검사 통과
 
 이번 단계는 권한 정책의 우회 경로 보강이다. 기존 Trigger는 아직 제거하지 않았고 운영 DB도 변경하지 않았다. 배포 bootstrap의 광범위 DML/default grant와 전용 Writer provisioning을 먼저 정렬해야 제거 migration을 안전하게 연결할 수 있다. #404는 머지 후 통합 대상으로 유지한다.
+
+## 배포 bootstrap 및 전용 Writer 권한 연결
+
+- Bootstrap의 전체 테이블 DML, 전이 함수 EXECUTE, 신규 테이블·sequence 자동 grant 제거
+- Admin/Migration/Runtime/Writer 이름 충돌 차단, Writer 로그인 별도 생성 및 Migration 기본 권한 회수
+- migration 뒤 `provision-db-roles` 일회성 관리자 컨테이너 연결. 실패 시 API·Worker 시작 전 배포 중단
+- Runtime의 명시적 테이블 목록, Prescription 버전·Check-in/Evidence SELECT/INSERT, Source 별도 Writer 정책 적용
+- 기존 PUBLIC/실행 계정 테이블·컬럼·sequence 권한 회수 후 단일 transaction으로 재구성
+- 신규·미등록 테이블 차단, 허용 테이블 종속 sequence만 USAGE/SELECT
+- Source Writer 비밀번호는 PostgreSQL bootstrap 및 별도 Source Writer에만 주입; API/일반 Worker/migrate와 분리
+- migration 전 Source Writer도 중지 확인. 기존 일반 Worker 배포 제외 선택 유지
+- psql 17에서 역할 이름 충돌 시 성공 종료하지 않고 ON_ERROR_STOP으로 실패하는지 확인
+
+검증: Source/Writer/실제 bootstrap·provisioning 34 passed, 배포 계약·입력 검증 29 passed, 과거 Source migration 계약 4 passed (총 67개, 재실행 제외). Ruff/format, 생산 코드 Mypy, shell 구문, Trigger/RLS 재도입 검사, diff 검사 통과. 현재 ORM의 모든 테이블과 명시적 목록 대조 완료.
+
+폐기 DB에서 bootstrap → provisioning → 재배포 반복과 계정별 실제 DML/sequence 거부, 실패 rollback을 검증했다. 전체 migration 이력에는 아직 기존 Source 전이 함수가 남아 있으므로 provisioning이 의도대로 거부되는 것도 확인했다. 기존 Trigger를 제거하지 않았고, 운영 배포·컨테이너 이미지 빌드/실행·운영 DB 변경은 하지 않았다. 다른 도메인의 명시적 호환 DML 목록은 해당 도메인 Writer 전환 완료를 의미하지 않는다. 제거 migration과 도메인별 남은 전환, #404 병합 후 통합이 필요하다.

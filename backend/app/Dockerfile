@@ -23,6 +23,7 @@ COPY ./provider_contracts ./provider_contracts
 COPY ./ocr_runtime ./ocr_runtime
 COPY ./provider_runtime ./provider_runtime
 COPY ./rag_runtime ./rag_runtime
+COPY ./infra/python ./infra/python
 COPY ./backend/alembic ./alembic
 COPY ./backend/alembic.ini ./alembic.ini
 
