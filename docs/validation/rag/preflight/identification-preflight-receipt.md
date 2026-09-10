@@ -113,11 +113,25 @@ Issue를 Close하지 않는다. `#174`·`#131`·`#175` 미구현으로 통합·C
 1. Stale이 Identification Fallback보다 앞서는 판정 우선순위 (고정 실행 Graph가 순서를 정하지 않았다)
 2. Identification Fallback 대표 reason이 계약 표기 순서를 따르는 규칙
 3. 구조 검증 실패를 `IDENTIFICATION_FALLBACK/REVIEW_REQUIRED`로 사영하는 선택
-4. 복합 STALE 신호 발생 시 단일 사영 우선순위 (`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`) (Review [P1] 반영: 기존 승인 `safety-result-v2.md` 정본의 인플레이스 수정을 롤백하고, 별도 Decision `docs/governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md`(`PD-173-20260909`) 및 제안 계약 `docs/contracts/proposed/post-mvp-1/safety-result-compound-stale-priority-v1.md`를 신설하여 상태 디렉터리·index·테스트를 authority에 결속 완료)
-5. `#174`에서 Backend가 이 kernel을 소비할 방식 (PR #382 송은영 리뷰 지적 반영으로 `rag_runtime` 최상위 공용 패키지 승격 및 `backend/app/Dockerfile`, `ai_worker/Dockerfile` COPY 추가 완료. 컨테이너 내부 import 계약 테스트 통과)
+4. `#174`에서 Backend가 이 kernel을 소비할 방식 (PR #382 송은영 리뷰 지적 반영으로 `rag_runtime` 최상위 공용 패키지 승격 및 `backend/app/Dockerfile`, `ai_worker/Dockerfile` COPY 추가 완료. 컨테이너 내부 import 계약 테스트 통과)
 
-위 항목들은 승인된 별도 Decision이 아직 없다. `#174` 병합 전에 확정한다. 그때까지 `identification_reasons`,
+위 1~4번은 승인된 별도 Decision이 아직 없다. `#174` 병합 전에 확정한다. 그때까지 `identification_reasons`,
 `stale_signals`, `validation_codes`를 환자 문구나 공개 DTO에 직접 매핑하지 않고, `primary_stale_projection`의 계약 범위를 우선 준수한다.
+
+## 승인 완료 항목
+
+- **복합 STALE 신호 발생 시 단일 사영 우선순위** (`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`) 및 내부 `stale_reason` 분리 — **승인됨.** `#174`에서 이 우선순위를 다시 결정하지 않는다.
+
+  | 항목 | 값 |
+  | --- | --- |
+  | 근거 Decision | [`PD-173-20260909`](../../../governance/decisions/2026-09-09-rag-preflight-compound-stale-priority.md) — `Approved` (2026-09-10) |
+  | 적용 개정 | [`PD-173-20260910`](../../../governance/decisions/2026-09-10-rag-preflight-compound-stale-approval-gate-amendment.md) — `Approved` |
+  | 확정 계약 | [`safety-result-compound-stale-priority-v1.md`](../../../contracts/targets/post-mvp-1/safety-result-compound-stale-priority-v1.md) — `Approved Target · Not implemented` |
+  | 승인 Evidence | [`decision-approval-evidence.json`](../../rag/issue-173/decision-approval-evidence.json) — 책임 리뷰어 3인 전원 `APPROVED`, PR #405 HEAD `0649e466` |
+
+  경위 (Review [P1] 반영): 기존 승인 `safety-result-v2.md` 정본의 인플레이스 수정을 롤백하고, 별도 Decision `PD-173-20260909`과 제안 계약을 신설하여 상태 디렉터리·index·테스트를 authority에 결속했다. 최초 승인 게이트가 충족되지 않은 채 PR #382가 병합되어 개정 `PD-173-20260910`으로 처리했으며, 계약 문서는 `docs/contracts/targets/post-mvp-1/`로 편입되었다.
+
+  **미구현 범위는 그대로다.** 판정 kernel은 프로덕션 호출부가 없으며 `Approved Target · Not implemented`다. 어휘·우선순위 규칙만 확정되었고 Runtime 배선은 `#174`·`#180` 범위다.
 
 ## 합성 데이터 확인
 
