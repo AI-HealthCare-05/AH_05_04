@@ -2,16 +2,18 @@
 
 ## 범위
 
-이 디렉터리는 Post-MVP 비동기 AI Worker의 실행 코드와 공통 처리 경계를 포함합니다.
+이 디렉터리는 현재 MVP OCR과 Post-MVP 확장 작업을 위한 비동기 AI Worker의 실행 코드와
+공통 처리 경계를 포함합니다.
 
 Worker runtime은 Redis Stream delivery를 읽고, PostgreSQL Job lease를 획득한 뒤
 등록된 Handler를 실행합니다. Handler 결과는 fencing 검증을 통과한 transaction으로
 저장하며, DB commit이 성공한 이후에만 Redis ACK를 수행합니다.
 
-현재 MVP의 복약 가이드와 복약 챗봇은 아직 FastAPI 요청 안에서 외부 Provider를
-직접 호출합니다. 기존 실행 경로는 다음 위치에 있습니다.
+현재 MVP에서 OCR은 Worker가 처리하고, 복약 가이드와 복약 챗봇은 아직 FastAPI 요청
+안에서 외부 Provider 호출까지 완료합니다. 실행 경로는 다음 위치에 있습니다.
 
-- OCR: `backend/app/services/ocr.py`, CLOVA 구현 `backend/app/services/clova_ocr_engine.py`
+- OCR 접수: `backend/app/services/ocr.py`; Worker 조립: `ai_worker/main.py`,
+  `ai_worker/core/runtime_assembly.py`; 공용 CLOVA 구현: `ocr_runtime/`
 - 복약 가이드: `backend/app/services/guide_ai/`, `backend/app/services/guides.py`
 - 복약 챗봇: `backend/app/services/chat_ai/`, `backend/app/services/chat.py`
 
@@ -31,26 +33,26 @@ Worker runtime은 Redis Stream delivery를 읽고, PostgreSQL Job lease를 획�
   OCR Handler 등록·dispatch one-cycle 통합 검증
 - DB Outbox due row 선점·만료 claim 재선점·`WorkerMessage` 조립·Redis 발행·
   `claim_token` fencing 완료 처리 (#219)
+- 실제 `ClovaOcrEngine`과 규칙 기반 구조화기의 공용 패키지 분리, Worker composition
+  root·Provider secret·공유 storage·Worker image 연결 및 합성 Provider smoke (#258)
+- Pending reclaim·예약 재시도·quarantine·DLQ와 복구 Scheduler 조립 (#142)
+- Outbox Publisher의 Worker runtime 주기 실행 (#370)
 
 남은 연결:
 
-- 실제 `ClovaOcrEngine`과 규칙 기반 구조화기의 공용 패키지 분리 및
-  Worker composition root 연결: #258
-- CLOVA secret 주입, 공유 object storage volume, Worker 이미지 구성과
-  실제 Provider smoke: #258
 - Guide·Chat Handler 등록
-- Pending reclaim·retry·quarantine·DLQ 운영 절차:
+- Worker health check·운영 관제·Production 배포 조립과 실제 환경 smoke
+- Pending reclaim·retry·quarantine·DLQ 운영 절차의 실제 환경 검증:
   `../docs/runbooks/worker-pending-dlq.md`
-- Outbox Publisher 주기 실행은 Worker runtime에 조립됨: #370
-- health check·운영 배포 조립
 
 #233의 완료 기준은 실제 CLOVA OCR 호출이 아니라, `OcrEngine`을 주입할 수 있는
 composition root와 명시적으로 주입한 Fake Engine을 사용한 Redis·PostgreSQL
 one-cycle 검증이다. `ocr_engine=None`으로 OCR Handler가 등록되지 않는 실행은
 #233 완료 증빙으로 사용하지 않는다.
 
-실제 `ClovaOcrEngine`, 규칙 기반 구조화기, Provider secret, 공유 object storage와
-Worker 이미지 연결 및 실제 Provider smoke는 후속 #258에서 진행한다.
+#258에서 실제 `ClovaOcrEngine`, 규칙 기반 구조화기, Provider secret, 공유 storage와
+Worker image 연결 및 합성 Provider smoke를 완료했습니다. 이는 Production Worker
+health check·관제·배포 조립 또는 실제 환경 smoke 완료를 뜻하지 않습니다.
 
 ## Redis Streams Adapter
 
@@ -293,13 +295,14 @@ docker inspect ai-worker \
   --format 'status={{.State.Status}} exit={{.State.ExitCode}} restart={{.RestartCount}}'
 ```
 
-## Post-MVP 전환 조건
+## Production 적용과 Post-MVP 확장 조건
 
-AI Worker를 실제 요청 경로에 연결하기 전에 다음 조건을 모두 충족해야 합니다.
+현재 MVP OCR은 AI Worker 요청 경로에 연결되어 있습니다. Worker를 Production에 적용하거나
+Guide·Chat 등 Post-MVP 작업을 추가하기 전에 해당 범위에 필요한 다음 조건을 충족해야 합니다.
 
 1. `docs/contracts/`에 작업 ID, schema version, 생성 시각, 재시도 횟수, trace ID를 포함한 입력·출력 계약을 기록합니다.
 2. API 접수·조회 상태, 오류 의미, timeout, 취소와 재시도 정책을 합의합니다.
-3. Redis consumer와 필요한 OCR·RAG·LLM·평가 작업을 구현합니다.
+3. Redis Consumer와 대상 OCR·RAG·LLM·평가 작업을 구현하고 composition root에 등록합니다.
 4. 중복 전달에도 같은 결과를 내는 멱등성과 실패 복구를 구현합니다.
 5. 실제 처방전·환자 정보·프롬프트 원문을 로그에 남기지 않고 외부 전송·보존 정책 승인을 받습니다.
 6. health check, graceful shutdown, contract·integration·장애·재시도 테스트를 추가합니다.

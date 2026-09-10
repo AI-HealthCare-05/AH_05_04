@@ -2,13 +2,13 @@
 
 ## 상태와 범위
 
-- 상태: **Proposed / 실구현 전 진행 기준**
+- 상태: **Proposed / Current 미승격 운영 기준**
 - 연결 Issue: `Related #77`
 - 적용 범위: Post-MVP-1 Sprint 1 착수 전 개발환경, Redis, PostgreSQL, CLOVA OCR, Provider secret, 로그·Stream·오류 응답 비밀정보 비노출 점검
 
-이 문서는 구현 완료 보고서가 아니라, Post-MVP-1 Sprint 1 착수 전에 개발환경과 비밀정보 주입 경로의 차단 요소를 확인하고 실구현 PR에서 따라야 할 조건을 정리한 Proposed 운영 계약이다.
+이 문서는 구현 완료 보고서가 아니라, Post-MVP-1 Sprint 1 착수 전에 개발환경과 비밀정보 주입 경로의 차단 요소를 확인하고 구현 PR에서 따라야 할 조건을 정리한 Proposed 운영 계약이다. 아래 구현 상태 기록은 현재 저장소와의 오해를 막기 위한 참고이며, 이 문서를 Current 계약으로 승격하거나 Production 적용을 승인하지 않는다.
 
-Redis Consumer Group과 Worker 실행 경로는 #140·#141·#233으로, reclaim·retry·quarantine·DLQ와 복구 Scheduler는 #142로 구현되었다. 다만 이 문서가 병합되더라도 Provider secret 주입·검증, Provider 실호출 기준 로그·Stream·오류 응답 비밀정보 비노출 테스트, 운영 Redis 인증·노출 차단이 완료된 것으로 간주하지 않는다. 남은 항목은 #258(실제 Provider 연결과 secret 주입), #150(운영 Redis 인증·노출 차단), health check와 Production 배포 조립에서 다루며, 관련 구현과 테스트가 병합되고 상태가 갱신되기 전에는 이 부분이 현재 실행 계약이 아니다.
+Redis Consumer Group과 Worker 실행 경로는 #140·#141·#233으로, reclaim·retry·quarantine·DLQ와 복구 Scheduler는 #142로 구현되었다. 실제 CLOVA Provider·secret·공유 storage·Worker image 연결과 합성 smoke는 #258/PR #268에서, 운영 Redis 인증·노출 차단은 #150/PR #314에서, Outbox Publisher 주기 실행은 #370/PR #371에서 완료되었다. Worker health check·운영 관제와 Production 배포 조립은 남아 있으며, 완료된 구현과 테스트만으로 이 Proposed 문서가 Current 계약이 되거나 Production 적용이 승인되지는 않는다.
 
 실제 API key, 비밀번호, token, cookie, 환자 정보, 원본 처방전, 원본 OCR 결과는 이 문서와 Issue, PR, 로그에 기록하지 않는다.
 
@@ -29,14 +29,14 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 | --- | --- |
 | Redis 운영 노출 | 운영 Redis는 기본적으로 host port에 공개하지 않는다. 공개가 필요한 경우 Redis 인증과 접근 제한을 먼저 적용한다. |
 | Redis 연결 설정 | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` 사용 여부와 기본값을 Backend/Worker 기준으로 통일한다. |
-| Worker 실행 | #140·#141·#233에서 Redis Consumer Group·ACK adapter·SQLAlchemy 결과 저장·lease·fencing·commit-before-ACK runtime을, #142에서 reclaim·retry·quarantine·DLQ와 복구 Scheduler를 조립했다. 실제 Provider 연결은 #258에서 완성한다. |
+| Worker 실행 | #140·#141·#233에서 Redis Consumer Group·ACK adapter·SQLAlchemy 결과 저장·lease·fencing·commit-before-ACK runtime을, #142에서 reclaim·retry·quarantine·DLQ와 복구 Scheduler를 조립했다. 실제 CLOVA Provider는 #258/PR #268에서, Outbox Publisher 주기 실행은 #370/PR #371에서 연결했다. |
 | Provider secret | 실제 Provider 호출이 켜진 환경에서는 CLOVA/OpenAI 설정 누락을 startup 또는 client 생성 시점에 차단한다. |
-| Runner secret 경계 | release validation runner에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`를 주입하지 않는다. 현재 동기 경로에서는 FastAPI에 Provider secret을 주입하고, Worker 이관 후에는 실제 Provider 호출을 담당하는 승인된 실행 서비스에만 최소 권한으로 주입한다. |
+| Runner secret 경계 | release validation runner에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`를 주입하지 않는다. OCR Provider secret은 Worker에, Guide·Chat Provider secret은 FastAPI에 최소 권한으로 주입한다. |
 | Provider endpoint | CLOVA endpoint는 허용된 HTTPS Provider endpoint인지 검증하고, full endpoint query를 로그·오류 응답에 남기지 않는다. |
 | 오류 응답 | secret, token, cookie, DB password, Provider 원문 응답, OCR 원문, 의료 원문을 응답 body에 포함하지 않는다. |
 | 로그·Stream·DLQ | 일반 로그, Stream, quarantine, DLQ, 평가 artifact에 의료 원문과 인증정보를 남기지 않는다. |
 | PostgreSQL pool | `pool_size`, `max_overflow`, pool wait timeout, process 수를 포함해 운영 connection 예산을 문서화한다. |
-| Production 배포 | `ai-worker`는 #233의 Consumer runtime과 #142의 복구 경로를 갖췄으나, 실제 Provider 연결과 secret 주입(#258), 운영 Redis 인증·노출 차단(#150), health check와 Production 배포 조립이 완료되기 전에는 Production 처리 서비스로 배포하지 않는다. |
+| Production 배포 | `ai-worker`는 Consumer·복구·실제 CLOVA Provider·Outbox Publisher와 운영 Redis 인증 경로를 갖췄으나, health check·운영 관제와 Production 배포 조립이 완료되기 전에는 Production 처리 서비스로 배포하지 않는다. |
 | 공개 차단 | 이 문서는 `PUBLIC_TRACK_C`, `PUBLIC_TRACK_F`를 새로 정의하지 않고 `docs/release-gates/post-mvp-1-external-approvals.md`의 공개 차단 기준을 따른다. |
 | 문서 승격 | 구현 완료 시 실행 계약은 `current`, 운영 절차는 `deployment`, 공개 조건은 `release-gates`, 결정 이유는 ADR 또는 governance decision으로 분리한다. |
 
@@ -53,7 +53,7 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 | Redis client 코드 | AI Worker에 `redis.asyncio` client와 Stream Adapter 구현됨 (#140) | `ai_worker/adapters/redis_stream.py`, `ai_worker/adapters/factory.py` |
 | AI Worker 진입점 | Consumer runtime을 조립해 Redis Stream을 소비하고 종료 신호까지 loop를 유지함 (#233) | `ai_worker/main.py`, `ai_worker/core/runtime_assembly.py`, `ai_worker/README.md:15` |
 | AI Worker 공통 실행 runtime | Redis Consumer Group·ACK adapter·SQLAlchemy 결과 저장·lease·heartbeat·fencing·commit-before-ACK 경계가 조립됨 (#140·#141·#233) | `ai_worker/core/consumer_execution.py`, `ai_worker/core/runtime_assembly.py` |
-| AI Worker 남은 영역 | 실제 CLOVA Provider 연결(#258), health check와 Production 배포 조립은 미완료 | `ai_worker/README.md` |
+| AI Worker 남은 영역 | health check·운영 관제와 Production 배포 조립·실제 환경 smoke는 미완료 | `ai_worker/README.md`, `docs/deployment.md` |
 
 운영 compose에서는 Redis host port 공개를 제거하고 내부 Docker network 접근으로 제한한다. Redis 인증값은 운영 secret에서 주입하며, local 외 Worker는 password 누락이나 placeholder 값을 startup에서 거부한다. 외부 공개가 필요한 운영 구성이 별도로 승인되기 전까지 Redis host port를 다시 열지 않는다.
 
@@ -68,7 +68,7 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 | Stream 금지 데이터 | 처방 내용, 약품명, 질문, 답변, OCR 텍스트, 사용자 식별정보 | `docs/contracts/targets/post-mvp-1/outbox-stream-v1.md:48-49` |
 | quarantine·DLQ 금지 데이터 | 원본 메시지나 의료정보를 저장하지 않고 digest, failure code, trace metadata 등만 저장 | `docs/contracts/targets/post-mvp-1/outbox-stream-v1.md:51-54`, `docs/contracts/targets/post-mvp-1/outbox-stream-v1.md:90` |
 
-위 항목은 승인된 Post-MVP-1 목표 계약이다. #140·#141·#233으로 Redis Consumer Group과 실제 ACK adapter, SQLAlchemy 결과 저장, lease·heartbeat·fencing, commit-before-ACK runtime을 연결했고 #142로 reclaim·retry·quarantine·DLQ와 복구 Scheduler를 추가했다. 다만 실제 Provider 연결(#258), health check, Production 배포 조립과 운영 Redis 인증(#150)이 남아 있으므로 아직 Production 처리 서비스 완료를 의미하지는 않는다.
+위 항목은 승인된 Post-MVP-1 목표 계약이다. #140·#141·#233으로 Redis Consumer Group과 실제 ACK adapter, SQLAlchemy 결과 저장, lease·heartbeat·fencing, commit-before-ACK runtime을 연결했고 #142로 reclaim·retry·quarantine·DLQ와 복구 Scheduler를 추가했다. 실제 CLOVA Provider 연결(#258/PR #268), 운영 Redis 인증(#150/PR #314), Outbox Publisher 주기 실행(#370/PR #371)도 완료했다. 다만 health check·운영 관제와 Production 배포 조립·실제 환경 smoke가 남아 있으므로 아직 Production 처리 서비스 완료를 의미하지는 않는다.
 
 ### PostgreSQL
 
@@ -85,15 +85,15 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 
 | 항목 | 현재 상태 | 근거 |
 | --- | --- | --- |
-| CLOVA endpoint | `CLOVA_OCR_INVOKE_URL` | `backend/app/core/config.py:106` |
-| CLOVA secret | `CLOVA_OCR_SECRET`, 기본값은 빈 문자열 | `backend/app/core/config.py:107` |
-| CLOVA timeout | `CLOVA_OCR_TIMEOUT_SECONDS`, 기본값 20초 | `backend/app/core/config.py:108` |
-| secret 주입 | engine 생성 시 `secret_key=config.CLOVA_OCR_SECRET` 전달 | `backend/app/dependencies/services.py:106` |
-| 요청 헤더 | `X-OCR-SECRET: self._secret_key` | `backend/app/services/clova_ocr_engine.py:119-121` |
+| CLOVA endpoint | `CLOVA_OCR_INVOKE_URL`, 필수 HTTPS URL | `ai_worker/core/config.py` |
+| CLOVA secret | `CLOVA_OCR_SECRET`, 필수 `SecretStr` | `ai_worker/core/config.py` |
+| CLOVA timeout | `CLOVA_OCR_TIMEOUT_SECONDS`, 기본값 20초 | `ai_worker/core/config.py` |
+| secret 주입 | engine 생성 시 `secret_key=config.CLOVA_OCR_SECRET.get_secret_value()` 전달 | `ai_worker/core/runtime_assembly.py` |
+| 요청 헤더 | `X-OCR-SECRET: self._secret_key` | `ocr_runtime/clova_engine.py` |
 
-현재 CLOVA endpoint·secret·timeout은 FastAPI 동기 OCR 경로에서 소비한다. Worker 이관 전까지는 FastAPI가 실제 Provider 호출을 담당한다. Worker 이관 후에는 실제 Provider 호출을 담당하는 승인된 실행 서비스에만 최소 권한으로 Provider secret을 주입하며, release validation runner에는 주입하지 않는다. 최신 develop 기준으로도 현재 MVP의 OCR, Guide, Chat은 AI Worker를 거치지 않고 FastAPI 요청 안에서 외부 Provider를 호출한다.
+현재 MVP의 OCR 접수는 Outbox와 Redis Stream을 거쳐 AI Worker가 CLOVA endpoint·secret·timeout을 소비한다. 복약 가이드와 Chat은 FastAPI 요청 안에서 OpenAI 호출까지 완료한다. Provider secret은 실제 Provider 호출을 담당하는 승인된 실행 서비스에만 최소 권한으로 주입하며, release validation runner에는 주입하지 않는다.
 
-`OPENAI_API_KEY`는 `sk-not-configured` placeholder를 기본값으로 사용하지만, `CLOVA_OCR_SECRET`은 빈 문자열을 기본값으로 사용한다. 이 상태에서 CLOVA OCR이 실행되면 빈 `X-OCR-SECRET` 헤더로 실제 요청을 보낼 수 있고, 설정 누락은 시작 시점이 아니라 Provider 인증 실패로 드러난다.
+`OPENAI_API_KEY`는 Provider 호출이 비활성화된 기본 CI를 위해 placeholder를 사용할 수 있다. Worker의 `CLOVA_OCR_INVOKE_URL`과 `CLOVA_OCR_SECRET`은 필수이며, 빈 secret이나 비HTTPS endpoint는 Provider 요청 전에 설정 검증에서 거부한다.
 
 ### CI와 secret
 
@@ -106,8 +106,8 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 최신 develop의 release validation runner는 Provider credential이 runner 환경에 존재하지 않아야 한다는 guard를 둔다. 이 기준은 유지한다.
 
 - runner 환경에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`를 주입하지 않는다.
-- 현재 동기 경로의 실제 CLOVA·OpenAI 호출은 FastAPI 실행 환경에서 수행한다.
-- Worker 이관 후에는 실제 Provider 호출을 담당하는 승인된 실행 서비스에만 최소 권한으로 secret을 주입한다.
+- 현재 OCR의 실제 CLOVA 호출은 Worker가, Guide·Chat의 OpenAI 호출은 FastAPI가 수행한다.
+- 실제 Provider 호출을 담당하는 승인된 실행 서비스에만 필요한 secret을 최소 권한으로 주입한다.
 - runner는 secret 값을 읽거나 출력하지 않는다.
 - runner가 수집하는 runtime environment에는 Provider credential 값을 포함하지 않는다.
 - local live 검증에서 CLOVA endpoint는 허용된 HTTPS Provider endpoint인지 확인한다.
@@ -139,7 +139,7 @@ Post-MVP-1 Sprint 1의 비동기 기반 작업을 시작하기 전에 다음을 
 
 ### Redis Consumer Group 구현 경계
 
-이 문서는 Redis Consumer Group 착수 전 설정 경계를 확인한 문서다. 아래 목록은 #140·#141·#233과 #142로 구현되었으며, 실제 Provider 연결은 #258에서 다룬다.
+이 문서는 Redis Consumer Group 착수 전 설정 경계를 확인한 문서다. 아래 목록은 #140·#141·#233과 #142로 구현되었으며, 실제 CLOVA Provider 연결은 #258/PR #268에서 완료되었다.
 
 - Redis client 생성
 - Consumer Group 자동 생성
@@ -223,10 +223,10 @@ Stream envelope 테스트는 Redis/Outbox 발행 골격이 구현된 뒤 추가�
 
 | 항목 | 현재 판정 | PR 반영 조건 |
 | --- | --- | --- |
-| 운영 Redis 외부 노출 제거 또는 인증 설정 | BLOCKED | #150에서 운영 compose port 공개 제거 또는 Redis 인증 설정 기준 추적 |
-| Redis Consumer Group 최소 구현 | TODO | Stream/Consumer Group client 구현 Issue/PR |
-| CLOVA OCR Worker 이관 | TODO | OCR 비동기 전환 Track의 별도 구현 Issue/PR |
-| CLOVA 설정 누락 시작 검증 | TODO | `CLOVA_OCR_INVOKE_URL`/`CLOVA_OCR_SECRET` 검증 Issue/PR |
+| 운영 Redis 외부 노출 제거 또는 인증 설정 | DONE | #150/PR #314에서 운영 compose host port 비공개와 Redis 인증 적용 |
+| Redis Consumer Group 최소 구현 | DONE | #140·#141·#233에서 Stream/Consumer runtime 구현 |
+| CLOVA OCR Worker 연결 | DONE | #258/PR #268에서 실제 CLOVA Provider와 Worker composition root 연결 |
+| CLOVA 설정 누락 시작 검증 | DONE | Worker `Config`가 endpoint·secret 누락과 비HTTPS endpoint를 기동 중 거부 |
 | OpenAI placeholder 호출 차단 | TODO | 실제 Provider 호출 경로별 설정 검증 Issue/PR |
 | Release validation runner secret 차단 | TODO | runner 환경에서 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY` 존재 시 실패하는 guard 유지·검증 |
 | CLOVA endpoint allowlist 검증 | TODO | 실제 Provider 호출 전 허용된 HTTPS endpoint인지 검증 |
@@ -234,7 +234,7 @@ Stream envelope 테스트는 Redis/Outbox 발행 골격이 구현된 뒤 추가�
 | 로그 비밀정보 비노출 테스트 | TODO | Backend/Worker log masking 또는 sentinel 검색 테스트 Issue/PR |
 | Stream envelope 비노출 테스트 | TODO | Redis/Outbox 발행 골격 구현 후 payload 금지 필드 테스트 Issue/PR |
 | PostgreSQL pool 예산 문서화 | TODO | process 수, `pool_size`, `max_overflow`, pool wait 기준 정리 Issue/PR |
-| Production Worker 배포 차단 | TODO | 실제 Provider, health check, 운영 Redis 인증과 Production 배포 조립이 완료되기 전 `ai-worker`를 Production 처리 서비스로 활성화하지 않도록 설정·문서화 Issue/PR |
+| Production Worker 배포 차단 | PARTIAL | 실제 Provider와 운영 Redis 인증은 완료. health check·운영 관제와 Production 배포 조립 전에는 `ai-worker`를 배포 대상에서 제외 |
 | 공개 차단 기준 연결 | TODO | `PUBLIC_TRACK_C`, `PUBLIC_TRACK_F` 해제 조건은 release-gates 문서를 따르고 이 문서에서 중복 정의하지 않음 |
 | 문서 분리·승격 | TODO | 구현 완료 항목을 `current`, `deployment`, `release-gates`, ADR/governance decision으로 분리하고 proposed 문서 제거 또는 대체 처리 |
 
@@ -436,13 +436,13 @@ Production Redis는 기본적으로 host port에 공개하지 않는다. Redis�
 ```text
 Production Provider secret은 저장소에 커밋하지 않고 승인된 secret 저장소에서 주입한다.
 
-현재 동기 경로에서는 FastAPI 실행 환경에 실제 Provider 호출에 필요한 `CLOVA_OCR_INVOKE_URL`, `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`를 주입한다.
+현재 OCR 경로에서는 Worker 실행 환경에 `CLOVA_OCR_INVOKE_URL`, `CLOVA_OCR_SECRET`을 주입하고, Guide·Chat 경로에서는 FastAPI 실행 환경에 `OPENAI_API_KEY`를 주입한다.
 
-Worker 이관 후에는 실제 Provider 호출을 담당하는 승인된 실행 서비스에만 필요한 Provider secret을 최소 권한으로 주입한다.
+실제 Provider 호출을 담당하는 승인된 실행 서비스에만 필요한 Provider secret을 최소 권한으로 주입한다.
 
 release validation runner에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`를 주입하지 않는다. runner는 Provider credential 이름이 환경에 존재하면 실행을 거부한다.
 
-runner는 secret 값을 읽거나 출력하지 않는다. Provider 호출 실행 위치는 현재 동기 경로에서는 FastAPI이고, Worker 이관 후에는 승인된 실행 서비스다.
+runner는 secret 값을 읽거나 출력하지 않는다. Provider 호출 실행 위치는 OCR의 경우 Worker이고, Guide·Chat의 경우 FastAPI다.
 ```
 
 반영 후보:
@@ -490,7 +490,7 @@ AI 외부 호출 동안 DB transaction과 connection을 유지하는 경로가 �
 실구현 완료 시 deployment 문서에는 다음 내용을 반영한다.
 
 ```text
-실제 Redis Consumer Group, ACK adapter, 결과 저장 adapter, lease·fencing은 #140·#141·#233으로, reclaim·retry·quarantine·DLQ와 복구 Scheduler는 #142로 연결되었다. 실제 Provider, health check, 운영 Redis 인증과 Production 배포 조립이 완료되기 전에는 `ai-worker`를 Production 처리 서비스로 활성화하지 않는다.
+실제 Redis Consumer Group, ACK adapter, 결과 저장 adapter, lease·fencing은 #140·#141·#233으로, reclaim·retry·quarantine·DLQ와 복구 Scheduler는 #142로 연결되었다. 실제 CLOVA Provider는 #258/PR #268에서, 운영 Redis 인증은 #150/PR #314에서, Outbox Publisher 주기 실행은 #370/PR #371에서 완료되었다. health check·운영 관제와 Production 배포 조립이 완료되기 전에는 `ai-worker`를 Production 처리 서비스로 활성화하지 않는다.
 
 Worker image가 Production compose에 포함되는 경우 미완료 의존성으로 restart loop가 발생하지 않도록 배포 대상에서 제외하거나 restart 정책을 별도로 확정한다.
 
@@ -569,11 +569,11 @@ Consequence: 실제 Provider smoke나 운영 배포는 secret 주입이 없으�
 Worker 배포 정책이 확정되면 ADR 또는 governance decision에는 다음 내용을 남긴다.
 
 ```text
-Decision: 실제 Provider, health check, 운영 Redis 인증과 Production 배포 조립이 완료되기 전에는 `ai-worker`를 Production 처리 서비스로 활성화하지 않는다.
+Decision: Worker health check·운영 관제와 Production 배포 조립이 완료되기 전에는 `ai-worker`를 Production 처리 서비스로 활성화하지 않는다.
 
-Context: Redis Consumer Group, ACK adapter, SQLAlchemy 결과 저장, lease·fencing은 #140·#141·#233으로, reclaim·retry·quarantine·DLQ와 복구 Scheduler는 #142로 구현되었다. 실제 Provider 연결과 secret 주입(#258), health check, Production 배포 조립과 운영 Redis 인증(#150)은 미구현이다.
+Context: Redis Consumer Group, ACK adapter, SQLAlchemy 결과 저장, lease·fencing은 #140·#141·#233으로, reclaim·retry·quarantine·DLQ와 복구 Scheduler는 #142로 구현되었다. 실제 CLOVA Provider와 secret·공유 storage·Worker image 연결(#258/PR #268), 운영 Redis 인증(#150/PR #314), Outbox Publisher 주기 실행(#370/PR #371)도 완료되었지만 health check·운영 관제와 Production 배포 조립은 미완료다.
 
-Decision: Worker를 Production에 포함하려면 이미 연결된 Redis consumer, ACK adapter, DB 결과 저장, lease·fencing, graceful shutdown에 더해 남은 health check, Provider, 장애·재시도 테스트까지 완료한다.
+Decision: Worker를 Production에 포함하려면 이미 연결된 Redis Consumer, ACK adapter, DB 결과 저장, lease·fencing, graceful shutdown과 Provider·복구 경로에 더해 남은 health check·운영 관제·실제 환경 smoke와 배포 조립을 완료한다.
 
 Consequence: 미완료 운영 요건으로 Worker가 Production compose에서 restart loop를 만들거나 완전한 처리 서비스로 오해되지 않도록 배포 문서와 compose 설정을 함께 관리한다.
 ```

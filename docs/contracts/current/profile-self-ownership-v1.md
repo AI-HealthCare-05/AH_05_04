@@ -172,7 +172,7 @@ SELF profile 생성은 `(user_id, profile_type)` unique 제약을 기준으로 �
 
 ## 8. Rollback 기준
 
-#117 구현 PR의 운영 적용은 migration, 코드, 문서가 같은 배포 단위로 움직이는 중단 배포를 기준으로 한다. DB schema 변경 전에 기존 `fastapi`와 `ai-worker`를 멈추고, 처리 중인 요청이 종료된 뒤 migration을 실행한다. 서비스 중단에 실패하거나 중단 상태를 확인하지 못하면 migration을 실행하지 않는다. migration 후에는 `fastapi` 새 이미지를 필수로 재시작하고, `ai-worker`는 실제 Redis Consumer 실행 경로가 연결된 뒤 같은 배포 단위에 포함한다. placeholder `ai-worker`를 강제 재시작해 재시작 루프를 만들지 않으며, 구버전 이미지를 다시 띄우지 않는다. Rolling deploy로 적용하려면 Expand, dual-write, backfill, read cutover, Contract를 분리 PR로 나누고 각 단계별 호환성을 별도로 검증해야 한다.
+#117 구현 PR의 운영 적용은 migration, 코드, 문서가 같은 배포 단위로 움직이는 중단 배포를 기준으로 한다. DB schema 변경 전에 기존 `fastapi`와 실행 중인 `ai-worker`를 멈추고, 처리 중인 요청이 종료된 뒤 migration을 실행한다. 서비스 중단에 실패하거나 중단 상태를 확인하지 못하면 migration을 실행하지 않는다. migration 후에는 `fastapi` 새 이미지를 필수로 재시작한다. Redis Consumer와 OCR 처리 경로는 현재 구현되어 있지만 Production 배포 스크립트는 아직 Worker를 배포하지 않으므로, `ai-worker`는 health check·운영 관제·배포 조립을 완료한 변경에서 호환되는 새 image와 함께 같은 배포 단위에 포함한다. 구버전 이미지를 다시 띄우지 않는다. Rolling deploy로 적용하려면 Expand, dual-write, backfill, read cutover, Contract를 분리 PR로 나누고 각 단계별 호환성을 별도로 검증해야 한다.
 
 - `profile_id`가 nullable인 Expand 단계에서는 코드 rollback이 가능해야 한다.
 - Contract 단계 전에는 기존 `user_id` 또는 부모 chain 기반 read 경로로 되돌릴 수 있어야 한다.
