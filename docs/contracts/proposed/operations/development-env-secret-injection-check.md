@@ -507,7 +507,7 @@ Worker를 Production에 포함하는 PR은 실제 처리 경로, health check, g
 
 구현 확인 기준:
 
-- 실제 처리 로직이 없는 `ai-worker`가 Production에서 `restart: always`로 무한 재시작하지 않는다.
+- Production 배포 조립이 완료되지 않은 `ai-worker`가 Production에서 `restart: always`로 무한 재시작하지 않는다.
 - Worker health check가 실제 Redis/DB 연결 상태를 반영한다.
 - Production compose에서 Worker 활성화 조건이 문서화되어 있다.
 
