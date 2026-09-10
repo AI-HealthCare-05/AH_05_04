@@ -1,0 +1,1208 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>RAG 코드 투어 — ELI5</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f7f6f3;
+    --panel: #ffffff;
+    --ink: #23211e;
+    --ink-soft: #5d574f;
+    --ink-faint: #8d867c;
+    --line: #e2ded6;
+    --accent: #b5451e;
+    --accent-soft: #fdefe8;
+    --ok: #1f6b45;
+    --ok-soft: #e8f3ec;
+    --warn: #8a6212;
+    --warn-soft: #fbf1da;
+    --stop: #a32a24;
+    --stop-soft: #fbe9e7;
+    --code-bg: #f2efe9;
+    --shadow: 0 1px 2px rgba(35, 33, 30, .06), 0 8px 24px rgba(35, 33, 30, .06);
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard",
+            "Segoe UI", "Noto Sans KR", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #17161a;
+      --panel: #201f24;
+      --ink: #eceaf0;
+      --ink-soft: #b3aebb;
+      --ink-faint: #837e8c;
+      --line: #34323a;
+      --accent: #ff9a72;
+      --accent-soft: #33251f;
+      --ok: #7cd6a5;
+      --ok-soft: #1d2b23;
+      --warn: #e5bd6b;
+      --warn-soft: #2c2519;
+      --stop: #ff8f85;
+      --stop-soft: #2e1e1d;
+      --code-bg: #1a191e;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px rgba(0, 0, 0, .3);
+    }
+    :root:not([data-theme="light"]) .navbtn.primary { color: #201206; }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #17161a;
+    --panel: #201f24;
+    --ink: #eceaf0;
+    --ink-soft: #b3aebb;
+    --ink-faint: #837e8c;
+    --line: #34323a;
+    --accent: #ff9a72;
+    --accent-soft: #33251f;
+    --ok: #7cd6a5;
+    --ok-soft: #1d2b23;
+    --warn: #e5bd6b;
+    --warn-soft: #2c2519;
+    --stop: #ff8f85;
+    --stop-soft: #2e1e1d;
+    --code-bg: #1a191e;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px rgba(0, 0, 0, .3);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 400 16px/1.65 var(--sans);
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior-y: contain;
+  }
+  #app {
+    min-height: 100dvh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding-top: env(safe-area-inset-top);
+  }
+
+  /* ---------- header ---------- */
+  header {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  .bar {
+    max-width: 900px; margin: 0 auto;
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px;
+  }
+  .brand { font-weight: 650; font-size: 14px; letter-spacing: -.01em; white-space: nowrap; }
+  .brand em { font-style: normal; color: var(--accent); }
+  .chapter {
+    font-size: 12px; color: var(--ink-faint);
+    margin-left: 2px; flex: 1 1 auto;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .counter { font: 500 12px/1 var(--mono); color: var(--ink-faint); white-space: nowrap; }
+  .iconbtn {
+    appearance: none; border: 1px solid var(--line); background: var(--panel);
+    color: var(--ink-soft); border-radius: 9px;
+    min-width: 40px; height: 40px; padding: 0 9px;
+    font: 500 12px/1 var(--sans); cursor: pointer;
+  }
+  .iconbtn:hover { color: var(--ink); border-color: var(--ink-faint); }
+  .progress { height: 3px; background: var(--line); }
+  .progress > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .28s ease; }
+
+  /* ---------- slide ---------- */
+  main { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; }
+  .slide {
+    max-width: 900px; width: 100%; min-width: 0;
+    margin: 0 auto; padding: 30px 18px 8px;
+    display: none;
+  }
+  .slide.is-current { display: block; animation: rise .32s ease both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .slide.is-current { animation: none; }
+    .progress > i { transition: none; }
+  }
+
+  .kicker {
+    display: inline-block; font: 600 11px/1 var(--sans); letter-spacing: .09em;
+    text-transform: uppercase; color: var(--accent);
+    background: var(--accent-soft); border-radius: 999px; padding: 6px 10px;
+    margin-bottom: 14px;
+  }
+  h1 { font-size: clamp(28px, 7vw, 44px); line-height: 1.15; letter-spacing: -.025em; margin: 0 0 14px; }
+  h2 { font-size: clamp(21px, 5.2vw, 30px); line-height: 1.25; letter-spacing: -.02em; margin: 0 0 12px; }
+  .lede { font-size: clamp(16px, 4vw, 19px); color: var(--ink-soft); margin: 0 0 20px; max-width: 40em; }
+  .lede code { font-size: .92em; }
+  code {
+    font-family: var(--mono); font-size: .88em;
+    background: var(--code-bg); border: 1px solid var(--line);
+    border-radius: 5px; padding: .08em .34em;
+  }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 16px; margin: 0 0 16px;
+    box-shadow: var(--shadow);
+  }
+  .card > h3 {
+    margin: 0 0 12px; font: 600 12px/1 var(--sans);
+    letter-spacing: .07em; text-transform: uppercase; color: var(--ink-faint);
+  }
+
+  pre {
+    margin: 0; padding: 13px 14px; overflow-x: auto;
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px;
+    font: 400 12.5px/1.7 var(--mono); color: var(--ink);
+    -webkit-overflow-scrolling: touch;
+  }
+  pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+  pre .c { color: var(--ink-faint); }
+  pre .k { color: var(--accent); }
+  pre .s { color: var(--ok); }
+
+  .srcref {
+    display: block; margin-top: 9px;
+    font: 400 11.5px/1.5 var(--mono); color: var(--ink-faint); word-break: break-all;
+  }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 7px; margin: 0; padding: 0; list-style: none; }
+  .chips li {
+    font: 500 11.5px/1 var(--mono);
+    border: 1px solid var(--line); border-radius: 999px; padding: 7px 10px;
+    color: var(--ink-soft); background: var(--bg);
+    overflow-wrap: anywhere;
+  }
+  .chips li.stop { color: var(--stop); background: var(--stop-soft); border-color: transparent; }
+  .chips li.ok { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+  .chips li.warn { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+
+  .flow { width: 100%; max-width: 100%; height: auto; display: block; }
+  .flow text { font-family: var(--sans); }
+
+  /* ---------- interactive widgets ---------- */
+  .controls { display: grid; gap: 10px; }
+  .ctl {
+    display: flex; align-items: center; gap: 12px;
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 12px; background: var(--bg);
+    cursor: pointer; user-select: none;
+    min-height: 46px;
+  }
+  .ctl:hover { border-color: var(--ink-faint); }
+  .ctl > span.label { flex: 1 1 auto; min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
+  .ctl > span.label small {
+    display: block; color: var(--ink-faint);
+    font: 400 11.5px/1.4 var(--mono); overflow-wrap: anywhere;
+  }
+  .ctl input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+  .ctl select, .ctl input[type="range"] { flex: none; font: inherit; font-size: 13px; }
+  .ctl select {
+    background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 8px; min-height: 38px;
+  }
+  .ctl input[type="range"] { width: 108px; accent-color: var(--accent); }
+  .num { font: 600 13px/1 var(--mono); min-width: 1.6em; text-align: right; color: var(--accent); }
+
+  .verdict { margin-top: 14px; border-radius: 12px; padding: 14px; border: 1px solid var(--line); }
+  .verdict.pass { background: var(--ok-soft); border-color: transparent; }
+  .verdict.block { background: var(--stop-soft); border-color: transparent; }
+  .verdict.err { background: var(--warn-soft); border-color: transparent; }
+  .verdict dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
+  .verdict dt { font: 500 11px/1.6 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); }
+  .verdict dd { margin: 0; font: 600 13.5px/1.6 var(--mono); word-break: break-all; }
+  .verdict .why { margin: 10px 0 0; font-size: 13.5px; color: var(--ink-soft); }
+  .verdict.pass dd { color: var(--ok); }
+  .verdict.block dd { color: var(--stop); }
+  .verdict.err dd { color: var(--warn); }
+
+  .ladder { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; counter-reset: rung; }
+  .ladder li {
+    display: flex; gap: 12px; align-items: flex-start;
+    border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px;
+    background: var(--bg); opacity: .45; transition: opacity .2s ease, border-color .2s ease;
+  }
+  .ladder li.on { opacity: 1; border-color: var(--accent); background: var(--accent-soft); }
+  .ladder li b { font: 600 12px/1.5 var(--mono); color: var(--accent); flex: none; }
+  .ladder li span { font-size: 13.5px; min-width: 0; overflow-wrap: anywhere; }
+  .ladder li span small { display: block; color: var(--ink-faint); font-size: 12px; }
+  .stepbar { display: flex; gap: 8px; margin-top: 12px; }
+  .stepbar button {
+    appearance: none; flex: 1 1 0; min-height: 42px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    border-radius: 10px; font: 500 13px/1 var(--sans); cursor: pointer;
+  }
+  .stepbar button:hover { border-color: var(--ink-faint); }
+
+  .files { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  .files li { display: flex; gap: 10px; align-items: baseline; font-size: 13.5px; }
+  .files li span { min-width: 0; overflow-wrap: anywhere; }
+  .files b { font: 600 11px/1.7 var(--mono); color: var(--accent); flex: none; min-width: 1.4em; }
+  .files code { font-size: 12.5px; }
+  .files em { font-style: normal; color: var(--ink-faint); font-size: 12.5px; }
+
+  /* ---------- footer nav ---------- */
+  footer {
+    position: sticky; bottom: 0; z-index: 20;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-top: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .navbar { max-width: 900px; margin: 0 auto; display: flex; gap: 10px; padding: 10px 16px; align-items: center; }
+  .navbtn {
+    appearance: none; flex: 1 1 0; min-height: 46px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    border-radius: 11px; font: 550 14px/1 var(--sans); cursor: pointer;
+  }
+  .navbtn:hover:not(:disabled) { border-color: var(--ink-faint); }
+  .navbtn:disabled { opacity: .35; cursor: default; }
+  .navbtn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  :root[data-theme="dark"] .navbtn.primary { color: #201206; }
+  .keyhint { font: 400 11.5px/1.4 var(--mono); color: var(--ink-faint); text-align: center; padding: 0 16px 9px; }
+  @media (max-width: 560px) { .keyhint { display: none; } }
+
+  /* ---------- overlay (목차 / 도움말) ---------- */
+  .overlay {
+    position: fixed; inset: 0; z-index: 40;
+    background: color-mix(in srgb, var(--bg) 94%, transparent);
+    overflow-y: auto; padding: 18px 16px calc(28px + env(safe-area-inset-bottom));
+  }
+  .overlay[hidden] { display: none !important; }
+  .overlay .inner { max-width: 720px; margin: 0 auto; }
+  .overlay h2 { margin-top: 8px; }
+  .toc { margin: 0 0 20px; padding: 0; list-style: none; display: grid; gap: 6px; }
+  .toc button {
+    appearance: none; width: 100%; text-align: left; cursor: pointer;
+    display: flex; gap: 12px; align-items: baseline;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 11px 13px; color: var(--ink); font: 400 14px/1.4 var(--sans);
+    min-height: 44px;
+  }
+  .toc button:hover { border-color: var(--accent); }
+  .toc button[aria-current="true"] { border-color: var(--accent); background: var(--accent-soft); }
+  .toc button > span { min-width: 0; overflow-wrap: anywhere; }
+  .toc b { font: 600 11px/1.7 var(--mono); color: var(--ink-faint); flex: none; min-width: 1.8em; }
+  .toc em { font-style: normal; color: var(--ink-faint); font-size: 11.5px; margin-left: auto; flex: none; }
+  .keys { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; font-size: 13.5px; }
+  .keys dt { font: 500 12px/1.6 var(--mono); color: var(--accent); }
+  .keys dd { margin: 0; color: var(--ink-soft); }
+  .sr {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <header>
+    <div class="bar">
+      <span class="brand">RAG <em>ELI5</em></span>
+      <span class="chapter" id="chapter">시작</span>
+      <span class="counter" id="counter">1 / 1</span>
+      <button class="iconbtn" id="btn-toc" aria-label="목차 열기" title="목차 (M)">목차</button>
+      <button class="iconbtn" id="btn-theme" aria-label="밝기 전환" title="밝기 전환 (T)">◐</button>
+    </div>
+    <div class="progress"><i id="bar"></i></div>
+  </header>
+
+  <main id="deck" aria-live="polite">
+
+    <!-- 1 -->
+    <section class="slide" data-chapter="시작" data-title="표지">
+      <span class="kicker">코드 투어</span>
+      <h1>이 프로젝트의 RAG,<br />한 장에 두 문장씩</h1>
+      <p class="lede">복약 안내 서비스의 RAG 코드를 실제 파일과 함께 훑어봅니다. 화살표 키로 넘기거나 화면을 좌우로 스와이프하세요.</p>
+      <div class="card">
+        <h3>이 투어에서 만지는 것</h3>
+        <ul class="chips">
+          <li>ai_worker/tasks/rag/</li>
+          <li>source_client</li>
+          <li>source_ingestion</li>
+          <li>candidate_index</li>
+          <li>evidence_retrieval</li>
+          <li>evidence_gate</li>
+          <li>source_governance</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 2 -->
+    <section class="slide" data-chapter="기초" data-title="RAG가 뭐야?">
+      <span class="kicker">기초</span>
+      <h2>RAG가 뭐야?</h2>
+      <p class="lede">RAG는 AI가 답을 만들기 전에 <strong>믿을 수 있는 자료를 먼저 찾아오는 방식</strong>입니다. 사서가 기억으로 답하지 않고 책을 꺼내 확인하는 것과 같습니다.</p>
+      <div class="card">
+        <h3>기억으로 답하기 vs 찾아서 답하기</h3>
+        <svg class="flow" viewBox="0 0 640 190" role="img" aria-label="질문이 검색을 거쳐 근거를 찾고, 근거를 바탕으로 답을 만드는 흐름">
+          <g fill="none" stroke="var(--line)" stroke-width="1.5">
+            <rect x="8" y="18" width="120" height="46" rx="10" />
+            <rect x="8" y="112" width="120" height="46" rx="10" />
+            <rect x="196" y="112" width="130" height="46" rx="10" />
+            <rect x="384" y="112" width="130" height="46" rx="10" />
+          </g>
+          <rect x="8" y="18" width="120" height="46" rx="10" fill="var(--stop-soft)" stroke="none" />
+          <rect x="384" y="112" width="130" height="46" rx="10" fill="var(--ok-soft)" stroke="none" />
+          <g font-size="13" fill="var(--ink)" text-anchor="middle">
+            <text x="68" y="46">기억으로 답</text>
+            <text x="68" y="140">사용자 질문</text>
+            <text x="261" y="133">승인된 자료에서</text>
+            <text x="261" y="150">근거 찾기</text>
+            <text x="449" y="133">근거를 붙여</text>
+            <text x="449" y="150">답 만들기</text>
+          </g>
+          <g font-size="11.5" fill="var(--ink-faint)" text-anchor="middle">
+            <text x="68" y="82">← 이 프로젝트가 금지하는 길</text>
+            <text x="322" y="182">출처·버전·위치가 함께 남는다</text>
+          </g>
+          <g stroke="var(--ink-faint)" stroke-width="1.5" fill="none" marker-end="url(#ah)">
+            <path d="M132 135 H190" />
+            <path d="M330 135 H378" />
+          </g>
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-faint)" />
+            </marker>
+          </defs>
+        </svg>
+      </div>
+    </section>
+
+    <!-- 3 -->
+    <section class="slide" data-chapter="기초" data-title="왜 이 앱에 필요해?">
+      <span class="kicker">기초</span>
+      <h2>왜 복약 앱에 필요해?</h2>
+      <p class="lede">복약 안내가 틀리면 사람이 다칩니다. 그래서 이 프로젝트는 <strong>출처 없는 의료 문장을 사용자에게 내보내지 않는 규칙</strong>을 코드로 강제합니다.</p>
+      <div class="card">
+        <h3>계약서에 적힌 원칙</h3>
+        <pre><code>의료 Claim과 처방약 기반 Guideline Claim은
+승인된 Source version과 locator를 가져야 한다.
+
+근거 없음·상충·Source 비활성·만료·Citation 불일치에서는
+생성 내용을 폐기하고 승인 fallback만 저장한다.</code></pre>
+        <span class="srcref">docs/contracts/targets/post-mvp-1/rag-runtime-v1.md — "Retrieval·Rerank·Evidence Gate"</span>
+      </div>
+    </section>
+
+    <!-- 4 -->
+    <section class="slide" data-chapter="현재 상태" data-title="지금 어디까지 됐어?">
+      <span class="kicker">먼저 알아둘 것</span>
+      <h2>지금 어디까지 됐어?</h2>
+      <p class="lede">부품(계약·순수 로직·일부 저장 어댑터)은 있지만 <strong>그 부품을 돌리는 Job이 아직 없습니다</strong>. <code>runtime_assembly</code>가 실제로 등록하는 핸들러는 <code>JobType.OCR</code> 하나뿐입니다.</p>
+      <div class="card">
+        <h3>아직 없는 것</h3>
+        <ul class="chips">
+          <li class="stop">RAG Worker 핸들러 등록</li>
+          <li class="stop">HTTP 라우터 연결</li>
+          <li class="stop">실제 LLM 호출</li>
+          <li class="stop">질의 경로의 실제 인덱스 어댑터</li>
+        </ul>
+        <span class="srcref">ai_worker/core/runtime_assembly.py:340 — registry.register(...) 는 OCR 하나</span>
+      </div>
+      <div class="card">
+        <h3>이미 있는 것</h3>
+        <ul class="chips">
+          <li class="ok">frozen dataclass 계약</li>
+          <li class="ok">Protocol 포트</li>
+          <li class="ok">결정적 순수 함수</li>
+          <li class="ok">합성(synthetic) 검색·rerank 어댑터</li>
+          <li class="ok">SQLAlchemy Snapshot 저장소</li>
+          <li class="ok">S3 / 로컬 원본 저장소</li>
+          <li class="ok">818개 테스트</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 5 -->
+    <section class="slide" data-chapter="현재 상태" data-title="코드가 스스로 말한다">
+      <span class="kicker">읽는 요령</span>
+      <h2>코드가 스스로 말해준다</h2>
+      <p class="lede">모듈 첫 줄 docstring이 <strong>자기 권한 범위를 직접 적어둡니다</strong>. 파일을 열면 이 코드가 무엇을 하지 <em>않는지</em>부터 알 수 있습니다.</p>
+      <div class="card">
+        <h3>evidence_retrieval.py 첫 줄</h3>
+        <pre><code><span class="s">"""Non-authoritative, synthetic-first Knowledge Evidence retrieval kernel.
+
+This module deliberately stops before source governance, persistence,
+public citations, and medical-answer safety decisions.  Its outputs are
+untrusted retrieval candidates only.
+"""</span></code></pre>
+        <span class="srcref">ai_worker/tasks/rag/evidence_retrieval.py:1</span>
+      </div>
+    </section>
+
+    <!-- 6 -->
+    <section class="slide" data-chapter="큰 그림" data-title="파이프라인 두 개">
+      <span class="kicker">큰 그림</span>
+      <h2>파이프라인은 두 줄기</h2>
+      <p class="lede">하나는 <strong>자료를 들여와 도장을 찍는 수집</strong> 파이프라인, 다른 하나는 <strong>질문이 왔을 때 근거를 골라내는 질의</strong> 파이프라인입니다. 앞줄기가 만든 도장(스냅샷·인덱스)을 뒷줄기가 그대로 인용합니다.</p>
+      <div class="card">
+        <h3>재료 준비 / 손님 응대</h3>
+        <svg class="flow" viewBox="0 0 660 260" role="img" aria-label="수집 파이프라인과 질의 파이프라인의 단계 흐름">
+          <g font-size="11" fill="var(--accent)" font-weight="600" letter-spacing=".08em">
+            <text x="8" y="22">수집 — SOURCE INGESTION</text>
+            <text x="8" y="152">질의 — RETRIEVAL &amp; GATE</text>
+          </g>
+          <g fill="var(--panel)" stroke="var(--line)" stroke-width="1.5">
+            <rect x="8" y="36" width="118" height="44" rx="9" />
+            <rect x="142" y="36" width="118" height="44" rx="9" />
+            <rect x="276" y="36" width="118" height="44" rx="9" />
+            <rect x="410" y="36" width="118" height="44" rx="9" />
+            <rect x="544" y="36" width="108" height="44" rx="9" />
+            <rect x="8" y="166" width="118" height="44" rx="9" />
+            <rect x="142" y="166" width="118" height="44" rx="9" />
+            <rect x="276" y="166" width="118" height="44" rx="9" />
+            <rect x="410" y="166" width="118" height="44" rx="9" />
+            <rect x="544" y="166" width="108" height="44" rx="9" />
+          </g>
+          <rect x="544" y="36" width="108" height="44" rx="9" fill="var(--accent-soft)" stroke="none" />
+          <rect x="410" y="166" width="118" height="44" rx="9" fill="var(--accent-soft)" stroke="none" />
+          <rect x="544" y="166" width="108" height="44" rx="9" fill="var(--ok-soft)" stroke="none" />
+          <g font-size="12.5" fill="var(--ink)" text-anchor="middle">
+            <text x="67" y="63">API 호출</text>
+            <text x="201" y="63">원본 보관</text>
+            <text x="335" y="63">checksum</text>
+            <text x="469" y="63">영수증 대조</text>
+            <text x="598" y="63">Snapshot</text>
+            <text x="67" y="193">질문 지문</text>
+            <text x="201" y="193">2갈래 검색</text>
+            <text x="335" y="193">rerank</text>
+            <text x="469" y="193">Evidence Gate</text>
+            <text x="598" y="193">답 + 인용</text>
+          </g>
+          <g stroke="var(--ink-faint)" stroke-width="1.5" fill="none" marker-end="url(#ah2)">
+            <path d="M126 58 H138" /><path d="M260 58 H272" /><path d="M394 58 H406" /><path d="M528 58 H540" />
+            <path d="M126 188 H138" /><path d="M260 188 H272" /><path d="M394 188 H406" /><path d="M528 188 H540" />
+          </g>
+          <path d="M598 84 V128 H201 V162" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="4 4" fill="none" marker-end="url(#ah3)" />
+          <text x="400" y="122" font-size="11.5" fill="var(--accent)" text-anchor="middle">이 도장을 붙여서 인용한다</text>
+          <defs>
+            <marker id="ah2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-faint)" />
+            </marker>
+            <marker id="ah3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)" />
+            </marker>
+          </defs>
+        </svg>
+      </div>
+    </section>
+
+    <!-- 7 -->
+    <section class="slide" data-chapter="수집" data-title="① 공공 API 문 두드리기">
+      <span class="kicker">수집 ①</span>
+      <h2>공공 API 문을 두드린다</h2>
+      <p class="lede"><code>source_client</code>가 식약처(MFDS) 공개 API를 호출합니다. 응답을 믿기 전에 <strong>URL·호스트·리다이렉트·Content-Type·XML 폭탄을 먼저 검사</strong>합니다.</p>
+      <div class="card">
+        <h3>실패는 이 코드들로만 밖에 나간다 — 응답 본문은 절대 안 나간다</h3>
+        <ul class="chips">
+          <li>AUTHENTICATION_FAILED</li>
+          <li>RATE_LIMITED</li>
+          <li>TIMEOUT</li>
+          <li>RESPONSE_TOO_LARGE</li>
+          <li>CONTENT_TYPE_MISMATCH</li>
+          <li class="warn">SCHEMA_DRIFT</li>
+          <li class="warn">REDIRECT_REJECTED</li>
+          <li class="warn">XML_SECURITY_VIOLATION</li>
+          <li>EMPTY_RESULT</li>
+        </ul>
+        <span class="srcref">ai_worker/tasks/rag/source_client/contracts.py:38 — SourceFailureCode</span>
+      </div>
+    </section>
+
+    <!-- 8 -->
+    <section class="slide" data-chapter="수집" data-title="② 두 번 들여오지 않기">
+      <span class="kicker">수집 ②</span>
+      <h2>같은 자료를 두 번 들여오지 않는다</h2>
+      <p class="lede"><strong>잠금을 먼저 잡은 실행만</strong> 외부 소스의 전체 페이지를 수집합니다. 잠금은 DB 트랜잭션에 묶여 있어서, 호출이 끝나기 전에 트랜잭션을 닫으면 규칙이 깨집니다.</p>
+      <div class="card">
+        <h3>함수 전체가 세 줄</h3>
+        <pre><code><span class="k">async def</span> acquire_source_exclusively(
+    *, gate: SourceAcquisitionGate,
+    client: SourcePageClient,
+    request: SourceRequest,
+) -&gt; SourceRunResult:
+    <span class="s">"""잠금을 얻은 실행만 외부 Source의 전체 페이지를 수집합니다."""</span>
+    <span class="k">await</span> gate.try_lock_acquisition(request.operation)
+    <span class="k">return await</span> client.fetch_all_pages(request)</code></pre>
+        <span class="srcref">ai_worker/tasks/rag/source_ingestion/service.py:27</span>
+      </div>
+    </section>
+
+    <!-- 9 -->
+    <section class="slide" data-chapter="수집" data-title="③ 원본 + 지문">
+      <span class="kicker">수집 ③</span>
+      <h2>원본은 손대지 않고, 지문을 남긴다</h2>
+      <p class="lede">받은 바이트는 <strong>그대로 보관</strong>하고 SHA-256 지문을 따로 계산합니다. 비교용으로는 canonical JSON을 만들어 키 순서를 항상 똑같이 맞춥니다.</p>
+      <div class="card">
+        <h3>두 종류의 checksum</h3>
+        <pre><code><span class="k">def</span> raw_checksum(chunks) -&gt; str:
+    <span class="c"># 원본 청크를 순서대로 이어붙인 바이트의 SHA-256</span>
+
+<span class="k">def</span> product_canonical_checksum(records) -&gt; str:
+    <span class="c"># 정렬·정규화한 canonical JSON의 SHA-256</span></code></pre>
+        <span class="srcref">ai_worker/tasks/rag/source_ingestion/checksums.py:13, :23</span>
+      </div>
+    </section>
+
+    <!-- 10 -->
+    <section class="slide" data-chapter="수집" data-title="왜 UTF-16 정렬?">
+      <span class="kicker">수집 ③-b</span>
+      <h2>왜 하필 UTF-16 정렬이야?</h2>
+      <p class="lede">파이썬 기본 문자열 비교(코드포인트 순서)와 UTF-16 코드 유닛 순서가 <strong>이모지 같은 문자에서 어긋납니다</strong>. 다른 언어로 만든 로더도 같은 checksum을 재현하도록 정렬 규칙을 계약으로 못 박았습니다.</p>
+      <div class="card">
+        <h3>어긋나는 예</h3>
+        <pre><code><span class="c"># 코드포인트 순서:  U+FFFD (0xFFFD)  &lt;  U+10000</span>
+<span class="c"># UTF-16 순서:     U+10000 (0xD800 0xDC00)  &lt;  U+FFFD</span>
+
+<span class="k">def</span> utf16_sort_key(value: str) -&gt; bytes:
+    <span class="k">return</span> value.encode(<span class="s">"utf-16-be"</span>)</code></pre>
+        <span class="srcref">ai_worker/tasks/rag/source_ingestion/normalize.py:9</span>
+      </div>
+    </section>
+
+    <!-- 11 -->
+    <section class="slide" data-chapter="수집" data-title="④ 영수증 대조">
+      <span class="kicker">수집 ④</span>
+      <h2>영수증과 대조한다</h2>
+      <p class="lede">수집 결과가 완전하지 않으면 <strong>파서 입력으로 넘기지 않습니다</strong>. 엔드포인트 검증 영수증의 상태·식별자가 결과와 맞는지도 함께 확인합니다.</p>
+      <div class="card">
+        <h3>문 앞에서 막는 두 함수</h3>
+        <pre><code><span class="k">def</span> require_complete_source_run(result) -&gt; <span class="k">None</span>:
+    <span class="k">if not</span> result.snapshot_candidate_allowed:
+        <span class="k">raise</span> ValueError(<span class="s">"Source run is not eligible for parser input."</span>)
+
+<span class="k">def</span> require_receipt_compatibility(*, result, receipt) -&gt; <span class="k">None</span>:
+    require_complete_source_run(result)
+    <span class="k">if</span> receipt.identity != result.operation:
+        ...</code></pre>
+        <span class="srcref">ai_worker/tasks/rag/source_ingestion/validation.py:11, :17</span>
+      </div>
+    </section>
+
+    <!-- 12 -->
+    <section class="slide" data-chapter="수집" data-title="⑤ Snapshot 도장 (체험)">
+      <span class="kicker">수집 ⑤ · 직접 해보기</span>
+      <h2>Snapshot에 도장 찍기</h2>
+      <p class="lede">같은 버전인데 내용이 다르면 <strong>충돌로 막고</strong>, 내용이 같으면 새로 만들지 않습니다. 스위치를 바꿔 <code>decide_snapshot_ingestion</code>의 판정을 직접 확인해 보세요.</p>
+      <div class="card">
+        <h3>입력</h3>
+        <div class="controls">
+          <label class="ctl">
+            <input type="checkbox" id="snap-same" checked />
+            <span class="label">같은 source_version의 Snapshot이 이미 있다<small>same_version is not None</small></span>
+          </label>
+          <label class="ctl">
+            <input type="checkbox" id="snap-equal" checked />
+            <span class="label">canonical 계약(checksum·버전들)이 완전히 같다<small>_has_same_canonical_contract</small></span>
+          </label>
+          <label class="ctl">
+            <input type="checkbox" id="snap-failed" />
+            <span class="label">기존 Snapshot의 검증 상태가 FAILED다<small>verification_status is FAILED</small></span>
+          </label>
+        </div>
+        <div class="verdict" id="snap-out" role="status"></div>
+        <span class="srcref">ai_worker/tasks/rag/source_ingestion/snapshot_lifecycle.py:228</span>
+      </div>
+    </section>
+
+    <!-- 13 -->
+    <section class="slide" data-chapter="수집" data-title="Snapshot 상태축">
+      <span class="kicker">수집 ⑤-b</span>
+      <h2>Snapshot은 두 개의 상태축을 가진다</h2>
+      <p class="lede">하나는 <strong>검증이 어디까지 됐는지</strong>, 다른 하나는 <strong>지금 쓰는 것인지</strong>입니다. 이 둘이 분리돼 있어서 새로 넣는 것과 실제로 쓰기 시작하는 것이 다른 결정이 됩니다.</p>
+      <div class="card">
+        <h3>verification_status</h3>
+        <ul class="chips">
+          <li class="warn">PENDING</li>
+          <li class="ok">CURRENT</li>
+          <li class="warn">STALE</li>
+          <li class="stop">FAILED</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>selection decision</h3>
+        <ul class="chips">
+          <li>ACTIVATED</li>
+          <li>RESTORED</li>
+          <li>ALREADY_CURRENT</li>
+        </ul>
+        <span class="srcref">ai_worker/tasks/rag/source_ingestion/snapshot_lifecycle.py:38, :47</span>
+      </div>
+    </section>
+
+    <!-- 14 -->
+    <section class="slide" data-chapter="약 찾기" data-title="검색 사다리 (체험)">
+      <span class="kicker">약 찾기 · 직접 해보기</span>
+      <h2>약 이름 찾기 사다리</h2>
+      <p class="lede">정확 일치에서 시작해 별칭, 오타 유사도, 벡터 검색까지 <strong>4단계를 순서대로</strong> 내려갑니다. 버튼으로 단계를 하나씩 켜 보세요.</p>
+      <div class="card">
+        <h3>CandidateSearchStage</h3>
+        <ul class="ladder" id="ladder">
+          <li data-i="0"><b>1</b><span>PRODUCT_NAME_EXACT<small>허가된 제품명과 글자가 똑같을 때</small></span></li>
+          <li data-i="1"><b>2</b><span>APPROVED_ALIAS_EXACT<small>승인된 별칭과 똑같을 때 (검토 통과한 별칭만)</small></span></li>
+          <li data-i="2"><b>3</b><span>TRIGRAM_EDIT_DISTANCE<small>글자 조각이 비슷할 때 — 오타를 잡는 자리</small></span></li>
+          <li data-i="3"><b>4</b><span>DENSE_VECTOR<small>뜻이 가까울 때 — 코사인 거리로 비교</small></span></li>
+        </ul>
+        <div class="stepbar">
+          <button type="button" id="ladder-prev">이전 단계</button>
+          <button type="button" id="ladder-next">다음 단계</button>
+        </div>
+        <span class="srcref">ai_worker/tasks/rag/candidate_index.py:267, :1449 — search_candidate_index</span>
+      </div>
+    </section>
+
+    <!-- 15 -->
+    <section class="slide" data-chapter="약 찾기" data-title="승인 안 된 카탈로그는 거절">
+      <span class="kicker">약 찾기</span>
+      <h2>승인 안 된 카탈로그로는 인덱스를 안 만든다</h2>
+      <p class="lede">카탈로그가 <code>APPROVED</code>이고 <code>CURRENT</code>가 아니면 <strong>인덱스 빌드 자체가 실패</strong>로 끝납니다. 검색 결과 한 줄마다 어느 인덱스·카탈로그·스냅샷에서 왔는지가 붙어 다닙니다.</p>
+      <div class="card">
+        <h3>빌드 실패 이유</h3>
+        <ul class="chips">
+          <li class="stop">CATALOG_NOT_APPROVED</li>
+          <li class="stop">CATALOG_STALE</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>결과 한 줄에 붙는 출처</h3>
+        <pre><code><span class="k">class</span> CandidateRawHit:
+    identity: ProductIdentity
+    stage: CandidateSearchStage
+    rank: int
+    index_version: str
+    catalog_version: str
+    source_snapshot_id: str
+    normalization_version: str
+    embedding_model_version: str | <span class="k">None</span></code></pre>
+        <span class="srcref">ai_worker/tasks/rag/candidate_index.py:58, :289</span>
+      </div>
+    </section>
+
+    <!-- 16 -->
+    <section class="slide" data-chapter="질의" data-title="질문은 비밀">
+      <span class="kicker">질의 ①</span>
+      <h2>질문은 비밀로 다룬다</h2>
+      <p class="lede">사용자 질문은 <code>SensitiveText</code>로 감싸서 <strong>로그·에러 메시지에 원문이 찍히지 않게</strong> 합니다. 추적은 원문 대신 질문 지문(<code>QueryFingerprint</code>)으로 합니다.</p>
+      <div class="card">
+        <h3>repr을 막아버린 래퍼</h3>
+        <pre><code><span class="k">class</span> SensitiveText:
+    <span class="s">"""A query wrapper that redacts itself in ordinary representations."""</span>
+    <span class="k">def</span> reveal(self) -&gt; str:
+        <span class="k">return</span> self.__value
+    <span class="k">def</span> __repr__(self) -&gt; str:
+        <span class="k">return</span> <span class="s">"&lt;redacted&gt;"</span>
+    __str__ = __repr__</code></pre>
+        <span class="srcref">ai_worker/tasks/rag/evidence_retrieval.py:22</span>
+      </div>
+    </section>
+
+    <!-- 17 -->
+    <section class="slide" data-chapter="질의" data-title="두 갈래로 찾고 합치기">
+      <span class="kicker">질의 ②</span>
+      <h2>두 갈래로 찾고 하나로 합친다</h2>
+      <p class="lede"><code>LEXICAL</code>(글자 기반)과 <code>DENSE</code>(벡터 기반)로 각각 찾은 뒤 같은 근거는 하나로 묶습니다. 묶인 후보는 <strong>어느 단계에서 몇 등에 몇 점이었는지</strong>를 <code>StageSignal</code>로 계속 들고 다닙니다.</p>
+      <div class="card">
+        <h3>후보 하나가 기억하는 것</h3>
+        <pre><code><span class="k">class</span> KnowledgeEvidenceCandidate:
+    provenance: KnowledgeEvidenceProvenance  <span class="c"># 출처·버전·locator·content_sha256</span>
+    content_text: SensitiveText              <span class="c"># 본문 (가려진 상태)</span>
+    stage_signals: tuple[StageSignal, ...]   <span class="c"># (stage, rank, score)</span></code></pre>
+        <span class="srcref">ai_worker/tasks/rag/evidence_retrieval.py:186</span>
+      </div>
+    </section>
+
+    <!-- 18 -->
+    <section class="slide" data-chapter="질의" data-title="rerank와 영수증">
+      <span class="kicker">질의 ③</span>
+      <h2>다시 줄 세우고, 영수증을 대조한다</h2>
+      <p class="lede">rerank 어댑터가 후보 순서를 다시 정합니다. 커널은 돌아온 응답이 <strong>내가 보낸 입력 해시와 같은지</strong> 확인하고, 다르면 그 자리에서 끊습니다.</p>
+      <div class="card">
+        <h3>끊는 이유들</h3>
+        <ul class="chips">
+          <li class="stop">RERANK_RECEIPT_MISMATCH</li>
+          <li class="stop">RERANK_RESULT_INVALID</li>
+          <li class="stop">RERANK_DEPENDENCY_ERROR</li>
+          <li class="warn">SEARCH_RECEIPT_MISMATCH</li>
+          <li class="warn">QUERY_BINDING_INVALID</li>
+          <li>NO_HITS</li>
+        </ul>
+        <span class="srcref">ai_worker/tasks/rag/evidence_retrieval.py:84, :312 — retrieve_knowledge_evidence</span>
+      </div>
+    </section>
+
+    <!-- 19 -->
+    <section class="slide" data-chapter="질의" data-title="아직 못 믿는다">
+      <span class="kicker">질의 ④</span>
+      <h2>여기까지는 아직 못 믿는다</h2>
+      <p class="lede">검색 결과 타입 이름에 <strong><code>Untrusted</code>가 그대로 붙어</strong> 있습니다. 검색은 후보를 고르기만 하고, 써도 되는지는 다음 관문이 결정합니다.</p>
+      <div class="card">
+        <h3>이름이 곧 경고문</h3>
+        <pre><code><span class="k">class</span> UntrustedKnowledgeEvidenceSelection:
+    candidate: KnowledgeEvidenceCandidate
+    rerank_rank: int
+    rerank_score: CanonicalScore
+
+<span class="c"># Evidence Gate를 통과하면 이름이 바뀐다</span>
+<span class="k">class</span> GatePassedKnowledgeEvidenceSelection:
+    selection: UntrustedKnowledgeEvidenceSelection
+    assessment_artifact_ref: ImmutableArtifactRef
+    eligibility_receipt_ref: ImmutableArtifactRef
+    verifier_artifact_ref: ImmutableArtifactRef</code></pre>
+        <span class="srcref">evidence_retrieval.py:234 · evidence_gate.py:191</span>
+      </div>
+    </section>
+
+    <!-- 20 -->
+    <section class="slide" data-chapter="관문" data-title="Evidence Gate (체험)">
+      <span class="kicker">관문 · 직접 해보기</span>
+      <h2>Evidence Gate: 네 개의 검사</h2>
+      <p class="lede"><strong>자격 → 유효기간 → 상충 → 개수</strong> 순서로 검사하고, 하나라도 걸리면 통과 근거가 0개가 됩니다. 스위치를 바꿔 판정이 어떻게 달라지는지 확인해 보세요.</p>
+      <div class="card">
+        <h3>입력 (정책: 근거 2개 이상 · 서로 다른 Snapshot 2개 이상)</h3>
+        <div class="controls">
+          <label class="ctl">
+            <span class="label">자격 검증기(eligibility verifier) 응답<small>EvidenceEligibilityVerifierPort.verify</small></span>
+            <select id="gate-elig">
+              <option value="pass">통과</option>
+              <option value="fail">자격 없음</option>
+              <option value="mismatch">영수증 불일치</option>
+              <option value="raise">예외 발생</option>
+            </select>
+          </label>
+          <label class="ctl">
+            <input type="checkbox" id="gate-stale" />
+            <span class="label">평가 시각이 근거 유효기간 밖이다<small>not (valid_from &lt;= evaluated_at &lt; valid_until)</small></span>
+          </label>
+          <label class="ctl">
+            <input type="checkbox" id="gate-conflict" />
+            <span class="label">같은 coverage_key에 SUPPORTS와 CONTRADICTS가 함께 있다<small>stance 충돌</small></span>
+          </label>
+          <label class="ctl">
+            <span class="label">지지(SUPPORTS) 근거 개수<small>minimum_supporting_items_per_coverage = 2</small></span>
+            <input type="range" id="gate-count" min="0" max="4" step="1" value="2" />
+            <span class="num" id="gate-count-n">2</span>
+          </label>
+          <label class="ctl">
+            <span class="label">서로 다른 Source Snapshot 개수<small>minimum_distinct_source_snapshots_per_coverage = 2</small></span>
+            <input type="range" id="gate-snap" min="1" max="3" step="1" value="2" />
+            <span class="num" id="gate-snap-n">2</span>
+          </label>
+        </div>
+        <div class="verdict" id="gate-out" role="status"></div>
+        <span class="srcref">ai_worker/tasks/rag/evidence_gate.py:208 — evaluate_evidence_gate</span>
+      </div>
+    </section>
+
+    <!-- 21 -->
+    <section class="slide" data-chapter="관문" data-title="정책은 숫자로 고정">
+      <span class="kicker">관문</span>
+      <h2>정책은 숫자로 적고, 해시로 못 박는다</h2>
+      <p class="lede">"몇 개 이상 필요한지"를 정책 객체에 넣고 <strong>버전과 내용 해시를 함께 고정</strong>합니다. 덕분에 나중에도 "그때 어떤 기준으로 통과했는지"를 재현할 수 있습니다.</p>
+      <div class="card">
+        <h3>정책 자체가 불변 artifact</h3>
+        <pre><code><span class="k">class</span> VersionedEvidenceGatePolicy:
+    artifact_ref: ImmutableArtifactRef   <span class="c"># code + version + content_sha256</span>
+    minimum_supporting_items_per_coverage: int
+    minimum_distinct_source_snapshots_per_coverage: int
+
+<span class="c"># 해시에 들어가는 전략 이름도 고정값이다</span>
+<span class="s">"conflict_strategy"</span>: <span class="s">"any-current-opposing-stance-v1"</span>
+<span class="s">"freshness_strategy"</span>: <span class="s">"valid-from-inclusive-valid-until-exclusive-v1"</span></code></pre>
+        <span class="srcref">ai_worker/tasks/rag/evidence_gate.py:142</span>
+      </div>
+    </section>
+
+    <!-- 22 -->
+    <section class="slide" data-chapter="관문" data-title="Source Governance Guard">
+      <span class="kicker">관문</span>
+      <h2>그 자료를 써도 되는 사이였나?</h2>
+      <p class="lede">번들의 모든 소스가 <strong>승인·유효기간·이용 범위·폐기 검사</strong>를 통과했는지 확인해 <code>PASS</code> 또는 <code>FAIL</code>을 냅니다. 지금 구현은 합성 전용이라 런타임을 실제로 허가하지는 않습니다.</p>
+      <div class="card">
+        <h3>FAIL로 관찰되는 이유 (일부)</h3>
+        <ul class="chips">
+          <li>SOURCE_NOT_ACTIVE</li>
+          <li>ENDPOINT_NOT_ELIGIBLE</li>
+          <li>APPROVAL_EXPIRED</li>
+          <li>LICENSE_NOT_APPROVED</li>
+          <li>CLINICAL_SCOPE_NOT_ALLOWED</li>
+          <li>SNAPSHOT_FRESHNESS_STALE</li>
+          <li>REVOCATION_UNRESOLVED</li>
+          <li>SCHEMA_DRIFT</li>
+        </ul>
+        <span class="srcref">ai_worker/tasks/rag/source_governance.py:47, :660</span>
+      </div>
+    </section>
+
+    <!-- 23 -->
+    <section class="slide" data-chapter="목표" data-title="목표 그래프">
+      <span class="kicker">목표 구조</span>
+      <h2>목표는 "노드가 고정된" 그래프</h2>
+      <p class="lede">응급·고위험 분기를 <strong>일반 검색보다 먼저</strong> 처리하고, 마지막 <code>release_gate</code>가 사용자 공개 여부를 정합니다. 자유 ReAct와 열린 웹 검색은 계약에서 금지돼 있습니다.</p>
+      <div class="card">
+        <h3>Chat Graph (ROUTINE 분기만 발췌)</h3>
+        <pre><code>START
+→ load_chat_intake_context
+→ safety_triage
+   ├─ URGENT | EMERGENCY → 승인된 응급 안내 → persist_result
+   ├─ UNKNOWN            → 승인된 fallback   → persist_result
+   └─ ROUTINE
+        → classify_question → classify_interaction_scope
+        → medication_identification_preflight
+        → pin_full_execution_context
+        → validate_bundle_and_source_freshness
+        → coverage_gate
+        → <span class="k">hybrid_retrieve</span>
+        → <span class="k">evidence_gate</span>
+        → generate_answer
+        → claim_citation_validator
+        → <span class="k">release_gate</span>
+        → persist_result</code></pre>
+        <span class="srcref">docs/contracts/targets/post-mvp-1/rag-runtime-v1.md — "고정 실행 Graph"</span>
+      </div>
+    </section>
+
+    <!-- 24 -->
+    <section class="slide" data-chapter="목표" data-title="fail-closed">
+      <span class="kicker">태도</span>
+      <h2>막히면 조용히 통과시키지 않는다</h2>
+      <p class="lede">근거 없음·상충·만료·인용 불일치면 <strong>이미 생성한 답변을 버리고</strong> 승인된 고정 문구만 저장합니다. 이 "fail-closed"가 RAG 코드 전체를 관통하는 기본 태도입니다.</p>
+      <div class="card">
+        <h3>같은 모양이 반복된다</h3>
+        <pre><code><span class="c"># 검색 커널</span>
+<span class="k">if not</span> _is_valid_request(request):
+    <span class="k">return</span> _outcome(VALIDATION_ERROR, REQUEST_INVALID)
+
+<span class="c"># Evidence Gate</span>
+<span class="k">if</span> stale_evidence_keys:
+    <span class="k">return</span> EvidenceGateOutcome(NO_RESULT, STALE, EVIDENCE_STALE, trace=...)
+
+<span class="c"># 수집</span>
+<span class="k">if not</span> result.snapshot_candidate_allowed:
+    <span class="k">raise</span> ValueError(...)</code></pre>
+      </div>
+    </section>
+
+    <!-- 25 -->
+    <section class="slide" data-chapter="다음" data-title="처음 읽을 순서">
+      <span class="kicker">다음 걸음</span>
+      <h2>처음 읽을 순서</h2>
+      <p class="lede">함수보다 <strong>타입(dataclass·StrEnum)부터</strong> 보면 흐름이 훨씬 빨리 잡힙니다. 아래 순서대로 열어 보세요.</p>
+      <div class="card">
+        <h3>추천 순서</h3>
+        <ul class="files">
+          <li><b>1</b><span><code>source_client/contracts.py</code> <em>— 외부 소스와의 약속</em></span></li>
+          <li><b>2</b><span><code>source_ingestion/service.py</code> <em>— 세 줄짜리 수집 경계</em></span></li>
+          <li><b>3</b><span><code>source_ingestion/snapshot_lifecycle.py</code> <em>— 도장 규칙</em></span></li>
+          <li><b>4</b><span><code>evidence_retrieval.py</code> <em>— 타입 → retrieve_knowledge_evidence</em></span></li>
+          <li><b>5</b><span><code>evidence_gate.py</code> <em>— 네 개의 검사</em></span></li>
+          <li><b>6</b><span><code>candidate_index.py</code> <em>— 약 이름 검색 사다리</em></span></li>
+          <li><b>7</b><span><code>docs/contracts/targets/post-mvp-1/rag-runtime-v1.md</code> <em>— 목표 그래프</em></span></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 26 -->
+    <section class="slide" data-chapter="다음" data-title="직접 돌려보기">
+      <span class="kicker">다음 걸음</span>
+      <h2>직접 돌려보기</h2>
+      <p class="lede">RAG 테스트는 <strong>실제 외부 API나 별도 DB 서버 없이</strong> 돌아갑니다. 이 투어에서 본 규칙들이 그대로 테스트로 박혀 있습니다.</p>
+      <div class="card">
+        <h3>명령</h3>
+        <pre><code>uv run pytest ai_worker/tests/rag -q
+<span class="c"># 818 passed</span></code></pre>
+        <span class="srcref">2026-09-08 기준 · ai_worker/tests/rag (source_client · source_ingestion 포함)</span>
+      </div>
+      <div class="card">
+        <h3>한 문장 요약</h3>
+        <p class="lede" style="margin:0">근거를 찾는 코드와 근거를 <strong>믿어도 되는지 판정하는 코드</strong>가 일부러 분리돼 있고, 둘 사이의 모든 것에 버전과 해시가 붙습니다.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <div class="navbar">
+      <button class="navbtn" id="prev" type="button">← 이전</button>
+      <button class="navbtn primary" id="next" type="button">다음 →</button>
+    </div>
+    <p class="keyhint">← → 이동 · Space 다음 · Home/End 처음·끝 · M 목차 · T 밝기 · ? 도움말</p>
+  </footer>
+</div>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="inner">
+    <h2 id="ov-title">목차</h2>
+    <ul class="toc" id="toc"></ul>
+    <h2>키보드</h2>
+    <dl class="keys">
+      <dt>→ / Space / J</dt><dd>다음 장</dd>
+      <dt>← / K</dt><dd>이전 장</dd>
+      <dt>Home / End</dt><dd>처음 / 마지막</dd>
+      <dt>M</dt><dd>목차 열기·닫기</dd>
+      <dt>T</dt><dd>밝기 전환</dd>
+      <dt>Esc</dt><dd>닫기</dd>
+    </dl>
+    <p class="keyhint" style="text-align:left;margin-top:16px">모바일에서는 좌우 스와이프로 넘길 수 있습니다.</p>
+  </div>
+</div>
+
+<p class="sr" id="live" role="status" aria-live="polite"></p>
+
+<script>
+(function () {
+  "use strict";
+
+  var slides = Array.prototype.slice.call(document.querySelectorAll(".slide"));
+  var total = slides.length;
+  var i = 0;
+
+  var elBar = document.getElementById("bar");
+  var elCounter = document.getElementById("counter");
+  var elChapter = document.getElementById("chapter");
+  var elPrev = document.getElementById("prev");
+  var elNext = document.getElementById("next");
+  var elOverlay = document.getElementById("overlay");
+  var elToc = document.getElementById("toc");
+  var elLive = document.getElementById("live");
+
+  /* ---------- 이동 ---------- */
+  function clamp(n) { return Math.max(0, Math.min(total - 1, n)); }
+
+  function show(n, pushHash) {
+    i = clamp(n);
+    slides.forEach(function (s, k) { s.classList.toggle("is-current", k === i); });
+    var cur = slides[i];
+    elBar.style.width = ((i + 1) / total * 100) + "%";
+    elCounter.textContent = (i + 1) + " / " + total;
+    elChapter.textContent = cur.dataset.chapter || "";
+    elPrev.disabled = i === 0;
+    elNext.textContent = i === total - 1 ? "처음으로 ↺" : "다음 →";
+    elLive.textContent = (i + 1) + "장. " + (cur.dataset.title || "");
+    Array.prototype.forEach.call(elToc.querySelectorAll("button"), function (b, k) {
+      b.setAttribute("aria-current", k === i ? "true" : "false");
+    });
+    if (pushHash !== false) {
+      try { history.replaceState(null, "", "#" + (i + 1)); } catch (e) {}
+    }
+    window.scrollTo({ top: 0, behavior: "instant" in document.documentElement.style ? "instant" : "auto" });
+  }
+
+  function next() { if (i === total - 1) { show(0); } else { show(i + 1); } }
+  function prev() { show(i - 1); }
+
+  elNext.addEventListener("click", next);
+  elPrev.addEventListener("click", prev);
+
+  /* ---------- 목차 ---------- */
+  slides.forEach(function (s, k) {
+    var li = document.createElement("li");
+    var b = document.createElement("button");
+    b.type = "button";
+    b.innerHTML = "<b>" + (k + 1) + "</b><span></span><em></em>";
+    b.querySelector("span").textContent = s.dataset.title || ("장 " + (k + 1));
+    b.querySelector("em").textContent = s.dataset.chapter || "";
+    b.addEventListener("click", function () { closeOverlay(); show(k); });
+    li.appendChild(b);
+    elToc.appendChild(li);
+  });
+
+  function openOverlay() { elOverlay.hidden = false; document.body.style.overflow = "hidden"; }
+  function closeOverlay() { elOverlay.hidden = true; document.body.style.overflow = ""; }
+  function toggleOverlay() { elOverlay.hidden ? openOverlay() : closeOverlay(); }
+  document.getElementById("btn-toc").addEventListener("click", toggleOverlay);
+  elOverlay.addEventListener("click", function (e) { if (e.target === elOverlay) closeOverlay(); });
+
+  /* ---------- 밝기 ---------- */
+  var root = document.documentElement;
+  document.getElementById("btn-theme").addEventListener("click", function () {
+    var dark = matchMedia("(prefers-color-scheme: dark)").matches;
+    var cur = root.getAttribute("data-theme") || (dark ? "dark" : "light");
+    root.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
+  });
+
+  /* ---------- 키보드 ---------- */
+  function typing(el) {
+    if (!el) return false;
+    var t = (el.tagName || "").toLowerCase();
+    return t === "input" || t === "select" || t === "textarea" || el.isContentEditable;
+  }
+
+  document.addEventListener("keydown", function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    var k = e.key;
+
+    if (k === "Escape") { closeOverlay(); return; }
+    if (typing(e.target) && (k === "ArrowLeft" || k === "ArrowRight" || k === " ")) return;
+
+    switch (k) {
+      case "ArrowRight": case "PageDown": case "j": case "J":
+        e.preventDefault(); next(); break;
+      case " ":
+        e.preventDefault(); next(); break;
+      case "ArrowLeft": case "PageUp": case "k": case "K":
+        e.preventDefault(); prev(); break;
+      case "Home": e.preventDefault(); show(0); break;
+      case "End": e.preventDefault(); show(total - 1); break;
+      case "m": case "M": e.preventDefault(); toggleOverlay(); break;
+      case "t": case "T": e.preventDefault(); document.getElementById("btn-theme").click(); break;
+      case "?": e.preventDefault(); openOverlay(); break;
+      default: break;
+    }
+  });
+
+  /* ---------- 스와이프 ---------- */
+  var sx = 0, sy = 0, tracking = false;
+  document.addEventListener("touchstart", function (e) {
+    if (e.touches.length !== 1 || !elOverlay.hidden) { tracking = false; return; }
+    if (typing(e.target) || (e.target.closest && e.target.closest("pre, .ctl"))) { tracking = false; return; }
+    tracking = true; sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+  }, { passive: true });
+
+  document.addEventListener("touchend", function (e) {
+    if (!tracking) return;
+    tracking = false;
+    var t = e.changedTouches[0];
+    var dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.abs(dx) < 55 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
+    dx < 0 ? next() : prev();
+  }, { passive: true });
+
+  /* ---------- 위젯 1: Snapshot 판정 ---------- */
+  var snapSame = document.getElementById("snap-same");
+  var snapEqual = document.getElementById("snap-equal");
+  var snapFailed = document.getElementById("snap-failed");
+  var snapOut = document.getElementById("snap-out");
+
+  function renderSnapshot() {
+    var same = snapSame.checked, equal = snapEqual.checked, failed = snapFailed.checked;
+    var decision, tone, why;
+
+    if (same) {
+      if (!equal) {
+        decision = "SOURCE_VERSION_CONFLICT"; tone = "block";
+        why = "같은 버전 번호인데 내용이 다릅니다. 새 Snapshot을 만들지 않고 충돌로 막습니다.";
+      } else if (failed) {
+        decision = "CREATED"; tone = "pass";
+        why = "내용은 같지만 기존 Snapshot이 검증에 실패한 상태라, 새로 만들어 다시 시도합니다.";
+      } else {
+        decision = "NO_CHANGE"; tone = "pass";
+        why = "버전도 내용도 같습니다. 아무것도 새로 만들지 않습니다.";
+      }
+    } else {
+      if (equal && !failed) {
+        decision = "NO_CHANGE"; tone = "pass";
+        why = "버전 번호는 새롭지만 직전 Snapshot과 내용이 같습니다. 중복 저장을 피합니다.";
+      } else {
+        decision = "CREATED"; tone = "pass";
+        why = "직전과 내용이 다르거나 직전이 검증 실패 상태입니다. 새 Snapshot을 만듭니다.";
+      }
+    }
+
+    snapOut.className = "verdict " + tone;
+    snapOut.innerHTML =
+      '<dl><dt>decision</dt><dd>' + decision + '</dd></dl>' +
+      '<p class="why">' + why + '</p>';
+  }
+
+  [snapSame, snapEqual, snapFailed].forEach(function (el) {
+    el.addEventListener("change", renderSnapshot);
+  });
+  renderSnapshot();
+
+  /* ---------- 위젯 2: 검색 사다리 ---------- */
+  var ladder = document.getElementById("ladder");
+  var rungs = Array.prototype.slice.call(ladder.querySelectorAll("li"));
+  var rung = 0;
+
+  function renderLadder() {
+    rungs.forEach(function (li, k) { li.classList.toggle("on", k <= rung); });
+    document.getElementById("ladder-prev").disabled = rung === 0;
+    document.getElementById("ladder-next").disabled = rung === rungs.length - 1;
+  }
+  document.getElementById("ladder-next").addEventListener("click", function () {
+    rung = Math.min(rungs.length - 1, rung + 1); renderLadder();
+  });
+  document.getElementById("ladder-prev").addEventListener("click", function () {
+    rung = Math.max(0, rung - 1); renderLadder();
+  });
+  rungs.forEach(function (li) {
+    li.addEventListener("click", function () { rung = Number(li.dataset.i); renderLadder(); });
+  });
+  renderLadder();
+
+  /* ---------- 위젯 3: Evidence Gate ---------- */
+  var gElig = document.getElementById("gate-elig");
+  var gStale = document.getElementById("gate-stale");
+  var gConflict = document.getElementById("gate-conflict");
+  var gCount = document.getElementById("gate-count");
+  var gSnap = document.getElementById("gate-snap");
+  var gOut = document.getElementById("gate-out");
+  var MIN_ITEMS = 2, MIN_SNAPSHOTS = 2;
+
+  function renderGate() {
+    document.getElementById("gate-count-n").textContent = gCount.value;
+    document.getElementById("gate-snap-n").textContent = gSnap.value;
+
+    var count = Number(gCount.value), snaps = Number(gSnap.value);
+    var exec, status, reason, tone, why;
+
+    if (gElig.value === "raise") {
+      exec = "DEPENDENCY_ERROR"; status = "None"; reason = "ELIGIBILITY_VERIFICATION_ERROR"; tone = "err";
+      why = "검증기 호출이 예외로 끝났습니다. 근거 판정을 내리지 않고 의존성 오류로 멈춥니다.";
+    } else if (gElig.value === "mismatch") {
+      exec = "DEPENDENCY_ERROR"; status = "None"; reason = "ELIGIBILITY_RECEIPT_MISMATCH"; tone = "err";
+      why = "검증기가 돌려준 영수증이 요청한 평가와 맞지 않습니다. 응답을 믿지 않고 멈춥니다.";
+    } else if (gElig.value === "fail") {
+      exec = "NO_RESULT"; status = "INSUFFICIENT"; reason = "EVIDENCE_INELIGIBLE"; tone = "block";
+      why = "그 근거를 쓸 자격이 없다고 판정됐습니다. 나머지 검사는 하지 않습니다.";
+    } else if (gStale.checked) {
+      exec = "NO_RESULT"; status = "STALE"; reason = "EVIDENCE_STALE"; tone = "block";
+      why = "평가 시각이 근거의 유효기간 밖입니다. 유효기간은 시작 포함, 끝 제외로 계산합니다.";
+    } else if (gConflict.checked) {
+      exec = "NO_RESULT"; status = "CONFLICTED"; reason = "EVIDENCE_CONFLICTED"; tone = "block";
+      why = "같은 주제에 지지와 반대 근거가 함께 있습니다. 한쪽을 골라주지 않고 답변을 포기합니다.";
+    } else if (count < MIN_ITEMS || snaps < MIN_SNAPSHOTS) {
+      exec = "NO_RESULT"; status = "INSUFFICIENT"; reason = "EVIDENCE_INSUFFICIENT"; tone = "block";
+      why = "근거 " + count + "개 · 서로 다른 Snapshot " + snaps + "개로는 정책 기준(각각 " +
+            MIN_ITEMS + "개 이상)에 미달입니다.";
+    } else {
+      exec = "SUCCEEDED"; status = "SUFFICIENT"; reason = "EVIDENCE_SUFFICIENT"; tone = "pass";
+      why = "네 검사를 모두 통과했습니다. SUPPORTS 근거만 GatePassed로 다음 단계에 넘어갑니다.";
+    }
+
+    gOut.className = "verdict " + tone;
+    gOut.innerHTML =
+      '<dl>' +
+      '<dt>execution</dt><dd>' + exec + '</dd>' +
+      '<dt>evidence</dt><dd>' + status + '</dd>' +
+      '<dt>reason</dt><dd>' + reason + '</dd>' +
+      '<dt>통과 근거</dt><dd>' + (tone === "pass" ? count + "개" : "0개") + '</dd>' +
+      '</dl>' +
+      '<p class="why">' + why + '</p>';
+  }
+
+  [gElig, gStale, gConflict, gCount, gSnap].forEach(function (el) {
+    el.addEventListener("input", renderGate);
+    el.addEventListener("change", renderGate);
+  });
+  renderGate();
+
+  /* ---------- 시작 위치 ---------- */
+  var fromHash = parseInt((location.hash || "").replace("#", ""), 10);
+  show(isFinite(fromHash) && fromHash >= 1 ? fromHash - 1 : 0, false);
+
+  window.addEventListener("hashchange", function () {
+    var n = parseInt((location.hash || "").replace("#", ""), 10);
+    if (isFinite(n) && n >= 1 && n - 1 !== i) show(n - 1, false);
+  });
+})();
+</script>
+</body>
+</html>

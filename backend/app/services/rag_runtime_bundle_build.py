@@ -77,14 +77,16 @@ async def execute_runtime_bundle_build(
     if outcome.decision is not RuntimeBundleBuildDecision.BUILDABLE:
         return RuntimeBundleBuildExecution(outcome=outcome, persisted=None)
 
-    # A BUILDABLE outcome always carries these; asserting keeps the type contract explicit
-    # instead of silently writing None into a NOT NULL column.
+    # A BUILDABLE outcome always carries these; the repository re-checks it and additionally
+    # verifies that the rows below recompute to outcome.bundle_manifest_hash, so the judgment
+    # cannot be bypassed by handing over different rows.
     configuration = outcome.configuration
     if configuration is None or outcome.manifest_hash is None or outcome.bundle_manifest_hash is None:
         raise AssertionError("BUILDABLE outcome must carry a configuration and both hashes")
 
     repository = RagRuntimeRepository(session)
     persisted = await repository.build_runtime_bundle(
+        outcome=outcome,
         manifest=RagRuntimeExecutionManifestCreate(
             manifest_key=request.execution_manifest.manifest_key,
             manifest_version=request.execution_manifest.manifest_version,

@@ -83,9 +83,23 @@ Migration은 `rag_runtime_release_bundle`·`rag_runtime_bundle_source`에 행이
 
 `RuntimeBundleSourceMemberInput`·`RuntimeBundleArtifactMemberInput`의 승인·freshness·revocation·scope 필드는 **기본값을 갖지 않는다.** 생략을 허용으로 읽으면 최소 인자 생성이 곧 통과가 된다. 기본값은 pinning 설정(`required`, `selected_for_operation`)에만 둔다.
 
-### 6. member set 불변은 검증으로 보장한다
+### 6. kernel 판정은 저장 경계에서 강제한다
 
-`CONTRIBUTING.md`가 Trigger 도입을 금지하므로 DB가 물리적으로 INSERT를 막지는 않는다. 대신 `verify_persisted_bundle_manifest_hash`가 저장 행에서 해시를 재계산해 저장값과 비교한다. member 추가·변경은 재계산 해시 불일치로 **탐지된다.** 이 성질을 통합 테스트로 고정한다.
+판정이 권고가 아니라 **강제**여야 한다. `RagRuntimeRepository.build_runtime_bundle`은 `RuntimeBundleBuildOutcome`을 **필수 인자**로 받고 다음을 거부한다.
+
+| 거부 조건 | 근거 |
+| --- | --- |
+| `decision`이 `BUILDABLE`이 아니다 | 판정을 우회한 저장 차단 |
+| `manifest_hash`·`bundle_manifest_hash`가 판정 결과와 다르다 | 다른 해시를 끼워 넣는 것 차단 |
+| 저장할 행에서 재계산한 해시 ≠ 판정 해시 | **BUILDABLE 판정을 들고 다른 행을 넘기는 것** 차단 |
+| member set이 비어 있다 | 빈 member set을 가리키는 해시 차단 |
+
+마지막 항목이 핵심이다. outcome만 요구하면 "유효한 판정 + 다른 행" 조합이 남는데, 저장 직전 행 기준 재계산으로 닫는다. 이 검사는 Create DTO만 읽으므로 「구성은 컬럼값만으로 재구성 가능하다」는 §1 원칙을 같은 코드로 증명한다.
+
+### 7. member set 불변은 API 차단 + 검증 탐지 2단으로 보장한다
+
+- **API 차단:** `create_bundle_source`를 public 표면에서 제거하고 `_create_bundle_source`로 닫았다. member는 `build_runtime_bundle` 안에서만 쓰인다. public member write 경로가 0건임을 테스트로 고정한다.
+- **탐지:** `CONTRIBUTING.md`가 Trigger 도입을 금지하므로 raw INSERT는 물리적으로 막지 못한다. 대신 `verify_persisted_bundle_manifest_hash`가 저장 행에서 해시를 재계산해 비교하므로 **탐지된다.** ORM 직접 insert로 이 성질을 통합 테스트에서 고정한다.
 
 ## 검토한 대안
 
@@ -93,7 +107,8 @@ Migration은 `rag_runtime_release_bundle`·`rag_runtime_bundle_source`에 행이
 | --- | --- |
 | **해시를 저장 가능한 범위로 축소** (승인·scope·freshness policy hash·artifact version·환경을 해시에서 제거) | 기각. `rag-runtime-v1.md`가 Guard에 「Bundle 전체 Source·Snapshot Member의 승인·Freshness·Scope Policy 무결성」 검사를 요구한다. 이를 identity에서 빼면 계약이 요구하는 결속이 약해진다. |
 | **정규화된 `rag_runtime_bundle_artifact` 테이블 도입** | 보류. `rag_runtime_bundle_source`와 대칭이고 가변 cardinality에 적합하지만, #164가 머지한 bundle 행 컬럼 7개를 폐기해야 해 변경 폭이 커진다. artifact 종류는 계약이 5종으로 고정하므로 additive 컬럼으로 현재 요구를 충족한다. 종류가 늘거나 artifact별 `required`/`selected_for_operation`이 필요해지면 재검토한다. |
-| **DB Trigger로 member 불변 강제** | 기각. `CONTRIBUTING.md`가 요구사항·승인 계약에 없는 Trigger 도입을 금지한다. 재계산 검증으로 탐지 가능하다. |
+| **DB Trigger로 member 불변 강제** | 기각. `CONTRIBUTING.md`가 요구사항·승인 계약에 없는 Trigger 도입을 금지한다. public write 차단 + 재계산 검증 2단으로 대체한다. |
+| **outcome을 받지 않고 service 계층만으로 판정 강제** | 기각. repository가 여전히 직접 호출 가능해 판정이 권고에 머문다. 리뷰에서 확인된 결함이다. |
 | **`backend` 대신 `ai_worker/adapters` Protocol+adapter로 build port 구현** | 기각. `sqlalchemy_source_snapshot_repository.py` 방식은 `table()` 리터럴로 스키마를 재선언하는데, Bundle 6개 테이블의 model·migration·리뷰어가 모두 `backend`에 있어 스키마 정본이 이중화된다. |
 
 ## 함께 결정할 사항 (리뷰 필요)
@@ -117,4 +132,4 @@ Migration은 `rag_runtime_release_bundle`·`rag_runtime_bundle_source`에 행이
 1. `@phina-io`가 migration·복합 FK·CHECK·transaction 경계와 「해시 입력 = 저장 컬럼」 원칙을 승인한다.
 2. `@hazelnutflavoured`가 backfill 금지와 fail-closed 기본값 금지를 승인한다.
 3. 두 승인 모두 PR #416 최신 HEAD 기준으로 기록한다. 승인 전에는 이 Decision을 `Approved`로 전이하지 않으며, PR 병합만으로 승인을 대체하지 않는다.
-4. `backend` → `ai_worker` 경계 결정을 함께 기록한다.
+4. `backend` → `ai_worker` 경계 결정을 함께 기록한다. 이 경계는 service뿐 아니라 **repository까지** 확장된다 — §6의 행 기준 재계산 검증이 kernel의 `canonical_runtime_bundle_manifest_hash`를 필요로 한다.

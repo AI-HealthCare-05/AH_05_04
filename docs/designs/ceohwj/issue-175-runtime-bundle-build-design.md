@@ -50,7 +50,9 @@ PR #416 리뷰에서 3건이 지적됐고 모두 유효했다. 초기 설계의 
 | --- | --- | --- |
 | **[BLOCKER]** 해시에 넣은 실행 구성을 저장 후 복원 불가 | `approval_version`·`scope_policy_hash`·`freshness_policy_hash`·artifact `version`·환경·Catalog `version`/`hash`가 해시 입력이지만 저장 컬럼이 없었다. artifact version만 바꾸면 해시는 달라지고 저장 행은 바이트 동일해진다 → `bundle_manifest_hash`가 불투명 토큰 | Migration `175a1b2c3d4e`로 13개 컬럼 추가. 해시 입력을 `RuntimeBundleCanonicalConfiguration` 하나로 좁히고 그 전량을 영속화. 저장→재조회→해시 재계산 왕복을 통합 테스트로 고정 (§6) |
 | **[MUST FIX]** Source Snapshot 존재를 Catalog 승인·완성으로 대체 | `CATALOG` purpose 존재만 확인하고 `verification_status`·`is_complete`·Candidate Index 결속을 검사하지 않았다. 승인 관측값 기본값이 전부 허용이라 최소 인자 생성이 곧 통과였다 | `MedicationCatalogBinding` 필수 입력 도입, `CandidateCatalogExport` 계약 검증, Candidate Index ↔ Catalog exact-match 결속. 승인 관측 필드의 기본값 전면 제거 (§5.3) |
-| **[MUST FIX]** 검증된 불변 Bundle을 만드는 실행 경계 부재 | production 호출자 0건. 임의 hash·빈 member 저장 가능, 생성 후 member 추가 가능 | `execute_runtime_bundle_build` 실행 함수 구현. 빈 member set 저장 차단. member 추가는 재계산 해시 불일치로 탐지 (§7) |
+| **[MUST FIX]** 검증된 불변 Bundle을 만드는 실행 경계 부재 | production 호출자 0건. 임의 hash·빈 member 저장 가능, 생성 후 member 추가 가능 | `execute_runtime_bundle_build` 실행 함수 구현. **`build_runtime_bundle`이 outcome을 필수 인자로 받아** 비-BUILDABLE·해시 불일치·행 불일치·빈 member를 거부. `create_bundle_source`를 private으로 닫아 public member write 0건 (§7) |
+
+2차 리뷰(송은영, 08:34Z)에서 같은 두 항목이 재확인됐다. 리뷰 시점은 1차 수정 커밋(09:10Z)보다 앞서 BLOCKER는 이미 해소된 상태였으나, MUST FIX 두 항목은 **1차 수정 후에도 유효했다**: `build_runtime_bundle`이 여전히 outcome을 받지 않아 판정이 권고에 머물렀고, `create_bundle_source`가 public이라 생성 후 member 추가가 가능했다. 2차 수정에서 둘 다 닫았다.
 
 ## 3. 해결하려는 문제
 

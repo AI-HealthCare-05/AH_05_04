@@ -1,0 +1,1157 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RAG 코드 투어 — develop 기준</title>
+<style>
+:root{
+  --bg:#f6f7fb; --bg2:#ffffff; --ink:#151a26; --ink2:#4a5468; --ink3:#79839a;
+  --line:#e2e6ef; --line2:#cdd4e2;
+  --accent:#3d5afe; --accent-soft:#e8ecff;
+  --ok:#12855a; --ok-bg:#e2f5ec;
+  --warn:#a56200; --warn-bg:#fdf0d9;
+  --no:#b3261e; --no-bg:#fbe6e4;
+  --code-bg:#eef1f7;
+  --shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px rgba(16,24,40,.07);
+  --radius:16px;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0e1117; --bg2:#161b26; --ink:#e8ecf4; --ink2:#a9b3c6; --ink3:#7d879b;
+    --line:#242c3b; --line2:#333d51;
+    --accent:#8fa2ff; --accent-soft:#1d2440;
+    --ok:#5fd6a4; --ok-bg:#11291f;
+    --warn:#f2c26b; --warn-bg:#2c2313;
+    --no:#ff9c92; --no-bg:#301917;
+    --code-bg:#1d2331;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 28px rgba(0,0,0,.35);
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard","Noto Sans KR",system-ui,"Segoe UI",sans-serif;
+  font-size:16px; line-height:1.72; -webkit-text-size-adjust:100%;
+  padding-bottom:96px;
+}
+/* ---------- layout ---------- */
+.wrap{max-width:860px;margin:0 auto;padding:0 18px}
+header.top{
+  position:sticky;top:0;z-index:40;background:color-mix(in srgb,var(--bg) 88%,transparent);
+  backdrop-filter:saturate(180%) blur(12px);border-bottom:1px solid var(--line);
+}
+.topbar{max-width:860px;margin:0 auto;padding:10px 18px;display:flex;align-items:center;gap:12px}
+.brand{font-weight:700;font-size:14px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brand span{color:var(--ink3);font-weight:500}
+.topbar .grow{flex:1}
+.btn{
+  appearance:none;border:1px solid var(--line2);background:var(--bg2);color:var(--ink);
+  border-radius:10px;min-height:38px;padding:0 12px;font-size:13px;font-weight:600;
+  cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;
+}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn:active{transform:translateY(1px)}
+.btn.icon{padding:0 10px;min-width:38px;justify-content:center}
+.progress{height:3px;background:var(--line);position:relative}
+.progress > i{display:block;height:100%;background:var(--accent);width:0;transition:width .25s ease}
+
+/* ---------- slides ---------- */
+.slide{padding:26px 0 8px;animation:fade .28s ease}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+body.flow .slide{border-bottom:1px solid var(--line);padding-bottom:34px;margin-bottom:14px}
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0 0 6px}
+h1{font-size:clamp(26px,6.2vw,40px);line-height:1.25;letter-spacing:-.02em;margin:.1em 0 .35em}
+h2{font-size:clamp(21px,4.6vw,29px);line-height:1.32;letter-spacing:-.02em;margin:.1em 0 .5em}
+h3{font-size:16px;margin:1.5em 0 .4em;letter-spacing:-.01em}
+p{margin:0 0 1em;color:var(--ink2)}
+p.lead{font-size:clamp(17px,3.6vw,19px);color:var(--ink)}
+strong{color:var(--ink);font-weight:700}
+ul,ol{margin:0 0 1em;padding-left:1.25em;color:var(--ink2)}
+li{margin:.3em 0}
+code,kbd{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--code-bg);border-radius:5px;padding:.12em .38em;color:var(--ink);word-break:break-all}
+kbd{background:var(--bg2);border:1px solid var(--line2);border-bottom-width:2px;border-radius:6px;padding:.1em .45em;font-size:.8em;color:var(--ink)}
+a{color:var(--accent)}
+
+.card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow);margin:0 0 16px}
+.card > :last-child{margin-bottom:0}
+.card h3{margin-top:0}
+.why{border-left:3px solid var(--accent);background:var(--accent-soft);border-radius:0 12px 12px 0;padding:12px 16px;margin:0 0 16px}
+.why > b{display:block;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-bottom:2px}
+.why p{margin:0;color:var(--ink)}
+.eli5{background:var(--bg2);border:1px dashed var(--line2);border-radius:var(--radius);padding:14px 18px;margin:0 0 16px}
+.eli5 > b{display:block;font-size:12px;letter-spacing:.06em;color:var(--ink3);margin-bottom:2px}
+.eli5 p{margin:0;color:var(--ink);font-size:17px}
+.eli5 p b,.why p b{display:inline;font-size:inherit;letter-spacing:normal;color:var(--ink);font-weight:700}
+
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700;border-radius:999px;padding:2px 9px;white-space:nowrap;line-height:1.7}
+.tag.ok{background:var(--ok-bg);color:var(--ok)}
+.tag.warn{background:var(--warn-bg);color:var(--warn)}
+.tag.no{background:var(--no-bg);color:var(--no)}
+.tag.neutral{background:var(--code-bg);color:var(--ink2)}
+
+.files{list-style:none;padding:0;margin:0}
+.files li{padding:7px 0;border-top:1px solid var(--line);font-size:14px;color:var(--ink2)}
+.files li:first-child{border-top:0}
+.files code{background:none;padding:0;color:var(--ink);font-weight:600}
+
+.tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg2);margin:0 0 16px}
+table{border-collapse:collapse;width:100%;min-width:540px;font-size:14px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;letter-spacing:.04em;color:var(--ink3);text-transform:uppercase;font-weight:700;white-space:nowrap}
+tr:last-child td{border-bottom:0}
+td:first-child{font-weight:600;color:var(--ink);white-space:nowrap}
+
+.figure{margin:0 0 18px}
+.figure svg{display:block;width:100%;height:auto;background:var(--bg2);border:1px solid var(--line);border-radius:var(--radius)}
+.figure figcaption{font-size:13px;color:var(--ink3);margin-top:8px;text-align:center}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:0 0 16px}
+.stat{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.stat .n{font-size:26px;font-weight:800;letter-spacing:-.02em;line-height:1.2}
+.stat .l{font-size:12px;color:var(--ink3);margin-top:2px}
+.stat.ok .n{color:var(--ok)} .stat.warn .n{color:var(--warn)} .stat.no .n{color:var(--no)}
+
+.script{background:var(--bg2);border:1px solid var(--line);border-left:4px solid var(--ok);border-radius:0 var(--radius) var(--radius) 0;padding:14px 18px;margin:0 0 14px;font-size:17px;color:var(--ink)}
+pre{background:var(--code-bg);border:1px solid var(--line);border-radius:12px;padding:12px 14px;overflow-x:auto;margin:0 0 14px;font-size:13px;line-height:1.6}
+pre code{background:none;padding:0;word-break:normal;white-space:pre}
+
+/* ---------- nav bar ---------- */
+.navbar{
+  position:fixed;left:0;right:0;bottom:0;z-index:50;
+  background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(12px);
+  border-top:1px solid var(--line);
+  padding:8px 14px calc(8px + env(safe-area-inset-bottom));
+}
+.navinner{max-width:860px;margin:0 auto;display:flex;align-items:center;gap:8px}
+.navinner .btn{min-height:44px}
+.counter{flex:1;text-align:center;font-size:13px;color:var(--ink3);font-variant-numeric:tabular-nums}
+.counter b{color:var(--ink)}
+body.flow .navbar{display:none}
+body.flow{padding-bottom:40px}
+
+/* ---------- overlays ---------- */
+.overlay{position:fixed;inset:0;z-index:100;background:color-mix(in srgb,var(--bg) 94%,transparent);
+  backdrop-filter:blur(6px);overflow-y:auto;padding:18px 18px calc(28px + env(safe-area-inset-bottom))}
+.overlay[hidden]{display:none}
+.ovhead{max-width:860px;margin:0 auto 12px;display:flex;align-items:center;gap:10px}
+.ovhead h2{margin:0;flex:1;font-size:20px}
+.toc{max-width:860px;margin:0 auto;list-style:none;padding:0}
+.toc li{margin:0 0 6px}
+.toc button{
+  width:100%;text-align:left;background:var(--bg2);border:1px solid var(--line);border-radius:12px;
+  padding:11px 14px;font:inherit;font-size:15px;color:var(--ink);cursor:pointer;display:flex;gap:10px;align-items:baseline;min-height:44px;
+}
+.toc button:hover{border-color:var(--accent)}
+.toc button[aria-current="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.toc .num{color:var(--ink3);font-size:12px;font-variant-numeric:tabular-nums;min-width:20px;font-weight:700}
+.keys{max-width:860px;margin:0 auto;list-style:none;padding:0}
+.keys li{display:flex;gap:12px;align-items:baseline;padding:9px 0;border-top:1px solid var(--line);font-size:15px;color:var(--ink2)}
+.keys li:first-child{border-top:0}
+.keys .k{min-width:130px}
+
+.hint{font-size:13px;color:var(--ink3);text-align:center;margin:22px 0 0}
+@media (max-width:640px){
+  .topbar .hide-sm{display:none}
+  .wrap{padding:0 15px}
+  .card{padding:14px 15px}
+}
+@media print{
+  .navbar,header.top,.overlay{display:none!important}
+  .slide{display:block!important;page-break-after:always}
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="topbar">
+    <div class="brand">RAG 코드 투어 <span>· develop 23d11234 · 2026-09-09</span></div>
+    <div class="grow"></div>
+    <button class="btn" id="btnFlow" title="전체를 한 페이지로 보기">📜 <span class="hide-sm">쭉 보기</span></button>
+    <button class="btn icon" id="btnToc" title="목차 (m)" aria-label="목차">☰</button>
+    <button class="btn icon hide-sm" id="btnHelp" title="단축키 (?)" aria-label="단축키">?</button>
+  </div>
+  <div class="progress"><i id="bar"></i></div>
+</header>
+
+<main class="wrap" id="deck">
+
+<!-- 1 ------------------------------------------------------------------ -->
+<section class="slide" data-title="시작하기">
+  <p class="eyebrow">AI-HealthCare-05 / AH_05_04</p>
+  <h1>우리 프로젝트의 RAG,<br>5살한테 설명하듯이</h1>
+  <p class="lead">이 문서는 <code>origin/develop</code>(커밋 <code>23d11234</code>)에 실제로 들어 있는 코드만 보고 만들었습니다. 그림 → 비유 → 실제 파일 순서로 갑니다.</p>
+  <div class="card">
+    <h3>이걸 다 보고 나면</h3>
+    <ul>
+      <li>RAG 파이프라인이 <strong>어떤 순서로</strong> 도는지 말할 수 있습니다.</li>
+      <li>각 단계가 <strong>진짜 구현됨 / 계약만 있음 / 합성(가짜) 전용 / 아직 없음</strong> 중 뭔지 구분할 수 있습니다.</li>
+      <li>멘토님께 <strong>“지금 여기까지, 다음은 이것”</strong>을 근거 파일과 함께 말할 수 있습니다. (현황·보고용 15~18번 장)</li>
+    </ul>
+  </div>
+  <div class="eli5">
+    <b>먼저 딱 한 줄로</b>
+    <p>“약 정보를 <b>공식 출처에서 가져와 도장 찍고 → 찾아주고 → 검사해서 → 통과한 것만 답에 쓰는</b> 공장을 짓고 있고, 지금은 <b>공장 설계와 부품 검사대까지</b> 만들었습니다.”</p>
+  </div>
+  <p class="hint"><kbd>→</kbd> 또는 <kbd>Space</kbd> 로 다음 · 모바일은 좌우로 스와이프</p>
+</section>
+
+<!-- 2 ------------------------------------------------------------------ -->
+<section class="slide" data-title="RAG가 뭐야?">
+  <p class="eyebrow">1. 개념</p>
+  <h2>RAG가 뭐야?</h2>
+  <div class="eli5">
+    <b>비유</b>
+    <p>AI한테 그냥 물어보면 <b>기억에 의존해서</b> 대답해요. 그런데 우리 약 정보는 AI가 몰라요.<br>그래서 <b>“대답하기 전에 도서관 먼저 다녀와”</b> 라고 시키는 게 RAG예요.</p>
+  </div>
+
+  <figure class="figure">
+    <svg viewBox="0 0 820 250" role="img" aria-label="질문이 도서관을 거쳐 근거와 함께 답이 되는 흐름">
+      <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0 0 L10 5 L0 10 z" fill="var(--ink3)"/></marker></defs>
+      <g font-family="inherit" font-size="15">
+        <rect x="14" y="86" width="150" height="78" rx="14" fill="var(--accent-soft)" stroke="var(--accent)"/>
+        <text x="89" y="118" text-anchor="middle" fill="var(--ink)" font-weight="700">질문</text>
+        <text x="89" y="140" text-anchor="middle" fill="var(--ink2)" font-size="13">“이 약 같이 먹어도 돼?”</text>
+
+        <rect x="215" y="60" width="180" height="130" rx="14" fill="var(--bg2)" stroke="var(--line2)"/>
+        <text x="305" y="92" text-anchor="middle" fill="var(--ink)" font-weight="700">📚 도서관</text>
+        <text x="305" y="116" text-anchor="middle" fill="var(--ink2)" font-size="13">공식 약 자료를</text>
+        <text x="305" y="136" text-anchor="middle" fill="var(--ink2)" font-size="13">미리 정리해 둔 곳</text>
+        <text x="305" y="162" text-anchor="middle" fill="var(--ink3)" font-size="12">Source · Index</text>
+
+        <rect x="446" y="60" width="170" height="130" rx="14" fill="var(--bg2)" stroke="var(--line2)"/>
+        <text x="531" y="92" text-anchor="middle" fill="var(--ink)" font-weight="700">🔍 찾기 + 검사</text>
+        <text x="531" y="116" text-anchor="middle" fill="var(--ink2)" font-size="13">관련된 쪽을 찾고</text>
+        <text x="531" y="136" text-anchor="middle" fill="var(--ink2)" font-size="13">써도 되는지 확인</text>
+        <text x="531" y="162" text-anchor="middle" fill="var(--ink3)" font-size="12">Retrieval · Gate</text>
+
+        <rect x="666" y="86" width="140" height="78" rx="14" fill="var(--ok-bg)" stroke="var(--ok)"/>
+        <text x="736" y="118" text-anchor="middle" fill="var(--ink)" font-weight="700">답 + 출처</text>
+        <text x="736" y="140" text-anchor="middle" fill="var(--ink2)" font-size="13">근거 없으면 답 안 함</text>
+
+        <line x1="168" y1="125" x2="209" y2="125" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar)"/>
+        <line x1="399" y1="125" x2="440" y2="125" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar)"/>
+        <line x1="620" y1="125" x2="660" y2="125" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar)"/>
+        <text x="410" y="222" text-anchor="middle" fill="var(--ink3)" font-size="13">R(찾고) · A(붙여서) · G(대답한다)</text>
+      </g>
+    </svg>
+    <figcaption>RAG = Retrieval(찾기) + Augmented(보태서) + Generation(생성)</figcaption>
+  </figure>
+
+  <div class="why"><b>우리는 여기서 한 발 더</b>
+  <p>보통 RAG는 “찾아서 답한다”까지입니다. 약은 틀리면 사람이 다치니까 우리는 <strong>“찾은 자료를 써도 되는 자료인지 검사하는 문(Evidence Gate)”</strong>을 하나 더 두었습니다.</p></div>
+</section>
+
+<!-- 3 ------------------------------------------------------------------ -->
+<section class="slide" data-title="왜 이렇게 복잡해?">
+  <p class="eyebrow">2. 설계 원칙</p>
+  <h2>왜 이렇게 복잡하게 만들어?</h2>
+  <p class="lead">코드를 열면 해시, 영수증, 버전이 끝없이 나옵니다. 이유는 딱 세 가지입니다.</p>
+
+  <div class="card">
+    <h3>① 출처 없으면 답 안 한다</h3>
+    <p>모든 근거 한 조각마다 <strong>어느 자료의 몇 번째 문단에서 왔는지</strong>를 붙여서 다닙니다. 코드에서는 <code>KnowledgeEvidenceProvenance</code>가 그 꼬리표입니다.</p>
+  </div>
+  <div class="card">
+    <h3>② 모든 단계에 영수증(Receipt)을 남긴다</h3>
+    <p>단계마다 입력을 <strong>SHA-256으로 도장</strong> 찍어 다음 단계에 넘깁니다. 다음 단계는 “내가 받은 게 진짜 그거 맞아?”를 다시 확인합니다. 안 맞으면 <code>*_RECEIPT_MISMATCH</code>로 멈춥니다.</p>
+  </div>
+  <div class="card">
+    <h3>③ 막히면 조용히 통과시키지 않는다 (fail-closed)</h3>
+    <p>검증에 실패하면 “일단 답은 주자”가 아니라 <strong>멈추고 이유를 코드로 남깁니다.</strong> <code>VALIDATION_ERROR</code>, <code>DEPENDENCY_ERROR</code>, <code>EVIDENCE_INSUFFICIENT</code> 같은 값들이 그 이유입니다.</p>
+  </div>
+
+  <div class="eli5"><b>한 줄 비유</b>
+  <p>급식실이랑 같아요. 재료가 어디서 왔는지 모르면 <b>그냥 안 씁니다.</b> 맛보다 안전이 먼저예요.</p></div>
+</section>
+
+<!-- 4 ------------------------------------------------------------------ -->
+<section class="slide" data-title="전체 지도">
+  <p class="eyebrow">3. 큰 그림</p>
+  <h2>전체 지도 — 이 한 장이 핵심</h2>
+  <p>RAG 코드는 흩어져 보이지만 실은 <strong>공장 라인 하나</strong>입니다. 색이 곧 현재 상태입니다.</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 840 430" role="img" aria-label="Source 수집부터 Runtime Bundle까지의 파이프라인과 옆에 붙은 Evaluation">
+      <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0 0 L10 5 L0 10 z" fill="var(--ink3)"/></marker></defs>
+      <g font-family="inherit">
+        <!-- row 1 -->
+        <rect x="16" y="46" width="186" height="82" rx="13" fill="var(--ok-bg)" stroke="var(--ok)"/>
+        <text x="109" y="74" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ink)">① 자료 가져오기</text>
+        <text x="109" y="96" text-anchor="middle" font-size="12" fill="var(--ink2)">식약처 공개 API 호출</text>
+        <text x="109" y="114" text-anchor="middle" font-size="11" fill="var(--ink3)">source_client</text>
+
+        <rect x="228" y="46" width="186" height="82" rx="13" fill="var(--ok-bg)" stroke="var(--ok)"/>
+        <text x="321" y="74" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ink)">② 도장 찍기</text>
+        <text x="321" y="96" text-anchor="middle" font-size="12" fill="var(--ink2)">Snapshot + checksum</text>
+        <text x="321" y="114" text-anchor="middle" font-size="11" fill="var(--ink3)">source_ingestion</text>
+
+        <rect x="440" y="46" width="186" height="82" rx="13" fill="var(--ok-bg)" stroke="var(--ok)"/>
+        <text x="533" y="74" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ink)">③ 약 사전 만들기</text>
+        <text x="533" y="96" text-anchor="middle" font-size="12" fill="var(--ink2)">제품·성분·별명 정리</text>
+        <text x="533" y="114" text-anchor="middle" font-size="11" fill="var(--ink3)">catalog</text>
+
+        <rect x="652" y="46" width="172" height="82" rx="13" fill="var(--warn-bg)" stroke="var(--warn)"/>
+        <text x="738" y="74" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ink)">④ 색인 만들기</text>
+        <text x="738" y="96" text-anchor="middle" font-size="12" fill="var(--ink2)">찾기 쉽게 목차화</text>
+        <text x="738" y="114" text-anchor="middle" font-size="11" fill="var(--ink3)">candidate_index</text>
+
+        <!-- row 2 -->
+        <rect x="16" y="196" width="186" height="82" rx="13" fill="var(--warn-bg)" stroke="var(--warn)"/>
+        <text x="109" y="224" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ink)">⑤ 찾기</text>
+        <text x="109" y="246" text-anchor="middle" font-size="12" fill="var(--ink2)">단어검색 + 의미검색</text>
+        <text x="109" y="264" text-anchor="middle" font-size="11" fill="var(--ink3)">evidence_retrieval</text>
+
+        <rect x="228" y="196" width="186" height="82" rx="13" fill="var(--warn-bg)" stroke="var(--warn)"/>
+        <text x="321" y="224" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ink)">⑥ 검사 문</text>
+        <text x="321" y="246" text-anchor="middle" font-size="12" fill="var(--ink2)">써도 되는 근거인가</text>
+        <text x="321" y="264" text-anchor="middle" font-size="11" fill="var(--ink3)">evidence_gate</text>
+
+        <rect x="440" y="196" width="186" height="82" rx="13" fill="var(--warn-bg)" stroke="var(--warn)"/>
+        <text x="533" y="224" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ink)">⑦ 도시락 싸기</text>
+        <text x="533" y="246" text-anchor="middle" font-size="12" fill="var(--ink2)">한 세트로 묶어 배포</text>
+        <text x="533" y="264" text-anchor="middle" font-size="11" fill="var(--ink3)">rag_runtime</text>
+
+        <rect x="652" y="196" width="172" height="82" rx="13" fill="var(--no-bg)" stroke="var(--no)"/>
+        <text x="738" y="224" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ink)">⑧ 답 만들기</text>
+        <text x="738" y="246" text-anchor="middle" font-size="12" fill="var(--ink2)">증강 · 생성 · 인용검증</text>
+        <text x="738" y="264" text-anchor="middle" font-size="11" fill="var(--ink3)">계약만 · 코드 0건</text>
+
+        <!-- arrows -->
+        <line x1="206" y1="87" x2="222" y2="87" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar2)"/>
+        <line x1="418" y1="87" x2="434" y2="87" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar2)"/>
+        <line x1="630" y1="87" x2="646" y2="87" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar2)"/>
+        <path d="M738 132 L738 160 L109 160 L109 190" fill="none" stroke="var(--ink3)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ar2)"/>
+        <line x1="206" y1="237" x2="222" y2="237" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar2)"/>
+        <line x1="418" y1="237" x2="434" y2="237" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar2)"/>
+        <line x1="630" y1="237" x2="646" y2="237" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar2)"/>
+
+        <!-- evaluation -->
+        <rect x="16" y="322" width="808" height="72" rx="13" fill="var(--bg2)" stroke="var(--line2)" stroke-dasharray="6 5"/>
+        <text x="420" y="350" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ink)">⑨ 시험 채점실 — Evaluation (라인 전체를 밖에서 측정)</text>
+        <text x="420" y="374" text-anchor="middle" font-size="12" fill="var(--ink2)">DEV / GOLD / HOLDOUT 문제지 · Recall@5 · MRR · nDCG@5 — 문제지는 있고 실채점은 아직</text>
+
+        <!-- legend -->
+        <g font-size="12">
+          <rect x="16" y="14" width="12" height="12" rx="3" fill="var(--ok-bg)" stroke="var(--ok)"/>
+          <text x="34" y="24" fill="var(--ink2)">돌아감</text>
+          <rect x="104" y="14" width="12" height="12" rx="3" fill="var(--warn-bg)" stroke="var(--warn)"/>
+          <text x="122" y="24" fill="var(--ink2)">계약·합성만</text>
+          <rect x="222" y="14" width="12" height="12" rx="3" fill="var(--no-bg)" stroke="var(--no)"/>
+          <text x="240" y="24" fill="var(--ink2)">아직 없음</text>
+        </g>
+      </g>
+    </svg>
+    <figcaption>①②③은 실제로 돌아가고, ④⑤⑥⑦은 “규칙과 검사기”까지, ⑧(RAG의 A·G)은 문서 계약만 있습니다.</figcaption>
+  </figure>
+
+  <div class="why"><b>여기서 꼭 기억할 것</b>
+  <p><strong>왼쪽 절반(자료 준비)은 진짜로 돌아가고, 오른쪽 절반(찾기·검사)은 “규칙과 시험대”까지 만들어져 있습니다.</strong> 그래서 “RAG 다 됐어?”의 정답은 “재료 창고는 완성, 조리대는 설계·검사기 완성, 손님상은 아직”입니다.</p></div>
+</section>
+
+<!-- 5 ------------------------------------------------------------------ -->
+<section class="slide" data-title="① 자료 가져오기">
+  <p class="eyebrow">4. 파이프라인 ①</p>
+  <h2>공공 API 문을 두드린다 <span class="tag ok">돌아감</span></h2>
+  <div class="eli5"><b>비유</b>
+  <p>모르는 집 문은 안 두드려요. <b>미리 적어둔 주소만</b> 가고, 갔다 오면 <b>영수증</b>을 받아옵니다.</p></div>
+
+  <div class="card">
+    <h3>무슨 코드가 있나</h3>
+    <ul class="files">
+      <li><code>source_client/endpoints.py</code> — 어떤 API 주소를 쓸지 목록으로 고정</li>
+      <li><code>source_client/mfds_client.py</code> — 식약처 API 실제 호출 (약 730줄)</li>
+      <li><code>source_client/security.py</code> — <strong>사설 IP·이상한 리다이렉트 차단</strong> (SSRF 방어)</li>
+      <li><code>source_client/decoders.py</code> — 응답 인코딩을 정해진 방식으로만 해석</li>
+      <li><code>source_client/receipts.py</code> — 호출 결과 영수증 생성</li>
+      <li><code>source_client/probe.py</code> — 실제 호출 전 “문이 열려 있나” 점검</li>
+    </ul>
+  </div>
+
+  <div class="why"><b>왜 security.py가 따로 있어?</b>
+  <p>외부 주소를 불러오는 코드는 공격자가 <strong>“우리 내부 서버 주소를 대신 불러줘”</strong>라고 속이기 딱 좋은 자리입니다(SSRF). 그래서 DNS 결과가 사설 IP면 아예 거부합니다.</p></div>
+
+  <div class="card">
+    <h3>중복 실행 방지</h3>
+    <p><code>source_ingestion/service.py</code>에 <code>SourceAcquisitionGate</code>가 있습니다. 같은 Source를 동시에 두 번 수집하면 <code>SourceAcquisitionInProgressError</code>로 막습니다. — <em>같은 자료를 두 번 들여오지 않는다.</em></p>
+  </div>
+</section>
+
+<!-- 6 ------------------------------------------------------------------ -->
+<section class="slide" data-title="② 도장 찍기">
+  <p class="eyebrow">5. 파이프라인 ②</p>
+  <h2>원본은 손대지 않고, 지문을 남긴다 <span class="tag ok">돌아감</span></h2>
+  <div class="eli5"><b>비유</b>
+  <p>가져온 자료를 <b>고치지 않고</b> 그대로 보관하고, 겉에 <b>“이 자료의 지문은 이거예요”</b> 스티커(SHA-256)만 붙입니다. 나중에 누가 몰래 바꾸면 지문이 달라져서 바로 들통납니다.</p></div>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>파일</th><th>하는 일</th></tr></thead>
+    <tbody>
+      <tr><td><code>acquire.py</code></td><td>받아온 원본 파일 목록의 무결성 검증</td></tr>
+      <tr><td><code>parse.py</code></td><td>정규화 입력과 제품별 checksum 준비</td></tr>
+      <tr><td><code>normalize.py</code></td><td><strong>값을 바꾸지 않고</strong> checksum용 JSON 바이트만 생성</td></tr>
+      <tr><td><code>checksums.py</code></td><td>원본·제품 레코드 checksum 계산</td></tr>
+      <tr><td><code>receipt_validation.py</code></td><td>받아온 것과 영수증이 일치하는지 대조</td></tr>
+      <tr><td><code>persistence.py</code></td><td>원본 보관 → Snapshot 저장 순서 고정</td></tr>
+      <tr><td><code>snapshot_lifecycle.py</code></td><td>Snapshot 상태 전이 규칙 (523줄)</td></tr>
+      <tr><td><code>failure_runs.py</code></td><td>실패한 수집도 기록으로 남김</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="why"><b>“왜 이름을 예쁘게 정리(NFC) 안 해?”</b>
+  <p><code>mfds-product-approval@1</code> Snapshot checksum은 <strong>원문 유니코드를 그대로 보존</strong>하는 게 확정 계약입니다. 예쁘게 고치면 지문이 바뀌어서 원본과 대조를 못 하게 됩니다. PD-315 결정문에도 “이 preimage를 변경하지 않는다”라고 못 박혀 있습니다.</p></div>
+
+  <div class="card">
+    <h3>DB에 남는 것</h3>
+    <p><code>backend/app/models/rag_source.py</code> — <code>rag_source</code>, <code>rag_source_endpoint</code>, <code>rag_source_operation</code>, <code>rag_source_snapshot</code>, <code>rag_source_ingestion_run</code>, <code>rag_source_ingestion_artifact</code>, <code>rag_source_snapshot_verification</code> 총 7개 테이블.</p>
+  </div>
+</section>
+
+<!-- 7 ------------------------------------------------------------------ -->
+<section class="slide" data-title="③ 약 사전">
+  <p class="eyebrow">6. 파이프라인 ③</p>
+  <h2>약 이름 사전을 만든다 <span class="tag ok">돌아감</span></h2>
+  <div class="eli5"><b>비유</b>
+  <p>“타이레놀”, “아세트아미노펜”, “타이레놀정500밀리그람”… 사람은 같은 약인 걸 알지만 컴퓨터는 몰라요. 그래서 <b>제품 · 성분 · 별명 · 구성</b>을 이어붙인 사전을 만듭니다.</p></div>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>테이블</th><th>뜻</th></tr></thead>
+    <tbody>
+      <tr><td><code>rag_medication_product</code></td><td>제품 (‘타이레놀정500mg’)</td></tr>
+      <tr><td><code>rag_medication_ingredient</code></td><td>성분 (‘아세트아미노펜’)</td></tr>
+      <tr><td><code>rag_medication_alias</code></td><td>별명·다른 표기</td></tr>
+      <tr><td><code>rag_medication_product_component</code></td><td>제품 ↔ 성분 연결과 역할</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="card">
+    <h3>코드 경계</h3>
+    <ul class="files">
+      <li><code>catalog/build.py</code> — 입력을 사전 구조로 조립</li>
+      <li><code>catalog/validate.py</code> — 규칙 위반 검사</li>
+      <li><code>catalog/normalize.py</code> — 표기 정규화 규칙(버전 있음)</li>
+      <li><code>catalog/approval.py</code> — <strong>승인 검증기</strong></li>
+      <li><code>catalog/export.py</code> — 다음 단계로 넘길 산출물 발행</li>
+      <li><code>catalog/service.py</code> — 위 넷을 한 작업 경계로 조립</li>
+    </ul>
+  </div>
+
+  <div class="why"><b>포인트</b>
+  <p><strong>승인(approval)되지 않은 카탈로그로는 색인을 만들 수 없습니다.</strong> <code>catalog/service.py</code>의 <code>CatalogBuildDecision</code>이 거부하면 뒤 단계가 아예 시작되지 않습니다. 발행 envelope는 <code>medication-catalog-v2</code> / <code>catalog-manifest-envelope-v2</code>입니다.</p></div>
+</section>
+
+<!-- 8 ------------------------------------------------------------------ -->
+<section class="slide" data-title="④ 이름 찾기 사다리">
+  <p class="eyebrow">7. 파이프라인 ④</p>
+  <h2>약 이름 찾기 — 사다리 4칸 <span class="tag warn">계약·순수로직만</span></h2>
+  <div class="eli5"><b>비유</b>
+  <p>이름을 찾을 때 <b>쉬운 방법부터</b> 씁니다. 딱 맞는 이름 → 별명 → 비슷한 철자 → 의미가 비슷한 것. 위 칸에서 찾으면 아래로 안 내려갑니다.</p></div>
+
+  <figure class="figure">
+    <svg viewBox="0 0 700 300" role="img" aria-label="후보 검색 4단계 사다리">
+      <g font-family="inherit" font-size="14">
+        <rect x="60" y="24" width="580" height="54" rx="12" fill="var(--ok-bg)" stroke="var(--ok)"/>
+        <text x="82" y="46" fill="var(--ink)" font-weight="700">1. PRODUCT_NAME_EXACT</text>
+        <text x="82" y="66" fill="var(--ink2)" font-size="12.5">제품명이 글자 그대로 똑같다 — 가장 믿을 만함</text>
+
+        <rect x="60" y="90" width="580" height="54" rx="12" fill="var(--ok-bg)" stroke="var(--ok)" opacity=".8"/>
+        <text x="82" y="112" fill="var(--ink)" font-weight="700">2. APPROVED_ALIAS_EXACT</text>
+        <text x="82" y="132" fill="var(--ink2)" font-size="12.5">승인된 별명과 똑같다 — 사전에 등록된 표기만</text>
+
+        <rect x="60" y="156" width="580" height="54" rx="12" fill="var(--warn-bg)" stroke="var(--warn)"/>
+        <text x="82" y="178" fill="var(--ink)" font-weight="700">3. TRIGRAM_EDIT_DISTANCE</text>
+        <text x="82" y="198" fill="var(--ink2)" font-size="12.5">철자가 비슷하다 — 오타·OCR 오인식 대응 (pg_trgm)</text>
+
+        <rect x="60" y="222" width="580" height="54" rx="12" fill="var(--warn-bg)" stroke="var(--warn)" opacity=".8"/>
+        <text x="82" y="244" fill="var(--ink)" font-weight="700">4. DENSE_VECTOR</text>
+        <text x="82" y="264" fill="var(--ink2)" font-size="12.5">의미가 비슷하다 — 임베딩 벡터 거리 (pgvector)</text>
+
+        <text x="30" y="56" fill="var(--ink3)" font-size="12">확실</text>
+        <text x="26" y="254" fill="var(--ink3)" font-size="12">느슨</text>
+        <line x1="42" y1="66" x2="42" y2="234" stroke="var(--line2)" stroke-width="2"/>
+      </g>
+    </svg>
+    <figcaption><code>ai_worker/tasks/rag/candidate_index.py</code> · <code>CandidateSearchStage</code></figcaption>
+  </figure>
+
+  <div class="why"><b>여기가 “계약만”인 이유 — 중요</b>
+  <p>이 파일(1,397줄)은 <strong>결정적 build 로직 + 검색 Port 계약</strong>만 가집니다. 공개 함수는 <code>build_candidate_index()</code>와 <code>search_candidate_index()</code> 둘뿐입니다.<br>
+  주석에 <em>“RAG-07A는 PostgreSQL similarity 또는 ANN 동작을 Python으로 모사하지 않는다”</em>고 적혀 있습니다. <strong>실제 검색은 PostgreSQL이 해야 하고, 이 코드는 그 결과의 순위·출처·영수증을 검증만 합니다.</strong> 그 PostgreSQL 어댑터가 아직 없습니다.</p></div>
+</section>
+
+<!-- 9 ------------------------------------------------------------------ -->
+<section class="slide" data-title="⑤ 두 갈래로 찾기">
+  <p class="eyebrow">8. 파이프라인 ⑤</p>
+  <h2>두 갈래로 찾고 하나로 합친다 <span class="tag warn">합성 어댑터만</span></h2>
+  <div class="eli5"><b>비유</b>
+  <p>친구 둘한테 동시에 시켜요. 한 명은 <b>“단어가 똑같은 것”</b>을 찾고, 다른 한 명은 <b>“뜻이 비슷한 것”</b>을 찾아요. 그다음 둘이 가져온 목록을 <b>공평하게 합쳐서</b> 순위를 다시 매깁니다.</p></div>
+
+  <figure class="figure">
+    <svg viewBox="0 0 760 330" role="img" aria-label="Lexical 20 + Dense 20이 RRF 30을 거쳐 rerank 20, 최종 context 5로 좁혀지는 깔때기">
+      <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0 0 L10 5 L0 10 z" fill="var(--ink3)"/></marker></defs>
+      <g font-family="inherit" font-size="13">
+        <rect x="30" y="26" width="200" height="62" rx="12" fill="var(--accent-soft)" stroke="var(--accent)"/>
+        <text x="130" y="50" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="14">Lexical 검색</text>
+        <text x="130" y="72" text-anchor="middle" fill="var(--ink2)">단어 일치 · 상위 20개</text>
+
+        <rect x="30" y="106" width="200" height="62" rx="12" fill="var(--accent-soft)" stroke="var(--accent)"/>
+        <text x="130" y="130" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="14">Dense 검색</text>
+        <text x="130" y="152" text-anchor="middle" fill="var(--ink2)">의미 유사 · 상위 20개</text>
+
+        <rect x="286" y="60" width="180" height="74" rx="12" fill="var(--bg2)" stroke="var(--line2)"/>
+        <text x="376" y="86" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="14">RRF 합치기</text>
+        <text x="376" y="106" text-anchor="middle" fill="var(--ink2)">순위 기반 · 출력 30개</text>
+        <text x="376" y="124" text-anchor="middle" fill="var(--ink3)" font-size="11.5">rrf_k = 60</text>
+
+        <rect x="286" y="176" width="180" height="66" rx="12" fill="var(--bg2)" stroke="var(--line2)"/>
+        <text x="376" y="200" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="14">Reranker</text>
+        <text x="376" y="222" text-anchor="middle" fill="var(--ink2)">앞 20개만 다시 줄세움</text>
+
+        <rect x="522" y="176" width="204" height="66" rx="12" fill="var(--ok-bg)" stroke="var(--ok)"/>
+        <text x="624" y="200" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="14">최종 Context 최대 5</text>
+        <text x="624" y="222" text-anchor="middle" fill="var(--ink2)">Evidence Gate 통과분만</text>
+
+        <rect x="522" y="60" width="204" height="74" rx="12" fill="var(--warn-bg)" stroke="var(--warn)"/>
+        <text x="624" y="84" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="14">Evidence Gate</text>
+        <text x="624" y="104" text-anchor="middle" fill="var(--ink2)">충분 · 충돌 · 신선 · 자격</text>
+        <text x="624" y="122" text-anchor="middle" fill="var(--ink3)" font-size="11.5">다음 장에서</text>
+
+        <path d="M234 57 L280 82" fill="none" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar3)"/>
+        <path d="M234 137 L280 112" fill="none" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar3)"/>
+        <path d="M376 138 L376 170" fill="none" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar3)"/>
+        <path d="M470 200 L516 129" fill="none" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar3)"/>
+        <path d="M624 138 L624 170" fill="none" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar3)"/>
+
+        <text x="380" y="292" text-anchor="middle" fill="var(--ink3)" font-size="12.5">Node ID: hybrid_retrieve → evidence_gate  ·  PD-315-20260908에서 확정한 P0 기본값</text>
+      </g>
+    </svg>
+    <figcaption>20 + 20 → RRF 30 → rerank 입력 20 → 최종 5</figcaption>
+  </figure>
+
+  <div class="card">
+    <h3>코드에서는</h3>
+    <p><code>ai_worker/tasks/rag/evidence_retrieval.py</code>(1,194줄)의 <code>retrieve_knowledge_evidence()</code>가 지휘자입니다. 자기가 검색을 하지 않고 <strong>세 개의 Port</strong>에 시킵니다.</p>
+    <ul>
+      <li><code>QueryBindingVerifierPort</code> — 이 질문이 이 지문(fingerprint)과 맞는지</li>
+      <li><code>EvidenceSearchPort</code> — LEXICAL / DENSE 단계 검색</li>
+      <li><code>EvidenceRerankPort</code> — 다시 줄 세우기</li>
+    </ul>
+  </div>
+
+  <div class="why"><b>“합성 어댑터만”이 무슨 뜻이야?</b>
+  <p>Port에 꽂을 실제 구현이 <code>evidence_retrieval_synthetic_adapters.py</code>(738줄) 하나뿐이고, 첫 줄에 <strong>“Synthetic-only adapters”</strong>라고 적혀 있습니다. 즉 <strong>진짜 DB를 치는 어댑터가 없습니다.</strong> 파일 맨 위 docstring도 “결과는 <em>untrusted retrieval candidates only</em>”라고 선을 그어 둡니다.<br>
+  PD-315는 합성 점수 방식(<code>weighted-stage-score-v1</code>)이 <strong>synthetic 전용</strong>이고, Production은 위 그림의 RRF를 쓴다고 확정했습니다.</p></div>
+</section>
+
+<!-- 10 ----------------------------------------------------------------- -->
+<section class="slide" data-title="영수증과 비밀 질문">
+  <p class="eyebrow">9. 두 개의 안전장치</p>
+  <h2>영수증, 그리고 비밀로 다루는 질문</h2>
+
+  <div class="card">
+    <h3>① 영수증(Receipt) — 왜 계속 해시를 찍나</h3>
+    <div class="eli5" style="margin:10px 0 12px"><b>비유</b>
+    <p>요리 단계마다 <b>영수증</b>을 붙여요. 다음 사람이 “네가 쓴 재료가 진짜 그 재료 맞아?”를 영수증으로 확인합니다. 안 맞으면 <b>요리를 버립니다.</b></p></div>
+    <p>실패 코드만 봐도 구조가 보입니다 — <code>QUERY_BINDING_RECEIPT_MISMATCH</code>, <code>SEARCH_RECEIPT_MISMATCH</code>, <code>RERANK_RECEIPT_MISMATCH</code>, <code>ELIGIBILITY_RECEIPT_MISMATCH</code>, <code>RETRIEVAL_RECEIPT_MISMATCH</code>.</p>
+    <p>모든 참조는 <code>ImmutableArtifactRef(artifact_code, version, content_sha256)</code> 세 쪽 짜리 표로 다닙니다. <strong>이름 + 버전 + 내용 지문</strong>이 항상 같이 붙어야 인정됩니다.</p>
+  </div>
+
+  <div class="card">
+    <h3>② 환자 질문은 비밀로 다룬다</h3>
+    <div class="eli5" style="margin:10px 0 12px"><b>비유</b>
+    <p>질문지를 <b>봉투에 넣어서</b> 들고 다녀요. 실수로 로그에 찍어도 봉투 겉면만 보여요.</p></div>
+    <p><code>SensitiveText</code> 클래스는 <code>print()</code>하거나 로그에 남기면 <strong><code>&lt;redacted&gt;</code></strong>만 나옵니다. 값을 보려면 <code>.reveal()</code>을 명시적으로 불러야 하고, 한 번 만들면 바꿀 수 없습니다.</p>
+    <p>대신 검색 단계들끼리는 실제 질문 대신 <code>QueryFingerprint(algorithm, key_version, digest)</code>를 주고받습니다. <strong>질문 원문 없이도 “같은 질문인지”는 확인할 수 있습니다.</strong></p>
+  </div>
+
+  <div class="why"><b>멘토님이 물어볼 만한 질문</b>
+  <p>“왜 점수를 float으로 안 쓰고 문자열로 써?” → 컴퓨터마다 소수점 계산이 미세하게 달라서 <strong>해시가 달라집니다.</strong> 그래서 <code>CanonicalScore</code>라는 <strong>정규화된 십진 문자열</strong>로 다닙니다. PD-315는 한 발 더 나가 순위 판정을 <strong>기약분수(exact rational)</strong>로 하도록 정했습니다.</p></div>
+</section>
+
+<!-- 11 ----------------------------------------------------------------- -->
+<section class="slide" data-title="⑥ 검사 문">
+  <p class="eyebrow">10. 파이프라인 ⑥</p>
+  <h2>Evidence Gate — 네 개의 검사 <span class="tag warn">검사기만 있음</span></h2>
+  <div class="eli5"><b>비유</b>
+  <p>찾아온 자료를 바로 안 써요. <b>문 앞에서 네 가지를 물어봅니다.</b> 하나라도 걸리면 못 들어옵니다.</p></div>
+
+  <figure class="figure">
+    <svg viewBox="0 0 740 280" role="img" aria-label="Evidence Gate의 네 가지 검사">
+      <g font-family="inherit" font-size="13">
+        <rect x="24" y="24" width="164" height="106" rx="13" fill="var(--bg2)" stroke="var(--line2)"/>
+        <text x="106" y="54" text-anchor="middle" font-size="22">🧮</text>
+        <text x="106" y="80" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="14">충분한가?</text>
+        <text x="106" y="100" text-anchor="middle" fill="var(--ink2)" font-size="12">근거 개수와</text>
+        <text x="106" y="117" text-anchor="middle" fill="var(--ink2)" font-size="12">서로 다른 출처 수</text>
+
+        <rect x="204" y="24" width="164" height="106" rx="13" fill="var(--bg2)" stroke="var(--line2)"/>
+        <text x="286" y="54" text-anchor="middle" font-size="22">⚔️</text>
+        <text x="286" y="80" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="14">서로 안 싸우나?</text>
+        <text x="286" y="100" text-anchor="middle" fill="var(--ink2)" font-size="12">SUPPORTS와</text>
+        <text x="286" y="117" text-anchor="middle" fill="var(--ink2)" font-size="12">CONTRADICTS 공존</text>
+
+        <rect x="384" y="24" width="164" height="106" rx="13" fill="var(--bg2)" stroke="var(--line2)"/>
+        <text x="466" y="54" text-anchor="middle" font-size="22">⏰</text>
+        <text x="466" y="80" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="14">안 상했나?</text>
+        <text x="466" y="100" text-anchor="middle" fill="var(--ink2)" font-size="12">valid_from ≤ 지금</text>
+        <text x="466" y="117" text-anchor="middle" fill="var(--ink2)" font-size="12">&lt; valid_until</text>
+
+        <rect x="564" y="24" width="152" height="106" rx="13" fill="var(--bg2)" stroke="var(--line2)"/>
+        <text x="640" y="54" text-anchor="middle" font-size="22">🪪</text>
+        <text x="640" y="80" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="14">써도 되나?</text>
+        <text x="640" y="100" text-anchor="middle" fill="var(--ink2)" font-size="12">Source 사용 권한</text>
+        <text x="640" y="117" text-anchor="middle" fill="var(--ink2)" font-size="12">(외부 Verifier)</text>
+
+        <rect x="24" y="164" width="164" height="52" rx="11" fill="var(--ok-bg)" stroke="var(--ok)"/>
+        <text x="106" y="195" text-anchor="middle" font-weight="700" fill="var(--ok)">SUFFICIENT</text>
+        <rect x="204" y="164" width="164" height="52" rx="11" fill="var(--no-bg)" stroke="var(--no)"/>
+        <text x="286" y="195" text-anchor="middle" font-weight="700" fill="var(--no)">CONFLICTED</text>
+        <rect x="384" y="164" width="164" height="52" rx="11" fill="var(--no-bg)" stroke="var(--no)"/>
+        <text x="466" y="195" text-anchor="middle" font-weight="700" fill="var(--no)">STALE</text>
+        <rect x="564" y="164" width="152" height="52" rx="11" fill="var(--no-bg)" stroke="var(--no)"/>
+        <text x="640" y="195" text-anchor="middle" font-weight="700" fill="var(--no)">INELIGIBLE</text>
+
+        <text x="370" y="252" text-anchor="middle" fill="var(--ink3)" font-size="12.5">근거가 모자라면 INSUFFICIENT — 어떤 경우에도 “대충 답하기”는 없습니다</text>
+      </g>
+    </svg>
+    <figcaption><code>ai_worker/tasks/rag/evidence_gate.py</code> · <code>EvidenceStatus</code> / <code>EvidenceGateReason</code></figcaption>
+  </figure>
+
+  <div class="card">
+    <h3>정책은 숫자로 적고, 해시로 못 박는다</h3>
+    <p><code>VersionedEvidenceGatePolicy</code>는 두 숫자를 가집니다.</p>
+    <ul>
+      <li><code>minimum_supporting_items_per_coverage</code> — 주제 하나당 최소 근거 개수</li>
+      <li><code>minimum_distinct_source_snapshots_per_coverage</code> — 최소 <strong>서로 다른</strong> 출처 개수</li>
+    </ul>
+    <p>이 숫자에 충돌 전략·신선도 전략까지 묶어 해시를 만들기 때문에, <strong>기준을 몰래 낮추면 정책 해시가 바뀌어 기록에 남습니다.</strong></p>
+  </div>
+
+  <div class="why"><b>여기도 “아직”인 부분</b>
+  <p>파일 첫 docstring: <em>“No production verifier exists in this slice.”</em> — 자격 검사를 실제로 해 줄 <code>EvidenceEligibilityVerifierPort</code> 구현이 아직 없습니다. 검사 규칙은 완성, <strong>검사를 대신해 줄 권위 기관이 미연결</strong>입니다.</p></div>
+</section>
+
+<!-- 12 ----------------------------------------------------------------- -->
+<section class="slide" data-title="⑦ 도시락 통">
+  <p class="eyebrow">11. 파이프라인 ⑦</p>
+  <h2>Runtime Bundle — 도시락 통 <span class="tag warn">DB 계층까지</span></h2>
+  <div class="eli5"><b>비유</b>
+  <p>밥, 반찬, 젓가락을 <b>따로 들고 다니면</b> 하나를 빠뜨려요. 그래서 <b>도시락 통 하나에 다 담고</b> 통에 이름표를 붙입니다. 바꿀 땐 통째로 바꾸고, 잘못되면 <b>통째로 되돌립니다.</b></p></div>
+
+  <figure class="figure">
+    <svg viewBox="0 0 720 260" role="img" aria-label="Runtime Bundle 상태 흐름">
+      <defs><marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0 0 L10 5 L0 10 z" fill="var(--ink3)"/></marker></defs>
+      <g font-family="inherit" font-size="13">
+        <rect x="20" y="30" width="680" height="86" rx="13" fill="var(--bg2)" stroke="var(--line2)" stroke-dasharray="5 4"/>
+        <text x="40" y="56" fill="var(--ink)" font-weight="700" font-size="14">🍱 도시락 통 하나에 들어가는 것</text>
+        <text x="40" y="80" fill="var(--ink2)">색인(candidate·knowledge) · 규칙 세트 · 가이드라인 세트 · 안전 정책 · 실행 매니페스트 · Source Snapshot 목록</text>
+        <text x="40" y="102" fill="var(--ink3)" font-size="12">통 전체에 bundle_manifest_hash 하나 — 하나라도 바뀌면 다른 통</text>
+
+        <rect x="20" y="150" width="140" height="52" rx="11" fill="var(--code-bg)" stroke="var(--line2)"/>
+        <text x="90" y="181" text-anchor="middle" font-weight="700" fill="var(--ink2)">DRAFT</text>
+        <rect x="196" y="150" width="140" height="52" rx="11" fill="var(--warn-bg)" stroke="var(--warn)"/>
+        <text x="266" y="181" text-anchor="middle" font-weight="700" fill="var(--warn)">READY</text>
+        <rect x="372" y="150" width="140" height="52" rx="11" fill="var(--ok-bg)" stroke="var(--ok)"/>
+        <text x="442" y="181" text-anchor="middle" font-weight="700" fill="var(--ok)">ACTIVE</text>
+        <rect x="548" y="150" width="152" height="52" rx="11" fill="var(--code-bg)" stroke="var(--line2)"/>
+        <text x="624" y="181" text-anchor="middle" font-weight="700" fill="var(--ink2)">RETIRED</text>
+
+        <line x1="164" y1="176" x2="190" y2="176" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar4)"/>
+        <line x1="340" y1="176" x2="366" y2="176" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar4)"/>
+        <line x1="516" y1="176" x2="542" y2="176" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar4)"/>
+        <path d="M442 206 L442 232 L266 232 L266 208" fill="none" stroke="var(--no)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ar4)"/>
+        <text x="354" y="250" text-anchor="middle" fill="var(--no)" font-size="12">rollback</text>
+      </g>
+    </svg>
+    <figcaption><code>backend/app/models/rag_runtime.py</code> · 5개 테이블 (#355에서 추가)</figcaption>
+  </figure>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>테이블</th><th>뜻</th></tr></thead>
+    <tbody>
+      <tr><td><code>rag_runtime_execution_manifest</code></td><td>어떤 코드·모델·프롬프트·파서로 돌릴지 (레시피)</td></tr>
+      <tr><td><code>rag_runtime_release_bundle</code></td><td>도시락 통 자체 + 통 전체 해시</td></tr>
+      <tr><td><code>rag_runtime_bundle_source</code></td><td>이 통에 담긴 Source Snapshot 목록과 용도</td></tr>
+      <tr><td><code>rag_runtime_environment</code></td><td>지금 어느 통이 올라가 있는지 (식탁)</td></tr>
+      <tr><td><code>rag_runtime_environment_transition</code></td><td>통을 바꾼 이력 — 무엇에서 무엇으로</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="why"><b>왜 통째로 묶어?</b>
+  <p>색인만 새로 바꾸고 규칙은 옛날 걸 쓰면 <strong>“설명은 새 자료, 판단은 옛날 규칙”</strong>인 위험한 상태가 됩니다. 통째로 묶으면 그런 조합이 아예 생기지 않고, 문제가 나면 <strong>이전 통으로 한 번에 되돌릴 수</strong> 있습니다.</p></div>
+</section>
+
+<!-- 13 ----------------------------------------------------------------- -->
+<section class="slide" data-title="⑧ 증강과 생성">
+  <p class="eyebrow">12. 파이프라인 ⑧ — RAG의 A와 G</p>
+  <h2>증강과 생성 — 근거를 답으로 <span class="tag no">계약만 · 코드 0건</span></h2>
+  <div class="eli5"><b>비유</b>
+  <p>검사 통과한 자료를 AI한테 <b>그냥 던지지 않아요.</b> “<b>이 자료 안에서만</b> 답해”라고 묶어서 줍니다(증강). 그리고 AI가 답을 써 오면 <b>문장 하나하나가 어느 자료에서 나왔는지</b> 다시 대조합니다(인용 검증).</p></div>
+
+  <p>RAG의 <strong>A(Augmented)</strong>와 <strong>G(Generation)</strong>가 여기입니다. 앞 장들이 “재료를 고르는 일”이었다면 이 장은 “요리해서 손님상에 올리는 일”입니다.</p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 780 300" role="img" aria-label="Evidence Gate 이후 답 생성과 인용 검증, 공개 판정까지의 흐름">
+      <defs><marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0 0 L10 5 L0 10 z" fill="var(--ink3)"/></marker>
+        <marker id="ar5r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0 0 L10 5 L0 10 z" fill="var(--no)"/></marker></defs>
+      <g font-family="inherit" font-size="12.5">
+        <rect x="14" y="52" width="132" height="66" rx="12" fill="var(--warn-bg)" stroke="var(--warn)"/>
+        <text x="80" y="80" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="13.5">evidence_gate</text>
+        <text x="80" y="100" text-anchor="middle" fill="var(--ink2)">통과한 근거 최대 5</text>
+
+        <rect x="174" y="52" width="150" height="66" rx="12" fill="var(--no-bg)" stroke="var(--no)"/>
+        <text x="249" y="76" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="13.5">generate_answer</text>
+        <text x="249" y="94" text-anchor="middle" fill="var(--ink2)">근거를 붙여 답 생성</text>
+        <text x="249" y="110" text-anchor="middle" fill="var(--ink3)" font-size="11">= 증강 + 생성</text>
+
+        <rect x="352" y="52" width="168" height="66" rx="12" fill="var(--no-bg)" stroke="var(--no)"/>
+        <text x="436" y="76" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="13.5">claim_citation_validator</text>
+        <text x="436" y="94" text-anchor="middle" fill="var(--ink2)">주장마다 근거가</text>
+        <text x="436" y="110" text-anchor="middle" fill="var(--ink2)">실제로 붙어 있나</text>
+
+        <rect x="548" y="52" width="120" height="66" rx="12" fill="var(--no-bg)" stroke="var(--no)"/>
+        <text x="608" y="76" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="13.5">release_gate</text>
+        <text x="608" y="94" text-anchor="middle" fill="var(--ink2)">환자에게</text>
+        <text x="608" y="110" text-anchor="middle" fill="var(--ink2)">공개할지 최종 판정</text>
+
+        <rect x="694" y="52" width="72" height="66" rx="12" fill="var(--ok-bg)" stroke="var(--ok)"/>
+        <text x="730" y="82" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="13.5">공개</text>
+        <text x="730" y="100" text-anchor="middle" fill="var(--ink2)" font-size="11">+ Citation</text>
+
+        <line x1="150" y1="85" x2="168" y2="85" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar5)"/>
+        <line x1="328" y1="85" x2="346" y2="85" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar5)"/>
+        <line x1="524" y1="85" x2="542" y2="85" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar5)"/>
+        <line x1="672" y1="85" x2="688" y2="85" stroke="var(--ink3)" stroke-width="2" marker-end="url(#ar5)"/>
+
+        <path d="M436 122 L436 168" fill="none" stroke="var(--no)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ar5r)"/>
+        <path d="M608 122 L608 152 L470 152 L470 168" fill="none" stroke="var(--no)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ar5r)"/>
+        <rect x="286" y="174" width="330" height="60" rx="12" fill="var(--code-bg)" stroke="var(--line2)"/>
+        <text x="451" y="199" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="13.5">근거를 못 붙이면 → 생성한 답을 폐기</text>
+        <text x="451" y="219" text-anchor="middle" fill="var(--ink2)">승인된 “무근거 제한 문구”만 저장</text>
+
+        <text x="390" y="272" text-anchor="middle" fill="var(--ink3)" font-size="12">Guide는 generate_answer 대신 compose_personalized_guide — 나머지는 동일</text>
+      </g>
+    </svg>
+    <figcaption><code>docs/contracts/targets/post-mvp-1/rag-runtime-v1.md</code> · 고정 LangGraph 정본 Node ID</figcaption>
+  </figure>
+
+  <div class="card">
+    <h3>정본 그래프에서 이 구간</h3>
+    <p><strong>Chat</strong> — <code>… → evidence_gate → generate_answer → claim_citation_validator → release_gate → persist_result</code></p>
+    <p><strong>Guide</strong> — <code>… → conflict_gate → compose_personalized_guide → claim_citation_validator → release_gate → persist_guide</code></p>
+    <p>둘 사이 <strong>Citation Finalizer</strong>가 <code>CITATION_AUTHORIZATION</code> Guard를 원자적으로 만들고 검증합니다. 이건 Node가 아니라 Application Service 경계입니다.</p>
+  </div>
+
+  <div class="why"><b>“계약만”의 근거 — 직접 확인한 것</b>
+  <p>① <code>evidence_gate.py:280</code>의 docstring이 <strong>“Evaluate <em>pre-composer</em> sufficiency, conflict, and freshness signals.”</strong> — 게이트가 스스로 “나는 컴포저 <strong>직전까지</strong>”라고 선을 긋습니다.<br>
+  ② 저장소 전체에 <code>generate_answer</code>·<code>claim_citation_validator</code>·<code>release_gate</code>·<code>compose_personalized_guide</code> <strong>구현 0건</strong>.<br>
+  ③ <code>pyproject.toml</code>에 <strong><code>langgraph</code> 의존성 자체가 없습니다.</strong> 그래프를 돌릴 런타임이 아직 안 들어왔다는 뜻입니다.</p></div>
+
+  <div class="card">
+    <h3>DB는 먼저 깔려 있음 <span class="tag warn">schema-only</span></h3>
+    <ul class="files">
+      <li><code>knowledge_document</code> / <code>knowledge_chunk</code> — 지식 문서와 잘린 조각, 벡터 저장소 키</li>
+      <li><code>chat_citation</code> — 메시지의 어느 <code>claim_text</code>가 어느 chunk의 <code>cited_text</code>에서 왔는지</li>
+      <li><code>guide_citation</code> — 가이드용 같은 구조</li>
+    </ul>
+    <p>즉 <strong>“인용을 저장할 자리”는 이미 있고, 그 자리를 채울 코드가 없는</strong> 상태입니다. <code>docs/ai-pipeline.md</code>가 이 영역을 <strong>“Schema-only / Not implemented”</strong>로 적어 둔 이유입니다.</p>
+  </div>
+
+  <div class="why"><b>말할 때 주의할 용어</b>
+  <p>정본 계약이 <strong>“<code>composer</code>, <code>retrieval</code>, <code>rerank</code> 같은 설명용 단축어를 Node ID로 쓰지 말라”</strong>고 명시합니다. 회의에서 “컴포저 단계”라고 부르는 건 괜찮지만, <strong>이슈·PR·평가 산출물에는 <code>generate_answer</code>처럼 정본 이름 그대로</strong> 써야 합니다.</p></div>
+</section>
+
+<!-- 14 ----------------------------------------------------------------- -->
+<section class="slide" data-title="⑨ 시험 채점실">
+  <p class="eyebrow">13. 파이프라인 ⑨</p>
+  <h2>시험지 세 종류 <span class="tag warn">문제지만 있음</span></h2>
+  <div class="eli5"><b>비유</b>
+  <p><b>연습문제</b>는 맘껏 풀어요. <b>정답지</b>는 선생님이 확인해줘요. <b>진짜 시험지</b>는 <b>봉인해서 금고에</b> 넣어두고, 딱 한 번만 꺼내요. 미리 보면 시험이 의미가 없거든요.</p></div>
+
+  <figure class="figure">
+    <svg viewBox="0 0 740 220" role="img" aria-label="DEV, GOLD, HOLDOUT 세 가지 데이터셋">
+      <g font-family="inherit" font-size="13">
+        <rect x="20" y="24" width="216" height="152" rx="14" fill="var(--ok-bg)" stroke="var(--ok)"/>
+        <text x="128" y="58" text-anchor="middle" font-size="26">📝</text>
+        <text x="128" y="86" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="15">DEV (연습문제)</text>
+        <text x="128" y="110" text-anchor="middle" fill="var(--ink2)">한국어 자연어 질문</text>
+        <text x="128" y="132" text-anchor="middle" fill="var(--ok)" font-weight="700" font-size="20">60 / 60 작성됨</text>
+        <text x="128" y="156" text-anchor="middle" fill="var(--ink3)" font-size="11.5">주제 5종 · 표현 6종 · 독립군 20</text>
+
+        <rect x="256" y="24" width="216" height="152" rx="14" fill="var(--ok-bg)" stroke="var(--ok)"/>
+        <text x="364" y="58" text-anchor="middle" font-size="26">✅</text>
+        <text x="364" y="86" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="15">GOLD (정답지)</text>
+        <text x="364" y="110" text-anchor="middle" fill="var(--ink2)">어느 근거가 정답인지</text>
+        <text x="364" y="132" text-anchor="middle" fill="var(--ok)" font-weight="700" font-size="20">20건 APPROVED</text>
+        <text x="364" y="156" text-anchor="middle" fill="var(--ink3)" font-size="11.5">PR #341 리뷰로 승인 기록</text>
+
+        <rect x="492" y="24" width="228" height="152" rx="14" fill="var(--no-bg)" stroke="var(--no)"/>
+        <text x="606" y="58" text-anchor="middle" font-size="26">🔒</text>
+        <text x="606" y="86" text-anchor="middle" font-weight="700" fill="var(--ink)" font-size="15">HOLDOUT (진짜 시험)</text>
+        <text x="606" y="110" text-anchor="middle" fill="var(--ink2)">봉인 대상 · 저장소에 없음</text>
+        <text x="606" y="132" text-anchor="middle" fill="var(--no)" font-weight="700" font-size="20">0 / 40</text>
+        <text x="606" y="156" text-anchor="middle" fill="var(--ink3)" font-size="11.5">준비 완료 · 권한 승인 대기</text>
+      </g>
+    </svg>
+    <figcaption>DEV 결과로는 절대 Release PASS를 만들 수 없습니다 — 설계상 그렇게 못 하게 막아둠</figcaption>
+  </figure>
+
+  <div class="card">
+    <h3>어떤 점수를 재나 — <code>retrieval_metrics.py</code></h3>
+    <ul>
+      <li><code>RECALL_AT_5</code> — 정답 근거를 상위 5개 안에 <strong>몇 %나 담았나</strong></li>
+      <li><code>PRECISION_AT_5</code> — 5개 중 <strong>몇 개가 진짜 정답</strong>인가</li>
+      <li><code>MRR</code> — 첫 정답이 <strong>몇 등에서</strong> 나오나</li>
+      <li><code>NDCG_AT_5</code> — 정답을 <strong>위쪽에</strong> 놓았나 (순위 품질)</li>
+      <li><code>NO_HIT_RATE</code> — <strong>아무것도 못 찾은</strong> 비율</li>
+    </ul>
+    <p>여기에 <code>percentile_group_bootstrap_ci()</code>로 <strong>95% 신뢰구간</strong>까지 냅니다. 한 번 잘 나온 걸 성능이라고 부르지 않겠다는 뜻입니다.</p>
+  </div>
+
+  <div class="why"><b>왜 아직 점수가 없어?</b>
+  <p>채점하려면 <strong>실제로 검색을 돌려줄 어댑터</strong>가 있어야 합니다. 그게 <code>NOT_IMPLEMENTED</code>라서 <strong>baseline 점수 자체가 존재하지 않습니다.</strong> 그래서 상태 파일에는 지표 필드를 <strong>기록하는 것 자체가 금지</strong>돼 있습니다(<code>_reject_unverified_metric_fields</code>). 숫자를 지어내지 못하게 코드가 막아둔 겁니다.</p></div>
+</section>
+
+<!-- 14 ----------------------------------------------------------------- -->
+<section class="slide" data-title="숫자로 보는 현재">
+  <p class="eyebrow">14. 현황</p>
+  <h2>숫자로 보는 현재</h2>
+  <p>모두 <code>origin/develop</code> 실제 파일에서 센 값입니다.</p>
+
+  <h3>만들어진 양</h3>
+  <div class="stats">
+    <div class="stat ok"><div class="n">11,429</div><div class="l"><code>ai_worker/tasks/rag/</code> 줄</div></div>
+    <div class="stat ok"><div class="n">13,357</div><div class="l"><code>ai_worker/tasks/evaluation/</code> 줄</div></div>
+    <div class="stat ok"><div class="n">2,044</div><div class="l">RAG DB 모델 줄 (6파일)</div></div>
+    <div class="stat ok"><div class="n">1,236</div><div class="l">RAG 관련 테스트 함수 개수</div></div>
+  </div>
+
+  <h3>평가 데이터셋 (Issue #273)</h3>
+  <div class="stats">
+    <div class="stat ok"><div class="n">60/60</div><div class="l">DEV 질문 작성</div></div>
+    <div class="stat ok"><div class="n">20</div><div class="l">Gold 레코드 (APPROVED)</div></div>
+    <div class="stat ok"><div class="n">100</div><div class="l">합성 corpus 레코드</div></div>
+    <div class="stat no"><div class="n">0/40</div><div class="l">HOLDOUT 질문</div></div>
+  </div>
+
+  <h3>아직 0인 것</h3>
+  <div class="stats">
+    <div class="stat no"><div class="n">0</div><div class="l">실제 Retrieval Adapter</div></div>
+    <div class="stat no"><div class="n">0</div><div class="l">실행된 Run Artifact</div></div>
+    <div class="stat no"><div class="n">0</div><div class="l">baseline 지표</div></div>
+    <div class="stat no"><div class="n">false</div><div class="l">Release Eligible</div></div>
+  </div>
+
+  <div class="why"><b>이 대비가 핵심 메시지</b>
+  <p><strong>“코드 2.4만 줄 + 테스트 1,200개인데 점수는 0”</strong>이 이상해 보이지만 의도된 순서입니다. 계약·검증·안전 경계를 먼저 못 박고, 실제 어댑터를 나중에 끼우는 방식이라 <strong>지금까지 만든 건 전부 “규칙과 검사대”</strong>입니다.</p></div>
+</section>
+
+<!-- 15 ----------------------------------------------------------------- -->
+<section class="slide" data-title="상태 보드">
+  <p class="eyebrow">15. 현황</p>
+  <h2>단계별 상태 보드</h2>
+  <p>멘토님께 화면 공유하기 딱 좋은 표입니다. 옆으로 스크롤됩니다.</p>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>단계</th><th>상태</th><th>근거</th></tr></thead>
+    <tbody>
+      <tr><td>① Source 호출</td><td><span class="tag ok">구현</span></td><td>MFDS client·SSRF 가드·probe·receipt, 테스트 있음</td></tr>
+      <tr><td>② Snapshot·checksum</td><td><span class="tag ok">구현</span></td><td>acquire→parse→normalize→checksum→persist→lifecycle 전 구간</td></tr>
+      <tr><td>③ Catalog</td><td><span class="tag ok">구현</span></td><td>build·validate·normalize·approval·export·service</td></tr>
+      <tr><td>④ Candidate Index</td><td><span class="tag warn">순수 로직·Port 계약</span></td><td>PG/pgvector 어댑터 없음 (의도적으로 Python 모사 금지)</td></tr>
+      <tr><td>⑤ Retrieval Kernel</td><td><span class="tag warn">합성 어댑터만</span></td><td>“Synthetic-only” · 결과는 untrusted</td></tr>
+      <tr><td>⑥ Evidence Gate</td><td><span class="tag warn">검사기만</span></td><td>“No production verifier exists in this slice.”</td></tr>
+      <tr><td>⑦ Runtime Bundle</td><td><span class="tag warn">DB 계층</span></td><td>5개 테이블 + repository (#355) · 활성화 흐름 미연결</td></tr>
+      <tr><td>⑧ 증강·생성 (A·G)</td><td><span class="tag no">계약만</span></td><td>정본 Node ID는 확정, 구현 0건 · <code>langgraph</code> 의존성 없음</td></tr>
+      <tr><td>⑧ 인용 저장 테이블</td><td><span class="tag warn">schema-only</span></td><td><code>chat_citation</code>·<code>guide_citation</code>·<code>knowledge_chunk</code> 존재, 실행 경로 미연결</td></tr>
+      <tr><td>⑨ Evaluation 실행</td><td><span class="tag no">미실행</span></td><td>어댑터 부재로 baseline 없음</td></tr>
+      <tr><td>Candidate 조회 API</td><td><span class="tag warn">flag OFF</span></td><td><code>PUBLIC_TRACK_F_ENABLED=false</code> → <code>503</code> fail-closed</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="why"><b>용어 주의 — 멘토님이 정확히 볼 부분</b>
+  <p><strong>“PR이 머지됐다 ≠ 그 기능이 켜졌다”</strong>입니다. 이 프로젝트는 <em>계약 → DB 스키마 → 실제 적재·연결</em>을 <strong>따로</strong> 진행하고 있어서, 머지된 PR 대부분은 앞 두 계층입니다. 실제로 <code>PUBLIC_TRACK_F_ENABLED</code>는 기본값이 <code>false</code>이고 켜기 전 조건이 문서에 명시돼 있습니다.</p></div>
+</section>
+
+<!-- 16 ----------------------------------------------------------------- -->
+<section class="slide" data-title="막고 있는 것">
+  <p class="eyebrow">16. 현황</p>
+  <h2>지금 막고 있는 것 4개</h2>
+  <p><code>docs/validation/rag/issue-273/report.md</code>에 기계가 적어 둔 blocking code 그대로입니다.</p>
+
+  <div class="card">
+    <h3><code>BLOCKED_BY_RAG_14_ADAPTER</code></h3>
+    <p><strong>실제 검색 어댑터가 없다.</strong> PostgreSQL FTS·trigram·pgvector를 실제로 치고 순위와 영수증을 만들어 줄 구현체. 이게 <strong>가장 큰 한 덩어리</strong>이고, 이게 생겨야 평가 점수가 처음 나옵니다.</p>
+  </div>
+  <div class="card">
+    <h3><code>BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER</code></h3>
+    <p>보호된 데이터로 평가를 <strong>실행할 러너</strong>가 없다. 브랜치 <code>368-protected-retrieval-runner</code>가 이 작업 자리입니다.</p>
+  </div>
+  <div class="card">
+    <h3><code>WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION</code></h3>
+    <p>HOLDOUT 문제를 <strong>만들 권한</strong>이 아직 승인되지 않았다. 사람이 승인 이벤트를 남겨야 시작할 수 있고, 그전엔 코드가 막습니다.</p>
+  </div>
+  <div class="card">
+    <h3><code>WAITING_FOR_HOLDOUT_FREEZE</code></h3>
+    <p>진짜 시험지 <strong>봉인</strong>이 아직. 현재는 <code>PREPARATION_READY</code> — 준비 끝, 봉인 전.</p>
+  </div>
+
+  <div class="why"><b>이 4개의 순서</b>
+  <p>어댑터(RAG-14) → 러너 → HOLDOUT 권한 승인 → HOLDOUT 작성·봉인 → 실제 채점 → Release 판정. <strong>앞의 두 개는 코드 작업, 뒤의 두 개는 사람 승인</strong>이라 병렬로 갈 수 있습니다.</p></div>
+</section>
+
+<!-- 17 ----------------------------------------------------------------- -->
+<section class="slide" data-title="멘토님께 할 말">
+  <p class="eyebrow">17. 보고용</p>
+  <h2>멘토님께는 이렇게 말하면 됩니다</h2>
+
+  <div class="script">
+    <p style="margin:0 0 .7em"><strong>① 어디까지 왔나</strong><br>
+    “RAG를 <strong>자료 준비 / 찾기 / 검사 / 배포 / 평가</strong> 다섯 층으로 나눠 진행 중입니다. <strong>자료 준비층은 실제로 동작</strong>합니다 — 식약처 API 호출, SSRF 가드, Snapshot checksum, 약품 Catalog build·승인·export까지 코드와 테스트가 있습니다.”</p>
+
+    <p style="margin:0 0 .7em"><strong>② 중간층은 어떤 상태인가</strong><br>
+    “찾기·검사층은 <strong>커널과 계약, 그리고 합성 어댑터까지</strong> 끝났습니다. Retrieval 커널·Evidence Gate·Candidate Index가 모두 <strong>Port 기반</strong>이라, 실제 PostgreSQL 어댑터를 꽂으면 바로 돌아가는 구조입니다. 지금은 의도적으로 <strong>합성 전용</strong>이고 결과를 <code>untrusted</code>로 표시합니다.”</p>
+
+    <p style="margin:0 0 .7em"><strong>③ 증강·생성은 어디까지</strong><br>
+    “RAG의 <strong>A(증강)와 G(생성)</strong>는 <strong>정본 LangGraph Node ID까지 확정</strong>돼 있습니다 — <code>evidence_gate → generate_answer → claim_citation_validator → release_gate</code>. 인용을 저장할 <code>chat_citation</code>·<code>guide_citation</code> 테이블도 이미 있습니다. 다만 <strong>그 Node들의 구현은 아직 0건</strong>이고 <code>langgraph</code> 의존성도 안 들어와 있어서, 지금은 <strong>‘설계 확정 + 저장 자리 준비’ 단계</strong>입니다.”</p>
+
+    <p style="margin:0 0 .7em"><strong>④ 남은 것</strong><br>
+    “평가 문제지는 DEV 60문항과 Gold 20건 승인까지 됐고, <strong>HOLDOUT은 준비 완료·봉인 전</strong>입니다. 막고 있는 건 네 가지인데 그중 <strong>실제 Retrieval 어댑터(RAG-14)가 다음 한 덩어리</strong>입니다. 그게 생겨야 첫 baseline 점수가 나옵니다.”</p>
+
+    <p style="margin:0"><strong>⑤ 안전 관련 한마디</strong><br>
+    “현재 <code>Release Eligible: false</code>, <code>PUBLIC_TRACK_F_ENABLED=false</code>로 <strong>Production은 닫혀 있고</strong>, 검증 미완인 상태에서 켜지지 않도록 fail-closed로 잠가 뒀습니다.”</p>
+  </div>
+
+  <div class="card">
+    <h3>나올 만한 질문 3개와 답</h3>
+    <p><strong>Q. 코드가 이렇게 많은데 왜 아직 못 돌려?</strong><br>
+    A. 계약과 검증을 먼저 고정하는 순서라서요. 커널은 <strong>Port 인터페이스만</strong> 알고, 실제 DB 접근 구현은 별도 슬라이스로 뺐습니다. 지금 없는 건 그 <strong>구현 한 겹</strong>입니다.</p>
+    <p><strong>Q. 그럼 지금 코드가 맞는지는 어떻게 알아?</strong><br>
+    A. RAG 관련 테스트 함수가 <strong>1,200개 이상</strong> 있고, 합성 어댑터로 커널 전 구간을 결정적으로 검증합니다. 그리고 결과에 <code>SUCCEEDED</code> 대신 <strong>진단 코드와 영수증</strong>을 남기게 해서, 실패 원인이 항상 특정됩니다.</p>
+    <p><strong>Q. 성능 숫자는?</strong><br>
+    A. <strong>아직 없습니다.</strong> 어댑터가 없어서 실행 자체를 안 했고, 상태 파일에 <strong>지표 필드를 적는 것 자체를 코드가 거부</strong>합니다. 추정치를 성능으로 보고하지 않는 게 이 트랙의 규칙입니다.</p>
+  </div>
+</section>
+
+<!-- 18 ----------------------------------------------------------------- -->
+<section class="slide" data-title="직접 확인하기">
+  <p class="eyebrow">18. 실습</p>
+  <h2>직접 확인해 보기</h2>
+
+  <h3>읽는 순서 (이 순서면 안 헤맵니다)</h3>
+  <div class="card">
+    <ul class="files">
+      <li>1 · <code>docs/ai-pipeline.md</code> — 전체 상태 표. 여기부터.</li>
+      <li>2 · <code>docs/validation/rag/issue-273/report.md</code> — 평가 현황과 blocking code</li>
+      <li>3 · <code>docs/contracts/targets/post-mvp-1/rag-runtime-v1.md</code> — <strong>고정 LangGraph 정본</strong>. Chat·Guide 그래프 전체 Node 목록이 여기 있습니다 (증강·생성 포함)</li>
+      <li>4 · <code>docs/governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md</code> — PD-315, RRF·해시 규칙 확정</li>
+      <li>5 · <code>ai_worker/tasks/rag/evidence_retrieval.py</code> — 위에서 300줄만 (타입 정의가 곧 설계도)</li>
+      <li>6 · <code>ai_worker/tasks/rag/evidence_gate.py</code> — 위에서 260줄</li>
+      <li>7 · <code>backend/app/models/rag_runtime.py</code> — 배포 단위</li>
+      <li>8 · <code>ai_worker/tasks/evaluation/retrieval_metrics.py</code> — 지표 정의</li>
+    </ul>
+  </div>
+
+  <h3>develop 최신으로 맞추기</h3>
+  <pre><code>git fetch origin develop &amp;&amp; git log origin/develop --oneline -10</code></pre>
+
+  <h3>RAG 테스트 돌려보기</h3>
+  <pre><code>uv run pytest ai_worker/tests/rag -q</code></pre>
+  <pre><code>uv run pytest ai_worker/tests/evaluation -q</code></pre>
+
+  <h3>“이 코드가 합성 전용인가?” 30초 확인법</h3>
+  <pre><code>grep -rn "synthetic\|Synthetic\|NOT_IMPLEMENTED\|untrusted" ai_worker/tasks/rag/*.py | head -20</code></pre>
+  <p>docstring 첫 줄에 <strong>스스로 권위 경계를 적어 두는 것</strong>이 이 코드베이스의 규칙입니다. 파일을 열었을 때 첫 세 줄만 읽어도 “이건 진짜냐 연습이냐”를 알 수 있습니다.</p>
+</section>
+
+<!-- 19 ----------------------------------------------------------------- -->
+<section class="slide" data-title="용어 사전">
+  <p class="eyebrow">19. 부록</p>
+  <h2>용어 사전 — 회의에서 나오면 당황 안 하게</h2>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>용어</th><th>쉬운 말</th></tr></thead>
+    <tbody>
+      <tr><td>Source</td><td>자료를 주는 곳 (식약처 API 같은)</td></tr>
+      <tr><td>Snapshot</td><td>그 자료를 어느 시점에 통째로 떠 온 사진</td></tr>
+      <tr><td>checksum</td><td>내용의 지문. 한 글자만 달라도 완전히 달라짐</td></tr>
+      <tr><td>Catalog</td><td>약 이름·성분·별명 사전</td></tr>
+      <tr><td>Index</td><td>빨리 찾으라고 만든 목차</td></tr>
+      <tr><td>Lexical</td><td>단어가 똑같은 걸 찾기</td></tr>
+      <tr><td>Dense</td><td>뜻이 비슷한 걸 찾기 (벡터)</td></tr>
+      <tr><td>RRF</td><td>두 목록을 순위 기준으로 공평하게 합치는 방법</td></tr>
+      <tr><td>Rerank</td><td>합친 목록을 더 좋은 기준으로 다시 줄 세우기</td></tr>
+      <tr><td>Provenance</td><td>이게 어디서 왔는지 적은 꼬리표</td></tr>
+      <tr><td>Receipt</td><td>단계별 영수증. 다음 단계가 대조함</td></tr>
+      <tr><td>Evidence Gate</td><td>근거를 써도 되는지 검사하는 문</td></tr>
+      <tr><td>Augmentation (증강)</td><td>통과한 근거를 프롬프트에 묶어 “이 안에서만 답해”라고 주는 것</td></tr>
+      <tr><td>generate_answer</td><td>Chat의 답 생성 Node 정본 이름 (별칭: 컴포저)</td></tr>
+      <tr><td>claim_citation_validator</td><td>답의 주장마다 근거가 실제로 붙었는지 결정론적으로 검증</td></tr>
+      <tr><td>release_gate</td><td>환자에게 공개할지 최종 판정하는 마지막 문</td></tr>
+      <tr><td>Citation</td><td>“이 문장은 이 자료 이 부분에서 나왔다”는 인용 기록</td></tr>
+      <tr><td>Bundle</td><td>배포 단위 도시락 통</td></tr>
+      <tr><td>fail-closed</td><td>애매하면 통과 대신 멈춤</td></tr>
+      <tr><td>synthetic</td><td>진짜 데이터가 아닌 연습용 합성 데이터</td></tr>
+      <tr><td>DEV / GOLD / HOLDOUT</td><td>연습문제 / 정답지 / 봉인된 진짜 시험</td></tr>
+      <tr><td>JCS (RFC 8785)</td><td>JSON을 항상 똑같은 바이트로 만드는 규칙</td></tr>
+      <tr><td>SSRF</td><td>외부 호출을 속여 내부망을 찌르는 공격</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="card">
+    <h3>이 문서의 근거</h3>
+    <p><code>origin/develop</code> · 커밋 <code>23d11234</code> · 작성 <time>2026-09-09</time>. 모든 상태 표기는 저장소 파일과 <code>docs/validation/rag/issue-273/report.md</code>의 기계 기록을 따랐고, 추정한 수치는 넣지 않았습니다.</p>
+  </div>
+  <p class="hint">처음으로 돌아가려면 <kbd>Home</kbd> · 목차는 <kbd>m</kbd></p>
+</section>
+
+</main>
+
+<nav class="navbar" aria-label="슬라이드 이동">
+  <div class="navinner">
+    <button class="btn" id="prev">← 이전</button>
+    <div class="counter"><b id="cur">1</b> / <span id="tot">19</span> · <span id="curTitle"></span></div>
+    <button class="btn" id="next">다음 →</button>
+  </div>
+</nav>
+
+<div class="overlay" id="tocOv" hidden role="dialog" aria-modal="true" aria-label="목차">
+  <div class="ovhead"><h2 id="ov-title">목차</h2><button class="btn" data-close>닫기 (Esc)</button></div>
+  <ul class="toc" id="tocList"></ul>
+</div>
+
+<div class="overlay" id="helpOv" hidden role="dialog" aria-modal="true" aria-label="단축키">
+  <div class="ovhead"><h2>키보드 · 터치</h2><button class="btn" data-close>닫기 (Esc)</button></div>
+  <ul class="keys">
+    <li><span class="k"><kbd>→</kbd> <kbd>l</kbd> <kbd>j</kbd> <kbd>Space</kbd></span><span>다음 장</span></li>
+    <li><span class="k"><kbd>←</kbd> <kbd>h</kbd> <kbd>k</kbd></span><span>이전 장</span></li>
+    <li><span class="k"><kbd>Home</kbd> / <kbd>End</kbd></span><span>처음 / 마지막</span></li>
+    <li><span class="k"><kbd>1</kbd>–<kbd>9</kbd></span><span>해당 번호 장으로</span></li>
+    <li><span class="k"><kbd>m</kbd> 또는 <kbd>t</kbd></span><span>목차 열기</span></li>
+    <li><span class="k"><kbd>a</kbd></span><span>전체를 한 페이지로 (쭉 보기)</span></li>
+    <li><span class="k"><kbd>?</kbd></span><span>이 도움말</span></li>
+    <li><span class="k"><kbd>Esc</kbd></span><span>닫기</span></li>
+    <li><span class="k">모바일</span><span>좌우 스와이프로 이동</span></li>
+    <li><span class="k">인쇄</span><span>⌘P — 모든 장이 순서대로 나옵니다</span></li>
+  </ul>
+</div>
+
+<script>
+(function(){
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var bar = document.getElementById('bar');
+  var cur = document.getElementById('cur');
+  var tot = document.getElementById('tot');
+  var curTitle = document.getElementById('curTitle');
+  var tocList = document.getElementById('tocList');
+  var tocOv = document.getElementById('tocOv');
+  var helpOv = document.getElementById('helpOv');
+  var i = 0, flow = false;
+
+  tot.textContent = slides.length;
+
+  // build TOC
+  slides.forEach(function(s, n){
+    var li = document.createElement('li');
+    var b = document.createElement('button');
+    b.innerHTML = '<span class="num">' + (n+1) + '</span><span>' + (s.dataset.title || ('장 ' + (n+1))) + '</span>';
+    b.addEventListener('click', function(){ closeOverlays(); go(n); });
+    li.appendChild(b); tocList.appendChild(li);
+  });
+  var tocBtns = Array.prototype.slice.call(tocList.querySelectorAll('button'));
+
+  function render(){
+    slides.forEach(function(s, n){ s.hidden = flow ? false : (n !== i); });
+    tocBtns.forEach(function(b, n){ b.setAttribute('aria-current', n === i ? 'true' : 'false'); });
+    bar.style.width = ((i+1) / slides.length * 100) + '%';
+    cur.textContent = i + 1;
+    curTitle.textContent = slides[i].dataset.title || '';
+    document.title = (slides[i].dataset.title ? slides[i].dataset.title + ' · ' : '') + 'RAG 코드 투어';
+  }
+
+  function go(n, noScroll){
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    render();
+    if (flow) { if (!noScroll) slides[i].scrollIntoView({behavior:'smooth', block:'start'}); }
+    else if (!noScroll) window.scrollTo(0, 0);
+    if (history.replaceState) history.replaceState(null, '', '#' + (i+1));
+  }
+
+  function setFlow(on){
+    flow = on;
+    document.body.classList.toggle('flow', flow);
+    document.getElementById('btnFlow').innerHTML = flow ? '🎞 <span class="hide-sm">한 장씩</span>' : '📜 <span class="hide-sm">쭉 보기</span>';
+    render();
+    if (flow) slides[i].scrollIntoView({block:'start'});
+    else window.scrollTo(0, 0);
+  }
+
+  function closeOverlays(){ tocOv.hidden = true; helpOv.hidden = true; }
+  function toggle(el){
+    var willOpen = el.hidden;
+    closeOverlays();
+    el.hidden = !willOpen;
+  }
+
+  document.getElementById('next').addEventListener('click', function(){ go(i+1); });
+  document.getElementById('prev').addEventListener('click', function(){ go(i-1); });
+  document.getElementById('btnToc').addEventListener('click', function(){ toggle(tocOv); });
+  document.getElementById('btnHelp').addEventListener('click', function(){ toggle(helpOv); });
+  document.getElementById('btnFlow').addEventListener('click', function(){ setFlow(!flow); });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-close]'), function(b){
+    b.addEventListener('click', closeOverlays);
+  });
+
+  document.addEventListener('keydown', function(e){
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    var k = e.key;
+    if (k === 'Escape'){ closeOverlays(); return; }
+    var overlayOpen = !tocOv.hidden || !helpOv.hidden;
+    if (k === '?' ){ e.preventDefault(); toggle(helpOv); return; }
+    if (k === 'm' || k === 'M' || k === 't' || k === 'T'){ e.preventDefault(); toggle(tocOv); return; }
+    if (overlayOpen) return;
+    if (k === 'ArrowRight' || k === 'l' || k === 'j' || k === 'PageDown' || k === ' '){ e.preventDefault(); go(i+1); }
+    else if (k === 'ArrowLeft' || k === 'h' || k === 'k' || k === 'PageUp'){ e.preventDefault(); go(i-1); }
+    else if (k === 'Home'){ e.preventDefault(); go(0); }
+    else if (k === 'End'){ e.preventDefault(); go(slides.length-1); }
+    else if (k === 'a' || k === 'A'){ e.preventDefault(); setFlow(!flow); }
+    else if (k >= '1' && k <= '9'){ e.preventDefault(); go(parseInt(k,10)-1); }
+  });
+
+  // swipe
+  var x0 = null, y0 = null, t0 = 0;
+  document.addEventListener('touchstart', function(e){
+    if (e.touches.length !== 1) { x0 = null; return; }
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; t0 = Date.now();
+  }, {passive:true});
+  document.addEventListener('touchend', function(e){
+    if (x0 === null || flow) return;
+    if (!tocOv.hidden || !helpOv.hidden) return;
+    var t = e.changedTouches[0];
+    var dx = t.clientX - x0, dy = t.clientY - y0;
+    if (Date.now() - t0 < 800 && Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.6){
+      go(dx < 0 ? i+1 : i-1);
+    }
+    x0 = null;
+  }, {passive:true});
+
+  // start position from hash
+  var start = parseInt((location.hash || '').replace('#',''), 10);
+  go(isNaN(start) ? 0 : start - 1, true);
+  window.addEventListener('hashchange', function(){
+    var n = parseInt((location.hash || '').replace('#',''), 10);
+    if (!isNaN(n) && n - 1 !== i) go(n - 1);
+  });
+})();
+</script>
+</body>
+</html>

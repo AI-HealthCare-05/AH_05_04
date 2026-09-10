@@ -15,6 +15,7 @@ from app.models.rag_evaluation import (
 )
 from app.models.rag_runtime import (
     RagRuntimeApprovalStatus,
+    RagRuntimeBundleSource,
     RagRuntimeBundleStatus,
     RagRuntimeEnvironmentStatus,
     RagRuntimeEnvironmentTransition,
@@ -31,7 +32,6 @@ from app.repositories.rag_evaluation_repository import (
 )
 from app.repositories.rag_runtime_repository import (
     RagReleaseEvaluationApprovalCreate,
-    RagRuntimeBundleSourceCreate,
     RagRuntimeEnvironmentCreate,
     RagRuntimeEnvironmentTransitionCreate,
     RagRuntimeExecutionManifestCreate,
@@ -190,18 +190,20 @@ async def test_runtime_bundle_repository_can_save_minimum_graph(db_session: Asyn
             created_by="backend-test",
         )
     )
-    bundle_source = await repository.create_bundle_source(
-        RagRuntimeBundleSourceCreate(
-            bundle_id=bundle.id,
-            source_snapshot_id=snapshot.id,
-            source_purpose=RagRuntimeSourcePurpose.CATALOG,
-            source_version=snapshot.source_version,
-            canonical_checksum=snapshot.canonical_checksum,
-            approval_version="approval-v1",
-            scope_policy_hash=_hash("c"),
-            freshness_policy_hash=_hash("d"),
-        )
+    # #164 저장 구조 자체를 확인하는 테스트다. member write 경로는 #175에서
+    # build_runtime_bundle 안으로 닫혔으므로, 여기서는 ORM으로 직접 넣어 컬럼·제약만 검증한다.
+    bundle_source = RagRuntimeBundleSource(
+        bundle_id=bundle.id,
+        source_snapshot_id=snapshot.id,
+        source_purpose=RagRuntimeSourcePurpose.CATALOG,
+        source_version=snapshot.source_version,
+        canonical_checksum=snapshot.canonical_checksum,
+        approval_version="approval-v1",
+        scope_policy_hash=_hash("c"),
+        freshness_policy_hash=_hash("d"),
     )
+    db_session.add(bundle_source)
+    await db_session.flush()
     environment = await repository.create_environment(
         RagRuntimeEnvironmentCreate(
             environment_code="local",

@@ -47,7 +47,6 @@ from app.models.rag_runtime import (
 )
 from app.models.rag_source import RagSnapshotVerificationStatus
 from app.repositories.rag_runtime_repository import (
-    RagRuntimeBundleSourceCreate,
     RagRuntimeEnvironmentCreate,
     RagRuntimeRepository,
 )
@@ -368,9 +367,11 @@ async def test_appending_a_member_after_creation_breaks_hash_verification() -> N
     async with session_factory() as session:
         assert await verify_persisted_bundle_manifest_hash(session, bundle_id) is True
 
+    # Inserted directly through the ORM: the repository no longer exposes a public member write,
+    # so this simulates the strongest available bypass -- a raw INSERT -- and shows it is detected.
     async with session_factory.begin() as session:
-        await RagRuntimeRepository(session).create_bundle_source(
-            RagRuntimeBundleSourceCreate(
+        session.add(
+            RagRuntimeBundleSource(
                 bundle_id=bundle_id,
                 source_snapshot_id=extra.id,
                 source_purpose=RagRuntimeSourcePurpose.RULE,
@@ -398,8 +399,8 @@ async def test_member_cannot_claim_a_version_its_snapshot_does_not_have() -> Non
 
     with pytest.raises(IntegrityError):
         async with session_factory.begin() as session:
-            await RagRuntimeRepository(session).create_bundle_source(
-                RagRuntimeBundleSourceCreate(
+            session.add(
+                RagRuntimeBundleSource(
                     bundle_id=execution.persisted.bundle.id,
                     source_snapshot_id=catalog.id,
                     source_purpose=RagRuntimeSourcePurpose.RULE,
