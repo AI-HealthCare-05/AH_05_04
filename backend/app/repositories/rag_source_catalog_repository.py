@@ -388,6 +388,14 @@ class RagSourceCatalogRepository:
         self,
         item: RagSourceSnapshotVerificationCreate,
     ) -> RagSourceSnapshotVerification:
+        operation_id = await self.session.scalar(
+            select(RagSourceOperation.id)
+            .join(RagSourceSnapshot, RagSourceSnapshot.operation_id == RagSourceOperation.id)
+            .where(RagSourceSnapshot.id == item.snapshot_id)
+            .with_for_update(of=RagSourceOperation)
+        )
+        if operation_id is None:
+            raise ValueError("Snapshot Source operation is missing")
         verification = RagSourceSnapshotVerification(
             snapshot_id=item.snapshot_id,
             check_name=item.check_name,

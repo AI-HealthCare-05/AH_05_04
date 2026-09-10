@@ -232,6 +232,7 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
         verified_by: str | None,
         details_summary: str | None = None,
     ) -> None:
+        await self.lock_snapshot_operation(snapshot_id=snapshot_id)
         await self._session.execute(
             insert(_VERIFICATION).values(
                 id=str(uuid4()),

@@ -970,3 +970,57 @@ async def test_writer_entrypoint_with_actual_restricted_credentials():
                     await connection.execute(text(f'DROP OWNED BY "{role}"'))
                     await connection.execute(text(f'DROP ROLE "{role}"'))
         await admin.dispose()
+
+
+@pytest.mark.parametrize("writer_path", ["worker", "backend"])
+async def test_verification_insert_waits_for_operation_transition_lock(writer_path):
+    from sqlalchemy.exc import DBAPIError
+
+    from app.models.rag_source import RagVerificationResultStatus
+    from app.repositories.rag_source_catalog_repository import RagSourceSnapshotVerificationCreate
+
+    identity = await _seed_operation(f"VERIFY_LOCK_{writer_path}")
+    async with session_factory.begin() as session:
+        created = await persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=_metadata(f"external:verify-lock-{writer_path}", minute=1),
+            artifacts=_stored_artifacts(minute=1),
+        )
+    assert created.snapshot_id is not None
+    async with session_factory.begin() as holder:
+        await SqlAlchemySourceSnapshotRepository(holder).lock_snapshot_operation(snapshot_id=created.snapshot_id)
+        with pytest.raises(DBAPIError) as error:
+            async with session_factory.begin() as contender:
+                await contender.execute(text("SET LOCAL lock_timeout = '100ms'"))
+                if writer_path == "worker":
+                    await SqlAlchemySourceSnapshotRepository(contender).append_verification(
+                        snapshot_id=created.snapshot_id,
+                        check_name="synthetic-lock-check",
+                        result="PASSED",
+                        verified_at=_NOW,
+                        verified_by="synthetic-reviewer",
+                    )
+                else:
+                    await RagSourceCatalogRepository(contender).create_snapshot_verification(
+                        RagSourceSnapshotVerificationCreate(
+                            snapshot_id=created.snapshot_id,
+                            check_name="synthetic-lock-check",
+                            verification_result=RagVerificationResultStatus.PASSED,
+                            verified_at=_NOW,
+                            verified_by="synthetic-reviewer",
+                        )
+                    )
+        assert error.value.orig.sqlstate == "55P03"
+    async with session_factory() as session:
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(RagSourceSnapshotVerification)
+                .where(
+                    RagSourceSnapshotVerification.snapshot_id == created.snapshot_id,
+                    RagSourceSnapshotVerification.check_name == "synthetic-lock-check",
+                )
+            )
+            == 0
+        )

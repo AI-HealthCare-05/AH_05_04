@@ -104,3 +104,11 @@ Candidate 검증은 아직 전체 Trigger 대체 완료를 의미하지 않는�
 - 정정 DTO의 순서 누락을 입력 단계에서 차단
 - hash·DTO·Repository·Service·확정 동시성 검증 39 passed
 - hash 영구 저장·소비 경로·DB 슬롯 제약·권한·migration은 미완료
+
+## Source·Catalog 저장 경계 1단계
+
+- Worker와 Backend Source/Catalog Repository의 검증 이력 INSERT가 상태 전환과 동일한 Operation 잠금 사용
+- 실제 별도 연결에서 전환 잠금 중 승인 INSERT가 대기하고 timeout 시 감사가 남지 않는 두 경로 검증
+- Source lifecycle·Repository 단위·기존 Catalog 회귀 합계 135 passed
+- 현재 Catalog build는 source identity 연결·export 검증 후 save_build 포트를 호출하지만, 실제 DB build adapter는 현재 브랜치에 없음. Catalog 기존 검증 통과를 DB 저장 전환 완료로 해석하지 않는다.
+- 미병합 #404 코드는 가져오지 않음. Catalog DB adapter·Set/hash 저장 및 Source 관리 권한의 운영 연결은 남아 있음.
