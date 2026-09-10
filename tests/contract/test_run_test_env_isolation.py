@@ -330,7 +330,7 @@ def test_default_local_backend_lane_does_not_enable_xdist() -> None:
     """공유 PostgreSQL·Redis를 사용하는 로컬 Backend lane은 직렬 실행해야 합니다."""
     backend_lane_tokens = shlex.split(_function_body("run_backend_test_lane", RUN_TEST_SCRIPT).replace("\\\n", " "))
 
-    assert "-n" not in backend_lane_tokens
+    assert not any(token.startswith(("-n", "--numprocesses")) for token in backend_lane_tokens)
     assert not any(token.startswith("--dist") for token in backend_lane_tokens)
 
 
@@ -476,7 +476,7 @@ def test_github_actions_uses_fixed_xdist_only_for_the_worker_lane() -> None:
     worker_command = shlex.split(worker_step["run"].replace("\\\n", " "))
 
     assert backend_command[:6] == ["uv", "run", "coverage", "run", "-m", "pytest"]
-    assert "-n" not in backend_command
+    assert not any(token.startswith(("-n", "--numprocesses")) for token in backend_command)
     assert worker_command[:3] == ["uv", "run", "pytest"]
     assert worker_command[3:9] == [
         "-n",
