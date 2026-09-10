@@ -159,19 +159,15 @@ function reconcileHistoryMessages(
   return mergedMessages
 }
 
-const sessionCreationRequests = new Map<
-  string,
-  ReturnType<typeof createChatSession>
+const sessionCreationRequests = new WeakMap<
+  typeof createChatSession,
+  Map<string, ReturnType<typeof createChatSession>>
 >()
 
-const sessionRediscoveryRequests = new Map<
-  string,
-  ReturnType<typeof getChatSessionForPrescription>
+const sessionRediscoveryRequests = new WeakMap<
+  typeof getChatSessionForPrescription,
+  Map<string, ReturnType<typeof getChatSessionForPrescription>>
 >()
-
-function getSessionStorageKey(prescriptionId: string) {
-  return `dosey_chat_session:${prescriptionId}`
-}
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) {
@@ -191,19 +187,24 @@ function createChatSessionOnce(
   prescriptionId: string,
   createSession: typeof createChatSession,
 ) {
-  if (createSession !== createChatSession) {
-    return createSession(prescriptionId)
+  let requestsByPrescription = sessionCreationRequests.get(createSession)
+  if (!requestsByPrescription) {
+    requestsByPrescription = new Map()
+    sessionCreationRequests.set(createSession, requestsByPrescription)
   }
 
-  const pendingRequest = sessionCreationRequests.get(prescriptionId)
+  const pendingRequest = requestsByPrescription.get(prescriptionId)
   if (pendingRequest) return pendingRequest
 
   const request = createSession(prescriptionId).finally(() => {
-    if (sessionCreationRequests.get(prescriptionId) === request) {
-      sessionCreationRequests.delete(prescriptionId)
+    if (requestsByPrescription.get(prescriptionId) === request) {
+      requestsByPrescription.delete(prescriptionId)
+      if (requestsByPrescription.size === 0) {
+        sessionCreationRequests.delete(createSession)
+      }
     }
   })
-  sessionCreationRequests.set(prescriptionId, request)
+  requestsByPrescription.set(prescriptionId, request)
   return request
 }
 
@@ -211,19 +212,24 @@ function getChatSessionForPrescriptionOnce(
   prescriptionId: string,
   getSession: typeof getChatSessionForPrescription,
 ) {
-  if (getSession !== getChatSessionForPrescription) {
-    return getSession(prescriptionId)
+  let requestsByPrescription = sessionRediscoveryRequests.get(getSession)
+  if (!requestsByPrescription) {
+    requestsByPrescription = new Map()
+    sessionRediscoveryRequests.set(getSession, requestsByPrescription)
   }
 
-  const pendingRequest = sessionRediscoveryRequests.get(prescriptionId)
+  const pendingRequest = requestsByPrescription.get(prescriptionId)
   if (pendingRequest) return pendingRequest
 
   const request = getSession(prescriptionId).finally(() => {
-    if (sessionRediscoveryRequests.get(prescriptionId) === request) {
-      sessionRediscoveryRequests.delete(prescriptionId)
+    if (requestsByPrescription.get(prescriptionId) === request) {
+      requestsByPrescription.delete(prescriptionId)
+      if (requestsByPrescription.size === 0) {
+        sessionRediscoveryRequests.delete(getSession)
+      }
     }
   })
-  sessionRediscoveryRequests.set(prescriptionId, request)
+  requestsByPrescription.set(prescriptionId, request)
   return request
 }
 
@@ -318,7 +324,6 @@ function ChatPage({
         setIsLoading(false)
         return
       }
-      const storageKey = getSessionStorageKey(requestedPrescriptionId)
 
       let sessionResponse
 
@@ -349,10 +354,6 @@ function ChatPage({
       if (!isCurrentRequest()) return
 
       const activeSessionId = sessionResponse.data.session_id
-
-      if (!previewState) {
-        sessionStorage.setItem(storageKey, activeSessionId)
-      }
 
       const historyResponse = await services.getChatMessages(activeSessionId)
 
@@ -538,6 +539,7 @@ function ChatPage({
 
     const compositionState = compositionStateRef.current
     if (
+      compositionState === 'composing' ||
       event.nativeEvent.isComposing ||
       (event.keyCode === 229 && compositionState !== 'ended')
     ) {

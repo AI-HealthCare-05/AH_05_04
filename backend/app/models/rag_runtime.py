@@ -117,6 +117,18 @@ class RagRuntimeReleaseBundle(Base):
             "knowledge_index_manifest_hash IS NULL OR length(knowledge_index_manifest_hash) = 64",
             name="chk_rag_runtime_bundle_knowledge_index_hash_length",
         ),
+        CheckConstraint("length(trim(environment_code)) > 0", name="chk_rag_runtime_bundle_environment_code_nonblank"),
+        CheckConstraint("length(trim(catalog_version)) > 0", name="chk_rag_runtime_bundle_catalog_version_nonblank"),
+        CheckConstraint("length(catalog_manifest_hash) = 64", name="chk_rag_runtime_bundle_catalog_manifest_hash"),
+        # An artifact member is identified by ref AND version together; neither alone is an
+        # identity, so a half-populated pair must not be storable.
+        *(
+            CheckConstraint(
+                f"({kind}_ref IS NULL) = ({kind}_version IS NULL)",
+                name=f"chk_rag_runtime_bundle_{kind}_ref_version_pair",
+            )
+            for kind in ("candidate_index", "knowledge_index", "rule_set", "guideline_set", "safety_policy")
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -133,13 +145,24 @@ class RagRuntimeReleaseBundle(Base):
         nullable=False,
     )
     bundle_manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # rag_runtime_release_bundle has no environment FK: the environment row points at the bundle,
+    # not the reverse.  environment_code is therefore the only place the environment that this
+    # content was built for can be pinned, and it enters bundle_manifest_hash.
+    environment_code: Mapped[str] = mapped_column(String(50), nullable=False)
+    catalog_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    catalog_manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     candidate_index_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    candidate_index_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
     candidate_index_manifest_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     knowledge_index_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    knowledge_index_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
     knowledge_index_manifest_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     rule_set_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    rule_set_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
     guideline_set_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    guideline_set_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
     safety_policy_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    safety_policy_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
     governance_revision_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -153,6 +176,17 @@ class RagRuntimeReleaseBundle(Base):
 
 
 class RagRuntimeBundleSource(Base):
+    """One pinned source member.
+
+    Every field that enters ``bundle_manifest_hash`` is stored here, so the hash can be
+    recomputed from persisted rows and compared with the stored value.  Without that the hash is
+    an opaque token and the ``rag-runtime-v1.md`` requirement to re-verify the Bundle Manifest
+    before a pointer change cannot be met.  ``source_version`` is validated against
+    ``rag_source_snapshot`` inside the build transaction, not by a composite FK: depending on
+    #369's ``uq_rag_source_snapshot_id_version`` made that constraint undroppable and broke #369's
+    own downgrade tests.  #398 moved integrity enforcement into Python, and this follows it.
+    """
+
     __tablename__ = "rag_runtime_bundle_source"
     __table_args__ = (
         UniqueConstraint(
@@ -164,6 +198,14 @@ class RagRuntimeBundleSource(Base):
         CheckConstraint(
             f"source_purpose IN ({_sql_in_list(RagRuntimeSourcePurpose)})",
             name="chk_rag_runtime_bundle_source_purpose",
+        ),
+        CheckConstraint("length(trim(source_version)) > 0", name="chk_rag_runtime_bundle_source_version_nonblank"),
+        CheckConstraint("length(trim(approval_version)) > 0", name="chk_rag_runtime_bundle_source_approval_nonblank"),
+        CheckConstraint("length(canonical_checksum) = 64", name="chk_rag_runtime_bundle_source_canonical_checksum"),
+        CheckConstraint("length(scope_policy_hash) = 64", name="chk_rag_runtime_bundle_source_scope_policy_hash"),
+        CheckConstraint(
+            "length(freshness_policy_hash) = 64",
+            name="chk_rag_runtime_bundle_source_freshness_policy_hash",
         ),
     )
 
@@ -178,6 +220,11 @@ class RagRuntimeBundleSource(Base):
         ForeignKey("rag_source_snapshot.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    source_version: Mapped[str] = mapped_column(String(255), nullable=False)
+    canonical_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    approval_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    scope_policy_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    freshness_policy_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     source_purpose: Mapped[RagRuntimeSourcePurpose] = mapped_column(
         Enum(RagRuntimeSourcePurpose, native_enum=False, length=30),
         nullable=False,

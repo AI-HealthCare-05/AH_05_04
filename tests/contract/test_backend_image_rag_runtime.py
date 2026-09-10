@@ -17,7 +17,7 @@ def test_backend_container_can_import_runtime_and_load_migration_head(storage_di
             "-c",
             "from rag_runtime import evaluate_medication_identification_preflight; "
             "from scripts.ci.verify_database_head import migration_heads; "
-            "assert migration_heads() == ('3984b5c6d7e8',); print('ok')",
+            "assert migration_heads() == ('175a1b2c3d4e',); print('ok')",
         ],
         check=True,
         capture_output=True,
@@ -49,6 +49,45 @@ def test_backend_image_contains_isolated_management_entrypoints(storage_dir_buil
             "from app.admin.source_management_api import management_app; "
             "from app.admin.source_management_permissions import PermissionChange; "
             "assert '/management/{kind}/{target_id}' in management_app.openapi()['paths']; print('ok')",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.stdout.strip() == "ok"
+
+
+def test_backend_image_can_import_runtime_bundle_build_port(storage_dir_built_image: str) -> None:
+    """#175 내부 Bundle build port가 배포 이미지에서 import되는지 검증합니다.
+
+    repository와 build service가 `ai_worker.tasks.rag.runtime_bundle_builder`를 import하므로
+    `backend/app/Dockerfile`의 COPY 목록에 `ai_worker`가 없으면 여기서 ModuleNotFoundError로
+    잡힙니다. 저장소 루트에서만 성공하고 이미지에서 실패하던 회귀를 고정합니다.
+    """
+    completed = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-e",
+            "DB_HOST=synthetic",
+            "-e",
+            "DB_USER=synthetic",
+            "-e",
+            "DB_PASSWORD=synthetic",
+            "-e",
+            "DB_NAME=synthetic",
+            storage_dir_built_image,
+            "uv",
+            "run",
+            "--no-sync",
+            "python",
+            "-c",
+            "from app.repositories.rag_runtime_repository import RagRuntimeRepository; "
+            "from app.services.rag_runtime_bundle_build import execute_runtime_bundle_build; "
+            "from ai_worker.tasks.rag.runtime_bundle_builder import evaluate_runtime_bundle_build; "
+            "assert callable(execute_runtime_bundle_build) and callable(evaluate_runtime_bundle_build); "
+            "print('ok')",
         ],
         check=True,
         capture_output=True,
