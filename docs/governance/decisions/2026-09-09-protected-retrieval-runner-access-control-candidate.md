@@ -142,6 +142,8 @@ infrastructure adapter 연결 PR, 역할·환경·정책 변경 시 재검토하
 ## 14. 관련 문서·참조
 
 - [Issue #368 Security Kernel 설계](../../designs/ceohwj/issue-368-protected-retrieval-runner-security-kernel-design.md)
+- `ai_worker/tasks/evaluation/protected_retrieval.py` — kernel 본체(정책, 인프라 독립)
+- `ai_worker/tasks/evaluation/protected_retrieval_synthetic.py` — synthetic in-memory adapter
 - `docs/validation/rag/issue-273/protected-runner-foundation.md`
 - `infra/docker/postgres/configure-app-role.sql` — §3 role/권한 provisioning 선례
 - `backend/alembic/versions/165e8f706152_guard_snapshot_transitions.py`, [Source Snapshot DB 상태 전이 결정](./2026-09-08-source-snapshot-db-transition.md) — §4 SECURITY DEFINER 함수 선례
