@@ -105,6 +105,14 @@ bash scripts/ci/run_test.sh
 뒤 하나라도 실패하면 전체 실행을 실패 처리합니다. CPU와 메모리가 제한된 환경에서는 병렬
 실행에 따른 개선 폭이 작을 수 있습니다.
 
+Worker lane 내부는 `pytest-xdist -n 2 --dist=loadfile --max-worker-restart=0`으로 실행합니다.
+고정된 두 worker만 사용해 동시에 실행되는 Backend lane과 CPU를 과다 경쟁하지 않게 하고,
+한 테스트 파일의 모든 테스트는 같은 worker에서 실행해 파일 단위 fixture와 module 상태의
+경계를 유지합니다. xdist worker가 비정상 종료돼도 자동 재시작하지 않으며, 테스트 실패나
+worker 종료는 Worker lane과 최종 `test` gate의 실패로 그대로 전달됩니다. pytest-cov가 각
+worker의 Coverage data를 `.coverage.worker`로 병합하므로 최종 Backend·Worker 합산 절차와
+Coverage 기준은 바뀌지 않습니다.
+
 애플리케이션 업로드용 `STORAGE_DIR`과 Coverage·pytest cache·lane log가 사용하는 runner 상태
 디렉터리는 서로 다른 임시 디렉터리입니다. Worker 기본 lane은 단위 테스트 경계이므로 DB port를
 연결 불가능한 값으로 고정합니다. 승인된 Worker 디렉터리에 DB 접근 테스트가 추가되면 조용히
@@ -124,6 +132,13 @@ Worker Coverage artifact를 합산합니다. Coverage artifact에는 실행 data
 `addopts`를 추가하는 변경도 분류 검토 전에는 허용하지 않습니다.
 따라서 기본 디렉터리 안의 새 테스트는 자동 수집되고, 새 suite는 작성 PR에서 실행 lane 또는
 opt-in 사유를 반드시 결정해야 합니다.
+
+승인된 Worker 디렉터리에 추가되는 테스트도 파일 단위로 자동 병렬 실행됩니다. 새 Worker 단위
+테스트는 실행 순서나 다른 파일의 process global, 환경변수, 현재 작업 디렉터리, 고정 임시파일에
+의존하지 않아야 합니다. 파일시스템은 `tmp_path` 등 테스트별 경로를 사용하고, 환경변수 변경은
+`monkeypatch`로 복원합니다. session-scope fixture는 xdist worker마다 한 번씩 실행된다는 점을
+전제로 작성해야 합니다. PostgreSQL·Redis·외부 Provider처럼 프로세스 간 공유 자원이 필요하면
+Worker 기본 lane에 넣지 말고 담당 reviewer와 별도 Integration 실행 경계를 결정합니다.
 
 `tests/integration/` 전체를 PostgreSQL·Redis와 함께 재현하는 공식 로컬 명령은 다음과 같습니다.
 
