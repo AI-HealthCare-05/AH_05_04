@@ -1,0 +1,89 @@
+{
+  "status": "FULL_PAGES_OBSERVED_NOT_VERIFIED",
+  "same_records_on_repeat": true,
+  "official_ingredient_mapping": "NOT_VERIFIED",
+  "source_order_semantics": "NOT_VERIFIED",
+  "limitations": "페이지 순회는 동일 시점 Snapshot을 보장하지 않음. 장기 키 안정성·공식 Identity·순서 승인·Source Receipt 증빙이 아님.",
+  "operation": "getDrugPrdtMcpnDtlInq07",
+  "observed_at": "2026-09-11T10:44:47.230192+00:00",
+  "passes": [
+    {
+      "advertised_total_count": 126825,
+      "pages_read": 1269,
+      "record_count": 126825,
+      "candidate_key_fields": [
+        "ITEM_SEQ",
+        "TAMT_SEQ",
+        "MTRAL_SN"
+      ],
+      "candidate_key_incomplete_rows": 31697,
+      "missing_key_patterns": [
+        {
+          "fields": [
+            "TAMT_SEQ",
+            "MTRAL_SN"
+          ],
+          "count": 31697
+        }
+      ],
+      "candidate_key_duplicate_groups": 0,
+      "duplicate_key_different_payload_groups": 0,
+      "observed_candidate_keys_complete_and_unique": false,
+      "all_component_fields_blank_rows": 31697,
+      "serial_statistics": {
+        "TAMT_SEQ": {
+          "ascii_digit_string": 95128,
+          "missing": 31697
+        },
+        "MTRAL_SN": {
+          "ascii_digit_string": 95128,
+          "missing": 31697
+        }
+      },
+      "numeric_conversion_collision_groups": 0,
+      "repeated_product_material_groups": 3613,
+      "material_codes_with_multiple_exact_names": 0,
+      "exact_names_with_multiple_material_codes": 281,
+      "order_independent_record_hash": "d873cea39f6afe669799da53c890c6aed946eb7807d106d1cb3eb6c80144f82e"
+    },
+    {
+      "advertised_total_count": 126825,
+      "pages_read": 1269,
+      "record_count": 126825,
+      "candidate_key_fields": [
+        "ITEM_SEQ",
+        "TAMT_SEQ",
+        "MTRAL_SN"
+      ],
+      "candidate_key_incomplete_rows": 31697,
+      "missing_key_patterns": [
+        {
+          "fields": [
+            "TAMT_SEQ",
+            "MTRAL_SN"
+          ],
+          "count": 31697
+        }
+      ],
+      "candidate_key_duplicate_groups": 0,
+      "duplicate_key_different_payload_groups": 0,
+      "observed_candidate_keys_complete_and_unique": false,
+      "all_component_fields_blank_rows": 31697,
+      "serial_statistics": {
+        "TAMT_SEQ": {
+          "ascii_digit_string": 95128,
+          "missing": 31697
+        },
+        "MTRAL_SN": {
+          "ascii_digit_string": 95128,
+          "missing": 31697
+        }
+      },
+      "numeric_conversion_collision_groups": 0,
+      "repeated_product_material_groups": 3613,
+      "material_codes_with_multiple_exact_names": 0,
+      "exact_names_with_multiple_material_codes": 281,
+      "order_independent_record_hash": "d873cea39f6afe669799da53c890c6aed946eb7807d106d1cb3eb6c80144f82e"
+    }
+  ]
+}

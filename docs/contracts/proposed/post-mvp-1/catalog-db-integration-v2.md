@@ -290,3 +290,29 @@ Search Entry 기반을 revision `166a7b8c9d0e`로 구현했다.
 
 D-02는 미확정 그대로다. 이 작업은 run 생성·ingestion run 대체·FK·migration을 추가하지 않는다.
 기존 public Candidate v2 입력·hash 의미도 유지한다. 실제 DB adapter·transaction 통합은 보류 상태다.
+
+## #166 D-04 후속: Component occurrence 전환 (리뷰 대상)
+
+[2026-09-11 결정안](../../../governance/decisions/2026-09-11-catalog-component-occurrences.md)을 따른다.
+`CatalogComponentInput.source_record_key`는 선택 문자열이다. 없는 입력의 기존 v2 ref/hash는
+유지하고, 있는 입력은 명시적 원본 키와 product_ref 기반 참조로 반복 성분을 구분한다.
+같은 product_ref의 구성원은 원본 키를 전부 제공하거나 전부 생략해야 한다. 혼용은 build에서
+COMPONENT_SOURCE_KEY_MODE_CONFLICT로 거부하며 Service는 MEMBER_CONFLICT로 반환한다.
+제품 간에는 서로 다른 모드를 사용할 수 있다.
+동일 ref 또는 제품별 동일 order의 서로 다른 구성원은 Python에서 MEMBER_CONFLICT로 거부한다.
+Service는 승인 조회·Export·저장 전에 REJECTED를 반환하고 저장 준비도 재검증한다.
+
+DB의 UNIQUE는 `(product_id, display_order)`이며 nullable `release_profile`을 저장한다.
+Repository `get_component(product_id=..., display_order=...)`와 Loader의 조회·재사용 기준도
+같다. 기존 행과 내용이 다르면 덮어쓰지 않고 거부한다. 기존 v2 export/envelope 형식·golden
+자료는 유지한다. 원본 키는 입력이며 DB에 별도 컬럼으로 복제하지 않는다. Source 원문과
+Snapshot 결속을 근거로 남긴다. hash를 원본 키 또는 실행 ID로 대체하지 않는다.
+
+forward migration `e8c41a09d652`는 기존 제품별 순서 충돌 시 무보정 중단한다. downgrade는
+반복 성분이나 release_profile을 잃는 경우 거부한다. 일반 FK·UNIQUE·CHECK·최소 권한을
+사용하며 RLS·Trigger·업무용 DB 함수를 추가하지 않는다.
+
+MFDS 상세 변환 함수는 원료→Ingredient 매핑과 order를 명시적으로 받는다. 누락 후보키·
+매핑 불일치는 거부하고, 일련번호의 숫자 변환·배열 index 순서·이름 기반 Identity 추론은
+하지 않는다. 실제 수집 자동 연결과 공식 매핑 승인은 완료 범위가 아니다.
+근거: [D-04 검토 문서](../../../designs/jye-rookie/issue-166-d04-component-order.md).
