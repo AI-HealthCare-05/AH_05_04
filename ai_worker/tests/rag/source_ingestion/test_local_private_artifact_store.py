@@ -132,12 +132,12 @@ def test_preserves_rejection_reference_without_putting_raw_value_in_metadata(tmp
         file_path=source,
         metadata=metadata,
         artifact_kind=IngestionArtifactKind.REJECTS,
-        reject_code="MISSING_ITEM_SEQ",
+        reject_code="ITEM_SEQ_REQUIRED",
         parser_location="page[1].record[3]",
     )
 
     assert stored.artifact_kind is IngestionArtifactKind.REJECTS
-    assert stored.reject_code == "MISSING_ITEM_SEQ"
+    assert stored.reject_code == "ITEM_SEQ_REQUIRED"
     assert stored.parser_location == "page[1].record[3]"
     assert content.decode() not in repr(stored)
 

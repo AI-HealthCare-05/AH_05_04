@@ -624,4 +624,17 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 
 ## #418 UNCONFIRMED backlog 후보 API (미등록)
 
-`GET /api/v1/medication-checkins/unconfirmed`의 조회 구현은 있으나 Backend blocker에 따라 v1 router 등록을 되돌렸다. 실제 앱의 route 목록·OpenAPI에는 없으며 요청은 404다. 테스트 앱에서만 backlog router와 병합된 #413 Check-in PUT을 연결해 보완 후 목록 재조회를 검증한다. Cursor 404에서는 Frontend가 cursor를 생략해 첫 페이지부터 재조회한다. [PD-418](./governance/decisions/2026-09-10-unconfirmed-backlog-418.md) 및 [Proposed 계약](./contracts/proposed/unconfirmed-backlog-v1.md)의 두 담당 리뷰어 승인 후 등록·실제 앱 검증을 진행하고 해당 HEAD 승인 전 병합하지 않는다. #138 Frontend 소비 검증과 Production 공개 승인을 대신하지 않는다.
+GET /api/v1/medication-checkins/unconfirmed의 조회 구현은 있으나 Backend blocker에 따라 v1 router 등록을 되돌렸다. 실제 앱의 route 목록·OpenAPI에는 없으며 요청은 404다. 테스트 앱에서만 backlog router와 병합된 #413 Check-in PUT을 연결해 보완 후 목록 재조회를 검증한다. Cursor 404에서는 Frontend가 cursor를 생략해 첫 페이지부터 재조회한다. [PD-418](./governance/decisions/2026-09-10-unconfirmed-backlog-418.md) 및 [Proposed 계약](./contracts/proposed/unconfirmed-backlog-v1.md)의 두 담당 리뷰어 승인 후 등록·실제 앱 검증을 진행하고 해당 HEAD 승인 전 병합하지 않는다. #138 Frontend 소비 검증과 Production 공개 승인을 대신하지 않는다.
+
+## #203 앱 내부 알림 — 구현 브랜치 검토 대상
+
+PD-203의 [Notification 계약](contracts/proposed/track-b-notifications-v1.md)을 구현한다. 이 절은 해당 구현 PR의 명세이며 지정 리뷰어 승인 전 current 승격 근거가 아니다.
+
+| Method | Path | 성공 | 동작 |
+| --- | --- | --- | --- |
+| GET | /api/v1/notifications?limit=20&offset=0 | 200 | 자신의 DELIVERED 목록, scheduled_at DESC·id DESC, items·next_offset |
+| PATCH | /api/v1/notifications/{notification_id}/read | 200 | body {}, 최초 read_at 유지, 
+otification.read |
+| POST | /api/v1/medication-occurrences/{occurrence_id}/reminders | 201 | body {scheduled_at}, 확인 기한 전 PENDING occurrence의 사용자 요청 1회, medication-reminder.create |
+
+쓰기에는 기존 Idempotency-Key 형식(16~255 ASCII 허용 문자)과 암호화 동기 snapshot이 적용된다. 성공은 data envelope, 오류는 공통 형식, 전체 응답은 no-store다. 알림 read/목록의 occurrence_local_date는 원본 occurrence 날짜이며 재알림 시각에서 추정하지 않는다. Track C REMINDER_SETUP은 기존 일정 PUT 흐름을 사용하며 위 재알림 POST를 호출하지 않는다. #202 약 정보 조회 경로의 통합 검증은 별도 대기다.

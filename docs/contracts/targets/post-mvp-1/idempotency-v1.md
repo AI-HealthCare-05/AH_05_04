@@ -84,3 +84,8 @@ snapshot은 암호화한 PostgreSQL `BYTEA`로 저장하고 application cap은 1
 공통 필드는 `record_type`, `user_id`, `operation_id`, versioned `key_hmac`, `request_hash`, `created_at`, `expires_at`이다. `ASYNC_JOB`은 non-null `job_id`를 저장하고 `parent_resource_id`, `response_status`, `response_body_snapshot`은 null이다. `SYNC_MUTATION`은 non-null `parent_resource_id`, `response_status`, 암호화된 `response_body_snapshot`(암호화 후 `BYTEA`)을 저장하고 `job_id`는 null이다. DB CHECK 제약으로 이 타입별 nullability를 강제한다.
 
 HMAC version의 물리 컬럼·인코딩과 키 교체 절차는 Privacy·보안 승인과 구현 PR에서 확정한다. HMAC key rotation 기간에는 미만료 record가 존재할 수 있는 모든 retained key version으로 계산한 `key_hmac`을 같은 scope에서 함께 조회해 기존 record를 찾는다. 현재·직전 key version만 조회하는 구현은 rotation 주기가 최대 멱등 레코드 보존기간보다 길어 N-2 이하 미만료 record가 존재할 수 없을 때만 허용한다. 같은 원문 key가 retained key version으로 저장되어 있는데 현재 key version만 조회해 새 Job이나 mutation을 만들면 안 된다. rotation 중에도 원문 `Idempotency-Key`는 저장하지 않는다. 또한 혼합 writer가 서로 다른 active key version으로 같은 원문 key의 최초 write를 동시에 수행할 수 있는 배포는 금지한다.
+
+
+## PD-203 알림 쓰기 적용 — 구현 PR 검토 대상
+
+`notification.read`는 notification_id를 parent_resource_id로, `medication-reminder.create`는 기존 occurrence_id를 parent로 사용한다. 읽음 fingerprint는 `{}`, 재알림은 UTC scheduled_at이다. 두 경로는 기존 SYNC_MUTATION unique·암호화 snapshot·rollback·만료 처리 구현을 재사용한다. 새 읽음 scope와 operation ID는 [Notification 계약](../../proposed/track-b-notifications-v1.md)의 구현 PR 검토 항목이며 본 target 전체 승인 상태를 확장하지 않는다.

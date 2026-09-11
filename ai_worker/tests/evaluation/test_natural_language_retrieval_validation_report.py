@@ -36,8 +36,8 @@ GOLD_REVIEW_EVIDENCE_HASH = "6dd83d9c258499fb0d543870e5a99a913abb0b2dcb3c11e4b72
 DATASET_APPROVAL_EVIDENCE_HASH = "3b1a90ba0f9a6c06162ce953bdb7e0d504f76074d415a807611812d16ac29896"
 HOLDOUT_PREPARATION_HASH = "40ea344c378298d99c14c372c27296322854d8e9b055fa179592568ca88bc192"
 HOLDOUT_PREPARATION_SELF_HASH = "b4a0a113d9efce867a434875f18ee259431d226a9cf1e4dcaed28152920600b6"
-PROTECTED_RUNNER_FOUNDATION_HASH = "85af97344a5a49757cbbaeb086999f1279ca11d13c1202decccefede097c6ab9"
-PROTECTED_RUNNER_FOUNDATION_SELF_HASH = "657e94a374d91f37604935ffe548e0bc224b37bd53c052f009df14f38b895969"
+PROTECTED_RUNNER_FOUNDATION_HASH = "49b4305f67b50e15016cd47aa307e503efc5d3ce9e963ad09d1a2fbb0d0faf1a"
+PROTECTED_RUNNER_FOUNDATION_SELF_HASH = "6b2b0e47baf7a9e5666a6db292da4dfa74828c6f1d19d6e5478166e3215d9377"
 
 
 def _status_payload() -> dict[str, Any]:
@@ -101,7 +101,7 @@ def _status_payload() -> dict[str, Any]:
         "protected_runner_issue_status": "CREATED",
         "policy_foundation_status": "IMPLEMENTED",
         "effective_enforcement_status": "NOT_IMPLEMENTED",
-        "infrastructure_adapter_status": "NOT_IMPLEMENTED",
+        "infrastructure_adapter_status": "PARTIALLY_IMPLEMENTED",
         "reconciliation_adapter_status": "NOT_IMPLEMENTED",
         "holdout_freeze_status": "NOT_STARTED",
         "adapter_status": "NOT_IMPLEMENTED",
@@ -268,7 +268,7 @@ def test_phase_b3_status_accepts_only_the_policy_foundation_without_effective_en
     assert status.protected_runner_issue_status == "CREATED"
     assert status.policy_foundation_status == "IMPLEMENTED"
     assert status.effective_enforcement_status == "NOT_IMPLEMENTED"
-    assert status.infrastructure_adapter_status == "NOT_IMPLEMENTED"
+    assert status.infrastructure_adapter_status == "PARTIALLY_IMPLEMENTED"
     assert status.reconciliation_adapter_status == "NOT_IMPLEMENTED"
     assert status.holdout_freeze_status == "NOT_STARTED"
     assert status.adapter_status == "NOT_IMPLEMENTED"

@@ -2,6 +2,10 @@
 
 ## 현재 인계 계약
 
+#166 후속의 DB 비의존 저장·복원 인계 결과는 [6단계 인계 증빙](catalog-storage-handoff-166.md)에 정리한다.
+실제 PostgreSQL 구성원·내용 주소 기반 Set/manifest 저장 결과는
+[DB 기반 검증](catalog-identity-alias-search-schema-166.md)에 별도로 기록한다.
+
 PR #329의 현재 공개 입력은 `CatalogExportArtifacts`, schema는 `medication-catalog-v2`다.
 manifest·JSONL·typed Catalog 결속과 승인 gate를 검증한 뒤 Candidate Index를 생성한다.
 `CandidateCatalogExport`는 내부 typed 값이며 단독 공개 입력이 아니다.
@@ -53,17 +57,15 @@ manifest·JSONL·typed Catalog 결속과 승인 gate를 검증한 뒤 Candidate 
 transaction에 저장하는 포트다. 검증 성공 후 이 메서드가 한 번만 호출되며, 저장 예외는 성공 결과로
 변환하지 않는다.
 
-현재 #164 DB 기반에는 다음 필드와 관계가 없어 손실 없는 Worker DB adapter를 구현할 수 없다.
+후속 revision은 안정 Identity·Search Entry와 Alias 상태·교차 Snapshot 출처를 추가하고,
+현재 v2 manifest·전체 Source 목록·구성원 실제 FK·종류별 hash 계산 bytes를 내용 주소 기반 Catalog Set에 저장한다.
+`SqlAlchemyCatalogBuildRepository`는 Backend ORM을 import하지 않고 이 구조에 적재하며 transaction을
+소유한다. 같은 완전한 v2 내용은 기존 Set을 재사용하고, 중간 오류는 구성원과 Set 전체를 rollback한다.
 
-- Catalog build/version과 manifest candidate 저장 구조
-- Catalog build와 여러 Source Snapshot/version의 lineage
-- Candidate용 Search Entry 저장 구조
-- Alias의 `alias_source`, `review_status`, `status`, `is_effective`
-- Alias Source Snapshot과 대상 Product/Ingredient Snapshot의 분리
-
-따라서 실제 PostgreSQL 저장은 `BLOCKED_BY_WORKER_DB_ADAPTER`로 유지한다. 위 구조의 DB 계약과
-migration이 승인되면 `CatalogBuildRepository` 구현체와 PostgreSQL commit/rollback 통합 테스트를 연결한다.
-현재 구현은 Backend ORM model을 Worker에서 import하지 않는다.
+D-02 실행 provenance는 계속 미확정이므로 이 Set을 정본 normalization 실행이나 Publication으로
+간주하지 않는다. 현재 schema가 손실 없이 보존하지 못하는 비활성 Ingredient와 Component
+`release_profile`도 조용히 누락하지 않고 저장을 거부한다. Crosswalk와 신규 Candidate projection·Runtime
+medication manifest hash, 실제 승인 저장소·실패 감사·Runtime 활성화는 남은 범위다.
 
 ## 실행 결과
 
@@ -81,7 +83,7 @@ MYPYPATH="$PWD/backend:$PWD" uv run mypy ai_worker/tasks/rag/catalog
 Success: no issues found in 7 source files
 ```
 
-## 남은 통합 조건
+## 최초 구현 당시 남았던 통합 조건
 
 - #323 병합 후 승인된 Worker DB adapter 기준으로 branch를 갱신한다.
 - 위 DB 계약과 migration을 DB 담당자에게 확인한다.
@@ -90,7 +92,7 @@ Success: no issues found in 7 source files
 
 저장소 전체 테스트에서는 DB 비의존 테스트 `3179 passed, 10 skipped`까지 진행됐고, PostgreSQL migration
 17건은 호스트 실행 환경에서 Compose 내부 hostname `postgres`를 해석하지 못해 실패했다. 로컬 DB를
-대상으로 한 migration 재실행은 downgrade/upgrade와 trigger 변경이 기존 데이터를 바꿀 수 있어 수행하지
+대상으로 한 migration 재실행은 downgrade/upgrade가 기존 데이터를 바꿀 수 있어 수행하지
 않으며, 격리된 CI PostgreSQL에서 확인한다.
 
 ## 2026-09-08 계약 결정과 독립적인 계산 계층 보완
@@ -249,3 +251,61 @@ git diff --check
 이번 수정에는 DB·migration 변경이 없다. Alembic 확인은 revision graph 검사이며 PostgreSQL
 upgrade/rollback 실행 검증이 아니다. 전체 Backend·PostgreSQL·Redis 통합 및 GitHub CI는 이
 수정의 push 후 최신 HEAD에서 확인해야 한다. #166 DB adapter·Runtime 활성화는 후속 범위다.
+
+## #166 DB 후속 1~3단계 검증 (2026-09-08)
+
+기준: develop `e20acb9`, v2 hash 보강 `59684d6`, 저장 준비 구현 `741795c`.
+현재 공개 인계는 계속 `CatalogExportArtifacts` / `medication-catalog-v2`다.
+과거 v1 기록의 숫자와 경로를 이번 검증 증빙으로 재사용하지 않는다.
+
+- 고정 합성 bytes·digest: `tests/fixtures/rag/catalog/hash-v2/`.
+- hash 보강 22건, DB 비의존 저장 준비 26건 추가.
+- RAG 전체 `963 passed`; Ruff 통과; 변경 Python format 통과; RAG Mypy 37파일 통과.
+- 단일 Alembic head `169b2c3d4e5f`, revision graph 29개 확인. 새 migration 없음.
+- 저장 준비 함수는 SQL을 실행하지 않는다. 실제 PostgreSQL 적재·commit/rollback·실행 FK·승인
+  adapter는 미완료이며 테스트 결과를 DB 통합 완료로 해석하지 않는다.
+
+4단계는 D-02 인계 및 합의된 선행 migration 병합 대기다.
+[상세 인계 점검](../designs/jye-rookie/issue-166-db-migration-readiness.md)을 따른다.
+
+## #166 DB 후속 5단계 선행 복원 검증 (2026-09-08)
+
+3단계 `741795c`의 저장 준비 자료를 v2 전체 artifacts로 복원하는 독립 코드를 추가했다.
+고정 합성 bytes 복원 → manifest/JSONL 검증 → 공개 Candidate 성공을 확인했고, 부적격·손상된
+자료는 거부했다. 신규 복원 테스트 35건, RAG 전체 `998 passed`, Ruff·format·Mypy 38파일 통과.
+기존 v2 bytes·digest와 D-02 미확정 기준은 유지한다.
+
+이는 메모리와 합성 bytes를 이용한 복원 검증이다. 실제 PostgreSQL adapter·commit/rollback·재시도
+통합 테스트는 아직 수행하지 않았고, 4단계 인계 전 5단계 전체 완료로 표시하지 않는다.
+
+
+## #166 후속 5단계 재개 — 현재 승인 대조
+
+`test_restore_current.py`는 복원된 과거 승인과 현재 verifier 응답을 분리해 검증한다.
+정상/역순 Source receipt는 고정 v2 bytes 그대로 공개 Candidate 인계를 통과한다.
+포트 없음, 거부 receipt, 다른 버전/checksum/receipt, Source subset·중복·미승인·STALE·불완전은
+반환을 차단한다. 같은 자료를 다시 읽어도 verifier를 다시 호출하며 첫 성공 뒤 철회를 캐시하지 않는다.
+손상·미승인 저장 자료는 승인 서비스 호출 전 차단하고, 서비스 예외 원문 비노출·취소 전파도 검사한다.
+
+실제 승인 DB·시간에 따른 만료 판단·PostgreSQL 왕복·동시 철회 잠금의 통합 증빙은 아니다.
+D-02는 미확정이며 run/FK를 구현하지 않았다. 실제 DB 통합 완료로 기록하지 않는다.
+
+검증 결과: 신규 승인 재검사 18건 포함 RAG 전체 **1,016 passed**. RAG Ruff 통과, 변경 Python
+format 통과, RAG Mypy **38 source files** 통과, `git diff --check` 통과.
+실행: `PYTHONPATH=backend:. python -m pytest ai_worker/tests/rag -q`,
+`MYPYPATH=backend:. python -m mypy ai_worker/tasks/rag`. PostgreSQL·실제 승인 저장소는 실행하지 않았다.
+
+
+## PR #372 develop 충돌 해결 (2026-09-11)
+
+- develop `8df1f93`을 반영했다. #436의 미병합 Receipt 변경은 포함하지 않는다.
+- 공통 head·이미지·Source 관리·preflight 테스트의 충돌 4곳을 해결했다. 기대 head는 코드에서 읽고 단일 head와 실제 DB/이미지 일치를 검사한다.
+- 기존 Catalog `166b8c9d0e1f`와 Runtime `175a1b2c3d4e`를 DDL 없는 merge revision `166c9d0e1f20`으로 연결한다. 기존 migration 이력은 수정하지 않는다.
+- 양쪽 기존 head에서 최신 head까지 Source 행 보존과 Trigger/RLS/제거 함수 부재를 검사한다. #175 downgrade 테스트는 최신 merge head의 상대 이동이 아니라 대상 revision과 부모를 명시한다.
+- Draft 제외 조건은 CI workflow에 없다. 충돌이 있는 PR은 GitHub의 pull_request workflow 실행 대상이 되지 않으므로 충돌 해결 후 푸시해 CI를 확인한다.
+- Ruff·format, mypy 551개 파일, 재도입 방지·보호 테이블 쓰기 경계·테스트 분류 검사를 통과했다.
+- 전체 CI runner는 envs/.local.env 부재로 환경 준비에서 중단했다. 전용 PostgreSQL 컨테이너의 빈 issue166_validation DB 및 격리 schema/DB로 관련 검사를 별도 실행한다.
+- D-02 등 합의된 후속 범위와 Source 승인·Runtime 활성화 경계는 유지한다.
+
+검증 결과: Catalog·저장/복원·Source 관리·head·Docker 이미지 **242 passed**, 전체 migration **176 passed**.
+최종 전용 DB upgrade 및 head 종합 검사: **166c9d0e1f20; Trigger/RLS/제거 함수 0개**.

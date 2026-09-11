@@ -219,7 +219,7 @@ class InMemoryProtectedAuditJournal:
         entry = entry.model_copy(update={"entry_sha256": audit_entry_sha256(entry)})
         return self._append(entry)  # type: ignore[return-value]
 
-    def operation_history(self, request: ProtectedOperationRequest) -> tuple[OperationAuditEntry, ...]:
+    async def operation_history(self, request: ProtectedOperationRequest) -> tuple[OperationAuditEntry, ...]:
         self.verify_chain()
         return tuple(
             entry
@@ -235,7 +235,7 @@ class InMemoryProtectedAuditJournal:
             and entry.hmac_key_version == request.dataset.hmac_key_version
         )
 
-    def append_operation(
+    async def append_operation(
         self,
         request: ProtectedOperationRequest,
         grant: ProtectedAuthorizationGrant | None,
@@ -250,7 +250,7 @@ class InMemoryProtectedAuditJournal:
             safe_reason = ProtectedAuditReason(reason_code)
         except ValueError:
             raise ProtectedSecurityError("INTERNAL_ERROR") from None
-        history = self.operation_history(request)
+        history = await self.operation_history(request)
         if not self._valid_operation_transition(history, outcome, closes_intent=closes_intent):
             raise ProtectedSecurityError("AUDIT_TRANSITION_INVALID")
         lifecycle_terminal = _operation_lifecycle_terminal(history)
@@ -392,7 +392,10 @@ class InMemoryAuthorizationLedger:
             raise ProtectedSecurityError("DATASET_STATE_MISMATCH")
         self._datasets[key] = dataset
 
-    def require_dataset(self, request: ProtectedOperationRequest) -> ProtectedDatasetBinding:
+    async def require_dataset(self, request: ProtectedOperationRequest) -> ProtectedDatasetBinding:
+        return self._require_dataset(request)
+
+    def _require_dataset(self, request: ProtectedOperationRequest) -> ProtectedDatasetBinding:
         dataset = self._datasets.get((request.dataset.dataset_id, request.dataset.dataset_version))
         if dataset is None or dataset != request.dataset:
             raise ProtectedSecurityError("DATASET_STATE_MISMATCH")
@@ -525,10 +528,10 @@ class _GuardSession:
         self._revoke_before_consume = revoke_before_consume
         self._consumed: set[str] = set()
 
-    def require_current(self, grant_id: str) -> ProtectedAuthorizationGrant:
+    async def require_current(self, grant_id: str) -> ProtectedAuthorizationGrant:
         return self._ledger._require_current(grant_id)
 
-    def issue_capability(
+    async def issue_capability(
         self, request: ProtectedOperationRequest, grant: ProtectedAuthorizationGrant
     ) -> ProtectedAuthorizationCapability:
         if request != self._request or grant != self._grant:
@@ -546,11 +549,11 @@ class _GuardSession:
             expires_at=self._clock.now_utc() + timedelta(seconds=30),
         )
 
-    def consume(self, capability: ProtectedAuthorizationCapability) -> None:
+    async def consume(self, capability: ProtectedAuthorizationCapability) -> None:
         if self._revoke_before_consume:
             self._ledger.simulate_concurrent_revocation(self._grant.grant_id)
         self._ledger._require_current(self._grant.grant_id)
-        self._ledger.require_dataset(self._request)
+        self._ledger._require_dataset(self._request)
         if capability.nonce in self._consumed:
             raise ProtectedSecurityError("CAPABILITY_ALREADY_CONSUMED")
         if self._clock.now_utc() >= capability.expires_at:

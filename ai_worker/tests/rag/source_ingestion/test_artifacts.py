@@ -130,10 +130,10 @@ def test_rejects_directory(tmp_path: Path) -> None:
     ("reject_code", "parser_location", "message"),
     [
         ("unsafe-code", "page[1].record[3]", "고정 코드"),
-        ("MISSING_ITEM_SEQ", "", "비어"),
-        ("MISSING_ITEM_SEQ", "page[1]\nrecord[3]", "형식"),
-        ("MISSING_ITEM_SEQ", "page[1]\x7frecord[3]", "형식"),
-        ("MISSING_ITEM_SEQ", "page[1]\x85record[3]", "형식"),
+        ("ITEM_SEQ_REQUIRED", "", "비어"),
+        ("ITEM_SEQ_REQUIRED", "page[1]\nrecord[3]", "형식"),
+        ("ITEM_SEQ_REQUIRED", "page[1]\x7frecord[3]", "형식"),
+        ("ITEM_SEQ_REQUIRED", "page[1]\x85record[3]", "형식"),
     ],
 )
 def test_rejects_unsafe_rejection_metadata(
@@ -160,6 +160,6 @@ def test_raw_response_cannot_carry_rejection_metadata() -> None:
             metadata=_metadata(b"synthetic raw response"),
             storage_backend="LOCAL_PRIVATE",
             object_key="sha256/synthetic-response.artifact",
-            reject_code="MISSING_ITEM_SEQ",
+            reject_code="ITEM_SEQ_REQUIRED",
             parser_location="page[1].record[3]",
         )

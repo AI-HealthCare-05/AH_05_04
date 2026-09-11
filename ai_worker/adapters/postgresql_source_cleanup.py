@@ -250,7 +250,7 @@ async def create_synthetic_workspace(
                     ),
                     artifact_kind=kind,
                     reject_code="SYNTHETIC_REJECT" if kind is IngestionArtifactKind.REJECTS else None,
-                    parser_location="synthetic" if kind is IngestionArtifactKind.REJECTS else None,
+                    parser_location=f"page[1].record[{index}]" if kind is IngestionArtifactKind.REJECTS else None,
                 )
             finally:
                 source.unlink()

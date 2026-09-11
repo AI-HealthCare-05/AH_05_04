@@ -48,6 +48,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
     SnapshotIngestionDecision,
     SnapshotIngestionMetadata,
+    SnapshotRunRecord,
     SnapshotSelectionDecision,
     SnapshotVerificationStatus,
     fail_snapshot_verification,
@@ -77,6 +78,7 @@ from app.repositories.rag_source_catalog_repository import (
 
 pytestmark = pytest.mark.asyncio
 
+EXTENSION_SCHEMA = "test_extensions"
 TEST_SCHEMA = "rag_source_snapshot_lifecycle_test"
 TEST_DATABASE_URL = URL.create(
     drivername="postgresql+asyncpg",
@@ -90,7 +92,7 @@ test_engine = create_async_engine(
     TEST_DATABASE_URL,
     pool_pre_ping=True,
     poolclass=NullPool,
-    connect_args={"server_settings": {"search_path": TEST_SCHEMA}},
+    connect_args={"server_settings": {"search_path": f"{TEST_SCHEMA},{EXTENSION_SCHEMA}"}},
 )
 session_factory = async_sessionmaker(test_engine, expire_on_commit=False, autoflush=False)
 
@@ -103,12 +105,31 @@ _ALLOW_ONE_REJECTION_POLICY = SourceSnapshotPolicy(
 )
 
 
+async def _ensure_trigram_extension(connection, schema: str) -> None:
+    """pg_trgm을 테이블이 없는 전용 schema에 둔다.
+
+    public이나 테스트 schema에 두면 `create_all`의 존재 검사가 다른 schema의 동명 테이블을
+    보고 생성을 건너뛴다. 확장은 DB당 하나뿐이라 이미 다른 schema에 있으면 옮긴다.
+    """
+    await connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+    await connection.execute(text(f"CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA {schema}"))
+    current = await connection.scalar(
+        text(
+            "SELECT n.nspname FROM pg_extension e "
+            "JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'pg_trgm'"
+        )
+    )
+    if current != schema:
+        await connection.execute(text(f"ALTER EXTENSION pg_trgm SET SCHEMA {schema}"))
+
+
 @pytest_asyncio.fixture(scope="module", autouse=True)
 async def isolated_schema() -> AsyncIterator[None]:
     admin_engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
     async with admin_engine.begin() as connection:
         await connection.execute(text(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE"))
         await connection.execute(text(f"CREATE SCHEMA {TEST_SCHEMA}"))
+        await _ensure_trigram_extension(connection, EXTENSION_SCHEMA)
 
     async with test_engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -122,16 +143,25 @@ async def isolated_schema() -> AsyncIterator[None]:
         await admin_engine.dispose()
 
 
-async def _seed_operation(suffix: str) -> SourceOperationIdentity:
+async def _seed_operation(suffix: str, *, product: bool = False) -> SourceOperationIdentity:
     identity = SourceOperationIdentity(
         source_code=f"SYNTHETIC_SOURCE_{suffix}",
         endpoint_code=f"SYNTHETIC_ENDPOINT_{suffix}",
         operation_code=f"SYNTHETIC_OPERATION_{suffix}",
     )
+    if product:
+        identity = SourceOperationIdentity(
+            "MFDS_PRODUCT_APPROVAL", "MFDS_PRODUCT_APPROVAL_API", "LIST_APPROVED_PRODUCTS"
+        )
     async with session_factory.begin() as session:
         repository = RagSourceCatalogRepository(session)
         source = await repository.create_source(
-            RagSourceCreate(source_code=identity.source_code, display_name="Synthetic Source")
+            RagSourceCreate(
+                source_code=identity.source_code,
+                display_name="Synthetic Source",
+                max_rejected_records=1,
+                max_rejection_rate=Decimal("0.5"),
+            )
         )
         endpoint = await repository.create_endpoint(
             RagSourceEndpointCreate(
@@ -397,7 +427,7 @@ async def test_outer_transaction_rollback_removes_snapshot_and_histories() -> No
 
 
 async def test_rejection_artifact_is_stored_with_safe_metadata() -> None:
-    identity = await _seed_operation("REJECTIONS")
+    identity = await _seed_operation("REJECTIONS", product=True)
     raw_artifacts = _stored_artifacts(minute=9)
     rejection = StoredRawArtifact(
         page_number=None,
@@ -410,7 +440,7 @@ async def test_rejection_artifact_is_stored_with_safe_metadata() -> None:
         storage_backend="PRIVATE_OBJECT_STORAGE",
         object_key="source-ingestion/synthetic/reject-0001.json",
         artifact_kind=IngestionArtifactKind.REJECTS,
-        reject_code="MISSING_ITEM_SEQ",
+        reject_code="ITEM_SEQ_REQUIRED",
         parser_location="page[1].record[3]",
     )
 
@@ -418,7 +448,12 @@ async def test_rejection_artifact_is_stored_with_safe_metadata() -> None:
         result = await persist_product_ingestion_result(
             repository=SqlAlchemySourceSnapshotRepository(session),
             ingestion=_ingestion(identity, _CHECKSUM_A),
-            metadata=replace(_metadata("external:rejections", minute=9), rejected_record_count=1),
+            metadata=replace(
+                _metadata("external:rejections", minute=9),
+                rejected_record_count=1,
+                parser_version="mfds-product-reject-parser@1",
+                reject_code_contract_version="source-reject-codes@1",
+            ),
             artifacts=(*raw_artifacts, rejection),
         )
 
@@ -433,34 +468,20 @@ async def test_rejection_artifact_is_stored_with_safe_metadata() -> None:
         ).all()
 
     assert run is not None
-    assert run.run_status is RagIngestionRunStatus.SUCCEEDED_WITH_REJECTIONS
+    assert run.run_status is RagIngestionRunStatus.FAILED
+    assert run.failure_code == "PARSER_VALIDATION_FAILED"
+    assert run.snapshot_id is None
     assert len(artifacts) == 2
     stored_rejection = next(
         artifact for artifact in artifacts if artifact.artifact_kind is RagSourceIngestionArtifactKind.REJECTS
     )
     assert stored_rejection.page_number is None
-    assert stored_rejection.reject_code == "MISSING_ITEM_SEQ"
+    assert stored_rejection.reject_code == "ITEM_SEQ_REQUIRED"
     assert stored_rejection.parser_location == "page[1].record[3]"
 
 
-async def test_rejection_change_creates_candidate_and_requires_publication_approval() -> None:
+async def test_historical_partial_snapshot_still_requires_publication_approval() -> None:
     identity = await _seed_operation("REJECTION_APPROVAL")
-    raw_artifacts = _stored_artifacts(minute=11)
-    rejection = StoredRawArtifact(
-        page_number=None,
-        metadata=RawArtifactMetadata(
-            artifact_key="reject-0001.json",
-            raw_checksum="e" * 64,
-            byte_size=64,
-            content_type="application/json",
-        ),
-        storage_backend="PRIVATE_OBJECT_STORAGE",
-        object_key="source-ingestion/synthetic/reject-approval.json",
-        artifact_kind=IngestionArtifactKind.REJECTS,
-        reject_code="MISSING_ITEM_SEQ",
-        parser_location="page[1].record[3]",
-    )
-
     async with session_factory.begin() as session:
         repository = SqlAlchemySourceSnapshotRepository(session)
         first = await persist_product_ingestion_result(
@@ -471,11 +492,16 @@ async def test_rejection_change_creates_candidate_and_requires_publication_appro
         )
         rejected = await persist_product_ingestion_result(
             repository=repository,
-            ingestion=_ingestion(identity, _CHECKSUM_A),
-            metadata=replace(_metadata("external:rejected", minute=11), rejected_record_count=1),
-            artifacts=(*raw_artifacts, rejection),
+            ingestion=_ingestion(identity, _CHECKSUM_B),
+            metadata=_metadata("external:rejected", minute=11),
+            artifacts=_stored_artifacts(minute=11),
         )
         assert rejected.snapshot_id is not None
+        # Seed a historical partial Snapshot; v1 identity rejection no longer creates one.
+        await session.execute(
+            text("UPDATE rag_source_snapshot SET rejected_record_count=1 WHERE id=:id"),
+            {"id": str(rejected.snapshot_id)},
+        )
         with pytest.raises(ValueError, match="publication 승인"):
             await select_current_snapshot(
                 repository=repository,
@@ -1054,7 +1080,7 @@ async def test_writer_login_can_acquire_and_persist_without_source_update_privil
     producer = create_async_engine(
         TEST_DATABASE_URL.set(username=writer, password=password),
         poolclass=NullPool,
-        connect_args={"server_settings": {"search_path": TEST_SCHEMA}},
+        connect_args={"server_settings": {"search_path": f"{TEST_SCHEMA},{EXTENSION_SCHEMA}"}},
         hide_parameters=True,
     )
     try:
@@ -1099,3 +1125,329 @@ async def test_writer_login_can_acquire_and_persist_without_source_update_privil
                 await connection.execute(text(f'DROP OWNED BY "{role}"'))
                 await connection.execute(text(f'DROP ROLE "{role}"'))
         await admin.dispose()
+
+
+async def test_external_version_and_source_policy_survive_database_roundtrip() -> None:
+    identity = await _seed_operation("POLICY_ROUNDTRIP")
+    async with session_factory.begin() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        result = await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=_metadata("external:provider-release-1"),
+            artifacts=_stored_artifacts(),
+        )
+    async with session_factory() as session:
+        snapshot = await session.get(RagSourceSnapshot, result.snapshot_id)
+        assert snapshot is not None
+        assert snapshot.external_version == "provider-release-1"
+        assert snapshot.source_version == "external:provider-release-1"
+        policy = await SqlAlchemySourceSnapshotRepository(session).get_source_policy(operation_id=result.operation_id)
+        assert policy == _ALLOW_ONE_REJECTION_POLICY
+
+
+async def test_no_change_version_observation_is_preserved_and_detects_later_conflict() -> None:
+    identity = await _seed_operation("ATTEMPT_VERSION")
+    results = []
+    for minute, (version, checksum) in enumerate(
+        (
+            ("external:first", _CHECKSUM_A),
+            ("external:observed", _CHECKSUM_A),
+            ("external:observed", _CHECKSUM_B),
+        )
+    ):
+        async with session_factory.begin() as session:
+            results.append(
+                await persist_product_ingestion_result(
+                    repository=SqlAlchemySourceSnapshotRepository(session),
+                    ingestion=_ingestion(identity, checksum),
+                    metadata=_metadata(version, minute=minute),
+                    artifacts=_stored_artifacts(minute=minute),
+                )
+            )
+    created, unchanged, conflict = results
+    assert unchanged.decision is SnapshotIngestionDecision.NO_CHANGE
+    assert unchanged.snapshot_id == created.snapshot_id
+    assert conflict.decision is SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT
+    assert conflict.snapshot_id is None
+    async with session_factory() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        for result in (created, unchanged, conflict):
+            receipt = await repository.get_attempt_receipt(ingestion_run_id=result.ingestion_run_id)
+            assert receipt is not None
+            assert receipt.decision is result.decision
+        attempt = await repository.get_attempt_receipt(ingestion_run_id=unchanged.ingestion_run_id)
+        assert attempt is not None
+        assert attempt.attempted_source_version == "external:observed"
+        assert attempt.attempted_external_version == "observed"
+        assert attempt.attempted_canonical_contract["canonical_checksum"] == _CHECKSUM_A
+        snapshot = await session.get(RagSourceSnapshot, created.snapshot_id)
+        assert snapshot.source_version == "external:first"
+        failed = await repository.get_attempt_receipt(ingestion_run_id=conflict.ingestion_run_id)
+        assert failed.attempted_canonical_contract["canonical_checksum"] == _CHECKSUM_B
+        assert failed.failure_code == "SOURCE_VERSION_CONFLICT"
+
+
+@pytest.mark.parametrize("invalid_version", ["v" * 201, "v" * 202, "v" * 300, "합" * 201, "SYNTHETIC_SECRET\ninvalid"])
+async def test_invalid_version_attempt_stores_only_digest_length_and_safe_code(invalid_version: str, caplog) -> None:
+    import hashlib
+    from unittest.mock import Mock
+    from uuid import uuid4
+
+    from ai_worker.tasks.rag.source_ingestion.artifacts import RawArtifactStore
+    from ai_worker.tasks.rag.source_ingestion.persistence import preserve_and_persist_product_ingestion_result
+
+    identity = await _seed_operation(f"INVALID_{uuid4().hex[:8]}")
+    store = Mock(spec=RawArtifactStore)
+    metadata = replace(_metadata("external:valid"), source_version=invalid_version, external_version=None)
+    assert invalid_version not in repr(metadata)
+    async with session_factory.begin() as session:
+        failed = await preserve_and_persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            artifact_store=store,
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=metadata,
+            raw_artifacts=(),
+        )
+    assert failed.decision is SnapshotIngestionDecision.VALIDATION_FAILED
+    assert failed.failure_code == "SOURCE_VERSION_INVALID"
+    assert not store.mock_calls
+    async with session_factory() as session:
+        attempt = await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(
+            ingestion_run_id=failed.ingestion_run_id
+        )
+        assert attempt is not None
+        assert attempt.snapshot_id is None
+        assert attempt.run_status == "FAILED"
+        assert attempt.decision is SnapshotIngestionDecision.VALIDATION_FAILED
+        assert attempt.attempted_source_version is None
+        assert attempt.attempted_external_version is None
+        assert attempt.invalid_source_version_sha256 == hashlib.sha256(invalid_version.encode()).hexdigest()
+        assert attempt.invalid_source_version_byte_length == len(invalid_version.encode())
+        assert attempt.validation_reason_code == "SOURCE_VERSION_INVALID"
+        assert invalid_version not in repr(attempt)
+        assert invalid_version not in caplog.text
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(RagSourceSnapshot)
+                .where(RagSourceSnapshot.operation_id == failed.operation_id)
+            )
+            == 0
+        )
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(RagSourceIngestionArtifact)
+                .where(RagSourceIngestionArtifact.ingestion_run_id == failed.ingestion_run_id)
+            )
+            == 0
+        )
+
+
+async def test_attempt_is_rolled_back_with_the_snapshot_transaction() -> None:
+    identity = await _seed_operation("ATTEMPT_ROLLBACK")
+    async with session_factory() as session:
+        transaction = await session.begin()
+        result = await persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=_metadata("external:rolled-back"),
+            artifacts=_stored_artifacts(),
+        )
+        await transaction.rollback()
+    async with session_factory() as session:
+        assert (
+            await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(
+                ingestion_run_id=result.ingestion_run_id
+            )
+            is None
+        )
+        assert await session.get(RagSourceSnapshot, result.snapshot_id) is None
+
+
+async def test_snapshot_receipt_keeps_identity_and_blocks_tampered_external_version_selection() -> None:
+    from ai_worker.admin.source_writer import select_snapshot
+    from ai_worker.tasks.rag.source_ingestion.source_version import SourceVersionValidationError
+
+    identity = await _seed_operation("RECEIPT_BINDING")
+    async with session_factory.begin() as session:
+        result = await persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            ingestion=_ingestion(identity, _CHECKSUM_A),
+            metadata=_metadata("external:receipt-version"),
+            artifacts=_stored_artifacts(),
+        )
+    async with session_factory.begin() as session:
+        receipt = await SqlAlchemySourceSnapshotRepository(session).get_snapshot_receipt(snapshot_id=result.snapshot_id)
+        assert receipt is not None
+        receipt.validate_provenance()
+        assert receipt.source_code == identity.source_code
+        assert receipt.source_snapshot_id == result.snapshot_id
+        assert receipt.endpoint_receipt_hash == "c" * 64
+        assert receipt.verification_status is SnapshotVerificationStatus.PENDING
+        snapshot = await session.get(RagSourceSnapshot, result.snapshot_id)
+        snapshot.external_version = "tampered"
+    async with session_factory.begin() as session:
+        with pytest.raises(SourceVersionValidationError):
+            await select_snapshot(
+                session,
+                snapshot_id=result.snapshot_id,
+                expected_checksum=_CHECKSUM_A,
+                actor="synthetic-reviewer",
+                reason_code="VERIFIED_RELEASE",
+            )
+    async with session_factory() as session:
+        snapshot = await session.get(RagSourceSnapshot, result.snapshot_id)
+        assert snapshot.verification_status is RagSnapshotVerificationStatus.PENDING
+
+
+async def test_attempt_receipt_rejects_unmapped_database_failure_code() -> None:
+    identity = await _seed_operation("UNMAPPED_RECEIPT")
+    async with session_factory.begin() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        operation_id = await repository.lock_operation(identity)
+        run_id = await repository.create_run(
+            SnapshotRunRecord(
+                operation_id=operation_id,
+                snapshot_id=None,
+                run_group_key="unmapped-receipt",
+                attempt_number=1,
+                run_status="FAILED",
+                started_at=_NOW,
+                finished_at=_NOW,
+                duration_ms=0,
+                failure_code="FUTURE_FAILURE",
+            )
+        )
+    async with session_factory() as session:
+        with pytest.raises(ValueError, match="decision is unavailable"):
+            await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(ingestion_run_id=run_id)
+
+
+@pytest.mark.parametrize("code", list(SourceFailureCode))
+async def test_collection_failure_recording_roundtrips_receipt(code) -> None:
+    from ai_worker.tasks.rag.source_ingestion.failure_codes import COLLECTION_EMPTY_RESULT
+
+    identity = await _seed_operation(f"COLLECTION_{code.value}")
+    metadata = FailedIngestionRunMetadata("synthetic-collection", 1, _NOW, _NOW)
+    result = SourceRunResult(
+        operation=identity,
+        status=SourceRunStatus.FAILED,
+        pages=(),
+        failure=SourceClientFailure(code=code, retry=RetryDisposition.BACKOFF, safe_message="Synthetic failure."),
+    )
+    async with session_factory.begin() as session:
+        failed = await record_source_run_failure(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            result=result,
+            metadata=metadata,
+        )
+    async with session_factory() as session:
+        receipt = await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(
+            ingestion_run_id=failed.ingestion_run_id
+        )
+        assert receipt is not None
+        assert receipt.decision is SnapshotIngestionDecision.COLLECTION_FAILED
+        assert receipt.failure_code == code.value
+        assert receipt.snapshot_id is None
+        assert receipt.validation_reason_code == (
+            COLLECTION_EMPTY_RESULT if code is SourceFailureCode.EMPTY_RESULT else None
+        )
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(RagSourceSnapshot)
+                .where(RagSourceSnapshot.operation_id == receipt.operation_id)
+            )
+            == 0
+        )
+
+
+@pytest.mark.parametrize("empty", [True, False])
+async def test_snapshot_policy_failure_or_unversioned_rejection_is_fail_closed(empty) -> None:
+    from ai_worker.tasks.rag.source_ingestion.failure_codes import SNAPSHOT_POLICY_EMPTY_RESULT
+
+    identity = await _seed_operation(f"POLICY_{empty}")
+    ingestion = replace(_ingestion(identity, _CHECKSUM_A), record_count=0 if empty else 2)
+    metadata = replace(
+        _metadata("external:policy"), rejected_record_count=0 if empty else 1, snapshot_policy=SourceSnapshotPolicy()
+    )
+    artifacts = _stored_artifacts()
+    if not empty:
+        artifacts += (
+            StoredRawArtifact(
+                page_number=None,
+                metadata=RawArtifactMetadata("synthetic-policy-reject.json", "e" * 64, 64, "application/json"),
+                storage_backend="PRIVATE_OBJECT_STORAGE",
+                object_key="source-ingestion/synthetic/policy-reject.json",
+                artifact_kind=IngestionArtifactKind.REJECTS,
+                reject_code="MISSING_ITEM_SEQ",
+                parser_location="page[1].record[0]",
+            ),
+        )
+    if not empty:
+        # #444 forbids writing REJECTS without the product reject contract. Valid
+        # processing failures of both kinds are covered in test_reject_contract_165.
+        from ai_worker.tasks.rag.source_ingestion.reject_codes import RejectContractError
+
+        with pytest.raises(RejectContractError):
+            async with session_factory.begin() as session:
+                await persist_product_ingestion_result(
+                    repository=SqlAlchemySourceSnapshotRepository(session),
+                    ingestion=ingestion,
+                    metadata=metadata,
+                    artifacts=artifacts,
+                )
+        async with session_factory() as session:
+            operation_id = await SqlAlchemySourceSnapshotRepository(session).lock_operation(identity)
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(RagSourceIngestionRun)
+                    .where(RagSourceIngestionRun.operation_id == operation_id)
+                )
+                == 0
+            )
+        return
+    async with session_factory.begin() as session:
+        failed = await persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            ingestion=ingestion,
+            metadata=metadata,
+            artifacts=artifacts,
+        )
+    async with session_factory() as session:
+        receipt = await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(
+            ingestion_run_id=failed.ingestion_run_id
+        )
+        assert receipt is not None
+        assert receipt.decision is SnapshotIngestionDecision.VALIDATION_FAILED
+        assert receipt.failure_code == ("EMPTY_RESULT" if empty else "REJECTION_LIMIT_EXCEEDED")
+        assert receipt.validation_reason_code == (SNAPSHOT_POLICY_EMPTY_RESULT if empty else None)
+        assert receipt.snapshot_id is None
+
+
+async def test_legacy_empty_result_remains_available_as_audit_without_guessed_decision() -> None:
+    identity = await _seed_operation("LEGACY_EMPTY")
+    async with session_factory.begin() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        operation_id = await repository.lock_operation(identity)
+        run_id = await repository.create_run(
+            SnapshotRunRecord(
+                operation_id=operation_id,
+                snapshot_id=None,
+                run_group_key="synthetic-legacy-empty",
+                attempt_number=1,
+                run_status="FAILED",
+                started_at=_NOW,
+                finished_at=_NOW,
+                duration_ms=0,
+                failure_code="EMPTY_RESULT",
+            )
+        )
+    async with session_factory() as session:
+        with pytest.raises(ValueError, match="decision is unavailable"):
+            await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(ingestion_run_id=run_id)
+        row = await session.get(RagSourceIngestionRun, run_id)
+        assert row is not None and row.failure_code == "EMPTY_RESULT" and row.validation_reason_code is None

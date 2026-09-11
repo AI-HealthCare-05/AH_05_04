@@ -341,3 +341,16 @@ raise ApiError(
 - 새 오류 코드나 기존 코드의 의미 변경은 [AGENTS.md](../../../AGENTS.md) 기준에 따라 먼저 팀 Decision 또는 Contract Freeze 승인을 받습니다. 승인 전에는 MVP·Post-MVP 표 어디에도 등록하지 않습니다.
 - 승인된 뒤에 HTTP 상태 코드와 사용자 메시지를 함께 정의하고, 실제 사용 상황 예시를 문서에 추가합니다.
 - 이 문서와 Backend 코드, 관련 테스트를 같은 PR에서 함께 갱신합니다. 실제 구현이 아직 없는 경우에만 "Post-MVP" 표에 등록하되, 이 역시 사전 승인이 있어야 합니다.
+
+
+### #203 Notification 구현 PR의 추가 오류 제안
+
+아래는 [PD-203](../../governance/decisions/2026-09-10-track-b-notifications.md)의 구현 PR 검토 항목이며 이 문서의 현재 계약으로 자동 승격하지 않는다.
+
+| HTTP | code | 의미 |
+| --- | --- | --- |
+| 404 | NOTIFICATION_NOT_FOUND | 존재하지 않거나 SELF 소유·DELIVERED 조건에 맞지 않는 알림 |
+| 409 | REMINDER_NOT_ALLOWED | occurrence가 PENDING이 아니거나 확인 기한 경과 |
+| 409 | REMINDER_LIMIT_REACHED | 동일 occurrence의 재알림이 이미 DELIVERED/CANCELLED |
+
+활성 재알림 중복은 기존 목표 `REMINDER_ALREADY_SCHEDULED`, 취소된 occurrence는 `OCCURRENCE_CANCELLED`, 시간 검증은 `VALIDATION_FAILED`다. 상세 순서는 Notification 계약을 따른다.

@@ -26,11 +26,13 @@ from app.models.medication_schedules import (
     MedicationOccurrence,
     MedicationOccurrenceStatus,
     MedicationSchedule,
+    MedicationScheduleAudit,
     MedicationScheduleEndMode,
     MedicationScheduleSource,
     MedicationScheduleStatus,
     MedicationScheduleTime,
 )
+from app.models.notifications import NotificationKind, NotificationRecord, NotificationStatus
 from app.models.ocr import ExtractedField, OcrJob
 from app.models.password_reset import PasswordResetToken
 from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
@@ -44,12 +46,23 @@ from app.models.rag_candidate import (
     MedicationIdentificationStatus,
 )
 from app.models.rag_catalog import (
+    RagCatalogHashKind,
+    RagCatalogMemberKind,
+    RagCatalogSet,
+    RagCatalogSetHash,
+    RagCatalogSetMember,
+    RagCatalogSetSource,
+    RagEntityIdentity,
     RagMedicationAlias,
+    RagMedicationAliasReviewStatus,
     RagMedicationAliasTargetType,
     RagMedicationComponentRole,
     RagMedicationIngredient,
     RagMedicationProduct,
     RagMedicationProductComponent,
+    RagMedicationRecordStatus,
+    RagMedicationSearchEntry,
+    RagMedicationSearchEntryType,
 )
 from app.models.rag_evaluation import (
     EvalCase,
@@ -123,6 +136,9 @@ from app.models.refresh_session import RefreshSession
 from app.models.users import AccountStatus, Gender, User
 
 __all__ = [
+    "NotificationKind",
+    "NotificationRecord",
+    "NotificationStatus",
     "AccountStatus",
     "AiJob",
     "AiJobAttempt",
@@ -167,6 +183,7 @@ __all__ = [
     "MedicationOccurrence",
     "MedicationOccurrenceStatus",
     "MedicationSchedule",
+    "MedicationScheduleAudit",
     "MedicationScheduleEndMode",
     "MedicationScheduleSource",
     "MedicationScheduleStatus",
@@ -192,12 +209,17 @@ __all__ = [
     "Profile",
     "ProfileType",
     "RagIngestionRunStatus",
+    "RagEntityIdentity",
     "RagMedicationAlias",
+    "RagMedicationAliasReviewStatus",
     "RagMedicationAliasTargetType",
     "RagMedicationComponentRole",
     "RagMedicationIngredient",
     "RagMedicationProduct",
     "RagMedicationProductComponent",
+    "RagMedicationRecordStatus",
+    "RagMedicationSearchEntry",
+    "RagMedicationSearchEntryType",
     "RagCitation",
     "RagCitationAuthorizationStatus",
     "RagCitationClaimKind",

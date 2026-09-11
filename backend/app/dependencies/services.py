@@ -21,6 +21,7 @@ from app.repositories.medical_document_repository import MedicalDocumentReposito
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
 from app.repositories.medication_checkin_repository import MedicationCheckinRepository
 from app.repositories.medication_schedule_repository import MedicationScheduleRepository
+from app.repositories.notification_repository import NotificationRepository
 from app.repositories.ocr_repository import OcrRepository
 from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.prescription_repository import PrescriptionRepository
@@ -47,6 +48,7 @@ from app.services.medication_checkin_api import MedicationCheckinApiService
 from app.services.medication_checkins import MedicationCheckinService, NoopCheckinRevisionInvalidation
 from app.services.medication_identification import MedicationIdentificationService
 from app.services.medication_occurrences import PrescriptionVersionMedicationInvalidationService
+from app.services.notifications import NotificationService
 from app.services.ocr import OcrService
 from app.services.ocr_ai import (
     LlmPrescriptionStructurer,
@@ -210,8 +212,10 @@ def get_prescription_version_medication_invalidation_service(
         Depends(get_medication_schedule_repository),
     ],
 ) -> PrescriptionVersionMedicationInvalidationService:
-    # B5 Notification repository가 구현되면 같은 transaction/session의 adapter를 여기 주입한다.
-    return PrescriptionVersionMedicationInvalidationService(repository)
+    return PrescriptionVersionMedicationInvalidationService(
+        repository,
+        notification_cancellation=NotificationRepository(repository.session),
+    )
 
 
 def get_ocr_service(
@@ -578,3 +582,10 @@ def get_job_status_service(
         guide_repository=guide_repository,
         chat_repository=chat_repository,
     )
+
+
+def get_notification_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    idempotency: Annotated[SyncMutationIdempotencyService, Depends(get_sync_mutation_idempotency_service)],
+) -> NotificationService:
+    return NotificationService(NotificationRepository(session), idempotency)

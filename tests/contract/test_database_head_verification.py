@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from scripts.ci.verify_database_head import (
@@ -24,7 +27,7 @@ def valid_state() -> DatabaseHeadState:
 
 
 def test_current_migration_tree_has_one_head() -> None:
-    assert migration_heads() == ("175a1b2c3d4e",)
+    assert len(migration_heads()) == 1
 
 
 def test_draft_pr_372_catalog_functions_are_in_final_removal_inventory() -> None:
@@ -77,8 +80,71 @@ def test_reports_every_unsafe_final_database_state() -> None:
 
 
 def test_ci_and_local_runner_verify_database_after_upgrade_to_head() -> None:
+    """전체 DB 검증은 `upgrade head` 뒤에 실행되어야 한다.
+
+    #439에서 같은 스크립트를 `--heads-only`로 앞단에도 호출하게 되었으므로, 두 호출을
+    구분해 판정한다. 앞단 호출은 DB 없이 head 개수만 보고, 뒤쪽 호출이 실제 카탈로그
+    상태를 검증한다.
+    """
     command = "python scripts/ci/verify_database_head.py"
     for relative_path in (".github/workflows/checks.yml", "scripts/ci/run_test.sh"):
         source = (ROOT / relative_path).read_text()
-        assert command in source
-        assert source.index("upgrade head") < source.index(command)
+        invocations = [line.strip() for line in source.splitlines() if command in line]
+        full_verifications = [line for line in invocations if "--heads-only" not in line]
+        assert len(full_verifications) == 1, invocations
+
+        full_at = source.index(full_verifications[0])
+        assert source.index("upgrade head") < full_at
+
+
+def test_heads_only_runs_before_any_alembic_upgrade() -> None:
+    """진단이 `upgrade` 뒤에 있으면 도달하지 못해 의미가 없다 (#439).
+
+    #398이 `test-migration`의 첫 단계를 고정 revision으로 바꾼 뒤, 기존
+    `verify_database_head.py` 호출은 `upgrade head` 다음에 놓여 head 분기 시 실행되지
+    않았다. 실패는 `alembic upgrade`의 "Multiple head revisions"로만 드러났고 `test`
+    집계 job이 먼저 죽어 원인을 가렸다. 순서를 계약으로 고정한다.
+    """
+    for relative_path in (".github/workflows/checks.yml", "scripts/ci/run_test.sh"):
+        source = (ROOT / relative_path).read_text()
+        heads_only_at = source.find("--heads-only")
+        first_upgrade_at = source.find("alembic -c backend/alembic.ini upgrade")
+
+        assert heads_only_at != -1, relative_path
+        assert first_upgrade_at != -1, relative_path
+        assert heads_only_at < first_upgrade_at, relative_path
+
+
+def test_heads_only_mode_reports_single_head_without_database() -> None:
+    """`--heads-only`는 DB 없이 head 개수만 확인한다 (#439).
+
+    CI는 이 모드를 `alembic upgrade` 앞에 둔다. head가 갈라진 상태는 원래
+    `upgrade head`의 "Multiple head revisions"로만 드러나고, migration을 적용하기
+    시작한 뒤에 실패해 원인이 가려진다.
+    """
+    from scripts.ci.verify_database_head import verify_single_head
+
+    assert verify_single_head() == 0
+
+
+def test_heads_only_cli_does_not_depend_on_caller_pythonpath(tmp_path: Path) -> None:
+    """진단 자체가 `PYTHONPATH` 때문에 죽으면 원인을 가리는 실패가 하나 늘어난다 (#439).
+
+    `get_heads()`는 모든 revision 파일을 import하고, 그중 하나가 `provider_contracts`를
+    참조한다. CI의 alembic step은 `PYTHONPATH`를 넘기지만 이 진단 step은 그 앞에 있어
+    넘기지 않았고, head 개수 대신 `ModuleNotFoundError`가 났다. pytest는
+    `pythonpath = ["."]`로 저장소 루트를 올려 주므로 함수 호출 테스트로는 드러나지 않는다.
+    실제 CLI를 호출자 환경 없이 실행해 고정한다.
+    """
+    environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    completed = subprocess.run(  # noqa: S603 - 저장소 내 스크립트를 고정 인자로 실행한다
+        [sys.executable, str(ROOT / "scripts/ci/verify_database_head.py"), "--heads-only"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "Alembic head 단일 확인" in completed.stdout
