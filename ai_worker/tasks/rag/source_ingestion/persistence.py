@@ -15,14 +15,18 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import (
     validate_artifact_binding,
 )
 from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
+from ai_worker.tasks.rag.source_ingestion.failure_runs import FailedIngestionRunMetadata, record_source_version_failure
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
+    SnapshotIngestionDecision,
     SnapshotIngestionMetadata,
     SnapshotLifecycleRepository,
     SnapshotPersistenceResult,
+    attempt_canonical_contract,
     persist_product_ingestion_result,
 )
 from ai_worker.tasks.rag.source_ingestion.source_version import (
+    SourceVersionValidationError,
     validate_source_version,
 )
 
@@ -53,11 +57,34 @@ async def preserve_and_persist_product_ingestion_result(
     rejection_artifacts: Iterable[RejectionArtifactInput] = (),
 ) -> SnapshotPersistenceResult:
     """검증 결과와 같은 원본만 불변 보관한 뒤 DB transaction에 연결합니다."""
-    validate_source_version(
-        source_version=metadata.source_version,
-        external_version=metadata.external_version,
-        canonical_checksum=ingestion.canonical_checksum,
-    )
+    try:
+        validate_source_version(
+            source_version=metadata.source_version,
+            external_version=metadata.external_version,
+            canonical_checksum=ingestion.canonical_checksum,
+        )
+    except SourceVersionValidationError:
+        failed = await record_source_version_failure(
+            repository=repository,
+            identity=ingestion.identity,
+            metadata=FailedIngestionRunMetadata(
+                run_group_key=metadata.run_group_key,
+                attempt_number=metadata.attempt_number,
+                started_at=metadata.started_at,
+                finished_at=metadata.finished_at,
+                duration_ms=metadata.duration_ms,
+            ),
+            source_version=metadata.source_version,
+            external_version=metadata.external_version,
+            canonical_contract=attempt_canonical_contract(ingestion=ingestion, metadata=metadata),
+        )
+        return SnapshotPersistenceResult(
+            SnapshotIngestionDecision.VALIDATION_FAILED,
+            failed.operation_id,
+            failed.ingestion_run_id,
+            None,
+            failed.failure_code,
+        )
     entries = tuple(raw_artifacts)
     if len(entries) != ingestion.artifact_count:
         raise ValueError("Artifact 개수가 검증된 수집 결과와 일치하지 않습니다.")

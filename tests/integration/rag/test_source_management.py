@@ -429,10 +429,18 @@ async def test_forward_migration_and_audit_preserving_downgrade(database):
         assert validation_errors("3980718293a4", await read_database_head_state(connection)) == []
     assert (await migrate("downgrade", "398f60718293")).returncode == 0
     assert (await migrate("upgrade", "3980718293a4")).returncode == 0
-    actor, target_id = await seed(engine)
-    current = await inspect_target(engine, actor, TargetKind.SOURCE, target_id)
-    async with async_sessionmaker(engine).begin() as session:
-        await SourceManagementService(session).mutate(actor, TargetKind.SOURCE, target_id, command(0, current.hash))
+    # Seed the historical audit schema directly; current Source models require later columns.
+    async with engine.begin() as audit_connection:
+        await audit_connection.execute(
+            text(
+                "INSERT INTO source_management_audit "
+                "(id,target_kind,target_id,operation,actor_id,permission,reason_code,approval_hash,request_id,"
+                "request_hash,before_revision,after_revision,before_hash,after_hash,before_provenance,after_provenance) "
+                "VALUES (:id,'SOURCE',:target,'UPDATE',:actor,'SOURCE_CATALOG_MANAGE','CORRECTION',"
+                "repeat('a',64),:request,repeat('b',64),0,1,repeat('c',64),repeat('d',64),'{}','{}')"
+            ),
+            {key: str(uuid4()) for key in ("id", "target", "actor", "request")},
+        )
         downgrade = asyncio.create_task(migrate("downgrade", "398f60718293"))
         waiting = False
         for _ in range(100):
@@ -737,12 +745,6 @@ async def test_404_authentication_works_with_only_runtime_token_permissions(data
 @pytest.mark.parametrize("database", ["migration"], indirect=True)
 @pytest.mark.parametrize("previous", ["206a1b2c3d4e", "3980718293a4", "174a1b2c3d4e"])
 async def test_merge_and_snapshot_seal_preserve_historical_rows(database, previous):
-    from app.repositories.rag_source_catalog_repository import (
-        RagSourceCatalogRepository,
-        RagSourceCreate,
-        RagSourceEndpointCreate,
-        RagSourceOperationCreate,
-    )
     from scripts.ci.verify_database_head import migration_heads, read_database_head_state, validation_errors
 
     engine, url, _ = database
@@ -763,13 +765,26 @@ async def test_merge_and_snapshot_seal_preserve_historical_rows(database, previo
     assert (await migrate("upgrade", previous)).returncode == 0
     assert (await migrate("upgrade", "39818293a4b5")).returncode == 0
     async with async_sessionmaker(engine).begin() as session:
-        repository = RagSourceCatalogRepository(session)
-        source = await repository.create_source(RagSourceCreate(source_code="seal-synthetic", display_name="합성 출처"))
-        endpoint = await repository.create_endpoint(
-            RagSourceEndpointCreate(source_id=source.id, endpoint_code="test", display_name="합성")
+        source_id, endpoint_id, operation_id = (str(uuid4()) for _ in range(3))
+        await session.execute(
+            text(
+                "INSERT INTO rag_source (id,source_code,display_name,lifecycle_status) VALUES (:id,'seal-synthetic','synthetic','DRAFT')"
+            ),
+            {"id": source_id},
         )
-        operation = await repository.create_operation(
-            RagSourceOperationCreate(endpoint_id=endpoint.id, operation_code="test", display_name="합성")
+        await session.execute(
+            text(
+                "INSERT INTO rag_source_endpoint (id,source_id,endpoint_code,display_name,lifecycle_status,runtime_status,acquisition_status) "
+                "VALUES (:id,:source,'test','synthetic','DRAFT','DISABLED','PENDING')"
+            ),
+            {"id": endpoint_id, "source": source_id},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO rag_source_operation (id,endpoint_id,operation_code,display_name,runtime_status,acquisition_status) "
+                "VALUES (:id,:endpoint,'test','synthetic','DISABLED','PENDING')"
+            ),
+            {"id": operation_id, "endpoint": endpoint_id},
         )
         current_id, pending_id = uuid4(), uuid4()
         for snapshot_id, state in ((current_id, "CURRENT"), (pending_id, "PENDING")):
@@ -780,7 +795,7 @@ async def test_merge_and_snapshot_seal_preserve_historical_rows(database, previo
                     "record_count,rejected_record_count,verification_status,collected_at) "
                     "VALUES (:id,:operation,:state,repeat('a',64),repeat('b',64),'1','1','1','1',0,0,:state,now())"
                 ),
-                {"id": str(snapshot_id), "operation": str(operation.id), "state": state},
+                {"id": str(snapshot_id), "operation": operation_id, "state": state},
             )
     from app.admin.source_management_service import fingerprint
 
@@ -788,15 +803,25 @@ async def test_merge_and_snapshot_seal_preserve_historical_rows(database, previo
     async with engine.connect() as connection:
         old_rows = (await connection.execute(text("SELECT * FROM rag_source_snapshot"))).mappings().all()
         old_hashes = {row["id"]: fingerprint(dict(row)) for row in old_rows}
-    assert (await migrate("upgrade", "head")).returncode == 0
-    async with async_sessionmaker(engine).begin() as session:
-        for snapshot in (await session.scalars(select(RagSourceSnapshot))).all():
-            assert snapshot.management_lock_marker == 0
-            assert row_hash(snapshot) == old_hashes[str(snapshot.id)]
+    assert (await migrate("upgrade", "3984b5c6d7e8")).returncode == 0
+    # A subprocess changed the result columns; discard cached asyncpg query plans.
+    await engine.dispose()
     async with engine.connect() as connection:
-        # 기대 head를 하드코딩하지 않는다. migration이 추가될 때마다(#175가 그 예다) 깨지지
-        # 않으면서도 "DB 상태 == 코드 head"라는 본래 의미는 유지된다.
-        assert validation_errors(migration_heads()[0], await read_database_head_state(connection)) == []
+        for row in (await connection.execute(text("SELECT * FROM rag_source_snapshot"))).mappings():
+            assert row["management_lock_marker"] == 0
+            assert (
+                fingerprint({key: value for key, value in row.items() if key != "management_lock_marker"})
+                == old_hashes[row["id"]]
+            )
+    assert (await migrate("upgrade", "head")).returncode == 0
+    await engine.dispose()
+    async with engine.connect() as connection:
+        expected_heads = migration_heads()
+        assert len(expected_heads) == 1
+        assert validation_errors(expected_heads[0], await read_database_head_state(connection)) == []
+        for row in (await connection.execute(text("SELECT * FROM rag_source_snapshot"))).mappings():
+            historical = {key: row[key] for key in old_rows[0]}
+            assert fingerprint(historical) == old_hashes[row["id"]]
         rows = (
             (
                 await connection.execute(

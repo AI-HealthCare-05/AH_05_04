@@ -19,7 +19,7 @@ SOURCE_TABLES = (
     "rag_source_snapshot_verification",
 )
 # 승인 이력·원본은 append-only입니다. 관리용 수정/삭제는 별도 권한 경로로 연결합니다.
-WRITER_UPDATE_TABLES = {"rag_source_operation", "rag_source_ingestion_run"}
+WRITER_UPDATE_TABLES = {"rag_source_operation"}
 
 
 def quoted_identifier(value: str) -> str:
@@ -79,6 +79,12 @@ async def apply_source_role_policy(
             await connection.execute(
                 text(
                     f"GRANT UPDATE (verification_status, verified_at, effective_at, verification_seal_id) ON TABLE {target} TO {writer_sql}"
+                )
+            )
+        if table == "rag_source_ingestion_run":
+            await connection.execute(
+                text(
+                    f"GRANT UPDATE (snapshot_id, run_status, failure_code, failure_message, duration_ms, finished_at) ON TABLE {target} TO {writer_sql}"
                 )
             )
         if table in WRITER_UPDATE_TABLES:
