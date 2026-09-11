@@ -1,7 +1,9 @@
 """Verify the actual migrated notification constraints and lossless rollback guard."""
 
 import asyncio
+import importlib.util
 from collections.abc import Iterator
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -14,6 +16,17 @@ from sqlalchemy.pool import NullPool
 from app.core import config
 from tests.migration.test_medication_checkin_migration import _alembic_config, _connection
 from tests.migration.test_medication_schedule_migration import _cleanup_graph, _seed_graph
+
+
+def _notification_down_revision() -> str:
+    migration_path = (
+        Path(__file__).resolve().parents[2] / "backend/alembic/versions/203a1b2c3d4e_create_notification_record.py"
+    )
+    spec = importlib.util.spec_from_file_location("notification_migration", migration_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.down_revision
 
 
 @pytest.fixture(autouse=True)
@@ -94,12 +107,12 @@ def test_notification_migration_constraints_and_rollback_guard():
     try:
         asyncio.run(_insert_and_check(ids))
         with pytest.raises(RuntimeError, match="notification history blocks downgrade"):
-            command.downgrade(cfg, "165a0b1c2d3e")
+            command.downgrade(cfg, _notification_down_revision())
         assert asyncio.run(_exists())
     finally:
         asyncio.run(_cleanup(ids))
     try:
-        command.downgrade(cfg, "165a0b1c2d3e")
+        command.downgrade(cfg, _notification_down_revision())
         assert not asyncio.run(_exists())
     finally:
         command.upgrade(cfg, "head")

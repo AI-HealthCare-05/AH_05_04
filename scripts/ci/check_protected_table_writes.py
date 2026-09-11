@@ -22,7 +22,10 @@ _SOURCE_WRITERS = frozenset(
 _CATALOG_WRITERS = frozenset(
     {"backend/app/repositories/rag_source_catalog_repository.py", "backend/app/admin/source_management_service.py"}
 )
-_PENDING_CATALOG_WRITERS: frozenset[str] = frozenset()
+_CATALOG_BUILD_WRITERS = frozenset({"ai_worker/adapters/sqlalchemy_catalog_write_support.py"})
+_CATALOG_IDENTITY_WRITERS = _CATALOG_BUILD_WRITERS | frozenset(
+    {"backend/app/repositories/rag_source_catalog_repository.py"}
+)
 
 APPROVED_WRITERS: dict[str, frozenset[str]] = {
     "source_management_permission": frozenset({"backend/app/admin/source_management_permissions.py"}),
@@ -36,17 +39,17 @@ APPROVED_WRITERS: dict[str, frozenset[str]] = {
     "rag_source_ingestion_run": _SOURCE_WRITERS,
     "rag_source_ingestion_artifact": _SOURCE_WRITERS,
     "rag_source_snapshot_verification": _SOURCE_WRITERS,
-    "rag_medication_product": _CATALOG_WRITERS,
-    "rag_medication_ingredient": _CATALOG_WRITERS,
-    "rag_medication_alias": _CATALOG_WRITERS,
-    "rag_medication_product_component": _CATALOG_WRITERS,
-    # Draft PR #372 tables stay fail-closed until its Python adapter and role policy are reviewed.
-    "rag_entity_identity": _PENDING_CATALOG_WRITERS,
-    "rag_medication_search_entry": _PENDING_CATALOG_WRITERS,
-    "rag_catalog_set": _PENDING_CATALOG_WRITERS,
-    "rag_catalog_set_source": _PENDING_CATALOG_WRITERS,
-    "rag_catalog_set_member": _PENDING_CATALOG_WRITERS,
-    "rag_catalog_set_hash": _PENDING_CATALOG_WRITERS,
+    "rag_medication_product": _CATALOG_WRITERS | _CATALOG_BUILD_WRITERS,
+    "rag_medication_ingredient": _CATALOG_WRITERS | _CATALOG_BUILD_WRITERS,
+    "rag_medication_alias": _CATALOG_WRITERS | _CATALOG_BUILD_WRITERS,
+    "rag_medication_product_component": _CATALOG_WRITERS | _CATALOG_BUILD_WRITERS,
+    # #372 Python boundaries. Deployment role grants remain a separate policy gate.
+    "rag_entity_identity": _CATALOG_IDENTITY_WRITERS,
+    "rag_medication_search_entry": _CATALOG_IDENTITY_WRITERS,
+    "rag_catalog_set": _CATALOG_BUILD_WRITERS,
+    "rag_catalog_set_source": _CATALOG_BUILD_WRITERS,
+    "rag_catalog_set_member": _CATALOG_BUILD_WRITERS,
+    "rag_catalog_set_hash": _CATALOG_BUILD_WRITERS,
     "prescription_version": frozenset({"backend/app/repositories/prescription_repository.py"}),
     "prescription_version_medication": frozenset({"backend/app/repositories/prescription_repository.py"}),
     "medication_candidate_search_result": frozenset({"backend/app/repositories/medication_candidate_repository.py"}),

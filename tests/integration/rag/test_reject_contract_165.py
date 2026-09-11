@@ -67,9 +67,15 @@ async def database():
     schema = "reject165_" + uuid4().hex
     admin = create_async_engine(config.database_url, poolclass=NullPool)
     engine = create_async_engine(
-        config.database_url, poolclass=NullPool, connect_args={"server_settings": {"search_path": schema}}
+        config.database_url,
+        poolclass=NullPool,
+        connect_args={"server_settings": {"search_path": f"{schema},test_extensions"}},
+        execution_options={"schema_translate_map": {None: schema}},
     )
     async with admin.begin() as conn:
+        await conn.execute(text("CREATE SCHEMA IF NOT EXISTS test_extensions"))
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA test_extensions"))
+        await conn.execute(text("ALTER EXTENSION pg_trgm SET SCHEMA test_extensions"))
         await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
     try:
         async with engine.begin() as conn:
@@ -563,3 +569,81 @@ async def test_each_processing_failure_code_roundtrips_through_database(database
         assert receipt.decision is SnapshotIngestionDecision.VALIDATION_FAILED
         assert receipt.failure_code == failure_code.value
         assert receipt.reject_code_contract_version == REJECT_CODE_CONTRACT_VERSION
+
+
+async def test_successful_source_run_reaches_catalog_and_candidate(database, tmp_path):
+    """Real #444 ingestion/Receipt and DB handoff; approval verifier remains a synthetic double."""
+    from ai_worker.adapters.sqlalchemy_catalog_write_support import SqlAlchemyCatalogBuildRepository
+    from ai_worker.tasks.rag.candidate_index import CandidateIndexBuildSuccess
+    from ai_worker.tasks.rag.catalog import (
+        CandidateCatalogSourceRef,
+        CandidateRecordStatus,
+        CatalogApprovalReceipt,
+        CatalogFreshnessStatus,
+        CatalogProductInput,
+        CatalogSourceApproval,
+        CatalogVerificationStatus,
+        build_catalog_members,
+        create_catalog_export,
+    )
+    from ai_worker.tasks.rag.catalog.approval import CatalogApprovalVerifier
+    from ai_worker.tests.rag.catalog.test_hash_contract_v2 import candidate
+    from app.models.rag_catalog import RagCatalogSet
+
+    factory, _ = database
+    record = {"ITEM_SEQ": "SYNTH_A", "ITEM_NAME": "합성 수집 제품"}
+    run, entries = raw_run(tmp_path, [[record]])
+    store = LocalPrivateSourceArtifactStore(tmp_path / "private")
+    ingested = await execute(factory, store, run, entries, metadata())
+    assert ingested.decision == SnapshotIngestionDecision.CREATED
+    async with factory() as session:
+        receipt = await SqlAlchemySourceSnapshotRepository(session).get_snapshot_receipt(
+            snapshot_id=ingested.snapshot_id
+        )
+        receipt.validate_provenance()
+    ref = CandidateCatalogSourceRef(str(receipt.source_snapshot_id), receipt.source_version)
+    members = build_catalog_members(
+        products=(
+            CatalogProductInput(
+                source_snapshot_id=ref.snapshot_id,
+                source_record_key=record["ITEM_SEQ"],
+                code_system="MFDS_ITEM_SEQ",
+                canonical_code=record["ITEM_SEQ"],
+                product_name=record["ITEM_NAME"],
+                product_status=CandidateRecordStatus.ACTIVE,
+            ),
+        ),
+        ingredients=(),
+        components=(),
+        aliases=(),
+    )
+    initial = create_catalog_export(catalog_version="synthetic-source-handoff", source_refs=(ref,), members=members)
+    approval = CatalogApprovalReceipt(
+        "synthetic-only-approval",
+        "synthetic-source-handoff",
+        initial.export_checksum,
+        CatalogVerificationStatus.APPROVED,
+        True,
+        (
+            CatalogSourceApproval(
+                ref, "synthetic-source-approval", CatalogVerificationStatus.APPROVED, CatalogFreshnessStatus.CURRENT
+            ),
+        ),
+    )
+    artifacts = create_catalog_export(
+        catalog_version="synthetic-source-handoff", source_refs=(ref,), members=members, approval_receipt=approval
+    )
+    verifier = AsyncMock(spec=CatalogApprovalVerifier)
+    verifier.verify.return_value = approval
+    repository = SqlAlchemyCatalogBuildRepository(factory)
+    await repository.save_build(members=members, artifacts=artifacts)
+    async with factory() as session:
+        set_id = await session.scalar(select(RagCatalogSet.id))
+    restored = await repository.load_build(set_id, approval_verifier=verifier)
+    assert restored == artifacts
+    outcome = candidate(restored)
+    assert isinstance(outcome, CandidateIndexBuildSuccess)
+    assert outcome.manifest.product_identity_count == 1
+    assert outcome.manifest.approved_alias_count == 0
+    assert restored.catalog.source_refs == (ref,)
+    assert verifier.verify.await_count == 1

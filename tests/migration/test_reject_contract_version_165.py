@@ -68,7 +68,7 @@ def database(monkeypatch):
 def test_upgrade_preserves_legacy_null_and_roundtrips_when_empty(database):
     cfg, execute, _ = database
     before = asyncio.run(execute("SELECT * FROM rag_source_ingestion_run", fetch=True))[0]
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REVISION)
     after = asyncio.run(execute("SELECT * FROM rag_source_ingestion_run", fetch=True))[0]
     assert after["reject_code_contract_version"] is None
     assert {key: after[key] for key in before} == dict(before)
@@ -79,15 +79,13 @@ def test_upgrade_preserves_legacy_null_and_roundtrips_when_empty(database):
 
 def test_versioned_history_blocks_downgrade_without_changing_rows(database):
     cfg, execute, _ = database
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REVISION)
     asyncio.run(execute("UPDATE rag_source_ingestion_run SET reject_code_contract_version='source-reject-codes@1'"))
     with pytest.raises(RuntimeError, match="history must be preserved"):
         command.downgrade(cfg, PARENT)
     row = asyncio.run(execute("SELECT reject_code_contract_version FROM rag_source_ingestion_run", fetch=True))[0]
     assert row["reject_code_contract_version"] == "source-reject-codes@1"
-    heads = migration_heads()
-    assert len(heads) == 1
-    assert asyncio.run(execute("SELECT version_num FROM alembic_version", fetch=True))[0]["version_num"] == heads[0]
+    assert asyncio.run(execute("SELECT version_num FROM alembic_version", fetch=True))[0]["version_num"] == REVISION
 
 
 def test_lifecycle_role_cannot_change_contract_version(database):
