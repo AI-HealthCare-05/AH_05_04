@@ -22,13 +22,14 @@ from app.models.rag_candidate import (
 )
 from app.models.rag_runtime import AiJobExecutionContext, AiJobExecutionIdentification, AiJobIntakeContext
 from app.models.users import Gender, User
-from app.repositories.rag_preflight_repository import RagPreflightRepository
+from app.repositories.medication_candidate_repository import MedicationCandidateRepository
+from app.services.medication_identification import MedicationIdentificationService
 from app.services.rag_preflight import RagPreflightService
 from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 
 def _service(session: AsyncSession) -> RagPreflightService:
-    return RagPreflightService(RagPreflightRepository(session))
+    return RagPreflightService(MedicationIdentificationService(MedicationCandidateRepository(session)))
 
 
 def _hash(char: str) -> str:
@@ -226,6 +227,7 @@ async def test_preflight_rejects_missing_identification_without_side_effects(db_
         await _service(db_session).ensure_all_active_medications_matched(
             prescription_id=prescription.id,
             user_id=owner.id,
+            expected_prescription_version_id=prescription.active_version_id,
         )
 
     assert exc_info.value.status_code == 409
@@ -248,6 +250,7 @@ async def test_preflight_rejects_non_matched_identification(db_session: AsyncSes
         await _service(db_session).ensure_all_active_medications_matched(
             prescription_id=prescription.id,
             user_id=owner.id,
+            expected_prescription_version_id=prescription.active_version_id,
         )
 
     assert exc_info.value.status_code == 409
@@ -265,6 +268,7 @@ async def test_preflight_hides_other_users_prescription(db_session: AsyncSession
         await _service(db_session).ensure_all_active_medications_matched(
             prescription_id=prescription.id,
             user_id=intruder.id,
+            expected_prescription_version_id=prescription.active_version_id,
         )
 
     assert exc_info.value.status_code == 404
@@ -298,6 +302,7 @@ async def test_preflight_returns_matches_in_medication_display_order(db_session:
     result = await _service(db_session).ensure_all_active_medications_matched(
         prescription_id=prescription.id,
         user_id=owner.id,
+        expected_prescription_version_id=prescription.active_version_id,
     )
 
     assert [item.prescription_version_medication_id for item in result.matched_medications] == [
@@ -314,6 +319,7 @@ async def test_preflight_does_not_include_sensitive_medication_text_in_result(db
     result = await _service(db_session).ensure_all_active_medications_matched(
         prescription_id=prescription.id,
         user_id=owner.id,
+        expected_prescription_version_id=prescription.active_version_id,
     )
 
     assert all(not hasattr(item, "medication_name") for item in result.matched_medications)
