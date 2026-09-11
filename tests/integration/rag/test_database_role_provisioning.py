@@ -26,7 +26,6 @@ from app.repositories.rag_runtime_repository import (
 )
 from app.repositories.rag_source_catalog_repository import (
     RagSourceCatalogRepository,
-    RagSourceCreate,
     RagSourceEndpointCreate,
     RagSourceOperationCreate,
 )
@@ -123,6 +122,11 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 await connection.execute(text(f'CREATE TABLE "{table}" (id integer PRIMARY KEY)'))
             await connection.execute(
                 text(
+                    "ALTER TABLE rag_source_ingestion_run ADD COLUMN snapshot_id integer, ADD COLUMN run_status text, ADD COLUMN failure_code text, ADD COLUMN failure_message text, ADD COLUMN duration_ms integer, ADD COLUMN finished_at timestamptz, ADD COLUMN attempted_source_version text"
+                )
+            )
+            await connection.execute(
+                text(
                     "ALTER TABLE rag_source_snapshot ADD COLUMN verification_status text, ADD COLUMN verified_at timestamptz, ADD COLUMN effective_at timestamptz, ADD COLUMN verification_seal_id char(36)"
                 )
             )
@@ -168,6 +172,8 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             (reader, "TRUNCATE medication_schedule_audit"),
             (producer, "SELECT * FROM medication_schedule_audit"),
             (producer, "INSERT INTO medication_schedule_audit VALUES (2)"),
+            (producer, "UPDATE rag_source_ingestion_run SET attempted_source_version=NULL"),
+            (reader, "UPDATE rag_source_ingestion_run SET run_status=NULL"),
             (reader, "UPDATE checkin_audit SET id=2"),
             (reader, "DELETE FROM checkin_audit"),
             (reader, "UPDATE rag_medication_product SET id=2"),
@@ -228,9 +234,16 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
     sessions = async_sessionmaker(admin, expire_on_commit=False)
     async with sessions.begin() as session:
         repository = RagSourceCatalogRepository(session)
-        source = await repository.create_source(RagSourceCreate(source_code="SYNTHETIC", display_name="Synthetic"))
+        source_id = uuid4()
+        await session.execute(
+            text(
+                "INSERT INTO rag_source (id,source_code,display_name,lifecycle_status) "
+                "VALUES (:id,'SYNTHETIC','Synthetic','DRAFT')"
+            ),
+            {"id": str(source_id)},
+        )
         endpoint = await repository.create_endpoint(
-            RagSourceEndpointCreate(source_id=source.id, endpoint_code="TEST", display_name="Synthetic")
+            RagSourceEndpointCreate(source_id=source_id, endpoint_code="TEST", display_name="Synthetic")
         )
         operation = await repository.create_operation(
             RagSourceOperationCreate(endpoint_id=endpoint.id, operation_code="TEST", display_name="Synthetic")
@@ -241,8 +254,9 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
             text(
                 "INSERT INTO rag_source_snapshot (id,operation_id,source_version,raw_manifest_checksum,canonical_checksum,"
                 "schema_version,parser_version,normalization_version,canonicalization_spec_version,"
-                "record_count,rejected_record_count,verification_status,collected_at) "
-                "VALUES (:id,:operation,'synthetic:v1',repeat('a',64),repeat('a',64),'1','1','1','1',0,0,'PENDING',now())"
+                "record_count,rejected_record_count,verification_status,collected_at,endpoint_receipt_hash) "
+                "VALUES (:id,:operation,'api:2026-09-10T00:00:00.000000Z:' || repeat('a',64),"
+                "repeat('a',64),repeat('a',64),'1','1','1','1',0,0,'PENDING',now(),repeat('d',64))"
             ),
             {"id": str(snapshot_id), "operation": str(operation.id)},
         )

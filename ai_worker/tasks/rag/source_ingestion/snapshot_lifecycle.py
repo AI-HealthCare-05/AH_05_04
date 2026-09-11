@@ -7,19 +7,33 @@ from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
-from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
+from ai_worker.tasks.rag.source_client.contracts import SourceFailureCode, SourceOperationIdentity
 from ai_worker.tasks.rag.source_ingestion.artifacts import (
     IngestionArtifactKind,
     StoredRawArtifact,
 )
 from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
+from ai_worker.tasks.rag.source_ingestion.failure_codes import (
+    COLLECTION_EMPTY_RESULT,
+    SNAPSHOT_POLICY_EMPTY_RESULT,
+    IngestionProcessingFailureCode,
+)
+from ai_worker.tasks.rag.source_ingestion.reject_codes import (
+    REJECT_CODE_CONTRACT_VERSION,
+    RejectContractError,
+    validate_parser_contract,
+    validate_reject_artifact,
+)
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 from ai_worker.tasks.rag.source_ingestion.snapshot_policy import (
+    SnapshotPolicyFailureCode,
     SourceSnapshotPolicy,
     evaluate_snapshot_policy,
 )
 from ai_worker.tasks.rag.source_ingestion.source_version import (
+    SourceVersionFailureCode,
     validate_source_version,
+    validate_source_version_syntax,
 )
 
 SOURCE_VERSION_CONFLICT = "SOURCE_VERSION_CONFLICT"
@@ -41,6 +55,7 @@ class SnapshotIngestionDecision(StrEnum):
     NO_CHANGE = "NO_CHANGE"
     SOURCE_VERSION_CONFLICT = SOURCE_VERSION_CONFLICT
     VALIDATION_FAILED = "VALIDATION_FAILED"
+    COLLECTION_FAILED = "COLLECTION_FAILED"
 
 
 class SnapshotVerificationStatus(StrEnum):
@@ -166,10 +181,42 @@ class SnapshotReference:
 
 
 @dataclass(frozen=True, slots=True)
+class SnapshotProvenanceReceipt:
+    source_id: UUID
+    source_code: str
+    endpoint_id: UUID
+    operation_id: UUID
+    source_snapshot_id: UUID
+    source_version: str
+    external_version: str | None
+    canonical_checksum: str
+    canonicalization_spec_version: str
+    endpoint_receipt_hash: str | None
+    verification_seal_id: UUID | None
+    verification_status: SnapshotVerificationStatus
+    rejected_record_count: int
+    publication_verification_id: UUID | None
+
+    def validate_provenance(self) -> None:
+        validate_source_version(
+            source_version=self.source_version,
+            external_version=self.external_version,
+            canonical_checksum=self.canonical_checksum,
+        )
+        if self.endpoint_receipt_hash is None or re.fullmatch(r"[0-9a-f]{64}", self.endpoint_receipt_hash) is None:
+            raise ValueError("Snapshot Endpoint Receipt is missing or invalid")
+        if not self.canonicalization_spec_version.strip():
+            raise ValueError("Snapshot canonicalization version is missing")
+        if self.verification_status is not SnapshotVerificationStatus.PENDING and self.verification_seal_id is None:
+            raise ValueError("Snapshot verification seal is missing")
+
+
+@dataclass(frozen=True, slots=True)
 class SnapshotIngestionMetadata:
     """검증 결과 외에 Source 수집 실행 계층이 선택하는 저장 메타데이터입니다."""
 
-    source_version: str
+    # Raw input: the persistence boundary validates and records invalid attempts safely.
+    source_version: str = field(repr=False)
     schema_version: str
     parser_version: str
     normalization_version: str
@@ -179,14 +226,14 @@ class SnapshotIngestionMetadata:
     started_at: datetime
     finished_at: datetime
     collected_at: datetime
-    external_version: str | None = None
+    external_version: str | None = field(default=None, repr=False)
     duration_ms: int | None = None
     verified_by: str | None = None
     snapshot_policy: SourceSnapshotPolicy = field(default_factory=SourceSnapshotPolicy)
+    reject_code_contract_version: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         bounded_text = (
-            ("source_version", self.source_version, 200),
             ("schema_version", self.schema_version, 100),
             ("parser_version", self.parser_version, 100),
             ("normalization_version", self.normalization_version, 100),
@@ -228,6 +275,79 @@ class SnapshotRunRecord:
     finished_at: datetime
     duration_ms: int | None
     failure_code: str | None = None
+    attempted_source_version: str | None = None
+    attempted_external_version: str | None = None
+    attempted_canonical_contract: dict[str, str | int] | None = None
+    invalid_source_version_sha256: str | None = None
+    invalid_source_version_byte_length: int | None = None
+    validation_reason_code: str | None = None
+    reject_code_contract_version: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.reject_code_contract_version not in (None, REJECT_CODE_CONTRACT_VERSION):
+            raise RejectContractError()
+        if self.run_status == "FAILED" and self.snapshot_id is not None:
+            raise ValueError("FAILED attempt cannot reference a Snapshot")
+        if self.run_status == "NO_CHANGE" and self.snapshot_id is None:
+            raise ValueError("NO_CHANGE attempt requires a Snapshot")
+        if self.attempted_canonical_contract is not None:
+            _validate_attempt_contract(self.attempted_canonical_contract)
+        if self.attempted_source_version is not None:
+            validate_source_version_syntax(self.attempted_source_version)
+        if self.invalid_source_version_sha256 is not None:
+            if (
+                re.fullmatch(r"[0-9a-f]{64}", self.invalid_source_version_sha256) is None
+                or self.invalid_source_version_byte_length is None
+                or self.invalid_source_version_byte_length < 0
+                or self.attempted_source_version is not None
+                or self.attempted_external_version is not None
+                or self.run_status != "FAILED"
+                or self.validation_reason_code != "SOURCE_VERSION_INVALID"
+            ):
+                raise ValueError("Invalid Source version audit shape")
+        elif self.invalid_source_version_byte_length is not None:
+            raise ValueError("Invalid Source version audit requires a checksum")
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotAttemptReceipt(SnapshotRunRecord):
+    """확정된 Snapshot 시도 판정을 한 곳에서 복원합니다. 알 수 없는 상태는 추정하지 않습니다."""
+
+    decision: SnapshotIngestionDecision = field(init=False)
+
+    def __post_init__(self) -> None:
+        SnapshotRunRecord.__post_init__(self)
+        object.__setattr__(self, "decision", self._decision())
+
+    def _decision(self) -> SnapshotIngestionDecision:
+        if (
+            self.validation_reason_code in {COLLECTION_EMPTY_RESULT, SNAPSHOT_POLICY_EMPTY_RESULT}
+            and self.failure_code != SourceFailureCode.EMPTY_RESULT
+        ):
+            raise ValueError("Snapshot Attempt decision is unavailable for stored state")
+        successful_decisions = {
+            "SUCCEEDED": SnapshotIngestionDecision.CREATED,
+            "SUCCEEDED_WITH_REJECTIONS": SnapshotIngestionDecision.CREATED,
+            "NO_CHANGE": SnapshotIngestionDecision.NO_CHANGE,
+        }
+        if self.snapshot_id is not None and self.failure_code is None and self.run_status in successful_decisions:
+            return successful_decisions[self.run_status]
+        if self.run_status == "FAILED" and self.snapshot_id is None:
+            if self.failure_code == SOURCE_VERSION_CONFLICT:
+                return SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT
+            if self.failure_code == SourceFailureCode.EMPTY_RESULT:
+                if self.validation_reason_code == COLLECTION_EMPTY_RESULT:
+                    return SnapshotIngestionDecision.COLLECTION_FAILED
+                if self.validation_reason_code == SNAPSHOT_POLICY_EMPTY_RESULT:
+                    return SnapshotIngestionDecision.VALIDATION_FAILED
+                # Legacy rows without a discriminator are ambiguous; do not invent provenance.
+            elif self.failure_code in set(SourceFailureCode):
+                return SnapshotIngestionDecision.COLLECTION_FAILED
+            elif self.failure_code in (
+                set(SourceVersionFailureCode) | set(IngestionProcessingFailureCode) | set(SnapshotPolicyFailureCode)
+            ):
+                return SnapshotIngestionDecision.VALIDATION_FAILED
+        raise ValueError("Snapshot Attempt decision is unavailable for stored state")
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,6 +382,8 @@ class SnapshotLifecycleRepository(Protocol):
         """Operation을 조회해 잠그고, 없으면 ValueError를 발생시킵니다."""
         ...
 
+    async def get_source_policy(self, *, operation_id: UUID) -> SourceSnapshotPolicy: ...
+
     async def get_snapshot_by_version(
         self,
         *,
@@ -270,6 +392,10 @@ class SnapshotLifecycleRepository(Protocol):
     ) -> SnapshotReference | None: ...
 
     async def get_latest_snapshot(self, *, operation_id: UUID) -> SnapshotReference | None: ...
+
+    async def has_attempt_version_conflict(
+        self, *, operation_id: UUID, source_version: str, canonical_contract: dict[str, str | int]
+    ) -> bool: ...
 
     async def create_snapshot(self, request: SnapshotCreateRequest) -> UUID: ...
 
@@ -350,6 +476,46 @@ def decide_snapshot_ingestion(
     return SnapshotIngestionDecision.CREATED, latest
 
 
+async def _persist_identity_rejections(
+    *,
+    repository: SnapshotLifecycleRepository,
+    ingestion: ProductIngestionResult,
+    metadata: SnapshotIngestionMetadata,
+    artifacts: tuple[StoredRawArtifact, ...],
+) -> SnapshotPersistenceResult | None:
+    if metadata.reject_code_contract_version is not None:
+        validate_parser_contract(
+            identity=ingestion.identity,
+            version=metadata.reject_code_contract_version,
+            parser_version=metadata.parser_version,
+        )
+    rejections = tuple(a for a in artifacts if a.artifact_kind is IngestionArtifactKind.REJECTS)
+    if rejections:
+        for artifact in rejections:
+            validate_reject_artifact(
+                identity=ingestion.identity,
+                version=metadata.reject_code_contract_version,
+                code=artifact.reject_code,
+                location=artifact.parser_location,
+            )
+        operation_id = await repository.lock_operation(ingestion.identity)
+        run_id = await repository.create_run(
+            _run_record(
+                operation_id=operation_id,
+                snapshot_id=None,
+                metadata=metadata,
+                ingestion=ingestion,
+                run_status="FAILED",
+                failure_code="PARSER_VALIDATION_FAILED",
+            )
+        )
+        await repository.create_artifacts(ingestion_run_id=run_id, artifacts=artifacts)
+        return SnapshotPersistenceResult(
+            SnapshotIngestionDecision.VALIDATION_FAILED, operation_id, run_id, None, "PARSER_VALIDATION_FAILED"
+        )
+    return None
+
+
 async def persist_product_ingestion_result(
     *,
     repository: SnapshotLifecycleRepository,
@@ -370,13 +536,26 @@ async def persist_product_ingestion_result(
         rejected_record_count=metadata.rejected_record_count,
         artifacts=artifacts,
     )
+    rejected = await _persist_identity_rejections(
+        repository=repository, ingestion=ingestion, metadata=metadata, artifacts=artifacts
+    )
+    if rejected is not None:
+        return rejected
+    operation_id = await repository.lock_operation(ingestion.identity)
+    stored_policy = await repository.get_source_policy(operation_id=operation_id)
     policy_result = evaluate_snapshot_policy(
         record_count=ingestion.record_count,
         rejected_record_count=metadata.rejected_record_count,
         policy=metadata.snapshot_policy,
     )
 
-    operation_id = await repository.lock_operation(ingestion.identity)
+    stored_result = evaluate_snapshot_policy(
+        record_count=ingestion.record_count,
+        rejected_record_count=metadata.rejected_record_count,
+        policy=stored_policy,
+    )
+    if not stored_result.snapshot_candidate_allowed:
+        policy_result = stored_result
     if not policy_result.snapshot_candidate_allowed:
         failure_code = policy_result.failure_code
         if failure_code is None:
@@ -387,8 +566,12 @@ async def persist_product_ingestion_result(
                 operation_id=operation_id,
                 snapshot_id=None,
                 metadata=metadata,
+                ingestion=ingestion,
                 run_status="FAILED",
                 failure_code=failure_code.value,
+                validation_reason_code=(
+                    SNAPSHOT_POLICY_EMPTY_RESULT if failure_code is SnapshotPolicyFailureCode.EMPTY_RESULT else None
+                ),
             )
         )
         await repository.create_artifacts(
@@ -414,6 +597,13 @@ async def persist_product_ingestion_result(
         latest=latest,
     )
 
+    if await repository.has_attempt_version_conflict(
+        operation_id=operation_id,
+        source_version=metadata.source_version,
+        canonical_contract=attempt_canonical_contract(ingestion=ingestion, metadata=metadata),
+    ):
+        decision = SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT
+
     if decision is SnapshotIngestionDecision.CREATED:
         snapshot_id = await repository.create_snapshot(
             SnapshotCreateRequest(
@@ -436,16 +626,16 @@ async def persist_product_ingestion_result(
                 operation_id=operation_id,
                 snapshot_id=snapshot_id,
                 metadata=metadata,
+                ingestion=ingestion,
                 run_status=run_status,
             )
         )
         await repository.create_artifacts(ingestion_run_id=ingestion_run_id, artifacts=artifacts)
         return SnapshotPersistenceResult(decision, operation_id, ingestion_run_id, snapshot_id)
 
-    if comparison_snapshot is None:
-        raise RuntimeError("Snapshot 비교 결과가 없습니다.")
-
     if decision is SnapshotIngestionDecision.NO_CHANGE:
+        if comparison_snapshot is None:
+            raise RuntimeError("Snapshot 비교 결과가 없습니다.")
         await repository.append_verification(
             snapshot_id=comparison_snapshot.snapshot_id,
             check_name="source-ingestion-integrity",
@@ -458,6 +648,7 @@ async def persist_product_ingestion_result(
                 operation_id=operation_id,
                 snapshot_id=comparison_snapshot.snapshot_id,
                 metadata=metadata,
+                ingestion=ingestion,
                 run_status="NO_CHANGE",
             )
         )
@@ -474,6 +665,7 @@ async def persist_product_ingestion_result(
             operation_id=operation_id,
             snapshot_id=None,
             metadata=metadata,
+            ingestion=ingestion,
             run_status="FAILED",
             failure_code=SOURCE_VERSION_CONFLICT,
         )
@@ -635,7 +827,9 @@ def _run_record(
     snapshot_id: UUID | None,
     metadata: SnapshotIngestionMetadata,
     run_status: str,
+    ingestion: ProductIngestionResult,
     failure_code: str | None = None,
+    validation_reason_code: str | None = None,
 ) -> SnapshotRunRecord:
     return SnapshotRunRecord(
         operation_id=operation_id,
@@ -647,7 +841,28 @@ def _run_record(
         finished_at=metadata.finished_at,
         duration_ms=metadata.duration_ms,
         failure_code=failure_code,
+        reject_code_contract_version=metadata.reject_code_contract_version,
+        validation_reason_code=validation_reason_code,
+        attempted_source_version=metadata.source_version,
+        attempted_external_version=metadata.external_version,
+        attempted_canonical_contract=attempt_canonical_contract(ingestion=ingestion, metadata=metadata),
     )
+
+
+def attempt_canonical_contract(
+    *,
+    ingestion: ProductIngestionResult,
+    metadata: SnapshotIngestionMetadata,
+) -> dict[str, str | int]:
+    return {
+        "canonical_checksum": ingestion.canonical_checksum,
+        "schema_version": metadata.schema_version,
+        "parser_version": metadata.parser_version,
+        "normalization_version": metadata.normalization_version,
+        "canonicalization_spec_version": ingestion.canonicalization_spec_version,
+        "endpoint_receipt_hash": ingestion.endpoint_receipt_hash,
+        "rejected_record_count": metadata.rejected_record_count,
+    }
 
 
 def _has_same_canonical_contract(
@@ -665,3 +880,26 @@ def _has_same_canonical_contract(
         and snapshot.endpoint_receipt_hash == ingestion.endpoint_receipt_hash
         and snapshot.rejected_record_count == metadata.rejected_record_count
     )
+
+
+def _validate_attempt_contract(contract: dict[str, str | int]) -> None:
+    keys = {
+        "canonical_checksum",
+        "schema_version",
+        "parser_version",
+        "normalization_version",
+        "canonicalization_spec_version",
+        "endpoint_receipt_hash",
+        "rejected_record_count",
+    }
+    if set(contract) != keys:
+        raise ValueError("Attempt canonical contract keys do not match PD-362")
+    for key in keys - {"rejected_record_count"}:
+        value = contract[key]
+        if not isinstance(value, str) or not value.strip() or len(value) > 100 or any(ord(c) < 32 for c in value):
+            raise ValueError("Invalid attempt canonical contract value")
+        if key in {"canonical_checksum", "endpoint_receipt_hash"} and re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise ValueError("Invalid attempt checksum")
+    count = contract["rejected_record_count"]
+    if type(count) is not int or count < 0:
+        raise ValueError("Invalid attempt rejected count")

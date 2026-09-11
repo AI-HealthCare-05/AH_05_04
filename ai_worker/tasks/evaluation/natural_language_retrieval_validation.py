@@ -158,8 +158,8 @@ class HoldoutPreparationRef(StrictContractModel):
 class ProtectedRunnerFoundationRef(StrictContractModel):
     id: Literal["issue-273-protected-runner-foundation"]
     version: Literal["1.0.0"]
-    raw_sha256: Literal["85af97344a5a49757cbbaeb086999f1279ca11d13c1202decccefede097c6ab9"]
-    self_sha256: Literal["657e94a374d91f37604935ffe548e0bc224b37bd53c052f009df14f38b895969"]
+    raw_sha256: Literal["49b4305f67b50e15016cd47aa307e503efc5d3ce9e963ad09d1a2fbb0d0faf1a"]
+    self_sha256: Literal["6b2b0e47baf7a9e5666a6db292da4dfa74828c6f1d19d6e5478166e3215d9377"]
 
 
 class Issue273ValidationStatus(StrictContractModel):
@@ -186,7 +186,7 @@ class Issue273ValidationStatus(StrictContractModel):
     protected_runner_issue_status: Literal["CREATED"]
     policy_foundation_status: Literal["IMPLEMENTED"]
     effective_enforcement_status: Literal["NOT_IMPLEMENTED"]
-    infrastructure_adapter_status: Literal["NOT_IMPLEMENTED"]
+    infrastructure_adapter_status: Literal["PARTIALLY_IMPLEMENTED"]
     reconciliation_adapter_status: Literal["NOT_IMPLEMENTED"]
     holdout_freeze_status: Literal["NOT_STARTED"]
     adapter_status: Literal["NOT_IMPLEMENTED"]
@@ -371,7 +371,8 @@ def render_report(raw_status: bytes) -> bytes:
         ),
         "DEV Dataset approval is recorded as APPROVED for the 60 Cases, Evidence Mapping, and Dataset Manifest.",
         "Dataset remains DRAFT and unfrozen; preparation does not create or Freeze HOLDOUT content.",
-        "The protected Runner policy foundation is implemented and verified with synthetic adapters only.",
+        "The protected Runner policy foundation and data-plane adapter are partially implemented and verified.",
+        "Control-plane services and the actual protected loader/CLI remain NOT_IMPLEMENTED.",
         "Access authorization is not recorded, and HOLDOUT authoring has not started.",
         "Actual retrieval was not run because the actual Adapter is NOT_IMPLEMENTED.",
         "No baseline Metric exists, and no Metric fields are recorded in the machine status.",
@@ -396,9 +397,9 @@ def render_report(raw_status: bytes) -> bytes:
         "- Issue [#278](https://github.com/AI-HealthCare-05/AH_05_04/issues/278) is separate and non-blocking for #273.",
         "- No Dataset Freeze, HOLDOUT Freeze, actual baseline completion, Release PASS, or Production readiness is claimed.",
         "- HOLDOUT question content is absent from the repository and remains future protected work.",
-        "- Actual protected infrastructure, access authorization, actual Adapter, and HOLDOUT Freeze remain blockers.",
+        "- Control-plane services, actual protected environment, access authorization, loader/CLI, and HOLDOUT Freeze remain blockers.",
         "- `@phina-io` must approve the database/schema, roles, protected credential environment, audit retention,",
-        "  backup, revoke, and incident-response design before an infrastructure adapter is implemented.",
+        "  backup, revoke, and incident-response evidence before adapter completion or activation.",
         "- HOLDOUT authoring may start only after an independent Dataset Custodian authorization event is recorded.",
         "- The #158 replay uses a different Dataset and is `NOT_COMPARABLE_DIFFERENT_DATASET`.",
         "",

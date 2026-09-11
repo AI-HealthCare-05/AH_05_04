@@ -296,10 +296,10 @@ async def _existing_columns(table: str) -> set[str]:
 
 
 @pytest.fixture
-def isolated_database_at_head() -> Any:
-    """전용 DB를 만들고 실제 Alembic으로 head까지 올린다. 공유 test DB는 건드리지 않는다."""
+def isolated_database_at_runtime_revision() -> Any:
+    """전용 DB를 테스트 대상 Runtime revision까지 올린다. 후속 merge head와 분리한다."""
     asyncio.run(_recreate_isolated_database())
-    result = _run_alembic("upgrade", "head")
+    result = _run_alembic("upgrade", RUNTIME_BUNDLE_REVISION)
     assert result.returncode == 0, result.stdout + result.stderr
     try:
         yield
@@ -328,14 +328,17 @@ def test_require_empty_allows_empty_tables() -> None:
     migration._require_empty(FakeConnection({}))
 
 
-def test_real_alembic_downgrade_is_refused_while_bundle_data_exists(isolated_database_at_head: None) -> None:
+def test_real_alembic_downgrade_is_refused_while_bundle_data_exists(
+    isolated_database_at_runtime_revision: None,
+) -> None:
     """실제 Alembic downgrade가 거부되고, 행과 identity 컬럼이 모두 보존되어야 한다."""
-    _ = isolated_database_at_head
+    _ = isolated_database_at_runtime_revision
     asyncio.run(_seed_bundle_with_member())
 
-    # `-1`은 이 migration 한 칸만 되돌린다. 부모 revision을 target으로 주면 #398의
-    # 되돌릴 수 없는 `3984b5c6d7e8`까지 내려가 버려 이 테스트의 대상이 흐려진다.
-    result = _run_alembic("downgrade", "-1")
+    # 부모 revision에서 멈추므로 #175만 되돌리고 #398 부모 자체의 downgrade는 실행하지 않는다.
+    # merge head가 아니라 테스트 대상 revision을 기준으로 상대 -1을 쓰므로,
+    # 부모가 바뀌어도 분기를 추측하지 않고 down_revision을 그대로 따라간다.
+    result = _run_alembic("downgrade", f"{RUNTIME_BUNDLE_REVISION}-1")
 
     assert result.returncode != 0
     assert "Runtime Bundle 행이 존재하면" in result.stdout + result.stderr
@@ -347,13 +350,13 @@ def test_real_alembic_downgrade_is_refused_while_bundle_data_exists(isolated_dat
 
 
 def test_real_alembic_downgrade_succeeds_and_removes_identity_columns_when_empty(
-    isolated_database_at_head: None,
+    isolated_database_at_runtime_revision: None,
 ) -> None:
-    _ = isolated_database_at_head
+    _ = isolated_database_at_runtime_revision
     assert asyncio.run(_count("rag_runtime_release_bundle")) == 0
     assert asyncio.run(_count("rag_runtime_bundle_source")) == 0
 
-    downgraded = _run_alembic("downgrade", "-1")
+    downgraded = _run_alembic("downgrade", f"{RUNTIME_BUNDLE_REVISION}-1")
     assert downgraded.returncode == 0, downgraded.stdout + downgraded.stderr
 
     for table, columns in IDENTITY_COLUMNS.items():

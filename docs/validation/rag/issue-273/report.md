@@ -15,8 +15,8 @@
 - Preparation raw SHA-256: `40ea344c378298d99c14c372c27296322854d8e9b055fa179592568ca88bc192`
 - Preparation self SHA-256: `b4a0a113d9efce867a434875f18ee259431d226a9cf1e4dcaed28152920600b6`
 - Protected Runner Foundation: `issue-273-protected-runner-foundation@1.0.0`
-- Foundation raw SHA-256: `85af97344a5a49757cbbaeb086999f1279ca11d13c1202decccefede097c6ab9`
-- Foundation self SHA-256: `657e94a374d91f37604935ffe548e0bc224b37bd53c052f009df14f38b895969`
+- Foundation raw SHA-256: `49b4305f67b50e15016cd47aa307e503efc5d3ce9e963ad09d1a2fbb0d0faf1a`
+- Foundation self SHA-256: `6b2b0e47baf7a9e5666a6db292da4dfa74828c6f1d19d6e5478166e3215d9377`
 - Phase B3 Product·Privacy·Safety·Evaluation Reviewer: `@hazelnutflavoured`
 - Phase B3 Dataset Custodian·Backend·Security Reviewer: `@phina-io`
 - Prior DEV Approval Transition: `DEV_DATASET_CUSTODIAN_APPROVAL_RECORDED`; the verified actor was `@phina-io` (`DATASET_CUSTODIAN`). This is not HOLDOUT access authorization.
@@ -36,7 +36,7 @@
 - Protected Runner Issue: `CREATED`
 - Policy Foundation: `IMPLEMENTED`
 - Effective Enforcement: `NOT_IMPLEMENTED`
-- Infrastructure Adapter: `NOT_IMPLEMENTED`
+- Infrastructure Adapter: `PARTIALLY_IMPLEMENTED`
 - Reconciliation Adapter: `NOT_IMPLEMENTED`
 - HOLDOUT Freeze: `NOT_STARTED`
 - Actual Adapter: `NOT_IMPLEMENTED`
@@ -45,7 +45,8 @@
 한국어 자연어 합성 DEV 질문 60개와 합성 Gold/corpus authoring graph가 저장소에 존재하며, 실제 환자 발화나 실제 제품 데이터가 아니다.
 DEV Dataset approval is recorded as APPROVED for the 60 Cases, Evidence Mapping, and Dataset Manifest.
 Dataset remains DRAFT and unfrozen; preparation does not create or Freeze HOLDOUT content.
-The protected Runner policy foundation is implemented and verified with synthetic adapters only.
+The protected Runner policy foundation and data-plane adapter are partially implemented and verified.
+Control-plane services and the actual protected loader/CLI remain NOT_IMPLEMENTED.
 Access authorization is not recorded, and HOLDOUT authoring has not started.
 Actual retrieval was not run because the actual Adapter is NOT_IMPLEMENTED.
 No baseline Metric exists, and no Metric fields are recorded in the machine status.
@@ -76,10 +77,10 @@ DEV cannot produce a Release PASS; Production remains closed.
 - Issue [#278](https://github.com/AI-HealthCare-05/AH_05_04/issues/278) is separate and non-blocking for #273.
 - No Dataset Freeze, HOLDOUT Freeze, actual baseline completion, Release PASS, or Production readiness is claimed.
 - HOLDOUT question content is absent from the repository and remains future protected work.
-- Actual protected infrastructure, access authorization, actual Adapter, and HOLDOUT Freeze remain blockers.
+- Control-plane services, actual protected environment, access authorization, loader/CLI, and HOLDOUT Freeze remain blockers.
 - `@phina-io` must approve the database/schema, roles, protected credential environment, audit retention,
-  backup, revoke, and incident-response design before an infrastructure adapter is implemented.
+  backup, revoke, and incident-response evidence before adapter completion or activation.
 - HOLDOUT authoring may start only after an independent Dataset Custodian authorization event is recorded.
 - The #158 replay uses a different Dataset and is `NOT_COMPARABLE_DIFFERENT_DATASET`.
 
-Status updated at `2026-09-09T00:00:00.000000Z`. Canonical status SHA-256: `f819f3df41061dc16ffc427a8bfa153b6cca1ebac6ea4fb2003bcd1bfc3d9e07`.
+Status updated at `2026-09-09T00:00:00.000000Z`. Canonical status SHA-256: `e443cc4a1983665b8cc81cb5a870804a225025c38369034c5c5aa7bd329b8ee5`.

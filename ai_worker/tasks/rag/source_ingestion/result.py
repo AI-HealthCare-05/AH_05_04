@@ -22,6 +22,7 @@ from ai_worker.tasks.rag.source_ingestion.checksums import (
 from ai_worker.tasks.rag.source_ingestion.parse import (
     PRODUCT_CANONICALIZATION_SPEC_VERSION,
 )
+from ai_worker.tasks.rag.source_ingestion.product_rejections import ProductIdentityError, classify_product_rejections
 from ai_worker.tasks.rag.source_ingestion.receipt_validation import (
     load_product_endpoint_receipt,
     verify_receipt_fixture_evidence,
@@ -67,7 +68,14 @@ def build_product_ingestion_result(
         artifacts=entries,
         decoder=decode_mfds_json,
         success_codes=_PRODUCT_CONTRACT.body_codes.success_codes,
+        inspect_product_rejections=True,
     )
+    rejections = classify_product_rejections((page.page_number, page.records) for page in result.pages)
+    if rejections:
+        raise ProductIdentityError(rejections)
+    from ai_worker.tasks.rag.source_ingestion.validation import require_complete_source_run
+
+    require_complete_source_run(result)
     records = verified_artifacts.records
     canonical_checksum = product_canonical_checksum(records)
 

@@ -1,7 +1,7 @@
 """PD-417 schedule audit, baseline evidence and cancellation instants.
 
 Revision ID: 423a1b2c3d4e
-Revises: 3984b5c6d7e8
+Revises: 166f20314253
 """
 
 import json
@@ -15,7 +15,7 @@ from alembic import context, op
 from sqlalchemy.dialects import postgresql
 
 revision = "423a1b2c3d4e"
-down_revision = "3984b5c6d7e8"
+down_revision = "166f20314253"
 branch_labels = None
 depends_on = None
 

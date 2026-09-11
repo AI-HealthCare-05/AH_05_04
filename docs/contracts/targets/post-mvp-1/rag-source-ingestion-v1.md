@@ -285,3 +285,72 @@ Snapshot의 verification_seal_id와 일반 복합 FK·CHECK는 검증된 행을 
 398c는 과거 전이·방어 함수와 Trigger를 제거하고 기본 권한 재부여도 막는다. 이미 적용된 migration 파일은 보존하며 최신 head 및 역할 provisioning을 적용하기 전의 DB를 전환 완료로 설명하지 않는다. 최신 seal 보호의 downgrade는 거부하고 검토한 forward-fix를 사용한다.
 
 PR #323 후속 검토에 따라 ingestion Run은 DB CHECK로 `FAILED → snapshot_id IS NULL`, `NO_CHANGE → snapshot_id IS NOT NULL`을 강제한다. 성공 Run은 생성한 Snapshot을 참조할 수 있다. CHECK는 참조 대상의 생성 시점이나 normalization run 구조를 확정하지 않으며, #164의 Snapshot·normalization provenance 정렬은 후속 범위로 유지한다.
+
+## #362 영속화 구현 — 1단계
+
+PD-362-20260909에 따라 Source별 거부 정책은 `rag_source`에 저장한다.
+`max_rejected_records=0`, `max_rejection_rate=0`, `empty_result_policy=REJECT`를
+기본값으로 사용하며 수집 요청 정책과 저장 정책을 모두 만족해야 후보 생성이 가능하다.
+요청 정책으로 저장된 한도를 완화하지 않는다. 정상 검증도 publication 승인을 대신하지 않는다.
+새 Snapshot의 `external_version`은 원래 입력을 보존한다. 기존 Snapshot은 소급 추정하지 않는다.
+Snapshot·Citation `source_version`의 저장 상한은 200자다. 초과하는 기존 행은
+migration에서 자르지 않고 중단한다. DB Trigger·RLS·업무 DB 함수 없이 Python 검증과
+transaction, 일반 CHECK/FK로 처리한다.
+
+Run 시도 provenance와 소비자 Receipt 연결은 아직 완료되지 않았다.
+#165의 reject_code allowlist·version 계약 및 #166의 실제 소비 검증도
+[공동 완료 조건](../../../testing/source-policy-persistence-362.md)에서 계속 추적한다.
+
+### #362 수집 시도 이력
+
+`rag_source_ingestion_run`은 Snapshot과 별개로 `attempted_source_version`,
+`attempted_external_version`, `attempted_canonical_contract`를 보존한다. 비교 계약은
+PD-362의 checksum·schema/parser/normalization/canonicalization version·Endpoint Receipt hash·거부 건수
+7개 필드만 포함한다. 새 version이 NO_CHANGE이면 기존 Snapshot을 참조하되 시도 version은 새 값을 유지한다.
+이미 성공·NO_CHANGE로 관측된 version의 비교 계약이 달라지면 Snapshot이 없었던 version도 충돌로 차단한다.
+
+문법 오류는 attempted version·external version을 NULL로 두고
+`invalid_source_version_sha256`, `invalid_source_version_byte_length`, `validation_reason_code`만 기록한다.
+문법이 유효한 결속 오류는 시도 version과 안전하게 검증된 external version을 보존한다.
+`record_source_version_failure`는 Snapshot metadata 생성 전 장문·제어문자 입력 실패에도 사용할 수 있다.
+원본 보존·저장 orchestration은 version 실패를 해당 감사 경로로 연결하고 Artifact를 쓰지 않는다.
+Run Receipt 조회는 Snapshot을 역으로 추정하지 않는다. Snapshot·Run·Artifact는 호출자 transaction에 속한다.
+Source Writer의 기존 Run 상태 갱신은 명시한 lifecycle 컬럼에만 허용하고 신규 시도 provenance UPDATE는 허용하지 않는다.
+
+
+### #436 리뷰 반영: invalid Version 감사와 Attempt 판정
+
+`SnapshotIngestionMetadata.source_version`은 아직 검증 전 입력이다. 생성자가 길이로 먼저 거부하지 않고,
+`preserve_and_persist_product_ingestion_result()`가 원본 Artifact 보관·Snapshot 생성 전에 문법·길이·결속을 검증한다.
+잘못된 문자열은 FAILED Run의 SHA-256·UTF-8 byte length·`SOURCE_VERSION_INVALID`로 보존한다.
+원문 Version·external Version은 이 경우 저장하지 않으며 입력 메타데이터 repr에서도 제외한다.
+하위 `persist_product_ingestion_result()`의 저장 전 Version 검증과 DB 200자 제약도 유지한다.
+
+`get_attempt_receipt()`는 기존 Run 필드와 명시적인 `decision` 필드를 갖는 `SnapshotAttemptReceipt`를 반환한다.
+승인된 PD-362 판정을 Python Receipt 경계 한 곳에서 복원하며 DB 컬럼·함수는 추가하지 않는다.
+
+| 저장된 상태 | 추가 조건 | decision |
+| --- | --- | --- |
+| SUCCEEDED / SUCCEEDED_WITH_REJECTIONS | Snapshot 있음, failure_code 없음 | CREATED |
+| NO_CHANGE | Snapshot 있음, failure_code 없음 | NO_CHANGE |
+| FAILED | Snapshot 없음, SOURCE_VERSION_CONFLICT | SOURCE_VERSION_CONFLICT |
+| FAILED | Snapshot 없음, SOURCE_VERSION_INVALID / SOURCE_VERSION_BINDING_MISMATCH / EMPTY_RESULT / REJECTION_LIMIT_EXCEEDED | VALIDATION_FAILED |
+
+진행 중 상태, 상태·Snapshot·failure_code 불일치, 미등록 실패 코드에는 decision을 추측하지 않고 고정 메시지의
+ValueError로 Receipt 반환을 거부한다. 예를 들어 수집 transport TIMEOUT을 Snapshot 검증 실패로 재분류하지 않는다.
+Run 자체의 저장·감사 내역을 제거하는 동작은 아니다. 신규 상태나 실패 코드는 의미 검토와 테스트 없이 매핑에 자동 포함되지 않는다.
+
+### #165 reject_code 구현 리뷰안
+
+제품 식별자 세 코드·버전·2-pass·실패 감사의 구현 리뷰 기준은
+[Source reject codes v1](../../proposed/post-mvp-1/source-reject-codes-v1.md)과
+[PD-165 리뷰안](../../../governance/decisions/2026-09-11-product-reject-contract-v1.md)을 참조한다.
+담당 승인 전 proposed이며, 이 참조가 기존 Target의 포괄적 부분 거부 경계를 자동 승인 변경하지 않는다.
+
+
+### PR #436 실패 매핑 보완 리뷰안
+
+위 네 decision 표는 기존 PD-362 기준이다. 작업 브랜치의 수집 실패·Parser 실패 조회 보완은
+[proposed 계약](../../proposed/source-attempt-receipt-436.md)과
+[PD-362-R2](../../../governance/decisions/2026-09-11-source-attempt-receipt-failures.md)를 따른다.
+추가 COLLECTION_FAILED와 EMPTY_RESULT 계열 구분은 담당 재리뷰 대상이며 승인 완료로 간주하지 않는다.

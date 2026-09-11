@@ -6,7 +6,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
-from app.models.rag_catalog import RagMedicationAliasTargetType, RagMedicationComponentRole
+from app.models.rag_catalog import (
+    RagMedicationAliasReviewStatus,
+    RagMedicationAliasTargetType,
+    RagMedicationComponentRole,
+    RagMedicationRecordStatus,
+)
 from app.models.rag_evidence import (
     RagCitationAuthorizationStatus,
     RagCitationClaimKind,
@@ -28,6 +33,7 @@ from app.repositories.rag_evidence_citation_repository import (
     RagEvidenceRuleCreate,
 )
 from app.repositories.rag_source_catalog_repository import (
+    RagEntityIdentityCreate,
     RagMedicationAliasCreate,
     RagMedicationIngredientCreate,
     RagMedicationProductComponentCreate,
@@ -84,8 +90,23 @@ async def _create_source_catalog_graph(db_session: AsyncSession):
             effective_at=now,
         ),
     )
+    product_identity = await repository.create_identity(
+        RagEntityIdentityCreate(
+            entity_type=RagMedicationAliasTargetType.PRODUCT,
+            code_system="MFDS_ITEM_SEQ",
+            canonical_code="200012345",
+        )
+    )
+    ingredient_identity = await repository.create_identity(
+        RagEntityIdentityCreate(
+            entity_type=RagMedicationAliasTargetType.INGREDIENT,
+            code_system="MFDS_INGREDIENT",
+            canonical_code="I0001",
+        )
+    )
     product = await repository.create_product(
         RagMedicationProductCreate(
+            entity_identity_id=product_identity.id,
             source_snapshot_id=snapshot.id,
             source_record_key="ITEM_SEQ:200012345",
             code_system="MFDS_ITEM_SEQ",
@@ -98,6 +119,7 @@ async def _create_source_catalog_graph(db_session: AsyncSession):
     )
     ingredient = await repository.create_ingredient(
         RagMedicationIngredientCreate(
+            entity_identity_id=ingredient_identity.id,
             source_snapshot_id=snapshot.id,
             source_record_key="INGREDIENT:ACETAMINOPHEN",
             ingredient_code_system="MFDS_INGREDIENT",
@@ -109,11 +131,14 @@ async def _create_source_catalog_graph(db_session: AsyncSession):
     await repository.create_alias(
         RagMedicationAliasCreate(
             source_snapshot_id=snapshot.id,
-            product_id=product.id,
+            target_identity_id=product_identity.id,
             target_type=RagMedicationAliasTargetType.PRODUCT,
             alias_text="테스트 정",
             normalized_alias_text="테스트정",
-            is_approved=True,
+            alias_source="SYNTHETIC",
+            review_status=RagMedicationAliasReviewStatus.APPROVED,
+            record_status=RagMedicationRecordStatus.ACTIVE,
+            is_effective=True,
         )
     )
     await repository.create_component(

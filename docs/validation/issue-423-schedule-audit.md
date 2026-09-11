@@ -1,7 +1,7 @@
 # #423 Schedule Audit DB 구현 검증 기록
 
 상태: **DB 저장 구현 · 지정 리뷰/머지 대기** (2026-09-10).
-기준 develop: `c97f20f7` (#429의 DB trigger 제거 포함).
+기준 develop: `47d71c5b` 이후 최신 develop 재연결.
 브랜치: `feat/423-schedule-audit`. 구현 담당 권가빈; 책임 리뷰 송은영(Backend·DB·Security),
 남한솔(Frontend 소비 의미). 본 기록은 책임 리뷰나 외부 공개 승인이 아니다.
 
@@ -16,7 +16,7 @@ APPROVED review URL·ID·commit·UTC 시각을 연결했다. 승인 대상 commi
 
 ## 저장 구현
 
-- `3984b5c6d7e8` 뒤 단일 head `423a1b2c3d4e`: 감사 테이블 및 nullable occurrence `cancelled_at`.
+- `166f20314253` 뒤 단일 head `423a1b2c3d4e`: 감사 테이블 및 nullable occurrence `cancelled_at`.
 - 기존 일정의 현재 상태는 별도 접근 제한 JSON baseline에 보존하며 과거 actor/time/audit을 만들지 않는다.
   알 수 없는 기존 CANCELLED 취소 시각은 null로 유지한다. 감사 또는 취소 이력이 있으면 downgrade를 거부한다.
 - FK RESTRICT·revision step·unique·actor 제약과 명시적 snapshot 검증.

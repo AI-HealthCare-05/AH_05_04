@@ -14,6 +14,9 @@ source scripts/ci/parallel_test_lanes.sh
 
 export PYTEST_ADDOPTS=""
 uv run python scripts/ci/check_python_test_inventory.py
+# #439: head 분기는 아래 alembic 단계에서야 드러나고 실패 메시지가 원인을 가린다.
+# DB 없이 먼저 확인해 재연결 절차를 바로 안내한다.
+uv run python scripts/ci/verify_database_head.py --heads-only
 uv run python scripts/ci/check_database_logic.py
 uv run python scripts/ci/check_protected_table_writes.py
 

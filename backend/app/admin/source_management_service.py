@@ -188,7 +188,7 @@ class SourceManagementService:
             raise fail("MANAGEMENT_TARGET_IN_USE")
         if kind == TargetKind.OPERATION and (row.runtime_status != "DISABLED" or row.acquisition_status != "PENDING"):
             raise fail("MANAGEMENT_TARGET_IN_USE")
-        if kind == TargetKind.ALIAS and row.is_approved:
+        if kind == TargetKind.ALIAS and row.review_status == "APPROVED":
             raise fail("MANAGEMENT_TARGET_IN_USE")
         await self._check_references(row)
 

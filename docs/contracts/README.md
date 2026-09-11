@@ -4,9 +4,11 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 상태와 승인 원본의 우선순위는 [Post-MVP-1 문서 권위](../governance/post-mvp-1-document-authority.md)를 따릅니다.
 
+- [Source Attempt Receipt 실패 보완 (#436)](./proposed/source-attempt-receipt-436.md): COLLECTION_FAILED 및 EMPTY_RESULT 계열 구분 구현 리뷰안.
+
 ## 디렉터리 구조와 배치 원칙
 
-- [PD-398-M1 Source·Catalog 관리](./proposed/source-catalog-management-398.md): 분리된 관리 API, 서버 권한, 미사용 자료 수정·삭제와 감사 transaction, PD-398-R2 Snapshot 잠금 권한 분리.
+- [PD-398-M1 Source·Catalog 관리](./proposed/source-catalog-management-398.md): 분리된 관리 API, 서버 권한, 미사용 자료 수정·삭제와 감사 transaction, PD-398-R2 Snapshot 잠금 권한 분리, #372 Alias review_status 승인 보호 연동.
 - [PD-398 Python Candidate 결과 저장](./proposed/python-candidate-integrity-398.md): 결과 저장·최종화 원자성, 최소 권한, 기존 Trigger 제거 구현.
 - [PD-398 Python Prescription 무결성](./proposed/python-prescription-integrity-398.md): count/hash 저장·소비 검증·NOT NULL·최소 권한·기존 Trigger 제거, 확정·정정 성공 응답 멱등 재현.
 - [PD-398 Python append-only 이력](./proposed/python-append-only-integrity-398.md): Runtime 전이·Check-in·Evidence 이력의 Python transaction과 INSERT 전용 권한.
@@ -44,7 +46,11 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## Proposed 계약
 
+- [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태, row 없음=미동의, Backend·Worker 공통 fixture 판정, WorkerMessage/Stream 비전송, CONSENT_REQUIRED 및 OCR CONSENT_WITHDRAWN 차단 의미. Proposed · 미구현 · Production 공개 승인 아님. 확인 필요: 권가빈·김지혜·정현우·남한솔.
+
 - [Track B UNCONFIRMED backlog v1](./proposed/unconfirmed-backlog-v1.md): PD-418 URL·cursor·DTO·오류 제안. 실제 v1 router 등록 보류, 테스트 앱의 #413 PUT→GET HTTP 통합 검증. Cursor 404의 첫 페이지 재조회 명시, 계약 및 등록 HEAD의 Backend/Frontend 승인 필요.
+
+- [Track B Notification 계약 v1 (#203)](./proposed/track-b-notifications-v1.md): 알림 저장·게시·읽음·재알림 상세 제안. PD-203 도메인 조율 대기·미구현이며 #202와의 통합 접점 및 검증 계획 포함.
 
 - [Source Artifact·REJECTS 보존·삭제 정책 초안 (#335)](./proposed/post-mvp-1/source-artifact-retention-cleanup.md): PM 30일 유예·참조 보존·수동 배치 승인 반영, 통합 검토 대상, 후속 구현 [#347](https://github.com/AI-HealthCare-05/AH_05_04/issues/347)·김지혜 담당. Local 합성 #347의 승인 순서·revision·경합 잠금·DB 감사 근거·참조 범위 보완 연결 포함. 운영 삭제·활성화 승인 아님.
 
@@ -67,12 +73,13 @@ Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 
 - [OCR 비-RAG LLM 구조화 계약 v1](./targets/post-mvp-1/ocr-llm-structuring-v1.md): 최소전송, 구조화 초안 provenance, 사용자 확정과 실패 복구
 - [MFDS 공식 의약품 식별·Candidate 계약 v1](./targets/post-mvp-1/medication-identification-v1.md): 공식 Source/Catalog·후보 검색·사용자 확인·Preflight 공유 경계
 - [Safety Result 계약 v1](./targets/post-mvp-1/safety-result-v1.md): Approved v4 이력과 Track C 공통 Safety 기준; Track F 후속 의미는 v2가 대체
-- [RAG Source 수집·활성화 계약 v1](./targets/post-mvp-1/rag-source-ingestion-v1.md): Source 승인, 수집·검증·활성화와 Index 결속 · MFDS 제품 `mfds-product-approval@1` canonicalization과 `ProductIngestionResult` 경계, 실패 재시도 충돌·Verification 불변성·REJECTS 1:1·DB-owned 상태 전이 검증 구현 중(#165), 비FAILED 계보 방향 확인·#335 정책 분리·#164 normalization DB 인계 대기
-- [RAG Runtime 계약 v1](./targets/post-mvp-1/rag-runtime-v1.md): Guide·Chat·OTC의 Rule-first·Retrieval·Citation·Safety 공통 흐름, Runtime Bundle의 Manifest Hash·저장 정합 계약(`PD-175-20260910` Review pending)
+- [RAG Source 수집·활성화 계약 v1](./targets/post-mvp-1/rag-source-ingestion-v1.md): Source 승인, 수집·검증·활성화와 Index 결속 · MFDS 제품 `mfds-product-approval@1` canonicalization과 `ProductIngestionResult` 경계, 실패 재시도 충돌·Verification 불변성·REJECTS 1:1·DB-owned 상태 전이 검증 구현 중(#165), 비FAILED 계보 유지·#335/#347 보존·정리 완료·#362 정책/외부 version/시도 provenance 영속화 구현 및 #165 잔여 allowlist 계약 추적 #436은 invalid Version의 저장 진입 감사와 명시적인 Attempt decision 복원을 포함한다.
+- [RAG Runtime 계약 v1](./targets/post-mvp-1/rag-runtime-v1.md): Guide·Chat·OTC의 Rule-first·Retrieval·Citation·Safety 공통 흐름, Runtime Bundle의 Manifest Hash·저장 정합 계약(`PD-175-20260910` Approved)
 - [Guideline Card typed port 계약 v1](./targets/post-mvp-1/guideline-card-v1.md): RAG-14 Evidence Gate·PD-362 Source eligibility와 RAG-16 사이의 Request·Outcome·승인 verifier·fallback 계약 — RAG-15 persistence-free kernel 구현 검토 중(#179, PR #414), Current 아님
 - [RAG Evaluation·Release Gate 계약 v1](./targets/post-mvp-1/rag-evaluation-v1.md): RAG 전후 비교, 필수 Metric, Schema Set 1.3 `Candidate · Review Required` provenance 계약과 Release 차단 기준
 - [Safety Result·Citation 계약 v2](./targets/post-mvp-1/safety-result-v2.md): Track F에서 v1의 Safety Result·Citation·STALE·Release Gate 목표를 대체하는 후속 Target
 - [Safety Result 복합 STALE 우선순위 계약 v1 (`PD-173`)](./targets/post-mvp-1/safety-result-compound-stale-priority-v1.md): 처방 버전·식별 스냅샷·런타임 번들 복합 STALE 동시 발생 시 단일 공개 fallback_code 사영 우선순위(`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`)와 내부 `stale_reason` 분리 — Approved Target · Not implemented: 판정 kernel은 병합되었으나 런타임 호출부 없음
+- [Protected Retrieval Infrastructure 계약 v1 (`PD-368`)](./targets/post-mvp-1/protected-retrieval-infrastructure-v1.md): data-plane 제한 로그인·승인 artifact hash 결속·durable INTENT/UNKNOWN 부분 구현, control-plane grant/revoke/FREEZE 서비스 미구현
 
 계약 파일의 존재나 문서 승인은 Worker·API·schema 구현 완료 또는 공개 승인을 의미하지 않습니다.
 
@@ -114,3 +121,6 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 계약 변경은 관련 요구사항 ID, API 명세, 구현, 테스트와 함께 한 PR에서 갱신합니다. 필드 삭제·이름/타입 변경·필수 필드 추가는 Breaking Change로 취급합니다.
 
 - [Catalog build·approval handoff v2](./targets/post-mvp-1/catalog-build-v2.md): #329 리뷰 반영 구현·검토 대상. 독립 Ingredient, Alias 검색 dedupe, REJECTED 경계, 검증 포트·승인 상태 결속 manifest, Candidate 전체 artifact 검증, 원문 보존·normalized NFC 경계 및 P0 코드 체계 allowlist. 실제 DB·승인 adapter·Runtime 연결은 미완료.
+- [Catalog DB 적재·저장 연결안](./proposed/post-mvp-1/catalog-db-integration-v2.md): #166 후속 Proposed. v2 저장 준비·DB transaction·Set/member/hash 보존·읽기 전용 복원과 Candidate 인계 검증을 구현. 별도 Catalog Writer·#436/#444 Source Receipt 소비를 연결. D-03a 조건부 동의·Crosswalk 후속 방향 확인, D-02 및 실제 승인/감사 저장소는 후속.
+
+- [Source reject codes v1 구현 리뷰안](proposed/post-mvp-1/source-reject-codes-v1.md): #165 코드·버전·2-pass·실패 기록. 담당 리뷰 전 proposed, 사용자 지시에 따라 구현·검증 후 리뷰.

@@ -1,0 +1,200 @@
+{
+  "format_id": "issue-175.decision-approval-evidence",
+  "format_version": "1.0.0",
+  "issue": "#175",
+  "decision_id": "PD-175-20260910",
+  "decision_status": "APPROVED",
+  "approval_recorded": true,
+  "approval_condition_met": true,
+  "contract_status": "REPOSITORY_LOCAL_NON_RUNTIME_PROJECTION",
+  "contract_status_directory": "docs/contracts/targets/post-mvp-1",
+  "purpose": "DECISION_APPROVAL_EVIDENCE",
+  "purpose_note": "PD-175-20260910의 Approved 전이 근거. bundle_manifest_hash의 「해시 입력 = 저장 컬럼」 정합 원칙, 추가 컬럼 13개, 기존 행 backfill 금지, 승인 관측값 기본값 금지, 판정 강제 저장 경계, backend→ai_worker (A)안 경계에 대해 PR #416 최신 HEAD에서 3인 전원 승인을 받았다.",
+  "pull_request": {
+    "number": 416,
+    "url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/416",
+    "base_ref": "develop",
+    "state": "MERGED",
+    "head_commit_sha": "96fd469369807c3e9ca6342b79c0cd5899b97359",
+    "merge_commit_sha": "086b2aa0186394658135464db3ef5361d4cb5e34",
+    "merged_at": "2026-09-10T14:43:46.000000Z",
+    "merged_by": {
+      "actor_id": "ceohwj",
+      "namespace": "GITHUB_LOGIN",
+      "role": "IMPLEMENTATION_OWNER"
+    }
+  },
+  "implementation_owner": {
+    "actor_id": "ceohwj",
+    "namespace": "GITHUB_LOGIN",
+    "role": "IMPLEMENTATION_OWNER"
+  },
+  "approval_events": [
+    {
+      "evidence_id": "github-pr-416-review-5168233837",
+      "review_id": 5168233837,
+      "review_node_id": "PRR_kwDOT3EWNs8AAAABNAz9bQ",
+      "review_state": "APPROVED",
+      "review_submitted_at": "2026-09-10T14:16:16.000000Z",
+      "review_url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/416#pullrequestreview-5168233837",
+      "reviewed_commit_sha": "96fd469369807c3e9ca6342b79c0cd5899b97359",
+      "reviewer": {
+        "actor_id": "hazelnutflavoured",
+        "namespace": "GITHUB_LOGIN",
+        "role": "SAFETY_PRODUCT_REVIEWER"
+      }
+    },
+    {
+      "evidence_id": "github-pr-416-review-5168246908",
+      "review_id": 5168246908,
+      "review_node_id": "PRR_kwDOT3EWNs8AAAABNA0wfA",
+      "review_state": "APPROVED",
+      "review_submitted_at": "2026-09-10T14:17:15.000000Z",
+      "review_url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/416#pullrequestreview-5168246908",
+      "reviewed_commit_sha": "96fd469369807c3e9ca6342b79c0cd5899b97359",
+      "reviewer": {
+        "actor_id": "phina-io",
+        "namespace": "GITHUB_LOGIN",
+        "role": "PERSISTENCE_FK_TRANSACTION_REVIEWER"
+      }
+    },
+    {
+      "evidence_id": "github-pr-416-review-5168489982",
+      "review_id": 5168489982,
+      "review_node_id": "PRR_kwDOT3EWNs8AAAABNBDl_g",
+      "review_state": "APPROVED",
+      "review_submitted_at": "2026-09-10T14:38:31.000000Z",
+      "review_url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/416#pullrequestreview-5168489982",
+      "reviewed_commit_sha": "96fd469369807c3e9ca6342b79c0cd5899b97359",
+      "reviewer": {
+        "actor_id": "Jye-rookie",
+        "namespace": "GITHUB_LOGIN",
+        "role": "DATABASE_INTEGRITY_ALIGNMENT_REVIEWER"
+      }
+    }
+  ],
+  "head_freshness_check": {
+    "approvals_target_head": true,
+    "commits_after_last_approval": 0,
+    "last_approval_submitted_at": "2026-09-10T14:38:31.000000Z",
+    "note": "3인 APPROVED 리뷰 모두 PR #416의 최종 headRefOid(96fd4693)를 대상으로 제출되었고 승인 이후 추가 커밋이 없다. 병합 커밋 086b2aa0은 승인 대상 트리를 squash한 결과다."
+  },
+  "automated_checks": {
+    "checked_commit_sha": "96fd469369807c3e9ca6342b79c0cd5899b97359",
+    "check_runs": [
+      {
+        "conclusion": "success",
+        "name": "frontend"
+      },
+      {
+        "conclusion": "success",
+        "name": "lint"
+      },
+      {
+        "conclusion": "success",
+        "name": "test"
+      },
+      {
+        "conclusion": "success",
+        "name": "test-backend"
+      },
+      {
+        "conclusion": "success",
+        "name": "test-inventory"
+      },
+      {
+        "conclusion": "success",
+        "name": "test-migration"
+      },
+      {
+        "conclusion": "success",
+        "name": "test-worker"
+      }
+    ],
+    "all_passed": true
+  },
+  "reviewed_documents": [
+    {
+      "path": "docs/governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md",
+      "role": "DECISION",
+      "sha256_at_reviewed_commit": "a0fbc0a5bf7be0aabac8ae5017694254dfb19238ebf62191d94ce0ff6a1a3662"
+    },
+    {
+      "path": "docs/contracts/targets/post-mvp-1/rag-runtime-v1.md",
+      "role": "CONTRACT",
+      "sha256_at_reviewed_commit": "6672205aa458f6be0fade3ce8df6fd79ef4b0ccb04c6b5383709400aecb88983",
+      "path_note": "Approved Target·Not implemented 유지. Worker 호환성 검사와 Graph·Validator 고정이 미해소이므로 current/로 승격하지 않았다."
+    },
+    {
+      "path": "backend/alembic/versions/175a1b2c3d4e_persist_runtime_bundle_canonical_configuration.py",
+      "role": "MIGRATION",
+      "sha256_at_reviewed_commit": "f5dc6466bc3cce5c200aed473b44f4342973384b62614423ae3e5b66c84645ff"
+    },
+    {
+      "path": "docs/designs/ceohwj/issue-175-runtime-bundle-build-design.md",
+      "role": "DESIGN",
+      "sha256_at_reviewed_commit": "71516ac1ff3f3df7782ad907f498c45936be0cce3e011d5f63815eec1e30ad6b"
+    }
+  ],
+  "unresolved_scope": [
+    {
+      "item": "WORKER_BUNDLE_COMPATIBILITY",
+      "block_code": "BLOCKED_BY_RUNTIME_BUNDLE_WORKER_DEPLOYMENT_DECISION",
+      "blocking_source": "docs/governance/post-mvp-1-document-authority.md 「Runtime Bundle과 Worker 배포」",
+      "note": "worker_artifact_ref는 Manifest에 고정만 하고 호환성 판정은 kernel 결과의 deferred_checks에 기록한다. 해소 조건은 #91 후속 Product Decision 승인이다."
+    },
+    {
+      "item": "GRAPH_VALIDATOR_VERSION_PINNING",
+      "block_code": null,
+      "blocking_source": "docs/contracts/targets/post-mvp-1/rag-runtime-v1.md 「Runtime Release Bundle」",
+      "note": "계약은 Graph·Validator 고정을 요구하지만 rag_runtime_execution_manifest에 graph_ref·validator_ref가 없다. 컬럼 추가와 계약 문장 개정 중 어느 쪽인지 미결이다."
+    }
+  ],
+  "follow_up": [
+    {
+      "item": "AI_WORKER_IMPORT_ALLOWLIST_CONTRACT_TEST",
+      "pull_request": 440,
+      "note": "backend가 허용 목록 밖 ai_worker 모듈을 import하지 않는지 확인하는 계약 테스트. 두 리뷰어가 함께 요청했고 병합 차단 사항은 아니었다."
+    },
+    {
+      "item": "ALEMBIC_HEAD_DIVERGENCE",
+      "issue": 439,
+      "note": "이번 사이클에 #206·#412·#398 병합으로 head가 3회 갈라졌고, #398이 기대 head를 4곳에 고정해 후속 브랜치가 같은 곳에서 막힌다."
+    }
+  ],
+  "precedent": {
+    "issue": "#173",
+    "path": "docs/validation/rag/issue-173/decision-approval-evidence.json",
+    "note": "구두 합의·Issue 코멘트가 아닌 GitHub review ID·actor·submitted timestamp·commit OID를 immutable evidence로 수집하는 기준을 따른다."
+  },
+  "contract_document_status": "Approved Target · Not implemented",
+  "public_gate": {
+    "flag": "PUBLIC_TRACK_F",
+    "value": false,
+    "note": "이 Decision은 BUILDING 범위의 저장 계약만 확정한다. READY·active pointer 전환은 RAG-17(#180) 소유이며 공개 게이트를 해제하지 않는다."
+  },
+  "post_approval_corrections": [
+    {
+      "correction_id": "pd-175-section-2-composite-fk",
+      "corrected_at": "2026-09-11",
+      "corrected_in_pull_request": 442,
+      "target": "docs/governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md",
+      "section": "§2 추가 컬럼",
+      "issue": "§2가 복합 FK fk_rag_runtime_bundle_source_snapshot_version 추가를 규정했으나 승인 대상 구현(96fd4693)에는 해당 FK가 없다. 실제 보장 수단은 RagRuntimeRepository._assert_member_versions_exist의 build transaction 내 조회 검증이다.",
+      "cause": "구현 중 복합 FK가 #369의 uq_rag_source_snapshot_id_version에 의존해 #369의 downgrade를 DependentObjectsStillExistError로 막는 것을 확인하고 전환했으나, Decision §2 문구를 함께 갱신하지 않았다. PR #416의 승인 리뷰는 FK 제거를 확인한 상태에서 제출됐다.",
+      "resolution": "§2를 실제 채택 방식으로 정정하고 정정 이력을 절 안에 남겼다. 승인 조건 1의 문구와 대안 표, 설계 문서 2곳도 함께 정합화했다.",
+      "evidence_integrity": "이 정정은 approval_events와 reviewed_documents의 sha256_at_reviewed_commit을 변경하지 않는다. 해당 값들은 승인 시점 commit 96fd4693의 원본이며 그대로 보존된다. 따라서 이 파일의 문서 해시는 '현재 문서'가 아니라 '승인 시점 문서'를 가리킨다.",
+      "reported_by": {
+        "actor_id": "hazelnutflavoured",
+        "namespace": "GITHUB_LOGIN",
+        "role": "PR_442_REVIEWER",
+        "evidence_id": "github-pr-442-comment-5620865337",
+        "comment_id": 5620865337,
+        "comment_url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/442#issuecomment-5620865337",
+        "comment_created_at": "2026-09-10T15:06:51.000000Z",
+        "verification_note": "gh api repos/AI-HealthCare-05/AH_05_04/issues/comments/5620865337 로 작성자를 재조회해 확인했다. 이 필드는 당초 Jye-rookie로 잘못 기록됐다 — #416 리뷰어를 이 PR로 옮겨 적은 오귀속이며, Jye-rookie는 PR #442에 코멘트·리뷰를 남기지 않았다(API로 0건 확인). PR #442 리뷰에서 지적돼 정정했다."
+      }
+    }
+  ],
+  "reviewed_documents_note": "sha256_at_reviewed_commit은 승인 대상 commit 96fd4693의 blob 해시다. 승인 이후 문서가 정정된 경우 현재 파일 내용과 일치하지 않으며, 그것이 의도된 동작이다. post_approval_corrections를 함께 볼 것."
+}

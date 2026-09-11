@@ -14,11 +14,12 @@
 - [MFDS 공식 의약품 식별·Candidate 계약 v1](./medication-identification-v1.md)
 - [Safety Result 계약 v1](./safety-result-v1.md) — Approved v4 이력과 Track C 공통 Safety 기준
 - [RAG Source 수집·활성화 계약 v1](./rag-source-ingestion-v1.md) — MFDS 제품 `mfds-product-approval@1` canonicalization과 `ProductIngestionResult` 경계 구현 중(#165)
-- [RAG Runtime 계약 v1](./rag-runtime-v1.md) — Runtime Bundle Manifest Hash·저장 정합은 `PD-175-20260910`(Review pending)
+- [RAG Runtime 계약 v1](./rag-runtime-v1.md) — Runtime Bundle Manifest Hash·저장 정합은 `PD-175-20260910`(Approved)
 - [Guideline Card typed port 계약 v1](./guideline-card-v1.md) — RAG-14 Evidence Gate·PD-362 Source eligibility와 RAG-16 사이의 Request·Outcome·승인 verifier·fallback 의미를 고정 · RAG-15 persistence-free kernel 구현 검토 중(#179, PR #414), Current 아님
 - [RAG Evaluation·Release Gate 계약 v1](./rag-evaluation-v1.md): Schema Set 1.3 Candidate · Review Required · 책임 리뷰어 PR review event 대기
 - [Safety Result·Citation 계약 v2](./safety-result-v2.md) — Track F에서 v1의 Safety·Citation·STALE·Release Gate 목표를 대체
 - [Safety Result 복합 STALE 우선순위 계약 v1](./safety-result-compound-stale-priority-v1.md) — 복합 STALE 단일 공개 fallback_code 사영 우선순위와 내부 stale_reason 분리 (`PD-173`)
+- [Protected Retrieval Infrastructure 계약 v1](./protected-retrieval-infrastructure-v1.md) — data-plane hash 결속·durable audit·제한 로그인 검증 부분 구현, control-plane grant/revoke/FREEZE 서비스 미구현 (`PD-368`)
 
 RAG-00 Target은 외부 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`을 저장소 경계에 투영한다. 외부 논리 계약 `medication-candidate-identification-v1`은 기존 공식 의약품 식별 Target에 통합하며 중복 Target 파일을 두지 않는다. Safety v1은 Approved v4 이력으로 유지하고 v2는 후속 Target으로 관리한다. 어느 문서도 구현·Current Runtime·공개 완료를 의미하지 않는다.
 

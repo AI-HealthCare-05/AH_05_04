@@ -1,5 +1,6 @@
 from collections.abc import Iterable
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID, uuid4
 
@@ -11,10 +12,12 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func, text
 
@@ -81,6 +84,11 @@ class RagSource(Base):
     __tablename__ = "rag_source"
     __table_args__ = (
         UniqueConstraint("source_code", name="uq_rag_source_code"),
+        CheckConstraint("max_rejected_records >= 0", name="chk_rag_source_max_rejected_records"),
+        CheckConstraint(
+            "max_rejection_rate >= 0 AND max_rejection_rate <= 1", name="chk_rag_source_max_rejection_rate"
+        ),
+        CheckConstraint("empty_result_policy = 'REJECT'", name="chk_rag_source_empty_result_policy"),
         CheckConstraint("length(trim(source_code)) > 0", name="chk_rag_source_code_nonblank"),
         CheckConstraint("length(trim(display_name)) > 0", name="chk_rag_source_display_name_nonblank"),
         CheckConstraint(
@@ -107,6 +115,14 @@ class RagSource(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+    max_rejected_records: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    max_rejection_rate: Mapped[Decimal] = mapped_column(
+        Numeric(), nullable=False, default=Decimal("0"), server_default="0"
+    )
+    empty_result_policy: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="REJECT", server_default="REJECT"
     )
 
     endpoints: Mapped[list["RagSourceEndpoint"]] = relationship(back_populates="source")
@@ -241,6 +257,7 @@ class RagSourceSnapshot(Base):
             unique=True,
             postgresql_where=text("verification_status = 'CURRENT'"),
         ),
+        CheckConstraint("length(source_version) <= 200", name="chk_rag_source_snapshot_version_length"),
         CheckConstraint("length(trim(source_version)) > 0", name="chk_rag_source_snapshot_version_nonblank"),
         CheckConstraint("length(raw_manifest_checksum) = 64", name="chk_rag_source_snapshot_raw_manifest_checksum"),
         CheckConstraint("length(canonical_checksum) = 64", name="chk_rag_source_snapshot_canonical_checksum"),
@@ -262,7 +279,8 @@ class RagSourceSnapshot(Base):
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     operation_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("rag_source_operation.id"), nullable=False)
-    source_version: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_version: Mapped[str] = mapped_column(String(200), nullable=False)
+    external_version: Mapped[str | None] = mapped_column(String(200), nullable=True)
     raw_manifest_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     canonical_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     schema_version: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -301,7 +319,20 @@ class RagSourceSnapshot(Base):
 class RagSourceIngestionRun(Base):
     __tablename__ = "rag_source_ingestion_run"
     __table_args__ = (
+        CheckConstraint(
+            "reject_code_contract_version IS NULL OR length(trim(reject_code_contract_version)) > 0",
+            name="chk_rag_source_ingestion_run_reject_contract_nonblank",
+        ),
         UniqueConstraint("operation_id", "run_group_key", "attempt_number", name="uq_rag_source_ingestion_run_attempt"),
+        Index("idx_rag_ingestion_attempt_version", "operation_id", "attempted_source_version"),
+        CheckConstraint(
+            "(invalid_source_version_sha256 IS NULL AND invalid_source_version_byte_length IS NULL) OR "
+            "(invalid_source_version_sha256 IS NOT NULL AND invalid_source_version_sha256 ~ '^[0-9a-f]{64}$' "
+            "AND invalid_source_version_byte_length IS NOT NULL AND invalid_source_version_byte_length >= 0 "
+            "AND attempted_source_version IS NULL AND attempted_external_version IS NULL "
+            "AND run_status = 'FAILED' AND validation_reason_code IS NOT NULL)",
+            name="chk_rag_ingestion_invalid_version_audit",
+        ),
         Index("idx_rag_source_ingestion_run_operation_status", "operation_id", "run_status", "started_at"),
         CheckConstraint(
             "(run_status <> 'FAILED' OR snapshot_id IS NULL) AND (run_status <> 'NO_CHANGE' OR snapshot_id IS NOT NULL)",
@@ -332,6 +363,14 @@ class RagSourceIngestionRun(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    reject_code_contract_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    attempted_source_version: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    attempted_external_version: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    attempted_canonical_contract: Mapped[dict[str, str | int] | None] = mapped_column(JSONB, nullable=True)
+    invalid_source_version_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    invalid_source_version_byte_length: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    validation_reason_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     operation: Mapped[RagSourceOperation] = relationship(back_populates="ingestion_runs")
     snapshot: Mapped[RagSourceSnapshot | None] = relationship(back_populates="ingestion_runs")

@@ -244,6 +244,7 @@ class RagEvidenceGuideline(Base):
 class RagCitation(Base):
     __tablename__ = "rag_citation"
     __table_args__ = (
+        CheckConstraint("length(source_version) <= 200", name="chk_rag_citation_source_version_length"),
         UniqueConstraint("target_type", "target_id", "claim_key", name="uq_rag_citation_target_claim"),
         UniqueConstraint("target_type", "target_id", "display_order", name="uq_rag_citation_display_order"),
         Index("idx_rag_citation_target", "target_type", "target_id"),
@@ -314,7 +315,7 @@ class RagCitation(Base):
     )
     display_order: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     source_title: Mapped[str] = mapped_column(String(500), nullable=False)
-    source_version: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_version: Mapped[str] = mapped_column(String(200), nullable=False)
     source_locator: Mapped[str] = mapped_column(String(500), nullable=False)
     public_excerpt: Mapped[str | None] = mapped_column(
         String(1000),
