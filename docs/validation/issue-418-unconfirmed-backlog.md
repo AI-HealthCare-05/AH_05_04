@@ -100,7 +100,19 @@ Repository·Check-in PUT·일정 조회 서비스는 실제 구현을 사용하�
 - 실제 앱 backlog·Check-in·일정 API: **61 passed** (8.65s). 이후 OpenAPI·fixture 테스트 1건 추가.
 - Ruff check / format: **PASS (765 files)**.
 - Mypy: **PASS (582 source files)**.
-- 전체 필수 runner: 실행 중. 최종 결과 확정 전 PASS로 계산하지 않는다.
+- 전체 필수 runner: **PASS, exit 0**. 검증 코드 commit `b30477be`.
+  - Migration: **202 passed / 3 skipped**, 172.50s.
+  - Backend·계약·선별 PostgreSQL: **1,927 passed / 65 skipped**, 352.32s. 추가 OpenAPI·fixture 테스트 포함.
+  - Redis 통합: **24 passed**, 6.68s.
+  - Worker: **2,987 passed / 8 skipped**, 105.00s.
+  - 합계: **5,140 passed / 76 skipped**, 종합 coverage **93%**.
+- `b30477be`의 [원격 CI](https://github.com/AI-HealthCare-05/AH_05_04/actions/runs/34586580588):
+  test-inventory·lint·test-migration·test-backend·test-worker·frontend·최종 test **7/7 PASS**.
+- 전체 diff·`git diff --check`, Pandoc 렌더의 제목·표·목록과 변경 참조: **PASS**.
+  계약 인덱스에 기존 `proposed/track-b-schedule-reconciliation-v1.md` 링크 오류가 있으나
+  `e4c74a68`에도 동일하며 이번 #418 변경 범위 밖이다.
+- [등록 변경 PR #462](https://github.com/AI-HealthCare-05/AH_05_04/pull/462): Draft,
+  `phina-io`·`solia142` 재검토 요청. 이 기록 시점 등록 HEAD 승인 없음.
 
 기여 지침의 재현 명령은 `uv run ruff check .`, `uv run ruff format . --check`,
 `uv run mypy backend/app ai_worker`, `bash scripts/ci/run_test.sh`다.
