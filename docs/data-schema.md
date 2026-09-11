@@ -601,12 +601,16 @@ efresh_session(active_jti, updated_at), password_reset_token(used_at) UPDATE만 
 
 ### PR #429 관리 Snapshot 잠금 권한 (PD-398-R2)
 
+`rag_source_snapshot.management_lock_marker`는 INTEGER NOT NULL DEFAULT 0이며 CHECK로 0에 고정한다. SELECT FOR UPDATE 권한을 충족하는 기술 표식으로, API 필드·검증 시각·provenance·revision·게시 승인 의미가 없다. 관리 역할은 이 컬럼만 UPDATE할 수 있고 `verified_at`/`effective_at`/seal은 직접 수정할 수 없다. 관리 row hash에서는 표식만 제외해 도입 전 hash를 유지한다. migration `3984b5c6d7e8` 적용 후 권한 provisioning을 재실행해야 기존 검증 시각 UPDATE 권한이 회수된다.
 
-ag_source_snapshot.management_lock_marker는 INTEGER NOT NULL DEFAULT 0이며 CHECK로 0에 고정한다. SELECT FOR UPDATE 권한을 충족하는 기술 표식으로, API 필드·검증 시각·provenance·revision·게시 승인 의미가 없다. 관리 역할은 이 컬럼만 UPDATE할 수 있고 erified_at/ffective_at/seal은 직접 수정할 수 없다. 관리 row hash에서는 표식만 제외해 도입 전 hash를 유지한다. migration 3984b5c6d7e8 적용 후 권한 provisioning을 재실행해야 기존 검증 시각 UPDATE 권한이 회수된다.
+## #423 Schedule Audit — develop 반영 완료
+
+Migration `423a1b2c3d4e`는 `medication_schedule_audit`와 occurrence의 nullable UTC `cancelled_at`을 추가한다. 감사 컬럼·revision/actor/unique·snapshot 의미는 [일정 정합화 v1 §3](contracts/targets/post-mvp-1/track-b-schedule-reconciliation-v1.md)을 따른다. Schedule·actor FK는 RESTRICT이며 기존 #398 역할 provisioning은 Runtime에 SELECT/INSERT만 부여해 감사 UPDATE/DELETE/TRUNCATE를 차단한다. Migration 이후 역할 provisioning을 재실행한다. DB trigger와 ORM event는 사용하지 않는다. 기존 time row는 보존하고 retire는 schedule 상태·revision으로 판정한다. 종료는 revision과 SCHEDULER audit을 같이 추가하며 기존 occurrence·Check-in·time FK를 보존한다.
+
+기존 Schedule은 migration 시 별도 JSON baseline으로 보존하고 과거 감사로 재구성하지 않는다. 기존 CANCELLED의 알 수 없는 취소 시각은 null이다. 실제 신규 감사/취소 이력이 있으면 downgrade를 거부한다. baseline 접근·보존·실패 재시도는 [PD-423](governance/decisions/2026-09-10-schedule-audit-storage.md), 검증 범위와 후속 연동은 [#423 기록](validation/issue-423-schedule-audit.md)을 따른다. 실제 #202 일정 API·#203 알림·Frontend 완료를 뜻하지 않는다.
 
 ## #203 Notification 저장 — 구현 PR 검토 대상
 
+`notification_record`는 occurrence FK와 `(occurrence_id, kind)` unique를 가지며 최초 알림·재알림을 각각 하나만 보존한다. kind는 `SCHEDULED|REMINDER`, status는 `PENDING|DELIVERED|CANCELLED`이며 전달·취소 timestamp와 attempt `0|1` 정합성을 DB CHECK로 강제한다. `read_at`은 전달 후 최초 시각만 저장한다. occurrence parent chain으로 SELF 소유권을 확인하며 별도 사용자·의료 본문 복제는 없다.
 
-otification_record는 occurrence FK와 (occurrence_id, kind) unique를 가지며 최초 알림·재알림을 각각 하나만 보존한다. kind=SCHEDULED/REMINDER, status=PENDING/DELIVERED/CANCELLED이며 전달·취소 timestamp와 attempt=0/1 정합성을 DB CHECK로 강제한다. read_at은 전달 후 최초 시각만 저장한다. occurrence parent chain으로 SELF 소유권을 확인하며 별도 사용자·의료 본문 복제는 없다.
-
-Migration은 203a1b2c3d4e이고 상세 컬럼·FK·rollback 동작은 [Notification 계약](contracts/proposed/track-b-notifications-v1.md)의 구현 절을 따른다. Check-in·일정·처방 변경은 알림 row를 삭제하지 않는다. 부모 occurrence의 정식 삭제는 FK CASCADE로 알림을 정리하지만 부모 자체의 기존 삭제 제한은 유지한다. Notification 이력이 있으면 downgrade는 중단한다.
+Migration은 `203a1b2c3d4e`이고 상세 컬럼·FK·rollback 동작은 [Notification 계약](contracts/proposed/track-b-notifications-v1.md)의 구현 절을 따른다. Check-in·일정·처방 변경은 알림 row를 삭제하지 않는다. 부모 occurrence의 정식 삭제는 FK CASCADE로 알림을 정리하지만 부모 자체의 기존 삭제 제한은 유지한다. Notification 이력이 있으면 downgrade는 중단한다.

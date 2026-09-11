@@ -40,6 +40,10 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [PROFILE SELF 소유권 전환 계약 v1](./current/profile-self-ownership-v1.md): 본인 단일 SELF profile과 `profile_id` 기반 사용자 리소스 소유권 기준
 - 공통 오류: `code`, `message`, `details`, `trace_id`
 
+## 승인된 추가 목표
+
+- [Track B 일정 정합화 v1 (#417)](./targets/post-mvp-1/track-b-schedule-reconciliation-v1.md): PR #424 양 도메인 승인 및 Decision 증빙 연결. #423 DB 구현·리뷰 대기; 일정 API #202·실제 알림 #203 연동은 별도.
+
 ## Proposed 계약
 
 - [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태, row 없음=미동의, Backend·Worker 공통 fixture 판정, WorkerMessage/Stream 비전송, CONSENT_REQUIRED 및 OCR CONSENT_WITHDRAWN 차단 의미. Proposed · 미구현 · Production 공개 승인 아님. 확인 필요: 권가빈·김지혜·정현우·남한솔.

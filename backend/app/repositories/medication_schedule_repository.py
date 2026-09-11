@@ -7,10 +7,13 @@ from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.medication_schedule_snapshots import ScheduleAuditSnapshot
 from app.models.medication_schedules import (
+    MedicationCheckin,
     MedicationOccurrence,
     MedicationOccurrenceStatus,
     MedicationSchedule,
+    MedicationScheduleAudit,
     MedicationScheduleEndMode,
     MedicationScheduleSource,
     MedicationScheduleStatus,
@@ -124,6 +127,58 @@ class MedicationScheduleRepository:
         self.session = session
         self.ownership = ownership or SqlAlchemyPrescriptionVersionMedicationOwnership(session)
 
+    async def lock_schedule_graph(self, *, prescription_version_id: UUID | None = None) -> tuple[UUID, ...]:
+        """Acquire each table separately in PD-417 order, with PK ordering."""
+        parents = (
+            select(Prescription.id)
+            .join(PrescriptionVersion, PrescriptionVersion.prescription_id == Prescription.id)
+            .join(
+                PrescriptionVersionMedication,
+                PrescriptionVersionMedication.prescription_version_id == PrescriptionVersion.id,
+            )
+            .join(
+                MedicationSchedule,
+                MedicationSchedule.prescription_version_medication_id == PrescriptionVersionMedication.id,
+            )
+        )
+        if prescription_version_id is not None:
+            parents = parents.where(PrescriptionVersion.id == prescription_version_id)
+        parent_ids = list(
+            (
+                await self.session.scalars(
+                    select(Prescription.id)
+                    .where(Prescription.id.in_(parents))
+                    .order_by(Prescription.id)
+                    .with_for_update(of=Prescription)
+                )
+            ).all()
+        )
+        schedules = (
+            select(MedicationSchedule.id)
+            .join(
+                PrescriptionVersionMedication,
+                PrescriptionVersionMedication.id == MedicationSchedule.prescription_version_medication_id,
+            )
+            .join(PrescriptionVersion, PrescriptionVersion.id == PrescriptionVersionMedication.prescription_version_id)
+        )
+        schedules = schedules.where(PrescriptionVersion.prescription_id.in_(parent_ids))
+        if prescription_version_id is not None:
+            schedules = schedules.where(PrescriptionVersion.id == prescription_version_id)
+        schedule_ids = list(
+            (
+                await self.session.scalars(
+                    schedules.order_by(MedicationSchedule.id).with_for_update(of=MedicationSchedule)
+                )
+            ).all()
+        )
+        await self.session.execute(
+            select(MedicationScheduleTime.id)
+            .where(MedicationScheduleTime.medication_schedule_id.in_(schedule_ids))
+            .order_by(MedicationScheduleTime.id)
+            .with_for_update(of=MedicationScheduleTime)
+        )
+        return tuple(schedule_ids)
+
     async def create_schedule_owned(
         self,
         *,
@@ -213,9 +268,12 @@ class MedicationScheduleRepository:
         *,
         horizon_start: date,
         horizon_end: date,
+        locked_schedule_ids: tuple[UUID, ...] | None = None,
     ) -> list[tuple[MedicationSchedule, MedicationScheduleTime]]:
         """활성 Version의 현재 Schedule revision만 생성 대상으로 잠금 조회한다."""
 
+        if locked_schedule_ids is None:
+            locked_schedule_ids = await self.lock_schedule_graph()
         rows = await self.session.execute(
             select(MedicationSchedule, MedicationScheduleTime, PrescriptionVersion.id)
             .join(
@@ -232,6 +290,7 @@ class MedicationScheduleRepository:
             )
             .join(Prescription, Prescription.id == PrescriptionVersion.prescription_id)
             .where(
+                MedicationSchedule.id.in_(locked_schedule_ids),
                 Prescription.active_version_id == PrescriptionVersion.id,
                 MedicationSchedule.status == MedicationScheduleStatus.ACTIVE,
                 MedicationSchedule.start_local_date <= horizon_end,
@@ -247,7 +306,7 @@ class MedicationScheduleRepository:
                 MedicationScheduleTime.local_time,
                 MedicationScheduleTime.id,
             )
-            .with_for_update(of=[Prescription, MedicationSchedule])
+            .execution_options(populate_existing=True)
         )
         targets = rows.all()
         for version_id in sorted({row[2] for row in targets}):
@@ -274,6 +333,10 @@ class MedicationScheduleRepository:
         if schedule_time.schedule_revision != schedule.revision:
             raise ValueError("schedule_time revision must match schedule revision")
 
+        lower_bound = await self.generation_lower_bound(schedule)
+        if lower_bound is not None and scheduled_at_utc < lower_bound:
+            return None
+
         statement = (
             pg_insert(MedicationOccurrence)
             .values(
@@ -290,9 +353,13 @@ class MedicationScheduleRepository:
         )
         return await self.session.scalar(statement)
 
-    async def mark_expired_schedules_ended(self, *, local_date: date) -> tuple[UUID, ...]:
+    async def mark_expired_schedules_ended(
+        self, *, local_date: date, effective_at: datetime, locked_schedule_ids: tuple[UUID, ...] | None = None
+    ) -> tuple[UUID, ...]:
         """종료일이 지난 활성 Schedule만 Scheduler 소유 상태인 ENDED로 전환한다."""
 
+        if locked_schedule_ids is None:
+            locked_schedule_ids = await self.lock_schedule_graph()
         schedules = list(
             (
                 await self.session.execute(
@@ -307,22 +374,33 @@ class MedicationScheduleRepository:
                     )
                     .join(Prescription, Prescription.id == PrescriptionVersion.prescription_id)
                     .where(
+                        MedicationSchedule.id.in_(locked_schedule_ids),
                         Prescription.active_version_id == PrescriptionVersion.id,
                         MedicationSchedule.status == MedicationScheduleStatus.ACTIVE,
                         MedicationSchedule.end_mode == MedicationScheduleEndMode.DATE,
                         MedicationSchedule.end_local_date < local_date,
                     )
                     .order_by(Prescription.id, MedicationSchedule.id)
-                    .with_for_update(of=[Prescription, MedicationSchedule])
+                    .execution_options(populate_existing=True)
                 )
             )
             .scalars()
             .all()
         )
-        for schedule in schedules:
-            schedule.status = MedicationScheduleStatus.ENDED
-        if schedules:
-            await self.session.flush()
+        async with self.session.begin_nested():
+            for schedule in schedules:
+                before = await self.snapshot(schedule)
+                schedule.status = MedicationScheduleStatus.ENDED
+                schedule.revision += 1
+                await self.append_audit(
+                    schedule=schedule,
+                    before=before,
+                    changed_by=None,
+                    change_source="SCHEDULER",
+                    effective_at=effective_at,
+                )
+            if schedules:
+                await self.session.flush()
         return tuple(schedule.id for schedule in schedules)
 
     async def cancel_future_for_prescription_version(
@@ -339,6 +417,7 @@ class MedicationScheduleRepository:
         """
 
         effective_at_utc = as_utc_instant(effective_at, field="effective_at")
+        await self.lock_schedule_graph(prescription_version_id=prescription_version_id)
         occurrences = list(
             (
                 await self.session.execute(
@@ -355,6 +434,10 @@ class MedicationScheduleRepository:
                         PrescriptionVersionMedication.prescription_version_id == prescription_version_id,
                         MedicationOccurrence.status == MedicationOccurrenceStatus.PENDING,
                         MedicationOccurrence.scheduled_at >= effective_at_utc,
+                        MedicationOccurrence.confirmation_deadline_at > effective_at_utc,
+                        ~select(MedicationCheckin.id)
+                        .where(MedicationCheckin.occurrence_id == MedicationOccurrence.id)
+                        .exists(),
                     )
                     .order_by(MedicationOccurrence.id)
                     .with_for_update(of=MedicationOccurrence)
@@ -365,6 +448,7 @@ class MedicationScheduleRepository:
         )
         for occurrence in occurrences:
             occurrence.status = MedicationOccurrenceStatus.CANCELLED
+            occurrence.cancelled_at = effective_at_utc
         if occurrences:
             await self.session.flush()
         return tuple(occurrence.id for occurrence in occurrences)
@@ -393,3 +477,115 @@ class MedicationScheduleRepository:
         ):
             return None
         return occurrence
+
+    async def snapshot(self, schedule: MedicationSchedule) -> ScheduleAuditSnapshot:
+        """Cancelled/ended revisions keep the last explicit time configuration."""
+        times = list(
+            (
+                await self.session.scalars(
+                    select(MedicationScheduleTime)
+                    .where(
+                        MedicationScheduleTime.medication_schedule_id == schedule.id,
+                        MedicationScheduleTime.schedule_revision <= schedule.revision,
+                    )
+                    .order_by(MedicationScheduleTime.schedule_revision.desc(), MedicationScheduleTime.local_time)
+                )
+            ).all()
+        )
+        latest = times[0].schedule_revision if times else None
+        return ScheduleAuditSnapshot(
+            start_local_date=schedule.start_local_date,
+            end_mode=schedule.end_mode,
+            end_local_date=schedule.end_local_date,
+            local_times=[
+                row.local_time.isoformat(timespec="minutes")
+                if row.local_time.second == 0 and row.local_time.microsecond == 0
+                else row.local_time.isoformat()
+                for row in times
+                if row.schedule_revision == latest
+            ],
+            status=schedule.status,
+            source=schedule.source,
+        )
+
+    async def append_audit(
+        self,
+        *,
+        schedule: MedicationSchedule,
+        before: ScheduleAuditSnapshot | None,
+        changed_by: UUID | None,
+        change_source: str,
+        effective_at: datetime,
+    ) -> MedicationScheduleAudit:
+        if change_source not in {"USER", "SCHEDULER"} or (change_source == "USER") != (changed_by is not None):
+            raise ValueError("audit actor does not match source")
+        if (schedule.revision == 1) != (before is None):
+            raise ValueError("only initial revision may have no prior snapshot")
+        after = await self.snapshot(schedule)
+        audit = MedicationScheduleAudit(
+            medication_schedule_id=schedule.id,
+            from_revision=schedule.revision - 1,
+            to_revision=schedule.revision,
+            before_snapshot=before.model_dump(mode="json") if before is not None else None,
+            after_snapshot=after.model_dump(mode="json"),
+            changed_by=changed_by,
+            change_source=change_source,
+            changed_at=as_utc_instant(effective_at, field="effective_at"),
+        )
+        self.session.add(audit)
+        await self.session.flush()
+        return audit
+
+    async def generation_lower_bound(self, schedule: MedicationSchedule) -> datetime | None:
+        return await self.session.scalar(
+            select(MedicationScheduleAudit.changed_at).where(
+                MedicationScheduleAudit.medication_schedule_id == schedule.id,
+                MedicationScheduleAudit.to_revision == schedule.revision,
+                MedicationScheduleAudit.change_source == "USER",
+            )
+        )
+
+    async def lock_schedule_for_mutation(self, medication_id: UUID) -> MedicationSchedule | None:
+        schedule = await self.session.scalar(
+            select(MedicationSchedule)
+            .where(MedicationSchedule.prescription_version_medication_id == medication_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if schedule is not None:
+            await self.session.execute(
+                select(MedicationScheduleTime.id)
+                .where(MedicationScheduleTime.medication_schedule_id == schedule.id)
+                .order_by(MedicationScheduleTime.id)
+                .with_for_update()
+            )
+        return schedule
+
+    async def cancel_future_for_schedule(
+        self, schedule: MedicationSchedule, effective_at: datetime
+    ) -> tuple[UUID, ...]:
+        session = self.session
+        rows = list(
+            (
+                await session.scalars(
+                    select(MedicationOccurrence)
+                    .where(
+                        MedicationOccurrence.medication_schedule_id == schedule.id,
+                        MedicationOccurrence.status == MedicationOccurrenceStatus.PENDING,
+                        MedicationOccurrence.scheduled_at >= effective_at,
+                        MedicationOccurrence.confirmation_deadline_at > effective_at,
+                        ~select(MedicationCheckin.id)
+                        .where(MedicationCheckin.occurrence_id == MedicationOccurrence.id)
+                        .exists(),
+                    )
+                    .order_by(MedicationOccurrence.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+        )
+        for row in rows:
+            row.status = MedicationOccurrenceStatus.CANCELLED
+            row.cancelled_at = effective_at
+        await session.flush()
+        return tuple(row.id for row in rows)

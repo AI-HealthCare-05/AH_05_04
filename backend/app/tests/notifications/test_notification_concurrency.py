@@ -18,6 +18,7 @@ from app.repositories.medication_checkin_repository import MedicationCheckinRepo
 from app.repositories.notification_repository import NotificationRepository
 from app.services.idempotency import SyncMutationIdempotencyService, get_default_snapshot_cipher
 from app.services.notifications import NotificationScheduler, NotificationService
+from app.tests.db_extensions import EXTENSION_SCHEMA, ensure_trigram_extension
 from app.tests.notifications.test_notifications import NOW
 from app.tests.repositories.test_medication_checkin_repository_integration import _create_occurrence
 from app.tests.repositories.test_medication_schedule_repository_integration import _create_user_with_self_profile
@@ -30,10 +31,13 @@ async def race_database() -> AsyncIterator[tuple]:
     schema = "notification_race_" + uuid4().hex
     admin = create_async_engine(config.database_url, poolclass=NullPool)
     engine = create_async_engine(
-        config.database_url, poolclass=NullPool, connect_args={"server_settings": {"search_path": schema}}
+        config.database_url,
+        poolclass=NullPool,
+        connect_args={"server_settings": {"search_path": f"{schema},{EXTENSION_SCHEMA}"}},
     )
     try:
         async with admin.begin() as connection:
+            await ensure_trigram_extension(connection, EXTENSION_SCHEMA)
             await connection.execute(text(f"CREATE SCHEMA {schema}"))
         async with engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
