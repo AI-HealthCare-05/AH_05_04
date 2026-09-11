@@ -29,3 +29,13 @@ def generate_password_reset_token() -> str:
 def hash_password_reset_token(raw_token: str) -> str:
     """원문은 DB에 저장하지 않고 이 다이제스트만 저장합니다(DB 유출 시 재사용 방지)."""
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def generate_email_verification_token() -> str:
+    """회원가입 전 이메일 인증 링크에 담을 고엔트로피 원문 token입니다."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_email_verification_token(raw_token: str) -> str:
+    """원문 이메일 인증 token은 저장하지 않고 SHA-256 hex digest만 저장합니다."""
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()

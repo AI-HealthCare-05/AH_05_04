@@ -94,6 +94,22 @@ access token과 refresh token에는 발급 시점의 `token_version`을 포함�
 
 재설정 완료 시 같은 transaction에서 비밀번호 변경, 해당 사용자의 미사용·미만료 `password_reset_token` 전체 소비, `token_version + 1`을 함께 처리합니다. 만료된 행을 지우는 별도 정리 배치는 두지 않고(`idempotency_record`와 동일하게 lazy cleanup), 조회 시 `expires_at` 조건으로만 거릅니다.
 
+`email_verification_token` 테이블은 회원가입 전 이메일 소유 확인용 1회성 token을 관리합니다. 별도 공개 이메일 중복 확인 API를 만들지 않으며, 최종 중복 방어는 기존 `POST /api/v1/auth/signup`의 `409 CONFLICT`가 담당합니다.
+
+| 컬럼 | 타입 | Nullable | 설명 |
+| --- | --- | ---: | --- |
+| `id` | `CHAR(36)` | No | Email Verification Token PK |
+| `email` | `VARCHAR(40)` | No | 인증 대상 이메일. 아직 User row가 없을 수 있어 FK를 두지 않음 |
+| `purpose` | `VARCHAR(30)` | No | 현재 `SIGNUP`만 허용 |
+| `token_hash` | `VARCHAR(64)` | No | 원문 token의 SHA-256 해시. 원문은 저장하지 않음 |
+| `created_at` | timezone datetime | No | 발급 시각 |
+| `expires_at` | timezone datetime | No | 만료 시각(기본 발급 후 30분) |
+| `verified_at` | timezone datetime | Yes | 인증 완료 시각. `NULL`이면 미인증 |
+
+인증 요청은 같은 이메일·목적에 대해 `EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS`(기본 60초) 안에 새 token을 만들지 않습니다. 인증 완료 시 같은 이메일·목적의 미사용·미만료 token을 함께 인증 완료 처리해 이전 링크 재사용을 차단합니다.
+
+이메일 발송은 `email_verification_token`이나 `password_reset_token` 테이블에 원문 token을 저장하지 않고 `EmailSender` adapter 경계에서만 원문을 사용합니다. 기본값 `EMAIL_PROVIDER=noop`은 발송하지 않으며, 배포에서 `EMAIL_PROVIDER=smtp`와 `SMTP_*` 환경변수를 설정하면 SMTP Provider로 발송합니다. 실제 Provider 계정·비용 정책은 배포 설정 단계에서 확정합니다.
+
 ## PROFILE SELF 소유권
 
 `profile` 테이블은 본인 단일 `SELF` profile을 저장합니다.
