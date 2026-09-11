@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import Field, field_validator
 
-from ai_worker.tasks.evaluation.canonical import canonical_json_bytes
+from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes
 from ai_worker.tasks.evaluation.protected_retrieval import (
     ApprovalSourceEvidence,
     AuthorizationAuditAction,
@@ -100,7 +100,7 @@ class TrustedApprovalSource(Protocol):
 
 
 def control_command_sha256(kind: ControlCommandKind, command: ControlCommand) -> str:
-    payload = {
+    payload: JsonValue = {
         "command_kind": kind.value,
         "command": command.model_dump(mode="json"),
     }

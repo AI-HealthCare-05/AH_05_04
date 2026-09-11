@@ -122,6 +122,19 @@ def protected_database() -> Iterator[_ProtectedDatabase]:
                     ),
                     {"database_login": database.actor_login},
                 )
+                await connection.execute(
+                    text(
+                        f"""
+                        INSERT INTO {_quote(database.schema)}.protected_identity (
+                            database_login, actor_id, actor_namespace, approval_role, identity_plane
+                        ) VALUES (
+                            :database_login, 'synthetic-custodian', 'GITHUB_LOGIN',
+                            'DATASET_CUSTODIAN', 'CONTROL'
+                        )
+                        """
+                    ),
+                    {"database_login": database.control_login},
+                )
         finally:
             await engine.dispose()
 
@@ -282,6 +295,20 @@ async def test_authorization_control_schema_has_plane_and_revision_constraints(
             )
             assert {"identity_plane", "approval_role"} <= identity_columns
 
+            control_identity = (
+                await connection.execute(
+                    text(
+                        f"""
+                        SELECT principal_role, identity_plane, approval_role
+                        FROM {_quote(database.schema)}.protected_identity
+                        WHERE database_login = :database_login
+                        """
+                    ),
+                    {"database_login": database.control_login},
+                )
+            ).one()
+            assert control_identity == (None, "CONTROL", "DATASET_CUSTODIAN")
+
             identity_constraints = "\n".join(
                 await connection.scalars(
                     text(
@@ -435,7 +462,7 @@ def test_protected_downgrade_refuses_durable_rows_without_data_loss(
     protected_database: _ProtectedDatabase,
 ) -> None:
     database = protected_database
-    with pytest.raises(RuntimeError, match="downgrade refused while durable rows exist"):
+    with pytest.raises(RuntimeError, match=r"downgrade refused while (?:C1 )?durable rows exist"):
         command.downgrade(Config(str(ALEMBIC_CONFIG)), "base")
 
     async def verify_preserved() -> None:
@@ -449,7 +476,7 @@ def test_protected_downgrade_refuses_durable_rows_without_data_loss(
                     text("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = :schema)"),
                     {"schema": database.schema},
                 )
-            assert identity_count == 1
+            assert identity_count == 2
             assert schema_exists is True
         finally:
             await engine.dispose()

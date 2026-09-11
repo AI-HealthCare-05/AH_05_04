@@ -42,7 +42,7 @@ def upgrade() -> None:
     )
     op.execute(
         f"ALTER TABLE {schema}.protected_identity ADD CONSTRAINT protected_identity_approval_role_check "
-        "CHECK (approval_role IS NULL OR approval_role IN ('DATASET_CUSTODIAN', 'PRODUCT_SAFETY'))"
+        "CHECK (approval_role IS NULL OR approval_role IN ('DATASET_CUSTODIAN', 'PRODUCT_SAFETY_REVIEWER'))"
     )
     op.execute(
         f"ALTER TABLE {schema}.protected_identity ADD CONSTRAINT protected_identity_plane_role_check CHECK ("

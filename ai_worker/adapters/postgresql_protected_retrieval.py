@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from ai_worker.tasks.evaluation.protected_retrieval import (
     ApprovalSourceEvidence,
     AuthorizationAuditEntry,
+    ControlCommandAuditEntry,
     OpaqueLogicalRef,
     OpaqueRefNamespace,
     OperationAuditEntry,
@@ -267,11 +268,17 @@ class PostgresqlProtectedAuditJournal(_ProtectedSession):
         for expected_sequence, row in enumerate(entries_result, start=1):
             if row.sequence != expected_sequence or not isinstance(row.entry_body, dict):
                 raise ProtectedSecurityError("AUDIT_TAIL_TRUNCATED")
-            model_type = (
-                AuthorizationAuditEntry
-                if row.entry_body.get("event_kind") == ProtectedAuditEventKind.AUTHORIZATION.value
-                else OperationAuditEntry
-            )
+            model_types = {
+                ProtectedAuditEventKind.AUTHORIZATION.value: AuthorizationAuditEntry,
+                ProtectedAuditEventKind.CONTROL.value: ControlCommandAuditEntry,
+                ProtectedAuditEventKind.OPERATION.value: OperationAuditEntry,
+            }
+            event_kind = row.entry_body.get("event_kind")
+            if not isinstance(event_kind, str):
+                raise ProtectedSecurityError("AUDIT_UNAVAILABLE")
+            model_type = model_types.get(event_kind)
+            if model_type is None:
+                raise ProtectedSecurityError("AUDIT_UNAVAILABLE")
             entry = _model(model_type, row.entry_body, "AUDIT_UNAVAILABLE")
             if entry.sequence != expected_sequence or entry.previous_entry_sha256 != previous:
                 raise ProtectedSecurityError("AUDIT_HASH_MISMATCH")
