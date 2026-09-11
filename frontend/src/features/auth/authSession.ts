@@ -1,5 +1,6 @@
 import { ApiError } from '../../api/client'
 import { clearOcrJobRecovery } from '../ai-jobs/ocrJobRecovery'
+import { clearAuthenticationStorage } from './authStorage'
 
 const AUTH_ERROR_CODES = new Set([
   'UNAUTHORIZED',
@@ -25,7 +26,7 @@ export function isStaleTokenError(error: unknown) {
 }
 
 export function clearAuthenticatedSession() {
-  localStorage.removeItem('access_token')
+  clearAuthenticationStorage()
   clearOcrJobRecovery()
   clearChatSessionRecovery()
 }

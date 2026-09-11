@@ -1,4 +1,9 @@
-import { apiRequest } from './client'
+import { apiRequest, runWithAuthSessionLock } from './client'
+import {
+  beginLogoutIntent,
+  completeLogoutIntent,
+  isCurrentLogoutIntent,
+} from '../features/auth/authStorage'
 
 export type SignupRequest = {
   email: string
@@ -36,7 +41,18 @@ export async function login(data: LoginRequest) {
 }
 
 export async function logout() {
-  return apiRequest<{ detail: string }>('/api/v1/auth/logout', {
-    method: 'POST',
+  const intent = beginLogoutIntent()
+
+  return runWithAuthSessionLock(async () => {
+    if (!isCurrentLogoutIntent(intent)) return undefined
+
+    try {
+      return await apiRequest<{ detail: string }>('/api/v1/auth/logout', {
+        method: 'POST',
+        ...(intent.accessToken ? { accessToken: intent.accessToken } : {}),
+      })
+    } finally {
+      completeLogoutIntent(intent)
+    }
   })
 }

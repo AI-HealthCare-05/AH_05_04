@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { login, logout, signup } from '../src/api/auth'
+import { runWithAuthSessionLock } from '../src/api/client'
+import {
+  clearAuthenticationStorage,
+  startAuthenticatedSession,
+} from '../src/features/auth/authStorage'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -79,7 +84,9 @@ describe('logout API', () => {
     vi.stubGlobal('fetch', fetchMock)
     localStorage.setItem('access_token', 'fixture-access-token')
 
-    await logout()
+    const request = logout()
+    clearAuthenticationStorage()
+    await request
 
     expect(fetchMock).toHaveBeenCalledWith(
       'http://localhost:8000/api/v1/auth/logout',
@@ -90,5 +97,48 @@ describe('logout API', () => {
         }),
       }),
     )
+  })
+
+  it('다른 탭의 새 로그인이 먼저 완료되면 지연된 이전 세션 로그아웃을 보내지 않는다', async () => {
+    let releaseLogin!: () => void
+    let loginLockStarted!: () => void
+    const loginStarted = new Promise<void>((resolve) => {
+      loginLockStarted = resolve
+    })
+    const loginRelease = new Promise<void>((resolve) => {
+      releaseLogin = resolve
+    })
+    let lockQueue: Promise<unknown> = Promise.resolve()
+    Object.defineProperty(navigator, 'locks', {
+      configurable: true,
+      value: {
+        request: (_name: string, task: () => Promise<unknown>) => {
+          const result = lockQueue.then(task, task)
+          lockQueue = result.then(
+            () => undefined,
+            () => undefined,
+          )
+          return result
+        },
+      },
+    })
+    const fetchMock = vi.fn<typeof fetch>()
+    vi.stubGlobal('fetch', fetchMock)
+    startAuthenticatedSession('first-account-token')
+
+    const newerLogin = runWithAuthSessionLock(async () => {
+      loginLockStarted()
+      await loginRelease
+      startAuthenticatedSession('second-account-token')
+    })
+    await loginStarted
+    const delayedLogout = logout()
+    clearAuthenticationStorage()
+    releaseLogin()
+
+    await newerLogin
+    await expect(delayedLogout).resolves.toBeUndefined()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(localStorage.getItem('access_token')).toBe('second-account-token')
   })
 })

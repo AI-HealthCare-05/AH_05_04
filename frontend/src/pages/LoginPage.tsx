@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { login } from '../api/auth'
-import { ApiError } from '../api/client'
+import { ApiError, runWithAuthSessionLock } from '../api/client'
 import { clearAuthenticatedSession } from '../features/auth/authSession'
+import { startAuthenticatedSession } from '../features/auth/authStorage'
 import { Button, MobileShell } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
@@ -85,12 +86,14 @@ function LoginPage() {
       setIsSubmitting(true)
       setFieldErrors({})
       clearFeedback()
-      const response = await login({
-        email: form.email.trim(),
-        password: form.password,
+      await runWithAuthSessionLock(async () => {
+        const response = await login({
+          email: form.email.trim(),
+          password: form.password,
+        })
+        clearAuthenticatedSession()
+        startAuthenticatedSession(response.access_token)
       })
-      clearAuthenticatedSession()
-      localStorage.setItem('access_token', response.access_token)
       navigate('/')
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : NETWORK_ERROR_MESSAGE)
