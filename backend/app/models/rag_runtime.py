@@ -104,7 +104,10 @@ class RagRuntimeReleaseBundle(Base):
         UniqueConstraint("bundle_manifest_hash", name="uq_rag_runtime_bundle_manifest_hash"),
         UniqueConstraint("id", "bundle_manifest_hash", name="uq_rag_runtime_bundle_id_manifest_hash"),
         UniqueConstraint(
-            "id", "bundle_manifest_hash", "execution_manifest_id", name="uq_rag_runtime_bundle_id_hash_manifest"
+            "id",
+            "bundle_manifest_hash",
+            "execution_manifest_id",
+            name="uq_rag_runtime_bundle_id_hash_execution_manifest",
         ),
         CheckConstraint("length(trim(bundle_key)) > 0", name="chk_rag_runtime_bundle_key_nonblank"),
         CheckConstraint("length(trim(bundle_version)) > 0", name="chk_rag_runtime_bundle_version_nonblank"),

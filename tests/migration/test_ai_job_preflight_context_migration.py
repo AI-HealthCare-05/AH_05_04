@@ -11,6 +11,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -555,6 +556,42 @@ async def _cleanup_context_tables() -> None:
                     await connection.execute(text(f'DELETE FROM "{table_name}"'))
 
 
+async def _set_intake_question_digest(intake_context_id: str, question_digest: str | None) -> None:
+    async with _connection() as connection:
+        async with connection.begin():
+            await connection.execute(
+                text(
+                    """
+                    UPDATE ai_job_intake_context
+                    SET question_digest = :question_digest
+                    WHERE id = :intake_context_id
+                    """
+                ),
+                {"intake_context_id": intake_context_id, "question_digest": question_digest},
+            )
+
+
+async def _point_execution_context_at_other_job_intake(
+    execution_context_id: str,
+    other_intake_context_id: str,
+) -> None:
+    async with _connection() as connection:
+        async with connection.begin():
+            await connection.execute(
+                text(
+                    """
+                    UPDATE ai_job_execution_context
+                    SET intake_context_id = :other_intake_context_id
+                    WHERE id = :execution_context_id
+                    """
+                ),
+                {
+                    "execution_context_id": execution_context_id,
+                    "other_intake_context_id": other_intake_context_id,
+                },
+            )
+
+
 @pytest.fixture(autouse=True)
 def _isolated_preflight_database(monkeypatch) -> Iterator[None]:
     """Exercise historical downgrades without touching the irreversible #398 head."""
@@ -661,7 +698,40 @@ def test_preflight_context_hardening_downgrade_blocks_when_context_data_exists()
     finally:
         asyncio.run(_cleanup_preflight_fixture_graph(ids))
         command.downgrade(cfg, _preflight_context_hardening_down_revision())
-        command.upgrade(cfg, PREFLIGHT_CONTEXT_HARDENING_REVISION)
+        command.upgrade(cfg, "head")
+
+
+def test_preflight_context_hardening_upgrade_blocks_nullable_question_digest() -> None:
+    cfg = create_alembic_config()
+    command.upgrade(cfg, _preflight_context_hardening_down_revision())
+    ids = asyncio.run(_seed_preflight_context_graph())
+    asyncio.run(_set_intake_question_digest(ids["intake_context_id"], None))
+
+    try:
+        with pytest.raises(RuntimeError, match="NULL digest"):
+            command.upgrade(cfg, PREFLIGHT_CONTEXT_HARDENING_REVISION)
+    finally:
+        asyncio.run(_cleanup_preflight_fixture_graph(ids))
+        command.upgrade(cfg, "head")
+
+
+def test_execution_context_rejects_cross_job_intake_context() -> None:
+    cfg = create_alembic_config()
+    command.upgrade(cfg, "head")
+    left_ids = asyncio.run(_seed_preflight_context_graph())
+    right_ids = asyncio.run(_seed_preflight_context_graph())
+
+    try:
+        with pytest.raises(IntegrityError):
+            asyncio.run(
+                _point_execution_context_at_other_job_intake(
+                    left_ids["execution_context_id"],
+                    right_ids["intake_context_id"],
+                )
+            )
+    finally:
+        asyncio.run(_cleanup_preflight_fixture_graph(left_ids))
+        asyncio.run(_cleanup_preflight_fixture_graph(right_ids))
 
 
 def test_preflight_context_hardening_constraints_exist_on_head() -> None:
@@ -670,7 +740,7 @@ def test_preflight_context_hardening_constraints_exist_on_head() -> None:
     expected = {
         "uq_rag_runtime_manifest_id_hash",
         "uq_prescription_version_medication_id_version",
-        "uq_rag_runtime_bundle_id_hash_manifest",
+        "uq_rag_runtime_bundle_id_hash_execution_manifest",
         "uq_ai_job_intake_context_job_id",
         "uq_ai_job_execution_context_id_version",
         "fk_ai_job_intake_context_bundle_execution_manifest",

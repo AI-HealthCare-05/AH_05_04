@@ -60,7 +60,7 @@ def upgrade() -> None:
         ["id", "prescription_version_id"],
     )
     op.create_unique_constraint(
-        "uq_rag_runtime_bundle_id_hash_manifest",
+        "uq_rag_runtime_bundle_id_hash_execution_manifest",
         "rag_runtime_release_bundle",
         ["id", "bundle_manifest_hash", "execution_manifest_id"],
     )
@@ -229,7 +229,7 @@ def downgrade() -> None:
     op.drop_constraint("uq_ai_job_execution_context_id_version", "ai_job_execution_context", type_="unique")
     op.drop_constraint("uq_ai_job_intake_context_job_id", "ai_job_intake_context", type_="unique")
     op.drop_constraint(
-        "uq_rag_runtime_bundle_id_hash_manifest",
+        "uq_rag_runtime_bundle_id_hash_execution_manifest",
         "rag_runtime_release_bundle",
         type_="unique",
     )
