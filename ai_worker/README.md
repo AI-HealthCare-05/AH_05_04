@@ -318,7 +318,7 @@ RAG, Citation/NLI 검증, AI 응답 평가와 OTC 기능은 Worker 자체와 별
 
 | Worker 설정 | 기본값 | 의미 |
 | --- | --- | --- |
-| OCR_STRUCTURE_LLM_ENABLED | false | Local 합성 검증용 명시적 opt-in |
+| OCR_STRUCTURE_LLM_ENABLED | false | 환경 공통 LLM 활성화 설정 |
 | OPENAI_API_KEY | 빈 SecretStr | 활성화 시 필수, 로그 출력 금지 |
 | OCR_STRUCTURE_MODEL | gpt-4o-mini | OCR 구조화 요청 모델 |
 | OCR_STRUCTURE_TIMEOUT_SECONDS | 30 | 개별 LLM 호출 상한 |
@@ -328,7 +328,11 @@ Worker 외부 deadline이 두 호출을 함께 제한하며 SDK retry는 0이다
 성공·실패·취소 모두 OpenAI client를 닫는다. 기존 Worker의 재시도·fencing·commit 후 ACK를 재사용한다.
 모델·프롬프트 기록은 OCR 결과에 저장한다. GUIDE_GENERATION 로그와 혼동하지 않는다.
 
-현재 외부 호출은 테스트에서 합성 Provider로 대체했다. Local 제한은 개인정보 제거 기능이 아니며,
-실제 환자 입력·Production 활성화를 허용하지 않는다. 기존 전체 토큰 전송 방식의 의미상
-최소화와 #207 동의 저장소 연결 전에는 #453 전체 완료로 표시하지 않는다.
-[동의·전송 계약 개정안](../docs/contracts/proposed/ocr-llm-worker-consent-453.md)을 함께 검토한다.
+검증에서는 외부 Provider를 합성 응답으로 대체했다. 환경별 Local 전용 제한은 없다.
+Local/real-stack Compose는 기존 env_file에서, 운영 Compose는 명시적 environment에서
+위 설정을 Worker에 전달한다. `OCR_STRUCTURE_LLM_ENABLED=true`와 유효한 API key를
+설정하고 Worker를 재생성해야 LLM 경로가 활성화된다. 기본값은 기존대로 false다.
+
+새 동의·철회·전송 최소화·Frontend 안내는 이번 이관에 추가하지 않는다. 리뷰에서
+필요하면 별도 이슈로 진행한다. 기존 공통 공개 게이트와 실제 환자 데이터 금지는 유지한다.
+[범위 정정 기록](../docs/contracts/proposed/ocr-llm-worker-consent-453.md).

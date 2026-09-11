@@ -135,7 +135,6 @@ async def test_timeout_closes_client_without_success(tmp_path, pipeline):
 @pytest.mark.parametrize(
     "changes",
     [
-        {"ENV": "production"},
         {"OPENAI_API_KEY": ""},
         {"OCR_STRUCTURE_MODEL": " "},
         {"OCR_STRUCTURE_TIMEOUT_SECONDS": 40},
@@ -150,3 +149,12 @@ def test_invalid_activation_is_rejected_before_worker_start(tmp_path, changes):
 def test_engine_repr_does_not_expose_key(tmp_path):
     engine = create_clova_ocr_engine(config(tmp_path), trace_id="b" * 32)
     assert "synthetic-test-key" not in repr(engine)
+
+
+@pytest.mark.parametrize("environment", ["local", "staging", "production"])
+async def test_llm_activation_is_available_in_each_environment(tmp_path, environment, pipeline):
+    clova, parse, clients = pipeline
+    result = await recognize(tmp_path, ENV=environment, REDIS_PASSWORD="test-redis-453-credential")
+    assert clova.await_count == parse.await_count == 1
+    assert result.model_version == "actual-synthetic-model"
+    assert clients[0].closed

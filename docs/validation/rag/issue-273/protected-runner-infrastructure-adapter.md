@@ -29,4 +29,4 @@
 - backup·restore·rotation 운영 증빙
 - Track F external gate 충족
 
-Evidence self hash: `7d71cdb85f26bd63e54a42f90fd9510ef519a2c4406d530bb152ac1d79ae03f6`
+Evidence self hash: `0bcbfab9fe67050ea95b18fe8f3def690b638b3f488dc91f91a9983764ab34d3`

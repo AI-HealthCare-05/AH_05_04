@@ -238,9 +238,6 @@ class Config(BaseSettings):
     def _validate_ocr_llm(self) -> Self:
         if not self.OCR_STRUCTURE_LLM_ENABLED:
             return self
-        # #207 동의 저장소와 입력 최소화의 실제 연결 전에는 Local 합성 검증만 허용한다.
-        if self.ENV is not DeploymentEnvironment.LOCAL:
-            raise ValueError("OCR LLM Worker activation is limited to local synthetic validation")
         if not self.OPENAI_API_KEY.get_secret_value().strip():
             raise ValueError("OCR LLM requires OPENAI_API_KEY")
         if not self.OCR_STRUCTURE_MODEL.strip():
