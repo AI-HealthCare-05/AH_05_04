@@ -4,6 +4,8 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 상태와 승인 원본의 우선순위는 [Post-MVP-1 문서 권위](../governance/post-mvp-1-document-authority.md)를 따릅니다.
 
+- [Source Attempt Receipt 실패 보완 (#436)](./proposed/source-attempt-receipt-436.md): COLLECTION_FAILED 및 EMPTY_RESULT 계열 구분 구현 리뷰안.
+
 ## 디렉터리 구조와 배치 원칙
 
 - [PD-398-M1 Source·Catalog 관리](./proposed/source-catalog-management-398.md): 분리된 관리 API, 서버 권한, 미사용 자료 수정·삭제와 감사 transaction, PD-398-R2 Snapshot 잠금 권한 분리.
@@ -69,6 +71,7 @@ Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 
 - [RAG Evaluation·Release Gate 계약 v1](./targets/post-mvp-1/rag-evaluation-v1.md): RAG 전후 비교, 필수 Metric, Schema Set 1.3 `Candidate · Review Required` provenance 계약과 Release 차단 기준
 - [Safety Result·Citation 계약 v2](./targets/post-mvp-1/safety-result-v2.md): Track F에서 v1의 Safety Result·Citation·STALE·Release Gate 목표를 대체하는 후속 Target
 - [Safety Result 복합 STALE 우선순위 계약 v1 (`PD-173`)](./targets/post-mvp-1/safety-result-compound-stale-priority-v1.md): 처방 버전·식별 스냅샷·런타임 번들 복합 STALE 동시 발생 시 단일 공개 fallback_code 사영 우선순위(`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`)와 내부 `stale_reason` 분리 — Approved Target · Not implemented: 판정 kernel은 병합되었으나 런타임 호출부 없음
+- [Protected Retrieval Infrastructure 계약 v1 (`PD-368`)](./targets/post-mvp-1/protected-retrieval-infrastructure-v1.md): data-plane 제한 로그인·승인 artifact hash 결속·durable INTENT/UNKNOWN 부분 구현, control-plane grant/revoke/FREEZE 서비스 미구현
 
 계약 파일의 존재나 문서 승인은 Worker·API·schema 구현 완료 또는 공개 승인을 의미하지 않습니다.
 

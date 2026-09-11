@@ -64,3 +64,40 @@ PR #444 본문을 작성했다.
 #436 최종 병합 상태와 이후 develop 변경은 원격 PR 준비 시 재확인한다.
 이번 계약 작업은 #165 전체 완료나 #166 소비 연결 완료를 의미하지 않는다.
 로컬 단계별 작업 완료. **푸시 필요.**
+
+## 2026-09-11 — #436 병합 후 MUST FIX ③ 반영
+
+기준: `origin/develop`의 `9822dfb`(#436 squash merge), #444 기존 HEAD `8315738`.
+공유된 작업 브랜치 이력을 다시 쓰지 않고 develop을 merge하여 선행 변경을 반영했다.
+
+- `SnapshotAttemptReceipt._decision()`은 병합된 #436 구현과 동일하다. #444의 리터럴 추가를 제거하고
+  네 실패 enum 기반 판정, COLLECTION_FAILED, EMPTY_RESULT 계열 구분을 그대로 유지한다.
+- Source 수집·정책 실패의 `validation_reason_code`와 #444의 `reject_code_contract_version`을 함께 보존한다.
+- 기존 TIMEOUT 통합 사례를 실제 Attempt Receipt 조회까지 확장하고 수집 EMPTY_RESULT도 추가했다.
+  실패 코드·COLLECTION_FAILED·Run 계약 버전 및 EMPTY_RESULT 구분자 보존을 확인한다.
+- Parser/한도 초과 두 enum 멤버의 기록·조회 사례도 실제 Receipt의 VALIDATION_FAILED와 계약 버전을 확인한다.
+  #436의 구버전·합성 Operation REJECTS fixture를 사용하는 중복 사례는 이 MFDS 제품 계약 fixture로 통합했다.
+- #436의 수집 실패 15종 조회와 과거 모호한 EMPTY_RESULT 거부 테스트는 유지한다.
+  버전 없는 REJECTS는 #444 계약에 따라 거부되고 Run이 남지 않는 것을 검증한다.
+- Source target에는 #436 실패 판정과 #444 reject-code 계약 참조를 모두 보존하고, 문서 bytes hash →
+  Receipt canonical hash → traceability hash 순서로 재계산했다. 승인이나 공개 상태를 새로 부여하지 않았다.
+- #436 migration 이력을 변경하지 않았으며 #444 head `165a0b1c2d3e`는 `362c3d4e5f60`을 부모로 유지한다.
+- RLS·Trigger·업무 DB 함수는 추가하지 않았다. 운영·팀 개발 DB를 사용하지 않았다.
+
+### 통합 후 최종 로컬 검증
+
+전용 PostgreSQL 17·Redis 7과 합성 데이터로 `scripts/ci/run_test.sh` 전체 실행 **exit 0**.
+
+| 검사 | 결과 |
+| --- | --- |
+| Migration | 181 passed, 3 skipped |
+| Backend·계약·PostgreSQL | 1809 passed, 65 skipped |
+| Redis 통합 | 23 passed |
+| Worker | 2860 passed, 8 skipped |
+| 통합 coverage | 92% |
+| Ruff·format·Mypy | 통과, Mypy 552 files |
+
+집중 검사: Source 단위·Receipt 계약 459건 통과. 전체 Backend 검사에는 reject-code DB 통합 28건,
+Source lifecycle 49건이 포함되며 중복 합산하지 않는다. `_decision()` AST가 병합된 #436과 동일한 것도 확인했다.
+최종 DB head `165a0b1c2d3e`, 사용자 Trigger·RLS·제거 대상 함수 0개.
+건너뛴 검사를 통과로 계산하지 않으며, 이 결과는 원격 CI·리뷰 승인·운영 적용을 뜻하지 않는다.

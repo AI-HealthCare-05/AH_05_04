@@ -39,7 +39,7 @@ def test_foundation_records_issue_source_and_only_the_implemented_policy_boundar
     assert packet["policy_foundation_status"] == "IMPLEMENTED"
     assert packet["issue_completion_status"] == "IN_PROGRESS"
     assert packet["effective_enforcement_status"] == "NOT_IMPLEMENTED"
-    assert packet["infrastructure_adapter_status"] == "NOT_IMPLEMENTED"
+    assert packet["infrastructure_adapter_status"] == "PARTIALLY_IMPLEMENTED"
     assert packet["reconciliation_adapter_status"] == "NOT_IMPLEMENTED"
     assert packet["access_authorized"] is False
     assert packet["holdout_authored"] is False
@@ -99,7 +99,7 @@ def test_foundation_rejects_protected_public_fields(forbidden_key: str) -> None:
 def test_committed_foundation_artifacts_equal_a_fresh_build() -> None:
     packet = build_protected_runner_foundation(REPOSITORY_ROOT)
 
-    assert FOUNDATION_JSON_PATH.read_bytes() == canonical_json_bytes(packet)
+    assert FOUNDATION_JSON_PATH.read_bytes() == canonical_json_bytes(packet) + b"\n"
     assert FOUNDATION_MARKDOWN_PATH.read_text(encoding="utf-8") == render_protected_runner_foundation_markdown(packet)
 
 

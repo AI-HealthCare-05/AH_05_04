@@ -1303,3 +1303,131 @@ async def test_attempt_receipt_rejects_unmapped_database_failure_code() -> None:
     async with session_factory() as session:
         with pytest.raises(ValueError, match="decision is unavailable"):
             await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(ingestion_run_id=run_id)
+
+
+@pytest.mark.parametrize("code", list(SourceFailureCode))
+async def test_collection_failure_recording_roundtrips_receipt(code) -> None:
+    from ai_worker.tasks.rag.source_ingestion.failure_codes import COLLECTION_EMPTY_RESULT
+
+    identity = await _seed_operation(f"COLLECTION_{code.value}")
+    metadata = FailedIngestionRunMetadata("synthetic-collection", 1, _NOW, _NOW)
+    result = SourceRunResult(
+        operation=identity,
+        status=SourceRunStatus.FAILED,
+        pages=(),
+        failure=SourceClientFailure(code=code, retry=RetryDisposition.BACKOFF, safe_message="Synthetic failure."),
+    )
+    async with session_factory.begin() as session:
+        failed = await record_source_run_failure(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            result=result,
+            metadata=metadata,
+        )
+    async with session_factory() as session:
+        receipt = await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(
+            ingestion_run_id=failed.ingestion_run_id
+        )
+        assert receipt is not None
+        assert receipt.decision is SnapshotIngestionDecision.COLLECTION_FAILED
+        assert receipt.failure_code == code.value
+        assert receipt.snapshot_id is None
+        assert receipt.validation_reason_code == (
+            COLLECTION_EMPTY_RESULT if code is SourceFailureCode.EMPTY_RESULT else None
+        )
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(RagSourceSnapshot)
+                .where(RagSourceSnapshot.operation_id == receipt.operation_id)
+            )
+            == 0
+        )
+
+
+@pytest.mark.parametrize("empty", [True, False])
+async def test_snapshot_policy_failure_or_unversioned_rejection_is_fail_closed(empty) -> None:
+    from ai_worker.tasks.rag.source_ingestion.failure_codes import SNAPSHOT_POLICY_EMPTY_RESULT
+
+    identity = await _seed_operation(f"POLICY_{empty}")
+    ingestion = replace(_ingestion(identity, _CHECKSUM_A), record_count=0 if empty else 2)
+    metadata = replace(
+        _metadata("external:policy"), rejected_record_count=0 if empty else 1, snapshot_policy=SourceSnapshotPolicy()
+    )
+    artifacts = _stored_artifacts()
+    if not empty:
+        artifacts += (
+            StoredRawArtifact(
+                page_number=None,
+                metadata=RawArtifactMetadata("synthetic-policy-reject.json", "e" * 64, 64, "application/json"),
+                storage_backend="PRIVATE_OBJECT_STORAGE",
+                object_key="source-ingestion/synthetic/policy-reject.json",
+                artifact_kind=IngestionArtifactKind.REJECTS,
+                reject_code="MISSING_ITEM_SEQ",
+                parser_location="page[1].record[0]",
+            ),
+        )
+    if not empty:
+        # #444 forbids writing REJECTS without the product reject contract. Valid
+        # processing failures of both kinds are covered in test_reject_contract_165.
+        from ai_worker.tasks.rag.source_ingestion.reject_codes import RejectContractError
+
+        with pytest.raises(RejectContractError):
+            async with session_factory.begin() as session:
+                await persist_product_ingestion_result(
+                    repository=SqlAlchemySourceSnapshotRepository(session),
+                    ingestion=ingestion,
+                    metadata=metadata,
+                    artifacts=artifacts,
+                )
+        async with session_factory() as session:
+            operation_id = await SqlAlchemySourceSnapshotRepository(session).lock_operation(identity)
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(RagSourceIngestionRun)
+                    .where(RagSourceIngestionRun.operation_id == operation_id)
+                )
+                == 0
+            )
+        return
+    async with session_factory.begin() as session:
+        failed = await persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            ingestion=ingestion,
+            metadata=metadata,
+            artifacts=artifacts,
+        )
+    async with session_factory() as session:
+        receipt = await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(
+            ingestion_run_id=failed.ingestion_run_id
+        )
+        assert receipt is not None
+        assert receipt.decision is SnapshotIngestionDecision.VALIDATION_FAILED
+        assert receipt.failure_code == ("EMPTY_RESULT" if empty else "REJECTION_LIMIT_EXCEEDED")
+        assert receipt.validation_reason_code == (SNAPSHOT_POLICY_EMPTY_RESULT if empty else None)
+        assert receipt.snapshot_id is None
+
+
+async def test_legacy_empty_result_remains_available_as_audit_without_guessed_decision() -> None:
+    identity = await _seed_operation("LEGACY_EMPTY")
+    async with session_factory.begin() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        operation_id = await repository.lock_operation(identity)
+        run_id = await repository.create_run(
+            SnapshotRunRecord(
+                operation_id=operation_id,
+                snapshot_id=None,
+                run_group_key="synthetic-legacy-empty",
+                attempt_number=1,
+                run_status="FAILED",
+                started_at=_NOW,
+                finished_at=_NOW,
+                duration_ms=0,
+                failure_code="EMPTY_RESULT",
+            )
+        )
+    async with session_factory() as session:
+        with pytest.raises(ValueError, match="decision is unavailable"):
+            await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(ingestion_run_id=run_id)
+        row = await session.get(RagSourceIngestionRun, run_id)
+        assert row is not None and row.failure_code == "EMPTY_RESULT" and row.validation_reason_code is None

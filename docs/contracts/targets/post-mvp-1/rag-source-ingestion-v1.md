@@ -346,3 +346,11 @@ Run 자체의 저장·감사 내역을 제거하는 동작은 아니다. 신규 
 [Source reject codes v1](../../proposed/post-mvp-1/source-reject-codes-v1.md)과
 [PD-165 리뷰안](../../../governance/decisions/2026-09-11-product-reject-contract-v1.md)을 참조한다.
 담당 승인 전 proposed이며, 이 참조가 기존 Target의 포괄적 부분 거부 경계를 자동 승인 변경하지 않는다.
+
+
+### PR #436 실패 매핑 보완 리뷰안
+
+위 네 decision 표는 기존 PD-362 기준이다. 작업 브랜치의 수집 실패·Parser 실패 조회 보완은
+[proposed 계약](../../proposed/source-attempt-receipt-436.md)과
+[PD-362-R2](../../../governance/decisions/2026-09-11-source-attempt-receipt-failures.md)를 따른다.
+추가 COLLECTION_FAILED와 EMPTY_RESULT 계열 구분은 담당 재리뷰 대상이며 승인 완료로 간주하지 않는다.

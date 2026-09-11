@@ -19,9 +19,13 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from ai_worker.adapters.clova_ocr_provider import ClovaOcrProviderAdapter
 from ai_worker.adapters.factory import create_redis_client, create_stream_adapter
+from ai_worker.adapters.postgresql_protected_retrieval import (
+    PostgresqlProtectedRetrievalService,
+)
 from ai_worker.adapters.redis_dead_letter_stream import (
     RedisDeadLetterStreamPublisher,
 )
@@ -134,6 +138,66 @@ def create_worker_engine(config: Config) -> AsyncEngine:
         pool_size=config.DB_CONNECTION_POOL_MAXSIZE,
         connect_args={"timeout": config.DB_CONNECT_TIMEOUT},
     )
+
+
+def _create_protected_engine(config: Config, *, control: bool) -> AsyncEngine:
+    """명시적으로 활성화된 plane에 대해서만 격리 engine을 생성합니다."""
+
+    if not config.PROTECTED_RETRIEVAL_ENABLED:
+        raise RuntimeError("PROTECTED_RETRIEVAL_DISABLED")
+    protected_url = config.protected_control_database_url if control else config.protected_data_database_url
+    application_name = "protected-retrieval-control" if control else "protected-retrieval-data"
+    return create_async_engine(
+        protected_url,
+        echo=False,
+        pool_pre_ping=True,
+        poolclass=NullPool,
+        connect_args={
+            "timeout": config.DB_CONNECT_TIMEOUT,
+            "server_settings": {"application_name": application_name},
+        },
+    )
+
+
+def create_protected_data_engine(config: Config) -> AsyncEngine:
+    """보호 데이터 작업용 단기 연결 engine을 생성합니다."""
+
+    return _create_protected_engine(config, control=False)
+
+
+def create_protected_control_engine(config: Config) -> AsyncEngine:
+    """승인·권한·Dataset 제어 작업용 단기 연결 engine을 생성합니다."""
+
+    return _create_protected_engine(config, control=True)
+
+
+async def create_protected_retrieval_service(config: Config) -> PostgresqlProtectedRetrievalService:
+    """Build and validate the durable protected data-plane runtime."""
+
+    if any(
+        value is None
+        for value in (
+            config.PROTECTED_DB_SCHEMA,
+            config.PROTECTED_DB_ACCESS_ROLE,
+            config.PROTECTED_DB_CONTROL_ROLE,
+        )
+    ):
+        raise RuntimeError("PROTECTED_RETRIEVAL_CONFIG_INVALID")
+    assert config.PROTECTED_DB_SCHEMA is not None
+    assert config.PROTECTED_DB_ACCESS_ROLE is not None
+    assert config.PROTECTED_DB_CONTROL_ROLE is not None
+    service = PostgresqlProtectedRetrievalService(
+        create_protected_data_engine(config),
+        schema=config.PROTECTED_DB_SCHEMA.get_secret_value(),
+        data_access_role=config.PROTECTED_DB_ACCESS_ROLE,
+        control_role=config.PROTECTED_DB_CONTROL_ROLE,
+    )
+    try:
+        await service.validate()
+    except Exception:
+        await service.close()
+        raise
+    return service
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

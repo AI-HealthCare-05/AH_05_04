@@ -481,7 +481,8 @@ async def test_failed_client_result_is_not_mutated_or_promoted(database, tmp_pat
     assert not any(p.is_file() for p in (tmp_path / "private").rglob("*"))
 
 
-async def test_transport_failure_keeps_existing_failure_type_and_code(database, tmp_path):
+@pytest.mark.parametrize("code", [SourceFailureCode.TIMEOUT, SourceFailureCode.EMPTY_RESULT])
+async def test_transport_failure_keeps_existing_failure_type_and_code(database, tmp_path, code):
     from ai_worker.tasks.rag.source_ingestion.failure_runs import FailedIngestionRunResult
 
     factory, _ = database
@@ -489,17 +490,27 @@ async def test_transport_failure_keeps_existing_failure_type_and_code(database, 
         PRODUCT_REJECT_IDENTITY,
         SourceRunStatus.FAILED,
         (),
-        SourceClientFailure(SourceFailureCode.TIMEOUT, RetryDisposition.BACKOFF, "Synthetic timeout"),
+        SourceClientFailure(code, RetryDisposition.BACKOFF, "Synthetic collection failure"),
     )
     store = AsyncMock()
     outcome = await execute(factory, store, failed, (), metadata())
     assert isinstance(outcome, FailedIngestionRunResult)
-    assert outcome.failure_code == "TIMEOUT"
+    assert outcome.failure_code == code.value
     store.put_verified.assert_not_called()
     async with factory() as session:
         row = await session.get(RagSourceIngestionRun, outcome.ingestion_run_id)
         assert row.reject_code_contract_version == REJECT_CODE_CONTRACT_VERSION
         assert row.snapshot_id is None
+        receipt = await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(
+            ingestion_run_id=outcome.ingestion_run_id
+        )
+        assert receipt is not None
+        assert receipt.decision is SnapshotIngestionDecision.COLLECTION_FAILED
+        assert receipt.failure_code == code.value
+        assert receipt.reject_code_contract_version == REJECT_CODE_CONTRACT_VERSION
+        assert receipt.validation_reason_code == (
+            "COLLECTION_EMPTY_RESULT" if code is SourceFailureCode.EMPTY_RESULT else None
+        )
 
 
 @pytest.mark.parametrize("failure_code", list(IngestionProcessingFailureCode))
@@ -545,3 +556,10 @@ async def test_each_processing_failure_code_roundtrips_through_database(database
         row = await session.get(RagSourceIngestionRun, recorded.ingestion_run_id)
         assert row.failure_code == failure_code.value
         assert row.snapshot_id is None
+        receipt = await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(
+            ingestion_run_id=recorded.ingestion_run_id
+        )
+        assert receipt is not None
+        assert receipt.decision is SnapshotIngestionDecision.VALIDATION_FAILED
+        assert receipt.failure_code == failure_code.value
+        assert receipt.reject_code_contract_version == REJECT_CODE_CONTRACT_VERSION
