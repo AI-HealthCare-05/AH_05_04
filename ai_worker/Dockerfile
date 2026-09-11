@@ -18,6 +18,7 @@ COPY ./ocr_runtime ./ocr_runtime
 COPY ./provider_runtime ./provider_runtime
 COPY ./rag_runtime ./rag_runtime
 COPY ./infra/python/protected_retrieval_role_policy.py ./infra/python/protected_retrieval_role_policy.py
+COPY ./infra/python/catalog_role_policy.py ./infra/python/source_role_policy.py ./infra/python/
 
 # 5. AI Worker 진입점을 실행합니다.
 CMD ["uv", "run", "--no-sync", "python", "-m", "ai_worker.main"]

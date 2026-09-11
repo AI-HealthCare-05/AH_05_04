@@ -4,15 +4,21 @@ from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.rag_catalog import (
+    RagEntityIdentity,
     RagMedicationAlias,
+    RagMedicationAliasReviewStatus,
     RagMedicationAliasTargetType,
     RagMedicationComponentRole,
     RagMedicationIngredient,
     RagMedicationProduct,
     RagMedicationProductComponent,
+    RagMedicationRecordStatus,
+    RagMedicationSearchEntry,
+    RagMedicationSearchEntryType,
 )
 from app.models.rag_source import (
     RagIngestionRunStatus,
@@ -118,6 +124,7 @@ class RagSourceSnapshotVerificationCreate:
 
 @dataclass(frozen=True)
 class RagMedicationProductCreate:
+    entity_identity_id: UUID
     source_snapshot_id: UUID
     source_record_key: str
     code_system: str
@@ -132,23 +139,42 @@ class RagMedicationProductCreate:
 
 @dataclass(frozen=True)
 class RagMedicationIngredientCreate:
+    entity_identity_id: UUID
     source_snapshot_id: UUID
     source_record_key: str
+    ingredient_code_system: str
+    ingredient_code: str
     ingredient_name: str
     normalized_ingredient_name: str
-    ingredient_code_system: str | None = None
-    ingredient_code: str | None = None
 
 
 @dataclass(frozen=True)
 class RagMedicationAliasCreate:
     source_snapshot_id: UUID
+    target_identity_id: UUID
     target_type: RagMedicationAliasTargetType
     alias_text: str
     normalized_alias_text: str
-    product_id: UUID | None = None
-    ingredient_id: UUID | None = None
-    is_approved: bool = False
+    alias_source: str
+    review_status: RagMedicationAliasReviewStatus
+    record_status: RagMedicationRecordStatus
+    is_effective: bool
+
+
+@dataclass(frozen=True)
+class RagEntityIdentityCreate:
+    entity_type: RagMedicationAliasTargetType
+    code_system: str
+    canonical_code: str
+
+
+@dataclass(frozen=True)
+class RagMedicationSearchEntryCreate:
+    entry_type: RagMedicationSearchEntryType
+    product_id: UUID
+    product_identity_id: UUID
+    normalized_text: str
+    alias_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -169,6 +195,22 @@ class RagSourceCatalogRepository:
 
     async def get_source_by_code(self, *, source_code: str) -> RagSource | None:
         result = await self.session.execute(select(RagSource).where(RagSource.source_code == source_code))
+        return result.scalar_one_or_none()
+
+    async def get_identity(
+        self,
+        *,
+        entity_type: RagMedicationAliasTargetType,
+        code_system: str,
+        canonical_code: str,
+    ) -> RagEntityIdentity | None:
+        result = await self.session.execute(
+            select(RagEntityIdentity).where(
+                RagEntityIdentity.entity_type == entity_type,
+                RagEntityIdentity.code_system == code_system,
+                RagEntityIdentity.canonical_code == canonical_code,
+            )
+        )
         return result.scalar_one_or_none()
 
     async def get_endpoint_by_code(self, *, source_id: UUID, endpoint_code: str) -> RagSourceEndpoint | None:
@@ -228,19 +270,19 @@ class RagSourceCatalogRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_ingredient_by_normalized_name(
+    async def list_ingredients_by_normalized_name(
         self,
         *,
         source_snapshot_id: UUID,
         normalized_ingredient_name: str,
-    ) -> RagMedicationIngredient | None:
+    ) -> list[RagMedicationIngredient]:
         result = await self.session.execute(
             select(RagMedicationIngredient).where(
                 RagMedicationIngredient.source_snapshot_id == source_snapshot_id,
                 RagMedicationIngredient.normalized_ingredient_name == normalized_ingredient_name,
             )
         )
-        return result.scalar_one_or_none()
+        return list(result.scalars().all())
 
     async def get_ingredient_by_record_key(
         self,
@@ -272,33 +314,43 @@ class RagSourceCatalogRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_product_alias(
+    async def get_alias(
         self,
         *,
-        product_id: UUID,
+        target_identity_id: UUID,
+        source_snapshot_id: UUID,
         normalized_alias_text: str,
+        alias_source: str,
     ) -> RagMedicationAlias | None:
         result = await self.session.execute(
             select(RagMedicationAlias).where(
-                RagMedicationAlias.product_id == product_id,
+                RagMedicationAlias.target_identity_id == target_identity_id,
+                RagMedicationAlias.source_snapshot_id == source_snapshot_id,
                 RagMedicationAlias.normalized_alias_text == normalized_alias_text,
+                RagMedicationAlias.alias_source == alias_source,
             )
         )
         return result.scalar_one_or_none()
 
-    async def get_ingredient_alias(
-        self,
-        *,
-        ingredient_id: UUID,
-        normalized_alias_text: str,
-    ) -> RagMedicationAlias | None:
-        result = await self.session.execute(
-            select(RagMedicationAlias).where(
-                RagMedicationAlias.ingredient_id == ingredient_id,
-                RagMedicationAlias.normalized_alias_text == normalized_alias_text,
+    async def create_identity(self, item: RagEntityIdentityCreate) -> RagEntityIdentity:
+        statement = (
+            insert(RagEntityIdentity)
+            .values(
+                entity_type=item.entity_type,
+                code_system=item.code_system,
+                canonical_code=item.canonical_code,
             )
+            .on_conflict_do_nothing(index_elements=["entity_type", "code_system", "canonical_code"])
         )
-        return result.scalar_one_or_none()
+        await self.session.execute(statement)
+        identity = await self.get_identity(
+            entity_type=item.entity_type,
+            code_system=item.code_system,
+            canonical_code=item.canonical_code,
+        )
+        if identity is None:
+            raise RuntimeError("Catalog identity upsert failed")
+        return identity
 
     async def get_component(
         self,
@@ -429,8 +481,15 @@ class RagSourceCatalogRepository:
         return verification
 
     async def create_product(self, item: RagMedicationProductCreate) -> RagMedicationProduct:
+        await self._require_identity_match(
+            identity_id=item.entity_identity_id,
+            entity_type=RagMedicationAliasTargetType.PRODUCT,
+            code_system=item.code_system,
+            canonical_code=item.canonical_code,
+        )
         product = RagMedicationProduct(
             source_snapshot_id=item.source_snapshot_id,
+            entity_identity_id=item.entity_identity_id,
             source_record_key=item.source_record_key,
             code_system=item.code_system,
             canonical_code=item.canonical_code,
@@ -446,8 +505,15 @@ class RagSourceCatalogRepository:
         return product
 
     async def create_ingredient(self, item: RagMedicationIngredientCreate) -> RagMedicationIngredient:
+        await self._require_identity_match(
+            identity_id=item.entity_identity_id,
+            entity_type=RagMedicationAliasTargetType.INGREDIENT,
+            code_system=item.ingredient_code_system,
+            canonical_code=item.ingredient_code,
+        )
         ingredient = RagMedicationIngredient(
             source_snapshot_id=item.source_snapshot_id,
+            entity_identity_id=item.entity_identity_id,
             source_record_key=item.source_record_key,
             ingredient_code_system=item.ingredient_code_system,
             ingredient_code=item.ingredient_code,
@@ -458,19 +524,91 @@ class RagSourceCatalogRepository:
         await self.session.flush()
         return ingredient
 
+    async def _require_identity_match(
+        self,
+        *,
+        identity_id: UUID,
+        entity_type: RagMedicationAliasTargetType,
+        code_system: str,
+        canonical_code: str,
+    ) -> None:
+        result = await self.session.execute(
+            select(RagEntityIdentity.id)
+            .where(
+                RagEntityIdentity.id == identity_id,
+                RagEntityIdentity.entity_type == entity_type,
+                RagEntityIdentity.code_system == code_system,
+                RagEntityIdentity.canonical_code == canonical_code,
+            )
+            .with_for_update()
+        )
+        if result.scalar_one_or_none() is None:
+            raise ValueError("Catalog member identity does not match its official code")
+
     async def create_alias(self, item: RagMedicationAliasCreate) -> RagMedicationAlias:
         alias = RagMedicationAlias(
             source_snapshot_id=item.source_snapshot_id,
-            product_id=item.product_id,
-            ingredient_id=item.ingredient_id,
+            target_identity_id=item.target_identity_id,
             target_type=item.target_type,
             alias_text=item.alias_text,
             normalized_alias_text=item.normalized_alias_text,
-            is_approved=item.is_approved,
+            alias_source=item.alias_source,
+            review_status=item.review_status,
+            record_status=item.record_status,
+            is_effective=item.is_effective,
         )
         self.session.add(alias)
         await self.session.flush()
         return alias
+
+    async def create_search_entry(self, item: RagMedicationSearchEntryCreate) -> RagMedicationSearchEntry:
+        product_result = await self.session.execute(
+            select(RagMedicationProduct)
+            .where(
+                RagMedicationProduct.id == item.product_id,
+                RagMedicationProduct.entity_identity_id == item.product_identity_id,
+            )
+            .with_for_update()
+        )
+        product = product_result.scalar_one_or_none()
+        if product is None or product.product_status != RagMedicationRecordStatus.ACTIVE:
+            raise ValueError("Search Entry requires an active Product with the same stable identity")
+
+        if item.entry_type is RagMedicationSearchEntryType.PRODUCT_NAME:
+            if item.alias_id is not None or item.normalized_text != product.normalized_product_name:
+                raise ValueError("Product-name Search Entry does not match its Product publication")
+        elif item.alias_id is None:
+            raise ValueError("Approved-alias Search Entry requires an Alias")
+        else:
+            alias_result = await self.session.execute(
+                select(RagMedicationAlias)
+                .where(
+                    RagMedicationAlias.id == item.alias_id,
+                    RagMedicationAlias.target_identity_id == item.product_identity_id,
+                    RagMedicationAlias.target_type == RagMedicationAliasTargetType.PRODUCT,
+                )
+                .with_for_update()
+            )
+            alias = alias_result.scalar_one_or_none()
+            if (
+                alias is None
+                or alias.review_status is not RagMedicationAliasReviewStatus.APPROVED
+                or alias.record_status is not RagMedicationRecordStatus.ACTIVE
+                or not alias.is_effective
+                or item.normalized_text != alias.normalized_alias_text
+            ):
+                raise ValueError("Approved-alias Search Entry requires an eligible matching Product Alias")
+
+        entry = RagMedicationSearchEntry(
+            entry_type=item.entry_type,
+            product_id=item.product_id,
+            product_identity_id=item.product_identity_id,
+            alias_id=item.alias_id,
+            normalized_text=item.normalized_text,
+        )
+        self.session.add(entry)
+        await self.session.flush()
+        return entry
 
     async def create_component(self, item: RagMedicationProductComponentCreate) -> RagMedicationProductComponent:
         component = RagMedicationProductComponent(

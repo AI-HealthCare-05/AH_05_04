@@ -1,33 +1,33 @@
-# Track B 일정 정합화 제안 v1
+# Track B 일정 정합화 v1
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | **Proposed · Not implemented** — 아래 규칙은 모두 승인 요청안 |
-| 결정 정본 | [PD-417-20260910](../../governance/decisions/2026-09-10-track-b-schedule-contract.md) |
-| 기존 목표 | [Check-in v1](../targets/post-mvp-1/checkin-v1.md), [멱등성 v1](../targets/post-mvp-1/idempotency-v1.md) |
+| 상태 | **Approved target** — PR #424 양 도메인 승인; #423 DB 작업 브랜치 구현·리뷰/머지 대기, 일정 API #202·실제 알림 연동 #203 별도 |
+| 결정 정본 | [PD-417-20260910](../../../governance/decisions/2026-09-10-track-b-schedule-contract.md) |
+| 기존 목표 | [Check-in v1](./checkin-v1.md), [멱등성 v1](./idempotency-v1.md) |
 | 구현 담당 | 권가빈 (`hazelnutflavoured`) |
 | 담당 리뷰어 | 송은영 (`phina-io`) — Backend·DB·Security; 남한솔 (`solia142`) — Frontend |
 
 ## 1. 원본·target·현재 구현 차이
 
 원본 절·열람 해시와 주장별 `target 교차 확인됨 / 열람본만` 판정은
-[Decision의 교차 확인 표](../../governance/decisions/2026-09-10-track-b-schedule-contract.md)에 기록한다.
+[Decision의 교차 확인 표](../../../governance/decisions/2026-09-10-track-b-schedule-contract.md)에 기록한다.
 아래 원본 인용 전체가 repository target으로 확인됐다는 의미는 아니다. 특히 물리 time status·schedule
-audit·종료 revision 증가는 열람본만의 세부 요구로 분리해 승인 요청한다.
+audit·종료 revision 증가는 열람본만의 세부 요구로 분리해 승인했다.
 이 표의 현재 구현은 Decision에 고정한 develop 기준이다.
 
-| 항목 | 원본 / repository target | 현재 구현 근거 | 제안 결과 / 후속 |
+| 항목 | 원본 / repository target | 현재 구현 근거 | 승인 결과 / 후속 |
 | --- | --- | --- | --- |
-| setup reason | Freeze §7, Track B §3.1: 4값; target 신규 값·우선순위는 TBD | B1/B2에는 공개 조회 DTO 없음; `docs/api.md`의 B API는 목표 목록 | §2의 5값·우선순위, 승인 후 #202 |
-| 전체 INACTIVE 경계 | 원본은 모두 INACTIVE이고 pending 없음 | 취소해도 과거 pending은 남을 수 있어 원본 aggregate에 빈 분기가 있음 | §2에서 모두 INACTIVE이면 전체 INACTIVE, 과거 pending 별도 표시를 명시적 delta로 제안 |
-| 일정 감사 | Freeze §7, Track B §2·3.2: 이전/새 snapshot과 revision, actor/time | [B1 모델](../../../backend/app/models/medication_schedules.py)에 schedule audit 없음. B3 `CheckinAudit`는 Check-in 전용 | §3의 새 audit 저장, #423 |
-| time retire | 원본은 물리 `ACTIVE/RETIRED`; target은 revision별 보존만 요약 | B1 time은 status 없이 revision별 row 보존, B2는 현재 revision으로 조회 | §3의 파생 retire 승인 요청, time status migration 불필요 |
-| 종료 revision | 원본은 조건부 revision+audit | [B2 repository](../../../backend/app/repositories/medication_schedule_repository.py)의 `mark_expired_schedules_ended`는 status만 변경 | §4의 한 단계 증가와 audit, #423 |
+| setup reason | Freeze §7, Track B §3.1: 4값; target 신규 값·우선순위는 TBD | B1/B2에는 공개 조회 DTO 없음; `docs/api.md`의 B API는 목표 목록 | §2의 승인된 5값·우선순위, #202 구현 |
+| 전체 INACTIVE 경계 | 원본은 모두 INACTIVE이고 pending 없음 | 취소해도 과거 pending은 남을 수 있어 원본 aggregate에 빈 분기가 있음 | §2에서 모두 INACTIVE이면 전체 INACTIVE, 과거 pending 별도 표시를 명시적 delta로 승인 |
+| 일정 감사 | Freeze §7, Track B §2·3.2: 이전/새 snapshot과 revision, actor/time | [B1 모델](../../../../backend/app/models/medication_schedules.py)에 schedule audit 없음. B3 `CheckinAudit`는 Check-in 전용 | §3의 새 audit 저장, #423 |
+| time retire | 원본은 물리 `ACTIVE/RETIRED`; target은 revision별 보존만 요약 | B1 time은 status 없이 revision별 row 보존, B2는 현재 revision으로 조회 | §3의 파생 retire 승인, time status migration 불필요 |
+| 종료 revision | 원본은 조건부 revision+audit | [B2 repository](../../../../backend/app/repositories/medication_schedule_repository.py)의 `mark_expired_schedules_ended`는 status만 변경 | §4의 한 단계 증가와 audit, #423 |
 | 생성·변경·취소·재활성화 | Track B §3.2: 동일 row의 새 revision·audit·horizon | B1 생성과 time 추가 존재, 변경·취소 전체 원자적 API 미완성 | §4–5 저장 기반 #423, API #202 |
-| 소유권·시간대 | 원본은 직접 user/version/timezone 필드 | B1은 SELF parent chain, 고정 KST 서비스 설정. [schema](../../data-schema.md) 참조 | 기존 chain·KST 유지; user/version/timezone 중복 컬럼 추가 안 함 |
+| 소유권·시간대 | 원본은 직접 user/version/timezone 필드 | B1은 SELF parent chain, 고정 KST 서비스 설정. [schema](../../../data-schema.md) 참조 | 기존 chain·KST 유지; user/version/timezone 중복 컬럼 추가 안 함 |
 | occurrence 보존 | 원본 `(time_id, scheduled_at)` unique, nullable `cancelled_at` | B1은 `(time_id, scheduled_local_date)` unique, revision snapshot; `cancelled_at` 없음 | KST 매일 반복의 현재 unique 유지. 취소 시각은 §3의 신규 nullable 컬럼으로 보완, #423 |
-| 처방 활성화 | Track B §4: 동일 transaction의 미래 pending·미전달 알림 취소 | B2는 `scheduled_at >= effective_at` pending 취소; [서비스](../../../backend/app/services/medication_occurrences.py)의 알림 port는 optional | §5의 동일 session 실제 adapter는 #203, API 연결은 #202 |
-| 검증 범위 | 원본 §6은 revision·audit·알림 rollback까지 요구 | 기존 [B1 migration 테스트](../../../tests/migration/test_medication_schedule_migration.py), [B2 통합 테스트](../../../backend/app/tests/repositories/test_medication_schedule_repository_integration.py)는 unique·KST·종료 status·미래 취소 검증 | 기존 테스트 존재는 새 감사·알림 통합 검증 PASS 아님. §7 후속 증빙 필요 |
+| 처방 활성화 | Track B §4: 동일 transaction의 미래 pending·미전달 알림 취소 | B2는 `scheduled_at >= effective_at` pending 취소; [서비스](../../../../backend/app/services/medication_occurrences.py)의 알림 port는 optional | §5의 동일 session 실제 adapter는 #203, API 연결은 #202 |
+| 검증 범위 | 원본 §6은 revision·audit·알림 rollback까지 요구 | 기존 [B1 migration 테스트](../../../../tests/migration/test_medication_schedule_migration.py), [B2 통합 테스트](../../../../backend/app/tests/repositories/test_medication_schedule_repository_integration.py)는 unique·KST·종료 status·미래 취소 검증 | 기존 테스트 존재는 새 감사·알림 통합 검증 PASS 아님. §7 후속 증빙 필요 |
 
 ## 2. setup_reason 단일 반환
 
@@ -45,13 +45,13 @@ audit·종료 revision 증가는 열람본만의 세부 요구로 분리해 승�
 
 값의 존재와 사용자 확인은 별개다. `timing_text`, `frequency_per_day`, 처방 확정일에서 시작일·시각을
 추정하지 않는다. 현재 snapshot에 정확한 값의 저장 경로가 없다면 없는 값으로 판정한다. 새 필드나 NLP
-추출기를 이 제안만으로 추가하지 않는다. `duration_days`가 있으면 사용자가 확인할 종료일 후보는
+추출기를 이 결정만으로 추가하지 않는다. `duration_days`가 있으면 사용자가 확인할 종료일 후보는
 `start+duration-1`이고, null 기간을 묵시적 OPEN_ENDED 확인으로 취급하지 않는다.
 Frontend는 Backend reason을 표시·분기하고 우선순위를 재계산하지 않는다.
 `NO_ACTIVE_PRESCRIPTION`은 전체 상태이며 reason enum에 넣지 않는다.
 
 전체 `READY/PARTIAL/SETUP_REQUIRED/INACTIVE/NO_ACTIVE_PRESCRIPTION`과 앞선 aggregate 우선순위는 유지한다.
-마지막 분기는 **모든 약이 INACTIVE이면 전체 INACTIVE**로 제안한다. 원본의 “pending 없음” 조건은
+마지막 분기는 **모든 약이 INACTIVE이면 전체 INACTIVE**로 정한다. 원본의 “pending 없음” 조건은
 과거 pending 보존과 동시에 만족하지 않을 수 있으므로 제거하는 명시적 delta다. 이때 과거 pending도
 응답 목록에 남기고 기한·Check-in 상태로 표시한다. INACTIVE는 과거 Check-in 금지나 목록 비움을 뜻하지
 않는다. `PARTIAL`에서도 ready 약의 occurrence를 숨기지 않는다. 날짜별 fixture는 #202에서 남한솔이 검토한다.
@@ -60,9 +60,9 @@ reason은 추가하지 않는다. HTTP 정상 미설정 응답은 `200`이다.
 
 ## 3. 감사 저장과 time 보존
 
-`medication_schedule_audit`를 새 테이블로 제안한다. 기존 B3 `checkin_audit`에 섞지 않는다.
+`medication_schedule_audit`를 새 테이블로 정한다. 기존 B3 `checkin_audit`에 섞지 않는다.
 
-| 필드 | 제안 타입·제약 |
+| 필드 | 승인 타입·제약 |
 | --- | --- |
 | `id` | UUID PK |
 | `medication_schedule_id` | UUID FK → schedule, NOT NULL, 이력 삭제를 막는 RESTRICT |
@@ -79,11 +79,11 @@ snapshot은 `start_local_date`, `end_mode`, nullable `end_local_date`, 정렬된
 해당 revision 이하의 마지막 time 집합을 설정 snapshot으로 사용하고, 이 집합으로 occurrence를 생성하지는 않는다. 처방 원문·약명·용량·자유 텍스트는 넣지 않는다.
 Service에서 snapshot shape와 revision 연속성을 검증하고 현재 row와 같은 transaction에서 append한다.
 일반 수정·조회 API로 audit을 수정하거나 공개하지 않는다. 계정 삭제·legal hold 정책은
-[Privacy 기준](../../privacy-safety.md)을 따른다.
+[Privacy 기준](../../../privacy-safety.md)을 따른다.
 
 기존 time row는 변경·삭제하지 않는다. 생성 가능한 time은 schedule이 `ACTIVE`이고 `time.schedule_revision == schedule.revision`인 row다. 나머지는 retire로 해석한다. 취소·종료 revision에
 time row를 새로 만들 필요는 없으며 재활성화는 새 revision time을 만든다. 이것은 원본의 물리 status
-컬럼 요구를 바꾸는 제안이고, 승인 전에는 원본 준수 완료로 주장하지 않는다.
+컬럼 요구를 바꾸는 PD-417의 승인 delta이며 원본 전체의 준수 완료를 뜻하지 않는다.
 
 occurrence의 `cancelled_at`은 신규 취소 시 유효 시각을 보존하는 nullable UTC timestamptz로 추가한다.
 기존 CANCELLED row의 실제 시각은 알 수 없으므로 `updated_at`을 복사하거나 가짜 audit을 만들지 않는다.
@@ -152,12 +152,12 @@ commit되면 전달 이력을 보존한다. 읽음 처리는 전달 여부를 �
 | 이슈 | 병행 가능한 범위 | 의존성과 완료 증빙 | 담당 / 책임 리뷰 |
 | --- | --- | --- | --- |
 | #417 | 이 Decision과 차이·후속 정리 | 송은영·남한솔 승인, 원본 delta 적용 범위 확인 후 Target 반영 | 권가빈 / 송은영·남한솔 |
-| [#423](https://github.com/AI-HealthCare-05/AH_05_04/issues/423) | 승인 전 migration 계획 | 승인 후 audit·cancelled_at migration, 종료 revision·잠금 보완, baseline·rollback·DB 통합 증빙 | 권가빈 / 송은영, Frontend 의미 남한솔 |
-| #202 | 명확한 Check-in API·404·공통 오류·기존 검증 | setup reason은 #417 승인 후 DTO/OpenAPI/fixture/계약 테스트 동기화. PUT/PATCH는 #423 완료 및 #203 취소 adapter 연결 필요. migration 제외 유지 | 권가빈 / 송은영·남한솔 |
+| [#423](https://github.com/AI-HealthCare-05/AH_05_04/issues/423) | 승인된 DB 구현 | audit·cancelled_at migration, 종료 revision·잠금 보완, baseline·rollback·DB 통합 증빙 | 권가빈 / 송은영, Frontend 의미 남한솔 |
+| #202 | 명확한 Check-in API·404·공통 오류·기존 검증 | setup reason은 #417 승인에 따라 DTO/OpenAPI/fixture/계약 테스트 동기화. PUT/PATCH는 #423 완료 및 #203 취소 adapter 연결 필요. migration 제외 유지 | 권가빈 / 송은영·남한솔 |
 | #203 | 명확한 알림 저장·조회·읽음 | §5–6 승인 결과로 동일 session adapter·생성/전달 경합·과거 보존 검증. Schedule migration 제외 유지 | 권가빈 / 송은영·남한솔 |
 | #138 | 승인된 DTO를 소비하는 UI | reason 재계산 없음, PARTIAL·취소·재활성화·늦은 Check-in fixture | 남한솔 / 실제 구현 PR에서 별도 지정 |
 
-승인 후 구현 PR은 아래 시나리오를 자동 테스트로 증명한다. 이 문서에 적힌 기대값은 승인 전 확정 fixture가 아니다.
+후속 구현 PR은 아래 시나리오를 자동 테스트로 증명한다. 이 문서에 적힌 기대값은 승인된 기대값이며 구현 테스트 PASS 증빙은 아니다.
 
 - reason 복수 결손의 각 우선순위, 값 완비/확인 누락, READY·INACTIVE null, 새 version 재확인, PARTIAL 보존.
 - 최초/수정/재활성화/취소/반복취소/종료의 revision·audit·time 참조, same-key replay와 새 키 stale conflict.
@@ -168,5 +168,35 @@ commit되면 전달 이력을 보존한다. 읽음 처리는 전달 여부를 �
 - migration 단일 head·upgrade·baseline과 기존 nullable 취소 시각, 실제 이력 보유 downgrade 거부.
 - SELF 교차 사용자 404, no-store, 민감 snapshot 비로그, Frontend와 OpenAPI enum/requiredness 일치.
 
-이 PR은 문서만 변경한다. 기존 코드·자동 테스트의 존재 확인과 문서 링크·render·diff 검증은 수행하되
+선행 PR #424는 문서만 변경했다. 기존 코드·자동 테스트의 존재 확인과 문서 링크·render·diff 검증은 수행하되
 DB/API/Frontend 및 의료 eval 실행 결과를 새 계약의 PASS 증빙으로 주장하지 않는다.
+
+## 승인 증빙
+
+PR [#424](https://github.com/AI-HealthCare-05/AH_05_04/pull/424)의 승인 대상은 `4fdecc8af73a62803cd970160886115d0c91be36`, develop 머지는 `015571a0a928f1146654bc5a9dacccada5b361f0`이다. 책임 리뷰 URL·UTC 시각·적용 범위는 Decision의 승인표를 따른다. 문서 승인은 DB/API 구현이나 공개 승인을 대신하지 않는다.
+
+## #423 저장 구현·인계
+
+[PD-423 저장 통제 보완](../../../governance/decisions/2026-09-10-schedule-audit-storage.md)은
+별도 접근 제한 JSON baseline과 기존 #398 Runtime SELECT/INSERT 권한 정책의 감사 테이블 적용을 명시한다.
+**DB trigger와 ORM event는 추가하지 않으며 Runtime의 직접 SQL UPDATE/DELETE/TRUNCATE도 차단한다.** 사용자 작업 지시에
+따른 구현이며 이번 지정 도메인 리뷰는 별도로 필요하다. `423a1b2c3d4e`는 최신 develop의
+`3984b5c6d7e8` 뒤에 연결하며 기존 B1/B3 migration을 수정하지 않는다.
+
+#202는 `MedicationScheduleMutationService.put/cancel`을 동일 AsyncSession에서 사용한다.
+입력은 `ScheduleAuditSnapshot`으로 검증된 명시적 설정, SELF user, version medication ID,
+expected revision, 고정 effective_at이다. 공개 DTO 변환·frequency_per_day 일치 검증은 #202의
+입력 검증 책임이며 저장 서비스는 API route/DTO를 추가하지 않는다. Snapshot의 local_times는
+정렬·중복 제거된 HH:mm이고 민감 원문 필드를 허용하지 않는다.
+
+호출자는 공통 `SyncMutationIdempotencyService`에서 성공 snapshot 재현을 먼저 처리하고, 신규
+mutation과 암호화 snapshot 저장을 같은 transaction으로 commit한다. 저장 서비스는 자체 commit을
+하지 않는다. Service의 OwnershipNotFound/VersionConflict/RevisionConflict 예외는 #202에서
+기존 계약의 404/409로 매핑하며 새 공개 오류 코드를 만들지 않는다.
+
+#203은 `cancel_undelivered_for_occurrences`를 같은 session으로 구현·주입해야 한다. 현재 develop에
+실제 adapter가 없어 SQL 합성 adapter로 transaction rollback을 검증했다. 실제 알림 전달 상태 매핑과
+취소/전달 경합은 #203에서 수행한다. #423의 테스트를 실제 알림 연동 완료로 해석하지 않는다.
+
+[구현 검증 기록](../../../validation/issue-423-schedule-audit.md)을 참조한다. DB 분량 구현만으로
+전체 목표를 `current/`로 옮기거나 일정 API·Frontend 완료를 선언하지 않는다.

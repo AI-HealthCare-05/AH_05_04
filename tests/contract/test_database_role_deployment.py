@@ -11,13 +11,17 @@ def test_credentials_and_admin_process_are_separated() -> None:
         environment = services[name]["environment"]
         assert "env_file" not in services[name]
         assert not any(
-            "DB_ADMIN_PASSWORD" in str(value) or "SOURCE_WRITER_PASSWORD" in str(value)
+            "DB_ADMIN_PASSWORD" in str(value)
+            or "SOURCE_WRITER_PASSWORD" in str(value)
+            or "CATALOG_WRITER_PASSWORD" in str(value)
             for value in environment.values()
         )
     provisioner = services["provision-db-roles"]
     assert provisioner["profiles"] == ["database-admin"]
     assert provisioner["restart"] == "no"
     assert provisioner["environment"]["DB_ADMIN_PASSWORD"] == "${DB_ADMIN_PASSWORD}"
+    assert provisioner["environment"]["CATALOG_WRITER_USER"] == "${CATALOG_WRITER_USER:-}"
+    assert "CATALOG_WRITER_PASSWORD" not in provisioner["environment"]
     assert not any("SOURCE_WRITER_PASSWORD" in str(value) for value in provisioner["environment"].values())
     verifier = services["verify-db-head"]
     assert verifier["profiles"] == ["database-maintenance"]

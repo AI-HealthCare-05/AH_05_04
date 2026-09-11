@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
+from infra.python.catalog_role_policy import apply_catalog_role_policy
 from infra.python.source_management_role_policy import CATALOG_TABLES, apply_management_role_policy
 from infra.python.source_role_policy import SOURCE_TABLES, apply_source_role_policy, quoted_identifier
 
@@ -26,7 +27,7 @@ RUNTIME_MUTABLE_TABLES = frozenset(
     "rag_runtime_environment rag_release_evaluation_approval".split()
 )
 RUNTIME_APPEND_ONLY_TABLES = frozenset(
-    "prescription_version prescription_version_medication checkin_audit rag_citation "
+    "prescription_version prescription_version_medication checkin_audit medication_schedule_audit rag_citation "
     "rag_evidence_guideline rag_evidence_rule rag_evidence rag_evidence_knowledge "
     "rag_runtime_environment_transition medication_candidate_search_result "
     "ai_job_intake_context ai_job_execution_context ai_job_execution_identification".split()
@@ -41,7 +42,13 @@ RUNTIME_AUTH_UPDATE_COLUMNS = {
 
 
 async def provision_roles(
-    connection: AsyncConnection, *, owner: str, runtime: str, writer: str, management: str | None = None
+    connection: AsyncConnection,
+    *,
+    owner: str,
+    runtime: str,
+    writer: str,
+    management: str | None = None,
+    catalog_writer: str | None = None,
 ) -> None:
     """Caller must use a single admin transaction; failure must roll it back."""
     owner_sql, runtime_sql, writer_sql = (quoted_identifier(value) for value in (owner, runtime, writer))
@@ -114,6 +121,16 @@ async def provision_roles(
             connection, owner=owner, runtime=runtime, writer=writer, management=management
         )
 
+    if catalog_writer:
+        await apply_catalog_role_policy(
+            connection,
+            owner=owner,
+            runtime=runtime,
+            writer=catalog_writer,
+            source_writer=writer,
+            management=management,
+        )
+
 
 async def run_provisioning(environment: Mapping[str, str]) -> None:
     names = (
@@ -152,6 +169,7 @@ async def run_provisioning(environment: Mapping[str, str]) -> None:
                 runtime=environment["DB_APP_USER"],
                 writer=environment["SOURCE_WRITER_USER"],
                 management=environment.get("SOURCE_MANAGEMENT_USER") or None,
+                catalog_writer=environment.get("CATALOG_WRITER_USER") or None,
             )
     finally:
         await engine.dispose()

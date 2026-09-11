@@ -51,6 +51,7 @@ def test_scheduler_rejects_a_non_seoul_service_timezone() -> None:
 async def test_scheduler_generates_fourteen_local_dates_and_deadline_snapshots() -> None:
     seoul = timezone(timedelta(hours=9), name="Asia/Seoul")
     repository = AsyncMock()
+    repository.generation_lower_bound.return_value = None
     repository.mark_expired_schedules_ended.return_value = ()
     schedule = _schedule(start_local_date=date(2026, 9, 9))
     morning = _schedule_time(schedule, time(9, 0))
@@ -78,6 +79,7 @@ async def test_scheduler_generates_fourteen_local_dates_and_deadline_snapshots()
 async def test_scheduler_clips_to_schedule_dates_and_counts_duplicates() -> None:
     seoul = timezone(timedelta(hours=9), name="Asia/Seoul")
     repository = AsyncMock()
+    repository.generation_lower_bound.return_value = None
     repository.mark_expired_schedules_ended.return_value = (uuid4(),)
     schedule = _schedule(
         start_local_date=date(2026, 9, 11),
@@ -100,6 +102,7 @@ async def test_scheduler_clips_to_schedule_dates_and_counts_duplicates() -> None
 
 async def test_version_invalidation_calls_b5_port_with_cancelled_occurrences() -> None:
     repository = AsyncMock()
+    repository.generation_lower_bound.return_value = None
     notification_cancellation = AsyncMock()
     occurrence_ids = (uuid4(), uuid4())
     repository.cancel_future_for_prescription_version.return_value = occurrence_ids

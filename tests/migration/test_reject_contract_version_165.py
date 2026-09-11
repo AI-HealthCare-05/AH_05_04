@@ -68,7 +68,7 @@ def database(monkeypatch):
 def test_upgrade_preserves_legacy_null_and_roundtrips_when_empty(database):
     cfg, execute, _ = database
     before = asyncio.run(execute("SELECT * FROM rag_source_ingestion_run", fetch=True))[0]
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REVISION)
     after = asyncio.run(execute("SELECT * FROM rag_source_ingestion_run", fetch=True))[0]
     assert after["reject_code_contract_version"] is None
     assert {key: after[key] for key in before} == dict(before)
@@ -79,7 +79,7 @@ def test_upgrade_preserves_legacy_null_and_roundtrips_when_empty(database):
 
 def test_versioned_history_blocks_downgrade_without_changing_rows(database):
     cfg, execute, _ = database
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REVISION)
     asyncio.run(execute("UPDATE rag_source_ingestion_run SET reject_code_contract_version='source-reject-codes@1'"))
     with pytest.raises(RuntimeError, match="history must be preserved"):
         command.downgrade(cfg, PARENT)
@@ -106,7 +106,7 @@ def test_lifecycle_role_cannot_change_contract_version(database):
             try:
                 async with engine.begin() as conn:
                     heads = migration_heads()
-                    assert heads == (REVISION,)
+                    assert len(heads) == 1
                     assert validation_errors(heads[0], await read_database_head_state(conn)) == []
                     await conn.execute(text(f'SET LOCAL ROLE "{role}"'))
                     await conn.execute(text("UPDATE rag_source_ingestion_run SET run_status='FAILED'"))

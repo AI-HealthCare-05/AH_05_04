@@ -8,7 +8,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## 디렉터리 구조와 배치 원칙
 
-- [PD-398-M1 Source·Catalog 관리](./proposed/source-catalog-management-398.md): 분리된 관리 API, 서버 권한, 미사용 자료 수정·삭제와 감사 transaction, PD-398-R2 Snapshot 잠금 권한 분리.
+- [PD-398-M1 Source·Catalog 관리](./proposed/source-catalog-management-398.md): 분리된 관리 API, 서버 권한, 미사용 자료 수정·삭제와 감사 transaction, PD-398-R2 Snapshot 잠금 권한 분리, #372 Alias review_status 승인 보호 연동.
 - [PD-398 Python Candidate 결과 저장](./proposed/python-candidate-integrity-398.md): 결과 저장·최종화 원자성, 최소 권한, 기존 Trigger 제거 구현.
 - [PD-398 Python Prescription 무결성](./proposed/python-prescription-integrity-398.md): count/hash 저장·소비 검증·NOT NULL·최소 권한·기존 Trigger 제거, 확정·정정 성공 응답 멱등 재현.
 - [PD-398 Python append-only 이력](./proposed/python-append-only-integrity-398.md): Runtime 전이·Check-in·Evidence 이력의 Python transaction과 INSERT 전용 권한.
@@ -39,6 +39,10 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Backend 공통 구현 규칙](./current/backend-common-patterns.md): 소유권 확인, 실패 상태 저장
 - [PROFILE SELF 소유권 전환 계약 v1](./current/profile-self-ownership-v1.md): 본인 단일 SELF profile과 `profile_id` 기반 사용자 리소스 소유권 기준
 - 공통 오류: `code`, `message`, `details`, `trace_id`
+
+## 승인된 추가 목표
+
+- [Track B 일정 정합화 v1 (#417)](./targets/post-mvp-1/track-b-schedule-reconciliation-v1.md): PR #424 양 도메인 승인 및 Decision 증빙 연결. #423 DB 구현·리뷰 대기; 일정 API #202·실제 알림 #203 연동은 별도.
 
 ## Proposed 계약
 
@@ -117,5 +121,6 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 계약 변경은 관련 요구사항 ID, API 명세, 구현, 테스트와 함께 한 PR에서 갱신합니다. 필드 삭제·이름/타입 변경·필수 필드 추가는 Breaking Change로 취급합니다.
 
 - [Catalog build·approval handoff v2](./targets/post-mvp-1/catalog-build-v2.md): #329 리뷰 반영 구현·검토 대상. 독립 Ingredient, Alias 검색 dedupe, REJECTED 경계, 검증 포트·승인 상태 결속 manifest, Candidate 전체 artifact 검증, 원문 보존·normalized NFC 경계 및 P0 코드 체계 allowlist. 실제 DB·승인 adapter·Runtime 연결은 미완료.
+- [Catalog DB 적재·저장 연결안](./proposed/post-mvp-1/catalog-db-integration-v2.md): #166 후속 Proposed. v2 저장 준비·DB transaction·Set/member/hash 보존·읽기 전용 복원과 Candidate 인계 검증을 구현. 별도 Catalog Writer·#436/#444 Source Receipt 소비를 연결. D-03a 조건부 동의·Crosswalk 후속 방향 확인, D-02 및 실제 승인/감사 저장소는 후속.
 
 - [Source reject codes v1 구현 리뷰안](proposed/post-mvp-1/source-reject-codes-v1.md): #165 코드·버전·2-pass·실패 기록. 담당 리뷰 전 proposed, 사용자 지시에 따라 구현·검증 후 리뷰.
