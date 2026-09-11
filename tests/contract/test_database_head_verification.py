@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from scripts.ci.verify_database_head import (
@@ -122,3 +125,26 @@ def test_heads_only_mode_reports_single_head_without_database() -> None:
     from scripts.ci.verify_database_head import verify_single_head
 
     assert verify_single_head() == 0
+
+
+def test_heads_only_cli_does_not_depend_on_caller_pythonpath(tmp_path: Path) -> None:
+    """진단 자체가 `PYTHONPATH` 때문에 죽으면 원인을 가리는 실패가 하나 늘어난다 (#439).
+
+    `get_heads()`는 모든 revision 파일을 import하고, 그중 하나가 `provider_contracts`를
+    참조한다. CI의 alembic step은 `PYTHONPATH`를 넘기지만 이 진단 step은 그 앞에 있어
+    넘기지 않았고, head 개수 대신 `ModuleNotFoundError`가 났다. pytest는
+    `pythonpath = ["."]`로 저장소 루트를 올려 주므로 함수 호출 테스트로는 드러나지 않는다.
+    실제 CLI를 호출자 환경 없이 실행해 고정한다.
+    """
+    environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    completed = subprocess.run(  # noqa: S603 - 저장소 내 스크립트를 고정 인자로 실행한다
+        [sys.executable, str(ROOT / "scripts/ci/verify_database_head.py"), "--heads-only"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "Alembic head 단일 확인" in completed.stdout

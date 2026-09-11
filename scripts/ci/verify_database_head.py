@@ -9,6 +9,7 @@ CI 초반에 이 모드를 한 번 실행하면 수 초 안에 원인과 대응�
 
 import argparse
 import asyncio
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -68,8 +69,23 @@ def alembic_paths(root: Path = ROOT) -> tuple[Path, Path]:
     raise FileNotFoundError(f"Alembic 설정과 migration 디렉터리를 찾을 수 없습니다: {root}")
 
 
+def _ensure_migration_imports(root: Path) -> None:
+    """migration 모듈이 import하는 공용 패키지를 `sys.path`에 올립니다.
+
+    `ScriptDirectory.get_heads()`는 모든 revision 파일을 실제로 import하므로, 그중
+    `provider_contracts`를 참조하는 migration이 있으면 호출자의 `PYTHONPATH`에 의존하게
+    됩니다. CI의 alembic step은 그 값을 넘기지만 이 스크립트를 그대로 실행하면 head 개수
+    대신 `ModuleNotFoundError`가 나와, 원인을 알려주는 것이 목적인 진단이 오히려 원인을
+    가립니다. 호출자와 무관하게 동작하도록 여기서 경로를 보장합니다.
+    """
+    for path in (root, root / "backend"):
+        if path.is_dir() and str(path) not in sys.path:
+            sys.path.insert(0, str(path))
+
+
 def migration_heads(root: Path = ROOT) -> tuple[str, ...]:
     config_path, script_path = alembic_paths(root)
+    _ensure_migration_imports(root)
     alembic_config = Config(config_path)
     alembic_config.set_main_option("script_location", str(script_path))
     return tuple(ScriptDirectory.from_config(alembic_config).get_heads())
