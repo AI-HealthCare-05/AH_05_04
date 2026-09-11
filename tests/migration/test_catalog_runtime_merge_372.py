@@ -15,7 +15,9 @@ from app.core import config
 from scripts.ci.verify_database_head import ROOT, migration_heads, read_database_head_state, validation_errors
 
 
-@pytest.mark.parametrize("previous", ["166b8c9d0e1f", "175a1b2c3d4e", "166c9d0e1f20", "362c3d4e5f60"])
+@pytest.mark.parametrize(
+    "previous", ["166b8c9d0e1f", "175a1b2c3d4e", "166c9d0e1f20", "362c3d4e5f60", "166d0e1f2031", "165a0b1c2d3e"]
+)
 def test_catalog_and_runtime_heads_merge_preserving_existing_source(previous, monkeypatch):
     original = config.database_url
     name = "merge372_" + uuid4().hex

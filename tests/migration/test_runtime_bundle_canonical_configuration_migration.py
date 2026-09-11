@@ -336,8 +336,9 @@ def test_real_alembic_downgrade_is_refused_while_bundle_data_exists(
     asyncio.run(_seed_bundle_with_member())
 
     # 부모 revision에서 멈추므로 #175만 되돌리고 #398 부모 자체의 downgrade는 실행하지 않는다.
-    # merge head에서 상대 -1로 분기를 추측하지 않고 테스트 대상 revision과 부모를 명시한다.
-    result = _run_alembic("downgrade", "3984b5c6d7e8")
+    # merge head가 아니라 테스트 대상 revision을 기준으로 상대 -1을 쓰므로,
+    # 부모가 바뀌어도 분기를 추측하지 않고 down_revision을 그대로 따라간다.
+    result = _run_alembic("downgrade", f"{RUNTIME_BUNDLE_REVISION}-1")
 
     assert result.returncode != 0
     assert "Runtime Bundle 행이 존재하면" in result.stdout + result.stderr
@@ -355,7 +356,7 @@ def test_real_alembic_downgrade_succeeds_and_removes_identity_columns_when_empty
     assert asyncio.run(_count("rag_runtime_release_bundle")) == 0
     assert asyncio.run(_count("rag_runtime_bundle_source")) == 0
 
-    downgraded = _run_alembic("downgrade", "3984b5c6d7e8")
+    downgraded = _run_alembic("downgrade", f"{RUNTIME_BUNDLE_REVISION}-1")
     assert downgraded.returncode == 0, downgraded.stdout + downgraded.stderr
 
     for table, columns in IDENTITY_COLUMNS.items():

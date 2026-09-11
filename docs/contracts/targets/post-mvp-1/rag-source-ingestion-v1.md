@@ -340,6 +340,13 @@ Source Writer의 기존 Run 상태 갱신은 명시한 lifecycle 컬럼에만 �
 ValueError로 Receipt 반환을 거부한다. 예를 들어 수집 transport TIMEOUT을 Snapshot 검증 실패로 재분류하지 않는다.
 Run 자체의 저장·감사 내역을 제거하는 동작은 아니다. 신규 상태나 실패 코드는 의미 검토와 테스트 없이 매핑에 자동 포함되지 않는다.
 
+### #165 reject_code 구현 리뷰안
+
+제품 식별자 세 코드·버전·2-pass·실패 감사의 구현 리뷰 기준은
+[Source reject codes v1](../../proposed/post-mvp-1/source-reject-codes-v1.md)과
+[PD-165 리뷰안](../../../governance/decisions/2026-09-11-product-reject-contract-v1.md)을 참조한다.
+담당 승인 전 proposed이며, 이 참조가 기존 Target의 포괄적 부분 거부 경계를 자동 승인 변경하지 않는다.
+
 
 ### PR #436 실패 매핑 보완 리뷰안
 

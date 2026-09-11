@@ -14,7 +14,7 @@
 - Policy foundation: `IMPLEMENTED`
 - Issue completion: `IN_PROGRESS`
 - Effective enforcement: `NOT_IMPLEMENTED`
-- Infrastructure adapter: `NOT_IMPLEMENTED`
+- Infrastructure adapter: `PARTIALLY_IMPLEMENTED`
 - Reconciliation adapter: `NOT_IMPLEMENTED`
 - HOLDOUT: `0`; access authorization: `false`; Freeze: `false`; actual run: `NOT_CREATED`
 - Release eligible: `false`; Production remains closed.
@@ -34,7 +34,8 @@
 - single-use capability, revocation guard, 성공 결과 멱등 반환과 UNKNOWN 자동 재실행 차단
 - UNKNOWN 독립 승인 reconciliation adapter는 아직 구현하지 않음
 - 실제 저장 위치를 노출하지 않는 random UUIDv4 logical reference
-- production CLI에 등록되지 않은 synthetic adapter 검증
+- protected data-plane 제한 로그인·artifact hash 결속·durable INTENT/UNKNOWN adapter 부분 구현
+- approval/grant/revoke/Freeze control-plane service는 아직 구현하지 않음
 
 ## 실제 인프라 결정 요청
 
@@ -44,8 +45,8 @@
 - `APPROVE_APPEND_ONLY_AUDIT_AND_RETENTION`
 - `APPROVE_BACKUP_REVOKE_INCIDENT_RESPONSE`
 
-위 결정과 독립 승인이 기록되기 전에는 PostgreSQL migration, credential, protected loader와
-`run-protected-holdout`을 구현하거나 HOLDOUT 작성을 시작하지 않습니다.
+실제 환경 provisioning과 독립 승인이 기록되기 전에는 protected credential/loader를 활성화하거나
+`run-protected-holdout`을 등록하고 HOLDOUT 작성을 시작하지 않습니다.
 
 ## 남은 Blocker
 
@@ -54,4 +55,4 @@
 - `WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION`
 - `WAITING_FOR_HOLDOUT_FREEZE`
 
-Captured at `2026-09-09T00:00:00.000000Z`. Foundation self hash: `657e94a374d91f37604935ffe548e0bc224b37bd53c052f009df14f38b895969`
+Captured at `2026-09-09T00:00:00.000000Z`. Foundation self hash: `6b2b0e47baf7a9e5666a6db292da4dfa74828c6f1d19d6e5478166e3215d9377`

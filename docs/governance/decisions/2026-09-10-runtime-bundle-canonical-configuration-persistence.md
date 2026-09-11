@@ -3,11 +3,13 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-175-20260910` |
-| 상태 | **Proposed** — 지정 책임 리뷰어 승인 대기 |
+| 상태 | **Approved** — PR #416 최신 HEAD(`96fd4693`)에서 지정 책임 리뷰어 3인 전원 승인 (2026-09-10) |
+| 승인일 | 2026-09-10 (최종 승인 `2026-09-10T14:38:31Z`) |
 | 제안일 | 2026-09-10 |
 | 제안·구현 | 정현우 (`@ceohwj`) — AI/RAG 구현 담당 |
 | 책임 리뷰 | 송은영 (`@phina-io`) — persistence·FK·transaction / 권가빈 (`@hazelnutflavoured`) — Product·Safety |
-| 추적 Issue·PR | [#175](https://github.com/AI-HealthCare-05/AH_05_04/issues/175) · [PR #416](https://github.com/AI-HealthCare-05/AH_05_04/pull/416) |
+| 추적 Issue·PR | [#175](https://github.com/AI-HealthCare-05/AH_05_04/issues/175) · [PR #416](https://github.com/AI-HealthCare-05/AH_05_04/pull/416) (merge `086b2aa0`) |
+| 승인 Evidence | [`docs/validation/rag/issue-175/decision-approval-evidence.json`](../../validation/rag/issue-175/decision-approval-evidence.json) |
 | 관련 계약 | [`rag-runtime-v1.md`](../../contracts/targets/post-mvp-1/rag-runtime-v1.md) — `Approved Target · Not implemented` |
 | Migration | `175a1b2c3d4e` (`201a1b2c3d4e` 후속) |
 | 선행 Decision | 없음. #164 저장 구조를 추정 없이 확장한다. |
@@ -49,13 +51,19 @@ PR #416 리뷰에서 확인된 사실이다.
 
 | 컬럼 | 타입 | 근거 |
 | --- | --- | --- |
-| `source_version` | `String(255)` NOT NULL | 해시 입력. 복합 FK로 pinning |
+| `source_version` | `String(255)` NOT NULL | 해시 입력. build transaction 내 조회로 snapshot과 일치 검증(아래) |
 | `canonical_checksum` | `String(64)` NOT NULL | 해시 입력 |
 | `approval_version` | `String(80)` NOT NULL | 해시 입력 |
 | `scope_policy_hash` | `String(64)` NOT NULL | 해시 입력 |
 | `freshness_policy_hash` | `String(64)` NOT NULL | 해시 입력 |
 
-복합 FK `fk_rag_runtime_bundle_source_snapshot_version` `(source_snapshot_id, source_version)` → `rag_source_snapshot(id, source_version)`를 추가한다. #164가 만든 `uq_rag_source_snapshot_id_version`이 정확히 이 용도의 unique이며, 복사한 문자열을 신뢰하는 대신 **참조로 version을 고정**한다. member가 snapshot에 없는 version을 주장할 수 없다. #164의 단일 컬럼 FK `fk_rag_runtime_bundle_source_snapshot`은 **유지한다** — 복합 FK가 이를 포섭하지만, 머지된 constraint를 제거하는 것은 이 Issue 범위보다 넓고 `tests/migration`이 그 존재를 단정한다.
+**`source_version`은 build transaction 내 조회로 검증한다.** `RagRuntimeRepository._assert_member_versions_exist`가 저장 직전 각 member의 `(source_snapshot_id, source_version)` 쌍이 `rag_source_snapshot`에 존재하는지 확인하고, 없으면 `RagRuntimeBundleSourceVersionMismatchError`로 fail-closed한다. member가 snapshot에 없는 version을 주장할 수 없다는 보장은 동일하다.
+
+#164가 만든 단일 컬럼 FK `fk_rag_runtime_bundle_source_snapshot`은 유지한다.
+
+> **정정 이력 (2026-09-11).** 이 절은 당초 복합 FK `fk_rag_runtime_bundle_source_snapshot_version` `(source_snapshot_id, source_version)` → `rag_source_snapshot(id, source_version)` 추가를 규정했다. 구현 중 그 FK가 #369가 만든 `uq_rag_source_snapshot_id_version`에 의존해, #369의 downgrade가 그 unique를 드롭할 때 `DependentObjectsStillExistError`로 막히는 것을 확인했다(격리 실행: develop 11 passed vs 해당 브랜치 12 errors). #398이 DB 무결성을 애플리케이션 계층으로 옮긴 방향에 맞춰 **복합 FK를 도입하지 않고** 위 조회 검증을 채택했으며, PR #416의 승인 리뷰도 FK 제거를 확인한 상태에서 제출됐다.
+>
+> **따라서 `fk_rag_runtime_bundle_source_snapshot_version`은 존재하지 않는다.** 후속 구현은 이 이름의 DB 제약을 승인된 보장으로 전제해서는 안 된다. 아래 「승인 Evidence」의 review ID·commit OID·문서 SHA-256은 승인 시점 원본이며 이 정정으로 변경되지 않는다.
 
 `rag_runtime_release_bundle`:
 
@@ -108,6 +116,7 @@ Migration은 `rag_runtime_release_bundle`·`rag_runtime_bundle_source`에 행이
 
 | 대안 | 판단 |
 | --- | --- |
+| **복합 FK로 `source_version` pinning** | 기각(구현 중 전환). #369의 unique에 의존해 그쪽 downgrade를 막았다. 이전 migration이 후속 migration의 제약을 알아야 하는 역방향 의존이 생긴다. |
 | **해시를 저장 가능한 범위로 축소** (승인·scope·freshness policy hash·artifact version·환경을 해시에서 제거) | 기각. `rag-runtime-v1.md`가 Guard에 「Bundle 전체 Source·Snapshot Member의 승인·Freshness·Scope Policy 무결성」 검사를 요구한다. 이를 identity에서 빼면 계약이 요구하는 결속이 약해진다. |
 | **정규화된 `rag_runtime_bundle_artifact` 테이블 도입** | 보류. `rag_runtime_bundle_source`와 대칭이고 가변 cardinality에 적합하지만, #164가 머지한 bundle 행 컬럼 7개를 폐기해야 해 변경 폭이 커진다. artifact 종류는 계약이 5종으로 고정하므로 additive 컬럼으로 현재 요구를 충족한다. 종류가 늘거나 artifact별 `required`/`selected_for_operation`이 필요해지면 재검토한다. |
 | **DB Trigger로 member 불변 강제** | 기각. `CONTRIBUTING.md`가 요구사항·승인 계약에 없는 Trigger 도입을 금지한다. public write 차단 + 재계산 검증 2단으로 대체한다. |
@@ -145,9 +154,30 @@ import 체인(`runtime_bundle_builder` → `catalog.types`, `source_ingestion.sn
 - **Graph·Validator version 고정.** `rag-runtime-v1.md`는 Bundle이 Graph·Validator를 고정한다고 적었으나 manifest 테이블에 `graph_ref`·`validator_ref`가 없다. 컬럼 추가와 계약 문장 개정 중 어느 쪽인지 미결이다.
 - **`current/` 승격.** 위 두 항목과 외부 승인 게이트가 남아 있어 `rag-runtime-v1.md`는 `targets/`에 유지한다.
 
-## 승인 및 적용 조건
+## 승인 및 적용 조건 — 충족
 
-1. `@phina-io`가 migration·복합 FK·CHECK·transaction 경계와 「해시 입력 = 저장 컬럼」 원칙을 승인한다.
-2. `@hazelnutflavoured`가 backfill 금지와 fail-closed 기본값 금지를 승인한다.
-3. 두 승인 모두 PR #416 최신 HEAD 기준으로 기록한다. 승인 전에는 이 Decision을 `Approved`로 전이하지 않으며, PR 병합만으로 승인을 대체하지 않는다.
-4. `backend` → `ai_worker` 경계 결정을 함께 기록한다. 배포 이미지 COPY 방식(현재)과 `rag_runtime/` 이전 중 어느 쪽인지 명시한다. 이 경계는 service뿐 아니라 **repository까지** 확장된다 — §6의 행 기준 재계산 검증이 kernel의 `canonical_runtime_bundle_manifest_hash`를 필요로 한다.
+| # | 조건 | 상태 |
+| --- | --- | --- |
+| 1 | `@phina-io`가 migration·CHECK·무결성 경계·transaction 경계와 「해시 입력 = 저장 컬럼」 원칙을 승인 | ✅ `APPROVED` (승인 대상 구현은 복합 FK 없이 조회 검증을 쓰는 상태였다 — §2 정정 이력) |
+| 2 | `@hazelnutflavoured`가 backfill 금지와 fail-closed 기본값 금지를 승인 | ✅ `APPROVED` |
+| 3 | 두 승인 모두 PR #416 최신 HEAD 기준으로 기록 | ✅ 3인 전원 `96fd4693` 대상, 승인 이후 추가 커밋 0건 |
+| 4 | `backend` → `ai_worker` 경계 결정을 함께 기록 | ✅ (A)안 확정 (§「함께 결정할 사항」) |
+
+### 승인 Evidence
+
+| 리뷰어 | 역할 | 상태 | 제출 시각 | 대상 commit |
+| --- | --- | --- | --- | --- |
+| `@hazelnutflavoured` | Product·Safety | `APPROVED` | 2026-09-10T14:16:16Z | `96fd4693` |
+| `@phina-io` | persistence·FK·transaction | `APPROVED` | 2026-09-10T14:17:15Z | `96fd4693` |
+| `@Jye-rookie` | #398 DB 무결성 정합 | `APPROVED` | 2026-09-10T14:38:31Z | `96fd4693` |
+
+- PR #416 check run 7종(`test`, `lint`, `frontend`, `test-backend`, `test-worker`, `test-migration`, `test-inventory`) 모두 `success`
+- 병합: 2026-09-10T14:43:46Z, merge commit `086b2aa0`
+- 상세 immutable evidence(review ID·node ID·URL·문서 SHA-256)는 [`decision-approval-evidence.json`](../../validation/rag/issue-175/decision-approval-evidence.json)에 있다. `#173` 선례의 수집 기준을 따른다.
+
+### 이 승인이 부여하지 않는 것
+
+- **`current/` 승격 아님.** `rag-runtime-v1.md`는 `Approved Target · Not implemented`로 `targets/`에 유지한다. 위 「미해소로 남기는 항목」의 Worker 호환성 검사와 Graph·Validator 고정이 남아 있다.
+- **공개 게이트 해제 아님.** `PUBLIC_TRACK_F=false`를 유지한다.
+- **`READY`·active pointer 권한 아님.** 이 Decision은 `BUILDING` 범위의 저장 계약만 확정한다. `READY`·`RETIRED`·환경 포인터 전환·Rollback 실행은 RAG-17(#180) 소유다.
+- **Issue #175 Close 근거 아님.** 차단 코드 `BLOCKED_BY_RUNTIME_BUNDLE_WORKER_DEPLOYMENT_DECISION`이 남아 Open을 유지한다.
