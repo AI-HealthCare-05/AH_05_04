@@ -9,6 +9,7 @@ import app.models  # noqa: F401
 from app.core import config
 from app.core.db.databases import Base, get_db_session
 from app.main import fastapi_app
+from app.tests.db_extensions import EXTENSION_SCHEMA, ensure_trigram_extension
 
 TEST_DATABASE_URL = URL.create(
     drivername="postgresql+asyncpg",
@@ -19,10 +20,12 @@ TEST_DATABASE_URL = URL.create(
     database="test",
 )
 
+
 test_engine = create_async_engine(
     TEST_DATABASE_URL,
     pool_pre_ping=True,
     poolclass=NullPool,
+    connect_args={"server_settings": {"search_path": f"public,{EXTENSION_SCHEMA}"}},
 )
 
 
@@ -32,6 +35,7 @@ test_engine = create_async_engine(
 )
 async def initialize_database() -> AsyncIterator[None]:
     async with test_engine.begin() as connection:
+        await ensure_trigram_extension(connection, EXTENSION_SCHEMA)
         await connection.run_sync(Base.metadata.drop_all)
         await connection.run_sync(Base.metadata.create_all)
 

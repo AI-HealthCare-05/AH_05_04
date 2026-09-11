@@ -75,3 +75,17 @@ normalized 필드·공식 Identity·참조·버전·build config의 NFC 검증�
 Candidate hash 직렬화에서도 전체 문자열 NFC 변환을 제거해 원문 바이트를 결속한다.
 기존에 허용하던 NFC 입력의 hash는 동일하다. 새로 허용되는 NFD 표시값의 hash는 NFC 표시값과
 구분한다. 승인·JSONL·manifest 검증은 우회하지 않는다. 정현우의 최종 재리뷰 대상이다.
+
+## #166 DB 후속 2단계: v2 hash 검증 보강
+
+기존 schema/spec 및 `catalog_manifest_hash`의 envelope 의미를 유지한다.
+JSON manifest의 최상위·중첩 객체에 중복 key가 있으면 마지막 값으로 덮어쓰지 않고
+기존 `CATALOG_MANIFEST_BINDING_INVALID`로 거부한다. 같은 값을 반복한 중복 key도 거부한다.
+공개 Candidate 인계에서는 기존 `CATALOG_MANIFEST_INVALID`로 처리한다.
+이는 정상 producer payload나 hash 계산식의 변경이 아닌 모호한 입력의 검증 보강이다.
+
+고정 bytes·digest와 Candidate 인계 회귀는 `tests/fixtures/rag/catalog/hash-v2/` 및
+`ai_worker/tests/rag/catalog/test_hash_contract_v2.py`를 따른다. 내부 DB 저장 metadata 설계는
+`docs/designs/jye-rookie/issue-166-db-integration-plan.md`에 기록하며 아직 새 공유 DTO·DB schema가 아니다.
+Candidate projection·Runtime medication manifest 분리는 새 계약 버전 제안으로 유지하고,
+D-02 실행 참조를 ingestion run으로 대체하지 않는다.

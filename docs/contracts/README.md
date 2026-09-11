@@ -8,7 +8,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## 디렉터리 구조와 배치 원칙
 
-- [PD-398-M1 Source·Catalog 관리](./proposed/source-catalog-management-398.md): 분리된 관리 API, 서버 권한, 미사용 자료 수정·삭제와 감사 transaction, PD-398-R2 Snapshot 잠금 권한 분리.
+- [PD-398-M1 Source·Catalog 관리](./proposed/source-catalog-management-398.md): 분리된 관리 API, 서버 권한, 미사용 자료 수정·삭제와 감사 transaction, PD-398-R2 Snapshot 잠금 권한 분리, #372 Alias review_status 승인 보호 연동.
 - [PD-398 Python Candidate 결과 저장](./proposed/python-candidate-integrity-398.md): 결과 저장·최종화 원자성, 최소 권한, 기존 Trigger 제거 구현.
 - [PD-398 Python Prescription 무결성](./proposed/python-prescription-integrity-398.md): count/hash 저장·소비 검증·NOT NULL·최소 권한·기존 Trigger 제거, 확정·정정 성공 응답 멱등 재현.
 - [PD-398 Python append-only 이력](./proposed/python-append-only-integrity-398.md): Runtime 전이·Check-in·Evidence 이력의 Python transaction과 INSERT 전용 권한.
@@ -40,13 +40,19 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [PROFILE SELF 소유권 전환 계약 v1](./current/profile-self-ownership-v1.md): 본인 단일 SELF profile과 `profile_id` 기반 사용자 리소스 소유권 기준
 - 공통 오류: `code`, `message`, `details`, `trace_id`
 
+## 승인된 추가 목표
+
+- [Track B 일정 정합화 v1 (#417)](./targets/post-mvp-1/track-b-schedule-reconciliation-v1.md): PR #424 양 도메인 승인 및 Decision 증빙 연결. #423 DB 구현·리뷰 대기; 일정 API #202·실제 알림 #203 연동은 별도.
+
 ## Proposed 계약
 
 - [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태, row 없음=미동의, Backend·Worker 공통 fixture 판정, WorkerMessage/Stream 비전송, CONSENT_REQUIRED 및 OCR CONSENT_WITHDRAWN 차단 의미. Proposed · 미구현 · Production 공개 승인 아님. 확인 필요: 권가빈·김지혜·정현우·남한솔.
 
 - [Track B UNCONFIRMED backlog v1](./proposed/unconfirmed-backlog-v1.md): PD-418 URL·cursor·DTO·오류 제안. 실제 v1 router 등록 보류, 테스트 앱의 #413 PUT→GET HTTP 통합 검증. Cursor 404의 첫 페이지 재조회 명시, 계약 및 등록 HEAD의 Backend/Frontend 승인 필요.
 
-- [Track B Notification 계약 v1 (#203)](./proposed/track-b-notifications-v1.md): 알림 저장·게시·읽음·재알림 상세 제안. PD-203 도메인 조율 대기·미구현이며 #202와의 통합 접점 및 검증 계획 포함.
+- [Track B Notification 계약 v1 (#203)](./proposed/track-b-notifications-v1.md): PD-203 기반 알림 저장·목록·읽음·재알림 구현 브랜치. 지정 리뷰어 승인 및 #202 일정 API 통합 전이며 current 계약 아님.
+
+- [Track B 일정 정합화 제안 v1 (#417)](./proposed/track-b-schedule-reconciliation-v1.md): setup reason·일정 Audit·time retire·revision·알림 취소 transaction의 승인 요청안. DB 후속 #423과 #202·#203 인계 기준; 승인 전 구현 근거 아님.
 
 - [Source Artifact·REJECTS 보존·삭제 정책 초안 (#335)](./proposed/post-mvp-1/source-artifact-retention-cleanup.md): PM 30일 유예·참조 보존·수동 배치 승인 반영, 통합 검토 대상, 후속 구현 [#347](https://github.com/AI-HealthCare-05/AH_05_04/issues/347)·김지혜 담당. Local 합성 #347의 승인 순서·revision·경합 잠금·DB 감사 근거·참조 범위 보완 연결 포함. 운영 삭제·활성화 승인 아님.
 
@@ -117,5 +123,6 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 계약 변경은 관련 요구사항 ID, API 명세, 구현, 테스트와 함께 한 PR에서 갱신합니다. 필드 삭제·이름/타입 변경·필수 필드 추가는 Breaking Change로 취급합니다.
 
 - [Catalog build·approval handoff v2](./targets/post-mvp-1/catalog-build-v2.md): #329 리뷰 반영 구현·검토 대상. 독립 Ingredient, Alias 검색 dedupe, REJECTED 경계, 검증 포트·승인 상태 결속 manifest, Candidate 전체 artifact 검증, 원문 보존·normalized NFC 경계 및 P0 코드 체계 allowlist. 실제 DB·승인 adapter·Runtime 연결은 미완료.
+- [Catalog DB 적재·저장 연결안](./proposed/post-mvp-1/catalog-db-integration-v2.md): #166 후속 Proposed. v2 저장 준비·DB transaction·Set/member/hash 보존·읽기 전용 복원과 Candidate 인계 검증을 구현. 별도 Catalog Writer·#436/#444 Source Receipt 소비를 연결. D-03a 조건부 동의·Crosswalk 후속 방향 확인, D-02 및 실제 승인/감사 저장소는 후속.
 
 - [Source reject codes v1 구현 리뷰안](proposed/post-mvp-1/source-reject-codes-v1.md): #165 코드·버전·2-pass·실패 기록. 담당 리뷰 전 proposed, 사용자 지시에 따라 구현·검증 후 리뷰.

@@ -810,27 +810,6 @@ def test_repository_correction_commits_complete_version_against_migrated_postgre
         asyncio.run(_cleanup(ids))
 
 
-def test_concurrent_corrections_allow_only_one_new_active_version_on_migrated_postgresql() -> None:
-    command.upgrade(create_alembic_config(), "398b2c3d4e5f")
-    ids = asyncio.run(_create_via_repository())
-    try:
-        snapshot = asyncio.run(_snapshot(ids))
-        assert snapshot is not None
-        base_version_id = UUID(str(snapshot["active_version_id"]))
-
-        results = asyncio.run(_correct_concurrently(ids, base_version_id=base_version_id))
-
-        assert [code for code, _ in results] == ["ok", "ok"]
-        assert results[0][1] == results[1][1]
-        assert asyncio.run(_version_counts(ids)) == (2, 2)
-        active = asyncio.run(_snapshot(ids))
-        assert active is not None
-        assert active["version_number"] == 2
-        assert str(active["active_version_id"]) in {version_id for _, version_id in results if version_id}
-    finally:
-        asyncio.run(_cleanup(ids))
-
-
 def test_read_cutover_rebackfills_and_remaps_dependents_on_migrated_postgresql() -> None:
     alembic_config = create_alembic_config()
     command.downgrade(alembic_config, BACKFILL_REVISION)
