@@ -7,7 +7,7 @@
 | 담당 리뷰어 | 송은영 (`@phina-io`) — persistence·FK·transaction |
 | Product/Safety 리뷰 | 권가빈 (`@hazelnutflavoured`) |
 | 상위 계약 | [`targets/post-mvp-1/rag-runtime-v1.md`](../../contracts/targets/post-mvp-1/rag-runtime-v1.md) (Approved Target · Not implemented) |
-| 문서 상태 | 구현 설계 · Migration `175a1b2c3d4e` · [`PD-175-20260910`](../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md) Review pending |
+| 문서 상태 | 구현 설계 · Migration `175a1b2c3d4e` · [`PD-175-20260910`](../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md) Approved · 구현 PR #416 병합(`086b2aa0`) |
 
 ## 1. 착수 판단 근거
 
@@ -216,14 +216,14 @@ RUNTIME_BUNDLE_MANIFEST_PROJECTION_VERSION = "rag-runtime-bundle-manifest-v1"
 | `BUILDING` member 임의 update 불가 | `test_runtime_bundle_repository.py` (member 변경 경로 0건) + `test_runtime_bundle_build.py` (생성 후 member 추가 시 재계산 해시 불일치 탐지) |
 | 하위 component 미완료 시 `READY`·active pointer 0건 | `test_runtime_bundle_build.py` |
 | build failure이 active pointer 미변경 | `test_runtime_bundle_build.py` — 거부 시 manifest조차 저장 0건 |
-| **해시 저장 정합(리뷰 지적)** | `test_runtime_bundle_build.py` — 저장→재조회→해시 재계산 일치, artifact version만 다른 두 구성의 개별 검증, 복합 FK로 version 위조 차단 |
+| **해시 저장 정합(리뷰 지적)** | `test_runtime_bundle_build.py` — 저장→재조회→해시 재계산 일치, artifact version만 다른 두 구성의 개별 검증, build transaction 내 조회 검증으로 version 위조 차단 |
 
 테스트 명령은 `#175`가 지정한 3개를 그대로 사용한다.
 
 ## 10. 공유 계약 영향
 
 - 환자용 API·공개 DTO·OpenAPI 변경 **0건**.
-- **DB 스키마 변경 있음.** Migration `175a1b2c3d4e`가 `rag_runtime_bundle_source`에 5개, `rag_runtime_release_bundle`에 8개 컬럼과 복합 FK·CHECK를 추가한다. 순수 additive이며 컬럼 삭제 0건이다. 근거와 대안은 [`PD-175-20260910`](../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md)에 기록했다.
+- **DB 스키마 변경 있음.** Migration `175a1b2c3d4e`가 `rag_runtime_bundle_source`에 5개, `rag_runtime_release_bundle`에 8개 컬럼과 CHECK를 추가한다. 순수 additive이며 컬럼 삭제 0건이다. **복합 FK는 도입하지 않는다** — #369의 `uq_rag_source_snapshot_id_version`에 의존해 그쪽 downgrade를 막으므로, `source_version` 일치는 build transaction 내 조회로 검증한다(`_assert_member_versions_exist`). 근거와 대안은 [`PD-175-20260910`](../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md)에 기록했다.
 - 기존 행 backfill을 하지 않는다. Runtime Bundle 행이 있으면 migration이 실패한다 — 승인·정책 hash를 추정해 채우면 검증되지 않은 내용에 provenance를 조작해 넣는 것이다.
 - `rag-runtime-v1.md`에 「Bundle Manifest Hash와 저장 정합」 절을 추가하고 `docs/contracts/README.md`·`targets/post-mvp-1/README.md` 인덱스를 갱신했다. 문서는 `targets/`에 유지하며 `current/` 승격은 하지 않는다(§2).
 - 새 enum·status·column·queue **0건**. member 어휘는 머지된 `RagRuntimeSourcePurpose`를, snapshot 사용 가능 판정은 머지된 `evaluate_snapshot_use_eligibility`와 `SnapshotUseFailureCode`를 사용한다.
