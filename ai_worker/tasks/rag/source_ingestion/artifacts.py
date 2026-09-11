@@ -2,11 +2,12 @@
 
 import hashlib
 import re
-import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
+
+from ai_worker.tasks.rag.source_ingestion.reject_codes import validate_parser_location
 
 _SAFE_REJECT_CODE_PATTERN = re.compile(r"[A-Z][A-Z0-9_]{0,99}")
 
@@ -110,8 +111,10 @@ def _validate_rejection_binding(
         raise ValueError("REJECTS reject_code는 안전한 고정 코드여야 합니다.")
     if parser_location is None or not parser_location.strip():
         raise ValueError("REJECTS parser_location은 비어 있을 수 없습니다.")
-    if len(parser_location) > 255 or any(unicodedata.category(character) == "Cc" for character in parser_location):
-        raise ValueError("REJECTS parser_location 형식이 올바르지 않습니다.")
+    try:
+        validate_parser_location(parser_location)
+    except ValueError:
+        raise ValueError("REJECTS parser_location 형식이 올바르지 않습니다.") from None
 
 
 class RawArtifactStore(Protocol):

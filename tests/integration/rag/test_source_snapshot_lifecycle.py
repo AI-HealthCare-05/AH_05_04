@@ -123,12 +123,16 @@ async def isolated_schema() -> AsyncIterator[None]:
         await admin_engine.dispose()
 
 
-async def _seed_operation(suffix: str) -> SourceOperationIdentity:
+async def _seed_operation(suffix: str, *, product: bool = False) -> SourceOperationIdentity:
     identity = SourceOperationIdentity(
         source_code=f"SYNTHETIC_SOURCE_{suffix}",
         endpoint_code=f"SYNTHETIC_ENDPOINT_{suffix}",
         operation_code=f"SYNTHETIC_OPERATION_{suffix}",
     )
+    if product:
+        identity = SourceOperationIdentity(
+            "MFDS_PRODUCT_APPROVAL", "MFDS_PRODUCT_APPROVAL_API", "LIST_APPROVED_PRODUCTS"
+        )
     async with session_factory.begin() as session:
         repository = RagSourceCatalogRepository(session)
         source = await repository.create_source(
@@ -403,7 +407,7 @@ async def test_outer_transaction_rollback_removes_snapshot_and_histories() -> No
 
 
 async def test_rejection_artifact_is_stored_with_safe_metadata() -> None:
-    identity = await _seed_operation("REJECTIONS")
+    identity = await _seed_operation("REJECTIONS", product=True)
     raw_artifacts = _stored_artifacts(minute=9)
     rejection = StoredRawArtifact(
         page_number=None,
@@ -416,7 +420,7 @@ async def test_rejection_artifact_is_stored_with_safe_metadata() -> None:
         storage_backend="PRIVATE_OBJECT_STORAGE",
         object_key="source-ingestion/synthetic/reject-0001.json",
         artifact_kind=IngestionArtifactKind.REJECTS,
-        reject_code="MISSING_ITEM_SEQ",
+        reject_code="ITEM_SEQ_REQUIRED",
         parser_location="page[1].record[3]",
     )
 
@@ -424,7 +428,12 @@ async def test_rejection_artifact_is_stored_with_safe_metadata() -> None:
         result = await persist_product_ingestion_result(
             repository=SqlAlchemySourceSnapshotRepository(session),
             ingestion=_ingestion(identity, _CHECKSUM_A),
-            metadata=replace(_metadata("external:rejections", minute=9), rejected_record_count=1),
+            metadata=replace(
+                _metadata("external:rejections", minute=9),
+                rejected_record_count=1,
+                parser_version="mfds-product-reject-parser@1",
+                reject_code_contract_version="source-reject-codes@1",
+            ),
             artifacts=(*raw_artifacts, rejection),
         )
 
@@ -439,34 +448,20 @@ async def test_rejection_artifact_is_stored_with_safe_metadata() -> None:
         ).all()
 
     assert run is not None
-    assert run.run_status is RagIngestionRunStatus.SUCCEEDED_WITH_REJECTIONS
+    assert run.run_status is RagIngestionRunStatus.FAILED
+    assert run.failure_code == "PARSER_VALIDATION_FAILED"
+    assert run.snapshot_id is None
     assert len(artifacts) == 2
     stored_rejection = next(
         artifact for artifact in artifacts if artifact.artifact_kind is RagSourceIngestionArtifactKind.REJECTS
     )
     assert stored_rejection.page_number is None
-    assert stored_rejection.reject_code == "MISSING_ITEM_SEQ"
+    assert stored_rejection.reject_code == "ITEM_SEQ_REQUIRED"
     assert stored_rejection.parser_location == "page[1].record[3]"
 
 
-async def test_rejection_change_creates_candidate_and_requires_publication_approval() -> None:
+async def test_historical_partial_snapshot_still_requires_publication_approval() -> None:
     identity = await _seed_operation("REJECTION_APPROVAL")
-    raw_artifacts = _stored_artifacts(minute=11)
-    rejection = StoredRawArtifact(
-        page_number=None,
-        metadata=RawArtifactMetadata(
-            artifact_key="reject-0001.json",
-            raw_checksum="e" * 64,
-            byte_size=64,
-            content_type="application/json",
-        ),
-        storage_backend="PRIVATE_OBJECT_STORAGE",
-        object_key="source-ingestion/synthetic/reject-approval.json",
-        artifact_kind=IngestionArtifactKind.REJECTS,
-        reject_code="MISSING_ITEM_SEQ",
-        parser_location="page[1].record[3]",
-    )
-
     async with session_factory.begin() as session:
         repository = SqlAlchemySourceSnapshotRepository(session)
         first = await persist_product_ingestion_result(
@@ -477,11 +472,16 @@ async def test_rejection_change_creates_candidate_and_requires_publication_appro
         )
         rejected = await persist_product_ingestion_result(
             repository=repository,
-            ingestion=_ingestion(identity, _CHECKSUM_A),
-            metadata=replace(_metadata("external:rejected", minute=11), rejected_record_count=1),
-            artifacts=(*raw_artifacts, rejection),
+            ingestion=_ingestion(identity, _CHECKSUM_B),
+            metadata=_metadata("external:rejected", minute=11),
+            artifacts=_stored_artifacts(minute=11),
         )
         assert rejected.snapshot_id is not None
+        # Seed a historical partial Snapshot; v1 identity rejection no longer creates one.
+        await session.execute(
+            text("UPDATE rag_source_snapshot SET rejected_record_count=1 WHERE id=:id"),
+            {"id": str(rejected.snapshot_id)},
+        )
         with pytest.raises(ValueError, match="publication 승인"):
             await select_current_snapshot(
                 repository=repository,
@@ -1344,39 +1344,8 @@ async def test_collection_failure_recording_roundtrips_receipt(code) -> None:
         )
 
 
-@pytest.mark.parametrize("code", list(IngestionProcessingFailureCode))
-async def test_processing_failure_recording_roundtrips_receipt(code) -> None:
-    identity = await _seed_operation(f"PROCESSING_{code.value}")
-    metadata = FailedIngestionRunMetadata("synthetic-processing", 1, _NOW, _NOW)
-    rejection = StoredRawArtifact(
-        page_number=None,
-        metadata=RawArtifactMetadata("synthetic-reject.json", "e" * 64, 64, "application/json"),
-        storage_backend="PRIVATE_OBJECT_STORAGE",
-        object_key="source-ingestion/synthetic/reject.json",
-        artifact_kind=IngestionArtifactKind.REJECTS,
-        reject_code="MISSING_ITEM_SEQ",
-        parser_location="page[1].record[0]",
-    )
-    async with session_factory.begin() as session:
-        failed = await record_processing_failure(
-            repository=SqlAlchemySourceSnapshotRepository(session),
-            identity=identity,
-            metadata=metadata,
-            failure_code=code,
-            artifacts=(*_stored_artifacts(), rejection),
-        )
-    async with session_factory() as session:
-        receipt = await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(
-            ingestion_run_id=failed.ingestion_run_id
-        )
-        assert receipt is not None
-        assert receipt.decision is SnapshotIngestionDecision.VALIDATION_FAILED
-        assert receipt.failure_code == code.value
-        assert receipt.snapshot_id is None
-
-
 @pytest.mark.parametrize("empty", [True, False])
-async def test_snapshot_policy_failure_roundtrips_distinct_reason(empty) -> None:
+async def test_snapshot_policy_failure_or_unversioned_rejection_is_fail_closed(empty) -> None:
     from ai_worker.tasks.rag.source_ingestion.failure_codes import SNAPSHOT_POLICY_EMPTY_RESULT
 
     identity = await _seed_operation(f"POLICY_{empty}")
@@ -1397,6 +1366,30 @@ async def test_snapshot_policy_failure_roundtrips_distinct_reason(empty) -> None
                 parser_location="page[1].record[0]",
             ),
         )
+    if not empty:
+        # #444 forbids writing REJECTS without the product reject contract. Valid
+        # processing failures of both kinds are covered in test_reject_contract_165.
+        from ai_worker.tasks.rag.source_ingestion.reject_codes import RejectContractError
+
+        with pytest.raises(RejectContractError):
+            async with session_factory.begin() as session:
+                await persist_product_ingestion_result(
+                    repository=SqlAlchemySourceSnapshotRepository(session),
+                    ingestion=ingestion,
+                    metadata=metadata,
+                    artifacts=artifacts,
+                )
+        async with session_factory() as session:
+            operation_id = await SqlAlchemySourceSnapshotRepository(session).lock_operation(identity)
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(RagSourceIngestionRun)
+                    .where(RagSourceIngestionRun.operation_id == operation_id)
+                )
+                == 0
+            )
+        return
     async with session_factory.begin() as session:
         failed = await persist_product_ingestion_result(
             repository=SqlAlchemySourceSnapshotRepository(session),

@@ -18,6 +18,12 @@ from ai_worker.tasks.rag.source_ingestion.failure_codes import (
     SNAPSHOT_POLICY_EMPTY_RESULT,
     IngestionProcessingFailureCode,
 )
+from ai_worker.tasks.rag.source_ingestion.reject_codes import (
+    REJECT_CODE_CONTRACT_VERSION,
+    RejectContractError,
+    validate_parser_contract,
+    validate_reject_artifact,
+)
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 from ai_worker.tasks.rag.source_ingestion.snapshot_policy import (
     SnapshotPolicyFailureCode,
@@ -224,6 +230,7 @@ class SnapshotIngestionMetadata:
     duration_ms: int | None = None
     verified_by: str | None = None
     snapshot_policy: SourceSnapshotPolicy = field(default_factory=SourceSnapshotPolicy)
+    reject_code_contract_version: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         bounded_text = (
@@ -274,8 +281,11 @@ class SnapshotRunRecord:
     invalid_source_version_sha256: str | None = None
     invalid_source_version_byte_length: int | None = None
     validation_reason_code: str | None = None
+    reject_code_contract_version: str | None = None
 
     def __post_init__(self) -> None:
+        if self.reject_code_contract_version not in (None, REJECT_CODE_CONTRACT_VERSION):
+            raise RejectContractError()
         if self.run_status == "FAILED" and self.snapshot_id is not None:
             raise ValueError("FAILED attempt cannot reference a Snapshot")
         if self.run_status == "NO_CHANGE" and self.snapshot_id is None:
@@ -466,6 +476,46 @@ def decide_snapshot_ingestion(
     return SnapshotIngestionDecision.CREATED, latest
 
 
+async def _persist_identity_rejections(
+    *,
+    repository: SnapshotLifecycleRepository,
+    ingestion: ProductIngestionResult,
+    metadata: SnapshotIngestionMetadata,
+    artifacts: tuple[StoredRawArtifact, ...],
+) -> SnapshotPersistenceResult | None:
+    if metadata.reject_code_contract_version is not None:
+        validate_parser_contract(
+            identity=ingestion.identity,
+            version=metadata.reject_code_contract_version,
+            parser_version=metadata.parser_version,
+        )
+    rejections = tuple(a for a in artifacts if a.artifact_kind is IngestionArtifactKind.REJECTS)
+    if rejections:
+        for artifact in rejections:
+            validate_reject_artifact(
+                identity=ingestion.identity,
+                version=metadata.reject_code_contract_version,
+                code=artifact.reject_code,
+                location=artifact.parser_location,
+            )
+        operation_id = await repository.lock_operation(ingestion.identity)
+        run_id = await repository.create_run(
+            _run_record(
+                operation_id=operation_id,
+                snapshot_id=None,
+                metadata=metadata,
+                ingestion=ingestion,
+                run_status="FAILED",
+                failure_code="PARSER_VALIDATION_FAILED",
+            )
+        )
+        await repository.create_artifacts(ingestion_run_id=run_id, artifacts=artifacts)
+        return SnapshotPersistenceResult(
+            SnapshotIngestionDecision.VALIDATION_FAILED, operation_id, run_id, None, "PARSER_VALIDATION_FAILED"
+        )
+    return None
+
+
 async def persist_product_ingestion_result(
     *,
     repository: SnapshotLifecycleRepository,
@@ -486,6 +536,11 @@ async def persist_product_ingestion_result(
         rejected_record_count=metadata.rejected_record_count,
         artifacts=artifacts,
     )
+    rejected = await _persist_identity_rejections(
+        repository=repository, ingestion=ingestion, metadata=metadata, artifacts=artifacts
+    )
+    if rejected is not None:
+        return rejected
     operation_id = await repository.lock_operation(ingestion.identity)
     stored_policy = await repository.get_source_policy(operation_id=operation_id)
     policy_result = evaluate_snapshot_policy(
@@ -786,6 +841,7 @@ def _run_record(
         finished_at=metadata.finished_at,
         duration_ms=metadata.duration_ms,
         failure_code=failure_code,
+        reject_code_contract_version=metadata.reject_code_contract_version,
         validation_reason_code=validation_reason_code,
         attempted_source_version=metadata.source_version,
         attempted_external_version=metadata.external_version,

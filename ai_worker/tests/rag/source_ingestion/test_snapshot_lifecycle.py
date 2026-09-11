@@ -266,7 +266,7 @@ def _stored_rejection_artifact() -> StoredRawArtifact:
         storage_backend="PRIVATE_OBJECT_STORAGE",
         object_key="source-ingestion/synthetic/reject-0001.json",
         artifact_kind=IngestionArtifactKind.REJECTS,
-        reject_code="MISSING_ITEM_SEQ",
+        reject_code="ITEM_SEQ_REQUIRED",
         parser_location="page[1].record[3]",
     )
 
@@ -277,7 +277,8 @@ def _metadata(source_version: str) -> SnapshotIngestionMetadata:
     return SnapshotIngestionMetadata(
         source_version=source_version,
         schema_version="mfds-product-response@1",
-        parser_version="mfds-product-parser@1",
+        parser_version="mfds-product-reject-parser@1",
+        reject_code_contract_version="source-reject-codes@1",
         normalization_version="mfds-product-normalization@1",
         rejected_record_count=0,
         run_group_key=(f"synthetic-{hashlib.sha256(source_version.encode('utf-8')).hexdigest()}"),
@@ -331,11 +332,11 @@ async def test_default_policy_records_rejection_limit_failure_without_snapshot()
 
     assert result.decision is SnapshotIngestionDecision.VALIDATION_FAILED
     assert result.snapshot_id is None
-    assert result.failure_code == "REJECTION_LIMIT_EXCEEDED"
+    assert result.failure_code == "PARSER_VALIDATION_FAILED"
     assert repository.snapshots == []
     assert repository.verifications == []
     assert repository.runs[0].run_status == "FAILED"
-    assert repository.runs[0].failure_code == "REJECTION_LIMIT_EXCEEDED"
+    assert repository.runs[0].failure_code == "PARSER_VALIDATION_FAILED"
     assert repository.run_artifacts[result.ingestion_run_id] == artifacts
 
 
@@ -520,7 +521,7 @@ async def test_preserves_rejection_before_success_with_rejections_run(
             RejectionArtifactInput(
                 file_path=rejection_path,
                 metadata=rejection_metadata,
-                reject_code="MISSING_ITEM_SEQ",
+                reject_code="ITEM_SEQ_REQUIRED",
                 parser_location="page[1].record[3]",
             ),
         ),
@@ -531,7 +532,7 @@ async def test_preserves_rejection_before_success_with_rejections_run(
         IngestionArtifactKind.RAW_RESPONSE,
         IngestionArtifactKind.REJECTS,
     ]
-    assert repository.runs[0].run_status == "SUCCEEDED_WITH_REJECTIONS"
+    assert repository.runs[0].run_status == "FAILED"
 
 
 async def test_duplicate_raw_and_rejection_keys_are_rejected_before_file_write(
@@ -572,7 +573,7 @@ async def test_duplicate_raw_and_rejection_keys_are_rejected_before_file_write(
                 RejectionArtifactInput(
                     file_path=rejection_path,
                     metadata=rejection_metadata,
-                    reject_code="MISSING_ITEM_SEQ",
+                    reject_code="ITEM_SEQ_REQUIRED",
                     parser_location="page[1].record[3]",
                 ),
             ),
@@ -622,9 +623,9 @@ async def test_changed_rejection_count_creates_new_candidate_instead_of_no_chang
     )
 
     assert first.decision is SnapshotIngestionDecision.CREATED
-    assert changed.decision is SnapshotIngestionDecision.CREATED
-    assert changed.snapshot_id != first.snapshot_id
-    assert repository.runs[-1].run_status == "SUCCEEDED_WITH_REJECTIONS"
+    assert changed.decision is SnapshotIngestionDecision.VALIDATION_FAILED
+    assert changed.snapshot_id is None
+    assert repository.runs[-1].run_status == "FAILED"
 
 
 @pytest.mark.parametrize("retry_version", ["external:v1", "external:v2"])
@@ -746,7 +747,7 @@ async def test_changed_parser_version_creates_new_snapshot_even_when_checksum_ma
     changed_parser = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=replace(_metadata("external:v2"), parser_version="parser-v2"),
+        metadata=replace(_metadata("external:v2"), parser_version="parser-v2", reject_code_contract_version=None),
         artifacts=_stored_artifacts(),
     )
 
@@ -766,7 +767,7 @@ async def test_rejections_are_reflected_in_success_status() -> None:
         artifacts=(*_stored_artifacts(), _stored_rejection_artifact()),
     )
 
-    assert repository.runs[0].run_status == "SUCCEEDED_WITH_REJECTIONS"
+    assert repository.runs[0].run_status == "FAILED"
     assert repository.run_artifacts[next(iter(repository.run_artifacts))][-1].artifact_kind is (
         IngestionArtifactKind.REJECTS
     )
@@ -833,10 +834,13 @@ async def test_rejected_snapshot_requires_publication_approval_before_selection(
     created = await persist_product_ingestion_result(
         repository=repository,
         ingestion=_ingestion(),
-        metadata=replace(_metadata("external:v1"), rejected_record_count=1),
-        artifacts=(*_stored_artifacts(), _stored_rejection_artifact()),
+        metadata=_metadata("external:v1"),
+        artifacts=_stored_artifacts(),
     )
     assert created.snapshot_id is not None
+    # Historical approved-contract partial Snapshot; new v1 identity failures cannot create one.
+    old = repository.snapshots[0]
+    repository.snapshots[0] = replace(old, rejected_record_count=1)
 
     with pytest.raises(ValueError, match="publication 승인"):
         await select_current_snapshot(
@@ -1002,7 +1006,7 @@ async def test_failed_same_version_preserves_contract_conflict(changed: str) -> 
     if changed == "receipt":
         ingestion = replace(ingestion, endpoint_receipt_hash="f" * 64)
     elif changed == "parser":
-        metadata = replace(metadata, parser_version="parser-v2")
+        metadata = replace(metadata, parser_version="parser-v2", reject_code_contract_version=None)
     elif changed == "normalization":
         metadata = replace(metadata, normalization_version="normalization-v2")
     elif changed == "rejections":
@@ -1014,10 +1018,17 @@ async def test_failed_same_version_preserves_contract_conflict(changed: str) -> 
         metadata=metadata,
         artifacts=artifacts,
     )
-    assert result.decision is SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT
+    expected = (
+        SnapshotIngestionDecision.VALIDATION_FAILED
+        if changed == "rejections"
+        else SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT
+    )
+    assert result.decision is expected
     assert result.snapshot_id is None
     assert len(repository.snapshots) == 1
-    assert repository.runs[-1].failure_code == SOURCE_VERSION_CONFLICT
+    assert repository.runs[-1].failure_code == (
+        "PARSER_VALIDATION_FAILED" if changed == "rejections" else SOURCE_VERSION_CONFLICT
+    )
 
 
 @pytest.mark.parametrize(("count", "artifact_count"), [(2, 1), (1, 2)])
@@ -1042,8 +1053,8 @@ async def test_reject_count_mismatch_stops_before_file_write(tmp_path: Path, cou
     rejection = RejectionArtifactInput(
         file_path=tmp_path / "missing-reject.json",
         metadata=_stored_rejection_artifact().metadata,
-        reject_code="MISSING_ITEM_SEQ",
-        parser_location="$.records[0]",
+        reject_code="ITEM_SEQ_REQUIRED",
+        parser_location="page[1].record[0]",
     )
     store = LocalPrivateSourceArtifactStore(tmp_path / "private")
     with pytest.raises(ValueError, match="개수가 rejected_record_count"):
@@ -1311,6 +1322,6 @@ async def test_request_policy_cannot_relax_persisted_source_rejection_limit() ->
         metadata=replace(_metadata("external:v1"), rejected_record_count=1),
         artifacts=(*_stored_artifacts(), _stored_rejection_artifact()),
     )
-    assert result.failure_code == "REJECTION_LIMIT_EXCEEDED"
+    assert result.failure_code == "PARSER_VALIDATION_FAILED"
     assert result.snapshot_id is None
     assert not repository.create_requests
