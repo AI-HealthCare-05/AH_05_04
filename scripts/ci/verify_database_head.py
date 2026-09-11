@@ -1,6 +1,15 @@
-"""최신 Alembic head와 #398 최종 PostgreSQL 카탈로그 상태를 검증합니다."""
+"""최신 Alembic head와 #398 최종 PostgreSQL 카탈로그 상태를 검증합니다.
 
+`--heads-only`는 DB 연결 없이 Alembic head 개수만 확인합니다. 병렬 브랜치가 각자 작성
+시점의 develop head를 `down_revision`으로 잡으면 head가 갈라지는데(#439), 그 상태는 지금
+`alembic upgrade head`의 "Multiple head revisions are present" 로만 드러납니다. 그 실패는
+migration을 이미 적용하기 시작한 뒤에 나오고, `test` 집계 job이 먼저 죽어 원인을 가립니다.
+CI 초반에 이 모드를 한 번 실행하면 수 초 안에 원인과 대응을 직접 알려줍니다.
+"""
+
+import argparse
 import asyncio
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -60,8 +69,23 @@ def alembic_paths(root: Path = ROOT) -> tuple[Path, Path]:
     raise FileNotFoundError(f"Alembic 설정과 migration 디렉터리를 찾을 수 없습니다: {root}")
 
 
+def _ensure_migration_imports(root: Path) -> None:
+    """migration 모듈이 import하는 공용 패키지를 `sys.path`에 올립니다.
+
+    `ScriptDirectory.get_heads()`는 모든 revision 파일을 실제로 import하므로, 그중
+    `provider_contracts`를 참조하는 migration이 있으면 호출자의 `PYTHONPATH`에 의존하게
+    됩니다. CI의 alembic step은 그 값을 넘기지만 이 스크립트를 그대로 실행하면 head 개수
+    대신 `ModuleNotFoundError`가 나와, 원인을 알려주는 것이 목적인 진단이 오히려 원인을
+    가립니다. 호출자와 무관하게 동작하도록 여기서 경로를 보장합니다.
+    """
+    for path in (root, root / "backend"):
+        if path.is_dir() and str(path) not in sys.path:
+            sys.path.insert(0, str(path))
+
+
 def migration_heads(root: Path = ROOT) -> tuple[str, ...]:
     config_path, script_path = alembic_paths(root)
+    _ensure_migration_imports(root)
     alembic_config = Config(config_path)
     alembic_config.set_main_option("script_location", str(script_path))
     return tuple(ScriptDirectory.from_config(alembic_config).get_heads())
@@ -197,5 +221,44 @@ async def verify_database_head() -> int:
     return 0
 
 
+def verify_single_head() -> int:
+    """DB 없이 코드 기준 Alembic head가 하나인지 확인합니다."""
+    heads = migration_heads()
+    if len(heads) == 1:
+        print(f"Alembic head 단일 확인 ({heads[0]})")
+        return 0
+
+    print(f"Alembic head가 {len(heads)}개입니다: {heads!r}")
+    print()
+    print("병렬 브랜치가 같은 down_revision을 잡아 chain이 갈라졌습니다.")
+    print("병합된 쪽이 기준이므로, 미병합 브랜치의 migration을 현재 develop head 뒤로 옮깁니다.")
+    print()
+    print("  1. git fetch origin && git merge/rebase origin/develop")
+    print("  2. 내 migration의 down_revision을 현재 develop head로 변경")
+    print("     (컬럼·제약 정의는 바꾸지 않습니다)")
+    print("  3. uv run alembic -c backend/alembic.ini heads  # 단일인지 확인")
+    print()
+    print("downgrade/upgrade 테스트에 부모 revision을 하드코딩했다면, migration 모듈의")
+    print("down_revision을 읽도록 바꾸면 재연결마다 테스트를 고치지 않아도 됩니다.")
+    print()
+    print("로컬 재현은 test DB를 초기화한 뒤 migration lane만 돌립니다. backend lane을")
+    print("먼저 돌리면 conftest의 drop_all teardown이 테이블을 지워")
+    print('relation "user" does not exist 로 오진하게 됩니다.')
+    return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--heads-only",
+        action="store_true",
+        help="DB 연결 없이 Alembic head 개수만 확인합니다 (#439).",
+    )
+    arguments = parser.parse_args(argv)
+    if arguments.heads_only:
+        return verify_single_head()
+    return asyncio.run(verify_database_head())
+
+
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(verify_database_head()))
+    raise SystemExit(main())

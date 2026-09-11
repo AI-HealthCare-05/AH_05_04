@@ -116,6 +116,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --group app --group worker --frozen
 
+      # #439: head가 갈라진 상태는 아래 `upgrade head`의 "Multiple head revisions"로만
+      # 드러나고, migration을 적용하기 시작한 뒤에 실패해 원인이 가려집니다. DB 없이 수 초
+      # 안에 원인과 대응을 먼저 보고합니다.
+      - name: Verify single Alembic head
+        run: uv run python scripts/ci/verify_database_head.py --heads-only
+
       - name: Run PostgreSQL migrations
         env:
           PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
@@ -190,6 +196,11 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --group app --group worker --frozen
+
+      # #439: 아래 Source cutover step의 `alembic upgrade head`가 head 분기로 죽기 전에
+      # 원인을 먼저 보고합니다.
+      - name: Verify single Alembic head
+        run: uv run python scripts/ci/verify_database_head.py --heads-only
 
       - name: Run Backend Tests with Coverage
         env:
