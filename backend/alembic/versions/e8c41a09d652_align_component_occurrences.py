@@ -1,14 +1,14 @@
 """Align Component occurrence uniqueness without rewriting stored members.
 
 Revision ID: e8c41a09d652
-Revises: 203a1b2c3d4e
+Revises: 428a1b2c3d4e
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "e8c41a09d652"
-down_revision = "203a1b2c3d4e"
+down_revision = "428a1b2c3d4e"
 branch_labels = None
 depends_on = None
 

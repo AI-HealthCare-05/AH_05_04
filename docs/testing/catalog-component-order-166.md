@@ -101,3 +101,23 @@ upgrade/downgrade 왕복도 각각 통과했다. 위 전체 검사와 중복되�
 불완전 키는 31,697행이다. 반복 제품·원료 그룹 3,613개, 동일 이름·복수 원료코드 그룹
 281개가 관찰됐다. 이전 실행 대기 기록 이후의 상태와 남은 의미 확인은
 [전체 감사 결과](mfds-component-key-audit-166.md)를 따른다. 실제 자동 적재 완료나 공식 매핑 승인으로 해석하지 않는다.
+
+
+## PR CI head 분기 수정
+
+최신 develop `ee3d54c`를 merge했다. #455의 `428a1b2c3d4e`와 D-04 revision이 같은
+선행 revision에서 갈라져 원격 Migration·Backend의 단일 head 사전 검사가 실패했다.
+미병합 D-04 revision `e8c41a09d652`의 `down_revision`을 `428a1b2c3d4e`로 연결했다.
+이미 병합된 migration과 D-04 컬럼·제약·upgrade/downgrade 동작은 변경하지 않았다.
+
+새 전용 테스트 DB에서 전체 CI 스크립트 exit 0을 확인했다. 단일 Alembic head와 실제
+DB head 검증이 통과했으며 최종 head는 `e8c41a09d652`, Trigger/RLS/제거 함수는 0개다.
+Ruff·format·Mypy도 통과했다(Mypy 587개 파일). 로컬 재검증 결과이며 원격 CI 재실행
+결과나 담당자 승인을 대신하지 않는다.
+
+| 재검증 | 결과 |
+| --- | --- |
+| Migration | 206 passed, 3 skipped |
+| Backend·계약·PostgreSQL | 1933 passed, 65 skipped |
+| Redis | 24 passed |
+| Worker | 3039 passed, 8 skipped |
