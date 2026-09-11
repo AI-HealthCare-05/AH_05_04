@@ -536,3 +536,39 @@ def test_preflight_tables_join_existing_integrity_head() -> None:
             assert validation_errors(heads[0], await read_database_head_state(connection)) == []
 
     asyncio.run(verify())
+
+
+def test_preflight_context_hardening_constraints_exist_on_head() -> None:
+    cfg = create_alembic_config()
+    command.upgrade(cfg, "head")
+    expected = {
+        "uq_rag_runtime_manifest_id_hash",
+        "uq_prescription_version_medication_id_version",
+        "uq_rag_runtime_bundle_id_hash_manifest",
+        "uq_ai_job_intake_context_job_id",
+        "uq_ai_job_execution_context_id_version",
+        "fk_ai_job_intake_context_bundle_execution_manifest",
+        "fk_ai_job_intake_context_execution_manifest_hash",
+        "fk_ai_job_execution_context_bundle_execution_manifest",
+        "fk_ai_job_execution_context_same_job_intake",
+        "fk_ai_job_execution_context_execution_manifest_hash",
+        "fk_ai_job_execution_identification_context_version",
+        "fk_ai_job_execution_identification_medication_version",
+    }
+
+    async def verify() -> set[str]:
+        async with _connection() as connection:
+            rows = await connection.execute(
+                text(
+                    """
+                    SELECT constraint_name
+                    FROM information_schema.table_constraints
+                    WHERE table_schema = :schema
+                      AND constraint_name = ANY(:constraint_names)
+                    """
+                ),
+                {"schema": "public", "constraint_names": list(expected)},
+            )
+            return {row[0] for row in rows}
+
+    assert asyncio.run(verify()) == expected
