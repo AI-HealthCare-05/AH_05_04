@@ -2,6 +2,11 @@
 
 > 상태: Current runtime. PR #96에서 feature flag 기반 비-RAG LLM 구조화 경로가 구현됐고 기본값 `false`는 미구현이 아니라 기본 비활성화를 뜻한다. Approved v4에서 추가한 최소 전송 allowlist, raw/rule/draft/corrected/confirmed provenance, Worker 이관과 실패 복구는 [OCR 비-RAG LLM 구조화 목표 계약](../targets/post-mvp-1/ocr-llm-structuring-v1.md)의 미구현 범위다.
 
+> #453 개정안: 기존 비-RAG LLM 구현을 `ocr_runtime.llm`으로 공유하고 Worker factory에 연결했다.
+> 현재 작업 브랜치에서 Local 합성 검증용 opt-in만 허용한다. 동의 저장소·의미상 입력 최소화와
+> 별도 provenance 저장은 완료하지 않았으며, 담당 리뷰·병합·배포 활성화 완료를 의미하지 않는다.
+> [동의·전송 개정안](../proposed/ocr-llm-worker-consent-453.md)
+
 > #144 변경 상태: 작업 브랜치 구현·로컬 검증 완료, 담당 리뷰·CI·병합 대기.
 > 아래 빈 검수 필드 변경은 이 PR의 코드와 일치하는 계약 개정안이며,
 > 병합 전 develop의 실행 동작이나 승인 완료를 선언하지 않는다.

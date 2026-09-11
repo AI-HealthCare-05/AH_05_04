@@ -42,6 +42,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## Proposed 계약
 
+- [OCR LLM Worker 동의·전송 개정안 (#453)](./proposed/ocr-llm-worker-consent-453.md): OCR 목적 안내 개정·호출 직전 재검사·입력 최소화 경계. Proposed, 실제 동의 저장소 미연결.
 - [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태, row 없음=미동의, Backend·Worker 공통 fixture 판정, WorkerMessage/Stream 비전송, CONSENT_REQUIRED 및 OCR CONSENT_WITHDRAWN 차단 의미. Proposed · 미구현 · Production 공개 승인 아님. 확인 필요: 권가빈·김지혜·정현우·남한솔.
 
 - [Track B UNCONFIRMED backlog v1](./proposed/unconfirmed-backlog-v1.md): PD-418 URL·cursor·DTO·오류 제안. 실제 v1 router 등록 보류, 테스트 앱의 #413 PUT→GET HTTP 통합 검증. Cursor 404의 첫 페이지 재조회 명시, 계약 및 등록 HEAD의 Backend/Frontend 승인 필요.

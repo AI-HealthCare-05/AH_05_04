@@ -309,3 +309,26 @@ Guide·Chat 등 Post-MVP 작업을 추가하기 전에 해당 범위에 필요�
 7. 장기 실행 Worker에 맞는 실행 명령과 배포 환경의 restart 정책을 검증합니다.
 
 RAG, Citation/NLI 검증, AI 응답 평가와 OTC 기능은 Worker 자체와 별개의 Post-MVP 기능입니다. 각 기능의 지식 소스, 라이선스, 스키마, 평가 데이터셋·지표·임계값이 승인된 뒤 해당 task를 구현합니다.
+
+## #453 비-RAG LLM 구조화 연결 (작업 브랜치)
+
+실제 Worker factory는 `OCR_STRUCTURE_LLM_ENABLED=false`일 때 기존 규칙 기반,
+`true`일 때 CLOVA 다음에 공용 LLM 구조화·grounding 검증을 실행한다.
+추가 Job이나 Frontend 검수 DTO는 만들지 않는다. 누락값은 기존 빈 필드·약물 추가로 검수한다.
+
+| Worker 설정 | 기본값 | 의미 |
+| --- | --- | --- |
+| OCR_STRUCTURE_LLM_ENABLED | false | Local 합성 검증용 명시적 opt-in |
+| OPENAI_API_KEY | 빈 SecretStr | 활성화 시 필수, 로그 출력 금지 |
+| OCR_STRUCTURE_MODEL | gpt-4o-mini | OCR 구조화 요청 모델 |
+| OCR_STRUCTURE_TIMEOUT_SECONDS | 30 | 개별 LLM 호출 상한 |
+
+CLOVA 상한과 LLM 상한의 합이 OCR_PROVIDER_BUDGET_SECONDS를 넘으면 기동을 거부한다.
+Worker 외부 deadline이 두 호출을 함께 제한하며 SDK retry는 0이다.
+성공·실패·취소 모두 OpenAI client를 닫는다. 기존 Worker의 재시도·fencing·commit 후 ACK를 재사용한다.
+모델·프롬프트 기록은 OCR 결과에 저장한다. GUIDE_GENERATION 로그와 혼동하지 않는다.
+
+현재 외부 호출은 테스트에서 합성 Provider로 대체했다. Local 제한은 개인정보 제거 기능이 아니며,
+실제 환자 입력·Production 활성화를 허용하지 않는다. 기존 전체 토큰 전송 방식의 의미상
+최소화와 #207 동의 저장소 연결 전에는 #453 전체 완료로 표시하지 않는다.
+[동의·전송 계약 개정안](../docs/contracts/proposed/ocr-llm-worker-consent-453.md)을 함께 검토한다.
