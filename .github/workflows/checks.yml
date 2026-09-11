@@ -262,6 +262,9 @@ jobs:
             ai_worker/tests/rag \
             ai_worker/tests/evaluation
 
+      - name: Verify protected-off Worker image startup
+        run: scripts/ci/verify_worker_image_startup.sh
+
       - name: Upload AI Worker Coverage Data
         uses: actions/upload-artifact@v4
         with:
