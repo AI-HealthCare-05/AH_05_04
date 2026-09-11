@@ -52,6 +52,11 @@ async def test_separate_credentials_and_future_tables_are_fail_closed() -> None:
             await connection.execute(text(f'ALTER DEFAULT PRIVILEGES REVOKE INSERT ON TABLES FROM "{writer}"'))
             await connection.execute(
                 text(
+                    f'ALTER TABLE "{schema}".rag_source_ingestion_run ADD COLUMN snapshot_id integer, ADD COLUMN run_status text, ADD COLUMN failure_code text, ADD COLUMN failure_message text, ADD COLUMN duration_ms integer, ADD COLUMN finished_at timestamptz, ADD COLUMN attempted_source_version text'
+                )
+            )
+            await connection.execute(
+                text(
                     f'ALTER TABLE "{schema}".rag_source_snapshot ADD COLUMN verification_status text, ADD COLUMN verified_at timestamptz, ADD COLUMN effective_at timestamptz, ADD COLUMN verification_seal_id char(36)'
                 )
             )
@@ -91,9 +96,15 @@ async def test_separate_credentials_and_future_tables_are_fail_closed() -> None:
             await connection.execute(text(f'INSERT INTO "{schema}".rag_source_snapshot (id) VALUES (1)'))
             await connection.execute(text(f'UPDATE "{schema}".rag_source_snapshot SET verified_at=now() WHERE id=1'))
             await connection.execute(text(f'INSERT INTO "{schema}".rag_source_snapshot_verification VALUES (1)'))
+            await connection.execute(text(f'INSERT INTO "{schema}".rag_source_ingestion_run (id) VALUES (1)'))
+            await connection.execute(
+                text(f'UPDATE "{schema}".rag_source_ingestion_run SET run_status=:status'), {"status": "FAILED"}
+            )
         async with reader.connect() as connection:
             assert await connection.scalar(text(f'SELECT id FROM "{schema}".rag_source_snapshot')) == 1
         denied = [
+            (producer, f'UPDATE "{schema}".rag_source_ingestion_run SET attempted_source_version=NULL'),
+            (reader, f'UPDATE "{schema}".rag_source_ingestion_run SET run_status=NULL'),
             (reader, f'INSERT INTO "{schema}".rag_source_snapshot (id) VALUES (3)'),
             (reader, f'UPDATE "{schema}".rag_source_snapshot SET id=3'),
             (reader, f'DELETE FROM "{schema}".rag_source_snapshot'),

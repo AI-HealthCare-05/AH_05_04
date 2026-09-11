@@ -205,3 +205,16 @@ Production Source·Catalog·Runtime 활성화를 선언하지 않는다.
 4. Snapshot 승인·사용 가능 판정 구현
 5. #369 병합 후 최신 Alembic head에서 DB 컬럼·제약 연결
 6. Catalog·Runtime 소비자 계약 테스트와 Receipt 검증
+
+
+## #429 병합 이후 구현 상태 — #362 후속
+
+`362a1b2c3d4e`와 `362b2c3d4e5f` migration 및 Python 저장소에서 Source 정책,
+Snapshot external version, Snapshot/Citation 200자 상한과 Run 시도 provenance를 구현했다.
+위 문서의 “DB 미저장/255자” 설명은 #377/#393 시점의 이력이며 이 후속 구현에서는 해소한다.
+DB Trigger·RLS·업무 DB 함수는 도입하지 않는다. #398에서 Python으로 이관한 상태 전이를 유지한다.
+
+실제 Snapshot Receipt와 Attempt Receipt를 별도로 조회하며 Source Writer 선택 전에
+version/hash/Receipt 결속을 검증한다. Catalog/Runtime 실제 소비와 #178 Freshness 계산은
+해당 담당 작업에 연결한다. #178 계산 구현은 #362 이슈의 명시적 제외 범위다.
+전체 종료를 선언하지 않고 [#362/#165 공동 완료 조건](../../testing/source-policy-persistence-362.md)을 따른다.

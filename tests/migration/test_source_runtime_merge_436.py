@@ -15,10 +15,10 @@ from app.core import config
 from scripts.ci.verify_database_head import ROOT, migration_heads, read_database_head_state, validation_errors
 
 
-@pytest.mark.parametrize("previous", ["166b8c9d0e1f", "175a1b2c3d4e", "166c9d0e1f20", "362c3d4e5f60"])
-def test_catalog_and_runtime_heads_merge_preserving_existing_source(previous, monkeypatch):
+@pytest.mark.parametrize("previous", ["362b2c3d4e5f", "175a1b2c3d4e"])
+def test_source_and_runtime_heads_merge_preserving_existing_source(previous, monkeypatch):
     original = config.database_url
-    name = "merge372_" + uuid4().hex
+    name = "merge436_" + uuid4().hex
     url = make_url(original).set(database=name)
 
     async def database_command(sql):
@@ -50,7 +50,7 @@ def test_catalog_and_runtime_heads_merge_preserving_existing_source(previous, mo
         try:
             async with engine.connect() as connection:
                 heads = migration_heads()
-                assert heads == ("166d0e1f2031",)
+                assert heads == ("362c3d4e5f60",)
                 assert validation_errors(heads[0], await read_database_head_state(connection)) == []
         finally:
             await engine.dispose()

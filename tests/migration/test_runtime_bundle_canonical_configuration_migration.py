@@ -335,7 +335,8 @@ def test_real_alembic_downgrade_is_refused_while_bundle_data_exists(
     _ = isolated_database_at_runtime_revision
     asyncio.run(_seed_bundle_with_member())
 
-    # 부모에서 멈춰 #175만 되돌리고 #398 자체의 downgrade는 실행하지 않는다.
+    # 부모 revision에서 멈추므로 #175만 되돌리고 #398 부모 자체의 downgrade는 실행하지 않는다.
+    # merge head에서 상대 -1로 분기를 추측하지 않고 테스트 대상 revision과 부모를 명시한다.
     result = _run_alembic("downgrade", "3984b5c6d7e8")
 
     assert result.returncode != 0
