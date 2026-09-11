@@ -1,5 +1,13 @@
-"""최신 Alembic head와 #398 최종 PostgreSQL 카탈로그 상태를 검증합니다."""
+"""최신 Alembic head와 #398 최종 PostgreSQL 카탈로그 상태를 검증합니다.
 
+`--heads-only`는 DB 연결 없이 Alembic head 개수만 확인합니다. 병렬 브랜치가 각자 작성
+시점의 develop head를 `down_revision`으로 잡으면 head가 갈라지는데(#439), 그 상태는 지금
+`alembic upgrade head`의 "Multiple head revisions are present" 로만 드러납니다. 그 실패는
+migration을 이미 적용하기 시작한 뒤에 나오고, `test` 집계 job이 먼저 죽어 원인을 가립니다.
+CI 초반에 이 모드를 한 번 실행하면 수 초 안에 원인과 대응을 직접 알려줍니다.
+"""
+
+import argparse
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
@@ -197,5 +205,44 @@ async def verify_database_head() -> int:
     return 0
 
 
+def verify_single_head() -> int:
+    """DB 없이 코드 기준 Alembic head가 하나인지 확인합니다."""
+    heads = migration_heads()
+    if len(heads) == 1:
+        print(f"Alembic head 단일 확인 ({heads[0]})")
+        return 0
+
+    print(f"Alembic head가 {len(heads)}개입니다: {heads!r}")
+    print()
+    print("병렬 브랜치가 같은 down_revision을 잡아 chain이 갈라졌습니다.")
+    print("병합된 쪽이 기준이므로, 미병합 브랜치의 migration을 현재 develop head 뒤로 옮깁니다.")
+    print()
+    print("  1. git fetch origin && git merge/rebase origin/develop")
+    print("  2. 내 migration의 down_revision을 현재 develop head로 변경")
+    print("     (컬럼·제약 정의는 바꾸지 않습니다)")
+    print("  3. uv run alembic -c backend/alembic.ini heads  # 단일인지 확인")
+    print()
+    print("downgrade/upgrade 테스트에 부모 revision을 하드코딩했다면, migration 모듈의")
+    print("down_revision을 읽도록 바꾸면 재연결마다 테스트를 고치지 않아도 됩니다.")
+    print()
+    print("로컬 재현은 test DB를 초기화한 뒤 migration lane만 돌립니다. backend lane을")
+    print("먼저 돌리면 conftest의 drop_all teardown이 테이블을 지워")
+    print('relation "user" does not exist 로 오진하게 됩니다.')
+    return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--heads-only",
+        action="store_true",
+        help="DB 연결 없이 Alembic head 개수만 확인합니다 (#439).",
+    )
+    arguments = parser.parse_args(argv)
+    if arguments.heads_only:
+        return verify_single_head()
+    return asyncio.run(verify_database_head())
+
+
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(verify_database_head()))
+    raise SystemExit(main())
