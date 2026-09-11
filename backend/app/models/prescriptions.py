@@ -227,6 +227,11 @@ class PrescriptionVersionMedication(Base):
             "display_order",
             name="uq_prescription_version_medication_order",
         ),
+        UniqueConstraint(
+            "id",
+            "prescription_version_id",
+            name="uq_prescription_version_medication_id_version",
+        ),
         CheckConstraint(
             "dose_value IS NULL OR dose_value > 0",
             name="chk_prescription_version_medication_dose",

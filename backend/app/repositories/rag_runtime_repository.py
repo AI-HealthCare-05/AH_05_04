@@ -17,6 +17,7 @@ from ai_worker.tasks.rag.runtime_bundle_builder import (
     canonical_execution_manifest_hash,
     canonical_runtime_bundle_manifest_hash,
 )
+from app.models.prescriptions import PrescriptionVersionMedication
 from app.models.rag_candidate import MedicationIdentification, MedicationIdentificationStatus
 from app.models.rag_evaluation import EvaluationDecisionStatus
 from app.models.rag_runtime import (
@@ -50,7 +51,7 @@ class AiJobIntakeContextCreate:
     runtime_execution_manifest_id: UUID
     runtime_execution_manifest_hash: str
     runtime_guard_decision_ref: str
-    question_digest: str | None = None
+    question_digest: str
     patient_context_digest: str | None = None
     context_schema_version: str = "ai-job-intake-context@1"
 
@@ -403,18 +404,37 @@ class RagRuntimeRepository:
         self,
         payload: AiJobExecutionIdentificationCreate,
     ) -> AiJobExecutionIdentification:
+        execution_version_id = await self.session.scalar(
+            select(AiJobExecutionContext.prescription_version_id).where(
+                AiJobExecutionContext.id == payload.execution_context_id
+            )
+        )
+        if execution_version_id is None:
+            raise ValueError("execution context is required before pinning identification")
+
         matched_identification = await self.session.scalar(
-            select(MedicationIdentification.id).where(
+            select(MedicationIdentification.id)
+            .join(
+                PrescriptionVersionMedication,
+                PrescriptionVersionMedication.id == MedicationIdentification.prescription_version_medication_id,
+            )
+            .where(
                 MedicationIdentification.id == payload.medication_identification_id,
                 MedicationIdentification.prescription_version_medication_id
                 == payload.prescription_version_medication_id,
                 MedicationIdentification.status == MedicationIdentificationStatus.MATCHED,
+                PrescriptionVersionMedication.prescription_version_id == execution_version_id,
             )
         )
         if matched_identification is None:
-            raise ValueError("execution context can pin only MATCHED identification for the same medication")
+            raise ValueError(
+                "execution context can pin only MATCHED identification for the same medication and prescription version"
+            )
 
-        identification = AiJobExecutionIdentification(**asdict(payload))
+        identification = AiJobExecutionIdentification(
+            **asdict(payload),
+            prescription_version_id=execution_version_id,
+        )
         self.session.add(identification)
         await self.session.flush()
         return identification

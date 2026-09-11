@@ -414,4 +414,13 @@ Track별 요구사항·계약·소유자·예정 테스트·승인 증빙은 [Po
 
 `backend/app/tests/notifications/`는 실제 PostgreSQL 기반 목록·읽음·재알림 API, 원본 날짜, SELF 소유권·멱등 snapshot·기한·취소·Check-in 정정을 검증한다. 별도 schema와 독립 connection으로 동일 key replay·상이 key 경쟁 및 occurrence 잠금 시 게시 유예를 검증한다. `tests/migration/test_notification_migration.py`는 실제 Alembic DB 제약과 이력 보존 downgrade guard를 검사한다.
 
-실행 결과·남은 #202 연결·배치 실행 안내는 [#203 검증 기록](validation/track-b/issue-203-notifications.md)을 따른다. Frontend fixture/E2E 및 일정 PUT/PATCH 통합은 아직 PASS가 아니다.
+알림 단독 실행 결과·배치 실행 안내는 [#203 검증 기록](validation/track-b/issue-203-notifications.md)을 따른다. 후속 일정 PUT/PATCH 통합 결과는 아래 #202 검증 기록에서 구분한다. Frontend E2E는 별도다.
+
+
+### #202 일정 API·실제 알림 취소 연결
+
+`backend/app/tests/medication_schedules/`는 날짜별 조회, 일정 PUT/PATCH, 동일 session의
+실제 미전달 알림 취소, 실패 후 전체 rollback, 멱등 재현, 교차 사용자 404와 OpenAPI를
+PostgreSQL·실제 ASGI 앱으로 검증한다. 기본 runner의 Backend 수집 범위에 포함한다.
+[실행 결과와 재현 방법](./validation/track-b/issue-202-schedule-api.md),
+[Frontend 합성 fixture](./validation/track-b/issue-202-schedule-fixtures.json)를 참조한다.

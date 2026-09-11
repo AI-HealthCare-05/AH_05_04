@@ -627,3 +627,17 @@ otification.read |
 | POST | /api/v1/medication-occurrences/{occurrence_id}/reminders | 201 | body {scheduled_at}, 확인 기한 전 PENDING occurrence의 사용자 요청 1회, medication-reminder.create |
 
 쓰기에는 기존 Idempotency-Key 형식(16~255 ASCII 허용 문자)과 암호화 동기 snapshot이 적용된다. 성공은 data envelope, 오류는 공통 형식, 전체 응답은 no-store다. 알림 read/목록의 occurrence_local_date는 원본 occurrence 날짜이며 재알림 시각에서 추정하지 않는다. Track C REMINDER_SETUP은 기존 일정 PUT 흐름을 사용하며 위 재알림 POST를 호출하지 않는다. #202 약 정보 조회 경로의 통합 검증은 별도 대기다.
+
+
+## #202 일정 API 연결 — 구현 PR 리뷰 대상
+
+[일정 HTTP 계약](./contracts/proposed/track-b-schedule-api-v1.md)에 따라 다음 경로를 실제
+v1 앱에 등록한다. PD-417의 승인된 의미와 #438 저장 서비스·#430 동일 session 알림
+취소를 연결한 작업 브랜치 구현이며, HTTP 구체화의 지정 리뷰어 승인은 별도다.
+
+- GET `/api/v1/medication-occurrences?date=YYYY-MM-DD`: 일정 전체·약별 상태와 원래 KST 날짜의 occurrence/현재 Check-in.
+- PUT `/api/v1/prescription-version-medications/{prescription_version_medication_id}/schedule`: 명시적 설정·재활성화.
+- PATCH 같은 경로: CANCELLED 요청과 반복 취소의 성공 snapshot.
+
+요청·응답·오류 requiredness는 계약과 실제 OpenAPI를 따른다. #418 backlog 라우터 등록과
+Check-in history route는 포함하지 않는다. [검증 기록](./validation/track-b/issue-202-schedule-api.md).
