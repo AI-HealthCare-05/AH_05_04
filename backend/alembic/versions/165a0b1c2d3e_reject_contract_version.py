@@ -26,5 +26,7 @@ def downgrade() -> None:
         sa.text("SELECT EXISTS (SELECT 1 FROM rag_source_ingestion_run WHERE reject_code_contract_version IS NOT NULL)")
     ):
         raise RuntimeError("Reject contract history must be preserved; use a forward fix.")
-    op.drop_constraint("chk_rag_source_ingestion_run_reject_contract_nonblank", "rag_source_ingestion_run", type_="check")
+    op.drop_constraint(
+        "chk_rag_source_ingestion_run_reject_contract_nonblank", "rag_source_ingestion_run", type_="check"
+    )
     op.drop_column("rag_source_ingestion_run", "reject_code_contract_version")
