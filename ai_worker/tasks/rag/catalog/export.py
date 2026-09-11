@@ -349,10 +349,19 @@ def write_catalog_export(*, artifacts: CatalogExportArtifacts, directory: Path) 
     (directory / "catalog.jsonl").write_bytes(artifacts.catalog_jsonl)
 
 
+def _unique_manifest_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate manifest key")
+        result[key] = value
+    return result
+
+
 def verify_catalog_export(artifacts: CatalogExportArtifacts) -> None:
     """인계 경계에서 payload와 typed gate 상태·구성원을 같은 manifest에 결속합니다."""
     try:
-        manifest = json.loads(artifacts.manifest_json)
+        manifest = json.loads(artifacts.manifest_json, object_pairs_hook=_unique_manifest_object)
         claimed_hash = manifest.pop("catalog_manifest_hash")
         catalog = artifacts.catalog
         members = CatalogMembers(

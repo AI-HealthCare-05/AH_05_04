@@ -38,3 +38,11 @@ revision은 해당 대상의 마지막 감사 revision이며 최초 0이다. has
 ## PD-398-R2 잠금 권한 분리
 
 Snapshot 관리 역할의 유일한 UPDATE 허용 컬럼은 `management_lock_marker` INTEGER NOT NULL DEFAULT 0이다. 일반 CHECK가 0만 허용하며 SELECT FOR UPDATE 권한 충족에만 사용한다. 검증 시각(`verified_at`/`effective_at`)·seal·identity·provenance는 관리 계정이 직접 수정할 수 없다. API는 표식을 받거나 반환하지 않으며 관리 hash에서도 제외한다. 기존 컬럼 권한은 provisioning 재실행으로 회수한다. 근거와 검증은 [PD-398-R2](../../governance/decisions/2026-09-10-snapshot-management-lock-isolation.md)를 따른다.
+
+
+## #372 Catalog schema 연동
+
+Alias의 기존 승인 여부가 `review_status`로 분리됨에 따라 관리 서비스는
+`review_status == APPROVED`인 Alias의 수정·삭제를 계속 거부한다.
+승인 상태의 변경이나 승인 철회 기능을 추가하지 않는다. 참조된 Alias와 Set 구성원에 대한
+기존 FK 참조 검사는 그대로 유지한다. PENDING Alias의 표시값 수정도 기존 정규화 이름을 바꾸지 않는 범위에서만 허용하며 권한·감사 transaction을 따른다.

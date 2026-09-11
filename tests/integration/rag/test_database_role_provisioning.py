@@ -141,6 +141,10 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             await connection.execute(
                 text(f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "{runtime}"')
             )
+            await connection.execute(text(f'GRANT UPDATE (id) ON medication_schedule_audit TO PUBLIC, "{runtime}"'))
+            await connection.execute(
+                text(f'GRANT DELETE, TRUNCATE ON medication_schedule_audit TO PUBLIC, "{runtime}"')
+            )
         bootstrap()
         await run_provisioning(environment)
         for _ in range(2):
@@ -153,6 +157,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             await connection.execute(text('INSERT INTO "user" (id) VALUES (1)'))
             await connection.execute(text('UPDATE "user" SET id=2'))
             await connection.execute(text("INSERT INTO checkin_audit VALUES (1)"))
+            await connection.execute(text("INSERT INTO medication_schedule_audit VALUES (1)"))
             await connection.execute(text("INSERT INTO prescription_version VALUES (1)"))
         async with producer.begin() as connection:
             await connection.execute(text("INSERT INTO rag_source_snapshot (id) VALUES (1)"))
@@ -162,6 +167,11 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             await connection.execute(text(f'SET LOCAL ROLE "{owner}"'))
             await connection.execute(text("CREATE TABLE future_after_provision (id serial PRIMARY KEY)"))
         for engine, sql in [
+            (reader, "UPDATE medication_schedule_audit SET id=2"),
+            (reader, "DELETE FROM medication_schedule_audit"),
+            (reader, "TRUNCATE medication_schedule_audit"),
+            (producer, "SELECT * FROM medication_schedule_audit"),
+            (producer, "INSERT INTO medication_schedule_audit VALUES (2)"),
             (producer, "UPDATE rag_source_ingestion_run SET attempted_source_version=NULL"),
             (reader, "UPDATE rag_source_ingestion_run SET run_status=NULL"),
             (reader, "UPDATE checkin_audit SET id=2"),
@@ -834,6 +844,7 @@ async def _grant_historical_test_permissions(admin, environment):
                 "ai_job_intake_context",
                 "ai_job_execution_context",
                 "ai_job_execution_identification",
+                "medication_schedule_audit",  # Added after the historical Source cutover.
             }:
                 await connection.execute(text(f'GRANT {privileges} ON "{table}" TO "{runtime}"'))
         for table in SOURCE_TABLES:
