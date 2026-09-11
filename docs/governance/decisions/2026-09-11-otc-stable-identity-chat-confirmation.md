@@ -41,9 +41,10 @@
 | 제품에 **함량·제형이 이미 있다** | `CatalogProduct.strength_text`·`dosage_form`, `CatalogComponent.strength_value`·`strength_unit` | 「함량·제형 식별」을 위한 새 필드가 필요 없다 |
 | Catalog에 **전문/일반 구분 필드가 없다** | `CatalogProduct`·`CatalogIngredient`·`ProductIdentity` 어디에도 분류 필드 없음. `catalog/*.py` 전체에서 ETC/OTC 검색 결과 0건 | **확정된 Identity가 OTC라는 것을 시스템이 증명할 수 없다.** §5-D2 |
 | Chat 요청 DTO에 **행위 표현이 없다** | `app/dtos/chat.py` · `SendChatMessageRequest`는 `content: str` 하나뿐 | §4-3의 DTO 확장이 필요하며, 이는 `AGENTS.md`상 Decision을 요구하는 변경이다 |
-| Chat 전송은 현재 **동기 `201`** 이다 | `chat_routers.py` · `send_chat_message`가 `HTTP_201_CREATED` | Approved v4의 `CHAT` Job 비동기 목표와 다르다. 이 결정은 전이만 고정하고 전송 방식을 바꾸지 않는다 |
-| 멱등성은 **확인·거절에만** 적용하기로 이미 정해져 있다 | `medication-identification-v1.md` 「Candidate Search 생성에는 `Idempotency-Key`를 요구하지 않는다 … 사용자 확인·거절에만 적용한다」 | §4-4가 기존 계약과 같은 규칙을 쓴다 |
+| Chat 전송은 현재 **동기 `201`** 이다 | `chat_routers.py` · `send_chat_message`가 `HTTP_201_CREATED` | 목표인 `CHAT` Job 2단계 접수와 다르다. **이 결정은 목표 Job 기반을 전제하므로 [#148](https://github.com/AI-HealthCare-05/AH_05_04/issues/148) Chat `202` 전환이 구현 선행 조건이다**(§4-8·§7-3) |
+| 멱등성 키는 **Job 생성 POST 전체 + Track F 확인·거절**에 필요하다 | `idempotency-v1.md` 「비동기 Job을 생성하는 모든 POST 요청과 … Track F 사용자 Candidate 확인·거절 요청은 `Idempotency-Key` 헤더를 요구한다」. `medication-identification-v1.md`의 「확인·거절에만」은 Job을 만들지 않는 **Candidate Search 생성**에 대한 규칙이다 | §4-4가 두 경로를 구분한다 |
 | Preflight 판정 kernel이 이미 있다 | `rag_runtime/identification_preflight.py` · `evaluate_medication_identification_preflight` ([#173](https://github.com/AI-HealthCare-05/AH_05_04/issues/173)) | §4-7의 fail-closed 형태를 같은 방식으로 맞춘다 |
+| Chat 접수는 목표 계약에서 **2단계**다 | `rag-runtime-v1.md` 「약품 식별이 불완전해도 질문과 최소 Chat Job을 먼저 저장하고 Safety Intake·Triage를 실행한다 … `ROUTINE`만 Identification Preflight를 통과한 뒤 진행한다」 | OTC 확인 전이는 이 2단계의 `ROUTINE` 분기 안에 놓인다(§4-8) |
 
 ## 4. 결정 (제안)
 
@@ -76,19 +77,70 @@
 
 `#176`의 금지 사항을 그대로 따른다 — `/api/v1/otc-products`, `/api/v1/otc-evaluations`, `OTC_CHECK` Job, OTC 전용 공개 flag를 만들지 않는다. 처방약처럼 `/medication-candidates/confirm` 형태의 **새 endpoint도 만들지 않는다.**
 
-확인·거절은 기존 `POST /api/v1/chat-sessions/{session_id}/messages` 요청 안의 **action**으로 표현한다. 지금 `SendChatMessageRequest`는 `content` 하나뿐이므로, 자유문장과 확인 행위를 구분할 수 있는 최소 확장이 필요하다.
+확인·거절은 기존 `POST /api/v1/chat-sessions/{session_id}/messages` 요청 안의 **action**으로 표현한다. 지금 `SendChatMessageRequest`는 `content` 하나뿐이므로 자유문장과 확인 행위를 구분할 최소 확장이 필요하다.
 
-- 확장은 **선택 필드 하나**로 한다. 자유문장 메시지의 기존 형태(`content`만)는 그대로 유효하다.
-- 확인 행위 메시지는 `content`를 Rule 입력으로 쓰지 않는다. 즉 확인은 문장이 아니라 **참조로** 이뤄진다.
-- 정확한 필드명·DTO·OpenAPI·상태 표현은 이 Decision 승인 뒤 `#176` 구현 PR에서 계약 문서·테스트와 함께 고정한다. **이 문서가 필드명을 확정하지 않는다** — 공개 DTO는 남한솔(`@solia142`)의 확인 UI 검토 대상이다.
+`#176`이 「후보 제시·추가 정보 요청·사용자 확인 action의 정확한 DTO와 상태 전이는 **선행 Product Decision에서 확정**한다」를 요구하므로, 아래 표를 이 Decision의 승인 대상으로 제시한다. 필드명은 `medication-identification-v1.md`의 승인된 표시 Snapshot·확인·거절 표를 그대로 대응시킨 것이다. **수정이 필요하면 구현 PR이 아니라 이 Candidate에서 고친 뒤 승인한다**(§7-1).
 
-### 4-4. 확인·거절에만 `Idempotency-Key`를 요구한다
+#### 후보 제시 (assistant 응답에 포함되는 OTC block)
 
-`medication-identification-v1.md`가 「Search 생성에는 요구하지 않고 사용자 확인·거절에만 적용한다」로 이미 정한 규칙을 그대로 쓴다. 새 멱등성 규칙을 만들지 않는다.
+| 필드 | 타입 | 필수 | 의미 |
+| --- | --- | --- | --- |
+| `otc_search_id` | string(UUID) | 필수 | OTC Candidate Search 식별자 |
+| `status` | enum | 필수 | §4-1의 승인된 Search 상태축 |
+| `candidate_search_result_id` | string(UUID) \| null | 필수 | `READY`일 때만 non-null |
+| `candidate` | object \| null | 필수 | 표시 Snapshot. `READY`일 때만 non-null |
+| `expires_at` | string(date-time) \| null | 필수 | 확인 가능 만료 시각. `RUNNING`은 null 가능 |
 
-- 동일 key + 동일 request → 동일 결과
+표시 Snapshot `candidate`는 승인 계약과 동일하게 `product_name`, nullable `strength_text`, nullable `dosage_form`, nullable `manufacturer_name`, `product_status`만 포함한다. `candidate_count`·`displayed_candidate_count`·`display_limit`·`status_reason`·Query Digest·Top-K·score·rank·distance는 공개 DTO에 넣지 않는다.
+
+#### 요청 (`SendChatMessageRequest` 확장)
+
+| 필드 | 타입 | 필수 | 의미 |
+| --- | --- | --- | --- |
+| `content` | string | `action`이 없을 때 필수 | 자유문장. action 요청에는 넣지 않는다 |
+| `action` | object \| null | 선택 | 있으면 확인·거절 행위다 |
+| `action.type` | enum `OTC_CANDIDATE_CONFIRM` \| `OTC_CANDIDATE_REJECT` | `action`이 있을 때 필수 | 행위 종류 |
+| `action.otc_search_id` | string(UUID) | `action`이 있을 때 필수 | 화면에 표시된 현재 Search |
+| `action.candidate_search_result_id` | string(UUID) | `action`이 있을 때 필수 | 표시된 단일 후보 |
+
+`content`와 `action`을 함께 제출하면 `400`이다. 자유문장 메시지의 기존 형태(`content`만)는 그대로 유효하므로 기존 Chat 소비자는 영향을 받지 않는다. **확인은 문장이 아니라 참조로만 이뤄진다** — action 요청의 문장을 Rule 입력으로 쓰지 않는다.
+
+#### 성공 응답
+
+| 동작 | 응답 필드 |
+| --- | --- |
+| 확인 | `otc_identification_id`, `otc_search_id`, `status=MATCHED`, `source=USER_SELECTED`, `identity`(`entity_type`·`code_system`·`canonical_code`), `confirmed_at` |
+| 거절 | `otc_identification_event_id`, `otc_search_id`, `status=UNRESOLVED`, `search_status=INVALIDATED_USER_REJECTED`, `rejected_at` |
+
+거절 사유는 서버 고정 `USER_REJECTED_DISPLAYED_CANDIDATE`이며 자유문장을 받지 않는다. Backend는 `candidate_search_result_id`가 같은 Search 소속이고 `READY`·표시 가능·선택 가능한지 검증한다(승인 계약과 동일).
+
+#### 오류 의미
+
+| 상황 | 응답 |
+| --- | --- |
+| `Idempotency-Key` 누락·빈 값 | `400 IDEMPOTENCY_KEY_REQUIRED` |
+| `Idempotency-Key` 형식 오류 | `400 IDEMPOTENCY_KEY_INVALID` |
+| `content`와 `action` 동시 제출 | `400` |
+| 타 사용자 세션·Search·Result | `404` |
+| 현재성 불일치(§4-5), 동일 키·상이 요청 | `409` |
+| 스키마 검증 실패 | `422` |
+
+이 표들은 승인 시 `#176` 구현 PR이 OpenAPI·Pydantic DTO·계약 테스트로 그대로 반영해야 하는 계약이다.
+
+### 4-4. `Idempotency-Key`는 두 경로 모두에 필요하다
+
+`idempotency-v1.md`는 「**비동기 Job을 생성하는 모든 POST 요청**과 Post-MVP-1 B·C 동기 상태 변경, **Track F 사용자 Candidate 확인·거절 요청**은 `Idempotency-Key` 헤더를 요구한다」로 정한다. OTC 경로에는 두 조건이 **모두** 걸린다.
+
+| 요청 | 키 | 근거 |
+| --- | --- | --- |
+| 자유문장 메시지 (`CHAT` Job을 생성) | **필수** | `idempotency-v1.md`의 「Job을 생성하는 모든 POST」. scope는 비동기 접수 `(user_id, operation_id, key_hmac)` |
+| 확인·거절 action | **필수** | `idempotency-v1.md`의 Track F 확인·거절 범위, `medication-identification-v1.md`와 동일 |
+
+- 동일 key + 동일 request → 최초 성공 응답 재현
 - 동일 key + 다른 request → `409`
-- 자유문장 메시지 전송은 기존 Chat 전송 규칙을 그대로 따른다
+- 누락·형식 오류 → `400 IDEMPOTENCY_KEY_REQUIRED` / `IDEMPOTENCY_KEY_INVALID`
+
+> **정정.** 이 문서의 이전 초안은 「확인·거절에만 요구한다」고 썼다. 그 규칙은 `medication-identification-v1.md`가 **Candidate Search 생성**(Job을 만들지 않는 경로)에 대해 정한 것이며, `CHAT` Job을 만드는 메시지 POST에 일반화하면 Job 생성 POST의 키 필수 요건을 누락하게 된다.
 
 ### 4-5. 현재성과 무효화
 
@@ -119,9 +171,13 @@
 
 자유 입력에 allowlist·정규화·최대 길이·속도 제한을 적용한다. 정규화는 Catalog가 쓰는 `normalization_version`과 같은 규칙을 쓰고 OTC 전용 정규화를 새로 만들지 않는다. 구체 수치는 **결정 필요**(§5-D5).
 
-### 4-8. 저장과 provenance
+### 4-8. 저장과 provenance — 목표 `CHAT` Job 기반이다
 
-확정 결과는 기존 `CHAT` Job에 귀속해 **append-only**로 남긴다. 저장 항목은 확정된 `ProductIdentity`, 확인·거절 행위와 시각, 입력 provenance(원문이 아닌 지문), Resolver policy/version/hash, Bundle·Index version이다. 부분 저장은 허용하지 않는다(하나의 transaction).
+**이 결정은 `rag-runtime-v1.md`의 2단계 Chat Job 접수를 기반으로 한다.** 즉 질문과 최소 `CHAT` Job을 먼저 저장하고 Safety Intake·Triage를 거친 뒤, `ROUTINE` 분기에서만 OTC Identity 확인 전이가 일어난다. `URGENT`·`EMERGENCY`·`UNKNOWN`은 승인 Safety Flow로 분기하므로 OTC 확인을 시작하지 않는다.
+
+현재 구현은 동기 `201`이라 이 기반이 아직 아니다. 따라서 **[#148](https://github.com/AI-HealthCare-05/AH_05_04/issues/148)(OCR/Guide/Chat `202` 전환)이 `#176` 구현의 선행 조건**이며, 그전에는 존재하지 않는 Job을 전제한 구현을 시작하지 않는다.
+
+확정 결과는 그 `CHAT` Job에 귀속해 **append-only**로 남긴다. 저장 항목은 확정된 `ProductIdentity`, 확인·거절 행위와 시각, 입력 provenance(원문이 아닌 지문), Resolver policy/version/hash, Bundle·Index version이다. 부분 저장은 허용하지 않는다(하나의 transaction).
 
 ## 5. 결정이 필요한 항목
 
@@ -169,15 +225,32 @@
 | **LLM이 추출한 제품명을 Identity로 확정** | 기각. `safety-result-v1.md`가 LLM 추론만으로 확정하지 않는다고 이미 고정했고, 잘못된 상호작용 판정의 직접 원인이 된다 |
 | **자유문장을 그대로 Rule 입력으로 저장** | 기각. `#176`이 금지하고, 같은 약을 가리키는 다른 문장이 서로 다른 Identity가 되어 Rule 재현이 깨진다 |
 | **확인 없이 단일 후보를 자동 확정** | 기각. 「최대 1개 후보 사용자 확인/거절」이 Approved v4 Track F 흐름의 일부다 |
-| **Chat 전송을 비동기 `CHAT` Job으로 함께 전환** | 이 문서 범위 밖. 현재 동기 `201`이며 전환은 Track A 비동기 계약과 함께 다뤄야 한다 |
+| **Chat 전송을 비동기 `CHAT` Job으로 함께 전환** | 이 문서에서 **결정하지 않되 선행 조건으로 연결**한다. 전환 자체는 Track A 비동기 계약([#148](https://github.com/AI-HealthCare-05/AH_05_04/issues/148)) 범위이고, 이 결정은 그 목표 기반 위에서만 구현될 수 있다(§4-8) |
 
-## 7. 승인 조건과 후속
+## 7. 승인 범위와 선행 조건
 
-1. §5의 D1~D5가 결정되고 이 문서에 반영된다.
-2. 승인 후 `#176` 구현 PR이 Decision·OpenAPI·Pydantic DTO·계약 문서의 필드·enum·requiredness를 함께 정렬한다(`AGENTS.md` 공유 계약 규칙).
-3. `safety-result-v1.md`의 「상세 전이는 아직 미정」 문구와 `post-mvp-1-document-authority.md`의 「OTC 질문의 안정 Identity」 항목을 같은 PR에서 해소 문구로 갱신한다.
-4. D2가 A안으로 결정되면 MFDS Source·Catalog 분류 수집을 별도 Issue로 분리한다.
-5. 승인 전까지 `#176`은 `BLOCKED_BY_OTC_IDENTITY_DECISION`을 유지하고 DTO·Router·persistence를 구현하지 않는다.
+### 7-1. 승인 범위 — §4-3의 DTO 표를 포함한다
+
+`#176`은 「후보 제시·추가 정보 요청·사용자 확인 action의 **정확한 DTO와 상태 전이는 선행 Product Decision에서 확정**한다」를 선행조건으로 걸었다. 따라서 이 문서의 승인은 §4 전체(§4-3의 요청·응답·오류 표 포함)에 대한 승인이어야 한다.
+
+- 필드명·requiredness·오류 의미를 고칠 필요가 있으면 **이 Candidate를 고친 뒤 승인한다.** 구현 PR로 미루지 않는다.
+- 원칙(§4-1·§4-2)만 합의하고 §4-3을 확정하지 않는 선택도 가능하다. 그 경우 **`#176`의 DTO·Router·persistence 구현 차단은 별도 DTO Decision 또는 계약 승인까지 그대로 유지된다.** 원칙 합의만으로는 Frontend와 Backend가 같은 계약으로 구현할 수 있다는 `#176`의 선행조건이 충족되지 않기 때문이다.
+
+### 7-2. 결정 항목
+
+§5의 D1~D5가 결정되고 이 문서에 반영된다. D2가 A안으로 결정되면 MFDS Source·Catalog 분류 수집을 별도 Issue로 분리한다.
+
+### 7-3. 실행 연결의 선행 조건
+
+이 결정은 `rag-runtime-v1.md`의 목표 `CHAT` Job 2단계 접수를 기반으로 한다(§4-8). 현재 Chat은 동기 `201`이므로, `#176`의 구현 착수 전에 [#148](https://github.com/AI-HealthCare-05/AH_05_04/issues/148)(OCR/Guide/Chat `202` 전환)이 선행되어야 한다. 이 문서의 승인이 그 전환을 승인하는 것은 아니다.
+
+### 7-4. 승인 후 정렬
+
+승인 후 `#176` 구현 PR이 Decision·OpenAPI·Pydantic DTO·계약 문서의 필드·enum·requiredness를 함께 정렬한다(`AGENTS.md` 공유 계약 규칙). 같은 PR에서 `safety-result-v1.md`의 「상세 전이는 아직 미정」 문구와 `post-mvp-1-document-authority.md`의 「OTC 질문의 안정 Identity」 항목을 해소 문구로 갱신한다.
+
+### 7-5. 승인 전
+
+`#176`은 `BLOCKED_BY_OTC_IDENTITY_DECISION`을 유지하고 DTO·Router·persistence를 구현하지 않는다.
 
 ## 8. 관련 문서
 
