@@ -11,7 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 
 from ai_worker.tasks.rag.source_client.contracts import EmptyResultPolicy, SourceOperationIdentity
-from ai_worker.tasks.rag.source_ingestion.artifacts import StoredRawArtifact
+from ai_worker.tasks.rag.source_ingestion.artifacts import IngestionArtifactKind, StoredRawArtifact
+from ai_worker.tasks.rag.source_ingestion.failure_runs import IngestionProcessingFailureCode
+from ai_worker.tasks.rag.source_ingestion.reject_codes import (
+    parser_location_identity,
+    validate_reject_artifact,
+    validate_reject_contract,
+)
 from ai_worker.tasks.rag.source_ingestion.service import SourceAcquisitionInProgressError
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
@@ -79,6 +85,7 @@ _INGESTION_RUN = table(
     column("attempt_number", Integer),
     column("failure_code", String(100)),
     column("failure_message", String(255)),
+    column("reject_code_contract_version", String(100)),
     column("attempted_source_version", String(200)),
     column("attempted_external_version", String(200)),
     column("attempted_canonical_contract", JSONB),
@@ -370,7 +377,24 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
             )
         )
 
+    async def _run_operation_identity(self, operation_id: UUID) -> SourceOperationIdentity:
+        row = (
+            await self._session.execute(
+                select(_SOURCE.c.source_code, _ENDPOINT.c.endpoint_code, _OPERATION.c.operation_code)
+                .select_from(
+                    _SOURCE.join(_ENDPOINT, _ENDPOINT.c.source_id == _SOURCE.c.id).join(
+                        _OPERATION, _OPERATION.c.endpoint_id == _ENDPOINT.c.id
+                    )
+                )
+                .where(_OPERATION.c.id == str(operation_id))
+            )
+        ).one()
+        return SourceOperationIdentity(*row)
+
     async def create_run(self, record: SnapshotRunRecord) -> UUID:
+        if record.reject_code_contract_version is not None:
+            identity = await self._run_operation_identity(record.operation_id)
+            validate_reject_contract(identity=identity, version=record.reject_code_contract_version)
         ingestion_run_id = uuid4()
         await self._session.execute(
             insert(_INGESTION_RUN).values(
@@ -382,6 +406,7 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
                 attempt_number=record.attempt_number,
                 failure_code=record.failure_code,
                 failure_message=None,
+                reject_code_contract_version=record.reject_code_contract_version,
                 attempted_source_version=record.attempted_source_version,
                 attempted_external_version=record.attempted_external_version,
                 attempted_canonical_contract=record.attempted_canonical_contract,
@@ -401,6 +426,45 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
         ingestion_run_id: UUID,
         artifacts: tuple[StoredRawArtifact, ...],
     ) -> None:
+        rejects = [a for a in artifacts if a.artifact_kind is IngestionArtifactKind.REJECTS]
+        if rejects:
+            row = (
+                (
+                    await self._session.execute(
+                        select(_INGESTION_RUN).where(_INGESTION_RUN.c.id == str(ingestion_run_id)).with_for_update()
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            identity = await self._run_operation_identity(UUID(row["operation_id"]))
+            locations = set(
+                (
+                    await self._session.scalars(
+                        select(_INGESTION_ARTIFACT.c.parser_location).where(
+                            _INGESTION_ARTIFACT.c.ingestion_run_id == str(ingestion_run_id),
+                            _INGESTION_ARTIFACT.c.artifact_kind == IngestionArtifactKind.REJECTS,
+                        )
+                    )
+                ).all()
+            )
+            location_keys = {parser_location_identity(location) for location in locations}
+            for artifact in rejects:
+                validate_reject_artifact(
+                    identity=identity,
+                    version=row["reject_code_contract_version"],
+                    code=artifact.reject_code,
+                    location=artifact.parser_location,
+                )
+                # REJECTS는 처리 실패 실행에만 붙습니다. 한도 초과와 parser 검증 실패를
+                # 모두 허용해야 두 실패 의미가 감사 행에서 구분됩니다.
+                if (
+                    parser_location_identity(artifact.parser_location) in location_keys
+                    or row["run_status"] != "FAILED"
+                    or row["failure_code"] not in set(IngestionProcessingFailureCode)
+                ):
+                    raise ValueError("Reject artifact does not match failed parser run.")
+                location_keys.add(parser_location_identity(artifact.parser_location))
         values = [
             {
                 "id": str(uuid4()),

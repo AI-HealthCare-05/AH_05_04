@@ -242,7 +242,7 @@ def test_product_checksum_rejects_duplicates_across_pages(
     )
 
     # 이전 검증 결과가 passed여도 현재 레코드의 중복을 다시 잡아냅니다.
-    with pytest.raises(ValueError, match="Duplicate"):
+    with pytest.raises(ValueError, match="valid ITEM_SEQ identifiers"):
         calculate_product_run_checksum(
             result=duplicated_run,
             receipt=receipt,
