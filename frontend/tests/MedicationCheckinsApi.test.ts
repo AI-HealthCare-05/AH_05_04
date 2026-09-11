@@ -24,7 +24,7 @@ function makeCheckin(
       occurrence_id: occurrenceId,
       status: 'TAKEN',
       taken_at: '2026-09-11T09:00:00Z',
-      revision: 0,
+      revision: 1,
       corrected: false,
       ...overrides,
     },
@@ -64,17 +64,19 @@ describe('Check-in PUT adapter', () => {
     const responseBody = makeCheckin()
     const fetchMock = stubFetch(responseBody)
 
-    await expect(
-      putMedicationCheckin(
-        occurrenceId,
-        {
-          status: 'TAKEN',
-          takenAt: '2026-09-11T09:00:00Z',
-          expectedRevision: 0,
-        },
-        idempotencyKey,
-      ),
-    ).resolves.toEqual(responseBody)
+    const response = await putMedicationCheckin(
+      occurrenceId,
+      {
+        status: 'TAKEN',
+        takenAt: '2026-09-11T09:00:00Z',
+        expectedRevision: 0,
+      },
+      idempotencyKey,
+    )
+
+    expect(response).toEqual(responseBody)
+    expect(response.data.revision).toBe(1)
+    expect(response.data.corrected).toBe(false)
 
     expect(fetchMock).toHaveBeenCalledWith(
       `http://localhost:8000/api/v1/medication-occurrences/${occurrenceId}/check-in`,
