@@ -601,3 +601,21 @@ OCR Candidate Index와 의료 Evidence Index는 별도 version과 물리 경계�
 ### PR #429 관리 Snapshot 잠금 권한 (PD-398-R2)
 
 `rag_source_snapshot.management_lock_marker`는 INTEGER NOT NULL DEFAULT 0이며 CHECK로 0에 고정한다. SELECT FOR UPDATE 권한을 충족하는 기술 표식으로, API 필드·검증 시각·provenance·revision·게시 승인 의미가 없다. 관리 역할은 이 컬럼만 UPDATE할 수 있고 `verified_at`/`effective_at`/seal은 직접 수정할 수 없다. 관리 row hash에서는 표식만 제외해 도입 전 hash를 유지한다. migration `3984b5c6d7e8` 적용 후 권한 provisioning을 재실행해야 기존 검증 시각 UPDATE 권한이 회수된다.
+
+## #423 Schedule Audit — 작업 브랜치 구현·리뷰/머지 대기
+
+Migration `423a1b2c3d4e` (`3984b5c6d7e8` 다음)는 `medication_schedule_audit`와 occurrence의
+nullable UTC `cancelled_at`을 추가한다. 감사 컬럼·revision/actor/unique·snapshot 의미는
+[일정 정합화 v1 §3](contracts/targets/post-mvp-1/track-b-schedule-reconciliation-v1.md)을 따른다.
+Schedule·actor FK는 RESTRICT이며 기존 #398 역할 provisioning은 Runtime에 SELECT/INSERT만 부여해
+감사 UPDATE/DELETE/TRUNCATE를 차단한다. Migration 이후 역할 provisioning을 재실행한다.
+DB trigger와 ORM event는 사용하지 않는다. 기존 time row는
+보존하고 retire는 schedule 상태·revision으로 판정한다. 종료는 revision과 SCHEDULER audit을
+같이 추가하며 기존 occurrence·Check-in·time FK를 보존한다.
+
+기존 Schedule은 migration 시 별도 JSON baseline으로 보존하고 과거 감사로 재구성하지 않는다.
+기존 CANCELLED의 알 수 없는 취소 시각은 null이다. 실제 신규 감사/취소 이력이 있으면 downgrade를
+거부한다. baseline 접근·보존·실패 재시도는 [PD-423](governance/decisions/2026-09-10-schedule-audit-storage.md),
+검증 범위와 후속 연동은 [#423 기록](validation/issue-423-schedule-audit.md)을 따른다.
+
+아직 develop에 병합되지 않은 구현이며 실제 #202 일정 API·#203 알림·Frontend 완료를 뜻하지 않는다.
