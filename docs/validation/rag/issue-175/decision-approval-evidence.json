@@ -185,9 +185,14 @@
       "resolution": "§2를 실제 채택 방식으로 정정하고 정정 이력을 절 안에 남겼다. 승인 조건 1의 문구와 대안 표, 설계 문서 2곳도 함께 정합화했다.",
       "evidence_integrity": "이 정정은 approval_events와 reviewed_documents의 sha256_at_reviewed_commit을 변경하지 않는다. 해당 값들은 승인 시점 commit 96fd4693의 원본이며 그대로 보존된다. 따라서 이 파일의 문서 해시는 '현재 문서'가 아니라 '승인 시점 문서'를 가리킨다.",
       "reported_by": {
-        "actor_id": "Jye-rookie",
+        "actor_id": "hazelnutflavoured",
         "namespace": "GITHUB_LOGIN",
-        "role": "PR_442_REVIEWER"
+        "role": "PR_442_REVIEWER",
+        "evidence_id": "github-pr-442-comment-5620865337",
+        "comment_id": 5620865337,
+        "comment_url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/442#issuecomment-5620865337",
+        "comment_created_at": "2026-09-10T15:06:51.000000Z",
+        "verification_note": "gh api repos/AI-HealthCare-05/AH_05_04/issues/comments/5620865337 로 작성자를 재조회해 확인했다. 이 필드는 당초 Jye-rookie로 잘못 기록됐다 — #416 리뷰어를 이 PR로 옮겨 적은 오귀속이며, Jye-rookie는 PR #442에 코멘트·리뷰를 남기지 않았다(API로 0건 확인). PR #442 리뷰에서 지적돼 정정했다."
       }
     }
   ],
