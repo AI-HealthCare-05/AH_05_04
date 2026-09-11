@@ -46,13 +46,16 @@ def test_detects_raw_sql_write(tmp_path: Path) -> None:
     ]
 
 
-def test_draft_pr_372_catalog_tables_have_no_preapproved_writer(tmp_path: Path) -> None:
-    path = tmp_path / "ai_worker/adapters/sqlalchemy_catalog_write_support.py"
-    path.parent.mkdir(parents=True)
-    path.write_text('statement = "INSERT INTO rag_catalog_set (id) VALUES (:id)"\n')
+def test_catalog_build_writes_are_limited_to_explicit_adapter(tmp_path: Path) -> None:
+    adapter = tmp_path / "ai_worker/adapters/sqlalchemy_catalog_write_support.py"
+    adapter.parent.mkdir(parents=True)
+    adapter.write_text('statement = "INSERT INTO rag_catalog_set (id) VALUES (:id)"\n')
+    bypass = tmp_path / "ai_worker/adapters/catalog_bypass.py"
+    bypass.write_text(adapter.read_text())
 
-    assert violations(tmp_path, [str(path.relative_to(tmp_path))]) == [
-        "ai_worker/adapters/sqlalchemy_catalog_write_support.py:1: unapproved write to rag_catalog_set"
+    assert violations(tmp_path, [str(adapter.relative_to(tmp_path))]) == []
+    assert violations(tmp_path, [str(bypass.relative_to(tmp_path))]) == [
+        "ai_worker/adapters/catalog_bypass.py:1: unapproved write to rag_catalog_set"
     ]
 
 
