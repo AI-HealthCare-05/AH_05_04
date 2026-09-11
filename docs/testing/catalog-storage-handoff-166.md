@@ -21,7 +21,7 @@
 
 ## 유지하는 후속 범위
 
-- #436 병합 후 #362 Snapshot Receipt를 실제 Catalog 소비 경로에 연결한다.
+- #436 `dc745a4`의 실제 Snapshot Receipt provenance 검증을 저장·조회 경로에 연결했다. 선행 PR 리뷰·병합 후 재정렬은 남아 있다.
 - D-02 실행 provenance, Authority projection/Runtime hash 등의 합의된 후속 경계는 그대로 유지한다.
   ingestion run·version·member_ref·hash로 정본 normalization 실행 ID를 대체하지 않는다.
 - 현재 승인 포트는 합성 응답으로 검증한다. 실제 승인 저장소·권한·만료·회수 조회 및 동시 철회 보장은 별도 연결 범위다.
@@ -104,7 +104,7 @@ shasum -a 256 tests/fixtures/rag/catalog/hash-v2/catalog.jsonl tests/fixtures/ra
 - #355는 조회 시 미병합이며, 이번 develop 반영으로 D-02 인계나 Evidence/Citation
   선행 migration 병합이 충족됐다고 판단하지 않는다. 실제 migration 부모는 착수 직전에 재확인한다.
 
-## 미완료 항목과 상태 해석
+## 당시 미완료 항목과 상태 해석 — DB 구현 전 과거 기록
 
 - D-02는 **미확정 그대로**다. 별도 run 신설·ingestion run을 정본 normalization_run_id로 대체하는 변경 없음.
 - schema·migration·실제 Worker PostgreSQL adapter·commit/rollback·재시도·부분 공개 방지는 미구현/미검증.
@@ -117,3 +117,48 @@ shasum -a 256 tests/fixtures/rag/catalog/hash-v2/catalog.jsonl tests/fixtures/ra
 [구현 계획](../designs/ceohwj/issue-167-rag-candidate-index-implementation-plan.md)의 공개 입력은
 이미 CatalogExportArtifacts/v2로 정렬돼 있다. 해당 담당 문서를 불필요하게 변경하지 않았다.
 `docs/validation/rag/catalog/synthetic-catalog-v1`은 과거 자료로 보존한다.
+
+
+## 2026-09-11 — Source Receipt 연결과 저장 후 전체 검증
+
+- Source `get_snapshot_receipt()`를 실제 DB에서 조회하고 ID/version 및 `validate_provenance()`를 검증한다.
+- 저장에서는 Snapshot 잠금 이후 Identity 쓰기 전에 검증한다. 조회에서는 같은 read-only repeatable-read
+  transaction에서 보존 bytes와 실제 Source Receipt·구성원·Set·hash를 검증한다.
+- commit 이후 manifest/Set 대조만 하던 경로를 전체 read-back으로 통일했다. 구성원 변조나 Source
+  provenance 손상이 발생하면 저장 성공을 반환하지 않으며, 이미 commit된 데이터를 임의 복구하지 않는다.
+- 승인 verifier는 그대로 별도 호출한다. 실제 승인 저장소·철회 경합·Freshness 구현 완료를 뜻하지 않는다.
+- 기존 `db-v2`와 `hash-v2` golden 자료는 보존했다. `db-receipt-v2`는 동일 합성 Catalog에 유효한
+  `external:v1/v2` Source 참조를 결속한 고정 bytes/digest다. 기대값은 테스트 실행 중 재생성하지 않는다.
+- 신규 merge revision `166d0e1f2031`은 기존 `166c9d0e1f20` 및 `362c3d4e5f60` 이력을 합친다.
+  과거 migration을 수정하지 않고 schema/data 변경이나 Trigger/RLS/업무 DB 함수 없이 단일 head를 만든다.
+- 확정 v2 입력·출력은 유지한다. D-02·D-03 Authority Set·D-04 Authority 차이 결정·D-05 후속 hash와
+  실제 승인/감사 저장소·Catalog Writer 연결이 모두 완료됐다고 해석하지 않는다.
+
+- 이미 transaction이 열린 외부 connection 주입은 첫 Catalog 쓰기 전에 거부한다. 기존 Backend
+  테스트의 외부 transaction/savepoint를 commit 증빙으로 사용하지 않는다. 실제 commit·재사용은
+  독립 PostgreSQL roundtrip 테스트가 검증하며, Backend 테스트는 외부 transaction 거부·부분 쓰기
+  0건을 확인한다.
+
+### 최종 검증 결과
+
+구현 기준: `a82043a` (선행 통합 `f0f5a6f`). 전용 PostgreSQL 17·Redis 7과 합성 데이터만 사용했다.
+
+- `scripts/ci/run_test.sh`: **exit 0**.
+- 전체 migration: **192 passed**.
+- Backend·계약·PostgreSQL 통합: **1815 passed, 59 skipped**.
+- Redis 통합: **23 passed**.
+- Worker 전체: **2903 passed, 8 skipped**.
+- 통합 coverage: **94%**.
+- 집중 검증: Catalog·Candidate 단위 **284 passed**, 실제 DB roundtrip **20 passed**,
+  Backend Catalog 저장소 **25 passed**. 전체 CI와 중복되는 수치는 합산하지 않는다.
+- Ruff 전체·format(713 files)·Mypy(553 source files)·diff 검사 통과.
+- DB 업무 로직 재도입·보호 테이블 Python 쓰기·테스트 inventory 검사 통과.
+- 최신 head **166d0e1f2031**, 실제 DB의 사용자 Trigger·RLS·제거 대상 함수 **0개**.
+
+첫 전체 실행에서 #436의 과거 head 고정 테스트 2건을 발견해 현재 단일 head/실제 DB 비교로 수정했다.
+다음 실행의 외부 transaction을 commit으로 취급하던 Catalog 테스트는 소유권 거부 테스트로 정렬했고,
+임시 환경의 Redis host/port는 Worker 기본값과 통합 실행용 값으로 구분했다. 위 수치는 이 수정 이후
+전체 스크립트를 다시 실행한 최종 결과다. 실제 commit·재사용 증빙은 독립 DB roundtrip에서 유지한다.
+
+원격 push·CI·담당자 승인·운영 적용은 이번 로컬 검증에 포함하지 않는다. 실제 승인 저장소/철회,
+실패 감사 저장소와 Catalog Writer 연결 및 합의된 후속 계약이 남아 있으므로 #372는 Draft 범위다.
