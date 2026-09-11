@@ -126,8 +126,8 @@ async def record_processing_failure(
                 code=artifact.reject_code,
                 location=artifact.parser_location,
             )
-            # v1 identity errors always retain their parser failure semantics.
-            failure_code = IngestionProcessingFailureCode.PARSER_VALIDATION_FAILED
+    # 호출자가 정한 실패 의미를 보존합니다. 식별자 오류를 PARSER_VALIDATION_FAILED로
+    # 판정하는 것은 persistence 계층의 책임이며, 여기서 덮어쓰면 한도 초과와 구분할 수 없습니다.
     _validate_failure_artifacts(failure_code=failure_code, artifacts=artifacts)
     return await _record_failed_run(
         repository=repository,

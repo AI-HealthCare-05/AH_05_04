@@ -12,7 +12,7 @@ depends_on = None
 def upgrade() -> None:
     op.add_column("rag_source_ingestion_run", sa.Column("reject_code_contract_version", sa.String(100), nullable=True))
     op.create_check_constraint(
-        "chk_rag_run_reject_contract_nonblank",
+        "chk_rag_source_ingestion_run_reject_contract_nonblank",
         "rag_source_ingestion_run",
         "reject_code_contract_version IS NULL OR length(trim(reject_code_contract_version)) > 0",
     )
@@ -26,5 +26,5 @@ def downgrade() -> None:
         sa.text("SELECT EXISTS (SELECT 1 FROM rag_source_ingestion_run WHERE reject_code_contract_version IS NOT NULL)")
     ):
         raise RuntimeError("Reject contract history must be preserved; use a forward fix.")
-    op.drop_constraint("chk_rag_run_reject_contract_nonblank", "rag_source_ingestion_run", type_="check")
+    op.drop_constraint("chk_rag_source_ingestion_run_reject_contract_nonblank", "rag_source_ingestion_run", type_="check")
     op.drop_column("rag_source_ingestion_run", "reject_code_contract_version")

@@ -28,6 +28,11 @@ from ai_worker.tasks.rag.source_client.contracts import (
     SourceRunStatus,
 )
 from ai_worker.tasks.rag.source_ingestion.artifacts import IngestionArtifactKind, RawArtifactMetadata, StoredRawArtifact
+from ai_worker.tasks.rag.source_ingestion.failure_runs import (
+    FailedIngestionRunMetadata,
+    IngestionProcessingFailureCode,
+    record_processing_failure,
+)
 from ai_worker.tasks.rag.source_ingestion.persistence import (
     RejectionArtifactInput,
     ingest_and_persist_product_run,
@@ -494,4 +499,49 @@ async def test_transport_failure_keeps_existing_failure_type_and_code(database, 
     async with factory() as session:
         row = await session.get(RagSourceIngestionRun, outcome.ingestion_run_id)
         assert row.reject_code_contract_version == REJECT_CODE_CONTRACT_VERSION
+        assert row.snapshot_id is None
+
+
+@pytest.mark.parametrize("failure_code", list(IngestionProcessingFailureCode))
+async def test_each_processing_failure_code_roundtrips_through_database(database, failure_code):
+    """두 처리 실패 코드가 각각 저장되고 같은 값으로 조회되어야 한다."""
+    factory, _ = database
+    artifacts = (
+        StoredRawArtifact(
+            1,
+            RawArtifactMetadata("page-0001.json", "b" * 64, 20, "application/json"),
+            "LOCAL_PRIVATE",
+            f"synthetic-raw-{failure_code.value}",
+        ),
+        StoredRawArtifact(
+            None,
+            RawArtifactMetadata("reject.json", "a" * 64, 10, "application/json"),
+            "LOCAL_PRIVATE",
+            f"synthetic-reject-{failure_code.value}",
+            IngestionArtifactKind.REJECTS,
+            "ITEM_SEQ_REQUIRED",
+            "page[1].record[0]",
+        ),
+    )
+
+    async with factory.begin() as session:
+        recorded = await record_processing_failure(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            identity=PRODUCT_REJECT_IDENTITY,
+            metadata=FailedIngestionRunMetadata(
+                run_group_key="synthetic-" + uuid4().hex,
+                attempt_number=1,
+                started_at=NOW,
+                finished_at=NOW,
+                duration_ms=1000,
+                reject_code_contract_version=REJECT_CODE_CONTRACT_VERSION,
+            ),
+            failure_code=failure_code,
+            artifacts=artifacts,
+        )
+
+    assert recorded.failure_code == failure_code.value
+    async with factory() as session:
+        row = await session.get(RagSourceIngestionRun, recorded.ingestion_run_id)
+        assert row.failure_code == failure_code.value
         assert row.snapshot_id is None

@@ -48,7 +48,7 @@ Source 단위 418건, Ruff·format 통과. 신규 revision 165a0b1c2d3e는 #436 
 운영·AWS·팀원 DB에는 적용하지 않았고, 원격 CI는 푸시하지 않아 실행하지 않았다.
 
 6단계 완료: 계약·Decision·구현·migration·테스트의 최종 정합성을 확인하고
-[로컬 PR 제목·본문 초안](reject-codes-165-pr-draft.md)을 준비했다.
+PR #444 본문을 작성했다.
 
 | 완료 조건 | 구현 및 검증 근거 |
 | --- | --- |

@@ -23,7 +23,6 @@ from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
 from ai_worker.tasks.rag.source_ingestion.normalize import canonical_json_bytes
 from ai_worker.tasks.rag.source_ingestion.reject_codes import (
     PRODUCT_REJECT_IDENTITY,
-    REJECT_CODE_CONTRACT_VERSION,
     validate_reject_artifact,
 )
 from ai_worker.tasks.rag.source_ingestion.validation import (
@@ -65,8 +64,8 @@ def preserve_rejection_artifact(
     reject_code: str,
     parser_location: str,
     store: RawArtifactStore,
-    identity: SourceOperationIdentity = PRODUCT_REJECT_IDENTITY,
-    reject_code_contract_version: str | None = REJECT_CODE_CONTRACT_VERSION,
+    identity: SourceOperationIdentity,
+    reject_code_contract_version: str | None,
 ) -> StoredRawArtifact:
     """거부 원문을 안전한 코드·Parser 위치와 함께 불변 보존합니다."""
     validate_reject_artifact(

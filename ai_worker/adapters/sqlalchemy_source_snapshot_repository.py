@@ -12,6 +12,7 @@ from sqlalchemy.sql import Select
 
 from ai_worker.tasks.rag.source_client.contracts import EmptyResultPolicy, SourceOperationIdentity
 from ai_worker.tasks.rag.source_ingestion.artifacts import IngestionArtifactKind, StoredRawArtifact
+from ai_worker.tasks.rag.source_ingestion.failure_runs import IngestionProcessingFailureCode
 from ai_worker.tasks.rag.source_ingestion.reject_codes import (
     parser_location_identity,
     validate_reject_artifact,
@@ -455,10 +456,12 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
                     code=artifact.reject_code,
                     location=artifact.parser_location,
                 )
+                # REJECTS는 처리 실패 실행에만 붙습니다. 한도 초과와 parser 검증 실패를
+                # 모두 허용해야 두 실패 의미가 감사 행에서 구분됩니다.
                 if (
                     parser_location_identity(artifact.parser_location) in location_keys
                     or row["run_status"] != "FAILED"
-                    or row["failure_code"] != "PARSER_VALIDATION_FAILED"
+                    or row["failure_code"] not in set(IngestionProcessingFailureCode)
                 ):
                     raise ValueError("Reject artifact does not match failed parser run.")
                 location_keys.add(parser_location_identity(artifact.parser_location))

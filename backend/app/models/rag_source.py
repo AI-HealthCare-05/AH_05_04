@@ -321,7 +321,7 @@ class RagSourceIngestionRun(Base):
     __table_args__ = (
         CheckConstraint(
             "reject_code_contract_version IS NULL OR length(trim(reject_code_contract_version)) > 0",
-            name="chk_rag_run_reject_contract_nonblank",
+            name="chk_rag_source_ingestion_run_reject_contract_nonblank",
         ),
         UniqueConstraint("operation_id", "run_group_key", "attempt_number", name="uq_rag_source_ingestion_run_attempt"),
         Index("idx_rag_ingestion_attempt_version", "operation_id", "attempted_source_version"),

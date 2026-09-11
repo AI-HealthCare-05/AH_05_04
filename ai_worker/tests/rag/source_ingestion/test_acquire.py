@@ -9,6 +9,7 @@ from ai_worker.tasks.rag.source_client.contracts import (
     P0_OPERATIONS,
     PrimaryKeyValidationResult,
     ProviderPage,
+    SourceOperationIdentity,
     SourceRunResult,
     SourceRunStatus,
 )
@@ -27,6 +28,11 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import (
 )
 from ai_worker.tasks.rag.source_ingestion.checksums import (
     raw_manifest_checksum,
+)
+from ai_worker.tasks.rag.source_ingestion.reject_codes import (
+    PRODUCT_REJECT_IDENTITY,
+    REJECT_CODE_CONTRACT_VERSION,
+    RejectContractError,
 )
 
 
@@ -139,12 +145,34 @@ def test_preserves_rejection_with_safe_metadata(tmp_path: Path) -> None:
         reject_code="ITEM_SEQ_REQUIRED",
         parser_location="page[1].record[3]",
         store=store,
+        identity=PRODUCT_REJECT_IDENTITY,
+        reject_code_contract_version=REJECT_CODE_CONTRACT_VERSION,
     )
 
     assert stored.artifact_kind is IngestionArtifactKind.REJECTS
     assert stored.page_number is None
     assert stored.reject_code == "ITEM_SEQ_REQUIRED"
     assert stored.parser_location == "page[1].record[3]"
+
+
+def test_rejection_artifact_outside_contract_scope_is_refused(tmp_path: Path) -> None:
+    """적용 범위 밖 Operation의 거부 원문은 보존 전에 차단되어야 한다."""
+    rejection = _write_artifact(tmp_path, "reject-1.json", b'{"ITEM_SEQ":null}')
+    store = RecordingArtifactStore()
+    outside = SourceOperationIdentity("SYNTHETIC_SOURCE", "SYNTHETIC_ENDPOINT", "SYNTHETIC_OPERATION")
+
+    with pytest.raises(RejectContractError):
+        preserve_rejection_artifact(
+            file_path=rejection[0],
+            metadata=rejection[1],
+            reject_code="ITEM_SEQ_REQUIRED",
+            parser_location="page[1].record[3]",
+            store=store,
+            identity=outside,
+            reject_code_contract_version=REJECT_CODE_CONTRACT_VERSION,
+        )
+
+    assert store.pages == []
 
 
 def _complete_run(

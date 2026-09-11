@@ -195,5 +195,5 @@ async def test_records_rejection_limit_failure_without_snapshot() -> None:
     )
 
     assert repository.runs[0].snapshot_id is None
-    assert repository.runs[0].failure_code == "PARSER_VALIDATION_FAILED"
+    assert repository.runs[0].failure_code == "REJECTION_LIMIT_EXCEEDED"
     assert repository.artifacts[result.ingestion_run_id] == artifacts
