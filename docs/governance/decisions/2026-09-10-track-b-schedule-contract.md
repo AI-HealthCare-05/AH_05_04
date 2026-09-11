@@ -1,13 +1,13 @@
-# Product Decision 제안: Track B 일정 조회·Audit·revision 정합화
+# Product Decision: Track B 일정 조회·Audit·revision 정합화
 
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-417-20260910` |
-| 상태 | **Proposed · 도메인 승인 대기 · Not implemented** |
+| 상태 | **Approved target · Not implemented** |
 | 구현 담당 | 권가빈 (`hazelnutflavoured`) |
 | 책임 리뷰 | 송은영 (`phina-io`) — Backend·DB·Security; 남한솔 (`solia142`) — 일정 상태·Frontend 소비 |
 | 배정 근거 | [#417](https://github.com/AI-HealthCare-05/AH_05_04/issues/417)의 2026-09-10 사용자 지정 |
-| 계약 | [일정 정합화 제안 v1](../../contracts/proposed/track-b-schedule-reconciliation-v1.md) |
+| 계약 | [일정 정합화 v1](../../contracts/targets/post-mvp-1/track-b-schedule-reconciliation-v1.md) |
 | 구현 후속 | [#423](https://github.com/AI-HealthCare-05/AH_05_04/issues/423) DB·B2 보완 → [#202](https://github.com/AI-HealthCare-05/AH_05_04/issues/202) API, [#203](https://github.com/AI-HealthCare-05/AH_05_04/issues/203) 알림 연동 |
 
 ## 문제와 선택안
@@ -17,7 +17,7 @@
 #202는 신규 migration을 제외하므로 API에서 audit을 생략하거나 B1을 임의 확장해서는 안 된다.
 또한 명시적 사용자 확인을 아직 받지 않은 완전한 입력을 기존 네 가지 missing reason만으로 표현할 수 없다.
 
-다음은 **승인 요청안**이며 현재 코드의 의미나 Approved v4를 즉시 대체하지 않는다.
+다음 D1–D5는 PR #424에서 승인된 delta다. 원본 Freeze 전체의 재승인이나 현재 runtime 구현 완료를 뜻하지 않는다.
 
 | 결정 | 제안 | 대안과 선택 이유 |
 | --- | --- | --- |
@@ -29,7 +29,7 @@
 
 구조 비용은 audit 테이블·migration·snapshot 검증과 종료 write 보완이다. 일정 감사 저장은 열람본의
 요구를 이 Decision에서 명시적으로 승인받기 위한 제안이며, Check-in 감사의 승인으로 대신하지 않는다.
-새 event bus·DB trigger·외부 알림 채널은 필요하지 않다.
+새 event bus·DB trigger·외부 알림 채널은 추가하지 않는다. 명시적 Python 감사 저장·기존 최소 권한 정책 적용과 baseline 보관 매체는 [PD-423 구현 보완](2026-09-10-schedule-audit-storage.md)에서 별도로 명시하며, 이를 PR #424의 승인에 소급 포함하지 않는다.
 
 ## 근거와 provenance
 
@@ -77,17 +77,15 @@
 
 | 책임 리뷰어 | 요청 범위 | 승인 증빙 |
 | --- | --- | --- |
-| 송은영 | D1–D5, audit 필드·보존·migration, 멱등성과 잠금·rollback | **대기** — review URL/ID·대상 commit·시각 미수집 |
-| 남한솔 | D1·D3·D4, 단일 reason, INACTIVE aggregate delta, 취소/재활성화/종료와 과거 기록 표시 | **대기** — review URL/ID·대상 commit·시각 미수집 |
+| 송은영 | D1–D5, audit 필드·보존·migration, 멱등성과 잠금·rollback | [APPROVED · 5165156334](https://github.com/AI-HealthCare-05/AH_05_04/pull/424#pullrequestreview-5165156334), `4fdecc8af73a62803cd970160886115d0c91be36`, 2026-09-10 09:12:55 UTC |
+| 남한솔 | D1·D3·D4, 단일 reason, INACTIVE aggregate delta, 취소/재활성화/종료와 과거 기록 표시 | [APPROVED · 5165125801](https://github.com/AI-HealthCare-05/AH_05_04/pull/424#pullrequestreview-5165125801), `4fdecc8af73a62803cd970160886115d0c91be36`, 2026-09-10 09:09:32 UTC |
 
 김지혜 (`Jye-rookie`)의 기존 검토는 현재 코드 대조에 대한 참고 의견이며, 이 Decision의 책임 승인으로
 산입하지 않는다. OCR·Worker·Source 변경을 포함하지 않으므로 세 번째 책임 리뷰 범위를 추가하지 않는다.
 
-두 리뷰어의 검토·승인과 blocking comment 해소 후 승인 대상 commit 및 review 증빙을 연결하고 상태를
-갱신한다. 원본 해시 차이의 적용 범위도 이때 확인한다. Proposed 계약은 한 파일만 유지하고 승인 시
-`targets/post-mvp-1/`로 이동해 인덱스·관련 참조와 기존 target의 delta 안내를 함께 갱신한다.
-실제 구현·migration·OpenAPI/DTO·계약/통합 테스트·담당 리뷰어 승인 증빙이 갖춰진 구현 PR에서만
-`current/` 승격을 판단한다. 문서 작성이나 PR 생성으로 #417의 승인 완료 조건을 체크하지 않는다.
+두 책임 리뷰어가 같은 commit을 승인했다. 송은영의 최종 리뷰는 교차 확인 표와 리뷰어 배정 blocker 해소를 확인했고, 남한솔은 D1·D3·D4와 과거 기록 표시의 추가 blocker가 없음을 확인했다. 머지 PR은 [#424](https://github.com/AI-HealthCare-05/AH_05_04/pull/424), develop merge commit은 `015571a0a928f1146654bc5a9dacccada5b361f0`이다.
+
+승인 범위는 이 Decision의 D1–D5 및 명시된 원본 delta다. 열람본 해시를 8월 승인 해시로 대체하거나 원본 전체의 승인으로 확대하지 않는다. 계약을 `targets/post-mvp-1/`로 이동하고 기존 target과 인덱스를 정렬했다. DB #423·API #202·알림 #203은 별도 구현·검증·책임 리뷰가 필요하며 `current/`로 승격하지 않는다.
 
 #202·#203은 이 Decision의 승인 결과를 소비한다. 다른 브랜치에서 같은 계약 파일의 값을 별도로 확정하지
 않는다. #202 Check-in API와 #203 저장·조회·읽음 중 이미 명확한 범위는 병행할 수 있다.
