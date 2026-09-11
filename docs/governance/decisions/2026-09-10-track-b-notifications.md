@@ -2,7 +2,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Proposed · 도메인 조율 대기 · 미구현 |
+| 상태 | Proposed · Notification 구현 PR 검토 중 · 최종 승인 대기 |
 | 기준일 | 2026-09-10 |
 | Issue | [#203](https://github.com/AI-HealthCare-05/AH_05_04/issues/203) |
 | 구현 담당 | 권가빈 (`hazelnutflavoured`) |
@@ -14,13 +14,13 @@
 
 #202는 Schedule·Occurrence·Check-in API를 구현하며, #203은 Notification 저장·목록·읽음·재알림을 담당한다. 최초 조사 기준 develop `99bb259`에는 B1~B3 모델·서비스와 미전달 알림 취소 port가 있으나 Notification 모델·API는 없다. #203의 리뷰어 지정은 계약 승인이나 구현 PR 승인으로 취급하지 않는다.
 
-Approved Contract Freeze v4와 원본 `FinalProject Documents/04_Decision/track-b-adherence-v1.md`는 `notification_record`의 최소 필드, 사용자 요청 재알림 1회, 멱등성, 활성 재알림 중복 오류를 정한다. 반면 `kind`·`status` 값, 읽음 필드, 목록·읽음 API, 재알림 시간 입력과 허용 상태는 고정하지 않는다. 이 상세 계약은 아래 제안에 대한 도메인 조율 전에 구현 근거로 사용할 수 없다.
+Approved Contract Freeze v4와 원본 `FinalProject Documents/04_Decision/track-b-adherence-v1.md`는 `notification_record`의 최소 필드, 사용자 요청 재알림 1회, 멱등성, 활성 재알림 중복 오류를 정한다. 반면 `kind`·`status` 값, 읽음 필드, 목록·읽음 API, 재알림 시간 입력과 허용 상태는 고정하지 않는다. 이번 구현 PR은 아래 제안과 도메인 검토 결과를 함께 검증하며 최종 승인 전 current 승격의 근거로 사용할 수 없다.
 
 ## 확정 원본과 오래된 요약의 차이
 
 처방 version 활성화의 transaction owner와 B 동기 취소 port는 원본 Freeze v4의 처방 변경 절 및 저장소 [처방 버전 목표 계약](../../contracts/targets/post-mvp-1/prescription-version-v1.md)에 이미 명시돼 있다. 같은 transaction에서 `effective_at` 이후 이전 version의 `PENDING` occurrence와 미전달 알림을 취소하며 Outbox나 사후 보상을 사용하지 않는다.
 
-[Check-in 목표 계약](../../contracts/targets/post-mvp-1/checkin-v1.md)의 transaction 결합 미정 문구와 [테스트 전략](../../testing.md)의 후속 Decision 대기 문구는 위 원본과 불일치한다. #203 기술 리뷰에서 원본과 대조하여 이 두 요약을 동기화한다. 본 제안은 새로운 transaction 방식을 선택하지 않는다.
+최초 조사 당시 [Check-in 목표 계약](../../contracts/targets/post-mvp-1/checkin-v1.md)의 transaction 결합 미정 문구와 [테스트 전략](../../testing.md)의 후속 Decision 대기 문구가 위 원본과 불일치했다. #415 기술 리뷰에서 원본과의 차이가 확인되어 #203 구현 PR에서 두 요약을 동기화했다. 새로운 transaction 방식을 선택한 것이 아니다.
 
 ## 제안하는 결정
 
@@ -42,8 +42,14 @@ Approved Contract Freeze v4와 원본 `FinalProject Documents/04_Decision/track-
 ## 병렬 진행과 완료 조건
 
 - 전용 worktree: `/private/tmp/ah-05-04-issue-203`, 브랜치: `codex/203-notifications`.
-- 승인 전: 이 Decision·상세 계약·통합 접점·검증 시나리오를 준비한다. API·enum·DB migration을 선반영하지 않는다.
-- 조율 후: #202 API 파일과 분리해 Notification 모델·Repository·Service·라우터·테스트를 구현한다.
+- 구현 PR에서 이 Decision·상세 계약·API·DB migration·검증 증빙을 함께 리뷰한다. 지정 리뷰어 승인 전 current 승격·merge는 하지 않는다.
+- #202 API 파일과 분리해 Notification 모델·Repository·Service·라우터·테스트를 구현한다.
 - #202 병합 후: 최신 develop 반영, dependency 주입과 일정 변경 취소 연결, 실제 API 통합, OpenAPI·공통 문서 정합화를 검증한다.
 - migration은 작성 전 및 PR 직전 최신 develop을 반영하고 단일 Alembic head, upgrade 및 rollback 검증을 기록한다.
 - 기술·소비 계약 조율 및 구현 PR의 지정 리뷰어 승인 증빙 없이는 완료·current 승격·merge로 처리하지 않는다.
+
+## 구현 PR 검토 범위
+
+알림 저장·목록·읽음·재알림, 생성·게시 one-shot 명령과 처방 version 취소 port adapter를 구현한다. 상세 operation ID, 404 코드, UTC fingerprint, FK 삭제 동작, 배치 transaction과 downgrade guard는 [상세 계약 구현 절](../../contracts/proposed/track-b-notifications-v1.md)에 기록했다. 변경된 공유 계약은 구현·migration·OpenAPI·자동 테스트와 함께 검토한다. #415는 문서 선행 PR이며 이 구현의 승인·current 승격 증거를 대체하지 않는다.
+
+#202 Schedule PUT/PATCH·Occurrence GET 및 Frontend 표시 경로는 기반 develop에 아직 없다. 해당 구현을 중복 작성하지 않으며 통합 완료 전 #203 전체 완료로 판정하지 않는다.
