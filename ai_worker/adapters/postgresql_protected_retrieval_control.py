@@ -39,8 +39,10 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
 from ai_worker.tasks.evaluation.protected_retrieval_control import (
     ControlCommandKind,
     ControlCommandResult,
+    ExpireAuthorizationCommand,
     GrantAuthorizationCommand,
     IngestApprovalCommand,
+    RevokeAuthorizationCommand,
     TrustedApprovalSource,
     control_command_sha256,
     verify_authorization_approval,
@@ -217,11 +219,15 @@ class _ControlSession(_ProtectedSession):
             raise ProtectedSecurityError("AUDIT_CAS_CONFLICT")
         return entry
 
-    async def append_authorization_grant(
+    async def append_authorization(
         self,
         *,
         entries: tuple[ProtectedAuditEntry, ...],
         grant: ProtectedAuthorizationGrant,
+        action: AuthorizationAuditAction,
+        effective_revision: int,
+        reason_code: ProtectedAuditReason,
+        evidence: ApprovalSourceEvidence | None = None,
     ) -> AuthorizationAuditEntry:
         previous = entries[-1].entry_sha256 if entries else None
         entry = AuthorizationAuditEntry(
@@ -230,7 +236,7 @@ class _ControlSession(_ProtectedSession):
             event_id=new_event_id(),
             grant_id=grant.grant_id,
             grant_revision=grant.revision,
-            effective_revision=grant.revision,
+            effective_revision=effective_revision,
             subject=grant.subject,
             issuer=grant.issuer,
             dataset_id=grant.dataset_id,
@@ -240,12 +246,14 @@ class _ControlSession(_ProtectedSession):
             hmac_key_version=grant.hmac_key_version,
             actions=grant.actions,
             control_implementation=grant.control_implementation,
-            approval_source_event_id=grant.approval_source_event_id,
-            approval_source_raw_sha256=grant.approval_source_raw_sha256,
+            approval_source_event_id=(evidence.source_event_id if evidence is not None else grant.approval_source_event_id),
+            approval_source_raw_sha256=(
+                evidence.canonical_raw_sha256 if evidence is not None else grant.approval_source_raw_sha256
+            ),
             valid_from=grant.valid_from,
             expires_at=grant.expires_at,
-            action=AuthorizationAuditAction.GRANT,
-            reason_code=ProtectedAuditReason.APPROVAL_VERIFIED,
+            action=action,
+            reason_code=reason_code,
             recorded_at=self._clock.now_utc(),
             previous_entry_sha256=previous,
             entry_sha256="0" * 64,
@@ -344,7 +352,7 @@ class _ControlSession(_ProtectedSession):
         if persisted != grant.subject:
             raise ProtectedSecurityError("GRANT_SUBJECT_MISMATCH")
 
-    async def require_next_grant_revision(self, grant: ProtectedAuthorizationGrant) -> None:
+    async def lock_grant_scope(self, grant: ProtectedAuthorizationGrant) -> int:
         rows = await self._execute(
             f"""
             SELECT revision
@@ -365,8 +373,7 @@ class _ControlSession(_ProtectedSession):
             },
         )
         revisions = [row.revision for row in rows]
-        if grant.revision != (max(revisions, default=0) + 1):
-            raise ProtectedSecurityError("AUTHORIZATION_REVISION_MISMATCH")
+        return max(revisions, default=0) + 1
 
     async def require_grant_approval(
         self,
@@ -395,6 +402,21 @@ class _ControlSession(_ProtectedSession):
         )
         if not grant.valid_from <= self._clock.now_utc() < grant.expires_at:
             raise ProtectedSecurityError("AUTHORIZATION_EXPIRED")
+
+    async def grant_denial_reason(
+        self,
+        grant: ProtectedAuthorizationGrant,
+        expected_state_revision: int,
+        executor: _ControlExecutor,
+    ) -> ProtectedAuditReason | None:
+        if executor.principal != grant.issuer:
+            return ProtectedAuditReason.APPROVAL_EVIDENCE_MISMATCH
+        try:
+            await self.require_grant_dataset(grant, expected_state_revision)
+            await self.require_grant_subject(grant)
+        except ProtectedSecurityError as error:
+            return ProtectedAuditReason(error.reason_code)
+        return None
 
     async def insert_grant(self, grant: ProtectedAuthorizationGrant) -> None:
         await self._execute(
@@ -431,6 +453,100 @@ class _ControlSession(_ProtectedSession):
             },
             fallback="AUTHORIZATION_REVISION_MISMATCH",
         )
+
+    async def locked_grant(self, grant_id: str) -> tuple[ProtectedAuthorizationGrant, int, bool]:
+        result = await self._execute(
+            f"""
+            SELECT grant_body, revision, effective_revision, revoked_at
+            FROM {self._schema}.authorization_grant
+            WHERE grant_id = CAST(:grant_id AS uuid)
+            FOR UPDATE
+            """,
+            {"grant_id": grant_id},
+        )
+        row = result.one_or_none()
+        if row is None:
+            raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
+        grant = _model(ProtectedAuthorizationGrant, row.grant_body, "INTERNAL_ERROR")
+        if grant.grant_id != grant_id or grant.revision != row.revision:
+            raise ProtectedSecurityError("AUTHORIZATION_REVISION_MISMATCH")
+        return grant, row.effective_revision, row.revoked_at is not None
+
+    async def require_revoke_approval(
+        self,
+        grant: ProtectedAuthorizationGrant,
+        command: RevokeAuthorizationCommand,
+        executor: _ControlExecutor,
+    ) -> ApprovalSourceEvidence:
+        result = await self._execute(
+            f"""
+            SELECT evidence, canonical_raw_sha256
+            FROM {self._schema}.approval_evidence
+            WHERE source_event_id = :source_event_id
+            """,
+            {"source_event_id": command.approval_source_event_id},
+        )
+        row = result.one_or_none()
+        if row is None:
+            raise ProtectedSecurityError("APPROVAL_NOT_VERIFIED")
+        evidence = _model(ApprovalSourceEvidence, row.evidence, "APPROVAL_NOT_VERIFIED")
+        if (
+            evidence.source_event_id != command.approval_source_event_id
+            or evidence.canonical_raw_sha256 != command.expected_raw_sha256
+            or row.canonical_raw_sha256 != command.expected_raw_sha256
+            or executor.principal != evidence.issuer
+        ):
+            raise ProtectedSecurityError("APPROVAL_EVIDENCE_MISMATCH")
+        verify_authorization_approval(
+            grant,
+            evidence,
+            AuthorizationAuditAction.REVOKE,
+            command.expected_raw_sha256,
+        )
+        return evidence
+
+    async def update_revoked(self, grant_id: str, expected_revision: int) -> int:
+        new_revision = expected_revision + 1
+        result = await self._execute(
+            f"""
+            UPDATE {self._schema}.authorization_grant
+            SET effective_revision = :new_revision, revoked_at = :revoked_at
+            WHERE grant_id = CAST(:grant_id AS uuid)
+              AND effective_revision = :expected_revision
+              AND revoked_at IS NULL
+            RETURNING effective_revision
+            """,
+            {
+                "grant_id": grant_id,
+                "expected_revision": expected_revision,
+                "new_revision": new_revision,
+                "revoked_at": self._clock.now_utc(),
+            },
+        )
+        if result.scalar_one_or_none() != new_revision:
+            raise ProtectedSecurityError("AUTHORIZATION_REVISION_MISMATCH")
+        return new_revision
+
+    async def update_expired(self, grant_id: str, expected_revision: int) -> int:
+        new_revision = expected_revision + 1
+        result = await self._execute(
+            f"""
+            UPDATE {self._schema}.authorization_grant
+            SET effective_revision = :new_revision
+            WHERE grant_id = CAST(:grant_id AS uuid)
+              AND effective_revision = :expected_revision
+              AND revoked_at IS NULL
+            RETURNING effective_revision
+            """,
+            {
+                "grant_id": grant_id,
+                "expected_revision": expected_revision,
+                "new_revision": new_revision,
+            },
+        )
+        if result.scalar_one_or_none() != new_revision:
+            raise ProtectedSecurityError("AUTHORIZATION_REVISION_MISMATCH")
+        return new_revision
 
 
 class PostgresqlProtectedAuthorizationControlService:
@@ -499,6 +615,21 @@ class PostgresqlProtectedAuthorizationControlService:
                     lock_head=False,
                 )
 
+    async def _fetch_approval(
+        self,
+        command: IngestApprovalCommand,
+    ) -> tuple[ApprovalSourceEvidence | None, ProtectedAuditReason | None]:
+        try:
+            evidence = await self._approval_source.fetch(command.source_event_id)
+        except Exception:
+            return None, ProtectedAuditReason.APPROVAL_NOT_VERIFIED
+        if (
+            evidence.source_event_id != command.source_event_id
+            or evidence.canonical_raw_sha256 != command.expected_raw_sha256
+        ):
+            return evidence, ProtectedAuditReason.APPROVAL_EVIDENCE_MISMATCH
+        return evidence, None
+
     async def ingest_approval(self, command: IngestApprovalCommand) -> ControlCommandResult:
         async with self._sessions() as preparation:
             async with preparation.begin():
@@ -512,24 +643,19 @@ class PostgresqlProtectedAuthorizationControlService:
         )
         if replay is not None:
             return replay
-        try:
-            evidence = await self._approval_source.fetch(command.source_event_id)
-        except Exception:
-            raise ProtectedSecurityError("APPROVAL_NOT_VERIFIED") from None
-        if (
-            evidence.source_event_id != command.source_event_id
-            or evidence.canonical_raw_sha256 != command.expected_raw_sha256
-        ):
-            raise ProtectedSecurityError("APPROVAL_EVIDENCE_MISMATCH")
+        evidence, denial_reason = await self._fetch_approval(command)
 
+        denial: ProtectedSecurityError | None = None
         async with self._sessions() as session:
             async with session.begin():
                 await self._validate_connection(session)
                 clock = await PostgresqlTrustedClock.from_session(session)
                 control = _ControlSession(session, self._schema, clock)
                 executor = await control.resolve_executor()
-                if executor != prepared_executor or executor.principal != evidence.issuer:
-                    raise ProtectedSecurityError("APPROVAL_EVIDENCE_MISMATCH")
+                if executor != prepared_executor:
+                    raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
+                if evidence is not None and executor.principal != evidence.issuer:
+                    denial_reason = ProtectedAuditReason.APPROVAL_EVIDENCE_MISMATCH
                 replay = await control.replay(
                     request_id=command.request_id,
                     command_kind=command_kind,
@@ -538,47 +664,66 @@ class PostgresqlProtectedAuthorizationControlService:
                 )
                 if replay is not None:
                     return replay
-                existing_value = await session.scalar(
-                    text(
-                        f"SELECT evidence FROM {control._schema}.approval_evidence "
-                        "WHERE source_event_id = :source_event_id"
-                    ),
-                    {"source_event_id": command.source_event_id},
-                )
-                if existing_value is None:
-                    await control._execute(
-                        f"""
-                        INSERT INTO {control._schema}.approval_evidence (
-                            source_event_id, evidence, canonical_raw_sha256, recorded_at
-                        ) VALUES (
-                            :source_event_id, CAST(:evidence AS jsonb), :canonical_raw_sha256, :recorded_at
-                        )
-                        """,
-                        {
-                            "source_event_id": evidence.source_event_id,
-                            "evidence": _json_value(evidence),
-                            "canonical_raw_sha256": evidence.canonical_raw_sha256,
-                            "recorded_at": clock.now_utc(),
-                        },
-                    )
-                else:
-                    persisted = _model(ApprovalSourceEvidence, existing_value, "APPROVAL_NOT_VERIFIED")
-                    if persisted != evidence:
-                        raise ProtectedSecurityError("CONTROL_COMMAND_CONFLICT")
                 entries = await control.verified_entries(lock_head=False)
-                await control.append_control(
-                    entries=entries,
-                    request_id=command.request_id,
-                    command_kind=command_kind,
-                    executor=executor.actor,
-                    target_kind=ControlAuditTargetKind.APPROVAL_SOURCE_EVENT,
-                    target_id=command.source_event_id,
-                    command_sha256=digest,
-                    outcome=ControlAuditOutcome.SUCCEEDED,
-                    effective_revision=None,
-                    authorization_audit_event_id=None,
-                    reason_code=ProtectedAuditReason.APPROVAL_VERIFIED,
-                )
+                if denial_reason is not None:
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.APPROVAL_SOURCE_EVENT,
+                        target_id=command.source_event_id,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.DENIED,
+                        effective_revision=None,
+                        authorization_audit_event_id=None,
+                        reason_code=denial_reason,
+                    )
+                    denial = ProtectedSecurityError(denial_reason.value)
+                else:
+                    assert evidence is not None
+                    existing_value = await session.scalar(
+                        text(
+                            f"SELECT evidence FROM {control._schema}.approval_evidence "
+                            "WHERE source_event_id = :source_event_id"
+                        ),
+                        {"source_event_id": command.source_event_id},
+                    )
+                    if existing_value is None:
+                        await control._execute(
+                            f"""
+                            INSERT INTO {control._schema}.approval_evidence (
+                                source_event_id, evidence, canonical_raw_sha256, recorded_at
+                            ) VALUES (
+                                :source_event_id, CAST(:evidence AS jsonb), :canonical_raw_sha256, :recorded_at
+                            )
+                            """,
+                            {
+                                "source_event_id": evidence.source_event_id,
+                                "evidence": _json_value(evidence),
+                                "canonical_raw_sha256": evidence.canonical_raw_sha256,
+                                "recorded_at": clock.now_utc(),
+                            },
+                        )
+                    else:
+                        persisted = _model(ApprovalSourceEvidence, existing_value, "APPROVAL_NOT_VERIFIED")
+                        if persisted != evidence:
+                            raise ProtectedSecurityError("CONTROL_COMMAND_CONFLICT")
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.APPROVAL_SOURCE_EVENT,
+                        target_id=command.source_event_id,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.SUCCEEDED,
+                        effective_revision=None,
+                        authorization_audit_event_id=None,
+                        reason_code=ProtectedAuditReason.APPROVAL_VERIFIED,
+                    )
+        if denial is not None:
+            raise denial
         return ControlCommandResult(
             request_id=command.request_id,
             command_kind=command_kind,
@@ -603,18 +748,21 @@ class PostgresqlProtectedAuthorizationControlService:
             return replay
 
         grant = command.grant
+        denial: ProtectedSecurityError | None = None
         async with self._sessions() as session:
             async with session.begin():
                 await self._validate_connection(session)
                 clock = await PostgresqlTrustedClock.from_session(session)
                 control = _ControlSession(session, self._schema, clock)
                 executor = await control.resolve_executor()
-                if executor != prepared_executor or executor.principal != grant.issuer:
-                    raise ProtectedSecurityError("APPROVAL_EVIDENCE_MISMATCH")
-
-                await control.require_grant_dataset(grant, command.expected_dataset_state_revision)
-                await control.require_grant_subject(grant)
-                await control.require_next_grant_revision(grant)
+                if executor != prepared_executor:
+                    raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
+                denial_reason = await control.grant_denial_reason(
+                    grant,
+                    command.expected_dataset_state_revision,
+                    executor,
+                )
+                next_revision = await control.lock_grant_scope(grant)
 
                 replay = await control.replay(
                     request_id=command.request_id,
@@ -624,25 +772,54 @@ class PostgresqlProtectedAuthorizationControlService:
                 )
                 if replay is not None:
                     return replay
-
-                await control.require_grant_approval(grant, executor)
-                await control.insert_grant(grant)
+                if denial_reason is None and grant.revision != next_revision:
+                    denial_reason = ProtectedAuditReason.AUTHORIZATION_REVISION_MISMATCH
+                if denial_reason is None:
+                    try:
+                        await control.require_grant_approval(grant, executor)
+                    except ProtectedSecurityError as error:
+                        denial_reason = ProtectedAuditReason(error.reason_code)
                 entries = await control.verified_entries(lock_head=False)
-                authorization_audit = await control.append_authorization_grant(entries=entries, grant=grant)
-                entries = await control.verified_entries(lock_head=False)
-                await control.append_control(
-                    entries=entries,
-                    request_id=command.request_id,
-                    command_kind=command_kind,
-                    executor=executor.actor,
-                    target_kind=ControlAuditTargetKind.AUTHORIZATION_GRANT,
-                    target_id=grant.grant_id,
-                    command_sha256=digest,
-                    outcome=ControlAuditOutcome.SUCCEEDED,
-                    effective_revision=grant.revision,
-                    authorization_audit_event_id=authorization_audit.event_id,
-                    reason_code=ProtectedAuditReason.AUTHORIZED,
-                )
+                if denial_reason is not None:
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.AUTHORIZATION_GRANT,
+                        target_id=grant.grant_id,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.DENIED,
+                        effective_revision=None,
+                        authorization_audit_event_id=None,
+                        reason_code=denial_reason,
+                    )
+                    denial = ProtectedSecurityError(denial_reason.value)
+                else:
+                    await control.insert_grant(grant)
+                    authorization_audit = await control.append_authorization(
+                        entries=entries,
+                        grant=grant,
+                        action=AuthorizationAuditAction.GRANT,
+                        effective_revision=grant.revision,
+                        reason_code=ProtectedAuditReason.APPROVAL_VERIFIED,
+                    )
+                    entries = await control.verified_entries(lock_head=False)
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.AUTHORIZATION_GRANT,
+                        target_id=grant.grant_id,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.SUCCEEDED,
+                        effective_revision=grant.revision,
+                        authorization_audit_event_id=authorization_audit.event_id,
+                        reason_code=ProtectedAuditReason.AUTHORIZED,
+                    )
+        if denial is not None:
+            raise denial
         return ControlCommandResult(
             request_id=command.request_id,
             command_kind=command_kind,
@@ -650,6 +827,190 @@ class PostgresqlProtectedAuthorizationControlService:
             effective_revision=grant.revision,
             authorization_audit_event_id=authorization_audit.event_id,
             reason_code="AUTHORIZED",
+        )
+
+    async def revoke(self, command: RevokeAuthorizationCommand) -> ControlCommandResult:
+        command_kind = ControlCommandKind.REVOKE
+        digest = control_command_sha256(command_kind, command)
+        async with self._sessions() as preparation:
+            async with preparation.begin():
+                prepared_executor = await self._authenticated_executor(preparation)
+        replay = await self._read_replay(
+            request_id=command.request_id,
+            command_kind=command_kind,
+            command_sha256=digest,
+        )
+        if replay is not None:
+            return replay
+
+        denial: ProtectedSecurityError | None = None
+        async with self._sessions() as session:
+            async with session.begin():
+                await self._validate_connection(session)
+                clock = await PostgresqlTrustedClock.from_session(session)
+                control = _ControlSession(session, self._schema, clock)
+                executor = await control.resolve_executor()
+                if executor != prepared_executor:
+                    raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
+                grant, effective_revision, revoked = await control.locked_grant(command.grant_id)
+                replay = await control.replay(
+                    request_id=command.request_id,
+                    command_kind=command_kind,
+                    command_sha256=digest,
+                    lock_head=True,
+                )
+                if replay is not None:
+                    return replay
+                denial_reason = None
+                if revoked:
+                    denial_reason = ProtectedAuditReason.AUTHORIZATION_REVOKED
+                elif effective_revision != command.expected_effective_revision:
+                    denial_reason = ProtectedAuditReason.AUTHORIZATION_REVISION_MISMATCH
+                evidence = None
+                if denial_reason is None:
+                    try:
+                        evidence = await control.require_revoke_approval(grant, command, executor)
+                    except ProtectedSecurityError as error:
+                        denial_reason = ProtectedAuditReason(error.reason_code)
+                entries = await control.verified_entries(lock_head=False)
+                if denial_reason is not None:
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.AUTHORIZATION_GRANT,
+                        target_id=grant.grant_id,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.DENIED,
+                        effective_revision=None,
+                        authorization_audit_event_id=None,
+                        reason_code=denial_reason,
+                    )
+                    denial = ProtectedSecurityError(denial_reason.value)
+                else:
+                    assert evidence is not None
+                    new_revision = await control.update_revoked(command.grant_id, effective_revision)
+                    authorization_audit = await control.append_authorization(
+                        entries=entries,
+                        grant=grant,
+                        action=AuthorizationAuditAction.REVOKE,
+                        effective_revision=new_revision,
+                        reason_code=ProtectedAuditReason.REVOKED,
+                        evidence=evidence,
+                    )
+                    entries = await control.verified_entries(lock_head=False)
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.AUTHORIZATION_GRANT,
+                        target_id=grant.grant_id,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.SUCCEEDED,
+                        effective_revision=new_revision,
+                        authorization_audit_event_id=authorization_audit.event_id,
+                        reason_code=ProtectedAuditReason.REVOKED,
+                    )
+        if denial is not None:
+            raise denial
+        return ControlCommandResult(
+            request_id=command.request_id,
+            command_kind=command_kind,
+            target_id=grant.grant_id,
+            effective_revision=new_revision,
+            authorization_audit_event_id=authorization_audit.event_id,
+            reason_code="REVOKED",
+        )
+
+    async def expire(self, command: ExpireAuthorizationCommand) -> ControlCommandResult:
+        command_kind = ControlCommandKind.EXPIRE
+        digest = control_command_sha256(command_kind, command)
+        async with self._sessions() as preparation:
+            async with preparation.begin():
+                prepared_executor = await self._authenticated_executor(preparation)
+        replay = await self._read_replay(
+            request_id=command.request_id,
+            command_kind=command_kind,
+            command_sha256=digest,
+        )
+        if replay is not None:
+            return replay
+
+        denial: ProtectedSecurityError | None = None
+        async with self._sessions() as session:
+            async with session.begin():
+                await self._validate_connection(session)
+                clock = await PostgresqlTrustedClock.from_session(session)
+                control = _ControlSession(session, self._schema, clock)
+                executor = await control.resolve_executor()
+                if executor != prepared_executor:
+                    raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
+                grant, effective_revision, revoked = await control.locked_grant(command.grant_id)
+                replay = await control.replay(
+                    request_id=command.request_id,
+                    command_kind=command_kind,
+                    command_sha256=digest,
+                    lock_head=True,
+                )
+                if replay is not None:
+                    return replay
+                denial_reason = None
+                if revoked:
+                    denial_reason = ProtectedAuditReason.AUTHORIZATION_REVOKED
+                elif effective_revision != command.expected_effective_revision:
+                    denial_reason = ProtectedAuditReason.AUTHORIZATION_REVISION_MISMATCH
+                elif effective_revision != grant.revision or clock.now_utc() < grant.expires_at:
+                    denial_reason = ProtectedAuditReason.AUTHORIZATION_EXPIRED
+                entries = await control.verified_entries(lock_head=False)
+                if denial_reason is not None:
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.AUTHORIZATION_GRANT,
+                        target_id=grant.grant_id,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.DENIED,
+                        effective_revision=None,
+                        authorization_audit_event_id=None,
+                        reason_code=denial_reason,
+                    )
+                    denial = ProtectedSecurityError(denial_reason.value)
+                else:
+                    new_revision = await control.update_expired(command.grant_id, effective_revision)
+                    authorization_audit = await control.append_authorization(
+                        entries=entries,
+                        grant=grant,
+                        action=AuthorizationAuditAction.EXPIRE,
+                        effective_revision=new_revision,
+                        reason_code=ProtectedAuditReason.EXPIRED,
+                    )
+                    entries = await control.verified_entries(lock_head=False)
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.AUTHORIZATION_GRANT,
+                        target_id=grant.grant_id,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.SUCCEEDED,
+                        effective_revision=new_revision,
+                        authorization_audit_event_id=authorization_audit.event_id,
+                        reason_code=ProtectedAuditReason.EXPIRED,
+                    )
+        if denial is not None:
+            raise denial
+        return ControlCommandResult(
+            request_id=command.request_id,
+            command_kind=command_kind,
+            target_id=grant.grant_id,
+            effective_revision=new_revision,
+            authorization_audit_event_id=authorization_audit.event_id,
+            reason_code="EXPIRED",
         )
 
 
