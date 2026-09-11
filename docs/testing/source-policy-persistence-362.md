@@ -252,7 +252,7 @@ Ruff·format, mypy 540개 파일, 재도입 방지·보호 테이블 쓰기 경�
 - 계약의 COLLECTION_FAILED 추가는 [PD-362-R2 리뷰안](../governance/decisions/2026-09-11-source-attempt-receipt-failures.md)이며
   정현우의 의미 검토 및 송은영의 DB 경계 리뷰 대상이다. 승인 완료로 간주하지 않는다.
 - Target 문서 바이트 hash, Receipt canonical hash, traceability hash를 함께 재계산했다.
-- WATCH는 [후속 Issue 초안](receipt-hash-followup-draft.md)으로 분리했다. 원격 Issue·리뷰 댓글은 게시하지 않았다.
+- WATCH는 후속 Issue #445로 분리했다. 이번 PR의 병합 차단 항목이 아니다.
 
 검증: 전용 PostgreSQL DB의 실제 기록·조회 및 기존 lifecycle 51건 통과.
 Ruff·format·Mypy(545 source files), DB 로직 금지·보호 쓰기·테스트 inventory 검사 통과.
