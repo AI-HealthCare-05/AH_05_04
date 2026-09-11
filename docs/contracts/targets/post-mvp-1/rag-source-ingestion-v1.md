@@ -339,3 +339,11 @@ Source Writer의 기존 Run 상태 갱신은 명시한 lifecycle 컬럼에만 �
 진행 중 상태, 상태·Snapshot·failure_code 불일치, 미등록 실패 코드에는 decision을 추측하지 않고 고정 메시지의
 ValueError로 Receipt 반환을 거부한다. 예를 들어 수집 transport TIMEOUT을 Snapshot 검증 실패로 재분류하지 않는다.
 Run 자체의 저장·감사 내역을 제거하는 동작은 아니다. 신규 상태나 실패 코드는 의미 검토와 테스트 없이 매핑에 자동 포함되지 않는다.
+
+
+### PR #436 실패 매핑 보완 리뷰안
+
+위 네 decision 표는 기존 PD-362 기준이다. 작업 브랜치의 수집 실패·Parser 실패 조회 보완은
+[proposed 계약](../../proposed/source-attempt-receipt-436.md)과
+[PD-362-R2](../../../governance/decisions/2026-09-11-source-attempt-receipt-failures.md)를 따른다.
+추가 COLLECTION_FAILED와 EMPTY_RESULT 계열 구분은 담당 재리뷰 대상이며 승인 완료로 간주하지 않는다.

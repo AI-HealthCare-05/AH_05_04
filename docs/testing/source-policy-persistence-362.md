@@ -238,3 +238,26 @@ downgrade를 수정했으며 upgrade와 revision 연결은 변경하지 않았�
 최종 검증: 전체 migration **177 passed**, Runtime Repository·Docker 이미지·head·Writer/역할 권한 **40 passed**.
 작업 전용 DB의 실제 head upgrade 및 종합 검사도 **362c3d4e5f60; Trigger/RLS/제거 함수 0개**로 통과했다.
 Ruff·format, mypy 540개 파일, 재도입 방지·보호 테이블 쓰기 경계·테스트 분류·diff 검사를 통과했다.
+
+## PR #436 추가 리뷰 — Attempt 실패 Receipt (2026-09-11)
+
+검토 기준: `c1587f7`, review `5169535518`.
+
+- 수집 실패 코드 15종은 `COLLECTION_FAILED`, Parser·Version·정책 실패는 `VALIDATION_FAILED`로 읽는다.
+- 네 실패 enum에서 허용 집합을 가져오며 전 멤버 및 고정 vocabulary 테스트로 추가 시 계약 검토를 요구한다.
+- 새 `EMPTY_RESULT`에는 수집/정책별 고정 `validation_reason_code`를 기록한다.
+- 구분자 없는 과거 EMPTY_RESULT는 추정하지 않는다. Receipt 반환은 차단하고 원본 감사 행은 보존한다.
+- `failure_codes.py`로 기존 Processing enum을 이동해 기록/조회가 같은 정본을 사용한다.
+  이전 import 경로는 재노출해 유지한다. 새 계층·DB 컬럼·migration·Trigger/RLS는 없다.
+- 계약의 COLLECTION_FAILED 추가는 [PD-362-R2 리뷰안](../governance/decisions/2026-09-11-source-attempt-receipt-failures.md)이며
+  정현우의 의미 검토 및 송은영의 DB 경계 리뷰 대상이다. 승인 완료로 간주하지 않는다.
+- Target 문서 바이트 hash, Receipt canonical hash, traceability hash를 함께 재계산했다.
+- WATCH는 [후속 Issue 초안](receipt-hash-followup-draft.md)으로 분리했다. 원격 Issue·리뷰 댓글은 게시하지 않았다.
+
+검증: 전용 PostgreSQL DB의 실제 기록·조회 및 기존 lifecycle 51건 통과.
+Ruff·format·Mypy(545 source files), DB 로직 금지·보호 쓰기·테스트 inventory 검사 통과.
+전체 CI 대신 관련 계약·Source·DB 검증을 직접 수행하며 원격 CI는 별도 확인 대상이다.
+운영·AWS·팀원 DB에는 적용하지 않았다. #165 및 #166 브랜치는 변경하지 않았다.
+
+최종 통합 실행: `tests/contract` + Source ingestion 단위 + Source Snapshot DB lifecycle,
+**724 passed** (전용 테스트 환경, 48.94초). 이 수에는 위 51건이 포함되어 있다.

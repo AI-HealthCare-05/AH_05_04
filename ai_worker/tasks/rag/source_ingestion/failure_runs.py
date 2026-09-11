@@ -2,11 +2,11 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
 from ai_worker.tasks.rag.source_client.contracts import (
+    SourceFailureCode,
     SourceOperationIdentity,
     SourceRunResult,
     SourceRunStatus,
@@ -14,6 +14,10 @@ from ai_worker.tasks.rag.source_client.contracts import (
 from ai_worker.tasks.rag.source_ingestion.artifacts import (
     IngestionArtifactKind,
     StoredRawArtifact,
+)
+from ai_worker.tasks.rag.source_ingestion.failure_codes import COLLECTION_EMPTY_RESULT
+from ai_worker.tasks.rag.source_ingestion.failure_codes import (
+    IngestionProcessingFailureCode as IngestionProcessingFailureCode,
 )
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import SnapshotRunRecord
 from ai_worker.tasks.rag.source_ingestion.source_version import (
@@ -23,13 +27,6 @@ from ai_worker.tasks.rag.source_ingestion.source_version import (
     validate_source_version,
     validate_source_version_syntax,
 )
-
-
-class IngestionProcessingFailureCode(StrEnum):
-    """Parser 이후 단계에서 기록할 수 있는 안전한 고정 실패 코드입니다."""
-
-    PARSER_VALIDATION_FAILED = "PARSER_VALIDATION_FAILED"
-    REJECTION_LIMIT_EXCEEDED = "REJECTION_LIMIT_EXCEEDED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +91,9 @@ async def record_source_run_failure(
         metadata=metadata,
         failure_code=result.failure.code.value,
         artifacts=(),
+        validation_reason_code=(
+            COLLECTION_EMPTY_RESULT if result.failure.code is SourceFailureCode.EMPTY_RESULT else None
+        ),
     )
 
 
@@ -125,6 +125,7 @@ async def _record_failed_run(
     metadata: FailedIngestionRunMetadata,
     failure_code: str,
     artifacts: tuple[StoredRawArtifact, ...],
+    validation_reason_code: str | None = None,
 ) -> FailedIngestionRunResult:
     operation_id = await repository.lock_operation(identity)
     ingestion_run_id = await repository.create_run(
@@ -138,6 +139,7 @@ async def _record_failed_run(
             finished_at=metadata.finished_at,
             duration_ms=metadata.duration_ms,
             failure_code=failure_code,
+            validation_reason_code=validation_reason_code,
         )
     )
     if artifacts:

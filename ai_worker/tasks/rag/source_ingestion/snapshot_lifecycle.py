@@ -7,18 +7,25 @@ from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
-from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
+from ai_worker.tasks.rag.source_client.contracts import SourceFailureCode, SourceOperationIdentity
 from ai_worker.tasks.rag.source_ingestion.artifacts import (
     IngestionArtifactKind,
     StoredRawArtifact,
 )
 from ai_worker.tasks.rag.source_ingestion.checksums import raw_manifest_checksum
+from ai_worker.tasks.rag.source_ingestion.failure_codes import (
+    COLLECTION_EMPTY_RESULT,
+    SNAPSHOT_POLICY_EMPTY_RESULT,
+    IngestionProcessingFailureCode,
+)
 from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
 from ai_worker.tasks.rag.source_ingestion.snapshot_policy import (
+    SnapshotPolicyFailureCode,
     SourceSnapshotPolicy,
     evaluate_snapshot_policy,
 )
 from ai_worker.tasks.rag.source_ingestion.source_version import (
+    SourceVersionFailureCode,
     validate_source_version,
     validate_source_version_syntax,
 )
@@ -42,6 +49,7 @@ class SnapshotIngestionDecision(StrEnum):
     NO_CHANGE = "NO_CHANGE"
     SOURCE_VERSION_CONFLICT = SOURCE_VERSION_CONFLICT
     VALIDATION_FAILED = "VALIDATION_FAILED"
+    COLLECTION_FAILED = "COLLECTION_FAILED"
 
 
 class SnapshotVerificationStatus(StrEnum):
@@ -302,20 +310,32 @@ class SnapshotAttemptReceipt(SnapshotRunRecord):
         object.__setattr__(self, "decision", self._decision())
 
     def _decision(self) -> SnapshotIngestionDecision:
-        if self.snapshot_id is not None and self.failure_code is None:
-            if self.run_status in {"SUCCEEDED", "SUCCEEDED_WITH_REJECTIONS"}:
-                return SnapshotIngestionDecision.CREATED
-            if self.run_status == "NO_CHANGE":
-                return SnapshotIngestionDecision.NO_CHANGE
+        if (
+            self.validation_reason_code in {COLLECTION_EMPTY_RESULT, SNAPSHOT_POLICY_EMPTY_RESULT}
+            and self.failure_code != SourceFailureCode.EMPTY_RESULT
+        ):
+            raise ValueError("Snapshot Attempt decision is unavailable for stored state")
+        successful_decisions = {
+            "SUCCEEDED": SnapshotIngestionDecision.CREATED,
+            "SUCCEEDED_WITH_REJECTIONS": SnapshotIngestionDecision.CREATED,
+            "NO_CHANGE": SnapshotIngestionDecision.NO_CHANGE,
+        }
+        if self.snapshot_id is not None and self.failure_code is None and self.run_status in successful_decisions:
+            return successful_decisions[self.run_status]
         if self.run_status == "FAILED" and self.snapshot_id is None:
             if self.failure_code == SOURCE_VERSION_CONFLICT:
                 return SnapshotIngestionDecision.SOURCE_VERSION_CONFLICT
-            if self.failure_code in {
-                "SOURCE_VERSION_INVALID",
-                "SOURCE_VERSION_BINDING_MISMATCH",
-                "EMPTY_RESULT",
-                "REJECTION_LIMIT_EXCEEDED",
-            }:
+            if self.failure_code == SourceFailureCode.EMPTY_RESULT:
+                if self.validation_reason_code == COLLECTION_EMPTY_RESULT:
+                    return SnapshotIngestionDecision.COLLECTION_FAILED
+                if self.validation_reason_code == SNAPSHOT_POLICY_EMPTY_RESULT:
+                    return SnapshotIngestionDecision.VALIDATION_FAILED
+                # Legacy rows without a discriminator are ambiguous; do not invent provenance.
+            elif self.failure_code in set(SourceFailureCode):
+                return SnapshotIngestionDecision.COLLECTION_FAILED
+            elif self.failure_code in (
+                set(SourceVersionFailureCode) | set(IngestionProcessingFailureCode) | set(SnapshotPolicyFailureCode)
+            ):
                 return SnapshotIngestionDecision.VALIDATION_FAILED
         raise ValueError("Snapshot Attempt decision is unavailable for stored state")
 
@@ -494,6 +514,9 @@ async def persist_product_ingestion_result(
                 ingestion=ingestion,
                 run_status="FAILED",
                 failure_code=failure_code.value,
+                validation_reason_code=(
+                    SNAPSHOT_POLICY_EMPTY_RESULT if failure_code is SnapshotPolicyFailureCode.EMPTY_RESULT else None
+                ),
             )
         )
         await repository.create_artifacts(
@@ -751,6 +774,7 @@ def _run_record(
     run_status: str,
     ingestion: ProductIngestionResult,
     failure_code: str | None = None,
+    validation_reason_code: str | None = None,
 ) -> SnapshotRunRecord:
     return SnapshotRunRecord(
         operation_id=operation_id,
@@ -762,6 +786,7 @@ def _run_record(
         finished_at=metadata.finished_at,
         duration_ms=metadata.duration_ms,
         failure_code=failure_code,
+        validation_reason_code=validation_reason_code,
         attempted_source_version=metadata.source_version,
         attempted_external_version=metadata.external_version,
         attempted_canonical_contract=attempt_canonical_contract(ingestion=ingestion, metadata=metadata),
