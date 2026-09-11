@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,6 +11,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -18,6 +20,10 @@ from app.core import config
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PREFLIGHT_CONTEXT_REVISION = "174a1b2c3d4e"
 PREFLIGHT_CONTEXT_BASE_REVISION = "206a1b2c3d4e"
+PREFLIGHT_CONTEXT_HARDENING_REVISION = "428a1b2c3d4e"
+PREFLIGHT_CONTEXT_HARDENING_MIGRATION = (
+    PROJECT_ROOT / "backend/alembic/versions/428a1b2c3d4e_harden_ai_job_preflight_context.py"
+)
 PREFLIGHT_CONTEXT_TABLES = {
     "ai_job_intake_context",
     "ai_job_execution_context",
@@ -27,6 +33,18 @@ PREFLIGHT_CONTEXT_TABLES = {
 
 def create_alembic_config() -> Config:
     return Config(str(PROJECT_ROOT / "backend" / "alembic.ini"))
+
+
+def _preflight_context_hardening_down_revision() -> str:
+    spec = importlib.util.spec_from_file_location(
+        "preflight_context_hardening_migration", PREFLIGHT_CONTEXT_HARDENING_MIGRATION
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert isinstance(module.down_revision, str)
+    return module.down_revision
 
 
 @asynccontextmanager
@@ -82,6 +100,24 @@ async def _fetch_schema_object_names() -> set[str]:
         return {*(row[0] for row in constraints), *(row[0] for row in indexes)}
 
 
+async def _has_column(connection: AsyncConnection, table_name: str, column_name: str) -> bool:
+    result = await connection.execute(
+        text(
+            """
+            SELECT EXISTS(
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = :schema
+                  AND table_name = :table_name
+                  AND column_name = :column_name
+            )
+            """
+        ),
+        {"schema": "public", "table_name": table_name, "column_name": column_name},
+    )
+    return bool(result.scalar_one())
+
+
 async def _seed_preflight_context_graph() -> dict[str, str]:
     ids = {
         key: str(uuid4())
@@ -113,6 +149,13 @@ async def _seed_preflight_context_graph() -> dict[str, str]:
     async with _connection() as connection:
         async with connection.begin():
             await connection.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+            has_prescription_fingerprint = await _has_column(connection, "prescription_version", "medication_count")
+            has_bundle_canonical_config = await _has_column(
+                connection, "rag_runtime_release_bundle", "environment_code"
+            )
+            has_execution_identification_version = await _has_column(
+                connection, "ai_job_execution_identification", "prescription_version_id"
+            )
             await connection.execute(
                 text(
                     """
@@ -170,28 +213,56 @@ async def _seed_preflight_context_graph() -> dict[str, str]:
                 ),
                 ids,
             )
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO prescription_version (
-                        id, prescription_id, version_number, prescribed_date, confirmed_at
-                    )
-                    VALUES (:version_id, :prescription_id, 1, DATE '2026-09-10', now())
-                    """
-                ),
-                ids,
-            )
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO prescription_version_medication (
-                        id, prescription_version_id, medication_name, display_order
-                    )
-                    VALUES (:version_medication_id, :version_id, '합성 식별약', 1)
-                    """
-                ),
-                ids,
-            )
+            if has_prescription_fingerprint:
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO prescription_version (
+                            id, prescription_id, version_number, prescribed_date, confirmed_at,
+                            medication_count, content_hash
+                        )
+                        VALUES (
+                            :version_id, :prescription_id, 1, DATE '2026-09-10', now(),
+                            1, :prescription_content_hash
+                        )
+                        """
+                    ),
+                    dict(ids, prescription_content_hash="b" * 64),
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO prescription_version_medication (
+                            id, prescription_version_id, medication_name, display_order, medication_count
+                        )
+                        VALUES (:version_medication_id, :version_id, '합성 식별약', 1, 1)
+                        """
+                    ),
+                    ids,
+                )
+            else:
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO prescription_version (
+                            id, prescription_id, version_number, prescribed_date, confirmed_at
+                        )
+                        VALUES (:version_id, :prescription_id, 1, DATE '2026-09-10', now())
+                        """
+                    ),
+                    ids,
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO prescription_version_medication (
+                            id, prescription_version_id, medication_name, display_order
+                        )
+                        VALUES (:version_medication_id, :version_id, '합성 식별약', 1)
+                        """
+                    ),
+                    ids,
+                )
             await connection.execute(
                 text(
                     """
@@ -239,21 +310,46 @@ async def _seed_preflight_context_graph() -> dict[str, str]:
                 ),
                 {**ids, "manifest_key": f"preflight-runtime-{suffix}", "manifest_hash": manifest_hash},
             )
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO rag_runtime_release_bundle (
-                        id, bundle_key, bundle_version, bundle_status,
-                        execution_manifest_id, bundle_manifest_hash
-                    )
-                    VALUES (
-                        :bundle_id, :bundle_key, '1.0.0', 'READY',
-                        :manifest_id, :bundle_hash
-                    )
-                    """
-                ),
-                {**ids, "bundle_key": f"preflight-bundle-{suffix}", "bundle_hash": bundle_hash},
-            )
+            if has_bundle_canonical_config:
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_runtime_release_bundle (
+                            id, bundle_key, bundle_version, bundle_status,
+                            execution_manifest_id, bundle_manifest_hash,
+                            environment_code, catalog_version, catalog_manifest_hash
+                        )
+                        VALUES (
+                            :bundle_id, :bundle_key, '1.0.0', 'READY',
+                            :manifest_id, :bundle_hash,
+                            :environment_code, 'catalog-v1', :catalog_manifest_hash
+                        )
+                        """
+                    ),
+                    {
+                        **ids,
+                        "bundle_key": f"preflight-bundle-{suffix}",
+                        "bundle_hash": bundle_hash,
+                        "environment_code": f"preflight-{suffix}",
+                        "catalog_manifest_hash": "a" * 64,
+                    },
+                )
+            else:
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO rag_runtime_release_bundle (
+                            id, bundle_key, bundle_version, bundle_status,
+                            execution_manifest_id, bundle_manifest_hash
+                        )
+                        VALUES (
+                            :bundle_id, :bundle_key, '1.0.0', 'READY',
+                            :manifest_id, :bundle_hash
+                        )
+                        """
+                    ),
+                    {**ids, "bundle_key": f"preflight-bundle-{suffix}", "bundle_hash": bundle_hash},
+                )
             await connection.execute(
                 text(
                     """
@@ -371,22 +467,38 @@ async def _seed_preflight_context_graph() -> dict[str, str]:
                     "scope_hash": "f" * 64,
                 },
             )
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO ai_job_execution_identification (
-                        id, execution_context_id, medication_identification_id,
-                        prescription_version_medication_id
-                    )
-                    VALUES (
-                        :execution_identification_id, :execution_context_id,
-                        :identification_id, :version_medication_id
-                    )
-                    """
-                ),
-                ids,
-            )
-
+            if has_execution_identification_version:
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO ai_job_execution_identification (
+                            id, execution_context_id, medication_identification_id,
+                            prescription_version_medication_id, prescription_version_id
+                        )
+                        VALUES (
+                            :execution_identification_id, :execution_context_id,
+                            :identification_id, :version_medication_id, :version_id
+                        )
+                        """
+                    ),
+                    ids,
+                )
+            else:
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO ai_job_execution_identification (
+                            id, execution_context_id, medication_identification_id,
+                            prescription_version_medication_id
+                        )
+                        VALUES (
+                            :execution_identification_id, :execution_context_id,
+                            :identification_id, :version_medication_id
+                        )
+                        """
+                    ),
+                    ids,
+                )
     return ids
 
 
@@ -442,6 +554,42 @@ async def _cleanup_context_tables() -> None:
                 )
                 if table_exists.scalar_one():
                     await connection.execute(text(f'DELETE FROM "{table_name}"'))
+
+
+async def _set_intake_question_digest(intake_context_id: str, question_digest: str | None) -> None:
+    async with _connection() as connection:
+        async with connection.begin():
+            await connection.execute(
+                text(
+                    """
+                    UPDATE ai_job_intake_context
+                    SET question_digest = :question_digest
+                    WHERE id = :intake_context_id
+                    """
+                ),
+                {"intake_context_id": intake_context_id, "question_digest": question_digest},
+            )
+
+
+async def _point_execution_context_at_other_job_intake(
+    execution_context_id: str,
+    other_intake_context_id: str,
+) -> None:
+    async with _connection() as connection:
+        async with connection.begin():
+            await connection.execute(
+                text(
+                    """
+                    UPDATE ai_job_execution_context
+                    SET intake_context_id = :other_intake_context_id
+                    WHERE id = :execution_context_id
+                    """
+                ),
+                {
+                    "execution_context_id": execution_context_id,
+                    "other_intake_context_id": other_intake_context_id,
+                },
+            )
 
 
 @pytest.fixture(autouse=True)
@@ -536,3 +684,87 @@ def test_preflight_tables_join_existing_integrity_head() -> None:
             assert validation_errors(heads[0], await read_database_head_state(connection)) == []
 
     asyncio.run(verify())
+
+
+def test_preflight_context_hardening_downgrade_blocks_when_context_data_exists() -> None:
+    cfg = create_alembic_config()
+    command.upgrade(cfg, "head")
+    ids = asyncio.run(_seed_preflight_context_graph())
+
+    try:
+        with pytest.raises(RuntimeError, match="existing data"):
+            command.downgrade(cfg, _preflight_context_hardening_down_revision())
+        assert asyncio.run(_fetch_table_names()) == PREFLIGHT_CONTEXT_TABLES
+    finally:
+        asyncio.run(_cleanup_preflight_fixture_graph(ids))
+        command.downgrade(cfg, _preflight_context_hardening_down_revision())
+        command.upgrade(cfg, "head")
+
+
+def test_preflight_context_hardening_upgrade_blocks_nullable_question_digest() -> None:
+    cfg = create_alembic_config()
+    command.upgrade(cfg, _preflight_context_hardening_down_revision())
+    ids = asyncio.run(_seed_preflight_context_graph())
+    asyncio.run(_set_intake_question_digest(ids["intake_context_id"], None))
+
+    try:
+        with pytest.raises(RuntimeError, match="NULL digest"):
+            command.upgrade(cfg, PREFLIGHT_CONTEXT_HARDENING_REVISION)
+    finally:
+        asyncio.run(_cleanup_preflight_fixture_graph(ids))
+        command.upgrade(cfg, "head")
+
+
+def test_execution_context_rejects_cross_job_intake_context() -> None:
+    cfg = create_alembic_config()
+    command.upgrade(cfg, "head")
+    left_ids = asyncio.run(_seed_preflight_context_graph())
+    right_ids = asyncio.run(_seed_preflight_context_graph())
+
+    try:
+        with pytest.raises(IntegrityError):
+            asyncio.run(
+                _point_execution_context_at_other_job_intake(
+                    left_ids["execution_context_id"],
+                    right_ids["intake_context_id"],
+                )
+            )
+    finally:
+        asyncio.run(_cleanup_preflight_fixture_graph(left_ids))
+        asyncio.run(_cleanup_preflight_fixture_graph(right_ids))
+
+
+def test_preflight_context_hardening_constraints_exist_on_head() -> None:
+    cfg = create_alembic_config()
+    command.upgrade(cfg, "head")
+    expected = {
+        "uq_rag_runtime_manifest_id_hash",
+        "uq_prescription_version_medication_id_version",
+        "uq_rag_runtime_bundle_id_hash_execution_manifest",
+        "uq_ai_job_intake_context_job_id",
+        "uq_ai_job_execution_context_id_version",
+        "fk_ai_job_intake_context_bundle_execution_manifest",
+        "fk_ai_job_intake_context_execution_manifest_hash",
+        "fk_ai_job_execution_context_bundle_execution_manifest",
+        "fk_ai_job_execution_context_same_job_intake",
+        "fk_ai_job_execution_context_execution_manifest_hash",
+        "fk_ai_job_execution_identification_context_version",
+        "fk_ai_job_execution_identification_medication_version",
+    }
+
+    async def verify() -> set[str]:
+        async with _connection() as connection:
+            rows = await connection.execute(
+                text(
+                    """
+                    SELECT constraint_name
+                    FROM information_schema.table_constraints
+                    WHERE table_schema = :schema
+                      AND constraint_name = ANY(:constraint_names)
+                    """
+                ),
+                {"schema": "public", "constraint_names": list(expected)},
+            )
+            return {row[0] for row in rows}
+
+    assert asyncio.run(verify()) == expected
