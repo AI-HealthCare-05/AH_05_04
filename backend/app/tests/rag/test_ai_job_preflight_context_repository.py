@@ -391,3 +391,100 @@ async def test_execution_context_requires_exactly_one_domain_reference(db_sessio
                 runtime_guard_decision_ref="guard:bad-domain",
             )
         )
+
+
+async def test_execution_identification_requires_same_prescription_version(
+    db_session: AsyncSession,
+) -> None:
+    user, profile = await _create_user(db_session)
+    prescription = await _create_prescription(db_session, user=user, profile=profile)
+    other_prescription = await _create_prescription(db_session, user=user, profile=profile)
+    other_medication = await db_session.scalar(
+        select(PrescriptionVersionMedication).where(
+            PrescriptionVersionMedication.prescription_version_id == other_prescription.active_version_id
+        )
+    )
+    assert other_medication is not None
+    other_identification = await _create_identification(db_session, medication=other_medication)
+    chat_message = await _create_chat_domain(db_session, profile=profile, prescription=prescription)
+    manifest, bundle, environment = await _create_runtime_graph(db_session)
+    chat_job = AiJob(
+        user_id=user.id,
+        job_type=AiJobType.CHAT,
+        status=AiJobStatus.PENDING,
+        prescription_version_id=prescription.active_version_id,
+        max_attempts=2,
+        available_at=datetime.now(UTC),
+    )
+    db_session.add(chat_job)
+    await db_session.flush()
+
+    repository = RagRuntimeRepository(db_session)
+    execution = await repository.create_execution_context(
+        AiJobExecutionContextCreate(
+            ai_job_id=chat_job.id,
+            chat_message_id=chat_message.id,
+            prescription_version_id=prescription.active_version_id,
+            runtime_environment_id=environment.id,
+            runtime_environment_revision=environment.environment_revision,
+            runtime_release_bundle_id=bundle.id,
+            runtime_release_bundle_manifest_hash=bundle.bundle_manifest_hash,
+            runtime_execution_manifest_id=manifest.id,
+            runtime_execution_manifest_hash=manifest.manifest_hash,
+            runtime_guard_decision_ref="guard:full-pass",
+        )
+    )
+
+    with pytest.raises(ValueError, match="prescription version"):
+        await repository.create_execution_identification(
+            AiJobExecutionIdentificationCreate(
+                execution_context_id=execution.id,
+                medication_identification_id=other_identification.id,
+                prescription_version_medication_id=other_medication.id,
+            )
+        )
+
+
+async def test_execution_context_rejects_bundle_manifest_mismatch(
+    db_session: AsyncSession,
+) -> None:
+    user, profile = await _create_user(db_session)
+    prescription = await _create_prescription(db_session, user=user, profile=profile)
+    chat_message = await _create_chat_domain(db_session, profile=profile, prescription=prescription)
+    manifest, bundle, environment = await _create_runtime_graph(db_session)
+    other_manifest = await RagRuntimeRepository(db_session).create_execution_manifest(
+        RagRuntimeExecutionManifestCreate(
+            manifest_key=f"preflight-runtime-other-{uuid4().hex[:8]}",
+            manifest_version="1.0.0",
+            manifest_hash=_hash("8"),
+            schema_version="runtime-manifest-v1",
+            git_commit_sha="abcdef2",
+            guard_policy_ref="guard-policy:test",
+        )
+    )
+    chat_job = AiJob(
+        user_id=user.id,
+        job_type=AiJobType.CHAT,
+        status=AiJobStatus.PENDING,
+        prescription_version_id=prescription.active_version_id,
+        max_attempts=2,
+        available_at=datetime.now(UTC),
+    )
+    db_session.add(chat_job)
+    await db_session.flush()
+
+    with pytest.raises(IntegrityError):
+        await RagRuntimeRepository(db_session).create_execution_context(
+            AiJobExecutionContextCreate(
+                ai_job_id=chat_job.id,
+                chat_message_id=chat_message.id,
+                prescription_version_id=prescription.active_version_id,
+                runtime_environment_id=environment.id,
+                runtime_environment_revision=environment.environment_revision,
+                runtime_release_bundle_id=bundle.id,
+                runtime_release_bundle_manifest_hash=bundle.bundle_manifest_hash,
+                runtime_execution_manifest_id=other_manifest.id,
+                runtime_execution_manifest_hash=other_manifest.manifest_hash,
+                runtime_guard_decision_ref="guard:full-pass",
+            )
+        )
