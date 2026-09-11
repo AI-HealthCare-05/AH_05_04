@@ -1,4 +1,6 @@
-# #418 UNCONFIRMED backlog 후보 구현 검증
+# #418 UNCONFIRMED backlog 구현·등록 검증
+
+아래 2026-09-10 기록은 #426 미등록 후보 구현의 이력이다. 현재 등록 변경은 마지막 절을 따른다.
 
 검증일: 2026-09-10. Base: `origin/develop`의 `ebcb21e`. Branch: `feat/418-unconfirmed-backlog`.
 
@@ -44,7 +46,7 @@
 - 전체 필수 검사: **4454 passed, 67 skipped, coverage 94%, exit 0** (Migration 148 / Backend·Contract 1602 / Redis integration 23 / Worker 2681).
 - 예제 합성 설정 및 전용 임시 PostgreSQL 17·Redis 7 사용. 실제 Provider·환자정보·개발 DB 사용 없음.
 
-## 검증 범위와 남은 조건
+## #426 당시 검증 범위와 남은 조건
 
 - SELF 소유 목록, 동일 예정 시각의 ID 정렬, cursor pagination, 앞 페이지 보완 후 다음 페이지 연속성
 - 이전 처방 버전의 snapshot, 현재 revision, TAKEN/NOT_TAKEN 보완 후 제외, stale revision 409와 재조회
@@ -63,3 +65,45 @@
 - backlog·Check-in repository·PUT HTTP: **34 passed** (전용 임시 PostgreSQL, 합성 설정).
 - Ruff check/format: **PASS (683 files)**, Mypy: **PASS (539 source files)**.
 - `git diff --check`: PASS. 전체 CI는 이 수정 커밋의 GitHub Actions 결과로 확인한다.
+
+
+## 2026-09-11 실제 v1 등록 변경
+
+- Base: `e4c74a68` (`origin/develop`, 최신 #202 일정 API #456 포함).
+- Branch: `codex/418-unconfirmed-api`.
+- 구현 담당: 권가빈 (`hazelnutflavoured`). 책임 리뷰: 송은영 (`phina-io`), 남한솔 (`solia142`).
+- #426의 두 승인은 미등록 후보 범위다. 정확한 링크와 등록 변경의 병합 조건은
+  [PD-418](../governance/decisions/2026-09-10-unconfirmed-backlog-418.md#승인-증빙과-등록-변경의-병합-조건)에 기록했다.
+- 계약은 Proposed이며 실제 등록 HEAD의 공동 재승인 전 Current 승격·병합을 하지 않는다.
+- 환경: macOS, Python 3.13.9, 전용 `ah418-public-tests` PostgreSQL 17·Redis 7, 격리 `test` DB.
+- Migration head: `203a1b2c3d4e`. 신규 migration 없음.
+- Fixture: `issue-418-unconfirmed-v1`, SYNTHETIC.
+  [Frontend 합성 응답](./track-b/issue-418-unconfirmed-fixtures.json)을 DTO로 검증한다.
+
+### 변경과 검증 범위
+
+실제 `app`/`fastapi_app`과 v1 router·middleware를 사용한다. 테스트 전용 후보 앱을 제거했다.
+Repository·Check-in PUT·일정 조회 서비스는 실제 구현을 사용하며 DB도 PostgreSQL이다.
+인증된 요청의 user 의존성만 합성 소유자로 대체하고, 미인증/잘못된 token은 실제 의존성을 통과한다.
+
+- 실제 route 한 번 등록, 인증 누락 401, OpenAPI GET·limit·cursor·성공/오류 schema.
+- SELF 목록 격리, 잘못된 UUID·limit, 타인/미존재 cursor 404, GET 무변경과 no-store.
+- 기존 historical version snapshot·revision 경쟁 검증 유지.
+- 실제 PUT TAKEN/NOT_TAKEN 보완 후 목록 제외, 최초 응답 replay, stale revision 409.
+- 보완한 cursor로 다음 페이지 연속 조회, cursor 404 후 첫 페이지 재요청.
+- 5건을 2건 단위로 페이지 이동하며 보완: 동일 시각 tie-break·누락/중복 없음·마지막 빈 목록·Audit 5건.
+- 최신 #456 날짜별 GET의 원래 날짜 occurrence와 보완 전 revision 확인, 보완 후 Check-in이 PUT 응답과 동일.
+- 합성 fixture의 목록·빈 상태·보완 요청/응답 DTO와 occurrence/revision 연결 검증.
+
+### 실행 결과
+
+- 실제 앱 backlog·Check-in·일정 API: **61 passed** (8.65s). 이후 OpenAPI·fixture 테스트 1건 추가.
+- Ruff check / format: **PASS (765 files)**.
+- Mypy: **PASS (582 source files)**.
+- 전체 필수 runner: 실행 중. 최종 결과 확정 전 PASS로 계산하지 않는다.
+
+기여 지침의 재현 명령은 `uv run ruff check .`, `uv run ruff format . --check`,
+`uv run mypy backend/app ai_worker`, `bash scripts/ci/run_test.sh`다.
+전체 runner에는 합성 전용 환경파일을 `ENV_FILE`, 전용 Compose를 `COMPOSE_FILE`로 지정했다.
+테스트 DB를 재생성하는 runner를 동시에 실행하지 않았다. 실제 Provider·환자정보·개발/Production DB는 사용하지 않았다.
+#138 Frontend 화면·E2E와 Production 배포는 실행하지 않았으며, Backend 테스트로 완료를 주장하지 않는다.
