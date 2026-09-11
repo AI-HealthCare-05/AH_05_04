@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -198,3 +198,45 @@ class MedicationCheckinRepository:
             .order_by(CheckinAudit.to_revision)
         )
         return tuple(rows.scalars().all())
+
+    async def list_unconfirmed_page_owned(
+        self, *, user_id: UUID, limit: int, cursor: UUID | None
+    ) -> (
+        list[tuple[MedicationCheckin, MedicationOccurrence, PrescriptionVersionMedication, PrescriptionVersion]] | None
+    ):
+        """Owned keyset page; a corrected check-in remains a valid cursor anchor."""
+        statement = (
+            select(MedicationCheckin, MedicationOccurrence, PrescriptionVersionMedication, PrescriptionVersion)
+            .join(MedicationOccurrence, MedicationOccurrence.id == MedicationCheckin.occurrence_id)
+            .join(MedicationSchedule, MedicationSchedule.id == MedicationOccurrence.medication_schedule_id)
+            .join(
+                PrescriptionVersionMedication,
+                PrescriptionVersionMedication.id == MedicationSchedule.prescription_version_medication_id,
+            )
+            .join(PrescriptionVersion, PrescriptionVersion.id == PrescriptionVersionMedication.prescription_version_id)
+            .join(Prescription, Prescription.id == PrescriptionVersion.prescription_id)
+            .where(owned_by_self(Prescription.profile_id, user_id))
+        )
+        if cursor is not None:
+            anchor = (
+                await self.session.execute(
+                    statement.with_only_columns(MedicationOccurrence.scheduled_at, MedicationCheckin.id).where(
+                        MedicationCheckin.id == cursor
+                    )
+                )
+            ).one_or_none()
+            if anchor is None:
+                return None
+            statement = statement.where(
+                or_(
+                    MedicationOccurrence.scheduled_at > anchor[0],
+                    and_(MedicationOccurrence.scheduled_at == anchor[0], MedicationCheckin.id > anchor[1]),
+                )
+            )
+        rows = await self.session.execute(
+            statement.where(MedicationCheckin.status == MedicationCheckinStatus.UNCONFIRMED)
+            .order_by(MedicationOccurrence.scheduled_at, MedicationCheckin.id)
+            .limit(limit + 1)
+            .execution_options(populate_existing=True)
+        )
+        return [(checkin, occurrence, medication, version) for checkin, occurrence, medication, version in rows]

@@ -116,7 +116,7 @@ OCR Worker는 `ocr_job.document_id -> medical_document.uploaded_by` 조인으로
 
 OCR에는 `STALE` 도메인 상태가 없으므로 `OcrStatus.FAILED`와 `error_code=CONSENT_WITHDRAWN`을 사용한다. `CONSENT_WITHDRAWN`은 Worker 공통 FailureCode가 아니라 OCR 도메인 실패 사유다.
 
-접수 후 실행 직전 동의 철회로 OCR을 종료할 때는 일반 Worker FailureCode 매핑 경로를 사용하지 않는다. 새 Worker FailureCode를 추가하지 않고, OCR 도메인 전용 종료 전이 또는 writer를 통해 `ocr_job.status=FAILED`, `ocr_job.error_code=CONSENT_WITHDRAWN`을 저장한다. 이 writer는 Provider 호출 전 차단 경로에서만 사용하며, 기존 Worker FailureCode에서 OCR error_code를 파생하는 매핑과 섞지 않는다.
+접수 후 실행 직전 동의 철회로 OCR을 종료할 때는 일반 Worker FailureCode 매핑 경로를 사용하지 않는다. 새 Worker FailureCode를 추가하지 않고, OCR 도메인 전용 종료 전이 또는 writer를 통해 `ocr_job.ocr_status=FAILED`, `ocr_job.error_code=CONSENT_WITHDRAWN`을 저장한다. 이 writer는 Provider 호출 전 차단 경로에서만 사용하며, 기존 Worker FailureCode에서 OCR error_code를 파생하는 매핑과 섞지 않는다.
 
 공통 Job 조회는 `STALE`의 상세 철회 사유를 새 응답 필드로 노출하지 않는다. Frontend는 현재 목적별 동의 상태와 OCR `error_code`, 그리고 후속 구현에서 제공되는 안전한 사용자-facing 안내를 사용해 일반 시스템 장애와 구분된 안내를 표시한다.
 

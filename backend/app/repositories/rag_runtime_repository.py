@@ -1,10 +1,22 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_worker.tasks.rag.runtime_bundle_builder import (
+    RuntimeBundleArtifactKind,
+    RuntimeBundleArtifactMemberIdentity,
+    RuntimeBundleBuildDecision,
+    RuntimeBundleBuildOutcome,
+    RuntimeBundleCanonicalConfiguration,
+    RuntimeBundleMemberPurpose,
+    RuntimeBundleSourceMemberIdentity,
+    RuntimeExecutionManifestInput,
+    canonical_execution_manifest_hash,
+    canonical_runtime_bundle_manifest_hash,
+)
 from app.models.rag_candidate import MedicationIdentification, MedicationIdentificationStatus
 from app.models.rag_evaluation import EvaluationDecisionStatus
 from app.models.rag_runtime import (
@@ -23,6 +35,7 @@ from app.models.rag_runtime import (
     RagRuntimeReleaseBundle,
     RagRuntimeSourcePurpose,
 )
+from app.models.rag_source import RagSourceSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,18 +99,33 @@ class RagRuntimeExecutionManifestCreate:
 
 @dataclass(frozen=True, slots=True)
 class RagRuntimeReleaseBundleCreate:
+    """Every field behind ``bundle_manifest_hash`` is required, so the hash stays recomputable.
+
+    ``environment_code``, ``catalog_version``, ``catalog_manifest_hash`` and each artifact
+    ``*_version`` enter the hash; storing a bundle without them would make the hash an opaque
+    token that no later read can re-verify.
+    """
+
     bundle_key: str
     bundle_version: str
     execution_manifest_id: UUID
     bundle_manifest_hash: str
+    environment_code: str
+    catalog_version: str
+    catalog_manifest_hash: str
     bundle_status: RagRuntimeBundleStatus = RagRuntimeBundleStatus.BUILDING
     candidate_index_ref: str | None = None
+    candidate_index_version: str | None = None
     candidate_index_manifest_hash: str | None = None
     knowledge_index_ref: str | None = None
+    knowledge_index_version: str | None = None
     knowledge_index_manifest_hash: str | None = None
     rule_set_ref: str | None = None
+    rule_set_version: str | None = None
     guideline_set_ref: str | None = None
+    guideline_set_version: str | None = None
     safety_policy_ref: str | None = None
+    safety_policy_version: str | None = None
     governance_revision_ref: str | None = None
     created_by: str | None = None
 
@@ -107,8 +135,195 @@ class RagRuntimeBundleSourceCreate:
     bundle_id: UUID
     source_snapshot_id: UUID
     source_purpose: RagRuntimeSourcePurpose
+    source_version: str
+    canonical_checksum: str
+    approval_version: str
+    scope_policy_hash: str
+    freshness_policy_hash: str
     required: bool = True
     selected_for_operation: bool = True
+
+
+_ARTIFACT_KIND_BY_COLUMN_PREFIX = {
+    "candidate_index": RuntimeBundleArtifactKind.CANDIDATE_INDEX,
+    "knowledge_index": RuntimeBundleArtifactKind.KNOWLEDGE_INDEX,
+    "rule_set": RuntimeBundleArtifactKind.RULE_SET,
+    "guideline_set": RuntimeBundleArtifactKind.GUIDELINE_SET,
+    "safety_policy": RuntimeBundleArtifactKind.SAFETY_POLICY,
+}
+_HASHED_COLUMN_PREFIXES = frozenset({"candidate_index", "knowledge_index"})
+
+
+class RagRuntimeBundleBuildError(RuntimeError):
+    """The requested bundle write cannot produce a verifiable immutable bundle."""
+
+
+class RagRuntimeBundleNotBuildableError(RagRuntimeBundleBuildError):
+    """The kernel did not authorise this write, or the rows do not match what it judged."""
+
+
+class RagRuntimeBundleSourceVersionMismatchError(RagRuntimeBundleBuildError):
+    """A member claims a ``source_version`` its snapshot does not have."""
+
+
+MANIFEST_IDENTITY_FIELDS = (
+    "manifest_key",
+    "manifest_version",
+    "schema_version",
+    "git_commit_sha",
+    "worker_artifact_ref",
+    "model_ref",
+    "prompt_ref",
+    "parser_ref",
+    "resolver_ref",
+    "guard_policy_ref",
+)
+
+
+def execution_manifest_input_from(source: object) -> RuntimeExecutionManifestInput:
+    """Project a manifest Create DTO or a stored manifest row onto the kernel's hash input.
+
+    Both shapes carry identically named attributes, so one projection serves the write path and
+    the re-read path.  Recomputing from these fields -- rather than trusting a supplied
+    ``manifest_hash`` string -- is what keeps the execution axis bound to the hash.
+    """
+    return RuntimeExecutionManifestInput(**{field: getattr(source, field) for field in MANIFEST_IDENTITY_FIELDS})
+
+
+def recomputed_execution_manifest_hash(source: object) -> str:
+    """Return the manifest hash implied by the manifest's own field values."""
+    return canonical_execution_manifest_hash(execution_manifest_input_from(source))
+
+
+def _assert_rows_match_outcome(
+    outcome: RuntimeBundleBuildOutcome,
+    *,
+    manifest: RagRuntimeExecutionManifestCreate,
+    bundle: RagRuntimeReleaseBundleCreate,
+    bundle_sources: tuple[RagRuntimeBundleSourceCreate, ...],
+) -> None:
+    """Refuse any write the kernel did not authorise, or that differs from what it judged.
+
+    Taking the outcome as a required argument is what makes the judgment enforced rather than
+    advisory: there is no way to reach persistence without one.  Comparing the recomputed hash of
+    the rows about to be written against ``outcome.bundle_manifest_hash`` closes the remaining
+    gap -- a caller cannot pass a BUILDABLE outcome and then hand over different rows.
+    """
+    if outcome.decision is not RuntimeBundleBuildDecision.BUILDABLE:
+        raise RagRuntimeBundleNotBuildableError(
+            f"kernel 판정이 {outcome.decision.value}이므로 저장하지 않습니다. "
+            f"rejection_reasons={[reason.value for reason in outcome.rejection_reasons]} "
+            f"validation_codes={[code.value for code in outcome.validation_codes]}"
+        )
+    if outcome.configuration is None or outcome.manifest_hash is None or outcome.bundle_manifest_hash is None:
+        raise RagRuntimeBundleNotBuildableError("BUILDABLE 판정에 configuration과 두 hash가 모두 있어야 합니다.")
+    if manifest.manifest_hash != outcome.manifest_hash:
+        raise RagRuntimeBundleNotBuildableError("manifest_hash가 판정 결과와 다릅니다.")
+    # A supplied manifest_hash is just a string: comparing it to the judged hash does not prove
+    # the manifest fields are the ones that were judged.  Without this recomputation a caller
+    # could keep the judged hash and swap model_ref/prompt_ref, binding a different execution
+    # axis to an approved hash.
+    manifest_recomputed = recomputed_execution_manifest_hash(manifest)
+    if manifest_recomputed != outcome.manifest_hash:
+        raise RagRuntimeBundleNotBuildableError(
+            "Execution Manifest 내용이 판정된 구성과 다릅니다. "
+            f"필드 기준 재계산 {manifest_recomputed[:12]}… != 판정 {outcome.manifest_hash[:12]}…"
+        )
+    if bundle.bundle_manifest_hash != outcome.bundle_manifest_hash:
+        raise RagRuntimeBundleNotBuildableError("bundle_manifest_hash가 판정 결과와 다릅니다.")
+
+    recomputed = canonical_runtime_bundle_manifest_hash(
+        _configuration_from_rows(bundle, bundle_sources, execution_manifest_hash=manifest.manifest_hash)
+    )
+    if recomputed != outcome.bundle_manifest_hash:
+        raise RagRuntimeBundleNotBuildableError(
+            "저장하려는 행이 판정된 구성과 다릅니다. "
+            f"행 기준 재계산 {recomputed[:12]}… != 판정 {outcome.bundle_manifest_hash[:12]}…"
+        )
+
+
+def _configuration_from_rows(
+    bundle: RagRuntimeReleaseBundleCreate,
+    bundle_sources: tuple[RagRuntimeBundleSourceCreate, ...],
+    *,
+    execution_manifest_hash: str,
+) -> RuntimeBundleCanonicalConfiguration:
+    """Project the rows about to be written onto the canonical configuration.
+
+    Reading only from the Create DTOs is deliberate: it proves the configuration is reconstructible
+    from column values alone, which is the same property the post-write verification relies on.
+    """
+    artifact_members = []
+    for prefix, kind in _ARTIFACT_KIND_BY_COLUMN_PREFIX.items():
+        ref = getattr(bundle, f"{prefix}_ref")
+        version = getattr(bundle, f"{prefix}_version")
+        if ref is None or version is None:
+            continue
+        artifact_members.append(
+            RuntimeBundleArtifactMemberIdentity(
+                artifact_kind=kind,
+                artifact_ref=ref,
+                artifact_version=version,
+                manifest_hash=(
+                    getattr(bundle, f"{prefix}_manifest_hash") if prefix in _HASHED_COLUMN_PREFIXES else None
+                ),
+            )
+        )
+    return RuntimeBundleCanonicalConfiguration(
+        environment_code=bundle.environment_code,
+        execution_manifest_hash=execution_manifest_hash,
+        catalog_version=bundle.catalog_version,
+        catalog_manifest_hash=bundle.catalog_manifest_hash,
+        source_members=tuple(
+            RuntimeBundleSourceMemberIdentity(
+                source_snapshot_id=str(member.source_snapshot_id),
+                source_purpose=RuntimeBundleMemberPurpose(member.source_purpose.value),
+                source_version=member.source_version,
+                canonical_checksum=member.canonical_checksum,
+                approval_version=member.approval_version,
+                scope_policy_hash=member.scope_policy_hash,
+                freshness_policy_hash=member.freshness_policy_hash,
+                required=member.required,
+                selected_for_operation=member.selected_for_operation,
+            )
+            for member in bundle_sources
+        ),
+        artifact_members=tuple(artifact_members),
+    )
+
+
+class RagRuntimeExecutionManifestConflictError(RagRuntimeBundleBuildError):
+    """A stored manifest shares the requested hash but pins a different execution axis."""
+
+
+def _assert_manifest_matches(
+    stored: RagRuntimeExecutionManifest,
+    requested: RagRuntimeExecutionManifestCreate,
+) -> None:
+    """Fail closed when a manifest hash is reused for different content.
+
+    ``manifest_hash`` is supplied by the caller, so a hash that matches an existing row does not
+    by itself prove the rows describe the same execution axis.  Reusing a mismatched manifest
+    would silently pin the bundle to something the caller never asked for, which is exactly the
+    evaluated-vs-executed drift this issue exists to prevent.
+    """
+    mismatched = tuple(
+        field for field in MANIFEST_IDENTITY_FIELDS if getattr(stored, field) != getattr(requested, field)
+    )
+    if mismatched:
+        raise RagRuntimeExecutionManifestConflictError(
+            f"manifest_hash {requested.manifest_hash} is already stored with different {', '.join(mismatched)}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RagRuntimeBundleBuildResult:
+    """What a single RAG-12A build transaction persisted."""
+
+    execution_manifest: RagRuntimeExecutionManifest
+    bundle: RagRuntimeReleaseBundle
+    bundle_sources: tuple[RagRuntimeBundleSource, ...]
+    execution_manifest_reused: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,6 +439,12 @@ class RagRuntimeRepository:
         await self.session.flush()
         return manifest
 
+    async def get_execution_manifest_by_id(self, manifest_id: UUID) -> RagRuntimeExecutionManifest | None:
+        result = await self.session.execute(
+            select(RagRuntimeExecutionManifest).where(RagRuntimeExecutionManifest.id == manifest_id)
+        )
+        return result.scalar_one_or_none()
+
     async def get_execution_manifest_by_hash(self, manifest_hash: str) -> RagRuntimeExecutionManifest | None:
         result = await self.session.execute(
             select(RagRuntimeExecutionManifest).where(RagRuntimeExecutionManifest.manifest_hash == manifest_hash)
@@ -250,13 +471,46 @@ class RagRuntimeRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_release_bundle_by_id(self, bundle_id: UUID) -> RagRuntimeReleaseBundle | None:
+        result = await self.session.execute(
+            select(RagRuntimeReleaseBundle).where(RagRuntimeReleaseBundle.id == bundle_id)
+        )
+        return result.scalar_one_or_none()
+
     async def get_release_bundle_by_manifest_hash(self, manifest_hash: str) -> RagRuntimeReleaseBundle | None:
         result = await self.session.execute(
             select(RagRuntimeReleaseBundle).where(RagRuntimeReleaseBundle.bundle_manifest_hash == manifest_hash)
         )
         return result.scalar_one_or_none()
 
-    async def create_bundle_source(self, payload: RagRuntimeBundleSourceCreate) -> RagRuntimeBundleSource:
+    async def _assert_member_versions_exist(self, bundle_sources: tuple[RagRuntimeBundleSourceCreate, ...]) -> None:
+        """Reject any member whose ``(source_snapshot_id, source_version)`` pair does not exist.
+
+        This replaces a composite FK onto ``uq_rag_source_snapshot_id_version``.  The FK would
+        enforce the same rule in the database, but it made this migration a hard dependant of
+        #369's unique constraint -- #369's downgrade could then no longer drop it, breaking 11 of
+        its tests.  #398 moved integrity enforcement from the database into Python, and this
+        follows that direction: one query, fail-closed, inside the same transaction as the write.
+        """
+        wanted = {(member.source_snapshot_id, member.source_version) for member in bundle_sources}
+        result = await self.session.execute(
+            select(RagSourceSnapshot.id, RagSourceSnapshot.source_version).where(
+                RagSourceSnapshot.id.in_({snapshot_id for snapshot_id, _ in wanted})
+            )
+        )
+        existing = {(row[0], row[1]) for row in result}
+        missing = sorted(f"{snapshot_id}@{source_version}" for snapshot_id, source_version in wanted - existing)
+        if missing:
+            raise RagRuntimeBundleSourceVersionMismatchError(
+                "member가 snapshot에 없는 source_version을 주장합니다: " + ", ".join(missing)
+            )
+
+    async def _create_bundle_source(self, payload: RagRuntimeBundleSourceCreate) -> RagRuntimeBundleSource:
+        """Private on purpose: members are only ever written by :meth:`build_runtime_bundle`.
+
+        A public member-insert would let a caller append to an already-built bundle, which breaks
+        the member-set immutability that ``bundle_manifest_hash`` is supposed to identify.
+        """
         bundle_source = RagRuntimeBundleSource(**asdict(payload))
         self.session.add(bundle_source)
         await self.session.flush()
@@ -269,6 +523,69 @@ class RagRuntimeRepository:
             .order_by(RagRuntimeBundleSource.created_at, RagRuntimeBundleSource.id)
         )
         return list(result.scalars().all())
+
+    async def build_runtime_bundle(
+        self,
+        *,
+        outcome: RuntimeBundleBuildOutcome,
+        manifest: RagRuntimeExecutionManifestCreate,
+        bundle: RagRuntimeReleaseBundleCreate,
+        bundle_sources: tuple[RagRuntimeBundleSourceCreate, ...],
+    ) -> RagRuntimeBundleBuildResult:
+        """Persist one ``BUILDING`` bundle with its full member set (RAG-12A, Issue #175).
+
+        The caller owns the transaction, so a raised error rolls back the manifest, the bundle
+        and every member together -- there is no partial-bundle path.  Eligibility is decided
+        before this call by ``ai_worker.tasks.rag.runtime_bundle_builder``; this method persists
+        a decision, it does not re-make one.
+
+        Two boundaries are structural rather than checked:
+
+        - ``bundle_status`` is forced to ``BUILDING``.  ``READY``, ``RETIRED`` and the
+          environment pointer belong to RAG-17 (#180), so this method cannot write them.
+        - ``rag_runtime_environment`` and ``rag_runtime_environment_transition`` are neither read
+          nor written, so a build failure has no path to change an existing active pointer.
+
+        Members are created once here and never updated: the repository exposes no member update
+        or delete, which is how "``BUILDING`` member 입력을 임의로 update하지 못한다" holds.
+
+        Raises:
+            RagRuntimeExecutionManifestConflictError: a manifest already stores this hash but
+                describes a different execution axis, so reusing it would bind the bundle to a
+                manifest the caller did not pin.
+        """
+        _assert_rows_match_outcome(outcome, bundle=bundle, manifest=manifest, bundle_sources=bundle_sources)
+        await self._assert_member_versions_exist(bundle_sources)
+        if not bundle_sources:
+            raise RagRuntimeBundleBuildError(
+                "member 없는 Bundle은 저장할 수 없습니다. bundle_manifest_hash가 빈 member set을 "
+                "가리키면 평가·실행 대상 동일성을 재검증할 수 없습니다."
+            )
+
+        existing_manifest = await self.get_execution_manifest_by_hash(manifest.manifest_hash)
+        if existing_manifest is not None:
+            _assert_manifest_matches(existing_manifest, manifest)
+        execution_manifest = existing_manifest or await self.create_execution_manifest(manifest)
+
+        created_bundle = await self.create_release_bundle(
+            replace(
+                bundle,
+                execution_manifest_id=execution_manifest.id,
+                bundle_status=RagRuntimeBundleStatus.BUILDING,
+            )
+        )
+        created_sources = tuple(
+            [
+                await self._create_bundle_source(replace(member, bundle_id=created_bundle.id))
+                for member in bundle_sources
+            ]
+        )
+        return RagRuntimeBundleBuildResult(
+            execution_manifest=execution_manifest,
+            bundle=created_bundle,
+            bundle_sources=created_sources,
+            execution_manifest_reused=existing_manifest is not None,
+        )
 
     async def create_environment(self, payload: RagRuntimeEnvironmentCreate) -> RagRuntimeEnvironment:
         environment = RagRuntimeEnvironment(**asdict(payload))
