@@ -61,6 +61,14 @@ def upgrade() -> None:
         f"ALTER TABLE {schema}.audit_entry ADD CONSTRAINT audit_entry_event_kind_check "
         "CHECK (event_kind IN ('AUTHORIZATION', 'OPERATION', 'CONTROL'))"
     )
+    op.execute(f"ALTER TABLE {schema}.audit_entry ADD COLUMN control_entry boolean")
+    op.execute(f"UPDATE {schema}.audit_entry SET control_entry = (event_kind = 'AUTHORIZATION')")
+    op.execute(f"ALTER TABLE {schema}.audit_entry ALTER COLUMN control_entry SET DEFAULT false")
+    op.execute(f"ALTER TABLE {schema}.audit_entry ALTER COLUMN control_entry SET NOT NULL")
+    op.execute(
+        f"ALTER TABLE {schema}.audit_entry ADD CONSTRAINT audit_entry_control_marker_check "
+        "CHECK (control_entry = (event_kind IN ('AUTHORIZATION', 'CONTROL')))"
+    )
 
 
 def downgrade() -> None:
@@ -78,6 +86,8 @@ def downgrade() -> None:
     if control_rows:
         raise RuntimeError("authorization control downgrade refused while C1 durable rows exist")
 
+    op.execute(f"ALTER TABLE {schema}.audit_entry DROP CONSTRAINT audit_entry_control_marker_check")
+    op.execute(f"ALTER TABLE {schema}.audit_entry DROP COLUMN control_entry")
     op.execute(f"ALTER TABLE {schema}.audit_entry DROP CONSTRAINT audit_entry_event_kind_check")
     op.execute(
         f"ALTER TABLE {schema}.audit_entry ADD CONSTRAINT audit_entry_event_kind_check "

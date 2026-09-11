@@ -367,6 +367,22 @@ async def test_authorization_control_schema_has_plane_and_revision_constraints(
             )
             assert audit_constraint is not None
             assert "CONTROL" in audit_constraint
+            control_marker_constraint = await connection.scalar(
+                text(
+                    """
+                    SELECT pg_get_constraintdef(constraint_row.oid)
+                    FROM pg_constraint AS constraint_row
+                    JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid
+                    JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                    WHERE namespace.nspname = :schema
+                      AND relation.relname = 'audit_entry'
+                      AND constraint_row.conname = 'audit_entry_control_marker_check'
+                    """
+                ),
+                {"schema": database.schema},
+            )
+            assert control_marker_constraint is not None
+            assert "control_entry" in control_marker_constraint
     finally:
         await engine.dispose()
 
@@ -401,7 +417,19 @@ async def test_limited_logins_have_plane_specific_column_privileges(
 
         forbidden_statements = (
             f"SELECT * FROM {_quote(database.schema)}.approval_evidence",
+            f"SELECT identity_plane FROM {_quote(database.schema)}.protected_identity",
+            f"SELECT approval_role FROM {_quote(database.schema)}.protected_identity",
             f"INSERT INTO {_quote(database.schema)}.audit_head DEFAULT VALUES",
+            f"INSERT INTO {_quote(database.schema)}.audit_entry "
+            "(sequence, event_id, event_kind, operation_key, entry_body, previous_entry_sha256, "
+            "entry_sha256, recorded_at) VALUES "
+            "(999, gen_random_uuid(), 'CONTROL', NULL, '{}'::jsonb, NULL, "
+            f"'{('a' * 64)}', clock_timestamp())",
+            f"INSERT INTO {_quote(database.schema)}.audit_entry "
+            "(sequence, event_id, event_kind, operation_key, entry_body, previous_entry_sha256, "
+            "entry_sha256, recorded_at) VALUES "
+            "(999, gen_random_uuid(), 'AUTHORIZATION', NULL, '{}'::jsonb, NULL, "
+            f"'{('a' * 64)}', clock_timestamp())",
             f"UPDATE {_quote(database.schema)}.protected_dataset SET state = 'FROZEN'",
             f"DELETE FROM {_quote(database.schema)}.audit_head",
             f"TRUNCATE {_quote(database.schema)}.audit_entry",
@@ -440,6 +468,11 @@ async def test_limited_logins_have_plane_specific_column_privileges(
             "'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', "
             "'forbidden-key', 'ACCESS_AUTHORIZED', 1, 0, false)",
             f"UPDATE {_quote(database.schema)}.protected_dataset SET state = 'FROZEN'",
+            f"INSERT INTO {_quote(database.schema)}.audit_entry "
+            "(sequence, event_id, event_kind, operation_key, entry_body, previous_entry_sha256, "
+            "entry_sha256, recorded_at, control_entry) VALUES "
+            "(999, gen_random_uuid(), 'OPERATION', 'forged-operation', '{}'::jsonb, NULL, "
+            f"'{('a' * 64)}', clock_timestamp(), false)",
         )
         for statement in control_forbidden_statements:
             async with control_engine.connect() as connection:

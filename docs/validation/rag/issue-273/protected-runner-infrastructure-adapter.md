@@ -9,6 +9,7 @@
 - Implemented scope: approval ingestion and grant/revoke/expire transaction·audit services
 - Production approval source connector: `NOT_IMPLEMENTED`
 - Dataset lifecycle/FREEZE service: `NOT_IMPLEMENTED`
+- Identity registration/disable service: `NOT_IMPLEMENTED`
 - Effective enforcement: `NOT_IMPLEMENTED`
 - Access authorized: `false`
 - HOLDOUT authored: `false`
@@ -19,7 +20,7 @@
 
 ## 검증
 
-- Authorization-control related suite: `107 passed`
+- Authorization-control related suite: `128 passed`
 - Runtime assembly suite: `24 passed`
 - Protected-off Worker image import: `passed`
 - 실제 환경 좌표와 보호 데이터는 사용하지 않았습니다.
@@ -31,4 +32,4 @@
 - backup·restore·rotation 운영 증빙
 - Track F external gate 충족
 
-Evidence self hash: `2d76d86932f8d4ca97b8f175c84add797b860aa3a8bb8d6b695692e38d610e50`
+Evidence self hash: `11cf7f132b394e43763e4c00a6dd35123f62cb13c0cac4aaf9c4c270e9355ca8`

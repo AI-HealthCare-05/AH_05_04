@@ -55,6 +55,8 @@ Current 승격 또는 Production 공개가 승인되지 않는다.
 Application Service는 caller가 제출한 evidence body를 신뢰하지 않는다. `TrustedApprovalSource`에서
 `source_event_id`로 immutable `ApprovalSourceEvidence`를 읽고 command의 expected raw hash와 대조한 뒤 정확한
 DTO를 저장한다. 실제 production connector는 이 범위에서 선택하지 않는다.
+명시적인 source-not-found만 `APPROVAL_NOT_VERIFIED` 정책 거부로 기록한다. connector 장애나 예상하지 못한 예외는
+`INTERNAL_ERROR`로 rollback하여 같은 request ID를 재시도할 수 있게 하고, 영구 DENIED 감사로 바꾸지 않는다.
 
 - Custodian subject grant issuer는 `PRODUCT_SAFETY_REVIEWER`다.
 - Author와 Runner subject grant issuer는 `DATASET_CUSTODIAN`이다.
@@ -72,6 +74,8 @@ plane별 최대 한 row를 가지며 database login은 계속 primary key다.
 GRANT는 subject actor/namespace/role + Dataset ID/version scope의 현재 최대 revision 다음 값만 허용한다. DB
 UNIQUE constraint가 동일 scope/revision의 동시 삽입을 거부한다. REVOKE와 EXPIRE는 caller가 지정한 current
 effective revision과 일치할 때만 이를 1 증가시킨다.
+AUTHORIZATION 수명주기는 동일 grant에 대해 정확히 하나의 `GRANT`로 시작하고 최대 하나의 terminal
+`REVOKE|EXPIRE`로 끝난다. orphan terminal, 중복 terminal, `EXPIRE → REVOKE`, `REVOKE → EXPIRE`는 거부한다.
 
 ## 5. CONTROL 감사와 멱등성
 
@@ -88,12 +92,15 @@ effective revision과 일치할 때만 이를 1 증가시킨다.
 command hash는 command kind와 strict command DTO 전체의 canonical JSON SHA-256이다. 같은 request ID와 같은
 hash는 기존 성공 결과 또는 기존 거부 오류를 재현하고 새 mutation/audit를 만들지 않는다. 같은 request ID와
 다른 hash는 새 고정 이유 `CONTROL_COMMAND_CONFLICT`로 거부한다. 별도 mutable command table은 만들지 않는다.
+exact replay는 현재 control executor가 원 `executed_by`와 같아야 하며, 성공 authorization command는 선행하는
+AUTHORIZATION 감사 ID·action·grant·effective revision과 다시 결속한다.
 
 ## 6. Transaction과 거부
 
 승인 원본을 쓰는 command는 먼저 짧은 read-only transaction으로 control `session_user`와 exact ACL을 검증한
 뒤 외부 원본을 읽는다. mutation transaction은 identity와 ACL을 다시 검증하고 replay를 확인한 뒤
 Dataset → grant scope/target → audit head 순서로 lock한다.
+시간 조건은 이 lock 대기와 replay 확인이 끝난 뒤 `clock_timestamp()`를 다시 읽어 판정한다.
 
 GRANT/REVOKE/EXPIRE 성공은 mutation, AUTHORIZATION audit, CONTROL audit, audit head 갱신을 한 transaction에서
 commit한다. ingestion은 evidence insert, CONTROL audit, head 갱신을 함께 commit한다. 알려진 정책 거부는
@@ -110,6 +117,9 @@ control role은 identity·Dataset·evidence·grant·audit의 필요한 column SE
 column INSERT, grant effective revision/revocation/lock marker, Dataset lock marker, audit head만 UPDATE할 수 있다.
 PR #432가 C2를 위해 미리 열어 둔 identity INSERT/disable과 Dataset lifecycle INSERT/UPDATE는 C1에서 회수한다.
 data role 권한은 바꾸지 않는다.
+DATA role은 CONTROL 전용 identity 컬럼을 읽지 못하며 OPERATION 감사만 append할 수 있다. 일반 constraint와
+CONTROL 전용 insert marker column으로 DATA credential의 AUTHORIZATION/CONTROL 감사 위조를 거부하고, journal은
+DB 중복 컬럼과 canonical body의 event ID/kind/operation key/hash/time 결속을 함께 확인한다.
 
 DB function, procedure, trigger, RLS, DELETE, TRUNCATE, schema CREATE, blanket table INSERT 또는 새 dependency를
 추가하지 않는다.

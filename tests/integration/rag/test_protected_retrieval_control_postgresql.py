@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from ai_worker.adapters import postgresql_protected_retrieval_control as control_adapter
 from ai_worker.adapters.postgresql_protected_retrieval_control import (
     PostgresqlProtectedAuthorizationControlService,
 )
@@ -18,19 +19,24 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     ActorIdentity,
     ApprovalSourceEvidence,
     AuthorizationAuditAction,
+    AuthorizationAuditEntry,
     ControlImplementationBinding,
     ProtectedAction,
     ProtectedApprovalPrincipal,
     ProtectedApprovalRole,
+    ProtectedAuditEventKind,
+    ProtectedAuditReason,
     ProtectedAuthorizationGrant,
     ProtectedDatasetBinding,
     ProtectedDatasetState,
     ProtectedPrincipal,
     ProtectedPrincipalRole,
     ProtectedSecurityError,
+    audit_entry_sha256,
     authorization_grant_approval_sha256,
 )
 from ai_worker.tasks.evaluation.protected_retrieval_control import (
+    ApprovalSourceNotFoundError,
     ExpireAuthorizationCommand,
     GrantAuthorizationCommand,
     IngestApprovalCommand,
@@ -49,6 +55,21 @@ class _ApprovalSource:
     async def fetch(self, source_event_id: str) -> ApprovalSourceEvidence:
         self.calls.append(source_event_id)
         return self.evidence
+
+
+class _FailingApprovalSource:
+    async def fetch(self, source_event_id: str) -> ApprovalSourceEvidence:
+        del source_event_id
+        raise RuntimeError("synthetic connector detail that must not escape")
+
+
+class _MissingApprovalSource:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def fetch(self, source_event_id: str) -> ApprovalSourceEvidence:
+        self.calls.append(source_event_id)
+        raise ApprovalSourceNotFoundError
 
 
 def _evidence(
@@ -171,7 +192,12 @@ async def _insert_dataset(database: _ProtectedDatabase, dataset: ProtectedDatase
         await engine.dispose()
 
 
-async def _insert_grant(database: _ProtectedDatabase, grant: ProtectedAuthorizationGrant) -> None:
+async def _insert_grant(
+    database: _ProtectedDatabase,
+    grant: ProtectedAuthorizationGrant,
+    *,
+    record_grant_audit: bool = True,
+) -> None:
     engine = create_async_engine(database.url)
     try:
         async with engine.begin() as connection:
@@ -207,13 +233,76 @@ async def _insert_grant(database: _ProtectedDatabase, grant: ProtectedAuthorizat
                     "expires_at": grant.expires_at,
                 },
             )
+            if not record_grant_audit:
+                return
+            head = (
+                await connection.execute(
+                    text(
+                        f'''SELECT sequence, entry_sha256 FROM "{database.schema}".audit_head
+                        WHERE singleton FOR UPDATE'''
+                    )
+                )
+            ).one()
+            entry = AuthorizationAuditEntry(
+                event_kind=ProtectedAuditEventKind.AUTHORIZATION,
+                sequence=head.sequence + 1,
+                event_id=str(uuid4()),
+                grant_id=grant.grant_id,
+                grant_revision=grant.revision,
+                effective_revision=grant.revision,
+                subject=grant.subject,
+                issuer=grant.issuer,
+                dataset_id=grant.dataset_id,
+                dataset_version=grant.dataset_version,
+                manifest_sha256=grant.manifest_sha256,
+                protected_artifact_sha256=grant.protected_artifact_sha256,
+                hmac_key_version=grant.hmac_key_version,
+                actions=grant.actions,
+                control_implementation=grant.control_implementation,
+                approval_source_event_id=grant.approval_source_event_id,
+                approval_source_raw_sha256=grant.approval_source_raw_sha256,
+                valid_from=grant.valid_from,
+                expires_at=grant.expires_at,
+                action=AuthorizationAuditAction.GRANT,
+                reason_code=ProtectedAuditReason.APPROVAL_VERIFIED,
+                recorded_at=datetime.now(UTC),
+                previous_entry_sha256=head.entry_sha256,
+                entry_sha256="0" * 64,
+            )
+            entry = entry.model_copy(update={"entry_sha256": audit_entry_sha256(entry)})
+            await connection.execute(
+                text(
+                    f'''INSERT INTO "{database.schema}".audit_entry (
+                        sequence, event_id, event_kind, operation_key, entry_body,
+                        previous_entry_sha256, entry_sha256, recorded_at, control_entry
+                    ) VALUES (
+                        :sequence, CAST(:event_id AS uuid), 'AUTHORIZATION', NULL, CAST(:entry_body AS jsonb),
+                        :previous_entry_sha256, :entry_sha256, :recorded_at, true
+                    )'''
+                ),
+                {
+                    "sequence": entry.sequence,
+                    "event_id": entry.event_id,
+                    "entry_body": entry.model_dump_json(),
+                    "previous_entry_sha256": entry.previous_entry_sha256,
+                    "entry_sha256": entry.entry_sha256,
+                    "recorded_at": entry.recorded_at,
+                },
+            )
+            await connection.execute(
+                text(
+                    f'''UPDATE "{database.schema}".audit_head
+                    SET sequence = :sequence, entry_sha256 = :entry_sha256 WHERE singleton'''
+                ),
+                {"sequence": entry.sequence, "entry_sha256": entry.entry_sha256},
+            )
     finally:
         await engine.dispose()
 
 
 def _service(
     database: _ProtectedDatabase,
-    source: _ApprovalSource,
+    source: _ApprovalSource | _FailingApprovalSource | _MissingApprovalSource,
     *,
     login: str | None = None,
 ) -> PostgresqlProtectedAuthorizationControlService:
@@ -248,6 +337,111 @@ async def test_ingest_rejects_unauthorized_login_before_source_use(
             await service.ingest_approval(command)
 
         assert source.calls == []
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_ingest_connector_failure_is_retryable_and_not_a_policy_denial(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    service = _service(database, _FailingApprovalSource())
+    request_id = str(uuid4())
+    try:
+        with pytest.raises(ProtectedSecurityError, match="^INTERNAL_ERROR$") as captured:
+            await service.ingest_approval(
+                IngestApprovalCommand(
+                    request_id=request_id,
+                    source_event_id=f"approval-{uuid4()}",
+                    expected_raw_sha256="a" * 64,
+                )
+            )
+        assert "synthetic connector" not in str(captured.value)
+
+        admin_engine = create_async_engine(database.url)
+        try:
+            async with admin_engine.connect() as connection:
+                audit_count = await connection.scalar(
+                    text(
+                        f'''SELECT count(*) FROM "{database.schema}".audit_entry
+                        WHERE event_id = CAST(:request_id AS uuid)'''
+                    ),
+                    {"request_id": request_id},
+                )
+            assert audit_count == 0
+        finally:
+            await admin_engine.dispose()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_ingest_missing_source_commits_one_policy_denial_and_replays(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    source = _MissingApprovalSource()
+    service = _service(database, source)
+    command = IngestApprovalCommand(
+        request_id=str(uuid4()),
+        source_event_id=f"approval-{uuid4()}",
+        expected_raw_sha256="a" * 64,
+    )
+    try:
+        for _ in range(2):
+            with pytest.raises(ProtectedSecurityError, match="^APPROVAL_NOT_VERIFIED$"):
+                await service.ingest_approval(command)
+        assert source.calls == [command.source_event_id]
+
+        admin_engine = create_async_engine(database.url)
+        try:
+            async with admin_engine.connect() as connection:
+                denial_count = await connection.scalar(
+                    text(
+                        f'''SELECT count(*) FROM "{database.schema}".audit_entry
+                        WHERE event_id = CAST(:request_id AS uuid)
+                          AND entry_body->>'reason_code' = 'APPROVAL_NOT_VERIFIED' '''
+                    ),
+                    {"request_id": command.request_id},
+                )
+            assert denial_count == 1
+        finally:
+            await admin_engine.dispose()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_grant_denial_is_committed_once_and_replayed(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    evidence = _evidence(f"approval-{uuid4()}", "a" * 64)
+    service = _service(database, _ApprovalSource(evidence))
+    command = ExpireAuthorizationCommand(
+        request_id=str(uuid4()),
+        grant_id=str(uuid4()),
+        expected_effective_revision=1,
+    )
+    try:
+        for _ in range(2):
+            with pytest.raises(ProtectedSecurityError, match="^AUTHORIZATION_NOT_FOUND$"):
+                await service.expire(command)
+        admin_engine = create_async_engine(database.url)
+        try:
+            async with admin_engine.connect() as connection:
+                denial_count = await connection.scalar(
+                    text(
+                        f'''SELECT count(*) FROM "{database.schema}".audit_entry
+                        WHERE event_id = CAST(:request_id AS uuid)
+                          AND entry_body->>'reason_code' = 'AUTHORIZATION_NOT_FOUND' '''
+                    ),
+                    {"request_id": command.request_id},
+                )
+            assert denial_count == 1
+        finally:
+            await admin_engine.dispose()
     finally:
         await service.close()
 
@@ -346,6 +540,52 @@ async def test_ingest_source_mismatch_leaves_no_evidence(
                     {"request_id": command.request_id},
                 )
             assert count == 0
+            assert denial_count == 1
+        finally:
+            await admin_engine.dispose()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_ingest_rejects_changed_evidence_for_an_immutable_source_and_audits_denial(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    evidence = _evidence(f"approval-{uuid4()}", "a" * 64)
+    source = _ApprovalSource(evidence)
+    service = _service(database, source)
+    try:
+        await service.ingest_approval(
+            IngestApprovalCommand(
+                request_id=str(uuid4()),
+                source_event_id=evidence.source_event_id,
+                expected_raw_sha256=evidence.canonical_raw_sha256,
+            )
+        )
+        changed = evidence.model_copy(update={"canonical_raw_sha256": "b" * 64})
+        source.evidence = changed
+        command = IngestApprovalCommand(
+            request_id=str(uuid4()),
+            source_event_id=evidence.source_event_id,
+            expected_raw_sha256=changed.canonical_raw_sha256,
+        )
+        for _ in range(2):
+            with pytest.raises(ProtectedSecurityError, match="^CONTROL_COMMAND_CONFLICT$"):
+                await service.ingest_approval(command)
+
+        admin_engine = create_async_engine(database.url)
+        try:
+            async with admin_engine.connect() as connection:
+                denial_count = await connection.scalar(
+                    text(
+                        f'''SELECT count(*) FROM "{database.schema}".audit_entry
+                        WHERE event_id = CAST(:request_id AS uuid)
+                          AND entry_body->>'outcome' = 'DENIED'
+                          AND entry_body->>'reason_code' = 'CONTROL_COMMAND_CONFLICT' '''
+                    ),
+                    {"request_id": command.request_id},
+                )
             assert denial_count == 1
         finally:
             await admin_engine.dispose()
@@ -481,6 +721,54 @@ async def test_grant_rejects_dataset_key_body_mismatch_without_mutation(
 
 
 @pytest.mark.asyncio
+async def test_grant_replay_is_bound_to_the_original_control_executor(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    dataset, grant, evidence = _grant_scenario()
+    await _insert_dataset(database, dataset)
+    source = _ApprovalSource(evidence)
+    service = _service(database, source)
+    alternate_service = _service(database, source, login=database.denied_login)
+    admin_engine = create_async_engine(database.url)
+    command = GrantAuthorizationCommand(
+        request_id=str(uuid4()), grant=grant, expected_dataset_state_revision=dataset.state_revision
+    )
+    try:
+        await service.ingest_approval(
+            IngestApprovalCommand(
+                request_id=str(uuid4()),
+                source_event_id=evidence.source_event_id,
+                expected_raw_sha256=evidence.canonical_raw_sha256,
+            )
+        )
+        await service.grant(command)
+        async with admin_engine.begin() as connection:
+            await connection.exec_driver_sql(f'GRANT "{database.control}" TO "{database.denied_login}"')
+            await connection.execute(
+                text(
+                    f'''INSERT INTO "{database.schema}".protected_identity (
+                        database_login, actor_id, actor_namespace, approval_role, identity_plane
+                    ) VALUES (:login, :actor_id, 'GITHUB_LOGIN', 'DATASET_CUSTODIAN', 'CONTROL')'''
+                ),
+                {"login": database.denied_login, "actor_id": f"alternate-{uuid4()}"},
+            )
+
+        with pytest.raises(ProtectedSecurityError, match="^CONTROL_COMMAND_CONFLICT$"):
+            await alternate_service.grant(command)
+    finally:
+        async with admin_engine.begin() as connection:
+            await connection.execute(
+                text(f'''DELETE FROM "{database.schema}".protected_identity WHERE database_login = :login'''),
+                {"login": database.denied_login},
+            )
+            await connection.exec_driver_sql(f'REVOKE "{database.control}" FROM "{database.denied_login}"')
+        await admin_engine.dispose()
+        await alternate_service.close()
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_revoke_requires_approval_and_increments_effective_revision_once(
     protected_database: _ProtectedDatabase,
 ) -> None:
@@ -530,6 +818,14 @@ async def test_revoke_requires_approval_and_increments_effective_revision_once(
         assert await service.revoke(command) == result
         assert result.effective_revision == 2
         assert result.reason_code == "REVOKED"
+        with pytest.raises(ProtectedSecurityError, match="^AUTHORIZATION_REVOKED$"):
+            await service.expire(
+                ExpireAuthorizationCommand(
+                    request_id=str(uuid4()),
+                    grant_id=grant.grant_id,
+                    expected_effective_revision=2,
+                )
+            )
 
         admin_engine = create_async_engine(database.url)
         try:
@@ -570,6 +866,16 @@ async def test_expire_uses_database_time_and_increments_once(
         assert await service.expire(command) == result
         assert result.effective_revision == 2
         assert result.reason_code == "EXPIRED"
+        with pytest.raises(ProtectedSecurityError, match="^AUTHORIZATION_EXPIRED$"):
+            await service.revoke(
+                RevokeAuthorizationCommand(
+                    request_id=str(uuid4()),
+                    grant_id=grant.grant_id,
+                    approval_source_event_id=f"unused-{uuid4()}",
+                    expected_raw_sha256="7" * 64,
+                    expected_effective_revision=2,
+                )
+            )
 
         admin_engine = create_async_engine(database.url)
         try:
@@ -595,7 +901,7 @@ async def test_expire_uses_database_time_and_increments_once(
                     )
                 )
             assert row == (2, None)
-            assert actions == ["EXPIRE"]
+            assert actions == ["GRANT", "EXPIRE"]
         finally:
             await admin_engine.dispose()
     finally:
@@ -642,6 +948,46 @@ async def test_early_expire_commits_one_denial_and_replays_reason(
                 )
             assert effective_revision == 1
             assert denial_count == 1
+        finally:
+            await admin_engine.dispose()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_expire_rejects_an_orphan_grant_without_authorization_history(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    dataset, grant, evidence = _grant_scenario(expired=True)
+    await _insert_dataset(database, dataset)
+    await _insert_grant(database, grant, record_grant_audit=False)
+    service = _service(database, _ApprovalSource(evidence))
+    command = ExpireAuthorizationCommand(
+        request_id=str(uuid4()), grant_id=grant.grant_id, expected_effective_revision=1
+    )
+    try:
+        with pytest.raises(ProtectedSecurityError, match="^AUDIT_TRANSITION_INVALID$"):
+            await service.expire(command)
+        admin_engine = create_async_engine(database.url)
+        try:
+            async with admin_engine.connect() as connection:
+                revision = await connection.scalar(
+                    text(
+                        f'''SELECT effective_revision FROM "{database.schema}".authorization_grant
+                        WHERE grant_id = CAST(:grant_id AS uuid)'''
+                    ),
+                    {"grant_id": grant.grant_id},
+                )
+                command_audits = await connection.scalar(
+                    text(
+                        f'''SELECT count(*) FROM "{database.schema}".audit_entry
+                        WHERE event_id = CAST(:request_id AS uuid)'''
+                    ),
+                    {"request_id": command.request_id},
+                )
+            assert revision == 1
+            assert command_audits == 0
         finally:
             await admin_engine.dispose()
     finally:
@@ -700,6 +1046,57 @@ async def test_concurrent_identical_grant_converges_to_one_effect(
 
 
 @pytest.mark.asyncio
+async def test_grant_refreshes_database_time_after_waiting_for_dataset_lock(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    dataset, original_grant, _ = _grant_scenario()
+    grant = original_grant.model_copy(update={"expires_at": datetime.now(UTC) + timedelta(seconds=1)})
+    evidence = _evidence(
+        grant.approval_source_event_id,
+        grant.approval_source_raw_sha256,
+        grant=grant,
+    )
+    await _insert_dataset(database, dataset)
+    source = _ApprovalSource(evidence)
+    service = _service(database, source)
+    lock_engine = create_async_engine(database.url)
+    try:
+        await service.ingest_approval(
+            IngestApprovalCommand(
+                request_id=str(uuid4()),
+                source_event_id=evidence.source_event_id,
+                expected_raw_sha256=evidence.canonical_raw_sha256,
+            )
+        )
+        async with lock_engine.connect() as connection:
+            transaction = await connection.begin()
+            await connection.execute(
+                text(
+                    f'''SELECT dataset_id FROM "{database.schema}".protected_dataset
+                    WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version FOR UPDATE'''
+                ),
+                {"dataset_id": dataset.dataset_id, "dataset_version": dataset.dataset_version},
+            )
+            pending = asyncio.create_task(
+                service.grant(
+                    GrantAuthorizationCommand(
+                        request_id=str(uuid4()),
+                        grant=grant,
+                        expected_dataset_state_revision=dataset.state_revision,
+                    )
+                )
+            )
+            await asyncio.sleep(1.2)
+            await transaction.commit()
+            with pytest.raises(ProtectedSecurityError, match="^AUTHORIZATION_EXPIRED$"):
+                await pending
+    finally:
+        await lock_engine.dispose()
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_grant_policy_denial_commits_once_without_grant(
     protected_database: _ProtectedDatabase,
 ) -> None:
@@ -746,6 +1143,71 @@ async def test_grant_policy_denial_commits_once_without_grant(
                 )
             assert grant_count == 0
             assert denial_count == 1
+        finally:
+            await admin_engine.dispose()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_grant_internal_failure_rolls_back_without_policy_denial_audit(
+    protected_database: _ProtectedDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = protected_database
+    dataset, grant, evidence = _grant_scenario()
+    await _insert_dataset(database, dataset)
+    service = _service(database, _ApprovalSource(evidence))
+    try:
+        await service.ingest_approval(
+            IngestApprovalCommand(
+                request_id=str(uuid4()),
+                source_event_id=evidence.source_event_id,
+                expected_raw_sha256=evidence.canonical_raw_sha256,
+            )
+        )
+
+        async def fail_dataset_validation(
+            control: control_adapter._ControlSession,
+            candidate: ProtectedAuthorizationGrant,
+            expected_state_revision: int,
+        ) -> None:
+            del control, candidate, expected_state_revision
+            raise ProtectedSecurityError("INTERNAL_ERROR")
+
+        monkeypatch.setattr(
+            control_adapter._ControlSession,
+            "require_grant_dataset",
+            fail_dataset_validation,
+        )
+        command = GrantAuthorizationCommand(
+            request_id=str(uuid4()),
+            grant=grant,
+            expected_dataset_state_revision=dataset.state_revision,
+        )
+
+        with pytest.raises(ProtectedSecurityError, match="^INTERNAL_ERROR$"):
+            await service.grant(command)
+
+        admin_engine = create_async_engine(database.url)
+        try:
+            async with admin_engine.connect() as connection:
+                grant_count = await connection.scalar(
+                    text(
+                        f'''SELECT count(*) FROM "{database.schema}".authorization_grant
+                        WHERE grant_id = CAST(:grant_id AS uuid)'''
+                    ),
+                    {"grant_id": grant.grant_id},
+                )
+                request_audit_count = await connection.scalar(
+                    text(
+                        f'''SELECT count(*) FROM "{database.schema}".audit_entry
+                        WHERE event_id = CAST(:request_id AS uuid)'''
+                    ),
+                    {"request_id": command.request_id},
+                )
+            assert grant_count == 0
+            assert request_audit_count == 0
         finally:
             await admin_engine.dispose()
     finally:

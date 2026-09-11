@@ -238,6 +238,10 @@ effective state, and uses database UTC time. It cannot succeed before `expires_a
 `effective_revision` without inventing approval evidence. The immutable grant body and original revision do not
 change.
 
+The PostgreSQL journal must prove exactly one matching GRANT authorization entry before either terminal transition.
+The lifecycle permits at most one terminal entry, so orphan, duplicate, and cross-terminal transitions fail closed.
+Time-window checks refresh `clock_timestamp()` after every required Dataset/grant/audit lock has been acquired.
+
 ### Command audit and idempotency
 
 Add `CONTROL` to `ProtectedAuditEventKind` and a `ControlCommandAuditEntry` to the audit union. Its canonical body is:
@@ -270,9 +274,11 @@ transaction as the mutation. Ingestion appends only a successful CONTROL audit. 
 the service performs no mutation and does not claim to have audited the denial.
 
 On replay, the service loads the CONTROL entry by `event_id`, verifies the complete global chain and stored entry
-hash, and compares command kind and command hash. An exact successful match reconstructs the stored result without a
-new mutation or audit. An exact denied match raises the stored fixed reason again. A different payload under the same
-request ID raises the new fixed reason `CONTROL_COMMAND_CONFLICT`.
+hash, and compares command kind, command hash, and current executor. A successful authorization replay also verifies
+that its referenced earlier AUTHORIZATION entry has the same action, grant, effective revision, and reason. An exact
+successful match reconstructs the stored result without a new mutation or audit. An exact denied match raises the
+stored fixed reason again. A different payload or executor under the same request ID raises the new fixed reason
+`CONTROL_COMMAND_CONFLICT`.
 
 There is no separate command table. A concurrent duplicate first loses the audit `event_id` uniqueness race and rolls
 back its whole transaction, then opens a fresh transaction to verify and return the winner. If the winner's hash does
@@ -312,6 +318,10 @@ The control group receives only:
 Remove the currently pre-granted identity INSERT/UPDATE and Dataset lifecycle INSERT/UPDATE columns until C2. The data
 role does not change. Both roles retain no ownership, schema CREATE, DELETE, TRUNCATE, TRIGGER, REFERENCES, blanket
 table INSERT, or access to protected artifact envelopes outside their existing data-plane needs.
+
+The DATA role retains only its original identity columns and cannot read `identity_plane` or `approval_role`. Its
+audit INSERT omits a CONTROL-only marker required by an ordinary CHECK constraint for AUTHORIZATION and CONTROL rows,
+so it can append only OPERATION entries. The journal compares redundant DB columns with the canonical entry body.
 
 ## Error contract
 

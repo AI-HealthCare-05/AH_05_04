@@ -17,8 +17,6 @@ _SELECT_COLUMNS: Mapping[str, Mapping[str, Sequence[str]]] = {
             "actor_id",
             "actor_namespace",
             "principal_role",
-            "identity_plane",
-            "approval_role",
             "enabled",
         ),
         "protected_dataset": (
@@ -159,7 +157,10 @@ _INSERT_COLUMNS: Mapping[str, Mapping[str, Sequence[str]]] = {
             for column in _SELECT_COLUMNS["control"]["authorization_grant"]
             if column not in {"revoked_at", "lock_marker"}
         ),
-        "audit_entry": _SELECT_COLUMNS["control"]["audit_entry"],
+        "audit_entry": (
+            *(column for column in _SELECT_COLUMNS["control"]["audit_entry"] if column != "operation_key"),
+            "control_entry",
+        ),
     },
 }
 

@@ -196,6 +196,31 @@ def test_control_result_rejects_a_non_v4_request_id() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"reason_code": "EXPIRED"},
+        {"effective_revision": None},
+        {"authorization_audit_event_id": None},
+        {"authorization_audit_event_id": "not-a-uuid"},
+        {"target_id": "not-a-uuid"},
+    ],
+)
+def test_control_result_rejects_command_result_mismatches(updates: dict[str, object]) -> None:
+    values: dict[str, object] = {
+        "request_id": REQUEST_ID,
+        "command_kind": ControlCommandKind.GRANT,
+        "target_id": GRANT_ID,
+        "effective_revision": 1,
+        "authorization_audit_event_id": "123e4567-e89b-42d3-a456-426614174002",
+        "reason_code": "AUTHORIZED",
+    }
+    values.update(updates)
+
+    with pytest.raises(ValidationError):
+        ControlCommandResult(**values)  # type: ignore[arg-type]
+
+
 def test_verified_approval_binds_the_complete_grant() -> None:
     grant = _grant()
     evidence = _evidence(grant)
@@ -306,3 +331,59 @@ def test_control_audit_hash_covers_the_command_outcome() -> None:
     )
 
     assert digest != audit_entry_sha256(denied)
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"target_kind": ControlAuditTargetKind.APPROVAL_SOURCE_EVENT},
+        {"reason_code": ProtectedAuditReason.EXPIRED},
+        {"result_effective_revision": None},
+        {"authorization_audit_event_id": None},
+        {"authorization_audit_event_id": "not-a-uuid"},
+    ],
+)
+def test_control_audit_rejects_semantic_mismatches(updates: dict[str, object]) -> None:
+    values: dict[str, object] = {
+        "event_kind": ProtectedAuditEventKind.CONTROL,
+        "sequence": 1,
+        "event_id": REQUEST_ID,
+        "command_kind": "GRANT",
+        "executed_by": ActorIdentity(actor_id="synthetic-custodian", namespace="GITHUB_LOGIN"),
+        "target_kind": ControlAuditTargetKind.AUTHORIZATION_GRANT,
+        "target_id": GRANT_ID,
+        "command_sha256": SHA_A,
+        "outcome": ControlAuditOutcome.SUCCEEDED,
+        "result_effective_revision": 1,
+        "authorization_audit_event_id": "123e4567-e89b-42d3-a456-426614174002",
+        "reason_code": ProtectedAuditReason.AUTHORIZED,
+        "recorded_at": NOW,
+        "previous_entry_sha256": None,
+        "entry_sha256": "0" * 64,
+    }
+    values.update(updates)
+
+    with pytest.raises(ValidationError):
+        ControlCommandAuditEntry(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("reason", [ProtectedAuditReason.AUTHORIZED, ProtectedAuditReason.COMPLETED])
+def test_denied_control_audit_rejects_a_non_control_denial_reason(reason: ProtectedAuditReason) -> None:
+    with pytest.raises(ValidationError):
+        ControlCommandAuditEntry(
+            event_kind=ProtectedAuditEventKind.CONTROL,
+            sequence=1,
+            event_id=REQUEST_ID,
+            command_kind="GRANT",
+            executed_by=ActorIdentity(actor_id="synthetic-custodian", namespace="GITHUB_LOGIN"),
+            target_kind=ControlAuditTargetKind.AUTHORIZATION_GRANT,
+            target_id=GRANT_ID,
+            command_sha256=SHA_A,
+            outcome=ControlAuditOutcome.DENIED,
+            result_effective_revision=None,
+            authorization_audit_event_id=None,
+            reason_code=reason,
+            recorded_at=NOW,
+            previous_entry_sha256=None,
+            entry_sha256="0" * 64,
+        )

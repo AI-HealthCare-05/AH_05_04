@@ -33,9 +33,11 @@
 - grant/revoke/expire
 - `session_user` 기반 control identity/approval role 결속
 - command payload hash와 request ID 기반 exact replay/conflict
+- original executor 및 선행 AUTHORIZATION audit reference에 결속된 exact replay
 - 성공 mutation과 AUTHORIZATION·CONTROL global hash-chain audit의 단일 transaction
+- `GRANT → REVOKE|EXPIRE` 단일 terminal 수명주기와 lock 이후 DB UTC 재확인
 - 신뢰 가능한 거부의 CONTROL audit 선행 commit과 고정 오류 재현
-- DATA/CONTROL identity shape, subject/Dataset scope grant revision, C1 column privilege
+- DATA/CONTROL identity shape, subject/Dataset scope grant revision, C1 column privilege와 DATA audit-kind 격리
 
 Command/결과/audit 필드, 승인자 분리, lock order와 C2 제외 범위는
 [`PD-368-R1`](../../../governance/decisions/2026-09-11-protected-retrieval-authorization-control.md)을 따른다.

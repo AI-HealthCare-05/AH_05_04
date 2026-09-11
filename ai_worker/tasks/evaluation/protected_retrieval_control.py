@@ -5,7 +5,7 @@ from hashlib import sha256
 from typing import Literal, Protocol
 from uuid import UUID
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes
 from ai_worker.tasks.evaluation.protected_retrieval import (
@@ -90,14 +90,39 @@ class ControlCommandResult(StrictContractModel):
     authorization_audit_event_id: str | None
     reason_code: Literal["APPROVAL_VERIFIED", "AUTHORIZED", "REVOKED", "EXPIRED"]
 
-    @field_validator("request_id")
+    @field_validator("request_id", "authorization_audit_event_id")
     @classmethod
-    def require_request_uuid_v4(cls, value: str) -> str:
+    def require_request_uuid_v4(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return _require_uuid_v4(value)
+
+    @model_validator(mode="after")
+    def validate_result_shape(self) -> ControlCommandResult:
+        ingest = self.command_kind is ControlCommandKind.INGEST_APPROVAL
+        expected_reason = {
+            ControlCommandKind.INGEST_APPROVAL: "APPROVAL_VERIFIED",
+            ControlCommandKind.GRANT: "AUTHORIZED",
+            ControlCommandKind.REVOKE: "REVOKED",
+            ControlCommandKind.EXPIRE: "EXPIRED",
+        }[self.command_kind]
+        if self.reason_code != expected_reason:
+            raise ValueError("control result reason does not match command kind")
+        if not ingest:
+            _require_uuid_v4(self.target_id)
+        if ingest and (self.effective_revision is not None or self.authorization_audit_event_id is not None):
+            raise ValueError("approval ingestion cannot reference an authorization mutation")
+        if not ingest and (self.effective_revision is None or self.authorization_audit_event_id is None):
+            raise ValueError("authorization mutation result is incomplete")
+        return self
 
 
 class TrustedApprovalSource(Protocol):
     async def fetch(self, source_event_id: str) -> ApprovalSourceEvidence: ...
+
+
+class ApprovalSourceNotFoundError(Exception):
+    """Trusted source reports that an approval event does not exist."""
 
 
 def control_command_sha256(kind: ControlCommandKind, command: ControlCommand) -> str:
@@ -152,6 +177,7 @@ def verify_authorization_approval(
 
 
 __all__ = [
+    "ApprovalSourceNotFoundError",
     "ControlCommand",
     "ControlCommandKind",
     "ControlCommandResult",

@@ -50,6 +50,14 @@ _SAFE_REASON_CODES = frozenset(
 )
 
 
+def _is_canonical_uuid_v4(value: str) -> bool:
+    try:
+        parsed = UUID(value)
+    except ValueError:
+        return False
+    return parsed.version == 4 and str(parsed) == value
+
+
 class ProtectedSecurityError(RuntimeError):
     """A fail-closed error containing only a fixed, non-sensitive reason code."""
 
@@ -158,6 +166,27 @@ class ProtectedAuditReason(StrEnum):
     SELF_APPROVAL_DENIED = "SELF_APPROVAL_DENIED"
     TERMINAL_AUDIT_UNCERTAIN = "TERMINAL_AUDIT_UNCERTAIN"
     EXPIRED = "EXPIRED"
+
+
+_CONTROL_DENIAL_REASONS = frozenset(
+    {
+        ProtectedAuditReason.ACTION_NOT_GRANTED,
+        ProtectedAuditReason.APPROVAL_ACTION_MISMATCH,
+        ProtectedAuditReason.APPROVAL_EVIDENCE_MISMATCH,
+        ProtectedAuditReason.APPROVAL_GRANT_BINDING_MISMATCH,
+        ProtectedAuditReason.APPROVAL_NOT_VERIFIED,
+        ProtectedAuditReason.AUTHORIZATION_EXPIRED,
+        ProtectedAuditReason.AUTHORIZATION_NOT_FOUND,
+        ProtectedAuditReason.AUTHORIZATION_REVOKED,
+        ProtectedAuditReason.AUTHORIZATION_REVISION_MISMATCH,
+        ProtectedAuditReason.CONTROL_COMMAND_CONFLICT,
+        ProtectedAuditReason.DATASET_BINDING_MISMATCH,
+        ProtectedAuditReason.DATASET_STATE_MISMATCH,
+        ProtectedAuditReason.GRANT_SUBJECT_MISMATCH,
+        ProtectedAuditReason.ISSUER_ROLE_DENIED,
+        ProtectedAuditReason.SELF_APPROVAL_DENIED,
+    }
+)
 
 
 class ActorIdentity(StrictContractModel):
@@ -351,6 +380,17 @@ class AuthorizationAuditEntry(StrictContractModel):
     previous_entry_sha256: Sha256Hex | None
     entry_sha256: Sha256Hex
 
+    @model_validator(mode="after")
+    def validate_action_reason(self) -> Self:
+        expected_reason = {
+            AuthorizationAuditAction.GRANT: ProtectedAuditReason.APPROVAL_VERIFIED,
+            AuthorizationAuditAction.REVOKE: ProtectedAuditReason.REVOKED,
+            AuthorizationAuditAction.EXPIRE: ProtectedAuditReason.EXPIRED,
+        }[self.action]
+        if self.reason_code is not expected_reason:
+            raise ValueError("authorization audit reason does not match action")
+        return self
+
 
 class OperationAuditEntry(StrictContractModel):
     event_kind: Literal[ProtectedAuditEventKind.OPERATION]
@@ -395,6 +435,50 @@ class ControlCommandAuditEntry(StrictContractModel):
     recorded_at: datetime
     previous_entry_sha256: Sha256Hex | None
     entry_sha256: Sha256Hex
+
+    @field_validator("event_id", "authorization_audit_event_id")
+    @classmethod
+    def require_uuid_v4_references(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            parsed = UUID(value)
+        except ValueError as error:
+            raise ValueError("control audit identifiers must be UUIDv4") from error
+        if parsed.version != 4 or str(parsed) != value:
+            raise ValueError("control audit identifiers must be UUIDv4")
+        return value
+
+    @model_validator(mode="after")
+    def validate_command_result_binding(self) -> Self:
+        ingest = self.command_kind == "INGEST_APPROVAL"
+        expected_target = (
+            ControlAuditTargetKind.APPROVAL_SOURCE_EVENT if ingest else ControlAuditTargetKind.AUTHORIZATION_GRANT
+        )
+        if self.target_kind is not expected_target:
+            raise ValueError("control audit target does not match command kind")
+        if not ingest and not _is_canonical_uuid_v4(self.target_id):
+            raise ValueError("authorization control target must be a UUIDv4")
+        if self.outcome is ControlAuditOutcome.DENIED:
+            if self.result_effective_revision is not None or self.authorization_audit_event_id is not None:
+                raise ValueError("denied control audit cannot carry success references")
+            if self.reason_code not in _CONTROL_DENIAL_REASONS:
+                raise ValueError("denied control audit reason is not allowlisted")
+            return self
+        expected_reason = {
+            "INGEST_APPROVAL": ProtectedAuditReason.APPROVAL_VERIFIED,
+            "GRANT": ProtectedAuditReason.AUTHORIZED,
+            "REVOKE": ProtectedAuditReason.REVOKED,
+            "EXPIRE": ProtectedAuditReason.EXPIRED,
+        }[self.command_kind]
+        if self.reason_code is not expected_reason:
+            raise ValueError("successful control audit reason does not match command kind")
+        if ingest:
+            if self.result_effective_revision is not None or self.authorization_audit_event_id is not None:
+                raise ValueError("approval ingestion cannot reference an authorization mutation")
+        elif self.result_effective_revision is None or self.authorization_audit_event_id is None:
+            raise ValueError("authorization mutation must reference its revision and audit event")
+        return self
 
 
 ProtectedAuditEntry = AuthorizationAuditEntry | OperationAuditEntry | ControlCommandAuditEntry
