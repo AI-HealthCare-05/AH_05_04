@@ -138,7 +138,7 @@ async def run(*, ocr_engine: OcrEngine | None = None) -> None:
     """Worker runtime을 실제 CLOVA OCR Engine과 조립하고 자원을 정리합니다.
 
     테스트나 검증에서 `ocr_engine`을 명시적으로 주입할 수 있으며, 생략하면
-    Worker 설정으로 규칙 기반 구조화기를 사용하는 실제 CLOVA Engine을 생성합니다.
+    Worker 설정으로 규칙 기반 또는 비-RAG LLM 구조화기를 사용하는 실제 CLOVA Engine을 생성합니다.
     """
 
     logger = get_logger()

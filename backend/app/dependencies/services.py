@@ -20,6 +20,7 @@ from app.repositories.idempotency_repository import IdempotencyRepository
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
 from app.repositories.medication_checkin_repository import MedicationCheckinRepository
+from app.repositories.medication_schedule_queries import MedicationScheduleQueries
 from app.repositories.medication_schedule_repository import MedicationScheduleRepository
 from app.repositories.notification_repository import NotificationRepository
 from app.repositories.ocr_repository import OcrRepository
@@ -48,6 +49,8 @@ from app.services.medication_checkin_api import MedicationCheckinApiService
 from app.services.medication_checkins import MedicationCheckinService, NoopCheckinRevisionInvalidation
 from app.services.medication_identification import MedicationIdentificationService
 from app.services.medication_occurrences import PrescriptionVersionMedicationInvalidationService
+from app.services.medication_schedule_api import MedicationScheduleApiService
+from app.services.medication_schedule_mutations import MedicationScheduleMutationService
 from app.services.notifications import NotificationService
 from app.services.ocr import OcrService
 from app.services.ocr_ai import (
@@ -589,3 +592,17 @@ def get_notification_service(
     idempotency: Annotated[SyncMutationIdempotencyService, Depends(get_sync_mutation_idempotency_service)],
 ) -> NotificationService:
     return NotificationService(NotificationRepository(session), idempotency)
+
+
+def get_medication_schedule_api_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    idempotency_service: Annotated[SyncMutationIdempotencyService, Depends(get_sync_mutation_idempotency_service)],
+) -> MedicationScheduleApiService:
+    return MedicationScheduleApiService(
+        MedicationScheduleQueries(session),
+        MedicationScheduleMutationService(
+            MedicationScheduleRepository(session),
+            notification_cancellation=NotificationRepository(session),
+        ),
+        idempotency_service,
+    )

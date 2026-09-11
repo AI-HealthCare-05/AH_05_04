@@ -23,6 +23,7 @@ from sqlalchemy.pool import NullPool
 
 from ai_worker.adapters.clova_ocr_provider import ClovaOcrProviderAdapter
 from ai_worker.adapters.factory import create_redis_client, create_stream_adapter
+from ai_worker.adapters.openai_ocr_structurer import WorkerLlmPrescriptionStructurer
 from ai_worker.adapters.postgresql_protected_retrieval import (
     PostgresqlProtectedRetrievalService,
 )
@@ -79,7 +80,7 @@ from ai_worker.core.stream import StreamAcknowledger, WorkerDelivery
 from ai_worker.schemas.messages import JobType, WorkerMessage
 from ai_worker.tasks.ocr.handler import OcrHandler, OcrProvider
 from ocr_runtime.clova_engine import ClovaOcrEngine
-from ocr_runtime.structuring import RuleBasedPrescriptionStructurer
+from ocr_runtime.structuring import OcrStructurer, RuleBasedPrescriptionStructurer
 from provider_contracts.observability import (
     Provider,
     ProviderCallDescriptor,
@@ -213,16 +214,22 @@ def create_clova_ocr_engine(
 ) -> OcrEngine:
     """메시지의 관측 컨텍스트와 함께 실제 CLOVA OCR Engine을 조립합니다."""
 
+    context = create_worker_provider_call_context_from_trace_id(trace_id=trace_id, environment=config.ENV)
+    structurer: OcrStructurer = RuleBasedPrescriptionStructurer()
+    if config.OCR_STRUCTURE_LLM_ENABLED:
+        structurer = WorkerLlmPrescriptionStructurer(
+            api_key=config.OPENAI_API_KEY.get_secret_value(),
+            model=config.OCR_STRUCTURE_MODEL,
+            timeout_seconds=config.OCR_STRUCTURE_TIMEOUT_SECONDS,
+            context=context,
+        )
     return ClovaOcrEngine(
         invoke_url=config.CLOVA_OCR_INVOKE_URL,
         secret_key=config.CLOVA_OCR_SECRET.get_secret_value(),
         storage_dir=config.STORAGE_DIR,
         timeout_seconds=config.CLOVA_OCR_TIMEOUT_SECONDS,
-        structurer=RuleBasedPrescriptionStructurer(),
-        context=create_worker_provider_call_context_from_trace_id(
-            trace_id=trace_id,
-            environment=config.ENV,
-        ),
+        structurer=structurer,
+        context=context,
         descriptor=ProviderCallDescriptor(
             provider=Provider.CLOVA_OCR,
             operation=ProviderOperation.PRESCRIPTION_RECOGNITION,
