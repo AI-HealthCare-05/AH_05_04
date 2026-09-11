@@ -1,8 +1,10 @@
 from datetime import date, datetime, time
 from enum import StrEnum
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import CheckConstraint, Date, DateTime, Enum, ForeignKey, Index, Integer, Time, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -190,6 +192,7 @@ class MedicationOccurrence(Base):
     schedule_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     scheduled_local_date: Mapped[date] = mapped_column(Date, nullable=False)
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     confirmation_deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[MedicationOccurrenceStatus] = mapped_column(
         Enum(MedicationOccurrenceStatus, native_enum=False, length=20),
@@ -297,3 +300,37 @@ class CheckinAudit(Base):
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     checkin: Mapped[MedicationCheckin] = relationship(back_populates="audits")
+
+
+class MedicationScheduleAudit(Base):
+    """PD-417 일정 변경 이력. Repository는 append만 제공한다."""
+
+    __tablename__ = "medication_schedule_audit"
+    __table_args__ = (
+        UniqueConstraint("medication_schedule_id", "to_revision", name="uq_schedule_audit_to_revision"),
+        CheckConstraint("from_revision >= 0", name="chk_schedule_audit_from_revision"),
+        CheckConstraint("to_revision = from_revision + 1", name="chk_schedule_audit_revision_step"),
+        CheckConstraint(
+            "(from_revision = 0 AND before_snapshot IS NULL) OR (from_revision > 0 AND before_snapshot IS NOT NULL)",
+            name="chk_schedule_audit_before_snapshot",
+        ),
+        CheckConstraint(
+            "(change_source = 'USER' AND changed_by IS NOT NULL) OR "
+            "(change_source = 'SCHEDULER' AND changed_by IS NULL)",
+            name="chk_schedule_audit_actor",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    medication_schedule_id: Mapped[UUID] = mapped_column(
+        UUIDChar(), ForeignKey("medication_schedule.id", ondelete="RESTRICT"), nullable=False
+    )
+    from_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    to_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    before_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    after_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    changed_by: Mapped[UUID | None] = mapped_column(
+        UUIDChar(), ForeignKey("user.id", ondelete="RESTRICT"), nullable=True
+    )
+    change_source: Mapped[str] = mapped_column(Enum("USER", "SCHEDULER", native_enum=False, length=20), nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

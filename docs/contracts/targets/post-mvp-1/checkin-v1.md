@@ -40,7 +40,7 @@ HTTP 응답 필드와 정규화 상세는 연결된 Decision에서 리뷰하며 
 - `NOT_TAKEN`과 무응답 `UNCONFIRMED`를 합치지 않는다.
 - 늦은 복용은 `TAKEN`과 실제 `taken_at`으로 표현하고 별도 상태를 추가하지 않는다.
 
-Timed occurrence는 사용자가 일정 설정 API에서 시작일·종료 결정·정확한 시각을 확인한 `medication_schedule`이 있을 때만 생성한다. 처방에 정확한 시작일·시각이 있어도 명시적 확인이 필요하며, `timing_text`, `frequency_per_day`, 처방 확정일만으로 값을 추정하지 않는다. Approved v4에서 미설정 약은 `schedule_item_status=SETUP_REQUIRED`와 `MISSING_START_DATE|MISSING_EXACT_TIME|MISSING_DURATION_DECISION|UNSUPPORTED_SCHEDULE_PATTERN` 중 하나를 반환하고 occurrence·알림을 만들지 않는다. 여러 사유가 동시에 있을 때의 단일 값 선택 우선순위와 `USER_CONFIRMATION_REQUIRED` 추가는 Approved v4에 포함되지 않은 Proposed/TBD delta이며 아래 별도 절에 격리한다. 전체 `schedule_status`는 `READY|PARTIAL|SETUP_REQUIRED|INACTIVE|NO_ACTIVE_PRESCRIPTION`이다.
+Timed occurrence는 사용자가 일정 설정 API에서 시작일·종료 결정·정확한 시각을 확인한 `medication_schedule`이 있을 때만 생성한다. 처방에 정확한 시작일·시각이 있어도 명시적 확인이 필요하며, `timing_text`, `frequency_per_day`, 처방 확정일만으로 값을 추정하지 않는다. Approved v4에서 미설정 약은 `schedule_item_status=SETUP_REQUIRED`와 `MISSING_START_DATE|MISSING_EXACT_TIME|MISSING_DURATION_DECISION|UNSUPPORTED_SCHEDULE_PATTERN` 중 하나를 반환하고 occurrence·알림을 만들지 않는다. 단일 값 우선순위와 `USER_CONFIRMATION_REQUIRED` 추가는 아래 PD-417 승인 delta를 따른다. 전체 `schedule_status`는 `READY|PARTIAL|SETUP_REQUIRED|INACTIVE|NO_ACTIVE_PRESCRIPTION`이다.
 
 `medication_schedule`은 `prescription_version_medication_id`를 unique로 참조하고 `end_mode=DATE|OPEN_ENDED`, `source=PRESCRIPTION_EXACT|USER_CONFIRMED`, `status=ACTIVE|CANCELLED|ENDED`, revision을 가진다. 시각은 별도 `medication_schedule_time` row에 revision별로 보존하고 `(medication_schedule_id, schedule_revision, local_time)`을 unique로 둔다. occurrence 상태는 `PENDING|CANCELLED|CLOSED`이며 Check-in 생성 시 `CLOSED`가 된다. 일정 `PUT`은 최초 생성·변경과 `CANCELLED|ENDED`의 명시적 재활성화를 담당하고, `PATCH`는 사용자 `CANCELLED`만 허용하며 `ENDED`는 Scheduler만 설정한다.
 
@@ -58,7 +58,7 @@ Check-in `PUT` 요청은 `Idempotency-Key` 헤더와 `expected_revision`을 요�
 
 처방 version이 바뀌면 `effective_at` 이후에 예정된 이전 version의 `PENDING` occurrence와 미전달 알림만 취소한다. 이전 일정·시각을 새 version에 복사·재귀속하거나 참고 후보로 자동 제공하지 않고, 새 occurrence도 자동 생성하지 않는다. 새 version의 모든 `prescription_version_medication`은 이전 version과 약명·용량·횟수가 같더라도 사용자가 해당 version의 일정을 다시 확인하기 전까지 `SETUP_REQUIRED`다.
 
-처방 version 확정과 이전 version의 `PENDING` occurrence·미전달 알림 취소를 하나의 DB transaction, Outbox 또는 다른 비동기 경계 중 어떤 방식으로 결합할지는 이 문서에서 고정하지 않는다. Track A 비동기 인프라가 확정된 뒤 후속 Issue와 별도 Decision에서 transaction 경계, 실패 복구와 재처리 방식을 정한다.
+처방 version 확정과 이전 version의 미래 PENDING occurrence·미전달 알림 취소는 PD-417 §5와 처방 버전 target의 동일 session/transaction 경계를 따른다. B의 동기 `cancel_future_for_prescription_version` port를 같은 DB transaction에서 호출하며, 비동기 사후 취소로 대체하지 않는다. 승인 원본과 [처방 버전 계약](./prescription-version-v1.md)에 맞춰 오래된 미정 요약을 동기화했으며, #203 알림 adapter의 구현 상태는 [PD-203](../../../governance/decisions/2026-09-10-track-b-notifications.md)을 따른다.
 
 이전 version의 schedule·time revision, `effective_at` 이전 occurrence, 이미 생성된 Check-in과 Check-in audit은 생성 당시 `prescription_version_id`에 그대로 보존하고 새 version으로 재귀속하지 않는다. `effective_at` 이전에 예정되었지만 아직 결과가 없는 occurrence도 취소하지 않으며, deadline이 지났다면 Scheduler가 기존 기준에 따라 `UNCONFIRMED`를 생성한다.
 
@@ -98,7 +98,7 @@ Track C의 목표 API는 다음으로 고정한다.
 
 ### 목표 DTO 요약
 
-- 일정 조회 응답은 `schedule_status`, 약별 `schedule_items[]`, 날짜별 `occurrences[]`, 현재 Check-in, `revision`, `corrected`, `prescription_version_id`를 포함한다. 약별 항목은 `schedule_item_status`, `prescription_version_medication_id`, nullable `schedule_id`, nullable `revision`, nullable `setup_reason`을 포함한다. 전체 상태는 활성 처방 없음 → `NO_ACTIVE_PRESCRIPTION`, READY와 SETUP_REQUIRED 혼합 → `PARTIAL`, SETUP_REQUIRED만 존재 → `SETUP_REQUIRED`, setup 대상 없이 READY 존재 → `READY`, 나머지가 모두 INACTIVE이고 pending occurrence 없음 → `INACTIVE` 순으로 판정한다. 원본에서 occurrence 정렬은 별도 고정하지 않았다.
+- 일정 조회 응답은 `schedule_status`, 약별 `schedule_items[]`, 날짜별 `occurrences[]`, 현재 Check-in, `revision`, `corrected`, `prescription_version_id`를 포함한다. 약별 항목은 `schedule_item_status`, `prescription_version_medication_id`, nullable `schedule_id`, nullable `revision`, nullable `setup_reason`을 포함한다. 전체 상태는 활성 처방 없음 → `NO_ACTIVE_PRESCRIPTION`, READY와 SETUP_REQUIRED 혼합 → `PARTIAL`, SETUP_REQUIRED만 존재 → `SETUP_REQUIRED`, setup 대상 없이 READY 존재 → `READY`, 나머지가 모두 INACTIVE → `INACTIVE` (과거 pending은 보존·별도 표시) 순으로 판정한다. 원본에서 occurrence 정렬은 별도 고정하지 않았다.
 - 일정 `PUT` body는 `start_local_date`, `end_mode`, nullable `end_local_date`, `local_times[]`, `expected_revision`; 취소 `PATCH` body는 `status=CANCELLED`, `expected_revision`이다.
 - Check-in `PUT` body는 `status=TAKEN|NOT_TAKEN`, nullable `taken_at`, `expected_revision`이다. 최초 생성의 `expected_revision`은 `0`이며 `taken_at`은 `TAKEN`에서만 허용한다. `reason_code`는 enum 확정 전까지 요청 body에 포함하지 않는다.
 - Safety assessment 요청은 `medication_checkin_id`, `checkin_revision`, `symptom_codes[]`, `expected_revision`; 응답은 `assessment_id`, `medication_checkin_id`, `checkin_revision`, `response_level`, `safety_disposition`, `message_code`, `copy_version`, `source_version`, `revision`이다.
@@ -106,16 +106,9 @@ Track C의 목표 API는 다음으로 고정한다.
 
 이 요약은 승인 원본의 최소 필드와 순서만 옮긴 것이다. 구현 PR에서 새 필수 필드, enum, 정렬 또는 오류를 추가하려면 계약 version을 갱신해야 한다.
 
-### Proposed/TBD — `setup_reason` 신규 값·우선순위
+### PD-417 승인 delta — 일정 reason·Audit·revision
 
-이 절은 Approved Contract Freeze v4의 일부가 아니다. 신규 값·단일 반환 우선순위의 제안 정본은
-[#417 일정 정합화 제안 §2](../../proposed/track-b-schedule-reconciliation-v1.md)로 이동했다.
-[PD-417-20260910](../../../governance/decisions/2026-09-10-track-b-schedule-contract.md)의
-송은영·남한솔 승인 전에는 확정 enum·OpenAPI·테스트 기대값으로 사용할 수 없다.
-일정 Audit·time retire·종료 revision의 B1/B2 차이도 같은 제안에서 추적하며 DB 후속은
-[#423](https://github.com/AI-HealthCare-05/AH_05_04/issues/423)이다. #202·#203은 이 결정의 승인
-결과를 반영하고 같은 계약을 다른 브랜치에서 별도로 확정하지 않는다. Approved v4의 기존 네 가지
-reason과 나머지 목표는 그대로 유지하며, 이 참조 변경은 제안 승인이나 Current 승격이 아니다.
+[일정 정합화 v1](./track-b-schedule-reconciliation-v1.md)은 PR #424의 송은영·남한솔 승인으로 확정된 추가 목표다. Decision에 review URL·대상 commit·시각을 연결했다. 다섯 reason·우선순위, INACTIVE의 과거 pending 보존, Audit·revision·time retire와 transaction은 해당 계약을 따른다. 기존 Freeze v4 전체를 재승인한 것은 아니다. DB #423·API #202·알림 #203 구현·검증이 남아 있으므로 현재 runtime 완료로 해석하지 않는다.
 
 목표 오류 의미는 다음과 같다.
 

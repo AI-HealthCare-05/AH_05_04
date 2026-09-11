@@ -61,15 +61,20 @@ class MedicationOccurrenceScheduler:
         horizon_start = now_utc.astimezone(self._timezone).date()
         horizon_end = horizon_start + timedelta(days=ROLLING_HORIZON_DAYS - 1)
 
-        ended_schedule_ids = await self._repository.mark_expired_schedules_ended(local_date=horizon_start)
+        locked_schedule_ids = await self._repository.lock_schedule_graph()
+        ended_schedule_ids = await self._repository.mark_expired_schedules_ended(
+            local_date=horizon_start, effective_at=now_utc, locked_schedule_ids=locked_schedule_ids
+        )
         targets = await self._repository.list_generation_targets_for_update(
             horizon_start=horizon_start,
             horizon_end=horizon_end,
+            locked_schedule_ids=locked_schedule_ids,
         )
 
         created_count = 0
         duplicate_count = 0
         for schedule, schedule_time in targets:
+            lower_bound = await self._repository.generation_lower_bound(schedule)
             first_date = max(horizon_start, schedule.start_local_date)
             last_date = min(horizon_end, schedule.end_local_date or horizon_end)
             if first_date > last_date:
@@ -77,6 +82,8 @@ class MedicationOccurrenceScheduler:
 
             for local_date in _inclusive_dates(first_date, last_date):
                 scheduled_local = datetime.combine(local_date, schedule_time.local_time, tzinfo=self._timezone)
+                if lower_bound is not None and scheduled_local < lower_bound:
+                    continue
                 next_midnight = datetime.combine(local_date + timedelta(days=1), time.min, tzinfo=self._timezone)
                 confirmation_deadline = max(next_midnight, scheduled_local + timedelta(hours=4))
                 occurrence_id = await self._repository.create_occurrence_if_absent(

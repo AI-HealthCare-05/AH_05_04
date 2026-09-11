@@ -585,19 +585,32 @@ OCR Candidate Index와 의료 Evidence Index는 별도 version과 물리 경계�
 
 ### Source Snapshot 상태 전이 보호 (#165 / #323)
 
-과거 `165e8f706152`와 `transition_rag_source_snapshot` 함수 기반 경계는 superseded되었다. `398c` forward migration이 기존 Source Trigger·함수를 제거하며, Python Repository가 Operation→Snapshot 잠금·expected status·허용 전이·named publication 승인과 선택 감사의 원자성을 담당한다. Runtime은 Source SELECT만, 별도 Writer는 필요한 INSERT와 제한된 UPDATE만 갖는다. `398293a4b5c6`의 Snapshot `(id, verification_seal_id)` FK와 CHECK, 불변 Verification의 역방향 FK가 검증된 Snapshot의 관리 역할 직접 DELETE를 차단한다. 미검증·미참조 PENDING 관리 삭제는 유지한다. 상세 계약은 [PD-398-R1](governance/decisions/2026-09-10-python-integrity-review-429.md)과 [Python Snapshot 전이](contracts/proposed/python-snapshot-transition-398.md)를 따른다.
+과거 165e8f706152와 	ransition_rag_source_snapshot 함수 기반 경계는 superseded되었다. 398c forward migration이 기존 Source Trigger·함수를 제거하며, Python Repository가 Operation→Snapshot 잠금·expected status·허용 전이·named publication 승인과 선택 감사의 원자성을 담당한다. Runtime은 Source SELECT만, 별도 Writer는 필요한 INSERT와 제한된 UPDATE만 갖는다. 398293a4b5c6의 Snapshot (id, verification_seal_id) FK와 CHECK, 불변 Verification의 역방향 FK가 검증된 Snapshot의 관리 역할 직접 DELETE를 차단한다. 미검증·미참조 PENDING 관리 삭제는 유지한다. 상세 계약은 [PD-398-R1](governance/decisions/2026-09-10-python-integrity-review-429.md)과 [Python Snapshot 전이](contracts/proposed/python-snapshot-transition-398.md)를 따른다.
 
 ## #398 관리 권한·감사 확장 (브랜치 구현, 리뷰 대기)
 
-`3980718293a4`는 `source_management_permission`과 `source_management_audit`를 추가한다. 권한은 user_id별 서버 설정이며 감사는 actor/request_id UNIQUE, 대상별 변경 revision UNIQUE를 갖는다. 감사 대상·작업자는 삭제 후 증거 보존을 위해 대상 FK로 연결하지 않는다. 일반 Runtime/Source Writer는 이 테이블을 수정하지 못하고 관리 Writer는 감사 INSERT만 가능하다. 상세 컬럼 의미와 삭제 후 provenance 보존은 [PD-398-M1](contracts/proposed/source-catalog-management-398.md)을 따른다. Trigger·RLS·업무 DB 함수는 추가하지 않는다.
+3980718293a4는 source_management_permission과 source_management_audit를 추가한다. 권한은 user_id별 서버 설정이며 감사는 actor/request_id UNIQUE, 대상별 변경 revision UNIQUE를 갖는다. 감사 대상·작업자는 삭제 후 증거 보존을 위해 대상 FK로 연결하지 않는다. 일반 Runtime/Source Writer는 이 테이블을 수정하지 못하고 관리 Writer는 감사 INSERT만 가능하다. 상세 컬럼 의미와 삭제 후 provenance 보존은 [PD-398-M1](contracts/proposed/source-catalog-management-398.md)을 따른다. Trigger·RLS·업무 DB 함수는 추가하지 않는다.
 
 ## #398 / PR #429 적용 기준
 
-위 Python 전환 설명은 이 PR의 코드와 최신 migration head `398293a4b5c6` 기준이다. AWS·운영 DB 적용 완료를 주장하지 않는다. 기존 운영 DB의 보호는 실제 적용 revision과 역할 정책으로 판단한다. 배포는 migration → verify-db-head → provision-db-roles → 서비스 시작 순서이며, 검사 실패 시 시작하지 않는다. 정적 SQL/AST 검사는 휴리스틱이고 동적 SQL 전부를 증명하지 않는다. 검증된 Snapshot 삭제 방어는 일반 FK·CHECK, 불변 이력 ACL, 실제 제한 로그인 테스트로 확인한다.
+위 Python 전환 설명은 이 PR의 코드와 최신 migration head 398293a4b5c6 기준이다. AWS·운영 DB 적용 완료를 주장하지 않는다. 기존 운영 DB의 보호는 실제 적용 revision과 역할 정책으로 판단한다. 배포는 migration → verify-db-head → provision-db-roles → 서비스 시작 순서이며, 검사 실패 시 시작하지 않는다. 정적 SQL/AST 검사는 휴리스틱이고 동적 SQL 전부를 증명하지 않는다. 검증된 Snapshot 삭제 방어는 일반 FK·CHECK, 불변 이력 ACL, 실제 제한 로그인 테스트로 확인한다.
 
-병합된 #404의 `206a1b2c3d4e`는 `39818293a4b5` merge revision으로 기존 #398 이력과 연결된다. 인증 테이블의 신규 권한은 Runtime SELECT/INSERT 및 `refresh_session(active_jti, updated_at)`, `password_reset_token(used_at)` UPDATE만 허용한다. 처방 멱등성은 기존 `idempotency_record` UNIQUE·암호화 응답 저장을 사용하며 새 Trigger·RLS·저장 함수는 만들지 않는다.
+병합된 #404의 206a1b2c3d4e는 39818293a4b5 merge revision으로 기존 #398 이력과 연결된다. 인증 테이블의 신규 권한은 Runtime SELECT/INSERT 및 
+efresh_session(active_jti, updated_at), password_reset_token(used_at) UPDATE만 허용한다. 처방 멱등성은 기존 idempotency_record UNIQUE·암호화 응답 저장을 사용하며 새 Trigger·RLS·저장 함수는 만들지 않는다.
 
 
 ### PR #429 관리 Snapshot 잠금 권한 (PD-398-R2)
 
 `rag_source_snapshot.management_lock_marker`는 INTEGER NOT NULL DEFAULT 0이며 CHECK로 0에 고정한다. SELECT FOR UPDATE 권한을 충족하는 기술 표식으로, API 필드·검증 시각·provenance·revision·게시 승인 의미가 없다. 관리 역할은 이 컬럼만 UPDATE할 수 있고 `verified_at`/`effective_at`/seal은 직접 수정할 수 없다. 관리 row hash에서는 표식만 제외해 도입 전 hash를 유지한다. migration `3984b5c6d7e8` 적용 후 권한 provisioning을 재실행해야 기존 검증 시각 UPDATE 권한이 회수된다.
+
+## #423 Schedule Audit — develop 반영 완료
+
+Migration `423a1b2c3d4e`는 `medication_schedule_audit`와 occurrence의 nullable UTC `cancelled_at`을 추가한다. 감사 컬럼·revision/actor/unique·snapshot 의미는 [일정 정합화 v1 §3](contracts/targets/post-mvp-1/track-b-schedule-reconciliation-v1.md)을 따른다. Schedule·actor FK는 RESTRICT이며 기존 #398 역할 provisioning은 Runtime에 SELECT/INSERT만 부여해 감사 UPDATE/DELETE/TRUNCATE를 차단한다. Migration 이후 역할 provisioning을 재실행한다. DB trigger와 ORM event는 사용하지 않는다. 기존 time row는 보존하고 retire는 schedule 상태·revision으로 판정한다. 종료는 revision과 SCHEDULER audit을 같이 추가하며 기존 occurrence·Check-in·time FK를 보존한다.
+
+기존 Schedule은 migration 시 별도 JSON baseline으로 보존하고 과거 감사로 재구성하지 않는다. 기존 CANCELLED의 알 수 없는 취소 시각은 null이다. 실제 신규 감사/취소 이력이 있으면 downgrade를 거부한다. baseline 접근·보존·실패 재시도는 [PD-423](governance/decisions/2026-09-10-schedule-audit-storage.md), 검증 범위와 후속 연동은 [#423 기록](validation/issue-423-schedule-audit.md)을 따른다. 실제 #202 일정 API·#203 알림·Frontend 완료를 뜻하지 않는다.
+
+## #203 Notification 저장 — 구현 PR 검토 대상
+
+`notification_record`는 occurrence FK와 `(occurrence_id, kind)` unique를 가지며 최초 알림·재알림을 각각 하나만 보존한다. kind는 `SCHEDULED|REMINDER`, status는 `PENDING|DELIVERED|CANCELLED`이며 전달·취소 timestamp와 attempt `0|1` 정합성을 DB CHECK로 강제한다. `read_at`은 전달 후 최초 시각만 저장한다. occurrence parent chain으로 SELF 소유권을 확인하며 별도 사용자·의료 본문 복제는 없다.
+
+Migration은 `203a1b2c3d4e`이고 상세 컬럼·FK·rollback 동작은 [Notification 계약](contracts/proposed/track-b-notifications-v1.md)의 구현 절을 따른다. Check-in·일정·처방 변경은 알림 row를 삭제하지 않는다. 부모 occurrence의 정식 삭제는 FK CASCADE로 알림을 정리하지만 부모 자체의 기존 삭제 제한은 유지한다. Notification 이력이 있으면 downgrade는 중단한다.
