@@ -187,6 +187,112 @@ def test_protected_engines_use_distinct_short_lived_non_logging_connections(
     }
 
 
+@pytest.mark.asyncio
+async def test_control_service_factory_uses_only_control_engine_and_validates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = object()
+    source = object()
+    captured: dict[str, object] = {}
+
+    class FakeService:
+        def __init__(self, supplied_engine, **options) -> None:
+            captured["engine"] = supplied_engine
+            captured.update(options)
+            self.validated = False
+
+        async def validate(self) -> None:
+            self.validated = True
+            captured["validated"] = True
+
+        async def close(self) -> None:
+            captured["closed"] = True
+
+    monkeypatch.setattr(runtime_assembly, "create_protected_control_engine", lambda config: engine)
+    monkeypatch.setattr(runtime_assembly, "PostgresqlProtectedAuthorizationControlService", FakeService)
+    config = _config(
+        PROTECTED_RETRIEVAL_ENABLED=True,
+        PROTECTED_DB_HOST="protected.test",
+        PROTECTED_DB_NAME="protected_test",
+        PROTECTED_DB_USER="protected_actor",
+        PROTECTED_DB_PASSWORD="synthetic-password",
+        PROTECTED_DB_CONTROL_USER="protected_controller",
+        PROTECTED_DB_CONTROL_PASSWORD="synthetic-control-password",
+        PROTECTED_DB_SCHEMA="synthetic_protected",
+        PROTECTED_DB_ACCESS_ROLE="synthetic_protected_access",
+        PROTECTED_DB_CONTROL_ROLE="synthetic_protected_control",
+    )
+
+    service = await runtime_assembly.create_protected_authorization_control_service(config, source)  # type: ignore[arg-type]
+
+    assert service.validated is True
+    assert captured == {
+        "engine": engine,
+        "schema": "synthetic_protected",
+        "data_access_role": "synthetic_protected_access",
+        "control_role": "synthetic_protected_control",
+        "approval_source": source,
+        "validated": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_control_service_factory_closes_on_validation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed = False
+
+    class FailingService:
+        def __init__(self, *_: object, **__: object) -> None:
+            pass
+
+        async def validate(self) -> None:
+            raise RuntimeError("synthetic validation failure")
+
+        async def close(self) -> None:
+            nonlocal closed
+            closed = True
+
+    monkeypatch.setattr(runtime_assembly, "create_protected_control_engine", lambda config: object())
+    monkeypatch.setattr(runtime_assembly, "PostgresqlProtectedAuthorizationControlService", FailingService)
+    config = _config(
+        PROTECTED_RETRIEVAL_ENABLED=True,
+        PROTECTED_DB_HOST="protected.test",
+        PROTECTED_DB_NAME="protected_test",
+        PROTECTED_DB_USER="protected_actor",
+        PROTECTED_DB_PASSWORD="synthetic-password",
+        PROTECTED_DB_CONTROL_USER="protected_controller",
+        PROTECTED_DB_CONTROL_PASSWORD="synthetic-control-password",
+        PROTECTED_DB_SCHEMA="synthetic_protected",
+        PROTECTED_DB_ACCESS_ROLE="synthetic_protected_access",
+        PROTECTED_DB_CONTROL_ROLE="synthetic_protected_control",
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic validation failure"):
+        await runtime_assembly.create_protected_authorization_control_service(config, object())  # type: ignore[arg-type]
+
+    assert closed is True
+
+
+@pytest.mark.asyncio
+async def test_control_service_factory_rejects_incomplete_config_before_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine_calls = 0
+
+    def unexpected_engine(config: Config) -> object:
+        nonlocal engine_calls
+        engine_calls += 1
+        return object()
+
+    monkeypatch.setattr(runtime_assembly, "create_protected_control_engine", unexpected_engine)
+
+    with pytest.raises(RuntimeError, match="PROTECTED_RETRIEVAL_CONFIG_INVALID"):
+        await runtime_assembly.create_protected_authorization_control_service(_config(), object())  # type: ignore[arg-type]
+
+    assert engine_calls == 0
+
+
 def test_config_rejects_heartbeat_interval_not_shorter_than_lease() -> None:
     with pytest.raises(ValidationError):
         _config(
