@@ -362,7 +362,8 @@ class RagMedicationProductComponent(Base):
         UniqueConstraint("product_id", "display_order", name="uq_rag_medication_component_order"),
         Index("idx_rag_medication_component_product_ingredient", "product_id", "ingredient_id"),
         CheckConstraint(
-            "release_profile IS NULL OR length(trim(release_profile)) > 0", name="chk_rag_component_release_profile"
+            "release_profile IS NULL OR length(trim(release_profile)) > 0",
+            name="chk_rag_medication_component_release_profile",
         ),
         ForeignKeyConstraint(
             ["product_id", "source_snapshot_id"],

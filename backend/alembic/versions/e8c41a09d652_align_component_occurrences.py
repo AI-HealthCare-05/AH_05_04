@@ -25,7 +25,7 @@ def upgrade() -> None:
         raise RuntimeError("D04 component order conflicts require explicit resolution before migration")
     op.add_column(TABLE, sa.Column("release_profile", sa.String(255), nullable=True))
     op.create_check_constraint(
-        "chk_rag_component_release_profile",
+        "chk_rag_medication_component_release_profile",
         TABLE,
         "release_profile IS NULL OR length(btrim(release_profile)) > 0",
     )
@@ -50,5 +50,5 @@ def downgrade() -> None:
     op.create_unique_constraint(
         "uq_rag_medication_component_role", TABLE, ["product_id", "ingredient_id", "component_role"]
     )
-    op.drop_constraint("chk_rag_component_release_profile", TABLE, type_="check")
+    op.drop_constraint("chk_rag_medication_component_release_profile", TABLE, type_="check")
     op.drop_column(TABLE, "release_profile")

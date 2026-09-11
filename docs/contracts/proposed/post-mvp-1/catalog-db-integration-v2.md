@@ -296,6 +296,9 @@ D-02는 미확정 그대로다. 이 작업은 run 생성·ingestion run 대체·
 [2026-09-11 결정안](../../../governance/decisions/2026-09-11-catalog-component-occurrences.md)을 따른다.
 `CatalogComponentInput.source_record_key`는 선택 문자열이다. 없는 입력의 기존 v2 ref/hash는
 유지하고, 있는 입력은 명시적 원본 키와 product_ref 기반 참조로 반복 성분을 구분한다.
+같은 product_ref의 구성원은 원본 키를 전부 제공하거나 전부 생략해야 한다. 혼용은 build에서
+COMPONENT_SOURCE_KEY_MODE_CONFLICT로 거부하며 Service는 MEMBER_CONFLICT로 반환한다.
+제품 간에는 서로 다른 모드를 사용할 수 있다.
 동일 ref 또는 제품별 동일 order의 서로 다른 구성원은 Python에서 MEMBER_CONFLICT로 거부한다.
 Service는 승인 조회·Export·저장 전에 REJECTED를 반환하고 저장 준비도 재검증한다.
 

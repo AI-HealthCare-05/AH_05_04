@@ -121,3 +121,35 @@ Ruff·format·Mypy도 통과했다(Mypy 587개 파일). 로컬 재검증 결과�
 | Backend·계약·PostgreSQL | 1933 passed, 65 skipped |
 | Redis | 24 passed |
 | Worker | 3039 passed, 8 skipped |
+
+## PR #464 담당 리뷰 반영
+
+검토 기준 HEAD `0af50eb`, 담당 리뷰: 정현우.
+
+- MUST FIX: 같은 product_ref에서 source_record_key 제공·생략 혼용을 build 단계에서 거부한다.
+  내부 COMPONENT_SOURCE_KEY_MODE_CONFLICT를 Service의 기존 MEMBER_CONFLICT로 연결한다.
+  입력 순서를 바꾼 두 재현 테스트가 수정 전 실패했고, 수정 후 통과했다. 승인·저장 미호출과
+  제품 간 독립 모드 허용도 검사했다. Catalog 집중 검사 240 passed.
+- WATCH: CHECK 이름을 model과 미병합 migration 모두
+  `chk_rag_medication_component_release_profile`로 정렬했다.
+- WATCH: upgrade 충돌 및 downgrade 보호 테스트를
+  `tests/migration/test_component_occurrences_migration.py`로 이동했다.
+  기존 독립 DB fixture를 참조하므로 migration lane의 공유 이행 이력을 변경하지 않는다.
+  Catalog 통합 테스트에서 중복 실행하지 않는다.
+
+계약·결정안에 제품별 전부 제공/전부 생략 규칙을 반영했다. 기존 v2 형식·hash 계약과
+명시적인 원본 키 및 순서 입력 원칙은 유지하며, RLS·Trigger·업무용 DB 함수는 추가하지 않는다.
+
+최종 전체 CI 스크립트 exit 0. 전용 PostgreSQL 17·Redis 7 및 합성 데이터 사용.
+
+| 검사 | 결과 |
+| --- | --- |
+| Migration | 210 passed, 3 skipped |
+| Backend·계약·PostgreSQL | 1929 passed, 65 skipped |
+| Redis | 24 passed |
+| Worker | 3043 passed, 8 skipped |
+| Ruff·format·Mypy | 통과 (Mypy 587개 파일) |
+
+Migration +4 / Backend -4는 테스트 이동에 따른 결과이며 삭제된 검증이 아니다.
+DB head `e8c41a09d652`와 Trigger/RLS/제거 함수 0개를 확인했다. 로컬 검증이며 원격 CI나
+리뷰어의 수정 확인을 대신하지 않는다. 집중 검사와 전체 수치를 합산하지 않는다.

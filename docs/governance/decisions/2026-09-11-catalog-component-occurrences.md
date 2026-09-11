@@ -15,6 +15,9 @@
    기존 참조 계산을 그대로 사용한다. 있는 입력은 nonblank·trimmed·NFC 문자열을 요구하고,
    기존 stable-ref 인코딩에 `reference_spec=catalog-component-source-key-v1`, `product_ref`,
    `source_record_key`를 넣어 component_ref를 계산한다. 순서·함량으로 원본 키를 만들지 않는다.
+   같은 product_ref 안에서 원본 키 제공·생략을 혼용하지 않는다. build의
+   COMPONENT_SOURCE_KEY_MODE_CONFLICT는 Service에서 MEMBER_CONFLICT로 처리한다.
+   서로 다른 제품은 각자 모드를 선택할 수 있다. PR #464 담당 리뷰 의견을 반영한 규칙이다.
 2. Python 검증은 component_ref 중복과 `(product_ref, component_order)` 중복을 거부한다.
    정확히 같은 입력의 기존 dedupe는 유지한다. 명시적인 양의 order를 보존하며 연속 순서나
    배열 index 기반 재번호 규칙을 추가하지 않는다.

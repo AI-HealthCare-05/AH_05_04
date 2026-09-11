@@ -129,3 +129,43 @@ def test_same_source_key_with_different_occurrence_content_is_rejected():
     repeated = replace(first, component_order=2, strength_value="020.00")
     with pytest.raises(CatalogExportError):
         export(members((first, repeated)))
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_one_product_cannot_mix_legacy_and_source_key_components(reverse):
+    from ai_worker.tasks.rag.catalog.build import CatalogMappingError
+
+    first = _component_inputs()[0]
+    keyed = replace(first, source_record_key="synthetic:1:2", component_order=2)
+    inputs = (keyed, first) if reverse else (first, keyed)
+    with pytest.raises(CatalogMappingError, match="COMPONENT_SOURCE_KEY_MODE_CONFLICT"):
+        members(inputs)
+
+
+async def test_mixed_source_key_modes_stop_before_approval_and_persistence():
+    first = _component_inputs()[0]
+    repository, verifier = AsyncMock(), AsyncMock()
+    result = await build_catalog_candidate(
+        request=CatalogBuildRequest(
+            catalog_version="synthetic-d04-review",
+            source_refs=(CandidateCatalogSourceRef("synthetic-snapshot-001", "v1"),),
+            products=_product_inputs(),
+            ingredients=_ingredient_inputs(),
+            components=(first, replace(first, component_order=2, source_record_key="synthetic:1:2")),
+            aliases=(),
+        ),
+        repository=repository,
+        approval_verifier=verifier,
+    )
+    assert result.decision is CatalogBuildDecision.REJECTED
+    assert result.validation.failures[0].reason is CatalogValidationFailureReason.MEMBER_CONFLICT
+    assert result.export is None
+    repository.save_build.assert_not_awaited()
+    verifier.verify.assert_not_awaited()
+
+
+def test_different_products_can_use_different_source_key_modes():
+    first, second, third = _component_inputs()
+    assert first.product_canonical_code != second.product_canonical_code
+    value = members((replace(first, source_record_key="synthetic:1:1"), second, third))
+    assert validate_catalog_members(value).is_valid

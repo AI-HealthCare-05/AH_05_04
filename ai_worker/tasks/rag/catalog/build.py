@@ -396,6 +396,14 @@ def _ingredient_registry(
     return catalog_ingredients, ingredient_by_identity
 
 
+def _validate_component_source_key_mode(
+    modes: dict[str, bool], product_ref: str, component: CatalogComponentInput
+) -> None:
+    has_source_key = component.source_record_key is not None
+    if modes.setdefault(product_ref, has_source_key) != has_source_key:
+        raise CatalogMappingError("COMPONENT_SOURCE_KEY_MODE_CONFLICT", ("components.source_record_key",))
+
+
 def build_catalog_members(
     *,
     products: tuple[CatalogProductInput, ...],
@@ -408,6 +416,7 @@ def build_catalog_members(
     catalog_products, product_by_identity = _product_registry(products)
     catalog_ingredients, ingredient_by_identity = _ingredient_registry(ingredients)
     catalog_components: dict[CatalogComponent, None] = {}
+    source_key_modes: dict[str, bool] = {}
     for component_input in components:
         if _is_excluded_code_system(
             CandidateEntityType.PRODUCT, component_input.product_code_system
@@ -421,6 +430,7 @@ def build_catalog_members(
         component_product = product_by_identity.get((component_input.source_snapshot_id, product_identity))
         if component_product is None:
             raise CatalogMappingError("COMPONENT_PRODUCT_NOT_FOUND", ("components.product_identity",))
+        _validate_component_source_key_mode(source_key_modes, component_product.product_ref, component_input)
         ingredient_identity = _identity(
             entity_type=CandidateEntityType.INGREDIENT,
             code_system=component_input.ingredient_code_system,
