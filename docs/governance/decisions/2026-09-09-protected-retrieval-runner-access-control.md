@@ -1,15 +1,20 @@
-# Product Decision Candidate: Protected Retrieval Runner 접근 통제·감사 경계
+# Product Decision: Protected Retrieval Runner 접근 통제·감사 경계
 
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-368-20260909` |
-| 상태 | Candidate · Review Required |
+| 상태 | Approved Target · Not implemented |
 | 제안일 | 2026-09-09 |
 | 구현 | 정현우 (`@ceohwj`) |
 | 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Product·Privacy·Safety·Evaluation |
 | Dataset Custodian·Backend·Security 검토 | 송은영 (`@phina-io`) — 송은영이 실제 접근 통제를 구현하면 독립 Dataset Custodian 승인은 김지혜(`@Jye-rookie`)가 담당 |
 | 추적 Issue | [#368](https://github.com/AI-HealthCare-05/AH_05_04/issues/368) (상위 #273) |
 | 관련 PR | PR #373 (kernel 구현), PR #366 |
+
+이 Decision은 PR #386의 최신 검토 commit `076d482355176a7ff2b208781eaea616a79c72db`에서 책임 리뷰어
+권가빈(`@hazelnutflavoured`)이 2026-09-10 `APPROVED` 리뷰를 제출한 뒤 병합되어 승인됐다. 승인은 구현
+방향을 확정한 것이며 실제 protected infrastructure, 접근 승인, HOLDOUT 작성·Freeze·실행 또는 공개 완료를
+뜻하지 않는다.
 
 ## 1. 목적·배경
 
@@ -167,7 +172,15 @@ infrastructure adapter 연결 PR, 역할·환경·정책 변경 시 재검토하
 - `scripts/deployment.sh` — §9 검토 대상 기존 `pg_dump` 백업 메커니즘(재사용 여부 미확정, 선행조건 검토 중)
 - `docs/runbooks/` — §11 참고(장애 복구용, IR 프레이밍 아님)
 - `docs/validation/rag/issue-273/` — §11 사고 증빙 위치
+- [`Protected Retrieval Infrastructure 계약 v1`](../../contracts/targets/post-mvp-1/protected-retrieval-infrastructure-v1.md) — data-plane 부분 구현과 미구현 control-plane 범위
 
 ## 완료 후 상태 (현재)
 
-policy foundation: `IMPLEMENTED` / effective enforcement: `NOT_IMPLEMENTED` / infrastructure adapter: `NOT_IMPLEMENTED` / HOLDOUT access authorization: `NOT_RECORDED` / HOLDOUT authored: `0` / HOLDOUT Freeze: `NOT_STARTED` — 위 결정은 방향 합의일 뿐이며, 실제 인프라·보관 위치·credential·SQL 통제가 구현·테스트되기 전까지 #368은 Open, `effective_enforcement_status=NOT_IMPLEMENTED`, HOLDOUT 미승인 상태를 유지한다.
+policy foundation: `IMPLEMENTED` / repository infrastructure adapter: `PARTIALLY_IMPLEMENTED` / effective enforcement:
+`NOT_IMPLEMENTED` / HOLDOUT access authorization: `NOT_RECORDED` / HOLDOUT authored: `0` / HOLDOUT Freeze:
+`NOT_STARTED` — data-plane의 제한 로그인 검증, 승인 artifact hash 결속, durable INTENT/UNKNOWN 경계와 합성
+disposable PostgreSQL 검증은
+[`protected-runner-infrastructure-adapter.md`](../../validation/rag/issue-273/protected-runner-infrastructure-adapter.md)에
+기록한다. approval ingestion, grant/revoke/expire, Dataset transition/FREEZE Application Service는 미구현이다.
+따라서 #368은 Open으로 유지하며, 실제 환경 provisioning, 독립 Backend·Security 검증, 보관·복구·rotation 및
+`EXT-PRIV-001` 승인 전까지 `effective_enforcement_status=NOT_IMPLEMENTED`, HOLDOUT 미승인 상태를 유지한다.
