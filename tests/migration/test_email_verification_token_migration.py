@@ -41,11 +41,19 @@ class FakeConnection:
         return ScalarResult(0)
 
 
+def test_migration_metadata_has_single_parent_revision() -> None:
+    migration = _load_migration()
+
+    assert migration.revision == "431a1b2c3d4e"
+    assert isinstance(migration.down_revision, str)
+    assert migration.down_revision
+
+
 def test_downgrade_guard_rejects_when_email_verification_token_has_data() -> None:
     migration = _load_migration()
     connection = FakeConnection(count=2)
 
-    with pytest.raises(RuntimeError, match="Cannot downgrade revision 431a1b2c3d4e"):
+    with pytest.raises(RuntimeError, match=f"Cannot downgrade revision {migration.revision}"):
         migration._ensure_email_verification_downgrade_is_data_safe(connection)
 
     assert connection.execute_count == 2
