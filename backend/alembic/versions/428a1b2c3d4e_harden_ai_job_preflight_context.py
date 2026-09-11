@@ -1,7 +1,7 @@
 """harden AI Job preflight context internal bindings
 
 Revision ID: 428a1b2c3d4e
-Revises: 362c3d4e5f60
+Revises: 203a1b2c3d4e
 Create Date: 2026-09-11
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "428a1b2c3d4e"
-down_revision: str | Sequence[str] | None = "362c3d4e5f60"
+down_revision: str | Sequence[str] | None = "203a1b2c3d4e"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
