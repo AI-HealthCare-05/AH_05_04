@@ -90,6 +90,10 @@ class Config(BaseSettings):
     CLOVA_OCR_INVOKE_URL: str
     CLOVA_OCR_SECRET: SecretStr
     CLOVA_OCR_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0)
+    OCR_STRUCTURE_LLM_ENABLED: bool = False
+    OPENAI_API_KEY: SecretStr = SecretStr("")
+    OCR_STRUCTURE_MODEL: str = "gpt-4o-mini"
+    OCR_STRUCTURE_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0, allow_inf_nan=False)
     STORAGE_DIR: str
 
     # Worker runtime의 DB 연결에는 Job 실행 계정만 사용하며,
@@ -228,6 +232,18 @@ class Config(BaseSettings):
         if required_seconds > self.OCR_REQUEST_DEADLINE_SECONDS:
             raise ValueError("OCR Provider 예산과 완료 여유의 합은 OCR_REQUEST_DEADLINE_SECONDS를 초과할 수 없습니다.")
 
+        return self
+
+    @model_validator(mode="after")
+    def _validate_ocr_llm(self) -> Self:
+        if not self.OCR_STRUCTURE_LLM_ENABLED:
+            return self
+        if not self.OPENAI_API_KEY.get_secret_value().strip():
+            raise ValueError("OCR LLM requires OPENAI_API_KEY")
+        if not self.OCR_STRUCTURE_MODEL.strip():
+            raise ValueError("OCR LLM requires OCR_STRUCTURE_MODEL")
+        if self.CLOVA_OCR_TIMEOUT_SECONDS + self.OCR_STRUCTURE_TIMEOUT_SECONDS > self.OCR_PROVIDER_BUDGET_SECONDS:
+            raise ValueError("CLOVA and OCR LLM timeouts must fit within OCR_PROVIDER_BUDGET_SECONDS")
         return self
 
     @model_validator(mode="after")

@@ -6,8 +6,11 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
 from sqlalchemy import text
@@ -19,6 +22,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from ai_worker.adapters import openai_ocr_structurer
 from ai_worker.adapters.redis_stream import RedisStreamAdapter
 from ai_worker.adapters.sqlalchemy_job_execution_repository import (
     SqlAlchemyJobExecutionRepository,
@@ -46,13 +50,17 @@ from ai_worker.core.job_execution import (
 )
 from ai_worker.core.registry import HandlerRegistry
 from ai_worker.core.results import HandlerSuccess
-from ai_worker.core.runtime_assembly import build_worker_runtime
+from ai_worker.core.runtime_assembly import build_worker_runtime, create_clova_ocr_provider
 from ai_worker.core.stream import WorkerDelivery
 from ai_worker.schemas.messages import JobType, WorkerMessage
+from ocr_runtime.clova_engine import ClovaOcrEngine
+from ocr_runtime.llm.prompt import PROMPT_VERSION
+from ocr_runtime.llm.schemas import GeneratedMedication, GeneratedPrescriptionDraft, GeneratedSourceValue
 from provider_contracts.observability import DeploymentEnvironment
 from provider_contracts.ocr import (
     OcrDeadline,
     OcrRecognitionResult,
+    RawRecognizedField,
     RecognizedField,
 )
 
@@ -1120,8 +1128,11 @@ async def test_postgresql_heartbeat_loss_blocks_result_and_ack() -> None:
     assert acknowledger.acknowledged_ids == []
 
 
+@pytest.mark.parametrize("llm_enabled", [False, True])
 async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    llm_enabled: bool,
 ) -> None:
     message = build_message()
     now = datetime.now(UTC)
@@ -1156,6 +1167,8 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
         CLOVA_OCR_INVOKE_URL="https://clova.test/ocr",
         CLOVA_OCR_SECRET="synthetic-clova-secret",
         STORAGE_DIR=str(tmp_path),
+        OCR_STRUCTURE_LLM_ENABLED=llm_enabled,
+        OPENAI_API_KEY="synthetic-test-key" if llm_enabled else "",
     )
 
     async with test_engine.begin() as connection:
@@ -1270,11 +1283,48 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
             },
         )
 
+    real_provider = None
+    if llm_enabled:
+        (tmp_path / "synthetic").mkdir()
+        (tmp_path / "synthetic/input.png").write_bytes(b"synthetic")
+        clova_call = AsyncMock(
+            return_value=OcrRecognitionResult(
+                raw_fields=[
+                    RawRecognizedField(
+                        raw_value="합성의약품에이정",
+                        confidence_score=0.99,
+                        center_x=10,
+                        center_y=30,
+                    )
+                ]
+            )
+        )
+        monkeypatch.setattr(ClovaOcrEngine, "_recognize_provider", clova_call)
+        llm_call = AsyncMock(
+            return_value=SimpleNamespace(
+                status="completed",
+                model="synthetic-llm-model",
+                output=[],
+                output_parsed=GeneratedPrescriptionDraft(
+                    medications=[
+                        GeneratedMedication(
+                            medication_name=GeneratedSourceValue(value="합성의약품에이정", source_ids=[1]),
+                        )
+                    ]
+                ),
+            )
+        )
+        sdk_context = MagicMock()
+        sdk_context.__aenter__.return_value = SimpleNamespace(responses=SimpleNamespace(parse=llm_call))
+        monkeypatch.setattr(openai_ocr_structurer, "AsyncOpenAI", MagicMock(return_value=sdk_context))
+        real_provider = create_clova_ocr_provider(worker_config)
+
     assembled = build_worker_runtime(
         worker_config,
         logger=__import__("logging").getLogger("worker-runtime-test"),
         clock=lambda: datetime.now(UTC),
-        ocr_engine=ocr_engine,
+        ocr_engine=None if llm_enabled else ocr_engine,
+        ocr_provider=real_provider,
         redis_client=redis_client,
         engine=test_engine,
     )
@@ -1357,7 +1407,20 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
         assert processed_count == 1
         assert outbox_status == "PUBLISHED"
         assert stream_message_id
-        assert ocr_engine.call_count == 1
+        if llm_enabled:
+            assert clova_call.await_count == llm_call.await_count == 1
+            assert sdk_context.__aexit__.await_count == 1
+            async with test_engine.connect() as connection:
+                await connection.execute(text(f"SET search_path TO {TEST_SCHEMA}"))
+                metadata = (
+                    await connection.execute(
+                        text("SELECT model_version, prompt_version FROM ocr_job WHERE id = :id"),
+                        {"id": str(message.domain_id)},
+                    )
+                ).one()
+                assert metadata == ("synthetic-llm-model", PROMPT_VERSION)
+        else:
+            assert ocr_engine.call_count == 1
         assert job_status == "COMPLETED"
         assert attempt_count == 1
         assert consumed_event_id == str(message.event_id)
@@ -1365,11 +1428,11 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
         assert ocr_status == "COMPLETED"
         assert ocr_started_at is not None
         assert ocr_completed_at is not None
-        assert engine_name == "SYNTHETIC_OCR"
+        assert engine_name == ("CLOVA_OCR" if llm_enabled else "SYNTHETIC_OCR")
         # SyntheticOcrEngine은 MEDICATION_NAME 1개만 반환하지만, 저장 경로가 나머지 필수
         # 필드(PRESCRIBED_DATE, DOSE_VALUE, FREQUENCY_PER_DAY, DURATION_DAYS)를 placeholder
         # row로 채우므로 총 5개가 됩니다(#294).
-        assert field_count_result.scalar_one() == 5
+        assert field_count_result.scalar_one() == (8 if llm_enabled else 5)
         assert await stream.list_pending() == ()
     finally:
         await assembled.aclose()
