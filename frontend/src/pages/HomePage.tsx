@@ -75,6 +75,9 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
     useState(shouldShowOnboarding)
 
   const onboardingDialogRef = useRef<HTMLElement>(null)
+  const pageRef = useRef<HTMLDivElement>(null)
+  const homePrescriptionButtonRef = useRef<HTMLButtonElement>(null)
+  const wasOnboardingOpenRef = useRef(false)
 
   const handleOnboardingKeyDown = (
     event: KeyboardEvent<HTMLElement>,
@@ -114,14 +117,37 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
   }, [navigate, shouldShowOnboarding])
 
   useEffect(() => {
-    if (!isOnboardingOpen) return
+    const background =
+      pageRef.current?.querySelector<HTMLElement>('.mobile-app')
 
-    const firstButton =
-      onboardingDialogRef.current?.querySelector<HTMLButtonElement>('button')
+    if (background) {
+      background.inert = isOnboardingOpen
 
-    firstButton?.focus()
+      if (isOnboardingOpen) {
+        background.setAttribute('aria-hidden', 'true')
+      } else {
+        background.removeAttribute('aria-hidden')
+      }
+    }
+
+    if (isOnboardingOpen) {
+      const firstButton =
+        onboardingDialogRef.current?.querySelector<HTMLButtonElement>('button')
+
+      firstButton?.focus()
+    } else if (wasOnboardingOpenRef.current) {
+      homePrescriptionButtonRef.current?.focus()
+    }
+
+    wasOnboardingOpenRef.current = isOnboardingOpen
+
+    return () => {
+      if (background) {
+        background.inert = false
+        background.removeAttribute('aria-hidden')
+      }
+    }
   }, [isOnboardingOpen])
-
   const userName = currentUser.name.trim()
   const today = useMemo(
     () =>
@@ -134,7 +160,10 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
   )
 
   return (
-    <div className="mvp-page mvp-home-page">
+    <div
+      ref={pageRef}
+      className="mvp-page mvp-home-page"
+    >
       <MobileShell
         title="Dosey 도지"
         brandMark={<DoseyMascot variant="header" />}
@@ -179,6 +208,7 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
 
           <section className="mvp-home__card-stack" aria-label="Home 주요 기능">
             <button
+              ref={homePrescriptionButtonRef}
               className="mvp-home__hub-card mvp-home__hub-card--prescription"
               type="button"
               onClick={() => navigate('/prescriptions/upload', {
