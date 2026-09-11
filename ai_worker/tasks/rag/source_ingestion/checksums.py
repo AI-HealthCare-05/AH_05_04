@@ -9,7 +9,7 @@ from ai_worker.tasks.rag.source_ingestion.normalize import (
     canonical_json_bytes,
     utf16_sort_key,
 )
-from ai_worker.tasks.rag.source_ingestion.product_rejections import ProductIdentityError, classify_product_rejections
+from ai_worker.tasks.rag.source_ingestion.product_rejections import classify_product_rejections
 
 
 def raw_checksum(chunks: Iterable[bytes]) -> str:
@@ -32,9 +32,11 @@ def product_canonical_checksum(
     언어 구현과 순서가 갈려 같은 입력이 다른 checksum을 냅니다.
     """
     entries = tuple(records)
-    rejections = classify_product_rejections(((1, entries),))
-    if rejections:
-        raise ProductIdentityError(rejections)
+    # 여기서는 page 번호를 알 수 없어 합성값 1을 씁니다. 그 위치가 감사 기록에 남지
+    # 않도록 위치를 담은 ProductIdentityError 대신 위치 없는 오류로 알립니다.
+    # 실제 위치가 있는 판정은 build_product_ingestion_result가 진짜 page로 수행합니다.
+    if classify_product_rejections(((1, entries),)):
+        raise ValueError("Product records must have valid ITEM_SEQ identifiers.")
     records_by_key = {cast(str, record["ITEM_SEQ"]): dict(record) for record in entries}
 
     if not records_by_key:

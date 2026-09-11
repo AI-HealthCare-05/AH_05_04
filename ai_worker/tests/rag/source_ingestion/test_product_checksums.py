@@ -58,7 +58,7 @@ def test_rejects_empty_records() -> None:
 
 
 def test_rejects_missing_item_seq() -> None:
-    with pytest.raises(ValueError, match="Product identity validation failed"):
+    with pytest.raises(ValueError, match="valid ITEM_SEQ identifiers"):
         product_canonical_checksum([{"ITEM_NAME": "합성 제품"}])
 
 
@@ -67,7 +67,7 @@ def test_rejects_missing_item_seq() -> None:
     [None, "", "   ", 1, True, 1.0],
 )
 def test_rejects_invalid_item_seq(item_seq: object) -> None:
-    with pytest.raises(ValueError, match="Product identity validation failed"):
+    with pytest.raises(ValueError, match="valid ITEM_SEQ identifiers"):
         product_canonical_checksum([{"ITEM_SEQ": item_seq}])
 
 
@@ -77,7 +77,7 @@ def test_rejects_duplicate_identity_even_if_content_differs() -> None:
         {"ITEM_SEQ": "001", "ITEM_NAME": "합성 제품 B"},
     ]
 
-    with pytest.raises(ValueError, match="Product identity validation failed"):
+    with pytest.raises(ValueError, match="valid ITEM_SEQ identifiers"):
         product_canonical_checksum(records)
 
 

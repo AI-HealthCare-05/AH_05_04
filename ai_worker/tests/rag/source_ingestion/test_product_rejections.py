@@ -49,11 +49,16 @@ def test_original_strings_are_not_trimmed_or_coerced():
     assert product_canonical_checksum(records) == product_canonical_checksum(reversed(records))
 
 
-def test_checksum_uses_same_typed_rejection_not_exception_text():
-    with pytest.raises(ProductIdentityError) as error:
+def test_checksum_failure_carries_no_fabricated_parser_location():
+    """page 번호를 모르는 경로이므로 조작된 위치가 예외에 실려 나가면 안 된다."""
+    with pytest.raises(ValueError) as error:
         product_canonical_checksum(({}, {"ITEM_SEQ": "SYNTH"}, {"ITEM_SEQ": "SYNTH"}))
-    assert len(error.value.rejections) == 3
-    assert str(error.value) == "Product identity validation failed."
+
+    assert not isinstance(error.value, ProductIdentityError)
+    assert "page[" not in str(error.value)
+    # 실제 위치가 필요한 판정은 진짜 page 번호를 받는 classify_product_rejections가 맡는다.
+    rejections = classify_product_rejections(((7, ({}, {"ITEM_SEQ": "SYNTH"}, {"ITEM_SEQ": "SYNTH"})),))
+    assert [r.parser_location for r in rejections] == ["page[7].record[0]", "page[7].record[1]", "page[7].record[2]"]
 
 
 @pytest.mark.parametrize("pages", [((0, ()),), ((True, ()),), ((1, ()), (1, ()))])
