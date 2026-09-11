@@ -78,6 +78,7 @@ from app.repositories.rag_source_catalog_repository import (
 
 pytestmark = pytest.mark.asyncio
 
+EXTENSION_SCHEMA = "test_extensions"
 TEST_SCHEMA = "rag_source_snapshot_lifecycle_test"
 TEST_DATABASE_URL = URL.create(
     drivername="postgresql+asyncpg",
@@ -91,7 +92,7 @@ test_engine = create_async_engine(
     TEST_DATABASE_URL,
     pool_pre_ping=True,
     poolclass=NullPool,
-    connect_args={"server_settings": {"search_path": TEST_SCHEMA}},
+    connect_args={"server_settings": {"search_path": f"{TEST_SCHEMA},{EXTENSION_SCHEMA}"}},
 )
 session_factory = async_sessionmaker(test_engine, expire_on_commit=False, autoflush=False)
 
@@ -104,12 +105,31 @@ _ALLOW_ONE_REJECTION_POLICY = SourceSnapshotPolicy(
 )
 
 
+async def _ensure_trigram_extension(connection, schema: str) -> None:
+    """pg_trgm을 테이블이 없는 전용 schema에 둔다.
+
+    public이나 테스트 schema에 두면 `create_all`의 존재 검사가 다른 schema의 동명 테이블을
+    보고 생성을 건너뛴다. 확장은 DB당 하나뿐이라 이미 다른 schema에 있으면 옮긴다.
+    """
+    await connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+    await connection.execute(text(f"CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA {schema}"))
+    current = await connection.scalar(
+        text(
+            "SELECT n.nspname FROM pg_extension e "
+            "JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'pg_trgm'"
+        )
+    )
+    if current != schema:
+        await connection.execute(text(f"ALTER EXTENSION pg_trgm SET SCHEMA {schema}"))
+
+
 @pytest_asyncio.fixture(scope="module", autouse=True)
 async def isolated_schema() -> AsyncIterator[None]:
     admin_engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
     async with admin_engine.begin() as connection:
         await connection.execute(text(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE"))
         await connection.execute(text(f"CREATE SCHEMA {TEST_SCHEMA}"))
+        await _ensure_trigram_extension(connection, EXTENSION_SCHEMA)
 
     async with test_engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -1060,7 +1080,7 @@ async def test_writer_login_can_acquire_and_persist_without_source_update_privil
     producer = create_async_engine(
         TEST_DATABASE_URL.set(username=writer, password=password),
         poolclass=NullPool,
-        connect_args={"server_settings": {"search_path": TEST_SCHEMA}},
+        connect_args={"server_settings": {"search_path": f"{TEST_SCHEMA},{EXTENSION_SCHEMA}"}},
         hide_parameters=True,
     )
     try:

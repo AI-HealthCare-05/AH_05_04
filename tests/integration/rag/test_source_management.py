@@ -24,7 +24,7 @@ from app.admin.source_management_service import ManagementActor, SourceManagemen
 from app.core import config
 from app.core.db.databases import Base, get_db_session
 from app.core.errors import ApiError
-from app.models.rag_catalog import RagMedicationProduct
+from app.models.rag_catalog import RagEntityIdentity, RagMedicationAlias, RagMedicationProduct
 from app.models.rag_source import (
     RagSource,
     RagSourceEndpoint,
@@ -58,6 +58,7 @@ async def database(request):
             await connection.execute(text(f'CREATE DATABASE "{name}"'))
         if getattr(request, "param", None) != "migration":
             async with engine.begin() as connection:
+                await connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
                 await connection.run_sync(Base.metadata.create_all)
         yield engine, url.set(database=name), roles
     finally:
@@ -267,7 +268,11 @@ async def seed_catalog(engine, source_id):
         )
         session.add(snapshot)
         await session.flush()
+        identity = RagEntityIdentity(entity_type="PRODUCT", code_system="synthetic", canonical_code="synthetic-code")
+        session.add(identity)
+        await session.flush()
         product = RagMedicationProduct(
+            entity_identity_id=identity.id,
             source_snapshot_id=snapshot.id,
             source_record_key="synthetic-key",
             code_system="synthetic",
@@ -813,6 +818,9 @@ async def test_merge_and_snapshot_seal_preserve_historical_rows(database, previo
                 fingerprint({key: value for key, value in row.items() if key != "management_lock_marker"})
                 == old_hashes[row["id"]]
             )
+    # Exercise the Source guard at its own revision before later irreversible migrations.
+    rollback = await migrate("downgrade", "39818293a4b5")
+    assert rollback.returncode != 0 and "cannot be downgraded" in rollback.stderr
     assert (await migrate("upgrade", "head")).returncode == 0
     await engine.dispose()
     async with engine.connect() as connection:
@@ -846,5 +854,37 @@ async def test_merge_and_snapshot_seal_preserve_historical_rows(database, previo
                 {"seal": current["verification_seal_id"], "id": str(pending_id)},
             )
     assert wrong_anchor.value.orig.sqlstate == "23503"
-    rollback = await migrate("downgrade", "39818293a4b5")
-    assert rollback.returncode != 0 and "cannot be downgraded" in rollback.stderr
+
+
+@pytest.mark.parametrize("review_status", ["PENDING", "APPROVED"])
+async def test_alias_management_preserves_approved_record_protection(database, review_status):
+    engine, _, _ = database
+    actor, source_id = await seed(engine)
+    snapshot_id, product_id = await seed_catalog(engine, source_id)
+    async with async_sessionmaker(engine, expire_on_commit=False).begin() as session:
+        product = await session.get(RagMedicationProduct, product_id)
+        alias = RagMedicationAlias(
+            source_snapshot_id=snapshot_id,
+            target_identity_id=product.entity_identity_id,
+            target_type="PRODUCT",
+            alias_text="합성 별칭",
+            normalized_alias_text="합성 별칭",
+            alias_source="SYNTHETIC",
+            review_status=review_status,
+            record_status="ACTIVE",
+            is_effective=True,
+        )
+        session.add(alias)
+        await session.flush()
+        alias_id = alias.id
+    current = await inspect_target(engine, actor, TargetKind.ALIAS, alias_id)
+    request = command(current.revision, current.hash).model_copy(update={"changes": {"alias_text": "합성  별칭"}})
+    if review_status == "APPROVED":
+        with pytest.raises(ApiError) as caught:
+            await mutate(engine, actor, TargetKind.ALIAS, alias_id, request)
+        assert caught.value.code == "MANAGEMENT_TARGET_IN_USE"
+    else:
+        await mutate(engine, actor, TargetKind.ALIAS, alias_id, request)
+    async with async_sessionmaker(engine).begin() as session:
+        stored = await session.get(RagMedicationAlias, alias_id)
+        assert stored.alias_text == ("합성 별칭" if review_status == "APPROVED" else "합성  별칭")
