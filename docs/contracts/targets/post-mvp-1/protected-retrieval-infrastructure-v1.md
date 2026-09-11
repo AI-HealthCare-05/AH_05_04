@@ -2,7 +2,7 @@
 
 > 상태: Approved Target · Partially implemented
 >
-> 근거 Decision: `PD-368-20260909`
+> 근거 Decision: `PD-368-20260909`; authorization control candidate `PD-368-R1`
 
 이 계약은 protected retrieval의 PostgreSQL data-plane 실행 경계와 아직 구현되지 않은 control-plane 범위를
 분리한다. 현재 실행 가능한 공개 계약이나 실제 protected 환경 활성화 승인이 아니다.
@@ -24,16 +24,29 @@
 - artifact·audit row가 존재하는 downgrade는 거부하며 데이터를 삭제하지 않는다. protected Alembic graph는
   단일 head를 유지한다.
 
-## 미구현 control-plane 범위
+## 조율 완료·구현 중인 authorization control-plane
 
-다음 Application Service는 이 부분 구현에 포함되지 않는다.
+`PD-368-R1`은 다음 C1 Application Service 계약을 고정하며, 실제 구현·테스트와 지정 PR review가 완료되기
+전에는 runtime 구현으로 간주하지 않는다.
 
 - approval evidence ingestion
-- grant/revoke/expire와 identity disable
-- Dataset lifecycle transition과 FREEZE
+- grant/revoke/expire
+- `session_user` 기반 control identity/approval role 결속
+- command payload hash와 request ID 기반 exact replay/conflict
+- 성공 mutation과 AUTHORIZATION·CONTROL global hash-chain audit의 단일 transaction
+- 신뢰 가능한 거부의 CONTROL audit 선행 commit과 고정 오류 재현
+- DATA/CONTROL identity shape, subject/Dataset scope grant revision, C1 column privilege
 
-해당 서비스의 command, 승인자 분리, 멱등성, 상태 전이 및 감사 계약은 담당자 합의와 구현·통합 테스트가
-필요하다. 구현 전까지 Issue #368은 Open이며 이 계약은 `current/`로 승격하지 않는다.
+Command/결과/audit 필드, 승인자 분리, lock order와 C2 제외 범위는
+[`PD-368-R1`](../../../governance/decisions/2026-09-11-protected-retrieval-authorization-control.md)을 따른다.
+
+## 미구현 control-plane 범위
+
+- identity 등록·비활성화
+- Dataset 등록·lifecycle transition과 FREEZE
+- production trusted approval source connector와 protected 환경 provisioning
+
+위 범위는 C2 또는 외부 gate로 남는다. Issue #368은 Open이며 이 계약은 `current/`로 승격하지 않는다.
 
 ## 활성화 상태
 

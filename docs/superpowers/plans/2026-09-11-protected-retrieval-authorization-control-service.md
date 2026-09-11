@@ -33,11 +33,11 @@
 
 **Interfaces:**
 - Consumes: `PD-368-20260909`, the approved design spec, and the user-confirmed owner coordination.
-- Produces: `PD-368-R1` with exact C1 DTOs, audit fields, identity schema, idempotency, transaction order, safe reason, and C2 exclusion.
+- Produces: coordinated `PD-368-R1` Candidate with exact C1 DTOs, audit fields, identity schema, idempotency, transaction order, safe reason, and C2 exclusion; designated PR review remains the approval evidence.
 
 - [ ] **Step 1: Add the Decision amendment**
 
-Record `Decision ID: PD-368-R1`, `Status: Approved Target · Implementation Required`, implementation owner and named reviewers, then copy the exact command/result/audit field sets and the single new safe reason `CONTROL_COMMAND_CONFLICT` from the design. State that known denials commit a CONTROL denial audit before raising, while identity/audit-integrity failures mutate nothing and may have no denial audit.
+Record `Decision ID: PD-368-R1`, `Status: Candidate · Coordination Confirmed · PR Review Required`, implementation owner and named reviewers, then copy the exact command/result/audit field sets and the single new safe reason `CONTROL_COMMAND_CONFLICT` from the design. State that known denials commit a CONTROL denial audit before raising, while identity/audit-integrity failures mutate nothing and may have no denial audit.
 
 - [ ] **Step 2: Align the target contract and both indexes**
 
