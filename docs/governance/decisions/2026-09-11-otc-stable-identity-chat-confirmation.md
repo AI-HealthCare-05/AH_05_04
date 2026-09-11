@@ -131,16 +131,16 @@
 
 `idempotency-v1.md`는 「**비동기 Job을 생성하는 모든 POST 요청**과 Post-MVP-1 B·C 동기 상태 변경, **Track F 사용자 Candidate 확인·거절 요청**은 `Idempotency-Key` 헤더를 요구한다」로 정한다. OTC 경로에는 두 조건이 **모두** 걸린다.
 
-| 요청 | 키 | 근거 |
-| --- | --- | --- |
-| 자유문장 메시지 (`CHAT` Job을 생성) | **필수** | `idempotency-v1.md`의 「Job을 생성하는 모든 POST」. scope는 비동기 접수 `(user_id, operation_id, key_hmac)` |
-| 확인·거절 action | **필수** | `idempotency-v1.md`의 Track F 확인·거절 범위, `medication-identification-v1.md`와 동일 |
+| 요청 | 키 | `record_type` | 같은 키 + 같은 지문의 응답 |
+| --- | --- | --- | --- |
+| 자유문장 메시지 (`CHAT` Job을 생성) | **필수** | `ASYNC_JOB` | 저장된 `job_id`로 Job을 조회해 **최신 상태의 `202`** 를 반환한다. 응답 body snapshot을 저장하지 않는다 |
+| 확인·거절 action | **필수** | `SYNC_MUTATION` | **최초 성공 status와 canonical body snapshot을 그대로 재현**한다. revision·현재 상태 검사보다 먼저 재현한다 |
 
-- 동일 key + 동일 request → 최초 성공 응답 재현
-- 동일 key + 다른 request → `409`
-- 누락·형식 오류 → `400 IDEMPOTENCY_KEY_REQUIRED` / `IDEMPOTENCY_KEY_INVALID`
+두 경로 모두 같은 키 + **다른** 지문은 `409 IDEMPOTENCY_KEY_CONFLICT`, 키 누락·빈 값은 `400 IDEMPOTENCY_KEY_REQUIRED`, 형식 오류는 `400 IDEMPOTENCY_KEY_INVALID`다. scope는 `idempotency-v1.md`대로 비동기 접수가 `(user_id, operation_id, key_hmac)`, 동기 상태 변경이 여기에 `parent_resource_id`를 더한 것이다. 확인·거절의 `parent_resource_id`는 `otc_search_id`다.
 
-> **정정.** 이 문서의 이전 초안은 「확인·거절에만 요구한다」고 썼다. 그 규칙은 `medication-identification-v1.md`가 **Candidate Search 생성**(Job을 만들지 않는 경로)에 대해 정한 것이며, `CHAT` Job을 만드는 메시지 POST에 일반화하면 Job 생성 POST의 키 필수 요건을 누락하게 된다.
+**재요청 의미를 하나로 뭉치지 않는다.** 비동기 경로에서 「최초 응답 재현」을 적용하면 이미 완료된 Job에도 최초의 접수 상태를 되돌려주게 되어 `idempotency-v1.md`와 어긋난다.
+
+> **정정 이력.** 이 문서의 이전 초안은 (1) 「확인·거절에만 키를 요구한다」고 썼고 (2) 두 경로 모두 「최초 성공 응답 재현」이라고 썼다. (1)은 `medication-identification-v1.md`가 **Candidate Search 생성**(Job을 만들지 않는 경로)에 대해 정한 규칙을 메시지 POST까지 일반화한 것이고, (2)는 `ASYNC_JOB`과 `SYNC_MUTATION`의 재요청 의미가 다르다는 점을 반영하지 못한 것이다.
 
 ### 4-5. 현재성과 무효화
 
@@ -215,6 +215,17 @@
 ### D5. 자유 입력 최대 길이·속도 제한 수치 — **송은영 · 권가빈**
 
 §4-7의 경계는 두되 수치는 API·남용 방지 관점의 판단이 필요하다.
+
+### D6. 확인 직후 답변 생성을 무엇이 촉발하는가 — **권가빈 · 남한솔**
+
+`rag-runtime-v1.md`는 「AI Job 안에서 사용자 입력을 기다리지 않는다」고 고정한다. 따라서 확인 action(`SYNC_MUTATION`)은 대기 중인 Job을 재개시키지 못하고 Identity 확정만 기록한다. 확정 뒤 실제 답변은 **새 `CHAT` Job**에서 생성되어야 한다.
+
+| 안 | 결과 |
+| --- | --- |
+| A. 사용자가 다시 질문한다 | 계약이 가장 단순하다. 사용자가 같은 질문을 두 번 하는 경험이 된다 |
+| B. 확인 직후 클라이언트가 후속 메시지를 이어서 보낸다 | 경험이 자연스럽다. 확인과 질문이 두 요청이므로 각각의 멱등성 키와 실패 시 표시를 정의해야 한다 |
+
+어느 쪽이든 **서버가 확인 action 하나로 답변까지 생성하지는 않는다.** 이 경계는 `#176` 구현 전에 정해져야 한다.
 
 ## 6. 검토한 대안
 
