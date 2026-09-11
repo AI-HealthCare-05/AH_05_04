@@ -109,10 +109,11 @@ contract.
 
 ### Domain and application contract
 
-Create `ai_worker/tasks/evaluation/protected_retrieval_control.py` containing only C1 command/result models, command
-audit models, the approval-source Protocol, canonical command hashing, and pure authorization-approval verification.
-The existing `ai_worker/tasks/evaluation/protected_retrieval.py` adds the `CONTROL` audit union member and only the
-safe reason/enum values approved by the contract amendment.
+Create `ai_worker/tasks/evaluation/protected_retrieval_control.py` containing only C1 command/result models, the
+approval-source Protocol, canonical command hashing, and pure authorization-approval verification. The existing
+`ai_worker/tasks/evaluation/protected_retrieval.py` owns `ControlCommandAuditEntry` beside the other audit DTOs and
+adds the `CONTROL` audit union member plus only the safe reason/enum values approved by the contract amendment. This
+ownership keeps the kernel audit union independent of the application command module and avoids a circular import.
 
 Move the policy currently embedded in `InMemoryApprovalEvidenceVerifier` into a pure
 `verify_authorization_approval(grant, evidence, action, expected_raw_sha256)` function. It returns the existing sealed
