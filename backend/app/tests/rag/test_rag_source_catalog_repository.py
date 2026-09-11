@@ -34,6 +34,7 @@ from app.models.rag_catalog import (
     RagCatalogSetHash,
     RagCatalogSetMember,
     RagCatalogSetSource,
+    RagEntityIdentity,
     RagMedicationAliasReviewStatus,
     RagMedicationAliasTargetType,
     RagMedicationComponentRole,
@@ -89,11 +90,11 @@ async def _create_snapshot(repository: RagSourceCatalogRepository):
             display_name="List Approved Products",
         )
     )
-    return await seed_snapshot(
+    snapshot = await seed_snapshot(
         repository,
         RagSourceSnapshotCreate(
             operation_id=operation.id,
-            source_version="api:2026-09-07T00:00:00.000000Z:" + _CHECKSUM,
+            source_version="api:2026-09-07T00:00:00.000000Z:" + _OTHER_CHECKSUM,
             raw_manifest_checksum=_CHECKSUM,
             canonical_checksum=_OTHER_CHECKSUM,
             schema_version="schema-v1",
@@ -108,6 +109,10 @@ async def _create_snapshot(repository: RagSourceCatalogRepository):
             effective_at=datetime.now(config.TIMEZONE),
         ),
     )
+
+    snapshot.endpoint_receipt_hash = _CHECKSUM
+    await repository.session.flush()
+    return snapshot
 
 
 async def test_source_snapshot_catalog_chain_can_be_saved(db_session: AsyncSession) -> None:
@@ -765,7 +770,7 @@ async def test_catalog_set_verification_compares_exact_hash_material(db_session:
         await support.verify_set(staged.set_id, plan, staged)
 
 
-async def test_catalog_build_repository_commits_one_complete_set_and_reuses_it(db_session: AsyncSession) -> None:
+async def test_catalog_build_repository_rejects_caller_owned_transaction(db_session: AsyncSession) -> None:
     repository = RagSourceCatalogRepository(db_session)
     snapshot = await _create_snapshot(repository)
     members = build_catalog_members(
@@ -790,16 +795,12 @@ async def test_catalog_build_repository_commits_one_complete_set_and_reuses_it(d
     session_factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
     catalog_repository = SqlAlchemyCatalogBuildRepository(session_factory)
 
-    await catalog_repository.save_build(members=members, artifacts=artifacts)
-    await catalog_repository.save_build(members=members, artifacts=artifacts)
+    with pytest.raises(CatalogDatabaseBindingError):
+        await catalog_repository.save_build(members=members, artifacts=artifacts)
 
-    for model, expected in (
-        (RagCatalogSet, 1),
-        (RagCatalogSetSource, 1),
-        (RagCatalogSetMember, 2),
-        (RagCatalogSetHash, 2),
-    ):
-        assert (await db_session.execute(select(func.count()).select_from(model))).scalar_one() == expected
+    assert db_session.in_transaction()
+    for model in (RagEntityIdentity, RagCatalogSet, RagCatalogSetSource, RagCatalogSetMember, RagCatalogSetHash):
+        assert (await db_session.execute(select(func.count()).select_from(model))).scalar_one() == 0
 
 
 async def test_catalog_write_support_rolls_back_all_members_on_unsupported_row(db_session: AsyncSession) -> None:

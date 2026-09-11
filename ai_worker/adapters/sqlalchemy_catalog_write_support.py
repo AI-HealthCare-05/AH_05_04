@@ -9,9 +9,10 @@ from uuid import UUID, uuid4
 from sqlalchemy import Boolean, Integer, LargeBinary, Numeric, String, column, func, select, table, text, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 from sqlalchemy.sql.selectable import TableClause
 
+from ai_worker.adapters.sqlalchemy_source_snapshot_repository import SqlAlchemySourceSnapshotRepository
 from ai_worker.tasks.rag.catalog.approval import CatalogApprovalVerifier
 from ai_worker.tasks.rag.catalog.build import CatalogMembers
 from ai_worker.tasks.rag.catalog.export import CatalogExportArtifacts
@@ -22,7 +23,7 @@ from ai_worker.tasks.rag.catalog.types import CandidateEntityType, ProductIdenti
 _SOURCE_SNAPSHOT = table(
     "rag_source_snapshot",
     column("id", String(36)),
-    column("source_version", String(255)),
+    column("source_version", String(200)),
 )
 _ENTITY_IDENTITY = table(
     "rag_entity_identity",
@@ -318,6 +319,19 @@ class SqlAlchemyCatalogWriteSupport:
             requested_ref = requested.get(snapshot_id)
             if requested_ref is None or requested_ref[1] != row["source_version"]:
                 raise CatalogDatabaseBindingError()
+            receipt = await SqlAlchemySourceSnapshotRepository(self._session).get_snapshot_receipt(
+                snapshot_id=snapshot_id
+            )
+            if (
+                receipt is None
+                or receipt.source_snapshot_id != snapshot_id
+                or receipt.source_version != requested_ref[1]
+            ):
+                raise CatalogDatabaseBindingError()
+            try:
+                receipt.validate_provenance()
+            except (ValueError, TypeError, AttributeError):
+                raise CatalogDatabaseBindingError() from None
             bound[requested_ref[0]] = snapshot_id
         return bound
 
@@ -821,13 +835,16 @@ class SqlAlchemyCatalogBuildRepository:
         plan = prepare_catalog_storage(members=members, artifacts=artifacts)
         try:
             async with self._session_factory() as session:
+                if isinstance(session.bind, AsyncConnection) and session.bind.in_transaction():
+                    raise CatalogDatabaseBindingError()
                 async with session.begin():
                     staged = await SqlAlchemyCatalogWriteSupport(session).stage_compatible_members(plan)
                     if staged.set_id is None:
                         raise CatalogDatabaseBindingError()
                     set_id = staged.set_id
-            async with self._session_factory() as session:
-                await SqlAlchemyCatalogWriteSupport(session).verify_set(set_id, plan, staged)
+            confirmed = await self._read_plan(set_id)
+            if confirmed != plan:
+                raise CatalogDatabaseBindingError()
         except SQLAlchemyError:
             raise CatalogDatabaseBindingError() from None
 
@@ -835,8 +852,16 @@ class SqlAlchemyCatalogBuildRepository:
         self, set_id: UUID, *, approval_verifier: CatalogApprovalVerifier | None
     ) -> CatalogExportArtifacts:
         """전체 v2 artifacts를 Candidate에 인계합니다. 저장 당시 승인만으로 소비를 허용하지 않습니다."""
-        async with self._session_factory() as session:
-            async with session.begin():
-                await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
-                plan = await SqlAlchemyCatalogWriteSupport(session, read_only=True).read_set(set_id)
+        plan = await self._read_plan(set_id)
         return await restore_current_catalog_storage(plan, approval_verifier=approval_verifier)
+
+    async def _read_plan(self, set_id: UUID) -> CatalogStoragePlan:
+        try:
+            async with self._session_factory() as session:
+                if isinstance(session.bind, AsyncConnection) and session.bind.in_transaction():
+                    raise CatalogDatabaseBindingError()
+                async with session.begin():
+                    await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+                    return await SqlAlchemyCatalogWriteSupport(session, read_only=True).read_set(set_id)
+        except SQLAlchemyError:
+            raise CatalogDatabaseBindingError() from None

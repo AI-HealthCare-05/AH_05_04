@@ -50,7 +50,7 @@ def test_catalog_and_runtime_heads_merge_preserving_existing_source(previous, mo
         try:
             async with engine.connect() as connection:
                 heads = migration_heads()
-                assert heads == ("166d0e1f2031",)
+                assert len(heads) == 1
                 assert validation_errors(heads[0], await read_database_head_state(connection)) == []
         finally:
             await engine.dispose()

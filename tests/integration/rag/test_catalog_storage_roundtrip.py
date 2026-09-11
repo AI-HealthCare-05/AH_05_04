@@ -45,15 +45,15 @@ from app.models.rag_catalog import RagCatalogSet
 from app.models.rag_source import RagSource, RagSourceEndpoint, RagSourceOperation, RagSourceSnapshot
 
 ROOT = Path(__file__).resolve().parents[3]
-GOLDEN = ROOT / "tests/fixtures/rag/catalog/db-v2"
+GOLDEN = ROOT / "tests/fixtures/rag/catalog/db-receipt-v2"
 PRODUCT_SNAPSHOT = "00000000-0000-4000-8000-000000000001"
 ALIAS_SNAPSHOT = "00000000-0000-4000-8000-000000000002"
 
 
 def approved_build(*, changed=False):
     refs = (
-        CandidateCatalogSourceRef(PRODUCT_SNAPSHOT, "v1"),
-        CandidateCatalogSourceRef(ALIAS_SNAPSHOT, "v2"),
+        CandidateCatalogSourceRef(PRODUCT_SNAPSHOT, "external:v1"),
+        CandidateCatalogSourceRef(ALIAS_SNAPSHOT, "external:v2"),
     )
     products = (
         replace(
@@ -146,7 +146,9 @@ async def database(monkeypatch):
                     RagSourceSnapshot(
                         id=UUID(snapshot_id),
                         operation_id=operation.id,
-                        source_version=version,
+                        source_version="external:" + version,
+                        external_version=version,
+                        endpoint_receipt_hash="c" * 64,
                         raw_manifest_checksum="a" * 64,
                         canonical_checksum="b" * 64,
                         schema_version="synthetic-v1",
@@ -311,3 +313,55 @@ async def test_concurrent_identical_builds_reuse_one_set(database):
         for table, count in (("rag_entity_identity", 3), ("rag_medication_product", 2), ("rag_catalog_set_hash", 2)):
             assert await session.scalar(text(f"SELECT count(*) FROM {table}")) == count
     assert await repository.load_build(set_id, approval_verifier=verifier) == artifacts
+
+
+@pytest.mark.parametrize("phase", ["save", "load"])
+@pytest.mark.parametrize("damage", ["external-version", "endpoint-receipt", "canonicalization"])
+async def test_source_receipt_provenance_is_required_at_storage_and_readback(database, phase, damage):
+    engine, factory = database
+    members, artifacts, verifier = approved_build()
+    repository = SqlAlchemyCatalogBuildRepository(factory)
+    set_id = None
+    if phase == "load":
+        await repository.save_build(members=members, artifacts=artifacts)
+        async with factory() as session:
+            set_id = await session.scalar(select(RagCatalogSet.id))
+    updates = {
+        "external-version": "external_version='SYNTHETIC_PRIVATE_SENTINEL'",
+        "endpoint-receipt": "endpoint_receipt_hash=NULL",
+        "canonicalization": "canonicalization_spec_version=''",
+    }
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE rag_source_snapshot SET " + updates[damage] + " WHERE id=:id"),
+            {"id": PRODUCT_SNAPSHOT},
+        )
+    with pytest.raises(CatalogDatabaseBindingError) as error:
+        if phase == "save":
+            await repository.save_build(members=members, artifacts=artifacts)
+        else:
+            await repository.load_build(set_id, approval_verifier=verifier)
+    assert str(error.value) == "Catalog database binding failed"
+    verifier.verify.assert_not_awaited()
+    async with factory() as session:
+        for table in ("rag_entity_identity", "rag_catalog_set"):
+            expected = (3 if table == "rag_entity_identity" else 1) if phase == "load" else 0
+            assert await session.scalar(text(f"SELECT count(*) FROM {table}")) == expected
+
+
+async def test_post_commit_confirmation_checks_member_rows_before_reporting_success(database, monkeypatch):
+    engine, factory = database
+    members, artifacts, _ = approved_build()
+    repository = SqlAlchemyCatalogBuildRepository(factory)
+    original = repository._read_plan
+
+    async def corrupt_committed_product(set_id):
+        async with engine.begin() as connection:
+            await connection.execute(text("UPDATE rag_medication_product SET product_name='tampered'"))
+        return await original(set_id)
+
+    monkeypatch.setattr(repository, "_read_plan", corrupt_committed_product)
+    with pytest.raises(CatalogDatabaseBindingError):
+        await repository.save_build(members=members, artifacts=artifacts)
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(RagCatalogSet)) == 1

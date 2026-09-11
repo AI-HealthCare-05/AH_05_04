@@ -1,6 +1,6 @@
 # #166 Catalog DB 적재·저장 연결안
 
-- 상태: **Proposed / DB 인계·결정 항목 검토안 작성 완료**. 승인·실제 DB 통합 완료가 아니다. D-02는 미확정이다.
+- 상태: **Proposed / 현행 v2 DB 저장·복원·Source Receipt 연결 구현**. 합성 검증과 담당자 승인은 구분한다. D-02는 합의된 후속 경계를 유지한다.
 - 구현 담당: 김지혜. Candidate·의미 계약 검토: 정현우. DB·FK·transaction 검토: 송은영.
 - 현재 적용 기준: [기존 v2 계약](../../targets/post-mvp-1/catalog-build-v2.md).
 - 최신 협의 기준: 김지혜가 제공한 D-05 v2 검토 반영본. 원본 공유 문서 자체를 복제하지 않는다.
@@ -16,11 +16,21 @@
 `load_build(set_id, approval_verifier=...)`를 연결했다. 저장은 adapter 소유 transaction,
 조회는 읽기 전용 repeatable-read transaction에서 수행한다. DB 원본 bytes 및 실제 구성원·Identity·
 출처·Set/member/hash를 모두 대조한 뒤 기존 승인 포트를 매번 확인하여 전체 `CatalogExportArtifacts`를 반환한다.
+이미 transaction이 시작된 외부 connection을 주입하면 첫 쓰기 전에 거부한다. 호출자 transaction에
+참여한 flush/savepoint를 실제 commit으로 보고하지 않는다. 실제 commit·재사용은 독립 DB 통합
+테스트로 검증하며, 외부 transaction 거부는 Backend 저장소 테스트로 고정한다.
 기존 hash 계산 규칙·Candidate 공개 입력은 변경하지 않았다. 아래 단계별 기록의 "DB adapter 미구현"은
 해당 단계 작성 당시 상태이며 현재 구현/검증 범위는 [인계 검증 문서](../../../testing/catalog-storage-handoff-166.md)를 따른다.
 
-D-02 등 합의된 후속 범위, #436 병합 후 Receipt 소비, 실제 승인/감사 저장소와 배포 Writer 권한 연결은
-유지한다. 저장 성공을 publication 승인 또는 Runtime 활성화로 취급하지 않으며 임의 실행 키를 만들지 않는다.
+#436 `dc745a4`를 작업 브랜치에 통합하고 실제 `get_snapshot_receipt()` 소비를 연결했다.
+저장 시 Source 행 결속 잠금 이후, 조회 시 읽기 전용 repeatable-read transaction 안에서 Receipt의
+Snapshot ID·version을 요청과 대조하고 `validate_provenance()`를 호출한다. 버전 문법·external/checksum
+결속·Endpoint Receipt·필수 검증 seal이 잘못되면 원문 없는 DB 결속 오류로 중단한다.
+과거의 임의 version을 새 규칙으로 보정하지 않는다. 저장 직후 성공 확인도 전체 DB read-back을
+사용하여 구성원 행·Source Receipt·Set·hash가 원래 저장 계획과 같은지 대조한다.
+이 연결은 Source provenance 검증이며 Source/Catalog 승인이나 Freshness 판정을 대신하지 않는다.
+현재 승인 포트와 v2 export/receipt/hash 의미는 유지한다. 선행 #436의 리뷰·병합은 별도다.
+D-02 등 합의된 후속 범위, 실제 승인/감사 저장소와 배포 Writer 권한 연결은 유지한다. 저장 성공을 publication 승인 또는 Runtime 활성화로 취급하지 않으며 임의 실행 키를 만들지 않는다.
 본 문서의 proposed 상태와 담당 리뷰 경계는 변경하지 않는다.
 
 
