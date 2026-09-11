@@ -114,8 +114,10 @@ def protected_database() -> Iterator[_ProtectedDatabase]:
                     text(
                         f"""
                         INSERT INTO {_quote(database.schema)}.protected_identity (
-                            database_login, actor_id, actor_namespace, principal_role
-                        ) VALUES (:database_login, 'synthetic-author', 'SERVICE_IDENTITY', 'HOLDOUT_AUTHOR')
+                            database_login, actor_id, actor_namespace, principal_role, identity_plane
+                        ) VALUES (
+                            :database_login, 'synthetic-author', 'SERVICE_IDENTITY', 'HOLDOUT_AUTHOR', 'DATA'
+                        )
                         """
                     ),
                     {"database_login": database.actor_login},
@@ -258,6 +260,90 @@ async def test_protected_schema_uses_only_ordinary_relations_and_constraints(
         await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_authorization_control_schema_has_plane_and_revision_constraints(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    engine = create_async_engine(database.url)
+    try:
+        async with engine.connect() as connection:
+            identity_columns = set(
+                await connection.scalars(
+                    text(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_schema = :schema AND table_name = 'protected_identity'
+                        """
+                    ),
+                    {"schema": database.schema},
+                )
+            )
+            assert {"identity_plane", "approval_role"} <= identity_columns
+
+            identity_constraints = "\n".join(
+                await connection.scalars(
+                    text(
+                        """
+                        SELECT pg_get_constraintdef(constraint_row.oid)
+                        FROM pg_constraint AS constraint_row
+                        JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid
+                        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                        WHERE namespace.nspname = :schema
+                          AND relation.relname = 'protected_identity'
+                        ORDER BY constraint_row.conname
+                        """
+                    ),
+                    {"schema": database.schema},
+                )
+            )
+            assert "identity_plane" in identity_constraints
+            assert "approval_role" in identity_constraints
+            assert "actor_namespace, actor_id, identity_plane" in identity_constraints
+
+            grant_constraints = "\n".join(
+                await connection.scalars(
+                    text(
+                        """
+                        SELECT pg_get_constraintdef(constraint_row.oid)
+                        FROM pg_constraint AS constraint_row
+                        JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid
+                        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                        WHERE namespace.nspname = :schema
+                          AND relation.relname = 'authorization_grant'
+                        ORDER BY constraint_row.conname
+                        """
+                    ),
+                    {"schema": database.schema},
+                )
+            )
+            assert (
+                "subject_actor_id, subject_namespace, subject_role, dataset_id, dataset_version, revision"
+                in grant_constraints
+            )
+
+            audit_constraint = await connection.scalar(
+                text(
+                    """
+                    SELECT pg_get_constraintdef(constraint_row.oid)
+                    FROM pg_constraint AS constraint_row
+                    JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid
+                    JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                    WHERE namespace.nspname = :schema
+                      AND relation.relname = 'audit_entry'
+                      AND pg_get_constraintdef(constraint_row.oid) LIKE '%event_kind%'
+                      AND pg_get_constraintdef(constraint_row.oid) LIKE '%AUTHORIZATION%'
+                    """
+                ),
+                {"schema": database.schema},
+            )
+            assert audit_constraint is not None
+            assert "CONTROL" in audit_constraint
+    finally:
+        await engine.dispose()
+
+
 def _login_url(database: _ProtectedDatabase, login: str) -> URL:
     return make_url(database.url).set(username=login, password=database.password)
 
@@ -315,6 +401,23 @@ async def test_limited_logins_have_plane_specific_column_privileges(
                 {"digest": "a" * 64},
             )
             await connection.rollback()
+        control_forbidden_statements = (
+            f"INSERT INTO {_quote(database.schema)}.protected_identity "
+            "(database_login, actor_id, actor_namespace, principal_role, identity_plane) "
+            "VALUES ('forbidden-control-identity', 'forbidden-actor', 'GITHUB_LOGIN', 'HOLDOUT_AUTHOR', 'DATA')",
+            f"UPDATE {_quote(database.schema)}.protected_identity SET enabled = false",
+            f"INSERT INTO {_quote(database.schema)}.protected_dataset "
+            "(dataset_id, dataset_version, binding, manifest_sha256, protected_artifact_sha256, "
+            "hmac_key_version, state, state_revision, authored_count, review_complete) VALUES "
+            "('forbidden-dataset', '1.0.0', '{}'::jsonb, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', "
+            "'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', "
+            "'forbidden-key', 'ACCESS_AUTHORIZED', 1, 0, false)",
+            f"UPDATE {_quote(database.schema)}.protected_dataset SET state = 'FROZEN'",
+        )
+        for statement in control_forbidden_statements:
+            async with control_engine.connect() as connection:
+                with pytest.raises(DBAPIError):
+                    await connection.execute(text(statement))
         async with control_engine.connect() as connection:
             with pytest.raises(DBAPIError):
                 await connection.execute(text(f"SELECT envelope FROM {_quote(database.schema)}.protected_artifact"))
