@@ -207,7 +207,7 @@ jobs:
           ISSUE398_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
           PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
         run: |
-          uv run coverage run -m pytest backend/app tests/contract tests/integration/rag tests/integration/test_worker_ocr_persistence.py tests/integration/test_outbox_publisher.py tests/integration/test_worker_job_execution_repository.py tests/integration/test_worker_dlq_outbox_repository.py tests/integration/test_worker_recovery_repository.py
+          uv run coverage run -m pytest backend/app tests/contract tests/integration/rag tests/integration/test_worker_ocr_persistence.py tests/services tests/integration/test_outbox_publisher.py tests/integration/test_worker_job_execution_repository.py tests/integration/test_worker_dlq_outbox_repository.py tests/integration/test_worker_recovery_repository.py
 
       # #347은 앱 기본 test DB로 fallback하지 않고 전용 migrated DB에서 권한·삭제를 검증합니다.
       - name: Verify isolated Source cleanup workflow
