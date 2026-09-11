@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { KeyboardEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import type { CurrentUser } from '../api/users'
 import bellIcon from '../assets/icon-bell-notification.svg'
@@ -73,6 +74,35 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
   const [isOnboardingOpen, setIsOnboardingOpen] =
     useState(shouldShowOnboarding)
 
+  const onboardingDialogRef = useRef<HTMLElement>(null)
+
+  const handleOnboardingKeyDown = (
+    event: KeyboardEvent<HTMLElement>,
+  ) => {
+    if (event.key === 'Escape') {
+      setIsOnboardingOpen(false)
+      return
+    }
+
+    if (event.key !== 'Tab') return
+
+    const buttons =
+      onboardingDialogRef.current?.querySelectorAll<HTMLButtonElement>('button')
+
+    if (!buttons || buttons.length === 0) return
+
+    const firstButton = buttons[0]
+    const lastButton = buttons[buttons.length - 1]
+
+    if (event.shiftKey && document.activeElement === firstButton) {
+      event.preventDefault()
+      lastButton.focus()
+    } else if (!event.shiftKey && document.activeElement === lastButton) {
+      event.preventDefault()
+      firstButton.focus()
+    }
+  }
+
   useEffect(() => {
     if (!shouldShowOnboarding) return
 
@@ -82,6 +112,16 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
       state: null,
     })
   }, [navigate, shouldShowOnboarding])
+
+  useEffect(() => {
+    if (!isOnboardingOpen) return
+
+    const firstButton =
+      onboardingDialogRef.current?.querySelector<HTMLButtonElement>('button')
+
+    firstButton?.focus()
+  }, [isOnboardingOpen])
+
   const userName = currentUser.name.trim()
   const today = useMemo(
     () =>
@@ -195,11 +235,14 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
           className="mvp-onboarding-backdrop"
           onClick={() => setIsOnboardingOpen(false)}
         >
+
           <section
+            ref={onboardingDialogRef}
             className="mvp-onboarding-sheet"
             role="dialog"
             aria-modal="true"
             aria-labelledby="prescription-onboarding-title"
+            onKeyDown={handleOnboardingKeyDown}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="mvp-onboarding-sheet__handle" aria-hidden="true" />
@@ -225,7 +268,7 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
               처방전을 사진으로 찍으면 도지가
               <br />
               복약 알림과 가이드를 자동으로 완성해 드려요
-              </p>
+            </p>
 
               <div className="mvp-onboarding-sheet__actions">
                 <Button
