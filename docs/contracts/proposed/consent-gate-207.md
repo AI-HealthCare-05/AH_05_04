@@ -112,7 +112,7 @@ OCR Worker는 `ocr_job.document_id -> medical_document.uploaded_by` 조인으로
 
 동의 철회로 인한 `STALE + BLOCKED`는 처방 버전 변경으로 인한 기존 `STALE + BLOCKED`와 반드시 구분한다. 후속 구현 PR은 공개 Job DTO를 확장하지 않더라도 저장 레벨의 내부 차단 사유를 남겨야 한다. 동의 철회 사유는 `CONSENT_WITHDRAWN`으로 기록하고, 처방 버전 변경 사유와 섞지 않는다. 현재 스키마에 적절한 저장 위치가 없으면 Job/Attempt 내부 reason 컬럼 또는 감사 테이블 등 공개 응답이 아닌 저장 경계를 함께 추가한다.
 
-동의 철회 STALE은 Provider 호출 전 차단이므로 Guide/Chat/RAG 결과를 생성하지 않는다. 따라서 생성 결과에 대한 `release_decision=STALE` 또는 `is_current=false` 판정을 새로 만들지 않는다. 이미 생성된 결과를 현재성 상실로 무효화하는 처방 버전 변경 STALE과 별도 원인으로 기록한다.
+동의 철회 STALE은 Provider 호출 전 차단이므로 Guide/Chat/RAG 결과를 생성하지 않는다. 이 차단은 RAG 실행 경로에 진입하기 전의 동의 Gate 차단이므로 Job 종결 단위의 `release_decision=STALE` 대상이 아니다. 생성된 결과도 없으므로 결과 단위의 `is_current=false` 판정을 새로 만들지 않는다. 이미 생성된 결과를 현재성 상실로 무효화하는 처방 버전 변경 STALE과 별도 원인으로 기록한다.
 
 OCR에는 `STALE` 도메인 상태가 없으므로 `OcrStatus.FAILED`와 `error_code=CONSENT_WITHDRAWN`을 사용한다. `CONSENT_WITHDRAWN`은 Worker 공통 FailureCode가 아니라 OCR 도메인 실패 사유다.
 
@@ -153,7 +153,7 @@ OCR에는 `STALE` 도메인 상태가 없으므로 `OcrStatus.FAILED`와 `error_
 | `owner_mismatch` | 차단 |
 | `withdrawn_after_acceptance` | Provider 호출 0건, Attempt `BLOCKED`, Job `STALE`, 내부 사유 `CONSENT_WITHDRAWN`, OCR `FAILED` |
 | `stale_reason_prescription_changed` | 처방 버전 변경 STALE과 동의 철회 STALE이 저장 레벨 내부 사유로 구분됨 |
-| `withdrawn_after_acceptance_no_result` | Guide/Chat/RAG 결과를 생성하지 않고 `release_decision` 또는 `is_current` 판정을 새로 만들지 않음 |
+| `withdrawn_after_acceptance_no_result` | RAG 실행 경로 진입 전 차단으로 `release_decision` 대상이 아니며, Guide/Chat/RAG 결과를 생성하지 않아 결과 단위 `is_current` 판정을 새로 만들지 않음 |
 
 ## 11. Frontend 소비 경계
 
