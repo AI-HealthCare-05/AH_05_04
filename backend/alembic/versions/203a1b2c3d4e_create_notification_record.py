@@ -1,7 +1,7 @@
 """Create occurrence notifications (PD-203).
 
 Revision ID: 203a1b2c3d4e
-Revises: 166f20314253
+Revises: 423a1b2c3d4e
 """
 
 import sqlalchemy as sa

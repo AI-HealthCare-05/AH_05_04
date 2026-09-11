@@ -8,8 +8,8 @@
 | 소비 계약 리뷰 | 남한솔 (`solia142`) |
 | 상태 | 구현 브랜치 검증 · 지정 리뷰어 승인 및 #202 일정 API/Frontend 통합 대기 |
 | 계약 | [PD-203 Notification](../../contracts/proposed/track-b-notifications-v1.md), 선행 문서 PR #415 |
-| 기반 | develop `c97f20f7` (#412·#429·#427 병합 반영) |
-| Migration head | `203a1b2c3d4e` (base `166f20314253`), 단일 head |
+| 기반 | develop `29e163e6` (#438·#449 병합 반영) |
+| Migration head | `203a1b2c3d4e` (base `423a1b2c3d4e`), 단일 head |
 | Fixture | `notification-v1`: 코드에 고정된 합성 사용자·처방·KST 자정 사례 |
 | 환경 | Local, 작업 전용 PostgreSQL 17·Redis 7, 실제 사용자/외부 Provider 호출 없음 |
 
@@ -54,7 +54,7 @@ PYTHONPATH=backend:. uv run --env-file /path/to/local.env python -m app.commands
 
 실제 정기 실행 주기·배포 scheduler 등록은 이번 작업에서 수행하지 않았다. 배포 담당자가 부하·알림 지연 요구에 맞춰 one-shot 명령을 정기 호출하도록 연결해야 한다. Backend 배포 전 migration을 적용하고, 배치 중단·재시작에 따른 지연을 확인한다. 외부 Push/SMS/Email 발송 설정은 없다.
 
-Rollback 시 먼저 배치와 신규 쓰기를 중단하고 이전 애플리케이션으로 되돌리되 테이블·이력은 보존한다. 빈 테이블에서만 base `166f20314253`로 downgrade가 가능하다. 알림 이력이 있으면 guard가 중단하며 임의 삭제 후 재시도하지 않는다.
+Rollback 시 먼저 배치와 신규 쓰기를 중단하고 이전 애플리케이션으로 되돌리되 테이블·이력은 보존한다. 빈 테이블에서만 base `423a1b2c3d4e`로 downgrade가 가능하다. 알림 이력이 있으면 guard가 중단하며 임의 삭제 후 재시도하지 않는다.
 
 ## 남은 통합·완료 조건
 
@@ -67,8 +67,17 @@ Rollback 시 먼저 배치와 신규 쓰기를 중단하고 이전 애플리케�
 ## PR #430 CI migration 충돌 수정
 
 - 실패 실행: https://github.com/AI-HealthCare-05/AH_05_04/actions/runs/34480462277
-- 원인: develop의 #412·#429 migration 통합 후 `203a1b2c3d4e`와 `166f20314253` 두 head가 남아 upgrade head와 단일 head 검증이 실패했다.
-- 수정: 미머지 알림 revision의 부모를 166f20314253로 연결하고 단일 head 검증은 최신 동적 검사 방식을 유지한다. API·DTO·알림 상태 의미는 변경하지 않는다.
+- 원인: develop의 #412·#429 migration 통합 후 `203a1b2c3d4e`와 `3984b5c6d7e8` 두 head가 남아 upgrade head와 단일 head 검증이 실패했다.
+- 수정: 미머지 알림 revision의 부모를 `3984b5c6d7e8`로 연결했다. 이후 재연결 이력은 아래 최신 리뷰 반영 기록을 참조한다. API·DTO·알림 상태 의미는 변경하지 않는다.
 - 알림 migration 테스트는 별도 합성 DB에서 실행해 #398의 되돌릴 수 없는 전환이 다른 과거 migration 테스트에 영향을 주지 않도록 격리한다. downgrade는 알림 직전 부모까지만 검증하며 기존 이력 보존 guard를 유지한다.
 - 이 변경은 Backend·DB 담당 송은영의 재검토 대상이다. 이전 커밋 승인을 수정 커밋의 승인으로 간주하지 않는다.
 - 수정 후 로컬 migration suite 159개 및 실제 DB 단일 head·Trigger/RLS/제거 함수 검사 통과. Ruff lint/format 및 Mypy(543 source files) 통과. 전체 Backend·Worker 검사와 원격 CI 결과는 PR에서 이어서 확인한다.
+
+## 2026-09-11 최신 리뷰 반영
+
+- #416·#444·#372 및 #438 병합 후 부모 revision이 이동했다. 최신 기준 develop `29e163e6`의 migration tip은 `423a1b2c3d4e`이며 알림 `203a1b2c3d4e`는 그 뒤에 연결된다.
+- 리뷰에서 요청한 부모 revision 자동 조회는 `test_notification_migration.py`에 이미 반영되어 있다. `test_reject_contract_version_165.py`의 실제 DB 검증도 코드의 단일 head를 동적으로 읽는다.
+- 이번 수정은 실제 `down_revision`에 맞춘 migration 설명과 문서 정합화다. 알림 동작·API 및 migration 실행 코드는 변경하지 않는다.
+- #438은 먼저 병합됐으므로 #430이 후행 연결을 반영했다. 이후 다른 migration PR이 먼저 병합되면 #430 담당자가 최신 develop 반영 및 단일 head 재검증을 수행한다. 반복 충돌 사례는 #439에서 추적한다.
+- 초기 실행 결과와 이후 CI 결과는 각 기준 커밋의 증빙이며 최신 커밋 승인·배포 완료를 대신하지 않는다.
+- 이번 문서 정합화 검증: `verify_database_head.py --heads-only`, 변경 migration의 Ruff lint/format, 상대 링크·전체 diff·`git diff --check` 통과. 변경 직전 `fa0922d3`의 원격 CI 7/7 PASS: https://github.com/AI-HealthCare-05/AH_05_04/actions/runs/34577967315
