@@ -33,6 +33,7 @@ _SAFE_REASON_CODES = frozenset(
         "CAPABILITY_ALREADY_CONSUMED",
         "CAPABILITY_BINDING_MISMATCH",
         "CAPABILITY_EXPIRED",
+        "CONTROL_COMMAND_CONFLICT",
         "DATASET_BINDING_MISMATCH",
         "DATASET_STATE_MISMATCH",
         "FREEZE_EVIDENCE_INCOMPLETE",
@@ -92,6 +93,7 @@ class OpaqueRefNamespace(StrEnum):
 
 class ProtectedAuditEventKind(StrEnum):
     AUTHORIZATION = "AUTHORIZATION"
+    CONTROL = "CONTROL"
     OPERATION = "OPERATION"
 
 
@@ -106,6 +108,16 @@ class OperationAuditOutcome(StrEnum):
     INTENT = "INTENT"
     SUCCEEDED = "SUCCEEDED"
     UNKNOWN = "UNKNOWN"
+
+
+class ControlAuditOutcome(StrEnum):
+    SUCCEEDED = "SUCCEEDED"
+    DENIED = "DENIED"
+
+
+class ControlAuditTargetKind(StrEnum):
+    APPROVAL_SOURCE_EVENT = "APPROVAL_SOURCE_EVENT"
+    AUTHORIZATION_GRANT = "AUTHORIZATION_GRANT"
 
 
 class ProtectedAuditReason(StrEnum):
@@ -130,6 +142,7 @@ class ProtectedAuditReason(StrEnum):
     CAPABILITY_BINDING_MISMATCH = "CAPABILITY_BINDING_MISMATCH"
     CAPABILITY_EXPIRED = "CAPABILITY_EXPIRED"
     COMPLETED = "COMPLETED"
+    CONTROL_COMMAND_CONFLICT = "CONTROL_COMMAND_CONFLICT"
     DATASET_BINDING_MISMATCH = "DATASET_BINDING_MISMATCH"
     DATASET_STATE_MISMATCH = "DATASET_STATE_MISMATCH"
     FREEZE_EVIDENCE_INCOMPLETE = "FREEZE_EVIDENCE_INCOMPLETE"
@@ -366,7 +379,25 @@ class OperationAuditEntry(StrictContractModel):
     entry_sha256: Sha256Hex
 
 
-ProtectedAuditEntry = AuthorizationAuditEntry | OperationAuditEntry
+class ControlCommandAuditEntry(StrictContractModel):
+    event_kind: Literal[ProtectedAuditEventKind.CONTROL]
+    sequence: int = Field(ge=1)
+    event_id: str
+    command_kind: Literal["INGEST_APPROVAL", "GRANT", "REVOKE", "EXPIRE"]
+    executed_by: ActorIdentity
+    target_kind: ControlAuditTargetKind
+    target_id: str
+    command_sha256: Sha256Hex
+    outcome: ControlAuditOutcome
+    result_effective_revision: int | None = Field(ge=1)
+    authorization_audit_event_id: str | None
+    reason_code: ProtectedAuditReason
+    recorded_at: datetime
+    previous_entry_sha256: Sha256Hex | None
+    entry_sha256: Sha256Hex
+
+
+ProtectedAuditEntry = AuthorizationAuditEntry | OperationAuditEntry | ControlCommandAuditEntry
 
 
 class _VerificationSeal:
@@ -847,6 +878,9 @@ __all__ = [
     "ApprovalSourceEvidence",
     "AuthorizationAuditAction",
     "AuthorizationAuditEntry",
+    "ControlAuditOutcome",
+    "ControlAuditTargetKind",
+    "ControlCommandAuditEntry",
     "ControlImplementationBinding",
     "OpaqueLogicalRef",
     "OpaqueRefNamespace",
