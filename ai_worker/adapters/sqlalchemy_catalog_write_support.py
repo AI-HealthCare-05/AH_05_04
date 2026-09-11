@@ -84,6 +84,7 @@ _COMPONENT = table(
     column("amount_unit", String(50)),
     column("amount_text", String(100)),
     column("display_order", Integer),
+    column("release_profile", String(255)),
 )
 _SEARCH_ENTRY = table(
     "rag_medication_search_entry",
@@ -529,8 +530,6 @@ class SqlAlchemyCatalogWriteSupport:
         result: dict[str, UUID] = {}
         for row in (item for item in plan.rows if item.kind == "COMPONENT"):
             record = records[row.member_ref]
-            if record.get("release_profile") is not None:
-                raise CatalogDatabaseBindingError()
             display_order = record.get("component_order")
             if type(display_order) is not int or display_order < 1:
                 raise CatalogDatabaseBindingError()
@@ -543,11 +542,12 @@ class SqlAlchemyCatalogWriteSupport:
                 "amount_unit": _text(record, "strength_unit"),
                 "amount_text": None,
                 "display_order": display_order,
+                "release_profile": _optional_text(record, "release_profile"),
             }
             result[row.member_ref] = await self._upsert_row(
                 _COMPONENT,
                 values=values,
-                key_columns=("product_id", "ingredient_id", "component_role"),
+                key_columns=("product_id", "display_order"),
             )
         return result
 

@@ -275,6 +275,17 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 | Catalog 구성원 | `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component`, `rag_medication_search_entry` | Snapshot별 제품·성분·Alias 관찰·구성성분과 검색용 선택을 보관 |
 | Catalog 불변 구성 | `rag_catalog_set`, `rag_catalog_set_source`, `rag_catalog_set_member`, `rag_catalog_set_hash` | v2 manifest bytes, 전체 Source Snapshot/version, 실제 구성원 행, export/envelope hash 종류·계산 bytes를 한 Set에 결속. Python adapter는 INSERT·동일 내용 재사용만 제공하고 조회 시 전체를 재검증. 배포 Writer 권한 연결은 후속 |
 
+D-04 Component 전환안 (`e8c41a09d652`, #166 리뷰 대상):
+
+- `rag_medication_product_component`의 고유성은 `(product_id, display_order)`다.
+  같은 Ingredient·role의 반복 행은 서로 다른 명시적 순서와 참조로 보존한다.
+- `release_profile`은 nullable VARCHAR(255)이며 제공된 값만 저장한다.
+  Source의 자유 텍스트에서 방출형을 추론하지 않는다.
+- 같은 Snapshot의 Product·Ingredient composite FK는 유지한다. Python 검증·Repository
+  transaction과 일반 제약으로 무결성을 관리하며 RLS·Trigger를 추가하지 않는다.
+- 기존 순서 충돌은 migration을 중단시킨다. downgrade는 반복 행·release_profile 손실이
+  발생할 때 거부한다. 세부 호환성은 [D-04 결정안](governance/decisions/2026-09-11-catalog-component-occurrences.md)을 따른다.
+
 Source/Snapshot 책임 경계:
 
 | 테이블 | 책임 | Runtime 활성화와의 관계 |

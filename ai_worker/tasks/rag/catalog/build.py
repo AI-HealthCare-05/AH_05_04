@@ -68,6 +68,7 @@ class CatalogComponentInput:
     strength_value: str
     strength_unit: str
     release_profile: str | None = None
+    source_record_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,6 +282,14 @@ def _component(
                 "product_ref": product.product_ref,
                 "ingredient_ref": ingredient.ingredient_ref,
                 "component_role": input_record.component_role.value,
+            }
+            if input_record.source_record_key is None
+            else {
+                "reference_spec": "catalog-component-source-key-v1",
+                "product_ref": product.product_ref,
+                "source_record_key": require_official_identity_text(
+                    input_record.source_record_key, field_name="components.source_record_key"
+                ),
             },
         ),
         product_ref=product.product_ref,

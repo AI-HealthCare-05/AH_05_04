@@ -268,8 +268,7 @@ async def test_source_snapshot_catalog_chain_can_be_saved(db_session: AsyncSessi
     assert (
         await repository.get_component(
             product_id=product.id,
-            ingredient_id=ingredient.id,
-            component_role=RagMedicationComponentRole.ACTIVE_INGREDIENT,
+            display_order=component.display_order,
         )
         == component
     )
