@@ -18,6 +18,40 @@ _IMPLEMENTATION_FILES = (
     ("PROTECTED_ROLE_POLICY", "infra/python/protected_retrieval_role_policy.py"),
     ("ISOLATED_MIGRATION_ENV", "infra/protected_retrieval/env.py"),
     ("ISOLATED_MIGRATION", "infra/protected_retrieval/versions/368000000001_create_protected_retrieval.py"),
+    ("AUTHORIZATION_CONTROL_CONTRACT", "ai_worker/tasks/evaluation/protected_retrieval_control.py"),
+    ("POSTGRESQL_CONTROL_ADAPTER", "ai_worker/adapters/postgresql_protected_retrieval_control.py"),
+    (
+        "AUTHORIZATION_CONTROL_MIGRATION",
+        "infra/protected_retrieval/versions/368000000002_add_authorization_control.py",
+    ),
+)
+
+_TOP_LEVEL_FIELDS = frozenset(
+    {
+        "access_authorized",
+        "activation_blockers",
+        "actual_run_ref",
+        "approval_ingestion_status",
+        "authorization_control_c1_status",
+        "captured_at",
+        "dataset_lifecycle_freeze_status",
+        "decision",
+        "disposal_status",
+        "effective_enforcement_status",
+        "evidence_sha256",
+        "format_id",
+        "format_version",
+        "freeze_recorded",
+        "grant_revoke_expire_status",
+        "holdout_authored",
+        "implementation_files",
+        "issue",
+        "production_approval_source_connector_status",
+        "release_eligible",
+        "remaining_repository_scope",
+        "repository_adapter_status",
+        "verification",
+    }
 )
 
 
@@ -26,15 +60,22 @@ def _file_sha256(path: Path) -> str:
 
 
 def _validate(evidence: dict[str, JsonValue], repository_root: Path | None = None) -> None:
+    if set(evidence) != _TOP_LEVEL_FIELDS:
+        raise RuntimeError("Issue 368 evidence contains fields outside the allowlisted schema")
     expected_state: dict[str, JsonValue] = {
         "access_authorized": False,
+        "approval_ingestion_status": "IMPLEMENTED_IN_REPOSITORY",
         "actual_run_ref": None,
+        "authorization_control_c1_status": "IMPLEMENTED_IN_REPOSITORY",
         "disposal_status": "BLOCKED_BY_ISSUE_425",
         "effective_enforcement_status": "NOT_IMPLEMENTED",
         "freeze_recorded": False,
+        "grant_revoke_expire_status": "IMPLEMENTED_IN_REPOSITORY",
         "holdout_authored": False,
         "release_eligible": False,
         "repository_adapter_status": "PARTIALLY_IMPLEMENTED",
+        "production_approval_source_connector_status": "NOT_IMPLEMENTED",
+        "dataset_lifecycle_freeze_status": "NOT_IMPLEMENTED",
     }
     if any(evidence.get(key) != value for key, value in expected_state.items()):
         raise RuntimeError("Issue 368 evidence cannot promote an operational activation state")
@@ -56,17 +97,21 @@ def build_protected_retrieval_infrastructure_evidence(repository_root: Path) -> 
         "access_authorized": False,
         "activation_blockers": [
             "EXT_PRIV_001",
+            "PRODUCTION_APPROVAL_SOURCE_CONNECTOR",
             "REAL_ENVIRONMENT_PROVISIONING",
             "INDEPENDENT_BACKEND_SECURITY_VERIFICATION",
             "BACKUP_RESTORE_AND_ROTATION_EVIDENCE",
             "TRACK_F_EXTERNAL_GATE",
         ],
         "actual_run_ref": None,
-        "captured_at": "2026-09-10T00:00:00.000000Z",
+        "approval_ingestion_status": "IMPLEMENTED_IN_REPOSITORY",
+        "authorization_control_c1_status": "IMPLEMENTED_IN_REPOSITORY",
+        "captured_at": "2026-09-11T00:00:00.000000Z",
+        "dataset_lifecycle_freeze_status": "NOT_IMPLEMENTED",
         "decision": {
-            "id": "PD-368-20260909",
-            "path": "docs/governance/decisions/2026-09-09-protected-retrieval-runner-access-control.md",
-            "status": "APPROVED_TARGET_NOT_IMPLEMENTED_IN_REAL_ENVIRONMENT",
+            "id": "PD-368-R1",
+            "path": "docs/governance/decisions/2026-09-11-protected-retrieval-authorization-control.md",
+            "status": "CANDIDATE_COORDINATION_CONFIRMED_PR_REVIEW_REQUIRED",
         },
         "disposal_status": "BLOCKED_BY_ISSUE_425",
         "effective_enforcement_status": "NOT_IMPLEMENTED",
@@ -74,34 +119,31 @@ def build_protected_retrieval_infrastructure_evidence(repository_root: Path) -> 
         "format_id": "issue-273.protected-runner-infrastructure-adapter",
         "format_version": "1.0.0",
         "freeze_recorded": False,
+        "grant_revoke_expire_status": "IMPLEMENTED_IN_REPOSITORY",
         "holdout_authored": False,
         "implementation_files": [
             {"component": component, "path": path, "raw_sha256": _file_sha256(repository_root / path)}
             for component, path in _IMPLEMENTATION_FILES
         ],
         "issue": "#368",
+        "production_approval_source_connector_status": "NOT_IMPLEMENTED",
         "release_eligible": False,
         "remaining_repository_scope": [
-            "APPROVAL_EVIDENCE_INGESTION_SERVICE",
-            "GRANT_REVOKE_EXPIRE_SERVICE",
+            "PRODUCTION_APPROVAL_SOURCE_CONNECTOR",
             "DATASET_TRANSITION_AND_FREEZE_SERVICE",
         ],
         "repository_adapter_status": "PARTIALLY_IMPLEMENTED",
-        "required_reviewers": [
-            {"actor_id": "hazelnutflavoured", "scope": "PRODUCT_PRIVACY_SAFETY_EVALUATION"},
-            {"actor_id": "phina-io", "scope": "BACKEND_SECURITY"},
-        ],
         "verification": [
             {
-                "command_id": "KERNEL_CONFIG_RUNTIME",
-                "result": "163_PASSED",
+                "command_id": "AUTHORIZATION_CONTROL_RELATED",
+                "result": "107_PASSED",
             },
             {
-                "command_id": "DISPOSABLE_POSTGRESQL_MIGRATION_ADAPTER",
-                "result": "11_PASSED",
+                "command_id": "RUNTIME_ASSEMBLY",
+                "result": "24_PASSED",
             },
             {
-                "command_id": "DATABASE_LOGIC_POLICY_AND_SINGLE_HEAD",
+                "command_id": "WORKER_IMAGE_PROTECTED_OFF_IMPORT",
                 "result": "PASSED",
             },
         ],
@@ -122,8 +164,10 @@ def render_protected_retrieval_infrastructure_evidence(evidence: dict[str, JsonV
             "## 상태",
             "",
             "- Repository adapter: `PARTIALLY_IMPLEMENTED`",
-            "- Implemented scope: data-plane READ/WRITE/RUN transaction and audit boundary",
-            "- Remaining scope: approval ingestion, grant/revoke/expire, Dataset transition/FREEZE services",
+            "- Authorization control C1: `IMPLEMENTED_IN_REPOSITORY`",
+            "- Implemented scope: approval ingestion and grant/revoke/expire transaction·audit services",
+            "- Production approval source connector: `NOT_IMPLEMENTED`",
+            "- Dataset lifecycle/FREEZE service: `NOT_IMPLEMENTED`",
             "- Effective enforcement: `NOT_IMPLEMENTED`",
             "- Access authorized: `false`",
             "- HOLDOUT authored: `false`",
@@ -134,9 +178,9 @@ def render_protected_retrieval_infrastructure_evidence(evidence: dict[str, JsonV
             "",
             "## 검증",
             "",
-            "- Kernel·config·runtime focused suite: `163 passed`",
-            "- Disposable PostgreSQL migration·ACL·adapter suite: `11 passed`",
-            "- Database logic policy and protected Alembic single head: `passed`",
+            "- Authorization-control related suite: `107 passed`",
+            "- Runtime assembly suite: `24 passed`",
+            "- Protected-off Worker image import: `passed`",
             "- 실제 환경 좌표와 보호 데이터는 사용하지 않았습니다.",
             "",
             "## 활성화 전 필수 조건",

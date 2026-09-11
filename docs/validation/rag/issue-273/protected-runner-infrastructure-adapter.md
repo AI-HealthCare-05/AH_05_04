@@ -5,8 +5,10 @@
 ## 상태
 
 - Repository adapter: `PARTIALLY_IMPLEMENTED`
-- Implemented scope: data-plane READ/WRITE/RUN transaction and audit boundary
-- Remaining scope: approval ingestion, grant/revoke/expire, Dataset transition/FREEZE services
+- Authorization control C1: `IMPLEMENTED_IN_REPOSITORY`
+- Implemented scope: approval ingestion and grant/revoke/expire transaction·audit services
+- Production approval source connector: `NOT_IMPLEMENTED`
+- Dataset lifecycle/FREEZE service: `NOT_IMPLEMENTED`
 - Effective enforcement: `NOT_IMPLEMENTED`
 - Access authorized: `false`
 - HOLDOUT authored: `false`
@@ -17,9 +19,9 @@
 
 ## 검증
 
-- Kernel·config·runtime focused suite: `163 passed`
-- Disposable PostgreSQL migration·ACL·adapter suite: `11 passed`
-- Database logic policy and protected Alembic single head: `passed`
+- Authorization-control related suite: `107 passed`
+- Runtime assembly suite: `24 passed`
+- Protected-off Worker image import: `passed`
 - 실제 환경 좌표와 보호 데이터는 사용하지 않았습니다.
 
 ## 활성화 전 필수 조건
@@ -29,4 +31,4 @@
 - backup·restore·rotation 운영 증빙
 - Track F external gate 충족
 
-Evidence self hash: `0bcbfab9fe67050ea95b18fe8f3def690b638b3f488dc91f91a9983764ab34d3`
+Evidence self hash: `f0de9c58bf4a848c18e9005b964da388fb89bd3a4f0e8f4ebfca059e12777a47`

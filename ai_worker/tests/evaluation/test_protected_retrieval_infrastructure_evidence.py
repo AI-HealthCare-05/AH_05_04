@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 from ai_worker.tasks.evaluation.canonical import JsonValue
 from ai_worker.tasks.evaluation.protected_retrieval_infrastructure_evidence import (
     EVIDENCE_JSON_PATH,
@@ -19,9 +21,13 @@ def test_infrastructure_evidence_separates_implementation_from_activation() -> N
     evidence = build_protected_retrieval_infrastructure_evidence(REPOSITORY_ROOT)
 
     assert evidence["repository_adapter_status"] == "PARTIALLY_IMPLEMENTED"
+    assert evidence["authorization_control_c1_status"] == "IMPLEMENTED_IN_REPOSITORY"
+    assert evidence["approval_ingestion_status"] == "IMPLEMENTED_IN_REPOSITORY"
+    assert evidence["grant_revoke_expire_status"] == "IMPLEMENTED_IN_REPOSITORY"
+    assert evidence["production_approval_source_connector_status"] == "NOT_IMPLEMENTED"
+    assert evidence["dataset_lifecycle_freeze_status"] == "NOT_IMPLEMENTED"
     assert evidence["remaining_repository_scope"] == [
-        "APPROVAL_EVIDENCE_INGESTION_SERVICE",
-        "GRANT_REVOKE_EXPIRE_SERVICE",
+        "PRODUCTION_APPROVAL_SOURCE_CONNECTOR",
         "DATASET_TRANSITION_AND_FREEZE_SERVICE",
     ]
     assert evidence["effective_enforcement_status"] == "NOT_IMPLEMENTED"
@@ -40,10 +46,13 @@ def test_infrastructure_evidence_separates_implementation_from_activation() -> N
         "PROTECTED_ROLE_POLICY",
         "ISOLATED_MIGRATION_ENV",
         "ISOLATED_MIGRATION",
+        "AUTHORIZATION_CONTROL_CONTRACT",
+        "POSTGRESQL_CONTROL_ADAPTER",
+        "AUTHORIZATION_CONTROL_MIGRATION",
     ]
     verification = cast(list[dict[str, JsonValue]], evidence["verification"])
     assert verification[-1] == {
-        "command_id": "DATABASE_LOGIC_POLICY_AND_SINGLE_HEAD",
+        "command_id": "WORKER_IMAGE_PROTECTED_OFF_IMPORT",
         "result": "PASSED",
     }
 
@@ -75,6 +84,14 @@ def test_infrastructure_evidence_contains_only_non_sensitive_scalars() -> None:
             assert not any(fragment in value.casefold() for fragment in forbidden)
 
     inspect(evidence)
+
+
+def test_infrastructure_evidence_rejects_unallowlisted_recursive_fields() -> None:
+    evidence = build_protected_retrieval_infrastructure_evidence(REPOSITORY_ROOT)
+    evidence["unexpected"] = {"database_login": "must-not-appear"}
+
+    with pytest.raises(RuntimeError, match="allowlisted"):
+        render_protected_retrieval_infrastructure_evidence(evidence)
 
 
 def test_committed_infrastructure_evidence_matches_builder() -> None:
