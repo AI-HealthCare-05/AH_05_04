@@ -31,6 +31,7 @@ from app.models.medication_schedules import (
     MedicationScheduleStatus,
     MedicationScheduleTime,
 )
+from app.models.notifications import NotificationKind, NotificationRecord, NotificationStatus
 from app.models.ocr import ExtractedField, OcrJob
 from app.models.password_reset import PasswordResetToken
 from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
@@ -134,6 +135,9 @@ from app.models.refresh_session import RefreshSession
 from app.models.users import AccountStatus, Gender, User
 
 __all__ = [
+    "NotificationKind",
+    "NotificationRecord",
+    "NotificationStatus",
     "AccountStatus",
     "AiJob",
     "AiJobAttempt",

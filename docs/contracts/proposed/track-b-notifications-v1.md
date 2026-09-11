@@ -2,8 +2,8 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 문서 상태 | Proposed · 승인 전 구현 금지 |
-| 구현 상태 | Not implemented |
+| 문서 상태 | Proposed · 구현 PR 검토 대상 · current 승격 전 |
+| 구현 상태 | 구현 브랜치: 저장·목록·읽음·재알림·생성/게시 명령·처방 취소 port 연결. #202 일정 API/Frontend 통합과 지정 리뷰어 승인 대기 |
 | Decision | [PD-203](../../governance/decisions/2026-09-10-track-b-notifications.md) |
 | 구현 담당 | 권가빈 (`hazelnutflavoured`) |
 | 기술 리뷰 | 송은영 (`phina-io`) — Backend·DB·Security |
@@ -128,3 +128,20 @@ body는 `{scheduled_at: UTC RFC3339 timestamp}`이며 필수다. 서버는 시�
 - 동기 snapshot 암호화·1MiB cap·오류 미저장·일반 로그 비노출.
 - 실제 FastAPI 요청/응답과 OpenAPI 비교 및 #202와의 API 통합, no-store·공통 오류 검증.
 - Ruff·format·Mypy·기본 CI 및 관련 PostgreSQL 계약·통합 검증. AI/Provider 동작 변경이 없어 의료 AI eval 추가 대상은 아님.
+
+## 구현 PR 상세와 검토할 추가 사항
+
+이 절은 PD-203 제안의 구현 브랜치 명세이며 병합된 runtime 또는 Production 공개 승인을 의미하지 않는다.
+
+- ORM: `NotificationRecord`, migration `203a1b2c3d4e`(base `206a1b2c3d4e`). 필드는 위 표와 일치하며 DB의 UUID 저장은 기존 `UUIDChar`/CHAR(36) 패턴을 따른다.
+- FK `occurrence_id`는 `ON DELETE CASCADE`로 부모의 정식 삭제와 함께 알림을 정리한다. 일정 취소·처방 version 변경·Check-in 변경은 row를 삭제하지 않는다. 기존 부모 데이터 삭제 제한을 완화하지 않는다.
+- 목록·읽음의 타인/없는/미전달 알림은 `404 NOTIFICATION_NOT_FOUND`, 재알림의 타인/없는 occurrence는 기존 `404 MEDICATION_OCCURRENCE_NOT_FOUND`를 사용한다. Notification 404 명칭은 이번 구현 PR의 추가 오류 코드 검토 대상이다.
+- 읽음 operation ID는 `notification.read`, parent는 notification_id, fingerprint는 빈 object다. 재알림은 `medication-reminder.create`, parent는 occurrence_id, fingerprint는 UTC로 정규화된 scheduled_at이다. 정규화는 같은 instant의 offset 표현 차이를 제거한다.
+- Pydantic 구조 검증(필수 필드·timezone·추가 필드)은 서비스 진입 전 422다. 위 번호로 열거한 도메인 검증 순서는 유효 DTO의 신규 요청에 적용한다. 인증·소유권 확인 뒤 멱등 replay를 수행한다.
+- 저장·소유권·멱등성은 기존 같은 AsyncSession을 사용하며 처방 취소 adapter도 상위 transaction을 commit하지 않는다.
+- `python -m app.commands.process_notifications`는 한 번에 생성 최대 500 occurrence와 게시/취소 최대 500 occurrence를 처리한다. 생성과 게시는 각각 독립 transaction이다. 생성 commit 뒤 중단돼도 PENDING이 보존되어 다음 실행이 게시한다. 각 단계는 occurrence UUID 순으로 잠그고 `SKIP LOCKED`로 경쟁 중인 대상은 다음 실행에 처리한다. Notification row는 occurrence 뒤 ID 순으로 잠근다.
+- 프로세스 외부 정기 호출은 배포 설정에 연결해야 한다. 이번 PR은 수동 one-shot 명령까지 제공하며 scheduler 배포·실행 주기·운영 활성화는 수행하지 않는다. 외부 전송 채널은 없다.
+- #202의 Schedule PUT/PATCH·Occurrence GET은 현재 기반 develop에 없으므로 해당 라우터를 추가하거나 수정하지 않는다. 미전달 취소 adapter는 기존 B2 port에 연결하며, 일정 API의 동일 session 주입과 약 표시 DTO·Frontend E2E는 후속 통합 항목이다.
+- downgrade는 notification_record를 배타 잠금한 뒤 이력이 있으면 중단한다. 이력 삭제를 동반한 자동 rollback은 하지 않는다. 빈 DB의 downgrade/upgrade와 실제 제약은 migration 테스트로 검증한다.
+
+구현 검증과 실행 방법은 [#203 검증 기록](../../validation/track-b/issue-203-notifications.md)을 따른다.
