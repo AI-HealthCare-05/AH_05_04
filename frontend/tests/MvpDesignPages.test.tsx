@@ -15,7 +15,10 @@ const CURRENT_USER = {
   created_at: '2026-08-28T00:00:00Z',
 }
 
-function renderHome(currentUser = CURRENT_USER) {
+function renderHome(
+  currentUser = CURRENT_USER,
+  showPrescriptionOnboarding = false,
+) {
   function UploadRoute() {
     const location = useLocation()
 
@@ -30,7 +33,16 @@ function renderHome(currentUser = CURRENT_USER) {
   }
 
   return render(
-    <MemoryRouter initialEntries={['/']}>
+    <MemoryRouter
+      initialEntries={[
+        {
+          pathname: '/',
+          state: showPrescriptionOnboarding
+            ? { showPrescriptionOnboarding: true }
+            : null,
+        },
+      ]}
+    >
       <Routes>
         <Route path="/" element={<HomePage currentUser={currentUser} />} />
         <Route
@@ -79,6 +91,27 @@ describe('Dosey MVP design pages', () => {
       screen.getByRole('button', { name: '회원가입하고 시작하기' }),
     )
     expect(screen.getByText('회원가입 화면')).toBeTruthy()
+  })
+
+  it('#395 가입 직후 Home에서 처방전 온보딩을 표시하고 촬영 CTA를 새 처방 등록으로 연결한다', async () => {
+    renderHome(CURRENT_USER, true)
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '처방전을 등록해 볼까요?',
+      }),
+    ).toBeTruthy()
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '지금 처방전 촬영하기',
+      }),
+    )
+
+    expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
+    expect(screen.getByTestId('upload-intent').textContent).toBe(
+      'new-prescription',
+    )
   })
 
   it('HOME-01은 users/me 이름과 현재 날짜를 표시한다', async () => {

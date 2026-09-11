@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { login } from '../src/api/auth'
 import { ApiError } from '../src/api/client'
 import LoginPage from '../src/pages/LoginPage'
@@ -22,15 +22,22 @@ afterEach(() => {
 })
 
 describe('LoginPage', () => {
-  function renderPage() {
-    return render(
-      <MemoryRouter initialEntries={['/login']}>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/signup" element={<div>회원가입 화면</div>} />
-          <Route path="/" element={<div>홈 화면</div>} />
-        </Routes>
-      </MemoryRouter>,
+  function HomeStateProbe() {
+    const location = useLocation()
+
+    return (
+      <div>
+        홈 화면
+        <span>
+          {String(
+            (
+              location.state as {
+                showPrescriptionOnboarding?: boolean
+              } | null
+            )?.showPrescriptionOnboarding === true,
+          )}
+        </span>
+      </div>
     )
   }
 
@@ -42,6 +49,46 @@ describe('LoginPage', () => {
       target: { value: 'Password1!' },
     })
   }
+
+  function renderPage(fromSignup = false) {
+    return render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/login',
+            state: fromSignup ? { fromSignup: true } : null,
+          },
+        ]}
+      >
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/signup" element={<div>회원가입 화면</div>} />
+          <Route path="/" element={<HomeStateProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('#395 가입 직후 로그인 성공 시 Home onboarding 상태를 전달한다', async () => {
+    renderPage(true)
+    fillValidForm()
+
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }))
+
+    expect(await screen.findByText('홈 화면')).toBeTruthy()
+    expect(screen.getByText('true')).toBeTruthy()
+  })
+
+  it('#395 일반 로그인 성공 시 Home onboarding 상태를 전달하지 않는다', async () => {
+    renderPage(false)
+    fillValidForm()
+
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }))
+
+    expect(await screen.findByText('홈 화면')).toBeTruthy()
+    expect(screen.getByText('false')).toBeTruthy()
+  })
+
 
   it('AUTH-02 Figma 문구와 회원가입 경로를 렌더링한다', () => {
     renderPage()

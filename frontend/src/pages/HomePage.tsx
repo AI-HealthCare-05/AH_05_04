@@ -1,8 +1,8 @@
-import { useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import type { CurrentUser } from '../api/users'
 import bellIcon from '../assets/icon-bell-notification.svg'
-import { MobileShell } from '../design-system/components'
+import { Button, MobileShell } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
 import './MvpPages.css'
@@ -61,6 +61,27 @@ function HomeAdherenceCard() {
 
 function HomePage({ currentUser }: { currentUser: CurrentUser }) {
   const navigate = useNavigate()
+  const location = useLocation()
+
+  const shouldShowOnboarding =
+    (
+      location.state as {
+        showPrescriptionOnboarding?: boolean
+      } | null
+    )?.showPrescriptionOnboarding === true
+
+  const [isOnboardingOpen, setIsOnboardingOpen] =
+    useState(shouldShowOnboarding)
+
+  useEffect(() => {
+    if (!shouldShowOnboarding) return
+
+    // 한 번 소비한 가입 직후 상태를 history에서 제거
+    navigate('/', {
+      replace: true,
+      state: null,
+    })
+  }, [navigate, shouldShowOnboarding])
   const userName = currentUser.name.trim()
   const today = useMemo(
     () =>
@@ -169,8 +190,68 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
           <HomeAdherenceCard />
         </main>
       </MobileShell>
+      {isOnboardingOpen && (
+        <div
+          className="mvp-onboarding-backdrop"
+          onClick={() => setIsOnboardingOpen(false)}
+        >
+          <section
+            className="mvp-onboarding-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="prescription-onboarding-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mvp-onboarding-sheet__handle" aria-hidden="true" />
+
+            <div className="mvp-onboarding-sheet__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M8.5 7.5 9.8 5.8h4.4l1.3 1.7H18A2 2 0 0 1 20 9.5v7A2 2 0 0 1 18 18.5H6A2 2 0 0 1 4 16.5v-7a2 2 0 0 1 2-2h2.5Z"
+                  fill="currentColor"
+                />
+                <circle cx="12" cy="13" r="3" fill="white" />
+              </svg>
+            </div>
+
+            <h2
+              id="prescription-onboarding-title"
+              className="mvp-onboarding-sheet__title"
+            >
+              처방전을 등록해 볼까요?
+            </h2>
+
+            <p className="mvp-onboarding-sheet__description">
+              처방전을 사진으로 찍으면 도지가
+              <br />
+              복약 알림과 가이드를 자동으로 완성해 드려요
+              </p>
+
+              <div className="mvp-onboarding-sheet__actions">
+                <Button
+                  className="mvp-onboarding-sheet__primary"
+                  type="button"
+                  onClick={() =>
+                    navigate('/prescriptions/upload', {
+                      state: { intent: 'new-prescription' },
+                    })
+                  }
+                >
+                  지금 처방전 촬영하기
+                </Button>
+
+                <Button
+                  className="mvp-onboarding-sheet__secondary"
+                  type="button"
+                  onClick={() => setIsOnboardingOpen(false)}
+                >
+                  나중에 촬영할게요
+                </Button>
+              </div>
+            </section>
+          </div>
+        )}
     </div>
   )
 }
-
 export default HomePage
