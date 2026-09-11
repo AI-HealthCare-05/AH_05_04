@@ -818,6 +818,9 @@ async def test_merge_and_snapshot_seal_preserve_historical_rows(database, previo
                 fingerprint({key: value for key, value in row.items() if key != "management_lock_marker"})
                 == old_hashes[row["id"]]
             )
+    # Exercise the Source guard at its own revision before later irreversible migrations.
+    rollback = await migrate("downgrade", "39818293a4b5")
+    assert rollback.returncode != 0 and "cannot be downgraded" in rollback.stderr
     assert (await migrate("upgrade", "head")).returncode == 0
     await engine.dispose()
     async with engine.connect() as connection:
@@ -851,8 +854,6 @@ async def test_merge_and_snapshot_seal_preserve_historical_rows(database, previo
                 {"seal": current["verification_seal_id"], "id": str(pending_id)},
             )
     assert wrong_anchor.value.orig.sqlstate == "23503"
-    rollback = await migrate("downgrade", "39818293a4b5")
-    assert rollback.returncode != 0 and "cannot be downgraded" in rollback.stderr
 
 
 @pytest.mark.parametrize("review_status", ["PENDING", "APPROVED"])

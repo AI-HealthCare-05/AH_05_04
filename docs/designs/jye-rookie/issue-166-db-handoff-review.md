@@ -1,5 +1,11 @@
 # #166 DB 인계·결정 항목 검토표
 
+> 2026-09-11 갱신: 아래 표·공유 초안은 협의 전 이력이다. 현재 판단은
+> [#372 범위 확인](../../governance/decisions/2026-09-11-catalog-372-scope.md)을 따른다.
+> D-03a 조건부 동의와 Crosswalk 후속 방향 동의를 받았다. D-02를 #372의 추가 차단으로 재요청하지 않는다.
+> PR 책임 리뷰어는 송은영 1명이며 정현우의 구현 후 P0 의미 확인과 구분한다.
+
+
 - 작성: 김지혜 / 2026-09-08, 갱신 2026-09-09. 기준: develop `164b6c7d8e9f`(#355 병합 후), 후속 작업 `8aa6d904`.
 - 상태: **참고 구현 완료 / 결정·인계 미완료**. D-02는 미확정이다.
 - 아래 결정표는 제안이고, 브랜치 `feat/166-catalog-db-integration`에 그 제안을 구현한
@@ -29,7 +35,7 @@
 | --- | --- | --- | --- |
 | D-02 | **미확정 유지** | Snapshot 재사용과 Catalog 실행 구분, 같은 요청 재시도/새 버전 재처리, 복수 Snapshot 입력과 실행 결과의 관계 | 정본 실행/Publication의 의미, 실제 참조 키·생성 인터페이스·상태/재시도 연결, 구현 담당·적용 revision |
 | D-03 | 리뷰 요청안 | 안정 Identity upsert, 관찰 Alias 집합/적격 검색 집합 분리, 기존 boolean 근거 없는 변환 금지 | 정본 Alias/Crosswalk Set 대응·필수 범위, 물리 구성 key와 상태/불변성, 기존 행 이행 |
-| D-03a | **신설. 은영님 승인 필요** | `rag_medication_alias`(#291) 파괴적 변경: `product_id`·`ingredient_id`·`is_approved` 삭제, `target_identity_id`·`alias_source`·`review_status`·`record_status`·`is_effective` NOT NULL 신설. 기존 행이 1건이라도 있으면 migration을 `RuntimeError`로 거부한다(`_require_safe_legacy_rows`) | 컬럼 삭제 허용 여부, 기존 행 이행 방식(거부 유지 / 백필 규칙 정의), `is_approved` boolean을 `review_status`로 옮길 근거의 출처 |
+| D-03a | **2026-09-11 조건부 동의** | `rag_medication_alias`(#291) 파괴적 변경: `product_id`·`ingredient_id`·`is_approved` 삭제, `target_identity_id`·`alias_source`·`review_status`·`record_status`·`is_effective` NOT NULL 신설. 기존 행이 1건이라도 있으면 migration을 `RuntimeError`로 거부한다(`_require_safe_legacy_rows`) | 기존 행 거부·추론 백필 금지 유지. 세부 코드와 조건 충족은 이번 PR에서 송은영 리뷰 |
 | D-04 | 보수적 유지안·실제 Source 근거 미확보 | role 포함 자연키 유지, 함량 문자열 보존, 명시적 FK INSERT | 원본 키 추가 필요성·실데이터 근거, 실행별 unique, 컬럼 이행 |
 | D-05 | **현재 v2 계산·인계 유지**, 물리 저장 리뷰 필요 | 종류/spec/digest/계산 근거를 같은 불변 구성에 연결. digest 단독 unique/FK 금지안 | 기존 구성/Set에 붙일 저장 위치·키·불변성. 새 projection/Runtime hash는 별도 계약 전환 |
 | D-06 | 리뷰 요청안 | adapter transaction 소유, commit 뒤 정상 반환, 같은 요청 재현/다른 내용 거부, 불명확 commit 재조회 | 확정 요청 key·공유 잠금/승인 revision·감사 경계·실패 분류·재시도 한도 |

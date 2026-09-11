@@ -96,8 +96,11 @@ class RagEntityIdentity(Base):
 
 
 class RagMedicationProduct(Base):
+    catalog_lock_marker: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+
     __tablename__ = "rag_medication_product"
     __table_args__ = (
+        CheckConstraint("catalog_lock_marker = 0", name="chk_rag_medication_product_catalog_lock_marker"),
         UniqueConstraint(
             "source_snapshot_id",
             "code_system",
@@ -227,8 +230,11 @@ class RagMedicationIngredient(Base):
 
 
 class RagMedicationAlias(Base):
+    catalog_lock_marker: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+
     __tablename__ = "rag_medication_alias"
     __table_args__ = (
+        CheckConstraint("catalog_lock_marker = 0", name="chk_rag_medication_alias_catalog_lock_marker"),
         Index("idx_rag_medication_alias_snapshot", "source_snapshot_id"),
         Index("idx_rag_medication_alias_normalized_text", "normalized_alias_text"),
         Index(

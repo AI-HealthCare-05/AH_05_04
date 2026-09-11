@@ -1,7 +1,7 @@
 # #166 저장 준비·복원 자료의 Candidate v2 인계
 
 상태: **PostgreSQL commit·read-back·Candidate v2 인계 구현 및 합성 검증 완료**.
-작성·구현: 김지혜. Candidate·RAG 리뷰: 정현우. DB 연결 리뷰: 송은영.
+작성·구현: 김지혜. PR 책임 리뷰어: 송은영 1명. 정현우: P0 Candidate 범위 방향 협의·구현 후 의미 확인.
 
 ## 전달 경로와 실제 구현 상태
 
@@ -21,11 +21,11 @@
 
 ## 유지하는 후속 범위
 
-- #436 `dc745a4`의 실제 Snapshot Receipt provenance 검증을 저장·조회 경로에 연결했다. 선행 PR 리뷰·병합 후 재정렬은 남아 있다.
+- #436·#444가 병합된 develop `4a7d294`를 반영했다. 실제 Snapshot Receipt provenance 검증을 저장·조회에서 소비한다.
 - D-02 실행 provenance, Authority projection/Runtime hash 등의 합의된 후속 경계는 그대로 유지한다.
   ingestion run·version·member_ref·hash로 정본 normalization 실행 ID를 대체하지 않는다.
 - 현재 승인 포트는 합성 응답으로 검증한다. 실제 승인 저장소·권한·만료·회수 조회 및 동시 철회 보장은 별도 연결 범위다.
-- 배포용 Catalog Writer 권한 연결은 후속이다. 이번 변경으로 신규 Catalog 테이블의 DB 권한을 광범위하게 부여하지 않는다.
+- 별도 Catalog Writer 연결은 이번 PR에 구현했다. 실제 승인·철회·감사 저장소와 Runtime 활성화는 후속이다.
 - 저장 성공이나 합성 Candidate build 성공은 Runtime 활성화·Source 승인·Production 공개를 의미하지 않는다.
 
 ## PostgreSQL 재현과 검증
@@ -47,7 +47,7 @@ Catalog migration 순서는 최신 develop의 `3984b5c6d7e8 → 166a7b8c9d0e →
 기존 과거 revision 회귀는 그대로 유지하고, #166 신규 migration 검사는 독립 DB에서 실행한다.
 기존 Alias 등 근거 없이 변환할 수 없는 데이터는 계속 migration을 중단한다.
 
-## 이번 단계 검증 결과
+## 이전 단계 검증 결과 (작성 당시 기록)
 
 - Catalog·Candidate 단위 테스트: **284 passed**.
 - 실제 commit·read-only 복원·변조 거부·승인 철회·동시 재시도 및 기존 Catalog 저장소: **38 passed**.
@@ -132,7 +132,7 @@ shasum -a 256 tests/fixtures/rag/catalog/hash-v2/catalog.jsonl tests/fixtures/ra
 - 신규 merge revision `166d0e1f2031`은 기존 `166c9d0e1f20` 및 `362c3d4e5f60` 이력을 합친다.
   과거 migration을 수정하지 않고 schema/data 변경이나 Trigger/RLS/업무 DB 함수 없이 단일 head를 만든다.
 - 확정 v2 입력·출력은 유지한다. D-02·D-03 Authority Set·D-04 Authority 차이 결정·D-05 후속 hash와
-  실제 승인/감사 저장소·Catalog Writer 연결이 모두 완료됐다고 해석하지 않는다.
+  당시 실제 승인/감사 저장소·Catalog Writer 연결이 모두 완료된 상태는 아니었다. 최신 Writer 연결은 아래 기록을 따른다.
 
 - 이미 transaction이 열린 외부 connection 주입은 첫 Catalog 쓰기 전에 거부한다. 기존 Backend
   테스트의 외부 transaction/savepoint를 commit 증빙으로 사용하지 않는다. 실제 commit·재사용은
@@ -161,4 +161,69 @@ shasum -a 256 tests/fixtures/rag/catalog/hash-v2/catalog.jsonl tests/fixtures/ra
 전체 스크립트를 다시 실행한 최종 결과다. 실제 commit·재사용 증빙은 독립 DB roundtrip에서 유지한다.
 
 원격 push·CI·담당자 승인·운영 적용은 이번 로컬 검증에 포함하지 않는다. 실제 승인 저장소/철회,
-실패 감사 저장소와 Catalog Writer 연결 및 합의된 후속 계약이 남아 있으므로 #372는 Draft 범위다.
+당시 실패 감사 저장소와 Catalog Writer 연결 및 후속 계약이 남아 있었다. 최신 #372 경계는 아래 기록을 따른다.
+
+
+## 2026-09-11 최종 구현과 재현
+
+- 기준: develop `4a7d294`(#444 포함). 기존 migration을 수정하지 않고
+  `166e1f203142`에서 #372·#444 이력을 합친 뒤 `166f20314253`에서 잠금 marker를 추가한다.
+- [담당자 의견·범위 확인](../governance/decisions/2026-09-11-catalog-372-scope.md):
+  D-03a 조건부 동의, Crosswalk 후속 방향 동의. D-02 추가 결정 요청 없음.
+- `test_catalog_writer_login_saves_and_reuses_without_payload_update`: 실제 별도 로그인으로 저장·재사용·복원,
+  Runtime INSERT 거부, Writer 원문/상태/Source 승인 기록 변경 거부, 새 테이블 접근 거부,
+  marker CHECK 및 추가 컬럼 권한이 있는 로그인 차단을 검증한다. 권한 provisioning 재실행도 확인한다.
+- `test_successful_source_run_reaches_catalog_and_candidate`: 합성 MFDS 원문을 #444 수집 경로로 저장하고,
+  그 결과의 실제 Snapshot Receipt ID/version을 사용해 Catalog 저장·복원·Candidate 생성을 확인한다.
+  정본 normalization 실행이나 실제 승인 저장소를 구현한 테스트가 아니다. 승인 verifier는 명시적인 합성 대역이다.
+
+### 격리된 Catalog Writer 실행
+
+1. 관리자가 migration을 head까지 적용하고 **별도 비관리자 LOGIN**을 준비한다.
+   Catalog 계정은 migration 소유자·Runtime·Source Writer·Source 관리 계정과 달라야 하며
+   역할 상속/SET ROLE, DB·schema·table 소유권을 가지면 안 된다.
+2. 일회성 관리자 provisioning 환경에 기존 필수 설정과 `CATALOG_WRITER_USER`를 지정하고
+   `python -m infra.python.provision_database_roles`를 실행한다. 계정 생성·비밀번호 관리는 기존
+   운영 secret 절차에서 한다. 이 명령은 계정을 생성하거나 Catalog 비밀번호를 받지 않는다.
+   재배포에서도 이 설정을 유지해 Catalog cutover 정책을 마지막에 적용한다.
+3. 실행 프로세스에는 `CATALOG_WRITER_HOST`, `CATALOG_WRITER_PORT`, `CATALOG_WRITER_NAME`,
+   `CATALOG_WRITER_USER`, `CATALOG_WRITER_PASSWORD`만 전달한다. Runtime/관리자/다른 Writer
+   비밀번호를 함께 주입하면 거부한다. 일반 Backend/Worker 설정에 Writer secret을 넣지 않는다.
+4. 기존 build 요청·승인 verifier를 호출자가 전달한다. 새로운 승인 응답을 임의 생성하지 않는다.
+
+```python
+async with catalog_writer_repository(isolated_environment) as repository:
+    result = await build_catalog_candidate(
+        request=request,
+        repository=repository,
+        approval_verifier=approval_verifier,
+    )
+```
+
+`catalog_writer_repository`는 `ai_worker.admin.catalog_writer`, `build_catalog_candidate`는
+`ai_worker.tasks.rag.catalog.service`에 있다. 이 연결은 별도 실행 조립용이며 Runtime 자동 호출·
+배포·공개를 활성화하지 않는다. 새 Writer로 Source 승인·철회나 Snapshot 상태를 변경할 수 없다.
+실제 승인 저장소가 없는 환경에서는 이 연결만으로 운영 공개를 시작할 수 없다.
+
+### 이번 검증 결과
+
+- Catalog DB 왕복 기존 회귀 20건 통과, 별도 Writer 통합 1건 통과.
+- #444 reject 계약 및 실제 Source→Catalog→Candidate 연결 29건 통과.
+
+| 필수 검사 | 결과 |
+| --- | --- |
+| Migration 전체 | 198 passed, 3 skipped |
+| Backend·계약·PostgreSQL 전체 | 1844 passed, 65 skipped |
+| Worker 전체 | 2974 passed, 8 skipped |
+| Redis 통합 | 23 passed |
+| Ruff / format / Mypy | 통과 (733 files / 562 typed source files) |
+| Worker 실제 이미지 빌드·Source/Catalog import | 통과 |
+| 신규 DB 업무 함수·Trigger·RLS / 보호 테이블 쓰기 검사 | 통과 |
+
+전체 CI 실행에서 migration·Worker는 통과했고 Backend에서 테스트 환경의 확장 조회 경로 및
+과거 downgrade 기준 문제가 발견됐다. 테스트 fixture를 수정한 뒤 **Backend lane 전체와 Redis lane**을
+새 test DB에서 다시 실행해 통과했다. 통과한 migration·Worker는 변경하지 않았으며, 새 #435 병합은 문서만 변경했다.
+집중 검증 수치는 전체 lane과 겹치므로 합산하지 않는다. skipped는 별도 opt-in 실행 환경을 요구하는
+기존 검사이며 실제 Catalog Writer·Source Receipt 인계 검사는 skip 없이 실행했다.
+최종 DB head `166f20314253`에서 사용자 Trigger·RLS·제거 대상 함수 0개를 확인했다.
+이 결과는 로컬 검증이며 원격 CI·담당 리뷰·운영 적용은 별도다.

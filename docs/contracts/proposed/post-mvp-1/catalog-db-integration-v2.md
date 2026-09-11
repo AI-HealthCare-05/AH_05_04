@@ -1,7 +1,7 @@
 # #166 Catalog DB 적재·저장 연결안
 
 - 상태: **Proposed / 현행 v2 DB 저장·복원·Source Receipt 연결 구현**. 합성 검증과 담당자 승인은 구분한다. D-02는 합의된 후속 경계를 유지한다.
-- 구현 담당: 김지혜. Candidate·의미 계약 검토: 정현우. DB·FK·transaction 검토: 송은영.
+- 구현 담당: 김지혜. PR 책임 리뷰어: 송은영 1명. 정현우: P0 Candidate 범위 방향 협의·구현 후 의미 확인.
 - 현재 적용 기준: [기존 v2 계약](../../targets/post-mvp-1/catalog-build-v2.md).
 - 최신 협의 기준: 김지혜가 제공한 D-05 v2 검토 반영본. 원본 공유 문서 자체를 복제하지 않는다.
 - Source 인계 기준: [Source 계약](../../targets/post-mvp-1/rag-source-ingestion-v1.md).
@@ -29,9 +29,29 @@ Snapshot ID·version을 요청과 대조하고 `validate_provenance()`를 호출
 과거의 임의 version을 새 규칙으로 보정하지 않는다. 저장 직후 성공 확인도 전체 DB read-back을
 사용하여 구성원 행·Source Receipt·Set·hash가 원래 저장 계획과 같은지 대조한다.
 이 연결은 Source provenance 검증이며 Source/Catalog 승인이나 Freshness 판정을 대신하지 않는다.
-현재 승인 포트와 v2 export/receipt/hash 의미는 유지한다. 선행 #436의 리뷰·병합은 별도다.
-D-02 등 합의된 후속 범위, 실제 승인/감사 저장소와 배포 Writer 권한 연결은 유지한다. 저장 성공을 publication 승인 또는 Runtime 활성화로 취급하지 않으며 임의 실행 키를 만들지 않는다.
+현재 승인 포트와 v2 export/receipt/hash 의미는 유지한다. #436·#444 병합 후 develop `4a7d294`를 반영했다.
+D-02 등 합의된 후속 범위와 실제 승인/감사 저장소는 유지한다. 별도 Catalog Writer 연결은 아래와 같이 구현한다. 저장 성공을 publication 승인 또는 Runtime 활성화로 취급하지 않으며 임의 실행 키를 만들지 않는다.
 본 문서의 proposed 상태와 담당 리뷰 경계는 변경하지 않는다.
+
+
+### 2026-09-11 담당자 의견과 Writer 연결
+
+[범위 확인 기록](../../../governance/decisions/2026-09-11-catalog-372-scope.md)을 따른다.
+D-03a는 기존 Alias 행이 있으면 중단하고 boolean 상태를 추론하지 않는 조건으로 동의받았다.
+Crosswalk는 승인 매핑 범위 없이 생성하지 않고 후속으로 유지한다. D-02는 추가 결정을
+재요청하는 이번 PR 차단 사안이 아니다. PR 책임 리뷰어는 송은영 1명이다.
+
+`catalog_writer_repository(environment)`가 별도 로그인과 실제 권한을 검증한 뒤 기존
+`SqlAlchemyCatalogBuildRepository`를 조립한다. Runtime/Source Writer/관리자 credential과
+함께 주입되면 거부한다. `provision_roles(..., catalog_writer=...)`는 기존 Source/관리 권한 적용 후
+Catalog 정책을 마지막에 적용한다. Runtime의 기존 Catalog INSERT 권한을 회수하고 SELECT만 남긴다.
+Writer는 Catalog 10개 테이블 SELECT·INSERT와 Receipt 조회에 필요한 Source 5개 테이블 SELECT만 가진다.
+잠금에는 Snapshot의 기존 `management_lock_marker`, Product/Alias의 `catalog_lock_marker` UPDATE만
+허용한다. 세 marker는 CHECK로 0에 고정된다. 원문·review_status·검증·승인 이력 수정 권한은 없다.
+테이블/컬럼의 실제 권한이 allowlist와 다르거나 관리자·소유자·역할 상속이 있으면 연결을 거부한다.
+새 테이블에 암묵적 쓰기 권한을 부여하지 않는다. [실행 안내](../../../testing/catalog-storage-handoff-166.md)를 따른다.
+
+## 단계별 설계 이력 (아래 미구현 표시는 당시 상태)
 
 
 `ai_worker/tasks/rag/catalog/storage.py::prepare_catalog_storage`는 검증된 v2 구성원과

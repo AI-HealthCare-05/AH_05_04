@@ -365,3 +365,78 @@ async def test_post_commit_confirmation_checks_member_rows_before_reporting_succ
         await repository.save_build(members=members, artifacts=artifacts)
     async with factory() as session:
         assert await session.scalar(select(func.count()).select_from(RagCatalogSet)) == 1
+
+
+async def test_catalog_writer_login_saves_and_reuses_without_payload_update(database):
+    from sqlalchemy.exc import DBAPIError
+
+    from ai_worker.admin.catalog_writer import catalog_writer_repository
+    from infra.python.provision_database_roles import provision_roles
+
+    engine, factory = database
+    suffix = uuid4().hex[:12]
+    runtime, source_writer, writer = (f"catalog372_{part}_{suffix}" for part in ("runtime", "source", "writer"))
+    password = "synthetic-catalog372-only"
+    environment = {
+        "CATALOG_WRITER_HOST": engine.url.host,
+        "CATALOG_WRITER_PORT": str(engine.url.port),
+        "CATALOG_WRITER_NAME": engine.url.database,
+        "CATALOG_WRITER_USER": writer,
+        "CATALOG_WRITER_PASSWORD": password,
+    }
+    producer = create_async_engine(engine.url.set(username=writer, password=password))
+    reader = create_async_engine(engine.url.set(username=runtime, password=password))
+    try:
+        async with engine.begin() as connection:
+            for role in (runtime, source_writer, writer):
+                await connection.execute(text(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"))
+            # Redeployment must preserve the final Catalog cutover, not restore legacy Runtime INSERT.
+            for _ in range(2):
+                await provision_roles(
+                    connection, owner=config.DB_USER, runtime=runtime, writer=source_writer, catalog_writer=writer
+                )
+            await connection.execute(text("CREATE TABLE future_catalog_fixture (id integer)"))
+        members, artifacts, verifier = approved_build()
+        async with catalog_writer_repository(environment) as repository:
+            await repository.save_build(members=members, artifacts=artifacts)
+            await repository.save_build(members=members, artifacts=artifacts)
+            async with factory() as session:
+                assert await session.scalar(select(func.count()).select_from(RagCatalogSet)) == 1
+                set_id = await session.scalar(select(RagCatalogSet.id))
+            assert await repository.load_build(set_id, approval_verifier=verifier) == artifacts
+        runtime_repository = SqlAlchemyCatalogBuildRepository(async_sessionmaker(reader, expire_on_commit=False))
+        assert await runtime_repository.load_build(set_id, approval_verifier=verifier) == artifacts
+        denied = [
+            (producer, "UPDATE rag_medication_product SET product_name='changed'"),
+            (producer, "UPDATE rag_medication_alias SET review_status='REJECTED'"),
+            (producer, "UPDATE rag_source_snapshot SET verification_status='VERIFIED'"),
+            (producer, "DELETE FROM rag_catalog_set"),
+            (producer, "TRUNCATE rag_catalog_set_hash"),
+            (producer, "INSERT INTO rag_source_snapshot_verification DEFAULT VALUES"),
+            (producer, "INSERT INTO future_catalog_fixture VALUES (1)"),
+            (reader, "INSERT INTO rag_medication_product DEFAULT VALUES"),
+            (reader, "INSERT INTO rag_catalog_set DEFAULT VALUES"),
+            (reader, f'SET ROLE "{writer}"'),
+        ]
+        for login, statement in denied:
+            with pytest.raises(DBAPIError) as error:
+                async with login.begin() as connection:
+                    await connection.execute(text(statement))
+            assert error.value.orig.sqlstate == "42501"
+        with pytest.raises(DBAPIError) as error:
+            async with producer.begin() as connection:
+                await connection.execute(text("UPDATE rag_medication_product SET catalog_lock_marker=1"))
+        assert error.value.orig.sqlstate == "23514"
+        async with engine.begin() as connection:
+            await connection.execute(text(f'GRANT UPDATE (product_name) ON rag_medication_product TO "{writer}"'))
+        with pytest.raises(ValueError, match="column privileges"):
+            async with catalog_writer_repository(environment):
+                pytest.fail("An overprivileged Writer must not be exposed to the caller")
+    finally:
+        await producer.dispose()
+        await reader.dispose()
+        async with engine.begin() as connection:
+            for role in (runtime, source_writer, writer):
+                if await connection.scalar(text("SELECT 1 FROM pg_roles WHERE rolname=:role"), {"role": role}):
+                    await connection.execute(text(f'DROP OWNED BY "{role}"'))
+                    await connection.execute(text(f'DROP ROLE "{role}"'))
