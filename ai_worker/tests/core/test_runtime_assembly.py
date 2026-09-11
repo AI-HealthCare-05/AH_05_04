@@ -223,7 +223,10 @@ async def test_control_service_factory_uses_only_control_engine_and_validates(
         PROTECTED_DB_CONTROL_ROLE="synthetic_protected_control",
     )
 
-    service = await runtime_assembly.create_protected_authorization_control_service(config, source)  # type: ignore[arg-type]
+    service = cast(
+        FakeService,
+        await runtime_assembly.create_protected_authorization_control_service(config, source),  # type: ignore[arg-type]
+    )
 
     assert service.validated is True
     assert captured == {

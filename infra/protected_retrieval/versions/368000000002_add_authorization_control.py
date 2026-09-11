@@ -33,8 +33,7 @@ def upgrade() -> None:
     op.execute(f"ALTER TABLE {schema}.protected_identity ALTER COLUMN identity_plane SET NOT NULL")
     op.execute(f"ALTER TABLE {schema}.protected_identity ALTER COLUMN principal_role DROP NOT NULL")
     op.execute(
-        f"ALTER TABLE {schema}.protected_identity "
-        "DROP CONSTRAINT protected_identity_actor_namespace_actor_id_key"
+        f"ALTER TABLE {schema}.protected_identity DROP CONSTRAINT protected_identity_actor_namespace_actor_id_key"
     )
     op.execute(
         f"ALTER TABLE {schema}.protected_identity ADD CONSTRAINT protected_identity_plane_check "
@@ -84,9 +83,7 @@ def downgrade() -> None:
         f"ALTER TABLE {schema}.audit_entry ADD CONSTRAINT audit_entry_event_kind_check "
         "CHECK (event_kind IN ('AUTHORIZATION', 'OPERATION'))"
     )
-    op.execute(
-        f"ALTER TABLE {schema}.authorization_grant DROP CONSTRAINT authorization_grant_scope_revision_key"
-    )
+    op.execute(f"ALTER TABLE {schema}.authorization_grant DROP CONSTRAINT authorization_grant_scope_revision_key")
     op.execute(f"ALTER TABLE {schema}.protected_identity DROP CONSTRAINT protected_identity_actor_plane_key")
     op.execute(f"ALTER TABLE {schema}.protected_identity DROP CONSTRAINT protected_identity_plane_role_check")
     op.execute(f"ALTER TABLE {schema}.protected_identity DROP CONSTRAINT protected_identity_approval_role_check")

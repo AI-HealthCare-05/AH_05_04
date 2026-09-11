@@ -137,7 +137,10 @@ def test_command_hash_changes_when_the_expected_source_hash_changes() -> None:
     )
 
 
-@pytest.mark.parametrize("command_type", [IngestApprovalCommand, GrantAuthorizationCommand, RevokeAuthorizationCommand, ExpireAuthorizationCommand])
+@pytest.mark.parametrize(
+    "command_type",
+    [IngestApprovalCommand, GrantAuthorizationCommand, RevokeAuthorizationCommand, ExpireAuthorizationCommand],
+)
 def test_control_commands_reject_non_v4_request_ids(command_type: type[object]) -> None:
     grant = _grant()
     values: dict[str, object] = {
@@ -212,9 +215,15 @@ def test_verified_approval_binds_the_complete_grant() -> None:
 @pytest.mark.parametrize(
     ("mutation", "reason"),
     [
-        (lambda item: item.model_copy(update={"authorization_action": AuthorizationAuditAction.REVOKE}), "APPROVAL_ACTION_MISMATCH"),
+        (
+            lambda item: item.model_copy(update={"authorization_action": AuthorizationAuditAction.REVOKE}),
+            "APPROVAL_ACTION_MISMATCH",
+        ),
         (lambda item: item.model_copy(update={"canonical_raw_sha256": SHA_B}), "APPROVAL_EVIDENCE_MISMATCH"),
-        (lambda item: item.model_copy(update={"approved_grant_payload_sha256": SHA_B}), "APPROVAL_GRANT_BINDING_MISMATCH"),
+        (
+            lambda item: item.model_copy(update={"approved_grant_payload_sha256": SHA_B}),
+            "APPROVAL_GRANT_BINDING_MISMATCH",
+        ),
     ],
 )
 def test_verified_approval_rejects_source_binding_mutations(mutation: object, reason: str) -> None:

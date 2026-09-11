@@ -120,9 +120,7 @@ class _ControlSession(_ProtectedSession):
     ) -> ControlCommandResult | None:
         entries = await self.verified_entries(lock_head=lock_head)
         matching = [
-            entry
-            for entry in entries
-            if isinstance(entry, ControlCommandAuditEntry) and entry.event_id == request_id
+            entry for entry in entries if isinstance(entry, ControlCommandAuditEntry) and entry.event_id == request_id
         ]
         if not matching:
             return None
@@ -246,7 +244,9 @@ class _ControlSession(_ProtectedSession):
             hmac_key_version=grant.hmac_key_version,
             actions=grant.actions,
             control_implementation=grant.control_implementation,
-            approval_source_event_id=(evidence.source_event_id if evidence is not None else grant.approval_source_event_id),
+            approval_source_event_id=(
+                evidence.source_event_id if evidence is not None else grant.approval_source_event_id
+            ),
             approval_source_raw_sha256=(
                 evidence.canonical_raw_sha256 if evidence is not None else grant.approval_source_raw_sha256
             ),

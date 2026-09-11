@@ -95,6 +95,7 @@ class ControlCommandResult(StrictContractModel):
     def require_request_uuid_v4(cls, value: str) -> str:
         return _require_uuid_v4(value)
 
+
 class TrustedApprovalSource(Protocol):
     async def fetch(self, source_event_id: str) -> ApprovalSourceEvidence: ...
 

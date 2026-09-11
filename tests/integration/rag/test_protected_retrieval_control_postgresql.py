@@ -58,23 +58,23 @@ def _evidence(
     grant: ProtectedAuthorizationGrant | None = None,
     action: AuthorizationAuditAction = AuthorizationAuditAction.GRANT,
 ) -> ApprovalSourceEvidence:
-    issuer = grant.issuer if grant is not None else ProtectedApprovalPrincipal(
-        actor=ActorIdentity(actor_id="synthetic-custodian", namespace="GITHUB_LOGIN"),
-        role=ProtectedApprovalRole.DATASET_CUSTODIAN,
+    issuer = (
+        grant.issuer
+        if grant is not None
+        else ProtectedApprovalPrincipal(
+            actor=ActorIdentity(actor_id="synthetic-custodian", namespace="GITHUB_LOGIN"),
+            role=ProtectedApprovalRole.DATASET_CUSTODIAN,
+        )
     )
     return ApprovalSourceEvidence(
         source_event_id=source_event_id,
         authorization_action=action,
-        approved_grant_payload_sha256=(
-            authorization_grant_approval_sha256(grant) if grant is not None else "b" * 64
-        ),
+        approved_grant_payload_sha256=(authorization_grant_approval_sha256(grant) if grant is not None else "b" * 64),
         issuer=issuer,
         state="APPROVED",
         recorded_at=datetime(2026, 9, 11, 1, 2, 3, tzinfo=UTC),
         target_commit_oid=grant.control_implementation.commit_oid if grant is not None else "c" * 40,
-        target_artifact_sha256=(
-            grant.control_implementation.artifact_sha256 if grant is not None else "d" * 64
-        ),
+        target_artifact_sha256=(grant.control_implementation.artifact_sha256 if grant is not None else "d" * 64),
         canonical_raw_sha256=raw_sha256,
         implementation_participants=(
             grant.control_implementation.participants
@@ -127,10 +127,14 @@ def _grant_scenario(
         valid_from=now - timedelta(minutes=20),
         expires_at=now - timedelta(minutes=10) if expired else now + timedelta(minutes=10),
     )
-    return dataset, grant, _evidence(
-        grant.approval_source_event_id,
-        grant.approval_source_raw_sha256,
-        grant=grant,
+    return (
+        dataset,
+        grant,
+        _evidence(
+            grant.approval_source_event_id,
+            grant.approval_source_raw_sha256,
+            grant=grant,
+        ),
     )
 
 
