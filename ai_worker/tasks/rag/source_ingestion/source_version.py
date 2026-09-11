@@ -128,49 +128,38 @@ def validate_source_version(
     canonical_checksum: str,
 ) -> SourceVersionKind:
     """문법과 external/checksum 결속을 검증합니다."""
-    _validate_common_source_version(source_version)
+    kind = validate_source_version_syntax(source_version)
     _validate_checksum(canonical_checksum)
-
-    if source_version.startswith("external:"):
-        payload = source_version.removeprefix("external:")
-        _validate_external_version(payload)
-
-        if external_version is None:
-            raise SourceVersionValidationError(
-                "external source_version에는 external_version이 필요합니다.",
-                failure_code=SourceVersionFailureCode.SOURCE_VERSION_BINDING_MISMATCH,
-            )
-        if payload != external_version:
+    if kind is SourceVersionKind.EXTERNAL:
+        if external_version is None or source_version.removeprefix("external:") != external_version:
             raise SourceVersionValidationError(
                 "source_version payload와 external_version이 일치하지 않습니다.",
                 failure_code=SourceVersionFailureCode.SOURCE_VERSION_BINDING_MISMATCH,
             )
-        return SourceVersionKind.EXTERNAL
+    else:
+        _require_null_external_version(external_version)
+        if source_version.rsplit(":", 1)[1] != canonical_checksum:
+            raise SourceVersionValidationError(
+                "source_version checksum이 canonical_checksum과 일치하지 않습니다.",
+                failure_code=SourceVersionFailureCode.SOURCE_VERSION_BINDING_MISMATCH,
+            )
+    return kind
 
+
+def validate_source_version_syntax(source_version: str) -> SourceVersionKind:
+    """Validate syntax independently so invalid attempts never persist raw input."""
+    _validate_common_source_version(source_version)
+    if source_version.startswith("external:"):
+        _validate_external_version(source_version.removeprefix("external:"))
+        return SourceVersionKind.EXTERNAL
     api_match = _API_VERSION_PATTERN.fullmatch(source_version)
     if api_match is not None:
-        _require_null_external_version(external_version)
         _validate_utc_timestamp(api_match.group("timestamp"))
-
-        if api_match.group("checksum") != canonical_checksum:
-            raise SourceVersionValidationError(
-                "API source_version checksum이 canonical_checksum과 일치하지 않습니다.",
-                failure_code=SourceVersionFailureCode.SOURCE_VERSION_BINDING_MISMATCH,
-            )
         return SourceVersionKind.API
-
     internal_match = _INTERNAL_VERSION_PATTERN.fullmatch(source_version)
     if internal_match is not None:
-        _require_null_external_version(external_version)
         _validate_immutable_fixture_version(internal_match.group("fixture_version"))
-
-        if internal_match.group("checksum") != canonical_checksum:
-            raise SourceVersionValidationError(
-                "Internal source_version checksum이 canonical_checksum과 일치하지 않습니다.",
-                failure_code=SourceVersionFailureCode.SOURCE_VERSION_BINDING_MISMATCH,
-            )
         return SourceVersionKind.INTERNAL
-
     raise SourceVersionValidationError("source_version이 external, api, internal 문법 중 하나와 일치해야 합니다.")
 
 

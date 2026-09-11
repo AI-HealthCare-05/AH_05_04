@@ -40,6 +40,17 @@ class RagSourceCreate:
     attribution_text: str | None = None
     purpose: str | None = None
     lifecycle_status: RagSourceLifecycleStatus = RagSourceLifecycleStatus.DRAFT
+    max_rejected_records: int = 0
+    max_rejection_rate: Decimal = Decimal("0")
+    empty_result_policy: str = "REJECT"
+
+    def __post_init__(self) -> None:
+        if type(self.max_rejected_records) is not int or self.max_rejected_records < 0:
+            raise ValueError("Invalid Source rejection count policy")
+        if not self.max_rejection_rate.is_finite() or not 0 <= self.max_rejection_rate <= 1:
+            raise ValueError("Invalid Source rejection rate policy")
+        if self.empty_result_policy != "REJECT":
+            raise ValueError("Unsupported Source empty result policy")
 
 
 @dataclass(frozen=True)
@@ -314,6 +325,9 @@ class RagSourceCatalogRepository:
             attribution_text=item.attribution_text,
             purpose=item.purpose,
             lifecycle_status=item.lifecycle_status,
+            max_rejected_records=item.max_rejected_records,
+            max_rejection_rate=item.max_rejection_rate,
+            empty_result_policy=item.empty_result_policy,
         )
         self.session.add(source)
         await self.session.flush()

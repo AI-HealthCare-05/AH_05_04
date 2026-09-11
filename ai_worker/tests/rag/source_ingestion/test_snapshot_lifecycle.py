@@ -62,6 +62,7 @@ _ALLOW_ONE_REJECTION_POLICY = SourceSnapshotPolicy(
 
 class FakeSnapshotRepository:
     def __init__(self) -> None:
+        self.source_policy = _ALLOW_ONE_REJECTION_POLICY
         self.snapshots: list[SnapshotReference] = []
         self.create_requests: list[SnapshotCreateRequest] = []
         self.statuses: dict[UUID, SnapshotVerificationStatus] = {}
@@ -73,6 +74,9 @@ class FakeSnapshotRepository:
     async def lock_operation(self, identity: SourceOperationIdentity) -> UUID:
         self.locked_identities.append(identity)
         return _OPERATION_ID
+
+    async def get_source_policy(self, *, operation_id: UUID) -> SourceSnapshotPolicy:
+        return self.source_policy
 
     async def get_snapshot_by_version(
         self,
@@ -92,6 +96,18 @@ class FakeSnapshotRepository:
             ),
             None,
         )
+
+    async def has_attempt_version_conflict(
+        self, *, operation_id: UUID, source_version: str, canonical_contract: dict[str, str | int]
+    ) -> bool:
+        for record in self.runs:
+            if record.attempted_source_version == source_version and record.run_status in {
+                "SUCCEEDED",
+                "SUCCEEDED_WITH_REJECTIONS",
+                "NO_CHANGE",
+            }:
+                return record.attempted_canonical_contract != canonical_contract
+        return False
 
     async def get_latest_snapshot(self, *, operation_id: UUID) -> SnapshotReference | None:
         assert operation_id == _OPERATION_ID
@@ -279,7 +295,6 @@ def _metadata(source_version: str) -> SnapshotIngestionMetadata:
 @pytest.mark.parametrize(
     ("factory", "message"),
     [
-        (lambda: replace(_metadata("external:v1"), source_version="x" * 201), "source_version"),
         (lambda: replace(_metadata("external:v1"), schema_version="x" * 101), "schema_version"),
         (lambda: replace(_metadata("external:v1"), parser_version="x" * 101), "parser_version"),
         (
@@ -1064,20 +1079,18 @@ async def test_invalid_source_version_is_rejected_before_file_write(
     repository = FakeSnapshotRepository()
     store = LocalPrivateSourceArtifactStore(tmp_path / "private")
 
-    with pytest.raises(SourceVersionValidationError):
-        await preserve_and_persist_product_ingestion_result(
-            repository=repository,
-            artifact_store=store,
-            ingestion=ingestion,
-            metadata=replace(
-                _metadata("external:v1"),
-                source_version="v1",
-            ),
-            raw_artifacts=((1, source, raw_metadata),),
-        )
-
+    result = await preserve_and_persist_product_ingestion_result(
+        repository=repository,
+        artifact_store=store,
+        ingestion=ingestion,
+        metadata=replace(_metadata("external:v1"), source_version="v1"),
+        raw_artifacts=((1, source, raw_metadata),),
+    )
+    assert result.failure_code == "SOURCE_VERSION_INVALID"
+    assert result.snapshot_id is None
     assert list((tmp_path / "private").iterdir()) == []
-    assert repository.locked_identities == []
+    assert repository.runs[0].attempted_source_version is None
+    assert repository.runs[0].invalid_source_version_sha256 == hashlib.sha256(b"v1").hexdigest()
 
 
 async def test_rejects_invalid_source_version_before_locking_operation() -> None:
@@ -1287,3 +1300,17 @@ def test_rejects_negative_rejected_record_count_for_use_evaluation() -> None:
             freshness_eligible=True,
             provenance_valid=True,
         )
+
+
+async def test_request_policy_cannot_relax_persisted_source_rejection_limit() -> None:
+    repository = FakeSnapshotRepository()
+    repository.source_policy = SourceSnapshotPolicy()
+    result = await persist_product_ingestion_result(
+        repository=repository,
+        ingestion=_ingestion(),
+        metadata=replace(_metadata("external:v1"), rejected_record_count=1),
+        artifacts=(*_stored_artifacts(), _stored_rejection_artifact()),
+    )
+    assert result.failure_code == "REJECTION_LIMIT_EXCEEDED"
+    assert result.snapshot_id is None
+    assert not repository.create_requests
