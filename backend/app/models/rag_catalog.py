@@ -359,7 +359,12 @@ class RagMedicationSearchEntry(Base):
 class RagMedicationProductComponent(Base):
     __tablename__ = "rag_medication_product_component"
     __table_args__ = (
-        UniqueConstraint("product_id", "ingredient_id", "component_role", name="uq_rag_medication_component_role"),
+        UniqueConstraint("product_id", "display_order", name="uq_rag_medication_component_order"),
+        Index("idx_rag_medication_component_product_ingredient", "product_id", "ingredient_id"),
+        CheckConstraint(
+            "release_profile IS NULL OR length(trim(release_profile)) > 0",
+            name="chk_rag_medication_component_release_profile",
+        ),
         ForeignKeyConstraint(
             ["product_id", "source_snapshot_id"],
             ["rag_medication_product.id", "rag_medication_product.source_snapshot_id"],
@@ -403,6 +408,7 @@ class RagMedicationProductComponent(Base):
     amount_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
     amount_unit: Mapped[str | None] = mapped_column(String(50), nullable=True)
     amount_text: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    release_profile: Mapped[str | None] = mapped_column(String(255), nullable=True)
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

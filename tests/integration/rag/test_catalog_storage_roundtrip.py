@@ -50,7 +50,7 @@ PRODUCT_SNAPSHOT = "00000000-0000-4000-8000-000000000001"
 ALIAS_SNAPSHOT = "00000000-0000-4000-8000-000000000002"
 
 
-def approved_build(*, changed=False):
+def approved_build(*, changed=False, repeated=False):
     refs = (
         CandidateCatalogSourceRef(PRODUCT_SNAPSHOT, "external:v1"),
         CandidateCatalogSourceRef(ALIAS_SNAPSHOT, "external:v2"),
@@ -94,6 +94,18 @@ def approved_build(*, changed=False):
             strength_unit="mg",
         ),
     )
+    if repeated:
+        first = replace(components[0], source_record_key="synthetic:1:1")
+        components = (
+            first,
+            replace(
+                first,
+                source_record_key="synthetic:1:2",
+                component_order=2,
+                strength_value="020.00",
+                release_profile="SYNTHETIC_EXTENDED",
+            ),
+        )
     members = build_catalog_members(products=products, ingredients=ingredients, components=components, aliases=aliases)
     initial = create_catalog_export(catalog_version="synthetic-db-v2", source_refs=refs, members=members)
     receipt = CatalogApprovalReceipt(
@@ -209,12 +221,24 @@ async def test_committed_database_bytes_reach_public_candidate_without_writes(da
 
 
 @pytest.mark.parametrize(
-    "damage", ["jsonl", "manifest", "hash-kind", "missing-member", "product", "alias", "missing-source", "identity"]
+    "damage",
+    [
+        "jsonl",
+        "manifest",
+        "hash-kind",
+        "missing-member",
+        "product",
+        "alias",
+        "missing-source",
+        "identity",
+        "release-profile",
+    ],
 )
 async def test_readback_rejects_corruption_without_repairing_rows(database, damage):
     engine, factory = database
     repository, set_id, _, verifier = await saved(factory)
     queries = {
+        "release-profile": "UPDATE rag_medication_product_component SET release_profile='tampered'",
         "jsonl": "UPDATE rag_catalog_set_hash SET canonical_bytes = decode('00', 'hex') WHERE hash_kind='EXPORT_CHECKSUM'",
         "manifest": "UPDATE rag_catalog_set SET manifest_json = decode('00', 'hex')",
         "hash-kind": "DELETE FROM rag_catalog_set_hash WHERE hash_kind='CATALOG_ENVELOPE'",
@@ -440,3 +464,26 @@ async def test_catalog_writer_login_saves_and_reuses_without_payload_update(data
                 if await connection.scalar(text("SELECT 1 FROM pg_roles WHERE rolname=:role"), {"role": role}):
                     await connection.execute(text(f'DROP OWNED BY "{role}"'))
                     await connection.execute(text(f'DROP ROLE "{role}"'))
+
+
+async def test_repeated_component_roundtrip_preserves_occurrences_and_release_profile(database):
+    _, factory = database
+    members, artifacts, verifier = approved_build(repeated=True)
+    repository = SqlAlchemyCatalogBuildRepository(factory)
+    await repository.save_build(members=members, artifacts=artifacts)
+    await repository.save_build(members=members, artifacts=artifacts)
+    async with factory() as session:
+        set_id = await session.scalar(select(RagCatalogSet.id))
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT display_order, release_profile FROM rag_medication_product_component ORDER BY display_order"
+                )
+            )
+        ).all()
+    assert rows == [(1, None), (2, "SYNTHETIC_EXTENDED")]
+    restored = await repository.load_build(set_id, approval_verifier=verifier)
+    assert restored == artifacts
+    assert len({c.component_ref for c in restored.catalog.components}) == 2
+    assert {c.strength_value for c in restored.catalog.components} == {"010.00", "020.00"}
+    assert isinstance(candidate(restored), CandidateIndexBuildSuccess)
