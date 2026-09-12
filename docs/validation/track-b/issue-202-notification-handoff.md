@@ -95,7 +95,7 @@ Fixture의 UUID·document_id는 모두 테스트에서 생성한 합성 식별�
 | 인증 401 | 기존 인증 복구 흐름 사용, 자동 Check-in 금지 | 기존 알림 인증 테스트; 화면 검증 남음 |
 | 잘못된 요청 422 | code와 입력값 기준 처리; 새 enum/필드 생성 금지 | 기존 알림/일정/Check-in 테스트 |
 | 새로고침·재접속 | 알림 offset=0 재조회 후 같은 occurrence ID 연결. 읽음 여부와 Check-in을 각각 최신화 | Frontend 실제 소비/E2E 남음 |
-| 과거 약 ID가 현재 상세에 없음 | 최신/유사 약으로 대체하지 않음. 기존 계약의 ‘관련 기록을 조회할 수 없음’ 처리를 제품·Frontend와 확인 | 구체 사례 재현; 과거 약 표시 조회 계약 합의 남음 |
+| 과거 약 ID가 현재 상세에 없음 | 최신/유사 약으로 대체하지 않음. occurrence 자체는 조회됐으므로 약 표시 실패 UX는 제품·Frontend와 별도로 합의 | 구체 사례 재현; 과거 약 표시 조회 계약 합의 남음 |
 | 모바일·접근성 | 320/390/412px, 긴 약명, 키보드·focus·상태/오류 알림, 읽음 전후 복약 상태 불변 | #421/#138 구현·브라우저 증빙 남음 |
 
 기존 자료는 [일정 fixture](./issue-202-schedule-fixtures.json), [일정 API 검증](./issue-202-schedule-api.md),
@@ -120,7 +120,11 @@ Fixture의 UUID·document_id는 모두 테스트에서 생성한 합성 식별�
 
 - 신규 실제 연결/타인 접근/fixture 검증: **3 passed (1.76초)**.
 - Ruff check/format PASS (776 files), Mypy PASS (588 source files).
-- 전체 필수 runner와 Commit SHA·PR 증빙은 최종 실행 결과에 기록한다.
+- 전체 필수 runner PASS: **5,209 passed / 76 skipped**, 총 coverage **93%**.
+  Migration 210/3, Backend 1,932/65, Redis 24/0, Worker 3,043/8 (passed/skipped).
+- 구현 검증 commit: `6d4688af`. 리뷰 자료: [PR #468](https://github.com/AI-HealthCare-05/AH_05_04/pull/468).
+  원격 검사는 [GitHub Actions](https://github.com/AI-HealthCare-05/AH_05_04/actions/runs/34690042782)에서 확인한다.
+  문서 후속 커밋의 최종 HEAD 검사와 지정 리뷰어 승인은 PR에서 별도로 확인해야 한다.
 - 재현: 기존 `scripts/ci/run_test.sh`를 합성 전용 ENV_FILE·COMPOSE_FILE로 실행한다.
   새 테스트는 기본 Backend 수집 범위에 포함된다. 전체/통합 runner를 동시 실행하지 않는다.
 - Fixture 재추출은 위 테스트 실행 환경에서 `TRACK_B_HANDOFF_FIXTURE_OUTPUT`을 명시한 경우만
