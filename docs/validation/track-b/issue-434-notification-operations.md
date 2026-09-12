@@ -112,3 +112,23 @@ Frontend 구현이나 새로운 fixture 계약을 본 PR에서 추가하지 않�
 
 #462는 작업 중 재조회 시 리뷰 0건, `phina-io`·`solia142` 검토 요청 상태였다.
 기존 승인을 최종 HEAD 승인으로 간주하지 않는다. #422는 이번 변경 범위에 포함하지 않았다.
+
+## 최종 Local 검사 기록
+
+- 구현·검증 기준 commit: `89fe373959a3f743f881a397c4c4948ca5a49566`.
+- Ruff check/format: PASS (778 files), Mypy: PASS (589 source files).
+- 전체 필수 runner: exit 0, **5,220 passed / 76 skipped**, coverage **93%**.
+  - Migration: 210 passed / 3 skipped (209.44초).
+  - Backend·계약·선별 PostgreSQL: 1,943 passed / 65 skipped (395.26초).
+  - Redis integration: 24 passed (6.04초).
+  - Worker: 3,043 passed / 8 skipped (108.83초).
+- 최종 commit에서 Track B 알림·일정·Check-in·일정 mutation·DB 권한·배포 회귀 재대조:
+  **126 passed (51.33초)**. 전체 검사 도중 보강한 배포 정지 검사도 포함해 최종 파일을 검증했다.
+- `bash -n scripts/deployment.sh`, 전체 diff와 `git diff --check`: PASS.
+- Pandoc HTML 생성, 제목·표 5개·셀 109개 및 신규 문서 상대 링크 검토: PASS.
+  브라우저 화면 미리보기는 로컬 file URL 정책으로 차단되어 수행하지 못했다.
+- 최종 코드 이미지 ID: `sha256:7bdc970eb54d3e88b2005ca01f46739b4590d04fd3318b89325c5a54d6dc6e52`.
+  해당 이미지에서 `infra.python.provision_database_roles` 실행 성공 후 제한 계정으로
+  컨테이너 재생성, 10:45:04 UTC 배치 success 확인.
+- 최종 fetch 기준 develop과 충돌/누락 없음. 새 dependency·migration·Frontend 구현·Worker
+  구현·Provider 호출 없음. CI/PR 증빙은 일반 PR에 연결하며 담당 승인 전 병합하지 않는다.
