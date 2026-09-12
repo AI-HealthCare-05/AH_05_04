@@ -424,3 +424,11 @@ Track별 요구사항·계약·소유자·예정 테스트·승인 증빙은 [Po
 PostgreSQL·실제 ASGI 앱으로 검증한다. 기본 runner의 Backend 수집 범위에 포함한다.
 [실행 결과와 재현 방법](./validation/track-b/issue-202-schedule-api.md),
 [Frontend 합성 fixture](./validation/track-b/issue-202-schedule-fixtures.json)를 참조한다.
+
+### #434 알림 운영 검증
+
+알림 명령의 실제 transaction 복구·501건 backlog·Runtime DB 권한 및 Docker 시작/중지
+검증은 [#434 기록](./validation/track-b/issue-434-notification-operations.md)을 참고한다.
+`backend/app/tests/notifications`, `tests/contract/test_notification_runtime_configuration.py`,
+`tests/integration/rag/test_database_role_provisioning.py`는 기본 필수 runner에 포함된다.
+실제 Local Docker smoke와 Production 적용 여부는 별도로 기록한다.
