@@ -424,3 +424,10 @@ Track별 요구사항·계약·소유자·예정 테스트·승인 증빙은 [Po
 PostgreSQL·실제 ASGI 앱으로 검증한다. 기본 runner의 Backend 수집 범위에 포함한다.
 [실행 결과와 재현 방법](./validation/track-b/issue-202-schedule-api.md),
 [Frontend 합성 fixture](./validation/track-b/issue-202-schedule-fixtures.json)를 참조한다.
+
+### #202 알림→복약 기록 인계 검증
+
+[Backend 연결 검증·Frontend 인계](./validation/track-b/issue-202-notification-handoff.md)는
+자정 경계 재알림, 읽음 실패/재시도, 명시적 Check-in, 처방 정정 후 과거 기록 및 타인 링크
+접근을 실제 HTTP로 검증한다. 새 합성 fixture는 기존 DTO와 식별자 관계로 검증한다.
+과거 약 표시 조회의 남은 계약 합의와 Frontend 화면/E2E는 Backend 통과와 구분한다.
