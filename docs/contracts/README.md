@@ -46,6 +46,8 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## Proposed 계약
 
+- [Web Push 구독·전송 v1 제안 (#469)](./proposed/web-push-v1.md): PD-469 구현 PR 검토안. SELF 소유권·계정 전환·전송 ledger·SSRF·재시도 구현 및 합성 검증. Backend/Frontend/Privacy 확인과 #471 실기기 통합 대기.
+
 - [RAG Answer Quality Metric·Variant 계약 v1 제안 (#159)](./proposed/post-mvp-1/rag-answer-quality-metrics-v1.md): `ANS-BASE | ANS-RAG | ANS-FINAL`, 네 Answer Metric의 분석 단위·micro ratio·95% cluster bootstrap, 승인 human-rubric label과 세 pair 비교 경계. `PD-159-20260913` 책임 리뷰 전 Proposed이며 DEV 구현·HOLDOUT 실행·Release 승인 아님.
 
 - [OCR LLM Worker 범위 정정 (#453)](./proposed/ocr-llm-worker-consent-453.md): 기존 이관 범위와 리뷰 시 별도 검토할 항목. 기존 동의 개정안 미채택.

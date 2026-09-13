@@ -36,6 +36,7 @@ from app.models.ocr import ExtractedField, OcrJob
 from app.models.password_reset import PasswordResetToken
 from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
+from app.models.push import PushDelivery, PushSubscription
 from app.models.rag_candidate import (
     MedicationCandidateSearch,
     MedicationCandidateSearchResult,

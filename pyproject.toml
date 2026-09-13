@@ -43,6 +43,7 @@ app = [
     "pyjwt>=2.10.1",
     "sqlalchemy[asyncio]>=2.0.43",
     "uvicorn>=0.40.0",
+    "pywebpush>=2.3.0,<3",
 ]
 dev = [
     "boto3-stubs[s3]>=1.42.0",

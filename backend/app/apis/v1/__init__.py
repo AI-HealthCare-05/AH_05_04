@@ -13,10 +13,12 @@ from app.apis.v1.medication_schedule_routers import medication_schedule_router
 from app.apis.v1.notification_routers import notification_router
 from app.apis.v1.ocr_routers import ocr_router
 from app.apis.v1.prescription_routers import prescription_router
+from app.apis.v1.push_routers import push_router
 from app.apis.v1.user_routers import user_router
 
 v1_routers = APIRouter(prefix="/api/v1")
 v1_routers.include_router(auth_router)
+v1_routers.include_router(push_router)
 v1_routers.include_router(user_router)
 v1_routers.include_router(medical_document_router)
 v1_routers.include_router(ocr_router)

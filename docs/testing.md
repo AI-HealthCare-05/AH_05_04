@@ -432,3 +432,11 @@ PostgreSQL·실제 ASGI 앱으로 검증한다. 기본 runner의 Backend 수집 
 `backend/app/tests/notifications`, `tests/contract/test_notification_runtime_configuration.py`,
 `tests/integration/rag/test_database_role_provisioning.py`는 기본 필수 runner에 포함된다.
 실제 Local Docker smoke와 Production 적용 여부는 별도로 기록한다.
+
+## #469 Web Push 검증
+
+- `backend/app/tests/push/`: API·소유권·해제·계정 세대, 실제 PostgreSQL 중복 등록/전송/취소 경합, bounded retry·UNKNOWN·기한, SSRF·TLS pinning, 합성 VAPID 서명·payload 복호화.
+- `tests/migration/test_push_migration.py`: 별도 PostgreSQL DB에서 실제 upgrade·제약·이력 보존 downgrade guard 및 재upgrade.
+- 기존 `backend/app/tests/notifications/` 및 인증 회귀를 함께 실행한다. Push 접수는 앱 내부 게시·읽음·복약을 변경하지 않는다.
+- 실제 provider 접수·iOS/Android 기기 표시와 #470 Service Worker generation·원래 날짜 연결은 #471의 별도 통합 증빙이다. Backend mock/암호화 roundtrip을 실기기 수신으로 표기하지 않는다.
+- [실행 기록](validation/track-b/issue-469-web-push.md), [검토 계약](contracts/proposed/web-push-v1.md).
