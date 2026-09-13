@@ -1,5 +1,8 @@
 # 공통 데이터 계약
 
+- [OCR LLM 동의·전송 후속 (#458)](proposed/ocr-llm-transfer-458.md): PM 방향 확인.
+  재동의·최소 전송·철회 구분·Frontend 확인 방향 기록. 기술 계약·최종 문구/버전 및 구현은 미완료.
+
 Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합니다. **현재 실행 계약**은 실제 FastAPI OpenAPI·Pydantic DTO·migration·구현과 테스트가 함께 뒷받침하는 문서입니다. `targets/post-mvp-1/`의 문서는 승인된 Post-MVP-1 목표 계약이며 문서별 구현 상태를 별도로 표시하고 Approved Contract Freeze v4와 RAG-00 Approved Target을 함께 관리합니다.
 
 상태와 승인 원본의 우선순위는 [Post-MVP-1 문서 권위](../governance/post-mvp-1-document-authority.md)를 따릅니다.
