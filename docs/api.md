@@ -192,14 +192,25 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 - 현재 구현은 기기·세션 단위 로그아웃을 구분하지 않습니다. 한 기기에서 로그아웃하면 같은 사용자의 기존 access/refresh token이 함께 무효화됩니다.
 - refresh token은 매 갱신마다 새 값으로 교체되며(rotation), 절대 만료(로그인 시점 기준)는 rotation으로 늘어나지 않습니다. 이미 교체돼 무효해진 refresh token이 다시 제출되면 탈취 의심 신호로 간주해 그 사용자의 모든 세션을 강제로 무효화합니다.
 
+### 회원가입 이메일 인증
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `POST` | `/api/v1/auth/email-verification/request` | `200 OK` | 회원가입 전 이메일 인증 안내를 요청합니다. 별도 이메일 중복 확인 API가 아니며, 이미 가입된 이메일이거나 쿨다운 중이어도 같은 성공 응답을 반환합니다. `verification_token`은 `LOCAL` 환경에서만 채워집니다. |
+| `POST` | `/api/v1/auth/email-verification/confirm` | `200 OK` | 이메일과 원문 token을 검증하고, 같은 이메일·목적의 유효 token을 인증 완료 처리합니다. |
+
+`POST /api/v1/auth/email-verification/confirm`의 token 오류는 `422 VALIDATION_FAILED`, `details[].field=token`, `reason=EMAIL_VERIFICATION_TOKEN_INVALID`입니다. 상세 스펙은 [회원가입·사용자 정보 계약의 회원가입 이메일 인증 절](./contracts/current/user-account.md#회원가입-이메일-인증431)을 따릅니다.
+
 ### 비밀번호 재설정
 
 | Method | Path | 성공 상태 | 동작 |
 | --- | --- | ---: | --- |
-| `POST` | `/api/v1/auth/password-reset/request` | `200 OK` | 계정 존재 여부와 무관하게 항상 같은 응답을 반환합니다. `reset_token`은 `LOCAL` 환경에서만 채워집니다(실제 이메일 발송 Provider 연동 전 임시 확인 경로). |
+| `POST` | `/api/v1/auth/password-reset/request` | `200 OK` | 계정 존재 여부와 무관하게 항상 같은 응답을 반환합니다. 원문 token은 `EmailSender` adapter 호출 경계까지만 전달하며, `reset_token`은 `LOCAL` 환경에서만 채워집니다. |
 | `POST` | `/api/v1/auth/password-reset/confirm` | `200 OK` | 유효한 token으로 비밀번호를 변경하고 기존 세션을 전부 무효화합니다. 새 토큰은 발급하지 않으며 재로그인이 필요합니다. |
 
 상세 스펙(오류 코드, lock 순서, 보안 규칙)은 [회원가입·사용자 정보 계약의 비밀번호 재설정 절](./contracts/current/user-account.md#비밀번호-재설정206-pd-206-결정-3)을 따릅니다.
+
+이메일 발송은 `EmailSender` adapter 뒤에 둡니다. 기본값 `EMAIL_PROVIDER=noop`은 실제 메일을 보내지 않으며, 배포에서 `EMAIL_PROVIDER=smtp`와 `SMTP_*` 환경변수를 설정하면 Gmail SMTP, Google Workspace, SendGrid SMTP, Mailgun SMTP 같은 SMTP Provider로 발송할 수 있습니다. 실제 Provider 선택·계정·비용 정책은 배포 설정 단계에서 확정합니다.
 
 ## Post-MVP-1 목표 API — 미구현
 

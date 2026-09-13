@@ -239,13 +239,21 @@ Worker 재시도 지연은 `min(5초 × 2^(attempt_count-1), 60초)`에 0~20% �
 | 403 | `FORBIDDEN` | "비활성화된 계정입니다." | 현재는 비활성 계정 로그인 시도에만 사용 |
 | 409 | `CONFLICT` | 상황에 따른 안내 문구 (예: "이미 사용중인 이메일입니다.") | 회원가입 중복, 종료된 대화 세션 등 여러 상황에서 재사용 |
 | 409 | `IDEMPOTENCY_KEY_CONFLICT` | "같은 Idempotency-Key로 이전과 다른 요청이 접수되었습니다." | OCR·Guide·Chat 접수 또는 OCR 수동 약물 추가 같은 멱등 mutation에서 같은 `Idempotency-Key`로 이전과 다른 요청 지문이 접수됨 |
-| 422 | `VALIDATION_FAILED` | 상황에 따른 안내 문구 (예: "입력값을 확인해 주세요.", "MVP에서는 처방전 문서만 업로드할 수 있습니다.") | Pydantic 요청 검증 실패 시 자동 발생 또는 Service에서 수동 발생 |
+| 422 | `VALIDATION_FAILED` | 상황에 따른 안내 문구 (예: "입력값을 확인해 주세요.", "MVP에서는 처방전 문서만 업로드할 수 있습니다.") | Pydantic 요청 검증 실패 시 자동 발생 또는 Service에서 수동 발생. Auth 도메인은 `details[].reason=PASSWORD_POLICY_VIOLATION`, `RESET_TOKEN_INVALID`, `EMAIL_VERIFICATION_TOKEN_INVALID`를 사용 |
 | 500 | `INTERNAL_SERVER_ERROR` | "서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." | 예상하지 못한 예외의 최종 fallback |
 | 503 | `SERVICE_UNAVAILABLE` | "현재 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요." | |
 | 504 | `GATEWAY_TIMEOUT` | "외부 처리 시간이 초과되었습니다. 다시 시도해 주세요." | |
 | (원본 상태 코드) | `HTTP_ERROR` | `HTTPException.detail`을 문자열로 변환한 값 (`str(detail)`) | 아직 `ApiError`로 전환되지 않은 코드의 자동 변환 결과. 기본 라우팅 404/405도 이 형식으로 변환됨 |
 
 각 코드의 재시도 가능 여부는 「재시도 가능 여부」 절의 표를 따릅니다.
+
+Auth 도메인의 `VALIDATION_FAILED` 세부 reason은 다음처럼 고정합니다. 모두 `details[].rejected_value=null`을 사용하며 원문 token, 새 비밀번호, token hash는 응답에 포함하지 않습니다.
+
+| Endpoint | `details[].field` | `details[].reason` | 사용 상황 |
+| --- | --- | --- | --- |
+| `POST /api/v1/auth/email-verification/confirm` | `token` | `EMAIL_VERIFICATION_TOKEN_INVALID` | 이메일 인증 token이 없거나, 만료됐거나, 이미 사용됐거나, 요청 이메일과 맞지 않음 |
+| `POST /api/v1/auth/password-reset/confirm` | `token` | `RESET_TOKEN_INVALID` | 비밀번호 재설정 token이 없거나, 만료됐거나, 이미 사용됐거나, 제출 token이 유효 token 집합에 없음 |
+| `POST /api/v1/auth/password-reset/confirm` | `new_password` | `PASSWORD_POLICY_VIOLATION` | 새 비밀번호가 회원가입과 같은 비밀번호 정책을 만족하지 않음 |
 
 ### Post-MVP
 

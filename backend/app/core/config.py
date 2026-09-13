@@ -134,6 +134,20 @@ class Config(BaseSettings):
     # 수 있고, 그 구간의 잔존 신호는 알려진 리스크로 남겨둔다(계약 문서 참고).
     PASSWORD_RESET_RESPONSE_TARGET_SECONDS: float = 0.03
 
+    EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES: int = 30
+    EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS: int = 60
+
+    # 이메일 발송 Provider는 배포 환경변수로 선택합니다. 기본값은 저장·로그 없이 아무것도
+    # 보내지 않는 noop이고, production SMTP 연결은 EMAIL_PROVIDER=smtp와 아래 SMTP_* 값으로 켭니다.
+    EMAIL_PROVIDER: str = "noop"
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = ""
+    SMTP_USE_TLS: bool = True
+    SMTP_TIMEOUT_SECONDS: float = 10.0
+
     # idempotency-v1.md: 원문 Idempotency-Key는 저장하지 않고 versioned HMAC만 저장합니다.
     # 실제 key rotation 절차·물리 secret 관리는 Privacy·보안 승인 후 별도로 확정합니다(문서 "단일 테이블과
     # 저장 필드" 참고) — 지금은 단일 active version만 지원합니다.
@@ -249,6 +263,32 @@ class Config(BaseSettings):
             raise ValueError("CHAT_HISTORY_CONTEXT_ENABLED is allowed only in local environment")
         if self.RELEASE_VALIDATION_ALLOWED and self.ENV is not Env.LOCAL:
             raise ValueError("RELEASE_VALIDATION_ALLOWED is allowed only in local environment")
+        return self
+
+    @field_validator("EMAIL_PROVIDER", mode="after")
+    @classmethod
+    def validate_email_provider(cls, value: str) -> str:
+        normalized = value.lower().strip()
+        if normalized not in {"noop", "smtp"}:
+            raise ValueError("EMAIL_PROVIDER must be either 'noop' or 'smtp'")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_smtp_configuration(self) -> "Config":
+        if self.EMAIL_PROVIDER != "smtp":
+            return self
+
+        missing = [
+            name
+            for name in ("SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM_EMAIL")
+            if not getattr(self, name).strip()
+        ]
+        if missing:
+            raise ValueError(f"SMTP configuration is required when EMAIL_PROVIDER=smtp: {', '.join(missing)}")
+        if self.SMTP_PORT <= 0:
+            raise ValueError("SMTP_PORT must be positive")
+        if not math.isfinite(self.SMTP_TIMEOUT_SECONDS) or self.SMTP_TIMEOUT_SECONDS <= 0:
+            raise ValueError("SMTP_TIMEOUT_SECONDS must be a positive finite number")
         return self
 
     @model_validator(mode="after")

@@ -13,6 +13,7 @@ AUTO_COLLECTED_ROOTS = (
     Path("tests/contract"),
     Path("tests/migration"),
     Path("tests/integration/rag"),
+    Path("tests/services"),
     Path("ai_worker/tests/core"),
     Path("ai_worker/tests/ocr"),
     Path("ai_worker/tests/rag"),

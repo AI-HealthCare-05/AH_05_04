@@ -15,6 +15,7 @@ from app.models.async_jobs import (
     OutboxEventStatus,
 )
 from app.models.chat import ChatCitation, ChatMessage, ChatSession
+from app.models.email_verification import EmailVerificationPurpose, EmailVerificationToken
 from app.models.guides import Guide, GuideCitation
 from app.models.knowledge import KnowledgeChunk, KnowledgeDocument
 from app.models.medical_documents import MedicalDocument

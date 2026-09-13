@@ -10,20 +10,25 @@ from app.core.config import Env
 from app.core.errors import ApiError, ErrorDetail
 from app.core.jwt.tokens import AccessToken, RefreshToken
 from app.core.utils.security import (
+    generate_email_verification_token,
     generate_password_reset_token,
+    hash_email_verification_token,
     hash_password,
     hash_password_reset_token,
     verify_password,
 )
 from app.core.validators import validate_password
 from app.dtos.auth import LoginRequest, SignUpRequest
+from app.models.email_verification import EmailVerificationPurpose
 from app.models.users import User
+from app.repositories.email_verification_repository import EmailVerificationRepository
 from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.user_repository import (
     DuplicateUserFieldError,
     UserRepository,
 )
+from app.services.email_delivery import EmailSender, NoopEmailSender
 from app.services.jwt import JwtService
 
 
@@ -45,16 +50,29 @@ def _reset_token_invalid_error() -> ApiError:
     )
 
 
+def _email_verification_token_invalid_error() -> ApiError:
+    return ApiError(
+        status_code=422,
+        code="VALIDATION_FAILED",
+        message="이메일 인증 링크가 유효하지 않습니다. 다시 요청해 주세요.",
+        details=[ErrorDetail(field="token", reason="EMAIL_VERIFICATION_TOKEN_INVALID")],
+    )
+
+
 class AuthService:
     def __init__(
         self,
         user_repository: UserRepository,
         password_reset_repository: PasswordResetRepository,
         refresh_session_repository: RefreshSessionRepository,
+        email_verification_repository: EmailVerificationRepository | None = None,
+        email_sender: EmailSender | None = None,
     ) -> None:
         self.user_repo = user_repository
         self.password_reset_repo = password_reset_repository
         self.refresh_session_repo = refresh_session_repository
+        self.email_verification_repo = email_verification_repository
+        self.email_sender = email_sender or NoopEmailSender()
         self.jwt_service = JwtService()
 
     async def signup(
@@ -151,11 +169,66 @@ class AuthService:
                 details=[ErrorDetail(field="email", reason="ALREADY_EXISTS")],
             )
 
+    def _require_email_verification_repo(self) -> EmailVerificationRepository:
+        if self.email_verification_repo is None:
+            raise RuntimeError("EmailVerificationRepository dependency is required for email verification flow.")
+        return self.email_verification_repo
+
+    async def request_email_verification(self, email: str | EmailStr) -> str | None:
+        """#431: 회원가입 전 이메일 소유 확인 token을 발급한다.
+
+        별도 이메일 중복 확인 API를 만들지 않는다. 이미 가입된 이메일이어도 공개 응답은
+        성공 형태를 유지하고 token을 만들거나 발송하지 않는다. 실제 중복 방어는 기존
+        `signup()`의 409 계약이 담당한다.
+        """
+        repo = self._require_email_verification_repo()
+        email_value = str(email)
+        purpose = EmailVerificationPurpose.SIGNUP
+        now = datetime.now(config.TIMEZONE)
+        cooldown_since = now - timedelta(seconds=config.EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS)
+
+        existing_user = await self.user_repo.get_user_by_email(email_value)
+        recent_token = await repo.find_recent_token(email=email_value, purpose=purpose, since=cooldown_since)
+
+        raw_token = generate_email_verification_token()
+        token_hash = hash_email_verification_token(raw_token)
+        token_created = existing_user is None and recent_token is None
+        if token_created:
+            await repo.create_token(
+                email=email_value,
+                purpose=purpose,
+                token_hash=token_hash,
+                expires_at=now + timedelta(minutes=config.EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES),
+            )
+
+        await repo.session.commit()
+
+        if not token_created:
+            return None
+
+        await self.email_sender.send_email_verification(email=email_value, token=raw_token)
+        return raw_token if config.ENV == Env.LOCAL else None
+
+    async def confirm_email_verification(self, *, email: str | EmailStr, token: str) -> None:
+        repo = self._require_email_verification_repo()
+        email_value = str(email)
+        purpose = EmailVerificationPurpose.SIGNUP
+        candidate = await repo.find_by_hash(hash_email_verification_token(token))
+        if candidate is None or candidate.email != email_value or candidate.purpose != purpose:
+            raise _email_verification_token_invalid_error()
+
+        valid_tokens = await repo.lock_unverified_unexpired_tokens(email=email_value, purpose=purpose)
+        if not any(valid_token.id == candidate.id for valid_token in valid_tokens):
+            raise _email_verification_token_invalid_error()
+
+        await repo.mark_tokens_verified(valid_tokens, verified_at=datetime.now(config.TIMEZONE))
+        await repo.session.commit()
+
     async def request_password_reset(self, email: str | EmailStr) -> str | None:
         """PD-206 결정 3: 계정 존재 여부를 노출하지 않기 위해 계정이 없거나 쿨다운
         중이어도 예외를 던지지 않고 조용히 반환한다(호출자는 항상 같은 성공 응답을 준다).
-        원문 token은 이번 범위에서 실제 이메일 발송 대신 로컬 환경에서만 호출자에게
-        돌려주고(#206 제외 범위: 실제 이메일 발송 Provider 연동), 그 외 환경에서는 항상
+        원문 token은 EmailSender adapter 호출 경계까지만 전달하고, LOCAL 환경에서만 호출자에게
+        돌려준다. 그 외 환경에서는 항상
         `None`을 반환해 존재 여부가 새지 않게 한다.
 
         응답 형태뿐 아니라 처리시간으로도 계정 존재 여부가 새지 않도록, 계정이 없어도
@@ -199,6 +272,9 @@ class AuthService:
             )
 
         await self.password_reset_repo.session.commit()
+
+        if token_created:
+            await self.email_sender.send_password_reset(email=str(email), token=raw_token)
 
         remaining = config.PASSWORD_RESET_RESPONSE_TARGET_SECONDS - (time.monotonic() - start)
         if remaining > 0:

@@ -51,7 +51,8 @@ run_backend_test_lane() {
     backend/app \
     tests/contract \
     tests/integration/rag \
-    tests/integration/test_worker_ocr_persistence.py; then
+    tests/integration/test_worker_ocr_persistence.py \
+    tests/services; then
     echo
     echo "Backend pytest failed."
     echo "Fix the test failures above and re-run."
