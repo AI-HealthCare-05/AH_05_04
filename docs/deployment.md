@@ -290,3 +290,12 @@ docker volume inspect postgres_data
 - 운영 환경변수와 인증서는 승인된 비밀 저장소에서 관리합니다.
 - 로그와 오류 응답에 환자 개인정보가 노출되지 않는지 확인합니다.
 - 의료문서·질문·AI 결과의 보존·삭제 및 외부 Provider 전송 정책을 승인하고 기록합니다.
+
+## Track B 알림 정기 실행 (#434)
+
+기존 Backend 이미지의 `notification-scheduler`는 `notifications` profile로 별도 시작한다.
+일반 배포가 자동 활성화하지 않는다. 기존 배포 스크립트는 migration 전에 알림 서비스를
+중지하고 정지 상태를 확인한다. 검증 후 운영자가 명시적으로 재생성해야 한다.
+주기·timeout·로그·장애 감지와 시작/중지/복구는
+[알림 운영 Runbook](./operations/notification-scheduler.md)을 따른다.
+Production 실행은 #230의 권한·승인 및 기존 공개 게이트 충족 후 별도 수행한다.

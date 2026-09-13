@@ -6,7 +6,7 @@ def test_knowledge_evidence_index_revision_contract() -> None:
     revision = importlib.import_module("backend.alembic.versions.178a1b2c3d4e_knowledge_evidence_index_foundation")
     source = inspect.getsource(revision)
 
-    assert revision.down_revision == "e8c41a09d652"
+    assert revision.down_revision == "166f30415263"
     assert "CREATE EXTENSION IF NOT EXISTS vector" in source
     assert "vector_dims(embedding) BETWEEN 1 AND 2000" in source
 

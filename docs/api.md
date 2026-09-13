@@ -611,9 +611,19 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 | 2026-08-24 | Issue #59 / PR #65 | 회원가입 MVP 입력값, OCR 실패 `error_message`, 처방 확정 필수값·DB 경계값 검증, OCR 최신 작업 정렬 기준을 반영 |
 | 2026-08-21 | Issue #51 / PR #52 | OCR 결과 조회 응답에 `normalized_value`와 `normalization_version`을 추가하고, `raw_value`, `normalized_value`, `confirmed_value`의 역할을 명시 |
 
-## #418 UNCONFIRMED backlog 후보 API (미등록)
+## #418 UNCONFIRMED backlog API (등록 변경 리뷰 대기)
 
-GET /api/v1/medication-checkins/unconfirmed의 조회 구현은 있으나 Backend blocker에 따라 v1 router 등록을 되돌렸다. 실제 앱의 route 목록·OpenAPI에는 없으며 요청은 404다. 테스트 앱에서만 backlog router와 병합된 #413 Check-in PUT을 연결해 보완 후 목록 재조회를 검증한다. Cursor 404에서는 Frontend가 cursor를 생략해 첫 페이지부터 재조회한다. [PD-418](./governance/decisions/2026-09-10-unconfirmed-backlog-418.md) 및 [Proposed 계약](./contracts/proposed/unconfirmed-backlog-v1.md)의 두 담당 리뷰어 승인 후 등록·실제 앱 검증을 진행하고 해당 HEAD 승인 전 병합하지 않는다. #138 Frontend 소비 검증과 Production 공개 승인을 대신하지 않는다.
+`GET /api/v1/medication-checkins/unconfirmed`를 실제 v1 앱에 연결한다. Bearer 인증과
+SELF parent chain을 사용하고, `limit` 1..100(기본 20) 및 선택 UUID `cursor`로
+UNCONFIRMED를 예정 시각·Check-in ID 오름차순 조회한다. 과거 version 기록도 포함한다.
+보완은 기존 #202 Check-in PUT을 재사용하며, 성공 후 목록에서 제외되고 #456 날짜별 조회에는
+수정된 Check-in revision·status가 반환된다. 보완된 cursor로 다음 페이지를 이어 조회할 수 있다.
+Cursor 404에서는 cursor를 생략해 첫 페이지부터 재조회한다.
+
+#426 승인은 미등록 후보에 한정된다. [PD-418](./governance/decisions/2026-09-10-unconfirmed-backlog-418.md)과
+[Proposed 계약](./contracts/proposed/unconfirmed-backlog-v1.md)에 증빙·병합 조건을 기록했다.
+등록 HEAD에서 두 담당 리뷰어가 재승인하기 전에는 Draft/Proposed를 유지한다.
+이 변경은 #138 Frontend 소비 검증이나 Production 공개 승인을 대신하지 않는다.
 
 ## #203 앱 내부 알림 — 구현 브랜치 검토 대상
 

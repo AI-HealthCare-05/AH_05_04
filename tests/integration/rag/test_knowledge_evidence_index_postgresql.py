@@ -332,12 +332,12 @@ async def test_populated_foundation_refuses_lossy_downgrade(database) -> None:
     await database.dispose()
 
     with pytest.raises(RuntimeError, match="would lose Knowledge Evidence Index data"):
-        await asyncio.to_thread(command.downgrade, _alembic_config(), "e8c41a09d652")
+        await asyncio.to_thread(command.downgrade, _alembic_config(), "166f30415263")
 
 
 async def test_legacy_knowledge_rows_round_trip_through_foundation_migration(database) -> None:
     await database.dispose()
-    await asyncio.to_thread(command.downgrade, _alembic_config(), "e8c41a09d652")
+    await asyncio.to_thread(command.downgrade, _alembic_config(), "166f30415263")
     async with database.begin() as connection:
         await connection.execute(
             text(
@@ -384,4 +384,4 @@ async def test_legacy_knowledge_rows_round_trip_through_foundation_migration(dat
     assert tuple(chunk) == (None, "legacy-model", "legacy-vector-key")
 
     await database.dispose()
-    await asyncio.to_thread(command.downgrade, _alembic_config(), "e8c41a09d652")
+    await asyncio.to_thread(command.downgrade, _alembic_config(), "166f30415263")

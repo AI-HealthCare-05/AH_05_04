@@ -5,7 +5,7 @@
 - 범위: #178 Production Hybrid Retrieval의 선행 Knowledge Evidence Index 저장 기반
 - 상태: 로컬 구현·검증 완료, 지정 리뷰·병합 대기
 - 계약: `docs/contracts/proposed/post-mvp-1/knowledge-evidence-index-v1.md`
-- migration: `178a1b2c3d4e` (`e8c41a09d652` 다음 단일 head)
+- migration: `178a1b2c3d4e` (`166f30415263` 다음 단일 head)
 - 공개: `PUBLIC_TRACK_F=false`; Current 승격·Production 활성화 아님
 
 권위 문서의 `PD-315` 리뷰 상태 표시는 이 구현 브랜치에서 변경하지 않았다. 해당 메타데이터 정리는 지정
@@ -31,9 +31,10 @@ SQLAlchemy `VECTOR` 타입이 bind/result 변환을 소유한다. 실제 Postgre
 
 | 검사 | 결과 |
 | --- | --- |
-| AI Worker 기본 lane (Core·OCR·RAG·Evaluation) | 3115 passed, 8 skipped |
-| Backend·Contract·선별 RAG Integration 기본 lane | 1942 passed, 85 skipped |
-| 전체 Contract suite (Docker image build 포함) | 271 passed |
+| AI Worker 기본 lane (Core·OCR·RAG·Evaluation) | 3147 passed, 8 skipped |
+| Backend·Contract·선별 RAG Integration 기본 lane | 1963 passed, 85 skipped |
+| 전체 Migration suite | 212 passed, 4 skipped |
+| 전체 Contract suite (Docker image build 포함) | 273 passed |
 | 기존 DB 역할 bootstrap/provision/redeploy 회귀 | 1 passed |
 | 독립 DB 전체 Alembic upgrade + vector round-trip/concurrency/conflict/dimension/downgrade/legacy/non-leakage | 3 passed |
 | 전용 Builder 실행 + Runtime read-only + 업무 UPDATE/DELETE/TRUNCATE 거부 | 1 passed |

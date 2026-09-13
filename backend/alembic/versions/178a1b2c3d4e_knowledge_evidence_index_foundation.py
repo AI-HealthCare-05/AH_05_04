@@ -9,7 +9,7 @@ from alembic import op
 from pgvector.sqlalchemy import VECTOR
 
 revision = "178a1b2c3d4e"
-down_revision = "e8c41a09d652"
+down_revision = "166f30415263"
 branch_labels = None
 depends_on = None
 

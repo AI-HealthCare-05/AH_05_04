@@ -269,6 +269,7 @@ async def test_source_snapshot_catalog_chain_can_be_saved(db_session: AsyncSessi
         await repository.get_component(
             product_id=product.id,
             display_order=component.display_order,
+            source_snapshot_id=snapshot.id,
         )
         == component
     )

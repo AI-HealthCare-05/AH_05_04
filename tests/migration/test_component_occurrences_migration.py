@@ -68,8 +68,8 @@ async def test_component_upgrade_refuses_existing_order_conflicts_without_repair
         await connection.execute(
             text(
                 "INSERT INTO rag_medication_product_component "
-                "(id, source_snapshot_id, product_id, ingredient_id, component_role, display_order) "
-                "SELECT :id, source_snapshot_id, product_id, ingredient_id, 'EXCIPIENT', display_order "
+                "(id, source_snapshot_id, product_source_snapshot_id, ingredient_source_snapshot_id, product_id, ingredient_id, component_role, display_order) "
+                "SELECT :id, source_snapshot_id, product_source_snapshot_id, ingredient_source_snapshot_id, product_id, ingredient_id, 'EXCIPIENT', display_order "
                 "FROM rag_medication_product_component LIMIT 1"
             ),
             {"id": str(uuid4())},

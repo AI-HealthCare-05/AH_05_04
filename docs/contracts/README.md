@@ -48,16 +48,20 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 - [Knowledge Evidence Index v1 (#178 선행 기반)](./proposed/post-mvp-1/knowledge-evidence-index-v1.md): 승인된 RAG Runtime 목표의 Retrieval Adapter가 소비할 Source Snapshot 결속 Chunk·버전별 embedding·재현 가능한 receipt 저장 계약. 구현 브랜치 검증 중이며 #178 Retrieval/RRF/Rerank/Evidence Gate·공개 활성화는 포함하지 않음.
 
+- [RAG Answer Quality Metric·Variant 계약 v1 제안 (#159)](./proposed/post-mvp-1/rag-answer-quality-metrics-v1.md): `ANS-BASE | ANS-RAG | ANS-FINAL`, 네 Answer Metric의 분석 단위·micro ratio·95% cluster bootstrap, 승인 human-rubric label과 세 pair 비교 경계. `PD-159-20260913` 책임 리뷰 전 Proposed이며 DEV 구현·HOLDOUT 실행·Release 승인 아님.
+
 - [OCR LLM Worker 범위 정정 (#453)](./proposed/ocr-llm-worker-consent-453.md): 기존 이관 범위와 리뷰 시 별도 검토할 항목. 기존 동의 개정안 미채택.
 - [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태, row 없음=미동의, Backend·Worker 공통 fixture 판정, WorkerMessage/Stream 비전송, CONSENT_REQUIRED 및 OCR CONSENT_WITHDRAWN 차단 의미. Proposed · 미구현 · Production 공개 승인 아님. 확인 필요: 권가빈·김지혜·정현우·남한솔.
 
-- [Track B UNCONFIRMED backlog v1](./proposed/unconfirmed-backlog-v1.md): PD-418 URL·cursor·DTO·오류 제안. 실제 v1 router 등록 보류, 테스트 앱의 #413 PUT→GET HTTP 통합 검증. Cursor 404의 첫 페이지 재조회 명시, 계약 및 등록 HEAD의 Backend/Frontend 승인 필요.
+- [Track B UNCONFIRMED backlog v1](./proposed/unconfirmed-backlog-v1.md): PD-418 URL·cursor·DTO·오류. #426 미등록 후보 승인 증빙 확인; 최신 #202 기반 실제 v1 등록·PUT 보완·페이지 이동 검증 변경은 두 리뷰어 재승인 대기. 승인 전 Current 승격·병합 금지.
 
 - [Track B Notification 계약 v1 (#203)](./proposed/track-b-notifications-v1.md): PD-203 기반 알림 저장·목록·읽음·재알림 구현 브랜치. 지정 리뷰어 승인 및 #202 일정 API 통합 전이며 current 계약 아님.
 
 - [Track B 일정 정합화 제안 v1 (#417)](./proposed/track-b-schedule-reconciliation-v1.md): setup reason·일정 Audit·time retire·revision·알림 취소 transaction의 승인 요청안. DB 후속 #423과 #202·#203 인계 기준; 승인 전 구현 근거 아님.
 
 - [Source Artifact·REJECTS 보존·삭제 정책 초안 (#335)](./proposed/post-mvp-1/source-artifact-retention-cleanup.md): PM 30일 유예·참조 보존·수동 배치 승인 반영, 통합 검토 대상, 후속 구현 [#347](https://github.com/AI-HealthCare-05/AH_05_04/issues/347)·김지혜 담당. Local 합성 #347의 승인 순서·revision·경합 잠금·DB 감사 근거·참조 범위 보완 연결 포함. 운영 삭제·활성화 승인 아님.
+
+- [Protected HOLDOUT Dataset 폐기 감사 계약 (#425)](./proposed/post-mvp-1/protected-holdout-disposal-audit.md): PD-368 §8이 분리를 지시한 폐기 감사 계약. 기존 audit chain에 `DISPOSAL` variant를 두고 `INTENT`→`SUCCEEDED`/`UNKNOWN`→재조정을 규정한다. 운영 종료는 기존 `DatasetStatus.RETIRED`를 재사용하며 새 상태를 만들지 않는다. 폐기 후 재현 범위 정책 결정 전까지 **실제 폐기는 차단 유지**. 실행 승인 아님.
 
 - [Staging Release Validation Ledger 계약](./proposed/operations/release-validation-ledger.md): staging control DB, 상태 전이, crash recovery와 migration 상호 배제
 - [개발환경·비밀정보 주입 경로 점검 운영 계약](./proposed/operations/development-env-secret-injection-check.md): Redis, PostgreSQL, Provider secret 주입 경로와 운영 배포 전 차단 조건
@@ -132,6 +136,17 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 
 ### #166 D-04 검토 연결
 
+- [D-03 Crosswalk 범위 결정](../governance/decisions/2026-09-13-catalog-crosswalk-scope.md):
+  현재 P0 소비 경로가 없어 즉시 구현에서 제외. 별도 계약·이슈의 재개 조건 기록, 구현 완료 아님.
+
 - [Catalog Component occurrence 결정안](../governance/decisions/2026-09-11-catalog-component-occurrences.md):
   Proposed. 선택 원본 키·제품별 순서 UNIQUE·release_profile·무손실 migration 경계.
   계약 정본은 기존 [Catalog DB 연결안](proposed/post-mvp-1/catalog-db-integration-v2.md)을 갱신한다.
+  2026-09-13 후속 구현: MFDS 관찰 입력의 총량 그룹·원본 필드·제외 사유·건수 검사.
+  검증된 상세 artifact 이후 Loader → DB 저장·복원 → Candidate 인계는 구현·합성 검증 및
+  [정현우 담당 범위 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/477#pullrequestreview-5190458759)를 완료했다. 실제 API 수집·상세 Snapshot 생산은 후속이다.
+  승인 대상 HEAD는 `c58f0968`이며 병합·운영 활성화와 구분한다.
+
+- [D-04 관찰 출처·인계 v3 결정안](../governance/decisions/2026-09-13-component-observation-handoff.md):
+  검증된 상세 artifact Loader, 독립 Snapshot FK, 관찰 버전·총량 그룹의 DB/Candidate 인계 제안.
+  기존 v2를 보존하고 관찰 자료는 medication-catalog-v3로 구분. 계약 정본은 위 Catalog DB 연결안.

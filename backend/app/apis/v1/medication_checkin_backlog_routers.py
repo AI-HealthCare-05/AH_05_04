@@ -1,4 +1,4 @@
-"""PD-418 proposed route: intentionally unregistered pending Backend/Frontend approval."""
+"""SELF-owned UNCONFIRMED backlog for Check-in correction."""
 
 from typing import Annotated
 from uuid import UUID

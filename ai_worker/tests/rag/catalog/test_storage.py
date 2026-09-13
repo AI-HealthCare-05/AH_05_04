@@ -9,6 +9,7 @@ from ai_worker.tasks.rag.catalog import (
     CandidateEntityType,
     CandidateEntryType,
     CandidateRecordStatus,
+    CatalogExportError,
     CatalogIngredientInput,
     build_catalog_members,
     create_catalog_export,
@@ -205,7 +206,7 @@ def test_component_cannot_borrow_alias_cross_snapshot_rule():
         members, components=(replace(members.components[0], source_snapshot_id="snapshot-002"), *members.components[1:])
     )
     refs = (CandidateCatalogSourceRef("synthetic-snapshot-001", "v1"), CandidateCatalogSourceRef("snapshot-002", "v2"))
-    with pytest.raises(CatalogStoragePreparationError):
+    with pytest.raises(CatalogExportError, match="CATALOG_VALIDATION_FAILED"):
         prepare(changed, refs)
 
 

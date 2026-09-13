@@ -103,7 +103,9 @@ function SignupPage() {
         email: form.email.trim(),
         password: form.password,
       })
-      navigate('/login')
+      navigate('/login', {
+        state: { fromSignup: true },
+      })
     } catch (error) {
       if (error instanceof ApiError) {
         const emailConflict = error.details.some(

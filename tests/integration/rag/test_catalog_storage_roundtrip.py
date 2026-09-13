@@ -487,3 +487,166 @@ async def test_repeated_component_roundtrip_preserves_occurrences_and_release_pr
     assert len({c.component_ref for c in restored.catalog.components}) == 2
     assert {c.strength_value for c in restored.catalog.components} == {"010.00", "020.00"}
     assert isinstance(candidate(restored), CandidateIndexBuildSuccess)
+
+
+async def test_mfds_loader_preserves_groups_sources_and_candidate_handoff(database):
+    from ai_worker.adapters.sqlalchemy_source_snapshot_repository import SqlAlchemySourceSnapshotRepository
+    from ai_worker.tasks.rag.catalog.mfds_component import inspect_mfds_component_rows
+    from ai_worker.tasks.rag.catalog.mfds_loader import DETAIL_CANONICALIZATION_SPEC, load_mfds_catalog
+
+    _, factory = database
+    rows = [
+        {
+            "ITEM_SEQ": "P-001",
+            "TAMT_SEQ": "01",
+            "MTRAL_SN": "001",
+            "MTRAL_CODE": "I-001",
+            "QNT": "010.00",
+            "INGD_UNIT_CD": "mg",
+        },
+        {
+            "ITEM_SEQ": "P-001",
+            "TAMT_SEQ": "02",
+            "MTRAL_SN": "001",
+            "MTRAL_CODE": "I-001",
+            "QNT": "020.00",
+            "INGD_UNIT_CD": "mg",
+        },
+    ]
+    encoded = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
+    async with factory.begin() as session:
+        await session.execute(
+            text(
+                "UPDATE rag_source_snapshot SET canonical_checksum=:digest, canonicalization_spec_version=:spec WHERE id=:id"
+            ),
+            {"digest": hashlib.sha256(encoded).hexdigest(), "spec": DETAIL_CANONICALIZATION_SPEC, "id": ALIAS_SNAPSHOT},
+        )
+    async with factory() as session:
+        source_repo = SqlAlchemySourceSnapshotRepository(session)
+        product_receipt = await source_repo.get_snapshot_receipt(snapshot_id=UUID(PRODUCT_SNAPSHOT))
+        detail_receipt = await source_repo.get_snapshot_receipt(snapshot_id=UUID(ALIAS_SNAPSHOT))
+    inspection = inspect_mfds_component_rows(tuple(rows))
+    verifier = AsyncMock(spec=CatalogApprovalVerifier)
+
+    def approve(*, catalog_version, export_checksum, source_refs):
+        return CatalogApprovalReceipt(
+            "synthetic-mfds-approval",
+            catalog_version,
+            export_checksum,
+            CatalogVerificationStatus.APPROVED,
+            True,
+            tuple(
+                CatalogSourceApproval(
+                    ref, "synthetic-source", CatalogVerificationStatus.APPROVED, CatalogFreshnessStatus.CURRENT
+                )
+                for ref in source_refs
+            ),
+        )
+
+    verifier.verify.side_effect = approve
+    repository = SqlAlchemyCatalogBuildRepository(factory)
+    kwargs = dict(
+        catalog_version="synthetic-mfds-observation-v1",
+        detail_receipt=detail_receipt,
+        detail_json=encoded,
+        product_receipt=product_receipt,
+        products=(replace(_product("P-001"), source_snapshot_id=PRODUCT_SNAPSHOT),),
+        ingredients_by_material={
+            "I-001": CatalogIngredientInput(
+                ALIAS_SNAPSHOT, "synthetic-material-record", "MFDS_INGREDIENT_CODE", "I-001", "합성 성분"
+            )
+        },
+        orders_by_observation={row.source_record_key: i for i, row in enumerate(inspection.observations, 1)},
+        order_spec_version="synthetic-explicit-order-v1",
+        repository=repository,
+        approval_verifier=verifier,
+    )
+    loaded = await load_mfds_catalog(**kwargs)
+    assert loaded.build.export.catalog.schema_version == "medication-catalog-v3"
+    await load_mfds_catalog(**kwargs)
+    async with factory() as session:
+        set_id = await session.scalar(select(RagCatalogSet.id))
+        stored = (
+            await session.execute(
+                text(
+                    "SELECT source_snapshot_id, product_source_snapshot_id, ingredient_source_snapshot_id, observation_json FROM rag_medication_product_component"
+                )
+            )
+        ).all()
+        assert await session.scalar(select(func.count()).select_from(RagCatalogSet)) == 1
+    assert len(stored) == 2
+    assert all(row[:3] == (ALIAS_SNAPSHOT, PRODUCT_SNAPSHOT, ALIAS_SNAPSHOT) for row in stored)
+    restored = await repository.load_build(set_id, approval_verifier=verifier)
+    assert restored == loaded.build.export
+    indexed = candidate(restored)
+    assert isinstance(indexed, CandidateIndexBuildSuccess)
+    assert indexed.components == restored.catalog.components
+    assert {c.observation.tamt_seq for c in indexed.components} == {"01", "02"}
+    assert {json.loads(row.observation_json)["quantity"] for row in stored} == {"010.00", "020.00"}
+    # A damaged canonical artifact must never reach save_build.
+    blocked = AsyncMock()
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        await load_mfds_catalog(**dict(kwargs, detail_json=encoded + b" ", repository=blocked))
+    blocked.save_build.assert_not_awaited()
+    # A self-consistent fabricated receipt/artifact cannot replace the real Snapshot checksum.
+    forged_json = json.dumps([dict(row, QNT="999.00") for row in rows], sort_keys=True, separators=(",", ":")).encode()
+    with pytest.raises(CatalogDatabaseBindingError):
+        await load_mfds_catalog(
+            **dict(
+                kwargs,
+                detail_json=forged_json,
+                detail_receipt=replace(detail_receipt, canonical_checksum=hashlib.sha256(forged_json).hexdigest()),
+            )
+        )
+    assert await repository.load_build(set_id, approval_verifier=verifier) == restored
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(RagCatalogSet)) == 1
+    # Recollection uses a new detail Snapshot, keeping the Product observation and old Set.
+    new_detail_id = uuid4()
+    new_rows = [dict(row, QNT="030.00") for row in rows]
+    new_json = json.dumps(new_rows, sort_keys=True, separators=(",", ":")).encode()
+    async with factory.begin() as session:
+        prior = await session.get(RagSourceSnapshot, UUID(ALIAS_SNAPSHOT))
+        values = {column.key: getattr(prior, column.key) for column in RagSourceSnapshot.__table__.columns}
+        values.update(
+            id=new_detail_id,
+            source_version="external:v3",
+            external_version="v3",
+            canonical_checksum=hashlib.sha256(new_json).hexdigest(),
+        )
+        session.add(RagSourceSnapshot(**values))
+    async with factory() as session:
+        new_receipt = await SqlAlchemySourceSnapshotRepository(session).get_snapshot_receipt(snapshot_id=new_detail_id)
+    next_load = await load_mfds_catalog(
+        **dict(
+            kwargs,
+            catalog_version="synthetic-mfds-observation-v2",
+            detail_receipt=new_receipt,
+            detail_json=new_json,
+            ingredients_by_material={
+                "I-001": replace(kwargs["ingredients_by_material"]["I-001"], source_snapshot_id=str(new_detail_id))
+            },
+        )
+    )
+    assert next_load.build.export.export_checksum != loaded.build.export.export_checksum
+    assert await repository.load_build(set_id, approval_verifier=verifier) == restored
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(RagCatalogSet)) == 2
+        assert await session.scalar(text("SELECT count(*) FROM rag_medication_product_component")) == 4
+        assert await session.scalar(text("SELECT count(*) FROM rag_medication_product")) == 1
+    # Blank rows never become a partial successful Catalog; the original row remains in the report.
+    blank_rows = [*rows, {"ITEM_SEQ": "P-001", "MTRAL_CODE": None}]
+    blank_json = json.dumps(blank_rows, sort_keys=True, separators=(",", ":")).encode()
+    not_saved = AsyncMock()
+    excluded = await load_mfds_catalog(
+        **dict(
+            kwargs,
+            detail_receipt=replace(detail_receipt, canonical_checksum=hashlib.sha256(blank_json).hexdigest()),
+            detail_json=blank_json,
+            repository=not_saved,
+        )
+    )
+    assert excluded.build is None
+    assert excluded.inspection.input_count == 3
+    assert json.loads(excluded.inspection.exclusions[0].record_json) == blank_rows[-1]
+    not_saved.save_build.assert_not_awaited()
