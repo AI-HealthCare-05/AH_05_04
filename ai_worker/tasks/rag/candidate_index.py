@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
+from ai_worker.tasks.rag.catalog.component_observation import component_sources_are_valid
 from ai_worker.tasks.rag.catalog.export import CatalogExportArtifacts, CatalogExportError, verify_catalog_export
 from ai_worker.tasks.rag.catalog.types import (
     CandidateAliasReviewStatus,
@@ -145,6 +146,7 @@ class CandidateIndexManifest:
 class CandidateIndexBuildSuccess:
     manifest: CandidateIndexManifest
     members: tuple[CandidateIndexMember, ...]
+    components: tuple[CatalogComponent, ...] = ()
 
 
 class CandidateSearchStage(StrEnum):
@@ -731,8 +733,7 @@ def _component_failure(catalog: CandidateCatalogExport) -> CandidateIndexBuildFa
             or component_product is None
             or component_ingredient is None
             or component.component_order < 1
-            or component.source_snapshot_id != component_product.source_snapshot_id
-            or component.source_snapshot_id != component_ingredient.source_snapshot_id
+            or not component_sources_are_valid(component, component_product, component_ingredient)
         ):
             return CandidateIndexBuildFailure(
                 CandidateIndexBuildFailureReason.REFERENTIAL_INTEGRITY_INVALID,
@@ -1255,6 +1256,7 @@ def _build_candidate_index_members(
     return CandidateIndexBuildSuccess(
         manifest=_build_manifest(catalog, config, members),
         members=members,
+        components=catalog.components if any(c.observation for c in catalog.components) else (),
     )
 
 

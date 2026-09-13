@@ -362,16 +362,26 @@ async def _seed_source_catalog_chain(
                     ),
                     ids,
                 )
+            # This fixture seeds both historical revisions and the current head.
+            has_observation_sources = await connection.scalar(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='rag_medication_product_component' AND column_name='product_source_snapshot_id')"
+                )
+            )
+            source_columns = (
+                ", product_source_snapshot_id, ingredient_source_snapshot_id" if has_observation_sources else ""
+            )
+            source_values = ", :snapshot_id, :snapshot_id" if has_observation_sources else ""
             await connection.execute(
                 text(
-                    """
+                    f"""
                     INSERT INTO rag_medication_product_component (
                         id, source_snapshot_id, product_id, ingredient_id,
-                        component_role, display_order
+                        component_role, display_order{source_columns}
                     )
                     VALUES (
                         :component_id, :snapshot_id, :product_id, :ingredient_id,
-                        'ACTIVE_INGREDIENT', 1
+                        'ACTIVE_INGREDIENT', 1{source_values}
                     )
                     """
                 ),

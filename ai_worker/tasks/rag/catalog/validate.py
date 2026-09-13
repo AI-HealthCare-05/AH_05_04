@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from ai_worker.tasks.rag.catalog.build import CatalogMembers
+from ai_worker.tasks.rag.catalog.component_observation import component_sources_are_valid
 from ai_worker.tasks.rag.catalog.types import (
     CandidateAliasReviewStatus,
     CandidateEntityType,
@@ -95,8 +96,8 @@ def _duplicate_ingredient_failures(
 def _orphan_component_failures(
     members: CatalogMembers,
 ) -> tuple[CatalogValidationFailure, ...]:
-    product_refs = {product.product_ref for product in members.products}
-    ingredient_refs = {ingredient.ingredient_ref for ingredient in members.ingredients}
+    product_refs = {product.product_ref: product for product in members.products}
+    ingredient_refs = {ingredient.ingredient_ref: ingredient for ingredient in members.ingredients}
 
     return tuple(
         CatalogValidationFailure(
@@ -104,7 +105,9 @@ def _orphan_component_failures(
             references=(component.component_ref,),
         )
         for component in members.components
-        if (component.product_ref not in product_refs or component.ingredient_ref not in ingredient_refs)
+        if not component_sources_are_valid(
+            component, product_refs.get(component.product_ref), ingredient_refs.get(component.ingredient_ref)
+        )
     )
 
 

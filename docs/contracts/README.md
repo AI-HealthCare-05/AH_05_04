@@ -134,6 +134,17 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 
 ### #166 D-04 검토 연결
 
+- [D-03 Crosswalk 범위 결정](../governance/decisions/2026-09-13-catalog-crosswalk-scope.md):
+  현재 P0 소비 경로가 없어 즉시 구현에서 제외. 별도 계약·이슈의 재개 조건 기록, 구현 완료 아님.
+
 - [Catalog Component occurrence 결정안](../governance/decisions/2026-09-11-catalog-component-occurrences.md):
   Proposed. 선택 원본 키·제품별 순서 UNIQUE·release_profile·무손실 migration 경계.
   계약 정본은 기존 [Catalog DB 연결안](proposed/post-mvp-1/catalog-db-integration-v2.md)을 갱신한다.
+  2026-09-13 후속 구현: MFDS 관찰 입력의 총량 그룹·원본 필드·제외 사유·건수 검사.
+  검증된 상세 artifact 이후 Loader → DB 저장·복원 → Candidate 인계는 구현·합성 검증 및
+  [정현우 담당 범위 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/477#pullrequestreview-5190458759)를 완료했다. 실제 API 수집·상세 Snapshot 생산은 후속이다.
+  승인 대상 HEAD는 `c58f0968`이며 병합·운영 활성화와 구분한다.
+
+- [D-04 관찰 출처·인계 v3 결정안](../governance/decisions/2026-09-13-component-observation-handoff.md):
+  검증된 상세 artifact Loader, 독립 Snapshot FK, 관찰 버전·총량 그룹의 DB/Candidate 인계 제안.
+  기존 v2를 보존하고 관찰 자료는 medication-catalog-v3로 구분. 계약 정본은 위 Catalog DB 연결안.
