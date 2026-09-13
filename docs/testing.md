@@ -432,3 +432,14 @@ PostgreSQL·실제 ASGI 앱으로 검증한다. 기본 runner의 Backend 수집 
 `backend/app/tests/notifications`, `tests/contract/test_notification_runtime_configuration.py`,
 `tests/integration/rag/test_database_role_provisioning.py`는 기본 필수 runner에 포함된다.
 실제 Local Docker smoke와 Production 적용 여부는 별도로 기록한다.
+
+### #202 occurrence 원래 약 표시 조회
+
+`backend/app/tests/notifications/test_occurrence_medication_handoff.py`는 실제 ASGI 앱·PostgreSQL로
+자정 경계 재알림의 원래 occurrence → 약 표시 → 명시적 Check-in을 검증합니다. 실제 처방 정정 후
+같은 약명·순서인 새 version이 생겨도 원래 약 ID·nullable 용량을 보존하며, 새 occurrence에서는
+새 함량·용량을 반환하는지 확인합니다. PENDING/CANCELLED 및 TAKEN/NOT_TAKEN/UNCONFIRMED,
+타인/없는 ID의 동일 404·401·422·no-store·OpenAPI requiredness와 GET 전후 상태 불변을 포함합니다.
+합성 응답 export는 `TRACK_B_OCCURRENCE_MEDICATION_FIXTURE_OUTPUT`에 출력 경로를 지정할 때만
+실행합니다. 기본 CI는 fixture를 갱신하지 않습니다. 검증 환경·결과는
+[검증 기록](validation/track-b/issue-202-closure-readiness.md)을 참조합니다.

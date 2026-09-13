@@ -9,6 +9,8 @@ from app.dtos.medication_schedules import (
     MedicationDayData,
     MedicationDayResponse,
     MedicationOccurrenceData,
+    MedicationOccurrenceMedicationData,
+    MedicationOccurrenceMedicationResponse,
     MedicationScheduleData,
     MedicationScheduleItem,
     MedicationScheduleResponse,
@@ -36,6 +38,28 @@ class MedicationScheduleApiService:
         self.queries = queries
         self.mutations = mutations
         self.idempotency = idempotency
+
+    async def occurrence_medication(
+        self, *, user_id: UUID, occurrence_id: UUID
+    ) -> MedicationOccurrenceMedicationResponse:
+        medication = await self.queries.occurrence_medication_owned(occurrence_id, user_id)
+        if medication is None:
+            raise ApiError(
+                status_code=404,
+                code="MEDICATION_OCCURRENCE_NOT_FOUND",
+                message="복약 일정을 찾을 수 없습니다.",
+            )
+        return MedicationOccurrenceMedicationResponse(
+            data=MedicationOccurrenceMedicationData(
+                occurrence_id=occurrence_id,
+                prescription_version_id=medication.prescription_version_id,
+                prescription_version_medication_id=medication.id,
+                medication_name=medication.medication_name,
+                strength_text=medication.strength_text,
+                dose_value=float(medication.dose_value) if medication.dose_value is not None else None,
+                dose_unit=medication.dose_unit,
+            )
+        )
 
     async def write(
         self,
