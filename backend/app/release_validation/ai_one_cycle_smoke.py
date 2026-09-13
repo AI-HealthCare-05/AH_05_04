@@ -530,12 +530,15 @@ async def cleanup_synthetic_fixture(
     *,
     user_id: UUID,
 ) -> int:
+    from app.models.async_jobs import IdempotencyRecord
     from app.models.chat import ChatCitation, ChatMessage, ChatSession
     from app.models.guides import Guide, GuideCitation
     from app.models.medical_documents import MedicalDocument
     from app.models.ocr import ExtractedField, OcrJob
+    from app.models.password_reset import PasswordResetToken
     from app.models.prescriptions import Medication, Prescription
     from app.models.profiles import Profile
+    from app.models.refresh_session import RefreshSession
     from app.models.users import User
 
     document_ids = select(MedicalDocument.id).where(MedicalDocument.uploaded_by == user_id)
@@ -556,6 +559,9 @@ async def cleanup_synthetic_fixture(
         await session.execute(delete(OcrJob).where(OcrJob.document_id.in_(document_ids)))
         await session.execute(delete(MedicalDocument).where(MedicalDocument.uploaded_by == user_id))
         await session.execute(delete(Profile).where(Profile.user_id == user_id))
+        await session.execute(delete(RefreshSession).where(RefreshSession.user_id == user_id))
+        await session.execute(delete(PasswordResetToken).where(PasswordResetToken.user_id == user_id))
+        await session.execute(delete(IdempotencyRecord).where(IdempotencyRecord.user_id == user_id))
         await session.execute(delete(User).where(User.id == user_id))
         await session.commit()
     async with session_factory() as verification_session:
@@ -578,12 +584,12 @@ async def verify_one_cycle(
     from app.models.guides import Guide, GuideGenerationStatus
     from app.models.medical_documents import MedicalDocument
     from app.models.ocr import ConfirmationStatus, ExtractedField, OcrJob, OcrStatus
-    from app.models.prescriptions import Prescription
+    from app.models.prescriptions import Prescription, PrescriptionVersion
 
     async with session_factory() as session:
         prescription = await session.scalar(
             select(Prescription)
-            .options(selectinload(Prescription.medications))
+            .options(selectinload(Prescription.active_version).selectinload(PrescriptionVersion.medications))
             .where(Prescription.id == UUID(ids["prescription_id"]))
         )
         guide = await session.get(Guide, UUID(ids["guide_id"]))
@@ -626,13 +632,14 @@ async def verify_one_cycle(
         or messages[0].content != scenario["question"]
         or document.uploaded_by != fixture.user_id
         or prescription.document_id != expected_document_id
+        or prescription.active_version is None
         or guide.prescription_id != prescription.id
         or chat_session.prescription_id != prescription.id
     ):
         raise HttpFlowError("DB_VERIFICATION")
     expected_medications = sorted(scenario["medications"], key=lambda item: item["display_order"])
-    actual_medications = list(prescription.medications)
-    matches = prescription.prescribed_date.isoformat() == scenario["prescribed_date"] and len(
+    actual_medications = list(prescription.active_version.medications)
+    matches = prescription.active_version.prescribed_date.isoformat() == scenario["prescribed_date"] and len(
         actual_medications
     ) == len(expected_medications)
     if matches:
@@ -663,7 +670,7 @@ async def verify_one_cycle(
         or assistant.generation_status != ChatGenerationStatus.COMPLETED
         or not assistant.content
         or not assistant.model_name
-        or assistant.prompt_version != "chat-prompt-v2"
+        or assistant.prompt_version != "chat-prompt-v3"
         or assistant.error_code is not None
         or assistant.error_message is not None
     ):
@@ -726,19 +733,21 @@ async def verify_prescription_input(
     """Fail before Guide/OpenAI when the freshly persisted input differs from the manifest."""
     from decimal import Decimal
 
-    from app.models.prescriptions import Prescription
+    from app.models.prescriptions import Prescription, PrescriptionVersion
 
     async with session_factory() as session:
         prescription = await session.scalar(
             select(Prescription)
-            .options(selectinload(Prescription.medications))
+            .options(selectinload(Prescription.active_version).selectinload(PrescriptionVersion.medications))
             .where(Prescription.id == UUID(prescription_id))
         )
-    if prescription is None or prescription.document_id != UUID(document_id):
+    if prescription is None or prescription.document_id != UUID(document_id) or prescription.active_version is None:
         raise HttpFlowError("PRESCRIPTION_INPUT")
     expected = sorted(scenario["medications"], key=lambda item: item["display_order"])
-    actual = list(prescription.medications)
-    matches = prescription.prescribed_date.isoformat() == scenario["prescribed_date"] and len(actual) == len(expected)
+    actual = list(prescription.active_version.medications)
+    matches = prescription.active_version.prescribed_date.isoformat() == scenario["prescribed_date"] and len(
+        actual
+    ) == len(expected)
     for stored, wanted in zip(actual, expected, strict=False):
         matches = matches and (
             stored.display_order == wanted["display_order"]

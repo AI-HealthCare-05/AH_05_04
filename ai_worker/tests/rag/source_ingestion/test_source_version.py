@@ -1,0 +1,284 @@
+import hashlib
+from datetime import UTC, datetime, timedelta, timezone
+
+import pytest
+
+from ai_worker.tasks.rag.source_ingestion.source_version import (
+    InvalidSourceVersionAudit,
+    SourceVersionFailureCode,
+    SourceVersionKind,
+    SourceVersionValidationError,
+    build_api_source_version,
+    build_external_source_version,
+    build_internal_source_version,
+    build_invalid_source_version_audit,
+    validate_source_version,
+)
+
+_CHECKSUM = "a" * 64
+_FIXTURE_VERSION = f"commit-{'1' * 40}-manifest-{'2' * 64}"
+
+
+def test_builds_and_validates_external_source_version() -> None:
+    source_version = build_external_source_version(external_version="2026-09-09")
+
+    assert source_version == "external:2026-09-09"
+    assert (
+        validate_source_version(
+            source_version=source_version,
+            external_version="2026-09-09",
+            canonical_checksum=_CHECKSUM,
+        )
+        is SourceVersionKind.EXTERNAL
+    )
+
+
+def test_external_payload_allows_191_characters() -> None:
+    payload = "a" * 191
+
+    assert len(build_external_source_version(external_version=payload)) == 200
+
+
+def test_external_payload_rejects_192_characters() -> None:
+    with pytest.raises(SourceVersionValidationError, match="191"):
+        build_external_source_version(external_version="a" * 192)
+
+
+def test_external_payload_must_match_preserved_value_exactly() -> None:
+    with pytest.raises(SourceVersionValidationError, match="일치하지 않습니다"):
+        validate_source_version(
+            source_version="external:v2",
+            external_version="v1",
+            canonical_checksum=_CHECKSUM,
+        )
+
+
+def test_builds_api_version_in_utc_with_six_fractional_digits() -> None:
+    collected_at = datetime(
+        2026,
+        9,
+        9,
+        10,
+        2,
+        3,
+        123456,
+        tzinfo=timezone(timedelta(hours=9)),
+    )
+
+    source_version = build_api_source_version(
+        collected_at=collected_at,
+        canonical_checksum=_CHECKSUM,
+    )
+
+    assert source_version == f"api:2026-09-09T01:02:03.123456Z:{_CHECKSUM}"
+
+
+def test_api_checksum_must_match_canonical_checksum() -> None:
+    with pytest.raises(SourceVersionValidationError, match="canonical_checksum"):
+        validate_source_version(
+            source_version=f"api:2026-09-09T01:02:03.123456Z:{'b' * 64}",
+            external_version=None,
+            canonical_checksum=_CHECKSUM,
+        )
+
+
+def test_builds_internal_version_from_fixture_version() -> None:
+    source_version = build_internal_source_version(
+        fixture_version=_FIXTURE_VERSION,
+        canonical_checksum=_CHECKSUM,
+    )
+
+    assert source_version == f"internal:{_FIXTURE_VERSION}:{_CHECKSUM}"
+    assert (
+        validate_source_version(
+            source_version=source_version,
+            external_version=None,
+            canonical_checksum=_CHECKSUM,
+        )
+        is SourceVersionKind.INTERNAL
+    )
+
+
+@pytest.mark.parametrize(
+    "fixture_version",
+    [
+        "latest",
+        "main",
+        "current",
+        "commit-0123456789abcdef",
+        f"commit-{'1' * 40}",
+        f"commit-{'1' * 40}-manifest-{'G' * 64}",
+    ],
+)
+def test_internal_builder_rejects_movable_or_unbound_fixture_version(
+    fixture_version: str,
+) -> None:
+    with pytest.raises(SourceVersionValidationError, match="commit-<40 lowercase hex>"):
+        build_internal_source_version(
+            fixture_version=fixture_version,
+            canonical_checksum=_CHECKSUM,
+        )
+
+
+def test_internal_validator_rejects_movable_fixture_alias() -> None:
+    with pytest.raises(SourceVersionValidationError, match="commit-<40 lowercase hex>"):
+        validate_source_version(
+            source_version=f"internal:latest:{_CHECKSUM}",
+            external_version=None,
+            canonical_checksum=_CHECKSUM,
+        )
+
+
+@pytest.mark.parametrize(
+    "source_version",
+    [
+        "v1",
+        "external:",
+        "external:version with space",
+        "external:e\u0301",
+        f"api:2026-09-09T01:02:03Z:{_CHECKSUM}",
+        f"internal::{_CHECKSUM}",
+    ],
+)
+def test_rejects_invalid_source_version(source_version: str) -> None:
+    with pytest.raises(SourceVersionValidationError):
+        validate_source_version(
+            source_version=source_version,
+            external_version=None,
+            canonical_checksum=_CHECKSUM,
+        )
+
+
+def test_api_builder_requires_timezone_aware_datetime() -> None:
+    with pytest.raises(SourceVersionValidationError, match="timezone-aware"):
+        build_api_source_version(
+            collected_at=datetime(2026, 9, 9, 1, 2, 3),
+            canonical_checksum=_CHECKSUM,
+        )
+
+
+def test_api_and_internal_require_null_external_version() -> None:
+    source_version = build_api_source_version(
+        collected_at=datetime(2026, 9, 9, 1, 2, 3, tzinfo=UTC),
+        canonical_checksum=_CHECKSUM,
+    )
+
+    with pytest.raises(SourceVersionValidationError, match="null"):
+        validate_source_version(
+            source_version=source_version,
+            external_version="unexpected",
+            canonical_checksum=_CHECKSUM,
+        )
+
+
+@pytest.mark.parametrize(
+    "external_version",
+    [
+        "external:nested-version",
+        "api:2026-09-09T00:00:00.000000Z:" + "a" * 64,
+        "internal:fixture-v1:" + "a" * 64,
+    ],
+)
+def test_external_version_rejects_reserved_source_version_prefix(
+    external_version: str,
+) -> None:
+    with pytest.raises(
+        SourceVersionValidationError,
+        match="예약 접두사",
+    ):
+        build_external_source_version(
+            external_version=external_version,
+        )
+
+    with pytest.raises(
+        SourceVersionValidationError,
+        match="예약 접두사",
+    ):
+        validate_source_version(
+            source_version=f"external:{external_version}",
+            external_version=external_version,
+            canonical_checksum=_CHECKSUM,
+        )
+
+
+@pytest.mark.parametrize(
+    (
+        "source_version",
+        "external_version",
+        "expected_failure_code",
+    ),
+    [
+        (
+            "external:v2",
+            "v1",
+            SourceVersionFailureCode.SOURCE_VERSION_BINDING_MISMATCH,
+        ),
+        (
+            f"api:2026-09-09T01:02:03.123456Z:{'b' * 64}",
+            None,
+            SourceVersionFailureCode.SOURCE_VERSION_BINDING_MISMATCH,
+        ),
+        (
+            f"internal:{_FIXTURE_VERSION}:{'b' * 64}",
+            None,
+            SourceVersionFailureCode.SOURCE_VERSION_BINDING_MISMATCH,
+        ),
+        (
+            "invalid-version",
+            None,
+            SourceVersionFailureCode.SOURCE_VERSION_INVALID,
+        ),
+    ],
+)
+def test_validation_error_exposes_safe_failure_code(
+    source_version: str,
+    external_version: str | None,
+    expected_failure_code: SourceVersionFailureCode,
+) -> None:
+    with pytest.raises(SourceVersionValidationError) as exc_info:
+        validate_source_version(
+            source_version=source_version,
+            external_version=external_version,
+            canonical_checksum=_CHECKSUM,
+        )
+
+    assert exc_info.value.failure_code is expected_failure_code
+
+
+def test_builds_safe_audit_without_exposing_invalid_source_version() -> None:
+    source_version = "잘못된 source version\n"
+
+    with pytest.raises(SourceVersionValidationError) as exc_info:
+        validate_source_version(
+            source_version=source_version,
+            external_version=None,
+            canonical_checksum=_CHECKSUM,
+        )
+
+    audit = build_invalid_source_version_audit(
+        source_version=source_version,
+        error=exc_info.value,
+    )
+    encoded_source_version = source_version.encode("utf-8")
+
+    assert audit == InvalidSourceVersionAudit(
+        source_version_sha256=hashlib.sha256(encoded_source_version).hexdigest(),
+        source_version_byte_length=len(encoded_source_version),
+        validation_reason_code=SourceVersionFailureCode.SOURCE_VERSION_INVALID,
+    )
+    assert source_version not in repr(audit)
+
+
+def test_does_not_replace_binding_mismatch_with_invalid_value_audit() -> None:
+    with pytest.raises(SourceVersionValidationError) as exc_info:
+        validate_source_version(
+            source_version="external:v2",
+            external_version="v1",
+            canonical_checksum=_CHECKSUM,
+        )
+
+    with pytest.raises(ValueError, match="SOURCE_VERSION_INVALID"):
+        build_invalid_source_version_audit(
+            source_version="external:v2",
+            error=exc_info.value,
+        )

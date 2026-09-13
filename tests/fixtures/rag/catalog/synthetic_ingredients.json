@@ -1,0 +1,19 @@
+{
+  "schema_version": "synthetic-catalog-ingredient-input-v1",
+  "records": [
+    {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "source_record_key": "INGREDIENT:ING-0001",
+      "code_system": "MFDS_INGREDIENT_CODE",
+      "canonical_code": "ING-0001",
+      "ingredient_name": "  합성   성분 하나  "
+    },
+    {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "source_record_key": "INGREDIENT:ING-0002",
+      "code_system": "MFDS_INGREDIENT_CODE",
+      "canonical_code": "ING-0002",
+      "ingredient_name": "합성 성분 둘"
+    }
+  ]
+}

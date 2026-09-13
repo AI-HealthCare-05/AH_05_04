@@ -95,6 +95,11 @@ class OutboxPublisher:
         self._batch_size = batch_size
         self._claim_token_factory = claim_token_factory
 
+    async def run_once(self) -> tuple[OutboxPublishResult, ...]:
+        """Worker 주기 실행 계약에서 한 발행 batch를 처리합니다."""
+
+        return await self.publish_batch()
+
     async def publish_batch(self) -> tuple[OutboxPublishResult, ...]:
         """due Outbox를 선점하고 각각 발행한 뒤 fencing 조건으로 완료합니다."""
 

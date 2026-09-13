@@ -3,11 +3,11 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-206-20260902` |
-| 상태 | 결정 기록 — 로그아웃·`token_version` 재검증 구현 반영, 비밀번호 재설정·회원탈퇴 후속 구현 대기 |
+| 상태 | 결정 기록 — 로그아웃·`token_version` 재검증·비밀번호 재설정 구현 반영. refresh token rotation과 비밀번호 재설정 응답시간 padding은 PR #404 리뷰 반영 결과를 결정 5·6으로 사후 승인(2026-09-10). 회원탈퇴 후속 구현 대기 |
 | 결정일 | 2026-09-02 |
 | 결정자(제안) | 송은영 (Backend/DB) |
 | 추적 Issue | [#206](https://github.com/AI-HealthCare-05/AH_05_04/issues/206) |
-| 근거 문서 | 계정 기능 범위 확정(남한솔, 권가빈 리뷰) — 팀 공용 Notion 문서, 저장소 미포함. 동의·외부 처리 범위 정리 §6/§8/§10(권가빈, 송은영 리뷰) — 팀 공용 Notion 문서, 저장소 미포함. [[공통-S1] Account·Security·Privacy 계약·inventory](https://app.notion.com/p/S1-Account-Security-Privacy-inventory-3c6233603e278184ba03e3b231d8cf13?pvs=21). `요구사항_정의서.xlsx` `CH02_회원_동의` 시트 REQ-USR-007/008/009/010/020. |
+| 근거 문서 | 계정 기능 범위 확정(남한솔, 권가빈 리뷰) — 팀 공용 Notion 문서, 저장소 미포함. 동의·외부 처리 범위 정리 §6/§8/§10(권가빈, 송은영 리뷰) — 팀 공용 Notion 문서, 저장소 미포함. [[공통-S1] Account·Security·Privacy 계약·inventory](https://app.notion.com/p/S1-Account-Security-Privacy-inventory-3c6233603e278184ba03e3b231d8cf13?pvs=21). 요구사항정의서 `CH02_회원_동의` 시트 REQ-USR-007/008/009/010/020. |
 | 적용 범위 | User 계정 상태, 로그아웃 구현 기준, 비밀번호 재설정/회원탈퇴 API·transaction 경계 |
 
 ## 결정 1: 계정 상태 표현 + 세션 무효화 카운터
@@ -67,39 +67,61 @@ REQ-USR-009 설계메모는 "본인 확인 방식과 기존 세션 무효화 범
 - **재설정 성공 후 인증 상태(Frontend/UX 리뷰 반영, 2026-09-02): 재로그인을 요구한다.** 재설정 성공 응답은 새 access/refresh token을 발급하지 않고 성공 안내만 반환하며, Frontend는 로그인 화면으로 이동시킨다. 의료정보를 다루는 서비스 특성상 재설정 직후 자동 세션 발급으로 매끄러운 진입을 주는 것보다, 사용자가 새 비밀번호로 다시 로그인해 본인이 그 비밀번호를 정확히 인지하고 있는지 즉시 재확인하게 하는 쪽을 우선한다. 재설정 성공 응답 body에는 토큰 등 세션 관련 정보를 포함하지 않는다.
 - rate limit 기준(횟수/기간)은 이 Decision 범위에서 확정하지 않고 구현 PR에서 Backend/Security 리뷰로 정한다.
 - **재설정 성공 자체(토큰 검증 후 새 비밀번호 저장)에는 anti-enumeration 고려가 필요 없다** — 이 시점의 인증 요소는 계정 존재 여부가 아니라 `password_reset_token`이므로, 유효하지 않은/만료된/사용된 토큰은 그냥 실패 응답으로 처리한다.
-- **토큰 소비는 원자적 일회성 소비로 구현한다.** 토큰 소비(`used_at` 조건부 갱신), 비밀번호 변경, `token_version` 증가를 단일 transaction에서 처리하며, 토큰 소비는 결정 4의 조건부 UPDATE와 같은 패턴(`UPDATE password_reset_token SET used_at = now() WHERE id = ? AND used_at IS NULL AND expires_at > now()`)으로 구현한다. 영향받은 row가 0건이면 이미 사용됐거나 만료된 토큰으로 간주해 실패 응답을 반환하고 비밀번호를 변경하지 않는다 — read-then-write로 구현하면 같은 토큰의 동시 요청이 둘 다 성공해 비밀번호가 두 번 바뀌거나 경쟁 상태로 이어질 수 있다.
-- **같은 사용자의 나머지 미사용 토큰도 같은 transaction에서 함께 무효화한다.** 한 사용자가 재설정을 여러 번 요청해 유효한 `password_reset_token`이 동시에 여러 개 존재할 수 있다. 위 조건부 UPDATE는 지금 소비하는 토큰 하나(`id = ?`)만 `used_at`을 채우므로, 그대로 두면 같은 사용자의 다른 유효 토큰으로 비밀번호를 다시 바꿀 수 있다. 그래서 토큰 소비와 같은 transaction에서 `UPDATE password_reset_token SET used_at = now() WHERE user_id = ? AND used_at IS NULL AND expires_at > now()`로 해당 사용자의 나머지 미사용·미만료 토큰도 함께 소비 처리한다.
+- **토큰 소비는 원자적 일회성 소비로 구현하고 잠금 순서를 고정한다.** `token_hash`로 candidate의 `user_id`를 잠금 없이 조회한 뒤 user row를 `FOR UPDATE`로 먼저 잠근다. 그 다음 제출 token의 미사용·미만료 조건을 다시 확인하고, 같은 사용자의 미사용·미만료 token row를 `id` 오름차순으로 잠가 함께 소비한 뒤 비밀번호 변경과 `token_version` 증가를 같은 transaction에서 처리한다. candidate 조회 뒤 상태가 바뀔 수 있으므로 user lock 획득 후 유효성 재확인은 필수다. token row를 먼저 갱신하거나 잠근 뒤 user row를 기다리는 경로는 두지 않는다.
+- **같은 사용자의 나머지 미사용 토큰도 같은 transaction에서 함께 무효화한다.** 한 사용자가 재설정을 여러 번 요청해 유효한 `password_reset_token`이 동시에 여러 개 존재할 수 있다. 제출 token 하나만 소비하면 다른 유효 token으로 비밀번호를 다시 바꿀 수 있으므로, user row lock을 보유한 상태에서 같은 사용자의 나머지 미사용·미만료 token도 함께 소비 처리한다. 서로 다른 유효 token이 동시에 제출되어도 user row → token row의 단일 lock order로 직렬화하고 deadlock 없이 한 요청만 성공해야 한다. token 발급·만료 정리처럼 두 종류의 row를 함께 잠그는 경로도 같은 순서를 따른다.
+- **Frontend 오류 복구 분기는 공통 오류 `details`로 고정한다.** 공개 코드는 새로 추가하지 않고 모두 `422 VALIDATION_FAILED`를 사용한다. 새 비밀번호 정책 오류는 `details[].field=new_password`, `reason=PASSWORD_POLICY_VIOLATION`, 만료·사용됨·존재하지 않는 token은 `details[].field=token`, `reason=RESET_TOKEN_INVALID`로 반환한다. token 내부 사유는 더 세분화하지 않고 두 경우 모두 `rejected_value=null`로 민감값을 숨긴다. Frontend는 message 문자열이 아니라 이 field/reason으로 입력 수정과 재설정 링크 다시 받기를 구분한다.
 
 ## 결정 4: 회원탈퇴 — Transaction 경계
 
 0. **대상과 재인증의 정의.** 탈퇴 대상 계정은 요청 URL/body의 별도 파라미터가 아니라 **인증된 요청의 `get_request_user()` 결과(`user_id`)로만** 결정한다 — 다른 사용자의 계정 ID를 지정해 탈퇴시킬 수 있는 경로를 두지 않는다. "재인증"은 세션이 살아있다는 사실만으로 충족되지 않고, `services/auth.py`의 `authenticate()`와 동일한 경로로 **비밀번호 재입력을 검증**하는 것을 의미한다. 이 재인증 엔드포인트는 로그인(`/auth/login`)과 별개의 "비밀번호 맞춰보기" 경로가 되므로, 동일한 수준의 rate limit/lockout을 적용한다(정확한 수치는 결정 3과 같이 구현 PR에서 확정).
 1. 재인증 성공 → 최종확인 → **단일 transaction**으로 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at=now()` 커밋. 이 시점부터 즉시 재로그인 차단. 이 UPDATE는 `WHERE account_status = 'ACTIVE'` 조건부 원자적 전이로 구현하고, 영향받은 row가 0이면 이미 처리된 것으로 간주한다 — read-then-write로 구현하면 동시 중복 요청이 둘 다 커밋될 수 있다([#101](https://github.com/AI-HealthCare-05/AH_05_04/issues/101)과 동일한 클래스의 동시성 결함).
-2. 같은 요청은 멱등 처리한다 — 이미 `WITHDRAWAL_REQUESTED`/`WITHDRAWN`인 계정에 중복 탈퇴 요청이 오면(위 조건부 UPDATE의 영향 row 0건으로 식별) 새 transaction 없이 현재 상태를 반환한다. **이 멱등 처리는 재인증에 성공한 여러 요청이 거의 동시에 도착하는 좁은 경쟁 구간에만 적용된다.** 1번에서 `token_version`이 증가하고 나면 그 시점 이전에 발급된 access token은 결정 1의 재검증 로직에 의해 즉시 무효화되므로, 탈퇴가 실제로 반영된 뒤 도착하는 재요청은 이 멱등 로직에 도달하기 전에 `get_request_user()` 단계에서 표준 401로 차단된다. 즉 탈퇴 완료 후 상태를 조회하기 위한 별도 idempotency key나 인증 없는 상태 조회 경로는 두지 않는다 — 탈퇴 확정 API의 마지막 성공 응답을 화면에 보존해 안내하는 것으로 충분하며, 그 UX 처리는 #206 Frontend 리뷰 범위에서 다룬다.
-3. 실제 건강정보 삭제·보존 처리는 **비동기**로 진행하고, 완료 시 `account_status=WITHDRAWN`, `withdrawn_at=now()`로 전환한다. 부분 실패는 상태로 식별 가능해야 하며 재시도 가능해야 한다.
+2. 같은 요청은 멱등 처리한다 — 이미 `WITHDRAWAL_REQUESTED`/`WITHDRAWN`인 계정에 중복 탈퇴 요청이 오면(위 조건부 UPDATE의 영향 row 0건으로 식별) 새 transaction 없이 동일한 계정 이용 종료·탈퇴 요청 접수 완료 응답을 반환한다. 이 응답은 개인정보·건강정보의 물리 삭제 완료를 뜻하지 않는다. **이 멱등 처리는 재인증에 성공한 여러 요청이 거의 동시에 도착하는 좁은 경쟁 구간에만 적용된다.** 1번에서 `token_version`이 증가하고 나면 그 시점 이전에 발급된 access token은 결정 1의 재검증 로직에 의해 즉시 무효화되므로, 탈퇴가 실제로 반영된 뒤 도착하는 재요청은 이 멱등 로직에 도달하기 전에 `get_request_user()` 단계에서 표준 401로 차단된다. 즉 탈퇴 완료 후 상태를 조회하기 위한 별도 idempotency key나 인증 없는 상태 조회 경로는 두지 않는다 — 탈퇴 확정 API의 마지막 성공 응답을 화면에 보존해 안내하는 것으로 충분하며, 그 UX 처리는 #206 Frontend 리뷰 범위에서 다룬다.
+3. 실제 개인정보·건강정보 삭제·보존 처리는 사용자에게 별도 상태 조회 API를 제공하지 않고 Backend 내부 처리로 진행한다. 탈퇴 기능을 실제 사용자에게 제공하는 구현 PR은 단순히 `PENDING` row만 만들고 종료하지 않으며, PM/Privacy가 확정한 삭제·보존 정책에 맞춰 삭제·보존 처리와 최종 계정 상태 전이를 함께 포함한다. 다만 `EXT-PRIV-001` 승인 전에는 Production 물리 삭제·보존 job, `IN_PROGRESS`/`COMPLETED` 전이와 `account_status=WITHDRAWN` 기록을 실행하지 않고 비식별 합성 fixture를 사용한 Local/Test 구현·검증만 허용한다. 실제 사용자 대상 기능도 승인 전에 `PENDING` 요청만 쌓는 형태로 공개하지 않는다. 승인 후 처리가 완료되면 `account_status=WITHDRAWN`, `withdrawn_at=now()`로 전환한다. 부분 실패는 사용자 화면에 노출하지 않더라도 운영·감사 관점에서 상태로 식별 가능해야 하며 재시도 가능해야 한다.
 
-   **초안(멘토 자문 후 확정) — 전용 `account_deletion_request` 테이블.** Track A `AI_JOB` 상태 머신을 재사용하지 않고, 삭제 처리 전용 테이블을 별도로 둔다.
-   - `account_deletion_request(id, user_id, status, requested_at, completed_at, failed_at, retry_count, last_error_code)`
-   - `status`: `PENDING` → `IN_PROGRESS` → `COMPLETED` | `FAILED`(재시도 가능)
+   **전용 `account_deletion_request` 테이블.** Track A `AI_JOB` 상태 머신을 재사용하지 않고, 삭제 처리 전용 테이블을 별도로 둔다.
+   - 최소 컬럼과 상태 전이 상세는 [계정 생명주기 후속 계약 v1](../../contracts/proposed/account-lifecycle-v1.md)의 `account_deletion_request` 테이블 계약을 따른다.
+   - `status`: `PENDING` → `IN_PROGRESS` → `COMPLETED` | `FAILED`(재시도 가능). `COMPLETED`는 terminal 상태다.
    - 1번의 `WITHDRAWAL_REQUESTED` 전이와 **같은 transaction**에서 `status=PENDING` row를 생성한다.
    - `account_status`는 로그인 가능 여부를 판단하는 게이트로만 유지하고, 삭제 진행 상태·재시도·실패 사유는 이 테이블이 전담한다 — AI_JOB은 단일 실행 단위(Provider 호출 1회) 기준으로 설계돼 있어 DB·백업·로그·외부 Provider에 걸친 다단계 삭제 작업과 도메인이 맞지 않는다.
-   - 이 테이블은 `EXT-PRIV-001`(외부 Privacy 승인) 관련 삭제 요청·완료 시각의 감사 기록 역할도 겸한다.
-   - **이 방향은 아직 확정이 아니다.** 멘토 자문 후 이 초안을 유지·수정할지 결정하고, 이 문단을 갱신한다.
-4. 실제 데이터 물리 삭제 실행은 `EXT-PRIV-001` 외부 Privacy 승인 전까지 수행하지 않는다 — 이 Decision은 상태 추적까지만 다루고 물리 삭제는 별도 승인 후 별도 PR로 분리한다.
+   - 이 테이블은 PM/Privacy 정책에 따른 삭제 요청·처리·완료·실패 시각의 감사 기록 역할도 겸한다.
+   - 실패 사유는 새 사용자 노출 오류 코드를 늘리지 않고, 필요 시 `TIMEOUT`, `DEPENDENCY_UNAVAILABLE`, `INTERNAL_ERROR` 같은 공통 내부 실패 사유를 재사용한다.
+4. 탈퇴 처리의 내부 상세 상태는 사용자에게 조회 API나 앱 내부 알림으로 제공하지 않는다. Frontend는 탈퇴 확정 API의 마지막 성공 응답을 화면에 보존하고 로컬 인증 정보를 제거한다. 완료 화면에는 REQ-USR-008 AC-04의 사용자-facing 처리 상태 "삭제 요청 접수됨"을 표시하며, 계정 이용 종료와 요청 접수 완료이지 물리 삭제 완료가 아님을 구분한다. 즉시 삭제 정보, 보존 정보·기간·근거와 최종 완료 통지 여부는 PM/Privacy 정책에서 별도 확정한다.
 5. 탈퇴 확정(1번) 시점에 결정 1을 재사용해 해당 사용자의 `token_version`을 원자적으로 `+1`하고 `refresh_token` 쿠키를 종료한다 — REQ-USR-008의 "즉시 로그인 차단"은 `is_active=false`뿐 아니라 이미 발급된 access token의 즉시 무효화(결정 1의 재검증 로직)까지 포함한다.
+
+## 결정 5 (추가, 2026-09-10): Refresh Token Rotation — 범위 외 보안 강화
+
+구현 PR #404 리뷰(권가빈, 남한솔)에서 refresh token 탈취 대응을 위해 이 Decision의 원래 적용 범위(비밀번호 재설정 token) 밖에서 추가로 구현했다. 리뷰 과정에서 최초 설계(`User.active_refresh_jti` 단일 컬럼)의 결함이 발견돼 재설계했고, 그 최종 동작과 기본값을 이 Decision에 사후 기록해 명시적으로 승인한다.
+
+- **`GET /auth/token/refresh`는 매 호출마다 access token과 refresh token을 함께 재발급한다(rotation).** 재사용(rotation으로 이미 교체된 refresh token의 재제출)이 탐지되면 결정 1의 `token_version` 전체 무효화를 그대로 재사용해 해당 사용자의 모든 세션을 강제 로그아웃시킨다 — 결정 2가 명시한 "세션·기기 단위로 구분하지 않는다"는 전역 무효화 원칙과 동일하며, per-device 선택적 로그아웃을 도입하는 것이 **아니다**.
+- **`refresh_session` 테이블(로그인별 row) + 로그인 시 발급하는 `session_id` JWT claim으로 재사용 판정을 세션 단위로 범위를 좁힌다.** 최초 설계는 사용자당 단일 `active_refresh_jti` 컬럼으로 CAS를 검사해, 같은 사용자가 다른 기기에서 로그인하면 그 기기의 jti가 이전 로그인의 jti를 덮어써 이전 기기의 아직 유효한 refresh token이 다음 사용 시 "재사용"으로 오판되는 결함이 있었다(다중 기기 로그인이 표준 사용 흐름이므로 회귀). `session_id`는 로그인 시 한 번 발급돼 `rotate()`의 `no_copy_claims`에 포함되지 않아 rotation 내내 유지되며, CAS 비교 기준을 `user_id`가 아니라 `session_id`로 바꿔 서로 다른 로그인이 서로의 rotation을 방해하지 않게 한다. 이 테이블은 결정 2가 언급한 "기기별 선택적 로그아웃"을 위한 세션 테이블이 **아니며**, 오직 rotation 재사용 판정의 정확성을 위해서만 존재한다 — 로그아웃·탈퇴는 여전히 결정 1·2·4의 전역 `token_version` 무효화만 사용한다.
+- **CAS 실패의 파급 범위는 세션 단위로 좁혀지지 않는다(PR #404 후속 리뷰 — 코드 주석·PR 설명이 이 부분을 실제보다 좁게 설명하고 있었다).** `refresh_session`의 세션별 스코프는 "누구의 CAS를 검사할지"만 좁힐 뿐, CAS가 실패했을 때의 결과(`token_version` 전역 증가)는 그대로 사용자 전체에 적용된다. 이 CAS는 진짜 재사용(탈취)뿐 아니라 **같은 세션에 대한 단순 동시 rotation 경쟁**(예: 같은 브라우저에서 여러 요청이 거의 동시에 401을 받아 각자 refresh를 시도하는 경우)으로도 실패할 수 있다. 따라서 Frontend가 동시 401 요청에 single-flight refresh(요청이 겹치면 하나만 실제로 refresh하고 나머지는 그 결과를 공유)를 적용하지 않으면, 정상적인 동시 사용만으로도 그 사용자의 다른 기기 세션까지 의도치 않게 로그아웃될 수 있다. 이 Frontend 대응은 위 `ACCESS_TOKEN_EXPIRE_MINUTES` 단축과 마찬가지로 별도 PR 선행 조건이다.
+- **`REFRESH_TOKEN_EXPIRE_MINUTES`를 14일에서 7일로 단축한다.** `ACCESS_TOKEN_EXPIRE_MINUTES`는 초안에서 10분으로 단축을 검토했으나, Frontend에 refresh/retry 흐름(+동시 401 요청에 대한 single-flight refresh)이 아직 없어 리뷰(남한솔)에서 기존 60분 유지로 반려됐다 — Frontend가 그 흐름을 구현·병합한 뒤 별도 PR에서 단축한다.
+- rotation이 반복돼도 refresh token의 절대 만료(`REFRESH_TOKEN_EXPIRE_MINUTES`, 최초 로그인 기준)는 그대로 유지된다 — `rotate()`는 매 사용마다 `jti`만 교체하고 `exp`는 복사해 유지하므로, 계속 활동해도 세션이 무기한 연장되지 않는다.
+- 이 migration 배포 전 발급된 refresh token에는 `session_id` claim이 없어 첫 `/token/refresh` 호출 시 `401 INVALID_TOKEN`으로 거부되고 재로그인이 필요하다 — 하위 호환 마이그레이션은 이 Decision 범위에서 별도로 두지 않는다(실사용자가 있는 환경이면 배포 공지 필요).
+
+## 결정 6 (추가, 2026-09-10): 비밀번호 재설정 요청의 처리시간 anti-enumeration 구체화
+
+결정 3은 "유사 처리시간"을 원칙으로만 명시했다. PR #404 리뷰(권가빈)에서 존재하는 계정만 수행하는 `password_reset_token` INSERT 때문에 실제로는 처리시간 차이가 남는다는 지적을 받아, 구체적인 완화 방식과 기본값을 이 Decision에 사후 기록한다.
+
+- 실제 쓰기(있다면)를 마치고 commit해 DB 커넥션을 반납한 뒤, 요청 진입 시각 기준 `PASSWORD_RESET_RESPONSE_TARGET_SECONDS`(기본 0.03초)까지 응답을 지연시킨다. commit 전에 대기하면 padding 동안 커넥션·트랜잭션을 붙든 채로 있게 되므로 순서를 고정한다.
+- 기본값은 CI(Linux 러너, 격리된 컨테이너 — 로컬 Windows/Docker 환경은 노이즈가 너무 커 기준으로 채택하지 않음) 기준 `scripts/measure_password_reset_timing.py` 측정 결과, 동시성 없는 조건에서 가장 느린 경로(존재 계정 신규 토큰)의 p99 4ms·최대 관측치 14ms에 여유를 둔 것이다.
+- **잔존 리스크(승인된 한계):** 동시 요청이 많아 DB 커넥션 풀 대기가 지배적인 상황에서는 이 목표치를 넘는 응답이 생길 수 있고, 그 구간에서는 시간차가 다시 드러날 수 있다. 측정 결과 그 상황에서는 세 카테고리(존재/미존재/쿨다운) 응답시간이 자연히 비슷하게 수렴하는 것도 확인했지만, 이는 설계된 방어가 아니므로 알려진 한계로 승인한다. 전역 요청 빈도 제한(IP 기준 등)은 결정 3의 "rate limit 기준은 구현 PR에서 확정" 문구에 따라 이번에도 확정하지 않고 후속 이슈로 분리한다.
+- 같은 사용자에 대한 동시 재설정 요청이 60초 쿨다운을 우회해 중복 토큰을 발급하지 않도록, 대상 user row를 결정 3의 재설정 완료 절차와 동일하게 먼저 `FOR UPDATE`로 잠근 뒤 쿨다운 조회~토큰 생성을 직렬화한다(PR #404 리뷰 반영).
 
 ## 제외
 
 - 보호자·멀티 프로필 계정 상태 (해당 없음, 본인 단일 계정 기준)
-- 동의 상태(`GRANTED`/`WITHDRAWN`) 자체의 모델링 — 별도 Decision
 - 실제 이메일 발송 Provider 연동
 - 비밀번호 재설정 rate limit 정확한 수치
-- 건강정보 실제 물리 삭제 실행 (`EXT-PRIV-001` 승인 후)
+- 개인정보·건강정보의 세부 보존 기간, 즉시 폐기 대상, 법정 보존 대상과 재가입 제한 여부의 정책 확정 — PM/Privacy 범위
+- 탈퇴 후 사용자-facing 상태 조회 API와 앱 내부 완료·실패 알림 — 제공하지 않음
+- `EXT-PRIV-001` 승인 전 Production 물리 삭제·보존 처리와 실제 사용자 공개 — 승인 게이트로 차단
 - 목적별 동의 상태(`GRANTED`/`WITHDRAWN`) 자체 모델링 — [#207](https://github.com/AI-HealthCare-05/AH_05_04/issues/207)로 분리
 - 계정 이벤트(로그아웃·비밀번호 재설정·회원탈퇴) 감사 로그 저장 여부 — 이 Decision 범위에서 확정하지 않는다
 
 ## 후속
 
 - Frontend는 이 Decision과 실제 구현 PR의 API/DTO가 확정된 뒤 연결한다(계정 기능 범위 확정 표2 "다음 조치" 참고). 현재 `frontend/src`에는 로그아웃·비밀번호 재설정·회원탈퇴 관련 실제 구현이 없음을 확인했다(`DesignPrototypePage.tsx`의 로그아웃 항목은 디자인 프로토타입 목업이며 실제 세션·API 연동이 아니다).
-- `password_reset_token`의 만료분 정리 배치는 구현 PR에서 별도 확정한다(`token_version`은 `User` 컬럼 값이라 별도 정리 배치가 필요 없다).
+- `password_reset_token`의 만료분 정리 배치는 구현 PR(#206)에서 lazy cleanup으로 확정했다 — 별도 배치·스케줄러 없이 조회 시 `expires_at` 조건으로만 거르고, 만료된 row는 삭제하지 않는다. 이 저장소의 `idempotency_record`(같은 만료-필터링 패턴, 별도 정리 배치 없음)와 일관된 선택이다. 테이블이 커지는 게 실제 문제가 되면 그때 배치를 추가한다.
 - 목적별 동의 상태 모델링은 [#207](https://github.com/AI-HealthCare-05/AH_05_04/issues/207)에서 별도 Decision으로 진행한다(담당 송은영/권가빈, `동의·외부 처리 범위 정리.md` §10 P0 근거).
 - 계정 이벤트 감사 로그 저장 여부는 이슈 [#206](https://github.com/AI-HealthCare-05/AH_05_04/issues/206) "후속 작업"에서 별도로 결정한다.

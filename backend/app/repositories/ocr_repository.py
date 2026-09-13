@@ -133,6 +133,10 @@ class OcrRepository:
         result = await self.session.execute(select(ExtractedField).where(ExtractedField.ocr_job_id == ocr_job_id))
         return list(result.scalars().all())
 
+    async def add_fields(self, fields: list[ExtractedField]) -> None:
+        self.session.add_all(fields)
+        await self.session.flush()
+
     async def mark_processing(self, job: OcrJob, *, started_at: datetime) -> OcrJob:
         job.ocr_status = OcrStatus.PROCESSING
         job.started_at = started_at

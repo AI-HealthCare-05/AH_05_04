@@ -13,6 +13,7 @@ class ChatRole(StrEnum):
 class ChatSessionData(BaseModel):
     session_id: UUID
     prescription_id: UUID
+    prescription_version_id: UUID
     session_status: str
     created_at: datetime
 

@@ -87,10 +87,13 @@ Frontend는 단일 성공/실패 코드가 아니라 아래 축을 분리해 소
 | `COMPLETED` | `LIMITED` | 금지 행동 요청 등, 승인된 범위 제한 안내만 공개 가능 | 제한 안내 UI로 표시 (실패 아님) |
 | `COMPLETED` | `REJECTED` | 생성 답변은 폐기하고 승인된 고정 fallback만 공개 | `fallback_code` 기반 안내 표시. **`ai_job.status=FAILED`가 아니다** — Job 자체는 정상 종결이다 |
 | `FAILED` | 해당 없음(값 없음) | fallback조차 안전하게 commit하지 못한 실행 실패 | 계약된 안전한 오류 응답만 표시(원문·상세 사유 노출 금지) |
-| `STALE` | `STALE` | 처리 중 active 처방 Version 변경으로 결과 반영 불가 | `content = null`, `is_current = false`로 비노출 |
+| `STALE` | `STALE` | 처리 중 active 처방 Version 변경 또는 실행 Context 불일치로 결과 반영 불가 | 생성된 결과는 `content = null`, `is_current = false`로 비노출 |
+| `STALE` | 해당 없음(값 없음) | 접수 후 실행 전 동의 철회로 RAG 실행 경로 진입 전 차단. Guide/Chat/RAG 결과를 생성하지 않으며 `release_decision`·`is_current`를 새로 만들지 않음 | 처방 변경 STALE 안내로 오분류하지 않는다. 공개 Job DTO 확장 없이 후속 Consent Gate 구현에서 제공하는 현재 목적별 동의 상태 또는 안전한 사용자-facing 안내를 사용해 동의 설정 확인 UI로 분기 |
 
-- `AI_JOB=COMPLETED` 또는 `execution_status=SUCCEEDED` 값만으로는 공개 가능 여부를 판단하지 않는다. 최종 공개는 `release_decision`·`is_current`·Citation 검증·Safety 결과를 함께 확인하는 `release_gate` 판정을 따른다.
-- `citations[]` 공개 여부는 `release_decision` 값 자체가 결정하지 않는다. 개별 Citation이 별도 `CITATION_AUTHORIZATION/PASS` Guard를 통과하고 최종 `release_gate` 검증까지 통과했을 때만 그 Citation을 공개한다(`safety-result-v2.md` "Claim-Citation 계약"). `PASS`뿐 아니라 `LIMITED`의 제한 응답이나 `REJECTED`의 승인된 fallback에도, 정본이 허용하고 개별 `CITATION_AUTHORIZATION/PASS`를 통과한 Citation은 포함될 수 있다. `STALE`은 `is_current=false`로 전체 비공개이므로 `citations[]`도 공개하지 않는다. Frontend는 `response_level` 또는 `release_decision` 값만 보고 `citations[]`를 임의로 숨기거나 노출하지 않는다. 정확한 Citation DTO/fixture 구현은 [#180](https://github.com/AI-HealthCare-05/AH_05_04/issues/180)/[#186](https://github.com/AI-HealthCare-05/AH_05_04/issues/186) 후속 계약 범위로 둔다.
+- `STALE + release_decision=STALE + is_current=false`는 이미 생성된 결과나 실행 Context의 현재성이 상실된 경우에 사용한다. `STALE + release_decision 없음 + is_current 없음`은 PD-207의 동의 철회 차단 경로처럼 결과 생성 전 Gate에서 중단된 경우에만 사용한다. Frontend는 두 조합을 같은 화면 안내로 합치지 않는다.
+- 동의 철회 STALE의 상세 사유는 공개 Job DTO에 새 필드로 노출하지 않는다. 처방 버전 변경 STALE과의 구분은 저장 레벨 내부 사유(`CONSENT_WITHDRAWN` 등)와 후속 구현에서 제공되는 안전한 사용자-facing 상태를 따른다. Frontend는 `ai_job.status=STALE`만 보고 처방 변경, 동의 철회, 시스템 장애를 임의 추론하지 않는다.
+- `AI_JOB=COMPLETED` 또는 `execution_status=SUCCEEDED` 값만으로는 공개 가능 여부를 판단하지 않는다. 최종 공개는 `release_decision`·`is_current`·Citation 검증·Safety 결과를 함께 확인하는 `release_gate` 판정을 따른다. 단, 동의 Gate 차단처럼 RAG 실행 경로 진입 전 중단되어 `release_decision`·`is_current`가 없는 `STALE` 조합은 `release_gate` 결과 공개 판단 대상이 아니다.
+- `citations[]` 공개 여부는 `release_decision` 값 자체가 결정하지 않는다. 개별 Citation이 별도 `CITATION_AUTHORIZATION/PASS` Guard를 통과하고 최종 `release_gate` 검증까지 통과했을 때만 그 Citation을 공개한다(`safety-result-v2.md` "Claim-Citation 계약"). `PASS`뿐 아니라 `LIMITED`의 제한 응답이나 `REJECTED`의 승인된 fallback에도, 정본이 허용하고 개별 `CITATION_AUTHORIZATION/PASS`를 통과한 Citation은 포함될 수 있다. `release_decision=STALE`인 현재성 상실 조합은 `is_current=false`로 전체 비공개이므로 `citations[]`도 공개하지 않는다. 동의 Gate 차단처럼 결과를 생성하지 않은 `STALE + release_decision 없음 + is_current 없음` 조합도 공개할 결과와 Citation이 없다. Frontend는 `response_level` 또는 `release_decision` 값만 보고 `citations[]`를 임의로 숨기거나 노출하지 않는다. 정확한 Citation DTO/fixture 구현은 [#180](https://github.com/AI-HealthCare-05/AH_05_04/issues/180)/[#186](https://github.com/AI-HealthCare-05/AH_05_04/issues/186) 후속 계약 범위로 둔다.
 
 ## 5) OTC는 기존 Chat transport 사용
 
@@ -134,7 +137,7 @@ Frontend는 단일 성공/실패 코드가 아니라 아래 축을 분리해 소
 | `Idempotency-Key`, `IDEMPOTENCY_RECORD` 동반 transaction 접수 | `docs/contracts/targets/post-mvp-1/idempotency-v1.md`와 대조 | 접수 transaction, 중복 요청, 충돌 응답이 기존 멱등성 계약과 일치하는지 확인 |
 | `REVIEW_REQUIRED`: 자동 Guide는 비-Job 동기 종료, Chat은 기존 Job에 제한 응답 저장 | `docs/contracts/targets/post-mvp-1/medication-identification-v1.md` 및 `rag-runtime-v1.md`와 대조 | 자동 Guide와 Chat의 Job 유무 차이가 유지되는지, Chat이 Safety Triage를 건너뛰지 않는지 확인 |
 | Session/Message/Job 결과 상태축 분리 | 필요 시 신규 `targets/post-mvp-1/guide-chat-session-message-status-ui-v1.md`로 승격 | Frontend/Backend/RAG가 공유해야 하는 상태축이면 별도 목표 계약으로 분리 |
-| STALE(`content=null`, `is_current=false`) 비노출 및 메타데이터 보존 | `prescription-version-v1.md`, `safety-result-v2.md`와 대조 | 버전 변경과 공개 결정 규칙이 기존 STALE 계약과 충돌하지 않는지 확인 |
+| STALE(`content=null`, `is_current=false`) 비노출 및 메타데이터 보존 | `prescription-version-v1.md`, `safety-result-v2.md`, `consent-gate-207.md`와 대조 | 버전 변경/Context 불일치 STALE과 동의 철회 STALE을 구분하고, 동의 철회 경로가 `release_decision`·`is_current`를 새로 만들지 않는다는 PD-207 기준과 충돌하지 않는지 확인 |
 | OTC 기존 Chat transport 사용 및 Rule-first 선행 게이트 | `rag-runtime-v1.md`, `medication-identification-v1.md`와 대조 | 별도 OTC API/Job을 만들지 않는 방향과 Identification 선행 조건을 확인 |
 | PROFILE 소유권 기반 조회/결과 접근 제어 | `docs/contracts/current/profile-self-ownership-v1.md`와 대조 | Current 소유권 계약을 따르며, 필요한 구현 세부사항은 구현 PR에서 검증 |
 | `ai_job_id`/도메인 연동 방향 | `async-job-v1.md` 및 구현 PR의 DB 설계와 대조 | FK/조회 경로는 구현 PR에서 확정하고, 계약 변경이 필요하면 별도 반영 |
@@ -148,8 +151,8 @@ Frontend는 단일 성공/실패 코드가 아니라 아래 축을 분리해 소
 - Profile 소유권 기준이 Current(`profile_id`/부모 chain)으로 고정되어 있고, 위반 접근은 `404`로 반환한다.
 - `POST /api/v1/guides`, `POST /api/v1/chat-sessions/{session_id}/messages`에서 Idempotency/202/Job 상태 조회 계약이 일관된다.
 - `REVIEW_REQUIRED`는 자동 Guide에서만 Job 없이 동기 fallback으로 종료된다. Chat은 Identification 이전에 이미 생성된 Job·Safety Triage를 유지하며, ROUTINE Preflight 실패도 그 Job에 제한 응답을 저장한다 — 두 경우 모두 RAG/Composer 호출은 선행되지 않는다.
-- `STALE`은 `content = null`, `is_current = false`로 현재 화면 비노출이며 Job/Safety 메타데이터는 보존한다.
+- `STALE`은 현재 화면 결과 비노출이다. 처방 Version 변경이나 실행 Context 불일치처럼 이미 생성된 결과의 현재성이 상실된 경우에는 `content = null`, `is_current = false`로 비노출하며 Job/Safety 메타데이터를 보존한다. PD-207의 동의 철회 Gate 차단처럼 RAG 실행 경로 진입 전 중단된 경우에는 Guide/Chat/RAG 결과를 생성하지 않고 `release_decision`·`is_current`를 새로 만들지 않는다.
 - OTC는 기존 Chat transport를 사용하고, Identification/Preflight 미완료 시 Rule-first 평가를 강제 차단한다.
-- Frontend 상태축은 `generation_status`, `execution_status`, `evidence_status`, `response_level`, `release_decision`, `safety_disposition`, `fallback_code`, `is_current`가 분리되어 해석된다.
+- Frontend 상태축은 `generation_status`, `execution_status`, `evidence_status`, `response_level`, `release_decision`, `safety_disposition`, `fallback_code`, `is_current`가 분리되어 해석된다. `ai_job.status=STALE`만으로 처방 변경 STALE과 동의 철회 STALE을 같은 사용자 안내로 처리하지 않는다.
 - `citations[]` 공개는 `release_decision` 값 자체가 아니라 개별 `CITATION_AUTHORIZATION/PASS`와 최종 `release_gate` 판정을 따르며, `LIMITED`·승인된 `REJECTED` fallback에도 통과한 Citation이 포함될 수 있다. Frontend가 `response_level`/`release_decision`만으로 `citations[]`를 임의 숨김·노출하지 않는다.
 - `ai_job_id` 소유권/연결 규칙이 구현 PR의 DB 제약과 정합된다.

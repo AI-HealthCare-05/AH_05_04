@@ -12,6 +12,7 @@ export type ChatSessionResponse = {
   data: {
     session_id: string
     prescription_id: string
+    prescription_version_id: string
     session_status: string
     created_at: string
   }
@@ -52,6 +53,14 @@ export async function createChatSession(
   return apiRequest<ChatSessionResponse>(
     `/api/v1/prescriptions/${prescriptionId}/chat-sessions`,
     { method: 'POST' },
+  )
+}
+
+export async function getChatSessionForPrescription(
+  prescriptionId: string,
+): Promise<ChatSessionResponse> {
+  return apiRequest<ChatSessionResponse>(
+    `/api/v1/prescriptions/${prescriptionId}/chat-session`,
   )
 }
 

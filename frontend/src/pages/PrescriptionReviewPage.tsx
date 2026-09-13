@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import type { NavigateFunction } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
   confirmPrescription,
+  createManualMedication,
   getOcrJob,
   getPrescriptionDocumentFile,
   updateExtractedField,
   type ExtractedField,
+  type CreateManualMedicationRequest,
   type OcrJobResponse,
   type PrescriptionResponse,
 } from '../api/prescriptions'
@@ -20,6 +23,38 @@ import { DoseyMascot } from '../design-system/DoseyMascot'
 import { createGuide } from '../api/guides'
 import '../design-system/prototype.css'
 import './PrescriptionReviewPage.css'
+
+export type PrescriptionReviewServices = {
+  getOcrJob: typeof getOcrJob
+  getPrescriptionDocumentFile: typeof getPrescriptionDocumentFile
+  updateExtractedField: typeof updateExtractedField
+  confirmPrescription: typeof confirmPrescription
+  createManualMedication: typeof createManualMedication
+  createGuide: typeof createGuide
+}
+
+export type PrescriptionReviewPreviewState = {
+  documentId: string
+  jobId: string
+  userConfirmed?: boolean
+  manualAddMode?: 'form' | 'validation'
+  unreviewedMedicationIndexes?: number[]
+}
+
+export type PrescriptionReviewPageProps = {
+  services?: PrescriptionReviewServices
+  previewState?: PrescriptionReviewPreviewState
+  navigation?: NavigateFunction
+}
+
+const defaultPrescriptionReviewServices: PrescriptionReviewServices = {
+  getOcrJob,
+  getPrescriptionDocumentFile,
+  updateExtractedField,
+  confirmPrescription,
+  createManualMedication,
+  createGuide,
+}
 
 const fieldLabels: Record<string, string> = {
   PRESCRIBED_DATE: '처방일',
@@ -58,6 +93,16 @@ const requiredReviewFieldTypes = new Set<string>([
   'PRESCRIBED_DATE',
   ...requiredMedicationFieldTypes,
 ])
+
+const manuallyEnterableOcrPlaceholderFieldTypes = new Set<string>([
+  'PRESCRIBED_DATE',
+  'DOSE_VALUE',
+  'FREQUENCY_PER_DAY',
+  'DURATION_DAYS',
+])
+
+const manualEntryNotice =
+  'OCR이 인식하지 못해 직접 입력이 필요한 필드예요.'
 
 type ReviewSectionKey = 'prescription-date' | `medication-${number}`
 
@@ -136,6 +181,18 @@ function getApiBlockingState(error: ApiError): ReviewBlockingState | null {
     }
   }
 
+  if (
+    error.code === 'OCR_JOB_NOT_FOUND' ||
+    error.code === 'MEDICAL_DOCUMENT_NOT_FOUND'
+  ) {
+    return {
+      title: '처방전 정보를 찾을 수 없어요',
+      message: '처방전 검수 정보를 다시 불러와 주세요.',
+      nextAction: '처방전을 다시 업로드해 주세요.',
+      action: 'UPLOAD',
+    }
+  }
+
   return null
 }
 
@@ -202,6 +259,30 @@ function getSavedDisplayValue(field: ExtractedField) {
   }
 
   return field.raw_value ?? ''
+}
+
+function isUnconfirmedEmptyOcrField(field: ExtractedField) {
+  return (
+    field.confirmation_status === 'UNCONFIRMED' &&
+    field.raw_value === null &&
+    field.normalized_value === null &&
+    field.confidence_score === null &&
+    field.confirmed_value === null
+  )
+}
+
+function isRequiredOcrPlaceholder(field: ExtractedField) {
+  return (
+    manuallyEnterableOcrPlaceholderFieldTypes.has(field.field_type) &&
+    isUnconfirmedEmptyOcrField(field)
+  )
+}
+
+function isUnrecoverableMedicationNameField(field: ExtractedField) {
+  return (
+    field.field_type === 'MEDICATION_NAME' &&
+    isUnconfirmedEmptyOcrField(field)
+  )
 }
 
 function isFieldConfirmed(
@@ -299,6 +380,83 @@ function getFieldValidationError(field: ExtractedField, value: string) {
     : null
 }
 
+const emptyManualMedication: CreateManualMedicationRequest = {
+  medication_name: '',
+  medication_strength: '',
+  dose_value: '',
+  dose_unit: '',
+  frequency_per_day: '',
+  timing: '',
+  duration_days: '',
+}
+
+function hasAtMostDecimalPlaces(value: string, maximumPlaces: number) {
+  const normalizedValue = value.replaceAll('_', '')
+  const [coefficient, exponentText] = normalizedValue.toLowerCase().split('e')
+  const unsignedCoefficient = coefficient.replace(/^[+-]/, '')
+  const fractionLength = unsignedCoefficient.split('.')[1]?.length ?? 0
+  const digits = unsignedCoefficient.replace('.', '')
+  const trailingZeroCount = digits.match(/0+$/)?.[0].length ?? 0
+  const decimalExponent =
+    BigInt(exponentText ?? '0') -
+    BigInt(fractionLength) +
+    BigInt(trailingZeroCount)
+
+  return decimalExponent >= -BigInt(maximumPlaces)
+}
+
+function validateManualMedication(payload: CreateManualMedicationRequest) {
+  const errors: Record<string, string> = {}
+  const medicationName = payload.medication_name.trim()
+  const doseValue = payload.dose_value.trim()
+  const frequencyPerDay = payload.frequency_per_day.trim()
+  const durationDays = payload.duration_days.trim()
+
+  if (!medicationName) {
+    errors.medication_name = '약물이름을 입력해 주세요.'
+  } else if (medicationName.length > 255) {
+    errors.medication_name = '약물이름은 255자 이하로 입력해 주세요.'
+  }
+
+  const doseNumber = Number(doseValue.replaceAll('_', ''))
+  const doseFormatError = getNumericFieldError('DOSE_VALUE', doseValue)
+  const doseHasAtMostThreeDecimals =
+    !doseFormatError && hasAtMostDecimalPlaces(doseValue, 3)
+  if (
+    !doseValue ||
+    doseFormatError ||
+    doseNumber > 9_999_999.999 ||
+    !doseHasAtMostThreeDecimals
+  ) {
+    errors.dose_value =
+      '1회 복용량은 0보다 큰 숫자로, 소수점 아래 3자리까지 입력해 주세요.'
+  }
+
+  for (const [key, value, label] of [
+    ['frequency_per_day', frequencyPerDay, '하루 횟수'],
+    ['duration_days', durationDays, '투약일수'],
+  ] as const) {
+    if (
+      !/^[0-9]+$/.test(value) ||
+      Number(value) <= 0 ||
+      Number(value) > 2_147_483_647
+    ) {
+      errors[key] = `${label}는 0보다 큰 정수로 입력해 주세요.`
+    }
+  }
+
+  for (const [key, value, maxLength, label] of [
+    ['medication_strength', payload.medication_strength, 100, '제품함량'],
+    ['dose_unit', payload.dose_unit, 50, '복용단위'],
+    ['timing', payload.timing, 255, '복용조건'],
+  ] as const) {
+    if ((value ?? '').trim().length > maxLength) {
+      errors[key] = `${label}은(는) ${maxLength}자 이하로 입력해 주세요.`
+    }
+  }
+  return errors
+}
+
 function formatDateForDisplay(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value)
     ? value.replaceAll('-', '.')
@@ -317,12 +475,17 @@ function formatFieldValue(fieldType: string, value: string) {
   return value
 }
 
-function PrescriptionReviewPage() {
-  const navigate = useNavigate()
+function PrescriptionReviewPage({
+  services = defaultPrescriptionReviewServices,
+  previewState,
+  navigation,
+}: PrescriptionReviewPageProps = {}) {
+  const routerNavigate = useNavigate()
+  const navigate = navigation ?? routerNavigate
   const location = useLocation()
   const [searchParams] = useSearchParams()
-  const documentId = searchParams.get('document_id')
-  const jobId = searchParams.get('job_id')
+  const documentId = previewState?.documentId ?? searchParams.get('document_id')
+  const jobId = previewState?.jobId ?? searchParams.get('job_id')
   const prefetchedOcrResponse = (
     location.state as { ocrResponse?: OcrJobResponse } | null
   )?.ocrResponse
@@ -359,7 +522,22 @@ function PrescriptionReviewPage() {
   const [guideCreationError, setGuideCreationError] = useState<string | null>(
     null,
   )
-  const [userConfirmed, setUserConfirmed] = useState(false)
+  const [userConfirmed, setUserConfirmed] = useState(
+    previewState?.userConfirmed ?? false,
+  )
+  const [isManualAddOpen, setIsManualAddOpen] = useState(
+    Boolean(previewState?.manualAddMode),
+  )
+  const [manualAddValues, setManualAddValues] =
+    useState<CreateManualMedicationRequest>(emptyManualMedication)
+  const [manualAddErrors, setManualAddErrors] = useState<Record<string, string>>(
+    () =>
+      previewState?.manualAddMode === 'validation'
+        ? validateManualMedication(emptyManualMedication)
+        : {},
+  )
+  const [isAddingMedication, setIsAddingMedication] = useState(false)
+  const manualAddKeyRef = useRef<{ signature: string; key: string } | null>(null)
 
   const applyReviewError = useCallback(
     (error: unknown, fallbackMessage: string) => {
@@ -486,6 +664,15 @@ function PrescriptionReviewPage() {
     [draftValues, fields],
   )
 
+  const hasRequiredOcrPlaceholders = useMemo(
+    () => fields.some(isRequiredOcrPlaceholder),
+    [fields],
+  )
+  const hasStructurallyMissingRequiredFields =
+    hasMissingPrescribedDateField || hasMissingRequiredMedicationFields
+  const hasRequiredRecognitionIssue =
+    hasRequiredOcrPlaceholders || hasStructurallyMissingRequiredFields
+
   const reviewReadyForAcknowledgement =
     prescribedDateConfirmed &&
     allRequiredMedicationFieldsConfirmed &&
@@ -495,7 +682,9 @@ function PrescriptionReviewPage() {
     !hasUnsavedChanges &&
     savingFieldIds.size === 0 &&
     editingSections.size === 0 &&
-    revokedReviewSections.size === 0
+    revokedReviewSections.size === 0 &&
+    !isManualAddOpen &&
+    !isAddingMedication
 
   const canConfirmPrescription = useMemo(() => {
     return (
@@ -527,7 +716,16 @@ function PrescriptionReviewPage() {
     setIsCreatingGuide(false)
     setGuideCreationError(null)
     guideCreationRequestRef.current = null
-    setUserConfirmed(false)
+    setUserConfirmed(previewState?.userConfirmed ?? false)
+    setIsManualAddOpen(Boolean(previewState?.manualAddMode))
+    setManualAddValues(emptyManualMedication)
+    setManualAddErrors(
+      previewState?.manualAddMode === 'validation'
+        ? validateManualMedication(emptyManualMedication)
+        : {},
+    )
+    setIsAddingMedication(false)
+    manualAddKeyRef.current = null
     setIsLoading(true)
 
     if (!documentId || !jobId) {
@@ -554,7 +752,7 @@ function PrescriptionReviewPage() {
           prefetchedOcrResponse.data.ocr_status === 'COMPLETED'
         const ocrResponse = canUsePrefetchedResult
           ? prefetchedOcrResponse
-          : await getOcrJob(resolvedJobId)
+          : await services.getOcrJob(resolvedJobId)
         if (!isLatestRequest()) return
 
         if (ocrResponse.data.document_id !== resolvedDocumentId) {
@@ -574,18 +772,47 @@ function PrescriptionReviewPage() {
           return
         }
 
-        const documentBlob = await getPrescriptionDocumentFile(resolvedDocumentId)
+        if (ocrResponse.data.fields.some(isUnrecoverableMedicationNameField)) {
+          setBlockingState({
+            title: '약 이름을 인식하지 못했어요',
+            message: '약 이름은 직접 입력해 검수를 진행할 수 없습니다.',
+            nextAction: '처방전을 다시 업로드하거나 OCR을 다시 실행해 주세요.',
+            action: 'UPLOAD',
+          })
+          return
+        }
+
+        const documentBlob = await services.getPrescriptionDocumentFile(resolvedDocumentId)
         if (!isLatestRequest()) return
 
-        setFields(ocrResponse.data.fields)
+        const nextFields = ocrResponse.data.fields
+        const placeholderSections = new Set<ReviewSectionKey>(
+          nextFields
+            .filter(isRequiredOcrPlaceholder)
+            .map<ReviewSectionKey>((field) =>
+              field.medication_index === 0
+                ? 'prescription-date'
+                : `medication-${field.medication_index}`,
+            ),
+        )
+        const revokedReviewSections = new Set<ReviewSectionKey>([
+          ...placeholderSections,
+          ...(previewState?.unreviewedMedicationIndexes ?? []).map(
+            (index) => `medication-${index}` as const,
+          ),
+        ])
+
+        setFields(nextFields)
         setDraftValues(
           Object.fromEntries(
-            ocrResponse.data.fields.map((field) => [
+            nextFields.map((field) => [
               field.field_id,
               getSavedDisplayValue(field),
             ]),
           ),
         )
+        setEditingSections(placeholderSections)
+        setRevokedReviewSections(revokedReviewSections)
 
         const nextObjectUrl = URL.createObjectURL(documentBlob)
         if (!isLatestRequest()) {
@@ -612,9 +839,20 @@ function PrescriptionReviewPage() {
       guideCreationRequestRef.current = null
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [applyReviewError, documentId, jobId, prefetchedOcrResponse, reviewRequestKey])
+  }, [
+    applyReviewError,
+    documentId,
+    jobId,
+    prefetchedOcrResponse,
+    previewState?.manualAddMode,
+    previewState?.unreviewedMedicationIndexes,
+    previewState?.userConfirmed,
+    reviewRequestKey,
+    services,
+  ])
 
   const startEditing = (sectionKey: ReviewSectionKey) => {
+    if (isManualAddOpen || isAddingMedication) return
     setEditingSections((current) => new Set(current).add(sectionKey))
     setRevokedReviewSections((current) => new Set(current).add(sectionKey))
     setUserConfirmed(false)
@@ -683,6 +921,8 @@ function PrescriptionReviewPage() {
   ) => {
     if (
       savingSections.has(sectionKey) ||
+      isManualAddOpen ||
+      isAddingMedication ||
       isConfirming ||
       prescription
     ) {
@@ -750,7 +990,7 @@ function PrescriptionReviewPage() {
       for (const field of fieldsToSave) {
         const confirmedValue =
           draftValues[field.field_id]?.trim() || null
-        const response = await updateExtractedField(
+        const response = await services.updateExtractedField(
           field.field_id,
           confirmedValue,
         )
@@ -807,7 +1047,7 @@ function PrescriptionReviewPage() {
     try {
       setIsCreatingGuide(true)
       setGuideCreationError(null)
-      const response = await createGuide(prescriptionId)
+      const response = await services.createGuide(prescriptionId)
       if (
         latestReviewRequestKeyRef.current !== guideRequestKey ||
         guideCreationRequestRef.current !== requestToken
@@ -852,7 +1092,7 @@ function PrescriptionReviewPage() {
     try {
       setIsConfirming(true)
       setMessage(null)
-      const response = await confirmPrescription(documentId)
+      const response = await services.confirmPrescription(documentId)
       if (latestReviewRequestKeyRef.current !== confirmationRequestKey) return
       setPrescription(response)
       void handleCreateGuide(response.data.prescription_id)
@@ -866,11 +1106,141 @@ function PrescriptionReviewPage() {
     }
   }
 
+  const handleManualMedicationAdd = async () => {
+    if (
+      !jobId ||
+      prescription ||
+      isAddingMedication ||
+      hasUnsavedChanges ||
+      editingSections.size > 0 ||
+      savingSections.size > 0
+    ) return
+    const payload: CreateManualMedicationRequest = {
+      medication_name: manualAddValues.medication_name.trim(),
+      dose_value: manualAddValues.dose_value.trim(),
+      frequency_per_day: manualAddValues.frequency_per_day.trim(),
+      duration_days: manualAddValues.duration_days.trim(),
+      medication_strength: manualAddValues.medication_strength?.trim() || null,
+      dose_unit: manualAddValues.dose_unit?.trim() || null,
+      timing: manualAddValues.timing?.trim() || null,
+    }
+    const errors = validateManualMedication(payload)
+    setManualAddErrors(errors)
+    if (Object.keys(errors).length) return
+    const signature = JSON.stringify(payload)
+    if (!manualAddKeyRef.current || manualAddKeyRef.current.signature !== signature) {
+      manualAddKeyRef.current = {
+        signature,
+        key: `manual-medication:${globalThis.crypto.randomUUID()}`,
+      }
+    }
+    const requestKey = reviewRequestKey
+    const existingMedicationIndexes = new Set(
+      fields
+        .filter((field) => field.medication_index > 0)
+        .map((field) => field.medication_index),
+    )
+    setIsAddingMedication(true)
+    setMessage(null)
+    try {
+      const response = await services.createManualMedication(
+        jobId,
+        payload,
+        manualAddKeyRef.current.key,
+      )
+      if (latestReviewRequestKeyRef.current !== requestKey) return
+
+      const nextFields = response.data.fields
+      const addedSectionKeys = new Set<ReviewSectionKey>(
+        nextFields
+          .filter(
+            (field) =>
+              field.medication_index > 0 &&
+              !existingMedicationIndexes.has(field.medication_index),
+          )
+          .map((field) => `medication-${field.medication_index}` as const),
+      )
+      setFields(nextFields)
+      setDraftValues(
+        Object.fromEntries(
+          nextFields.map((field) => [
+            field.field_id,
+            getSavedDisplayValue(field),
+          ]),
+        ),
+      )
+      setRevokedReviewSections((current) =>
+        new Set([...current, ...addedSectionKeys]),
+      )
+      setIsManualAddOpen(false)
+      setManualAddValues(emptyManualMedication)
+      setManualAddErrors({})
+      manualAddKeyRef.current = null
+      setUserConfirmed(false)
+    } catch (error) {
+      if (latestReviewRequestKeyRef.current !== requestKey) return
+
+      if (
+        error instanceof ApiError &&
+        error.code === 'CONCURRENT_UPDATE_IN_PROGRESS'
+      ) {
+        setMessage({
+          title: '약물을 저장하고 있는 요청이 있어요',
+          message: '입력한 내용은 그대로 유지했어요.',
+          nextAction: '잠시 후 다시 저장해 주세요.',
+        })
+      } else if (
+        error instanceof ApiError &&
+        error.code === 'IDEMPOTENCY_KEY_CONFLICT'
+      ) {
+        manualAddKeyRef.current = null
+        setMessage({
+          title: '저장 요청을 다시 확인해 주세요',
+          message: '이전 요청과 현재 입력 내용이 달라 저장하지 않았어요.',
+          nextAction: '입력값을 확인한 뒤 다시 저장해 주세요.',
+        })
+      } else if (
+        error instanceof ApiError &&
+        (error.code === 'IDEMPOTENCY_KEY_REQUIRED' ||
+          error.code === 'IDEMPOTENCY_KEY_INVALID')
+      ) {
+        manualAddKeyRef.current = null
+        setMessage({
+          title: '저장 요청을 준비하지 못했어요',
+          message: '입력한 내용은 그대로 유지했어요.',
+          nextAction: '다시 저장해 주세요.',
+        })
+      } else if (
+        error instanceof ApiError &&
+        error.code === 'VALIDATION_FAILED'
+      ) {
+        setMessage({
+          title: '입력값을 확인해 주세요',
+          message: '저장할 수 없는 항목이 있어요.',
+          nextAction: '필수값과 숫자 형식을 확인한 뒤 다시 저장해 주세요.',
+        })
+      } else {
+        applyReviewError(
+          error,
+          '약물을 추가하는 중 오류가 발생했습니다.',
+        )
+      }
+    } finally {
+      if (latestReviewRequestKeyRef.current === requestKey) {
+        setIsAddingMedication(false)
+      }
+    }
+  }
+
   const renderEditField = (field: ExtractedField) => {
     const draftValue = draftValues[field.field_id] ?? ''
     const isSaving = savingFieldIds.has(field.field_id)
     const fieldError = fieldErrors[field.field_id] ??
       getFieldValidationError(field, draftValue)
+    const helpText = [
+      isRequiredOcrPlaceholder(field) ? manualEntryNotice : null,
+      fieldError,
+    ].filter(Boolean).join(' ')
     const inputMode =
       field.field_type === 'DOSE_VALUE'
         ? 'decimal'
@@ -896,6 +1266,7 @@ function PrescriptionReviewPage() {
         <span className="prescription-review__edit-control">
           <input
             id={`field-${field.field_id}`}
+            aria-label={getFieldLabel(field.field_type)}
             value={draftValue}
             inputMode={inputMode}
             placeholder={
@@ -904,7 +1275,12 @@ function PrescriptionReviewPage() {
                 : '선택 입력'
             }
             aria-invalid={Boolean(fieldError)}
-            disabled={isSaving || isConfirming || Boolean(prescription)}
+            disabled={
+              isSaving ||
+              isAddingMedication ||
+              isConfirming ||
+              Boolean(prescription)
+            }
             onChange={(event) => {
               setDraftValues((current) => ({
                 ...current,
@@ -925,7 +1301,7 @@ function PrescriptionReviewPage() {
           className={fieldError ? 'is-error' : ''}
           role={fieldError ? 'alert' : undefined}
         >
-          {fieldError ?? ''}
+          {helpText}
         </small>
       </label>
     )
@@ -977,6 +1353,9 @@ function PrescriptionReviewPage() {
       ? fieldErrors[prescribedDateField.field_id] ??
         getFieldValidationError(prescribedDateField, dateValue)
       : '처방일을 확인할 수 없습니다.'
+    const dateNeedsManualEntry = Boolean(
+      prescribedDateField && isRequiredOcrPlaceholder(prescribedDateField),
+    )
     const reviewed = Boolean(prescriptionDateReviewed)
 
     return (
@@ -1042,12 +1421,20 @@ function PrescriptionReviewPage() {
               }`}
             >
               <strong>{formatDateForDisplay(dateValue) || '—'}</strong>
-              {dateError && <small role="alert">{dateError}</small>}
+              {dateError && (
+                <small role="alert">
+                  {dateNeedsManualEntry ? manualEntryNotice : dateError}
+                </small>
+              )}
             </div>
             <div className="prescription-review__section-actions">
               <Button
                 variant="secondary"
-                disabled={!prescribedDateField}
+                disabled={
+                  !prescribedDateField ||
+                  isManualAddOpen ||
+                  isAddingMedication
+                }
                 onClick={() => startEditing(prescriptionSectionKey)}
               >
                 수정
@@ -1057,7 +1444,9 @@ function PrescriptionReviewPage() {
                   disabled={
                     !prescribedDateField ||
                     Boolean(dateError) ||
-                    isSaving
+                    isSaving ||
+                    isManualAddOpen ||
+                    isAddingMedication
                   }
                   onClick={() =>
                     prescribedDateField &&
@@ -1176,15 +1565,25 @@ function PrescriptionReviewPage() {
             )}
             <dl className="prescription-review__medication-values">
               {rows.map((fieldType) => {
+                const field = group.fields.find(
+                  (candidate) => candidate.field_type === fieldType,
+                )
                 const value = getValue(fieldType)
                 const isRequiredMissing =
                   requiredReviewFieldTypes.has(fieldType) && !value
+                const needsManualEntry = Boolean(
+                  field && isRequiredOcrPlaceholder(field),
+                )
                 return (
                   <div className={isRequiredMissing ? 'is-error' : ''} key={fieldType}>
                     <dt>{getFieldLabel(fieldType)}</dt>
                     <dd>{formatFieldValue(fieldType, value)}</dd>
                     {isRequiredMissing && (
-                      <small>{getFieldLabel(fieldType)}을(를) 입력해 주세요.</small>
+                      <small>
+                        {needsManualEntry
+                          ? manualEntryNotice
+                          : `${getFieldLabel(fieldType)}을(를) 입력해 주세요.`}
+                      </small>
                     )}
                   </div>
                 )
@@ -1193,13 +1592,19 @@ function PrescriptionReviewPage() {
             <div className="prescription-review__section-actions">
               <Button
                 variant="secondary"
+                disabled={isManualAddOpen || isAddingMedication}
                 onClick={() => startEditing(sectionKey)}
               >
                 수정하기
               </Button>
               {!reviewed && (
                 <Button
-                  disabled={hasValidationError || isSaving}
+                  disabled={
+                    hasValidationError ||
+                    isSaving ||
+                    isManualAddOpen ||
+                    isAddingMedication
+                  }
                   onClick={() => handleReviewSection(sectionKey, group.fields)}
                 >
                   {isSaving ? '저장 중...' : '검토 완료'}
@@ -1366,12 +1771,29 @@ function PrescriptionReviewPage() {
       >
         <main className="app-scroll prescription-review prescription-review__content">
           <section className="prescription-review__intro">
-            <div className="prescription-review__success-icon" aria-hidden="true">
-              ✓
+            <div
+              className={`prescription-review__status-icon ${
+                hasRequiredRecognitionIssue ? 'is-warning' : 'is-success'
+              }`}
+              aria-hidden="true"
+            >
+              {hasRequiredRecognitionIssue ? '!' : '✓'}
             </div>
             <div>
-              <p>전체 인식 성공</p>
-              <h1>처방전과 같은지 확인해 주세요</h1>
+              <p>
+                {hasStructurallyMissingRequiredFields
+                  ? '필수 처방 항목 인식 누락'
+                  : hasRequiredOcrPlaceholders
+                    ? '일부 필수 항목 인식 누락'
+                    : '전체 인식 성공'}
+              </p>
+              <h1>
+                {hasStructurallyMissingRequiredFields
+                  ? '처방전을 다시 업로드해 주세요'
+                  : hasRequiredOcrPlaceholders
+                    ? '누락된 항목을 직접 입력해 주세요'
+                    : '처방전과 같은지 확인해 주세요'}
+              </h1>
             </div>
           </section>
 
@@ -1392,8 +1814,7 @@ function PrescriptionReviewPage() {
             </span>
           </div>
 
-          {(hasMissingPrescribedDateField ||
-            hasMissingRequiredMedicationFields) && (
+          {hasStructurallyMissingRequiredFields && (
             <div className="prescription-review__error" role="alert">
               <strong>필수 처방 항목이 누락됐어요</strong>
               <span>
@@ -1418,6 +1839,121 @@ function PrescriptionReviewPage() {
           )}
 
           {renderPrescriptionCard()}
+
+          <section
+            className="prescription-review__manual-add"
+            aria-label="약물 추가"
+          >
+              {!isManualAddOpen ? (
+                <Button
+                  variant="secondary"
+                  disabled={
+                    isConfirming ||
+                    editingSections.size > 0 ||
+                    hasUnsavedChanges ||
+                    savingSections.size > 0 ||
+                    Boolean(prescription)
+                  }
+                  onClick={() => {
+                    setIsManualAddOpen(true)
+                    setMessage(null)
+                    setUserConfirmed(false)
+                  }}
+                >
+                  약물 추가
+                </Button>
+              ) : (
+                <Card className="prescription-review__manual-add-card">
+                  <div className="prescription-review__manual-add-heading">
+                    <div>
+                      <h2>약물 추가</h2>
+                      <p>처방전에서 누락된 약물을 직접 입력해 주세요.</p>
+                    </div>
+                    <span><strong>*</strong> 필수 입력</span>
+                  </div>
+                  <div className="prescription-review__edit-grid">
+                    {([
+                      ['medication_name', '약물이름', true], ['medication_strength', '제품함량', false],
+                      ['dose_value', '1회 복용량', true], ['dose_unit', '복용단위', false],
+                      ['frequency_per_day', '하루횟수', true], ['timing', '복용조건', false], ['duration_days', '투약일수', true],
+                    ] as const).map(([key, label, required]) => (
+                      <label
+                        className={`prescription-review__edit-field ${
+                          key === 'medication_name' || key === 'duration_days'
+                            ? 'prescription-review__edit-field--wide'
+                            : ''
+                        }`}
+                        htmlFor={`manual-${key}`}
+                        key={key}
+                      >
+                        <span>
+                          {label}
+                          <em>{required ? '필수' : '선택'}</em>
+                        </span>
+                        <input
+                          id={`manual-${key}`}
+                          aria-label={label}
+                          placeholder={required ? '필수 입력' : '선택 입력'}
+                          inputMode={
+                            key === 'dose_value'
+                              ? 'decimal'
+                              : key === 'frequency_per_day' ||
+                                  key === 'duration_days'
+                                ? 'numeric'
+                                : undefined
+                          }
+                          value={manualAddValues[key] ?? ''}
+                          aria-invalid={Boolean(manualAddErrors[key])}
+                          aria-describedby={`manual-error-${key}`}
+                          disabled={isAddingMedication}
+                          onChange={(event) => {
+                            setManualAddValues((current) => ({
+                              ...current,
+                              [key]: event.target.value,
+                            }))
+                            setManualAddErrors((current) => {
+                              const next = { ...current }
+                              delete next[key]
+                              return next
+                            })
+                            setUserConfirmed(false)
+                          }}
+                        />
+                        {manualAddErrors[key] && (
+                          <small
+                            className="is-error"
+                            id={`manual-error-${key}`}
+                            role="alert"
+                          >
+                            {manualAddErrors[key]}
+                          </small>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="prescription-review__section-actions">
+                    <Button
+                      variant="secondary"
+                      disabled={isAddingMedication}
+                      onClick={() => {
+                        setIsManualAddOpen(false)
+                        setManualAddValues(emptyManualMedication)
+                        setManualAddErrors({})
+                        manualAddKeyRef.current = null
+                      }}
+                    >
+                      취소
+                    </Button>
+                    <Button
+                      disabled={isAddingMedication}
+                      onClick={handleManualMedicationAdd}
+                    >
+                      {isAddingMedication ? '저장 중...' : '약물 저장'}
+                    </Button>
+                  </div>
+                </Card>
+              )}
+          </section>
 
           <section
             className="prescription-review__medication-progress"

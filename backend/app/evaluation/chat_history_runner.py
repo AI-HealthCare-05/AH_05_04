@@ -17,12 +17,13 @@ from app.evaluation.chat_history import (
     validate_live_environment,
 )
 from app.services.chat_ai.client import OpenAIResponsesClient
+from app.services.chat_ai.prompt import CHAT_SYSTEM_INSTRUCTIONS
 
 _REPOSITORY_ROOT = Path(__file__).parents[3]
-_DEFAULT_DATASET_PATH = _REPOSITORY_ROOT / "evals" / "generation" / "chat-v2-history-eval-v1.json"
-_LIVE_DATASET_ID = "chat-v2-history-eval-v1"
+_DEFAULT_DATASET_PATH = _REPOSITORY_ROOT / "evals" / "generation" / "chat-v3-history-eval-v1.json"
+_LIVE_DATASET_ID = "chat-v3-history-eval-v1"
 _LIVE_DATA_CLASSIFICATION = "SYNTHETIC"
-_LIVE_DATASET_SHA256 = "2a02ed127d8227323b139ca1b59268f48a15706ef0be97e33f4c4cc2813ff5bc"
+_LIVE_DATASET_SHA256 = "8e7b7f50e034a2450873092893fa9f1967dcf2f23e03247560a658bd4229e32c"
 
 
 @dataclass(frozen=True)
@@ -74,12 +75,15 @@ async def execute(
     else:
         raise ValueError("mode must be deterministic or live")
 
+    result = report.to_dict()
+    result["dataset_sha256"] = hashlib.sha256(raw_dataset.replace(b"\r\n", b"\n")).hexdigest()
+    result["prompt_sha256"] = hashlib.sha256(CHAT_SYSTEM_INSTRUCTIONS.encode()).hexdigest()
     arguments.output_path.parent.mkdir(parents=True, exist_ok=True)
     arguments.output_path.write_text(
-        json.dumps(report.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    return 0
+    return 0 if report.passed else 1
 
 
 def _parse_arguments(argv: list[str] | None = None) -> RunnerArguments:

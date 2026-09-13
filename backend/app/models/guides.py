@@ -42,6 +42,11 @@ class Guide(Base):
             ["prescription.id", "prescription.profile_id"],
             name="fk_guide_prescription_profile",
         ),
+        ForeignKeyConstraint(
+            ["prescription_version_id", "prescription_id"],
+            ["prescription_version.id", "prescription_version.prescription_id"],
+            name="fk_guide_prescription_version_prescription",
+        ),
         Index("idx_guide_prescription_requested", "prescription_id", "requested_at", "id"),
         Index("idx_guide_profile_requested", "profile_id", "requested_at", "id"),
         UniqueConstraint("ai_job_id", name="uq_guide_ai_job"),
@@ -53,6 +58,7 @@ class Guide(Base):
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     prescription_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    prescription_version_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     profile_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("profile.id"), nullable=False)
     ai_job_id: Mapped[UUID | None] = mapped_column(
         UUIDChar(),

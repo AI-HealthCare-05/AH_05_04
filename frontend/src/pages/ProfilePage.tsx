@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../api/client'
-import { clearOcrJobRecovery } from '../features/ai-jobs/ocrJobRecovery'
+import { clearAuthenticatedSession } from '../features/auth/authSession'
 import {
   getCurrentUser,
   updateCurrentUser,
@@ -97,8 +97,7 @@ function ProfilePage() {
   }, [])
 
   const expireSession = useCallback(() => {
-    localStorage.removeItem('access_token')
-    clearOcrJobRecovery()
+    clearAuthenticatedSession()
     setUser(null)
     setForm(EMPTY_FORM)
     setFieldErrors({})

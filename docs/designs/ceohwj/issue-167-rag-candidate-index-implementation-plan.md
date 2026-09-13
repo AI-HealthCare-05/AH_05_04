@@ -15,6 +15,14 @@ repository와 Candidate Resolver 판정은 구현하지 않고 protocol 뒤에 �
 
 **설계 문서:** `docs/designs/ceohwj/issue-167-rag-candidate-index-design.md`
 
+## PR #329 반영 기준
+
+공개 입력은 `CatalogExportArtifacts`이며 v2 manifest·JSONL·typed 값 검증을 선행한다.
+아래 최초 단계의 typed Catalog 예제는 내부 구성원 계산 테스트의 과거 작성 순서다.
+현재 해당 테스트는 `_build_candidate_index_members`를 테스트 내부 이름으로 import하며,
+공개 인계 예제·회귀는 `catalog/test_review_regressions.py`를 기준으로 한다.
+원문 NFD 표시값은 보존하고 normalized·Identity·참조·설정의 NFC 검증은 유지한다.
+
 ## 전역 제약
 
 - 구현 파일은 `ai_worker/tasks/rag/candidate_index.py` 하나로 시작한다.
@@ -47,9 +55,10 @@ repository와 Candidate Resolver 판정은 구현하지 않고 protocol 뒤에 �
 
 **인터페이스:**
 
-- 입력: `CandidateCatalogExport`, `CandidateIndexBuildConfig`
+- 공개 입력: `CatalogExportArtifacts`, `CandidateIndexBuildConfig` (`medication-catalog-v2`)
+- 내부 typed 구성원: `CandidateCatalogExport`. 단독 공개 인계는 거부하고 manifest·JSONL 결속을 먼저 검증한다.
 - 출력: `CandidateIndexBuildFailure` 또는 후속 Task가 완성할 `CandidateIndexBuildSuccess`
-- 생성 함수: `build_candidate_index(catalog, config, embedding_port=None)`
+- 생성 함수: `build_candidate_index(artifacts, config, embedding_port=None)`
 
 - [x] **Step 1: 실패 enum과 최소 Catalog fixture를 요구하는 테스트 작성**
 
@@ -209,7 +218,7 @@ def _canonical_json_bytes(value: object) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
     )
-    return unicodedata.normalize("NFC", serialized).encode("utf-8")
+    return serialized.encode("utf-8")
 
 
 def _sha256(value: object) -> str:
@@ -569,7 +578,7 @@ git commit -m "✅ test: Candidate Index 계약 회귀 보강"
 ## 리뷰 보완: Catalog NFC와 Product-name 결속
 
 - [x] NFC/NFD가 다른 저장 문자열인데 같은 member·manifest hash를 만드는 회귀 테스트를 RED로 확인
-- [x] Catalog 전체 문자열을 자동 변환하지 않고 `CATALOG_TEXT_NOT_NFC`로 fail-closed
+- [x] Catalog normalized·Identity·참조 문자열의 NFC 위반은 `CATALOG_TEXT_NOT_NFC`로 fail-closed; 원문 표시 필드는 보존
 - [x] build config 문자열도 NFC가 아니면 `BUILD_CONFIG_INVALID`
 - [x] `PRODUCT_NAME` Search Entry의 표시명·정규명을 Product row와 exact-match
 - [x] 고정된 `display_limit=1` 검사 뒤의 도달 불가능한 중복 비교 제거

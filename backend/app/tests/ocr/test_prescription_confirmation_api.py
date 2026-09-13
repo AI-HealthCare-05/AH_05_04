@@ -251,6 +251,246 @@ async def test_accepted_ocr_job_result_can_be_reviewed_and_confirmed(
 
 
 @pytest.mark.asyncio
+async def test_create_manual_medication_adds_confirmed_fields_and_confirms_prescription(
+    db_session: AsyncSession,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="manual-med")
+        headers = {"Authorization": f"Bearer {access_token}"}
+        document_id, job_id = await _upload_and_prepare_ocr(
+            client,
+            db_session=db_session,
+            access_token=access_token,
+        )
+        await _confirm_all_fields(client, job_id=job_id, access_token=access_token)
+
+        response = await client.post(
+            f"/api/v1/ocr-jobs/{job_id}/manual-medications",
+            headers={**headers, "Idempotency-Key": "manual-medication-create-0001"},
+            json={
+                "medication_name": "직접입력약정",
+                "medication_strength": "50mg",
+                "dose_value": "0.5",
+                "dose_unit": "정",
+                "frequency_per_day": "2",
+                "timing": "저녁 식후",
+                "duration_days": "5",
+            },
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED, response.text
+        fields = response.json()["data"]["fields"]
+        manual_fields = [field for field in fields if field["medication_index"] == 2]
+        assert {field["field_type"] for field in manual_fields} == {
+            "MEDICATION_NAME",
+            "MEDICATION_STRENGTH",
+            "DOSE_VALUE",
+            "DOSE_UNIT",
+            "FREQUENCY_PER_DAY",
+            "TIMING",
+            "DURATION_DAYS",
+        }
+        assert all(field["confirmation_status"] == "CONFIRMED" for field in manual_fields)
+        assert all(field["raw_value"] is None for field in manual_fields)
+        assert all(field["normalized_value"] is None for field in manual_fields)
+        assert all(field["confidence_score"] is None for field in manual_fields)
+        assert all(field["normalization_version"] == "manual-entry@1" for field in manual_fields)
+
+        confirm_response = await client.post(
+            f"/api/v1/documents/{document_id}/prescription",
+            headers=headers,
+        )
+
+    assert confirm_response.status_code == status.HTTP_201_CREATED, confirm_response.text
+    medications = confirm_response.json()["data"]["medications"]
+    assert [medication["medication_name"] for medication in medications] == ["혈압약정", "직접입력약정"]
+    manual_medication = medications[1]
+    assert manual_medication["strength_text"] == "50mg"
+    assert manual_medication["dose_value"] == 0.5
+    assert manual_medication["dose_unit"] == "정"
+    assert manual_medication["frequency_per_day"] == 2
+    assert manual_medication["timing_text"] == "저녁 식후"
+    assert manual_medication["duration_days"] == 5
+
+
+@pytest.mark.asyncio
+async def test_create_manual_medication_rejects_another_users_ocr_job(
+    db_session: AsyncSession,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner_token = await _signup_and_login(client, label="manual-owner")
+        _, job_id = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=owner_token)
+        other_token = await _signup_and_login(client, label="manual-other")
+
+        response = await client.post(
+            f"/api/v1/ocr-jobs/{job_id}/manual-medications",
+            headers={"Authorization": f"Bearer {other_token}", "Idempotency-Key": "manual-medication-other-0001"},
+            json={
+                "medication_name": "직접입력약정",
+                "dose_value": "1",
+                "frequency_per_day": "1",
+                "duration_days": "7",
+            },
+        )
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json()["code"] == "OCR_JOB_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_create_manual_medication_rejects_after_prescription_confirmed(
+    db_session: AsyncSession,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="manual-confirmed")
+        headers = {"Authorization": f"Bearer {access_token}"}
+        document_id, job_id = await _upload_and_prepare_ocr(
+            client,
+            db_session=db_session,
+            access_token=access_token,
+        )
+        await _confirm_all_fields(client, job_id=job_id, access_token=access_token)
+        confirm_response = await client.post(f"/api/v1/documents/{document_id}/prescription", headers=headers)
+        assert confirm_response.status_code == status.HTTP_201_CREATED
+
+        response = await client.post(
+            f"/api/v1/ocr-jobs/{job_id}/manual-medications",
+            headers={**headers, "Idempotency-Key": "manual-medication-confirmed-0001"},
+            json={
+                "medication_name": "확정후추가약",
+                "dose_value": "1",
+                "frequency_per_day": "1",
+                "duration_days": "7",
+            },
+        )
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.json()["code"] == "PRESCRIPTION_ALREADY_CONFIRMED"
+
+
+@pytest.mark.asyncio
+async def test_create_manual_medication_rejects_invalid_numeric_fields(
+    db_session: AsyncSession,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="manual-invalid")
+        _, job_id = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=access_token)
+
+        response = await client.post(
+            f"/api/v1/ocr-jobs/{job_id}/manual-medications",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "medication_name": "직접입력약정",
+                "dose_value": "약 반 알",
+                "frequency_per_day": "1",
+                "duration_days": "7",
+            },
+        )
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert response.json()["code"] == "VALIDATION_FAILED"
+    assert any(detail["field"] == "dose_value" for detail in response.json()["details"])
+
+
+@pytest.mark.asyncio
+async def test_create_manual_medication_replays_same_idempotency_key_without_duplicate(
+    db_session: AsyncSession,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="manual-replay")
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Idempotency-Key": "manual-medication-replay-0001",
+        }
+        _, job_id = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=access_token)
+        await _confirm_all_fields(client, job_id=job_id, access_token=access_token)
+        payload = {
+            "medication_name": "재전송방지약",
+            "dose_value": "1",
+            "frequency_per_day": "1",
+            "duration_days": "7",
+        }
+
+        first = await client.post(f"/api/v1/ocr-jobs/{job_id}/manual-medications", headers=headers, json=payload)
+        second = await client.post(f"/api/v1/ocr-jobs/{job_id}/manual-medications", headers=headers, json=payload)
+
+    assert first.status_code == status.HTTP_201_CREATED, first.text
+    assert second.status_code == status.HTTP_201_CREATED, second.text
+    first_fields = first.json()["data"]["fields"]
+    second_fields = second.json()["data"]["fields"]
+    assert first_fields == second_fields
+    replayed_names = [
+        field
+        for field in second_fields
+        if field["field_type"] == "MEDICATION_NAME" and field["confirmed_value"] == "재전송방지약"
+    ]
+    assert len(replayed_names) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_manual_medication_rejects_same_idempotency_key_with_different_body(
+    db_session: AsyncSession,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="manual-conflict")
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Idempotency-Key": "manual-medication-conflict-0001",
+        }
+        _, job_id = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=access_token)
+        await _confirm_all_fields(client, job_id=job_id, access_token=access_token)
+
+        first = await client.post(
+            f"/api/v1/ocr-jobs/{job_id}/manual-medications",
+            headers=headers,
+            json={
+                "medication_name": "첫번째약",
+                "dose_value": "1",
+                "frequency_per_day": "1",
+                "duration_days": "7",
+            },
+        )
+        second = await client.post(
+            f"/api/v1/ocr-jobs/{job_id}/manual-medications",
+            headers=headers,
+            json={
+                "medication_name": "다른약",
+                "dose_value": "1",
+                "frequency_per_day": "1",
+                "duration_days": "7",
+            },
+        )
+
+    assert first.status_code == status.HTTP_201_CREATED, first.text
+    assert second.status_code == status.HTTP_409_CONFLICT, second.text
+    assert second.json()["code"] == "IDEMPOTENCY_KEY_CONFLICT"
+
+
+@pytest.mark.asyncio
+async def test_create_manual_medication_requires_idempotency_key(
+    db_session: AsyncSession,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="manual-key")
+        _, job_id = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=access_token)
+        await _confirm_all_fields(client, job_id=job_id, access_token=access_token)
+
+        response = await client.post(
+            f"/api/v1/ocr-jobs/{job_id}/manual-medications",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "medication_name": "멱등키필수약",
+                "dose_value": "1",
+                "frequency_per_day": "1",
+                "duration_days": "7",
+            },
+        )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.text
+    assert response.json()["code"] == "IDEMPOTENCY_KEY_REQUIRED"
+
+
+@pytest.mark.asyncio
 async def test_confirm_prescription_api_uses_confirmed_fields(db_session: AsyncSession) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         access_token = await _signup_and_login(client, label="success")
@@ -264,6 +504,65 @@ async def test_confirm_prescription_api_uses_confirmed_fields(db_session: AsyncS
 
     assert response.status_code == status.HTTP_201_CREATED
     assert response.json()["data"]["medications"][0]["medication_name"] == "혈압약정"
+
+
+@pytest.mark.asyncio
+async def test_correct_prescription_api_returns_new_active_version_snapshot(
+    db_session: AsyncSession,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="correction")
+        headers = {"Authorization": f"Bearer {access_token}"}
+        document_id, job_id = await _upload_and_prepare_ocr(
+            client,
+            db_session=db_session,
+            access_token=access_token,
+        )
+        await _confirm_all_fields(client, job_id=job_id, access_token=access_token)
+        confirmation = await client.post(
+            f"/api/v1/documents/{document_id}/prescription",
+            headers=headers,
+        )
+        assert confirmation.status_code == status.HTTP_201_CREATED
+        original = confirmation.json()["data"]
+        correction_payload = {
+            "base_version_id": original["prescription_version_id"],
+            "expected_revision": original["revision"],
+            "prescribed_date": "2026-09-08",
+            "medications": [
+                {
+                    "medication_name": "정정된 합성약",
+                    "strength_text": "5mg",
+                    "dose_value": "0.5",
+                    "dose_unit": "정",
+                    "frequency_per_day": 2,
+                    "timing_text": "식후",
+                    "duration_days": 5,
+                    "display_order": 1,
+                }
+            ],
+        }
+
+        correction = await client.patch(
+            f"/api/v1/prescriptions/{original['prescription_id']}",
+            headers=headers,
+            json=correction_payload,
+        )
+
+        assert correction.status_code == status.HTTP_200_OK, correction.text
+        corrected = correction.json()["data"]
+        assert corrected["prescription_version_id"] != original["prescription_version_id"]
+        assert corrected["revision"] == 2
+        assert corrected["current"] is True
+        assert corrected["medications"][0]["prescription_version_medication_id"]
+        assert corrected["medications"][0]["medication_name"] == "정정된 합성약"
+
+        detail = await client.get(
+            f"/api/v1/prescriptions/{original['prescription_id']}",
+            headers=headers,
+        )
+        assert detail.status_code == status.HTTP_200_OK
+        assert detail.json()["data"] == corrected
 
 
 @pytest.mark.asyncio
@@ -606,3 +905,125 @@ async def test_update_extracted_field_api_rejects_after_prescription_confirmed(d
 
     # 409 응답만 반환하고 끝나는 것이 아니라, 기존 확정값이 보존되어야 합니다.
     assert updated_field["confirmed_value"] == original_confirmed_value
+
+
+@pytest.mark.parametrize(
+    "path,date_case",
+    [("llm", "missing"), ("rule", "missing"), ("rule", "birth"), ("rule", "conflict"), ("rule", "dense")],
+)
+@pytest.mark.parametrize("fill_optional", [False, True])
+@pytest.mark.asyncio
+async def test_generated_empty_fields_persist_and_confirm(
+    db_session: AsyncSession,
+    path: str,
+    date_case: str,
+    fill_optional: bool,
+) -> None:
+    from app.repositories.ocr_repository import OcrRepository
+    from app.services.ocr_ai.schemas import GeneratedMedication, GeneratedPrescriptionDraft, GeneratedSourceValue
+    from app.services.ocr_ai.validator import validate_and_convert_draft
+    from ocr_runtime.medication_name_normalizer import MedicationNameNormalizer
+    from ocr_runtime.prescription_ocr_structurer import PrescriptionOcrStructurer
+    from provider_contracts.ocr import RawRecognizedField
+
+    raw = [
+        RawRecognizedField("명칭", 0.99, 237, 581),
+        RawRecognizedField("투여량", 0.99, 413, 581),
+        RawRecognizedField("용법", 0.99, 911, 581),
+        RawRecognizedField("합성의약품정", 0.99, 137, 637),
+    ]
+    date_inputs = {
+        "missing": [],
+        "birth": [("생년월일", 100, 100), ("2010-03-15", 240, 100)],
+        "conflict": [("처방일 2026-08-01", 100, 100), ("발행일 2026-08-02", 100, 200)],
+        "dense": [("처방일자", 350, 300), ("생년월일", 480, 300), ("2026-08-12", 500, 300)],
+    }
+    raw.extend(RawRecognizedField(text, 0.99, x, y) for text, x, y in date_inputs[date_case])
+    if path == "rule":
+        generated = PrescriptionOcrStructurer().structure(raw)
+    else:
+        generated = validate_and_convert_draft(
+            draft=GeneratedPrescriptionDraft(
+                medications=[
+                    GeneratedMedication(medication_name=GeneratedSourceValue(value="합성의약품정", source_ids=[4]))
+                ]
+            ),
+            raw_fields=raw,
+            normalizer=MedicationNameNormalizer(),
+        )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = await _signup_and_login(client, label="empty-generated")
+        headers = {"Authorization": f"Bearer {token}"}
+        document_id, job_id = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=token)
+        job = await db_session.get(OcrJob, UUID(job_id))
+        assert job is not None
+        await OcrRepository(db_session).replace_fields(
+            ocr_job=job,
+            fields=[
+                {
+                    "medication_index": field.medication_index,
+                    "field_type": FieldType(field.field_type),
+                    "raw_value": field.raw_value,
+                    "normalized_value": field.normalized_value,
+                    "normalization_version": field.normalization_version,
+                    "confidence_score": field.confidence_score,
+                }
+                for field in generated
+            ],
+        )
+        response = await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)
+        assert response.status_code == 200
+        fields = response.json()["data"]["fields"]
+        assert len(fields) == 8
+        assert len({field["field_id"] for field in fields}) == 8
+        # 기존 결과를 지운 뒤 중복 삽입에 실패해도 transaction rollback으로 복구되어야 합니다.
+        from sqlalchemy.exc import IntegrityError
+
+        with pytest.raises(IntegrityError, match="uq_extracted_field_identity"):
+            async with db_session.begin_nested():
+                duplicate = {
+                    "medication_index": 1,
+                    "field_type": FieldType.DOSE_UNIT,
+                    "raw_value": None,
+                    "confidence_score": None,
+                }
+                await OcrRepository(db_session).replace_fields(ocr_job=job, fields=[duplicate, duplicate])
+        restored = await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)
+        assert {field["field_id"] for field in restored.json()["data"]["fields"]} == {
+            field["field_id"] for field in fields
+        }
+        values = {
+            "MEDICATION_NAME": "합성의약품정",
+            "PRESCRIBED_DATE": "2026-08-01",
+            "DOSE_VALUE": "1",
+            "FREQUENCY_PER_DAY": "1",
+            "DURATION_DAYS": "7",
+            "MEDICATION_STRENGTH": "5mg" if fill_optional else None,
+            "DOSE_UNIT": "정" if fill_optional else None,
+            "TIMING": "아침 식후" if fill_optional else None,
+        }
+        for field in sorted(fields, key=lambda value: value["field_type"] == "PRESCRIBED_DATE"):
+            kind = field["field_type"]
+            if kind != "MEDICATION_NAME":
+                assert all(
+                    field[key] is None
+                    for key in ("raw_value", "normalized_value", "normalization_version", "confidence_score")
+                )
+                assert field["confirmation_status"] == "UNCONFIRMED"
+            if kind == "PRESCRIBED_DATE":
+                incomplete = await client.post(f"/api/v1/documents/{document_id}/prescription", headers=headers)
+                assert incomplete.status_code == 422, incomplete.text
+                assert any(
+                    detail["field"] == "prescribed_date" and detail["reason"] == "REQUIRED"
+                    for detail in incomplete.json()["details"]
+                )
+            patched = await client.patch(
+                f"/api/v1/extracted-fields/{field['field_id']}", headers=headers, json={"confirmed_value": values[kind]}
+            )
+            assert patched.status_code == 200, patched.text
+            assert patched.json()["data"]["confirmed_value"] == values[kind]
+            assert patched.json()["data"]["confirmation_status"] == "CONFIRMED"
+        confirmed = await client.post(f"/api/v1/documents/{document_id}/prescription", headers=headers)
+        assert confirmed.status_code == 201, confirmed.text
+        medication = confirmed.json()["data"]["medications"][0]
+        assert medication["strength_text"] == values["MEDICATION_STRENGTH"]

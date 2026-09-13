@@ -10,6 +10,12 @@ def validate_password(password: str) -> str:
     if len(password) < 8:
         raise ValueError("비밀번호는 8자 이상이어야 합니다.")
 
+    # 회원가입 DTO는 Field(max_length=72)로 이 상한을 이미 강제하지만, 비밀번호
+    # 재설정(#206)은 PD-206 결정 3에 따라 이 함수가 유일한 정책 검증 지점이라
+    # DTO 제약에 기대지 않고 여기서도 명시적으로 검사한다(PR #404 리뷰).
+    if len(password) > 72:
+        raise ValueError("비밀번호는 72자를 초과할 수 없습니다.")
+
     # 대문자를 포함하고 있는지
     if not re.search(r"[A-Z]", password):
         raise ValueError("비밀번호에는 대문자, 소문자, 특수문자, 숫자가 각 하나씩 포함되어야 합니다.")

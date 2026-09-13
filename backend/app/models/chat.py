@@ -53,6 +53,11 @@ class ChatSession(Base):
             ["prescription.id", "prescription.profile_id"],
             name="fk_chat_session_prescription_profile",
         ),
+        ForeignKeyConstraint(
+            ["prescription_version_id", "prescription_id"],
+            ["prescription_version.id", "prescription_version.prescription_id"],
+            name="fk_chat_session_prescription_version_prescription",
+        ),
         Index(
             "idx_chat_session_prescription_activity",
             "prescription_id",
@@ -66,6 +71,7 @@ class ChatSession(Base):
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     prescription_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    prescription_version_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     profile_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("profile.id"), nullable=False)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     session_status: Mapped[ChatSessionStatus] = mapped_column(

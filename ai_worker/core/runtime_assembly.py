@@ -19,9 +19,17 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from ai_worker.adapters.clova_ocr_provider import ClovaOcrProviderAdapter
 from ai_worker.adapters.factory import create_redis_client, create_stream_adapter
+from ai_worker.adapters.openai_ocr_structurer import WorkerLlmPrescriptionStructurer
+from ai_worker.adapters.postgresql_protected_retrieval import (
+    PostgresqlProtectedRetrievalService,
+)
+from ai_worker.adapters.postgresql_protected_retrieval_control import (
+    PostgresqlProtectedAuthorizationControlService,
+)
 from ai_worker.adapters.redis_dead_letter_stream import (
     RedisDeadLetterStreamPublisher,
 )
@@ -36,6 +44,7 @@ from ai_worker.adapters.sqlalchemy_ocr_execution_starter import (
 )
 from ai_worker.adapters.sqlalchemy_ocr_input_repository import SqlAlchemyOcrInputRepository
 from ai_worker.adapters.sqlalchemy_ocr_result_store import SqlAlchemyOcrResultStore
+from ai_worker.adapters.sqlalchemy_outbox_repository import SqlAlchemyOutboxRepository
 from ai_worker.adapters.sqlalchemy_quarantine_repository import (
     SqlAlchemyQuarantineRepository,
 )
@@ -49,7 +58,9 @@ from ai_worker.core.consumer_runtime import ConsumerRuntime
 from ai_worker.core.dispatcher import Dispatcher
 from ai_worker.core.dlq import DlqOutboxPublisher
 from ai_worker.core.errors import WorkerError
+from ai_worker.core.event_publisher import EventPublisher
 from ai_worker.core.job_execution import LeaseNotAcquired
+from ai_worker.core.outbox_publisher import OutboxPublisher
 from ai_worker.core.provider_observability import (
     create_worker_provider_call_context_from_trace_id,
 )
@@ -70,9 +81,10 @@ from ai_worker.core.registry import HandlerRegistry
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.stream import StreamAcknowledger, WorkerDelivery
 from ai_worker.schemas.messages import JobType, WorkerMessage
+from ai_worker.tasks.evaluation.protected_retrieval_control import TrustedApprovalSource
 from ai_worker.tasks.ocr.handler import OcrHandler, OcrProvider
 from ocr_runtime.clova_engine import ClovaOcrEngine
-from ocr_runtime.structuring import RuleBasedPrescriptionStructurer
+from ocr_runtime.structuring import OcrStructurer, RuleBasedPrescriptionStructurer
 from provider_contracts.observability import (
     Provider,
     ProviderCallDescriptor,
@@ -133,6 +145,99 @@ def create_worker_engine(config: Config) -> AsyncEngine:
     )
 
 
+def _create_protected_engine(config: Config, *, control: bool) -> AsyncEngine:
+    """명시적으로 활성화된 plane에 대해서만 격리 engine을 생성합니다."""
+
+    if not config.PROTECTED_RETRIEVAL_ENABLED:
+        raise RuntimeError("PROTECTED_RETRIEVAL_DISABLED")
+    protected_url = config.protected_control_database_url if control else config.protected_data_database_url
+    application_name = "protected-retrieval-control" if control else "protected-retrieval-data"
+    return create_async_engine(
+        protected_url,
+        echo=False,
+        pool_pre_ping=True,
+        poolclass=NullPool,
+        connect_args={
+            "timeout": config.DB_CONNECT_TIMEOUT,
+            "server_settings": {"application_name": application_name},
+        },
+    )
+
+
+def create_protected_data_engine(config: Config) -> AsyncEngine:
+    """보호 데이터 작업용 단기 연결 engine을 생성합니다."""
+
+    return _create_protected_engine(config, control=False)
+
+
+def create_protected_control_engine(config: Config) -> AsyncEngine:
+    """승인·권한·Dataset 제어 작업용 단기 연결 engine을 생성합니다."""
+
+    return _create_protected_engine(config, control=True)
+
+
+async def create_protected_retrieval_service(config: Config) -> PostgresqlProtectedRetrievalService:
+    """Build and validate the durable protected data-plane runtime."""
+
+    if any(
+        value is None
+        for value in (
+            config.PROTECTED_DB_SCHEMA,
+            config.PROTECTED_DB_ACCESS_ROLE,
+            config.PROTECTED_DB_CONTROL_ROLE,
+        )
+    ):
+        raise RuntimeError("PROTECTED_RETRIEVAL_CONFIG_INVALID")
+    assert config.PROTECTED_DB_SCHEMA is not None
+    assert config.PROTECTED_DB_ACCESS_ROLE is not None
+    assert config.PROTECTED_DB_CONTROL_ROLE is not None
+    service = PostgresqlProtectedRetrievalService(
+        create_protected_data_engine(config),
+        schema=config.PROTECTED_DB_SCHEMA.get_secret_value(),
+        data_access_role=config.PROTECTED_DB_ACCESS_ROLE,
+        control_role=config.PROTECTED_DB_CONTROL_ROLE,
+    )
+    try:
+        await service.validate()
+    except Exception:
+        await service.close()
+        raise
+    return service
+
+
+async def create_protected_authorization_control_service(
+    config: Config,
+    approval_source: TrustedApprovalSource,
+) -> PostgresqlProtectedAuthorizationControlService:
+    """Build and validate the durable protected control-plane runtime."""
+
+    if any(
+        value is None
+        for value in (
+            config.PROTECTED_DB_SCHEMA,
+            config.PROTECTED_DB_ACCESS_ROLE,
+            config.PROTECTED_DB_CONTROL_ROLE,
+        )
+    ):
+        raise RuntimeError("PROTECTED_RETRIEVAL_CONFIG_INVALID")
+    assert config.PROTECTED_DB_SCHEMA is not None
+    assert config.PROTECTED_DB_ACCESS_ROLE is not None
+    assert config.PROTECTED_DB_CONTROL_ROLE is not None
+    service = PostgresqlProtectedAuthorizationControlService(
+        create_protected_control_engine(config),
+        schema=config.PROTECTED_DB_SCHEMA.get_secret_value(),
+        data_access_role=config.PROTECTED_DB_ACCESS_ROLE,
+        control_role=config.PROTECTED_DB_CONTROL_ROLE,
+        approval_source=approval_source,
+    )
+    try:
+        await service.validate()
+    except Exception:
+        await service.close()
+        raise
+    return service
+
+
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     """delivery마다 새 session을 만드는 factory를 반환합니다."""
 
@@ -146,16 +251,22 @@ def create_clova_ocr_engine(
 ) -> OcrEngine:
     """메시지의 관측 컨텍스트와 함께 실제 CLOVA OCR Engine을 조립합니다."""
 
+    context = create_worker_provider_call_context_from_trace_id(trace_id=trace_id, environment=config.ENV)
+    structurer: OcrStructurer = RuleBasedPrescriptionStructurer()
+    if config.OCR_STRUCTURE_LLM_ENABLED:
+        structurer = WorkerLlmPrescriptionStructurer(
+            api_key=config.OPENAI_API_KEY.get_secret_value(),
+            model=config.OCR_STRUCTURE_MODEL,
+            timeout_seconds=config.OCR_STRUCTURE_TIMEOUT_SECONDS,
+            context=context,
+        )
     return ClovaOcrEngine(
         invoke_url=config.CLOVA_OCR_INVOKE_URL,
         secret_key=config.CLOVA_OCR_SECRET.get_secret_value(),
         storage_dir=config.STORAGE_DIR,
         timeout_seconds=config.CLOVA_OCR_TIMEOUT_SECONDS,
-        structurer=RuleBasedPrescriptionStructurer(),
-        context=create_worker_provider_call_context_from_trace_id(
-            trace_id=trace_id,
-            environment=config.ENV,
-        ),
+        structurer=structurer,
+        context=context,
         descriptor=ProviderCallDescriptor(
             provider=Provider.CLOVA_OCR,
             operation=ProviderOperation.PRESCRIPTION_RECOGNITION,
@@ -421,13 +532,19 @@ def build_recovery_scheduler(
     logger: logging.Logger,
     rejected_execution: SessionScopedRejectedDeliveryExecution,
 ) -> AssembledRecoveryScheduler:
-    """Pending 복구와 DLQ 발행 Scheduler를 실제 Adapter로 조립합니다."""
+    """정상 Outbox 발행과 복구 Scheduler를 실제 Adapter로 조립합니다."""
 
-    # 두 주기 작업은 동시에 실행되므로 AsyncSession을 공유하지 않습니다.
+    # 장기 실행하는 복구 작업은 동시에 실행되므로 AsyncSession을 공유하지 않습니다.
     recovery_session = session_factory()
     dlq_session = session_factory()
 
     metrics = RecoveryMetricLogger(logger)
+
+    outbox_publisher = OutboxPublisher(
+        repository=SqlAlchemyOutboxRepository(session_factory),
+        event_publisher=EventPublisher(stream),
+        clock=clock,
+    )
 
     reconciler = PendingMessageReconciler(
         repository=SqlAlchemyRecoveryRepository(
@@ -466,6 +583,7 @@ def build_recovery_scheduler(
     )
 
     scheduler = RecoveryScheduler(
+        outbox_publisher=outbox_publisher,
         reconciler=ObservedPendingReconciler(
             task=reconciler,
             metrics=metrics,
@@ -475,6 +593,7 @@ def build_recovery_scheduler(
             metrics=metrics,
         ),
         failure_reporter=metrics,
+        outbox_publisher_interval_seconds=config.OUTBOX_PUBLISHER_INTERVAL_SECONDS,
         reconciler_interval_seconds=(config.RECONCILER_INTERVAL_SECONDS),
         dlq_publisher_interval_seconds=(config.DLQ_PUBLISHER_INTERVAL_SECONDS),
     )

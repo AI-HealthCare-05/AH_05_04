@@ -1,0 +1,103 @@
+# #165 reject_code 단계별 구현·검증
+
+기준: #436 head c1587f7. 브랜치 feat/165-reject-code-contract.
+#436 병합 후 최종 base/head 재검증 필요. #372 변경은 포함하지 않는다.
+사용자 지시: 단계별 커밋, 전체 정합성 감사, 푸시·원격 PR 생성 금지. 마지막에 푸시 필요 표시.
+
+1. 기준·브랜치 확인 완료. AGENTS.md·CONTRIBUTING.md·SECURITY.md·privacy-safety.md를 읽음.
+2. 코드/버전/Operation 고정 검증.
+3. 전체 페이지 2-pass 판정.
+4. Run 버전·REJECTS·실패 감사와 migration 연결.
+5. 실제 경로·DB·실패 복구·정보 노출 방지 검증.
+6. 정합성 감사 및 로컬 PR 본문 준비.
+
+계약: [리뷰안](../contracts/proposed/post-mvp-1/source-reject-codes-v1.md).
+은영님 사전 승인 대기를 구현 차단 조건으로 삼지 않으며 승인 완료로 표시하지 않는다.
+기존 첨부 MD 내용은 대화에서 읽은 v2를 기준으로 위 계약에 반영했다.
+
+2단계 완료: 버전·Parser 매핑·Operation·코드·위치 검증 20건 통과.
+문서 목록과 코드 enum 일치 및 미등록 입력의 안전한 고정 오류를 검사했다.
+
+3단계 완료: 전체 페이지 필수값·타입·중복 2-pass, 모든 중복 행 기록, 원문 비노출 typed 오류 연결.
+Source ingestion 회귀 418건 통과. 기존 checksum 오류 문자열 의존 테스트를 고정 안전 오류로 정렬했다.
+
+4단계 완료: 새 orchestration, checksum 전 실패 감사 복원, Run 계약 버전 저장·Receipt 조회,
+파일 보존 전/Repository 재검증, identity 오류의 Hard Limit 이전 실패, 기존 partial Snapshot 승인 보호 유지.
+신규 실제 DB 경로 10건, 기존 lifecycle 31건, migration·과거 NULL·downgrade·컬럼 권한 3건 통과.
+Source 단위 418건, Ruff·format 통과. 신규 revision 165a0b1c2d3e는 #436 merge head 362c3d4e5f60의 자식이다.
+
+5단계 완료: 실패 복구·기존 CURRENT 보존·중복 Artifact 추가 차단·원문 오류 비노출을 검증했다.
+동일 위치의 0 패딩 표기도 숫자 위치로 비교해 중복 저장을 차단한다.
+통신 실패는 기존 FailedIngestionRunResult와 실패 코드를 유지하며 Parser 실패로 바꾸지 않는다.
+
+검증 결과 (2026-09-11, 작업 전용 PostgreSQL 17):
+
+- 신규 DB 통합 25건 + Source 단위 418건: 443 passed.
+- 전체 migration: 180 passed.
+- RAG·Evaluation: 2429 passed, 8 skipped. 이 결과에는 Source 단위 등 중복 테스트가 포함된다.
+- Writer·프로비저닝·이미지·Backend Source 경계: 25 passed, 정리 DB 미설정으로 57 skipped.
+- 위에서 건너뛴 정리 경로는 전용 DB를 설정해 별도 실행: 57 passed.
+- 기존 Snapshot lifecycle: 31 passed.
+- Ruff, format (704 files), Mypy (548 source files), DB 로직 금지 검사,
+  보호 쓰기 경로 검사, Python 테스트 inventory 통과.
+- 전용 테스트 DB upgrade head 및 종합 검증 통과:
+  165a0b1c2d3e, Trigger/RLS/제거 대상 함수 0개.
+
+`scripts/ci/run_test.sh` 전체 실행은 `envs/.local.env` 부재로 환경 준비 단계에서 중단했다.
+위 검증은 별도 전용 DB 환경으로 직접 실행한 결과이며 전체 CI 통과로 표현하지 않는다.
+운영·AWS·팀원 DB에는 적용하지 않았고, 원격 CI는 푸시하지 않아 실행하지 않았다.
+
+6단계 완료: 계약·Decision·구현·migration·테스트의 최종 정합성을 확인하고
+PR #444 본문을 작성했다.
+
+| 완료 조건 | 구현 및 검증 근거 |
+| --- | --- |
+| 세 코드·버전·Operation 고정 | reject_codes.py, test_reject_codes.py의 문서/enum 대조 |
+| 전체 페이지·중복 그룹 전체·원문 유지 | product_rejections.py, test_product_rejections.py 및 DB 통합 |
+| 오류 시 Snapshot/CURRENT 보존 | persistence.py, snapshot_lifecycle.py 및 기존 CURRENT 통합 사례 |
+| 실제 수집 PK 실패 감사 연결 | 실패 Raw Artifact 재검증·복원, 원래 실패 결과 불변 통합 사례 |
+| Run 버전·과거 NULL·최소 권한 | 165a0b1c2d3e migration, 모델/Repository, migration 권한 테스트 |
+| 저장 실패·재시도·정리 경로 | 파일/DB 실패 rollback 통합, 보존·삭제 57건 |
+| 금지 DB 로직 없음 | 정적 검사 및 최종 head 실DB 검사 모두 통과 |
+
+의도된 한계: 기존 내부 API의 과거 parser 호환성은 유지한다. 새 계약 적용에는 새 orchestration이 필요하다.
+#436 최종 병합 상태와 이후 develop 변경은 원격 PR 준비 시 재확인한다.
+이번 계약 작업은 #165 전체 완료나 #166 소비 연결 완료를 의미하지 않는다.
+로컬 단계별 작업 완료. **푸시 필요.**
+
+## 2026-09-11 — #436 병합 후 MUST FIX ③ 반영
+
+기준: `origin/develop`의 `9822dfb`(#436 squash merge), #444 기존 HEAD `8315738`.
+공유된 작업 브랜치 이력을 다시 쓰지 않고 develop을 merge하여 선행 변경을 반영했다.
+
+- `SnapshotAttemptReceipt._decision()`은 병합된 #436 구현과 동일하다. #444의 리터럴 추가를 제거하고
+  네 실패 enum 기반 판정, COLLECTION_FAILED, EMPTY_RESULT 계열 구분을 그대로 유지한다.
+- Source 수집·정책 실패의 `validation_reason_code`와 #444의 `reject_code_contract_version`을 함께 보존한다.
+- 기존 TIMEOUT 통합 사례를 실제 Attempt Receipt 조회까지 확장하고 수집 EMPTY_RESULT도 추가했다.
+  실패 코드·COLLECTION_FAILED·Run 계약 버전 및 EMPTY_RESULT 구분자 보존을 확인한다.
+- Parser/한도 초과 두 enum 멤버의 기록·조회 사례도 실제 Receipt의 VALIDATION_FAILED와 계약 버전을 확인한다.
+  #436의 구버전·합성 Operation REJECTS fixture를 사용하는 중복 사례는 이 MFDS 제품 계약 fixture로 통합했다.
+- #436의 수집 실패 15종 조회와 과거 모호한 EMPTY_RESULT 거부 테스트는 유지한다.
+  버전 없는 REJECTS는 #444 계약에 따라 거부되고 Run이 남지 않는 것을 검증한다.
+- Source target에는 #436 실패 판정과 #444 reject-code 계약 참조를 모두 보존하고, 문서 bytes hash →
+  Receipt canonical hash → traceability hash 순서로 재계산했다. 승인이나 공개 상태를 새로 부여하지 않았다.
+- #436 migration 이력을 변경하지 않았으며 #444 head `165a0b1c2d3e`는 `362c3d4e5f60`을 부모로 유지한다.
+- RLS·Trigger·업무 DB 함수는 추가하지 않았다. 운영·팀 개발 DB를 사용하지 않았다.
+
+### 통합 후 최종 로컬 검증
+
+전용 PostgreSQL 17·Redis 7과 합성 데이터로 `scripts/ci/run_test.sh` 전체 실행 **exit 0**.
+
+| 검사 | 결과 |
+| --- | --- |
+| Migration | 181 passed, 3 skipped |
+| Backend·계약·PostgreSQL | 1809 passed, 65 skipped |
+| Redis 통합 | 23 passed |
+| Worker | 2860 passed, 8 skipped |
+| 통합 coverage | 92% |
+| Ruff·format·Mypy | 통과, Mypy 552 files |
+
+집중 검사: Source 단위·Receipt 계약 459건 통과. 전체 Backend 검사에는 reject-code DB 통합 28건,
+Source lifecycle 49건이 포함되며 중복 합산하지 않는다. `_decision()` AST가 병합된 #436과 동일한 것도 확인했다.
+최종 DB head `165a0b1c2d3e`, 사용자 Trigger·RLS·제거 대상 함수 0개.
+건너뛴 검사를 통과로 계산하지 않으며, 이 결과는 원격 CI·리뷰 승인·운영 적용을 뜻하지 않는다.

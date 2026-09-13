@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../src/api/client'
 import {
+  createManualMedication,
   executeOcr,
   getJobStatus,
+  getLatestPrescription,
   getOcrJob,
   getOcrResult,
   isJobStatusResponse,
@@ -59,6 +61,51 @@ afterEach(() => {
 })
 
 describe('OCR Job API', () => {
+  it('sends the manual medication body with the logical-attempt Idempotency-Key', async () => {
+    const responseBody = {
+      ...makeLegacyOcrJob(),
+      data: {
+        ...makeLegacyOcrJob().data,
+        ocr_status: 'COMPLETED' as const,
+      },
+    }
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(responseBody), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const request = {
+      medication_name: '직접입력약정',
+      medication_strength: '50mg',
+      dose_value: '0.5',
+      dose_unit: '정',
+      frequency_per_day: '2',
+      timing: '저녁 식후',
+      duration_days: '5',
+    }
+
+    await expect(
+      createManualMedication(
+        jobId,
+        request,
+        'manual-medication:374:0001',
+      ),
+    ).resolves.toEqual(responseBody)
+    expect(fetchMock).toHaveBeenCalledWith(
+      `http://localhost:8000/api/v1/ocr-jobs/${jobId}/manual-medications`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'manual-medication:374:0001',
+        }),
+        body: JSON.stringify(request),
+      }),
+    )
+  })
+
   it('sends a valid Idempotency-Key and AbortSignal with OCR intake', async () => {
     const responseBody = makeJobStatus()
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
@@ -243,5 +290,32 @@ describe('OCR Job API', () => {
       details: errorBody.details,
       traceId: errorBody.trace_id,
     })
+  })
+})
+
+describe('Prescription rediscovery API', () => {
+  it('현재 사용자의 최신 확정 처방을 기존 PrescriptionResponse로 조회한다', async () => {
+    const responseBody = {
+      data: {
+        prescription_id: '44444444-4444-4444-8444-444444444444',
+        document_id: documentId,
+        prescribed_date: '2026-09-07',
+        confirmed_at: '2026-09-07T08:00:00Z',
+        medications: [],
+      },
+    }
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(responseBody), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getLatestPrescription()).resolves.toEqual(responseBody)
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/prescriptions/latest',
+      expect.any(Object),
+    )
   })
 })

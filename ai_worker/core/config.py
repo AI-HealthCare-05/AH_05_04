@@ -1,7 +1,8 @@
 import zoneinfo
 from dataclasses import field
 from datetime import UTC, timedelta, timezone, tzinfo
-from typing import Self
+from typing import Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -68,6 +69,10 @@ class Config(BaseSettings):
         default=1.0,
         gt=0,
     )
+    OUTBOX_PUBLISHER_INTERVAL_SECONDS: float = Field(
+        default=1.0,
+        gt=0,
+    )
     REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: float = Field(default=5.0, gt=0)
     REDIS_SOCKET_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0)
     OCR_REQUEST_DEADLINE_SECONDS: float = Field(
@@ -85,6 +90,10 @@ class Config(BaseSettings):
     CLOVA_OCR_INVOKE_URL: str
     CLOVA_OCR_SECRET: SecretStr
     CLOVA_OCR_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0)
+    OCR_STRUCTURE_LLM_ENABLED: bool = False
+    OPENAI_API_KEY: SecretStr = SecretStr("")
+    OCR_STRUCTURE_MODEL: str = "gpt-4o-mini"
+    OCR_STRUCTURE_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0, allow_inf_nan=False)
     STORAGE_DIR: str
 
     # Worker runtime의 DB 연결에는 Job 실행 계정만 사용하며,
@@ -97,6 +106,31 @@ class Config(BaseSettings):
     DB_CONNECT_TIMEOUT: int = Field(default=5, gt=0)
     DB_CONNECTION_POOL_MAXSIZE: int = Field(default=10, gt=0)
     SQLALCHEMY_ECHO: bool = False
+
+    # Protected Retrieval은 일반 Worker DB identity를 재사용하지 않습니다. 실제 연결값은
+    # 승인된 실행 환경에서만 단기 주입하며 기본 runtime assembly에는 연결하지 않습니다.
+    PROTECTED_RETRIEVAL_ENABLED: bool = False
+    PROTECTED_DB_HOST: str | None = None
+    PROTECTED_DB_PORT: int = Field(default=5432, ge=1, le=65535)
+    PROTECTED_DB_NAME: str | None = None
+    PROTECTED_DB_USER: str | None = None
+    PROTECTED_DB_PASSWORD: SecretStr | None = None
+    PROTECTED_DB_CONTROL_USER: str | None = None
+    PROTECTED_DB_CONTROL_PASSWORD: SecretStr | None = None
+    PROTECTED_DB_SCHEMA: SecretStr | None = None
+    PROTECTED_DB_ACCESS_ROLE: str | None = None
+    PROTECTED_DB_CONTROL_ROLE: str | None = None
+
+    # Source ingestion은 #166 runtime 연결 전까지 기본 비활성입니다. S3 credential은
+    # 여기 저장하지 않고 AWS SDK의 실행 역할·Web Identity·환경 주입 chain을 사용합니다.
+    SOURCE_ARTIFACT_STORAGE_BACKEND: Literal["DISABLED", "LOCAL_PRIVATE", "S3_PRIVATE"] = "DISABLED"
+    SOURCE_ARTIFACT_LOCAL_ROOT: str | None = None
+    SOURCE_ARTIFACT_S3_BUCKET: str | None = None
+    SOURCE_ARTIFACT_S3_PREFIX: str = "source-artifacts"
+    SOURCE_ARTIFACT_S3_REGION: str | None = None
+    SOURCE_ARTIFACT_S3_ENDPOINT_URL: str | None = None
+    SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION: Literal["AES256", "aws:kms"] | None = None
+    SOURCE_ARTIFACT_S3_KMS_KEY_ID: str | None = None
 
     # async-job-v1.md "시도와 재시도": lease가 만료되기 전에 heartbeat가 반드시 한 번 이상
     # 갱신되어야 하므로 두 값의 관계를 기동 시 검증합니다.
@@ -170,6 +204,15 @@ class Config(BaseSettings):
         return value
 
     @model_validator(mode="after")
+    def _validate_redis_password_for_non_local(self) -> Self:
+        if self.ENV is not DeploymentEnvironment.LOCAL:
+            password = self.REDIS_PASSWORD.strip() if self.REDIS_PASSWORD else ""
+            if not password or password.startswith("replace-with-"):
+                raise ValueError("REDIS_PASSWORD는 local 외 환경에서 실제 값이어야 합니다.")
+
+        return self
+
+    @model_validator(mode="after")
     def _validate_redis_timeout_relationship(self) -> Self:
         """Blocking read보다 socket timeout을 길게 유지합니다."""
 
@@ -189,6 +232,18 @@ class Config(BaseSettings):
         if required_seconds > self.OCR_REQUEST_DEADLINE_SECONDS:
             raise ValueError("OCR Provider 예산과 완료 여유의 합은 OCR_REQUEST_DEADLINE_SECONDS를 초과할 수 없습니다.")
 
+        return self
+
+    @model_validator(mode="after")
+    def _validate_ocr_llm(self) -> Self:
+        if not self.OCR_STRUCTURE_LLM_ENABLED:
+            return self
+        if not self.OPENAI_API_KEY.get_secret_value().strip():
+            raise ValueError("OCR LLM requires OPENAI_API_KEY")
+        if not self.OCR_STRUCTURE_MODEL.strip():
+            raise ValueError("OCR LLM requires OCR_STRUCTURE_MODEL")
+        if self.CLOVA_OCR_TIMEOUT_SECONDS + self.OCR_STRUCTURE_TIMEOUT_SECONDS > self.OCR_PROVIDER_BUDGET_SECONDS:
+            raise ValueError("CLOVA and OCR LLM timeouts must fit within OCR_PROVIDER_BUDGET_SECONDS")
         return self
 
     @model_validator(mode="after")
@@ -212,6 +267,111 @@ class Config(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_source_artifact_storage(self) -> Self:
+        """활성 backend에 필요한 비민감 위치 설정만 허용합니다."""
+
+        backend = self.SOURCE_ARTIFACT_STORAGE_BACKEND
+        if backend == "DISABLED":
+            return self
+        if backend == "LOCAL_PRIVATE":
+            self._validate_local_source_artifact_storage()
+            return self
+
+        self._validate_s3_source_artifact_storage()
+        return self
+
+    @model_validator(mode="after")
+    def _validate_protected_retrieval_connection(self) -> Self:
+        if not self.PROTECTED_RETRIEVAL_ENABLED:
+            return self
+
+        values = self._required_protected_values()
+
+        if self.ENV is not DeploymentEnvironment.LOCAL:
+            for field_name, configured in values.items():
+                if configured.startswith("replace-with-"):
+                    raise ValueError(f"{field_name} must not use a placeholder outside Local")
+
+        protected_identity = (
+            values["PROTECTED_DB_HOST"],
+            self.PROTECTED_DB_PORT,
+            values["PROTECTED_DB_NAME"],
+            values["PROTECTED_DB_USER"],
+        )
+        worker_identity = (self.DB_HOST, self.DB_PORT, self.DB_NAME, self.DB_USER)
+        control_identity = (
+            values["PROTECTED_DB_HOST"],
+            self.PROTECTED_DB_PORT,
+            values["PROTECTED_DB_NAME"],
+            values["PROTECTED_DB_CONTROL_USER"],
+        )
+        if protected_identity == control_identity:
+            raise ValueError("protected data and control database identities must be distinct")
+        if protected_identity == worker_identity or control_identity == worker_identity:
+            raise ValueError("protected retrieval requires a separate database identity")
+        return self
+
+    def _required_protected_values(self) -> dict[str, str]:
+        values: dict[str, str] = {}
+        plain_fields = (
+            "PROTECTED_DB_HOST",
+            "PROTECTED_DB_NAME",
+            "PROTECTED_DB_USER",
+            "PROTECTED_DB_CONTROL_USER",
+            "PROTECTED_DB_ACCESS_ROLE",
+            "PROTECTED_DB_CONTROL_ROLE",
+        )
+        secret_fields = ("PROTECTED_DB_PASSWORD", "PROTECTED_DB_CONTROL_PASSWORD", "PROTECTED_DB_SCHEMA")
+        for field_name in plain_fields:
+            configured = getattr(self, field_name)
+            if configured is None or not configured.strip():
+                raise ValueError(f"{field_name} is required when protected retrieval is enabled")
+            values[field_name] = configured.strip()
+        for field_name in secret_fields:
+            configured = getattr(self, field_name)
+            if configured is None or not configured.get_secret_value().strip():
+                raise ValueError(f"{field_name} is required when protected retrieval is enabled")
+            values[field_name] = configured.get_secret_value().strip()
+        return values
+
+    def _validate_local_source_artifact_storage(self) -> None:
+        if self.SOURCE_ARTIFACT_LOCAL_ROOT is None or not self.SOURCE_ARTIFACT_LOCAL_ROOT.strip():
+            raise ValueError("LOCAL_PRIVATE Source artifact storage에는 local root가 필요합니다.")
+        s3_only_settings = (
+            self.SOURCE_ARTIFACT_S3_BUCKET,
+            self.SOURCE_ARTIFACT_S3_REGION,
+            self.SOURCE_ARTIFACT_S3_ENDPOINT_URL,
+            self.SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION,
+            self.SOURCE_ARTIFACT_S3_KMS_KEY_ID,
+        )
+        if any(value is not None for value in s3_only_settings):
+            raise ValueError("LOCAL_PRIVATE Source artifact storage에는 S3 전용 설정을 사용할 수 없습니다.")
+
+    def _validate_s3_source_artifact_storage(self) -> None:
+        if self.SOURCE_ARTIFACT_LOCAL_ROOT is not None:
+            raise ValueError("S3_PRIVATE Source artifact storage에는 local root를 설정할 수 없습니다.")
+        if self.SOURCE_ARTIFACT_S3_BUCKET is None or not self.SOURCE_ARTIFACT_S3_BUCKET.strip():
+            raise ValueError("S3_PRIVATE Source artifact storage에는 bucket이 필요합니다.")
+        if self.SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION is None:
+            raise ValueError("S3_PRIVATE Source artifact storage에는 서버 측 암호화 방식이 필요합니다.")
+        if self.SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION == "aws:kms":
+            if self.SOURCE_ARTIFACT_S3_KMS_KEY_ID is None or not self.SOURCE_ARTIFACT_S3_KMS_KEY_ID.strip():
+                raise ValueError("aws:kms Source artifact storage에는 KMS key ID가 필요합니다.")
+        elif self.SOURCE_ARTIFACT_S3_KMS_KEY_ID is not None:
+            raise ValueError("AES256 Source artifact storage에는 KMS key ID를 설정할 수 없습니다.")
+        if self.SOURCE_ARTIFACT_S3_ENDPOINT_URL is not None:
+            endpoint = urlsplit(self.SOURCE_ARTIFACT_S3_ENDPOINT_URL)
+            if (
+                endpoint.scheme != "https"
+                or not endpoint.hostname
+                or endpoint.username is not None
+                or endpoint.password is not None
+                or endpoint.query
+                or endpoint.fragment
+            ):
+                raise ValueError("Source artifact S3 endpoint는 credential 없는 HTTPS URL이어야 합니다.")
+
     @property
     def database_url(self) -> URL:
         """URL.create를 사용해 비밀번호의 @·/·% 문자도 안전하게 처리합니다."""
@@ -223,6 +383,56 @@ class Config(BaseSettings):
             host=self.DB_HOST,
             port=self.DB_PORT,
             database=self.DB_NAME,
+        )
+
+    @property
+    def protected_data_database_url(self) -> URL:
+        if not self.PROTECTED_RETRIEVAL_ENABLED:
+            raise RuntimeError("PROTECTED_RETRIEVAL_DISABLED")
+        if any(
+            value is None
+            for value in (
+                self.PROTECTED_DB_HOST,
+                self.PROTECTED_DB_NAME,
+                self.PROTECTED_DB_USER,
+                self.PROTECTED_DB_PASSWORD,
+                self.PROTECTED_DB_SCHEMA,
+            )
+        ):
+            raise RuntimeError("PROTECTED_RETRIEVAL_CONFIG_INVALID")
+        assert self.PROTECTED_DB_PASSWORD is not None
+        return URL.create(
+            drivername="postgresql+asyncpg",
+            username=self.PROTECTED_DB_USER,
+            password=self.PROTECTED_DB_PASSWORD.get_secret_value(),
+            host=self.PROTECTED_DB_HOST,
+            port=self.PROTECTED_DB_PORT,
+            database=self.PROTECTED_DB_NAME,
+        )
+
+    @property
+    def protected_control_database_url(self) -> URL:
+        if not self.PROTECTED_RETRIEVAL_ENABLED:
+            raise RuntimeError("PROTECTED_RETRIEVAL_DISABLED")
+        if any(
+            value is None
+            for value in (
+                self.PROTECTED_DB_HOST,
+                self.PROTECTED_DB_NAME,
+                self.PROTECTED_DB_CONTROL_USER,
+                self.PROTECTED_DB_CONTROL_PASSWORD,
+                self.PROTECTED_DB_SCHEMA,
+            )
+        ):
+            raise RuntimeError("PROTECTED_RETRIEVAL_CONFIG_INVALID")
+        assert self.PROTECTED_DB_CONTROL_PASSWORD is not None
+        return URL.create(
+            drivername="postgresql+asyncpg",
+            username=self.PROTECTED_DB_CONTROL_USER,
+            password=self.PROTECTED_DB_CONTROL_PASSWORD.get_secret_value(),
+            host=self.PROTECTED_DB_HOST,
+            port=self.PROTECTED_DB_PORT,
+            database=self.PROTECTED_DB_NAME,
         )
 
     @property

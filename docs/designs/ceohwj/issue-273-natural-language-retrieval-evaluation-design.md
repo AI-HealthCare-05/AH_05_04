@@ -578,6 +578,13 @@ exception message, SQL parameter, Provider payload는 기록하지 않는다.
 - Dataset Freeze가 승인되면 Phase 0의 최종 Schema Set으로 한 번만 `dataset.status=FROZEN`과 `frozen_at` 기록
 - 승인 event 없이 상태를 미리 변경하지 않음
 
+### 단계 B2 — HOLDOUT Freeze 준비
+
+- [`issue-273-holdout-freeze-preparation-design.md`](issue-273-holdout-freeze-preparation-design.md)에 따라 공개 가능한 접근 통제·역할 분리·감사·Freeze 선행조건만 결정적으로 기록
+- `holdout_preparation_status=PREPARATION_READY`와 `holdout_freeze_status=NOT_STARTED`를 분리하고 HOLDOUT 작성 수는 0으로 유지
+- 이 준비 PR 병합 직후, 접근 통제 구현이나 HOLDOUT 작성 전에 #273 전용 protected Retrieval 실행 후속 Issue 생성
+- 실제 authorization event, HOLDOUT 내용, HMAC/fingerprint 값, 보호 경로, Run과 Metric은 만들지 않음
+
 ### 단계 C — actual Adapter integration
 
 - `#178` concrete Adapter와 versioned Index Receipt 확인
@@ -602,7 +609,7 @@ exception message, SQL parameter, Provider payload는 기록하지 않는다.
 | 단계 | 필요한 의존성 | 명시적 비의존성 |
 | --- | --- | --- |
 | Phase 0 | Evaluation 계약 Decision과 지정 계약 리뷰 | `#159`, `#160`, `#161`, `#278` |
-| A/B | Phase 0 Schema Set, `#273` Gold/Dataset review | `#159`, `#160`, `#161`, `#278` |
+| A/B/B2 | Phase 0 Schema Set, `#273` Gold/Dataset review | `#159`, `#160`, `#161`, `#278` |
 | C | `#178` actual Adapter·Index, Retrieval Metric algorithm support | `#159`, `#160`, `#161`, `#278` |
 | D | #273 전용 protected Retrieval 실행 Issue, 승인된 Retrieval-only Policy·Freeze | `#159`, `#160`, `#161`, `#278` |
 

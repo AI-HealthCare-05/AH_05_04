@@ -1,0 +1,120 @@
+name: dosey-real-stack-e2e
+
+x-app-environment: &app-environment
+  ENV: local
+  RELEASE_VALIDATION_ALLOWED: "false"
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_NAME: dosey_e2e
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_STREAM_NAME: dosey:e2e:jobs
+  REDIS_DLQ_STREAM_NAME: dosey:e2e:jobs:dead-letter
+  REDIS_CONSUMER_GROUP: dosey-e2e-workers
+  REDIS_CONSUMER_NAME: dosey-e2e-worker
+  RECONCILER_CONSUMER_NAME: dosey-e2e-reconciler
+  STORAGE_DIR: /app/uploads/medical_documents
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: dosey_e2e
+      POSTGRES_USER: ${DB_USER:?DB_USER is required}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [real-stack]
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [real-stack]
+
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/app/Dockerfile
+    env_file: ${REAL_STACK_ENV_FILE:-envs/.local.env}
+    environment: *app-environment
+    command: ["uv", "run", "--no-sync", "alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [real-stack]
+    restart: "no"
+
+  fastapi:
+    build:
+      context: .
+      dockerfile: backend/app/Dockerfile
+    env_file: ${REAL_STACK_ENV_FILE:-envs/.local.env}
+    environment:
+      <<: *app-environment
+      CORS_ALLOWED_ORIGINS: http://127.0.0.1:14173
+    command: ["uv", "run", "--no-sync", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    volumes:
+      - real-stack-uploads:/app/uploads
+    ports:
+      - "127.0.0.1:18000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/openapi.json', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [real-stack]
+
+  ai-worker:
+    build:
+      context: .
+      dockerfile: ai_worker/Dockerfile
+    env_file: ${REAL_STACK_ENV_FILE:-envs/.local.env}
+    environment: *app-environment
+    volumes:
+      - real-stack-uploads:/app/uploads:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [real-stack]
+    restart: "no"
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    environment:
+      VITE_API_BASE_URL: http://127.0.0.1:18000
+    command: ["pnpm", "dev", "--host", "0.0.0.0", "--port", "5173"]
+    ports:
+      - "127.0.0.1:14173:5173"
+    depends_on:
+      fastapi:
+        condition: service_healthy
+    networks: [real-stack]
+
+volumes:
+  real-stack-uploads:
+
+networks:
+  real-stack:
+    driver: bridge

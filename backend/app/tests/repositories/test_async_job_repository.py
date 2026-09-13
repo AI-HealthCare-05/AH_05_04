@@ -1,7 +1,8 @@
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,6 +64,29 @@ async def _create_job(session: AsyncSession, *, user: User) -> AiJob:
     session.add(job)
     await session.flush()
     return job
+
+
+@pytest.mark.parametrize(
+    ("job_type", "prescription_version_id"),
+    [
+        (AiJobType.OCR, uuid4()),
+        (AiJobType.GUIDE, None),
+        (AiJobType.CHAT, None),
+    ],
+)
+async def test_create_job_rejects_invalid_prescription_version_assignment(
+    db_session: AsyncSession,
+    job_type: AiJobType,
+    prescription_version_id: UUID | None,
+) -> None:
+    user = await _create_user(db_session)
+
+    with pytest.raises(ValueError, match="prescription_version_id"):
+        await AsyncJobRepository(db_session).create_job(
+            user_id=user.id,
+            job_type=job_type,
+            prescription_version_id=prescription_version_id,
+        )
 
 
 async def test_get_interim_domain_reference_returns_none_without_any_outbox_event(

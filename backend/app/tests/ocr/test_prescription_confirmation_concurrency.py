@@ -24,9 +24,10 @@ from app.core.db.databases import get_db_session
 from app.dependencies.services import get_ocr_engine
 from app.main import app, fastapi_app
 from app.models.ocr import ExtractedField, FieldType, OcrJob, OcrStatus
-from app.models.prescriptions import Prescription, PrescriptionStatus
+from app.models.prescriptions import Prescription, PrescriptionStatus, PrescriptionVersion
 from app.services.ocr_engine import OcrDeadline, OcrRecognitionResult, RecognizedField
 from app.tests.conftest import test_engine
+from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 
@@ -265,15 +266,33 @@ async def test_patch_waits_for_confirmation_and_then_rejects(
         assert not patch_task.done(), "PATCH가 lock을 기다리지 않고 통과했습니다."
 
         # 잠금 보유자가 확정을 완료하고 lock을 놓습니다.
-        lock_holder.add(
-            Prescription(
-                document_id=UUID(document_id),
-                source_ocr_job_id=UUID(job_id),
-                profile_id=profile_id,
-                prescribed_date=date(2026, 8, 1),
-                prescription_status=PrescriptionStatus.CONFIRMED,
-                confirmed_at=datetime.now(UTC),
-            )
+        prescription_id = uuid4()
+        version_id = uuid4()
+        confirmed_at = datetime.now(UTC)
+        lock_holder.add_all(
+            [
+                Prescription(
+                    id=prescription_id,
+                    active_version_id=version_id,
+                    document_id=UUID(document_id),
+                    source_ocr_job_id=UUID(job_id),
+                    profile_id=profile_id,
+                    prescribed_date=date(2026, 8, 1),
+                    prescription_status=PrescriptionStatus.CONFIRMED,
+                    confirmed_at=confirmed_at,
+                ),
+                PrescriptionVersion(
+                    **fingerprint_values(
+                        date(2026, 8, 1),
+                        [{"medication_name": "테스트약", "strength_text": "500mg", "display_order": 1}],
+                    ),
+                    id=version_id,
+                    prescription_id=prescription_id,
+                    version_number=1,
+                    prescribed_date=date(2026, 8, 1),
+                    confirmed_at=confirmed_at,
+                ),
+            ]
         )
         await lock_holder.commit()
 
@@ -323,10 +342,10 @@ async def test_confirmation_reflects_patch_committed_while_waiting(
 
 
 @pytest.mark.asyncio
-async def test_two_concurrent_confirmations_produce_one_success_and_one_conflict(
+async def test_two_concurrent_confirmations_replay_one_success(
     real_connection_app: None,
 ) -> None:
-    """3. 동시 확정 2건 중 하나만 성공하고, 나머지는 500이 아닌 409여야 합니다."""
+    """동시 확정은 처방 하나를 만들고 두 요청에 같은 최초 성공 응답을 반환한다."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         access_token, document_id, _, _ = await _prepare_reviewed_document(client, label="double")
         headers = {"Authorization": f"Bearer {access_token}"}
@@ -336,12 +355,66 @@ async def test_two_concurrent_confirmations_produce_one_success_and_one_conflict
             client.post(f"/api/v1/documents/{document_id}/prescription", headers=headers),
         )
 
-    codes = sorted([first.status_code, second.status_code])
-    assert codes == [status.HTTP_201_CREATED, status.HTTP_409_CONFLICT], (first.text, second.text)
+    assert first.status_code == second.status_code == status.HTTP_201_CREATED, (first.text, second.text)
+    assert first.json()["data"] == second.json()["data"]
 
-    conflict = first if first.status_code == status.HTTP_409_CONFLICT else second
-    # document_id unique 제약 때문에 lock이 없으면 IntegrityError 500이 됩니다.
-    assert conflict.json()["code"] == "PRESCRIPTION_ALREADY_CONFIRMED"
+
+@pytest.mark.asyncio
+async def test_two_concurrent_manual_medication_additions_use_distinct_indexes(
+    real_connection_app: None,
+    lock_holder: AsyncSession,
+) -> None:
+    """동시 수동 추가는 lock 이후 최신 필드 기준으로 서로 다른 medication_index를 사용합니다."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token, document_id, job_id, _ = await _prepare_reviewed_document(client, label="manual-double")
+        headers = {"Authorization": f"Bearer {access_token}"}
+        await _lock_document(lock_holder, document_id)
+
+        first_task = asyncio.create_task(
+            client.post(
+                f"/api/v1/ocr-jobs/{job_id}/manual-medications",
+                headers={**headers, "Idempotency-Key": "manual-medication-concurrent-a"},
+                json={
+                    "medication_name": "직접추가약A",
+                    "dose_value": "1",
+                    "frequency_per_day": "1",
+                    "duration_days": "3",
+                },
+            )
+        )
+        second_task = asyncio.create_task(
+            client.post(
+                f"/api/v1/ocr-jobs/{job_id}/manual-medications",
+                headers={**headers, "Idempotency-Key": "manual-medication-concurrent-b"},
+                json={
+                    "medication_name": "직접추가약B",
+                    "dose_value": "2",
+                    "frequency_per_day": "2",
+                    "duration_days": "5",
+                },
+            )
+        )
+
+        await asyncio.sleep(HOLD_SECONDS)
+        await lock_holder.rollback()
+        first, second = await asyncio.gather(first_task, second_task)
+
+        assert first.status_code == status.HTTP_201_CREATED, first.text
+        assert second.status_code == status.HTTP_201_CREATED, second.text
+
+        result = await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)
+        assert result.status_code == status.HTTP_200_OK, result.text
+
+    fields = result.json()["data"]["fields"]
+    manual_names = {
+        field["confirmed_value"]: field["medication_index"]
+        for field in fields
+        if field["field_type"] == "MEDICATION_NAME" and field["confirmed_value"] in {"직접추가약A", "직접추가약B"}
+    }
+    assert manual_names == {"직접추가약A": 2, "직접추가약B": 3} or manual_names == {
+        "직접추가약A": 3,
+        "직접추가약B": 2,
+    }
 
 
 @pytest.mark.asyncio
@@ -425,3 +498,37 @@ async def test_patch_times_out_and_preserves_value_when_document_row_is_locked(
 
     assert current["confirmed_value"] == expected_value
     assert current["confirmation_status"] == "CONFIRMED"
+
+
+async def test_concurrent_corrections_replay_once_and_conflicting_body_is_rejected(real_connection_app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token, document_id, _, _ = await _prepare_reviewed_document(client, label="correct-replay")
+        headers = {"Authorization": f"Bearer {access_token}"}
+        confirmed = await client.post(f"/api/v1/documents/{document_id}/prescription", headers=headers)
+        assert confirmed.status_code == 201, confirmed.text
+        initial = confirmed.json()["data"]
+        payload = {
+            "base_version_id": initial["prescription_version_id"],
+            "expected_revision": initial["revision"],
+            "prescribed_date": "2026-09-10",
+            "medications": [{"medication_name": "합성 정정약", "display_order": 1}],
+        }
+        endpoint = f"/api/v1/prescriptions/{initial['prescription_id']}"
+        first, second = await asyncio.gather(
+            client.patch(endpoint, headers=headers, json=payload),
+            client.patch(endpoint, headers=headers, json=payload),
+        )
+        assert first.status_code == second.status_code == 200, (first.text, second.text)
+        assert first.json()["data"] == second.json()["data"]
+        payload["medications"][0]["medication_name"] = "다른 합성약"
+        conflict = await client.patch(endpoint, headers=headers, json=payload)
+        assert conflict.status_code == 409, conflict.text
+        assert conflict.json()["code"] == "IDEMPOTENCY_KEY_CONFLICT"
+        async with test_engine.connect() as connection:
+            assert (
+                await connection.scalar(
+                    text("SELECT count(*) FROM prescription_version WHERE prescription_id=:id"),
+                    {"id": initial["prescription_id"]},
+                )
+                == 2
+            )

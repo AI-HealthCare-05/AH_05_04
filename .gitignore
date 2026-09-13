@@ -44,6 +44,8 @@ frontend/.next/
 frontend/dist/
 frontend/coverage/
 frontend/.env*
+frontend/playwright-report/
+frontend/test-results/
 
 # Runtime / generated artifacts
 .playwright-cli/

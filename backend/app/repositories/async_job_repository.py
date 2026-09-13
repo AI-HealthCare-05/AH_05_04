@@ -17,6 +17,7 @@ from app.models.async_jobs import (
     OutboxEvent,
     OutboxEventKind,
     OutboxEventStatus,
+    validate_job_prescription_version,
 )
 
 # async-job-v1.md "시도와 재시도": 최초 실행을 포함한 기본 max_attempts입니다.
@@ -155,6 +156,10 @@ class AsyncJobRepository:
         prescription_version_id: UUID | None,
         max_attempts: int | None = None,
     ) -> AiJob:
+        validate_job_prescription_version(
+            job_type=job_type,
+            prescription_version_id=prescription_version_id,
+        )
         job = AiJob(
             user_id=user_id,
             job_type=job_type,

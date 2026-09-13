@@ -37,9 +37,9 @@ class CreateMedicationCandidateSearchRequest(BaseModel):
 
 class MedicationCandidateSnapshot(BaseModel):
     product_name: str
-    strength_text: str | None = None
-    dosage_form: str | None = None
-    manufacturer_name: str | None = None
+    strength_text: str | None
+    dosage_form: str | None
+    manufacturer_name: str | None
     product_status: str
 
 
@@ -85,7 +85,7 @@ class ConfirmMedicationCandidateResponse(BaseModel):
 
 
 class RejectMedicationCandidateData(BaseModel):
-    identification_id: UUID
+    identification_event_id: UUID
     prescription_version_medication_id: UUID
     status: MedicationIdentificationStatus
     search_status: MedicationCandidateSearchStatus

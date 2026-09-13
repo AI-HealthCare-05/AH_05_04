@@ -3,12 +3,36 @@ services:
   redis:
     image: redis:alpine
     container_name: redis
+    # sh -c 형태의 command는 redis 공식 이미지 entrypoint의 gosu 권한 하향 분기를 타지
+    # 않아 명시하지 않으면 root로 기동된다(#322). requirepass conf 파일 방식과 충돌하지
+    # 않는 것을 확인했다 — 인증 경계가 된 프로세스는 비특권으로 실행한다.
+    # 영속 볼륨을 추가할 때는 기존 데이터 소유자를 확인해야 한다. root로 기동됐던
+    # 시기의 dump.rdb는 umask 077로 600 root:root이므로, user: redis 상태에서는
+    # 읽기 실패로 기동 자체가 막힌다(#322 검증). 볼륨 도입 시 chown 또는 초기화가 필요하다.
+    user: redis
     networks:
       - ws
-    ports:
-      - "${REDIS_PORT}:6379"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    # requirepass를 --requirepass CLI 인자로 넘기면 컨테이너 프로세스 인자(`ps aux`,
+    # `docker top redis`, `/proc/<pid>/cmdline`)에 비밀번호 평문이 그대로 남는다. 대신
+    # 컨테이너 안에서만 임시 conf 파일을 생성해 그 경로만 인자로 넘긴다 — 값 자체는
+    # 이 sh 프로세스가 exec로 교체되기 전 stdin/redirection으로만 흐르고 별도 프로세스의
+    # argv로 노출되지 않는다.
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        umask 077
+        cat > /tmp/redis-runtime.conf <<CONF
+        requirepass $${REDIS_PASSWORD}
+        CONF
+        exec redis-server /tmp/redis-runtime.conf
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      # -a 플래그도 redis-cli 프로세스의 argv로 비밀번호를 노출한다. REDISCLI_AUTH 환경변수를
+      # 쓰면 같은 위험 없이 인증할 수 있고, "Using a password with '-a'" 경고도 사라진다.
+      test: [ "CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping | grep -q PONG" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -30,6 +54,8 @@ services:
       DB_MIGRATION_PASSWORD: ${DB_MIGRATION_PASSWORD}
       DB_APP_USER: ${DB_APP_USER}
       DB_APP_PASSWORD: ${DB_APP_PASSWORD}
+      SOURCE_WRITER_USER: ${SOURCE_WRITER_USER}
+      SOURCE_WRITER_PASSWORD: ${SOURCE_WRITER_PASSWORD}
     networks:
       - ws
     volumes:
@@ -82,6 +108,44 @@ services:
 
     restart: "no"
 
+  # Migration 직후 코드 head와 실제 DB 카탈로그가 일치하는지 읽기 전용으로 검증합니다.
+  verify-db-head:
+    profiles: ["database-maintenance"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "scripts.ci.verify_database_head"]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_MIGRATION_USER}
+      DB_PASSWORD: ${DB_MIGRATION_PASSWORD}
+      DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-5}
+      DB_CONNECTION_POOL_MAXSIZE: ${DB_CONNECTION_POOL_MAXSIZE:-10}
+      SQLALCHEMY_ECHO: ${SQLALCHEMY_ECHO:-false}
+    networks:
+      - ws
+
+  # Admin credentials exist only in this explicit one-shot provisioning service.
+  provision-db-roles:
+    profiles: ["database-admin"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "infra.python.provision_database_roles"]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME}
+      DB_ADMIN_USER: ${DB_ADMIN_USER}
+      DB_ADMIN_PASSWORD: ${DB_ADMIN_PASSWORD}
+      DB_MIGRATION_USER: ${DB_MIGRATION_USER}
+      DB_APP_USER: ${DB_APP_USER}
+      SOURCE_WRITER_USER: ${SOURCE_WRITER_USER}
+      SOURCE_MANAGEMENT_USER: ${SOURCE_MANAGEMENT_USER:-}
+      CATALOG_WRITER_USER: ${CATALOG_WRITER_USER:-}
+    networks:
+      - ws
+
   # 4. API Server (FastAPI)
   fastapi:
     container_name: fastapi
@@ -92,6 +156,9 @@ services:
       ENV: ${ENV}
       SECRET_KEY: ${SECRET_KEY}
       IDEMPOTENCY_HMAC_KEY: ${IDEMPOTENCY_HMAC_KEY}
+      IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY: ${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY}
+      IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION: "${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION:-v1}"
+      IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS: "${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS:-{}}"
       TIMEZONE: ${TIMEZONE:-Asia/Seoul}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
@@ -117,6 +184,8 @@ services:
       OCR_STRUCTURE_LLM_ENABLED: ${OCR_STRUCTURE_LLM_ENABLED:-false}
       OCR_STRUCTURE_MODEL: ${OCR_STRUCTURE_MODEL:-gpt-4o-mini}
       OCR_STRUCTURE_TIMEOUT_SECONDS: ${OCR_STRUCTURE_TIMEOUT_SECONDS:-30}
+      # RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는 false를 유지합니다.
+      PUBLIC_TRACK_F_ENABLED: ${PUBLIC_TRACK_F_ENABLED:-false}
 
       # 업로드 파일이 영속 volume 아래에 저장되도록 고정합니다.
       STORAGE_DIR: ${STORAGE_DIR:-/app/media/medical_documents}
@@ -136,6 +205,53 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - uv
+        - run
+        - --no-sync
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # #434: explicitly enabled after deployment authorization and migration verification.
+  notification-scheduler:
+    profiles: ["notifications"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    init: true
+    entrypoint: ["/app/.venv/bin/python", "-m", "app.commands.schedule_notifications"]
+    restart: unless-stopped
+    stop_grace_period: 15s
+    environment:
+      ENV: ${ENV}
+      # Required by shared Config validation; no Provider/admin/migration credentials.
+      SECRET_KEY: ${SECRET_KEY}
+      IDEMPOTENCY_HMAC_KEY: ${IDEMPOTENCY_HMAC_KEY}
+      IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY: ${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_APP_USER}
+      DB_PASSWORD: ${DB_APP_PASSWORD}
+      DB_CONNECTION_POOL_MAXSIZE: "2"
+      SQLALCHEMY_ECHO: "false"
+    networks:
+      - ws
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # 5. AI Worker (Model 학습 및 추론)
   ai-worker:
@@ -161,6 +277,21 @@ services:
       CLOVA_OCR_INVOKE_URL: ${CLOVA_OCR_INVOKE_URL}
       CLOVA_OCR_SECRET: ${CLOVA_OCR_SECRET}
       CLOVA_OCR_TIMEOUT_SECONDS: ${CLOVA_OCR_TIMEOUT_SECONDS:-20}
+      OCR_STRUCTURE_LLM_ENABLED: ${OCR_STRUCTURE_LLM_ENABLED:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OCR_STRUCTURE_MODEL: ${OCR_STRUCTURE_MODEL:-gpt-4o-mini}
+      OCR_STRUCTURE_TIMEOUT_SECONDS: ${OCR_STRUCTURE_TIMEOUT_SECONDS:-30}
+
+      # 운영 Redis는 host port에 공개하지 않고 내부 network + 인증으로만 접근합니다.
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_STREAM_NAME: ${REDIS_STREAM_NAME:-oryak:jobs}
+      REDIS_DLQ_STREAM_NAME: ${REDIS_DLQ_STREAM_NAME:-oryak:jobs:dead-letter}
+      REDIS_CONSUMER_GROUP: ${REDIS_CONSUMER_GROUP:-ai-workers}
+      REDIS_CONSUMER_NAME: ${REDIS_CONSUMER_NAME:-ai-worker-prod}
+      RECONCILER_CONSUMER_NAME: ${RECONCILER_CONSUMER_NAME:-ai-worker-reconciler}
+      REDIS_BLOCK_MS: ${REDIS_BLOCK_MS:-5000}
 
       # FastAPI와 동일한 업로드 volume 경로를 사용합니다.
       STORAGE_DIR: ${STORAGE_DIR:-/app/media/medical_documents}
@@ -179,15 +310,14 @@ services:
       redis:
         condition: service_healthy
 
-  # 6. Nginx (웹 서버 - 요청 리버스 프록시로 전달)
+  # 6. Frontend + Nginx (정적 SPA 제공 및 API reverse proxy)
   nginx:
     container_name: nginx
-    image: nginx:latest
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:frontend-${FRONTEND_VERSION}
+    restart: always
     volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
-      - static_volume:/vol/web/static
-      - media_volume:/vol/web/media
-      - certbot-conf:/etc/letsencrypt
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot-conf:/etc/letsencrypt:ro
       - certbot-www:/var/www/certbot
     ports:
       - "80:80"
@@ -195,7 +325,14 @@ services:
     networks:
       - ws
     depends_on:
-      - fastapi
+      fastapi:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   # 7. certbot: SSL 인증서 발급담당
   certbot:
@@ -206,7 +343,84 @@ services:
       - certbot-conf:/etc/letsencrypt
       - certbot-www:/var/www/certbot
     depends_on:
-      - nginx
+      nginx:
+        condition: service_healthy
+
+
+  # Explicit management profile only; ordinary API/Worker never receive this password.
+  source-management:
+    profiles: ["source-management"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "uvicorn", "app.admin.source_management_api:management_app", "--host", "0.0.0.0", "--port", "8010"]
+    ports:
+      - "127.0.0.1:8010:8010"
+    environment:
+      ENV: ${ENV}
+      SECRET_KEY: ${SECRET_KEY}
+      IDEMPOTENCY_HMAC_KEY: ${IDEMPOTENCY_HMAC_KEY}
+      IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY: ${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${SOURCE_MANAGEMENT_USER:-}
+      DB_PASSWORD: ${SOURCE_MANAGEMENT_PASSWORD:-}
+      SOURCE_MANAGEMENT_USER: ${SOURCE_MANAGEMENT_USER:-}
+      SQLALCHEMY_ECHO: "false"
+    networks:
+      - ws
+
+  source-management-bootstrap:
+    profiles: ["source-management-admin"]
+    image: postgres:17
+    restart: "no"
+    entrypoint: ["psql", "-X", "-v", "ON_ERROR_STOP=1", "-f", "/admin/configure-management-role.sql"]
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${DB_NAME}
+      PGUSER: ${DB_ADMIN_USER}
+      PGPASSWORD: ${DB_ADMIN_PASSWORD}
+      DB_MIGRATION_USER: ${DB_MIGRATION_USER}
+      DB_APP_USER: ${DB_APP_USER}
+      SOURCE_WRITER_USER: ${SOURCE_WRITER_USER}
+      SOURCE_MANAGEMENT_USER: ${SOURCE_MANAGEMENT_USER:-}
+      SOURCE_MANAGEMENT_PASSWORD: ${SOURCE_MANAGEMENT_PASSWORD:-}
+    volumes:
+      - ./postgres/configure-management-role.sql:/admin/configure-management-role.sql:ro
+    networks:
+      - ws
+
+  source-management-permission:
+    profiles: ["source-management-admin"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "app.admin.source_management_permissions"]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_MIGRATION_USER}
+      DB_PASSWORD: ${DB_MIGRATION_PASSWORD}
+      SQLALCHEMY_ECHO: "false"
+    networks:
+      - ws
+
+  # 운영자가 명시적으로 실행하는 일회성 작업. 일반 배포에서는 시작하지 않습니다.
+  source-writer:
+    profiles: ["source-admin"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "ai_worker.admin.source_writer"]
+    environment:
+      SOURCE_WRITER_HOST: postgres
+      SOURCE_WRITER_PORT: "5432"
+      SOURCE_WRITER_NAME: ${DB_NAME}
+      SOURCE_WRITER_USER: ${SOURCE_WRITER_USER:-}
+      SOURCE_WRITER_PASSWORD: ${SOURCE_WRITER_PASSWORD:-}
+      SOURCE_WRITER_ACTOR: ${SOURCE_WRITER_ACTOR:-}
+    networks:
+      - ws
 
 volumes:
   # PostgreSQL 운영 데이터를 컨테이너 재생성 후에도 유지합니다.

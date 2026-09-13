@@ -7,238 +7,108 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPOSITORY_ROOT="$(pwd)"
 
-ENV_FILE="${ENV_FILE:-envs/.local.env}"
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+# shellcheck source=scripts/ci/test_environment.sh
+source scripts/ci/test_environment.sh
+# shellcheck source=scripts/ci/parallel_test_lanes.sh
+source scripts/ci/parallel_test_lanes.sh
 
-if [ ! -f "$ENV_FILE" ]; then
-  echo "환경 파일을 찾을 수 없습니다: $ENV_FILE"
-  exit 1
-fi
+export PYTEST_ADDOPTS=""
+uv run python scripts/ci/check_python_test_inventory.py
+# #439: head 분기는 아래 alembic 단계에서야 드러나고 실패 메시지가 원인을 가린다.
+# DB 없이 먼저 확인해 재연결 절차를 바로 안내한다.
+uv run python scripts/ci/verify_database_head.py --heads-only
+uv run python scripts/ci/check_database_logic.py
+uv run python scripts/ci/check_protected_table_writes.py
 
-if [ ! -f "$COMPOSE_FILE" ]; then
-  echo "Compose 파일을 찾을 수 없습니다: $COMPOSE_FILE"
-  exit 1
-fi
-
-# test DB를 삭제하고 다시 만드는 스크립트이므로
-# production 환경파일이나 Production Compose에서는 실행하지 않습니다.
-ENV_FILE_LOWER="$(
-  printf '%s' "$ENV_FILE" |
-    tr '[:upper:]' '[:lower:]'
-)"
-
-COMPOSE_FILE_LOWER="$(
-  printf '%s' "$COMPOSE_FILE" |
-    tr '[:upper:]' '[:lower:]'
-)"
-
-# Production Compose를 해석하기 전에 파일명 기준으로 먼저 차단합니다.
-if [[ "$ENV_FILE_LOWER" == *prod* ]] ||
-  [[ "$COMPOSE_FILE_LOWER" == *prod* ]]; then
-  echo "Production 환경에서는 test DB 재생성 스크립트를 실행할 수 없습니다."
-  echo "ENV_FILE=$ENV_FILE"
-  echo "COMPOSE_FILE=$COMPOSE_FILE"
-  exit 1
-fi
-
-# 선택한 환경파일의 ENV 값을 직접 읽습니다.
-# Docker Compose 설정을 해석하기 전에 검사하므로 잘못된 운영 파일도 안전하게 차단합니다.
-SELECTED_ENV="$(
-  awk -F= '
-    /^[[:space:]]*ENV[[:space:]]*=/ {
-      value = substr($0, index($0, "=") + 1)
-      gsub(/^[[:space:]"]+/, "", value)
-      gsub(/[[:space:]"]+$/, "", value)
-      print value
-    }
-  ' "$ENV_FILE" |
-    tail -n 1
-)"
-
-SELECTED_ENV_LOWER="$(
-  printf '%s' "$SELECTED_ENV" |
-    tr '[:upper:]' '[:lower:]'
-)"
-
-# DB를 강제로 재생성하는 스크립트이므로 local 또는 test만 허용합니다.
-if [ "$SELECTED_ENV_LOWER" != "local" ] &&
-  [ "$SELECTED_ENV_LOWER" != "test" ]; then
-  echo "이 스크립트는 local 또는 test 환경에서만 실행할 수 있습니다."
-  echo "선택된 ENV=${SELECTED_ENV:-<empty>}"
-  exit 1
-fi
-
-echo "Find Tests"
-
-HAS_TESTS=false
-
-# 실제 기본 테스트 실행 범위와 동일한 디렉터리를 확인합니다.
-for test_dir in \
-  ./backend/app/tests \
-  ./tests/contract \
-  ./tests/migration \
-  ./ai_worker/tests/core \
-  ./ai_worker/tests/ocr \
-  ./ai_worker/tests/rag \
-  ./tests/integration; do
-  if [ -d "$test_dir" ] &&
-    find "$test_dir" -type f -name 'test_*.py' -print -quit |
-      grep -q .; then
-    HAS_TESTS=true
-    break
-  fi
-done
-
-echo "Has tests: $HAS_TESTS"
-
-if [ "$HAS_TESTS" != true ]; then
-  echo "No tests found. Skipping tests."
-  exit 0
-fi
-
-# Compose 프로젝트의 PostgreSQL·Redis 서비스가 실제 실행 중인지 확인합니다.
-if ! docker compose \
-  --env-file "$ENV_FILE" \
-  -f "$COMPOSE_FILE" \
-  ps --services --status running |
-  grep -qx postgres; then
-  echo "PostgreSQL container not found."
-  echo "Run: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE up -d postgres"
-  exit 1
-fi
-
-if ! docker compose \
-  --env-file "$ENV_FILE" \
-  -f "$COMPOSE_FILE" \
-  ps --services --status running |
-  grep -qx redis; then
-  echo "Redis container not found."
-  echo "Run: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE up -d redis"
-  exit 1
-fi
-
-# 실제 Compose port mapping을 사용하여 호스트 접속 포트를 결정합니다.
-HOST_DB_PORT="$(
-  docker compose \
-    --env-file "$ENV_FILE" \
-    -f "$COMPOSE_FILE" \
-    port postgres 5432 |
-    tail -n 1 |
-    awk -F: '{print $NF}'
-)"
-
-if [[ ! "$HOST_DB_PORT" =~ ^[0-9]+$ ]]; then
-  echo "PostgreSQL 호스트 포트를 확인할 수 없습니다: $HOST_DB_PORT"
-  exit 1
-fi
-
-echo "PostgreSQL container found. Recreating isolated test database."
-
-# 이전 일반 테스트가 애플리케이션 테이블만 삭제하고 alembic_version을
-# 남겼을 수 있으므로 test DB를 매 실행마다 새로 생성합니다.
-# 삭제 대상은 개발 DB와 분리된 literal test DB로 한정합니다.
-docker compose \
-  --env-file "$ENV_FILE" \
-  -f "$COMPOSE_FILE" \
-  exec -T postgres \
-  sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres' <<'SQL'
-DROP DATABASE IF EXISTS test WITH (FORCE);
-
-SELECT format(
-    'CREATE DATABASE %I OWNER %I',
-    'test',
-    current_user
-)
-\gexec
-SQL
-
-# ENV_FILE은 컨테이너용 설정이라 host 테스트에 그대로 쓸 수 없습니다.
-# uv는 shell 환경변수를 --env-file보다 우선 적용하므로, host에서 달라야 하는 값을
-# env로 덮어써서 ENV_FILE의 현재 값과 무관하게 같은 결과가 나오도록 고정합니다.
-#
-# STORAGE_DIR: ENV_FILE 값은 컨테이너 절대경로(/app/...)라 host에 없거나 쓸 수 없습니다.
-# RELEASE_VALIDATION_ALLOWED, OCR_STRUCTURE_LLM_ENABLED: local live 검증 절차
-# (docs/validation/ai-one-cycle-release.md)가 켜두도록 안내하는 gate입니다. 켜진 채로
-# 남아 있으면 테스트가 검증 경로 분기를 타므로 test 기준값으로 되돌립니다. 이 값이
-# 필요한 테스트는 각자 monkeypatch로 설정합니다.
-TEST_STORAGE_DIR="$(mktemp -d)"
-trap 'rm -rf "$TEST_STORAGE_DIR"' EXIT
-
-# 기존 shell의 DB 계정은 제거하고, 선택한 ENV_FILE에서 DB_USER와
-# DB_PASSWORD를 로딩합니다. 호스트·포트·DB 이름만 test DB 기준으로 덮어씁니다.
-run_with_backend_test_database() {
-  env \
-    -u DB_USER \
-    -u DB_PASSWORD \
-    DB_HOST=127.0.0.1 \
-    DB_PORT="$HOST_DB_PORT" \
-    DB_EXPOSE_PORT="$HOST_DB_PORT" \
-    DB_NAME=test \
-    PYTHONPATH="$REPOSITORY_ROOT/backend:$REPOSITORY_ROOT" \
-    STORAGE_DIR="$TEST_STORAGE_DIR" \
-    RELEASE_VALIDATION_ALLOWED=false \
-    OCR_STRUCTURE_LLM_ENABLED=false \
-    uv run --env-file "$ENV_FILE" "$@"
-}
-
-run_with_worker_test_environment() {
-  env \
-    -u DB_USER \
-    -u DB_PASSWORD \
-    DB_HOST=127.0.0.1 \
-    DB_PORT="$HOST_DB_PORT" \
-    DB_EXPOSE_PORT="$HOST_DB_PORT" \
-    DB_NAME=test \
-    PYTHONPATH="$REPOSITORY_ROOT" \
-    STORAGE_DIR="$TEST_STORAGE_DIR" \
-    RELEASE_VALIDATION_ALLOWED=false \
-    OCR_STRUCTURE_LLM_ENABLED=false \
-    uv run --env-file "$ENV_FILE" "$@"
-}
+prepare_test_environment
+prepare_test_runner_state_directory
+TEST_COVERAGE_DIR="$TEST_RUNNER_STATE_DIR/coverage"
+PARALLEL_TEST_LOG_DIR="$TEST_RUNNER_STATE_DIR/test-lane-logs"
+export PARALLEL_TEST_LOG_DIR
+mkdir -p "$TEST_COVERAGE_DIR" "$TEST_RUNNER_STATE_DIR/pytest-cache/backend" "$TEST_RUNNER_STATE_DIR/pytest-cache/worker"
 
 echo "Apply Alembic migrations to test database"
 
-run_with_backend_test_database alembic -c backend/alembic.ini upgrade head
+run_with_backend_test_database alembic -c backend/alembic.ini upgrade 398b2c3d4e5f
 
 echo "Validate migrated PostgreSQL schema"
 
 run_with_backend_test_database pytest tests/migration -v
 
-echo "Run Pytest with Coverage"
+# Historical downgrade tests finish before the irreversible Source cutover.
+run_with_backend_test_database alembic -c backend/alembic.ini upgrade head
+run_with_backend_test_database python scripts/ci/verify_database_head.py
 
-# Backend, 공통 계약, PostgreSQL·Redis 통합 테스트는 backend/app import 경로가
-# 필요한 프로세스에서 실행합니다.
-if ! run_with_backend_test_database \
-  coverage run -m pytest \
-  backend/app \
-  tests/contract \
-  tests/integration/rag \
-  tests/integration/test_worker_ocr_persistence.py \
-  tests/integration/test_outbox_publisher.py \
-  tests/integration/test_worker_job_execution_repository.py::test_handler_permanent_failure_marks_real_ocr_job_failed \
-  tests/integration/test_worker_job_execution_repository.py::test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle \
-  tests/integration/test_worker_dlq_outbox_repository.py \
-  tests/integration/test_worker_recovery_repository.py; then
-  echo
-  echo "Pytest failed."
-  echo "Fix the test failures above and re-run."
-  exit 1
-fi
+run_backend_test_lane() {
+  local cache_dir="$TEST_RUNNER_STATE_DIR/pytest-cache/backend"
+  local COVERAGE_FILE="$TEST_COVERAGE_DIR/.coverage.backend"
+  export COVERAGE_FILE
 
-# ai_worker 단위 테스트는 backend/app을 PYTHONPATH에서 제외한 별도 프로세스로
-# 실행하여 Worker가 Backend 내부 모듈에 의존하는 실수를 CI에서 잡습니다.
-if ! run_with_worker_test_environment \
-  coverage run --append -m pytest \
-  ai_worker/tests/core \
-  ai_worker/tests/ocr \
-  ai_worker/tests/rag; then
-  echo
-  echo "AI Worker pytest failed."
-  echo "Fix the test failures above and re-run."
-  exit 1
-fi
+  echo "Run Backend, Contract and selected PostgreSQL tests with Coverage"
+
+  if ! run_with_backend_test_database \
+    coverage run -m pytest -o "cache_dir=$cache_dir" \
+    backend/app \
+    tests/contract \
+    tests/integration/rag \
+    tests/integration/test_worker_ocr_persistence.py; then
+    echo
+    echo "Backend pytest failed."
+    echo "Fix the test failures above and re-run."
+    return 1
+  fi
+
+  # 실제 Redis를 사용하는 선별 통합 테스트는 같은 test DB를 공유하므로 Backend lane 안에서
+  # 직렬 실행합니다. Worker 단위 테스트의 승인 Redis 기본값은 별도 lane에서 유지합니다.
+  if ! run_with_integration_test_environment \
+    coverage run --append -m pytest -o "cache_dir=$cache_dir" \
+    tests/integration/test_outbox_publisher.py \
+    tests/integration/test_worker_job_execution_repository.py \
+    tests/integration/test_worker_dlq_outbox_repository.py \
+    tests/integration/test_worker_recovery_repository.py; then
+    echo
+    echo "Redis integration pytest failed."
+    echo "Fix the test failures above and re-run."
+    return 1
+  fi
+}
+
+run_worker_test_lane() {
+  local cache_dir="$TEST_RUNNER_STATE_DIR/pytest-cache/worker"
+  local COVERAGE_FILE="$TEST_COVERAGE_DIR/.coverage.worker"
+  export COVERAGE_FILE
+
+  # ai_worker 단위 테스트는 backend/app을 PYTHONPATH에서 제외한 별도 프로세스로
+  # 실행하여 Worker가 Backend 내부 모듈에 의존하는 실수를 잡습니다.
+  echo "Run AI Worker tests with two pytest-xdist workers and combined Coverage"
+
+  if ! run_with_worker_test_environment \
+    pytest -n 2 --dist=loadfile --max-worker-restart=0 --cov --cov-report= \
+    -o "cache_dir=$cache_dir" \
+    ai_worker/tests/core \
+    ai_worker/tests/ocr \
+    ai_worker/tests/rag \
+    ai_worker/tests/evaluation; then
+    echo
+    echo "AI Worker pytest failed."
+    echo "Fix the test failures above and re-run."
+    return 1
+  fi
+}
+
+echo "Run independent test lanes in parallel"
+
+run_parallel_test_lanes_with_failure_summary run_backend_test_lane run_worker_test_lane
 
 echo "Coverage Report"
+
+COVERAGE_FILE="$TEST_COVERAGE_DIR/.coverage"
+export COVERAGE_FILE
+
+if ! run_with_backend_test_database coverage combine "$TEST_COVERAGE_DIR"; then
+  echo "Coverage data combine failed."
+  exit 1
+fi
 
 if ! run_with_backend_test_database coverage report -m; then
   echo "Coverage check failed."

@@ -10,36 +10,26 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-
-class CandidateEntityType(StrEnum):
-    PRODUCT = "PRODUCT"
-    INGREDIENT = "INGREDIENT"
-
-
-class CandidateEntryType(StrEnum):
-    PRODUCT_NAME = "PRODUCT_NAME"
-    APPROVED_ALIAS = "APPROVED_ALIAS"
-
-
-class CandidateRecordStatus(StrEnum):
-    ACTIVE = "ACTIVE"
-    INACTIVE = "INACTIVE"
-
-
-class CandidateAliasReviewStatus(StrEnum):
-    PENDING = "PENDING"
-    APPROVED = "APPROVED"
-    REJECTED = "REJECTED"
-
-
-class CatalogVerificationStatus(StrEnum):
-    APPROVED = "APPROVED"
-    NOT_APPROVED = "NOT_APPROVED"
-
-
-class CatalogFreshnessStatus(StrEnum):
-    CURRENT = "CURRENT"
-    STALE = "STALE"
+from ai_worker.tasks.rag.catalog.export import CatalogExportArtifacts, CatalogExportError, verify_catalog_export
+from ai_worker.tasks.rag.catalog.types import (
+    CandidateAliasReviewStatus,
+    CandidateCatalogCounts,
+    CandidateCatalogExport,
+    CandidateCatalogSourceRef,
+    CandidateEntityType,
+    CandidateEntryType,
+    CandidateRecordStatus,
+    CatalogAlias,
+    CatalogComponent,
+    CatalogComponentRole,
+    CatalogFreshnessStatus,
+    CatalogIngredient,
+    CatalogProduct,
+    CatalogSearchEntry,
+    CatalogVerificationStatus,
+    ProductIdentity,
+    is_p0_code_system,
+)
 
 
 class CandidateIndexBuildMode(StrEnum):
@@ -70,113 +60,6 @@ class CandidateIndexBuildFailureReason(StrEnum):
     MEMBER_CONFLICT = "MEMBER_CONFLICT"
     BUILD_CONFIG_INVALID = "BUILD_CONFIG_INVALID"
     EMBEDDING_OUTPUT_INVALID = "EMBEDDING_OUTPUT_INVALID"
-
-
-@dataclass(frozen=True, slots=True)
-class ProductIdentity:
-    entity_type: CandidateEntityType
-    code_system: str
-    canonical_code: str
-
-
-@dataclass(frozen=True, slots=True)
-class CatalogProduct:
-    product_ref: str
-    identity: ProductIdentity
-    product_name: str
-    normalized_product_name: str
-    strength_text: str | None
-    dosage_form: str | None
-    manufacturer_name: str | None
-    source_snapshot_id: str
-    normalization_version: str
-    status: CandidateRecordStatus
-
-
-@dataclass(frozen=True, slots=True)
-class CatalogIngredient:
-    ingredient_ref: str
-    identity: ProductIdentity
-    ingredient_name: str
-    normalized_ingredient_name: str
-    source_snapshot_id: str
-    normalization_version: str
-    status: CandidateRecordStatus
-
-
-@dataclass(frozen=True, slots=True)
-class CatalogComponent:
-    component_ref: str
-    product_ref: str
-    ingredient_ref: str
-    component_order: int
-    strength_value: str
-    strength_unit: str
-    source_snapshot_id: str
-
-
-@dataclass(frozen=True, slots=True)
-class CatalogAlias:
-    alias_ref: str
-    identity: ProductIdentity
-    alias_text: str
-    normalized_alias: str
-    source_snapshot_id: str
-    normalization_version: str
-    review_status: CandidateAliasReviewStatus
-    status: CandidateRecordStatus
-    is_effective: bool
-
-
-@dataclass(frozen=True, slots=True)
-class CatalogSearchEntry:
-    entry_ref: str
-    product_ref: str
-    identity: ProductIdentity
-    entry_type: CandidateEntryType
-    alias_ref: str | None
-    display_text: str
-    normalized_text: str
-    source_snapshot_id: str
-    normalization_version: str
-    review_status: CandidateAliasReviewStatus
-    status: CandidateRecordStatus
-
-
-@dataclass(frozen=True, slots=True)
-class CandidateCatalogSourceRef:
-    snapshot_id: str
-    source_version: str
-
-
-@dataclass(frozen=True, slots=True)
-class CandidateCatalogCounts:
-    product_count: int
-    ingredient_count: int
-    component_count: int
-    alias_count: int
-    search_entry_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class CandidateCatalogExport:
-    catalog_version: str
-    catalog_manifest_hash: str
-    source_refs: tuple[CandidateCatalogSourceRef, ...]
-    schema_version: str
-    normalization_version: str
-    verification_status: CatalogVerificationStatus
-    freshness_status: CatalogFreshnessStatus
-    is_complete: bool
-    products: tuple[CatalogProduct, ...]
-    ingredients: tuple[CatalogIngredient, ...]
-    components: tuple[CatalogComponent, ...]
-    aliases: tuple[CatalogAlias, ...]
-    search_entries: tuple[CatalogSearchEntry, ...]
-    declared_counts: CandidateCatalogCounts
-    duplicate_identity_count: int
-    orphan_count: int
-    conflict_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -381,7 +264,7 @@ def _canonical_json_bytes(value: object) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
     )
-    return unicodedata.normalize("NFC", serialized).encode("utf-8")
+    return serialized.encode("utf-8")
 
 
 def _sha256(value: object) -> str:
@@ -396,7 +279,7 @@ def _identity_shape_is_valid(value: object) -> bool:
     return (
         isinstance(value, ProductIdentity)
         and isinstance(value.entity_type, CandidateEntityType)
-        and _is_nonblank_text(value.code_system)
+        and is_p0_code_system(value.entity_type, value.code_system)
         and _is_nonblank_text(value.canonical_code)
     )
 
@@ -555,7 +438,12 @@ def _component_shape_is_valid(component: CatalogComponent) -> bool:
         component.strength_unit,
         component.source_snapshot_id,
     )
-    return all(isinstance(value, str) for value in required_texts) and _is_positive_int(component.component_order)
+    return (
+        all(isinstance(value, str) for value in required_texts)
+        and isinstance(component.component_role, CatalogComponentRole)
+        and (component.release_profile is None or isinstance(component.release_profile, str))
+        and _is_positive_int(component.component_order)
+    )
 
 
 def _alias_shape_is_valid(alias: CatalogAlias) -> bool:
@@ -565,6 +453,7 @@ def _alias_shape_is_valid(alias: CatalogAlias) -> bool:
         alias.normalized_alias,
         alias.source_snapshot_id,
         alias.normalization_version,
+        alias.alias_source,
     )
     return (
         all(isinstance(value, str) for value in required_texts)
@@ -1268,7 +1157,20 @@ def _catalog_envelope_failure(catalog: CandidateCatalogExport) -> CandidateIndex
             CandidateIndexBuildFailureReason.CATALOG_COUNT_MISMATCH,
             count_mismatches,
         )
-    non_nfc_fields = _non_nfc_text_paths(dataclasses.asdict(catalog))
+    # These source-derived display values are intentionally preserved byte-for-byte.
+    # Keep NFC validation for normalized matching fields, identities and metadata.
+    raw_display_paths = {
+        "products.product_name",
+        "products.strength_text",
+        "products.dosage_form",
+        "products.manufacturer_name",
+        "ingredients.ingredient_name",
+        "aliases.alias_text",
+        "search_entries.display_text",
+    }
+    non_nfc_fields = tuple(
+        path for path in _non_nfc_text_paths(dataclasses.asdict(catalog)) if path not in raw_display_paths
+    )
     if non_nfc_fields:
         return CandidateIndexBuildFailure(
             CandidateIndexBuildFailureReason.CATALOG_TEXT_NOT_NFC,
@@ -1302,6 +1204,21 @@ def _catalog_envelope_failure(catalog: CandidateCatalogExport) -> CandidateIndex
 
 
 def build_candidate_index(
+    artifacts: CatalogExportArtifacts,
+    config: CandidateIndexBuildConfig,
+    embedding_port: CandidateEmbeddingPort | None = None,
+) -> CandidateIndexBuildSuccess | CandidateIndexBuildFailure:
+    """Verify the complete Catalog handoff before trusting typed gates or calling ports."""
+    if not isinstance(artifacts, CatalogExportArtifacts):
+        return CandidateIndexBuildFailure(CandidateIndexBuildFailureReason.CATALOG_MANIFEST_INVALID, ("artifacts",))
+    try:
+        verify_catalog_export(artifacts)
+    except CatalogExportError:
+        return CandidateIndexBuildFailure(CandidateIndexBuildFailureReason.CATALOG_MANIFEST_INVALID, ("manifest",))
+    return _build_candidate_index_members(artifacts.catalog, config, embedding_port)
+
+
+def _build_candidate_index_members(
     catalog: CandidateCatalogExport,
     config: CandidateIndexBuildConfig,
     embedding_port: CandidateEmbeddingPort | None = None,

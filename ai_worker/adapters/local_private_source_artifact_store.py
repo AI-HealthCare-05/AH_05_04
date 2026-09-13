@@ -1,0 +1,189 @@
+"""로컬 접근 통제 디렉터리에 Source 원본을 불변 보존합니다."""
+
+import hashlib
+import os
+import stat
+import tempfile
+from pathlib import Path
+
+from ai_worker.tasks.rag.source_ingestion.artifacts import (
+    IngestionArtifactKind,
+    RawArtifactMetadata,
+    StoredRawArtifact,
+    validate_artifact_binding,
+    verify_raw_artifact,
+)
+
+_STORAGE_BACKEND = "LOCAL_PRIVATE"
+_CHUNK_SIZE = 1024 * 1024
+
+
+class LocalPrivateSourceArtifactStore:
+    """SHA-256 기반 object key로 원본을 원자적·멱등하게 보존합니다."""
+
+    def __init__(self, root: Path) -> None:
+        if not root.is_absolute():
+            raise ValueError("Source artifact storage root must be an absolute path.")
+        self._reject_symlink_path(root)
+        try:
+            root.mkdir(mode=0o700, parents=True, exist_ok=False)
+        except FileExistsError:
+            self._validate_existing_private_root(root)
+        except OSError:
+            raise ValueError("Source artifact storage root could not be created.") from None
+        else:
+            os.chmod(root, 0o700)
+        self._root = root.resolve(strict=True)
+
+    def put_verified(
+        self,
+        *,
+        page_number: int | None,
+        file_path: Path,
+        metadata: RawArtifactMetadata,
+        artifact_kind: IngestionArtifactKind = IngestionArtifactKind.RAW_RESPONSE,
+        reject_code: str | None = None,
+        parser_location: str | None = None,
+    ) -> StoredRawArtifact:
+        validate_artifact_binding(
+            page_number=page_number,
+            artifact_kind=artifact_kind,
+            reject_code=reject_code,
+            parser_location=parser_location,
+        )
+        object_key = self._object_key(metadata.raw_checksum)
+        destination = self._resolve_object_key(object_key)
+        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(destination.parent, 0o700)
+
+        if destination.exists():
+            verify_raw_artifact(file_path=file_path, metadata=metadata)
+            verify_raw_artifact(file_path=destination, metadata=metadata)
+            return self._reference(
+                page_number,
+                metadata,
+                object_key,
+                artifact_kind,
+                reject_code,
+                parser_location,
+            )
+
+        temporary_path: Path | None = None
+        try:
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=".pending-",
+                dir=destination.parent,
+            )
+            temporary_path = Path(temporary_name)
+            os.fchmod(descriptor, 0o600)
+            self._copy_verified(
+                descriptor=descriptor,
+                source_path=file_path,
+                metadata=metadata,
+            )
+            try:
+                os.link(temporary_path, destination)
+            except FileExistsError:
+                verify_raw_artifact(file_path=destination, metadata=metadata)
+            self._sync_directory(destination.parent)
+        except OSError:
+            raise ValueError("Raw artifact could not be preserved.") from None
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+
+        return self._reference(
+            page_number,
+            metadata,
+            object_key,
+            artifact_kind,
+            reject_code,
+            parser_location,
+        )
+
+    @staticmethod
+    def _reject_symlink_path(root: Path) -> None:
+        for path in (root, *root.parents):
+            if path.is_symlink():
+                raise ValueError("Source artifact storage root cannot use symlinks.")
+
+    @staticmethod
+    def _validate_existing_private_root(root: Path) -> None:
+        try:
+            root_stat = root.lstat()
+        except OSError:
+            raise ValueError("Source artifact storage root could not be inspected.") from None
+        if not stat.S_ISDIR(root_stat.st_mode):
+            raise ValueError("Source artifact storage root is not a directory.")
+        if root_stat.st_uid != os.geteuid():
+            raise ValueError("Source artifact storage root must be owned by the Worker user.")
+        if stat.S_IMODE(root_stat.st_mode) != 0o700:
+            raise ValueError("Existing Source artifact storage root must already use mode 0700.")
+
+    @staticmethod
+    def _object_key(raw_checksum: str) -> str:
+        return f"sha256/{raw_checksum[:2]}/{raw_checksum}.artifact"
+
+    def _resolve_object_key(self, object_key: str) -> Path:
+        destination = (self._root / object_key).resolve()
+        if not destination.is_relative_to(self._root):
+            raise ValueError("Source artifact object key is outside storage root.")
+        return destination
+
+    @staticmethod
+    def _copy_verified(
+        *,
+        descriptor: int,
+        source_path: Path,
+        metadata: RawArtifactMetadata,
+    ) -> None:
+        digest = hashlib.sha256()
+        bytes_read = 0
+        try:
+            with os.fdopen(descriptor, "wb") as destination, source_path.open("rb") as source:
+                while True:
+                    read_size = min(_CHUNK_SIZE, metadata.byte_size - bytes_read + 1)
+                    chunk = source.read(read_size)
+                    if not chunk:
+                        break
+                    bytes_read += len(chunk)
+                    if bytes_read > metadata.byte_size:
+                        raise ValueError("Raw artifact byte size mismatch.")
+                    digest.update(chunk)
+                    destination.write(chunk)
+                destination.flush()
+                os.fsync(destination.fileno())
+        except OSError:
+            raise ValueError("Raw artifact could not be read or preserved.") from None
+
+        if bytes_read != metadata.byte_size:
+            raise ValueError("Raw artifact byte size mismatch.")
+        if digest.hexdigest() != metadata.raw_checksum:
+            raise ValueError("Raw artifact checksum mismatch.")
+
+    @staticmethod
+    def _sync_directory(directory: Path) -> None:
+        descriptor = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    @staticmethod
+    def _reference(
+        page_number: int | None,
+        metadata: RawArtifactMetadata,
+        object_key: str,
+        artifact_kind: IngestionArtifactKind,
+        reject_code: str | None,
+        parser_location: str | None,
+    ) -> StoredRawArtifact:
+        return StoredRawArtifact(
+            page_number=page_number,
+            metadata=metadata,
+            storage_backend=_STORAGE_BACKEND,
+            object_key=object_key,
+            artifact_kind=artifact_kind,
+            reject_code=reject_code,
+            parser_location=parser_location,
+        )

@@ -1,0 +1,321 @@
+{
+  "fixture_version": "medication-identification-preflight-decision-matrix-v1",
+  "issue": "173",
+  "notice": "합성 fixture입니다. 실제 환자 정보, 실제 MFDS 제품명, 보험코드, 검색 원문을 포함하지 않습니다. 이 fixture의 통과는 Production 활성 조건이나 외부 승인을 뜻하지 않습니다.",
+  "manifest_projection_version": "medication-identification-preflight-manifest-v1",
+  "prescription_id": "aaaaaaaa-0000-4000-8000-000000000001",
+  "prescription_version_id": "bbbbbbbb-0000-4000-8000-000000000002",
+  "other_prescription_version_id": "bbbbbbbb-0000-4000-8000-00000000ff02",
+  "runtime_release_bundle_id": "cccccccc-0000-4000-8000-000000000003",
+  "other_runtime_release_bundle_id": "cccccccc-0000-4000-8000-00000000ff03",
+  "cases": [
+    {
+      "case_id": "PF-001-all-matched-passes",
+      "description": "활성 Version의 전체 약제가 MATCHED면 일반 Rule·RAG 실행을 허용한다.",
+      "medications": [
+        {
+          "display_order": 1,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000101",
+          "state": "MATCHED",
+          "identification_id": "eeeeeeee-0000-4000-8000-000000000201",
+          "code_system": "SYNTHETIC-CODE-SYSTEM",
+          "canonical_code": "SYNTHETIC-0101"
+        },
+        {
+          "display_order": 2,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000102",
+          "state": "MATCHED",
+          "identification_id": "eeeeeeee-0000-4000-8000-000000000202",
+          "code_system": "SYNTHETIC-CODE-SYSTEM",
+          "canonical_code": "SYNTHETIC-0102"
+        }
+      ],
+      "expected": {
+        "execution_status": "EVALUATED",
+        "decision": "PASS",
+        "reason": "MATCHED",
+        "identification_reasons": [],
+        "stale_signals": [],
+        "primary_stale_projection": null,
+        "manifest_hash_present": true
+      }
+    },
+    {
+      "case_id": "PF-002-single-unresolved-blocks",
+      "description": "한 약제만 UNRESOLVED여도 일반 Rule·Retrieval·Provider를 실행하지 않는다.",
+      "medications": [
+        {
+          "display_order": 1,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000101",
+          "state": "MATCHED",
+          "identification_id": "eeeeeeee-0000-4000-8000-000000000201",
+          "code_system": "SYNTHETIC-CODE-SYSTEM",
+          "canonical_code": "SYNTHETIC-0101"
+        },
+        {
+          "display_order": 2,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000102",
+          "state": "UNRESOLVED"
+        }
+      ],
+      "expected": {
+        "execution_status": "EVALUATED",
+        "decision": "IDENTIFICATION_FALLBACK",
+        "reason": "UNRESOLVED",
+        "identification_reasons": ["UNRESOLVED"],
+        "blocking_medication_ids": ["dddddddd-0000-4000-8000-000000000102"],
+        "stale_signals": [],
+        "primary_stale_projection": null,
+        "manifest_hash_present": true
+      }
+    },
+    {
+      "case_id": "PF-003-mixed-reasons-use-contract-order",
+      "description": "여러 약제가 서로 다른 이유로 막히면 계약 표기 순서의 첫 값을 대표 reason으로 쓴다.",
+      "medications": [
+        {
+          "display_order": 1,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000101",
+          "state": "INVALID_INPUT"
+        },
+        {
+          "display_order": 2,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000102",
+          "state": "AMBIGUOUS"
+        },
+        {
+          "display_order": 3,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000103",
+          "state": "NOT_FOUND"
+        }
+      ],
+      "expected": {
+        "execution_status": "EVALUATED",
+        "decision": "IDENTIFICATION_FALLBACK",
+        "reason": "AMBIGUOUS",
+        "identification_reasons": ["AMBIGUOUS", "NOT_FOUND", "INVALID_INPUT"],
+        "blocking_medication_ids": [
+          "dddddddd-0000-4000-8000-000000000101",
+          "dddddddd-0000-4000-8000-000000000102",
+          "dddddddd-0000-4000-8000-000000000103"
+        ],
+        "stale_signals": [],
+        "primary_stale_projection": null,
+        "manifest_hash_present": true
+      }
+    },
+    {
+      "case_id": "PF-004-resolver-unavailable-blocks",
+      "description": "Resolver 장애로 UNAVAILABLE인 약제는 재시도 안내 경로로 보내고 실행을 차단한다.",
+      "medications": [
+        {
+          "display_order": 1,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000101",
+          "state": "UNAVAILABLE"
+        }
+      ],
+      "expected": {
+        "execution_status": "EVALUATED",
+        "decision": "IDENTIFICATION_FALLBACK",
+        "reason": "UNAVAILABLE",
+        "identification_reasons": ["UNAVAILABLE"],
+        "stale_signals": [],
+        "primary_stale_projection": null,
+        "manifest_hash_present": true
+      }
+    },
+    {
+      "case_id": "PF-005-active-version-changed-is-stale",
+      "description": "pinned Version이 더 이상 활성 포인터가 아니면 Stale Fallback으로 끝낸다.",
+      "observed_active_prescription_version_id": "bbbbbbbb-0000-4000-8000-00000000ff02",
+      "medications": [
+        {
+          "display_order": 1,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000101",
+          "state": "MATCHED",
+          "identification_id": "eeeeeeee-0000-4000-8000-000000000201",
+          "code_system": "SYNTHETIC-CODE-SYSTEM",
+          "canonical_code": "SYNTHETIC-0101"
+        }
+      ],
+      "expected": {
+        "execution_status": "EVALUATED",
+        "decision": "STALE_FALLBACK",
+        "reason": "EXECUTION_CONTEXT_STALE",
+        "identification_reasons": [],
+        "stale_signals": ["PRESCRIPTION_STALE"],
+        "primary_stale_projection": {
+          "fallback_code": "PRESCRIPTION_STALE",
+          "stale_reason": null
+        },
+        "manifest_hash_present": true
+      }
+    },
+    {
+      "case_id": "PF-006-active-bundle-changed-is-stale",
+      "description": "pinned Runtime Release Bundle이 더 이상 활성이 아니면 Stale Fallback으로 끝낸다.",
+      "observed_active_runtime_release_bundle_id": "cccccccc-0000-4000-8000-00000000ff03",
+      "medications": [
+        {
+          "display_order": 1,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000101",
+          "state": "MATCHED",
+          "identification_id": "eeeeeeee-0000-4000-8000-000000000201",
+          "code_system": "SYNTHETIC-CODE-SYSTEM",
+          "canonical_code": "SYNTHETIC-0101"
+        }
+      ],
+      "expected": {
+        "execution_status": "EVALUATED",
+        "decision": "STALE_FALLBACK",
+        "reason": "EXECUTION_CONTEXT_STALE",
+        "identification_reasons": [],
+        "stale_signals": ["RUNTIME_RELEASE_STALE"],
+        "primary_stale_projection": {
+          "fallback_code": "EXECUTION_CONTEXT_STALE",
+          "stale_reason": "RUNTIME_RELEASE_STALE"
+        },
+        "manifest_hash_present": true
+      }
+    },
+    {
+      "case_id": "PF-007-stale-precedes-identification-gap",
+      "description": "현재성을 이미 잃은 입력의 약제별 상태는 신뢰하지 않고 Stale Fallback을 먼저 보고한다.",
+      "observed_active_prescription_version_id": "bbbbbbbb-0000-4000-8000-00000000ff02",
+      "medications": [
+        {
+          "display_order": 1,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000101",
+          "state": "REVIEW_REQUIRED"
+        }
+      ],
+      "expected": {
+        "execution_status": "EVALUATED",
+        "decision": "STALE_FALLBACK",
+        "reason": "EXECUTION_CONTEXT_STALE",
+        "identification_reasons": [],
+        "stale_signals": ["PRESCRIPTION_STALE"],
+        "primary_stale_projection": {
+          "fallback_code": "PRESCRIPTION_STALE",
+          "stale_reason": null
+        },
+        "manifest_hash_present": true
+      }
+    },
+    {
+      "case_id": "PF-008-no-medication-fails-closed",
+      "description": "약제가 0개인 활성 Version은 판정 불가이므로 fail-closed로 끝낸다.",
+      "medications": [],
+      "expected": {
+        "execution_status": "VALIDATION_ERROR",
+        "decision": "IDENTIFICATION_FALLBACK",
+        "reason": "REVIEW_REQUIRED",
+        "identification_reasons": [],
+        "stale_signals": [],
+        "primary_stale_projection": null,
+        "validation_codes": ["AT_LEAST_ONE_MEDICATION_REQUIRED"],
+        "manifest_hash_present": false
+      }
+    },
+    {
+      "case_id": "PF-009-unknown-state-fails-closed",
+      "description": "allowlist 밖의 상태값은 추정하지 않고 fail-closed로 끝낸다.",
+      "medications": [
+        {
+          "display_order": 1,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000101",
+          "state": "PROBABLY_MATCHED"
+        }
+      ],
+      "expected": {
+        "execution_status": "VALIDATION_ERROR",
+        "decision": "IDENTIFICATION_FALLBACK",
+        "reason": "REVIEW_REQUIRED",
+        "identification_reasons": [],
+        "stale_signals": [],
+        "primary_stale_projection": null,
+        "validation_codes": ["UNKNOWN_PREFLIGHT_STATE"],
+        "manifest_hash_present": false
+      }
+    },
+    {
+      "case_id": "PF-010-duplicate-medication-id-fails-closed",
+      "description": "같은 약제 ID가 두 번 들어오면 어느 쪽이 정본인지 추정하지 않고 fail-closed로 끝낸다.",
+      "medications": [
+        {
+          "display_order": 1,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000101",
+          "state": "MATCHED",
+          "identification_id": "eeeeeeee-0000-4000-8000-000000000201",
+          "code_system": "SYNTHETIC-CODE-SYSTEM",
+          "canonical_code": "SYNTHETIC-0101"
+        },
+        {
+          "display_order": 2,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000101",
+          "state": "UNRESOLVED"
+        }
+      ],
+      "expected": {
+        "execution_status": "VALIDATION_ERROR",
+        "decision": "IDENTIFICATION_FALLBACK",
+        "reason": "REVIEW_REQUIRED",
+        "identification_reasons": [],
+        "stale_signals": [],
+        "primary_stale_projection": null,
+        "validation_codes": [
+          "DUPLICATE_MEDICATION_ID",
+          "DUPLICATE_IDENTIFICATION_MEDICATION_ID"
+        ],
+        "manifest_hash_present": false
+      }
+    },
+    {
+      "case_id": "PF-011-ownership-not-verified-fails-closed",
+      "description": "소유권 검증 완료 표시가 없으면 판정하지 않는다.",
+      "ownership_verified": false,
+      "medications": [
+        {
+          "display_order": 1,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000101",
+          "state": "MATCHED",
+          "identification_id": "eeeeeeee-0000-4000-8000-000000000201",
+          "code_system": "SYNTHETIC-CODE-SYSTEM",
+          "canonical_code": "SYNTHETIC-0101"
+        }
+      ],
+      "expected": {
+        "execution_status": "VALIDATION_ERROR",
+        "decision": "IDENTIFICATION_FALLBACK",
+        "reason": "REVIEW_REQUIRED",
+        "identification_reasons": [],
+        "stale_signals": [],
+        "primary_stale_projection": null,
+        "validation_codes": ["OWNERSHIP_NOT_VERIFIED"],
+        "manifest_hash_present": false
+      }
+    },
+    {
+      "case_id": "PF-012-matched-without-product-identity-fails-closed",
+      "description": "MATCHED인데 code_system·canonical_code가 없으면 제품 정체성을 추정하지 않는다.",
+      "medications": [
+        {
+          "display_order": 1,
+          "prescription_version_medication_id": "dddddddd-0000-4000-8000-000000000101",
+          "state": "MATCHED",
+          "identification_id": "eeeeeeee-0000-4000-8000-000000000201"
+        }
+      ],
+      "expected": {
+        "execution_status": "VALIDATION_ERROR",
+        "decision": "IDENTIFICATION_FALLBACK",
+        "reason": "REVIEW_REQUIRED",
+        "identification_reasons": [],
+        "stale_signals": [],
+        "primary_stale_projection": null,
+        "validation_codes": ["MATCHED_PRODUCT_IDENTITY_REQUIRED"],
+        "manifest_hash_present": false
+      }
+    }
+  ]
+}

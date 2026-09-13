@@ -3,10 +3,24 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 검증 |
-| 구현·리뷰 | Not implemented · 구현 동기화와 관련 지정 리뷰어 검토 대기 |
+| 구현·리뷰 | B1/B2 Schedule·Occurrence와 B3 Check-in 구현 · B4 Check-in PUT 병합, 일정 조회·PUT/PATCH는 #202 작업 브랜치 구현·지정 리뷰어 검토 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-b-adherence-v1.md`, `track-c-support-v1.md` |
-| Proposed delta | 아래 `setup_reason` 신규 값·우선순위는 Decision/Contract Freeze 승인 전 TBD이며 Approved v4에 포함되지 않음 |
-| Last verified | 2026-08-27 |
+| 승인 delta | `setup_reason` 추가 값·우선순위는 PD-417 / #424 승인 delta이며 최초 Freeze v4 자체의 내용은 아님 |
+| Last verified | 2026-09-11 |
+
+## #202 Check-in API 최초 부분 구현 기록
+
+[PD-202-20260910](../../../governance/decisions/2026-09-10-checkin-api-202.md)은
+기존 B3의 Check-in PUT을 HTTP·OpenAPI·SYNC_MUTATION에 연결하는 구체화 제안이다.
+생성·정정은 `200`과 `data` envelope를 사용하고, SELF 소유권 확인 이후 최초 응답
+snapshot을 재현한다. 상태·revision·오류 의미는 아래 승인 목표를 따른다.
+HTTP 응답 필드와 정규화 상세는 연결된 Decision에서 리뷰하며 Approved v4의 변경으로
+간주하지 않는다. 구현·검증 자료는 [#202 검증 기록](../../../validation/track-b/issue-202-checkin-api.md)에 남긴다.
+
+날짜별 조회와 일정 PUT/PATCH는 최초 부분 구현 당시 미승인 setup_reason 정책 및 원본 schedule audit
+요구와 B1 모델의 불일치 때문에 미구현이었다. 당시 history·backlog·Notification·Track C 실제
+무효화 연결도 해당 부분 구현 PR의 완료 주장에 포함하지 않았다. 이 문서는 target에 유지하며
+책임 리뷰어 승인 없이 Current로 승격하지 않는다.
 
 ## 소유권 경계
 
@@ -26,7 +40,7 @@
 - `NOT_TAKEN`과 무응답 `UNCONFIRMED`를 합치지 않는다.
 - 늦은 복용은 `TAKEN`과 실제 `taken_at`으로 표현하고 별도 상태를 추가하지 않는다.
 
-Timed occurrence는 사용자가 일정 설정 API에서 시작일·종료 결정·정확한 시각을 확인한 `medication_schedule`이 있을 때만 생성한다. 처방에 정확한 시작일·시각이 있어도 명시적 확인이 필요하며, `timing_text`, `frequency_per_day`, 처방 확정일만으로 값을 추정하지 않는다. Approved v4에서 미설정 약은 `schedule_item_status=SETUP_REQUIRED`와 `MISSING_START_DATE|MISSING_EXACT_TIME|MISSING_DURATION_DECISION|UNSUPPORTED_SCHEDULE_PATTERN` 중 하나를 반환하고 occurrence·알림을 만들지 않는다. 여러 사유가 동시에 있을 때의 단일 값 선택 우선순위와 `USER_CONFIRMATION_REQUIRED` 추가는 Approved v4에 포함되지 않은 Proposed/TBD delta이며 아래 별도 절에 격리한다. 전체 `schedule_status`는 `READY|PARTIAL|SETUP_REQUIRED|INACTIVE|NO_ACTIVE_PRESCRIPTION`이다.
+Timed occurrence는 사용자가 일정 설정 API에서 시작일·종료 결정·정확한 시각을 확인한 `medication_schedule`이 있을 때만 생성한다. 처방에 정확한 시작일·시각이 있어도 명시적 확인이 필요하며, `timing_text`, `frequency_per_day`, 처방 확정일만으로 값을 추정하지 않는다. Approved v4에서 미설정 약은 `schedule_item_status=SETUP_REQUIRED`와 `MISSING_START_DATE|MISSING_EXACT_TIME|MISSING_DURATION_DECISION|UNSUPPORTED_SCHEDULE_PATTERN` 중 하나를 반환하고 occurrence·알림을 만들지 않는다. 단일 값 우선순위와 `USER_CONFIRMATION_REQUIRED` 추가는 아래 PD-417 승인 delta를 따른다. 전체 `schedule_status`는 `READY|PARTIAL|SETUP_REQUIRED|INACTIVE|NO_ACTIVE_PRESCRIPTION`이다.
 
 `medication_schedule`은 `prescription_version_medication_id`를 unique로 참조하고 `end_mode=DATE|OPEN_ENDED`, `source=PRESCRIPTION_EXACT|USER_CONFIRMED`, `status=ACTIVE|CANCELLED|ENDED`, revision을 가진다. 시각은 별도 `medication_schedule_time` row에 revision별로 보존하고 `(medication_schedule_id, schedule_revision, local_time)`을 unique로 둔다. occurrence 상태는 `PENDING|CANCELLED|CLOSED`이며 Check-in 생성 시 `CLOSED`가 된다. 일정 `PUT`은 최초 생성·변경과 `CANCELLED|ENDED`의 명시적 재활성화를 담당하고, `PATCH`는 사용자 `CANCELLED`만 허용하며 `ENDED`는 Scheduler만 설정한다.
 
@@ -44,7 +58,7 @@ Check-in `PUT` 요청은 `Idempotency-Key` 헤더와 `expected_revision`을 요�
 
 처방 version이 바뀌면 `effective_at` 이후에 예정된 이전 version의 `PENDING` occurrence와 미전달 알림만 취소한다. 이전 일정·시각을 새 version에 복사·재귀속하거나 참고 후보로 자동 제공하지 않고, 새 occurrence도 자동 생성하지 않는다. 새 version의 모든 `prescription_version_medication`은 이전 version과 약명·용량·횟수가 같더라도 사용자가 해당 version의 일정을 다시 확인하기 전까지 `SETUP_REQUIRED`다.
 
-처방 version 확정과 이전 version의 `PENDING` occurrence·미전달 알림 취소를 하나의 DB transaction, Outbox 또는 다른 비동기 경계 중 어떤 방식으로 결합할지는 이 문서에서 고정하지 않는다. Track A 비동기 인프라가 확정된 뒤 후속 Issue와 별도 Decision에서 transaction 경계, 실패 복구와 재처리 방식을 정한다.
+처방 version 확정과 이전 version의 미래 PENDING occurrence·미전달 알림 취소는 PD-417 §5와 처방 버전 target의 동일 session/transaction 경계를 따른다. B의 동기 `cancel_future_for_prescription_version` port를 같은 DB transaction에서 호출하며, 비동기 사후 취소로 대체하지 않는다. 승인 원본과 [처방 버전 계약](./prescription-version-v1.md)에 맞춰 오래된 미정 요약을 동기화했으며, #203 알림 adapter의 구현 상태는 [PD-203](../../../governance/decisions/2026-09-10-track-b-notifications.md)을 따른다.
 
 이전 version의 schedule·time revision, `effective_at` 이전 occurrence, 이미 생성된 Check-in과 Check-in audit은 생성 당시 `prescription_version_id`에 그대로 보존하고 새 version으로 재귀속하지 않는다. `effective_at` 이전에 예정되었지만 아직 결과가 없는 occurrence도 취소하지 않으며, deadline이 지났다면 Scheduler가 기존 기준에 따라 `UNCONFIRMED`를 생성한다.
 
@@ -84,7 +98,7 @@ Track C의 목표 API는 다음으로 고정한다.
 
 ### 목표 DTO 요약
 
-- 일정 조회 응답은 `schedule_status`, 약별 `schedule_items[]`, 날짜별 `occurrences[]`, 현재 Check-in, `revision`, `corrected`, `prescription_version_id`를 포함한다. 약별 항목은 `schedule_item_status`, `prescription_version_medication_id`, nullable `schedule_id`, nullable `revision`, nullable `setup_reason`을 포함한다. 전체 상태는 활성 처방 없음 → `NO_ACTIVE_PRESCRIPTION`, READY와 SETUP_REQUIRED 혼합 → `PARTIAL`, SETUP_REQUIRED만 존재 → `SETUP_REQUIRED`, setup 대상 없이 READY 존재 → `READY`, 나머지가 모두 INACTIVE이고 pending occurrence 없음 → `INACTIVE` 순으로 판정한다. 원본에서 occurrence 정렬은 별도 고정하지 않았다.
+- 일정 조회 응답은 `schedule_status`, 약별 `schedule_items[]`, 날짜별 `occurrences[]`, 현재 Check-in, `revision`, `corrected`, `prescription_version_id`를 포함한다. 약별 항목은 `schedule_item_status`, `prescription_version_medication_id`, nullable `schedule_id`, nullable `revision`, nullable `setup_reason`을 포함한다. 전체 상태는 활성 처방 없음 → `NO_ACTIVE_PRESCRIPTION`, READY와 SETUP_REQUIRED 혼합 → `PARTIAL`, SETUP_REQUIRED만 존재 → `SETUP_REQUIRED`, setup 대상 없이 READY 존재 → `READY`, 나머지가 모두 INACTIVE → `INACTIVE` (과거 pending은 보존·별도 표시) 순으로 판정한다. 원본에서 occurrence 정렬은 별도 고정하지 않았다.
 - 일정 `PUT` body는 `start_local_date`, `end_mode`, nullable `end_local_date`, `local_times[]`, `expected_revision`; 취소 `PATCH` body는 `status=CANCELLED`, `expected_revision`이다.
 - Check-in `PUT` body는 `status=TAKEN|NOT_TAKEN`, nullable `taken_at`, `expected_revision`이다. 최초 생성의 `expected_revision`은 `0`이며 `taken_at`은 `TAKEN`에서만 허용한다. `reason_code`는 enum 확정 전까지 요청 body에 포함하지 않는다.
 - Safety assessment 요청은 `medication_checkin_id`, `checkin_revision`, `symptom_codes[]`, `expected_revision`; 응답은 `assessment_id`, `medication_checkin_id`, `checkin_revision`, `response_level`, `safety_disposition`, `message_code`, `copy_version`, `source_version`, `revision`이다.
@@ -92,19 +106,9 @@ Track C의 목표 API는 다음으로 고정한다.
 
 이 요약은 승인 원본의 최소 필드와 순서만 옮긴 것이다. 구현 PR에서 새 필수 필드, enum, 정렬 또는 오류를 추가하려면 계약 version을 갱신해야 한다.
 
-### Proposed/TBD — `setup_reason` 신규 값·우선순위
+### PD-417 승인 delta — 일정 reason·Audit·revision
 
-이 절은 Approved Contract Freeze v4의 일부가 아니며 구현 근거로 사용할 수 없다. 다음 신규 값·우선순위는 별도 Decision 또는 Contract Freeze version에서 승인될 때까지 Proposed/TBD다. 승인 시 Backend가 고정 우선순위를 계산해 `schedule_item_status=SETUP_REQUIRED`인 약품별 항목에 nullable 단일 `setup_reason`을 반환한다. Frontend는 반환값을 표시·분기에만 사용하고 동일 우선순위를 재계산하지 않는다. `NO_ACTIVE_PRESCRIPTION`은 약품별 `setup_reason`이 아니라 전체 `schedule_status`로만 반환한다. `NEW_PRESCRIPTION_VERSION`과 `NEW_MEDICATION`은 중복·경계가 불명확하므로 제안 enum에 포함하지 않는다.
-
-| 우선순위 | `setup_reason` | 의미 |
-| ---: | --- | --- |
-| 1 | `UNSUPPORTED_SCHEDULE_PATTERN` | v1의 매일 동일 시각 반복으로 표현할 수 없음 |
-| 2 | `MISSING_START_DATE` | 시작일 확인이 필요함 |
-| 3 | `MISSING_EXACT_TIME` | 정확한 복용 시각 확인이 필요함 |
-| 4 | `MISSING_DURATION_DECISION` | 종료일 또는 계속 복용 여부 확인이 필요함 |
-| 5 | `USER_CONFIRMATION_REQUIRED` | 필요한 값은 모두 있지만 사용자가 해당 version의 일정을 아직 확인하지 않음 |
-
-제안안에서 `USER_CONFIRMATION_REQUIRED`는 위의 1~4 사유가 없고 active schedule도 없을 때만 사용한다. 이 enum 추가와 우선순위 고정은 공유 계약 변경이므로 구현 전 Decision 또는 Contract Freeze version에 반영하고 OpenAPI·DTO·Frontend fixture·계약 테스트를 같이 동기화한다. 승인 전에는 이 표를 확정 enum 또는 테스트 기대값으로 사용하지 않는다.
+[일정 정합화 v1](./track-b-schedule-reconciliation-v1.md)은 PR #424의 송은영·남한솔 승인으로 확정된 추가 목표다. Decision에 review URL·대상 commit·시각을 연결했다. 다섯 reason·우선순위, INACTIVE의 과거 pending 보존, Audit·revision·time retire와 transaction은 해당 계약을 따른다. 기존 Freeze v4 전체를 재승인한 것은 아니다. DB #423·API #202·알림 #203 구현·검증이 남아 있으므로 현재 runtime 완료로 해석하지 않는다.
 
 목표 오류 의미는 다음과 같다.
 
@@ -151,3 +155,13 @@ Track C의 목표 API는 다음으로 고정한다.
 - 실행계획 상태는 `ACTIVE`, `COMPLETED`, `CANCELLED`다.
 - follow-up 응답은 `HELPED`, `NOT_HELPED`, `NOT_SURE`다.
 - Post-MVP-1 재알림은 앱 내부 사용자 요청 1회만 지원하며 외부 Push·SMS provider 연동은 범위 밖이다.
+
+
+## #202 일정 API 후속 구현 (2026-09-11)
+
+#424 reason 정책 승인, #438 저장 기반, #430 알림 adapter 병합을 반영한
+[HTTP 구체화](../../proposed/track-b-schedule-api-v1.md)를 별도 리뷰한다. 날짜별 조회와
+일정 PUT/PATCH를 실제 v1 앱에 연결하고 동일 세션 알림 취소·실패 rollback을 검증한다.
+위 최초 부분 구현의 blocker 기록은 과거 상태이며 현재 진행 상태는
+[검증 기록](../../../validation/track-b/issue-202-schedule-api.md)을 따른다.
+전체 Track B/Track C 계약의 Current 승격이나 공개 승인을 뜻하지 않는다.

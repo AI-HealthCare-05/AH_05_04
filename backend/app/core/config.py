@@ -6,6 +6,7 @@ from dataclasses import field
 from datetime import UTC, timedelta, timezone, tzinfo
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
@@ -25,6 +26,14 @@ _IDEMPOTENCY_HMAC_KEY_PLACEHOLDERS = frozenset(
 
 # example 파일들의 placeholder 명명 규칙("-at-least-32-characters")과 맞춘 최소 길이입니다.
 _IDEMPOTENCY_HMAC_KEY_MIN_LENGTH = 32
+
+# SYNC_MUTATION response_body_snapshot 암호화 키(Fernet, 32byte urlsafe-base64)의 local
+# 기본값입니다. 전부 0바이트로 만든 값이라 눈에 띄게 가짜지만 Fernet이 요구하는 형식은
+# 지켜서, 실제 값을 설정하지 않은 local 환경에서도 기동은 됩니다. non-local 기동은 아래
+# validator가 이 값 그대로 쓰이는 것을 거부합니다. 알고리즘 자체(Fernet)는 #311 구현의
+# 임시 기본값이며, 담당 리뷰어의 암호화 envelope 검토가 끝나기 전까지 실제 운영 키를
+# 이 값으로 설정해서는 안 됩니다.
+_IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_PLACEHOLDER = "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
 
 
 def get_default_timezone() -> tzinfo:
@@ -101,9 +110,29 @@ class Config(BaseSettings):
         return [origin.strip() for origin in self.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]
 
     JWT_ALGORITHM: str = "HS256"
+    # PR #404 리뷰(남한솔): Frontend에 refresh/retry 흐름이 아직 없어 10분으로 줄이면
+    # 사용자가 자주 재로그인해야 한다. Frontend가 그 흐름(+single-flight refresh)을
+    # 구현한 뒤 별도 PR에서 단축한다 — 이번 PR은 기존 60분을 유지한다.
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-    REFRESH_TOKEN_EXPIRE_MINUTES: int = 14 * 24 * 60
+    # 이 값은 로그인 시점부터의 절대 상한이다. refresh rotation은 매 사용마다 jti만
+    # 교체하고 이 exp는 그대로 유지하므로(RefreshToken.rotate 참고), 계속 활동해도
+    # 세션이 무기한 연장되지 않는다.
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = 7 * 24 * 60
     JWT_LEEWAY: int = 5
+
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
+    # 같은 사용자가 재설정을 반복 요청해 password_reset_token row가 무제한으로 쌓이거나
+    # 이메일이 스팸으로 반복 발송되지 않도록 하는 최소한의 안전장치다. 정교한 분당·시간당
+    # rate limit은 이번 범위에 포함하지 않는다(PD-206 제외 범위).
+    PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS: int = 60
+    # PR #404 리뷰(권가빈): 존재하는 계정(추가 INSERT)과 존재하지 않는 계정(조회만) 경로의
+    # 처리시간 차이로 계정 존재 여부가 새는 걸 막기 위해, request_password_reset()이 이
+    # 목표 시각까지 응답을 늦춘다. CI(scripts/measure_password_reset_timing.py, Linux 러너
+    # 기준) 실측 결과 가장 느린 경로도 p99 4ms·최대 14ms 수준이라, 여기에 여유를 두고
+    # 0.03초(30ms)로 잡았다 — 사용자 체감에는 영향 없는 수준이면서 관측된 차이보다 충분히
+    # 크다. 동시 부하가 심해 커넥션 풀 대기가 지배적인 상황에서는 이 값을 넘는 응답이 생길
+    # 수 있고, 그 구간의 잔존 신호는 알려진 리스크로 남겨둔다(계약 문서 참고).
+    PASSWORD_RESET_RESPONSE_TARGET_SECONDS: float = 0.03
 
     # idempotency-v1.md: 원문 Idempotency-Key는 저장하지 않고 versioned HMAC만 저장합니다.
     # 실제 key rotation 절차·물리 secret 관리는 Privacy·보안 승인 후 별도로 확정합니다(문서 "단일 테이블과
@@ -124,6 +153,45 @@ class Config(BaseSettings):
     IDEMPOTENCY_HMAC_KEY_VERSION: str = "v1"
     IDEMPOTENCY_RECORD_TTL_DAYS: int = 7
 
+    # idempotency-v1.md: SYNC_MUTATION의 response_body_snapshot은 암호화한 BYTEA로 저장합니다.
+    # 알고리즘·키 관리 방식은 #311 담당 리뷰어의 암호화 envelope 검토 대상이라, 아래 값은
+    # "일단 동작하는 기본값"(Fernet)입니다 — 검토 결과에 따라 값을 교체하면 되도록 별도 필드로
+    # 분리해뒀습니다. IDEMPOTENCY_HMAC_KEY와 같은 이유로 로그·이슈·PR에 실제 값을 남기지 않습니다.
+    IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY: str = _IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_PLACEHOLDER
+    IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION: str = "v1"
+
+    # PR #346 리뷰: key/version을 교체해도 아직 TTL(IDEMPOTENCY_RECORD_TTL_DAYS)이 남은 기존
+    # snapshot을 계속 복호화(replay)할 수 있도록 유지하는 retired key ring입니다
+    # (`encryption_key_version -> key`). 새 쓰기(encrypt)는 절대 여기 값을 쓰지 않고 항상 위
+    # active key만 사용합니다 — 여기는 오직 과거에 쓰인 key를 만료 시점까지 보관하는 용도입니다.
+    IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS: dict[str, str] = {}
+
+    @field_validator("IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY", mode="after")
+    @classmethod
+    def _validate_idempotency_snapshot_encryption_key_format(cls, value: str) -> str:
+        # 값 자체가 Fernet이 요구하는 32byte urlsafe-base64 키가 아니면, non-local 여부와
+        # 무관하게 기동 시점에 바로 드러나야 한다(런타임 첫 암호화 호출까지 미루지 않는다).
+        try:
+            Fernet(value.encode("utf-8"))
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY must be a valid Fernet key (32 bytes, urlsafe-base64-encoded)"
+            ) from exc
+        return value
+
+    @field_validator("IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS", mode="after")
+    @classmethod
+    def _validate_idempotency_snapshot_encryption_retired_keys_format(cls, value: dict[str, str]) -> dict[str, str]:
+        for version, retired_key in value.items():
+            try:
+                Fernet(retired_key.encode("utf-8"))
+            except (ValueError, TypeError) as exc:
+                raise ValueError(
+                    "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS"
+                    f"[{version!r}] must be a valid Fernet key (32 bytes, urlsafe-base64-encoded)"
+                ) from exc
+        return value
+
     @field_validator("IDEMPOTENCY_HMAC_KEY", mode="after")
     @classmethod
     def _strip_idempotency_hmac_key(cls, value: str) -> str:
@@ -141,6 +209,11 @@ class Config(BaseSettings):
     OPENAI_TIMEOUT_SECONDS: float = 20.0
     CHAT_HISTORY_CONTEXT_ENABLED: bool = False
     RELEASE_VALIDATION_ALLOWED: bool = False
+
+    # medication-identification-v1.md "공개 게이트": RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는
+    # 실제 사용자 트래픽에 Candidate 조회·확정·거절 API를 공개하지 않습니다. 명시적으로 활성화하지
+    # 않은 환경에서는 GET/confirm/reject가 503으로 fail-closed됩니다.
+    PUBLIC_TRACK_F_ENABLED: bool = False
 
     CLOVA_OCR_INVOKE_URL: str = ""
     CLOVA_OCR_SECRET: str = ""
@@ -191,6 +264,27 @@ class Config(BaseSettings):
                     f"IDEMPOTENCY_HMAC_KEY must be at least {_IDEMPOTENCY_HMAC_KEY_MIN_LENGTH} "
                     "characters outside local environment"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def validate_idempotency_snapshot_encryption_key_configured(self) -> "Config":
+        if self.ENV is not Env.LOCAL and self.IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY == (
+            _IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_PLACEHOLDER
+        ):
+            raise ValueError(
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY must be set to a real secret outside local environment"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_idempotency_snapshot_encryption_retired_keys_disjoint_from_active(self) -> "Config":
+        # PR #346 리뷰: 같은 version 문자열이 active key와 retired key 양쪽에 배포되면 어느
+        # key로 복호화해야 할지 모호해진다 — 운영 절차로 강제하지 않고 기동 시점에 바로 막는다.
+        if self.IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION in self.IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS:
+            raise ValueError(
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY_VERSION must not also appear in "
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_RETIRED_KEYS"
+            )
         return self
 
     @model_validator(mode="after")

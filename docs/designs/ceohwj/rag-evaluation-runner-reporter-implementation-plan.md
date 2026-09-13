@@ -1158,6 +1158,9 @@ filename allowlist는 `run.json`, `cases.jsonl`, `metrics.json`, `suite-results.
 staging directory 생성 identity는 fd 획득 여부와 별도로 보존하며, `mkdir` 뒤 `open` 실패 cleanup은 identity가
 일치하는 빈 directory에만 `rmdir`을 수행한다. directory 또는 lock entry를 제거한 뒤에는 parent를 fsync한다.
 파일과 열린 staging은 descriptor identity와 entry identity가 일치한 경우에만 owned로 표시한다. identity가
+확정된 lock과 Bundle 파일 descriptor는 commit 또는 cleanup 제거가 끝날 때까지 보유해 inode 번호 재사용을
+차단하고, cleanup 성공 여부와 무관하게 모두 닫는다. staging `open` 실패로 descriptor가 없는 경로는 생성 시
+기록한 identity와 빈 directory 조건을 사용하는 기존 unopened-staging cleanup을 유지한다. identity가
 미확정이거나 불일치하면 현재 경로의 identity를 cleanup ownership으로 다시 채우지 않고 entry를 보존한다.
 rename 직전에는 fd/name identity와 실제 7-file set을 검증하고, 이름 기반 exclusive rename 직후 final identity를
 같은 fd identity와 다시 비교한다. post-rename 불일치 시 replacement final은 삭제하지 않고 fail-closed하되,

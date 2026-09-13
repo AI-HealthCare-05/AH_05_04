@@ -52,8 +52,8 @@ class RecordingPrescriptionRepository:
         self.medications = medications
         self.events = events
 
-    async def get_medications(self, *, prescription_id: object) -> Sequence[object]:
-        self.events.append("prescription.get_medications")
+    async def get_version_medications(self, *, prescription_version_id: object) -> Sequence[object]:
+        self.events.append("prescription.get_version_medications")
         return self.medications
 
 
@@ -65,6 +65,7 @@ class RecordingChatRepository:
         *,
         recent_pairs: list[tuple[SimpleNamespace, SimpleNamespace]] | None = None,
         commit_error: Exception | None = None,
+        current_version_at_completion: bool = True,
     ) -> None:
         self.owned_session = session
         self.events = events
@@ -74,6 +75,7 @@ class RecordingChatRepository:
         self.created_snapshots: list[tuple[int, object, object, object]] = []
         self.state_transitions: list[tuple[int, ChatGenerationStatus]] = []
         self.commits = 0
+        self.current_version_at_completion = current_version_at_completion
 
     async def get_session_owned_for_update(self, *, session_id: object, user_id: object) -> object | None:
         self.events.append("chat.lock_owned")
@@ -123,6 +125,11 @@ class RecordingChatRepository:
         self.state_transitions.append((message.message_seq, message.generation_status))
         return message
 
+    async def lock_if_current_version(self, *, chat_session: object) -> bool:
+        del chat_session
+        self.events.append("chat.lock_if_current_version")
+        return self.current_version_at_completion
+
     async def mark_completed(self, message: SimpleNamespace, **kwargs: object) -> SimpleNamespace:
         self.events.append("chat.mark_completed")
         message.content = kwargs["content"]
@@ -157,14 +164,17 @@ def _service_fixture(
     commit_error: Exception | None = None,
     history_context_enabled: bool = False,
     recent_pairs: list[tuple[SimpleNamespace, SimpleNamespace]] | None = None,
+    current_version_at_completion: bool = True,
 ) -> tuple[ChatService, RecordingChatRepository, list[str], SimpleNamespace]:
     events: list[str] = []
     chat_session = SimpleNamespace(
         id=uuid4(),
         prescription_id=uuid4(),
+        prescription_version_id=uuid4(),
         session_status=status,
         last_message_at=datetime(2026, 8, 19, tzinfo=UTC),
     )
+    chat_session.prescription = SimpleNamespace(active_version_id=chat_session.prescription_version_id)
     medications = [
         SimpleNamespace(
             medication_name="첫 번째 합성약",
@@ -190,6 +200,7 @@ def _service_fixture(
         events,
         recent_pairs=recent_pairs,
         commit_error=commit_error,
+        current_version_at_completion=current_version_at_completion,
     )
     prescription_repo = RecordingPrescriptionRepository(medications, events)
     engine.events = events
@@ -228,12 +239,13 @@ async def test_send_message_locks_then_preserves_ordered_medication_fields_and_c
 
     assert events == [
         "chat.lock_owned",
-        "prescription.get_medications",
+        "prescription.get_version_medications",
         "chat.next_seq",
         f"chat.create.{ChatRole.USER}",
         f"chat.create.{ChatRole.ASSISTANT}",
         "chat.mark_generating",
         "engine.reply",
+        "chat.lock_if_current_version",
         "chat.mark_completed",
         "chat.update_last_message_at",
     ]
@@ -269,6 +281,34 @@ async def test_send_message_locks_then_preserves_ordered_medication_fields_and_c
     assert result.prompt_version == "chat-prompt-v2"
     assert result.completed_at == chat_session.last_message_at
     assert engine.inputs[0].history == []
+
+
+async def test_send_message_rejects_generated_result_when_prescription_version_changes() -> None:
+    engine = RecordingEngine(
+        result=ChatReplyOutput(content="폐기할 합성 답변", model_name="model-id", prompt_version="chat-prompt-v2")
+    )
+    service, chat_repo, events, chat_session = _service_fixture(
+        engine=engine,
+        current_version_at_completion=False,
+    )
+
+    with pytest.raises(ApiError) as captured:
+        await service.send_message(
+            user=SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
+            session_id=chat_session.id,
+            request=SendChatMessageRequest(content="정정과 경합하는 질문"),
+        )
+
+    assert captured.value.code == "PRESCRIPTION_VERSION_CONFLICT"
+    assert [(detail.field, detail.reason) for detail in captured.value.details] == [
+        ("session_id", "ACTIVE_VERSION_MISMATCH")
+    ]
+    assert events[-3:] == ["engine.reply", "chat.lock_if_current_version", "chat.commit_failed_message_pair"]
+    assert chat_repo.commits == 1
+    assistant = chat_repo.messages[1]
+    assert assistant.generation_status == ChatGenerationStatus.FAILED
+    assert assistant.error_code == "PRESCRIPTION_VERSION_STALE"
+    assert (assistant.content, assistant.model_name, assistant.prompt_version) == (None, None, None)
 
 
 @pytest.mark.parametrize("pair_count", [0, 1, 3, 4])
@@ -353,6 +393,49 @@ async def test_history_context_stops_when_next_valid_pair_exceeds_total_characte
     )
 
     assert [(item.question, item.answer) for item in engine.inputs[0].history] == [("가" * 2000, "나" * 9000)]
+
+
+async def test_history_context_delivers_two_completed_pairs_oldest_first() -> None:
+    # 검증 책임: service가 주어진 완료 pair 2개를 오래된 순으로 그대로 전달하는지.
+    #
+    # Issue #293 의 재현 절차(약물 A -> 다른 주제 -> 약물명 생략 후속 질문)에서
+    # 완료 pair 가 2개뿐이라 3쌍 제한에도 12,000자 예산에도 걸리지 않는다는 사실을
+    # 함께 고정합니다. 다만 두 번째 질문의 "약"은 앞선 약물을 가리킬 수도 있어
+    # 이 테스트가 주제 전환이나 대상 식별 능력을 검증하는 것은 아닙니다.
+    # 최신 subject 와 이전 subject 를 구분하는 판별은 LLM 평가 축의 책임이며
+    # evals/generation/chat-v2-history-eval-v2.json 의
+    #   followup-earlier-subject-over-latest
+    # 케이스가 담당합니다.
+    #
+    # FAILED·GENERATING pair 배제 역시 fake repository 가 아니라 실제 쿼리의 책임이며
+    # test_chat_repository.py::
+    #   test_list_recent_completed_pairs_returns_only_latest_complete_consecutive_pairs_from_same_session
+    # 이 실제 PostgreSQL 에서 고정합니다.
+    pairs = [
+        _history_pair(3, "약은 어디에 보관하나요?", "직사광선을 피해 실온 보관하세요."),
+        _history_pair(1, "합성의약품 알파는 언제 먹나요?", "아침 식후로 확인됩니다."),
+    ]
+    engine = RecordingEngine(
+        result=ChatReplyOutput(content="안전한 합성 답변", model_name="model-id", prompt_version="chat-prompt-v2")
+    )
+    service, _, _, chat_session = _service_fixture(
+        engine=engine,
+        history_context_enabled=True,
+        recent_pairs=pairs,
+    )
+
+    await service.send_message(
+        user=SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
+        session_id=chat_session.id,
+        request=SendChatMessageRequest(content="아까 그 약은 식전에 먹어도 되나요?"),
+    )
+
+    history = engine.inputs[0].history
+    assert [(item.question, item.answer) for item in history] == [
+        ("합성의약품 알파는 언제 먹나요?", "아침 식후로 확인됩니다."),
+        ("약은 어디에 보관하나요?", "직사광선을 피해 실온 보관하세요."),
+    ]
+    assert "합성의약품 알파" in history[0].question
 
 
 @pytest.mark.parametrize(

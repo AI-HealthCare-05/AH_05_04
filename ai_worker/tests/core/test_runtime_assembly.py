@@ -8,7 +8,10 @@ from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import URL
+from sqlalchemy.pool import NullPool
 
+from ai_worker.core import runtime_assembly
 from ai_worker.core.config import Config
 from ai_worker.core.consumer_execution import LeaseAwareConsumerExecution
 from ai_worker.core.errors import WorkerError
@@ -16,6 +19,7 @@ from ai_worker.core.job_execution import (
     LeaseNotAcquired,
     LeaseRejectionReason,
 )
+from ai_worker.core.outbox_publisher import OutboxPublisher
 from ai_worker.core.provider_observability import (
     create_worker_provider_call_context_from_trace_id,
 )
@@ -32,6 +36,8 @@ from ai_worker.core.runtime_assembly import (
     SessionScopedRejectedDeliveryExecution,
     build_worker_runtime,
     create_clova_ocr_engine,
+    create_protected_control_engine,
+    create_protected_data_engine,
     create_session_factory,
 )
 from ai_worker.core.stream import WorkerDelivery
@@ -123,6 +129,171 @@ def test_config_builds_database_url_with_special_characters() -> None:
 
     assert rendered.startswith("postgresql+asyncpg://worker:")
     assert "p%40ss%2Fw%25rd" in rendered
+
+
+def test_protected_engine_factory_refuses_disabled_configuration() -> None:
+    with pytest.raises(RuntimeError, match="PROTECTED_RETRIEVAL_DISABLED"):
+        create_protected_data_engine(_config())
+    with pytest.raises(RuntimeError, match="PROTECTED_RETRIEVAL_DISABLED"):
+        create_protected_control_engine(_config())
+
+
+@pytest.mark.parametrize(
+    ("factory", "expected_user", "application_name"),
+    [
+        (create_protected_data_engine, "protected_actor", "protected-retrieval-data"),
+        (create_protected_control_engine, "protected_controller", "protected-retrieval-control"),
+    ],
+)
+def test_protected_engines_use_distinct_short_lived_non_logging_connections(
+    monkeypatch: pytest.MonkeyPatch,
+    factory,
+    expected_user: str,
+    application_name: str,
+) -> None:
+    captured: dict[str, object] = {}
+    expected_engine = object()
+
+    def fake_create_async_engine(url, **options):
+        captured["url"] = url
+        captured.update(options)
+        return expected_engine
+
+    monkeypatch.setattr(runtime_assembly, "create_async_engine", fake_create_async_engine)
+    config = _config(
+        PROTECTED_RETRIEVAL_ENABLED=True,
+        PROTECTED_DB_HOST="protected.test",
+        PROTECTED_DB_NAME="protected_test",
+        PROTECTED_DB_USER="protected_actor",
+        PROTECTED_DB_PASSWORD="synthetic-password",
+        PROTECTED_DB_CONTROL_USER="protected_controller",
+        PROTECTED_DB_CONTROL_PASSWORD="synthetic-control-password",
+        PROTECTED_DB_SCHEMA="synthetic_protected",
+        PROTECTED_DB_ACCESS_ROLE="synthetic_protected_access",
+        PROTECTED_DB_CONTROL_ROLE="synthetic_protected_control",
+    )
+
+    engine = factory(config)
+
+    assert engine is expected_engine
+    assert cast(URL, captured["url"]).username == expected_user
+    assert captured["url"] != config.database_url
+    assert captured["echo"] is False
+    assert captured["pool_pre_ping"] is True
+    assert captured["poolclass"] is NullPool
+    assert captured["connect_args"] == {
+        "timeout": config.DB_CONNECT_TIMEOUT,
+        "server_settings": {"application_name": application_name},
+    }
+
+
+@pytest.mark.asyncio
+async def test_control_service_factory_uses_only_control_engine_and_validates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = object()
+    source = object()
+    captured: dict[str, object] = {}
+
+    class FakeService:
+        def __init__(self, supplied_engine, **options) -> None:
+            captured["engine"] = supplied_engine
+            captured.update(options)
+            self.validated = False
+
+        async def validate(self) -> None:
+            self.validated = True
+            captured["validated"] = True
+
+        async def close(self) -> None:
+            captured["closed"] = True
+
+    monkeypatch.setattr(runtime_assembly, "create_protected_control_engine", lambda config: engine)
+    monkeypatch.setattr(runtime_assembly, "PostgresqlProtectedAuthorizationControlService", FakeService)
+    config = _config(
+        PROTECTED_RETRIEVAL_ENABLED=True,
+        PROTECTED_DB_HOST="protected.test",
+        PROTECTED_DB_NAME="protected_test",
+        PROTECTED_DB_USER="protected_actor",
+        PROTECTED_DB_PASSWORD="synthetic-password",
+        PROTECTED_DB_CONTROL_USER="protected_controller",
+        PROTECTED_DB_CONTROL_PASSWORD="synthetic-control-password",
+        PROTECTED_DB_SCHEMA="synthetic_protected",
+        PROTECTED_DB_ACCESS_ROLE="synthetic_protected_access",
+        PROTECTED_DB_CONTROL_ROLE="synthetic_protected_control",
+    )
+
+    service = cast(
+        FakeService,
+        await runtime_assembly.create_protected_authorization_control_service(config, source),  # type: ignore[arg-type]
+    )
+
+    assert service.validated is True
+    assert captured == {
+        "engine": engine,
+        "schema": "synthetic_protected",
+        "data_access_role": "synthetic_protected_access",
+        "control_role": "synthetic_protected_control",
+        "approval_source": source,
+        "validated": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_control_service_factory_closes_on_validation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed = False
+
+    class FailingService:
+        def __init__(self, *_: object, **__: object) -> None:
+            pass
+
+        async def validate(self) -> None:
+            raise RuntimeError("synthetic validation failure")
+
+        async def close(self) -> None:
+            nonlocal closed
+            closed = True
+
+    monkeypatch.setattr(runtime_assembly, "create_protected_control_engine", lambda config: object())
+    monkeypatch.setattr(runtime_assembly, "PostgresqlProtectedAuthorizationControlService", FailingService)
+    config = _config(
+        PROTECTED_RETRIEVAL_ENABLED=True,
+        PROTECTED_DB_HOST="protected.test",
+        PROTECTED_DB_NAME="protected_test",
+        PROTECTED_DB_USER="protected_actor",
+        PROTECTED_DB_PASSWORD="synthetic-password",
+        PROTECTED_DB_CONTROL_USER="protected_controller",
+        PROTECTED_DB_CONTROL_PASSWORD="synthetic-control-password",
+        PROTECTED_DB_SCHEMA="synthetic_protected",
+        PROTECTED_DB_ACCESS_ROLE="synthetic_protected_access",
+        PROTECTED_DB_CONTROL_ROLE="synthetic_protected_control",
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic validation failure"):
+        await runtime_assembly.create_protected_authorization_control_service(config, object())  # type: ignore[arg-type]
+
+    assert closed is True
+
+
+@pytest.mark.asyncio
+async def test_control_service_factory_rejects_incomplete_config_before_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine_calls = 0
+
+    def unexpected_engine(config: Config) -> object:
+        nonlocal engine_calls
+        engine_calls += 1
+        return object()
+
+    monkeypatch.setattr(runtime_assembly, "create_protected_control_engine", unexpected_engine)
+
+    with pytest.raises(RuntimeError, match="PROTECTED_RETRIEVAL_CONFIG_INVALID"):
+        await runtime_assembly.create_protected_authorization_control_service(_config(), object())  # type: ignore[arg-type]
+
+    assert engine_calls == 0
 
 
 def test_config_rejects_heartbeat_interval_not_shorter_than_lease() -> None:
@@ -367,6 +538,7 @@ async def test_build_worker_runtime_closes_only_owned_resources() -> None:
         assert engine.sync_engine.pool is original_pool
         assert assembled.registered_types == frozenset()
         assert assembled.recovery_scheduler is not None
+        assert isinstance(assembled.recovery_scheduler._outbox_publisher, OutboxPublisher)
     finally:
         await engine.dispose()
 

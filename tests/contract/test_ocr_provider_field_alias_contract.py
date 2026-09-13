@@ -1,5 +1,6 @@
 import re
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -66,6 +67,7 @@ def test_medication_response_does_not_expose_unregistered_alias(
 ) -> None:
     medication = MedicationData.model_validate(
         {
+            "prescription_version_medication_id": uuid4(),
             "medication_name": "정본합성약정",
             alias: "외부별칭합성약정",
             "display_order": 1,
@@ -80,6 +82,7 @@ def test_medication_response_does_not_expose_unregistered_alias(
 
 def test_backend_response_contains_only_canonical_medication_name() -> None:
     medication = MedicationData(
+        prescription_version_medication_id=uuid4(),
         medication_name="합성약정",
         display_order=1,
     )

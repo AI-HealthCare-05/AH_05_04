@@ -51,6 +51,8 @@ Former Track D is not a separate execution or ownership unit. Its historical doc
 
 ## Shared Contracts and Implementations
 
+- Do not introduce database triggers or row-level security policies. Do not implement business rules in stored procedures or user-defined database functions. An approved contract is not an exception to these prohibitions. Implement explicit Python Service/Repository validation and transactions, supported by ordinary constraints and least-privilege DB roles. Preserve applied migration history; remove legacy definitions through forward migrations. Do not expand the legacy exception manifest to permit new definitions.
+
 A shared contract is an externally consumed API, request or response shape, error or status meaning, database or message schema, or other interface shared across Frontend, Backend, OCR, RAG, LLM, or Evaluation. An implementation change stays behind an existing contract and does not alter those observable semantics.
 
 - Do not disguise a contract change as an implementation detail. Removing or renaming fields, changing types or meanings, adding required fields, or changing shared states is a contract change.

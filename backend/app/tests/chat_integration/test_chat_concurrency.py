@@ -1,14 +1,17 @@
 import asyncio
+from datetime import UTC, date, datetime
 from time import monotonic
 from uuid import UUID
 
 import pytest
 from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
 from app.dtos.chat import SendChatMessageRequest
 from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSession
+from app.models.prescriptions import Prescription
 from app.models.users import User
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.prescription_repository import PrescriptionRepository
@@ -18,6 +21,7 @@ from app.tests.chat_integration.conftest import CommittedChatFixture
 from app.tests.conftest import test_engine
 
 REFERENCE_GENERATION_DELAY_SECONDS = 0.08
+FINAL_FENCE_LOCK_TIMEOUT_SECONDS = 3
 
 
 class CommitControlledEngine:
@@ -123,7 +127,7 @@ async def _send(
         await db_session.commit()
 
 
-async def _cancel_pending(*tasks: asyncio.Task[None]) -> None:
+async def _cancel_pending(*tasks: asyncio.Task[object]) -> None:
     for task in tasks:
         if not task.done():
             task.cancel()
@@ -295,6 +299,79 @@ async def test_different_sessions_for_same_prescription_enter_generation_in_para
     assert engine.calls == 2
     for chat_session_id in committed_chat_fixture.session_ids:
         _assert_completed_pairs(await _messages(chat_session_id), pair_count=1)
+
+
+async def test_correction_committed_during_generation_rejects_stale_result(
+    committed_chat_fixture: CommittedChatFixture,
+) -> None:
+    chat_session_id = committed_chat_fixture.session_ids[0]
+    engine = CommitControlledEngine()
+    async with AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as send_db:
+        service = ChatService(PrescriptionRepository(send_db), ChatRepository(send_db), engine)
+        send_task = asyncio.create_task(
+            service.send_message(
+                user=committed_chat_fixture.user,
+                session_id=chat_session_id,
+                request=SendChatMessageRequest(content="정정과 경합하는 합성 질문"),
+            )
+        )
+        try:
+            await asyncio.wait_for(engine.first_entered.wait(), timeout=1)
+            async with AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as correction_db:
+                prescription_repo = PrescriptionRepository(correction_db)
+                prescription = await prescription_repo.get_owned_for_version_update(
+                    prescription_id=committed_chat_fixture.prescription_id,
+                    user_id=committed_chat_fixture.user.id,
+                )
+                assert prescription is not None
+                await prescription_repo.create_version(
+                    prescription=prescription,
+                    prescribed_date=date.today(),
+                    confirmed_at=datetime.now(UTC),
+                    medications=[{"medication_name": "정정된 합성약", "display_order": 1}],
+                )
+                await correction_db.commit()
+
+            engine.release_first.set()
+            with pytest.raises(ApiError) as captured:
+                await asyncio.wait_for(send_task, timeout=3)
+        finally:
+            engine.release_first.set()
+            await _cancel_pending(send_task)
+
+    assert captured.value.code == "PRESCRIPTION_VERSION_CONFLICT"
+    messages = await _messages(chat_session_id)
+    assert len(messages) == 2
+    assert messages[0].content == "정정과 경합하는 합성 질문"
+    assert messages[1].generation_status == ChatGenerationStatus.FAILED
+    assert messages[1].error_code == "PRESCRIPTION_VERSION_STALE"
+    assert (messages[1].content, messages[1].model_name, messages[1].prompt_version) == (None, None, None)
+
+
+async def test_final_prescription_fence_has_bounded_lock_wait(
+    committed_chat_fixture: CommittedChatFixture,
+) -> None:
+    chat_session_id = committed_chat_fixture.session_ids[0]
+    async with (
+        AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as lock_holder,
+        AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as contender,
+    ):
+        await lock_holder.scalar(
+            select(Prescription)
+            .where(Prescription.id == committed_chat_fixture.prescription_id)
+            .with_for_update(of=Prescription)
+        )
+        chat_session = await contender.get(ChatSession, chat_session_id)
+        assert chat_session is not None
+
+        started_at = monotonic()
+        with pytest.raises(DBAPIError):
+            await ChatRepository(contender).lock_if_current_version(chat_session=chat_session)
+        elapsed = monotonic() - started_at
+        await contender.rollback()
+
+    assert elapsed >= FINAL_FENCE_LOCK_TIMEOUT_SECONDS * 0.8
+    assert elapsed < FINAL_FENCE_LOCK_TIMEOUT_SECONDS + 2
 
 
 async def test_two_same_session_requests_reflect_two_generation_delays_only_as_reference_behavior(

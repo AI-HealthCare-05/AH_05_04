@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse as Response
 
 from app.apis.v1.job_routers import JOB_ACCEPTED_OPENAPI_RESPONSES, build_job_accepted_response
+from app.core.utils.idempotency import build_idempotency_key_openapi_parameter
 from app.dependencies.security import get_request_user
 from app.dependencies.services import (
     get_job_intake_service,
@@ -72,18 +73,9 @@ async def create_prescription_document(
     responses=JOB_ACCEPTED_OPENAPI_RESPONSES,
     openapi_extra={
         "parameters": [
-            {
-                "name": "Idempotency-Key",
-                "in": "header",
-                "required": True,
-                "schema": {
-                    "type": "string",
-                    "minLength": 16,
-                    "maxLength": 255,
-                    "pattern": r"^[A-Za-z0-9._:-]+$",
-                },
-                "description": "비동기 OCR 접수 멱등성 키입니다. 원문 값은 저장하지 않고 HMAC digest만 저장합니다.",
-            }
+            build_idempotency_key_openapi_parameter(
+                description="비동기 OCR 접수 멱등성 키입니다. 원문 값은 저장하지 않고 HMAC digest만 저장합니다."
+            )
         ]
     },
 )

@@ -3,9 +3,9 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
-| 구현·리뷰 | Partially implemented (#148) — 공통 Job 상태 조회(`GET /jobs/{job_id}`)와 OCR 접수(`POST /documents/{document_id}/ocr-jobs`)는 구현·테스트·라우트 등록이 완료되었습니다. 공통 Job 상태 조회는 [공통 Job 상태 조회 계약 v1](../../current/job-status-v1.md)로 승격했습니다(#148 다섯 번째 리뷰 — AGENTS.md 문서 권위 규칙에 따라 구현된 부분만 current로 분리). OCR·Guide rediscovery GET(`GET /documents/{id}/ocr-jobs`, `GET /prescriptions/{id}/guides`)은 서비스 로직·테스트만 완료하고 라우트 등록은 별도 계약 검토 후 진행합니다. Guide·Chat 접수(POST)와 Reconciler는 Not implemented — 전체 승격 대기 |
+| 구현·리뷰 | Partially implemented (#148, #169) — 공통 Job 상태 조회와 OCR 접수는 구현·테스트·라우트 등록 완료. Prescription Version 변경 시 미종료 Job `STALE` 전이, 실행 중 Attempt `BLOCKED`, 미발행·예약 Outbox `CANCELLED`, 이전 완료 결과 `result_url` 비노출을 PR 4에서 구현하고 지정 리뷰어 검토 대기. OCR·Guide rediscovery GET은 서비스 로직·테스트만 완료하고 라우트 등록은 별도 계약 검토 후 진행. Guide·Chat 접수(POST)와 Reconciler는 Not implemented — 전체 승격 대기 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, [`PD-91-20260831`](../../../governance/decisions/2026-08-31-ocr-timeout-idempotency.md) |
-| Last verified | 2026-08-31 |
+| Last verified | 2026-09-08 |
 
 ## 적용 범위
 
@@ -76,6 +76,8 @@ OCR 접수는 기존 라우터의 path parameter 방식과 `202` 응답을 유�
 ```
 
 OCR·Guide·Chat 접수의 `202 Accepted` 응답은 HTTP `Location`과 `data.status_url`을 같은 Job 조회 URL로 제공한다.
+
+`prescription_version_id`는 공통 응답 타입에서는 nullable이다. OCR은 처방 확정 전 입력이므로 항상 `null`이고, 확정 처방에서 파생되는 Guide·Chat Job은 생성 시점의 값이 필수다. DB의 `chk_ai_job_prescription_version_by_type`은 `OCR ↔ NULL`, `GUIDE|CHAT ↔ NOT NULL`을 강제하고, Job intake와 repository 생성 경계도 같은 조건을 검증한다. Guide·Chat Job의 값 누락을 OCR 호환성으로 허용하거나 active Version을 조회 시점에 추정해서는 안 된다. `prescription_version_medication_id`는 Candidate Search·Identification 계약에서 필수이며 공통 Job 응답 필드가 아니다.
 
 공통 header 기준은 다음과 같다.
 

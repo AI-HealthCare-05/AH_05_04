@@ -1,7 +1,13 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import React from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import HomePage from '../src/pages/HomePage'
 import StartPage from '../src/pages/StartPage'
 
@@ -15,14 +21,39 @@ const CURRENT_USER = {
   created_at: '2026-08-28T00:00:00Z',
 }
 
-function renderHome(currentUser = CURRENT_USER) {
+function renderHome(
+  currentUser = CURRENT_USER,
+  showPrescriptionOnboarding = false,
+) {
+  function UploadRoute() {
+    const location = useLocation()
+
+    return (
+      <div>
+        처방전 업로드 화면
+        <output data-testid="upload-intent">
+          {(location.state as { intent?: string } | null)?.intent ?? ''}
+        </output>
+      </div>
+    )
+  }
+
   return render(
-    <MemoryRouter initialEntries={['/']}>
+    <MemoryRouter
+      initialEntries={[
+        {
+          pathname: '/',
+          state: showPrescriptionOnboarding
+            ? { showPrescriptionOnboarding: true }
+            : null,
+        },
+      ]}
+    >
       <Routes>
         <Route path="/" element={<HomePage currentUser={currentUser} />} />
         <Route
           path="/prescriptions/upload"
-          element={<div>처방전 업로드 화면</div>}
+          element={<UploadRoute />}
         />
         <Route path="/chat" element={<div>처방전 ID 없는 챗봇 진입 화면</div>} />
         <Route path="/guides" element={<div>가이드 empty 화면</div>} />
@@ -68,6 +99,77 @@ describe('Dosey MVP design pages', () => {
     expect(screen.getByText('회원가입 화면')).toBeTruthy()
   })
 
+  it('#395 온보딩은 키보드 포커스를 모달 내부에 가두고 닫힌 뒤 Home CTA로 복귀한다', async () => {
+    const { container } = renderHome(CURRENT_USER, true)
+
+    const primaryButton = await screen.findByRole('button', {
+      name: '지금 처방전 촬영하기',
+    })
+    const secondaryButton = screen.getByRole('button', {
+      name: '나중에 촬영할게요',
+    })
+    const homePrescriptionButton = container.querySelector<HTMLButtonElement>(
+    '.mvp-home__hub-card--prescription',
+    )
+
+    expect(homePrescriptionButton).not.toBeNull()
+
+    // 열리면 첫 CTA에 포커스
+    expect(document.activeElement).toBe(primaryButton)
+
+    // 배경 Home 접근 차단
+    const mobileApp = homePrescriptionButton!.closest('.mobile-app')
+    expect(mobileApp?.getAttribute('aria-hidden')).toBe('true')
+
+    // 마지막 버튼에서 Tab → 첫 버튼
+    secondaryButton.focus()
+    fireEvent.keyDown(secondaryButton, {
+      key: 'Tab',
+    })
+    expect(document.activeElement).toBe(primaryButton!)
+
+    // 첫 버튼에서 Shift+Tab → 마지막 버튼
+    primaryButton.focus()
+    fireEvent.keyDown(primaryButton, {
+      key: 'Tab',
+      shiftKey: true,
+    })
+    expect(document.activeElement).toBe(secondaryButton)
+
+    // Escape → 닫힘 + Home 처방전 CTA로 포커스 복귀
+    fireEvent.keyDown(secondaryButton, {
+      key: 'Escape',
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(document.activeElement).toBe(homePrescriptionButton)
+    })
+
+    expect(mobileApp?.getAttribute('aria-hidden')).toBeNull()
+  })
+
+  it('#395 가입 직후 Home에서 처방전 온보딩을 표시하고 촬영 CTA를 새 처방 등록으로 연결한다', async () => {
+    renderHome(CURRENT_USER, true)
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '처방전을 등록해 볼까요?',
+      }),
+    ).toBeTruthy()
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '지금 처방전 촬영하기',
+      }),
+    )
+
+    expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
+    expect(screen.getByTestId('upload-intent').textContent).toBe(
+      'new-prescription',
+    )
+  })
+
   it('HOME-01은 users/me 이름과 현재 날짜를 표시한다', async () => {
     renderHome()
 
@@ -104,11 +206,12 @@ describe('Dosey MVP design pages', () => {
     expect(screen.queryByText('85%')).toBeNull()
   })
 
-  it('HOME-01의 처방약 복용 안내를 기존 업로드 route에 연결한다', async () => {
+  it('HOME-01의 처방약 복용 안내를 새 처방 등록 intent와 함께 업로드 route에 연결한다', async () => {
     renderHome()
     await screen.findByText('오늘도 건강한 하루 되세요')
     fireEvent.click(screen.getByRole('button', { name: /처방약 복용 안내/ }))
     expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
+    expect(screen.getByTestId('upload-intent').textContent).toBe('new-prescription')
   })
 
   it('계약 없는 HOME 기능은 비활성 상태이며 미확인 기록을 임의 표시하지 않는다', async () => {
@@ -147,6 +250,14 @@ describe('Dosey MVP design pages', () => {
     await screen.findByText('오늘도 건강한 하루 되세요')
     fireEvent.click(screen.getByRole('button', { name: '가이드' }))
     expect(screen.getByText('가이드 empty 화면')).toBeTruthy()
+  })
+
+  it('도지 Bottom Navigation은 prescription_id를 추측하지 않고 /chat으로 이동한다', async () => {
+    renderHome()
+
+    await screen.findByText('오늘도 건강한 하루 되세요')
+    fireEvent.click(screen.getByRole('button', { name: '도지' }))
+    expect(screen.getByText('처방전 ID 없는 챗봇 진입 화면')).toBeTruthy()
   })
 
   it('HOME-01 Bottom Navigation은 최신 5-tab과 Menu 경로를 유지한다', async () => {

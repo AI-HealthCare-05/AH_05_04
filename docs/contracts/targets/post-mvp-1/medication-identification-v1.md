@@ -2,13 +2,13 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 문서 상태 | Approved Target · Not implemented — RAG-00 / 2026-09-01 |
+| 문서 상태 | Approved Target · Partially implemented — 조회·확정·거절 API(#172)는 구현되었으나 `PUBLIC_TRACK_F_ENABLED`(기본값 false)로 publication gated / 2026-09-07 |
 | 구현 담당 | 정현우 — Candidate Resolver·Identification 연계 |
 | 책임 리뷰 | 송은영 — Backend·DB·소유권·Transaction, 김지혜 — OCR 확정 입력 경계, 남한솔 — 확인 UI·공개 DTO, 권가빈 — 제품 범위·안전 문구 |
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; Design `1.50` SHA-256 `e83415326dd08cda61353d7cd8bf4e6d591bb99f51a8a3daa498421d8772535a`; DB `1.47` SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
 | 기준 관계 | Approved Contract Freeze v4의 공식 의약품 식별 기준을 유지하고 RAG-00 Candidate 공유 계약을 이 파일에 통합 · [처방 버전 계약 v1](./prescription-version-v1.md) |
 | 보완 Decision | [`PD-167-20260904`](../../../governance/decisions/2026-09-04-rag-candidate-index-input-boundary.md) · PR #260 최신 HEAD 교차 승인 대기 |
-| Last verified | 2026-09-04 |
+| Last verified | 2026-09-07 |
 
 ## 목적과 변경 분류
 
@@ -22,6 +22,8 @@
 - 공개 오류 code와 `Cache-Control: no-store`
 
 Route Template과 물리 컬럼은 구현 PR에서 OpenAPI·Migration·Contract Test와 함께 확정한다. 공유 DTO, HTTP 의미와 공개 오류 code는 아래 계약을 변경하지 않고 구현해야 한다.
+
+Revision `169a1b2c3d4e`에서 `prescription_version_medication` 최소 DB 기반을 만들었고 `169b2c3d4e5f`에서 기존 처방 Version 1 backfill과 당시 신규 확정 dual-write를 연결했다. `169c3d4e5f6a`는 placeholder가 가리키는 legacy Medication을 `(prescription_id, display_order)`로 같은 Prescription의 Version 1 Medication에 일대일 재매핑하고, 누락·중복·값 불일치 0건을 검증한 뒤 Candidate Search·Identification FK와 read를 `prescription_version_medication_id`로 전환했다. `169d4e5f6a7b` cleanup 이후 이 ID는 두 도메인에서 항상 필수이며 신규 legacy Medication dual-write는 중단한다. legacy table은 과거 migration 감사 원본으로만 보존하고 현재 Candidate·Identification 입력이나 조회 기준으로 사용하지 않는다. Version 간 계보 Key는 이 v1 이관용 매핑에서 추론하지 않으며 별도 승인 전까지 추가하지 않는다.
 
 ## 입력 정본
 

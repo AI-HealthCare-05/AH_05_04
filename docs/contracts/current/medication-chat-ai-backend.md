@@ -10,7 +10,7 @@
 
 ## Backend 입력 계약
 
-`ChatService`는 활성 세션에 연결된 확정 처방의 약물을 `display_order` 오름차순으로 조회하고 `ChatReplyInput`을 만든다. `CHAT_HISTORY_CONTEXT_ENABLED=true`인 Local 합성 데이터 검증에서는 현재 질문 이전의 같은 세션 완료 대화도 함께 구성한다.
+`ChatService`는 필수 `prescription_version_id`로 세션 생성 당시 불변 Version Medication을 `display_order` 오름차순으로 조회하고 `ChatReplyInput`을 만든다. 요청 처리와 결과 저장 직전에는 이 ID가 현재 `active_version_id`인지 검증한다. `CHAT_HISTORY_CONTEXT_ENABLED=true`인 Local 합성 데이터 검증에서는 현재 질문 이전의 같은 세션 완료 대화도 함께 구성한다.
 
 | 필드 | 타입 | 규칙 |
 | --- | --- | --- |
@@ -56,9 +56,11 @@ Provider에는 다음 정보만 전달할 수 있다.
 
 예시의 모든 값은 합성 데이터여야 하며 실제 환자정보를 사용하지 않는다.
 
-`CHAT_HISTORY_CONTEXT_ENABLED`의 기본값은 `false`이며 Staging·Production에서는 활성화할 수 없다. 프롬프트는 flag와 관계없이 `chat-prompt-v2` 하나만 사용하고 Provider payload에 `history` 배열을 항상 포함한다. `false`이면 history를 조회하지 않고 빈 배열을 전달하며, Local에서 `true`이면 허용된 최근 완료 대화를 배열에 채운다. question, history, medications 내부 문자열은 모두 지시가 아닌 JSON 데이터로 취급한다.
+`CHAT_HISTORY_CONTEXT_ENABLED`의 기본값은 `false`이며 Staging·Production에서는 활성화할 수 없다. 프롬프트는 flag와 관계없이 `chat-prompt-v3` 하나만 사용하고 Provider payload에 `history` 배열을 항상 포함한다. `false`이면 history를 조회하지 않고 빈 배열을 전달하며, Local에서 `true`이면 허용된 최근 완료 대화를 배열에 채운다. question, history, medications 내부 문자열은 모두 지시가 아닌 JSON 데이터로 취급한다.
 
 history의 USER 발화는 과거 사용자 진술일 뿐 검증된 의료 사실이나 현재 상태가 아니다. 현재 질문이 지속 여부를 확인하지 않은 과거 증상·진단·알레르기·복용 여부를 현재 사실로 단정하지 않는다. 과거 ASSISTANT 답변도 의료 근거가 아니며, 현재 확정 `medications`가 우선한다. 답변 안전성에 중요한 과거 정보라면 현재도 해당하는지 짧게 확인한다.
+
+현재 질문에 응급·고위험 신호가 있으면 생략된 약물 대상의 특정·재확인이 의료진 또는 응급 도움 안내를 지연해서는 안 된다. 현재 응급·고위험 신호가 없고 질문과 history로 생략된 약물 대상을 하나만 특정할 수 없을 때만, `medications`에 여러 약물이 있다는 사실을 전체 약물에 대한 질문으로 해석하지 않는다. 후보 약물을 추측하거나 복수 약물 정보를 나열하지 않고 약명·제품명·성분을 짧게 재확인한다.
 
 ## AI 결과 계약
 
@@ -98,6 +100,7 @@ DB lock wait timeout처럼 세션 row lock을 얻기 전에 발생한 DB 오류�
 ## 동시성과 캐시 관찰 계약
 
 - 동일 세션의 메시지 전송은 `CHAT_SESSION` row의 `SELECT ... FOR UPDATE`로 직렬화한다.
+- Provider 호출 뒤 Prescription 결과 fencing의 row lock에는 transaction 범위 `lock_timeout = 3s`를 적용한다.
 - 성공한 USER·ASSISTANT 쌍의 `message_seq`는 연속하며 동일 세션에서 중복되지 않는다.
 - 잠금 획득 전 DB lock timeout이 발생하면 새 메시지를 저장하지 않는다.
 - 모든 채팅 API 성공·오류 응답에는 `Cache-Control: no-store`를 포함한다.

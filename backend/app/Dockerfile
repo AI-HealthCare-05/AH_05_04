@@ -22,8 +22,15 @@ COPY ./backend/app ./app
 COPY ./provider_contracts ./provider_contracts
 COPY ./ocr_runtime ./ocr_runtime
 COPY ./provider_runtime ./provider_runtime
+COPY ./rag_runtime ./rag_runtime
+COPY ./infra/python ./infra/python
+# #175 내부 Bundle build port는 ai_worker의 순수 RAG kernel을 import합니다.
+# (app/repositories/rag_runtime_repository.py, app/services/rag_runtime_bundle_build.py)
+# 해당 import 체인은 stdlib만 사용하므로 'app' 의존성 그룹으로 충분하고, 추가 패키지는 없습니다.
+COPY ./ai_worker ./ai_worker
 COPY ./backend/alembic ./alembic
 COPY ./backend/alembic.ini ./alembic.ini
+COPY ./scripts/ci/verify_database_head.py ./scripts/ci/verify_database_head.py
 
 # STORAGE_DIR 기본값을 이미지 자체에 고정합니다. Config의 Path(__file__) 기반 기본값은
 # 로컬 실행(backend/app/core/config.py 기준 저장소 루트) 기준이라, docker-compose 없이

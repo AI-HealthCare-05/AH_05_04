@@ -5,6 +5,7 @@ export type GuideStatus = 'GENERATING' | 'COMPLETED' | 'FAILED'
 export type GuideData = {
   guide_id: string
   prescription_id: string
+  prescription_version_id: string
   generation_status: GuideStatus
   content: string | null
   model_name: string | null
@@ -33,4 +34,12 @@ export async function createGuide(
 
 export async function getGuide(guideId: string): Promise<GuideResponse> {
   return apiRequest<GuideResponse>(`/api/v1/guides/${guideId}`)
+}
+
+export async function getGuideForPrescription(
+  prescriptionId: string,
+): Promise<GuideResponse> {
+  return apiRequest<GuideResponse>(
+    `/api/v1/prescriptions/${prescriptionId}/guide`,
+  )
 }

@@ -19,6 +19,7 @@ class CreateGuideRequest(BaseModel):
 class GuideData(BaseModel):
     guide_id: UUID
     prescription_id: UUID
+    prescription_version_id: UUID
     generation_status: GuideStatus
     content: str | None
     model_name: str | None

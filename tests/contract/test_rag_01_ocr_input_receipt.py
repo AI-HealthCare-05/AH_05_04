@@ -41,14 +41,21 @@ def test_required_source_locations_are_machine_readable() -> None:
     locations_by_path = {location["path"]: location for location in source_locations}
 
     required_paths = {
-        "backend/app/apis/v1/medical_document_routers.py",
-        "backend/alembic/versions/529b2a36b677_add_medication_strength_and_ocr_prompt_.py",
-        "backend/app/tests/ocr/test_prescription_confirmation_api.py",
-        "backend/app/tests/ocr/test_prescription_confirmation_concurrency.py",
-        "backend/app/tests/ocr/test_prescription_confirmation_validation.py",
+        "backend/app/services/prescriptions.py",
+        "backend/app/repositories/prescription_repository.py",
+        "backend/app/models/prescriptions.py",
+        "backend/app/dtos/prescriptions.py",
+        "backend/alembic/versions/169a1b2c3d4e_create_prescription_version_foundation.py",
+        "backend/alembic/versions/169b2c3d4e5f_backfill_prescription_versions.py",
+        "backend/alembic/versions/169c3d4e5f6a_cut_over_prescription_version_reads.py",
+        "backend/alembic/versions/169d4e5f6a7b_harden_prescription_version_links.py",
+        "tests/migration/test_prescription_version_backfill_migration.py",
     }
 
     assert required_paths <= locations_by_path.keys()
+
+    for location in source_locations:
+        assert (PROJECT_ROOT / location["path"]).is_file()
 
     for path in required_paths:
         location = locations_by_path[path]
@@ -72,25 +79,35 @@ def test_machine_and_human_receipts_have_same_source_mapping_evidence() -> None:
         assert expected_row in human_receipt
 
 
-def test_migration_source_and_postgresql_execution_are_distinguished() -> None:
+def test_version_migration_chain_has_source_and_postgresql_evidence() -> None:
     receipt = load_receipt(RECEIPT_PATH)
     migration_verification = receipt["migration_verification"]
 
-    assert migration_verification["revision"] == "529b2a36b677"
+    assert migration_verification["revisions"] == [
+        "169a1b2c3d4e",
+        "169b2c3d4e5f",
+        "169c3d4e5f6a",
+        "169d4e5f6a7b",
+    ]
     assert migration_verification["source_inspection"]["status"] == "PASS"
     assert migration_verification["postgresql_alembic_execution"]["status"] == "PASS"
+    assert migration_verification["source_inspection"]["commit_sha"] == receipt["verified_git_commit_sha"]
     assert (
-        migration_verification["source_inspection"]["commit_sha"]
-        != migration_verification["postgresql_alembic_execution"]["verified_commit_sha"]
+        migration_verification["postgresql_alembic_execution"]["verified_commit_sha"]
+        == receipt["verified_git_commit_sha"]
     )
 
 
-def test_rag_08_09_gate_links_receipt_hash_and_gap_code() -> None:
+def test_rag_08_09_gate_links_receipt_hash_and_remaining_prerequisites() -> None:
     receipt = load_receipt(RECEIPT_PATH)
     receipt_hash = receipt["receipt_hash"]["value"]
     traceability = TRACEABILITY_PATH.read_text(encoding="utf-8")
 
     assert receipt_hash in traceability
-    assert "PRESCRIPTION_VERSION_NOT_IMPLEMENTED" in traceability
+    assert receipt["downstream_gate"]["prescription_version_input_ready"] is True
+    assert receipt["downstream_gate"]["rag_08_09_ready"] is False
+    assert "PRESCRIPTION_VERSION_NOT_IMPLEMENTED" not in receipt["downstream_gate"]["remaining_blockers"]
+    assert "BLOCKED_BY_RAG_08_PREREQUISITE" in traceability
+    assert "BLOCKED_BY_RAG_09_PREREQUISITE" in traceability
     assert "#170" in traceability
     assert "#171" in traceability

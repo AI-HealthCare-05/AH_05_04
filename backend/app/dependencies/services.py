@@ -15,9 +15,17 @@ from app.core.provider_observability import (
 from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.guide_repository import GuideRepository
+from app.repositories.idempotency_repository import IdempotencyRepository
 from app.repositories.medical_document_repository import MedicalDocumentRepository
+from app.repositories.medication_candidate_repository import MedicationCandidateRepository
+from app.repositories.medication_checkin_repository import MedicationCheckinRepository
+from app.repositories.medication_schedule_queries import MedicationScheduleQueries
+from app.repositories.medication_schedule_repository import MedicationScheduleRepository
+from app.repositories.notification_repository import NotificationRepository
 from app.repositories.ocr_repository import OcrRepository
+from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
 from app.services.chat import ChatService
@@ -30,9 +38,18 @@ from app.services.guide_ai import GuideGenerator
 from app.services.guide_ai import OpenAIResponsesClient as GuideOpenAIResponsesClient
 from app.services.guide_ai.prompt import PROMPT_VERSION as GUIDE_PROMPT_VERSION
 from app.services.guides import GuideService
+from app.services.idempotency import SnapshotCipher, SyncMutationIdempotencyService, get_default_snapshot_cipher
 from app.services.job_intake import JobIntakeService
 from app.services.job_status import JobStatusService
 from app.services.medical_documents import MedicalDocumentService
+from app.services.medication_candidates import MedicationCandidateService
+from app.services.medication_checkin_api import MedicationCheckinApiService
+from app.services.medication_checkins import MedicationCheckinService, NoopCheckinRevisionInvalidation
+from app.services.medication_identification import MedicationIdentificationService
+from app.services.medication_occurrences import PrescriptionVersionMedicationInvalidationService
+from app.services.medication_schedule_api import MedicationScheduleApiService
+from app.services.medication_schedule_mutations import MedicationScheduleMutationService
+from app.services.notifications import NotificationService
 from app.services.ocr import OcrService
 from app.services.ocr_ai import (
     LlmPrescriptionStructurer,
@@ -181,6 +198,27 @@ def get_prescription_repository(
     return PrescriptionRepository(session)
 
 
+def get_medication_schedule_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> MedicationScheduleRepository:
+    return MedicationScheduleRepository(session)
+
+
+def get_prescription_version_medication_invalidation_service(
+    repository: Annotated[
+        MedicationScheduleRepository,
+        Depends(get_medication_schedule_repository),
+    ],
+) -> PrescriptionVersionMedicationInvalidationService:
+    return PrescriptionVersionMedicationInvalidationService(
+        repository,
+        notification_cancellation=NotificationRepository(repository.session),
+    )
+
+
 def get_ocr_service(
     document_repository: Annotated[
         MedicalDocumentRepository,
@@ -219,8 +257,95 @@ def get_prescription_service(
         PrescriptionRepository,
         Depends(get_prescription_repository),
     ],
+    schedule_invalidation: Annotated[
+        PrescriptionVersionMedicationInvalidationService,
+        Depends(get_prescription_version_medication_invalidation_service),
+    ],
 ) -> PrescriptionService:
-    return PrescriptionService(document_repository, ocr_repository, prescription_repository)
+    return PrescriptionService(
+        document_repository,
+        ocr_repository,
+        prescription_repository,
+        schedule_invalidation,
+    )
+
+
+def get_medication_candidate_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> MedicationCandidateRepository:
+    return MedicationCandidateRepository(session)
+
+
+def get_medication_identification_service(
+    repository: Annotated[
+        MedicationCandidateRepository,
+        Depends(get_medication_candidate_repository),
+    ],
+) -> MedicationIdentificationService:
+    return MedicationIdentificationService(repository)
+
+
+def get_idempotency_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> IdempotencyRepository:
+    return IdempotencyRepository(session)
+
+
+def get_snapshot_cipher() -> SnapshotCipher:
+    # 알고리즘·키 관리 방식은 여전히 Privacy·Security 리뷰 대상입니다(#311). 이 provider가
+    # 하나로 모아둔 지점이라, 리뷰 결과가 나오면 이 함수만 바꾸면 됩니다.
+    return get_default_snapshot_cipher()
+
+
+def get_sync_mutation_idempotency_service(
+    repository: Annotated[
+        IdempotencyRepository,
+        Depends(get_idempotency_repository),
+    ],
+    cipher: Annotated[
+        SnapshotCipher,
+        Depends(get_snapshot_cipher),
+    ],
+) -> SyncMutationIdempotencyService:
+    return SyncMutationIdempotencyService(repository, cipher)
+
+
+def get_medication_candidate_service(
+    repository: Annotated[
+        MedicationCandidateRepository,
+        Depends(get_medication_candidate_repository),
+    ],
+    identification_service: Annotated[
+        MedicationIdentificationService,
+        Depends(get_medication_identification_service),
+    ],
+    idempotency_service: Annotated[
+        SyncMutationIdempotencyService,
+        Depends(get_sync_mutation_idempotency_service),
+    ],
+) -> MedicationCandidateService:
+    return MedicationCandidateService(repository, identification_service, idempotency_service)
+
+
+def get_medication_checkin_api_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    idempotency_service: Annotated[
+        SyncMutationIdempotencyService,
+        Depends(get_sync_mutation_idempotency_service),
+    ],
+) -> MedicationCheckinApiService:
+    # B3's explicit no-op remains until Track C #195 supplies its same-session adapter.
+    checkins = MedicationCheckinService(
+        MedicationCheckinRepository(session),
+        revision_invalidation=NoopCheckinRevisionInvalidation(),
+    )
+    return MedicationCheckinApiService(MedicationScheduleRepository(session), checkins, idempotency_service)
 
 
 def get_guide_repository(
@@ -326,13 +451,39 @@ def get_chat_service(
     )
 
 
+def get_password_reset_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> PasswordResetRepository:
+    return PasswordResetRepository(session)
+
+
+def get_refresh_session_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> RefreshSessionRepository:
+    return RefreshSessionRepository(session)
+
+
 def get_auth_service(
     repository: Annotated[
         UserRepository,
         Depends(get_user_repository),
     ],
+    password_reset_repository: Annotated[
+        PasswordResetRepository,
+        Depends(get_password_reset_repository),
+    ],
+    refresh_session_repository: Annotated[
+        RefreshSessionRepository,
+        Depends(get_refresh_session_repository),
+    ],
 ) -> AuthService:
-    return AuthService(repository)
+    return AuthService(repository, password_reset_repository, refresh_session_repository)
 
 
 def get_user_manage_service(
@@ -392,4 +543,25 @@ def get_job_status_service(
         ocr_repository=ocr_repository,
         guide_repository=guide_repository,
         chat_repository=chat_repository,
+    )
+
+
+def get_notification_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    idempotency: Annotated[SyncMutationIdempotencyService, Depends(get_sync_mutation_idempotency_service)],
+) -> NotificationService:
+    return NotificationService(NotificationRepository(session), idempotency)
+
+
+def get_medication_schedule_api_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    idempotency_service: Annotated[SyncMutationIdempotencyService, Depends(get_sync_mutation_idempotency_service)],
+) -> MedicationScheduleApiService:
+    return MedicationScheduleApiService(
+        MedicationScheduleQueries(session),
+        MedicationScheduleMutationService(
+            MedicationScheduleRepository(session),
+            notification_cancellation=NotificationRepository(session),
+        ),
+        idempotency_service,
     )

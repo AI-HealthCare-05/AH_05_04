@@ -364,6 +364,9 @@ staging만 정리하며 사용자 또는 다른 실행이 소유한 파일은 �
 별도로 추적한다. 따라서 `mkdir` 성공 직후 staging `open`이 실패해 fd를 얻지 못한 경우에도 생성 당시 inode
 identity와 현재 entry를 비교해 자신이 만든 빈 staging만 제거하고 lock 제거와 parent fsync까지 수행한다.
 파일과 열린 staging의 ownership은 descriptor identity와 directory-entry identity가 일치한 뒤에만 확정한다.
+생성한 lock과 Bundle 파일 descriptor는 commit 또는 cleanup의 ownership 판정과 제거가 끝날 때까지 보유해
+inode 번호 재사용을 막고, cleanup 결과와 무관하게 모든 descriptor를 해제한다. staging `open` 실패로
+descriptor를 얻지 못한 경로는 생성 시 기록한 identity와 빈 directory 조건으로만 별도 정리한다.
 identity 조회가 실패하거나 두 identity가 다르면 현재 경로를 다시 조회한 값으로 ownership을 추정하지 않고 해당
 entry를 보존한 채 `EVAL_INTERNAL_ERROR`로 실패한다. 이는 잔존물보다 다른 실행의 replacement 오삭제 방지를
 우선하는 fail-closed 규칙이다. cleanup은 대상 이름을 예측 불가능한 격리 이름으로 먼저 exclusive rename하고,

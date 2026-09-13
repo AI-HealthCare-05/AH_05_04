@@ -105,7 +105,7 @@ async def test_structurer_sends_all_clova_tokens_and_splits_strength() -> None:
     assert fields["DOSE_VALUE"] == "1"
     assert fields["DOSE_UNIT"] == "정"
     assert result.model_name == "actual-test-model-id"
-    assert result.prompt_version == "ocr-structure-prompt-v2"
+    assert result.prompt_version == "ocr-structure-prompt-v3"
 
 
 async def test_rule_based_structurer_does_not_report_llm_metadata() -> None:

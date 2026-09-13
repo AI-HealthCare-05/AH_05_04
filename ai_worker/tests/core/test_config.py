@@ -121,6 +121,7 @@ def test_config_has_approved_redis_defaults() -> None:
 
     assert config.DLQ_OUTBOX_CLAIM_TTL_SECONDS == 30.0
     assert config.DLQ_PUBLISHER_INTERVAL_SECONDS == 1.0
+    assert config.OUTBOX_PUBLISHER_INTERVAL_SECONDS == 1.0
 
 
 def test_config_accepts_redis_environment_values(
@@ -135,6 +136,37 @@ def test_config_accepts_redis_environment_values(
     assert config.REDIS_HOST == "localhost"
     assert config.REDIS_PORT == 6380
     assert config.REDIS_CONSUMER_NAME == "worker-test-1"
+
+
+@pytest.mark.parametrize(
+    "environment",
+    [DeploymentEnvironment.STAGING, DeploymentEnvironment.PRODUCTION],
+)
+def test_config_requires_redis_password_outside_local(
+    environment: DeploymentEnvironment,
+) -> None:
+    with pytest.raises(ValidationError, match="REDIS_PASSWORD"):
+        _config(ENV=environment, REDIS_PASSWORD=None)
+
+
+@pytest.mark.parametrize(
+    "configured_value",
+    ["", "   ", "replace-with-production-redis-password"],
+)
+def test_config_rejects_blank_or_placeholder_redis_password_outside_local(
+    configured_value: str,
+) -> None:
+    with pytest.raises(ValidationError, match="REDIS_PASSWORD"):
+        _config(ENV=DeploymentEnvironment.PRODUCTION, REDIS_PASSWORD=configured_value)
+
+
+def test_config_allows_redis_password_outside_local() -> None:
+    config = _config(
+        ENV=DeploymentEnvironment.PRODUCTION,
+        REDIS_PASSWORD="synthetic-production-redis-password",
+    )
+
+    assert config.REDIS_PASSWORD == "synthetic-production-redis-password"
 
 
 def test_config_rejects_blank_redis_group() -> None:
@@ -183,6 +215,7 @@ def test_config_rejects_blank_reconciler_consumer_name() -> None:
         ("RECONCILER_INTERVAL_SECONDS", 0),
         ("DLQ_OUTBOX_CLAIM_TTL_SECONDS", 0),
         ("DLQ_PUBLISHER_INTERVAL_SECONDS", 0),
+        ("OUTBOX_PUBLISHER_INTERVAL_SECONDS", 0),
     ],
 )
 def test_config_rejects_invalid_recovery_setting(
@@ -205,12 +238,14 @@ def test_config_parses_required_environment(
     configured_value: str,
     expected: DeploymentEnvironment,
 ) -> None:
-    config = Config.model_validate(
-        {
-            **_REQUIRED_SETTINGS,
-            "ENV": configured_value,
-        }
-    )
+    settings = {
+        **_REQUIRED_SETTINGS,
+        "ENV": configured_value,
+    }
+    if expected is not DeploymentEnvironment.LOCAL:
+        settings["REDIS_PASSWORD"] = "synthetic-redis-password"
+
+    config = Config.model_validate(settings)
 
     assert config.ENV is expected
 
@@ -296,3 +331,161 @@ def test_config_rejects_blank_clova_secret() -> None:
 def test_config_rejects_blank_storage_dir() -> None:
     with pytest.raises(ValidationError):
         _config(STORAGE_DIR="   ")
+
+
+def _protected_settings(**overrides: Any) -> dict[str, Any]:
+    return {
+        "PROTECTED_RETRIEVAL_ENABLED": True,
+        "PROTECTED_DB_HOST": "protected-db.test",
+        "PROTECTED_DB_NAME": "protected_test",
+        "PROTECTED_DB_USER": "protected-runner",
+        "PROTECTED_DB_PASSWORD": "synthetic-protected-password",
+        "PROTECTED_DB_CONTROL_USER": "protected-controller",
+        "PROTECTED_DB_CONTROL_PASSWORD": "synthetic-control-password",
+        "PROTECTED_DB_SCHEMA": "protected_test_schema",
+        "PROTECTED_DB_ACCESS_ROLE": "protected_access_role",
+        "PROTECTED_DB_CONTROL_ROLE": "protected_control_role",
+        **overrides,
+    }
+
+
+def test_protected_retrieval_database_is_disabled_by_default() -> None:
+    config = _config()
+
+    assert config.PROTECTED_RETRIEVAL_ENABLED is False
+    with pytest.raises(RuntimeError, match="PROTECTED_RETRIEVAL_DISABLED"):
+        _ = config.protected_data_database_url
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "PROTECTED_DB_HOST",
+        "PROTECTED_DB_NAME",
+        "PROTECTED_DB_USER",
+        "PROTECTED_DB_PASSWORD",
+        "PROTECTED_DB_CONTROL_USER",
+        "PROTECTED_DB_CONTROL_PASSWORD",
+        "PROTECTED_DB_SCHEMA",
+        "PROTECTED_DB_ACCESS_ROLE",
+        "PROTECTED_DB_CONTROL_ROLE",
+    ],
+)
+def test_enabled_protected_retrieval_requires_a_complete_separate_connection(missing_field: str) -> None:
+    settings = _protected_settings()
+    settings[missing_field] = None
+
+    with pytest.raises(ValidationError, match=missing_field):
+        _config(**settings)
+
+
+def test_protected_retrieval_never_falls_back_to_the_worker_connection() -> None:
+    with pytest.raises(ValidationError, match="separate database identity"):
+        _config(
+            DB_PORT=5432,
+            **_protected_settings(
+                PROTECTED_DB_HOST=_REQUIRED_SETTINGS["DB_HOST"],
+                PROTECTED_DB_PORT=5432,
+                PROTECTED_DB_NAME=_REQUIRED_SETTINGS["DB_NAME"],
+                PROTECTED_DB_USER=_REQUIRED_SETTINGS["DB_USER"],
+            ),
+        )
+
+
+def test_protected_data_and_control_identities_must_be_distinct() -> None:
+    with pytest.raises(ValidationError, match="data and control database identities must be distinct"):
+        _config(
+            **_protected_settings(
+                PROTECTED_DB_CONTROL_USER="protected-runner",
+                PROTECTED_DB_CONTROL_PASSWORD="synthetic-protected-password",
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("PROTECTED_DB_HOST", "replace-with-protected-host"),
+        ("PROTECTED_DB_NAME", "replace-with-protected-database"),
+        ("PROTECTED_DB_USER", "replace-with-protected-user"),
+        ("PROTECTED_DB_PASSWORD", "replace-with-protected-password"),
+        ("PROTECTED_DB_CONTROL_USER", "replace-with-protected-control-user"),
+        ("PROTECTED_DB_CONTROL_PASSWORD", "replace-with-protected-control-password"),
+        ("PROTECTED_DB_SCHEMA", "replace-with-protected-schema"),
+        ("PROTECTED_DB_ACCESS_ROLE", "replace-with-protected-access-role"),
+        ("PROTECTED_DB_CONTROL_ROLE", "replace-with-protected-control-role"),
+    ],
+)
+def test_non_local_protected_retrieval_rejects_placeholders(field_name: str, value: str) -> None:
+    with pytest.raises(ValidationError, match=field_name):
+        _config(
+            ENV=DeploymentEnvironment.PRODUCTION,
+            REDIS_PASSWORD="synthetic-redis-password",
+            **_protected_settings(**{field_name: value}),
+        )
+
+
+def test_protected_database_url_handles_reserved_password_characters_without_exposing_schema() -> None:
+    config = _config(**_protected_settings(PROTECTED_DB_PASSWORD="synthetic@pass/word%value"))
+
+    assert config.protected_data_database_url.password == "synthetic@pass/word%value"
+    assert config.protected_data_database_url.username == "protected-runner"
+    assert config.protected_control_database_url.username == "protected-controller"
+    assert config.PROTECTED_DB_SCHEMA is not None
+    assert config.PROTECTED_DB_SCHEMA.get_secret_value() == "protected_test_schema"
+    assert "protected_test_schema" not in repr(config)
+
+
+def test_source_artifact_storage_is_disabled_by_default() -> None:
+    config = _config()
+
+    assert config.SOURCE_ARTIFACT_STORAGE_BACKEND == "DISABLED"
+
+
+def test_config_accepts_s3_source_artifact_storage_without_credentials() -> None:
+    config = _config(
+        SOURCE_ARTIFACT_STORAGE_BACKEND="S3_PRIVATE",
+        SOURCE_ARTIFACT_S3_BUCKET="private-source-artifacts",
+        SOURCE_ARTIFACT_S3_REGION="ap-northeast-2",
+        SOURCE_ARTIFACT_S3_ENDPOINT_URL="https://storage.example",
+        SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION="AES256",
+    )
+
+    assert config.SOURCE_ARTIFACT_S3_BUCKET == "private-source-artifacts"
+    serialized = repr(config)
+    assert "AWS_ACCESS_KEY_ID" not in serialized
+    assert "AWS_SECRET_ACCESS_KEY" not in serialized
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"SOURCE_ARTIFACT_STORAGE_BACKEND": "LOCAL_PRIVATE"},
+        {"SOURCE_ARTIFACT_STORAGE_BACKEND": "S3_PRIVATE"},
+        {
+            "SOURCE_ARTIFACT_STORAGE_BACKEND": "LOCAL_PRIVATE",
+            "SOURCE_ARTIFACT_LOCAL_ROOT": "/private/source-artifacts",
+            "SOURCE_ARTIFACT_S3_REGION": "unexpected-region",
+        },
+        {
+            "SOURCE_ARTIFACT_STORAGE_BACKEND": "S3_PRIVATE",
+            "SOURCE_ARTIFACT_S3_BUCKET": "private-source-artifacts",
+            "SOURCE_ARTIFACT_LOCAL_ROOT": "/unexpected/local/root",
+            "SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION": "AES256",
+        },
+        {
+            "SOURCE_ARTIFACT_STORAGE_BACKEND": "S3_PRIVATE",
+            "SOURCE_ARTIFACT_S3_BUCKET": "private-source-artifacts",
+            "SOURCE_ARTIFACT_S3_ENDPOINT_URL": "https://user:secret@storage.example",
+            "SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION": "AES256",
+        },
+        {
+            "SOURCE_ARTIFACT_STORAGE_BACKEND": "S3_PRIVATE",
+            "SOURCE_ARTIFACT_S3_BUCKET": "private-source-artifacts",
+            "SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION": "aws:kms",
+        },
+    ],
+)
+def test_config_rejects_incomplete_or_mixed_source_artifact_storage(overrides: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        _config(**overrides)

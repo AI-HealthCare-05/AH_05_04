@@ -1,14 +1,17 @@
-# Issue #178 RAG Evidence Retrieval Kernel Implementation Plan
+# Issue #178 RAG Evidence Retrieval Kernel·Synthetic Adapter Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:test-driven-development` while implementing each task. Execute this plan inline and sequentially because all tasks modify the same production and test files.
 
-**Goal:** 비권위적 `KNOWLEDGE_CHUNK` Retrieval Kernel을 구현해 query binding, lexical·dense search, canonical candidate 구성, rerank와 sanitized diagnostic trace를 결정적으로 검증한다.
+**Goal:** 비권위적 `KNOWLEDGE_CHUNK` Retrieval Kernel과 synthetic exact·trigram·dense·versioned rerank adapter를 구현해 query binding, canonical candidate 구성, Receipt와 sanitized diagnostic trace를 결정적으로 검증한다.
 
-**Architecture:** 하나의 순수 모듈이 provisional 내부 타입과 orchestration을 소유하고, query 검증·검색·rerank 계산은 Protocol 뒤로 둔다. Kernel은 요청과 실제 적용 Receipt를 exact-match하고 민감한 query·Evidence content를 `SensitiveText`로 격리하지만 Source 승인, Evidence sufficiency, Safety 상태, persistence 또는 Composer 사용 가능성은 판정하지 않는다.
+**Architecture:** Kernel 모듈이 provisional 내부 타입과 orchestration을 소유하고, 별도 synthetic adapter 모듈이 기존 search/rerank Protocol을 구현한다. Kernel은 요청과 실제 적용 Receipt를 exact-match하고 민감한 query·Evidence content를 `SensitiveText`로 격리하지만 Source 승인, Evidence sufficiency, Safety 상태, persistence 또는 Composer 사용 가능성은 판정하지 않는다.
 
 **Tech Stack:** Python 3.13, frozen dataclass, `StrEnum`, `Protocol`, SHA-256, canonical JSON, pytest, Ruff, mypy
 
 **Spec:** `docs/designs/ceohwj/issue-178-rag-evidence-retrieval-design.md`
+
+**Production Decision:** `docs/governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md`
+(`PD-315-20260908`, Review pending)
 
 ## Global Constraints
 
@@ -16,7 +19,7 @@
 - 허용 Evidence kind는 `KNOWLEDGE_CHUNK` 하나이며 `RULE_EVIDENCE`는 구현하지 않는다.
 - PostgreSQL, SQLAlchemy, Backend model, sentence-transformers, Source Guard, Safety Result와 Composer를 import하지 않는다.
 - 새로운 dependency를 추가하지 않는다.
-- Production adapter, DB schema, wire DTO, Runtime Bundle field와 persistence contract를 만들지 않는다.
+- Production DB/provider adapter, DB schema, wire DTO, Runtime Bundle field와 persistence contract를 만들지 않는다.
 - `SensitiveText` 원문은 `repr`, `str`, typed failure, trace 또는 기본 JSON serialization에서 노출하지 않는다.
 - Kernel output은 비권위적이며 Source approval, sufficiency, conflict, freshness, Safety 또는 Composer eligibility를 주장하지 않는다.
 - `.claude/`와 `skills-lock.json` 등 사용자 소유 미추적 파일을 수정하거나 stage하지 않는다.
@@ -29,6 +32,7 @@
 | File | Responsibility |
 | --- | --- |
 | `ai_worker/tasks/rag/evidence_retrieval.py` | provisional 내부 타입, 민감 문자열 wrapper, 입력 검증, search/rerank Receipt와 결과 검증, orchestration, sanitized trace |
+| `ai_worker/tasks/rag/evidence_retrieval_synthetic_adapters.py` | synthetic fixture Index, versioned stage/rerank config, concrete search/rerank Port adapter |
 | `ai_worker/tests/rag/test_evidence_retrieval.py` | 비식별 합성 fixture, deterministic fake ports, RED/GREEN 및 privacy·determinism 회귀 |
 
 `ai_worker/tasks/rag/__init__.py`에는 새 이름을 export하지 않는다. Knowledge Evidence Index와 Privacy 계약 전에는 이 모듈을 stable package surface로 승격하지 않는다.
@@ -188,7 +192,12 @@ def test_query_binding_failures_stop_before_search(
     verifier = QueryVerifier(verification)
     search = NeverSearch()
 
-    result = retrieve_knowledge_evidence(lexical_request(), verifier, search, NeverRerank())
+    result = retrieve_knowledge_evidence(
+        lexical_request(),
+        query_verifier=verifier,
+        search_port=search,
+        rerank_port=NeverRerank(),
+    )
 
     assert result.execution_status is status
     assert result.diagnostic_code is code
@@ -464,7 +473,12 @@ def test_search_results_normalize_same_evidence_into_one_candidate() -> None:
     )
     rerank = CapturingRerankPort()
 
-    retrieve_knowledge_evidence(request, QueryVerifier(query_success()), search, rerank)
+    retrieve_knowledge_evidence(
+        request,
+        query_verifier=QueryVerifier(query_success()),
+        search_port=search,
+        rerank_port=rerank,
+    )
 
     assert rerank.request is not None
     assert len(rerank.request.candidates) == 1
@@ -928,9 +942,11 @@ class DiagnosticHitRecord:
     rank: int
     stage_score: CanonicalScore
     content_sha256: str
+    evidence_index_ref: ImmutableArtifactRef
     source_snapshot_ref: ImmutableArtifactRef
     source_version: str
     locator: str
+    canonicalization_spec_version: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -1074,3 +1090,171 @@ Approval requires code/spec/security `APPROVE` and architecture `CLEAR`. Review 
 4. `✅ test: Retrieval Kernel privacy 회귀 보강`
 
 설계·계획 문서 커밋은 이미 별도로 유지하며 구현 커밋에 `.claude/` 또는 `skills-lock.json`을 포함하지 않는다.
+
+---
+
+## Slice 2: Synthetic Search·Versioned Rerank Adapter
+
+PR `#270`은 위 Task 1~4의 Kernel과 Port Protocol만 구현했다. 이번 slice는 함수 시그니처나 Kernel stage를
+바꾸지 않고 concrete adapter를 추가한다. Issue와 PR에는 `Related #178`을 사용하며 이 slice로 Issue를 닫지 않는다.
+
+### Task A: exact·trigram lexical adapter
+
+**Files:**
+
+- Create: `ai_worker/tasks/rag/evidence_retrieval_synthetic_adapters.py`
+- Modify: `ai_worker/tests/rag/test_evidence_retrieval.py`
+
+- [x] exact 후보가 trigram 후보보다 먼저 오는 실패 테스트를 작성한다.
+- [x] RED가 adapter module 부재로 발생하는지 확인한다.
+- [x] `SyntheticEvidenceRecord`, `SyntheticEvidenceIndex`, `VersionedLexicalSearchConfig`를 frozen/slots로 구현한다.
+- [x] 기존 `LEXICAL` stage 내부에서 normalized substring exact와 synthetic pg_trgm Jaccard-shaped similarity를 실행한다.
+- [x] `synthetic-trigram-jaccard-v1`과 matching normalization strategy를 lexical config artifact에 결속한다.
+- [x] `cat`/`car`의 hand-derived Jaccard score `0.333333` 회귀를 고정한다.
+- [x] exact 우선, score 내림차순, UTF-8 evidence key 오름차순, `lexical_limit`을 적용한다.
+- [x] lexical/dense ordering 기준을 stage config artifact payload에 결속한다.
+- [x] trigram threshold를 canonical Decimal 문자열로 제한하고 JSON number payload를 typed failure로 거부한다.
+- [x] config·Index payload와 artifact SHA-256을 재계산해 detached payload를 typed failure로 거부한다.
+
+### Task B: fingerprint-bound dense adapter
+
+**Files:**
+
+- Modify: `ai_worker/tasks/rag/evidence_retrieval_synthetic_adapters.py`
+- Modify: `ai_worker/tests/rag/test_evidence_retrieval.py`
+
+- [x] query fingerprint에 결속된 vector가 cosine 순위를 만드는 실패 테스트를 작성한다.
+- [x] `SyntheticDenseQueryVector`, `VersionedDenseSearchConfig`를 추가한다.
+- [x] raw query 없이 fingerprint와 문자열 Decimal vector만 config artifact에 포함한다.
+- [x] query vector 누락·중복, dimension mismatch, zero/non-finite/non-string vector, mutable record collection과 threshold 오류를 typed failure로 닫는다.
+- [x] dense threshold를 canonical Decimal 문자열로 제한하고 JSON number payload를 typed failure로 거부한다.
+- [x] query vector 입력 순서와 caller Decimal context가 artifact/score/정렬을 바꾸지 않는지 검증한다.
+- [x] `DENSE` stage Receipt에 실제 config와 adapter artifact를 반환한다.
+
+### Task C: versioned weighted reranker
+
+**Files:**
+
+- Modify: `ai_worker/tasks/rag/evidence_retrieval_synthetic_adapters.py`
+- Modify: `ai_worker/tests/rag/test_evidence_retrieval.py`
+
+- [x] lexical/dense weight 변경이 순위를 바꾸는 실패 테스트를 작성한다.
+- [x] `VersionedRerankConfig`, `VersionedEvidenceRerankAdapter`를 구현한다.
+- [x] `knowledge-rerank-input-v1` projection hash를 adapter에서 재계산한다.
+- [x] weight 합 `1`, positive `top_k`, unique candidate key와 unique stage signal을 검증한다.
+- [x] rerank weight를 canonical Decimal 문자열로 제한하고 JSON number payload를 typed failure로 거부한다.
+- [x] malformed provenance·score, empty candidate set과 stage rank 충돌을 typed failure로 거부한다.
+- [x] weighted score 내림차순, UTF-8 evidence key 오름차순으로 selection을 만든다.
+- [x] weight 변경 순위, 동점 tie-break와 `top_k > selection_limit` Kernel fail-closed를 검증한다.
+- [x] malformed/detached config와 내부 예외를 raw detail 없는 `EvidenceRerankFailure`로 반환한다.
+- [x] synthetic namespace 없는 Evidence provenance·config·adapter Receipt를 typed failure로 거부한다.
+
+### Task D: Kernel DI·privacy·reproducibility 회귀
+
+**Files:**
+
+- Modify: `ai_worker/tests/rag/test_evidence_retrieval.py`
+- Modify: `docs/designs/ceohwj/issue-178-rag-evidence-retrieval-design.md`
+- Modify: `docs/designs/ceohwj/issue-178-rag-evidence-retrieval-implementation-plan.md`
+
+- [x] concrete search/rerank adapter를 기존 `retrieve_knowledge_evidence()`에 DI한다.
+- [x] lexical+dense 후보 병합과 versioned rerank 성공을 검증한다.
+- [x] trace에 raw query와 Source content가 없음을 검증한다.
+- [x] lexical config canonical projection의 golden SHA-256을 고정한다.
+- [x] duplicate fixture/candidate, detached config와 input-set hash mismatch 회귀를 고정한다.
+- [x] immutable `SensitiveText`를 불필요하게 unwrap·rewrap하지 않고 같은 instance로 전달한다.
+- [x] Source snapshot·Evidence Index·개별 Evidence content hash domain과 공개 Source 전용 SHA-256 경계를 문서화한다.
+- [x] record·candidate·`SensitiveText`를 exact runtime type으로 검증해 benign·stateful subclass를 typed failure로 거부한다.
+- [x] production `ai_worker` 모듈이 synthetic adapter 모듈을 import하지 않음을 CI 테스트로 고정한다.
+- [x] synthetic Index marker가 승인 Source 형태 provenance를 보증하지 못하도록 Source marker를 독립 요구한다.
+- [x] versioned config·index·query vector·fingerprint·provenance·stage signal을 exact runtime type으로 검증한다.
+- [x] canonical container를 `type(x) is tuple`로 닫아 stateful tuple 하위 타입의 재결속 우회를 막고 end-to-end 회귀로 고정한다.
+- [x] marker 판정을 case-sensitive 소문자 canonical 형태로 통일한다.
+- [x] rerank에서 Evidence Index marker와 Source marker를 각각 독립 요구하고 양방향 회귀를 고정한다.
+- [x] stage signal score를 stage metric 범위(`LEXICAL` `[0,1]`, `DENSE` `[-1,1]`)로 강제한다.
+- [x] import 가드 스캔 범위를 repo 루트로 올려 `ai_worker` 밖 모듈도 덮는다.
+- [x] provisional 이름과 `rag-db-schema` 정규 이름의 매핑과 미표현 정규 필드를 설계 문서에 명시한다.
+- [x] 아래 전체 검증 명령을 fresh 실행한다.
+
+```bash
+UV_CACHE_DIR=/private/tmp/ah178_adapters_uv_cache uv run pytest ai_worker/tests/rag -q
+UV_CACHE_DIR=/private/tmp/ah178_adapters_uv_cache uv run pytest ai_worker/tests/evaluation -q
+UV_CACHE_DIR=/private/tmp/ah178_adapters_uv_cache uv run ruff check ai_worker/tasks/rag ai_worker/tests/rag
+UV_CACHE_DIR=/private/tmp/ah178_adapters_uv_cache uv run mypy ai_worker/tasks/rag
+git diff --check
+```
+
+### Slice 2 완료 주장과 후속
+
+완료 주장은 synthetic fixture에서 exact·trigram·dense 검색과 versioned weighted rerank가 version/hash에 결속되고
+결정적으로 재현되며 raw text를 diagnostic surface에 남기지 않는다는 범위까지다. 실제 RAG-06 Catalog·Evidence
+Index persistence, PostgreSQL `pg_trgm`·pgvector SQL, Source approval, Evidence Gate, Retrieval Run, Composer와
+EVAL `#160` 연결은 후속 slice다.
+
+리뷰 배정은 구현 담당자 정현우, 담당 리뷰어 권가빈(Evidence/Scope/Safety), DB·Source 교차리뷰 송은영·김지혜다.
+
+---
+
+## Production 후속 순서 — Issue #315 결정 반영
+
+이 절은 후속 구현의 순서와 인계 조건만 고정한다. Issue #315 문서 PR에서는 아래 production code, DB,
+Catalog, persistence 또는 Evaluation 연결을 구현하지 않는다.
+
+1. **#166 PR 검토:** Catalog/Resolver 입력 경계, Source Snapshot·Member provenance와 export hash domain을
+   검토한다.
+2. **#166 완료 후 #167/#168 통합:** PR #260의 pure Candidate Index logic을 재구현하지 않고 실제 Catalog
+   export와 DB persistence를 연결한다. #166 D-05의 Candidate Catalog projection hash, Runtime medication
+   Catalog manifest hash와 PR #329/#167 v2 Catalog envelope 계산식은 이 Decision에서 변경하지 않는다.
+3. **#362 Source 생산 경계:** Source ingestion이 Production `source_version` 생성·검증, 외부 Version 보존·결속,
+   정규 200자 상한과 파생 Freshness·Snapshot 승인 경계를 구현한다. Snapshot이 없는 conflict run에도 Operation,
+   시도한 `source_version`과 비교 canonical contract를 append-only로 보존한다. #178의 fail-closed Source
+   version 검증과 conflict origin 결속보다 먼저 완료한다. `external:` prefix를 포함한 총 길이 기준으로
+   payload 191자는 허용하고 192자는 거부하는 경계 테스트를 포함한다.
+4. **#178 Production Adapter:** `PD-315-20260908`의 `rrf-rank-fusion@1` 공식과 안정 Chunk 좌표
+   dedupe·content hash 충돌 검증·exact-rational 비교·fraction receipt를 구현한다. RRF는
+   `KNOWLEDGE_CHUNK` 전용이고 Rule Evidence는 `rule_check` 경로를 사용한다. P0 승인 기본 configuration은
+   Lexical 20·Dense 20·`rrf_k=60`·RRF 출력 30·Reranker 입력 20·Gate 뒤 Context 최대 5다. DEV가 변경을
+   요구하면 새 version을 승인하고 HOLDOUT 전에 선택된 version을 동결한다. Exact 우선 bucket의
+   Trigram·`ts_rank_cd` 순위는 PostgreSQL Adapter가 versioned lexical receipt로 반환한다.
+5. **정규 경계 반영:** RFC 8785 JCS serializer와 hash-domain golden vector, 유형별
+   `evidence-bridge-content@1` projection 및 `INTERACTION_RULE.evidence_role`을 포함한 정규 Evidence provenance,
+   Snapshot `canonical_checksum` exact-match, API·Internal `source_version` hash suffix와 Snapshot checksum의
+   exact-match, Source metadata와 결속된 Production `source_version`, terminal `retrieval_execution_status`,
+   `retrieval_run.status` lifecycle과 diagnostic을 포함한 Safety finalizer 변환,
+   `hybrid_retrieve` Node ID, Runtime identity와 Evaluation bridge ID의 분리 검증을 구현한다.
+6. **권위적 실행 결속:** PostgreSQL hybrid retrieval이 준비된 뒤 별도 DB·Safety 범위에서 authoritative
+   Retrieval Run receipt, locator 검증과 Gate origin을 결속한다.
+7. **Evaluation 연결:** bridge producer가 Runtime identity를 Evaluation ID에 결속한 뒤 runner가 Runtime
+   receipt를 `RET-L -> RET-D -> RET-H -> RET-HR`과 연결하고 Dataset·Index·configuration version/hash를
+   exact-match한다. 승인된 새 `source_version`은 내용 hash가 같아도 새 stable key·`evidence_ref_id`·mapping
+   manifest로 재평가하고, 새 Snapshot·version이 없는 `NO_CHANGE`만 기존 결속을 유지한다. Bridge와 runner는
+   SQL ranking을 재구현하지 않는다.
+
+### Production 후속 완료 주장 차단 조건
+
+- `PD-315-20260908` 책임·교차 리뷰 미완료
+- #166의 승인 Catalog export Receipt 미확정
+- #362의 Production `source_version` 생산·검증·200자 상한과 Source Snapshot 승인 경계 미완료
+- #178의 별도 Knowledge Evidence Index/Corpus Receipt와 소유 경계 미확정
+- PostgreSQL Adapter가 `ts_rank_cd`를 포함한 Lexical configuration receipt를 재현하지 못함
+- Production provenance가 Snapshot `canonical_checksum`과 exact-match하지 않거나 정확히 하나의 Snapshot
+  Member를 가리키지 않음
+- API·Internal `source_version` hash suffix가 해당 Snapshot `canonical_checksum`과 exact-match하지 않는데
+  Retrieval Adapter에서 Retrieval `VALIDATION_ERROR`와 Safety `VALIDATION_FAILED`로 닫지 않거나,
+  Source producer에서 Snapshot 생성 전 수집 validation failure로 닫지 않고 이미 관측된 동일
+  `source_version`의 canonical contract 충돌인 `SOURCE_VERSION_CONFLICT`로 오분류함. Producer의 정확한
+  ingestion `failure_code`는 #362에서 Source Ingestion 계약과 함께 고정함
+- `external:` payload가 Snapshot의 non-null `external_version`과 byte-for-byte exact-match하지 않거나,
+  외부 불변 version이 없는 API·Internal Snapshot에 `external_version`이 남아 있는데 producer 또는
+  Retrieval Adapter가 각각 fail-closed하지 않음
+- Source Snapshot checksum을 포함한 모든 JCS domain의 문자열을 일괄 NFC 변환하여 원문 Unicode를 보존하는
+  `mfds-product-approval@1` preimage를 변경함
+- pinned Source·Operation·요청 version과 authoritative conflict signal의 exact origin 결속 없이 latest 또는
+  unbound `SOURCE_VERSION_CONFLICT`를 현재 Job의 `evidence_status=CONFLICTED`로 투영함
+- ad-hoc `json.dumps(sort_keys=True)` hash 또는 raw-score weighted fusion을 Production에 사용함
+- Retrieval 상태를 `safety_result.execution_status`로 직접 저장하거나 canonical Node ID를 기록하지 않음
+- Production `source_version`을 Source metadata와 함께 검증하지 않거나 Runtime identity와 Evaluation bridge
+  ID의 생성·검증 소유권이 분리되지 않음
+
+이 차단 조건이 남아 있으면 Production Adapter, Retrieval Run, Evidence Gate origin 또는 실제 Retrieval
+Evaluation 완료를 주장하지 않는다. `PUBLIC_TRACK_F=false`를 유지한다.

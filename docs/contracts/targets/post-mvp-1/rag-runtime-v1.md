@@ -3,17 +3,22 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Target · Not implemented — RAG-00 / 2026-09-01 |
-| 구현·리뷰 | Not implemented · Track F Backend·Worker·RAG·Frontend 구현과 지정 리뷰어 검토 대기 |
+| 구현·리뷰 | Not implemented · Track F Backend·Worker·RAG·Frontend 구현과 지정 리뷰어 검토 대기. 「Bundle Manifest Hash와 저장 정합」 절만 `PD-175-20260910` Approved이며 `BUILDING` 범위 저장 계약에 한한다 |
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
 | Normative Source | `post-mvp-patient-rule-first-curated-evidence-rag-v1.7.md@1.50` · SHA-256 `e83415326dd08cda61353d7cd8bf4e6d591bb99f51a8a3daa498421d8772535a` |
 | Physical Target | `rag-detailed-db-schema-v1.md@1.47` · SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
-| Last verified | 2026-09-01 |
+| 후속 결정 | [`PD-315-20260908`](../../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md) · Review pending · [`PD-175-20260910`](../../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md) · Approved (2026-09-10) |
+| Last verified | 2026-09-10 |
 
 ## 목적과 적용 범위
 
 사용자가 확정한 현재 처방과 공식 의약품 Identification을 기반으로 Guide·Chat·처방약–OTC 질문을 동일한 Rule-first RAG·Citation·Safety 경로에서 처리한다.
 
 이 문서는 외부 RAG 정본의 Local P0 Runtime 투영본이다. RAG-00은 Approved Target이지만 공유 DTO·DB 계약의 구현·테스트가 완료되기 전에는 현재 Runtime 계약이 아니며 기존 Current 동작을 자동으로 대체하지 않는다.
+
+#164 Runtime Bundle 최소 DB 기반 분할 PR은 `rag_runtime_execution_manifest`, `rag_runtime_release_bundle`, `rag_runtime_bundle_source`, `rag_runtime_environment`, `rag_runtime_environment_transition`, `rag_release_evaluation_approval`의 저장 구조와 FK/unique/CHECK/append-only 이력 기반만 추가한다. 이 변경은 Runtime Bundle 활성화, 환경 포인터 전환, drain, mixed worker rollback, Production 공개 승인을 수행하거나 Current Runtime 동작으로 해석하지 않는다.
+
+#174_1 Preflight Context 저장 기반 분할 PR은 `ai_job_intake_context`, `ai_job_execution_context`, `ai_job_execution_identification`의 저장 구조와 FK/unique/CHECK 기반만 추가한다. `ai_job_execution_identification`은 약-Identification composite FK와 repository `MATCHED` 검증으로 문서의 MATCHED pinning 보장을 실제 저장 경계에서 강제한다. Guard 물리 테이블이 아직 없으므로 구현 컬럼은 `runtime_guard_decision_ref`를 사용한다. 이 변경은 Guide/Chat `202 + Job` 접수 전환, Worker 실행, 결과 commit currentness 재검증, `STALE` 종결, 공개 DTO 연결을 수행하거나 Current Runtime 동작으로 해석하지 않는다.
 
 - 자유 ReAct Agent, 열린 웹 검색, Graph DB와 승인되지 않은 Source 자동 편입은 사용하지 않는다.
 - 고위험·응급·금지 행동 분기는 일반 Retrieval보다 먼저 수행한다.
@@ -168,9 +173,25 @@ Guide의 Citation Finalizer도 `claim_citation_validator`와 `release_gate` 사�
 
 ### Retrieval·Rerank·Evidence Gate
 
-- 검색 대상은 승인·활성 Source Snapshot의 Knowledge Chunk와 Rule Evidence다.
+- RRF 검색 대상은 승인·활성 Source Snapshot의 Knowledge Chunk다. Interaction Rule은 앞선 `rule_check`에서
+  결정론적으로 평가하고 연결된 Rule Evidence를 Citation·Evidence Gate로 전달하며, 같은 Rule Evidence를
+  RRF 후보로 다시 검색하지 않는다.
+- 내부 Evidence provenance는 `source_snapshot_id`, 해당 Snapshot의 `canonical_checksum`과 정확히 하나의
+  Endpoint/Operation 또는 Artifact Member를 함께 보존·검증한다. `canonical_checksum`은 bridge content hash
+  preimage가 아니라 당시 Snapshot 내용 동일성 확인 값이다.
+- `external:` Production `source_version`의 payload는 해당 Snapshot에 보존된 non-null
+  `external_version`과 byte-for-byte exact-match해야 하며, 외부 불변 version이 없는 API·Internal
+  Snapshot의 `external_version`은 `null`이어야 한다. 전체 `source_version` 200자 상한에 prefix가 포함되므로
+  `external_version` payload의 허용 상한은 191자다.
+- `api:`·`internal:` Production `source_version`의 hash suffix는 해당 `source_snapshot_id`의
+  `canonical_checksum`과 exact-match해야 한다. 이미 저장된 Snapshot을 읽는 Adapter에서 형식만 유효한 다른
+  hash가 발견되면 Source 내용 충돌이 아니라 Retrieval `VALIDATION_ERROR`로 닫고 Safety finalizer가
+  `VALIDATION_FAILED` fallback으로 변환한다.
 - `pg_trgm`·Dense 검색과 rerank 구현은 versioned configuration으로 재현한다.
 - 내부 Top-K·score는 공개 DTO에 노출하지 않는다.
+- 승인 근거가 없는 Retrieval `SUCCEEDED/NO_HITS`는 Safety finalizer에서
+  `execution_status=NO_RESULT`, `evidence_status=INSUFFICIENT`, `release_decision=REJECTED`,
+  `fallback_code=NO_APPROVED_EVIDENCE`로 변환한다.
 - 의료 Claim과 처방약 기반 Guideline Claim은 승인된 Source version과 locator를 가져야 한다.
 - 근거 없음·상충·Source 비활성·만료·Citation 불일치에서는 생성 내용을 폐기하고 승인 fallback만 저장한다.
 
@@ -190,6 +211,8 @@ Citation 공개 전에는 별도 `operation_type=CITATION_AUTHORIZATION` Guard�
 
 ## Intake Context와 Full Execution Context
 
+#398/#412 통합 시 위 Context 저장 테이블 3개의 일반 Runtime 직접 권한은 SELECT·INSERT로 제한한다. UPDATE·DELETE·TRUNCATE는 허용하지 않으며 Source Writer·관리 Writer에는 접근을 부여하지 않는다. Python 저장 경계는 `RagRuntimeRepository`이고 기존 FK·UNIQUE·CHECK와 함께 검증한다. 부모 Job 삭제의 기존 CASCADE 의미와 후속 접수·공개 범위는 변경하지 않는다.
+
 Chat은 접수 시점과 일반 RAG 실행 시점의 Snapshot을 분리한다.
 
 | 구분 | 생성 Transaction | 고정 범위 | 사용 분기 |
@@ -200,7 +223,7 @@ Chat은 접수 시점과 일반 RAG 실행 시점의 Snapshot을 분리한다.
 
 - Chat 접수 Transaction에서는 Full Execution Context를 미리 만들지 않는다. `URGENT`, `EMERGENCY`, `UNKNOWN`은 Full Context 없이 승인 Safety 결과로 종료할 수 있다.
 - Chat `ROUTINE` 확장 시 Intake의 Prescription Version·환경·Bundle 참조와 잠금 재검증한 현재값이 다르면 Full Context를 만들지 않고 `AI_JOB=STALE`, `release_decision=STALE`로 종료하며 일반 RAG를 실행하지 않는다.
-- 각 Intake·Full Context는 해당 단계의 `runtime_guard_decision_id`를 필수로 저장한다. Full Guard, Full Context 생성과 Identification member 저장은 하나의 Transaction이며 부분 Snapshot은 허용하지 않는다.
+- 각 Intake·Full Context는 해당 단계의 `runtime_guard_decision_id`를 필수로 저장한다. Full Guard, Full Context 생성과 Identification member 저장은 하나의 Transaction이며 부분 Snapshot은 허용하지 않는다. #174_1 최소 DB 기반에서는 Guard 물리 테이블 도입 전까지 같은 의미의 stable reference인 `runtime_guard_decision_ref`를 저장한다.
 - Worker 재시도는 이미 고정된 Intake/Full Context만 읽고 현재 상태를 다시 선택하지 않는다. Full Context가 없는 `ROUTINE` 재시도는 같은 원자적 확장 절차를 다시 수행한다.
 - Worker의 Preflight·결과 commit Transaction은 [처방 버전 계약의 전역 잠금 순서](./prescription-version-v1.md#동시-수정)인 `PRESCRIPTION → CHAT_SESSION(해당 시) → AI_JOB → 도메인 row → OUTBOX(해당 시)`를 따른다.
 - 결과 commit 직전에도 위 순서로 고정 Context와 현재 Prescription·Patient Context·Identification·Bundle·Execution Manifest·runtime revision을 재검증한다. 불일치 시 생성 결과를 공개하지 않고 `AI_JOB=STALE`, `release_decision=STALE`, `is_current=false`로 저장한다.
@@ -218,6 +241,19 @@ Guide Job 접수 Transaction은 Full Execution Context 전체를 고정한다. C
 
 처방·Patient Context·Identification·Bundle·Execution Manifest·runtime revision이 달라지면 이전 결과는 `AI_JOB=STALE`, `release_decision=STALE`, `is_current=false`이며 현재 답변으로 공개하지 않는다.
 
+### Bundle Manifest Hash와 저장 정합
+
+`bundle_manifest_hash`는 저장된 행만으로 **재계산·검증 가능해야** 한다. 그렇지 않으면 위 「활성화·Rollback·Resume Guard」의 「포인터 교체 직전 Bundle Manifest 재검증」을 수행할 수 없다.
+
+- 해시 입력은 canonical 구성 하나이며, 그 전체가 영속화된다: 환경, Execution Manifest hash, Medication Catalog `version`·`manifest_hash`, 전체 Source member(`source_version`·`canonical_checksum`·`approval_version`·`scope_policy_hash`·`freshness_policy_hash`·`required`·`selected_for_operation`), 전체 Artifact member(`kind`·`ref`·`version`·`manifest_hash`).
+- 해시에 값을 추가하려면 같은 변경에서 저장 컬럼도 추가한다. 해시 입력과 저장 컬럼의 불일치는 계약 위반이다.
+- member 목록은 canonical JSON 바이트 기준 정렬로 순서 독립이다.
+- Bundle 이름(`bundle_key`·`bundle_version`)·`created_by`·`governance_revision_ref`는 내용 identity가 아니므로 제외한다. 따라서 `uq_rag_runtime_bundle_manifest_hash`는 「내용당 한 행」을 뜻하며, 동일 Manifest 평가의 재사용 근거가 된다.
+- 승인·freshness 관측값은 제외한다. 고정된 member set은 관측 상태와 무관하게 동일 해시여야 한다.
+- member set 불변은 Trigger가 아니라 재계산 해시 비교로 탐지한다.
+
+세부 근거와 컬럼 목록은 [`PD-175-20260910`](../../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md)를 따른다. 이 항목은 `BUILDING` 범위의 저장 계약이며, `READY`·active pointer 전환 권한을 부여하지 않는다.
+
 `RETRY_WAIT` 중 Active Bundle 변경과 구·신 Worker 동시 실행의 호환성·drain 방식은 아직 미정이다. [문서 권위의 후속 Product Decision 항목](../../../governance/post-mvp-1-document-authority.md#구현-전-재결정이-필요한-충돌)이 승인되기 전에는 Runtime Bundle을 Current로 승격하지 않는다.
 
 ### 활성화·Rollback·Resume Guard
@@ -228,7 +264,7 @@ Local Runtime 포인터 변경도 보호된 Guard Operation을 사용한다.
 - `EMERGENCY_ROLLBACK`: 현재 Bundle이 부적격일 때 Rollback 후보의 Source·Endpoint·Operation·Approval·Freshness·평가 PASS를 다시 검사한다. 적격 후보일 때만 포인터를 원자 교체하고, 현재·후보가 모두 부적격일 때 환경을 `SUSPENDED`로 전환한다.
 - `RESUME`: 중지 원인이 해소되고 대상 Bundle 전체가 다시 적격일 때만 `SUSPENDED → ACTIVE`를 허용한다.
 
-활성화·Rollback·Resume은 환경 행을 잠근 뒤 포인터 교체 직전에 Bundle Manifest, Release Policy Profile, Environment Revision, Governance Revision과 Safety Epoch를 재검증한다. 미해결 Revocation Intent가 있으면 모두 실패한다. 모든 포인터·환경 상태 변경은 Guard Decision을 참조하는 append-only 전환 Event와 같은 Transaction에 저장한다.
+활성화·Rollback·Resume은 환경 행을 잠근 뒤 포인터 교체 직전에 Bundle Manifest, Release Policy Profile, Environment Revision, Governance Revision과 Safety Epoch를 재검증한다. 미해결 Revocation Intent가 있으면 모두 실패한다. 활성 Bundle의 기준 원본은 환경의 active bundle pointer이며, Bundle 자체 status에 `ACTIVE` 값을 두지 않는다. 모든 포인터·환경 상태 변경은 Guard Decision을 참조하는 append-only 전환 Event와 같은 Transaction에 저장한다.
 
 ## 결과·Citation·상태
 

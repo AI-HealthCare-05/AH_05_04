@@ -2,16 +2,18 @@
 
 ## 범위
 
-이 디렉터리는 Post-MVP 비동기 AI Worker의 실행 코드와 공통 처리 경계를 포함합니다.
+이 디렉터리는 현재 MVP OCR과 Post-MVP 확장 작업을 위한 비동기 AI Worker의 실행 코드와
+공통 처리 경계를 포함합니다.
 
 Worker runtime은 Redis Stream delivery를 읽고, PostgreSQL Job lease를 획득한 뒤
 등록된 Handler를 실행합니다. Handler 결과는 fencing 검증을 통과한 transaction으로
 저장하며, DB commit이 성공한 이후에만 Redis ACK를 수행합니다.
 
-현재 MVP의 복약 가이드와 복약 챗봇은 아직 FastAPI 요청 안에서 외부 Provider를
-직접 호출합니다. 기존 실행 경로는 다음 위치에 있습니다.
+현재 MVP에서 OCR은 Worker가 처리하고, 복약 가이드와 복약 챗봇은 아직 FastAPI 요청
+안에서 외부 Provider 호출까지 완료합니다. 실행 경로는 다음 위치에 있습니다.
 
-- OCR: `backend/app/services/ocr.py`, CLOVA 구현 `backend/app/services/clova_ocr_engine.py`
+- OCR 접수: `backend/app/services/ocr.py`; Worker 조립: `ai_worker/main.py`,
+  `ai_worker/core/runtime_assembly.py`; 공용 CLOVA 구현: `ocr_runtime/`
 - 복약 가이드: `backend/app/services/guide_ai/`, `backend/app/services/guides.py`
 - 복약 챗봇: `backend/app/services/chat_ai/`, `backend/app/services/chat.py`
 
@@ -31,25 +33,26 @@ Worker runtime은 Redis Stream delivery를 읽고, PostgreSQL Job lease를 획�
   OCR Handler 등록·dispatch one-cycle 통합 검증
 - DB Outbox due row 선점·만료 claim 재선점·`WorkerMessage` 조립·Redis 발행·
   `claim_token` fencing 완료 처리 (#219)
+- 실제 `ClovaOcrEngine`과 규칙 기반 구조화기의 공용 패키지 분리, Worker composition
+  root·Provider secret·공유 storage·Worker image 연결 및 합성 Provider smoke (#258)
+- Pending reclaim·예약 재시도·quarantine·DLQ와 복구 Scheduler 조립 (#142)
+- Outbox Publisher의 Worker runtime 주기 실행 (#370)
 
 남은 연결:
 
-- 실제 `ClovaOcrEngine`과 규칙 기반 구조화기의 공용 패키지 분리 및
-  Worker composition root 연결: #258
-- CLOVA secret 주입, 공유 object storage volume, Worker 이미지 구성과
-  실제 Provider smoke: #258
 - Guide·Chat Handler 등록
-- Pending reclaim·retry·quarantine·DLQ 운영 절차:
+- Worker health check·운영 관제·Production 배포 조립과 실제 환경 smoke
+- Pending reclaim·retry·quarantine·DLQ 운영 절차의 실제 환경 검증:
   `../docs/runbooks/worker-pending-dlq.md`
-- Publisher 주기 실행·health check·운영 배포 조립
 
 #233의 완료 기준은 실제 CLOVA OCR 호출이 아니라, `OcrEngine`을 주입할 수 있는
 composition root와 명시적으로 주입한 Fake Engine을 사용한 Redis·PostgreSQL
 one-cycle 검증이다. `ocr_engine=None`으로 OCR Handler가 등록되지 않는 실행은
 #233 완료 증빙으로 사용하지 않는다.
 
-실제 `ClovaOcrEngine`, 규칙 기반 구조화기, Provider secret, 공유 object storage와
-Worker 이미지 연결 및 실제 Provider smoke는 후속 #258에서 진행한다.
+#258에서 실제 `ClovaOcrEngine`, 규칙 기반 구조화기, Provider secret, 공유 storage와
+Worker image 연결 및 합성 Provider smoke를 완료했습니다. 이는 Production Worker
+health check·관제·배포 조립 또는 실제 환경 smoke 완료를 뜻하지 않습니다.
 
 ## Redis Streams Adapter
 
@@ -74,11 +77,12 @@ Track A Worker는 Redis Client를 직접 호출하지 않고
 | `ENV` | 없음(필수) | Worker 실행 환경: `local`, `staging`, `production` |
 | `REDIS_HOST` | `redis` | Redis hostname |
 | `REDIS_PORT` | `6379` | Redis port |
-| `REDIS_PASSWORD` | 없음 | Redis 인증값 |
+| `REDIS_PASSWORD` | local 없음 / non-local 필수 | Redis 인증값. `staging`, `production`에서는 빈 값과 placeholder를 startup에서 거부합니다. |
 | `REDIS_STREAM_NAME` | `oryak:jobs` | 실행 Stream |
 | `REDIS_CONSUMER_GROUP` | `ai-workers` | Consumer Group |
 | `REDIS_CONSUMER_NAME` | `ai-worker-local` | Consumer 식별자 |
 | `REDIS_BLOCK_MS` | `5000` | blocking read 시간 |
+| `OUTBOX_PUBLISHER_INTERVAL_SECONDS` | `1.0` | 정상 Outbox 발행 주기(초) |
 | `REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS` | `5.0` | Redis 연결 수립 timeout(초) |
 | `REDIS_SOCKET_TIMEOUT_SECONDS` | `10.0` | Redis 명령 socket timeout(초) |
 | `DB_HOST` | 없음(필수) | Worker PostgreSQL hostname |
@@ -99,10 +103,36 @@ Track A Worker는 Redis Client를 직접 호출하지 않고
 | `OCR_RESPONSE_MARGIN_SECONDS` | `5.0` | 결과 검증·저장을 위해 남겨두는 완료 여유 |
 
 실제 비밀번호를 저장소·로그·이슈·문서에 기록하지 않습니다.
-운영 Redis 외부 노출과 인증 설정은 별도 Infrastructure 작업의
-Production 차단 조건입니다.
+운영 Redis는 host port에 공개하지 않고 Docker 내부 network와 인증으로만 접근합니다.
+`staging`, `production` Worker는 `REDIS_PASSWORD`가 비어 있거나 `replace-with-` placeholder이면 시작하지 않습니다.
 `REDIS_SOCKET_TIMEOUT_SECONDS`는 `REDIS_BLOCK_MS / 1000`보다 길어야 합니다.
 이를 통해 정상적인 `XREADGROUP` blocking read가 socket timeout으로 먼저 중단되지 않도록 합니다.
+
+### Source Artifact 저장소
+
+Source ingestion Artifact 저장소는 기본 `DISABLED`이며 #166 Runtime 연결 전에는
+자동으로 로컬 경로를 선택하지 않습니다. 활성화할 때 사용하는 설정은 다음과 같습니다.
+
+| 환경변수 | 기본값 | 의미 |
+| --- | --- | --- |
+| `SOURCE_ARTIFACT_STORAGE_BACKEND` | `DISABLED` | `DISABLED`, `LOCAL_PRIVATE`, `S3_PRIVATE` 중 하나 |
+| `SOURCE_ARTIFACT_LOCAL_ROOT` | 없음 | `LOCAL_PRIVATE` 전용 접근 통제 경로 |
+| `SOURCE_ARTIFACT_S3_BUCKET` | 없음 | `S3_PRIVATE` 전용 비공개 bucket |
+| `SOURCE_ARTIFACT_S3_PREFIX` | `source-artifacts` | bucket 내부 내용 주소 prefix |
+| `SOURCE_ARTIFACT_S3_REGION` | 없음 | S3 region |
+| `SOURCE_ARTIFACT_S3_ENDPOINT_URL` | 없음 | S3 호환 endpoint. credential 없는 HTTPS URL만 허용 |
+| `SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION` | 없음 | `AES256` 또는 `aws:kms`. S3 활성화 시 필수 |
+| `SOURCE_ARTIFACT_S3_KMS_KEY_ID` | 없음 | `aws:kms` 선택 시 필수 KMS key ID |
+
+S3 adapter는 AWS SDK 표준 credential provider chain을 사용합니다. access key·secret
+key·session token 필드를 Worker 설정 모델에 추가하지 않습니다. 배포 환경에서는
+실행 역할이나 Web Identity를 우선 사용하고, 환경 credential을 사용할 때도 저장소·
+로그·DB에 값을 기록하지 않습니다.
+
+S3 객체는 SHA-256 내용 주소와 조건부 생성으로 덮어쓰기를 막고, upload checksum과
+명시적으로 선택한 AES256 또는 KMS 서버 측 암호화를 요구합니다. 기존 객체를 재사용할 때 크기·content type·
+checksum metadata·암호화 상태를 다시 검사합니다. 보존 기간과 정리 정책이 승인되기
+전에는 rollback 뒤 미참조 객체나 REJECTS를 자동 삭제하지 않습니다.
 
 ### OCR Worker Handler
 
@@ -265,16 +295,44 @@ docker inspect ai-worker \
   --format 'status={{.State.Status}} exit={{.State.ExitCode}} restart={{.RestartCount}}'
 ```
 
-## Post-MVP 전환 조건
+## Production 적용과 Post-MVP 확장 조건
 
-AI Worker를 실제 요청 경로에 연결하기 전에 다음 조건을 모두 충족해야 합니다.
+현재 MVP OCR은 AI Worker 요청 경로에 연결되어 있습니다. Worker를 Production에 적용하거나
+Guide·Chat 등 Post-MVP 작업을 추가하기 전에 해당 범위에 필요한 다음 조건을 충족해야 합니다.
 
 1. `docs/contracts/`에 작업 ID, schema version, 생성 시각, 재시도 횟수, trace ID를 포함한 입력·출력 계약을 기록합니다.
 2. API 접수·조회 상태, 오류 의미, timeout, 취소와 재시도 정책을 합의합니다.
-3. Redis consumer와 필요한 OCR·RAG·LLM·평가 작업을 구현합니다.
+3. Redis Consumer와 대상 OCR·RAG·LLM·평가 작업을 구현하고 composition root에 등록합니다.
 4. 중복 전달에도 같은 결과를 내는 멱등성과 실패 복구를 구현합니다.
 5. 실제 처방전·환자 정보·프롬프트 원문을 로그에 남기지 않고 외부 전송·보존 정책 승인을 받습니다.
 6. health check, graceful shutdown, contract·integration·장애·재시도 테스트를 추가합니다.
 7. 장기 실행 Worker에 맞는 실행 명령과 배포 환경의 restart 정책을 검증합니다.
 
 RAG, Citation/NLI 검증, AI 응답 평가와 OTC 기능은 Worker 자체와 별개의 Post-MVP 기능입니다. 각 기능의 지식 소스, 라이선스, 스키마, 평가 데이터셋·지표·임계값이 승인된 뒤 해당 task를 구현합니다.
+
+## #453 비-RAG LLM 구조화 연결 (작업 브랜치)
+
+실제 Worker factory는 `OCR_STRUCTURE_LLM_ENABLED=false`일 때 기존 규칙 기반,
+`true`일 때 CLOVA 다음에 공용 LLM 구조화·grounding 검증을 실행한다.
+추가 Job이나 Frontend 검수 DTO는 만들지 않는다. 누락값은 기존 빈 필드·약물 추가로 검수한다.
+
+| Worker 설정 | 기본값 | 의미 |
+| --- | --- | --- |
+| OCR_STRUCTURE_LLM_ENABLED | false | 환경 공통 LLM 활성화 설정 |
+| OPENAI_API_KEY | 빈 SecretStr | 활성화 시 필수, 로그 출력 금지 |
+| OCR_STRUCTURE_MODEL | gpt-4o-mini | OCR 구조화 요청 모델 |
+| OCR_STRUCTURE_TIMEOUT_SECONDS | 30 | 개별 LLM 호출 상한 |
+
+CLOVA 상한과 LLM 상한의 합이 OCR_PROVIDER_BUDGET_SECONDS를 넘으면 기동을 거부한다.
+Worker 외부 deadline이 두 호출을 함께 제한하며 SDK retry는 0이다.
+성공·실패·취소 모두 OpenAI client를 닫는다. 기존 Worker의 재시도·fencing·commit 후 ACK를 재사용한다.
+모델·프롬프트 기록은 OCR 결과에 저장한다. GUIDE_GENERATION 로그와 혼동하지 않는다.
+
+검증에서는 외부 Provider를 합성 응답으로 대체했다. 환경별 Local 전용 제한은 없다.
+Local/real-stack Compose는 기존 env_file에서, 운영 Compose는 명시적 environment에서
+위 설정을 Worker에 전달한다. `OCR_STRUCTURE_LLM_ENABLED=true`와 유효한 API key를
+설정하고 Worker를 재생성해야 LLM 경로가 활성화된다. 기본값은 기존대로 false다.
+
+새 동의·철회·전송 최소화·Frontend 안내는 이번 이관에 추가하지 않는다. 리뷰에서
+필요하면 별도 이슈로 진행한다. 기존 공통 공개 게이트와 실제 환자 데이터 금지는 유지한다.
+[범위 정정 기록](../docs/contracts/proposed/ocr-llm-worker-consent-453.md).

@@ -1,16 +1,53 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import type { NavigateFunction } from 'react-router-dom'
 import {
   createChatSession,
   getChatMessages,
+  getChatSessionForPrescription,
   sendChatMessage,
   type ChatMessageData,
 } from '../api/chat'
 import { ApiError } from '../api/client'
+import { getLatestPrescription } from '../api/prescriptions'
 import { Button, Card, MobileShell, StatusBadge } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
+import {
+  clearAuthenticatedSession,
+  isStaleTokenError,
+} from '../features/auth/authSession'
+import { AssistantMessageContent } from './AssistantMessageContent'
 import '../design-system/prototype.css'
 import './ChatPage.css'
+
+export type ChatPageServices = {
+  createChatSession: typeof createChatSession
+  getChatSessionForPrescription: typeof getChatSessionForPrescription
+  getChatMessages: typeof getChatMessages
+  sendChatMessage: typeof sendChatMessage
+  getLatestPrescription: typeof getLatestPrescription
+}
+
+export type ChatPreviewState = {
+  prescriptionId: string
+  draft?: string
+  isSending?: boolean
+  visibleMessages?: ChatMessageData[]
+}
+
+export type ChatPageProps = {
+  services?: ChatPageServices
+  previewState?: ChatPreviewState
+  navigation?: NavigateFunction
+}
+
+const defaultChatPageServices: ChatPageServices = {
+  createChatSession,
+  getChatSessionForPrescription,
+  getChatMessages,
+  sendChatMessage,
+  getLatestPrescription,
+}
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -77,11 +114,16 @@ function reconcileHistoryMessages(
     historyMessages.map((message) => message.message_id),
   )
 
-  for (const optimisticMessage of optimisticUserMessages) {
-    if (canonicalIdByOptimisticId.has(optimisticMessage.message_id)) continue
+  for (const currentMessage of currentMessages) {
+    if (
+      historyMessageIds.has(currentMessage.message_id) ||
+      canonicalIdByOptimisticId.has(currentMessage.message_id)
+    ) {
+      continue
+    }
 
     const currentIndex = currentMessages.findIndex(
-      (message) => message.message_id === optimisticMessage.message_id,
+      (message) => message.message_id === currentMessage.message_id,
     )
     let nextHistoryMessageId: string | undefined
 
@@ -102,27 +144,30 @@ function reconcileHistoryMessages(
     }
 
     if (!nextHistoryMessageId) {
-      mergedMessages.push(optimisticMessage)
+      mergedMessages.push(currentMessage)
+      historyMessageIds.add(currentMessage.message_id)
       continue
     }
 
     const insertionIndex = mergedMessages.findIndex(
       (message) => message.message_id === nextHistoryMessageId,
     )
-    mergedMessages.splice(insertionIndex, 0, optimisticMessage)
+    mergedMessages.splice(insertionIndex, 0, currentMessage)
+    historyMessageIds.add(currentMessage.message_id)
   }
 
   return mergedMessages
 }
 
-const sessionCreationRequests = new Map<
-  string,
-  ReturnType<typeof createChatSession>
+const sessionCreationRequests = new WeakMap<
+  typeof createChatSession,
+  Map<string, ReturnType<typeof createChatSession>>
 >()
 
-function getSessionStorageKey(prescriptionId: string) {
-  return `dosey_chat_session:${prescriptionId}`
-}
+const sessionRediscoveryRequests = new WeakMap<
+  typeof getChatSessionForPrescription,
+  Map<string, ReturnType<typeof getChatSessionForPrescription>>
+>()
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) {
@@ -138,110 +183,229 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback
 }
 
-function createChatSessionOnce(prescriptionId: string) {
-  const pendingRequest = sessionCreationRequests.get(prescriptionId)
+function createChatSessionOnce(
+  prescriptionId: string,
+  createSession: typeof createChatSession,
+) {
+  let requestsByPrescription = sessionCreationRequests.get(createSession)
+  if (!requestsByPrescription) {
+    requestsByPrescription = new Map()
+    sessionCreationRequests.set(createSession, requestsByPrescription)
+  }
+
+  const pendingRequest = requestsByPrescription.get(prescriptionId)
   if (pendingRequest) return pendingRequest
 
-  const request = createChatSession(prescriptionId).finally(() => {
-    if (sessionCreationRequests.get(prescriptionId) === request) {
-      sessionCreationRequests.delete(prescriptionId)
+  const request = createSession(prescriptionId).finally(() => {
+    if (requestsByPrescription.get(prescriptionId) === request) {
+      requestsByPrescription.delete(prescriptionId)
+      if (requestsByPrescription.size === 0) {
+        sessionCreationRequests.delete(createSession)
+      }
     }
   })
-  sessionCreationRequests.set(prescriptionId, request)
+  requestsByPrescription.set(prescriptionId, request)
   return request
 }
 
-function ChatPage() {
-  const navigate = useNavigate()
+function getChatSessionForPrescriptionOnce(
+  prescriptionId: string,
+  getSession: typeof getChatSessionForPrescription,
+) {
+  let requestsByPrescription = sessionRediscoveryRequests.get(getSession)
+  if (!requestsByPrescription) {
+    requestsByPrescription = new Map()
+    sessionRediscoveryRequests.set(getSession, requestsByPrescription)
+  }
+
+  const pendingRequest = requestsByPrescription.get(prescriptionId)
+  if (pendingRequest) return pendingRequest
+
+  const request = getSession(prescriptionId).finally(() => {
+    if (requestsByPrescription.get(prescriptionId) === request) {
+      requestsByPrescription.delete(prescriptionId)
+      if (requestsByPrescription.size === 0) {
+        sessionRediscoveryRequests.delete(getSession)
+      }
+    }
+  })
+  requestsByPrescription.set(prescriptionId, request)
+  return request
+}
+
+function ChatPage({
+  services = defaultChatPageServices,
+  previewState,
+  navigation,
+}: ChatPageProps = {}) {
+  const routerNavigate = useNavigate()
+  const navigate = navigation ?? routerNavigate
   const [searchParams] = useSearchParams()
-  const prescriptionId = searchParams.get('prescription_id')?.trim() ?? ''
+  const prescriptionId = previewState?.prescriptionId ??
+    searchParams.get('prescription_id')?.trim() ?? ''
   const activePrescriptionRef = useRef(prescriptionId)
   const initializationRequestRef = useRef(0)
   const sendRequestRef = useRef(0)
+  const initialHistoryMessageIdsRef = useRef<Set<string>>(new Set())
+  const hasInitialHistorySnapshotRef = useRef(false)
+  const initialHistorySessionIdRef = useRef<string | null>(null)
+  const compositionStateRef = useRef<'idle' | 'composing' | 'ended'>('idle')
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const [stateRoutePrescriptionId, setStateRoutePrescriptionId] = useState(
+    prescriptionId,
+  )
   const [statePrescriptionId, setStatePrescriptionId] = useState(prescriptionId)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessageData[]>([])
-  const [draft, setDraft] = useState('')
+  const [draft, setDraft] = useState(previewState?.draft ?? '')
   const [errorMessage, setErrorMessage] = useState('')
   const [isLoading, setIsLoading] = useState(true)
-  const [isSending, setIsSending] = useState(false)
+  const [isSending, setIsSending] = useState(previewState?.isSending ?? false)
   const [requiresLogin, setRequiresLogin] = useState(false)
 
-  activePrescriptionRef.current = prescriptionId
-
-  const initializeChat = useCallback(async () => {
-    const requestedPrescriptionId = prescriptionId
+  const initializeChat = useCallback(async (preserveCurrentVisit = false) => {
+    const requestedRoutePrescriptionId = prescriptionId
+    let requestedPrescriptionId = requestedRoutePrescriptionId
     const requestId = ++initializationRequestRef.current
+
+    activePrescriptionRef.current = requestedPrescriptionId
+
     const isCurrentRequest = () =>
       initializationRequestRef.current === requestId &&
       activePrescriptionRef.current === requestedPrescriptionId
 
+    setStateRoutePrescriptionId(requestedRoutePrescriptionId)
     setStatePrescriptionId(requestedPrescriptionId)
     setSessionId(null)
-    setMessages([])
-    setDraft('')
-    setErrorMessage('')
-    setIsSending(false)
-    setRequiresLogin(false)
-
-    if (!uuidPattern.test(prescriptionId)) {
-      setIsLoading(false)
-      return
+    if (!preserveCurrentVisit) {
+      setMessages([])
+      initialHistoryMessageIdsRef.current = new Set()
+      hasInitialHistorySnapshotRef.current = false
+      initialHistorySessionIdRef.current = null
     }
+    setDraft(previewState?.draft ?? '')
+    setErrorMessage('')
+    setIsSending(previewState?.isSending ?? false)
+    setRequiresLogin(false)
 
     try {
       setIsLoading(true)
-      setErrorMessage('')
-      setMessages([])
 
-      const storageKey = getSessionStorageKey(prescriptionId)
-      const storedSessionId = sessionStorage.getItem(storageKey)
-      let activeSessionId = storedSessionId
+      if (!requestedPrescriptionId) {
+        try {
+          const latestResponse = await services.getLatestPrescription()
+          if (initializationRequestRef.current !== requestId) return
 
-      if (!activeSessionId) {
-        const sessionResponse = await createChatSessionOnce(prescriptionId)
-        if (!isCurrentRequest()) return
-        activeSessionId = sessionResponse.data.session_id
-        sessionStorage.setItem(storageKey, activeSessionId)
+          requestedPrescriptionId = latestResponse.data.prescription_id
+
+          activePrescriptionRef.current = requestedPrescriptionId
+          setStatePrescriptionId(requestedPrescriptionId)
+        } catch (error) {
+          if (initializationRequestRef.current !== requestId) return
+
+          if (
+            error instanceof ApiError &&
+            error.status === 404 &&
+            error.code === 'PRESCRIPTION_NOT_FOUND'
+          ) {
+            setStatePrescriptionId('')
+            setSessionId(null)
+            setMessages([])
+            setErrorMessage('')
+            setIsLoading(false)
+            return
+          }
+
+          throw error
+        }
       }
 
-      let historyResponse
+      if (!uuidPattern.test(requestedPrescriptionId)) {
+        setIsLoading(false)
+        return
+      }
+
+      let sessionResponse
+
       try {
-        historyResponse = await getChatMessages(activeSessionId)
-        if (!isCurrentRequest()) return
+        sessionResponse = await getChatSessionForPrescriptionOnce(
+          requestedPrescriptionId,
+          services.getChatSessionForPrescription,
+        )
       } catch (error) {
         if (!isCurrentRequest()) return
-        if (!(storedSessionId && error instanceof ApiError && error.status === 404)) {
+
+        if (
+          !(
+            error instanceof ApiError &&
+            error.status === 404 &&
+            error.code === 'CHAT_SESSION_NOT_FOUND'
+          )
+        ) {
           throw error
         }
 
-        sessionStorage.removeItem(storageKey)
-        const sessionResponse = await createChatSessionOnce(prescriptionId)
-        if (!isCurrentRequest()) return
-        activeSessionId = sessionResponse.data.session_id
-        sessionStorage.setItem(storageKey, activeSessionId)
-        historyResponse = await getChatMessages(activeSessionId)
-        if (!isCurrentRequest()) return
+        sessionResponse = await createChatSessionOnce(
+          requestedPrescriptionId,
+          services.createChatSession,
+        )
       }
 
+      if (!isCurrentRequest()) return
+
+      const activeSessionId = sessionResponse.data.session_id
+
+      const historyResponse = await services.getChatMessages(activeSessionId)
+
+      if (!isCurrentRequest()) return
+
       setSessionId(activeSessionId)
-      setMessages(historyResponse.data.messages)
+      if (
+        preserveCurrentVisit &&
+        hasInitialHistorySnapshotRef.current &&
+        initialHistorySessionIdRef.current === activeSessionId
+      ) {
+        const currentVisitHistory = historyResponse.data.messages.filter(
+          (message) =>
+            !initialHistoryMessageIdsRef.current.has(message.message_id),
+        )
+        setMessages((current) =>
+          reconcileHistoryMessages(
+            current,
+            currentVisitHistory,
+            new Set(current.map((message) => message.message_id)),
+          ),
+        )
+      } else {
+        initialHistoryMessageIdsRef.current = new Set(
+          historyResponse.data.messages.map((message) => message.message_id),
+        )
+        hasInitialHistorySnapshotRef.current = true
+        initialHistorySessionIdRef.current = activeSessionId
+        setMessages(previewState?.visibleMessages ?? [])
+      }
     } catch (error) {
       if (!isCurrentRequest()) return
-      if (error instanceof ApiError && error.status === 401) {
+
+      if (isStaleTokenError(error)) {
+        clearAuthenticatedSession()
         setRequiresLogin(true)
+        return
       }
+
       setSessionId(null)
       setErrorMessage(
-        getErrorMessage(error, '복약 대화를 시작하는 중 오류가 발생했습니다.'),
+        getErrorMessage(
+          error,
+          '복약 대화를 시작하는 중 오류가 발생했습니다.',
+        ),
       )
     } finally {
       if (isCurrentRequest()) {
         setIsLoading(false)
       }
     }
-  }, [prescriptionId])
+  }, [prescriptionId, previewState, services])
 
   useEffect(() => {
     sendRequestRef.current += 1
@@ -254,10 +418,15 @@ function ChatPage() {
   }, [initializeChat])
 
   useEffect(() => {
+    if (previewState) return
     messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' })
-  }, [isSending, messages])
+  }, [isSending, messages, previewState])
 
-  const isCurrentPrescriptionState = statePrescriptionId === prescriptionId
+  const isCurrentPrescriptionState =
+    stateRoutePrescriptionId === prescriptionId
+  const currentPrescriptionId = isCurrentPrescriptionState
+    ? statePrescriptionId
+    : ''
   const currentSessionId = isCurrentPrescriptionState ? sessionId : null
   const currentMessages = isCurrentPrescriptionState ? messages : []
   const currentDraft = isCurrentPrescriptionState ? draft : ''
@@ -271,7 +440,7 @@ function ChatPage() {
     const content = currentDraft.trim()
     if (!content || !currentSessionId || currentIsSending) return
 
-    const requestedPrescriptionId = prescriptionId
+    const requestedPrescriptionId = currentPrescriptionId
     const requestedSessionId = currentSessionId
     const requestId = ++sendRequestRef.current
     const knownMessageIds = new Set(
@@ -293,7 +462,7 @@ function ChatPage() {
       setErrorMessage('')
       setDraft('')
       setMessages((current) => [...current, optimisticUserMessage])
-      const response = await sendChatMessage(requestedSessionId, content)
+      const response = await services.sendChatMessage(requestedSessionId, content)
       if (!isCurrentRequest()) return
       const completedAt = response.data.completed_at ?? response.data.created_at
       const canonicalUserMessage: ChatMessageData = {
@@ -322,13 +491,17 @@ function ChatPage() {
       })
     } catch (error) {
       if (!isCurrentRequest()) return
-      if (error instanceof ApiError && error.status === 401) {
+      if (isStaleTokenError(error)) {
+        clearAuthenticatedSession()
         setRequiresLogin(true)
       } else {
         try {
-          const historyResponse = await getChatMessages(requestedSessionId)
+          const historyResponse = await services.getChatMessages(requestedSessionId)
           if (!isCurrentRequest()) return
-          const historyMessages = historyResponse.data.messages
+          const historyMessages = historyResponse.data.messages.filter(
+            (message) =>
+              !initialHistoryMessageIdsRef.current.has(message.message_id),
+          )
           setMessages((current) =>
             reconcileHistoryMessages(
               current,
@@ -336,8 +509,12 @@ function ChatPage() {
               knownMessageIds,
             ),
           )
-        } catch {
+        } catch (historyError) {
           if (!isCurrentRequest()) return
+          if (isStaleTokenError(historyError)) {
+            clearAuthenticatedSession()
+            setRequiresLogin(true)
+          }
         }
       }
       setErrorMessage(
@@ -350,9 +527,33 @@ function ChatPage() {
     }
   }
 
+  const handleComposerKeyDown = (
+    event: React.KeyboardEvent<HTMLTextAreaElement>,
+  ) => {
+    if (event.key !== 'Enter' || event.shiftKey) {
+      if (compositionStateRef.current === 'ended') {
+        compositionStateRef.current = 'idle'
+      }
+      return
+    }
+
+    const compositionState = compositionStateRef.current
+    if (
+      compositionState === 'composing' ||
+      event.nativeEvent.isComposing ||
+      (event.keyCode === 229 && compositionState !== 'ended')
+    ) {
+      return
+    }
+
+    compositionStateRef.current = 'idle'
+    event.preventDefault()
+    event.currentTarget.form?.requestSubmit()
+  }
+
   const handleNavigation = (item: '홈' | '일정' | '도지' | '가이드' | '메뉴') => {
     if (item === '홈') navigate('/')
-    if (item === '도지' && !prescriptionId) navigate('/chat')
+    if (item === '도지' && !currentPrescriptionId) navigate('/chat')
     if (item === '가이드') navigate('/guides')
     if (item === '메뉴') navigate('/menu')
   }
@@ -381,7 +582,11 @@ function ChatPage() {
     )
   }
 
-  if (!prescriptionId || !uuidPattern.test(prescriptionId)) {
+  if (
+    !currentIsLoading &&
+    !currentErrorMessage &&
+    (!currentPrescriptionId || !uuidPattern.test(currentPrescriptionId))
+  ) {
     return (
       <div className="chat-page">
         <MobileShell
@@ -398,7 +603,12 @@ function ChatPage() {
             <h1>도지와 처방에 대해 이야기하려면<br />먼저 처방전을 등록해 주세요</h1>
             <p>처방전을 등록하고 내용을 확인하면<br />도지가 현재 처방을 참고해 답변할 수 있어요.</p>
             <Card className="chat-page__gate-actions">
-              <Button fullWidth onClick={() => navigate('/prescriptions/upload')}>
+              <Button
+                fullWidth
+                onClick={() => navigate('/prescriptions/upload', {
+                  state: { intent: 'new-prescription' },
+                })}
+              >
                 처방전 등록하기
               </Button>
               <Button fullWidth variant="ghost" onClick={() => navigate('/')}>
@@ -474,10 +684,14 @@ function ChatPage() {
 
               {currentMessages.map((message) => (
                 <div
-                  className={`chat-message ${message.role === 'USER' ? 'user' : ''}`}
+                  className={`chat-message ${message.role === 'USER' ? 'user' : 'assistant'}`}
                   key={message.message_id}
                 >
-                  {message.content ?? '답변을 생성하지 못했어요.'}
+                  {message.role === 'ASSISTANT' && message.content ? (
+                    <AssistantMessageContent content={message.content} />
+                  ) : (
+                    message.content ?? '답변을 생성하지 못했어요.'
+                  )}
                 </div>
               ))}
 
@@ -497,7 +711,7 @@ function ChatPage() {
                   <Button
                     fullWidth
                     variant="secondary"
-                    onClick={() => void initializeChat()}
+                    onClick={() => void initializeChat(true)}
                     disabled={currentIsSending}
                   >
                     대화 다시 불러오기
@@ -509,16 +723,24 @@ function ChatPage() {
 
             <form className="chat-composer" onSubmit={handleSend}>
               <label className="chat-page__composer-label" htmlFor="dosey-chat-input">
-                복약 챗봇 도지에게 질문
+                복약 질문
               </label>
               <textarea
                 id="dosey-chat-input"
                 className="chat-input"
                 value={currentDraft}
                 onChange={(event) => setDraft(event.target.value)}
+                onCompositionStart={() => {
+                  compositionStateRef.current = 'composing'
+                }}
+                onCompositionEnd={() => {
+                  compositionStateRef.current = 'ended'
+                }}
+                onKeyDown={handleComposerKeyDown}
                 aria-label="복약 질문"
                 placeholder="궁금한 내용을 입력하세요"
                 rows={1}
+                enterKeyHint="send"
                 disabled={
                   currentIsLoading || currentIsSending || !currentSessionId
                 }

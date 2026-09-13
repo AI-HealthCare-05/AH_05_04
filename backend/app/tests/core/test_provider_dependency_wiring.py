@@ -68,7 +68,7 @@ def test_ocr_dependencies_inject_distinct_clova_and_openai_descriptors(monkeypat
     assert services.get_ocr_engine(structurer, context) is engine
     assert captured["openai"]["context"] is context
     assert captured["openai"]["descriptor"].operation == "OCR_STRUCTURING"
-    assert captured["openai"]["descriptor"].prompt_version == "ocr-structure-prompt-v2"
+    assert captured["openai"]["descriptor"].prompt_version == "ocr-structure-prompt-v3"
     assert captured["clova"]["context"] is context
     assert captured["clova"]["descriptor"].operation == "PRESCRIPTION_RECOGNITION"
     assert captured["clova"]["descriptor"].prompt_version is None
@@ -103,4 +103,4 @@ def test_guide_and_chat_dependencies_inject_operation_descriptors(monkeypatch: p
     assert captured["guide_provider"]["descriptor"].prompt_version == "guide-prompt-v3"
     assert captured["chat_provider"]["context"] is context
     assert captured["chat_provider"]["descriptor"].operation == "CHAT_GENERATION"
-    assert captured["chat_provider"]["descriptor"].prompt_version == "chat-prompt-v2"
+    assert captured["chat_provider"]["descriptor"].prompt_version == "chat-prompt-v3"

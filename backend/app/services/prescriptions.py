@@ -1,18 +1,22 @@
 import re
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
+from typing import Protocol
 from uuid import UUID
 
 from app.core.errors import ApiError, ErrorDetail
-from app.dtos.prescriptions import MedicationData, PrescriptionData
+from app.dtos.prescriptions import CorrectPrescriptionRequest, MedicationData, PrescriptionData
 from app.models.ocr import ExtractedField, FieldType
-from app.models.prescriptions import Medication, Prescription
+from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.users import User
+from app.repositories.idempotency_repository import IdempotencyRepository
 from app.repositories.medical_document_repository import DocumentLockTimeoutError, MedicalDocumentRepository
 from app.repositories.ocr_repository import OcrRepository
+from app.repositories.prescription_integrity import verify_loaded_version
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.services.idempotency import SyncMutationIdempotencyService, get_default_snapshot_cipher
 
 _MAX_MEDICATION_NAME_LENGTH = 255
 # 복합제 및 농도 문자열을 포함할 수 있는 최대 길이입니다.
@@ -22,6 +26,19 @@ _MAX_DOSE_SCALE = 3
 _MAX_INTEGER_VALUE = 2_147_483_647
 _MAX_DOSE_UNIT_LENGTH = 50
 _MAX_TIMING_TEXT_LENGTH = 255
+
+
+class PrescriptionVersionScheduleInvalidationPort(Protocol):
+    """처방 Version 활성화 transaction에서 호출하는 Track B 동기 경계."""
+
+    async def cancel_future_for_prescription_version(
+        self,
+        *,
+        prescription_version_id: UUID,
+        effective_at: datetime,
+    ) -> Sequence[UUID]:
+        """취소된 occurrence ID를 B5 미전달 알림 취소 연동점으로 반환한다."""
+        ...
 
 
 def _field_value(field: ExtractedField | None) -> str | None:
@@ -36,14 +53,23 @@ def _field_value(field: ExtractedField | None) -> str | None:
     return stripped or None
 
 
-def _to_prescription_data(prescription: Prescription, medications: list[Medication]) -> PrescriptionData:
+def _to_prescription_data(
+    prescription: Prescription,
+    version: PrescriptionVersion,
+    medications: list[PrescriptionVersionMedication],
+) -> PrescriptionData:
+    verify_loaded_version(version, medications)
     return PrescriptionData(
         prescription_id=prescription.id,
+        prescription_version_id=version.id,
+        revision=version.version_number,
+        current=prescription.active_version_id == version.id,
         document_id=prescription.document_id,
-        prescribed_date=prescription.prescribed_date,
-        confirmed_at=prescription.confirmed_at,
+        prescribed_date=version.prescribed_date,
+        confirmed_at=version.confirmed_at,
         medications=[
             MedicationData(
+                prescription_version_medication_id=medication.id,
                 medication_name=medication.medication_name,
                 strength_text=medication.strength_text,
                 dose_value=(float(medication.dose_value) if medication.dose_value is not None else None),
@@ -64,12 +90,38 @@ class PrescriptionService:
         document_repository: MedicalDocumentRepository,
         ocr_repository: OcrRepository,
         prescription_repository: PrescriptionRepository,
+        schedule_invalidation: PrescriptionVersionScheduleInvalidationPort,
     ) -> None:
         self._document_repo = document_repository
         self._ocr_repo = ocr_repository
         self._prescription_repo = prescription_repository
+        self._schedule_invalidation = schedule_invalidation
 
     async def confirm_prescription(self, *, user: User, document_id: UUID) -> PrescriptionData:
+        if await self._document_repo.get_owned(document_id=document_id, user=user) is None:
+            raise ApiError(status_code=404, code="MEDICAL_DOCUMENT_NOT_FOUND", message="의료문서를 찾을 수 없습니다.")
+
+        async def mutate() -> dict:
+            result = await self._confirm_prescription_once(user=user, document_id=document_id)
+            return result.model_dump(mode="json")
+
+        result = await self._idempotency().execute(
+            user_id=user.id,
+            operation_id="confirm_prescription_api_v1_documents__document_id__prescription_post",
+            parent_resource_id=document_id,
+            idempotency_key=f"prescription-confirm:{document_id}",
+            fingerprint={"document_id": str(document_id)},
+            success_status=201,
+            mutate=mutate,
+        )
+        return PrescriptionData.model_validate(result.response_body)
+
+    def _idempotency(self) -> SyncMutationIdempotencyService:
+        return SyncMutationIdempotencyService(
+            IdempotencyRepository(self._prescription_repo.session), get_default_snapshot_cipher()
+        )
+
+    async def _confirm_prescription_once(self, *, user: User, document_id: UUID) -> PrescriptionData:
         # 처방 확정과 extracted-field PATCH의 동시 요청을 직렬화합니다.
         # 문서 row를 먼저 잠근 뒤에 확정 여부와 검수값을 읽어야
         # "확정에 반영되지 않은 PATCH"와 "확정 이후 필드 변경"을 함께 차단할 수 있습니다.
@@ -121,8 +173,13 @@ class PrescriptionService:
             confirmed_at=confirmed_at,
             medications=medications,
         )
-        created_medications = await self._prescription_repo.get_medications(prescription_id=prescription.id)
-        return _to_prescription_data(prescription, created_medications)
+        created_medications = await self._prescription_repo.get_version_medications(
+            prescription_version_id=prescription.active_version_id
+        )
+        version = await self._prescription_repo.get_version(prescription_version_id=prescription.active_version_id)
+        if version is None:
+            raise RuntimeError("created prescription version is missing")
+        return _to_prescription_data(prescription, version, created_medications)
 
     async def get_prescription_detail(self, *, user: User, prescription_id: UUID) -> PrescriptionData:
         prescription = await self._prescription_repo.get_owned(prescription_id=prescription_id, user_id=user.id)
@@ -133,7 +190,115 @@ class PrescriptionService:
                 message="처방 정보를 찾을 수 없습니다.",
                 details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND", rejected_value=str(prescription_id))],
             )
-        return _to_prescription_data(prescription, list(prescription.medications))
+        return self._active_version_data(prescription)
+
+    async def get_latest_prescription(self, *, user: User) -> PrescriptionData:
+        # 재접속 복구 Backend 계약(#295): Frontend가 어떤 prescription_id도 들고 있지 않을 때
+        # (로그아웃·재로그인 등) 이 사용자의 가장 최근 확정 처방을 다시 찾을 수 있게 합니다.
+        prescription = await self._prescription_repo.get_latest_owned(user_id=user.id)
+        if prescription is None:
+            raise ApiError(
+                status_code=404,
+                code="PRESCRIPTION_NOT_FOUND",
+                message="처방 정보를 찾을 수 없습니다.",
+                details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND")],
+            )
+        return self._active_version_data(prescription)
+
+    async def correct_prescription(
+        self,
+        *,
+        user: User,
+        prescription_id: UUID,
+        request: CorrectPrescriptionRequest,
+    ) -> PrescriptionData:
+        if await self._prescription_repo.get_owned(prescription_id=prescription_id, user_id=user.id) is None:
+            raise ApiError(status_code=404, code="PRESCRIPTION_NOT_FOUND", message="처방 정보를 찾을 수 없습니다.")
+
+        async def mutate() -> dict:
+            result = await self._correct_prescription_once(user=user, prescription_id=prescription_id, request=request)
+            return result.model_dump(mode="json")
+
+        result = await self._idempotency().execute(
+            user_id=user.id,
+            operation_id="correct_prescription_api_v1_prescriptions__prescription_id__patch",
+            parent_resource_id=prescription_id,
+            idempotency_key=f"prescription-correction:{request.base_version_id}:{request.expected_revision}",
+            fingerprint=request.model_dump(mode="json"),
+            success_status=200,
+            mutate=mutate,
+        )
+        return PrescriptionData.model_validate(result.response_body)
+
+    async def _correct_prescription_once(
+        self,
+        *,
+        user: User,
+        prescription_id: UUID,
+        request: CorrectPrescriptionRequest,
+    ) -> PrescriptionData:
+        prescription = await self._prescription_repo.get_owned_for_version_update(
+            prescription_id=prescription_id,
+            user_id=user.id,
+        )
+        if prescription is None:
+            raise ApiError(
+                status_code=404,
+                code="PRESCRIPTION_NOT_FOUND",
+                message="처방 정보를 찾을 수 없습니다.",
+                details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND")],
+            )
+        if prescription.active_version_id != request.base_version_id:
+            raise self._version_conflict()
+
+        current_version = await self._prescription_repo.session.get(
+            PrescriptionVersion,
+            prescription.active_version_id,
+        )
+        if current_version is None or current_version.version_number != request.expected_revision:
+            raise self._version_conflict()
+
+        confirmed_at = datetime.now(UTC)
+        stale_job_ids = await self._prescription_repo.invalidate_version_domain_dependencies(
+            prescription_version_id=current_version.id,
+            invalidated_at=confirmed_at,
+        )
+        await self._schedule_invalidation.cancel_future_for_prescription_version(
+            prescription_version_id=current_version.id,
+            effective_at=confirmed_at,
+        )
+        await self._prescription_repo.invalidate_version_outbox(
+            stale_job_ids=stale_job_ids,
+        )
+        version = await self._prescription_repo.create_version(
+            prescription=prescription,
+            prescribed_date=request.prescribed_date,
+            confirmed_at=confirmed_at,
+            medications=[item.model_dump() for item in request.medications],
+        )
+        medications = await self._prescription_repo.get_version_medications(prescription_version_id=version.id)
+        return _to_prescription_data(prescription, version, medications)
+
+    @staticmethod
+    def _version_conflict() -> ApiError:
+        return ApiError(
+            status_code=409,
+            code="PRESCRIPTION_VERSION_CONFLICT",
+            message="처방 정보가 이미 변경되었습니다. 최신 정보를 다시 확인해 주세요.",
+            details=[ErrorDetail(field="base_version_id", reason="ACTIVE_VERSION_MISMATCH")],
+        )
+
+    @staticmethod
+    def _active_version_data(prescription: Prescription) -> PrescriptionData:
+        version = prescription.active_version
+        if version is None or not version.medications:
+            raise ApiError(
+                status_code=409,
+                code="PRESCRIPTION_VERSION_UNAVAILABLE",
+                message="활성 처방 버전 정보를 사용할 수 없습니다.",
+                details=[ErrorDetail(field="active_version_id", reason="INVALID_VERSION_GRAPH")],
+            )
+        return _to_prescription_data(prescription, version, list(version.medications))
 
     @staticmethod
     def _build_confirmed_data(

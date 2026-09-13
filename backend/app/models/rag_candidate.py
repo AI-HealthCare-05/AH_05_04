@@ -116,9 +116,14 @@ class MedicationCandidateSearch(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
-    # prescription_version_medication은 #169에서 생성된다. 이 테이블은 그 선행 테이블을
-    # 중복 생성하지 않기 위해 우선 값만 저장하고, FK는 #169 이후 별도 migration에서 추가한다.
-    prescription_version_medication_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    prescription_version_medication_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey(
+            "prescription_version_medication.id",
+            name="fk_medication_candidate_search_version_medication",
+        ),
+        nullable=False,
+    )
     # medication.medication_name/strength_text는 사용자가 나중에 정정하면 값이 바뀐다.
     # Search가 실제로 어떤 값을 대상으로 실행됐는지는 살아있는 FK 참조만으로 재구성할 수
     # 없으므로(#260 Product Identity 원칙과 동일한 이유) 생성 시점 값을 그대로 스냅샷한다.
@@ -204,8 +209,9 @@ class MedicationCandidateSearchResult(Base):
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     search_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("medication_candidate_search.id"), nullable=False)
-    # 공식 제품 Catalog는 #164의 Source/Catalog slice 또는 #166 이후 생성된다. product_id는 그
-    # 테이블이 생기면 FK가 될 편의 포인터일 뿐, 정체성 판단에 쓰지 않는다 — Catalog row는 Source
+    # 공식 제품 Catalog는 #164 Source/Catalog slice에서 생성된다. product_id FK 연결은 기존
+    # Candidate fixture와 적재 경계 정리 후 별도 migration에서 추가한다. 이 값은 편의 포인터일 뿐,
+    # 정체성 판단에 쓰지 않는다 — Catalog row는 Source
     # Snapshot을 다시 적재할 때마다 새 UUID로 재생성될 수 있어 product_id만으로는 시간이 지나도
     # "같은 공식 제품"을 재식별할 수 없다(#260 Product Identity 원칙). 실제 정체성은
     # code_system·canonical_code tuple로 보존한다.
@@ -256,6 +262,11 @@ class MedicationIdentification(Base):
             unique=True,
             postgresql_where=text("status = 'MATCHED'"),
         ),
+        UniqueConstraint(
+            "id",
+            "prescription_version_medication_id",
+            name="uq_medication_identification_id_medication",
+        ),
         UniqueConstraint("candidate_search_id", name="uq_medication_identification_search"),
         CheckConstraint(
             f"status IN ({_sql_in_list(MedicationIdentificationStatus)})",
@@ -285,9 +296,14 @@ class MedicationIdentification(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
-    # prescription_version_medication은 #169에서 생성된다. Candidate Search와 같은 이유로
-    # 우선 값만 저장하고, FK는 선행 테이블 구현 이후 별도 migration에서 추가한다.
-    prescription_version_medication_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    prescription_version_medication_id: Mapped[UUID] = mapped_column(
+        UUIDChar(),
+        ForeignKey(
+            "prescription_version_medication.id",
+            name="fk_medication_identification_version_medication",
+        ),
+        nullable=False,
+    )
     candidate_search_id: Mapped[UUID] = mapped_column(
         UUIDChar(),
         ForeignKey("medication_candidate_search.id"),
@@ -298,7 +314,8 @@ class MedicationIdentification(Base):
         ForeignKey("medication_candidate_search_result.id"),
         nullable=True,
     )
-    # product_id는 Catalog 테이블이 생기면 FK가 될 편의 포인터일 뿐이다. 이 테이블은
+    # product_id FK 연결은 기존 Candidate fixture와 적재 경계 정리 후 별도 migration에서 추가한다.
+    # 이 값은 편의 포인터일 뿐이다. 이 테이블은
     # append-only라 나중에 값을 보정할 수 없으므로, 재적재 후에도 안정적인 정체성은
     # code_system·canonical_code tuple로 보존한다(#260 Product Identity 원칙).
     product_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)

@@ -17,11 +17,24 @@ import {
   useNavigate,
 } from 'react-router-dom'
 import { ApiError } from '../src/api/client'
-import { getGuide, type GuideResponse } from '../src/api/guides'
+import {
+  getGuide,
+  getGuideForPrescription,
+  type GuideResponse,
+} from '../src/api/guides'
+import {
+  getLatestPrescription,
+  type PrescriptionResponse,
+} from '../src/api/prescriptions'
 import GuidePage from '../src/pages/GuidePage'
 
 vi.mock('../src/api/guides', () => ({
   getGuide: vi.fn(),
+  getGuideForPrescription: vi.fn(),
+}))
+
+vi.mock('../src/api/prescriptions', () => ({
+  getLatestPrescription: vi.fn(),
 }))
 
 function GuideRouteControls() {
@@ -57,6 +70,7 @@ function renderPage(entry = '/guides/guide-1', withRouteControls = false) {
         <Route path="/guides" element={<GuidePage />} />
         <Route path="/guides/:guideId" element={<GuidePage />} />
         <Route path="/prescriptions/upload" element={<div>처방전 업로드 화면</div>} />
+        <Route path="/login" element={<div>로그인 화면</div>} />
         <Route path="/" element={<div>홈 화면</div>} />
         <Route path="/menu" element={<div>메뉴 화면</div>} />
         <Route path="/chat" element={<ChatRouteProbe />} />
@@ -79,6 +93,20 @@ function completedGuideResponse(
       prompt_version: 'guide-prompt-v1',
       requested_at: '2026-08-22T00:00:00Z',
       completed_at: '2026-08-22T00:00:03Z',
+    },
+  }
+}
+
+function prescriptionResponse(
+  prescriptionId = 'prescription-latest',
+): PrescriptionResponse {
+  return {
+    data: {
+      prescription_id: prescriptionId,
+      document_id: 'document-latest',
+      prescribed_date: '2026-09-07',
+      confirmed_at: '2026-09-07T08:00:00Z',
+      medications: [],
     },
   }
 }
@@ -115,6 +143,9 @@ function deferred<T>() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(getLatestPrescription).mockRejectedValue(
+    new ApiError(404, '처방을 찾을 수 없습니다.', 'PRESCRIPTION_NOT_FOUND'),
+  )
 })
 
 afterEach(() => {
@@ -291,14 +322,123 @@ describe('GuidePage', () => {
     expect(screen.getByRole('button', { name: '다시 불러오기' })).toBeTruthy()
   })
 
-  it('Guide가 없는 경로에서 GUIDE-01 상태와 업로드 CTA를 표시한다', async () => {
+  it('latest 처방이 없으면 GUIDE-01 empty state와 업로드 CTA를 표시한다', async () => {
     renderPage('/guides')
 
     expect(await screen.findByText('아직 만들어진 가이드가 없어요')).toBeTruthy()
+    expect(getLatestPrescription).toHaveBeenCalledTimes(1)
+    expect(getGuideForPrescription).not.toHaveBeenCalled()
     expect(getGuide).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: '처방전 등록하기' }))
     expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
+  })
+
+  it('client ID가 없는 재로그인 상태에서 최신 처방과 가이드를 순서대로 복원한다', async () => {
+    localStorage.clear()
+    sessionStorage.clear()
+    localStorage.setItem('access_token', 'relogin-access-token')
+    vi.mocked(getLatestPrescription).mockResolvedValue(
+      prescriptionResponse('prescription-restored'),
+    )
+    const restoredGuide = {
+      ...completedGuideResponse('guide-restored', structuredGuideContent()),
+      data: {
+        ...completedGuideResponse('guide-restored', structuredGuideContent()).data,
+        prescription_id: 'prescription-restored',
+      },
+    }
+    vi.mocked(getGuideForPrescription).mockResolvedValue(restoredGuide)
+    vi.mocked(getGuide).mockResolvedValue(restoredGuide)
+
+    renderPage('/guides')
+
+    expect(
+      await screen.findByRole('heading', { name: '확인된 약 목록 · 1개' }),
+    ).toBeTruthy()
+    expect(getLatestPrescription).toHaveBeenCalledTimes(1)
+    expect(getGuideForPrescription).toHaveBeenCalledWith('prescription-restored')
+    expect(getGuide).toHaveBeenCalledWith('guide-restored')
+    expect(screen.getByTestId('location').textContent).toBe('/guides/guide-restored')
+    expect(localStorage.getItem('access_token')).toBe('relogin-access-token')
+    expect(localStorage.length).toBe(1)
+    expect(sessionStorage.length).toBe(0)
+  })
+
+  it('처방은 있지만 Guide가 없으면 기존 Guide empty state를 유지한다', async () => {
+    vi.mocked(getLatestPrescription).mockResolvedValue(
+      prescriptionResponse('prescription-without-guide'),
+    )
+    vi.mocked(getGuideForPrescription).mockRejectedValue(
+      new ApiError(404, '가이드를 찾을 수 없습니다.', 'GUIDE_NOT_FOUND'),
+    )
+
+    renderPage('/guides')
+
+    expect(await screen.findByText('아직 만들어진 가이드가 없어요')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '처방전 등록하기' })).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe('/guides')
+  })
+
+  it.each([
+    [
+      new ApiError(503, 'internal provider detail', 'PROVIDER_DOWN'),
+      '서버 응답이 원활하지 않아요. 잠시 후 다시 시도해 주세요.',
+    ],
+    [
+      new TypeError('Failed to fetch'),
+      '네트워크 연결을 확인한 뒤 다시 시도해 주세요.',
+    ],
+  ])('rediscovery 오류를 empty state로 오인하지 않는다', async (error, expectedMessage) => {
+    vi.mocked(getLatestPrescription).mockRejectedValue(error)
+
+    renderPage('/guides')
+
+    expect(await screen.findByText(expectedMessage)).toBeTruthy()
+    expect(screen.queryByText('아직 만들어진 가이드가 없어요')).toBeNull()
+    expect(screen.queryByRole('button', { name: '처방전 등록하기' })).toBeNull()
+  })
+
+  it.each([
+    ['latest 처방', false],
+    ['처방의 Guide', true],
+  ])('%s rediscovery의 401은 기존 Auth 계약대로 세션을 정리하고 로그인으로 이동한다', async (_stage, failGuide) => {
+    localStorage.setItem('access_token', 'expired-access-token')
+    sessionStorage.setItem('dosey_ocr_job_recovery:v1', '{"job":"active"}')
+    const authError = new ApiError(401, '만료된 토큰입니다.', 'EXPIRED_TOKEN')
+
+    if (failGuide) {
+      vi.mocked(getLatestPrescription).mockResolvedValue(
+        prescriptionResponse('prescription-auth-error'),
+      )
+      vi.mocked(getGuideForPrescription).mockRejectedValue(authError)
+    } else {
+      vi.mocked(getLatestPrescription).mockRejectedValue(authError)
+    }
+
+    renderPage('/guides')
+
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe('/login')
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toBeNull()
+    expect(screen.queryByText('아직 만들어진 가이드가 없어요')).toBeNull()
+  })
+
+  it('latest 처방 성공 뒤 Guide 5xx를 empty state로 오인하지 않는다', async () => {
+    vi.mocked(getLatestPrescription).mockResolvedValue(
+      prescriptionResponse('prescription-guide-error'),
+    )
+    vi.mocked(getGuideForPrescription).mockRejectedValue(
+      new ApiError(503, 'internal provider detail', 'PROVIDER_DOWN'),
+    )
+
+    renderPage('/guides')
+
+    expect(
+      await screen.findByText('서버 응답이 원활하지 않아요. 잠시 후 다시 시도해 주세요.'),
+    ).toBeTruthy()
+    expect(screen.queryByText('아직 만들어진 가이드가 없어요')).toBeNull()
   })
 
   it('GENERATING 응답을 최신 생성 중 상태로 표시하고 실제 조회만 다시 시도한다', async () => {
@@ -380,6 +520,8 @@ describe('GuidePage', () => {
     expect(screen.getByTestId('location').textContent).toBe('/guides/guide-1')
     expect(screen.getByText('현재 Guide 내용')).toBeTruthy()
     expect(getGuide).toHaveBeenCalledTimes(1)
+    expect(getLatestPrescription).not.toHaveBeenCalled()
+    expect(getGuideForPrescription).not.toHaveBeenCalled()
   })
 
   it('Guide A의 느린 응답이 route 전환 후 Guide B를 덮어쓰지 않는다', async () => {

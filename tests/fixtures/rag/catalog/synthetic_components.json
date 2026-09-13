@@ -1,0 +1,38 @@
+{
+  "schema_version": "synthetic-catalog-component-input-v2",
+  "records": [
+    {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "product_code_system": "MFDS_ITEM_SEQ",
+      "product_code": "000000001",
+      "ingredient_code_system": "MFDS_INGREDIENT_CODE",
+      "ingredient_code": "ING-0001",
+      "component_role": "ACTIVE_INGREDIENT",
+      "component_order": 1,
+      "strength_value": "010.00",
+      "strength_unit": "mg"
+    },
+    {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "product_code_system": "MFDS_ITEM_SEQ",
+      "product_code": "000000002",
+      "ingredient_code_system": "MFDS_INGREDIENT_CODE",
+      "ingredient_code": "ING-0001",
+      "component_role": "ACTIVE_INGREDIENT",
+      "component_order": 1,
+      "strength_value": "5.0",
+      "strength_unit": "mg"
+    },
+    {
+      "source_snapshot_id": "synthetic-snapshot-001",
+      "product_code_system": "MFDS_ITEM_SEQ",
+      "product_code": "000000002",
+      "ingredient_code_system": "MFDS_INGREDIENT_CODE",
+      "ingredient_code": "ING-0002",
+      "component_role": "ACTIVE_INGREDIENT",
+      "component_order": 2,
+      "strength_value": "2.50",
+      "strength_unit": "mg"
+    }
+  ]
+}

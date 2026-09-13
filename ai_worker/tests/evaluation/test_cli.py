@@ -302,12 +302,40 @@ def test_publish_receipt_rejects_nonfinal_ancestor_symlink_swap(
     assert not (outside / "level-two/receipt.json").exists()
 
 
+def _swap_entry_under_a_new_inode(name: str, *, dir_fd: int, payload: bytes) -> int:
+    """Replace `name` with fresh bytes that a `(st_dev, st_ino)` check can tell apart.
+
+    `_PublishFiles._remove_if_owned` refuses to delete an entry whose identity no longer matches
+    the one recorded at creation. Unlinking and immediately recreating the entry is not enough to
+    trigger that: Linux (ext4/tmpfs) reuses the just-freed inode number, so the replacement keeps
+    the original identity and the cleanup deletes it as its own. Holding a descriptor on the
+    unlinked inode keeps it allocated, forcing the new entry onto a different one.
+
+    Returns that pinned descriptor; the caller must keep it open until the identity check has run.
+    """
+    original_inode = os.stat(name, dir_fd=dir_fd).st_ino
+    pinned = os.open(name, os.O_RDONLY, dir_fd=dir_fd)
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+        descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dir_fd)
+        try:
+            os.write(descriptor, payload)
+        finally:
+            os.close(descriptor)
+        assert os.stat(name, dir_fd=dir_fd).st_ino != original_inode, "replacement must not reuse the inode"
+    except BaseException:
+        os.close(pinned)
+        raise
+    return pinned
+
+
 def test_publish_receipt_preserves_replacement_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     destination = tmp_path / "receipt.json"
     replacement = b"replacement-lock"
+    pinned_inodes: list[int] = []
 
     def replace_lock_then_fail(
         source: os.PathLike[str] | str,
@@ -320,25 +348,24 @@ def test_publish_receipt_preserves_replacement_lock(
         del source, follow_symlinks
         assert src_dir_fd is not None and dst_dir_fd is not None
         lock_name = f"{os.fspath(target)}.lock"
-        os.unlink(lock_name, dir_fd=dst_dir_fd)
-        descriptor = os.open(lock_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dst_dir_fd)
-        try:
-            os.write(descriptor, replacement)
-        finally:
-            os.close(descriptor)
+        pinned_inodes.append(_swap_entry_under_a_new_inode(lock_name, dir_fd=dst_dir_fd, payload=replacement))
         raise OSError(errno.EIO, "SENSITIVE_SENTINEL")
 
     monkeypatch.setattr(cli_module.os, "link", replace_lock_then_fail)
 
-    with pytest.raises(EvaluationValidationError) as caught:
-        publish_receipt_no_clobber(destination, b'{"safe":true}')
+    try:
+        with pytest.raises(EvaluationValidationError) as caught:
+            publish_receipt_no_clobber(destination, b'{"safe":true}')
 
-    assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
-    assert "SENSITIVE_SENTINEL" not in str(caught.value)
-    assert caught.value.__cause__ is None
-    assert (tmp_path / "receipt.json.lock").read_bytes() == replacement
-    assert not destination.exists()
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["receipt.json.lock"]
+        assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
+        assert "SENSITIVE_SENTINEL" not in str(caught.value)
+        assert caught.value.__cause__ is None
+        assert (tmp_path / "receipt.json.lock").read_bytes() == replacement
+        assert not destination.exists()
+        assert sorted(path.name for path in tmp_path.iterdir()) == ["receipt.json.lock"]
+    finally:
+        for descriptor in pinned_inodes:
+            os.close(descriptor)
 
 
 def test_publish_receipt_preserves_replacement_temp(
@@ -347,6 +374,7 @@ def test_publish_receipt_preserves_replacement_temp(
 ) -> None:
     destination = tmp_path / "receipt.json"
     replacement = b"replacement-temp"
+    pinned_inodes: list[int] = []
 
     def replace_temp_then_fail(
         source: os.PathLike[str] | str,
@@ -359,32 +387,155 @@ def test_publish_receipt_preserves_replacement_temp(
         del target, follow_symlinks
         assert src_dir_fd is not None and dst_dir_fd is not None
         temporary_name = os.fspath(source)
-        os.unlink(temporary_name, dir_fd=src_dir_fd)
-        descriptor = os.open(
-            temporary_name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o600,
-            dir_fd=src_dir_fd,
-        )
-        try:
-            os.write(descriptor, replacement)
-        finally:
-            os.close(descriptor)
+        pinned_inodes.append(_swap_entry_under_a_new_inode(temporary_name, dir_fd=src_dir_fd, payload=replacement))
         raise OSError(errno.EIO, "SENSITIVE_SENTINEL")
 
     monkeypatch.setattr(cli_module.os, "link", replace_temp_then_fail)
+
+    try:
+        with pytest.raises(EvaluationValidationError) as caught:
+            publish_receipt_no_clobber(destination, b'{"safe":true}')
+
+        assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
+        assert "SENSITIVE_SENTINEL" not in str(caught.value)
+        assert caught.value.__cause__ is None
+        remaining = list(tmp_path.iterdir())
+        assert len(remaining) == 1
+        assert ".tmp." in remaining[0].name
+        assert remaining[0].read_bytes() == replacement
+        assert not destination.exists()
+    finally:
+        for descriptor in pinned_inodes:
+            os.close(descriptor)
+
+
+def test_publish_receipt_pins_lock_inode_against_number_recycling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A replacement lock must not be able to inherit the identity of the lock we created.
+
+    ``test_publish_receipt_preserves_replacement_lock`` asserts the outcome; this asserts the mechanism
+    that makes the outcome hold on filesystems which recycle inode numbers eagerly (ext4, overlayfs).
+    On those filesystems a file created right after an unlink takes the freed inode number, so the
+    recorded ``(st_dev, st_ino)`` pair only stays unique to our file while a descriptor pins the inode.
+    """
+
+    destination = tmp_path / "receipt.json"
+    observed: dict[str, Any] = {}
+    published: list[cli_module._PublishFiles] = []
+    real_publish_in_directory = cli_module._publish_in_directory
+
+    def capture_publish_files(files: cli_module._PublishFiles, payload: bytes) -> None:
+        published.append(files)
+        real_publish_in_directory(files, payload)
+
+    def replace_lock_then_fail(
+        source: os.PathLike[str] | str,
+        target: os.PathLike[str] | str,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> None:
+        del source, follow_symlinks
+        assert src_dir_fd is not None and dst_dir_fd is not None
+        files = published[0]
+        assert files.lock_descriptor is not None
+        lock_name = f"{os.fspath(target)}.lock"
+        os.unlink(lock_name, dir_fd=dst_dir_fd)
+        held = os.fstat(files.lock_descriptor)
+        observed["recorded_identity"] = files.lock_identity
+        observed["held_identity"] = (held.st_dev, held.st_ino)
+        observed["held_links"] = held.st_nlink
+        descriptor = os.open(lock_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dst_dir_fd)
+        os.close(descriptor)
+        replacement = os.stat(lock_name, dir_fd=dst_dir_fd, follow_symlinks=False)
+        observed["replacement_identity"] = (replacement.st_dev, replacement.st_ino)
+        raise OSError(errno.EIO, "SENSITIVE_SENTINEL")
+
+    monkeypatch.setattr(cli_module, "_publish_in_directory", capture_publish_files)
+    monkeypatch.setattr(cli_module.os, "link", replace_lock_then_fail)
 
     with pytest.raises(EvaluationValidationError) as caught:
         publish_receipt_no_clobber(destination, b'{"safe":true}')
 
     assert caught.value.code is EvaluationErrorCode.INTERNAL_ERROR
-    assert "SENSITIVE_SENTINEL" not in str(caught.value)
-    assert caught.value.__cause__ is None
-    remaining = list(tmp_path.iterdir())
-    assert len(remaining) == 1
-    assert ".tmp." in remaining[0].name
-    assert remaining[0].read_bytes() == replacement
-    assert not destination.exists()
+    # The descriptor still resolves to the inode we created, now unlinked and therefore unnameable.
+    assert observed["held_identity"] == observed["recorded_identity"]
+    assert observed["held_links"] == 0
+    # Because we still pin that inode, the kernel cannot lend its number to the replacement.
+    assert observed["replacement_identity"] != observed["recorded_identity"]
+    assert (tmp_path / "receipt.json.lock").exists()
+
+
+def test_publish_receipt_releases_pinning_descriptors_on_success_and_failure(tmp_path: Path) -> None:
+    """The descriptors that pin the lock and temporary inodes must not outlive the publication."""
+
+    def open_descriptor_count() -> int:
+        return len(os.listdir("/dev/fd"))
+
+    def failing_link(
+        source: os.PathLike[str] | str,
+        target: os.PathLike[str] | str,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> None:
+        del source, target, src_dir_fd, dst_dir_fd, follow_symlinks
+        raise OSError(errno.EIO, "SENSITIVE_SENTINEL")
+
+    baseline = open_descriptor_count()
+    for index in range(8):
+        publish_receipt_no_clobber(tmp_path / f"receipt-{index}.json", b'{"safe":true}')
+    assert open_descriptor_count() == baseline
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(cli_module.os, "link", failing_link)
+        for index in range(8):
+            with pytest.raises(EvaluationValidationError):
+                publish_receipt_no_clobber(tmp_path / f"failed-{index}.json", b'{"safe":true}')
+    assert open_descriptor_count() == baseline
+
+
+def test_publish_cleanup_releases_pinning_descriptors_after_ownership_mismatch(tmp_path: Path) -> None:
+    directory_fd = os.open(tmp_path, os.O_RDONLY)
+    files = cli_module._PublishFiles(
+        directory_fd=directory_fd,
+        destination_name="receipt.json",
+        lock_name="receipt.json.lock",
+        temporary_name="receipt.json.tmp",
+    )
+    files.acquire_lock()
+    files.write_temporary(b'{"safe":true}')
+    assert files.lock_descriptor is not None
+    assert files.temporary_descriptor is not None
+    descriptors = (files.lock_descriptor, files.temporary_descriptor)
+
+    os.unlink(files.lock_name, dir_fd=directory_fd)
+    replacement_descriptor = os.open(
+        files.lock_name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+        dir_fd=directory_fd,
+    )
+    os.close(replacement_descriptor)
+
+    cleanup_error = files.cleanup()
+    assert isinstance(cleanup_error, EvaluationValidationError)
+    assert cleanup_error.code is EvaluationErrorCode.INTERNAL_ERROR
+    try:
+        for descriptor in descriptors:
+            with pytest.raises(OSError) as caught:
+                os.fstat(descriptor)
+            assert caught.value.errno == errno.EBADF
+    finally:
+        for descriptor in descriptors:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
 
 def test_cli_maps_publication_path_race_to_exit_two_without_raw_error(

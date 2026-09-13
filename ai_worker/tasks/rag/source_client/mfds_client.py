@@ -38,7 +38,9 @@ class DecodedProviderPage:
 
     body_code: str
     records: tuple[Mapping[str, object], ...]
-    total_count: int | None
+    page_number: int
+    page_size: int
+    total_count: int
     retry_reset_at: str | None = None
 
 
@@ -560,6 +562,17 @@ class MfdsSourceClient:
                 failure=body_failure,
             )
 
+        requested_page_number = page_number if page_number is not None else self._contract.pagination.page_base
+
+        if decoded_page.page_number != requested_page_number:
+            return self._failed_result(
+                code=SourceFailureCode.SCHEMA_DRIFT,
+                retry=RetryDisposition.NOT_RETRYABLE,
+                safe_message="MFDS response page does not match the request.",
+                http_status=response.status_code,
+                status=SourceRunStatus.SCHEMA_DRIFT,
+            )
+
         if not decoded_page.records:
             return self._failed_result(
                 code=SourceFailureCode.EMPTY_RESULT,
@@ -568,9 +581,8 @@ class MfdsSourceClient:
                 http_status=response.status_code,
             )
 
-        actual_page_number = page_number if page_number is not None else self._contract.pagination.page_base
         page = ProviderPage(
-            page_number=actual_page_number,
+            page_number=decoded_page.page_number,
             records=decoded_page.records,
             response_checksum=hashlib.sha256(body).hexdigest(),
             content_type=media_type,
@@ -590,6 +602,11 @@ class MfdsSourceClient:
         *,
         page_number: int | None,
     ) -> dict[str, str | int]:
+        if page_number is not None and (
+            type(page_number) is not int or page_number < self._contract.pagination.page_base
+        ):
+            raise ValueError
+
         required_parameters = {parameter.name: parameter for parameter in self._contract.required_parameters}
         sensitive_names = {parameter.name for parameter in self._contract.required_parameters if parameter.sensitive}
         pagination_names = {

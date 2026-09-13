@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { login } from '../api/auth'
 import { ApiError } from '../api/client'
-import { clearOcrJobRecovery } from '../features/ai-jobs/ocrJobRecovery'
+import { clearAuthenticatedSession } from '../features/auth/authSession'
 import { Button, MobileShell } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
@@ -38,6 +38,11 @@ function validateLogin(form: LoginForm): LoginFieldErrors {
 
 function LoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
+
+  const cameFromSignup =
+    (location.state as { fromSignup?: boolean } | null)?.fromSignup === true
+
   const [form, setForm] = useState<LoginForm>({ email: '', password: '' })
   const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({})
   const [hasCredentialError, setHasCredentialError] = useState(false)
@@ -89,9 +94,13 @@ function LoginPage() {
         email: form.email.trim(),
         password: form.password,
       })
-      clearOcrJobRecovery()
+      clearAuthenticatedSession()
       localStorage.setItem('access_token', response.access_token)
-      navigate('/')
+      navigate('/', {
+        state: cameFromSignup
+          ? { showPrescriptionOnboarding: true }
+          : null,
+      })
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : NETWORK_ERROR_MESSAGE)
       setHasCredentialError(error instanceof ApiError && error.status === 401)

@@ -34,6 +34,7 @@ def isolate_database() -> None:
         "/api/v1/chat-sessions/session-id/messages",
         "/api/v1/chat-sessions/session-id/messages/",
         "/api/v1/prescriptions/prescription-id/chat-sessions",
+        "/api/v1/prescriptions/prescription-id/chat-session",
     ],
 )
 def test_is_api_v1_path_accepts_every_v1_route(path: str) -> None:

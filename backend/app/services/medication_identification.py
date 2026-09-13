@@ -1,5 +1,5 @@
+import logging
 import math
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -18,6 +18,9 @@ from app.repositories.medication_candidate_repository import (
     MedicationCandidateRepository,
     MedicationCandidateResultCreate,
 )
+
+logger = logging.getLogger(__name__)
+
 
 _FINALIZABLE_SEARCH_STATUSES = frozenset(
     {
@@ -128,14 +131,10 @@ class MedicationIdentificationService:
             raise self._stale_error(field="search_id", reason="NOT_RUNNING")
 
         self._validate_finalize_payload(status=status, results=results, status_reason=status_reason)
-        created_results = await self._repository.add_results(search=search, results=results)
-        displayed_candidate_count = sum(1 for result in results if result.is_displayed)
-
-        finalized = await self._repository.finalize_search(
+        finalized, created_results = await self._repository.assemble_and_finalize_search(
             search=search,
+            results=results,
             status=status,
-            candidate_count=len(results),
-            displayed_candidate_count=displayed_candidate_count,
             finalized_at=finalized_at or datetime.now(config.TIMEZONE),
             status_reason=status_reason,
         )
@@ -227,34 +226,38 @@ class MedicationIdentificationService:
     async def ensure_matched_for_preflight(
         self,
         *,
-        prescription_version_medication_ids: Sequence[UUID],
+        prescription_version_id: UUID,
     ) -> MedicationIdentificationPreflightResult:
-        unique_medication_ids = list(dict.fromkeys(prescription_version_medication_ids))
-        if not unique_medication_ids:
+        medication_ids = await self._repository.get_active_version_medication_ids_for_update(
+            prescription_version_id=prescription_version_id
+        )
+        if medication_ids is None:
             raise self._invalid_state_error(
-                field="prescription_version_medication_ids",
-                reason="AT_LEAST_ONE_MEDICATION_REQUIRED",
+                field="prescription_version_id",
+                reason="ACTIVE_VERSION_REQUIRED",
             )
+        if not medication_ids:
+            raise self._invalid_state_error(field="prescription_version_id", reason="AT_LEAST_ONE_MEDICATION_REQUIRED")
 
         identifications = await self._repository.get_matched_identifications_for_update(
-            prescription_version_medication_ids=unique_medication_ids
+            prescription_version_medication_ids=medication_ids
         )
         matched_medication_ids = {item.prescription_version_medication_id for item in identifications}
-        if len(matched_medication_ids) != len(unique_medication_ids):
+        if len(matched_medication_ids) != len(medication_ids):
             raise ApiError(
                 status_code=409,
                 code="PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE",
                 message="약품 확인이 완료되지 않아 다음 단계를 진행할 수 없습니다.",
                 details=[
                     ErrorDetail(
-                        field="prescription_version_medication_ids",
+                        field="prescription_version_id",
                         reason="MATCHED_IDENTIFICATION_REQUIRED",
                     )
                 ],
             )
 
         return MedicationIdentificationPreflightResult(
-            prescription_version_medication_count=len(unique_medication_ids),
+            prescription_version_medication_count=len(medication_ids),
             matched_identification_count=len(matched_medication_ids),
         )
 
@@ -383,11 +386,17 @@ class MedicationIdentificationService:
 
     @staticmethod
     def _stale_error(*, field: str, reason: str) -> ApiError:
+        # Target 계약은 만료·입력 변경·이미 소비됨 같은 내부 lifecycle 원인을
+        # 환자 오류 DTO에 노출하지 않는다. 구체 reason은 개인정보 없는 내부 로그에만 남긴다.
+        logger.info(
+            "Candidate search became stale before identification finalization.",
+            extra={"field": field, "stale_reason": reason},
+        )
         return ApiError(
             status_code=409,
             code="CANDIDATE_SEARCH_STALE",
             message="현재 사용할 수 없는 약품 후보 검색 결과입니다. 최신 상태를 다시 확인해 주세요.",
-            details=[ErrorDetail(field=field, reason=reason)],
+            details=[ErrorDetail(field=field, reason="STALE")],
         )
 
     @staticmethod
