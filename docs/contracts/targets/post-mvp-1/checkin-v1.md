@@ -3,10 +3,10 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 검증 |
-| 구현·리뷰 | B1/B2 Schedule·Occurrence와 B3 Check-in 구현 · B4 Check-in PUT 병합, 일정 조회·PUT/PATCH는 #202 작업 브랜치 구현·지정 리뷰어 검토 대기 |
+| 구현·리뷰 | B1/B2 Schedule·Occurrence와 B3 Check-in 구현 · B4 Check-in PUT 병합, 일정 조회·PUT/PATCH와 실제 알림 adapter 연동 #456 병합; 전체 목표 Current 승격 별도 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-b-adherence-v1.md`, `track-c-support-v1.md` |
 | 승인 delta | `setup_reason` 추가 값·우선순위는 PD-417 / #424 승인 delta이며 최초 Freeze v4 자체의 내용은 아님 |
-| Last verified | 2026-09-11 |
+| Last verified | 2026-09-12 |
 
 ## #202 Check-in API 최초 부분 구현 기록
 
@@ -108,7 +108,7 @@ Track C의 목표 API는 다음으로 고정한다.
 
 ### PD-417 승인 delta — 일정 reason·Audit·revision
 
-[일정 정합화 v1](./track-b-schedule-reconciliation-v1.md)은 PR #424의 송은영·남한솔 승인으로 확정된 추가 목표다. Decision에 review URL·대상 commit·시각을 연결했다. 다섯 reason·우선순위, INACTIVE의 과거 pending 보존, Audit·revision·time retire와 transaction은 해당 계약을 따른다. 기존 Freeze v4 전체를 재승인한 것은 아니다. DB #423·API #202·알림 #203 구현·검증이 남아 있으므로 현재 runtime 완료로 해석하지 않는다.
+[일정 정합화 v1](./track-b-schedule-reconciliation-v1.md)은 PR #424의 송은영·남한솔 승인으로 확정된 추가 목표다. Decision에 review URL·대상 commit·시각을 연결했다. 다섯 reason·우선순위, INACTIVE의 과거 pending 보존, Audit·revision·time retire와 transaction은 해당 계약을 따른다. 기존 Freeze v4 전체를 재승인한 것은 아니다. DB #438·알림 #430·일정 API #456은 병합됐다. 구현 검증과 남은 승인·과거 약 표시 인계는 연결된 일정 정합화 계약의 2026-09-12 현황을 따른다. 병합 사실만으로 전체 목표의 Current 승격을 선언하지 않는다.
 
 목표 오류 의미는 다음과 같다.
 

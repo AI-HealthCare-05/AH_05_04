@@ -2,7 +2,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | **Approved target** — PR #424 양 도메인 승인; #423 DB 작업 브랜치 구현·리뷰/머지 대기, 일정 API #202·실제 알림 연동 #203 별도 |
+| 상태 | **Approved target** — PR #424 양 도메인 승인; DB #438·알림 #430·일정 API #456 병합; Current 승격은 별도 |
 | 결정 정본 | [PD-417-20260910](../../../governance/decisions/2026-09-10-track-b-schedule-contract.md) |
 | 기존 목표 | [Check-in v1](./checkin-v1.md), [멱등성 v1](./idempotency-v1.md) |
 | 구현 담당 | 권가빈 (`hazelnutflavoured`) |
@@ -14,7 +14,8 @@
 [Decision의 교차 확인 표](../../../governance/decisions/2026-09-10-track-b-schedule-contract.md)에 기록한다.
 아래 원본 인용 전체가 repository target으로 확인됐다는 의미는 아니다. 특히 물리 time status·schedule
 audit·종료 revision 증가는 열람본만의 세부 요구로 분리해 승인했다.
-이 표의 현재 구현은 Decision에 고정한 develop 기준이다.
+이 표는 Decision 작성 당시 develop `ebcb21ea04ce7bd5f43d4c3bd7f0629ef70e438a`의 역사적 비교다.
+표의 미구현·후속 표현을 현재 상태로 읽지 않는다. 2026-09-12 병합 현황은 아래 별도 표를 따른다.
 
 | 항목 | 원본 / repository target | 현재 구현 근거 | 승인 결과 / 후속 |
 | --- | --- | --- | --- |
@@ -28,6 +29,20 @@ audit·종료 revision 증가는 열람본만의 세부 요구로 분리해 승�
 | occurrence 보존 | 원본 `(time_id, scheduled_at)` unique, nullable `cancelled_at` | B1은 `(time_id, scheduled_local_date)` unique, revision snapshot; `cancelled_at` 없음 | KST 매일 반복의 현재 unique 유지. 취소 시각은 §3의 신규 nullable 컬럼으로 보완, #423 |
 | 처방 활성화 | Track B §4: 동일 transaction의 미래 pending·미전달 알림 취소 | B2는 `scheduled_at >= effective_at` pending 취소; [서비스](../../../../backend/app/services/medication_occurrences.py)의 알림 port는 optional | §5의 동일 session 실제 adapter는 #203, API 연결은 #202 |
 | 검증 범위 | 원본 §6은 revision·audit·알림 rollback까지 요구 | 기존 [B1 migration 테스트](../../../../tests/migration/test_medication_schedule_migration.py), [B2 통합 테스트](../../../../backend/app/tests/repositories/test_medication_schedule_repository_integration.py)는 unique·KST·종료 status·미래 취소 검증 | 기존 테스트 존재는 새 감사·알림 통합 검증 PASS 아님. §7 후속 증빙 필요 |
+
+## 2026-09-12 구현 현황과 남은 인계
+
+확인 기준은 develop `df259ab3ff4317edfff74857c09a29f63c36ab12`다. 아래 병합 기록은 구현 근거이며 문서 승인이나 운영 공개 승인을 대신하지 않는다.
+
+| 범위 | 병합 근거 | 검증 기록 |
+| --- | --- | --- |
+| #423 Audit·revision·migration·저장 통제 | [PR #438](https://github.com/AI-HealthCare-05/AH_05_04/pull/438), `d9e0bb27d20f3e4bb6aa922d7c8baf4733ce0ba0` | [DB 검증](../../../validation/issue-423-schedule-audit.md) |
+| #203 알림 저장·조회·읽음·취소 adapter | [PR #430](https://github.com/AI-HealthCare-05/AH_05_04/pull/430) | [알림 검증](../../../validation/track-b/issue-203-notifications.md) |
+| #202 날짜 조회·일정 PUT/PATCH·실제 동일 session 알림 연동 | [PR #456](https://github.com/AI-HealthCare-05/AH_05_04/pull/456), `e4c74a6894a4fbbc72ae19d7ace6d0679375234c` | [API 검증](../../../validation/track-b/issue-202-schedule-api.md) |
+
+Current 승격 시에는 §7의 요구별 구현·테스트·OpenAPI와 지정 리뷰어 승인 증빙을 함께 확인한다. 2026-09-12 조회한 GitHub 기록에서 #438의 Backend 리뷰는 DISMISSED이며, #456의 Frontend 동의 문구는 COMMENTED 이벤트다. 이를 유효한 APPROVED 이벤트로 환산하거나 #424의 계약 승인으로 대체하지 않는다.
+
+[PR #468](https://github.com/AI-HealthCare-05/AH_05_04/pull/468)의 알림→과거 기록 인계는 리뷰 대기다. 과거 occurrence의 약 표시 경로는 [검토 자료](../../../validation/track-b/historical-medication-display-review.md)에서 선택안을 비교하며, 새 API/DTO는 아직 확정하지 않는다. Frontend 구현은 남한솔 담당이다.
 
 ## 2. setup_reason 단일 반환
 
@@ -133,8 +148,8 @@ B2의 단일 JOIN `FOR UPDATE`는 표기만으로 전역 잠금 순서가 증명
 
 기한 경과·이미 응답·effective_at 이전 occurrence, Check-in/audit, 참조된 time row와 전달된 알림은 보존한다.
 종료는 전날 늦은 시각의 아직 유효한 확인 기한을 자르지 않는다. 처방 활성화도 같은 미래 취소 조건을 쓰고
-새 version에는 자동 생성하지 않는다. 알림 port 미주입은 현재 B2 구현 사실이며 #203 완료 이후 정상
-배선으로 허용하지 않는다. 독립 transaction·사후 이벤트 취소로 원자성을 대신하지 않는다.
+새 version에는 자동 생성하지 않는다. 알림 port 미주입은 최초 B2 비교 시점의 상태다. #430·#456에서 실제 adapter를 연결했으며
+정상 배선에서 미주입을 허용하지 않는다. 독립 transaction·사후 이벤트 취소로 원자성을 대신하지 않는다.
 
 ## 6. #203 미전달 알림 경계
 
@@ -194,9 +209,9 @@ mutation과 암호화 snapshot 저장을 같은 transaction으로 commit한다. 
 하지 않는다. Service의 OwnershipNotFound/VersionConflict/RevisionConflict 예외는 #202에서
 기존 계약의 404/409로 매핑하며 새 공개 오류 코드를 만들지 않는다.
 
-#203은 `cancel_undelivered_for_occurrences`를 같은 session으로 구현·주입해야 한다. 현재 develop에
-실제 adapter가 없어 SQL 합성 adapter로 transaction rollback을 검증했다. 실제 알림 전달 상태 매핑과
-취소/전달 경합은 #203에서 수행한다. #423의 테스트를 실제 알림 연동 완료로 해석하지 않는다.
+#423 최초 검증은 SQL 합성 adapter로 transaction rollback을 확인했다. 이후 #430·#456에서
+`cancel_undelivered_for_occurrences`를 같은 session으로 구현·주입했다. 실제 알림 전달 상태 매핑과
+취소·rollback 검증은 위 #203·#202 검증 기록을 따른다. #423 단독 테스트와 실제 연동 증빙을 구분한다.
 
 [구현 검증 기록](../../../validation/issue-423-schedule-audit.md)을 참조한다. DB 분량 구현만으로
 전체 목표를 `current/`로 옮기거나 일정 API·Frontend 완료를 선언하지 않는다.
