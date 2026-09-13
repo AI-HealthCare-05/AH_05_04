@@ -19,9 +19,10 @@ RAG-EVAL-004의 구현 전 검토 대상으로 제안한다. 이 후보는 다�
 2. `REQUIRED_CLAIM_RECALL`과 `COMPLETENESS`는 구조화된 Gold/Actual ID를 직접 계산한다.
 3. `ANSWER_CORRECTNESS`와 `RELEVANCE`는 승인된 immutable human-rubric label을 집계하며 scorer가
    자연어 의미를 추정하지 않는다.
-4. 각 Metric은 고유한 분석 단위를 사용하고, point estimate는 micro ratio로 계산한다.
-5. 95% CI는 승인 Policy의 독립 group을 fixed seed로 cluster bootstrap하고 매 표본에서 분자·분모를
-   다시 합산한다.
+4. 각 Metric은 고유한 분모·분석 단위를 `unit_of_analysis`에 기록하고, point estimate는 micro ratio로
+   계산한다. 이 값은 CI 재표집 단위를 나타내지 않는다.
+5. 95% CI는 `cluster_dimension`으로 Case를 묶은 승인 Policy의 distinct 독립 group을 fixed seed로
+   cluster bootstrap하고 매 표본에서 포함된 모든 Case의 분자·분모 기여값을 다시 합산한다.
 6. 세 Variant는 기존 2-run `rag-eval.comparison` schema를 재사용한 세 개의 독립 pair로 비교하고,
    pair별 경로·hash·허용 delta를 별도 comparison-set manifest에 exact-set으로 결속한다.
 

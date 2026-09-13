@@ -77,6 +77,10 @@ immutable resource의 file/content hash와 승인 identity를 exact-match한다.
 모든 Metric version은 최초 제안에서 `1.0.0`이다. `metric_value`는 `numerator / denominator`의 6자리
 half-even canonical decimal이다. Case별 기여값도 분자·분모 쌍으로 유지하며 평균의 평균을 계산하지 않는다.
 
+`ComparisonScope.unit_of_analysis`와 `MetricResult.unit_of_analysis`에는 CI의 표본 또는 재표집 단위가 아니라
+아래 표의 Metric별 분모·분석 단위를 기록한다. 두 Artifact의 값은 exact-match해야 하며 Answer Metric에는
+각각 `CLAIM | REQUIRED_CLAIM | CASE | EXPECTED_SECTION` 중 해당 값만 허용한다.
+
 | Metric ID | 분석 단위 | 분자 | 분모 |
 | --- | --- | --- | --- |
 | `ANSWER_CORRECTNESS` | `CLAIM` | 승인 judgment가 `CORRECT`인 Actual claim 수 | 승인 완료된 Actual claim 수 |
@@ -121,9 +125,25 @@ Comparison Policy는 Metric scope마다 다음을 고정한다.
 - `level=0.95`, `sidedness=TWO_SIDED`, 양의 iteration 수와 fixed seed
 - `cluster_dimension`, `minimum_case_count`, `minimum_independent_group_count`
 
-bootstrap은 승인된 leakage-axis group을 복원추출한다. 선택된 각 bootstrap sample에서 포함된 Case들의
-분자와 분모를 다시 합산해 micro ratio를 계산한다. 정렬은 기존 Evaluation canonical ordering을 사용하고
-동일 seed·입력·iteration에서 같은 percentile bounds를 생성해야 한다.
+이 필드들의 직렬화 의미는 다음과 같이 분리한다. 새 CI 표본 단위 필드는 추가하지 않는다.
+
+| 필드 | 기록하는 값 |
+| --- | --- |
+| `unit_of_analysis` | Metric별 분모·분석 단위. 위 표의 값이며 CI 재표집 단위가 아니다. |
+| `sample_case_count` | partition·slice에 선택되어 해당 Metric의 분자·분모 기여값 쌍을 만든 Case 수 |
+| `independence_unit` | 승인 Policy가 정한 독립 표본 group의 의미를 나타내는 stable ID |
+| `cluster_dimension` | 각 Case에서 독립 group ID를 추출할 Dataset leakage-axis 필드 |
+| `sample_independent_group_count` | `cluster_dimension`으로 추출한 distinct 독립 group ID 수 |
+
+`ComparisonScope`의 `unit_of_analysis`, `independence_unit`, `cluster_dimension`은 계산된 `MetricResult`에
+그대로 복사되어 exact-match해야 한다. `sample_case_count`는 Metric 분모와 같다는 뜻이 아니다. 예를 들어
+`ANSWER_CORRECTNESS` 한 Case가 여러 `CLAIM` 분모 기여를 만들 수 있어도 Case 수는 1 증가한다.
+
+bootstrap의 재표집 단위는 Case나 `unit_of_analysis`가 아니라 `cluster_dimension`으로 만든 distinct 독립
+group이다. 승인된 leakage-axis group을 복원추출하고, 선택된 group에 속한 모든 Case의 분자·분모 기여값
+쌍을 함께 포함해 micro ratio를 다시 계산한다. group을 뽑은 횟수만큼 그 group의 전체 Case 기여값도
+반복 포함한다. 정렬은 기존 Evaluation canonical ordering을 사용하고 동일 seed·입력·iteration에서 같은
+percentile bounds를 생성해야 한다.
 
 분모가 0인 원표본은 CI를 만들지 않는다. bootstrap replicate에서 분모 0이 생길 수 있는 Policy는 지원하지
 않고 algorithm signature mismatch로 `NOT_IMPLEMENTED/null` 처리한다. 구현이 cluster 축이나 seed를 임의로
@@ -209,7 +229,9 @@ RAG-15/16 versioned Artifact 전에는 `BLOCKED_BY_RAG_RUNTIME_ARTIFACT`, 승인
 - 손계산 가능한 네 Metric의 numerator·denominator·canonical value
 - 서로 다른 Case별 분모에서 micro ratio와 평균의 평균이 달라지는 회귀 사례
 - fixed-seed cluster bootstrap 반복 결정성
-- partition·slice와 독립 group 집계
+- `ComparisonScope`와 `MetricResult`의 Metric별 `unit_of_analysis` exact-match 및 CI group 필드의 분리
+- Case 수가 서로 다른 독립 group fixture에서 Case 재표집이 아닌 group 재표집임을 검증
+- partition·slice의 Case 수와 distinct 독립 group 수 집계
 - `required=false` DEV diagnostic과 `required=true` scope 각각의 분모 0, 최소 Case·최소 독립 group 미달 `INCONCLUSIVE`
 - human judgment 없음의 `NOT_EVALUATED/null`
 - judgment Case exact-set·claim exact-set·approval evidence·Answer hash·Variant·Rubric mismatch의 `INVALID/null`
