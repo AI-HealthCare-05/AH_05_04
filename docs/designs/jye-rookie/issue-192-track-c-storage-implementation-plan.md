@@ -2,7 +2,8 @@
 
 ## 2026-09-13 최신 구현 기준
 
-- 최신 `develop` `0ea12641`을 기존 Draft 브랜치에 merge했다.
+- 최초 `develop` `0ea12641` 반영 후, #477 병합을 포함한 `f10ca016`으로 다시 정렬했다.
+- #192 migration은 병합된 `166f30415263` 뒤에 연결하며 기존 적용 이력은 수정하지 않는다.
 - #199~#201의 실제 부모 모델이 병합되어 부모 미구현 차단은 해소됐다.
 - 확정 범위의 Safety·Barrier·Plan·Follow-up/Audit 5개 ORM·migration과 SELF 소유권 조회를 구현한다.
 - 물리 제약과 reference 선택은 [PD-192](../../governance/decisions/2026-09-13-track-c-storage-192.md),

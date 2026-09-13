@@ -17,6 +17,7 @@ from ai_worker.tasks.rag.catalog.types import (
     CandidateRecordStatus,
     CatalogAlias,
     CatalogComponent,
+    CatalogComponentObservation,
     CatalogComponentRole,
     CatalogIngredient,
     CatalogProduct,
@@ -69,6 +70,7 @@ class CatalogComponentInput:
     strength_unit: str
     release_profile: str | None = None
     source_record_key: str | None = None
+    observation: CatalogComponentObservation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +274,15 @@ def _component(
 ) -> CatalogComponent:
     if type(input_record.component_order) is not int or input_record.component_order < 1:
         raise CatalogMappingError("COMPONENT_ORDER_INVALID", ("components.component_order",))
+    if input_record.observation is not None:
+        observation = input_record.observation
+        expected_key = json.dumps(
+            ["mfds-component-key-v1", observation.item_seq, observation.tamt_seq, observation.mtral_sn],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if input_record.source_record_key != expected_key:
+            raise ValueError("Component observation key must match its original fields")
     strength_value = normalize_catalog_text(input_record.strength_value, field_name="strength_value")
     strength_unit = normalize_catalog_text(input_record.strength_unit, field_name="strength_unit")
     release_profile = _normalized_optional(input_record.release_profile, field_name="release_profile")
@@ -285,7 +296,10 @@ def _component(
             }
             if input_record.source_record_key is None
             else {
-                "reference_spec": "catalog-component-source-key-v1",
+                "reference_spec": "catalog-component-source-key-v1"
+                if input_record.observation is None
+                else "catalog-component-observation-v1",
+                **({"source_snapshot_id": input_record.source_snapshot_id} if input_record.observation else {}),
                 "product_ref": product.product_ref,
                 "source_record_key": require_official_identity_text(
                     input_record.source_record_key, field_name="components.source_record_key"
@@ -297,7 +311,8 @@ def _component(
         component_order=input_record.component_order,
         strength_value=strength_value.normalized_value,
         strength_unit=strength_unit.normalized_value,
-        source_snapshot_id=product.source_snapshot_id,
+        source_snapshot_id=input_record.source_snapshot_id,
+        observation=input_record.observation,
         component_role=input_record.component_role,
         release_profile=release_profile,
     )
@@ -427,7 +442,16 @@ def build_catalog_members(
             code_system=component_input.product_code_system,
             canonical_code=component_input.product_canonical_code,
         )
-        component_product = product_by_identity.get((component_input.source_snapshot_id, product_identity))
+        component_product = product_by_identity.get(
+            (
+                (
+                    component_input.observation.product_source_snapshot_id
+                    if component_input.observation
+                    else component_input.source_snapshot_id
+                ),
+                product_identity,
+            )
+        )
         if component_product is None:
             raise CatalogMappingError("COMPONENT_PRODUCT_NOT_FOUND", ("components.product_identity",))
         _validate_component_source_key_mode(source_key_modes, component_product.product_ref, component_input)
@@ -436,7 +460,16 @@ def build_catalog_members(
             code_system=component_input.ingredient_code_system,
             canonical_code=component_input.ingredient_canonical_code,
         )
-        component_ingredient = ingredient_by_identity.get((component_input.source_snapshot_id, ingredient_identity))
+        component_ingredient = ingredient_by_identity.get(
+            (
+                (
+                    component_input.observation.ingredient_source_snapshot_id
+                    if component_input.observation
+                    else component_input.source_snapshot_id
+                ),
+                ingredient_identity,
+            )
+        )
         if component_ingredient is None:
             raise CatalogMappingError("COMPONENT_INGREDIENT_NOT_FOUND", ("components.ingredient_identity",))
         _append_exact_deduplicated(

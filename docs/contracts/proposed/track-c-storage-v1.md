@@ -2,7 +2,7 @@
 
 - 상태: **Proposed — 구현 PR 리뷰 대상**, 공개 API 또는 HandlerConfig 승인 아님
 - 구현: 김지혜 (`@Jye-rookie`), 담당 리뷰어: 송은영 (`@phina-io`)
-- 기준: `develop` `0ea12641`, [Check-in/Barrier target](../targets/post-mvp-1/checkin-v1.md)
+- 기준: `develop` `f10ca016`, [Check-in/Barrier target](../targets/post-mvp-1/checkin-v1.md)
 - 결정 근거: [C1 저장 구체화](../../governance/decisions/2026-09-13-track-c-storage-192.md)
 - 검증: [C1 PostgreSQL 검증](../../testing/track-c-storage-192.md)
 
@@ -74,7 +74,7 @@ config 독립 테이블, 운영 seed와 실행 adapter를 임의로 만들지 �
 
 ## Migration
 
-`192a1b2c3d4e`는 최신 병합 head `e8c41a09d652` 뒤에 추가한다.
+`192a1b2c3d4e`는 최신 병합 head `166f30415263` 뒤에 추가한다.
 적용된 migration은 수정하지 않고 Track B 기존 행을 보정하거나 삭제하지 않는다.
 Downgrade는 5개 테이블을 같은 transaction에서 잠근 뒤 하나라도 데이터가 있으면
 전체 중단한다. 빈 DB만 역순 삭제한다. 기존 데이터는 forward-fix 대상이다.

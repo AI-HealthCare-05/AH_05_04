@@ -91,6 +91,21 @@ class CatalogIngredient:
 
 
 @dataclass(frozen=True, slots=True)
+class CatalogComponentObservation:
+    product_source_snapshot_id: str
+    ingredient_source_snapshot_id: str
+    item_seq: str
+    tamt_seq: str
+    mtral_sn: str
+    material_code: str
+    quantity: str
+    unit: str
+    order_spec_version: str
+    source_canonical_checksum: str
+    source_canonicalization_spec_version: str
+
+
+@dataclass(frozen=True, slots=True)
 class CatalogComponent:
     component_ref: str
     product_ref: str
@@ -101,6 +116,7 @@ class CatalogComponent:
     source_snapshot_id: str
     component_role: CatalogComponentRole = CatalogComponentRole.ACTIVE_INGREDIENT
     release_profile: str | None = None
+    observation: CatalogComponentObservation | None = None
 
 
 @dataclass(frozen=True, slots=True)

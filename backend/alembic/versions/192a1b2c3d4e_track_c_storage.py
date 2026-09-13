@@ -1,7 +1,7 @@
 """Track C confirmed storage foundation (#192); no HandlerConfig schema.
 
 Revision ID: 192a1b2c3d4e
-Revises: e8c41a09d652
+Revises: 166f30415263
 """
 
 import sqlalchemy as sa
@@ -9,7 +9,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "192a1b2c3d4e"
-down_revision = "e8c41a09d652"
+down_revision = "166f30415263"
 branch_labels = None
 depends_on = None
 

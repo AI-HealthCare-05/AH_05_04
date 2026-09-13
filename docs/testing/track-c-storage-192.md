@@ -33,7 +33,7 @@ NOT_TAKEN·현재 revision·최신 ROUTINE 판정, append-only 이력·종료 Pl
 follow-up 감사 원자 저장·SYNC_MUTATION 재전송, Track B 정정 무효화를 연결해 검증해야 한다.
 HandlerConfig 상세·운영 seed·Track C 공개는 이 테스트 결과로 승인하지 않는다.
 
-## 최종 로컬 결과
+## 최초 구현 로컬 결과 — `bfbc7008`
 
 | 검사 | 결과 |
 | --- | --- |
@@ -55,3 +55,12 @@ HandlerConfig 상세·운영 seed·Track C 공개는 이 테스트 결과로 승
 `uv sync --group app --group dev --group worker`로 기존 lockfile 의존성을 채운 뒤,
 전용 임시 DB를 새로 만들고 전체 스크립트를 다시 실행한 **최종 성공 결과**를 위에 기록했다.
 저장소 의존성·Worker 코드·공개 설정은 변경하지 않았다.
+
+## #477 병합 후 develop 정렬
+
+`develop` `f10ca016`을 반영하고 README의 D-04·C1 항목을 모두 보존했다.
+미병합 #192 migration의 부모만 `e8c41a09d652`에서 `166f30415263`으로 변경했다.
+#192 테이블·제약 정의는 변경하지 않았다. 위 전체 테스트 수치는 이전 `bfbc7008`의 결과이며
+이번 병합 결과에서 전체 스크립트를 재실행한 수치로 해석하지 않는다.
+
+재연결 집중 검증: C1 PostgreSQL 13 passed. 단일 Alembic head, 신규 DB 로직 재도입·보호 쓰기 검사, Ruff·format·diff 검사 통과.
