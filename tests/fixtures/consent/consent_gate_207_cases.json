@@ -1,0 +1,86 @@
+{
+  "schema_version": "consent-gate-207.fixture@1",
+  "decision": "docs/governance/decisions/2026-09-10-consent-gate-207.md",
+  "purposes": ["OCR", "GUIDE", "CHAT", "NOTIFICATION"],
+  "statuses": ["GRANTED", "WITHDRAWN"],
+  "current_policy_versions": {
+    "OCR": "ocr-consent.v1",
+    "GUIDE": "guide-consent.v1",
+    "CHAT": "chat-consent.v1",
+    "NOTIFICATION": "notification-consent.v1"
+  },
+  "cases": [
+    {
+      "case_id": "missing_row_blocks",
+      "purpose": "OCR",
+      "row": null,
+      "account_status": "ACTIVE",
+      "resource_owner_matches": true,
+      "lookup_error": false,
+      "expected": {"allowed": false, "reason": "MISSING_CONSENT", "provider_calls": 0}
+    },
+    {
+      "case_id": "granted_current_policy_allows",
+      "purpose": "GUIDE",
+      "row": {"purpose": "GUIDE", "status": "GRANTED", "policy_version": "guide-consent.v1"},
+      "account_status": "ACTIVE",
+      "resource_owner_matches": true,
+      "lookup_error": false,
+      "expected": {"allowed": true, "reason": null, "provider_calls": "NEXT_STEP_ONLY"}
+    },
+    {
+      "case_id": "withdrawn_blocks",
+      "purpose": "CHAT",
+      "row": {"purpose": "CHAT", "status": "WITHDRAWN", "policy_version": "chat-consent.v1"},
+      "account_status": "ACTIVE",
+      "resource_owner_matches": true,
+      "lookup_error": false,
+      "expected": {"allowed": false, "reason": "WITHDRAWN", "provider_calls": 0}
+    },
+    {
+      "case_id": "lookup_error_fail_closed",
+      "purpose": "OCR",
+      "row": {"purpose": "OCR", "status": "GRANTED", "policy_version": "ocr-consent.v1"},
+      "account_status": "ACTIVE",
+      "resource_owner_matches": true,
+      "lookup_error": true,
+      "expected": {"allowed": false, "reason": "LOOKUP_FAILED", "provider_calls": 0}
+    },
+    {
+      "case_id": "purpose_mismatch_blocks",
+      "purpose": "OCR",
+      "row": {"purpose": "CHAT", "status": "GRANTED", "policy_version": "chat-consent.v1"},
+      "account_status": "ACTIVE",
+      "resource_owner_matches": true,
+      "lookup_error": false,
+      "expected": {"allowed": false, "reason": "PURPOSE_MISMATCH", "provider_calls": 0}
+    },
+    {
+      "case_id": "inactive_account_blocks",
+      "purpose": "NOTIFICATION",
+      "row": {"purpose": "NOTIFICATION", "status": "GRANTED", "policy_version": "notification-consent.v1"},
+      "account_status": "WITHDRAWAL_REQUESTED",
+      "resource_owner_matches": true,
+      "lookup_error": false,
+      "expected": {"allowed": false, "reason": "ACCOUNT_NOT_ACTIVE", "provider_calls": 0}
+    },
+    {
+      "case_id": "owner_mismatch_blocks",
+      "purpose": "GUIDE",
+      "row": {"purpose": "GUIDE", "status": "GRANTED", "policy_version": "guide-consent.v1"},
+      "account_status": "ACTIVE",
+      "resource_owner_matches": false,
+      "lookup_error": false,
+      "expected": {"allowed": false, "reason": "OWNER_MISMATCH", "provider_calls": 0}
+    },
+    {
+      "case_id": "policy_version_mismatch_blocks",
+      "purpose": "GUIDE",
+      "row": {"purpose": "GUIDE", "status": "GRANTED", "policy_version": "guide-consent.old"},
+      "account_status": "ACTIVE",
+      "resource_owner_matches": true,
+      "lookup_error": false,
+      "expected": {"allowed": false, "reason": "POLICY_VERSION_MISMATCH", "provider_calls": 0}
+    }
+  ]
+}
