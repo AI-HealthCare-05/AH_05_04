@@ -126,11 +126,30 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
         run: uv run alembic -c backend/alembic.ini upgrade 398b2c3d4e5f
+      # PD-368 §4는 protected 권한 경계를 "실제 제한 로그인 통합 테스트로 입증"하도록
+      # 요구하고 정적 검색만으로 판정하지 않는다고 명시합니다. 해당 테스트는 fixture가
+      # 일회용 schema와 LOGIN role을 만들기 때문에 공용 test DB가 아닌 전용 DB를 씁니다.
+      - name: Create protected retrieval test database
+        run: |
+          uv run python - <<'PY'
+          import asyncio
+          import os
+          import asyncpg
+          async def create_database():
+              connection = await asyncpg.connect(host=os.environ['DB_HOST'], port=int(os.environ['DB_PORT']), user=os.environ['DB_USER'], password=os.environ['DB_PASSWORD'], database='postgres')
+              try:
+                  await connection.execute('CREATE DATABASE protected368_test')
+              finally:
+                  await connection.close()
+          asyncio.run(create_database())
+          PY
+
       # backend/app/tests/conftest.py가 스키마를 재생성하기 전에
       # Alembic이 만든 실제 PostgreSQL 구조를 검증합니다.
       - name: Validate migrated PostgreSQL schema
         env:
           PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
+          PROTECTED_TEST_DATABASE_URL: postgresql+asyncpg://postgres:ci_test_password@127.0.0.1:5432/protected368_test
         run: uv run pytest tests/migration -v
 
       - name: Apply irreversible Source cutover
