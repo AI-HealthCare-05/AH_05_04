@@ -256,7 +256,7 @@ rejection, NaN/infinity rejection, dimension boundaries, and a one-bit vector mu
 
 ### 5. Application flow
 
-Create one AI Worker build service and one Backend SQLAlchemy repository boundary:
+Create one AI Worker build service and one AI Worker SQLAlchemy adapter over the shared Backend schema:
 
 ```text
 ValidatedSourceSnapshotMember inputs
