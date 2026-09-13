@@ -1,0 +1,113 @@
+{
+  "classification": "SYNTHETIC",
+  "fixture_id": "track-b-occurrence-medication-v1",
+  "notifications": {
+    "data": {
+      "items": [
+        {
+          "id": "db349278-7a62-4924-9239-07e1a91fc2bd",
+          "occurrence_id": "af67911e-d060-4987-ad1b-82937e612bf0",
+          "occurrence_local_date": "2026-09-10",
+          "kind": "REMINDER",
+          "scheduled_at": "2026-09-10T16:00:00Z",
+          "status": "DELIVERED",
+          "delivered_at": "2026-09-10T16:00:00Z",
+          "read_at": null
+        },
+        {
+          "id": "35fd3dbb-ac0a-403c-9916-c07c1d8cab18",
+          "occurrence_id": "af67911e-d060-4987-ad1b-82937e612bf0",
+          "occurrence_local_date": "2026-09-10",
+          "kind": "SCHEDULED",
+          "scheduled_at": "2026-09-10T14:00:00Z",
+          "status": "DELIVERED",
+          "delivered_at": "2026-09-10T14:00:00Z",
+          "read_at": null
+        }
+      ],
+      "next_offset": null
+    }
+  },
+  "historical_day": {
+    "data": {
+      "schedule_status": "SETUP_REQUIRED",
+      "schedule_items": [
+        {
+          "prescription_version_medication_id": "ccab14a6-6ade-41fb-b5bb-f0bcf2df10ee",
+          "schedule_item_status": "SETUP_REQUIRED",
+          "schedule_id": null,
+          "revision": null,
+          "setup_reason": "MISSING_START_DATE"
+        }
+      ],
+      "occurrences": [
+        {
+          "occurrence_id": "af67911e-d060-4987-ad1b-82937e612bf0",
+          "prescription_version_id": "ed6969c7-741d-40f2-8456-d7b66962e1c6",
+          "prescription_version_medication_id": "5e05659d-eecd-4476-92a8-07cef909f379",
+          "scheduled_local_date": "2026-09-10",
+          "scheduled_at": "2026-09-10T14:00:00Z",
+          "confirmation_deadline_at": "2026-09-10T18:00:00Z",
+          "status": "PENDING",
+          "checkin": null
+        }
+      ]
+    }
+  },
+  "historical_medication": {
+    "data": {
+      "occurrence_id": "af67911e-d060-4987-ad1b-82937e612bf0",
+      "prescription_version_id": "ed6969c7-741d-40f2-8456-d7b66962e1c6",
+      "prescription_version_medication_id": "5e05659d-eecd-4476-92a8-07cef909f379",
+      "medication_name": "합성테스트약",
+      "strength_text": null,
+      "dose_value": null,
+      "dose_unit": null
+    }
+  },
+  "current_prescription": {
+    "data": {
+      "prescription_id": "635a60c9-43f8-4f2e-acd9-5949ac604386",
+      "prescription_version_id": "adcc9751-0765-4dc2-bd6d-8cbbf6f9d788",
+      "revision": 2,
+      "current": true,
+      "document_id": "d952f62b-94bc-4685-9c3c-257c57cabea8",
+      "prescribed_date": "2026-09-09",
+      "confirmed_at": "2026-09-13T07:54:34.096427Z",
+      "medications": [
+        {
+          "prescription_version_medication_id": "ccab14a6-6ade-41fb-b5bb-f0bcf2df10ee",
+          "medication_name": "합성테스트약",
+          "strength_text": "합성함량",
+          "dose_value": 2.5,
+          "dose_unit": "정",
+          "frequency_per_day": 1,
+          "timing_text": null,
+          "duration_days": null,
+          "display_order": 1
+        }
+      ]
+    }
+  },
+  "current_medication": {
+    "data": {
+      "occurrence_id": "f3644ee2-23f1-4bbd-8c4e-8b26125060ed",
+      "prescription_version_id": "adcc9751-0765-4dc2-bd6d-8cbbf6f9d788",
+      "prescription_version_medication_id": "ccab14a6-6ade-41fb-b5bb-f0bcf2df10ee",
+      "medication_name": "합성테스트약",
+      "strength_text": "합성함량",
+      "dose_value": 2.5,
+      "dose_unit": "정"
+    }
+  },
+  "checkin": {
+    "data": {
+      "checkin_id": "5a1bbb02-81b6-448f-bdeb-81cf935f0b9c",
+      "occurrence_id": "af67911e-d060-4987-ad1b-82937e612bf0",
+      "status": "TAKEN",
+      "taken_at": null,
+      "revision": 1,
+      "corrected": false
+    }
+  }
+}
