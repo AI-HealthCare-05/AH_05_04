@@ -114,11 +114,26 @@ def protected_database() -> Iterator[_ProtectedDatabase]:
                     text(
                         f"""
                         INSERT INTO {_quote(database.schema)}.protected_identity (
-                            database_login, actor_id, actor_namespace, principal_role
-                        ) VALUES (:database_login, 'synthetic-author', 'SERVICE_IDENTITY', 'HOLDOUT_AUTHOR')
+                            database_login, actor_id, actor_namespace, principal_role, identity_plane
+                        ) VALUES (
+                            :database_login, 'synthetic-author', 'SERVICE_IDENTITY', 'HOLDOUT_AUTHOR', 'DATA'
+                        )
                         """
                     ),
                     {"database_login": database.actor_login},
+                )
+                await connection.execute(
+                    text(
+                        f"""
+                        INSERT INTO {_quote(database.schema)}.protected_identity (
+                            database_login, actor_id, actor_namespace, approval_role, identity_plane
+                        ) VALUES (
+                            :database_login, 'synthetic-custodian', 'GITHUB_LOGIN',
+                            'DATASET_CUSTODIAN', 'CONTROL'
+                        )
+                        """
+                    ),
+                    {"database_login": database.control_login},
                 )
         finally:
             await engine.dispose()
@@ -258,6 +273,120 @@ async def test_protected_schema_uses_only_ordinary_relations_and_constraints(
         await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_authorization_control_schema_has_plane_and_revision_constraints(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    engine = create_async_engine(database.url)
+    try:
+        async with engine.connect() as connection:
+            identity_columns = set(
+                await connection.scalars(
+                    text(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_schema = :schema AND table_name = 'protected_identity'
+                        """
+                    ),
+                    {"schema": database.schema},
+                )
+            )
+            assert {"identity_plane", "approval_role"} <= identity_columns
+
+            control_identity = (
+                await connection.execute(
+                    text(
+                        f"""
+                        SELECT principal_role, identity_plane, approval_role
+                        FROM {_quote(database.schema)}.protected_identity
+                        WHERE database_login = :database_login
+                        """
+                    ),
+                    {"database_login": database.control_login},
+                )
+            ).one()
+            assert control_identity == (None, "CONTROL", "DATASET_CUSTODIAN")
+
+            identity_constraints = "\n".join(
+                await connection.scalars(
+                    text(
+                        """
+                        SELECT pg_get_constraintdef(constraint_row.oid)
+                        FROM pg_constraint AS constraint_row
+                        JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid
+                        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                        WHERE namespace.nspname = :schema
+                          AND relation.relname = 'protected_identity'
+                        ORDER BY constraint_row.conname
+                        """
+                    ),
+                    {"schema": database.schema},
+                )
+            )
+            assert "identity_plane" in identity_constraints
+            assert "approval_role" in identity_constraints
+            assert "actor_namespace, actor_id, identity_plane" in identity_constraints
+
+            grant_constraints = "\n".join(
+                await connection.scalars(
+                    text(
+                        """
+                        SELECT pg_get_constraintdef(constraint_row.oid)
+                        FROM pg_constraint AS constraint_row
+                        JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid
+                        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                        WHERE namespace.nspname = :schema
+                          AND relation.relname = 'authorization_grant'
+                        ORDER BY constraint_row.conname
+                        """
+                    ),
+                    {"schema": database.schema},
+                )
+            )
+            assert (
+                "subject_actor_id, subject_namespace, subject_role, dataset_id, dataset_version, revision"
+                in grant_constraints
+            )
+
+            audit_constraint = await connection.scalar(
+                text(
+                    """
+                    SELECT pg_get_constraintdef(constraint_row.oid)
+                    FROM pg_constraint AS constraint_row
+                    JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid
+                    JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                    WHERE namespace.nspname = :schema
+                      AND relation.relname = 'audit_entry'
+                      AND pg_get_constraintdef(constraint_row.oid) LIKE '%event_kind%'
+                      AND pg_get_constraintdef(constraint_row.oid) LIKE '%AUTHORIZATION%'
+                    """
+                ),
+                {"schema": database.schema},
+            )
+            assert audit_constraint is not None
+            assert "CONTROL" in audit_constraint
+            control_marker_constraint = await connection.scalar(
+                text(
+                    """
+                    SELECT pg_get_constraintdef(constraint_row.oid)
+                    FROM pg_constraint AS constraint_row
+                    JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid
+                    JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                    WHERE namespace.nspname = :schema
+                      AND relation.relname = 'audit_entry'
+                      AND constraint_row.conname = 'audit_entry_control_marker_check'
+                    """
+                ),
+                {"schema": database.schema},
+            )
+            assert control_marker_constraint is not None
+            assert "control_entry" in control_marker_constraint
+    finally:
+        await engine.dispose()
+
+
 def _login_url(database: _ProtectedDatabase, login: str) -> URL:
     return make_url(database.url).set(username=login, password=database.password)
 
@@ -288,7 +417,19 @@ async def test_limited_logins_have_plane_specific_column_privileges(
 
         forbidden_statements = (
             f"SELECT * FROM {_quote(database.schema)}.approval_evidence",
+            f"SELECT identity_plane FROM {_quote(database.schema)}.protected_identity",
+            f"SELECT approval_role FROM {_quote(database.schema)}.protected_identity",
             f"INSERT INTO {_quote(database.schema)}.audit_head DEFAULT VALUES",
+            f"INSERT INTO {_quote(database.schema)}.audit_entry "
+            "(sequence, event_id, event_kind, operation_key, entry_body, previous_entry_sha256, "
+            "entry_sha256, recorded_at) VALUES "
+            "(999, gen_random_uuid(), 'CONTROL', NULL, '{}'::jsonb, NULL, "
+            f"'{('a' * 64)}', clock_timestamp())",
+            f"INSERT INTO {_quote(database.schema)}.audit_entry "
+            "(sequence, event_id, event_kind, operation_key, entry_body, previous_entry_sha256, "
+            "entry_sha256, recorded_at) VALUES "
+            "(999, gen_random_uuid(), 'AUTHORIZATION', NULL, '{}'::jsonb, NULL, "
+            f"'{('a' * 64)}', clock_timestamp())",
             f"UPDATE {_quote(database.schema)}.protected_dataset SET state = 'FROZEN'",
             f"DELETE FROM {_quote(database.schema)}.audit_head",
             f"TRUNCATE {_quote(database.schema)}.audit_entry",
@@ -315,6 +456,28 @@ async def test_limited_logins_have_plane_specific_column_privileges(
                 {"digest": "a" * 64},
             )
             await connection.rollback()
+        control_forbidden_statements = (
+            f"INSERT INTO {_quote(database.schema)}.protected_identity "
+            "(database_login, actor_id, actor_namespace, principal_role, identity_plane) "
+            "VALUES ('forbidden-control-identity', 'forbidden-actor', 'GITHUB_LOGIN', 'HOLDOUT_AUTHOR', 'DATA')",
+            f"UPDATE {_quote(database.schema)}.protected_identity SET enabled = false",
+            f"INSERT INTO {_quote(database.schema)}.protected_dataset "
+            "(dataset_id, dataset_version, binding, manifest_sha256, protected_artifact_sha256, "
+            "hmac_key_version, state, state_revision, authored_count, review_complete) VALUES "
+            "('forbidden-dataset', '1.0.0', '{}'::jsonb, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', "
+            "'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', "
+            "'forbidden-key', 'ACCESS_AUTHORIZED', 1, 0, false)",
+            f"UPDATE {_quote(database.schema)}.protected_dataset SET state = 'FROZEN'",
+            f"INSERT INTO {_quote(database.schema)}.audit_entry "
+            "(sequence, event_id, event_kind, operation_key, entry_body, previous_entry_sha256, "
+            "entry_sha256, recorded_at, control_entry) VALUES "
+            "(999, gen_random_uuid(), 'OPERATION', 'forged-operation', '{}'::jsonb, NULL, "
+            f"'{('a' * 64)}', clock_timestamp(), false)",
+        )
+        for statement in control_forbidden_statements:
+            async with control_engine.connect() as connection:
+                with pytest.raises(DBAPIError):
+                    await connection.execute(text(statement))
         async with control_engine.connect() as connection:
             with pytest.raises(DBAPIError):
                 await connection.execute(text(f"SELECT envelope FROM {_quote(database.schema)}.protected_artifact"))
@@ -332,7 +495,7 @@ def test_protected_downgrade_refuses_durable_rows_without_data_loss(
     protected_database: _ProtectedDatabase,
 ) -> None:
     database = protected_database
-    with pytest.raises(RuntimeError, match="downgrade refused while durable rows exist"):
+    with pytest.raises(RuntimeError, match=r"downgrade refused while (?:C1 )?durable rows exist"):
         command.downgrade(Config(str(ALEMBIC_CONFIG)), "base")
 
     async def verify_preserved() -> None:
@@ -346,7 +509,7 @@ def test_protected_downgrade_refuses_durable_rows_without_data_loss(
                     text("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = :schema)"),
                     {"schema": database.schema},
                 )
-            assert identity_count == 1
+            assert identity_count == 2
             assert schema_exists is True
         finally:
             await engine.dispose()
