@@ -34,7 +34,7 @@ text bytes, a versioned embedding configuration, and independently verifiable co
 - immutable Knowledge Index version and member rows;
 - pgvector storage for a member embedding under one versioned embedding configuration;
 - RFC 8785 JCS corpus-manifest hashing and deterministic embedding-byte hashing;
-- an atomic Python Service/Repository write boundary and a read-only retrieval projection;
+- an atomic Python Service/Repository write boundary; the read-only retrieval projection is deferred with Retrieval;
 - migration, model, repository, PostgreSQL integration, hash golden-vector, tamper, and non-leakage tests;
 - local PostgreSQL 17 pgvector support and a locked Python SQLAlchemy adapter dependency.
 
@@ -64,8 +64,9 @@ prescription, OCR text, chat text, credential, or HMAC key.
 5. Text and vectors never appear in ordinary logs, exception messages, receipts, or test failure snapshots.
 6. No current API or public DTO changes. The proposed contract stays under `docs/contracts/proposed/` until the full
    runtime implementation, tests, evidence, and designated approvals justify promotion.
-7. The local pgvector dependency is infrastructure for testing and future #178 consumption only. Production remains
-   disabled.
+7. The version-pinned pgvector server extension is provisioned for migration compatibility in local, CI, and
+   production database images. This does not activate the Retrieval Runtime, builder/read roles, Track F publication,
+   or any production request path.
 
 ## Considered approaches
 
@@ -118,6 +119,10 @@ created_at: timestamp
 repository verifies the full parent chain: Source → Endpoint → Operation → Snapshot or Ingestion Run → Artifact.
 Ordinary CHECK/FK/UNIQUE constraints enforce row shape and duplicate prevention; Python verifies cross-table
 ownership and exact Snapshot membership in the insertion transaction.
+
+Member append is allowed only while the Snapshot is `PENDING` and has no verification seal. The later
+`PENDING → CURRENT` transition freezes the member set for index use; already-CURRENT legacy Snapshots must be
+re-collected as a new Snapshot version instead of receiving post-approval members.
 
 This table belongs to the Source provenance domain. Its model, migration, repository validation, and tests therefore
 require the named Source and DB reviewers in the same PR.
@@ -185,8 +190,9 @@ created_at: timestamp
 
 An index row is a completed immutable artifact. Draft building and external embedding calls are outside the database
 transaction and do not create a partially visible index. One transaction inserts the completed index and all
-members after validating every receipt. The runtime role receives SELECT only; the dedicated builder repository has
-INSERT but no update/delete method.
+members after validating every receipt. The repository exposes no update/delete method. A dedicated builder DB
+identity and Runtime SELECT-only projection are required before the Retrieval slice is wired; this foundation does
+not grant the shared Runtime role write access.
 
 Add `rag_knowledge_index_member`:
 
@@ -271,22 +277,23 @@ ValidatedSourceSnapshotMember inputs
   → commit and return opaque KnowledgeIndexReceipt
 ```
 
-The receipt returns only index ID/code/version, member count, model ref/version, dimension, metric, and the three
+The receipt returns only index code/version, member count, model ref/version, dimension, metric, and the three
 hashes. It contains no chunk text, vector, locator, endpoint URL, storage key, or Source body.
 
 Concurrent creation of the same `index_code + index_version` is idempotent only when all three hashes and every
 immutable configuration field match. A mismatch fails with a fixed safe conflict reason. Transaction failure leaves
 no index or member rows.
 
-### 6. Local infrastructure
+### 6. PostgreSQL infrastructure
 
-Use the official version-pinned server image `pgvector/pgvector:0.8.6-pg17-bookworm` for the local PostgreSQL service and
-enable `vector` through the forward migration. Keep `pg_trgm` enabled independently. Add and lock `pgvector==0.5.0`
-for SQLAlchemy/Psycopg vector conversion. The official adapters support SQLAlchemy and async Psycopg registration;
-runtime assembly registers the vector type on the existing async engine without enabling SQL echo.
+Use the official version-pinned server image `pgvector/pgvector:0.8.6-pg17-bookworm` for every migration-bearing
+PostgreSQL service and enable `vector` through the forward migration. Keep `pg_trgm` enabled independently. Add and lock `pgvector==0.5.0`
+for SQLAlchemy vector conversion. The `VECTOR` SQLAlchemy type owns bind/result conversion; the asyncpg raw codec is
+not also registered because double conversion is incompatible with this pinned adapter combination. SQL echo remains
+disabled in production and parameters remain hidden.
 
-This changes local development and integration-test infrastructure only. Production compose, credentials, network,
-backup, and activation are excluded.
+Production bootstrap installs the extension with the admin identity before Alembic runs as the restricted migration
+role. Production credentials, network, backup, Runtime/builder role activation, and Track F publication are excluded.
 
 ## Failure behavior
 

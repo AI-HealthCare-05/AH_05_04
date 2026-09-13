@@ -70,13 +70,28 @@ def test_corpus_manifest_ignores_locator_and_embedding() -> None:
     assert canonical_corpus_manifest_hash((first.identity,)) == canonical_corpus_manifest_hash((second.identity,))
 
 
+def test_locator_allows_internal_spaces_used_by_source_member_contract() -> None:
+    member = member_draft(locator="$.records[0] item")
+
+    assert member.identity.locator == "$.records[0] item"
+
+
 def test_embedding_hash_has_hand_checked_golden_hash() -> None:
     assert canonical_embedding_sha256((1.0, 0.0)) == (
         "6d55b3f0997762a9f412cd80a4e4f0b28b5a2d51b70088123d6ea4a1bfa8dfa9"
     )
 
 
-@pytest.mark.parametrize("embedding", [(-0.0, 1.0), (0.0, 0.0), (float("nan"), 1.0), (float("inf"), 1.0)])
+@pytest.mark.parametrize(
+    "embedding",
+    [
+        (-0.0, 1.0),
+        (0.0, 0.0),
+        (1e-46, 0.0),
+        (float("nan"), 1.0),
+        (float("inf"), 1.0),
+    ],
+)
 def test_embedding_hash_rejects_noncanonical_vectors(embedding: tuple[float, ...]) -> None:
     with pytest.raises(KnowledgeEvidenceIndexValidationError) as exc_info:
         canonical_embedding_sha256(embedding)
@@ -91,6 +106,17 @@ def test_sensitive_evidence_text_redacts_ordinary_representations() -> None:
     assert str(value) == "<redacted>"
     assert repr(value) == "<redacted>"
     assert value.reveal() == "SECRET_SENTINEL"
+
+
+def test_index_request_representations_hide_locator_text_and_embedding() -> None:
+    member = member_draft(locator="SENSITIVE_LOCATOR_178", embedding=(0.25, 0.75))
+    request = build_request(member)
+
+    for value in (member.identity, member, request):
+        representation = repr(value)
+        assert "SENSITIVE_LOCATOR_178" not in representation
+        assert "합성 의약품 근거" not in representation
+        assert "(0.25, 0.75)" not in representation
 
 
 def test_member_rejects_content_hash_mismatch() -> None:

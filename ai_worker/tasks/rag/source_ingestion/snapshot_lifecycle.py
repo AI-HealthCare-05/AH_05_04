@@ -250,9 +250,10 @@ class SourceSnapshotMemberCreate:
             raise SourceSnapshotMemberValidationError(
                 SourceSnapshotMemberFailureReason.SOURCE_BINDING_INVALID
             ) from None
-        if self.provenance.verification_status is not SnapshotVerificationStatus.CURRENT:
-            raise SourceSnapshotMemberValidationError(SourceSnapshotMemberFailureReason.SOURCE_BINDING_INVALID)
-        if self.provenance.rejected_record_count > 0 and self.provenance.publication_verification_id is None:
+        if (
+            self.provenance.verification_status is not SnapshotVerificationStatus.PENDING
+            or self.provenance.verification_seal_id is not None
+        ):
             raise SourceSnapshotMemberValidationError(SourceSnapshotMemberFailureReason.SOURCE_BINDING_INVALID)
         if (
             not self.locator

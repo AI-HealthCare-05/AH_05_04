@@ -12,9 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
-from pgvector.asyncpg import register_vector
 from redis.asyncio import Redis
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -146,21 +144,7 @@ def create_worker_engine(config: Config) -> AsyncEngine:
         pool_size=config.DB_CONNECTION_POOL_MAXSIZE,
         connect_args={"timeout": config.DB_CONNECT_TIMEOUT},
     )
-    register_pgvector_async(engine)
     return engine
-
-
-def register_pgvector_async(engine: AsyncEngine) -> None:
-    """Register pgvector codecs whenever the asyncpg-backed engine connects."""
-
-    event.listen(engine.sync_engine, "connect", _register_pgvector_connection)
-
-
-def _register_pgvector_connection(dbapi_connection: object, _: object) -> None:
-    run_async = getattr(dbapi_connection, "run_async", None)
-    if run_async is None:
-        raise RuntimeError("PGVECTOR_CONNECTION_UNSUPPORTED")
-    run_async(register_vector)
 
 
 def _create_protected_engine(config: Config, *, control: bool) -> AsyncEngine:

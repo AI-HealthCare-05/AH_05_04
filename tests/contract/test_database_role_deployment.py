@@ -3,6 +3,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
+PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg17-bookworm"
 
 
 def test_credentials_and_admin_process_are_separated() -> None:
@@ -58,9 +59,19 @@ def test_deployment_stops_writers_and_provisions_before_starting_api() -> None:
     assert stop < bootstrap < migration < verification < provisioning < startup
     assert "set -euo pipefail" in script[script.index("ssh", script.index("configure-app-role.sql")) : verification]
     bootstrap_sql = (ROOT / "infra/docker/postgres/configure-app-role.sql").read_text()
+    services = yaml.safe_load((ROOT / "infra/docker/docker-compose.prod.yml").read_text())["services"]
+    assert services["postgres"]["image"] == PGVECTOR_IMAGE
+    assert "CREATE EXTENSION IF NOT EXISTS vector" in bootstrap_sql
+    assert "extversion = '0.8.6'" in bootstrap_sql
     assert "GRANT SELECT, INSERT, UPDATE, DELETE" not in bootstrap_sql
     assert "GRANT EXECUTE" not in bootstrap_sql
     assert "GRANT ALL" not in bootstrap_sql
+
+
+def test_real_stack_uses_the_same_pgvector_server_image() -> None:
+    services = yaml.safe_load((ROOT / "docker-compose.real-stack-e2e.yml").read_text())["services"]
+
+    assert services["postgres"]["image"] == PGVECTOR_IMAGE
 
 
 def test_ci_runs_legacy_downgrades_before_irreversible_cutover():

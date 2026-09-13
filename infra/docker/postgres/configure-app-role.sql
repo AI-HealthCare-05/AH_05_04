@@ -6,6 +6,19 @@
 \getenv writer_user SOURCE_WRITER_USER
 \getenv writer_password SOURCE_WRITER_PASSWORD
 
+-- Alembic은 제한된 Migration 역할로 실행되므로 trusted 여부와 무관하게 필요한
+-- extension을 Bootstrap/admin 단계에서 먼저 준비합니다. 이미 설치된 DB에도 안전하게 재실행됩니다.
+CREATE EXTENSION IF NOT EXISTS vector;
+SELECT extversion = '0.8.6' AS vector_version_valid
+FROM pg_extension
+WHERE extname = 'vector'
+\gset
+\if :vector_version_valid
+\else
+  \echo 'pgvector extension version must be 0.8.6'
+  SELECT 1 / 0;
+\endif
+
 -- 계정 이름 충돌 시 관리 계정 변경을 포함한 어떤 변경도 하지 않습니다.
 SELECT count(DISTINCT name)=4 AND bool_and(length(name)>0) AS roles_valid
 FROM (VALUES (current_user), (:'migration_user'), (:'app_user'), (:'writer_user')) AS roles(name)

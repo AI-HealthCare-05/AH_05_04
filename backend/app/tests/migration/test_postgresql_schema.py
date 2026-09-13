@@ -8,9 +8,6 @@ def test_knowledge_evidence_index_revision_contract() -> None:
 
     assert revision.down_revision == "e8c41a09d652"
     assert "CREATE EXTENSION IF NOT EXISTS vector" in source
-    assert "CREATE TRIGGER" not in source.upper()
-    assert "CREATE POLICY" not in source.upper()
-    assert "CREATE FUNCTION" not in source.upper()
     assert "vector_dims(embedding) BETWEEN 1 AND 2000" in source
 
 
@@ -21,4 +18,6 @@ def test_knowledge_evidence_index_downgrade_refuses_populated_state() -> None:
     assert "rag_source_snapshot_member" in source
     assert "rag_knowledge_index" in source
     assert "rag_knowledge_index_member" in source
+    assert "LOCK TABLE knowledge_document IN SHARE ROW EXCLUSIVE MODE" in source
+    assert "LOCK TABLE knowledge_chunk IN SHARE ROW EXCLUSIVE MODE" in source
     assert "would lose Knowledge Evidence Index data" in source

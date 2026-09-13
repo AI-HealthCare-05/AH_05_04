@@ -97,6 +97,9 @@ projection version은 `knowledge-evidence-index-configuration@1`이다. model re
 ## 저장 계약
 
 - `rag_source_snapshot_member`는 `ENDPOINT_OPERATION` 또는 `ARTIFACT` 중 한 origin shape만 가진다.
+- Source Writer는 Snapshot이 아직 `PENDING`이고 verification seal이 없을 때만 member를 추가한다. Snapshot이
+  `CURRENT`가 된 뒤에는 member를 추가하지 않으며, 기존 CURRENT Snapshot을 수용하려면 새 Snapshot version을
+  수집·검증한다. Index build는 반대로 `CURRENT` Snapshot member만 허용한다.
 - 기존 `knowledge_document`와 `knowledge_chunk`는 `LEGACY_V1`을 보존한다. migration은 기존 row를 승인된
   근거로 추론하거나 `KNOWLEDGE_EVIDENCE_V1`로 승격하지 않는다.
 - `KNOWLEDGE_EVIDENCE_V1` document/chunk는 Source Snapshot member, external document ID, canonicalization
@@ -106,7 +109,8 @@ projection version은 `knowledge-evidence-index-configuration@1`이다. model re
 - 한 transaction 안에서 parent chain을 재검증하고 index와 모든 member를 기록한 뒤 persisted receipt를
   재계산한다. 실패하면 전체 rollback한다.
 - 동일 `index_code + index_version` 재요청은 모든 configuration과 세 hash가 같은 경우에만 idempotent다.
-- Runtime reader는 read-only이고 builder adapter는 update/delete 인터페이스를 제공하지 않는다.
+- 이 선행 slice의 builder adapter는 update/delete 인터페이스를 제공하지 않는다. Runtime read-only 조회 port와
+  전용 builder DB identity·권한은 실제 Retrieval 연결 slice 전에 별도 계약·제한 역할 테스트와 함께 추가한다.
 - trigger, RLS policy, stored procedure, user-defined database function을 사용하지 않는다.
 
 ## 출력 계약

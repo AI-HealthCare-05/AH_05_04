@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Sequence
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import VECTOR
-from sqlalchemy import DateTime, Integer, String, column, insert, select, table, text
+from sqlalchemy import DateTime, Integer, String, and_, column, exists, insert, or_, select, table, text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,16 +59,33 @@ _SNAPSHOT_MEMBER = table(
     "rag_source_snapshot_member",
     column("id", String(36)),
     column("source_snapshot_id", String(36)),
+    column("member_kind", String(30)),
+    column("endpoint_id", String(36)),
+    column("operation_id", String(36)),
+    column("ingestion_artifact_id", String(36)),
     column("locator", String(500)),
     column("content_sha256", String(64)),
+)
+_INGESTION_RUN = table(
+    "rag_source_ingestion_run",
+    column("id", String(36)),
+    column("operation_id", String(36)),
+    column("snapshot_id", String(36)),
+)
+_INGESTION_ARTIFACT = table(
+    "rag_source_ingestion_artifact",
+    column("id", String(36)),
+    column("ingestion_run_id", String(36)),
 )
 _DOCUMENT = table(
     "knowledge_document",
     column("id", String(36)),
     column("record_contract_version", String(40)),
+    column("document_status", String(20)),
     column("source_snapshot_member_id", String(36)),
     column("external_document_id", String(300)),
     column("document_content_hash", String(64)),
+    column("canonicalization_spec_version", String(100)),
 )
 _CHUNK = table(
     "knowledge_chunk",
@@ -195,8 +213,16 @@ class SqlAlchemyKnowledgeEvidenceIndexRepository:
     ) -> None:
         for member in sorted(request.members, key=lambda item: item.identity.knowledge_chunk_id.bytes):
             row = (await session.execute(_source_binding_statement(member))).mappings().one_or_none()
-            if row is None:
+            if row is None or hashlib.sha256(str(row["chunk_text"]).encode("utf-8")).hexdigest() != (
+                member.identity.content_hash
+            ):
                 raise KnowledgeEvidenceIndexValidationError(KnowledgeEvidenceIndexFailureReason.SOURCE_BINDING_INVALID)
+            if row["member_kind"] == "ARTIFACT":
+                artifact = (await session.execute(_artifact_origin_lock_statement(member))).scalar_one_or_none()
+                if artifact is None:
+                    raise KnowledgeEvidenceIndexValidationError(
+                        KnowledgeEvidenceIndexFailureReason.SOURCE_BINDING_INVALID
+                    )
 
     async def _load_and_recompute_receipt(
         self,
@@ -244,8 +270,35 @@ def _source_binding_statement(member: KnowledgeIndexMemberDraft):
         .join(_DOCUMENT, _DOCUMENT.c.source_snapshot_member_id == _SNAPSHOT_MEMBER.c.id)
         .join(_CHUNK, _CHUNK.c.knowledge_document_id == _DOCUMENT.c.id)
     )
+    member_origin_matches = or_(
+        and_(
+            _SNAPSHOT_MEMBER.c.member_kind == "ENDPOINT_OPERATION",
+            _SNAPSHOT_MEMBER.c.endpoint_id == _ENDPOINT.c.id,
+            or_(_SNAPSHOT_MEMBER.c.operation_id.is_(None), _SNAPSHOT_MEMBER.c.operation_id == _OPERATION.c.id),
+            _SNAPSHOT_MEMBER.c.ingestion_artifact_id.is_(None),
+        ),
+        and_(
+            _SNAPSHOT_MEMBER.c.member_kind == "ARTIFACT",
+            _SNAPSHOT_MEMBER.c.endpoint_id.is_(None),
+            _SNAPSHOT_MEMBER.c.operation_id.is_(None),
+            exists(
+                select(1)
+                .select_from(
+                    _INGESTION_ARTIFACT.join(
+                        _INGESTION_RUN,
+                        _INGESTION_RUN.c.id == _INGESTION_ARTIFACT.c.ingestion_run_id,
+                    )
+                )
+                .where(
+                    _INGESTION_ARTIFACT.c.id == _SNAPSHOT_MEMBER.c.ingestion_artifact_id,
+                    _INGESTION_RUN.c.snapshot_id == _SNAPSHOT.c.id,
+                    _INGESTION_RUN.c.operation_id == _OPERATION.c.id,
+                )
+            ),
+        ),
+    )
     return (
-        select(_CHUNK.c.id)
+        select(_CHUNK.c.id, _CHUNK.c.chunk_text, _SNAPSHOT_MEMBER.c.member_kind)
         .select_from(source_chain)
         .where(
             _SOURCE.c.source_code == identity.source_code,
@@ -260,15 +313,43 @@ def _source_binding_statement(member: KnowledgeIndexMemberDraft):
             _SNAPSHOT.c.canonical_checksum == identity.canonical_checksum,
             _SNAPSHOT.c.verification_status == "CURRENT",
             _SNAPSHOT_MEMBER.c.id == str(identity.source_snapshot_member_id),
+            _SNAPSHOT_MEMBER.c.locator == identity.locator,
+            member_origin_matches,
             _DOCUMENT.c.record_contract_version == "KNOWLEDGE_EVIDENCE_V1",
+            _DOCUMENT.c.document_status == "ACTIVE",
             _DOCUMENT.c.external_document_id == identity.external_document_id,
             _DOCUMENT.c.document_content_hash == _SNAPSHOT_MEMBER.c.content_sha256,
+            _DOCUMENT.c.canonicalization_spec_version.is_not(None),
             _CHUNK.c.id == str(identity.knowledge_chunk_id),
             _CHUNK.c.chunk_index == identity.chunk_index,
             _CHUNK.c.content_hash == identity.content_hash,
             _CHUNK.c.normalization_version.is_not(None),
         )
         .with_for_update(of=[_SOURCE, _ENDPOINT, _OPERATION, _SNAPSHOT, _SNAPSHOT_MEMBER, _DOCUMENT, _CHUNK])
+    )
+
+
+def _artifact_origin_lock_statement(member: KnowledgeIndexMemberDraft):
+    identity = member.identity
+    chain = (
+        _SNAPSHOT_MEMBER.join(
+            _INGESTION_ARTIFACT,
+            _INGESTION_ARTIFACT.c.id == _SNAPSHOT_MEMBER.c.ingestion_artifact_id,
+        )
+        .join(_INGESTION_RUN, _INGESTION_RUN.c.id == _INGESTION_ARTIFACT.c.ingestion_run_id)
+        .join(_SNAPSHOT, _SNAPSHOT.c.id == _INGESTION_RUN.c.snapshot_id)
+    )
+    return (
+        select(_INGESTION_ARTIFACT.c.id)
+        .select_from(chain)
+        .where(
+            _SNAPSHOT_MEMBER.c.id == str(identity.source_snapshot_member_id),
+            _SNAPSHOT_MEMBER.c.member_kind == "ARTIFACT",
+            _SNAPSHOT_MEMBER.c.source_snapshot_id == str(identity.source_snapshot_id),
+            _SNAPSHOT.c.id == str(identity.source_snapshot_id),
+            _INGESTION_RUN.c.operation_id == _SNAPSHOT.c.operation_id,
+        )
+        .with_for_update(of=[_INGESTION_RUN, _INGESTION_ARTIFACT])
     )
 
 

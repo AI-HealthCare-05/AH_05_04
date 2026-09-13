@@ -798,8 +798,8 @@ def _snapshot_member_parent_statement(request: SourceSnapshotMemberCreate) -> Se
         _SNAPSHOT.c.canonical_checksum == provenance.canonical_checksum,
         _SNAPSHOT.c.canonicalization_spec_version == provenance.canonicalization_spec_version,
         _SNAPSHOT.c.endpoint_receipt_hash == provenance.endpoint_receipt_hash,
-        _SNAPSHOT.c.verification_seal_id == str(provenance.verification_seal_id),
-        _SNAPSHOT.c.verification_status == SnapshotVerificationStatus.CURRENT.value,
+        _SNAPSHOT.c.verification_seal_id.is_(None),
+        _SNAPSHOT.c.verification_status == SnapshotVerificationStatus.PENDING.value,
         _SNAPSHOT.c.rejected_record_count == provenance.rejected_record_count,
     ]
     lock_targets = [_SOURCE, _ENDPOINT, _OPERATION, _SNAPSHOT]

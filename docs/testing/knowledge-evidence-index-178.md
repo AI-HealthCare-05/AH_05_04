@@ -1,0 +1,58 @@
+# #178 Knowledge Evidence Index 선행 기반 검증 기록
+
+## 판정
+
+- 범위: #178 Production Hybrid Retrieval의 선행 Knowledge Evidence Index 저장 기반
+- 상태: 로컬 구현·검증 완료, 지정 리뷰·병합 대기
+- 계약: `docs/contracts/proposed/post-mvp-1/knowledge-evidence-index-v1.md`
+- migration: `178a1b2c3d4e` (`e8c41a09d652` 다음 단일 head)
+- 공개: `PUBLIC_TRACK_F=false`; Current 승격·Production 활성화 아님
+
+권위 문서의 `PD-315` 리뷰 상태 표시는 이 구현 브랜치에서 변경하지 않았다. 해당 메타데이터 정리는 지정
+리뷰어가 승인 근거와 함께 별도로 확정해야 하며, 이 검증 기록은 승인 상태를 대신하지 않는다.
+
+## 구현 경계
+
+- unsealed `PENDING` Source Snapshot member의 Endpoint/Operation·Artifact origin shape와 parent-chain 잠금;
+  `CURRENT` 전이 뒤에는 추가 금지
+- 기존 Knowledge row의 `LEGACY_V1` 보존과 production provenance 확장
+- `rag_knowledge_index`·`rag_knowledge_index_member` 완성 artifact 원자 저장
+- RFC 8785 호환 corpus/embedding/configuration receipt와 persisted 재계산
+- PostgreSQL transaction advisory lock을 통한 동일 code/version 생성 직렬화
+- pgvector 0.8.6 server와 `pgvector==0.5.0` SQLAlchemy `VECTOR` 변환
+- Production admin bootstrap의 extension 선설치와 제한 Alembic migration role 분리
+- raw text/vector/locator를 receipt·일반 로그·고정 예외 reason에서 제외
+
+SQLAlchemy `VECTOR` 타입이 bind/result 변환을 소유한다. 실제 PostgreSQL 검증에서 raw asyncpg codec을 함께
+등록하면 문자열 변환이 중복되어 실패함을 확인했으므로 이 고정 조합은 codec을 별도로 등록하지 않는다.
+
+## 2026-09-13 실행 증빙
+
+| 검사 | 결과 |
+| --- | --- |
+| AI Worker 기본 lane (Core·OCR·RAG·Evaluation) | 3115 passed, 8 skipped |
+| Backend·Contract·선별 RAG Integration 기본 lane | 1937 passed, 87 skipped |
+| 전체 Contract suite (Docker image build 포함) | 269 passed |
+| 독립 DB 전체 Alembic upgrade + vector round-trip/concurrency/conflict/dimension/downgrade/legacy/non-leakage | 3 passed |
+| #178 model/migration metadata와 위 PostgreSQL 통합 묶음 | 9 passed |
+| 전체 빈 DB `alembic upgrade head` | 성공, head `178a1b2c3d4e` |
+| populated Knowledge Evidence Index downgrade | 의도대로 중단: `downgrade would lose Knowledge Evidence Index data` |
+| legacy row upgrade | `LEGACY_V1` backfill, publisher/source URL/document version와 external vector key 보존 |
+| legacy-only row downgrade | 성공, 기존 row 보존 |
+
+모든 DB fixture는 비식별 합성 데이터만 사용했다. 임시 PostgreSQL은 기존 개발 DB와 분리된 port와 database를
+사용했다.
+
+## 남은 #178 범위
+
+이 구현은 Hybrid Retrieval 자체가 아니다. 다음은 후속 #178 구현·검증으로 남는다.
+
+- PostgreSQL Exact/Trigram/FTS lexical 20과 exact cosine dense 20
+- `rrf-rank-fusion@1` 출력 30과 UTF-8 tie-break
+- versioned reranker 입력 20
+- Evidence Gate와 context 최대 5
+- authoritative Retrieval Run/signal/hit persistence
+- Runtime Bundle/currentness 연결, `hybrid_retrieve` node receipt
+- `RET-L`, `RET-D`, `RET-H`, `RET-HR` Evaluation과 Recall@5/latency 증빙
+- 지정 DB·Source·Evidence/Safety 리뷰와 Current 승격 판단
+- 전용 Knowledge Index builder DB identity와 Runtime SELECT-only projection/권한 검증

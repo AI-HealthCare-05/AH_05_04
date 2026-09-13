@@ -1,4 +1,5 @@
 from dataclasses import replace
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -35,8 +36,8 @@ def provenance() -> SnapshotProvenanceReceipt:
         canonical_checksum="a" * 64,
         canonicalization_spec_version="mfds-product-approval@1",
         endpoint_receipt_hash="b" * 64,
-        verification_seal_id=_SEAL_ID,
-        verification_status=SnapshotVerificationStatus.CURRENT,
+        verification_seal_id=None,
+        verification_status=SnapshotVerificationStatus.PENDING,
         rejected_record_count=0,
         publication_verification_id=None,
     )
@@ -90,7 +91,7 @@ def test_endpoint_member_allows_nullable_operation_but_not_another_operation() -
         {"endpoint_id": None},
     ],
 )
-def test_mixed_member_shape_is_rejected(changes: dict[str, object]) -> None:
+def test_mixed_member_shape_is_rejected(changes: dict[str, Any]) -> None:
     with pytest.raises(SourceSnapshotMemberValidationError):
         replace(endpoint_request(), **changes)
 
@@ -105,11 +106,15 @@ def test_locator_requires_bounded_trimmed_nfc_text(locator: str) -> None:
         assert locator not in repr(exc_info.value)
 
 
-def test_rejected_snapshot_requires_publication_verification() -> None:
-    rejected = replace(provenance(), rejected_record_count=1)
+def test_member_append_rejects_an_already_sealed_snapshot() -> None:
+    sealed = replace(
+        provenance(),
+        verification_status=SnapshotVerificationStatus.CURRENT,
+        verification_seal_id=_SEAL_ID,
+    )
 
     with pytest.raises(SourceSnapshotMemberValidationError):
-        replace(endpoint_request(), provenance=rejected)
+        replace(endpoint_request(), provenance=sealed)
 
 
 class CapturingRepository:

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_worker.adapters.sqlalchemy_knowledge_evidence_index import (
     SqlAlchemyKnowledgeEvidenceIndexRepository,
+    _artifact_origin_lock_statement,
     _source_binding_statement,
 )
 from ai_worker.tasks.rag.knowledge_evidence_index import (
@@ -73,9 +74,26 @@ def test_source_binding_query_locks_full_chain_and_never_uses_candidate_index() 
     assert "JOIN rag_source_snapshot_member" in sql
     assert "JOIN knowledge_document" in sql
     assert "JOIN knowledge_chunk" in sql
+    assert "rag_source_ingestion_artifact" in sql
+    assert "rag_source_ingestion_run" in sql
     assert "FOR UPDATE" in sql
     assert "KNOWLEDGE_EVIDENCE_V1" in statement.compile().params.values()
+    assert "ACTIVE" in statement.compile().params.values()
+    assert "$.records[0]" in statement.compile().params.values()
+    assert "ENDPOINT_OPERATION" in statement.compile().params.values()
+    assert "ARTIFACT" in statement.compile().params.values()
+    assert "canonicalization_spec_version IS NOT NULL" in sql
     assert "candidate" not in sql.lower()
+
+
+def test_artifact_origin_query_locks_run_and_artifact_rows() -> None:
+    statement = _artifact_origin_lock_statement(member())
+    sql = str(statement)
+
+    assert "rag_source_ingestion_artifact" in sql
+    assert "rag_source_ingestion_run" in sql
+    assert "rag_source_snapshot" in sql
+    assert "FOR UPDATE" in sql
 
 
 async def test_new_index_is_inserted_atomically_and_recomputed_before_commit() -> None:
@@ -144,3 +162,43 @@ async def test_missing_source_binding_fails_before_any_index_insert() -> None:
 
     assert exc_info.value.reason is KnowledgeEvidenceIndexFailureReason.SOURCE_BINDING_INVALID
     assert all("INSERT INTO rag_knowledge" not in str(call.args[0]) for call in session.execute.await_args_list)
+
+
+async def test_database_chunk_text_must_match_the_bound_content_hash() -> None:
+    build = request()
+    receipt = create_knowledge_index_receipt(build)
+    session = _session()
+    corrupted = MagicMock()
+    corrupted.mappings.return_value.one_or_none.return_value = {
+        "id": str(build.members[0].identity.knowledge_chunk_id),
+        "chunk_text": "different synthetic text",
+        "member_kind": "ENDPOINT_OPERATION",
+    }
+    session.execute.side_effect = [MagicMock(), corrupted]
+    repository = SqlAlchemyKnowledgeEvidenceIndexRepository(lambda: session)
+
+    with pytest.raises(KnowledgeEvidenceIndexValidationError) as exc_info:
+        await repository.persist_complete_index(build, receipt)
+
+    assert exc_info.value.reason is KnowledgeEvidenceIndexFailureReason.SOURCE_BINDING_INVALID
+
+
+async def test_artifact_member_locks_its_ingestion_parent_before_index_insert() -> None:
+    build = request()
+    session = _session()
+    binding = MagicMock()
+    binding.mappings.return_value.one_or_none.return_value = {
+        "id": str(build.members[0].identity.knowledge_chunk_id),
+        "chunk_text": build.members[0].content_text.reveal(),
+        "member_kind": "ARTIFACT",
+    }
+    artifact = MagicMock()
+    artifact.scalar_one_or_none.return_value = "artifact-id"
+    session.execute.side_effect = [binding, artifact]
+    repository = SqlAlchemyKnowledgeEvidenceIndexRepository(lambda: session)
+
+    await repository._lock_and_validate_members(session, build)
+
+    assert session.execute.await_count == 2
+    assert "rag_source_ingestion_run" in str(session.execute.await_args_list[1].args[0])
+    assert "FOR UPDATE" in str(session.execute.await_args_list[1].args[0])

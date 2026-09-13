@@ -82,8 +82,8 @@ def _member_request(*, artifact: bool = False) -> SourceSnapshotMemberCreate:
         canonical_checksum="c" * 64,
         canonicalization_spec_version="mfds-product-approval@1",
         endpoint_receipt_hash="a" * 64,
-        verification_seal_id=UUID("77777777-7777-4777-8777-777777777777"),
-        verification_status=SnapshotVerificationStatus.CURRENT,
+        verification_seal_id=None,
+        verification_status=SnapshotVerificationStatus.PENDING,
         rejected_record_count=0,
         publication_verification_id=None,
     )

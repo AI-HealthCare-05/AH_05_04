@@ -133,7 +133,7 @@ def test_config_builds_database_url_with_special_characters() -> None:
     assert "p%40ss%2Fw%25rd" in rendered
 
 
-def test_worker_engine_hides_parameters_and_registers_pgvector(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_worker_engine_hides_database_parameters(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
     engine = MagicMock()
 
@@ -143,15 +143,8 @@ def test_worker_engine_hides_parameters_and_registers_pgvector(monkeypatch: pyte
         return engine
 
     monkeypatch.setattr(runtime_assembly, "create_async_engine", fake_create_async_engine)
-    monkeypatch.setattr(
-        runtime_assembly,
-        "register_pgvector_async",
-        lambda supplied: captured.update(pgvector_engine=supplied),
-    )
-
     assert create_worker_engine(_config()) is engine
     assert captured["hide_parameters"] is True
-    assert captured["pgvector_engine"] is engine
 
 
 def test_protected_engine_factory_refuses_disabled_configuration() -> None:

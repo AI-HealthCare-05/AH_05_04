@@ -155,7 +155,9 @@ Expected: missing models/revision assertions fail.
 
 - [ ] **Step 4: Add pinned pgvector dependencies and local image**
 
-Add `pgvector==0.5.0` to project dependencies, regenerate `uv.lock`, and change only the local `postgres` service image to `pgvector/pgvector:0.8.6-pg17-bookworm`. Do not change production compose.
+Add `pgvector==0.5.0` to project dependencies, regenerate `uv.lock`, and pin every migration-bearing PostgreSQL
+service to `pgvector/pgvector:0.8.6-pg17-bookworm`. Install the extension in the production admin bootstrap before
+the restricted Alembic migration role runs; do not activate Track F or broaden application credentials.
 
 - [ ] **Step 5: Implement models and migration**
 
@@ -207,7 +209,9 @@ Test Endpoint/Operation, Artifact, mixed-shape rejection, nullable operation beh
 
 - [ ] **Step 2: Write failing SQL adapter tests**
 
-Capture statements and require parent-chain joins plus `FOR UPDATE` before insert. Test that an Artifact from another run/Snapshot is rejected and that a repeated byte-identical member is idempotent.
+Capture statements and require parent-chain joins plus `FOR UPDATE` before insert. Require an unsealed `PENDING`
+Snapshot so the later CURRENT seal freezes membership. Test that an Artifact from another run/Snapshot is rejected
+and that a repeated byte-identical member is idempotent.
 
 - [ ] **Step 3: Run tests and confirm RED**
 
@@ -243,7 +247,7 @@ git commit -m "✨ feat: #178 Source Snapshot member 결속 추가"
 
 **Interfaces:**
 - Consumes: `KnowledgeIndexBuildRequest` and expected `KnowledgeIndexReceipt` from Task 1.
-- Produces: `SqlAlchemyKnowledgeEvidenceIndexRepository` and `register_pgvector_async(engine)`.
+- Produces: `SqlAlchemyKnowledgeEvidenceIndexRepository` using the pinned SQLAlchemy `VECTOR` bind/result adapter.
 
 - [ ] **Step 1: Write failing repository statement tests**
 
@@ -259,7 +263,7 @@ Run: `UV_CACHE_DIR=/private/tmp/ah178_index_uv_cache uv run pytest ai_worker/tes
 
 - [ ] **Step 4: Implement the adapter**
 
-Use SQLAlchemy Core table definitions local to the adapter, `async with session.begin()`, `hide_parameters=True`, and pgvector async Psycopg registration on the engine's sync connection event. Do not commit in the repository method; the transaction context owns commit/rollback.
+Use SQLAlchemy Core table definitions local to the adapter, `async with session.begin()`, `hide_parameters=True`, and the pgvector SQLAlchemy `VECTOR` bind/result adapter without a second raw asyncpg codec. Do not commit in the repository method; the transaction context owns commit/rollback.
 
 - [ ] **Step 5: Implement exact persisted receipt recomputation**
 
@@ -311,9 +315,11 @@ Expected: repository test suite passes with the pgvector-enabled local PostgreSQ
 
 - [ ] **Step 4: Update implementation-state documentation**
 
-Document the exact tables, proposed-contract status, migration revision, hash domains, local-only pgvector dependency,
-reviewers, test results, and the remaining #178 Retrieval/Gate/Run/Evaluation work. Correct PD-315's stale
-`Review pending` metadata to approved/merged without changing the runtime target's `Not implemented` status.
+Document the exact tables, proposed-contract status, migration revision, hash domains, version-pinned pgvector
+extension provisioning, reviewers, test results, and the remaining #178 Retrieval/Gate/Run/Evaluation work. Keep
+PD-315's `Review pending` metadata unchanged until designated Evidence/Safety, DB/Security, and Source reviewers
+provide approval evidence; only then may an authorized change align its status without changing the runtime target's
+`Not implemented` status.
 
 - [ ] **Step 5: Run all required completion checks**
 

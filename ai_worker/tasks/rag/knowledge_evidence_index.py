@@ -11,7 +11,7 @@ import math
 import re
 import struct
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
@@ -87,7 +87,7 @@ class KnowledgeChunkIdentity:
     external_document_id: str
     chunk_index: int
     content_hash: str
-    locator: str
+    locator: str = field(repr=False)
 
     def __post_init__(self) -> None:
         if not all(
@@ -95,7 +95,7 @@ class KnowledgeChunkIdentity:
                 _bounded_nfc(self.source_code, 100),
                 _bounded_nfc(self.source_version, 200),
                 _bounded_nfc(self.external_document_id, 300),
-                _bounded_nfc(self.locator, 500),
+                _bounded_locator(self.locator, 500),
             )
         ):
             raise KnowledgeEvidenceIndexValidationError(KnowledgeEvidenceIndexFailureReason.SOURCE_BINDING_INVALID)
@@ -113,7 +113,7 @@ class KnowledgeChunkIdentity:
 class KnowledgeIndexMemberDraft:
     identity: KnowledgeChunkIdentity
     content_text: SensitiveEvidenceText
-    embedding: tuple[float, ...]
+    embedding: tuple[float, ...] = field(repr=False)
 
     def __post_init__(self) -> None:
         observed = hashlib.sha256(self.content_text.reveal().encode("utf-8")).hexdigest()
@@ -194,10 +194,14 @@ def canonical_embedding_sha256(embedding: tuple[float, ...]) -> str:
         if not math.isfinite(value) or (value == 0.0 and math.copysign(1.0, value) < 0):
             raise KnowledgeEvidenceIndexValidationError(KnowledgeEvidenceIndexFailureReason.EMBEDDING_INVALID)
         try:
-            encoded.extend(struct.pack(">f", value))
+            packed = struct.pack(">f", value)
         except (OverflowError, struct.error):
             raise KnowledgeEvidenceIndexValidationError(KnowledgeEvidenceIndexFailureReason.EMBEDDING_INVALID) from None
-        squared_norm += value * value
+        stored_value = struct.unpack(">f", packed)[0]
+        if stored_value == 0.0 and math.copysign(1.0, stored_value) < 0:
+            raise KnowledgeEvidenceIndexValidationError(KnowledgeEvidenceIndexFailureReason.EMBEDDING_INVALID)
+        encoded.extend(packed)
+        squared_norm += stored_value * stored_value
     if squared_norm == 0.0 or not math.isfinite(squared_norm):
         raise KnowledgeEvidenceIndexValidationError(KnowledgeEvidenceIndexFailureReason.EMBEDDING_INVALID)
     return hashlib.sha256(encoded).hexdigest()
@@ -301,6 +305,17 @@ def _bounded_nfc(value: object, maximum: int) -> bool:
         and len(value) <= maximum
         and unicodedata.normalize("NFC", value) == value
         and not any(character.isspace() or unicodedata.category(character) == "Cc" for character in value)
+    )
+
+
+def _bounded_locator(value: object, maximum: int) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value == value.strip()
+        and len(value) <= maximum
+        and unicodedata.normalize("NFC", value) == value
+        and not any(unicodedata.category(character).startswith("C") for character in value)
     )
 
 

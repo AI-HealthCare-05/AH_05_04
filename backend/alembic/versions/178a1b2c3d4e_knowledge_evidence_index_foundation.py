@@ -178,6 +178,8 @@ def downgrade() -> None:
     connection.execute(sa.text("LOCK TABLE rag_knowledge_index_member IN SHARE ROW EXCLUSIVE MODE"))
     connection.execute(sa.text("LOCK TABLE rag_knowledge_index IN SHARE ROW EXCLUSIVE MODE"))
     connection.execute(sa.text("LOCK TABLE rag_source_snapshot_member IN SHARE ROW EXCLUSIVE MODE"))
+    connection.execute(sa.text("LOCK TABLE knowledge_document IN SHARE ROW EXCLUSIVE MODE"))
+    connection.execute(sa.text("LOCK TABLE knowledge_chunk IN SHARE ROW EXCLUSIVE MODE"))
     incompatible = connection.scalar(
         sa.text(
             "SELECT EXISTS (SELECT 1 FROM rag_knowledge_index_member) "
