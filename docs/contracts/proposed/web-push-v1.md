@@ -25,7 +25,7 @@ endpoint·키·요청 body는 오류 details와 로그에 반사하지 않는다
 | --- | --- | --- |
 | `GET /api/v1/push/config` | 없음 | `200 {data: {public_key: string}}` |
 | `PUT /api/v1/push/subscriptions` | `endpoint: string`, `keys: {p256dh: string, auth: string}` | `200 {data: {id: UUID, generation: UUID}}` |
-| `DELETE /api/v1/push/subscriptions/{id}` | 없음 | `204`, body 없음 |
+| `DELETE /api/v1/push/subscriptions/{subscription_id}` | 없음 | `204`, body 없음 |
 
 operation ID는 각각 `push.config`, `push-subscription.upsert`,
 `push-subscription.delete`다. body의 추가 필드는 금지한다. 키는 base64url을
@@ -73,8 +73,9 @@ SELF profile이 없는 사용자는 `404 PROFILE_NOT_FOUND`다. DNS 조회 실�
 - 계정 삭제 시 구독·전달 FK cascade와 암호문 삭제가 필요하다. 현재 탈퇴 API를
   완료로 가정하지 않으며 #469와 계정 생명주기 담당자가 호출 경계를 조율한다.
 - 해제 즉시 키 ciphertext를 제거하고, endpoint HMAC tombstone과 terminal
-  ledger는 7일 후 삭제하는 안을 제안한다. 7일 보존·탈퇴 예외는 Privacy 확인 필요다. 전달 ledger가 남아 있는 tombstone은
-  먼저 삭제하지 않는다. 정리도 회당 최대 limit개이며 해제 시각 기준이다.
+  ledger를 7일 후 정리한다. tombstone은 revoked_at, ledger는 terminal updated_at
+  기준이다. 7일 보존·탈퇴 예외는 Privacy 확인 필요다. 전달 ledger가 남아 있는
+  tombstone은 먼저 삭제하지 않으며 정리도 회당 최대 limit개다.
 
 ## 전송 보안과 payload
 
@@ -89,7 +90,7 @@ host 목록은 #471 합성 구독에서 확인하고 Security 리뷰로 고정�
 검증된 공인 IP로 직접 연결하며 TLS는 원래 hostname을 검증한다. DNS 재해석,
 redirect, 환경 proxy를 사용하지 않는 전용 transport로 이를 구현했다.
 
-payload 후보는 고정 title `복약 기록 알림`, body `앱에서 기록을 확인해 주세요.`,
+구현 payload는 고정 title `복약 기록 알림`, body `앱에서 기록을 확인해 주세요.`,
 불투명 notification id, generation이다. 약명·용량·진단·사용자 식별자·날짜는
 전송하지 않는다. notification id도 민감 metadata로 취급하고 로깅하지 않는다.
 클릭 시 인증 후 기존 알림 목록에서 id와 `occurrence_local_date`를 확인해
@@ -113,7 +114,7 @@ payload 후보는 고정 title `복약 기록 알림`, body `앱에서 기록을
 5. 선점과 최종 판정 후 HTTP는 DB transaction 밖에서 호출한다. 응답 저장은
    claim token과 generation을 재확인한다. 2xx는 서비스 접수이며 기기 수신이 아니다.
 
-| 결과 | 후보 처리 |
+| 결과 | 처리 |
 | --- | --- |
 | 2xx | `ACCEPTED`, 재전송 금지 |
 | 404/410 | `FAILED`, 해당 generation 구독 해제·다른 대기 전달 차단 |
@@ -129,7 +130,8 @@ payload 후보는 고정 title `복약 기록 알림`, body `앱에서 기록을
 클릭 시 최신 인증·소유권·상태 조회가 필수다.
 
 기존 `schedule_notifications`가 `process_notifications` 완료 후 별도 bounded
-Push 명령을 실행한다. 회당 기본 100개, 최대 500개, 배치 제한 45초다. 생성/게시 transaction에 외부 요청을 추가하지 않는다. opt-in 기본 off,
+Push 명령을 실행한다. 회당 기본 100개, 최대 500개, 배치 제한 45초다.
+생성/게시 transaction에 외부 요청을 추가하지 않는다. opt-in 기본 off,
 Push 장애는 기존 앱 내부 목록·Check-in을 막지 않는다. AI Worker 및 새 queue는
 범위 밖이며 운영 scheduler 연결은 #434 담당 범위와 함께 리뷰한다. Production에서는
 환경변수 enabled 값과 무관하게 config/등록/전송을 차단하며 DELETE는 유지한다.

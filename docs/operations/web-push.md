@@ -56,7 +56,10 @@ logout/reset/refresh 재사용 탐지는 token_version 증가와 같은 transact
 
 ## Migration·롤백·검증
 
-- revision `469a1b2c3d4e`는 `e8c41a09d652` 다음에 적용한다.
+- revision `469a1b2c3d4e`는 `166f30415263` 다음에 적용한다.
+- migration 후 `provision_database_roles.py`를 재실행한다. Runtime(API/scheduler)만
+  Push 테이블 SELECT/INSERT/UPDATE/DELETE를 가지며 Source Writer/Management와 PUBLIC에는
+  해당 테이블 접근을 부여하지 않는다. TRUNCATE·DDL 권한도 부여하지 않는다.
 - `push_subscription` 또는 `push_delivery`가 비어 있지 않으면 downgrade가 거절된다.
   rollback을 위해 사용자 이력을 임의로 삭제하지 않는다. 우선 기능을 OFF한다.
 - `process_push`의 정리 단계는 7일 지난 terminal ledger와 해제 tombstone을 제한된
