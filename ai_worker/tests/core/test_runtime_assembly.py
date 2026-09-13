@@ -4,6 +4,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any, cast
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -39,6 +40,7 @@ from ai_worker.core.runtime_assembly import (
     create_protected_control_engine,
     create_protected_data_engine,
     create_session_factory,
+    create_worker_engine,
 )
 from ai_worker.core.stream import WorkerDelivery
 from ai_worker.schemas.messages import JobType, WorkerMessage
@@ -129,6 +131,27 @@ def test_config_builds_database_url_with_special_characters() -> None:
 
     assert rendered.startswith("postgresql+asyncpg://worker:")
     assert "p%40ss%2Fw%25rd" in rendered
+
+
+def test_worker_engine_hides_parameters_and_registers_pgvector(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+    engine = MagicMock()
+
+    def fake_create_async_engine(url, **options):
+        captured["url"] = url
+        captured.update(options)
+        return engine
+
+    monkeypatch.setattr(runtime_assembly, "create_async_engine", fake_create_async_engine)
+    monkeypatch.setattr(
+        runtime_assembly,
+        "register_pgvector_async",
+        lambda supplied: captured.update(pgvector_engine=supplied),
+    )
+
+    assert create_worker_engine(_config()) is engine
+    assert captured["hide_parameters"] is True
+    assert captured["pgvector_engine"] is engine
 
 
 def test_protected_engine_factory_refuses_disabled_configuration() -> None:
