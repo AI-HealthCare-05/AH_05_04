@@ -1,7 +1,7 @@
 # PD-418 — UNCONFIRMED backlog 조회 제안
 
-- 상태: Proposed · Backend/Frontend 승인 대기
-- 구현 상태: repository·service·DTO·미등록 router와 테스트 앱의 합성 HTTP 통합 테스트. 계약 승인 대기.
+- 상태: Proposed · 미등록 후보 승인 확인, 등록 변경 Backend/Frontend 재승인 대기
+- 구현 상태: #426의 조회 구현을 실제 v1 router에 연결한 리뷰용 변경. 최신 #202(#456)와 실제 앱 HTTP/OpenAPI 통합 검증 대상.
 - 구현: 권가빈 (`hazelnutflavoured`), #418의 Backend 담당 변경 기준
 - 책임 리뷰: 송은영 (`phina-io`, Backend/API/SELF ownership), 남한솔 (`solia142`, Frontend 소비 계약)
 - 이슈: [#418](https://github.com/AI-HealthCare-05/AH_05_04/issues/418)
@@ -19,9 +19,25 @@ Cursor는 마지막으로 반환된 Check-in UUID다. 소유권을 확인한 저
 
 새 DB schema, 상태, scheduler, 의료 판단, Frontend 구현은 없다. #202 PUT, #203 알림, #417 schedule contract 파일을 변경하지 않는다. 새 조회 메서드는 기존 repository에 추가하고 새 DTO/service/router를 분리한다.
 
-API route·DTO·오류는 공유 계약 변경이므로 두 담당 리뷰어의 계약 승인 전에는 `apis/v1/__init__.py`에 등록하지 않는다. `8d2909eb`의 선등록은 2026-09-10 Backend blocker에 따라 되돌렸다. 테스트 앱에서만 후보 backlog router를 등록해 병합된 #413 PUT 구현과 HTTP 통합을 검증하며, 실제 앱의 route 목록·OpenAPI 미노출 및 HTTP 404를 회귀 테스트로 고정한다.
+### 승인 증빙과 등록 변경의 병합 조건
 
-Frontend의 `b213cc01` 승인과 과거 Backend 검토를 등록 변경의 공동 승인으로 간주하지 않는다. 계약 승인 후 등록과 실제 앱 검증을 추가하고 두 담당 리뷰어가 그 등록 HEAD를 승인하기 전에는 병합하지 않는다. Draft를 유지하며 Current 승격·#138 Frontend 소비 완료·#418 종료를 주장하지 않는다.
+#426은 미등록 상태로 병합됐다. `564dfb0a`의
+[Frontend 승인](https://github.com/AI-HealthCare-05/AH_05_04/pull/426#pullrequestreview-5168490711)과
+[Backend 승인](https://github.com/AI-HealthCare-05/AH_05_04/pull/426#pullrequestreview-5168848890)은
+미등록 후보 구현·DTO·cursor 복구에 대한 승인이다. 실제 API 등록이나 Current 승격,
+Production 공개 승인으로 확대하지 않는다. 과거 등록 시도의 승인·철회 이력은
+[#426 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/426/files)에 남아 있다.
+
+2026-09-11 사용자 요청으로 최신 `develop`의 #456을 반영하여 실제 v1 등록과
+실제 앱 GET→PUT→목록 제외·페이지 이동·날짜별 Check-in 재조회 검증을 리뷰 가능한 변경으로
+준비한다. #426 Backend blocker의 “등록을 포함한 HEAD에서 두 책임 리뷰어 승인 전 병합 금지”
+조건을 적용하며, 이전 승인을 등록 변경 승인으로 간주하지 않는다.
+
+등록 변경 PR은 Draft로 두고 송은영·남한솔이 등록 HEAD와 계약을 재승인해야 한다.
+승인 후 같은 구현 PR에서 이 Decision의 승인 증빙과 계약 상태·인덱스·참조를 정렬하고
+`docs/contracts/current/`로 이동한다. Proposed 복제본을 남기지 않는다. 이후 필수 CI·blocking
+comment 해소를 확인하고 병합한다. 승인 전 Current 승격·#418 종료를 하지 않는다.
+#138 Frontend 화면/소비 검증과 Privacy·Track C/F Production gate는 별도로 유지한다.
 
 ## Pagination 한계
 

@@ -1,19 +1,18 @@
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.apis.v1 import v1_routers
-from app.apis.v1.medication_checkin_backlog_routers import medication_checkin_backlog_router
-from app.core.errors import ApiError, register_exception_handlers
-from app.core.no_store_middleware import NoStoreMiddleware
-from app.core.validation_trace_middleware import RequestTraceMiddleware
+from app.core.errors import ApiError
 from app.dependencies.security import get_request_user
+from app.dtos.medication_checkin_backlog import UnconfirmedCheckinResponse
+from app.dtos.medication_checkins import MedicationCheckinData, PutMedicationCheckinRequest
 from app.main import app, fastapi_app
 from app.models.medication_schedules import CheckinAudit, MedicationCheckin, MedicationCheckinStatus, MedicationSchedule
 from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
@@ -25,27 +24,17 @@ from app.tests.repositories.test_medication_checkin_repository_integration impor
 from app.tests.repositories.test_medication_schedule_repository_integration import _create_user_with_self_profile
 
 
-@pytest.fixture
-def candidate_app():
-    candidate = FastAPI()
-    candidate.include_router(v1_routers)
-    candidate.include_router(medication_checkin_backlog_router, prefix="/api/v1")
-    register_exception_handlers(candidate)
-    candidate.dependency_overrides = fastapi_app.dependency_overrides
-    return candidate
-
-
-@pytest.fixture
-def candidate_http_app(candidate_app):
-    return RequestTraceMiddleware(NoStoreMiddleware(candidate_app))
-
-
-async def test_backlog_is_not_registered_before_contract_approval():
+async def test_backlog_is_registered_once_in_actual_v1_app():
     url = "/api/v1/medication-checkins/unconfirmed"
-    assert url not in fastapi_app.openapi()["paths"]
-    assert not any(getattr(route, "path", None) == url for route in fastapi_app.routes)
+    assert url in fastapi_app.openapi()["paths"]
+    routes = [route for route in fastapi_app.routes if getattr(route, "path", None) == url]
+    assert len(routes) == 1
+    assert routes[0].methods == {"GET"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        assert (await client.get(url)).status_code == 404
+        response = await client.get(url)
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHORIZED"
+    assert response.headers["cache-control"] == "no-store"
 
 
 async def _seed(session, *, count=3):
@@ -160,9 +149,7 @@ async def test_historical_snapshot_and_refetch_after_stale_revision(db_session: 
     assert (await backlog.list_owned(user_id=owner.id)).items == []
 
 
-async def test_http_contract_auth_ownership_validation_and_no_mutation(
-    db_session: AsyncSession, monkeypatch, candidate_app, candidate_http_app
-):
+async def test_http_contract_auth_ownership_validation_and_no_mutation(db_session: AsyncSession, monkeypatch):
     owner, _, records = await _seed(db_session, count=3)
     intruder, _ = await _create_user_with_self_profile(db_session, label="backlog-other")
     owner_id, intruder_id = owner.id, intruder.id
@@ -170,7 +157,7 @@ async def test_http_contract_auth_ownership_validation_and_no_mutation(
     record_ids = {str(row[0].id) for row in records}
     await db_session.commit()
     url = "/api/v1/medication-checkins/unconfirmed"
-    async with AsyncClient(transport=ASGITransport(app=candidate_http_app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         unauthorized = await client.get(url)
         assert unauthorized.status_code == 401
         assert unauthorized.json()["code"] == "UNAUTHORIZED"
@@ -216,7 +203,7 @@ async def test_http_contract_auth_ownership_validation_and_no_mutation(
     assert records[0][0].revision == 1
     assert await db_session.scalar(select(func.count()).select_from(CheckinAudit)) == 0
     assert await db_session.scalar(select(func.count()).select_from(MedicationCheckin)) == 3
-    schema = candidate_app.openapi()
+    schema = fastapi_app.openapi()
     operation = schema["paths"][url]["get"]
     for status in ("401", "404", "422"):
         assert operation["responses"][status]["content"]["application/json"]["schema"] == {
@@ -233,16 +220,14 @@ async def test_service_rejects_unbounded_page(db_session: AsyncSession, limit: i
 
 
 @pytest.mark.parametrize("status", ["TAKEN", "NOT_TAKEN"])
-async def test_http_put_then_backlog_refetch_and_cursor_recovery(
-    db_session: AsyncSession, monkeypatch, status: str, candidate_http_app
-):
+async def test_http_put_then_backlog_refetch_and_cursor_recovery(db_session: AsyncSession, monkeypatch, status: str):
     owner, _, records = await _seed(db_session, count=3)
     owner_id = owner.id
     record_ids = {str(row[0].id) for row in records}
     await db_session.commit()
     monkeypatch.setitem(fastapi_app.dependency_overrides, get_request_user, lambda: SimpleNamespace(id=owner_id))
     url = "/api/v1/medication-checkins/unconfirmed"
-    async with AsyncClient(transport=ASGITransport(app=candidate_http_app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         first = await client.get(url, params={"limit": 1})
         assert first.status_code == 200
         item = first.json()["data"]["items"][0]
@@ -281,3 +266,90 @@ async def test_http_put_then_backlog_refetch_and_cursor_recovery(
         for response in (first, corrected, replay, conflict, remaining, following, missing, recovered):
             assert response.headers["cache-control"] == "no-store"
     assert await db_session.scalar(select(func.count()).select_from(CheckinAudit)) == 1
+
+
+async def test_http_multiple_corrections_keep_page_order_and_day_checkin_consistent(
+    db_session: AsyncSession, monkeypatch
+):
+    owner, _, records = await _seed(db_session, count=5)
+    owner_id = owner.id
+    expected_ids = [str(row[0].id) for row in sorted(records, key=lambda row: (row[1].scheduled_at, row[0].id))]
+    await db_session.commit()
+    monkeypatch.setitem(fastapi_app.dependency_overrides, get_request_user, lambda: SimpleNamespace(id=owner_id))
+    url = "/api/v1/medication-checkins/unconfirmed"
+    seen = []
+    params = {"limit": "2"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        while True:
+            page = await client.get(url, params=params)
+            assert page.status_code == 200
+            data = page.json()["data"]
+            for item in data["items"]:
+                seen.append(item["checkin_id"])
+                before = await client.get(
+                    "/api/v1/medication-occurrences", params={"date": item["scheduled_local_date"]}
+                )
+                assert before.status_code == 200
+                occurrence = next(
+                    row for row in before.json()["data"]["occurrences"] if row["occurrence_id"] == item["occurrence_id"]
+                )
+                assert occurrence["checkin"]["status"] == "UNCONFIRMED"
+                assert occurrence["checkin"]["revision"] == item["revision"]
+                corrected = await client.put(
+                    f"/api/v1/medication-occurrences/{item['occurrence_id']}/check-in",
+                    json={"status": "TAKEN" if len(seen) % 2 else "NOT_TAKEN", "expected_revision": item["revision"]},
+                    headers={"Idempotency-Key": f"backlog-multiple-{item['checkin_id']}"},
+                )
+                assert corrected.status_code == 200, corrected.text
+                after = await client.get(
+                    "/api/v1/medication-occurrences", params={"date": item["scheduled_local_date"]}
+                )
+                assert after.status_code == 200
+                occurrence = next(
+                    row for row in after.json()["data"]["occurrences"] if row["occurrence_id"] == item["occurrence_id"]
+                )
+                assert occurrence["checkin"] == corrected.json()["data"]
+                assert occurrence["checkin"]["revision"] == item["revision"] + 1
+                for response in (page, before, corrected, after):
+                    assert response.headers["cache-control"] == "no-store"
+                    assert response.headers["x-trace-id"]
+            remaining = await client.get(url)
+            assert remaining.status_code == 200
+            assert [row["checkin_id"] for row in remaining.json()["data"]["items"]] == expected_ids[len(seen) :]
+            if data["next_cursor"] is None:
+                break
+            params["cursor"] = data["next_cursor"]
+        assert (await client.get(url)).json() == {"data": {"items": [], "next_cursor": None}}
+    assert seen == expected_ids
+    assert await db_session.scalar(select(func.count()).select_from(CheckinAudit)) == 5
+
+
+def test_actual_openapi_and_frontend_fixture_match_backlog_contract():
+    schema = fastapi_app.openapi()
+    operation = schema["paths"]["/api/v1/medication-checkins/unconfirmed"]["get"]
+    parameters = {parameter["name"]: parameter for parameter in operation["parameters"]}
+    assert set(parameters) == {"limit", "cursor"}
+    assert parameters["limit"]["schema"] == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 20,
+        "title": "Limit",
+    }
+    assert parameters["cursor"]["required"] is False
+    assert {"type": "string", "format": "uuid"} in parameters["cursor"]["schema"]["anyOf"]
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/UnconfirmedCheckinResponse"
+    }
+    fixture_path = Path(__file__).resolve().parents[4] / "docs/validation/track-b/issue-418-unconfirmed-fixtures.json"
+    fixture = json.loads(fixture_path.read_text())
+    page = UnconfirmedCheckinResponse.model_validate(fixture["first_page"]).data
+    assert set(schema["components"]["schemas"]["UnconfirmedCheckinItem"]["properties"]) == set(
+        fixture["first_page"]["data"]["items"][0]
+    )
+    request = PutMedicationCheckinRequest.model_validate(fixture["correction_request"])
+    correction = MedicationCheckinData.model_validate(fixture["correction_response"]["data"])
+    assert request.expected_revision == page.items[0].revision
+    assert correction.occurrence_id == page.items[0].occurrence_id
+    assert correction.revision == page.items[0].revision + 1
+    assert UnconfirmedCheckinResponse.model_validate(fixture["empty"]).data.items == []
