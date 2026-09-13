@@ -1,6 +1,7 @@
 """검증된 Source 수집 결과를 Snapshot 이력에 연결하는 계약입니다."""
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -90,6 +91,27 @@ class SnapshotUseFailureCode(StrEnum):
     SNAPSHOT_SUPERSEDED = "SNAPSHOT_SUPERSEDED"
     SNAPSHOT_FRESHNESS_STALE = "SNAPSHOT_FRESHNESS_STALE"
     SNAPSHOT_PROVENANCE_INVALID = "SNAPSHOT_PROVENANCE_INVALID"
+
+
+class SourceSnapshotMemberKind(StrEnum):
+    ENDPOINT_OPERATION = "ENDPOINT_OPERATION"
+    ARTIFACT = "ARTIFACT"
+
+
+class SourceSnapshotMemberFailureReason(StrEnum):
+    MEMBER_INVALID = "MEMBER_INVALID"
+    SOURCE_BINDING_INVALID = "SOURCE_BINDING_INVALID"
+    RECEIPT_MISMATCH = "RECEIPT_MISMATCH"
+    DEPENDENCY_ERROR = "DEPENDENCY_ERROR"
+
+
+class SourceSnapshotMemberValidationError(ValueError):
+    def __init__(self, reason: SourceSnapshotMemberFailureReason) -> None:
+        self.reason = reason
+        super().__init__(reason.value)
+
+    def __repr__(self) -> str:
+        return f"SourceSnapshotMemberValidationError({self.reason.value})"
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +231,99 @@ class SnapshotProvenanceReceipt:
             raise ValueError("Snapshot canonicalization version is missing")
         if self.verification_status is not SnapshotVerificationStatus.PENDING and self.verification_seal_id is None:
             raise ValueError("Snapshot verification seal is missing")
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSnapshotMemberCreate:
+    provenance: SnapshotProvenanceReceipt
+    member_kind: SourceSnapshotMemberKind
+    endpoint_id: UUID | None
+    operation_id: UUID | None
+    ingestion_artifact_id: UUID | None
+    locator: str = field(repr=False)
+    content_sha256: str
+
+    def __post_init__(self) -> None:
+        try:
+            self.provenance.validate_provenance()
+        except ValueError:
+            raise SourceSnapshotMemberValidationError(
+                SourceSnapshotMemberFailureReason.SOURCE_BINDING_INVALID
+            ) from None
+        if self.provenance.verification_status is not SnapshotVerificationStatus.CURRENT:
+            raise SourceSnapshotMemberValidationError(SourceSnapshotMemberFailureReason.SOURCE_BINDING_INVALID)
+        if self.provenance.rejected_record_count > 0 and self.provenance.publication_verification_id is None:
+            raise SourceSnapshotMemberValidationError(SourceSnapshotMemberFailureReason.SOURCE_BINDING_INVALID)
+        if (
+            not self.locator
+            or self.locator != self.locator.strip()
+            or len(self.locator) > 500
+            or unicodedata.normalize("NFC", self.locator) != self.locator
+            or any(unicodedata.category(character).startswith("C") for character in self.locator)
+            or re.fullmatch(r"[0-9a-f]{64}", self.content_sha256) is None
+        ):
+            raise SourceSnapshotMemberValidationError(SourceSnapshotMemberFailureReason.MEMBER_INVALID)
+        endpoint_shape = (
+            self.member_kind is SourceSnapshotMemberKind.ENDPOINT_OPERATION
+            and self.endpoint_id == self.provenance.endpoint_id
+            and self.operation_id in (None, self.provenance.operation_id)
+            and self.ingestion_artifact_id is None
+        )
+        artifact_shape = (
+            self.member_kind is SourceSnapshotMemberKind.ARTIFACT
+            and self.endpoint_id is None
+            and self.operation_id is None
+            and self.ingestion_artifact_id is not None
+        )
+        if not endpoint_shape and not artifact_shape:
+            raise SourceSnapshotMemberValidationError(SourceSnapshotMemberFailureReason.SOURCE_BINDING_INVALID)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSnapshotMemberReceipt:
+    source_snapshot_member_id: UUID
+    source_snapshot_id: UUID
+    member_kind: SourceSnapshotMemberKind
+    endpoint_id: UUID | None
+    operation_id: UUID | None
+    ingestion_artifact_id: UUID | None
+    content_sha256: str
+
+
+class SourceSnapshotMemberRepository(Protocol):
+    async def append_snapshot_member(self, request: SourceSnapshotMemberCreate) -> SourceSnapshotMemberReceipt: ...
+
+
+async def append_snapshot_member(
+    request: SourceSnapshotMemberCreate,
+    *,
+    repository: SourceSnapshotMemberRepository,
+) -> SourceSnapshotMemberReceipt:
+    try:
+        receipt = await repository.append_snapshot_member(request)
+    except SourceSnapshotMemberValidationError:
+        raise
+    except Exception:
+        raise SourceSnapshotMemberValidationError(SourceSnapshotMemberFailureReason.DEPENDENCY_ERROR) from None
+    expected = (
+        request.provenance.source_snapshot_id,
+        request.member_kind,
+        request.endpoint_id,
+        request.operation_id,
+        request.ingestion_artifact_id,
+        request.content_sha256,
+    )
+    observed = (
+        receipt.source_snapshot_id,
+        receipt.member_kind,
+        receipt.endpoint_id,
+        receipt.operation_id,
+        receipt.ingestion_artifact_id,
+        receipt.content_sha256,
+    )
+    if observed != expected:
+        raise SourceSnapshotMemberValidationError(SourceSnapshotMemberFailureReason.RECEIPT_MISMATCH)
+    return receipt
 
 
 @dataclass(frozen=True, slots=True)
