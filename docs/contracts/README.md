@@ -57,6 +57,8 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 - [Source Artifact·REJECTS 보존·삭제 정책 초안 (#335)](./proposed/post-mvp-1/source-artifact-retention-cleanup.md): PM 30일 유예·참조 보존·수동 배치 승인 반영, 통합 검토 대상, 후속 구현 [#347](https://github.com/AI-HealthCare-05/AH_05_04/issues/347)·김지혜 담당. Local 합성 #347의 승인 순서·revision·경합 잠금·DB 감사 근거·참조 범위 보완 연결 포함. 운영 삭제·활성화 승인 아님.
 
+- [Protected HOLDOUT Dataset 폐기 감사 계약 (#425)](./proposed/post-mvp-1/protected-holdout-disposal-audit.md): PD-368 §8이 분리를 지시한 폐기 감사 계약. 기존 audit chain에 `DISPOSAL` variant를 두고 `INTENT`→`SUCCEEDED`/`UNKNOWN`→재조정을 규정한다. 운영 종료는 기존 `DatasetStatus.RETIRED`를 재사용하며 새 상태를 만들지 않는다. 폐기 후 재현 범위 정책 결정 전까지 **실제 폐기는 차단 유지**. 실행 승인 아님.
+
 - [Staging Release Validation Ledger 계약](./proposed/operations/release-validation-ledger.md): staging control DB, 상태 전이, crash recovery와 migration 상호 배제
 - [개발환경·비밀정보 주입 경로 점검 운영 계약](./proposed/operations/development-env-secret-injection-check.md): Redis, PostgreSQL, Provider secret 주입 경로와 운영 배포 전 차단 조건
 - [Track A migration·rollback 계획 제안 v1](./proposed/track-a-migration-rollback-v1.md): 문서 상태 Proposed · 구현 상태 Partially implemented — 공통 Job 기반과 OCR–AI Job mapping을 구현했으며 Guide·Chat 연결, Prescription Version, 전체 비동기 전환·backfill·read cutover는 미구현
@@ -82,7 +84,7 @@ Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 
 - [RAG Evaluation·Release Gate 계약 v1](./targets/post-mvp-1/rag-evaluation-v1.md): RAG 전후 비교, 필수 Metric, Schema Set 1.3 `Candidate · Review Required` provenance 계약과 Release 차단 기준
 - [Safety Result·Citation 계약 v2](./targets/post-mvp-1/safety-result-v2.md): Track F에서 v1의 Safety Result·Citation·STALE·Release Gate 목표를 대체하는 후속 Target
 - [Safety Result 복합 STALE 우선순위 계약 v1 (`PD-173`)](./targets/post-mvp-1/safety-result-compound-stale-priority-v1.md): 처방 버전·식별 스냅샷·런타임 번들 복합 STALE 동시 발생 시 단일 공개 fallback_code 사영 우선순위(`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`)와 내부 `stale_reason` 분리 — Approved Target · Not implemented: 판정 kernel은 병합되었으나 런타임 호출부 없음
-- [Protected Retrieval Infrastructure 계약 v1 (`PD-368`)](./targets/post-mvp-1/protected-retrieval-infrastructure-v1.md): data-plane 제한 로그인·승인 artifact hash 결속·durable INTENT/UNKNOWN 부분 구현, control-plane grant/revoke/FREEZE 서비스 미구현
+- [Protected Retrieval Infrastructure 계약 v1 (`PD-368`, `PD-368-R1`)](./targets/post-mvp-1/protected-retrieval-infrastructure-v1.md): data-plane 부분 구현, authorization control C1 조율 완료·구현 중, identity/Dataset lifecycle·FREEZE 미구현
 
 계약 파일의 존재나 문서 승인은 Worker·API·schema 구현 완료 또는 공개 승인을 의미하지 않습니다.
 
@@ -127,3 +129,9 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [Catalog DB 적재·저장 연결안](./proposed/post-mvp-1/catalog-db-integration-v2.md): #166 후속 Proposed. v2 저장 준비·DB transaction·Set/member/hash 보존·읽기 전용 복원과 Candidate 인계 검증을 구현. 별도 Catalog Writer·#436/#444 Source Receipt 소비를 연결. D-03a 조건부 동의·Crosswalk 후속 방향 확인, D-02 및 실제 승인/감사 저장소는 후속.
 
 - [Source reject codes v1 구현 리뷰안](proposed/post-mvp-1/source-reject-codes-v1.md): #165 코드·버전·2-pass·실패 기록. 담당 리뷰 전 proposed, 사용자 지시에 따라 구현·검증 후 리뷰.
+
+### #166 D-04 검토 연결
+
+- [Catalog Component occurrence 결정안](../governance/decisions/2026-09-11-catalog-component-occurrences.md):
+  Proposed. 선택 원본 키·제품별 순서 UNIQUE·release_profile·무손실 migration 경계.
+  계약 정본은 기존 [Catalog DB 연결안](proposed/post-mvp-1/catalog-db-integration-v2.md)을 갱신한다.

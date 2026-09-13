@@ -275,6 +275,17 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 | Catalog 구성원 | `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component`, `rag_medication_search_entry` | Snapshot별 제품·성분·Alias 관찰·구성성분과 검색용 선택을 보관 |
 | Catalog 불변 구성 | `rag_catalog_set`, `rag_catalog_set_source`, `rag_catalog_set_member`, `rag_catalog_set_hash` | v2 manifest bytes, 전체 Source Snapshot/version, 실제 구성원 행, export/envelope hash 종류·계산 bytes를 한 Set에 결속. Python adapter는 INSERT·동일 내용 재사용만 제공하고 조회 시 전체를 재검증. 배포 Writer 권한 연결은 후속 |
 
+D-04 Component 전환안 (`e8c41a09d652`, #166 리뷰 대상):
+
+- `rag_medication_product_component`의 고유성은 `(product_id, display_order)`다.
+  같은 Ingredient·role의 반복 행은 서로 다른 명시적 순서와 참조로 보존한다.
+- `release_profile`은 nullable VARCHAR(255)이며 제공된 값만 저장한다.
+  Source의 자유 텍스트에서 방출형을 추론하지 않는다.
+- 같은 Snapshot의 Product·Ingredient composite FK는 유지한다. Python 검증·Repository
+  transaction과 일반 제약으로 무결성을 관리하며 RLS·Trigger를 추가하지 않는다.
+- 기존 순서 충돌은 migration을 중단시킨다. downgrade는 반복 행·release_profile 손실이
+  발생할 때 거부한다. 세부 호환성은 [D-04 결정안](governance/decisions/2026-09-11-catalog-component-occurrences.md)을 따른다.
+
 Source/Snapshot 책임 경계:
 
 | 테이블 | 책임 | Runtime 활성화와의 관계 |
@@ -567,7 +578,7 @@ Runtime Bundle 최소 DB 기반은 `rag_runtime_execution_manifest`로 실행 ma
 
 Runtime 전이 이력은 Runtime SELECT·INSERT 권한만 갖는 append-only 테이블이다. Python 전이 Service/Repository가 Environment→Bundle 순서로 잠그고 최신 상태를 다시 읽어 revision·포인터·governance를 비교한 뒤 포인터 변경과 이력 INSERT를 같은 savepoint에서 수행한다. `(environment_id, environment_revision)` UNIQUE가 중복 전이 이력을 막고 미지원 전이 종류는 거부한다. `398d`에서 기존 이력 Trigger·함수를 제거한다. 전체 activation drain, mixed Worker rollback 및 공개 승인은 후속 범위이며 최소 전이 transaction 구현과 구분한다.
 
-AI Job Preflight Context 최소 DB 기반은 `ai_job_intake_context`로 Chat Safety Intake 시점의 요청 digest·Prescription Version·Runtime Bundle/환경·Execution Manifest·Guard ref를 고정하고, `ai_job_execution_context`로 Guide 또는 Chat ROUTINE Full Execution 시점의 동일 Runtime 기준과 Source scope hash를 고정합니다. `ai_job_execution_identification`은 Full Context가 참조한 `MATCHED` Identification member set을 중복 없이 보존합니다. DB는 `medication_identification_id`와 `prescription_version_medication_id`의 composite FK로 약-Identification 일치를 고정하고, repository는 `MATCHED` 상태만 pinning하도록 검증합니다. 이 구조는 저장 기반만 제공하며 Guide/Chat 접수 API 전환, Outbox 원자 생성, Worker 실행, 결과 commit currentness 재검증, Citation 공개 Guard와 Frontend DTO 연결은 후속 PR에서 처리합니다.
+AI Job Preflight Context 최소 DB 기반은 `ai_job_intake_context`로 Chat Safety Intake 시점의 필수 질문 digest·Prescription Version·Runtime Bundle/환경·Execution Manifest id/hash·Guard ref를 고정하고, `ai_job_execution_context`로 Guide 또는 Chat ROUTINE Full Execution 시점의 동일 Runtime 기준과 Source scope hash를 고정합니다. `ai_job_execution_identification`은 Full Context가 참조한 `MATCHED` Identification member set을 중복 없이 보존합니다. DB composite FK는 Runtime Bundle과 Execution Manifest의 id/hash 결속, Execution Context와 Intake Context의 같은 Job 결속, 그리고 `medication_identification_id`와 `prescription_version_medication_id`의 약-Identification 일치를 강제합니다. Prescription Version 동일성은 composite FK가, `MATCHED` 상태는 repository 조회 조건이 강제합니다. 이 구조는 저장 기반만 제공하며 Guide/Chat 접수 API 전환, Outbox 원자 생성, Worker 실행, 결과 commit currentness 재검증, Citation 공개 Guard와 Frontend DTO 연결은 후속 PR에서 처리합니다.
 
 OCR Candidate Index와 의료 Evidence Index는 별도 version과 물리 경계를 가지며, pgvector는 OCR 후보 보조 단계에만 사용합니다. HIRA 적용약가 데이터는 공식 제품 식별 입력·정답 원장·상호작용 근거로 사용하지 않습니다.
 

@@ -111,13 +111,11 @@ def _orphan_component_failures(
 def _component_conflict_failures(
     members: CatalogMembers,
 ) -> tuple[CatalogValidationFailure, ...]:
-    references_by_key: dict[tuple[str, str, str], list[str]] = {}
+    references_by_key: dict[str, list[str]] = {}
     for component in members.components:
-        key = (
-            component.product_ref,
-            component.ingredient_ref,
-            component.component_role.value,
-        )
+        # Legacy references still reject ambiguous repeats; source-key references
+        # distinguish occurrences without treating Ingredient identity as a row key.
+        key = component.component_ref
         references_by_key.setdefault(key, []).append(component.component_ref)
 
     return tuple(
@@ -126,6 +124,24 @@ def _component_conflict_failures(
             references=tuple(sorted(references)),
         )
         for key, references in sorted(references_by_key.items())
+        if len(references) > 1
+    )
+
+
+def _component_order_conflict_failures(
+    members: CatalogMembers,
+) -> tuple[CatalogValidationFailure, ...]:
+    references_by_order: dict[tuple[str, int], list[str]] = {}
+    for component in members.components:
+        key = (component.product_ref, component.component_order)
+        references_by_order.setdefault(key, []).append(component.component_ref)
+
+    return tuple(
+        CatalogValidationFailure(
+            reason=CatalogValidationFailureReason.MEMBER_CONFLICT,
+            references=tuple(sorted(references)),
+        )
+        for key, references in sorted(references_by_order.items())
         if len(references) > 1
     )
 
@@ -193,7 +209,7 @@ def validate_catalog_members(
     product_failures = _duplicate_product_failures(members)
     ingredient_failures = _duplicate_ingredient_failures(members)
     orphan_failures = _orphan_component_failures(members)
-    component_failures = _component_conflict_failures(members)
+    component_failures = (*_component_conflict_failures(members), *_component_order_conflict_failures(members))
     duplicate_alias_failures = _duplicate_alias_failures(members)
     alias_failures = _alias_conflict_failures(members)
 

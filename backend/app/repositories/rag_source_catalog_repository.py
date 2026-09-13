@@ -187,6 +187,7 @@ class RagMedicationProductComponentCreate:
     amount_value: Decimal | None = None
     amount_unit: str | None = None
     amount_text: str | None = None
+    release_profile: str | None = None
 
 
 class RagSourceCatalogRepository:
@@ -356,14 +357,12 @@ class RagSourceCatalogRepository:
         self,
         *,
         product_id: UUID,
-        ingredient_id: UUID,
-        component_role: RagMedicationComponentRole,
+        display_order: int,
     ) -> RagMedicationProductComponent | None:
         result = await self.session.execute(
             select(RagMedicationProductComponent).where(
                 RagMedicationProductComponent.product_id == product_id,
-                RagMedicationProductComponent.ingredient_id == ingredient_id,
-                RagMedicationProductComponent.component_role == component_role,
+                RagMedicationProductComponent.display_order == display_order,
             )
         )
         return result.scalar_one_or_none()
@@ -619,6 +618,7 @@ class RagSourceCatalogRepository:
             amount_value=item.amount_value,
             amount_unit=item.amount_unit,
             amount_text=item.amount_text,
+            release_profile=item.release_profile,
             display_order=item.display_order,
         )
         self.session.add(component)

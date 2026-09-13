@@ -12,7 +12,13 @@ _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 
 _SELECT_COLUMNS: Mapping[str, Mapping[str, Sequence[str]]] = {
     "data": {
-        "protected_identity": ("database_login", "actor_id", "actor_namespace", "principal_role", "enabled"),
+        "protected_identity": (
+            "database_login",
+            "actor_id",
+            "actor_namespace",
+            "principal_role",
+            "enabled",
+        ),
         "protected_dataset": (
             "dataset_id",
             "dataset_version",
@@ -82,7 +88,15 @@ _SELECT_COLUMNS: Mapping[str, Mapping[str, Sequence[str]]] = {
         "audit_head": ("singleton", "sequence", "entry_sha256"),
     },
     "control": {
-        "protected_identity": ("database_login", "actor_id", "actor_namespace", "principal_role", "enabled"),
+        "protected_identity": (
+            "database_login",
+            "actor_id",
+            "actor_namespace",
+            "principal_role",
+            "identity_plane",
+            "approval_role",
+            "enabled",
+        ),
         "protected_dataset": (
             "dataset_id",
             "dataset_version",
@@ -137,15 +151,16 @@ _INSERT_COLUMNS: Mapping[str, Mapping[str, Sequence[str]]] = {
         "audit_entry": _SELECT_COLUMNS["data"]["audit_entry"],
     },
     "control": {
-        "protected_identity": _SELECT_COLUMNS["control"]["protected_identity"],
-        "protected_dataset": _SELECT_COLUMNS["control"]["protected_dataset"][:-1],
         "approval_evidence": _SELECT_COLUMNS["control"]["approval_evidence"],
         "authorization_grant": tuple(
             column
             for column in _SELECT_COLUMNS["control"]["authorization_grant"]
             if column not in {"revoked_at", "lock_marker"}
         ),
-        "audit_entry": _SELECT_COLUMNS["control"]["audit_entry"],
+        "audit_entry": (
+            *(column for column in _SELECT_COLUMNS["control"]["audit_entry"] if column != "operation_key"),
+            "control_entry",
+        ),
     },
 }
 
@@ -158,18 +173,7 @@ _UPDATE_COLUMNS: Mapping[str, Mapping[str, Sequence[str]]] = {
         "audit_head": ("sequence", "entry_sha256"),
     },
     "control": {
-        "protected_identity": ("enabled",),
-        "protected_dataset": (
-            "binding",
-            "manifest_sha256",
-            "protected_artifact_sha256",
-            "hmac_key_version",
-            "state",
-            "state_revision",
-            "authored_count",
-            "review_complete",
-            "lock_marker",
-        ),
+        "protected_dataset": ("lock_marker",),
         "authorization_grant": ("effective_revision", "revoked_at", "lock_marker"),
         "audit_head": ("sequence", "entry_sha256"),
     },
