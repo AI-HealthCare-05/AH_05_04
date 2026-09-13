@@ -1,6 +1,6 @@
 # #166 D-04 MFDS Loader·저장·Candidate 인계
 
-- 상태: Proposed / 구현·합성 검증 후 PR 리뷰 대상. MFDS 공식 의미·운영 활성화 승인이 아님.
+- 상태: Proposed / 구현·합성 검증 완료, PR #477 `c58f0968` 정현우 담당 범위 승인. 병합·별도 전문 검토·MFDS 공식 의미·운영 활성화 승인은 구분한다.
 - 확인일: 2026-09-13
 - 기준: develop `f56a632`, `feat/166-d04-mfds-loader`
 - 구현: 김지혜. 담당 리뷰어: 정현우(`ceohwj`). DB·migration 전문 검토: 송은영(`phina-io`).

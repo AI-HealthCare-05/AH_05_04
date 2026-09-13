@@ -1,16 +1,30 @@
 # #166 Catalog DB 적재·저장 연결안
 
 - 상태: **Proposed / 현행 v2 DB 저장·복원·Source Receipt 연결 구현**. 합성 검증과 담당자 승인은 구분한다. D-02는 합의된 후속 경계를 유지한다.
-- 구현 담당: 김지혜. PR 책임 리뷰어: 송은영 1명. 정현우: P0 Candidate 범위 방향 협의·구현 후 의미 확인.
+- 구현 담당: 김지혜. #372 책임 리뷰어: 송은영. #477 D-04 책임 리뷰어: 정현우 1명, DB·migration 전문 검토 범위: 송은영. PR별 검토 범위와 승인 증빙을 구분한다.
 - 현재 적용 기준: [기존 v2 계약](../../targets/post-mvp-1/catalog-build-v2.md).
 - 최신 협의 기준: 김지혜가 제공한 D-05 v2 검토 반영본. 원본 공유 문서 자체를 복제하지 않는다.
 - Source 인계 기준: [Source 계약](../../targets/post-mvp-1/rag-source-ingestion-v1.md).
 
 - 검토용 인계 목록과 답변 양식: [DB 인계·결정 검토표](../../../designs/jye-rookie/issue-166-db-handoff-review.md).
 
+## 문서 적용 범위와 최신 검토 기록
+
+앞부분의 v2 전용 hash·같은-Snapshot Component 설명은 기존 비관찰 입력 기준이다.
+관찰 메타데이터가 있는 입력에는 아래 「D-04 관찰 출처 인계 v3」 절의 출처 분리·v3 계약을
+적용한다. DB UNIQUE와 get_component 조회 키의 변경은 최신 migration 이후 공통 물리 구조에
+적용되므로 v2 입력이라는 이유로 이전 DB 제약을 사용하는 것은 아니다. 단계별 기록과 #464
+전환 기록은 당시 이력으로 보존하며 현재 동작과 혼동하지 않는다.
+
+검증된 상세 artifact → Loader → DB 저장·복원 → Candidate 인계는 구현·합성 검증 완료다.
+[PR #477 정현우 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/477#pullrequestreview-5190458759)는 `c58f0968`의 담당 범위를 승인했다.
+[동일 HEAD 원격 CI](https://github.com/AI-HealthCare-05/AH_05_04/actions/runs/34752583896) 7개 검사는 모두 통과했다.
+이는 실제 상세 API 수집·Snapshot 생산·공식 순서·별도 전문 검토·운영 활성화 승인이 아니다.
+문서 전체의 Proposed 상태를 일괄 승격하거나 D-02·D-05·실제 승인 저장소를 완료 처리하지 않는다.
+
 ## 구현 상태
 
-### 최신 구현 상태 — #372 DB 왕복 연결
+### #372 DB 왕복 연결 — 기존 v2 구현 기준
 
 현재 확정된 v2 범위에서 `SqlAlchemyCatalogBuildRepository.save_build()`와
 `load_build(set_id, approval_verifier=...)`를 연결했다. 저장은 adapter 소유 transaction,
@@ -289,9 +303,13 @@ Search Entry 기반을 revision `166a7b8c9d0e`로 구현했다.
 - 이는 호출 시점의 승인 대조다. DB 잠금·원자 저장·이후 소비까지의 동시 철회 방지를 보장하지 않는다.
 
 D-02는 미확정 그대로다. 이 작업은 run 생성·ingestion run 대체·FK·migration을 추가하지 않는다.
-기존 public Candidate v2 입력·hash 의미도 유지한다. 실제 DB adapter·transaction 통합은 보류 상태다.
+기존 public Candidate v2 입력·hash 의미도 유지한다. 이 단계 작성 당시 실제 DB adapter·transaction
+통합은 보류였다. 이후 #372에서 DB 왕복을 연결했으며, #477의 관찰 v3 확장은 아래 절을 따른다.
 
-## #166 D-04 후속: Component occurrence 전환 (리뷰 대상)
+## #464 Component occurrence 전환 — 당시 스키마 이력
+
+이 절의 제품별 UNIQUE·get_component 서명은 #464 당시 기준이다. #477 migration 이후에는
+아래 v3 절의 상세 Snapshot을 포함하는 UNIQUE·조회 키가 적용된다.
 
 [2026-09-11 결정안](../../../governance/decisions/2026-09-11-catalog-component-occurrences.md)을 따른다.
 `CatalogComponentInput.source_record_key`는 선택 문자열이다. 없는 입력의 기존 v2 ref/hash는
@@ -317,14 +335,15 @@ MFDS 상세 변환 함수는 원료→Ingredient 매핑과 order를 명시적으
 하지 않는다. 실제 수집 자동 연결과 공식 매핑 승인은 완료 범위가 아니다.
 근거: [D-04 검토 문서](../../../designs/jye-rookie/issue-166-d04-component-order.md).
 
-### 2026-09-13 — MFDS 관찰 입력 검사 (후속 구현 중)
+### 2026-09-13 — MFDS 관찰 입력 검사 (#477 구현·담당 범위 검토 완료)
 
 D-03 Crosswalk는 [범위 결정](../../../governance/decisions/2026-09-13-catalog-crosswalk-scope.md)에
 따라 현재 P0·#166 즉시 구현 범위에서 제외한다. 현재 소비 경로가 없으며 별도 계약·이슈로
 재개한다. 기존 `rag_catalog_set`을 Crosswalk Set으로 확장하거나 빈 READY Set을 생성하지 않는다.
 D-04 MFDS 원료 관찰 연결을 Crosswalk 구현으로 간주하지 않는다.
 
-현우님의 조건부 검토 답변에 따라 `inspect_mfds_component_rows`는 전달받은 전체 입력에서
+[D-04 합의·공개 리뷰 근거](../../../governance/decisions/2026-09-13-component-observation-handoff.md)에
+따라 `inspect_mfds_component_rows`는 전달받은 전체 입력에서
 관찰 키의 `ITEM_SEQ`, `TAMT_SEQ`, `MTRAL_SN` 문자열을 각각 보존한다. 총량 그룹을 합치거나
 숫자·표시 순서로 변환하지 않는다. 원료코드는 해당 MFDS 입력 범위의 관찰값이며 전역적으로
 정규화된 성분 Identity나 장기 안정 키를 승인한 것으로 해석하지 않는다.
@@ -347,7 +366,8 @@ Export/DB/Candidate 연결을 구현했다. 실제 API 수집·공식 표시 순
 ## D-04 관찰 출처 인계 v3 — 2026-09-13 구현·리뷰 제안
 
 이 절은 앞선 같은-Snapshot Component 제한을 확장한다. 지혜님이 구체안을 구현하고
-현우님(담당), 은영님(DB 전문 검토)이 PR에서 확인하는 범위이며 승인 완료가 아니다.
+정현우가 PR #477 `c58f0968`의 담당 범위를 승인했다. 송은영의 별도 DB 전문 검토나
+실제 수집·운영 승인까지 완료한 것으로 해석하지 않는다.
 [결정안](../../../governance/decisions/2026-09-13-component-observation-handoff.md)을 따른다.
 
 ### 입력과 실패 경계

@@ -2,7 +2,7 @@
 
 - 날짜: 2026-09-13
 - 작업 브랜치: `feat/166-d04-mfds-loader`, 기준 develop `f56a632`
-- 상태: 로컬 합성 검사 기록. 원격 CI·담당자 승인·실제 MFDS 수집 증빙과 구분한다.
+- 상태: 로컬 합성 검사와 원격 CI·담당 리뷰 증빙을 별도 기록. 실제 MFDS 수집·운영 적용 증빙은 아니다.
 - 설계: [D-04 Loader 인계](../designs/jye-rookie/issue-166-d04-loader-handoff.md)
 - 계약: [관찰 출처·v2/v3](../contracts/proposed/post-mvp-1/catalog-db-integration-v2.md)
 
@@ -55,6 +55,17 @@ Ruff·format·Mypy 및 `git diff --check`도 통과했다.
 임시 env는 Worker 단위 검사의 Redis 기본 주소를 유지하고 실제 통합 연결 주소/포트는
 CI 스크립트에서 전용 Compose 서비스로 지정했다. 테스트 전용 Redis 비밀번호도 별도로 연결했다.
 저장소 env 예시·개인 env·Docker 설정은 수정하지 않았다.
+
+## 원격 CI·담당 리뷰 증빙 — 2026-09-13 확인
+
+- 검토·CI 대상 HEAD: `c58f09686d3a72567793ee237abeb500ab04e710`.
+- [원격 CI 실행](https://github.com/AI-HealthCare-05/AH_05_04/actions/runs/34752583896): completed / success.
+  lint, test-backend, test-worker, test-inventory, test-migration, frontend, test 모두 success(7/7).
+- [정현우 승인 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/477#pullrequestreview-5190458759): MFDS 매핑의 의미·한계, 반복 성분·총량 그룹, 출처 분리, Candidate 인계 확인.
+- 리뷰의 D-03 WATCH는 결정 문서에 공개 리뷰 URL과 최초 Discord 합의 링크를 연결해 보완했다.
+- 위 로컬 검사 수치와 기준 develop `f56a632`는 당시 실행 기록으로 보존한다. 최신 HEAD에서
+  로컬 전체 검사를 재실행한 것으로 바꾸지 않는다. 이후 문서 커밋의 CI는 해당 커밋에서 별도 확인한다.
+- 이 문서 보완에서는 실행 코드·migration을 변경하지 않았으며 전체 실행 테스트를 재실행하지 않았다.
 
 ## 실입력 한계
 

@@ -139,7 +139,9 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
   Proposed. 선택 원본 키·제품별 순서 UNIQUE·release_profile·무손실 migration 경계.
   계약 정본은 기존 [Catalog DB 연결안](proposed/post-mvp-1/catalog-db-integration-v2.md)을 갱신한다.
   2026-09-13 후속 구현: MFDS 관찰 입력의 총량 그룹·원본 필드·제외 사유·건수 검사.
-  실제 Source Loader·별도 Snapshot·총량 그룹 Export/DB 연결은 진행 중이며 완료로 표시하지 않는다.
+  검증된 상세 artifact 이후 Loader → DB 저장·복원 → Candidate 인계는 구현·합성 검증 및
+  [정현우 담당 범위 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/477#pullrequestreview-5190458759)를 완료했다. 실제 API 수집·상세 Snapshot 생산은 후속이다.
+  승인 대상 HEAD는 `c58f0968`이며 병합·운영 활성화와 구분한다.
 
 - [D-04 관찰 출처·인계 v3 결정안](../governance/decisions/2026-09-13-component-observation-handoff.md):
   검증된 상세 artifact Loader, 독립 Snapshot FK, 관찰 버전·총량 그룹의 DB/Candidate 인계 제안.
