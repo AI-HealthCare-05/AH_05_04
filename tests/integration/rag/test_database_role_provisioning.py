@@ -118,6 +118,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 | CATALOG_TABLES
                 | set(SOURCE_TABLES)
                 | set(RUNTIME_AUTH_UPDATE_COLUMNS)
+                | {"notification_record"}
             ):
                 await connection.execute(text(f'CREATE TABLE "{table}" (id integer PRIMARY KEY)'))
             await connection.execute(
@@ -376,6 +377,7 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
     assert current.returncode == 0, "Synthetic current-head migration failed"
     await run_provisioning(environment)
     await _exercise_preflight_context_runtime_permissions(reader, producer)
+    await _exercise_notification_runtime_permissions(reader, producer)
     writer_config = WriterConfig(url.set(database=database, username=writer, password=password), "synthetic-operator")
     args = Namespace(snapshot_id=snapshot_id, expected_checksum="a" * 64, reason_code="SYNTHETIC_TEST")
     assert (await run_selection(writer_config, args)).decision.value == "ACTIVATED"
@@ -878,3 +880,29 @@ async def _exercise_preflight_context_runtime_permissions(reader, producer):
                     async with engine.begin() as connection:
                         await connection.execute(text(statement))
                 assert error.value.orig.sqlstate == "42501"
+
+
+async def _exercise_notification_runtime_permissions(reader, producer):
+    from datetime import timedelta
+
+    from app.commands.process_notifications import process_notifications_once
+    from app.tests.notifications.test_notifications import NOW
+    from app.tests.repositories.test_medication_checkin_repository_integration import _create_occurrence
+    from app.tests.repositories.test_medication_schedule_repository_integration import _create_user_with_self_profile
+
+    factory = async_sessionmaker(reader, expire_on_commit=False)
+    async with factory.begin() as session:
+        owner, profile = await _create_user_with_self_profile(session, label="notification-runtime-synthetic")
+        await _create_occurrence(session, owner=owner, profile=profile, deadline_at=NOW + timedelta(hours=4))
+    result = await process_notifications_once(now=NOW, session_factory=factory)
+    assert result.created_count == result.delivered_count == 1
+    assert (await process_notifications_once(now=NOW, session_factory=factory)).delivered_count == 0
+    for engine, statements in (
+        (reader, ("DELETE FROM notification_record", "TRUNCATE notification_record")),
+        (producer, ("SELECT * FROM notification_record", "INSERT INTO notification_record DEFAULT VALUES")),
+    ):
+        for statement in statements:
+            with pytest.raises(DBAPIError) as error:
+                async with engine.begin() as connection:
+                    await connection.execute(text(statement))
+            assert error.value.orig.sqlstate == "42501"
