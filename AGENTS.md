@@ -39,12 +39,12 @@ Former Track D is not a separate execution or ownership unit. Its historical doc
 - Select the responsible reviewer for the actual change scope. Do not infer the reviewer from file history, document authorship, a former CODEOWNERS entry, or an unrecorded GitHub handle/name mapping.
 - The PR author cannot count self-approval as the required approval.
 - Merge only after the named responsible reviewer approves and blocking review comments are resolved.
-- Cross-domain changes name reviewers for every affected domain. Security·Privacy, medical safety, Source and AI/RAG changes also attach the required specialist or external approval evidence when applicable.
-- AI/RAG detailed assignments and PR reviewers are scheduled to be finalized in the 2026-08-28 responsibility matrix under 정현우's overall responsibility. Until that matrix is published and linked from the repository, every affected Issue and Pull Request must name its implementation owner and responsible reviewers explicitly; do not treat the matrix as an available source.
+- Every Issue and Pull Request names exactly one responsible reviewer, including cross-domain changes. Record every affected domain in that reviewer's scope and attach specialist or external approval evidence for Security·Privacy, medical safety, Source, and AI/RAG when applicable; evidence providers are not additional required Pull Request reviewers.
+- AI/RAG detailed assignments and PR review scopes are scheduled to be finalized in the 2026-08-28 responsibility matrix under 정현우's overall responsibility. Until that matrix is published and linked from the repository, every affected Issue and Pull Request must name its implementation owner and single responsible reviewer explicitly; do not treat the matrix as an available source.
 
 ## Ownership Boundaries
 
-- Identify the affected domains and name their responsible reviewers before editing shared contracts.
+- Identify every affected domain and name the single responsible reviewer before editing shared contracts. Record any required specialist evidence separately.
 - Do not modify another owner's implementation merely because it is adjacent or convenient. Cross-owner changes require explicit task scope or prior coordination, and the relevant owners must review them.
 - Keep changes within the issue's stated scope. Do not include unrelated refactors, formatting sweeps, generated files, or dependency changes.
 - Co-owned and cross-cutting areas require coordination with all affected domains; ownership of one implementation area does not grant authority to change a shared interface unilaterally.

@@ -91,7 +91,7 @@ async def build_knowledge_evidence_index(
 
 - [ ] **Step 5: Add the proposed contract and index entry**
 
-Document exact fields, projection versions, byte preimages, failure reasons, legacy boundary, non-public status, and required reviewers. Add it only under the Proposed section of `docs/contracts/README.md`.
+Document exact fields, projection versions, byte preimages, failure reasons, legacy boundary, non-public status, the single responsible reviewer, and required specialist evidence. Add it only under the Proposed section of `docs/contracts/README.md`.
 
 - [ ] **Step 6: Run unit and static checks**
 
@@ -316,10 +316,10 @@ Expected: repository test suite passes with the pgvector-enabled local PostgreSQ
 - [ ] **Step 4: Update implementation-state documentation**
 
 Document the exact tables, proposed-contract status, migration revision, hash domains, version-pinned pgvector
-extension provisioning, reviewers, test results, and the remaining #178 Retrieval/Gate/Run/Evaluation work. Keep
-PD-315's `Review pending` metadata unchanged until designated Evidence/Safety, DB/Security, and Source reviewers
-provide approval evidence; only then may an authorized change align its status without changing the runtime target's
-`Not implemented` status.
+extension provisioning, the responsible reviewer and specialist evidence, test results, and the remaining #178 Retrieval/Gate/Run/Evaluation work. Keep
+PD-315's `Review pending` metadata unchanged until the single responsible reviewer approves and the required
+Evidence/Safety and Source specialist evidence is attached; only then may an authorized change align its status
+without changing the runtime target's `Not implemented` status.
 
 - [ ] **Step 5: Run all required completion checks**
 

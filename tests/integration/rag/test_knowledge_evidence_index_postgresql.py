@@ -11,6 +11,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import select, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from ai_worker.adapters.sqlalchemy_knowledge_evidence_index import (
@@ -37,6 +38,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SourceSnapshotMemberKind,
 )
 from app.core import config
+from infra.python.knowledge_index_role_policy import apply_knowledge_index_role_policy
 
 ROOT = Path(__file__).resolve().parents[3]
 pytestmark = pytest.mark.asyncio
@@ -272,6 +274,57 @@ async def test_real_postgresql_index_is_atomic_reproducible_and_non_leaking(data
     with pytest.raises(KnowledgeEvidenceIndexValidationError) as dimension_error:
         await build_knowledge_evidence_index(initial, repository=repository)
     assert dimension_error.value.reason is KnowledgeEvidenceIndexFailureReason.EMBEDDING_INVALID
+
+
+async def test_dedicated_builder_and_runtime_roles_enforce_the_index_boundary(database) -> None:
+    member_id = await _seed_source_chain(database)
+    suffix = uuid4().hex[:12]
+    builder = f"index_builder_{suffix}"
+    runtime = f"index_reader_{suffix}"
+    password = "synthetic-index-role-only"
+    builder_engine = create_async_engine(database.url.set(username=builder, password=password), hide_parameters=True)
+    runtime_engine = create_async_engine(database.url.set(username=runtime, password=password), hide_parameters=True)
+    try:
+        async with database.begin() as connection:
+            await connection.execute(text(f"CREATE ROLE \"{builder}\" LOGIN PASSWORD '{password}'"))
+            await connection.execute(text(f"CREATE ROLE \"{runtime}\" LOGIN PASSWORD '{password}'"))
+            await apply_knowledge_index_role_policy(
+                connection,
+                owner=config.DB_USER,
+                runtime=runtime,
+                builder=builder,
+            )
+
+        repository = SqlAlchemyKnowledgeEvidenceIndexRepository(
+            async_sessionmaker(builder_engine, expire_on_commit=False, autoflush=False)
+        )
+        request = _build_request(member_id, version="limited-role-v1", embedding=(1.0, 0.0))
+        receipt = await build_knowledge_evidence_index(request, repository=repository)
+        assert receipt.index_version == "limited-role-v1"
+
+        async with runtime_engine.connect() as connection:
+            assert await connection.scalar(text("SELECT count(*) FROM rag_knowledge_index")) == 1
+
+        for engine, statement in (
+            (builder_engine, "UPDATE rag_source SET lifecycle_status='REVOKED'"),
+            (builder_engine, "DELETE FROM knowledge_chunk"),
+            (builder_engine, "TRUNCATE rag_knowledge_index_member"),
+            (builder_engine, "INSERT INTO rag_source DEFAULT VALUES"),
+            (runtime_engine, "INSERT INTO rag_knowledge_index DEFAULT VALUES"),
+            (runtime_engine, "UPDATE knowledge_document SET title='changed'"),
+        ):
+            with pytest.raises(DBAPIError) as error:
+                async with engine.begin() as connection:
+                    await connection.execute(text(statement))
+            assert getattr(error.value.orig, "sqlstate", None) == "42501"
+    finally:
+        await builder_engine.dispose()
+        await runtime_engine.dispose()
+        async with database.begin() as connection:
+            await connection.execute(text(f'DROP OWNED BY "{builder}"'))
+            await connection.execute(text(f'DROP OWNED BY "{runtime}"'))
+            await connection.execute(text(f'DROP ROLE IF EXISTS "{builder}"'))
+            await connection.execute(text(f'DROP ROLE IF EXISTS "{runtime}"'))
 
 
 async def test_populated_foundation_refuses_lossy_downgrade(database) -> None:

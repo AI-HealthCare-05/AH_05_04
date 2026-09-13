@@ -1,9 +1,19 @@
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg17-bookworm"
+
+
+def test_optional_database_roles_must_be_distinct() -> None:
+    from infra.python.provision_database_roles import validate_distinct_role_names
+
+    validate_distinct_role_names("admin", "owner", "runtime", "writer", None, "index-builder")
+
+    with pytest.raises(ValueError, match="distinct"):
+        validate_distinct_role_names("admin", "owner", "runtime", "writer", None, "writer")
 
 
 def test_credentials_and_admin_process_are_separated() -> None:
@@ -22,6 +32,8 @@ def test_credentials_and_admin_process_are_separated() -> None:
     assert provisioner["restart"] == "no"
     assert provisioner["environment"]["DB_ADMIN_PASSWORD"] == "${DB_ADMIN_PASSWORD}"
     assert provisioner["environment"]["CATALOG_WRITER_USER"] == "${CATALOG_WRITER_USER:-}"
+    assert provisioner["environment"]["KNOWLEDGE_INDEX_BUILDER_USER"] == "${KNOWLEDGE_INDEX_BUILDER_USER:-}"
+    assert "KNOWLEDGE_INDEX_BUILDER_PASSWORD" not in provisioner["environment"]
     assert "CATALOG_WRITER_PASSWORD" not in provisioner["environment"]
     assert not any("SOURCE_WRITER_PASSWORD" in str(value) for value in provisioner["environment"].values())
     verifier = services["verify-db-head"]
@@ -38,6 +50,44 @@ def test_credentials_and_admin_process_are_separated() -> None:
     dockerfile = (ROOT / "backend/app/Dockerfile").read_text()
     assert "COPY ./infra/python ./infra/python" in dockerfile
     assert "COPY ./scripts/ci/verify_database_head.py ./scripts/ci/verify_database_head.py" in dockerfile
+
+    worker = services["ai-worker"]
+    assert not any("KNOWLEDGE_INDEX_BUILDER" in key for key in worker["environment"])
+
+
+def test_knowledge_index_role_policy_is_explicit_and_least_privilege() -> None:
+    from infra.python.knowledge_index_role_policy import (
+        KNOWLEDGE_INDEX_LOCK_COLUMNS,
+        KNOWLEDGE_INDEX_RUNTIME_READ_TABLES,
+        KNOWLEDGE_INDEX_WRITE_TABLES,
+    )
+
+    assert KNOWLEDGE_INDEX_WRITE_TABLES == {
+        "knowledge_document",
+        "knowledge_chunk",
+        "rag_knowledge_index",
+        "rag_knowledge_index_member",
+    }
+    assert KNOWLEDGE_INDEX_RUNTIME_READ_TABLES == KNOWLEDGE_INDEX_WRITE_TABLES
+    assert set(KNOWLEDGE_INDEX_LOCK_COLUMNS) == {
+        "rag_source",
+        "rag_source_endpoint",
+        "rag_source_operation",
+        "rag_source_snapshot",
+        "rag_source_snapshot_member",
+        "rag_source_ingestion_run",
+        "rag_source_ingestion_artifact",
+        "knowledge_document",
+        "knowledge_chunk",
+        "rag_knowledge_index",
+    }
+
+    source = (ROOT / "infra/python/knowledge_index_role_policy.py").read_text()
+    assert "GRANT SELECT, INSERT" in source
+    assert "GRANT UPDATE (" in source
+    assert "GRANT UPDATE ON TABLE" not in source
+    assert "GRANT DELETE" not in source
+    assert "GRANT TRUNCATE" not in source
 
 
 def test_deployment_stops_writers_and_provisions_before_starting_api() -> None:

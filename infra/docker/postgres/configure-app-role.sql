@@ -5,6 +5,16 @@
 \getenv app_password DB_APP_PASSWORD
 \getenv writer_user SOURCE_WRITER_USER
 \getenv writer_password SOURCE_WRITER_PASSWORD
+\getenv index_builder_user KNOWLEDGE_INDEX_BUILDER_USER
+\getenv index_builder_password KNOWLEDGE_INDEX_BUILDER_PASSWORD
+\if :{?index_builder_user}
+\else
+  \set index_builder_user ''
+\endif
+\if :{?index_builder_password}
+\else
+  \set index_builder_password ''
+\endif
 
 -- Alembic은 제한된 Migration 역할로 실행되므로 trusted 여부와 무관하게 필요한
 -- extension을 Bootstrap/admin 단계에서 먼저 준비합니다. 이미 설치된 DB에도 안전하게 재실행됩니다.
@@ -19,13 +29,20 @@ WHERE extname = 'vector'
   SELECT 1 / 0;
 \endif
 
--- 계정 이름 충돌 시 관리 계정 변경을 포함한 어떤 변경도 하지 않습니다.
-SELECT count(DISTINCT name)=4 AND bool_and(length(name)>0) AS roles_valid
-FROM (VALUES (current_user), (:'migration_user'), (:'app_user'), (:'writer_user')) AS roles(name)
+-- Builder는 Retrieval 연결 전까지 생략할 수 있다. 한 값만 설정하거나 기존 역할과 충돌하면
+-- 관리 계정 변경을 포함한 어떤 변경도 하지 않는다.
+SELECT
+  count(DISTINCT name) FILTER (WHERE length(name)>0)
+    = 4 + CASE WHEN length(:'index_builder_user')>0 THEN 1 ELSE 0 END
+  AND bool_and(length(name)>0) FILTER (WHERE name <> :'index_builder_user')
+  AND (length(:'index_builder_user')=0) = (length(:'index_builder_password')=0)
+  AS roles_valid
+FROM (VALUES (current_user), (:'migration_user'), (:'app_user'), (:'writer_user'),
+             (:'index_builder_user')) AS roles(name)
 \gset
 \if :roles_valid
 \else
-  \echo 'Admin, Migration, Runtime and Writer roles must be distinct and nonempty'
+  \echo 'Admin, Migration, Runtime, Writer and optional Index Builder roles must be distinct'
   -- SQL 오류로 ON_ERROR_STOP을 발동합니다 (psql 17의 \quit는 종료 코드를 받지 않음).
   SELECT 1 / 0;
 \endif
@@ -35,24 +52,30 @@ BEGIN;
 -- Python provisioning이 명시적 목록으로 부여하며, 재실행 시 DML을 다시 열지 않습니다.
 SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', name, password)
 FROM (VALUES (:'migration_user', :'migration_password'),
-             (:'app_user', :'app_password'), (:'writer_user', :'writer_password')) AS roles(name, password)
-WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=name)
+             (:'app_user', :'app_password'), (:'writer_user', :'writer_password'),
+             (:'index_builder_user', :'index_builder_password')) AS roles(name, password)
+WHERE length(name)>0 AND NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=name)
 \gexec
 SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', name, password)
 FROM (VALUES (:'migration_user', :'migration_password'),
-             (:'app_user', :'app_password'), (:'writer_user', :'writer_password')) AS roles(name, password)
+             (:'app_user', :'app_password'), (:'writer_user', :'writer_password'),
+             (:'index_builder_user', :'index_builder_password')) AS roles(name, password)
+WHERE length(name)>0
 \gexec
 SELECT format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), name)
-FROM (VALUES (:'migration_user'), (:'app_user'), (:'writer_user')) AS roles(name)
+FROM (VALUES (:'migration_user'), (:'app_user'), (:'writer_user'), (:'index_builder_user')) AS roles(name)
+WHERE length(name)>0
 \gexec
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 SELECT format('GRANT USAGE, CREATE ON SCHEMA public TO %I', :'migration_user')
 \gexec
 SELECT format('REVOKE CREATE ON SCHEMA public FROM %I', name)
-FROM (VALUES (:'app_user'), (:'writer_user')) AS roles(name)
+FROM (VALUES (:'app_user'), (:'writer_user'), (:'index_builder_user')) AS roles(name)
+WHERE length(name)>0
 \gexec
 SELECT format('GRANT USAGE ON SCHEMA public TO %I', name)
-FROM (VALUES (:'app_user'), (:'writer_user')) AS roles(name)
+FROM (VALUES (:'app_user'), (:'writer_user'), (:'index_builder_user')) AS roles(name)
+WHERE length(name)>0
 \gexec
 
 -- 이전 테이블·sequence 기본 권한을 global/schema 양쪽에서 회수합니다.
@@ -61,5 +84,11 @@ SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I %s REVOKE ALL ON %s FROM PUB
               :'migration_user', scope, object_type, :'app_user', :'writer_user')
 FROM (VALUES (''), ('IN SCHEMA public')) AS scopes(scope)
 CROSS JOIN (VALUES ('TABLES'), ('SEQUENCES')) AS objects(object_type)
+\gexec
+SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I %s REVOKE ALL ON %s FROM %I',
+              :'migration_user', scope, object_type, :'index_builder_user')
+FROM (VALUES (''), ('IN SCHEMA public')) AS scopes(scope)
+CROSS JOIN (VALUES ('TABLES'), ('SEQUENCES')) AS objects(object_type)
+WHERE length(:'index_builder_user')>0
 \gexec
 COMMIT;

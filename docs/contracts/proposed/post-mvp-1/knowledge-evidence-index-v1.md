@@ -5,8 +5,9 @@
 - 상태: Proposed · 구현 브랜치 검증 중 · Current 아님
 - 추적: Issue #178의 선행 저장 기반. 이 계약만으로 #178을 완료하지 않는다.
 - 구현 담당: 정현우 (`@ceohwj`)
-- 책임 리뷰: Evidence·Scope·Safety 권가빈 (`@hazelnutflavoured`), Backend·DB·Security 송은영
-  (`@phina-io`), Source provenance 김지혜 (`@Jye-rookie`)
+- 책임 리뷰어: Backend·DB·Security 송은영 (`@phina-io`) 1명
+- 전문 검토 근거: Evidence·Scope·Safety 권가빈 (`@hazelnutflavoured`), Source provenance 김지혜
+  (`@Jye-rookie`)의 의견 또는 승인 근거를 첨부하되 추가 필수 PR 리뷰어로 지정하지 않는다.
 - 공개 상태: `PUBLIC_TRACK_F=false` 유지
 
 이 계약은 승인된 Source Snapshot에 결속된 canonical Knowledge Chunk와 모델별 embedding을 PostgreSQL에
@@ -109,8 +110,13 @@ projection version은 `knowledge-evidence-index-configuration@1`이다. model re
 - 한 transaction 안에서 parent chain을 재검증하고 index와 모든 member를 기록한 뒤 persisted receipt를
   재계산한다. 실패하면 전체 rollback한다.
 - 동일 `index_code + index_version` 재요청은 모든 configuration과 세 hash가 같은 경우에만 idempotent다.
-- 이 선행 slice의 builder adapter는 update/delete 인터페이스를 제공하지 않는다. Runtime read-only 조회 port와
-  전용 builder DB identity·권한은 실제 Retrieval 연결 slice 전에 별도 계약·제한 역할 테스트와 함께 추가한다.
+- 이 선행 slice의 builder adapter는 update/delete 인터페이스를 제공하지 않는다. 전용
+  `KNOWLEDGE_INDEX_BUILDER_USER`는 Source·Knowledge parent SELECT, Knowledge document/chunk와 Index/member
+  SELECT·INSERT, 그리고 `CHECK = 0` 고정 lock-marker 컬럼의 UPDATE만 가진다. Runtime은 Knowledge
+  document/chunk와 Index/member에 SELECT만 갖는다. Builder 환경변수를 비워 두면 이 역할과 Runtime read
+  권한은 활성화되지 않는다.
+- PostgreSQL의 `SELECT ... FOR UPDATE` 권한 조건을 충족하는 lock-marker는 provenance, 상태, revision 또는
+  공개 의미가 없는 고정 기술 컬럼이며 CHECK가 0 이외의 값을 거부한다.
 - trigger, RLS policy, stored procedure, user-defined database function을 사용하지 않는다.
 
 ## 출력 계약

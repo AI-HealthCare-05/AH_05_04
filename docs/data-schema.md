@@ -639,6 +639,13 @@ efresh_session(active_jti, updated_at), password_reset_token(used_at) UPDATE만 
 
 `rag_source_snapshot.management_lock_marker`는 INTEGER NOT NULL DEFAULT 0이며 CHECK로 0에 고정한다. SELECT FOR UPDATE 권한을 충족하는 기술 표식으로, API 필드·검증 시각·provenance·revision·게시 승인 의미가 없다. 관리 역할은 이 컬럼만 UPDATE할 수 있고 `verified_at`/`effective_at`/seal은 직접 수정할 수 없다. 관리 row hash에서는 표식만 제외해 도입 전 hash를 유지한다. migration `3984b5c6d7e8` 적용 후 권한 provisioning을 재실행해야 기존 검증 시각 UPDATE 권한이 회수된다.
 
+#178 migration `178a1b2c3d4e`는 Knowledge Index build가 parent chain을 `SELECT FOR UPDATE`로 검증할 수 있도록
+관련 Source·Knowledge·Index row에 `knowledge_index_lock_marker INTEGER NOT NULL DEFAULT 0 CHECK (... = 0)`를
+둔다. Snapshot은 기존 `management_lock_marker`를 공유한다. 전용 Builder는 이 고정 컬럼만 UPDATE할 수 있고
+Source·Knowledge 업무 필드는 수정할 수 없다. Builder는 Knowledge document/chunk와 Index/member에
+SELECT·INSERT만, Runtime은 같은 read set에 SELECT만 가진다. Builder 환경변수가 비어 있으면 이 선택형
+권한 경계는 활성화되지 않으며 Track F 공개 상태에도 영향을 주지 않는다.
+
 ## #423 Schedule Audit — develop 반영 완료
 
 Migration `423a1b2c3d4e`는 `medication_schedule_audit`와 occurrence의 nullable UTC `cancelled_at`을 추가한다. 감사 컬럼·revision/actor/unique·snapshot 의미는 [일정 정합화 v1 §3](contracts/targets/post-mvp-1/track-b-schedule-reconciliation-v1.md)을 따른다. Schedule·actor FK는 RESTRICT이며 기존 #398 역할 provisioning은 Runtime에 SELECT/INSERT만 부여해 감사 UPDATE/DELETE/TRUNCATE를 차단한다. Migration 이후 역할 provisioning을 재실행한다. DB trigger와 ORM event는 사용하지 않는다. 기존 time row는 보존하고 retire는 schedule 상태·revision으로 판정한다. 종료는 revision과 SCHEDULER audit을 같이 추가하며 기존 occurrence·Check-in·time FK를 보존한다.

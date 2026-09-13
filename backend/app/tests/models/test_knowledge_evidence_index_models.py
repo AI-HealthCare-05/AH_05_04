@@ -27,8 +27,9 @@ def test_knowledge_document_and_chunk_expose_legacy_safe_contract_columns() -> N
         "external_document_id",
         "document_content_hash",
         "canonicalization_spec_version",
+        "knowledge_index_lock_marker",
     }.issubset(document.c.keys())
-    assert {"content_hash", "normalization_version"}.issubset(chunk.c.keys())
+    assert {"content_hash", "normalization_version", "knowledge_index_lock_marker"}.issubset(chunk.c.keys())
     assert document.c.source_url.nullable
     assert document.c.publisher.nullable
     assert document.c.document_version.nullable
@@ -52,6 +53,7 @@ def test_source_snapshot_member_has_one_origin_shape() -> None:
         "ingestion_artifact_id",
         "locator",
         "content_sha256",
+        "knowledge_index_lock_marker",
         "created_at",
     }
     assert {member.value for member in RagSourceSnapshotMemberKind} == {
@@ -79,6 +81,7 @@ def test_index_and_member_columns_and_constraints_are_exact() -> None:
         "embedding_dimension",
         "distance_metric",
         "member_count",
+        "knowledge_index_lock_marker",
         "created_at",
     }
     assert set(member.c.keys()) == {

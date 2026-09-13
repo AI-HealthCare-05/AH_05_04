@@ -17,6 +17,27 @@ depends_on = None
 def upgrade() -> None:
     op.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
 
+    for table in ("rag_source", "rag_source_endpoint", "rag_source_operation"):
+        op.add_column(
+            table,
+            sa.Column("knowledge_index_lock_marker", sa.Integer(), server_default="0", nullable=False),
+        )
+        op.create_check_constraint(
+            f"chk_{table}_knowledge_index_lock_marker",
+            table,
+            "knowledge_index_lock_marker = 0",
+        )
+    for table in ("rag_source_ingestion_run", "rag_source_ingestion_artifact"):
+        op.add_column(
+            table,
+            sa.Column("knowledge_index_lock_marker", sa.Integer(), server_default="0", nullable=False),
+        )
+        op.create_check_constraint(
+            f"chk_{table}_knowledge_index_lock_marker",
+            table,
+            "knowledge_index_lock_marker = 0",
+        )
+
     op.create_table(
         "rag_source_snapshot_member",
         sa.Column("id", sa.CHAR(length=36), nullable=False),
@@ -27,6 +48,7 @@ def upgrade() -> None:
         sa.Column("ingestion_artifact_id", sa.CHAR(length=36), nullable=True),
         sa.Column("locator", sa.String(length=500), nullable=False),
         sa.Column("content_sha256", sa.String(length=64), nullable=False),
+        sa.Column("knowledge_index_lock_marker", sa.Integer(), server_default="0", nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.CheckConstraint(
             "(member_kind = 'ENDPOINT_OPERATION' AND endpoint_id IS NOT NULL "
@@ -38,6 +60,10 @@ def upgrade() -> None:
         sa.CheckConstraint("length(locator) BETWEEN 1 AND 500", name="chk_rag_source_snapshot_member_locator_length"),
         sa.CheckConstraint("locator !~ '[[:cntrl:]]'", name="chk_rag_source_snapshot_member_locator_control"),
         sa.CheckConstraint("content_sha256 ~ '^[0-9a-f]{64}$'", name="chk_rag_source_snapshot_member_content_hash"),
+        sa.CheckConstraint(
+            "knowledge_index_lock_marker = 0",
+            name="chk_rag_source_snapshot_member_knowledge_index_lock_marker",
+        ),
         sa.ForeignKeyConstraint(["source_snapshot_id"], ["rag_source_snapshot.id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["endpoint_id"], ["rag_source_endpoint.id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["operation_id"], ["rag_source_operation.id"], ondelete="RESTRICT"),
@@ -58,6 +84,10 @@ def upgrade() -> None:
     op.add_column("knowledge_document", sa.Column("document_content_hash", sa.String(length=64), nullable=True))
     op.add_column(
         "knowledge_document", sa.Column("canonicalization_spec_version", sa.String(length=100), nullable=True)
+    )
+    op.add_column(
+        "knowledge_document",
+        sa.Column("knowledge_index_lock_marker", sa.Integer(), server_default="0", nullable=False),
     )
     op.alter_column("knowledge_document", "publisher", existing_type=sa.String(length=255), nullable=True)
     op.alter_column("knowledge_document", "source_url", existing_type=sa.String(length=500), nullable=True)
@@ -87,9 +117,18 @@ def upgrade() -> None:
         "AND document_content_hash ~ '^[0-9a-f]{64}$' "
         "AND length(trim(canonicalization_spec_version)) > 0)",
     )
+    op.create_check_constraint(
+        "chk_knowledge_document_knowledge_index_lock_marker",
+        "knowledge_document",
+        "knowledge_index_lock_marker = 0",
+    )
 
     op.add_column("knowledge_chunk", sa.Column("content_hash", sa.String(length=64), nullable=True))
     op.add_column("knowledge_chunk", sa.Column("normalization_version", sa.String(length=100), nullable=True))
+    op.add_column(
+        "knowledge_chunk",
+        sa.Column("knowledge_index_lock_marker", sa.Integer(), server_default="0", nullable=False),
+    )
     op.alter_column("knowledge_chunk", "embedding_model", existing_type=sa.String(length=100), nullable=True)
     op.alter_column("knowledge_chunk", "vector_store_key", existing_type=sa.String(length=255), nullable=True)
     op.create_check_constraint(
@@ -97,6 +136,11 @@ def upgrade() -> None:
         "knowledge_chunk",
         "(content_hash IS NULL AND normalization_version IS NULL) OR "
         "(content_hash ~ '^[0-9a-f]{64}$' AND length(trim(normalization_version)) > 0)",
+    )
+    op.create_check_constraint(
+        "chk_knowledge_chunk_knowledge_index_lock_marker",
+        "knowledge_chunk",
+        "knowledge_index_lock_marker = 0",
     )
 
     op.create_table(
@@ -112,6 +156,7 @@ def upgrade() -> None:
         sa.Column("embedding_dimension", sa.Integer(), nullable=False),
         sa.Column("distance_metric", sa.String(length=20), nullable=False),
         sa.Column("member_count", sa.Integer(), nullable=False),
+        sa.Column("knowledge_index_lock_marker", sa.Integer(), server_default="0", nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.CheckConstraint("length(trim(index_code)) > 0", name="chk_rag_knowledge_index_code_nonblank"),
         sa.CheckConstraint("length(trim(index_version)) > 0", name="chk_rag_knowledge_index_version_nonblank"),
@@ -125,6 +170,10 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint("distance_metric = 'COSINE'", name="chk_rag_knowledge_index_distance_metric"),
         sa.CheckConstraint("member_count >= 0", name="chk_rag_knowledge_index_member_count"),
+        sa.CheckConstraint(
+            "knowledge_index_lock_marker = 0",
+            name="chk_rag_knowledge_index_knowledge_index_lock_marker",
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("index_code", "index_version", name="uq_rag_knowledge_index_version"),
     )
@@ -201,6 +250,7 @@ def downgrade() -> None:
     op.alter_column("knowledge_chunk", "embedding_model", existing_type=sa.String(length=100), nullable=False)
     op.drop_column("knowledge_chunk", "normalization_version")
     op.drop_column("knowledge_chunk", "content_hash")
+    op.drop_column("knowledge_chunk", "knowledge_index_lock_marker")
     op.drop_constraint("chk_knowledge_document_contract_shape", "knowledge_document", type_="check")
     op.drop_constraint("uq_knowledge_document_evidence_identity", "knowledge_document", type_="unique")
     op.drop_constraint("fk_knowledge_document_snapshot_member", "knowledge_document", type_="foreignkey")
@@ -212,5 +262,14 @@ def downgrade() -> None:
     op.drop_column("knowledge_document", "external_document_id")
     op.drop_column("knowledge_document", "source_snapshot_member_id")
     op.drop_column("knowledge_document", "record_contract_version")
+    op.drop_column("knowledge_document", "knowledge_index_lock_marker")
     op.drop_index("idx_rag_source_snapshot_member_snapshot", table_name="rag_source_snapshot_member")
     op.drop_table("rag_source_snapshot_member")
+    for table in (
+        "rag_source_ingestion_artifact",
+        "rag_source_ingestion_run",
+        "rag_source_operation",
+        "rag_source_endpoint",
+        "rag_source",
+    ):
+        op.drop_column(table, "knowledge_index_lock_marker")

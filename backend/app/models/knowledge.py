@@ -51,6 +51,7 @@ class KnowledgeDocument(Base):
             "AND length(trim(canonicalization_spec_version)) > 0)",
             name="chk_knowledge_document_contract_shape",
         ),
+        CheckConstraint("knowledge_index_lock_marker = 0", name="chk_knowledge_document_knowledge_index_lock_marker"),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -72,6 +73,7 @@ class KnowledgeDocument(Base):
     external_document_id: Mapped[str | None] = mapped_column(String(300), nullable=True)
     document_content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     canonicalization_spec_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    knowledge_index_lock_marker: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     document_status: Mapped[KnowledgeDocumentStatus] = mapped_column(
         Enum(KnowledgeDocumentStatus, native_enum=False, length=20),
         nullable=False,
@@ -96,6 +98,7 @@ class KnowledgeChunk(Base):
             "(content_hash ~ '^[0-9a-f]{64}$' AND length(trim(normalization_version)) > 0)",
             name="chk_knowledge_chunk_evidence_shape",
         ),
+        CheckConstraint("knowledge_index_lock_marker = 0", name="chk_knowledge_chunk_knowledge_index_lock_marker"),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -111,6 +114,7 @@ class KnowledgeChunk(Base):
     vector_store_key: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     normalization_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    knowledge_index_lock_marker: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -136,6 +140,7 @@ class RagKnowledgeIndex(Base):
         CheckConstraint("embedding_dimension BETWEEN 1 AND 2000", name="chk_rag_knowledge_index_embedding_dimension"),
         CheckConstraint("distance_metric = 'COSINE'", name="chk_rag_knowledge_index_distance_metric"),
         CheckConstraint("member_count >= 0", name="chk_rag_knowledge_index_member_count"),
+        CheckConstraint("knowledge_index_lock_marker = 0", name="chk_rag_knowledge_index_knowledge_index_lock_marker"),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -151,6 +156,7 @@ class RagKnowledgeIndex(Base):
         Enum(RagKnowledgeDistanceMetric, native_enum=False, length=20), nullable=False
     )
     member_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    knowledge_index_lock_marker: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 

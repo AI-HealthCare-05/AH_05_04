@@ -8,15 +8,16 @@
 - Governing baseline: `PD-315-20260908`, `PD-362`, and the approved-but-not-current
   `rag-runtime-v1` and `rag-source-ingestion-v1` targets.
 - Implementation owner: 정현우 (`@ceohwj`).
-- Required reviewers: 권가빈 (`@hazelnutflavoured`) for Evidence/Scope/Safety, 송은영
-  (`@phina-io`) for Backend/DB/Security, and 김지혜 (`@Jye-rookie`) for Source provenance.
+- Responsible reviewer: 송은영 (`@phina-io`) for Backend/DB/Security and the complete cross-domain change.
+- Specialist evidence: 권가빈 (`@hazelnutflavoured`) for Evidence/Scope/Safety and 김지혜 (`@Jye-rookie`)
+  for Source provenance; they are not additional required Pull Request reviewers.
 - Publication: `PUBLIC_TRACK_F=false` remains unchanged. This foundation is not a production activation or a
   current-contract promotion.
 
-PR #361 shows that the responsible Evidence/Safety reviewer approved the final PD-315 head and that the Source
-review findings were resolved before merge. The remaining `Review pending` labels in PD-315 and the RAG Runtime
-target are stale document metadata and must be corrected in the implementation PR without claiming that the runtime
-itself is implemented.
+PR #361 is supporting review history, but the repository PD-315 file still says `Review pending`. This implementation
+does not reinterpret or rewrite that status. The single responsible reviewer must confirm the approval evidence and
+required Evidence/Safety·Source specialist evidence before an authorized status-alignment change; that change must
+not claim that the Retrieval Runtime itself is implemented.
 
 ## Goal
 
@@ -65,8 +66,8 @@ prescription, OCR text, chat text, credential, or HMAC key.
 6. No current API or public DTO changes. The proposed contract stays under `docs/contracts/proposed/` until the full
    runtime implementation, tests, evidence, and designated approvals justify promotion.
 7. The version-pinned pgvector server extension is provisioned for migration compatibility in local, CI, and
-   production database images. This does not activate the Retrieval Runtime, builder/read roles, Track F publication,
-   or any production request path.
+   production database images. Optional builder/read roles are provisioned only when the separate builder identity is
+   configured; this does not activate the Retrieval Runtime, Track F publication, or any production request path.
 
 ## Considered approaches
 
@@ -124,8 +125,8 @@ Member append is allowed only while the Snapshot is `PENDING` and has no verific
 `PENDING → CURRENT` transition freezes the member set for index use; already-CURRENT legacy Snapshots must be
 re-collected as a new Snapshot version instead of receiving post-approval members.
 
-This table belongs to the Source provenance domain. Its model, migration, repository validation, and tests therefore
-require the named Source and DB reviewers in the same PR.
+This table belongs to the Source provenance domain. Its model, migration, repository validation, and tests are in the
+single responsible reviewer's scope and require the named Source specialist evidence in the same PR.
 
 ### 2. Stable document and chunk identity
 
@@ -190,9 +191,9 @@ created_at: timestamp
 
 An index row is a completed immutable artifact. Draft building and external embedding calls are outside the database
 transaction and do not create a partially visible index. One transaction inserts the completed index and all
-members after validating every receipt. The repository exposes no update/delete method. A dedicated builder DB
-identity and Runtime SELECT-only projection are required before the Retrieval slice is wired; this foundation does
-not grant the shared Runtime role write access.
+members after validating every receipt. The repository exposes no update/delete method. An optional dedicated builder
+DB identity receives exact read/insert and fixed lock-marker privileges, while Runtime receives SELECT-only access to
+the Knowledge/Index read set. Neither credential activates a Retrieval request path or grants Runtime write access.
 
 Add `rag_knowledge_index_member`:
 
@@ -293,7 +294,8 @@ not also registered because double conversion is incompatible with this pinned a
 disabled in production and parameters remain hidden.
 
 Production bootstrap installs the extension with the admin identity before Alembic runs as the restricted migration
-role. Production credentials, network, backup, Runtime/builder role activation, and Track F publication are excluded.
+role. It can also create the optional NOSUPERUSER builder login without exposing its password to application or role
+provisioning services. Production network, backup, Retrieval Runtime activation, and Track F publication are excluded.
 
 ## Failure behavior
 
@@ -326,8 +328,8 @@ No Recall@5, latency, production quality, current-runtime, or publication claim 
 
 ## Follow-up boundary for #178
 
-#178 may consume this foundation only after its contract and implementation reviewers approve the exact Index
-Receipt and Source member binding. The next #178 slice then owns:
+#178 may consume this foundation only after its single responsible reviewer approves the exact Index contract,
+implementation Receipt, and Source member binding. The next #178 slice then owns:
 
 - PostgreSQL Exact/Trigram/`ts_rank_cd` and dense cosine search;
 - rank-based exact-rational RRF and its fraction receipt;

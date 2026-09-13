@@ -21,6 +21,7 @@
 - PostgreSQL transaction advisory lock을 통한 동일 code/version 생성 직렬화
 - pgvector 0.8.6 server와 `pgvector==0.5.0` SQLAlchemy `VECTOR` 변환
 - Production admin bootstrap의 extension 선설치와 제한 Alembic migration role 분리
+- 선택형 전용 Knowledge Index Builder와 Runtime SELECT-only 권한; 고정 lock-marker 외 업무 UPDATE 금지
 - raw text/vector/locator를 receipt·일반 로그·고정 예외 reason에서 제외
 
 SQLAlchemy `VECTOR` 타입이 bind/result 변환을 소유한다. 실제 PostgreSQL 검증에서 raw asyncpg codec을 함께
@@ -31,10 +32,13 @@ SQLAlchemy `VECTOR` 타입이 bind/result 변환을 소유한다. 실제 Postgre
 | 검사 | 결과 |
 | --- | --- |
 | AI Worker 기본 lane (Core·OCR·RAG·Evaluation) | 3115 passed, 8 skipped |
-| Backend·Contract·선별 RAG Integration 기본 lane | 1937 passed, 87 skipped |
-| 전체 Contract suite (Docker image build 포함) | 269 passed |
+| Backend·Contract·선별 RAG Integration 기본 lane | 1942 passed, 85 skipped |
+| 전체 Contract suite (Docker image build 포함) | 271 passed |
+| 기존 DB 역할 bootstrap/provision/redeploy 회귀 | 1 passed |
 | 독립 DB 전체 Alembic upgrade + vector round-trip/concurrency/conflict/dimension/downgrade/legacy/non-leakage | 3 passed |
-| #178 model/migration metadata와 위 PostgreSQL 통합 묶음 | 9 passed |
+| 전용 Builder 실행 + Runtime read-only + 업무 UPDATE/DELETE/TRUNCATE 거부 | 1 passed |
+| #178 model/migration metadata와 PostgreSQL 통합 묶음 | 10 passed |
+| Builder 미설정/설정 Production bootstrap SQL | 모두 성공 |
 | 전체 빈 DB `alembic upgrade head` | 성공, head `178a1b2c3d4e` |
 | populated Knowledge Evidence Index downgrade | 의도대로 중단: `downgrade would lose Knowledge Evidence Index data` |
 | legacy row upgrade | `LEGACY_V1` backfill, publisher/source URL/document version와 external vector key 보존 |
@@ -54,5 +58,5 @@ SQLAlchemy `VECTOR` 타입이 bind/result 변환을 소유한다. 실제 Postgre
 - authoritative Retrieval Run/signal/hit persistence
 - Runtime Bundle/currentness 연결, `hybrid_retrieve` node receipt
 - `RET-L`, `RET-D`, `RET-H`, `RET-HR` Evaluation과 Recall@5/latency 증빙
-- 지정 DB·Source·Evidence/Safety 리뷰와 Current 승격 판단
-- 전용 Knowledge Index builder DB identity와 Runtime SELECT-only projection/권한 검증
+- 단일 책임 리뷰어 송은영의 코드·DB·Security 승인과 Evidence/Safety·Source 전문 검토 근거
+- Proposed 계약의 Target/Current 승격 판단
