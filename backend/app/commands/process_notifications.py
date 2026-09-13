@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime
+from time import monotonic
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -33,23 +34,42 @@ async def process_notifications_once(
     return NotificationBatchResult(generated.created_count, published.delivered_count, published.cancelled_count)
 
 
-async def run() -> None:
+BATCH_TIMEOUT_SECONDS = 45
+
+
+async def run() -> bool:
+    """Return success without exposing exception text, SQL or notification payloads."""
+    started = monotonic()
     try:
-        result = await process_notifications_once()
+        async with asyncio.timeout(BATCH_TIMEOUT_SECONDS):
+            result = await process_notifications_once()
         default_logger.info(
-            "app notifications processed",
-            extra={
-                "created_count": result.created_count,
-                "delivered_count": result.delivered_count,
-                "cancelled_count": result.cancelled_count,
-            },
+            "notification_batch status=success completed_at=%s duration_seconds=%.3f "
+            "created_count=%d delivered_count=%d cancelled_count=%d",
+            datetime.now(UTC).isoformat(),
+            monotonic() - started,
+            result.created_count,
+            result.delivered_count,
+            result.cancelled_count,
         )
+        return True
+    except Exception as exc:
+        # Partial generation may already be committed. Counts are deliberately
+        # omitted on failure; the next invocation recovers pending records.
+        reason = "timeout" if isinstance(exc, TimeoutError) else "batch_error"
+        default_logger.error(
+            "notification_batch status=failed completed_at=%s duration_seconds=%.3f reason=%s",
+            datetime.now(UTC).isoformat(),
+            monotonic() - started,
+            reason,
+        )
+        return False
     finally:
         await close_database()
 
 
 def main() -> None:
-    asyncio.run(run())
+    raise SystemExit(0 if asyncio.run(run()) else 1)
 
 
 if __name__ == "__main__":

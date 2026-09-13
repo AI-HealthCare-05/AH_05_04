@@ -219,6 +219,40 @@ services:
       retries: 10
       start_period: 15s
 
+  # #434: explicitly enabled after deployment authorization and migration verification.
+  notification-scheduler:
+    profiles: ["notifications"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    init: true
+    entrypoint: ["/app/.venv/bin/python", "-m", "app.commands.schedule_notifications"]
+    restart: unless-stopped
+    stop_grace_period: 15s
+    environment:
+      ENV: ${ENV}
+      # Required by shared Config validation; no Provider/admin/migration credentials.
+      SECRET_KEY: ${SECRET_KEY}
+      IDEMPOTENCY_HMAC_KEY: ${IDEMPOTENCY_HMAC_KEY}
+      IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY: ${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_APP_USER}
+      DB_PASSWORD: ${DB_APP_PASSWORD}
+      DB_CONNECTION_POOL_MAXSIZE: "2"
+      SQLALCHEMY_ECHO: "false"
+    networks:
+      - ws
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # 5. AI Worker (Model 학습 및 추론)
   ai-worker:
     container_name: ai-worker

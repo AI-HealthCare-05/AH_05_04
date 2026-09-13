@@ -425,9 +425,10 @@ PostgreSQL·실제 ASGI 앱으로 검증한다. 기본 runner의 Backend 수집 
 [실행 결과와 재현 방법](./validation/track-b/issue-202-schedule-api.md),
 [Frontend 합성 fixture](./validation/track-b/issue-202-schedule-fixtures.json)를 참조한다.
 
-### #202 알림→복약 기록 인계 검증
+### #434 알림 운영 검증
 
-[Backend 연결 검증·Frontend 인계](./validation/track-b/issue-202-notification-handoff.md)는
-자정 경계 재알림, 읽음 실패/재시도, 명시적 Check-in, 처방 정정 후 과거 기록 및 타인 링크
-접근을 실제 HTTP로 검증한다. 새 합성 fixture는 기존 DTO와 식별자 관계로 검증한다.
-과거 약 표시 조회의 남은 계약 합의와 Frontend 화면/E2E는 Backend 통과와 구분한다.
+알림 명령의 실제 transaction 복구·501건 backlog·Runtime DB 권한 및 Docker 시작/중지
+검증은 [#434 기록](./validation/track-b/issue-434-notification-operations.md)을 참고한다.
+`backend/app/tests/notifications`, `tests/contract/test_notification_runtime_configuration.py`,
+`tests/integration/rag/test_database_role_provisioning.py`는 기본 필수 runner에 포함된다.
+실제 Local Docker smoke와 Production 적용 여부는 별도로 기록한다.
