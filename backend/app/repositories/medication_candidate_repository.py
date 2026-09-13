@@ -70,6 +70,24 @@ class MedicationCandidateRepository:
             await require_verified_version(self.session, prescription.active_version_id)
         return prescription
 
+    async def get_active_prescription_for_preflight_owned(
+        self,
+        *,
+        prescription_id: UUID,
+        user_id: UUID,
+    ) -> Prescription | None:
+        prescription = await self.session.scalar(
+            select(Prescription)
+            .where(
+                Prescription.id == prescription_id,
+                owned_by_self(Prescription.profile_id, user_id),
+            )
+            .with_for_update(of=Prescription)
+        )
+        if prescription is not None:
+            await require_verified_version(self.session, prescription.active_version_id)
+        return prescription
+
     async def get_medication_for_candidate_search_owned(
         self,
         *,
