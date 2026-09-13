@@ -5,7 +5,8 @@
 | 기준일 | 2026-09-13 |
 | 기준 develop | f56a6322 (#467 병합 포함) |
 | 별도 열람 | #468 head 0f068b72, OPEN |
-| 결과 | **Backend 조회 구현·관련 100건 PASS — 전체 검사·책임 리뷰·Frontend 인수 대기** |
+| 결과 | **Backend 조회 구현·관련 100건 PASS — 원격 CI·책임 리뷰·Frontend 인수 대기** |
+| 구현 코드 | `4231fb85`; 후속 검증 기록 커밋은 문서만 변경 |
 | 변경 범위 | 조회 API·DTO·SELF query·실제 HTTP 테스트·합성 fixture·문서 |
 
 ## 종료 조건별 남은 증빙
@@ -24,10 +25,15 @@
 - Python 3.13, 별도 Compose `track-b-202-test`, PostgreSQL 17의 `test` DB·Redis. 실제 사용자·Provider 호출 없음.
 - 신규 실제 HTTP/OpenAPI 8건을 포함한 알림·일정·Check-in 회귀: **100 passed / 31.38s**.
 - Ruff check/format: **PASS (784 files)**. Mypy: **PASS (593 source files)**.
-- 필수 전체 runner: migration **210 passed / 4 skipped**, head `e8c41a09d652` 확인. Backend lane은 실행 중.
+- 필수 전체 runner: migration **210 passed / 4 skipped**, head `e8c41a09d652` 확인.
+  Backend **1,954 passed / 85 skipped / 391.97s**, Redis 통합 **24 passed / 6.82s**.
 - Worker 첫 실행 **3,076 passed / 8 skipped / 1 failed**: 격리 환경파일의 Redis host override로
   기본 설정 검사가 실패했다. override 제거 후 영향받은 `ai_worker/tests/core/test_config.py`는
-  **76 passed / 0.30s**. 런타임 코드는 수정하지 않았다. 전체 runner exit 0으로 보고하지 않는다.
+  **76 passed / 0.30s**. 런타임 코드는 수정하지 않았다. 최초 전체 runner는 exit 1이며, 실패한 설정 파일 재검사만 통과했다.
+  해당 실패로 전체 coverage combine/report는 실행되지 않았다. 단발 전체 PASS나 coverage 수치를 주장하지 않는다.
+- [구현 PR #474](https://github.com/AI-HealthCare-05/AH_05_04/pull/474), 원격 CI 진행 중.
+- `git diff --check`, 변경 범위·합성 fixture 관계·상대 링크 및 Pandoc HTML 구조 검토: PASS.
+  Frontend 브라우저 E2E는 #421/#138 담당 범위로 이번에 실행하지 않았다.
 - 최초 신규 검사 7 PASS/1 FAIL은 오류 응답 후 테스트 ORM 객체 접근으로 발생한 MissingGreenlet이었다.
   요청 path를 오류 전 보관하도록 테스트를 수정했고 위 100건 재실행에서 모두 통과했다.
 - [합성 HTTP 응답](issue-202-occurrence-medication.json): 실제 ASGI 실행에서 추출.
