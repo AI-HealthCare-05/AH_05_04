@@ -1,0 +1,236 @@
+{
+  "fixture_id": "track-b-notification-record-handoff-v1",
+  "classification": "SYNTHETIC",
+  "status": "observed-current-behavior-not-new-contract",
+  "current_prescription": {
+    "data": {
+      "prescription_id": "2e8342e5-4ce9-4487-9403-3df23cb3e865",
+      "prescription_version_id": "2b21e328-9c6f-45cf-a95a-6c0f9a4834b2",
+      "revision": 1,
+      "current": true,
+      "document_id": "07d7770e-a920-419b-ae17-337b292e2056",
+      "prescribed_date": "2026-09-09",
+      "confirmed_at": "2026-09-09T00:00:00Z",
+      "medications": [
+        {
+          "prescription_version_medication_id": "42c204ad-bb52-4227-bf57-45c4411ccab6",
+          "medication_name": "합성테스트약",
+          "strength_text": null,
+          "dose_value": null,
+          "dose_unit": null,
+          "frequency_per_day": 1,
+          "timing_text": null,
+          "duration_days": null,
+          "display_order": 1
+        }
+      ]
+    }
+  },
+  "notifications": {
+    "data": {
+      "items": [
+        {
+          "id": "3fff63b6-9e2e-4908-8d45-2f2f7394caa8",
+          "occurrence_id": "b6a84cff-b6e5-489f-a0ef-1550afe8f60e",
+          "occurrence_local_date": "2026-09-10",
+          "kind": "REMINDER",
+          "scheduled_at": "2026-09-10T16:00:00Z",
+          "status": "DELIVERED",
+          "delivered_at": "2026-09-10T16:00:00Z",
+          "read_at": null
+        },
+        {
+          "id": "6e684aab-0552-4603-b473-07f5c12dd520",
+          "occurrence_id": "b6a84cff-b6e5-489f-a0ef-1550afe8f60e",
+          "occurrence_local_date": "2026-09-10",
+          "kind": "SCHEDULED",
+          "scheduled_at": "2026-09-10T14:00:00Z",
+          "status": "DELIVERED",
+          "delivered_at": "2026-09-10T14:00:00Z",
+          "read_at": null
+        }
+      ],
+      "next_offset": null
+    }
+  },
+  "day_before_read": {
+    "data": {
+      "schedule_status": "READY",
+      "schedule_items": [
+        {
+          "prescription_version_medication_id": "42c204ad-bb52-4227-bf57-45c4411ccab6",
+          "schedule_item_status": "READY",
+          "schedule_id": "7f6e883c-4030-47f6-a167-8b911cf28934",
+          "revision": 1,
+          "setup_reason": null
+        }
+      ],
+      "occurrences": [
+        {
+          "occurrence_id": "b6a84cff-b6e5-489f-a0ef-1550afe8f60e",
+          "prescription_version_id": "2b21e328-9c6f-45cf-a95a-6c0f9a4834b2",
+          "prescription_version_medication_id": "42c204ad-bb52-4227-bf57-45c4411ccab6",
+          "scheduled_local_date": "2026-09-10",
+          "scheduled_at": "2026-09-10T14:00:00Z",
+          "confirmation_deadline_at": "2026-09-10T18:00:00Z",
+          "status": "PENDING",
+          "checkin": null
+        }
+      ]
+    }
+  },
+  "read_failure": {
+    "code": "IDEMPOTENCY_RESPONSE_TOO_LARGE",
+    "message": "응답이 너무 커서 멱등성 저장 용량을 초과했습니다.",
+    "details": [],
+    "trace_id": "bac029b059c44da1a839316bf8bab44e"
+  },
+  "read_response": {
+    "data": {
+      "id": "3fff63b6-9e2e-4908-8d45-2f2f7394caa8",
+      "occurrence_id": "b6a84cff-b6e5-489f-a0ef-1550afe8f60e",
+      "occurrence_local_date": "2026-09-10",
+      "kind": "REMINDER",
+      "scheduled_at": "2026-09-10T16:00:00Z",
+      "status": "DELIVERED",
+      "delivered_at": "2026-09-10T16:00:00Z",
+      "read_at": "2026-09-10T16:00:00Z"
+    }
+  },
+  "day_after_read": {
+    "data": {
+      "schedule_status": "READY",
+      "schedule_items": [
+        {
+          "prescription_version_medication_id": "42c204ad-bb52-4227-bf57-45c4411ccab6",
+          "schedule_item_status": "READY",
+          "schedule_id": "7f6e883c-4030-47f6-a167-8b911cf28934",
+          "revision": 1,
+          "setup_reason": null
+        }
+      ],
+      "occurrences": [
+        {
+          "occurrence_id": "b6a84cff-b6e5-489f-a0ef-1550afe8f60e",
+          "prescription_version_id": "2b21e328-9c6f-45cf-a95a-6c0f9a4834b2",
+          "prescription_version_medication_id": "42c204ad-bb52-4227-bf57-45c4411ccab6",
+          "scheduled_local_date": "2026-09-10",
+          "scheduled_at": "2026-09-10T14:00:00Z",
+          "confirmation_deadline_at": "2026-09-10T18:00:00Z",
+          "status": "PENDING",
+          "checkin": null
+        }
+      ]
+    }
+  },
+  "checkin_request": {
+    "status": "TAKEN",
+    "expected_revision": 0
+  },
+  "checkin_response": {
+    "data": {
+      "checkin_id": "c661e86e-3a27-4143-89ca-6ce8dc1d1ebc",
+      "occurrence_id": "b6a84cff-b6e5-489f-a0ef-1550afe8f60e",
+      "status": "TAKEN",
+      "taken_at": null,
+      "revision": 1,
+      "corrected": false
+    }
+  },
+  "checkin_conflict": {
+    "code": "CHECKIN_REVISION_CONFLICT",
+    "message": "복약 기록이 이미 변경되었습니다. 최신 기록을 다시 확인해 주세요.",
+    "details": [
+      {
+        "field": "expected_revision",
+        "reason": "CURRENT_REVISION_MISMATCH",
+        "rejected_value": null
+      }
+    ],
+    "trace_id": "e673121e4d8b4fc1b8e23d37b75608b1"
+  },
+  "current_prescription_after_correction": {
+    "data": {
+      "prescription_id": "2e8342e5-4ce9-4487-9403-3df23cb3e865",
+      "prescription_version_id": "ad68d863-bf85-4c82-a2d3-14c3a300182a",
+      "revision": 2,
+      "current": true,
+      "document_id": "07d7770e-a920-419b-ae17-337b292e2056",
+      "prescribed_date": "2026-09-09",
+      "confirmed_at": "2026-09-12T10:58:52.667465Z",
+      "medications": [
+        {
+          "prescription_version_medication_id": "df9adbc9-675a-45df-a410-fd08ae5b3d21",
+          "medication_name": "합성정정약",
+          "strength_text": null,
+          "dose_value": null,
+          "dose_unit": null,
+          "frequency_per_day": 1,
+          "timing_text": null,
+          "duration_days": null,
+          "display_order": 1
+        }
+      ]
+    }
+  },
+  "historical_day": {
+    "data": {
+      "schedule_status": "SETUP_REQUIRED",
+      "schedule_items": [
+        {
+          "prescription_version_medication_id": "df9adbc9-675a-45df-a410-fd08ae5b3d21",
+          "schedule_item_status": "SETUP_REQUIRED",
+          "schedule_id": null,
+          "revision": null,
+          "setup_reason": "MISSING_START_DATE"
+        }
+      ],
+      "occurrences": [
+        {
+          "occurrence_id": "b6a84cff-b6e5-489f-a0ef-1550afe8f60e",
+          "prescription_version_id": "2b21e328-9c6f-45cf-a95a-6c0f9a4834b2",
+          "prescription_version_medication_id": "42c204ad-bb52-4227-bf57-45c4411ccab6",
+          "scheduled_local_date": "2026-09-10",
+          "scheduled_at": "2026-09-10T14:00:00Z",
+          "confirmation_deadline_at": "2026-09-10T18:00:00Z",
+          "status": "CLOSED",
+          "checkin": {
+            "checkin_id": "c661e86e-3a27-4143-89ca-6ce8dc1d1ebc",
+            "occurrence_id": "b6a84cff-b6e5-489f-a0ef-1550afe8f60e",
+            "status": "TAKEN",
+            "taken_at": null,
+            "revision": 1,
+            "corrected": false
+          }
+        }
+      ]
+    }
+  },
+  "notifications_after_correction": {
+    "data": {
+      "items": [
+        {
+          "id": "3fff63b6-9e2e-4908-8d45-2f2f7394caa8",
+          "occurrence_id": "b6a84cff-b6e5-489f-a0ef-1550afe8f60e",
+          "occurrence_local_date": "2026-09-10",
+          "kind": "REMINDER",
+          "scheduled_at": "2026-09-10T16:00:00Z",
+          "status": "DELIVERED",
+          "delivered_at": "2026-09-10T16:00:00Z",
+          "read_at": "2026-09-10T16:00:00Z"
+        },
+        {
+          "id": "6e684aab-0552-4603-b473-07f5c12dd520",
+          "occurrence_id": "b6a84cff-b6e5-489f-a0ef-1550afe8f60e",
+          "occurrence_local_date": "2026-09-10",
+          "kind": "SCHEDULED",
+          "scheduled_at": "2026-09-10T14:00:00Z",
+          "status": "DELIVERED",
+          "delivered_at": "2026-09-10T14:00:00Z",
+          "read_at": null
+        }
+      ],
+      "next_offset": null
+    }
+  }
+}
