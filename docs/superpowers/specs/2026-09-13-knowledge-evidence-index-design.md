@@ -2,7 +2,8 @@
 
 ## Status and authority
 
-- Status: requester-approved decomposition; written design pending requester review.
+- Status: requester-approved decomposition and implementation design; designated reviewer approval remains required
+  before merge.
 - Tracking: prerequisite subproject for Issue #178. This work does not close #178.
 - Governing baseline: `PD-315-20260908`, `PD-362`, and the approved-but-not-current
   `rag-runtime-v1` and `rag-source-ingestion-v1` targets.
@@ -126,6 +127,7 @@ require the named Source and DB reviewers in the same PR.
 Forward-evolve `knowledge_document` with:
 
 ```text
+record_contract_version: LEGACY_V1 | KNOWLEDGE_EVIDENCE_V1
 source_snapshot_member_id: UUID | null during legacy compatibility
 external_document_id: string | null during legacy compatibility
 document_content_hash: 64-lower-hex | null during legacy compatibility
@@ -138,6 +140,13 @@ Forward-evolve `knowledge_chunk` with:
 content_hash: 64-lower-hex | null during legacy compatibility
 normalization_version: string | null during legacy compatibility
 ```
+
+The migration backfills every existing document as `LEGACY_V1`. It makes legacy-only `source_url`, `publisher`,
+`document_version`, `embedding_model`, and `vector_store_key` nullable so a `KNOWLEDGE_EVIDENCE_V1` row is not forced
+to invent values for the superseded external-vector contract. An ordinary document CHECK requires the complete old
+shape for `LEGACY_V1` and the complete new provenance shape for `KNOWLEDGE_EVIDENCE_V1`; the repository additionally
+verifies the child chunk shape because a cross-table CHECK is not used. A production unique constraint covers
+`source_snapshot_member_id + external_document_id`. No existing row is promoted or reinterpreted by the migration.
 
 The production repository accepts only rows for which every field above is present. It validates
 `content_hash == SHA-256(canonical chunk_text UTF-8 bytes)` and never silently normalizes the stored text during
@@ -152,9 +161,8 @@ The stable production Chunk coordinate is:
 `content_hash` is not a second identity. The same stable coordinate with a different content hash is a validation
 failure, not a new candidate. New `source_version` means a new runtime identity even when text and hashes are equal.
 
-Legacy `source_url`, `document_version`, `embedding_model`, and `vector_store_key` columns remain readable for old
-schema fixtures but are not accepted as production provenance. The migration does not backfill or infer approval
-from them.
+Legacy columns remain readable for `LEGACY_V1` fixtures but are not accepted as production provenance. The migration
+does not backfill or infer approval from them.
 
 ### 3. Versioned index and members
 
@@ -206,9 +214,11 @@ mutable joins as the original hash preimage. Unique constraints cover index/memb
 index/stable coordinate.
 
 The pgvector column uses the unbounded `vector` type because embedding dimension belongs to the versioned index row,
-not to a global schema constant. The repository validates that every vector has exactly `embedding_dimension`
-finite float32 values. The initial adapter uses exact cosine scans filtered to one index ID; approximate indexes are
-deferred until measurement and a separate configuration decision justify them.
+not to a global schema constant. The 2,000-dimension index limit deliberately preserves compatibility with a future
+HNSW/IVFFlat `vector` index without choosing one now. The repository validates that every vector has exactly
+`embedding_dimension` finite, non-negative-zero float32 values and a nonzero Euclidean norm. The initial adapter uses
+exact cosine scans filtered to one index ID; approximate indexes are deferred until measurement and a separate
+configuration decision justify them.
 
 ### 4. Hash domains
 
@@ -241,8 +251,8 @@ UTF-8("knowledge-evidence-embedding@1\n")
 `knowledge-evidence-index-configuration@1` hashes the model ref/version, dimension, `COSINE` metric, corpus projection
 version, embedding projection version, and both manifest hashes. It never includes raw text or vector values.
 
-Golden tests cover non-BMP object keys, explicit null, stable-coordinate UTF-8 ordering, negative zero rejection,
-NaN/infinity rejection, dimension boundaries, and a one-bit vector mutation.
+Golden tests cover non-BMP object keys, explicit null, stable-coordinate UTF-8 ordering, negative zero and zero-vector
+rejection, NaN/infinity rejection, dimension boundaries, and a one-bit vector mutation.
 
 ### 5. Application flow
 
