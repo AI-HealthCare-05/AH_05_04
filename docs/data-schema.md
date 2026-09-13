@@ -298,10 +298,21 @@ Component의 두 참조 Snapshot 열을 별도로 보존하고 Product/Ingredien
 HEAD `c58f09686d3a72567793ee237abeb500ab04e710`의 MFDS 매핑·총량 그룹·출처·Candidate 인계를
 확인한 증빙이다. 실제 수집·MFDS 공식 의미·운영 활성화 승인을 의미하지 않는다.
 
+`rag_catalog_set`은 현재 Catalog의 manifest·Source·member·hash를 결속하는 저장·재현 구성 단위다.
+기존 v2와 관찰 v3 export를 수용한다. Set 종류 컬럼은 없으며, `RagCatalogMemberKind`의
+`PRODUCT / INGREDIENT / COMPONENT / ALIAS / SEARCH_ENTRY`는 Set 안의 구성원 종류다.
+`member_kind=ALIAS`는 `alias_id`로 실제 Alias 행을 참조한다. 따라서 **Alias가 Catalog Set에
+포함되는 관계이며, 독립 Authority Alias Set(alias_set/alias_set_member)의 대체 관계가 아니다.**
+독립 Alias Set 구현·승인·Runtime 연결 완료를 의미하지 않는다.
+
 D-03 Crosswalk는 현재 P0 소비 경로가 없어 #166의 즉시 구현 범위에서 제외한다.
 `rag_catalog_set`을 Crosswalk Set으로 재해석하거나 승인 입력 없이 매핑·빈 READY Set을
 생성하지 않는다. Alias D-03a 및 D-04 원료 관찰 연결과 구분하며,
 [D-03 범위 결정·공개 확인 근거·재개 조건](governance/decisions/2026-09-13-catalog-crosswalk-scope.md)을 따른다.
+
+D-05 전체 hash 전환과 Runtime medication Catalog manifest 구성·연결은 후속 보류다.
+기존 v2·관찰 v3 envelope 및 현재 저장 구조는 유지한다. Product Identity 한정 projection도
+실제 필요 확인 뒤 별도 계약으로 검토하며 [답변 기록·재개 조건](governance/decisions/2026-09-13-catalog-d05-transition-scope.md)을 따른다.
 
 Source/Snapshot 책임 경계:
 
