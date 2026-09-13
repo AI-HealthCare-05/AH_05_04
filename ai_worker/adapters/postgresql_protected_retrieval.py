@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from ai_worker.tasks.evaluation.protected_retrieval import (
     ApprovalSourceEvidence,
     AuthorizationAuditEntry,
+    ControlCommandAuditEntry,
     OpaqueLogicalRef,
     OpaqueRefNamespace,
     OperationAuditEntry,
@@ -249,6 +250,21 @@ class PostgresqlProtectedAuditJournal(_ProtectedSession):
         super().__init__(session, schema)
         self._clock = clock
 
+    @staticmethod
+    def _require_storage_binding(entry: ProtectedAuditEntry, row: object) -> None:
+        if (
+            entry.event_id != str(row.event_id)  # type: ignore[attr-defined]
+            or entry.event_kind.value != row.event_kind  # type: ignore[attr-defined]
+            or entry.previous_entry_sha256 != row.previous_entry_sha256  # type: ignore[attr-defined]
+            or entry.entry_sha256 != row.entry_sha256  # type: ignore[attr-defined]
+            or entry.recorded_at != row.recorded_at  # type: ignore[attr-defined]
+            or (
+                isinstance(entry, OperationAuditEntry) and entry.operation_key != row.operation_key  # type: ignore[attr-defined]
+            )
+            or (not isinstance(entry, OperationAuditEntry) and row.operation_key is not None)  # type: ignore[attr-defined]
+        ):
+            raise ProtectedSecurityError("AUDIT_BINDING_MISMATCH")
+
     async def _verified_entries(self, *, lock_head: bool) -> tuple[ProtectedAuditEntry, ...]:
         lock = " FOR UPDATE" if lock_head else ""
         head_result = await self._execute(
@@ -259,7 +275,9 @@ class PostgresqlProtectedAuditJournal(_ProtectedSession):
         if head is None:
             raise ProtectedSecurityError("AUDIT_UNAVAILABLE")
         entries_result = await self._execute(
-            f"SELECT sequence, entry_body FROM {self._schema}.audit_entry ORDER BY sequence",
+            f"SELECT sequence, event_id, event_kind, operation_key, entry_body, "
+            f"previous_entry_sha256, entry_sha256, recorded_at "
+            f"FROM {self._schema}.audit_entry ORDER BY sequence",
             fallback="AUDIT_UNAVAILABLE",
         )
         entries: list[ProtectedAuditEntry] = []
@@ -267,12 +285,19 @@ class PostgresqlProtectedAuditJournal(_ProtectedSession):
         for expected_sequence, row in enumerate(entries_result, start=1):
             if row.sequence != expected_sequence or not isinstance(row.entry_body, dict):
                 raise ProtectedSecurityError("AUDIT_TAIL_TRUNCATED")
-            model_type = (
-                AuthorizationAuditEntry
-                if row.entry_body.get("event_kind") == ProtectedAuditEventKind.AUTHORIZATION.value
-                else OperationAuditEntry
-            )
+            model_types = {
+                ProtectedAuditEventKind.AUTHORIZATION.value: AuthorizationAuditEntry,
+                ProtectedAuditEventKind.CONTROL.value: ControlCommandAuditEntry,
+                ProtectedAuditEventKind.OPERATION.value: OperationAuditEntry,
+            }
+            event_kind = row.entry_body.get("event_kind")
+            if not isinstance(event_kind, str):
+                raise ProtectedSecurityError("AUDIT_UNAVAILABLE")
+            model_type = model_types.get(event_kind)
+            if model_type is None:
+                raise ProtectedSecurityError("AUDIT_UNAVAILABLE")
             entry = _model(model_type, row.entry_body, "AUDIT_UNAVAILABLE")
+            self._require_storage_binding(entry, row)
             if entry.sequence != expected_sequence or entry.previous_entry_sha256 != previous:
                 raise ProtectedSecurityError("AUDIT_HASH_MISMATCH")
             if audit_entry_sha256(entry) != entry.entry_sha256:
