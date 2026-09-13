@@ -298,6 +298,12 @@ Component의 두 참조 Snapshot 열을 별도로 보존하고 Product/Ingredien
 HEAD `c58f09686d3a72567793ee237abeb500ab04e710`의 MFDS 매핑·총량 그룹·출처·Candidate 인계를
 확인한 증빙이다. 실제 수집·MFDS 공식 의미·운영 활성화 승인을 의미하지 않는다.
 
+D-04 상세 수집기 후속은 [상세 수집·Snapshot 생산 계약](contracts/proposed/post-mvp-1/mfds-detail-acquisition-166.md)을 따른다.
+새 DB 구조 없이 별도 상세 Operation을 기존 Source Snapshot/Run/Artifact에 연결하는 구현 PR 검토 대상이다.
+전체 상세 원문을 검증하며 빈 키·중복·제외 행이 있으면 실패 Run과 원문만 보존한다.
+일부 행에 전체 Snapshot Receipt를 붙이거나 성공 Snapshot으로 보정하지 않는다.
+
+
 `rag_catalog_set`은 현재 Catalog의 manifest·Source·member·hash를 결속하는 저장·재현 구성 단위다.
 기존 v2와 관찰 v3 export를 수용한다. Set 종류 컬럼은 없으며, `RagCatalogMemberKind`의
 `PRODUCT / INGREDIENT / COMPONENT / ALIAS / SEARCH_ENTRY`는 Set 안의 구성원 종류다.
