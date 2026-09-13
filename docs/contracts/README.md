@@ -153,3 +153,9 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [D-04 관찰 출처·인계 v3 결정안](../governance/decisions/2026-09-13-component-observation-handoff.md):
   검증된 상세 artifact Loader, 독립 Snapshot FK, 관찰 버전·총량 그룹의 DB/Candidate 인계 제안.
   기존 v2를 보존하고 관찰 자료는 medication-catalog-v3로 구분. 계약 정본은 위 Catalog DB 연결안.
+
+### #166 실제 승인 저장소 후속 제안
+
+- [승인·철회·감사 저장소 구체안](proposed/post-mvp-1/catalog-approval-storage-166.md):
+  Proposed. 기존 관리 감사와 승인 receipt 저장을 구분하고, 승인 대상·포트·transaction·최소 권한·이행 및 검증 범위를 제안한다.
+  실제 연결·DB 변경·신규 승인 획득은 미완료이며 기존 D-03/D-05 합의의 승인 범위에 포함하지 않는다.
