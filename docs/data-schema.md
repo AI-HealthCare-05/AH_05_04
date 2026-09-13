@@ -286,14 +286,22 @@ D-04 Component 전환안 (`e8c41a09d652`, #166 리뷰 대상):
 - 기존 순서 충돌은 migration을 중단시킨다. downgrade는 반복 행·release_profile 손실이
   발생할 때 거부한다. 세부 호환성은 [D-04 결정안](governance/decisions/2026-09-11-catalog-component-occurrences.md)을 따른다.
 
-D-04 관찰 출처 후속안 (`166f30415263`, PR 리뷰 대상)은 위 #464 구조를 확장한다.
+D-04 관찰 출처 후속안 (`166f30415263`, PR #477)은 위 #464 구조를 확장한다.
 Component의 두 참조 Snapshot 열을 별도로 보존하고 Product/Ingredient 각각의 composite FK로
 결속한다. 자체 상세 Snapshot을 포함한 `(product_id, source_snapshot_id, display_order)`가 새
 고유성이다. `observation_json` BYTEA에는 원문 총량 그룹·관찰 키·출처·순서 계약을 보존한다.
 기존 행의 참조 출처만 FK 근거로 이행하며 관찰 값을 추론하지 않는다. 출처·관찰 정보 손실이
 있으면 downgrade를 거부한다. 검증·저장·복원은 Python transaction에서 수행한다.
 [필드·v2/v3 인계 계약](contracts/proposed/post-mvp-1/catalog-db-integration-v2.md),
-[결정안](governance/decisions/2026-09-13-component-observation-handoff.md)을 함께 검토한다.
+[결정 및 합의 근거](governance/decisions/2026-09-13-component-observation-handoff.md)를 함께 확인한다.
+[정현우 담당 범위 승인 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/477#pullrequestreview-5190458759)는
+HEAD `c58f09686d3a72567793ee237abeb500ab04e710`의 MFDS 매핑·총량 그룹·출처·Candidate 인계를
+확인한 증빙이다. 실제 수집·MFDS 공식 의미·운영 활성화 승인을 의미하지 않는다.
+
+D-03 Crosswalk는 현재 P0 소비 경로가 없어 #166의 즉시 구현 범위에서 제외한다.
+`rag_catalog_set`을 Crosswalk Set으로 재해석하거나 승인 입력 없이 매핑·빈 READY Set을
+생성하지 않는다. Alias D-03a 및 D-04 원료 관찰 연결과 구분하며,
+[D-03 범위 결정·공개 확인 근거·재개 조건](governance/decisions/2026-09-13-catalog-crosswalk-scope.md)을 따른다.
 
 Source/Snapshot 책임 경계:
 

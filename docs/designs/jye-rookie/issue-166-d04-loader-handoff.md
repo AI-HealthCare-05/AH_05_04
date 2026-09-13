@@ -6,7 +6,8 @@
 - 구현: 김지혜. 담당 리뷰어: 정현우(`ceohwj`). DB·migration 전문 검토: 송은영(`phina-io`).
 - 계약: [Catalog DB 연결안](../../contracts/proposed/post-mvp-1/catalog-db-integration-v2.md)
 - 변경 결정안: [Component 관찰 출처](../../governance/decisions/2026-09-13-component-observation-handoff.md)
-- 근거: [MFDS 실측](../../testing/mfds-component-key-audit-166.md), 사용자 전달 현우님 2026-09-13 답변.
+- 실측 근거: [MFDS 관찰 검사](../../testing/mfds-component-key-audit-166.md). 공식 의미 승인과 구분한다.
+- 합의·검토 근거: [D-04 결정 문서의 원문 및 공개 리뷰](../../governance/decisions/2026-09-13-component-observation-handoff.md#합의와-검토-근거). PR #477 HEAD `c58f09686d3a72567793ee237abeb500ab04e710`의 정현우 담당 범위 승인 기록을 연결하며 전문 검토·운영 승인은 별도다.
 
 ## 반영한 방향
 

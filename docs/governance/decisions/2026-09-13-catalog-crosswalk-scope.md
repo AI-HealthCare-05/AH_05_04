@@ -1,9 +1,10 @@
 # #166 D-03 Crosswalk 범위와 재개 조건
 
-- 상태: 사용자 전달 정현우 Discord 답변의 범위 결정 기록. Crosswalk 구현 완료·Runtime 승인 아님.
+- 상태: 정현우가 PR #477 공개 리뷰에서 확인한 범위 결정. Crosswalk 구현 완료·Runtime 승인 아님.
 - 확인일: 2026-09-13
 - 구현 담당: 김지혜. Candidate·Identity·Runtime 의미 확인: 정현우. DB·migration 검토: 송은영.
-- 근거: 사용자가 제공한 정현우 15:43 답변. 공개 원문 링크는 아직 연결하지 않았다.
+- 공개 확인 근거: [PR #477 정현우 승인 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/477#pullrequestreview-5190458759), 검토 HEAD `c58f09686d3a72567793ee237abeb500ab04e710`.
+- 최초 합의 이력: [D-03 Crosswalk 범위 답변](https://discord.com/channels/@me/1545029651477307442/1548584827912069172). 사용자 제공 원문 링크이며 DM 접근 권한이 필요하다. 접근 가능한 공개 확인 근거는 위 PR 리뷰를 사용한다.
 
 ## 현재 결정
 
