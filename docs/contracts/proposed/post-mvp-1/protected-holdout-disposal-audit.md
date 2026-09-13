@@ -35,6 +35,8 @@
 | variant 구분은 `event_kind` 판별자다 | `ProtectedAuditEventKind` = `AUTHORIZATION`\|`OPERATION`, `ProtectedAuditEntry = AuthorizationAuditEntry \| OperationAuditEntry` | 세 번째 variant 추가가 기존 구조와 같은 방식이다 |
 | `INTENT`/`UNKNOWN` 미종결은 후속 실행을 **차단**한다 | `protected_retrieval.py` · `_resolve_operation_history`·`_resolve_guarded_operation_history`가 `RECONCILIATION_REQUIRED`로 fail-closed | §4-4의 재조정 절차를 새로 발명하지 않고 같은 규칙을 적용한다 |
 | 자기 승인은 이미 금지된다 | `ProtectedAuditReason.SELF_APPROVAL_DENIED` | §4-2의 승인 결속이 기존 통제와 일관된다 |
+| 그러나 승인 역할 타입은 **Custodian도 허용**한다 | `ProtectedApprovalRole` = `DATASET_CUSTODIAN`\|`PRODUCT_SAFETY_REVIEWER` | identity 비교만으로는 `PD-368` §8의 승인 주체를 강제할 수 없다. §4-2가 역할까지 검증한다 |
+| 기존 Operation 감사에 **폐기 action이 없다** | `OperationAuditEntry.protected_action`은 필수이고 `ProtectedAction` = `READ`\|`WRITE`\|`FREEZE`\|`RUN` | 폐기 거부를 기존 variant로 기록할 수 없다. §4-3 |
 | Dataset **운영 종료 상태가 이미 있다** | `evaluation/schemas/authoring.py` · `DatasetStatus` = `DRAFT`\|`FROZEN`\|`RETIRED`, schema `1.3.0`의 `DatasetStatus` | §3에서 **새 상태를 만들지 않는 근거**다 |
 | 그러나 `RETIRED`에는 증빙 요건이 없다 | `DatasetManifest.validate_manifest`는 `FROZEN`에만 `frozen_at`·승인된 provenance를 요구하고 `RETIRED`에는 아무 조건이 없다 | §3의 유일한 실질 변경 지점이다 |
 | kernel의 Dataset 상태축은 **접근 통제용**으로 별개다 | `ProtectedDatasetState` = `ACCESS_AUTHORIZED`\|`AUTHORING`\|`REVIEW_READY`\|`FROZEN` | 두 축을 합치지 않는다(§3 대안 표) |
@@ -78,14 +80,16 @@
 | `disposal_request_id` | 하나의 폐기 요청을 `INTENT`와 종결 기록이 공유하는 키 |
 | `dataset_id`, `dataset_version`, `manifest_sha256` | 폐기 대상 Dataset version의 identity |
 | `protected_artifact_sha256` | 폐기 대상 원본 digest. 폐기 후 이 값만 남고 원본은 남지 않는다 |
-| `requested_by` | Custodian (`ProtectedPrincipal`) |
-| `approved_by` | 독립 승인자 (`ProtectedApprovalPrincipal`). `requested_by`와 같으면 `SELF_APPROVAL_DENIED` |
+| `requested_by` | 폐기 요청자. `ProtectedPrincipal`이며 역할은 `DATASET_CUSTODIAN`이어야 한다 |
+| `approved_by` | Product·Evaluation 독립 승인자. `ProtectedApprovalPrincipal`이며 **역할이 `PRODUCT_SAFETY_REVIEWER`여야 한다**. 역할이 `DATASET_CUSTODIAN`이면 거부한다. `requested_by`와 같은 identity면 `SELF_APPROVAL_DENIED` |
 | `approval_source_event_id`, `approval_source_raw_sha256` | 승인 증빙 결속. 기존 `AuthorizationAuditEntry`와 동일한 방식 |
 | `legal_hold_state` | `ABSENT`\|`PRESENT`\|`UNVERIFIED`. `ABSENT`가 아니면 폐기하지 않는다 |
 | `backup_disposition` | `NO_BACKUP_EXISTS`\|`BACKUP_DISPOSED`\|`BACKUP_RETAINED`\|`UNVERIFIED`. 백업이 남아 있으면 "폐기됨"이 아니다 |
 | `outcome` | `DatasetDisposalOutcome` (§4-3) |
 | `reason_code` | `ProtectedAuditReason` 재사용 |
 | `closes_intent` | 선행 `INTENT`를 종결하는 기록인지 |
+
+**승인자 자격은 identity 비교만으로 충족되지 않는다.** `ProtectedApprovalRole`은 `DATASET_CUSTODIAN`과 `PRODUCT_SAFETY_REVIEWER` 둘 다 허용하므로, 「요청자와 다른 사람」만 요구하면 **서로 다른 Custodian 두 명으로 상위 정책의 필수 승인을 대체할 수 있다.** `PD-368` §8은 「Custodian의 폐기 요청 + Product·Evaluation 책임자의 독립 승인」을 요구하고, §4는 그 독립 발급을 `PRODUCT_SAFETY_REVIEWER` 역할로 수행한다고 고정한다. 따라서 저장 경계는 역할과 identity를 **모두** 검증한다.
 
 `legal_hold_state`와 `backup_disposition`에 `UNVERIFIED`를 둔 이유는 fail-closed다. "확인하지 못했다"를 "없다"로 기록할 수 없어야 한다.
 
@@ -99,14 +103,24 @@
 | `SUCCEEDED` | 삭제 성공 확인. `closes_intent = true` |
 | `UNKNOWN` | 삭제 시도 후 결과를 확인하지 못함. `closes_intent = false`, 재조정 필요 |
 
-`DENIED`는 포함하지 않는 것을 제안한다 — 승인되지 않은 폐기는 `INTENT`에 도달하지 못하므로 남길 폐기 사실이 없고, 거부는 이미 기존 `OperationAuditOutcome.DENIED`로 기록된다. **다만 이 판단은 검토가 필요하다(§7-D2).**
+`DENIED`를 이 enum에 포함할지는 **결정 필요**(§7-D2)다.
+
+**다만 「기존 Operation 감사가 폐기 거부를 이미 기록한다」는 전제는 성립하지 않는다.** `OperationAuditEntry.protected_action`은 필수이고 `ProtectedAction`에는 `READ`·`WRITE`·`FREEZE`·`RUN`만 있다. 폐기 거부를 기존 variant에 넣으려면 **다른 작업으로 잘못 기록하거나 기록을 아예 남기지 못한다.**
+
+따라서 D2의 선택과 무관하게 다음은 **승인·구현 전 확정해야 하는 필수 항목**이다.
+
+- 폐기 거부의 **action**(어떤 행위가 거부됐는지)
+- 거부 **대상**(`dataset_version`·`disposal_request_id`)
+- 거부 **사유**(고정 reason code)
+
+이 셋을 담을 감사 표현이 정해지기 전에는, 거부가 남지 않는 경로가 생기므로 폐기를 열지 않는다(§6).
 
 ### 4-4. 순서와 재조정
 
 1. `INTENT` 기록이 **성공적으로 journal에 들어간 뒤에만** 실제 삭제를 시작한다. 순서를 뒤집으면 원본이 사라졌는데 그 사실을 남긴 기록이 없는 상태가 가능해진다.
 2. 삭제 후 `SUCCEEDED` 또는 `UNKNOWN`을 기록한다.
 3. 같은 `dataset_version`에 종결되지 않은 `INTENT` 또는 `UNKNOWN`이 있으면 **그 Dataset version에 대한 모든 후속 폐기·실행을 차단한다.** kernel이 이미 `_resolve_operation_history`에서 쓰는 `RECONCILIATION_REQUIRED`와 같은 규칙이다.
-4. 재조정은 실제 저장 상태를 확인한 사람이 결과를 확정해 종결 기록을 남기는 절차이며, 요청자 단독으로 할 수 없다(§4-2의 독립 승인과 동일).
+4. 재조정은 실제 저장 상태를 확인한 사람이 결과를 확정해 종결 기록을 남기는 절차이며, 요청자 단독으로 할 수 없다. 종결 기록의 승인 결속도 §4-2와 같은 자격(`PRODUCT_SAFETY_REVIEWER` 역할 + 요청자와 다른 identity)을 요구한다.
 
 ### 4-5. 감사 기록에 담지 않는 것
 
@@ -126,6 +140,7 @@ Dataset 원문, 질문·Gold 본문, 경로, 접근 주체의 보호 위치는 �
 2. 이 문서가 승인되고, §3-1 schema 보완과 §4 variant가 구현·테스트된다.
 3. `protected_retrieval_infrastructure_evidence.py`의 `disposal_status`가 같은 PR에서 함께 전환된다 — 그 고정 기대값은 폐기가 차단되어 있다는 사실의 기계 기록이므로, 계약만 승인되고 이 값이 남아 있으면 문서와 증빙이 어긋난다.
 4. `PD-368` §9의 백업 경계가 확정된다 — 백업에 남은 사본을 확인할 수 없으면 `backup_disposition`을 `UNVERIFIED`로만 기록할 수 있고, 그 상태의 폐기는 "폐기됨"을 주장하지 못한다.
+5. §7-D2의 **폐기 거부 감사 표현**이 확정된다 — 거부의 action·대상·사유를 남길 곳이 없으면 거부가 기록되지 않는 경로가 생긴다.
 
 ## 7. 결정이 필요한 항목
 
@@ -144,9 +159,17 @@ Dataset 원문, 질문·Gold 본문, 경로, 접근 주체의 보호 위치는 �
 
 결정 전까지 §6에 따라 폐기는 차단이다.
 
-### D2. `DatasetDisposalOutcome`에 `DENIED`를 두는지 — **권가빈·송은영**
+### D2. 폐기 거부를 어떤 감사 표현으로 남기는지 — **권가빈·송은영**
 
-§4-3의 제안은 두지 않는 것이다. "폐기가 거부된 사실"을 폐기 축에 남겨야 한다는 판단이면 추가한다.
+「기존 `OperationAuditOutcome.DENIED`로 이미 남는다」는 전제는 성립하지 않는다(§4-3). `protected_action`이 필수인데 `ProtectedAction`에 폐기에 해당하는 값이 없기 때문이다.
+
+| 안 | 결과 |
+| --- | --- |
+| A. `DatasetDisposalOutcome`에 `DENIED` 추가 | 폐기 축 안에서 거부까지 하나의 chain에 남는다. 값이 하나 늘어난다 |
+| B. 별도 거부 표현(예: `INTENT` 이전 단계의 요청 기록) | 승인 전 단계와 폐기 사실을 분리한다. 표현을 새로 정의해야 한다 |
+| C. `ProtectedAction`에 폐기 action 추가 | 기존 Operation 감사를 그대로 쓴다. `PD-368` §8이 금지한 「기존 enum에 폐기를 끼워 넣기」에 해당할 소지가 있다 |
+
+어느 안이든 **거부의 action·대상·사유 세 가지가 기록에 남아야 한다.** 이 항목이 확정되기 전에는 폐기를 열지 않는다(§6-5).
 
 ### D3. 폐기 감사 기록의 보존 기간 — **권가빈**
 
@@ -170,7 +193,8 @@ Dataset 원문, 질문·Gold 본문, 경로, 접근 주체의 보호 위치는 �
 | 계약 작성·후속 구현 | 정현우 (`@ceohwj`) | kernel variant, schema 보완, 테스트 |
 | 정책 결정·담당 리뷰 | 권가빈 (`@hazelnutflavoured`) | D1·D2·D3, 승인 구조, 보존 정책 정합 |
 | 접근 통제·저장 경계 검토 | 송은영 (`@phina-io`) | §5 저장 경계, D2 |
-| 독립 Custodian 승인 | `PD-368` §3의 지정에 따름 | 실제 폐기 요청·승인 (이 문서 범위 밖) |
+| 폐기 요청 | `DATASET_CUSTODIAN` (`PD-368` §4의 지정에 따름) | 실제 폐기 요청 (이 문서 범위 밖) |
+| 폐기 독립 승인 | Product·Evaluation 책임자 — `PRODUCT_SAFETY_REVIEWER` 역할 (`PD-368` §8·§4) | 실제 폐기 승인 (이 문서 범위 밖). Custodian이 대신할 수 없다 |
 
 외부 승인·공개 게이트는 해당 없다. 계약 정의 단계이며 실제 폐기 실행 전이다.
 
