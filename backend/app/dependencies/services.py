@@ -19,6 +19,7 @@ from app.repositories.idempotency_repository import IdempotencyRepository
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
 from app.repositories.medication_checkin_repository import MedicationCheckinRepository
+from app.repositories.medication_report_repository import MedicationReportRepository
 from app.repositories.medication_schedule_queries import MedicationScheduleQueries
 from app.repositories.medication_schedule_repository import MedicationScheduleRepository
 from app.repositories.notification_repository import NotificationRepository
@@ -47,6 +48,7 @@ from app.services.medication_checkin_api import MedicationCheckinApiService
 from app.services.medication_checkins import MedicationCheckinService, NoopCheckinRevisionInvalidation
 from app.services.medication_identification import MedicationIdentificationService
 from app.services.medication_occurrences import PrescriptionVersionMedicationInvalidationService
+from app.services.medication_reports import MedicationReportService
 from app.services.medication_schedule_api import MedicationScheduleApiService
 from app.services.medication_schedule_mutations import MedicationScheduleMutationService
 from app.services.notifications import NotificationService
@@ -565,3 +567,9 @@ def get_medication_schedule_api_service(
         ),
         idempotency_service,
     )
+
+
+def get_medication_report_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> MedicationReportService:
+    return MedicationReportService(MedicationReportRepository(session))

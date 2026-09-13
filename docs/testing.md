@@ -432,3 +432,11 @@ PostgreSQL·실제 ASGI 앱으로 검증한다. 기본 runner의 Backend 수집 
 `backend/app/tests/notifications`, `tests/contract/test_notification_runtime_configuration.py`,
 `tests/integration/rag/test_database_role_provisioning.py`는 기본 필수 runner에 포함된다.
 실제 Local Docker smoke와 Production 적용 여부는 별도로 기록한다.
+
+### #419 공통 복약 집계
+
+`backend/app/tests/medication_reports/test_medication_report_api.py`는 7/30일·KST 경계,
+0분모·반올림, 과거 version·SELF 소유권, Scheduler 지연 및 실제 Check-in API 정정 후
+재집계, OpenAPI와 Frontend 합성 fixture를 검증한다. 기본 `run_test.sh` Backend lane에
+자동 포함된다. [실행 증빙](validation/track-b/issue-419-medication-report.md)을 참고한다.
+#469와 병렬 실행할 때는 같은 이름의 test DB를 재생성하지 않도록 별도 PostgreSQL 인스턴스를 사용한다.
