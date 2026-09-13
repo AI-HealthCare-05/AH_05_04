@@ -17,10 +17,10 @@ RAG-16은 먼저 **Claim–Citation 검증과 Citation Authorization Receipt 검
 pure layer**로 구현한다. 이번 slice는 다음 세 모듈만 추가한다.
 
 1. `claim_citation_validator.py`: 생성된 Claim과 Citation 후보의 구조·완전성·근거 결속을 검증하고,
-   caller가 제공한 support verifier의 Receipt를 exact-match한다.
-2. `citation_authorization.py`: 검증된 Citation Selection을 승인 요청으로 투영하고, 외부 승인 Port가 반환한
-   Receipt가 요청과 exact-match하는지 검증한다.
-3. `citation_finalizer.py`: Validator 이후에만 Authorization을 호출하도록 순서를 강제하고, 승인된 Selection 또는
+   caller가 제공한 support Receipt를 exact-match한다.
+2. `citation_authorization.py`: 검증된 Citation Selection을 승인 요청으로 투영하고, 외부 승인 경계에서 관측한
+   Receipt가 요청과 exact-match하는지 순수 판정한다.
+3. `citation_finalizer.py`: 검증된 Selection·승인 요청·관측 Receipt의 결속을 최종 확인하고, 승인된 Selection 또는
    생성 내용 폐기 지시를 반환한다.
 
 `handler.py`, `retriever.py`, `generator.py`와 LangGraph 조립은 이번 slice에서 만들지 않는다. 이미 존재하는
@@ -31,7 +31,7 @@ RAG-14 `evidence_retrieval.py`·`evidence_gate.py`와 RAG-15 `guideline_card.py`
 
 - 실제 구현체·소비자가 없는 미래 확장용 interface를 만들지 않는다.
 - 같은 의미의 DTO/model/schema를 계층마다 복제하지 않는다.
-- 보안·의료 안전 경계에 필요한 Protocol은 현재 필요성을 근거로 도입한다.
+- 실제 I/O 소비자가 생기기 전에는 sync/async를 고정하는 미래용 Protocol을 만들지 않는다.
 - AI Worker 흐름은 `Task/Consumer → Service → Repository/External Client`로 추적 가능하게 유지한다.
 
 ## 2. 착수 가능 범위와 차단 범위
@@ -46,7 +46,7 @@ RAG-14 `evidence_retrieval.py`·`evidence_gate.py`와 RAG-15 `guideline_card.py`
 - Generator가 자체 표기한 `SUPPORTED`를 신뢰하지 않고 versioned support assessment Receipt를 검증하는 경계
 - 원 `REQUEST/PASS`와 `CITATION_AUTHORIZATION` 요청의 Bundle·환경·Manifest·Scope exact-match
 - 모든 선택 Source/Member가 `PATIENT_CITATION`, `selected_for_operation=true`, `PASS`인지 Receipt 검증
-- Port exception·malformed Receipt·호출 중 입력 변조의 fail-closed 처리
+- 누락·malformed·요청 불일치 Receipt의 fail-closed 처리
 - 비식별 합성 fixture와 순수 단위·계약 테스트
 
 위 범위는 DB·Graph·HTTP·Provider·시계·네트워크 없이 검증 가능하다. Target 계약의 enum이나 공개 DTO를
@@ -56,7 +56,7 @@ RAG-14 `evidence_retrieval.py`·`evidence_gate.py`와 RAG-15 `guideline_card.py`
 
 | 차단 범위 | 해소 조건 | 이번 설계의 대응 |
 | --- | --- | --- |
-| Citation Guard row 생성과 Parent/Source/Member Decision 원자 저장 | #174 후속 Guard persistence·transaction 계약 | `CitationAuthorizationPort` 뒤로 격리하고 저장 구현 0건 |
+| Citation Guard row 생성과 Parent/Source/Member Decision 원자 저장 | #174 후속 Guard persistence·transaction 계약 | pure request/Receipt 계약까지만 고정하고 저장 구현 0건 |
 | Guide/Chat `JOB_EXECUTE`와 LangGraph 실행 | #174 접수·Full Context·currentness 연결, #148 공통 Job API 연결 | Graph·Handler registry·Worker assembly 0건 |
 | 결과 commit과 `AI_JOB=STALE` 전이 | #174 결과 commit currentness transaction | finalizer가 DB/Job 상태를 반환하지 않음 |
 | 공개 Citation DTO와 `PASS` 공개 | v2 DTO·OpenAPI·Migration·Contract/Integration Test 동시 승격 | pure outcome을 public DTO로 직렬화하지 않음 |
@@ -93,9 +93,10 @@ RAG-14 `evidence_retrieval.py`·`evidence_gate.py`와 RAG-15 `guideline_card.py`
 회귀 근거로 재사용하지만, `Synthetic*` 타입이나 `evaluate_synthetic_source_governance` 결과를 Runtime 승인으로
 취급하지 않는다.
 
-새 authorization layer는 Source 적합성을 다시 판정하지 않는다. 실제 권위 Source에서 승인을 발급하는 책임은
-후속 Backend Application Service/Repository adapter에 있고, pure layer는 반환 Receipt가 자신이 보낸 요청과
-정확히 결속됐는지만 검증한다.
+새 authorization layer는 Source 적합성을 다시 판정하지 않는다. 실제 권위 Source에서 승인을 발급·저장하는 책임은
+#174가 확정할 persistence 계약을 따르는 후속 Worker Application Service와 `ai_worker/adapters` 구현에 있다.
+Worker는 `backend.app`을 import하지 않으며, transaction commit/rollback은 기존 Consumer의 ResultStore 경계가 소유한다.
+pure layer는 외부 I/O를 호출하지 않고 관측 Receipt가 자신이 만든 요청과 정확히 결속됐는지만 검증한다.
 
 ### 3.3 이름 충돌 방지
 
@@ -113,19 +114,22 @@ RAG-14 EvidenceGateOutcome / RAG-15 GuidelineCardOutcome / 후속 Generator Draf
 ClaimCitationCandidateSet
         │
         ▼
-validate_claim_citations(..., support_verifier)
+validate_claim_citations(..., support_receipts)
         ├─ shape/binding/support 실패
         │      → ValidationRejected + DISCARD_GENERATED_CONTENT
-        │      → Authorization Port 호출 0건
+        │      → Authorization request 생성 0건
         │
         └─ ValidatedCitationSelection
                  │ canonical selection projection/hash
                  ▼
-          finalize_citations()
+          build_citation_authorization_request()
+                 │  후속 async Worker Service가 외부 승인·저장을 수행
+                 ▼
+          observed CitationAuthorizationReceipt
                  │
                  ▼
-          CitationAuthorizationPort.authorize(detached request snapshot)
-                 ├─ exception / malformed / mismatch / FAIL
+          finalize_citations(validated selection, request, receipt)
+                 ├─ missing / malformed / mismatch / FAIL
                  │      → AuthorizationRejected + DISCARD_GENERATED_CONTENT
                  └─ exact-bound PASS Receipt
                         → AuthorizedCitationSelection
@@ -175,30 +179,27 @@ ClaimCitationCandidateSet(
 
 각 `CitationCandidate`는 위 tagged Evidence Ref 중 정확히 하나를 값으로 가진다. nullable FK 다섯 개를 한
 dataclass에 병렬로 두지 않아 잘못된 조합을 구성하기 어렵게 한다. 각 변형은 필요한 Evidence/Source Snapshot,
-artifact/member, source version, locator, content digest를 명시한다. `PRESCRIPTION`만 Source 실행 provenance를
-nullable로 허용한다.
+artifact/member, source version, locator, content digest를 명시한다. Source 실행 provenance는 Source와
+`ENDPOINT_OPERATION | ARTIFACT_MEMBER` tagged member identity, 원 REQUEST의 Source/Member Decision ref를 분리해
+보존한다. 새 Citation Authorization Decision ref는 아직 존재하지 않으므로 후보나 요청에 넣지 않고 Receipt에서만
+관측한다. `PRESCRIPTION`만 Source 실행 provenance를 nullable로 허용한다.
 
 #### Claim support 권위
 
-Generator가 만든 `support_status` 문자열은 승인 근거가 아니다. Validator는 다음 보안 경계를 사용한다.
-
-```python
-class ClaimSupportVerifierPort(Protocol):
-    def verify(
-        self,
-        assertion: ClaimSupportAssertion,
-        projection: ClaimCitationProjection,
-    ) -> ClaimSupportVerificationSuccess | ClaimSupportVerificationFailure: ...
-```
+Generator가 만든 `support_status` 문자열은 승인 근거가 아니다. Validator는 caller가 외부 권위 경계에서 관측한
+`ClaimSupportVerificationReceipt`를 입력받고, Candidate에서 다시 계산한 projection과 exact-match한다.
 
 성공 Receipt는 assertion artifact ref, verifier artifact ref, Claim text digest, Citation Evidence Ref 전량,
-Claim/Citation projection hash와 support status를 exact-bind해야 한다. Port가 단순히 `SUPPORTED`만 반환하거나
+Claim/Citation projection hash와 support status를 exact-bind해야 한다. Receipt가 단순히 `SUPPORTED`만 반환하거나
 요청의 일부 Citation만 확인하면 malformed Receipt로 거부한다.
 
-이 Port는 의미 기반 NLI를 새로 도입하지 않는다. 현재 첫 소비자인 RAG-15 Guideline Card는 이미 검증한
+이 Receipt 계약은 의미 기반 NLI를 새로 도입하지 않는다. 현재 첫 소비자인 RAG-15 Guideline Card는 이미 검증한
 Evidence assessment와 Guideline Evidence Binding을 투영한다. 후속 Interaction Rule은 결정적 Rule Binding을,
-일반 생성 답변은 승인된 Claim support assessment가 마련된 경우에만 같은 Port를 구현한다. 권위 있는 assertion을
-제공할 구현이 없으면 `SUPPORT_VERIFICATION_UNAVAILABLE`로 fail-closed하며, Generator의 자기 선언으로 우회하지 않는다.
+일반 생성 답변은 승인된 Claim support assessment가 마련된 경우에만 같은 Receipt를 제공한다. 권위 있는 Receipt가
+없으면 `SUPPORT_VERIFICATION_UNAVAILABLE`로 fail-closed하며, Generator의 자기 선언으로 우회하지 않는다.
+
+pure layer는 Receipt 발급자의 권위나 DB 존재를 증명하지 않는다. 후속 Worker Service가 #174의 승인 저장소에서
+Receipt를 관측한 뒤 이 순수 검증 함수에 전달해야 하며, 이 단계가 연결되기 전 pure 성공은 Runtime 공개 권한이 아니다.
 
 #### 출력
 
@@ -210,6 +211,9 @@ ClaimCitationValidationOutcome(
     validated_selection,    # 성공 때만 존재
 )
 ```
+
+`ValidatedCitationSelection`은 검증에 사용한 support Receipt 전량을 canonical Claim 순서로 보존한다. 후속
+Authorization 진입은 후보와 Receipt를 다시 순수 검증해 Receipt가 누락·교체된 forged selection을 거부한다.
 
 이 enum은 pure module 내부 결과이며 API·DB·공유 메시지 계약이 아니다. v2의 `release_decision` 값을 재사용하거나
 새 값을 추가하지 않는다.
@@ -236,18 +240,12 @@ CitationAuthorizationRequest(
 Scope code와 Selection entry는 canonical UTF-8 byte order로 정렬하고 중복을 거부한다. Hash는 NFC 문자열과
 projection version을 포함한 canonical JSON의 SHA-256이다. 잘못된 입력을 조용히 정규화하지 않는다.
 
-#### 필요한 Protocol
+#### I/O 경계
 
-```python
-class CitationAuthorizationPort(Protocol):
-    def authorize(
-        self,
-        request: CitationAuthorizationRequest,
-    ) -> CitationAuthorizationPass | CitationAuthorizationFail: ...
-```
-
-이 Protocol은 미래 확장을 위한 장식이 아니라 현재 보안 경계다. pure test의 결정적 fake와 후속 원자 저장
-adapter가 동일한 요청/Receipt 계약을 구현해야 하고, kernel이 DB·승인 서비스에 직접 의존하지 않도록 한다.
+이번 pure slice는 `build_citation_authorization_request()`와 `verify_citation_authorization_receipt()`만 제공한다.
+동기 `Protocol`을 미리 고정하지 않는다. 후속 Worker Application Service는 현재 Worker 실행 모델에 맞는 async
+persistence port를 정의하고, 요청을 deep-copy한 값으로 승인·저장한 뒤 관측 Receipt를 pure verifier에 전달한다.
+이렇게 해야 DB I/O를 연결할 때 pure 함수의 sync 호출을 async로 바꾸는 재작업과 `backend.app` 역방향 import를 피한다.
 
 `Pass` Receipt는 최소한 다음을 반환해야 한다.
 
@@ -259,14 +257,17 @@ adapter가 동일한 요청/Receipt 계약을 구현해야 하고, kernel이 DB�
 - Selection Manifest Hash
 - 모든 Selection entry의 `selected_for_operation=true`
 - 목적 `PATIENT_CITATION`
+- 새 Citation Authorization Source Decision ref와 Member Decision ref
 - Source Decision과 Member Decision 전부 `PASS`
 
-pure layer는 Port가 `PASS`라고 말한 사실만 신뢰하지 않고 위 값을 요청과 exact-match한다.
+pure layer는 Receipt가 `PASS`라고 말한 사실만 신뢰하지 않고 위 값을 요청과 exact-match한다.
+요청 Selection은 Source/Member identity만 담고 새 Decision ref를 미리 만들지 않는다. `PRESCRIPTION` 후보의 구조
+검증은 지금 지원하지만, Source/Member Selection이 0건인 Citation Authorization 요청은 #174가 그 Guard 표현을
+확정하기 전까지 fail-closed한다. 빈 Selection을 성공으로 해석해 계약을 선점하지 않는다.
 
 ### 5.3 `citation_finalizer.py`
 
-`finalize_citations(candidate_set, runtime_binding, origin_guard, support_verifier, authorization_port)` 한 개의 구체
-함수를 둔다.
+`finalize_citations(validated_selection, authorization_request, authorization_receipt)` 한 개의 구체 함수를 둔다.
 Factory, Registry, class hierarchy는 만들지 않는다.
 
 반환값은 다음 둘 중 하나다.
@@ -290,7 +291,7 @@ fallback임을 별도로 확인한다. 이를 자동 우회 경로로 추가하�
 3. **Citation identity**: 빈 값·중복 citation key·없는 Claim 참조를 차단한다.
 4. **Typed Evidence Ref**: `source_type`과 tagged ref 변형이 exact-match해야 한다.
 5. **Provenance**: source version, locator, digest, Snapshot/artifact/member ref의 필수값과 결속을 확인한다.
-6. **Support assertion**: 검증된 값으로 만든 detached Claim/Citation projection을 `ClaimSupportVerifierPort`에 전달하고 Receipt의
+6. **Support assertion**: 검증된 값으로 만든 detached Claim/Citation projection과 caller가 제공한 Receipt의
    artifact·verifier·projection hash·Claim/Citation 전량 결속을 확인한다.
 7. **Support decision**:
    - `MEDICAL`은 `SUPPORTED`만 허용하고 Citation이 하나 이상이어야 한다.
@@ -305,23 +306,23 @@ fallback임을 별도로 확인한다. 이를 자동 우회 경로로 추가하�
 1. origin Guard가 `REQUEST/PASS`인지 확인한다.
 2. origin과 요청의 환경·Bundle·Manifest·정렬 Scope·Scope Hash가 exact-match하는지 확인한다.
 3. 검증된 Citation만 Selection Manifest로 투영한다.
-4. Port에 deep detached snapshot을 전달한다.
-5. 호출 뒤 전달본과 원본이 바뀌지 않았는지 확인한다.
-6. 반환 Receipt의 구조·self reference·request binding·Selection 전량을 확인한다.
-7. Source/Member 중 하나라도 미선택·목적 불일치·FAIL이면 전체 Authorization을 거부한다.
+4. 후속 I/O Service에 넘길 immutable request를 반환한다.
+5. 별도로 관측된 Receipt의 구조·self reference·request binding·Selection 전량을 확인한다.
+6. Source/Member 중 하나라도 미선택·목적 불일치·FAIL이면 전체 Authorization을 거부한다.
 
-Port exception과 exception message는 outcome에 보존하지 않는다. 안정 reason code만 반환한다.
+외부 I/O exception은 후속 Service가 안정된 dependency failure로 변환해야 하며 pure outcome에 exception message를
+전달하지 않는다.
 
 ## 7. 실패 의미
 
 | 실패 | pure outcome | 후속 Runtime 의미 |
 | --- | --- | --- |
 | 입력 구조·enum·hash 오류 | `VALIDATION_ERROR/REJECTED` | 생성 내용 폐기, `VALIDATION_FAILED` fallback 후보 |
-| Support verifier 부재·exception·malformed Receipt | `DEPENDENCY_ERROR/REJECTED` | 생성 내용 폐기, `DEPENDENCY_UNAVAILABLE` 후보 |
+| Support Receipt 부재·malformed | `DEPENDENCY_ERROR/REJECTED` | 생성 내용 폐기, `DEPENDENCY_UNAVAILABLE` 후보 |
 | 의료 Claim Citation 누락 | `EVALUATED/REJECTED` | 생성 내용 폐기, 공개 0건 |
 | Support/근거 불일치 | `EVALUATED/REJECTED` | 생성 내용 폐기, 근거 없음·상충 fallback 후보 |
 | Authorization 정책 FAIL | `EVALUATED/REJECTED` | 생성 내용 폐기, 승인 fallback 후보 |
-| Port exception/malformed Receipt | `DEPENDENCY_ERROR/REJECTED` | 생성 내용 폐기, `DEPENDENCY_UNAVAILABLE` 후보 |
+| Authorization Receipt 부재/malformed | `DEPENDENCY_ERROR/REJECTED` | 생성 내용 폐기, `DEPENDENCY_UNAVAILABLE` 후보 |
 | Authorization PASS | `AUTHORIZED` | Release Gate 입력일 뿐 공개 허가 아님 |
 
 pure layer는 위 표의 “후속 Runtime 의미”를 직접 저장하거나 공개 enum으로 변환하지 않는다. 정확한
@@ -346,8 +347,8 @@ PR에서 v2 Target과 transaction 계약을 함께 연결한다.
 | 파일 | 검증 |
 | --- | --- |
 | `ai_worker/tests/rag/test_claim_citation_validator.py` | shape, support Receipt, typed ref, provenance, 전체 폐기, 결정적 hash |
-| `ai_worker/tests/rag/test_citation_authorization.py` | origin/scope/bundle/selection exact-match, fake Port, malformed/exception/mutation |
-| `ai_worker/tests/rag/test_citation_finalizer.py` | Validator-before-Port, 실패 시 Port 0회, 승인 결과 handoff |
+| `ai_worker/tests/rag/test_citation_authorization.py` | origin/scope/bundle/selection exact-match, 결정적 request, malformed Receipt |
+| `ai_worker/tests/rag/test_citation_finalizer.py` | Selection/request/Receipt 순서 결속, 실패 시 전체 폐기, 승인 결과 handoff |
 | `tests/contract/rag/test_claim_citation_contract.py` | v2 다섯 Source type·support 어휘·최소 불변식 drift |
 | `tests/fixtures/rag/citation/finalization_cases.json` | 비식별 합성 PASS/누락/변조/상충/승인 실패 matrix |
 
@@ -361,7 +362,7 @@ PR에서 v2 Target과 transaction 계약을 함께 연결한다.
 - `source_type`과 Evidence Ref 변형 불일치 전량
 - 의료 Claim의 0 Citation, `PARTIALLY_SUPPORTED`, `CONTRADICTED`, `NOT_SUPPORTED`
 - Generator가 `SUPPORTED`를 표기했지만 support assertion/Receipt가 없거나 Claim/Citation 일부만 결속한 사례
-- Support verifier exception, malformed success, 입력 snapshot 변조와 verifier artifact mismatch
+- Support Receipt 누락, malformed success, projection 변조와 verifier artifact mismatch
 - 존재하지 않는 Claim 참조, 중복 key/order, order gap
 - source version/locator/digest/Snapshot/member ref 누락·변조
 - 입력 순서 변경에도 같은 Selection hash
@@ -369,8 +370,8 @@ PR에서 v2 Target과 transaction 계약을 함께 연결한다.
 - origin REQUEST가 FAIL 또는 다른 Bundle/환경/Manifest/Scope를 참조
 - `PATIENT_CITATION` 대신 `RETRIEVAL` 승인만 반환
 - Selection 일부만 PASS, `selected_for_operation=false`, 추가·누락 Selection
-- Port가 입력 snapshot을 변조하거나 malformed PASS/exception을 반환
-- Validator 실패 시 Authorization Port 호출 0회
+- Authorization request와 다른 malformed PASS Receipt
+- Validator 실패 시 Authorization request 생성 0건
 - 어떤 실패 outcome/repr에도 합성 sentinel·Source 원문·exception message가 없음
 
 ### 9.3 검증 명령
@@ -401,7 +402,7 @@ DB·Redis·Provider·실제 환자 데이터 검증은 이 pure slice의 완료 
 | 후속 단계 | 추가되는 구현 | pure core와의 접점 |
 | --- | --- | --- |
 | RAG-13~15 통합 | Rule/Knowledge/Guideline 결과 변환 adapter와 support verifier | 각 결과와 승인 Binding을 `ClaimCitationCandidateSet`/support Receipt로 변환 |
-| #174 Guard persistence | Backend Application Service + Repository transaction adapter | `CitationAuthorizationPort` 구현 |
+| #174 Guard persistence | Worker Application Service + `ai_worker/adapters` persistence port; Consumer ResultStore transaction | pure request를 저장 경계로 전달하고 관측 Receipt를 verifier에 반환 |
 | #174 Context/currentness | pinned Context → `RuntimeAuthorizationBinding` 변환 | pure 입력 생성만 담당 |
 | LangGraph | `claim_citation_validator` Node와 Finalizer service 호출 | `finalize_citations` 호출, 내부 로직 복제 금지 |
 | Runtime Release Gate | Authorization outcome + Safety/Currentness 종합 | `AuthorizedCitationSelection` 소비 |
@@ -452,8 +453,9 @@ LangGraph 연결 시 다시 분해해야 한다.
 
 ### 선택안 — Validator → Authorization → Finalizer의 동작하는 수직 slice
 
-각 경계에 현재 보안·의료 안전 책임이 있고, fake Port와 후속 persistence adapter라는 실제 두 소비 방식이 존재한다.
-지금 작성한 pure 판정은 후속 adapter가 바뀌어도 유지할 수 있다.
+각 경계에 현재 보안·의료 안전 책임이 있고, 결정적 request/Receipt fixture와 후속 persistence adapter라는 실제 두
+소비 방식이 존재한다. I/O 호출 자체를 pure core 밖에 두므로 후속 async adapter가 추가돼도 지금 작성한 판정은
+유지할 수 있다.
 
 ## 13. 완료 기준
 
