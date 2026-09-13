@@ -137,3 +137,10 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [Catalog Component occurrence 결정안](../governance/decisions/2026-09-11-catalog-component-occurrences.md):
   Proposed. 선택 원본 키·제품별 순서 UNIQUE·release_profile·무손실 migration 경계.
   계약 정본은 기존 [Catalog DB 연결안](proposed/post-mvp-1/catalog-db-integration-v2.md)을 갱신한다.
+
+## Track C C1 저장 기반 (#192)
+
+- [저장 계약 v1 — Proposed/구현 PR 리뷰 대상](proposed/track-c-storage-v1.md)
+- [PD-192](../governance/decisions/2026-09-13-track-c-storage-192.md)
+- 실제 Check-in 부모에 Safety·Barrier·Plan·Follow-up 이력을 연결하는 저장 기반이다.
+  HandlerConfig 상세, 공개 mutation, #195 무효화와 Track C 공개는 미완료다.

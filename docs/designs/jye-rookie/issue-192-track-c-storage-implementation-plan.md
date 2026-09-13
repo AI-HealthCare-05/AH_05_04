@@ -1,5 +1,18 @@
 # #192 Track C 저장 모델·Migration 구현 계획
 
+## 2026-09-13 최신 구현 기준
+
+- 최신 `develop` `0ea12641`을 기존 Draft 브랜치에 merge했다.
+- #199~#201의 실제 부모 모델이 병합되어 부모 미구현 차단은 해소됐다.
+- 확정 범위의 Safety·Barrier·Plan·Follow-up/Audit 5개 ORM·migration과 SELF 소유권 조회를 구현한다.
+- 물리 제약과 reference 선택은 [PD-192](../../governance/decisions/2026-09-13-track-c-storage-192.md),
+  정확한 범위는 [저장 계약](../../contracts/proposed/track-c-storage-v1.md)을 따른다.
+- HandlerConfig 상세 Decision은 계속 미확정이다. #192 전체 완료나 사용자 쓰기 경로 완료를 주장하지 않는다.
+- 아래 원래 계획과 “구현 전 확인/시작 조건”은 2026-09-07 당시 기록이다.
+  현재 착수 조건은 위의 확정 범위로 제한하며 HandlerConfig 미확정을 다른 저장 기반 전체의 차단으로 삼지 않는다.
+
+## 2026-09-07 최초 계획 — 이력 보존
+
 ## 상태
 
 - 작성 기준: `develop` commit `4038f7e`
