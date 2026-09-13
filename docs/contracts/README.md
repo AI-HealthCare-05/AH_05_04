@@ -45,11 +45,13 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [OCR LLM Worker 범위 정정 (#453)](./proposed/ocr-llm-worker-consent-453.md): 기존 이관 범위와 리뷰 시 별도 검토할 항목. 기존 동의 개정안 미채택.
 - [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태, row 없음=미동의, Backend·Worker 공통 fixture 판정, WorkerMessage/Stream 비전송, CONSENT_REQUIRED 및 OCR CONSENT_WITHDRAWN 차단 의미. Proposed · 미구현 · Production 공개 승인 아님. 확인 필요: 권가빈·김지혜·정현우·남한솔.
 
-- [Track B UNCONFIRMED backlog v1](./proposed/unconfirmed-backlog-v1.md): PD-418 URL·cursor·DTO·오류 제안. 실제 v1 router 등록 보류, 테스트 앱의 #413 PUT→GET HTTP 통합 검증. Cursor 404의 첫 페이지 재조회 명시, 계약 및 등록 HEAD의 Backend/Frontend 승인 필요.
+- [Track B UNCONFIRMED backlog v1](./proposed/unconfirmed-backlog-v1.md): PD-418 URL·cursor·DTO·오류. #426 미등록 후보 승인 증빙 확인; 최신 #202 기반 실제 v1 등록·PUT 보완·페이지 이동 검증 변경은 두 리뷰어 재승인 대기. 승인 전 Current 승격·병합 금지.
 
 - [Track B Notification 계약 v1 (#203)](./proposed/track-b-notifications-v1.md): PD-203 기반 알림 저장·목록·읽음·재알림 구현 브랜치. 지정 리뷰어 승인 및 #202 일정 API 통합 전이며 current 계약 아님.
 
 - [Source Artifact·REJECTS 보존·삭제 정책 초안 (#335)](./proposed/post-mvp-1/source-artifact-retention-cleanup.md): PM 30일 유예·참조 보존·수동 배치 승인 반영, 통합 검토 대상, 후속 구현 [#347](https://github.com/AI-HealthCare-05/AH_05_04/issues/347)·김지혜 담당. Local 합성 #347의 승인 순서·revision·경합 잠금·DB 감사 근거·참조 범위 보완 연결 포함. 운영 삭제·활성화 승인 아님.
+
+- [Protected HOLDOUT Dataset 폐기 감사 계약 (#425)](./proposed/post-mvp-1/protected-holdout-disposal-audit.md): PD-368 §8이 분리를 지시한 폐기 감사 계약. 기존 audit chain에 `DISPOSAL` variant를 두고 `INTENT`→`SUCCEEDED`/`UNKNOWN`→재조정을 규정한다. 운영 종료는 기존 `DatasetStatus.RETIRED`를 재사용하며 새 상태를 만들지 않는다. 폐기 후 재현 범위 정책 결정 전까지 **실제 폐기는 차단 유지**. 실행 승인 아님.
 
 - [Staging Release Validation Ledger 계약](./proposed/operations/release-validation-ledger.md): staging control DB, 상태 전이, crash recovery와 migration 상호 배제
 - [개발환경·비밀정보 주입 경로 점검 운영 계약](./proposed/operations/development-env-secret-injection-check.md): Redis, PostgreSQL, Provider secret 주입 경로와 운영 배포 전 차단 조건
@@ -78,7 +80,7 @@ Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 
 - [RAG Evaluation·Release Gate 계약 v1](./targets/post-mvp-1/rag-evaluation-v1.md): RAG 전후 비교, 필수 Metric, Schema Set 1.3 `Candidate · Review Required` provenance 계약과 Release 차단 기준
 - [Safety Result·Citation 계약 v2](./targets/post-mvp-1/safety-result-v2.md): Track F에서 v1의 Safety Result·Citation·STALE·Release Gate 목표를 대체하는 후속 Target
 - [Safety Result 복합 STALE 우선순위 계약 v1 (`PD-173`)](./targets/post-mvp-1/safety-result-compound-stale-priority-v1.md): 처방 버전·식별 스냅샷·런타임 번들 복합 STALE 동시 발생 시 단일 공개 fallback_code 사영 우선순위(`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`)와 내부 `stale_reason` 분리 — Approved Target · Not implemented: 판정 kernel은 병합되었으나 런타임 호출부 없음
-- [Protected Retrieval Infrastructure 계약 v1 (`PD-368`)](./targets/post-mvp-1/protected-retrieval-infrastructure-v1.md): data-plane 제한 로그인·승인 artifact hash 결속·durable INTENT/UNKNOWN 부분 구현, control-plane grant/revoke/FREEZE 서비스 미구현
+- [Protected Retrieval Infrastructure 계약 v1 (`PD-368`, `PD-368-R1`)](./targets/post-mvp-1/protected-retrieval-infrastructure-v1.md): data-plane 부분 구현, authorization control C1 조율 완료·구현 중, identity/Dataset lifecycle·FREEZE 미구현
 
 계약 파일의 존재나 문서 승인은 Worker·API·schema 구현 완료 또는 공개 승인을 의미하지 않습니다.
 

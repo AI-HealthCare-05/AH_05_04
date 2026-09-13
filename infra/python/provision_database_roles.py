@@ -85,6 +85,7 @@ async def provision_roles(
         | CATALOG_TABLES
         | set(SOURCE_TABLES)
         | set(RUNTIME_AUTH_UPDATE_COLUMNS)
+        | {"notification_record"}
     )
     if not required.issubset(present):
         raise ValueError("Required application tables are missing; apply migrations before provisioning")
@@ -96,6 +97,8 @@ async def provision_roles(
             await connection.execute(
                 text(f"GRANT {privileges} ON TABLE public.{quoted_identifier(table)} TO {runtime_sql}")
             )
+    # #434: notification creation/publication/read require DML, never history deletion.
+    await connection.execute(text(f"GRANT SELECT, INSERT, UPDATE ON TABLE public.notification_record TO {runtime_sql}"))
     for table, columns in RUNTIME_AUTH_UPDATE_COLUMNS.items():
         target = f"public.{quoted_identifier(table)}"
         names = ", ".join(quoted_identifier(column) for column in columns)

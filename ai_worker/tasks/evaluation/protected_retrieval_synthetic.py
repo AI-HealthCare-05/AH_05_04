@@ -14,8 +14,6 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     OpaqueRefNamespace,
     OperationAuditEntry,
     OperationAuditOutcome,
-    ProtectedAction,
-    ProtectedApprovalRole,
     ProtectedAuditEntry,
     ProtectedAuditEventKind,
     ProtectedAuditReason,
@@ -25,15 +23,14 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     ProtectedDatasetState,
     ProtectedOperationRequest,
     ProtectedOperationResult,
-    ProtectedPrincipalRole,
     ProtectedSecurityError,
     VerifiedAuthorizationApproval,
     _operation_lifecycle_terminal,
     audit_entry_sha256,
-    authorization_grant_approval_sha256,
     authorization_grant_sha256,
     new_event_id,
 )
+from ai_worker.tasks.evaluation.protected_retrieval_control import verify_authorization_approval
 
 
 class FixedTrustedClock:
@@ -95,37 +92,7 @@ class InMemoryApprovalEvidenceVerifier:
         trusted = self._trusted_sources.get(source_event_id)
         if trusted is None or (presented is not None and presented != trusted):
             raise ProtectedSecurityError("APPROVAL_EVIDENCE_MISMATCH")
-        if trusted.authorization_action is not action:
-            raise ProtectedSecurityError("APPROVAL_ACTION_MISMATCH")
-        binding = grant.control_implementation
-        if (
-            trusted.state != "APPROVED"
-            or trusted.issuer != grant.issuer
-            or trusted.target_commit_oid != binding.commit_oid
-            or trusted.target_artifact_sha256 != binding.artifact_sha256
-            or trusted.canonical_raw_sha256 != expected_raw_sha256
-            or trusted.implementation_participants != binding.participants
-        ):
-            raise ProtectedSecurityError("APPROVAL_EVIDENCE_MISMATCH")
-        if trusted.approved_grant_payload_sha256 != authorization_grant_approval_sha256(grant):
-            raise ProtectedSecurityError("APPROVAL_GRANT_BINDING_MISMATCH")
-        if trusted.issuer.actor == grant.subject.actor or trusted.issuer.actor in binding.participants:
-            raise ProtectedSecurityError("SELF_APPROVAL_DENIED")
-        expected_issuer_role = (
-            ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER
-            if grant.subject.role is ProtectedPrincipalRole.DATASET_CUSTODIAN
-            else ProtectedApprovalRole.DATASET_CUSTODIAN
-        )
-        if trusted.issuer.role is not expected_issuer_role:
-            raise ProtectedSecurityError("ISSUER_ROLE_DENIED")
-        allowed_actions = {
-            ProtectedPrincipalRole.HOLDOUT_AUTHOR: {ProtectedAction.READ, ProtectedAction.WRITE},
-            ProtectedPrincipalRole.DATASET_CUSTODIAN: {ProtectedAction.READ, ProtectedAction.FREEZE},
-            ProtectedPrincipalRole.PROTECTED_RUNNER: {ProtectedAction.READ, ProtectedAction.RUN},
-        }
-        if not set(grant.actions) <= allowed_actions[grant.subject.role]:
-            raise ProtectedSecurityError("ACTION_NOT_GRANTED")
-        return VerifiedAuthorizationApproval._from_verified(trusted, grant, action)
+        return verify_authorization_approval(grant, trusted, action, expected_raw_sha256)
 
 
 class InMemoryProtectedAuditJournal:

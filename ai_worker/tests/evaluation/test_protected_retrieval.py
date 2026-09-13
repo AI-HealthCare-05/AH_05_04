@@ -470,6 +470,16 @@ def test_authorization_and_operation_audits_have_distinct_exact_fields() -> None
         type(entry).model_validate({**entry.model_dump(), "outcome": OperationAuditOutcome.SUCCEEDED})
 
 
+def test_authorization_audit_rejects_an_action_reason_mismatch() -> None:
+    grant = _grant()
+    _, journal, _, _, _ = _authorized_components(grant, _approval_source(grant))
+    entry = journal.entries[0]
+    assert isinstance(entry, AuthorizationAuditEntry)
+
+    with pytest.raises(ValidationError, match="reason does not match action"):
+        type(entry).model_validate({**entry.model_dump(), "reason_code": ProtectedAuditReason.COMPLETED})
+
+
 @pytest.mark.parametrize(
     "update",
     [
