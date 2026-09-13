@@ -74,6 +74,11 @@ class RagSourceIngestionArtifactKind(StrEnum):
     REJECTS = "REJECTS"
 
 
+class RagSourceSnapshotMemberKind(StrEnum):
+    ENDPOINT_OPERATION = "ENDPOINT_OPERATION"
+    ARTIFACT = "ARTIFACT"
+
+
 class RagVerificationResultStatus(StrEnum):
     PASSED = "PASSED"
     FAILED = "FAILED"
@@ -314,6 +319,46 @@ class RagSourceSnapshot(Base):
     verification_runs: Mapped[list["RagSourceSnapshotVerification"]] = relationship(
         back_populates="snapshot", foreign_keys="RagSourceSnapshotVerification.snapshot_id"
     )
+
+
+class RagSourceSnapshotMember(Base):
+    __tablename__ = "rag_source_snapshot_member"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_snapshot_id", "member_kind", "locator", "content_sha256", name="uq_rag_source_snapshot_member"
+        ),
+        Index("idx_rag_source_snapshot_member_snapshot", "source_snapshot_id"),
+        CheckConstraint(
+            "(member_kind = 'ENDPOINT_OPERATION' AND endpoint_id IS NOT NULL "
+            "AND ingestion_artifact_id IS NULL) OR "
+            "(member_kind = 'ARTIFACT' AND endpoint_id IS NULL "
+            "AND operation_id IS NULL AND ingestion_artifact_id IS NOT NULL)",
+            name="chk_rag_source_snapshot_member_origin",
+        ),
+        CheckConstraint("length(locator) BETWEEN 1 AND 500", name="chk_rag_source_snapshot_member_locator_length"),
+        CheckConstraint("locator !~ '[[:cntrl:]]'", name="chk_rag_source_snapshot_member_locator_control"),
+        CheckConstraint("content_sha256 ~ '^[0-9a-f]{64}$'", name="chk_rag_source_snapshot_member_content_hash"),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    source_snapshot_id: Mapped[UUID] = mapped_column(
+        UUIDChar(), ForeignKey("rag_source_snapshot.id", ondelete="RESTRICT"), nullable=False
+    )
+    member_kind: Mapped[RagSourceSnapshotMemberKind] = mapped_column(
+        Enum(RagSourceSnapshotMemberKind, native_enum=False, length=30), nullable=False
+    )
+    endpoint_id: Mapped[UUID | None] = mapped_column(
+        UUIDChar(), ForeignKey("rag_source_endpoint.id", ondelete="RESTRICT"), nullable=True
+    )
+    operation_id: Mapped[UUID | None] = mapped_column(
+        UUIDChar(), ForeignKey("rag_source_operation.id", ondelete="RESTRICT"), nullable=True
+    )
+    ingestion_artifact_id: Mapped[UUID | None] = mapped_column(
+        UUIDChar(), ForeignKey("rag_source_ingestion_artifact.id", ondelete="RESTRICT"), nullable=True
+    )
+    locator: Mapped[str] = mapped_column(String(500), nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class RagSourceIngestionRun(Base):
