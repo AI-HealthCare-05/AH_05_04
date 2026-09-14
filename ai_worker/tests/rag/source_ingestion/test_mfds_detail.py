@@ -189,7 +189,7 @@ async def test_whole_pages_preserve_repeated_material_and_raw_bytes(tmp_path):
 @pytest.mark.parametrize(
     "records,reason",
     [
-        ([row(), dict(row("002"), QNT=None)], "INVALID_COMPONENT_FIELDS"),
+        ([row(), dict(row("002"), QNT=None)], "MISSING_COMPONENT_QUANTITY"),
         ([row(), dict(row(), QNT="2")], "CONFLICTING_OBSERVATION"),
         ([row(), row()], None),
     ],

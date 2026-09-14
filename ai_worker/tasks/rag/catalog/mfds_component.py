@@ -33,15 +33,30 @@ class MfdsComponentObservation:
         )
 
 
+MfdsComponentExclusionReason = Literal[
+    "EMPTY_COMPONENT_FIELDS",
+    "MISSING_COMPONENT_QUANTITY",
+    "INVALID_COMPONENT_KEY_FIELDS",
+    "CONFLICTING_OBSERVATION",
+]
+
+
 @dataclass(frozen=True, slots=True)
 class MfdsComponentExclusion:
-    reason: Literal["EMPTY_COMPONENT_FIELDS", "INVALID_COMPONENT_FIELDS", "CONFLICTING_OBSERVATION"]
+    reason: MfdsComponentExclusionReason
     record_json: bytes = field(repr=False)
 
 
 # 빈 주성분 행은 제공자가 성분을 비워 반환한 경우이며 원문 무결성 위반이 아니다.
-# 아래 두 사유는 원문이 깨졌거나 같은 키의 원문이 서로 다른 경우이므로 계속 전체를 차단한다.
-_BLOCKING_EXCLUSION_REASONS = frozenset({"INVALID_COMPONENT_FIELDS", "CONFLICTING_OBSERVATION"})
+# 아래 사유들은 계속 전체를 차단한다. 감사·후속 복구를 위해 분량만 누락된 경우와
+# identity·join에 필요한 필드가 손상된 경우를 구분해 기록한다.
+_BLOCKING_EXCLUSION_REASONS = frozenset(
+    {"MISSING_COMPONENT_QUANTITY", "INVALID_COMPONENT_KEY_FIELDS", "CONFLICTING_OBSERVATION"}
+)
+# 분량만 비어 있고 키·성분코드·단위는 남아 있는 행. 공식 상세 화면에는 분량이 표시되므로
+# 성분 없음이나 분량 미상 정상 성분으로 해석하지 않는다.
+_QUANTITY_FIELD = "QNT"
+_IDENTITY_FIELDS = tuple(name for name in _REQUIRED_FIELDS if name != _QUANTITY_FIELD)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,8 +73,21 @@ class MfdsComponentInspection:
         return tuple(item for item in self.exclusions if item.reason == "EMPTY_COMPONENT_FIELDS")
 
     @property
+    def missing_quantity_exclusions(self) -> tuple[MfdsComponentExclusion, ...]:
+        """분량만 누락된 행. 차단 사유이지만 키 손상과 원인이 다르므로 따로 센다."""
+        return tuple(item for item in self.exclusions if item.reason == "MISSING_COMPONENT_QUANTITY")
+
+    @property
     def blocking_exclusions(self) -> tuple[MfdsComponentExclusion, ...]:
         return tuple(item for item in self.exclusions if item.reason in _BLOCKING_EXCLUSION_REASONS)
+
+    @property
+    def exclusion_counts_by_reason(self) -> dict[str, int]:
+        """사유별 제외 건수. 어떤 행이 왜 막혔는지 감사할 수 있게 한다."""
+        counts: dict[str, int] = {}
+        for item in self.exclusions:
+            counts[item.reason] = counts.get(item.reason, 0) + 1
+        return counts
 
     @property
     def eligible_for_mapping(self) -> bool:
@@ -103,6 +131,32 @@ def _observation(record: Mapping[str, object], record_json: bytes) -> MfdsCompon
     )
 
 
+def _is_blank(record: Mapping[str, object], field_name: str) -> bool:
+    value = record.get(field_name)
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _exclusion_reason(record: Mapping[str, object]) -> MfdsComponentExclusionReason:
+    """구성원으로 승격하지 못한 행의 사유를 구분합니다.
+
+    분량만 비어 있고 identity·join 필드가 남아 있으면 제공자 응답에서 값이 빠진 경우이며,
+    공식 상세 화면에는 분량이 표시되는 사례가 확인됐습니다. 성분 없음이나 분량 미상 정상
+    성분으로 해석하지 않고 전체 차단을 유지하되 별도 사유로 기록합니다.
+    """
+    try:
+        require_official_identity_text(record.get("ITEM_SEQ"), field_name="mfds_component.ITEM_SEQ")
+    except ValueError:
+        return "INVALID_COMPONENT_KEY_FIELDS"
+
+    if all(_is_blank(record, name) for name in (*_REQUIRED_FIELDS[1:], "CPNT_CTNT_CONT")):
+        return "EMPTY_COMPONENT_FIELDS"
+
+    if _is_blank(record, _QUANTITY_FIELD) and not any(_is_blank(record, name) for name in _IDENTITY_FIELDS):
+        return "MISSING_COMPONENT_QUANTITY"
+
+    return "INVALID_COMPONENT_KEY_FIELDS"
+
+
 def inspect_mfds_component_rows(records: tuple[Mapping[str, object], ...]) -> MfdsComponentInspection:
     """빈 행·충돌을 기록한다. 빈 주성분 행은 제외로만 남기고 원문 무결성 위반만 전체를 차단한다."""
     observations: dict[str, MfdsComponentObservation] = {}
@@ -113,18 +167,7 @@ def inspect_mfds_component_rows(records: tuple[Mapping[str, object], ...]) -> Mf
         try:
             observation = _observation(record, raw)
         except ValueError:
-            component_fields = (*_REQUIRED_FIELDS[1:], "CPNT_CTNT_CONT")
-            empty = all(
-                record.get(name) is None or isinstance(record.get(name), str) and not str(record[name]).strip()
-                for name in component_fields
-            )
-            try:
-                require_official_identity_text(record.get("ITEM_SEQ"), field_name="mfds_component.ITEM_SEQ")
-            except ValueError:
-                empty = False
-            exclusions.append(
-                MfdsComponentExclusion("EMPTY_COMPONENT_FIELDS" if empty else "INVALID_COMPONENT_FIELDS", raw)
-            )
+            exclusions.append(MfdsComponentExclusion(_exclusion_reason(record), raw))
             continue
         previous = observations.get(observation.source_record_key)
         if previous is None:
