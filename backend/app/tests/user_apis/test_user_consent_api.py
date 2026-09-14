@@ -16,19 +16,29 @@ from app.services.users import _is_currently_granted
 
 
 async def _signup_and_login(client: AsyncClient, *, email: str) -> dict[str, str]:
-    await client.post(
+    signup_response = await client.post(
         "/api/v1/auth/signup",
         json={"email": email, "password": "Password123!", "name": "동의API"},
     )
+    assert signup_response.status_code == status.HTTP_201_CREATED, signup_response.text
     login_response = await client.post(
         "/api/v1/auth/login",
         json={"email": email, "password": "Password123!"},
     )
+    assert login_response.status_code == status.HTTP_200_OK, login_response.text
     return {"Authorization": f"Bearer {login_response.json()['access_token']}"}
 
 
 def _email(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex[:8]}@example.com"
+
+
+def _consent_item(response_data: list[dict[str, object]], purpose: ConsentPurpose) -> dict[str, object]:
+    return next(item for item in response_data if item["purpose"] == purpose.value)
+
+
+def _ocr_consent_item(response_data: list[dict[str, object]]) -> dict[str, object]:
+    return _consent_item(response_data, ConsentPurpose.OCR)
 
 
 @pytest.mark.parametrize(
@@ -128,7 +138,7 @@ async def test_update_user_consent_grants_and_lists_current_status(monkeypatch: 
     assert granted["granted_at"] is not None
     assert granted["withdrawn_at"] is None
 
-    ocr_item = next(item for item in list_response.json()["data"] if item["purpose"] == ConsentPurpose.OCR.value)
+    ocr_item = _ocr_consent_item(list_response.json()["data"])
     assert ocr_item["status"] == ConsentStatus.GRANTED.value
     assert ocr_item["current_policy_version"] == "ocr-consent.v1"
     assert ocr_item["is_granted"] is True
@@ -152,7 +162,7 @@ async def test_list_user_consents_marks_stale_policy_version_as_not_granted(
         await db_session.flush()
         response = await client.get("/api/v1/users/me/consents", headers=headers)
 
-    ocr_item = next(item for item in response.json()["data"] if item["purpose"] == ConsentPurpose.OCR.value)
+    ocr_item = _ocr_consent_item(response.json()["data"])
     assert ocr_item["status"] == ConsentStatus.GRANTED.value
     assert ocr_item["policy_version"] == "ocr-consent.v0"
     assert ocr_item["current_policy_version"] == "ocr-consent.v1"
@@ -250,7 +260,7 @@ async def test_user_consents_do_not_expose_other_users_rows() -> None:
         )
         response = await client.get("/api/v1/users/me/consents", headers=requester_headers)
 
-    chat_item = next(item for item in response.json()["data"] if item["purpose"] == ConsentPurpose.CHAT.value)
+    chat_item = _consent_item(response.json()["data"], ConsentPurpose.CHAT)
     assert chat_item["status"] is None
     assert chat_item["policy_version"] is None
     assert chat_item["current_policy_version"] == "chat-consent.v1"
@@ -317,7 +327,7 @@ async def test_ocr_consent_policy_version_matches_dedicated_ocr_endpoints(
     assert ocr_get.json()["data"]["current_policy_version"] == "ocr-consent.v2"
     assert ocr_get.json()["data"]["effective"] is True
 
-    ocr_item = next(item for item in list_get.json()["data"] if item["purpose"] == ConsentPurpose.OCR.value)
+    ocr_item = _ocr_consent_item(list_get.json()["data"])
     assert ocr_item["current_policy_version"] == "ocr-consent.v2"
     assert ocr_item["is_granted"] is True
 
@@ -357,7 +367,7 @@ async def test_ocr_consent_policy_unavailable_blocks_new_grants_but_allows_exist
         )
         ocr_get_after_withdraw = await client.get("/api/v1/users/me/consents/OCR", headers=headers)
 
-    ocr_item = next(item for item in list_get.json()["data"] if item["purpose"] == ConsentPurpose.OCR.value)
+    ocr_item = _ocr_consent_item(list_get.json()["data"])
     assert ocr_item["current_policy_version"] == ""
     assert ocr_item["is_granted"] is False
 
@@ -373,6 +383,44 @@ async def test_ocr_consent_policy_unavailable_blocks_new_grants_but_allows_exist
     assert withdrawn.json()["data"]["is_granted"] is False
 
     assert ocr_get_after_withdraw.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
+
+async def test_dedicated_ocr_consent_policy_unavailable_blocks_post_but_allows_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        headers = await _signup_and_login(client, email=_email("ocr-dedicated"))
+        grant = await client.post(
+            "/api/v1/users/me/consents/OCR",
+            json={"policy_version": "ocr-consent.v1"},
+            headers=headers,
+        )
+        assert grant.status_code == status.HTTP_200_OK
+
+        monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "")
+        blocked_post = await client.post(
+            "/api/v1/users/me/consents/OCR",
+            json={"policy_version": "ocr-consent.v1"},
+            headers=headers,
+        )
+        withdrawn = await client.delete("/api/v1/users/me/consents/OCR", headers=headers)
+        list_get = await client.get("/api/v1/users/me/consents", headers=headers)
+
+    assert blocked_post.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert blocked_post.json()["code"] == "CONSENT_POLICY_UNAVAILABLE"
+
+    assert withdrawn.status_code == status.HTTP_200_OK
+    assert withdrawn.json()["data"]["status"] == ConsentStatus.WITHDRAWN.value
+    assert withdrawn.json()["data"]["accepted_policy_version"] == "ocr-consent.v1"
+    assert withdrawn.json()["data"]["current_policy_version"] == ""
+    assert withdrawn.json()["data"]["effective"] is False
+
+    ocr_item = _ocr_consent_item(list_get.json()["data"])
+    assert ocr_item["status"] == ConsentStatus.WITHDRAWN.value
+    assert ocr_item["current_policy_version"] == ""
+    assert ocr_item["is_granted"] is False
 
 
 async def test_update_user_consent_rejects_non_current_policy_versions(monkeypatch: pytest.MonkeyPatch) -> None:
