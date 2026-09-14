@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { signup } from '../api/auth'
+import { signup, requestEmailVerification, confirmEmailVerification } from '../api/auth'
 import { ApiError } from '../api/client'
 import { Button, MobileShell } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
@@ -47,6 +47,8 @@ function validateSignup(form: SignupForm): SignupFieldErrors {
 
 function SignupPage() {
   const navigate = useNavigate()
+  // Opt in only after email delivery is available (#494); noop must not block signup.
+  const emailVerificationEnabled = import.meta.env.VITE_EMAIL_VERIFICATION_ENABLED === 'true'
   const [form, setForm] = useState<SignupForm>({
     email: '',
     password: '',
@@ -56,6 +58,14 @@ function SignupPage() {
   const [message, setMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const isSubmittingRef = useRef(false)
+  const [verification, setVerification] = useState<'idle' | 'requesting' | 'sent' | 'confirming' | 'verified'>('idle')
+  const [token, setToken] = useState('')
+  const [verificationError, setVerificationError] = useState('')
+  const verificationBusyRef = useRef(false)
+  const verificationVersionRef = useRef(0)
+  const tokenInputRef = useRef<HTMLInputElement>(null)
+  const verificationRequestRef = useRef<HTMLButtonElement>(null)
+  const verificationBusy = verification === 'requesting' || verification === 'confirming'
   const nameInputRef = useRef<HTMLInputElement>(null)
   const emailInputRef = useRef<HTMLInputElement>(null)
   const passwordInputRef = useRef<HTMLInputElement>(null)
@@ -63,6 +73,12 @@ function SignupPage() {
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     const { name, value } = event.target
     const fieldName = name as keyof SignupForm
+    if (name === 'email') {
+      verificationVersionRef.current += 1
+      setVerification('idle')
+      setToken('')
+      setVerificationError('')
+    }
     setForm((prev) => ({ ...prev, [name]: value }))
     setFieldErrors((prev) => {
       if (!(fieldName in prev)) return prev
@@ -80,16 +96,67 @@ function SignupPage() {
     if (field === 'password') passwordInputRef.current?.focus()
   }
 
+  const handleVerification = async (action: 'request' | 'confirm') => {
+    if (verificationBusyRef.current || isSubmittingRef.current) return
+    const emailError = validateSignup(form).email
+    if (emailError) {
+      setFieldErrors((prev) => ({ ...prev, email: emailError }))
+      focusField('email')
+      return
+    }
+    if (action === 'confirm' && !token.trim()) {
+      setVerificationError('이메일로 받은 인증 코드를 입력해 주세요.')
+      tokenInputRef.current?.focus()
+      return
+    }
+    const version = verificationVersionRef.current
+    verificationBusyRef.current = true
+    setVerificationError('')
+    setVerification(action === 'request' ? 'requesting' : 'confirming')
+    try {
+      if (action === 'request') await requestEmailVerification(form.email.trim())
+      else await confirmEmailVerification(form.email.trim(), token.trim())
+      if (version !== verificationVersionRef.current) return
+      setVerification(action === 'request' ? 'sent' : 'verified')
+      if (action === 'confirm') {
+        setToken('')
+        passwordInputRef.current?.focus()
+      } else {
+        // The token field stays mounted so focus also works on the first request.
+        tokenInputRef.current?.focus()
+      }
+    } catch (error) {
+      if (version !== verificationVersionRef.current) return
+      setVerification(action === 'request' ? 'idle' : 'sent')
+      const invalidToken = error instanceof ApiError && error.status === 422 &&
+        error.code === 'VALIDATION_FAILED' && error.details.some(
+          (detail) => detail.field === 'token' && detail.reason === 'EMAIL_VERIFICATION_TOKEN_INVALID',
+        )
+      setVerificationError(invalidToken
+        ? '인증을 완료하지 못했습니다. 코드를 확인하거나 인증 안내를 다시 요청해 주세요.'
+        : '이메일 인증을 처리하지 못했습니다. 연결을 확인하고 다시 시도해 주세요.')
+      if (action === 'confirm') tokenInputRef.current?.focus()
+    } finally {
+      verificationBusyRef.current = false
+    }
+  }
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
-    if (isSubmittingRef.current) return
+    if (isSubmittingRef.current || verificationBusyRef.current) return
 
     const validationErrors = validateSignup(form)
     if (Object.keys(validationErrors).length > 0) {
       setFieldErrors(validationErrors)
       setMessage('')
       focusField(Object.keys(validationErrors)[0] as keyof SignupForm | undefined)
+      return
+    }
+
+    if (emailVerificationEnabled && verification !== 'verified') {
+      setVerificationError('회원가입 전에 이메일 인증을 완료해 주세요.')
+      verificationRequestRef.current?.focus()
       return
     }
 
@@ -108,7 +175,7 @@ function SignupPage() {
       })
     } catch (error) {
       if (error instanceof ApiError) {
-        const emailConflict = error.details.some(
+        const emailConflict = (error.status === 409 && error.code === 'CONFLICT') || error.details.some(
           (detail) => detail.field === 'email' && detail.reason === 'ALREADY_EXISTS',
         )
 
@@ -177,6 +244,7 @@ function SignupPage() {
                   ref={emailInputRef}
                   name="email"
                   type="email"
+                  readOnly={verificationBusy || isSubmitting}
                   placeholder="이메일을 입력해 주세요"
                   autoComplete="email"
                   required
@@ -192,6 +260,38 @@ function SignupPage() {
                   </span>
                 )}
               </div>
+              {emailVerificationEnabled && <div className="mvp-form__field" aria-busy={verificationBusy}>
+                <button ref={verificationRequestRef} type="button" className="ds-button full-width"
+                  disabled={verificationBusy || isSubmitting || verification === 'verified'}
+                  onClick={() => void handleVerification('request')}>
+                  {verification === 'requesting' ? '인증 요청 중...' : verification === 'verified' ? '이메일 인증 완료' : verification === 'idle' ? '인증 요청' : '인증 안내 다시 요청'}
+                </button>
+                <p id="signup-verification-status" role="status">
+                  {verification === 'verified' ? '이메일 인증이 완료되었습니다.' :
+                    verification === 'sent' || verification === 'confirming'
+                      ? '인증 안내를 요청했습니다. 이메일로 받은 코드를 입력해 주세요. 안내가 오지 않으면 스팸함을 확인하거나 다시 요청해 주세요.'
+                      : '회원가입을 위해 이메일 인증을 진행해 주세요.'}
+                </p>
+                <label htmlFor="signup-token">이메일 인증 코드</label>
+                <input id="signup-token" ref={tokenInputRef} value={token}
+                  autoComplete="one-time-code" spellCheck={false} autoCapitalize="none"
+                  readOnly={verificationBusy || isSubmitting || verification === 'verified'}
+                  aria-invalid={Boolean(verificationError)}
+                  aria-describedby={`signup-verification-status${verificationError ? ' signup-verification-error' : ''}`}
+                  onChange={(event) => { setToken(event.target.value); setVerificationError('') }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      if (verification === 'sent') void handleVerification('confirm')
+                    }
+                  }} />
+                <Button type="button" fullWidth
+                  disabled={verification !== 'sent' || isSubmitting}
+                  onClick={() => void handleVerification('confirm')}>
+                  {verification === 'confirming' ? '인증 확인 중...' : '인증 확인'}
+                </Button>
+                {verificationError && <span id="signup-verification-error" className="mvp-form__field-error" role="alert">{verificationError}</span>}
+              </div>}
               <div className="mvp-form__field">
                 <label htmlFor="signup-password">비밀번호</label>
                 <input
@@ -222,7 +322,7 @@ function SignupPage() {
 
             {message && <p className="mvp-form__message" role="alert">{message}</p>}
 
-            <Button fullWidth type="submit" disabled={isSubmitting}>
+            <Button fullWidth type="submit" disabled={isSubmitting || verificationBusy}>
               {isSubmitting ? '가입 중...' : '가입 완료'}
             </Button>
           </form>

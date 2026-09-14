@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: '**/signup-email-verification.spec.ts',
   outputDir: './test-results/requirements',
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
@@ -25,6 +26,7 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     env: {
       VITE_API_BASE_URL: 'http://127.0.0.1:4173',
+      VITE_EMAIL_VERIFICATION_ENABLED: 'false',
     },
   },
   projects: [

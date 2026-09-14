@@ -40,3 +40,20 @@ export async function logout() {
     method: 'POST',
   })
 }
+
+// Discard the LOCAL-only token so consumers cannot depend on or display it.
+export async function requestEmailVerification(email: string): Promise<void> {
+  await apiRequest('/api/v1/auth/email-verification/request', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  })
+}
+
+export async function confirmEmailVerification(email: string, token: string): Promise<void> {
+  await apiRequest('/api/v1/auth/email-verification/confirm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, token }),
+  })
+}

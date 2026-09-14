@@ -1,18 +1,19 @@
-# RAG Grounding·Citation Metric 계약 v1 제안
+# RAG Grounding·Citation Metric 계약 v1
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Proposed · Review Required |
+| 상태 | Approved Target |
 | 구현 | Not implemented |
 | Decision | [`PD-160-20260914`](../../../governance/decisions/2026-09-14-rag-grounding-citation-metrics.md) |
 | 추적 Issue | [#160](https://github.com/AI-HealthCare-05/AH_05_04/issues/160) |
 | 구현 담당 | 정현우 (`@ceohwj`) |
-| 책임 리뷰 | 김지혜 (`@Jye-rookie`) — Evaluation·Source provenance·Safety fixture 계약 |
+| 책임 리뷰 | 김지혜 (`@Jye-rookie`) — `APPROVED` |
+| 승인 Evidence | [PR #541 review `5198114002`](https://github.com/AI-HealthCare-05/AH_05_04/pull/541#pullrequestreview-5198114002) · [`decision-approval-evidence.json`](../../../validation/rag/issue-160/decision-approval-evidence.json) |
 
 ## 1. 목적과 비목표
 
 이 계약은 RAG-EVAL-005의 Claim별 근거, Citation 정확성·완전성, unsupported Claim을 deterministic하게
-계산하기 위한 DEV 입력과 Metric 의미를 제안한다.
+계산하기 위한 DEV 입력과 Metric 의미를 고정한다.
 
 다음은 포함하지 않는다.
 
@@ -189,6 +190,6 @@ code만 저장한다.
 
 ## 7. 승인과 공개
 
-책임 리뷰어의 실제 Pull Request 승인 전 이 문서는 구현 근거가 아니다. 승인되더라도 DEV projection과
-metric kernel만 허용하며, Runtime 연결·HOLDOUT 관찰·Baseline Freeze·Release `PASS`·`PUBLIC_TRACK_F`는
-별도 승인 대상이다.
+PR #541 최종 HEAD에 대한 책임 리뷰어 승인으로 DEV projection과 metric kernel 구현이
+허용됐다. 이 승인은 Runtime 연결·HOLDOUT 관찰·Baseline Freeze·Release `PASS`·`PUBLIC_TRACK_F`를
+허용하지 않는다.
