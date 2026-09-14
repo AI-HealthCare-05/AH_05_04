@@ -255,13 +255,67 @@ jobs:
       - name: Install dependencies
         run: uv sync --group app --group worker --frozen
 
-      # #439: 아래 Source cutover step의 `alembic upgrade head`가 head 분기로 죽기 전에
-      # 원인을 먼저 보고합니다.
+      - name: Run Backend Tests with Coverage
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
+        run: |
+          uv run coverage run -m pytest backend/app tests/integration/test_worker_ocr_persistence.py tests/integration/test_outbox_publisher.py tests/integration/test_worker_job_execution_repository.py tests/integration/test_worker_dlq_outbox_repository.py tests/integration/test_worker_recovery_repository.py
+
+      - name: Upload Backend Coverage Data
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage-backend
+          path: .coverage.backend
+          include-hidden-files: true
+          if-no-files-found: error
+
+  test-rag:
+    needs:
+      - classify-test-scope
+    if: ${{ needs.classify-test-scope.outputs.backend == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_EXPOSE_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: ci_test_password
+      DB_NAME: test
+      COVERAGE_FILE: .coverage.rag
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg17-bookworm
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_test_password
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: uv sync --group app --group worker --frozen
+
       - name: Verify single Alembic head
         run: uv run python scripts/ci/verify_database_head.py --heads-only
 
-      # tests/integration/rag의 protected Retrieval 통합 테스트는 tests/migration의
-      # protected_database fixture를 pytest_plugins로 공유하므로 같은 전용 DB가 필요합니다.
       - name: Create protected retrieval test database
         run: |
           uv run python - <<'PY'
@@ -277,13 +331,12 @@ jobs:
           asyncio.run(create_database())
           PY
 
-      - name: Run Backend Tests with Coverage
+      - name: Run RAG Integration Tests with Coverage
         env:
           ISSUE398_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
           PYTHONPATH: ${{ github.workspace }}/backend:${{ github.workspace }}
           PROTECTED_TEST_DATABASE_URL: postgresql+asyncpg://postgres:ci_test_password@127.0.0.1:5432/protected368_test
-        run: |
-          uv run coverage run -m pytest backend/app tests/integration/rag tests/integration/test_worker_ocr_persistence.py tests/integration/test_outbox_publisher.py tests/integration/test_worker_job_execution_repository.py tests/integration/test_worker_dlq_outbox_repository.py tests/integration/test_worker_recovery_repository.py
+        run: uv run coverage run -m pytest tests/integration/rag
 
       # #347은 앱 기본 test DB로 fallback하지 않고 전용 migrated DB에서 권한·삭제를 검증합니다.
       - name: Verify isolated Source cleanup workflow
@@ -307,11 +360,11 @@ jobs:
           uv run alembic -c backend/alembic.ini upgrade head
           uv run coverage run --append -m pytest tests/integration/rag/test_source_cleanup_references.py tests/integration/rag/test_source_cleanup_workflow.py -q
 
-      - name: Upload Backend Coverage Data
+      - name: Upload RAG Coverage Data
         uses: actions/upload-artifact@v4
         with:
-          name: python-coverage-backend
-          path: .coverage.backend
+          name: python-coverage-rag
+          path: .coverage.rag
           include-hidden-files: true
           if-no-files-found: error
 
@@ -413,6 +466,7 @@ jobs:
       - test-inventory
       - test-migration
       - test-backend
+      - test-rag
       - test-contract
       - test-worker
     runs-on: ubuntu-latest
@@ -428,6 +482,8 @@ jobs:
           MIGRATION_RESULT: ${{ needs.test-migration.result }}
           BACKEND_REQUIRED: ${{ needs.classify-test-scope.outputs.backend }}
           BACKEND_RESULT: ${{ needs.test-backend.result }}
+          RAG_REQUIRED: ${{ needs.classify-test-scope.outputs.backend }}
+          RAG_RESULT: ${{ needs.test-rag.result }}
           CONTRACT_REQUIRED: ${{ needs.classify-test-scope.outputs.contract }}
           CONTRACT_RESULT: ${{ needs.test-contract.result }}
           WORKER_REQUIRED: ${{ needs.classify-test-scope.outputs.worker }}
@@ -457,6 +513,13 @@ jobs:
           name: python-coverage-backend
           path: coverage-data/backend
 
+      - name: Download RAG Coverage Data
+        if: ${{ needs.classify-test-scope.outputs.full == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: python-coverage-rag
+          path: coverage-data/rag
+
       - name: Download Contract Coverage Data
         if: ${{ needs.classify-test-scope.outputs.full == 'true' }}
         uses: actions/download-artifact@v4
@@ -474,7 +537,7 @@ jobs:
       - name: Coverage Report
         if: ${{ needs.classify-test-scope.outputs.full == 'true' }}
         run: |
-          uv run coverage combine coverage-data/backend coverage-data/contract coverage-data/worker
+          uv run coverage combine coverage-data/backend coverage-data/rag coverage-data/contract coverage-data/worker
           uv run coverage report -m --fail-under=94
 
   frontend:

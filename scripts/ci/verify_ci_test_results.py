@@ -4,7 +4,7 @@ import os
 import sys
 
 ALWAYS_REQUIRED_JOBS = ("classifier", "inventory")
-SELECTIVE_JOBS = ("migration", "backend", "contract", "worker")
+SELECTIVE_JOBS = ("migration", "backend", "rag", "contract", "worker")
 
 
 def _environment(name: str) -> str:

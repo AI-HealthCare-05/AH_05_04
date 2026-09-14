@@ -132,16 +132,18 @@ GitHub Actions의 Pull Request 실행은 먼저 `classify-test-scope`가 merge b
 | PR 변경 영역 | 실행하는 주요 검증 |
 | --- | --- |
 | `frontend/**` | Frontend, Contract |
-| `backend/**` | Backend, Contract, Python lint |
-| `backend/alembic.ini`, `backend/alembic/**`, `tests/migration/**` | Migration, Backend, Contract, Python lint |
+| `backend/**` | Backend, RAG Integration, Contract, Python lint |
+| `backend/alembic.ini`, `backend/alembic/**`, `tests/migration/**` | Migration, Backend, RAG Integration, Contract, Python lint |
 | `ai_worker/**` | Worker, Contract, Python lint |
 | `tests/contract/**`, `tests/services/**`, `docs/**`, root Markdown | Contract(테스트 Python 변경은 lint 포함) |
 | GitHub Issue/PR template만 변경 | Python·Frontend suite 생략 |
 | CI·dependency·shared runtime·deployment·미분류 경로 | 전체 검증 |
 
-`test-inventory`는 모든 이벤트에서 실행합니다. `test-migration`, `test-backend`, `test-contract`,
-`test-worker`는 독립 job이며, 각 DB 의존 job은 필요한 PostgreSQL 또는 Redis service container를
-자체 사용하므로 다른 job과 상태를 공유하지 않습니다. `test-contract`는 service container 없이
+`test-inventory`는 모든 이벤트에서 실행합니다. `test-migration`, `test-backend`, `test-rag`,
+`test-contract`, `test-worker`는 독립 job이며, 각 DB 의존 job은 필요한 PostgreSQL 또는 Redis service
+container를 자체 사용하므로 다른 job과 상태를 공유하지 않습니다. `test-rag`는 Backend scope에서
+`tests/integration/rag`와 전용 migrated DB의 Source cleanup 검증을 PostgreSQL 전용 job으로 실행합니다.
+따라서 Backend의 직렬 테스트와 RAG 통합 검증이 서로 다른 runner에서 병렬로 진행됩니다. `test-contract`는 service container 없이
 `tests/contract`와 `tests/services`를 직렬 실행하고, DB host port를 연결 불가능한 `1`로 고정합니다.
 따라서 이 경계에 DB 접근 테스트가 추가되면 Backend DB를 조용히 공유하지 않고 실패합니다.
 `tests/contract/conftest.py`의 고정 Docker image fixture 충돌을 피하기 위해 Contract job에는 xdist를
@@ -149,7 +151,7 @@ GitHub Actions의 Pull Request 실행은 먼저 `classify-test-scope`가 merge b
 
 최종 `test` job은 분류기가 선택한 Python job이 실제로 성공했는지 확인합니다. 선택된 job의 skip,
 failure, cancellation과 선택되지 않았지만 실행된 job의 failure/cancellation은 성공으로 숨기지
-않습니다. Backend·Contract·Worker 전체가 실행되는 경우에만 각각의 Coverage artifact를 합산해
+않습니다. Backend·RAG Integration·Contract·Worker 전체가 실행되는 경우에만 각각의 Coverage artifact를 합산해
 기존 94% 기준을 적용합니다. 부분 PR coverage는 전체 저장소 coverage로 오판하지 않으며,
 merge queue의 전체 실행에서 병합 전에 94%를 반드시 검증합니다. Coverage artifact에는 실행
 data만 포함하며 환경파일은 업로드하지 않습니다.
@@ -409,7 +411,7 @@ PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Co
 완성 index의 vector round-trip과 receipt 재계산, 동일 버전 멱등 재생, 동시 생성 직렬화, 변경 receipt 충돌
 rollback과 민감 합성 sentinel 비노출을 검증한 뒤 database를 제거한다.
 
-`tests/integration/rag/test_postgresql_evidence_search.py`는 PostgreSQL live 환경에서 Exact(`strpos`), Trigram(`chunk_text % query`), FTS(`plainto_tsquery @@ to_tsvector`), Dense(pgvector `<=>` cosine distance) sub-search 4종의 결속 조회, Content hash 및 embedding hash 위변조 감지 시 fail-closed 무결성 차단, 트랜잭션 로컬 `pg_trgm.similarity_threshold` 설정 및 커넥션 풀 오염 방지, `EXPLAIN` 쿼리 계획 호환성을 검증한다. Worker 기본 lane의 차단된 DB 포트를 우회하지 않도록 이 두 테스트는 `tests/integration/rag`의 Backend PostgreSQL lane에서만 실행한다.
+`tests/integration/rag/test_postgresql_evidence_search.py`는 PostgreSQL live 환경에서 Exact(`strpos`), Trigram(`chunk_text % query`), FTS(`plainto_tsquery @@ to_tsvector`), Dense(pgvector `<=>` cosine distance) sub-search 4종의 결속 조회, Content hash 및 embedding hash 위변조 감지 시 fail-closed 무결성 차단, 트랜잭션 로컬 `pg_trgm.similarity_threshold` 설정 및 커넥션 풀 오염 방지, `EXPLAIN` 쿼리 계획 호환성을 검증한다. Worker 기본 lane의 차단된 DB 포트를 우회하지 않도록 이 두 테스트는 `tests/integration/rag`의 RAG Integration PostgreSQL lane에서만 실행한다.
 
 순수 RRF 융합 로직(`rrf-rank-fusion@1`, Fraction 기반 무손실 연산, Stable coordinate UTF-8 tie-break, Exact 버킷 우선순위 융합, Top 30/20 경계)은 `ai_worker/tests/rag/test_evidence_rank_fusion.py`에서 검증하며, 검색 프로토콜·설정 해시·쿼리 유효성 검증 및 18자리 소수점 점수 포맷팅(`observed-stage-score-decimal@1`)은 `ai_worker/tests/rag/test_evidence_search.py`에서 검증하여 AI Worker lane에서 실행한다.
 

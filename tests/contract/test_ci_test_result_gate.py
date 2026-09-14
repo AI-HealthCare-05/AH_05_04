@@ -15,6 +15,8 @@ SUCCESS_ENV = {
     "MIGRATION_RESULT": "success",
     "BACKEND_REQUIRED": "true",
     "BACKEND_RESULT": "success",
+    "RAG_REQUIRED": "true",
+    "RAG_RESULT": "success",
     "CONTRACT_REQUIRED": "true",
     "CONTRACT_RESULT": "success",
     "WORKER_REQUIRED": "true",
@@ -50,6 +52,8 @@ def test_gate_accepts_skipped_unselected_jobs() -> None:
         MIGRATION_RESULT="skipped",
         BACKEND_REQUIRED="false",
         BACKEND_RESULT="skipped",
+        RAG_REQUIRED="false",
+        RAG_RESULT="skipped",
         WORKER_REQUIRED="false",
         WORKER_RESULT="skipped",
     )
@@ -70,6 +74,13 @@ def test_gate_rejects_a_skipped_required_job() -> None:
 
     assert result.returncode == 1
     assert "backend=skipped (required=true)" in result.stderr
+
+
+def test_gate_rejects_a_failed_rag_job_required_by_backend_scope() -> None:
+    result = _run_gate(RAG_REQUIRED="true", RAG_RESULT="failure")
+
+    assert result.returncode == 1
+    assert "rag=failure (required=true)" in result.stderr
 
 
 @pytest.mark.parametrize("variable", ["CLASSIFIER_RESULT", "INVENTORY_RESULT"])

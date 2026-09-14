@@ -454,13 +454,19 @@ def test_github_actions_excludes_backend_from_ai_worker_unit_test_pythonpath() -
     contract_step = next(
         step for step in jobs["test-contract"]["steps"] if step["name"] == "Run Contract Tests with Coverage"
     )
+    rag_step = next(
+        step for step in jobs["test-rag"]["steps"] if step["name"] == "Run RAG Integration Tests with Coverage"
+    )
 
     assert backend_step["env"]["PYTHONPATH"] == "${{ github.workspace }}/backend:${{ github.workspace }}"
     assert contract_step["env"]["PYTHONPATH"] == "${{ github.workspace }}/backend:${{ github.workspace }}"
+    assert rag_step["env"]["PYTHONPATH"] == "${{ github.workspace }}/backend:${{ github.workspace }}"
     assert worker_step["env"]["PYTHONPATH"] == "${{ github.workspace }}"
     assert "backend/app" in backend_step["run"]
     assert "tests/contract" not in backend_step["run"]
     assert "tests/services" not in backend_step["run"]
+    assert "tests/integration/rag" not in backend_step["run"]
+    assert "tests/integration/rag" in rag_step["run"]
     assert "tests/contract" in contract_step["run"]
     assert "tests/services" in contract_step["run"]
     assert "ai_worker/tests/core" in worker_step["run"]
@@ -505,6 +511,7 @@ def test_github_actions_runs_python_test_lanes_as_independent_jobs_with_a_final_
         "test-inventory",
         "test-migration",
         "test-backend",
+        "test-rag",
         "test-contract",
         "test-worker",
         "test",
@@ -516,6 +523,13 @@ def test_github_actions_runs_python_test_lanes_as_independent_jobs_with_a_final_
     assert "postgres" in jobs["test-migration"]["services"]
     assert "redis" not in jobs["test-migration"]["services"]
     assert {"postgres", "redis"}.issubset(jobs["test-backend"]["services"])
+    assert "postgres" in jobs["test-rag"]["services"]
+    assert "redis" not in jobs["test-rag"]["services"]
+    rag_steps = jobs["test-rag"]["steps"]
+    assert any(step.get("name") == "Verify isolated Source cleanup workflow" for step in rag_steps)
+    assert not any(
+        step.get("name") == "Verify isolated Source cleanup workflow" for step in jobs["test-backend"]["steps"]
+    )
     assert "services" not in jobs["test-contract"]
     assert "services" not in jobs["test-worker"]
     assert set(jobs["test"]["needs"]) == {
@@ -523,6 +537,7 @@ def test_github_actions_runs_python_test_lanes_as_independent_jobs_with_a_final_
         "test-inventory",
         "test-migration",
         "test-backend",
+        "test-rag",
         "test-contract",
         "test-worker",
     }
@@ -538,6 +553,8 @@ def test_github_actions_runs_python_test_lanes_as_independent_jobs_with_a_final_
         "MIGRATION_RESULT": "${{ needs.test-migration.result }}",
         "BACKEND_REQUIRED": "${{ needs.classify-test-scope.outputs.backend }}",
         "BACKEND_RESULT": "${{ needs.test-backend.result }}",
+        "RAG_REQUIRED": "${{ needs.classify-test-scope.outputs.backend }}",
+        "RAG_RESULT": "${{ needs.test-rag.result }}",
         "CONTRACT_REQUIRED": "${{ needs.classify-test-scope.outputs.contract }}",
         "CONTRACT_RESULT": "${{ needs.test-contract.result }}",
         "WORKER_REQUIRED": "${{ needs.classify-test-scope.outputs.worker }}",
@@ -576,6 +593,7 @@ def test_github_actions_classifies_pull_requests_and_forces_full_merge_validatio
     for job_name, scope in (
         ("test-migration", "migration"),
         ("test-backend", "backend"),
+        ("test-rag", "backend"),
         ("test-contract", "contract"),
         ("test-worker", "worker"),
     ):
@@ -589,12 +607,14 @@ def test_github_actions_combines_distinct_lane_coverage_artifacts() -> None:
     jobs = workflow["jobs"]
 
     assert jobs["test-backend"]["env"]["COVERAGE_FILE"] == ".coverage.backend"
+    assert jobs["test-rag"]["env"]["COVERAGE_FILE"] == ".coverage.rag"
     assert jobs["test-contract"]["env"]["COVERAGE_FILE"] == ".coverage.contract"
     assert jobs["test-worker"]["env"]["COVERAGE_FILE"] == ".coverage.worker"
 
     backend_upload = next(
         step for step in jobs["test-backend"]["steps"] if step["name"] == "Upload Backend Coverage Data"
     )
+    rag_upload = next(step for step in jobs["test-rag"]["steps"] if step["name"] == "Upload RAG Coverage Data")
     worker_upload = next(
         step for step in jobs["test-worker"]["steps"] if step["name"] == "Upload AI Worker Coverage Data"
     )
@@ -622,20 +642,28 @@ def test_github_actions_combines_distinct_lane_coverage_artifacts() -> None:
         "include-hidden-files": True,
         "if-no-files-found": "error",
     }
+    assert rag_upload["with"] == {
+        "name": "python-coverage-rag",
+        "path": ".coverage.rag",
+        "include-hidden-files": True,
+        "if-no-files-found": "error",
+    }
 
     final_steps = {step["name"]: step for step in jobs["test"]["steps"]}
     assert final_steps["Download Backend Coverage Data"]["with"]["name"] == "python-coverage-backend"
+    assert final_steps["Download RAG Coverage Data"]["with"]["name"] == "python-coverage-rag"
     assert final_steps["Download Contract Coverage Data"]["with"]["name"] == "python-coverage-contract"
     assert final_steps["Download AI Worker Coverage Data"]["with"]["name"] == "python-coverage-worker"
     for name in (
         "Download Backend Coverage Data",
+        "Download RAG Coverage Data",
         "Download Contract Coverage Data",
         "Download AI Worker Coverage Data",
         "Coverage Report",
     ):
         assert final_steps[name]["if"] == "${{ needs.classify-test-scope.outputs.full == 'true' }}"
     assert (
-        "coverage combine coverage-data/backend coverage-data/contract coverage-data/worker"
+        "coverage combine coverage-data/backend coverage-data/rag coverage-data/contract coverage-data/worker"
         in final_steps["Coverage Report"]["run"]
     )
     for name in ("Install uv", "Set up Python", "Install dependencies"):
