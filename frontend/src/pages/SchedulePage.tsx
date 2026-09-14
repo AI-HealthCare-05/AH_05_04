@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   useNavigate,
@@ -20,6 +20,7 @@ import {
   type MedicationOccurrenceData,
   type MedicationOccurrenceMedicationResponse,
   type MedicationScheduleItem,
+  type PutMedicationScheduleInput,
 } from '../api/medicationSchedules'
 import {
   createCheckinIdempotencyKey,
@@ -29,7 +30,13 @@ import {
   isOccurrenceNotFoundError,
   putMedicationCheckin,
   type MedicationCheckinUserStatus,
+  type PutMedicationCheckinInput,
 } from '../api/medicationCheckins'
+import {
+  getLatestPrescription,
+  type Medication,
+  type PrescriptionResponse,
+} from '../api/prescriptions'
 import { Button, Card, MobileShell } from '../design-system/components'
 import { clearAuthenticatedSession } from '../features/auth/authSession'
 import '../design-system/prototype.css'
@@ -44,6 +51,7 @@ const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 export type SchedulePageServices = {
   getMedicationDay: typeof getMedicationDay
   getOccurrenceMedication: typeof getOccurrenceMedication
+  getLatestPrescription: typeof getLatestPrescription
   putMedicationSchedule: typeof putMedicationSchedule
   cancelMedicationSchedule: typeof cancelMedicationSchedule
   putMedicationCheckin: typeof putMedicationCheckin
@@ -54,6 +62,7 @@ export type SchedulePageServices = {
 const defaultServices: SchedulePageServices = {
   getMedicationDay,
   getOccurrenceMedication,
+  getLatestPrescription,
   putMedicationSchedule,
   cancelMedicationSchedule,
   putMedicationCheckin,
@@ -63,6 +72,47 @@ const defaultServices: SchedulePageServices = {
 
 type MedicationDetail = MedicationOccurrenceMedicationResponse['data']
 type LoadFailure = 'AUTH' | 'NOT_FOUND' | 'VALIDATION' | 'NETWORK' | 'SERVER'
+type LogicalMutationOperation = 'SCHEDULE_PUT' | 'SCHEDULE_CANCEL' | 'CHECKIN_PUT'
+
+type LogicalMutationAttempt<TPayload = unknown> = {
+  operation: LogicalMutationOperation
+  targetId: string
+  requestPayload: TPayload
+  expectedRevision: number
+  idempotencyKey: string
+}
+
+function resolveLogicalMutationAttempt<TPayload>(
+  current: LogicalMutationAttempt | null,
+  operation: LogicalMutationOperation,
+  targetId: string,
+  requestPayload: TPayload,
+  expectedRevision: number,
+  createIdempotencyKey: () => string,
+): LogicalMutationAttempt<TPayload> {
+  if (
+    current?.operation === operation &&
+    current.targetId === targetId &&
+    current.expectedRevision === expectedRevision &&
+    JSON.stringify(current.requestPayload) === JSON.stringify(requestPayload)
+  ) {
+    return {
+      operation,
+      targetId,
+      requestPayload,
+      expectedRevision,
+      idempotencyKey: current.idempotencyKey,
+    }
+  }
+
+  return {
+    operation,
+    targetId,
+    requestPayload,
+    expectedRevision,
+    idempotencyKey: createIdempotencyKey(),
+  }
+}
 
 function kstToday(): string {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -101,7 +151,12 @@ function formatKstTime(value: string): string {
   }).format(date)
 }
 
-function medicationDescription(medication: MedicationDetail): string {
+function medicationDescription(
+  medication: Pick<
+    Medication,
+    'medication_name' | 'strength_text' | 'dose_value' | 'dose_unit'
+  >,
+): string {
   const amount =
     medication.dose_value !== null && medication.dose_unit
       ? `${medication.dose_value}${medication.dose_unit}`
@@ -109,6 +164,36 @@ function medicationDescription(medication: MedicationDetail): string {
   return [medication.medication_name, medication.strength_text, amount]
     .filter(Boolean)
     .join(' · ')
+}
+
+function scheduleMedicationMap(
+  scheduleItems: MedicationScheduleItem[],
+  prescription: PrescriptionResponse['data'],
+): Record<string, Medication> | null {
+  if (!prescription.current) return null
+
+  const medicationEntries = new Map<string, Medication>()
+  for (const medication of prescription.medications) {
+    const medicationId = medication.prescription_version_medication_id
+    if (medicationEntries.has(medicationId)) return null
+    medicationEntries.set(medicationId, medication)
+  }
+
+  const scheduleIds = new Set<string>()
+  for (const item of scheduleItems) {
+    const medicationId = item.prescription_version_medication_id
+    if (scheduleIds.has(medicationId) || !medicationEntries.has(medicationId)) {
+      return null
+    }
+    scheduleIds.add(medicationId)
+  }
+
+  return Object.fromEntries(
+    scheduleItems.map((item) => {
+      const medicationId = item.prescription_version_medication_id
+      return [medicationId, medicationEntries.get(medicationId)!]
+    }),
+  )
 }
 
 function isMatchingMedication(
@@ -214,7 +299,7 @@ function NavigationShell({
 
 function ScheduleEditor({
   item,
-  label,
+  medication,
   selectedDate,
   services,
   onSaved,
@@ -222,20 +307,33 @@ function ScheduleEditor({
   onClose,
 }: {
   item: MedicationScheduleItem
-  label: string
+  medication: Medication
   selectedDate: string
   services: SchedulePageServices
   onSaved: () => Promise<void>
   onConflict: () => Promise<void>
   onClose: () => void
 }) {
+  const frequencyPerDay =
+    Number.isInteger(medication.frequency_per_day) &&
+    (medication.frequency_per_day ?? 0) > 0
+      ? medication.frequency_per_day
+      : null
   const [startDate, setStartDate] = useState('')
   const [endMode, setEndMode] = useState<'DATE' | 'OPEN_ENDED'>('DATE')
   const [endDate, setEndDate] = useState('')
-  const [times, setTimes] = useState([''])
+  const [times, setTimes] = useState(() =>
+    Array.from({ length: frequencyPerDay ?? 1 }, () => ''),
+  )
   const [isSaving, setIsSaving] = useState(false)
   const [message, setMessage] = useState('')
   const [isConfirmingCancel, setIsConfirmingCancel] = useState(false)
+  const scheduleMutationAttemptRef = useRef<LogicalMutationAttempt | null>(null)
+
+  const changeScheduleInput = (change: () => void) => {
+    scheduleMutationAttemptRef.current = null
+    change()
+  }
 
   const validate = (): string | null => {
     if (!isValidLocalDate(startDate)) return '복용 시작일을 확인해 주세요.'
@@ -249,6 +347,9 @@ function ScheduleEditor({
       return '모든 복용 시간을 확인해 주세요.'
     }
     if (new Set(times).size !== times.length) return '같은 시간은 한 번만 입력해 주세요.'
+    if (frequencyPerDay !== null && times.length !== frequencyPerDay) {
+      return `처방의 하루 복용 횟수(${frequencyPerDay}회)와 복용 시간 ${times.length}개가 일치하지 않아요.`
+    }
     return null
   }
 
@@ -261,43 +362,62 @@ function ScheduleEditor({
       return
     }
 
+    const requestPayload: PutMedicationScheduleInput =
+      endMode === 'DATE'
+        ? {
+            startLocalDate: startDate,
+            endMode,
+            endLocalDate: endDate,
+            localTimes: times,
+            expectedRevision: item.revision ?? 0,
+          }
+        : {
+            startLocalDate: startDate,
+            endMode,
+            localTimes: times,
+            expectedRevision: item.revision ?? 0,
+          }
+    const attempt = resolveLogicalMutationAttempt(
+      scheduleMutationAttemptRef.current,
+      'SCHEDULE_PUT',
+      item.prescription_version_medication_id,
+      requestPayload,
+      requestPayload.expectedRevision,
+      services.createScheduleIdempotencyKey,
+    )
+    scheduleMutationAttemptRef.current = attempt
+
     setIsSaving(true)
     setMessage('')
     try {
       await services.putMedicationSchedule(
-        item.prescription_version_medication_id,
-        endMode === 'DATE'
-          ? {
-              startLocalDate: startDate,
-              endMode,
-              endLocalDate: endDate,
-              localTimes: times,
-              expectedRevision: item.revision ?? 0,
-            }
-          : {
-              startLocalDate: startDate,
-              endMode,
-              localTimes: times,
-              expectedRevision: item.revision ?? 0,
-            },
-        services.createScheduleIdempotencyKey(),
+        attempt.targetId,
+        attempt.requestPayload,
+        attempt.idempotencyKey,
       )
+      scheduleMutationAttemptRef.current = null
       await onSaved()
       onClose()
     } catch (error) {
       if (isScheduleRevisionConflictError(error)) {
+        scheduleMutationAttemptRef.current = null
         await onConflict()
         setMessage('일정이 다른 곳에서 변경됐어요. 최신 상태를 불러왔으니 내용을 다시 확인해 주세요.')
       } else if (
         isPrescriptionVersionConflictError(error) ||
         isPrescriptionMedicationNotFoundError(error)
       ) {
+        scheduleMutationAttemptRef.current = null
         await onConflict()
         setMessage('현재 처방 내용이 변경됐어요. 최신 일정을 확인해 주세요.')
       } else if (error instanceof ApiError && error.status === 401) {
         setMessage('로그인 정보를 다시 확인해 주세요.')
       } else if (error instanceof ApiError && error.status === 422) {
-        setMessage('입력한 날짜와 시간을 확인해 주세요.')
+        setMessage(
+          frequencyPerDay === null
+            ? '입력한 날짜와 시간을 확인해 주세요.'
+            : `처방의 하루 복용 횟수(${frequencyPerDay}회)와 복용 시간 개수를 확인해 주세요.`,
+        )
       } else if (error instanceof ApiError && error.status >= 500) {
         setMessage('일정을 저장하지 못했어요. 입력값을 유지한 채 다시 시도해 주세요.')
       } else {
@@ -316,20 +436,43 @@ function ScheduleEditor({
     }
     if (item.revision === null || isSaving) return
 
+    const requestPayload = {
+      status: 'CANCELLED' as const,
+      expectedRevision: item.revision,
+    }
+    const attempt = resolveLogicalMutationAttempt(
+      scheduleMutationAttemptRef.current,
+      'SCHEDULE_CANCEL',
+      item.prescription_version_medication_id,
+      requestPayload,
+      requestPayload.expectedRevision,
+      services.createScheduleIdempotencyKey,
+    )
+    scheduleMutationAttemptRef.current = attempt
+
     setIsSaving(true)
     setMessage('')
     try {
       await services.cancelMedicationSchedule(
-        item.prescription_version_medication_id,
-        item.revision,
-        services.createScheduleIdempotencyKey(),
+        attempt.targetId,
+        attempt.requestPayload.expectedRevision,
+        attempt.idempotencyKey,
       )
+      scheduleMutationAttemptRef.current = null
       await onSaved()
       onClose()
     } catch (error) {
       if (isScheduleRevisionConflictError(error)) {
+        scheduleMutationAttemptRef.current = null
         await onConflict()
         setMessage('일정이 다른 곳에서 변경됐어요. 최신 상태를 확인해 주세요.')
+      } else if (
+        isPrescriptionVersionConflictError(error) ||
+        isPrescriptionMedicationNotFoundError(error)
+      ) {
+        scheduleMutationAttemptRef.current = null
+        await onConflict()
+        setMessage('현재 처방 내용이 변경됐어요. 최신 일정을 확인해 주세요.')
       } else {
         setMessage('일정을 중지하지 못했어요. 잠시 후 다시 시도해 주세요.')
       }
@@ -342,7 +485,7 @@ function ScheduleEditor({
     <Card className="schedule-editor">
       <div className="schedule-editor__heading">
         <div>
-          <span>{label}</span>
+          <span>{medicationDescription(medication)}</span>
           <h3>복용할 날짜와 시간을 확인해 주세요</h3>
         </div>
         <button type="button" onClick={onClose} aria-label="일정 입력 닫기">×</button>
@@ -357,7 +500,7 @@ function ScheduleEditor({
             type="date"
             value={startDate}
             placeholder={selectedDate}
-            onChange={(event) => setStartDate(event.target.value)}
+            onChange={(event) => changeScheduleInput(() => setStartDate(event.target.value))}
             required
           />
         </label>
@@ -369,7 +512,7 @@ function ScheduleEditor({
               name={`end-mode-${item.prescription_version_medication_id}`}
               value="DATE"
               checked={endMode === 'DATE'}
-              onChange={() => setEndMode('DATE')}
+              onChange={() => changeScheduleInput(() => setEndMode('DATE'))}
             />
             종료일 지정
           </label>
@@ -379,7 +522,7 @@ function ScheduleEditor({
               name={`end-mode-${item.prescription_version_medication_id}`}
               value="OPEN_ENDED"
               checked={endMode === 'OPEN_ENDED'}
-              onChange={() => setEndMode('OPEN_ENDED')}
+              onChange={() => changeScheduleInput(() => setEndMode('OPEN_ENDED'))}
             />
             계속 복용
           </label>
@@ -391,7 +534,7 @@ function ScheduleEditor({
               type="date"
               value={endDate}
               min={startDate || undefined}
-              onChange={(event) => setEndDate(event.target.value)}
+              onChange={(event) => changeScheduleInput(() => setEndDate(event.target.value))}
               required
             />
           </label>
@@ -408,7 +551,7 @@ function ScheduleEditor({
                   onChange={(event) => {
                     const next = [...times]
                     next[index] = event.target.value
-                    setTimes(next)
+                    changeScheduleInput(() => setTimes(next))
                   }}
                   required
                 />
@@ -416,7 +559,9 @@ function ScheduleEditor({
               {times.length > 1 && (
                 <button
                   type="button"
-                  onClick={() => setTimes(times.filter((_, candidate) => candidate !== index))}
+                  onClick={() => changeScheduleInput(() => setTimes(
+                    times.filter((_, candidate) => candidate !== index),
+                  ))}
                   aria-label={`${index + 1}번째 복용 시간 삭제`}
                 >
                   삭제
@@ -424,9 +569,16 @@ function ScheduleEditor({
               )}
             </div>
           ))}
-          <button type="button" className="schedule-editor__add-time" onClick={() => setTimes([...times, ''])}>
+          <button
+            type="button"
+            className="schedule-editor__add-time"
+            onClick={() => changeScheduleInput(() => setTimes([...times, '']))}
+          >
             + 복용 시간 추가
           </button>
+          {frequencyPerDay !== null && (
+            <small>하루 {frequencyPerDay}회 처방이에요. 복용 시간을 {frequencyPerDay}개 입력해 주세요.</small>
+          )}
         </div>
         {message && <p className="schedule-editor__message" role="alert">{message}</p>}
         <Button fullWidth type="submit" disabled={isSaving}>
@@ -499,12 +651,15 @@ export function SchedulePage({
   const selectedDate = isValidLocalDate(requestedDate) ? requestedDate : kstToday()
   const [day, setDay] = useState<MedicationDayResponse['data'] | null>(null)
   const [medications, setMedications] = useState<Record<string, MedicationDetail | null>>({})
+  const [scheduleMedications, setScheduleMedications] = useState<Record<string, Medication>>({})
+  const [isScheduleIdentityUnavailable, setIsScheduleIdentityUnavailable] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [loadFailure, setLoadFailure] = useState<LoadFailure | null>(null)
   const [reloadVersion, setReloadVersion] = useState(0)
   const [editingMedicationId, setEditingMedicationId] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
+    setIsLoading(true)
     setReloadVersion((version) => version + 1)
   }, [])
 
@@ -526,7 +681,17 @@ export function SchedulePage({
         if (!active) return
         setDay(response.data)
 
-        const entries = await Promise.all(
+        const scheduleIdentityPromise = response.data.schedule_items.length === 0
+          ? Promise.resolve<Record<string, Medication> | null>({})
+          : services.getLatestPrescription(controller.signal)
+              .then((prescription) =>
+                scheduleMedicationMap(response.data.schedule_items, prescription.data),
+              )
+              .catch((error: unknown) => {
+                if (controller.signal.aborted) throw error
+                return null
+              })
+        const occurrenceDetailsPromise = Promise.all(
           response.data.occurrences
             .filter((occurrence) => occurrence.scheduled_local_date === selectedDate)
             .map(async (occurrence) => {
@@ -545,11 +710,21 @@ export function SchedulePage({
               }
             }),
         )
-        if (active) setMedications(Object.fromEntries(entries))
+        const [scheduleIdentity, occurrenceEntries] = await Promise.all([
+          scheduleIdentityPromise,
+          occurrenceDetailsPromise,
+        ])
+        if (active) {
+          setScheduleMedications(scheduleIdentity ?? {})
+          setIsScheduleIdentityUnavailable(scheduleIdentity === null)
+          setMedications(Object.fromEntries(occurrenceEntries))
+        }
       } catch (error) {
         if (!controller.signal.aborted && active) {
           setDay(null)
           setMedications({})
+          setScheduleMedications({})
+          setIsScheduleIdentityUnavailable(false)
           setLoadFailure(classifyLoadFailure(error))
         }
       } finally {
@@ -571,18 +746,10 @@ export function SchedulePage({
         .sort((left, right) => left.scheduled_at.localeCompare(right.scheduled_at)),
     [day, selectedDate],
   )
-  const namesByMedicationId = useMemo(() => {
-    const entries = Object.values(medications)
-      .filter((medication): medication is MedicationDetail => Boolean(medication))
-      .map((medication) => [
-        medication.prescription_version_medication_id,
-        medication.medication_name,
-      ])
-    return Object.fromEntries(entries)
-  }, [medications])
   const state = day ? statusContent(day.schedule_status) : null
 
   const openRelevantEditor = () => {
+    if (isScheduleIdentityUnavailable) return
     const preferred = day?.schedule_items.find(
       (item) => item.schedule_item_status !== 'READY',
     ) ?? day?.schedule_items[0]
@@ -632,7 +799,12 @@ export function SchedulePage({
             <StatusCard
               title={state.title}
               body={state.body}
-              action={state.action}
+              action={
+                day.schedule_status === 'NO_ACTIVE_PRESCRIPTION' ||
+                !isScheduleIdentityUnavailable
+                  ? state.action
+                  : undefined
+              }
               onAction={day.schedule_status === 'NO_ACTIVE_PRESCRIPTION'
                 ? () => navigate('/prescriptions/upload', { state: { intent: 'new-prescription' } })
                 : openRelevantEditor}
@@ -685,13 +857,20 @@ export function SchedulePage({
               <div className="schedule-page__section-heading">
                 <h2 id="schedule-settings-title">복약 일정 설정</h2>
               </div>
-              {day.schedule_items.map((item, index) => {
-                const label = namesByMedicationId[item.prescription_version_medication_id] ?? `처방약 ${index + 1}`
+              {isScheduleIdentityUnavailable ? (
+                <Card className="schedule-page__empty">
+                  <p role="alert">약 정보를 확인할 수 없어 일정을 설정할 수 없습니다. 처방 정보를 다시 확인해 주세요.</p>
+                </Card>
+              ) : day.schedule_items.map((item) => {
+                const medication = scheduleMedications[
+                  item.prescription_version_medication_id
+                ]
+                if (!medication) return null
                 return editingMedicationId === item.prescription_version_medication_id ? (
                   <ScheduleEditor
                     key={item.prescription_version_medication_id}
                     item={item}
-                    label={label}
+                    medication={medication}
                     selectedDate={selectedDate}
                     services={services}
                     onSaved={reload}
@@ -706,7 +885,7 @@ export function SchedulePage({
                     onClick={() => setEditingMedicationId(item.prescription_version_medication_id)}
                   >
                     <span>
-                      <strong>{label}</strong>
+                      <strong>{medicationDescription(medication)}</strong>
                       <small>{
                         item.schedule_item_status === 'READY'
                           ? '설정됨'
@@ -752,8 +931,10 @@ export function ScheduleOccurrencePage({
   const [reloadVersion, setReloadVersion] = useState(0)
   const [isSaving, setIsSaving] = useState(false)
   const [mutationMessage, setMutationMessage] = useState('')
+  const checkinAttemptRef = useRef<LogicalMutationAttempt | null>(null)
 
   const reload = useCallback(async () => {
+    setIsLoading(true)
     setReloadVersion((version) => version + 1)
   }, [])
 
@@ -814,17 +995,29 @@ export function ScheduleOccurrencePage({
 
   const submitCheckin = async (status: MedicationCheckinUserStatus) => {
     if (!occurrence || isSaving || occurrence.status === 'CANCELLED') return
+    const requestPayload: PutMedicationCheckinInput = {
+      status,
+      expectedRevision: occurrence.checkin?.revision ?? 0,
+    }
+    const attempt = resolveLogicalMutationAttempt(
+      checkinAttemptRef.current,
+      'CHECKIN_PUT',
+      occurrence.occurrence_id,
+      requestPayload,
+      requestPayload.expectedRevision,
+      services.createCheckinIdempotencyKey,
+    )
+    checkinAttemptRef.current = attempt
+
     setIsSaving(true)
     setMutationMessage('')
     try {
       const response = await services.putMedicationCheckin(
-        occurrence.occurrence_id,
-        {
-          status,
-          expectedRevision: occurrence.checkin?.revision ?? 0,
-        },
-        services.createCheckinIdempotencyKey(),
+        attempt.targetId,
+        attempt.requestPayload,
+        attempt.idempotencyKey,
       )
+      checkinAttemptRef.current = null
       setOccurrence({
         ...occurrence,
         status: 'CLOSED',
@@ -833,18 +1026,22 @@ export function ScheduleOccurrencePage({
       setMutationMessage('복약 기록을 저장했어요.')
     } catch (error) {
       if (isCheckinRevisionConflictError(error)) {
+        checkinAttemptRef.current = null
         await reload()
         setMutationMessage('기록이 다른 곳에서 변경됐어요. 최신 상태를 확인한 뒤 다시 선택해 주세요.')
       } else if (isOccurrenceNotFoundError(error)) {
+        checkinAttemptRef.current = null
         setLoadFailure('NOT_FOUND')
         setOccurrence(null)
         setMedication(null)
       } else if (isCheckinValidationError(error)) {
         setMutationMessage('선택한 복약 기록을 저장할 수 없어요. 상태를 확인해 주세요.')
       } else if (isCheckinConflictError(error)) {
+        checkinAttemptRef.current = null
         await reload()
         setMutationMessage('이 일정의 상태가 변경됐어요. 최신 상태를 확인해 주세요.')
       } else if (error instanceof ApiError && error.status === 401) {
+        checkinAttemptRef.current = null
         setLoadFailure('AUTH')
         setOccurrence(null)
         setMedication(null)

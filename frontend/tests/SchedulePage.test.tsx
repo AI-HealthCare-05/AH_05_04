@@ -7,6 +7,7 @@ import type {
   MedicationDayResponse,
   MedicationOccurrenceMedicationResponse,
 } from '../src/api/medicationSchedules'
+import type { PrescriptionResponse } from '../src/api/prescriptions'
 import {
   ScheduleOccurrencePage,
   SchedulePage,
@@ -16,6 +17,7 @@ import {
 const occurrenceId = '11111111-1111-4111-8111-111111111111'
 const medicationId = '22222222-2222-4222-8222-222222222222'
 const prescriptionVersionId = '33333333-3333-4333-8333-333333333333'
+const secondMedicationId = '66666666-6666-4666-8666-666666666666'
 
 function makeDay(
   overrides: Partial<MedicationDayResponse['data']> = {},
@@ -66,12 +68,43 @@ function makeMedication(
   }
 }
 
+function makePrescription(
+  overrides: Partial<PrescriptionResponse['data']> = {},
+): PrescriptionResponse {
+  return {
+    data: {
+      prescription_id: '77777777-7777-4777-8777-777777777777',
+      prescription_version_id: prescriptionVersionId,
+      revision: 1,
+      current: true,
+      document_id: '88888888-8888-4888-8888-888888888888',
+      prescribed_date: '2026-09-14',
+      confirmed_at: '2026-09-14T00:00:00Z',
+      medications: [
+        {
+          prescription_version_medication_id: medicationId,
+          medication_name: '현재 처방의 혈압약',
+          strength_text: '5mg',
+          dose_value: 1,
+          dose_unit: '정',
+          frequency_per_day: 1,
+          timing_text: null,
+          duration_days: 7,
+          display_order: 0,
+        },
+      ],
+      ...overrides,
+    },
+  }
+}
+
 function makeServices(
   overrides: Partial<SchedulePageServices> = {},
 ): SchedulePageServices {
   return {
     getMedicationDay: vi.fn().mockResolvedValue(makeDay()),
     getOccurrenceMedication: vi.fn().mockResolvedValue(makeMedication()),
+    getLatestPrescription: vi.fn().mockResolvedValue(makePrescription()),
     putMedicationSchedule: vi.fn().mockResolvedValue({ data: {} }),
     cancelMedicationSchedule: vi.fn().mockResolvedValue({ data: {} }),
     putMedicationCheckin: vi.fn().mockResolvedValue({
@@ -127,6 +160,44 @@ function renderOccurrence(
   )
 }
 
+function setupItem(
+  id = medicationId,
+  overrides: Partial<MedicationDayResponse['data']['schedule_items'][number]> = {},
+) {
+  return {
+    prescription_version_medication_id: id,
+    schedule_item_status: 'SETUP_REQUIRED' as const,
+    schedule_id: null,
+    revision: null,
+    setup_reason: 'MISSING_START_DATE' as const,
+    ...overrides,
+  }
+}
+
+function fillScheduleEditor(
+  startDate = '2026-09-14',
+  endDate = '2026-09-20',
+  time = '08:30',
+) {
+  fireEvent.change(screen.getByLabelText('복용 시작일'), {
+    target: { value: startDate },
+  })
+  fireEvent.change(screen.getByLabelText('복용 종료일'), {
+    target: { value: endDate },
+  })
+  fireEvent.change(screen.getByLabelText('1번째 복용 시간'), {
+    target: { value: time },
+  })
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
@@ -162,6 +233,158 @@ describe('production 복약 일정', () => {
     })
     renderSchedule(services)
     expect(await screen.findByRole('heading', { name: title })).toBeTruthy()
+  })
+
+  it('신규 처방에 occurrence가 없어도 현재 처방의 ID로 2개 약 정보와 저장 대상을 정확히 매칭한다', async () => {
+    const items = [setupItem(), setupItem(secondMedicationId)]
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({
+        schedule_status: 'SETUP_REQUIRED',
+        schedule_items: items,
+        occurrences: [],
+      })),
+      getLatestPrescription: vi.fn().mockResolvedValue(makePrescription({
+        medications: [
+          {
+            prescription_version_medication_id: secondMedicationId,
+            medication_name: '두 번째 혈당약',
+            strength_text: '500mg',
+            dose_value: 2,
+            dose_unit: '정',
+            frequency_per_day: 1,
+            timing_text: null,
+            duration_days: 7,
+            display_order: 1,
+          },
+          makePrescription().data.medications[0],
+        ],
+      })),
+    })
+    renderSchedule(services)
+
+    expect(await screen.findByText('현재 처방의 혈압약 · 5mg · 1정')).toBeTruthy()
+    expect(screen.getByText('두 번째 혈당약 · 500mg · 2정')).toBeTruthy()
+    expect(services.getOccurrenceMedication).not.toHaveBeenCalled()
+    expect(screen.queryByText(/처방약 \d/)).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /현재 처방의 혈압약.*설정 필요/ }))
+    fillScheduleEditor()
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+    await waitFor(() => expect(services.putMedicationSchedule).toHaveBeenCalledTimes(1))
+    expect(services.putMedicationSchedule).toHaveBeenNthCalledWith(
+      1,
+      medicationId,
+      expect.objectContaining({ localTimes: ['08:30'], expectedRevision: 0 }),
+      'schedule:test-key',
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: /두 번째 혈당약.*설정 필요/ }))
+    fillScheduleEditor('2026-09-15', '2026-09-21', '20:30')
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+    await waitFor(() => expect(services.putMedicationSchedule).toHaveBeenCalledTimes(2))
+    expect(services.putMedicationSchedule).toHaveBeenNthCalledWith(
+      2,
+      secondMedicationId,
+      expect.objectContaining({ localTimes: ['20:30'], expectedRevision: 0 }),
+      'schedule:test-key',
+    )
+  })
+
+  it('PARTIAL의 미설정 약도 현재 처방 identity로 표시한다', async () => {
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({
+        schedule_status: 'PARTIAL',
+        schedule_items: [
+          makeDay().data.schedule_items[0],
+          setupItem(secondMedicationId),
+        ],
+        occurrences: [],
+      })),
+      getLatestPrescription: vi.fn().mockResolvedValue(makePrescription({
+        medications: [
+          makePrescription().data.medications[0],
+          {
+            ...makePrescription().data.medications[0],
+            prescription_version_medication_id: secondMedicationId,
+            medication_name: '미설정 위장약',
+            strength_text: '20mg',
+            display_order: 1,
+          },
+        ],
+      })),
+    })
+    renderSchedule(services)
+
+    expect(await screen.findByText('미설정 위장약 · 20mg · 1정')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '이어서 설정하기' }))
+    expect(screen.getByText('미설정 위장약 · 20mg · 1정')).toBeTruthy()
+  })
+
+  it.each([
+    ['현재가 아닌 처방', makePrescription({ current: false })],
+    ['이전 version의 schedule item', makePrescription({ medications: [] })],
+  ])('%s으로 identity를 확정할 수 없으면 임의 label과 저장 CTA를 막는다', async (_case, prescription) => {
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({
+        schedule_status: 'SETUP_REQUIRED',
+        schedule_items: [setupItem()],
+        occurrences: [],
+      })),
+      getLatestPrescription: vi.fn().mockResolvedValue(prescription),
+    })
+    renderSchedule(services)
+
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      '약 정보를 확인할 수 없어 일정을 설정할 수 없습니다.',
+    )
+    expect(screen.queryByRole('button', { name: '일정 설정하기' })).toBeNull()
+    expect(screen.queryByText(/처방약 1/)).toBeNull()
+    expect(services.putMedicationSchedule).not.toHaveBeenCalled()
+  })
+
+  it('현재 처방 identity 조회 실패 시 안전 안내를 표시하고 저장을 막는다', async () => {
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({
+        schedule_status: 'SETUP_REQUIRED',
+        schedule_items: [setupItem()],
+        occurrences: [],
+      })),
+      getLatestPrescription: vi.fn().mockRejectedValue(new TypeError('Failed to fetch')),
+    })
+    renderSchedule(services)
+
+    expect((await screen.findByRole('alert')).textContent).toContain('처방 정보를 다시 확인해 주세요.')
+    expect(screen.queryByRole('button', { name: '일정 설정하기' })).toBeNull()
+    expect(services.putMedicationSchedule).not.toHaveBeenCalled()
+  })
+
+  it('frequency_per_day와 local_times 개수가 다르면 구체적 안내 후 저장을 막는다', async () => {
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({
+        schedule_status: 'SETUP_REQUIRED',
+        schedule_items: [setupItem()],
+        occurrences: [],
+      })),
+      getLatestPrescription: vi.fn().mockResolvedValue(makePrescription({
+        medications: [{
+          ...makePrescription().data.medications[0],
+          frequency_per_day: 2,
+        }],
+      })),
+    })
+    renderSchedule(services)
+
+    fireEvent.click(await screen.findByRole('button', { name: '일정 설정하기' }))
+    expect(screen.getByText('하루 2회 처방이에요. 복용 시간을 2개 입력해 주세요.')).toBeTruthy()
+    fillScheduleEditor()
+    fireEvent.change(screen.getByLabelText('2번째 복용 시간'), {
+      target: { value: '20:30' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '2번째 복용 시간 삭제' }))
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+
+    expect(screen.getByRole('alert').textContent).toContain('하루 복용 횟수(2회)와 복용 시간 1개가 일치하지 않아요.')
+    expect(services.putMedicationSchedule).not.toHaveBeenCalled()
   })
 
   it('최초 일정은 revision 0과 직접 입력한 DATE 값으로만 저장한다', async () => {
@@ -203,12 +426,125 @@ describe('production 복약 일정', () => {
     )
   })
 
+  it('일정 PUT 응답 유실 후 동일 입력을 재시도하면 key·body·revision을 재사용한다', async () => {
+    const put = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValue({ data: {} })
+    const createKey = vi.fn()
+      .mockReturnValueOnce('schedule:first-key')
+      .mockReturnValueOnce('schedule:unexpected-key')
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({
+        schedule_status: 'SETUP_REQUIRED',
+        schedule_items: [setupItem()],
+        occurrences: [],
+      })),
+      putMedicationSchedule: put,
+      createScheduleIdempotencyKey: createKey,
+    })
+    renderSchedule(services)
+
+    fireEvent.click(await screen.findByRole('button', { name: '일정 설정하기' }))
+    fillScheduleEditor()
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+    expect(await screen.findByText(/연결을 확인한 뒤 다시 시도/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(2))
+    expect(put.mock.calls[1]).toEqual(put.mock.calls[0])
+    expect(createKey).toHaveBeenCalledTimes(1)
+  })
+
+  it('일정 PUT 실패 후 사용자가 시간을 바꾸면 새 논리적 시도 key를 발급한다', async () => {
+    const put = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValue({ data: {} })
+    const createKey = vi.fn()
+      .mockReturnValueOnce('schedule:first-key')
+      .mockReturnValueOnce('schedule:changed-key')
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({
+        schedule_status: 'SETUP_REQUIRED',
+        schedule_items: [setupItem()],
+        occurrences: [],
+      })),
+      putMedicationSchedule: put,
+      createScheduleIdempotencyKey: createKey,
+    })
+    renderSchedule(services)
+
+    fireEvent.click(await screen.findByRole('button', { name: '일정 설정하기' }))
+    fillScheduleEditor()
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+    await screen.findByText(/연결을 확인한 뒤 다시 시도/)
+    fireEvent.change(screen.getByLabelText('1번째 복용 시간'), {
+      target: { value: '09:30' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(2))
+    expect(put.mock.calls[0]?.[2]).toBe('schedule:first-key')
+    expect(put.mock.calls[1]?.[2]).toBe('schedule:changed-key')
+    expect(put.mock.calls[0]?.[1]).toMatchObject({ localTimes: ['08:30'], expectedRevision: 0 })
+    expect(put.mock.calls[1]?.[1]).toMatchObject({ localTimes: ['09:30'], expectedRevision: 0 })
+  })
+
+  it('일정 PUT revision conflict 재조회 후에는 최신 revision과 새 key로 시작한다', async () => {
+    const latestItem = setupItem(medicationId, { revision: 4 })
+    const reloadResponse = deferred<MedicationDayResponse>()
+    const getDay = vi.fn()
+      .mockResolvedValueOnce(makeDay({
+        schedule_status: 'SETUP_REQUIRED',
+        schedule_items: [setupItem()],
+        occurrences: [],
+      }))
+      .mockReturnValueOnce(reloadResponse.promise)
+      .mockResolvedValue(makeDay({
+        schedule_status: 'SETUP_REQUIRED',
+        schedule_items: [latestItem],
+        occurrences: [],
+      }))
+    const put = vi.fn()
+      .mockRejectedValueOnce(new ApiError(409, 'raw', 'SCHEDULE_REVISION_CONFLICT'))
+      .mockResolvedValue({ data: {} })
+    const createKey = vi.fn()
+      .mockReturnValueOnce('schedule:conflict-key')
+      .mockReturnValueOnce('schedule:reloaded-key')
+    const services = makeServices({
+      getMedicationDay: getDay,
+      putMedicationSchedule: put,
+      createScheduleIdempotencyKey: createKey,
+    })
+    renderSchedule(services)
+
+    fireEvent.click(await screen.findByRole('button', { name: '일정 설정하기' }))
+    fillScheduleEditor()
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+    await waitFor(() => expect(getDay).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('status').textContent).toContain('일정을 불러오는 중')
+    expect(screen.queryByRole('button', { name: '복약 일정 저장하기' })).toBeNull()
+    reloadResponse.resolve(makeDay({
+      schedule_status: 'SETUP_REQUIRED',
+      schedule_items: [latestItem],
+      occurrences: [],
+    }))
+    expect(await screen.findByRole('heading', { name: '복용할 날짜와 시간을 확인해 주세요' })).toBeTruthy()
+    fillScheduleEditor()
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(2))
+    expect(put.mock.calls[0]?.[1]).toMatchObject({ expectedRevision: 0 })
+    expect(put.mock.calls[0]?.[2]).toBe('schedule:conflict-key')
+    expect(put.mock.calls[1]?.[1]).toMatchObject({ expectedRevision: 4 })
+    expect(put.mock.calls[1]?.[2]).toBe('schedule:reloaded-key')
+  })
+
   it('활성 일정 중지는 2단계 확인 후 현재 revision으로 PATCH한다', async () => {
     const services = makeServices()
     renderSchedule(services)
     await screen.findByText('당시 처방의 혈압약 · 5mg · 1정')
 
-    fireEvent.click(screen.getByRole('button', { name: /당시 처방의 혈압약\s*설정됨/ }))
+    fireEvent.click(screen.getByRole('button', { name: /현재 처방의 혈압약.*설정됨/ }))
     fireEvent.click(screen.getByRole('button', { name: '이 일정 사용 중지' }))
     expect(services.cancelMedicationSchedule).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '사용 중지 확인' }))
@@ -219,6 +555,120 @@ describe('production 복약 일정', () => {
       3,
       'schedule:test-key',
     )
+  })
+
+  it('일정 PATCH 응답 유실 후 다시 중지하면 동일 key·body·revision을 재사용한다', async () => {
+    const cancel = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValue({ data: {} })
+    const createKey = vi.fn()
+      .mockReturnValueOnce('schedule:cancel-key')
+      .mockReturnValueOnce('schedule:unexpected-key')
+    const services = makeServices({
+      cancelMedicationSchedule: cancel,
+      createScheduleIdempotencyKey: createKey,
+    })
+    renderSchedule(services)
+    await screen.findByText('현재 처방의 혈압약 · 5mg · 1정')
+
+    fireEvent.click(screen.getByRole('button', { name: /현재 처방의 혈압약.*설정됨/ }))
+    fireEvent.click(screen.getByRole('button', { name: '이 일정 사용 중지' }))
+    fireEvent.click(screen.getByRole('button', { name: '사용 중지 확인' }))
+    expect(await screen.findByText(/일정을 중지하지 못했어요/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '사용 중지 확인' }))
+
+    await waitFor(() => expect(cancel).toHaveBeenCalledTimes(2))
+    expect(cancel.mock.calls[1]).toEqual(cancel.mock.calls[0])
+    expect(createKey).toHaveBeenCalledTimes(1)
+  })
+
+  it('일정 PUT에서 PATCH로 operation이 바뀌면 동일 target이어도 새 key를 발급한다', async () => {
+    const put = vi.fn().mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const cancel = vi.fn().mockResolvedValue({ data: {} })
+    const createKey = vi.fn()
+      .mockReturnValueOnce('schedule:put-key')
+      .mockReturnValueOnce('schedule:cancel-key')
+    const services = makeServices({
+      putMedicationSchedule: put,
+      cancelMedicationSchedule: cancel,
+      createScheduleIdempotencyKey: createKey,
+    })
+    renderSchedule(services)
+    await screen.findByText('현재 처방의 혈압약 · 5mg · 1정')
+
+    fireEvent.click(screen.getByRole('button', { name: /현재 처방의 혈압약.*설정됨/ }))
+    fillScheduleEditor()
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+    await screen.findByText(/연결을 확인한 뒤 다시 시도/)
+    fireEvent.click(screen.getByRole('button', { name: '이 일정 사용 중지' }))
+    fireEvent.click(screen.getByRole('button', { name: '사용 중지 확인' }))
+
+    await waitFor(() => expect(cancel).toHaveBeenCalledTimes(1))
+    expect(put.mock.calls[0]?.[2]).toBe('schedule:put-key')
+    expect(cancel.mock.calls[0]?.[2]).toBe('schedule:cancel-key')
+  })
+
+  it('응답이 유실된 PATCH 사이에 PUT operation을 시도하면 다시 PATCH할 때 새 key를 발급한다', async () => {
+    const cancel = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValue({ data: {} })
+    const put = vi.fn().mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const createKey = vi.fn()
+      .mockReturnValueOnce('schedule:first-cancel-key')
+      .mockReturnValueOnce('schedule:put-between-key')
+      .mockReturnValueOnce('schedule:second-cancel-key')
+    const services = makeServices({
+      putMedicationSchedule: put,
+      cancelMedicationSchedule: cancel,
+      createScheduleIdempotencyKey: createKey,
+    })
+    renderSchedule(services)
+    await screen.findByText('현재 처방의 혈압약 · 5mg · 1정')
+
+    fireEvent.click(screen.getByRole('button', { name: /현재 처방의 혈압약.*설정됨/ }))
+    fireEvent.click(screen.getByRole('button', { name: '이 일정 사용 중지' }))
+    fireEvent.click(screen.getByRole('button', { name: '사용 중지 확인' }))
+    await screen.findByText(/일정을 중지하지 못했어요/)
+
+    fillScheduleEditor()
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+    await screen.findByText(/연결을 확인한 뒤 다시 시도/)
+    fireEvent.click(screen.getByRole('button', { name: '사용 중지 확인' }))
+
+    await waitFor(() => expect(cancel).toHaveBeenCalledTimes(2))
+    expect(cancel.mock.calls[0]?.[2]).toBe('schedule:first-cancel-key')
+    expect(put.mock.calls[0]?.[2]).toBe('schedule:put-between-key')
+    expect(cancel.mock.calls[1]?.[2]).toBe('schedule:second-cancel-key')
+  })
+
+  it('일정 PATCH revision conflict 재조회 후에는 최신 revision과 새 key로 시작한다', async () => {
+    const latestDay = makeDay()
+    latestDay.data.schedule_items[0].revision = 5
+    const getDay = vi.fn().mockResolvedValueOnce(makeDay()).mockResolvedValue(latestDay)
+    const cancel = vi.fn()
+      .mockRejectedValueOnce(new ApiError(409, 'raw', 'SCHEDULE_REVISION_CONFLICT'))
+      .mockResolvedValue({ data: {} })
+    const createKey = vi.fn()
+      .mockReturnValueOnce('schedule:cancel-conflict-key')
+      .mockReturnValueOnce('schedule:cancel-reloaded-key')
+    const services = makeServices({
+      getMedicationDay: getDay,
+      cancelMedicationSchedule: cancel,
+      createScheduleIdempotencyKey: createKey,
+    })
+    renderSchedule(services)
+    await screen.findByText('현재 처방의 혈압약 · 5mg · 1정')
+
+    fireEvent.click(screen.getByRole('button', { name: /현재 처방의 혈압약.*설정됨/ }))
+    fireEvent.click(screen.getByRole('button', { name: '이 일정 사용 중지' }))
+    fireEvent.click(screen.getByRole('button', { name: '사용 중지 확인' }))
+    await waitFor(() => expect(getDay).toHaveBeenCalledTimes(2))
+    fireEvent.click(await screen.findByRole('button', { name: '이 일정 사용 중지' }))
+    fireEvent.click(screen.getByRole('button', { name: '사용 중지 확인' }))
+
+    await waitFor(() => expect(cancel).toHaveBeenCalledTimes(2))
+    expect(cancel.mock.calls[0]).toEqual([medicationId, 3, 'schedule:cancel-conflict-key'])
+    expect(cancel.mock.calls[1]).toEqual([medicationId, 5, 'schedule:cancel-reloaded-key'])
   })
 
   it.each([
@@ -241,6 +691,7 @@ describe('production 복약 기록 handoff', () => {
     renderOccurrence(services)
     expect(await screen.findByRole('heading', { name: '당시 처방의 혈압약' })).toBeTruthy()
     expect(screen.getByText('9월 14일 월요일')).toBeTruthy()
+    expect(services.getLatestPrescription).not.toHaveBeenCalled()
   })
 
   it('occurrence/date가 일치하지 않으면 detail을 요청하지 않고 404를 소유권 구분 없이 표시한다', async () => {
@@ -265,6 +716,78 @@ describe('production 복약 기록 handoff', () => {
       { status: 'TAKEN', expectedRevision: 0 },
       'checkin:test-key',
     )
+  })
+
+  it('Check-in 응답 유실 후 동일 선택을 재시도하면 key·body·revision을 재사용한다', async () => {
+    const put = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValue({
+        data: {
+          checkin_id: '55555555-5555-4555-8555-555555555555',
+          occurrence_id: occurrenceId,
+          status: 'TAKEN',
+          taken_at: null,
+          revision: 1,
+          corrected: false,
+        },
+      })
+    const createKey = vi.fn()
+      .mockReturnValueOnce('checkin:first-key')
+      .mockReturnValueOnce('checkin:unexpected-key')
+    const services = makeServices({
+      putMedicationCheckin: put,
+      createCheckinIdempotencyKey: createKey,
+    })
+    renderOccurrence(services)
+    await screen.findByRole('heading', { name: '당시 처방의 혈압약' })
+
+    fireEvent.click(screen.getByRole('button', { name: '복용했어요' }))
+    expect(await screen.findByText(/연결을 확인한 뒤 다시 시도/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '복용했어요' }))
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(2))
+    expect(put.mock.calls[1]).toEqual(put.mock.calls[0])
+    expect(createKey).toHaveBeenCalledTimes(1)
+  })
+
+  it('Check-in 실패 후 사용자가 상태 선택을 바꾸면 새 key를 발급한다', async () => {
+    const put = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValue({
+        data: {
+          checkin_id: '55555555-5555-4555-8555-555555555555',
+          occurrence_id: occurrenceId,
+          status: 'NOT_TAKEN',
+          taken_at: null,
+          revision: 1,
+          corrected: false,
+        },
+      })
+    const createKey = vi.fn()
+      .mockReturnValueOnce('checkin:taken-key')
+      .mockReturnValueOnce('checkin:not-taken-key')
+    const services = makeServices({
+      putMedicationCheckin: put,
+      createCheckinIdempotencyKey: createKey,
+    })
+    renderOccurrence(services)
+    await screen.findByRole('heading', { name: '당시 처방의 혈압약' })
+
+    fireEvent.click(screen.getByRole('button', { name: '복용했어요' }))
+    await screen.findByText(/연결을 확인한 뒤 다시 시도/)
+    fireEvent.click(screen.getByRole('button', { name: '복용하지 않았어요' }))
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(2))
+    expect(put.mock.calls[0]).toEqual([
+      occurrenceId,
+      { status: 'TAKEN', expectedRevision: 0 },
+      'checkin:taken-key',
+    ])
+    expect(put.mock.calls[1]).toEqual([
+      occurrenceId,
+      { status: 'NOT_TAKEN', expectedRevision: 0 },
+      'checkin:not-taken-key',
+    ])
   })
 
   it('기존 Check-in을 NOT_TAKEN으로 정정할 때 실제 revision을 사용한다', async () => {
@@ -328,5 +851,62 @@ describe('production 복약 기록 handoff', () => {
     expect(services.putMedicationCheckin).toHaveBeenCalledTimes(1)
     expect(screen.queryByText('raw backend detail')).toBeNull()
     expect(await screen.findByText('복용하지 않았어요.')).toBeTruthy()
+  })
+
+  it('Check-in revision conflict 재조회 후에는 최신 revision과 새 key로 시작한다', async () => {
+    const latest = makeDay()
+    latest.data.occurrences[0].status = 'CLOSED'
+    latest.data.occurrences[0].checkin = {
+      checkin_id: '55555555-5555-4555-8555-555555555555',
+      occurrence_id: occurrenceId,
+      status: 'NOT_TAKEN',
+      taken_at: null,
+      revision: 2,
+      corrected: true,
+    }
+    const reloadResponse = deferred<MedicationDayResponse>()
+    const getDay = vi.fn()
+      .mockResolvedValueOnce(makeDay())
+      .mockReturnValueOnce(reloadResponse.promise)
+      .mockResolvedValue(latest)
+    const put = vi.fn()
+      .mockRejectedValueOnce(new ApiError(409, 'raw backend detail', 'CHECKIN_REVISION_CONFLICT'))
+      .mockResolvedValue({
+        data: {
+          ...latest.data.occurrences[0].checkin!,
+          status: 'TAKEN',
+          revision: 3,
+        },
+      })
+    const createKey = vi.fn()
+      .mockReturnValueOnce('checkin:conflict-key')
+      .mockReturnValueOnce('checkin:reloaded-key')
+    const services = makeServices({
+      getMedicationDay: getDay,
+      putMedicationCheckin: put,
+      createCheckinIdempotencyKey: createKey,
+    })
+    renderOccurrence(services)
+    await screen.findByRole('heading', { name: '당시 처방의 혈압약' })
+
+    fireEvent.click(screen.getByRole('button', { name: '복용했어요' }))
+    await waitFor(() => expect(getDay).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('status').textContent).toContain('복약 기록을 불러오는 중')
+    expect(screen.queryByRole('button', { name: '복용했어요' })).toBeNull()
+    reloadResponse.resolve(latest)
+    expect(await screen.findByText(/최신 상태를 확인한 뒤 다시 선택/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '복용했어요' }))
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(2))
+    expect(put.mock.calls[0]).toEqual([
+      occurrenceId,
+      { status: 'TAKEN', expectedRevision: 0 },
+      'checkin:conflict-key',
+    ])
+    expect(put.mock.calls[1]).toEqual([
+      occurrenceId,
+      { status: 'TAKEN', expectedRevision: 2 },
+      'checkin:reloaded-key',
+    ])
   })
 })

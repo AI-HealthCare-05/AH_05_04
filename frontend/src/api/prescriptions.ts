@@ -194,8 +194,10 @@ export type PrescriptionResponse = {
   }
 }
 
-export async function getLatestPrescription(): Promise<PrescriptionResponse> {
-  return apiRequest<PrescriptionResponse>('/api/v1/prescriptions/latest')
+export async function getLatestPrescription(
+  signal?: AbortSignal,
+): Promise<PrescriptionResponse> {
+  return apiRequest<PrescriptionResponse>('/api/v1/prescriptions/latest', { signal })
 }
 
 export type ExtractedFieldResponse = {
