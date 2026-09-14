@@ -427,7 +427,7 @@ def test_schema_set_1_4_new_members_are_strict_body_free_contracts() -> None:
         assert document["$schema"] == "https://json-schema.org/draft/2020-12/schema"
         assert document["$id"] == f"urn:ah05:rag-eval:schema:{schema_id.removeprefix('rag-eval.')}:1.0.0"
         assert document["additionalProperties"] is False
-        assert set(document["required"]) == expected_required[schema_id]
+        assert set(cast(list[str], document["required"])) == expected_required[schema_id]
 
     encoded = repr({"observation": observation, "signal": signal}).casefold()
     for forbidden in (

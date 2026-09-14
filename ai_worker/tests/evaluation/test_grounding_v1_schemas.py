@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from enum import StrEnum
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
@@ -220,7 +222,7 @@ def test_no_claims_signal_allows_approved_fallback_answer_hash() -> None:
         (GroundingSignalStatus, {"EVALUATED", "NOT_APPLICABLE_NO_CLAIMS"}),
     ],
 )
-def test_bounded_enums_exactly_match_approved_wire_values(enum_type: type, values: set[str]) -> None:
+def test_bounded_enums_exactly_match_approved_wire_values(enum_type: type[StrEnum], values: set[str]) -> None:
     assert {member.value for member in enum_type} == values
     with pytest.raises(ValueError):
         enum_type("UNSUPPORTED_VALUE")
@@ -464,7 +466,7 @@ def test_parsers_reject_self_hash_mismatch(payload_factory, hash_field: str) -> 
 
 
 @pytest.mark.parametrize("model", [ClaimCitationObservation, GroundingSignal])
-def test_projection_models_expose_no_body_or_sensitive_identity_fields(model: type) -> None:
+def test_projection_models_expose_no_body_or_sensitive_identity_fields(model: type[BaseModel]) -> None:
     forbidden = {
         "query",
         "question",
