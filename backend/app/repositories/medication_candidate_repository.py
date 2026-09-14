@@ -84,8 +84,6 @@ class MedicationCandidateRepository:
             )
             .with_for_update(of=Prescription)
         )
-        if prescription is not None:
-            await require_verified_version(self.session, prescription.active_version_id)
         return prescription
 
     async def get_medication_for_candidate_search_owned(
@@ -349,13 +347,14 @@ class MedicationCandidateRepository:
         )
         if prescription is None:
             return None
-        await require_verified_version(self.session, prescription_version_id)
         result = await self.session.execute(
             select(PrescriptionVersionMedication.id)
             .where(PrescriptionVersionMedication.prescription_version_id == prescription_version_id)
             .order_by(PrescriptionVersionMedication.display_order)
         )
-        return list(result.scalars().all())
+        medication_ids = list(result.scalars().all())
+        await require_verified_version(self.session, prescription_version_id)
+        return medication_ids
 
     async def create_search(
         self,

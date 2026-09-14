@@ -160,6 +160,10 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             await connection.execute(text("INSERT INTO checkin_audit VALUES (1)"))
             await connection.execute(text("INSERT INTO medication_schedule_audit VALUES (1)"))
             await connection.execute(text("INSERT INTO prescription_version VALUES (1)"))
+            await connection.execute(text("INSERT INTO push_subscription VALUES (1)"))
+            await connection.execute(text("INSERT INTO push_delivery VALUES (1)"))
+            await connection.execute(text("UPDATE push_subscription SET id=2"))
+            await connection.execute(text("DELETE FROM push_delivery"))
         async with producer.begin() as connection:
             await connection.execute(text("INSERT INTO rag_source_snapshot (id) VALUES (1)"))
             await connection.execute(text("UPDATE rag_source_snapshot SET verified_at=now()"))
@@ -168,6 +172,10 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             await connection.execute(text(f'SET LOCAL ROLE "{owner}"'))
             await connection.execute(text("CREATE TABLE future_after_provision (id serial PRIMARY KEY)"))
         for engine, sql in [
+            (producer, "SELECT * FROM push_subscription"),
+            (producer, "INSERT INTO push_delivery VALUES (2)"),
+            (reader, "TRUNCATE push_subscription"),
+            (reader, "TRUNCATE push_delivery"),
             (reader, "UPDATE medication_schedule_audit SET id=2"),
             (reader, "DELETE FROM medication_schedule_audit"),
             (reader, "TRUNCATE medication_schedule_audit"),
@@ -859,6 +867,8 @@ async def _grant_historical_test_permissions(admin, environment):
                 "ai_job_execution_context",
                 "ai_job_execution_identification",
                 "medication_schedule_audit",  # Added after the historical Source cutover.
+                "push_subscription",  # #469 does not exist at the historical revision.
+                "push_delivery",
             }:
                 await connection.execute(text(f'GRANT {privileges} ON "{table}" TO "{runtime}"'))
         for table in set(SOURCE_TABLES) & present:

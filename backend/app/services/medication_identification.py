@@ -47,12 +47,6 @@ class CandidateSearchFinalizeResult:
 
 
 @dataclass(frozen=True)
-class MedicationIdentificationPreflightResult:
-    prescription_version_medication_count: int
-    matched_identification_count: int
-
-
-@dataclass(frozen=True)
 class MedicationIdentificationPreflightMatchedMedication:
     prescription_version_medication_id: UUID
     medication_identification_id: UUID
@@ -236,32 +230,6 @@ class MedicationIdentificationService:
             raise self._stale_error(field="search_id", reason="ALREADY_REJECTED") from exc
         return identification
 
-    async def ensure_matched_for_preflight(
-        self,
-        *,
-        prescription_version_id: UUID,
-    ) -> MedicationIdentificationPreflightResult:
-        medication_ids = await self._repository.get_active_version_medication_ids_for_update(
-            prescription_version_id=prescription_version_id
-        )
-        if medication_ids is None:
-            raise self._invalid_state_error(
-                field="prescription_version_id",
-                reason="ACTIVE_VERSION_REQUIRED",
-            )
-        if not medication_ids:
-            raise self._invalid_state_error(field="prescription_version_id", reason="AT_LEAST_ONE_MEDICATION_REQUIRED")
-
-        identifications = await self._repository.get_matched_identifications_for_update(
-            prescription_version_medication_ids=medication_ids
-        )
-        self._raise_if_any_medication_unmatched(medication_ids=medication_ids, identifications=identifications)
-
-        return MedicationIdentificationPreflightResult(
-            prescription_version_medication_count=len(medication_ids),
-            matched_identification_count=len({item.prescription_version_medication_id for item in identifications}),
-        )
-
     async def ensure_owned_active_matched_for_guide_preflight(
         self,
         *,
@@ -310,27 +278,6 @@ class MedicationIdentificationService:
         identifications: list[MedicationIdentification],
     ) -> dict[UUID, MedicationIdentification]:
         return {identification.prescription_version_medication_id: identification for identification in identifications}
-
-    def _raise_if_any_medication_unmatched(
-        self,
-        *,
-        medication_ids: list[UUID],
-        identifications: list[MedicationIdentification],
-    ) -> None:
-        matched_medication_ids = {item.prescription_version_medication_id for item in identifications}
-        if len(matched_medication_ids) == len(medication_ids):
-            return
-        raise ApiError(
-            status_code=409,
-            code="PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE",
-            message="약품 확인이 완료되지 않아 다음 단계를 진행할 수 없습니다.",
-            details=[
-                ErrorDetail(
-                    field="prescription_version_id",
-                    reason="MATCHED_IDENTIFICATION_REQUIRED",
-                )
-            ],
-        )
 
     @staticmethod
     def _has_same_search_context(
