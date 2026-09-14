@@ -175,7 +175,7 @@ async def _create_runtime_context(session: AsyncSession) -> GuideRuntimeContextS
         RagRuntimeExecutionManifestCreate(
             manifest_key=f"guide-intake-{suffix}",
             manifest_version="1.0.0",
-            manifest_hash=_hash("1"),
+            manifest_hash=suffix.ljust(64, "1"),
             schema_version="runtime-manifest-v1",
             git_commit_sha="abcdef1",
             guard_policy_ref="guard-policy:test",
@@ -187,11 +187,11 @@ async def _create_runtime_context(session: AsyncSession) -> GuideRuntimeContextS
             bundle_version="1.0.0",
             bundle_status=RagRuntimeBundleStatus.READY,
             execution_manifest_id=manifest.id,
-            bundle_manifest_hash=_hash("2"),
+            bundle_manifest_hash=suffix.ljust(64, "2"),
             environment_code="local",
             catalog_version="catalog-1.0.0",
-            catalog_manifest_hash=_hash("9"),
-            candidate_index_manifest_hash=_hash("3"),
+            catalog_manifest_hash=suffix.ljust(64, "9"),
+            candidate_index_manifest_hash=suffix.ljust(64, "3"),
         )
     )
     environment = await repository.create_environment(
@@ -211,8 +211,8 @@ async def _create_runtime_context(session: AsyncSession) -> GuideRuntimeContextS
         runtime_execution_manifest_id=manifest.id,
         runtime_execution_manifest_hash=manifest.manifest_hash,
         runtime_guard_decision_ref="guard:guide-full-request",
-        patient_context_digest=_hash("5"),
-        source_scope_manifest_hash=_hash("6"),
+        patient_context_digest=suffix.ljust(64, "5"),
+        source_scope_manifest_hash=suffix.ljust(64, "6"),
     )
 
 
@@ -359,15 +359,15 @@ async def test_accept_guide_job_rejects_idempotency_conflict_without_duplicate_r
         trace_id="e" * 32,
         runtime_context=runtime_context,
     )
-    changed_fingerprint = replace(runtime_context, runtime_guard_decision_ref="guard:changed")
+    other_prescription = await _create_matched_prescription(db_session, user=user)
 
     with pytest.raises(IdempotencyKeyConflictError):
         await _adapter(db_session).accept_guide_job(
             user=user,
-            prescription_id=prescription.id,
+            prescription_id=other_prescription.id,
             idempotency_key="guide-intake-key-000000000004",
             trace_id="f" * 32,
-            runtime_context=changed_fingerprint,
+            runtime_context=runtime_context,
         )
 
     assert await _count(db_session, AiJob) == 1
