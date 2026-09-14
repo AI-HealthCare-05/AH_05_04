@@ -96,6 +96,7 @@ async def repository_schema() -> AsyncIterator[None]:
                     engine_name VARCHAR(100),
                     model_version VARCHAR(100),
                     prompt_version VARCHAR(100),
+                    llm_processing VARCHAR(32),
                     completed_at TIMESTAMPTZ,
                     error_code VARCHAR(100),
                     error_message VARCHAR(500)
@@ -158,12 +159,12 @@ def build_message(
 async def read_persisted_result(
     *,
     domain_id: UUID,
-) -> tuple[str, int]:
+) -> tuple[str, int, str | None]:
     async with session_factory() as observer:
         status_result = await observer.execute(
             text(
                 """
-                SELECT ocr_status
+                SELECT ocr_status, llm_processing
                 FROM ocr_job
                 WHERE id = :domain_id
                 """
@@ -181,10 +182,8 @@ async def read_persisted_result(
             {"domain_id": str(domain_id)},
         )
 
-        return (
-            status_result.scalar_one(),
-            field_result.scalar_one(),
-        )
+        status_row = status_result.one()
+        return (status_row[0], field_result.scalar_one(), status_row[1])
 
 
 @pytest.mark.parametrize(
@@ -288,6 +287,7 @@ async def test_ocr_input_and_result_share_one_external_transaction(field_type, r
                 engine_name="CLOVA_OCR",
                 model_version=None,
                 prompt_version=None,
+                llm_processing="SKIPPED_MINIMIZATION",
             ),
         )
 
@@ -295,7 +295,7 @@ async def test_ocr_input_and_result_share_one_external_transaction(field_type, r
         # 아직 변경 결과가 보여서는 안 됩니다.
         assert await read_persisted_result(
             domain_id=domain_id,
-        ) == ("PROCESSING", 0)
+        ) == ("PROCESSING", 0, None)
 
         await session.commit()
 
@@ -304,7 +304,7 @@ async def test_ocr_input_and_result_share_one_external_transaction(field_type, r
     # 필드를 raw_value=null row로 채우기 때문입니다(sqlalchemy_ocr_result_store.py의
     # _fill_missing_required_fields). MEDICATION_NAME은 계약상 저장 계층이 빈 필드로
     # 만들지 않으므로 이 세 parametrize 케이스 모두 동일하게 5건입니다.
-    assert await read_persisted_result(domain_id=domain_id) == ("COMPLETED", 5)
+    assert await read_persisted_result(domain_id=domain_id) == ("COMPLETED", 5, "SKIPPED_MINIMIZATION")
 
     async with session_factory() as session:
         stored = (

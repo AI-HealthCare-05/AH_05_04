@@ -410,9 +410,13 @@ async def _create_via_repository(*, legacy_schema: bool = False) -> dict[str, st
             )
             session.add(document)
             await session.flush()
-            ocr_job = OcrJob(document_id=document.id)
-            session.add(ocr_job)
-            await session.flush()
+            # 이 테스트는 현재 ORM보다 오래된 revision의 DB를 재현합니다.
+            # 당시 스키마에 없는 후속 OCR 컬럼을 INSERT하지 않도록 부모 row만 직접 준비합니다.
+            ocr_job = OcrJob(id=uuid4(), document_id=document.id)
+            await session.execute(
+                text("INSERT INTO ocr_job (id, document_id, ocr_status) VALUES (:id, :document_id, 'PENDING')"),
+                {"id": str(ocr_job.id), "document_id": str(document.id)},
+            )
             if legacy_schema:
                 # Hardening migration tests run against the pre-398 schema.
                 from types import SimpleNamespace

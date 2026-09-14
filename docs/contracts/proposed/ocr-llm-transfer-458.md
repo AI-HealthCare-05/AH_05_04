@@ -1,6 +1,6 @@
 # #458 OCR LLM 동의·전송 후속 계약
 
-- 상태: Proposed — Worker 검사·차단 저장 로컬 구현. Backend/Frontend 연계·최소화·최종 문구/버전·리뷰 미완료.
+- 상태: Proposed — Worker·Backend·Frontend 연계 로컬 구현. 최종 안내 문구/버전·리뷰·실사용 활성화 미완료.
 - 확인일: 2026-09-14. 최신 답변 근거와 저장 결정은
   [#458 Worker 결정안](../../governance/decisions/2026-09-14-ocr-consent-worker-458.md)에 연결한다.
 - 구현: 김지혜. Privacy/Product: 권가빈. Backend/Security: 송은영. Frontend/UX: 남한솔.
@@ -68,8 +68,8 @@
 | 철회 후 기존 OCR 결과 | 검수 허용 전제로 구현하지 않음 | 가빈의 보관·삭제 정책 확인 |
 | 직접 입력 | 경로 유지 | 한솔의 화면·상태 연결 |
 
-Frontend 코드는 김지혜 작업에서 대신 변경하지 않는다. 외부 OCR 이미지 처리와 LLM 텍스트
-처리를 구분한 안내, 재동의·설정 이동 및 위 상태의 화면을 남한솔과 확정한다.
+Frontend에는 기존 업로드·검수 화면의 동의 Gate와 생략 안내, 프로필 화면의 동의 상태 조회·철회를 연결했다.
+외부 OCR 이미지 처리와 LLM 텍스트 처리를 구분한 최종 안내 문구·화면은 남한솔과 확정한다.
 사용자의 인식 결과 검수는 전송 동의를 대신하지 않는다.
 
 ## 검증·완료 조건
@@ -90,7 +90,13 @@ RLS·DB Trigger·업무용 DB 함수 없이 명시적 Python 검증·transaction
 [Worker 차단 저장 결정안](../../governance/decisions/2026-09-14-ocr-consent-worker-458.md)에
 원문 링크와 구체 사유·상태·재시도·ACK 순서를 기록한다. #465는 develop에 병합됐다.
 Backend는 접수 전, Worker는 CLOVA 직전·LLM 직전 및 결과 성공 반환 전 검사를 담당한다.
-동의 API/Frontend 및 전송 최소화는 아직 미완료다. 새 공유 FailureCode나 DB 스키마는 추가하지 않는다.
+`GET/POST/DELETE /users/me/consents/OCR`과 Frontend Gate·검수 안내를 로컬 연결했다.
+현재 약품명 안전 분리 기준이 검토되지 않아 `OCR_STRUCTURE_LLM_ENABLED=true`여도 외부 LLM 호출을
+생략하고 규칙 기반 결과를 사용한다. 이 상태를 `ocr_job.llm_processing=SKIPPED_MINIMIZATION`으로 저장한다.
+`NOT_REQUESTED`는 LLM 기능 자체가 꺼진 경우, `null`은 과거/미확인 값으로 구분한다.
+`APPLIED`는 미래의 검증된 최소 전송 selector가 연결될 때만 가능하다.
+현재 구현은 **약품 정보를 LLM에 실제 전송하는 기능 완료 또는 활성화 승인**을 뜻하지 않는다.
+처방일은 LLM 전송 없이 로컬 규칙 결과와 기존 필수 검수를 유지한다.
 
 가빈 답변에 따라 철회 후 기존 OCR 결과 재노출·검수·수정은 데모에서 제외한다. 보관·삭제는
 실제 사용자 적용 전 별도 결정이며 보관 허용으로 해석하지 않는다. 완전 수동 입력은 OCR Job 없이

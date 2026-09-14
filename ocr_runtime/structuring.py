@@ -15,6 +15,7 @@ class OcrStructureResult:
     fields: list[RecognizedField]
     model_name: str | None
     prompt_version: str | None
+    llm_processing: str | None = None
 
 
 class OcrStructurer(Protocol):
@@ -45,4 +46,5 @@ class RuleBasedPrescriptionStructurer:
             fields=fields,
             model_name=None,
             prompt_version=None,
+            llm_processing="NOT_REQUESTED",
         )

@@ -1,10 +1,5 @@
-"""Current-boundary evidence for #458, not acceptance of a minimized transfer policy.
+"""전송 대상을 검증할 수 없으면 LLM을 생략하는 #458 회귀 테스트입니다."""
 
-The full-token characterization must be replaced with non-disclosure assertions
-when the reviewed selector is connected. No real provider or patient data is used.
-"""
-
-import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -18,6 +13,7 @@ from ocr_runtime.llm.schemas import (
 from ocr_runtime.llm.structurer import LlmPrescriptionStructurer
 from ocr_runtime.llm.validator import validate_and_convert_draft
 from ocr_runtime.medication_name_normalizer import MedicationNameNormalizer
+from ocr_runtime.structuring import RuleBasedPrescriptionStructurer
 from provider_contracts.ocr import OcrProcessingError, RawRecognizedField
 
 
@@ -48,20 +44,18 @@ def draft(source_id=2):
     )
 
 
-async def test_current_payload_still_contains_non_medication_sentinel():
+async def test_unapproved_transfer_never_calls_llm_and_keeps_local_review_fields():
     provider = AsyncMock()
     provider.generate.return_value = ProviderOcrStructureResponse(draft=draft(), model_name="synthetic-model")
     structurer = LlmPrescriptionStructurer(provider=provider, model="synthetic-model", timeout_seconds=1)
 
     result = await structurer.structure(synthetic_fields())
 
-    provider.generate.assert_awaited_once()
-    tokens = json.loads(provider.generate.call_args.kwargs["input_json"])["tokens"]
-    # Evidence of the current gap, not a privacy pass or a desired future contract.
-    assert tokens[0]["text"] == "SYNTHETIC_PRIVATE_SENTINEL_458"
-    assert [token["source_id"] for token in tokens] == [1, 2]
-    assert {"center_x", "center_y", "height", "confidence"} <= tokens[1].keys()
-    assert any(field.raw_value == "합성의약품에이정" for field in result.fields)
+    provider.generate.assert_not_awaited()
+    assert result.llm_processing == "SKIPPED_MINIMIZATION"
+    assert result.model_name is None
+    assert result.prompt_version is None
+    assert result.fields == (await RuleBasedPrescriptionStructurer().structure(synthetic_fields())).fields
 
 
 def test_filtering_list_without_preserving_source_ids_breaks_original_reference():

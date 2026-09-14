@@ -42,6 +42,7 @@ class OcrProviderResult:
     engine_name: str | None
     model_version: str | None
     prompt_version: str | None
+    llm_processing: str | None = None
 
 
 class OcrProviderError(Exception):
@@ -77,6 +78,7 @@ class OcrHandlerSuccess(HandlerSuccess):
     engine_name: str | None
     model_version: str | None
     prompt_version: str | None
+    llm_processing: str | None = None
 
 
 class OcrInputRepository(Protocol):
@@ -207,6 +209,7 @@ class OcrHandler:
             engine_name=provider_result.engine_name,
             model_version=provider_result.model_version,
             prompt_version=provider_result.prompt_version,
+            llm_processing=provider_result.llm_processing,
         )
 
     async def _recognize(

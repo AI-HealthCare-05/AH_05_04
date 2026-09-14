@@ -1,6 +1,6 @@
 # 공통 데이터 계약
 
-- [OCR LLM 동의·전송 후속 (#458)](proposed/ocr-llm-transfer-458.md): PM·Backend 방향 및 답변 근거 연결. Worker Gate·차단 저장 로컬 구현, 연동·최소화·리뷰 미완료.
+- [OCR LLM 동의·전송 후속 (#458)](proposed/ocr-llm-transfer-458.md): PM·Backend 방향 및 답변 근거 연결. Worker·Backend·Frontend Gate와 안전한 LLM 생략 로컬 구현, 최종 문구·버전·리뷰 미완료.
   재동의·최소 전송·철회 구분·Frontend 확인 방향 기록. 최종 문구/버전과 전체 구현은 미완료.
 
 Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합니다. **현재 실행 계약**은 실제 FastAPI OpenAPI·Pydantic DTO·migration·구현과 테스트가 함께 뒷받침하는 문서입니다. `targets/post-mvp-1/`의 문서는 승인된 Post-MVP-1 목표 계약이며 문서별 구현 상태를 별도로 표시하고 Approved Contract Freeze v4와 RAG-00 Approved Target을 함께 관리합니다.

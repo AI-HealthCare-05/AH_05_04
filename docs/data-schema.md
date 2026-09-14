@@ -167,6 +167,13 @@ DB 제약:
 
 `ocr_job` 테이블은 OCR 처리 상태와 오류 정보를 저장합니다.
 
+#458은 nullable `llm_processing VARCHAR(32)`와 일반 CHECK 제약
+`chk_ocr_llm_processing`을 추가합니다. 허용 값은 `APPLIED`, `SKIPPED_MINIMIZATION`,
+`NOT_REQUESTED`이며 null은 기존 기록의 미확인 상태입니다. 완료된 LLM 생략 작업도 OCR 검수
+결과는 보존하며, 상태 판정과 외부 호출 차단은 애플리케이션 Service/Worker에서 수행합니다.
+이 migration은 RLS나 DB Trigger를 만들지 않습니다. non-null 이력이 있으면 downgrade를
+중단해 실행 근거를 우발적으로 제거하지 않습니다.
+
 | 컬럼 | 타입           | Nullable | 설명 |
 |---|----------------|---:|---|
 | `created_sequence` | `BIGINT`       | No | 같은 `created_at` 안에서 최신 작업을 안정적으로 정렬하기 위한 생성 순서 기준 |

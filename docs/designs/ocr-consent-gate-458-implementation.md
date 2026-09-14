@@ -3,7 +3,7 @@
 - 구현 담당: 김지혜. 담당 리뷰어: 송은영(Backend/Security·Worker 동의 조회 경계).
 - Privacy/Product 정책 증빙: 권가빈 답변 별도. Frontend 소비 계약: 남한솔 답변 별도.
 - 기준: develop `a440d2ae` (#465 병합), 로컬 동기화 merge `3a77d956`.
-- 상태: 로컬 Worker runtime 연결·차단 저장 구현. Backend API·전송 최소화·공개 활성화는 미완료.
+- 상태: Worker·Backend API·Frontend 로컬 연결 및 안전한 LLM 생략 구현. 최종 정책 안내·실제 LLM 전송·공개 활성화는 미완료.
 
 ## 2026-09-14 은영 답변 반영
 
@@ -11,7 +11,7 @@
 [#465 병합 후 답변](https://discord.com/channels/@me/1546828697879969832/1548877992795701439) 기준이다.
 데모 범위는 [가빈 11:07 답변](https://discord.com/channels/@me/1536183621747220564/1548877830459490437)에 따른다.
 
-- #207/#465는 migration/model/repository/공통 fixture 인계 기준이다. 동의 API와 실제 Gate 연결은 후속.
+- #207/#465는 migration/model/repository/공통 fixture 인계 기준이다. 동의 API와 실제 Gate는 #458 후속 변경에서 연결했다.
 - Backend 접수 전 검사, Worker CLOVA 직전 및 LLM 직전 재검사로 분담한다.
 - row 없음/철회/policy mismatch/조회 실패는 외부 호출을 차단한다.
 - 접수 전 미동의·철회·버전 불일치는 CONSENT_REQUIRED 계열이다.
@@ -36,7 +36,7 @@
 5. 조회 실패·불완전한 timestamp·소유권 불일치를 안전한 내부 사유로 반환한다. DB 원문 예외 chain을
    버리고 취소는 전파한다. 내부 사유는 공개 enum/Worker FailureCode가 아니다.
 6. Runtime의 Job별 Gate 조립, OCR_CONSENT_POLICY_VERSION 설정, 안전한 Dispatcher 예외 전달과
-   차단 상태 transaction을 연결했다. RLS·DB Trigger·DB 함수·migration·Frontend 변경은 없다.
+   차단 상태 transaction을 연결했다. 이 Worker 단계에는 RLS·DB Trigger·DB 함수가 없다.
 
 Protocol은 실제 SQL 조회와 합성 테스트 대역을 분리하기 위한 하나의 경계다.
 독립 transaction의 비용은 외부 호출당 짧은 SELECT 1회이며, 동의 캐시로 대체하지 않는다.
@@ -50,7 +50,8 @@ Dispatcher는 동의 사유를 일반 INTERNAL_ERROR로 바꾸지 않는다. lea
 
 CLOVA·LLM 호출 전 검사 외에 결과 반환 전에도 동의를 재검사한다. LLM 비활성 경로에서
 CLOVA 중 철회된 경우에도 성공 결과를 저장하지 않는다. Backend 동의 API/접수 Gate와 과거 결과
-접근 차단은 별도 연계 범위다. 새로운 HTTP status나 동의 route는 구현하지 않았다.
+접근 차단은 같은 #458의 후속 변경으로 구현했다. 상세 route와 사유는
+[계약안](../contracts/proposed/ocr-llm-transfer-458.md)에 기록했다.
 
 CLOVA와 LLM 사이 철회 시 이 부품은 성공 결과를 반환하지 않는다. 이미 받은 OCR 원문의 영구
 저장/삭제/재노출 정책까지 구현하거나 결정하지 않는다. 검사와 네트워크 전송 사이의 극소 경합을
@@ -58,13 +59,13 @@ CLOVA와 LLM 사이 철회 시 이 부품은 성공 결과를 반환하지 않�
 
 ## 전송 최소화·처방일 경계
 
-이번 단위는 payload selector/LLM 출력 schema를 변경하지 않는다. 기존 전체-token 전송 경로의
-최소화가 완료됐다는 의미가 아니다. 기본 LLM 비활성 설정과 공개 gate를 변경하지 않는다. 이 브랜치는 아직 실제 데이터 LLM 전송에 사용할 수 있는 완성본이 아니다.
+기존 전체-token LLM 전송 경로를 차단했다. 안전한 약품명 selector가 검증되기 전에는
+LLM 기능을 켜도 외부 호출을 생략하고 로컬 규칙 결과를 반환한다. 생략 여부는 `ocr_job.llm_processing`
+컬럼과 OCR 결과 DTO로 전달한다. 실제 데이터를 LLM에 전송할 수 있는 완성본이나 활성화 승인은 아니다.
 
-기존 처방일·처방약 검수 및 확정 흐름은 유지한다. 현재 ClovaOcrEngine은 선택된 구조화기의
-fields를 최종 결과로 사용한다. 처방일 token만 제외하면 규칙 기반 날짜가 자동 병합되는 구조가
-아니므로, 날짜 분리·필드 조립·저장 회귀는 다음 최소화 구현에서 검증한다. 날짜 전송 제외를
-승인된 정책으로 쓰거나 한솔에게 필수항목 여부를 다시 질문하지 않는다.
+기존 처방일·처방약 검수 및 확정 흐름은 유지한다. 안전한 전송 범위를 만들지 못한 경우
+전체 필드를 로컬 규칙 구조화기로 처리하므로 처방일은 LLM에 보내지 않고 기존 필수 검수를 거친다.
+향후 실제 LLM 전송 selector를 도입할 때 날짜 분리·필드 조립·저장 회귀를 다시 검증한다.
 
 ## fixture provenance
 

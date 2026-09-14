@@ -167,6 +167,15 @@ class ClovaOcrProviderAdapter:
     ) -> OcrProviderResult:
         """Provider 결과를 검증하고 저장 가능한 형태로 변환합니다."""
 
+        if result.llm_processing not in (None, "APPLIED", "SKIPPED_MINIMIZATION", "NOT_REQUESTED"):
+            raise OcrProviderSchemaError()
+        if result.llm_processing == "APPLIED" and (not result.model_version or not result.prompt_version):
+            raise OcrProviderSchemaError()
+        if result.llm_processing in ("SKIPPED_MINIMIZATION", "NOT_REQUESTED") and (
+            result.model_version is not None or result.prompt_version is not None
+        ):
+            raise OcrProviderSchemaError()
+
         identities: set[tuple[int, str]] = set()
         normalized_fields: list[OcrRecognizedField] = []
 
@@ -193,6 +202,7 @@ class ClovaOcrProviderAdapter:
             engine_name=result.engine_name,
             model_version=result.model_version,
             prompt_version=result.prompt_version,
+            llm_processing=result.llm_processing,
         )
 
     @classmethod

@@ -327,6 +327,7 @@ async def test_get_ocr_job_result_exposes_safe_error_message() -> None:
             engine_name=None,
             model_version=None,
             prompt_version=None,
+            llm_processing=None,
             created_at=datetime(2026, 8, 24, 10, 0, 0, tzinfo=UTC),
             completed_at=datetime(2026, 8, 24, 10, 0, 5, tzinfo=UTC),
             extracted_fields=[],

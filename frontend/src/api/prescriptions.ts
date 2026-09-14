@@ -48,6 +48,7 @@ export type OcrJobResponse = {
     engine_name: string | null
     model_version: string | null
     prompt_version: string | null
+    llm_processing?: 'APPLIED' | 'SKIPPED_MINIMIZATION' | 'NOT_REQUESTED' | null
     created_at: string
     completed_at: string | null
     fields: ExtractedField[]
