@@ -10,6 +10,7 @@ from ai_worker.tasks.rag.source_client.contracts import (
     ProviderBodyCodeContract,
     RequiredParameter,
     SourceClientLimits,
+    SourceOperationIdentity,
 )
 
 _P0_BY_OPERATION = {operation.operation_code: operation for operation in P0_OPERATIONS}
@@ -139,3 +140,30 @@ MFDS_ENDPOINT_CANDIDATES = {
         max_pages=100,
     ),
 }
+
+
+# Separate, unactivated candidate: full endpoint scope only; no inferred item filter.
+MFDS_DETAIL_IDENTITY = SourceOperationIdentity(
+    "MFDS_PRODUCT_APPROVAL", "MFDS_PRODUCT_APPROVAL_API", "LIST_PRODUCT_COMPONENT_DETAILS"
+)
+MFDS_DETAIL_CANDIDATE = MfdsEndpointCandidate(
+    contract=EndpointContract(
+        identity=MFDS_DETAIL_IDENTITY,
+        method="GET",
+        scheme="https",
+        host="apis.data.go.kr",
+        path_template="/1471000/DrugPrdtPrmsnInfoService07/getDrugPrdtMcpnDtlInq07",
+        required_parameters=MFDS_ENDPOINT_CANDIDATES["LIST_APPROVED_PRODUCTS"].contract.required_parameters,
+        allowed_content_types=("application/json",),
+        body_success_code_path="header.resultCode",
+        body_error_code_path="header.resultCode",
+        pagination=PaginationContract("PAGE_NUMBER", "pageNo", "numOfRows", 1, 100, "TOTAL_COUNT_REACHED"),
+        primary_key_fields=("ITEM_SEQ", "TAMT_SEQ", "MTRAL_SN"),
+        external_version_field=None,
+        body_codes=_COMMON_BODY_CODES,
+        # Internal execution bounds, not a provider limit or quota guarantee.
+        limits=_limits(total_timeout_seconds=3600, max_pages=1500),
+    ),
+    secret_parameter_name="serviceKey",
+    request_parameters=(("type", "json"),),
+)

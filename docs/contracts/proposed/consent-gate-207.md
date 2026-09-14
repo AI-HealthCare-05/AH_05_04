@@ -2,7 +2,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Proposed — #207 지정 리뷰어 승인 전 · 미구현 · Current 아님 |
+| 상태 | Proposed — PR #465에서 `user_consent` 저장 기반 구현 중 · Gate/API/Worker 실행 검증 미구현 · Current 아님 |
 | Decision | [PD-207 목적별 동의 상태와 Provider 호출 Gate 기준](../../governance/decisions/2026-09-10-consent-gate-207.md) |
 | Issue | [#207](https://github.com/AI-HealthCare-05/AH_05_04/issues/207) |
 | 작성 | 송은영 (`phina-io`) — Backend·DB·Security |
@@ -13,7 +13,7 @@
 
 이 문서는 `PD-207`에서 정한 목적별 동의 상태와 Provider 호출 Gate를 공유 계약 형태로 정리한다. Backend, Worker/OCR, Guide/Chat, Notification, Frontend가 같은 의미로 동의 상태와 차단 결과를 해석하기 위한 제안이다.
 
-이 문서는 `proposed/` 계약이며 아직 구현된 Current 계약이 아니다. `user_consent` migration/model, Backend Gate, Worker Gate, API/DTO, Frontend UI가 구현되고 테스트·리뷰가 완료되기 전에는 실행 가능한 계약이나 Production 공개 근거로 사용하지 않는다.
+이 문서는 `proposed/` 계약이며 아직 구현된 Current 계약이 아니다. PR #465는 `user_consent` migration/model/repository와 Backend·Worker 공통 fixture의 저장 기반만 구현한다. Backend Gate, Worker Gate, API/DTO, Frontend UI가 구현되고 테스트·리뷰가 완료되기 전에는 실행 가능한 전체 Gate 계약이나 Production 공개 근거로 사용하지 않는다.
 
 ## 2. 동의 목적
 
@@ -44,6 +44,8 @@
 `GRANTED` row라도 `policy_version`이 현재 목적별 policy version과 다르면 허용하지 않는다. 다만 자동 호환 판정, 일괄 재동의, 과거 version 호환성 판단은 이번 제안의 구현 범위에서 제외한다.
 
 ## 4. `user_consent` 스키마 제안
+
+구현 상태: PR #465에서 아래 최소 저장 기반을 구현한다. 물리 테이블은 `backend/alembic/versions/207b1c2d3e4_create_user_consent.py`, SQLAlchemy 모델은 `backend/app/models/user_consents.py`, repository 판정은 `backend/app/repositories/user_consent_repository.py`, 공통 fixture는 `tests/fixtures/consent/consent_gate_207_cases.json`에 둔다. 이 구현은 최신 동의 상태 저장과 `GRANTED` 판정 기반만 제공하며, 실제 기능 Gate와 외부 Provider 호출 차단 연결은 후속 범위다.
 
 최소 테이블은 다음 필드를 가진다.
 
@@ -181,7 +183,7 @@ OCR LLM 구조화나 추가 외부 Provider가 실제 연결되면 안내 문구
 
 ## 13. Current 승격 조건
 
-이 Proposed 계약은 다음이 같은 구현 PR 또는 명시적으로 연결된 PR 묶음에서 충족된 뒤에만 `current/` 승격을 검토한다.
+이 Proposed 계약은 다음이 같은 구현 PR 또는 명시적으로 연결된 PR 묶음에서 충족된 뒤에만 `current/` 승격을 검토한다. PR #465는 첫 두 항목과 Backend 저장소 판정 fixture만 부분 충족하며, 나머지는 후속 범위다.
 
 - `user_consent` migration/model 구현
 - 목적·상태 enum과 DB 제약 구현
