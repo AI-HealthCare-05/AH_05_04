@@ -1,12 +1,49 @@
+from typing import Any
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Response
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
-from app.dependencies.services import get_user_repository
+from app.core import config
+from app.dependencies.services import get_user_consent_repository, get_user_repository
 from app.main import app, fastapi_app
+from app.models.user_consents import ConsentPurpose, ConsentStatus, UserConsent
+from app.models.users import User
 from app.repositories.user_repository import DuplicateUserFieldError, UserRepository
+
+OCR_CONSENT_V1 = {"purpose": "OCR", "policy_version": "ocr-consent.v1"}
+GUIDE_CONSENT_V1 = {"purpose": "GUIDE", "policy_version": "guide-consent.v1"}
+CHAT_CONSENT_V1 = {"purpose": "CHAT", "policy_version": "chat-consent.v1"}
+NOTIFICATION_CONSENT_V1 = {"purpose": "NOTIFICATION", "policy_version": "notification-consent.v1"}
+
+
+def _email() -> str:
+    return f"u{uuid4().hex[:8]}@e.co"
+
+
+async def _signup(client: AsyncClient, *, email: str, consents: list[dict[str, str]] | None = None) -> Response:
+    payload: dict[str, Any] = {
+        "email": email,
+        "password": "Password123!",
+        "name": "동의가입테스터",
+    }
+    if consents is not None:
+        payload["consents"] = consents
+    return await client.post("/api/v1/auth/signup", json=payload)
+
+
+async def _consents_for_email(db_session: AsyncSession, *, email: str) -> list[UserConsent]:
+    user_id = await db_session.scalar(select(User.id).where(User.email == email.lower()))
+    if user_id is None:
+        return []
+    rows = await db_session.scalars(
+        select(UserConsent).where(UserConsent.user_id == user_id).order_by(UserConsent.purpose)
+    )
+    return list(rows.all())
 
 
 class TestSignupAPI:
@@ -95,6 +132,173 @@ class TestSignupAPI:
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         assert response.headers.get_list("cache-control") == ["no-store"]
+
+    async def test_signup_stores_selected_consents_as_granted(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
+        email = _email()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await _signup(
+                client,
+                email=email,
+                consents=[
+                    OCR_CONSENT_V1,
+                    GUIDE_CONSENT_V1,
+                ],
+            )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        rows = await _consents_for_email(db_session, email=email)
+        assert {(row.purpose, row.status, row.policy_version) for row in rows} == {
+            (ConsentPurpose.OCR, ConsentStatus.GRANTED, "ocr-consent.v1"),
+            (ConsentPurpose.GUIDE, ConsentStatus.GRANTED, "guide-consent.v1"),
+        }
+        assert all(row.granted_at is not None for row in rows)
+        assert all(row.withdrawn_at is None for row in rows)
+
+    async def test_signup_does_not_store_unselected_consents(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
+        email = _email()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await _signup(client, email=email)
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert await _consents_for_email(db_session, email=email) == []
+
+    async def test_signup_accepts_empty_consent_list(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
+        email = _email()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await _signup(client, email=email, consents=[])
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert await _consents_for_email(db_session, email=email) == []
+
+    async def test_signup_can_store_all_consent_purposes(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
+        email = _email()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await _signup(
+                client,
+                email=email,
+                consents=[
+                    OCR_CONSENT_V1,
+                    GUIDE_CONSENT_V1,
+                    CHAT_CONSENT_V1,
+                    NOTIFICATION_CONSENT_V1,
+                ],
+            )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        rows = await _consents_for_email(db_session, email=email)
+        assert {row.purpose for row in rows} == set(ConsentPurpose)
+        assert all(row.status == ConsentStatus.GRANTED for row in rows)
+
+    async def test_signup_rejects_invalid_consent_purpose(self) -> None:
+        email = _email()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await _signup(
+                client,
+                email=email,
+                consents=[{"purpose": "LOCATION", "policy_version": "location-consent.v1"}],
+            )
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert response.headers.get_list("cache-control") == ["no-store"]
+
+    async def test_signup_rejects_duplicate_consent_purpose(self) -> None:
+        email = _email()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await _signup(
+                client,
+                email=email,
+                consents=[
+                    GUIDE_CONSENT_V1,
+                    GUIDE_CONSENT_V1,
+                ],
+            )
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert response.headers.get_list("cache-control") == ["no-store"]
+
+    async def test_signup_rolls_back_user_when_consent_policy_mismatches(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        email = _email()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await _signup(
+                client,
+                email=email,
+                consents=[{"purpose": "GUIDE", "policy_version": "guide-consent.v0"}],
+            )
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert response.json()["details"] == [
+            {"field": "consents.policy_version", "reason": "POLICY_VERSION_MISMATCH", "rejected_value": None}
+        ]
+        assert await db_session.scalar(select(User.id).where(User.email == email.lower())) is None
+        assert await _consents_for_email(db_session, email=email) == []
+
+    async def test_signup_rejects_consent_when_policy_is_unavailable(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "")
+        email = _email()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await _signup(
+                client,
+                email=email,
+                consents=[OCR_CONSENT_V1],
+            )
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.json()["code"] == "CONSENT_POLICY_UNAVAILABLE"
+        assert await db_session.scalar(select(User.id).where(User.email == email.lower())) is None
+
+    async def test_signup_rolls_back_user_when_consent_storage_fails(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
+        failing_repository = AsyncMock()
+        failing_repository.set_status.side_effect = RuntimeError("synthetic consent storage failure")
+
+        def override_get_user_consent_repository():
+            return failing_repository
+
+        fastapi_app.dependency_overrides[get_user_consent_repository] = override_get_user_consent_repository
+        email = _email()
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app, raise_app_exceptions=False),
+                base_url="http://test",
+            ) as client:
+                response = await _signup(client, email=email, consents=[OCR_CONSENT_V1])
+        finally:
+            fastapi_app.dependency_overrides.pop(get_user_consent_repository, None)
+
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert await db_session.scalar(select(User.id).where(User.email == email.lower())) is None
+        assert await _consents_for_email(db_session, email=email) == []
 
     async def test_signup_rejects_profile_fields_in_mvp_signup(self):
         signup_data = {

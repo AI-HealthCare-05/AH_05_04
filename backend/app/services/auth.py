@@ -18,18 +18,21 @@ from app.core.utils.security import (
     verify_password,
 )
 from app.core.validators import validate_password
-from app.dtos.auth import LoginRequest, SignUpRequest
+from app.dtos.auth import LoginRequest, SignUpConsentRequest, SignUpRequest
 from app.models.email_verification import EmailVerificationPurpose
+from app.models.user_consents import ConsentStatus
 from app.models.users import User
 from app.repositories.email_verification_repository import EmailVerificationRepository
 from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.refresh_session_repository import RefreshSessionRepository
+from app.repositories.user_consent_repository import UserConsentRepository
 from app.repositories.user_repository import (
     DuplicateUserFieldError,
     UserRepository,
 )
 from app.services.email_delivery import EmailSender, NoopEmailSender
 from app.services.jwt import JwtService
+from app.services.user_consent_policy import current_consent_policy_version
 
 
 def _invalid_credentials_error() -> ApiError:
@@ -67,12 +70,14 @@ class AuthService:
         refresh_session_repository: RefreshSessionRepository,
         email_verification_repository: EmailVerificationRepository | None = None,
         email_sender: EmailSender | None = None,
+        user_consent_repository: UserConsentRepository | None = None,
     ) -> None:
         self.user_repo = user_repository
         self.password_reset_repo = password_reset_repository
         self.refresh_session_repo = refresh_session_repository
         self.email_verification_repo = email_verification_repository
         self.email_sender = email_sender or NoopEmailSender()
+        self.user_consent_repo = user_consent_repository
         self.jwt_service = JwtService()
 
     async def signup(
@@ -80,13 +85,16 @@ class AuthService:
         data: SignUpRequest,
     ) -> User:
         await self.check_email_exists(data.email)
+        self._validate_signup_consents(data.consents)
 
         try:
-            return await self.user_repo.create_user(
+            user = await self.user_repo.create_user(
                 email=data.email,
                 hashed_password=hash_password(data.password),
                 name=data.name,
             )
+            await self._store_signup_consents(user=user, consents=data.consents)
+            return user
         except DuplicateUserFieldError as exc:
             if exc.field == "email":
                 detail = "이미 사용중인 이메일입니다."
@@ -99,6 +107,39 @@ class AuthService:
                 message=detail,
                 details=[ErrorDetail(field=exc.field, reason="ALREADY_EXISTS")],
             ) from exc
+
+    def _validate_signup_consents(self, consents: list[SignUpConsentRequest]) -> None:
+        for consent in consents:
+            current_policy_version = current_consent_policy_version(consent.purpose)
+            if not current_policy_version.strip():
+                raise ApiError(
+                    status_code=503,
+                    code="CONSENT_POLICY_UNAVAILABLE",
+                    message="현재 동의 안내를 사용할 수 없습니다.",
+                )
+            if consent.policy_version != current_policy_version:
+                raise ApiError(
+                    status_code=422,
+                    code="VALIDATION_FAILED",
+                    message="동의 정책 버전을 확인해 주세요.",
+                    details=[ErrorDetail(field="consents.policy_version", reason="POLICY_VERSION_MISMATCH")],
+                )
+
+    async def _store_signup_consents(self, *, user: User, consents: list[SignUpConsentRequest]) -> None:
+        if not consents:
+            return
+        if self.user_consent_repo is None:
+            raise RuntimeError("UserConsentRepository is required to store signup consents.")
+
+        changed_at = datetime.now(config.TIMEZONE)
+        for consent in consents:
+            await self.user_consent_repo.set_status(
+                user_id=user.id,
+                purpose=consent.purpose,
+                status=ConsentStatus.GRANTED,
+                policy_version=consent.policy_version,
+                changed_at=changed_at,
+            )
 
     async def authenticate(
         self,

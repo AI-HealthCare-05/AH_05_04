@@ -7,7 +7,10 @@
 ## 회원가입
 
 - Endpoint: `POST /api/v1/auth/signup`
-- 요청 body는 `name`, `email`, `password` 세 필드만 허용합니다(`extra="forbid"`).
+- 요청 body는 필수 계정 필드 `name`, `email`, `password`와 선택 필드 `consents`만 허용합니다(`extra="forbid"`).
+- `consents`를 생략하거나 빈 배열로 보내도 회원가입은 성공하며 목적별 동의 row를 만들지 않습니다.
+- `consents[].purpose`는 `OCR`, `GUIDE`, `CHAT`, `NOTIFICATION`만 허용하고 중복 목적은 `422 VALIDATION_FAILED`로 거부합니다.
+- `consents[].policy_version`은 해당 목적의 현재 policy version과 일치해야 합니다. 서버는 선택된 목적만 `GRANTED`로 저장하며 클라이언트는 `status`를 보내지 않습니다.
 - `gender`, `birthday`, `phone_number` 등 가입 후 추가 정보 입력 대상 필드는 회원가입 요청에서 받지 않습니다.
 - MVP 범위 밖 필드가 포함되면 공통 `422 VALIDATION_FAILED` 응답을 반환합니다.
 - `email` 중복 시 `409 CONFLICT`을 반환합니다. `phone_number` 중복 체크는 Post-MVP에서 가입 요청에 `phone_number`가 추가될 때 함께 적용됩니다.
@@ -17,6 +20,7 @@
 | `name` | 필수, 1~20자 |
 | `email` | 필수, `EmailStr`, 최대 40자. Backend에서 소문자로 정규화 |
 | `password` | 필수, 8~72자, 대문자·소문자·숫자·특수문자 각 1개 이상 포함 |
+| `consents` | 선택, `{purpose, policy_version}` 배열. 선택 목적만 `GRANTED` 저장 |
 
 ### 이메일 정규화·저장·중복 기준
 
@@ -42,6 +46,7 @@
 - row가 없는 목적은 미동의로 판정하며 조회 응답에서는 `status=null`, `policy_version=null`, `current_policy_version=<현재 목적별 version>`, `is_granted=false`로 반환합니다. 명시 철회 row는 `status=WITHDRAWN`, `is_granted=false`로 반환해 missing row와 구분합니다.
 - 응답의 `policy_version`은 저장된 row의 version이고, `current_policy_version`은 서버가 현재 허용하는 목적별 version입니다.
 - `is_granted=true`는 `status=GRANTED`, 저장된 `policy_version`과 `current_policy_version` 일치, `granted_at` 존재, `withdrawn_at=null`인 현재 row에만 사용합니다.
+- 회원가입 시 선택된 목적도 같은 `user_consent` current row에 `GRANTED`로 저장합니다. 미선택 목적은 row 없음으로 유지합니다.
 - 이 API는 목적별 동의 저장·조회·변경 기반을 제공합니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide/Chat/Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 [PD-207 Proposed 계약](../proposed/consent-gate-207.md)의 후속 구현 범위입니다.
 
 ## 인증 세션 무효화
@@ -127,6 +132,7 @@
 다음 변경은 이 문서, 구현, API 문서와 관련 테스트를 같은 PR에서 갱신해야 합니다.
 
 - 회원가입·내 정보 수정 요청에서 허용하는 필드의 추가·삭제·필수 여부 변경
+- 회원가입 `consents`의 purpose, policy_version, 선택 동의 저장 의미 변경
 - `USER` 테이블의 nullable 필드 범위 변경
 - 이메일 정규화, 저장, 조회 및 중복 비교 기준 변경
 - 인증 토큰 payload, `token_version` 재검증, 로그아웃 세션 무효화 기준 변경
