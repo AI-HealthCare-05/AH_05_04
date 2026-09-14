@@ -459,12 +459,27 @@ async def test_limited_logins_have_plane_specific_column_privileges(
                 ),
                 {"digest": "a" * 64},
             )
+            await connection.execute(
+                text(
+                    f"INSERT INTO {_quote(database.schema)}.protected_identity "
+                    "(database_login, actor_id, actor_namespace, principal_role, identity_plane, enabled) "
+                    "VALUES ('synthetic-permitted-login', 'synthetic-permitted-actor', 'SERVICE_IDENTITY', 'HOLDOUT_AUTHOR', 'DATA', true)"
+                )
+            )
+            await connection.execute(
+                text(
+                    f"UPDATE {_quote(database.schema)}.protected_identity SET enabled = false "
+                    "WHERE database_login = 'synthetic-permitted-login'"
+                )
+            )
             await connection.rollback()
         control_forbidden_statements = (
-            f"INSERT INTO {_quote(database.schema)}.protected_identity "
-            "(database_login, actor_id, actor_namespace, principal_role, identity_plane) "
-            "VALUES ('forbidden-control-identity', 'forbidden-actor', 'GITHUB_LOGIN', 'HOLDOUT_AUTHOR', 'DATA')",
-            f"UPDATE {_quote(database.schema)}.protected_identity SET enabled = false",
+            f"UPDATE {_quote(database.schema)}.protected_identity SET principal_role = 'HOLDOUT_RUNNER'",
+            f"UPDATE {_quote(database.schema)}.protected_identity SET database_login = 'forged-login'",
+            f"UPDATE {_quote(database.schema)}.protected_identity SET actor_id = 'forged-actor'",
+            f"UPDATE {_quote(database.schema)}.protected_identity SET actor_namespace = 'SYSTEM'",
+            f"UPDATE {_quote(database.schema)}.protected_identity SET identity_plane = 'DATA'",
+            f"UPDATE {_quote(database.schema)}.protected_identity SET approval_role = 'PRODUCT_SAFETY_REVIEWER'",
             f"INSERT INTO {_quote(database.schema)}.protected_dataset "
             "(dataset_id, dataset_version, binding, manifest_sha256, protected_artifact_sha256, "
             "hmac_key_version, state, state_revision, authored_count, review_complete) VALUES "

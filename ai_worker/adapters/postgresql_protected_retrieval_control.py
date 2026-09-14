@@ -39,9 +39,11 @@ from ai_worker.tasks.evaluation.protected_retrieval_control import (
     ApprovalSourceNotFoundError,
     ControlCommandKind,
     ControlCommandResult,
+    DisableIdentityCommand,
     ExpireAuthorizationCommand,
     GrantAuthorizationCommand,
     IngestApprovalCommand,
+    RegisterIdentityCommand,
     RevokeAuthorizationCommand,
     TrustedApprovalSource,
     control_command_sha256,
@@ -54,9 +56,17 @@ from infra.python.protected_retrieval_role_policy import validate_protected_cont
 class _ControlExecutor:
     actor: ActorIdentity
     principal: ProtectedApprovalPrincipal
+    database_login: str
 
 
-type _SuccessReason = Literal["APPROVAL_VERIFIED", "AUTHORIZED", "REVOKED", "EXPIRED"]
+type _SuccessReason = Literal[
+    "APPROVAL_VERIFIED",
+    "AUTHORIZED",
+    "REVOKED",
+    "EXPIRED",
+    "IDENTITY_REGISTERED",
+    "IDENTITY_DISABLED",
+]
 
 _POLICY_DENIAL_REASONS = frozenset(
     {
@@ -92,6 +102,8 @@ def _success_reason(command_kind: ControlCommandKind) -> _SuccessReason:
         ControlCommandKind.GRANT: "AUTHORIZED",
         ControlCommandKind.REVOKE: "REVOKED",
         ControlCommandKind.EXPIRE: "EXPIRED",
+        ControlCommandKind.REGISTER_IDENTITY: "IDENTITY_REGISTERED",
+        ControlCommandKind.DISABLE_IDENTITY: "IDENTITY_DISABLED",
     }
     return reasons[command_kind]
 
@@ -112,7 +124,7 @@ class _ControlSession(_ProtectedSession):
     async def resolve_executor(self) -> _ControlExecutor:
         result = await self._execute(
             f"""
-            SELECT actor_id, actor_namespace, approval_role
+            SELECT database_login, actor_id, actor_namespace, approval_role
             FROM {self._schema}.protected_identity
             WHERE database_login = session_user::name
               AND identity_plane = 'CONTROL'
@@ -134,6 +146,7 @@ class _ControlSession(_ProtectedSession):
         return _ControlExecutor(
             actor=actor,
             principal=ProtectedApprovalPrincipal(actor=actor, role=role),
+            database_login=str(row.database_login),
         )
 
     async def verified_entries(self, *, lock_head: bool) -> tuple[ProtectedAuditEntry, ...]:
@@ -169,7 +182,11 @@ class _ControlSession(_ProtectedSession):
         reason_code = _success_reason(command_kind)
         if entry.reason_code.value != reason_code:
             raise ProtectedSecurityError("AUDIT_BINDING_MISMATCH")
-        if command_kind is not ControlCommandKind.INGEST_APPROVAL:
+        if command_kind in {
+            ControlCommandKind.GRANT,
+            ControlCommandKind.REVOKE,
+            ControlCommandKind.EXPIRE,
+        }:
             references = [
                 candidate
                 for candidate in entries
@@ -1235,6 +1252,248 @@ class PostgresqlProtectedAuthorizationControlService:
             effective_revision=new_revision,
             authorization_audit_event_id=authorization_audit.event_id,
             reason_code="EXPIRED",
+        )
+
+    async def register_identity(self, command: RegisterIdentityCommand) -> ControlCommandResult:
+        command_kind = ControlCommandKind.REGISTER_IDENTITY
+        digest = control_command_sha256(command_kind, command)
+        async with self._sessions() as preparation:
+            async with preparation.begin():
+                prepared_executor = await self._authenticated_executor(preparation)
+        replay = await self._read_replay(
+            request_id=command.request_id,
+            command_kind=command_kind,
+            command_sha256=digest,
+        )
+        if replay is not None:
+            return replay
+
+        denial: ProtectedSecurityError | None = None
+        async with self._sessions() as session:
+            async with session.begin():
+                await self._validate_connection(session)
+                clock = await PostgresqlTrustedClock.from_session(session)
+                control = _ControlSession(session, self._schema, clock)
+                executor = await control.resolve_executor()
+                if executor != prepared_executor:
+                    raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
+
+                existing_row = (
+                    await control._execute(
+                        f"""
+                        SELECT database_login, actor_id, actor_namespace
+                        FROM {control._schema}.protected_identity
+                        WHERE database_login = :database_login
+                           OR (actor_namespace = :actor_namespace AND actor_id = :actor_id AND identity_plane = :identity_plane)
+                        FOR UPDATE
+                        """,
+                        {
+                            "database_login": command.database_login,
+                            "actor_namespace": command.actor_namespace,
+                            "actor_id": command.actor_id,
+                            "identity_plane": command.identity_plane,
+                        },
+                    )
+                ).one_or_none()
+
+                replay = await control.replay(
+                    request_id=command.request_id,
+                    command_kind=command_kind,
+                    command_sha256=digest,
+                    executor=executor.actor,
+                    lock_head=True,
+                )
+                if replay is not None:
+                    return replay
+
+                denial_reason: ProtectedAuditReason | None = None
+                if executor.principal.role != ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER:
+                    denial_reason = ProtectedAuditReason.ISSUER_ROLE_DENIED
+                elif command.database_login == executor.database_login or (
+                    command.actor_namespace,
+                    command.actor_id,
+                ) == (executor.actor.namespace, executor.actor.actor_id):
+                    denial_reason = ProtectedAuditReason.SELF_APPROVAL_DENIED
+                elif existing_row is not None:
+                    denial_reason = ProtectedAuditReason.CONTROL_COMMAND_CONFLICT
+
+                await control.refresh_clock()
+                entries = await control.verified_entries(lock_head=False)
+                if denial_reason is not None:
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.PROTECTED_IDENTITY,
+                        target_id=command.database_login,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.DENIED,
+                        effective_revision=None,
+                        authorization_audit_event_id=None,
+                        reason_code=denial_reason,
+                    )
+                    denial = ProtectedSecurityError(denial_reason.value)
+                else:
+                    await control._execute(
+                        f"""
+                        INSERT INTO {control._schema}.protected_identity (
+                            database_login, actor_id, actor_namespace, principal_role,
+                            identity_plane, approval_role, enabled
+                        ) VALUES (
+                            :database_login, :actor_id, :actor_namespace, :principal_role,
+                            :identity_plane, :approval_role, :enabled
+                        )
+                        """,
+                        {
+                            "database_login": command.database_login,
+                            "actor_id": command.actor_id,
+                            "actor_namespace": command.actor_namespace,
+                            "principal_role": command.principal_role.value
+                            if command.principal_role is not None
+                            else None,
+                            "identity_plane": command.identity_plane,
+                            "approval_role": command.approval_role.value if command.approval_role is not None else None,
+                            "enabled": command.enabled,
+                        },
+                    )
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.PROTECTED_IDENTITY,
+                        target_id=command.database_login,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.SUCCEEDED,
+                        effective_revision=None,
+                        authorization_audit_event_id=None,
+                        reason_code=ProtectedAuditReason.IDENTITY_REGISTERED,
+                    )
+
+        if denial is not None:
+            raise denial
+        return ControlCommandResult(
+            request_id=command.request_id,
+            command_kind=command_kind,
+            target_id=command.database_login,
+            effective_revision=None,
+            authorization_audit_event_id=None,
+            reason_code="IDENTITY_REGISTERED",
+        )
+
+    async def disable_identity(self, command: DisableIdentityCommand) -> ControlCommandResult:
+        command_kind = ControlCommandKind.DISABLE_IDENTITY
+        digest = control_command_sha256(command_kind, command)
+        async with self._sessions() as preparation:
+            async with preparation.begin():
+                prepared_executor = await self._authenticated_executor(preparation)
+        replay = await self._read_replay(
+            request_id=command.request_id,
+            command_kind=command_kind,
+            command_sha256=digest,
+        )
+        if replay is not None:
+            return replay
+
+        denial: ProtectedSecurityError | None = None
+        async with self._sessions() as session:
+            async with session.begin():
+                await self._validate_connection(session)
+                clock = await PostgresqlTrustedClock.from_session(session)
+                control = _ControlSession(session, self._schema, clock)
+                executor = await control.resolve_executor()
+                if executor != prepared_executor:
+                    raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
+
+                target_row = (
+                    await control._execute(
+                        f"""
+                        SELECT database_login, actor_id, actor_namespace, enabled
+                        FROM {control._schema}.protected_identity
+                        WHERE database_login = :database_login
+                        FOR UPDATE
+                        """,
+                        {"database_login": command.database_login},
+                    )
+                ).one_or_none()
+
+                replay = await control.replay(
+                    request_id=command.request_id,
+                    command_kind=command_kind,
+                    command_sha256=digest,
+                    executor=executor.actor,
+                    lock_head=True,
+                )
+                if replay is not None:
+                    return replay
+
+                denial_reason: ProtectedAuditReason | None = None
+                if executor.principal.role != ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER:
+                    denial_reason = ProtectedAuditReason.ISSUER_ROLE_DENIED
+                elif command.database_login == executor.database_login or (
+                    command.expected_actor_namespace,
+                    command.expected_actor_id,
+                ) == (executor.actor.namespace, executor.actor.actor_id):
+                    denial_reason = ProtectedAuditReason.SELF_APPROVAL_DENIED
+                elif (
+                    target_row is None
+                    or not target_row.enabled
+                    or target_row.actor_id != command.expected_actor_id
+                    or target_row.actor_namespace != command.expected_actor_namespace
+                ):
+                    denial_reason = ProtectedAuditReason.AUTHORIZATION_NOT_FOUND
+
+                await control.refresh_clock()
+                entries = await control.verified_entries(lock_head=False)
+                if denial_reason is not None:
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.PROTECTED_IDENTITY,
+                        target_id=command.database_login,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.DENIED,
+                        effective_revision=None,
+                        authorization_audit_event_id=None,
+                        reason_code=denial_reason,
+                    )
+                    denial = ProtectedSecurityError(denial_reason.value)
+                else:
+                    await control._execute(
+                        f"""
+                        UPDATE {control._schema}.protected_identity
+                        SET enabled = false
+                        WHERE database_login = :database_login
+                          AND enabled = true
+                        """,
+                        {"database_login": command.database_login},
+                    )
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.PROTECTED_IDENTITY,
+                        target_id=command.database_login,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.SUCCEEDED,
+                        effective_revision=None,
+                        authorization_audit_event_id=None,
+                        reason_code=ProtectedAuditReason.IDENTITY_DISABLED,
+                    )
+
+        if denial is not None:
+            raise denial
+        return ControlCommandResult(
+            request_id=command.request_id,
+            command_kind=command_kind,
+            target_id=command.database_login,
+            effective_revision=None,
+            authorization_audit_event_id=None,
+            reason_code="IDENTITY_DISABLED",
         )
 
 
