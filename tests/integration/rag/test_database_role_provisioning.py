@@ -382,7 +382,13 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
 
     runtime_environment_id = await _exercise_audit_cutover(admin, reader, producer, environment)
 
+    # 과거 398 revision을 재현하면서 현재 ORM helper가 추가로 쓰는 후속 컬럼만 잠시 제공한다.
+    # 실제 head upgrade 전에 제거해 #458 migration이 컬럼을 직접 생성하도록 한다.
+    async with admin.begin() as connection:
+        await connection.execute(text("ALTER TABLE ocr_job ADD COLUMN llm_processing varchar(32)"))
     await _exercise_prescription_candidate_cutover(admin, reader, environment)
+    async with admin.begin() as connection:
+        await connection.execute(text("ALTER TABLE ocr_job DROP COLUMN llm_processing"))
     await _assert_runtime_transition_revisions_are_sealed(admin, runtime_environment_id, environment)
 
     current = subprocess.run(

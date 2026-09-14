@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../api/client'
+import { getOcrConsent, withdrawOcrConsent, type OcrConsentState } from '../api/ocrConsent'
 import { clearAuthenticatedSession } from '../features/auth/authSession'
 import {
   getCurrentUser,
@@ -88,6 +89,10 @@ function ProfilePage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [ocrConsent, setOcrConsent] = useState<OcrConsentState | null>(null)
+  const [ocrConsentError, setOcrConsentError] = useState('')
+  const [isWithdrawingOcrConsent, setIsWithdrawingOcrConsent] = useState(false)
+  const [ocrConsentFeedback, setOcrConsentFeedback] = useState('')
   const nameInputRef = useRef<HTMLInputElement>(null)
   const emailInputRef = useRef<HTMLInputElement>(null)
 
@@ -104,6 +109,9 @@ function ProfilePage() {
     setLoadError('')
     setSaveError('')
     setSuccessMessage('')
+    setOcrConsent(null)
+    setOcrConsentError('')
+    setOcrConsentFeedback('')
     navigate('/login', { replace: true })
   }, [navigate])
 
@@ -137,6 +145,44 @@ function ProfilePage() {
   useEffect(() => {
     void loadProfile()
   }, [loadProfile])
+
+  const loadOcrConsent = useCallback(async () => {
+    setOcrConsentError('')
+    try {
+      setOcrConsent((await getOcrConsent()).data)
+    } catch (error) {
+      if (isAuthenticationError(error)) {
+        expireSession()
+        return
+      }
+      setOcrConsent(null)
+      setOcrConsentError('처방전 처리 동의 상태를 확인할 수 없어요. 잠시 후 다시 시도해 주세요.')
+    }
+  }, [expireSession])
+
+  useEffect(() => {
+    if (user) void loadOcrConsent()
+  }, [user, loadOcrConsent])
+
+  const handleWithdrawOcrConsent = async () => {
+    if ((!ocrConsentError && ocrConsent?.status !== 'GRANTED') || isWithdrawingOcrConsent) return
+    setIsWithdrawingOcrConsent(true)
+    setOcrConsentFeedback('')
+    try {
+      setOcrConsent((await withdrawOcrConsent()).data)
+      setOcrConsentError('')
+      setOcrConsentFeedback('처방전 외부 처리 동의를 철회했습니다. 새로운 외부 처리는 시작하지 않습니다.')
+    } catch (error) {
+      if (isAuthenticationError(error)) {
+        expireSession()
+        return
+      }
+      setOcrConsent(null)
+      setOcrConsentError('동의를 철회하지 못했습니다. 현재 상태를 다시 확인해 주세요.')
+    } finally {
+      setIsWithdrawingOcrConsent(false)
+    }
+  }
 
   useEffect(() => {
     const firstError = Object.keys(fieldErrors)[0] as keyof ProfileForm | undefined
@@ -383,6 +429,44 @@ function ProfilePage() {
                     <p className="mvp-profile__readonly-note">
                       현재 기본 정보는 조회만 가능해요.
                     </p>
+                  </section>
+
+                  <section className="mvp-profile__section" aria-labelledby="ocr-consent-title">
+                    <h3 id="ocr-consent-title">처방전 외부 처리 동의</h3>
+                    <Card className="mvp-profile__card mvp-profile__consent-card">
+                      {ocrConsent ? (
+                        <p>{ocrConsent.effective ? '현재 동의한 상태입니다.' : ocrConsent.status === 'WITHDRAWN' ? '철회한 상태입니다.' : '현재 유효한 동의가 없습니다.'}</p>
+                      ) : !ocrConsentError ? (
+                        <p role="status">동의 상태를 확인하는 중입니다.</p>
+                      ) : null}
+                      {ocrConsentFeedback && <p role="status">{ocrConsentFeedback}</p>}
+                      {ocrConsentError && <p role="alert">{ocrConsentError}</p>}
+                    </Card>
+                    {ocrConsent?.status === 'GRANTED' && (
+                      <Button
+                        fullWidth
+                        variant="secondary"
+                        onClick={() => void handleWithdrawOcrConsent()}
+                        disabled={isWithdrawingOcrConsent}
+                      >
+                        {isWithdrawingOcrConsent ? '철회 중...' : '처방전 외부 처리 동의 철회'}
+                      </Button>
+                    )}
+                    {ocrConsentError && (
+                      <>
+                        <Button fullWidth variant="secondary" onClick={() => void loadOcrConsent()}>
+                          동의 상태 다시 확인
+                        </Button>
+                        <Button
+                          fullWidth
+                          variant="secondary"
+                          onClick={() => void handleWithdrawOcrConsent()}
+                          disabled={isWithdrawingOcrConsent}
+                        >
+                          {isWithdrawingOcrConsent ? '철회 중...' : '동의 철회 시도'}
+                        </Button>
+                      </>
+                    )}
                   </section>
                 </>
               )}

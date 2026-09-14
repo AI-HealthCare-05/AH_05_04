@@ -75,3 +75,26 @@ async def mark_linked_ocr_job_failed(
     )
     result = await session.execute(statement)
     return result.scalar_one_or_none() is not None
+
+
+async def mark_ocr_consent_blocked(
+    session: AsyncSession, *, ai_job_id: str, reason: str, completed_at: datetime
+) -> bool:
+    codes = {
+        "WITHDRAWN": ("CONSENT_WITHDRAWN", "동의가 철회되어 처리가 중단되었습니다."),
+        "LOOKUP_FAILED": ("CONSENT_LOOKUP_FAILED", "동의를 확인할 수 없어 처리가 중단되었습니다."),
+        "POLICY_VERSION_MISMATCH": ("CONSENT_POLICY_MISMATCH", "현재 정책에 대한 동의가 필요합니다."),
+        "MISSING_CONSENT": ("CONSENT_REQUIRED", "처방전 처리 동의가 필요합니다."),
+        "ACCOUNT_NOT_ACTIVE": ("CONSENT_SUBJECT_INVALID", "처리 권한을 확인할 수 없습니다."),
+        "OWNER_MISMATCH": ("CONSENT_SUBJECT_INVALID", "처리 권한을 확인할 수 없습니다."),
+        "PURPOSE_MISMATCH": ("CONSENT_REQUIRED", "처방전 처리 동의가 필요합니다."),
+        "INVALID_CONSENT": ("CONSENT_REQUIRED", "처방전 처리 동의가 필요합니다."),
+    }
+    code, message = codes[reason]
+    result = await session.execute(
+        update(_OCR_JOB)
+        .where(_OCR_JOB.c.ai_job_id == ai_job_id, _OCR_JOB.c.ocr_status == "PROCESSING")
+        .values(ocr_status="FAILED", completed_at=completed_at, error_code=code, error_message=message)
+        .returning(_OCR_JOB.c.id)
+    )
+    return result.scalar_one_or_none() is not None

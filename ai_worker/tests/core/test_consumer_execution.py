@@ -16,6 +16,7 @@ from ai_worker.core.errors import (
     ConsumerAcknowledgementError,
     ConsumerPersistenceError,
     HandlerResultMismatchError,
+    OcrConsentDeniedError,
     WorkerError,
 )
 from ai_worker.core.handler import Handler, HandlerExecutionContext
@@ -25,6 +26,7 @@ from ai_worker.core.job_execution import (
     FailureDisposition,
     LeaseAcquisitionResult,
     LeaseNotAcquired,
+    RecordedConsentBlock,
     RecordedFailure,
 )
 from ai_worker.core.registry import HandlerRegistry
@@ -213,6 +215,10 @@ class FakeJobExecutionRepository:
         _ = lease
         self._events.append("record_failure")
         self.recorded_failure = (failure_code, failed_at, retry_at)
+        return self._complete_successfully
+
+    async def record_consent_block(self, lease: ExecutionLease, *, reason: str, blocked_at: datetime) -> bool:
+        self._events.append("record_consent_block")
         return self._complete_successfully
 
 
@@ -1453,3 +1459,84 @@ async def test_leased_consumer_does_not_run_handler_when_domain_start_fails() ->
         "rollback",
     ]
     assert acknowledger.acknowledged_ids == []
+
+
+@pytest.mark.parametrize("reason", sorted(OcrConsentDeniedError.REASONS))
+async def test_consent_denial_commits_block_without_result_or_retry_before_ack(reason: str) -> None:
+    events: list[str] = []
+    registry = HandlerRegistry()
+    registry.register(FakeHandler(events=events, error=OcrConsentDeniedError(reason)))
+    repository = FakeJobExecutionRepository(events, complete_successfully=True)
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=FakeAcknowledger(events),
+        job_repository=repository,
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=75),
+        clock=lambda: datetime.now(UTC),
+    )
+    result = await execution.execute(WorkerDelivery(stream_message_id="458-0", message=build_message()))
+    assert isinstance(result, RecordedConsentBlock)
+    assert result.reason == reason
+    assert events == [
+        "acquire",
+        "commit",
+        "heartbeat_start",
+        "handle",
+        "rollback",
+        "heartbeat_stop",
+        "record_consent_block",
+        "commit",
+        "ack",
+    ]
+    assert repository.recorded_failure is None
+
+
+async def test_lost_lease_cannot_commit_or_ack_consent_block() -> None:
+    events: list[str] = []
+    registry = HandlerRegistry()
+    registry.register(FakeHandler(events=events, error=OcrConsentDeniedError("WITHDRAWN")))
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FakeTransaction(events),
+        acknowledger=FakeAcknowledger(events),
+        job_repository=FakeJobExecutionRepository(events, complete_successfully=False),
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=75),
+        clock=lambda: datetime.now(UTC),
+    )
+    result = await execution.execute(WorkerDelivery(stream_message_id="458-0", message=build_message()))
+    assert isinstance(result, LeaseNotAcquired)
+    assert events.count("commit") == 1
+    assert "ack" not in events and "save" not in events
+
+
+async def test_consent_block_commit_failure_rolls_back_without_ack() -> None:
+    events: list[str] = []
+    registry = HandlerRegistry()
+    registry.register(FakeHandler(events=events, error=OcrConsentDeniedError("WITHDRAWN")))
+
+    class FailingBlockTransaction(FakeTransaction):
+        async def commit(self) -> None:
+            await super().commit()
+            if self.events.count("commit") == 2:
+                raise RuntimeError("synthetic-private-commit")
+
+    execution = LeaseAwareConsumerExecution(
+        dispatcher=Dispatcher(registry),
+        result_store=FakeResultStore(events),
+        transaction=FailingBlockTransaction(events),
+        acknowledger=FakeAcknowledger(events),
+        job_repository=FakeJobExecutionRepository(events, complete_successfully=True),
+        heartbeat=FakeLeaseHeartbeat(events),
+        lease_duration=timedelta(seconds=75),
+        clock=lambda: datetime.now(UTC),
+    )
+    with pytest.raises(ConsumerPersistenceError) as caught:
+        await execution.execute(WorkerDelivery(stream_message_id="458-0", message=build_message()))
+    assert "synthetic-private-commit" not in str(caught.value)
+    assert events[-1] == "rollback"
+    assert "ack" not in events and "save" not in events

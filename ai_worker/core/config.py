@@ -90,6 +90,7 @@ class Config(BaseSettings):
     CLOVA_OCR_INVOKE_URL: str
     CLOVA_OCR_SECRET: SecretStr
     CLOVA_OCR_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0)
+    OCR_CONSENT_POLICY_VERSION: str = ""
     OCR_STRUCTURE_LLM_ENABLED: bool = False
     OPENAI_API_KEY: SecretStr = SecretStr("")
     OCR_STRUCTURE_MODEL: str = "gpt-4o-mini"

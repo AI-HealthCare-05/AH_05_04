@@ -266,6 +266,13 @@ export function createPrescriptionReviewPreview(scenario: ReviewScenario): {
 } {
   const fields = reviewFields(scenario)
   const services: PrescriptionReviewServices = {
+    getOcrConsent: async () => ({
+      data: {
+        purpose: 'OCR', status: 'GRANTED', effective: true, reason: null,
+        current_policy_version: 'synthetic-preview', accepted_policy_version: 'synthetic-preview',
+        granted_at: now, withdrawn_at: null,
+      },
+    }),
     getOcrJob: async () => {
       if (scenario === 'completed') {
         throw new ApiError(

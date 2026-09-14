@@ -142,6 +142,7 @@ class ClovaOcrEngine:
             engine_name="CLOVA_OCR",
             model_version=structured_result.model_name,
             prompt_version=structured_result.prompt_version,
+            llm_processing=structured_result.llm_processing,
         )
 
     async def _recognize_provider(
