@@ -24,7 +24,7 @@
 
 - 집중 Worker/Adapter/Consumer 테스트: **147 passed**.
 - Ruff check 및 format check 통과. Mypy **618 source files** 통과.
-- 전체 migration: **227 passed, 4 skipped**. 최신 단일 head `207c1d2e3f4a` 검증 통과.
+- 당시 전체 migration: **227 passed, 4 skipped**. 당시 단일 head `207c1d2e3f4a` 검증 통과.
 - 최신 DB의 Trigger/RLS/제거 대상 함수 **0개**, 재도입 검사·보호 테이블 쓰기 검사 통과.
 - 전체 `scripts/ci/run_test.sh`: exit 0. **5461 passed, 97 skipped**, coverage **92%**.
   - Backend·계약·PostgreSQL: 1996 passed, 85 skipped.
@@ -58,6 +58,18 @@ PYTHONPATH=backend:. uv run pytest tests/integration/test_worker_ocr_consent.py 
 
 ## 아직 증명하지 않은 범위
 
-전송 payload 최소화·LLM 생략 metadata/DTO·Backend 동의 API/접수 Gate·과거 결과 접근 차단·
-Frontend 연결은 이 검사로 완료됐다고 주장하지 않는다. 현재 LLM 전체-token 경로의 대체 및
-최종 동의 문구/버전과 실제 사용자 공개 조건은 남아 있다. 환경 활성화나 실제 사용자 전송은 하지 않았다.
+위 초기 검사만으로 전송 payload 최소화·LLM 생략 metadata/DTO·Backend 동의 API/접수 Gate·
+과거 결과 접근 차단·Frontend 연결을 완료했다고 주장하지 않는다. 해당 변경은 같은 브랜치의
+후속 구현과 아래 전체 회귀에서 별도로 검증했다. 최종 동의 문구/버전과 실제 사용자 공개 조건은
+남아 있으며, 환경 활성화나 실제 사용자 전송은 하지 않았다.
+
+## 최신 develop 병합 후 #505 CI 재검증
+
+- develop `2cbdaaca`의 이메일 인증 migration `431a1b2c3d4e` 뒤에 OCR metadata migration
+  `458c1d2e3f4a`를 연결했다. Alembic 단일 head, `upgrade head`와 migration suite를 확인했다.
+- 격리된 합성 PostgreSQL/Redis의 전체 `scripts/ci/run_test.sh` 통과: migration **230 passed,
+  4 skipped**, Backend·계약 **2058 passed, 85 skipped**, Redis 통합 **29 passed**, Worker
+  **3271 passed, 8 skipped**, 결합 coverage **92%**.
+- 최신 DB의 Trigger/RLS/제거 함수 **0개**. Ruff check·format, Mypy **636 source files** 통과.
+- Frontend 단위 테스트 **419 passed**, 전체 브라우저 E2E **8 passed**, lint·build 통과.
+  새 동의 조회 요청을 합성 E2E API fixture에 추가해 기존 업로드·검수·프로필 흐름을 검증했다.
