@@ -13,16 +13,24 @@ from ai_worker.tasks.rag.source_client.contracts import (
     SourceRunResult,
     SourceRunStatus,
 )
+from ai_worker.tasks.rag.source_client.endpoints import MFDS_ENDPOINT_CANDIDATES
 from ai_worker.tasks.rag.source_client.probe import (
     OPERATIONS,
+    PROBE_CANDIDATES,
     build_fixture_evidence,
     build_live_receipt,
     build_not_run_receipt,
     calculate_last_page_number,
     live_validation_requested,
     main,
+    repository_root,
     require_local_secret,
     write_not_run_receipt,
+)
+from ai_worker.tasks.rag.source_client.receipts import write_endpoint_receipt
+from ai_worker.tasks.rag.source_ingestion.receipt_validation import (
+    load_detail_endpoint_receipt,
+    verify_receipt_fixture_evidence,
 )
 
 
@@ -69,11 +77,37 @@ def test_rejects_invalid_pagination_values(
         )
 
 
-def test_all_three_p0_operations_are_registered() -> None:
+def test_every_probeable_operation_is_registered() -> None:
     assert set(OPERATIONS) == {
         "LIST_APPROVED_PRODUCTS",
         "LIST_INGREDIENT_CONTRAINDICATIONS",
         "LIST_PATIENT_MEDICATION_GUIDES",
+        "LIST_PRODUCT_COMPONENT_DETAILS",
+    }
+
+
+def test_detail_operation_is_probeable_without_joining_the_p0_registry() -> None:
+    assert "LIST_PRODUCT_COMPONENT_DETAILS" in PROBE_CANDIDATES
+    assert "LIST_PRODUCT_COMPONENT_DETAILS" not in MFDS_ENDPOINT_CANDIDATES
+
+    contract = PROBE_CANDIDATES["LIST_PRODUCT_COMPONENT_DETAILS"].contract
+
+    assert contract.path_template == ("/1471000/DrugPrdtPrmsnInfoService07/getDrugPrdtMcpnDtlInq07")
+    assert contract.primary_key_fields == ("ITEM_SEQ", "TAMT_SEQ", "MTRAL_SN")
+    assert OPERATIONS["LIST_PRODUCT_COMPONENT_DETAILS"].identity == contract.identity
+
+
+def test_detail_fixture_evidence_covers_every_required_receipt_scenario() -> None:
+    evidence = build_fixture_evidence("LIST_PRODUCT_COMPONENT_DETAILS")
+
+    assert {item.scenario for item in evidence} == {
+        "LIST_PRODUCT_COMPONENT_DETAILS_SUCCESS",
+        "SYNTHETIC_AUTH_FAILURE",
+        "SYNTHETIC_DAILY_LIMIT",
+        "SYNTHETIC_EMPTY",
+        "SYNTHETIC_SCHEMA_DRIFT",
+        "SYNTHETIC_DETAIL_BLANK",
+        "SYNTHETIC_DETAIL_DUPLICATE",
     }
 
 
@@ -223,6 +257,102 @@ def test_live_receipt_allows_parser_only_after_valid_full_scan() -> None:
     assert receipt.primary_key_duplicate_count == 0
     assert receipt.parser_activation_allowed is True
     assert receipt.blocking_code is None
+
+
+def test_detail_full_scan_receipt_is_accepted_by_the_detail_ingestion_loader(
+    tmp_path: Path,
+) -> None:
+    """probe가 쓴 상세 Receipt를 상세 수집 경로가 그대로 읽을 수 있어야 합니다."""
+    result = SourceRunResult(
+        operation=OPERATIONS["LIST_PRODUCT_COMPONENT_DETAILS"].identity,
+        status=SourceRunStatus.SUCCEEDED,
+        pages=(
+            ProviderPage(
+                page_number=1,
+                records=(
+                    {
+                        "ITEM_SEQ": "synthetic-product-001",
+                        "TAMT_SEQ": "1",
+                        "MTRAL_SN": "1",
+                    },
+                ),
+                response_checksum="a" * 64,
+                content_type="application/json",
+                total_count=1,
+            ),
+        ),
+        failure=None,
+        primary_key_validation=PrimaryKeyValidationResult(
+            passed=True,
+            record_count=1,
+            null_count=0,
+            duplicate_count=0,
+            observed_fields=("ITEM_SEQ", "MTRAL_SN", "TAMT_SEQ"),
+        ),
+        full_scan_completed=True,
+    )
+    receipt_path = tmp_path / "detail-receipt.json"
+
+    write_endpoint_receipt(
+        receipt_path,
+        build_live_receipt(
+            operation_code="LIST_PRODUCT_COMPONENT_DETAILS",
+            result=result,
+            validated_at="2026-09-14T01:00:00+00:00",
+            git_sha="synthetic-git-sha",
+        ),
+        generated_at="2026-09-14T01:00:00+00:00",
+    )
+
+    evidence = load_detail_endpoint_receipt(receipt_path)
+
+    assert evidence.identity == OPERATIONS["LIST_PRODUCT_COMPONENT_DETAILS"].identity
+    verify_receipt_fixture_evidence(
+        evidence=evidence.fixture_evidence,
+        repository_root=repository_root(),
+    )
+
+
+def test_product_receipt_is_still_rejected_by_the_detail_ingestion_loader(
+    tmp_path: Path,
+) -> None:
+    result = SourceRunResult(
+        operation=OPERATIONS["LIST_APPROVED_PRODUCTS"].identity,
+        status=SourceRunStatus.SUCCEEDED,
+        pages=(
+            ProviderPage(
+                page_number=1,
+                records=({"ITEM_SEQ": "synthetic-product-001"},),
+                response_checksum="a" * 64,
+                content_type="application/json",
+                total_count=1,
+            ),
+        ),
+        failure=None,
+        primary_key_validation=PrimaryKeyValidationResult(
+            passed=True,
+            record_count=1,
+            null_count=0,
+            duplicate_count=0,
+            observed_fields=("ITEM_SEQ",),
+        ),
+        full_scan_completed=True,
+    )
+    receipt_path = tmp_path / "product-receipt.json"
+
+    write_endpoint_receipt(
+        receipt_path,
+        build_live_receipt(
+            operation_code="LIST_APPROVED_PRODUCTS",
+            result=result,
+            validated_at="2026-09-14T01:00:00+00:00",
+            git_sha="synthetic-git-sha",
+        ),
+        generated_at="2026-09-14T01:00:00+00:00",
+    )
+
+    with pytest.raises(ValueError):
+        load_detail_endpoint_receipt(receipt_path)
 
 
 def test_live_receipt_blocks_parser_for_unstable_primary_key() -> None:

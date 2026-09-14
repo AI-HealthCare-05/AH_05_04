@@ -1,0 +1,22 @@
+{
+  "header": {
+    "resultCode": "00",
+    "resultMsg": "NORMAL SERVICE"
+  },
+  "body": {
+    "items": [
+      {
+        "ITEM_SEQ": "synthetic-product-001",
+        "TAMT_SEQ": "1",
+        "MTRAL_SN": "1",
+        "MTRAL_CODE": "synthetic-ingredient-001",
+        "QNT": "500",
+        "INGD_UNIT_CD": "밀리그램",
+        "CPNT_CTNT_CONT": "합성 주성분"
+      }
+    ],
+    "pageNo": 1,
+    "numOfRows": 100,
+    "totalCount": 1
+  }
+}
