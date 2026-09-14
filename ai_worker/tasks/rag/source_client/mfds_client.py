@@ -294,6 +294,18 @@ class MfdsSourceClient:
             full_scan_completed=True,
         )
 
+    def _is_declared_empty_record(self, record: Mapping[str, object]) -> bool:
+        """계약이 선언한 필드가 모두 비어 있는 행인지 판정합니다.
+
+        선언이 없으면 항상 False이므로 기존 Operation의 판정은 바뀌지 않습니다.
+        선언한 필드 중 하나라도 값이 있으면 빈 행이 아니며, 그 행의 키 누락은
+        계속 SCHEMA_DRIFT로 차단합니다.
+        """
+        fields = self._contract.empty_record_fields
+        if not fields:
+            return False
+        return all(record.get(field_name) in (None, "") for field_name in fields)
+
     def _candidate_field_stat(
         self,
         records: list[Mapping[str, object]],
@@ -348,6 +360,8 @@ class MfdsSourceClient:
         observed_keys: set[tuple[str, ...]] = set()
         missing_field_counts = {field_name: 0 for field_name in primary_key_fields}
         null_count = 0
+        enforced_null_count = 0
+        excluded_empty_row_count = 0
         duplicate_count = 0
 
         for record in records:
@@ -360,6 +374,13 @@ class MfdsSourceClient:
 
                 for field_name in missing_fields:
                     missing_field_counts[field_name] += 1
+
+                # 제공자가 본문을 통째로 비워 보낸 행은 통과 판정에서 제외하되 원본 통계에는 남긴다.
+                # 성분 없음이나 안전성 문제 없음을 뜻하지 않으며, 구성원으로 승격하지도 않는다.
+                if self._is_declared_empty_record(record):
+                    excluded_empty_row_count += 1
+                else:
+                    enforced_null_count += 1
 
                 continue
 
@@ -403,13 +424,15 @@ class MfdsSourceClient:
                 observed_records.add(serialized_record)
 
         return PrimaryKeyValidationResult(
-            passed=null_count == 0 and duplicate_count == 0,
+            passed=enforced_null_count == 0 and duplicate_count == 0,
             record_count=len(records),
             null_count=null_count,
             duplicate_count=duplicate_count,
             missing_field_counts=populated_missing_counts,
             candidate_field_stats=candidate_field_stats,
             whole_record_duplicate_count=whole_record_duplicate_count,
+            excluded_empty_row_count=excluded_empty_row_count,
+            enforced_null_count=enforced_null_count,
             observed_fields=tuple(sorted(observed_fields)),
         )
 
