@@ -158,8 +158,8 @@ class HoldoutPreparationRef(StrictContractModel):
 class ProtectedRunnerFoundationRef(StrictContractModel):
     id: Literal["issue-273-protected-runner-foundation"]
     version: Literal["1.0.0"]
-    raw_sha256: Literal["67085a511148edf8554e923f798415228bc15ae7d473d4d6677e21f302b764f4"]
-    self_sha256: Literal["72cd3df8a3dd50da234e4451e1cd619796d34b3abadab8970cec7a78b9a9b99e"]
+    raw_sha256: Literal["03d6c7613f2429d0ce972857c493bea7b37fec6b69f7c2d7f467a426159f2e24"]
+    self_sha256: Literal["edb69fea41af1ee2aec34e54ef44d7d0dc8273ab27135b26829c096ed842b3b2"]
 
 
 class Issue273ValidationStatus(StrictContractModel):
