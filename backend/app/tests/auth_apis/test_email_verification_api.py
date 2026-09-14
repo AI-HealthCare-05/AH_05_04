@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,13 +28,56 @@ class FailingEmailSender:
         raise EmailDeliveryError("Email delivery failed")
 
 
-def _assert_internal_error_hides(response: Response, *sensitive_values: str) -> None:
-    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    body_text = response.text
-    assert "INTERNAL_SERVER_ERROR" in body_text
-    normalized_body = body_text.lower()
-    for value in sensitive_values:
-        assert value.lower() not in normalized_body
+async def _wait_until(assertion, *, timeout_seconds: float = 1.0) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    last_error: AssertionError | None = None
+    while asyncio.get_running_loop().time() < deadline:
+        try:
+            assertion()
+            return
+        except AssertionError as exc:
+            last_error = exc
+            await asyncio.sleep(0.01)
+    if last_error is not None:
+        raise last_error
+    assertion()
+
+
+async def _wait_until_no_recent_email_verification_token(db_session, *, email: str) -> None:
+    deadline = asyncio.get_running_loop().time() + 1.0
+    last_error: AssertionError | None = None
+    while asyncio.get_running_loop().time() < deadline:
+        recent_token = await EmailVerificationRepository(db_session).find_recent_token(
+            email=email,
+            purpose=EmailVerificationPurpose.SIGNUP,
+            since=datetime.now(config.TIMEZONE) - timedelta(seconds=config.EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS),
+        )
+        try:
+            assert recent_token is None
+            return
+        except AssertionError as exc:
+            last_error = exc
+            await asyncio.sleep(0.01)
+    if last_error is not None:
+        raise last_error
+
+
+async def _wait_until_no_recent_password_reset_token(db_session, *, user_id: UUID) -> None:
+    deadline = asyncio.get_running_loop().time() + 1.0
+    last_error: AssertionError | None = None
+    while asyncio.get_running_loop().time() < deadline:
+        recent_token = await PasswordResetRepository(db_session).find_recent_token_for_user(
+            user_id=user_id,
+            since=datetime.now(config.TIMEZONE) - timedelta(seconds=config.PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS),
+        )
+        try:
+            assert recent_token is None
+            return
+        except AssertionError as exc:
+            last_error = exc
+            await asyncio.sleep(0.01)
+    if last_error is not None:
+        raise last_error
 
 
 class RecordingEmailSender:
@@ -63,7 +106,11 @@ async def test_email_verification_request_issues_local_token_and_sends_email() -
     body = response.json()
     assert body["detail"]
     assert body["verification_token"]
-    assert sender.email_verifications == [(email, body["verification_token"])]
+
+    def sent_once() -> None:
+        assert sender.email_verifications == [(email, body["verification_token"])]
+
+    await _wait_until(sent_once)
 
 
 async def test_email_verification_request_does_not_create_duplicate_probe_for_existing_email() -> None:
@@ -116,8 +163,12 @@ async def test_email_verification_request_concurrent_first_requests_issue_one_to
     assert [response.status_code for response in responses] == [status.HTTP_200_OK, status.HTTP_200_OK]
     tokens = [response.json()["verification_token"] for response in responses]
     assert sum(token is not None for token in tokens) == 1
-    assert len(sender.email_verifications) == 1
-    assert sender.email_verifications[0][0] == email
+
+    def sent_once() -> None:
+        assert len(sender.email_verifications) == 1
+        assert sender.email_verifications[0][0] == email
+
+    await _wait_until(sent_once)
 
 
 async def test_email_verification_request_within_cooldown_does_not_issue_new_token() -> None:
@@ -135,10 +186,16 @@ async def test_email_verification_request_within_cooldown_does_not_issue_new_tok
     assert first.json()["verification_token"]
     assert second.status_code == status.HTTP_200_OK
     assert second.json()["verification_token"] is None
-    assert len(sender.email_verifications) == 1
+
+    def sent_once() -> None:
+        assert len(sender.email_verifications) == 1
+
+    await _wait_until(sent_once)
 
 
-async def test_email_verification_request_delivery_failure_hides_email_and_token(db_session) -> None:
+async def test_email_verification_request_delivery_failure_keeps_public_response(
+    db_session,
+) -> None:
     sender = FailingEmailSender()
     fastapi_app.dependency_overrides[get_email_sender] = lambda: sender
     email = f"vfail-{uuid4().hex[:10]}@example.com"
@@ -149,13 +206,12 @@ async def test_email_verification_request_delivery_failure_hides_email_and_token
     finally:
         fastapi_app.dependency_overrides.pop(get_email_sender, None)
 
-    _assert_internal_error_hides(response, email, "verification")
-    recent_token = await EmailVerificationRepository(db_session).find_recent_token(
-        email=email,
-        purpose=EmailVerificationPurpose.SIGNUP,
-        since=datetime.now(config.TIMEZONE) - timedelta(seconds=config.EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS),
-    )
-    assert recent_token is None
+    assert response.status_code == status.HTTP_200_OK
+    body = response.json()
+    assert body["detail"]
+    assert body["verification_token"]
+    assert email.lower() not in response.text.lower()
+    await _wait_until_no_recent_email_verification_token(db_session, email=email)
 
 
 async def test_email_verification_confirm_accepts_valid_token_and_rejects_reuse() -> None:
@@ -238,7 +294,11 @@ async def test_password_reset_request_uses_email_sender_for_existing_account() -
     assert response.status_code == status.HTTP_200_OK
     reset_token = response.json()["reset_token"]
     assert reset_token
-    assert sender.password_resets == [(email, reset_token)]
+
+    def sent_once() -> None:
+        assert sender.password_resets == [(email, reset_token)]
+
+    await _wait_until(sent_once)
 
 
 async def test_password_reset_request_does_not_send_for_unknown_account() -> None:
@@ -258,10 +318,11 @@ async def test_password_reset_request_does_not_send_for_unknown_account() -> Non
     assert sender.password_resets == []
 
 
-async def test_password_reset_request_delivery_failure_hides_email_and_token(db_session) -> None:
+async def test_password_reset_request_delivery_failure_matches_unknown_response_and_cleans_token(db_session) -> None:
     sender = FailingEmailSender()
     fastapi_app.dependency_overrides[get_email_sender] = lambda: sender
     email = f"rfail-{uuid4().hex[:10]}@example.com"
+    unknown_email = f"unknown-rfail-{uuid4().hex[:10]}@example.com"
     try:
         transport = ASGITransport(app=app, raise_app_exceptions=False)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -269,15 +330,17 @@ async def test_password_reset_request_delivery_failure_hides_email_and_token(db_
                 "/api/v1/auth/signup",
                 json={"email": email, "password": "Password123!", "name": "발송실패테스터"},
             )
-            response = await client.post("/api/v1/auth/password-reset/request", json={"email": email})
+            existing_response = await client.post("/api/v1/auth/password-reset/request", json={"email": email})
+            unknown_response = await client.post("/api/v1/auth/password-reset/request", json={"email": unknown_email})
     finally:
         fastapi_app.dependency_overrides.pop(get_email_sender, None)
 
-    _assert_internal_error_hides(response, email, "reset")
+    assert existing_response.status_code == status.HTTP_200_OK
+    assert unknown_response.status_code == status.HTTP_200_OK
+    assert existing_response.json()["detail"] == unknown_response.json()["detail"]
+    assert existing_response.json()["reset_token"]
+    assert unknown_response.json()["reset_token"] is None
+    assert email.lower() not in existing_response.text.lower()
     user = await UserRepository(db_session).get_user_by_email(email)
     assert user is not None
-    recent_token = await PasswordResetRepository(db_session).find_recent_token_for_user(
-        user_id=user.id,
-        since=datetime.now(config.TIMEZONE) - timedelta(seconds=config.PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS),
-    )
-    assert recent_token is None
+    await _wait_until_no_recent_password_reset_token(db_session, user_id=user.id)

@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +34,12 @@ class EmailVerificationRepository:
     async def delete_token(self, token: EmailVerificationToken) -> None:
         await self.session.delete(token)
         await self.session.flush()
+
+    async def delete_token_by_id(self, token_id: UUID) -> None:
+        token = await self.session.get(EmailVerificationToken, token_id)
+        if token is None:
+            return
+        await self.delete_token(token)
 
     async def find_recent_token(
         self,

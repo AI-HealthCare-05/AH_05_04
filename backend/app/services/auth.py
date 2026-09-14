@@ -1,5 +1,6 @@
 import asyncio
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -7,6 +8,7 @@ from pydantic import EmailStr
 
 from app.core import config
 from app.core.config import Env
+from app.core.db.databases import AsyncSessionFactory
 from app.core.errors import ApiError, ErrorDetail
 from app.core.jwt.tokens import AccessToken, RefreshToken
 from app.core.utils.security import (
@@ -60,6 +62,60 @@ def _email_verification_token_invalid_error() -> ApiError:
         message="이메일 인증 링크가 유효하지 않습니다. 다시 요청해 주세요.",
         details=[ErrorDetail(field="token", reason="EMAIL_VERIFICATION_TOKEN_INVALID")],
     )
+
+
+@dataclass(frozen=True)
+class EmailVerificationDeliveryTask:
+    email: str
+    token: str
+    token_id: UUID
+
+
+@dataclass(frozen=True)
+class PasswordResetDeliveryTask:
+    email: str
+    token: str
+    token_id: UUID
+
+
+@dataclass(frozen=True)
+class EmailVerificationRequestResult:
+    verification_token: str | None
+    delivery_task: EmailVerificationDeliveryTask | None
+
+
+@dataclass(frozen=True)
+class PasswordResetRequestResult:
+    reset_token: str | None
+    delivery_task: PasswordResetDeliveryTask | None
+
+
+async def _send_email_verification_and_cleanup_on_failure(
+    *,
+    sender: EmailSender,
+    task: EmailVerificationDeliveryTask,
+) -> None:
+    try:
+        await sender.send_email_verification(email=task.email, token=task.token)
+    except Exception:
+        async with AsyncSessionFactory() as session:
+            repo = EmailVerificationRepository(session)
+            await repo.delete_token_by_id(task.token_id)
+            await session.commit()
+
+
+async def _send_password_reset_and_cleanup_on_failure(
+    *,
+    sender: EmailSender,
+    task: PasswordResetDeliveryTask,
+) -> None:
+    try:
+        await sender.send_password_reset(email=task.email, token=task.token)
+    except Exception:
+        async with AsyncSessionFactory() as session:
+            repo = PasswordResetRepository(session)
+            await repo.delete_token_by_id(task.token_id)
+            await session.commit()
 
 
 class AuthService:
@@ -216,12 +272,18 @@ class AuthService:
                 details=[ErrorDetail(field="email", reason="ALREADY_EXISTS")],
             )
 
+    def schedule_email_verification_delivery(self, task: EmailVerificationDeliveryTask) -> None:
+        asyncio.create_task(_send_email_verification_and_cleanup_on_failure(sender=self.email_sender, task=task))
+
+    def schedule_password_reset_delivery(self, task: PasswordResetDeliveryTask) -> None:
+        asyncio.create_task(_send_password_reset_and_cleanup_on_failure(sender=self.email_sender, task=task))
+
     def _require_email_verification_repo(self) -> EmailVerificationRepository:
         if self.email_verification_repo is None:
             raise RuntimeError("EmailVerificationRepository dependency is required for email verification flow.")
         return self.email_verification_repo
 
-    async def request_email_verification(self, email: str | EmailStr) -> str | None:
+    async def request_email_verification(self, email: str | EmailStr) -> EmailVerificationRequestResult:
         """#431: 회원가입 전 이메일 소유 확인 token을 발급한다.
 
         별도 이메일 중복 확인 API를 만들지 않는다. 이미 가입된 이메일이어도 공개 응답은
@@ -256,22 +318,23 @@ class AuthService:
 
         await repo.session.commit()
 
+        delivery_task = None
         if token_created:
-            try:
-                await self.email_sender.send_email_verification(email=email_value, token=raw_token)
-            except Exception:
-                assert created_token is not None
-                await repo.delete_token(created_token)
-                await repo.session.commit()
-                raise
+            assert created_token is not None
+            delivery_task = EmailVerificationDeliveryTask(
+                email=email_value,
+                token=raw_token,
+                token_id=created_token.id,
+            )
 
         remaining = config.EMAIL_VERIFICATION_RESPONSE_TARGET_SECONDS - (time.monotonic() - start)
         if remaining > 0:
             await asyncio.sleep(remaining)
 
-        if not token_created:
-            return None
-        return raw_token if config.ENV == Env.LOCAL else None
+        return EmailVerificationRequestResult(
+            verification_token=raw_token if token_created and config.ENV == Env.LOCAL else None,
+            delivery_task=delivery_task,
+        )
 
     async def confirm_email_verification(self, *, email: str | EmailStr, token: str) -> None:
         repo = self._require_email_verification_repo()
@@ -288,7 +351,7 @@ class AuthService:
         await repo.mark_tokens_verified(valid_tokens, verified_at=datetime.now(config.TIMEZONE))
         await repo.session.commit()
 
-    async def request_password_reset(self, email: str | EmailStr) -> str | None:
+    async def request_password_reset(self, email: str | EmailStr) -> PasswordResetRequestResult:
         """PD-206 결정 3: 계정 존재 여부를 노출하지 않기 위해 계정이 없거나 쿨다운
         중이어도 예외를 던지지 않고 조용히 반환한다(호출자는 항상 같은 성공 응답을 준다).
         원문 token은 EmailSender adapter 호출 경계까지만 전달하고, LOCAL 환경에서만 호출자에게
@@ -338,22 +401,23 @@ class AuthService:
 
         await self.password_reset_repo.session.commit()
 
+        delivery_task = None
         if token_created:
-            try:
-                await self.email_sender.send_password_reset(email=str(email), token=raw_token)
-            except Exception:
-                assert created_token is not None
-                await self.password_reset_repo.delete_token(created_token)
-                await self.password_reset_repo.session.commit()
-                raise
+            assert created_token is not None
+            delivery_task = PasswordResetDeliveryTask(
+                email=str(email),
+                token=raw_token,
+                token_id=created_token.id,
+            )
 
         remaining = config.PASSWORD_RESET_RESPONSE_TARGET_SECONDS - (time.monotonic() - start)
         if remaining > 0:
             await asyncio.sleep(remaining)
 
-        if not token_created:
-            return None
-        return raw_token if config.ENV == Env.LOCAL else None
+        return PasswordResetRequestResult(
+            reset_token=raw_token if token_created and config.ENV == Env.LOCAL else None,
+            delivery_task=delivery_task,
+        )
 
     async def reset_password(self, *, token: str, new_password: str) -> None:
         """PD-206 결정 3의 lock 순서를 그대로 따른다: token_hash로 candidate를 잠금 없이

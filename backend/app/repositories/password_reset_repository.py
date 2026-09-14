@@ -28,6 +28,12 @@ class PasswordResetRepository:
         await self.session.delete(token)
         await self.session.flush()
 
+    async def delete_token_by_id(self, token_id: UUID) -> None:
+        token = await self.session.get(PasswordResetToken, token_id)
+        if token is None:
+            return
+        await self.delete_token(token)
+
     async def find_recent_token_for_user(
         self,
         *,
