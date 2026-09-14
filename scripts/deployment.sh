@@ -548,6 +548,8 @@ ssh \
    bash -s" <<'EOF'
 set -euo pipefail
 
+# 함수 전체를 먼저 읽고 실행하여 하위 명령이 배포 스크립트 stdin을 소비하지 않게 합니다.
+run_remote_deployment() {
 cd "$HOME/project"
 
 if [ -z "${DEPLOY_SERVICES// }" ]; then
@@ -679,7 +681,7 @@ profile_validation_output="$(
       psql \
         -v ON_ERROR_STOP=1 \
         -At \
-        -F $'"'"'\t'"'"' \
+        -F "$(printf "\t")" \
         -U "$POSTGRES_USER" \
         -d "$POSTGRES_DB" <<'"'"'SQL'"'"'
 SELECT '"'"'user'"'"', count(*) FROM "user";
@@ -706,22 +708,25 @@ SQL
 
 printf '%s\n' "$profile_validation_output" >"$evidence_dir/post-migration-profile-validation.tsv"
 
-user_count="$(printf '%s\n' "$profile_validation_output" | awk -F '\t' '$1 == "user" {print $2}')"
-self_profile_count="$(printf '%s\n' "$profile_validation_output" | awk -F '\t' '$1 == "self_profile" {print $2}')"
-
-if [ "$user_count" != "$self_profile_count" ]; then
-  echo "Profile migration validation failed: user count and SELF profile count differ."
-  cat "$evidence_dir/post-migration-profile-validation.tsv"
-  exit 1
-fi
-
 if ! printf '%s\n' "$profile_validation_output" |
   awk -F '\t' '
-    $1 != "user" && $1 != "self_profile" && $2 != 0 { failed = 1 }
-    END { exit failed }
+    BEGIN {
+      split("user self_profile medical_document_profile_null prescription_profile_null guide_profile_null chat_session_profile_null prescription_profile_mismatch guide_profile_mismatch chat_session_profile_mismatch", names, " ")
+      for (i in names) expected[names[i]] = 1
+    }
+    NF != 2 || !($1 in expected) || $2 !~ /^[0-9]+$/ { failed = 1; next }
+    {
+      if (++seen[$1] != 1) failed = 1
+      counts[$1] = $2
+      if ($1 != "user" && $1 != "self_profile" && $2 != 0) failed = 1
+    }
+    END {
+      for (name in expected) if (seen[name] != 1) failed = 1
+      if (counts["user"] != counts["self_profile"]) failed = 1
+      exit failed
+    }
   '; then
-  echo "Profile migration validation failed: null or mismatch rows remain."
-  cat "$evidence_dir/post-migration-profile-validation.tsv"
+  echo "Profile migration validation failed: incomplete/invalid counts, SELF count difference, or null/mismatch rows."
   exit 1
 fi
 
@@ -743,6 +748,10 @@ docker compose up \
 docker image prune -f
 
 docker compose ps
+}
+
+# 명시적인 SQL heredoc은 각 명령의 stdin으로 계속 전달됩니다.
+run_remote_deployment </dev/null
 EOF
 
 echo "${COLOR_GREEN}Deployment finished.${COLOR_NC}"
