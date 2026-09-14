@@ -66,6 +66,17 @@ def _is_valid_database_login(value: str) -> bool:
     return bool(_POSTGRESQL_IDENTIFIER_PATTERN.match(value))
 
 
+_SEMVER_PATTERN = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$")
+
+
+def _is_valid_dataset_target(value: str) -> bool:
+    parts = value.rsplit(":", 1)
+    if len(parts) != 2:
+        return False
+    dataset_id, dataset_version = parts
+    return _is_canonical_uuid_v4(dataset_id) and bool(_SEMVER_PATTERN.match(dataset_version))
+
+
 class ProtectedSecurityError(RuntimeError):
     """A fail-closed error containing only a fixed, non-sensitive reason code."""
 
@@ -162,7 +173,10 @@ class ProtectedAuditReason(StrEnum):
     COMPLETED = "COMPLETED"
     CONTROL_COMMAND_CONFLICT = "CONTROL_COMMAND_CONFLICT"
     DATASET_BINDING_MISMATCH = "DATASET_BINDING_MISMATCH"
+    DATASET_FROZEN = "DATASET_FROZEN"
+    DATASET_REGISTERED = "DATASET_REGISTERED"
     DATASET_STATE_MISMATCH = "DATASET_STATE_MISMATCH"
+    DATASET_TRANSITIONED = "DATASET_TRANSITIONED"
     FREEZE_EVIDENCE_INCOMPLETE = "FREEZE_EVIDENCE_INCOMPLETE"
     GRANT_SUBJECT_MISMATCH = "GRANT_SUBJECT_MISMATCH"
     GUARD_BINDING_MISMATCH = "GUARD_BINDING_MISMATCH"
@@ -194,6 +208,7 @@ _CONTROL_DENIAL_REASONS = frozenset(
         ProtectedAuditReason.CONTROL_COMMAND_CONFLICT,
         ProtectedAuditReason.DATASET_BINDING_MISMATCH,
         ProtectedAuditReason.DATASET_STATE_MISMATCH,
+        ProtectedAuditReason.FREEZE_EVIDENCE_INCOMPLETE,
         ProtectedAuditReason.GRANT_SUBJECT_MISMATCH,
         ProtectedAuditReason.ISSUER_ROLE_DENIED,
         ProtectedAuditReason.SELF_APPROVAL_DENIED,
@@ -435,6 +450,9 @@ _EXPECTED_CONTROL_TARGETS: dict[str, ControlAuditTargetKind] = {
     "INGEST_APPROVAL": ControlAuditTargetKind.APPROVAL_SOURCE_EVENT,
     "REGISTER_IDENTITY": ControlAuditTargetKind.PROTECTED_IDENTITY,
     "DISABLE_IDENTITY": ControlAuditTargetKind.PROTECTED_IDENTITY,
+    "REGISTER_DATASET": ControlAuditTargetKind.PROTECTED_DATASET,
+    "TRANSITION_DATASET": ControlAuditTargetKind.PROTECTED_DATASET,
+    "FREEZE_DATASET": ControlAuditTargetKind.PROTECTED_DATASET,
 }
 
 _EXPECTED_CONTROL_REASONS: dict[str, ProtectedAuditReason] = {
@@ -444,6 +462,9 @@ _EXPECTED_CONTROL_REASONS: dict[str, ProtectedAuditReason] = {
     "EXPIRE": ProtectedAuditReason.EXPIRED,
     "REGISTER_IDENTITY": ProtectedAuditReason.IDENTITY_REGISTERED,
     "DISABLE_IDENTITY": ProtectedAuditReason.IDENTITY_DISABLED,
+    "REGISTER_DATASET": ProtectedAuditReason.DATASET_REGISTERED,
+    "TRANSITION_DATASET": ProtectedAuditReason.DATASET_TRANSITIONED,
+    "FREEZE_DATASET": ProtectedAuditReason.DATASET_FROZEN,
 }
 
 
@@ -458,6 +479,9 @@ class ControlCommandAuditEntry(StrictContractModel):
         "EXPIRE",
         "REGISTER_IDENTITY",
         "DISABLE_IDENTITY",
+        "REGISTER_DATASET",
+        "TRANSITION_DATASET",
+        "FREEZE_DATASET",
     ]
     executed_by: ActorIdentity
     target_kind: ControlAuditTargetKind
@@ -495,6 +519,8 @@ class ControlCommandAuditEntry(StrictContractModel):
             self.target_id
         ):
             raise ValueError("identity control target must be a valid database login")
+        if expected_target is ControlAuditTargetKind.PROTECTED_DATASET and not _is_valid_dataset_target(self.target_id):
+            raise ValueError("dataset control target must be a valid dataset_id:dataset_version")
         if self.outcome is ControlAuditOutcome.DENIED:
             return self._validate_denied_result()
         return self._validate_succeeded_result()
@@ -509,9 +535,22 @@ class ControlCommandAuditEntry(StrictContractModel):
     def _validate_succeeded_result(self) -> Self:
         if self.reason_code is not _EXPECTED_CONTROL_REASONS[self.command_kind]:
             raise ValueError("successful control audit reason does not match command kind")
-        if self.command_kind in _EXPECTED_CONTROL_TARGETS:
+        is_no_revision = self.command_kind in {
+            "INGEST_APPROVAL",
+            "REGISTER_IDENTITY",
+            "DISABLE_IDENTITY",
+        }
+        is_dataset = self.command_kind in {
+            "REGISTER_DATASET",
+            "TRANSITION_DATASET",
+            "FREEZE_DATASET",
+        }
+        if is_no_revision:
             if self.result_effective_revision is not None or self.authorization_audit_event_id is not None:
                 raise ValueError("ingest and identity audit cannot reference an authorization mutation")
+        elif is_dataset:
+            if self.result_effective_revision is None or self.authorization_audit_event_id is not None:
+                raise ValueError("dataset audit must carry effective revision and forbid authorization audit ref")
         elif self.result_effective_revision is None or self.authorization_audit_event_id is None:
             raise ValueError("authorization mutation must reference its revision and audit event")
         return self
