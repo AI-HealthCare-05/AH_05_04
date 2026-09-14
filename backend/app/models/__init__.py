@@ -17,7 +17,14 @@ from app.models.async_jobs import (
 from app.models.chat import ChatCitation, ChatMessage, ChatSession
 from app.models.email_verification import EmailVerificationPurpose, EmailVerificationToken
 from app.models.guides import Guide, GuideCitation
-from app.models.knowledge import KnowledgeChunk, KnowledgeDocument
+from app.models.knowledge import (
+    KnowledgeChunk,
+    KnowledgeDocument,
+    KnowledgeDocumentContractVersion,
+    RagKnowledgeDistanceMetric,
+    RagKnowledgeIndex,
+    RagKnowledgeIndexMember,
+)
 from app.models.medical_documents import MedicalDocument
 from app.models.medication_schedules import (
     CheckinAudit,
@@ -128,14 +135,29 @@ from app.models.rag_source import (
     RagSourceLifecycleStatus,
     RagSourceOperation,
     RagSourceSnapshot,
+    RagSourceSnapshotMember,
+    RagSourceSnapshotMemberKind,
     RagSourceSnapshotVerification,
     RagSourceUsageStatus,
     RagVerificationResultStatus,
 )
 from app.models.refresh_session import RefreshSession
+from app.models.track_c import (
+    ActionPlanFollowup,
+    ActionPlanFollowupAudit,
+    BarrierResponse,
+    SafetyAssessment,
+    SupportActionPlan,
+)
+from app.models.user_consents import ConsentPurpose, ConsentStatus, UserConsent
 from app.models.users import AccountStatus, Gender, User
 
 __all__ = [
+    "SafetyAssessment",
+    "BarrierResponse",
+    "SupportActionPlan",
+    "ActionPlanFollowup",
+    "ActionPlanFollowupAudit",
     "NotificationKind",
     "NotificationRecord",
     "NotificationStatus",
@@ -151,6 +173,8 @@ __all__ = [
     "ChatCitation",
     "ChatMessage",
     "ChatSession",
+    "ConsentPurpose",
+    "ConsentStatus",
     "CheckinAudit",
     "DlqOutboxEvent",
     "DlqOutboxEventKind",
@@ -179,6 +203,7 @@ __all__ = [
     "IdempotencyRecordType",
     "KnowledgeChunk",
     "KnowledgeDocument",
+    "KnowledgeDocumentContractVersion",
     "Medication",
     "MedicationOccurrence",
     "MedicationOccurrenceStatus",
@@ -209,6 +234,9 @@ __all__ = [
     "Profile",
     "ProfileType",
     "RagIngestionRunStatus",
+    "RagKnowledgeDistanceMetric",
+    "RagKnowledgeIndex",
+    "RagKnowledgeIndexMember",
     "RagEntityIdentity",
     "RagMedicationAlias",
     "RagMedicationAliasReviewStatus",
@@ -257,6 +285,8 @@ __all__ = [
     "RagSourceLifecycleStatus",
     "RagSourceOperation",
     "RagSourceSnapshot",
+    "RagSourceSnapshotMember",
+    "RagSourceSnapshotMemberKind",
     "RagSourceSnapshotVerification",
     "RagSourceUsageStatus",
     "RagVerificationResultStatus",
@@ -264,6 +294,7 @@ __all__ = [
     "SourceManagementPermission",
     "RefreshSession",
     "User",
+    "UserConsent",
 ]
 
 from app.models.source_management import SourceManagementAudit, SourceManagementPermission

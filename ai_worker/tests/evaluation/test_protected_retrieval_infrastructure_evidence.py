@@ -53,10 +53,10 @@ def test_infrastructure_evidence_separates_implementation_from_activation() -> N
         "AUTHORIZATION_CONTROL_MIGRATION",
     ]
     verification = cast(list[dict[str, JsonValue]], evidence["verification"])
-    assert verification[-1] == {
-        "command_id": "WORKER_IMAGE_PROTECTED_OFF_IMPORT",
-        "result": "PASSED",
-    }
+    assert verification[-2:] == [
+        {"command_id": "WORKER_IMAGE_PROTECTED_OFF_IMPORT", "result": "PASSED"},
+        {"command_id": "PROTECTED_LIMITED_LOGIN_CI", "result": "PASSED"},
+    ]
 
 
 def test_infrastructure_evidence_contains_only_non_sensitive_scalars() -> None:

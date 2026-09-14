@@ -87,7 +87,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:17-alpine
+        image: pgvector/pgvector:0.8.6-pg17-bookworm
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ci_test_password
@@ -187,7 +187,7 @@ jobs:
           --health-timeout=5s
           --health-retries=5
       postgres:
-        image: postgres:17-alpine
+        image: pgvector/pgvector:0.8.6-pg17-bookworm
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ci_test_password

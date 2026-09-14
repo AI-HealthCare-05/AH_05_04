@@ -1,6 +1,7 @@
 """검증된 Source 수집 결과를 Snapshot 이력에 연결하는 계약입니다."""
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -24,7 +25,7 @@ from ai_worker.tasks.rag.source_ingestion.reject_codes import (
     validate_parser_contract,
     validate_reject_artifact,
 )
-from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
+from ai_worker.tasks.rag.source_ingestion.result import SourceIngestionResult
 from ai_worker.tasks.rag.source_ingestion.snapshot_policy import (
     SnapshotPolicyFailureCode,
     SourceSnapshotPolicy,
@@ -90,6 +91,27 @@ class SnapshotUseFailureCode(StrEnum):
     SNAPSHOT_SUPERSEDED = "SNAPSHOT_SUPERSEDED"
     SNAPSHOT_FRESHNESS_STALE = "SNAPSHOT_FRESHNESS_STALE"
     SNAPSHOT_PROVENANCE_INVALID = "SNAPSHOT_PROVENANCE_INVALID"
+
+
+class SourceSnapshotMemberKind(StrEnum):
+    ENDPOINT_OPERATION = "ENDPOINT_OPERATION"
+    ARTIFACT = "ARTIFACT"
+
+
+class SourceSnapshotMemberFailureReason(StrEnum):
+    MEMBER_INVALID = "MEMBER_INVALID"
+    SOURCE_BINDING_INVALID = "SOURCE_BINDING_INVALID"
+    RECEIPT_MISMATCH = "RECEIPT_MISMATCH"
+    DEPENDENCY_ERROR = "DEPENDENCY_ERROR"
+
+
+class SourceSnapshotMemberValidationError(ValueError):
+    def __init__(self, reason: SourceSnapshotMemberFailureReason) -> None:
+        self.reason = reason
+        super().__init__(reason.value)
+
+    def __repr__(self) -> str:
+        return f"SourceSnapshotMemberValidationError({self.reason.value})"
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +234,100 @@ class SnapshotProvenanceReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceSnapshotMemberCreate:
+    provenance: SnapshotProvenanceReceipt
+    member_kind: SourceSnapshotMemberKind
+    endpoint_id: UUID | None
+    operation_id: UUID | None
+    ingestion_artifact_id: UUID | None
+    locator: str = field(repr=False)
+    content_sha256: str
+
+    def __post_init__(self) -> None:
+        try:
+            self.provenance.validate_provenance()
+        except ValueError:
+            raise SourceSnapshotMemberValidationError(
+                SourceSnapshotMemberFailureReason.SOURCE_BINDING_INVALID
+            ) from None
+        if (
+            self.provenance.verification_status is not SnapshotVerificationStatus.PENDING
+            or self.provenance.verification_seal_id is not None
+        ):
+            raise SourceSnapshotMemberValidationError(SourceSnapshotMemberFailureReason.SOURCE_BINDING_INVALID)
+        if (
+            not self.locator
+            or self.locator != self.locator.strip()
+            or len(self.locator) > 500
+            or unicodedata.normalize("NFC", self.locator) != self.locator
+            or any(unicodedata.category(character).startswith("C") for character in self.locator)
+            or re.fullmatch(r"[0-9a-f]{64}", self.content_sha256) is None
+        ):
+            raise SourceSnapshotMemberValidationError(SourceSnapshotMemberFailureReason.MEMBER_INVALID)
+        endpoint_shape = (
+            self.member_kind is SourceSnapshotMemberKind.ENDPOINT_OPERATION
+            and self.endpoint_id == self.provenance.endpoint_id
+            and self.operation_id in (None, self.provenance.operation_id)
+            and self.ingestion_artifact_id is None
+        )
+        artifact_shape = (
+            self.member_kind is SourceSnapshotMemberKind.ARTIFACT
+            and self.endpoint_id is None
+            and self.operation_id is None
+            and self.ingestion_artifact_id is not None
+        )
+        if not endpoint_shape and not artifact_shape:
+            raise SourceSnapshotMemberValidationError(SourceSnapshotMemberFailureReason.SOURCE_BINDING_INVALID)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSnapshotMemberReceipt:
+    source_snapshot_member_id: UUID
+    source_snapshot_id: UUID
+    member_kind: SourceSnapshotMemberKind
+    endpoint_id: UUID | None
+    operation_id: UUID | None
+    ingestion_artifact_id: UUID | None
+    content_sha256: str
+
+
+class SourceSnapshotMemberRepository(Protocol):
+    async def append_snapshot_member(self, request: SourceSnapshotMemberCreate) -> SourceSnapshotMemberReceipt: ...
+
+
+async def append_snapshot_member(
+    request: SourceSnapshotMemberCreate,
+    *,
+    repository: SourceSnapshotMemberRepository,
+) -> SourceSnapshotMemberReceipt:
+    try:
+        receipt = await repository.append_snapshot_member(request)
+    except SourceSnapshotMemberValidationError:
+        raise
+    except Exception:
+        raise SourceSnapshotMemberValidationError(SourceSnapshotMemberFailureReason.DEPENDENCY_ERROR) from None
+    expected = (
+        request.provenance.source_snapshot_id,
+        request.member_kind,
+        request.endpoint_id,
+        request.operation_id,
+        request.ingestion_artifact_id,
+        request.content_sha256,
+    )
+    observed = (
+        receipt.source_snapshot_id,
+        receipt.member_kind,
+        receipt.endpoint_id,
+        receipt.operation_id,
+        receipt.ingestion_artifact_id,
+        receipt.content_sha256,
+    )
+    if observed != expected:
+        raise SourceSnapshotMemberValidationError(SourceSnapshotMemberFailureReason.RECEIPT_MISMATCH)
+    return receipt
+
+
+@dataclass(frozen=True, slots=True)
 class SnapshotIngestionMetadata:
     """검증 결과 외에 Source 수집 실행 계층이 선택하는 저장 메타데이터입니다."""
 
@@ -259,7 +375,7 @@ class SnapshotIngestionMetadata:
 @dataclass(frozen=True, slots=True)
 class SnapshotCreateRequest:
     operation_id: UUID
-    ingestion: ProductIngestionResult
+    ingestion: SourceIngestionResult
     metadata: SnapshotIngestionMetadata
     supersedes_snapshot_id: UUID | None
 
@@ -453,7 +569,7 @@ class SnapshotLifecycleRepository(Protocol):
 
 def decide_snapshot_ingestion(
     *,
-    ingestion: ProductIngestionResult,
+    ingestion: SourceIngestionResult,
     metadata: SnapshotIngestionMetadata,
     same_version: SnapshotReference | None,
     latest: SnapshotReference | None,
@@ -479,7 +595,7 @@ def decide_snapshot_ingestion(
 async def _persist_identity_rejections(
     *,
     repository: SnapshotLifecycleRepository,
-    ingestion: ProductIngestionResult,
+    ingestion: SourceIngestionResult,
     metadata: SnapshotIngestionMetadata,
     artifacts: tuple[StoredRawArtifact, ...],
 ) -> SnapshotPersistenceResult | None:
@@ -516,10 +632,10 @@ async def _persist_identity_rejections(
     return None
 
 
-async def persist_product_ingestion_result(
+async def persist_source_ingestion_result(
     *,
     repository: SnapshotLifecycleRepository,
-    ingestion: ProductIngestionResult,
+    ingestion: SourceIngestionResult,
     metadata: SnapshotIngestionMetadata,
     artifacts: tuple[StoredRawArtifact, ...],
 ) -> SnapshotPersistenceResult:
@@ -682,7 +798,7 @@ async def persist_product_ingestion_result(
 
 def _validate_ingestion_artifacts(
     *,
-    ingestion: ProductIngestionResult,
+    ingestion: SourceIngestionResult,
     rejected_record_count: int,
     artifacts: tuple[StoredRawArtifact, ...],
 ) -> None:
@@ -827,7 +943,7 @@ def _run_record(
     snapshot_id: UUID | None,
     metadata: SnapshotIngestionMetadata,
     run_status: str,
-    ingestion: ProductIngestionResult,
+    ingestion: SourceIngestionResult,
     failure_code: str | None = None,
     validation_reason_code: str | None = None,
 ) -> SnapshotRunRecord:
@@ -851,7 +967,7 @@ def _run_record(
 
 def attempt_canonical_contract(
     *,
-    ingestion: ProductIngestionResult,
+    ingestion: SourceIngestionResult,
     metadata: SnapshotIngestionMetadata,
 ) -> dict[str, str | int]:
     return {
@@ -868,7 +984,7 @@ def attempt_canonical_contract(
 def _has_same_canonical_contract(
     snapshot: SnapshotReference,
     *,
-    ingestion: ProductIngestionResult,
+    ingestion: SourceIngestionResult,
     metadata: SnapshotIngestionMetadata,
 ) -> bool:
     return (
@@ -903,3 +1019,7 @@ def _validate_attempt_contract(contract: dict[str, str | int]) -> None:
     count = contract["rejected_record_count"]
     if type(count) is not int or count < 0:
         raise ValueError("Invalid attempt rejected count")
+
+
+# Compatibility entry point for the existing product pipeline.
+persist_product_ingestion_result = persist_source_ingestion_result
