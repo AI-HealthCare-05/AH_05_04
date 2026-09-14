@@ -37,9 +37,11 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
 )
 from ai_worker.tasks.evaluation.protected_retrieval_control import (
     ApprovalSourceNotFoundError,
+    DisableIdentityCommand,
     ExpireAuthorizationCommand,
     GrantAuthorizationCommand,
     IngestApprovalCommand,
+    RegisterIdentityCommand,
     RevokeAuthorizationCommand,
 )
 from tests.migration.test_protected_retrieval_migration import _login_url, _ProtectedDatabase
@@ -1324,3 +1326,240 @@ async def test_grant_audit_failure_leaves_no_mutation(
                 )
         await admin_engine.dispose()
         await service.close()
+
+
+@pytest.mark.asyncio
+async def test_register_identity_requires_product_safety_reviewer(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    evidence = _evidence(f"approval-{uuid4()}", "a" * 64)
+    source = _ApprovalSource(evidence)
+    # database.control_login has approval_role=DATASET_CUSTODIAN
+    service = _service(protected_database, source)
+    request_id = str(uuid4())
+    command = RegisterIdentityCommand(
+        request_id=request_id,
+        database_login="test_sub_login",
+        actor_id="test-sub-actor",
+        actor_namespace="SERVICE_IDENTITY",
+        identity_plane="DATA",
+        principal_role=ProtectedPrincipalRole.PROTECTED_RUNNER,
+    )
+    try:
+        with pytest.raises(ProtectedSecurityError, match="ISSUER_ROLE_DENIED"):
+            await service.register_identity(command)
+
+        # Replay should reproduce the same denial
+        with pytest.raises(ProtectedSecurityError, match="ISSUER_ROLE_DENIED"):
+            await service.register_identity(command)
+
+        # Verify denied audit entry committed
+        admin_engine = create_async_engine(protected_database.url)
+        try:
+            async with admin_engine.connect() as connection:
+                audit_row = (
+                    await connection.execute(
+                        text(
+                            f'''SELECT event_kind, entry_body FROM "{protected_database.schema}".audit_entry
+                            WHERE event_id = CAST(:request_id AS uuid)'''
+                        ),
+                        {"request_id": request_id},
+                    )
+                ).one()
+                assert audit_row.event_kind == "CONTROL"
+                body = (
+                    json.loads(audit_row.entry_body) if isinstance(audit_row.entry_body, str) else audit_row.entry_body
+                )
+                assert body["outcome"] == "DENIED"
+                assert body["reason_code"] == "ISSUER_ROLE_DENIED"
+                assert body["target_kind"] == "PROTECTED_IDENTITY"
+                assert body["target_id"] == "test_sub_login"
+        finally:
+            await admin_engine.dispose()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_register_and_disable_identity_lifecycle(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    admin_engine = create_async_engine(database.url)
+    reviewer_login = f"pr368_rev_{uuid4().hex[:8]}"
+    try:
+        async with admin_engine.begin() as connection:
+            await connection.exec_driver_sql(
+                f"CREATE ROLE \"{reviewer_login}\" LOGIN PASSWORD '{database.password}' "
+                "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+            )
+            await connection.exec_driver_sql(f'GRANT "{database.control}" TO "{reviewer_login}"')
+            await connection.execute(
+                text(
+                    f'''INSERT INTO "{database.schema}".protected_identity (
+                        database_login, actor_id, actor_namespace, approval_role, identity_plane
+                    ) VALUES (
+                        :login, 'synthetic-safety-reviewer', 'GITHUB_LOGIN',
+                        'PRODUCT_SAFETY_REVIEWER', 'CONTROL'
+                    )'''
+                ),
+                {"login": reviewer_login},
+            )
+
+        evidence = _evidence(f"approval-{uuid4()}", "a" * 64)
+        source = _ApprovalSource(evidence)
+        service = _service(database, source, login=reviewer_login)
+        try:
+            # Self-registration denied
+            self_reg = RegisterIdentityCommand(
+                request_id=str(uuid4()),
+                database_login=reviewer_login,
+                actor_id="someone-else",
+                actor_namespace="GITHUB_LOGIN",
+                identity_plane="DATA",
+                principal_role=ProtectedPrincipalRole.HOLDOUT_AUTHOR,
+            )
+            with pytest.raises(ProtectedSecurityError, match="SELF_APPROVAL_DENIED"):
+                await service.register_identity(self_reg)
+
+            self_actor_reg = RegisterIdentityCommand(
+                request_id=str(uuid4()),
+                database_login="another_login",
+                actor_id="synthetic-safety-reviewer",
+                actor_namespace="GITHUB_LOGIN",
+                identity_plane="DATA",
+                principal_role=ProtectedPrincipalRole.HOLDOUT_AUTHOR,
+            )
+            with pytest.raises(ProtectedSecurityError, match="SELF_APPROVAL_DENIED"):
+                await service.register_identity(self_actor_reg)
+
+            # Happy path: register new data identity
+            target_login = f"pr368_runner_{uuid4().hex[:8]}"
+            reg_id = str(uuid4())
+            reg_cmd = RegisterIdentityCommand(
+                request_id=reg_id,
+                database_login=target_login,
+                actor_id="synthetic-runner-actor",
+                actor_namespace="SERVICE_IDENTITY",
+                identity_plane="DATA",
+                principal_role=ProtectedPrincipalRole.PROTECTED_RUNNER,
+            )
+            reg_result = await service.register_identity(reg_cmd)
+            assert reg_result.command_kind == "REGISTER_IDENTITY"
+            assert reg_result.target_id == target_login
+            assert reg_result.reason_code == "IDENTITY_REGISTERED"
+
+            # Replay returns exact same result
+            replayed_result = await service.register_identity(reg_cmd)
+            assert replayed_result == reg_result
+
+            # Verify row in DB
+            async with admin_engine.connect() as connection:
+                row = (
+                    await connection.execute(
+                        text(
+                            f'''SELECT actor_id, actor_namespace, principal_role, identity_plane, enabled
+                            FROM "{database.schema}".protected_identity WHERE database_login = :login'''
+                        ),
+                        {"login": target_login},
+                    )
+                ).one()
+                assert row == ("synthetic-runner-actor", "SERVICE_IDENTITY", "PROTECTED_RUNNER", "DATA", True)
+
+            # Conflict: same request_id but different command payload
+            diff_cmd = RegisterIdentityCommand(
+                request_id=reg_id,
+                database_login=target_login,
+                actor_id="different-actor",
+                actor_namespace="SERVICE_IDENTITY",
+                identity_plane="DATA",
+                principal_role=ProtectedPrincipalRole.PROTECTED_RUNNER,
+            )
+            with pytest.raises(ProtectedSecurityError, match="CONTROL_COMMAND_CONFLICT"):
+                await service.register_identity(diff_cmd)
+
+            # Duplicate database_login registration with new request_id -> CONTROL_COMMAND_CONFLICT
+            dup_cmd = RegisterIdentityCommand(
+                request_id=str(uuid4()),
+                database_login=target_login,
+                actor_id="another-actor",
+                actor_namespace="SERVICE_IDENTITY",
+                identity_plane="DATA",
+                principal_role=ProtectedPrincipalRole.PROTECTED_RUNNER,
+            )
+            with pytest.raises(ProtectedSecurityError, match="CONTROL_COMMAND_CONFLICT"):
+                await service.register_identity(dup_cmd)
+
+            # Self-disable denied
+            self_dis = DisableIdentityCommand(
+                request_id=str(uuid4()),
+                database_login=reviewer_login,
+                expected_actor_id="synthetic-safety-reviewer",
+                expected_actor_namespace="GITHUB_LOGIN",
+            )
+            with pytest.raises(ProtectedSecurityError, match="SELF_APPROVAL_DENIED"):
+                await service.disable_identity(self_dis)
+
+            # Disable non-existent identity -> AUTHORIZATION_NOT_FOUND
+            missing_dis = DisableIdentityCommand(
+                request_id=str(uuid4()),
+                database_login="non_existent_login",
+                expected_actor_id="non-existent",
+                expected_actor_namespace="GITHUB_LOGIN",
+            )
+            with pytest.raises(ProtectedSecurityError, match="AUTHORIZATION_NOT_FOUND"):
+                await service.disable_identity(missing_dis)
+
+            # Disable with mismatched actor_id -> AUTHORIZATION_NOT_FOUND
+            mismatch_dis = DisableIdentityCommand(
+                request_id=str(uuid4()),
+                database_login=target_login,
+                expected_actor_id="wrong-actor",
+                expected_actor_namespace="SERVICE_IDENTITY",
+            )
+            with pytest.raises(ProtectedSecurityError, match="AUTHORIZATION_NOT_FOUND"):
+                await service.disable_identity(mismatch_dis)
+
+            # Happy path: disable identity
+            dis_id = str(uuid4())
+            dis_cmd = DisableIdentityCommand(
+                request_id=dis_id,
+                database_login=target_login,
+                expected_actor_id="synthetic-runner-actor",
+                expected_actor_namespace="SERVICE_IDENTITY",
+            )
+            dis_result = await service.disable_identity(dis_cmd)
+            assert dis_result.command_kind == "DISABLE_IDENTITY"
+            assert dis_result.target_id == target_login
+            assert dis_result.reason_code == "IDENTITY_DISABLED"
+
+            # Replay returns exact same result
+            replayed_dis = await service.disable_identity(dis_cmd)
+            assert replayed_dis == dis_result
+
+            # Verify enabled = false in DB
+            async with admin_engine.connect() as connection:
+                enabled_val = await connection.scalar(
+                    text(
+                        f'''SELECT enabled FROM "{database.schema}".protected_identity
+                        WHERE database_login = :login'''
+                    ),
+                    {"login": target_login},
+                )
+                assert enabled_val is False
+
+            # Subsequent attempt to disable already disabled identity -> AUTHORIZATION_NOT_FOUND
+            subsequent_dis = DisableIdentityCommand(
+                request_id=str(uuid4()),
+                database_login=target_login,
+                expected_actor_id="synthetic-runner-actor",
+                expected_actor_namespace="SERVICE_IDENTITY",
+            )
+            with pytest.raises(ProtectedSecurityError, match="AUTHORIZATION_NOT_FOUND"):
+                await service.disable_identity(subsequent_dis)
+        finally:
+            await service.close()
+    finally:
+        async with admin_engine.begin() as connection:
+            await connection.exec_driver_sql(f'DROP ROLE IF EXISTS "{reviewer_login}"')
+        await admin_engine.dispose()

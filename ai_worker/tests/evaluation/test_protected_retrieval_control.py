@@ -29,9 +29,11 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
 from ai_worker.tasks.evaluation.protected_retrieval_control import (
     ControlCommandKind,
     ControlCommandResult,
+    DisableIdentityCommand,
     ExpireAuthorizationCommand,
     GrantAuthorizationCommand,
     IngestApprovalCommand,
+    RegisterIdentityCommand,
     RevokeAuthorizationCommand,
     control_command_sha256,
     verify_authorization_approval,
@@ -387,3 +389,242 @@ def test_denied_control_audit_rejects_a_non_control_denial_reason(reason: Protec
             previous_entry_sha256=None,
             entry_sha256="0" * 64,
         )
+
+
+def test_register_identity_command_validates_data_and_control_planes() -> None:
+    data_cmd = RegisterIdentityCommand(
+        request_id=REQUEST_ID,
+        database_login="test_data_user",
+        actor_id="test-data-actor",
+        actor_namespace="SERVICE_IDENTITY",
+        identity_plane="DATA",
+        principal_role=ProtectedPrincipalRole.HOLDOUT_AUTHOR,
+    )
+    assert data_cmd.identity_plane == "DATA"
+    assert data_cmd.principal_role == ProtectedPrincipalRole.HOLDOUT_AUTHOR
+    assert data_cmd.approval_role is None
+    assert data_cmd.enabled is True
+
+    control_cmd = RegisterIdentityCommand(
+        request_id=REQUEST_ID,
+        database_login="test_control_user",
+        actor_id="test-control-actor",
+        actor_namespace="GITHUB_LOGIN",
+        identity_plane="CONTROL",
+        approval_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+    )
+    assert control_cmd.identity_plane == "CONTROL"
+    assert control_cmd.approval_role == ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER
+    assert control_cmd.principal_role is None
+
+    # DATA plane requires principal_role, forbids approval_role
+    with pytest.raises(ValidationError, match="requires principal_role"):
+        RegisterIdentityCommand(
+            request_id=REQUEST_ID,
+            database_login="test_user",
+            actor_id="test-actor",
+            actor_namespace="SERVICE_IDENTITY",
+            identity_plane="DATA",
+            principal_role=None,
+        )
+    with pytest.raises(ValidationError, match="forbids approval_role"):
+        RegisterIdentityCommand(
+            request_id=REQUEST_ID,
+            database_login="test_user",
+            actor_id="test-actor",
+            actor_namespace="SERVICE_IDENTITY",
+            identity_plane="DATA",
+            principal_role=ProtectedPrincipalRole.HOLDOUT_AUTHOR,
+            approval_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+        )
+
+    # CONTROL plane requires approval_role, forbids principal_role
+    with pytest.raises(ValidationError, match="requires approval_role"):
+        RegisterIdentityCommand(
+            request_id=REQUEST_ID,
+            database_login="test_user",
+            actor_id="test-actor",
+            actor_namespace="GITHUB_LOGIN",
+            identity_plane="CONTROL",
+            approval_role=None,
+        )
+    with pytest.raises(ValidationError, match="forbids principal_role"):
+        RegisterIdentityCommand(
+            request_id=REQUEST_ID,
+            database_login="test_user",
+            actor_id="test-actor",
+            actor_namespace="GITHUB_LOGIN",
+            identity_plane="CONTROL",
+            principal_role=ProtectedPrincipalRole.HOLDOUT_AUTHOR,
+            approval_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+        )
+
+    # Invalid database_login (not PostgreSQL identifier)
+    with pytest.raises(ValidationError):
+        RegisterIdentityCommand(
+            request_id=REQUEST_ID,
+            database_login="invalid-login-with-dashes",
+            actor_id="test-actor",
+            actor_namespace="SERVICE_IDENTITY",
+            identity_plane="DATA",
+            principal_role=ProtectedPrincipalRole.HOLDOUT_AUTHOR,
+        )
+
+
+def test_disable_identity_command_validates_login_and_actor() -> None:
+    cmd = DisableIdentityCommand(
+        request_id=REQUEST_ID,
+        database_login="valid_login_1",
+        expected_actor_id="valid-actor",
+        expected_actor_namespace="GITHUB_LOGIN",
+    )
+    assert cmd.database_login == "valid_login_1"
+    assert cmd.expected_actor_id == "valid-actor"
+
+    with pytest.raises(ValidationError):
+        DisableIdentityCommand(
+            request_id=REQUEST_ID,
+            database_login="invalid-login",
+            expected_actor_id="valid-actor",
+            expected_actor_namespace="GITHUB_LOGIN",
+        )
+
+
+def test_control_command_result_for_identity_commands() -> None:
+    reg_result = ControlCommandResult(
+        request_id=REQUEST_ID,
+        command_kind=ControlCommandKind.REGISTER_IDENTITY,
+        target_id="test_login",
+        effective_revision=None,
+        authorization_audit_event_id=None,
+        reason_code="IDENTITY_REGISTERED",
+    )
+    assert reg_result.target_id == "test_login"
+    assert reg_result.reason_code == "IDENTITY_REGISTERED"
+
+    dis_result = ControlCommandResult(
+        request_id=REQUEST_ID,
+        command_kind=ControlCommandKind.DISABLE_IDENTITY,
+        target_id="test_login",
+        effective_revision=None,
+        authorization_audit_event_id=None,
+        reason_code="IDENTITY_DISABLED",
+    )
+    assert dis_result.target_id == "test_login"
+    assert dis_result.reason_code == "IDENTITY_DISABLED"
+
+    # Identity command result rejects revision and authorization audit ref
+    with pytest.raises(ValidationError):
+        ControlCommandResult(
+            request_id=REQUEST_ID,
+            command_kind=ControlCommandKind.REGISTER_IDENTITY,
+            target_id="test_login",
+            effective_revision=1,
+            authorization_audit_event_id=None,
+            reason_code="IDENTITY_REGISTERED",
+        )
+    with pytest.raises(ValidationError):
+        ControlCommandResult(
+            request_id=REQUEST_ID,
+            command_kind=ControlCommandKind.DISABLE_IDENTITY,
+            target_id="test_login",
+            effective_revision=None,
+            authorization_audit_event_id=REQUEST_ID,
+            reason_code="IDENTITY_DISABLED",
+        )
+
+
+def test_control_audit_entry_for_identity_commands() -> None:
+    entry = ControlCommandAuditEntry(
+        event_kind=ProtectedAuditEventKind.CONTROL,
+        sequence=1,
+        event_id=REQUEST_ID,
+        command_kind="REGISTER_IDENTITY",
+        executed_by=ActorIdentity(actor_id="synthetic-reviewer", namespace="GITHUB_LOGIN"),
+        target_kind=ControlAuditTargetKind.PROTECTED_IDENTITY,
+        target_id="test_user",
+        command_sha256=SHA_A,
+        outcome=ControlAuditOutcome.SUCCEEDED,
+        result_effective_revision=None,
+        authorization_audit_event_id=None,
+        reason_code=ProtectedAuditReason.IDENTITY_REGISTERED,
+        recorded_at=NOW,
+        previous_entry_sha256=None,
+        entry_sha256="0" * 64,
+    )
+    assert entry.command_kind == "REGISTER_IDENTITY"
+    assert entry.target_kind == ControlAuditTargetKind.PROTECTED_IDENTITY
+    assert entry.reason_code == ProtectedAuditReason.IDENTITY_REGISTERED
+
+    # Denial audit for identity command
+    denied = ControlCommandAuditEntry(
+        event_kind=ProtectedAuditEventKind.CONTROL,
+        sequence=1,
+        event_id=REQUEST_ID,
+        command_kind="DISABLE_IDENTITY",
+        executed_by=ActorIdentity(actor_id="synthetic-reviewer", namespace="GITHUB_LOGIN"),
+        target_kind=ControlAuditTargetKind.PROTECTED_IDENTITY,
+        target_id="test_user",
+        command_sha256=SHA_A,
+        outcome=ControlAuditOutcome.DENIED,
+        result_effective_revision=None,
+        authorization_audit_event_id=None,
+        reason_code=ProtectedAuditReason.SELF_APPROVAL_DENIED,
+        recorded_at=NOW,
+        previous_entry_sha256=None,
+        entry_sha256="0" * 64,
+    )
+    assert denied.reason_code == ProtectedAuditReason.SELF_APPROVAL_DENIED
+
+    # Reject invalid target_kind for identity command
+    with pytest.raises(ValidationError):
+        ControlCommandAuditEntry(
+            event_kind=ProtectedAuditEventKind.CONTROL,
+            sequence=1,
+            event_id=REQUEST_ID,
+            command_kind="REGISTER_IDENTITY",
+            executed_by=ActorIdentity(actor_id="synthetic-reviewer", namespace="GITHUB_LOGIN"),
+            target_kind=ControlAuditTargetKind.AUTHORIZATION_GRANT,
+            target_id="test_user",
+            command_sha256=SHA_A,
+            outcome=ControlAuditOutcome.SUCCEEDED,
+            result_effective_revision=None,
+            authorization_audit_event_id=None,
+            reason_code=ProtectedAuditReason.IDENTITY_REGISTERED,
+            recorded_at=NOW,
+            previous_entry_sha256=None,
+            entry_sha256="0" * 64,
+        )
+
+
+def test_identity_command_sha256_is_deterministic() -> None:
+    cmd1 = RegisterIdentityCommand(
+        request_id=REQUEST_ID,
+        database_login="test_user_a",
+        actor_id="actor-a",
+        actor_namespace="GITHUB_LOGIN",
+        identity_plane="CONTROL",
+        approval_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+    )
+    cmd2 = RegisterIdentityCommand(
+        request_id=REQUEST_ID,
+        database_login="test_user_a",
+        actor_id="actor-a",
+        actor_namespace="GITHUB_LOGIN",
+        identity_plane="CONTROL",
+        approval_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+    )
+    cmd3 = RegisterIdentityCommand(
+        request_id=REQUEST_ID,
+        database_login="test_user_b",
+        actor_id="actor-a",
+        actor_namespace="GITHUB_LOGIN",
+        identity_plane="CONTROL",
+        approval_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+    )
+    assert control_command_sha256(ControlCommandKind.REGISTER_IDENTITY, cmd1) == control_command_sha256(
+        ControlCommandKind.REGISTER_IDENTITY, cmd2
+    )
+    assert control_command_sha256(ControlCommandKind.REGISTER_IDENTITY, cmd1) != control_command_sha256(
+        ControlCommandKind.REGISTER_IDENTITY, cmd3
+    )

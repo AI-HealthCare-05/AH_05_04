@@ -126,6 +126,8 @@ class ControlAuditOutcome(StrEnum):
 class ControlAuditTargetKind(StrEnum):
     APPROVAL_SOURCE_EVENT = "APPROVAL_SOURCE_EVENT"
     AUTHORIZATION_GRANT = "AUTHORIZATION_GRANT"
+    PROTECTED_IDENTITY = "PROTECTED_IDENTITY"
+    PROTECTED_DATASET = "PROTECTED_DATASET"
 
 
 class ProtectedAuditReason(StrEnum):
@@ -156,6 +158,8 @@ class ProtectedAuditReason(StrEnum):
     FREEZE_EVIDENCE_INCOMPLETE = "FREEZE_EVIDENCE_INCOMPLETE"
     GRANT_SUBJECT_MISMATCH = "GRANT_SUBJECT_MISMATCH"
     GUARD_BINDING_MISMATCH = "GUARD_BINDING_MISMATCH"
+    IDENTITY_DISABLED = "IDENTITY_DISABLED"
+    IDENTITY_REGISTERED = "IDENTITY_REGISTERED"
     INTERNAL_ERROR = "INTERNAL_ERROR"
     ISSUER_ROLE_DENIED = "ISSUER_ROLE_DENIED"
     OPERATION_OUTCOME_UNKNOWN = "OPERATION_OUTCOME_UNKNOWN"
@@ -419,11 +423,34 @@ class OperationAuditEntry(StrictContractModel):
     entry_sha256: Sha256Hex
 
 
+_EXPECTED_CONTROL_TARGETS: dict[str, ControlAuditTargetKind] = {
+    "INGEST_APPROVAL": ControlAuditTargetKind.APPROVAL_SOURCE_EVENT,
+    "REGISTER_IDENTITY": ControlAuditTargetKind.PROTECTED_IDENTITY,
+    "DISABLE_IDENTITY": ControlAuditTargetKind.PROTECTED_IDENTITY,
+}
+
+_EXPECTED_CONTROL_REASONS: dict[str, ProtectedAuditReason] = {
+    "INGEST_APPROVAL": ProtectedAuditReason.APPROVAL_VERIFIED,
+    "GRANT": ProtectedAuditReason.AUTHORIZED,
+    "REVOKE": ProtectedAuditReason.REVOKED,
+    "EXPIRE": ProtectedAuditReason.EXPIRED,
+    "REGISTER_IDENTITY": ProtectedAuditReason.IDENTITY_REGISTERED,
+    "DISABLE_IDENTITY": ProtectedAuditReason.IDENTITY_DISABLED,
+}
+
+
 class ControlCommandAuditEntry(StrictContractModel):
     event_kind: Literal[ProtectedAuditEventKind.CONTROL]
     sequence: int = Field(ge=1)
     event_id: str
-    command_kind: Literal["INGEST_APPROVAL", "GRANT", "REVOKE", "EXPIRE"]
+    command_kind: Literal[
+        "INGEST_APPROVAL",
+        "GRANT",
+        "REVOKE",
+        "EXPIRE",
+        "REGISTER_IDENTITY",
+        "DISABLE_IDENTITY",
+    ]
     executed_by: ActorIdentity
     target_kind: ControlAuditTargetKind
     target_id: str
@@ -451,31 +478,28 @@ class ControlCommandAuditEntry(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_command_result_binding(self) -> Self:
-        ingest = self.command_kind == "INGEST_APPROVAL"
-        expected_target = (
-            ControlAuditTargetKind.APPROVAL_SOURCE_EVENT if ingest else ControlAuditTargetKind.AUTHORIZATION_GRANT
-        )
+        expected_target = _EXPECTED_CONTROL_TARGETS.get(self.command_kind, ControlAuditTargetKind.AUTHORIZATION_GRANT)
         if self.target_kind is not expected_target:
             raise ValueError("control audit target does not match command kind")
-        if not ingest and not _is_canonical_uuid_v4(self.target_id):
+        if expected_target is ControlAuditTargetKind.AUTHORIZATION_GRANT and not _is_canonical_uuid_v4(self.target_id):
             raise ValueError("authorization control target must be a UUIDv4")
         if self.outcome is ControlAuditOutcome.DENIED:
-            if self.result_effective_revision is not None or self.authorization_audit_event_id is not None:
-                raise ValueError("denied control audit cannot carry success references")
-            if self.reason_code not in _CONTROL_DENIAL_REASONS:
-                raise ValueError("denied control audit reason is not allowlisted")
-            return self
-        expected_reason = {
-            "INGEST_APPROVAL": ProtectedAuditReason.APPROVAL_VERIFIED,
-            "GRANT": ProtectedAuditReason.AUTHORIZED,
-            "REVOKE": ProtectedAuditReason.REVOKED,
-            "EXPIRE": ProtectedAuditReason.EXPIRED,
-        }[self.command_kind]
-        if self.reason_code is not expected_reason:
+            return self._validate_denied_result()
+        return self._validate_succeeded_result()
+
+    def _validate_denied_result(self) -> Self:
+        if self.result_effective_revision is not None or self.authorization_audit_event_id is not None:
+            raise ValueError("denied control audit cannot carry success references")
+        if self.reason_code not in _CONTROL_DENIAL_REASONS:
+            raise ValueError("denied control audit reason is not allowlisted")
+        return self
+
+    def _validate_succeeded_result(self) -> Self:
+        if self.reason_code is not _EXPECTED_CONTROL_REASONS[self.command_kind]:
             raise ValueError("successful control audit reason does not match command kind")
-        if ingest:
+        if self.command_kind in _EXPECTED_CONTROL_TARGETS:
             if self.result_effective_revision is not None or self.authorization_audit_event_id is not None:
-                raise ValueError("approval ingestion cannot reference an authorization mutation")
+                raise ValueError("ingest and identity audit cannot reference an authorization mutation")
         elif self.result_effective_revision is None or self.authorization_audit_event_id is None:
             raise ValueError("authorization mutation must reference its revision and audit event")
         return self

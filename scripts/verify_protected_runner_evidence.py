@@ -1,10 +1,15 @@
 """Regenerate or verify the Issue #368 protected runner evidence hash."""
 
 import argparse
+import sys
 from pathlib import Path
 
-from ai_worker.tasks.evaluation.canonical import canonical_json_bytes
-from ai_worker.tasks.evaluation.protected_retrieval_infrastructure_evidence import (
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from ai_worker.tasks.evaluation.canonical import canonical_json_bytes  # noqa: E402
+from ai_worker.tasks.evaluation.protected_retrieval_infrastructure_evidence import (  # noqa: E402
     EVIDENCE_JSON_PATH,
     EVIDENCE_MARKDOWN_PATH,
     build_protected_retrieval_infrastructure_evidence,
@@ -48,6 +53,11 @@ def main() -> None:
     project_root = Path(__file__).resolve().parents[1]
     if args.write:
         write_protected_retrieval_infrastructure_evidence(project_root)
+        from ai_worker.tasks.evaluation.natural_language_retrieval_protected_runner_foundation import (
+            write_protected_runner_foundation,
+        )
+
+        write_protected_runner_foundation(project_root)
     print(verify_protected_runner_evidence(project_root))
 
 
