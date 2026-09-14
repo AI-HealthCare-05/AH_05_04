@@ -151,6 +151,7 @@ _INSERT_COLUMNS: Mapping[str, Mapping[str, Sequence[str]]] = {
         "audit_entry": _SELECT_COLUMNS["data"]["audit_entry"],
     },
     "control": {
+        "protected_identity": _SELECT_COLUMNS["control"]["protected_identity"],
         "approval_evidence": _SELECT_COLUMNS["control"]["approval_evidence"],
         "authorization_grant": tuple(
             column
@@ -173,6 +174,7 @@ _UPDATE_COLUMNS: Mapping[str, Mapping[str, Sequence[str]]] = {
         "audit_head": ("sequence", "entry_sha256"),
     },
     "control": {
+        "protected_identity": ("enabled",),
         "protected_dataset": ("lock_marker",),
         "authorization_grant": ("effective_revision", "revoked_at", "lock_marker"),
         "audit_head": ("sequence", "entry_sha256"),

@@ -35,7 +35,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [OCR Provider 약품명 필드 Alias 예방 계약](./current/ocr-provider-field-aliases.md): 현재 외부 alias가 없는 상태에서 `medication_name`·`MEDICATION_NAME` 정본과 향후 Source별 Provider Adapter 변환 경계를 고정
 - [OCR 약품 행 구조화 계약](./current/ocr-medication-structuring.md): #144 빈 검수 필드 개정은 작업 브랜치 검증 완료·리뷰/병합 대기. 현재 약품 행 판정·부분 인식·사용자 확인 경계
 - [처방 확정 Backend 계약](./current/prescription-confirmation.md): OCR 검수 필드로 처방을 확정할 때의 필수값, DB 경계값, Post-MVP `job_id` 검증 경계
-- [회원가입·사용자 정보 계약](./current/user-account.md): 회원가입 허용 필드, 내 정보 수정 범위, 개인정보 nullable 상태, 현재 구현된 `token_version` 기반 인증 세션 무효화
+- [회원가입·사용자 정보 계약](./current/user-account.md): 회원가입 허용 필드, 내 정보 수정 범위, 개인정보 nullable 상태, 목적별 동의 상태 API, 현재 구현된 `token_version` 기반 인증 세션 무효화
 - [OCR 작업 상태 조회 계약](./current/ocr-job-status.md): OCR 작업 실패 코드와 `error_message` 노출 기준, 최신 작업 판별 기준
 - [공통 Job 상태 조회 계약 v1](./current/job-status-v1.md): `GET /api/v1/jobs/{job_id}` 응답 필드, 6개 Job 상태 의미, 소유권 이중 확인, 오류 계약
 - [Backend 공통 오류 응답 계약](./current/backend-error-response.md): `ApiError` 사용법, 공통·도메인 오류 코드
@@ -47,11 +47,12 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 ## Proposed 계약
 
 - [Knowledge Evidence Index v1 (#178 선행 기반)](./proposed/post-mvp-1/knowledge-evidence-index-v1.md): 승인된 RAG Runtime 목표의 Retrieval Adapter가 소비할 Source Snapshot 결속 Chunk·버전별 embedding·재현 가능한 receipt 저장 계약. 구현 브랜치 검증 중이며 #178 Retrieval/RRF/Rerank/Evidence Gate·공개 활성화는 포함하지 않음.
+- [Knowledge Evidence Search 및 Deterministic RRF v1 (#178)](./proposed/post-mvp-1/knowledge-evidence-search-rrf-v1.md): 승인된 Knowledge Evidence Index 대상 PostgreSQL Lexical(Exact/Trigram/FTS)·Dense(pgvector Cosine) 검색 및 결정적 RRF(`rrf-rank-fusion@1`) 융합 계약. 구현 브랜치 검증 중이며 Reranker/Evidence Gate/authoritative Retrieval Run/Runtime graph 연결·공개 활성화는 포함하지 않음.
 
 - [RAG Answer Quality Metric·Variant 계약 v1 제안 (#159)](./proposed/post-mvp-1/rag-answer-quality-metrics-v1.md): `ANS-BASE | ANS-RAG | ANS-FINAL`, 네 Answer Metric의 분석 단위·micro ratio·95% cluster bootstrap, 승인 human-rubric label과 세 pair 비교 경계. `PD-159-20260913` 책임 리뷰 전 Proposed이며 DEV 구현·HOLDOUT 실행·Release 승인 아님.
 
 - [OCR LLM Worker 범위 정정 (#453)](./proposed/ocr-llm-worker-consent-453.md): 기존 이관 범위와 리뷰 시 별도 검토할 항목. 기존 동의 개정안 미채택.
-- [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태와 row 없음=미동의 기준. #465에서 `user_consent` 저장 기반을 병합했고 #505에서 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전과 Production 공개 승인은 후속 범위다. 전체 목적별 계약은 Proposed 유지.
+- [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태와 row 없음=미동의 기준. #465에서 `user_consent` 저장 기반을 병합했고, #510에서 현재 사용자 목적별 동의 상태 조회·변경 API를 추가했다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전과 Production 공개 승인은 후속 범위다. 전체 목적별 계약은 Proposed 유지.
 
 - [Track B UNCONFIRMED backlog v1](./proposed/unconfirmed-backlog-v1.md): PD-418 URL·cursor·DTO·오류. #426 후보와 #462 실제 등록·PUT 보완·페이지 이동·날짜별 revision 검증 병합 완료; #462 남한솔 APPROVED·최종 CI 7/7 확인. 문서는 Proposed 유지, Current 승격 별도 검토. [승인 범위·상태 근거](../governance/decisions/2026-09-10-unconfirmed-backlog-418.md#승인-증빙과-등록-변경의-병합-조건).
 
@@ -171,7 +172,8 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - 실제 Check-in 부모에 Safety·Barrier·Plan·Follow-up 이력을 연결하는 저장 기반이다.
   HandlerConfig 상세, 공개 mutation, #195 무효화와 Track C 공개는 미완료다.
 - [HandlerConfig 구체안 — Proposed](proposed/track-c-handler-config-192.md):
-  기존 Plan JSONB 기반 설정·버전·지원별 허용 필드 및 #194 실행 인계 제안. 미승인·미구현이다.
+  기존 Plan JSONB 기반 설정·버전·지원별 허용 필드 및 #194 실행 인계 제안. 내부 저장·검증 경계는
+  구현 중이며 제품 문구·버전 정본과 공개 실행은 미확정이다.
 
 
 ### #458 Worker 동의 조회·재검사 로컬 구현

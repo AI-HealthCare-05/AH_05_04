@@ -91,3 +91,18 @@ HandlerConfig 상세·운영 seed·Track C 공개는 이 테스트 결과로 승
 
 집중 13건은 Migration 전체에도 포함되므로 합산하지 않는다.
 위 결과는 충돌 해결 후 로컬 검증이며 푸시 후 원격 CI 결과와 구분한다.
+
+## HandlerConfig snapshot 내부 경계 — 2026-09-14
+
+- 기준: #514 병합 뒤 `develop` `b85d32d9` 위의 `feat/192-handler-config-validation` 로컬 구현.
+- 합성 규칙 여섯 지원 모두의 설정 파싱·snapshot 생성·복원을 검증했다. 필수·추가 필드,
+  우선순위·Barrier 대응, 승인되지 않은 rule/copy/rationale 참조, JSON 중복 키와 경로 이탈을 거부한다.
+- 과거 Plan의 rule/copy/snapshot 불일치, 부모 약 항목 ID 불일치, 기존 `{}` snapshot을 복원 시 거부한다.
+  `REMINDER_SETUP`의 약 항목 ID는 SELF 소유 부모 관계에서 서버가 결속한다.
+- 별도 PostgreSQL 17 임시 컨테이너에서 합성 Plan을 저장·commit 후 새 세션에서 복원하고,
+  타인 소유 조회·저장 차단과 잘못된 과거 JSON 거부를 확인했다. 테스트 후 컨테이너를 제거했다.
+- 합성 설정 단위 22건 + Track C 저장소 migration 14건 = **36 passed**.
+  단일 Alembic head(`166f40516273`), Ruff 전체 check/format, 수정한 Backend 파일 Mypy,
+  diff 검사 통과. #514 반영 후 동일한 36건을 전용 DB에서 재실행했다.
+- `scripts/ci/run_test.sh` 전체와 원격 CI는 이 브랜치에서 실행하지 않았다.
+  운영 rule 파일·실제 승인 문구·공개 API·Frontend/Provider·DB schema/RLS/Trigger는 변경하지 않았다.

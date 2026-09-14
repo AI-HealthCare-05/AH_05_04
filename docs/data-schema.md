@@ -27,14 +27,14 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 영역 | 테이블 | 현재 사용 상태 |
 | --- | --- | --- |
 | 사용자 | `user` | 인증·사용자 정보에 사용 |
-| 사용자 동의 | `user_consent` | PD-207 목적별 최신 동의 상태 저장 기반. OCR 목적은 #505에서 Backend 동의 API·접수 Gate와 Worker 재검사에 연결; GUIDE/CHAT/NOTIFICATION 실행 Gate는 후속 범위 |
+| 사용자 동의 | `user_consent` | PD-207 목적별 최신 동의 상태 저장 기반. 사용자 동의 상태 API는 #510에서 구현. OCR 목적은 #505에서 Backend 동의 API·접수 Gate와 Worker 재검사에 연결; GUIDE/CHAT/NOTIFICATION 실행 Gate는 후속 범위 |
 | 프로필 | `profile` | 본인 단일 `SELF` profile과 사용자 리소스 소유권 기준에 사용 |
 | 의료문서 | `medical_document` | 처방전 metadata와 로컬 파일 object key 저장 |
 | OCR | `ocr_job`, `extracted_field` | 동기 OCR 상태, 원문·정규화·사용자 확정값 저장 |
 | 처방 | `prescription`, `medication` | 사용자 확정 처방과 약물 저장 |
 | 가이드 | `guide` | 동기 생성 상태·본문·모델·프롬프트 버전 저장 |
 | 채팅 | `chat_session`, `chat_message` | 세션과 USER·ASSISTANT 메시지, 생성 상태 저장 |
-| 의료 지식 | `knowledge_document`, `knowledge_chunk`, `rag_knowledge_index`, `rag_knowledge_index_member` | #178 선행 Knowledge Evidence Index 저장 기반 구현 브랜치. Source 결속·불변 receipt는 연결됐으나 실제 검색 경로에서는 아직 미사용 |
+| 의료 지식 | `knowledge_document`, `knowledge_chunk`, `rag_knowledge_index`, `rag_knowledge_index_member` | #178 Knowledge Evidence Index 저장 기반 및 PostgreSQL Evidence Search + 결정적 RRF 구현 브랜치. revision `178b1c2d3e4f`에서 lexical GIN 인덱스(simple FTS, pg_trgm) 추가. Reranker·Evidence Gate·authoritative Retrieval Run·Runtime graph 연결은 후속 범위 |
 | 인용 | `guide_citation`, `chat_citation` | Schema-only Post-MVP 골격, 현재 생성·API 경로에서 미사용 |
 | 비동기 실행 | `ai_job`, `outbox_event`, `idempotency_record` | `JobIntakeService`(#147)의 Job 접수 transaction과 DB Outbox 선점·`WorkerMessage` 조립·Redis 발행·fencing 완료(#219)가 repository·service 계층에 연결됨. 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 미연결(#148) |
 | 비동기 실행(schema-only) | `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event` | Schema-only Post-MVP 골격, 현재 repository·service·API 경로에서 미사용 |
@@ -133,7 +133,7 @@ DB 제약:
 - `policy_version`은 빈 문자열 금지
 - `GRANTED`는 `granted_at` 필수 및 `withdrawn_at=NULL`, `WITHDRAWN`은 `withdrawn_at` 필수
 
-row가 없으면 미동의로 판정한다. 이 테이블은 최신 상태만 저장하며 과거 동의 이력을 append-only audit으로 남길지는 후속 Decision 또는 계약 갱신 범위다. OCR 목적은 #505에서 `GET/POST/DELETE /api/v1/users/me/consents/OCR`, Backend 접수 전·문서 잠금 후 검사, Worker의 CLOVA 전·LLM 전·결과 저장 전 재검사와 `CONSENT_REQUIRED`/OCR `CONSENT_WITHDRAWN` 차단 저장에 연결했다. `OCR_CONSENT_POLICY_VERSION`이 비어 있으면 fail-closed이며, 최종 안내 문구·policy version과 실제 사용자 대상 LLM 전송은 승인되지 않았다. GUIDE/CHAT/NOTIFICATION 목적의 실행 Gate와 API는 후속 범위다.
+row가 없으면 미동의로 판정한다. 이 테이블은 최신 상태만 저장하며 과거 동의 이력을 append-only audit으로 남길지는 후속 Decision 또는 계약 갱신 범위다. 사용자 동의 상태 API는 #510에서 이 최신 row를 조회·변경한다. OCR 목적은 #505에서 `GET/POST/DELETE /api/v1/users/me/consents/OCR`, Backend 접수 전·문서 잠금 후 검사, Worker의 CLOVA 전·LLM 전·결과 저장 전 재검사와 `CONSENT_REQUIRED`/OCR `CONSENT_WITHDRAWN` 차단 저장에 연결했다. `OCR_CONSENT_POLICY_VERSION`이 비어 있으면 fail-closed이며, 최종 안내 문구·policy version과 실제 사용자 대상 LLM 전송은 승인되지 않았다. GUIDE/CHAT/NOTIFICATION 목적의 실행 Gate는 후속 범위다.
 
 ## PROFILE SELF 소유권
 
@@ -331,6 +331,11 @@ transaction에서 전체 index를 기록하고 persisted row로 receipt를 재�
 configuration이 모두 같을 때만 재사용하며 다른 값은 안전한 version conflict다. migration downgrade는 새
 member/index 또는 production Knowledge data가 있으면 손실 전에 중단한다. 이 기반은 Proposed 계약이며
 lexical/dense 조회, RRF, rerank, Evidence Gate, Retrieval Run, Evaluation과 Runtime 공개를 구현하지 않는다.
+
+Revision `178b1c2d3e4f`는 #178 PostgreSQL Knowledge Evidence Search의 Lexical 검색(FTS 및 Trigram)을 지원하기 위해 `knowledge_chunk` 테이블에 두 개의 GIN 인덱스를 추가합니다:
+- `ix_knowledge_chunk_fts_simple`: `to_tsvector('simple', chunk_text)`에 대한 GIN 인덱스.
+- `ix_knowledge_chunk_chunk_text_trgm`: `chunk_text gin_trgm_ops`에 대한 GIN 인덱스 (`pg_trgm` 확장 활용).
+Downgrade는 이 두 인덱스만 안전하게 drop하며 데이터는 보존합니다.
 
 Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapshot/Catalog 최소 DB 기반을 추가합니다. Revision `165a4b3c2d1e`는 수집 실행별 원본 Artifact 참조와 무결성 메타데이터를 추가하고, `165b5c4d3e2f`는 거부 원문의 안전한 추적 필드를 추가합니다. Revision `166a7b8c9d0e`는 #166의 안정 Identity, Alias 상태·출처와 Search Entry 저장 기반을 추가합니다. Revision `166b8c9d0e1f`는 기존 v2 envelope와 계산 bytes를 보존하는 불변 Catalog Set·Source·member·hash 구조를 추가합니다. 정본 `normalization_run_id`에 해당하는 D-02는 미확정이며 두 #166 revision 모두 실행 테이블·대체 FK를 넣지 않습니다.
 

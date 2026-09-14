@@ -22,6 +22,12 @@ class UserConsentRepository:
             .execution_options(populate_existing=True)
         )
 
+    async def list_current_for_user(self, *, user_id: UUID) -> list[UserConsent]:
+        result = await self.session.scalars(
+            select(UserConsent).where(UserConsent.user_id == user_id).order_by(UserConsent.purpose)
+        )
+        return list(result.all())
+
     async def is_granted(
         self,
         *,
