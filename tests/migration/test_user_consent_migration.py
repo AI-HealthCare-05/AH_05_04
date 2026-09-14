@@ -203,6 +203,7 @@ def test_user_consent_migration_constraints_and_downgrade_guard() -> None:
     try:
         asyncio.run(_insert_valid_consent(user_id))
         asyncio.run(_assert_constraints(user_id))
+        command.downgrade(alembic_config, USER_CONSENT_REVISION)
         with pytest.raises(RuntimeError, match="Cannot downgrade user_consent"):
             command.downgrade(alembic_config, _downgrade_target())
     finally:
@@ -210,6 +211,7 @@ def test_user_consent_migration_constraints_and_downgrade_guard() -> None:
         command.upgrade(alembic_config, "head")
 
     try:
+        command.downgrade(alembic_config, USER_CONSENT_REVISION)
         command.downgrade(alembic_config, _downgrade_target())
         constraints, _ = asyncio.run(_schema_snapshot())
         assert constraints == set()
