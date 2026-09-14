@@ -2531,6 +2531,7 @@ async def test_dataset_transition_internal_failure_rolls_back_without_policy_den
 ) -> None:
     service, dataset = await _registered_dataset_service(protected_database)
     try:
+
         async def fail_check_dataset_transition(
             self_session: control_adapter._ControlSession,
             candidate: TransitionDatasetCommand,
@@ -2628,4 +2629,3 @@ async def test_dataset_command_conflict_rejects_payload_mutation_on_same_request
         assert await _request_control_audit_count(protected_database, shared_request_id) == 1
     finally:
         await service.close()
-
