@@ -1,23 +1,24 @@
-# RAG Answer Quality Metric·Variant 계약 v1 제안
+# RAG Answer Quality Metric·Variant 계약 v1
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Proposed · Review Required |
+| 상태 | Approved Target |
 | 구현 | Not implemented |
 | Decision | [`PD-159-20260913`](../../../governance/decisions/2026-09-13-rag-answer-quality-metrics.md) |
 | 추적 Issue | [#159](https://github.com/AI-HealthCare-05/AH_05_04/issues/159) |
 | 구현 담당 | 정현우 (`@ceohwj`) |
-| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Product·Safety·Evaluation |
+| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — `APPROVED` |
+| 승인 Evidence | [PR #475 review `5190544119`](https://github.com/AI-HealthCare-05/AH_05_04/pull/475#pullrequestreview-5190544119) · [`decision-approval-evidence.json`](../../../validation/rag/issue-159/decision-approval-evidence.json) |
 
 ## 1. 목적과 권위
 
 이 문서는 `RAG-EVAL-004`의 Answer Quality DEV metric, Answer Variant, human-rubric 입력과 pair comparison
-경계를 제안한다. 승인 전에는 구현 또는 Release 판정의 정본이 아니며, 승인되더라도 구현·schema export·
-자동 테스트가 함께 병합되기 전에는 Current Runtime 계약이 아니다.
+경계를 고정한 Approved Target이다. 구현·schema export·자동 테스트가 함께 병합되기 전에는 Current Runtime
+계약이 아니다.
 
 기존 [RAG Evaluation·Release Gate 목표 계약](../../targets/post-mvp-1/rag-evaluation-v1.md)의 상태축,
-민감정보 금지, HOLDOUT 접근 통제와 Release 차단 규칙을 유지한다. 이 제안과 기존 Target이 충돌하면
-이 제안의 승인을 먼저 받고 Target을 같은 변경 흐름에서 정렬한다.
+민감정보 금지, HOLDOUT 접근 통제와 Release 차단 규칙을 유지한다. 이 계약과 기존 Target이 충돌하면
+새 Decision 또는 Contract Freeze로 정렬하기 전까지 구현을 차단한다.
 
 ## 2. 비목표
 
@@ -74,7 +75,7 @@ immutable resource의 file/content hash와 승인 identity를 exact-match한다.
 
 ## 5. Metric formula
 
-모든 Metric version은 최초 제안에서 `1.0.0`이다. `metric_value`는 `numerator / denominator`의 6자리
+모든 Metric version은 `1.0.0`이다. `metric_value`는 `numerator / denominator`의 6자리
 half-even canonical decimal이다. Case별 기여값도 분자·분모 쌍으로 유지하며 평균의 평균을 계산하지 않는다.
 
 `ComparisonScope.unit_of_analysis`와 `MetricResult.unit_of_analysis`에는 CI의 표본 또는 재표집 단위가 아니라
@@ -113,7 +114,7 @@ Metric builder는 선택된 partition·slice의 `ANSWER_QUALITY` Case와 Case Re
 | judgment artifact 없음 | `NOT_EVALUATED` | `null` | `null` |
 | judgment 결속·집합·hash 불일치 | `INVALID` | `null` | `null` |
 
-승인 전 Comparison Policy는 네 Metric을 `DIAGNOSTIC_ONLY`, `required=false`, `threshold=0`으로만 제안할 수
+DEV Comparison Policy는 네 Metric을 `DIAGNOSTIC_ONLY`, `required=false`, `threshold=0`으로만 구성할 수
 있다. 활성 threshold와 `PASS | FAIL`은 별도 승인된 Policy version 없이는 생성하지 않는다.
 
 ## 7. 95% CI와 독립성
@@ -243,9 +244,9 @@ RAG-15/16 versioned Artifact 전에는 `BLOCKED_BY_RAG_RUNTIME_ARTIFACT`, 승인
 
 ## 12. 승인과 공개
 
-책임 리뷰어의 PR 승인 전 이 문서는 구현 근거가 아니다. 승인되면 상태 디렉터리와
-[계약 인덱스](../../README.md)를 같은 변경 흐름에서 정렬한다. 구현 PR은 schema/export parity, 관련
-Evaluation 전체 테스트, Ruff, format, Mypy와 의료·AI eval 회귀 증빙을 포함한다.
+PR #475의 최종 HEAD `ca27931f`에서 책임 리뷰어가 실제 `APPROVED` review를 제출해 이 문서는 Approved
+Target으로 전이했다. 구현 PR은 schema/export parity, 관련 Evaluation 전체 테스트, Ruff, format, Mypy와
+의료·AI eval 회귀 증빙을 포함한다.
 
 문서 승인, DEV 구현, Runtime 통합, HOLDOUT 실행, Release `PASS`와 `PUBLIC_TRACK_F`는 서로 다른 상태다.
 RAG-EVAL-005~008, RAG-15/16과 외부 승인이 완료되기 전에는 공개하지 않는다.

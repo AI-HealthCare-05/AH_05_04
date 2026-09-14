@@ -1,0 +1,128 @@
+{
+  "allowed_content_types": [
+    "application/json"
+  ],
+  "authentication_failure_codes": [
+    "20",
+    "30",
+    "31"
+  ],
+  "blocking_code": null,
+  "body_error_code_path": "header.resultCode",
+  "body_success_code_path": "header.resultCode",
+  "body_success_codes": [
+    "00"
+  ],
+  "daily_limit_codes": [
+    "22"
+  ],
+  "encoding": "UTF-8",
+  "enforced_primary_key_null_count": 0,
+  "excluded_empty_row_count": 31702,
+  "execution_status": "COMPLETED",
+  "external_version_field": null,
+  "external_version_field_exists": null,
+  "failure_code": null,
+  "fixture_evidence": [
+    {
+      "path": "tests/fixtures/rag/mfds/list_product_component_details_success.json",
+      "scenario": "LIST_PRODUCT_COMPONENT_DETAILS_SUCCESS",
+      "sha256": "d9848faa78865b25a9506ac60a010216ce66a121c0faf53dd03ccfbeff34b0c9"
+    },
+    {
+      "path": "tests/fixtures/rag/mfds/synthetic_auth_failure.json",
+      "scenario": "SYNTHETIC_AUTH_FAILURE",
+      "sha256": "be6d2256676817ef17182bd92307b59e4449225495156528c6124e79f49f5dbc"
+    },
+    {
+      "path": "tests/fixtures/rag/mfds/synthetic_daily_limit.json",
+      "scenario": "SYNTHETIC_DAILY_LIMIT",
+      "sha256": "a0b6e4b1b3c728c359a9ae73f3b51114463d7c8b653c28c134419e279deac347"
+    },
+    {
+      "path": "tests/fixtures/rag/mfds/synthetic_empty.json",
+      "scenario": "SYNTHETIC_EMPTY",
+      "sha256": "e8e99ca7692ff15560d1ee67e8d9ddc3e4132ddad92c6e3250a5b1cfe3dbc81d"
+    },
+    {
+      "path": "tests/fixtures/rag/mfds/synthetic_schema_drift.json",
+      "scenario": "SYNTHETIC_SCHEMA_DRIFT",
+      "sha256": "ac40eb8d47fe8b38278e609642a69485aaf144c0bc75833c469b20c48621339c"
+    },
+    {
+      "path": "tests/fixtures/rag/mfds/synthetic_detail_blank.json",
+      "scenario": "SYNTHETIC_DETAIL_BLANK",
+      "sha256": "b1aa48bc0f7be1a5d33a6bc907bc191b39fb8262b3d1cc09f7340478f8a2f42f"
+    },
+    {
+      "path": "tests/fixtures/rag/mfds/synthetic_detail_duplicate.json",
+      "scenario": "SYNTHETIC_DETAIL_DUPLICATE",
+      "sha256": "c13b6390fa0564e6c7acb247867643767e20504308244fc3b1cafdffe9861a6c"
+    }
+  ],
+  "generated_at": "2026-09-14T11:20:35+00:00",
+  "identity": {
+    "endpoint_code": "MFDS_PRODUCT_APPROVAL_API",
+    "operation_code": "LIST_PRODUCT_COMPONENT_DETAILS",
+    "source_code": "MFDS_PRODUCT_APPROVAL"
+  },
+  "limits": {
+    "connect_timeout_seconds": 3,
+    "max_decompressed_bytes": 10000000,
+    "max_pages": 1500,
+    "max_redirects": 0,
+    "max_response_bytes": 5000000,
+    "max_retry_attempts": 2,
+    "read_timeout_seconds": 10,
+    "total_timeout_seconds": 3600
+  },
+  "live_validation_git_sha": "f97c280e650897d8a9d753b973a53ed1ef924505",
+  "official_document_checked_at": "2026-09-05",
+  "official_document_url": "https://www.data.go.kr/data/15095677/openapi.do",
+  "pagination": {
+    "end_condition": "TOTAL_COUNT_REACHED",
+    "mode": "PAGE_NUMBER",
+    "page_base": 1,
+    "page_parameter": "pageNo",
+    "page_size_limit": 100,
+    "page_size_parameter": "numOfRows"
+  },
+  "parser_activation_allowed": true,
+  "primary_key_duplicate_count": 0,
+  "primary_key_fields": [
+    "ITEM_SEQ",
+    "TAMT_SEQ",
+    "MTRAL_SN"
+  ],
+  "primary_key_null_count": 31702,
+  "receipt_hash": "542944c0ac0ce5251b667f793b0eb31042650fe4a45b553644ea81b07351bfef",
+  "receipt_version": "1.2",
+  "regression_fixture_git_sha": "f97c280e650897d8a9d753b973a53ed1ef924505",
+  "required_parameters": [
+    {
+      "location": "query",
+      "name": "serviceKey",
+      "sensitive": true,
+      "type_name": "string"
+    },
+    {
+      "location": "query",
+      "name": "type",
+      "sensitive": false,
+      "type_name": "string"
+    }
+  ],
+  "retry_mapping": {
+    "authentication_failure": "NOT_RETRYABLE",
+    "daily_limit": "RETRY_AT_RESET",
+    "temporary_failure": "BACKOFF"
+  },
+  "source_run_status": "SUCCEEDED",
+  "validated_at": "2026-09-14T11:20:35+00:00",
+  "validated_record_count": 126823,
+  "verified_host": "apis.data.go.kr",
+  "verified_http_method": "GET",
+  "verified_path_template": "/1471000/DrugPrdtPrmsnInfoService07/getDrugPrdtMcpnDtlInq07",
+  "verified_scheme": "https",
+  "whole_record_duplicate_count": 0
+}

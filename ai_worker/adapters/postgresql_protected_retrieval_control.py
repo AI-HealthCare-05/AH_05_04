@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from ai_worker.adapters.postgresql_protected_retrieval import (
     PostgresqlProtectedAuditJournal,
     PostgresqlTrustedClock,
+    _assemble_dataset_binding,
     _json_value,
     _model,
     _ProtectedSession,
@@ -29,8 +30,9 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     ProtectedAuditEventKind,
     ProtectedAuditReason,
     ProtectedAuthorizationGrant,
-    ProtectedDatasetBinding,
+    ProtectedDatasetState,
     ProtectedPrincipal,
+    ProtectedPrincipalRole,
     ProtectedSecurityError,
     audit_entry_sha256,
     new_event_id,
@@ -41,13 +43,18 @@ from ai_worker.tasks.evaluation.protected_retrieval_control import (
     ControlCommandResult,
     DisableIdentityCommand,
     ExpireAuthorizationCommand,
+    FreezeApprovalSourceEvidence,
+    FreezeDatasetCommand,
     GrantAuthorizationCommand,
     IngestApprovalCommand,
+    RegisterDatasetCommand,
     RegisterIdentityCommand,
     RevokeAuthorizationCommand,
+    TransitionDatasetCommand,
     TrustedApprovalSource,
     control_command_sha256,
     verify_authorization_approval,
+    verify_freeze_approval,
 )
 from infra.python.protected_retrieval_role_policy import validate_protected_control_connection
 
@@ -66,7 +73,32 @@ type _SuccessReason = Literal[
     "EXPIRED",
     "IDENTITY_REGISTERED",
     "IDENTITY_DISABLED",
+    "DATASET_REGISTERED",
+    "DATASET_TRANSITIONED",
+    "DATASET_FROZEN",
 ]
+
+_DATASET_TRANSITIONS = frozenset(
+    {
+        (ProtectedDatasetState.ACCESS_AUTHORIZED, ProtectedDatasetState.AUTHORING),
+        (ProtectedDatasetState.AUTHORING, ProtectedDatasetState.REVIEW_READY),
+        (ProtectedDatasetState.REVIEW_READY, ProtectedDatasetState.AUTHORING),
+    }
+)
+
+
+def _validate_dataset_transition_invariants(
+    command: TransitionDatasetCommand,
+) -> ProtectedAuditReason | None:
+    if (command.from_state, command.to_state) not in _DATASET_TRANSITIONS:
+        return ProtectedAuditReason.DATASET_STATE_MISMATCH
+    if command.to_state is ProtectedDatasetState.REVIEW_READY:
+        if command.authored_count == 0 or not command.review_complete:
+            return ProtectedAuditReason.DATASET_STATE_MISMATCH
+    elif command.to_state is ProtectedDatasetState.AUTHORING and command.review_complete:
+        return ProtectedAuditReason.DATASET_STATE_MISMATCH
+    return None
+
 
 _POLICY_DENIAL_REASONS = frozenset(
     {
@@ -82,6 +114,7 @@ _POLICY_DENIAL_REASONS = frozenset(
         ProtectedAuditReason.CONTROL_COMMAND_CONFLICT,
         ProtectedAuditReason.DATASET_BINDING_MISMATCH,
         ProtectedAuditReason.DATASET_STATE_MISMATCH,
+        ProtectedAuditReason.FREEZE_EVIDENCE_INCOMPLETE,
         ProtectedAuditReason.GRANT_SUBJECT_MISMATCH,
         ProtectedAuditReason.ISSUER_ROLE_DENIED,
         ProtectedAuditReason.SELF_APPROVAL_DENIED,
@@ -104,6 +137,9 @@ def _success_reason(command_kind: ControlCommandKind) -> _SuccessReason:
         ControlCommandKind.EXPIRE: "EXPIRED",
         ControlCommandKind.REGISTER_IDENTITY: "IDENTITY_REGISTERED",
         ControlCommandKind.DISABLE_IDENTITY: "IDENTITY_DISABLED",
+        ControlCommandKind.REGISTER_DATASET: "DATASET_REGISTERED",
+        ControlCommandKind.TRANSITION_DATASET: "DATASET_TRANSITIONED",
+        ControlCommandKind.FREEZE_DATASET: "DATASET_FROZEN",
     }
     return reasons[command_kind]
 
@@ -148,6 +184,62 @@ class _ControlSession(_ProtectedSession):
             principal=ProtectedApprovalPrincipal(actor=actor, role=role),
             database_login=str(row.database_login),
         )
+
+    async def lock_dataset_executor(self, expected: _ControlExecutor) -> _ControlExecutor:
+        result = await self._execute(
+            f"""
+            SELECT database_login, actor_id, actor_namespace, identity_plane,
+                   principal_role, approval_role, enabled
+            FROM {self._schema}.protected_identity
+            WHERE database_login = :database_login
+               OR (actor_id = :actor_id AND actor_namespace = :actor_namespace)
+            ORDER BY database_login
+            FOR UPDATE
+            """,
+            {
+                "database_login": expected.database_login,
+                "actor_id": expected.actor.actor_id,
+                "actor_namespace": expected.actor.namespace,
+            },
+        )
+        rows = tuple(result)
+        executor_rows = tuple(row for row in rows if row.database_login == expected.database_login)
+        if len(executor_rows) != 1:
+            raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
+        if any(
+            row.enabled
+            and row.identity_plane == "DATA"
+            and row.principal_role == ProtectedPrincipalRole.HOLDOUT_AUTHOR.value
+            for row in rows
+        ):
+            raise ProtectedSecurityError("SELF_APPROVAL_DENIED")
+        locked = await self.resolve_executor()
+        if locked != expected:
+            raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
+        if locked.principal.role is not ProtectedApprovalRole.DATASET_CUSTODIAN:
+            raise ProtectedSecurityError("ISSUER_ROLE_DENIED")
+        return locked
+
+    async def check_dataset_transition(self, command: TransitionDatasetCommand) -> ProtectedAuditReason | None:
+        dataset_row = (
+            await self._execute(
+                f"""
+                SELECT state, state_revision, authored_count, review_complete
+                FROM {self._schema}.protected_dataset
+                WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version
+                FOR UPDATE
+                """,
+                {"dataset_id": command.dataset_id, "dataset_version": command.dataset_version},
+            )
+        ).one_or_none()
+        if dataset_row is None:
+            return ProtectedAuditReason.DATASET_STATE_MISMATCH
+        if (
+            dataset_row.state != command.from_state.value
+            or dataset_row.state_revision != command.expected_state_revision
+        ):
+            return ProtectedAuditReason.DATASET_STATE_MISMATCH
+        return None
 
     async def verified_entries(self, *, lock_head: bool) -> tuple[ProtectedAuditEntry, ...]:
         journal = PostgresqlProtectedAuditJournal(self._session, self._schema_name, self._clock)
@@ -486,14 +578,35 @@ class _ControlSession(_ProtectedSession):
         expected_state_revision: int,
     ) -> None:
         result = await self._execute(
-            f"SELECT binding FROM {self._schema}.protected_dataset "
-            "WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version FOR UPDATE",
+            f"""
+            SELECT binding, dataset_id, dataset_version, manifest_sha256,
+                   protected_artifact_sha256, hmac_key_version, state,
+                   state_revision, authored_count, review_complete
+            FROM {self._schema}.protected_dataset
+            WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version
+            FOR UPDATE
+            """,
             {"dataset_id": grant.dataset_id, "dataset_version": grant.dataset_version},
         )
-        dataset_value = result.scalar_one_or_none()
-        if dataset_value is None:
+        row = result.one_or_none()
+        if row is None:
             raise ProtectedSecurityError("DATASET_STATE_MISMATCH")
-        dataset = _model(ProtectedDatasetBinding, dataset_value, "INTERNAL_ERROR")
+        entries: tuple[ProtectedAuditEntry, ...] = ()
+        if row.state == ProtectedDatasetState.FROZEN.value:
+            entries = await self.verified_entries(lock_head=False)
+        dataset = _assemble_dataset_binding(
+            binding_value=row.binding,
+            dataset_id=row.dataset_id,
+            dataset_version=row.dataset_version,
+            manifest_sha256=row.manifest_sha256,
+            protected_artifact_sha256=row.protected_artifact_sha256,
+            hmac_key_version=row.hmac_key_version,
+            state=row.state,
+            state_revision=row.state_revision,
+            authored_count=row.authored_count,
+            review_complete=row.review_complete,
+            audit_entries=entries,
+        )
         if (
             dataset.dataset_id != grant.dataset_id
             or dataset.dataset_version != grant.dataset_version
@@ -825,6 +938,23 @@ class PostgresqlProtectedAuthorizationControlService:
             raise ProtectedSecurityError("INTERNAL_ERROR") from None
         if (
             evidence.source_event_id != command.source_event_id
+            or evidence.canonical_raw_sha256 != command.expected_raw_sha256
+        ):
+            return evidence, ProtectedAuditReason.APPROVAL_EVIDENCE_MISMATCH
+        return evidence, None
+
+    async def _fetch_freeze_approval(
+        self,
+        command: FreezeDatasetCommand,
+    ) -> tuple[FreezeApprovalSourceEvidence | None, ProtectedAuditReason | None]:
+        try:
+            evidence = await self._approval_source.fetch_freeze(command.approval_source_event_id)
+        except ApprovalSourceNotFoundError:
+            return None, ProtectedAuditReason.APPROVAL_NOT_VERIFIED
+        except Exception:
+            raise ProtectedSecurityError("INTERNAL_ERROR") from None
+        if (
+            evidence.source_event_id != command.approval_source_event_id
             or evidence.canonical_raw_sha256 != command.expected_raw_sha256
         ):
             return evidence, ProtectedAuditReason.APPROVAL_EVIDENCE_MISMATCH
@@ -1495,6 +1625,499 @@ class PostgresqlProtectedAuthorizationControlService:
             authorization_audit_event_id=None,
             reason_code="IDENTITY_DISABLED",
         )
+
+    async def register_dataset(self, command: RegisterDatasetCommand) -> ControlCommandResult:
+        command_kind = ControlCommandKind.REGISTER_DATASET
+        digest = control_command_sha256(command_kind, command)
+        async with self._sessions() as preparation:
+            async with preparation.begin():
+                prepared_executor = await self._authenticated_executor(preparation)
+        replay = await self._read_replay(
+            request_id=command.request_id,
+            command_kind=command_kind,
+            command_sha256=digest,
+        )
+        if replay is not None:
+            return replay
+
+        target_id = f"{command.dataset_id}:{command.dataset_version}"
+        denial: ProtectedSecurityError | None = None
+        result: ControlCommandResult | None = None
+        async with self._sessions() as session:
+            async with session.begin():
+                await self._validate_connection(session)
+                clock = await PostgresqlTrustedClock.from_session(session)
+                control = _ControlSession(session, self._schema, clock)
+
+                executor, denial_reason = await self._lock_dataset_control_executor(control, prepared_executor)
+
+                if denial_reason is None:
+                    existing_row = (
+                        await control._execute(
+                            f"""
+                            SELECT state_revision
+                            FROM {control._schema}.protected_dataset
+                            WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version
+                            FOR UPDATE
+                            """,
+                            {"dataset_id": command.dataset_id, "dataset_version": command.dataset_version},
+                        )
+                    ).one_or_none()
+                    if existing_row is not None:
+                        denial_reason = ProtectedAuditReason.CONTROL_COMMAND_CONFLICT
+
+                replay = await control.replay(
+                    request_id=command.request_id,
+                    command_kind=command_kind,
+                    command_sha256=digest,
+                    executor=executor.actor,
+                    lock_head=True,
+                )
+                if replay is not None:
+                    return replay
+
+                await control.refresh_clock()
+                entries = await control.verified_entries(lock_head=False)
+                if denial_reason is not None:
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.PROTECTED_DATASET,
+                        target_id=target_id,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.DENIED,
+                        effective_revision=None,
+                        authorization_audit_event_id=None,
+                        reason_code=denial_reason,
+                    )
+                    denial = ProtectedSecurityError(denial_reason.value)
+                else:
+                    insert_result = await control._execute(
+                        f"""
+                        INSERT INTO {control._schema}.protected_dataset (
+                            dataset_id, dataset_version, binding, manifest_sha256,
+                            protected_artifact_sha256, hmac_key_version, state,
+                            state_revision, authored_count, review_complete, lock_marker
+                        ) VALUES (
+                            :dataset_id, :dataset_version, CAST(:binding AS jsonb), :manifest_sha256,
+                            :protected_artifact_sha256, :hmac_key_version, 'ACCESS_AUTHORIZED',
+                            1, 0, false, 0
+                        )
+                        ON CONFLICT (dataset_id, dataset_version) DO NOTHING
+                        RETURNING state_revision
+                        """,
+                        {
+                            "dataset_id": command.dataset_id,
+                            "dataset_version": command.dataset_version,
+                            "binding": _json_value(command.binding),
+                            "manifest_sha256": command.manifest_sha256,
+                            "protected_artifact_sha256": command.protected_artifact_sha256,
+                            "hmac_key_version": command.hmac_key_version,
+                        },
+                    )
+                    inserted_row = insert_result.one_or_none()
+                    if inserted_row is None:
+                        await control.append_control(
+                            entries=entries,
+                            request_id=command.request_id,
+                            command_kind=command_kind,
+                            executor=executor.actor,
+                            target_kind=ControlAuditTargetKind.PROTECTED_DATASET,
+                            target_id=target_id,
+                            command_sha256=digest,
+                            outcome=ControlAuditOutcome.DENIED,
+                            effective_revision=None,
+                            authorization_audit_event_id=None,
+                            reason_code=ProtectedAuditReason.CONTROL_COMMAND_CONFLICT,
+                        )
+                        denial = ProtectedSecurityError("CONTROL_COMMAND_CONFLICT")
+                    else:
+                        effective_revision = 1
+                        await control.append_control(
+                            entries=entries,
+                            request_id=command.request_id,
+                            command_kind=command_kind,
+                            executor=executor.actor,
+                            target_kind=ControlAuditTargetKind.PROTECTED_DATASET,
+                            target_id=target_id,
+                            command_sha256=digest,
+                            outcome=ControlAuditOutcome.SUCCEEDED,
+                            effective_revision=effective_revision,
+                            authorization_audit_event_id=None,
+                            reason_code=ProtectedAuditReason.DATASET_REGISTERED,
+                        )
+                        result = ControlCommandResult(
+                            request_id=command.request_id,
+                            command_kind=command_kind,
+                            target_id=target_id,
+                            effective_revision=effective_revision,
+                            authorization_audit_event_id=None,
+                            reason_code=ProtectedAuditReason.DATASET_REGISTERED.value,
+                        )
+
+        if denial is not None:
+            raise denial
+        assert result is not None
+        return result
+
+    async def _lock_dataset_control_executor(
+        self, control: _ControlSession, prepared_executor: _ControlExecutor
+    ) -> tuple[_ControlExecutor, ProtectedAuditReason | None]:
+        try:
+            executor = await control.lock_dataset_executor(prepared_executor)
+            return executor, None
+        except ProtectedSecurityError as err:
+            if err.reason_code in (
+                ProtectedAuditReason.ISSUER_ROLE_DENIED.value,
+                ProtectedAuditReason.SELF_APPROVAL_DENIED.value,
+            ):
+                executor = await control.resolve_executor()
+                return executor, ProtectedAuditReason(err.reason_code)
+            raise
+
+    async def transition_dataset(self, command: TransitionDatasetCommand) -> ControlCommandResult:
+        if command.to_state is ProtectedDatasetState.FROZEN:
+            raise ProtectedSecurityError("ROLE_ACTION_STATE_DENIED")
+
+        command_kind = ControlCommandKind.TRANSITION_DATASET
+        digest = control_command_sha256(command_kind, command)
+        async with self._sessions() as preparation:
+            async with preparation.begin():
+                prepared_executor = await self._authenticated_executor(preparation)
+        replay = await self._read_replay(
+            request_id=command.request_id,
+            command_kind=command_kind,
+            command_sha256=digest,
+        )
+        if replay is not None:
+            return replay
+
+        target_id = f"{command.dataset_id}:{command.dataset_version}"
+        denial: ProtectedSecurityError | None = None
+        result: ControlCommandResult | None = None
+        async with self._sessions() as session:
+            async with session.begin():
+                await self._validate_connection(session)
+                clock = await PostgresqlTrustedClock.from_session(session)
+                control = _ControlSession(session, self._schema, clock)
+
+                executor, denial_reason = await self._lock_dataset_control_executor(control, prepared_executor)
+
+                if denial_reason is None:
+                    denial_reason = _validate_dataset_transition_invariants(command)
+                if denial_reason is None:
+                    denial_reason = await control.check_dataset_transition(command)
+
+                replay = await control.replay(
+                    request_id=command.request_id,
+                    command_kind=command_kind,
+                    command_sha256=digest,
+                    executor=executor.actor,
+                    lock_head=True,
+                )
+                if replay is not None:
+                    return replay
+
+                await control.refresh_clock()
+                entries = await control.verified_entries(lock_head=False)
+                if denial_reason is not None:
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.PROTECTED_DATASET,
+                        target_id=target_id,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.DENIED,
+                        effective_revision=None,
+                        authorization_audit_event_id=None,
+                        reason_code=denial_reason,
+                    )
+                    denial = ProtectedSecurityError(denial_reason.value)
+                else:
+                    new_revision = command.expected_state_revision + 1
+                    update_result = await control._execute(
+                        f"""
+                        UPDATE {control._schema}.protected_dataset
+                        SET state = :to_state,
+                            state_revision = :new_revision,
+                            authored_count = :authored_count,
+                            review_complete = :review_complete
+                        WHERE dataset_id = :dataset_id
+                          AND dataset_version = :dataset_version
+                          AND state = :from_state
+                          AND state_revision = :expected_revision
+                        RETURNING state_revision
+                        """,
+                        {
+                            "dataset_id": command.dataset_id,
+                            "dataset_version": command.dataset_version,
+                            "to_state": command.to_state.value,
+                            "new_revision": new_revision,
+                            "authored_count": command.authored_count,
+                            "review_complete": command.review_complete,
+                            "from_state": command.from_state.value,
+                            "expected_revision": command.expected_state_revision,
+                        },
+                        fallback="DATASET_STATE_MISMATCH",
+                    )
+                    updated_row = update_result.one_or_none()
+                    if updated_row is None:
+                        await control.append_control(
+                            entries=entries,
+                            request_id=command.request_id,
+                            command_kind=command_kind,
+                            executor=executor.actor,
+                            target_kind=ControlAuditTargetKind.PROTECTED_DATASET,
+                            target_id=target_id,
+                            command_sha256=digest,
+                            outcome=ControlAuditOutcome.DENIED,
+                            effective_revision=None,
+                            authorization_audit_event_id=None,
+                            reason_code=ProtectedAuditReason.DATASET_STATE_MISMATCH,
+                        )
+                        denial = ProtectedSecurityError("DATASET_STATE_MISMATCH")
+                    else:
+                        await control.append_control(
+                            entries=entries,
+                            request_id=command.request_id,
+                            command_kind=command_kind,
+                            executor=executor.actor,
+                            target_kind=ControlAuditTargetKind.PROTECTED_DATASET,
+                            target_id=target_id,
+                            command_sha256=digest,
+                            outcome=ControlAuditOutcome.SUCCEEDED,
+                            effective_revision=new_revision,
+                            authorization_audit_event_id=None,
+                            reason_code=ProtectedAuditReason.DATASET_TRANSITIONED,
+                        )
+                        result = ControlCommandResult(
+                            request_id=command.request_id,
+                            command_kind=command_kind,
+                            target_id=target_id,
+                            effective_revision=new_revision,
+                            authorization_audit_event_id=None,
+                            reason_code=ProtectedAuditReason.DATASET_TRANSITIONED.value,
+                        )
+
+        if denial is not None:
+            raise denial
+        assert result is not None
+        return result
+
+    async def _assert_dataset_custodian_preflight(self, control: _ControlSession, prepared: _ControlExecutor) -> None:
+        if prepared.principal.role is not ProtectedApprovalRole.DATASET_CUSTODIAN:
+            raise ProtectedSecurityError("ISSUER_ROLE_DENIED")
+        result = await control._execute(
+            f"""
+            SELECT 1 FROM {control._schema}.protected_identity
+            WHERE actor_id = :actor_id AND actor_namespace = :actor_namespace
+              AND identity_plane = 'DATA'
+              AND principal_role = 'HOLDOUT_AUTHOR'
+              AND enabled = true
+            """,
+            {"actor_id": prepared.actor.actor_id, "actor_namespace": prepared.actor.namespace},
+        )
+        if result.first() is not None:
+            raise ProtectedSecurityError("SELF_APPROVAL_DENIED")
+
+    async def _check_freeze_mutation(
+        self,
+        control: _ControlSession,
+        command: FreezeDatasetCommand,
+        executor: _ControlExecutor,
+        evidence: FreezeApprovalSourceEvidence | None,
+        fetch_denial: ProtectedAuditReason | None,
+    ) -> ProtectedAuditReason | None:
+        dataset_row = (
+            await control._execute(
+                f"""
+                SELECT dataset_id, dataset_version, binding, manifest_sha256,
+                       protected_artifact_sha256, hmac_key_version, state,
+                       state_revision, authored_count, review_complete, lock_marker
+                FROM {control._schema}.protected_dataset
+                WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version
+                FOR UPDATE
+                """,
+                {"dataset_id": command.dataset_id, "dataset_version": command.dataset_version},
+            )
+        ).one_or_none()
+        if dataset_row is None:
+            return ProtectedAuditReason.DATASET_STATE_MISMATCH
+        if (
+            dataset_row.state != ProtectedDatasetState.REVIEW_READY.value
+            or dataset_row.state_revision != command.expected_state_revision
+        ):
+            return ProtectedAuditReason.DATASET_STATE_MISMATCH
+
+        entries = await control.verified_entries(lock_head=False)
+        dataset = _assemble_dataset_binding(
+            binding_value=dataset_row.binding,
+            dataset_id=dataset_row.dataset_id,
+            dataset_version=dataset_row.dataset_version,
+            manifest_sha256=dataset_row.manifest_sha256,
+            protected_artifact_sha256=dataset_row.protected_artifact_sha256,
+            hmac_key_version=dataset_row.hmac_key_version,
+            state=dataset_row.state,
+            state_revision=dataset_row.state_revision,
+            authored_count=dataset_row.authored_count,
+            review_complete=dataset_row.review_complete,
+            audit_entries=entries,
+        )
+        if (
+            dataset.authored_count != 40
+            or not dataset.review_complete
+            or dataset.leakage_axis_intersections != (0, 0, 0, 0)
+        ):
+            return ProtectedAuditReason.FREEZE_EVIDENCE_INCOMPLETE
+
+        if fetch_denial is not None:
+            return fetch_denial
+        if evidence is None:
+            return ProtectedAuditReason.APPROVAL_NOT_VERIFIED
+
+        try:
+            verify_freeze_approval(
+                dataset,
+                evidence,
+                approval_source_event_id=command.approval_source_event_id,
+                expected_raw_sha256=command.expected_raw_sha256,
+                executor=executor.principal,
+            )
+        except ProtectedSecurityError as err:
+            return _policy_denial_reason(err)
+        return None
+
+    async def freeze_dataset(self, command: FreezeDatasetCommand) -> ControlCommandResult:
+        command_kind = ControlCommandKind.FREEZE_DATASET
+        digest = control_command_sha256(command_kind, command)
+        async with self._sessions() as preparation:
+            async with preparation.begin():
+                await self._validate_connection(preparation)
+                clock = await PostgresqlTrustedClock.from_session(preparation)
+                prep_control = _ControlSession(preparation, self._schema, clock)
+                prepared_executor = await prep_control.resolve_executor()
+                await self._assert_dataset_custodian_preflight(prep_control, prepared_executor)
+
+        replay = await self._read_replay(
+            request_id=command.request_id,
+            command_kind=command_kind,
+            command_sha256=digest,
+        )
+        if replay is not None:
+            return replay
+
+        evidence, fetch_denial = await self._fetch_freeze_approval(command)
+
+        target_id = f"{command.dataset_id}:{command.dataset_version}"
+        denial: ProtectedSecurityError | None = None
+        result: ControlCommandResult | None = None
+        async with self._sessions() as session:
+            async with session.begin():
+                await self._validate_connection(session)
+                clock = await PostgresqlTrustedClock.from_session(session)
+                control = _ControlSession(session, self._schema, clock)
+
+                executor, lock_denial = await self._lock_dataset_control_executor(control, prepared_executor)
+                denial_reason = lock_denial
+                if denial_reason is None:
+                    denial_reason = await self._check_freeze_mutation(
+                        control, command, executor, evidence, fetch_denial
+                    )
+
+                replay = await control.replay(
+                    request_id=command.request_id,
+                    command_kind=command_kind,
+                    command_sha256=digest,
+                    executor=executor.actor,
+                    lock_head=True,
+                )
+                if replay is not None:
+                    return replay
+
+                await control.refresh_clock()
+                entries = await control.verified_entries(lock_head=False)
+                if denial_reason is not None:
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.PROTECTED_DATASET,
+                        target_id=target_id,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.DENIED,
+                        effective_revision=None,
+                        authorization_audit_event_id=None,
+                        reason_code=denial_reason,
+                    )
+                    denial = ProtectedSecurityError(denial_reason.value)
+                else:
+                    new_revision = command.expected_state_revision + 1
+                    update_result = await control._execute(
+                        f"""
+                        UPDATE {control._schema}.protected_dataset
+                        SET state = 'FROZEN',
+                            state_revision = :new_revision
+                        WHERE dataset_id = :dataset_id
+                          AND dataset_version = :dataset_version
+                          AND state = 'REVIEW_READY'
+                          AND state_revision = :expected_revision
+                        RETURNING state_revision
+                        """,
+                        {
+                            "dataset_id": command.dataset_id,
+                            "dataset_version": command.dataset_version,
+                            "new_revision": new_revision,
+                            "expected_revision": command.expected_state_revision,
+                        },
+                        fallback="DATASET_STATE_MISMATCH",
+                    )
+                    updated_row = update_result.one_or_none()
+                    if updated_row is None:
+                        await control.append_control(
+                            entries=entries,
+                            request_id=command.request_id,
+                            command_kind=command_kind,
+                            executor=executor.actor,
+                            target_kind=ControlAuditTargetKind.PROTECTED_DATASET,
+                            target_id=target_id,
+                            command_sha256=digest,
+                            outcome=ControlAuditOutcome.DENIED,
+                            effective_revision=None,
+                            authorization_audit_event_id=None,
+                            reason_code=ProtectedAuditReason.DATASET_STATE_MISMATCH,
+                        )
+                        denial = ProtectedSecurityError("DATASET_STATE_MISMATCH")
+                    else:
+                        await control.append_control(
+                            entries=entries,
+                            request_id=command.request_id,
+                            command_kind=command_kind,
+                            executor=executor.actor,
+                            target_kind=ControlAuditTargetKind.PROTECTED_DATASET,
+                            target_id=target_id,
+                            command_sha256=digest,
+                            outcome=ControlAuditOutcome.SUCCEEDED,
+                            effective_revision=new_revision,
+                            authorization_audit_event_id=None,
+                            reason_code=ProtectedAuditReason.DATASET_FROZEN,
+                        )
+                        result = ControlCommandResult(
+                            request_id=command.request_id,
+                            command_kind=command_kind,
+                            target_id=target_id,
+                            effective_revision=new_revision,
+                            authorization_audit_event_id=None,
+                            reason_code=ProtectedAuditReason.DATASET_FROZEN.value,
+                        )
+        if denial is not None:
+            raise denial
+        assert result is not None
+        return result
 
 
 __all__ = ["PostgresqlProtectedAuthorizationControlService"]

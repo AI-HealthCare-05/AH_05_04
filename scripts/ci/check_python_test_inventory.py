@@ -4,6 +4,7 @@ import argparse
 import shlex
 import sys
 import tomllib
+from collections import Counter
 from pathlib import Path, PurePath
 
 import yaml  # type: ignore[import-untyped]
@@ -134,19 +135,25 @@ def _shell_command_tokens(config: str) -> list[list[str]]:
     return commands
 
 
-def _yaml_step_run_blocks(config: str) -> list[str]:
+def _yaml_job_run_blocks(config: str) -> dict[str, list[str]]:
     workflow = yaml.safe_load(config)
     if not isinstance(workflow, dict) or not isinstance(workflow.get("jobs"), dict):
-        return []
+        return {}
 
-    blocks: list[str] = []
-    for job in workflow["jobs"].values():
+    blocks_by_job: dict[str, list[str]] = {}
+    for job_name, job in workflow["jobs"].items():
         if not isinstance(job, dict) or not isinstance(job.get("steps"), list):
             continue
+        blocks: list[str] = []
         for step in job["steps"]:
             if isinstance(step, dict) and isinstance(step.get("run"), str):
                 blocks.append(step["run"])
-    return blocks
+        blocks_by_job[str(job_name)] = blocks
+    return blocks_by_job
+
+
+def _yaml_step_run_blocks(config: str) -> list[str]:
+    return [block for blocks in _yaml_job_run_blocks(config).values() for block in blocks]
 
 
 def _execution_commands(config_path: Path, config: str) -> list[list[str]]:
@@ -317,7 +324,51 @@ def _validate_declared_targets(root: Path) -> list[str]:
     return errors
 
 
-def _validate_execution_configs(root: Path) -> list[str]:
+def _duplicate_target_errors(pytest_targets: list[str], config_path: Path) -> list[str]:
+    duplicate_targets = sorted(target for target, count in Counter(pytest_targets).items() if count > 1)
+    if not duplicate_targets:
+        return []
+    return [
+        f"Duplicate Python test targets in {config_path}:\n" + "\n".join(f"  {target}" for target in duplicate_targets)
+    ]
+
+
+def _duplicate_test_lane_errors(discovered: set[Path], pytest_targets_by_lane: dict[str, list[str]]) -> list[str]:
+    duplicate_memberships: list[tuple[Path, list[str]]] = []
+    for test_path in sorted(discovered):
+        lanes = sorted(
+            lane
+            for lane, targets in pytest_targets_by_lane.items()
+            if any(_is_under(test_path, Path(target)) for target in targets)
+        )
+        if len(lanes) > 1:
+            duplicate_memberships.append((test_path, lanes))
+    if not duplicate_memberships:
+        return []
+    return [
+        "Python tests collected by multiple GitHub Actions lanes:\n"
+        + "\n".join(f"  {path}: {', '.join(lanes)}" for path, lanes in duplicate_memberships)
+    ]
+
+
+def _pytest_targets_by_yaml_job(config: str) -> dict[str, list[str]]:
+    targets_by_job: dict[str, list[str]] = {}
+    for job_name, blocks in _yaml_job_run_blocks(config).items():
+        commands = [command for block in blocks for command in _shell_command_tokens(block)]
+        invocations = _pytest_invocations(commands)
+        targets = [target for invocation in invocations for target in _classify_pytest_arguments(invocation)[0]]
+        if targets:
+            targets_by_job[job_name] = targets
+    return targets_by_job
+
+
+def _duplicate_lane_errors_for_config(config_path: Path, config: str, discovered: set[Path]) -> list[str]:
+    if config_path.suffix not in {".yml", ".yaml"}:
+        return []
+    return _duplicate_test_lane_errors(discovered, _pytest_targets_by_yaml_job(config))
+
+
+def _validate_execution_configs(root: Path, discovered: set[Path]) -> list[str]:
     errors: list[str] = []
     required_targets = AUTO_COLLECTED_ROOTS + DEFAULT_INTEGRATION_FILES
 
@@ -334,6 +385,8 @@ def _validate_execution_configs(root: Path) -> list[str]:
         pytest_arguments = [argument for invocation in pytest_invocations for argument in invocation]
         classified_invocations = [_classify_pytest_arguments(invocation) for invocation in pytest_invocations]
         pytest_targets = [target for targets, _ in classified_invocations for target in targets]
+        errors.extend(_duplicate_target_errors(pytest_targets, config_path))
+        errors.extend(_duplicate_lane_errors_for_config(config_path, config, discovered))
         node_selections = sorted(argument for argument in pytest_arguments if "::" in argument)
         if node_selections:
             errors.append(
@@ -390,7 +443,7 @@ def check_inventory(root: Path) -> list[str]:
     errors.extend(_validate_declared_targets(root))
     errors.extend(_validate_pytest_config(root))
     errors.extend(_validate_test_environment(root))
-    errors.extend(_validate_execution_configs(root))
+    errors.extend(_validate_execution_configs(root, discovered))
     return errors
 
 

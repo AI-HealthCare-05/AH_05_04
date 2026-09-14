@@ -31,8 +31,10 @@ from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
 from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.medical_document_repository import MedicalDocumentRepository
+from app.repositories.medication_schedule_repository import MedicationScheduleRepository
 from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.services.medication_occurrences import PrescriptionVersionMedicationInvalidationService
 from app.services.ocr import OcrService
 from app.services.prescriptions import PrescriptionService
 from app.tests.db_extensions import ensure_vector_extension
@@ -193,11 +195,17 @@ async def test_worker_saved_placeholder_can_be_confirmed_through_existing_patch_
                 engine_name="CLOVA_OCR",
                 model_version=None,
                 prompt_version=None,
+                llm_processing="SKIPPED_MINIMIZATION",
             ),
         )
         await session.commit()
 
     async with session_factory() as session:
+        saved_ocr_job = (await session.execute(select(OcrJob).where(OcrJob.id == ocr_job.id))).scalar_one()
+        assert saved_ocr_job.llm_processing == "SKIPPED_MINIMIZATION"
+        assert saved_ocr_job.model_version is None
+        assert saved_ocr_job.prompt_version is None
+
         result = await session.execute(select(ExtractedField).where(ExtractedField.ocr_job_id == ocr_job.id))
         fields_by_type = {(f.medication_index, f.field_type): f for f in result.scalars().all()}
         assert len(fields_by_type) == 5  # MEDICATION_NAME + 4개 placeholder
@@ -214,7 +222,14 @@ async def test_worker_saved_placeholder_can_be_confirmed_through_existing_patch_
             ocr_repository=ocr_repository,
             prescription_repository=prescription_repository,
         )
-        prescription_service = PrescriptionService(document_repository, ocr_repository, prescription_repository)
+        prescription_service = PrescriptionService(
+            document_repository,
+            ocr_repository,
+            prescription_repository,
+            schedule_invalidation=PrescriptionVersionMedicationInvalidationService(
+                MedicationScheduleRepository(session)
+            ),
+        )
 
         # placeholder 상태 그대로 확정을 시도하면 기존 회귀 로직(_field_value)이 여전히
         # PRESCRIPTION_REQUIRED_FIELD_MISSING으로 막아야 한다.

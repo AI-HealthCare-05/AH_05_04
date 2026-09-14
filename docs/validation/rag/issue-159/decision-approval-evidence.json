@@ -1,0 +1,22 @@
+{
+  "decision_id": "PD-159-20260913",
+  "pull_request": 475,
+  "head_commit_oid": "ca27931ff54b3a48feb07e3b4a766620bfc34614",
+  "merged_at": "2026-09-13T11:27:21Z",
+  "merge_commit_oid": "0ea12641f68eb753754fb686bbd22c59f6a90d3f",
+  "reviews": [
+    {
+      "review_id": 5190544119,
+      "actor": "hazelnutflavoured",
+      "state": "APPROVED",
+      "submitted_at": "2026-09-13T11:26:42Z",
+      "commit_oid": "ca27931ff54b3a48feb07e3b4a766620bfc34614",
+      "url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/475#pullrequestreview-5190544119"
+    }
+  ],
+  "required_checks": {
+    "test": "SUCCESS",
+    "lint": "SUCCESS",
+    "frontend": "SUCCESS"
+  }
+}

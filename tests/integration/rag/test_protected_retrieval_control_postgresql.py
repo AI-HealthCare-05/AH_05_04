@@ -9,9 +9,14 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from ai_worker.adapters import postgresql_protected_retrieval_control as control_adapter
+from ai_worker.adapters.postgresql_protected_retrieval import (
+    PostgresqlProtectedAuditJournal,
+    PostgresqlTrustedClock,
+    _assemble_dataset_binding,
+)
 from ai_worker.adapters.postgresql_protected_retrieval_control import (
     PostgresqlProtectedAuthorizationControlService,
 )
@@ -21,6 +26,8 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     AuthorizationAuditAction,
     AuthorizationAuditEntry,
     ControlImplementationBinding,
+    OpaqueLogicalRef,
+    OpaqueRefNamespace,
     ProtectedAction,
     ProtectedApprovalPrincipal,
     ProtectedApprovalRole,
@@ -37,12 +44,17 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
 )
 from ai_worker.tasks.evaluation.protected_retrieval_control import (
     ApprovalSourceNotFoundError,
+    ControlCommandResult,
     DisableIdentityCommand,
     ExpireAuthorizationCommand,
+    FreezeApprovalSourceEvidence,
+    FreezeDatasetCommand,
     GrantAuthorizationCommand,
     IngestApprovalCommand,
+    RegisterDatasetCommand,
     RegisterIdentityCommand,
     RevokeAuthorizationCommand,
+    TransitionDatasetCommand,
 )
 from tests.migration.test_protected_retrieval_migration import _login_url, _ProtectedDatabase
 
@@ -58,11 +70,19 @@ class _ApprovalSource:
         self.calls.append(source_event_id)
         return self.evidence
 
+    async def fetch_freeze(self, source_event_id: str) -> FreezeApprovalSourceEvidence:
+        del source_event_id
+        raise ApprovalSourceNotFoundError
+
 
 class _FailingApprovalSource:
     async def fetch(self, source_event_id: str) -> ApprovalSourceEvidence:
         del source_event_id
         raise RuntimeError("synthetic connector detail that must not escape")
+
+    async def fetch_freeze(self, source_event_id: str) -> FreezeApprovalSourceEvidence:
+        del source_event_id
+        raise ApprovalSourceNotFoundError
 
 
 class _MissingApprovalSource:
@@ -72,6 +92,31 @@ class _MissingApprovalSource:
     async def fetch(self, source_event_id: str) -> ApprovalSourceEvidence:
         self.calls.append(source_event_id)
         raise ApprovalSourceNotFoundError
+
+    async def fetch_freeze(self, source_event_id: str) -> FreezeApprovalSourceEvidence:
+        self.calls.append(source_event_id)
+        raise ApprovalSourceNotFoundError
+
+
+class _DatasetApprovalSource:
+    def __init__(self, freeze_evidence: FreezeApprovalSourceEvidence | None = None) -> None:
+        self.freeze_evidence = freeze_evidence
+        self.freeze_calls: list[str] = []
+
+    async def fetch(self, source_event_id: str) -> ApprovalSourceEvidence:
+        del source_event_id
+        raise ApprovalSourceNotFoundError
+
+    async def fetch_freeze(self, source_event_id: str) -> FreezeApprovalSourceEvidence:
+        self.freeze_calls.append(source_event_id)
+        if self.freeze_evidence is None:
+            raise ApprovalSourceNotFoundError
+        return self.freeze_evidence
+
+    @property
+    def evidence(self) -> FreezeApprovalSourceEvidence:
+        assert self.freeze_evidence is not None
+        return self.freeze_evidence
 
 
 def _evidence(
@@ -304,7 +349,7 @@ async def _insert_grant(
 
 def _service(
     database: _ProtectedDatabase,
-    source: _ApprovalSource | _FailingApprovalSource | _MissingApprovalSource,
+    source: _ApprovalSource | _FailingApprovalSource | _MissingApprovalSource | _DatasetApprovalSource,
     *,
     login: str | None = None,
 ) -> PostgresqlProtectedAuthorizationControlService:
@@ -1286,11 +1331,13 @@ async def test_grant_audit_failure_leaves_no_mutation(
             )
         )
         async with admin_engine.begin() as connection:
-            original_head = (
-                await connection.execute(
-                    text(f'''SELECT sequence, entry_sha256 FROM "{database.schema}".audit_head WHERE singleton''')
-                )
-            ).one()
+            original_head = tuple(
+                (
+                    await connection.execute(
+                        text(f'''SELECT sequence, entry_sha256 FROM "{database.schema}".audit_head WHERE singleton''')
+                    )
+                ).one()
+            )
             await connection.execute(
                 text(f'''UPDATE "{database.schema}".audit_head SET entry_sha256 = :digest WHERE singleton'''),
                 {"digest": "f" * 64},
@@ -1563,3 +1610,1188 @@ async def test_register_and_disable_identity_lifecycle(
         async with admin_engine.begin() as connection:
             await connection.exec_driver_sql(f'DROP ROLE IF EXISTS "{reviewer_login}"')
         await admin_engine.dispose()
+
+
+class _FailIfConnectedEngine:
+    def __getattr__(self, name: str) -> object:
+        pytest.fail(f"Database was accessed via {name} during preflight rejection")
+
+
+def _dataset_binding(**updates: object) -> ProtectedDatasetBinding:
+    base: dict[str, object] = {
+        "dataset_id": str(uuid4()),
+        "dataset_version": "1.0.0",
+        "manifest_sha256": "a" * 64,
+        "protected_artifact_sha256": "b" * 64,
+        "hmac_key_version": "v1",
+        "state": ProtectedDatasetState.ACCESS_AUTHORIZED,
+        "state_revision": 1,
+        "authored_count": 0,
+        "review_complete": False,
+        "leakage_axis_intersections": (0, 0, 0, 0),
+        "freeze_receipt_ref": None,
+        "execution_authorization_ref": None,
+        "retriever_binding_ref": None,
+    }
+    base.update(updates)
+    return ProtectedDatasetBinding.model_validate(base)
+
+
+def _register_dataset_command(
+    binding: ProtectedDatasetBinding | None = None,
+    **updates: object,
+) -> RegisterDatasetCommand:
+    b = binding or _dataset_binding()
+    base: dict[str, object] = {
+        "request_id": str(uuid4()),
+        "dataset_id": b.dataset_id,
+        "dataset_version": b.dataset_version,
+        "binding": b,
+        "manifest_sha256": b.manifest_sha256,
+        "protected_artifact_sha256": b.protected_artifact_sha256,
+        "hmac_key_version": b.hmac_key_version,
+    }
+    base.update(updates)
+    return RegisterDatasetCommand.model_validate(base)
+
+
+def _transition_command(
+    dataset: ProtectedDatasetBinding,
+    *,
+    from_state: ProtectedDatasetState,
+    to_state: ProtectedDatasetState,
+    revision: int,
+    authored_count: int,
+    review_complete: bool,
+    **updates: object,
+) -> TransitionDatasetCommand:
+    base: dict[str, object] = {
+        "request_id": str(uuid4()),
+        "dataset_id": dataset.dataset_id,
+        "dataset_version": dataset.dataset_version,
+        "from_state": from_state,
+        "to_state": to_state,
+        "expected_state_revision": revision,
+        "authored_count": authored_count,
+        "review_complete": review_complete,
+    }
+    base.update(updates)
+    return TransitionDatasetCommand.model_validate(base)
+
+
+def _transition_to_frozen_command() -> TransitionDatasetCommand:
+    dataset = _dataset_binding()
+    return TransitionDatasetCommand(
+        request_id=str(uuid4()),
+        dataset_id=dataset.dataset_id,
+        dataset_version=dataset.dataset_version,
+        from_state=ProtectedDatasetState.REVIEW_READY,
+        to_state=ProtectedDatasetState.FROZEN,
+        expected_state_revision=2,
+        authored_count=40,
+        review_complete=True,
+    )
+
+
+async def _owner_read_dataset_row(
+    database: _ProtectedDatabase,
+    dataset_id: str,
+    dataset_version: str,
+) -> object:
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with admin_engine.begin() as connection:
+            result = await connection.execute(
+                text(
+                    f"""
+                    SELECT dataset_id, dataset_version, binding, manifest_sha256,
+                           protected_artifact_sha256, hmac_key_version, state,
+                           state_revision, authored_count, review_complete, lock_marker
+                    FROM "{database.schema}".protected_dataset
+                    WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version
+                    """
+                ),
+                {"dataset_id": dataset_id, "dataset_version": dataset_version},
+            )
+            return result.one()
+    finally:
+        await admin_engine.dispose()
+
+
+async def _registered_dataset_service(
+    database: _ProtectedDatabase,
+) -> tuple[PostgresqlProtectedAuthorizationControlService, ProtectedDatasetBinding]:
+    service = _service(database, _DatasetApprovalSource())
+    command = _register_dataset_command()
+    await service.register_dataset(command)
+    return service, command.binding
+
+
+@pytest.mark.asyncio
+async def test_custodian_registers_dataset_and_new_session_reads_initial_state(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service = _service(protected_database, _DatasetApprovalSource())
+    command = _register_dataset_command()
+    try:
+        result = await service.register_dataset(command)
+        assert result.reason_code == "DATASET_REGISTERED"
+        assert result.effective_revision == 1
+        assert result.authorization_audit_event_id is None
+
+        persisted = await _owner_read_dataset_row(protected_database, command.dataset_id, command.dataset_version)
+        assert persisted.state == "ACCESS_AUTHORIZED"  # type: ignore[attr-defined]
+        assert persisted.state_revision == 1  # type: ignore[attr-defined]
+        assert persisted.binding == command.binding.model_dump(mode="json")  # type: ignore[attr-defined]
+        assert persisted.authored_count == 0  # type: ignore[attr-defined]
+        assert persisted.review_complete is False  # type: ignore[attr-defined]
+
+        # Replay returns identical result
+        replay = await service.register_dataset(command)
+        assert replay == result
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_custodian_transitions_only_the_approved_dataset_dag(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, registered = await _registered_dataset_service(protected_database)
+    try:
+        authoring = await service.transition_dataset(
+            _transition_command(
+                registered,
+                from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+                to_state=ProtectedDatasetState.AUTHORING,
+                revision=1,
+                authored_count=0,
+                review_complete=False,
+            )
+        )
+        assert authoring.effective_revision == 2
+        assert authoring.reason_code == "DATASET_TRANSITIONED"
+
+        review_ready = await service.transition_dataset(
+            _transition_command(
+                registered,
+                from_state=ProtectedDatasetState.AUTHORING,
+                to_state=ProtectedDatasetState.REVIEW_READY,
+                revision=2,
+                authored_count=40,
+                review_complete=True,
+            )
+        )
+        assert review_ready.effective_revision == 3
+        assert review_ready.reason_code == "DATASET_TRANSITIONED"
+
+        back_to_authoring = await service.transition_dataset(
+            _transition_command(
+                registered,
+                from_state=ProtectedDatasetState.REVIEW_READY,
+                to_state=ProtectedDatasetState.AUTHORING,
+                revision=3,
+                authored_count=35,
+                review_complete=False,
+            )
+        )
+        assert back_to_authoring.effective_revision == 4
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_transition_to_frozen_is_rejected_before_database_access() -> None:
+    service = PostgresqlProtectedAuthorizationControlService(
+        _FailIfConnectedEngine(),  # type: ignore[arg-type]
+        schema="synthetic_schema",
+        data_access_role="synthetic_data_role",
+        control_role="synthetic_control_role",
+        approval_source=_MissingApprovalSource(),
+    )
+    with pytest.raises(ProtectedSecurityError) as captured:
+        await service.transition_dataset(_transition_to_frozen_command())
+    assert captured.value.reason_code == "ROLE_ACTION_STATE_DENIED"
+
+
+@pytest.mark.asyncio
+async def test_dataset_registration_rejects_non_custodian_or_author_overlap(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    admin_engine = create_async_engine(protected_database.url)
+    try:
+        # Update existing DATA identity to have actor = synthetic-custodian
+        async with admin_engine.begin() as connection:
+            await connection.execute(
+                text(
+                    f"""
+                    UPDATE "{protected_database.schema}".protected_identity
+                    SET actor_id = 'synthetic-custodian', actor_namespace = 'GITHUB_LOGIN'
+                    WHERE database_login = :login
+                    """
+                ),
+                {"login": protected_database.actor_login},
+            )
+
+        service = _service(protected_database, _DatasetApprovalSource())
+        try:
+            with pytest.raises(ProtectedSecurityError, match="SELF_APPROVAL_DENIED"):
+                await service.register_dataset(_register_dataset_command())
+        finally:
+            await service.close()
+    finally:
+        async with admin_engine.begin() as connection:
+            await connection.execute(
+                text(
+                    f"""
+                    UPDATE "{protected_database.schema}".protected_identity
+                    SET actor_id = 'synthetic-author', actor_namespace = 'SERVICE_IDENTITY'
+                    WHERE database_login = :login
+                    """
+                ),
+                {"login": protected_database.actor_login},
+            )
+        await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_dataset_registration_rejects_conflicting_duplicate(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, registered = await _registered_dataset_service(protected_database)
+    try:
+        # Different request_id with already registered dataset_id:version -> CONTROL_COMMAND_CONFLICT
+        conflicting_cmd = _register_dataset_command(
+            binding=_dataset_binding(dataset_id=registered.dataset_id, dataset_version=registered.dataset_version)
+        )
+        with pytest.raises(ProtectedSecurityError, match="CONTROL_COMMAND_CONFLICT"):
+            await service.register_dataset(conflicting_cmd)
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_dataset_transition_rejects_invalid_state_transitions(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, registered = await _registered_dataset_service(protected_database)
+    try:
+        # 1. Wrong expected revision
+        with pytest.raises(ProtectedSecurityError, match="DATASET_STATE_MISMATCH"):
+            await service.transition_dataset(
+                _transition_command(
+                    registered,
+                    from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+                    to_state=ProtectedDatasetState.AUTHORING,
+                    revision=99,
+                    authored_count=0,
+                    review_complete=False,
+                )
+            )
+
+        # 2. Unsupported DAG transition (ACCESS_AUTHORIZED -> REVIEW_READY)
+        with pytest.raises(ProtectedSecurityError, match="DATASET_STATE_MISMATCH"):
+            await service.transition_dataset(
+                _transition_command(
+                    registered,
+                    from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+                    to_state=ProtectedDatasetState.REVIEW_READY,
+                    revision=1,
+                    authored_count=40,
+                    review_complete=True,
+                )
+            )
+
+        # 3. Transition to AUTHORING first
+        await service.transition_dataset(
+            _transition_command(
+                registered,
+                from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+                to_state=ProtectedDatasetState.AUTHORING,
+                revision=1,
+                authored_count=0,
+                review_complete=False,
+            )
+        )
+
+        # 4. REVIEW_READY entry with authored_count == 0 -> DATASET_STATE_MISMATCH
+        with pytest.raises(ProtectedSecurityError, match="DATASET_STATE_MISMATCH"):
+            await service.transition_dataset(
+                _transition_command(
+                    registered,
+                    from_state=ProtectedDatasetState.AUTHORING,
+                    to_state=ProtectedDatasetState.REVIEW_READY,
+                    revision=2,
+                    authored_count=0,
+                    review_complete=True,
+                )
+            )
+    finally:
+        await service.close()
+
+
+def _freeze_evidence(
+    dataset: ProtectedDatasetBinding,
+    *,
+    source_event_id: str | None = None,
+    canonical_raw_sha256: str | None = None,
+    **updates: object,
+) -> FreezeApprovalSourceEvidence:
+    event_id = source_event_id or str(uuid4())
+    payload: dict[str, object] = {
+        "source_event_id": event_id,
+        "action": ProtectedAction.FREEZE,
+        "dataset_id": dataset.dataset_id,
+        "dataset_version": dataset.dataset_version,
+        "manifest_sha256": dataset.manifest_sha256,
+        "protected_artifact_sha256": dataset.protected_artifact_sha256,
+        "authored_count": 40,
+        "review_complete": True,
+        "leakage_axis_intersections": (0, 0, 0, 0),
+        "issuer": ProtectedApprovalPrincipal(
+            actor=ActorIdentity(actor_id="synthetic-reviewer-actor", namespace="SERVICE_IDENTITY"),
+            role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+        ),
+        "state": "APPROVED",
+        "recorded_at": datetime(2026, 9, 14, 10, 0, 0, tzinfo=UTC),
+        "target_commit_oid": "a" * 40,
+        "target_artifact_sha256": "b" * 64,
+        "canonical_raw_sha256": canonical_raw_sha256 or ("c" * 64),
+        "implementation_participants": (ActorIdentity(actor_id="synthetic-author", namespace="SERVICE_IDENTITY"),),
+    }
+    payload.update(updates)
+    return FreezeApprovalSourceEvidence(**payload)  # type: ignore[arg-type]
+
+
+def _freeze_command(
+    dataset: ProtectedDatasetBinding,
+    evidence: FreezeApprovalSourceEvidence | None = None,
+    *,
+    request_id: str | None = None,
+    revision: int | None = None,
+    **updates: object,
+) -> FreezeDatasetCommand:
+    source_id = evidence.source_event_id if evidence is not None else str(uuid4())
+    raw_sha = evidence.canonical_raw_sha256 if evidence is not None else ("c" * 64)
+    payload: dict[str, object] = {
+        "request_id": request_id or str(uuid4()),
+        "dataset_id": dataset.dataset_id,
+        "dataset_version": dataset.dataset_version,
+        "expected_state_revision": revision if revision is not None else dataset.state_revision,
+        "approval_source_event_id": source_id,
+        "expected_raw_sha256": raw_sha,
+    }
+    payload.update(updates)
+    return FreezeDatasetCommand(**payload)  # type: ignore[arg-type]
+
+
+async def _review_ready_dataset_service(
+    database: _ProtectedDatabase,
+    dataset_updates: dict[str, object] | None = None,
+) -> tuple[PostgresqlProtectedAuthorizationControlService, ProtectedDatasetBinding]:
+    service, dataset = await _registered_dataset_service(database)
+    await service.transition_dataset(
+        _transition_command(
+            dataset,
+            from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+            to_state=ProtectedDatasetState.AUTHORING,
+            revision=1,
+            authored_count=0,
+            review_complete=False,
+        )
+    )
+    result = await service.transition_dataset(
+        _transition_command(
+            dataset,
+            from_state=ProtectedDatasetState.AUTHORING,
+            to_state=ProtectedDatasetState.REVIEW_READY,
+            revision=2,
+            authored_count=40,
+            review_complete=True,
+        )
+    )
+    dataset_binding = dataset.model_copy(
+        update={
+            "state": ProtectedDatasetState.REVIEW_READY,
+            "state_revision": result.effective_revision,
+            "authored_count": 40,
+            "review_complete": True,
+        }
+    )
+    if dataset_updates:
+        admin_engine = create_async_engine(database.url)
+        try:
+            async with admin_engine.begin() as connection:
+                for k, v in dataset_updates.items():
+                    if k == "state":
+                        val = v.value if isinstance(v, ProtectedDatasetState) else v
+                        await connection.execute(
+                            text(f'UPDATE "{database.schema}".protected_dataset SET state = :v WHERE dataset_id = :id'),
+                            {"v": val, "id": dataset.dataset_id},
+                        )
+                    elif k == "authored_count":
+                        await connection.execute(
+                            text(
+                                f'UPDATE "{database.schema}".protected_dataset SET authored_count = :v WHERE dataset_id = :id'
+                            ),
+                            {"v": v, "id": dataset.dataset_id},
+                        )
+                    elif k == "review_complete":
+                        await connection.execute(
+                            text(
+                                f'UPDATE "{database.schema}".protected_dataset SET review_complete = :v WHERE dataset_id = :id'
+                            ),
+                            {"v": v, "id": dataset.dataset_id},
+                        )
+                    elif k == "leakage_axis_intersections":
+                        binding_dict = dataset_binding.model_dump(mode="json")
+                        binding_dict["leakage_axis_intersections"] = list(v) if isinstance(v, (tuple, list)) else v
+                        await connection.execute(
+                            text(
+                                f'UPDATE "{database.schema}".protected_dataset SET binding = CAST(:v AS jsonb) WHERE dataset_id = :id'
+                            ),
+                            {"v": json.dumps(binding_dict), "id": dataset.dataset_id},
+                        )
+        finally:
+            await admin_engine.dispose()
+    return service, dataset_binding
+
+
+async def _freezable_dataset_service(
+    database: _ProtectedDatabase,
+) -> tuple[PostgresqlProtectedAuthorizationControlService, ProtectedDatasetBinding, _DatasetApprovalSource]:
+    service, dataset = await _review_ready_dataset_service(database)
+    evidence = _freeze_evidence(dataset)
+    source = _DatasetApprovalSource(evidence)
+    await service.close()
+    service = _service(database, source)
+    return service, dataset, source
+
+
+async def _load_dataset_in_new_data_session(
+    database: _ProtectedDatabase,
+    dataset: ProtectedDatasetBinding,
+) -> ProtectedDatasetBinding:
+    actor_engine = create_async_engine(_login_url(database, database.actor_login))
+    session_factory = async_sessionmaker(actor_engine)
+    try:
+        async with session_factory() as session:
+            clock = await PostgresqlTrustedClock.from_session(session)
+            entries = await PostgresqlProtectedAuditJournal(session, database.schema, clock)._verified_entries(
+                lock_head=False
+            )
+            row = (
+                await session.execute(
+                    text(
+                        f"""
+                        SELECT dataset_id, dataset_version, binding, manifest_sha256,
+                               protected_artifact_sha256, hmac_key_version, state,
+                               state_revision, authored_count, review_complete
+                        FROM "{database.schema}".protected_dataset
+                        WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version
+                        """
+                    ),
+                    {"dataset_id": dataset.dataset_id, "dataset_version": dataset.dataset_version},
+                )
+            ).one()
+            return _assemble_dataset_binding(
+                binding_value=row.binding,
+                dataset_id=row.dataset_id,
+                dataset_version=row.dataset_version,
+                manifest_sha256=row.manifest_sha256,
+                protected_artifact_sha256=row.protected_artifact_sha256,
+                hmac_key_version=row.hmac_key_version,
+                state=row.state,
+                state_revision=row.state_revision,
+                authored_count=row.authored_count,
+                review_complete=row.review_complete,
+                audit_entries=entries,
+            )
+    finally:
+        await actor_engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("dataset_updates", "expected_reason"),
+    [
+        ({"authored_count": 39}, "FREEZE_EVIDENCE_INCOMPLETE"),
+        ({"review_complete": False}, "FREEZE_EVIDENCE_INCOMPLETE"),
+        ({"leakage_axis_intersections": (1, 0, 0, 0)}, "FREEZE_EVIDENCE_INCOMPLETE"),
+        ({"leakage_axis_intersections": (0, 1, 0, 0)}, "FREEZE_EVIDENCE_INCOMPLETE"),
+        ({"leakage_axis_intersections": (0, 0, 1, 0)}, "FREEZE_EVIDENCE_INCOMPLETE"),
+        ({"leakage_axis_intersections": (0, 0, 0, 1)}, "FREEZE_EVIDENCE_INCOMPLETE"),
+        ({"state": ProtectedDatasetState.AUTHORING}, "DATASET_STATE_MISMATCH"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_freeze_rejects_incomplete_dataset_evidence(
+    protected_database: _ProtectedDatabase,
+    dataset_updates: dict[str, object],
+    expected_reason: str,
+) -> None:
+    service, dataset = await _review_ready_dataset_service(protected_database, dataset_updates)
+    try:
+        with pytest.raises(ProtectedSecurityError) as captured:
+            await service.freeze_dataset(_freeze_command(dataset))
+        assert captured.value.reason_code == expected_reason
+        persisted = await _owner_read_dataset_row(protected_database, dataset.dataset_id, dataset.dataset_version)
+        assert persisted.state != "FROZEN"  # type: ignore[attr-defined]
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_freeze_commits_lifecycle_and_audit_receipt_atomically(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, dataset, source = await _freezable_dataset_service(protected_database)
+    try:
+        command = _freeze_command(dataset, source.evidence)
+        result = await service.freeze_dataset(command)
+        assert result.reason_code == "DATASET_FROZEN"
+        assert result.effective_revision == dataset.state_revision + 1
+        assert result.authorization_audit_event_id is None
+
+        replay = await service.freeze_dataset(command)
+        assert replay == result
+        loaded = await _load_dataset_in_new_data_session(protected_database, dataset)
+        assert loaded.state is ProtectedDatasetState.FROZEN
+        assert loaded.freeze_receipt_ref == OpaqueLogicalRef(
+            namespace=OpaqueRefNamespace.AUDIT_EVENT,
+            value=command.request_id,
+        )
+        assert source.freeze_calls == [command.approval_source_event_id]
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_freeze_audit_failure_rolls_back_without_mutation(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    service, dataset, source = await _freezable_dataset_service(database)
+    command = _freeze_command(dataset, source.evidence)
+    admin_engine = create_async_engine(database.url)
+    original_head: tuple[int, str | None] | None = None
+    try:
+        async with admin_engine.begin() as connection:
+            original_head = tuple(
+                (
+                    await connection.execute(
+                        text(f'''SELECT sequence, entry_sha256 FROM "{database.schema}".audit_head WHERE singleton''')
+                    )
+                ).one()
+            )
+            await connection.execute(
+                text(f'''UPDATE "{database.schema}".audit_head SET entry_sha256 = :digest WHERE singleton'''),
+                {"digest": "f" * 64},
+            )
+
+        with pytest.raises(ProtectedSecurityError, match="AUDIT_HASH_MISMATCH"):
+            await service.freeze_dataset(command)
+
+        persisted = await _owner_read_dataset_row(database, dataset.dataset_id, dataset.dataset_version)
+        assert persisted.state == "REVIEW_READY"  # type: ignore[attr-defined]
+        assert persisted.state_revision == dataset.state_revision  # type: ignore[attr-defined]
+    finally:
+        if original_head is not None:
+            async with admin_engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        f'''UPDATE "{database.schema}".audit_head
+                        SET sequence = :sequence, entry_sha256 = :entry_sha256 WHERE singleton'''
+                    ),
+                    {"sequence": original_head[0], "entry_sha256": original_head[1]},
+                )
+        await admin_engine.dispose()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_freeze_rejects_evidence_mismatch(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, dataset, source = await _freezable_dataset_service(protected_database)
+    original_evidence = source.evidence
+    try:
+        # 1. Missing evidence -> APPROVAL_NOT_VERIFIED
+        source.freeze_evidence = None
+        cmd_missing = _freeze_command(dataset, evidence=None, approval_source_event_id=str(uuid4()))
+        with pytest.raises(ProtectedSecurityError, match="APPROVAL_NOT_VERIFIED"):
+            await service.freeze_dataset(cmd_missing)
+        source.freeze_evidence = original_evidence
+
+        # 2. Mismatched source ID in command -> APPROVAL_EVIDENCE_MISMATCH
+        cmd_mismatch_source = _freeze_command(dataset, original_evidence, approval_source_event_id=str(uuid4()))
+        with pytest.raises(ProtectedSecurityError, match="APPROVAL_EVIDENCE_MISMATCH"):
+            await service.freeze_dataset(cmd_mismatch_source)
+
+        # 3. Mismatched expected raw sha in command -> APPROVAL_EVIDENCE_MISMATCH
+        cmd_mismatch_hash = _freeze_command(dataset, original_evidence, expected_raw_sha256="d" * 64)
+        with pytest.raises(ProtectedSecurityError, match="APPROVAL_EVIDENCE_MISMATCH"):
+            await service.freeze_dataset(cmd_mismatch_hash)
+
+        # 4. Evidence with mismatched dataset_id
+        bad_evidence = _freeze_evidence(dataset, dataset_id=str(uuid4()))
+        source.freeze_evidence = bad_evidence
+        with pytest.raises(ProtectedSecurityError, match="APPROVAL_EVIDENCE_MISMATCH"):
+            await service.freeze_dataset(_freeze_command(dataset, bad_evidence))
+
+        # 5. Evidence with issuer actor == executor actor
+        bad_issuer = _freeze_evidence(
+            dataset,
+            issuer=ProtectedApprovalPrincipal(
+                actor=ActorIdentity(actor_id="synthetic-custodian", namespace="GITHUB_LOGIN"),
+                role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+            ),
+        )
+        source.freeze_evidence = bad_issuer
+        with pytest.raises(ProtectedSecurityError, match="SELF_APPROVAL_DENIED"):
+            await service.freeze_dataset(_freeze_command(dataset, bad_issuer))
+
+        # Ensure dataset was not modified
+        persisted = await _owner_read_dataset_row(protected_database, dataset.dataset_id, dataset.dataset_version)
+        assert persisted.state == "REVIEW_READY"  # type: ignore[attr-defined]
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_freeze_rejects_non_custodian_or_author_overlap(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    admin_engine = create_async_engine(protected_database.url)
+    try:
+        # Update existing DATA identity to have actor = synthetic-custodian (creating author overlap)
+        async with admin_engine.begin() as connection:
+            await connection.execute(
+                text(
+                    f"""
+                    UPDATE "{protected_database.schema}".protected_identity
+                    SET actor_id = 'synthetic-custodian', actor_namespace = 'GITHUB_LOGIN'
+                    WHERE database_login = :login
+                    """
+                ),
+                {"login": protected_database.actor_login},
+            )
+
+        dataset = _dataset_binding()
+        evidence = _freeze_evidence(dataset)
+        source = _DatasetApprovalSource(evidence)
+        service = _service(protected_database, source)
+        try:
+            with pytest.raises(ProtectedSecurityError, match="SELF_APPROVAL_DENIED"):
+                await service.freeze_dataset(_freeze_command(dataset, evidence))
+            assert source.freeze_calls == []
+        finally:
+            await service.close()
+    finally:
+        async with admin_engine.begin() as connection:
+            await connection.execute(
+                text(
+                    f"""
+                    UPDATE "{protected_database.schema}".protected_identity
+                    SET actor_id = 'synthetic-author', actor_namespace = 'SERVICE_IDENTITY'
+                    WHERE database_login = :login
+                    """
+                ),
+                {"login": protected_database.actor_login},
+            )
+        await admin_engine.dispose()
+
+
+async def _dataset_row_count(
+    database: _ProtectedDatabase,
+    command: RegisterDatasetCommand,
+) -> int:
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with admin_engine.connect() as connection:
+            return await connection.scalar(
+                text(
+                    f'''SELECT count(*) FROM "{database.schema}".protected_dataset
+                    WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version'''
+                ),
+                {"dataset_id": command.dataset_id, "dataset_version": command.dataset_version},
+            )
+    finally:
+        await admin_engine.dispose()
+
+
+async def _request_control_audit_count(
+    database: _ProtectedDatabase,
+    request_id: str,
+) -> int:
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with admin_engine.connect() as connection:
+            return await connection.scalar(
+                text(
+                    f'''SELECT count(*) FROM "{database.schema}".audit_entry
+                    WHERE event_id = CAST(:request_id AS uuid)'''
+                ),
+                {"request_id": request_id},
+            )
+    finally:
+        await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_identical_dataset_register_converges_to_one_effect(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    first = _service(protected_database, _DatasetApprovalSource())
+    second = _service(protected_database, _DatasetApprovalSource())
+    command = _register_dataset_command()
+    try:
+        first_result, second_result = await asyncio.gather(
+            first.register_dataset(command),
+            second.register_dataset(command),
+        )
+        assert first_result == second_result
+        assert await _dataset_row_count(protected_database, command) == 1
+        assert await _request_control_audit_count(protected_database, command.request_id) == 1
+    finally:
+        await first.close()
+        await second.close()
+
+
+@pytest.mark.asyncio
+async def test_competing_dataset_transitions_commit_one_winner(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, dataset = await _registered_dataset_service(protected_database)
+    second_service = _service(protected_database, _DatasetApprovalSource())
+    try:
+        cmd1 = _transition_command(
+            dataset,
+            from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+            to_state=ProtectedDatasetState.AUTHORING,
+            revision=1,
+            authored_count=0,
+            review_complete=False,
+        )
+        cmd2 = _transition_command(
+            dataset,
+            from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+            to_state=ProtectedDatasetState.AUTHORING,
+            revision=1,
+            authored_count=0,
+            review_complete=False,
+        )
+        results = await asyncio.gather(
+            service.transition_dataset(cmd1),
+            second_service.transition_dataset(cmd2),
+            return_exceptions=True,
+        )
+        successes = [r for r in results if isinstance(r, ControlCommandResult)]
+        failures = [r for r in results if isinstance(r, ProtectedSecurityError)]
+        assert len(successes) == 1
+        assert len(failures) == 1
+        assert successes[0].reason_code == "DATASET_TRANSITIONED"
+        assert successes[0].effective_revision == 2
+        assert failures[0].reason_code == "DATASET_STATE_MISMATCH"
+
+        persisted = await _owner_read_dataset_row(protected_database, dataset.dataset_id, dataset.dataset_version)
+        assert persisted.state == "AUTHORING"  # type: ignore[attr-defined]
+        assert persisted.state_revision == 2  # type: ignore[attr-defined]
+
+        winner_cmd = cmd1 if results[0] == successes[0] else cmd2
+        loser_cmd = cmd2 if winner_cmd == cmd1 else cmd1
+        assert await _request_control_audit_count(protected_database, winner_cmd.request_id) == 1
+        assert await _request_control_audit_count(protected_database, loser_cmd.request_id) == 1
+    finally:
+        await service.close()
+        await second_service.close()
+
+
+@pytest.mark.asyncio
+async def test_competing_freeze_commits_one_winner_and_replays(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, dataset, source = await _freezable_dataset_service(protected_database)
+    second_service = _service(protected_database, source)
+    try:
+        cmd1 = _freeze_command(dataset, source.evidence)
+        cmd2 = _freeze_command(dataset, source.evidence)
+        results = await asyncio.gather(
+            service.freeze_dataset(cmd1),
+            second_service.freeze_dataset(cmd2),
+            return_exceptions=True,
+        )
+        successes = [r for r in results if isinstance(r, ControlCommandResult)]
+        failures = [r for r in results if isinstance(r, ProtectedSecurityError)]
+        assert len(successes) == 1
+        assert len(failures) == 1
+        assert successes[0].reason_code == "DATASET_FROZEN"
+        assert successes[0].effective_revision == dataset.state_revision + 1
+        assert failures[0].reason_code == "DATASET_STATE_MISMATCH"
+
+        persisted = await _owner_read_dataset_row(protected_database, dataset.dataset_id, dataset.dataset_version)
+        assert persisted.state == "FROZEN"  # type: ignore[attr-defined]
+        assert persisted.state_revision == dataset.state_revision + 1  # type: ignore[attr-defined]
+
+        winner_cmd = cmd1 if results[0] == successes[0] else cmd2
+        replay = await service.freeze_dataset(winner_cmd)
+        assert replay == successes[0]
+    finally:
+        await service.close()
+        await second_service.close()
+
+
+@pytest.mark.asyncio
+async def test_dataset_transition_refreshes_database_time_after_waiting_for_lock(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, dataset = await _registered_dataset_service(protected_database)
+    lock_engine = create_async_engine(protected_database.url)
+    try:
+        command = _transition_command(
+            dataset,
+            from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+            to_state=ProtectedDatasetState.AUTHORING,
+            revision=1,
+            authored_count=0,
+            review_complete=False,
+        )
+        async with lock_engine.connect() as connection:
+            transaction = await connection.begin()
+            await connection.execute(
+                text(
+                    f'''SELECT dataset_id FROM "{protected_database.schema}".protected_dataset
+                    WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version FOR UPDATE'''
+                ),
+                {"dataset_id": dataset.dataset_id, "dataset_version": dataset.dataset_version},
+            )
+            pending = asyncio.create_task(service.transition_dataset(command))
+            await asyncio.sleep(0.5)
+            lock_release_time = await connection.scalar(text("SELECT clock_timestamp()"))
+            await transaction.commit()
+            result = await pending
+            assert result.reason_code == "DATASET_TRANSITIONED"
+
+            admin_engine = create_async_engine(protected_database.url)
+            try:
+                async with admin_engine.connect() as admin_conn:
+                    recorded_at = await admin_conn.scalar(
+                        text(
+                            f'''SELECT recorded_at FROM "{protected_database.schema}".audit_entry
+                            WHERE event_id = CAST(:request_id AS uuid)'''
+                        ),
+                        {"request_id": command.request_id},
+                    )
+                assert recorded_at is not None
+                assert recorded_at >= lock_release_time
+            finally:
+                await admin_engine.dispose()
+    finally:
+        await lock_engine.dispose()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_dataset_freeze_policy_denial_commits_once_without_mutation(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, dataset, source = await _freezable_dataset_service(protected_database)
+    try:
+        command = _freeze_command(dataset, source.evidence, expected_raw_sha256="0" * 64)
+        for _ in range(2):
+            with pytest.raises(ProtectedSecurityError, match="APPROVAL_EVIDENCE_MISMATCH"):
+                await service.freeze_dataset(command)
+
+        persisted = await _owner_read_dataset_row(protected_database, dataset.dataset_id, dataset.dataset_version)
+        assert persisted.state == "REVIEW_READY"  # type: ignore[attr-defined]
+        assert persisted.state_revision == dataset.state_revision  # type: ignore[attr-defined]
+
+        admin_engine = create_async_engine(protected_database.url)
+        try:
+            async with admin_engine.connect() as connection:
+                denial_count = await connection.scalar(
+                    text(
+                        f'''SELECT count(*) FROM "{protected_database.schema}".audit_entry
+                        WHERE event_id = CAST(:request_id AS uuid)
+                          AND entry_body->>'outcome' = 'DENIED'
+                          AND entry_body->>'reason_code' = 'APPROVAL_EVIDENCE_MISMATCH' '''
+                    ),
+                    {"request_id": command.request_id},
+                )
+                assert denial_count == 1
+        finally:
+            await admin_engine.dispose()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_dataset_transition_internal_failure_rolls_back_without_policy_denial_audit(
+    protected_database: _ProtectedDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, dataset = await _registered_dataset_service(protected_database)
+    try:
+
+        async def fail_check_dataset_transition(
+            self_session: control_adapter._ControlSession,
+            candidate: TransitionDatasetCommand,
+        ) -> ProtectedAuditReason | None:
+            del self_session, candidate
+            raise ProtectedSecurityError("INTERNAL_ERROR")
+
+        monkeypatch.setattr(
+            control_adapter._ControlSession,
+            "check_dataset_transition",
+            fail_check_dataset_transition,
+        )
+        command = _transition_command(
+            dataset,
+            from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+            to_state=ProtectedDatasetState.AUTHORING,
+            revision=1,
+            authored_count=0,
+            review_complete=False,
+        )
+        with pytest.raises(ProtectedSecurityError, match="^INTERNAL_ERROR$"):
+            await service.transition_dataset(command)
+
+        persisted = await _owner_read_dataset_row(protected_database, dataset.dataset_id, dataset.dataset_version)
+        assert persisted.state == "ACCESS_AUTHORIZED"  # type: ignore[attr-defined]
+        assert persisted.state_revision == 1  # type: ignore[attr-defined]
+
+        assert await _request_control_audit_count(protected_database, command.request_id) == 0
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_dataset_transition_denied_replay_returns_fixed_error_without_duplicate_audit(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, dataset = await _registered_dataset_service(protected_database)
+    try:
+        command = _transition_command(
+            dataset,
+            from_state=ProtectedDatasetState.REVIEW_READY,
+            to_state=ProtectedDatasetState.AUTHORING,
+            revision=99,
+            authored_count=0,
+            review_complete=False,
+        )
+        with pytest.raises(ProtectedSecurityError) as exc_info1:
+            await service.transition_dataset(command)
+        assert exc_info1.value.reason_code == "DATASET_STATE_MISMATCH"
+
+        with pytest.raises(ProtectedSecurityError) as exc_info2:
+            await service.transition_dataset(command)
+        assert exc_info2.value.reason_code == "DATASET_STATE_MISMATCH"
+
+        assert await _request_control_audit_count(protected_database, command.request_id) == 1
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_dataset_command_conflict_rejects_payload_mutation_on_same_request_id(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, dataset = await _registered_dataset_service(protected_database)
+    try:
+        shared_request_id = str(uuid4())
+        cmd1 = _transition_command(
+            dataset,
+            request_id=shared_request_id,
+            from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+            to_state=ProtectedDatasetState.AUTHORING,
+            revision=1,
+            authored_count=0,
+            review_complete=False,
+        )
+        result1 = await service.transition_dataset(cmd1)
+        assert result1.reason_code == "DATASET_TRANSITIONED"
+
+        cmd2 = _transition_command(
+            dataset,
+            request_id=shared_request_id,
+            from_state=ProtectedDatasetState.AUTHORING,
+            to_state=ProtectedDatasetState.REVIEW_READY,
+            revision=2,
+            authored_count=40,
+            review_complete=True,
+        )
+        with pytest.raises(ProtectedSecurityError, match="CONTROL_COMMAND_CONFLICT"):
+            await service.transition_dataset(cmd2)
+
+        persisted = await _owner_read_dataset_row(protected_database, dataset.dataset_id, dataset.dataset_version)
+        assert persisted.state == "AUTHORING"  # type: ignore[attr-defined]
+        assert persisted.state_revision == 2  # type: ignore[attr-defined]
+
+        assert await _request_control_audit_count(protected_database, shared_request_id) == 1
+    finally:
+        await service.close()
+
+
+async def _wait_for_blocked_by(
+    admin_engine: AsyncEngine,
+    blocking_pids: int | tuple[int, ...] | None = None,
+    *,
+    blocking_pid: int | None = None,
+    exclude_pids: tuple[int, ...] = (),
+    timeout: float = 10.0,
+) -> int:
+    target = blocking_pids if blocking_pids is not None else blocking_pid
+    assert target is not None
+    blockers = (target,) if isinstance(target, int) else target
+
+    async def _probe() -> int:
+        while True:
+            async with admin_engine.connect() as conn:
+                waiting_pids = await conn.scalars(
+                    text(
+                        "SELECT pid FROM pg_stat_activity "
+                        "WHERE EXISTS ("
+                        "   SELECT 1 FROM unnest(pg_blocking_pids(pg_stat_activity.pid)) AS b(pid) "
+                        "   WHERE b.pid = ANY(:blockers)"
+                        ") "
+                        "AND wait_event_type = 'Lock' "
+                        "ORDER BY pid"
+                    ),
+                    {"blockers": list(blockers)},
+                )
+                for pid in waiting_pids:
+                    if pid not in exclude_pids:
+                        is_waiting = await conn.scalar(
+                            text("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE NOT granted AND pid = :pid)"),
+                            {"pid": pid},
+                        )
+                        if is_waiting:
+                            return int(pid)
+            await asyncio.sleep(0.01)
+
+    return await asyncio.wait_for(_probe(), timeout=timeout)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_grant_and_dataset_transition_deadlock_prevention(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    dataset_uuid = str(uuid4())
+    dataset = _dataset_binding(
+        dataset_id=dataset_uuid,
+        state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+        state_revision=1,
+    )
+    await _insert_dataset(database, dataset)
+    now = datetime.now(UTC)
+    grant = ProtectedAuthorizationGrant(
+        grant_id=str(uuid4()),
+        revision=1,
+        subject=ProtectedPrincipal(
+            actor=ActorIdentity(actor_id="synthetic-author", namespace="SERVICE_IDENTITY"),
+            role=ProtectedPrincipalRole.HOLDOUT_AUTHOR,
+        ),
+        dataset_id=dataset.dataset_id,
+        dataset_version=dataset.dataset_version,
+        manifest_sha256=dataset.manifest_sha256,
+        protected_artifact_sha256=dataset.protected_artifact_sha256,
+        hmac_key_version=dataset.hmac_key_version,
+        actions=(ProtectedAction.READ, ProtectedAction.WRITE),
+        issuer=ProtectedApprovalPrincipal(
+            actor=ActorIdentity(actor_id="synthetic-custodian", namespace="GITHUB_LOGIN"),
+            role=ProtectedApprovalRole.DATASET_CUSTODIAN,
+        ),
+        control_implementation=ControlImplementationBinding(
+            commit_oid="3" * 40,
+            artifact_sha256="4" * 64,
+            participants=(ActorIdentity(actor_id="synthetic-implementer", namespace="GITHUB_LOGIN"),),
+        ),
+        approval_source_event_id=f"grant-approval-{uuid4()}",
+        approval_source_raw_sha256="5" * 64,
+        valid_from=now - timedelta(minutes=20),
+        expires_at=now + timedelta(minutes=10),
+    )
+    evidence = _evidence(
+        grant.approval_source_event_id,
+        grant.approval_source_raw_sha256,
+        grant=grant,
+    )
+    source = _ApprovalSource(evidence)
+    grant_service = _service(database, source)
+    custodian_service = _service(database, _DatasetApprovalSource())
+    admin_engine = create_async_engine(database.url)
+    aux_engine = create_async_engine(database.url)
+    tasks: list[asyncio.Task[object]] = []
+    try:
+        await grant_service.ingest_approval(
+            IngestApprovalCommand(
+                request_id=str(uuid4()),
+                source_event_id=evidence.source_event_id,
+                expected_raw_sha256=evidence.canonical_raw_sha256,
+            )
+        )
+        transition_cmd = _transition_command(
+            dataset,
+            from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+            to_state=ProtectedDatasetState.AUTHORING,
+            revision=1,
+            authored_count=0,
+            review_complete=False,
+        )
+        grant_cmd = GrantAuthorizationCommand(
+            request_id=str(uuid4()),
+            grant=grant,
+            expected_dataset_state_revision=dataset.state_revision,
+        )
+
+        async with aux_engine.connect() as aux_conn:
+            aux_trans = await aux_conn.begin()
+            try:
+                aux_pid = await aux_conn.scalar(text("SELECT pg_backend_pid()"))
+                # Pre-lock protected_dataset for this dataset in aux transaction
+                await aux_conn.execute(
+                    text(
+                        f'''SELECT dataset_id FROM "{database.schema}".protected_dataset
+                        WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version FOR UPDATE'''
+                    ),
+                    {"dataset_id": dataset.dataset_id, "dataset_version": dataset.dataset_version},
+                )
+
+                # Start transition task
+                task_trans = asyncio.create_task(custodian_service.transition_dataset(transition_cmd))
+                tasks.append(task_trans)
+                # Wait until transition task is blocked on protected_dataset
+                trans_pid = await _wait_for_blocked_by(admin_engine, blocking_pid=aux_pid)
+
+                # Start grant task
+                task_grant = asyncio.create_task(grant_service.grant(grant_cmd))
+                tasks.append(task_grant)
+                # Wait until grant task is also queued waiting for protected_dataset (excluding trans_pid)
+                grant_pid = await _wait_for_blocked_by(
+                    admin_engine, blocking_pids=(aux_pid, trans_pid), exclude_pids=(trans_pid,)
+                )
+
+                assert trans_pid != grant_pid
+                assert trans_pid != aux_pid
+                assert grant_pid != aux_pid
+            finally:
+                # Release aux lock so both commands contend in aligned lock order
+                await aux_trans.rollback()
+
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Assert NO deadlock (40P01) occurred
+            for r in results:
+                if isinstance(r, Exception):
+                    assert "40P01" not in str(r)
+
+            successes = [r for r in results if isinstance(r, ControlCommandResult)]
+            assert len(successes) >= 1
+    finally:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await aux_engine.dispose()
+        await admin_engine.dispose()
+        await grant_service.close()
+        await custodian_service.close()

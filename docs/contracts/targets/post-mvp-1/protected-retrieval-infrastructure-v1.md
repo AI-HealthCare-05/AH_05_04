@@ -54,13 +54,13 @@ Command/결과/audit 필드, 승인자 분리, lock order는
 - 최소 권한 확장: `protected_identity` INSERT 및 `enabled` UPDATE, `protected_dataset` INSERT 및 lifecycle 컬럼 UPDATE
 - 음성 테스트 보존: identity/dataset 불변 식별자·해시 UPDATE 거부 단언 및 data-plane envelope/capability/OPERATION 감사 격리 단언 유지
 
-## 미구현 범위 및 활성화 상태
+## 구현 완료 및 남은 범위
 
-- C2-a Identity control-plane Application Service 구현
-- C2-b Dataset lifecycle 및 FREEZE Application Service 구현
-- production trusted approval source connector와 protected 환경 provisioning (`EXT-PRIV-001`)
+- C2-a Identity control-plane Application Service 구현: #512(#522) 병합으로 구현 완료
+- C2-b Dataset lifecycle 및 FREEZE Application Service 구현: #513 구현 완료 (Freeze receipt는 성공한 `DATASET_FROZEN` CONTROL 감사 이벤트 식별자를 참조)
+- production trusted approval source connector와 protected 환경 provisioning (`EXT-PRIV-001`): 미구현 / unprovisioned
 
-위 범위는 C2 구현 Issue 및 외부 gate로 남는다. Issue #368은 Open이며 이 계약은 `current/`로 승격하지 않는다.
+위 production connector 및 protected 환경 provisioning은 외부 gate로 남는다. Issue #368은 Open이며 이 계약은 `current/`로 승격하지 않고 `targets/` 상태를 유지한다.
 
 ## 활성화 상태
 
@@ -70,6 +70,7 @@ Command/결과/audit 필드, 승인자 분리, lock order는
 - HOLDOUT authored: `0`
 - Freeze/Runner execution: blocked
 - Disposal: `BLOCKED_BY_ISSUE_425`
+- Production approval source and protected environment: unprovisioned
 - Production/publication: blocked by `EXT-PRIV-001` and the Track F external gate
 
 Issue #425의 disposal audit 계약은 실제 폐기 활성화 조건이지만, 이 data-plane 부분 구현의 선행조건은 아니다.
@@ -77,4 +78,4 @@ Issue #425의 disposal audit 계약은 실제 폐기 활성화 조건이지만, 
 ## 책임 검토
 
 - 구현: 정현우 (`@ceohwj`)
-- 책임 리뷰: 권가빈 (`@hazelnutflavoured`) — 단일 책임 리뷰어 (Product·Privacy·Safety·Evaluation, command 계약 및 권한 확장 타당성)
+- 책임 리뷰: 김지혜 (`@Jye-rookie`) — 단일 책임 리뷰어 (Worker·OCR, Track F Dataset Custodian 독립 승인 및 command 계약·최소 권한 확장 타당성)

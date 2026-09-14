@@ -148,7 +148,7 @@ def test_blank_and_partial_rows_remain_visible_and_make_whole_input_ineligible()
     assert not result.eligible_for_mapping
     assert result.input_count == 3
     assert len(result.observations) == 1
-    assert [row.reason for row in result.exclusions] == ["EMPTY_COMPONENT_FIELDS", "INVALID_COMPONENT_FIELDS"]
+    assert [row.reason for row in result.exclusions] == ["EMPTY_COMPONENT_FIELDS", "MISSING_COMPONENT_QUANTITY"]
     assert [json.loads(row.record_json) for row in result.exclusions] == [blank, partial]
     assert "synthetic-empty" not in repr(result.exclusions)
 
@@ -179,7 +179,7 @@ def test_blank_rows_never_become_observations_or_components():
 @pytest.mark.parametrize(
     ("extra_row", "expected_reason"),
     (
-        (dict(record(), QNT=None), "INVALID_COMPONENT_FIELDS"),
+        (dict(record(), QNT=None), "MISSING_COMPONENT_QUANTITY"),
         (dict(record(), QNT="020.00"), "CONFLICTING_OBSERVATION"),
     ),
 )
@@ -190,6 +190,42 @@ def test_integrity_violations_still_block_the_whole_input_next_to_blank_rows(ext
     assert not result.eligible_for_mapping
     assert [row.reason for row in result.blocking_exclusions] == [expected_reason]
     assert result.has_excluded_empty_components
+
+
+def test_quantity_only_gap_is_separated_from_key_damage_but_still_blocks():
+    """#166: 분량만 누락된 행과 identity 필드가 손상된 행을 구분하되 둘 다 차단한다."""
+    quantity_gap = dict(record(), QNT=None)
+    key_damage = dict(record(), MTRAL_SN=None)
+
+    result = inspect_mfds_component_rows((record(), quantity_gap, key_damage))
+
+    assert not result.eligible_for_mapping
+    assert [row.reason for row in result.exclusions] == [
+        "MISSING_COMPONENT_QUANTITY",
+        "INVALID_COMPONENT_KEY_FIELDS",
+    ]
+    assert len(result.missing_quantity_exclusions) == 1
+    assert json.loads(result.missing_quantity_exclusions[0].record_json) == quantity_gap
+    # 분량 누락도 차단 사유로 남는다. 부분 Catalog는 별도 계약 없이 허용하지 않는다.
+    assert len(result.blocking_exclusions) == 2
+
+
+@pytest.mark.parametrize("damaged_field", ["TAMT_SEQ", "MTRAL_SN", "MTRAL_CODE", "INGD_UNIT_CD"])
+def test_identity_field_damage_is_not_reported_as_a_quantity_gap(damaged_field):
+    result = inspect_mfds_component_rows((dict(record(), **{damaged_field: None}),))
+
+    assert result.exclusions[0].reason == "INVALID_COMPONENT_KEY_FIELDS"
+    assert not result.missing_quantity_exclusions
+
+
+def test_exclusion_counts_are_reported_by_reason():
+    blank = {"ITEM_SEQ": "synthetic-empty", "MTRAL_CODE": None}
+    result = inspect_mfds_component_rows((record(), blank, dict(record(), QNT=None)))
+
+    assert result.exclusion_counts_by_reason == {
+        "EMPTY_COMPONENT_FIELDS": 1,
+        "MISSING_COMPONENT_QUANTITY": 1,
+    }
 
 
 def test_input_without_blank_rows_is_not_marked_partial():
@@ -223,7 +259,7 @@ def test_missing_product_identity_is_not_classified_as_an_empty_component(item_s
     result = inspect_mfds_component_rows((row,))
     assert not result.eligible_for_mapping
     assert not result.observations
-    assert result.exclusions[0].reason == "INVALID_COMPONENT_FIELDS"
+    assert result.exclusions[0].reason == "INVALID_COMPONENT_KEY_FIELDS"
     assert json.loads(result.exclusions[0].record_json) == row
 
 

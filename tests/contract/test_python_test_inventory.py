@@ -197,6 +197,58 @@ def test_python_test_inventory_rejects_unsupported_pytest_options(tmp_path: Path
     assert "backend/app" in result.stderr
 
 
+def test_python_test_inventory_rejects_duplicate_targets_in_one_execution_config(tmp_path: Path) -> None:
+    workflow = tmp_path / ".github" / "workflows" / "checks.yml"
+    runner = tmp_path / "scripts" / "ci" / "run_test.sh"
+    workflow.parent.mkdir(parents=True)
+    runner.parent.mkdir(parents=True, exist_ok=True)
+    duplicate_command = "uv run pytest backend/app backend/app"
+    workflow.write_text(
+        f"jobs:\n  fake:\n    steps:\n      - run: {duplicate_command}\n",
+        encoding="utf-8",
+    )
+    runner.write_text(f"{duplicate_command}\n", encoding="utf-8")
+
+    result = _run_inventory_check(tmp_path)
+
+    assert result.returncode == 1
+    assert "Duplicate Python test targets in .github/workflows/checks.yml:" in result.stderr
+    assert "backend/app" in result.stderr
+
+
+def test_python_test_inventory_rejects_one_test_collected_by_multiple_ci_lanes() -> None:
+    duplicate_test_lane_errors = runpy.run_path(str(INVENTORY_CHECKER))["_duplicate_test_lane_errors"]
+
+    errors = duplicate_test_lane_errors(
+        {Path("backend/app/tests/test_duplicate.py")},
+        {
+            "test-backend": ["backend/app"],
+            "test-contract": ["backend/app/tests/test_duplicate.py"],
+        },
+    )
+
+    assert errors == [
+        "Python tests collected by multiple GitHub Actions lanes:\n"
+        "  backend/app/tests/test_duplicate.py: test-backend, test-contract"
+    ]
+
+
+def test_python_test_inventory_allows_overlapping_targets_inside_one_ci_lane() -> None:
+    duplicate_test_lane_errors = runpy.run_path(str(INVENTORY_CHECKER))["_duplicate_test_lane_errors"]
+
+    errors = duplicate_test_lane_errors(
+        {Path("tests/integration/rag/test_source_cleanup_workflow.py")},
+        {
+            "test-backend": [
+                "tests/integration/rag",
+                "tests/integration/rag/test_source_cleanup_workflow.py",
+            ]
+        },
+    )
+
+    assert errors == []
+
+
 def test_python_test_inventory_rejects_pytest_addopts_from_every_configuration(tmp_path: Path) -> None:
     workflow = tmp_path / ".github" / "workflows" / "checks.yml"
     runner = tmp_path / "scripts" / "ci" / "run_test.sh"
