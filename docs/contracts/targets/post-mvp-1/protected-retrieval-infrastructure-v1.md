@@ -78,4 +78,4 @@ Issue #425의 disposal audit 계약은 실제 폐기 활성화 조건이지만, 
 ## 책임 검토
 
 - 구현: 정현우 (`@ceohwj`)
-- 책임 리뷰: 권가빈 (`@hazelnutflavoured`) — 단일 책임 리뷰어 (Product·Privacy·Safety·Evaluation, command 계약 및 권한 확장 타당성)
+- 책임 리뷰: 김지혜 (`@Jye-rookie`) — 단일 책임 리뷰어 (Worker·OCR, Track F Dataset Custodian 독립 승인 및 command 계약·최소 권한 확장 타당성)
