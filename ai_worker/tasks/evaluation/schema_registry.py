@@ -26,6 +26,10 @@ from ai_worker.tasks.evaluation.schemas.authoring_v1_2 import (
     ProtectedArtifactReceiptV12,
 )
 from ai_worker.tasks.evaluation.schemas.authoring_v1_3 import DatasetManifestV13
+from ai_worker.tasks.evaluation.schemas.grounding_v1 import (
+    CLAIM_CITATION_OBSERVATION_ADAPTER,
+    GROUNDING_SIGNAL_ADAPTER,
+)
 from ai_worker.tasks.evaluation.schemas.policy import (
     ComparisonPolicy,
     EvaluationPolicy,
@@ -217,16 +221,31 @@ SCHEMA_REGISTRY_V1_3: tuple[SchemaRegistryEntry, ...] = (
     ),
 )
 
+SCHEMA_REGISTRY_V1_4: tuple[SchemaRegistryEntry, ...] = (
+    *SCHEMA_REGISTRY_V1_3,
+    SchemaRegistryEntry(
+        "artifacts/rag-eval.claim-citation-observation.schema.json",
+        "rag-eval.claim-citation-observation",
+        CLAIM_CITATION_OBSERVATION_ADAPTER,
+    ),
+    SchemaRegistryEntry(
+        "artifacts/rag-eval.grounding-signal.schema.json",
+        "rag-eval.grounding-signal",
+        GROUNDING_SIGNAL_ADAPTER,
+    ),
+)
+
 SCHEMA_REGISTRIES = MappingProxyType(
     {
         "1.0.0": SCHEMA_REGISTRY,
         "1.1.0": SCHEMA_REGISTRY_V1_1,
         "1.2.0": SCHEMA_REGISTRY_V1_2,
         "1.3.0": SCHEMA_REGISTRY_V1_3,
+        "1.4.0": SCHEMA_REGISTRY_V1_4,
     }
 )
 
-_SCHEMA_SET_MEMBER_COUNTS = {"1.0.0": 18, "1.1.0": 18, "1.2.0": 18, "1.3.0": 21}
+_SCHEMA_SET_MEMBER_COUNTS = {"1.0.0": 18, "1.1.0": 18, "1.2.0": 18, "1.3.0": 21, "1.4.0": 23}
 
 for schema_set_version, registry in SCHEMA_REGISTRIES.items():
     expected_count = _SCHEMA_SET_MEMBER_COUNTS[schema_set_version]

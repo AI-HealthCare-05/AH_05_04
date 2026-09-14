@@ -125,6 +125,200 @@ def _add_run_conditions(document: dict[str, JsonValue]) -> None:
     )
 
 
+def _claims_with_citation_properties(properties: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    return {
+        "items": {
+            "properties": {
+                "citations": {
+                    "items": {
+                        "properties": properties,
+                    }
+                }
+            }
+        }
+    }
+
+
+def _add_claim_citation_observation_conditions(document: dict[str, JsonValue]) -> None:
+    definitions = document.get("$defs")
+    if not isinstance(definitions, dict):
+        raise TypeError("claim-citation observation definitions must be an object")
+    citation = definitions.get("CitationEdgeObservation")
+    claim = definitions.get("ClaimObservation")
+    if not isinstance(citation, dict) or not isinstance(claim, dict):
+        raise TypeError("claim-citation observation definitions are incomplete")
+
+    citation["allOf"] = [
+        {
+            "if": {"properties": {"accepted": {"const": True}}, "required": ["accepted"]},
+            "then": {"properties": {"validation_reason_code": {"type": "null"}}},
+            "else": {"properties": {"validation_reason_code": {"not": {"type": "null"}}}},
+        },
+        {
+            "if": {"properties": {"authorized": {"const": True}}, "required": ["authorized"]},
+            "then": {
+                "properties": {
+                    "authorization_reason_code": {"type": "null"},
+                    "authorization_selection_sha256": {"not": {"type": "null"}},
+                }
+            },
+            "else": {
+                "properties": {
+                    "authorization_reason_code": {"not": {"type": "null"}},
+                    "authorization_selection_sha256": {"type": "null"},
+                }
+            },
+        },
+    ]
+    claim["allOf"] = [
+        {
+            "if": {
+                "properties": {"criticality_source": {"const": "APPROVED_REVIEW"}},
+                "required": ["criticality_source"],
+            },
+            "then": {"properties": {"criticality_review_ref": {"not": {"type": "null"}}}},
+            "else": {"properties": {"criticality_review_ref": {"type": "null"}}},
+        }
+    ]
+
+    conditions = document.setdefault("allOf", [])
+    if not isinstance(conditions, list):
+        raise TypeError("claim-citation observation allOf must be an array")
+    validation_states: tuple[tuple[str, dict[str, JsonValue]], ...] = (
+        (
+            "VALIDATED",
+            {
+                "validation_execution_status": {"const": "EVALUATED"},
+                "validation_reason_codes": {"maxItems": 0},
+                "validated_selection_sha256": {"not": {"type": "null"}},
+            },
+        ),
+        (
+            "REJECTED",
+            {
+                "validation_reason_codes": {"minItems": 1},
+                "validated_selection_sha256": {"type": "null"},
+            },
+        ),
+    )
+    for validation_decision, properties in validation_states:
+        conditions.append(
+            {
+                "if": {
+                    "properties": {"validation_decision": {"const": validation_decision}},
+                    "required": ["validation_decision"],
+                },
+                "then": {"properties": properties},
+            }
+        )
+
+    authorization_states: tuple[tuple[str | None, dict[str, JsonValue]], ...] = (
+        (
+            "AUTHORIZED",
+            {
+                "authorization_reason_codes": {"maxItems": 0},
+                "authorization_receipt_ref": {"not": {"type": "null"}},
+                "authorization_receipt_sha256": {"not": {"type": "null"}},
+                "claims": _claims_with_citation_properties({"authorized": {"const": True}}),
+            },
+        ),
+        (
+            "REJECTED",
+            {
+                "authorization_reason_codes": {"minItems": 1},
+                "authorization_receipt_ref": {"type": "null"},
+                "authorization_receipt_sha256": {"type": "null"},
+                "claims": _claims_with_citation_properties({"authorized": {"const": False}}),
+            },
+        ),
+        (
+            None,
+            {
+                "authorization_reason_codes": {"maxItems": 0},
+                "authorization_receipt_ref": {"type": "null"},
+                "authorization_receipt_sha256": {"type": "null"},
+                "claims": {"items": {"properties": {"citations": {"maxItems": 0}}}},
+            },
+        ),
+    )
+    for authorization_decision, properties in authorization_states:
+        decision_schema: dict[str, JsonValue] = (
+            {"const": authorization_decision} if authorization_decision is not None else {"type": "null"}
+        )
+        conditions.append(
+            {
+                "if": {
+                    "properties": {"authorization_decision": decision_schema},
+                    "required": ["authorization_decision"],
+                },
+                "then": {"properties": properties},
+            }
+        )
+    conditions.append(
+        {
+            "if": {
+                "properties": {"authorization_decision": {"not": {"type": "null"}}},
+                "required": ["authorization_decision"],
+            },
+            "then": {
+                "properties": {
+                    "claims": {
+                        "contains": {
+                            "properties": {"citations": {"minItems": 1}},
+                            "required": ["citations"],
+                        }
+                    }
+                }
+            },
+        }
+    )
+
+
+def _add_grounding_signal_conditions(document: dict[str, JsonValue]) -> None:
+    conditions = document.setdefault("allOf", [])
+    if not isinstance(conditions, list):
+        raise TypeError("grounding signal allOf must be an array")
+    conditions.extend(
+        [
+            {
+                "if": {
+                    "properties": {"status": {"const": "EVALUATED"}},
+                    "required": ["status"],
+                },
+                "then": {
+                    "properties": {
+                        "answer_sha256": {"not": {"type": "null"}},
+                        "observation_ref": {"not": {"type": "null"}},
+                        "observation_sha256": {"not": {"type": "null"}},
+                    }
+                },
+            },
+            {
+                "if": {
+                    "properties": {"status": {"const": "NOT_APPLICABLE_NO_CLAIMS"}},
+                    "required": ["status"],
+                },
+                "then": {
+                    "properties": {
+                        "answer_sha256": {"type": "null"},
+                        "observation_ref": {"type": "null"},
+                        "observation_sha256": {"type": "null"},
+                        "critical_unsupported_claim": {"const": False},
+                        "uncited_medical_claim": {"const": False},
+                        "source_binding_misuse": {"const": False},
+                    }
+                },
+            },
+        ]
+    )
+
+
+_GROUNDING_CONDITION_ADDERS = {
+    "rag-eval.claim-citation-observation": _add_claim_citation_observation_conditions,
+    "rag-eval.grounding-signal": _add_grounding_signal_conditions,
+}
+
+
 def _add_receipt_outcomes(document: dict[str, JsonValue]) -> None:
     document["oneOf"] = [
         {
@@ -981,6 +1175,9 @@ def _schema_document(entry: SchemaRegistryEntry) -> dict[str, JsonValue]:
         _add_evidence_target_condition(document)
     if schema_id == "rag-eval.run":
         _add_run_conditions(document)
+    grounding_condition_adder = _GROUNDING_CONDITION_ADDERS.get(schema_id)
+    if grounding_condition_adder is not None:
+        grounding_condition_adder(document)
     if schema_id == "rag-eval.validation-receipt":
         _add_receipt_outcomes(document)
     if schema_id == "rag-eval.metrics":
