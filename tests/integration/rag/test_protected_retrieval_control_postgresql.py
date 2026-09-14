@@ -39,10 +39,13 @@ from ai_worker.tasks.evaluation.protected_retrieval_control import (
     ApprovalSourceNotFoundError,
     DisableIdentityCommand,
     ExpireAuthorizationCommand,
+    FreezeApprovalSourceEvidence,
     GrantAuthorizationCommand,
     IngestApprovalCommand,
+    RegisterDatasetCommand,
     RegisterIdentityCommand,
     RevokeAuthorizationCommand,
+    TransitionDatasetCommand,
 )
 from tests.migration.test_protected_retrieval_migration import _login_url, _ProtectedDatabase
 
@@ -58,11 +61,19 @@ class _ApprovalSource:
         self.calls.append(source_event_id)
         return self.evidence
 
+    async def fetch_freeze(self, source_event_id: str) -> FreezeApprovalSourceEvidence:
+        del source_event_id
+        raise ApprovalSourceNotFoundError
+
 
 class _FailingApprovalSource:
     async def fetch(self, source_event_id: str) -> ApprovalSourceEvidence:
         del source_event_id
         raise RuntimeError("synthetic connector detail that must not escape")
+
+    async def fetch_freeze(self, source_event_id: str) -> FreezeApprovalSourceEvidence:
+        del source_event_id
+        raise ApprovalSourceNotFoundError
 
 
 class _MissingApprovalSource:
@@ -72,6 +83,26 @@ class _MissingApprovalSource:
     async def fetch(self, source_event_id: str) -> ApprovalSourceEvidence:
         self.calls.append(source_event_id)
         raise ApprovalSourceNotFoundError
+
+    async def fetch_freeze(self, source_event_id: str) -> FreezeApprovalSourceEvidence:
+        self.calls.append(source_event_id)
+        raise ApprovalSourceNotFoundError
+
+
+class _DatasetApprovalSource:
+    def __init__(self, freeze_evidence: FreezeApprovalSourceEvidence | None = None) -> None:
+        self.freeze_evidence = freeze_evidence
+        self.freeze_calls: list[str] = []
+
+    async def fetch(self, source_event_id: str) -> ApprovalSourceEvidence:
+        del source_event_id
+        raise ApprovalSourceNotFoundError
+
+    async def fetch_freeze(self, source_event_id: str) -> FreezeApprovalSourceEvidence:
+        self.freeze_calls.append(source_event_id)
+        if self.freeze_evidence is None:
+            raise ApprovalSourceNotFoundError
+        return self.freeze_evidence
 
 
 def _evidence(
@@ -304,7 +335,7 @@ async def _insert_grant(
 
 def _service(
     database: _ProtectedDatabase,
-    source: _ApprovalSource | _FailingApprovalSource | _MissingApprovalSource,
+    source: _ApprovalSource | _FailingApprovalSource | _MissingApprovalSource | _DatasetApprovalSource,
     *,
     login: str | None = None,
 ) -> PostgresqlProtectedAuthorizationControlService:
@@ -1286,11 +1317,13 @@ async def test_grant_audit_failure_leaves_no_mutation(
             )
         )
         async with admin_engine.begin() as connection:
-            original_head = (
-                await connection.execute(
-                    text(f'''SELECT sequence, entry_sha256 FROM "{database.schema}".audit_head WHERE singleton''')
-                )
-            ).one()
+            original_head = tuple(
+                (
+                    await connection.execute(
+                        text(f'''SELECT sequence, entry_sha256 FROM "{database.schema}".audit_head WHERE singleton''')
+                    )
+                ).one()
+            )
             await connection.execute(
                 text(f'''UPDATE "{database.schema}".audit_head SET entry_sha256 = :digest WHERE singleton'''),
                 {"digest": "f" * 64},
@@ -1563,3 +1596,321 @@ async def test_register_and_disable_identity_lifecycle(
         async with admin_engine.begin() as connection:
             await connection.exec_driver_sql(f'DROP ROLE IF EXISTS "{reviewer_login}"')
         await admin_engine.dispose()
+
+
+class _FailIfConnectedEngine:
+    def __getattr__(self, name: str) -> object:
+        pytest.fail(f"Database was accessed via {name} during preflight rejection")
+
+
+def _dataset_binding(**updates: object) -> ProtectedDatasetBinding:
+    base: dict[str, object] = {
+        "dataset_id": str(uuid4()),
+        "dataset_version": "1.0.0",
+        "manifest_sha256": "a" * 64,
+        "protected_artifact_sha256": "b" * 64,
+        "hmac_key_version": "v1",
+        "state": ProtectedDatasetState.ACCESS_AUTHORIZED,
+        "state_revision": 1,
+        "authored_count": 0,
+        "review_complete": False,
+        "leakage_axis_intersections": None,
+        "freeze_receipt_ref": None,
+        "execution_authorization_ref": None,
+        "retriever_binding_ref": None,
+    }
+    base.update(updates)
+    return ProtectedDatasetBinding.model_validate(base)
+
+
+def _register_dataset_command(
+    binding: ProtectedDatasetBinding | None = None,
+    **updates: object,
+) -> RegisterDatasetCommand:
+    b = binding or _dataset_binding()
+    base: dict[str, object] = {
+        "request_id": str(uuid4()),
+        "dataset_id": b.dataset_id,
+        "dataset_version": b.dataset_version,
+        "binding": b,
+        "manifest_sha256": b.manifest_sha256,
+        "protected_artifact_sha256": b.protected_artifact_sha256,
+        "hmac_key_version": b.hmac_key_version,
+    }
+    base.update(updates)
+    return RegisterDatasetCommand.model_validate(base)
+
+
+def _transition_command(
+    dataset: ProtectedDatasetBinding,
+    *,
+    from_state: ProtectedDatasetState,
+    to_state: ProtectedDatasetState,
+    revision: int,
+    authored_count: int,
+    review_complete: bool,
+    **updates: object,
+) -> TransitionDatasetCommand:
+    base: dict[str, object] = {
+        "request_id": str(uuid4()),
+        "dataset_id": dataset.dataset_id,
+        "dataset_version": dataset.dataset_version,
+        "from_state": from_state,
+        "to_state": to_state,
+        "expected_state_revision": revision,
+        "authored_count": authored_count,
+        "review_complete": review_complete,
+    }
+    base.update(updates)
+    return TransitionDatasetCommand.model_validate(base)
+
+
+def _transition_to_frozen_command() -> TransitionDatasetCommand:
+    dataset = _dataset_binding()
+    return TransitionDatasetCommand(
+        request_id=str(uuid4()),
+        dataset_id=dataset.dataset_id,
+        dataset_version=dataset.dataset_version,
+        from_state=ProtectedDatasetState.REVIEW_READY,
+        to_state=ProtectedDatasetState.FROZEN,
+        expected_state_revision=2,
+        authored_count=40,
+        review_complete=True,
+    )
+
+
+async def _owner_read_dataset_row(
+    database: _ProtectedDatabase,
+    dataset_id: str,
+    dataset_version: str,
+) -> object:
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with admin_engine.begin() as connection:
+            result = await connection.execute(
+                text(
+                    f"""
+                    SELECT dataset_id, dataset_version, binding, manifest_sha256,
+                           protected_artifact_sha256, hmac_key_version, state,
+                           state_revision, authored_count, review_complete, lock_marker
+                    FROM "{database.schema}".protected_dataset
+                    WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version
+                    """
+                ),
+                {"dataset_id": dataset_id, "dataset_version": dataset_version},
+            )
+            return result.one()
+    finally:
+        await admin_engine.dispose()
+
+
+async def _registered_dataset_service(
+    database: _ProtectedDatabase,
+) -> tuple[PostgresqlProtectedAuthorizationControlService, ProtectedDatasetBinding]:
+    service = _service(database, _DatasetApprovalSource())
+    command = _register_dataset_command()
+    await service.register_dataset(command)
+    return service, command.binding
+
+
+@pytest.mark.asyncio
+async def test_custodian_registers_dataset_and_new_session_reads_initial_state(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service = _service(protected_database, _DatasetApprovalSource())
+    command = _register_dataset_command()
+    try:
+        result = await service.register_dataset(command)
+        assert result.reason_code == "DATASET_REGISTERED"
+        assert result.effective_revision == 1
+        assert result.authorization_audit_event_id is None
+
+        persisted = await _owner_read_dataset_row(protected_database, command.dataset_id, command.dataset_version)
+        assert persisted.state == "ACCESS_AUTHORIZED"  # type: ignore[attr-defined]
+        assert persisted.state_revision == 1  # type: ignore[attr-defined]
+        assert persisted.binding == command.binding.model_dump(mode="json")  # type: ignore[attr-defined]
+        assert persisted.authored_count == 0  # type: ignore[attr-defined]
+        assert persisted.review_complete is False  # type: ignore[attr-defined]
+
+        # Replay returns identical result
+        replay = await service.register_dataset(command)
+        assert replay == result
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_custodian_transitions_only_the_approved_dataset_dag(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, registered = await _registered_dataset_service(protected_database)
+    try:
+        authoring = await service.transition_dataset(
+            _transition_command(
+                registered,
+                from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+                to_state=ProtectedDatasetState.AUTHORING,
+                revision=1,
+                authored_count=0,
+                review_complete=False,
+            )
+        )
+        assert authoring.effective_revision == 2
+        assert authoring.reason_code == "DATASET_TRANSITIONED"
+
+        review_ready = await service.transition_dataset(
+            _transition_command(
+                registered,
+                from_state=ProtectedDatasetState.AUTHORING,
+                to_state=ProtectedDatasetState.REVIEW_READY,
+                revision=2,
+                authored_count=40,
+                review_complete=True,
+            )
+        )
+        assert review_ready.effective_revision == 3
+        assert review_ready.reason_code == "DATASET_TRANSITIONED"
+
+        back_to_authoring = await service.transition_dataset(
+            _transition_command(
+                registered,
+                from_state=ProtectedDatasetState.REVIEW_READY,
+                to_state=ProtectedDatasetState.AUTHORING,
+                revision=3,
+                authored_count=35,
+                review_complete=False,
+            )
+        )
+        assert back_to_authoring.effective_revision == 4
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_transition_to_frozen_is_rejected_before_database_access() -> None:
+    service = PostgresqlProtectedAuthorizationControlService(
+        _FailIfConnectedEngine(),  # type: ignore[arg-type]
+        schema="synthetic_schema",
+        data_access_role="synthetic_data_role",
+        control_role="synthetic_control_role",
+        approval_source=_MissingApprovalSource(),
+    )
+    with pytest.raises(ProtectedSecurityError) as captured:
+        await service.transition_dataset(_transition_to_frozen_command())
+    assert captured.value.reason_code == "ROLE_ACTION_STATE_DENIED"
+
+
+@pytest.mark.asyncio
+async def test_dataset_registration_rejects_non_custodian_or_author_overlap(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    admin_engine = create_async_engine(protected_database.url)
+    try:
+        # Update existing DATA identity to have actor = synthetic-custodian
+        async with admin_engine.begin() as connection:
+            await connection.execute(
+                text(
+                    f"""
+                    UPDATE "{protected_database.schema}".protected_identity
+                    SET actor_id = 'synthetic-custodian', actor_namespace = 'GITHUB_LOGIN'
+                    WHERE database_login = :login
+                    """
+                ),
+                {"login": protected_database.actor_login},
+            )
+
+        service = _service(protected_database, _DatasetApprovalSource())
+        try:
+            with pytest.raises(ProtectedSecurityError, match="SELF_APPROVAL_DENIED"):
+                await service.register_dataset(_register_dataset_command())
+        finally:
+            await service.close()
+    finally:
+        async with admin_engine.begin() as connection:
+            await connection.execute(
+                text(
+                    f"""
+                    UPDATE "{protected_database.schema}".protected_identity
+                    SET actor_id = 'synthetic-author', actor_namespace = 'SERVICE_IDENTITY'
+                    WHERE database_login = :login
+                    """
+                ),
+                {"login": protected_database.actor_login},
+            )
+        await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_dataset_registration_rejects_conflicting_duplicate(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, registered = await _registered_dataset_service(protected_database)
+    try:
+        # Different request_id with already registered dataset_id:version -> CONTROL_COMMAND_CONFLICT
+        conflicting_cmd = _register_dataset_command(
+            binding=_dataset_binding(dataset_id=registered.dataset_id, dataset_version=registered.dataset_version)
+        )
+        with pytest.raises(ProtectedSecurityError, match="CONTROL_COMMAND_CONFLICT"):
+            await service.register_dataset(conflicting_cmd)
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_dataset_transition_rejects_invalid_state_transitions(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, registered = await _registered_dataset_service(protected_database)
+    try:
+        # 1. Wrong expected revision
+        with pytest.raises(ProtectedSecurityError, match="DATASET_STATE_MISMATCH"):
+            await service.transition_dataset(
+                _transition_command(
+                    registered,
+                    from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+                    to_state=ProtectedDatasetState.AUTHORING,
+                    revision=99,
+                    authored_count=0,
+                    review_complete=False,
+                )
+            )
+
+        # 2. Unsupported DAG transition (ACCESS_AUTHORIZED -> REVIEW_READY)
+        with pytest.raises(ProtectedSecurityError, match="DATASET_STATE_MISMATCH"):
+            await service.transition_dataset(
+                _transition_command(
+                    registered,
+                    from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+                    to_state=ProtectedDatasetState.REVIEW_READY,
+                    revision=1,
+                    authored_count=40,
+                    review_complete=True,
+                )
+            )
+
+        # 3. Transition to AUTHORING first
+        await service.transition_dataset(
+            _transition_command(
+                registered,
+                from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+                to_state=ProtectedDatasetState.AUTHORING,
+                revision=1,
+                authored_count=0,
+                review_complete=False,
+            )
+        )
+
+        # 4. REVIEW_READY entry with authored_count == 0 -> DATASET_STATE_MISMATCH
+        with pytest.raises(ProtectedSecurityError, match="DATASET_STATE_MISMATCH"):
+            await service.transition_dataset(
+                _transition_command(
+                    registered,
+                    from_state=ProtectedDatasetState.AUTHORING,
+                    to_state=ProtectedDatasetState.REVIEW_READY,
+                    revision=2,
+                    authored_count=0,
+                    review_complete=True,
+                )
+            )
+    finally:
+        await service.close()

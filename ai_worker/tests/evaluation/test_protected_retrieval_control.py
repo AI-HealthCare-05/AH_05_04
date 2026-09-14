@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -823,7 +824,7 @@ def test_freeze_evidence_rejects_incomplete_or_noncanonical_values(field: str, v
 )
 def test_dataset_control_results_require_revision_without_authorization_audit(
     kind: ControlCommandKind,
-    reason: str,
+    reason: Any,
     revision: int,
 ) -> None:
     result = ControlCommandResult(
