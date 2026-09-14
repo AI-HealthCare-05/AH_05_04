@@ -1,8 +1,15 @@
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.core.validators import validate_password
+from app.models.user_consents import ConsentPurpose
+
+
+class SignUpConsentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    purpose: ConsentPurpose
 
 
 class SignUpRequest(BaseModel):
@@ -14,6 +21,20 @@ class SignUpRequest(BaseModel):
     ]
     password: Annotated[str, Field(min_length=8, max_length=72), AfterValidator(validate_password)]
     name: Annotated[str, Field(min_length=1, max_length=20)]
+    consents: list[SignUpConsentRequest] = Field(default_factory=list, max_length=len(ConsentPurpose))
+
+    @field_validator("consents")
+    @classmethod
+    def validate_unique_consent_purposes(
+        cls,
+        consents: list[SignUpConsentRequest],
+    ) -> list[SignUpConsentRequest]:
+        seen: set[ConsentPurpose] = set()
+        for consent in consents:
+            if consent.purpose in seen:
+                raise ValueError("DUPLICATE_CONSENT_PURPOSE")
+            seen.add(consent.purpose)
+        return consents
 
 
 class LoginRequest(BaseModel):
