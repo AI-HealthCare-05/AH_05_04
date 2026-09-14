@@ -78,7 +78,7 @@ Dataset 라이프사이클에서 `FROZEN` 상태는 평가 런타임이 참조�
    - **전수 검토**: `review_complete == true` (미완료 시 `FREEZE_EVIDENCE_INCOMPLETE` 거부)
    - **정보 누출 부재**: **네 leakage 축 모두 0** (`leakage_axis_intersections == (0, 0, 0, 0)`, 비영 누출 시 `FREEZE_EVIDENCE_INCOMPLETE` 거부)
    - **승인 evidence 결속**: `approval_source_event_id`로 조회한 `FreezeApprovalSourceEvidence`가 `PRODUCT_SAFETY_REVIEWER`에 의해 `state=APPROVED`로 발행되었으며, Dataset ID, 버전, `manifest_sha256`, `protected_artifact_sha256`이 정확히 일치함
-   - **Freeze Receipt 생성 및 보존**: FREEZE 전이 성공 트랜잭션에서 불변 `freeze_receipt_ref` (OpaqueLogicalRef)가 생성되어 `ProtectedDatasetBinding`에 원자적으로 결속 및 영속화됨
+   - **Freeze Receipt 생성 및 보존**: FREEZE 전이 성공 트랜잭션에서 불변 `freeze_receipt_ref` (OpaqueLogicalRef)가 생성된다. 불변 식별자/해시 보호를 유지하기 위해 `binding` 전체 일괄 UPDATE는 금지하며, receipt 저장 및 어댑터의 `ProtectedDatasetBinding` 조회 조립 경계는 C2-b(§7 [WATCH])에서 확정하여 결속·영속화한다.
 
 3. **후속 구현의 필수 거부 테스트 요건**:
    - `TransitionDatasetCommand`를 이용한 `to_state=FROZEN` 우회 시도 거부 (`ROLE_ACTION_STATE_DENIED`)
@@ -275,6 +275,10 @@ Control role의 권한을 C2 요구사항에 맞추어 열되, 불변 속성 훼
    - `RegisterDatasetCommand`, `TransitionDatasetCommand`, `FreezeDatasetCommand` DTO, `FreezeApprovalSourceEvidence` 및 Application Service 구현
    - 일반 전이에서의 `to_state=FROZEN` 우회 차단 검증
    - FREEZE의 40건, 전수 검토, 4축 0 누출, evidence 결속 및 freeze receipt 생성 구현
+   - **[WATCH] 불변 binding과 lifecycle·Freeze receipt 저장/조회 경계 확정**:
+     - `protected_dataset.binding` 전체 UPDATE 권한을 일괄 개방하지 않고, Dataset 불변 식별자/해시(`dataset_id`, `dataset_version`, `manifest_sha256`, `protected_artifact_sha256`, `hmac_key_version` 등) 보호를 엄격히 유지
+     - `freeze_receipt_ref`의 저장 경로(전용 receipt 컬럼/테이블 또는 엄격히 제어된 부분 갱신)와 어댑터의 `ProtectedDatasetBinding` 조회 시점 조립(합성) 방식을 명시하고 계약·권한 목록 정렬
+     - 제한 control 로그인으로 전이·FREEZE 후 새 세션 재조회 정합성, 실패 시 원자적 rollback, 불변 필드 변조 거부를 테스트로 입증
    - `TrustedApprovalSource`의 FREEZE evidence 검증 연동
    - `infra/python/protected_retrieval_role_policy.py`의 `protected_dataset` INSERT 및 lifecycle 컬럼 UPDATE 권한 반영
    - positive 전이/FREEZE 테스트 및 Dataset negative 권한 테스트 보강
