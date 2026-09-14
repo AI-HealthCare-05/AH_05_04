@@ -22,6 +22,20 @@
 이는 실제 상세 API 수집·Snapshot 생산·공식 순서·별도 전문 검토·운영 활성화 승인이 아니다.
 문서 전체의 Proposed 상태를 일괄 승격하거나 D-02·D-05·실제 승인 저장소를 완료 처리하지 않는다.
 
+## D-03 Set 역할 및 D-05 후속 범위 보충
+
+`rag_catalog_set`은 manifest·Source·member·hash를 결속해 현재 Catalog를 저장·재현하는 구성 단위다.
+기존 v2와 #477 관찰 v3를 수용하며 Set 자체의 종류를 구분하는 컬럼은 없다.
+`member_kind=ALIAS`가 실제 Alias 행을 참조하므로 **Alias를 포함**하지만, 독립 Authority
+`alias_set`/`alias_set_member`를 **대체하지 않는다**. D-03a Alias 전환과 Authority Set 구현 완료는
+구분한다. [D-03 다섯 항목 기록](../../../governance/decisions/2026-09-13-catalog-crosswalk-scope.md)을 따른다.
+
+D-05 전체 전환과 Runtime manifest 구성원·실제 연결은 후속 보류다. Product Identity 한정
+projection은 실제 필요 확인 후 별도 계약으로 검토할 수 있다. 현재 v2·관찰 v3 envelope를 유지하며
+새 hash로 대입·자동 변환하지 않는다. [최신 답변·재개 조건](../../../governance/decisions/2026-09-13-catalog-d05-transition-scope.md)을 따른다.
+아래 D-05 저장안은 단계별 설계 이력이다. 현재 저장 위치는 `rag_catalog_set_hash`이며,
+종류/target CHECK 확장과 Runtime 참조 변경은 실제 전환 시 별도 검토한다.
+
 ## 구현 상태
 
 ### #372 DB 왕복 연결 — 기존 v2 구현 기준
@@ -452,3 +466,9 @@ Export 검증·복원·DB read-back·Candidate는 개별 관찰 출처와 품목
 실제 승인·철회·감사 저장소와 Runtime 활성화는 별도다.
 
 검증: [D-04 Loader 검사 기록](../../../testing/mfds-loader-handoff-166.md).
+
+## 실제 승인·철회·감사 저장소 후속 구체안
+
+[별도 Proposed 연결안](catalog-approval-storage-166.md)에 기존 #398 관리 권한/감사와의 차이,
+Set 생성 전 승인 대상, 저장 당시 receipt 검증, 동일 transaction 경합 제어, 실패 감사·최소 권한·이행을 정리했다.
+현재 verifier 포트의 실제 저장소 연결 완료나 이 구체안에 대한 담당자 승인을 의미하지 않는다.

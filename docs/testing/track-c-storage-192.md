@@ -64,3 +64,30 @@ HandlerConfig 상세·운영 seed·Track C 공개는 이 테스트 결과로 승
 이번 병합 결과에서 전체 스크립트를 재실행한 수치로 해석하지 않는다.
 
 재연결 집중 검증: C1 PostgreSQL 13 passed. 단일 Alembic head, 신규 DB 로직 재도입·보호 쓰기 검사, Ruff·format·diff 검사 통과.
+
+
+## 2026-09-14 PR #310 충돌 해결
+
+- PR HEAD `9fa449c2`에 최신 `develop` `0afc83b6`을 병합했다.
+- 담당 리뷰어 `phina-io`의 APPROVED 리뷰를 확인했으며, 조회 시 추가 inline/일반 댓글은 없었다.
+- 충돌은 `docs/contracts/README.md` 한 곳이었다. #166 승인 저장소 후속 제안과
+  #192 C1 저장 기반 항목을 모두 보존하고 heading 관계와 새 링크를 검증했다.
+- #192 migration·모델·Repository·집중 테스트 파일은 기존 PR HEAD와 동일하다.
+- 별도 worktree에서 처리해 기존 로컬 HandlerConfig 초안은 포함하지 않았다.
+- 전용 PostgreSQL 17·Redis 7 및 합성 데이터로 검증했다.
+- C1 PostgreSQL 집중 검사: 13 passed.
+- Ruff check·format, Mypy(602 source files), diff 검사 통과.
+
+전체 `scripts/ci/run_test.sh`: exit 0.
+
+| 검사 | 이번 병합 결과 |
+| --- | --- |
+| Migration | 225 passed, 4 skipped |
+| Backend·Contract·PostgreSQL | 1964 passed, 85 skipped |
+| Redis 통합 | 24 passed |
+| Worker | 3115 passed, 8 skipped |
+| 합산 Coverage | 92% |
+| 단일 Alembic head·DB 로직 재도입·보호 쓰기·Test inventory | 통과 |
+
+집중 13건은 Migration 전체에도 포함되므로 합산하지 않는다.
+위 결과는 충돌 해결 후 로컬 검증이며 푸시 후 원격 CI 결과와 구분한다.
