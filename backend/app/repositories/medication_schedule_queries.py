@@ -35,6 +35,22 @@ class MedicationScheduleQueries:
         )
         return [(medication, schedule) for medication, schedule in rows]
 
+    async def occurrence_medication_owned(
+        self, occurrence_id: UUID, user_id: UUID
+    ) -> PrescriptionVersionMedication | None:
+        # Follow the occurrence's original snapshot, including inactive versions.
+        return await self.session.scalar(
+            select(PrescriptionVersionMedication)
+            .join(
+                MedicationSchedule,
+                MedicationSchedule.prescription_version_medication_id == PrescriptionVersionMedication.id,
+            )
+            .join(MedicationOccurrence, MedicationOccurrence.medication_schedule_id == MedicationSchedule.id)
+            .join(PrescriptionVersion, PrescriptionVersion.id == PrescriptionVersionMedication.prescription_version_id)
+            .join(Prescription, Prescription.id == PrescriptionVersion.prescription_id)
+            .where(MedicationOccurrence.id == occurrence_id, owned_by_self(Prescription.profile_id, user_id))
+        )
+
     async def occurrences(
         self, user_id: UUID, day: date
     ) -> list[tuple[MedicationOccurrence, PrescriptionVersionMedication, MedicationCheckin | None]]:
