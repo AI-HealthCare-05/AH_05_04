@@ -14,6 +14,11 @@ from app.models.async_jobs import (
     OutboxEventKind,
     OutboxEventStatus,
 )
+from app.models.catalog_approval import (
+    CatalogBuildApproval,
+    CatalogBuildApprovalSource,
+    CatalogSourceApproval,
+)
 from app.models.chat import ChatCitation, ChatMessage, ChatSession
 from app.models.email_verification import EmailVerificationPurpose, EmailVerificationToken
 from app.models.guides import Guide, GuideCitation
@@ -156,6 +161,9 @@ from app.models.user_consents import ConsentPurpose, ConsentStatus, UserConsent
 from app.models.users import AccountStatus, Gender, User
 
 __all__ = [
+    "CatalogBuildApproval",
+    "CatalogBuildApprovalSource",
+    "CatalogSourceApproval",
     "SafetyAssessment",
     "BarrierResponse",
     "SupportActionPlan",
