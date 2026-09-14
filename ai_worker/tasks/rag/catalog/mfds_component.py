@@ -33,14 +33,17 @@ class MfdsComponentObservation:
         )
 
 
+MfdsComponentExclusionReason = Literal[
+    "EMPTY_COMPONENT_FIELDS",
+    "MISSING_COMPONENT_QUANTITY",
+    "INVALID_COMPONENT_KEY_FIELDS",
+    "CONFLICTING_OBSERVATION",
+]
+
+
 @dataclass(frozen=True, slots=True)
 class MfdsComponentExclusion:
-    reason: Literal[
-        "EMPTY_COMPONENT_FIELDS",
-        "MISSING_COMPONENT_QUANTITY",
-        "INVALID_COMPONENT_KEY_FIELDS",
-        "CONFLICTING_OBSERVATION",
-    ]
+    reason: MfdsComponentExclusionReason
     record_json: bytes = field(repr=False)
 
 
@@ -133,7 +136,7 @@ def _is_blank(record: Mapping[str, object], field_name: str) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
 
 
-def _exclusion_reason(record: Mapping[str, object]) -> str:
+def _exclusion_reason(record: Mapping[str, object]) -> MfdsComponentExclusionReason:
     """구성원으로 승격하지 못한 행의 사유를 구분합니다.
 
     분량만 비어 있고 identity·join 필드가 남아 있으면 제공자 응답에서 값이 빠진 경우이며,
