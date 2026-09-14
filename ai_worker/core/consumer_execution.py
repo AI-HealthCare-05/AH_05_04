@@ -12,6 +12,7 @@ from ai_worker.core.dispatcher import Dispatcher
 from ai_worker.core.errors import (
     ConsumerAcknowledgementError,
     ConsumerPersistenceError,
+    OcrConsentDeniedError,
     WorkerError,
 )
 from ai_worker.core.handler import HandlerExecutionContext
@@ -23,6 +24,7 @@ from ai_worker.core.job_execution import (
     LeaseHeartbeat,
     LeaseHeartbeatHandle,
     LeaseNotAcquired,
+    RecordedConsentBlock,
     RecordedFailure,
 )
 from ai_worker.core.results import HandlerSuccess
@@ -142,7 +144,9 @@ class ConsumerExecution:
             return
 
 
-type LeaseAwareExecutionResult = HandlerSuccess | CommittedDelivery | LeaseNotAcquired | RecordedFailure
+type LeaseAwareExecutionResult = (
+    HandlerSuccess | CommittedDelivery | LeaseNotAcquired | RecordedFailure | RecordedConsentBlock
+)
 
 
 class LeaseAwareConsumerExecution:
@@ -221,7 +225,7 @@ class LeaseAwareConsumerExecution:
             heartbeat_handle=heartbeat_handle,
         )
 
-        if isinstance(result, RecordedFailure | LeaseNotAcquired):
+        if isinstance(result, RecordedFailure | RecordedConsentBlock | LeaseNotAcquired):
             if isinstance(result, LeaseNotAcquired):
                 await self._rollback_safely()
             return result
@@ -285,11 +289,16 @@ class LeaseAwareConsumerExecution:
         *,
         lease: ExecutionLease,
         heartbeat_handle: LeaseHeartbeatHandle,
-    ) -> HandlerSuccess | LeaseNotAcquired | RecordedFailure:
+    ) -> HandlerSuccess | LeaseNotAcquired | RecordedFailure | RecordedConsentBlock:
         try:
             return await self._run_handler(
                 delivery,
                 heartbeat_handle,
+            )
+        except OcrConsentDeniedError as error:
+            await self._rollback_safely()
+            return await self._record_consent_block(
+                delivery, lease=lease, heartbeat_handle=heartbeat_handle, reason=error.reason
             )
         except WorkerError as error:
             # Handler가 실패 전에 남긴 현재 transaction의 변경은 폐기하고,
@@ -390,6 +399,30 @@ class LeaseAwareConsumerExecution:
             disposition=disposition,
             available_at=retry_at if retry_at is not None else failed_at,
         )
+
+    async def _record_consent_block(
+        self, delivery: WorkerDelivery, *, lease: ExecutionLease, heartbeat_handle: LeaseHeartbeatHandle, reason: str
+    ) -> RecordedConsentBlock | LeaseNotAcquired:
+        if not await self._stop_heartbeat(heartbeat_handle):
+            await self._rollback_safely()
+            return LeaseNotAcquired()
+        persistence_failed = False
+        try:
+            recorded = await self._job_repository.record_consent_block(lease, reason=reason, blocked_at=self._clock())
+            if not recorded:
+                await self._rollback_safely()
+                return LeaseNotAcquired()
+            await self._transaction.commit()
+        except asyncio.CancelledError:
+            await self._rollback_safely()
+            raise
+        except Exception:
+            await self._rollback_safely()
+            persistence_failed = True
+        if persistence_failed:
+            raise ConsumerPersistenceError()
+        await self._acknowledge(delivery.stream_message_id)
+        return RecordedConsentBlock(lease.job_id, lease.event_id, lease.attempt, reason)
 
     def _create_execution_context(
         self,

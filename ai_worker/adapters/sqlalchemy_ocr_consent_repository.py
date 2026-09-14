@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ai_worker.tasks.ocr.consent import ConsentRow, ConsentSnapshot
 
 _OCR = table("ocr_job", column("id", String(36)), column("ai_job_id", String(36)), column("document_id", String(36)))
+_JOB = table("ai_job", column("id", String(36)), column("user_id", String(36)))
 _DOCUMENT = table(
     "medical_document", column("id", String(36)), column("uploaded_by", String(36)), column("profile_id", String(36))
 )
@@ -35,6 +36,7 @@ class SqlAlchemyOcrConsentRepository:
                 _USER.c.account_status,
                 _USER.c.is_active,
                 _DOCUMENT.c.uploaded_by,
+                _JOB.c.user_id.label("job_user_id"),
                 _PROFILE.c.user_id,
                 _PROFILE.c.profile_type,
                 _CONSENT.c.id.label("consent_id"),
@@ -45,7 +47,8 @@ class SqlAlchemyOcrConsentRepository:
                 _CONSENT.c.withdrawn_at,
             )
             .select_from(
-                _OCR.join(_DOCUMENT, _OCR.c.document_id == _DOCUMENT.c.id)
+                _OCR.join(_JOB, _OCR.c.ai_job_id == _JOB.c.id)
+                .join(_DOCUMENT, _OCR.c.document_id == _DOCUMENT.c.id)
                 .join(_PROFILE, _DOCUMENT.c.profile_id == _PROFILE.c.id)
                 .join(_USER, _DOCUMENT.c.uploaded_by == _USER.c.id)
                 .outerjoin(_CONSENT, and_(_CONSENT.c.user_id == _USER.c.id, _CONSENT.c.purpose == "OCR"))
@@ -68,5 +71,5 @@ class SqlAlchemyOcrConsentRepository:
         return ConsentSnapshot(
             row=consent,
             account_status=row.account_status if row.is_active else "INACTIVE",
-            resource_owner_matches=row.uploaded_by == row.user_id and row.profile_type == "SELF",
+            resource_owner_matches=row.uploaded_by == row.user_id == row.job_user_id and row.profile_type == "SELF",
         )

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol, TypeVar
 from uuid import UUID
 
+from ai_worker.core.errors import OcrConsentDeniedError as OcrConsentDeniedError
 from ocr_runtime.structuring import OcrStructurer, OcrStructureResult
 from provider_contracts.ocr import RawRecognizedField
 
@@ -58,14 +59,6 @@ class OcrConsentRepository(Protocol):
     async def get_snapshot(self, *, domain_id: UUID, job_id: UUID) -> ConsentSnapshot: ...
 
 
-class OcrConsentDeniedError(Exception):
-    """내부의 고정 사유만 전달한다. Worker FailureCode나 공개 API code가 아니다."""
-
-    def __init__(self, reason: ConsentReason) -> None:
-        self.reason = reason
-        super().__init__(reason)
-
-
 T = TypeVar("T")
 
 
@@ -75,10 +68,6 @@ class OcrConsentGate:
     domain_id: UUID
     job_id: UUID
     current_policy_version: Callable[[], str]
-
-    def __post_init__(self) -> None:
-        if not self.current_policy_version().strip():
-            raise ValueError("현재 OCR policy version이 필요합니다.")
 
     async def check(self) -> None:
         reason: ConsentReason | None

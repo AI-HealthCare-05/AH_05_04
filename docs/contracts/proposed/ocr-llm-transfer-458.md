@@ -1,7 +1,8 @@
 # #458 OCR LLM 동의·전송 후속 계약
 
-- 상태: Proposed — PM 방향 확인. 검사 분담 확인·API/저장 상세·최종 문구/버전 미확정, 구현·공개 승인 아님.
-- 확인일: 2026-09-13. 근거: 사용자 전달 권가빈 Discord 16:04 답변. 공개 원문 링크 미연결.
+- 상태: Proposed — Worker 검사·차단 저장 로컬 구현. Backend/Frontend 연계·최소화·최종 문구/버전·리뷰 미완료.
+- 확인일: 2026-09-14. 최신 답변 근거와 저장 결정은
+  [#458 Worker 결정안](../../governance/decisions/2026-09-14-ocr-consent-worker-458.md)에 연결한다.
 - 구현: 김지혜. Privacy/Product: 권가빈. Backend/Security: 송은영. Frontend/UX: 남한솔.
 - 관련: #458, #453/PR #454, #207/PR #465. #166과 기능 의존성 없음.
 
@@ -83,10 +84,15 @@ RLS·DB Trigger·업무용 DB 함수 없이 명시적 Python 검증·transaction
 완료될 때 관련 문서 상태를 함께 정렬한다. 이 문서는 환경 활성화·배포·외부 전송을 승인하지 않는다.
 
 
-## 2026-09-14 Backend 답변 및 로컬 구현
+## 2026-09-14 Backend·PM 답변 및 로컬 구현
 
-은영의 사용자 제공 Discord 10:46 답변과 구현 범위는
-[동의 조회·재검사 구현 기록](../../designs/ocr-consent-gate-458-implementation.md)에 기록한다.
-Backend는 접수 전, Worker는 CLOVA 직전과 LLM 직전 검사를 담당한다.
-#207/#465 저장 기반과 fixture를 재사용하되 동의 API·원자적 차단 저장·runtime 조립은 후속이다.
-현재 내부 조회·검사 부품을 구현했으며 공개 상태/DTO·정책 버전·활성화는 변경하지 않았다.
+[동의 조회·재검사 구현 기록](../../designs/ocr-consent-gate-458-implementation.md) 및
+[Worker 차단 저장 결정안](../../governance/decisions/2026-09-14-ocr-consent-worker-458.md)에
+원문 링크와 구체 사유·상태·재시도·ACK 순서를 기록한다. #465는 develop에 병합됐다.
+Backend는 접수 전, Worker는 CLOVA 직전·LLM 직전 및 결과 성공 반환 전 검사를 담당한다.
+동의 API/Frontend 및 전송 최소화는 아직 미완료다. 새 공유 FailureCode나 DB 스키마는 추가하지 않는다.
+
+가빈 답변에 따라 철회 후 기존 OCR 결과 재노출·검수·수정은 데모에서 제외한다. 보관·삭제는
+실제 사용자 적용 전 별도 결정이며 보관 허용으로 해석하지 않는다. 완전 수동 입력은 OCR Job 없이
+처방일·처방약을 입력·확정하는 독립 경로다. 새 구현은 별도 후속으로 분리할 수 있으며 #458/데모
+필수조건으로 두지 않는다. 유효 동의·LLM 최소화 생략이면 기존 OCR 검수·수정을 재사용한다.

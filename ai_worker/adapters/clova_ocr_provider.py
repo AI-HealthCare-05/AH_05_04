@@ -5,6 +5,7 @@ import math
 import time
 from collections.abc import Callable
 
+from ai_worker.tasks.ocr.consent import OcrConsentGate
 from ai_worker.tasks.ocr.handler import (
     OcrProviderInputError,
     OcrProviderResult,
@@ -61,10 +62,12 @@ class ClovaOcrProviderAdapter:
         *,
         engine_factory: OcrEngineFactory | None = None,
         clock: Callable[[], float] = time.monotonic,
+        consent_engine_factory: Callable[[str, OcrConsentGate], OcrEngine] | None = None,
     ) -> None:
         if (engine is None) == (engine_factory is None):
             raise ValueError("engine과 engine_factory 중 정확히 하나가 필요합니다.")
 
+        self._consent_engine_factory = consent_engine_factory
         self._engine = engine
         self._engine_factory = engine_factory
         self._clock = clock
@@ -76,13 +79,20 @@ class ClovaOcrProviderAdapter:
         file_mime_type: str,
         trace_id: str,
         deadline: float,
+        consent_gate: OcrConsentGate | None = None,
     ) -> OcrProviderResult:
         """최소 입력만 전달하고 원문을 제외한 결과를 반환합니다."""
 
         if not object_key.strip() or file_mime_type not in self._SUPPORTED_FILE_MIME_TYPES:
             raise OcrProviderInputError()
 
-        engine = self._resolve_engine(trace_id)
+        if consent_gate is not None:
+            await consent_gate.check()
+            if self._consent_engine_factory is None:
+                raise OcrProviderSafetyError()
+            engine = self._consent_engine_factory(trace_id, consent_gate)
+        else:
+            engine = self._resolve_engine(trace_id)
 
         engine_result: OcrRecognitionResult | None = None
         normalized_error: Exception | None = None

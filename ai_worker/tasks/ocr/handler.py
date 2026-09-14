@@ -1,6 +1,7 @@
 """OCR WorkerMessage를 Provider 실행 결과로 변환하는 Handler입니다."""
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
@@ -10,6 +11,7 @@ from ai_worker.core.handler import HandlerExecutionContext
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.retry import FailureCode
 from ai_worker.schemas.messages import DomainType, JobType, WorkerMessage
+from ai_worker.tasks.ocr.consent import OcrConsentGate
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +102,7 @@ class OcrProvider(Protocol):
         file_mime_type: str,
         trace_id: str,
         deadline: float,
+        consent_gate: OcrConsentGate | None = None,
     ) -> OcrProviderResult:
         """monotonic absolute deadline 안에서 OCR을 실행합니다."""
         ...
@@ -126,6 +129,7 @@ class OcrHandler:
         clock: MonotonicClock,
         provider_budget_seconds: float,
         completion_budget_seconds: float = 5.0,
+        consent_gate_factory: Callable[[UUID, UUID], OcrConsentGate] | None = None,
     ) -> None:
         if (
             isinstance(provider_budget_seconds, bool)
@@ -143,6 +147,7 @@ class OcrHandler:
         ):
             raise ValueError("completion_budget_seconds는 유한한 0 이상의 값이어야 합니다.")
 
+        self._consent_gate_factory = consent_gate_factory
         self._input_repository = input_repository
         self._provider = provider
         self._clock = clock
@@ -180,11 +185,18 @@ class OcrHandler:
         if provider_deadline <= now:
             raise WorkerError(failure_code="TIMEOUT")
 
+        consent_gate = (
+            self._consent_gate_factory(message.domain_id, message.job_id) if self._consent_gate_factory else None
+        )
         provider_result = await self._recognize(
             domain_input=domain_input,
             provider_deadline=provider_deadline,
             trace_id=message.trace_id,
+            consent_gate=consent_gate,
         )
+        # LLM 미사용 경로에서도 CLOVA 실행 중 철회된 결과를 성공으로 저장하지 않는다.
+        if consent_gate is not None:
+            await consent_gate.check()
 
         return OcrHandlerSuccess(
             event_id=message.event_id,
@@ -203,6 +215,7 @@ class OcrHandler:
         domain_input: OcrDomainInput,
         provider_deadline: float,
         trace_id: str,
+        consent_gate: OcrConsentGate | None = None,
     ) -> OcrProviderResult:
         """Provider 오류를 승인된 Worker failure code로 정규화합니다."""
 
@@ -210,12 +223,21 @@ class OcrHandler:
         failure_code: FailureCode | None = None
 
         try:
-            provider_result = await self._provider.recognize(
-                object_key=domain_input.object_key,
-                file_mime_type=domain_input.file_mime_type,
-                trace_id=trace_id,
-                deadline=provider_deadline,
-            )
+            if consent_gate is not None:
+                provider_result = await self._provider.recognize(
+                    object_key=domain_input.object_key,
+                    file_mime_type=domain_input.file_mime_type,
+                    trace_id=trace_id,
+                    deadline=provider_deadline,
+                    consent_gate=consent_gate,
+                )
+            else:
+                provider_result = await self._provider.recognize(
+                    object_key=domain_input.object_key,
+                    file_mime_type=domain_input.file_mime_type,
+                    trace_id=trace_id,
+                    deadline=provider_deadline,
+                )
         except OcrProviderTimeoutError:
             failure_code = "TIMEOUT"
         except OcrProviderUnavailableError:

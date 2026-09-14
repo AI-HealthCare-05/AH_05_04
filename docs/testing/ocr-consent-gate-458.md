@@ -1,62 +1,63 @@
-# #458 동의 조회·재검사 검증 — 2026-09-14
+# #458 동의 Gate·차단 저장 검증 — 2026-09-14
 
-## 기준과 범위
+## 기준
 
-- develop `ac1b148a`, 로컬 동기화 `71131950` 이후 변경.
-- #465 미병합 기준 HEAD `6d5494cc0a488675a195cd5db71bd5e50a49fd82`.
-- [구현 범위·담당자 답변·후속 연결](../designs/ocr-consent-gate-458-implementation.md).
-- 외부 Provider 호출 없이 합성 데이터·전용 임시 PostgreSQL 17로 실행.
+- develop `a440d2ae` (#465 병합), 로컬 동기화 merge `3a77d956`.
+- [구현과 답변 근거](../designs/ocr-consent-gate-458-implementation.md),
+  [사유·상태·transaction 결정안](../governance/decisions/2026-09-14-ocr-consent-worker-458.md).
+- 합성 데이터와 전용 PostgreSQL 17/Redis를 사용한다. CLOVA/OpenAI 호출은 대역으로 검증한다.
 
-## 집중 검증
+## 확인한 동작
 
-- OCR 전체: 66 passed. 신규 Gate 검사 17건 포함.
-- 실제 PostgreSQL adapter: 12 passed. 별도 transaction의 철회/재동의 가시성, 잘못된 Job·소유권,
-  다른 사용자/목적의 동의 오사용 차단, 누락/버전 불일치/timestamp 오류/조회 실패 검사.
-- #465 공통 fixture 8개 판정과 일치. Worker에서는 같은 판정에 실제 호출 대역을 붙여 차단 시 0회 확인.
-- CLOVA 완료 후 철회/조회 장애/정책 변경 시 LLM 호출 0회.
-- 실제 ClovaOcrEngine의 구조화 지점에 guard를 조립한 합성 테스트 통과. runtime factory 연결 증빙은 아님.
-- DB 예외 chain·원문을 반환하지 않고 asyncio 취소를 전파.
-- Ruff check/format·Mypy(615 files) 통과.
+- 병합된 #465 공통 fixture 8건과 같은 판정. 원본 fixture 변경 없음.
+- CLOVA·LLM 직전 최신 동의 조회. 누락·철회·버전 불일치·조회 실패·계정/소유권 불일치이면 호출 차단.
+- CLOVA 중 철회·조회 실패·policy 변경 시 LLM 호출 0회. LLM 비활성 경로도 결과 반환 전 재검사.
+- SQLAlchemy Core 조회로 Backend ORM/Service import 경계를 유지한다.
+- Dispatcher는 동의 차단을 일반 INTERNAL_ERROR로 바꾸지 않는다.
+- 현재 lease/event/attempt/token에 결속된 Job STALE, Attempt BLOCKED, OCR FAILED와 명시적 사유 저장.
+- 일부 저장 실패 시 전체 rollback. commit 실패 또는 lease 상실 시 성공 필드 저장·ACK 없음.
+- 차단 상태 commit 이후 ACK. 같은 event 재전달은 이미 소비한 것으로 처리하며 새 Attempt 없음.
+- 유효 동의의 실제 Worker runtime·Redis·PostgreSQL 성공 경로 유지. 외부 Provider만 대역이다.
+- 기존 처방일 필수 검수 및 처방 확정 계약 변경 없음.
 
-## 전체 스크립트 차단 — develop 기준 문제
+## 검사 결과
 
-`scripts/ci/run_test.sh`는 단일 migration head 사전 검사에서 exit 1:
+- 집중 Worker/Adapter/Consumer 테스트: **147 passed**.
+- Ruff check 및 format check 통과. Mypy **618 source files** 통과.
+- 전체 migration: **227 passed, 4 skipped**. 최신 단일 head `207c1d2e3f4a` 검증 통과.
+- 최신 DB의 Trigger/RLS/제거 대상 함수 **0개**, 재도입 검사·보호 테이블 쓰기 검사 통과.
+- 전체 `scripts/ci/run_test.sh`: exit 0. **5461 passed, 97 skipped**, coverage **92%**.
+  - Backend·계약·PostgreSQL: 1996 passed, 85 skipped.
+  - Redis 선별 통합: 29 passed.
+  - Worker: 3209 passed, 8 skipped.
+  - 위 migration 227 passed, 4 skipped 포함.
+- 전체 CI 이후 AI Job 사용자·문서 업로더·SELF 소유자 일치 검사를 보강했다.
+  최종 관련 DB·Redis 재검증: **25 passed** (동의 조회 13, 작업 저장/runtime 12).
+  Ruff·format·Mypy도 최종 코드 기준 재검증한다.
 
-- `178a1b2c3d4e`: Knowledge Evidence Index (#178 / PR #482)
-- `192a1b2c3d4e`: Track C 저장 (#192 / PR #310)
+이전 실행의 migration 분기와 보호 증빙 해시 불일치는 최신 develop에서 해소됐다. origin/develop을
+독립 임시 디렉터리에 복원해 보호 증빙 검사 통과를 확인했다. 이번 Config/runtime 변경에 따른
+해시는 병합된 `scripts/verify_protected_runner_evidence.py --write`로 갱신했다. JSON/Markdown에서
+변경된 것은 두 구현 파일의 hash와 증빙 self hash이며 승인·활성화 상태는 바꾸지 않았다.
+갱신 후 증빙 회귀 4건 통과. 갱신 전 Worker 실행은 3207 passed, 8 skipped, 이 해시 검사 1 failed였다.
 
-원격 develop 파일을 git show로 읽어 DAG를 별도로 계산했으며 같은 두 head를 확인했다.
-#458의 backend/alembic/versions 변경은 0건이다. 이미 병합된 migration의 down_revision을
-고치거나 full-CI의 검사를 우회하지 않았다. 공유 develop migration 분기는 별도 수정이 필요하다.
-따라서 Backend/전체 migration/Redis 통합 전체 통과를 주장하지 않는다.
-
-처음 기존 다른 작업의 venv에는 최신 develop의 pgvector가 없어 Mypy import 오류가 있었다.
-#458 전용 venv를 기존 lockfile로 구성한 뒤 통과했다. dependency/lockfile 변경은 없다.
-초기 전체 실행의 신규 테스트 미분류는 explicit opt-in 등록으로 해결했다.
-
-## 집중 DB 검사 재현
-
-운영·개발 DB 대신 테스트 전용 PostgreSQL URL을 설정하고 다음을 실행한다.
-`OCR_CONSENT_TEST_DATABASE_URL`은 테스트를 위해 schema 생성/삭제가 허용된 격리 DB만 지정한다.
+## DB 집중 검사
 
 ```bash
 PYTHONPATH=backend:. uv run pytest tests/integration/test_worker_ocr_consent.py -q
 ```
 
-URL이 없으면 명시적으로 skip한다. schema 이름은 실행마다 `consent458_<uuid>`로 분리하고
-해당 schema만 제거한다. 최소 물리 컬럼 fixture이며 #465 migration 전체 검증을 대신하지 않는다.
-실제 동의 API·runtime 차단 저장·Frontend·payload 최소화·사용자 대상 활성화는 미검증이다.
+`OCR_CONSENT_TEST_DATABASE_URL`은 전용 합성 테스트 DB만 지정한다. 미설정이면 명시적으로 skip한다.
+검사는 매번 `consent458_<uuid>` schema를 만들고 제거한다. 이 fixture는 조회에 필요한 물리 컬럼의
+격리 검사다. #465의 전체 migration 검증을 대신하지 않으며 전체 CI에서 별도로 검증한다.
 
-## Worker 전체·검사 결과
+`tests/integration/test_worker_job_execution_repository.py`의 실제 DB 차단 저장·부분 실패 rollback·
+재전달·Redis runtime 테스트는 전체 CI Backend lane에 등록돼 있다. DB를 재생성하는 전체 CI와
+별도 DB 테스트를 동시에 시작하면 안 된다. 첫 집중 재실행의 23 passed/1 error는 전체 CI의 DB
+재생성과 겹친 실행 오류였으며 해당 실행을 최종 성공 증빙으로 사용하지 않는다.
 
-- Worker 전체: 3197 passed, 8 skipped, 1 failed (40.66s).
-- 실패: `test_committed_infrastructure_evidence_matches_builder`.
-  `protected-runner-infrastructure-adapter.md`의 runtime_assembly.py hash가 생성 결과와 다름.
-  해당 증빙·코드의 origin/develop 원문만 임시 디렉터리에 복원해 같은 불일치를 재현했다.
-  #458이 변경한 파일이 아니며, 자동 생성 증빙 수정은 별도 #487/#488 후속 범위로 남긴다.
-- Test inventory 회귀: 13 passed.
-- DB 함수/프로시저/Trigger/RLS 재도입 검사·보호 테이블 쓰기 검사 통과.
-- 실제 PostgreSQL 집중 12건은 전용 venv와 최신 CI의 pgvector PostgreSQL 17 이미지에서도 재통과.
+## 아직 증명하지 않은 범위
 
-두 기존 develop 문제(분기 head, 증빙 Markdown 불일치)를 별도로 수정하기 전 전체 CI 성공으로
-표시하지 않는다. #458 신규 테스트의 실패는 없으며 위 실패를 제외해 전체 성공으로 재표기하지 않는다.
+전송 payload 최소화·LLM 생략 metadata/DTO·Backend 동의 API/접수 Gate·과거 결과 접근 차단·
+Frontend 연결은 이 검사로 완료됐다고 주장하지 않는다. 현재 LLM 전체-token 경로의 대체 및
+최종 동의 문구/버전과 실제 사용자 공개 조건은 남아 있다. 환경 활성화나 실제 사용자 전송은 하지 않았다.

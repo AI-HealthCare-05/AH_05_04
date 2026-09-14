@@ -1,4 +1,4 @@
-"""#465 미병합 스키마를 격리한 합성 DB 조회 검증. 운영 migration은 추가하지 않는다."""
+"""#465 스키마의 동의 조회 경계를 격리한 합성 DB 검증. 운영 migration은 추가하지 않는다."""
 
 import os
 from datetime import UTC, datetime
@@ -30,6 +30,7 @@ async def database():
             'CREATE TABLE "user" (id varchar(36) PRIMARY KEY, account_status varchar(25), is_active boolean)',
             "CREATE TABLE profile (id varchar(36) PRIMARY KEY, user_id varchar(36), profile_type varchar(20))",
             "CREATE TABLE medical_document (id varchar(36) PRIMARY KEY, uploaded_by varchar(36), profile_id varchar(36))",
+            "CREATE TABLE ai_job (id varchar(36) PRIMARY KEY, user_id varchar(36))",
             "CREATE TABLE ocr_job (id varchar(36) PRIMARY KEY, ai_job_id varchar(36), document_id varchar(36))",
             "CREATE TABLE user_consent (id varchar(36) PRIMARY KEY, user_id varchar(36), purpose varchar(20), status varchar(20), policy_version varchar(100), granted_at timestamptz, withdrawn_at timestamptz, UNIQUE(user_id,purpose))",
         ]:
@@ -38,6 +39,7 @@ async def database():
         await connection.execute(text("INSERT INTO profile VALUES ('profile','owner','SELF')"))
         await connection.execute(text("INSERT INTO medical_document VALUES ('document','owner','profile')"))
         domain_id, job_id = uuid4(), uuid4()
+        await connection.execute(text("INSERT INTO ai_job VALUES (:job,'owner')"), {"job": str(job_id)})
         await connection.execute(
             text("INSERT INTO ocr_job VALUES (:domain,:job,'document')"), {"domain": str(domain_id), "job": str(job_id)}
         )
@@ -76,6 +78,7 @@ async def test_separate_transactions_observe_withdrawal_and_reconsent(database):
         ("UPDATE user_consent SET policy_version='old'", "POLICY_VERSION_MISMATCH"),
         ("UPDATE user_consent SET granted_at=NULL", "INVALID_CONSENT"),
         ("UPDATE profile SET user_id='other'", "OWNER_MISMATCH"),
+        ("UPDATE ai_job SET user_id='other'", "OWNER_MISMATCH"),
         ("UPDATE profile SET profile_type='OTHER'", "OWNER_MISMATCH"),
         ('UPDATE "user" SET is_active=false', "ACCOUNT_NOT_ACTIVE"),
         ("UPDATE \"user\" SET account_status='WITHDRAWN'", "ACCOUNT_NOT_ACTIVE"),

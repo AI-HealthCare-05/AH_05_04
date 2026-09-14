@@ -135,9 +135,14 @@ async def test_task_cancellation_is_not_consent_denial():
         await gate(repository).check()
 
 
-def test_empty_current_policy_is_rejected():
-    with pytest.raises(ValueError):
-        OcrConsentGate(AsyncMock(), uuid4(), uuid4(), lambda: " ")
+async def test_empty_current_policy_blocks_external_call():
+    repository = AsyncMock()
+    repository.get_snapshot.return_value = allowed()
+    checker = OcrConsentGate(repository, uuid4(), uuid4(), lambda: " ")
+    provider = AsyncMock()
+    with pytest.raises(OcrConsentDeniedError, match="POLICY_VERSION_MISMATCH"):
+        await checker.run(provider)
+    provider.assert_not_awaited()
 
 
 async def test_actual_clova_engine_boundary_stops_llm_after_withdrawal(tmp_path, monkeypatch):
