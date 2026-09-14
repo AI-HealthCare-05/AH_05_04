@@ -16,6 +16,7 @@ from ai_worker.tasks.rag.source_client.contracts import SourceRunStatus
 from ai_worker.tasks.rag.source_client.endpoints import MFDS_DETAIL_CANDIDATE, MFDS_DETAIL_IDENTITY
 from ai_worker.tasks.rag.source_ingestion.mfds_detail import (
     DETAIL_PARSER_VERSION,
+    _record_empty_component_receipt,
     acquire_mfds_detail,
     build_detail_ingestion_result,
     ingest_and_persist_mfds_detail,
@@ -214,6 +215,60 @@ async def test_ineligible_rows_kept_without_partial_snapshot(tmp_path, records, 
     assert result.failure_code
     repo.create_snapshot.assert_not_awaited()
     assert len(repo.create_artifacts.call_args.kwargs["artifacts"]) == 1
+
+
+async def test_blank_rows_are_still_blocked_by_the_primary_key_gate(tmp_path):
+    """#166 D-04: Catalog 매핑은 빈 행을 통과시키지만 수집 계층 고유키 검사가 먼저 막는다.
+
+    빈 행은 TAMT_SEQ·MTRAL_SN이 비어 primary key null로 집계되므로 run이 SCHEMA_DRIFT가
+    된다. 이 게이트는 이번 변경 범위 밖이며 실제 수집 전에 별도로 확인해야 한다.
+    """
+    acquisition, _ = await acquire(tmp_path, [envelope([row(), {"ITEM_SEQ": "synthetic-blank"}])])
+    validation = acquisition.result.primary_key_validation
+
+    assert acquisition.result.status is not SourceRunStatus.SUCCEEDED
+    assert not acquisition.result.snapshot_candidate_allowed
+    assert validation is not None and validation.null_count == 1
+
+    report = json.loads((acquisition.directory / "inspection.json").read_text())
+    assert report["empty_component_row_count"] == 1
+    assert report["component_input_row_count"] == 1
+    assert report["catalog_is_partial"] is True
+    assert report["catalog_input_eligible"] is False
+
+
+async def test_empty_component_receipt_is_recorded_only_with_a_stored_snapshot(tmp_path):
+    repo = repository()
+    await _record_empty_component_receipt(
+        repository=repo, snapshot_id=None, acquisition=await _blank_acquisition(tmp_path)
+    )
+    repo.record_observation_exclusions.assert_not_awaited()
+
+    snapshot_id = uuid4()
+    await _record_empty_component_receipt(
+        repository=repo, snapshot_id=snapshot_id, acquisition=await _blank_acquisition(tmp_path)
+    )
+    receipt = repo.record_observation_exclusions.await_args.args[0]
+
+    assert receipt.snapshot_id == snapshot_id
+    assert receipt.reason == "EMPTY_COMPONENT_FIELDS"
+    assert (receipt.source_row_count, receipt.excluded_row_count, receipt.retained_row_count) == (2, 1, 1)
+
+
+async def test_receipt_is_not_written_when_nothing_was_excluded(tmp_path):
+    acquisition, _ = await acquire(tmp_path, [envelope([row()])])
+    repo = repository()
+
+    await _record_empty_component_receipt(repository=repo, snapshot_id=uuid4(), acquisition=acquisition)
+
+    repo.record_observation_exclusions.assert_not_awaited()
+
+
+async def _blank_acquisition(tmp_path):
+    spool = tmp_path / uuid4().hex
+    spool.mkdir()
+    acquisition, _ = await acquire(spool, [envelope([row(), {"ITEM_SEQ": "synthetic-blank"}])])
+    return acquisition
 
 
 @pytest.mark.parametrize(
