@@ -236,7 +236,7 @@ async def test_preflight_rejects_missing_identification_without_side_effects(db_
     assert await _side_effect_counts(db_session) == before
 
 
-async def test_preflight_rejects_when_active_medication_is_empty_without_side_effects(
+async def test_preflight_rejects_corrupted_active_version_before_empty_medication_reason(
     db_session: AsyncSession,
 ) -> None:
     owner = await _create_user(db_session, email="preflight-empty@example.com")
@@ -254,9 +254,9 @@ async def test_preflight_rejects_when_active_medication_is_empty_without_side_ef
         )
 
     assert exc_info.value.status_code == 409
-    assert exc_info.value.code == "PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE"
-    assert exc_info.value.details[0].field == "prescription_id"
-    assert exc_info.value.details[0].reason == "ACTIVE_MEDICATION_REQUIRED"
+    assert exc_info.value.code == "PRESCRIPTION_VERSION_UNAVAILABLE"
+    assert exc_info.value.details[0].field == "active_version_id"
+    assert exc_info.value.details[0].reason == "INVALID_VERSION_GRAPH"
     assert await _side_effect_counts(db_session) == before
 
 

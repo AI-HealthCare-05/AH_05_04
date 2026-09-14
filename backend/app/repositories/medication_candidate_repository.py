@@ -353,9 +353,6 @@ class MedicationCandidateRepository:
             .order_by(PrescriptionVersionMedication.display_order)
         )
         medication_ids = list(result.scalars().all())
-        if not medication_ids:
-            return []
-
         await require_verified_version(self.session, prescription_version_id)
         return medication_ids
 
