@@ -71,6 +71,7 @@ def _validate_exact_records(evidence: dict[str, JsonValue]) -> None:
             {"command_id": "AUTHORIZATION_CONTROL_RELATED", "result": "128_PASSED"},
             {"command_id": "RUNTIME_ASSEMBLY", "result": "24_PASSED"},
             {"command_id": "WORKER_IMAGE_PROTECTED_OFF_IMPORT", "result": "PASSED"},
+            {"command_id": "PROTECTED_LIMITED_LOGIN_CI", "result": "PASSED"},
         ],
         "remaining_repository_scope": [
             "PRODUCTION_APPROVAL_SOURCE_CONNECTOR",
@@ -205,6 +206,10 @@ def build_protected_retrieval_infrastructure_evidence(repository_root: Path) -> 
                 "command_id": "WORKER_IMAGE_PROTECTED_OFF_IMPORT",
                 "result": "PASSED",
             },
+            {
+                "command_id": "PROTECTED_LIMITED_LOGIN_CI",
+                "result": "PASSED",
+            },
         ],
     }
     evidence["evidence_sha256"] = canonical_sha256(evidence, excluded_top_level_keys=frozenset({"evidence_sha256"}))
@@ -247,6 +252,7 @@ def render_protected_retrieval_infrastructure_evidence(evidence: dict[str, JsonV
             "- Authorization-control related suite: `128 passed`",
             "- Runtime assembly suite: `24 passed`",
             "- Protected-off Worker image import: `passed`",
+            "- Protected limited-login verification in CI: `passed`",
             "- 실제 환경 좌표와 보호 데이터는 사용하지 않았습니다.",
             "",
             "## Evidence self hash 입력",
