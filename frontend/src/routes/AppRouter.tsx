@@ -6,7 +6,6 @@ import {
   clearAuthenticatedSession,
   isStaleTokenError,
 } from '../features/auth/authSession'
-import DesignPrototypePage from '../pages/DesignPrototypePage'
 import HomePage from '../pages/HomePage'
 import LoginPage from '../pages/LoginPage'
 import SignupPage from '../pages/SignupPage'
@@ -17,9 +16,15 @@ import ChatPage from '../pages/ChatPage'
 import StartPage from '../pages/StartPage'
 import ProfilePage from '../pages/ProfilePage'
 import MenuPage from '../pages/MenuPage'
+import { ScheduleOccurrencePage, SchedulePage } from '../pages/SchedulePage'
+import NotificationsPage from '../pages/NotificationsPage'
 
 const DevPreviewPage = import.meta.env.DEV
   ? lazy(() => import('../dev-preview/DevPreviewPage'))
+  : null
+
+const DesignPrototypePage = import.meta.env.DEV
+  ? lazy(() => import('../pages/DesignPrototypePage'))
   : null
 
 type AuthState =
@@ -104,8 +109,10 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
 
 export function AppRoutes({
   enableDevPreview = import.meta.env.DEV,
+  enableDesignPrototype = import.meta.env.DEV,
 }: {
   enableDevPreview?: boolean
+  enableDesignPrototype?: boolean
 } = {}) {
   return (
     <Routes>
@@ -114,7 +121,16 @@ export function AppRoutes({
       <Route path="/signup" element={<PublicOnlyRoute><SignupPage /></PublicOnlyRoute>} />
       <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
       <Route path="/prescriptions/upload" element={<ProtectedRoute><PrescriptionUploadPage /></ProtectedRoute>} />
-      <Route path="/design-prototype" element={<DesignPrototypePage />} />
+      {enableDesignPrototype && DesignPrototypePage && (
+        <Route
+          path="/design-prototype"
+          element={
+            <Suspense fallback={<div role="status">Prototype를 준비하고 있습니다.</div>}>
+              <DesignPrototypePage />
+            </Suspense>
+          }
+        />
+      )}
       {enableDevPreview && DevPreviewPage && (
         <Route
           path="/dev/preview"
@@ -129,8 +145,14 @@ export function AppRoutes({
       <Route path="/guides/:guideId" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
       <Route path="/guides" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
       <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
+      <Route path="/schedule" element={<ProtectedRoute><SchedulePage /></ProtectedRoute>} />
+      <Route
+        path="/schedule/occurrences/:occurrenceId"
+        element={<ProtectedRoute><ScheduleOccurrencePage /></ProtectedRoute>}
+      />
       <Route path="/menu" element={<ProtectedRoute><MenuPage /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+      <Route path="/notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
     </Routes>
   )
 }

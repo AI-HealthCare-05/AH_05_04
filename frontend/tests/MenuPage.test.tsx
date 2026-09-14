@@ -27,6 +27,8 @@ function renderMenu() {
         <Route path="/start" element={<div>시작 화면</div>} />
         <Route path="/guides" element={<div>가이드 화면</div>} />
         <Route path="/chat" element={<div>도지 화면</div>} />
+        <Route path="/schedule" element={<div>복약 일정 화면</div>} />
+        <Route path="/notifications" element={<div>알림 화면</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -44,21 +46,33 @@ afterEach(() => {
 })
 
 describe('Dosey 메뉴', () => {
-  it('사용자 정보는 실제 route로 이동하고 미연결 항목은 준비 중으로 비활성화한다', () => {
-    renderMenu()
+  it('사용자 정보와 복약 기록은 실제 route로 이동하고 나머지 미연결 항목은 비활성화한다', () => {
+    const first = renderMenu()
 
-    for (const label of ['복약 기록', '복약 리포트', '알림 설정']) {
+    for (const label of ['복약 리포트', '알림 설정']) {
       expect(screen.getByRole('button', { name: `${label} (준비 중)` })).toHaveProperty('disabled', true)
     }
 
+    fireEvent.click(screen.getByRole('button', { name: '복약 기록' }))
+    expect(screen.getByText('복약 일정 화면')).toBeTruthy()
+
+    first.unmount()
+    renderMenu()
     fireEvent.click(screen.getByRole('button', { name: '사용자 정보' }))
     expect(screen.getByText('사용자 정보 화면')).toBeTruthy()
   })
 
-  it('현재 가능한 하단 navigation만 기존 route로 이동한다', () => {
+  it('header 알림 버튼은 /notifications route로 이동한다', () => {
+    renderMenu()
+
+    fireEvent.click(screen.getByRole('button', { name: '알림' }))
+    expect(screen.getByText('알림 화면')).toBeTruthy()
+  })
+
+  it('일정을 포함한 현재 가능한 하단 navigation이 기존 route로 이동한다', () => {
     const first = renderMenu()
     expect(screen.getByRole('button', { name: '메뉴' }).getAttribute('aria-current')).toBe('page')
-    expect(screen.getByRole('button', { name: '일정 (준비 중)' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: '일정' })).toHaveProperty('disabled', false)
     fireEvent.click(screen.getByRole('button', { name: '가이드' }))
     expect(screen.getByText('가이드 화면')).toBeTruthy()
 

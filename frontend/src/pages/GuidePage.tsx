@@ -329,9 +329,9 @@ function GuidePage({
         title="Dosey 도지"
         activeNavigation="가이드"
         onBack={() => navigate('/')}
-        disabledNavigation={['일정']}
         onNavigate={(item) => {
           if (item === '홈') navigate('/')
+          if (item === '일정') navigate('/schedule')
           if (item === '가이드' && !guideId) navigate('/guides')
           if (item === '도지') {
             navigate(

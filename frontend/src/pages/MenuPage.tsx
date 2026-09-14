@@ -66,17 +66,16 @@ function MenuPage() {
           <button
             className="mvp-menu__notification"
             type="button"
-            aria-label="알림 (준비 중)"
-            disabled
+            aria-label="알림"
+            onClick={() => navigate('/notifications')}
           >
             <img src={notificationIcon} alt="" aria-hidden="true" />
-            <span aria-hidden="true" />
           </button>
         }
         activeNavigation="메뉴"
-        disabledNavigation={['일정']}
         onNavigate={(item) => {
           if (item === '홈') navigate('/')
+          if (item === '일정') navigate('/schedule')
           if (item === '도지') navigate('/chat')
           if (item === '가이드') navigate('/guides')
         }}
@@ -94,7 +93,7 @@ function MenuPage() {
           <section className="mvp-menu__section" aria-labelledby="menu-medication-title">
             <h3 id="menu-medication-title">복약 관리</h3>
             <div className="mvp-menu__card">
-              <MenuRow icon="clipboard" label="복약 기록" disabled />
+              <MenuRow icon="clipboard" label="복약 기록" onClick={() => navigate('/schedule')} />
               <MenuRow icon="report" label="복약 리포트" detail="7일 · 30일" disabled />
             </div>
           </section>

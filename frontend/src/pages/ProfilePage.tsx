@@ -269,10 +269,10 @@ function ProfilePage() {
       <MobileShell
         title="Dosey 도지"
         activeNavigation="메뉴"
-        disabledNavigation={['일정']}
         onBack={() => navigate('/menu')}
         onNavigate={(item) => {
           if (item === '홈') navigate('/')
+          if (item === '일정') navigate('/schedule')
           if (item === '도지') navigate('/chat')
           if (item === '가이드') navigate('/guides')
           if (item === '메뉴') navigate('/menu')

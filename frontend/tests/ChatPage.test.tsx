@@ -120,6 +120,7 @@ function renderPage(
         <Route path="/prescriptions/upload" element={<UploadRoute />} />
         <Route path="/guides" element={<div>복약 가이드 화면</div>} />
         <Route path="/menu" element={<div>메뉴 화면</div>} />
+        <Route path="/schedule" element={<div>복약 일정 화면</div>} />
       </Routes>
     </MemoryRouter>
   )
@@ -1312,10 +1313,7 @@ describe('ChatPage', () => {
     expect(screen.getByRole('button', { name: '도지' }).getAttribute('aria-current')).toBe(
       'page',
     )
-    expect(screen.getByRole('button', { name: '일정 (준비 중)' })).toHaveProperty(
-      'disabled',
-      true,
-    )
+    expect(screen.getByRole('button', { name: '일정' })).toHaveProperty('disabled', false)
     fireEvent.click(screen.getByRole('button', { name: '처방전 등록하기' }))
     expect(screen.getByText('처방전 등록 화면')).toBeTruthy()
     expect(screen.getByTestId('upload-intent').textContent).toBe('new-prescription')
