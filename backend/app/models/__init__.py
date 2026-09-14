@@ -16,7 +16,14 @@ from app.models.async_jobs import (
 )
 from app.models.chat import ChatCitation, ChatMessage, ChatSession
 from app.models.guides import Guide, GuideCitation
-from app.models.knowledge import KnowledgeChunk, KnowledgeDocument
+from app.models.knowledge import (
+    KnowledgeChunk,
+    KnowledgeDocument,
+    KnowledgeDocumentContractVersion,
+    RagKnowledgeDistanceMetric,
+    RagKnowledgeIndex,
+    RagKnowledgeIndexMember,
+)
 from app.models.medical_documents import MedicalDocument
 from app.models.medication_schedules import (
     CheckinAudit,
@@ -127,6 +134,8 @@ from app.models.rag_source import (
     RagSourceLifecycleStatus,
     RagSourceOperation,
     RagSourceSnapshot,
+    RagSourceSnapshotMember,
+    RagSourceSnapshotMemberKind,
     RagSourceSnapshotVerification,
     RagSourceUsageStatus,
     RagVerificationResultStatus,
@@ -178,6 +187,7 @@ __all__ = [
     "IdempotencyRecordType",
     "KnowledgeChunk",
     "KnowledgeDocument",
+    "KnowledgeDocumentContractVersion",
     "Medication",
     "MedicationOccurrence",
     "MedicationOccurrenceStatus",
@@ -208,6 +218,9 @@ __all__ = [
     "Profile",
     "ProfileType",
     "RagIngestionRunStatus",
+    "RagKnowledgeDistanceMetric",
+    "RagKnowledgeIndex",
+    "RagKnowledgeIndexMember",
     "RagEntityIdentity",
     "RagMedicationAlias",
     "RagMedicationAliasReviewStatus",
@@ -256,6 +269,8 @@ __all__ = [
     "RagSourceLifecycleStatus",
     "RagSourceOperation",
     "RagSourceSnapshot",
+    "RagSourceSnapshotMember",
+    "RagSourceSnapshotMemberKind",
     "RagSourceSnapshotVerification",
     "RagSourceUsageStatus",
     "RagVerificationResultStatus",

@@ -59,6 +59,7 @@ async def database(request):
         if getattr(request, "param", None) != "migration":
             async with engine.begin() as connection:
                 await connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+                await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
                 await connection.run_sync(Base.metadata.create_all)
         yield engine, url.set(database=name), roles
     finally:

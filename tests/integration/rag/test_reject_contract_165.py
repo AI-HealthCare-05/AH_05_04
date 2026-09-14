@@ -55,6 +55,7 @@ from app.repositories.rag_source_catalog_repository import (
     RagSourceEndpointCreate,
     RagSourceOperationCreate,
 )
+from app.tests.db_extensions import ensure_vector_extension
 
 ROOT = Path(__file__).resolve().parents[3]
 RECEIPT = ROOT / "docs/validation/rag/endpoints/LIST_APPROVED_PRODUCTS.json"
@@ -76,6 +77,7 @@ async def database():
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS test_extensions"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA test_extensions"))
         await conn.execute(text("ALTER EXTENSION pg_trgm SET SCHEMA test_extensions"))
+        await ensure_vector_extension(conn, "test_extensions")
         await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
     try:
         async with engine.begin() as conn:

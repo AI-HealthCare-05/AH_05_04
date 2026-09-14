@@ -4,8 +4,9 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Integer, Numeric, String, column, func, insert, select, table, update
+from sqlalchemy import DateTime, Integer, Numeric, String, and_, column, func, insert, select, table, update
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
@@ -29,6 +30,11 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotRunRecord,
     SnapshotStatusReference,
     SnapshotVerificationStatus,
+    SourceSnapshotMemberCreate,
+    SourceSnapshotMemberFailureReason,
+    SourceSnapshotMemberKind,
+    SourceSnapshotMemberReceipt,
+    SourceSnapshotMemberValidationError,
 )
 from ai_worker.tasks.rag.source_ingestion.snapshot_policy import SourceSnapshotPolicy
 
@@ -39,18 +45,24 @@ _SOURCE = table(
     column("max_rejected_records", Integer),
     column("max_rejection_rate", Numeric()),
     column("empty_result_policy", String(20)),
+    column("lifecycle_status", String(20)),
 )
 _ENDPOINT = table(
     "rag_source_endpoint",
     column("id", String(36)),
     column("source_id", String(36)),
     column("endpoint_code", String(100)),
+    column("lifecycle_status", String(20)),
+    column("runtime_status", String(20)),
+    column("acquisition_status", String(20)),
 )
 _OPERATION = table(
     "rag_source_operation",
     column("id", String(36)),
     column("endpoint_id", String(36)),
     column("operation_code", String(100)),
+    column("runtime_status", String(20)),
+    column("acquisition_status", String(20)),
 )
 _SNAPSHOT = table(
     "rag_source_snapshot",
@@ -121,6 +133,17 @@ _VERIFICATION = table(
     column("verified_by", String(100)),
     column("verified_at", DateTime(timezone=True)),
 )
+_SOURCE_SNAPSHOT_MEMBER = table(
+    "rag_source_snapshot_member",
+    column("id", String(36)),
+    column("source_snapshot_id", String(36)),
+    column("member_kind", String(30)),
+    column("endpoint_id", String(36)),
+    column("operation_id", String(36)),
+    column("ingestion_artifact_id", String(36)),
+    column("locator", String(500)),
+    column("content_sha256", String(64)),
+)
 
 
 class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
@@ -128,6 +151,49 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def append_snapshot_member(self, request: SourceSnapshotMemberCreate) -> SourceSnapshotMemberReceipt:
+        parent = (await self._session.execute(_snapshot_member_parent_statement(request))).mappings().one_or_none()
+        if parent is None:
+            raise SourceSnapshotMemberValidationError(SourceSnapshotMemberFailureReason.SOURCE_BINDING_INVALID)
+
+        identity_filter = _snapshot_member_identity_filter(request)
+        existing_id = await self._session.scalar(select(_SOURCE_SNAPSHOT_MEMBER.c.id).where(identity_filter))
+        if existing_id is None:
+            member_id = uuid4()
+            inserted_id = await self._session.scalar(
+                postgresql_insert(_SOURCE_SNAPSHOT_MEMBER)
+                .values(
+                    id=str(member_id),
+                    source_snapshot_id=str(request.provenance.source_snapshot_id),
+                    member_kind=request.member_kind.value,
+                    endpoint_id=str(request.endpoint_id) if request.endpoint_id is not None else None,
+                    operation_id=str(request.operation_id) if request.operation_id is not None else None,
+                    ingestion_artifact_id=(
+                        str(request.ingestion_artifact_id) if request.ingestion_artifact_id is not None else None
+                    ),
+                    locator=request.locator,
+                    content_sha256=request.content_sha256,
+                )
+                .on_conflict_do_nothing(
+                    constraint="uq_rag_source_snapshot_member",
+                )
+                .returning(_SOURCE_SNAPSHOT_MEMBER.c.id)
+            )
+            existing_id = inserted_id
+        if existing_id is None:
+            existing_id = await self._session.scalar(select(_SOURCE_SNAPSHOT_MEMBER.c.id).where(identity_filter))
+        if existing_id is None:
+            raise SourceSnapshotMemberValidationError(SourceSnapshotMemberFailureReason.RECEIPT_MISMATCH)
+        return SourceSnapshotMemberReceipt(
+            source_snapshot_member_id=UUID(str(existing_id)),
+            source_snapshot_id=request.provenance.source_snapshot_id,
+            member_kind=request.member_kind,
+            endpoint_id=request.endpoint_id,
+            operation_id=request.operation_id,
+            ingestion_artifact_id=request.ingestion_artifact_id,
+            content_sha256=request.content_sha256,
+        )
 
     async def lock_operation(self, identity: SourceOperationIdentity) -> UUID:
         statement = _operation_lookup(identity).with_for_update(of=_OPERATION)
@@ -706,4 +772,76 @@ def _operation_lookup(identity: SourceOperationIdentity) -> Select[tuple[Any]]:
             _ENDPOINT.c.endpoint_code == identity.endpoint_code,
             _OPERATION.c.operation_code == identity.operation_code,
         )
+    )
+
+
+def _snapshot_member_parent_statement(request: SourceSnapshotMemberCreate) -> Select[tuple[Any]]:
+    provenance = request.provenance
+    source_chain = (
+        _SOURCE.join(_ENDPOINT, _ENDPOINT.c.source_id == _SOURCE.c.id)
+        .join(_OPERATION, _OPERATION.c.endpoint_id == _ENDPOINT.c.id)
+        .join(_SNAPSHOT, _SNAPSHOT.c.operation_id == _OPERATION.c.id)
+    )
+    conditions = [
+        _SOURCE.c.id == str(provenance.source_id),
+        _SOURCE.c.source_code == provenance.source_code,
+        _SOURCE.c.lifecycle_status == "ACTIVE",
+        _ENDPOINT.c.id == str(provenance.endpoint_id),
+        _ENDPOINT.c.lifecycle_status == "VERIFIED",
+        _ENDPOINT.c.runtime_status == "ENABLED",
+        _ENDPOINT.c.acquisition_status == "APPROVED",
+        _OPERATION.c.id == str(provenance.operation_id),
+        _OPERATION.c.runtime_status == "ENABLED",
+        _OPERATION.c.acquisition_status == "APPROVED",
+        _SNAPSHOT.c.id == str(provenance.source_snapshot_id),
+        _SNAPSHOT.c.source_version == provenance.source_version,
+        _SNAPSHOT.c.canonical_checksum == provenance.canonical_checksum,
+        _SNAPSHOT.c.canonicalization_spec_version == provenance.canonicalization_spec_version,
+        _SNAPSHOT.c.endpoint_receipt_hash == provenance.endpoint_receipt_hash,
+        _SNAPSHOT.c.verification_seal_id.is_(None),
+        _SNAPSHOT.c.verification_status == SnapshotVerificationStatus.PENDING.value,
+        _SNAPSHOT.c.rejected_record_count == provenance.rejected_record_count,
+    ]
+    lock_targets = [_SOURCE, _ENDPOINT, _OPERATION, _SNAPSHOT]
+    if request.member_kind is SourceSnapshotMemberKind.ARTIFACT:
+        source_chain = source_chain.join(
+            _INGESTION_RUN,
+            and_(
+                _INGESTION_RUN.c.snapshot_id == _SNAPSHOT.c.id,
+                _INGESTION_RUN.c.operation_id == _OPERATION.c.id,
+            ),
+        ).join(_INGESTION_ARTIFACT, _INGESTION_ARTIFACT.c.ingestion_run_id == _INGESTION_RUN.c.id)
+        conditions.append(_INGESTION_ARTIFACT.c.id == str(request.ingestion_artifact_id))
+        lock_targets.extend((_INGESTION_RUN, _INGESTION_ARTIFACT))
+    if provenance.publication_verification_id is not None:
+        source_chain = source_chain.join(
+            _VERIFICATION,
+            and_(
+                _VERIFICATION.c.snapshot_id == _SNAPSHOT.c.id,
+                _VERIFICATION.c.id == str(provenance.publication_verification_id),
+            ),
+        )
+        conditions.extend(
+            (
+                _VERIFICATION.c.check_name == SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
+                _VERIFICATION.c.verification_result == "PASSED",
+                _VERIFICATION.c.verified_by.is_not(None),
+            )
+        )
+        lock_targets.append(_VERIFICATION)
+    return select(_SNAPSHOT.c.id).select_from(source_chain).where(*conditions).with_for_update(of=lock_targets)
+
+
+def _snapshot_member_identity_filter(request: SourceSnapshotMemberCreate):
+    return and_(
+        _SOURCE_SNAPSHOT_MEMBER.c.source_snapshot_id == str(request.provenance.source_snapshot_id),
+        _SOURCE_SNAPSHOT_MEMBER.c.member_kind == request.member_kind.value,
+        _SOURCE_SNAPSHOT_MEMBER.c.endpoint_id
+        == (str(request.endpoint_id) if request.endpoint_id is not None else None),
+        _SOURCE_SNAPSHOT_MEMBER.c.operation_id
+        == (str(request.operation_id) if request.operation_id is not None else None),
+        _SOURCE_SNAPSHOT_MEMBER.c.ingestion_artifact_id
+        == (str(request.ingestion_artifact_id) if request.ingestion_artifact_id is not None else None),
+        _SOURCE_SNAPSHOT_MEMBER.c.locator == request.locator,
+        _SOURCE_SNAPSHOT_MEMBER.c.content_sha256 == request.content_sha256,
     )

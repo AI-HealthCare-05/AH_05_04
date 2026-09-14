@@ -370,6 +370,16 @@ PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Co
 - 자동 Guide는 모든 활성 약의 현재 Identification 전에는 Job을 만들지 않고 동기 `REVIEW_REQUIRED`를 반환합니다. Chat은 Identification 전에도 최소 Safety Intake Job을 만들 수 있지만, `ROUTINE`만 Identification Preflight 후 일반 Rule·RAG로 진행합니다. `URGENT | EMERGENCY | UNKNOWN`은 일반 Retrieval·Composer·Provider 호출 0건을 검증합니다.
 - 처방·Identification·Source·Runtime Bundle 변경 뒤 과거 결과가 `STALE`인지 검증합니다.
 
+### #178 Knowledge Evidence Index 선행 기반
+
+`tests/integration/rag/test_knowledge_evidence_index_postgresql.py`는 매 실행마다 별도 PostgreSQL database를
+만들고 전체 Alembic head를 적용한다. pgvector extension version, Source Snapshot member parent 결속,
+완성 index의 vector round-trip과 receipt 재계산, 동일 버전 멱등 재생, 동시 생성 직렬화, 변경 receipt 충돌
+rollback과 민감 합성 sentinel 비노출을 검증한 뒤 database를 제거한다. Worker 기본 lane의 차단된 DB 포트를
+우회하지 않도록 이 테스트는 `tests/integration/rag`의 Backend PostgreSQL lane에서만 실행한다.
+
+상세 실행 증빙과 미완료 #178 범위는 [Knowledge Evidence Index #178 검증 기록](./testing/knowledge-evidence-index-178.md)을 따른다.
+
 ### Track F Evaluation Release Gate
 
 - Release 통합 Experiment Type은 `END_TO_END_RAG`이며 `HOLDOUT`과 `SAFETY_REGRESSION`을 모두 요구합니다. `END_TO_END_FINAL`은 저장하거나 혼용하지 않습니다.
