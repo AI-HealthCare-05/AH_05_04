@@ -5,6 +5,7 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
+from app.core.config import Env
 from app.core.db.databases import get_db_session
 from app.core.provider_observability import (
     Provider,
@@ -14,11 +15,13 @@ from app.core.provider_observability import (
 )
 from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.chat_repository import ChatRepository
+from app.repositories.email_verification_repository import EmailVerificationRepository
 from app.repositories.guide_repository import GuideRepository
 from app.repositories.idempotency_repository import IdempotencyRepository
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
 from app.repositories.medication_checkin_repository import MedicationCheckinRepository
+from app.repositories.medication_report_repository import MedicationReportRepository
 from app.repositories.medication_schedule_queries import MedicationScheduleQueries
 from app.repositories.medication_schedule_repository import MedicationScheduleRepository
 from app.repositories.notification_repository import NotificationRepository
@@ -34,6 +37,7 @@ from app.services.chat_ai import OpenAIResponsesClient as ChatOpenAIResponsesCli
 from app.services.chat_ai.prompt import PROMPT_VERSION as CHAT_PROMPT_VERSION
 from app.services.chat_generator_engine import ChatGeneratorEngine
 from app.services.clova_ocr_engine import ClovaOcrEngine
+from app.services.email_delivery import EmailSender, NoopEmailSender, SmtpEmailSender, SmtpEmailSenderConfig
 from app.services.guide_ai import GuideGenerator
 from app.services.guide_ai import OpenAIResponsesClient as GuideOpenAIResponsesClient
 from app.services.guide_ai.prompt import PROMPT_VERSION as GUIDE_PROMPT_VERSION
@@ -47,6 +51,7 @@ from app.services.medication_checkin_api import MedicationCheckinApiService
 from app.services.medication_checkins import MedicationCheckinService, NoopCheckinRevisionInvalidation
 from app.services.medication_identification import MedicationIdentificationService
 from app.services.medication_occurrences import PrescriptionVersionMedicationInvalidationService
+from app.services.medication_reports import MedicationReportService
 from app.services.medication_schedule_api import MedicationScheduleApiService
 from app.services.medication_schedule_mutations import MedicationScheduleMutationService
 from app.services.notifications import NotificationService
@@ -460,6 +465,35 @@ def get_password_reset_repository(
     return PasswordResetRepository(session)
 
 
+def get_email_verification_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> EmailVerificationRepository:
+    return EmailVerificationRepository(session)
+
+
+def get_email_sender() -> EmailSender:
+    if config.EMAIL_PROVIDER == "smtp":
+        if config.ENV is not Env.LOCAL:
+            raise RuntimeError("SMTP email provider is not enabled outside local environment in this PR")
+        if not config.SMTP_USE_TLS:
+            raise RuntimeError("SMTP_USE_TLS=false is not allowed")
+        return SmtpEmailSender(
+            SmtpEmailSenderConfig(
+                host=config.SMTP_HOST,
+                port=config.SMTP_PORT,
+                username=config.SMTP_USERNAME,
+                password=config.SMTP_PASSWORD,
+                from_email=config.SMTP_FROM_EMAIL,
+                use_tls=config.SMTP_USE_TLS,
+                timeout_seconds=config.SMTP_TIMEOUT_SECONDS,
+            )
+        )
+    return NoopEmailSender()
+
+
 def get_refresh_session_repository(
     session: Annotated[
         AsyncSession,
@@ -482,8 +516,22 @@ def get_auth_service(
         RefreshSessionRepository,
         Depends(get_refresh_session_repository),
     ],
+    email_verification_repository: Annotated[
+        EmailVerificationRepository,
+        Depends(get_email_verification_repository),
+    ],
+    email_sender: Annotated[
+        EmailSender,
+        Depends(get_email_sender),
+    ],
 ) -> AuthService:
-    return AuthService(repository, password_reset_repository, refresh_session_repository)
+    return AuthService(
+        repository,
+        password_reset_repository,
+        refresh_session_repository,
+        email_verification_repository,
+        email_sender,
+    )
 
 
 def get_user_manage_service(
@@ -565,3 +613,9 @@ def get_medication_schedule_api_service(
         ),
         idempotency_service,
     )
+
+
+def get_medication_report_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> MedicationReportService:
+    return MedicationReportService(MedicationReportRepository(session))
