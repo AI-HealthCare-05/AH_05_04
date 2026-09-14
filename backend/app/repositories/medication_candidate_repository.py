@@ -84,8 +84,6 @@ class MedicationCandidateRepository:
             )
             .with_for_update(of=Prescription)
         )
-        if prescription is not None:
-            await require_verified_version(self.session, prescription.active_version_id)
         return prescription
 
     async def get_medication_for_candidate_search_owned(
