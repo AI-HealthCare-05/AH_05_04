@@ -25,8 +25,8 @@ PROTECTED_DATABASE_URL = "PROTECTED_TEST_DATABASE_URL"
 PROTECTED_DATABASE_NAME = "protected368_test"
 
 # 이 두 잡이 protected_database fixture를 쓰는 테스트를 수집합니다.
-# test-backend는 tests/integration/rag의 두 파일이 pytest_plugins로 같은 fixture를 공유합니다.
-REQUIRED_JOBS = ("test-migration", "test-backend")
+# test-rag는 tests/integration/rag의 두 파일이 pytest_plugins로 같은 fixture를 공유합니다.
+REQUIRED_JOBS = ("test-migration", "test-rag")
 
 
 def _jobs() -> dict[str, Any]:
