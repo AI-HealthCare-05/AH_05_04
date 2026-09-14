@@ -41,6 +41,16 @@ def test_production_fastapi_receives_idempotency_snapshot_encryption_key_ring() 
     )
 
 
+def test_production_ocr_consent_policy_version_reaches_backend_and_worker() -> None:
+    compose = yaml.safe_load(_read(PRODUCTION_COMPOSE_PATH))
+    services = compose["services"]
+    expected = "${OCR_CONSENT_POLICY_VERSION:-}"
+
+    assert services["fastapi"]["environment"]["OCR_CONSENT_POLICY_VERSION"] == expected
+    assert services["ai-worker"]["environment"]["OCR_CONSENT_POLICY_VERSION"] == expected
+    assert "OCR_CONSENT_POLICY_VERSION=\n" in _read(PROJECT_ROOT / "envs/example.prod.env")
+
+
 def test_frontend_production_image_requires_api_origin_and_contains_built_spa() -> None:
     dockerfile = _read(PROJECT_ROOT / "frontend/Dockerfile.prod")
 
