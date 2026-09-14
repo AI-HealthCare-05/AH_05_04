@@ -24,6 +24,8 @@ from ai_worker.tasks.rag.source_client.contracts import (
 )
 from ai_worker.tasks.rag.source_client.decoders import decode_mfds_json
 from ai_worker.tasks.rag.source_client.endpoints import (
+    MFDS_DETAIL_CANDIDATE,
+    MFDS_DETAIL_IDENTITY,
     MFDS_ENDPOINT_CANDIDATES,
 )
 from ai_worker.tasks.rag.source_client.mfds_client import MfdsSourceClient
@@ -68,6 +70,19 @@ OPERATIONS = {
         ),
         official_document_url=("https://www.data.go.kr/data/15075057/openapi.do"),
     ),
+    # 제품 목록과 같은 허가 출처이지만 Operation·Endpoint Receipt는 분리합니다.
+    # P0 자동 실행 목록(MFDS_ENDPOINT_CANDIDATES)에는 추가하지 않습니다.
+    MFDS_DETAIL_IDENTITY.operation_code: ProbeOperation(
+        identity=MFDS_DETAIL_IDENTITY,
+        official_document_url=("https://www.data.go.kr/data/15095677/openapi.do"),
+    ),
+}
+
+# probe는 P0 Operation과 상세 Operation을 모두 실측할 수 있어야 하므로
+# P0 registry를 넓히지 않고 probe 실행 범위에서만 상세 후보를 더합니다.
+PROBE_CANDIDATES = {
+    **MFDS_ENDPOINT_CANDIDATES,
+    MFDS_DETAIL_IDENTITY.operation_code: MFDS_DETAIL_CANDIDATE,
 }
 
 
@@ -79,6 +94,17 @@ _SUCCESS_FIXTURE_BY_OPERATION = {
     "LIST_APPROVED_PRODUCTS": "list_approved_products_success.json",
     "LIST_INGREDIENT_CONTRAINDICATIONS": ("list_ingredient_contraindications_success.json"),
     "LIST_PATIENT_MEDICATION_GUIDES": ("list_patient_medication_guides_success.json"),
+    "LIST_PRODUCT_COMPONENT_DETAILS": ("list_product_component_details_success.json"),
+}
+
+# 상세 Receipt는 빈 행·중복 행 시나리오 증빙까지 요구합니다.
+# ai_worker/tasks/rag/source_ingestion/receipt_validation.py의
+# load_detail_endpoint_receipt()가 요구하는 scenario와 같은 집합을 만듭니다.
+_ADDITIONAL_FIXTURES_BY_OPERATION = {
+    "LIST_PRODUCT_COMPONENT_DETAILS": (
+        "synthetic_detail_blank.json",
+        "synthetic_detail_duplicate.json",
+    ),
 }
 
 
@@ -92,6 +118,7 @@ def build_fixture_evidence(
         "synthetic_daily_limit.json",
         "synthetic_empty.json",
         "synthetic_schema_drift.json",
+        *_ADDITIONAL_FIXTURES_BY_OPERATION.get(operation_code, ()),
     )
     evidence: list[SanitizedFixtureEvidence] = []
 
@@ -173,7 +200,7 @@ def build_live_receipt(
 ) -> EndpointReceipt:
     """전체 수집의 성공 또는 실패 결과를 안전한 증빙으로 변환합니다."""
 
-    candidate = MFDS_ENDPOINT_CANDIDATES[operation_code]
+    candidate = PROBE_CANDIDATES[operation_code]
     contract = candidate.contract
     validation = result.primary_key_validation
     parser_activation_allowed = result.snapshot_candidate_allowed
@@ -328,7 +355,7 @@ async def run_live_probe(
 ) -> SourceRunResult:
     """Call the first and last documented MFDS pages without storing raw data."""
 
-    candidate = MFDS_ENDPOINT_CANDIDATES[operation_code]
+    candidate = PROBE_CANDIDATES[operation_code]
     contract = candidate.contract
     request = SourceRequest(
         operation=contract.identity,
