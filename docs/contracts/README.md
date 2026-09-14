@@ -48,7 +48,9 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 - [Knowledge Evidence Index v1 (#178 선행 기반)](./proposed/post-mvp-1/knowledge-evidence-index-v1.md): 승인된 RAG Runtime 목표의 Retrieval Adapter가 소비할 Source Snapshot 결속 Chunk·버전별 embedding·재현 가능한 receipt 저장 계약. 구현 브랜치 검증 중이며 #178 Retrieval/RRF/Rerank/Evidence Gate·공개 활성화는 포함하지 않음.
 
-- [RAG Answer Quality Metric·Variant 계약 v1 제안 (#159)](./proposed/post-mvp-1/rag-answer-quality-metrics-v1.md): `ANS-BASE | ANS-RAG | ANS-FINAL`, 네 Answer Metric의 분석 단위·micro ratio·95% cluster bootstrap, 승인 human-rubric label과 세 pair 비교 경계. `PD-159-20260913` 책임 리뷰 전 Proposed이며 DEV 구현·HOLDOUT 실행·Release 승인 아님.
+- [RAG Grounding·Citation Metric 계약 v1 제안 (#160)](./proposed/post-mvp-1/rag-grounding-citation-metrics-v1.md): Claim↔Citation edge, #180 validation·authorization, Gold/source binding을 보존하는 비민감 Evaluation projection과 Citation·unsupported Claim Metric. `PD-160-20260914` 책임 리뷰 전 구현 불가.
+
+- [RAG Safety·Rule-first Metric 계약 v1 제안 (#161)](./proposed/post-mvp-1/rag-safety-rule-first-metrics-v1.md): 기존 Safety Case/Result 기반 routing·Rule·Scope·invocation·fallback Metric과 critical failure exact union. `PD-161-20260914` 책임 리뷰 전 구현 불가.
 
 - [OCR LLM Worker 범위 정정 (#453)](./proposed/ocr-llm-worker-consent-453.md): 기존 이관 범위와 리뷰 시 별도 검토할 항목. 기존 동의 개정안 미채택.
 - [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태와 row 없음=미동의 기준. #465에서 `user_consent` 저장 기반을 병합했고, #510에서 현재 사용자 목적별 동의 상태 조회·변경 API를 추가했다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전과 Production 공개 승인은 후속 범위다. 전체 목적별 계약은 Proposed 유지.
@@ -86,6 +88,7 @@ Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 
 - [RAG Runtime 계약 v1](./targets/post-mvp-1/rag-runtime-v1.md): Guide·Chat·OTC의 Rule-first·Retrieval·Citation·Safety 공통 흐름, Runtime Bundle의 Manifest Hash·저장 정합 계약(`PD-175-20260910` Approved)
 - [Guideline Card typed port 계약 v1](./targets/post-mvp-1/guideline-card-v1.md): RAG-14 Evidence Gate·PD-362 Source eligibility와 RAG-16 사이의 Request·Outcome·승인 verifier·fallback 계약 — RAG-15 persistence-free kernel 구현 검토 중(#179, PR #414), Current 아님
 - [RAG Evaluation·Release Gate 계약 v1](./targets/post-mvp-1/rag-evaluation-v1.md): RAG 전후 비교, 필수 Metric, Schema Set 1.3 `Candidate · Review Required` provenance 계약과 Release 차단 기준
+- [RAG Answer Quality Metric·Variant 계약 v1 (#159)](./targets/post-mvp-1/rag-answer-quality-metrics-v1.md): PR #475 책임 리뷰 승인으로 확정된 Approved Target. `ANS-BASE | ANS-RAG | ANS-FINAL`, 네 Answer Metric의 분석 단위·micro ratio·95% cluster bootstrap, 승인 human-rubric label과 세 pair 비교 경계. 순수 DEV kernel 준비 범위이며 신규 schema/Policy는 승인 version 정렬이 선행되고 HOLDOUT 실행·Release 승인은 아님.
 - [Safety Result·Citation 계약 v2](./targets/post-mvp-1/safety-result-v2.md): Track F에서 v1의 Safety Result·Citation·STALE·Release Gate 목표를 대체하는 후속 Target
 - [Safety Result 복합 STALE 우선순위 계약 v1 (`PD-173`)](./targets/post-mvp-1/safety-result-compound-stale-priority-v1.md): 처방 버전·식별 스냅샷·런타임 번들 복합 STALE 동시 발생 시 단일 공개 fallback_code 사영 우선순위(`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`)와 내부 `stale_reason` 분리 — Approved Target · Not implemented: 판정 kernel은 병합되었으나 런타임 호출부 없음
 - [Protected Retrieval Infrastructure 계약 v1 (`PD-368`, `PD-368-R1`, `PD-368-R2`)](./targets/post-mvp-1/protected-retrieval-infrastructure-v1.md): data-plane 부분 구현, authorization control C1 구현 완료(PR #463), C2 command 및 최소 권한 확장 계약 확정(`PD-368-R2`)

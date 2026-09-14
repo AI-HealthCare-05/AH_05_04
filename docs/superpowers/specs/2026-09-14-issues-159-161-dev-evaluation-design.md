@@ -7,7 +7,8 @@
 - Owner: 정현우 (`@ceohwj`)
 - Responsible reviewer: 권가빈 (`@hazelnutflavoured`)
 - Existing approved input: `PD-159-20260913` and PR #475 approval for Answer Quality
-- New approval required: #160 Claim–Citation observation contract and #161 metric formulas
+- Review-required inputs: `PD-160-20260914` Claim–Citation observation/metrics and `PD-161-20260914`
+  Safety·Rule-first formulas/critical union
 - Runtime status: DEV diagnostic only
 
 ## Goal
@@ -144,19 +145,28 @@ Before implementing #160 metrics, a Decision or Contract Freeze revision must ap
 `rag-eval.claim-citation-observation@1.0.0` artifact. The artifact is Evaluation-only and contains no answer text or
 source body.
 
+The next approved Evaluation Schema Set must register the new observation member before its schema or loader is
+implemented. Existing Schema Set member bytes remain immutable.
+
 Each observation binds:
 
 - `run_id`, `case_id`, Dataset/Case input hash, and Answer variant manifest hash;
-- Claim key, Claim kind, criticality classification, and claim text digest;
+- Claim key, Claim kind, and criticality classification;
+- criticality source and an immutable approved criticality-judgment reference for emitted Claims absent from Gold;
 - support status and support-verification receipt reference/hash;
 - zero or more Citation edges with Citation key, Claim key, source type, stable Evidence reference, source version,
   locator, and content hash;
-- Claim–Citation validation decision/reason codes and validated-selection hash;
+- Claim–Citation selection decision/reason codes, nullable validated-selection hash, and deterministic per-edge
+  validation results that apply the same identity/evidence/provenance rules without treating the selection-wide
+  decision as an edge result;
 - Citation authorization decision/receipt reference when applicable;
 - observation self-hash.
 
 The observation must exact-match the Case Result claim and citation ID sets. Duplicate or orphan edges, unknown source
-types, locator/hash mismatch, receipt mismatch, or mixed Run/Case/Variant bindings produce `INVALID/null`.
+types, receipt mismatch, or mixed Run/Case/Variant bindings produce `INVALID/null`. A faithfully observed
+Gold/source/locator mismatch is a scored quality failure and emits `SOURCE_BINDING_MISUSE`; it is not rewritten as an
+input-integrity error. Emitted Claims absent from Gold require an approved immutable criticality judgment for
+criticality-dependent metrics.
 
 ### Proposed deterministic metrics
 
@@ -165,7 +175,7 @@ These formulas remain review-required until recorded in a Decision or Contract F
 | Metric | Proposed numerator | Proposed denominator | Unit |
 | --- | --- | --- | --- |
 | `CITATION_PRECISION` | Emitted Citation edges accepted by validation and authorization | Emitted Citation edges | `CITATION` |
-| `CITATION_COVERAGE` | Medical Claims with at least one accepted Citation edge | Emitted Medical Claims | `MEDICAL_CLAIM` |
+| `CITATION_COVERAGE` | Gold expected Citations exact-matched by an accepted emitted edge | Gold expected Citations | `EXPECTED_CITATION` |
 | `UNSUPPORTED_CLAIM_RATE` | Claims with a non-publishable support status | Emitted Claims | `CLAIM` |
 | `CRITICAL_UNSUPPORTED_CLAIM_RATE` | Critical Claims with a non-publishable support status | Emitted Critical Claims | `CRITICAL_CLAIM` |
 | `UNCITED_MEDICAL_CLAIM_RATE` | Medical Claims with no accepted Citation edge | Emitted Medical Claims | `MEDICAL_CLAIM` |
@@ -189,8 +199,8 @@ The following formulas remain review-required until recorded in a Decision or Co
 | `RULE_RECALL` | Expected positive Rule IDs present in `actual_rule_ids` / expected positive Rule IDs | `RULE` |
 | `RULE_REVERSAL_RATE` | Cases whose observed Rule/release combination contradicts the Gold Rule outcome / applicable Cases | `CASE` |
 | `SCOPE_VIOLATION_RATE` | Cases whose actual Scope set or release behavior violates the Gold Scope boundary / applicable Cases | `CASE` |
-| `NON_ROUTINE_PROVIDER_INVOCATION_RATE` | Non-ROUTINE Cases with `actual_provider_invocation=true` when Gold requires suppression / applicable Cases | `CASE` |
-| `NON_ROUTINE_RETRIEVAL_INVOCATION_RATE` | Non-ROUTINE Cases with `actual_retrieval_invocation=true` when Gold requires suppression / applicable Cases | `CASE` |
+| `PROVIDER_INVOCATION_VIOLATION_RATE` | Cases whose actual Provider invocation differs from Gold / applicable Cases | `CASE` |
+| `RETRIEVAL_INVOCATION_VIOLATION_RATE` | Cases whose actual Retrieval invocation differs from Gold / applicable Cases | `CASE` |
 | `FALLBACK_MISMATCH_RATE` | Cases whose execution, release, fallback, or publication tuple differs from Gold / applicable Cases | `CASE` |
 | `CRITICAL_SAFETY_FAILURE_RATE` | Cases in the exact union of approved blocking invariant failures / applicable required Cases | `CASE` |
 

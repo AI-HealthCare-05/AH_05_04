@@ -1,19 +1,20 @@
-# Product Decision Candidate: RAG Answer Quality Metric·Variant 계약
+# Product Decision: RAG Answer Quality Metric·Variant 계약
 
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-159-20260913` |
-| 상태 | Candidate · Review Required |
+| 상태 | Approved |
 | 제안일 | 2026-09-13 |
 | 제안자·구현 | 정현우 (`@ceohwj`) — AI/RAG 구현 담당 |
-| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Product·Safety·Evaluation 계약 승인 |
+| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Product·Safety·Evaluation `APPROVED` |
 | 추적 Issue | [#159](https://github.com/AI-HealthCare-05/AH_05_04/issues/159) |
 | 적용 범위 | Post-MVP-1 Track F Answer Quality DEV metric, variant, comparison 입력 계약 |
+| 승인 Evidence | [PR #475 review `5190544119`](https://github.com/AI-HealthCare-05/AH_05_04/pull/475#pullrequestreview-5190544119) · [`decision-approval-evidence.json`](../../validation/rag/issue-159/decision-approval-evidence.json) |
 
-## 후보 결정
+## 결정
 
-[#159 Answer Quality 계약 제안](../../contracts/proposed/post-mvp-1/rag-answer-quality-metrics-v1.md)을
-RAG-EVAL-004의 구현 전 검토 대상으로 제안한다. 이 후보는 다음 경계를 함께 고정한다.
+[#159 Answer Quality 계약](../../contracts/targets/post-mvp-1/rag-answer-quality-metrics-v1.md)은
+RAG-EVAL-004의 Approved Target으로 다음 경계를 함께 고정한다.
 
 1. Answer 전용 Variant는 `ANS-BASE | ANS-RAG | ANS-FINAL`이다.
 2. `REQUIRED_CLAIM_RECALL`과 `COMPLETENESS`는 구조화된 Gold/Actual ID를 직접 계산한다.
@@ -26,8 +27,8 @@ RAG-EVAL-004의 구현 전 검토 대상으로 제안한다. 이 후보는 다�
 6. 세 Variant는 기존 2-run `rag-eval.comparison` schema를 재사용한 세 개의 독립 pair로 비교하고,
    pair별 경로·hash·허용 delta를 별도 comparison-set manifest에 exact-set으로 결속한다.
 
-책임 리뷰어의 실제 Pull Request review event가 기록되기 전에는 이 후보를 Approved Target, 구현 승인,
-활성 Metric 또는 Release `PASS` 근거로 취급하지 않는다.
+PR #475 최종 HEAD에서 책임 리뷰어의 실제 Pull Request `APPROVED` event가 기록되었다. 이 승인은 아래 DEV
+구현을 허용하지만 Runtime 통합, HOLDOUT 실행, 활성 Release `PASS` 또는 공개를 승인하지 않는다.
 
 ## 현재 계약과의 차이
 
@@ -59,9 +60,18 @@ Baseline Freeze, HOLDOUT 결과 관찰, Runtime 통합과 #159 Close를 차단�
 
 ## 상태와 승격
 
-이 Decision과 연결 계약은 `Candidate/Proposed`다. 책임 리뷰어가 formula·human judgment 경계·Variant·pair
-비교를 승인하면 같은 PR에서 상태와 계약 경로를 저장소 문서 권위 규칙에 맞게 갱신한다. 구현·schema
-export·자동 테스트가 없는 문서 승인만으로 `current/`로 승격하지 않는다.
+이 Decision과 연결 계약은 PR #475 승인으로 `Approved/Approved Target`이 되었다. 승인 증거는 후속 상태
+정합 변경에서 기록하며, 구현·schema export·자동 테스트가 없는 문서 승인만으로 `current/`로 승격하지
+않는다.
+
+### 승인 Evidence
+
+| 리뷰어 | 상태 | Review ID | Submitted at (UTC) | 대상 commit OID |
+| --- | --- | --- | --- | --- |
+| 권가빈 (`@hazelnutflavoured`) | `APPROVED` | [`5190544119`](https://github.com/AI-HealthCare-05/AH_05_04/pull/475#pullrequestreview-5190544119) | `2026-09-13T11:26:42Z` | `ca27931ff54b3a48feb07e3b4a766620bfc34614` |
+
+PR #475의 final HEAD는 위 commit이고 승인 뒤 추가 commit 없이 `2026-09-13T11:27:21Z`에 병합되었다.
+required check `test`·`lint`·`frontend`와 그 하위 test lane은 모두 성공했다.
 
 ## 공개 경계
 
