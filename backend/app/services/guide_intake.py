@@ -87,7 +87,6 @@ class GuideJobIntakeTransactionAdapter:
             fingerprint=self._request_fingerprint(
                 prescription_id=prescription_id,
                 prescription_version_id=expected_prescription_version_id,
-                runtime_context=runtime_context,
             ),
             create_domain_placeholder=create_domain_placeholder,
             trace_id=trace_id,
@@ -176,21 +175,11 @@ class GuideJobIntakeTransactionAdapter:
         *,
         prescription_id: UUID,
         prescription_version_id: UUID,
-        runtime_context: GuideRuntimeContextSnapshot,
     ) -> dict[str, object]:
         return {
             "job_type": AiJobType.GUIDE.value,
             "prescription_id": str(prescription_id),
             "prescription_version_id": str(prescription_version_id),
-            "runtime_environment_id": str(runtime_context.runtime_environment_id),
-            "runtime_environment_revision": runtime_context.runtime_environment_revision,
-            "runtime_release_bundle_id": str(runtime_context.runtime_release_bundle_id),
-            "runtime_release_bundle_manifest_hash": runtime_context.runtime_release_bundle_manifest_hash,
-            "runtime_execution_manifest_id": str(runtime_context.runtime_execution_manifest_id),
-            "runtime_execution_manifest_hash": runtime_context.runtime_execution_manifest_hash,
-            "runtime_guard_decision_ref": runtime_context.runtime_guard_decision_ref,
-            "patient_context_digest": runtime_context.patient_context_digest,
-            "source_scope_manifest_hash": runtime_context.source_scope_manifest_hash,
         }
 
     async def _get_created_guide(self, *, ai_job_id: UUID) -> Guide:

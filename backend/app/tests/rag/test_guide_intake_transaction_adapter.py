@@ -291,12 +291,15 @@ async def test_accept_guide_job_reuses_same_idempotency_key_without_duplicate_ro
         trace_id="b" * 32,
         runtime_context=runtime_context,
     )
+
+    changed_runtime_context = await _create_runtime_context(db_session)
+
     second = await _adapter(db_session).accept_guide_job(
         user=user,
         prescription_id=prescription.id,
         idempotency_key="guide-intake-key-000000000002",
         trace_id="c" * 32,
-        runtime_context=runtime_context,
+        runtime_context=changed_runtime_context,
     )
 
     assert second.is_duplicate is True
@@ -307,6 +310,13 @@ async def test_accept_guide_job_reuses_same_idempotency_key_without_duplicate_ro
     assert await _count(db_session, OutboxEvent) == 1
     assert await _count(db_session, AiJobExecutionContext) == 1
     assert await _count(db_session, IdempotencyRecord) == 1
+
+    context = await db_session.scalar(
+        select(AiJobExecutionContext).where(AiJobExecutionContext.ai_job_id == first.job.id)
+    )
+    assert context is not None
+    assert context.runtime_release_bundle_id == runtime_context.runtime_release_bundle_id
+    assert context.runtime_release_bundle_id != changed_runtime_context.runtime_release_bundle_id
 
 
 async def test_accept_guide_job_rolls_back_when_preflight_fails(
