@@ -59,6 +59,16 @@ afterEach(() => {
 })
 
 describe('인증 상태별 AppRouter 이동', () => {
+  it('개발 환경의 /design-prototype는 인증 API 없이 열린다', async () => {
+    renderRoute('/design-prototype')
+
+    expect(
+      await screen.findByRole('heading', { name: '다섯알 전체 여정 + UX 상태' }),
+    ).toBeTruthy()
+    expect(document.querySelector('.prototype-workbench')).toBeTruthy()
+    expect(getCurrentUser).not.toHaveBeenCalled()
+  })
+
   it('개발 환경의 /dev/preview는 인증 API 없이 열린다', async () => {
     renderRoute('/dev/preview')
 
