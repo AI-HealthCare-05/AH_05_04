@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -178,6 +179,7 @@ async def _simulate_worker_completed_ocr_job(
     ai_job_id: str,
     ocr_job_id: str,
     fields: list[RecognizedField],
+    llm_processing: str | None = None,
 ) -> None:
     completed_at = datetime.now(UTC)
     ai_job = await db_session.get(AiJob, UUID(ai_job_id))
@@ -191,8 +193,9 @@ async def _simulate_worker_completed_ocr_job(
     ocr_job.ocr_status = OcrStatus.COMPLETED
     ocr_job.completed_at = completed_at
     ocr_job.engine_name = "test-worker"
-    ocr_job.model_version = "test-worker"
-    ocr_job.prompt_version = "test-worker"
+    ocr_job.model_version = None if llm_processing == "SKIPPED_MINIMIZATION" else "test-worker"
+    ocr_job.prompt_version = None if llm_processing == "SKIPPED_MINIMIZATION" else "test-worker"
+    ocr_job.llm_processing = llm_processing
 
     db_session.add_all(
         [
@@ -214,13 +217,27 @@ async def _simulate_worker_completed_ocr_job(
 @pytest.mark.asyncio
 async def test_accepted_ocr_job_result_can_be_reviewed_and_confirmed(
     db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(config, "STORAGE_DIR", str(tmp_path))
+    fixture = Path(__file__).resolve().parents[4] / "tests/fixtures/release_validation/ai_one_cycle_clova_openai_v1.png"
+    synthetic_fields = [
+        RecognizedField(0, "PRESCRIBED_DATE", "2026-08-21", 0.99),
+        RecognizedField(1, "MEDICATION_NAME", "합성의약품에이정", 0.99),
+        RecognizedField(1, "MEDICATION_STRENGTH", "100mg", 0.99),
+        RecognizedField(1, "DOSE_VALUE", "1", 0.99),
+        RecognizedField(1, "DOSE_UNIT", "정", 0.99),
+        RecognizedField(1, "FREQUENCY_PER_DAY", "2", 0.99),
+        RecognizedField(1, "TIMING", "아침 저녁 식후", 0.99),
+        RecognizedField(1, "DURATION_DAYS", "3", 0.99),
+    ]
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         access_token = await _signup_and_login(client, label="async-confirm")
         headers = {"Authorization": f"Bearer {access_token}"}
         upload_response = await client.post(
             "/api/v1/documents",
-            files={"file": ("prescription.jpg", JPEG_SIGNATURE + b"fake-jpeg", "image/jpeg")},
+            files={"file": (fixture.name, fixture.read_bytes(), "image/png")},
             headers=headers,
         )
         assert upload_response.status_code == status.HTTP_201_CREATED, upload_response.text
@@ -241,7 +258,8 @@ async def test_accepted_ocr_job_result_can_be_reviewed_and_confirmed(
             db_session,
             ai_job_id=job_data["job_id"],
             ocr_job_id=ocr_job_id,
-            fields=list(recognized_fields),
+            fields=synthetic_fields,
+            llm_processing="SKIPPED_MINIMIZATION",
         )
 
         status_response = await client.get(job_data["status_url"], headers=headers)
@@ -252,6 +270,7 @@ async def test_accepted_ocr_job_result_can_be_reviewed_and_confirmed(
         result_response = await client.get(result_url, headers=headers)
         assert result_response.status_code == status.HTTP_200_OK, result_response.text
         assert result_response.json()["data"]["job_id"] == ocr_job_id
+        assert result_response.json()["data"]["llm_processing"] == "SKIPPED_MINIMIZATION"
 
         await _confirm_all_fields(client, job_id=ocr_job_id, access_token=access_token)
         confirm_response = await client.post(
@@ -260,7 +279,8 @@ async def test_accepted_ocr_job_result_can_be_reviewed_and_confirmed(
         )
 
     assert confirm_response.status_code == status.HTTP_201_CREATED, confirm_response.text
-    assert confirm_response.json()["data"]["medications"][0]["medication_name"] == "혈압약정"
+    assert confirm_response.json()["data"]["prescribed_date"] == "2026-08-21"
+    assert confirm_response.json()["data"]["medications"][0]["medication_name"] == "합성의약품에이정"
 
 
 @pytest.mark.asyncio
