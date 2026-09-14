@@ -74,6 +74,7 @@ function renderPage(entry = '/guides/guide-1', withRouteControls = false) {
         <Route path="/" element={<div>홈 화면</div>} />
         <Route path="/menu" element={<div>메뉴 화면</div>} />
         <Route path="/chat" element={<ChatRouteProbe />} />
+        <Route path="/schedule" element={<div>복약 일정 화면</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -484,17 +485,14 @@ describe('GuidePage', () => {
     expect(screen.getByRole('button', { name: '다시 시도하기' })).toBeTruthy()
   })
 
-  it('공통 Navigation의 Guide active, 일정 disabled, 기존 route 이동을 유지한다', async () => {
+  it('공통 Navigation의 Guide active, 일정 활성화, 기존 route 이동을 유지한다', async () => {
     const firstRender = renderPage('/guides')
 
     await screen.findByText('아직 만들어진 가이드가 없어요')
     expect(screen.getByRole('button', { name: '가이드' }).getAttribute('aria-current')).toBe(
       'page',
     )
-    expect(screen.getByRole('button', { name: '일정 (준비 중)' })).toHaveProperty(
-      'disabled',
-      true,
-    )
+    expect(screen.getByRole('button', { name: '일정' })).toHaveProperty('disabled', false)
     fireEvent.click(screen.getByRole('button', { name: '메뉴' }))
     expect(screen.getByText('메뉴 화면')).toBeTruthy()
 
