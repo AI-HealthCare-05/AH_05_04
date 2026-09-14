@@ -89,7 +89,7 @@ Each Claim contains:
 - `criticality_source`: `GOLD_EXACT_MATCH | APPROVED_REVIEW`;
 - nullable `criticality_review_ref`;
 - `support_status`: `SUPPORTED | PARTIALLY_SUPPORTED | CONTRADICTED | NOT_SUPPORTED`;
-- `support_receipt_ref` and `support_receipt_sha256`;
+- `support_receipt_sha256`;
 - sorted `citations`.
 
 `GOLD_EXACT_MATCH` forbids a criticality review reference. `APPROVED_REVIEW` requires an immutable reference that is
@@ -108,16 +108,20 @@ Each Citation contains:
 - `evidence_ref_id`, `source_version`, `locator`, and `content_sha256`;
 - Evaluation edge `accepted` plus nullable bounded validation reason code;
 - `authorized` plus nullable bounded authorization reason code;
-- nullable authorization selection receipt reference/hash;
+- nullable authorization selection receipt hash;
 - `gold_source_matched`.
 
 Citation keys are unique across the observation, each edge must point to its containing Claim, and Citation ordering is
-canonical. The exact Evidence ID multiset projected by edges must match the Case Result's flat
-`actual_citation_evidence_ids`; flat duplicate Evidence IDs remain representable through unique Citation keys.
+canonical. The distinct Evidence ID set projected by edges must exact-match the Case Result's flat
+`actual_citation_evidence_ids` set. Multiple unique Citation edges may still refer to the same Evidence ID.
 
 An accepted or authorized edge can still have `gold_source_matched=false`. That is a scored quality failure, not an
 artifact-integrity error. A missing required receipt binding, an unknown enum, a duplicate key, an orphan edge, or a
 mixed Run/Case binding is invalid.
+
+The per-edge authorization selection hash is computed from the matching #180 selection-receipt entry. The observation
+keeps the enclosing authorization receipt's immutable reference and canonical hash once at the envelope level; it does
+not invent an artifact reference that the embedded #180 selection entry does not provide.
 
 The schema records the same wire values as #180 but does not import mutable Runtime dataclasses as the Evaluation
 contract. Projection-builder tests will prove the mapping explicitly when that builder is implemented.
