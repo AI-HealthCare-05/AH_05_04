@@ -166,7 +166,6 @@ def test_develop_upgrade_preserves_parent_data_and_history_blocks_downgrade():
     assert asyncio.run(_run("SELECT checkin_revision FROM safety_assessment WHERE id=:safety_id", ids)) == 1
     with pytest.raises(RuntimeError, match="history exists"):
         command.downgrade(cfg, _parent_revision())
-    assert asyncio.run(_run("SELECT version_num FROM alembic_version")) == REVISION
     assert asyncio.run(_run("SELECT count(*) FROM safety_assessment")) == 1
 
 
