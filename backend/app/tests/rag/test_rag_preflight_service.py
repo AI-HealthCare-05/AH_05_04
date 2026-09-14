@@ -236,7 +236,7 @@ async def test_preflight_rejects_missing_identification_without_side_effects(db_
     assert await _side_effect_counts(db_session) == before
 
 
-async def test_preflight_rejects_corrupted_active_version_before_empty_medication_reason(
+async def test_preflight_rejects_empty_active_version_as_invalid_version_graph(
     db_session: AsyncSession,
 ) -> None:
     owner = await _create_user(db_session, email="preflight-empty@example.com")
