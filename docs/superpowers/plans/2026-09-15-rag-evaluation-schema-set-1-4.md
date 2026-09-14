@@ -135,7 +135,7 @@ class GroundingSignal(StrictContractModel):
     source_binding_misuse: StrictBool
 ```
 
-`SafetyTaskTypeValue` accepts only `SAFETY | END_TO_END_RAG`. `EVALUATED` requires answer and both observation bindings. `NOT_APPLICABLE_NO_CLAIMS` requires all three nullable bindings to be null and all failure booleans false. Validate `signal_sha256` over the payload excluding that field. Byte parsers must follow the existing hashed-artifact path: parse a JSON object, validate the strict model, compare the canonical hash excluding its self-hash field, apply `validate_privacy_boundary`, and translate failures to the established `EvaluationValidationError` codes.
+`SafetyTaskTypeValue` accepts only `SAFETY | END_TO_END_RAG`. `EVALUATED` requires answer and both observation bindings. `NOT_APPLICABLE_NO_CLAIMS` permits a null answer hash or an approved-fallback answer hash, requires both observation bindings to be null, and requires all failure booleans false. Validate `signal_sha256` over the payload excluding that field. Byte parsers must follow the existing hashed-artifact path: parse a JSON object, validate the strict model, compare the canonical hash excluding its self-hash field, apply `validate_privacy_boundary`, and translate failures to the established `EvaluationValidationError` codes.
 
 - [ ] **Step 4: Run valid-payload tests and verify GREEN**
 

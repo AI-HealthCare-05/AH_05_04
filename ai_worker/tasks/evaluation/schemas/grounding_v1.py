@@ -314,17 +314,18 @@ class GroundingSignal(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_signal_state(self) -> GroundingSignal:
-        bindings = (self.answer_sha256, self.observation_ref, self.observation_sha256)
+        evaluated_bindings = (self.answer_sha256, self.observation_ref, self.observation_sha256)
+        observation_bindings = (self.observation_ref, self.observation_sha256)
         failures = (
             self.critical_unsupported_claim,
             self.uncited_medical_claim,
             self.source_binding_misuse,
         )
         if self.status is GroundingSignalStatus.EVALUATED:
-            if any(value is None for value in bindings):
+            if any(value is None for value in evaluated_bindings):
                 raise ValueError("evaluated grounding signal requires complete observation binding")
-        elif any(value is not None for value in bindings) or any(failures):
-            raise ValueError("no-claims grounding signal requires null bindings and false failures")
+        elif any(value is not None for value in observation_bindings) or any(failures):
+            raise ValueError("no-claims grounding signal requires null observation bindings and false failures")
         return self
 
 

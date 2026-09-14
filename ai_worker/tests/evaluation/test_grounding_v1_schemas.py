@@ -163,6 +163,16 @@ def test_parses_both_grounding_signal_states(no_claims: bool) -> None:
     assert signal.task_type is TaskType.SAFETY
 
 
+def test_no_claims_signal_allows_approved_fallback_answer_hash() -> None:
+    payload = _signal_payload(no_claims=True)
+    payload["answer_sha256"] = SHA_B
+
+    signal = _parse_signal(_rehash(payload, "signal_sha256"))
+
+    assert signal.status is GroundingSignalStatus.NOT_APPLICABLE_NO_CLAIMS
+    assert signal.answer_sha256 == SHA_B
+
+
 @pytest.mark.parametrize(
     ("enum_type", "values"),
     [
@@ -413,7 +423,6 @@ def test_observation_rejects_outcome_tuple_mismatch(mutation: str) -> None:
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("answer_sha256", SHA_B),
         ("observation_ref", _ref("unexpected-observation")),
         ("observation_sha256", SHA_C),
         ("critical_unsupported_claim", True),

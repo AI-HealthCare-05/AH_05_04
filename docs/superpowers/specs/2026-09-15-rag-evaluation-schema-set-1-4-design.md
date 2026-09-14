@@ -143,8 +143,8 @@ signal.
 State invariants:
 
 - `EVALUATED` requires non-null answer and observation bindings.
-- `NOT_APPLICABLE_NO_CLAIMS` requires null answer and observation bindings and requires all three failure booleans to
-  be false.
+- `NOT_APPLICABLE_NO_CLAIMS` permits either a null answer hash for generation-not-run/discarded paths or a non-null
+  hash for an approved fallback, requires null observation bindings, and requires all three failure booleans false.
 - A Case Result with any emitted Claim or Citation cannot use `NOT_APPLICABLE_NO_CLAIMS`.
 - A missing, duplicate, additional, or cross-Case signal is not converted to an all-false result.
 

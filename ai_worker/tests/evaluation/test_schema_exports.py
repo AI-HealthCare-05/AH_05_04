@@ -365,7 +365,6 @@ def test_schema_set_1_4_grounding_signal_state_matrix_is_portable() -> None:
 
     assert validator.is_valid(valid)
     for field, value in (
-        ("answer_sha256", "b" * 64),
         ("observation_sha256", "c" * 64),
         ("critical_unsupported_claim", True),
     ):

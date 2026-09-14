@@ -300,7 +300,6 @@ def _add_grounding_signal_conditions(document: dict[str, JsonValue]) -> None:
                 },
                 "then": {
                     "properties": {
-                        "answer_sha256": {"type": "null"},
                         "observation_ref": {"type": "null"},
                         "observation_sha256": {"type": "null"},
                         "critical_unsupported_claim": {"const": False},
