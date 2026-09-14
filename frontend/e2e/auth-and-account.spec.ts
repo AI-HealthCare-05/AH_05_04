@@ -6,8 +6,17 @@ test('[REQ-USR-007] 유효한 정보로 가입한 사용자는 로그인 화면�
   await page.goto('/signup')
 
   await page.getByLabel('이름').fill('합성 사용자')
-  await page.getByLabel('이메일').fill('synthetic@example.com')
+  await page.getByLabel('이메일', { exact: true }).fill('synthetic@example.com')
   await page.getByLabel('비밀번호').fill('Synthetic1!')
+  await page.route('**/api/v1/auth/email-verification/*', async (route) => {
+    await route.fulfill({ json: { detail: '이메일 인증 요청 처리 완료' } })
+  })
+  await page.getByRole('button', { name: '인증 요청', exact: true }).click()
+  await expect(page.getByLabel('이메일 인증 코드')).toBeFocused()
+  await page.getByLabel('이메일 인증 코드').fill('synthetic-verification-code')
+  await page.getByLabel('이메일 인증 코드').press('Enter')
+  await expect(page.getByText('이메일 인증이 완료되었습니다.')).toBeVisible()
+  await expect(page.getByLabel('비밀번호')).toBeFocused()
   await page.getByRole('button', { name: '가입 완료' }).click()
 
   await expect(page).toHaveURL(/\/login$/)
@@ -21,7 +30,7 @@ test('[REQ-USR-010][REQ-USR-019][REQ-USR-020] 보호 화면·프로필 저장·�
   await expect(page).toHaveURL(/\/login$/)
   await expect(page.getByText('사용자 정보')).toHaveCount(0)
 
-  await page.getByLabel('이메일').fill('synthetic@example.com')
+  await page.getByLabel('이메일', { exact: true }).fill('synthetic@example.com')
   await page.getByLabel('비밀번호').fill('Synthetic1!')
   await page.getByRole('button', { name: '로그인' }).click()
   await expect(page.getByText('오늘도 건강한 하루 되세요')).toBeVisible()
