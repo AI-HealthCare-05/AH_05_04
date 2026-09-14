@@ -90,3 +90,17 @@ class MedicationDayData(BaseModel):
 
 class MedicationDayResponse(BaseModel):
     data: MedicationDayData
+
+
+class MedicationOccurrenceMedicationData(BaseModel):
+    occurrence_id: UUID
+    prescription_version_id: UUID
+    prescription_version_medication_id: UUID
+    medication_name: str
+    strength_text: str | None
+    dose_value: float | None
+    dose_unit: str | None
+
+
+class MedicationOccurrenceMedicationResponse(BaseModel):
+    data: MedicationOccurrenceMedicationData

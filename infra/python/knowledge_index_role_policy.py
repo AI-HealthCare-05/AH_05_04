@@ -15,6 +15,8 @@ KNOWLEDGE_INDEX_WRITE_TABLES = frozenset(
 )
 KNOWLEDGE_INDEX_RUNTIME_READ_TABLES = KNOWLEDGE_INDEX_WRITE_TABLES
 KNOWLEDGE_INDEX_SOURCE_READ_TABLES = frozenset(SOURCE_TABLES) - {"rag_source_snapshot_verification"}
+# PostgreSQL row-locking clauses require UPDATE privilege on every locked table.
+# CHECK=0 markers provide that privilege without making provenance or business columns mutable.
 KNOWLEDGE_INDEX_LOCK_COLUMNS = {
     "rag_source": "knowledge_index_lock_marker",
     "rag_source_endpoint": "knowledge_index_lock_marker",
