@@ -197,8 +197,11 @@ Claim/Citation projection hash와 support status를 exact-bind해야 한다. 검
 
 이 Receipt 계약은 의미 기반 NLI를 새로 도입하지 않는다. 현재 첫 소비자인 RAG-15 Guideline Card는 이미 검증한
 Evidence assessment와 Guideline Evidence Binding을 투영한다. 후속 Interaction Rule은 결정적 Rule Binding을,
-일반 생성 답변은 승인된 Claim support assessment가 마련된 경우에만 같은 Receipt를 제공한다. 권위 있는 Receipt가
-없으면 `SUPPORT_VERIFICATION_UNAVAILABLE`로 fail-closed하며, Generator의 자기 선언으로 우회하지 않는다.
+일반 생성 답변은 승인된 Claim support assessment가 마련된 경우에만 같은 Receipt를 제공한다. pure validator에
+Claim별 Receipt가 없으면 `DEPENDENCY_ERROR/REJECTED + SUPPORT_RECEIPT_REQUIRED`, Receipt 구조나 projection 결속이
+맞지 않으면 `DEPENDENCY_ERROR/REJECTED + SUPPORT_RECEIPT_MISMATCH`로 fail-closed하며, Generator의 자기 선언으로
+우회하지 않는다. 후속 adapter가 이를 Runtime fallback code로 변환하는 규칙은 #174 이후 통합 범위이며, pure 계층에
+존재하지 않는 별도 reason code를 가정하지 않는다.
 
 pure layer는 Receipt 발급자의 권위나 DB 존재를 증명하지 않는다. 후속 Worker Service가 #174의 승인 저장소에서
 Receipt를 관측한 뒤 이 순수 검증 함수에 전달해야 하며, 이 단계가 연결되기 전 pure 성공은 Runtime 공개 권한이 아니다.
@@ -207,7 +210,7 @@ Receipt를 관측한 뒤 이 순수 검증 함수에 전달해야 하며, 이 �
 
 ```python
 ClaimCitationValidationOutcome(
-    execution_status,       # EVALUATED | VALIDATION_ERROR
+    execution_status,       # EVALUATED | VALIDATION_ERROR | DEPENDENCY_ERROR
     decision,               # VALIDATED | REJECTED
     reasons,                # 내부 안정 reason tuple
     validated_selection,    # 성공 때만 존재
@@ -235,8 +238,10 @@ CitationAuthorizationRequest(
         request_scope_codes,
         scope_manifest_hash,
     ),
+    validated_selection_sha256,
     selection_manifest=(CitationSelectionEntry(...),),
-    selection_manifest_hash,
+    selection_manifest_sha256,
+    request_sha256,
 )
 ```
 
@@ -316,21 +321,50 @@ fallback임을 별도로 확인한다. 이를 자동 우회 경로로 추가하�
 외부 I/O exception은 후속 Service가 안정된 dependency failure로 변환해야 하며 pure outcome에 exception message를
 전달하지 않는다.
 
-## 7. 실패 의미
+## 7. 실패·성공 결과 정렬
 
-| 실패 | pure outcome | 후속 Runtime 의미 |
-| --- | --- | --- |
-| 입력 구조·enum·hash 오류 | `VALIDATION_ERROR/REJECTED` | 생성 내용 폐기, `VALIDATION_FAILED` fallback 후보 |
-| Support Receipt 부재·malformed | `DEPENDENCY_ERROR/REJECTED` | 생성 내용 폐기, `DEPENDENCY_UNAVAILABLE` 후보 |
-| 의료 Claim Citation 누락 | `EVALUATED/REJECTED` | 생성 내용 폐기, 공개 0건 |
-| Support/근거 불일치 | `EVALUATED/REJECTED` | 생성 내용 폐기, 근거 없음·상충 fallback 후보 |
-| Authorization 정책 FAIL | `EVALUATED/REJECTED` | 생성 내용 폐기, 승인 fallback 후보 |
-| Authorization Receipt 부재/malformed | `DEPENDENCY_ERROR/REJECTED` | 생성 내용 폐기, `DEPENDENCY_UNAVAILABLE` 후보 |
-| Authorization PASS | `AUTHORIZED` | Release Gate 입력일 뿐 공개 허가 아님 |
+### 7.1 Claim–Citation Validator
 
-pure layer는 위 표의 “후속 Runtime 의미”를 직접 저장하거나 공개 enum으로 변환하지 않는다. 정확한
-`execution_status/evidence_status/release_decision/fallback_code/ai_job.status` 조합은 RAG-16 Runtime integration
-PR에서 v2 Target과 transaction 계약을 함께 연결한다.
+| 입력 조건 | `execution_status / decision` | 실제 reason | 결과 payload |
+| --- | --- | --- | --- |
+| Candidate/dataclass/enum/hash 형식 오류 | `VALIDATION_ERROR / REJECTED` | `REQUEST_INVALID` 등 shape·identity·provenance reason | `validated_selection=None` |
+| Claim별 Support Receipt 누락·Claim key 집합 불완전 | `DEPENDENCY_ERROR / REJECTED` | `SUPPORT_RECEIPT_REQUIRED` | `validated_selection=None` |
+| Receipt 구조 오류 또는 status·digest·assessment·projection 불일치 | `DEPENDENCY_ERROR / REJECTED` | `SUPPORT_RECEIPT_MISMATCH` | `validated_selection=None` |
+| 의료 Claim Citation 누락 | `EVALUATED / REJECTED` | `MEDICAL_CLAIM_CITATION_REQUIRED` | `validated_selection=None` |
+| 허용되지 않은 Claim kind/support status 조합 | `EVALUATED / REJECTED` | 의료 Claim은 `MEDICAL_CLAIM_NOT_SUPPORTED`, 그 밖은 `CLAIM_NOT_SUPPORTED` | `validated_selection=None` |
+| Candidate와 Support Receipt 전량 통과 | `EVALUATED / VALIDATED` | 빈 tuple | `ValidatedCitationSelection` |
+
+동일 요청에서 semantic reason과 Receipt dependency reason이 함께 생기면 구현은 dependency reason 존재 여부를 우선해
+`DEPENDENCY_ERROR`를 반환하고 reason tuple에는 중복을 제거한 실제 원인들을 함께 보존한다.
+
+### 7.2 Citation Authorization
+
+Authorization 결과에는 `execution_status`가 없다. Build와 Receipt verification은 각각 별도 decision/result shape을
+반환하며, 후속 adapter가 이를 Runtime 상태로 임의 추정해서는 안 된다.
+
+| 경계·입력 조건 | 실제 decision | 실제 reason | 결과 payload |
+| --- | --- | --- | --- |
+| Build: forged validated selection | `REJECTED` | `VALIDATED_SELECTION_INVALID` | `request=None` |
+| Build: Runtime 또는 origin REQUEST 결속 오류 | `REJECTED` | `RUNTIME_BINDING_INVALID` 또는 `ORIGIN_REQUEST_MISMATCH` | `request=None` |
+| Build: 빈 Source selection 또는 잘못된 selection | `REJECTED` | `AUTHORIZATION_SELECTION_REQUIRED` 또는 `AUTHORIZATION_SELECTION_INVALID` | `request=None` |
+| Build: 전 조건 통과 | `BUILT` | 빈 tuple | `CitationAuthorizationRequest` |
+| Verify: request self-binding 오류 | `REJECTED` | `AUTHORIZATION_REQUEST_INVALID` | `receipt=None` |
+| Verify: Receipt 누락·구조 오류 | `REJECTED` | `RECEIPT_INVALID` | `receipt=None` |
+| Verify: request/Receipt 또는 selection 전량 불일치 | `REJECTED` | `RECEIPT_BINDING_MISMATCH` 또는 `SELECTION_RECEIPT_MISMATCH` | `receipt=None` |
+| Verify: 목적·선택 여부·Source/Member PASS 불충족 | `REJECTED` | `SELECTION_NOT_AUTHORIZED` | `receipt=None` |
+| Verify: exact-bound PASS | `AUTHORIZED` | 빈 tuple | 검증된 `CitationAuthorizationReceipt` |
+
+### 7.3 Finalizer와 후속 Runtime
+
+Finalizer는 위 결과를 다시 검증해 성공 시 `AuthorizedCitationSelection`, 실패 시
+`DiscardGeneratedContent(failed_stage, reasons)`를 반환한다. Finalizer에 Receipt 자체가 전달되지 않으면
+`CITATION_AUTHORIZATION / AUTHORIZATION_RECEIPT_REQUIRED`, rebuild한 요청과 전달 요청이 다르면
+`CITATION_AUTHORIZATION / AUTHORIZATION_REQUEST_MISMATCH`로 폐기한다. 이 두 문자열은 finalizer의 안정 reason이며
+Authorization enum에 새 값을 추가한 것이 아니다.
+
+pure layer는 이 결과를 직접 저장하거나 공개 enum으로 변환하지 않는다. 정확한
+`execution_status/evidence_status/release_decision/fallback_code/ai_job.status` 조합과 `DEPENDENCY_UNAVAILABLE` 같은
+Runtime fallback mapping은 RAG-16 Runtime integration PR에서 v2 Target과 transaction 계약을 함께 연결한다.
 
 ## 8. 개인정보·의료 안전
 
