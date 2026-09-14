@@ -90,15 +90,21 @@ git switch -c feature/12-prescription-upload
 
 - `develop` PR은 GitHub Ruleset의 required status check `test`·`lint`·`frontend`가 통과해야 머지할 수 있습니다.
   `test`는 `test-inventory`·`test-migration`·`test-backend`·`test-worker`를 집계합니다.
-- required status check는 base가 움직여도 재실행을 강제하지 않습니다. 즉 통과 기록이 최신 `develop`을 반영한다는
-  보장이 없으므로, **migration을 추가·수정하는 PR은 머지 직전에 최신 `develop`을 반영하고 단일 head를 확인합니다.**
+- 담당 리뷰어 승인과 required status check 통과 후 PR을 직접 머지하지 않고 merge queue에 추가합니다. Queue는 최신
+  `develop`과 PR 변경을 합친 임시 merge group에서 같은 required check를 다시 실행하고, 모두 통과한 경우에만 squash
+  merge합니다. 작성자가 base 변경 때마다 수동으로 rebase할 필요는 없습니다.
+- Queue는 PR을 한 건씩 병합하며, 동시에 최대 두 merge group을 검사합니다. 각 merge group은 모든 required check가
+  성공해야 하고, check 응답은 최대 60분 기다립니다.
+- migration을 추가·수정하는 PR은 로컬에서도 단일 head를 확인합니다.
 
   ```bash
   uv run python scripts/ci/verify_database_head.py --heads-only
   ```
 
-  같은 `down_revision`을 잡은 병렬 PR은 파일이 서로 달라 텍스트 충돌 없이 병합되며, head는 병합 이후에야 갈라집니다.
-  이미 갈라진 head는 기존 migration의 부모를 고쳐 쓰지 않고 merge revision으로 해소합니다.
+  같은 `down_revision`을 잡은 병렬 PR은 파일이 서로 달라 텍스트 충돌 없이 합쳐질 수 있지만, merge group의
+  `test-migration`이 갈라진 head를 검출하므로 해당 PR은 병합되지 않습니다. 아직 병합되지 않은 migration PR은 최신
+  `develop`을 반영해 부모를 정렬한 뒤 다시 검사합니다. 이미 `develop`에서 갈라진 head는 기존 migration의 부모를
+  고쳐 쓰지 않고 merge revision으로 해소합니다.
 - Ruleset 우회가 필요한 경우 저장소 admin 1명이 처리하고, 사유를 해당 PR에 남깁니다. ruleset의 bypass 설정 자체는
   해당 ruleset에 write 권한이 있는 사람에게만 조회됩니다.
 - `develop`이 실패 상태이면 원인을 먼저 해소하고 후속 머지를 진행합니다. 실패한 `develop` 위에 머지를 쌓으면
