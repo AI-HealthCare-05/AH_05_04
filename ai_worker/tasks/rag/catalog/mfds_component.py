@@ -39,6 +39,11 @@ class MfdsComponentExclusion:
     record_json: bytes = field(repr=False)
 
 
+# 빈 주성분 행은 제공자가 성분을 비워 반환한 경우이며 원문 무결성 위반이 아니다.
+# 아래 두 사유는 원문이 깨졌거나 같은 키의 원문이 서로 다른 경우이므로 계속 전체를 차단한다.
+_BLOCKING_EXCLUSION_REASONS = frozenset({"INVALID_COMPONENT_FIELDS", "CONFLICTING_OBSERVATION"})
+
+
 @dataclass(frozen=True, slots=True)
 class MfdsComponentInspection:
     """전달된 입력 전체의 적격성. Source Receipt·Catalog 완전성 판정은 아니다."""
@@ -49,8 +54,26 @@ class MfdsComponentInspection:
     duplicate_count: int
 
     @property
+    def empty_component_exclusions(self) -> tuple[MfdsComponentExclusion, ...]:
+        return tuple(item for item in self.exclusions if item.reason == "EMPTY_COMPONENT_FIELDS")
+
+    @property
+    def blocking_exclusions(self) -> tuple[MfdsComponentExclusion, ...]:
+        return tuple(item for item in self.exclusions if item.reason in _BLOCKING_EXCLUSION_REASONS)
+
+    @property
     def eligible_for_mapping(self) -> bool:
-        return bool(self.observations) and not self.exclusions
+        """빈 주성분 행은 차단하지 않는다. 원문 무결성 위반은 계속 전체를 차단한다."""
+        return bool(self.observations) and not self.blocking_exclusions
+
+    @property
+    def has_excluded_empty_components(self) -> bool:
+        """빈 주성분 행이 제외돼 Catalog가 부분임을 나타낸다.
+
+        해당 제품의 성분 없음이나 금기 없음을 뜻하지 않는다. 성분 기반 안전성 검사는
+        구성원 0개를 판정 불가로 다루어야 하며 통과로 해석하지 않는다.
+        """
+        return bool(self.empty_component_exclusions)
 
 
 def _record_json(record: Mapping[str, object]) -> bytes:
@@ -81,7 +104,7 @@ def _observation(record: Mapping[str, object], record_json: bytes) -> MfdsCompon
 
 
 def inspect_mfds_component_rows(records: tuple[Mapping[str, object], ...]) -> MfdsComponentInspection:
-    """빈 행·충돌을 기록하며, 제외 행이 있으면 전체 입력을 부적격으로 표시한다."""
+    """빈 행·충돌을 기록한다. 빈 주성분 행은 제외로만 남기고 원문 무결성 위반만 전체를 차단한다."""
     observations: dict[str, MfdsComponentObservation] = {}
     exclusions: list[MfdsComponentExclusion] = []
     duplicate_count = 0

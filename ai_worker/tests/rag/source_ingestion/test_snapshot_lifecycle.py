@@ -28,6 +28,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
     SOURCE_VERSION_CONFLICT,
     SnapshotCreateRequest,
+    SnapshotExclusionReceipt,
     SnapshotIngestionDecision,
     SnapshotIngestionMetadata,
     SnapshotReference,
@@ -70,6 +71,7 @@ class FakeSnapshotRepository:
         self.runs: list[SnapshotRunRecord] = []
         self.run_artifacts: dict[UUID, tuple[StoredRawArtifact, ...]] = {}
         self.locked_identities: list[SourceOperationIdentity] = []
+        self.observation_exclusions: list[SnapshotExclusionReceipt] = []
 
     async def lock_operation(self, identity: SourceOperationIdentity) -> UUID:
         self.locked_identities.append(identity)
@@ -159,6 +161,9 @@ class FakeSnapshotRepository:
         ingestion_run_id = uuid4()
         self.runs.append(record)
         return ingestion_run_id
+
+    async def record_observation_exclusions(self, receipt: SnapshotExclusionReceipt) -> None:
+        self.observation_exclusions.append(receipt)
 
     async def create_artifacts(
         self,

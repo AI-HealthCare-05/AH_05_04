@@ -59,6 +59,8 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | 인증 | `POST` | `/api/v1/auth/logout` | `200` |
 | 사용자 | `GET` | `/api/v1/users/me` | `200` |
 | 사용자 | `PATCH` | `/api/v1/users/me` | `200` |
+| 사용자 동의 | `GET` | `/api/v1/users/me/consents` | `200` |
+| 사용자 동의 | `PUT` | `/api/v1/users/me/consents/{purpose}` | `200` |
 | OCR 동의 | `GET` / `POST` / `DELETE` | `/api/v1/users/me/consents/OCR` | `200` |
 | 의료문서 | `POST` | `/api/v1/documents` | `201` |
 | OCR 실행 | `POST` | `/api/v1/documents/{document_id}/ocr-jobs` | `202` |
@@ -189,6 +191,17 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 - 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다.
 - MVP의 `PATCH /api/v1/users/me`는 `name`, `email`만 수정 대상으로 받습니다.
 - `gender`, `birthday`, `phone_number` 수정은 Post-MVP의 가입 후 추가 개인정보·건강정보 입력 기능에서 다룹니다.
+
+## 목적별 동의 상태
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `GET` | `/api/v1/users/me/consents` | `200 OK` | 로그인 사용자의 `OCR`, `GUIDE`, `CHAT`, `NOTIFICATION` 최신 동의 상태를 조회합니다. |
+| `PUT` | `/api/v1/users/me/consents/{purpose}` | `200 OK` | 로그인 사용자의 목적별 최신 동의 상태를 `GRANTED` 또는 `WITHDRAWN`으로 저장합니다. |
+
+`purpose`는 `OCR`, `GUIDE`, `CHAT`, `NOTIFICATION`만 허용합니다. 요청 body는 `status`(`GRANTED` 또는 `WITHDRAWN`)와 `policy_version`(1~100자)을 받습니다. `policy_version`은 해당 목적의 현재 policy version과 일치해야 하며, 불일치하면 `422 VALIDATION_FAILED`, `details[].field=policy_version`, `reason=POLICY_VERSION_MISMATCH`로 거부합니다. 응답은 목적별 `status`, 저장된 `policy_version`, 서버의 `current_policy_version`, `is_granted`, `granted_at`, `withdrawn_at`, `updated_at`을 반환합니다. row가 없는 목적은 `status=null`, `policy_version=null`, `current_policy_version=<현재 목적별 version>`, `is_granted=false`로 반환해 미동의와 명시 철회를 구분합니다. `is_granted=true`는 저장 상태가 `GRANTED`이고 저장된 `policy_version`이 `current_policy_version`과 일치할 때만 사용합니다.
+
+이 API는 PD-207의 목적별 최신 동의 상태 저장·조회·변경 경로입니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide/Chat/Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 후속 구현 범위입니다.
 
 ### 토큰 갱신·로그아웃
 
