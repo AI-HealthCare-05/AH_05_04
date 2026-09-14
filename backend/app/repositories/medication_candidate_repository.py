@@ -349,13 +349,17 @@ class MedicationCandidateRepository:
         )
         if prescription is None:
             return None
-        await require_verified_version(self.session, prescription_version_id)
         result = await self.session.execute(
             select(PrescriptionVersionMedication.id)
             .where(PrescriptionVersionMedication.prescription_version_id == prescription_version_id)
             .order_by(PrescriptionVersionMedication.display_order)
         )
-        return list(result.scalars().all())
+        medication_ids = list(result.scalars().all())
+        if not medication_ids:
+            return []
+
+        await require_verified_version(self.session, prescription_version_id)
+        return medication_ids
 
     async def create_search(
         self,
