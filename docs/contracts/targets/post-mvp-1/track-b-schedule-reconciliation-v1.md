@@ -42,7 +42,7 @@ audit·종료 revision 증가는 열람본만의 세부 요구로 분리해 승�
 
 Current 승격 시에는 §7의 요구별 구현·테스트·OpenAPI와 지정 리뷰어 승인 증빙을 함께 확인한다. 2026-09-12 조회한 GitHub 기록에서 #438의 Backend 리뷰는 DISMISSED이며, #456의 Frontend 동의 문구는 COMMENTED 이벤트다. 이를 유효한 APPROVED 이벤트로 환산하거나 #424의 계약 승인으로 대체하지 않는다.
 
-[PR #468](https://github.com/AI-HealthCare-05/AH_05_04/pull/468)의 알림→과거 기록 인계는 리뷰 대기다. 과거 occurrence의 약 표시 경로는 [검토 자료](../../../validation/track-b/historical-medication-display-review.md)에서 선택안을 비교하며, 새 API/DTO는 아직 확정하지 않는다. Frontend 구현은 남한솔 담당이다.
+[PR #468](https://github.com/AI-HealthCare-05/AH_05_04/pull/468)의 알림→과거 기록 인계는 리뷰 대기다. 2026-09-14 후속 확인: 과거 occurrence의 약 표시 경로는 [PR #474](https://github.com/AI-HealthCare-05/AH_05_04/pull/474)에서 B안(occurrence별 별도 조회)을 리뷰용으로 구현했으며 아직 미병합이다. [검토 자료](../../../validation/track-b/historical-medication-display-review.md)에 A안의 당시 추천과 B안 구현 경위·현재 리뷰 상태를 구분했다. 새 계약의 최종 승인·Current 승격은 #474에서 확인한다. Frontend 구현은 남한솔 담당이다.
 
 ## 2. setup_reason 단일 반환
 
