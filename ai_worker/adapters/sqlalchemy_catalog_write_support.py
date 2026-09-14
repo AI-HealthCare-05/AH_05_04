@@ -77,6 +77,9 @@ _COMPONENT = table(
     "rag_medication_product_component",
     column("id", String(36)),
     column("source_snapshot_id", String(36)),
+    column("product_source_snapshot_id", String(36)),
+    column("ingredient_source_snapshot_id", String(36)),
+    column("observation_json", LargeBinary),
     column("product_id", String(36)),
     column("ingredient_id", String(36)),
     column("component_role", String(30)),
@@ -84,6 +87,7 @@ _COMPONENT = table(
     column("amount_unit", String(50)),
     column("amount_text", String(100)),
     column("display_order", Integer),
+    column("release_profile", String(255)),
 )
 _SEARCH_ENTRY = table(
     "rag_medication_search_entry",
@@ -222,6 +226,27 @@ def _amount(record: dict[str, object]) -> Decimal:
     return value
 
 
+def _component_source_contracts(plan: CatalogStoragePlan) -> dict[str, tuple[str, str]]:
+    expected: dict[str, tuple[str, str]] = {}
+    for row in plan.rows:
+        if row.kind != "COMPONENT":
+            continue
+        record = _record(row.canonical_record)
+        observation = record.get("observation")
+        if observation is None:
+            continue
+        if not isinstance(observation, dict):
+            raise CatalogDatabaseBindingError()
+        source = _text(record, "source_snapshot_id")
+        contract = (
+            _text(observation, "source_canonical_checksum"),
+            _text(observation, "source_canonicalization_spec_version"),
+        )
+        if expected.setdefault(source, contract) != contract:
+            raise CatalogDatabaseBindingError()
+    return expected
+
+
 class SqlAlchemyCatalogWriteSupport:
     """전체 Catalog 저장 transaction 내부에서만 사용하는 선행 결속 단계입니다."""
 
@@ -295,6 +320,7 @@ class SqlAlchemyCatalogWriteSupport:
             raise CatalogDatabaseBindingError() from None
 
     async def _bind_source_refs(self, plan: CatalogStoragePlan) -> dict[str, UUID]:
+        detail_contracts = _component_source_contracts(plan)
         requested: dict[UUID, tuple[str, str]] = {}
         for source_ref in plan.source_refs:
             snapshot_id = _uuid(source_ref.snapshot_id)
@@ -332,6 +358,12 @@ class SqlAlchemyCatalogWriteSupport:
                 receipt.validate_provenance()
             except (ValueError, TypeError, AttributeError):
                 raise CatalogDatabaseBindingError() from None
+            expected_detail = detail_contracts.get(requested_ref[0])
+            if expected_detail is not None and (
+                expected_detail != (receipt.canonical_checksum, receipt.canonicalization_spec_version)
+                or receipt.rejected_record_count != 0
+            ):
+                raise CatalogDatabaseBindingError()
             bound[requested_ref[0]] = snapshot_id
         return bound
 
@@ -529,12 +561,18 @@ class SqlAlchemyCatalogWriteSupport:
         result: dict[str, UUID] = {}
         for row in (item for item in plan.rows if item.kind == "COMPONENT"):
             record = records[row.member_ref]
-            if record.get("release_profile") is not None:
-                raise CatalogDatabaseBindingError()
             display_order = record.get("component_order")
             if type(display_order) is not int or display_order < 1:
                 raise CatalogDatabaseBindingError()
+            product = records[_text(record, "product_ref")]
+            ingredient = records[_text(record, "ingredient_ref")]
+            observation = record.get("observation")
             values: dict[str, object] = {
+                "product_source_snapshot_id": bindings.source_snapshot_ids[_text(product, "source_snapshot_id")],
+                "ingredient_source_snapshot_id": bindings.source_snapshot_ids[_text(ingredient, "source_snapshot_id")],
+                "observation_json": None
+                if observation is None
+                else json.dumps(observation, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"),
                 "source_snapshot_id": bindings.source_snapshot_ids[_text(record, "source_snapshot_id")],
                 "product_id": product_ids[_text(record, "product_ref")],
                 "ingredient_id": ingredient_ids[_text(record, "ingredient_ref")],
@@ -543,11 +581,12 @@ class SqlAlchemyCatalogWriteSupport:
                 "amount_unit": _text(record, "strength_unit"),
                 "amount_text": None,
                 "display_order": display_order,
+                "release_profile": _optional_text(record, "release_profile"),
             }
             result[row.member_ref] = await self._upsert_row(
                 _COMPONENT,
                 values=values,
-                key_columns=("product_id", "ingredient_id", "component_role"),
+                key_columns=("product_id", "source_snapshot_id", "display_order"),
             )
         return result
 

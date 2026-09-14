@@ -1,8 +1,9 @@
-import { useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { KeyboardEvent } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import type { CurrentUser } from '../api/users'
 import bellIcon from '../assets/icon-bell-notification.svg'
-import { MobileShell } from '../design-system/components'
+import { Button, MobileShell } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
 import './MvpPages.css'
@@ -61,6 +62,92 @@ function HomeAdherenceCard() {
 
 function HomePage({ currentUser }: { currentUser: CurrentUser }) {
   const navigate = useNavigate()
+  const location = useLocation()
+
+  const shouldShowOnboarding =
+    (
+      location.state as {
+        showPrescriptionOnboarding?: boolean
+      } | null
+    )?.showPrescriptionOnboarding === true
+
+  const [isOnboardingOpen, setIsOnboardingOpen] =
+    useState(shouldShowOnboarding)
+
+  const onboardingDialogRef = useRef<HTMLElement>(null)
+  const pageRef = useRef<HTMLDivElement>(null)
+  const homePrescriptionButtonRef = useRef<HTMLButtonElement>(null)
+  const wasOnboardingOpenRef = useRef(false)
+
+  const handleOnboardingKeyDown = (
+    event: KeyboardEvent<HTMLElement>,
+  ) => {
+    if (event.key === 'Escape') {
+      setIsOnboardingOpen(false)
+      return
+    }
+
+    if (event.key !== 'Tab') return
+
+    const buttons =
+      onboardingDialogRef.current?.querySelectorAll<HTMLButtonElement>('button')
+
+    if (!buttons || buttons.length === 0) return
+
+    const firstButton = buttons[0]
+    const lastButton = buttons[buttons.length - 1]
+
+    if (event.shiftKey && document.activeElement === firstButton) {
+      event.preventDefault()
+      lastButton.focus()
+    } else if (!event.shiftKey && document.activeElement === lastButton) {
+      event.preventDefault()
+      firstButton.focus()
+    }
+  }
+
+  useEffect(() => {
+    if (!shouldShowOnboarding) return
+
+    // 한 번 소비한 가입 직후 상태를 history에서 제거
+    navigate('/', {
+      replace: true,
+      state: null,
+    })
+  }, [navigate, shouldShowOnboarding])
+
+  useEffect(() => {
+    const background =
+      pageRef.current?.querySelector<HTMLElement>('.mobile-app')
+
+    if (background) {
+      background.inert = isOnboardingOpen
+
+      if (isOnboardingOpen) {
+        background.setAttribute('aria-hidden', 'true')
+      } else {
+        background.removeAttribute('aria-hidden')
+      }
+    }
+
+    if (isOnboardingOpen) {
+      const firstButton =
+        onboardingDialogRef.current?.querySelector<HTMLButtonElement>('button')
+
+      firstButton?.focus()
+    } else if (wasOnboardingOpenRef.current) {
+      homePrescriptionButtonRef.current?.focus()
+    }
+
+    wasOnboardingOpenRef.current = isOnboardingOpen
+
+    return () => {
+      if (background) {
+        background.inert = false
+        background.removeAttribute('aria-hidden')
+      }
+    }
+  }, [isOnboardingOpen])
   const userName = currentUser.name.trim()
   const today = useMemo(
     () =>
@@ -73,7 +160,10 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
   )
 
   return (
-    <div className="mvp-page mvp-home-page">
+    <div
+      ref={pageRef}
+      className="mvp-page mvp-home-page"
+    >
       <MobileShell
         title="Dosey 도지"
         brandMark={<DoseyMascot variant="header" />}
@@ -118,6 +208,7 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
 
           <section className="mvp-home__card-stack" aria-label="Home 주요 기능">
             <button
+              ref={homePrescriptionButtonRef}
               className="mvp-home__hub-card mvp-home__hub-card--prescription"
               type="button"
               onClick={() => navigate('/prescriptions/upload', {
@@ -169,8 +260,71 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
           <HomeAdherenceCard />
         </main>
       </MobileShell>
+      {isOnboardingOpen && (
+        <div
+          className="mvp-onboarding-backdrop"
+          onClick={() => setIsOnboardingOpen(false)}
+        >
+
+          <section
+            ref={onboardingDialogRef}
+            className="mvp-onboarding-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="prescription-onboarding-title"
+            onKeyDown={handleOnboardingKeyDown}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mvp-onboarding-sheet__handle" aria-hidden="true" />
+
+            <div className="mvp-onboarding-sheet__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M8.5 7.5 9.8 5.8h4.4l1.3 1.7H18A2 2 0 0 1 20 9.5v7A2 2 0 0 1 18 18.5H6A2 2 0 0 1 4 16.5v-7a2 2 0 0 1 2-2h2.5Z"
+                  fill="currentColor"
+                />
+                <circle cx="12" cy="13" r="3" fill="white" />
+              </svg>
+            </div>
+
+            <h2
+              id="prescription-onboarding-title"
+              className="mvp-onboarding-sheet__title"
+            >
+              처방전을 등록해 볼까요?
+            </h2>
+
+            <p className="mvp-onboarding-sheet__description">
+              처방전을 사진으로 찍으면 도지가
+              <br />
+              복약 알림과 가이드를 자동으로 완성해 드려요
+            </p>
+
+              <div className="mvp-onboarding-sheet__actions">
+                <Button
+                  className="mvp-onboarding-sheet__primary"
+                  type="button"
+                  onClick={() =>
+                    navigate('/prescriptions/upload', {
+                      state: { intent: 'new-prescription' },
+                    })
+                  }
+                >
+                  지금 처방전 촬영하기
+                </Button>
+
+                <Button
+                  className="mvp-onboarding-sheet__secondary"
+                  type="button"
+                  onClick={() => setIsOnboardingOpen(false)}
+                >
+                  나중에 촬영할게요
+                </Button>
+              </div>
+            </section>
+          </div>
+        )}
     </div>
   )
 }
-
 export default HomePage

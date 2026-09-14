@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { login } from '../api/auth'
 import { ApiError } from '../api/client'
 import { clearAuthenticatedSession } from '../features/auth/authSession'
@@ -38,6 +38,11 @@ function validateLogin(form: LoginForm): LoginFieldErrors {
 
 function LoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
+
+  const cameFromSignup =
+    (location.state as { fromSignup?: boolean } | null)?.fromSignup === true
+
   const [form, setForm] = useState<LoginForm>({ email: '', password: '' })
   const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({})
   const [hasCredentialError, setHasCredentialError] = useState(false)
@@ -91,7 +96,11 @@ function LoginPage() {
       })
       clearAuthenticatedSession()
       localStorage.setItem('access_token', response.access_token)
-      navigate('/')
+      navigate('/', {
+        state: cameFromSignup
+          ? { showPrescriptionOnboarding: true }
+          : null,
+      })
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : NETWORK_ERROR_MESSAGE)
       setHasCredentialError(error instanceof ApiError && error.status === 401)

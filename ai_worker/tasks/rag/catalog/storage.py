@@ -8,10 +8,10 @@ from typing import Literal
 from ai_worker.tasks.rag.catalog.build import CatalogMembers, _alias_entry, _product_entry
 from ai_worker.tasks.rag.catalog.export import (
     CATALOG_MANIFEST_SPEC_VERSION,
-    CATALOG_SCHEMA_VERSION,
     CatalogExportArtifacts,
     _canonical_json_bytes,
     _record_lines,
+    catalog_schema_version,
     verify_catalog_export,
 )
 from ai_worker.tasks.rag.catalog.normalize import CATALOG_NORMALIZATION_VERSION, require_official_identity_text
@@ -128,7 +128,11 @@ def _member_links(members: CatalogMembers) -> dict[tuple[MemberKind, str], tuple
     _require(set(members.search_entries) == expected_entries)
     for c in members.components:
         p, i = products[c.product_ref], ingredients[c.ingredient_ref]
-        _require(c.source_snapshot_id == p.source_snapshot_id == i.source_snapshot_id)
+        if c.observation is None:
+            _require(c.source_snapshot_id == p.source_snapshot_id == i.source_snapshot_id)
+        else:
+            _require(c.observation.product_source_snapshot_id == p.source_snapshot_id)
+            _require(c.observation.ingredient_source_snapshot_id == i.source_snapshot_id)
         _require(type(c.component_order) is int and c.component_order > 0)
         links[("COMPONENT", c.component_ref)] = (
             CatalogMemberLink("PRODUCT", c.product_ref),
@@ -173,7 +177,7 @@ def _prepare(*, members: CatalogMembers, artifacts: CatalogExportArtifacts) -> C
     _require(validate_catalog_members(members).is_valid)
     links = _member_links(members)
     catalog = artifacts.catalog
-    _require(catalog.schema_version == CATALOG_SCHEMA_VERSION)
+    _require(catalog.schema_version == catalog_schema_version(members))
     _require(catalog.normalization_version == CATALOG_NORMALIZATION_VERSION)
     counts = catalog.declared_counts
     actual_counts = (

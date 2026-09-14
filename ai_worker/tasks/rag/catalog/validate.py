@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from ai_worker.tasks.rag.catalog.build import CatalogMembers
+from ai_worker.tasks.rag.catalog.component_observation import component_sources_are_valid
 from ai_worker.tasks.rag.catalog.types import (
     CandidateAliasReviewStatus,
     CandidateEntityType,
@@ -95,8 +96,8 @@ def _duplicate_ingredient_failures(
 def _orphan_component_failures(
     members: CatalogMembers,
 ) -> tuple[CatalogValidationFailure, ...]:
-    product_refs = {product.product_ref for product in members.products}
-    ingredient_refs = {ingredient.ingredient_ref for ingredient in members.ingredients}
+    product_refs = {product.product_ref: product for product in members.products}
+    ingredient_refs = {ingredient.ingredient_ref: ingredient for ingredient in members.ingredients}
 
     return tuple(
         CatalogValidationFailure(
@@ -104,20 +105,20 @@ def _orphan_component_failures(
             references=(component.component_ref,),
         )
         for component in members.components
-        if (component.product_ref not in product_refs or component.ingredient_ref not in ingredient_refs)
+        if not component_sources_are_valid(
+            component, product_refs.get(component.product_ref), ingredient_refs.get(component.ingredient_ref)
+        )
     )
 
 
 def _component_conflict_failures(
     members: CatalogMembers,
 ) -> tuple[CatalogValidationFailure, ...]:
-    references_by_key: dict[tuple[str, str, str], list[str]] = {}
+    references_by_key: dict[str, list[str]] = {}
     for component in members.components:
-        key = (
-            component.product_ref,
-            component.ingredient_ref,
-            component.component_role.value,
-        )
+        # Legacy references still reject ambiguous repeats; source-key references
+        # distinguish occurrences without treating Ingredient identity as a row key.
+        key = component.component_ref
         references_by_key.setdefault(key, []).append(component.component_ref)
 
     return tuple(
@@ -126,6 +127,24 @@ def _component_conflict_failures(
             references=tuple(sorted(references)),
         )
         for key, references in sorted(references_by_key.items())
+        if len(references) > 1
+    )
+
+
+def _component_order_conflict_failures(
+    members: CatalogMembers,
+) -> tuple[CatalogValidationFailure, ...]:
+    references_by_order: dict[tuple[str, int], list[str]] = {}
+    for component in members.components:
+        key = (component.product_ref, component.component_order)
+        references_by_order.setdefault(key, []).append(component.component_ref)
+
+    return tuple(
+        CatalogValidationFailure(
+            reason=CatalogValidationFailureReason.MEMBER_CONFLICT,
+            references=tuple(sorted(references)),
+        )
+        for key, references in sorted(references_by_order.items())
         if len(references) > 1
     )
 
@@ -193,7 +212,7 @@ def validate_catalog_members(
     product_failures = _duplicate_product_failures(members)
     ingredient_failures = _duplicate_ingredient_failures(members)
     orphan_failures = _orphan_component_failures(members)
-    component_failures = _component_conflict_failures(members)
+    component_failures = (*_component_conflict_failures(members), *_component_order_conflict_failures(members))
     duplicate_alias_failures = _duplicate_alias_failures(members)
     alias_failures = _alias_conflict_failures(members)
 

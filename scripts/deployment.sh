@@ -217,6 +217,39 @@ case "$TLS_TERMINATION" in
     ;;
 esac
 
+# Worker Provider 설정 오류는 이미지 push와 원격 변경 전에 차단합니다.
+for variable_name in CLOVA_OCR_INVOKE_URL CLOVA_OCR_SECRET; do
+  if ! grep -Eq "^${variable_name}=" "$PROD_ENV_FILE"; then
+    echo "$PROD_ENV_FILE에 ${variable_name}가 선언되어 있지 않습니다."
+    exit 1
+  fi
+  if [ -z "${!variable_name:-}" ]; then
+    echo "필수 Worker 환경변수가 비어 있습니다: $variable_name"
+    exit 1
+  fi
+  case "${!variable_name}" in
+    *replace-with* | *replace_with*)
+      echo "Worker 환경변수의 placeholder를 교체해야 합니다: $variable_name"
+      exit 1
+      ;;
+  esac
+done
+if [[ ! "$CLOVA_OCR_INVOKE_URL" =~ ^https://[^[:space:]]+$ ]]; then
+  echo "CLOVA_OCR_INVOKE_URL은 HTTPS endpoint이어야 합니다."
+  exit 1
+fi
+
+# 합성 OCR 데모는 기존 공개·외부 LLM 승인 범위를 확장하지 않습니다.
+for variable_name in PUBLIC_TRACK_F_ENABLED OCR_STRUCTURE_LLM_ENABLED CHAT_HISTORY_CONTEXT_ENABLED PROTECTED_RETRIEVAL_ENABLED; do
+  case "${!variable_name:-false}" in
+    false | False | FALSE | 0) ;;
+    *)
+      echo "합성 OCR 데모에서는 $variable_name=false가 필요합니다."
+      exit 1
+      ;;
+  esac
+done
+
 for required_command in docker ssh scp; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     echo "필수 명령을 찾을 수 없습니다: $required_command"
@@ -312,8 +345,7 @@ echo "${COLOR_GREEN}Docker 로그인 성공!${COLOR_NC}"
 echo ""
 
 # ---------- 데모 배포 image build 및 push ----------
-# Worker health check·운영 관제·Production 배포 조립은 후속 범위입니다. FastAPI와 Frontend만
-# 새 immutable image로 배포하고, migration 전 기존 ai-worker 중지 확인은 유지합니다.
+# API·Worker·Frontend를 같은 배포 단위로 빌드합니다.
 build_and_push \
   "$docker_user" \
   "$docker_repo" \
@@ -331,7 +363,15 @@ build_and_push \
   "." \
   "VITE_API_BASE_URL=$PRODUCTION_PUBLIC_ORIGIN"
 
-DEPLOY_SERVICES=("fastapi" "nginx")
+build_and_push \
+  "$docker_user" \
+  "$docker_repo" \
+  "AI Worker" \
+  "$AI_WORKER_VERSION" \
+  "ai_worker/Dockerfile" \
+  "."
+
+DEPLOY_SERVICES=("fastapi" "ai-worker" "nginx")
 
 echo "${COLOR_GREEN}선택한 이미지의 build와 push가 완료되었습니다.${COLOR_NC}"
 echo "${COLOR_BLUE}배포 대상 서비스: ${DEPLOY_SERVICES[*]}${COLOR_NC}"
@@ -524,41 +564,31 @@ mkdir -p "$evidence_dir"
 write_deployment_db_snapshot() {
   local output_path="$1"
 
+  # SQL은 별도 stdin으로 전달해 원격 Bash와 SQL 문자열의 중첩 quoting을 피합니다.
   docker compose exec -T postgres \
-    sh -lc '
-      psql \
-        -v ON_ERROR_STOP=1 \
-        -q \
-        -At \
-        -F $'"'"'\t'"'"' \
-        -U "$POSTGRES_USER" \
-        -d "$POSTGRES_DB" <<'"'"'SQL'"'"'
+    sh -c 'exec psql -v ON_ERROR_STOP=1 -q -At -F "$(printf "\t")" -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+    >"$output_path" <<'SQL'
 CREATE TEMP TABLE deployment_snapshot(name text, value text);
 DO $$
+DECLARE
+  table_name text;
 BEGIN
-  IF to_regclass('"'"'public.alembic_version'"'"') IS NULL THEN
-    INSERT INTO deployment_snapshot VALUES ('"'"'alembic_revision'"'"', NULL);
+  IF to_regclass('public.alembic_version') IS NULL THEN
+    INSERT INTO deployment_snapshot VALUES ('alembic_revision', NULL);
   ELSE
-    EXECUTE '"'"'INSERT INTO deployment_snapshot SELECT '"'"''"'"'alembic_revision'"'"''"'"', version_num FROM alembic_version ORDER BY version_num LIMIT 1';
+    EXECUTE 'INSERT INTO deployment_snapshot SELECT ''alembic_revision'', version_num FROM alembic_version ORDER BY version_num LIMIT 1';
   END IF;
+  FOREACH table_name IN ARRAY ARRAY['user', 'profile', 'medical_document', 'prescription', 'guide', 'chat_session'] LOOP
+    IF to_regclass(format('public.%I', table_name)) IS NULL THEN
+      INSERT INTO deployment_snapshot VALUES (table_name, NULL);
+    ELSE
+      EXECUTE format('INSERT INTO deployment_snapshot SELECT %L, count(*)::text FROM public.%I', table_name, table_name);
+    END IF;
+  END LOOP;
 END $$;
-INSERT INTO deployment_snapshot SELECT '"'"'user'"'"', count(*)::text FROM "user";
-DO $$
-BEGIN
-  IF to_regclass('"'"'public.profile'"'"') IS NULL THEN
-    INSERT INTO deployment_snapshot VALUES ('"'"'profile'"'"', NULL);
-  ELSE
-    EXECUTE '"'"'INSERT INTO deployment_snapshot SELECT '"'"''"'"'profile'"'"''"'"', count(*)::text FROM profile';
-  END IF;
-END $$;
-INSERT INTO deployment_snapshot SELECT '"'"'medical_document'"'"', count(*)::text FROM medical_document;
-INSERT INTO deployment_snapshot SELECT '"'"'prescription'"'"', count(*)::text FROM prescription;
-INSERT INTO deployment_snapshot SELECT '"'"'guide'"'"', count(*)::text FROM guide;
-INSERT INTO deployment_snapshot SELECT '"'"'chat_session'"'"', count(*)::text FROM chat_session;
 SELECT name, value FROM deployment_snapshot ORDER BY name;
 DROP TABLE deployment_snapshot;
 SQL
-    ' >"$output_path"
 }
 
 echo "Starting PostgreSQL and Redis"
@@ -575,8 +605,10 @@ echo "Stopping application services before schema migration"
 
 # Schema migration 전에 기존 애플리케이션을 먼저 멈춰 구버전 코드가 변경 중인
 # DB schema를 읽거나 쓰는 상황을 방지합니다.
+docker compose --profile notifications stop -t 15 notification-scheduler
+
 docker compose --profile source-admin stop \
-  -t 60 \
+  -t 90 \
   fastapi \
   ai-worker \
   source-writer
@@ -587,7 +619,7 @@ if ! running_application_services="$(docker compose ps --services --status runni
   exit 1
 fi
 
-if printf '%s\n' "$running_application_services" | grep -Eq '^(fastapi|ai-worker|source-writer)$'; then
+if printf '%s\n' "$running_application_services" | grep -Eq '^(fastapi|ai-worker|source-writer|notification-scheduler)$'; then
   echo "Application services are still running after stop request."
   docker compose ps fastapi ai-worker
   exit 1
@@ -692,6 +724,10 @@ if ! printf '%s\n' "$profile_validation_output" |
   cat "$evidence_dir/post-migration-profile-validation.tsv"
   exit 1
 fi
+
+# Worker mount는 read-only이므로 API image로 공유 업로드 경로를 먼저 생성합니다.
+docker compose run --rm --no-deps --pull always --entrypoint python fastapi \
+  -c 'import os; os.makedirs(os.environ["STORAGE_DIR"], exist_ok=True)'
 
 echo "Deploying services: ${deploy_services[*]}"
 
