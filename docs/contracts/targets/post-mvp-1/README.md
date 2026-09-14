@@ -17,6 +17,7 @@
 - [RAG Runtime 계약 v1](./rag-runtime-v1.md) — Runtime Bundle Manifest Hash·저장 정합은 `PD-175-20260910`(Approved)
 - [Guideline Card typed port 계약 v1](./guideline-card-v1.md) — RAG-14 Evidence Gate·PD-362 Source eligibility와 RAG-16 사이의 Request·Outcome·승인 verifier·fallback 의미를 고정 · RAG-15 persistence-free kernel 구현 검토 중(#179, PR #414), Current 아님
 - [RAG Evaluation·Release Gate 계약 v1](./rag-evaluation-v1.md): Schema Set 1.3 Candidate · Review Required · 책임 리뷰어 PR review event 대기
+- [RAG Answer Quality Metric·Variant 계약 v1](./rag-answer-quality-metrics-v1.md) — PR #475 책임 리뷰 승인 · Approved Target · Not implemented · 순수 DEV kernel 준비 범위이며 신규 schema/Policy version 정렬 필요
 - [Safety Result·Citation 계약 v2](./safety-result-v2.md) — Track F에서 v1의 Safety·Citation·STALE·Release Gate 목표를 대체
 - [Safety Result 복합 STALE 우선순위 계약 v1](./safety-result-compound-stale-priority-v1.md) — 복합 STALE 단일 공개 fallback_code 사영 우선순위와 내부 stale_reason 분리 (`PD-173`)
 - [Protected Retrieval Infrastructure 계약 v1](./protected-retrieval-infrastructure-v1.md) — data-plane 부분 구현, authorization control C1 구현 완료(PR #463), C2 command 및 최소 권한 확장 계약 확정 (`PD-368`, `PD-368-R1`, `PD-368-R2`)

@@ -669,5 +669,5 @@ async def test_mfds_loader_preserves_groups_sources_and_candidate_handoff(databa
         )
     )
     assert blocked_load.build is None
-    assert [row.reason for row in blocked_load.inspection.blocking_exclusions] == ["INVALID_COMPONENT_FIELDS"]
+    assert [row.reason for row in blocked_load.inspection.blocking_exclusions] == ["MISSING_COMPONENT_QUANTITY"]
     not_saved.save_build.assert_not_awaited()
