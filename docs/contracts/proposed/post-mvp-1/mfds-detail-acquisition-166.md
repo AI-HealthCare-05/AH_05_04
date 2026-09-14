@@ -35,6 +35,10 @@ serviceKey로 고정하며 품목/업체 필터, 첫 N페이지, 호출자 선�
   같은 키·동일 원문도 원본 배열에서 지우지 않는다. 기본키 중복이므로 Snapshot 생산은 차단한다.
 - 빈 성분은 성분 없음으로 해석하지 않고 Ingredient/Component를 만들지 않는다.
   실패 시 Snapshot/CURRENT는 변경하지 않는다. DB/저장소 예외는 호출자의 transaction rollback으로 전파한다.
+- EMPTY_COMPONENT_FIELDS는 전체 차단 사유가 아니다. 해당 행은 제외로 남기고 나머지 행으로 Catalog를
+  구성하며, 제외 건수·사유는 Source Snapshot 단위 DB receipt에 남긴다. INVALID_COMPONENT_FIELDS와
+  CONFLICTING_OBSERVATION은 전체 차단을 유지한다. 구성원 0개는 성분 기반 안전성 판정 불가로 다룬다.
+  [결정 기록](../../../governance/decisions/2026-09-13-mfds-detail-acquisition.md#빈-주성분-행-처리-2026-09-14-확인)을 따른다.
 
 ## 키·bytes·Receipt
 

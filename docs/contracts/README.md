@@ -53,7 +53,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [OCR LLM Worker 범위 정정 (#453)](./proposed/ocr-llm-worker-consent-453.md): 기존 이관 범위와 리뷰 시 별도 검토할 항목. 기존 동의 개정안 미채택.
 - [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태와 row 없음=미동의 기준. #465에서 `user_consent` 저장 기반을 병합했고 #505에서 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전과 Production 공개 승인은 후속 범위다. 전체 목적별 계약은 Proposed 유지.
 
-- [Track B UNCONFIRMED backlog v1](./proposed/unconfirmed-backlog-v1.md): PD-418 URL·cursor·DTO·오류. #426 미등록 후보 승인 증빙 확인; 최신 #202 기반 실제 v1 등록·PUT 보완·페이지 이동 검증 변경은 두 리뷰어 재승인 대기. 승인 전 Current 승격·병합 금지.
+- [Track B UNCONFIRMED backlog v1](./proposed/unconfirmed-backlog-v1.md): PD-418 URL·cursor·DTO·오류. #426 후보와 #462 실제 등록·PUT 보완·페이지 이동·날짜별 revision 검증 병합 완료; #462 남한솔 APPROVED·최종 CI 7/7 확인. 문서는 Proposed 유지, Current 승격 별도 검토. [승인 범위·상태 근거](../governance/decisions/2026-09-10-unconfirmed-backlog-418.md#승인-증빙과-등록-변경의-병합-조건).
 
 - [Track B Notification 계약 v1 (#203)](./proposed/track-b-notifications-v1.md): PD-203 기반 알림 저장·목록·읽음·재알림 구현 브랜치. 지정 리뷰어 승인 및 #202 일정 API 통합 전이며 current 계약 아님.
 

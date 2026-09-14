@@ -381,6 +381,27 @@ class SnapshotCreateRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class SnapshotExclusionReceipt:
+    """수집 성공 후 구성원으로 승격하지 않은 행의 집계입니다.
+
+    성분 없음이나 안전성 문제 없음을 뜻하지 않습니다. 구성원 0개인 제품은 성분 기반
+    안전성 판정 불가로 다루어야 하며 통과로 해석하지 않습니다.
+    """
+
+    snapshot_id: UUID
+    reason: str
+    source_row_count: int
+    excluded_row_count: int
+    retained_row_count: int
+
+    def __post_init__(self) -> None:
+        if min(self.source_row_count, self.excluded_row_count, self.retained_row_count) < 0:
+            raise ValueError("Snapshot exclusion receipt counts must not be negative.")
+        if self.excluded_row_count + self.retained_row_count > self.source_row_count:
+            raise ValueError("Snapshot exclusion receipt counts must not exceed the source rows.")
+
+
+@dataclass(frozen=True, slots=True)
 class SnapshotRunRecord:
     operation_id: UUID
     snapshot_id: UUID | None
@@ -527,6 +548,10 @@ class SnapshotLifecycleRepository(Protocol):
     ) -> None: ...
 
     async def create_run(self, record: SnapshotRunRecord) -> UUID: ...
+
+    async def record_observation_exclusions(self, receipt: SnapshotExclusionReceipt) -> None:
+        """partial 적재 사실을 Snapshot 단위로 남깁니다. 같은 사유를 중복 기록하지 않습니다."""
+        ...
 
     async def create_artifacts(
         self,
