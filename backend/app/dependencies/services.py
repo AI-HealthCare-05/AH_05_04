@@ -29,6 +29,7 @@ from app.repositories.ocr_repository import OcrRepository
 from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.repositories.refresh_session_repository import RefreshSessionRepository
+from app.repositories.user_consent_repository import UserConsentRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
 from app.services.chat import ChatService
@@ -65,7 +66,7 @@ from app.services.ocr_ai import (
 from app.services.ocr_ai.prompt import PROMPT_VERSION as OCR_STRUCTURE_PROMPT_VERSION
 from app.services.ocr_engine import OcrEngine
 from app.services.prescriptions import PrescriptionService
-from app.services.users import UserManageService
+from app.services.users import UserConsentService, UserManageService
 
 
 def get_openai_client(request: Request) -> AsyncOpenAI:
@@ -107,6 +108,15 @@ def get_user_repository(
     ],
 ) -> UserRepository:
     return UserRepository(session)
+
+
+def get_user_consent_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> UserConsentRepository:
+    return UserConsentRepository(session)
 
 
 def get_medical_document_repository(
@@ -548,6 +558,15 @@ def get_user_manage_service(
         repository=repository,
         auth_service=auth_service,
     )
+
+
+def get_user_consent_service(
+    repository: Annotated[
+        UserConsentRepository,
+        Depends(get_user_consent_repository),
+    ],
+) -> UserConsentService:
+    return UserConsentService(repository)
 
 
 def get_async_job_repository(

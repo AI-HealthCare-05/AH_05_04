@@ -27,7 +27,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 영역 | 테이블 | 현재 사용 상태 |
 | --- | --- | --- |
 | 사용자 | `user` | 인증·사용자 정보에 사용 |
-| 사용자 동의 | `user_consent` | PD-207 목적별 최신 동의 상태 저장 기반. Gate/API 연결은 후속 범위 |
+| 사용자 동의 | `user_consent` | PD-207 목적별 최신 동의 상태 저장 기반. 사용자 동의 상태 API는 구현, Gate/Worker 연결은 후속 범위 |
 | 프로필 | `profile` | 본인 단일 `SELF` profile과 사용자 리소스 소유권 기준에 사용 |
 | 의료문서 | `medical_document` | 처방전 metadata와 로컬 파일 object key 저장 |
 | OCR | `ocr_job`, `extracted_field` | 동기 OCR 상태, 원문·정규화·사용자 확정값 저장 |
@@ -133,7 +133,7 @@ DB 제약:
 - `policy_version`은 빈 문자열 금지
 - `GRANTED`는 `granted_at` 필수 및 `withdrawn_at=NULL`, `WITHDRAWN`은 `withdrawn_at` 필수
 
-row가 없으면 미동의로 판정한다. 이 테이블은 최신 상태만 저장하며 과거 동의 이력을 append-only audit으로 남길지는 후속 Decision 또는 계약 갱신 범위다. Backend Gate, Worker Gate, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 연결은 후속 구현 범위이며 이번 저장 기반만으로 Provider 호출을 허용하지 않는다.
+row가 없으면 미동의로 판정한다. 이 테이블은 최신 상태만 저장하며 과거 동의 이력을 append-only audit으로 남길지는 후속 Decision 또는 계약 갱신 범위다. 사용자 동의 상태 API는 이 최신 row를 조회·변경한다. Backend Gate, Worker Gate, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 연결은 후속 구현 범위이며 저장·조회 기반만으로 Provider 호출을 허용하지 않는다.
 
 ## PROFILE SELF 소유권
 
