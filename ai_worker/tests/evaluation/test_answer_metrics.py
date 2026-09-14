@@ -9,7 +9,7 @@ from ai_worker.tasks.evaluation.answer_metrics import build_answer_metrics
 from ai_worker.tasks.evaluation.loaders import EvaluationCaseContract, ValidatedDataset, load_dataset
 from ai_worker.tasks.evaluation.schemas.artifacts import CASE_RESULT_ADAPTER, CaseResult, MetricResult, MetricResults
 from ai_worker.tasks.evaluation.schemas.authoring import GoldClaim
-from ai_worker.tasks.evaluation.schemas.common import Partition
+from ai_worker.tasks.evaluation.schemas.common import ExecutionStatus, Partition
 from ai_worker.tasks.evaluation.schemas.policy import ComparisonPolicy, ComparisonScope
 
 EVALS_ROOT = Path(__file__).parents[3] / "evals"
@@ -249,6 +249,78 @@ def test_answer_input_failure_does_not_leak_into_unowned_metric_scope() -> None:
 
     assert metric(metrics.metrics, answer_scope.metric_id).execution_status.value == "ERROR"
     assert metric(metrics.metrics, safety_scope.metric_id).execution_status.value == "NOT_IMPLEMENTED"
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_b_and_all"),
+    [
+        ("COMPLETED", "COMPLETED"),
+        ("INVALID", "INVALID"),
+        ("ERROR", "ERROR"),
+        ("NOT_IMPLEMENTED", "NOT_IMPLEMENTED"),
+        ("NOT_EVALUATED", "NOT_EVALUATED"),
+        ("FUTURE_STATUS", "INVALID"),
+    ],
+)
+def test_answer_execution_status_is_confined_to_selected_slices(
+    status: str,
+    expected_b_and_all: str,
+) -> None:
+    cases = (
+        CASES[0].model_copy(update={"slice_ids": ("SLICE_A",)}),
+        CASES[1].model_copy(update={"slice_ids": ("SLICE_B",)}),
+    )
+    scopes = tuple(
+        _scope("COMPLETENESS", "EXPECTED_SECTION").model_copy(update={"slice_id": slice_id})
+        for slice_id in ("SLICE_A", "SLICE_B", "ALL")
+    )
+    dataset = replace(dataset_with_answer_scopes(*scopes), cases=cases)
+    first, second = completed_answer_results()
+    if status == "COMPLETED":
+        second_with_status = second
+    elif status == "FUTURE_STATUS":
+        second_with_status = second.model_copy(
+            update={
+                "execution_status": cast(ExecutionStatus, status),
+                "decision_status": None,
+                "failure_codes": ("SYNTHETIC_FUTURE_STATUS",),
+            }
+        )
+    else:
+        second_with_status = CASE_RESULT_ADAPTER.validate_python(
+            {
+                **second.model_dump(mode="json"),
+                "execution_status": status,
+                "decision_status": None,
+                "failure_codes": [f"SYNTHETIC_{status}"],
+            }
+        )
+
+    metrics = _build_answer_metrics(dataset, (first, second_with_status))
+    by_slice = {result.slice_id: result for result in metrics.metrics}
+
+    assert by_slice["SLICE_A"].execution_status.value == "COMPLETED"
+    assert by_slice["SLICE_A"].metric_value == "0.5"
+    assert by_slice["SLICE_B"].execution_status.value == expected_b_and_all
+    assert by_slice["ALL"].execution_status.value == expected_b_and_all
+
+
+def test_run_wide_binding_failure_invalidates_every_answer_slice() -> None:
+    cases = (
+        CASES[0].model_copy(update={"slice_ids": ("SLICE_A",)}),
+        CASES[1].model_copy(update={"slice_ids": ("SLICE_B",)}),
+    )
+    scopes = tuple(
+        _scope("COMPLETENESS", "EXPECTED_SECTION").model_copy(update={"slice_id": slice_id})
+        for slice_id in ("SLICE_A", "SLICE_B", "ALL")
+    )
+    dataset = replace(dataset_with_answer_scopes(*scopes), cases=cases)
+    first, second = completed_answer_results()
+    wrong_run = second.model_copy(update={"run_id": "15900000-0000-4000-8000-000000000099"})
+
+    metrics = _build_answer_metrics(dataset, (first, wrong_run))
+
+    assert {result.execution_status.value for result in metrics.metrics} == {"INVALID"}
 
 
 def test_structured_answer_metrics_use_micro_counts() -> None:

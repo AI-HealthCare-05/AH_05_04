@@ -118,7 +118,7 @@ def _algorithm_signature_supported(scope: ComparisonScope) -> bool:
     )
 
 
-def _input_status(
+def _run_integrity_status(
     answer_cases: tuple[EvaluationCaseContract, ...],
     case_results: tuple[CaseResult, ...],
     expected_run_id: str,
@@ -142,9 +142,20 @@ def _input_status(
             or result.input_sha256 != expected_input_sha256_by_case[result.case_id]
         ):
             return ExecutionStatus.INVALID
-    incomplete_statuses = {
-        result.execution_status for result in case_results if result.execution_status is not ExecutionStatus.COMPLETED
-    }
+    return None
+
+
+def _scope_execution_status(
+    cases: tuple[EvaluationCaseContract, ...],
+    results_by_case: Mapping[str, CaseResult],
+) -> ExecutionStatus | None:
+    incomplete_statuses: set[ExecutionStatus] = set()
+    for case in cases:
+        status = results_by_case[case.case_id].execution_status
+        if not isinstance(status, ExecutionStatus):
+            return ExecutionStatus.INVALID
+        if status is not ExecutionStatus.COMPLETED:
+            incomplete_statuses.add(status)
     if incomplete_statuses:
         return min(incomplete_statuses, key=_INPUT_STATUS_PRIORITY.__getitem__)
     return None
@@ -227,7 +238,12 @@ def build_answer_metrics(
     answer_cases = tuple(
         case for case in dataset.cases if case.task_type is TaskType.ANSWER_QUALITY and case.partition is Partition.DEV
     )
-    input_status = _input_status(answer_cases, case_results, expected_run_id, expected_input_sha256_by_case)
+    run_integrity_status = _run_integrity_status(
+        answer_cases,
+        case_results,
+        expected_run_id,
+        expected_input_sha256_by_case,
+    )
     results_by_case = {result.case_id: result for result in case_results}
     metrics: list[MetricResult] = []
     for scope in dataset.comparison_policy.scopes:
@@ -237,8 +253,13 @@ def build_answer_metrics(
         if not _algorithm_signature_supported(scope):
             metrics.append(_incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED))
             continue
-        if input_status is not None:
-            metrics.append(_incomplete_metric(scope, input_status))
+        if run_integrity_status is not None:
+            metrics.append(_incomplete_metric(scope, run_integrity_status))
+            continue
+        scoped_cases = tuple(case for case in answer_cases if _matches_scope(case, scope))
+        scope_execution_status = _scope_execution_status(scoped_cases, results_by_case)
+        if scope_execution_status is not None:
+            metrics.append(_incomplete_metric(scope, scope_execution_status))
             continue
         if scope.metric_id in _HUMAN_METRICS:
             metrics.append(_incomplete_metric(scope, ExecutionStatus.NOT_EVALUATED))
@@ -246,7 +267,6 @@ def build_answer_metrics(
         if scope.metric_id not in _STRUCTURED_METRICS:
             metrics.append(_incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED))
             continue
-        scoped_cases = tuple(case for case in answer_cases if _matches_scope(case, scope))
         try:
             metrics.append(_completed_metric(scope, scoped_cases, results_by_case))
         except ValueError as exc:
