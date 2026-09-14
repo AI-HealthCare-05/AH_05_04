@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -20,6 +21,8 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     ProtectedAuditEventKind,
     ProtectedAuditReason,
     ProtectedAuthorizationGrant,
+    ProtectedDatasetBinding,
+    ProtectedDatasetState,
     ProtectedPrincipal,
     ProtectedPrincipalRole,
     ProtectedSecurityError,
@@ -31,17 +34,23 @@ from ai_worker.tasks.evaluation.protected_retrieval_control import (
     ControlCommandResult,
     DisableIdentityCommand,
     ExpireAuthorizationCommand,
+    FreezeApprovalSourceEvidence,
+    FreezeDatasetCommand,
     GrantAuthorizationCommand,
     IngestApprovalCommand,
+    RegisterDatasetCommand,
     RegisterIdentityCommand,
     RevokeAuthorizationCommand,
+    TransitionDatasetCommand,
     control_command_sha256,
     verify_authorization_approval,
+    verify_freeze_approval,
 )
 
 NOW = datetime(2026, 9, 11, 1, 2, 3, tzinfo=UTC)
 REQUEST_ID = "123e4567-e89b-42d3-a456-426614174000"
 GRANT_ID = "123e4567-e89b-42d3-a456-426614174001"
+DATASET_ID = "123e4567-e89b-42d3-a456-426614174003"
 SHA_A = "a" * 64
 SHA_B = "b" * 64
 
@@ -674,3 +683,290 @@ def test_identity_command_result_and_audit_reject_invalid_target_id() -> None:
             previous_entry_sha256=None,
             entry_sha256="0" * 64,
         )
+
+
+def _dataset_binding(**updates: object) -> ProtectedDatasetBinding:
+    payload: dict[str, object] = {
+        "dataset_id": DATASET_ID,
+        "dataset_version": "1.0.0",
+        "manifest_sha256": SHA_A,
+        "protected_artifact_sha256": SHA_B,
+        "hmac_key_version": "synthetic-key-v1",
+        "state": ProtectedDatasetState.ACCESS_AUTHORIZED,
+        "state_revision": 1,
+        "authored_count": 0,
+        "review_complete": False,
+        "leakage_axis_intersections": (0, 0, 0, 0),
+        "freeze_receipt_ref": None,
+    }
+    payload.update(updates)
+    return ProtectedDatasetBinding.model_validate(payload)
+
+
+def _register_dataset_payload(**updates: object) -> dict[str, object]:
+    binding = _dataset_binding()
+    payload: dict[str, object] = {
+        "request_id": REQUEST_ID,
+        "dataset_id": binding.dataset_id,
+        "dataset_version": binding.dataset_version,
+        "binding": binding.model_dump(mode="python"),
+        "manifest_sha256": binding.manifest_sha256,
+        "protected_artifact_sha256": binding.protected_artifact_sha256,
+        "hmac_key_version": binding.hmac_key_version,
+    }
+    payload.update(updates)
+    return payload
+
+
+def _freeze_evidence(**updates: object) -> FreezeApprovalSourceEvidence:
+    payload: dict[str, object] = {
+        "source_event_id": REQUEST_ID,
+        "action": ProtectedAction.FREEZE,
+        "dataset_id": DATASET_ID,
+        "dataset_version": "1.0.0",
+        "manifest_sha256": SHA_A,
+        "protected_artifact_sha256": SHA_B,
+        "authored_count": 40,
+        "review_complete": True,
+        "leakage_axis_intersections": (0, 0, 0, 0),
+        "issuer": ProtectedApprovalPrincipal(
+            actor=ActorIdentity(actor_id="synthetic-reviewer", namespace="GITHUB_LOGIN"),
+            role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+        ),
+        "state": "APPROVED",
+        "recorded_at": NOW,
+        "target_commit_oid": "0" * 40,
+        "target_artifact_sha256": SHA_A,
+        "canonical_raw_sha256": SHA_B,
+        "implementation_participants": (ActorIdentity(actor_id="participant-1", namespace="GITHUB_LOGIN"),),
+    }
+    payload.update(updates)
+    return FreezeApprovalSourceEvidence.model_validate(payload)
+
+
+def test_register_dataset_command_requires_exact_initial_binding() -> None:
+    binding = _dataset_binding()
+    command = RegisterDatasetCommand(
+        request_id=REQUEST_ID,
+        dataset_id=binding.dataset_id,
+        dataset_version=binding.dataset_version,
+        binding=binding,
+        manifest_sha256=binding.manifest_sha256,
+        protected_artifact_sha256=binding.protected_artifact_sha256,
+        hmac_key_version=binding.hmac_key_version,
+    )
+    assert command.binding.state is ProtectedDatasetState.ACCESS_AUTHORIZED
+    assert command.binding.state_revision == 1
+    assert command.binding.authored_count == 0
+    assert command.binding.review_complete is False
+    assert command.binding.freeze_receipt_ref is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("dataset_id", "not-a-uuid"),
+        ("dataset_version", "01.0.0"),
+        ("manifest_sha256", "A" * 64),
+        ("protected_artifact_sha256", "b" * 63),
+    ],
+)
+def test_dataset_commands_reject_noncanonical_identifiers(field: str, value: str) -> None:
+    payload = _register_dataset_payload()
+    payload[field] = value
+    with pytest.raises(ValidationError):
+        RegisterDatasetCommand.model_validate(payload)
+
+
+def test_register_dataset_command_rejects_binding_mismatch_and_noninitial_state() -> None:
+    payload = _register_dataset_payload()
+    payload["manifest_sha256"] = SHA_B
+    with pytest.raises(ValidationError, match="binding"):
+        RegisterDatasetCommand.model_validate(payload)
+    payload = _register_dataset_payload()
+    payload["binding"] = _dataset_binding(state=ProtectedDatasetState.AUTHORING, state_revision=2)
+    with pytest.raises(ValidationError, match="initial"):
+        RegisterDatasetCommand.model_validate(payload)
+
+
+def test_freeze_evidence_requires_exact_completed_review_shape() -> None:
+    evidence = _freeze_evidence()
+    assert evidence.action is ProtectedAction.FREEZE
+    assert evidence.authored_count == 40
+    assert evidence.review_complete is True
+    assert evidence.leakage_axis_intersections == (0, 0, 0, 0)
+    assert evidence.issuer.role is ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("authored_count", 39),
+        ("review_complete", False),
+        ("leakage_axis_intersections", (0, 0, 1, 0)),
+        ("source_event_id", "not-a-uuid"),
+    ],
+)
+def test_freeze_evidence_rejects_incomplete_or_noncanonical_values(field: str, value: object) -> None:
+    payload = _freeze_evidence().model_dump(mode="python")
+    payload[field] = value
+    with pytest.raises(ValidationError):
+        FreezeApprovalSourceEvidence.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("kind", "reason", "revision"),
+    [
+        (ControlCommandKind.REGISTER_DATASET, "DATASET_REGISTERED", 1),
+        (ControlCommandKind.TRANSITION_DATASET, "DATASET_TRANSITIONED", 2),
+        (ControlCommandKind.FREEZE_DATASET, "DATASET_FROZEN", 3),
+    ],
+)
+def test_dataset_control_results_require_revision_without_authorization_audit(
+    kind: ControlCommandKind,
+    reason: Any,
+    revision: int,
+) -> None:
+    result = ControlCommandResult(
+        request_id=REQUEST_ID,
+        command_kind=kind,
+        target_id=f"{DATASET_ID}:1.0.0",
+        effective_revision=revision,
+        authorization_audit_event_id=None,
+        reason_code=reason,
+    )
+    assert result.effective_revision == revision
+
+
+def test_dataset_control_audit_entries_bind_target_and_reason() -> None:
+    entry = ControlCommandAuditEntry(
+        event_kind=ProtectedAuditEventKind.CONTROL,
+        sequence=1,
+        event_id=REQUEST_ID,
+        command_kind="REGISTER_DATASET",
+        executed_by=ActorIdentity(actor_id="synthetic-custodian", namespace="GITHUB_LOGIN"),
+        target_kind=ControlAuditTargetKind.PROTECTED_DATASET,
+        target_id=f"{DATASET_ID}:1.0.0",
+        command_sha256=SHA_A,
+        outcome=ControlAuditOutcome.SUCCEEDED,
+        result_effective_revision=1,
+        authorization_audit_event_id=None,
+        reason_code=ProtectedAuditReason.DATASET_REGISTERED,
+        recorded_at=NOW,
+        previous_entry_sha256=None,
+        entry_sha256="0" * 64,
+    )
+    assert entry.command_kind == "REGISTER_DATASET"
+    assert entry.target_kind == ControlAuditTargetKind.PROTECTED_DATASET
+    assert entry.reason_code == ProtectedAuditReason.DATASET_REGISTERED
+
+    # Denied with FREEZE_EVIDENCE_INCOMPLETE is allowlisted
+    denied = ControlCommandAuditEntry(
+        event_kind=ProtectedAuditEventKind.CONTROL,
+        sequence=1,
+        event_id=REQUEST_ID,
+        command_kind="FREEZE_DATASET",
+        executed_by=ActorIdentity(actor_id="synthetic-custodian", namespace="GITHUB_LOGIN"),
+        target_kind=ControlAuditTargetKind.PROTECTED_DATASET,
+        target_id=f"{DATASET_ID}:1.0.0",
+        command_sha256=SHA_A,
+        outcome=ControlAuditOutcome.DENIED,
+        result_effective_revision=None,
+        authorization_audit_event_id=None,
+        reason_code=ProtectedAuditReason.FREEZE_EVIDENCE_INCOMPLETE,
+        recorded_at=NOW,
+        previous_entry_sha256=None,
+        entry_sha256="0" * 64,
+    )
+    assert denied.reason_code == ProtectedAuditReason.FREEZE_EVIDENCE_INCOMPLETE
+
+    # Reject invalid target format
+    with pytest.raises(ValidationError):
+        ControlCommandAuditEntry(
+            event_kind=ProtectedAuditEventKind.CONTROL,
+            sequence=1,
+            event_id=REQUEST_ID,
+            command_kind="REGISTER_DATASET",
+            executed_by=ActorIdentity(actor_id="synthetic-custodian", namespace="GITHUB_LOGIN"),
+            target_kind=ControlAuditTargetKind.PROTECTED_DATASET,
+            target_id="invalid-dataset-target",
+            command_sha256=SHA_A,
+            outcome=ControlAuditOutcome.SUCCEEDED,
+            result_effective_revision=1,
+            authorization_audit_event_id=None,
+            reason_code=ProtectedAuditReason.DATASET_REGISTERED,
+            recorded_at=NOW,
+            previous_entry_sha256=None,
+            entry_sha256="0" * 64,
+        )
+
+
+def test_verify_freeze_approval_matrix() -> None:
+    dataset = _dataset_binding(
+        state=ProtectedDatasetState.REVIEW_READY,
+        state_revision=3,
+        authored_count=40,
+        review_complete=True,
+        leakage_axis_intersections=(0, 0, 0, 0),
+    )
+    evidence = _freeze_evidence()
+    custodian = ProtectedApprovalPrincipal(
+        actor=ActorIdentity(actor_id="custodian-actor", namespace="GITHUB_LOGIN"),
+        role=ProtectedApprovalRole.DATASET_CUSTODIAN,
+    )
+
+    # Success
+    verify_freeze_approval(
+        dataset,
+        evidence,
+        approval_source_event_id=evidence.source_event_id,
+        expected_raw_sha256=evidence.canonical_raw_sha256,
+        executor=custodian,
+    )
+
+    # Mismatched source event ID
+    with pytest.raises(ProtectedSecurityError) as err:
+        verify_freeze_approval(
+            dataset,
+            evidence,
+            approval_source_event_id="00000000-0000-0000-0000-000000000000",
+            expected_raw_sha256=evidence.canonical_raw_sha256,
+            executor=custodian,
+        )
+    assert err.value.reason_code == "APPROVAL_EVIDENCE_MISMATCH"
+
+    # Self-approval: issuer == executor
+    with pytest.raises(ProtectedSecurityError) as err:
+        verify_freeze_approval(
+            dataset,
+            evidence,
+            approval_source_event_id=evidence.source_event_id,
+            expected_raw_sha256=evidence.canonical_raw_sha256,
+            executor=evidence.issuer,
+        )
+    assert err.value.reason_code in {"SELF_APPROVAL_DENIED", "ISSUER_ROLE_DENIED"}
+
+
+def test_transition_and_freeze_dataset_command_shapes() -> None:
+    transition_cmd = TransitionDatasetCommand(
+        request_id=REQUEST_ID,
+        dataset_id=DATASET_ID,
+        dataset_version="1.0.0",
+        from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+        to_state=ProtectedDatasetState.AUTHORING,
+        expected_state_revision=1,
+        authored_count=0,
+        review_complete=False,
+    )
+    assert transition_cmd.from_state is ProtectedDatasetState.ACCESS_AUTHORIZED
+    assert transition_cmd.to_state is ProtectedDatasetState.AUTHORING
+
+    freeze_cmd = FreezeDatasetCommand(
+        request_id=REQUEST_ID,
+        dataset_id=DATASET_ID,
+        dataset_version="1.0.0",
+        expected_state_revision=3,
+        approval_source_event_id=REQUEST_ID,
+        expected_raw_sha256=SHA_B,
+    )
+    assert freeze_cmd.expected_state_revision == 3

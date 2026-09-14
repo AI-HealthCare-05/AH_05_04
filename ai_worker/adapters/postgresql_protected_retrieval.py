@@ -20,6 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from ai_worker.tasks.evaluation.protected_retrieval import (
     ApprovalSourceEvidence,
     AuthorizationAuditEntry,
+    ControlAuditOutcome,
+    ControlAuditTargetKind,
     ControlCommandAuditEntry,
     OpaqueLogicalRef,
     OpaqueRefNamespace,
@@ -33,6 +35,7 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     ProtectedAuthorizationCapability,
     ProtectedAuthorizationGrant,
     ProtectedDatasetBinding,
+    ProtectedDatasetState,
     ProtectedOperationRequest,
     ProtectedOperationResult,
     ProtectedPrincipal,
@@ -74,11 +77,74 @@ def _database_reason(error: BaseException, fallback: str) -> ProtectedSecurityEr
 
 def _model(model_type, value: object, fallback: str):
     try:
-        if isinstance(value, (dict, list)):
-            return model_type.model_validate_json(json.dumps(value))
-        return model_type.model_validate(value)
+        if isinstance(value, str):
+            return model_type.model_validate_json(value)
+        try:
+            return model_type.model_validate(value)
+        except (TypeError, ValueError, ValidationError):
+            if isinstance(value, (dict, list)):
+                return model_type.model_validate_json(json.dumps(value))
+            raise
     except (TypeError, ValueError, ValidationError):
         raise ProtectedSecurityError(fallback) from None
+
+
+def _assemble_dataset_binding(
+    *,
+    binding_value: object,
+    dataset_id: str,
+    dataset_version: str,
+    manifest_sha256: str,
+    protected_artifact_sha256: str,
+    hmac_key_version: str,
+    state: str,
+    state_revision: int,
+    authored_count: int,
+    review_complete: bool,
+    audit_entries: tuple[ProtectedAuditEntry, ...],
+) -> ProtectedDatasetBinding:
+    stored = _model(ProtectedDatasetBinding, binding_value, "DATASET_BINDING_MISMATCH")
+    if (
+        stored.dataset_id != dataset_id
+        or stored.dataset_version != dataset_version
+        or stored.manifest_sha256 != manifest_sha256
+        or stored.protected_artifact_sha256 != protected_artifact_sha256
+        or stored.hmac_key_version != hmac_key_version
+    ):
+        raise ProtectedSecurityError("DATASET_BINDING_MISMATCH")
+    try:
+        dataset_state = ProtectedDatasetState(state)
+    except ValueError:
+        raise ProtectedSecurityError("DATASET_BINDING_MISMATCH") from None
+    updates: dict[str, object] = {
+        "state": dataset_state,
+        "state_revision": state_revision,
+        "authored_count": authored_count,
+        "review_complete": review_complete,
+        "freeze_receipt_ref": None,
+    }
+    if dataset_state is ProtectedDatasetState.FROZEN:
+        target_id = f"{dataset_id}:{dataset_version}"
+        matches = tuple(
+            entry
+            for entry in audit_entries
+            if isinstance(entry, ControlCommandAuditEntry)
+            and entry.command_kind == "FREEZE_DATASET"
+            and entry.target_kind is ControlAuditTargetKind.PROTECTED_DATASET
+            and entry.target_id == target_id
+            and entry.outcome is ControlAuditOutcome.SUCCEEDED
+            and entry.reason_code is ProtectedAuditReason.DATASET_FROZEN
+            and entry.result_effective_revision == state_revision
+        )
+        if len(matches) != 1:
+            raise ProtectedSecurityError("AUDIT_BINDING_MISMATCH")
+        updates["freeze_receipt_ref"] = OpaqueLogicalRef(
+            namespace=OpaqueRefNamespace.AUDIT_EVENT,
+            value=matches[0].event_id,
+        )
+    payload = stored.model_dump(mode="python")
+    payload.update(updates)
+    return _model(ProtectedDatasetBinding, payload, "DATASET_BINDING_MISMATCH")
 
 
 class _ProtectedSession:
@@ -230,7 +296,9 @@ class PostgresqlAuthorizationLedger(_ProtectedSession):
         await self._resolve_principal()
         result = await self._execute(
             f"""
-            SELECT binding
+            SELECT binding, dataset_id, dataset_version, manifest_sha256,
+                   protected_artifact_sha256, hmac_key_version, state,
+                   state_revision, authored_count, review_complete
             FROM {self._schema}.protected_dataset
             WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version
             """,
@@ -239,10 +307,27 @@ class PostgresqlAuthorizationLedger(_ProtectedSession):
                 "dataset_version": request.dataset.dataset_version,
             },
         )
-        value = result.scalar_one_or_none()
-        if value is None:
+        row = result.one_or_none()
+        if row is None:
             raise ProtectedSecurityError("DATASET_STATE_MISMATCH")
-        return _model(ProtectedDatasetBinding, value, "INTERNAL_ERROR")
+        entries: tuple[ProtectedAuditEntry, ...] = ()
+        if row.state == ProtectedDatasetState.FROZEN.value:
+            clock = await PostgresqlTrustedClock.from_session(self._session)
+            journal = PostgresqlProtectedAuditJournal(self._session, self._schema_name, clock)
+            entries = await journal._verified_entries(lock_head=False)
+        return _assemble_dataset_binding(
+            binding_value=row.binding,
+            dataset_id=row.dataset_id,
+            dataset_version=row.dataset_version,
+            manifest_sha256=row.manifest_sha256,
+            protected_artifact_sha256=row.protected_artifact_sha256,
+            hmac_key_version=row.hmac_key_version,
+            state=row.state,
+            state_revision=row.state_revision,
+            authored_count=row.authored_count,
+            review_complete=row.review_complete,
+            audit_entries=entries,
+        )
 
 
 class PostgresqlProtectedAuditJournal(_ProtectedSession):
@@ -623,7 +708,9 @@ class _GuardContext(AbstractAsyncContextManager[_PostgresqlGuardSession]):
         await self._guard_session._require_request_principal(self._guard_session._request)
         dataset_result = await self._guard_session._execute(
             f"""
-            SELECT binding
+            SELECT binding, dataset_id, dataset_version, manifest_sha256,
+                   protected_artifact_sha256, hmac_key_version, state,
+                   state_revision, authored_count, review_complete
             FROM {self._guard_session._schema}.protected_dataset
             WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version
             FOR UPDATE
@@ -633,7 +720,7 @@ class _GuardContext(AbstractAsyncContextManager[_PostgresqlGuardSession]):
                 "dataset_version": self._guard_session._request.dataset.dataset_version,
             },
         )
-        dataset_value = dataset_result.scalar_one_or_none()
+        dataset_row = dataset_result.one_or_none()
         grant_result = await self._guard_session._execute(
             f"""
             SELECT grant_body, revision, effective_revision, revoked_at
@@ -644,9 +731,26 @@ class _GuardContext(AbstractAsyncContextManager[_PostgresqlGuardSession]):
             {"grant_id": self._guard_session._grant.grant_id},
         )
         grant_row = grant_result.one_or_none()
-        if dataset_value is None or grant_row is None:
+        if dataset_row is None or grant_row is None:
             raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
-        locked_dataset = _model(ProtectedDatasetBinding, dataset_value, "INTERNAL_ERROR")
+        entries: tuple[ProtectedAuditEntry, ...] = ()
+        if dataset_row.state == ProtectedDatasetState.FROZEN.value:
+            clock = await PostgresqlTrustedClock.from_session(self._session)
+            journal = PostgresqlProtectedAuditJournal(self._session, self._guard_session._schema_name, clock)
+            entries = await journal._verified_entries(lock_head=False)
+        locked_dataset = _assemble_dataset_binding(
+            binding_value=dataset_row.binding,
+            dataset_id=dataset_row.dataset_id,
+            dataset_version=dataset_row.dataset_version,
+            manifest_sha256=dataset_row.manifest_sha256,
+            protected_artifact_sha256=dataset_row.protected_artifact_sha256,
+            hmac_key_version=dataset_row.hmac_key_version,
+            state=dataset_row.state,
+            state_revision=dataset_row.state_revision,
+            authored_count=dataset_row.authored_count,
+            review_complete=dataset_row.review_complete,
+            audit_entries=entries,
+        )
         locked_grant = _model(ProtectedAuthorizationGrant, grant_row.grant_body, "INTERNAL_ERROR")
         if locked_dataset != self._guard_session._request.dataset or locked_grant != self._guard_session._grant:
             raise ProtectedSecurityError("GUARD_BINDING_MISMATCH")
