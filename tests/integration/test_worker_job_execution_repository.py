@@ -54,8 +54,6 @@ from ai_worker.core.runtime_assembly import build_worker_runtime, create_clova_o
 from ai_worker.core.stream import WorkerDelivery
 from ai_worker.schemas.messages import JobType, WorkerMessage
 from ocr_runtime.clova_engine import ClovaOcrEngine
-from ocr_runtime.llm.prompt import PROMPT_VERSION
-from ocr_runtime.llm.schemas import GeneratedMedication, GeneratedPrescriptionDraft, GeneratedSourceValue
 from provider_contracts.observability import DeploymentEnvironment
 from provider_contracts.ocr import (
     OcrDeadline,
@@ -223,6 +221,7 @@ class SyntheticOcrEngine:
             engine_name="SYNTHETIC_OCR",
             model_version=None,
             prompt_version=None,
+            llm_processing="NOT_REQUESTED",
         )
 
 
@@ -280,6 +279,7 @@ async def repository_schema() -> AsyncIterator[None]:
                     engine_name VARCHAR(100),
                     model_version VARCHAR(100),
                     prompt_version VARCHAR(100),
+                    llm_processing VARCHAR(32),
                     started_at TIMESTAMPTZ,
                     completed_at TIMESTAMPTZ,
                     error_code VARCHAR(100),
@@ -1314,20 +1314,7 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
             )
         )
         monkeypatch.setattr(ClovaOcrEngine, "_recognize_provider", clova_call)
-        llm_call = AsyncMock(
-            return_value=SimpleNamespace(
-                status="completed",
-                model="synthetic-llm-model",
-                output=[],
-                output_parsed=GeneratedPrescriptionDraft(
-                    medications=[
-                        GeneratedMedication(
-                            medication_name=GeneratedSourceValue(value="합성의약품에이정", source_ids=[1]),
-                        )
-                    ]
-                ),
-            )
-        )
+        llm_call = AsyncMock()
         sdk_context = MagicMock()
         sdk_context.__aenter__.return_value = SimpleNamespace(responses=SimpleNamespace(parse=llm_call))
         monkeypatch.setattr(openai_ocr_structurer, "AsyncOpenAI", MagicMock(return_value=sdk_context))
@@ -1385,16 +1372,17 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
                     """
                     SELECT
                         ocr_status,
-                        started_at,
-                        completed_at,
-                        engine_name
+                            started_at,
+                            completed_at,
+                            engine_name,
+                            llm_processing
                     FROM ocr_job
                     WHERE id = :domain_id
                     """
                 ),
                 {"domain_id": str(message.domain_id)},
             )
-            ocr_status, ocr_started_at, ocr_completed_at, engine_name = ocr_result.one()
+            ocr_status, ocr_started_at, ocr_completed_at, engine_name, llm_processing = ocr_result.one()
 
             field_count_result = await observer.execute(
                 text(
@@ -1422,19 +1410,21 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
         assert outbox_status == "PUBLISHED"
         assert stream_message_id
         if llm_enabled:
-            assert clova_call.await_count == llm_call.await_count == 1
+            assert clova_call.await_count == 1
+            assert llm_call.await_count == 0
             assert sdk_context.__aexit__.await_count == 1
             async with test_engine.connect() as connection:
                 await connection.execute(text(f"SET search_path TO {TEST_SCHEMA}"))
                 metadata = (
                     await connection.execute(
-                        text("SELECT model_version, prompt_version FROM ocr_job WHERE id = :id"),
+                        text("SELECT model_version, prompt_version, llm_processing FROM ocr_job WHERE id = :id"),
                         {"id": str(message.domain_id)},
                     )
                 ).one()
-                assert metadata == ("synthetic-llm-model", PROMPT_VERSION)
+                assert metadata == (None, None, "SKIPPED_MINIMIZATION")
         else:
             assert ocr_engine.call_count == 1
+        assert llm_processing == ("SKIPPED_MINIMIZATION" if llm_enabled else "NOT_REQUESTED")
         assert job_status == "COMPLETED"
         assert attempt_count == 1
         assert consumed_event_id == str(message.event_id)
@@ -1443,10 +1433,9 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
         assert ocr_started_at is not None
         assert ocr_completed_at is not None
         assert engine_name == ("CLOVA_OCR" if llm_enabled else "SYNTHETIC_OCR")
-        # SyntheticOcrEngine은 MEDICATION_NAME 1개만 반환하지만, 저장 경로가 나머지 필수
-        # 필드(PRESCRIBED_DATE, DOSE_VALUE, FREQUENCY_PER_DAY, DURATION_DAYS)를 placeholder
-        # row로 채우므로 총 5개가 됩니다(#294).
-        assert field_count_result.scalar_one() == (8 if llm_enabled else 5)
+        # LLM을 생략한 규칙 경로는 약품 라벨이 없는 단일 토큰을 약품으로 추정하지 않아
+        # 처방일 검수 placeholder만 저장합니다. 합성 엔진 경로는 약품 1건과 필수 placeholder 4건입니다.
+        assert field_count_result.scalar_one() == (1 if llm_enabled else 5)
         assert await stream.list_pending() == ()
     finally:
         await assembled.aclose()
