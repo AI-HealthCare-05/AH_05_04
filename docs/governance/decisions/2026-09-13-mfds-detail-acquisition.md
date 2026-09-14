@@ -13,6 +13,25 @@
 통과한 경우에만 PENDING Snapshot을 생성한다. 제한 적재 및 subset에 전체 Receipt를 붙이는 방식은 금지한다.
 공식 성분 순서·전역 Identity·Snapshot 동일시점성을 이번 내부 구현 규칙으로 확정하지 않는다.
 
+## 빈 주성분 행 처리 (2026-09-14 확인)
+
+전체 상세 조회 126,825행 중 31,697행이 주요 성분 필드가 모두 비어 있다. 빈 행 3건을 공식 상세
+화면과 대조한 결과 화면에는 성분이 존재했다. [대조 기록](../../testing/mfds-component-key-audit-166.md#빈-행-3건의-공식-상세-대조).
+따라서 빈 값을 성분 없음으로 해석하지 않는다. 공급기관의 반환 조건 확인은 회신 시점을 알 수 없어
+선행 조건으로 두지 않는다.
+
+- 확인: 권가빈(제품 판단), 송은영(저장 경계), 남한솔(Frontend 표시). 2026-09-14.
+- 빈 주성분 행은 `EMPTY_COMPONENT_FIELDS` 제외로 남기고 구성원을 만들지 않는다.
+  전체 Catalog 차단 사유로는 쓰지 않으며 나머지 행으로 Catalog를 구성한다.
+- `INVALID_COMPONENT_FIELDS`와 `CONFLICTING_OBSERVATION`은 원문 무결성 위반이므로 전체 차단을 유지한다.
+- 제품은 Catalog와 검색·식별에 남는다. 검색 항목은 제품명·Alias로 만들어져 성분과 무관하다.
+  관찰 행 없는 제품은 허용하고, 제품 없는 관찰 행은 orphan이므로 계속 거부한다.
+- **구성원 0개는 성분 없음이나 금기 없음이 아니다. 성분 기반 안전성 검사는 이 상태를 판정 불가로
+  다루어야 하며 통과로 해석하지 않는다.** 사용자 표시 상태값과 문구는 후속 Safety/Frontend 계약에서 정한다.
+- 제외 건수와 사유는 Source Snapshot 단위 DB receipt에 남긴다. 상세 원문 위치와 source record key는
+  private 조사 sidecar에 유지한다. manifest payload와 `is_complete`는 변경하지 않는다.
+- 제품 단위 상태값은 이번 범위에서 제공하지 않는다. 집계 건수만으로 특정 제품의 표시 상태를 판단하지 않는다.
+
 검토 대안: 제품 parser 재사용은 잘못된 키/checksum으로 배제했다. 새 Source DB 모델은 기존 저장 형태로
 충분하므로 추가하지 않았다. nullable 관찰 키 Snapshot 및 파생 subset은 별도 공유 계약 변경이므로 구현하지 않았다.
 유지보수 추가분은 상세 endpoint 후보·parser/수집 진입점·합성 회귀이며 API key·운영 승인 관리 경로는 확장하지 않는다.
