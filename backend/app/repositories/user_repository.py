@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -12,6 +12,7 @@ from app.core import config
 from app.core.utils.common import normalize_email
 from app.models.profiles import Profile, ProfileType
 from app.models.users import Gender, User
+from app.repositories.push_repository import PushRepository
 
 DuplicateUserField = Literal["email", "phone_number"]
 
@@ -226,6 +227,7 @@ class UserRepository:
                 token_version=User.token_version + 1,
             )
         )
+        await PushRepository(self.session).revoke_for_user(user.id, datetime.now(UTC))
 
     async def update_instance(
         self,
