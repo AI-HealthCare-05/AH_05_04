@@ -46,7 +46,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## Proposed 계약
 
-- [Track B occurrence 원래 약 표시 조회 v1 (#202)](./proposed/track-b-occurrence-medication-v1.md): PD-202-HISTORY-20260913 후보. 과거 occurrence 한 건의 확정 약 표시·SELF 404·읽기 불변성; 리뷰용 구현·HTTP 검증, 승인 대기.
+- [RAG Answer Quality Metric·Variant 계약 v1 제안 (#159)](./proposed/post-mvp-1/rag-answer-quality-metrics-v1.md): `ANS-BASE | ANS-RAG | ANS-FINAL`, 네 Answer Metric의 분석 단위·micro ratio·95% cluster bootstrap, 승인 human-rubric label과 세 pair 비교 경계. `PD-159-20260913` 책임 리뷰 전 Proposed이며 DEV 구현·HOLDOUT 실행·Release 승인 아님.
 
 - [OCR LLM Worker 범위 정정 (#453)](./proposed/ocr-llm-worker-consent-453.md): 기존 이관 범위와 리뷰 시 별도 검토할 항목. 기존 동의 개정안 미채택.
 - [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태, row 없음=미동의, Backend·Worker 공통 fixture 판정, WorkerMessage/Stream 비전송, CONSENT_REQUIRED 및 OCR CONSENT_WITHDRAWN 차단 의미. Proposed · 미구현 · Production 공개 승인 아님. 확인 필요: 권가빈·김지혜·정현우·남한솔.
@@ -132,8 +132,30 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 
 - [Source reject codes v1 구현 리뷰안](proposed/post-mvp-1/source-reject-codes-v1.md): #165 코드·버전·2-pass·실패 기록. 담당 리뷰 전 proposed, 사용자 지시에 따라 구현·검증 후 리뷰.
 
-### #166 D-04 검토 연결
+### #166 D-03·D-04·D-05 범위와 검토 연결
+
+- [D-03 Catalog Set·Authority Alias Set 관계 및 Crosswalk 범위](../governance/decisions/2026-09-13-catalog-crosswalk-scope.md):
+  일반 Catalog 저장·재현 구성에 Alias member를 포함하며 독립 Authority Alias Set을 대체하지 않는다.
+  Crosswalk는 현재 P0 소비 경로가 없어 제외. 다섯 항목과 재개 조건을 기록하며 Authority 구현 완료가 아니다.
+
+- [D-05 hash 전환 보류·재개 조건](../governance/decisions/2026-09-13-catalog-d05-transition-scope.md):
+  현우님 답변 반영 문서 리뷰 대상. 전체 전환과 Runtime 구성·연결 보류, 기존 v2·관찰 v3 envelope 유지.
+  축소 projection은 필요 확인 후 새 계약으로 검토. 신규 hash 구현 완료·공개 승인 아님.
 
 - [Catalog Component occurrence 결정안](../governance/decisions/2026-09-11-catalog-component-occurrences.md):
   Proposed. 선택 원본 키·제품별 순서 UNIQUE·release_profile·무손실 migration 경계.
   계약 정본은 기존 [Catalog DB 연결안](proposed/post-mvp-1/catalog-db-integration-v2.md)을 갱신한다.
+  2026-09-13 후속 구현: MFDS 관찰 입력의 총량 그룹·원본 필드·제외 사유·건수 검사.
+  검증된 상세 artifact 이후 Loader → DB 저장·복원 → Candidate 인계는 구현·합성 검증 및
+  [정현우 담당 범위 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/477#pullrequestreview-5190458759)를 완료했다. 실제 API 수집·상세 Snapshot 생산은 후속이다.
+  승인 대상 HEAD는 `c58f0968`이며 병합·운영 활성화와 구분한다.
+
+- [D-04 관찰 출처·인계 v3 결정안](../governance/decisions/2026-09-13-component-observation-handoff.md):
+  검증된 상세 artifact Loader, 독립 Snapshot FK, 관찰 버전·총량 그룹의 DB/Candidate 인계 제안.
+  기존 v2를 보존하고 관찰 자료는 medication-catalog-v3로 구분. 계약 정본은 위 Catalog DB 연결안.
+
+### #166 실제 승인 저장소 후속 제안
+
+- [승인·철회·감사 저장소 구체안](proposed/post-mvp-1/catalog-approval-storage-166.md):
+  Proposed. 기존 관리 감사와 승인 receipt 저장을 구분하고, 승인 대상·포트·transaction·최소 권한·이행 및 검증 범위를 제안한다.
+  실제 연결·DB 변경·신규 승인 획득은 미완료이며 기존 D-03/D-05 합의의 승인 범위에 포함하지 않는다.
