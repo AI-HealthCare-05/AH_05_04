@@ -148,6 +148,7 @@ from app.models.track_c import (
     SafetyAssessment,
     SupportActionPlan,
 )
+from app.models.user_consents import ConsentPurpose, ConsentStatus, UserConsent
 from app.models.users import AccountStatus, Gender, User
 
 __all__ = [
@@ -171,6 +172,8 @@ __all__ = [
     "ChatCitation",
     "ChatMessage",
     "ChatSession",
+    "ConsentPurpose",
+    "ConsentStatus",
     "CheckinAudit",
     "DlqOutboxEvent",
     "DlqOutboxEventKind",
@@ -290,6 +293,7 @@ __all__ = [
     "SourceManagementPermission",
     "RefreshSession",
     "User",
+    "UserConsent",
 ]
 
 from app.models.source_management import SourceManagementAudit, SourceManagementPermission
