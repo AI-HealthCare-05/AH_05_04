@@ -36,10 +36,8 @@ def _load_migration() -> Any:
     return module
 
 
-def _base_revision() -> str:
-    migration = _load_migration()
-    assert isinstance(migration.down_revision, str)
-    return migration.down_revision
+def _downgrade_target() -> str:
+    return f"{USER_CONSENT_REVISION}-1"
 
 
 @asynccontextmanager
@@ -206,13 +204,13 @@ def test_user_consent_migration_constraints_and_downgrade_guard() -> None:
         asyncio.run(_insert_valid_consent(user_id))
         asyncio.run(_assert_constraints(user_id))
         with pytest.raises(RuntimeError, match="Cannot downgrade user_consent"):
-            command.downgrade(alembic_config, _base_revision())
+            command.downgrade(alembic_config, _downgrade_target())
     finally:
         asyncio.run(_cleanup_user(user_id))
         command.upgrade(alembic_config, "head")
 
     try:
-        command.downgrade(alembic_config, _base_revision())
+        command.downgrade(alembic_config, _downgrade_target())
         constraints, _ = asyncio.run(_schema_snapshot())
         assert constraints == set()
     finally:

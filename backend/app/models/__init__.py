@@ -141,10 +141,22 @@ from app.models.rag_source import (
     RagVerificationResultStatus,
 )
 from app.models.refresh_session import RefreshSession
+from app.models.track_c import (
+    ActionPlanFollowup,
+    ActionPlanFollowupAudit,
+    BarrierResponse,
+    SafetyAssessment,
+    SupportActionPlan,
+)
 from app.models.user_consents import ConsentPurpose, ConsentStatus, UserConsent
 from app.models.users import AccountStatus, Gender, User
 
 __all__ = [
+    "SafetyAssessment",
+    "BarrierResponse",
+    "SupportActionPlan",
+    "ActionPlanFollowup",
+    "ActionPlanFollowupAudit",
     "NotificationKind",
     "NotificationRecord",
     "NotificationStatus",
