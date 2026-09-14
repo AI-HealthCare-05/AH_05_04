@@ -37,10 +37,11 @@
 - Endpoint: `GET /api/v1/users/me/consents`, `PUT /api/v1/users/me/consents/{purpose}`
 - 인증된 현재 사용자 본인의 `user_consent` row만 조회·변경합니다. 다른 사용자의 동의 row는 응답과 판정에 사용하지 않습니다.
 - `purpose`는 `OCR`, `GUIDE`, `CHAT`, `NOTIFICATION`만 허용합니다.
-- `PUT` 요청 body는 `status`(`GRANTED` 또는 `WITHDRAWN`)와 `policy_version`(1~100자)만 허용합니다(`extra="forbid"`).
+- `PUT` 요청 body는 `status`(`GRANTED` 또는 `WITHDRAWN`)와 `policy_version`(1~100자)만 허용합니다(`extra="forbid"`). `policy_version`은 해당 목적의 현재 policy version과 일치해야 하며, 불일치하면 `422 VALIDATION_FAILED`, `details[].field=policy_version`, `reason=POLICY_VERSION_MISMATCH`로 거부합니다.
 - 같은 `user_id + purpose`는 하나의 current row만 가집니다. `PUT`은 해당 row를 upsert하고, 이력 append-only audit은 아직 구현하지 않습니다.
-- row가 없는 목적은 미동의로 판정하며 조회 응답에서는 `status=null`, `policy_version=null`, `is_granted=false`로 반환합니다. 명시 철회 row는 `status=WITHDRAWN`, `is_granted=false`로 반환해 missing row와 구분합니다.
-- `is_granted=true`는 `status=GRANTED`, `granted_at` 존재, `withdrawn_at=null`인 현재 row에만 사용합니다.
+- row가 없는 목적은 미동의로 판정하며 조회 응답에서는 `status=null`, `policy_version=null`, `current_policy_version=<현재 목적별 version>`, `is_granted=false`로 반환합니다. 명시 철회 row는 `status=WITHDRAWN`, `is_granted=false`로 반환해 missing row와 구분합니다.
+- 응답의 `policy_version`은 저장된 row의 version이고, `current_policy_version`은 서버가 현재 허용하는 목적별 version입니다.
+- `is_granted=true`는 `status=GRANTED`, 저장된 `policy_version`과 `current_policy_version` 일치, `granted_at` 존재, `withdrawn_at=null`인 현재 row에만 사용합니다.
 - 이 API는 목적별 동의 저장·조회·변경 기반만 제공합니다. OCR/Guide/Chat 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN`, 동의 철회 `STALE + BLOCKED` 종료 전이는 [PD-207 Proposed 계약](../proposed/consent-gate-207.md)의 후속 구현 범위입니다.
 
 ## 인증 세션 무효화
@@ -131,7 +132,7 @@
 - 인증 토큰 payload, `token_version` 재검증, 로그아웃 세션 무효화 기준 변경
 - refresh token rotation·재사용 탐지 기준, 비밀번호 재설정 lock 순서·오류 코드 변경
 - 회원가입 이메일 인증 목적·만료·쿨다운·오류 코드 변경
-- 목적별 동의 API의 purpose/status/policy_version, missing row 응답 의미, `is_granted` 판정 기준 변경
+- 목적별 동의 API의 purpose/status/policy_version/current_policy_version, missing row 응답 의미, `is_granted` 판정 기준 변경
 
 ## #398 통합 권한 (PR #429 리뷰 대상)
 

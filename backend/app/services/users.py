@@ -18,6 +18,7 @@ from app.repositories.user_repository import (
     UserRepository,
 )
 from app.services.auth import AuthService
+from app.services.user_consent_policy import current_consent_policy_version
 
 
 class UserManageService:
@@ -69,12 +70,23 @@ class UserManageService:
             ) from exc
 
 
+def _is_currently_granted(row: UserConsent, current_policy_version: str) -> bool:
+    return (
+        row.status == ConsentStatus.GRANTED
+        and row.policy_version == current_policy_version
+        and row.granted_at is not None
+        and row.withdrawn_at is None
+    )
+
+
 def _consent_data(purpose: ConsentPurpose, row: UserConsent | None) -> UserConsentData:
+    current_policy_version = current_consent_policy_version(purpose)
     if row is None:
         return UserConsentData(
             purpose=purpose,
             status=None,
             policy_version=None,
+            current_policy_version=current_policy_version,
             is_granted=False,
             granted_at=None,
             withdrawn_at=None,
@@ -85,7 +97,8 @@ def _consent_data(purpose: ConsentPurpose, row: UserConsent | None) -> UserConse
         purpose=row.purpose,
         status=row.status,
         policy_version=row.policy_version,
-        is_granted=row.status == ConsentStatus.GRANTED and row.granted_at is not None and row.withdrawn_at is None,
+        current_policy_version=current_policy_version,
+        is_granted=_is_currently_granted(row, current_policy_version),
         granted_at=row.granted_at,
         withdrawn_at=row.withdrawn_at,
         updated_at=row.updated_at,
@@ -110,6 +123,15 @@ class UserConsentService:
         purpose: ConsentPurpose,
         request: UserConsentUpdateRequest,
     ) -> UserConsentResponse:
+        current_policy_version = current_consent_policy_version(purpose)
+        if request.policy_version != current_policy_version:
+            raise ApiError(
+                status_code=422,
+                code="VALIDATION_FAILED",
+                message="동의 정책 버전을 확인해 주세요.",
+                details=[ErrorDetail(field="policy_version", reason="POLICY_VERSION_MISMATCH")],
+            )
+
         row = await self.repository.set_status(
             user_id=user.id,
             purpose=purpose,

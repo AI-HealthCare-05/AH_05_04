@@ -40,6 +40,7 @@ class UserConsentData(BaseSerializerModel):
     purpose: ConsentPurpose
     status: ConsentStatus | None
     policy_version: str | None
+    current_policy_version: str
     is_granted: bool
     granted_at: datetime | None
     withdrawn_at: datetime | None

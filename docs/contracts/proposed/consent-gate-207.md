@@ -43,6 +43,8 @@
 
 `GRANTED` row라도 `policy_version`이 현재 목적별 policy version과 다르면 허용하지 않는다. 다만 자동 호환 판정, 일괄 재동의, 과거 version 호환성 판단은 이번 제안의 구현 범위에서 제외한다.
 
+현재 사용자 동의 상태 API는 이 기준을 Current 계약으로 구현한다. `PUT /api/v1/users/me/consents/{purpose}`는 요청 `policy_version`이 해당 목적의 현재 policy version과 일치할 때만 저장하고, 불일치하면 `422 VALIDATION_FAILED`와 `POLICY_VERSION_MISMATCH`로 거부한다. `GET`/`PUT` 응답의 `is_granted`도 저장된 row가 `GRANTED`이고 저장 `policy_version`이 `current_policy_version`과 일치할 때만 `true`다.
+
 ## 4. `user_consent` 스키마 제안
 
 구현 상태: PR #465에서 아래 최소 저장 기반을 구현한다. 물리 테이블은 `backend/alembic/versions/207b1c2d3e4_create_user_consent.py`, SQLAlchemy 모델은 `backend/app/models/user_consents.py`, repository 판정은 `backend/app/repositories/user_consent_repository.py`, 공통 fixture는 `tests/fixtures/consent/consent_gate_207_cases.json`에 둔다. 이 구현은 최신 동의 상태 저장과 `GRANTED` 판정 기반만 제공하며, 실제 기능 Gate와 외부 Provider 호출 차단 연결은 후속 범위다.

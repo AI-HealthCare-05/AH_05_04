@@ -1,12 +1,13 @@
 from uuid import uuid4
 
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from app.main import app
 from app.models.user_consents import ConsentPurpose, ConsentStatus, UserConsent
+from app.services.user_consent_policy import CURRENT_CONSENT_POLICY_VERSIONS
 
 
 async def _signup_and_login(client: AsyncClient, *, email: str) -> dict[str, str]:
@@ -36,6 +37,9 @@ async def test_list_user_consents_returns_missing_rows_as_not_granted() -> None:
     assert [item["purpose"] for item in data] == [purpose.value for purpose in ConsentPurpose]
     assert all(item["status"] is None for item in data)
     assert all(item["policy_version"] is None for item in data)
+    assert {item["purpose"]: item["current_policy_version"] for item in data} == {
+        purpose.value: version for purpose, version in CURRENT_CONSENT_POLICY_VERSIONS.items()
+    }
     assert all(item["is_granted"] is False for item in data)
 
 
@@ -55,13 +59,38 @@ async def test_update_user_consent_grants_and_lists_current_status() -> None:
     assert granted["purpose"] == ConsentPurpose.OCR.value
     assert granted["status"] == ConsentStatus.GRANTED.value
     assert granted["policy_version"] == "ocr-consent.v1"
+    assert granted["current_policy_version"] == "ocr-consent.v1"
     assert granted["is_granted"] is True
     assert granted["granted_at"] is not None
     assert granted["withdrawn_at"] is None
 
     ocr_item = next(item for item in list_response.json()["data"] if item["purpose"] == ConsentPurpose.OCR.value)
     assert ocr_item["status"] == ConsentStatus.GRANTED.value
+    assert ocr_item["current_policy_version"] == "ocr-consent.v1"
     assert ocr_item["is_granted"] is True
+
+
+async def test_list_user_consents_marks_stale_policy_version_as_not_granted(
+    db_session: AsyncSession,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        headers = await _signup_and_login(client, email=_email("stale-consent"))
+        await client.put(
+            "/api/v1/users/me/consents/OCR",
+            json={"status": "GRANTED", "policy_version": "ocr-consent.v1"},
+            headers=headers,
+        )
+        await db_session.execute(
+            update(UserConsent).where(UserConsent.purpose == ConsentPurpose.OCR).values(policy_version="ocr-consent.v0")
+        )
+        await db_session.flush()
+        response = await client.get("/api/v1/users/me/consents", headers=headers)
+
+    ocr_item = next(item for item in response.json()["data"] if item["purpose"] == ConsentPurpose.OCR.value)
+    assert ocr_item["status"] == ConsentStatus.GRANTED.value
+    assert ocr_item["policy_version"] == "ocr-consent.v0"
+    assert ocr_item["current_policy_version"] == "ocr-consent.v1"
+    assert ocr_item["is_granted"] is False
 
 
 async def test_update_user_consent_withdraws_current_status(db_session: AsyncSession) -> None:
@@ -82,6 +111,7 @@ async def test_update_user_consent_withdraws_current_status(db_session: AsyncSes
     data = response.json()["data"]
     assert data["purpose"] == ConsentPurpose.GUIDE.value
     assert data["status"] == ConsentStatus.WITHDRAWN.value
+    assert data["current_policy_version"] == "guide-consent.v1"
     assert data["is_granted"] is False
     assert data["granted_at"] is None
     assert data["withdrawn_at"] is not None
@@ -106,6 +136,7 @@ async def test_user_consents_do_not_expose_other_users_rows() -> None:
     chat_item = next(item for item in response.json()["data"] if item["purpose"] == ConsentPurpose.CHAT.value)
     assert chat_item["status"] is None
     assert chat_item["policy_version"] is None
+    assert chat_item["current_policy_version"] == "chat-consent.v1"
     assert chat_item["is_granted"] is False
 
 
@@ -139,3 +170,35 @@ async def test_update_user_consent_rejects_unsupported_purpose_and_invalid_body(
     assert unsupported_purpose.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert invalid_status.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert empty_policy.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+async def test_update_user_consent_rejects_non_current_policy_versions() -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        headers = await _signup_and_login(client, email=_email("policy-mismatch"))
+        stale_policy = await client.put(
+            "/api/v1/users/me/consents/OCR",
+            json={"status": "GRANTED", "policy_version": "ocr-consent.v0"},
+            headers=headers,
+        )
+        other_purpose_policy = await client.put(
+            "/api/v1/users/me/consents/OCR",
+            json={"status": "GRANTED", "policy_version": "chat-consent.v1"},
+            headers=headers,
+        )
+        arbitrary_policy = await client.put(
+            "/api/v1/users/me/consents/OCR",
+            json={"status": "GRANTED", "policy_version": "synthetic-consent.v1"},
+            headers=headers,
+        )
+        withdraw_wrong_policy = await client.put(
+            "/api/v1/users/me/consents/GUIDE",
+            json={"status": "WITHDRAWN", "policy_version": "guide-consent.v0"},
+            headers=headers,
+        )
+
+    for response in (stale_policy, other_purpose_policy, arbitrary_policy, withdraw_wrong_policy):
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert response.json()["code"] == "VALIDATION_FAILED"
+        assert response.json()["details"] == [
+            {"field": "policy_version", "reason": "POLICY_VERSION_MISMATCH", "rejected_value": None}
+        ]
