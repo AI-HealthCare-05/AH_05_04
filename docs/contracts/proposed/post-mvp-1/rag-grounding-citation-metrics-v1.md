@@ -7,7 +7,7 @@
 | Decision | [`PD-160-20260914`](../../../governance/decisions/2026-09-14-rag-grounding-citation-metrics.md) |
 | 추적 Issue | [#160](https://github.com/AI-HealthCare-05/AH_05_04/issues/160) |
 | 구현 담당 | 정현우 (`@ceohwj`) |
-| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Product·Safety·Evaluation |
+| 책임 리뷰 | 김지혜 (`@Jye-rookie`) — Evaluation·Source provenance·Safety fixture 계약 |
 
 ## 1. 목적과 비목표
 

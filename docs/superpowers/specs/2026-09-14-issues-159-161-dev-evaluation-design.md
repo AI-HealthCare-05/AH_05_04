@@ -5,7 +5,7 @@
 - Scope: RAG-EVAL-004·005·006 DEV implementation validation
 - Tracking Issues: #159, #160, #161
 - Owner: 정현우 (`@ceohwj`)
-- Responsible reviewer: 권가빈 (`@hazelnutflavoured`)
+- Responsible reviewer: 김지혜 (`@Jye-rookie`)
 - Existing approved input: `PD-159-20260913` and PR #475 approval for Answer Quality
 - Review-required inputs: `PD-160-20260914` Claim–Citation observation/metrics and `PD-161-20260914`
   Safety·Rule-first formulas/critical union

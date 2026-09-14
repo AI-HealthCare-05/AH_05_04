@@ -6,7 +6,7 @@
 | 상태 | Candidate · Review Required |
 | 제안일 | 2026-09-14 |
 | 제안자·구현 | 정현우 (`@ceohwj`) — AI/RAG 구현 담당 |
-| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Product·Safety·Evaluation 계약 승인 |
+| 책임 리뷰 | 김지혜 (`@Jye-rookie`) — Evaluation·Source provenance·Safety fixture 계약 승인 |
 | 전문 검토 | 의료·약학 Safety fixture 검토 evidence |
 | 추적 Issue | [#161](https://github.com/AI-HealthCare-05/AH_05_04/issues/161) |
 | 연결 계약 | [`rag-safety-rule-first-metrics-v1.md`](../../contracts/proposed/post-mvp-1/rag-safety-rule-first-metrics-v1.md) |
