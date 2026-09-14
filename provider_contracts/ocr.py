@@ -32,6 +32,7 @@ class OcrRecognitionResult:
     engine_name: str | None = None
     model_version: str | None = None
     prompt_version: str | None = None
+    llm_processing: str | None = None
 
 
 class OcrProviderUnavailableError(Exception):

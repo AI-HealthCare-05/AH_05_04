@@ -23,6 +23,7 @@ import type {
   OcrJobResponse,
 } from '../src/api/prescriptions'
 import { ApiError } from '../src/api/client'
+import { getOcrConsent } from '../src/api/ocrConsent'
 import { createGuide, type GuideResponse } from '../src/api/guides'
 import PrescriptionReviewPage from '../src/pages/PrescriptionReviewPage'
 
@@ -54,6 +55,8 @@ vi.mock('../src/api/prescriptions', async (importOriginal) => {
 vi.mock('../src/api/guides', () => ({
   createGuide: vi.fn(),
 }))
+
+vi.mock('../src/api/ocrConsent', () => ({ getOcrConsent: vi.fn() }))
 
 const displayedMedicationFields = [
   'MEDICATION_NAME',
@@ -339,6 +342,13 @@ function makeGuideResponse(
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(getOcrConsent).mockResolvedValue({
+    data: {
+      purpose: 'OCR', status: 'GRANTED', effective: true, reason: null,
+      current_policy_version: 'ocr-test.v1', accepted_policy_version: 'ocr-test.v1',
+      granted_at: '2026-09-14T00:00:00Z', withdrawn_at: null,
+    },
+  })
   vi.stubGlobal('URL', {
     ...URL,
     createObjectURL: vi.fn(() => 'blob:prescription'),
@@ -367,6 +377,25 @@ afterEach(() => {
 })
 
 describe('PrescriptionReviewPage confirmation gate', () => {
+  it('LLM 전송 최소화로 생략됐을 때만 OCR 검수 안내를 표시한다', async () => {
+    const response = makeOcrResponse(makeCompleteFields())
+    response.data.llm_processing = 'SKIPPED_MINIMIZATION'
+    renderPage(response)
+    expect(await screen.findByText('AI 구조화를 생략했어요')).toBeTruthy()
+    expect(screen.getByText(/외부 LLM에 보내지 않았습니다/)).toBeTruthy()
+  })
+
+  it('철회 후에는 prefetched OCR 결과도 검수 화면에 표시하지 않는다', async () => {
+    vi.mocked(getOcrConsent).mockResolvedValue({ data: {
+      purpose: 'OCR', status: 'WITHDRAWN', effective: false, reason: 'WITHDRAWN',
+      current_policy_version: 'ocr-test.v1', accepted_policy_version: 'ocr-test.v1',
+      granted_at: null, withdrawn_at: '2026-09-14T00:00:00Z',
+    } })
+    renderPage(makeOcrResponse(makeCompleteFields()))
+    expect(await screen.findByText('현재 OCR 동의가 유효하지 않아 기존 OCR 결과를 표시하지 않습니다.')).toBeTruthy()
+    expect(getPrescriptionDocumentFile).not.toHaveBeenCalled()
+  })
+
   it('result_url에서 미리 받은 OCR fields를 재조회 없이 DOC-03에 표시한다', async () => {
     const prefetchedResult = makeOcrResponse(makeCompleteFields())
 

@@ -5,6 +5,7 @@ import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { ApiError } from '../src/api/client'
+import { getOcrConsent, grantOcrConsent } from '../src/api/ocrConsent'
 import { getGuideForPrescription } from '../src/api/guides'
 import {
   executeOcr,
@@ -41,6 +42,11 @@ vi.mock('../src/api/prescriptions', async (importOriginal) => {
 vi.mock('../src/api/guides', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/api/guides')>()),
   getGuideForPrescription: vi.fn(),
+}))
+
+vi.mock('../src/api/ocrConsent', () => ({
+  getOcrConsent: vi.fn(),
+  grantOcrConsent: vi.fn(),
 }))
 
 const documentId = '11111111-1111-4111-8111-111111111111'
@@ -175,6 +181,13 @@ function selectPrescriptionFile(
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(getOcrConsent).mockResolvedValue({
+    data: {
+      purpose: 'OCR', status: 'GRANTED', effective: true, reason: null,
+      current_policy_version: 'ocr-test.v1', accepted_policy_version: 'ocr-test.v1',
+      granted_at: '2026-09-14T00:00:00Z', withdrawn_at: null,
+    },
+  })
   vi.mocked(getLatestPrescription).mockImplementation(() => {
     throw new ApiError(404, '처방을 찾을 수 없습니다.', 'PRESCRIPTION_NOT_FOUND')
   })
@@ -187,6 +200,7 @@ beforeEach(() => {
     message: 'uploaded',
   })
   vi.mocked(executeOcr).mockResolvedValue(jobStatusResponse('PENDING'))
+  vi.mocked(getOcrJob).mockResolvedValue(ocrResponse('FAILED'))
 })
 
 afterEach(() => {
@@ -195,6 +209,36 @@ afterEach(() => {
 })
 
 describe('PrescriptionUploadPage OCR polling', () => {
+  it('현재 OCR 동의가 없으면 업로드 전 안내하고 재동의 후 같은 처방전을 처리한다', async () => {
+    const missing = {
+      purpose: 'OCR' as const, status: 'MISSING' as const, effective: false,
+      reason: 'MISSING_CONSENT' as const, current_policy_version: 'ocr-test.v2',
+      accepted_policy_version: null, granted_at: null, withdrawn_at: null,
+    }
+    vi.mocked(getOcrConsent)
+      .mockResolvedValueOnce({ data: missing })
+      .mockResolvedValue({ data: {
+        ...missing, status: 'GRANTED', effective: true, reason: null,
+        accepted_policy_version: 'ocr-test.v2', granted_at: '2026-09-14T00:00:00Z',
+      } })
+    vi.mocked(grantOcrConsent).mockResolvedValue({ data: {
+      ...missing, status: 'GRANTED', effective: true, reason: null,
+      accepted_policy_version: 'ocr-test.v2', granted_at: '2026-09-14T00:00:00Z',
+    } })
+    const { container } = renderPage({ newPrescriptionIntent: true })
+    selectPrescriptionFile(container)
+    fireEvent.click(screen.getByRole('button', { name: '처방전 읽기' }))
+
+    expect(await screen.findByText('처방전 외부 처리 동의가 필요해요')).toBeTruthy()
+    expect(uploadPrescription).not.toHaveBeenCalled()
+    expect(executeOcr).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '확인하고 동의하기' }))
+    await waitFor(() => expect(executeOcr).toHaveBeenCalledOnce())
+    expect(grantOcrConsent).toHaveBeenCalledWith('ocr-test.v2')
+    expect(uploadPrescription).toHaveBeenCalledOnce()
+  })
+
   it('HOME 직접 등록 CTA는 기존 Guide와 OCR recovery가 있어도 DOC-01을 유지한다', async () => {
     setExistingOcrRecovery()
 
@@ -625,6 +669,18 @@ describe('PrescriptionUploadPage OCR polling', () => {
     expect(screen.getByRole('button', { name: '최신 정보 확인하기' })).toBeTruthy()
     expect(getJobStatus).toHaveBeenCalledTimes(1)
     expect(getOcrResult).not.toHaveBeenCalled()
+  })
+
+  it('OCR 사유가 철회일 때만 STALE을 동의 철회로 안내한다', async () => {
+    vi.mocked(getJobStatus).mockResolvedValue(polledJobStatus('STALE'))
+    vi.mocked(getOcrJob).mockResolvedValue({
+      data: { ...ocrResponse('FAILED').data, error_code: 'CONSENT_WITHDRAWN' },
+    })
+    const { container } = renderPage()
+    selectPrescriptionFile(container)
+    fireEvent.click(screen.getByRole('button', { name: '처방전 읽기' }))
+    expect(await screen.findByText('동의가 철회되어 처리를 중단했어요')).toBeTruthy()
+    expect(getOcrJob).toHaveBeenCalledWith(ocrJobId)
   })
 
   it('COMPLETED에 result_url이 없으면 검수로 이동하지 않고 fail-closed 한다', async () => {

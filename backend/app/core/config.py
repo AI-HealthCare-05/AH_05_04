@@ -239,6 +239,8 @@ class Config(BaseSettings):
     # 명시적으로 활성화하지 않은 환경에서는 외부 LLM에 OCR 원문을 전달하지 않고
     # 기존 규칙 기반 구조화기를 사용합니다.
     OCR_STRUCTURE_LLM_ENABLED: bool = False
+    # #458 OCR 안내·재동의 버전. 확정 전 빈 값은 동의 Gate에서 차단됩니다.
+    OCR_CONSENT_POLICY_VERSION: str = ""
 
     # Guide·Chat과 독립적으로 OCR 구조화 모델을 변경할 수 있게 분리합니다.
     # 이 값들은 OCR_STRUCTURE_LLM_ENABLED=true일 때만 사용됩니다.

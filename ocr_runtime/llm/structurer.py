@@ -1,31 +1,18 @@
-import asyncio
 import math
 
 from ocr_runtime.llm.client import OcrStructureProvider
-from ocr_runtime.llm.prompt import (
-    PROMPT_VERSION,
-    SYSTEM_INSTRUCTIONS,
-)
-from ocr_runtime.llm.schemas import (
-    OcrSourceToken,
-    OcrStructureInput,
-)
-from ocr_runtime.llm.validator import (
-    validate_and_convert_draft,
-)
 from ocr_runtime.medication_name_normalizer import MedicationNameNormalizer
 from ocr_runtime.structuring import OcrStructurer as OcrStructurer
 from ocr_runtime.structuring import OcrStructureResult as OcrStructureResult
 from ocr_runtime.structuring import RuleBasedPrescriptionStructurer as RuleBasedPrescriptionStructurer
 from provider_contracts.ocr import (
     OcrProcessingError,
-    OcrProviderTimeoutError,
     RawRecognizedField,
 )
 
 
 class LlmPrescriptionStructurer:
-    """CLOVA가 인식한 전체 token을 LLM Structured Outputs로 변환합니다."""
+    """검증된 최소 전송 selector가 연결되기 전에는 LLM 전송을 차단합니다."""
 
     def __init__(
         self,
@@ -42,6 +29,7 @@ class LlmPrescriptionStructurer:
         self._model = model
         self._timeout_seconds = timeout_seconds
         self._normalizer = normalizer if normalizer is not None else MedicationNameNormalizer()
+        self._fallback = RuleBasedPrescriptionStructurer(normalizer=self._normalizer)
 
     async def structure(
         self,
@@ -49,45 +37,13 @@ class LlmPrescriptionStructurer:
     ) -> OcrStructureResult:
         if not raw_fields:
             raise OcrProcessingError("구조화할 OCR token이 없습니다.")
-
-        structure_input = OcrStructureInput(
-            tokens=[
-                OcrSourceToken(
-                    # source_id는 LLM 결과와 CLOVA 원문을 연결하는 근거 ID입니다.
-                    source_id=source_id,
-                    text=field.raw_value,
-                    center_x=field.center_x,
-                    center_y=field.center_y,
-                    height=field.height,
-                    confidence=field.confidence_score,
-                )
-                for source_id, field in enumerate(
-                    raw_fields,
-                    start=1,
-                )
-            ]
-        )
-
-        try:
-            async with asyncio.timeout(self._timeout_seconds):
-                provider_response = await self._provider.generate(
-                    model=self._model,
-                    instructions=SYSTEM_INSTRUCTIONS,
-                    # 특정 실패 항목이 아니라 CLOVA가 인식한 전체 token을 전달합니다.
-                    input_json=structure_input.model_dump_json(),
-                    max_output_tokens=4000,
-                )
-        except TimeoutError as error:
-            raise OcrProviderTimeoutError("OCR 구조화 AI 응답 제한시간을 초과했습니다.") from error
-
-        fields = validate_and_convert_draft(
-            draft=provider_response.draft,
-            raw_fields=raw_fields,
-            normalizer=self._normalizer,
-        )
-
+        # 약품명은 자유 텍스트이므로 숫자/단위 정규식만으로는 식별정보와
+        # 안전하게 분리할 수 없습니다. 승인된 selector가 없는 상태에서
+        # 일부 토큰이나 OCR 원문을 LLM에 보내지 않습니다.
+        fallback = await self._fallback.structure(raw_fields)
         return OcrStructureResult(
-            fields=fields,
-            model_name=provider_response.model_name,
-            prompt_version=PROMPT_VERSION,
+            fields=fallback.fields,
+            model_name=None,
+            prompt_version=None,
+            llm_processing="SKIPPED_MINIMIZATION",
         )

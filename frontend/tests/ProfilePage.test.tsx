@@ -3,6 +3,7 @@ import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { ApiError } from '../src/api/client'
+import { getOcrConsent, withdrawOcrConsent, type OcrConsentState } from '../src/api/ocrConsent'
 import {
   getCurrentUser,
   updateCurrentUser,
@@ -14,6 +15,21 @@ vi.mock('../src/api/users', () => ({
   getCurrentUser: vi.fn(),
   updateCurrentUser: vi.fn(),
 }))
+vi.mock('../src/api/ocrConsent', () => ({
+  getOcrConsent: vi.fn(),
+  withdrawOcrConsent: vi.fn(),
+}))
+
+const GRANTED_OCR_CONSENT: OcrConsentState = {
+  purpose: 'OCR',
+  status: 'GRANTED',
+  effective: true,
+  reason: null,
+  current_policy_version: 'ocr-test-v2',
+  accepted_policy_version: 'ocr-test-v2',
+  granted_at: '2026-09-14T00:00:00Z',
+  withdrawn_at: null,
+}
 
 const CURRENT_USER: CurrentUser = {
   id: '00000000-0000-4000-8000-000000000097',
@@ -61,6 +77,16 @@ beforeEach(() => {
   localStorage.setItem('access_token', 'fixture-token')
   vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
   vi.mocked(updateCurrentUser).mockResolvedValue(CURRENT_USER)
+  vi.mocked(getOcrConsent).mockResolvedValue({ data: GRANTED_OCR_CONSENT })
+  vi.mocked(withdrawOcrConsent).mockResolvedValue({
+    data: {
+      ...GRANTED_OCR_CONSENT,
+      status: 'WITHDRAWN',
+      effective: false,
+      reason: 'WITHDRAWN',
+      withdrawn_at: '2026-09-14T01:00:00Z',
+    },
+  })
 })
 
 afterEach(() => {
@@ -69,6 +95,40 @@ afterEach(() => {
 })
 
 describe('내 정보 조회', () => {
+  it('현재 OCR 동의를 표시하고 철회 후 외부 처리 차단 상태를 표시한다', async () => {
+    renderProfile()
+
+    expect(await screen.findByText('현재 동의한 상태입니다.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '처방전 외부 처리 동의 철회' }))
+
+    expect(await screen.findByText('철회한 상태입니다.')).toBeTruthy()
+    expect(withdrawOcrConsent).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: '처방전 외부 처리 동의 철회' })).toBeNull()
+  })
+
+  it('동의 조회 실패 시 상태를 추정하지 않고 철회를 별도로 시도한다', async () => {
+    vi.mocked(getOcrConsent).mockRejectedValue(new Error('database unavailable'))
+    renderProfile()
+
+    expect(await screen.findByText('처방전 처리 동의 상태를 확인할 수 없어요. 잠시 후 다시 시도해 주세요.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '처방전 외부 처리 동의 철회' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '동의 철회 시도' }))
+    expect(await screen.findByText('철회한 상태입니다.')).toBeTruthy()
+    expect(withdrawOcrConsent).toHaveBeenCalledTimes(1)
+  })
+
+  it('철회 응답을 받지 못하면 이전 동의 상태를 확정으로 표시하지 않는다', async () => {
+    vi.mocked(withdrawOcrConsent).mockRejectedValue(new Error('response lost'))
+    renderProfile()
+
+    await screen.findByText('현재 동의한 상태입니다.')
+    fireEvent.click(screen.getByRole('button', { name: '처방전 외부 처리 동의 철회' }))
+
+    expect(await screen.findByText('동의를 철회하지 못했습니다. 현재 상태를 다시 확인해 주세요.')).toBeTruthy()
+    expect(screen.queryByText('현재 동의한 상태입니다.')).toBeNull()
+    expect(screen.getByRole('button', { name: '동의 상태 다시 확인' })).toBeTruthy()
+  })
+
   it('GET users/me 정상 응답으로 본인 정보를 표시한다', async () => {
     renderProfile()
 

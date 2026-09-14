@@ -7,6 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
+from app.core import config
 from app.main import app
 from app.models.async_jobs import AiJob, AiJobStatus, AiJobType
 from app.models.medical_documents import MedicalDocument
@@ -36,6 +37,11 @@ def reset_recognized_fields() -> None:
     recognized_fields = list(DEFAULT_RECOGNIZED_FIELDS)
 
 
+@pytest.fixture(autouse=True)
+def configure_synthetic_ocr_consent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-test.v1")
+
+
 async def _signup_and_login(client: AsyncClient, *, label: str) -> str:
     suffix = uuid4().hex[:8]
     email = f"pc-{label}-{suffix}@example.com"
@@ -54,7 +60,14 @@ async def _signup_and_login(client: AsyncClient, *, label: str) -> str:
         json={"email": email, "password": "Password123!"},
     )
     assert login_response.status_code == status.HTTP_200_OK, login_response.text
-    return login_response.json()["access_token"]
+    access_token = login_response.json()["access_token"]
+    consent = await client.post(
+        "/api/v1/users/me/consents/OCR",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"policy_version": "ocr-test.v1"},
+    )
+    assert consent.status_code == status.HTTP_200_OK, consent.text
+    return access_token
 
 
 async def _seed_completed_ocr_job(
@@ -504,6 +517,33 @@ async def test_confirm_prescription_api_uses_confirmed_fields(db_session: AsyncS
 
     assert response.status_code == status.HTTP_201_CREATED
     assert response.json()["data"]["medications"][0]["medication_name"] == "혈압약정"
+
+
+@pytest.mark.asyncio
+async def test_withdrawal_blocks_completed_ocr_review_and_confirmation(db_session: AsyncSession) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="withdrawn-review")
+        headers = {"Authorization": f"Bearer {access_token}"}
+        document_id, job_id = await _upload_and_prepare_ocr(client, db_session=db_session, access_token=access_token)
+        before = await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers)
+        assert before.status_code == 200
+        field_id = before.json()["data"]["fields"][0]["field_id"]
+
+        withdrawn = await client.delete("/api/v1/users/me/consents/OCR", headers=headers)
+        assert withdrawn.status_code == 200
+
+        requests = (
+            await client.get(f"/api/v1/ocr-jobs/{job_id}", headers=headers),
+            await client.patch(
+                f"/api/v1/extracted-fields/{field_id}",
+                headers=headers,
+                json={"confirmed_value": "2026-08-01"},
+            ),
+            await client.post(f"/api/v1/documents/{document_id}/prescription", headers=headers),
+        )
+        for response in requests:
+            assert response.status_code == 403
+            assert response.json()["code"] == "CONSENT_REQUIRED"
 
 
 @pytest.mark.asyncio

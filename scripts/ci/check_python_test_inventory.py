@@ -30,6 +30,8 @@ DEFAULT_INTEGRATION_FILES = (
 
 # 전체 Integration CI 편입은 Issue #307에서 반복 안정성과 실행 시간을 확인한 뒤 결정합니다.
 INTENTIONAL_OPT_IN_FILES = (
+    # #458: #465 미병합 스키마를 별도 합성 DB에서 검증한다.
+    Path("tests/integration/test_worker_ocr_consent.py"),
     Path("tests/integration/test_cors_and_errors.py"),
     Path("tests/integration/test_ocr_required_field_placeholder_e2e.py"),
     Path("tests/integration/test_redis_stream_adapter.py"),

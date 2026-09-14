@@ -135,6 +135,22 @@ export function getPollingTimeoutPresentation(): AiJobPresentation {
 
 export function getJobRequestErrorPresentation(error: unknown): AiJobPresentation {
   if (error instanceof ApiError) {
+    if (error.code === 'CONSENT_REQUIRED' || error.code === 'CONSENT_POLICY_MISMATCH') {
+      return {
+        title: '처방전 처리 동의를 확인해 주세요',
+        description: '현재 안내에 동의한 뒤 처방전을 다시 읽어 주세요.',
+        actionLabel: '동의 확인하기',
+        tone: 'attention',
+      }
+    }
+    if (error.code === 'CONSENT_LOOKUP_FAILED' || error.code === 'CONSENT_POLICY_UNAVAILABLE') {
+      return {
+        title: '동의 상태를 확인할 수 없어요',
+        description: '외부 처리를 시작하지 않았습니다. 잠시 후 다시 시도해 주세요.',
+        actionLabel: '다시 시도하기',
+        tone: 'attention',
+      }
+    }
     switch (error.status) {
       case 401:
         return {
