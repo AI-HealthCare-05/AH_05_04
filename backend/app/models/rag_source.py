@@ -85,6 +85,16 @@ class RagVerificationResultStatus(StrEnum):
     NO_CHANGE = "NO_CHANGE"
 
 
+class RagSourceObservationExclusionReason(StrEnum):
+    """수집은 성공했으나 구성원을 만들지 못한 행의 사유입니다.
+
+    성분 없음이나 안전성 문제 없음을 뜻하지 않습니다. 구성원 0개인 제품은 성분 기반
+    안전성 판정 불가로 다루어야 하며 통과로 해석하지 않습니다.
+    """
+
+    EMPTY_COMPONENT_FIELDS = "EMPTY_COMPONENT_FIELDS"
+
+
 class RagSource(Base):
     __tablename__ = "rag_source"
     __table_args__ = (
@@ -368,6 +378,38 @@ class RagSourceSnapshotMember(Base):
     locator: Mapped[str] = mapped_column(String(500), nullable=False)
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     knowledge_index_lock_marker: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class RagSourceSnapshotExclusion(Base):
+    """Snapshot 단위 제외 receipt. partial 적재 사실과 건수를 DB에서 추적합니다.
+
+    무결성 위반은 Snapshot을 만들지 않으므로 이 표에 남지 않습니다. 여기 남는 행은
+    수집이 성공했고 원문도 보존됐지만 구성원으로 승격하지 않은 행의 집계입니다.
+    """
+
+    __tablename__ = "rag_source_snapshot_exclusion"
+    __table_args__ = (
+        UniqueConstraint("source_snapshot_id", "reason", name="uq_rag_source_snapshot_exclusion"),
+        Index("idx_rag_source_snapshot_exclusion_snapshot", "source_snapshot_id"),
+        CheckConstraint("excluded_row_count >= 0", name="chk_rag_source_snapshot_exclusion_excluded_count"),
+        CheckConstraint("retained_row_count >= 0", name="chk_rag_source_snapshot_exclusion_retained_count"),
+        CheckConstraint(
+            "excluded_row_count + retained_row_count <= source_row_count",
+            name="chk_rag_source_snapshot_exclusion_row_totals",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    source_snapshot_id: Mapped[UUID] = mapped_column(
+        UUIDChar(), ForeignKey("rag_source_snapshot.id", ondelete="RESTRICT"), nullable=False
+    )
+    reason: Mapped[RagSourceObservationExclusionReason] = mapped_column(
+        Enum(RagSourceObservationExclusionReason, native_enum=False, length=40), nullable=False
+    )
+    source_row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    excluded_row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    retained_row_count: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 

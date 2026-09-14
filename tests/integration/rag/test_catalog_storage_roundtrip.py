@@ -634,19 +634,40 @@ async def test_mfds_loader_preserves_groups_sources_and_candidate_handoff(databa
         assert await session.scalar(select(func.count()).select_from(RagCatalogSet)) == 2
         assert await session.scalar(text("SELECT count(*) FROM rag_medication_product_component")) == 4
         assert await session.scalar(text("SELECT count(*) FROM rag_medication_product")) == 1
-    # Blank rows never become a partial successful Catalog; the original row remains in the report.
+    # #166 D-04: blank rows are excluded from members but no longer block the remaining Catalog.
     blank_rows = [*rows, {"ITEM_SEQ": "P-001", "MTRAL_CODE": None}]
     blank_json = json.dumps(blank_rows, sort_keys=True, separators=(",", ":")).encode()
-    not_saved = AsyncMock()
+    partial_repository = AsyncMock()
     excluded = await load_mfds_catalog(
         **dict(
             kwargs,
             detail_receipt=replace(detail_receipt, canonical_checksum=hashlib.sha256(blank_json).hexdigest()),
             detail_json=blank_json,
+            repository=partial_repository,
+        )
+    )
+    assert excluded.build is not None
+    assert excluded.inspection.input_count == 3
+    assert excluded.inspection.has_excluded_empty_components
+    assert [row.reason for row in excluded.inspection.empty_component_exclusions] == ["EMPTY_COMPONENT_FIELDS"]
+    assert json.loads(excluded.inspection.empty_component_exclusions[0].record_json) == blank_rows[-1]
+    assert not excluded.inspection.blocking_exclusions
+    # The blank row is recorded, never promoted into a member.
+    assert len(excluded.build.export.catalog.components) == 2
+    partial_repository.save_build.assert_awaited_once()
+
+    # Integrity violations still refuse a partial Catalog.
+    broken_rows = [*rows, dict(rows[0], QNT=None)]
+    broken_json = json.dumps(broken_rows, sort_keys=True, separators=(",", ":")).encode()
+    not_saved = AsyncMock()
+    blocked_load = await load_mfds_catalog(
+        **dict(
+            kwargs,
+            detail_receipt=replace(detail_receipt, canonical_checksum=hashlib.sha256(broken_json).hexdigest()),
+            detail_json=broken_json,
             repository=not_saved,
         )
     )
-    assert excluded.build is None
-    assert excluded.inspection.input_count == 3
-    assert json.loads(excluded.inspection.exclusions[0].record_json) == blank_rows[-1]
+    assert blocked_load.build is None
+    assert [row.reason for row in blocked_load.inspection.blocking_exclusions] == ["INVALID_COMPONENT_FIELDS"]
     not_saved.save_build.assert_not_awaited()

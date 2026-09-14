@@ -32,6 +32,18 @@
 - MVP의 `PATCH /api/v1/users/me`는 `name`, `email`만 수정 대상으로 받습니다(`extra="forbid"`).
 - `gender`, `birthday`, `phone_number` 수정은 Post-MVP의 가입 후 추가 개인정보·건강정보 입력 기능에서 다룹니다.
 
+## 목적별 동의 상태 API(#207)
+
+- Endpoint: `GET /api/v1/users/me/consents`, `PUT /api/v1/users/me/consents/{purpose}`
+- 인증된 현재 사용자 본인의 `user_consent` row만 조회·변경합니다. 다른 사용자의 동의 row는 응답과 판정에 사용하지 않습니다.
+- `purpose`는 `OCR`, `GUIDE`, `CHAT`, `NOTIFICATION`만 허용합니다.
+- `PUT` 요청 body는 `status`(`GRANTED` 또는 `WITHDRAWN`)와 `policy_version`(1~100자)만 허용합니다(`extra="forbid"`). `policy_version`은 해당 목적의 현재 policy version과 일치해야 하며, 불일치하면 `422 VALIDATION_FAILED`, `details[].field=policy_version`, `reason=POLICY_VERSION_MISMATCH`로 거부합니다.
+- 같은 `user_id + purpose`는 하나의 current row만 가집니다. `PUT`은 해당 row를 upsert하고, 이력 append-only audit은 아직 구현하지 않습니다.
+- row가 없는 목적은 미동의로 판정하며 조회 응답에서는 `status=null`, `policy_version=null`, `current_policy_version=<현재 목적별 version>`, `is_granted=false`로 반환합니다. 명시 철회 row는 `status=WITHDRAWN`, `is_granted=false`로 반환해 missing row와 구분합니다.
+- 응답의 `policy_version`은 저장된 row의 version이고, `current_policy_version`은 서버가 현재 허용하는 목적별 version입니다.
+- `is_granted=true`는 `status=GRANTED`, 저장된 `policy_version`과 `current_policy_version` 일치, `granted_at` 존재, `withdrawn_at=null`인 현재 row에만 사용합니다.
+- 이 API는 목적별 동의 저장·조회·변경 기반을 제공합니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide/Chat/Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 [PD-207 Proposed 계약](../proposed/consent-gate-207.md)의 후속 구현 범위입니다.
+
 ## 인증 세션 무효화
 
 이 절은 [`PD-206`](../../governance/decisions/2026-09-02-account-lifecycle-contract.md) 중 현재 구현된 로그아웃·refresh token rotation·비밀번호 재설정 범위를 기록합니다. 회원탈퇴 API는 아직 현재 실행 계약이 아니며 후속 구현 범위입니다.
@@ -106,10 +118,11 @@
 - `PATCH /api/v1/users/me`에서 위 필드를 수정 대상으로 확장
 - 회원탈퇴 API의 세부 transaction 구현
 - 실제 외부 Email Provider 연동, 정교한 rate limit
+- Guide/Chat/Notification 목적별 동의 Gate, OCR 최종 정책 문구·version 승인, Frontend 동의 UI
 
 ## 검증과 변경 규칙
 
-구현 계약은 `backend/app/tests/auth_apis`, `backend/app/tests/user_apis`, `backend/app/tests/services/test_auth_service.py`(로그인·refresh rotation·비밀번호 재설정 동시성), `tests/migration/test_refresh_rotation_password_reset_migration.py`, `tests/migration/test_email_verification_token_migration.py`에서 검증합니다.
+구현 계약은 `backend/app/tests/auth_apis`, `backend/app/tests/user_apis`, `backend/app/tests/services/test_auth_service.py`(로그인·refresh rotation·비밀번호 재설정 동시성), `tests/migration/test_refresh_rotation_password_reset_migration.py`, `tests/migration/test_email_verification_token_migration.py`에서 검증합니다. 목적별 동의 상태 API는 `backend/app/tests/user_apis/test_user_consent_api.py`와 `backend/app/tests/user_apis/test_user_consent_repository.py`에서 검증합니다.
 
 다음 변경은 이 문서, 구현, API 문서와 관련 테스트를 같은 PR에서 갱신해야 합니다.
 
@@ -119,6 +132,7 @@
 - 인증 토큰 payload, `token_version` 재검증, 로그아웃 세션 무효화 기준 변경
 - refresh token rotation·재사용 탐지 기준, 비밀번호 재설정 lock 순서·오류 코드 변경
 - 회원가입 이메일 인증 목적·만료·쿨다운·오류 코드 변경
+- 목적별 동의 API의 purpose/status/policy_version/current_policy_version, missing row 응답 의미, `is_granted` 판정 기준 변경
 
 ## #398 통합 권한 (PR #429 리뷰 대상)
 

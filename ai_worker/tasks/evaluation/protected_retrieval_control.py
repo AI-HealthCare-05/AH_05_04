@@ -17,6 +17,7 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     ProtectedPrincipalRole,
     ProtectedSecurityError,
     VerifiedAuthorizationApproval,
+    _is_valid_database_login,
     authorization_grant_approval_sha256,
 )
 from ai_worker.tasks.evaluation.schemas.common import Sha256Hex, StrictContractModel
@@ -27,6 +28,8 @@ class ControlCommandKind(StrEnum):
     GRANT = "GRANT"
     REVOKE = "REVOKE"
     EXPIRE = "EXPIRE"
+    REGISTER_IDENTITY = "REGISTER_IDENTITY"
+    DISABLE_IDENTITY = "DISABLE_IDENTITY"
 
 
 def _require_uuid_v4(value: str) -> str:
@@ -77,8 +80,39 @@ class ExpireAuthorizationCommand(_GrantControlCommand):
     expected_effective_revision: int = Field(ge=1)
 
 
+class RegisterIdentityCommand(_ControlCommand):
+    database_login: str = Field(min_length=1, max_length=63, pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+    actor_id: str = Field(min_length=1, max_length=160, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    actor_namespace: Literal["GITHUB_LOGIN", "SERVICE_IDENTITY", "SYSTEM"]
+    identity_plane: Literal["DATA", "CONTROL"]
+    principal_role: ProtectedPrincipalRole | None = None
+    approval_role: ProtectedApprovalRole | None = None
+    enabled: Literal[True] = True
+
+    @model_validator(mode="after")
+    def validate_plane_roles(self) -> RegisterIdentityCommand:
+        if self.identity_plane == "DATA":
+            if self.principal_role is None or self.approval_role is not None:
+                raise ValueError("DATA plane identity requires principal_role and forbids approval_role")
+        elif self.identity_plane == "CONTROL":
+            if self.approval_role is None or self.principal_role is not None:
+                raise ValueError("CONTROL plane identity requires approval_role and forbids principal_role")
+        return self
+
+
+class DisableIdentityCommand(_ControlCommand):
+    database_login: str = Field(min_length=1, max_length=63, pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+    expected_actor_id: str = Field(min_length=1, max_length=160, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    expected_actor_namespace: Literal["GITHUB_LOGIN", "SERVICE_IDENTITY", "SYSTEM"]
+
+
 ControlCommand = (
-    IngestApprovalCommand | GrantAuthorizationCommand | RevokeAuthorizationCommand | ExpireAuthorizationCommand
+    IngestApprovalCommand
+    | GrantAuthorizationCommand
+    | RevokeAuthorizationCommand
+    | ExpireAuthorizationCommand
+    | RegisterIdentityCommand
+    | DisableIdentityCommand
 )
 
 
@@ -88,7 +122,14 @@ class ControlCommandResult(StrictContractModel):
     target_id: str
     effective_revision: int | None = Field(ge=1)
     authorization_audit_event_id: str | None
-    reason_code: Literal["APPROVAL_VERIFIED", "AUTHORIZED", "REVOKED", "EXPIRED"]
+    reason_code: Literal[
+        "APPROVAL_VERIFIED",
+        "AUTHORIZED",
+        "REVOKED",
+        "EXPIRED",
+        "IDENTITY_REGISTERED",
+        "IDENTITY_DISABLED",
+    ]
 
     @field_validator("request_id", "authorization_audit_event_id")
     @classmethod
@@ -100,19 +141,29 @@ class ControlCommandResult(StrictContractModel):
     @model_validator(mode="after")
     def validate_result_shape(self) -> ControlCommandResult:
         ingest = self.command_kind is ControlCommandKind.INGEST_APPROVAL
+        identity = self.command_kind in {
+            ControlCommandKind.REGISTER_IDENTITY,
+            ControlCommandKind.DISABLE_IDENTITY,
+        }
         expected_reason = {
             ControlCommandKind.INGEST_APPROVAL: "APPROVAL_VERIFIED",
             ControlCommandKind.GRANT: "AUTHORIZED",
             ControlCommandKind.REVOKE: "REVOKED",
             ControlCommandKind.EXPIRE: "EXPIRED",
+            ControlCommandKind.REGISTER_IDENTITY: "IDENTITY_REGISTERED",
+            ControlCommandKind.DISABLE_IDENTITY: "IDENTITY_DISABLED",
         }[self.command_kind]
         if self.reason_code != expected_reason:
             raise ValueError("control result reason does not match command kind")
-        if not ingest:
+        if not ingest and not identity:
             _require_uuid_v4(self.target_id)
-        if ingest and (self.effective_revision is not None or self.authorization_audit_event_id is not None):
-            raise ValueError("approval ingestion cannot reference an authorization mutation")
-        if not ingest and (self.effective_revision is None or self.authorization_audit_event_id is None):
+        if identity and not _is_valid_database_login(self.target_id):
+            raise ValueError("identity control target must be a valid database login")
+        if (ingest or identity) and (
+            self.effective_revision is not None or self.authorization_audit_event_id is not None
+        ):
+            raise ValueError("approval ingestion or identity cannot reference an authorization mutation")
+        if not (ingest or identity) and (self.effective_revision is None or self.authorization_audit_event_id is None):
             raise ValueError("authorization mutation result is incomplete")
         return self
 

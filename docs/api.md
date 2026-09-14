@@ -59,6 +59,8 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | 인증 | `POST` | `/api/v1/auth/logout` | `200` |
 | 사용자 | `GET` | `/api/v1/users/me` | `200` |
 | 사용자 | `PATCH` | `/api/v1/users/me` | `200` |
+| 사용자 동의 | `GET` | `/api/v1/users/me/consents` | `200` |
+| 사용자 동의 | `PUT` | `/api/v1/users/me/consents/{purpose}` | `200` |
 | OCR 동의 | `GET` / `POST` / `DELETE` | `/api/v1/users/me/consents/OCR` | `200` |
 | 의료문서 | `POST` | `/api/v1/documents` | `201` |
 | OCR 실행 | `POST` | `/api/v1/documents/{document_id}/ocr-jobs` | `202` |
@@ -189,6 +191,17 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 - 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다.
 - MVP의 `PATCH /api/v1/users/me`는 `name`, `email`만 수정 대상으로 받습니다.
 - `gender`, `birthday`, `phone_number` 수정은 Post-MVP의 가입 후 추가 개인정보·건강정보 입력 기능에서 다룹니다.
+
+## 목적별 동의 상태
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `GET` | `/api/v1/users/me/consents` | `200 OK` | 로그인 사용자의 `OCR`, `GUIDE`, `CHAT`, `NOTIFICATION` 최신 동의 상태를 조회합니다. |
+| `PUT` | `/api/v1/users/me/consents/{purpose}` | `200 OK` | 로그인 사용자의 목적별 최신 동의 상태를 `GRANTED` 또는 `WITHDRAWN`으로 저장합니다. |
+
+`purpose`는 `OCR`, `GUIDE`, `CHAT`, `NOTIFICATION`만 허용합니다. 요청 body는 `status`(`GRANTED` 또는 `WITHDRAWN`)와 `policy_version`(1~100자)을 받습니다. `policy_version`은 해당 목적의 현재 policy version과 일치해야 하며, 불일치하면 `422 VALIDATION_FAILED`, `details[].field=policy_version`, `reason=POLICY_VERSION_MISMATCH`로 거부합니다. 응답은 목적별 `status`, 저장된 `policy_version`, 서버의 `current_policy_version`, `is_granted`, `granted_at`, `withdrawn_at`, `updated_at`을 반환합니다. row가 없는 목적은 `status=null`, `policy_version=null`, `current_policy_version=<현재 목적별 version>`, `is_granted=false`로 반환해 미동의와 명시 철회를 구분합니다. `is_granted=true`는 저장 상태가 `GRANTED`이고 저장된 `policy_version`이 `current_policy_version`과 일치할 때만 사용합니다.
+
+이 API는 PD-207의 목적별 최신 동의 상태 저장·조회·변경 경로입니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide/Chat/Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 후속 구현 범위입니다.
 
 ### 토큰 갱신·로그아웃
 
@@ -640,18 +653,19 @@ API 계약이 변경되면 관련 Issue와 Pull Request를 기록합니다.
 | 2026-08-24 | Issue #59 / PR #65 | 회원가입 MVP 입력값, OCR 실패 `error_message`, 처방 확정 필수값·DB 경계값 검증, OCR 최신 작업 정렬 기준을 반영 |
 | 2026-08-21 | Issue #51 / PR #52 | OCR 결과 조회 응답에 `normalized_value`와 `normalization_version`을 추가하고, `raw_value`, `normalized_value`, `confirmed_value`의 역할을 명시 |
 
-## #418 UNCONFIRMED backlog API (등록 변경 리뷰 대기)
+## #418 UNCONFIRMED backlog API (등록 구현 병합 완료)
 
-`GET /api/v1/medication-checkins/unconfirmed`를 실제 v1 앱에 연결한다. Bearer 인증과
+`GET /api/v1/medication-checkins/unconfirmed`는 #462에서 실제 v1 앱에 등록·병합됐다. Bearer 인증과
 SELF parent chain을 사용하고, `limit` 1..100(기본 20) 및 선택 UUID `cursor`로
 UNCONFIRMED를 예정 시각·Check-in ID 오름차순 조회한다. 과거 version 기록도 포함한다.
 보완은 기존 #202 Check-in PUT을 재사용하며, 성공 후 목록에서 제외되고 #456 날짜별 조회에는
 수정된 Check-in revision·status가 반환된다. 보완된 cursor로 다음 페이지를 이어 조회할 수 있다.
 Cursor 404에서는 cursor를 생략해 첫 페이지부터 재조회한다.
 
-#426 승인은 미등록 후보에 한정된다. [PD-418](./governance/decisions/2026-09-10-unconfirmed-backlog-418.md)과
-[Proposed 계약](./contracts/proposed/unconfirmed-backlog-v1.md)에 증빙·병합 조건을 기록했다.
-등록 HEAD에서 두 담당 리뷰어가 재승인하기 전에는 Draft/Proposed를 유지한다.
+#426 승인은 미등록 후보에 한정된다. #462는 남한솔 APPROVED와 최종 HEAD CI 7/7 성공 후
+2026-09-13 병합됐다. [PD-418](./governance/decisions/2026-09-10-unconfirmed-backlog-418.md)에
+승인 범위와 commit 근거를 기록했다. [계약 문서](./contracts/proposed/unconfirmed-backlog-v1.md)는
+Proposed 경로를 유지하며 Current 승격은 저장소 절차에 따라 별도 검토한다.
 이 변경은 #138 Frontend 소비 검증이나 Production 공개 승인을 대신하지 않는다.
 
 ## #203 앱 내부 알림 — 구현 브랜치 검토 대상

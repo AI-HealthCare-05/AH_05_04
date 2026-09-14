@@ -153,6 +153,53 @@ def test_blank_and_partial_rows_remain_visible_and_make_whole_input_ineligible()
     assert "synthetic-empty" not in repr(result.exclusions)
 
 
+def test_blank_rows_alone_do_not_block_the_remaining_catalog_input():
+    """#166 D-04 합의: 빈 주성분 행은 제외로만 남기고 정상 행의 Catalog 구성은 계속한다."""
+    blank = {"ITEM_SEQ": "synthetic-empty", "MTRAL_CODE": None}
+    result = inspect_mfds_component_rows((record(), blank))
+
+    assert result.eligible_for_mapping
+    assert result.has_excluded_empty_components
+    assert result.input_count == 2
+    assert [row.item_seq for row in result.observations] == ["synthetic-product"]
+    assert [row.reason for row in result.empty_component_exclusions] == ["EMPTY_COMPONENT_FIELDS"]
+    assert not result.blocking_exclusions
+    assert json.loads(result.empty_component_exclusions[0].record_json) == blank
+
+
+def test_blank_rows_never_become_observations_or_components():
+    blank = {"ITEM_SEQ": "synthetic-empty", "MTRAL_CODE": None}
+    result = inspect_mfds_component_rows((record(), blank))
+
+    assert "synthetic-empty" not in {row.item_seq for row in result.observations}
+    with pytest.raises(ValueError):
+        convert(blank)
+
+
+@pytest.mark.parametrize(
+    ("extra_row", "expected_reason"),
+    (
+        (dict(record(), QNT=None), "INVALID_COMPONENT_FIELDS"),
+        (dict(record(), QNT="020.00"), "CONFLICTING_OBSERVATION"),
+    ),
+)
+def test_integrity_violations_still_block_the_whole_input_next_to_blank_rows(extra_row, expected_reason):
+    blank = {"ITEM_SEQ": "synthetic-empty", "MTRAL_CODE": None}
+    result = inspect_mfds_component_rows((record(), blank, extra_row))
+
+    assert not result.eligible_for_mapping
+    assert [row.reason for row in result.blocking_exclusions] == [expected_reason]
+    assert result.has_excluded_empty_components
+
+
+def test_input_without_blank_rows_is_not_marked_partial():
+    result = inspect_mfds_component_rows((record(),))
+
+    assert result.eligible_for_mapping
+    assert not result.has_excluded_empty_components
+    assert not result.empty_component_exclusions
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 def test_conflicting_payload_is_not_last_wins_and_preserves_both_observations(reverse):
     rows = (record(), dict(record(), QNT="020.00"))
