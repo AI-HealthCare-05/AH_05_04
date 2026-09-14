@@ -17,7 +17,7 @@ x-app-environment: &app-environment
 
 services:
   postgres:
-    image: postgres:17-alpine
+    image: pgvector/pgvector:0.8.6-pg17-bookworm
     environment:
       POSTGRES_DB: dosey_e2e
       POSTGRES_USER: ${DB_USER:?DB_USER is required}

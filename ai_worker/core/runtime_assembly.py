@@ -137,12 +137,14 @@ class ResultStoreLike(Protocol):
 def create_worker_engine(config: Config) -> AsyncEngine:
     """Worker 전용 AsyncEngine을 생성합니다."""
 
-    return create_async_engine(
+    engine = create_async_engine(
         config.database_url,
         echo=config.SQLALCHEMY_ECHO,
+        hide_parameters=True,
         pool_size=config.DB_CONNECTION_POOL_MAXSIZE,
         connect_args={"timeout": config.DB_CONNECT_TIMEOUT},
     )
+    return engine
 
 
 def _create_protected_engine(config: Config, *, control: bool) -> AsyncEngine:
