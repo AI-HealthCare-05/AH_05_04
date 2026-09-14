@@ -1,16 +1,20 @@
 import asyncio
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
 from uuid import uuid4
 
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Response
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from app.core import config
+from app.core.db.databases import get_db_session
 from app.core.utils.security import generate_email_verification_token, hash_email_verification_token
 from app.dependencies.services import get_email_sender
 from app.main import app, fastapi_app
 from app.models.email_verification import EmailVerificationPurpose
 from app.repositories.email_verification_repository import EmailVerificationRepository
+from app.tests.conftest import test_engine
 
 
 class RecordingEmailSender:
@@ -65,16 +69,29 @@ async def test_email_verification_request_does_not_create_duplicate_probe_for_ex
 
 async def test_email_verification_request_concurrent_first_requests_issue_one_token() -> None:
     sender = RecordingEmailSender()
+
+    async def independent_get_db_session() -> AsyncIterator[AsyncSession]:
+        async with AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
     fastapi_app.dependency_overrides[get_email_sender] = lambda: sender
+    fastapi_app.dependency_overrides[get_db_session] = independent_get_db_session
     email = f"verify-concurrent-{uuid4().hex[:10]}@example.com"
     try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            responses = await asyncio.gather(
-                client.post("/api/v1/auth/email-verification/request", json={"email": email}),
-                client.post("/api/v1/auth/email-verification/request", json={"email": email}),
-            )
+
+        async def request_verification() -> Response:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                return await client.post("/api/v1/auth/email-verification/request", json={"email": email})
+
+        responses = await asyncio.gather(request_verification(), request_verification())
     finally:
         fastapi_app.dependency_overrides.pop(get_email_sender, None)
+        fastapi_app.dependency_overrides.pop(get_db_session, None)
 
     assert [response.status_code for response in responses] == [status.HTTP_200_OK, status.HTTP_200_OK]
     tokens = [response.json()["verification_token"] for response in responses]
