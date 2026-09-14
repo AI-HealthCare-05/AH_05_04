@@ -748,10 +748,10 @@ EOF
 echo "${COLOR_GREEN}Deployment finished.${COLOR_NC}"
 
 if [ "$is_https" = "cloudfront" ]; then
-  echo "${COLOR_BLUE}Smoke test: ${PRODUCTION_PUBLIC_ORIGIN}/healthz 및 ${PRODUCTION_PUBLIC_ORIGIN}/api/v1/health${COLOR_NC}"
+  echo "${COLOR_BLUE}Smoke test: ${PRODUCTION_PUBLIC_ORIGIN}/healthz 및 ${PRODUCTION_PUBLIC_ORIGIN}/api/openapi.json${COLOR_NC}"
   echo "${COLOR_BLUE}EC2 80번 inbound가 CloudFront origin-facing prefix list로만 제한됐는지 확인하세요.${COLOR_NC}"
 elif [ "$is_https" = "1" ]; then
   echo "${COLOR_BLUE}다음 단계: DNS가 ${PRODUCTION_DOMAIN}을 가리키는지 확인한 뒤 scripts/certbot.sh를 실행하세요.${COLOR_NC}"
 else
-  echo "${COLOR_BLUE}Smoke test: ${PRODUCTION_PUBLIC_ORIGIN}/healthz 및 ${PRODUCTION_PUBLIC_ORIGIN}/api/v1/health${COLOR_NC}"
+  echo "${COLOR_BLUE}Smoke test: ${PRODUCTION_PUBLIC_ORIGIN}/healthz 및 ${PRODUCTION_PUBLIC_ORIGIN}/api/openapi.json${COLOR_NC}"
 fi

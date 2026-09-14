@@ -450,3 +450,13 @@ PostgreSQL·실제 ASGI 앱으로 검증한다. 기본 runner의 Backend 수집 
 - 기존 `backend/app/tests/notifications/` 및 인증 회귀를 함께 실행한다. Push 접수는 앱 내부 게시·읽음·복약을 변경하지 않는다.
 - 실제 provider 접수·iOS/Android 기기 표시와 #470 Service Worker generation·원래 날짜 연결은 #471의 별도 통합 증빙이다. Backend mock/암호화 roundtrip을 실기기 수신으로 표기하지 않는다.
 - [실행 기록](validation/track-b/issue-469-web-push.md), [검토 계약](contracts/proposed/web-push-v1.md).
+### #202 occurrence 원래 약 표시 조회
+
+`backend/app/tests/notifications/test_occurrence_medication_handoff.py`는 실제 ASGI 앱·PostgreSQL로
+자정 경계 재알림의 원래 occurrence → 약 표시 → 명시적 Check-in을 검증합니다. 실제 처방 정정 후
+같은 약명·순서인 새 version이 생겨도 원래 약 ID·nullable 용량을 보존하며, 새 occurrence에서는
+새 함량·용량을 반환하는지 확인합니다. PENDING/CANCELLED 및 TAKEN/NOT_TAKEN/UNCONFIRMED,
+타인/없는 ID의 동일 404·401·422·no-store·OpenAPI requiredness와 GET 전후 상태 불변을 포함합니다.
+합성 응답 export는 `TRACK_B_OCCURRENCE_MEDICATION_FIXTURE_OUTPUT`에 출력 경로를 지정할 때만
+실행합니다. 기본 CI는 fixture를 갱신하지 않습니다. 검증 환경·결과는
+[검증 기록](validation/track-b/issue-202-closure-readiness.md)을 참조합니다.

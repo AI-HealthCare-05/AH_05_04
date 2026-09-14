@@ -659,3 +659,17 @@ Check-in history route는 포함하지 않는다. [검증 기록](./validation/t
 `no-store`, DTO/오류/계정 전환과 전송 정책은 [정규 계약](contracts/proposed/web-push-v1.md)에
 기록한다. Proposed 상태로 책임 리뷰 대기이며 Production 등록·전송은 차단한다.
 Notification의 앱 내부 게시·읽음 API 의미는 유지한다.
+### #202 occurrence 원래 약 표시 조회 — 리뷰용 구현
+
+`GET /api/v1/medication-occurrences/{occurrence_id}/medication`은 SELF 소유 occurrence의
+원래 prescription version medication에서 약명·제품 함량·1회 복용량/단위를 읽습니다.
+현재 version으로 대체하지 않으며 비활성 version·취소 occurrence의 보존 기록도 조회합니다.
+조회로 알림 읽음·Check-in·Audit을 생성하거나 수정하지 않습니다.
+
+200 `data`는 occurrence_id, prescription_version_id, prescription_version_medication_id,
+medication_name, strength_text, dose_value, dose_unit입니다. 모든 키가 존재하고 마지막 세 값은
+nullable입니다. 없는/타인 occurrence는 동일 404 MEDICATION_OCCURRENCE_NOT_FOUND,
+무인증 401, UUID 형식 오류 422 및 기존 no-store·trace 정책을 적용합니다.
+
+[계약·Decision](contracts/proposed/track-b-occurrence-medication-v1.md)은 Proposed이며 리뷰 대기입니다.
+[실제 합성 응답과 검증](validation/track-b/issue-202-closure-readiness.md)을 함께 확인합니다.

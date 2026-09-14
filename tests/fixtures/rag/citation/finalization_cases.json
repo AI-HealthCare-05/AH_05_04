@@ -1,0 +1,67 @@
+{
+  "cases": [
+    {
+      "id": "prescription-supported-medical",
+      "source_type": "PRESCRIPTION",
+      "support_status": "SUPPORTED",
+      "claim_kind": "MEDICAL",
+      "validation_decision": "VALIDATED"
+    },
+    {
+      "id": "knowledge-supported-medical",
+      "source_type": "KNOWLEDGE_CHUNK",
+      "support_status": "SUPPORTED",
+      "claim_kind": "MEDICAL",
+      "validation_decision": "VALIDATED"
+    },
+    {
+      "id": "interaction-supported-medical",
+      "source_type": "INTERACTION_RULE",
+      "support_status": "SUPPORTED",
+      "claim_kind": "MEDICAL",
+      "validation_decision": "VALIDATED"
+    },
+    {
+      "id": "guideline-supported-medical",
+      "source_type": "LIFESTYLE_GUIDELINE",
+      "support_status": "SUPPORTED",
+      "claim_kind": "MEDICAL",
+      "validation_decision": "VALIDATED"
+    },
+    {
+      "id": "safety-supported-medical",
+      "source_type": "SAFETY_POLICY",
+      "support_status": "SUPPORTED",
+      "claim_kind": "MEDICAL",
+      "validation_decision": "VALIDATED"
+    },
+    {
+      "id": "partial-medical-rejected",
+      "source_type": "KNOWLEDGE_CHUNK",
+      "support_status": "PARTIALLY_SUPPORTED",
+      "claim_kind": "MEDICAL",
+      "validation_decision": "REJECTED"
+    },
+    {
+      "id": "partial-auxiliary-validated",
+      "source_type": "KNOWLEDGE_CHUNK",
+      "support_status": "PARTIALLY_SUPPORTED",
+      "claim_kind": "AUXILIARY",
+      "validation_decision": "VALIDATED"
+    },
+    {
+      "id": "contradicted-auxiliary-rejected",
+      "source_type": "KNOWLEDGE_CHUNK",
+      "support_status": "CONTRADICTED",
+      "claim_kind": "AUXILIARY",
+      "validation_decision": "REJECTED"
+    },
+    {
+      "id": "not-supported-auxiliary-rejected",
+      "source_type": "KNOWLEDGE_CHUNK",
+      "support_status": "NOT_SUPPORTED",
+      "claim_kind": "AUXILIARY",
+      "validation_decision": "REJECTED"
+    }
+  ]
+}
