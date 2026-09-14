@@ -14,10 +14,12 @@ class UserConsentRepository:
 
     async def get_current(self, *, user_id: UUID, purpose: ConsentPurpose) -> UserConsent | None:
         return await self.session.scalar(
-            select(UserConsent).where(
+            select(UserConsent)
+            .where(
                 UserConsent.user_id == user_id,
                 UserConsent.purpose == purpose,
             )
+            .execution_options(populate_existing=True)
         )
 
     async def list_current_for_user(self, *, user_id: UUID) -> list[UserConsent]:

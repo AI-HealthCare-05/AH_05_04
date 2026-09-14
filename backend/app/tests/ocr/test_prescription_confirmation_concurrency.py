@@ -20,6 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
+from app.core import config
 from app.core.db.databases import get_db_session
 from app.dependencies.services import get_ocr_engine
 from app.main import app, fastapi_app
@@ -75,6 +76,11 @@ def override_ocr_engine() -> Generator[None]:
     fastapi_app.dependency_overrides[get_ocr_engine] = lambda: ConcurrencyTestOcrEngine()
     yield
     fastapi_app.dependency_overrides.pop(get_ocr_engine, None)
+
+
+@pytest.fixture(autouse=True)
+def configure_synthetic_ocr_consent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-test.v1")
 
 
 @pytest_asyncio.fixture
@@ -139,7 +145,14 @@ async def _signup_and_login(client: AsyncClient, *, label: str) -> str:
         json={"email": email, "password": "Password123!"},
     )
     assert login.status_code == status.HTTP_200_OK, login.text
-    return login.json()["access_token"]
+    access_token = login.json()["access_token"]
+    consent = await client.post(
+        "/api/v1/users/me/consents/OCR",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"policy_version": "ocr-test.v1"},
+    )
+    assert consent.status_code == status.HTTP_200_OK, consent.text
+    return access_token
 
 
 async def _seed_completed_ocr_job(*, document_id: str) -> str:

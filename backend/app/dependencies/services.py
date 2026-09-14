@@ -66,7 +66,17 @@ from app.services.ocr_ai import (
 from app.services.ocr_ai.prompt import PROMPT_VERSION as OCR_STRUCTURE_PROMPT_VERSION
 from app.services.ocr_engine import OcrEngine
 from app.services.prescriptions import PrescriptionService
+from app.services.user_consents import OcrConsentService
 from app.services.users import UserConsentService, UserManageService
+
+
+def get_ocr_consent_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> OcrConsentService:
+    return OcrConsentService(
+        UserConsentRepository(session),
+        current_policy_version=config.OCR_CONSENT_POLICY_VERSION,
+    )
 
 
 def get_openai_client(request: Request) -> AsyncOpenAI:
@@ -248,6 +258,7 @@ def get_ocr_service(
         PrescriptionRepository,
         Depends(get_prescription_repository),
     ],
+    consent_service: Annotated[OcrConsentService, Depends(get_ocr_consent_service)],
 ) -> OcrService:
     # API 계층의 OCR 접수/조회/필드 수정은 Provider를 직접 호출하지 않습니다.
     # 실제 Worker OCR 실행은 ai_worker의 handler/provider 경로에서 처리합니다.
@@ -256,6 +267,7 @@ def get_ocr_service(
         document_repository,
         ocr_repository,
         prescription_repository=prescription_repository,
+        consent_service=consent_service,
     )
 
 
@@ -276,12 +288,14 @@ def get_prescription_service(
         PrescriptionVersionMedicationInvalidationService,
         Depends(get_prescription_version_medication_invalidation_service),
     ],
+    consent_service: Annotated[OcrConsentService, Depends(get_ocr_consent_service)],
 ) -> PrescriptionService:
     return PrescriptionService(
         document_repository,
         ocr_repository,
         prescription_repository,
         schedule_invalidation,
+        consent_service=consent_service,
     )
 
 

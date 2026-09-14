@@ -35,6 +35,7 @@ from app.services.ocr_engine import (
     OcrProviderTimeoutError,
     OcrProviderUnavailableError,
 )
+from app.services.user_consents import OcrConsentService
 
 # 실제 예외 메시지를 그대로 저장하면 처방전 파일 정보가 노출될 수 있어 고정된 문구만 저장합니다.
 _PROVIDER_UNAVAILABLE_ERROR_MESSAGE = "OCR 제공자 호출에 실패했습니다."
@@ -91,6 +92,7 @@ def _to_job_data(job: OcrJob, fields: list[ExtractedField]) -> OcrJobData:
         engine_name=job.engine_name,
         model_version=job.model_version,
         prompt_version=job.prompt_version,
+        llm_processing=job.llm_processing,
         created_at=job.created_at,
         completed_at=job.completed_at,
         fields=[_to_field_data(field) for field in fields],
@@ -105,11 +107,17 @@ class OcrService:
         engine: OcrEngine | None = None,
         # 처방 확정 여부를 lock 획득 이후에 다시 확인하기 위해 주입합니다.
         prescription_repository: PrescriptionRepository | None = None,
+        consent_service: OcrConsentService | None = None,
     ) -> None:
         self._engine: OcrEngine = engine or NotConfiguredOcrEngine()
         self._document_repo = document_repository
         self._ocr_repo = ocr_repository
         self._prescription_repo = prescription_repository
+        self._consent_service = consent_service
+
+    async def _require_ocr_consent(self, user: User) -> None:
+        if self._consent_service is not None:
+            await self._consent_service.require_for_intake(user=user)
 
     async def accept_ocr_job(
         self,
@@ -124,6 +132,9 @@ class OcrService:
     ) -> JobStatusResult:
         # OCR 접수 Backend 계약: API 요청에서는 Provider를 호출하지 않고 Job/Outbox/placeholder만
         # 같은 transaction에 저장한 뒤 공통 Job 상태 응답을 반환합니다. 실제 OCR 실행은 Worker가 담당합니다.
+        if self._consent_service is not None:
+            await self._consent_service.require_for_intake(user=user)
+
         async def create_domain_placeholder(ai_job_id: UUID) -> DomainReference:
             try:
                 document = await self._document_repo.get_owned_for_update(document_id=document_id, user=user)
@@ -147,6 +158,9 @@ class OcrService:
                         )
                     ],
                 )
+
+            if self._consent_service is not None:
+                await self._consent_service.require_for_intake(user=user)
 
             if not request.force_reprocess:
                 active_job = await self._ocr_repo.get_active_job(
@@ -187,6 +201,7 @@ class OcrService:
         document_id: UUID,
         request: ExecuteOcrRequest,
     ) -> OcrJobData:
+        await self._require_ocr_consent(user)
         # OCR 실행 Backend 계약: 문서 소유권 확인 후 OCR 작업을 생성하고 같은 요청 안에서 처리합니다.
         document = await self._document_repo.get_owned(document_id=document_id, user=user)
         if document is None:
@@ -221,6 +236,7 @@ class OcrService:
         )
 
         try:
+            await self._require_ocr_consent(user)
             result = await self._engine.recognize(
                 object_key=document.object_key,
                 file_mime_type=document.file_mime_type,
@@ -340,6 +356,7 @@ class OcrService:
             engine_name=result.engine_name,
             model_version=result.model_version,
             prompt_version=result.prompt_version,
+            llm_processing=result.llm_processing,
         )
 
         saved_fields = await self._ocr_repo.get_fields_for_job(ocr_job_id=job.id)
@@ -354,6 +371,8 @@ class OcrService:
                 message="OCR 작업 정보를 찾을 수 없습니다.",
                 details=[ErrorDetail(field="job_id", reason="NOT_FOUND", rejected_value=str(job_id))],
             )
+        if job.ocr_status == OcrStatus.COMPLETED and self._consent_service is not None:
+            await self._consent_service.require_for_intake(user=user)
         return _to_job_data(job, list(job.extracted_fields))
 
     async def create_manual_medication(
@@ -365,6 +384,8 @@ class OcrService:
         idempotency_key: str,
         idempotency_service: SyncMutationIdempotencyService,
     ) -> OcrJobData:
+        if self._consent_service is not None:
+            await self._consent_service.require_for_intake(user=user)
         try:
             result = await idempotency_service.execute(
                 user_id=user.id,
@@ -446,6 +467,9 @@ class OcrService:
                 details=[ErrorDetail(field="job_id", reason="NOT_FOUND", rejected_value=str(job_id))],
             )
 
+        if self._consent_service is not None:
+            await self._consent_service.require_for_intake(user=user)
+
         if self._prescription_repo is None:
             raise RuntimeError("prescription_repository가 주입되지 않았습니다.")
 
@@ -501,6 +525,8 @@ class OcrService:
         field_id: UUID,
         request: UpdateExtractedFieldRequest,
     ) -> ExtractedFieldData:
+        if self._consent_service is not None:
+            await self._consent_service.require_for_intake(user=user)
         # OCR 추출 필드 확인/수정 Backend 계약: 사용자가 인식 결과를 검토·수정합니다.
         field = await self._ocr_repo.get_field_owned(field_id=field_id, user_id=user.id)
         if field is None:
@@ -547,6 +573,9 @@ class OcrService:
                     )
                 ],
             )
+
+        if self._consent_service is not None:
+            await self._consent_service.require_for_intake(user=user)
 
         # PRESCRIPTION은 사용자 검수를 마친 최종 확정 데이터입니다.
         # 처방 확정 이후 OCR 추출값이 변경되면 화면의 검수값과 확정 처방이 달라질 수 있으므로

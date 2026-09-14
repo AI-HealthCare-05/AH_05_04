@@ -2,7 +2,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Proposed — `user_consent` 저장 기반과 사용자 동의 상태 API는 구현됨 · Gate/Worker 실행 검증 미구현 · Current 아님 |
+| 상태 | Proposed — PR #465 저장 기반 병합 · #510 현재 사용자 목적별 동의 상태 API 구현 · #505 OCR 목적 Gate/API/Worker·Frontend 연결 구현 · 다른 목적의 실행 Gate와 최종 정책 승인 미완료 · Current 아님 |
 | Decision | [PD-207 목적별 동의 상태와 Provider 호출 Gate 기준](../../governance/decisions/2026-09-10-consent-gate-207.md) |
 | Issue | [#207](https://github.com/AI-HealthCare-05/AH_05_04/issues/207) |
 | 작성 | 송은영 (`phina-io`) — Backend·DB·Security |
@@ -13,7 +13,7 @@
 
 이 문서는 `PD-207`에서 정한 목적별 동의 상태와 Provider 호출 Gate를 공유 계약 형태로 정리한다. Backend, Worker/OCR, Guide/Chat, Notification, Frontend가 같은 의미로 동의 상태와 차단 결과를 해석하기 위한 제안이다.
 
-이 문서는 `proposed/` 계약이며 아직 구현된 Current 계약이 아니다. `user_consent` migration/model/repository와 Backend·Worker 공통 fixture의 저장 기반은 PR #465에서 구현됐고, 사용자 동의 상태 조회·변경 API의 현재 실행 계약은 `docs/contracts/current/user-account.md`에 기록한다. 이 문서의 Gate 계약 전체는 Backend Gate, Worker Gate, Frontend UI가 구현되고 테스트·리뷰가 완료되기 전까지 Current 계약이나 Production 공개 근거로 사용하지 않는다.
+이 문서는 `proposed/` 계약이며 전체 목적별 Gate의 Current 계약이 아니다. PR #465는 `user_consent` migration/model/repository와 Backend·Worker 공통 fixture의 저장 기반을 병합했다. #510은 현재 사용자 목적별 동의 상태 조회·변경 API를 구현했고, 해당 API의 현재 실행 계약은 `docs/contracts/current/user-account.md`에 기록한다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전, 담당 리뷰와 Production 공개 승인은 별도로 남아 있다.
 
 ## 2. 동의 목적
 
@@ -21,7 +21,7 @@
 
 | purpose | 의미 | 주요 소비자 |
 | --- | --- | --- |
-| `OCR` | 처방전 인식과 외부 OCR Provider 호출을 허용하는 동의 | Backend OCR 접수, OCR Worker |
+| `OCR` | 외부 OCR 인식과 OCR 결과의 외부 LLM 구조화를 함께 고지할 목적. 최종 문구·policy version과 기존 동의자의 재동의는 #458에서 확정 | Backend OCR 접수, OCR Worker |
 | `GUIDE` | 복약 가이드 생성 처리를 허용하는 동의 | Guide Backend/AI 경로 |
 | `CHAT` | 챗봇 응답 생성 처리를 허용하는 동의 | Chat Backend/AI 경로 |
 | `NOTIFICATION` | 앱 내부 알림 처리와 게시/발송을 허용하는 동의 | Notification Backend, Frontend |
@@ -47,7 +47,7 @@
 
 ## 4. `user_consent` 스키마 제안
 
-구현 상태: PR #465에서 아래 최소 저장 기반을 구현한다. 물리 테이블은 `backend/alembic/versions/207b1c2d3e4_create_user_consent.py`, SQLAlchemy 모델은 `backend/app/models/user_consents.py`, repository 판정은 `backend/app/repositories/user_consent_repository.py`, 공통 fixture는 `tests/fixtures/consent/consent_gate_207_cases.json`에 둔다. 이 구현은 최신 동의 상태 저장과 `GRANTED` 판정 기반만 제공하며, 실제 기능 Gate와 외부 Provider 호출 차단 연결은 후속 범위다.
+구현 상태: PR #465에서 아래 최소 저장 기반을 병합했다. 물리 테이블은 `backend/alembic/versions/207b1c2d3e4_create_user_consent.py`, SQLAlchemy 모델은 `backend/app/models/user_consents.py`, repository 판정은 `backend/app/repositories/user_consent_repository.py`, 공통 fixture는 `tests/fixtures/consent/consent_gate_207_cases.json`에 있다. #505에서 OCR 목적의 실제 Gate와 외부 Provider 호출 차단을 연결했으며 다른 목적의 연결은 후속 범위다.
 
 최소 테이블은 다음 필드를 가진다.
 
@@ -101,7 +101,7 @@ Backend와 Worker는 런타임 코드를 공유하지 않는다. 대신 같은 D
 
 OCR Worker는 `ocr_job.document_id -> medical_document.uploaded_by` 조인으로 동의 주체를 확인한다. Worker는 Backend ORM을 import하지 않고 기존 Worker repository 패턴처럼 raw `table()` 선언 또는 동등한 ORM-독립 조회로 필요한 테이블만 조회한다.
 
-현재 OCR Worker 외부 호출은 CLOVA OCR 1회이며 구조화는 규칙 기반이다. 따라서 Provider adapter 내부에 DB hook을 두지 않고, Worker handler 진입 후 CLOVA 호출 직전에 동의 상태를 검사한다.
+OCR Worker는 CLOVA 호출 직전, 선택적인 LLM 호출 직전 및 결과 저장 전 최신 동의를 재검사한다. 안전한 최소 전송 selector가 확정되기 전에는 LLM을 생략하고 규칙 기반 결과를 사용한다. Provider adapter 내부에 DB hook을 두지 않는다.
 
 ## 8. 차단과 상태 매핑
 
@@ -114,7 +114,7 @@ OCR Worker는 `ocr_job.document_id -> medical_document.uploaded_by` 조인으로
 
 `AiJobStatus.STALE`와 `AiJobAttemptStatus.BLOCKED`는 기존 enum을 사용한다. 새 Worker FailureCode를 만들지 않는다. `STALE`에는 “접수 당시 유효했던 동의가 실행 전에 철회되어 실행 권한의 현재성을 잃음”을 포함한다.
 
-동의 철회로 인한 `STALE + BLOCKED`는 처방 버전 변경으로 인한 기존 `STALE + BLOCKED`와 반드시 구분한다. 후속 구현 PR은 공개 Job DTO를 확장하지 않더라도 저장 레벨의 내부 차단 사유를 남겨야 한다. 동의 철회 사유는 `CONSENT_WITHDRAWN`으로 기록하고, 처방 버전 변경 사유와 섞지 않는다. 현재 스키마에 적절한 저장 위치가 없으면 Job/Attempt 내부 reason 컬럼 또는 감사 테이블 등 공개 응답이 아닌 저장 경계를 함께 추가한다.
+동의 철회로 인한 `STALE + BLOCKED`는 처방 버전 변경으로 인한 기존 `STALE + BLOCKED`와 반드시 구분한다. #505는 공개 Job DTO를 확장하지 않고 OCR 도메인 `error_code=CONSENT_WITHDRAWN`을 저장한다. Job/Attempt의 일반 failure code와 섞지 않는다.
 
 동의 철회 STALE은 Provider 호출 전 차단이므로 Guide/Chat/RAG 결과를 생성하지 않는다. 이 차단은 RAG 실행 경로에 진입하기 전의 동의 Gate 차단이므로 Job 종결 단위의 `release_decision=STALE` 대상이 아니다. 생성된 결과도 없으므로 결과 단위의 `is_current=false` 판정을 새로 만들지 않는다. 이미 생성된 결과를 현재성 상실로 무효화하는 처방 버전 변경 STALE과 별도 원인으로 기록한다.
 
@@ -122,7 +122,7 @@ OCR에는 `STALE` 도메인 상태가 없으므로 `OcrStatus.FAILED`와 `error_
 
 접수 후 실행 직전 동의 철회로 OCR을 종료할 때는 일반 Worker FailureCode 매핑 경로를 사용하지 않는다. 새 Worker FailureCode를 추가하지 않고, OCR 도메인 전용 종료 전이 또는 writer를 통해 `ocr_job.ocr_status=FAILED`, `ocr_job.error_code=CONSENT_WITHDRAWN`을 저장한다. 이 writer는 Provider 호출 전 차단 경로에서만 사용하며, 기존 Worker FailureCode에서 OCR error_code를 파생하는 매핑과 섞지 않는다.
 
-공통 Job 조회는 `STALE`의 상세 철회 사유를 새 응답 필드로 노출하지 않는다. Frontend는 현재 목적별 동의 상태와 OCR `error_code`, 그리고 후속 구현에서 제공되는 안전한 사용자-facing 안내를 사용해 일반 시스템 장애와 구분된 안내를 표시한다.
+공통 Job 조회는 `STALE`의 상세 철회 사유를 새 응답 필드로 노출하지 않는다. Frontend는 현재 OCR 동의 상태와 OCR `error_code`를 함께 확인하며, `STALE`만으로 철회를 추정하지 않는다.
 
 ## 9. 오류 계약 제안
 
@@ -130,7 +130,7 @@ OCR에는 `STALE` 도메인 상태가 없으므로 `OcrStatus.FAILED`와 `error_
 
 필요한 목적의 동의가 없거나 철회되어 Backend 접수 또는 동기 Provider 호출을 시작하지 않는 경우의 공통 오류 코드다.
 
-- HTTP status는 후속 API 계약에서 확정한다.
+- OCR 접수 전 차단은 #505에서 `403 CONSENT_REQUIRED`로 구현했다. 다른 목적의 HTTP 계약은 후속 범위다.
 - 응답 형식은 공통 오류 envelope `{code, message, details, trace_id}`를 따른다.
 - `details[].rejected_value`에는 동의 원문, 환자정보, 처방 원문, Provider 응답을 넣지 않는다.
 
@@ -144,7 +144,7 @@ OCR에는 `STALE` 도메인 상태가 없으므로 `OcrStatus.FAILED`와 `error_
 
 ## 10. Contract Fixture 최소 케이스
 
-후속 구현 PR은 Backend와 Worker가 같은 fixture를 사용하거나 같은 의미의 fixture를 공유해 다음 케이스를 고정해야 한다.
+Backend와 Worker는 공통 fixture의 동의 판정 기준을 따른다. #505에서 OCR 목적의 조회·철회 차단과 저장 경합을 검증했으며, 아래 Guide/Chat 등 나머지 목적의 실행 연결은 후속 범위다.
 
 | fixture case | 기대 결과 |
 | --- | --- |
@@ -163,9 +163,7 @@ OCR에는 `STALE` 도메인 상태가 없으므로 `OcrStatus.FAILED`와 `error_
 
 회원가입은 미선택 목적이 있어도 성공할 수 있다. 기능 실행 시 필요한 목적의 동의가 없으면 해당 기능만 차단된다.
 
-기능 화면은 반복 동의창을 계속 띄우는 대신 처리 안내와 동의 내역/설정 이동 경로를 제공한다. 현재 OCR 안내는 실제 동작에 맞춰 “처방전 인식에는 외부 OCR 서비스가 사용됩니다.” 수준으로 둔다.
-
-OCR LLM 구조화나 추가 외부 Provider가 실제 연결되면 안내 문구와 목적별 전송 범위를 다시 검토한다.
+기능 화면은 반복 동의창을 계속 띄우는 대신 처리 안내와 동의 내역/설정 이동 경로를 제공한다. #505는 OCR 업로드 전 동의 Gate와 프로필의 동의 상태·철회를 연결했다. 외부 OCR과 LLM 구조화를 함께 명시할 최종 안내 문구·policy version은 확정 전이며, 과거 OCR 전용 동의를 LLM 전송 근거로 자동 확대하지 않는다. 현재는 안전한 최소 전송 selector가 없어 LLM 호출을 생략한다.
 
 ## 12. 제외와 승인 게이트
 
@@ -185,7 +183,7 @@ OCR LLM 구조화나 추가 외부 Provider가 실제 연결되면 안내 문구
 
 ## 13. Current 승격 조건
 
-이 Proposed 계약은 다음이 같은 구현 PR 또는 명시적으로 연결된 PR 묶음에서 충족된 뒤에만 `current/` 승격을 검토한다. PR #465는 첫 두 항목과 Backend 저장소 판정 fixture를 충족했고, 사용자 동의 상태 조회·변경 API는 `current/user-account.md`에 별도 실행 계약으로 기록한다. 나머지는 후속 범위다.
+이 Proposed 계약은 다음이 같은 구현 PR 또는 명시적으로 연결된 PR 묶음에서 충족된 뒤에만 `current/` 승격을 검토한다. PR #465는 저장 기반을 병합했고, #510은 사용자 동의 상태 조회·변경 API를 `current/user-account.md`의 실행 계약으로 기록했다. #505는 OCR 목적의 Gate/API·Worker·Frontend 연결을 구현했다. 다른 목적의 실행 연결, OCR 최종 정책·최소 전송과 담당 리뷰·공개 승인은 후속 범위다.
 
 - `user_consent` migration/model 구현
 - 목적·상태 enum과 DB 제약 구현

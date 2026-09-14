@@ -1,5 +1,8 @@
+from datetime import datetime
+from typing import cast
 from uuid import uuid4
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +11,7 @@ from starlette import status
 from app.main import app
 from app.models.user_consents import ConsentPurpose, ConsentStatus, UserConsent
 from app.services.user_consent_policy import CURRENT_CONSENT_POLICY_VERSIONS
+from app.services.users import _is_currently_granted
 
 
 async def _signup_and_login(client: AsyncClient, *, email: str) -> dict[str, str]:
@@ -24,6 +28,63 @@ async def _signup_and_login(client: AsyncClient, *, email: str) -> dict[str, str
 
 def _email(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex[:8]}@example.com"
+
+
+@pytest.mark.parametrize(
+    ("stored_status", "expected"),
+    [
+        (ConsentStatus.GRANTED, True),
+        (ConsentStatus.WITHDRAWN, False),
+        ("PENDING", False),
+    ],
+)
+def test_is_currently_granted_allows_only_current_granted_status(
+    stored_status: ConsentStatus | str,
+    expected: bool,
+) -> None:
+    changed_at = datetime.now()
+    row = UserConsent(
+        user_id=uuid4(),
+        purpose=ConsentPurpose.OCR,
+        status=cast(ConsentStatus, stored_status),
+        policy_version="ocr-consent.v1",
+        granted_at=changed_at if stored_status == ConsentStatus.GRANTED else None,
+        withdrawn_at=changed_at if stored_status == ConsentStatus.WITHDRAWN else None,
+    )
+
+    assert _is_currently_granted(row, "ocr-consent.v1") is expected
+
+
+def test_is_currently_granted_rejects_stale_or_incomplete_grant() -> None:
+    granted_at = datetime.now()
+    stale = UserConsent(
+        user_id=uuid4(),
+        purpose=ConsentPurpose.OCR,
+        status=ConsentStatus.GRANTED,
+        policy_version="ocr-consent.v0",
+        granted_at=granted_at,
+        withdrawn_at=None,
+    )
+    incomplete = UserConsent(
+        user_id=uuid4(),
+        purpose=ConsentPurpose.OCR,
+        status=ConsentStatus.GRANTED,
+        policy_version="ocr-consent.v1",
+        granted_at=None,
+        withdrawn_at=None,
+    )
+    withdrawn_marker = UserConsent(
+        user_id=uuid4(),
+        purpose=ConsentPurpose.OCR,
+        status=ConsentStatus.GRANTED,
+        policy_version="ocr-consent.v1",
+        granted_at=granted_at,
+        withdrawn_at=granted_at,
+    )
+
+    assert not _is_currently_granted(stale, "ocr-consent.v1")
+    assert not _is_currently_granted(incomplete, "ocr-consent.v1")
+    assert not _is_currently_granted(withdrawn_marker, "ocr-consent.v1")
 
 
 async def test_list_user_consents_returns_missing_rows_as_not_granted() -> None:
@@ -91,6 +152,57 @@ async def test_list_user_consents_marks_stale_policy_version_as_not_granted(
     assert ocr_item["policy_version"] == "ocr-consent.v0"
     assert ocr_item["current_policy_version"] == "ocr-consent.v1"
     assert ocr_item["is_granted"] is False
+
+
+async def test_update_user_consent_regrants_same_purpose_without_changing_other_purposes(
+    db_session: AsyncSession,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        headers = await _signup_and_login(client, email=_email("regrant-consent"))
+        await client.put(
+            "/api/v1/users/me/consents/GUIDE",
+            json={"status": "GRANTED", "policy_version": "guide-consent.v1"},
+            headers=headers,
+        )
+        await client.put(
+            "/api/v1/users/me/consents/CHAT",
+            json={"status": "GRANTED", "policy_version": "chat-consent.v1"},
+            headers=headers,
+        )
+        withdrawn = await client.put(
+            "/api/v1/users/me/consents/GUIDE",
+            json={"status": "WITHDRAWN", "policy_version": "guide-consent.v1"},
+            headers=headers,
+        )
+        regranted = await client.put(
+            "/api/v1/users/me/consents/GUIDE",
+            json={"status": "GRANTED", "policy_version": "guide-consent.v1"},
+            headers=headers,
+        )
+        list_response = await client.get("/api/v1/users/me/consents", headers=headers)
+
+    assert withdrawn.status_code == status.HTTP_200_OK
+    assert withdrawn.json()["data"]["withdrawn_at"] is not None
+
+    assert regranted.status_code == status.HTTP_200_OK
+    data = regranted.json()["data"]
+    assert data["purpose"] == ConsentPurpose.GUIDE.value
+    assert data["status"] == ConsentStatus.GRANTED.value
+    assert data["policy_version"] == "guide-consent.v1"
+    assert data["is_granted"] is True
+    assert data["granted_at"] is not None
+    assert data["withdrawn_at"] is None
+
+    guide_row_count = await db_session.scalar(
+        select(func.count()).select_from(UserConsent).where(UserConsent.purpose == ConsentPurpose.GUIDE)
+    )
+    assert guide_row_count == 1
+
+    items = {item["purpose"]: item for item in list_response.json()["data"]}
+    assert items[ConsentPurpose.GUIDE.value]["is_granted"] is True
+    assert items[ConsentPurpose.GUIDE.value]["withdrawn_at"] is None
+    assert items[ConsentPurpose.CHAT.value]["is_granted"] is True
+    assert items[ConsentPurpose.CHAT.value]["status"] == ConsentStatus.GRANTED.value
 
 
 async def test_update_user_consent_withdraws_current_status(db_session: AsyncSession) -> None:

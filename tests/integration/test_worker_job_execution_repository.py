@@ -54,8 +54,6 @@ from ai_worker.core.runtime_assembly import build_worker_runtime, create_clova_o
 from ai_worker.core.stream import WorkerDelivery
 from ai_worker.schemas.messages import JobType, WorkerMessage
 from ocr_runtime.clova_engine import ClovaOcrEngine
-from ocr_runtime.llm.prompt import PROMPT_VERSION
-from ocr_runtime.llm.schemas import GeneratedMedication, GeneratedPrescriptionDraft, GeneratedSourceValue
 from provider_contracts.observability import DeploymentEnvironment
 from provider_contracts.ocr import (
     OcrDeadline,
@@ -223,6 +221,7 @@ class SyntheticOcrEngine:
             engine_name="SYNTHETIC_OCR",
             model_version=None,
             prompt_version=None,
+            llm_processing="NOT_REQUESTED",
         )
 
 
@@ -237,6 +236,7 @@ async def repository_schema() -> AsyncIterator[None]:
                 """
                 CREATE TABLE ai_job (
                     id VARCHAR(36) PRIMARY KEY,
+                    user_id VARCHAR(36) DEFAULT 'synthetic-owner',
                     job_type VARCHAR(20) NOT NULL,
                     status VARCHAR(20) NOT NULL,
                     expected_event_id VARCHAR(36),
@@ -259,6 +259,8 @@ async def repository_schema() -> AsyncIterator[None]:
                 """
                 CREATE TABLE medical_document (
                     id VARCHAR(36) PRIMARY KEY,
+                    uploaded_by VARCHAR(36) DEFAULT 'synthetic-owner',
+                    profile_id VARCHAR(36) DEFAULT 'synthetic-profile',
                     object_key VARCHAR(500) NOT NULL,
                     file_mime_type VARCHAR(100) NOT NULL
                 )
@@ -277,6 +279,7 @@ async def repository_schema() -> AsyncIterator[None]:
                     engine_name VARCHAR(100),
                     model_version VARCHAR(100),
                     prompt_version VARCHAR(100),
+                    llm_processing VARCHAR(32),
                     started_at TIMESTAMPTZ,
                     completed_at TIMESTAMPTZ,
                     error_code VARCHAR(100),
@@ -345,6 +348,16 @@ async def repository_schema() -> AsyncIterator[None]:
                 """
             )
         )
+
+        for ddl in [
+            'CREATE TABLE "user" (id varchar(36) PRIMARY KEY, account_status varchar(25), is_active boolean)',
+            "CREATE TABLE profile (id varchar(36) PRIMARY KEY, user_id varchar(36), profile_type varchar(20))",
+            "CREATE TABLE user_consent (id varchar(36) PRIMARY KEY, user_id varchar(36), purpose varchar(20), status varchar(20), policy_version varchar(100), granted_at timestamptz, withdrawn_at timestamptz, UNIQUE(user_id,purpose))",
+            "INSERT INTO \"user\" VALUES ('synthetic-owner','ACTIVE',true)",
+            "INSERT INTO profile VALUES ('synthetic-profile','synthetic-owner','SELF')",
+            "INSERT INTO user_consent VALUES ('consent','synthetic-owner','OCR','GRANTED','synthetic-policy',now(),NULL)",
+        ]:
+            await connection.execute(text(ddl))
 
     yield
 
@@ -1168,6 +1181,7 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
         CLOVA_OCR_SECRET="synthetic-clova-secret",
         STORAGE_DIR=str(tmp_path),
         OCR_STRUCTURE_LLM_ENABLED=llm_enabled,
+        OCR_CONSENT_POLICY_VERSION="synthetic-policy",
         OPENAI_API_KEY="synthetic-test-key" if llm_enabled else "",
     )
 
@@ -1300,20 +1314,7 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
             )
         )
         monkeypatch.setattr(ClovaOcrEngine, "_recognize_provider", clova_call)
-        llm_call = AsyncMock(
-            return_value=SimpleNamespace(
-                status="completed",
-                model="synthetic-llm-model",
-                output=[],
-                output_parsed=GeneratedPrescriptionDraft(
-                    medications=[
-                        GeneratedMedication(
-                            medication_name=GeneratedSourceValue(value="합성의약품에이정", source_ids=[1]),
-                        )
-                    ]
-                ),
-            )
-        )
+        llm_call = AsyncMock()
         sdk_context = MagicMock()
         sdk_context.__aenter__.return_value = SimpleNamespace(responses=SimpleNamespace(parse=llm_call))
         monkeypatch.setattr(openai_ocr_structurer, "AsyncOpenAI", MagicMock(return_value=sdk_context))
@@ -1371,16 +1372,17 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
                     """
                     SELECT
                         ocr_status,
-                        started_at,
-                        completed_at,
-                        engine_name
+                            started_at,
+                            completed_at,
+                            engine_name,
+                            llm_processing
                     FROM ocr_job
                     WHERE id = :domain_id
                     """
                 ),
                 {"domain_id": str(message.domain_id)},
             )
-            ocr_status, ocr_started_at, ocr_completed_at, engine_name = ocr_result.one()
+            ocr_status, ocr_started_at, ocr_completed_at, engine_name, llm_processing = ocr_result.one()
 
             field_count_result = await observer.execute(
                 text(
@@ -1408,19 +1410,21 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
         assert outbox_status == "PUBLISHED"
         assert stream_message_id
         if llm_enabled:
-            assert clova_call.await_count == llm_call.await_count == 1
+            assert clova_call.await_count == 1
+            assert llm_call.await_count == 0
             assert sdk_context.__aexit__.await_count == 1
             async with test_engine.connect() as connection:
                 await connection.execute(text(f"SET search_path TO {TEST_SCHEMA}"))
                 metadata = (
                     await connection.execute(
-                        text("SELECT model_version, prompt_version FROM ocr_job WHERE id = :id"),
+                        text("SELECT model_version, prompt_version, llm_processing FROM ocr_job WHERE id = :id"),
                         {"id": str(message.domain_id)},
                     )
                 ).one()
-                assert metadata == ("synthetic-llm-model", PROMPT_VERSION)
+                assert metadata == (None, None, "SKIPPED_MINIMIZATION")
         else:
             assert ocr_engine.call_count == 1
+        assert llm_processing == ("SKIPPED_MINIMIZATION" if llm_enabled else "NOT_REQUESTED")
         assert job_status == "COMPLETED"
         assert attempt_count == 1
         assert consumed_event_id == str(message.event_id)
@@ -1429,12 +1433,136 @@ async def test_worker_runtime_completes_real_redis_postgresql_ocr_one_cycle(
         assert ocr_started_at is not None
         assert ocr_completed_at is not None
         assert engine_name == ("CLOVA_OCR" if llm_enabled else "SYNTHETIC_OCR")
-        # SyntheticOcrEngine은 MEDICATION_NAME 1개만 반환하지만, 저장 경로가 나머지 필수
-        # 필드(PRESCRIBED_DATE, DOSE_VALUE, FREQUENCY_PER_DAY, DURATION_DAYS)를 placeholder
-        # row로 채우므로 총 5개가 됩니다(#294).
-        assert field_count_result.scalar_one() == (8 if llm_enabled else 5)
+        # LLM을 생략한 규칙 경로는 약품 라벨이 없는 단일 토큰을 약품으로 추정하지 않아
+        # 처방일 검수 placeholder만 저장합니다. 합성 엔진 경로는 약품 1건과 필수 placeholder 4건입니다.
+        assert field_count_result.scalar_one() == (1 if llm_enabled else 5)
         assert await stream.list_pending() == ()
     finally:
         await assembled.aclose()
         await redis_client.delete(stream_name)
         await redis_client.aclose()
+
+
+@pytest.mark.parametrize("reason", ["WITHDRAWN", "LOOKUP_FAILED", "POLICY_VERSION_MISMATCH"])
+async def test_consent_block_is_atomic_and_redelivery_is_already_committed(reason: str) -> None:
+    from ai_worker.core.errors import OcrConsentDeniedError
+    from ai_worker.core.job_execution import RecordedConsentBlock
+
+    message = build_message()
+    now = datetime.now(UTC)
+    params = {"job": str(message.job_id), "event": str(message.event_id), "domain": str(message.domain_id), "now": now}
+    async with test_engine.begin() as connection:
+        for sql in [
+            "INSERT INTO ai_job (id,job_type,status,expected_event_id,attempt_count,max_attempts,available_at) VALUES (:job,'OCR','PENDING',:event,0,3,:now)",
+            "INSERT INTO outbox_event (event_id,job_id,attempt,event_kind) VALUES (:event,:job,1,'JOB_EXECUTE')",
+            "INSERT INTO medical_document (id,object_key,file_mime_type) VALUES (:domain,'synthetic.png','image/png')",
+            "INSERT INTO ocr_job (id,document_id,ai_job_id,ocr_status) VALUES (:domain,:domain,:job,'PENDING')",
+        ]:
+            await connection.execute(text(sql), params)
+
+    class ConsentBlockedHandler:
+        handler_type = JobType.OCR
+
+        async def handle(self, message: WorkerMessage) -> HandlerSuccess:
+            raise OcrConsentDeniedError(reason)
+
+    async with AsyncSession(test_engine, expire_on_commit=False) as session:
+        registry = HandlerRegistry()
+        registry.register(ConsentBlockedHandler())
+        acknowledger = RecordingAcknowledger()
+        execution = LeaseAwareConsumerExecution(
+            dispatcher=Dispatcher(registry),
+            result_store=NoopResultStore(),
+            transaction=SqlAlchemyTransaction(session),
+            acknowledger=acknowledger,
+            job_repository=SqlAlchemyJobExecutionRepository(session),
+            heartbeat=RetainedHeartbeat(),
+            execution_starter=SqlAlchemyOcrExecutionStarter(session),
+            lease_duration=timedelta(seconds=30),
+            clock=lambda: now,
+        )
+        delivery = WorkerDelivery(stream_message_id="consent-458", message=message)
+        assert isinstance(await execution.execute(delivery), RecordedConsentBlock)
+        assert isinstance(await execution.execute(delivery), CommittedDelivery)
+
+    async with test_engine.connect() as observer:
+        row = (
+            await observer.execute(
+                text(
+                    "SELECT j.status,j.failure_code,j.expected_event_id,a.attempt_status,a.error_code,a.retryable,o.ocr_status,o.error_code "
+                    "FROM ai_job j JOIN ai_job_attempt a ON a.ai_job_id=j.id JOIN ocr_job o ON o.ai_job_id=j.id WHERE j.id=:job"
+                ),
+                params,
+            )
+        ).one()
+        assert tuple(row) == (
+            "STALE",
+            None,
+            None,
+            "BLOCKED",
+            None,
+            False,
+            "FAILED",
+            {
+                "WITHDRAWN": "CONSENT_WITHDRAWN",
+                "LOOKUP_FAILED": "CONSENT_LOOKUP_FAILED",
+                "POLICY_VERSION_MISMATCH": "CONSENT_POLICY_MISMATCH",
+            }[reason],
+        )
+        assert (
+            await observer.execute(text("SELECT count(*) FROM extracted_field WHERE ocr_job_id=:domain"), params)
+        ).scalar_one() == 0
+        assert (
+            await observer.execute(text("SELECT count(*) FROM ai_job_attempt WHERE ai_job_id=:job"), params)
+        ).scalar_one() == 1
+
+
+@pytest.mark.parametrize("missing", ["attempt", "ocr"])
+async def test_consent_block_rolls_back_every_state_when_linked_row_is_missing(missing: str) -> None:
+    from ai_worker.adapters.sqlalchemy_job_execution_repository import JobExecutionStateError
+
+    message = build_message()
+    now = datetime.now(UTC)
+    lease = ExecutionLease(message.job_id, message.event_id, 1, 3, "synthetic-lease", now + timedelta(seconds=30))
+    params = {
+        "job": str(message.job_id),
+        "event": str(message.event_id),
+        "domain": str(message.domain_id),
+        "now": now,
+        "expires": lease.lease_expires_at,
+    }
+    async with test_engine.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO ai_job (id,job_type,status,expected_event_id,attempt_count,max_attempts,available_at,lease_token,lease_expires_at) VALUES (:job,'OCR','PROCESSING',:event,1,3,:now,'synthetic-lease',:expires)"
+            ),
+            params,
+        )
+        if missing != "attempt":
+            await connection.execute(
+                text(
+                    "INSERT INTO ai_job_attempt (id,ai_job_id,attempt_no,attempt_status,retryable,timed_out,started_at) VALUES (:domain,:job,1,'PROCESSING',false,false,:now)"
+                ),
+                params,
+            )
+        if missing != "ocr":
+            await connection.execute(
+                text(
+                    "INSERT INTO ocr_job (id,document_id,ai_job_id,ocr_status) VALUES (:domain,:domain,:job,'PROCESSING')"
+                ),
+                params,
+            )
+    async with AsyncSession(test_engine) as session:
+        with pytest.raises(JobExecutionStateError):
+            async with session.begin():
+                await SqlAlchemyJobExecutionRepository(session).record_consent_block(
+                    lease, reason="WITHDRAWN", blocked_at=now
+                )
+    async with test_engine.connect() as observer:
+        assert (
+            await observer.execute(text("SELECT status FROM ai_job WHERE id=:job"), params)
+        ).scalar_one() == "PROCESSING"
+        if missing != "attempt":
+            assert (
+                await observer.execute(text("SELECT attempt_status FROM ai_job_attempt WHERE ai_job_id=:job"), params)
+            ).scalar_one() == "PROCESSING"

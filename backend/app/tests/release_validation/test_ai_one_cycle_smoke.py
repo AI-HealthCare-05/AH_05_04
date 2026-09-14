@@ -20,6 +20,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 import app.release_validation.ai_one_cycle_smoke as smoke_module
+from app.core import config
 from app.core.db.databases import get_db_session
 from app.dependencies.services import get_chat_engine, get_guide_generator
 from app.main import app, fastapi_app
@@ -28,6 +29,7 @@ from app.models.guides import Guide, GuideGenerationStatus
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import ConfirmationStatus, ExtractedField, FieldType, OcrJob, OcrStatus
 from app.models.profiles import Profile
+from app.models.user_consents import ConsentPurpose, ConsentStatus
 from app.models.users import User
 from app.release_validation.ai_one_cycle_smoke import (
     CleanupPendingError,
@@ -52,6 +54,7 @@ from app.release_validation.ai_one_cycle_smoke import (
     verify_prescription_input,
 )
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.repositories.user_consent_repository import UserConsentRepository
 from app.services.chat_ai import ChatReplyOutput
 from app.services.guide_ai.schemas import GuideGenerationResult
 from app.tests.conftest import test_engine
@@ -1536,7 +1539,9 @@ async def test_db_verifiers_accept_optional_strength_from_real_scenarios(
 
 
 @pytest.mark.asyncio
-async def test_deterministic_one_cycle_uses_asgi_routes_with_only_provider_boundary_fakes() -> None:
+async def test_deterministic_one_cycle_uses_asgi_routes_with_only_provider_boundary_fakes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class FakeGuideGenerator:
         async def generate(self, _generation_input: object) -> GuideGenerationResult:
             return GuideGenerationResult(
@@ -1556,6 +1561,16 @@ async def test_deterministic_one_cycle_uses_asgi_routes_with_only_provider_bound
     factory = async_sessionmaker(test_engine, expire_on_commit=False)
     scenario = _scenario_payload()
     fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=scenario)
+    monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-release-test.v1")
+    async with factory() as consent_session:
+        await UserConsentRepository(consent_session).set_status(
+            user_id=fixture.user_id,
+            purpose=ConsentPurpose.OCR,
+            status=ConsentStatus.GRANTED,
+            policy_version="ocr-release-test.v1",
+            changed_at=datetime.now(UTC),
+        )
+        await consent_session.commit()
     paths: list[str] = []
     previous_db_override = fastapi_app.dependency_overrides[get_db_session]
 

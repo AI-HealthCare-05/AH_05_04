@@ -17,6 +17,9 @@
 .mvp-profile__account-details dd { font-size: 16px; text-align: left; }
 .mvp-profile__account-details span { min-height: 32px; display: inline-flex; align-items: center; justify-content: center; padding: 5px 10px; border-radius: 12px; background: #eaf4ff; color: #1677ea; font-size: 13px; font-weight: 700; white-space: nowrap; }
 .mvp-profile__readonly-note { margin: -2px 0 0; color: #526074; font-size: 16px; line-height: 1.5; }
+.mvp-profile__consent-card { padding: 16px; }
+.mvp-profile__consent-card p { margin: 0; color: #526074; font-size: 15px; line-height: 1.5; }
+.mvp-profile__consent-card p + p { margin-top: 8px; }
 .mvp-profile__edit-card { padding: 6px 0 0; overflow: visible; border: 0; border-radius: 0; background: transparent; }
 .mvp-profile__edit-card .mvp-form { gap: 16px; }
 .mvp-profile__edit-card .mvp-form__field { gap: 8px; }

@@ -61,6 +61,7 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | 사용자 | `PATCH` | `/api/v1/users/me` | `200` |
 | 사용자 동의 | `GET` | `/api/v1/users/me/consents` | `200` |
 | 사용자 동의 | `PUT` | `/api/v1/users/me/consents/{purpose}` | `200` |
+| OCR 동의 | `GET` / `POST` / `DELETE` | `/api/v1/users/me/consents/OCR` | `200` |
 | 의료문서 | `POST` | `/api/v1/documents` | `201` |
 | OCR 실행 | `POST` | `/api/v1/documents/{document_id}/ocr-jobs` | `202` |
 | 처방 확정 | `POST` | `/api/v1/documents/{document_id}/prescription` | `201` |
@@ -126,6 +127,15 @@ OCR 실행 endpoint는 `202 Accepted`를 반환하며, 현재 구현은 공통 J
 
 OCR 접수 요청에는 `Idempotency-Key` header가 필수입니다. 키는 16~255자의 ASCII 영숫자와 `-._:`만 허용하며, 원문 값은 저장하지 않고 HMAC digest만 저장합니다.
 
+OCR 외부 처리 동의는 `user_consent`의 `purpose=OCR` 최신 row로 판정합니다. `GET`은
+`status`(`MISSING`/`GRANTED`/`WITHDRAWN`), `effective`, `reason`,
+`current_policy_version`, `accepted_policy_version`, `granted_at`, `withdrawn_at`을 `data`에 반환합니다.
+`POST`는 `{"policy_version":"현재 버전"}`을 받으며 버전이 다르면 `409 CONSENT_POLICY_MISMATCH`입니다.
+`DELETE`는 기존 버전을 보존해 철회하며 row가 없으면 미동의를 반환합니다. 정책 버전이 설정되지
+않으면 조회·등록·외부 처리는 `503 CONSENT_POLICY_UNAVAILABLE`로 차단하지만 기존 동의의 철회는
+허용합니다. 저장소 조회 실패는 `503 CONSENT_LOOKUP_FAILED`로 닫습니다. 최종 안내 문구·정책
+버전은 아직 확정되지 않았습니다.
+
 | 상태 | `code` | 발생 상황 |
 | ---: | --- | --- |
 | `400` | `IDEMPOTENCY_KEY_REQUIRED` | `Idempotency-Key` header가 없거나 빈 값입니다. |
@@ -133,6 +143,8 @@ OCR 접수 요청에는 `Idempotency-Key` header가 필수입니다. 키는 16~2
 | `409` | `IDEMPOTENCY_KEY_CONFLICT` | 같은 key로 이전과 다른 요청 지문이 접수되었습니다. |
 | `409` | `OCR_JOB_ALREADY_PROCESSING` | 같은 문서에 대해 진행 중인 OCR Job이 있습니다. |
 | `409` | `CONCURRENT_UPDATE_IN_PROGRESS` | 같은 문서의 OCR 접수 또는 다른 수정 요청이 처리 중이라 문서 row lock을 획득하지 못했습니다. |
+| `403` | `CONSENT_REQUIRED` | 현재 OCR 동의가 없거나 철회·버전 불일치여서 접수하지 않습니다. |
+| `503` | `CONSENT_LOOKUP_FAILED` / `CONSENT_POLICY_UNAVAILABLE` | 동의를 확인할 수 없어 접수하지 않습니다. |
 
 `GET /api/v1/jobs/{job_id}`(공통 Job 상태 조회)는 [비동기 Job 계약 v1](./contracts/targets/post-mvp-1/async-job-v1.md) 목표 중 조회 경로가 구현된 현재 API입니다(#148).
 
@@ -410,8 +422,9 @@ OCR 작업 응답에는 OCR 엔진과 LLM 구조화 실행 정보를 포함합�
     "error_code": null,
     "error_message": null,
     "engine_name": "CLOVA_OCR",
-    "model_version": "gpt-4o-mini",
-    "prompt_version": "ocr-structure-prompt-v3",
+    "model_version": null,
+    "prompt_version": null,
+    "llm_processing": "NOT_REQUESTED",
     "created_at": "2026-08-26T09:00:00Z",
     "completed_at": "2026-08-26T09:00:05Z",
     "fields": [
@@ -444,6 +457,11 @@ OCR 작업 응답에는 OCR 엔진과 LLM 구조화 실행 정보를 포함합�
 - `engine_name`은 실제 OCR 엔진 식별자입니다.
 - `OCR_STRUCTURE_LLM_ENABLED=false`인 규칙 기반 구조화 경로에서는 `model_version`과 `prompt_version`이 `null`입니다.
 - LLM 구조화가 실제 실행된 경우에만 실제 모델 ID와 프롬프트 버전을 기록합니다.
+- `llm_processing`은 `APPLIED`(실제 실행), `SKIPPED_MINIMIZATION`(안전한 전송 범위를 만들지 못해
+  LLM 생략), `NOT_REQUESTED`(LLM 기능 비활성), `null`(과거/미확인) 중 하나입니다. 현재 #458에서는
+  검토된 약품명 selector가 없어 LLM 활성 설정에서도 `SKIPPED_MINIMIZATION`으로 안전하게 생략합니다.
+- 현재 동의가 유효하지 않으면 완료된 과거 OCR 결과 조회·검수 수정·수동 약물 추가·처방 확정을
+  `403 CONSENT_REQUIRED`로 차단합니다. 철회 후 결과의 보관·삭제 정책은 별도 결정입니다.
 - `raw_value`는 OCR 원문입니다. 사용자 입력용 빈 검수 필드에서는 `null`일 수 있습니다.
 - `MEDICATION_NAME`의 `normalized_value`는 표기 정리용 참고값이며 `normalization_version`에는 정규화 규칙 버전을 기록합니다.
 - LLM 경로의 `PRESCRIBED_DATE`에는 날짜 정규화 값과 `date-rule-v1`이 기록될 수 있습니다.

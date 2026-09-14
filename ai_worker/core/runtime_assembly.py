@@ -39,6 +39,7 @@ from ai_worker.adapters.sqlalchemy_dlq_outbox_repository import (
 )
 from ai_worker.adapters.sqlalchemy_job_execution_repository import SqlAlchemyJobExecutionRepository
 from ai_worker.adapters.sqlalchemy_lease_heartbeat import SqlAlchemyLeaseHeartbeat
+from ai_worker.adapters.sqlalchemy_ocr_consent_repository import SqlAlchemyOcrConsentRepository
 from ai_worker.adapters.sqlalchemy_ocr_execution_starter import (
     SqlAlchemyOcrExecutionStarter,
 )
@@ -82,6 +83,7 @@ from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.stream import StreamAcknowledger, WorkerDelivery
 from ai_worker.schemas.messages import JobType, WorkerMessage
 from ai_worker.tasks.evaluation.protected_retrieval_control import TrustedApprovalSource
+from ai_worker.tasks.ocr.consent import ConsentCheckedLlmStructurer, OcrConsentGate
 from ai_worker.tasks.ocr.handler import OcrHandler, OcrProvider
 from ocr_runtime.clova_engine import ClovaOcrEngine
 from ocr_runtime.structuring import OcrStructurer, RuleBasedPrescriptionStructurer
@@ -250,6 +252,7 @@ def create_clova_ocr_engine(
     config: Config,
     *,
     trace_id: str,
+    consent_gate: OcrConsentGate | None = None,
 ) -> OcrEngine:
     """메시지의 관측 컨텍스트와 함께 실제 CLOVA OCR Engine을 조립합니다."""
 
@@ -262,6 +265,8 @@ def create_clova_ocr_engine(
             timeout_seconds=config.OCR_STRUCTURE_TIMEOUT_SECONDS,
             context=context,
         )
+    if consent_gate is not None and config.OCR_STRUCTURE_LLM_ENABLED:
+        structurer = ConsentCheckedLlmStructurer(consent_gate, structurer)
     return ClovaOcrEngine(
         invoke_url=config.CLOVA_OCR_INVOKE_URL,
         secret_key=config.CLOVA_OCR_SECRET.get_secret_value(),
@@ -280,17 +285,20 @@ def create_clova_ocr_engine(
 def create_ocr_provider(engine: OcrEngine) -> OcrProvider:
     """승인된 OCR engine을 Worker Provider Adapter로 감쌉니다."""
 
-    return ClovaOcrProviderAdapter(engine)
+    return ClovaOcrProviderAdapter(engine, consent_engine_factory=lambda trace_id, gate: engine)
 
 
 def create_clova_ocr_provider(config: Config) -> OcrProvider:
     """메시지별 trace_id로 실제 CLOVA Engine을 만드는 Provider입니다."""
 
     return ClovaOcrProviderAdapter(
+        consent_engine_factory=lambda trace_id, gate: create_clova_ocr_engine(
+            config, trace_id=trace_id, consent_gate=gate
+        ),
         engine_factory=lambda trace_id: create_clova_ocr_engine(
             config,
             trace_id=trace_id,
-        )
+        ),
     )
 
 
@@ -453,6 +461,12 @@ class SessionScopedDeliveryExecution:
             registry.register(
                 OcrHandler(
                     input_repository=SqlAlchemyOcrInputRepository(session),
+                    consent_gate_factory=lambda domain_id, job_id: OcrConsentGate(
+                        SqlAlchemyOcrConsentRepository(self._session_factory),
+                        domain_id,
+                        job_id,
+                        lambda: self._config.OCR_CONSENT_POLICY_VERSION,
+                    ),
                     provider=self._ocr_provider,
                     clock=self._monotonic_clock if self._monotonic_clock is not None else _default_monotonic,
                     provider_budget_seconds=self._config.OCR_PROVIDER_BUDGET_SECONDS,

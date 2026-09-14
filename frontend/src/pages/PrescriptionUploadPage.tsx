@@ -13,6 +13,7 @@ import {
 } from '../api/prescriptions'
 import { getGuideForPrescription } from '../api/guides'
 import { ApiError } from '../api/client'
+import { getOcrConsent, grantOcrConsent, type OcrConsentState } from '../api/ocrConsent'
 import AiJobStatusState from '../components/AiJobStatusState'
 import { Button, Card, MobileShell } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
@@ -150,6 +151,9 @@ function PrescriptionUploadPage() {
       isNewPrescriptionFlow ? null : loadOcrJobRecovery()
     ))
   const [message, setMessage] = useState('')
+  const [consentGate, setConsentGate] = useState<OcrConsentState | null>(null)
+  const [staleOcrReason, setStaleOcrReason] = useState<string | null>(null)
+  const [isGrantingConsent, setIsGrantingConsent] = useState(false)
   const [hasUploadFailed, setHasUploadFailed] = useState(false)
   const [isPreparing, setIsPreparing] = useState(false)
   const [completionError, setCompletionError] =
@@ -361,6 +365,20 @@ function PrescriptionUploadPage() {
     }
   }, [pollingState.jobKey, pollingState.status, pollingTarget])
 
+  useEffect(() => {
+    if (pollingState.status !== 'STALE' || pollingState.data?.kind !== 'ASYNC') return
+    let active = true
+    const domainId = pollingState.data.body.data.domain_id
+    void getOcrJob(domainId)
+      .then((response) => {
+        if (active) setStaleOcrReason(response.data.error_code)
+      })
+      .catch(() => {
+        if (active) setStaleOcrReason(null)
+      })
+    return () => { active = false }
+  }, [pollingState.status, pollingState.data])
+
   const expireOcrSession = useCallback(() => {
     clearAuthenticatedSession()
     navigate('/login', { replace: true })
@@ -381,6 +399,8 @@ function PrescriptionUploadPage() {
     setPollingTarget(null)
     setCompletionError(null)
     setMessage('')
+    setConsentGate(null)
+    setStaleOcrReason(null)
     setHasUploadFailed(false)
     clearOcrJobRecovery()
     intakeIntentRef.current = selectedFile
@@ -406,6 +426,8 @@ function PrescriptionUploadPage() {
     setPollingTarget(null)
     setCompletionError(null)
     setMessage('')
+    setConsentGate(null)
+    setStaleOcrReason(null)
     setHasUploadFailed(false)
     intakeIntentRef.current = null
     clearOcrJobRecovery()
@@ -429,6 +451,16 @@ function PrescriptionUploadPage() {
       setPollingTarget(null)
       setCompletionError(null)
       setHasUploadFailed(false)
+
+      // 외부 OCR이 시작되기 전에 현재 버전의 동의를 확인합니다.
+      // Backend와 Worker도 각각 독립적으로 재검사합니다.
+      const consent = (await getOcrConsent(preparationController.signal)).data
+      if (!isCurrentRequest()) return
+      if (!consent.effective) {
+        setConsentGate(consent)
+        return
+      }
+      setConsentGate(null)
 
       let intent = intakeIntentRef.current
       if (!intent || intent.file !== file) {
@@ -483,6 +515,21 @@ function PrescriptionUploadPage() {
         expireOcrSession()
         return
       }
+      if (error instanceof ApiError && error.code === 'CONSENT_REQUIRED') {
+        try {
+          setConsentGate((await getOcrConsent()).data)
+          setMessage('현재 동의 상태가 변경됐어요. 안내를 다시 확인해 주세요.')
+        } catch {
+          setMessage('동의 상태를 확인할 수 없어요. 잠시 후 다시 시도해 주세요.')
+        }
+        setHasUploadFailed(false)
+        return
+      }
+      if (error instanceof ApiError && error.code.startsWith('CONSENT_')) {
+        setMessage(getJobRequestErrorPresentation(error).description)
+        setHasUploadFailed(false)
+        return
+      }
       if (!intakeIntentRef.current?.documentId) {
         setMessage(getUploadFailureMessage(error))
         setHasUploadFailed(true)
@@ -510,9 +557,38 @@ function PrescriptionUploadPage() {
     setIsFilenameExpanded(false)
     setCompletionError(null)
     setMessage('')
+    setConsentGate(null)
+    setStaleOcrReason(null)
     setHasUploadFailed(false)
     intakeIntentRef.current = null
     clearOcrJobRecovery()
+  }
+
+  const grantConsentAndContinue = async () => {
+    if (!consentGate || isGrantingConsent) return
+    setIsGrantingConsent(true)
+    setMessage('')
+    try {
+      const result = await grantOcrConsent(consentGate.current_policy_version)
+      if (!result.data.effective) throw new Error('OCR consent is not effective')
+      setConsentGate(null)
+      await handleUpload()
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        expireOcrSession()
+      } else if (error instanceof ApiError && error.code === 'CONSENT_POLICY_MISMATCH') {
+        setMessage('동의 안내가 변경됐어요. 다시 확인해 주세요.')
+        try {
+          setConsentGate((await getOcrConsent()).data)
+        } catch {
+          setMessage('동의 상태를 확인할 수 없어요. 잠시 후 다시 시도해 주세요.')
+        }
+      } else {
+        setMessage('동의를 저장하거나 처방전을 처리할 수 없어요. 잠시 후 다시 시도해 주세요.')
+      }
+    } finally {
+      setIsGrantingConsent(false)
+    }
   }
 
   const resumePolling = () => {
@@ -655,7 +731,21 @@ function PrescriptionUploadPage() {
       onAction = resetToUpload
     } else if (isCurrentPollingTarget && pollingState.status === 'STALE') {
       status = 'STALE'
-      presentation = getJobStatusPresentation('STALE')
+      presentation = staleOcrReason === 'CONSENT_WITHDRAWN'
+        ? {
+            title: '동의가 철회되어 처리를 중단했어요',
+            description: '외부 처리를 더 진행하지 않았습니다. 기존 OCR 결과도 현재 검수 화면에 표시하지 않습니다.',
+            actionLabel: '처방전 등록으로 돌아가기',
+            tone: 'attention',
+          }
+        : staleOcrReason === 'CONSENT_REQUIRED' || staleOcrReason === 'CONSENT_POLICY_MISMATCH'
+          ? {
+              title: '현재 동의가 필요해요',
+              description: '처방전 처리 동의를 다시 확인해 주세요.',
+              actionLabel: '처방전 등록으로 돌아가기',
+              tone: 'attention',
+            }
+          : getJobStatusPresentation('STALE')
       onAction = resetToUpload
     } else if (
       isCurrentPollingTarget &&
@@ -794,10 +884,21 @@ function PrescriptionUploadPage() {
             주민등록번호 등 민감 정보는 가리고 촬영해 주세요.
           </div>
 
+          {consentGate && (
+            <div className="notice mvp-upload__notice" role="group" aria-label="처방전 외부 처리 동의">
+              <strong>처방전 외부 처리 동의가 필요해요</strong>
+              <p>처방전 이미지는 외부 OCR 서비스에서 인식합니다. 인식한 약품·복용 정보 중 필요한 내용은 외부 LLM에서 구조화할 수 있습니다.</p>
+              <p>동의하지 않으면 외부 OCR·LLM 처리를 시작하지 않습니다. 이전 동의가 있더라도 현재 안내 버전과 다르면 다시 동의해야 합니다.</p>
+              <p>안내 버전: {consentGate.current_policy_version}</p>
+              <Button fullWidth onClick={grantConsentAndContinue} disabled={isGrantingConsent}>
+                확인하고 동의하기
+              </Button>
+            </div>
+          )}
           {message && <p className="mvp-form__message" role="alert">{message}</p>}
 
           {file && (
-            <Button fullWidth onClick={handleUpload}>
+            <Button fullWidth onClick={handleUpload} disabled={isGrantingConsent}>
               처방전 읽기
             </Button>
           )}
