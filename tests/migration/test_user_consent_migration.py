@@ -22,7 +22,6 @@ from app.core import config
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MIGRATION_PATH = PROJECT_ROOT / "backend/alembic/versions/207b1c2d3e4_create_user_consent.py"
 USER_CONSENT_REVISION = "207b1c2d3e4"
-USER_CONSENT_BASE_REVISION = "428a1b2c3d4e"
 
 
 def _alembic_config() -> Config:
@@ -35,6 +34,12 @@ def _load_migration() -> Any:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _base_revision() -> str:
+    migration = _load_migration()
+    assert isinstance(migration.down_revision, str)
+    return migration.down_revision
 
 
 @asynccontextmanager
@@ -201,13 +206,13 @@ def test_user_consent_migration_constraints_and_downgrade_guard() -> None:
         asyncio.run(_insert_valid_consent(user_id))
         asyncio.run(_assert_constraints(user_id))
         with pytest.raises(RuntimeError, match="Cannot downgrade user_consent"):
-            command.downgrade(alembic_config, USER_CONSENT_BASE_REVISION)
+            command.downgrade(alembic_config, _base_revision())
     finally:
         asyncio.run(_cleanup_user(user_id))
         command.upgrade(alembic_config, "head")
 
     try:
-        command.downgrade(alembic_config, USER_CONSENT_BASE_REVISION)
+        command.downgrade(alembic_config, _base_revision())
         constraints, _ = asyncio.run(_schema_snapshot())
         assert constraints == set()
     finally:

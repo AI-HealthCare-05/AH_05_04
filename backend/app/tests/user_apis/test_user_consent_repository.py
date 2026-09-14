@@ -1,6 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
@@ -124,3 +125,50 @@ async def test_user_consent_repository_does_not_use_other_users_consent(db_sessi
         purpose=ConsentPurpose.OCR,
         policy_version="ocr-consent.v1",
     )
+
+
+@pytest.mark.parametrize("purpose", list(ConsentPurpose))
+async def test_user_consent_repository_grants_each_supported_purpose(
+    db_session: AsyncSession,
+    purpose: ConsentPurpose,
+) -> None:
+    user = await _create_user(db_session)
+    repository = UserConsentRepository(db_session)
+    policy_version = f"{purpose.value.lower()}-consent.v1"
+
+    await repository.set_status(
+        user_id=user.id,
+        purpose=purpose,
+        status=ConsentStatus.GRANTED,
+        policy_version=policy_version,
+        changed_at=datetime.now(config.TIMEZONE),
+    )
+
+    assert await repository.is_granted(
+        user_id=user.id,
+        purpose=purpose,
+        policy_version=policy_version,
+    )
+
+
+@pytest.mark.parametrize("status", list(ConsentStatus))
+async def test_user_consent_repository_only_granted_status_allows(
+    db_session: AsyncSession,
+    status: ConsentStatus,
+) -> None:
+    user = await _create_user(db_session)
+    repository = UserConsentRepository(db_session)
+
+    await repository.set_status(
+        user_id=user.id,
+        purpose=ConsentPurpose.CHAT,
+        status=status,
+        policy_version="chat-consent.v1",
+        changed_at=datetime.now(config.TIMEZONE),
+    )
+
+    assert await repository.is_granted(
+        user_id=user.id,
+        purpose=ConsentPurpose.CHAT,
+        policy_version="chat-consent.v1",
+    ) is (status == ConsentStatus.GRANTED)
