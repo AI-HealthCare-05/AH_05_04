@@ -166,17 +166,25 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 | --- | --- | ---: | --- |
 | `POST` | `/api/v1/auth/signup` | `201 Created` | MVP 계정을 생성합니다. |
 
-요청 body는 MVP 기준으로 아래 세 필드만 허용합니다.
+요청 body는 MVP 계정 필드와 선택 목적별 동의 목록을 받습니다.
 
 ```json
 {
   "name": "홍길동",
   "email": "user@example.com",
-  "password": "Password123!"
+  "password": "Password123!",
+  "consents": [
+    {"purpose": "OCR"},
+    {"purpose": "GUIDE"}
+  ]
 }
 ```
 
 - `name`, `email`, `password`는 모두 필수입니다.
+- `consents`는 선택 필드입니다. 생략하거나 빈 배열이면 회원가입은 성공하고 목적별 동의 row를 만들지 않습니다.
+- `consents[].purpose`는 `OCR`, `GUIDE`, `CHAT`, `NOTIFICATION`만 허용하며 같은 목적은 한 번만 보낼 수 있습니다.
+- 클라이언트는 `policy_version`이나 `status`를 보내지 않습니다. 서버가 해당 목적의 현재 policy version으로 선택된 목적을 `GRANTED` 저장합니다.
+- 선택한 목적의 현재 policy version이 설정되어 있지 않으면 `503 CONSENT_POLICY_UNAVAILABLE`로 거부합니다.
 - `password`는 8~72자이며 대문자, 소문자, 숫자, 특수문자를 각각 1개 이상 포함해야 합니다.
 - `gender`, `birthday`, `phone_number` 등 가입 후 추가 정보 입력 대상 필드는 회원가입 요청에서 허용하지 않습니다.
 - MVP 범위 밖 필드가 포함되면 공통 `422 VALIDATION_FAILED` 응답을 반환합니다.

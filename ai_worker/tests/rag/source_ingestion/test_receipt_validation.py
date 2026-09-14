@@ -47,6 +47,22 @@ def test_loads_verified_product_receipt() -> None:
     assert len(evidence.receipt_hash) == 64
 
 
+def test_rejects_product_receipt_1_2_even_with_valid_gate_statistics(tmp_path: Path) -> None:
+    payload = deepcopy(_product_payload())
+    payload.update(
+        receipt_version="1.2",
+        primary_key_null_count=1,
+        excluded_empty_row_count=1,
+        enforced_primary_key_null_count=0,
+    )
+
+    path = tmp_path / "receipt.json"
+    _write_payload(path, payload)
+
+    with pytest.raises(ValueError, match="not supported for this operation"):
+        load_product_endpoint_receipt(path)
+
+
 @pytest.mark.parametrize(
     "change",
     [

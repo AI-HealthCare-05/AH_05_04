@@ -163,6 +163,10 @@ MFDS_DETAIL_CANDIDATE = MfdsEndpointCandidate(
         body_codes=_COMMON_BODY_CODES,
         # Internal execution bounds, not a provider limit or quota guarantee.
         limits=_limits(total_timeout_seconds=3600, max_pages=1500),
+        # 제공자가 성분 본문을 통째로 비워 반환하는 행이 있다. 실측 126,825행 중 31,697행이
+        # 해당하며 공식 상세 화면에는 성분이 존재하는 사례가 확인됐다. 성분 없음으로 해석하지
+        # 않고 통과 판정에서만 분리한다. 구성원 승격은 Catalog 계층이 계속 거부한다.
+        empty_record_fields=("TAMT_SEQ", "MTRAL_SN", "MTRAL_CODE", "QNT", "INGD_UNIT_CD"),
     ),
     secret_parameter_name="serviceKey",
     request_parameters=(("type", "json"),),
