@@ -99,3 +99,18 @@ PYTHONPATH=backend:. uv run pytest tests/integration/test_worker_ocr_consent.py 
 Frontend 테스트는 이번 재검증에 포함하지 않았다. 최소 전송 허용 항목·실제 LLM 구조화와
 실제 사용자 활성화도 검증하거나 승인하지 않았다. 이번 변경은 통합 테스트의 현행 Service
 연결·LLM 생략 회귀 검사와 검증 기록만 추가하며 실행 코드·DB schema·RLS·Trigger는 변경하지 않는다.
+
+## #539·#534·#533 병합 후 합성 흐름 확인
+
+- 병합된 `develop` `f97c280e`를 작업 브랜치에 반영했다. 위 `fb25a4c3` 결과와 구분한다.
+- `tests/fixtures/release_validation/ai_one_cycle_clova_openai_v1.png`를 API에 실제 업로드하고,
+  `OCR` 목적의 합성 policy version 동의 후 Job을 접수했다. Worker 완료 결과는 fixture와
+  일치하는 합성 필드로 대역 처리했다. Job·OCR 결과 조회에서 `SKIPPED_MINIMIZATION`을
+  확인하고 모든 필드를 사용자 검수 경로로 확인한 뒤 처방일·약품 확정까지 통과했다.
+- 실제 Worker runtime의 DB·Redis 처리와 LLM Provider 미호출은 별도 통합·단위 검사로
+  확인했다. 위 이미지 흐름에서 CLOVA 판독 또는 LLM 외부 호출을 실행했다는 뜻은 아니다.
+- Worker 단위 **33 passed**, Backend 동의·OCR API **69 passed**, PostgreSQL·Redis
+  통합 **21 passed**(기본 CI 제외 opt-in 검수 1건 포함), Frontend 전체 **419 passed**:
+  이번 선별 실행에서 **542 passed**.
+- Python 테스트 inventory·Alembic 단일 head(`178b1c2d3e4f`)와 수정 파일 Ruff 검사를
+  확인했다. 전체 Python CI와 운영 배포 smoke는 이번 로컬 실행 범위가 아니다.
