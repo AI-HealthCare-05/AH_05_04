@@ -1,0 +1,112 @@
+/* 공통 상태 패널. prototype.css 의 --ds-* 토큰을 그대로 사용합니다. */
+
+.status-panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 20px 16px;
+  border: 1px solid var(--ds-line);
+  border-radius: 14px;
+  background: var(--ds-surface);
+  color: var(--ds-text);
+  text-align: left;
+}
+
+/* 상태 라벨. 색 외에 기호와 텍스트로도 구분됩니다. */
+.status-panel__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 3px 10px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.status-panel__glyph {
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.status-panel__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.status-panel__description {
+  margin: 0;
+  color: var(--ds-text-muted);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.status-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.status-panel__retry {
+  min-height: 44px; /* 터치 영역 확보 */
+  padding: 10px 18px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--ds-action);
+  color: #fff;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.status-panel__retry:hover {
+  background: var(--ds-action-pressed);
+}
+
+.status-panel__retry:focus-visible {
+  outline: 3px solid var(--ds-focus);
+  outline-offset: 2px;
+}
+
+/* variant 별 색은 보조 신호입니다. 위 라벨 텍스트·기호가 1차 신호입니다. */
+.status-panel--loading .status-panel__label,
+.status-panel--empty .status-panel__label {
+  color: var(--ds-text-muted);
+}
+
+.status-panel--unavailable .status-panel__label {
+  color: var(--ds-attention);
+}
+
+.status-panel--error .status-panel__label,
+.status-panel--error-retryable .status-panel__label,
+.status-panel--error-final .status-panel__label {
+  color: var(--ds-danger);
+}
+
+/* 320px 대응: 여백을 줄이고 버튼을 한 줄 폭으로 */
+@media (max-width: 359px) {
+  .status-panel {
+    padding: 16px 12px;
+  }
+
+  .status-panel__title {
+    font-size: 15px;
+  }
+
+  .status-panel__retry {
+    width: 100%;
+  }
+}
