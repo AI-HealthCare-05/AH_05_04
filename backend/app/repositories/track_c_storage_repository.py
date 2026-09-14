@@ -45,6 +45,26 @@ class TrackCStorageRepository:
             )
         )
 
+    async def get_barrier_medication_owned(
+        self, *, barrier_id: UUID, user_id: UUID
+    ) -> tuple[BarrierResponse, UUID] | None:
+        """Resolve the reminder target from the owned parent chain, never a client ID."""
+        result = await self.session.execute(
+            select(BarrierResponse, PrescriptionVersionMedication.id)
+            .join(MedicationCheckin, MedicationCheckin.id == BarrierResponse.medication_checkin_id)
+            .join(MedicationOccurrence, MedicationOccurrence.id == MedicationCheckin.occurrence_id)
+            .join(MedicationSchedule, MedicationSchedule.id == MedicationOccurrence.medication_schedule_id)
+            .join(
+                PrescriptionVersionMedication,
+                PrescriptionVersionMedication.id == MedicationSchedule.prescription_version_medication_id,
+            )
+            .join(PrescriptionVersion, PrescriptionVersion.id == PrescriptionVersionMedication.prescription_version_id)
+            .join(Prescription, Prescription.id == PrescriptionVersion.prescription_id)
+            .where(BarrierResponse.id == barrier_id, owned_by_self(Prescription.profile_id, user_id))
+        )
+        row = result.one_or_none()
+        return (row[0], row[1]) if row is not None else None
+
     async def get_action_plan_owned(self, *, plan_id: UUID, user_id: UUID) -> SupportActionPlan | None:
         return await self.session.scalar(
             select(SupportActionPlan)

@@ -171,7 +171,8 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - 실제 Check-in 부모에 Safety·Barrier·Plan·Follow-up 이력을 연결하는 저장 기반이다.
   HandlerConfig 상세, 공개 mutation, #195 무효화와 Track C 공개는 미완료다.
 - [HandlerConfig 구체안 — Proposed](proposed/track-c-handler-config-192.md):
-  기존 Plan JSONB 기반 설정·버전·지원별 허용 필드 및 #194 실행 인계 제안. 미승인·미구현이다.
+  기존 Plan JSONB 기반 설정·버전·지원별 허용 필드 및 #194 실행 인계 제안. 내부 저장·검증 경계는
+  구현 중이며 제품 문구·버전 정본과 공개 실행은 미확정이다.
 
 
 ### #458 Worker 동의 조회·재검사 로컬 구현
