@@ -251,8 +251,6 @@ class MedicationIdentificationService:
         )
         if medication_ids is None:
             raise self._preflight_version_conflict_error()
-        if not medication_ids:
-            raise self._preflight_identification_incomplete_error(reason="ACTIVE_MEDICATION_REQUIRED")
 
         identifications = await self._repository.get_matched_identifications_for_update(
             prescription_version_medication_ids=medication_ids
