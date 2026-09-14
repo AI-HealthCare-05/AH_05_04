@@ -35,7 +35,7 @@
 | `ASYNC_KERNEL_SEAM` | `ai_worker/tasks/evaluation/protected_retrieval.py` | `7c092a4036bfe45841a245ccf705ba2a68f50145636734dfde7ea91da26fd84c` |
 | `POSTGRESQL_ADAPTER` | `ai_worker/adapters/postgresql_protected_retrieval.py` | `c3d2cd602bd245a04a6ca16bed45ecb0a6cf64a2802ca842524310a9161d0a16` |
 | `FAIL_CLOSED_CONFIG` | `ai_worker/core/config.py` | `7801d556f6a54f05a0ec5937c18e8f46b4160f26d8e7b98ce1fb4a829b0f09b6` |
-| `EXPLICIT_RUNTIME_ASSEMBLY` | `ai_worker/core/runtime_assembly.py` | `008be1c5a5d6b5b0b6d824e320a4e208de690b928ed217ed120d66b384c52bf0` |
+| `EXPLICIT_RUNTIME_ASSEMBLY` | `ai_worker/core/runtime_assembly.py` | `c0b0e9a471a6161333eca5615173947ccf5b6857d8b718a089ca1a469d8c47b1` |
 | `PROTECTED_ROLE_POLICY` | `infra/python/protected_retrieval_role_policy.py` | `72cd86476abdb64551eef4fa72c81221907b285b8be9179fd504e4f248bd5d15` |
 | `ISOLATED_MIGRATION_ENV` | `infra/protected_retrieval/env.py` | `4853f8178ea611df177900573e6593c8bdc76db86a039ebd6f299013895fdbf3` |
 | `ISOLATED_MIGRATION` | `infra/protected_retrieval/versions/368000000001_create_protected_retrieval.py` | `20ed57547853a39ae5254d69dd71873e0a26223a705c5231e50dc8aa7416c68d` |
