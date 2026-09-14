@@ -276,6 +276,8 @@ def _load_endpoint_receipt(
     receipt_version = payload.get("receipt_version")
     if receipt_version not in _SUPPORTED_RECEIPT_VERSIONS:
         raise ValueError("Endpoint receipt version is not supported.")
+    if receipt_version == "1.2" and not contract.empty_record_fields:
+        raise ValueError("Endpoint receipt 1.2 is not supported for this operation.")
     _require_exact_value(payload, "execution_status", "COMPLETED")
     _require_exact_value(payload, "source_run_status", "SUCCEEDED")
     _require_exact_value(payload, "parser_activation_allowed", True)
