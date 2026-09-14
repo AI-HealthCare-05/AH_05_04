@@ -33,11 +33,11 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 처방 | `prescription`, `medication` | 사용자 확정 처방과 약물 저장 |
 | 가이드 | `guide` | 동기 생성 상태·본문·모델·프롬프트 버전 저장 |
 | 채팅 | `chat_session`, `chat_message` | 세션과 USER·ASSISTANT 메시지, 생성 상태 저장 |
-| 의료 지식 | `knowledge_document`, `knowledge_chunk` | Schema-only Post-MVP 골격, 현재 검색 경로에서 미사용 |
+| 의료 지식 | `knowledge_document`, `knowledge_chunk`, `rag_knowledge_index`, `rag_knowledge_index_member` | #178 선행 Knowledge Evidence Index 저장 기반 구현 브랜치. Source 결속·불변 receipt는 연결됐으나 실제 검색 경로에서는 아직 미사용 |
 | 인용 | `guide_citation`, `chat_citation` | Schema-only Post-MVP 골격, 현재 생성·API 경로에서 미사용 |
 | 비동기 실행 | `ai_job`, `outbox_event`, `idempotency_record` | `JobIntakeService`(#147)의 Job 접수 transaction과 DB Outbox 선점·`WorkerMessage` 조립·Redis 발행·fencing 완료(#219)가 repository·service 계층에 연결됨. 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 미연결(#148) |
 | 비동기 실행(schema-only) | `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event` | Schema-only Post-MVP 골격, 현재 repository·service·API 경로에서 미사용 |
-| RAG Source·Catalog | `rag_source`, `rag_source_endpoint`, `rag_source_operation`, `rag_source_snapshot`, `rag_source_ingestion_run`, `rag_source_ingestion_artifact`, `rag_source_snapshot_verification`, `rag_entity_identity`, `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component`, `rag_medication_search_entry`, `rag_catalog_set`, `rag_catalog_set_source`, `rag_catalog_set_member`, `rag_catalog_set_hash` | #164·#165 기반과 #166 안정 Identity·Catalog 구성원·불변 v2 Set/manifest 저장 기반. D-02 실행 provenance와 Runtime 활성화는 후속 범위 |
+| RAG Source·Catalog | `rag_source`, `rag_source_endpoint`, `rag_source_operation`, `rag_source_snapshot`, `rag_source_snapshot_member`, `rag_source_ingestion_run`, `rag_source_ingestion_artifact`, `rag_source_snapshot_verification`, `rag_entity_identity`, `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component`, `rag_medication_search_entry`, `rag_catalog_set`, `rag_catalog_set_source`, `rag_catalog_set_member`, `rag_catalog_set_hash` | #164·#165 기반과 #166 안정 Identity·Catalog 구성원·불변 v2 Set/manifest, #178 선행 Snapshot member 저장 기반. D-02 실행 provenance와 Runtime 활성화는 후속 범위 |
 
 본인 단일 `SELF` profile과 `profile_id` 기반 소유권 전환은 #117 구현 PR에서 도입했습니다. 보호자·멀티 프로필·위임 권한은 후속 범위이며, 현재 구현은 사용자 1명당 `SELF` profile 1개만 허용합니다. 복약 일정·occurrence와 Check-in 저장·정정 경계는 아래 분할 구현 상태를 따르며, B4 공개 API와 Track C 상세 구현은 아직 목표 계약이다.
 
@@ -261,6 +261,29 @@ Production에서는 연결 정보를 제거하는 downgrade 대신 forward-fix�
 
 ## RAG Source·Catalog DB 기반
 
+### #178 Knowledge Evidence Index 선행 저장 기반
+
+Revision `178a1b2c3d4e`는 기존 Knowledge 골격을 폐기하지 않고 다음 저장 경계를 추가한다.
+
+- `rag_source_snapshot_member`: 하나의 unsealed `PENDING` Snapshot 안에서 Endpoint/Operation 또는 captured
+  Artifact origin 하나만 선택하고 locator와 content SHA-256을 결속한다. 이후 `CURRENT` 전이가 member set을
+  고정하며 index adapter는 CURRENT Snapshot만 소비한다.
+- `knowledge_document.record_contract_version`: 기존 row는 `LEGACY_V1`로 보존하며 새
+  `KNOWLEDGE_EVIDENCE_V1` row만 Snapshot member·external document ID·document hash·canonicalization
+  version을 요구한다.
+- `knowledge_chunk`: legacy external vector 필드는 nullable로 유지하고 production Chunk에는 content hash와
+  normalization version을 요구한다.
+- `rag_knowledge_index`: index code/version, model ref/version, dimension, `COSINE`, corpus·embedding·configuration
+  hash와 member count를 보존하는 완성 artifact다.
+- `rag_knowledge_index_member`: stable Chunk 좌표, Source Snapshot 결속, PostgreSQL `vector`, 개별 embedding
+  SHA-256과 결정적 member order를 보존한다.
+
+Python adapter는 Source→Endpoint→Operation→Snapshot→member→Document→Chunk를 잠가 exact-match한 뒤 한
+transaction에서 전체 index를 기록하고 persisted row로 receipt를 재계산한다. 동일 code/version은 세 hash와
+configuration이 모두 같을 때만 재사용하며 다른 값은 안전한 version conflict다. migration downgrade는 새
+member/index 또는 production Knowledge data가 있으면 손실 전에 중단한다. 이 기반은 Proposed 계약이며
+lexical/dense 조회, RRF, rerank, Evidence Gate, Retrieval Run, Evaluation과 Runtime 공개를 구현하지 않는다.
+
 Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapshot/Catalog 최소 DB 기반을 추가합니다. Revision `165a4b3c2d1e`는 수집 실행별 원본 Artifact 참조와 무결성 메타데이터를 추가하고, `165b5c4d3e2f`는 거부 원문의 안전한 추적 필드를 추가합니다. Revision `166a7b8c9d0e`는 #166의 안정 Identity, Alias 상태·출처와 Search Entry 저장 기반을 추가합니다. Revision `166b8c9d0e1f`는 기존 v2 envelope와 계산 bytes를 보존하는 불변 Catalog Set·Source·member·hash 구조를 추가합니다. 정본 `normalization_run_id`에 해당하는 D-02는 미확정이며 두 #166 revision 모두 실행 테이블·대체 FK를 넣지 않습니다.
 
 이번 분할 범위의 ID/FK 매핑은 기존 애플리케이션 호환성을 우선해 `UUIDChar` 기반 `CHAR(36)`을 사용합니다. 신규 독립 RAG/Eval ID의 PostgreSQL native `UUID` 전환은 별도 승인 migration 범위이며, 이 PR에서 타입을 섞지 않습니다.
@@ -285,6 +308,40 @@ D-04 Component 전환안 (`e8c41a09d652`, #166 리뷰 대상):
   transaction과 일반 제약으로 무결성을 관리하며 RLS·Trigger를 추가하지 않는다.
 - 기존 순서 충돌은 migration을 중단시킨다. downgrade는 반복 행·release_profile 손실이
   발생할 때 거부한다. 세부 호환성은 [D-04 결정안](governance/decisions/2026-09-11-catalog-component-occurrences.md)을 따른다.
+
+D-04 관찰 출처 후속안 (`166f30415263`, PR #477)은 위 #464 구조를 확장한다.
+Component의 두 참조 Snapshot 열을 별도로 보존하고 Product/Ingredient 각각의 composite FK로
+결속한다. 자체 상세 Snapshot을 포함한 `(product_id, source_snapshot_id, display_order)`가 새
+고유성이다. `observation_json` BYTEA에는 원문 총량 그룹·관찰 키·출처·순서 계약을 보존한다.
+기존 행의 참조 출처만 FK 근거로 이행하며 관찰 값을 추론하지 않는다. 출처·관찰 정보 손실이
+있으면 downgrade를 거부한다. 검증·저장·복원은 Python transaction에서 수행한다.
+[필드·v2/v3 인계 계약](contracts/proposed/post-mvp-1/catalog-db-integration-v2.md),
+[결정 및 합의 근거](governance/decisions/2026-09-13-component-observation-handoff.md)를 함께 확인한다.
+[정현우 담당 범위 승인 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/477#pullrequestreview-5190458759)는
+HEAD `c58f09686d3a72567793ee237abeb500ab04e710`의 MFDS 매핑·총량 그룹·출처·Candidate 인계를
+확인한 증빙이다. 실제 수집·MFDS 공식 의미·운영 활성화 승인을 의미하지 않는다.
+
+D-04 상세 수집기 후속은 [상세 수집·Snapshot 생산 계약](contracts/proposed/post-mvp-1/mfds-detail-acquisition-166.md)을 따른다.
+새 DB 구조 없이 별도 상세 Operation을 기존 Source Snapshot/Run/Artifact에 연결하는 구현 PR 검토 대상이다.
+전체 상세 원문을 검증하며 빈 키·중복·제외 행이 있으면 실패 Run과 원문만 보존한다.
+일부 행에 전체 Snapshot Receipt를 붙이거나 성공 Snapshot으로 보정하지 않는다.
+
+
+`rag_catalog_set`은 현재 Catalog의 manifest·Source·member·hash를 결속하는 저장·재현 구성 단위다.
+기존 v2와 관찰 v3 export를 수용한다. Set 종류 컬럼은 없으며, `RagCatalogMemberKind`의
+`PRODUCT / INGREDIENT / COMPONENT / ALIAS / SEARCH_ENTRY`는 Set 안의 구성원 종류다.
+`member_kind=ALIAS`는 `alias_id`로 실제 Alias 행을 참조한다. 따라서 **Alias가 Catalog Set에
+포함되는 관계이며, 독립 Authority Alias Set(alias_set/alias_set_member)의 대체 관계가 아니다.**
+독립 Alias Set 구현·승인·Runtime 연결 완료를 의미하지 않는다.
+
+D-03 Crosswalk는 현재 P0 소비 경로가 없어 #166의 즉시 구현 범위에서 제외한다.
+`rag_catalog_set`을 Crosswalk Set으로 재해석하거나 승인 입력 없이 매핑·빈 READY Set을
+생성하지 않는다. Alias D-03a 및 D-04 원료 관찰 연결과 구분하며,
+[D-03 범위 결정·공개 확인 근거·재개 조건](governance/decisions/2026-09-13-catalog-crosswalk-scope.md)을 따른다.
+
+D-05 전체 hash 전환과 Runtime medication Catalog manifest 구성·연결은 후속 보류다.
+기존 v2·관찰 v3 envelope 및 현재 저장 구조는 유지한다. Product Identity 한정 projection도
+실제 필요 확인 뒤 별도 계약으로 검토하며 [답변 기록·재개 조건](governance/decisions/2026-09-13-catalog-d05-transition-scope.md)을 따른다.
 
 Source/Snapshot 책임 경계:
 
@@ -580,7 +637,9 @@ Runtime 전이 이력은 Runtime SELECT·INSERT 권한만 갖는 append-only 테
 
 AI Job Preflight Context 최소 DB 기반은 `ai_job_intake_context`로 Chat Safety Intake 시점의 필수 질문 digest·Prescription Version·Runtime Bundle/환경·Execution Manifest id/hash·Guard ref를 고정하고, `ai_job_execution_context`로 Guide 또는 Chat ROUTINE Full Execution 시점의 동일 Runtime 기준과 Source scope hash를 고정합니다. `ai_job_execution_identification`은 Full Context가 참조한 `MATCHED` Identification member set을 중복 없이 보존합니다. DB composite FK는 Runtime Bundle과 Execution Manifest의 id/hash 결속, Execution Context와 Intake Context의 같은 Job 결속, 그리고 `medication_identification_id`와 `prescription_version_medication_id`의 약-Identification 일치를 강제합니다. Prescription Version 동일성은 composite FK가, `MATCHED` 상태는 repository 조회 조건이 강제합니다. 이 구조는 저장 기반만 제공하며 Guide/Chat 접수 API 전환, Outbox 원자 생성, Worker 실행, 결과 commit currentness 재검증, Citation 공개 Guard와 Frontend DTO 연결은 후속 PR에서 처리합니다.
 
-OCR Candidate Index와 의료 Evidence Index는 별도 version과 물리 경계를 가지며, pgvector는 OCR 후보 보조 단계에만 사용합니다. HIRA 적용약가 데이터는 공식 제품 식별 입력·정답 원장·상호작용 근거로 사용하지 않습니다.
+OCR Candidate Index와 Knowledge Evidence Index는 별도 version, hash, table, vector port와 테스트 경계를
+가진다. pgvector는 각 경계에서 독립적으로 사용하며 Candidate vector를 의료 근거로 재사용하지 않는다.
+HIRA 적용약가 데이터는 공식 제품 식별 입력·정답 원장·상호작용 근거로 사용하지 않습니다.
 
 `OTC_IDENTIFICATION`, `OTC_EVALUATION`, `OTC_RULE_MATCH` 같은 Track D 전용 평가 모델은 목표 schema에서 사용하지 않습니다. OTC는 기존 Chat 결과·Citation을 재사용하지만 `interaction_rule`과 `rule_evidence`는 Track F 내부 결정 규칙과 근거 원장으로 유지합니다.
 
@@ -614,6 +673,13 @@ efresh_session(active_jti, updated_at), password_reset_token(used_at) UPDATE만 
 
 `rag_source_snapshot.management_lock_marker`는 INTEGER NOT NULL DEFAULT 0이며 CHECK로 0에 고정한다. SELECT FOR UPDATE 권한을 충족하는 기술 표식으로, API 필드·검증 시각·provenance·revision·게시 승인 의미가 없다. 관리 역할은 이 컬럼만 UPDATE할 수 있고 `verified_at`/`effective_at`/seal은 직접 수정할 수 없다. 관리 row hash에서는 표식만 제외해 도입 전 hash를 유지한다. migration `3984b5c6d7e8` 적용 후 권한 provisioning을 재실행해야 기존 검증 시각 UPDATE 권한이 회수된다.
 
+#178 migration `178a1b2c3d4e`는 Knowledge Index build가 parent chain을 `SELECT FOR UPDATE`로 검증할 수 있도록
+관련 Source·Knowledge·Index row에 `knowledge_index_lock_marker INTEGER NOT NULL DEFAULT 0 CHECK (... = 0)`를
+둔다. Snapshot은 기존 `management_lock_marker`를 공유한다. 전용 Builder는 이 고정 컬럼만 UPDATE할 수 있고
+Source·Knowledge 업무 필드는 수정할 수 없다. Builder는 Knowledge document/chunk와 Index/member에
+SELECT·INSERT만, Runtime은 같은 read set에 SELECT만 가진다. Builder 환경변수가 비어 있으면 이 선택형
+권한 경계는 활성화되지 않으며 Track F 공개 상태에도 영향을 주지 않는다.
+
 ## #423 Schedule Audit — develop 반영 완료
 
 Migration `423a1b2c3d4e`는 `medication_schedule_audit`와 occurrence의 nullable UTC `cancelled_at`을 추가한다. 감사 컬럼·revision/actor/unique·snapshot 의미는 [일정 정합화 v1 §3](contracts/targets/post-mvp-1/track-b-schedule-reconciliation-v1.md)을 따른다. Schedule·actor FK는 RESTRICT이며 기존 #398 역할 provisioning은 Runtime에 SELECT/INSERT만 부여해 감사 UPDATE/DELETE/TRUNCATE를 차단한다. Migration 이후 역할 provisioning을 재실행한다. DB trigger와 ORM event는 사용하지 않는다. 기존 time row는 보존하고 retire는 schedule 상태·revision으로 판정한다. 종료는 revision과 SCHEDULER audit을 같이 추가하며 기존 occurrence·Check-in·time FK를 보존한다.
@@ -625,3 +691,21 @@ Migration `423a1b2c3d4e`는 `medication_schedule_audit`와 occurrence의 nullabl
 `notification_record`는 occurrence FK와 `(occurrence_id, kind)` unique를 가지며 최초 알림·재알림을 각각 하나만 보존한다. kind는 `SCHEDULED|REMINDER`, status는 `PENDING|DELIVERED|CANCELLED`이며 전달·취소 timestamp와 attempt `0|1` 정합성을 DB CHECK로 강제한다. `read_at`은 전달 후 최초 시각만 저장한다. occurrence parent chain으로 SELF 소유권을 확인하며 별도 사용자·의료 본문 복제는 없다.
 
 Migration은 `203a1b2c3d4e`이고 상세 컬럼·FK·rollback 동작은 [Notification 계약](contracts/proposed/track-b-notifications-v1.md)의 구현 절을 따른다. Check-in·일정·처방 변경은 알림 row를 삭제하지 않는다. 부모 occurrence의 정식 삭제는 FK CASCADE로 알림을 정리하지만 부모 자체의 기존 삭제 제한은 유지한다. Notification 이력이 있으면 downgrade는 중단한다.
+
+## Track C C1 저장 기반 — #192 / PR #310 리뷰 대상
+
+최신 Track B Check-in 부모에 `safety_assessment`, `barrier_response`, `support_action_plan`,
+`action_plan_followup`, `action_plan_followup_audit`를 연결한다. Check-in의 현재 revision은
+변경되므로 이력의 revision은 snapshot으로 보존하며 현재 revision FK를 만들지 않는다.
+Barrier는 근거 Safety의 Check-in ID·revision을 복합 FK로 결속하고, 같은 Barrier의 ACTIVE
+Plan은 partial unique로 최대 하나다. Follow-up 현재값과 정정 감사는 분리한다.
+
+SELF 소유권은 Python repository가 기존 Prescription 부모 chain으로 검증한다.
+이 PR은 저장 기반·소유권 조회만 제공한다. append-only 쓰기, 최신 상태 판정·정정·무효화는
+#193~#195의 Application Service/Repository transaction 연결 범위다.
+신규 RLS·Trigger·업무용 DB 함수는 없고, 5개 테이블에 이력이 있으면 downgrade를 중단한다.
+Handler별 config schema·운영 seed·공개 API는 추가하지 않는다.
+
+정본: [저장 계약](contracts/proposed/track-c-storage-v1.md),
+[결정/기존 합의 근거](governance/decisions/2026-09-13-track-c-storage-192.md),
+[검증 기록](testing/track-c-storage-192.md).

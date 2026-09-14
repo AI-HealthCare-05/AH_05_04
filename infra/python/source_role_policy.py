@@ -14,6 +14,7 @@ SOURCE_TABLES = (
     "rag_source_endpoint",
     "rag_source_operation",
     "rag_source_snapshot",
+    "rag_source_snapshot_member",
     "rag_source_ingestion_run",
     "rag_source_ingestion_artifact",
     "rag_source_snapshot_verification",

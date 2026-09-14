@@ -10,6 +10,7 @@ from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from infra.python.catalog_role_policy import apply_catalog_role_policy
+from infra.python.knowledge_index_role_policy import apply_knowledge_index_role_policy
 from infra.python.source_management_role_policy import CATALOG_TABLES, apply_management_role_policy
 from infra.python.source_role_policy import SOURCE_TABLES, apply_source_role_policy, quoted_identifier
 
@@ -21,7 +22,6 @@ RUNTIME_MUTABLE_TABLES = frozenset(
     "medication_candidate_search medication_identification "
     "ocr_job extracted_field chat_session chat_message chat_citation "
     "medication_schedule medication_schedule_time medication_occurrence medication_checkin "
-    "knowledge_document knowledge_chunk "
     "eval_dataset eval_case eval_experiment eval_variant eval_run eval_case_result eval_metric eval_failure "
     "rag_runtime_execution_manifest rag_runtime_release_bundle rag_runtime_bundle_source "
     "rag_runtime_environment rag_release_evaluation_approval".split()
@@ -41,6 +41,13 @@ RUNTIME_AUTH_UPDATE_COLUMNS = {
 }
 
 
+def validate_distinct_role_names(*names: str | None) -> None:
+    """Reject credential sharing across configured database responsibility boundaries."""
+    configured = [name for name in names if name]
+    if len(configured) != len(set(configured)):
+        raise ValueError("Database roles must be distinct")
+
+
 async def provision_roles(
     connection: AsyncConnection,
     *,
@@ -49,8 +56,10 @@ async def provision_roles(
     writer: str,
     management: str | None = None,
     catalog_writer: str | None = None,
+    knowledge_index_builder: str | None = None,
 ) -> None:
     """Caller must use a single admin transaction; failure must roll it back."""
+    validate_distinct_role_names(owner, runtime, writer, management, catalog_writer, knowledge_index_builder)
     owner_sql, runtime_sql, writer_sql = (quoted_identifier(value) for value in (owner, runtime, writer))
     # Validates real role boundaries and rejects the legacy transition function before granting anything.
     await apply_source_role_policy(connection, schema="public", owner=owner, runtime=runtime, writer=writer)
@@ -85,6 +94,7 @@ async def provision_roles(
         | CATALOG_TABLES
         | set(SOURCE_TABLES)
         | set(RUNTIME_AUTH_UPDATE_COLUMNS)
+        | {"notification_record"}
     )
     if not required.issubset(present):
         raise ValueError("Required application tables are missing; apply migrations before provisioning")
@@ -96,6 +106,8 @@ async def provision_roles(
             await connection.execute(
                 text(f"GRANT {privileges} ON TABLE public.{quoted_identifier(table)} TO {runtime_sql}")
             )
+    # #434: notification creation/publication/read require DML, never history deletion.
+    await connection.execute(text(f"GRANT SELECT, INSERT, UPDATE ON TABLE public.notification_record TO {runtime_sql}"))
     for table, columns in RUNTIME_AUTH_UPDATE_COLUMNS.items():
         target = f"public.{quoted_identifier(table)}"
         names = ", ".join(quoted_identifier(column) for column in columns)
@@ -121,14 +133,42 @@ async def provision_roles(
             connection, owner=owner, runtime=runtime, writer=writer, management=management
         )
 
+    await _apply_optional_role_policies(
+        connection,
+        owner=owner,
+        runtime=runtime,
+        source_writer=writer,
+        management=management,
+        catalog_writer=catalog_writer,
+        knowledge_index_builder=knowledge_index_builder,
+    )
+
+
+async def _apply_optional_role_policies(
+    connection: AsyncConnection,
+    *,
+    owner: str,
+    runtime: str,
+    source_writer: str,
+    management: str | None,
+    catalog_writer: str | None,
+    knowledge_index_builder: str | None,
+) -> None:
     if catalog_writer:
         await apply_catalog_role_policy(
             connection,
             owner=owner,
             runtime=runtime,
             writer=catalog_writer,
-            source_writer=writer,
+            source_writer=source_writer,
             management=management,
+        )
+    if knowledge_index_builder:
+        await apply_knowledge_index_role_policy(
+            connection,
+            owner=owner,
+            runtime=runtime,
+            builder=knowledge_index_builder,
         )
 
 
@@ -145,11 +185,15 @@ async def run_provisioning(environment: Mapping[str, str]) -> None:
     )
     if any(not environment.get(name, "").strip() for name in names):
         raise ValueError("Missing database provisioning configuration")
-    if (
-        len({environment[name] for name in ("DB_ADMIN_USER", "DB_MIGRATION_USER", "DB_APP_USER", "SOURCE_WRITER_USER")})
-        != 4
-    ):
-        raise ValueError("Database roles must be distinct")
+    validate_distinct_role_names(
+        environment["DB_ADMIN_USER"],
+        environment["DB_MIGRATION_USER"],
+        environment["DB_APP_USER"],
+        environment["SOURCE_WRITER_USER"],
+        environment.get("SOURCE_MANAGEMENT_USER") or None,
+        environment.get("CATALOG_WRITER_USER") or None,
+        environment.get("KNOWLEDGE_INDEX_BUILDER_USER") or None,
+    )
     engine = create_async_engine(
         URL.create(
             "postgresql+asyncpg",
@@ -170,6 +214,7 @@ async def run_provisioning(environment: Mapping[str, str]) -> None:
                 writer=environment["SOURCE_WRITER_USER"],
                 management=environment.get("SOURCE_MANAGEMENT_USER") or None,
                 catalog_writer=environment.get("CATALOG_WRITER_USER") or None,
+                knowledge_index_builder=environment.get("KNOWLEDGE_INDEX_BUILDER_USER") or None,
             )
     finally:
         await engine.dispose()

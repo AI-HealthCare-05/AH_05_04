@@ -370,6 +370,16 @@ PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Co
 - 자동 Guide는 모든 활성 약의 현재 Identification 전에는 Job을 만들지 않고 동기 `REVIEW_REQUIRED`를 반환합니다. Chat은 Identification 전에도 최소 Safety Intake Job을 만들 수 있지만, `ROUTINE`만 Identification Preflight 후 일반 Rule·RAG로 진행합니다. `URGENT | EMERGENCY | UNKNOWN`은 일반 Retrieval·Composer·Provider 호출 0건을 검증합니다.
 - 처방·Identification·Source·Runtime Bundle 변경 뒤 과거 결과가 `STALE`인지 검증합니다.
 
+### #178 Knowledge Evidence Index 선행 기반
+
+`tests/integration/rag/test_knowledge_evidence_index_postgresql.py`는 매 실행마다 별도 PostgreSQL database를
+만들고 전체 Alembic head를 적용한다. pgvector extension version, Source Snapshot member parent 결속,
+완성 index의 vector round-trip과 receipt 재계산, 동일 버전 멱등 재생, 동시 생성 직렬화, 변경 receipt 충돌
+rollback과 민감 합성 sentinel 비노출을 검증한 뒤 database를 제거한다. Worker 기본 lane의 차단된 DB 포트를
+우회하지 않도록 이 테스트는 `tests/integration/rag`의 Backend PostgreSQL lane에서만 실행한다.
+
+상세 실행 증빙과 미완료 #178 범위는 [Knowledge Evidence Index #178 검증 기록](./testing/knowledge-evidence-index-178.md)을 따른다.
+
 ### Track F Evaluation Release Gate
 
 - Release 통합 Experiment Type은 `END_TO_END_RAG`이며 `HOLDOUT`과 `SAFETY_REGRESSION`을 모두 요구합니다. `END_TO_END_FINAL`은 저장하거나 혼용하지 않습니다.
@@ -424,3 +434,11 @@ Track별 요구사항·계약·소유자·예정 테스트·승인 증빙은 [Po
 PostgreSQL·실제 ASGI 앱으로 검증한다. 기본 runner의 Backend 수집 범위에 포함한다.
 [실행 결과와 재현 방법](./validation/track-b/issue-202-schedule-api.md),
 [Frontend 합성 fixture](./validation/track-b/issue-202-schedule-fixtures.json)를 참조한다.
+
+### #434 알림 운영 검증
+
+알림 명령의 실제 transaction 복구·501건 backlog·Runtime DB 권한 및 Docker 시작/중지
+검증은 [#434 기록](./validation/track-b/issue-434-notification-operations.md)을 참고한다.
+`backend/app/tests/notifications`, `tests/contract/test_notification_runtime_configuration.py`,
+`tests/integration/rag/test_database_role_provisioning.py`는 기본 필수 runner에 포함된다.
+실제 Local Docker smoke와 Production 적용 여부는 별도로 기록한다.

@@ -14,12 +14,10 @@
 
 현재 MVP의 OCR 요청은 Outbox·Redis Stream·`ai-worker`를 사용하는 비동기 경로이며,
 Consumer, 실제 CLOVA OCR Provider와 Outbox Publisher 주기 실행까지 구현되어 있습니다.
-다만 이 Runbook이 사용하는 `scripts/deployment.sh`는 Worker health check·운영 관제와
-Production 배포 조립을 아직 포함하지 않아 `ai-worker` image를 build·push·시작하지
-않습니다. 따라서 이 제한된 AWS 데모 구성만으로는 OCR Job을 terminal 상태까지 처리할
-수 없으며, 아래 전체 MVP browser smoke를 통과했다고 기록할 수 없습니다. Worker를
-Production 배포 대상에 추가하는 작업은 해당 운영 조건과 검증을 함께 완료하는 별도
-구현 범위입니다.
+이 Runbook의 `scripts/deployment.sh`는 FastAPI·Frontend·Worker image를 build·push하고
+`fastapi`, `ai-worker`, `nginx`를 함께 시작합니다. Worker 프로세스가 Consumer와
+Outbox Publisher·Reconciler·DLQ Scheduler를 함께 실행하므로 별도 Scheduler를 추가하지 않습니다.
+이는 배포 코드의 구성 상태이며 실제 AWS OCR smoke 통과나 공개 승인 증빙은 아닙니다.
 
 ## 책임과 배포 차단
 
@@ -64,7 +62,7 @@ origin을 직접 우회하지 못하게 합니다. 단일 EC2이므로 고가용
 4. 팀이 승인한 비용 상한으로 AWS Budget을 만들고 50%, 80%, 100% actual-cost 알림을
    권가빈에게 설정합니다.
 5. 2026-09-30 철거 일정을 팀 캘린더에 등록합니다.
-6. 배포할 commit SHA와 직전 정상 `APP_VERSION`, `FRONTEND_VERSION`을 기록합니다.
+6. 배포할 commit SHA와 직전 정상 `APP_VERSION`, `FRONTEND_VERSION`, `AI_WORKER_VERSION`을 기록합니다.
 
 CloudFront 기본 hostname과 기본 인증서를 쓰면 별도 도메인을 구매하지 않아도 됩니다.
 이는 무료 배포라는 뜻이 아니며 EC2, EBS, CloudFront 전송·요청 등 실제 AWS 사용량은
@@ -138,10 +136,9 @@ bash scripts/deployment.sh
 - Docker registry PAT, `~/.ssh` 아래 EC2 key 파일명, EC2 IP 또는 hostname을 입력합니다.
 - `TLS_TERMINATION=cloudfront`이면 HTTP/HTTPS 선택을 묻지 않고 CloudFront origin용 HTTP
   Nginx 설정을 적용합니다.
-- FastAPI와 Frontend image를 고정 태그로 build·push합니다.
+- FastAPI·Frontend·Worker image를 고정 태그로 build·push합니다.
 - PostgreSQL과 Redis health를 기다린 뒤 migration 전 backup·snapshot을 생성합니다.
-- 기존 애플리케이션 중지, migration과 profile 무결성 검증이 성공한 경우에만 FastAPI와
-  Nginx를 시작합니다.
+- 기존 애플리케이션 중지, migration과 profile 무결성 검증이 성공한 경우에만 공유 업로드 경로를 생성하고 FastAPI·Worker·Nginx를 시작합니다.
 - CloudFront 모드에서는 `scripts/certbot.sh`를 실행하지 않습니다.
 
 EC2에서 다음 상태를 확인합니다.
@@ -149,10 +146,10 @@ EC2에서 다음 상태를 확인합니다.
 ```bash
 cd ~/project
 docker compose ps
-docker compose logs --no-color --tail=100 fastapi nginx
+docker compose logs --no-color --tail=100 fastapi ai-worker nginx
 ```
 
-`postgres`, `redis`, `fastapi`, `nginx`가 healthy이고 `migrate`가 정상 종료되어야 합니다.
+`postgres`, `redis`, `fastapi`, `ai-worker`, `nginx`가 healthy이고 `migrate`가 정상 종료되어야 합니다.
 
 ## 5. 배포 Smoke test
 
@@ -169,16 +166,35 @@ EC2 public DNS의 `/`, `/assets/*`, `/api/*`에 `X-Origin-Verify` 없이 직접 
 컨테이너 health check를 위해 header를 요구하지 않지만 Security Group이 CloudFront 외
 접근을 차단해야 합니다.
 
-위 검사는 현재 Worker 미포함 배포 범위의 인프라·Frontend·Backend 기본 smoke입니다.
-로그인과 보호 route 접근까지 확인할 수 있지만, 비동기 OCR 완료를 전제로 하는 전체 MVP
-흐름의 통과 증빙은 아닙니다.
+### Worker 기동·관제 및 합성 OCR smoke
 
-### 전체 MVP browser smoke — Worker Production 조립 전 실행 차단
+- CLOVA endpoint/secret은 필수이며 배포 전에 누락·placeholder와 HTTPS 여부를 검증합니다.
+  `PUBLIC_TRACK_F_ENABLED`, `OCR_STRUCTURE_LLM_ENABLED`, `CHAT_HISTORY_CONTEXT_ENABLED`,
+  `PROTECTED_RETRIEVAL_ENABLED`는 false를 유지합니다. Provider secret은 출력하지 않습니다.
+- Worker에는 Runtime DB 자격 증명과 인증된 Redis만 전달하며 공유 media volume은 읽기 전용입니다.
+  업로드 전 빈 volume에서도 기동할 수 있도록 migration 후 API image로 STORAGE_DIR을 생성합니다.
+- Docker readiness는 DB `SELECT 1`, Redis PING·Consumer Group 존재, 업로드 디렉터리 읽기 권한을
+  확인합니다. Provider를 호출하거나 작업을 읽고 ACK하지 않습니다. 기동 후 group이 남아 있을 수
+  있으므로 healthy는 Consumer 진척·주기 작업 성공·OCR 완료 증거가 아닙니다.
+- Worker는 `unless-stopped`, 종료 유예 90초, runtime 종료 제한 75초를 사용합니다.
+  SIGTERM 시 실행 취소가 발생할 수 있으므로 컨테이너 중지만으로 drain 완료를 선언하지 않습니다.
+  미완료 Job·PEL·예약 retry를 확인하고 기존 lease·복구 경로로 처리합니다.
+- JSON 로그는 10 MiB × 3개로 제한합니다. Docker unhealthy만으로 자동 재시작되지는 않습니다.
+  Worker/OCR 담당 김지혜가 `docker compose ps`, 비민감 복구 성공/실패 집계,
+  Outbox PENDING/CLAIMED·Job PENDING/PROCESSING/RETRY_WAIT·PEL·DLQ·quarantine 수와 추세를
+  확인합니다. 의료 원문·message body·환경파일은 관제 증빙으로 출력하지 않습니다.
+- 단일 EC2 Worker 메모리 상한은 1 GiB입니다. 실제 합성 smoke 중 `docker stats --no-stream`으로
+  호스트 여유 메모리와 Worker OOM/재시작 여부를 확인합니다. 수용량 검증 전 운영 적합 판정을 하지 않습니다.
+- 배포 직후와 재시작 후 합성 계정으로 업로드 → 접수 Job polling → COMPLETED → OCR 결과를 검수·확정까지
+  확인합니다. FAILED·영구 PENDING·파일 읽기 실패·Worker unhealthy/OOM이면 배포 성공으로 기록하지 않고
+  #230의 판단자에게 전달합니다. 5분 관찰에서 적체가 해소되지 않으면 중단 판단을 요청합니다.
+- 기록: commit과 세 image digest, readiness, migration revision, 합성 fixture label,
+  Job 상태 전이·소요시간·재시작 후 복구 결과. 실제 AWS 실행 전에는 `NOT_RUN`입니다.
 
-아래 절차는 Worker를 Production 배포 대상에 포함하고 health check·관제·Provider
-secret·공유 storage 검증까지 완료한 뒤에만 동일한 합성 계정으로 중간 생략 없이
-수행합니다. 현재 `scripts/deployment.sh`의 배포 결과에서는 2단계 OCR Job이 terminal
-상태에 도달하지 않으므로 이후 단계를 실행하거나 PASS로 기록하지 않습니다.
+### 전체 MVP browser smoke — 별도 Guide/Chat 공개 조건 충족 후
+
+Worker 배포만으로 Guide/Chat 공개 조건을 충족하지 않습니다. 아래 전체 흐름은 기존 외부 승인과
+공개 조건이 충족된 환경에서만 수행합니다. 현재 합성 OCR 배포의 통과 범위는 위 OCR smoke까지입니다.
 
 1. 루트 URL과 새로고침에서 SPA route가 404가 되지 않는지 확인합니다.
 2. 합성 계정으로 로그인하고 합성 처방전을 업로드한 뒤 OCR 결과를 검수·확정합니다.
@@ -204,14 +220,13 @@ path·status, 배포 commit과 image digest를 `deployment-evidence/<timestamp>/
 기록합니다. 요청·응답 body, Authorization/Cookie header, Secret, 비밀번호와 원본 의료
 데이터는 캡처하지 않습니다.
 
-기본 배포 smoke는 배포 후 Issue #338에서 수행합니다. 전체 MVP browser smoke는 Worker
-Production 조립을 완료한 후 별도 배포 Issue 또는 PR에서 수행합니다.
+기본 배포 smoke는 배포 후 Issue #338에서 수행합니다. 전체 MVP browser smoke는 Guide/Chat 공개 조건을 충족한 뒤 별도 배포 Issue 또는 PR에서 수행합니다.
 Runbook에 절차가 있다는 사실만으로 smoke를 통과한 것으로 간주하지 않습니다. Worker의
 Local·통합 테스트 통과도 AWS Production smoke를 대신하지 않습니다.
 
 ## 6. 이후 재배포
 
-새 commit의 고정 `APP_VERSION`과 `FRONTEND_VERSION`으로 `.prod.env`를 갱신하고
+새 commit의 고정 `APP_VERSION`, `FRONTEND_VERSION`, `AI_WORKER_VERSION`으로 `.prod.env`를 갱신하고
 `scripts/deployment.sh`를 다시 실행합니다. CloudFront distribution과 origin secret은
 그대로 유지합니다. 완료 후 전체 Smoke test를 반복합니다.
 
@@ -221,19 +236,21 @@ Local·통합 테스트 통과도 AWS Production smoke를 대신하지 않습니
 downgrade하지 않습니다. 새 migration이 이전 image와 호환되지 않으면 이전 FastAPI를
 강제로 올리지 말고 후속 migration으로 forward-fix합니다.
 
-호환성이 확인된 image rollback은 EC2에서 수행합니다.
+호환성이 확인된 image rollback은 EC2에서 수행합니다. Worker 담당자는 PEL·예약 retry·미완료 Job과
+구·신 Consumer 호환성을 확인하고 실행자에게 전달합니다. 기존 호환성 게이트가 닫혀 있으면 rollback하지 않습니다.
 
 ```bash
 cd ~/project
 cp .env ".env.before-rollback-$(date -u +%Y%m%dT%H%M%SZ)"
 vi .env
-docker compose pull fastapi nginx
-docker compose up -d --no-deps --wait fastapi
+docker compose pull fastapi ai-worker nginx
+docker compose stop -t 90 fastapi ai-worker
+docker compose up -d --no-deps --wait fastapi ai-worker
 docker compose up -d --no-deps --wait nginx
 docker compose ps
 ```
 
-`vi .env`에서 `APP_VERSION`과 `FRONTEND_VERSION`만 직전 정상 태그로 변경합니다. 복구 후
+`vi .env`에서 `APP_VERSION`, `FRONTEND_VERSION`, `AI_WORKER_VERSION`만 직전 정상 태그로 변경합니다. 복구 후
 CloudFront 주소의 health, Frontend와 합성 데이터 흐름을 다시 확인하고 image digest와
 결과를 기록합니다.
 

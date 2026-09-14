@@ -1,16 +1,44 @@
 # #166 Catalog DB 적재·저장 연결안
 
 - 상태: **Proposed / 현행 v2 DB 저장·복원·Source Receipt 연결 구현**. 합성 검증과 담당자 승인은 구분한다. D-02는 합의된 후속 경계를 유지한다.
-- 구현 담당: 김지혜. PR 책임 리뷰어: 송은영 1명. 정현우: P0 Candidate 범위 방향 협의·구현 후 의미 확인.
+- 구현 담당: 김지혜. #372 책임 리뷰어: 송은영. #477 D-04 책임 리뷰어: 정현우 1명, DB·migration 전문 검토 범위: 송은영. PR별 검토 범위와 승인 증빙을 구분한다.
 - 현재 적용 기준: [기존 v2 계약](../../targets/post-mvp-1/catalog-build-v2.md).
 - 최신 협의 기준: 김지혜가 제공한 D-05 v2 검토 반영본. 원본 공유 문서 자체를 복제하지 않는다.
 - Source 인계 기준: [Source 계약](../../targets/post-mvp-1/rag-source-ingestion-v1.md).
 
 - 검토용 인계 목록과 답변 양식: [DB 인계·결정 검토표](../../../designs/jye-rookie/issue-166-db-handoff-review.md).
 
+## 문서 적용 범위와 최신 검토 기록
+
+앞부분의 v2 전용 hash·같은-Snapshot Component 설명은 기존 비관찰 입력 기준이다.
+관찰 메타데이터가 있는 입력에는 아래 「D-04 관찰 출처 인계 v3」 절의 출처 분리·v3 계약을
+적용한다. DB UNIQUE와 get_component 조회 키의 변경은 최신 migration 이후 공통 물리 구조에
+적용되므로 v2 입력이라는 이유로 이전 DB 제약을 사용하는 것은 아니다. 단계별 기록과 #464
+전환 기록은 당시 이력으로 보존하며 현재 동작과 혼동하지 않는다.
+
+검증된 상세 artifact → Loader → DB 저장·복원 → Candidate 인계는 구현·합성 검증 완료다.
+[PR #477 정현우 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/477#pullrequestreview-5190458759)는 `c58f0968`의 담당 범위를 승인했다.
+[동일 HEAD 원격 CI](https://github.com/AI-HealthCare-05/AH_05_04/actions/runs/34752583896) 7개 검사는 모두 통과했다.
+이는 실제 상세 API 수집·Snapshot 생산·공식 순서·별도 전문 검토·운영 활성화 승인이 아니다.
+문서 전체의 Proposed 상태를 일괄 승격하거나 D-02·D-05·실제 승인 저장소를 완료 처리하지 않는다.
+
+## D-03 Set 역할 및 D-05 후속 범위 보충
+
+`rag_catalog_set`은 manifest·Source·member·hash를 결속해 현재 Catalog를 저장·재현하는 구성 단위다.
+기존 v2와 #477 관찰 v3를 수용하며 Set 자체의 종류를 구분하는 컬럼은 없다.
+`member_kind=ALIAS`가 실제 Alias 행을 참조하므로 **Alias를 포함**하지만, 독립 Authority
+`alias_set`/`alias_set_member`를 **대체하지 않는다**. D-03a Alias 전환과 Authority Set 구현 완료는
+구분한다. [D-03 다섯 항목 기록](../../../governance/decisions/2026-09-13-catalog-crosswalk-scope.md)을 따른다.
+
+D-05 전체 전환과 Runtime manifest 구성원·실제 연결은 후속 보류다. Product Identity 한정
+projection은 실제 필요 확인 후 별도 계약으로 검토할 수 있다. 현재 v2·관찰 v3 envelope를 유지하며
+새 hash로 대입·자동 변환하지 않는다. [최신 답변·재개 조건](../../../governance/decisions/2026-09-13-catalog-d05-transition-scope.md)을 따른다.
+아래 D-05 저장안은 단계별 설계 이력이다. 현재 저장 위치는 `rag_catalog_set_hash`이며,
+종류/target CHECK 확장과 Runtime 참조 변경은 실제 전환 시 별도 검토한다.
+
 ## 구현 상태
 
-### 최신 구현 상태 — #372 DB 왕복 연결
+### #372 DB 왕복 연결 — 기존 v2 구현 기준
 
 현재 확정된 v2 범위에서 `SqlAlchemyCatalogBuildRepository.save_build()`와
 `load_build(set_id, approval_verifier=...)`를 연결했다. 저장은 adapter 소유 transaction,
@@ -289,9 +317,13 @@ Search Entry 기반을 revision `166a7b8c9d0e`로 구현했다.
 - 이는 호출 시점의 승인 대조다. DB 잠금·원자 저장·이후 소비까지의 동시 철회 방지를 보장하지 않는다.
 
 D-02는 미확정 그대로다. 이 작업은 run 생성·ingestion run 대체·FK·migration을 추가하지 않는다.
-기존 public Candidate v2 입력·hash 의미도 유지한다. 실제 DB adapter·transaction 통합은 보류 상태다.
+기존 public Candidate v2 입력·hash 의미도 유지한다. 이 단계 작성 당시 실제 DB adapter·transaction
+통합은 보류였다. 이후 #372에서 DB 왕복을 연결했으며, #477의 관찰 v3 확장은 아래 절을 따른다.
 
-## #166 D-04 후속: Component occurrence 전환 (리뷰 대상)
+## #464 Component occurrence 전환 — 당시 스키마 이력
+
+이 절의 제품별 UNIQUE·get_component 서명은 #464 당시 기준이다. #477 migration 이후에는
+아래 v3 절의 상세 Snapshot을 포함하는 UNIQUE·조회 키가 적용된다.
 
 [2026-09-11 결정안](../../../governance/decisions/2026-09-11-catalog-component-occurrences.md)을 따른다.
 `CatalogComponentInput.source_record_key`는 선택 문자열이다. 없는 입력의 기존 v2 ref/hash는
@@ -316,3 +348,127 @@ MFDS 상세 변환 함수는 원료→Ingredient 매핑과 order를 명시적으
 매핑 불일치는 거부하고, 일련번호의 숫자 변환·배열 index 순서·이름 기반 Identity 추론은
 하지 않는다. 실제 수집 자동 연결과 공식 매핑 승인은 완료 범위가 아니다.
 근거: [D-04 검토 문서](../../../designs/jye-rookie/issue-166-d04-component-order.md).
+
+### 2026-09-13 — MFDS 관찰 입력 검사 (#477 구현·담당 범위 검토 완료)
+
+D-03 Crosswalk는 [범위 결정](../../../governance/decisions/2026-09-13-catalog-crosswalk-scope.md)에
+따라 현재 P0·#166 즉시 구현 범위에서 제외한다. 현재 소비 경로가 없으며 별도 계약·이슈로
+재개한다. 기존 `rag_catalog_set`을 Crosswalk Set으로 확장하거나 빈 READY Set을 생성하지 않는다.
+D-04 MFDS 원료 관찰 연결을 Crosswalk 구현으로 간주하지 않는다.
+
+[D-04 합의·공개 리뷰 근거](../../../governance/decisions/2026-09-13-component-observation-handoff.md)에
+따라 `inspect_mfds_component_rows`는 전달받은 전체 입력에서
+관찰 키의 `ITEM_SEQ`, `TAMT_SEQ`, `MTRAL_SN` 문자열을 각각 보존한다. 총량 그룹을 합치거나
+숫자·표시 순서로 변환하지 않는다. 원료코드는 해당 MFDS 입력 범위의 관찰값이며 전역적으로
+정규화된 성분 Identity나 장기 안정 키를 승인한 것으로 해석하지 않는다.
+
+관찰 및 제외 행에 `record_json`을 보존한다. 이는 API 행 객체의 값을 보존한 JSON이며
+HTTP 원본 bytes·Raw Artifact·Snapshot Receipt를 대신하지 않는다. `repr`에 행 본문을 넣지 않는다.
+빈 성분 필드, 부분 누락/잘못된 필드, 동일 관찰 키의 다른 payload를 각각 내부 검사 사유로 기록한다.
+정확히 같은 행은 한 관찰로 합치되 중복 건수를 보존하며, 총 입력 건수는 제외·중복을 포함한다.
+
+`eligible_for_mapping`은 비어 있지 않고 제외 행이 없는 입력인지 나타내는 사전 검사 값이다.
+공식 매핑 승인, 전체 API 수집 완료, Catalog `is_complete`, 공개·Runtime 승인이 아니다.
+제외 행을 조용히 버리고 전체 입력이 유효했다고 보고하지 않는다. 제한 대상 적재의 포함·제외
+정책이나 Candidate 이후의 총량 그룹 소비 계약은 이 함수가 결정하지 않는다.
+
+기존 `map_mfds_component`는 같은 관찰 필드 검증을 재사용하고, 기존처럼 독립 Ingredient와
+기대 원료코드·명시적 order를 요구한다. 아래 구체안에서 검증된 상세 artifact를 받는 Loader와
+Export/DB/Candidate 연결을 구현했다. 실제 API 수집·공식 표시 순서 확정은 별도 조건이다.
+
+
+## D-04 관찰 출처 인계 v3 — 2026-09-13 구현·리뷰 제안
+
+이 절은 앞선 같은-Snapshot Component 제한을 확장한다. 지혜님이 구체안을 구현하고
+정현우가 PR #477 `c58f0968`의 담당 범위를 승인했다. 송은영의 별도 DB 전문 검토나
+실제 수집·운영 승인까지 완료한 것으로 해석하지 않는다.
+[결정안](../../../governance/decisions/2026-09-13-component-observation-handoff.md)을 따른다.
+
+### 입력과 실패 경계
+
+`load_mfds_catalog`는 상세 canonical JSON bytes와 상세/제품 SnapshotProvenanceReceipt,
+검증된 typed 제품 입력, 원료별 독립 Ingredient 입력, 관찰 키별 양의 정수 표시 순서,
+비어 있지 않은 `order_spec_version`, 저장 Repository 및 승인 verifier를 받는다.
+전달된 상세 전체의 제품·원료·관찰 키와 입력 매핑의 범위가 정확히 일치해야 한다.
+Ingredient는 상세 출처의 `MFDS_INGREDIENT_CODE`이며 canonical_code는 MTRAL_CODE 원문이다.
+이는 MFDS 출처 범위 연결이고 전역 공식 성분 매핑 승인이 아니다.
+
+상세 canonical 계약 `mfds-component-observations-v1`은 내부 제안이다. 행 객체 배열을
+UTF-8, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False로 직렬화하고
+마지막 LF를 붙이지 않는다. 배열 순서와 중복 행을 보존하고 문자열 값을 정규화하지 않는다.
+JSON 객체의 중복 키를 거부하며 재직렬화 bytes와 SHA-256을 Receipt의 checksum에 대조한다.
+배열 순서는 표시 순서의 근거가 아니다. Receipt provenance·canonicalization 불일치,
+원료·제품·순서 매핑 불일치는 ValueError로 거부하고 승인 조회·저장을 호출하지 않는다.
+
+제외 행이 있거나 관찰이 없으면 `MfdsCatalogLoadResult.build=None`과 검사 결과를 반환한다.
+검사 결과는 원문 행 값, 사유, input_count, duplicate_count, observations, exclusions를 포함한다.
+임의 부분 성공·READY/complete 발행을 하지 않는다. 원본 HTTP artifact와 감사 보고서 저장은
+호출자/Source 경계의 책임이다. 검사 결과 반환을 실제 감사 저장소 구현으로 간주하지 않는다.
+
+### Component 관찰 필드와 DB
+
+`CatalogComponentInput.observation` 및 `CatalogComponent.observation`은 선택 값이다.
+있는 경우 아래 11개 문자열 필드를 모두 요구한다. 생략된 기존 입력은 같은-Snapshot 규칙을 유지한다.
+
+| 필드 | 의미 |
+| --- | --- |
+| product_source_snapshot_id | 실제 Product 목록 출처 |
+| ingredient_source_snapshot_id | 실제 Ingredient 출처; Component 자체 상세 출처와 같음 |
+| item_seq | Product MFDS_ITEM_SEQ 원문과 일치 |
+| tamt_seq / mtral_sn | 원문 총량 그룹 / 관찰 순번; 숫자 변환이나 공식 순서 추론 금지 |
+| material_code | Ingredient MFDS_INGREDIENT_CODE 원문과 일치 |
+| quantity / unit | Component strength_value / strength_unit과 일치하는 원문 값 |
+| order_spec_version | 호출자가 제공한 명시적 순서 계약 버전; 자동 생성하지 않음 |
+| source_canonical_checksum / source_canonicalization_spec_version | 실제 상세 Snapshot에 결속할 SHA-256 / 상세 canonical 계약 버전 |
+
+관찰 Component 참조는 `catalog-component-observation-v1`로 구분하고 상세 Snapshot,
+Product 참조, 원문 관찰 키를 결속한다. 입력 키는 ITEM_SEQ·TAMT_SEQ·MTRAL_SN 원문으로
+구성된 키와 일치해야 하며 누락·불일치는 ValueError로 거부한다. 기존 비관찰 Component 참조는 그대로 유지한다.
+
+Migration `166f30415263`은 Component에 `product_source_snapshot_id`,
+`ingredient_source_snapshot_id`(NOT NULL CHAR(36)), `observation_json`(nullable BYTEA)을 추가한다.
+두 참조는 각각 `(product_id, product_source_snapshot_id)`와
+`(ingredient_id, ingredient_source_snapshot_id)` composite FK로 실제 행과 결속한다.
+UNIQUE는 `(product_id, source_snapshot_id, display_order)`로 변경한다.
+Repository의 `get_component`도 자체 `source_snapshot_id`를 조회 키에 포함한다.
+기존 ORM 입력에는 Python 기본값으로 같은-Snapshot 참조를 제공하며 DB trigger/default로 추론하지 않는다.
+새 필수 열을 보내지 않는 구버전 Writer의 직접 INSERT는 실패한다. 적용 시 Catalog Writer를
+중지하고 migration 및 새 Writer 코드를 배포한 뒤 저장·복원 점검 후 재개한다. 무중단 구버전
+Writer 호환을 주장하지 않으며 실제 운영 적용은 이번 로컬 검증에 포함하지 않는다.
+
+기존 FK로 증명된 두 참조 출처만 backfill하며 observation_json은 NULL로 유지한다.
+새 관찰 JSON, 서로 다른 참조 출처, 이전 고유성으로 합칠 수 없는 관찰 버전이 있으면 downgrade를
+중단한다. 실제 Source 조회·잠금·원자 저장·Set/member 전체 read-back은 기존 Repository를 사용한다.
+같은 입력은 Set을 재사용하고 새 상세 Snapshot은 과거 Set을 덮어쓰지 않는다.
+상세 checksum·canonicalization 버전은 관찰 JSON·Export hash에 함께 결속한다. 저장 시 Snapshot
+잠금 이후 실제 Receipt와 대조하며 조회 시에도 재검증한다. 같은 Snapshot에 서로 다른
+checksum 계약을 요구하거나 호출자가 Receipt/원문을 함께 위조한 경우에도 저장을 거부한다.
+
+### Export·복원·Candidate
+
+관찰이 하나라도 있으면 schema_version은 `medication-catalog-v3`이며 JSONL Component에
+observation 객체를 포함한다. 관찰이 없는 자료는 필드를 생략하고 기존 `medication-catalog-v2`
+bytes/hash를 보존한다. `catalog-manifest-envelope-v2` 계산 알고리즘은 유지하며 schema_version을
+포함한 payload를 계산한다. DB hash metadata도 실제 v2/v3 schema_version을 저장한다.
+새 Projection/Runtime hash가 아니며 기존 digest를 새 의미에 대입하지 않는다.
+
+Export 검증·복원·DB read-back·Candidate는 개별 관찰 출처와 품목/원료/함량을 재검증한다.
+`CandidateIndexBuildSuccess.components`는 관찰을 포함한 Catalog의 전체 Component tuple을
+반환한다. 기존 비관찰 v2 입력에는 빈 tuple 기본값을 유지한다. 이후 소비자는 각 observation의
+총량 그룹을 보존해야 하며 그룹을 합쳐 함량을 계산하는 규칙은 이번 구현에 없다.
+
+### 완료 범위와 실입력 조건
+
+이번 구현은 검증된 상세 artifact 입력 → Loader → 실제 DB 저장·복원 → Candidate 인계다.
+주성분 상세 Operation 등록·API acquisition·Raw Artifact 및 실제 상세 Snapshot 생성은 포함하지 않는다.
+현재 제품 목록 Snapshot을 상세 출처로 재사용하지 않는다. 공식 총량·순번 의미와 복수 그룹 사례
+확인 전 자동 표시 순서는 확정하지 않으며 명시적 순서 계약을 입력받는다.
+실제 승인·철회·감사 저장소와 Runtime 활성화는 별도다.
+
+검증: [D-04 Loader 검사 기록](../../../testing/mfds-loader-handoff-166.md).
+
+## 실제 승인·철회·감사 저장소 후속 구체안
+
+[별도 Proposed 연결안](catalog-approval-storage-166.md)에 기존 #398 관리 권한/감사와의 차이,
+Set 생성 전 승인 대상, 저장 당시 receipt 검증, 동일 transaction 경합 제어, 실패 감사·최소 권한·이행을 정리했다.
+현재 verifier 포트의 실제 저장소 연결 완료나 이 구체안에 대한 담당자 승인을 의미하지 않는다.

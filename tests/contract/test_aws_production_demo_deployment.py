@@ -101,12 +101,12 @@ def test_production_scripts_use_env_domain_and_do_not_mutate_source_nginx_config
     unsafe_secret_sed = "s/__CLOUDFRONT_ORIGIN_VERIFY_SECRET__/${CLOUDFRONT_ORIGIN_VERIFY_SECRET}"
     assert unsafe_secret_sed not in deployment_script
     assert '"VITE_API_BASE_URL=$PRODUCTION_PUBLIC_ORIGIN"' in deployment_script
-    assert 'DEPLOY_SERVICES=("fastapi" "nginx")' in deployment_script
+    assert 'DEPLOY_SERVICES=("fastapi" "ai-worker" "nginx")' in deployment_script
     assert 'if [ "$APP_VERSION" = "latest" ]' in deployment_script
     assert "--wait" in deployment_script
     assert (
         "AI Worker"
-        not in deployment_script.split("# ---------- 데모 배포 image build 및 push ----------", 1)[1].split(
+        in deployment_script.split("# ---------- 데모 배포 image build 및 push ----------", 1)[1].split(
             "DEPLOY_SERVICES=", 1
         )[0]
     )
@@ -205,3 +205,20 @@ def test_production_runbook_covers_cloudfront_default_domain_and_nine_day_teardo
     assert "기술 배포 승인과 기술 Rollback 판단: 정현우" in runbook
     assert "배포·Rollback 실행, 관제 총괄: 권가빈" in runbook
     assert "대체 배포·Rollback 실행자: 미정" in runbook
+
+
+def test_worker_production_readiness_and_shutdown_preserve_runtime_boundaries() -> None:
+    worker = yaml.safe_load(_read(PRODUCTION_COMPOSE_PATH))["services"]["ai-worker"]
+    assert worker["image"].endswith(":ai-${AI_WORKER_VERSION}")
+    assert worker["command"] == ["/app/.venv/bin/python", "-m", "ai_worker.main"]
+    assert worker["init"] is True
+    assert worker["restart"] == "unless-stopped"
+    assert worker["stop_grace_period"] == "90s"
+    assert worker["environment"]["WORKER_SHUTDOWN_TIMEOUT_SECONDS"] == "75"
+    assert worker["healthcheck"]["test"][-1] == "ai_worker.healthcheck"
+    assert "media_volume:/app/media:ro" in worker["volumes"]
+    assert "ports" not in worker
+    assert "DB_ADMIN_PASSWORD" not in worker["environment"]
+    assert "DB_MIGRATION_PASSWORD" not in worker["environment"]
+    assert "SOURCE_WRITER_PASSWORD" not in worker["environment"]
+    assert worker["depends_on"]["migrate"]["condition"] == "service_completed_successfully"

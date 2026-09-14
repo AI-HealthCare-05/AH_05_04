@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-417-20260910` |
-| 상태 | **Approved target · Not implemented** |
+| 상태 | **Approved target** — DB #438·알림 #430·일정 API #456 병합; Current 승격 별도 |
 | 구현 담당 | 권가빈 (`hazelnutflavoured`) |
 | 책임 리뷰 | 송은영 (`phina-io`) — Backend·DB·Security; 남한솔 (`solia142`) — 일정 상태·Frontend 소비 |
 | 배정 근거 | [#417](https://github.com/AI-HealthCare-05/AH_05_04/issues/417)의 2026-09-10 사용자 지정 |
@@ -11,6 +11,8 @@
 | 구현 후속 | [#423](https://github.com/AI-HealthCare-05/AH_05_04/issues/423) DB·B2 보완 → [#202](https://github.com/AI-HealthCare-05/AH_05_04/issues/202) API, [#203](https://github.com/AI-HealthCare-05/AH_05_04/issues/203) 알림 연동 |
 
 ## 문제와 선택안
+
+이 절과 아래 provenance 대조표는 Decision 작성 당시의 문제·선택 근거를 보존한다. 현재 병합 현황과 남은 인계는 [계약의 2026-09-12 현황](../../contracts/targets/post-mvp-1/track-b-schedule-reconciliation-v1.md#2026-09-12-구현-현황과-남은-인계)을 따른다.
 
 현재 열람본의 일정 감사·물리 time retire 요구와 B1 저장 구조가 다르고, B2의 종료는 status만 변경한다.
 이 세부 요구는 아래 대조표에서 repository target으로 교차 확인된 범위와 구분한다.
@@ -85,7 +87,7 @@
 
 두 책임 리뷰어가 같은 commit을 승인했다. 송은영의 최종 리뷰는 교차 확인 표와 리뷰어 배정 blocker 해소를 확인했고, 남한솔은 D1·D3·D4와 과거 기록 표시의 추가 blocker가 없음을 확인했다. 머지 PR은 [#424](https://github.com/AI-HealthCare-05/AH_05_04/pull/424), develop merge commit은 `015571a0a928f1146654bc5a9dacccada5b361f0`이다.
 
-승인 범위는 이 Decision의 D1–D5 및 명시된 원본 delta다. 열람본 해시를 8월 승인 해시로 대체하거나 원본 전체의 승인으로 확대하지 않는다. 계약을 `targets/post-mvp-1/`로 이동하고 기존 target과 인덱스를 정렬했다. DB #423·API #202·알림 #203은 별도 구현·검증·책임 리뷰가 필요하며 `current/`로 승격하지 않는다.
+승인 범위는 이 Decision의 D1–D5 및 명시된 원본 delta다. 열람본 해시를 8월 승인 해시로 대체하거나 원본 전체의 승인으로 확대하지 않는다. 계약을 `targets/post-mvp-1/`로 이동하고 기존 target과 인덱스를 정렬했다. 후속 DB #438·알림 #430·API #456은 병합됐다. 해당 구현·검증 및 책임 승인 증빙의 확인은 #424의 문서 승인과 별도이며, 이번 상태 정리에서는 `current/`로 승격하지 않는다.
 
 #202·#203은 이 Decision의 승인 결과를 소비한다. 다른 브랜치에서 같은 계약 파일의 값을 별도로 확정하지
 않는다. #202 Check-in API와 #203 저장·조회·읽음 중 이미 명확한 범위는 병행할 수 있다.
