@@ -1,7 +1,6 @@
 # 공통 데이터 계약
 
-- [OCR LLM 동의·전송 후속 (#458)](proposed/ocr-llm-transfer-458.md): PM·Backend 방향 및 답변 근거 연결. Worker·Backend·Frontend Gate와 안전한 LLM 생략 로컬 구현, 최종 문구·버전·리뷰 미완료.
-  재동의·최소 전송·철회 구분·Frontend 확인 방향 기록. 최종 문구/버전과 전체 구현은 미완료.
+- [OCR LLM 동의·전송 후속 (#458)](proposed/ocr-llm-transfer-458.md): #505에서 OCR 목적 Backend API·접수 Gate, Worker 재검사, Frontend 연결과 안전한 LLM 생략을 구현. 최종 안내 문구·policy version, 검증된 최소 전송 selector와 실제 사용자 대상 LLM 활성화는 미완료.
 
 Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합니다. **현재 실행 계약**은 실제 FastAPI OpenAPI·Pydantic DTO·migration·구현과 테스트가 함께 뒷받침하는 문서입니다. `targets/post-mvp-1/`의 문서는 승인된 Post-MVP-1 목표 계약이며 문서별 구현 상태를 별도로 표시하고 Approved Contract Freeze v4와 RAG-00 Approved Target을 함께 관리합니다.
 
@@ -52,7 +51,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [RAG Answer Quality Metric·Variant 계약 v1 제안 (#159)](./proposed/post-mvp-1/rag-answer-quality-metrics-v1.md): `ANS-BASE | ANS-RAG | ANS-FINAL`, 네 Answer Metric의 분석 단위·micro ratio·95% cluster bootstrap, 승인 human-rubric label과 세 pair 비교 경계. `PD-159-20260913` 책임 리뷰 전 Proposed이며 DEV 구현·HOLDOUT 실행·Release 승인 아님.
 
 - [OCR LLM Worker 범위 정정 (#453)](./proposed/ocr-llm-worker-consent-453.md): 기존 이관 범위와 리뷰 시 별도 검토할 항목. 기존 동의 개정안 미채택.
-- [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태, row 없음=미동의, Backend·Worker 공통 fixture 판정, WorkerMessage/Stream 비전송, CONSENT_REQUIRED 및 OCR CONSENT_WITHDRAWN 차단 의미. Proposed · PR #465에서 `user_consent` 저장 기반 구현 중 · Gate/API/Worker 실행 검증 미구현 · Production 공개 승인 아님. 확인 필요: 권가빈·김지혜·정현우·남한솔.
+- [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태와 row 없음=미동의 기준. #465에서 `user_consent` 저장 기반을 병합했고 #505에서 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전과 Production 공개 승인은 후속 범위다. 전체 목적별 계약은 Proposed 유지.
 
 - [Track B UNCONFIRMED backlog v1](./proposed/unconfirmed-backlog-v1.md): PD-418 URL·cursor·DTO·오류. #426 미등록 후보 승인 증빙 확인; 최신 #202 기반 실제 v1 등록·PUT 보완·페이지 이동 검증 변경은 두 리뷰어 재승인 대기. 승인 전 Current 승격·병합 금지.
 

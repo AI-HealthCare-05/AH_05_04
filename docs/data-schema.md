@@ -27,7 +27,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 영역 | 테이블 | 현재 사용 상태 |
 | --- | --- | --- |
 | 사용자 | `user` | 인증·사용자 정보에 사용 |
-| 사용자 동의 | `user_consent` | PD-207 목적별 최신 동의 상태 저장 기반. Gate/API 연결은 후속 범위 |
+| 사용자 동의 | `user_consent` | PD-207 목적별 최신 동의 상태 저장 기반. OCR 목적은 #505에서 Backend 동의 API·접수 Gate와 Worker 재검사에 연결; GUIDE/CHAT/NOTIFICATION 실행 Gate는 후속 범위 |
 | 프로필 | `profile` | 본인 단일 `SELF` profile과 사용자 리소스 소유권 기준에 사용 |
 | 의료문서 | `medical_document` | 처방전 metadata와 로컬 파일 object key 저장 |
 | OCR | `ocr_job`, `extracted_field` | 동기 OCR 상태, 원문·정규화·사용자 확정값 저장 |
@@ -133,7 +133,7 @@ DB 제약:
 - `policy_version`은 빈 문자열 금지
 - `GRANTED`는 `granted_at` 필수 및 `withdrawn_at=NULL`, `WITHDRAWN`은 `withdrawn_at` 필수
 
-row가 없으면 미동의로 판정한다. 이 테이블은 최신 상태만 저장하며 과거 동의 이력을 append-only audit으로 남길지는 후속 Decision 또는 계약 갱신 범위다. Backend Gate, Worker Gate, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 연결은 후속 구현 범위이며 이번 저장 기반만으로 Provider 호출을 허용하지 않는다.
+row가 없으면 미동의로 판정한다. 이 테이블은 최신 상태만 저장하며 과거 동의 이력을 append-only audit으로 남길지는 후속 Decision 또는 계약 갱신 범위다. OCR 목적은 #505에서 `GET/POST/DELETE /api/v1/users/me/consents/OCR`, Backend 접수 전·문서 잠금 후 검사, Worker의 CLOVA 전·LLM 전·결과 저장 전 재검사와 `CONSENT_REQUIRED`/OCR `CONSENT_WITHDRAWN` 차단 저장에 연결했다. `OCR_CONSENT_POLICY_VERSION`이 비어 있으면 fail-closed이며, 최종 안내 문구·policy version과 실제 사용자 대상 LLM 전송은 승인되지 않았다. GUIDE/CHAT/NOTIFICATION 목적의 실행 Gate와 API는 후속 범위다.
 
 ## PROFILE SELF 소유권
 
