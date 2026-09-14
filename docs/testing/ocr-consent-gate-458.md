@@ -73,3 +73,29 @@ PYTHONPATH=backend:. uv run pytest tests/integration/test_worker_ocr_consent.py 
 - 최신 DB의 Trigger/RLS/제거 함수 **0개**. Ruff check·format, Mypy **636 source files** 통과.
 - Frontend 단위 테스트 **419 passed**, 전체 브라우저 E2E **8 passed**, lint·build 통과.
   새 동의 조회 요청을 합성 E2E API fixture에 추가해 기존 업로드·검수·프로필 흐름을 검증했다.
+
+## 2026-09-14 합성 회귀 재검증
+
+- 기준: 로컬 `origin/develop` `fb25a4c3`. 원격 갱신은 네트워크 DNS 오류로 확인하지 못했으며,
+  이후 머지큐의 변경은 이 결과에 포함되지 않는다.
+- 전용 PostgreSQL 17·Redis 7 컨테이너와 합성 값만 사용했다. 두 컨테이너는 기존 개발 DB와
+  분리했고 검증 후 제거했다. CLOVA·OpenAI는 테스트 대역이며 실제 외부 호출은 없었다.
+- Worker 동의 판정·CLOVA/LLM 직전 재검사와 전송 최소화 미승인 시 생략: **21 passed**.
+- Worker 실제 구성 경로의 LLM 생략·Provider 미호출·환경별 비활성화: **12 passed**.
+- Backend 목적별 동의 API와 OCR 결과 검수·처방 확정: **47 passed**.
+- Worker의 별도 DB transaction에서 철회·policy 불일치·조회 실패·소유권 불일치: **13 passed**.
+- Backend 동의 저장소와 OCR 접수 Gate: **22 passed**.
+- PostgreSQL·Redis Worker 성공 경로의 `SKIPPED_MINIMIZATION` 저장, 차단 상태의 원자성·
+  재전달: **7 passed**.
+- 합성 OCR 필드의 `SKIPPED_MINIMIZATION` 저장 → 필수 처방일·약품 값 검수 → 처방 확정:
+  **1 passed**. 기존 통합 테스트의 `PrescriptionService` 생성자를 현행 일정 무효화 Service와
+  연결해 다시 실행했다. 이 검사는 #307 기준 기본 CI에서 제외된 opt-in 테스트이며,
+  실제 이미지 업로드나 외부 CLOVA 판독을 포함하지 않는다.
+- Frontend OCR 검수 화면: **75 passed**. 업로드 전 동의 안내·재동의: **1 passed**.
+
+위 **199건**은 이번에 선택해 재실행한 서로 다른 테스트 사례의 합계다. 전체 CI나 배포 환경
+검증 결과로 해석하지 않는다. `synthetic-policy`는 테스트 fixture 값이며 승인된 운영 정책
+버전이 아니다. #539의 Frontend STALE/AbortSignal 수정은 이 기준 커밋에 없으므로 전체
+Frontend 테스트는 이번 재검증에 포함하지 않았다. 최소 전송 허용 항목·실제 LLM 구조화와
+실제 사용자 활성화도 검증하거나 승인하지 않았다. 이번 변경은 통합 테스트의 현행 Service
+연결·LLM 생략 회귀 검사와 검증 기록만 추가하며 실행 코드·DB schema·RLS·Trigger는 변경하지 않는다.
