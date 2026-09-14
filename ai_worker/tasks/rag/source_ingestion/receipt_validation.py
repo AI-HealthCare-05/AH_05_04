@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import cast
 
 from ai_worker.tasks.rag.source_client.contracts import (
+    EndpointContract,
     SourceOperationIdentity,
 )
 from ai_worker.tasks.rag.source_client.endpoints import (
+    MFDS_DETAIL_CANDIDATE,
     MFDS_ENDPOINT_CANDIDATES,
 )
 
@@ -38,14 +40,17 @@ class ReceiptFixtureEvidence:
 
 
 @dataclass(frozen=True, slots=True)
-class ProductReceiptEvidence:
-    """제품 Parser가 사용하는 검증 완료 Receipt 증빙입니다."""
+class EndpointReceiptEvidence:
+    """Operation별 Parser가 사용하는 검증 완료 Endpoint 증빙입니다."""
 
     receipt_version: str
     identity: SourceOperationIdentity
     validated_record_count: int
     receipt_hash: str
     fixture_evidence: tuple[ReceiptFixtureEvidence, ...]
+
+
+ProductReceiptEvidence = EndpointReceiptEvidence
 
 
 def calculate_endpoint_receipt_hash(
@@ -128,13 +133,14 @@ def _is_exact_value(actual: object, expected: object) -> bool:
     return actual == expected
 
 
-def _require_fixture_scenarios(observed_scenarios: set[str]) -> None:
-    if not _REQUIRED_FIXTURE_SCENARIOS.issubset(observed_scenarios):
+def _require_fixture_scenarios(observed_scenarios: set[str], required: frozenset[str]) -> None:
+    if not required.issubset(observed_scenarios):
         raise ValueError("Endpoint receipt is missing required fixture evidence.")
 
 
 def _parse_fixture_evidence(
     payload: Mapping[str, object],
+    required: frozenset[str],
 ) -> tuple[ReceiptFixtureEvidence, ...]:
     """Receipt의 fixture 증빙을 안전한 상대 경로로 해석합니다."""
     raw_evidence = payload.get("fixture_evidence")
@@ -187,7 +193,7 @@ def _parse_fixture_evidence(
             )
         )
 
-    _require_fixture_scenarios(observed_scenarios)
+    _require_fixture_scenarios(observed_scenarios, required)
 
     return tuple(evidence)
 
@@ -215,10 +221,12 @@ def verify_receipt_fixture_evidence(
             raise ValueError("Endpoint receipt fixture checksum mismatch.")
 
 
-def load_product_endpoint_receipt(
+def _load_endpoint_receipt(
     path: Path,
-) -> ProductReceiptEvidence:
-    """제품 Parser가 사용할 수 있는 검증 완료 Receipt를 읽습니다."""
+    contract: EndpointContract,
+    required_scenarios: frozenset[str],
+) -> EndpointReceiptEvidence:
+    """요청한 Operation의 정확한 계약·fixture를 갖춘 Endpoint Receipt를 읽습니다."""
     try:
         serialized = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
@@ -247,7 +255,7 @@ def load_product_endpoint_receipt(
     _require_exact_value(
         payload,
         "primary_key_fields",
-        list(_PRODUCT_CONTRACT.primary_key_fields),
+        list(contract.primary_key_fields),
     )
     _require_exact_value(payload, "primary_key_null_count", 0)
     _require_exact_value(payload, "primary_key_duplicate_count", 0)
@@ -256,22 +264,22 @@ def load_product_endpoint_receipt(
     _require_exact_value(
         payload,
         "verified_http_method",
-        _PRODUCT_CONTRACT.method,
+        contract.method,
     )
     _require_exact_value(
         payload,
         "verified_scheme",
-        _PRODUCT_CONTRACT.scheme,
+        contract.scheme,
     )
     _require_exact_value(
         payload,
         "verified_host",
-        _PRODUCT_CONTRACT.host,
+        contract.host,
     )
     _require_exact_value(
         payload,
         "verified_path_template",
-        _PRODUCT_CONTRACT.path_template,
+        contract.path_template,
     )
     _require_exact_value(payload, "encoding", "UTF-8")
 
@@ -282,7 +290,7 @@ def load_product_endpoint_receipt(
             "location": parameter.location,
             "sensitive": parameter.sensitive,
         }
-        for parameter in _PRODUCT_CONTRACT.required_parameters
+        for parameter in contract.required_parameters
     ]
     _require_exact_value(
         payload,
@@ -293,35 +301,35 @@ def load_product_endpoint_receipt(
     _require_exact_value(
         payload,
         "body_success_code_path",
-        _PRODUCT_CONTRACT.body_success_code_path,
+        contract.body_success_code_path,
     )
     _require_exact_value(
         payload,
         "body_error_code_path",
-        _PRODUCT_CONTRACT.body_error_code_path,
+        contract.body_error_code_path,
     )
     _require_exact_value(
         payload,
         "body_success_codes",
-        list(_PRODUCT_CONTRACT.body_codes.success_codes),
+        list(contract.body_codes.success_codes),
     )
     _require_exact_value(
         payload,
         "authentication_failure_codes",
-        list(_PRODUCT_CONTRACT.body_codes.authentication_failure_codes),
+        list(contract.body_codes.authentication_failure_codes),
     )
     _require_exact_value(
         payload,
         "daily_limit_codes",
-        list(_PRODUCT_CONTRACT.body_codes.daily_limit_codes),
+        list(contract.body_codes.daily_limit_codes),
     )
     _require_exact_value(
         payload,
         "allowed_content_types",
-        list(_PRODUCT_CONTRACT.allowed_content_types),
+        list(contract.allowed_content_types),
     )
 
-    pagination = _PRODUCT_CONTRACT.pagination
+    pagination = contract.pagination
     expected_pagination = {
         "mode": pagination.mode,
         "page_parameter": pagination.page_parameter,
@@ -336,7 +344,7 @@ def load_product_endpoint_receipt(
         expected_pagination,
     )
 
-    limits = _PRODUCT_CONTRACT.limits
+    limits = contract.limits
     expected_limits = {
         "connect_timeout_seconds": limits.connect_timeout_seconds,
         "read_timeout_seconds": limits.read_timeout_seconds,
@@ -355,13 +363,13 @@ def load_product_endpoint_receipt(
     _require_exact_value(
         payload,
         "external_version_field",
-        _PRODUCT_CONTRACT.external_version_field,
+        contract.external_version_field,
     )
 
     expected_identity = {
-        "source_code": _PRODUCT_OPERATION.source_code,
-        "endpoint_code": _PRODUCT_OPERATION.endpoint_code,
-        "operation_code": _PRODUCT_OPERATION.operation_code,
+        "source_code": contract.identity.source_code,
+        "endpoint_code": contract.identity.endpoint_code,
+        "operation_code": contract.identity.operation_code,
     }
 
     _require_exact_value(payload, "identity", expected_identity)
@@ -371,15 +379,38 @@ def load_product_endpoint_receipt(
     if type(validated_record_count) is not int or validated_record_count <= 0:
         raise ValueError("Endpoint receipt has invalid validated_record_count.")
 
-    fixture_evidence = _parse_fixture_evidence(payload)
+    fixture_evidence = _parse_fixture_evidence(payload, required_scenarios)
 
     receipt_hash = payload["receipt_hash"]
     assert isinstance(receipt_hash, str)
 
-    return ProductReceiptEvidence(
+    return EndpointReceiptEvidence(
         receipt_version="1.1",
-        identity=_PRODUCT_OPERATION,
+        identity=contract.identity,
         validated_record_count=validated_record_count,
         receipt_hash=receipt_hash,
         fixture_evidence=fixture_evidence,
+    )
+
+
+def load_product_endpoint_receipt(path: Path) -> EndpointReceiptEvidence:
+    return _load_endpoint_receipt(path, _PRODUCT_CONTRACT, _REQUIRED_FIXTURE_SCENARIOS)
+
+
+def load_detail_endpoint_receipt(path: Path) -> EndpointReceiptEvidence:
+    """Detailed-operation evidence; never accept a product receipt or a missing live receipt."""
+    return _load_endpoint_receipt(
+        path,
+        MFDS_DETAIL_CANDIDATE.contract,
+        frozenset(
+            {
+                "LIST_PRODUCT_COMPONENT_DETAILS_SUCCESS",
+                "SYNTHETIC_AUTH_FAILURE",
+                "SYNTHETIC_DAILY_LIMIT",
+                "SYNTHETIC_EMPTY",
+                "SYNTHETIC_SCHEMA_DRIFT",
+                "SYNTHETIC_DETAIL_BLANK",
+                "SYNTHETIC_DETAIL_DUPLICATE",
+            }
+        ),
     )

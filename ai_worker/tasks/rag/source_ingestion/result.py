@@ -1,4 +1,4 @@
-"""검증이 끝난 제품 Source ingestion 결과 계약입니다."""
+"""검증된 Source 저장 결과와 제품 Parser 진입점입니다."""
 
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -32,7 +32,7 @@ _PRODUCT_CONTRACT = MFDS_ENDPOINT_CANDIDATES["LIST_APPROVED_PRODUCTS"].contract
 
 
 @dataclass(frozen=True, slots=True)
-class ProductIngestionResult:
+class SourceIngestionResult:
     """#164 저장 인터페이스에 전달할 검증 완료 결과입니다."""
 
     identity: SourceOperationIdentity
@@ -42,6 +42,10 @@ class ProductIngestionResult:
     canonicalization_spec_version: str
     record_count: int
     artifact_count: int
+
+
+# Preserve the existing product import while sharing the unchanged storage shape.
+ProductIngestionResult = SourceIngestionResult
 
 
 def build_product_ingestion_result(

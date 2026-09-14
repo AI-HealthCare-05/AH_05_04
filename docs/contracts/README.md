@@ -152,6 +152,8 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
   검증된 상세 artifact Loader, 독립 Snapshot FK, 관찰 버전·총량 그룹의 DB/Candidate 인계 제안.
   기존 v2를 보존하고 관찰 자료는 medication-catalog-v3로 구분. 계약 정본은 위 Catalog DB 연결안.
 
+- [D-04 MFDS 상세 수집·Snapshot 생산](./proposed/post-mvp-1/mfds-detail-acquisition-166.md): 전체 범위 전용 수집·원문 보존·빈 행 차단·상세 Receipt 검증과 기존 Source lifecycle 연결. 구현 PR 리뷰 대상이며 실제 API 수집·승인은 별도.
+
 ### #166 실제 승인 저장소 후속 제안
 
 - [승인·철회·감사 저장소 구체안](proposed/post-mvp-1/catalog-approval-storage-166.md):
