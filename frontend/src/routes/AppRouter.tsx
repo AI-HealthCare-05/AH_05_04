@@ -17,6 +17,7 @@ import ChatPage from '../pages/ChatPage'
 import StartPage from '../pages/StartPage'
 import ProfilePage from '../pages/ProfilePage'
 import MenuPage from '../pages/MenuPage'
+import { ScheduleOccurrencePage, SchedulePage } from '../pages/SchedulePage'
 
 const DevPreviewPage = import.meta.env.DEV
   ? lazy(() => import('../dev-preview/DevPreviewPage'))
@@ -129,6 +130,11 @@ export function AppRoutes({
       <Route path="/guides/:guideId" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
       <Route path="/guides" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
       <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
+      <Route path="/schedule" element={<ProtectedRoute><SchedulePage /></ProtectedRoute>} />
+      <Route
+        path="/schedule/occurrences/:occurrenceId"
+        element={<ProtectedRoute><ScheduleOccurrencePage /></ProtectedRoute>}
+      />
       <Route path="/menu" element={<ProtectedRoute><MenuPage /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
     </Routes>

@@ -179,9 +179,9 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
           </button>
         }
         activeNavigation="홈"
-        disabledNavigation={['일정']}
         onNavigate={(item) => {
           if (item === '홈') navigate('/')
+          if (item === '일정') navigate('/schedule')
           if (item === '도지') navigate('/chat')
           if (item === '가이드') navigate('/guides')
           if (item === '메뉴') navigate('/menu')

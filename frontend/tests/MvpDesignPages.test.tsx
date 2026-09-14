@@ -57,6 +57,7 @@ function renderHome(
         />
         <Route path="/chat" element={<div>처방전 ID 없는 챗봇 진입 화면</div>} />
         <Route path="/guides" element={<div>가이드 empty 화면</div>} />
+        <Route path="/schedule" element={<div>복약 일정 화면</div>} />
         <Route path="/menu" element={<div>메뉴 화면</div>} />
       </Routes>
     </MemoryRouter>,
@@ -230,10 +231,7 @@ describe('Dosey MVP design pages', () => {
       'disabled',
       true,
     )
-    expect(screen.getByRole('button', { name: '일정 (준비 중)' })).toHaveProperty(
-      'disabled',
-      true,
-    )
+    expect(screen.getByRole('button', { name: '일정' })).toHaveProperty('disabled', false)
   })
 
   it('복약 챗봇은 ID를 추측하지 않고 기존 /chat route로만 이동한다', async () => {
