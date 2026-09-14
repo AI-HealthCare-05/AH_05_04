@@ -79,7 +79,7 @@ def test_upgrade_constraints_and_downgrade_preserves_history(push_database):
 
     asyncio.run(check_and_seed())
     with pytest.raises(RuntimeError, match="history blocks downgrade"):
-        command.downgrade(alembic, "166f30415263")
+        command.downgrade(alembic, "469a1b2c3d4e-1")
 
     async def clear_subscriptions():
         async with _connection() as connection:
@@ -87,5 +87,5 @@ def test_upgrade_constraints_and_downgrade_preserves_history(push_database):
                 await connection.execute(text("DELETE FROM push_subscription"))
 
     asyncio.run(clear_subscriptions())
-    command.downgrade(alembic, "166f30415263")
+    command.downgrade(alembic, "469a1b2c3d4e-1")
     command.upgrade(alembic, "469a1b2c3d4e")
