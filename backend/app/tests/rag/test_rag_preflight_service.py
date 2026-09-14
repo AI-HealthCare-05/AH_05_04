@@ -255,7 +255,7 @@ async def test_preflight_rejects_when_active_medication_is_empty_without_side_ef
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE"
-    assert exc_info.value.details[0].field == "prescription_version_id"
+    assert exc_info.value.details[0].field == "prescription_id"
     assert exc_info.value.details[0].reason == "ACTIVE_MEDICATION_REQUIRED"
     assert await _side_effect_counts(db_session) == before
 
