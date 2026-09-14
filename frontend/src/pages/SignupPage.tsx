@@ -47,6 +47,8 @@ function validateSignup(form: SignupForm): SignupFieldErrors {
 
 function SignupPage() {
   const navigate = useNavigate()
+  // Opt in only after email delivery is available (#494); noop must not block signup.
+  const emailVerificationEnabled = import.meta.env.VITE_EMAIL_VERIFICATION_ENABLED === 'true'
   const [form, setForm] = useState<SignupForm>({
     email: '',
     password: '',
@@ -152,7 +154,7 @@ function SignupPage() {
       return
     }
 
-    if (verification !== 'verified') {
+    if (emailVerificationEnabled && verification !== 'verified') {
       setVerificationError('회원가입 전에 이메일 인증을 완료해 주세요.')
       verificationRequestRef.current?.focus()
       return
@@ -258,7 +260,7 @@ function SignupPage() {
                   </span>
                 )}
               </div>
-              <div className="mvp-form__field" aria-busy={verificationBusy}>
+              {emailVerificationEnabled && <div className="mvp-form__field" aria-busy={verificationBusy}>
                 <button ref={verificationRequestRef} type="button" className="ds-button full-width"
                   disabled={verificationBusy || isSubmitting || verification === 'verified'}
                   onClick={() => void handleVerification('request')}>
@@ -289,7 +291,7 @@ function SignupPage() {
                   {verification === 'confirming' ? '인증 확인 중...' : '인증 확인'}
                 </Button>
                 {verificationError && <span id="signup-verification-error" className="mvp-form__field-error" role="alert">{verificationError}</span>}
-              </div>
+              </div>}
               <div className="mvp-form__field">
                 <label htmlFor="signup-password">비밀번호</label>
                 <input

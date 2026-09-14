@@ -15,6 +15,7 @@ vi.mock('../src/api/auth', () => ({
 
 beforeEach(() => {
   vi.resetAllMocks()
+  vi.stubEnv('VITE_EMAIL_VERIFICATION_ENABLED', 'true')
   vi.mocked(requestEmailVerification).mockResolvedValue(undefined)
   vi.mocked(confirmEmailVerification).mockResolvedValue(undefined)
   localStorage.clear()
@@ -23,6 +24,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.unstubAllEnvs()
 })
 
 describe('SignupPage', () => {
@@ -71,6 +73,35 @@ describe('SignupPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '인증 확인' }))
     await screen.findByText('이메일 인증이 완료되었습니다.')
   }
+
+  it.each([undefined, 'false', 'TRUE', '1'])('flag %s keeps noop/non-local signup available without verification calls', async (flag) => {
+    vi.stubEnv('VITE_EMAIL_VERIFICATION_ENABLED', flag)
+    vi.stubEnv('MODE', 'production')
+    vi.stubEnv('PROD', true)
+    renderPage()
+    fillValidForm()
+    expect(screen.queryByRole('button', { name: '인증 요청' })).toBeNull()
+    expect(screen.queryByLabelText('이메일 인증 코드')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(signup).toHaveBeenCalledTimes(1)
+    expect(requestEmailVerification).not.toHaveBeenCalled()
+    expect(confirmEmailVerification).not.toHaveBeenCalled()
+  })
+
+  it('disabled flag preserves validation focus and final signup conflict', async () => {
+    vi.stubEnv('VITE_EMAIL_VERIFICATION_ENABLED', 'false')
+    vi.mocked(signup).mockRejectedValue(new ApiError(409, '이미 사용중인 이메일입니다.', 'CONFLICT'))
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+    expect(document.activeElement).toBe(screen.getByLabelText('이름'))
+    expect(signup).not.toHaveBeenCalled()
+    fillValidForm()
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+    await screen.findByText('이미 사용중인 이메일입니다.')
+    expect(document.activeElement).toBe(screen.getByLabelText('이메일'))
+    expect(requestEmailVerification).not.toHaveBeenCalled()
+  })
 
   it('#395 회원가입 성공 후 로그인 화면에 fromSignup 상태를 전달한다', async () => {
     renderPage()
