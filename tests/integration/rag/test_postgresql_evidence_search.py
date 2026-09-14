@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -600,3 +601,62 @@ async def test_explain_query_plan_smoke(database) -> None:
         assert plan_json2 is not None
         plan_str2 = str(plan_json2)
         assert "ix_knowledge_chunk_chunk_text_trgm" in plan_str2 or "Bitmap Index Scan" in plan_str2
+
+
+async def test_transaction_isolation_and_read_only_verified_during_search(database) -> None:
+    engine = database
+    index_id, member_id, index_hash = await _seed_test_data(engine)
+    raw_factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+
+    observed_isolation: list[str] = []
+    observed_read_only: list[str] = []
+
+    class ObservingSession:
+        def __init__(self, delegate):
+            self._delegate = delegate
+
+        async def execute(self, statement, *args, **kwargs):
+            res = await self._delegate.execute(statement, *args, **kwargs)
+            # After SET TRANSACTION is executed (observed on the next command like set_config)
+            if not observed_isolation and "set_config" in str(statement):
+                iso = await self._delegate.scalar(text("SHOW transaction_isolation"))
+                ro = await self._delegate.scalar(text("SHOW transaction_read_only"))
+                observed_isolation.append(str(iso))
+                observed_read_only.append(str(ro))
+            return res
+
+        def begin(self):
+            return self._delegate.begin()
+
+        def __getattr__(self, name):
+            return getattr(self._delegate, name)
+
+    @asynccontextmanager
+    async def observing_factory():
+        async with raw_factory() as session:
+            yield ObservingSession(session)
+
+    adapter = PostgresqlEvidenceSearchAdapter(observing_factory, ImmutableArtifactRef("adapter", "1.0", "a" * 64))
+
+    binding = _create_binding(index_id, member_id, index_hash, dense_enabled=False)
+    query = SensitiveText("아스피린")
+    fp = QueryFingerprint("sha256", "v1", "8" * 64)
+    req = EvidenceSearchRequest(
+        normalized_query=query,
+        query_fingerprint=fp,
+        execution_binding=binding,
+        query_embedding_receipt=None,
+    )
+
+    res = await adapter.search(req)
+    assert isinstance(res, EvidenceSearchSuccess)
+    assert len(observed_isolation) == 1
+    assert observed_isolation[0].lower() == "repeatable read"
+    assert observed_read_only[0].lower() == "on"
+
+    # Verify that default pool connection outside the search transaction is default read committed and read-write
+    async with raw_factory() as session:
+        default_iso = await session.scalar(text("SHOW transaction_isolation"))
+        default_ro = await session.scalar(text("SHOW transaction_read_only"))
+        assert default_iso.lower() == "read committed"
+        assert default_ro.lower() == "off"

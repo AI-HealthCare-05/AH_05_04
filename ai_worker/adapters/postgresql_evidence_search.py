@@ -230,6 +230,7 @@ class PostgresqlEvidenceSearchAdapter:
 
         try:
             async with self._session_factory() as session, session.begin():
+                await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
                 trigram_th = binding.retrieval_config.lexical_config.trigram_threshold
                 await session.execute(
                     text("SELECT set_config('pg_trgm.similarity_threshold', :th, true)"),

@@ -59,7 +59,7 @@ SQLAlchemy `VECTOR` 타입이 bind/result 변환을 소유한다. 실제 Postgre
 | --- | --- | --- |
 | 단위 테스트: 순수 RRF 연산 | `ai_worker/tests/rag/test_evidence_rank_fusion.py` | 9 passed (`rrf-rank-fusion@1`, exact Fraction, tie-break, bucketed fusion, Top 30/20) |
 | 단위 테스트: 프로토콜·설정·검증 | `ai_worker/tests/rag/test_evidence_search.py` | 8 passed (쿼리 유효성, `SensitiveText`/`Vector` redaction, 18자리 점수 포맷, JCS hash) |
-| 통합 테스트: PostgreSQL 실환경 | `tests/integration/rag/test_postgresql_evidence_search.py` | 7 passed (Exact 우선순위, Trigram/FTS 조회, Cosine dense, fail-closed 무결성, threshold cleanup, EXPLAIN plan) |
+| 통합 테스트: PostgreSQL 실환경 | `tests/integration/rag/test_postgresql_evidence_search.py` | 8 passed (Exact 우선순위, Trigram/FTS 조회, Cosine dense, fail-closed 무결성, threshold cleanup, EXPLAIN plan, REPEATABLE READ READ ONLY 격리 및 읽기전용 검증) |
 
 ## 남은 #178 범위
 

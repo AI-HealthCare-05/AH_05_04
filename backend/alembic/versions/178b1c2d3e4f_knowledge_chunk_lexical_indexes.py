@@ -1,14 +1,14 @@
 """Add GIN expression index for FTS (simple) and GIN trgm index on knowledge_chunk.chunk_text.
 
 Revision ID: 178b1c2d3e4f
-Revises: 458c1d2e3f4a
+Revises: 166f40516273
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "178b1c2d3e4f"
-down_revision = "458c1d2e3f4a"
+down_revision = "166f40516273"
 branch_labels = None
 depends_on = None
 
