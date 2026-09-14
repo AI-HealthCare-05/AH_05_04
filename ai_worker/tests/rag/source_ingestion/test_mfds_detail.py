@@ -184,10 +184,11 @@ async def test_whole_pages_preserve_repeated_material_and_raw_bytes(tmp_path):
     assert len(repo.create_artifacts.call_args.kwargs["artifacts"]) == 2
 
 
+# 빈 주성분 행은 #525로 통과 판정에서 분리됐으므로 여기의 부적격 사례가 아니다.
+# 해당 경로는 test_blank_rows_pass_the_gate_without_hiding_source_statistics가 덮는다.
 @pytest.mark.parametrize(
     "records,reason",
     [
-        ([row(), {"ITEM_SEQ": "synthetic-blank"}], "EMPTY_COMPONENT_FIELDS"),
         ([row(), dict(row("002"), QNT=None)], "INVALID_COMPONENT_FIELDS"),
         ([row(), dict(row(), QNT="2")], "CONFLICTING_OBSERVATION"),
         ([row(), row()], None),
@@ -217,24 +218,40 @@ async def test_ineligible_rows_kept_without_partial_snapshot(tmp_path, records, 
     assert len(repo.create_artifacts.call_args.kwargs["artifacts"]) == 1
 
 
-async def test_blank_rows_are_still_blocked_by_the_primary_key_gate(tmp_path):
-    """#166 D-04: Catalog 매핑은 빈 행을 통과시키지만 수집 계층 고유키 검사가 먼저 막는다.
-
-    빈 행은 TAMT_SEQ·MTRAL_SN이 비어 primary key null로 집계되므로 run이 SCHEMA_DRIFT가
-    된다. 이 게이트는 이번 변경 범위 밖이며 실제 수집 전에 별도로 확인해야 한다.
-    """
+async def test_blank_rows_pass_the_gate_without_hiding_source_statistics(tmp_path):
+    """#525: 빈 행은 통과 판정에서 분리하되 원본 null 통계는 감사용으로 보존한다."""
     acquisition, _ = await acquire(tmp_path, [envelope([row(), {"ITEM_SEQ": "synthetic-blank"}])])
     validation = acquisition.result.primary_key_validation
 
-    assert acquisition.result.status is not SourceRunStatus.SUCCEEDED
-    assert not acquisition.result.snapshot_candidate_allowed
-    assert validation is not None and validation.null_count == 1
+    assert acquisition.result.status is SourceRunStatus.SUCCEEDED
+    assert acquisition.result.snapshot_candidate_allowed
+    assert validation is not None
+    # 원본 기준 통계는 그대로 남는다.
+    assert validation.null_count == 1
+    assert validation.missing_field_counts
+    # 통과 판정은 빈 행을 제외한 기준으로 한다.
+    assert validation.excluded_empty_row_count == 1
+    assert validation.enforced_null_count == 0
+    assert validation.gate_null_count == 0
 
     report = json.loads((acquisition.directory / "inspection.json").read_text())
     assert report["empty_component_row_count"] == 1
     assert report["component_input_row_count"] == 1
     assert report["catalog_is_partial"] is True
-    assert report["catalog_input_eligible"] is False
+    assert report["catalog_input_eligible"] is True
+
+
+async def test_non_empty_row_missing_a_key_is_still_schema_drift(tmp_path):
+    """비어 있지 않은 행의 키 누락은 계속 전체를 차단한다."""
+    partial = dict(row(), MTRAL_SN=None)
+    acquisition, _ = await acquire(tmp_path, [envelope([row("002"), partial])])
+    validation = acquisition.result.primary_key_validation
+
+    assert acquisition.result.status is SourceRunStatus.SCHEMA_DRIFT
+    assert not acquisition.result.snapshot_candidate_allowed
+    assert validation is not None
+    assert validation.excluded_empty_row_count == 0
+    assert validation.enforced_null_count == 1
 
 
 async def test_empty_component_receipt_is_recorded_only_with_a_stored_snapshot(tmp_path):

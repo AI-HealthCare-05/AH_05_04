@@ -121,10 +121,40 @@ Coverage 기준은 바뀌지 않습니다.
 연결 불가능한 값으로 고정합니다. 승인된 Worker 디렉터리에 DB 접근 테스트가 추가되면 조용히
 Backend의 `test` DB를 공유하지 않고 실패하며, 별도 Integration lane으로 분류해야 합니다.
 
-GitHub Actions는 `test-inventory`, `test-migration`, `test-backend`, `test-worker`를 독립 job으로 동시에
-실행합니다. 각 DB 의존 job은 필요한 PostgreSQL 또는 Redis service container를 자체 사용하므로
-다른 job과 상태를 공유하지 않습니다. 최종 `test` job은 네 job의 성공 여부를 확인하고 Backend와
-Worker Coverage artifact를 합산합니다. Coverage artifact에는 실행 data만 포함하며 환경파일은 업로드하지 않습니다.
+GitHub Actions의 Pull Request 실행은 먼저 `classify-test-scope`가 merge base와 head 사이의 변경
+경로를 분류합니다. workflow-level `paths`는 required check가 Pending으로 남을 수 있어 사용하지
+않고, 항상 생성되는 workflow 안에서 job-level 조건으로 실행 범위를 정합니다. 여러 영역을 함께
+수정하면 각 영역의 합집합을 실행하고, CI·dependency·shared runtime·미분류 경로 또는 빈 변경
+목록은 전체 실행으로 닫습니다. `merge_group`과 `main`·`develop`·`release/*`·`hotfix/*` push는
+변경 경로와 무관하게 전체 scope를 실행합니다. 파일 이동은 삭제된 원래 경로와 추가된 새 경로를
+모두 분류해 두 영역의 검증을 합집합으로 실행합니다.
+
+| PR 변경 영역 | 실행하는 주요 검증 |
+| --- | --- |
+| `frontend/**` | Frontend, Contract |
+| `backend/**` | Backend, RAG Integration, Contract, Python lint |
+| `backend/alembic.ini`, `backend/alembic/**`, `tests/migration/**` | Migration, Backend, RAG Integration, Contract, Python lint |
+| `ai_worker/**` | Worker, Contract, Python lint |
+| `tests/contract/**`, `tests/services/**`, `docs/**`, root Markdown | Contract(테스트 Python 변경은 lint 포함) |
+| GitHub Issue/PR template만 변경 | Python·Frontend suite 생략 |
+| CI·dependency·shared runtime·deployment·미분류 경로 | 전체 검증 |
+
+`test-inventory`는 모든 이벤트에서 실행합니다. `test-migration`, `test-backend`, `test-rag`,
+`test-contract`, `test-worker`는 독립 job이며, 각 DB 의존 job은 필요한 PostgreSQL 또는 Redis service
+container를 자체 사용하므로 다른 job과 상태를 공유하지 않습니다. `test-rag`는 Backend scope에서
+`tests/integration/rag`와 전용 migrated DB의 Source cleanup 검증을 PostgreSQL 전용 job으로 실행합니다.
+따라서 Backend의 직렬 테스트와 RAG 통합 검증이 서로 다른 runner에서 병렬로 진행됩니다. `test-contract`는 service container 없이
+`tests/contract`와 `tests/services`를 직렬 실행하고, DB host port를 연결 불가능한 `1`로 고정합니다.
+따라서 이 경계에 DB 접근 테스트가 추가되면 Backend DB를 조용히 공유하지 않고 실패합니다.
+`tests/contract/conftest.py`의 고정 Docker image fixture 충돌을 피하기 위해 Contract job에는 xdist를
+적용하지 않습니다.
+
+최종 `test` job은 분류기가 선택한 Python job이 실제로 성공했는지 확인합니다. 선택된 job의 skip,
+failure, cancellation과 선택되지 않았지만 실행된 job의 failure/cancellation은 성공으로 숨기지
+않습니다. Backend·RAG Integration·Contract·Worker 전체가 실행되는 경우에만 각각의 Coverage artifact를 합산해
+기존 94% 기준을 적용합니다. 부분 PR coverage는 전체 저장소 coverage로 오판하지 않으며,
+merge queue의 전체 실행에서 병합 전에 94%를 반드시 검증합니다. Coverage artifact에는 실행
+data만 포함하며 환경파일은 업로드하지 않습니다.
 
 `tests/contract/test_python_test_inventory.py`는 저장소의 모든 Python `test_*.py`·`*_test.py`
 파일이 기본 lane 또는 명시적 opt-in 범위 중 하나로 분류됐는지 검사합니다. 어느 범위에도 없는
@@ -133,8 +163,12 @@ Worker Coverage artifact를 합산합니다. Coverage artifact에는 실행 data
 구조적으로 검사하므로 주석, step 이름, 환경 변수 문자열은 실행 대상으로 인정하지 않습니다.
 로컬 runner는 외부 `PYTEST_ADDOPTS`를 제거하고 CI도 이를 빈 값으로 고정하며, pytest 설정에
 `addopts`를 추가하는 변경도 분류 검토 전에는 허용하지 않습니다.
-따라서 기본 디렉터리 안의 새 테스트는 자동 수집되고, 새 suite는 작성 PR에서 실행 lane 또는
-opt-in 사유를 반드시 결정해야 합니다.
+따라서 `backend/app/tests/**`의 새 테스트는 Backend job, `ai_worker/tests/core|ocr|rag|evaluation/**`는
+Worker job, `tests/contract/**`와 `tests/services/**`는 Contract job에 자동 수집됩니다. 새 suite는
+작성 PR에서 실행 lane 또는 opt-in 사유를 반드시 결정해야 합니다. 같은 실행 설정 안에 동일한
+pytest target을 중복으로 선언하거나 서로 다른 GitHub Actions job이 같은 테스트 파일을 수집해도
+inventory gate가 실패합니다. 같은 Backend job에서 전용 migrated DB로 다시 실행하는 테스트는
+동일 lane의 별도 환경 검증이므로 허용합니다.
 
 승인된 Worker 디렉터리에 추가되는 테스트도 파일 단위로 자동 병렬 실행됩니다. 새 Worker 단위
 테스트는 실행 순서나 다른 파일의 process global, 환경변수, 현재 작업 디렉터리, 고정 임시파일에
@@ -370,13 +404,16 @@ PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Co
 - 자동 Guide는 모든 활성 약의 현재 Identification 전에는 Job을 만들지 않고 동기 `REVIEW_REQUIRED`를 반환합니다. Chat은 Identification 전에도 최소 Safety Intake Job을 만들 수 있지만, `ROUTINE`만 Identification Preflight 후 일반 Rule·RAG로 진행합니다. `URGENT | EMERGENCY | UNKNOWN`은 일반 Retrieval·Composer·Provider 호출 0건을 검증합니다.
 - 처방·Identification·Source·Runtime Bundle 변경 뒤 과거 결과가 `STALE`인지 검증합니다.
 
-### #178 Knowledge Evidence Index 선행 기반
+### #178 Knowledge Evidence Index 선행 기반 및 PostgreSQL Evidence Search + RRF
 
 `tests/integration/rag/test_knowledge_evidence_index_postgresql.py`는 매 실행마다 별도 PostgreSQL database를
 만들고 전체 Alembic head를 적용한다. pgvector extension version, Source Snapshot member parent 결속,
 완성 index의 vector round-trip과 receipt 재계산, 동일 버전 멱등 재생, 동시 생성 직렬화, 변경 receipt 충돌
-rollback과 민감 합성 sentinel 비노출을 검증한 뒤 database를 제거한다. Worker 기본 lane의 차단된 DB 포트를
-우회하지 않도록 이 테스트는 `tests/integration/rag`의 Backend PostgreSQL lane에서만 실행한다.
+rollback과 민감 합성 sentinel 비노출을 검증한 뒤 database를 제거한다.
+
+`tests/integration/rag/test_postgresql_evidence_search.py`는 PostgreSQL live 환경에서 Exact(`strpos`), Trigram(`chunk_text % query`), FTS(`plainto_tsquery @@ to_tsvector`), Dense(pgvector `<=>` cosine distance) sub-search 4종의 결속 조회, Content hash 및 embedding hash 위변조 감지 시 fail-closed 무결성 차단, 트랜잭션 로컬 `pg_trgm.similarity_threshold` 설정 및 커넥션 풀 오염 방지, `EXPLAIN` 쿼리 계획 호환성을 검증한다. Worker 기본 lane의 차단된 DB 포트를 우회하지 않도록 이 두 테스트는 `tests/integration/rag`의 RAG Integration PostgreSQL lane에서만 실행한다.
+
+순수 RRF 융합 로직(`rrf-rank-fusion@1`, Fraction 기반 무손실 연산, Stable coordinate UTF-8 tie-break, Exact 버킷 우선순위 융합, Top 30/20 경계)은 `ai_worker/tests/rag/test_evidence_rank_fusion.py`에서 검증하며, 검색 프로토콜·설정 해시·쿼리 유효성 검증 및 18자리 소수점 점수 포맷팅(`observed-stage-score-decimal@1`)은 `ai_worker/tests/rag/test_evidence_search.py`에서 검증하여 AI Worker lane에서 실행한다.
 
 상세 실행 증빙과 미완료 #178 범위는 [Knowledge Evidence Index #178 검증 기록](./testing/knowledge-evidence-index-178.md)을 따른다.
 

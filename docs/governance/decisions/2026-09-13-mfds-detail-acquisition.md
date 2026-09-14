@@ -32,6 +32,22 @@
   private 조사 sidecar에 유지한다. manifest payload와 `is_complete`는 변경하지 않는다.
 - 제품 단위 상태값은 이번 범위에서 제공하지 않는다. 집계 건수만으로 특정 제품의 표시 상태를 판단하지 않는다.
 
+## 수집 계층 primary key 통과 판정 (2026-09-14 확인, #525)
+
+Catalog 매핑에서 빈 행을 통과시켜도 수집 계층의 primary key 검사가 먼저 run을 `SCHEMA_DRIFT`로
+끝내 실제 Snapshot이 생성되지 않았다. 빈 행을 `primary_key_null_count`에서 조용히 빼 같은
+`receipt_version=1.1` 안에서 의미를 바꾸지 않는다.
+
+- 확인: 송은영. 2026-09-14.
+- 빈 행은 수집 단계에서 별도 집계한다(`excluded_empty_row_count`).
+- 원본 수집 행 기준 null 통계는 감사·진단용으로 보존한다.
+  통과 판정은 빈 행을 제외한 `enforced_primary_key_null_count`로 한다.
+- 비어 있지 않은 행에서 `ITEM_SEQ`·`TAMT_SEQ`·`MTRAL_SN`이 비면 계속 `SCHEMA_DRIFT`로 차단한다.
+- 빈 행 분류는 상세 Operation 계약에만 선언한다. 선언하지 않은 Operation의 판정은 바뀌지 않으며
+  DUR·환자용 Endpoint의 기존 차단도 유지한다.
+- Receipt 필드 의미와 통과 판정 기준이 바뀌므로 상세 Receipt는 `receipt_version` 1.2를 쓴다.
+  기존 1.1 Receipt는 재발급 없이 계속 수용한다. 이 결정은 실제 수집 실행·승인이 아니다.
+
 검토 대안: 제품 parser 재사용은 잘못된 키/checksum으로 배제했다. 새 Source DB 모델은 기존 저장 형태로
 충분하므로 추가하지 않았다. nullable 관찰 키 Snapshot 및 파생 subset은 별도 공유 계약 변경이므로 구현하지 않았다.
 유지보수 추가분은 상세 endpoint 후보·parser/수집 진입점·합성 회귀이며 API key·운영 승인 관리 경로는 확장하지 않는다.
