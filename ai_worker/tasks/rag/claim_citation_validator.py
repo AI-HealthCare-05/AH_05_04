@@ -18,7 +18,7 @@ from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 CLAIM_SUPPORT_PROJECTION_VERSION = "rag-claim-support-v1"
-VALIDATED_SELECTION_PROJECTION_VERSION = "rag-validated-citation-selection-v1"
+VALIDATED_SELECTION_PROJECTION_VERSION = "rag-validated-citation-selection-v2"
 
 
 class CitationSourceType(StrEnum):
@@ -406,6 +406,17 @@ def _claim_payload(claim: ClaimCandidate) -> dict[str, object]:
     }
 
 
+def _support_receipt_payload(receipt: ClaimSupportVerificationReceipt) -> dict[str, object]:
+    return {
+        "claim_key": receipt.claim_key,
+        "support_status": receipt.support_status.value,
+        "claim_text_digest": receipt.claim_text_digest,
+        "assessment_ref": _artifact_payload(receipt.assessment_ref),
+        "verifier_artifact_ref": _artifact_payload(receipt.verifier_artifact_ref),
+        "projection_sha256": receipt.projection_sha256,
+    }
+
+
 def canonical_claim_support_projection_hash(candidate_set: ClaimCitationCandidateSet, claim_key: str) -> str:
     claim = next(claim for claim in candidate_set.claims if claim.claim_key == claim_key)
     citations = sorted(
@@ -420,9 +431,16 @@ def canonical_claim_support_projection_hash(candidate_set: ClaimCitationCandidat
     return hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
 
 
-def canonical_validated_selection_hash(candidate_set: ClaimCitationCandidateSet) -> str:
+def canonical_validated_selection_hash(
+    candidate_set: ClaimCitationCandidateSet,
+    support_receipts: tuple[ClaimSupportVerificationReceipt, ...],
+) -> str:
     claims = sorted(candidate_set.claims, key=lambda claim: _canonical_json_bytes(_claim_payload(claim)))
     citations = sorted(candidate_set.citations, key=lambda citation: _canonical_json_bytes(_citation_payload(citation)))
+    receipts = sorted(
+        support_receipts,
+        key=lambda receipt: _canonical_json_bytes(_support_receipt_payload(receipt)),
+    )
     payload = {
         "projection_version": VALIDATED_SELECTION_PROJECTION_VERSION,
         "target": {"target_kind": candidate_set.target.target_kind, "target_ref": candidate_set.target.target_ref},
@@ -434,6 +452,7 @@ def canonical_validated_selection_hash(candidate_set: ClaimCitationCandidateSet)
             "parser_ref": _artifact_payload(candidate_set.generation_provenance.parser_ref),
         },
         "validator_policy_ref": _artifact_payload(candidate_set.validator_policy_ref),
+        "support_receipts": [_support_receipt_payload(receipt) for receipt in receipts],
     }
     return hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
 
@@ -527,9 +546,12 @@ def _support_reasons(
         if claim.claim_kind is ClaimKind.MEDICAL and not citations_by_claim[claim.claim_key]:
             reasons.append(CandidateValidationReason.MEDICAL_CLAIM_CITATION_REQUIRED)
         status = claim.support_assertion.support_status
-        if claim.claim_kind is ClaimKind.MEDICAL and status is not ClaimSupportStatus.SUPPORTED:
+        publishable = status is ClaimSupportStatus.SUPPORTED or (
+            claim.claim_kind is ClaimKind.AUXILIARY and status is ClaimSupportStatus.PARTIALLY_SUPPORTED
+        )
+        if not publishable and claim.claim_kind is ClaimKind.MEDICAL:
             reasons.append(CandidateValidationReason.MEDICAL_CLAIM_NOT_SUPPORTED)
-        elif status in {ClaimSupportStatus.CONTRADICTED, ClaimSupportStatus.NOT_SUPPORTED}:
+        elif not publishable:
             reasons.append(CandidateValidationReason.CLAIM_NOT_SUPPORTED)
     if type(receipts) is not tuple or not all(
         type(receipt) is ClaimSupportVerificationReceipt
@@ -607,13 +629,14 @@ def validate_claim_citations(
             reasons=_unique_reasons(reasons),
             validated_selection=None,
         )
+    canonical_receipts = tuple(sorted(support_receipts, key=lambda receipt: receipt.claim_key.encode("utf-8")))
     return ClaimCitationValidationOutcome(
         execution_status=CandidateValidationExecutionStatus.EVALUATED,
         decision=CandidateValidationDecision.VALIDATED,
         reasons=(),
         validated_selection=ValidatedCitationSelection(
             candidate_set=candidate_set,
-            support_receipts=tuple(sorted(support_receipts, key=lambda receipt: receipt.claim_key.encode("utf-8"))),
-            selection_sha256=canonical_validated_selection_hash(candidate_set),
+            support_receipts=canonical_receipts,
+            selection_sha256=canonical_validated_selection_hash(candidate_set, canonical_receipts),
         ),
     )

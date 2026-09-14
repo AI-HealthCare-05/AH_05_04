@@ -168,29 +168,91 @@ def test_validates_each_target_citation_source_type_with_exact_support_receipt(
 
 
 @pytest.mark.parametrize(
-    ("support_status", "claim_kind", "expected_reason"),
+    ("claim_kind", "support_status", "expected_decision", "expected_reason"),
     (
+        (ClaimKind.MEDICAL, ClaimSupportStatus.SUPPORTED, CandidateValidationDecision.VALIDATED, None),
         (
-            ClaimSupportStatus.PARTIALLY_SUPPORTED,
             ClaimKind.MEDICAL,
+            ClaimSupportStatus.PARTIALLY_SUPPORTED,
+            CandidateValidationDecision.REJECTED,
             CandidateValidationReason.MEDICAL_CLAIM_NOT_SUPPORTED,
         ),
-        (ClaimSupportStatus.CONTRADICTED, ClaimKind.AUXILIARY, CandidateValidationReason.CLAIM_NOT_SUPPORTED),
-        (ClaimSupportStatus.NOT_SUPPORTED, ClaimKind.AUXILIARY, CandidateValidationReason.CLAIM_NOT_SUPPORTED),
+        (
+            ClaimKind.MEDICAL,
+            ClaimSupportStatus.CONTRADICTED,
+            CandidateValidationDecision.REJECTED,
+            CandidateValidationReason.MEDICAL_CLAIM_NOT_SUPPORTED,
+        ),
+        (
+            ClaimKind.MEDICAL,
+            ClaimSupportStatus.NOT_SUPPORTED,
+            CandidateValidationDecision.REJECTED,
+            CandidateValidationReason.MEDICAL_CLAIM_NOT_SUPPORTED,
+        ),
+        (ClaimKind.AUXILIARY, ClaimSupportStatus.SUPPORTED, CandidateValidationDecision.VALIDATED, None),
+        (
+            ClaimKind.AUXILIARY,
+            ClaimSupportStatus.PARTIALLY_SUPPORTED,
+            CandidateValidationDecision.VALIDATED,
+            None,
+        ),
+        (
+            ClaimKind.AUXILIARY,
+            ClaimSupportStatus.CONTRADICTED,
+            CandidateValidationDecision.REJECTED,
+            CandidateValidationReason.CLAIM_NOT_SUPPORTED,
+        ),
+        (
+            ClaimKind.AUXILIARY,
+            ClaimSupportStatus.NOT_SUPPORTED,
+            CandidateValidationDecision.REJECTED,
+            CandidateValidationReason.CLAIM_NOT_SUPPORTED,
+        ),
+        (ClaimKind.SAFETY_FALLBACK, ClaimSupportStatus.SUPPORTED, CandidateValidationDecision.VALIDATED, None),
+        (
+            ClaimKind.SAFETY_FALLBACK,
+            ClaimSupportStatus.PARTIALLY_SUPPORTED,
+            CandidateValidationDecision.REJECTED,
+            CandidateValidationReason.CLAIM_NOT_SUPPORTED,
+        ),
+        (
+            ClaimKind.SAFETY_FALLBACK,
+            ClaimSupportStatus.CONTRADICTED,
+            CandidateValidationDecision.REJECTED,
+            CandidateValidationReason.CLAIM_NOT_SUPPORTED,
+        ),
+        (
+            ClaimKind.SAFETY_FALLBACK,
+            ClaimSupportStatus.NOT_SUPPORTED,
+            CandidateValidationDecision.REJECTED,
+            CandidateValidationReason.CLAIM_NOT_SUPPORTED,
+        ),
+        (
+            ClaimKind.AUXILIARY,
+            cast(ClaimSupportStatus, "UNSUPPORTED_VALUE"),
+            CandidateValidationDecision.REJECTED,
+            CandidateValidationReason.REQUEST_INVALID,
+        ),
     ),
 )
-def test_rejects_the_whole_candidate_when_any_claim_is_not_publishable(
-    support_status: ClaimSupportStatus,
+def test_all_claim_kind_and_support_status_combinations_fail_closed_except_allowed_pairs(
     claim_kind: ClaimKind,
-    expected_reason: CandidateValidationReason,
+    support_status: ClaimSupportStatus,
+    expected_decision: CandidateValidationDecision,
+    expected_reason: CandidateValidationReason | None,
 ) -> None:
     candidate_set = _candidate_set(support_status=support_status, claim_kind=claim_kind)
+    support_receipts = (_support_receipt(candidate_set),) if type(support_status) is ClaimSupportStatus else ()
 
-    outcome = validate_claim_citations(candidate_set, (_support_receipt(candidate_set),))
+    outcome = validate_claim_citations(candidate_set, support_receipts)
 
-    assert outcome.decision is CandidateValidationDecision.REJECTED
-    assert expected_reason in outcome.reasons
-    assert outcome.validated_selection is None
+    assert outcome.decision is expected_decision
+    if expected_reason is None:
+        assert outcome.reasons == ()
+        assert outcome.validated_selection is not None
+    else:
+        assert expected_reason in outcome.reasons
+        assert outcome.validated_selection is None
 
 
 def test_rejects_medical_claim_without_a_citation() -> None:
@@ -317,7 +379,7 @@ def test_selection_hash_is_deterministic_when_input_order_changes() -> None:
     assert ordered_outcome.validated_selection.selection_sha256 == reversed_outcome.validated_selection.selection_sha256
 
 
-def test_canonical_projection_hashes_match_the_reviewed_v1_fixture() -> None:
+def test_canonical_projection_hashes_match_the_reviewed_v2_fixture() -> None:
     candidate_set = _candidate_set()
     outcome = validate_claim_citations(candidate_set, (_support_receipt(candidate_set),))
 
@@ -326,5 +388,5 @@ def test_canonical_projection_hashes_match_the_reviewed_v1_fixture() -> None:
     )
     assert outcome.validated_selection is not None
     assert outcome.validated_selection.selection_sha256 == (
-        "5379edb46b4c682d8d90d274c48c6093eda8e304ddd38a7387b76d3983e7af1a"
+        "e5e54a8146f4e6a2771e9d35730351475361773a2b2df4832b6c8a60dc354b9f"
     )

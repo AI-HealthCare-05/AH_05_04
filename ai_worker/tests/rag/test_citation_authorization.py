@@ -116,7 +116,7 @@ def test_builds_a_deterministic_request_bound_to_origin_runtime_and_validated_se
     assert first.request.selection_manifest_sha256 == (
         "a1c277c295e59b6375452dd7a829d13e57a030b89e3b9bc84dd99439c70ae396"
     )
-    assert first.request.request_sha256 == "7b2fd3eb6a6a43d20e29d9d4073633645b972655db9f2f30c273ac639fb20b68"
+    assert first.request.request_sha256 == "74105ba87a0c4e326b803e7ba7f559d71c9b3dfff1a43c6c60ff84f6096317a3"
 
 
 @pytest.mark.parametrize(

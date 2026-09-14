@@ -190,7 +190,9 @@ Generator가 만든 `support_status` 문자열은 승인 근거가 아니다. Va
 `ClaimSupportVerificationReceipt`를 입력받고, Candidate에서 다시 계산한 projection과 exact-match한다.
 
 성공 Receipt는 assertion artifact ref, verifier artifact ref, Claim text digest, Citation Evidence Ref 전량,
-Claim/Citation projection hash와 support status를 exact-bind해야 한다. Receipt가 단순히 `SUPPORTED`만 반환하거나
+Claim/Citation projection hash와 support status를 exact-bind해야 한다. 검증 성공 시 support Receipt 전량을
+`ValidatedCitationSelection.selection_sha256`의 canonical projection에 포함하므로 verifier artifact의 code·version·hash가
+하나라도 바뀌면 Authorization request identity도 바뀌고, 이전 승인 Receipt를 재사용할 수 없다. Receipt가 단순히 `SUPPORTED`만 반환하거나
 요청의 일부 Citation만 확인하면 malformed Receipt로 거부한다.
 
 이 Receipt 계약은 의미 기반 NLI를 새로 도입하지 않는다. 현재 첫 소비자인 RAG-15 Guideline Card는 이미 검증한
@@ -212,8 +214,9 @@ ClaimCitationValidationOutcome(
 )
 ```
 
-`ValidatedCitationSelection`은 검증에 사용한 support Receipt 전량을 canonical Claim 순서로 보존한다. 후속
-Authorization 진입은 후보와 Receipt를 다시 순수 검증해 Receipt가 누락·교체된 forged selection을 거부한다.
+`ValidatedCitationSelection`은 검증에 사용한 support Receipt 전량을 canonical Claim 순서로 보존하고 selection hash에도
+Receipt 전량을 포함한다. 후속 Authorization 진입은 후보와 Receipt를 다시 순수 검증해 Receipt가 누락된 forged selection을
+거부하며, 유효한 다른 verifier Receipt로 교체된 경우에는 새 selection/request identity와 새 승인을 요구한다.
 
 이 enum은 pure module 내부 결과이며 API·DB·공유 메시지 계약이 아니다. v2의 `release_decision` 값을 재사용하거나
 새 값을 추가하지 않는다.
