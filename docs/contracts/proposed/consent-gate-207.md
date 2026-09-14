@@ -45,6 +45,8 @@
 
 현재 사용자 동의 상태 API는 이 기준을 Current 계약으로 구현한다. `PUT /api/v1/users/me/consents/{purpose}`는 요청 `policy_version`이 해당 목적의 현재 policy version과 일치할 때만 저장하고, 불일치하면 `422 VALIDATION_FAILED`와 `POLICY_VERSION_MISMATCH`로 거부한다. `GET`/`PUT` 응답의 `is_granted`도 저장된 row가 `GRANTED`이고 저장 `policy_version`이 `current_policy_version`과 일치할 때만 `true`다.
 
+OCR 목적의 현재 policy version은 `OCR_CONSENT_POLICY_VERSION`으로 공급한다. 이 값이 빈 문자열이면 OCR 최종 안내 문구·version이 미설정된 상태이므로 신규 `GRANTED` 저장과 OCR 접수 Gate는 fail-closed로 차단한다. 단, 이미 저장된 OCR 동의 row의 철회는 사용자의 철회권을 막지 않기 위해 허용하며, 기존 저장 `policy_version`을 보존한 `WITHDRAWN` row로 전환한다.
+
 ## 4. `user_consent` 스키마 제안
 
 구현 상태: PR #465에서 아래 최소 저장 기반을 병합했다. 물리 테이블은 `backend/alembic/versions/207b1c2d3e4_create_user_consent.py`, SQLAlchemy 모델은 `backend/app/models/user_consents.py`, repository 판정은 `backend/app/repositories/user_consent_repository.py`, 공통 fixture는 `tests/fixtures/consent/consent_gate_207_cases.json`에 있다. #505에서 OCR 목적의 실제 Gate와 외부 Provider 호출 차단을 연결했으며 다른 목적의 연결은 후속 범위다.
