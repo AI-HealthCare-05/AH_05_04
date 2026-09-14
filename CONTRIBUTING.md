@@ -79,7 +79,10 @@ git switch -c feature/12-prescription-upload
 
 - CODEOWNERS는 사용하지 않으며 변경 경로나 과거 작성자만으로 리뷰어를 자동 확정하지 않습니다.
 - 담당 리뷰어는 실제 변경 영역을 검토할 수 있는 팀원으로 지정하며 PR 작성자의 self-approval은 승인으로 인정하지 않습니다.
-- 여러 영역을 함께 변경하면 Backend·Frontend·Worker/OCR·AI/RAG·Security·Privacy 등 영향 영역별 리뷰어를 기록합니다.
+- 여러 영역을 함께 변경해도 PR의 최종 승인 책임자는 1명만 지정합니다. 담당 리뷰어 검토 범위에는
+  Backend·Frontend·Worker/OCR·AI/RAG·Security·Privacy 등 모든 영향 영역을 기록하고, 담당 리뷰어가 직접
+  검토할 수 없는 전문 영역은 관련 팀원의 의견이나 승인 근거를 첨부합니다. 이 근거 제공자는 추가 필수
+  PR 리뷰어로 지정하지 않습니다.
 - 공유 계약 변경은 Decision, 계약 문서, OpenAPI/DTO, migration, 구현과 계약·통합 테스트를 같은 변경 흐름에서 정렬합니다.
 - 의료 안전·Privacy·외부 Source 공개 승인은 코드 리뷰와 별도 게이트이며 필요한 증빙이 없으면 `PUBLIC_TRACK_C` 또는 `PUBLIC_TRACK_F`를 해제하지 않습니다.
 

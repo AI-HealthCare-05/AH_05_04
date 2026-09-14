@@ -35,6 +35,7 @@ from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.ocr import OcrService
 from app.services.prescriptions import PrescriptionService
+from app.tests.db_extensions import ensure_vector_extension
 
 pytestmark = pytest.mark.asyncio
 
@@ -84,6 +85,7 @@ async def isolated_schema() -> AsyncIterator[None]:
         await connection.execute(text(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE"))
         await connection.execute(text(f"CREATE SCHEMA {TEST_SCHEMA}"))
         await _ensure_trigram_extension(connection, EXTENSION_SCHEMA)
+        await ensure_vector_extension(connection, EXTENSION_SCHEMA)
 
     async with test_engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)

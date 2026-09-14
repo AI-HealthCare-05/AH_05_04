@@ -74,6 +74,11 @@ class RagSourceIngestionArtifactKind(StrEnum):
     REJECTS = "REJECTS"
 
 
+class RagSourceSnapshotMemberKind(StrEnum):
+    ENDPOINT_OPERATION = "ENDPOINT_OPERATION"
+    ARTIFACT = "ARTIFACT"
+
+
 class RagVerificationResultStatus(StrEnum):
     PASSED = "PASSED"
     FAILED = "FAILED"
@@ -95,6 +100,7 @@ class RagSource(Base):
             f"lifecycle_status IN ({_sql_in_list(RagSourceLifecycleStatus)})",
             name="chk_rag_source_lifecycle_status",
         ),
+        CheckConstraint("knowledge_index_lock_marker = 0", name="chk_rag_source_knowledge_index_lock_marker"),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -124,6 +130,7 @@ class RagSource(Base):
     empty_result_policy: Mapped[str] = mapped_column(
         String(20), nullable=False, default="REJECT", server_default="REJECT"
     )
+    knowledge_index_lock_marker: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
     endpoints: Mapped[list["RagSourceEndpoint"]] = relationship(back_populates="source")
 
@@ -147,6 +154,7 @@ class RagSourceEndpoint(Base):
             f"acquisition_status IN ({_sql_in_list(RagSourceApprovalStatus)})",
             name="chk_rag_source_endpoint_acquisition_status",
         ),
+        CheckConstraint("knowledge_index_lock_marker = 0", name="chk_rag_source_endpoint_knowledge_index_lock_marker"),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -176,6 +184,7 @@ class RagSourceEndpoint(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+    knowledge_index_lock_marker: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
     source: Mapped[RagSource] = relationship(back_populates="endpoints")
     operations: Mapped[list["RagSourceOperation"]] = relationship(back_populates="endpoint")
@@ -196,6 +205,7 @@ class RagSourceOperation(Base):
             f"acquisition_status IN ({_sql_in_list(RagSourceApprovalStatus)})",
             name="chk_rag_source_operation_acquisition_status",
         ),
+        CheckConstraint("knowledge_index_lock_marker = 0", name="chk_rag_source_operation_knowledge_index_lock_marker"),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -219,6 +229,7 @@ class RagSourceOperation(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+    knowledge_index_lock_marker: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
     endpoint: Mapped[RagSourceEndpoint] = relationship(back_populates="operations")
     snapshots: Mapped[list["RagSourceSnapshot"]] = relationship(back_populates="operation")
@@ -316,6 +327,50 @@ class RagSourceSnapshot(Base):
     )
 
 
+class RagSourceSnapshotMember(Base):
+    __tablename__ = "rag_source_snapshot_member"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_snapshot_id", "member_kind", "locator", "content_sha256", name="uq_rag_source_snapshot_member"
+        ),
+        Index("idx_rag_source_snapshot_member_snapshot", "source_snapshot_id"),
+        CheckConstraint(
+            "(member_kind = 'ENDPOINT_OPERATION' AND endpoint_id IS NOT NULL "
+            "AND ingestion_artifact_id IS NULL) OR "
+            "(member_kind = 'ARTIFACT' AND endpoint_id IS NULL "
+            "AND operation_id IS NULL AND ingestion_artifact_id IS NOT NULL)",
+            name="chk_rag_source_snapshot_member_origin",
+        ),
+        CheckConstraint("length(locator) BETWEEN 1 AND 500", name="chk_rag_source_snapshot_member_locator_length"),
+        CheckConstraint("locator !~ '[[:cntrl:]]'", name="chk_rag_source_snapshot_member_locator_control"),
+        CheckConstraint("content_sha256 ~ '^[0-9a-f]{64}$'", name="chk_rag_source_snapshot_member_content_hash"),
+        CheckConstraint(
+            "knowledge_index_lock_marker = 0", name="chk_rag_source_snapshot_member_knowledge_index_lock_marker"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    source_snapshot_id: Mapped[UUID] = mapped_column(
+        UUIDChar(), ForeignKey("rag_source_snapshot.id", ondelete="RESTRICT"), nullable=False
+    )
+    member_kind: Mapped[RagSourceSnapshotMemberKind] = mapped_column(
+        Enum(RagSourceSnapshotMemberKind, native_enum=False, length=30), nullable=False
+    )
+    endpoint_id: Mapped[UUID | None] = mapped_column(
+        UUIDChar(), ForeignKey("rag_source_endpoint.id", ondelete="RESTRICT"), nullable=True
+    )
+    operation_id: Mapped[UUID | None] = mapped_column(
+        UUIDChar(), ForeignKey("rag_source_operation.id", ondelete="RESTRICT"), nullable=True
+    )
+    ingestion_artifact_id: Mapped[UUID | None] = mapped_column(
+        UUIDChar(), ForeignKey("rag_source_ingestion_artifact.id", ondelete="RESTRICT"), nullable=True
+    )
+    locator: Mapped[str] = mapped_column(String(500), nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    knowledge_index_lock_marker: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class RagSourceIngestionRun(Base):
     __tablename__ = "rag_source_ingestion_run"
     __table_args__ = (
@@ -345,6 +400,9 @@ class RagSourceIngestionRun(Base):
             f"run_status IN ({_sql_in_list(RagIngestionRunStatus)})",
             name="chk_rag_source_ingestion_run_status",
         ),
+        CheckConstraint(
+            "knowledge_index_lock_marker = 0", name="chk_rag_source_ingestion_run_knowledge_index_lock_marker"
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -371,6 +429,7 @@ class RagSourceIngestionRun(Base):
     invalid_source_version_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     invalid_source_version_byte_length: Mapped[int | None] = mapped_column(Integer, nullable=True)
     validation_reason_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    knowledge_index_lock_marker: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
     operation: Mapped[RagSourceOperation] = relationship(back_populates="ingestion_runs")
     snapshot: Mapped[RagSourceSnapshot | None] = relationship(back_populates="ingestion_runs")
@@ -405,6 +464,7 @@ class RagSourceIngestionArtifact(Base):
         ),
         CheckConstraint("byte_size >= 0", name="chk_rag_source_artifact_byte_size"),
         CheckConstraint("length(trim(content_type)) > 0", name="chk_rag_source_artifact_content_type_nonblank"),
+        CheckConstraint("knowledge_index_lock_marker = 0", name="chk_rag_source_artifact_knowledge_index_lock_marker"),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -427,6 +487,7 @@ class RagSourceIngestionArtifact(Base):
     content_type: Mapped[str] = mapped_column(String(255), nullable=False)
     reject_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     parser_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    knowledge_index_lock_marker: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     ingestion_run: Mapped[RagSourceIngestionRun] = relationship(back_populates="artifacts")
