@@ -48,7 +48,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 - [Knowledge Evidence Index v1 (#178 선행 기반)](./proposed/post-mvp-1/knowledge-evidence-index-v1.md): 승인된 RAG Runtime 목표의 Retrieval Adapter가 소비할 Source Snapshot 결속 Chunk·버전별 embedding·재현 가능한 receipt 저장 계약. 구현 브랜치 검증 중이며 #178 Retrieval/RRF/Rerank/Evidence Gate·공개 활성화는 포함하지 않음.
 
-- [RAG Grounding·Citation Metric 계약 v1 제안 (#160)](./proposed/post-mvp-1/rag-grounding-citation-metrics-v1.md): Claim↔Citation edge, #180 validation·authorization, Gold/source binding을 보존하는 비민감 Evaluation projection과 Citation·unsupported Claim Metric. `PD-160-20260914` 책임 리뷰 전 구현 불가.
+- [RAG Grounding·Citation Metric 계약 v1 제안 (#160)](./proposed/post-mvp-1/rag-grounding-citation-metrics-v1.md): Claim↔Citation edge, #180 validation·authorization, Gold/source binding을 보존하는 비민감 Evaluation observation, Safety/E2E same-Case grounding signal과 Citation·unsupported Claim Metric. `PD-160-20260914` 책임 리뷰 전 구현 불가.
 
 - [RAG Safety·Rule-first Metric 계약 v1 제안 (#161)](./proposed/post-mvp-1/rag-safety-rule-first-metrics-v1.md): 기존 Safety Case/Result 기반 routing·Rule·Scope·invocation·fallback Metric과 critical failure exact union. `PD-161-20260914` 책임 리뷰 전 구현 불가.
 

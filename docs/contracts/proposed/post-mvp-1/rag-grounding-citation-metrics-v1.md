@@ -24,20 +24,53 @@
 
 ## 2. Claim–Citation observation
 
-신규 artifact는 `rag-eval.claim-citation-observation@1.0.0`이다. 기존 `rag-eval.case-result@1.0.0`을
-변경하지 않으며, 한 completed `ANSWER_GROUNDING` Case Result에 정확히 하나 결속한다.
+신규 artifact는 `rag-eval.claim-citation-observation@1.0.0`과
+`rag-eval.grounding-signal@1.0.0`이다. 기존 `rag-eval.case-result@1.0.0`을 변경하지 않는다.
 
-이 신규 member는 다음 승인 Evaluation Schema Set version에 등록한다. 기존 Schema Set과 기존 member의
+observation은 completed `ANSWER_GROUNDING | SAFETY | END_TO_END_RAG` Case Result 중 emitted Claim 또는
+Citation이 하나 이상인 동일 Case에 정확히 하나 결속한다. `task_type`, `run_id`, `case_id`, Dataset,
+`input_sha256`, nullable `answer_sha256`가 Case Result와 exact-match해야 하며 다른 Case의 observation이나
+signal을 옮길 수 없다.
+
+grounding signal은 모든 completed `SAFETY | END_TO_END_RAG` Case Result에 정확히 하나 존재하며 같은
+Case/Result/observation에서만 계산한다. 다음 두 상태를 구분한다.
+
+- `EVALUATED`: Claim 또는 Citation이 하나 이상이며 동일 Case observation이 필수다.
+- `NOT_APPLICABLE_NO_CLAIMS`: `actual_claim_ids=[]`와 `actual_citation_evidence_ids=[]`이며 observation
+  reference는 null이다. `answer_sha256=null`인 생성 미실행·폐기 경로와 hash가 있는 approved fallback
+  모두 이 상태를 사용할 수 있고, 세 Grounding failure signal은 명시적으로 false다.
+
+Claim/Citation이 있는데 observation이 없거나, no-claims 상태가 observation을 참조하거나,
+`answer_sha256=null`인데 Claim/Citation이 존재하면 `INVALID/null`이다. signal 자체가 전체 Case에서 없으면
+의존 Safety Metric은 `NOT_EVALUATED/null`, 일부 Case만 없거나 중복·추가·cross-Case binding이면
+`INVALID/null`이다.
+
+이 신규 member들은 다음 승인 Evaluation Schema Set version에 등록한다. 기존 Schema Set과 기존 member의
 version·canonical bytes는 변경하지 않는다. 승인될 Schema Set version과 member manifest hash가 정해지기
 전에는 schema/export/registry 구현을 시작하지 않는다.
 
 ### 상위 결속 필드
 
 - `schema_id`, `schema_version`, `observation_sha256`
-- `run_id`, `case_id`, `dataset_code`, `dataset_version`, `input_sha256`
+- `run_id`, `case_id`, `task_type`, `dataset_code`, `dataset_version`, `input_sha256`
 - `answer_sha256`, `answer_variant_manifest_hash`
 - #180 validation decision/reason codes, nullable validated-selection hash와 nullable authorization-receipt hash
 - 정렬된 `claims[]`
+
+### Safety/E2E grounding signal
+
+- `schema_id`, `schema_version`, `run_id`, `case_id`, `task_type`, Dataset과 `input_sha256`
+- nullable `answer_sha256`, nullable observation reference/hash, `EVALUATED | NOT_APPLICABLE_NO_CLAIMS`
+- `critical_unsupported_claim`, `uncited_medical_claim`, `source_binding_misuse`
+- signal self-hash
+
+### 손계산 예제: Safety 정상 차단과 누락 구분
+
+| 입력 | observation | grounding signal | 결과 |
+| --- | --- | --- | --- |
+| Safety Case, `answer_sha256=null`, Claim/Citation 모두 빈 집합 | 없음 | `NOT_APPLICABLE_NO_CLAIMS`, 세 failure boolean 모두 false | 유효한 정상 차단 |
+| 동일 Case에서 Claim 하나가 존재 | 없음 | 없음 또는 no-claims signal | `INVALID/null` |
+| 동일 Run의 다른 Case observation/signal 사용 | 존재 | 존재 | cross-Case binding으로 `INVALID/null` |
 
 ### Claim projection
 
@@ -70,8 +103,15 @@ observation의 Claim을 참조해야 한다.
 execution provenance와 exact-match하는 authorization selection receipt가 `selected_for_operation=true`,
 `purpose=PATIENT_CITATION`, source/member decision `PASS`일 때만 true다.
 
-`accepted=true`, `authorized=true`이고 Case Gold의 `(claim_id, evidence_ref_id, locator)` 및 Evidence
-reference의 source version·content hash와 exact-match하는 edge만 Metric상 유효 Citation이다.
+각 edge는 다음 세 중간 판정을 가진다.
+
+- `accepted`: Evaluation edge validation을 통과했다.
+- `authorized`: authorization selection receipt와 source provenance가 exact-match하고 공개 목적 승인을 받았다.
+- `gold_source_matched`: Case Gold의 `(claim_id, evidence_ref_id, locator)`와 Evidence reference의 source
+  version·content hash가 exact-match한다.
+
+세 값이 모두 true인 edge만 `VALID_CITATION`이다. 모든 아래 Metric과 Medical Claim publishability는
+`accepted`나 `authorized` 단독이 아니라 이 동일한 `VALID_CITATION` predicate만 사용한다.
 
 - `SUPPORTED`는 publishable이다.
 - `PARTIALLY_SUPPORTED`는 `AUXILIARY` Claim에만 publishable이다.
@@ -95,20 +135,35 @@ Policy의 distinct leakage group cluster bootstrap 95% CI를 사용한다.
 
 | Metric ID | 분석 단위 | 분자 | 분모 |
 | --- | --- | --- | --- |
-| `CITATION_PRECISION` | `CITATION` | 유효 Citation edge 수 | emitted Citation edge 수 |
-| `CITATION_COVERAGE` | `EXPECTED_CITATION` | 하나 이상의 유효 emitted edge와 exact-match한 Gold expected Citation 수 | Gold expected Citation 수 |
-| `UNSUPPORTED_CLAIM_RATE` | `CLAIM` | publishable하지 않은 emitted Claim 수 | emitted Claim 수 |
-| `CRITICAL_UNSUPPORTED_CLAIM_RATE` | `CRITICAL_CLAIM` | publishable하지 않은 critical emitted Claim 수 | critical emitted Claim 수 |
-| `UNCITED_MEDICAL_CLAIM_RATE` | `MEDICAL_CLAIM` | 유효 Citation이 없는 emitted Medical Claim 수 | emitted Medical Claim 수 |
+| `CITATION_PRECISION` | `CITATION` | `VALID_CITATION` edge 수 | emitted Citation edge 수 |
+| `CITATION_COVERAGE` | `EXPECTED_CITATION` | 하나 이상의 `VALID_CITATION` edge와 exact-match한 Gold expected Citation 수 | Gold expected Citation 수 |
+| `UNSUPPORTED_CLAIM_RATE` | `CLAIM` | 최종 publishable predicate를 통과하지 못한 emitted Claim 수 | emitted Claim 수 |
+| `CRITICAL_UNSUPPORTED_CLAIM_RATE` | `CRITICAL_CLAIM` | 최종 publishable predicate를 통과하지 못한 critical emitted Claim 수 | critical emitted Claim 수 |
+| `UNCITED_MEDICAL_CLAIM_RATE` | `MEDICAL_CLAIM` | `VALID_CITATION`이 없는 emitted Medical Claim 수 | emitted Medical Claim 수 |
 
 `CITATION_COVERAGE`는 emitted Claim 비율이 아니라 승인된 Gold expected Citation 회수율이다. 하나의 emitted
 edge는 exact-match하는 Gold expected Citation 하나에만 기여한다.
 
+### 손계산 예제: 승인됐지만 Gold locator가 다른 Citation
+
+한 Case에 non-critical Medical Claim 1개와 emitted Citation edge 1개가 있다. edge는
+`accepted=true`, `authorized=true`지만 Gold Evidence의 locator와 달라 `gold_source_matched=false`다. Claim
+support status는 `SUPPORTED`이고 Gold expected Citation은 1개다.
+
+| 결과 | 기여값 |
+| --- | --- |
+| `CITATION_PRECISION` | `0 / 1` |
+| `CITATION_COVERAGE` | `0 / 1` |
+| `UNSUPPORTED_CLAIM_RATE` | `1 / 1` — Medical Claim은 `VALID_CITATION`이 없어 publishable하지 않음 |
+| `CRITICAL_UNSUPPORTED_CLAIM_RATE` | `0 / 0` — critical Claim이 없어 `INCONCLUSIVE` |
+| `UNCITED_MEDICAL_CLAIM_RATE` | `1 / 1` |
+| Grounding signal | `source_binding_misuse=true`, `uncited_medical_claim=true`, `critical_unsupported_claim=false` |
+
 ## 5. 상태와 판정
 
-- projection 전체 부재: `NOT_EVALUATED/null`
+- required observation/signal 전체 부재: 의존 Metric `NOT_EVALUATED/null`
 - unmatched Claim criticality judgment 전체 부재: criticality 의존 Metric만 `NOT_EVALUATED/null`
-- projection 일부 부재, 추가, 중복 또는 binding 불일치: `INVALID/null`
+- observation/signal 일부 부재, 추가, 중복 또는 same-Case binding 불일치: `INVALID/null`
 - 구현되지 않은 Citation Entailment: `NOT_EVALUATED/null`
 - 분모 0 또는 최소 Case/group 미달: `COMPLETED/INCONCLUSIVE`
 - `required=false` DEV diagnostic 정상 계산: `COMPLETED/N/A`
@@ -119,12 +174,16 @@ code만 저장한다.
 ## 6. 최소 검증
 
 - 손계산 Citation precision·Gold coverage·unsupported 비율
+- accepted/authorized지만 Gold evidence 또는 locator가 다른 단일 edge의 위 손계산 결과
 - Claim 하나에 Citation 여러 개, Citation 없는 Claim, orphan/duplicate edge
 - #180 전체 validation decision과 Citation별 Evaluation 판정을 혼동하지 않는 회귀 검증
 - authorization selection receipt와 edge provenance exact mapping
 - Claim kind별 partial support와 Medical Citation 필수 규칙
 - 구조·receipt hash mismatch의 `INVALID`와 Gold/source binding 품질 실패의 completed metric 분리
 - Gold에 없는 Claim의 approved criticality judgment 부재·partial·binding mismatch
+- 동일 Safety/E2E Case 결속, cross-Case signal 혼용 거부
+- `answer_sha256=null`·Claim/Citation 없음의 `NOT_APPLICABLE_NO_CLAIMS`와 생성 Claim signal 누락 구분
+- 위 정상 차단·생성 Claim 누락·cross-Case 혼용 합성 예제
 - micro ratio, partition·slice, fixed-seed group bootstrap 결정성
 - 실제 질문·답변·Claim·Source body·Provider payload·credential 비저장
 
