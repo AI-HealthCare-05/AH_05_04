@@ -2,23 +2,29 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { signup } from '../src/api/auth'
+import { signup, requestEmailVerification, confirmEmailVerification } from '../src/api/auth'
 import { ApiError } from '../src/api/client'
 import SignupPage from '../src/pages/SignupPage'
 import { useLocation } from 'react-router-dom'
 
 vi.mock('../src/api/auth', () => ({
   signup: vi.fn(),
+  requestEmailVerification: vi.fn(),
+  confirmEmailVerification: vi.fn(),
 }))
 
 beforeEach(() => {
-  vi.clearAllMocks()
+  vi.resetAllMocks()
+  vi.stubEnv('VITE_EMAIL_VERIFICATION_ENABLED', 'true')
+  vi.mocked(requestEmailVerification).mockResolvedValue(undefined)
+  vi.mocked(confirmEmailVerification).mockResolvedValue(undefined)
   localStorage.clear()
   vi.mocked(signup).mockResolvedValue({ detail: '회원가입 완료' })
 })
 
 afterEach(() => {
   cleanup()
+  vi.unstubAllEnvs()
 })
 
 describe('SignupPage', () => {
@@ -60,9 +66,47 @@ describe('SignupPage', () => {
     })
   }
 
+  async function verifyEmail() {
+    fireEvent.click(screen.getByRole('button', { name: '인증 요청' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '인증 확인' })).toHaveProperty('disabled', false))
+    fireEvent.change(screen.getByLabelText('이메일 인증 코드'), { target: { value: 'synthetic-code' } })
+    fireEvent.click(screen.getByRole('button', { name: '인증 확인' }))
+    await screen.findByText('이메일 인증이 완료되었습니다.')
+  }
+
+  it.each([undefined, 'false', 'TRUE', '1'])('flag %s keeps noop/non-local signup available without verification calls', async (flag) => {
+    vi.stubEnv('VITE_EMAIL_VERIFICATION_ENABLED', flag)
+    vi.stubEnv('MODE', 'production')
+    vi.stubEnv('PROD', true)
+    renderPage()
+    fillValidForm()
+    expect(screen.queryByRole('button', { name: '인증 요청' })).toBeNull()
+    expect(screen.queryByLabelText('이메일 인증 코드')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(signup).toHaveBeenCalledTimes(1)
+    expect(requestEmailVerification).not.toHaveBeenCalled()
+    expect(confirmEmailVerification).not.toHaveBeenCalled()
+  })
+
+  it('disabled flag preserves validation focus and final signup conflict', async () => {
+    vi.stubEnv('VITE_EMAIL_VERIFICATION_ENABLED', 'false')
+    vi.mocked(signup).mockRejectedValue(new ApiError(409, '이미 사용중인 이메일입니다.', 'CONFLICT'))
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+    expect(document.activeElement).toBe(screen.getByLabelText('이름'))
+    expect(signup).not.toHaveBeenCalled()
+    fillValidForm()
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+    await screen.findByText('이미 사용중인 이메일입니다.')
+    expect(document.activeElement).toBe(screen.getByLabelText('이메일'))
+    expect(requestEmailVerification).not.toHaveBeenCalled()
+  })
+
   it('#395 회원가입 성공 후 로그인 화면에 fromSignup 상태를 전달한다', async () => {
     renderPage()
     fillValidForm()
+    await verifyEmail()
 
     fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
 
@@ -144,6 +188,7 @@ describe('SignupPage', () => {
     localStorage.setItem('existing_key', 'preserved')
     renderPage()
     fillValidForm()
+    await verifyEmail()
 
     expect(screen.queryByLabelText('성별')).toBeNull()
     expect(screen.queryByLabelText('생년월일')).toBeNull()
@@ -171,6 +216,7 @@ describe('SignupPage', () => {
     )
     renderPage()
     fillValidForm()
+    await verifyEmail()
 
     fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
 
@@ -183,6 +229,7 @@ describe('SignupPage', () => {
     vi.mocked(signup).mockRejectedValue(new TypeError('Failed to fetch'))
     renderPage()
     fillValidForm()
+    await verifyEmail()
 
     fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
 
@@ -201,6 +248,7 @@ describe('SignupPage', () => {
     )
     renderPage()
     fillValidForm()
+    await verifyEmail()
 
     fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
     const loadingButton = await screen.findByRole('button', { name: '가입 중...' })
@@ -212,4 +260,100 @@ describe('SignupPage', () => {
     resolveSignup?.({ detail: '회원가입 완료' })
     expect(await screen.findByText('로그인 화면')).toBeTruthy()
   })
+  it('인증 전 가입을 막고 요청 버튼으로 focus를 이동한다', () => {
+    renderPage()
+    fillValidForm()
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+    expect(signup).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '인증 요청' }))
+  })
+
+  it('인증 요청은 이메일만 검증하고 잘못된 이메일에 focus한다', () => {
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: '인증 요청' }))
+    expect(requestEmailVerification).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(screen.getByLabelText('이메일'))
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+  })
+
+  it('요청 중 중복 클릭과 가입 제출을 막고 성공 후 코드에 focus한다', async () => {
+    let resolveRequest!: () => void
+    vi.mocked(requestEmailVerification).mockImplementation(() => new Promise<void>((resolve) => { resolveRequest = resolve }))
+    renderPage()
+    fillValidForm()
+    fireEvent.click(screen.getByRole('button', { name: '인증 요청' }))
+    fireEvent.click(screen.getByRole('button', { name: '인증 요청 중...' }))
+    fireEvent.submit(screen.getByRole('button', { name: '가입 완료' }).closest('form')!)
+    expect(requestEmailVerification).toHaveBeenCalledTimes(1)
+    expect(signup).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('이메일')).toHaveProperty('readOnly', true)
+    resolveRequest()
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('이메일 인증 코드')))
+    expect(requestEmailVerification).toHaveBeenCalledWith('dosey@example.com')
+  })
+
+  it('확인 중 Enter·중복 클릭·가입 제출을 막고 token을 지운다', async () => {
+    let resolveConfirm!: () => void
+    vi.mocked(confirmEmailVerification).mockImplementation(() => new Promise<void>((resolve) => { resolveConfirm = resolve }))
+    renderPage()
+    fillValidForm()
+    fireEvent.click(screen.getByRole('button', { name: '인증 요청' }))
+    await screen.findByRole('button', { name: '인증 안내 다시 요청' })
+    const code = screen.getByLabelText('이메일 인증 코드')
+    fireEvent.change(code, { target: { value: 'synthetic-code' } })
+    fireEvent.keyDown(code, { key: 'Enter' })
+    fireEvent.keyDown(code, { key: 'Enter' })
+    fireEvent.click(screen.getByRole('button', { name: '인증 확인 중...' }))
+    fireEvent.submit(screen.getByRole('button', { name: '가입 완료' }).closest('form')!)
+    expect(confirmEmailVerification).toHaveBeenCalledTimes(1)
+    expect(confirmEmailVerification).toHaveBeenCalledWith('dosey@example.com', 'synthetic-code')
+    expect(signup).not.toHaveBeenCalled()
+    resolveConfirm()
+    await screen.findByText('이메일 인증이 완료되었습니다.')
+    expect(code).toHaveProperty('value', '')
+    expect(document.activeElement).toBe(screen.getByLabelText('비밀번호'))
+  })
+
+  it('인증 완료 후 이메일을 변경하면 인증과 코드를 초기화한다', async () => {
+    renderPage()
+    fillValidForm()
+    await verifyEmail()
+    fireEvent.change(screen.getByLabelText('이메일'), { target: { value: 'changed@example.com' } })
+    expect(screen.queryByText('이메일 인증이 완료되었습니다.')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+    expect(signup).not.toHaveBeenCalled()
+  })
+
+  it('token 오류는 중립 오류와 재요청을 제공한다', async () => {
+    vi.mocked(confirmEmailVerification).mockRejectedValue(new ApiError(422, 'unsafe-server-message', 'VALIDATION_FAILED', [
+      { field: 'token', reason: 'EMAIL_VERIFICATION_TOKEN_INVALID' },
+    ]))
+    renderPage()
+    fillValidForm()
+    fireEvent.click(screen.getByRole('button', { name: '인증 요청' }))
+    await screen.findByRole('button', { name: '인증 안내 다시 요청' })
+    fireEvent.change(screen.getByLabelText('이메일 인증 코드'), { target: { value: 'synthetic-invalid' } })
+    fireEvent.click(screen.getByRole('button', { name: '인증 확인' }))
+    await screen.findByText('인증을 완료하지 못했습니다. 코드를 확인하거나 인증 안내를 다시 요청해 주세요.')
+    expect(screen.queryByText('unsafe-server-message')).toBeNull()
+    expect(screen.getByLabelText('이메일').getAttribute('aria-invalid')).toBe('false')
+    expect(document.activeElement).toBe(screen.getByLabelText('이메일 인증 코드'))
+    fireEvent.click(screen.getByRole('button', { name: '인증 안내 다시 요청' }))
+    await waitFor(() => expect(requestEmailVerification).toHaveBeenCalledTimes(2))
+    expect(signup).not.toHaveBeenCalled()
+  })
+
+  it('빈 코드는 전송하지 않고 네트워크 요청 실패도 안전하게 재시도한다', async () => {
+    vi.mocked(requestEmailVerification).mockRejectedValueOnce(new TypeError('sensitive-value'))
+    renderPage()
+    fillValidForm()
+    fireEvent.click(screen.getByRole('button', { name: '인증 요청' }))
+    await screen.findByText('이메일 인증을 처리하지 못했습니다. 연결을 확인하고 다시 시도해 주세요.')
+    fireEvent.click(screen.getByRole('button', { name: '인증 요청' }))
+    await screen.findByRole('button', { name: '인증 안내 다시 요청' })
+    fireEvent.click(screen.getByRole('button', { name: '인증 확인' }))
+    expect(confirmEmailVerification).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(screen.getByLabelText('이메일 인증 코드'))
+  })
+
 })
