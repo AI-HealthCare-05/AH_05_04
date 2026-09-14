@@ -232,6 +232,14 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
     database = environment["DB_NAME"]
     runtime = environment["DB_APP_USER"]
     writer = environment["SOURCE_WRITER_USER"]
+    # The historical 398c schema predates #178, while this test intentionally uses today's
+    # endpoint/operation ORM mappers. Add only their server-generated compatibility columns
+    # for the ORM flush, then remove them before Alembic advances to the real #178 revision.
+    async with admin.begin() as connection:
+        for table in ("rag_source_endpoint", "rag_source_operation"):
+            await connection.execute(
+                text(f"ALTER TABLE {table} ADD COLUMN knowledge_index_lock_marker integer DEFAULT 0 NOT NULL")
+            )
     sessions = async_sessionmaker(admin, expire_on_commit=False)
     async with sessions.begin() as session:
         repository = RagSourceCatalogRepository(session)
@@ -261,6 +269,9 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
             ),
             {"id": str(snapshot_id), "operation": str(operation.id)},
         )
+    async with admin.begin() as connection:
+        for table in ("rag_source_endpoint", "rag_source_operation"):
+            await connection.execute(text(f"ALTER TABLE {table} DROP COLUMN knowledge_index_lock_marker"))
     async with admin.begin() as connection:
         await connection.execute(text(f'GRANT USAGE ON SCHEMA public TO "{runtime}", "{writer}"'))
         await connection.execute(text(f'GRANT ALL ON rag_source_snapshot TO PUBLIC, "{runtime}", "{writer}"'))
@@ -838,6 +849,7 @@ async def _grant_historical_test_permissions(admin, environment):
     """
     runtime, writer = environment["DB_APP_USER"], environment["SOURCE_WRITER_USER"]
     async with admin.begin() as connection:
+        present = set(await connection.scalars(text("SELECT tablename FROM pg_tables WHERE schemaname='public'")))
         for tables, privileges in (
             (RUNTIME_MUTABLE_TABLES, "SELECT, INSERT, UPDATE, DELETE"),
             (RUNTIME_APPEND_ONLY_TABLES | CATALOG_TABLES, "SELECT, INSERT"),
@@ -849,7 +861,7 @@ async def _grant_historical_test_permissions(admin, environment):
                 "medication_schedule_audit",  # Added after the historical Source cutover.
             }:
                 await connection.execute(text(f'GRANT {privileges} ON "{table}" TO "{runtime}"'))
-        for table in SOURCE_TABLES:
+        for table in set(SOURCE_TABLES) & present:
             await connection.execute(text(f'GRANT SELECT ON "{table}" TO "{runtime}"'))
             await connection.execute(text(f'GRANT SELECT, INSERT ON "{table}" TO "{writer}"'))
         for table in ("rag_source_operation", "rag_source_ingestion_run"):

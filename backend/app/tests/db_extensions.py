@@ -14,3 +14,16 @@ async def ensure_trigram_extension(connection, schema: str = EXTENSION_SCHEMA) -
     )
     if current != schema:
         await connection.execute(text(f"ALTER EXTENSION pg_trgm SET SCHEMA {schema}"))
+
+
+async def ensure_vector_extension(connection, schema: str = EXTENSION_SCHEMA) -> None:
+    await connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+    await connection.execute(text(f"CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA {schema}"))
+    current = await connection.scalar(
+        text(
+            "SELECT n.nspname FROM pg_extension e "
+            "JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'vector'"
+        )
+    )
+    if current != schema:
+        await connection.execute(text(f"ALTER EXTENSION vector SET SCHEMA {schema}"))

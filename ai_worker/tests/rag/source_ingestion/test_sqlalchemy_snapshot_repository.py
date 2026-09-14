@@ -19,13 +19,20 @@ from ai_worker.tasks.rag.source_ingestion.service import SourceAcquisitionInProg
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotCreateRequest,
     SnapshotIngestionMetadata,
+    SnapshotProvenanceReceipt,
     SnapshotRunRecord,
     SnapshotVerificationStatus,
+    SourceSnapshotMemberCreate,
+    SourceSnapshotMemberKind,
 )
 
 _OPERATION_ID = UUID("11111111-1111-4111-8111-111111111111")
 _SNAPSHOT_ID = UUID("22222222-2222-4222-8222-222222222222")
 _NOW = datetime(2026, 9, 7, 1, 0, tzinfo=UTC)
+_SOURCE_ID = UUID("33333333-3333-4333-8333-333333333333")
+_ENDPOINT_ID = UUID("44444444-4444-4444-8444-444444444444")
+_ARTIFACT_ID = UUID("55555555-5555-4555-8555-555555555555")
+_MEMBER_ID = UUID("66666666-6666-4666-8666-666666666666")
 
 
 def _identity() -> SourceOperationIdentity:
@@ -61,6 +68,93 @@ def _ingestion() -> ProductIngestionResult:
         record_count=2,
         artifact_count=1,
     )
+
+
+def _member_request(*, artifact: bool = False) -> SourceSnapshotMemberCreate:
+    provenance = SnapshotProvenanceReceipt(
+        source_id=_SOURCE_ID,
+        source_code="MFDS_PRODUCT_APPROVAL",
+        endpoint_id=_ENDPOINT_ID,
+        operation_id=_OPERATION_ID,
+        source_snapshot_id=_SNAPSHOT_ID,
+        source_version="external:v1",
+        external_version="v1",
+        canonical_checksum="c" * 64,
+        canonicalization_spec_version="mfds-product-approval@1",
+        endpoint_receipt_hash="a" * 64,
+        verification_seal_id=None,
+        verification_status=SnapshotVerificationStatus.PENDING,
+        rejected_record_count=0,
+        publication_verification_id=None,
+    )
+    return SourceSnapshotMemberCreate(
+        provenance=provenance,
+        member_kind=(SourceSnapshotMemberKind.ARTIFACT if artifact else SourceSnapshotMemberKind.ENDPOINT_OPERATION),
+        endpoint_id=None if artifact else _ENDPOINT_ID,
+        operation_id=None if artifact else _OPERATION_ID,
+        ingestion_artifact_id=_ARTIFACT_ID if artifact else None,
+        locator="artifact://page/1" if artifact else "$.records[0]",
+        content_sha256="d" * 64,
+    )
+
+
+async def test_append_snapshot_member_locks_complete_source_chain_before_insert() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    parent = MagicMock()
+    parent.mappings.return_value.one_or_none.return_value = {"id": str(_SNAPSHOT_ID)}
+    session.execute.return_value = parent
+    session.scalar.side_effect = [None, str(_MEMBER_ID)]
+    repository = SqlAlchemySourceSnapshotRepository(session)
+
+    receipt = await repository.append_snapshot_member(_member_request())
+
+    parent_sql = str(session.execute.await_args.args[0])
+    insert_statement = session.scalar.await_args_list[1].args[0]
+    insert_sql = str(insert_statement)
+    parameters = insert_statement.compile().params
+    assert "rag_source JOIN rag_source_endpoint" in parent_sql
+    assert "JOIN rag_source_operation" in parent_sql
+    assert "JOIN rag_source_snapshot" in parent_sql
+    assert "FOR UPDATE" in parent_sql
+    assert "rag_source.lifecycle_status" in parent_sql
+    assert "rag_source_endpoint.acquisition_status" in parent_sql
+    assert "rag_source_operation.runtime_status" in parent_sql
+    assert "INSERT INTO rag_source_snapshot_member" in insert_sql
+    assert "ON CONFLICT" in insert_sql
+    assert parameters["locator"] == "$.records[0]"
+    assert receipt.source_snapshot_member_id == _MEMBER_ID
+    session.commit.assert_not_awaited()
+
+
+async def test_append_artifact_member_requires_artifact_run_snapshot_chain() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    parent = MagicMock()
+    parent.mappings.return_value.one_or_none.return_value = {"id": str(_SNAPSHOT_ID)}
+    session.execute.return_value = parent
+    session.scalar.return_value = str(_MEMBER_ID)
+    repository = SqlAlchemySourceSnapshotRepository(session)
+
+    await repository.append_snapshot_member(_member_request(artifact=True))
+
+    sql = str(session.execute.await_args.args[0])
+    assert "JOIN rag_source_ingestion_run" in sql
+    assert "JOIN rag_source_ingestion_artifact" in sql
+    assert "rag_source_ingestion_run.snapshot_id = rag_source_snapshot.id" in sql
+    assert "rag_source_ingestion_artifact.id" in sql
+
+
+async def test_append_snapshot_member_replays_existing_identity_without_insert() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    parent = MagicMock()
+    parent.mappings.return_value.one_or_none.return_value = {"id": str(_SNAPSHOT_ID)}
+    session.execute.return_value = parent
+    session.scalar.return_value = str(_MEMBER_ID)
+    repository = SqlAlchemySourceSnapshotRepository(session)
+
+    receipt = await repository.append_snapshot_member(_member_request())
+
+    assert receipt.source_snapshot_member_id == _MEMBER_ID
+    assert session.scalar.await_count == 1
 
 
 async def test_operation_lookup_locks_exact_source_endpoint_and_operation() -> None:
