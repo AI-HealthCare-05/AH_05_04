@@ -11,9 +11,13 @@ def test_ci_python_test_lanes_use_their_required_import_boundaries() -> None:
     backend_step = next(
         step for step in jobs["test-backend"]["steps"] if step["name"] == "Run Backend Tests with Coverage"
     )
+    contract_step = next(
+        step for step in jobs["test-contract"]["steps"] if step["name"] == "Run Contract Tests with Coverage"
+    )
     worker_step = next(
         step for step in jobs["test-worker"]["steps"] if step["name"] == "Run AI Worker Unit Tests with Coverage"
     )
 
     assert backend_step["env"]["PYTHONPATH"] == "${{ github.workspace }}/backend:${{ github.workspace }}"
+    assert contract_step["env"]["PYTHONPATH"] == "${{ github.workspace }}/backend:${{ github.workspace }}"
     assert worker_step["env"]["PYTHONPATH"] == "${{ github.workspace }}"

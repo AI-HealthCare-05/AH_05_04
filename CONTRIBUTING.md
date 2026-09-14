@@ -89,7 +89,9 @@ git switch -c feature/12-prescription-upload
 ### 머지 게이트
 
 - `develop` PR은 GitHub Ruleset의 required status check `test`·`lint`·`frontend`가 통과해야 머지할 수 있습니다.
-  `test`는 `test-inventory`·`test-migration`·`test-backend`·`test-worker`를 집계합니다.
+  Pull Request에서는 `classify-test-scope`가 변경 경로를 분류하고 `test`는 항상 실행되는
+  `test-inventory`와 선택된 `test-migration`·`test-backend`·`test-contract`·`test-worker`를 집계합니다.
+  Merge queue와 보호 브랜치 push에서는 네 test lane을 모두 실행하고 전체 Python coverage를 검증합니다.
 - 담당 리뷰어 승인과 required status check 통과 후 PR을 직접 머지하지 않고 merge queue에 추가합니다. Queue는 최신
   `develop`과 PR 변경을 합친 임시 merge group에서 같은 required check를 다시 실행하고, 모두 통과한 경우에만 squash
   merge합니다. 작성자가 base 변경 때마다 수동으로 rebase할 필요는 없습니다.

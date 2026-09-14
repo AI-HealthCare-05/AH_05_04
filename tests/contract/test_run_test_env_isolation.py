@@ -451,11 +451,18 @@ def test_github_actions_excludes_backend_from_ai_worker_unit_test_pythonpath() -
     worker_step = next(
         step for step in jobs["test-worker"]["steps"] if step["name"] == "Run AI Worker Unit Tests with Coverage"
     )
+    contract_step = next(
+        step for step in jobs["test-contract"]["steps"] if step["name"] == "Run Contract Tests with Coverage"
+    )
 
     assert backend_step["env"]["PYTHONPATH"] == "${{ github.workspace }}/backend:${{ github.workspace }}"
+    assert contract_step["env"]["PYTHONPATH"] == "${{ github.workspace }}/backend:${{ github.workspace }}"
     assert worker_step["env"]["PYTHONPATH"] == "${{ github.workspace }}"
     assert "backend/app" in backend_step["run"]
-    assert "tests/contract" in backend_step["run"]
+    assert "tests/contract" not in backend_step["run"]
+    assert "tests/services" not in backend_step["run"]
+    assert "tests/contract" in contract_step["run"]
+    assert "tests/services" in contract_step["run"]
     assert "ai_worker/tests/core" in worker_step["run"]
     assert "ai_worker/tests/ocr" in worker_step["run"]
     assert "ai_worker/tests/rag" in worker_step["run"]
@@ -493,7 +500,15 @@ def test_github_actions_runs_python_test_lanes_as_independent_jobs_with_a_final_
     workflow = yaml.safe_load(GITHUB_ACTIONS_CHECKS.read_text(encoding="utf-8"))
     jobs = workflow["jobs"]
 
-    assert {"test-inventory", "test-migration", "test-backend", "test-worker", "test"}.issubset(jobs)
+    assert {
+        "classify-test-scope",
+        "test-inventory",
+        "test-migration",
+        "test-backend",
+        "test-contract",
+        "test-worker",
+        "test",
+    }.issubset(jobs)
     inventory_step = next(
         step for step in jobs["test-inventory"]["steps"] if step["name"] == "Verify Python test inventory"
     )
@@ -501,22 +516,71 @@ def test_github_actions_runs_python_test_lanes_as_independent_jobs_with_a_final_
     assert "postgres" in jobs["test-migration"]["services"]
     assert "redis" not in jobs["test-migration"]["services"]
     assert {"postgres", "redis"}.issubset(jobs["test-backend"]["services"])
+    assert "services" not in jobs["test-contract"]
     assert "services" not in jobs["test-worker"]
-    assert set(jobs["test"]["needs"]) == {"test-inventory", "test-migration", "test-backend", "test-worker"}
+    assert set(jobs["test"]["needs"]) == {
+        "classify-test-scope",
+        "test-inventory",
+        "test-migration",
+        "test-backend",
+        "test-contract",
+        "test-worker",
+    }
     assert jobs["test"]["if"] == "${{ always() }}"
 
     final_steps = jobs["test"]["steps"]
-    gate_step = final_steps[0]
+    gate_step = next(step for step in final_steps if step["name"] == "Verify Python test jobs succeeded")
     assert gate_step["name"] == "Verify Python test jobs succeeded"
     assert gate_step["env"] == {
+        "CLASSIFIER_RESULT": "${{ needs.classify-test-scope.result }}",
         "INVENTORY_RESULT": "${{ needs.test-inventory.result }}",
+        "MIGRATION_REQUIRED": "${{ needs.classify-test-scope.outputs.migration }}",
         "MIGRATION_RESULT": "${{ needs.test-migration.result }}",
+        "BACKEND_REQUIRED": "${{ needs.classify-test-scope.outputs.backend }}",
         "BACKEND_RESULT": "${{ needs.test-backend.result }}",
+        "CONTRACT_REQUIRED": "${{ needs.classify-test-scope.outputs.contract }}",
+        "CONTRACT_RESULT": "${{ needs.test-contract.result }}",
+        "WORKER_REQUIRED": "${{ needs.classify-test-scope.outputs.worker }}",
         "WORKER_RESULT": "${{ needs.test-worker.result }}",
     }
-    for result_name in gate_step["env"]:
-        assert f'"${result_name}" != "success"' in gate_step["run"]
-    assert next(index for index, step in enumerate(final_steps) if step["name"] == "Coverage Report") > 0
+    assert gate_step["run"] == "python scripts/ci/verify_ci_test_results.py"
+    checkout_index = next(index for index, step in enumerate(final_steps) if step["name"] == "Checkout code")
+    gate_index = final_steps.index(gate_step)
+    coverage_index = next(index for index, step in enumerate(final_steps) if step["name"] == "Coverage Report")
+    assert checkout_index < gate_index < coverage_index
+
+
+def test_github_actions_classifies_pull_requests_and_forces_full_merge_validation() -> None:
+    workflow = yaml.safe_load(GITHUB_ACTIONS_CHECKS.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    classifier = jobs["classify-test-scope"]
+
+    checkout = next(step for step in classifier["steps"] if step["name"] == "Checkout code")
+    classify = next(step for step in classifier["steps"] if step["name"] == "Classify CI scope")
+
+    assert checkout["with"]["fetch-depth"] == 0
+    assert classify["env"] == {
+        "EVENT_NAME": "${{ github.event_name }}",
+        "BASE_SHA": "${{ github.event.pull_request.base.sha }}",
+        "HEAD_SHA": "${{ github.event.pull_request.head.sha }}",
+    }
+    assert classify["run"] == (
+        'python scripts/ci/classify_ci_scope.py --event-name "$EVENT_NAME" '
+        '--base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" --github-output "$GITHUB_OUTPUT"'
+    )
+    for name in ("lint", "frontend", "migration", "backend", "contract", "worker", "full"):
+        assert classifier["outputs"][name] == f"${{{{ steps.scope.outputs.{name} }}}}"
+
+    assert jobs["lint"]["if"] == "${{ needs.classify-test-scope.outputs.lint == 'true' }}"
+    assert jobs["frontend"]["if"] == "${{ needs.classify-test-scope.outputs.frontend == 'true' }}"
+    for job_name, scope in (
+        ("test-migration", "migration"),
+        ("test-backend", "backend"),
+        ("test-contract", "contract"),
+        ("test-worker", "worker"),
+    ):
+        assert jobs[job_name]["needs"] == ["classify-test-scope"]
+        assert jobs[job_name]["if"] == f"${{{{ needs.classify-test-scope.outputs.{scope} == 'true' }}}}"
 
 
 def test_github_actions_combines_distinct_lane_coverage_artifacts() -> None:
@@ -525,6 +589,7 @@ def test_github_actions_combines_distinct_lane_coverage_artifacts() -> None:
     jobs = workflow["jobs"]
 
     assert jobs["test-backend"]["env"]["COVERAGE_FILE"] == ".coverage.backend"
+    assert jobs["test-contract"]["env"]["COVERAGE_FILE"] == ".coverage.contract"
     assert jobs["test-worker"]["env"]["COVERAGE_FILE"] == ".coverage.worker"
 
     backend_upload = next(
@@ -532,6 +597,9 @@ def test_github_actions_combines_distinct_lane_coverage_artifacts() -> None:
     )
     worker_upload = next(
         step for step in jobs["test-worker"]["steps"] if step["name"] == "Upload AI Worker Coverage Data"
+    )
+    contract_upload = next(
+        step for step in jobs["test-contract"]["steps"] if step["name"] == "Upload Contract Coverage Data"
     )
 
     assert backend_upload["uses"] == "actions/upload-artifact@v4"
@@ -548,12 +616,31 @@ def test_github_actions_combines_distinct_lane_coverage_artifacts() -> None:
         "include-hidden-files": True,
         "if-no-files-found": "error",
     }
+    assert contract_upload["with"] == {
+        "name": "python-coverage-contract",
+        "path": ".coverage.contract",
+        "include-hidden-files": True,
+        "if-no-files-found": "error",
+    }
 
     final_steps = {step["name"]: step for step in jobs["test"]["steps"]}
     assert final_steps["Download Backend Coverage Data"]["with"]["name"] == "python-coverage-backend"
+    assert final_steps["Download Contract Coverage Data"]["with"]["name"] == "python-coverage-contract"
     assert final_steps["Download AI Worker Coverage Data"]["with"]["name"] == "python-coverage-worker"
-    assert "coverage combine coverage-data/backend coverage-data/worker" in final_steps["Coverage Report"]["run"]
-    assert "coverage report -m" in final_steps["Coverage Report"]["run"]
+    for name in (
+        "Download Backend Coverage Data",
+        "Download Contract Coverage Data",
+        "Download AI Worker Coverage Data",
+        "Coverage Report",
+    ):
+        assert final_steps[name]["if"] == "${{ needs.classify-test-scope.outputs.full == 'true' }}"
+    assert (
+        "coverage combine coverage-data/backend coverage-data/contract coverage-data/worker"
+        in final_steps["Coverage Report"]["run"]
+    )
+    for name in ("Install uv", "Set up Python", "Install dependencies"):
+        assert final_steps[name]["if"] == "${{ needs.classify-test-scope.outputs.full == 'true' }}"
+    assert "coverage report -m --fail-under=94" in final_steps["Coverage Report"]["run"]
 
 
 @pytest.mark.parametrize("target", REQUIRED_WORKER_INTEGRATION_TARGETS)
