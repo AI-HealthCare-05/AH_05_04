@@ -210,7 +210,7 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 
 상세 스펙(오류 코드, lock 순서, 보안 규칙)은 [회원가입·사용자 정보 계약의 비밀번호 재설정 절](./contracts/current/user-account.md#비밀번호-재설정206-pd-206-결정-3)을 따릅니다.
 
-이메일 발송은 `EmailSender` adapter 뒤에 둡니다. 기본값 `EMAIL_PROVIDER=noop`은 실제 메일을 보내지 않으며, 배포에서 `EMAIL_PROVIDER=smtp`와 `SMTP_*` 환경변수를 설정하면 Gmail SMTP, Google Workspace, SendGrid SMTP, Mailgun SMTP 같은 SMTP Provider로 발송할 수 있습니다. 실제 Provider 선택·계정·비용 정책은 배포 설정 단계에서 확정합니다.
+이메일 발송은 `EmailSender` adapter 뒤에 둡니다. 기본값 `EMAIL_PROVIDER=noop`은 실제 메일을 보내지 않으며, 이번 범위에서 SMTP adapter는 local 검증용으로만 사용할 수 있습니다. Production/Staging SMTP 활성화, 실제 Provider 선택·계정·비용 정책은 후속 보안·배포 설정 PR에서 확정합니다.
 
 ## Post-MVP-1 목표 API — 미구현
 

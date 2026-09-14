@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
@@ -10,6 +10,12 @@ from app.models.email_verification import EmailVerificationPurpose, EmailVerific
 class EmailVerificationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    async def lock_email_purpose(self, *, email: str, purpose: EmailVerificationPurpose) -> None:
+        await self.session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+            {"lock_key": f"email_verification:{purpose.value}:{email}"},
+        )
 
     async def create_token(
         self,

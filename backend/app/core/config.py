@@ -136,9 +136,11 @@ class Config(BaseSettings):
 
     EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES: int = 30
     EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS: int = 60
+    EMAIL_VERIFICATION_RESPONSE_TARGET_SECONDS: float = 0.03
 
     # 이메일 발송 Provider는 배포 환경변수로 선택합니다. 기본값은 저장·로그 없이 아무것도
-    # 보내지 않는 noop이고, production SMTP 연결은 EMAIL_PROVIDER=smtp와 아래 SMTP_* 값으로 켭니다.
+    # 보내지 않는 noop입니다. SMTP 실제 발송은 local 검증용 adapter만 남기고 production 활성화는
+    # 보안·비밀정보 경계 승인 후 후속 PR에서 켭니다.
     EMAIL_PROVIDER: str = "noop"
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
@@ -277,6 +279,11 @@ class Config(BaseSettings):
     def validate_smtp_configuration(self) -> "Config":
         if self.EMAIL_PROVIDER != "smtp":
             return self
+
+        if self.ENV is not Env.LOCAL:
+            raise ValueError("EMAIL_PROVIDER=smtp is not enabled outside local environment in this PR")
+        if not self.SMTP_USE_TLS:
+            raise ValueError("SMTP_USE_TLS=false is not allowed")
 
         missing = [
             name

@@ -176,7 +176,7 @@ services:
       DB_CONNECTION_POOL_MAXSIZE: ${DB_CONNECTION_POOL_MAXSIZE:-10}
       SQLALCHEMY_ECHO: ${SQLALCHEMY_ECHO:-false}
 
-      # 이메일 발송 Provider 설정. 실제 Secret은 배포 환경에서만 주입합니다.
+      # 이메일 발송 Provider 설정. 이번 범위에서는 production SMTP 활성화를 허용하지 않고 noop을 기본으로 둡니다.
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-noop}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}

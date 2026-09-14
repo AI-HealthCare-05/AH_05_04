@@ -181,12 +181,17 @@ class AuthService:
         성공 형태를 유지하고 token을 만들거나 발송하지 않는다. 실제 중복 방어는 기존
         `signup()`의 409 계약이 담당한다.
         """
+        start = time.monotonic()
         repo = self._require_email_verification_repo()
         email_value = str(email)
         purpose = EmailVerificationPurpose.SIGNUP
         now = datetime.now(config.TIMEZONE)
         cooldown_since = now - timedelta(seconds=config.EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS)
 
+        # 회원가입 전 이메일에는 아직 user row가 없어 FOR UPDATE로 직렬화할 대상이 없다.
+        # email+purpose advisory transaction lock으로 쿨다운 조회와 token 생성을 한 단위로 묶어,
+        # 동시 첫 요청이 각각 token을 발급하는 경합을 막는다.
+        await repo.lock_email_purpose(email=email_value, purpose=purpose)
         existing_user = await self.user_repo.get_user_by_email(email_value)
         recent_token = await repo.find_recent_token(email=email_value, purpose=purpose, since=cooldown_since)
 
@@ -203,10 +208,15 @@ class AuthService:
 
         await repo.session.commit()
 
+        if token_created:
+            await self.email_sender.send_email_verification(email=email_value, token=raw_token)
+
+        remaining = config.EMAIL_VERIFICATION_RESPONSE_TARGET_SECONDS - (time.monotonic() - start)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+
         if not token_created:
             return None
-
-        await self.email_sender.send_email_verification(email=email_value, token=raw_token)
         return raw_token if config.ENV == Env.LOCAL else None
 
     async def confirm_email_verification(self, *, email: str | EmailStr, token: str) -> None:

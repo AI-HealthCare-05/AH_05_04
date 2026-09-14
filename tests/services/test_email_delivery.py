@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from app.core.config import Config
+from app.core.config import Config, Env
 from app.dependencies import services
 from app.services.email_delivery import NoopEmailSender, SmtpEmailSender, SmtpEmailSenderConfig
 
@@ -75,7 +75,8 @@ def test_get_email_sender_uses_noop_by_default(monkeypatch: pytest.MonkeyPatch) 
     assert isinstance(services.get_email_sender(), NoopEmailSender)
 
 
-def test_get_email_sender_uses_smtp_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_email_sender_uses_smtp_when_configured_in_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(services.config, "ENV", Env.LOCAL)
     monkeypatch.setattr(services.config, "EMAIL_PROVIDER", "smtp")
     monkeypatch.setattr(services.config, "SMTP_HOST", "smtp.example.test")
     monkeypatch.setattr(services.config, "SMTP_PORT", 587)
@@ -86,6 +87,24 @@ def test_get_email_sender_uses_smtp_when_configured(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(services.config, "SMTP_TIMEOUT_SECONDS", 10.0)
 
     assert isinstance(services.get_email_sender(), SmtpEmailSender)
+
+
+def test_get_email_sender_rejects_smtp_outside_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(services.config, "ENV", Env.PRODUCTION)
+    monkeypatch.setattr(services.config, "EMAIL_PROVIDER", "smtp")
+    monkeypatch.setattr(services.config, "SMTP_USE_TLS", True)
+
+    with pytest.raises(RuntimeError, match="not enabled outside local"):
+        services.get_email_sender()
+
+
+def test_get_email_sender_rejects_plaintext_smtp(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(services.config, "ENV", Env.LOCAL)
+    monkeypatch.setattr(services.config, "EMAIL_PROVIDER", "smtp")
+    monkeypatch.setattr(services.config, "SMTP_USE_TLS", False)
+
+    with pytest.raises(RuntimeError, match="SMTP_USE_TLS=false"):
+        services.get_email_sender()
 
 
 def _config_kwargs(**overrides: Any) -> dict[str, Any]:
@@ -105,9 +124,10 @@ def test_config_uses_noop_email_provider_by_default() -> None:
     assert config.EMAIL_PROVIDER == "noop"
 
 
-def test_config_normalizes_smtp_email_provider() -> None:
+def test_config_normalizes_smtp_email_provider_in_local() -> None:
     config = Config(
         **_config_kwargs(
+            ENV=Env.LOCAL,
             EMAIL_PROVIDER=" SMTP ",
             SMTP_HOST="smtp.example.test",
             SMTP_USERNAME="mailer@example.test",
@@ -117,6 +137,35 @@ def test_config_normalizes_smtp_email_provider() -> None:
     )
 
     assert config.EMAIL_PROVIDER == "smtp"
+
+
+def test_config_rejects_smtp_provider_outside_local() -> None:
+    with pytest.raises(ValidationError, match="not enabled outside local"):
+        Config(
+            **_config_kwargs(
+                ENV=Env.PRODUCTION,
+                EMAIL_PROVIDER="smtp",
+                SMTP_HOST="smtp.example.test",
+                SMTP_USERNAME="mailer@example.test",
+                SMTP_PASSWORD="secret-password",
+                SMTP_FROM_EMAIL="no-reply@example.test",
+            )
+        )
+
+
+def test_config_rejects_plaintext_smtp() -> None:
+    with pytest.raises(ValidationError, match="SMTP_USE_TLS=false"):
+        Config(
+            **_config_kwargs(
+                ENV=Env.LOCAL,
+                EMAIL_PROVIDER="smtp",
+                SMTP_HOST="smtp.example.test",
+                SMTP_USERNAME="mailer@example.test",
+                SMTP_PASSWORD="secret-password",
+                SMTP_FROM_EMAIL="no-reply@example.test",
+                SMTP_USE_TLS=False,
+            )
+        )
 
 
 def test_config_rejects_smtp_provider_without_required_secret_settings() -> None:

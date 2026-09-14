@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta
 from uuid import uuid4
 
@@ -60,6 +61,26 @@ async def test_email_verification_request_does_not_create_duplicate_probe_for_ex
     assert body["detail"]
     assert body["verification_token"] is None
     assert sender.email_verifications == []
+
+
+async def test_email_verification_request_concurrent_first_requests_issue_one_token() -> None:
+    sender = RecordingEmailSender()
+    fastapi_app.dependency_overrides[get_email_sender] = lambda: sender
+    email = f"verify-concurrent-{uuid4().hex[:10]}@example.com"
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            responses = await asyncio.gather(
+                client.post("/api/v1/auth/email-verification/request", json={"email": email}),
+                client.post("/api/v1/auth/email-verification/request", json={"email": email}),
+            )
+    finally:
+        fastapi_app.dependency_overrides.pop(get_email_sender, None)
+
+    assert [response.status_code for response in responses] == [status.HTTP_200_OK, status.HTTP_200_OK]
+    tokens = [response.json()["verification_token"] for response in responses]
+    assert sum(token is not None for token in tokens) == 1
+    assert len(sender.email_verifications) == 1
+    assert sender.email_verifications[0][0] == email
 
 
 async def test_email_verification_request_within_cooldown_does_not_issue_new_token() -> None:

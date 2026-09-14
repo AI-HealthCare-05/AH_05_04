@@ -5,6 +5,7 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
+from app.core.config import Env
 from app.core.db.databases import get_db_session
 from app.core.provider_observability import (
     Provider,
@@ -473,6 +474,10 @@ def get_email_verification_repository(
 
 def get_email_sender() -> EmailSender:
     if config.EMAIL_PROVIDER == "smtp":
+        if config.ENV is not Env.LOCAL:
+            raise RuntimeError("SMTP email provider is not enabled outside local environment in this PR")
+        if not config.SMTP_USE_TLS:
+            raise RuntimeError("SMTP_USE_TLS=false is not allowed")
         return SmtpEmailSender(
             SmtpEmailSenderConfig(
                 host=config.SMTP_HOST,
