@@ -95,7 +95,8 @@ class AuthService:
         data: SignUpRequest,
     ) -> User:
         await self.check_email_exists(data.email)
-        await self._require_signup_email_verified(data.email)
+        if config.SIGNUP_EMAIL_VERIFICATION_REQUIRED:
+            await self._require_signup_email_verified(data.email)
         consent_policy_versions = self._validate_signup_consents(data.consents)
 
         try:

@@ -69,7 +69,28 @@ class TestSignupAPI:
         assert response.json() == {"detail": "회원가입이 성공적으로 완료되었습니다."}
         assert response.headers.get_list("cache-control") == ["no-store"]
 
-    async def test_signup_requires_verified_email(self):
+    async def test_signup_allows_unverified_email_when_verification_gate_is_disabled(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(config, "SIGNUP_EMAIL_VERIFICATION_REQUIRED", False)
+        signup_data = {
+            "email": "gate-disabled@example.com",
+            "password": "Password123!",
+            "name": "인증비활성테스터",
+        }
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/v1/auth/signup", json=signup_data)
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.json() == {"detail": "회원가입이 성공적으로 완료되었습니다."}
+
+    async def test_signup_requires_verified_email_when_verification_gate_is_enabled(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(config, "SIGNUP_EMAIL_VERIFICATION_REQUIRED", True)
         signup_data = {
             "email": "unverified@example.com",
             "password": "Password123!",
@@ -94,8 +115,10 @@ class TestSignupAPI:
     async def test_signup_rejects_expired_verified_email(
         self,
         db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
         mark_expired_signup_email_verified,
     ):
+        monkeypatch.setattr(config, "SIGNUP_EMAIL_VERIFICATION_REQUIRED", True)
         email = "expired-verified@example.com"
         await mark_expired_signup_email_verified(email)
 

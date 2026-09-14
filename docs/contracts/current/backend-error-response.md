@@ -238,7 +238,7 @@ Worker 재시도 지연은 `min(5초 × 2^(attempt_count-1), 60초)`에 0~20% �
 | 401 | `EXPIRED_TOKEN` | "인증 정보가 만료되었습니다. 다시 로그인해 주세요." | |
 | 403 | `FORBIDDEN` | "비활성화된 계정입니다." | 현재는 비활성 계정 로그인 시도에만 사용 |
 | 409 | `CONFLICT` | 상황에 따른 안내 문구 (예: "이미 사용중인 이메일입니다.") | 회원가입 중복, 종료된 대화 세션 등 여러 상황에서 재사용 |
-| 409 | `EMAIL_VERIFICATION_REQUIRED` | "이메일 인증을 완료해 주세요." | 회원가입 전 같은 정규화 이메일의 `SIGNUP` 인증 완료 기록이 없음 |
+| 409 | `EMAIL_VERIFICATION_REQUIRED` | "이메일 인증을 완료해 주세요." | `SIGNUP_EMAIL_VERIFICATION_REQUIRED=true`인 회원가입에서 같은 정규화 이메일의 `SIGNUP` 인증 완료 기록이 없거나 만료됨 |
 | 409 | `IDEMPOTENCY_KEY_CONFLICT` | "같은 Idempotency-Key로 이전과 다른 요청이 접수되었습니다." | OCR·Guide·Chat 접수 또는 OCR 수동 약물 추가 같은 멱등 mutation에서 같은 `Idempotency-Key`로 이전과 다른 요청 지문이 접수됨 |
 | 422 | `VALIDATION_FAILED` | 상황에 따른 안내 문구 (예: "입력값을 확인해 주세요.", "MVP에서는 처방전 문서만 업로드할 수 있습니다.") | Pydantic 요청 검증 실패 시 자동 발생 또는 Service에서 수동 발생. Auth 도메인은 `details[].reason=PASSWORD_POLICY_VIOLATION`, `RESET_TOKEN_INVALID`, `EMAIL_VERIFICATION_TOKEN_INVALID`를 사용 |
 | 500 | `INTERNAL_SERVER_ERROR` | "서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." | 예상하지 못한 예외의 최종 fallback |
@@ -252,7 +252,7 @@ Auth 도메인의 세부 reason은 다음처럼 고정합니다. 모두 `details
 
 | Endpoint | HTTP/code | `details[].field` | `details[].reason` | 사용 상황 |
 | --- | --- | --- | --- | --- |
-| `POST /api/v1/auth/signup` | `409 EMAIL_VERIFICATION_REQUIRED` | `email` | `EMAIL_VERIFICATION_REQUIRED` | 같은 정규화 이메일의 `SIGNUP` 인증 완료 기록이 없음 |
+| `POST /api/v1/auth/signup` | `409 EMAIL_VERIFICATION_REQUIRED` | `email` | `EMAIL_VERIFICATION_REQUIRED` | `SIGNUP_EMAIL_VERIFICATION_REQUIRED=true`인 회원가입에서 같은 정규화 이메일의 `SIGNUP` 인증 완료 기록이 없거나 만료됨 |
 | `POST /api/v1/auth/email-verification/confirm` | `422 VALIDATION_FAILED` | `token` | `EMAIL_VERIFICATION_TOKEN_INVALID` | 이메일 인증 token이 없거나, 만료됐거나, 이미 사용됐거나, 요청 이메일과 맞지 않음 |
 | `POST /api/v1/auth/password-reset/confirm` | `422 VALIDATION_FAILED` | `token` | `RESET_TOKEN_INVALID` | 비밀번호 재설정 token이 없거나, 만료됐거나, 이미 사용됐거나, 제출 token이 유효 token 집합에 없음 |
 | `POST /api/v1/auth/password-reset/confirm` | `422 VALIDATION_FAILED` | `new_password` | `PASSWORD_POLICY_VIOLATION` | 새 비밀번호가 회원가입과 같은 비밀번호 정책을 만족하지 않음 |

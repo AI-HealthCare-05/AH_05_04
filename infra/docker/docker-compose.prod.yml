@@ -178,6 +178,7 @@ services:
 
       # 이메일 발송 Provider 설정. 이번 범위에서는 production SMTP 활성화를 허용하지 않고 noop을 기본으로 둡니다.
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-noop}
+      SIGNUP_EMAIL_VERIFICATION_REQUIRED: ${SIGNUP_EMAIL_VERIFICATION_REQUIRED:-false}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
