@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
 
+import jsonschema  # type: ignore[import-untyped]
 import pytest
 
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes
@@ -342,7 +343,6 @@ def _schema_set_1_4_signal_payload() -> dict[str, Any]:
 
 
 def test_schema_set_1_4_observation_state_matrix_is_portable() -> None:
-    jsonschema = pytest.importorskip("jsonschema", reason="portable Draft 2020-12 validation requires jsonschema")
     document = schema_documents("1.4.0")["artifacts/rag-eval.claim-citation-observation.schema.json"]
     validator = jsonschema.Draft202012Validator(document)
     valid = _schema_set_1_4_observation_payload()
@@ -356,9 +356,28 @@ def test_schema_set_1_4_observation_state_matrix_is_portable() -> None:
     invalid["claims"][0]["citations"][0]["authorization_selection_sha256"] = None
     assert not validator.is_valid(invalid)
 
+    rejected_before_authorization = deepcopy(valid)
+    rejected_before_authorization["validation_decision"] = "REJECTED"
+    rejected_before_authorization["validation_reason_codes"] = ["CLAIM_NOT_SUPPORTED"]
+    rejected_before_authorization["validated_selection_sha256"] = None
+    rejected_before_authorization["authorization_decision"] = None
+    rejected_before_authorization["authorization_reason_codes"] = []
+    rejected_before_authorization["authorization_receipt_ref"] = None
+    rejected_before_authorization["authorization_receipt_sha256"] = None
+    rejected_citation = rejected_before_authorization["claims"][0]["citations"][0]
+    rejected_citation["authorized"] = False
+    rejected_citation["authorization_reason_code"] = None
+    rejected_citation["authorization_selection_sha256"] = None
+    assert validator.is_valid(rejected_before_authorization)
+
+    fabricated_authorization = deepcopy(valid)
+    fabricated_authorization["validation_decision"] = "REJECTED"
+    fabricated_authorization["validation_reason_codes"] = ["CLAIM_NOT_SUPPORTED"]
+    fabricated_authorization["validated_selection_sha256"] = None
+    assert not validator.is_valid(fabricated_authorization)
+
 
 def test_schema_set_1_4_grounding_signal_state_matrix_is_portable() -> None:
-    jsonschema = pytest.importorskip("jsonschema", reason="portable Draft 2020-12 validation requires jsonschema")
     document = schema_documents("1.4.0")["artifacts/rag-eval.grounding-signal.schema.json"]
     validator = jsonschema.Draft202012Validator(document)
     valid = _schema_set_1_4_signal_payload()
@@ -745,7 +764,6 @@ def test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable(
         },
     }
 
-    jsonschema = pytest.importorskip("jsonschema", reason="portable Draft 2020-12 validation requires jsonschema")
     invalid_draft: dict[str, Any] = {
         "authored_by": {
             "namespace": "GITHUB_LOGIN",
@@ -803,7 +821,6 @@ def test_schema_set_1_3_positive_integers_match_the_canonical_safe_integer_bound
     assert field_schema["exclusiveMinimum"] == 0
     assert field_schema["maximum"] == (2**53) - 1
 
-    jsonschema = pytest.importorskip("jsonschema", reason="portable Draft 2020-12 validation requires jsonschema")
     validator = jsonschema.Draft202012Validator(field_schema)
 
     assert validator.is_valid((2**53) - 1)
@@ -822,7 +839,6 @@ def test_schema_set_1_3_study_split_axis_cardinality_is_portable() -> None:
     assert "minLength" not in axis_summaries
     assert "maxLength" not in axis_summaries
 
-    jsonschema = pytest.importorskip("jsonschema", reason="portable Draft 2020-12 validation requires jsonschema")
     portable_schema = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$defs": document["$defs"],

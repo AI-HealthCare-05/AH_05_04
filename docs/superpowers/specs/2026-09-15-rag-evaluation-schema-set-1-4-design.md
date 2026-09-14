@@ -72,6 +72,11 @@ answer text, Claim text, Source body, Provider payload, credentials, or patient 
 - nullable Citation authorization decision, sorted bounded reason codes, immutable receipt reference, and receipt hash;
 - sorted `claims`.
 
+Authorization is causally downstream of validation. `validation_decision=REJECTED` records emitted candidate Citations
+with authorization not run: the envelope decision, reasons, and receipt bindings are null/empty, while every edge has
+`authorized=false` and null authorization reason/selection hash. A non-null authorization decision is permitted only
+for `validation_decision=VALIDATED`; a validated observation with Citations requires that decision.
+
 Allowed task types are `ANSWER_GROUNDING | SAFETY | END_TO_END_RAG`. An observation exists whenever the corresponding
 completed Case Result emitted any Claim or Citation. Its Run, Case, Dataset, input, answer, and answer-variant fields
 must exact-match that Case Result and Run before a scorer consumes it.
@@ -105,14 +110,14 @@ Each Citation contains:
 
 - `citation_key` and parent `claim_key`;
 - `source_type`: `PRESCRIPTION | KNOWLEDGE_CHUNK | INTERACTION_RULE | LIFESTYLE_GUIDELINE | SAFETY_POLICY`;
-- `evidence_ref_id`, `source_version`, `locator`, and `content_sha256`;
+- `evidence_ref_id`, bounded opaque NFC `source_version`, `locator`, and `content_sha256`;
 - Evaluation edge `accepted` plus nullable bounded validation reason code;
 - `authorized` plus nullable bounded authorization reason code;
 - nullable authorization selection receipt hash;
 - `gold_source_matched`.
 
-Citation keys are unique across the observation, each edge must point to its containing Claim, and Citation ordering is
-canonical. The distinct Evidence ID set projected by edges must exact-match the Case Result's flat
+Citation keys are unique and UTF-16-sorted across the flattened observation, each edge must point to its containing
+Claim, and Citation ordering is canonical. The distinct Evidence ID set projected by edges must exact-match the Case Result's flat
 `actual_citation_evidence_ids` set. Multiple unique Citation edges may still refer to the same Evidence ID.
 
 An accepted or authorized edge can still have `gold_source_matched=false`. That is a scored quality failure, not an
@@ -188,7 +193,7 @@ The focused test suite covers:
 1. Valid observation and evaluated/no-claims signal examples.
 2. Every bounded enum member and one unsupported value.
 3. Duplicate, unsorted, orphan, and self-hash mismatch rejection.
-4. Conditional validation/authorization receipt requirements.
+4. Conditional validation/authorization causality, not-run state, and receipt requirements.
 5. `NOT_APPLICABLE_NO_CLAIMS` accepting only the exact all-false null-binding tuple.
 6. Schema Set `1.4.0` containing exactly 23 unique members.
 7. All 21 inherited `1.3.0` member documents remaining byte-for-byte identical.
@@ -196,6 +201,7 @@ The focused test suite covers:
 9. Documented Schema Set hash matching the committed canonical set.
 10. Privacy sentinels proving the models and schemas expose no free-form body fields.
 11. Existing `1.0.0` through `1.3.0` export regression tests remaining unchanged and passing.
+12. Required `jsonschema` Draft 2020-12 validation for every portable conditional-schema test.
 
 ## Delivery Boundary
 

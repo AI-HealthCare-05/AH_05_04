@@ -164,7 +164,6 @@ def _add_claim_citation_observation_conditions(document: dict[str, JsonValue]) -
             },
             "else": {
                 "properties": {
-                    "authorization_reason_code": {"not": {"type": "null"}},
                     "authorization_selection_sha256": {"type": "null"},
                 }
             },
@@ -191,6 +190,7 @@ def _add_claim_citation_observation_conditions(document: dict[str, JsonValue]) -
                 "validation_execution_status": {"const": "EVALUATED"},
                 "validation_reason_codes": {"maxItems": 0},
                 "validated_selection_sha256": {"not": {"type": "null"}},
+                "claims": _claims_with_citation_properties({"accepted": {"const": True}}),
             },
         ),
         (
@@ -198,6 +198,17 @@ def _add_claim_citation_observation_conditions(document: dict[str, JsonValue]) -
             {
                 "validation_reason_codes": {"minItems": 1},
                 "validated_selection_sha256": {"type": "null"},
+                "authorization_decision": {"type": "null"},
+                "authorization_reason_codes": {"maxItems": 0},
+                "authorization_receipt_ref": {"type": "null"},
+                "authorization_receipt_sha256": {"type": "null"},
+                "claims": _claims_with_citation_properties(
+                    {
+                        "authorized": {"const": False},
+                        "authorization_reason_code": {"type": "null"},
+                        "authorization_selection_sha256": {"type": "null"},
+                    }
+                ),
             },
         ),
     )
@@ -219,6 +230,7 @@ def _add_claim_citation_observation_conditions(document: dict[str, JsonValue]) -
                 "authorization_reason_codes": {"maxItems": 0},
                 "authorization_receipt_ref": {"not": {"type": "null"}},
                 "authorization_receipt_sha256": {"not": {"type": "null"}},
+                "validation_decision": {"const": "VALIDATED"},
                 "claims": _claims_with_citation_properties({"authorized": {"const": True}}),
             },
         ),
@@ -228,7 +240,14 @@ def _add_claim_citation_observation_conditions(document: dict[str, JsonValue]) -
                 "authorization_reason_codes": {"minItems": 1},
                 "authorization_receipt_ref": {"type": "null"},
                 "authorization_receipt_sha256": {"type": "null"},
-                "claims": _claims_with_citation_properties({"authorized": {"const": False}}),
+                "validation_decision": {"const": "VALIDATED"},
+                "claims": _claims_with_citation_properties(
+                    {
+                        "authorized": {"const": False},
+                        "authorization_reason_code": {"not": {"type": "null"}},
+                        "authorization_selection_sha256": {"type": "null"},
+                    }
+                ),
             },
         ),
         (
@@ -237,7 +256,13 @@ def _add_claim_citation_observation_conditions(document: dict[str, JsonValue]) -
                 "authorization_reason_codes": {"maxItems": 0},
                 "authorization_receipt_ref": {"type": "null"},
                 "authorization_receipt_sha256": {"type": "null"},
-                "claims": {"items": {"properties": {"citations": {"maxItems": 0}}}},
+                "claims": _claims_with_citation_properties(
+                    {
+                        "authorized": {"const": False},
+                        "authorization_reason_code": {"type": "null"},
+                        "authorization_selection_sha256": {"type": "null"},
+                    }
+                ),
             },
         ),
     )
@@ -254,23 +279,46 @@ def _add_claim_citation_observation_conditions(document: dict[str, JsonValue]) -
                 "then": {"properties": properties},
             }
         )
-    conditions.append(
-        {
-            "if": {
-                "properties": {"authorization_decision": {"not": {"type": "null"}}},
-                "required": ["authorization_decision"],
+    conditions.extend(
+        [
+            {
+                "if": {
+                    "allOf": [
+                        {
+                            "properties": {"validation_decision": {"const": "VALIDATED"}},
+                            "required": ["validation_decision"],
+                        },
+                        {
+                            "properties": {
+                                "claims": {
+                                    "contains": {
+                                        "properties": {"citations": {"minItems": 1}},
+                                        "required": ["citations"],
+                                    }
+                                }
+                            }
+                        },
+                    ]
+                },
+                "then": {"properties": {"authorization_decision": {"not": {"type": "null"}}}},
             },
-            "then": {
-                "properties": {
-                    "claims": {
-                        "contains": {
-                            "properties": {"citations": {"minItems": 1}},
-                            "required": ["citations"],
+            {
+                "if": {
+                    "properties": {"authorization_decision": {"not": {"type": "null"}}},
+                    "required": ["authorization_decision"],
+                },
+                "then": {
+                    "properties": {
+                        "claims": {
+                            "contains": {
+                                "properties": {"citations": {"minItems": 1}},
+                                "required": ["citations"],
+                            }
                         }
                     }
-                }
+                },
             },
-        }
+        ]
     )
 
 

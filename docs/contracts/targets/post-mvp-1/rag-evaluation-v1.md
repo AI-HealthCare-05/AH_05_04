@@ -98,7 +98,7 @@ canonicalization version은 공백 없는 bounded opaque token으로 보존하�
 
 ### Evaluation Schema Set 1.4 후보
 
-#160·#161 DEV metric 입력 projection 후보는 `rag-eval.schema-set@1.4.0`, SHA-256 `646cc7108ea945338a8f58f61a07c65c3f7050e1b3fb2fbe40541f3cadda2e7c`이다. 문서 상태는
+#160·#161 DEV metric 입력 projection 후보는 `rag-eval.schema-set@1.4.0`, SHA-256 `13cb59316be25c80ecaad2e3ae87bff6d0a4f1ebfb5f75c888ff3c7ae85a0a8c`이다. 문서 상태는
 `Candidate · Review Required`이며, 책임 Evaluation·Source provenance·Safety fixture 리뷰어 김지혜
 (`@Jye-rookie`)의 실제 Pull Request review event가 승인 전환에 필요하다.
 
@@ -110,7 +110,8 @@ Evaluation artifact를 member `1.0.0`으로 추가한다.
 
 두 artifact는 원문 대신 stable ID·bounded enum·immutable reference·hash만 저장한다. no-claims Safety/E2E
 signal은 null answer뿐 아니라 승인 fallback answer hash도 허용하되 observation 결속은 null이고 failure
-boolean은 모두 false여야 한다. 기존 Schema Set 1.0.0–1.3.0과 exporter 기본 version은 변경하지 않는다.
+boolean은 모두 false여야 한다. Citation source version은 #180 opaque token을 그대로 보존하고 validation
+거절 뒤에는 authorization not-run만 허용한다. 기존 Schema Set 1.0.0–1.3.0과 exporter 기본 version은 변경하지 않는다.
 상세 후보 경계는 [RAG Evaluation Schema Set 1.4 Candidate](../../../governance/decisions/2026-09-15-rag-evaluation-schema-set-1-4-candidate.md)를 따른다.
 
 이 Candidate는 projection schema/export/registry 구현만 뜻한다. 책임 리뷰 승인 전에는 #160·#161 scorer

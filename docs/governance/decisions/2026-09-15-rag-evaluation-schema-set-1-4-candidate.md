@@ -20,7 +20,7 @@ same-Case signal 입력에 필요한 최소 후보 Schema Set으로 제안한다
 | --- | --- |
 | Schema Set ID | `rag-eval.schema-set` |
 | Schema Set version | `1.4.0` |
-| Schema Set SHA-256 | `646cc7108ea945338a8f58f61a07c65c3f7050e1b3fb2fbe40541f3cadda2e7c` |
+| Schema Set SHA-256 | `13cb59316be25c80ecaad2e3ae87bff6d0a4f1ebfb5f75c888ff3c7ae85a0a8c` |
 | Canonical member root | `evals/schemas/1.4.0/` |
 | Member count | `23` |
 
@@ -45,13 +45,19 @@ input·answer·Answer variant에 결속하며 Claim과 Citation edge, #180 valid
 일치 여부를 stable ID·bounded enum·immutable reference·hash로만 보존한다. Claim/Citation/Source/Answer 원문과
 Provider payload는 저장하지 않는다.
 
+Citation의 `source_version`은 #180과 동일한 bounded opaque NFC token을 그대로 보존한다. authorization은
+validation의 후속 단계이므로 validation `REJECTED`에서는 envelope와 edge에 명시적인 not-run 상태를 기록하고,
+validated selection이 있을 때만 authorization decision·receipt를 허용한다. Citation key는 observation 전체의
+flattened 순서에서 UTF-16 정렬돼야 한다.
+
 Grounding signal은 `SAFETY | END_TO_END_RAG` Case에 결속하며 `EVALUATED | NOT_APPLICABLE_NO_CLAIMS`를 구분한다.
 no-claims 상태는 generation 미실행·폐기의 `answer_sha256=null`과 승인 fallback의 non-null answer hash를 모두
 허용하지만 observation reference/hash는 null이고 세 failure boolean은 모두 false여야 한다.
 
-Python strict model과 exported Draft 2020-12 schema는 task enum, validation·authorization receipt tuple,
+Python strict model과 exported Draft 2020-12 schema는 task enum, validation-before-authorization 인과와 receipt tuple,
 criticality judgment reference, no-claims state를 fail-closed한다. 정렬·중복·orphan과 canonical self-hash는
-Python parser가 추가 검증한다. Run·Case Result·Gold·#180 receipt 사이의 실제 외부 artifact exact matching은
+Python parser가 추가 검증한다. portable 조건 검증은 required dev dependency인 `jsonschema`로 실행한다.
+Run·Case Result·Gold·#180 receipt 사이의 실제 외부 artifact exact matching은
 후속 pure projection builder 입력 검증의 책임이다.
 
 ## 적용 경계

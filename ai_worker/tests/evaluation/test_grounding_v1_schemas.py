@@ -240,6 +240,16 @@ def test_observation_rejects_unsupported_task_type(task_type: str) -> None:
     assert caught.value.code is EvaluationErrorCode.SCHEMA_INVALID
 
 
+def test_observation_accepts_runtime_opaque_source_version() -> None:
+    payload = _observation_payload()
+    payload["claims"][0]["citations"][0]["source_version"] = "2026-09-01"
+    payload = _with_hash(payload, "observation_sha256")
+
+    observation = _parse_observation(payload)
+
+    assert observation.claims[0].citations[0].source_version == "2026-09-01"
+
+
 @pytest.mark.parametrize("task_type", ["ANSWER_GROUNDING", "ANSWER_QUALITY", "RETRIEVAL", "UNKNOWN"])
 def test_signal_rejects_non_safety_task_type(task_type: str) -> None:
     payload = _signal_payload()
@@ -320,6 +330,19 @@ def test_observation_rejects_noncanonical_collections(mutation: str) -> None:
     _assert_observation_schema_invalid(payload)
 
 
+def test_observation_rejects_citation_keys_not_globally_sorted() -> None:
+    payload = _observation_payload()
+    first_claim = payload["claims"][0]
+    first_claim["citations"][0]["citation_key"] = "citation-z"
+    second_claim = deepcopy(first_claim)
+    second_claim["claim_key"] = "claim-002"
+    second_claim["citations"][0]["claim_key"] = "claim-002"
+    second_claim["citations"][0]["citation_key"] = "citation-a"
+    payload["claims"].append(second_claim)
+
+    _assert_observation_schema_invalid(payload)
+
+
 @pytest.mark.parametrize(
     ("criticality_source", "review_ref"),
     [
@@ -370,6 +393,36 @@ def test_observation_rejects_edge_authorization_tuple_mismatch(
     citation["authorized"] = authorized
     citation["authorization_reason_code"] = reason
     citation["authorization_selection_sha256"] = selection_hash
+
+    _assert_observation_schema_invalid(payload)
+
+
+def test_rejected_validation_with_emitted_citation_forbids_authorization() -> None:
+    payload = _observation_payload()
+    payload["validation_decision"] = "REJECTED"
+    payload["validation_reason_codes"] = ["CLAIM_NOT_SUPPORTED"]
+    payload["validated_selection_sha256"] = None
+    payload["authorization_decision"] = None
+    payload["authorization_reason_codes"] = []
+    payload["authorization_receipt_ref"] = None
+    payload["authorization_receipt_sha256"] = None
+    citation = payload["claims"][0]["citations"][0]
+    citation["authorized"] = False
+    citation["authorization_reason_code"] = None
+    citation["authorization_selection_sha256"] = None
+    payload = _with_hash(payload, "observation_sha256")
+
+    observation = _parse_observation(payload)
+
+    assert observation.authorization_decision is None
+    assert observation.claims[0].citations[0].authorization_reason_code is None
+
+
+def test_rejected_validation_cannot_claim_authorized_receipt() -> None:
+    payload = _observation_payload()
+    payload["validation_decision"] = "REJECTED"
+    payload["validation_reason_codes"] = ["CLAIM_NOT_SUPPORTED"]
+    payload["validated_selection_sha256"] = None
 
     _assert_observation_schema_invalid(payload)
 

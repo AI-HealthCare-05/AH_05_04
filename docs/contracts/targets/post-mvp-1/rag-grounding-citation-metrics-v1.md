@@ -47,7 +47,7 @@ Claim/Citation이 있는데 observation이 없거나, no-claims 상태가 observ
 `INVALID/null`이다.
 
 이 신규 member들은 Schema Set `1.4.0` Candidate에 등록됐으며 canonical member manifest hash는
-`646cc7108ea945338a8f58f61a07c65c3f7050e1b3fb2fbe40541f3cadda2e7c`이다. 기존 Schema Set과 기존 member의
+`13cb59316be25c80ecaad2e3ae87bff6d0a4f1ebfb5f75c888ff3c7ae85a0a8c`이다. 기존 Schema Set과 기존 member의
 version·canonical bytes는 변경하지 않는다. 책임 리뷰어의 실제 Pull Request 승인 전에는 이 Candidate를
 Approved 입력이나 Metric kernel 구현 선행조건 완료로 취급하지 않는다.
 
@@ -90,13 +90,18 @@ Approved 입력이나 Metric kernel 구현 선행조건 완료로 취급하지 �
 
 - `citation_key`, `claim_key`
 - #180 `source_type`
-- Case Evidence reference의 `evidence_ref_id`, `source_version`, `locator`, `content_sha256`
+- Case Evidence reference의 `evidence_ref_id`, #180과 동일한 bounded opaque NFC `source_version`, `locator`, `content_sha256`
 - Evaluation edge validation `accepted`와 bounded reason code
 - Citation authorization `authorized`와 매칭된 authorization selection-receipt hash
 
 본문 대신 stable key와 hash만 저장한다. observation과 Case Result의 Claim ID 집합 및 Citation Evidence ID
 집합은 exact-match해야 한다. Citation key는 observation 안에서 유일하고 edge의 `claim_key`는 같은
-observation의 Claim을 참조해야 한다.
+observation의 Claim을 참조해야 하며 flattened Citation key 순서는 UTF-16 기준으로 정렬한다.
+
+authorization은 validation의 후속 단계다. validation이 `REJECTED`면 emitted candidate Citation은 보존하되
+envelope authorization decision·reason·receipt는 null/빈 집합이고 edge는 `authorized=false`, authorization
+reason/selection hash null인 not-run 상태여야 한다. validation이 `VALIDATED`이고 Citation이 있을 때만
+authorization decision이 필수이며, validation 거절 뒤 authorization receipt를 붙인 artifact는 `INVALID`다.
 
 ## 3. 유효 Citation과 publishable Claim
 

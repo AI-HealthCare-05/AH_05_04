@@ -30,7 +30,7 @@
 - Modify: `ai_worker/tasks/evaluation/schemas/__init__.py`
 
 **Interfaces:**
-- Consumes: `StrictContractModel`, `CanonicalUuid`, `StableId`, `SemanticVersion`, `Sha256Hex`, `ImmutableReference`, `NonEmptyText`, `TaskType`, `canonical_sha256`, and the established byte-parser error path.
+- Consumes: `StrictContractModel`, `CanonicalUuid`, `StableId`, `SemanticVersion`, `RuntimeVersionToken`, `Sha256Hex`, `ImmutableReference`, `NonEmptyText`, `TaskType`, `canonical_sha256`, and the established byte-parser error path.
 - Produces: `ClaimCitationObservation`, `GroundingSignal`, `CLAIM_CITATION_OBSERVATION_ADAPTER`, `GROUNDING_SIGNAL_ADAPTER`, `parse_claim_citation_observation_bytes(bytes)`, and `parse_grounding_signal_bytes(bytes)`.
 - Produces bounded Evaluation enums whose wire values exactly match #180 Claim kind, support, source type, validation, and authorization values.
 
@@ -66,7 +66,7 @@ class CitationEdgeObservation(StrictContractModel):
     claim_key: StableId
     source_type: CitationSourceTypeValue
     evidence_ref_id: StableId
-    source_version: SemanticVersion
+    source_version: RuntimeVersionToken
     locator: NonEmptyText
     content_sha256: Sha256Hex
     accepted: StrictBool
@@ -111,7 +111,7 @@ class ClaimCitationObservation(StrictContractModel):
     claims: tuple[ClaimObservation, ...]
 ```
 
-`AnswerGroundingTaskTypeValue` accepts only `ANSWER_GROUNDING | SAFETY | END_TO_END_RAG`. Require unique UTF-16-sorted Claim keys, globally unique UTF-16-sorted Citation keys, each Citation's `claim_key` equal to its containing Claim, unique sorted reason tuples, correct criticality-reference pairing, consistent accepted/authorized reason/hash pairing, and the canonical self-hash excluding `observation_sha256`.
+`AnswerGroundingTaskTypeValue` accepts only `ANSWER_GROUNDING | SAFETY | END_TO_END_RAG`. Require unique UTF-16-sorted Claim keys, globally unique and UTF-16-sorted flattened Citation keys, each Citation's `claim_key` equal to its containing Claim, unique sorted reason tuples, correct criticality-reference pairing, consistent accepted/authorized reason/hash pairing, validation-before-authorization causality, and the canonical self-hash excluding `observation_sha256`. A rejected validation records authorization as not run at both envelope and edge levels; only a validated selection can carry a non-null authorization decision.
 
 Implement the signal with these public fields:
 
@@ -143,7 +143,7 @@ Run the Task 1 command. Expected: valid-payload and enum tests pass.
 
 - [ ] **Step 5: Write failing invariant and privacy tests**
 
-Parameterize literal mutations for duplicate/unsorted Claim and Citation keys, orphan Citation, self-hash mismatch, criticality-reference mismatch, accepted/authorized reason mismatch, invalid authorization hash tuple, and every invalid no-claims tuple. Add a field-name sentinel rejecting `query`, `question`, `answer_text`, `claim_text`, `source_body`, `provider_payload`, `credential`, and `patient`.
+Parameterize literal mutations for duplicate/unsorted Claim and Citation keys including cross-Claim flattened ordering, opaque #180 source-version tokens, orphan Citation, self-hash mismatch, criticality-reference mismatch, accepted/authorized reason mismatch, invalid authorization hash tuple, rejected-validation authorization not-run state, fabricated post-rejection authorization, and every invalid no-claims tuple. Add a field-name sentinel rejecting `query`, `question`, `answer_text`, `claim_text`, `source_body`, `provider_payload`, `credential`, and `patient`.
 
 - [ ] **Step 6: Run invariant tests and verify RED**
 
@@ -212,7 +212,7 @@ Run the Step 2 command.
 
 - [ ] **Step 5: Write failing portable conditional-schema tests**
 
-Validate the same invalid authorization and no-claims payload mutations against the exported Draft 2020-12 documents. Use the existing conditional `jsonschema` skip convention when that optional package is unavailable.
+Validate the same invalid authorization and no-claims payload mutations against the exported Draft 2020-12 documents. Add `jsonschema` to the required dev test dependencies and do not skip portable validation when it is unavailable.
 
 - [ ] **Step 6: Run conditional tests and verify RED**
 

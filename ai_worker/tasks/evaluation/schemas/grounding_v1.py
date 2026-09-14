@@ -18,6 +18,7 @@ from ai_worker.tasks.evaluation.schemas.common import (
     StrictContractModel,
     TaskType,
 )
+from ai_worker.tasks.evaluation.schemas.provenance_v1 import RuntimeVersionToken
 
 
 def _enum_from_wire(enum_type: type[StrEnum], value: object) -> object:
@@ -174,7 +175,7 @@ class CitationEdgeObservation(StrictContractModel):
     claim_key: StableId
     source_type: CitationSourceTypeValue
     evidence_ref_id: StableId
-    source_version: SemanticVersion
+    source_version: RuntimeVersionToken
     locator: NonEmptyText
     content_sha256: Sha256Hex
     accepted: StrictBool
@@ -191,8 +192,8 @@ class CitationEdgeObservation(StrictContractModel):
         if self.authorized:
             if self.authorization_reason_code is not None or self.authorization_selection_sha256 is None:
                 raise ValueError("authorized edge requires selection hash and no rejection reason")
-        elif self.authorization_reason_code is None or self.authorization_selection_sha256 is not None:
-            raise ValueError("unauthorized edge requires one reason and no selection hash")
+        elif self.authorization_selection_sha256 is not None:
+            raise ValueError("unauthorized edge forbids selection hash")
         return self
 
 
@@ -245,8 +246,8 @@ class ClaimCitationObservation(StrictContractModel):
         if len(claim_keys) != len(set(claim_keys)) or claim_keys != sorted(claim_keys, key=_utf16_key):
             raise ValueError("claim keys must be unique and sorted")
         citation_keys = [citation.citation_key for claim in self.claims for citation in claim.citations]
-        if len(citation_keys) != len(set(citation_keys)):
-            raise ValueError("citation keys must be unique across the observation")
+        if len(citation_keys) != len(set(citation_keys)) or citation_keys != sorted(citation_keys, key=_utf16_key):
+            raise ValueError("citation keys must be unique and sorted across the observation")
         _require_sorted_unique_enum_values(self.validation_reason_codes, "validation reasons must be unique and sorted")
         _require_sorted_unique_enum_values(
             self.authorization_reason_codes,
@@ -265,26 +266,59 @@ class ClaimCitationObservation(StrictContractModel):
         elif not self.validation_reason_codes or self.validated_selection_sha256 is not None:
             raise ValueError("rejected observation requires reasons and no validated selection hash")
 
+    def _validate_authorized_outcome(
+        self,
+        receipt_values: tuple[ImmutableReference | None, Sha256Hex | None],
+        citations: tuple[CitationEdgeObservation, ...],
+    ) -> None:
+        if self.authorization_reason_codes or any(value is None for value in receipt_values):
+            raise ValueError("authorized observation requires complete receipt binding and no reasons")
+        if any(not citation.authorized for citation in citations):
+            raise ValueError("authorized observation cannot contain unauthorized edges")
+
+    def _validate_rejected_authorization(
+        self,
+        receipt_values: tuple[ImmutableReference | None, Sha256Hex | None],
+        citations: tuple[CitationEdgeObservation, ...],
+    ) -> None:
+        if not self.authorization_reason_codes or any(value is not None for value in receipt_values):
+            raise ValueError("rejected observation requires reasons and no accepted receipt binding")
+        if any(citation.authorized or citation.authorization_reason_code is None for citation in citations):
+            raise ValueError("rejected observation requires rejected edge reasons")
+
+    def _validate_authorization_not_run(
+        self,
+        receipt_values: tuple[ImmutableReference | None, Sha256Hex | None],
+        citations: tuple[CitationEdgeObservation, ...],
+    ) -> None:
+        if self.authorization_reason_codes or any(value is not None for value in receipt_values):
+            raise ValueError("missing authorization decision forbids reasons and receipt bindings")
+        if any(
+            citation.authorized
+            or citation.authorization_reason_code is not None
+            or citation.authorization_selection_sha256 is not None
+            for citation in citations
+        ):
+            raise ValueError("authorization not run requires empty edge authorization outcomes")
+
     def _validate_authorization_outcome(self, *, has_citations: bool) -> None:
         receipt_values = (self.authorization_receipt_ref, self.authorization_receipt_sha256)
+        citations = tuple(citation for claim in self.claims for citation in claim.citations)
         if self.authorization_decision is AuthorizationDecision.AUTHORIZED:
-            if self.authorization_reason_codes or any(value is None for value in receipt_values):
-                raise ValueError("authorized observation requires complete receipt binding and no reasons")
+            self._validate_authorized_outcome(receipt_values, citations)
         elif self.authorization_decision is AuthorizationDecision.REJECTED:
-            if not self.authorization_reason_codes or any(value is not None for value in receipt_values):
-                raise ValueError("rejected observation requires reasons and no accepted receipt binding")
-        elif self.authorization_reason_codes or any(value is not None for value in receipt_values):
-            raise ValueError("missing authorization decision forbids reasons and receipt bindings")
-        if has_citations != (self.authorization_decision is not None):
-            raise ValueError("citation presence and authorization decision must be consistent")
-        if self.authorization_decision is AuthorizationDecision.AUTHORIZED and any(
-            not citation.authorized for claim in self.claims for citation in claim.citations
-        ):
-            raise ValueError("authorized observation cannot contain unauthorized edges")
-        if self.authorization_decision is AuthorizationDecision.REJECTED and any(
-            citation.authorized for claim in self.claims for citation in claim.citations
-        ):
-            raise ValueError("rejected observation cannot contain authorized edges")
+            self._validate_rejected_authorization(receipt_values, citations)
+        else:
+            self._validate_authorization_not_run(receipt_values, citations)
+
+        validation_succeeded = self.validation_decision is CandidateValidationDecision.VALIDATED
+        if validation_succeeded:
+            if any(not citation.accepted for citation in citations):
+                raise ValueError("validated observation cannot contain rejected validation edges")
+            if has_citations != (self.authorization_decision is not None):
+                raise ValueError("validated citation presence and authorization decision must be consistent")
+        elif self.authorization_decision is not None:
+            raise ValueError("rejected validation forbids authorization outcome")
 
     @model_validator(mode="after")
     def validate_observation(self) -> ClaimCitationObservation:
