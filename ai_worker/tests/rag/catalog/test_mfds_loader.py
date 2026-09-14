@@ -5,6 +5,12 @@ from uuid import uuid4
 
 import pytest
 
+from ai_worker.tasks.rag.catalog import (
+    CatalogApprovalReceipt,
+    CatalogFreshnessStatus,
+    CatalogSourceApproval,
+    CatalogVerificationStatus,
+)
 from ai_worker.tasks.rag.catalog.export import _canonical_json_bytes
 from ai_worker.tasks.rag.catalog.mfds_component import inspect_mfds_component_rows
 from ai_worker.tasks.rag.catalog.mfds_loader import DETAIL_CANONICALIZATION_SPEC, load_mfds_catalog
@@ -119,6 +125,74 @@ async def test_invalid_loader_input_never_requests_approval_or_writes(damage):
         await load_mfds_catalog(**kwargs)
     kwargs["repository"].save_build.assert_not_awaited()
     kwargs["approval_verifier"].verify.assert_not_awaited()
+
+
+def _approving_verifier():
+    verifier = AsyncMock()
+
+    def approve(*, catalog_version, export_checksum, source_refs):
+        return CatalogApprovalReceipt(
+            "synthetic-loader-approval",
+            catalog_version,
+            export_checksum,
+            CatalogVerificationStatus.APPROVED,
+            True,
+            tuple(
+                CatalogSourceApproval(
+                    ref, "synthetic-source", CatalogVerificationStatus.APPROVED, CatalogFreshnessStatus.CURRENT
+                )
+                for ref in source_refs
+            ),
+        )
+
+    verifier.verify.side_effect = approve
+    return verifier
+
+
+async def test_product_without_any_observation_stays_in_the_catalog():
+    """#166 D-04: 빈 주성분 행만 있는 제품은 구성원 0개로 Catalog와 검색에 남는다."""
+    kwargs = inputs()
+    kwargs["approval_verifier"] = _approving_verifier()
+    rows = [record(), {"ITEM_SEQ": "synthetic-blank-product", "MTRAL_CODE": None}]
+    raw = _canonical_json_bytes(rows)
+    blank_product = replace(
+        kwargs["products"][0],
+        canonical_code="synthetic-blank-product",
+        source_record_key="synthetic-blank-product-record",
+    )
+    kwargs.update(
+        detail_json=raw,
+        detail_receipt=replace(kwargs["detail_receipt"], canonical_checksum=hashlib.sha256(raw).hexdigest()),
+        products=(*kwargs["products"], blank_product),
+    )
+
+    result = await load_mfds_catalog(**kwargs)
+
+    assert result.build is not None
+    assert result.inspection.has_excluded_empty_components
+    members = result.build.export.catalog
+    assert {product.identity.canonical_code for product in members.products} == {
+        "synthetic-product",
+        "synthetic-blank-product",
+    }
+    # 구성원은 관찰 행이 있는 제품에만 생기고, 검색 항목은 성분과 무관하게 유지된다.
+    assert len(members.components) == 1
+    assert "synthetic-blank-product" in {entry.identity.canonical_code for entry in members.search_entries}
+
+
+async def test_observation_without_a_matching_product_is_still_rejected():
+    kwargs = inputs()
+    rows = [record(), dict(record(), ITEM_SEQ="synthetic-orphan", MTRAL_SN="003")]
+    raw = _canonical_json_bytes(rows)
+    kwargs.update(
+        detail_json=raw,
+        detail_receipt=replace(kwargs["detail_receipt"], canonical_checksum=hashlib.sha256(raw).hexdigest()),
+    )
+
+    with pytest.raises(ValueError, match="observation scope"):
+        await load_mfds_catalog(**kwargs)
+
+    kwargs["repository"].save_build.assert_not_awaited()
 
 
 @pytest.mark.parametrize("rows", [[], [dict(record(), QNT=None)], [record(), dict(record(), QNT="020.00")]])

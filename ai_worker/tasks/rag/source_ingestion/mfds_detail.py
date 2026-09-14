@@ -6,6 +6,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
 import httpx
 
@@ -37,6 +38,7 @@ from ai_worker.tasks.rag.source_ingestion.receipt_validation import (
 from ai_worker.tasks.rag.source_ingestion.result import SourceIngestionResult
 from ai_worker.tasks.rag.source_ingestion.service import SourceAcquisitionGate
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
+    SnapshotExclusionReceipt,
     SnapshotIngestionMetadata,
     SnapshotLifecycleRepository,
     SnapshotPersistenceResult,
@@ -188,6 +190,11 @@ def write_detail_report(acquisition: MfdsDetailAcquisition) -> None:
         "exclusion_count": len(inspection.exclusions),
         "exclusion_counts": reasons,
         "exclusions": exclusions,
+        # 빈 주성분 행을 제외하고 Catalog를 구성한 경우 부분임을 명시한다.
+        # 구성원 0개를 성분 없음·금기 없음으로 해석하지 않는다.
+        "empty_component_row_count": len(inspection.empty_component_exclusions),
+        "component_input_row_count": len(inspection.observations),
+        "catalog_is_partial": inspection.has_excluded_empty_components,
         "catalog_input_eligible": complete
         and acquisition.result.snapshot_candidate_allowed
         and inspection.eligible_for_mapping
@@ -199,6 +206,32 @@ def write_detail_report(acquisition: MfdsDetailAcquisition) -> None:
     _write_private(acquisition.directory / "inspection.json", _json_bytes(payload))
     if complete:
         _write_private(acquisition.directory / "observations.json", canonical)
+
+
+async def _record_empty_component_receipt(
+    *,
+    repository: SnapshotLifecycleRepository,
+    snapshot_id: UUID | None,
+    acquisition: MfdsDetailAcquisition,
+) -> None:
+    """빈 주성분 행을 제외하고 적재한 사실을 Snapshot 단위 receipt로 남깁니다.
+
+    제외 행이 없으면 기록하지 않는다. 제외가 있는데 Snapshot이 없으면 적재가 아니므로
+    남기지 않는다. 상세 원문 위치와 source record key는 private sidecar에만 둔다.
+    """
+    rows, _ = _raw_rows(acquisition)
+    inspection = inspect_mfds_component_rows(tuple(rows))
+    if snapshot_id is None or not inspection.has_excluded_empty_components:
+        return
+    await repository.record_observation_exclusions(
+        SnapshotExclusionReceipt(
+            snapshot_id=snapshot_id,
+            reason="EMPTY_COMPONENT_FIELDS",
+            source_row_count=inspection.input_count,
+            excluded_row_count=len(inspection.empty_component_exclusions),
+            retained_row_count=len(inspection.observations),
+        )
+    )
 
 
 def build_detail_ingestion_result(
@@ -288,12 +321,16 @@ async def ingest_and_persist_mfds_detail(
             artifacts=stored,
         )
     try:
-        return await persist_source_ingestion_result(
+        persisted = await persist_source_ingestion_result(
             repository=repository,
             ingestion=ingestion,
             metadata=metadata,
             artifacts=stored,
         )
+        await _record_empty_component_receipt(
+            repository=repository, snapshot_id=persisted.snapshot_id, acquisition=acquisition
+        )
+        return persisted
     except SourceVersionValidationError:
         failure = await record_source_version_failure(
             repository=repository,
