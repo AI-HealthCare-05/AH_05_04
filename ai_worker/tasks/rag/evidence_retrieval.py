@@ -168,7 +168,7 @@ class EvidenceSearchFailure:
     pass
 
 
-class EvidenceSearchPort(Protocol):
+class SyntheticEvidenceSearchPort(Protocol):
     def search(
         self,
         request: EvidenceRetrievalKernelRequest,
@@ -313,7 +313,7 @@ def retrieve_knowledge_evidence(
     request: EvidenceRetrievalKernelRequest,
     *,
     query_verifier: QueryBindingVerifierPort,
-    search_port: EvidenceSearchPort,
+    search_port: SyntheticEvidenceSearchPort,
     rerank_port: EvidenceRerankPort,
 ) -> EvidenceRetrievalKernelOutcome:
     """Validate and bind a query before later retrieval stages are allowed."""
@@ -752,7 +752,7 @@ def _is_matching_verification(
 
 
 def _search_candidates(
-    request: EvidenceRetrievalKernelRequest, search_port: EvidenceSearchPort
+    request: EvidenceRetrievalKernelRequest, search_port: SyntheticEvidenceSearchPort
 ) -> _SearchExecution | _SearchExecutionFailure:
     all_hits: list[KnowledgeEvidenceSearchHit] = []
     adapter_artifacts: dict[EvidenceSearchStage, ImmutableArtifactRef] = {}
@@ -784,7 +784,7 @@ def _search_candidates(
 
 
 def _call_search_port(
-    search_port: EvidenceSearchPort,
+    search_port: SyntheticEvidenceSearchPort,
     adapter_request: EvidenceRetrievalKernelRequest,
     request: EvidenceRetrievalKernelRequest,
     stage: EvidenceSearchStage,
