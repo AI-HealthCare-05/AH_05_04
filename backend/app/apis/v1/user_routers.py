@@ -4,12 +4,23 @@ from fastapi import APIRouter, Depends, status
 from fastapi.responses import ORJSONResponse as Response
 
 from app.dependencies.security import get_request_user
-from app.dependencies.services import get_ocr_consent_service, get_user_manage_service
+from app.dependencies.services import (
+    get_ocr_consent_service,
+    get_user_consent_service,
+    get_user_manage_service,
+)
 from app.dtos.user_consents import GrantOcrConsentRequest, OcrConsentResponse
-from app.dtos.users import UserInfoResponse, UserUpdateRequest
+from app.dtos.users import (
+    UserConsentListResponse,
+    UserConsentResponse,
+    UserConsentUpdateRequest,
+    UserInfoResponse,
+    UserUpdateRequest,
+)
+from app.models.user_consents import ConsentPurpose
 from app.models.users import User
 from app.services.user_consents import OcrConsentService
-from app.services.users import UserManageService
+from app.services.users import UserConsentService, UserManageService
 
 user_router = APIRouter(prefix="/users", tags=["users"])
 
@@ -54,3 +65,27 @@ async def update_user_me_info(
 ) -> Response:
     updated_user = await user_manage_service.update_user(user=user, data=update_data)
     return Response(UserInfoResponse.model_validate(updated_user).model_dump(), status_code=status.HTTP_200_OK)
+
+
+@user_router.get("/me/consents", response_model=UserConsentListResponse, status_code=status.HTTP_200_OK)
+async def list_user_consents(
+    user: Annotated[User, Depends(get_request_user)],
+    consent_service: Annotated[UserConsentService, Depends(get_user_consent_service)],
+) -> Response:
+    result = await consent_service.list_user_consents(user=user)
+    return Response(result.model_dump(mode="json"), status_code=status.HTTP_200_OK)
+
+
+@user_router.put(
+    "/me/consents/{purpose}",
+    response_model=UserConsentResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def update_user_consent(
+    purpose: ConsentPurpose,
+    request: UserConsentUpdateRequest,
+    user: Annotated[User, Depends(get_request_user)],
+    consent_service: Annotated[UserConsentService, Depends(get_user_consent_service)],
+) -> Response:
+    result = await consent_service.set_user_consent(user=user, purpose=purpose, request=request)
+    return Response(result.model_dump(mode="json"), status_code=status.HTTP_200_OK)
