@@ -214,6 +214,12 @@ def build_protected_retrieval_infrastructure_evidence(repository_root: Path) -> 
 
 def render_protected_retrieval_infrastructure_evidence(evidence: dict[str, JsonValue]) -> str:
     _validate(evidence)
+    implementation_files = evidence["implementation_files"]
+    implementation_rows = [
+        f"| `{record['component']}` | `{record['path']}` | `{record['raw_sha256']}` |"
+        for record in (implementation_files if isinstance(implementation_files, list) else [])
+        if isinstance(record, dict)
+    ]
     return "\n".join(
         [
             "# Issue #368 Protected Retrieval Infrastructure Adapter",
@@ -242,6 +248,17 @@ def render_protected_retrieval_infrastructure_evidence(evidence: dict[str, JsonV
             "- Runtime assembly suite: `24 passed`",
             "- Protected-off Worker image import: `passed`",
             "- 실제 환경 좌표와 보호 데이터는 사용하지 않았습니다.",
+            "",
+            "## Evidence self hash 입력",
+            "",
+            "`evidence_sha256`은 아래 구현 파일의 raw SHA-256을 포함해 계산합니다.",
+            "구현 파일이 바뀌면 이 문서의 본문이 같아도 해시는 달라집니다.",
+            "",
+            "| Component | Path | raw_sha256 |",
+            "| --- | --- | --- |",
+            *implementation_rows,
+            "",
+            "재생성·검증: `uv run python scripts/verify_protected_runner_evidence.py [--write]`",
             "",
             "## 활성화 전 필수 조건",
             "",
