@@ -3,18 +3,18 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-368-R1` |
-| 상태 | Candidate · Coordination Confirmed · PR Review Required |
-| 조율 확인 | 구현 담당자가 2026-09-11 현재 작업에서 영향 도메인 협의 완료를 확인 |
+| 상태 | Approved Target · Implemented in PR #463 |
+| 조율 확인 | 구현 담당자가 2026-09-11 현재 작업에서 영향 도메인 협의 완료를 확인; PR #463 승인으로 확정 |
 | 선행 Decision | `PD-368-20260909` |
 | 구현 | 정현우 (`@ceohwj`) |
 | 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Product·Privacy·Safety·Evaluation |
 | Backend·Security·DB | 송은영 (`@phina-io`) |
-| 추적 | Issue #368; PR #373·#386·#432 |
+| 추적 | Issue #368; PR #373·#386·#432·#463 (C1 구현) |
 
 이 문서는 이미 승인된 Protected Retrieval 목표 중 PR #432가 의도적으로 남긴 authorization control-plane
-구현 계약을 구체화한다. 영향 도메인 협의 완료는 구현 착수 근거이며, 이 문서와 구현의 최종 승인 증거는
-지정 리뷰어의 GitHub PR review event다. 이 문서만으로 protected 환경, HOLDOUT 접근, Freeze, 실행, 외부 승인,
-Current 승격 또는 Production 공개가 승인되지 않는다.
+구현 계약을 구체화한 Decision이다. PR #463에서 `@phina-io`의 `APPROVED` 리뷰로 병합 조건이 충족되어 승인 및 C1 구현이
+완료됐다. 이 문서와 C1 구현만으로 protected 환경, HOLDOUT 접근, Freeze, 실행, 외부 승인, Current 승격 또는
+Production 공개가 승인되지 않는다.
 
 ## 1. 범위
 
