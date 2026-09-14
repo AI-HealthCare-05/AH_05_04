@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import unicodedata
 from enum import StrEnum
 from typing import Annotated, Literal, cast
 
-from pydantic import BaseModel, BeforeValidator, Field, StrictBool, TypeAdapter, ValidationError, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    Field,
+    StrictBool,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_sha256
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
@@ -31,6 +41,12 @@ def _tuple_from_wire(value: object) -> object:
 
 def _utf16_key(value: str) -> bytes:
     return value.encode("utf-16-be")
+
+
+def _require_nfc(value: str) -> str:
+    if not unicodedata.is_normalized("NFC", value):
+        raise ValueError("value must be NFC-normalized")
+    return value
 
 
 def _require_sorted_unique_enum_values(values: tuple[StrEnum, ...], message: str) -> None:
@@ -168,6 +184,7 @@ SafetyTaskTypeValue = Annotated[
 ]
 ValidationReasons = Annotated[tuple[CandidateValidationReasonValue, ...], BeforeValidator(_tuple_from_wire)]
 AuthorizationReasons = Annotated[tuple[AuthorizationReasonValue, ...], BeforeValidator(_tuple_from_wire)]
+SourceVersionToken = Annotated[RuntimeVersionToken, AfterValidator(_require_nfc)]
 
 
 class CitationEdgeObservation(StrictContractModel):
@@ -175,7 +192,7 @@ class CitationEdgeObservation(StrictContractModel):
     claim_key: StableId
     source_type: CitationSourceTypeValue
     evidence_ref_id: StableId
-    source_version: RuntimeVersionToken
+    source_version: SourceVersionToken
     locator: NonEmptyText
     content_sha256: Sha256Hex
     accepted: StrictBool

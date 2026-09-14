@@ -56,7 +56,8 @@ no-claims 상태는 generation 미실행·폐기의 `answer_sha256=null`과 승�
 
 Python strict model과 exported Draft 2020-12 schema는 task enum, validation-before-authorization 인과와 receipt tuple,
 criticality judgment reference, no-claims state를 fail-closed한다. 정렬·중복·orphan과 canonical self-hash는
-Python parser가 추가 검증한다. portable 조건 검증은 required dev dependency인 `jsonschema`로 실행한다.
+Python parser가 추가 검증하며 source-version NFC도 정규화하지 않고 거부한다. Draft schema는 portable한
+길이·lexical subset만 표현한다. portable 조건 검증은 required dev dependency인 `jsonschema`로 실행한다.
 Run·Case Result·Gold·#180 receipt 사이의 실제 외부 artifact exact matching은
 후속 pure projection builder 입력 검증의 책임이다.
 

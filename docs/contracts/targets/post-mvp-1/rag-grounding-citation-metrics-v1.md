@@ -90,7 +90,7 @@ Approved 입력이나 Metric kernel 구현 선행조건 완료로 취급하지 �
 
 - `citation_key`, `claim_key`
 - #180 `source_type`
-- Case Evidence reference의 `evidence_ref_id`, #180과 동일한 bounded opaque NFC `source_version`, `locator`, `content_sha256`
+- Case Evidence reference의 `evidence_ref_id`, #180과 동일한 bounded opaque NFC `source_version`, `locator`, `content_sha256`; non-NFC bytes는 Python parser가 정규화하지 않고 거부하며 Draft schema는 portable lexical subset만 표현한다.
 - Evaluation edge validation `accepted`와 bounded reason code
 - Citation authorization `authorized`와 매칭된 authorization selection-receipt hash
 

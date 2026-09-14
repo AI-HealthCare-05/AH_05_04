@@ -348,6 +348,12 @@ def test_schema_set_1_4_observation_state_matrix_is_portable() -> None:
     valid = _schema_set_1_4_observation_payload()
 
     assert validator.is_valid(valid)
+    opaque_source_version = deepcopy(valid)
+    opaque_source_version["claims"][0]["citations"][0]["source_version"] = "rules-v1"
+    assert validator.is_valid(opaque_source_version)
+    invalid_source_version = deepcopy(valid)
+    invalid_source_version["claims"][0]["citations"][0]["source_version"] = "rules v1"
+    assert not validator.is_valid(invalid_source_version)
     for field in ("validated_selection_sha256", "authorization_receipt_ref", "authorization_receipt_sha256"):
         invalid = deepcopy(valid)
         invalid[field] = None

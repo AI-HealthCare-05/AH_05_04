@@ -250,6 +250,13 @@ def test_observation_accepts_runtime_opaque_source_version() -> None:
     assert observation.claims[0].citations[0].source_version == "2026-09-01"
 
 
+def test_observation_rejects_non_nfc_source_version() -> None:
+    payload = _observation_payload()
+    payload["claims"][0]["citations"][0]["source_version"] = "e\u0301-v1"
+
+    _assert_observation_schema_invalid(payload)
+
+
 @pytest.mark.parametrize("task_type", ["ANSWER_GROUNDING", "ANSWER_QUALITY", "RETRIEVAL", "UNKNOWN"])
 def test_signal_rejects_non_safety_task_type(task_type: str) -> None:
     payload = _signal_payload()

@@ -129,7 +129,9 @@ keeps the enclosing authorization receipt's immutable reference and canonical ha
 not invent an artifact reference that the embedded #180 selection entry does not provide.
 
 The schema records the same wire values as #180 but does not import mutable Runtime dataclasses as the Evaluation
-contract. Projection-builder tests will prove the mapping explicitly when that builder is implemented.
+contract. Draft 2020-12 expresses the portable length and lexical subset; the Python parser additionally rejects,
+rather than normalizes, non-NFC source-version bytes. Projection-builder tests will prove the mapping explicitly when
+that builder is implemented.
 
 ## Grounding Signal
 

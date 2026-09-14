@@ -113,6 +113,8 @@ class ClaimCitationObservation(StrictContractModel):
 
 `AnswerGroundingTaskTypeValue` accepts only `ANSWER_GROUNDING | SAFETY | END_TO_END_RAG`. Require unique UTF-16-sorted Claim keys, globally unique and UTF-16-sorted flattened Citation keys, each Citation's `claim_key` equal to its containing Claim, unique sorted reason tuples, correct criticality-reference pairing, consistent accepted/authorized reason/hash pairing, validation-before-authorization causality, and the canonical self-hash excluding `observation_sha256`. A rejected validation records authorization as not run at both envelope and edge levels; only a validated selection can carry a non-null authorization decision.
 
+Use a Grounding-specific annotated `RuntimeVersionToken` that rejects non-NFC source-version bytes without normalizing them. Draft 2020-12 tests cover the portable bounded lexical subset; parser tests cover the NFC-only invariant.
+
 Implement the signal with these public fields:
 
 ```python
