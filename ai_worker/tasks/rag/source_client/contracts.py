@@ -128,6 +128,10 @@ class EndpointContract:
     body_codes: ProviderBodyCodeContract
     limits: SourceClientLimits
     empty_result_policy: EmptyResultPolicy = EmptyResultPolicy.REJECT
+    # 제공자가 본문을 통째로 비워 반환하는 행을 통과 판정에서 분리할 때만 선언한다.
+    # 여기 적힌 필드가 모두 비어 있는 행만 빈 행으로 분류하며, 선언하지 않은 Operation은
+    # 기존처럼 모든 행을 primary key 통계로 판정한다.
+    empty_record_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,7 +166,12 @@ class SourceClientFailure:
 
 @dataclass(frozen=True, slots=True)
 class PrimaryKeyValidationResult:
-    """Sanitized primary-key statistics for one complete source run."""
+    """Sanitized primary-key statistics for one complete source run.
+
+    `null_count`는 원본 수집 행 전체 기준이며 감사·진단용으로 보존한다. 통과 판정은
+    빈 행을 제외한 `enforced_null_count`로 한다. 빈 행 분류를 선언하지 않은 Operation은
+    두 값이 같고 `excluded_empty_row_count`가 0이므로 기존 판정과 동일하다.
+    """
 
     passed: bool
     record_count: int
@@ -172,6 +181,13 @@ class PrimaryKeyValidationResult:
     candidate_field_stats: tuple[tuple[str, int, int], ...] = ()
     whole_record_duplicate_count: int = 0
     observed_fields: tuple[str, ...] = ()
+    excluded_empty_row_count: int = 0
+    enforced_null_count: int | None = None
+
+    @property
+    def gate_null_count(self) -> int:
+        """통과 판정에 사용한 null 건수. 빈 행 분류가 없으면 원본 기준과 같다."""
+        return self.null_count if self.enforced_null_count is None else self.enforced_null_count
 
 
 @dataclass(frozen=True, slots=True)

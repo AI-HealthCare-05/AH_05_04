@@ -6,7 +6,7 @@ from uuid import UUID
 
 import httpx
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from ai_worker.adapters.sqlalchemy_catalog_write_support import SqlAlchemyCatalogBuildRepository
 from ai_worker.adapters.sqlalchemy_source_snapshot_repository import SqlAlchemySourceSnapshotRepository
@@ -158,11 +158,36 @@ async def test_real_snapshot_receipt_reaches_catalog_and_candidate(database, tmp
     assert len(loaded.build.export.catalog.components) == 2
 
 
+async def test_blank_rows_still_produce_a_detail_snapshot(database, tmp_path):
+    """#525: 빈 주성분 행이 섞여도 Snapshot이 생성되고 제외 receipt가 남는다."""
+    _, factory = database
+    await seed(factory)
+    rows = [dict(row(), ITEM_SEQ="P-001", MTRAL_CODE="I-001"), {"ITEM_SEQ": "P-001"}]
+
+    result, _ = await collect_and_store(factory, tmp_path, rows)
+
+    assert result.failure_code is None
+    assert result.snapshot_id
+    async with factory() as session:
+        exclusions = (
+            await session.execute(
+                text(
+                    "SELECT reason, source_row_count, excluded_row_count, retained_row_count "
+                    "FROM rag_source_snapshot_exclusion WHERE source_snapshot_id = :snapshot_id"
+                ),
+                {"snapshot_id": str(result.snapshot_id)},
+            )
+        ).all()
+    assert [tuple(item) for item in exclusions] == [("EMPTY_COMPONENT_FIELDS", 2, 1, 1)]
+
+
 @pytest.mark.parametrize("rollback", [False, True])
 async def test_failed_or_rolled_back_run_has_no_detail_snapshot(database, tmp_path, rollback):
     _, factory = database
     operation_id = await seed(factory)
-    records = [row()] if rollback else [row(), {"ITEM_SEQ": "synthetic-blank"}]
+    # 비어 있지 않은 행의 키 누락은 #525 이후에도 전체를 차단한다. 빈 행은 더 이상 실패
+    # 사례가 아니므로 test_blank_rows_still_produce_a_detail_snapshot이 따로 덮는다.
+    records = [row()] if rollback else [row(), dict(row("002"), MTRAL_SN=None)]
     if rollback:
         with pytest.raises(RuntimeError, match="before commit"):
             await collect_and_store(factory, tmp_path, records, rollback=True)

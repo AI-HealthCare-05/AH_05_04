@@ -219,8 +219,12 @@ def build_live_receipt(
             else "BLOCKED_BY_SOURCE_RUN_FAILURE"
         )
 
+    # 빈 행 분류를 선언한 Operation만 통과 판정 기준이 달라지므로 1.2로 올린다.
+    # 선언하지 않은 기존 P0 Operation은 계속 1.1을 쓴다.
+    declares_empty_rows = bool(contract.empty_record_fields) and validation is not None
+
     return EndpointReceipt(
-        receipt_version="1.1",
+        receipt_version="1.2" if declares_empty_rows else "1.1",
         execution_status=(
             EndpointExecutionStatus.COMPLETED if parser_activation_allowed else EndpointExecutionStatus.FAILED
         ),
@@ -261,6 +265,12 @@ def build_live_receipt(
         validated_at=validated_at,
         live_validation_git_sha=git_sha,
         regression_fixture_git_sha=git_sha,
+        excluded_empty_row_count=(
+            validation.excluded_empty_row_count if validation is not None and declares_empty_rows else None
+        ),
+        enforced_primary_key_null_count=(
+            validation.gate_null_count if validation is not None and declares_empty_rows else None
+        ),
     )
 
 
