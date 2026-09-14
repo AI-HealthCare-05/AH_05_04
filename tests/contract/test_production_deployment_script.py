@@ -500,7 +500,13 @@ def test_remote_deployment_waits_for_worker_and_propagates_readiness_failure(tmp
         "#!/bin/bash\n"
         'printf "%s\\n" "$*" >> "$COMMAND_LOG"\n'
         'if [[ "$*" == "wait migrate" ]]; then echo 0; fi\n'
-        'if [[ "$*" == *"exec -T postgres"* ]]; then printf "user\\t1\\nself_profile\\t1\\n"; fi\n'
+        'if [[ "$*" == *"exec -T postgres"* ]]; then\n'
+        '  printf "user\\t1\\nself_profile\\t1\\n"\n'
+        "  for name in medical_document_profile_null prescription_profile_null guide_profile_null "
+        "chat_session_profile_null prescription_profile_mismatch guide_profile_mismatch chat_session_profile_mismatch; do\n"
+        '    printf "%s\\t0\\n" "$name"\n'
+        "  done\n"
+        "fi\n"
         'if [[ "$*" == "compose up -d --pull always --wait fastapi ai-worker nginx" ]]; then\n'
         '  exit "$WORKER_HEALTH_EXIT"\n'
         "fi\n"

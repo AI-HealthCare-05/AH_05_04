@@ -234,6 +234,31 @@ Local·통합 테스트 통과도 AWS Production smoke를 대신하지 않습니
 `scripts/deployment.sh`를 다시 실행합니다. CloudFront distribution과 origin secret은
 그대로 유지합니다. 완료 후 전체 Smoke test를 반복합니다.
 
+### 재배포 스크립트의 입력과 실패 처리
+
+#519 수정이 포함된 버전에서는 별도의 SSH 입력 보완 스크립트나 수동 DB 검사 없이
+공식 `scripts/deployment.sh`를 사용합니다.
+
+원격 Bash는 배포 함수 전체를 읽은 다음 표준입력을 `/dev/null`로 연결해 실행합니다.
+이렇게 해야 `docker compose exec -T`가 SSH로 전달된 나머지 배포 명령을 읽어 버리지 않습니다.
+DB snapshot용 SQL heredoc은 해당 명령에 별도로 전달되므로 유지해야 합니다.
+PostgreSQL 컨테이너의 `sh`에서는 탭 구분자를 `printf`로 생성하며 Bash 전용 인용을 사용하지 않습니다.
+
+Profile 검사는 9개 집계 행이 각각 한 번씩 있고 값이 음이 아닌 정수인지 확인합니다.
+사용자 수와 SELF profile 수가 같고 NULL·불일치 집계가 모두 0일 때만 서비스를 시작합니다.
+SQL 명령 실패, 빈 결과, 누락·중복·잘못된 집계 또는 migration 실패 시 배포는 실패로 종료되고
+`Deployment finished.`를 출력하지 않습니다. 이 경우 애플리케이션이 중지된 상태일 수 있으므로
+서비스를 수동으로 건너뛰어 시작하지 말고 원인을 해결한 뒤 재배포합니다.
+
+EC2의 `~/project/deployment-evidence/<UTC 배포 시각>/`에서 전후 snapshot과
+`post-migration-profile-validation.tsv`를 확인합니다. SQL 자체가 실패하면 해당 검증 파일은
+없을 수 있습니다. DB backup과 증빙은 제한된 경로에 보관하고 Git에 올리지 않습니다.
+성공 문구와 함께 컨테이너 상태 및 위 Smoke test 결과까지 확인해야 배포 검증이 끝납니다.
+
+로컬 회귀 검사는 `uv run pytest tests/contract/test_deployment_remote_shell.py -q`로 실행합니다.
+PostgreSQL 컨테이너의 셸 동작을 재현하므로 `dash` 실행 파일이 필요합니다.
+Docker·psql은 합성 테스트 대역을 사용하며 실제 AWS·DB에 연결하지 않습니다.
+
 ## 7. 애플리케이션 Rollback
 
 정현우의 기술 Rollback 판단과 권가빈의 실행 기록을 먼저 남깁니다. DB schema는 자동
