@@ -23,6 +23,7 @@
 - Authorization-control related suite: `128 passed`
 - Runtime assembly suite: `24 passed`
 - Protected-off Worker image import: `passed`
+- Protected limited-login verification in CI: `passed`
 - 실제 환경 좌표와 보호 데이터는 사용하지 않았습니다.
 
 ## Evidence self hash 입력
@@ -52,4 +53,4 @@
 - backup·restore·rotation 운영 증빙
 - Track F external gate 충족
 
-Evidence self hash: `66b2fa47f00cbffd49c3acc915d7677a0c3a56a40f4afe7e11ab110fcd850fb2`
+Evidence self hash: `23e3c76ba666f80370a904cf6c48ff9414aeda5597459ea1a0456541407de8aa`
