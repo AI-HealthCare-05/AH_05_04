@@ -30,14 +30,20 @@ serviceKey로 고정하며 품목/업체 필터, 첫 N페이지, 호출자 선�
   원문 artifact는 기존 불변 저장소에 저장하고 실패 Run에 연결한다. sidecar의 보존·정리는 호출자가 담당한다.
 - 전체 페이지와 건수가 맞으면 빈 행/중복까지 포함한 `observations.json`도 남긴다.
   실패한 수집의 canonical 파일이 존재해도 Snapshot 사용 가능 증거가 아니다.
-- 빈 주요 성분 필드는 EMPTY_COMPONENT_FIELDS, 불완전/잘못된 행은 INVALID_COMPONENT_FIELDS,
+- 빈 주요 성분 필드는 EMPTY_COMPONENT_FIELDS, 분량만 누락된 행은 MISSING_COMPONENT_QUANTITY,
+  identity·join 필드가 손상된 행은 INVALID_COMPONENT_KEY_FIELDS,
   같은 관찰 키의 다른 원문은 CONFLICTING_OBSERVATION으로 집계한다.
   같은 키·동일 원문도 원본 배열에서 지우지 않는다. 기본키 중복이므로 Snapshot 생산은 차단한다.
 - 빈 성분은 성분 없음으로 해석하지 않고 Ingredient/Component를 만들지 않는다.
   실패 시 Snapshot/CURRENT는 변경하지 않는다. DB/저장소 예외는 호출자의 transaction rollback으로 전파한다.
 - EMPTY_COMPONENT_FIELDS는 전체 차단 사유가 아니다. 해당 행은 제외로 남기고 나머지 행으로 Catalog를
-  구성하며, 제외 건수·사유는 Source Snapshot 단위 DB receipt에 남긴다. INVALID_COMPONENT_FIELDS와
-  CONFLICTING_OBSERVATION은 전체 차단을 유지한다. 구성원 0개는 성분 기반 안전성 판정 불가로 다룬다.
+  구성하며, 제외 건수·사유는 Source Snapshot 단위 DB receipt에 남긴다. MISSING_COMPONENT_QUANTITY,
+  INVALID_COMPONENT_KEY_FIELDS, CONFLICTING_OBSERVATION은 전체 차단을 유지한다.
+  구성원 0개는 성분 기반 안전성 판정 불가로 다룬다.
+- 분량만 누락된 행은 제공자가 값을 비워 반환한 경우이며 공식 상세 화면에는 분량이 표시된다.
+  성분 없음이나 분량 미상 정상 성분으로 해석하지 않고 QNT를 nullable로 저장하지 않는다.
+  차단 사유를 별도로 두는 것은 감사·후속 복구를 위한 구분이며 부분 적재 허용이 아니다.
+  부분 집합 Catalog는 제외 건수·제품별 불완전 상태·소비 차단 기준을 갖춘 별도 계약이 있어야 한다.
   [결정 기록](../../../governance/decisions/2026-09-13-mfds-detail-acquisition.md#빈-주성분-행-처리-2026-09-14-확인)을 따른다.
 - 수집 계층의 primary key 통과 판정도 빈 행을 분리한다. `primary_key_null_count`는 원본 수집 행 기준
   통계로 보존하고, `SCHEMA_DRIFT` 판정은 빈 행을 제외한 `enforced_primary_key_null_count`로 한다.
