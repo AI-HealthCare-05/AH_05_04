@@ -99,7 +99,8 @@ git switch -c feature/12-prescription-upload
 
   같은 `down_revision`을 잡은 병렬 PR은 파일이 서로 달라 텍스트 충돌 없이 병합되며, head는 병합 이후에야 갈라집니다.
   이미 갈라진 head는 기존 migration의 부모를 고쳐 쓰지 않고 merge revision으로 해소합니다.
-- Ruleset 우회 권한은 저장소 admin 1명에게만 있습니다. CI가 통과하지 않은 상태로 머지하면 사유를 해당 PR에 남깁니다.
+- Ruleset 우회가 필요한 경우 저장소 admin 1명이 처리하고, 사유를 해당 PR에 남깁니다. ruleset의 bypass 설정 자체는
+  해당 ruleset에 write 권한이 있는 사람에게만 조회됩니다.
 - `develop`이 실패 상태이면 원인을 먼저 해소하고 후속 머지를 진행합니다. 실패한 `develop` 위에 머지를 쌓으면
   원인 PR을 특정하기 어려워집니다.
 
