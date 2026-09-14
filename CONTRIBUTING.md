@@ -86,6 +86,23 @@ git switch -c feature/12-prescription-upload
 - 공유 계약 변경은 Decision, 계약 문서, OpenAPI/DTO, migration, 구현과 계약·통합 테스트를 같은 변경 흐름에서 정렬합니다.
 - 의료 안전·Privacy·외부 Source 공개 승인은 코드 리뷰와 별도 게이트이며 필요한 증빙이 없으면 `PUBLIC_TRACK_C` 또는 `PUBLIC_TRACK_F`를 해제하지 않습니다.
 
+### 머지 게이트
+
+- `develop` PR은 GitHub Ruleset의 required status check `test`·`lint`·`frontend`가 통과해야 머지할 수 있습니다.
+  `test`는 `test-inventory`·`test-migration`·`test-backend`·`test-worker`를 집계합니다.
+- required status check는 base가 움직여도 재실행을 강제하지 않습니다. 즉 통과 기록이 최신 `develop`을 반영한다는
+  보장이 없으므로, **migration을 추가·수정하는 PR은 머지 직전에 최신 `develop`을 반영하고 단일 head를 확인합니다.**
+
+  ```bash
+  uv run python scripts/ci/verify_database_head.py --heads-only
+  ```
+
+  같은 `down_revision`을 잡은 병렬 PR은 파일이 서로 달라 텍스트 충돌 없이 병합되며, head는 병합 이후에야 갈라집니다.
+  이미 갈라진 head는 기존 migration의 부모를 고쳐 쓰지 않고 merge revision으로 해소합니다.
+- Ruleset 우회 권한은 저장소 admin 1명에게만 있습니다. CI가 통과하지 않은 상태로 머지하면 사유를 해당 PR에 남깁니다.
+- `develop`이 실패 상태이면 원인을 먼저 해소하고 후속 머지를 진행합니다. 실패한 `develop` 위에 머지를 쌓으면
+  원인 PR을 특정하기 어려워집니다.
+
 ## 커밋 메시지
 
 `.github/commit_template.txt`의 형식을 따릅니다.
