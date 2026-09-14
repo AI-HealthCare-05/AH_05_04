@@ -450,6 +450,11 @@ PostgreSQL·실제 ASGI 앱으로 검증한다. 기본 runner의 Backend 수집 
 - 기존 `backend/app/tests/notifications/` 및 인증 회귀를 함께 실행한다. Push 접수는 앱 내부 게시·읽음·복약을 변경하지 않는다.
 - 실제 provider 접수·iOS/Android 기기 표시와 #470 Service Worker generation·원래 날짜 연결은 #471의 별도 통합 증빙이다. Backend mock/암호화 roundtrip을 실기기 수신으로 표기하지 않는다.
 - [실행 기록](validation/track-b/issue-469-web-push.md), [검토 계약](contracts/proposed/web-push-v1.md).
+
+#471의 환경·기기 준비는 [실기기 사전 검증 절차](operations/web-push-preflight-471.md)를,
+실행별 PASS/FAIL/BLOCKED·미실행 구분은 [기록 양식](validation/track-b/issue-471-web-push-preflight.md)을 따른다.
+이 준비 문서와 합성 payload 예시는 실제 Push 접수·기기 수신 또는 Production 적용 증거가 아니다.
+
 ### #419 공통 복약 집계
 
 `backend/app/tests/medication_reports/test_medication_report_api.py`는 7/30일·KST 경계,
