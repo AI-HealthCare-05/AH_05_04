@@ -676,6 +676,13 @@ v1 앱에 등록한다. PD-417의 승인된 의미와 #438 저장 서비스·#43
 요청·응답·오류 requiredness는 계약과 실제 OpenAPI를 따른다. #418 backlog 라우터 등록과
 Check-in history route는 포함하지 않는다. [검증 기록](./validation/track-b/issue-202-schedule-api.md).
 
+## #469 Web Push 구현 PR 검토 범위
+
+`GET /api/v1/push/config`, `PUT /api/v1/push/subscriptions`,
+`DELETE /api/v1/push/subscriptions/{subscription_id}`를 추가한다. 인증·SELF 소유권·
+`no-store`, DTO/오류/계정 전환과 전송 정책은 [정규 계약](contracts/proposed/web-push-v1.md)에
+기록한다. Proposed 상태로 책임 리뷰 대기이며 Production 등록·전송은 차단한다.
+Notification의 앱 내부 게시·읽음 API 의미는 유지한다.
 ## #419 공통 복약 리포트 — 작업 브랜치 구현, 지정 리뷰 대기
 
 `GET /api/v1/medication-reports?period_days=7&end_date=2026-09-13`
