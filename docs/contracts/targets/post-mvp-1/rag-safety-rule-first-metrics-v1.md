@@ -1,17 +1,18 @@
-# RAG Safety·Rule-first Metric 계약 v1 제안
+# RAG Safety·Rule-first Metric 계약 v1
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Proposed · Review Required |
+| 상태 | Approved Target |
 | 구현 | Not implemented |
 | Decision | [`PD-161-20260914`](../../../governance/decisions/2026-09-14-rag-safety-rule-first-metrics.md) |
 | 추적 Issue | [#161](https://github.com/AI-HealthCare-05/AH_05_04/issues/161) |
 | 구현 담당 | 정현우 (`@ceohwj`) |
-| 책임 리뷰 | 김지혜 (`@Jye-rookie`) — Evaluation·Source provenance·Safety fixture 계약 |
+| 책임 리뷰 | 김지혜 (`@Jye-rookie`) — `APPROVED` |
+| 승인 Evidence | [PR #541 review `5198114002`](https://github.com/AI-HealthCare-05/AH_05_04/pull/541#pullrequestreview-5198114002) · [`decision-approval-evidence.json`](../../../validation/rag/issue-161/decision-approval-evidence.json) |
 
 ## 1. 목적과 입력 경계
 
-이 계약은 RAG-EVAL-006 Safety·Rule-first 회귀 Metric의 deterministic 계산을 제안한다. 입력은 승인된
+이 계약은 RAG-EVAL-006 Safety·Rule-first 회귀 Metric의 deterministic 계산을 고정한다. 입력은 승인된
 Safety/End-to-End Case, 대응 Case Result, Comparison Policy와 동일 `run_id`·`case_id`·`input_sha256`·
 nullable `answer_sha256`에 결속한 #160 `rag-eval.grounding-signal@1.0.0`이다.
 
@@ -120,6 +121,6 @@ DEV에서는 active threshold와 `PASS | FAIL`을 만들지 않는다. frozen SA
 
 ## 7. 승인과 공개
 
-책임 리뷰어의 실제 Pull Request 승인 전 이 문서는 구현 근거가 아니다. 승인되더라도 DEV kernel만
-허용하며 frozen SAFETY_REGRESSION 실행, 외부 의료·약학 승인, Runtime 통합, Release `PASS`와
-`PUBLIC_TRACK_F`는 별도 게이트다.
+PR #541 최종 HEAD에 대한 책임 리뷰어 승인으로 DEV kernel 구현이 허용됐다. 이 승인은
+frozen SAFETY_REGRESSION 실행, 외부 의료·약학 승인, Runtime 통합, Release `PASS`와
+`PUBLIC_TRACK_F`를 허용하지 않는다.

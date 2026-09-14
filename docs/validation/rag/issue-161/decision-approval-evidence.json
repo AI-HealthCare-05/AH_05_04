@@ -1,0 +1,29 @@
+{
+  "decision_id": "PD-161-20260914",
+  "pull_request": 541,
+  "head_commit_oid": "7ae82bd3a22c211ee5e2c39d2f1ff6f250310426",
+  "merged_at": "2026-09-14T13:21:45Z",
+  "merge_commit_oid": "d16e048379b19a2ecc377c439d7d9b750300cc2a",
+  "reviews": [
+    {
+      "review_id": 5198114002,
+      "actor": "Jye-rookie",
+      "state": "APPROVED",
+      "submitted_at": "2026-09-14T13:14:51Z",
+      "commit_oid": "7ae82bd3a22c211ee5e2c39d2f1ff6f250310426",
+      "url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/541#pullrequestreview-5198114002"
+    }
+  ],
+  "checks": {
+    "classify-test-scope": "SUCCESS",
+    "test-inventory": "SUCCESS",
+    "test-contract": "SUCCESS",
+    "test": "SUCCESS",
+    "lint": "SKIPPED",
+    "test-migration": "SKIPPED",
+    "test-backend": "SKIPPED",
+    "test-rag": "SKIPPED",
+    "test-worker": "SKIPPED",
+    "frontend": "SKIPPED"
+  }
+}

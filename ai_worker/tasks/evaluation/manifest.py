@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ValidationError
 
+from ai_worker.tasks.evaluation.answer_metrics import build_answer_metrics
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes, canonical_sha256, sha256_hex
 from ai_worker.tasks.evaluation.config import ResolvedDevExecution
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
@@ -41,6 +42,7 @@ from ai_worker.tasks.evaluation.schemas.common import (
     ExecutionStatus,
     ExperimentType,
     ImmutableReference,
+    TaskType,
 )
 
 if TYPE_CHECKING:
@@ -142,6 +144,33 @@ def _partition_manifest_hash(dataset: ValidatedDataset) -> str:
 def _build_metrics(material: RunMaterial) -> MetricResults:
     if material.resolved.request.experiment_type is ExperimentType.KNOWLEDGE_RETRIEVAL:
         return build_retrieval_metrics(material.dataset, material.outcome.case_results)
+    if material.resolved.request.experiment_type is ExperimentType.ANSWER_GROUNDING_SAFETY:
+        answer_results = tuple(
+            result for result in material.outcome.case_results if result.task_type is TaskType.ANSWER_QUALITY
+        )
+        resource_hashes = {item.case_id: item.sha256 for item in material.dataset.manifest.case_resources}
+        expected_input_sha256_by_case = {
+            case.case_id: case_input_sha256(
+                CaseInputBinding(
+                    case_id=case.case_id,
+                    task_type=case.task_type.value,
+                    partition=case.partition.value,
+                    case_resource_sha256=resource_hashes[case.case_id],
+                    dataset_manifest_sha256=material.dataset.manifest.manifest_sha256,
+                    evidence_mapping_manifest_sha256=material.dataset.evidence_mapping.manifest_sha256,
+                    critical_claim_rubric_hash=material.dataset.rubric.rubric_hash,
+                    resolved_evaluation_config_hash=material.resolved.resolved_evaluation_config_hash,
+                )
+            )
+            for case in material.dataset.cases
+            if case.task_type is TaskType.ANSWER_QUALITY and case.partition.value == "DEV"
+        }
+        return build_answer_metrics(
+            material.dataset,
+            answer_results,
+            expected_run_id=material.run_id,
+            expected_input_sha256_by_case=expected_input_sha256_by_case,
+        )
 
     metrics: list[MetricResult] = []
     retrieval_cases = {
