@@ -17,6 +17,7 @@ from app.repositories.ocr_repository import OcrRepository
 from app.repositories.prescription_integrity import verify_loaded_version
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.idempotency import SyncMutationIdempotencyService, get_default_snapshot_cipher
+from app.services.user_consents import OcrConsentService
 
 _MAX_MEDICATION_NAME_LENGTH = 255
 # 복합제 및 농도 문자열을 포함할 수 있는 최대 길이입니다.
@@ -91,13 +92,17 @@ class PrescriptionService:
         ocr_repository: OcrRepository,
         prescription_repository: PrescriptionRepository,
         schedule_invalidation: PrescriptionVersionScheduleInvalidationPort,
+        consent_service: OcrConsentService | None = None,
     ) -> None:
         self._document_repo = document_repository
         self._ocr_repo = ocr_repository
         self._prescription_repo = prescription_repository
         self._schedule_invalidation = schedule_invalidation
+        self._consent_service = consent_service
 
     async def confirm_prescription(self, *, user: User, document_id: UUID) -> PrescriptionData:
+        if self._consent_service is not None:
+            await self._consent_service.require_for_intake(user=user)
         if await self._document_repo.get_owned(document_id=document_id, user=user) is None:
             raise ApiError(status_code=404, code="MEDICAL_DOCUMENT_NOT_FOUND", message="의료문서를 찾을 수 없습니다.")
 
@@ -142,6 +147,9 @@ class PrescriptionService:
                 message="의료문서를 찾을 수 없습니다.",
                 details=[ErrorDetail(field="document_id", reason="NOT_FOUND", rejected_value=str(document_id))],
             )
+
+        if self._consent_service is not None:
+            await self._consent_service.require_for_intake(user=user)
 
         existing = await self._prescription_repo.get_by_document(document=document)
         if existing is not None:

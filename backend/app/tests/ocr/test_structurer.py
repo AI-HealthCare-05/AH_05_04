@@ -1,5 +1,3 @@
-import json
-
 from app.services.ocr_ai.schemas import (
     GeneratedMedication,
     GeneratedPrescriptionDraft,
@@ -74,7 +72,7 @@ def _raw(
     )
 
 
-async def test_structurer_sends_all_clova_tokens_and_splits_strength() -> None:
+async def test_structurer_skips_llm_without_reviewed_minimization_selector() -> None:
     provider = RecordingProvider()
     structurer = LlmPrescriptionStructurer(
         provider=provider,
@@ -93,19 +91,12 @@ async def test_structurer_sends_all_clova_tokens_and_splits_strength() -> None:
 
     result = await structurer.structure(raw_fields)
 
-    call = provider.calls[0]
-    payload = json.loads(str(call["input_json"]))
+    assert provider.calls == []
 
-    assert [token["text"] for token in payload["tokens"]] == [field.raw_value for field in raw_fields]
-
-    fields = {field.field_type: field.raw_value for field in result.fields}
-
-    assert fields["MEDICATION_NAME"] == "합성의약품에이정"
-    assert fields["MEDICATION_STRENGTH"] == "100mg"
-    assert fields["DOSE_VALUE"] == "1"
-    assert fields["DOSE_UNIT"] == "정"
-    assert result.model_name == "actual-test-model-id"
-    assert result.prompt_version == "ocr-structure-prompt-v3"
+    assert result.fields == (await RuleBasedPrescriptionStructurer().structure(raw_fields)).fields
+    assert result.model_name is None
+    assert result.prompt_version is None
+    assert result.llm_processing == "SKIPPED_MINIMIZATION"
 
 
 async def test_rule_based_structurer_does_not_report_llm_metadata() -> None:
@@ -120,5 +111,6 @@ async def test_rule_based_structurer_does_not_report_llm_metadata() -> None:
     # 규칙 기반 경로에서는 OpenAI 모델과 프롬프트가 실행되지 않습니다.
     assert result.model_name is None
     assert result.prompt_version is None
+    assert result.llm_processing == "NOT_REQUESTED"
     assert result.fields[0].field_type == "PRESCRIBED_DATE"
     assert result.fields[0].raw_value == "2026-08-26"

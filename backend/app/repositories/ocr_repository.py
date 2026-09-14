@@ -151,6 +151,7 @@ class OcrRepository:
         engine_name: str | None,
         model_version: str | None,
         prompt_version: str | None,
+        llm_processing: str | None = None,
     ) -> OcrJob:
         job.ocr_status = OcrStatus.COMPLETED
         job.completed_at = completed_at
@@ -159,6 +160,7 @@ class OcrRepository:
         job.engine_name = engine_name
         job.model_version = model_version
         job.prompt_version = prompt_version
+        job.llm_processing = llm_processing
 
         await self.session.flush()
         return job

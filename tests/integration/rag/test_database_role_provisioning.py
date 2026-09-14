@@ -160,6 +160,10 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             await connection.execute(text("INSERT INTO checkin_audit VALUES (1)"))
             await connection.execute(text("INSERT INTO medication_schedule_audit VALUES (1)"))
             await connection.execute(text("INSERT INTO prescription_version VALUES (1)"))
+            await connection.execute(text("INSERT INTO push_subscription VALUES (1)"))
+            await connection.execute(text("INSERT INTO push_delivery VALUES (1)"))
+            await connection.execute(text("UPDATE push_subscription SET id=2"))
+            await connection.execute(text("DELETE FROM push_delivery"))
         async with producer.begin() as connection:
             await connection.execute(text("INSERT INTO rag_source_snapshot (id) VALUES (1)"))
             await connection.execute(text("UPDATE rag_source_snapshot SET verified_at=now()"))
@@ -168,6 +172,10 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             await connection.execute(text(f'SET LOCAL ROLE "{owner}"'))
             await connection.execute(text("CREATE TABLE future_after_provision (id serial PRIMARY KEY)"))
         for engine, sql in [
+            (producer, "SELECT * FROM push_subscription"),
+            (producer, "INSERT INTO push_delivery VALUES (2)"),
+            (reader, "TRUNCATE push_subscription"),
+            (reader, "TRUNCATE push_delivery"),
             (reader, "UPDATE medication_schedule_audit SET id=2"),
             (reader, "DELETE FROM medication_schedule_audit"),
             (reader, "TRUNCATE medication_schedule_audit"),
@@ -374,7 +382,13 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
 
     runtime_environment_id = await _exercise_audit_cutover(admin, reader, producer, environment)
 
+    # 과거 398 revision을 재현하면서 현재 ORM helper가 추가로 쓰는 후속 컬럼만 잠시 제공한다.
+    # 실제 head upgrade 전에 제거해 #458 migration이 컬럼을 직접 생성하도록 한다.
+    async with admin.begin() as connection:
+        await connection.execute(text("ALTER TABLE ocr_job ADD COLUMN llm_processing varchar(32)"))
     await _exercise_prescription_candidate_cutover(admin, reader, environment)
+    async with admin.begin() as connection:
+        await connection.execute(text("ALTER TABLE ocr_job DROP COLUMN llm_processing"))
     await _assert_runtime_transition_revisions_are_sealed(admin, runtime_environment_id, environment)
 
     current = subprocess.run(
@@ -859,6 +873,8 @@ async def _grant_historical_test_permissions(admin, environment):
                 "ai_job_execution_context",
                 "ai_job_execution_identification",
                 "medication_schedule_audit",  # Added after the historical Source cutover.
+                "push_subscription",  # #469 does not exist at the historical revision.
+                "push_delivery",
             }:
                 await connection.execute(text(f'GRANT {privileges} ON "{table}" TO "{runtime}"'))
         for table in set(SOURCE_TABLES) & present:

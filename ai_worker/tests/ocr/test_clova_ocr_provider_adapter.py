@@ -143,6 +143,7 @@ async def test_clova_adapter_forwards_only_minimum_provider_input() -> None:
             engine_name="CLOVA_OCR",
             model_version=None,
             prompt_version=None,
+            llm_processing="SKIPPED_MINIMIZATION",
         )
     )
     adapter = ClovaOcrProviderAdapter(
@@ -180,6 +181,7 @@ async def test_clova_adapter_forwards_only_minimum_provider_input() -> None:
         engine_name="CLOVA_OCR",
         model_version=None,
         prompt_version=None,
+        llm_processing="SKIPPED_MINIMIZATION",
     )
 
 

@@ -4,6 +4,7 @@ import asyncio
 import signal
 
 from app.commands.process_notifications import run
+from app.commands.process_push import run as run_push
 from app.core import default_logger
 
 INTERVAL_SECONDS = 60
@@ -13,6 +14,7 @@ async def serve() -> None:
     # Fixed delay after each attempt prevents a local backlog of overlapping jobs.
     while True:
         await run()
+        await run_push()
         await asyncio.sleep(INTERVAL_SECONDS)
 
 
