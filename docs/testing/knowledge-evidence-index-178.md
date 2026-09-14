@@ -48,13 +48,24 @@ SQLAlchemy `VECTOR` 타입이 bind/result 변환을 소유한다. 실제 Postgre
 모든 DB fixture는 비식별 합성 데이터만 사용했다. 임시 PostgreSQL은 기존 개발 DB와 분리된 port와 database를
 사용했다.
 
+## 2026-09-14 PostgreSQL Evidence Search 및 결정적 RRF 검증 기록
+
+- 범위: #178 PostgreSQL Knowledge Evidence Search (Exact, Trigram, FTS lexical 20 및 pgvector cosine dense 20) + `rrf-rank-fusion@1` 결정적 RRF 구현
+- 계약: `docs/contracts/proposed/post-mvp-1/knowledge-evidence-search-rrf-v1.md`
+- migration: `178b1c2d3e4f` (`knowledge_chunk`에 `ix_knowledge_chunk_fts_simple`, `ix_knowledge_chunk_chunk_text_trgm` GIN 인덱스 추가)
+- 상태: 로컬 구현·검증 완료, 지정 리뷰·병합 대기 (`Part of #178`, `PUBLIC_TRACK_F=false`)
+
+| 검사 | 대상 | 결과 |
+| --- | --- | --- |
+| 단위 테스트: 순수 RRF 연산 | `ai_worker/tests/rag/test_evidence_rank_fusion.py` | 9 passed (`rrf-rank-fusion@1`, exact Fraction, tie-break, bucketed fusion, Top 30/20) |
+| 단위 테스트: 프로토콜·설정·검증 | `ai_worker/tests/rag/test_evidence_search.py` | 8 passed (쿼리 유효성, `SensitiveText`/`Vector` redaction, 18자리 점수 포맷, JCS hash) |
+| 통합 테스트: PostgreSQL 실환경 | `tests/integration/rag/test_postgresql_evidence_search.py` | 7 passed (Exact 우선순위, Trigram/FTS 조회, Cosine dense, fail-closed 무결성, threshold cleanup, EXPLAIN plan) |
+
 ## 남은 #178 범위
 
-이 구현은 Hybrid Retrieval 자체가 아니다. 다음은 후속 #178 구현·검증으로 남는다.
+이 구현은 Knowledge Evidence Search 및 RRF 융합 계층이며, 다음은 후속 #178 구현·검증으로 남는다.
 
-- PostgreSQL Exact/Trigram/FTS lexical 20과 exact cosine dense 20
-- `rrf-rank-fusion@1` 출력 30과 UTF-8 tie-break
-- versioned reranker 입력 20
+- versioned reranker (`EvidenceRerankPort`) 구현 및 입력 20 연동
 - Evidence Gate와 context 최대 5
 - authoritative Retrieval Run/signal/hit persistence
 - Runtime Bundle/currentness 연결, `hybrid_retrieve` node receipt
