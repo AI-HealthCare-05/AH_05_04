@@ -1,7 +1,7 @@
 # Track B UNCONFIRMED backlog v1
 
-- 문서 상태: Proposed · 리뷰 대기
-- 구현 상태: 조회 구현 및 테스트 앱의 #413 PUT→GET HTTP 통합 완료. 실제 v1 router 등록 보류, 계약 승인 대기
+- 문서 상태: Proposed · 미등록 후보 승인 확인, 실제 등록 HEAD 재승인 대기
+- 구현 상태: #426 조회 구현을 실제 v1에 등록한 리뷰용 변경. 최신 #202(#456) 날짜별 조회와 기존 Check-in PUT을 실제 앱에서 통합 검증한다.
 - Decision: [PD-418](../../governance/decisions/2026-09-10-unconfirmed-backlog-418.md)
 - 기존 목표: [Check-in v1](../targets/post-mvp-1/checkin-v1.md)
 - 구현 담당 권가빈; 책임 리뷰 송은영(Backend), 남한솔(Frontend)
@@ -67,6 +67,16 @@ UNCONFIRMED만 `scheduled_at ASC, checkin_id ASC`로 반환한다. 비활성 과
 
 ## 검증과 남은 승인
 
-합성 PostgreSQL 테스트에서 historical snapshot, 동일시각 tie-break, corrected cursor, 보완 제외와 revision 충돌, SELF ownership, 조회 무변경 및 후보 HTTP 인증/검증/오류/no-store를 검증한다. 실제 앱의 route 목록·OpenAPI에 backlog route가 없고 HTTP 요청이 404인지 검사한다. 테스트 앱에서만 backlog router를 등록하고 실제 v1 PUT router와 공통 인증·오류·no-store를 검증한다. #413의 실제 PUT으로 TAKEN/NOT_TAKEN 보완 후 목록 제외, 동일 키 replay, stale revision 409 후 재조회, 보완된 cursor로 다음 페이지 조회 및 cursor 404 후 첫 페이지 재요청을 검증한다.
+합성 PostgreSQL과 실제 ASGI 앱으로 historical snapshot, 동일시각 tie-break, corrected cursor,
+보완 제외·revision 충돌, SELF ownership, 조회 무변경, HTTP 인증·검증·오류·no-store를 검증한다.
+실제 v1 route가 한 번만 등록되고 OpenAPI의 요청·응답·오류가 DTO와 일치하는지 확인한다.
+기존 PUT의 TAKEN/NOT_TAKEN 보완, 동일 키 replay, stale revision 409, cursor 404 복구와
+다건 보완 중 페이지 이동을 검증한다. #456 날짜별 조회의 Check-in은 PUT 응답과 같은
+revision·status를 반환해야 한다. Frontend가 사용할 합성 fixture도 DTO로 검증한다.
 
-2026-09-10 Backend blocker에 따라 실제 v1 router 등록을 되돌렸다. Frontend의 `b213cc01` 승인과 과거 Backend 검토는 등록을 포함한 새 HEAD의 공동 승인을 대체하지 않는다. 두 담당 리뷰어의 계약 승인 후 별도 등록 변경과 실제 앱 HTTP/OpenAPI 검증을 진행하고, 그 등록 HEAD의 승인 전에는 병합하지 않는다. #138 Frontend 소비 검증과 계약 상태 전환은 남아 있다. 현재 문서는 병합된 runtime 계약이나 승인된 target을 대체하지 않는다.
+#426의 `564dfb0a`에서 받은 두 리뷰어 승인은 미등록 후보에 한정된다.
+[PD-418 승인 증빙](../../governance/decisions/2026-09-10-unconfirmed-backlog-418.md#승인-증빙과-등록-변경의-병합-조건)을
+따르며 실제 등록 HEAD의 송은영·남한솔 재승인 전에는 Draft를 유지하고 병합하지 않는다.
+그 승인 후 같은 구현 PR에서 계약을 Current로 이동하고 인덱스·참조·승인 증빙을 함께 갱신한다.
+현재 Proposed는 배포된 runtime 계약이나 승인된 target을 뜻하지 않는다.
+#138의 Frontend 구현·소비 검증과 Production 공개 승인은 별도이며 테스트 통과로 대체하지 않는다.

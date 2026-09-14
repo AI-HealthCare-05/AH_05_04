@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import React from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
@@ -15,7 +21,10 @@ const CURRENT_USER = {
   created_at: '2026-08-28T00:00:00Z',
 }
 
-function renderHome(currentUser = CURRENT_USER) {
+function renderHome(
+  currentUser = CURRENT_USER,
+  showPrescriptionOnboarding = false,
+) {
   function UploadRoute() {
     const location = useLocation()
 
@@ -30,7 +39,16 @@ function renderHome(currentUser = CURRENT_USER) {
   }
 
   return render(
-    <MemoryRouter initialEntries={['/']}>
+    <MemoryRouter
+      initialEntries={[
+        {
+          pathname: '/',
+          state: showPrescriptionOnboarding
+            ? { showPrescriptionOnboarding: true }
+            : null,
+        },
+      ]}
+    >
       <Routes>
         <Route path="/" element={<HomePage currentUser={currentUser} />} />
         <Route
@@ -79,6 +97,77 @@ describe('Dosey MVP design pages', () => {
       screen.getByRole('button', { name: '회원가입하고 시작하기' }),
     )
     expect(screen.getByText('회원가입 화면')).toBeTruthy()
+  })
+
+  it('#395 온보딩은 키보드 포커스를 모달 내부에 가두고 닫힌 뒤 Home CTA로 복귀한다', async () => {
+    const { container } = renderHome(CURRENT_USER, true)
+
+    const primaryButton = await screen.findByRole('button', {
+      name: '지금 처방전 촬영하기',
+    })
+    const secondaryButton = screen.getByRole('button', {
+      name: '나중에 촬영할게요',
+    })
+    const homePrescriptionButton = container.querySelector<HTMLButtonElement>(
+    '.mvp-home__hub-card--prescription',
+    )
+
+    expect(homePrescriptionButton).not.toBeNull()
+
+    // 열리면 첫 CTA에 포커스
+    expect(document.activeElement).toBe(primaryButton)
+
+    // 배경 Home 접근 차단
+    const mobileApp = homePrescriptionButton!.closest('.mobile-app')
+    expect(mobileApp?.getAttribute('aria-hidden')).toBe('true')
+
+    // 마지막 버튼에서 Tab → 첫 버튼
+    secondaryButton.focus()
+    fireEvent.keyDown(secondaryButton, {
+      key: 'Tab',
+    })
+    expect(document.activeElement).toBe(primaryButton!)
+
+    // 첫 버튼에서 Shift+Tab → 마지막 버튼
+    primaryButton.focus()
+    fireEvent.keyDown(primaryButton, {
+      key: 'Tab',
+      shiftKey: true,
+    })
+    expect(document.activeElement).toBe(secondaryButton)
+
+    // Escape → 닫힘 + Home 처방전 CTA로 포커스 복귀
+    fireEvent.keyDown(secondaryButton, {
+      key: 'Escape',
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(document.activeElement).toBe(homePrescriptionButton)
+    })
+
+    expect(mobileApp?.getAttribute('aria-hidden')).toBeNull()
+  })
+
+  it('#395 가입 직후 Home에서 처방전 온보딩을 표시하고 촬영 CTA를 새 처방 등록으로 연결한다', async () => {
+    renderHome(CURRENT_USER, true)
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '처방전을 등록해 볼까요?',
+      }),
+    ).toBeTruthy()
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '지금 처방전 촬영하기',
+      }),
+    )
+
+    expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
+    expect(screen.getByTestId('upload-intent').textContent).toBe(
+      'new-prescription',
+    )
   })
 
   it('HOME-01은 users/me 이름과 현재 날짜를 표시한다', async () => {
