@@ -59,6 +59,7 @@ function renderHome(
         <Route path="/guides" element={<div>가이드 empty 화면</div>} />
         <Route path="/schedule" element={<div>복약 일정 화면</div>} />
         <Route path="/menu" element={<div>메뉴 화면</div>} />
+        <Route path="/notifications" element={<div>알림 화면</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -227,11 +228,15 @@ describe('Dosey MVP design pages', () => {
       'disabled',
       true,
     )
-    expect(screen.getByRole('button', { name: '알림 (준비 중)' })).toHaveProperty(
-      'disabled',
-      true,
-    )
+    expect(screen.getByRole('button', { name: '알림' })).toHaveProperty('disabled', false)
     expect(screen.getByRole('button', { name: '일정' })).toHaveProperty('disabled', false)
+  })
+
+  it('Home 알림 버튼은 production /notifications route로 이동한다', async () => {
+    renderHome()
+
+    fireEvent.click(await screen.findByRole('button', { name: '알림' }))
+    expect(screen.getByText('알림 화면')).toBeTruthy()
   })
 
   it('복약 챗봇은 ID를 추측하지 않고 기존 /chat route로만 이동한다', async () => {

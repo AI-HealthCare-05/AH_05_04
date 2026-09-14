@@ -66,11 +66,10 @@ function MenuPage() {
           <button
             className="mvp-menu__notification"
             type="button"
-            aria-label="알림 (준비 중)"
-            disabled
+            aria-label="알림"
+            onClick={() => navigate('/notifications')}
           >
             <img src={notificationIcon} alt="" aria-hidden="true" />
-            <span aria-hidden="true" />
           </button>
         }
         activeNavigation="메뉴"

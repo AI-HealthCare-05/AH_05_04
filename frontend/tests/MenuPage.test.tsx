@@ -28,6 +28,7 @@ function renderMenu() {
         <Route path="/guides" element={<div>가이드 화면</div>} />
         <Route path="/chat" element={<div>도지 화면</div>} />
         <Route path="/schedule" element={<div>복약 일정 화면</div>} />
+        <Route path="/notifications" element={<div>알림 화면</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -59,6 +60,13 @@ describe('Dosey 메뉴', () => {
     renderMenu()
     fireEvent.click(screen.getByRole('button', { name: '사용자 정보' }))
     expect(screen.getByText('사용자 정보 화면')).toBeTruthy()
+  })
+
+  it('header 알림 버튼은 /notifications route로 이동한다', () => {
+    renderMenu()
+
+    fireEvent.click(screen.getByRole('button', { name: '알림' }))
+    expect(screen.getByText('알림 화면')).toBeTruthy()
   })
 
   it('일정을 포함한 현재 가능한 하단 navigation이 기존 route로 이동한다', () => {
