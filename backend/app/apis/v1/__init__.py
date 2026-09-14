@@ -9,6 +9,7 @@ from app.apis.v1.medical_document_routers import medical_document_router
 from app.apis.v1.medication_candidate_routers import medication_candidate_router
 from app.apis.v1.medication_checkin_backlog_routers import medication_checkin_backlog_router
 from app.apis.v1.medication_checkin_routers import medication_checkin_router
+from app.apis.v1.medication_report_routers import medication_report_router
 from app.apis.v1.medication_schedule_routers import medication_schedule_router
 from app.apis.v1.notification_routers import notification_router
 from app.apis.v1.ocr_routers import ocr_router
@@ -32,3 +33,5 @@ v1_routers.include_router(job_router)
 v1_routers.include_router(notification_router)
 
 v1_routers.include_router(medication_schedule_router)
+
+v1_routers.include_router(medication_report_router)
