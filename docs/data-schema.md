@@ -27,6 +27,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 영역 | 테이블 | 현재 사용 상태 |
 | --- | --- | --- |
 | 사용자 | `user` | 인증·사용자 정보에 사용 |
+| 사용자 동의 | `user_consent` | PD-207 목적별 최신 동의 상태 저장 기반. Gate/API 연결은 후속 범위 |
 | 프로필 | `profile` | 본인 단일 `SELF` profile과 사용자 리소스 소유권 기준에 사용 |
 | 의료문서 | `medical_document` | 처방전 metadata와 로컬 파일 object key 저장 |
 | OCR | `ocr_job`, `extracted_field` | 동기 OCR 상태, 원문·정규화·사용자 확정값 저장 |
@@ -93,6 +94,30 @@ access token과 refresh token에는 발급 시점의 `token_version`을 포함�
 | `used_at` | timezone datetime | Yes | 소비 시각. `NULL`이면 미사용 |
 
 재설정 완료 시 같은 transaction에서 비밀번호 변경, 해당 사용자의 미사용·미만료 `password_reset_token` 전체 소비, `token_version + 1`을 함께 처리합니다. 만료된 행을 지우는 별도 정리 배치는 두지 않고(`idempotency_record`와 동일하게 lazy cleanup), 조회 시 `expires_at` 조건으로만 거릅니다.
+
+`user_consent` 테이블은 PD-207의 목적별 최신 동의 상태 저장 기반입니다.
+
+| 컬럼 | 타입 | Nullable | 설명 |
+| --- | --- | ---: | --- |
+| `id` | `CHAR(36)` | No | User Consent PK |
+| `user_id` | `CHAR(36)` | No | `user.id` FK. 동의 주체 |
+| `purpose` | `VARCHAR(20)` | No | 동의 목적. `OCR`, `GUIDE`, `CHAT`, `NOTIFICATION` |
+| `status` | `VARCHAR(20)` | No | 최신 동의 상태. `GRANTED`, `WITHDRAWN` |
+| `policy_version` | `VARCHAR(100)` | No | 동의 또는 철회 판정에 사용한 목적별 policy version |
+| `granted_at` | timezone datetime | Yes | `GRANTED` 전환 시각. `GRANTED` 상태에서는 필수 |
+| `withdrawn_at` | timezone datetime | Yes | `WITHDRAWN` 전환 시각. `WITHDRAWN` 상태에서는 필수, `GRANTED` 상태에서는 `NULL` |
+| `created_at` | timezone datetime | No | row 생성 시각 |
+| `updated_at` | timezone datetime | No | 최신 상태 갱신 시각 |
+
+DB 제약:
+
+- `(user_id, purpose)` unique로 사용자별·목적별 current row를 하나로 제한
+- `purpose IN ('OCR', 'GUIDE', 'CHAT', 'NOTIFICATION')`
+- `status IN ('GRANTED', 'WITHDRAWN')`
+- `policy_version`은 빈 문자열 금지
+- `GRANTED`는 `granted_at` 필수 및 `withdrawn_at=NULL`, `WITHDRAWN`은 `withdrawn_at` 필수
+
+row가 없으면 미동의로 판정한다. 이 테이블은 최신 상태만 저장하며 과거 동의 이력을 append-only audit으로 남길지는 후속 Decision 또는 계약 갱신 범위다. Backend Gate, Worker Gate, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 연결은 후속 구현 범위이며 이번 저장 기반만으로 Provider 호출을 허용하지 않는다.
 
 ## PROFILE SELF 소유권
 
@@ -320,6 +345,12 @@ Component의 두 참조 Snapshot 열을 별도로 보존하고 Product/Ingredien
 [정현우 담당 범위 승인 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/477#pullrequestreview-5190458759)는
 HEAD `c58f09686d3a72567793ee237abeb500ab04e710`의 MFDS 매핑·총량 그룹·출처·Candidate 인계를
 확인한 증빙이다. 실제 수집·MFDS 공식 의미·운영 활성화 승인을 의미하지 않는다.
+
+D-04 상세 수집기 후속은 [상세 수집·Snapshot 생산 계약](contracts/proposed/post-mvp-1/mfds-detail-acquisition-166.md)을 따른다.
+새 DB 구조 없이 별도 상세 Operation을 기존 Source Snapshot/Run/Artifact에 연결하는 구현 PR 검토 대상이다.
+전체 상세 원문을 검증하며 빈 키·중복·제외 행이 있으면 실패 Run과 원문만 보존한다.
+일부 행에 전체 Snapshot Receipt를 붙이거나 성공 Snapshot으로 보정하지 않는다.
+
 
 `rag_catalog_set`은 현재 Catalog의 manifest·Source·member·hash를 결속하는 저장·재현 구성 단위다.
 기존 v2와 관찰 v3 export를 수용한다. Set 종류 컬럼은 없으며, `RagCatalogMemberKind`의
@@ -685,3 +716,21 @@ Migration `423a1b2c3d4e`는 `medication_schedule_audit`와 occurrence의 nullabl
 `notification_record`는 occurrence FK와 `(occurrence_id, kind)` unique를 가지며 최초 알림·재알림을 각각 하나만 보존한다. kind는 `SCHEDULED|REMINDER`, status는 `PENDING|DELIVERED|CANCELLED`이며 전달·취소 timestamp와 attempt `0|1` 정합성을 DB CHECK로 강제한다. `read_at`은 전달 후 최초 시각만 저장한다. occurrence parent chain으로 SELF 소유권을 확인하며 별도 사용자·의료 본문 복제는 없다.
 
 Migration은 `203a1b2c3d4e`이고 상세 컬럼·FK·rollback 동작은 [Notification 계약](contracts/proposed/track-b-notifications-v1.md)의 구현 절을 따른다. Check-in·일정·처방 변경은 알림 row를 삭제하지 않는다. 부모 occurrence의 정식 삭제는 FK CASCADE로 알림을 정리하지만 부모 자체의 기존 삭제 제한은 유지한다. Notification 이력이 있으면 downgrade는 중단한다.
+
+## Track C C1 저장 기반 — #192 / PR #310 리뷰 대상
+
+최신 Track B Check-in 부모에 `safety_assessment`, `barrier_response`, `support_action_plan`,
+`action_plan_followup`, `action_plan_followup_audit`를 연결한다. Check-in의 현재 revision은
+변경되므로 이력의 revision은 snapshot으로 보존하며 현재 revision FK를 만들지 않는다.
+Barrier는 근거 Safety의 Check-in ID·revision을 복합 FK로 결속하고, 같은 Barrier의 ACTIVE
+Plan은 partial unique로 최대 하나다. Follow-up 현재값과 정정 감사는 분리한다.
+
+SELF 소유권은 Python repository가 기존 Prescription 부모 chain으로 검증한다.
+이 PR은 저장 기반·소유권 조회만 제공한다. append-only 쓰기, 최신 상태 판정·정정·무효화는
+#193~#195의 Application Service/Repository transaction 연결 범위다.
+신규 RLS·Trigger·업무용 DB 함수는 없고, 5개 테이블에 이력이 있으면 downgrade를 중단한다.
+Handler별 config schema·운영 seed·공개 API는 추가하지 않는다.
+
+정본: [저장 계약](contracts/proposed/track-c-storage-v1.md),
+[결정/기존 합의 근거](governance/decisions/2026-09-13-track-c-storage-192.md),
+[검증 기록](testing/track-c-storage-192.md).
