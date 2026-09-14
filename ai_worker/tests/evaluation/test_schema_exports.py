@@ -1004,3 +1004,31 @@ def test_documented_schema_set_1_3_hash_matches_committed_schema_set(
 
     assert documented is not None
     assert documented.group("hash") == _schema_set_hash(_SnapshotReader(EVALS_ROOT), "1.3.0")
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "pattern"),
+    [
+        (
+            "docs/contracts/targets/post-mvp-1/rag-evaluation-v1.md",
+            r"rag-eval\.schema-set@1\.4\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
+        ),
+        (
+            "docs/governance/decisions/2026-09-15-rag-evaluation-schema-set-1-4-candidate.md",
+            r"Schema Set SHA-256 \| `(?P<hash>[0-9a-f]{64})`",
+        ),
+        (
+            "evals/README.md",
+            r"rag-eval\.schema-set@1\.4\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
+        ),
+    ],
+)
+def test_documented_schema_set_1_4_hash_matches_committed_schema_set(
+    relative_path: str,
+    pattern: str,
+) -> None:
+    path = REPOSITORY_ROOT / relative_path
+    documented = re.search(pattern, path.read_text(encoding="utf-8")) if path.exists() else None
+
+    assert documented is not None
+    assert documented.group("hash") == _schema_set_hash(_SnapshotReader(EVALS_ROOT), "1.4.0")

@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 상태 | Approved Target |
-| 구현 | Not implemented |
+| 구현 | Schema projection Candidate implemented · Metric kernel not implemented |
 | Decision | [`PD-160-20260914`](../../../governance/decisions/2026-09-14-rag-grounding-citation-metrics.md) |
 | 추적 Issue | [#160](https://github.com/AI-HealthCare-05/AH_05_04/issues/160) |
 | 구현 담당 | 정현우 (`@ceohwj`) |
@@ -30,8 +30,8 @@
 
 observation은 completed `ANSWER_GROUNDING | SAFETY | END_TO_END_RAG` Case Result 중 emitted Claim 또는
 Citation이 하나 이상인 동일 Case에 정확히 하나 결속한다. `task_type`, `run_id`, `case_id`, Dataset,
-`input_sha256`, nullable `answer_sha256`가 Case Result와 exact-match해야 하며 다른 Case의 observation이나
-signal을 옮길 수 없다.
+`input_sha256`, non-null `answer_sha256`가 Case Result와 exact-match해야 하며 다른 Case의 observation이나
+signal을 옮길 수 없다. nullable answer binding은 아래 grounding signal에만 적용된다.
 
 grounding signal은 모든 completed `SAFETY | END_TO_END_RAG` Case Result에 정확히 하나 존재하며 같은
 Case/Result/observation에서만 계산한다. 다음 두 상태를 구분한다.
@@ -46,16 +46,18 @@ Claim/Citation이 있는데 observation이 없거나, no-claims 상태가 observ
 의존 Safety Metric은 `NOT_EVALUATED/null`, 일부 Case만 없거나 중복·추가·cross-Case binding이면
 `INVALID/null`이다.
 
-이 신규 member들은 다음 승인 Evaluation Schema Set version에 등록한다. 기존 Schema Set과 기존 member의
-version·canonical bytes는 변경하지 않는다. 승인될 Schema Set version과 member manifest hash가 정해지기
-전에는 schema/export/registry 구현을 시작하지 않는다.
+이 신규 member들은 Schema Set `1.4.0` Candidate에 등록됐으며 canonical member manifest hash는
+`646cc7108ea945338a8f58f61a07c65c3f7050e1b3fb2fbe40541f3cadda2e7c`이다. 기존 Schema Set과 기존 member의
+version·canonical bytes는 변경하지 않는다. 책임 리뷰어의 실제 Pull Request 승인 전에는 이 Candidate를
+Approved 입력이나 Metric kernel 구현 선행조건 완료로 취급하지 않는다.
 
 ### 상위 결속 필드
 
 - `schema_id`, `schema_version`, `observation_sha256`
 - `run_id`, `case_id`, `task_type`, `dataset_code`, `dataset_version`, `input_sha256`
 - `answer_sha256`, `answer_variant_manifest_hash`
-- #180 validation decision/reason codes, nullable validated-selection hash와 nullable authorization-receipt hash
+- #180 validation execution status·decision·reason codes, nullable validated-selection hash
+- nullable authorization decision·reason codes·receipt reference/hash
 - 정렬된 `claims[]`
 
 ### Safety/E2E grounding signal
@@ -90,7 +92,7 @@ version·canonical bytes는 변경하지 않는다. 승인될 Schema Set version
 - #180 `source_type`
 - Case Evidence reference의 `evidence_ref_id`, `source_version`, `locator`, `content_sha256`
 - Evaluation edge validation `accepted`와 bounded reason code
-- Citation authorization `authorized`와 매칭된 authorization selection-receipt reference/hash
+- Citation authorization `authorized`와 매칭된 authorization selection-receipt hash
 
 본문 대신 stable key와 hash만 저장한다. observation과 Case Result의 Claim ID 집합 및 Citation Evidence ID
 집합은 exact-match해야 한다. Citation key는 observation 안에서 유일하고 edge의 `claim_key`는 같은
