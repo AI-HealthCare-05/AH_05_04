@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { signup } from '../src/api/auth'
 import { ApiError } from '../src/api/client'
 import SignupPage from '../src/pages/SignupPage'
+import { useLocation } from 'react-router-dom'
 
 vi.mock('../src/api/auth', () => ({
   signup: vi.fn(),
@@ -21,12 +22,27 @@ afterEach(() => {
 })
 
 describe('SignupPage', () => {
+  function LoginStateProbe() {
+    const location = useLocation()
+
+    return (
+      <div>
+        로그인 화면
+        <span>
+          {String(
+            (location.state as { fromSignup?: boolean } | null)?.fromSignup === true,
+          )}
+        </span>
+      </div>
+    )
+  }
+
   function renderPage() {
     return render(
       <MemoryRouter initialEntries={['/signup']}>
         <Routes>
           <Route path="/signup" element={<SignupPage />} />
-          <Route path="/login" element={<div>로그인 화면</div>} />
+          <Route path="/login" element={<LoginStateProbe />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -43,6 +59,16 @@ describe('SignupPage', () => {
       target: { value: 'Password1!' },
     })
   }
+
+  it('#395 회원가입 성공 후 로그인 화면에 fromSignup 상태를 전달한다', async () => {
+    renderPage()
+    fillValidForm()
+
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(screen.getByText('true')).toBeTruthy()
+  })
 
   it('AUTH-01 Figma 문구와 필수 입력을 렌더링한다', () => {
     renderPage()

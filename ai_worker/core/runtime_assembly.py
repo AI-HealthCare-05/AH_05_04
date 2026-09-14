@@ -27,6 +27,9 @@ from ai_worker.adapters.openai_ocr_structurer import WorkerLlmPrescriptionStruct
 from ai_worker.adapters.postgresql_protected_retrieval import (
     PostgresqlProtectedRetrievalService,
 )
+from ai_worker.adapters.postgresql_protected_retrieval_control import (
+    PostgresqlProtectedAuthorizationControlService,
+)
 from ai_worker.adapters.redis_dead_letter_stream import (
     RedisDeadLetterStreamPublisher,
 )
@@ -78,6 +81,7 @@ from ai_worker.core.registry import HandlerRegistry
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.stream import StreamAcknowledger, WorkerDelivery
 from ai_worker.schemas.messages import JobType, WorkerMessage
+from ai_worker.tasks.evaluation.protected_retrieval_control import TrustedApprovalSource
 from ai_worker.tasks.ocr.handler import OcrHandler, OcrProvider
 from ocr_runtime.clova_engine import ClovaOcrEngine
 from ocr_runtime.structuring import OcrStructurer, RuleBasedPrescriptionStructurer
@@ -192,6 +196,39 @@ async def create_protected_retrieval_service(config: Config) -> PostgresqlProtec
         schema=config.PROTECTED_DB_SCHEMA.get_secret_value(),
         data_access_role=config.PROTECTED_DB_ACCESS_ROLE,
         control_role=config.PROTECTED_DB_CONTROL_ROLE,
+    )
+    try:
+        await service.validate()
+    except Exception:
+        await service.close()
+        raise
+    return service
+
+
+async def create_protected_authorization_control_service(
+    config: Config,
+    approval_source: TrustedApprovalSource,
+) -> PostgresqlProtectedAuthorizationControlService:
+    """Build and validate the durable protected control-plane runtime."""
+
+    if any(
+        value is None
+        for value in (
+            config.PROTECTED_DB_SCHEMA,
+            config.PROTECTED_DB_ACCESS_ROLE,
+            config.PROTECTED_DB_CONTROL_ROLE,
+        )
+    ):
+        raise RuntimeError("PROTECTED_RETRIEVAL_CONFIG_INVALID")
+    assert config.PROTECTED_DB_SCHEMA is not None
+    assert config.PROTECTED_DB_ACCESS_ROLE is not None
+    assert config.PROTECTED_DB_CONTROL_ROLE is not None
+    service = PostgresqlProtectedAuthorizationControlService(
+        create_protected_control_engine(config),
+        schema=config.PROTECTED_DB_SCHEMA.get_secret_value(),
+        data_access_role=config.PROTECTED_DB_ACCESS_ROLE,
+        control_role=config.PROTECTED_DB_CONTROL_ROLE,
+        approval_source=approval_source,
     )
     try:
         await service.validate()

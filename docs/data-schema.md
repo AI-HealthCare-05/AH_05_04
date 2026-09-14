@@ -275,6 +275,45 @@ Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapsho
 | Catalog 구성원 | `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component`, `rag_medication_search_entry` | Snapshot별 제품·성분·Alias 관찰·구성성분과 검색용 선택을 보관 |
 | Catalog 불변 구성 | `rag_catalog_set`, `rag_catalog_set_source`, `rag_catalog_set_member`, `rag_catalog_set_hash` | v2 manifest bytes, 전체 Source Snapshot/version, 실제 구성원 행, export/envelope hash 종류·계산 bytes를 한 Set에 결속. Python adapter는 INSERT·동일 내용 재사용만 제공하고 조회 시 전체를 재검증. 배포 Writer 권한 연결은 후속 |
 
+D-04 Component 전환안 (`e8c41a09d652`, #166 리뷰 대상):
+
+- `rag_medication_product_component`의 고유성은 `(product_id, display_order)`다.
+  같은 Ingredient·role의 반복 행은 서로 다른 명시적 순서와 참조로 보존한다.
+- `release_profile`은 nullable VARCHAR(255)이며 제공된 값만 저장한다.
+  Source의 자유 텍스트에서 방출형을 추론하지 않는다.
+- 같은 Snapshot의 Product·Ingredient composite FK는 유지한다. Python 검증·Repository
+  transaction과 일반 제약으로 무결성을 관리하며 RLS·Trigger를 추가하지 않는다.
+- 기존 순서 충돌은 migration을 중단시킨다. downgrade는 반복 행·release_profile 손실이
+  발생할 때 거부한다. 세부 호환성은 [D-04 결정안](governance/decisions/2026-09-11-catalog-component-occurrences.md)을 따른다.
+
+D-04 관찰 출처 후속안 (`166f30415263`, PR #477)은 위 #464 구조를 확장한다.
+Component의 두 참조 Snapshot 열을 별도로 보존하고 Product/Ingredient 각각의 composite FK로
+결속한다. 자체 상세 Snapshot을 포함한 `(product_id, source_snapshot_id, display_order)`가 새
+고유성이다. `observation_json` BYTEA에는 원문 총량 그룹·관찰 키·출처·순서 계약을 보존한다.
+기존 행의 참조 출처만 FK 근거로 이행하며 관찰 값을 추론하지 않는다. 출처·관찰 정보 손실이
+있으면 downgrade를 거부한다. 검증·저장·복원은 Python transaction에서 수행한다.
+[필드·v2/v3 인계 계약](contracts/proposed/post-mvp-1/catalog-db-integration-v2.md),
+[결정 및 합의 근거](governance/decisions/2026-09-13-component-observation-handoff.md)를 함께 확인한다.
+[정현우 담당 범위 승인 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/477#pullrequestreview-5190458759)는
+HEAD `c58f09686d3a72567793ee237abeb500ab04e710`의 MFDS 매핑·총량 그룹·출처·Candidate 인계를
+확인한 증빙이다. 실제 수집·MFDS 공식 의미·운영 활성화 승인을 의미하지 않는다.
+
+`rag_catalog_set`은 현재 Catalog의 manifest·Source·member·hash를 결속하는 저장·재현 구성 단위다.
+기존 v2와 관찰 v3 export를 수용한다. Set 종류 컬럼은 없으며, `RagCatalogMemberKind`의
+`PRODUCT / INGREDIENT / COMPONENT / ALIAS / SEARCH_ENTRY`는 Set 안의 구성원 종류다.
+`member_kind=ALIAS`는 `alias_id`로 실제 Alias 행을 참조한다. 따라서 **Alias가 Catalog Set에
+포함되는 관계이며, 독립 Authority Alias Set(alias_set/alias_set_member)의 대체 관계가 아니다.**
+독립 Alias Set 구현·승인·Runtime 연결 완료를 의미하지 않는다.
+
+D-03 Crosswalk는 현재 P0 소비 경로가 없어 #166의 즉시 구현 범위에서 제외한다.
+`rag_catalog_set`을 Crosswalk Set으로 재해석하거나 승인 입력 없이 매핑·빈 READY Set을
+생성하지 않는다. Alias D-03a 및 D-04 원료 관찰 연결과 구분하며,
+[D-03 범위 결정·공개 확인 근거·재개 조건](governance/decisions/2026-09-13-catalog-crosswalk-scope.md)을 따른다.
+
+D-05 전체 hash 전환과 Runtime medication Catalog manifest 구성·연결은 후속 보류다.
+기존 v2·관찰 v3 envelope 및 현재 저장 구조는 유지한다. Product Identity 한정 projection도
+실제 필요 확인 뒤 별도 계약으로 검토하며 [답변 기록·재개 조건](governance/decisions/2026-09-13-catalog-d05-transition-scope.md)을 따른다.
+
 Source/Snapshot 책임 경계:
 
 | 테이블 | 책임 | Runtime 활성화와의 관계 |

@@ -13,6 +13,7 @@ from ai_worker.tasks.rag.catalog.export import (
     _canonical_json_bytes,
     _unique_manifest_object,
     create_catalog_export,
+    member_payload,
 )
 from ai_worker.tasks.rag.catalog.storage import CatalogStoragePlan, prepare_catalog_storage
 from ai_worker.tasks.rag.catalog.types import CandidateCatalogSourceRef
@@ -71,7 +72,7 @@ def restore_catalog_export_bytes(*, catalog_jsonl: bytes, manifest_json: bytes) 
             groups[_RECORD_GROUPS[record.pop("record_type")]].append(record)
         encoded = _canonical_json_bytes(groups)
         members = _MEMBERS_ADAPTER.validate_json(encoded, strict=True)
-        _require(_canonical_json_bytes(dataclasses.asdict(members)) == encoded)
+        _require(_canonical_json_bytes(member_payload(members)) == encoded)
         manifest = json.loads(manifest_json, object_pairs_hook=_unique_manifest_object)
         refs = TypeAdapter(tuple[CandidateCatalogSourceRef, ...]).validate_json(
             _canonical_json_bytes(manifest["source_refs"]), strict=True
@@ -103,7 +104,7 @@ def _restore(plan: CatalogStoragePlan) -> CatalogExportArtifacts:
     encoded_groups = _canonical_json_bytes(groups)
     members = _MEMBERS_ADAPTER.validate_json(encoded_groups, strict=True)
     # 알 수 없는 key를 무시하거나 기본값을 채워 손상된 저장 자료를 정상화하지 않습니다.
-    _require(_canonical_json_bytes(dataclasses.asdict(members)) == encoded_groups)
+    _require(_canonical_json_bytes(member_payload(members)) == encoded_groups)
 
     manifest = json.loads(plan.manifest_json, object_pairs_hook=_unique_manifest_object)
     _require(isinstance(manifest, dict))
