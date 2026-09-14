@@ -680,7 +680,7 @@ describe('PrescriptionUploadPage OCR polling', () => {
     selectPrescriptionFile(container)
     fireEvent.click(screen.getByRole('button', { name: '처방전 읽기' }))
     expect(await screen.findByText('동의가 철회되어 처리를 중단했어요')).toBeTruthy()
-    expect(getOcrJob).toHaveBeenCalledWith(ocrJobId)
+    expect(getOcrJob).toHaveBeenCalledWith(ocrJobId, expect.any(AbortSignal))
   })
 
   it('COMPLETED에 result_url이 없으면 검수로 이동하지 않고 fail-closed 한다', async () => {
