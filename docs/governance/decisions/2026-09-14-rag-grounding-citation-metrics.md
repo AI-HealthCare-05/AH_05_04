@@ -1,18 +1,19 @@
-# Product Decision Candidate: RAG Grounding·Citation Metric 계약
+# Product Decision: RAG Grounding·Citation Metric 계약
 
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-160-20260914` |
-| 상태 | Candidate · Review Required |
+| 상태 | Approved |
 | 제안일 | 2026-09-14 |
 | 제안자·구현 | 정현우 (`@ceohwj`) — AI/RAG 구현 담당 |
-| 책임 리뷰 | 김지혜 (`@Jye-rookie`) — Evaluation·Source provenance·Safety fixture 계약 승인 |
+| 책임 리뷰 | 김지혜 (`@Jye-rookie`) — Evaluation·Source provenance·Safety fixture 계약 `APPROVED` |
 | 추적 Issue | [#160](https://github.com/AI-HealthCare-05/AH_05_04/issues/160) |
-| 연결 계약 | [`rag-grounding-citation-metrics-v1.md`](../../contracts/proposed/post-mvp-1/rag-grounding-citation-metrics-v1.md) |
+| 연결 계약 | [`rag-grounding-citation-metrics-v1.md`](../../contracts/targets/post-mvp-1/rag-grounding-citation-metrics-v1.md) |
+| 승인 Evidence | [PR #541 review `5198114002`](https://github.com/AI-HealthCare-05/AH_05_04/pull/541#pullrequestreview-5198114002) · [`decision-approval-evidence.json`](../../validation/rag/issue-160/decision-approval-evidence.json) |
 
-## 후보 결정
+## 결정
 
-RAG-EVAL-005 DEV 구현을 위해 다음 경계를 함께 제안한다.
+RAG-EVAL-005 DEV 구현을 위해 다음 경계를 함께 고정한다.
 
 1. 기존 `rag-eval.case-result@1.0.0`은 유지한다. Claim↔Citation edge와 #180 검증·승인 결과는 별도
    `rag-eval.claim-citation-observation@1.0.0` Evaluation projection으로 보존한다.
@@ -67,6 +68,16 @@ Run/Case/Variant와 결속한 immutable artifact가 아니다.
 
 ## 승인 조건
 
-책임 리뷰어가 본 Decision과 연결 계약을 포함한 Pull Request의 최신 HEAD에서 실제 `APPROVED` review를
-제출해야 Approved Target으로 전이한다. 승인 뒤 상태 디렉터리와 인덱스를 정렬한다. 승인 전에는 schema,
-metric kernel 또는 manifest routing을 구현하지 않는다.
+PR #541 최종 HEAD `7ae82bd3a22c211ee5e2c39d2f1ff6f250310426`에서 책임 리뷰어의 실제
+`APPROVED` review가 기록되었다. 이로써 Decision은 Approved, 연결 계약은 Approved Target으로
+전이한다. 다만 신규 artifact의 schema/export/registry는 다음 Evaluation Schema Set version과 member
+manifest hash가 별도로 승인되기 전에 구현하지 않는다.
+
+### 승인 Evidence
+
+| 리뷰어 | 상태 | Review ID | Submitted at (UTC) | 대상 commit OID |
+| --- | --- | --- | --- | --- |
+| 김지혜 (`@Jye-rookie`) | `APPROVED` | [`5198114002`](https://github.com/AI-HealthCare-05/AH_05_04/pull/541#pullrequestreview-5198114002) | `2026-09-14T13:14:51Z` | `7ae82bd3a22c211ee5e2c39d2f1ff6f250310426` |
+
+PR #541은 승인 뒤 추가 commit 없이 `2026-09-14T13:21:45Z`에 merge commit
+`d16e048379b19a2ecc377c439d7d9b750300cc2a`로 병합됐다.

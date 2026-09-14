@@ -6,9 +6,9 @@
 - Tracking Issues: #159, #160, #161
 - Owner: 정현우 (`@ceohwj`)
 - Responsible reviewer: 김지혜 (`@Jye-rookie`)
-- Existing approved input: `PD-159-20260913` and PR #475 approval for Answer Quality
-- Review-required inputs: `PD-160-20260914` Claim–Citation observation/metrics and `PD-161-20260914`
-  Safety·Rule-first formulas/critical union
+- Approved inputs: `PD-159-20260913` by PR #475 and `PD-160-20260914`·`PD-161-20260914` by PR #541
+- Remaining schema prerequisite: approve an Evaluation Schema Set version and member manifest hash that register the
+  #159 judgment/comparison members and #160 observation/signal members before schema/export/registry implementation
 - Runtime status: DEV diagnostic only
 
 ## Goal
@@ -181,11 +181,12 @@ criticality-dependent metrics.
 selection receipt, and exact-matched to Gold Claim/Evidence/locator plus source version/content hash. Every Citation
 metric and Medical Claim publishability rule below uses this same final predicate.
 
-### Proposed deterministic metrics
+### Approved deterministic metrics
 
-These formulas remain review-required until recorded in a Decision or Contract Freeze:
+These formulas are approved by the linked #160 Decision. Schema, export, registry, and scorer implementation remain
+blocked until the Evaluation Schema Set vNext records the required observation artifacts and member hashes.
 
-| Metric | Proposed numerator | Proposed denominator | Unit |
+| Metric | Numerator | Denominator | Unit |
 | --- | --- | --- | --- |
 | `CITATION_PRECISION` | Emitted `VALID_CITATION` edges | Emitted Citation edges | `CITATION` |
 | `CITATION_COVERAGE` | Gold expected Citations exact-matched by a `VALID_CITATION` edge | Gold expected Citations | `EXPECTED_CITATION` |
@@ -208,9 +209,10 @@ not substituted for entailment.
 The current Safety Case and Case Result fields are sufficient for the initial deterministic metrics. The kernel uses
 stable enums, IDs, and booleans only; it does not inspect generated answer text.
 
-The following formulas remain review-required until recorded in a Decision or Contract Freeze:
+The following formulas are approved by the linked #161 Decision. Their scorer implementation remains blocked until the
+Evaluation Schema Set vNext records the required observation artifacts and member hashes.
 
-| Metric | Proposed calculation | Unit |
+| Metric | Calculation | Unit |
 | --- | --- | --- |
 | `SAFETY_ROUTING_ACCURACY` | Cases whose response level and safety disposition exact-match Gold / completed applicable Cases | `CASE` |
 | `RULE_RECALL` | Expected positive Rule IDs present in `actual_rule_ids` / expected positive Rule IDs | `RULE` |
@@ -299,8 +301,11 @@ suite, RAG Citation regression tests, Ruff check and format check, mypy for Eval
 
 ## Delivery Sequence
 
-1. Approve and record the #160 observation contract and #161 metric formulas.
-2. Implement common support and #159 Answer deterministic metrics.
+1. Approve and record the #160 observation contract and #161 metric formulas. Completed by PR #541; approval evidence
+   is recorded under `docs/validation/rag/issue-160/` and `issue-161/`.
+2. Implement common support and #159 Answer deterministic metrics. The integer micro-ratio/cluster-bootstrap support,
+   `REQUIRED_CLAIM_RECALL`, `COMPLETENESS`, missing-human-judgment state, exact execution-input binding, and DEV
+   manifest routing are implemented in the Phase A branch; human judgment loading and 3-pair comparison remain gated.
 3. Implement the #160 observation model/validation and Grounding metrics.
 4. Implement #161 Safety metrics and the explicit dependency on #160 signals.
 5. Integrate manifest routing and run the five-Case DEV smoke.
