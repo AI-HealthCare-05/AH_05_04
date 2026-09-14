@@ -434,3 +434,98 @@ def test_writer_credentials_are_validated_before_external_actions(tmp_path, writ
     assert "docker" not in result.stdout.lower()
     assert "synthetic-admin-secret" not in result.stdout + result.stderr
     assert "synthetic-writer-secret" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "key,value,expected",
+    [
+        ("CLOVA_OCR_SECRET", "", "CLOVA_OCR_SECRET"),
+        ("CLOVA_OCR_INVOKE_URL", "http://clova.test/ocr", "HTTPS"),
+        ("PUBLIC_TRACK_F_ENABLED", "True", "PUBLIC_TRACK_F_ENABLED=false"),
+        ("OCR_STRUCTURE_LLM_ENABLED", "true", "OCR_STRUCTURE_LLM_ENABLED=false"),
+    ],
+)
+def test_worker_preflight_blocks_before_registry_and_ssh(tmp_path, key, value, expected):
+    settings = {
+        "ENV": "production",
+        "REDIS_PASSWORD": "synthetic-redis",
+        "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": VALID_SNAPSHOT_ENCRYPTION_KEY,
+        "DB_ADMIN_USER": "admin",
+        "DB_ADMIN_PASSWORD": "synthetic-admin",
+        "DB_MIGRATION_USER": "migration",
+        "DB_MIGRATION_PASSWORD": "synthetic-migration",
+        "DB_APP_USER": "app",
+        "DB_APP_PASSWORD": "synthetic-app",
+        "SOURCE_WRITER_USER": "writer",
+        "SOURCE_WRITER_PASSWORD": "synthetic-writer",
+        "DOCKER_USER": "synthetic",
+        "DOCKER_REPOSITORY": "demo",
+        "APP_VERSION": "test123",
+        "FRONTEND_VERSION": "test123",
+        "AI_WORKER_VERSION": "test123",
+        "TLS_TERMINATION": "cloudfront",
+        "PRODUCTION_DOMAIN": "synthetic.cloudfront.net",
+        "PRODUCTION_PUBLIC_ORIGIN": "https://synthetic.cloudfront.net",
+        "COOKIE_DOMAIN": "synthetic.cloudfront.net",
+        "CORS_ALLOWED_ORIGINS": "https://synthetic.cloudfront.net",
+        "CLOUDFRONT_ORIGIN_VERIFY_SECRET": "synthetic-origin-secret-for-tests-only",
+        "CLOVA_OCR_INVOKE_URL": "https://clova.test/ocr",
+        "CLOVA_OCR_SECRET": "synthetic-clova-secret",
+    }
+    settings[key] = value
+    env_file = tmp_path / "prod.env"
+    env_file.write_text("\n".join(f'{k}="{v}"' for k, v in settings.items()))
+    result = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env={"PATH": "/usr/bin:/bin", "PROD_ENV_FILE": str(env_file)},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode != 0
+    assert expected in result.stdout
+    assert "synthetic-clova-secret" not in result.stdout + result.stderr
+    assert "Docker login" not in result.stdout
+
+
+@pytest.mark.parametrize("worker_health_exit", [0, 42])
+def test_remote_deployment_waits_for_worker_and_propagates_readiness_failure(tmp_path, worker_health_exit):
+    script = SCRIPT_PATH.read_text()
+    remote = script.split("bash -s\" <<'EOF'\n", 1)[1].split("\nEOF\n", 1)[0]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker = bin_dir / "docker"
+    docker.write_text(
+        "#!/bin/bash\n"
+        'printf "%s\\n" "$*" >> "$COMMAND_LOG"\n'
+        'if [[ "$*" == "wait migrate" ]]; then echo 0; fi\n'
+        'if [[ "$*" == *"exec -T postgres"* ]]; then printf "user\\t1\\nself_profile\\t1\\n"; fi\n'
+        'if [[ "$*" == "compose up -d --pull always --wait fastapi ai-worker nginx" ]]; then\n'
+        '  exit "$WORKER_HEALTH_EXIT"\n'
+        "fi\n"
+        "exit 0\n"
+    )
+    docker.chmod(0o700)
+    (tmp_path / "project").mkdir()
+    log = tmp_path / "commands.log"
+    result = subprocess.run(
+        ["bash"],
+        input=remote,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        env={
+            "HOME": str(tmp_path),
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "DEPLOY_SERVICES": "fastapi ai-worker nginx",
+            "COMMAND_LOG": str(log),
+            "WORKER_HEALTH_EXIT": str(worker_health_exit),
+        },
+    )
+    assert log.exists(), result.stderr
+    commands = log.read_text()
+    assert result.returncode == worker_health_exit
+    assert commands.index("stop -t 90 fastapi ai-worker") < commands.index("--force-recreate migrate")
+    assert commands.index("--entrypoint python fastapi") < commands.index("--wait fastapi ai-worker nginx")
+    assert ("image prune" in commands) is (worker_health_exit == 0)

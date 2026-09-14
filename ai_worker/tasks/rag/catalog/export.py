@@ -23,7 +23,24 @@ from ai_worker.tasks.rag.catalog.types import (
 from ai_worker.tasks.rag.catalog.validate import CatalogValidationReport, validate_catalog_members
 
 CATALOG_SCHEMA_VERSION = "medication-catalog-v2"
+CATALOG_OBSERVATION_SCHEMA_VERSION = "medication-catalog-v3"
 CATALOG_MANIFEST_SPEC_VERSION = "catalog-manifest-envelope-v2"
+
+
+def catalog_schema_version(members: CatalogMembers) -> str:
+    return (
+        CATALOG_OBSERVATION_SCHEMA_VERSION
+        if any(c.observation is not None for c in members.components)
+        else CATALOG_SCHEMA_VERSION
+    )
+
+
+def member_payload(members: CatalogMembers) -> dict[str, object]:
+    payload = dataclasses.asdict(members)
+    for component in payload["components"]:
+        if component["observation"] is None:
+            del component["observation"]
+    return payload
 
 
 class CatalogExportError(ValueError):
@@ -126,7 +143,10 @@ def _record_lines(members: CatalogMembers) -> tuple[dict[str, object], ...]:
                     f"{component.component_order:020d}".encode("ascii"),
                     _text_sort_key(component.component_ref),
                 ),
-                {"record_type": "COMPONENT", **dataclasses.asdict(component)},
+                {
+                    "record_type": "COMPONENT",
+                    **{k: v for k, v in dataclasses.asdict(component).items() if k != "observation" or v is not None},
+                },
             )
         )
     for alias in members.aliases:
@@ -295,7 +315,7 @@ def create_catalog_export(
         "catalog_version": catalog_version,
         "source_refs": [dataclasses.asdict(item) for item in ordered_source_refs],
         "normalization_version": CATALOG_NORMALIZATION_VERSION,
-        "schema_version": CATALOG_SCHEMA_VERSION,
+        "schema_version": catalog_schema_version(members),
         "declared_counts": dataclasses.asdict(counts),
         "export_checksum": export_checksum,
         "duplicate_identity_count": report.duplicate_identity_count,
@@ -311,7 +331,7 @@ def create_catalog_export(
         catalog_version=catalog_version,
         catalog_manifest_hash=manifest_hash,
         source_refs=ordered_source_refs,
-        schema_version=CATALOG_SCHEMA_VERSION,
+        schema_version=catalog_schema_version(members),
         normalization_version=CATALOG_NORMALIZATION_VERSION,
         verification_status=approval["verification_status"],
         freshness_status=approval["freshness_status"],
@@ -374,7 +394,7 @@ def verify_catalog_export(artifacts: CatalogExportArtifacts) -> None:
             and manifest["freshness_status"] == catalog.freshness_status
             and manifest["is_complete"] is catalog.is_complete
             and manifest["catalog_version"] == catalog.catalog_version
-            and manifest["schema_version"] == catalog.schema_version
+            and manifest["schema_version"] == catalog.schema_version == catalog_schema_version(members)
             and manifest["normalization_version"] == catalog.normalization_version
             and manifest["source_refs"] == [dataclasses.asdict(ref) for ref in catalog.source_refs]
             and manifest["declared_counts"] == dataclasses.asdict(catalog.declared_counts)
