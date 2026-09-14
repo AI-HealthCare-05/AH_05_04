@@ -1,7 +1,10 @@
 """Add the versioned Knowledge Evidence Index foundation.
 
+Fixed-zero lock markers let the Builder acquire PostgreSQL row locks without
+granting UPDATE on provenance or business columns.
+
 Revision ID: 178a1b2c3d4e
-Revises: e8c41a09d652
+Revises: 166f30415263
 """
 
 import sqlalchemy as sa
