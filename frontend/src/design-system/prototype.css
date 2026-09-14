@@ -1050,8 +1050,29 @@
 }
 
 .bottom-nav button:disabled {
-  cursor: default;
-  color: #9aa3ad;
+  cursor: not-allowed;
+  color: #6b737d;
+  opacity: 0.75;
+}
+
+/* 색 외의 신호. aria-label 의 "(준비 중)" 과 같은 의미를 눈으로도 보여줍니다. */
+.bottom-nav button:disabled::after {
+  content: '준비 중';
+  display: block;
+  margin-top: 1px;
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.2px;
+}
+
+/* 아이콘도 함께 흐리게 해 활성 탭과 혼동되지 않게 합니다. */
+.bottom-nav button:disabled .bottom-nav__icon,
+.bottom-nav button:disabled .bottom-nav__home {
+  opacity: 0.6;
 }
 
 .compact-two-column {
