@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "166f40516273"
-down_revision = "469a1b2c3d4e"
+down_revision = "458c1d2e3f4a"
 branch_labels = None
 depends_on = None
 TABLE = "rag_source_snapshot_exclusion"
