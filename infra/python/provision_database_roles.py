@@ -39,6 +39,7 @@ RUNTIME_APPEND_ONLY_TABLES = frozenset(
 RUNTIME_AUTH_UPDATE_COLUMNS = {
     "refresh_session": ("active_jti", "updated_at"),
     "password_reset_token": ("used_at",),
+    "email_verification_token": ("verified_at",),
 }
 
 
