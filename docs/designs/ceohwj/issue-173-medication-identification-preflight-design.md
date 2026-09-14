@@ -64,10 +64,9 @@ allowlist로 fail-closed 검증한다. DB 사영은 RAG-12-API(`#174`)가 Reposi
 ## 문제
 
 Chat `ROUTINE`과 자동 Guide가 서로 다른 코드에서 "약품 식별이 끝났는가"를 판단하면, 한쪽이 미식별·
-stale 처방으로 Rule·Retrieval·Provider를 실행할 수 있다. 현재 저장소에는 두 경로가 공통 소비할
-결정적·부작용 없는 판정 경계가 없다. `MedicationIdentificationService.ensure_matched_for_preflight`는
-DB 잠금과 `ApiError` 예외에 결속돼 있어 Worker Graph Node가 재사용할 수 없고, 예외 기반이라
-`STALE_FALLBACK`과 `IDENTIFICATION_FALLBACK`을 서로 다른 code로 구분하지 못한다.
+stale 처방으로 Rule·Retrieval·Provider를 실행할 수 있다. Guide HTTP Preflight 정본 경계는
+`RagPreflightService`가 호출하는 `ensure_owned_active_matched_for_guide_preflight`로 제한하고,
+Chat·Worker가 공통 소비할 판정은 이 문서의 순수 결정 함수로 분리한다.
 
 ## 이번 변경의 목표
 
