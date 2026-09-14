@@ -358,11 +358,13 @@ class RagSourceCatalogRepository:
         *,
         product_id: UUID,
         display_order: int,
+        source_snapshot_id: UUID,
     ) -> RagMedicationProductComponent | None:
         result = await self.session.execute(
             select(RagMedicationProductComponent).where(
                 RagMedicationProductComponent.product_id == product_id,
                 RagMedicationProductComponent.display_order == display_order,
+                RagMedicationProductComponent.source_snapshot_id == source_snapshot_id,
             )
         )
         return result.scalar_one_or_none()
