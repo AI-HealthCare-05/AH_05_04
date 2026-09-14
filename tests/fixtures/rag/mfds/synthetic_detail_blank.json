@@ -1,0 +1,21 @@
+{
+  "header": {
+    "resultCode": "00"
+  },
+  "body": {
+    "items": [
+      {
+        "ITEM_SEQ": "synthetic-product-002",
+        "TAMT_SEQ": "1",
+        "MTRAL_SN": "",
+        "MTRAL_CODE": "",
+        "QNT": "",
+        "INGD_UNIT_CD": "",
+        "CPNT_CTNT_CONT": ""
+      }
+    ],
+    "pageNo": 1,
+    "numOfRows": 100,
+    "totalCount": 1
+  }
+}
