@@ -548,6 +548,10 @@ def get_auth_service(
         EmailSender,
         Depends(get_email_sender),
     ],
+    user_consent_repository: Annotated[
+        UserConsentRepository,
+        Depends(get_user_consent_repository),
+    ],
 ) -> AuthService:
     return AuthService(
         repository,
@@ -555,6 +559,7 @@ def get_auth_service(
         refresh_session_repository,
         email_verification_repository,
         email_sender,
+        user_consent_repository,
     )
 
 
