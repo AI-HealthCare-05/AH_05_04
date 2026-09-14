@@ -16,14 +16,16 @@ from app.services.users import _is_currently_granted
 
 
 async def _signup_and_login(client: AsyncClient, *, email: str) -> dict[str, str]:
-    await client.post(
+    signup_response = await client.post(
         "/api/v1/auth/signup",
         json={"email": email, "password": "Password123!", "name": "동의API"},
     )
+    assert signup_response.status_code == status.HTTP_201_CREATED, signup_response.text
     login_response = await client.post(
         "/api/v1/auth/login",
         json={"email": email, "password": "Password123!"},
     )
+    assert login_response.status_code == status.HTTP_200_OK, login_response.text
     return {"Authorization": f"Bearer {login_response.json()['access_token']}"}
 
 
