@@ -10,7 +10,8 @@
 - 요청 body는 필수 계정 필드 `name`, `email`, `password`와 선택 필드 `consents`만 허용합니다(`extra="forbid"`).
 - `consents`를 생략하거나 빈 배열로 보내도 회원가입은 성공하며 목적별 동의 row를 만들지 않습니다.
 - `consents[].purpose`는 `OCR`, `GUIDE`, `CHAT`, `NOTIFICATION`만 허용하고 중복 목적은 `422 VALIDATION_FAILED`로 거부합니다.
-- `consents[].policy_version`은 해당 목적의 현재 policy version과 일치해야 합니다. 서버는 선택된 목적만 `GRANTED`로 저장하며 클라이언트는 `status`를 보내지 않습니다.
+- 클라이언트는 `policy_version`이나 `status`를 보내지 않습니다. 서버는 선택된 목적만 해당 목적의 현재 policy version으로 `GRANTED` 저장합니다.
+- 선택한 목적의 현재 policy version이 설정되어 있지 않으면 `503 CONSENT_POLICY_UNAVAILABLE`로 거부합니다.
 - `gender`, `birthday`, `phone_number` 등 가입 후 추가 정보 입력 대상 필드는 회원가입 요청에서 받지 않습니다.
 - MVP 범위 밖 필드가 포함되면 공통 `422 VALIDATION_FAILED` 응답을 반환합니다.
 - `email` 중복 시 `409 CONFLICT`을 반환합니다. `phone_number` 중복 체크는 Post-MVP에서 가입 요청에 `phone_number`가 추가될 때 함께 적용됩니다.
@@ -20,7 +21,7 @@
 | `name` | 필수, 1~20자 |
 | `email` | 필수, `EmailStr`, 최대 40자. Backend에서 소문자로 정규화 |
 | `password` | 필수, 8~72자, 대문자·소문자·숫자·특수문자 각 1개 이상 포함 |
-| `consents` | 선택, `{purpose, policy_version}` 배열. 선택 목적만 `GRANTED` 저장 |
+| `consents` | 선택, `{purpose}` 배열. 선택 목적만 서버 current policy version으로 `GRANTED` 저장 |
 
 ### 이메일 정규화·저장·중복 기준
 
@@ -132,7 +133,7 @@
 다음 변경은 이 문서, 구현, API 문서와 관련 테스트를 같은 PR에서 갱신해야 합니다.
 
 - 회원가입·내 정보 수정 요청에서 허용하는 필드의 추가·삭제·필수 여부 변경
-- 회원가입 `consents`의 purpose, policy_version, 선택 동의 저장 의미 변경
+- 회원가입 `consents`의 purpose, 서버 current policy version 저장, 선택 동의 저장 의미 변경
 - `USER` 테이블의 nullable 필드 범위 변경
 - 이메일 정규화, 저장, 조회 및 중복 비교 기준 변경
 - 인증 토큰 payload, `token_version` 재검증, 로그아웃 세션 무효화 기준 변경

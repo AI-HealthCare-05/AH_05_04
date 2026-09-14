@@ -15,10 +15,10 @@ from app.models.user_consents import ConsentPurpose, ConsentStatus, UserConsent
 from app.models.users import User
 from app.repositories.user_repository import DuplicateUserFieldError, UserRepository
 
-OCR_CONSENT_V1 = {"purpose": "OCR", "policy_version": "ocr-consent.v1"}
-GUIDE_CONSENT_V1 = {"purpose": "GUIDE", "policy_version": "guide-consent.v1"}
-CHAT_CONSENT_V1 = {"purpose": "CHAT", "policy_version": "chat-consent.v1"}
-NOTIFICATION_CONSENT_V1 = {"purpose": "NOTIFICATION", "policy_version": "notification-consent.v1"}
+OCR_CONSENT = {"purpose": "OCR"}
+GUIDE_CONSENT = {"purpose": "GUIDE"}
+CHAT_CONSENT = {"purpose": "CHAT"}
+NOTIFICATION_CONSENT = {"purpose": "NOTIFICATION"}
 
 
 def _email() -> str:
@@ -145,8 +145,8 @@ class TestSignupAPI:
                 client,
                 email=email,
                 consents=[
-                    OCR_CONSENT_V1,
-                    GUIDE_CONSENT_V1,
+                    OCR_CONSENT,
+                    GUIDE_CONSENT,
                 ],
             )
 
@@ -197,10 +197,10 @@ class TestSignupAPI:
                 client,
                 email=email,
                 consents=[
-                    OCR_CONSENT_V1,
-                    GUIDE_CONSENT_V1,
-                    CHAT_CONSENT_V1,
-                    NOTIFICATION_CONSENT_V1,
+                    OCR_CONSENT,
+                    GUIDE_CONSENT,
+                    CHAT_CONSENT,
+                    NOTIFICATION_CONSENT,
                 ],
             )
 
@@ -215,7 +215,7 @@ class TestSignupAPI:
             response = await _signup(
                 client,
                 email=email,
-                consents=[{"purpose": "LOCATION", "policy_version": "location-consent.v1"}],
+                consents=[{"purpose": "LOCATION"}],
             )
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
@@ -228,30 +228,31 @@ class TestSignupAPI:
                 client,
                 email=email,
                 consents=[
-                    GUIDE_CONSENT_V1,
-                    GUIDE_CONSENT_V1,
+                    GUIDE_CONSENT,
+                    GUIDE_CONSENT,
                 ],
             )
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         assert response.headers.get_list("cache-control") == ["no-store"]
 
-    async def test_signup_rolls_back_user_when_consent_policy_mismatches(
+    @pytest.mark.parametrize(
+        "consent",
+        [
+            {"purpose": "GUIDE", "policy_version": "guide-consent.v1"},
+            {"purpose": "GUIDE", "status": "GRANTED"},
+        ],
+    )
+    async def test_signup_rejects_client_supplied_consent_internals(
         self,
         db_session: AsyncSession,
+        consent: dict[str, str],
     ) -> None:
         email = _email()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await _signup(
-                client,
-                email=email,
-                consents=[{"purpose": "GUIDE", "policy_version": "guide-consent.v0"}],
-            )
+            response = await _signup(client, email=email, consents=[consent])
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
-        assert response.json()["details"] == [
-            {"field": "consents.policy_version", "reason": "POLICY_VERSION_MISMATCH", "rejected_value": None}
-        ]
         assert await db_session.scalar(select(User.id).where(User.email == email.lower())) is None
         assert await _consents_for_email(db_session, email=email) == []
 
@@ -266,7 +267,7 @@ class TestSignupAPI:
             response = await _signup(
                 client,
                 email=email,
-                consents=[OCR_CONSENT_V1],
+                consents=[OCR_CONSENT],
             )
 
         assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
@@ -292,7 +293,7 @@ class TestSignupAPI:
                 transport=ASGITransport(app=app, raise_app_exceptions=False),
                 base_url="http://test",
             ) as client:
-                response = await _signup(client, email=email, consents=[OCR_CONSENT_V1])
+                response = await _signup(client, email=email, consents=[OCR_CONSENT])
         finally:
             fastapi_app.dependency_overrides.pop(get_user_consent_repository, None)
 

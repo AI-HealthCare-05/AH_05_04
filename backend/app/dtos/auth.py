@@ -10,7 +10,6 @@ class SignUpConsentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     purpose: ConsentPurpose
-    policy_version: Annotated[str, Field(min_length=1, max_length=100)]
 
 
 class SignUpRequest(BaseModel):

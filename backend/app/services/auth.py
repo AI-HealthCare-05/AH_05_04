@@ -20,7 +20,7 @@ from app.core.utils.security import (
 from app.core.validators import validate_password
 from app.dtos.auth import LoginRequest, SignUpConsentRequest, SignUpRequest
 from app.models.email_verification import EmailVerificationPurpose
-from app.models.user_consents import ConsentStatus
+from app.models.user_consents import ConsentPurpose, ConsentStatus
 from app.models.users import User
 from app.repositories.email_verification_repository import EmailVerificationRepository
 from app.repositories.password_reset_repository import PasswordResetRepository
@@ -85,7 +85,7 @@ class AuthService:
         data: SignUpRequest,
     ) -> User:
         await self.check_email_exists(data.email)
-        self._validate_signup_consents(data.consents)
+        consent_policy_versions = self._validate_signup_consents(data.consents)
 
         try:
             user = await self.user_repo.create_user(
@@ -93,7 +93,11 @@ class AuthService:
                 hashed_password=hash_password(data.password),
                 name=data.name,
             )
-            await self._store_signup_consents(user=user, consents=data.consents)
+            await self._store_signup_consents(
+                user=user,
+                consents=data.consents,
+                policy_versions=consent_policy_versions,
+            )
             return user
         except DuplicateUserFieldError as exc:
             if exc.field == "email":
@@ -108,7 +112,8 @@ class AuthService:
                 details=[ErrorDetail(field=exc.field, reason="ALREADY_EXISTS")],
             ) from exc
 
-    def _validate_signup_consents(self, consents: list[SignUpConsentRequest]) -> None:
+    def _validate_signup_consents(self, consents: list[SignUpConsentRequest]) -> dict[ConsentPurpose, str]:
+        policy_versions: dict[ConsentPurpose, str] = {}
         for consent in consents:
             current_policy_version = current_consent_policy_version(consent.purpose)
             if not current_policy_version.strip():
@@ -117,15 +122,16 @@ class AuthService:
                     code="CONSENT_POLICY_UNAVAILABLE",
                     message="현재 동의 안내를 사용할 수 없습니다.",
                 )
-            if consent.policy_version != current_policy_version:
-                raise ApiError(
-                    status_code=422,
-                    code="VALIDATION_FAILED",
-                    message="동의 정책 버전을 확인해 주세요.",
-                    details=[ErrorDetail(field="consents.policy_version", reason="POLICY_VERSION_MISMATCH")],
-                )
+            policy_versions[consent.purpose] = current_policy_version
+        return policy_versions
 
-    async def _store_signup_consents(self, *, user: User, consents: list[SignUpConsentRequest]) -> None:
+    async def _store_signup_consents(
+        self,
+        *,
+        user: User,
+        consents: list[SignUpConsentRequest],
+        policy_versions: dict[ConsentPurpose, str],
+    ) -> None:
         if not consents:
             return
         if self.user_consent_repo is None:
@@ -137,7 +143,7 @@ class AuthService:
                 user_id=user.id,
                 purpose=consent.purpose,
                 status=ConsentStatus.GRANTED,
-                policy_version=consent.policy_version,
+                policy_version=policy_versions[consent.purpose],
                 changed_at=changed_at,
             )
 
