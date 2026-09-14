@@ -62,6 +62,10 @@ def test_protected_migration_refuses_missing_environment(
 def protected_database() -> Iterator[_ProtectedDatabase]:
     database_url = os.getenv("PROTECTED_TEST_DATABASE_URL")
     if not database_url:
+        # PD-368 §4는 권한 경계를 실제 제한 로그인 테스트로 입증하도록 요구하므로
+        # CI에서는 조용히 skip하지 않고 배선 누락으로 실패합니다.
+        if os.getenv("CI"):
+            pytest.fail("PROTECTED_TEST_DATABASE_URL is required in CI")
         pytest.skip("PROTECTED_TEST_DATABASE_URL is unavailable")
 
     suffix = uuid4().hex[:10]

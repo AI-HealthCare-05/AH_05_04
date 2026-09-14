@@ -52,6 +52,19 @@ class MedicationIdentificationPreflightResult:
     matched_identification_count: int
 
 
+@dataclass(frozen=True)
+class MedicationIdentificationPreflightMatchedMedication:
+    prescription_version_medication_id: UUID
+    medication_identification_id: UUID
+
+
+@dataclass(frozen=True)
+class MedicationIdentificationGuidePreflightResult:
+    prescription_id: UUID
+    prescription_version_id: UUID
+    matched_medications: tuple[MedicationIdentificationPreflightMatchedMedication, ...]
+
+
 class MedicationIdentificationService:
     def __init__(self, repository: MedicationCandidateRepository) -> None:
         self._repository = repository
@@ -242,23 +255,81 @@ class MedicationIdentificationService:
         identifications = await self._repository.get_matched_identifications_for_update(
             prescription_version_medication_ids=medication_ids
         )
-        matched_medication_ids = {item.prescription_version_medication_id for item in identifications}
-        if len(matched_medication_ids) != len(medication_ids):
-            raise ApiError(
-                status_code=409,
-                code="PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE",
-                message="약품 확인이 완료되지 않아 다음 단계를 진행할 수 없습니다.",
-                details=[
-                    ErrorDetail(
-                        field="prescription_version_id",
-                        reason="MATCHED_IDENTIFICATION_REQUIRED",
-                    )
-                ],
-            )
+        self._raise_if_any_medication_unmatched(medication_ids=medication_ids, identifications=identifications)
 
         return MedicationIdentificationPreflightResult(
             prescription_version_medication_count=len(medication_ids),
-            matched_identification_count=len(matched_medication_ids),
+            matched_identification_count=len({item.prescription_version_medication_id for item in identifications}),
+        )
+
+    async def ensure_owned_active_matched_for_guide_preflight(
+        self,
+        *,
+        prescription_id: UUID,
+        user_id: UUID,
+        expected_prescription_version_id: UUID,
+    ) -> MedicationIdentificationGuidePreflightResult:
+        prescription = await self._repository.get_active_prescription_for_preflight_owned(
+            prescription_id=prescription_id,
+            user_id=user_id,
+        )
+        if prescription is None:
+            raise self._preflight_prescription_not_found_error()
+        if prescription.active_version_id != expected_prescription_version_id:
+            raise self._preflight_version_conflict_error()
+
+        medication_ids = await self._repository.get_active_version_medication_ids_for_update(
+            prescription_version_id=prescription.active_version_id
+        )
+        if medication_ids is None:
+            raise self._preflight_version_conflict_error()
+        if not medication_ids:
+            raise self._preflight_identification_incomplete_error(reason="ACTIVE_MEDICATION_REQUIRED")
+
+        identifications = await self._repository.get_matched_identifications_for_update(
+            prescription_version_medication_ids=medication_ids
+        )
+        matched_by_medication = self._matched_by_medication(identifications)
+        if any(medication_id not in matched_by_medication for medication_id in medication_ids):
+            raise self._preflight_identification_incomplete_error(reason="MATCHED_IDENTIFICATION_REQUIRED")
+
+        return MedicationIdentificationGuidePreflightResult(
+            prescription_id=prescription.id,
+            prescription_version_id=prescription.active_version_id,
+            matched_medications=tuple(
+                MedicationIdentificationPreflightMatchedMedication(
+                    prescription_version_medication_id=medication_id,
+                    medication_identification_id=matched_by_medication[medication_id].id,
+                )
+                for medication_id in medication_ids
+            ),
+        )
+
+    @staticmethod
+    def _matched_by_medication(
+        identifications: list[MedicationIdentification],
+    ) -> dict[UUID, MedicationIdentification]:
+        return {identification.prescription_version_medication_id: identification for identification in identifications}
+
+    def _raise_if_any_medication_unmatched(
+        self,
+        *,
+        medication_ids: list[UUID],
+        identifications: list[MedicationIdentification],
+    ) -> None:
+        matched_medication_ids = {item.prescription_version_medication_id for item in identifications}
+        if len(matched_medication_ids) == len(medication_ids):
+            return
+        raise ApiError(
+            status_code=409,
+            code="PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE",
+            message="약품 확인이 완료되지 않아 다음 단계를 진행할 수 없습니다.",
+            details=[
+                ErrorDetail(
+                    field="prescription_version_id",
+                    reason="MATCHED_IDENTIFICATION_REQUIRED",
+                )
+            ],
         )
 
     @staticmethod
@@ -374,6 +445,33 @@ class MedicationIdentificationService:
                 field="candidate_search_result_id",
                 reason="RESULT_NOT_SELECTABLE",
             )
+
+    @staticmethod
+    def _preflight_prescription_not_found_error() -> ApiError:
+        return ApiError(
+            status_code=404,
+            code="PRESCRIPTION_NOT_FOUND",
+            message="처방 정보를 찾을 수 없습니다.",
+            details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND")],
+        )
+
+    @staticmethod
+    def _preflight_version_conflict_error() -> ApiError:
+        return ApiError(
+            status_code=409,
+            code="PRESCRIPTION_VERSION_CONFLICT",
+            message="처방 버전이 최신 상태가 아닙니다. 최신 처방 상태를 다시 확인해 주세요.",
+            details=[ErrorDetail(field="prescription_version_id", reason="STALE")],
+        )
+
+    @staticmethod
+    def _preflight_identification_incomplete_error(*, reason: str) -> ApiError:
+        return ApiError(
+            status_code=409,
+            code="PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE",
+            message="약품 확인이 완료되지 않아 다음 단계를 진행할 수 없습니다.",
+            details=[ErrorDetail(field="prescription_id", reason=reason)],
+        )
 
     @staticmethod
     def _not_found_error(*, field: str) -> ApiError:

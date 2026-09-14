@@ -42,10 +42,6 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [PROFILE SELF 소유권 전환 계약 v1](./current/profile-self-ownership-v1.md): 본인 단일 SELF profile과 `profile_id` 기반 사용자 리소스 소유권 기준
 - 공통 오류: `code`, `message`, `details`, `trace_id`
 
-## 승인된 추가 목표
-
-- [Track B 일정 정합화 v1 (#417)](./targets/post-mvp-1/track-b-schedule-reconciliation-v1.md): PR #424 양 도메인 승인 및 Decision 증빙 연결. #423 DB 구현·리뷰 대기; 일정 API #202·실제 알림 #203 연동은 별도.
-
 ## Proposed 계약
 
 - [RAG Answer Quality Metric·Variant 계약 v1 제안 (#159)](./proposed/post-mvp-1/rag-answer-quality-metrics-v1.md): `ANS-BASE | ANS-RAG | ANS-FINAL`, 네 Answer Metric의 분석 단위·micro ratio·95% cluster bootstrap, 승인 human-rubric label과 세 pair 비교 경계. `PD-159-20260913` 책임 리뷰 전 Proposed이며 DEV 구현·HOLDOUT 실행·Release 승인 아님.
@@ -56,8 +52,6 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Track B UNCONFIRMED backlog v1](./proposed/unconfirmed-backlog-v1.md): PD-418 URL·cursor·DTO·오류. #426 미등록 후보 승인 증빙 확인; 최신 #202 기반 실제 v1 등록·PUT 보완·페이지 이동 검증 변경은 두 리뷰어 재승인 대기. 승인 전 Current 승격·병합 금지.
 
 - [Track B Notification 계약 v1 (#203)](./proposed/track-b-notifications-v1.md): PD-203 기반 알림 저장·목록·읽음·재알림 구현 브랜치. 지정 리뷰어 승인 및 #202 일정 API 통합 전이며 current 계약 아님.
-
-- [Track B 일정 정합화 제안 v1 (#417)](./proposed/track-b-schedule-reconciliation-v1.md): setup reason·일정 Audit·time retire·revision·알림 취소 transaction의 승인 요청안. DB 후속 #423과 #202·#203 인계 기준; 승인 전 구현 근거 아님.
 
 - [Source Artifact·REJECTS 보존·삭제 정책 초안 (#335)](./proposed/post-mvp-1/source-artifact-retention-cleanup.md): PM 30일 유예·참조 보존·수동 배치 승인 반영, 통합 검토 대상, 후속 구현 [#347](https://github.com/AI-HealthCare-05/AH_05_04/issues/347)·김지혜 담당. Local 합성 #347의 승인 순서·revision·경합 잠금·DB 감사 근거·참조 범위 보완 연결 포함. 운영 삭제·활성화 승인 아님.
 
@@ -73,12 +67,14 @@ Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 
 
 ## 승인된 Post-MVP-1 목표 계약
 
+- [Track B 일정 정합화 v1 (#417)](./targets/post-mvp-1/track-b-schedule-reconciliation-v1.md): PR #424 승인 목표. DB #438·알림 #430·일정 API #456 병합; Current 승격과 과거 약 표시 경로의 검토는 별도.
+
 - [Post-MVP-1 목표 계약 인덱스](./targets/post-mvp-1/README.md)
 - [비동기 Job 계약 v1](./targets/post-mvp-1/async-job-v1.md): Job 유형, 6개 상태, Chat 동시성 및 Polling — Job 상태 조회 GET과 OCR 접수 POST 구현 완료(#148) · rediscovery GET은 서비스 로직 구현·라우트 등록 보류 · Guide/Chat 접수 POST와 Reconciler 미구현
 - [멱등성 계약 v1](./targets/post-mvp-1/idempotency-v1.md): 요청 지문, 중복·충돌 처리와 보존 기간
 - [Transactional Outbox와 Redis Stream 계약 v1](./targets/post-mvp-1/outbox-stream-v1.md): at-least-once 전달, ACK, fencing과 메시지 경계
 - [처방 버전 계약 v1](./targets/post-mvp-1/prescription-version-v1.md): 불변 snapshot, 활성화, stale 및 기존 데이터 backfill
-- [Check-in과 Barrier 계약 v1](./targets/post-mvp-1/checkin-v1.md): 3개 Check-in 결과와 Barrier 명시적 거절·미제출 구분; #202 Check-in PUT 부분 구현·Draft 리뷰 대기, [HTTP 구체화 제안](../governance/decisions/2026-09-10-checkin-api-202.md)
+- [Check-in과 Barrier 계약 v1](./targets/post-mvp-1/checkin-v1.md): 3개 Check-in 결과와 Barrier 명시적 거절·미제출 구분; #413 Check-in PUT·#456 일정 API 병합, 전체 목표 Current 승격은 별도, [HTTP 구체화 제안](../governance/decisions/2026-09-10-checkin-api-202.md)
 - [OCR 비-RAG LLM 구조화 계약 v1](./targets/post-mvp-1/ocr-llm-structuring-v1.md): 최소전송, 구조화 초안 provenance, 사용자 확정과 실패 복구
 - [MFDS 공식 의약품 식별·Candidate 계약 v1](./targets/post-mvp-1/medication-identification-v1.md): 공식 Source/Catalog·후보 검색·사용자 확인·Preflight 공유 경계
 - [Safety Result 계약 v1](./targets/post-mvp-1/safety-result-v1.md): Approved v4 이력과 Track C 공통 Safety 기준; Track F 후속 의미는 v2가 대체
@@ -134,10 +130,15 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 
 - [Source reject codes v1 구현 리뷰안](proposed/post-mvp-1/source-reject-codes-v1.md): #165 코드·버전·2-pass·실패 기록. 담당 리뷰 전 proposed, 사용자 지시에 따라 구현·검증 후 리뷰.
 
-### #166 D-04 검토 연결
+### #166 D-03·D-04·D-05 범위와 검토 연결
 
-- [D-03 Crosswalk 범위 결정](../governance/decisions/2026-09-13-catalog-crosswalk-scope.md):
-  현재 P0 소비 경로가 없어 즉시 구현에서 제외. 별도 계약·이슈의 재개 조건 기록, 구현 완료 아님.
+- [D-03 Catalog Set·Authority Alias Set 관계 및 Crosswalk 범위](../governance/decisions/2026-09-13-catalog-crosswalk-scope.md):
+  일반 Catalog 저장·재현 구성에 Alias member를 포함하며 독립 Authority Alias Set을 대체하지 않는다.
+  Crosswalk는 현재 P0 소비 경로가 없어 제외. 다섯 항목과 재개 조건을 기록하며 Authority 구현 완료가 아니다.
+
+- [D-05 hash 전환 보류·재개 조건](../governance/decisions/2026-09-13-catalog-d05-transition-scope.md):
+  현우님 답변 반영 문서 리뷰 대상. 전체 전환과 Runtime 구성·연결 보류, 기존 v2·관찰 v3 envelope 유지.
+  축소 projection은 필요 확인 후 새 계약으로 검토. 신규 hash 구현 완료·공개 승인 아님.
 
 - [Catalog Component occurrence 결정안](../governance/decisions/2026-09-11-catalog-component-occurrences.md):
   Proposed. 선택 원본 키·제품별 순서 UNIQUE·release_profile·무손실 migration 경계.
@@ -150,3 +151,9 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [D-04 관찰 출처·인계 v3 결정안](../governance/decisions/2026-09-13-component-observation-handoff.md):
   검증된 상세 artifact Loader, 독립 Snapshot FK, 관찰 버전·총량 그룹의 DB/Candidate 인계 제안.
   기존 v2를 보존하고 관찰 자료는 medication-catalog-v3로 구분. 계약 정본은 위 Catalog DB 연결안.
+
+### #166 실제 승인 저장소 후속 제안
+
+- [승인·철회·감사 저장소 구체안](proposed/post-mvp-1/catalog-approval-storage-166.md):
+  Proposed. 기존 관리 감사와 승인 receipt 저장을 구분하고, 승인 대상·포트·transaction·최소 권한·이행 및 검증 범위를 제안한다.
+  실제 연결·DB 변경·신규 승인 획득은 미완료이며 기존 D-03/D-05 합의의 승인 범위에 포함하지 않는다.
