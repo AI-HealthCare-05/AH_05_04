@@ -236,6 +236,30 @@ async def test_preflight_rejects_missing_identification_without_side_effects(db_
     assert await _side_effect_counts(db_session) == before
 
 
+async def test_preflight_rejects_when_active_medication_is_empty_without_side_effects(
+    db_session: AsyncSession,
+) -> None:
+    owner = await _create_user(db_session, email="preflight-empty@example.com")
+    prescription, medications = await _create_prescription(db_session, user=owner)
+    for medication in medications:
+        await db_session.delete(medication)
+    await db_session.flush()
+    before = await _side_effect_counts(db_session)
+
+    with pytest.raises(ApiError) as exc_info:
+        await _service(db_session).ensure_all_active_medications_matched(
+            prescription_id=prescription.id,
+            user_id=owner.id,
+            expected_prescription_version_id=prescription.active_version_id,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE"
+    assert exc_info.value.details[0].field == "prescription_version_id"
+    assert exc_info.value.details[0].reason == "ACTIVE_MEDICATION_REQUIRED"
+    assert await _side_effect_counts(db_session) == before
+
+
 async def test_preflight_rejects_non_matched_identification(db_session: AsyncSession) -> None:
     owner = await _create_user(db_session, email="preflight-unresolved@example.com")
     prescription, medications = await _create_prescription(db_session, user=owner)
