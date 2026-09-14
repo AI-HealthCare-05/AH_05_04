@@ -43,6 +43,8 @@ from ai_worker.tasks.evaluation.protected_retrieval_control import (
     ControlCommandResult,
     DisableIdentityCommand,
     ExpireAuthorizationCommand,
+    FreezeApprovalSourceEvidence,
+    FreezeDatasetCommand,
     GrantAuthorizationCommand,
     IngestApprovalCommand,
     RegisterDatasetCommand,
@@ -52,6 +54,7 @@ from ai_worker.tasks.evaluation.protected_retrieval_control import (
     TrustedApprovalSource,
     control_command_sha256,
     verify_authorization_approval,
+    verify_freeze_approval,
 )
 from infra.python.protected_retrieval_role_policy import validate_protected_control_connection
 
@@ -111,6 +114,7 @@ _POLICY_DENIAL_REASONS = frozenset(
         ProtectedAuditReason.CONTROL_COMMAND_CONFLICT,
         ProtectedAuditReason.DATASET_BINDING_MISMATCH,
         ProtectedAuditReason.DATASET_STATE_MISMATCH,
+        ProtectedAuditReason.FREEZE_EVIDENCE_INCOMPLETE,
         ProtectedAuditReason.GRANT_SUBJECT_MISMATCH,
         ProtectedAuditReason.ISSUER_ROLE_DENIED,
         ProtectedAuditReason.SELF_APPROVAL_DENIED,
@@ -934,6 +938,23 @@ class PostgresqlProtectedAuthorizationControlService:
             raise ProtectedSecurityError("INTERNAL_ERROR") from None
         if (
             evidence.source_event_id != command.source_event_id
+            or evidence.canonical_raw_sha256 != command.expected_raw_sha256
+        ):
+            return evidence, ProtectedAuditReason.APPROVAL_EVIDENCE_MISMATCH
+        return evidence, None
+
+    async def _fetch_freeze_approval(
+        self,
+        command: FreezeDatasetCommand,
+    ) -> tuple[FreezeApprovalSourceEvidence | None, ProtectedAuditReason | None]:
+        try:
+            evidence = await self._approval_source.fetch_freeze(command.approval_source_event_id)
+        except ApprovalSourceNotFoundError:
+            return None, ProtectedAuditReason.APPROVAL_NOT_VERIFIED
+        except Exception:
+            raise ProtectedSecurityError("INTERNAL_ERROR") from None
+        if (
+            evidence.source_event_id != command.approval_source_event_id
             or evidence.canonical_raw_sha256 != command.expected_raw_sha256
         ):
             return evidence, ProtectedAuditReason.APPROVAL_EVIDENCE_MISMATCH
@@ -1881,6 +1902,217 @@ class PostgresqlProtectedAuthorizationControlService:
                             reason_code=ProtectedAuditReason.DATASET_TRANSITIONED.value,
                         )
 
+        if denial is not None:
+            raise denial
+        assert result is not None
+        return result
+
+    async def _assert_dataset_custodian_preflight(self, control: _ControlSession, prepared: _ControlExecutor) -> None:
+        if prepared.principal.role is not ProtectedApprovalRole.DATASET_CUSTODIAN:
+            raise ProtectedSecurityError("ISSUER_ROLE_DENIED")
+        result = await control._execute(
+            f"""
+            SELECT 1 FROM {control._schema}.protected_identity
+            WHERE actor_id = :actor_id AND actor_namespace = :actor_namespace
+              AND identity_plane = 'DATA'
+              AND principal_role = 'HOLDOUT_AUTHOR'
+              AND enabled = true
+            """,
+            {"actor_id": prepared.actor.actor_id, "actor_namespace": prepared.actor.namespace},
+        )
+        if result.first() is not None:
+            raise ProtectedSecurityError("SELF_APPROVAL_DENIED")
+
+    async def _check_freeze_mutation(
+        self,
+        control: _ControlSession,
+        command: FreezeDatasetCommand,
+        executor: _ControlExecutor,
+        evidence: FreezeApprovalSourceEvidence | None,
+        fetch_denial: ProtectedAuditReason | None,
+    ) -> ProtectedAuditReason | None:
+        dataset_row = (
+            await control._execute(
+                f"""
+                SELECT dataset_id, dataset_version, binding, manifest_sha256,
+                       protected_artifact_sha256, hmac_key_version, state,
+                       state_revision, authored_count, review_complete, lock_marker
+                FROM {control._schema}.protected_dataset
+                WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version
+                FOR UPDATE
+                """,
+                {"dataset_id": command.dataset_id, "dataset_version": command.dataset_version},
+            )
+        ).one_or_none()
+        if dataset_row is None:
+            return ProtectedAuditReason.DATASET_STATE_MISMATCH
+        if (
+            dataset_row.state != ProtectedDatasetState.REVIEW_READY.value
+            or dataset_row.state_revision != command.expected_state_revision
+        ):
+            return ProtectedAuditReason.DATASET_STATE_MISMATCH
+
+        entries = await control.verified_entries(lock_head=False)
+        dataset = _assemble_dataset_binding(
+            binding_value=dataset_row.binding,
+            dataset_id=dataset_row.dataset_id,
+            dataset_version=dataset_row.dataset_version,
+            manifest_sha256=dataset_row.manifest_sha256,
+            protected_artifact_sha256=dataset_row.protected_artifact_sha256,
+            hmac_key_version=dataset_row.hmac_key_version,
+            state=dataset_row.state,
+            state_revision=dataset_row.state_revision,
+            authored_count=dataset_row.authored_count,
+            review_complete=dataset_row.review_complete,
+            audit_entries=entries,
+        )
+        if (
+            dataset.authored_count != 40
+            or not dataset.review_complete
+            or dataset.leakage_axis_intersections != (0, 0, 0, 0)
+        ):
+            return ProtectedAuditReason.FREEZE_EVIDENCE_INCOMPLETE
+
+        if fetch_denial is not None:
+            return fetch_denial
+        if evidence is None:
+            return ProtectedAuditReason.APPROVAL_NOT_VERIFIED
+
+        try:
+            verify_freeze_approval(
+                dataset,
+                evidence,
+                approval_source_event_id=command.approval_source_event_id,
+                expected_raw_sha256=command.expected_raw_sha256,
+                executor=executor.principal,
+            )
+        except ProtectedSecurityError as err:
+            return _policy_denial_reason(err)
+        return None
+
+    async def freeze_dataset(self, command: FreezeDatasetCommand) -> ControlCommandResult:
+        command_kind = ControlCommandKind.FREEZE_DATASET
+        digest = control_command_sha256(command_kind, command)
+        async with self._sessions() as preparation:
+            async with preparation.begin():
+                await self._validate_connection(preparation)
+                clock = await PostgresqlTrustedClock.from_session(preparation)
+                prep_control = _ControlSession(preparation, self._schema, clock)
+                prepared_executor = await prep_control.resolve_executor()
+                await self._assert_dataset_custodian_preflight(prep_control, prepared_executor)
+
+        replay = await self._read_replay(
+            request_id=command.request_id,
+            command_kind=command_kind,
+            command_sha256=digest,
+        )
+        if replay is not None:
+            return replay
+
+        evidence, fetch_denial = await self._fetch_freeze_approval(command)
+
+        target_id = f"{command.dataset_id}:{command.dataset_version}"
+        denial: ProtectedSecurityError | None = None
+        result: ControlCommandResult | None = None
+        async with self._sessions() as session:
+            async with session.begin():
+                await self._validate_connection(session)
+                clock = await PostgresqlTrustedClock.from_session(session)
+                control = _ControlSession(session, self._schema, clock)
+
+                executor, lock_denial = await self._lock_dataset_control_executor(control, prepared_executor)
+                replay = await control.replay(
+                    request_id=command.request_id,
+                    command_kind=command_kind,
+                    command_sha256=digest,
+                    executor=executor.actor,
+                    lock_head=True,
+                )
+                if replay is not None:
+                    return replay
+
+                denial_reason = lock_denial
+                if denial_reason is None:
+                    denial_reason = await self._check_freeze_mutation(
+                        control, command, executor, evidence, fetch_denial
+                    )
+
+                await control.refresh_clock()
+                entries = await control.verified_entries(lock_head=False)
+                if denial_reason is not None:
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=executor.actor,
+                        target_kind=ControlAuditTargetKind.PROTECTED_DATASET,
+                        target_id=target_id,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.DENIED,
+                        effective_revision=None,
+                        authorization_audit_event_id=None,
+                        reason_code=denial_reason,
+                    )
+                    denial = ProtectedSecurityError(denial_reason.value)
+                else:
+                    new_revision = command.expected_state_revision + 1
+                    update_result = await control._execute(
+                        f"""
+                        UPDATE {control._schema}.protected_dataset
+                        SET state = 'FROZEN',
+                            state_revision = :new_revision
+                        WHERE dataset_id = :dataset_id
+                          AND dataset_version = :dataset_version
+                          AND state = 'REVIEW_READY'
+                          AND state_revision = :expected_revision
+                        RETURNING state_revision
+                        """,
+                        {
+                            "dataset_id": command.dataset_id,
+                            "dataset_version": command.dataset_version,
+                            "new_revision": new_revision,
+                            "expected_revision": command.expected_state_revision,
+                        },
+                        fallback="DATASET_STATE_MISMATCH",
+                    )
+                    updated_row = update_result.one_or_none()
+                    if updated_row is None:
+                        await control.append_control(
+                            entries=entries,
+                            request_id=command.request_id,
+                            command_kind=command_kind,
+                            executor=executor.actor,
+                            target_kind=ControlAuditTargetKind.PROTECTED_DATASET,
+                            target_id=target_id,
+                            command_sha256=digest,
+                            outcome=ControlAuditOutcome.DENIED,
+                            effective_revision=None,
+                            authorization_audit_event_id=None,
+                            reason_code=ProtectedAuditReason.DATASET_STATE_MISMATCH,
+                        )
+                        denial = ProtectedSecurityError("DATASET_STATE_MISMATCH")
+                    else:
+                        await control.append_control(
+                            entries=entries,
+                            request_id=command.request_id,
+                            command_kind=command_kind,
+                            executor=executor.actor,
+                            target_kind=ControlAuditTargetKind.PROTECTED_DATASET,
+                            target_id=target_id,
+                            command_sha256=digest,
+                            outcome=ControlAuditOutcome.SUCCEEDED,
+                            effective_revision=new_revision,
+                            authorization_audit_event_id=None,
+                            reason_code=ProtectedAuditReason.DATASET_FROZEN,
+                        )
+                        result = ControlCommandResult(
+                            request_id=command.request_id,
+                            command_kind=command_kind,
+                            target_id=target_id,
+                            effective_revision=new_revision,
+                            authorization_audit_event_id=None,
+                            reason_code=ProtectedAuditReason.DATASET_FROZEN.value,
+                        )
         if denial is not None:
             raise denial
         assert result is not None
