@@ -27,7 +27,7 @@ from ai_worker.tasks.rag.source_client.probe import (
     require_local_secret,
     write_not_run_receipt,
 )
-from ai_worker.tasks.rag.source_client.receipts import write_endpoint_receipt
+from ai_worker.tasks.rag.source_client.receipts import build_receipt_payload, write_endpoint_receipt
 from ai_worker.tasks.rag.source_ingestion.receipt_validation import (
     load_detail_endpoint_receipt,
     verify_receipt_fixture_evidence,
@@ -307,10 +307,118 @@ def test_detail_full_scan_receipt_is_accepted_by_the_detail_ingestion_loader(
     evidence = load_detail_endpoint_receipt(receipt_path)
 
     assert evidence.identity == OPERATIONS["LIST_PRODUCT_COMPONENT_DETAILS"].identity
+    assert evidence.receipt_version == "1.2"
     verify_receipt_fixture_evidence(
         evidence=evidence.fixture_evidence,
         repository_root=repository_root(),
     )
+
+
+def _detail_run(*, null_count: int, excluded: int, enforced: int) -> SourceRunResult:
+    return SourceRunResult(
+        operation=OPERATIONS["LIST_PRODUCT_COMPONENT_DETAILS"].identity,
+        status=SourceRunStatus.SUCCEEDED,
+        pages=(
+            ProviderPage(
+                page_number=1,
+                records=({"ITEM_SEQ": "synthetic-product-001", "TAMT_SEQ": "1", "MTRAL_SN": "1"},),
+                response_checksum="a" * 64,
+                content_type="application/json",
+                total_count=1,
+            ),
+        ),
+        failure=None,
+        primary_key_validation=PrimaryKeyValidationResult(
+            passed=enforced == 0,
+            record_count=1,
+            null_count=null_count,
+            duplicate_count=0,
+            observed_fields=("ITEM_SEQ", "MTRAL_SN", "TAMT_SEQ"),
+            excluded_empty_row_count=excluded,
+            enforced_null_count=enforced,
+        ),
+        full_scan_completed=True,
+    )
+
+
+def test_detail_receipt_keeps_the_source_null_count_while_reporting_the_gate_basis(
+    tmp_path: Path,
+) -> None:
+    """#525: 원본 null 통계는 보존하고 통과 판정 기준은 별도 필드로 읽힌다."""
+    receipt_path = tmp_path / "detail-receipt.json"
+
+    payload = write_endpoint_receipt(
+        receipt_path,
+        build_live_receipt(
+            operation_code="LIST_PRODUCT_COMPONENT_DETAILS",
+            result=_detail_run(null_count=31697, excluded=31697, enforced=0),
+            validated_at="2026-09-14T01:00:00+00:00",
+            git_sha="synthetic-git-sha",
+        ),
+        generated_at="2026-09-14T01:00:00+00:00",
+    )
+
+    assert payload["receipt_version"] == "1.2"
+    assert payload["primary_key_null_count"] == 31697
+    assert payload["excluded_empty_row_count"] == 31697
+    assert payload["enforced_primary_key_null_count"] == 0
+    assert load_detail_endpoint_receipt(receipt_path).receipt_version == "1.2"
+
+
+def test_p0_operations_keep_receipt_version_1_1_without_empty_row_fields() -> None:
+    """빈 행 분류를 선언하지 않은 Operation은 기존 Receipt 구성을 유지한다."""
+    result = SourceRunResult(
+        operation=OPERATIONS["LIST_APPROVED_PRODUCTS"].identity,
+        status=SourceRunStatus.SUCCEEDED,
+        pages=(
+            ProviderPage(
+                page_number=1,
+                records=({"ITEM_SEQ": "synthetic-product-001"},),
+                response_checksum="a" * 64,
+                content_type="application/json",
+                total_count=1,
+            ),
+        ),
+        failure=None,
+        primary_key_validation=PrimaryKeyValidationResult(
+            passed=True, record_count=1, null_count=0, duplicate_count=0, observed_fields=("ITEM_SEQ",)
+        ),
+        full_scan_completed=True,
+    )
+
+    payload = build_receipt_payload(
+        build_live_receipt(
+            operation_code="LIST_APPROVED_PRODUCTS",
+            result=result,
+            validated_at="2026-09-14T01:00:00+00:00",
+            git_sha="synthetic-git-sha",
+        ),
+        generated_at="2026-09-14T01:00:00+00:00",
+    )
+
+    assert payload["receipt_version"] == "1.1"
+    assert "excluded_empty_row_count" not in payload
+    assert "enforced_primary_key_null_count" not in payload
+
+
+def test_detail_receipt_is_rejected_when_a_non_empty_row_still_misses_a_key(
+    tmp_path: Path,
+) -> None:
+    receipt_path = tmp_path / "detail-receipt.json"
+
+    write_endpoint_receipt(
+        receipt_path,
+        build_live_receipt(
+            operation_code="LIST_PRODUCT_COMPONENT_DETAILS",
+            result=_detail_run(null_count=5, excluded=3, enforced=2),
+            validated_at="2026-09-14T01:00:00+00:00",
+            git_sha="synthetic-git-sha",
+        ),
+        generated_at="2026-09-14T01:00:00+00:00",
+    )
+
+    with pytest.raises(ValueError):
+        load_detail_endpoint_receipt(receipt_path)
 
 
 def test_product_receipt_is_still_rejected_by_the_detail_ingestion_loader(

@@ -39,6 +39,13 @@ serviceKey로 고정하며 품목/업체 필터, 첫 N페이지, 호출자 선�
   구성하며, 제외 건수·사유는 Source Snapshot 단위 DB receipt에 남긴다. INVALID_COMPONENT_FIELDS와
   CONFLICTING_OBSERVATION은 전체 차단을 유지한다. 구성원 0개는 성분 기반 안전성 판정 불가로 다룬다.
   [결정 기록](../../../governance/decisions/2026-09-13-mfds-detail-acquisition.md#빈-주성분-행-처리-2026-09-14-확인)을 따른다.
+- 수집 계층의 primary key 통과 판정도 빈 행을 분리한다. `primary_key_null_count`는 원본 수집 행 기준
+  통계로 보존하고, `SCHEMA_DRIFT` 판정은 빈 행을 제외한 `enforced_primary_key_null_count`로 한다.
+  비어 있지 않은 행에서 `ITEM_SEQ`·`TAMT_SEQ`·`MTRAL_SN`이 비면 계속 전체를 차단한다.
+  빈 행 분류는 상세 Operation 계약에만 선언하며 다른 Operation의 판정은 바꾸지 않는다.
+- 통과 판정 기준이 달라지므로 상세 Endpoint Receipt는 `receipt_version` 1.2를 사용하고
+  `excluded_empty_row_count`·`enforced_primary_key_null_count`를 함께 기록한다. 기존 1.1 Receipt는
+  재발급 없이 계속 수용하며, 1.1 payload에 1.2 전용 필드를 섞지 않는다.
 
 ## 키·bytes·Receipt
 
