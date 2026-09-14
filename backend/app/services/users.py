@@ -124,7 +124,24 @@ class UserConsentService:
         request: UserConsentUpdateRequest,
     ) -> UserConsentResponse:
         current_policy_version = current_consent_policy_version(purpose)
-        if request.policy_version != current_policy_version:
+        existing = await self.repository.get_current(user_id=user.id, purpose=purpose)
+
+        if not current_policy_version.strip():
+            if purpose == ConsentPurpose.OCR and request.status == ConsentStatus.WITHDRAWN and existing is not None:
+                if request.policy_version != existing.policy_version:
+                    raise ApiError(
+                        status_code=422,
+                        code="VALIDATION_FAILED",
+                        message="동의 정책 버전을 확인해 주세요.",
+                        details=[ErrorDetail(field="policy_version", reason="POLICY_VERSION_MISMATCH")],
+                    )
+            else:
+                raise ApiError(
+                    status_code=503,
+                    code="CONSENT_POLICY_UNAVAILABLE",
+                    message="현재 동의 안내를 사용할 수 없습니다.",
+                )
+        elif request.policy_version != current_policy_version:
             raise ApiError(
                 status_code=422,
                 code="VALIDATION_FAILED",

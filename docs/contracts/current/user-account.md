@@ -42,7 +42,7 @@
 - row가 없는 목적은 미동의로 판정하며 조회 응답에서는 `status=null`, `policy_version=null`, `current_policy_version=<현재 목적별 version>`, `is_granted=false`로 반환합니다. 명시 철회 row는 `status=WITHDRAWN`, `is_granted=false`로 반환해 missing row와 구분합니다.
 - 응답의 `policy_version`은 저장된 row의 version이고, `current_policy_version`은 서버가 현재 허용하는 목적별 version입니다.
 - `is_granted=true`는 `status=GRANTED`, 저장된 `policy_version`과 `current_policy_version` 일치, `granted_at` 존재, `withdrawn_at=null`인 현재 row에만 사용합니다.
-- 이 API는 목적별 동의 저장·조회·변경 기반만 제공합니다. OCR/Guide/Chat 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN`, 동의 철회 `STALE + BLOCKED` 종료 전이는 [PD-207 Proposed 계약](../proposed/consent-gate-207.md)의 후속 구현 범위입니다.
+- 이 API는 목적별 동의 저장·조회·변경 기반을 제공합니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide/Chat/Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 [PD-207 Proposed 계약](../proposed/consent-gate-207.md)의 후속 구현 범위입니다.
 
 ## 인증 세션 무효화
 
@@ -118,7 +118,7 @@
 - `PATCH /api/v1/users/me`에서 위 필드를 수정 대상으로 확장
 - 회원탈퇴 API의 세부 transaction 구현
 - 실제 외부 Email Provider 연동, 정교한 rate limit
-- 목적별 동의 Gate, Worker 재검사, 동의 철회 종료 전이, Frontend 동의 UI
+- Guide/Chat/Notification 목적별 동의 Gate, OCR 최종 정책 문구·version 승인, Frontend 동의 UI
 
 ## 검증과 변경 규칙
 

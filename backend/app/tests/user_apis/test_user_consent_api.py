@@ -8,9 +8,10 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
+from app.core import config
 from app.main import app
 from app.models.user_consents import ConsentPurpose, ConsentStatus, UserConsent
-from app.services.user_consent_policy import CURRENT_CONSENT_POLICY_VERSIONS
+from app.services.user_consent_policy import current_consent_policy_version
 from app.services.users import _is_currently_granted
 
 
@@ -87,7 +88,8 @@ def test_is_currently_granted_rejects_stale_or_incomplete_grant() -> None:
     assert not _is_currently_granted(withdrawn_marker, "ocr-consent.v1")
 
 
-async def test_list_user_consents_returns_missing_rows_as_not_granted() -> None:
+async def test_list_user_consents_returns_missing_rows_as_not_granted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         headers = await _signup_and_login(client, email=_email("missing-consent"))
         response = await client.get("/api/v1/users/me/consents", headers=headers)
@@ -99,12 +101,13 @@ async def test_list_user_consents_returns_missing_rows_as_not_granted() -> None:
     assert all(item["status"] is None for item in data)
     assert all(item["policy_version"] is None for item in data)
     assert {item["purpose"]: item["current_policy_version"] for item in data} == {
-        purpose.value: version for purpose, version in CURRENT_CONSENT_POLICY_VERSIONS.items()
+        purpose.value: current_consent_policy_version(purpose) for purpose in ConsentPurpose
     }
     assert all(item["is_granted"] is False for item in data)
 
 
-async def test_update_user_consent_grants_and_lists_current_status() -> None:
+async def test_update_user_consent_grants_and_lists_current_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         headers = await _signup_and_login(client, email=_email("grant-consent"))
         grant_response = await client.put(
@@ -133,7 +136,9 @@ async def test_update_user_consent_grants_and_lists_current_status() -> None:
 
 async def test_list_user_consents_marks_stale_policy_version_as_not_granted(
     db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         headers = await _signup_and_login(client, email=_email("stale-consent"))
         await client.put(
@@ -284,7 +289,94 @@ async def test_update_user_consent_rejects_unsupported_purpose_and_invalid_body(
     assert empty_policy.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
-async def test_update_user_consent_rejects_non_current_policy_versions() -> None:
+async def test_ocr_consent_policy_version_matches_dedicated_ocr_endpoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v2")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        headers = await _signup_and_login(client, email=_email("ocr-policy-v2"))
+        purpose_put = await client.put(
+            "/api/v1/users/me/consents/OCR",
+            json={"status": "GRANTED", "policy_version": "ocr-consent.v2"},
+            headers=headers,
+        )
+        ocr_get = await client.get("/api/v1/users/me/consents/OCR", headers=headers)
+        list_get = await client.get("/api/v1/users/me/consents", headers=headers)
+        wrong_version = await client.put(
+            "/api/v1/users/me/consents/OCR",
+            json={"status": "GRANTED", "policy_version": "ocr-consent.v1"},
+            headers=headers,
+        )
+
+    assert purpose_put.status_code == status.HTTP_200_OK
+    assert purpose_put.json()["data"]["current_policy_version"] == "ocr-consent.v2"
+    assert purpose_put.json()["data"]["is_granted"] is True
+
+    assert ocr_get.status_code == status.HTTP_200_OK
+    assert ocr_get.json()["data"]["current_policy_version"] == "ocr-consent.v2"
+    assert ocr_get.json()["data"]["effective"] is True
+
+    ocr_item = next(item for item in list_get.json()["data"] if item["purpose"] == ConsentPurpose.OCR.value)
+    assert ocr_item["current_policy_version"] == "ocr-consent.v2"
+    assert ocr_item["is_granted"] is True
+
+    assert wrong_version.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert wrong_version.json()["details"] == [
+        {"field": "policy_version", "reason": "POLICY_VERSION_MISMATCH", "rejected_value": None}
+    ]
+
+
+async def test_ocr_consent_policy_unavailable_blocks_new_grants_but_allows_existing_withdrawal(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        headers = await _signup_and_login(client, email=_email("ocr-policy-empty"))
+        await client.put(
+            "/api/v1/users/me/consents/OCR",
+            json={"status": "GRANTED", "policy_version": "ocr-consent.v1"},
+            headers=headers,
+        )
+        await db_session.flush()
+
+        monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "")
+        list_get = await client.get("/api/v1/users/me/consents", headers=headers)
+        ocr_get = await client.get("/api/v1/users/me/consents/OCR", headers=headers)
+        blocked_grant = await client.put(
+            "/api/v1/users/me/consents/OCR",
+            json={"status": "GRANTED", "policy_version": "ocr-consent.v1"},
+            headers=headers,
+        )
+        withdrawn = await client.put(
+            "/api/v1/users/me/consents/OCR",
+            json={"status": "WITHDRAWN", "policy_version": "ocr-consent.v1"},
+            headers=headers,
+        )
+        ocr_get_after_withdraw = await client.get("/api/v1/users/me/consents/OCR", headers=headers)
+
+    ocr_item = next(item for item in list_get.json()["data"] if item["purpose"] == ConsentPurpose.OCR.value)
+    assert ocr_item["current_policy_version"] == ""
+    assert ocr_item["is_granted"] is False
+
+    assert ocr_get.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert ocr_get.json()["code"] == "CONSENT_POLICY_UNAVAILABLE"
+
+    assert blocked_grant.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert blocked_grant.json()["code"] == "CONSENT_POLICY_UNAVAILABLE"
+
+    assert withdrawn.status_code == status.HTTP_200_OK
+    assert withdrawn.json()["data"]["status"] == ConsentStatus.WITHDRAWN.value
+    assert withdrawn.json()["data"]["current_policy_version"] == ""
+    assert withdrawn.json()["data"]["is_granted"] is False
+
+    assert ocr_get_after_withdraw.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
+
+async def test_update_user_consent_rejects_non_current_policy_versions(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         headers = await _signup_and_login(client, email=_email("policy-mismatch"))
         stale_policy = await client.put(
