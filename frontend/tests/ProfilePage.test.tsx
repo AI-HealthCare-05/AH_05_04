@@ -61,6 +61,7 @@ function renderProfile() {
         <Route path="/" element={<div>홈 화면</div>} />
         <Route path="/guides" element={<div>가이드 화면</div>} />
         <Route path="/chat" element={<div>도지 화면</div>} />
+        <Route path="/schedule" element={<div>복약 일정 화면</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -141,17 +142,14 @@ describe('내 정보 조회', () => {
     expect(getCurrentUser).toHaveBeenCalledTimes(1)
   })
 
-  it('공통 Navigation의 Menu active, 일정 disabled, 기존 route 이동을 유지한다', async () => {
+  it('공통 Navigation의 Menu active와 production 일정 route, 기존 route 이동을 유지한다', async () => {
     const firstRender = renderProfile()
 
     await screen.findByText(CURRENT_USER.email)
     expect(screen.getByRole('button', { name: '메뉴' }).getAttribute('aria-current')).toBe(
       'page',
     )
-    expect(screen.getByRole('button', { name: '일정 (준비 중)' })).toHaveProperty(
-      'disabled',
-      true,
-    )
+    expect(screen.getByRole('button', { name: '일정' })).toHaveProperty('disabled', false)
     fireEvent.click(screen.getByRole('button', { name: '가이드' }))
     expect(screen.getByText('가이드 화면')).toBeTruthy()
 
