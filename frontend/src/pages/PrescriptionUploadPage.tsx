@@ -369,14 +369,18 @@ function PrescriptionUploadPage() {
     if (pollingState.status !== 'STALE' || pollingState.data?.kind !== 'ASYNC') return
     let active = true
     const domainId = pollingState.data.body.data.domain_id
-    void getOcrJob(domainId)
+    const controller = new AbortController()
+    void getOcrJob(domainId, controller.signal)
       .then((response) => {
         if (active) setStaleOcrReason(response.data.error_code)
       })
       .catch(() => {
         if (active) setStaleOcrReason(null)
       })
-    return () => { active = false }
+    return () => {
+      active = false
+      controller.abort()
+    }
   }, [pollingState.status, pollingState.data])
 
   const expireOcrSession = useCallback(() => {
