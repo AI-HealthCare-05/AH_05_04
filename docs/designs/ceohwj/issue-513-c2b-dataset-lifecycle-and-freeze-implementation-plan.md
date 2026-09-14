@@ -26,7 +26,7 @@
 
 ---
 
-### Task 0: C2-a 선행 기준 확인
+### Task 0: C2-a PR #522 병합 기준 확인
 
 **Files:**
 - Read: `ai_worker/tasks/evaluation/protected_retrieval.py`
@@ -48,7 +48,8 @@ git log -1 --oneline --decorate
 rg -n "RegisterIdentityCommand|DisableIdentityCommand|PROTECTED_IDENTITY|database_login: str" ai_worker/tasks/evaluation ai_worker/adapters/postgresql_protected_retrieval_control.py
 ```
 
-Expected: branch는 `feat/513-c2b-dataset-lifecycle-and-freeze`이고 네 C2-a symbol이 모두 존재한다.
+Expected: PR `#522`의 merge commit이 최신 `develop`에 포함되고, branch는 그 기준으로 정렬된
+`feat/513-c2b-dataset-lifecycle-and-freeze`이며 네 C2-a symbol이 모두 존재한다.
 
 - [ ] **Step 2: C2-a가 없으면 구현을 멈춘다**
 
@@ -1218,9 +1219,9 @@ git commit -m "📝 docs: #513 Dataset control 구현 증거 정렬"
 
 ---
 
-## Gemini 실행 완료 보고 형식
+## Antigravity Gemini 실행 완료 보고 형식
 
-Gemini는 구현 완료 시 다음을 모두 보고한다.
+Antigravity Gemini는 구현 완료 시 다음을 모두 보고한다.
 
 ```text
 Baseline: C2-a merged commit / C2-b base commit

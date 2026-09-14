@@ -30,9 +30,9 @@ HOLDOUT 문항 작성·열람·실행, production trusted source, protected 환�
 5. C2-a가 확장한 command/result/audit/replay 구조
 6. 기존 `protected_retrieval.py` domain kernel과 PostgreSQL adapter
 
-C2-b는 C2-a 병합 결과를 선행 기준으로 삼는다. 현재 `develop@b85d32d9`에는 C2-a가
-병합되지 않았고, 로컬 `feat/512-c2a-protected-identity-control-plane@167cb1eb`에 후속 설계의
-공통 확장이 있다. Gemini는 C2-a가 `develop`에 병합된 뒤 C2-b 브랜치를 rebase하거나,
+C2-b는 C2-a 병합 결과를 선행 기준으로 삼는다. 설계 작성 시점의 `develop@b85d32d9`에는 C2-a가
+병합되지 않았고, C2-a PR `#522`가 병합 절차 중이다. Antigravity Gemini는 C2-a가
+`develop`에 병합된 뒤 C2-b 브랜치를 rebase하거나,
 담당자가 승인한 동일 C2-a HEAD를 선행 기준으로 사용해야 한다. C2-b가 C2-a 코드를
 독자적으로 복제하거나 다른 형태로 재구현해서는 안 된다.
 
@@ -267,7 +267,7 @@ actor와 plane/role만 알고 Dataset scope를 알지 못한다. 따라서 이 �
 보수적 해석으로 **전역 actor-level Author/Custodian 겸직을 금지**한다. 이는 다른 Dataset의
 Author였던 actor도 Custodian command를 실행할 수 없게 하므로, 구현 전 단일 책임
 리뷰어가 계약 의도와 맞는지 확인해야 한다. Dataset별 분리가 필요하다면 이슈
-범위와 계약·schema를 별도로 바꾸어야 하며 Gemini가 임의로 grant 유무만 검사하는 불완전한
+범위와 계약·schema를 별도로 바꾸어야 하며 Antigravity Gemini가 임의로 grant 유무만 검사하는 불완전한
 대체안을 만들지 않는다.
 
 FREEZE evidence issuer는 `PRODUCT_SAFETY_REVIEWER`이어야 하며 executor와 다른 전체
@@ -455,7 +455,7 @@ eval은 필요하지 않지만, protected evaluation control 회귀는 기본 Wo
 - `ControlCommandResult` 형상 변경 없음
 - 새 세션과 data/control plane의 동일 조립 결과
 
-다만 다음 게이트는 Gemini 구현 전·PR 병합 전에 확인해야 한다.
+다만 다음 게이트는 Antigravity Gemini 구현 전·PR 병합 전에 확인해야 한다.
 
 1. **C2-a 선행 통합**: C2-a가 `develop`에 없는 상태에서 C2-b를 독자 구현하지 않는다.
 2. **Decision metadata 정렬**: PR `#498`은 병합됐고 Issue `#513`은 이를 승인된 계약으로
@@ -477,9 +477,9 @@ eval은 필요하지 않지만, protected evaluation control 회귀는 기본 Wo
 대신 수정하지 않는다. 담당자와 단일 책임 리뷰어가 구현 PR의 검토 범위와 증거로
 정렬한다.
 
-## 12. Gemini 인계 규칙
+## 12. Antigravity Gemini 인계 규칙
 
-Gemini는 이 문서와 Issue `#513`을 구현 정본으로 삼되 다음을 지켜야 한다.
+Antigravity Gemini는 이 문서와 Issue `#513`을 구현 정본으로 삼되 다음을 지켜야 한다.
 
 - 먼저 C2-a 통합 HEAD를 확인한다.
 - 실패 테스트로 DTO, 조립, state DAG, FREEZE 불변 조건, 권한 경계를 고정한 후
