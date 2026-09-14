@@ -245,8 +245,9 @@ class AuthService:
         raw_token = generate_email_verification_token()
         token_hash = hash_email_verification_token(raw_token)
         token_created = existing_user is None and recent_token is None
+        created_token = None
         if token_created:
-            await repo.create_token(
+            created_token = await repo.create_token(
                 email=email_value,
                 purpose=purpose,
                 token_hash=token_hash,
@@ -256,7 +257,13 @@ class AuthService:
         await repo.session.commit()
 
         if token_created:
-            await self.email_sender.send_email_verification(email=email_value, token=raw_token)
+            try:
+                await self.email_sender.send_email_verification(email=email_value, token=raw_token)
+            except Exception:
+                assert created_token is not None
+                await repo.delete_token(created_token)
+                await repo.session.commit()
+                raise
 
         remaining = config.EMAIL_VERIFICATION_RESPONSE_TARGET_SECONDS - (time.monotonic() - start)
         if remaining > 0:
@@ -320,9 +327,10 @@ class AuthService:
         token_hash = hash_password_reset_token(raw_token)
 
         token_created = user is not None and recent_token is None
+        created_token = None
         if token_created:
             assert user is not None
-            await self.password_reset_repo.create_token(
+            created_token = await self.password_reset_repo.create_token(
                 user_id=user.id,
                 token_hash=token_hash,
                 expires_at=now + timedelta(minutes=config.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES),
@@ -331,7 +339,13 @@ class AuthService:
         await self.password_reset_repo.session.commit()
 
         if token_created:
-            await self.email_sender.send_password_reset(email=str(email), token=raw_token)
+            try:
+                await self.email_sender.send_password_reset(email=str(email), token=raw_token)
+            except Exception:
+                assert created_token is not None
+                await self.password_reset_repo.delete_token(created_token)
+                await self.password_reset_repo.session.commit()
+                raise
 
         remaining = config.PASSWORD_RESET_RESPONSE_TARGET_SECONDS - (time.monotonic() - start)
         if remaining > 0:

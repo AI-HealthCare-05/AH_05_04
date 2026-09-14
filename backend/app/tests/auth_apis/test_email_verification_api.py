@@ -14,7 +14,27 @@ from app.dependencies.services import get_email_sender
 from app.main import app, fastapi_app
 from app.models.email_verification import EmailVerificationPurpose
 from app.repositories.email_verification_repository import EmailVerificationRepository
+from app.repositories.password_reset_repository import PasswordResetRepository
+from app.repositories.user_repository import UserRepository
+from app.services.email_delivery import EmailDeliveryError
 from app.tests.conftest import test_engine
+
+
+class FailingEmailSender:
+    async def send_email_verification(self, *, email: str, token: str) -> None:
+        raise EmailDeliveryError("Email delivery failed")
+
+    async def send_password_reset(self, *, email: str, token: str) -> None:
+        raise EmailDeliveryError("Email delivery failed")
+
+
+def _assert_internal_error_hides(response: Response, *sensitive_values: str) -> None:
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    body_text = response.text
+    assert "INTERNAL_SERVER_ERROR" in body_text
+    normalized_body = body_text.lower()
+    for value in sensitive_values:
+        assert value.lower() not in normalized_body
 
 
 class RecordingEmailSender:
@@ -118,6 +138,26 @@ async def test_email_verification_request_within_cooldown_does_not_issue_new_tok
     assert len(sender.email_verifications) == 1
 
 
+async def test_email_verification_request_delivery_failure_hides_email_and_token(db_session) -> None:
+    sender = FailingEmailSender()
+    fastapi_app.dependency_overrides[get_email_sender] = lambda: sender
+    email = f"vfail-{uuid4().hex[:10]}@example.com"
+    try:
+        transport = ASGITransport(app=app, raise_app_exceptions=False)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/api/v1/auth/email-verification/request", json={"email": email})
+    finally:
+        fastapi_app.dependency_overrides.pop(get_email_sender, None)
+
+    _assert_internal_error_hides(response, email, "verification")
+    recent_token = await EmailVerificationRepository(db_session).find_recent_token(
+        email=email,
+        purpose=EmailVerificationPurpose.SIGNUP,
+        since=datetime.now(config.TIMEZONE) - timedelta(seconds=config.EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS),
+    )
+    assert recent_token is None
+
+
 async def test_email_verification_confirm_accepts_valid_token_and_rejects_reuse() -> None:
     email = f"verify-confirm-{uuid4().hex[:10]}@example.com"
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -216,3 +256,28 @@ async def test_password_reset_request_does_not_send_for_unknown_account() -> Non
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["reset_token"] is None
     assert sender.password_resets == []
+
+
+async def test_password_reset_request_delivery_failure_hides_email_and_token(db_session) -> None:
+    sender = FailingEmailSender()
+    fastapi_app.dependency_overrides[get_email_sender] = lambda: sender
+    email = f"rfail-{uuid4().hex[:10]}@example.com"
+    try:
+        transport = ASGITransport(app=app, raise_app_exceptions=False)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(
+                "/api/v1/auth/signup",
+                json={"email": email, "password": "Password123!", "name": "발송실패테스터"},
+            )
+            response = await client.post("/api/v1/auth/password-reset/request", json={"email": email})
+    finally:
+        fastapi_app.dependency_overrides.pop(get_email_sender, None)
+
+    _assert_internal_error_hides(response, email, "reset")
+    user = await UserRepository(db_session).get_user_by_email(email)
+    assert user is not None
+    recent_token = await PasswordResetRepository(db_session).find_recent_token_for_user(
+        user_id=user.id,
+        since=datetime.now(config.TIMEZONE) - timedelta(seconds=config.PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS),
+    )
+    assert recent_token is None

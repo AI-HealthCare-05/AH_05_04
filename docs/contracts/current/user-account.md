@@ -79,10 +79,10 @@
 - `POST /api/v1/auth/email-verification/request`는 회원가입 전 이메일 소유 확인 token을 발급합니다. 별도 공개 이메일 중복 확인 API를 만들지 않으며, 이미 가입된 이메일이어도 같은 성공 응답 형태를 반환하고 token을 만들거나 발송하지 않습니다. 최종 중복 방어는 기존 `POST /api/v1/auth/signup`의 `409 CONFLICT`가 담당합니다.
 - `email_verification_token(id, email, purpose, token_hash, created_at, expires_at, verified_at)` — 아직 User row가 없을 수 있는 단계이므로 `user_id` FK를 두지 않습니다. 원문 token은 저장하지 않고 SHA-256 해시만 저장합니다.
 - `purpose`는 현재 `SIGNUP`만 사용합니다. 같은 이메일·목적에 대해 `EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS`(기본 60초) 안에 다시 요청하면 새 token을 만들지 않고 같은 성공 응답을 반환합니다.
-- `verification_token`은 `LOCAL` 환경에서만 응답에 채워집니다. 그 외 환경에서는 이메일 존재 여부 추론을 줄이기 위해 비웁니다. 실제 외부 Email Provider 연결은 `EmailSender` adapter 뒤에 두며, 기본값 `EMAIL_PROVIDER=noop`은 발송하지 않습니다. 이번 범위에서 SMTP adapter는 local 검증용으로만 사용할 수 있고 Production/Staging 활성화는 fail-closed됩니다. 실제 Provider 선택·계정·비용 정책은 후속 보안·배포 설정 PR에서 확정합니다.
+- `verification_token`은 `LOCAL` 환경에서만 응답에 채워집니다. 그 외 환경에서는 이메일 존재 여부 추론을 줄이기 위해 비웁니다. 실제 외부 Email Provider 연결은 `EmailSender` adapter 뒤에 두며, `EMAIL_PROVIDER=noop`은 local/test 기본값으로 발송하지 않습니다. Production/Staging 발송은 `EMAIL_PROVIDER=smtp`와 SMTP Secret이 모두 설정되고 `SMTP_USE_TLS=true`이며 placeholder 값이 아닐 때만 활성화됩니다. 회원가입 시 이메일 인증 완료 강제는 별도 gate(`#549`)에서 관리하며, 이 발송 기반만으로 가입을 차단하지 않습니다.
 - `POST /api/v1/auth/email-verification/confirm`은 이메일과 원문 token을 받아 `token_hash`, `verified_at IS NULL`, `expires_at > now()` 조건으로 검증합니다. 성공하면 같은 이메일·목적의 미인증·미만료 token 전체를 인증 완료 처리합니다.
 - 유효하지 않거나, 만료됐거나, 이미 사용됐거나, 다른 이메일에 발급된 token이면 `422 VALIDATION_FAILED`, `details[].field=token`, `reason=EMAIL_VERIFICATION_TOKEN_INVALID`를 반환합니다.
-- 로그·오류 응답에는 원문 token, token hash, 이메일 존재 여부 추론 정보를 남기지 않습니다.
+- 로그·오류 응답에는 원문 token, token hash, 이메일 존재 여부 추론 정보를 남기지 않습니다. Provider 발송 실패 시 해당 요청에서 생성한 token은 삭제해, 사용자가 발송 실패 후 쿨다운 token에 갇히지 않게 합니다.
 
 ### 비밀번호 재설정(#206, `PD-206` 결정 3)
 
@@ -126,7 +126,7 @@
 - 가입 후 `gender`, `birthday`, `phone_number` 등 추가 개인정보·건강정보 입력 및 저장
 - `PATCH /api/v1/users/me`에서 위 필드를 수정 대상으로 확장
 - 회원탈퇴 API의 세부 transaction 구현
-- 실제 외부 Email Provider 연동, 정교한 rate limit
+- 정교한 rate limit, 이메일 템플릿 디자인 고도화, 회원가입 이메일 인증 강제 gate 활성화
 - Guide/Chat/Notification 목적별 동의 Gate, OCR 최종 정책 문구·version 승인, Frontend 동의 UI
 
 ## 검증과 변경 규칙

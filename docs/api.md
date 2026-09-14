@@ -245,7 +245,7 @@ OCR 목적은 전용 경로 `/api/v1/users/me/consents/OCR`에서 `GET` / `POST`
 
 상세 스펙(오류 코드, lock 순서, 보안 규칙)은 [회원가입·사용자 정보 계약의 비밀번호 재설정 절](./contracts/current/user-account.md#비밀번호-재설정206-pd-206-결정-3)을 따릅니다.
 
-이메일 발송은 `EmailSender` adapter 뒤에 둡니다. 기본값 `EMAIL_PROVIDER=noop`은 실제 메일을 보내지 않으며, 이번 범위에서 SMTP adapter는 local 검증용으로만 사용할 수 있습니다. Production/Staging SMTP 활성화, 실제 Provider 선택·계정·비용 정책은 후속 보안·배포 설정 PR에서 확정합니다.
+이메일 발송은 `EmailSender` adapter 뒤에 둡니다. `EMAIL_PROVIDER=noop`은 local/test 기본값으로 실제 메일을 보내지 않습니다. Production/Staging 발송은 `EMAIL_PROVIDER=smtp`와 `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_USE_TLS=true`를 배포 Secret으로 주입해야 하며, TLS 없는 SMTP, 필수 설정 누락, non-local placeholder 값은 기동 검증에서 거부합니다. 회원가입 시 이메일 인증 완료 강제는 별도 gate(`#549`)에서 관리하며 이 발송 기반만으로 가입을 차단하지 않습니다. Provider 발송 실패 시 공개 응답은 민감정보 없는 500 오류이며, 해당 요청에서 생성한 token은 재시도를 막지 않도록 정리합니다.
 
 ## Post-MVP-1 목표 API — 미구현
 
