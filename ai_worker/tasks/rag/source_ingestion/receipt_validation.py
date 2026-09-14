@@ -19,6 +19,10 @@ from ai_worker.tasks.rag.source_client.endpoints import (
 
 _PRODUCT_CONTRACT = MFDS_ENDPOINT_CANDIDATES["LIST_APPROVED_PRODUCTS"].contract
 _PRODUCT_OPERATION = _PRODUCT_CONTRACT.identity
+# 1.1은 원본 수집 행 기준 판정, 1.2는 빈 행을 분리한 판정이다. 기존 1.1 Receipt를 재발급
+# 없이 계속 수용하며, 1.2 전용 필드는 1.1 payload에 섞이지 않도록 막는다.
+_SUPPORTED_RECEIPT_VERSIONS = frozenset({"1.1", "1.2"})
+_RECEIPT_1_2_FIELDS = ("excluded_empty_row_count", "enforced_primary_key_null_count")
 _REQUIRED_FIXTURE_SCENARIOS = frozenset(
     {
         "LIST_APPROVED_PRODUCTS_SUCCESS",
@@ -221,6 +225,29 @@ def verify_receipt_fixture_evidence(
             raise ValueError("Endpoint receipt fixture checksum mismatch.")
 
 
+def _require_primary_key_gate(payload: Mapping[str, object], receipt_version: str) -> None:
+    """버전별 primary key 통과 판정 기준을 확인합니다.
+
+    1.1은 원본 수집 행 기준으로 null이 없어야 합니다. 1.2는 원본 통계를 그대로 보존하고
+    빈 행을 제외한 기준으로 판정하므로, 두 값을 모두 요구하고 판정 기준만 0을 강제합니다.
+    """
+    if receipt_version == "1.1":
+        _require_exact_value(payload, "primary_key_null_count", 0)
+        if any(key in payload for key in _RECEIPT_1_2_FIELDS):
+            raise ValueError("Endpoint receipt 1.1 must not carry 1.2 fields.")
+        return
+
+    for key in (*_RECEIPT_1_2_FIELDS, "primary_key_null_count"):
+        value = payload.get(key)
+        if type(value) is not int or value < 0:
+            raise ValueError("Endpoint receipt 1.2 requires non-negative empty-row statistics.")
+
+    _require_exact_value(payload, "enforced_primary_key_null_count", 0)
+
+    if cast(int, payload["excluded_empty_row_count"]) > cast(int, payload["primary_key_null_count"]):
+        raise ValueError("Endpoint receipt excluded empty rows must not exceed the source null count.")
+
+
 def _load_endpoint_receipt(
     path: Path,
     contract: EndpointContract,
@@ -246,7 +273,11 @@ def _load_endpoint_receipt(
     payload = cast(dict[str, object], decoded)
     verify_endpoint_receipt_hash(payload)
 
-    _require_exact_value(payload, "receipt_version", "1.1")
+    receipt_version = payload.get("receipt_version")
+    if receipt_version not in _SUPPORTED_RECEIPT_VERSIONS:
+        raise ValueError("Endpoint receipt version is not supported.")
+    if receipt_version == "1.2" and not contract.empty_record_fields:
+        raise ValueError("Endpoint receipt 1.2 is not supported for this operation.")
     _require_exact_value(payload, "execution_status", "COMPLETED")
     _require_exact_value(payload, "source_run_status", "SUCCEEDED")
     _require_exact_value(payload, "parser_activation_allowed", True)
@@ -257,7 +288,7 @@ def _load_endpoint_receipt(
         "primary_key_fields",
         list(contract.primary_key_fields),
     )
-    _require_exact_value(payload, "primary_key_null_count", 0)
+    _require_primary_key_gate(payload, cast(str, receipt_version))
     _require_exact_value(payload, "primary_key_duplicate_count", 0)
     _require_exact_value(payload, "whole_record_duplicate_count", 0)
 
@@ -385,7 +416,7 @@ def _load_endpoint_receipt(
     assert isinstance(receipt_hash, str)
 
     return EndpointReceiptEvidence(
-        receipt_version="1.1",
+        receipt_version=cast(str, receipt_version),
         identity=contract.identity,
         validated_record_count=validated_record_count,
         receipt_hash=receipt_hash,

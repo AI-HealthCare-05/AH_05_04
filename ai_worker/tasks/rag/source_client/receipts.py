@@ -54,6 +54,7 @@ class EndpointReceipt:
     source_run_status: SourceRunStatus | None
     validated_record_count: int | None
     primary_key_fields: tuple[str, ...]
+    # 원본 수집 행 기준 통계. 빈 행을 분리해도 이 값은 줄이지 않는다.
     primary_key_null_count: int | None
     primary_key_duplicate_count: int | None
     whole_record_duplicate_count: int | None
@@ -68,6 +69,10 @@ class EndpointReceipt:
     validated_at: str | None
     live_validation_git_sha: str | None
     regression_fixture_git_sha: str
+    # receipt_version 1.2에서 추가한다. 빈 행 건수와 통과 판정에 사용한 null 건수를 분리해,
+    # primary_key_null_count의 기존 의미를 바꾸지 않고도 판정 기준을 읽을 수 있게 한다.
+    excluded_empty_row_count: int | None = None
+    enforced_primary_key_null_count: int | None = None
 
 
 _FORBIDDEN_FIELD_NAMES = {
@@ -97,6 +102,11 @@ def build_receipt_payload(
     """Build a sanitized payload with a deterministic receipt hash."""
 
     raw_payload: dict[str, object] = asdict(receipt)
+    # 1.2에서 추가한 항목은 값이 있을 때만 payload에 넣는다. 기존 1.1 Receipt의 키 구성과
+    # canonical hash를 바꾸지 않기 위해서다.
+    for optional_key in ("excluded_empty_row_count", "enforced_primary_key_null_count"):
+        if raw_payload.get(optional_key) is None:
+            raw_payload.pop(optional_key, None)
     raw_payload["generated_at"] = generated_at
 
     # tuple·StrEnum 등을 실제 JSON 저장 결과와 같은 자료형으로
