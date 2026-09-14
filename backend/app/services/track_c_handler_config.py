@@ -57,7 +57,9 @@ class HandlerConfig:
     supports: Mapping[SupportCode, SupportRule]
 
     def snapshot(self, support_code: SupportCode, *, medication_id: UUID | None = None) -> dict[str, Any]:
-        rule = self.supports[support_code]
+        rule = self.supports.get(support_code)
+        if rule is None:
+            raise HandlerConfigError("support unavailable in approved rule")
         parameters: dict[str, str] = dict(rule.parameters)
         if support_code == SupportCode.REMINDER_SETUP:
             if medication_id is None:

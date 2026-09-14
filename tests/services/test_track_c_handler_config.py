@@ -70,6 +70,27 @@ def test_snapshot_contains_only_approved_fields_and_server_medication_id():
         config.snapshot(SupportCode.ACCESS_SUPPORT, medication_id=medication_id)
 
 
+@pytest.mark.parametrize("support_code", list(SupportCode))
+def test_each_synthetic_support_round_trips_without_extra_patient_or_schedule_fields(support_code: SupportCode):
+    config = parse_handler_config(synthetic_rules(), **APPROVALS)
+    medication_id = uuid4()
+    bound_id = medication_id if support_code == SupportCode.REMINDER_SETUP else None
+    snapshot = config.snapshot(support_code, medication_id=bound_id)
+    plan = SupportActionPlan(
+        support_code=support_code,
+        rule_version=config.rule_version,
+        copy_version=config.supports[support_code].copy_version,
+        action_config_snapshot=snapshot,
+    )
+    assert config.restore(plan, medication_id=bound_id) == snapshot
+    assert set(snapshot) == {"schema_version", "rationale_code", "parameters"}
+    assert set(snapshot["parameters"]) == (
+        {"destination", "prescription_version_medication_id"}
+        if support_code == SupportCode.REMINDER_SETUP
+        else {"content_key"}
+    )
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -123,6 +144,19 @@ def test_restore_rejects_legacy_and_tampered_history_without_backfill():
         with pytest.raises(HandlerConfigError):
             config.restore(plan, medication_id=medication_id)
     plan.action_config_snapshot = config.snapshot(SupportCode.REMINDER_SETUP, medication_id=medication_id)
+    for key, bad_value in (
+        ("schema_version", "future"),
+        ("rationale_code", "OTHER_REASON"),
+        ("parameters", {"destination": "MEDICATION_SCHEDULE_SETUP"}),
+    ):
+        plan.action_config_snapshot[key] = bad_value
+        with pytest.raises(HandlerConfigError):
+            config.restore(plan, medication_id=medication_id)
+        plan.action_config_snapshot = config.snapshot(SupportCode.REMINDER_SETUP, medication_id=medication_id)
+    plan.copy_version = "other-copy"
+    with pytest.raises(HandlerConfigError, match="copy reference"):
+        config.restore(plan, medication_id=medication_id)
+    plan.copy_version = "synthetic-copy-v1"
     with pytest.raises(HandlerConfigError, match="parent"):
         config.restore(plan, medication_id=uuid4())
     plan.rule_version = "synthetic-v2"
