@@ -1,0 +1,304 @@
+{
+  "empty": {
+    "data": {
+      "period_days": 7,
+      "start_date": "2026-09-07",
+      "end_date": "2026-09-13",
+      "timezone": "Asia/Seoul",
+      "as_of": "2026-09-13T15:00:00Z",
+      "counts": {
+        "taken_count": 0,
+        "not_taken_count": 0,
+        "unconfirmed_count": 0,
+        "pending_count": 0,
+        "cancelled_count": 0
+      },
+      "overdue_pending_count": 0,
+      "adherence_rate": {
+        "numerator": 0,
+        "denominator": 0,
+        "percentage": null
+      },
+      "confirmation_rate": {
+        "numerator": 0,
+        "denominator": 0,
+        "percentage": null
+      },
+      "records": []
+    }
+  },
+  "mixed": {
+    "data": {
+      "period_days": 7,
+      "start_date": "2026-09-07",
+      "end_date": "2026-09-13",
+      "timezone": "Asia/Seoul",
+      "as_of": "2026-09-13T15:00:00Z",
+      "counts": {
+        "taken_count": 2,
+        "not_taken_count": 1,
+        "unconfirmed_count": 1,
+        "pending_count": 1,
+        "cancelled_count": 1
+      },
+      "overdue_pending_count": 1,
+      "adherence_rate": {
+        "numerator": 2,
+        "denominator": 3,
+        "percentage": 66.7
+      },
+      "confirmation_rate": {
+        "numerator": 3,
+        "denominator": 4,
+        "percentage": 75.0
+      },
+      "records": [
+        {
+          "occurrence_id": "00000000-0000-0000-0000-000000000064",
+          "prescription_version_id": "00000000-0000-0000-0000-00000000000a",
+          "prescription_version_medication_id": "00000000-0000-0000-0000-000000000014",
+          "scheduled_local_date": "2026-09-13",
+          "scheduled_at": "2026-09-12T15:00:00+00:00",
+          "confirmation_deadline_at": "2026-09-13T15:00:00Z",
+          "status": "CLOSED",
+          "updated_at": "2026-09-12T15:00:00+00:00",
+          "checkin": {
+            "checkin_id": "00000000-0000-0000-0000-0000000000c8",
+            "occurrence_id": "00000000-0000-0000-0000-000000000064",
+            "status": "TAKEN",
+            "taken_at": null,
+            "revision": 1,
+            "corrected": false,
+            "updated_at": "2026-09-12T15:00:00+00:00"
+          }
+        },
+        {
+          "occurrence_id": "00000000-0000-0000-0000-000000000065",
+          "prescription_version_id": "00000000-0000-0000-0000-00000000000a",
+          "prescription_version_medication_id": "00000000-0000-0000-0000-000000000014",
+          "scheduled_local_date": "2026-09-13",
+          "scheduled_at": "2026-09-12T16:00:00+00:00",
+          "confirmation_deadline_at": "2026-09-13T15:00:00Z",
+          "status": "CLOSED",
+          "updated_at": "2026-09-12T16:00:00+00:00",
+          "checkin": {
+            "checkin_id": "00000000-0000-0000-0000-0000000000c9",
+            "occurrence_id": "00000000-0000-0000-0000-000000000065",
+            "status": "TAKEN",
+            "taken_at": null,
+            "revision": 1,
+            "corrected": false,
+            "updated_at": "2026-09-12T16:00:00+00:00"
+          }
+        },
+        {
+          "occurrence_id": "00000000-0000-0000-0000-000000000066",
+          "prescription_version_id": "00000000-0000-0000-0000-00000000000a",
+          "prescription_version_medication_id": "00000000-0000-0000-0000-000000000014",
+          "scheduled_local_date": "2026-09-13",
+          "scheduled_at": "2026-09-12T17:00:00+00:00",
+          "confirmation_deadline_at": "2026-09-13T15:00:00Z",
+          "status": "CLOSED",
+          "updated_at": "2026-09-12T17:00:00+00:00",
+          "checkin": {
+            "checkin_id": "00000000-0000-0000-0000-0000000000ca",
+            "occurrence_id": "00000000-0000-0000-0000-000000000066",
+            "status": "NOT_TAKEN",
+            "taken_at": null,
+            "revision": 1,
+            "corrected": false,
+            "updated_at": "2026-09-12T17:00:00+00:00"
+          }
+        },
+        {
+          "occurrence_id": "00000000-0000-0000-0000-000000000067",
+          "prescription_version_id": "00000000-0000-0000-0000-00000000000a",
+          "prescription_version_medication_id": "00000000-0000-0000-0000-000000000014",
+          "scheduled_local_date": "2026-09-13",
+          "scheduled_at": "2026-09-12T18:00:00+00:00",
+          "confirmation_deadline_at": "2026-09-13T15:00:00Z",
+          "status": "CLOSED",
+          "updated_at": "2026-09-12T18:00:00+00:00",
+          "checkin": {
+            "checkin_id": "00000000-0000-0000-0000-0000000000cb",
+            "occurrence_id": "00000000-0000-0000-0000-000000000067",
+            "status": "UNCONFIRMED",
+            "taken_at": null,
+            "revision": 1,
+            "corrected": false,
+            "updated_at": "2026-09-12T18:00:00+00:00"
+          }
+        },
+        {
+          "occurrence_id": "00000000-0000-0000-0000-000000000068",
+          "prescription_version_id": "00000000-0000-0000-0000-00000000000a",
+          "prescription_version_medication_id": "00000000-0000-0000-0000-000000000014",
+          "scheduled_local_date": "2026-09-13",
+          "scheduled_at": "2026-09-12T19:00:00+00:00",
+          "confirmation_deadline_at": "2026-09-13T15:00:00Z",
+          "status": "PENDING",
+          "updated_at": "2026-09-12T19:00:00+00:00",
+          "checkin": null
+        },
+        {
+          "occurrence_id": "00000000-0000-0000-0000-000000000069",
+          "prescription_version_id": "00000000-0000-0000-0000-00000000000a",
+          "prescription_version_medication_id": "00000000-0000-0000-0000-000000000014",
+          "scheduled_local_date": "2026-09-13",
+          "scheduled_at": "2026-09-12T20:00:00+00:00",
+          "confirmation_deadline_at": "2026-09-13T15:00:00Z",
+          "status": "CANCELLED",
+          "updated_at": "2026-09-12T20:00:00+00:00",
+          "checkin": null
+        }
+      ]
+    }
+  },
+  "only_unconfirmed": {
+    "data": {
+      "period_days": 7,
+      "start_date": "2026-09-07",
+      "end_date": "2026-09-13",
+      "timezone": "Asia/Seoul",
+      "as_of": "2026-09-13T15:00:00Z",
+      "counts": {
+        "taken_count": 0,
+        "not_taken_count": 0,
+        "unconfirmed_count": 1,
+        "pending_count": 0,
+        "cancelled_count": 0
+      },
+      "overdue_pending_count": 0,
+      "adherence_rate": {
+        "numerator": 0,
+        "denominator": 0,
+        "percentage": null
+      },
+      "confirmation_rate": {
+        "numerator": 0,
+        "denominator": 1,
+        "percentage": 0.0
+      },
+      "records": [
+        {
+          "occurrence_id": "00000000-0000-0000-0000-000000000064",
+          "prescription_version_id": "00000000-0000-0000-0000-00000000000a",
+          "prescription_version_medication_id": "00000000-0000-0000-0000-000000000014",
+          "scheduled_local_date": "2026-09-13",
+          "scheduled_at": "2026-09-12T15:00:00+00:00",
+          "confirmation_deadline_at": "2026-09-13T15:00:00Z",
+          "status": "CLOSED",
+          "updated_at": "2026-09-12T15:00:00+00:00",
+          "checkin": {
+            "checkin_id": "00000000-0000-0000-0000-0000000000c8",
+            "occurrence_id": "00000000-0000-0000-0000-000000000064",
+            "status": "UNCONFIRMED",
+            "taken_at": null,
+            "revision": 1,
+            "corrected": false,
+            "updated_at": "2026-09-12T15:00:00+00:00"
+          }
+        }
+      ]
+    }
+  },
+  "pending_and_cancelled": {
+    "data": {
+      "period_days": 7,
+      "start_date": "2026-09-07",
+      "end_date": "2026-09-13",
+      "timezone": "Asia/Seoul",
+      "as_of": "2026-09-13T15:00:00Z",
+      "counts": {
+        "taken_count": 0,
+        "not_taken_count": 0,
+        "unconfirmed_count": 0,
+        "pending_count": 1,
+        "cancelled_count": 1
+      },
+      "overdue_pending_count": 1,
+      "adherence_rate": {
+        "numerator": 0,
+        "denominator": 0,
+        "percentage": null
+      },
+      "confirmation_rate": {
+        "numerator": 0,
+        "denominator": 0,
+        "percentage": null
+      },
+      "records": [
+        {
+          "occurrence_id": "00000000-0000-0000-0000-000000000064",
+          "prescription_version_id": "00000000-0000-0000-0000-00000000000a",
+          "prescription_version_medication_id": "00000000-0000-0000-0000-000000000014",
+          "scheduled_local_date": "2026-09-13",
+          "scheduled_at": "2026-09-12T15:00:00+00:00",
+          "confirmation_deadline_at": "2026-09-13T15:00:00Z",
+          "status": "PENDING",
+          "updated_at": "2026-09-12T15:00:00+00:00",
+          "checkin": null
+        },
+        {
+          "occurrence_id": "00000000-0000-0000-0000-000000000065",
+          "prescription_version_id": "00000000-0000-0000-0000-00000000000a",
+          "prescription_version_medication_id": "00000000-0000-0000-0000-000000000014",
+          "scheduled_local_date": "2026-09-13",
+          "scheduled_at": "2026-09-12T16:00:00+00:00",
+          "confirmation_deadline_at": "2026-09-13T15:00:00Z",
+          "status": "CANCELLED",
+          "updated_at": "2026-09-12T16:00:00+00:00",
+          "checkin": null
+        }
+      ]
+    }
+  },
+  "corrected": {
+    "data": {
+      "period_days": 7,
+      "start_date": "2026-09-07",
+      "end_date": "2026-09-13",
+      "timezone": "Asia/Seoul",
+      "as_of": "2026-09-14T02:00:00Z",
+      "counts": {
+        "taken_count": 1,
+        "not_taken_count": 0,
+        "unconfirmed_count": 0,
+        "pending_count": 0,
+        "cancelled_count": 0
+      },
+      "overdue_pending_count": 0,
+      "adherence_rate": {
+        "numerator": 1,
+        "denominator": 1,
+        "percentage": 100.0
+      },
+      "confirmation_rate": {
+        "numerator": 1,
+        "denominator": 1,
+        "percentage": 100.0
+      },
+      "records": [
+        {
+          "occurrence_id": "00000000-0000-0000-0000-000000000064",
+          "prescription_version_id": "00000000-0000-0000-0000-00000000000a",
+          "prescription_version_medication_id": "00000000-0000-0000-0000-000000000014",
+          "scheduled_local_date": "2026-09-13",
+          "scheduled_at": "2026-09-12T15:00:00+00:00",
+          "confirmation_deadline_at": "2026-09-13T15:00:00Z",
+          "status": "CLOSED",
+          "updated_at": "2026-09-14T01:00:00Z",
+          "checkin": {
+            "checkin_id": "00000000-0000-0000-0000-0000000000c8",
+            "occurrence_id": "00000000-0000-0000-0000-000000000064",
+            "status": "TAKEN",
+            "taken_at": null,
+            "revision": 2,
+            "corrected": true,
+            "updated_at": "2026-09-14T01:00:00Z"
+          }
+        }
+      ]
+    }
+  }
+}
