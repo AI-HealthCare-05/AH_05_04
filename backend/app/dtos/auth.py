@@ -35,6 +35,35 @@ class LogoutResponse(BaseModel):
     detail: str
 
 
+class EmailVerificationRequestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: Annotated[
+        EmailStr,
+        Field(max_length=40),
+    ]
+
+
+class EmailVerificationRequestResponse(BaseModel):
+    detail: str
+    # LOCAL 환경에서만 채워진다. 그 외 환경에서는 이메일 존재 여부 추론을 줄이기 위해 비운다.
+    verification_token: str | None = None
+
+
+class EmailVerificationConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: Annotated[
+        EmailStr,
+        Field(max_length=40),
+    ]
+    token: str
+
+
+class EmailVerificationConfirmResponse(BaseModel):
+    detail: str
+
+
 class PasswordResetRequestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -46,7 +75,7 @@ class PasswordResetRequestRequest(BaseModel):
 
 class PasswordResetRequestResponse(BaseModel):
     detail: str
-    # LOCAL 환경에서만 채워진다(실제 이메일 발송 Provider 연동 전까지의 임시 확인 경로).
+    # LOCAL 환경에서만 채워진다. 그 외 환경에서는 계정 존재 여부가 새지 않도록 항상 비운다.
     # 그 외 환경에서는 계정 존재 여부가 새지 않도록 항상 비운다.
     reset_token: str | None = None
 
