@@ -25,7 +25,7 @@ from ai_worker.tasks.rag.source_ingestion.reject_codes import (
     validate_parser_contract,
     validate_reject_artifact,
 )
-from ai_worker.tasks.rag.source_ingestion.result import ProductIngestionResult
+from ai_worker.tasks.rag.source_ingestion.result import SourceIngestionResult
 from ai_worker.tasks.rag.source_ingestion.snapshot_policy import (
     SnapshotPolicyFailureCode,
     SourceSnapshotPolicy,
@@ -375,7 +375,7 @@ class SnapshotIngestionMetadata:
 @dataclass(frozen=True, slots=True)
 class SnapshotCreateRequest:
     operation_id: UUID
-    ingestion: ProductIngestionResult
+    ingestion: SourceIngestionResult
     metadata: SnapshotIngestionMetadata
     supersedes_snapshot_id: UUID | None
 
@@ -569,7 +569,7 @@ class SnapshotLifecycleRepository(Protocol):
 
 def decide_snapshot_ingestion(
     *,
-    ingestion: ProductIngestionResult,
+    ingestion: SourceIngestionResult,
     metadata: SnapshotIngestionMetadata,
     same_version: SnapshotReference | None,
     latest: SnapshotReference | None,
@@ -595,7 +595,7 @@ def decide_snapshot_ingestion(
 async def _persist_identity_rejections(
     *,
     repository: SnapshotLifecycleRepository,
-    ingestion: ProductIngestionResult,
+    ingestion: SourceIngestionResult,
     metadata: SnapshotIngestionMetadata,
     artifacts: tuple[StoredRawArtifact, ...],
 ) -> SnapshotPersistenceResult | None:
@@ -632,10 +632,10 @@ async def _persist_identity_rejections(
     return None
 
 
-async def persist_product_ingestion_result(
+async def persist_source_ingestion_result(
     *,
     repository: SnapshotLifecycleRepository,
-    ingestion: ProductIngestionResult,
+    ingestion: SourceIngestionResult,
     metadata: SnapshotIngestionMetadata,
     artifacts: tuple[StoredRawArtifact, ...],
 ) -> SnapshotPersistenceResult:
@@ -798,7 +798,7 @@ async def persist_product_ingestion_result(
 
 def _validate_ingestion_artifacts(
     *,
-    ingestion: ProductIngestionResult,
+    ingestion: SourceIngestionResult,
     rejected_record_count: int,
     artifacts: tuple[StoredRawArtifact, ...],
 ) -> None:
@@ -943,7 +943,7 @@ def _run_record(
     snapshot_id: UUID | None,
     metadata: SnapshotIngestionMetadata,
     run_status: str,
-    ingestion: ProductIngestionResult,
+    ingestion: SourceIngestionResult,
     failure_code: str | None = None,
     validation_reason_code: str | None = None,
 ) -> SnapshotRunRecord:
@@ -967,7 +967,7 @@ def _run_record(
 
 def attempt_canonical_contract(
     *,
-    ingestion: ProductIngestionResult,
+    ingestion: SourceIngestionResult,
     metadata: SnapshotIngestionMetadata,
 ) -> dict[str, str | int]:
     return {
@@ -984,7 +984,7 @@ def attempt_canonical_contract(
 def _has_same_canonical_contract(
     snapshot: SnapshotReference,
     *,
-    ingestion: ProductIngestionResult,
+    ingestion: SourceIngestionResult,
     metadata: SnapshotIngestionMetadata,
 ) -> bool:
     return (
@@ -1019,3 +1019,7 @@ def _validate_attempt_contract(contract: dict[str, str | int]) -> None:
     count = contract["rejected_record_count"]
     if type(count) is not int or count < 0:
         raise ValueError("Invalid attempt rejected count")
+
+
+# Compatibility entry point for the existing product pipeline.
+persist_product_ingestion_result = persist_source_ingestion_result
