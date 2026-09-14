@@ -192,14 +192,25 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 - 현재 구현은 기기·세션 단위 로그아웃을 구분하지 않습니다. 한 기기에서 로그아웃하면 같은 사용자의 기존 access/refresh token이 함께 무효화됩니다.
 - refresh token은 매 갱신마다 새 값으로 교체되며(rotation), 절대 만료(로그인 시점 기준)는 rotation으로 늘어나지 않습니다. 이미 교체돼 무효해진 refresh token이 다시 제출되면 탈취 의심 신호로 간주해 그 사용자의 모든 세션을 강제로 무효화합니다.
 
+### 회원가입 이메일 인증
+
+| Method | Path | 성공 상태 | 동작 |
+| --- | --- | ---: | --- |
+| `POST` | `/api/v1/auth/email-verification/request` | `200 OK` | 회원가입 전 이메일 인증 안내를 요청합니다. 별도 이메일 중복 확인 API가 아니며, 이미 가입된 이메일이거나 쿨다운 중이어도 같은 성공 응답을 반환합니다. `verification_token`은 `LOCAL` 환경에서만 채워집니다. |
+| `POST` | `/api/v1/auth/email-verification/confirm` | `200 OK` | 이메일과 원문 token을 검증하고, 같은 이메일·목적의 유효 token을 인증 완료 처리합니다. |
+
+`POST /api/v1/auth/email-verification/confirm`의 token 오류는 `422 VALIDATION_FAILED`, `details[].field=token`, `reason=EMAIL_VERIFICATION_TOKEN_INVALID`입니다. 상세 스펙은 [회원가입·사용자 정보 계약의 회원가입 이메일 인증 절](./contracts/current/user-account.md#회원가입-이메일-인증431)을 따릅니다.
+
 ### 비밀번호 재설정
 
 | Method | Path | 성공 상태 | 동작 |
 | --- | --- | ---: | --- |
-| `POST` | `/api/v1/auth/password-reset/request` | `200 OK` | 계정 존재 여부와 무관하게 항상 같은 응답을 반환합니다. `reset_token`은 `LOCAL` 환경에서만 채워집니다(실제 이메일 발송 Provider 연동 전 임시 확인 경로). |
+| `POST` | `/api/v1/auth/password-reset/request` | `200 OK` | 계정 존재 여부와 무관하게 항상 같은 응답을 반환합니다. 원문 token은 `EmailSender` adapter 호출 경계까지만 전달하며, `reset_token`은 `LOCAL` 환경에서만 채워집니다. |
 | `POST` | `/api/v1/auth/password-reset/confirm` | `200 OK` | 유효한 token으로 비밀번호를 변경하고 기존 세션을 전부 무효화합니다. 새 토큰은 발급하지 않으며 재로그인이 필요합니다. |
 
 상세 스펙(오류 코드, lock 순서, 보안 규칙)은 [회원가입·사용자 정보 계약의 비밀번호 재설정 절](./contracts/current/user-account.md#비밀번호-재설정206-pd-206-결정-3)을 따릅니다.
+
+이메일 발송은 `EmailSender` adapter 뒤에 둡니다. 기본값 `EMAIL_PROVIDER=noop`은 실제 메일을 보내지 않으며, 이번 범위에서 SMTP adapter는 local 검증용으로만 사용할 수 있습니다. Production/Staging SMTP 활성화, 실제 Provider 선택·계정·비용 정책은 후속 보안·배포 설정 PR에서 확정합니다.
 
 ## Post-MVP-1 목표 API — 미구현
 
@@ -652,6 +663,28 @@ v1 앱에 등록한다. PD-417의 승인된 의미와 #438 저장 서비스·#43
 요청·응답·오류 requiredness는 계약과 실제 OpenAPI를 따른다. #418 backlog 라우터 등록과
 Check-in history route는 포함하지 않는다. [검증 기록](./validation/track-b/issue-202-schedule-api.md).
 
+## #419 공통 복약 리포트 — 작업 브랜치 구현, 지정 리뷰 대기
+
+`GET /api/v1/medication-reports?period_days=7&end_date=2026-09-13`
+(`operationId=medication-reports.get`)는 기본 리포트와 진료 보기가 함께 사용하는 SELF 집계다.
+`period_days`는 필수 7/30, `end_date`는 선택이며 기본값은 요청 시각의 KST 오늘이다.
+종료일을 포함한 7/30일을 원래 `scheduled_local_date`로 조회하며 현재·과거 처방 version을 포함한다.
+
+성공은 `200 {data: ...}`다. 상태별 횟수, 두 비율의 분자·분모·백분율, 원래 날짜별
+occurrence와 현재 Check-in·정정 여부·갱신 시각을 반환한다. 복용률은
+`TAKEN/(TAKEN+NOT_TAKEN)`, 기록 확인률은
+`(TAKEN+NOT_TAKEN)/(TAKEN+NOT_TAKEN+UNCONFIRMED)`다.
+백분율은 소수 첫째 자리 ROUND_HALF_UP이며 분모 0은 null이다.
+PENDING·CANCELLED는 두 비율에서 제외한다. 조회에서 Check-in을 생성하지 않고
+기한이 지난 PENDING 수를 `overdue_pending_count`로 따로 표시한다.
+
+미인증은 기존 401, 잘못된 기간·미래 종료일·날짜 계산 underflow는 `422 VALIDATION_FAILED`다.
+빈 SELF 조회는 `200`과 빈 records·0 count·null 비율이다. 공통 오류·no-store를 유지한다.
+리포트 전용 DTO를 추가했으며 기존 일정·Check-in 응답, DB schema와 쓰기 경계는 바꾸지 않는다.
+
+정본은 [리포트 v1 제안](contracts/proposed/medication-report-v1.md),
+검증과 Frontend fixture는 [#419 검증 기록](validation/track-b/issue-419-medication-report.md)을 따른다.
+사용자 구현 기준 확인과 작업 브랜치 구현은 담당 리뷰 승인·병합·Production 공개를 의미하지 않는다.
 ### #202 occurrence 원래 약 표시 조회 — 리뷰용 구현
 
 `GET /api/v1/medication-occurrences/{occurrence_id}/medication`은 SELF 소유 occurrence의
