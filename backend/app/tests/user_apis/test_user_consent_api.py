@@ -389,7 +389,7 @@ async def test_dedicated_ocr_consent_policy_unavailable_blocks_post_but_allows_d
     monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        headers = await _signup_and_login(client, email=_email("ocr-dedicated-empty-policy"))
+        headers = await _signup_and_login(client, email=_email("ocr-dedicated"))
         grant = await client.post(
             "/api/v1/users/me/consents/OCR",
             json={"policy_version": "ocr-consent.v1"},
