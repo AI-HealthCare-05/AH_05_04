@@ -232,7 +232,7 @@ async def _count(session: AsyncSession, model: type) -> int:
 async def test_accept_guide_job_creates_job_guide_context_identifications_and_outbox(
     db_session: AsyncSession,
 ) -> None:
-    user = await _create_user(db_session, email=f"guide-intake-{uuid4().hex[:8]}@test.local")
+    user = await _create_user(db_session, email=f"gint-{uuid4().hex[:8]}@test.local")
     prescription = await _create_prescription(db_session, user=user)
     medications = await _active_medications(db_session, prescription)
     identifications = [await _create_identification(db_session, medication=medication) for medication in medications]
@@ -280,7 +280,7 @@ async def test_accept_guide_job_creates_job_guide_context_identifications_and_ou
 async def test_accept_guide_job_reuses_same_idempotency_key_without_duplicate_rows(
     db_session: AsyncSession,
 ) -> None:
-    user = await _create_user(db_session, email=f"guide-intake-dupe-{uuid4().hex[:8]}@test.local")
+    user = await _create_user(db_session, email=f"gint-dupe-{uuid4().hex[:8]}@test.local")
     prescription = await _create_matched_prescription(db_session, user=user)
     runtime_context = await _create_runtime_context(db_session)
 
@@ -312,7 +312,7 @@ async def test_accept_guide_job_reuses_same_idempotency_key_without_duplicate_ro
 async def test_accept_guide_job_rolls_back_when_preflight_fails(
     db_session: AsyncSession,
 ) -> None:
-    user = await _create_user(db_session, email=f"guide-intake-fail-{uuid4().hex[:8]}@test.local")
+    user = await _create_user(db_session, email=f"gint-fail-{uuid4().hex[:8]}@test.local")
     prescription = await _create_prescription(db_session, user=user)
     runtime_context = await _create_runtime_context(db_session)
 
@@ -338,7 +338,7 @@ async def test_accept_guide_job_rolls_back_when_preflight_fails(
 async def test_accept_guide_job_rejects_idempotency_conflict_without_duplicate_rows(
     db_session: AsyncSession,
 ) -> None:
-    user = await _create_user(db_session, email=f"guide-intake-conflict-{uuid4().hex[:8]}@test.local")
+    user = await _create_user(db_session, email=f"gint-conflict-{uuid4().hex[:8]}@test.local")
     prescription = await _create_matched_prescription(db_session, user=user)
     runtime_context = await _create_runtime_context(db_session)
 
@@ -373,8 +373,8 @@ async def test_accept_guide_job_rejects_idempotency_conflict_without_duplicate_r
 async def test_accept_guide_job_hides_other_users_prescription_without_side_effects(
     db_session: AsyncSession,
 ) -> None:
-    owner = await _create_user(db_session, email=f"guide-intake-owner-{uuid4().hex[:8]}@test.local")
-    intruder = await _create_user(db_session, email=f"guide-intake-intruder-{uuid4().hex[:8]}@test.local")
+    owner = await _create_user(db_session, email=f"gint-owner-{uuid4().hex[:8]}@test.local")
+    intruder = await _create_user(db_session, email=f"gint-intruder-{uuid4().hex[:8]}@test.local")
     prescription = await _create_matched_prescription(db_session, user=owner)
     runtime_context = await _create_runtime_context(db_session)
 
@@ -400,7 +400,7 @@ async def test_accept_guide_job_hides_other_users_prescription_without_side_effe
 async def test_accept_guide_job_rolls_back_when_runtime_snapshot_mismatches(
     db_session: AsyncSession,
 ) -> None:
-    user = await _create_user(db_session, email=f"guide-intake-runtime-{uuid4().hex[:8]}@test.local")
+    user = await _create_user(db_session, email=f"gint-runtime-{uuid4().hex[:8]}@test.local")
     prescription = await _create_matched_prescription(db_session, user=user)
     runtime_context = await _create_runtime_context(db_session)
     mismatched_context = replace(runtime_context, runtime_release_bundle_manifest_hash="8" * 64)
@@ -425,7 +425,7 @@ async def test_accept_guide_job_rolls_back_when_runtime_snapshot_mismatches(
 async def test_accept_guide_job_outbox_reference_contains_no_sensitive_payload(
     db_session: AsyncSession,
 ) -> None:
-    user = await _create_user(db_session, email=f"guide-intake-outbox-{uuid4().hex[:8]}@test.local")
+    user = await _create_user(db_session, email=f"gint-outbox-{uuid4().hex[:8]}@test.local")
     prescription = await _create_matched_prescription(db_session, user=user)
     runtime_context = await _create_runtime_context(db_session)
 
