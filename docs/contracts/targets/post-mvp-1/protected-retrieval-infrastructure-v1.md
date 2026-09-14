@@ -2,9 +2,9 @@
 
 > 상태: Approved Target · Partially implemented
 >
-> 근거 Decision: `PD-368-20260909`; authorization control candidate `PD-368-R1`
+> 근거 Decision: `PD-368-20260909`; authorization control decision `PD-368-R1` (PR #463 완료); C2 command 및 권한 확장 candidate `PD-368-R2`
 
-이 계약은 protected retrieval의 PostgreSQL data-plane 실행 경계와 아직 구현되지 않은 control-plane 범위를
+이 계약은 protected retrieval의 PostgreSQL data-plane 실행 경계와 control-plane 구현 범위를
 분리한다. 현재 실행 가능한 공개 계약이나 실제 protected 환경 활성화 승인이 아니다.
 
 ## 구현된 data-plane 경계
@@ -24,10 +24,9 @@
 - artifact·audit row가 존재하는 downgrade는 거부하며 데이터를 삭제하지 않는다. protected Alembic graph는
   단일 head를 유지한다.
 
-## 조율 완료·구현 중인 authorization control-plane
+## 구현 완료된 authorization control-plane (C1)
 
-`PD-368-R1`은 다음 C1 Application Service 계약을 고정하며, 실제 구현·테스트와 지정 PR review가 완료되기
-전에는 runtime 구현으로 간주하지 않는다.
+`PD-368-R1`에 따라 PR #463에서 다음 C1 Application Service 구현 및 통합 테스트가 완료되었다:
 
 - approval evidence ingestion
 - grant/revoke/expire
@@ -39,16 +38,29 @@
 - 신뢰 가능한 거부의 CONTROL audit 선행 commit과 고정 오류 재현
 - DATA/CONTROL identity shape, subject/Dataset scope grant revision, C1 column privilege와 DATA audit-kind 격리
 
-Command/결과/audit 필드, 승인자 분리, lock order와 C2 제외 범위는
+Command/결과/audit 필드, 승인자 분리, lock order는
 [`PD-368-R1`](../../../governance/decisions/2026-09-11-protected-retrieval-authorization-control.md)을 따른다.
 
-## 미구현 control-plane 범위
+## 계약 확정된 C2 control-plane 및 최소 권한 확장 경계
 
-- identity 등록·비활성화
-- Dataset 등록·lifecycle transition과 FREEZE
-- production trusted approval source connector와 protected 환경 provisioning
+[`PD-368-R2`](../../../governance/decisions/2026-09-14-protected-retrieval-c2-command-and-privilege-expansion.md)는
+남은 control-plane 범위(C2)의 계약과 최소 권한 확장 기준을 다음과 같이 고정한다:
 
-위 범위는 C2 또는 외부 gate로 남는다. Issue #368은 Open이며 이 계약은 `current/`로 승격하지 않는다.
+- Identity 등록(`RegisterIdentityCommand`) 및 비활성화(`DisableIdentityCommand`) 계약
+- Dataset 등록(`RegisterDatasetCommand`), 일반 전이(`TransitionDatasetCommand`), 불변 고정(`FreezeDatasetCommand`) 계약
+- FREEZE 전용 전이 분리: `TransitionDatasetCommand`로 `to_state=FROZEN` 우회 시도 차단(`ROLE_ACTION_STATE_DENIED`), `FreezeDatasetCommand`에서만 40건·전수 검토·4축 0 누출·`FreezeApprovalSourceEvidence` 결속 및 `freeze_receipt_ref` 생성 불변 조건을 강제
+- C2 DTO 형상 확정: `ControlCommandResult` 및 `ControlCommandAuditEntry`의 C2 분기(target_id 형식, authorization_audit_event_id=None 강제), `FreezeApprovalSourceEvidence` DTO 정의 및 replay 회귀 방지
+- 승인자 분리: Identity는 `PRODUCT_SAFETY_REVIEWER`, Dataset 등록/전이는 `DATASET_CUSTODIAN`, FREEZE는 Independent `DATASET_CUSTODIAN` (송은영 구현 참여 시 김지혜 담당) + Safety Reviewer 승인 evidence 결속
+- 최소 권한 확장: `protected_identity` INSERT 및 `enabled` UPDATE, `protected_dataset` INSERT 및 lifecycle 컬럼 UPDATE
+- 음성 테스트 보존: identity/dataset 불변 식별자·해시 UPDATE 거부 단언 및 data-plane envelope/capability/OPERATION 감사 격리 단언 유지
+
+## 미구현 범위 및 활성화 상태
+
+- C2-a Identity control-plane Application Service 구현
+- C2-b Dataset lifecycle 및 FREEZE Application Service 구현
+- production trusted approval source connector와 protected 환경 provisioning (`EXT-PRIV-001`)
+
+위 범위는 C2 구현 Issue 및 외부 gate로 남는다. Issue #368은 Open이며 이 계약은 `current/`로 승격하지 않는다.
 
 ## 활성화 상태
 
@@ -64,6 +76,5 @@ Issue #425의 disposal audit 계약은 실제 폐기 활성화 조건이지만, 
 
 ## 책임 검토
 
-- 구현: 정현우
-- Backend·Security·DB·transaction: 송은영 (`@phina-io`)
-- Product·Privacy·Safety·완료 범위: 권가빈 (`@hazelnutflavoured`)
+- 구현: 정현우 (`@ceohwj`)
+- 책임 리뷰: 권가빈 (`@hazelnutflavoured`) — 단일 책임 리뷰어 (Product·Privacy·Safety·Evaluation, command 계약 및 권한 확장 타당성)
