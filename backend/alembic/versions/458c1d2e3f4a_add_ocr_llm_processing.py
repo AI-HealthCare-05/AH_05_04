@@ -1,14 +1,14 @@
 """Record whether OCR LLM structuring ran or was safely skipped.
 
 Revision ID: 458c1d2e3f4a
-Revises: 431a1b2c3d4e
+Revises: 469a1b2c3d4e
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "458c1d2e3f4a"
-down_revision = "431a1b2c3d4e"
+down_revision = "469a1b2c3d4e"
 branch_labels = None
 depends_on = None
 
