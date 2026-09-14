@@ -7,7 +7,7 @@
 - 선행 작업: `#512` C2-a Identity Control-Plane
 - 구현 담당: 정현우 (`@ceohwj`)
 - 단일 책임 리뷰: 권가빈 (`@hazelnutflavoured`)
-- 상태: Draft · 작성 후 리뷰 대기
+- 상태: Active · 2026-09-14 설계 승인
 
 이 설계는 `RegisterDatasetCommand`, `TransitionDatasetCommand`, `FreezeDatasetCommand`를 기존
 PostgreSQL protected retrieval control-plane에 추가한다. 일반 전이와 FREEZE를 분리하고,
