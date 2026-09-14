@@ -157,9 +157,13 @@ CloudFront 기본 주소로만 확인합니다.
 
 ```bash
 curl --fail --show-error --silent https://d111111abcdef8.cloudfront.net/healthz
-curl --fail --show-error --silent https://d111111abcdef8.cloudfront.net/api/v1/health
+curl --fail --show-error --silent --output /dev/null https://d111111abcdef8.cloudfront.net/api/openapi.json
 curl --head --fail --show-error https://d111111abcdef8.cloudfront.net/
 ```
+
+`/healthz`는 Nginx liveness이고 `/api/openapi.json`은 기존 FastAPI HTTP liveness 확인입니다.
+앱에 없는 `/api/v1/health`를 호출하지 않습니다. OpenAPI 응답 성공은 DB·Redis·Provider
+readiness나 OCR 완료를 뜻하지 않으며 아래 Worker·합성 OCR 검증을 별도로 수행합니다.
 
 EC2 public DNS의 `/`, `/assets/*`, `/api/*`에 `X-Origin-Verify` 없이 직접 접근했을 때
 `403`이고, 외부에서 443·5432·6379·8000·5173에 연결할 수 없는지 확인합니다. `/healthz`는

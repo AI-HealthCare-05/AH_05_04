@@ -12,6 +12,7 @@ from app.dependencies.services import get_medication_schedule_api_service
 from app.dtos.medication_schedules import (
     CancelMedicationScheduleRequest,
     MedicationDayResponse,
+    MedicationOccurrenceMedicationResponse,
     MedicationScheduleResponse,
     PutMedicationScheduleRequest,
 )
@@ -36,6 +37,22 @@ async def get_medication_day(
     user: AuthenticatedUser, service: Service, day: Annotated[date, Query(alias="date")]
 ) -> MedicationDayResponse:
     return await service.day(user_id=user.id, day=day)
+
+
+@medication_schedule_router.get(
+    "/medication-occurrences/{occurrence_id}/medication",
+    response_model=MedicationOccurrenceMedicationResponse,
+    operation_id="medication-occurrences.medication.get",
+    responses={
+        401: {"model": ErrorResponse},
+        404: {"model": ErrorResponse, "description": "존재하지 않거나 SELF 소유가 아닌 occurrence"},
+        422: {"model": ErrorResponse},
+    },
+)
+async def get_occurrence_medication(
+    occurrence_id: UUID, user: AuthenticatedUser, service: Service
+) -> MedicationOccurrenceMedicationResponse:
+    return await service.occurrence_medication(user_id=user.id, occurrence_id=occurrence_id)
 
 
 @medication_schedule_router.put(
