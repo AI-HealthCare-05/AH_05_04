@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from ai_worker.adapters.postgresql_protected_retrieval import (
     PostgresqlProtectedAuditJournal,
     PostgresqlTrustedClock,
+    _assemble_dataset_binding,
     _json_value,
     _model,
     _ProtectedSession,
@@ -29,7 +30,7 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     ProtectedAuditEventKind,
     ProtectedAuditReason,
     ProtectedAuthorizationGrant,
-    ProtectedDatasetBinding,
+    ProtectedDatasetState,
     ProtectedPrincipal,
     ProtectedSecurityError,
     audit_entry_sha256,
@@ -486,14 +487,35 @@ class _ControlSession(_ProtectedSession):
         expected_state_revision: int,
     ) -> None:
         result = await self._execute(
-            f"SELECT binding FROM {self._schema}.protected_dataset "
-            "WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version FOR UPDATE",
+            f"""
+            SELECT binding, dataset_id, dataset_version, manifest_sha256,
+                   protected_artifact_sha256, hmac_key_version, state,
+                   state_revision, authored_count, review_complete
+            FROM {self._schema}.protected_dataset
+            WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version
+            FOR UPDATE
+            """,
             {"dataset_id": grant.dataset_id, "dataset_version": grant.dataset_version},
         )
-        dataset_value = result.scalar_one_or_none()
-        if dataset_value is None:
+        row = result.one_or_none()
+        if row is None:
             raise ProtectedSecurityError("DATASET_STATE_MISMATCH")
-        dataset = _model(ProtectedDatasetBinding, dataset_value, "INTERNAL_ERROR")
+        entries: tuple[ProtectedAuditEntry, ...] = ()
+        if row.state == ProtectedDatasetState.FROZEN.value:
+            entries = await self.verified_entries(lock_head=False)
+        dataset = _assemble_dataset_binding(
+            binding_value=row.binding,
+            dataset_id=row.dataset_id,
+            dataset_version=row.dataset_version,
+            manifest_sha256=row.manifest_sha256,
+            protected_artifact_sha256=row.protected_artifact_sha256,
+            hmac_key_version=row.hmac_key_version,
+            state=row.state,
+            state_revision=row.state_revision,
+            authored_count=row.authored_count,
+            review_complete=row.review_complete,
+            audit_entries=entries,
+        )
         if (
             dataset.dataset_id != grant.dataset_id
             or dataset.dataset_version != grant.dataset_version
