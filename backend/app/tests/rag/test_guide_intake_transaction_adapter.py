@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
 from app.core.errors import ApiError
+from app.core.utils.idempotency import compute_request_hash
 from app.models.async_jobs import AiJob, AiJobStatus, AiJobType, DomainType, IdempotencyRecord, OutboxEvent
 from app.models.guides import Guide, GuideGenerationStatus
 from app.models.medical_documents import MedicalDocument
@@ -40,7 +41,12 @@ from app.repositories.rag_runtime_repository import (
     RagRuntimeReleaseBundleCreate,
     RagRuntimeRepository,
 )
-from app.services.guide_intake import GuideJobIntakeTransactionAdapter, GuideRuntimeContextSnapshot
+from app.services.guide_intake import (
+    GUIDE_JOB_INTAKE_METHOD,
+    GUIDE_JOB_INTAKE_ROUTE_TEMPLATE,
+    GuideJobIntakeTransactionAdapter,
+    GuideRuntimeContextSnapshot,
+)
 from app.services.job_intake import IdempotencyKeyConflictError, JobIntakeService
 from app.services.medication_identification import MedicationIdentificationService
 from app.services.rag_preflight import RagPreflightService
@@ -317,6 +323,20 @@ async def test_accept_guide_job_reuses_same_idempotency_key_without_duplicate_ro
     assert context is not None
     assert context.runtime_release_bundle_id == runtime_context.runtime_release_bundle_id
     assert context.runtime_release_bundle_id != changed_runtime_context.runtime_release_bundle_id
+
+    idempotency_record = await db_session.scalar(
+        select(IdempotencyRecord).where(IdempotencyRecord.job_id == first.job.id)
+    )
+    assert idempotency_record is not None
+    assert idempotency_record.request_hash == compute_request_hash(
+        {
+            "method": GUIDE_JOB_INTAKE_METHOD,
+            "route_template": GUIDE_JOB_INTAKE_ROUTE_TEMPLATE,
+            "job_type": AiJobType.GUIDE.value,
+            "prescription_id": str(prescription.id),
+            "prescription_version_id": str(prescription.active_version_id),
+        }
+    )
 
 
 async def test_accept_guide_job_rolls_back_when_preflight_fails(

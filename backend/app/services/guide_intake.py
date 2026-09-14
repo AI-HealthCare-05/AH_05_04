@@ -16,6 +16,8 @@ from app.services.job_intake import DomainReference, JobIntakeService
 from app.services.rag_preflight import RagPreflightService
 
 GUIDE_JOB_INTAKE_OPERATION_ID = "guide.create_job"
+GUIDE_JOB_INTAKE_METHOD = "POST"
+GUIDE_JOB_INTAKE_ROUTE_TEMPLATE = "/api/v1/guides"
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,6 +179,8 @@ class GuideJobIntakeTransactionAdapter:
         prescription_version_id: UUID,
     ) -> dict[str, object]:
         return {
+            "method": GUIDE_JOB_INTAKE_METHOD,
+            "route_template": GUIDE_JOB_INTAKE_ROUTE_TEMPLATE,
             "job_type": AiJobType.GUIDE.value,
             "prescription_id": str(prescription_id),
             "prescription_version_id": str(prescription_version_id),
