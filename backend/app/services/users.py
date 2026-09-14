@@ -1,12 +1,24 @@
+from datetime import datetime
+
+from app.core import config
 from app.core.errors import ApiError, ErrorDetail
 from app.core.utils.common import normalize_email
-from app.dtos.users import UserUpdateRequest
+from app.dtos.users import (
+    UserConsentData,
+    UserConsentListResponse,
+    UserConsentResponse,
+    UserConsentUpdateRequest,
+    UserUpdateRequest,
+)
+from app.models.user_consents import ConsentPurpose, ConsentStatus, UserConsent
 from app.models.users import User
+from app.repositories.user_consent_repository import UserConsentRepository
 from app.repositories.user_repository import (
     DuplicateUserFieldError,
     UserRepository,
 )
 from app.services.auth import AuthService
+from app.services.user_consent_policy import current_consent_policy_version
 
 
 class UserManageService:
@@ -56,3 +68,92 @@ class UserManageService:
                     )
                 ],
             ) from exc
+
+
+def _is_currently_granted(row: UserConsent, current_policy_version: str) -> bool:
+    return (
+        row.status == ConsentStatus.GRANTED
+        and row.policy_version == current_policy_version
+        and row.granted_at is not None
+        and row.withdrawn_at is None
+    )
+
+
+def _consent_data(purpose: ConsentPurpose, row: UserConsent | None) -> UserConsentData:
+    current_policy_version = current_consent_policy_version(purpose)
+    if row is None:
+        return UserConsentData(
+            purpose=purpose,
+            status=None,
+            policy_version=None,
+            current_policy_version=current_policy_version,
+            is_granted=False,
+            granted_at=None,
+            withdrawn_at=None,
+            updated_at=None,
+        )
+
+    return UserConsentData(
+        purpose=row.purpose,
+        status=row.status,
+        policy_version=row.policy_version,
+        current_policy_version=current_policy_version,
+        is_granted=_is_currently_granted(row, current_policy_version),
+        granted_at=row.granted_at,
+        withdrawn_at=row.withdrawn_at,
+        updated_at=row.updated_at,
+    )
+
+
+class UserConsentService:
+    def __init__(self, repository: UserConsentRepository) -> None:
+        self.repository = repository
+
+    async def list_user_consents(self, *, user: User) -> UserConsentListResponse:
+        rows = await self.repository.list_current_for_user(user_id=user.id)
+        rows_by_purpose = {row.purpose: row for row in rows}
+        return UserConsentListResponse(
+            data=[_consent_data(purpose, rows_by_purpose.get(purpose)) for purpose in ConsentPurpose]
+        )
+
+    async def set_user_consent(
+        self,
+        *,
+        user: User,
+        purpose: ConsentPurpose,
+        request: UserConsentUpdateRequest,
+    ) -> UserConsentResponse:
+        current_policy_version = current_consent_policy_version(purpose)
+        existing = await self.repository.get_current(user_id=user.id, purpose=purpose)
+
+        if not current_policy_version.strip():
+            if purpose == ConsentPurpose.OCR and request.status == ConsentStatus.WITHDRAWN and existing is not None:
+                if request.policy_version != existing.policy_version:
+                    raise ApiError(
+                        status_code=422,
+                        code="VALIDATION_FAILED",
+                        message="동의 정책 버전을 확인해 주세요.",
+                        details=[ErrorDetail(field="policy_version", reason="POLICY_VERSION_MISMATCH")],
+                    )
+            else:
+                raise ApiError(
+                    status_code=503,
+                    code="CONSENT_POLICY_UNAVAILABLE",
+                    message="현재 동의 안내를 사용할 수 없습니다.",
+                )
+        elif request.policy_version != current_policy_version:
+            raise ApiError(
+                status_code=422,
+                code="VALIDATION_FAILED",
+                message="동의 정책 버전을 확인해 주세요.",
+                details=[ErrorDetail(field="policy_version", reason="POLICY_VERSION_MISMATCH")],
+            )
+
+        row = await self.repository.set_status(
+            user_id=user.id,
+            purpose=purpose,
+            status=request.status,
+            policy_version=request.policy_version,
+            changed_at=datetime.now(config.TIMEZONE),
+        )
+        return UserConsentResponse(data=_consent_data(purpose, row))

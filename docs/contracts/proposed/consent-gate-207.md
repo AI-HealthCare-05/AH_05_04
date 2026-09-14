@@ -2,7 +2,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Proposed — PR #465 저장 기반 병합 · #505 OCR 목적 Gate/API/Worker·Frontend 연결 구현 · 다른 목적의 실행 Gate와 최종 정책 승인 미완료 · Current 아님 |
+| 상태 | Proposed — PR #465 저장 기반 병합 · #510 현재 사용자 목적별 동의 상태 API 구현 · #505 OCR 목적 Gate/API/Worker·Frontend 연결 구현 · 다른 목적의 실행 Gate와 최종 정책 승인 미완료 · Current 아님 |
 | Decision | [PD-207 목적별 동의 상태와 Provider 호출 Gate 기준](../../governance/decisions/2026-09-10-consent-gate-207.md) |
 | Issue | [#207](https://github.com/AI-HealthCare-05/AH_05_04/issues/207) |
 | 작성 | 송은영 (`phina-io`) — Backend·DB·Security |
@@ -13,7 +13,7 @@
 
 이 문서는 `PD-207`에서 정한 목적별 동의 상태와 Provider 호출 Gate를 공유 계약 형태로 정리한다. Backend, Worker/OCR, Guide/Chat, Notification, Frontend가 같은 의미로 동의 상태와 차단 결과를 해석하기 위한 제안이다.
 
-이 문서는 `proposed/` 계약이며 전체 목적별 Gate의 Current 계약이 아니다. PR #465는 `user_consent` migration/model/repository와 Backend·Worker 공통 fixture의 저장 기반을 병합했다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전, 담당 리뷰와 Production 공개 승인은 별도로 남아 있다.
+이 문서는 `proposed/` 계약이며 전체 목적별 Gate의 Current 계약이 아니다. PR #465는 `user_consent` migration/model/repository와 Backend·Worker 공통 fixture의 저장 기반을 병합했다. #510은 현재 사용자 목적별 동의 상태 조회·변경 API를 구현했고, 해당 API의 현재 실행 계약은 `docs/contracts/current/user-account.md`에 기록한다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전, 담당 리뷰와 Production 공개 승인은 별도로 남아 있다.
 
 ## 2. 동의 목적
 
@@ -42,6 +42,8 @@
 `user_consent` row가 없으면 미동의로 판단한다. 이번 계약 제안에서는 `NOT_GRANTED`, `POLICY_VERSION_EXPIRED`를 저장 enum으로 추가하지 않는다.
 
 `GRANTED` row라도 `policy_version`이 현재 목적별 policy version과 다르면 허용하지 않는다. 다만 자동 호환 판정, 일괄 재동의, 과거 version 호환성 판단은 이번 제안의 구현 범위에서 제외한다.
+
+현재 사용자 동의 상태 API는 이 기준을 Current 계약으로 구현한다. `PUT /api/v1/users/me/consents/{purpose}`는 요청 `policy_version`이 해당 목적의 현재 policy version과 일치할 때만 저장하고, 불일치하면 `422 VALIDATION_FAILED`와 `POLICY_VERSION_MISMATCH`로 거부한다. `GET`/`PUT` 응답의 `is_granted`도 저장된 row가 `GRANTED`이고 저장 `policy_version`이 `current_policy_version`과 일치할 때만 `true`다.
 
 ## 4. `user_consent` 스키마 제안
 
@@ -181,7 +183,7 @@ Backend와 Worker는 공통 fixture의 동의 판정 기준을 따른다. #505�
 
 ## 13. Current 승격 조건
 
-이 Proposed 계약은 다음이 같은 구현 PR 또는 명시적으로 연결된 PR 묶음에서 충족된 뒤에만 `current/` 승격을 검토한다. PR #465는 저장 기반을 병합했고 #505는 OCR 목적의 Gate/API·Worker·Frontend 연결을 구현했다. 다른 목적의 실행 연결, OCR 최종 정책·최소 전송과 담당 리뷰·공개 승인은 후속 범위다.
+이 Proposed 계약은 다음이 같은 구현 PR 또는 명시적으로 연결된 PR 묶음에서 충족된 뒤에만 `current/` 승격을 검토한다. PR #465는 저장 기반을 병합했고, #510은 사용자 동의 상태 조회·변경 API를 `current/user-account.md`의 실행 계약으로 기록했다. #505는 OCR 목적의 Gate/API·Worker·Frontend 연결을 구현했다. 다른 목적의 실행 연결, OCR 최종 정책·최소 전송과 담당 리뷰·공개 승인은 후속 범위다.
 
 - `user_consent` migration/model 구현
 - 목적·상태 enum과 DB 제약 구현

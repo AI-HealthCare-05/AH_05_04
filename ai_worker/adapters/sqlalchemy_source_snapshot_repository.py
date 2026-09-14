@@ -24,6 +24,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SNAPSHOT_PUBLICATION_APPROVAL_CHECK,
     SnapshotAttemptReceipt,
     SnapshotCreateRequest,
+    SnapshotExclusionReceipt,
     SnapshotLifecycleRepository,
     SnapshotProvenanceReceipt,
     SnapshotReference,
@@ -143,6 +144,15 @@ _SOURCE_SNAPSHOT_MEMBER = table(
     column("ingestion_artifact_id", String(36)),
     column("locator", String(500)),
     column("content_sha256", String(64)),
+)
+_SNAPSHOT_EXCLUSION = table(
+    "rag_source_snapshot_exclusion",
+    column("id", String(36)),
+    column("source_snapshot_id", String(36)),
+    column("reason", String(40)),
+    column("source_row_count", Integer()),
+    column("excluded_row_count", Integer()),
+    column("retained_row_count", Integer()),
 )
 
 
@@ -485,6 +495,26 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
             )
         )
         return ingestion_run_id
+
+    async def record_observation_exclusions(self, receipt: SnapshotExclusionReceipt) -> None:
+        """같은 Snapshot·사유의 재실행은 기존 건수를 덮어쓰고 중복 행을 만들지 않습니다."""
+        values = {
+            "source_row_count": receipt.source_row_count,
+            "excluded_row_count": receipt.excluded_row_count,
+            "retained_row_count": receipt.retained_row_count,
+        }
+        statement = postgresql_insert(_SNAPSHOT_EXCLUSION).values(
+            id=str(uuid4()),
+            source_snapshot_id=str(receipt.snapshot_id),
+            reason=receipt.reason,
+            **values,
+        )
+        await self._session.execute(
+            statement.on_conflict_do_update(
+                constraint="uq_rag_source_snapshot_exclusion",
+                set_=values,
+            )
+        )
 
     async def create_artifacts(
         self,
