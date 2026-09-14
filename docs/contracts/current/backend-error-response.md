@@ -298,6 +298,13 @@ Auth 도메인의 `VALIDATION_FAILED` 세부 reason은 다음처럼 고정합니
 | 409 | `IDENTIFICATION_CONTEXT_STALE` | "약품 식별 기준이 최신 상태가 아닙니다. 최신 처방 상태를 다시 확인해 주세요." | 현재 구현에서는 기존 Identification이 이미 존재하는 경우(`details.reason=IDENTIFICATION_ALREADY_EXISTS`) 신규 Identification을 저장하지 않음. Runtime/Candidate Index context 불일치는 #168/#181 연결 후 추가되는 발생 조건 |
 | 409 | `PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE` | "약품 후보 확인이 완료되지 않았습니다." | 일반 RAG Guide Job 접수 전 활성 약제 Identification Preflight 실패 |
 
+`PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE`의 현재 Guide Preflight `details.reason`은 다음으로 제한한다.
+
+| reason | 의미 |
+| --- | --- |
+| `ACTIVE_MEDICATION_REQUIRED` | 활성 Prescription Version에 확인 대상 약제가 없음 |
+| `MATCHED_IDENTIFICATION_REQUIRED` | 활성 약제 중 `MATCHED` Identification이 없는 항목이 있음 |
+
 위 Candidate 오류 코드는 #172 API 구현에 포함되지만 `PUBLIC_TRACK_F_ENABLED=false` 기본 게이트 아래에 있습니다. 공개 UI·Preflight·Runtime 현재성 연결 전에는 실제 사용자 경로에서 활성화하지 않습니다.
 
 ### Post-MVP
