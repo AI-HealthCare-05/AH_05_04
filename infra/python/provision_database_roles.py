@@ -22,6 +22,7 @@ RUNTIME_MUTABLE_TABLES = frozenset(
     "medication_candidate_search medication_identification "
     "ocr_job extracted_field chat_session chat_message chat_citation "
     "medication_schedule medication_schedule_time medication_occurrence medication_checkin "
+    "push_subscription push_delivery "
     "eval_dataset eval_case eval_experiment eval_variant eval_run eval_case_result eval_metric eval_failure "
     "rag_runtime_execution_manifest rag_runtime_release_bundle rag_runtime_bundle_source "
     "rag_runtime_environment rag_release_evaluation_approval".split()
