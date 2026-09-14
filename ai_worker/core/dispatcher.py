@@ -5,6 +5,7 @@ from typing import cast
 from ai_worker.core.errors import (
     HandlerExecutionError,
     HandlerResultMismatchError,
+    OcrConsentDeniedError,
     WorkerError,
 )
 from ai_worker.core.handler import (
@@ -37,6 +38,7 @@ class Dispatcher:
         result: HandlerSuccess | None = None
         classified_failure_code: FailureCode | None = None
         execution_failed = False
+        consent_reason: str | None = None
 
         try:
             if context is None:
@@ -50,6 +52,11 @@ class Dispatcher:
                     message,
                     context=context,
                 )
+        except OcrConsentDeniedError as exc:
+            if exc.reason in OcrConsentDeniedError.REASONS and message.job_type.value == "OCR":
+                consent_reason = exc.reason
+            else:
+                execution_failed = True
         except WorkerError as exc:
             # Handler 오류도 승인된 코드·고정 메시지 조합일 때만 전달합니다.
             # 계약을 위반한 오류에는 Provider 응답이나 secret이 포함될 수
@@ -65,12 +72,19 @@ class Dispatcher:
 
         # 활성 예외 처리 구간을 벗어난 뒤 새 오류를 만들어
         # __cause__와 __context__ 어디에도 원본 예외가 남지 않게 합니다.
+        if consent_reason is not None:
+            raise OcrConsentDeniedError(consent_reason)
+
         if execution_failed:
             raise HandlerExecutionError(message.job_type)
 
         if classified_failure_code is not None:
             raise WorkerError(failure_code=classified_failure_code)
 
+        return self._validate_result(message, result)
+
+    @staticmethod
+    def _validate_result(message: WorkerMessage, result: HandlerSuccess | None) -> HandlerSuccess:
         # Handler가 반환 타입 계약을 위반해도 내부 예외를 노출하지 않습니다.
         if not isinstance(result, HandlerSuccess):
             raise HandlerResultMismatchError(message.job_type)

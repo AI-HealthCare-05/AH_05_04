@@ -123,3 +123,26 @@ class ConsumerAcknowledgementError(WorkerError):
         super().__init__(
             failure_code="DEPENDENCY_UNAVAILABLE",
         )
+
+
+class OcrConsentDeniedError(Exception):
+    """공개 Worker FailureCode와 분리된 고정 동의 차단 사유."""
+
+    REASONS = frozenset(
+        {
+            "LOOKUP_FAILED",
+            "ACCOUNT_NOT_ACTIVE",
+            "OWNER_MISMATCH",
+            "MISSING_CONSENT",
+            "PURPOSE_MISMATCH",
+            "WITHDRAWN",
+            "POLICY_VERSION_MISMATCH",
+            "INVALID_CONSENT",
+        }
+    )
+
+    def __init__(self, reason: str) -> None:
+        if reason not in self.REASONS:
+            raise ValueError("지원하지 않는 동의 차단 사유입니다.")
+        self.reason = reason
+        super().__init__(reason)

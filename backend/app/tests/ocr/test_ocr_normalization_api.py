@@ -1,9 +1,16 @@
+import pytest
 from httpx import ASGITransport, AsyncClient
 from starlette import status
 
+from app.core import config
 from app.main import app
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
+
+
+@pytest.fixture(autouse=True)
+def configure_synthetic_ocr_consent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-test.v1")
 
 
 async def _signup_and_login(
@@ -31,6 +38,12 @@ async def _signup_and_login(
     )
 
     access_token: str = login_response.json()["access_token"]
+    consent_response = await client.post(
+        "/api/v1/users/me/consents/OCR",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"policy_version": "ocr-test.v1"},
+    )
+    assert consent_response.status_code == status.HTTP_200_OK, consent_response.text
     return access_token
 
 
@@ -49,6 +62,25 @@ async def _upload_document(client: AsyncClient, *, access_token: str) -> str:
 
     assert upload_response.status_code == status.HTTP_201_CREATED, upload_response.text
     return upload_response.json()["data"]["document_id"]
+
+
+async def test_ocr_intake_is_blocked_after_withdrawal() -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="withdrawn")
+        document_id = await _upload_document(client, access_token=access_token)
+        headers = {"Authorization": f"Bearer {access_token}"}
+        withdrawn = await client.delete("/api/v1/users/me/consents/OCR", headers=headers)
+        assert withdrawn.status_code == 200
+        blocked = await client.post(
+            f"/api/v1/documents/{document_id}/ocr-jobs",
+            json={"force_reprocess": False},
+            headers={**headers, "Idempotency-Key": "ocr-withdrawn-test-0001"},
+        )
+        assert blocked.status_code == 403
+        assert blocked.json()["code"] == "CONSENT_REQUIRED"
+
+        state = await client.get("/api/v1/users/me/consents/OCR", headers=headers)
+        assert state.json()["data"]["reason"] == "WITHDRAWN"
 
 
 async def test_ocr_intake_returns_job_status_without_running_provider() -> None:

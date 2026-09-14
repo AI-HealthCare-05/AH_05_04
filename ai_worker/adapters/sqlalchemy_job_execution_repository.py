@@ -444,3 +444,52 @@ class SqlAlchemyJobExecutionRepository:
                 raise JobExecutionStateError()
 
         return True
+
+    async def record_consent_block(self, lease: ExecutionLease, *, reason: str, blocked_at: datetime) -> bool:
+        from ai_worker.adapters.sqlalchemy_ocr_failure import mark_ocr_consent_blocked
+        from ai_worker.core.errors import OcrConsentDeniedError
+
+        if reason not in OcrConsentDeniedError.REASONS:
+            raise JobExecutionStateError()
+        result = await self._session.execute(
+            update(_AI_JOB)
+            .where(
+                _AI_JOB.c.id == str(lease.job_id),
+                _AI_JOB.c.job_type == "OCR",
+                _AI_JOB.c.expected_event_id == str(lease.event_id),
+                _AI_JOB.c.attempt_count == lease.attempt,
+                _AI_JOB.c.lease_token == lease.lease_token,
+                _AI_JOB.c.status == "PROCESSING",
+                _AI_JOB.c.lease_expires_at > blocked_at,
+            )
+            .values(
+                status="STALE",
+                last_consumed_event_id=str(lease.event_id),
+                expected_event_id=None,
+                completed_at=blocked_at,
+                lease_token=None,
+                lease_expires_at=None,
+                heartbeat_at=None,
+                failure_code=None,
+            )
+            .returning(_AI_JOB.c.id)
+        )
+        if result.scalar_one_or_none() is None:
+            return False
+        result = await self._session.execute(
+            update(_AI_JOB_ATTEMPT)
+            .where(
+                _AI_JOB_ATTEMPT.c.ai_job_id == str(lease.job_id),
+                _AI_JOB_ATTEMPT.c.attempt_no == lease.attempt,
+                _AI_JOB_ATTEMPT.c.attempt_status == "PROCESSING",
+            )
+            .values(
+                attempt_status="BLOCKED", error_code=None, retryable=False, timed_out=False, completed_at=blocked_at
+            )
+            .returning(_AI_JOB_ATTEMPT.c.id)
+        )
+        if result.scalar_one_or_none() is None or not await mark_ocr_consent_blocked(
+            self._session, ai_job_id=str(lease.job_id), reason=reason, completed_at=blocked_at
+        ):
+            raise JobExecutionStateError()
+        return True

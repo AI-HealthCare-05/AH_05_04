@@ -1,4 +1,3 @@
-import asyncio
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -9,9 +8,7 @@ from pydantic import ValidationError
 from ai_worker.adapters import openai_ocr_structurer
 from ai_worker.core.config import Config
 from ai_worker.core.runtime_assembly import create_clova_ocr_engine, create_clova_ocr_provider
-from ai_worker.tasks.ocr.handler import OcrProviderSchemaError, OcrProviderTimeoutError
 from ocr_runtime.clova_engine import ClovaOcrEngine
-from ocr_runtime.llm.prompt import PROMPT_VERSION
 from ocr_runtime.llm.schemas import GeneratedMedication, GeneratedPrescriptionDraft, GeneratedSourceValue
 from provider_contracts.ocr import OcrRecognitionResult, RawRecognizedField
 
@@ -91,15 +88,14 @@ async def recognize(tmp_path, **changes):
     )
 
 
-async def test_real_worker_factory_runs_llm_and_preserves_metadata(tmp_path, pipeline):
+async def test_real_worker_factory_skips_unreviewed_llm_transfer(tmp_path, pipeline):
     clova, parse, clients = pipeline
     result = await recognize(tmp_path)
-    assert clova.await_count == parse.await_count == 1
+    assert clova.await_count == 1
+    assert parse.await_count == 0
     assert result.engine_name == "CLOVA_OCR"
-    assert result.model_version == "actual-synthetic-model"
-    assert result.prompt_version == PROMPT_VERSION
-    assert any(f.field_type == "MEDICATION_NAME" and f.raw_value == "합성의약품에이정" for f in result.fields)
-    assert parse.call_args.kwargs["store"] is False
+    assert result.model_version is result.prompt_version is None
+    assert result.llm_processing == "SKIPPED_MINIMIZATION"
     assert clients[0].kwargs["max_retries"] == 0
     assert clients[0].closed
 
@@ -108,27 +104,26 @@ async def test_disabled_flag_never_creates_openai_client(tmp_path, pipeline):
     _, parse, clients = pipeline
     result = await recognize(tmp_path, OCR_STRUCTURE_LLM_ENABLED=False, OPENAI_API_KEY="")
     assert result.model_version is result.prompt_version is None
+    assert result.llm_processing == "NOT_REQUESTED"
     assert parse.await_count == 0
     assert clients == []
 
 
-async def test_grounding_failure_is_not_replaced_with_rule_success(tmp_path, pipeline):
+async def test_untrusted_draft_is_never_requested(tmp_path, pipeline):
     _, parse, clients = pipeline
     parse.return_value.output_parsed.medications[0].medication_name.source_ids = [999]
-    with pytest.raises(OcrProviderSchemaError):
-        await recognize(tmp_path)
+    result = await recognize(tmp_path)
+    assert result.llm_processing == "SKIPPED_MINIMIZATION"
+    parse.assert_not_awaited()
     assert clients[0].closed
 
 
-async def test_timeout_closes_client_without_success(tmp_path, pipeline):
+async def test_untrusted_provider_is_not_called_even_with_short_timeout(tmp_path, pipeline):
     _, parse, clients = pipeline
 
-    async def slow(**kwargs):
-        await asyncio.sleep(5)
-
-    parse.side_effect = slow
-    with pytest.raises(OcrProviderTimeoutError):
-        await recognize(tmp_path, OCR_STRUCTURE_TIMEOUT_SECONDS=0.01)
+    result = await recognize(tmp_path, OCR_STRUCTURE_TIMEOUT_SECONDS=0.01)
+    assert result.llm_processing == "SKIPPED_MINIMIZATION"
+    parse.assert_not_awaited()
     assert clients[0].closed
 
 
@@ -152,9 +147,11 @@ def test_engine_repr_does_not_expose_key(tmp_path):
 
 
 @pytest.mark.parametrize("environment", ["local", "staging", "production"])
-async def test_llm_activation_is_available_in_each_environment(tmp_path, environment, pipeline):
+async def test_llm_transfer_is_skipped_in_each_environment(tmp_path, environment, pipeline):
     clova, parse, clients = pipeline
     result = await recognize(tmp_path, ENV=environment, REDIS_PASSWORD="test-redis-453-credential")
-    assert clova.await_count == parse.await_count == 1
-    assert result.model_version == "actual-synthetic-model"
+    assert clova.await_count == 1
+    assert parse.await_count == 0
+    assert result.model_version is result.prompt_version is None
+    assert result.llm_processing == "SKIPPED_MINIMIZATION"
     assert clients[0].closed

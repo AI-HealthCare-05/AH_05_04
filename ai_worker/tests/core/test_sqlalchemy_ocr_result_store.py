@@ -60,6 +60,7 @@ async def test_ocr_result_is_staged_without_commit() -> None:
         engine_name="CLOVA_OCR",
         model_version=None,
         prompt_version=None,
+        llm_processing="SKIPPED_MINIMIZATION",
     )
 
     session = AsyncMock(spec=AsyncSession)
@@ -89,6 +90,8 @@ async def test_ocr_result_is_staged_without_commit() -> None:
     update_where_sql = update_sql.split("WHERE", maxsplit=1)[1]
 
     assert update_sql.startswith("UPDATE ocr_job SET")
+    assert "llm_processing" in update_sql
+    assert statements[0].compile().params["llm_processing"] == "SKIPPED_MINIMIZATION"
     assert "ocr_job.id" in update_where_sql
     assert "ocr_job.ai_job_id" in update_where_sql
     assert "ocr_job.ocr_status =" in update_where_sql

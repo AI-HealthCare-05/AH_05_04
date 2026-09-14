@@ -223,6 +223,20 @@ export async function installRequirementsApi(
         created_at: now,
       })
     }
+    if (key === 'GET /api/v1/users/me/consents/OCR') {
+      return json(route, {
+        data: {
+          purpose: 'OCR',
+          status: 'GRANTED',
+          effective: true,
+          reason: null,
+          current_policy_version: 'synthetic-e2e-ocr.v1',
+          accepted_policy_version: 'synthetic-e2e-ocr.v1',
+          granted_at: now,
+          withdrawn_at: null,
+        },
+      })
+    }
     if (key === 'PATCH /api/v1/users/me') {
       state.profilePatchCount += 1
       const body = request.postDataJSON() as { name: string; email: string }

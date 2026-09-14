@@ -14,6 +14,7 @@ from ai_worker.schemas.messages import (
     JobType,
     WorkerMessage,
 )
+from ai_worker.tasks.ocr.consent import OcrConsentGate
 from ai_worker.tasks.ocr.handler import (
     OcrDomainInput,
     OcrHandler,
@@ -63,6 +64,7 @@ class FakeOcrProvider:
         file_mime_type: str,
         deadline: float,
         trace_id: str,
+        consent_gate: OcrConsentGate | None = None,
     ) -> OcrProviderResult:
         self.calls.append(
             ProviderCall(
@@ -87,6 +89,7 @@ class FailingOcrProvider:
         file_mime_type: str,
         deadline: float,
         trace_id: str,
+        consent_gate: OcrConsentGate | None = None,
     ) -> OcrProviderResult:
         self.calls.append(
             ProviderCall(
@@ -434,3 +437,29 @@ async def test_ocr_handler_requires_worker_execution_context() -> None:
     assert exc_info.value.failure_code == "INTERNAL_ERROR"
     assert repository.received_lookups == []
     assert provider.calls == []
+
+
+async def test_withdrawal_during_clova_without_llm_never_returns_success():
+    from unittest.mock import AsyncMock
+
+    from ai_worker.tasks.ocr.consent import ConsentRow, ConsentSnapshot, OcrConsentDeniedError
+
+    domain_id = uuid4()
+    message = build_message(domain_id=domain_id)
+    repository = AsyncMock()
+    repository.get_snapshot.return_value = ConsentSnapshot(
+        ConsentRow("OCR", "WITHDRAWN", "synthetic-policy"), "ACTIVE", True
+    )
+    gate = OcrConsentGate(repository, domain_id, message.job_id, lambda: "synthetic-policy")
+    provider = FakeOcrProvider(OcrProviderResult((), "CLOVA_OCR", None, None))
+    handler = OcrHandler(
+        input_repository=FakeOcrInputRepository(OcrDomainInput("synthetic.png", "image/png")),
+        provider=provider,
+        clock=lambda: 1000.0,
+        provider_budget_seconds=55.0,
+        consent_gate_factory=lambda domain_id, job_id: gate,
+    )
+    with pytest.raises(OcrConsentDeniedError, match="WITHDRAWN"):
+        await handler.handle(message, context=HandlerExecutionContext(worker_deadline=1060.0))
+    assert len(provider.calls) == 1
+    repository.get_snapshot.assert_awaited_once_with(domain_id=domain_id, job_id=message.job_id)

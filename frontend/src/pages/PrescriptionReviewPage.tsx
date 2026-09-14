@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { NavigateFunction } from 'react-router-dom'
 import { ApiError } from '../api/client'
+import { getOcrConsent } from '../api/ocrConsent'
 import {
   confirmPrescription,
   createManualMedication,
@@ -25,6 +26,7 @@ import '../design-system/prototype.css'
 import './PrescriptionReviewPage.css'
 
 export type PrescriptionReviewServices = {
+  getOcrConsent: typeof getOcrConsent
   getOcrJob: typeof getOcrJob
   getPrescriptionDocumentFile: typeof getPrescriptionDocumentFile
   updateExtractedField: typeof updateExtractedField
@@ -48,6 +50,7 @@ export type PrescriptionReviewPageProps = {
 }
 
 const defaultPrescriptionReviewServices: PrescriptionReviewServices = {
+  getOcrConsent,
   getOcrJob,
   getPrescriptionDocumentFile,
   updateExtractedField,
@@ -500,6 +503,7 @@ function PrescriptionReviewPage({
   const [prescription, setPrescription] =
     useState<PrescriptionResponse | null>(null)
   const [message, setMessage] = useState<ReviewMessage | null>(null)
+  const [llmProcessing, setLlmProcessing] = useState<OcrJobResponse['data']['llm_processing']>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [blockingState, setBlockingState] =
     useState<ReviewBlockingState | null>(null)
@@ -746,6 +750,17 @@ function PrescriptionReviewPage({
 
     async function loadReviewData() {
       try {
+        const consent = (await services.getOcrConsent()).data
+        if (!isLatestRequest()) return
+        if (!consent.effective) {
+          setBlockingState({
+            title: '처방전 검수를 진행할 수 없어요',
+            message: '현재 OCR 동의가 유효하지 않아 기존 OCR 결과를 표시하지 않습니다.',
+            nextAction: '처방전 처리 동의를 확인해 주세요.',
+            action: 'UPLOAD',
+          })
+          return
+        }
         const canUsePrefetchedResult =
           prefetchedOcrResponse?.data.document_id === resolvedDocumentId &&
           prefetchedOcrResponse.data.job_id === resolvedJobId &&
@@ -771,6 +786,7 @@ function PrescriptionReviewPage({
           )
           return
         }
+        setLlmProcessing(ocrResponse.data.llm_processing)
 
         if (ocrResponse.data.fields.some(isUnrecoverableMedicationNameField)) {
           setBlockingState({
@@ -1813,6 +1829,13 @@ function PrescriptionReviewPage({
                   : '값을 확인하거나 수정한 뒤, 처방일과 각 약의 검토 완료를 눌러 주세요.'}
             </span>
           </div>
+
+          {llmProcessing === 'SKIPPED_MINIMIZATION' && (
+            <div className="prescription-review__notice" role="status">
+              <strong>AI 구조화를 생략했어요</strong>
+              <span>안전하게 전송할 약품 정보를 구분하지 못해 외부 LLM에 보내지 않았습니다. OCR 결과를 원본 처방전과 비교해 확인해 주세요.</span>
+            </div>
+          )}
 
           {hasStructurallyMissingRequiredFields && (
             <div className="prescription-review__error" role="alert">

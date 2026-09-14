@@ -59,6 +59,14 @@ class RecordedFailure:
 
 
 @dataclass(frozen=True, slots=True)
+class RecordedConsentBlock:
+    job_id: UUID
+    event_id: UUID
+    attempt: int
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class LeaseNotAcquired:
     """조건 불일치 또는 동시 경합으로 lease를 얻지 못했습니다."""
 
@@ -135,4 +143,8 @@ class JobExecutionRepository(Protocol):
         retry_at: datetime | None,
     ) -> bool:
         """현재 실행 소유자만 Job과 Attempt의 실패를 함께 기록합니다."""
+        ...
+
+    async def record_consent_block(self, lease: ExecutionLease, *, reason: str, blocked_at: datetime) -> bool:
+        """OCR 동의 차단을 lease 검증 후 같은 transaction에 기록한다."""
         ...

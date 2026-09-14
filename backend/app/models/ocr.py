@@ -75,6 +75,10 @@ class OcrJob(Base):
             "ocr_status <> 'COMPLETED' OR (error_code IS NULL AND error_message IS NULL)",
             name="chk_ocr_exclusive_result",
         ),
+        CheckConstraint(
+            "llm_processing IS NULL OR llm_processing IN ('APPLIED', 'SKIPPED_MINIMIZATION', 'NOT_REQUESTED')",
+            name="chk_ocr_llm_processing",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -115,6 +119,7 @@ class OcrJob(Base):
         String(100),
         nullable=True,
     )
+    llm_processing: Mapped[str | None] = mapped_column(String(32), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
