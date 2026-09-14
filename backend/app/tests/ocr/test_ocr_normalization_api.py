@@ -68,17 +68,38 @@ async def test_ocr_intake_is_blocked_after_withdrawal() -> None:
         document_id = await _upload_document(client, access_token=access_token)
         headers = {"Authorization": f"Bearer {access_token}"}
         withdrawn = await client.delete("/api/v1/users/me/consents/OCR", headers=headers)
-        assert withdrawn.status_code == 200
+        assert withdrawn.status_code == status.HTTP_200_OK
         blocked = await client.post(
             f"/api/v1/documents/{document_id}/ocr-jobs",
             json={"force_reprocess": False},
             headers={**headers, "Idempotency-Key": "ocr-withdrawn-test-0001"},
         )
-        assert blocked.status_code == 403
+        assert blocked.status_code == status.HTTP_403_FORBIDDEN
         assert blocked.json()["code"] == "CONSENT_REQUIRED"
 
         state = await client.get("/api/v1/users/me/consents/OCR", headers=headers)
         assert state.json()["data"]["reason"] == "WITHDRAWN"
+
+
+async def test_ocr_intake_is_blocked_when_policy_version_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token = await _signup_and_login(client, label="policy-unavailable")
+        document_id = await _upload_document(client, access_token=access_token)
+        monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "")
+
+        response = await client.post(
+            f"/api/v1/documents/{document_id}/ocr-jobs",
+            json={"force_reprocess": False},
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Idempotency-Key": "ocr-policy-unavailable-0001",
+            },
+        )
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert response.json()["code"] == "CONSENT_POLICY_UNAVAILABLE"
 
 
 async def test_ocr_intake_returns_job_status_without_running_provider() -> None:

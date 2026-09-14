@@ -49,6 +49,9 @@
 - 응답의 `policy_version`은 저장된 row의 version이고, `current_policy_version`은 서버가 현재 허용하는 목적별 version입니다.
 - `is_granted=true`는 `status=GRANTED`, 저장된 `policy_version`과 `current_policy_version` 일치, `granted_at` 존재, `withdrawn_at=null`인 현재 row에만 사용합니다.
 - 회원가입 시 선택된 목적도 같은 `user_consent` current row에 `GRANTED`로 저장합니다. 미선택 목적은 row 없음으로 유지합니다.
+- OCR 목적의 `current_policy_version`은 `OCR_CONSENT_POLICY_VERSION`입니다. 이 값이 빈 문자열이면 현재 OCR 동의 안내가 확정되지 않은 상태로 보고 신규 `GRANTED` 저장을 `503 CONSENT_POLICY_UNAVAILABLE`로 거부합니다.
+- 단, `OCR_CONSENT_POLICY_VERSION`이 빈 문자열이어도 이미 저장된 OCR 동의 row의 철회는 허용합니다. 목적별 `PUT /api/v1/users/me/consents/OCR`은 기존 row가 있고 요청 `status=WITHDRAWN`, 요청 `policy_version`이 기존 row의 저장 `policy_version`과 일치할 때만 철회할 수 있습니다. OCR 전용 `DELETE /api/v1/users/me/consents/OCR`도 같은 기존 저장 version을 보존해 철회합니다.
+- OCR 전용 `GET /api/v1/users/me/consents/OCR`과 OCR 접수 Gate는 빈 `OCR_CONSENT_POLICY_VERSION`에서 fail-closed로 `503 CONSENT_POLICY_UNAVAILABLE`을 반환합니다. 목적별 목록 조회 `GET /api/v1/users/me/consents`는 상태 확인용으로 계속 `200 OK`를 반환하되 OCR 항목의 `current_policy_version=""`, `is_granted=false`를 반환합니다.
 - 이 API는 목적별 동의 저장·조회·변경 기반을 제공합니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide/Chat/Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 [PD-207 Proposed 계약](../proposed/consent-gate-207.md)의 후속 구현 범위입니다.
 
 ## 인증 세션 무효화
@@ -142,6 +145,7 @@
 - refresh token rotation·재사용 탐지 기준, 비밀번호 재설정 lock 순서·오류 코드 변경
 - 회원가입 이메일 인증 목적·만료·쿨다운·오류 코드 변경
 - 목적별 동의 API의 purpose/status/policy_version/current_policy_version, missing row 응답 의미, `is_granted` 판정 기준 변경
+- OCR `OCR_CONSENT_POLICY_VERSION` 미설정 상태의 신규 동의 차단, 기존 철회 허용, OCR 접수 Gate fail-closed 의미 변경
 
 ## #398 통합 권한 (PR #429 리뷰 대상)
 
