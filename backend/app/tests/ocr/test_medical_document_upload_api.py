@@ -7,6 +7,7 @@ from starlette import status
 from app.core import config
 from app.main import app
 from app.services.medical_documents import MAX_DOCUMENT_SIZE_BYTES
+from app.tests.helpers.auth import signup_verified_user
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 
@@ -17,7 +18,7 @@ async def _signup_and_login(client: AsyncClient, *, email: str) -> str:
         "password": "Password123!",
         "name": "업로드API테스터",
     }
-    await client.post("/api/v1/auth/signup", json=signup_data)
+    await signup_verified_user(client, signup_data)
     login_response = await client.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
     access_token: str = login_response.json()["access_token"]
     return access_token

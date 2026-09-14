@@ -46,11 +46,14 @@ async def test_email_verification_request_issues_local_token_and_sends_email() -
     assert sender.email_verifications == [(email, body["verification_token"])]
 
 
-async def test_email_verification_request_does_not_create_duplicate_probe_for_existing_email() -> None:
+async def test_email_verification_request_does_not_create_duplicate_probe_for_existing_email(
+    mark_signup_email_verified,
+) -> None:
     sender = RecordingEmailSender()
     fastapi_app.dependency_overrides[get_email_sender] = lambda: sender
     email = f"verify-existing-{uuid4().hex[:10]}@example.com"
     try:
+        await mark_signup_email_verified(email)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post(
                 "/api/v1/auth/signup",
@@ -181,11 +184,12 @@ async def test_email_verification_confirm_rejects_expired_token(db_session) -> N
     ]
 
 
-async def test_password_reset_request_uses_email_sender_for_existing_account() -> None:
+async def test_password_reset_request_uses_email_sender_for_existing_account(mark_signup_email_verified) -> None:
     sender = RecordingEmailSender()
     fastapi_app.dependency_overrides[get_email_sender] = lambda: sender
     email = f"reset-mail-{uuid4().hex[:10]}@example.com"
     try:
+        await mark_signup_email_verified(email)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post(
                 "/api/v1/auth/signup",

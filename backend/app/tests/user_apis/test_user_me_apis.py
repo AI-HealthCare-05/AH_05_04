@@ -12,6 +12,7 @@ from app.core.jwt.tokens import AccessToken, RefreshToken
 from app.dependencies.security import get_request_user
 from app.main import app
 from app.models.users import AccountStatus, User
+from app.tests.helpers.auth import signup_verified_user
 
 
 class TestUserMeApis:
@@ -23,7 +24,7 @@ class TestUserMeApis:
             "name": "내정보테스터",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup_verified_user(client, signup_data)
 
             login_response = await client.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
             access_token = login_response.json()["access_token"]
@@ -51,7 +52,7 @@ class TestUserMeApis:
             "name": "수정후",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup_verified_user(client, signup_data)
 
             login_response = await client.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
             access_token = login_response.json()["access_token"]
@@ -78,7 +79,7 @@ class TestUserMeApis:
             "phone_number": "01077778888",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup_verified_user(client, signup_data)
 
             login_response = await client.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
             access_token = login_response.json()["access_token"]

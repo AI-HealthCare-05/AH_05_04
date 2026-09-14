@@ -12,6 +12,7 @@ from app.models.user_consents import ConsentPurpose, ConsentStatus
 from app.repositories.user_consent_repository import UserConsentRepository
 from app.repositories.user_repository import UserRepository
 from app.services.user_consents import OcrConsentService
+from app.tests.helpers.auth import signup_verified_user
 
 
 async def _create_user(session: AsyncSession):
@@ -238,10 +239,10 @@ async def test_ocr_consent_api_reports_distinct_states_and_refuses_old_version(
     monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v2")
     email = f"ocr-api-{uuid4().hex[:10]}@example.com"
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        signup = await client.post(
-            "/api/v1/auth/signup", json={"email": email, "password": "Password123!", "name": "동의테스터"}
+        await signup_verified_user(
+            client,
+            {"email": email, "password": "Password123!", "name": "동의테스터"},
         )
-        assert signup.status_code in (200, 201)
         login = await client.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
         headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
 

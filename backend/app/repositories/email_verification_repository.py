@@ -95,6 +95,7 @@ class EmailVerificationRepository:
                 EmailVerificationToken.email == email,
                 EmailVerificationToken.purpose == purpose,
                 EmailVerificationToken.verified_at.is_not(None),
+                EmailVerificationToken.expires_at > datetime.now(config.TIMEZONE),
             )
             .order_by(EmailVerificationToken.verified_at.desc())
             .limit(1)

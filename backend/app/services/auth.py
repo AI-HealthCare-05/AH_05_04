@@ -9,6 +9,7 @@ from app.core import config
 from app.core.config import Env
 from app.core.errors import ApiError, ErrorDetail
 from app.core.jwt.tokens import AccessToken, RefreshToken
+from app.core.utils.common import normalize_email
 from app.core.utils.security import (
     generate_email_verification_token,
     generate_password_reset_token,
@@ -62,6 +63,15 @@ def _email_verification_token_invalid_error() -> ApiError:
     )
 
 
+def _email_verification_required_error() -> ApiError:
+    return ApiError(
+        status_code=409,
+        code="EMAIL_VERIFICATION_REQUIRED",
+        message="이메일 인증을 완료해 주세요.",
+        details=[ErrorDetail(field="email", reason="EMAIL_VERIFICATION_REQUIRED")],
+    )
+
+
 class AuthService:
     def __init__(
         self,
@@ -85,6 +95,7 @@ class AuthService:
         data: SignUpRequest,
     ) -> User:
         await self.check_email_exists(data.email)
+        await self._require_signup_email_verified(data.email)
         consent_policy_versions = self._validate_signup_consents(data.consents)
 
         try:
@@ -111,6 +122,15 @@ class AuthService:
                 message=detail,
                 details=[ErrorDetail(field=exc.field, reason="ALREADY_EXISTS")],
             ) from exc
+
+    async def _require_signup_email_verified(self, email: str | EmailStr) -> None:
+        repo = self._require_email_verification_repo()
+        verified_token = await repo.latest_verified_token(
+            email=normalize_email(str(email)),
+            purpose=EmailVerificationPurpose.SIGNUP,
+        )
+        if verified_token is None:
+            raise _email_verification_required_error()
 
     def _validate_signup_consents(self, consents: list[SignUpConsentRequest]) -> dict[ConsentPurpose, str]:
         policy_versions: dict[ConsentPurpose, str] = {}
@@ -230,7 +250,7 @@ class AuthService:
         """
         start = time.monotonic()
         repo = self._require_email_verification_repo()
-        email_value = str(email)
+        email_value = normalize_email(str(email))
         purpose = EmailVerificationPurpose.SIGNUP
         now = datetime.now(config.TIMEZONE)
         cooldown_since = now - timedelta(seconds=config.EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS)
@@ -268,7 +288,7 @@ class AuthService:
 
     async def confirm_email_verification(self, *, email: str | EmailStr, token: str) -> None:
         repo = self._require_email_verification_repo()
-        email_value = str(email)
+        email_value = normalize_email(str(email))
         purpose = EmailVerificationPurpose.SIGNUP
         candidate = await repo.find_by_hash(hash_email_verification_token(token))
         if candidate is None or candidate.email != email_value or candidate.purpose != purpose:

@@ -8,6 +8,7 @@
 
 - Endpoint: `POST /api/v1/auth/signup`
 - 요청 body는 필수 계정 필드 `name`, `email`, `password`와 선택 필드 `consents`만 허용합니다(`extra="forbid"`).
+- 회원가입은 같은 정규화 이메일의 `SIGNUP` 이메일 인증 완료 기록이 있어야 성공합니다. 인증이 없으면 `409 EMAIL_VERIFICATION_REQUIRED`, `details[].field=email`, `reason=EMAIL_VERIFICATION_REQUIRED`를 반환합니다.
 - `consents`를 생략하거나 빈 배열로 보내도 회원가입은 성공하며 목적별 동의 row를 만들지 않습니다.
 - `consents[].purpose`는 `OCR`, `GUIDE`, `CHAT`, `NOTIFICATION`만 허용하고 중복 목적은 `422 VALIDATION_FAILED`로 거부합니다.
 - 클라이언트는 `policy_version`이나 `status`를 보내지 않습니다. 서버는 선택된 목적만 해당 목적의 현재 policy version으로 `GRANTED` 저장합니다.
@@ -78,6 +79,7 @@
 - `purpose`는 현재 `SIGNUP`만 사용합니다. 같은 이메일·목적에 대해 `EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS`(기본 60초) 안에 다시 요청하면 새 token을 만들지 않고 같은 성공 응답을 반환합니다.
 - `verification_token`은 `LOCAL` 환경에서만 응답에 채워집니다. 그 외 환경에서는 이메일 존재 여부 추론을 줄이기 위해 비웁니다. 실제 외부 Email Provider 연결은 `EmailSender` adapter 뒤에 두며, 기본값 `EMAIL_PROVIDER=noop`은 발송하지 않습니다. 이번 범위에서 SMTP adapter는 local 검증용으로만 사용할 수 있고 Production/Staging 활성화는 fail-closed됩니다. 실제 Provider 선택·계정·비용 정책은 후속 보안·배포 설정 PR에서 확정합니다.
 - `POST /api/v1/auth/email-verification/confirm`은 이메일과 원문 token을 받아 `token_hash`, `verified_at IS NULL`, `expires_at > now()` 조건으로 검증합니다. 성공하면 같은 이메일·목적의 미인증·미만료 token 전체를 인증 완료 처리합니다.
+- `POST /api/v1/auth/signup`은 같은 정규화 이메일의 `SIGNUP` 인증 완료 기록을 요구합니다. 인증 완료 기록이 없으면 `409 EMAIL_VERIFICATION_REQUIRED`, `details[].field=email`, `reason=EMAIL_VERIFICATION_REQUIRED`를 반환합니다.
 - 유효하지 않거나, 만료됐거나, 이미 사용됐거나, 다른 이메일에 발급된 token이면 `422 VALIDATION_FAILED`, `details[].field=token`, `reason=EMAIL_VERIFICATION_TOKEN_INVALID`를 반환합니다.
 - 로그·오류 응답에는 원문 token, token hash, 이메일 존재 여부 추론 정보를 남기지 않습니다.
 
