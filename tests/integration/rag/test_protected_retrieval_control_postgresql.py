@@ -44,6 +44,7 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
 )
 from ai_worker.tasks.evaluation.protected_retrieval_control import (
     ApprovalSourceNotFoundError,
+    ControlCommandResult,
     DisableIdentityCommand,
     ExpireAuthorizationCommand,
     FreezeApprovalSourceEvidence,
@@ -2298,3 +2299,333 @@ async def test_freeze_rejects_non_custodian_or_author_overlap(
                 {"login": protected_database.actor_login},
             )
         await admin_engine.dispose()
+
+
+async def _dataset_row_count(
+    database: _ProtectedDatabase,
+    command: RegisterDatasetCommand,
+) -> int:
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with admin_engine.connect() as connection:
+            return await connection.scalar(
+                text(
+                    f'''SELECT count(*) FROM "{database.schema}".protected_dataset
+                    WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version'''
+                ),
+                {"dataset_id": command.dataset_id, "dataset_version": command.dataset_version},
+            )
+    finally:
+        await admin_engine.dispose()
+
+
+async def _request_control_audit_count(
+    database: _ProtectedDatabase,
+    request_id: str,
+) -> int:
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with admin_engine.connect() as connection:
+            return await connection.scalar(
+                text(
+                    f'''SELECT count(*) FROM "{database.schema}".audit_entry
+                    WHERE event_id = CAST(:request_id AS uuid)'''
+                ),
+                {"request_id": request_id},
+            )
+    finally:
+        await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_identical_dataset_register_converges_to_one_effect(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    first = _service(protected_database, _DatasetApprovalSource())
+    second = _service(protected_database, _DatasetApprovalSource())
+    command = _register_dataset_command()
+    try:
+        first_result, second_result = await asyncio.gather(
+            first.register_dataset(command),
+            second.register_dataset(command),
+        )
+        assert first_result == second_result
+        assert await _dataset_row_count(protected_database, command) == 1
+        assert await _request_control_audit_count(protected_database, command.request_id) == 1
+    finally:
+        await first.close()
+        await second.close()
+
+
+@pytest.mark.asyncio
+async def test_competing_dataset_transitions_commit_one_winner(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, dataset = await _registered_dataset_service(protected_database)
+    second_service = _service(protected_database, _DatasetApprovalSource())
+    try:
+        cmd1 = _transition_command(
+            dataset,
+            from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+            to_state=ProtectedDatasetState.AUTHORING,
+            revision=1,
+            authored_count=0,
+            review_complete=False,
+        )
+        cmd2 = _transition_command(
+            dataset,
+            from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+            to_state=ProtectedDatasetState.AUTHORING,
+            revision=1,
+            authored_count=0,
+            review_complete=False,
+        )
+        results = await asyncio.gather(
+            service.transition_dataset(cmd1),
+            second_service.transition_dataset(cmd2),
+            return_exceptions=True,
+        )
+        successes = [r for r in results if isinstance(r, ControlCommandResult)]
+        failures = [r for r in results if isinstance(r, ProtectedSecurityError)]
+        assert len(successes) == 1
+        assert len(failures) == 1
+        assert successes[0].reason_code == "DATASET_TRANSITIONED"
+        assert successes[0].effective_revision == 2
+        assert failures[0].reason_code == "DATASET_STATE_MISMATCH"
+
+        persisted = await _owner_read_dataset_row(protected_database, dataset.dataset_id, dataset.dataset_version)
+        assert persisted.state == "AUTHORING"  # type: ignore[attr-defined]
+        assert persisted.state_revision == 2  # type: ignore[attr-defined]
+
+        winner_cmd = cmd1 if results[0] == successes[0] else cmd2
+        loser_cmd = cmd2 if winner_cmd == cmd1 else cmd1
+        assert await _request_control_audit_count(protected_database, winner_cmd.request_id) == 1
+        assert await _request_control_audit_count(protected_database, loser_cmd.request_id) == 1
+    finally:
+        await service.close()
+        await second_service.close()
+
+
+@pytest.mark.asyncio
+async def test_competing_freeze_commits_one_winner_and_replays(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, dataset, source = await _freezable_dataset_service(protected_database)
+    second_service = _service(protected_database, source)
+    try:
+        cmd1 = _freeze_command(dataset, source.evidence)
+        cmd2 = _freeze_command(dataset, source.evidence)
+        results = await asyncio.gather(
+            service.freeze_dataset(cmd1),
+            second_service.freeze_dataset(cmd2),
+            return_exceptions=True,
+        )
+        successes = [r for r in results if isinstance(r, ControlCommandResult)]
+        failures = [r for r in results if isinstance(r, ProtectedSecurityError)]
+        assert len(successes) == 1
+        assert len(failures) == 1
+        assert successes[0].reason_code == "DATASET_FROZEN"
+        assert successes[0].effective_revision == dataset.state_revision + 1
+        assert failures[0].reason_code == "DATASET_STATE_MISMATCH"
+
+        persisted = await _owner_read_dataset_row(protected_database, dataset.dataset_id, dataset.dataset_version)
+        assert persisted.state == "FROZEN"  # type: ignore[attr-defined]
+        assert persisted.state_revision == dataset.state_revision + 1  # type: ignore[attr-defined]
+
+        winner_cmd = cmd1 if results[0] == successes[0] else cmd2
+        replay = await service.freeze_dataset(winner_cmd)
+        assert replay == successes[0]
+    finally:
+        await service.close()
+        await second_service.close()
+
+
+@pytest.mark.asyncio
+async def test_dataset_transition_refreshes_database_time_after_waiting_for_lock(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, dataset = await _registered_dataset_service(protected_database)
+    lock_engine = create_async_engine(protected_database.url)
+    try:
+        command = _transition_command(
+            dataset,
+            from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+            to_state=ProtectedDatasetState.AUTHORING,
+            revision=1,
+            authored_count=0,
+            review_complete=False,
+        )
+        async with lock_engine.connect() as connection:
+            transaction = await connection.begin()
+            await connection.execute(
+                text(
+                    f'''SELECT dataset_id FROM "{protected_database.schema}".protected_dataset
+                    WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version FOR UPDATE'''
+                ),
+                {"dataset_id": dataset.dataset_id, "dataset_version": dataset.dataset_version},
+            )
+            pending = asyncio.create_task(service.transition_dataset(command))
+            await asyncio.sleep(0.5)
+            lock_release_time = await connection.scalar(text("SELECT clock_timestamp()"))
+            await transaction.commit()
+            result = await pending
+            assert result.reason_code == "DATASET_TRANSITIONED"
+
+            admin_engine = create_async_engine(protected_database.url)
+            try:
+                async with admin_engine.connect() as admin_conn:
+                    recorded_at = await admin_conn.scalar(
+                        text(
+                            f'''SELECT recorded_at FROM "{protected_database.schema}".audit_entry
+                            WHERE event_id = CAST(:request_id AS uuid)'''
+                        ),
+                        {"request_id": command.request_id},
+                    )
+                assert recorded_at is not None
+                assert recorded_at >= lock_release_time
+            finally:
+                await admin_engine.dispose()
+    finally:
+        await lock_engine.dispose()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_dataset_freeze_policy_denial_commits_once_without_mutation(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, dataset, source = await _freezable_dataset_service(protected_database)
+    try:
+        command = _freeze_command(dataset, source.evidence, expected_raw_sha256="0" * 64)
+        for _ in range(2):
+            with pytest.raises(ProtectedSecurityError, match="APPROVAL_EVIDENCE_MISMATCH"):
+                await service.freeze_dataset(command)
+
+        persisted = await _owner_read_dataset_row(protected_database, dataset.dataset_id, dataset.dataset_version)
+        assert persisted.state == "REVIEW_READY"  # type: ignore[attr-defined]
+        assert persisted.state_revision == dataset.state_revision  # type: ignore[attr-defined]
+
+        admin_engine = create_async_engine(protected_database.url)
+        try:
+            async with admin_engine.connect() as connection:
+                denial_count = await connection.scalar(
+                    text(
+                        f'''SELECT count(*) FROM "{protected_database.schema}".audit_entry
+                        WHERE event_id = CAST(:request_id AS uuid)
+                          AND entry_body->>'outcome' = 'DENIED'
+                          AND entry_body->>'reason_code' = 'APPROVAL_EVIDENCE_MISMATCH' '''
+                    ),
+                    {"request_id": command.request_id},
+                )
+                assert denial_count == 1
+        finally:
+            await admin_engine.dispose()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_dataset_transition_internal_failure_rolls_back_without_policy_denial_audit(
+    protected_database: _ProtectedDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, dataset = await _registered_dataset_service(protected_database)
+    try:
+        async def fail_check_dataset_transition(
+            self_session: control_adapter._ControlSession,
+            candidate: TransitionDatasetCommand,
+        ) -> ProtectedAuditReason | None:
+            del self_session, candidate
+            raise ProtectedSecurityError("INTERNAL_ERROR")
+
+        monkeypatch.setattr(
+            control_adapter._ControlSession,
+            "check_dataset_transition",
+            fail_check_dataset_transition,
+        )
+        command = _transition_command(
+            dataset,
+            from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+            to_state=ProtectedDatasetState.AUTHORING,
+            revision=1,
+            authored_count=0,
+            review_complete=False,
+        )
+        with pytest.raises(ProtectedSecurityError, match="^INTERNAL_ERROR$"):
+            await service.transition_dataset(command)
+
+        persisted = await _owner_read_dataset_row(protected_database, dataset.dataset_id, dataset.dataset_version)
+        assert persisted.state == "ACCESS_AUTHORIZED"  # type: ignore[attr-defined]
+        assert persisted.state_revision == 1  # type: ignore[attr-defined]
+
+        assert await _request_control_audit_count(protected_database, command.request_id) == 0
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_dataset_transition_denied_replay_returns_fixed_error_without_duplicate_audit(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, dataset = await _registered_dataset_service(protected_database)
+    try:
+        command = _transition_command(
+            dataset,
+            from_state=ProtectedDatasetState.REVIEW_READY,
+            to_state=ProtectedDatasetState.AUTHORING,
+            revision=99,
+            authored_count=0,
+            review_complete=False,
+        )
+        with pytest.raises(ProtectedSecurityError) as exc_info1:
+            await service.transition_dataset(command)
+        assert exc_info1.value.reason_code == "DATASET_STATE_MISMATCH"
+
+        with pytest.raises(ProtectedSecurityError) as exc_info2:
+            await service.transition_dataset(command)
+        assert exc_info2.value.reason_code == "DATASET_STATE_MISMATCH"
+
+        assert await _request_control_audit_count(protected_database, command.request_id) == 1
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_dataset_command_conflict_rejects_payload_mutation_on_same_request_id(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    service, dataset = await _registered_dataset_service(protected_database)
+    try:
+        shared_request_id = str(uuid4())
+        cmd1 = _transition_command(
+            dataset,
+            request_id=shared_request_id,
+            from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+            to_state=ProtectedDatasetState.AUTHORING,
+            revision=1,
+            authored_count=0,
+            review_complete=False,
+        )
+        result1 = await service.transition_dataset(cmd1)
+        assert result1.reason_code == "DATASET_TRANSITIONED"
+
+        cmd2 = _transition_command(
+            dataset,
+            request_id=shared_request_id,
+            from_state=ProtectedDatasetState.AUTHORING,
+            to_state=ProtectedDatasetState.REVIEW_READY,
+            revision=2,
+            authored_count=40,
+            review_complete=True,
+        )
+        with pytest.raises(ProtectedSecurityError, match="CONTROL_COMMAND_CONFLICT"):
+            await service.transition_dataset(cmd2)
+
+        persisted = await _owner_read_dataset_row(protected_database, dataset.dataset_id, dataset.dataset_version)
+        assert persisted.state == "AUTHORING"  # type: ignore[attr-defined]
+        assert persisted.state_revision == 2  # type: ignore[attr-defined]
+
+        assert await _request_control_audit_count(protected_database, shared_request_id) == 1
+    finally:
+        await service.close()
+
