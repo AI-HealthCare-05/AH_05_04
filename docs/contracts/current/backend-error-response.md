@@ -304,8 +304,9 @@ Auth 도메인의 세부 reason은 다음처럼 고정합니다. 모두 `details
 
 | reason | 의미 |
 | --- | --- |
-| `ACTIVE_MEDICATION_REQUIRED` | 활성 Prescription Version에 확인 대상 약제가 없음 |
 | `MATCHED_IDENTIFICATION_REQUIRED` | 활성 약제 중 `MATCHED` Identification이 없는 항목이 있음 |
+
+활성 Prescription Version에 확인 대상 약제가 없는 상태는 현재 합법 생성 경로가 아니며, 봉인 metadata 또는 구성 무결성 손상으로 보고 `PRESCRIPTION_VERSION_UNAVAILABLE` / `INVALID_VERSION_GRAPH`로 fail-closed한다.
 
 위 Candidate 오류 코드는 #172 API 구현에 포함되지만 `PUBLIC_TRACK_F_ENABLED=false` 기본 게이트 아래에 있습니다. 공개 UI·Preflight·Runtime 현재성 연결 전에는 실제 사용자 경로에서 활성화하지 않습니다.
 
