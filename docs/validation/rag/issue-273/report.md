@@ -15,8 +15,8 @@
 - Preparation raw SHA-256: `40ea344c378298d99c14c372c27296322854d8e9b055fa179592568ca88bc192`
 - Preparation self SHA-256: `b4a0a113d9efce867a434875f18ee259431d226a9cf1e4dcaed28152920600b6`
 - Protected Runner Foundation: `issue-273-protected-runner-foundation@1.0.0`
-- Foundation raw SHA-256: `257fbfeff70622a8464a02dfb1c791f0980b66877e8b00a99079ed0022934124`
-- Foundation self SHA-256: `24741134b1aae312101c712b1d4630fe300195ffdddc3425ed06120b903fea85`
+- Foundation raw SHA-256: `67085a511148edf8554e923f798415228bc15ae7d473d4d6677e21f302b764f4`
+- Foundation self SHA-256: `72cd3df8a3dd50da234e4451e1cd619796d34b3abadab8970cec7a78b9a9b99e`
 - Phase B3 Product·Privacy·Safety·Evaluation Reviewer: `@hazelnutflavoured`
 - Phase B3 Dataset Custodian·Backend·Security Reviewer: `@phina-io`
 - Prior DEV Approval Transition: `DEV_DATASET_CUSTODIAN_APPROVAL_RECORDED`; the verified actor was `@phina-io` (`DATASET_CUSTODIAN`). This is not HOLDOUT access authorization.
@@ -83,4 +83,4 @@ DEV cannot produce a Release PASS; Production remains closed.
 - HOLDOUT authoring may start only after an independent Dataset Custodian authorization event is recorded.
 - The #158 replay uses a different Dataset and is `NOT_COMPARABLE_DIFFERENT_DATASET`.
 
-Status updated at `2026-09-09T00:00:00.000000Z`. Canonical status SHA-256: `b31d84a4becb905aef01bdfdd664f97c2b83b70d73a75e8a48595c789e08187a`.
+Status updated at `2026-09-09T00:00:00.000000Z`. Canonical status SHA-256: `9efce67b1997b7eb3bd01ca0f364c15e66e5c3b9cf63ab16fb8efd376e37ef80`.

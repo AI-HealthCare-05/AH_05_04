@@ -628,3 +628,49 @@ def test_identity_command_sha256_is_deterministic() -> None:
     assert control_command_sha256(ControlCommandKind.REGISTER_IDENTITY, cmd1) != control_command_sha256(
         ControlCommandKind.REGISTER_IDENTITY, cmd3
     )
+
+
+def test_register_identity_command_rejects_enabled_false() -> None:
+    with pytest.raises(ValidationError):
+        RegisterIdentityCommand(
+            request_id=REQUEST_ID,
+            database_login="test_user",
+            actor_id="synthetic-reviewer",
+            actor_namespace="GITHUB_LOGIN",
+            identity_plane="CONTROL",
+            approval_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+            enabled=False,  # type: ignore[arg-type]
+        )
+
+
+def test_identity_command_result_and_audit_reject_invalid_target_id() -> None:
+    # Result rejects invalid database_login as target_id
+    with pytest.raises(ValidationError):
+        ControlCommandResult(
+            request_id=REQUEST_ID,
+            command_kind=ControlCommandKind.REGISTER_IDENTITY,
+            target_id="123-invalid-ident!",
+            effective_revision=None,
+            authorization_audit_event_id=None,
+            reason_code="IDENTITY_REGISTERED",
+        )
+
+    # Audit rejects invalid database_login as target_id
+    with pytest.raises(ValidationError):
+        ControlCommandAuditEntry(
+            event_kind=ProtectedAuditEventKind.CONTROL,
+            sequence=1,
+            event_id=REQUEST_ID,
+            command_kind="REGISTER_IDENTITY",
+            executed_by=ActorIdentity(actor_id="synthetic-reviewer", namespace="GITHUB_LOGIN"),
+            target_kind=ControlAuditTargetKind.PROTECTED_IDENTITY,
+            target_id="123-invalid-ident!",
+            command_sha256=SHA_A,
+            outcome=ControlAuditOutcome.SUCCEEDED,
+            result_effective_revision=None,
+            authorization_audit_event_id=None,
+            reason_code=ProtectedAuditReason.IDENTITY_REGISTERED,
+            recorded_at=NOW,
+            previous_entry_sha256=None,
+            entry_sha256="0" * 64,
+        )

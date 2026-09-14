@@ -17,6 +17,7 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     ProtectedPrincipalRole,
     ProtectedSecurityError,
     VerifiedAuthorizationApproval,
+    _is_valid_database_login,
     authorization_grant_approval_sha256,
 )
 from ai_worker.tasks.evaluation.schemas.common import Sha256Hex, StrictContractModel
@@ -86,7 +87,7 @@ class RegisterIdentityCommand(_ControlCommand):
     identity_plane: Literal["DATA", "CONTROL"]
     principal_role: ProtectedPrincipalRole | None = None
     approval_role: ProtectedApprovalRole | None = None
-    enabled: bool = True
+    enabled: Literal[True] = True
 
     @model_validator(mode="after")
     def validate_plane_roles(self) -> RegisterIdentityCommand:
@@ -156,6 +157,8 @@ class ControlCommandResult(StrictContractModel):
             raise ValueError("control result reason does not match command kind")
         if not ingest and not identity:
             _require_uuid_v4(self.target_id)
+        if identity and not _is_valid_database_login(self.target_id):
+            raise ValueError("identity control target must be a valid database login")
         if (ingest or identity) and (
             self.effective_revision is not None or self.authorization_audit_event_id is not None
         ):

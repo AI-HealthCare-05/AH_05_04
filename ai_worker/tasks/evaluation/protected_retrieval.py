@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -56,6 +57,13 @@ def _is_canonical_uuid_v4(value: str) -> bool:
     except ValueError:
         return False
     return parsed.version == 4 and str(parsed) == value
+
+
+_POSTGRESQL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+
+
+def _is_valid_database_login(value: str) -> bool:
+    return bool(_POSTGRESQL_IDENTIFIER_PATTERN.match(value))
 
 
 class ProtectedSecurityError(RuntimeError):
@@ -483,6 +491,10 @@ class ControlCommandAuditEntry(StrictContractModel):
             raise ValueError("control audit target does not match command kind")
         if expected_target is ControlAuditTargetKind.AUTHORIZATION_GRANT and not _is_canonical_uuid_v4(self.target_id):
             raise ValueError("authorization control target must be a UUIDv4")
+        if expected_target is ControlAuditTargetKind.PROTECTED_IDENTITY and not _is_valid_database_login(
+            self.target_id
+        ):
+            raise ValueError("identity control target must be a valid database login")
         if self.outcome is ControlAuditOutcome.DENIED:
             return self._validate_denied_result()
         return self._validate_succeeded_result()
