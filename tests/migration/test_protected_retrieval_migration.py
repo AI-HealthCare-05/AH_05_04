@@ -472,6 +472,24 @@ async def test_limited_logins_have_plane_specific_column_privileges(
                     "WHERE database_login = 'synthetic-permitted-login'"
                 )
             )
+            await connection.execute(
+                text(
+                    f"INSERT INTO {_quote(database.schema)}.protected_dataset "
+                    "(dataset_id, dataset_version, binding, manifest_sha256, "
+                    "protected_artifact_sha256, hmac_key_version, state, "
+                    "state_revision, authored_count, review_complete, lock_marker) VALUES "
+                    "('55555555-5555-4555-8555-555555555555', '1.0.0', '{}'::jsonb, :manifest, "
+                    ":artifact, 'synthetic-key-v1', 'ACCESS_AUTHORIZED', 1, 0, false, 0)"
+                ),
+                {"manifest": "a" * 64, "artifact": "b" * 64},
+            )
+            await connection.execute(
+                text(
+                    f"UPDATE {_quote(database.schema)}.protected_dataset "
+                    "SET state = 'AUTHORING', state_revision = 2, authored_count = 1, review_complete = false "
+                    "WHERE dataset_id = '55555555-5555-4555-8555-555555555555' AND dataset_version = '1.0.0'"
+                )
+            )
             await connection.rollback()
         control_forbidden_statements = (
             f"UPDATE {_quote(database.schema)}.protected_identity SET principal_role = 'HOLDOUT_RUNNER'",
@@ -480,13 +498,12 @@ async def test_limited_logins_have_plane_specific_column_privileges(
             f"UPDATE {_quote(database.schema)}.protected_identity SET actor_namespace = 'SYSTEM'",
             f"UPDATE {_quote(database.schema)}.protected_identity SET identity_plane = 'DATA'",
             f"UPDATE {_quote(database.schema)}.protected_identity SET approval_role = 'PRODUCT_SAFETY_REVIEWER'",
-            f"INSERT INTO {_quote(database.schema)}.protected_dataset "
-            "(dataset_id, dataset_version, binding, manifest_sha256, protected_artifact_sha256, "
-            "hmac_key_version, state, state_revision, authored_count, review_complete) VALUES "
-            "('forbidden-dataset', '1.0.0', '{}'::jsonb, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', "
-            "'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', "
-            "'forbidden-key', 'ACCESS_AUTHORIZED', 1, 0, false)",
-            f"UPDATE {_quote(database.schema)}.protected_dataset SET state = 'FROZEN'",
+            f"UPDATE {_quote(database.schema)}.protected_dataset SET dataset_id = '99999999-9999-4999-8999-999999999999'",
+            f"UPDATE {_quote(database.schema)}.protected_dataset SET dataset_version = '2.0.0'",
+            f"UPDATE {_quote(database.schema)}.protected_dataset SET binding = '{{}}'::jsonb",
+            f"UPDATE {_quote(database.schema)}.protected_dataset SET manifest_sha256 = '{('a' * 64)}'",
+            f"UPDATE {_quote(database.schema)}.protected_dataset SET protected_artifact_sha256 = '{('b' * 64)}'",
+            f"UPDATE {_quote(database.schema)}.protected_dataset SET hmac_key_version = 'forged-key-version'",
             f"INSERT INTO {_quote(database.schema)}.audit_entry "
             "(sequence, event_id, event_kind, operation_key, entry_body, previous_entry_sha256, "
             "entry_sha256, recorded_at, control_entry) VALUES "
