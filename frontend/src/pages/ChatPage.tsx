@@ -553,6 +553,7 @@ function ChatPage({
 
   const handleNavigation = (item: '홈' | '일정' | '도지' | '가이드' | '메뉴') => {
     if (item === '홈') navigate('/')
+    if (item === '일정') navigate('/schedule')
     if (item === '도지' && !currentPrescriptionId) navigate('/chat')
     if (item === '가이드') navigate('/guides')
     if (item === '메뉴') navigate('/menu')
@@ -595,7 +596,6 @@ function ChatPage({
           brandMark={<DoseyMascot variant="header" />}
           backPlacement="content"
           activeNavigation="도지"
-          disabledNavigation={['일정']}
           onNavigate={handleNavigation}
         >
           <main className="app-scroll chat-page__gate chat-page__gate--no-prescription">
@@ -629,7 +629,6 @@ function ChatPage({
         brandMark={<DoseyMascot variant="header" />}
         backPlacement="content"
         activeNavigation="도지"
-        disabledNavigation={['일정']}
         onNavigate={handleNavigation}
       >
         <main className="chat-layout">

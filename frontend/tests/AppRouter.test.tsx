@@ -5,6 +5,7 @@ import { ApiError } from '../src/api/client'
 import { getGuide, getGuideForPrescription } from '../src/api/guides'
 import { getLatestPrescription } from '../src/api/prescriptions'
 import { getCurrentUser } from '../src/api/users'
+import { listNotifications } from '../src/api/notifications'
 import AppRouter from '../src/routes/AppRouter'
 
 vi.mock('../src/api/users', () => ({
@@ -20,6 +21,11 @@ vi.mock('../src/api/guides', async (importOriginal) => ({
 vi.mock('../src/api/prescriptions', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/api/prescriptions')>()),
   getLatestPrescription: vi.fn(),
+}))
+
+vi.mock('../src/api/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/api/notifications')>()),
+  listNotifications: vi.fn(),
 }))
 
 const CURRENT_USER = {
@@ -53,6 +59,16 @@ afterEach(() => {
 })
 
 describe('인증 상태별 AppRouter 이동', () => {
+  it('개발 환경의 /design-prototype는 인증 API 없이 열린다', async () => {
+    renderRoute('/design-prototype')
+
+    expect(
+      await screen.findByRole('heading', { name: '다섯알 전체 여정 + UX 상태' }),
+    ).toBeTruthy()
+    expect(document.querySelector('.prototype-workbench')).toBeTruthy()
+    expect(getCurrentUser).not.toHaveBeenCalled()
+  })
+
   it('개발 환경의 /dev/preview는 인증 API 없이 열린다', async () => {
     renderRoute('/dev/preview')
 
@@ -124,6 +140,9 @@ describe('인증 상태별 AppRouter 이동', () => {
     '/prescriptions/upload',
     '/prescriptions/review',
     '/chat',
+    '/schedule',
+    '/schedule/occurrences/11111111-1111-4111-8111-111111111111?date=2026-09-14',
+    '/notifications',
   ])('비로그인 사용자가 회원 전용 화면 %s에 직접 접속하면 로그인 화면으로 이동한다', (path) => {
     renderRoute(path)
 
@@ -192,6 +211,18 @@ describe('인증 상태별 AppRouter 이동', () => {
 
     expect(await screen.findByRole('heading', { name: '메뉴' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '사용자 정보' })).toBeTruthy()
+  })
+
+  it('로그인 사용자에게 protected /notifications production route를 허용한다', async () => {
+    vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
+    vi.mocked(listNotifications).mockResolvedValue({
+      data: { items: [], next_offset: null },
+    })
+    localStorage.setItem('access_token', 'fixture-access-token')
+    renderRoute('/notifications')
+
+    expect(await screen.findByRole('heading', { name: '알림 목록' })).toBeTruthy()
+    expect(await screen.findByText('새로운 알림이 없어요')).toBeTruthy()
   })
 
   it('로그인 사용자가 로그인 화면에 접속하면 홈 화면으로 이동한다', async () => {

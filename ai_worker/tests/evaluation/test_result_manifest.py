@@ -36,6 +36,7 @@ from ai_worker.tasks.evaluation.schemas.artifacts import (
     SuiteResults,
 )
 from ai_worker.tasks.evaluation.schemas.common import ActorNamespace, ActorRef, ActorRole
+from ai_worker.tasks.evaluation.schemas.policy import ComparisonPolicy, ComparisonScope
 from ai_worker.tests.evaluation.test_runner import CountingAdapter, StaticRegistry
 
 REPOSITORY_ROOT = Path(__file__).parents[3]
@@ -297,6 +298,69 @@ def test_non_retrieval_artifact_draft_keeps_placeholder_metrics() -> None:
     draft = build_artifact_draft(material)
 
     assert {metric.execution_status.value for metric in draft.metrics.metrics} == {"NOT_IMPLEMENTED"}
+
+
+def _answer_scope(metric_id: str, unit_of_analysis: str) -> ComparisonScope:
+    return ComparisonScope.model_validate(
+        {
+            "metric_id": metric_id,
+            "metric_version": "1.0.0",
+            "partition": "DEV",
+            "slice_id": "ALL",
+            "required": False,
+            "unit_of_analysis": unit_of_analysis,
+            "estimator_id": "MICRO_RATIO",
+            "estimator_version": "1.0.0",
+            "minimum_case_count": 1,
+            "independence_unit": "question_template",
+            "cluster_dimension": "question_template",
+            "minimum_independent_group_count": 1,
+            "threshold": "0",
+            "decision_basis": "DIAGNOSTIC_ONLY",
+            "ci_method_id": "PERCENTILE_CLUSTER_BOOTSTRAP",
+            "ci_method_version": "1.0.0",
+            "ci_parameters": {"iterations": 100, "level": "0.95", "sidedness": "TWO_SIDED"},
+            "seed": 159,
+        }
+    )
+
+
+def test_answer_metric_routing_calculates_structured_scopes_only() -> None:
+    material = _material(run_id=RUN_ID_A, started_at=TIME_A, complete=True)
+    resolved = load_dev_execution_request(
+        REPOSITORY_ROOT / "evals/configs/dev-foundation-answer-grounding-safety-v1.execution.json",
+        repository_root=REPOSITORY_ROOT,
+        repository_state_provider=lambda _root: RepositoryState("a" * 40, True),
+    )
+    outcome = execute_dev_cases(
+        material.dataset,
+        resolved,
+        run_id=RUN_ID_A,
+        adapter_registry=StaticRegistry(CountingAdapter()),
+    )
+    scopes = (
+        _answer_scope("ANSWER_CORRECTNESS", "CLAIM"),
+        _answer_scope("COMPLETENESS", "EXPECTED_SECTION"),
+        _answer_scope("RELEVANCE", "CASE"),
+        _answer_scope("REQUIRED_CLAIM_RECALL", "REQUIRED_CLAIM"),
+    )
+    policy = ComparisonPolicy.model_validate(
+        {
+            **material.dataset.comparison_policy.model_dump(mode="json"),
+            "scopes": [scope.model_dump(mode="json") for scope in scopes],
+        }
+    )
+    dataset = replace(material.dataset, comparison_policy=policy)
+
+    draft = build_artifact_draft(replace(material, outcome=outcome, resolved=resolved, dataset=dataset))
+
+    by_id = {metric.metric_id: metric for metric in draft.metrics.metrics}
+    assert by_id["REQUIRED_CLAIM_RECALL"].execution_status.value == "COMPLETED"
+    assert (by_id["REQUIRED_CLAIM_RECALL"].numerator, by_id["REQUIRED_CLAIM_RECALL"].denominator) == (0, 1)
+    assert by_id["COMPLETENESS"].execution_status.value == "COMPLETED"
+    assert (by_id["COMPLETENESS"].numerator, by_id["COMPLETENESS"].denominator) == (0, 1)
+    assert by_id["ANSWER_CORRECTNESS"].execution_status.value == "NOT_EVALUATED"
+    assert by_id["RELEVANCE"].execution_status.value == "NOT_EVALUATED"
 
 
 def test_artifact_contract_validation_rejects_checked_in_schema_drift(tmp_path: Path) -> None:

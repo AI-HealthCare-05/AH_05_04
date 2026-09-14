@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 상태 | Approved Target |
-| 구현 | Not implemented |
+| 구현 | Partially implemented — 구조화 Metric·DEV manifest routing 구현, human judgment·3-pair comparison 미구현 |
 | Decision | [`PD-159-20260913`](../../../governance/decisions/2026-09-13-rag-answer-quality-metrics.md) |
 | 추적 Issue | [#159](https://github.com/AI-HealthCare-05/AH_05_04/issues/159) |
 | 구현 담당 | 정현우 (`@ceohwj`) |
