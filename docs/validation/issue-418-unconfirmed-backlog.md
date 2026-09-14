@@ -1,6 +1,6 @@
 # #418 UNCONFIRMED backlog 구현·등록 검증
 
-아래 2026-09-10 기록은 #426 미등록 후보 구현의 이력이다. 현재 등록 변경은 마지막 절을 따른다.
+아래 2026-09-10·11 기록은 당시 후보 구현·등록 준비의 이력이다. 최신 병합·승인 상태는 마지막 2026-09-14 절을 따른다.
 
 검증일: 2026-09-10. Base: `origin/develop`의 `ebcb21e`. Branch: `feat/418-unconfirmed-backlog`.
 
@@ -22,7 +22,7 @@
 
 전용 PostgreSQL 17·Redis 7 컨테이너와 합성 credential/fixture를 사용했다. 테스트 파일은 `backend/app/tests/repositories/test_medication_checkin_backlog_integration.py`와 기존 `test_medication_checkin_repository_integration.py`다. 전체 suite 이후 변경은 OpenAPI 오류 응답 모델 명시 및 인증/스키마 테스트·문서 보완이며, 이 변경은 관련 테스트 재실행과 Ruff/Mypy로 검증했다. 실제 Provider/환자 데이터나 공유 개발 DB를 사용하지 않았다.
 
-## 이전 등록 HEAD의 검증 기록 (현재 등록은 철회됨)
+## 이전 등록 HEAD의 검증 기록 (2026-09-10 당시 등록 철회)
 
 2026-09-10, `039c54c` 이후 변경. #413의 병합된 Check-in PUT을 재사용하고 v1 router에 backlog GET을 등록했다. 초기 테스트 전용 앱을 실제 `app`으로 전환했다.
 
@@ -53,7 +53,7 @@
 - 조회 무변경, 인증 누락/무효, 타인/없는 cursor, limit·UUID 검증, 공통 오류/no-store
 - 실제 앱 route/OpenAPI 미등록·HTTP 404 및 테스트 앱의 #413 PUT→GET 통합
 
-[PD-418](../governance/decisions/2026-09-10-unconfirmed-backlog-418.md) 및 [Proposed 계약](../contracts/proposed/unconfirmed-backlog-v1.md)은 Backend/Frontend 승인 대기다. 실제 앱 등록은 보류하며 테스트 앱에서만 #413 PUT-GET HTTP 연동을 검증했다. 두 담당 리뷰어의 계약 승인 후 등록·실제 앱 검증을 추가하고 해당 HEAD의 승인을 받아야 한다. #138 Frontend 소비 검증과 계약 상태 전환 전에는 #418 완료로 판정하지 않는다. 새 migration과 Frontend 구현은 없다.
+당시 판정(현재 종료 조건 아님): [PD-418](../governance/decisions/2026-09-10-unconfirmed-backlog-418.md) 및 [Proposed 계약](../contracts/proposed/unconfirmed-backlog-v1.md)은 Backend/Frontend 승인 대기다. 실제 앱 등록은 보류하며 테스트 앱에서만 #413 PUT-GET HTTP 연동을 검증했다. 두 담당 리뷰어의 계약 승인 후 등록·실제 앱 검증을 추가하고 해당 HEAD의 승인을 받아야 한다. #138 Frontend 소비 검증과 계약 상태 전환 전에는 #418 완료로 판정하지 않는다. 새 migration과 Frontend 구현은 없다.
 
 
 ## #429 병합 후 CI fixture 호환성 수정
@@ -119,3 +119,24 @@ Repository·Check-in PUT·일정 조회 서비스는 실제 구현을 사용하�
 전체 runner에는 합성 전용 환경파일을 `ENV_FILE`, 전용 Compose를 `COMPOSE_FILE`로 지정했다.
 테스트 DB를 재생성하는 runner를 동시에 실행하지 않았다. 실제 Provider·환자정보·개발/Production DB는 사용하지 않았다.
 #138 Frontend 화면·E2E와 Production 배포는 실행하지 않았으며, Backend 테스트로 완료를 주장하지 않는다.
+
+## 2026-09-14 병합·승인 상태 정리
+
+- #426은 미등록 후보로 2026-09-10 병합됐고, #462는 실제 등록·보완·페이지 이동·날짜별 revision
+  검증을 포함해 2026-09-13 병합됐다. 위 Draft·재승인 대기는 당시 진행 기록이다.
+- #462의 실제 승인은 남한솔(`solia142`)의 APPROVED 1건이다. Frontend 소비 관점에서
+  실제 등록 이후 DTO·SELF ownership·cursor 복구·보완 제외·revision 일치를 확인했다.
+  송은영의 #426 미등록 후보 승인은 별도 범위다.
+- 승인 메타데이터 commit은 최종 HEAD `7c4252d9095ca8fb357cb2cd22e32d4a297d42fd`이고
+  리뷰 본문은 `33ac5dbd`를 언급한다. 정확한 링크·시각·merge SHA는
+  [PD-418 승인 근거](../governance/decisions/2026-09-10-unconfirmed-backlog-418.md#승인-증빙과-등록-변경의-병합-조건)에 기록했다.
+- [최종 HEAD CI](https://github.com/AI-HealthCare-05/AH_05_04/actions/runs/34745052686)는
+  test-inventory·lint·test-migration·test-backend·test-worker·frontend·test **7/7 SUCCESS**다.
+  2026-09-11 로컬 검사 수치를 새로 실행한 결과로 재표기하지 않는다.
+- 이번 변경은 문서 상태·승인 범위·Decision·API·계약 인덱스 정리다. route·DTO·DB·오류·테스트는
+  변경하지 않는다. 문서는 Proposed 유지이며 구현 PR 내 Current 승격이 완료됐다고 주장하지 않는다.
+- #418은 이 정리의 지정 리뷰어 승인·병합과 체크리스트 갱신 후 종료한다.
+  #138 화면·실제 브라우저 E2E와 외부 승인·Production 공개는 별도 범위다.
+- 문서 정리 검증: 변경 5개 Markdown의 Pandoc HTML 렌더(제목·표·링크 구조), 변경 상대 링크,
+  전체 diff·범위 및 `git diff --check` PASS. 코드 변경이 없어 Ruff/Mypy·DB 전체 runner는
+  재실행하지 않았다. 위 #462 CI는 병합된 구현의 근거이며 이번 문서 HEAD의 CI와 구분한다.

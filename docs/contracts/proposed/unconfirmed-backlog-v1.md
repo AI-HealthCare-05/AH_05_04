@@ -1,12 +1,12 @@
 # Track B UNCONFIRMED backlog v1
 
-- 문서 상태: Proposed · 미등록 후보 승인 확인, 실제 등록 HEAD 재승인 대기
-- 구현 상태: #426 조회 구현을 실제 v1에 등록한 리뷰용 변경. 최신 #202(#456) 날짜별 조회와 기존 Check-in PUT을 실제 앱에서 통합 검증한다.
+- 문서 상태: Proposed · #462 등록 구현 병합·승인 확인, Current 승격은 별도 검토
+- 구현 상태: #426 후보 구현에 이어 #462가 2026-09-13 실제 v1 등록·보완·페이지 이동·날짜별 revision 일치 검증을 포함해 병합됐다.
 - Decision: [PD-418](../../governance/decisions/2026-09-10-unconfirmed-backlog-418.md)
 - 기존 목표: [Check-in v1](../targets/post-mvp-1/checkin-v1.md)
-- 구현 담당 권가빈; 책임 리뷰 송은영(Backend), 남한솔(Frontend)
+- 구현 담당: 권가빈 (`hazelnutflavoured`). 상태·참조 정리 책임 리뷰어: 남한솔 (`solia142`) — Backend/API 등록 근거와 Frontend 소비 계약의 문서 정합성. 과거 영역별 승인 범위는 PD-418 참조.
 
-## 후보 요청
+## 등록된 요청
 
 `GET /api/v1/medication-checkins/unconfirmed`
 
@@ -46,7 +46,7 @@ UNCONFIRMED만 `scheduled_at ASC, checkin_id ASC`로 반환한다. 비활성 과
 | 404 | CHECKIN_CURSOR_NOT_FOUND | cursor 미존재 또는 SELF 소유권 불일치, 구별하지 않음 |
 | 422 | VALIDATION_FAILED | 잘못된 UUID 또는 limit 형식/범위 |
 
-성공·빈 목록·오류 모두 공통 middleware의 `Cache-Control: no-store`를 따른다. 새 공개 예외 코드 `CHECKIN_CURSOR_NOT_FOUND`는 본 제안 승인 대상이다.
+성공·빈 목록·오류 모두 공통 middleware의 `Cache-Control: no-store`를 따른다. `CHECKIN_CURSOR_NOT_FOUND`는 #462에 등록된 오류 코드다.
 
 ### Cursor 404의 Frontend 복구
 
@@ -65,7 +65,7 @@ UNCONFIRMED만 `scheduled_at ASC, checkin_id ASC`로 반환한다. 비활성 과
 
 전체 traversal은 snapshot이 아니다. 도중 추가된 cursor 앞의 기록은 최초 페이지 재조회로 확인한다. 여러 건 보완은 항목별 PUT이며 원자적 batch 성공을 보장하지 않는다. #138 Frontend 연결은 남한솔 담당이다.
 
-## 검증과 남은 승인
+## 검증과 문서 상태
 
 합성 PostgreSQL과 실제 ASGI 앱으로 historical snapshot, 동일시각 tie-break, corrected cursor,
 보완 제외·revision 충돌, SELF ownership, 조회 무변경, HTTP 인증·검증·오류·no-store를 검증한다.
@@ -74,9 +74,14 @@ UNCONFIRMED만 `scheduled_at ASC, checkin_id ASC`로 반환한다. 비활성 과
 다건 보완 중 페이지 이동을 검증한다. #456 날짜별 조회의 Check-in은 PUT 응답과 같은
 revision·status를 반환해야 한다. Frontend가 사용할 합성 fixture도 DTO로 검증한다.
 
-#426의 `564dfb0a`에서 받은 두 리뷰어 승인은 미등록 후보에 한정된다.
-[PD-418 승인 증빙](../../governance/decisions/2026-09-10-unconfirmed-backlog-418.md#승인-증빙과-등록-변경의-병합-조건)을
-따르며 실제 등록 HEAD의 송은영·남한솔 재승인 전에는 Draft를 유지하고 병합하지 않는다.
-그 승인 후 같은 구현 PR에서 계약을 Current로 이동하고 인덱스·참조·승인 증빙을 함께 갱신한다.
-현재 Proposed는 배포된 runtime 계약이나 승인된 target을 뜻하지 않는다.
-#138의 Frontend 구현·소비 검증과 Production 공개 승인은 별도이며 테스트 통과로 대체하지 않는다.
+#426의 승인은 미등록 후보에 한정된다. #462는 등록 구현에 대한 남한솔의 APPROVED와
+최종 HEAD CI 7/7 성공 후 병합됐다. 정확한 commit·승인 범위는
+[PD-418 승인 증빙](../../governance/decisions/2026-09-10-unconfirmed-backlog-418.md#승인-증빙과-등록-변경의-병합-조건),
+실행 결과는 [검증 기록](../../validation/issue-418-unconfirmed-backlog.md)을 따른다.
+
+등록 구현의 병합과 계약 문서의 Current 승격을 구분한다. #462는 문서 이동 없이 병합됐으므로
+이 문서는 Proposed에 유지한다. 문서 정리만으로 구현 PR 내 승격 요건을 충족했다고 간주하지
+않으며, 후속 승격은 [문서 권위·승격 규칙](../../governance/post-mvp-1-document-authority.md#충돌과-승격-규칙)에
+따라 별도 검토한다. 이전 두 리뷰어 재승인 대기를 #418 종료 blocker로 반복하지 않는다.
+#418의 남은 종료 조건은 이 상태·Decision·인덱스 정리의 승인·병합과 이슈 체크리스트 갱신이다.
+#138의 Frontend 화면·실제 브라우저 E2E와 Production 공개 승인은 별도다.
