@@ -34,7 +34,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 처방 | `prescription`, `medication` | 사용자 확정 처방과 약물 저장 |
 | 가이드 | `guide` | 동기 생성 상태·본문·모델·프롬프트 버전 저장 |
 | 채팅 | `chat_session`, `chat_message` | 세션과 USER·ASSISTANT 메시지, 생성 상태 저장 |
-| 의료 지식 | `knowledge_document`, `knowledge_chunk`, `rag_knowledge_index`, `rag_knowledge_index_member` | #178 선행 Knowledge Evidence Index 저장 기반 구현 브랜치. Source 결속·불변 receipt는 연결됐으나 실제 검색 경로에서는 아직 미사용 |
+| 의료 지식 | `knowledge_document`, `knowledge_chunk`, `rag_knowledge_index`, `rag_knowledge_index_member` | #178 Knowledge Evidence Index 저장 기반 및 PostgreSQL Evidence Search + 결정적 RRF 구현 브랜치. revision `178b1c2d3e4f`에서 lexical GIN 인덱스(simple FTS, pg_trgm) 추가. Reranker·Evidence Gate·authoritative Retrieval Run·Runtime graph 연결은 후속 범위 |
 | 인용 | `guide_citation`, `chat_citation` | Schema-only Post-MVP 골격, 현재 생성·API 경로에서 미사용 |
 | 비동기 실행 | `ai_job`, `outbox_event`, `idempotency_record` | `JobIntakeService`(#147)의 Job 접수 transaction과 DB Outbox 선점·`WorkerMessage` 조립·Redis 발행·fencing 완료(#219)가 repository·service 계층에 연결됨. 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 미연결(#148) |
 | 비동기 실행(schema-only) | `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event` | Schema-only Post-MVP 골격, 현재 repository·service·API 경로에서 미사용 |
@@ -331,6 +331,11 @@ transaction에서 전체 index를 기록하고 persisted row로 receipt를 재�
 configuration이 모두 같을 때만 재사용하며 다른 값은 안전한 version conflict다. migration downgrade는 새
 member/index 또는 production Knowledge data가 있으면 손실 전에 중단한다. 이 기반은 Proposed 계약이며
 lexical/dense 조회, RRF, rerank, Evidence Gate, Retrieval Run, Evaluation과 Runtime 공개를 구현하지 않는다.
+
+Revision `178b1c2d3e4f`는 #178 PostgreSQL Knowledge Evidence Search의 Lexical 검색(FTS 및 Trigram)을 지원하기 위해 `knowledge_chunk` 테이블에 두 개의 GIN 인덱스를 추가합니다:
+- `ix_knowledge_chunk_fts_simple`: `to_tsvector('simple', chunk_text)`에 대한 GIN 인덱스.
+- `ix_knowledge_chunk_chunk_text_trgm`: `chunk_text gin_trgm_ops`에 대한 GIN 인덱스 (`pg_trgm` 확장 활용).
+Downgrade는 이 두 인덱스만 안전하게 drop하며 데이터는 보존합니다.
 
 Revision `164f3a2b1c0d`는 #164의 후속 적재 준비를 위해 Source/Snapshot/Catalog 최소 DB 기반을 추가합니다. Revision `165a4b3c2d1e`는 수집 실행별 원본 Artifact 참조와 무결성 메타데이터를 추가하고, `165b5c4d3e2f`는 거부 원문의 안전한 추적 필드를 추가합니다. Revision `166a7b8c9d0e`는 #166의 안정 Identity, Alias 상태·출처와 Search Entry 저장 기반을 추가합니다. Revision `166b8c9d0e1f`는 기존 v2 envelope와 계산 bytes를 보존하는 불변 Catalog Set·Source·member·hash 구조를 추가합니다. 정본 `normalization_run_id`에 해당하는 D-02는 미확정이며 두 #166 revision 모두 실행 테이블·대체 FK를 넣지 않습니다.
 

@@ -370,13 +370,16 @@ PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Co
 - 자동 Guide는 모든 활성 약의 현재 Identification 전에는 Job을 만들지 않고 동기 `REVIEW_REQUIRED`를 반환합니다. Chat은 Identification 전에도 최소 Safety Intake Job을 만들 수 있지만, `ROUTINE`만 Identification Preflight 후 일반 Rule·RAG로 진행합니다. `URGENT | EMERGENCY | UNKNOWN`은 일반 Retrieval·Composer·Provider 호출 0건을 검증합니다.
 - 처방·Identification·Source·Runtime Bundle 변경 뒤 과거 결과가 `STALE`인지 검증합니다.
 
-### #178 Knowledge Evidence Index 선행 기반
+### #178 Knowledge Evidence Index 선행 기반 및 PostgreSQL Evidence Search + RRF
 
 `tests/integration/rag/test_knowledge_evidence_index_postgresql.py`는 매 실행마다 별도 PostgreSQL database를
 만들고 전체 Alembic head를 적용한다. pgvector extension version, Source Snapshot member parent 결속,
 완성 index의 vector round-trip과 receipt 재계산, 동일 버전 멱등 재생, 동시 생성 직렬화, 변경 receipt 충돌
-rollback과 민감 합성 sentinel 비노출을 검증한 뒤 database를 제거한다. Worker 기본 lane의 차단된 DB 포트를
-우회하지 않도록 이 테스트는 `tests/integration/rag`의 Backend PostgreSQL lane에서만 실행한다.
+rollback과 민감 합성 sentinel 비노출을 검증한 뒤 database를 제거한다.
+
+`tests/integration/rag/test_postgresql_evidence_search.py`는 PostgreSQL live 환경에서 Exact(`strpos`), Trigram(`chunk_text % query`), FTS(`plainto_tsquery @@ to_tsvector`), Dense(pgvector `<=>` cosine distance) sub-search 4종의 결속 조회, Content hash 및 embedding hash 위변조 감지 시 fail-closed 무결성 차단, 트랜잭션 로컬 `pg_trgm.similarity_threshold` 설정 및 커넥션 풀 오염 방지, `EXPLAIN` 쿼리 계획 호환성을 검증한다. Worker 기본 lane의 차단된 DB 포트를 우회하지 않도록 이 두 테스트는 `tests/integration/rag`의 Backend PostgreSQL lane에서만 실행한다.
+
+순수 RRF 융합 로직(`rrf-rank-fusion@1`, Fraction 기반 무손실 연산, Stable coordinate UTF-8 tie-break, Exact 버킷 우선순위 융합, Top 30/20 경계)은 `ai_worker/tests/rag/test_evidence_rank_fusion.py`에서 검증하며, 검색 프로토콜·설정 해시·쿼리 유효성 검증 및 18자리 소수점 점수 포맷팅(`observed-stage-score-decimal@1`)은 `ai_worker/tests/rag/test_evidence_search.py`에서 검증하여 AI Worker lane에서 실행한다.
 
 상세 실행 증빙과 미완료 #178 범위는 [Knowledge Evidence Index #178 검증 기록](./testing/knowledge-evidence-index-178.md)을 따른다.
 

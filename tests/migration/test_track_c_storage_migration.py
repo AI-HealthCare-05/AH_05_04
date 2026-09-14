@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -20,9 +20,17 @@ from app.models.track_c import (
     BarrierResponse,
     SafetyAssessment,
     SupportActionPlan,
+    SupportCode,
 )
 from app.repositories.track_c_storage_repository import TrackCStorageRepository
+from app.services.track_c_handler_config import (
+    HandlerConfigError,
+    parse_handler_config,
+    restore_action_plan_snapshot,
+    save_action_plan_snapshot,
+)
 from tests.migration.test_medication_schedule_migration import _connection, _seed_graph, create_alembic_config
+from tests.services.test_track_c_handler_config import APPROVALS, synthetic_rules
 
 REVISION = "192a1b2c3d4e"
 TABLES = [
@@ -283,6 +291,89 @@ def test_owned_reads_hide_foreign_and_missing_ids():
             await engine.dispose()
 
     asyncio.run(verify())
+
+
+def test_handler_snapshot_database_round_trip_and_rejection():
+    command.upgrade(create_alembic_config(), "head")
+    ids = asyncio.run(_seed())
+    asyncio.run(_run(SAFETY, ids))
+    asyncio.run(_run(BARRIER, ids))
+    other = asyncio.run(_seed())
+    rules = parse_handler_config(synthetic_rules(), **APPROVALS)
+
+    async def verify():
+        engine = create_async_engine(config.database_url, poolclass=NullPool)
+        try:
+            async with AsyncSession(engine) as session:
+                with pytest.raises(HandlerConfigError, match="barrier unavailable"):
+                    await save_action_plan_snapshot(
+                        session,
+                        user_id=UUID(other["user_id"]),
+                        barrier_id=UUID(ids["barrier_id"]),
+                        support_code=SupportCode.REMINDER_SETUP,
+                        config=rules,
+                    )
+                await session.rollback()
+            async with AsyncSession(engine) as session:
+                plan = await save_action_plan_snapshot(
+                    session,
+                    user_id=UUID(ids["user_id"]),
+                    barrier_id=UUID(ids["barrier_id"]),
+                    support_code=SupportCode.REMINDER_SETUP,
+                    config=rules,
+                )
+                plan_id = plan.id
+                await session.commit()
+            async with AsyncSession(engine) as session:
+                snapshot = await restore_action_plan_snapshot(
+                    session,
+                    user_id=UUID(ids["user_id"]),
+                    plan_id=plan_id,
+                    historical_config=rules,
+                )
+                assert snapshot["parameters"] == {
+                    "destination": "MEDICATION_SCHEDULE_SETUP",
+                    "prescription_version_medication_id": ids["version_medication_id"],
+                }
+                assert set(snapshot) == {"schema_version", "rationale_code", "parameters"}
+                with pytest.raises(HandlerConfigError, match="plan unavailable"):
+                    await restore_action_plan_snapshot(
+                        session,
+                        user_id=UUID(other["user_id"]),
+                        plan_id=plan_id,
+                        historical_config=rules,
+                    )
+                newer = parse_handler_config(synthetic_rules("synthetic-v2"), **APPROVALS)
+                with pytest.raises(HandlerConfigError, match="historical rule unavailable"):
+                    await restore_action_plan_snapshot(
+                        session,
+                        user_id=UUID(ids["user_id"]),
+                        plan_id=plan_id,
+                        historical_config=newer,
+                    )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(verify())
+    assert asyncio.run(_run("SELECT count(*) FROM support_action_plan")) == 1
+    asyncio.run(_run("UPDATE support_action_plan SET action_config_snapshot='{}'::jsonb"))
+
+    async def reject_legacy():
+        engine = create_async_engine(config.database_url, poolclass=NullPool)
+        try:
+            async with AsyncSession(engine) as session:
+                plan_id = await session.scalar(select(SupportActionPlan.id))
+                with pytest.raises(HandlerConfigError, match="invalid historical snapshot"):
+                    await restore_action_plan_snapshot(
+                        session,
+                        user_id=UUID(ids["user_id"]),
+                        plan_id=plan_id,
+                        historical_config=rules,
+                    )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(reject_legacy())
 
 
 def test_competing_active_plan_inserts_commit_only_one():

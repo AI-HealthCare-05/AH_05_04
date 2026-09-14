@@ -43,6 +43,18 @@ class GuideRepository:
         await self.session.flush()
         return guide
 
+    async def create_async_placeholder(self, *, prescription: Prescription, ai_job_id: UUID) -> Guide:
+        guide = Guide(
+            prescription_id=prescription.id,
+            prescription_version_id=prescription.active_version_id,
+            profile_id=prescription.profile_id,
+            ai_job_id=ai_job_id,
+            generation_status=GuideGenerationStatus.PENDING,
+        )
+        self.session.add(guide)
+        await self.session.flush()
+        return guide
+
     async def get_owned(self, *, guide_id: UUID, user_id: UUID) -> Guide | None:
         result = await self.session.execute(
             select(Guide)
