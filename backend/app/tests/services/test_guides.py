@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -18,6 +19,7 @@ from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.guide_ai.client import ProviderGuideResponse
 from app.services.guide_ai.generator import GuideGenerator
 from app.services.guides import GuideService
+from app.services.rag_preflight import RagPreflightService
 from app.tests.conftest import test_engine
 from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
@@ -58,7 +60,7 @@ class _UnusedGuideProvider:
 
 def _service(session: AsyncSession) -> GuideService:
     generator = GuideGenerator(provider=_UnusedGuideProvider(), model="test-model", timeout_seconds=1.0)
-    return GuideService(GuideRepository(session), generator)
+    return GuideService(GuideRepository(session), generator, AsyncMock(spec=RagPreflightService))
 
 
 async def _create_user(session: AsyncSession, *, email: str) -> User:

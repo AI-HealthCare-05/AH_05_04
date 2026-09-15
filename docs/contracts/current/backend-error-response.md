@@ -189,7 +189,7 @@ raise ApiError(
 | `PRESCRIPTION_MEDICATION_NOT_FOUND` | 404 | false | Candidate 조회·확정 대상 처방 약제 부재 또는 타 사용자 리소스 |
 | `CANDIDATE_SEARCH_STALE` | 409 | false | Candidate Search 만료·입력 변경·소비 등으로 같은 확인·거절 재시도 대상이 아님 |
 | `IDENTIFICATION_CONTEXT_STALE` | 409 | false | 현재 구현에서는 기존 Identification이 이미 존재해 현재 상태 재조회가 필요한 경우. Runtime Bundle·Candidate Index 현재성 상실 조건은 #168/#181 연결 후 추가 |
-| `PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE` | 409 | false | 활성 약제 Identification 완료 전 일반 RAG Guide Job 생성 금지 |
+| `PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE` | 409 | false | 활성 약제 Identification 완료 전 동기 Guide 생성을 차단 |
 | `IDEMPOTENCY_KEY_CONFLICT` | 409 | false | 같은 키로 다른 요청 지문이 접수된 것이므로 새 `Idempotency-Key`가 필요한 충돌 |
 | `OCR_PROCESSING_FAILED` | 500 | false | 원인 확인 없이 재전송하면 같은 실패가 반복됨 |
 | `GUIDE_GENERATION_FAILED` | 500 | false | 동일 |
@@ -296,7 +296,7 @@ Auth 도메인의 `VALIDATION_FAILED` 세부 reason은 다음처럼 고정합니
 | 404 | `CANDIDATE_SEARCH_NOT_FOUND` | "약품 후보 정보를 찾을 수 없습니다." | Candidate Search 또는 Result가 없거나 다른 사용자 SELF Profile 소유 |
 | 409 | `CANDIDATE_SEARCH_STALE` | 상황별 안내 문구 | Candidate Search가 만료·입력 변경·소비·재거절 등으로 현재 확인·거절 대상이 아님 |
 | 409 | `IDENTIFICATION_CONTEXT_STALE` | "약품 식별 기준이 최신 상태가 아닙니다. 최신 처방 상태를 다시 확인해 주세요." | 현재 구현에서는 기존 Identification이 이미 존재하는 경우(`details.reason=IDENTIFICATION_ALREADY_EXISTS`) 신규 Identification을 저장하지 않음. Runtime/Candidate Index context 불일치는 #168/#181 연결 후 추가되는 발생 조건 |
-| 409 | `PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE` | "약품 후보 확인이 완료되지 않았습니다." | 일반 RAG Guide Job 접수 전 활성 약제 Identification Preflight 실패 |
+| 409 | `PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE` | "약품 후보 확인이 완료되지 않았습니다." | 활성 약제 Identification이 완료되지 않아 동기 Guide 생성 Preflight 실패 |
 
 `PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE`의 현재 Guide Preflight `details.reason`은 다음으로 제한한다.
 

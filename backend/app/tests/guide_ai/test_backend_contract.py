@@ -24,6 +24,7 @@ from app.services.guide_ai.exceptions import (
 from app.services.guide_ai.generator import GuideGenerator
 from app.services.guide_ai.schemas import GuideGenerationResult
 from app.services.guides import GuideService
+from app.services.rag_preflight import RagPreflightService
 from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 
@@ -107,9 +108,10 @@ def _guide(prescription_id: UUID, *, completed: bool = False) -> Guide:
 
 def _service(
     prescription: Prescription,
-) -> tuple[GuideService, AsyncMock, AsyncMock]:
+) -> tuple[GuideService, AsyncMock, AsyncMock, AsyncMock]:
     repository = AsyncMock(spec=GuideRepository)
     generator = AsyncMock(spec=GuideGenerator)
+    preflight_service = AsyncMock(spec=RagPreflightService)
     repository.get_prescription_owned.return_value = prescription
     repository.create.return_value = _guide(prescription.id)
     repository.mark_failed.return_value = repository.create.return_value
@@ -117,15 +119,17 @@ def _service(
         GuideService(
             repository=cast(GuideRepository, repository),
             generator=cast(GuideGenerator, generator),
+            preflight_service=cast(RagPreflightService, preflight_service),
         ),
         repository,
         generator,
+        preflight_service,
     )
 
 
 async def test_backend_contract_stores_and_returns_exact_generation_result() -> None:
     prescription = _prescription()
-    service, repository, generator = _service(prescription)
+    service, repository, generator, preflight_service = _service(prescription)
     result = GuideGenerationResult(
         content="검증된 최종 평문",
         model_name="gpt-4o-mini-2024-07-18",
@@ -134,11 +138,17 @@ async def test_backend_contract_stores_and_returns_exact_generation_result() -> 
     generator.generate.return_value = result
     repository.mark_completed.return_value = _guide(prescription.id, completed=True)
 
+    user = User(id=uuid4())
     response = await service.create_guide(
-        user=User(id=uuid4()),
+        user=user,
         request=CreateGuideRequest(prescription_id=prescription.id),
     )
 
+    preflight_service.ensure_all_active_medications_matched.assert_awaited_once_with(
+        prescription_id=prescription.id,
+        user_id=user.id,
+        expected_prescription_version_id=prescription.active_version_id,
+    )
     generation_input = generator.generate.await_args.args[0]
     assert generation_input.medications[0].model_dump() == {
         "medication_name": "합성약 A",
@@ -159,7 +169,7 @@ async def test_backend_contract_stores_and_returns_exact_generation_result() -> 
 
 async def test_backend_contract_preserves_medication_order_in_generation_input() -> None:
     prescription = _prescription_with_ordered_medications()
-    service, repository, generator = _service(prescription)
+    service, repository, generator, _preflight_service = _service(prescription)
     generator.generate.return_value = GuideGenerationResult(
         content="검증된 최종 평문",
         model_name="gpt-4o-mini-2024-07-18",
@@ -235,7 +245,7 @@ async def test_backend_contract_maps_generation_errors_and_marks_failed(
     stored_error_message: str,
 ) -> None:
     prescription = _prescription()
-    service, repository, generator = _service(prescription)
+    service, repository, generator, _preflight_service = _service(prescription)
     generator.generate.side_effect = generation_error
 
     with pytest.raises(ApiError) as caught:
@@ -254,10 +264,51 @@ async def test_backend_contract_maps_generation_errors_and_marks_failed(
         assert caught.value.message == "복약 가이드 생성에 실패했습니다. 다시 시도해 주세요."
 
 
+async def test_backend_contract_does_not_create_guide_or_call_provider_when_preflight_fails() -> None:
+    prescription = _prescription()
+    service, repository, generator, preflight_service = _service(prescription)
+    preflight_service.ensure_all_active_medications_matched.side_effect = ApiError(
+        status_code=409,
+        code="PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE",
+        message="Medication identification preflight is incomplete.",
+    )
+
+    with pytest.raises(ApiError) as caught:
+        await service.create_guide(
+            user=User(id=uuid4()),
+            request=CreateGuideRequest(prescription_id=prescription.id),
+        )
+
+    assert caught.value.status_code == 409
+    assert caught.value.code == "PRESCRIPTION_MEDICATION_IDENTIFICATION_INCOMPLETE"
+    repository.create.assert_not_awaited()
+    generator.generate.assert_not_awaited()
+    repository.mark_failed.assert_not_awaited()
+
+
+async def test_backend_contract_does_not_run_preflight_or_provider_when_prescription_is_not_owned() -> None:
+    prescription = _prescription()
+    service, repository, generator, preflight_service = _service(prescription)
+    repository.get_prescription_owned.return_value = None
+
+    with pytest.raises(ApiError) as caught:
+        await service.create_guide(
+            user=User(id=uuid4()),
+            request=CreateGuideRequest(prescription_id=uuid4()),
+        )
+
+    assert caught.value.status_code == 404
+    assert caught.value.code == "PRESCRIPTION_NOT_FOUND"
+    preflight_service.ensure_all_active_medications_matched.assert_not_awaited()
+    repository.create.assert_not_awaited()
+    generator.generate.assert_not_awaited()
+    repository.mark_failed.assert_not_awaited()
+
+
 async def test_backend_contract_does_not_call_provider_when_prescription_input_is_invalid() -> None:
     prescription = _prescription()
     prescription.active_version.medications[0].medication_name = "   "
-    service, repository, generator = _service(prescription)
+    service, repository, generator, _preflight_service = _service(prescription)
 
     with pytest.raises(ApiError) as caught:
         await service.create_guide(
@@ -277,7 +328,7 @@ async def test_backend_contract_does_not_expose_prescription_values_in_logs_or_e
 ) -> None:
     sentinel = "SENTINEL-RX-NAME-5MG-AFTER-MEAL-RX-ID"
     prescription = _prescription(medication_name=sentinel)
-    service, repository, generator = _service(prescription)
+    service, repository, generator, _preflight_service = _service(prescription)
     generator.generate.side_effect = GuideGenerationInvalidResponseError(sentinel)
 
     with pytest.raises(ApiError) as caught:

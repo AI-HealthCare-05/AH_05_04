@@ -14,6 +14,7 @@ from app.services.guide_ai.exceptions import (
     GuideGenerationTimeoutError,
     GuideGenerationUnavailableError,
 )
+from app.services.rag_preflight import RagPreflightService
 
 # OpenAI SDK/도메인 예외 메시지를 그대로 저장하면 요청 payload(약물 정보 등)가 노출될 수 있어
 # 고정된 문구만 DB에 저장합니다.
@@ -51,9 +52,11 @@ class GuideService:
         self,
         repository: GuideRepository,
         generator: GuideGenerator,
+        preflight_service: RagPreflightService,
     ) -> None:
         self._repo = repository
         self._generator = generator
+        self._preflight_service = preflight_service
 
     async def create_guide(
         self,
@@ -91,6 +94,11 @@ class GuideService:
             )
 
         verify_loaded_version(version, version.medications)
+        await self._preflight_service.ensure_all_active_medications_matched(
+            prescription_id=prescription.id,
+            user_id=user.id,
+            expected_prescription_version_id=version.id,
+        )
         guide = await self._repo.create(prescription=prescription)
 
         failure_error: ApiError

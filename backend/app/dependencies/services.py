@@ -66,6 +66,7 @@ from app.services.ocr_ai import (
 from app.services.ocr_ai.prompt import PROMPT_VERSION as OCR_STRUCTURE_PROMPT_VERSION
 from app.services.ocr_engine import OcrEngine
 from app.services.prescriptions import PrescriptionService
+from app.services.rag_preflight import RagPreflightService
 from app.services.user_consents import OcrConsentService
 from app.services.users import UserConsentService, UserManageService
 
@@ -317,6 +318,15 @@ def get_medication_identification_service(
     return MedicationIdentificationService(repository)
 
 
+def get_rag_preflight_service(
+    identification_service: Annotated[
+        MedicationIdentificationService,
+        Depends(get_medication_identification_service),
+    ],
+) -> RagPreflightService:
+    return RagPreflightService(identification_service)
+
+
 def get_idempotency_repository(
     session: Annotated[
         AsyncSession,
@@ -420,8 +430,12 @@ def get_guide_service(
         GuideGenerator,
         Depends(get_guide_generator),
     ],
+    preflight_service: Annotated[
+        RagPreflightService,
+        Depends(get_rag_preflight_service),
+    ],
 ) -> GuideService:
-    return GuideService(repository, generator)
+    return GuideService(repository, generator, preflight_service)
 
 
 def get_chat_repository(
