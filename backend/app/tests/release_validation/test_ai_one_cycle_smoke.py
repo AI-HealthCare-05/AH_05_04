@@ -2193,6 +2193,13 @@ async def test_deterministic_one_cycle_uses_asgi_routes_with_only_provider_bound
             policy_version="guide-consent.v1",
             changed_at=datetime.now(UTC),
         )
+        await repository.set_status(
+            user_id=fixture.user_id,
+            purpose=ConsentPurpose.CHAT,
+            status=ConsentStatus.GRANTED,
+            policy_version="chat-consent.v1",
+            changed_at=datetime.now(UTC),
+        )
         await consent_session.commit()
     paths: list[str] = []
     previous_db_override = fastapi_app.dependency_overrides[get_db_session]
