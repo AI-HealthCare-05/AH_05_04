@@ -536,8 +536,13 @@ async def cleanup_synthetic_fixture(
     from app.models.medical_documents import MedicalDocument
     from app.models.ocr import ExtractedField, OcrJob
     from app.models.password_reset import PasswordResetToken
-    from app.models.prescriptions import Medication, Prescription
+    from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
     from app.models.profiles import Profile
+    from app.models.rag_candidate import (
+        MedicationCandidateSearch,
+        MedicationCandidateSearchResult,
+        MedicationIdentification,
+    )
     from app.models.refresh_session import RefreshSession
     from app.models.user_consents import UserConsent
     from app.models.users import User
@@ -545,6 +550,15 @@ async def cleanup_synthetic_fixture(
     document_ids = select(MedicalDocument.id).where(MedicalDocument.uploaded_by == user_id)
     ocr_job_ids = select(OcrJob.id).where(OcrJob.document_id.in_(document_ids))
     prescription_ids = select(Prescription.id).where(Prescription.document_id.in_(document_ids))
+    prescription_version_ids = select(PrescriptionVersion.id).where(
+        PrescriptionVersion.prescription_id.in_(prescription_ids)
+    )
+    version_medication_ids = select(PrescriptionVersionMedication.id).where(
+        PrescriptionVersionMedication.prescription_version_id.in_(prescription_version_ids)
+    )
+    candidate_search_ids = select(MedicationCandidateSearch.id).where(
+        MedicationCandidateSearch.prescription_version_medication_id.in_(version_medication_ids)
+    )
     guide_ids = select(Guide.id).where(Guide.prescription_id.in_(prescription_ids))
     chat_session_ids = select(ChatSession.id).where(ChatSession.prescription_id.in_(prescription_ids))
     message_ids = select(ChatMessage.id).where(ChatMessage.session_id.in_(chat_session_ids))
@@ -554,6 +568,19 @@ async def cleanup_synthetic_fixture(
         await session.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(chat_session_ids)))
         await session.execute(delete(ChatSession).where(ChatSession.prescription_id.in_(prescription_ids)))
         await session.execute(delete(Guide).where(Guide.prescription_id.in_(prescription_ids)))
+        await session.execute(
+            delete(MedicationIdentification).where(
+                MedicationIdentification.candidate_search_id.in_(candidate_search_ids)
+            )
+        )
+        await session.execute(
+            delete(MedicationCandidateSearchResult).where(
+                MedicationCandidateSearchResult.search_id.in_(candidate_search_ids)
+            )
+        )
+        await session.execute(
+            delete(MedicationCandidateSearch).where(MedicationCandidateSearch.id.in_(candidate_search_ids))
+        )
         await session.execute(delete(Medication).where(Medication.prescription_id.in_(prescription_ids)))
         await session.execute(delete(Prescription).where(Prescription.document_id.in_(document_ids)))
         await session.execute(delete(ExtractedField).where(ExtractedField.ocr_job_id.in_(ocr_job_ids)))
@@ -725,6 +752,92 @@ def _ocr_database_evidence(ocr_job: Any, *, ocr_structuring_expected: bool) -> d
     }
 
 
+async def _seed_release_validation_identifications(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    prescription_id: str,
+) -> None:
+    """Seed the explicit MATCHED state required before synchronous Guide generation."""
+    from app.models.prescriptions import Prescription, PrescriptionVersionMedication
+    from app.models.rag_candidate import (
+        MedicationCandidateSearchStatus,
+        MedicationIdentification,
+        MedicationIdentificationSource,
+        MedicationIdentificationStatus,
+    )
+    from app.repositories.medication_candidate_repository import (
+        MedicationCandidateRepository,
+        MedicationCandidateResultCreate,
+    )
+
+    prescription_uuid = UUID(prescription_id)
+    async with session_factory() as session:
+        prescription = await session.get(Prescription, prescription_uuid)
+        if prescription is None or prescription.active_version_id is None:
+            raise HttpFlowError("DB_VERIFICATION", {"api_code": "PRESCRIPTION_NOT_READY_FOR_IDENTIFICATION"})
+        medications = list(
+            (
+                await session.scalars(
+                    select(PrescriptionVersionMedication)
+                    .where(PrescriptionVersionMedication.prescription_version_id == prescription.active_version_id)
+                    .order_by(PrescriptionVersionMedication.display_order)
+                )
+            ).all()
+        )
+        if not medications:
+            raise HttpFlowError("DB_VERIFICATION", {"api_code": "PRESCRIPTION_MEDICATIONS_MISSING"})
+
+        for medication in medications:
+            query_digest = hashlib.sha256(f"{prescription_id}:{medication.id}".encode()).hexdigest()
+            repository = MedicationCandidateRepository(session)
+            search = await repository.create_search(
+                prescription_version_medication_id=medication.id,
+                medication_name_snapshot=medication.medication_name,
+                strength_text_snapshot=medication.strength_text,
+                query_digest=query_digest,
+                runtime_release_bundle_id=None,
+                candidate_index_version_id=None,
+                expires_at=None,
+            )
+            _, results = await repository.assemble_and_finalize_search(
+                search=search,
+                results=[
+                    MedicationCandidateResultCreate(
+                        product_id=uuid4(),
+                        code_system="RELEASE_VALIDATION_SYNTHETIC",
+                        canonical_code=f"RV-{medication.display_order}",
+                        product_name=medication.medication_name,
+                        strength_text=None,
+                        dosage_form=None,
+                        manufacturer_name=None,
+                        product_status="ACTIVE",
+                        result_rank=1,
+                        result_score=1.0,
+                        result_method="release-validation-fixture",
+                        is_displayed=True,
+                        selection_eligible=True,
+                    )
+                ],
+                status=MedicationCandidateSearchStatus.READY,
+                finalized_at=datetime.now(UTC),
+            )
+            result = results[0]
+            session.add(
+                MedicationIdentification(
+                    prescription_version_medication_id=medication.id,
+                    candidate_search_id=search.id,
+                    candidate_search_result_id=result.id,
+                    product_id=result.product_id,
+                    code_system=result.code_system,
+                    canonical_code=result.canonical_code,
+                    status=MedicationIdentificationStatus.MATCHED,
+                    source=MedicationIdentificationSource.USER_SELECTED,
+                    confirmed_at=datetime.now(UTC),
+                )
+            )
+        await session.commit()
+
+
 async def verify_prescription_input(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -843,6 +956,7 @@ async def run_deterministic_one_cycle(
         document_id=str(fixture.document_id),
         scenario=scenario,
     )
+    await _seed_release_validation_identifications(session_factory, prescription_id=prescription_id)
     guide = await request(
         "POST",
         "/api/v1/guides",
