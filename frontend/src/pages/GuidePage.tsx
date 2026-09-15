@@ -427,7 +427,7 @@ function GuidePage({
                 fullWidth
                 variant="secondary"
                 className="guide-page__schedule-button"
-                disabled
+                onClick={() => navigate('/schedule')}
               >
                 복용 일정 확인하기
               </Button>

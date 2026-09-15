@@ -21,6 +21,17 @@
   --ds-action-pressed: #0052a3;
 }
 
+.mvp-login-page {
+  --ds-action: #607d8b;
+  --ds-action-pressed: #526b78;
+}
+
+.mvp-signup-page {
+  --ds-action: #607d8b;
+  --ds-action-pressed: #526b78;
+  --ds-text-muted: #78909c;
+}
+
 .mvp-page__content {
   padding: 20px 20px calc(96px + var(--ds-safe-bottom));
 }
@@ -223,6 +234,11 @@
   scroll-margin-block: 96px 32px;
 }
 
+.mvp-signup-page .mvp-form__field input {
+  border-color: #d8dee8;
+  border-radius: 12px;
+}
+
 .mvp-auth .mvp-form__field input:focus-visible {
   border-color: var(--ds-action);
   outline: 3px solid var(--ds-focus);
@@ -265,7 +281,9 @@
 
 .mvp-signup-required {
   align-items: flex-start;
-  gap: 12px;
+  gap: 14px;
+  padding-block: 16px;
+  border-radius: 16px;
 }
 
 .mvp-signup-required:has(input:focus-visible),
@@ -293,13 +311,13 @@
 
 .mvp-signup-required span {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   font-size: 13px;
 }
 
 .mvp-signup-required small {
   color: var(--ds-text-muted);
-  line-height: 1.5;
+  line-height: 16px;
 }
 
 .mvp-signup-required strong {
@@ -355,51 +373,65 @@
 }
 
 .mvp-signup-consents legend {
-  margin-bottom: 4px;
+  margin-bottom: 8px;
   color: var(--ds-text);
-  font-size: 15px;
-  font-weight: 800;
-}
-
-.mvp-signup-consents__intro {
-  margin: 0 0 2px;
-  color: var(--ds-text-muted);
   font-size: 13px;
-  line-height: 1.5;
+  font-weight: 800;
+  line-height: 16px;
 }
 
 .mvp-signup-consents__option {
   display: flex;
-  gap: 11px;
+  min-height: 86px;
+  gap: 14px;
   align-items: flex-start;
-  padding: 13px 14px;
-  border: 1px solid #efca72;
-  border-radius: 14px;
-  background: #fff9e9;
+  padding: 15px 17px;
+  border: 1px solid var(--ds-line);
+  border-radius: 16px;
+  background: var(--ds-surface);
   color: var(--ds-text);
 }
 
+.mvp-signup-consents__option:has(input:focus-visible) {
+  border-color: var(--ds-action);
+  outline: 3px solid var(--ds-focus);
+  outline-offset: 2px;
+}
+
 .mvp-signup-consents__option input {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   flex: 0 0 auto;
   margin: 0;
 }
 
 .mvp-signup-consents__option span {
   display: grid;
-  gap: 3px;
+  min-width: 0;
+  gap: 6px;
 }
 
 .mvp-signup-consents__option strong {
-  font-size: 14px;
-  line-height: 1.4;
+  font-size: 13px;
+  line-height: 16px;
 }
 
 .mvp-signup-consents__option small {
   color: var(--ds-text-muted);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 16px;
+}
+
+.mvp-signup-page .mvp-signup-submit {
+  min-height: 52px;
+  border-radius: 16px;
+  font-size: 14px;
+}
+
+.mvp-signup-page .mvp-signup-submit:disabled {
+  border-color: transparent;
+  background: #d5e0f0;
+  color: #78909c;
 }
 
 .mvp-form__footer.mvp-auth__signup-link {
@@ -513,6 +545,7 @@
 
 .mvp-home-page .mvp-page__content {
   padding-top: 12px;
+  padding-bottom: calc(112px + var(--ds-safe-bottom));
   background: linear-gradient(180deg, #f4f9ff 0%, #fafcfe 58%, #fffdf3 100%);
 }
 

@@ -16,6 +16,7 @@ import {
   useLocation,
   useNavigate,
 } from 'react-router-dom'
+import type { NavigateFunction } from 'react-router-dom'
 import { ApiError } from '../src/api/client'
 import {
   getGuide,
@@ -61,14 +62,18 @@ function ChatRouteProbe() {
   )
 }
 
-function renderPage(entry = '/guides/guide-1', withRouteControls = false) {
+function renderPage(
+  entry = '/guides/guide-1',
+  withRouteControls = false,
+  navigation?: NavigateFunction,
+) {
   return render(
     <MemoryRouter initialEntries={[entry]}>
       {withRouteControls && <GuideRouteControls />}
       <LocationProbe />
       <Routes>
-        <Route path="/guides" element={<GuidePage />} />
-        <Route path="/guides/:guideId" element={<GuidePage />} />
+        <Route path="/guides" element={<GuidePage navigation={navigation} />} />
+        <Route path="/guides/:guideId" element={<GuidePage navigation={navigation} />} />
         <Route path="/prescriptions/upload" element={<div>처방전 업로드 화면</div>} />
         <Route path="/login" element={<div>로그인 화면</div>} />
         <Route path="/" element={<div>홈 화면</div>} />
@@ -154,6 +159,25 @@ afterEach(() => {
 })
 
 describe('GuidePage', () => {
+  it('완료 Guide의 복용 일정 CTA는 mutation 없이 기존 route로 한 번 이동한다', async () => {
+    const navigation = vi.fn<NavigateFunction>()
+    vi.mocked(getGuide).mockResolvedValue(
+      completedGuideResponse('guide-1', structuredGuideContent()),
+    )
+
+    renderPage('/guides/guide-1', false, navigation)
+
+    const scheduleCta = await screen.findByRole('button', {
+      name: '복용 일정 확인하기',
+    })
+    expect(scheduleCta).toHaveProperty('disabled', false)
+    fireEvent.click(scheduleCta)
+
+    expect(navigation).toHaveBeenCalledTimes(1)
+    expect(navigation).toHaveBeenCalledWith('/schedule')
+    expect(getGuide).toHaveBeenCalledTimes(1)
+  })
+
   it('표준 Guide 원문을 약별 카드와 의미 있는 라벨 구조로 표시한다', async () => {
     vi.mocked(getGuide).mockResolvedValue(
       completedGuideResponse('guide-1', structuredGuideContent()),

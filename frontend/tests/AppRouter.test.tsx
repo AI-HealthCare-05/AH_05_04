@@ -230,7 +230,7 @@ describe('인증 상태별 AppRouter 이동', () => {
     localStorage.setItem('access_token', 'fixture-access-token')
     renderRoute('/notifications')
 
-    expect(await screen.findByRole('heading', { name: '알림 목록' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '알림', level: 2 })).toBeTruthy()
     expect(await screen.findByText('새로운 알림이 없어요')).toBeTruthy()
   })
 
