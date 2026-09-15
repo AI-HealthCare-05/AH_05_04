@@ -308,7 +308,7 @@ def load_support_copy_catalog(
     return catalog
 
 
-def _load_active_rule_and_copy() -> tuple[HandlerConfig, SupportCopyCatalog]:
+def load_active_support_assets() -> tuple[HandlerConfig, SupportCopyCatalog]:
     """Return active assets only after both files and their references validate."""
     config = load_handler_config(
         _RULES_DIR,
@@ -328,12 +328,12 @@ def _load_active_rule_and_copy() -> tuple[HandlerConfig, SupportCopyCatalog]:
 
 
 def load_active_handler_config() -> HandlerConfig:
-    config, _ = _load_active_rule_and_copy()
+    config, _ = load_active_support_assets()
     return config
 
 
 def load_active_support_copy_catalog() -> SupportCopyCatalog:
-    _, catalog = _load_active_rule_and_copy()
+    _, catalog = load_active_support_assets()
     return catalog
 
 
