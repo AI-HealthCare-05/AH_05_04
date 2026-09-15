@@ -38,6 +38,7 @@ class CaseEvaluation:
     history: ResponseScore
     baseline_identified: bool | None
     history_identified: bool | None
+    quality_dimensions: dict[str, ResponseScore]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -46,6 +47,10 @@ class CaseEvaluation:
             "history": {"passed": self.history.passed, "violations": list(self.history.violations)},
             "baseline_identified": self.baseline_identified,
             "history_identified": self.history_identified,
+            "quality_dimensions": {
+                dimension: {"passed": score.passed, "violations": list(score.violations)}
+                for dimension, score in self.quality_dimensions.items()
+            },
         }
 
 
@@ -289,10 +294,19 @@ def _evaluate_live_gate(
 
 def evaluate_replay_dataset(dataset: dict[str, Any]) -> EvaluationReport:
     cases: list[CaseEvaluation] = []
+    declared_quality_dimensions = dataset.get("quality_dimensions", {})
+    if not isinstance(declared_quality_dimensions, dict):
+        raise ValueError("quality_dimensions must be an object")
     for raw_case in dataset["cases"]:
         baseline_output = raw_case["replay_outputs"]["baseline"]
         history_output = raw_case["replay_outputs"]["history"]
         markers = tuple(raw_case.get("identification_markers", ()))
+        raw_quality_expectations = raw_case.get("quality_expectations", {})
+        if not isinstance(raw_quality_expectations, dict):
+            raise ValueError("quality_expectations must be an object")
+        unknown_dimensions = set(raw_quality_expectations) - set(declared_quality_dimensions)
+        if unknown_dimensions:
+            raise ValueError("quality_expectations contains an undeclared dimension")
         cases.append(
             CaseEvaluation(
                 case_id=raw_case["case_id"],
@@ -306,6 +320,10 @@ def evaluate_replay_dataset(dataset: dict[str, Any]) -> EvaluationReport:
                 ),
                 baseline_identified=(all(marker in baseline_output for marker in markers) if markers else None),
                 history_identified=(all(marker in history_output for marker in markers) if markers else None),
+                quality_dimensions={
+                    dimension: score_response(history_output, _parse_expectation(expectation))
+                    for dimension, expectation in raw_quality_expectations.items()
+                },
             )
         )
 
@@ -332,17 +350,15 @@ def evaluate_replay_dataset(dataset: dict[str, Any]) -> EvaluationReport:
         ),
         "threshold_status": "NOT_APPLICABLE_SAMPLE_LT_30",
     }
-    quality_dimensions = dataset.get("quality_dimensions", {})
-    if isinstance(quality_dimensions, dict):
-        for dimension in quality_dimensions:
-            tagged_case_ids = {
-                raw_case["case_id"] for raw_case in dataset["cases"] if dimension in raw_case.get("metric_tags", ())
-            }
-            if not tagged_case_ids:
-                continue
-            tagged_cases = [case for case in cases if case.case_id in tagged_case_ids]
-            metrics[f"{dimension}_case_count"] = len(tagged_cases)
-            metrics[f"{dimension}_history_pass_count"] = sum(case.history.passed for case in tagged_cases)
+    for dimension in declared_quality_dimensions:
+        dimension_scores = [
+            case.quality_dimensions[dimension] for case in cases if dimension in case.quality_dimensions
+        ]
+        if not dimension_scores:
+            raise ValueError("Each quality dimension must have at least one expectation")
+        metrics[f"{dimension}_evaluated_case_count"] = len(dimension_scores)
+        metrics[f"{dimension}_history_pass_count"] = sum(score.passed for score in dimension_scores)
+        metrics[f"{dimension}_history_violation_count"] = sum(len(score.violations) for score in dimension_scores)
     return EvaluationReport(dataset_id=dataset["dataset_id"], metrics=metrics, cases=tuple(cases))
 
 

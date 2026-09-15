@@ -23,7 +23,7 @@ _REPOSITORY_ROOT = Path(__file__).parents[3]
 _DEFAULT_DATASET_PATH = _REPOSITORY_ROOT / "evals" / "generation" / "chat-v4-conversation-quality-eval-v1.json"
 _LIVE_DATASET_ID = "chat-v4-conversation-quality-eval-v1"
 _LIVE_DATA_CLASSIFICATION = "SYNTHETIC"
-_LIVE_DATASET_SHA256 = "23bdf84fc5e98d59dce3dd58adc43a4924b605df3cb4c340e7f23f87b45241c6"
+_LIVE_DATASET_SHA256 = "5a02a3592615d8a06969821c555133b12fe6e16edd8bc760d1c26ad9cd0a3213"
 
 
 @dataclass(frozen=True)
