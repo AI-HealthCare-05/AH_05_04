@@ -43,6 +43,7 @@ type Field = {
 }
 
 export type RequirementsApiState = {
+  signupRequests: Array<Record<string, unknown>>
   jobPollCount: number
   uploadCount: number
   profilePatchCount: number
@@ -102,6 +103,7 @@ export async function installRequirementsApi(
   options: MockApiOptions = {},
 ): Promise<RequirementsApiState> {
   const state: RequirementsApiState = {
+    signupRequests: [],
     jobPollCount: 0,
     uploadCount: 0,
     profilePatchCount: 0,
@@ -203,6 +205,7 @@ export async function installRequirementsApi(
     const key = `${method} ${path}`
 
     if (key === 'POST /api/v1/auth/signup') {
+      state.signupRequests.push(request.postDataJSON() as Record<string, unknown>)
       return json(route, { detail: '회원가입이 완료되었습니다.' }, 201)
     }
     if (key === 'POST /api/v1/auth/login') {

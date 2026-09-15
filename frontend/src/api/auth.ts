@@ -4,6 +4,13 @@ export type SignupRequest = {
   email: string
   password: string
   name: string
+  consents?: SignupConsentRequest[]
+}
+
+export type SignupConsentPurpose = 'OCR' | 'GUIDE' | 'CHAT' | 'NOTIFICATION'
+
+export type SignupConsentRequest = {
+  purpose: SignupConsentPurpose
 }
 
 export type LoginRequest = {
