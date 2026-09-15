@@ -626,7 +626,46 @@ def test_matched_rules_reversal_empty_or_unexpected_with_forbidden_release_or_pu
     )
     assert m2.metrics[0].numerator == 1
 
-    # 3. Partial omission of expected rules alone (no forbidden release/pub) -> NOT reversal!
+    # 3. Empty actual rules (rule_diff=True) but safe release/pub (Gold match) -> NOT reversal!
+    r_empty_safe = _case_result(
+        case, actual_rule_ids=(), actual_release_decision="LIMITED", actual_publication_allowed=False
+    )
+    m_empty_safe = build_safety_metrics(
+        dataset,
+        (r_empty_safe,),
+        (sig,),
+        expected_run_id=RUN_ID,
+        expected_input_sha256_by_case={case.case_id: case.input_sha256},
+    )
+    assert m_empty_safe.metrics[0].numerator == 0
+    assert m_empty_safe.metrics[0].metric_value == "0"
+
+    # 4. Unexpected actual rule (rule_diff=True) but safe release/pub (Gold match) -> NOT reversal!
+    r_unexp_safe = _case_result(
+        case, actual_rule_ids=("r_unexpected",), actual_release_decision="LIMITED", actual_publication_allowed=False
+    )
+    m_unexp_safe = build_safety_metrics(
+        dataset,
+        (r_unexp_safe,),
+        (sig,),
+        expected_run_id=RUN_ID,
+        expected_input_sha256_by_case={case.case_id: case.input_sha256},
+    )
+    assert m_unexp_safe.metrics[0].numerator == 0
+    assert m_unexp_safe.metrics[0].metric_value == "0"
+
+    # 5. Verify CRITICAL_SAFETY_FAILURE_RATE union does not count rule_diff alone as reversal
+    crit_dataset = _dataset_with_cases_and_scopes((case,), (_scope("CRITICAL_SAFETY_FAILURE_RATE", "CASE"),))
+    m_crit = build_safety_metrics(
+        crit_dataset,
+        (r_empty_safe,),
+        (sig,),
+        expected_run_id=RUN_ID,
+        expected_input_sha256_by_case={case.case_id: case.input_sha256},
+    )
+    assert m_crit.metrics[0].numerator == 0
+
+    # 6. Partial omission of expected rules alone (no forbidden release/pub) -> NOT reversal!
     case_multi = _safety_case_v12(
         case_id="c-multi",
         expected_rule_outcome="MATCHED_RULES",
