@@ -808,7 +808,9 @@ async def test_dense_only_does_not_execute_lexical_sql(database) -> None:
     for r, h in enumerate(res.hybrid_hits, start=1):
         assert h.fusion_rank == r
     # Assert lexical SQL (similarity / ts_rank_cd / % operator) was not executed
-    assert not any("similarity" in stmt or "ts_rank_cd" in stmt or "plainto_tsquery" in stmt for stmt in executed_statements)
+    assert not any(
+        "similarity" in stmt or "ts_rank_cd" in stmt or "plainto_tsquery" in stmt for stmt in executed_statements
+    )
     # Assert signals only have DENSE method
     assert len(res.signals) > 0
     assert all(sig.method == ProductionSearchMethod.DENSE for sig in res.signals)

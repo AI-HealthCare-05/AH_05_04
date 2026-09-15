@@ -171,6 +171,7 @@ def test_retrieval_enums_match_specifications() -> None:
 
 def test_python_validation_boundary_selected_hits_and_ranks() -> None:
     """Validate that selected hits cannot exceed rank 5 or final_rank > 5 in Python domain rules."""
+
     # Selected hit with final_rank > 5 is invalid
     def validate_selection(final_rank: int, selected: bool) -> None:
         if selected and final_rank > 5:

@@ -128,8 +128,12 @@ def upgrade() -> None:
             name="fk_retrieval_signal_knowledge_chunk_id",
             ondelete="RESTRICT",
         ),
-        sa.PrimaryKeyConstraint("retrieval_run_id", "retrieval_method", "knowledge_chunk_id", name="pk_retrieval_signal"),
-        sa.UniqueConstraint("retrieval_run_id", "retrieval_method", "raw_rank", name="uq_retrieval_signal_run_method_rank"),
+        sa.PrimaryKeyConstraint(
+            "retrieval_run_id", "retrieval_method", "knowledge_chunk_id", name="pk_retrieval_signal"
+        ),
+        sa.UniqueConstraint(
+            "retrieval_run_id", "retrieval_method", "raw_rank", name="uq_retrieval_signal_run_method_rank"
+        ),
         sa.CheckConstraint(
             "retrieval_method IN ('EXACT', 'TRIGRAM', 'FTS', 'LEXICAL', 'DENSE')",
             name="chk_retrieval_signal_method",

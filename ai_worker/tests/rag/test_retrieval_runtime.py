@@ -210,7 +210,9 @@ class RecordingSearchPort:
                     raw_rank=1,
                     observed_score="1.000000000000000000",
                 ),
-            ) if self.hits else (),
+            )
+            if self.hits
+            else (),
         )
 
 

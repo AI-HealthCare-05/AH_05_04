@@ -70,12 +70,14 @@ def test_gate_accepts_pre_gate_top_5_subset_in_strict_ascending_order() -> None:
     hit6 = _make_hit(6)
 
     # hits 1, 2, 4 are eligible, 3 is ineligible, 6 is eligible but rank 6
-    eligible = frozenset([
-        hit1.provenance.knowledge_chunk_id,
-        hit2.provenance.knowledge_chunk_id,
-        hit4.provenance.knowledge_chunk_id,
-        hit6.provenance.knowledge_chunk_id,
-    ])
+    eligible = frozenset(
+        [
+            hit1.provenance.knowledge_chunk_id,
+            hit2.provenance.knowledge_chunk_id,
+            hit4.provenance.knowledge_chunk_id,
+            hit6.provenance.knowledge_chunk_id,
+        ]
+    )
 
     outcome = evaluate_evidence_gate([hit1, hit2, hit3, hit4, hit5, hit6], eligible)
     assert isinstance(outcome, EvidenceGateSuccess)
@@ -108,10 +110,12 @@ def test_gate_rejects_duplicate_stable_coordinates() -> None:
     hit1 = _make_hit(1, coordinate=coord)
     hit2 = _make_hit(2, coordinate=coord)  # same coordinate, duplicate
 
-    eligible = frozenset([
-        hit1.provenance.knowledge_chunk_id,
-        hit2.provenance.knowledge_chunk_id,
-    ])
+    eligible = frozenset(
+        [
+            hit1.provenance.knowledge_chunk_id,
+            hit2.provenance.knowledge_chunk_id,
+        ]
+    )
 
     outcome = evaluate_evidence_gate([hit1, hit2], eligible)
     assert isinstance(outcome, EvidenceGateSuccess)

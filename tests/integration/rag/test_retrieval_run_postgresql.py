@@ -79,7 +79,7 @@ async def _seed_test_prerequisites(engine) -> tuple[UUID, UUID, UUID, UUID, UUID
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "INSERT INTO \"user\" (id, email, hashed_password, name, is_active, is_admin) "
+                'INSERT INTO "user" (id, email, hashed_password, name, is_active, is_admin) '
                 "VALUES (:id, :email, 'hash', '테스트', true, false)"
             ),
             {"id": str(user_id), "email": f"test-{uuid4().hex[:8]}@example.com"},
@@ -258,7 +258,9 @@ async def test_finalize_rollback_on_failure_preserves_running(database) -> None:
     async with engine.connect() as conn:
         run_row = (await conn.execute(text(f"SELECT status FROM retrieval_run WHERE id = '{run_id}'"))).first()
         assert run_row[0] == "RUNNING"
-        hit_count = (await conn.execute(text(f"SELECT COUNT(*) FROM retrieval_hit WHERE retrieval_run_id = '{run_id}'"))).scalar()
+        hit_count = (
+            await conn.execute(text(f"SELECT COUNT(*) FROM retrieval_hit WHERE retrieval_run_id = '{run_id}'"))
+        ).scalar()
         assert hit_count == 0
 
 
@@ -293,7 +295,9 @@ async def test_corrupt_receipt_hash_fails_closed(database) -> None:
     # Mutate receipt_hash in database to simulate tampering/corruption
     async with engine.begin() as conn:
         await conn.execute(
-            text(f"UPDATE retrieval_run SET receipt_hash = '0000000000000000000000000000000000000000000000000000000000000000' WHERE id = '{run_id}'")
+            text(
+                f"UPDATE retrieval_run SET receipt_hash = '0000000000000000000000000000000000000000000000000000000000000000' WHERE id = '{run_id}'"
+            )
         )
 
     # Reloading corrupt receipt fails closed

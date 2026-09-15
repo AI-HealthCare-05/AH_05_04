@@ -338,7 +338,7 @@ async def execute_production_retrieval(
         PersistedHitInput(
             knowledge_chunk_id=h.provenance.knowledge_chunk_id,
             rrf_rank=h.fusion_rank,
-            rrf_score=Decimal(f"{int(h.fraction_receipt.numerator)/int(h.fraction_receipt.denominator):.18f}"),
+            rrf_score=Decimal(f"{int(h.fraction_receipt.numerator) / int(h.fraction_receipt.denominator):.18f}"),
             rrf_score_numerator=h.fraction_receipt.numerator,
             rrf_score_denominator=h.fraction_receipt.denominator,
             final_rank=h.fusion_rank,
@@ -563,7 +563,7 @@ async def execute_hybrid_retrieve(
         PersistedHitInput(
             knowledge_chunk_id=h.provenance.knowledge_chunk_id,
             rrf_rank=h.fusion_rank,
-            rrf_score=Decimal(f"{int(h.fraction_receipt.numerator)/int(h.fraction_receipt.denominator):.18f}"),
+            rrf_score=Decimal(f"{int(h.fraction_receipt.numerator) / int(h.fraction_receipt.denominator):.18f}"),
             rrf_score_numerator=h.fraction_receipt.numerator,
             rrf_score_denominator=h.fraction_receipt.denominator,
             final_rank=h.fusion_rank,

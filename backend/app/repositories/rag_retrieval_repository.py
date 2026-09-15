@@ -183,9 +183,7 @@ class RagRetrievalRepository:
         if run.status != RetrievalRunStatus.RUNNING:
             if run.status == data.status and run.receipt_hash == data.receipt_hash:
                 return run
-            raise RetrievalRunStateError(
-                f"Retrieval run {run_id} has invalid status {run.status} for finalization"
-            )
+            raise RetrievalRunStateError(f"Retrieval run {run_id} has invalid status {run.status} for finalization")
 
         # Validate selection rules: selected must only be in pre-gate top 5 (final_rank <= 5)
         for h in data.hits:
@@ -242,10 +240,6 @@ class RagRetrievalRepository:
         return list(res.scalars().all())
 
     async def get_run_hits(self, run_id: UUID) -> list[RetrievalHit]:
-        stmt = (
-            select(RetrievalHit)
-            .where(RetrievalHit.retrieval_run_id == run_id)
-            .order_by(RetrievalHit.final_rank)
-        )
+        stmt = select(RetrievalHit).where(RetrievalHit.retrieval_run_id == run_id).order_by(RetrievalHit.final_rank)
         res = await self._session.execute(stmt)
         return list(res.scalars().all())

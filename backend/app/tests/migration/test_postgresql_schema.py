@@ -28,7 +28,9 @@ def test_retrieval_run_revision_contract() -> None:
     source = inspect.getsource(revision)
 
     assert revision.down_revision == "168a1b2c3d4e"
-    assert "op.create_table(\n        \"retrieval_run\"" in source or 'op.create_table(\n        "retrieval_run"' in source
+    assert (
+        'op.create_table(\n        "retrieval_run"' in source or 'op.create_table(\n        "retrieval_run"' in source
+    )
     assert "retrieval_signal" in source
     assert "retrieval_hit" in source
     assert "uq_retrieval_run_job_node" in source

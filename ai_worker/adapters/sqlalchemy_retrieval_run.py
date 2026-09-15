@@ -106,6 +106,7 @@ _RETRIEVAL_HIT = table(
     column("selected", Boolean),
 )
 
+
 class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
     def __init__(self, session_factory: SessionFactory) -> None:
         self._session_factory = session_factory
@@ -115,10 +116,14 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
             async with self._session_factory() as session:
                 async with session.begin():
                     # 1. Check existing run for (job_id, node_id)
-                    run_stmt = select(_RETRIEVAL_RUN).where(
-                        _RETRIEVAL_RUN.c.job_id == str(request.job_id),
-                        _RETRIEVAL_RUN.c.node_id == request.node_id,
-                    ).with_for_update()
+                    run_stmt = (
+                        select(_RETRIEVAL_RUN)
+                        .where(
+                            _RETRIEVAL_RUN.c.job_id == str(request.job_id),
+                            _RETRIEVAL_RUN.c.node_id == request.node_id,
+                        )
+                        .with_for_update()
+                    )
                     run_row = (await session.execute(run_stmt)).mappings().first()
 
                     if run_row is not None:
@@ -197,9 +202,13 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
             async with self._session_factory() as session:
                 async with session.begin():
                     # Lock retrieval run FOR UPDATE
-                    run_stmt = select(_RETRIEVAL_RUN).where(
-                        _RETRIEVAL_RUN.c.id == str(request.run_id),
-                    ).with_for_update()
+                    run_stmt = (
+                        select(_RETRIEVAL_RUN)
+                        .where(
+                            _RETRIEVAL_RUN.c.id == str(request.run_id),
+                        )
+                        .with_for_update()
+                    )
                     run_row = (await session.execute(run_stmt)).mappings().first()
                     if run_row is None:
                         return FinalizeRetrievalRunFailure(
@@ -356,9 +365,7 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
         run_row: Any,
     ) -> PersistedRetrievalRunReceipt | None:
         # Load signals
-        sig_stmt = select(_RETRIEVAL_SIGNAL).where(
-            _RETRIEVAL_SIGNAL.c.retrieval_run_id == str(run_id)
-        )
+        sig_stmt = select(_RETRIEVAL_SIGNAL).where(_RETRIEVAL_SIGNAL.c.retrieval_run_id == str(run_id))
         sig_rows = (await session.execute(sig_stmt)).mappings().all()
         signals = [
             PersistedSignalInput(
@@ -372,9 +379,7 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
         ]
 
         # Load hits
-        hit_stmt = select(_RETRIEVAL_HIT).where(
-            _RETRIEVAL_HIT.c.retrieval_run_id == str(run_id)
-        )
+        hit_stmt = select(_RETRIEVAL_HIT).where(_RETRIEVAL_HIT.c.retrieval_run_id == str(run_id))
         hit_rows = (await session.execute(hit_stmt)).mappings().all()
         hits = [
             PersistedHitInput(

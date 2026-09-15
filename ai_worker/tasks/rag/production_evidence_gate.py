@@ -92,15 +92,13 @@ PostSearchEligibilityOutcome = PostSearchEligibilitySuccess | PostSearchEligibil
 
 
 class ProductionEvidenceEligibilityVerifierPort(Protocol):
-    async def pre_search(self, request: PreSearchEligibilityRequest) -> PreSearchEligibilityOutcome:
-        ...
+    async def pre_search(self, request: PreSearchEligibilityRequest) -> PreSearchEligibilityOutcome: ...
 
     async def post_search(
         self,
         request: PostSearchEligibilityRequest,
         hits: Sequence[ProductionSearchHit],
-    ) -> PostSearchEligibilityOutcome:
-        ...
+    ) -> PostSearchEligibilityOutcome: ...
 
 
 def evaluate_evidence_gate(
@@ -134,10 +132,7 @@ def evaluate_evidence_gate(
         )
 
     # 2. Filter by post-search eligibility
-    eligible_candidates = [
-        h for h in pre_gate_candidates
-        if h.provenance.knowledge_chunk_id in eligible_chunk_ids
-    ]
+    eligible_candidates = [h for h in pre_gate_candidates if h.provenance.knowledge_chunk_id in eligible_chunk_ids]
     if not eligible_candidates:
         return EvidenceGateNoResult(
             status=EvidenceGateStatus.NO_RESULT,
