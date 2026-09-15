@@ -220,6 +220,18 @@ class TrackCStorageRepository:
         row = result.one_or_none()
         return (row[0], row[1]) if row is not None else None
 
+    async def get_active_plan_for_update(self, *, barrier_id: UUID) -> SupportActionPlan | None:
+        """Caller must hold the owned Check-in → Safety → Barrier locks first."""
+        return await self.session.scalar(
+            select(SupportActionPlan)
+            .where(
+                SupportActionPlan.barrier_response_id == barrier_id,
+                SupportActionPlan.status == SupportActionPlanStatus.ACTIVE,
+            )
+            .with_for_update(of=SupportActionPlan)
+            .execution_options(populate_existing=True)
+        )
+
     async def get_action_plan_owned(self, *, plan_id: UUID, user_id: UUID) -> SupportActionPlan | None:
         return await self.session.scalar(
             select(SupportActionPlan)

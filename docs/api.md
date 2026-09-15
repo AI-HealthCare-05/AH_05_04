@@ -1,5 +1,14 @@
 # API 명세
 
+## #194 지원 제안·Plan 생성 — 구현 브랜치 리뷰 대상
+
+`GET /api/v1/barrier-responses/{id}/supports`는 현재 NOT_TAKEN·최신 ROUTINE/NORMAL Safety·
+현재 Barrier에서 승인 설정의 첫 지원 1개(없으면 0개 + NO_ELIGIBLE_SUPPORT)를 반환한다.
+`POST /api/v1/support-action-plans`는 Idempotency-Key와 명시적 confirmed=true를 요구하고
+서버가 현재 제안·버전·ACTIVE 중복을 재검증한 뒤 snapshot을 저장한다. 두 응답은 200/data다.
+DTO·오류·#139 소비 계약은 [#194 부분 구현 계약](contracts/proposed/track-c-support-plan-api-194.md)을 따른다.
+Plan 조회·완료·취소·follow-up은 이번 구현에 없으며 #194 전체 완료가 아니다.
+
 ## 공통 규칙
 
 - Base path: `/api/v1`
