@@ -221,6 +221,89 @@
   border: 0;
 }
 
+.mvp-signup-required {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.mvp-signup-required label {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mvp-signup-required input {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.mvp-signup-required span {
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+}
+
+.mvp-signup-required small {
+  color: var(--ds-text-muted);
+  line-height: 1.5;
+}
+
+.mvp-signup-required strong {
+  color: var(--ds-text);
+}
+
+.mvp-signup-required__link {
+  flex: 0 0 auto;
+  min-height: 44px;
+  margin-top: -10px;
+  padding: 10px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ds-action);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.mvp-signup-legal {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.mvp-page .mvp-signup-legal__review {
+  margin-block: 16px 24px;
+  border: 0;
+  background: #fff6de;
+  color: #73520f;
+}
+
+.mvp-signup-legal__review p {
+  margin: 4px 0 0;
+  font-size: 11px;
+}
+
+.mvp-signup-legal section + section {
+  margin-top: 26px;
+}
+
+.mvp-signup-legal h2 {
+  font-size: 18px;
+  line-height: 1.5;
+}
+
+.mvp-signup-legal__footer {
+  margin-top: 24px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ds-line);
+  color: var(--ds-text-muted);
+  font-size: 12px;
+}
+
 .mvp-signup-consents legend {
   margin-bottom: 4px;
   color: var(--ds-text);

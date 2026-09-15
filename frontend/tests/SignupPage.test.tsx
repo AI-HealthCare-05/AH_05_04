@@ -54,7 +54,12 @@ describe('SignupPage', () => {
     )
   }
 
+  function acceptTerms() {
+    fireEvent.click(screen.getByRole('checkbox', { name: '필수 약관에 동의합니다' }))
+  }
+
   function fillValidForm() {
+    if (!(screen.getByRole('checkbox', { name: '필수 약관에 동의합니다' }) as HTMLInputElement).checked) acceptTerms()
     fireEvent.change(screen.getByLabelText('이름'), {
       target: { value: '홍길동' },
     })
@@ -73,6 +78,66 @@ describe('SignupPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '인증 확인' }))
     await screen.findByText('이메일 인증이 완료되었습니다.')
   }
+
+  it('필수 약관 미동의는 CTA와 form 직접 제출을 차단한다', async () => {
+    renderPage()
+    fillValidForm()
+    await verifyEmail()
+    acceptTerms()
+    const submit = screen.getByRole('button', { name: '가입 완료' })
+    expect(submit).toHaveProperty('disabled', true)
+    fireEvent.submit(submit.closest('form')!)
+    expect(signup).not.toHaveBeenCalled()
+    expect(screen.getByText('필수 약관에 동의해 주세요.')).toBeTruthy()
+    expect(document.activeElement).toBe(screen.getByRole('checkbox', { name: '필수 약관에 동의합니다' }))
+    acceptTerms()
+    expect(submit).toHaveProperty('disabled', false)
+    fireEvent.click(submit)
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(signup).toHaveBeenCalledWith({
+      name: '홍길동', email: 'dosey@example.com', password: 'Password1!', consents: [],
+    })
+  })
+
+  it('약관 열기·확인은 동의나 API 호출 없이 입력·선택·인증 상태를 보존한다', async () => {
+    renderPage()
+    fillValidForm()
+    await verifyEmail()
+    acceptTerms()
+    fireEvent.click(screen.getByRole('checkbox', { name: /도지에게 질문/ }))
+    const requestCount = vi.mocked(requestEmailVerification).mock.calls.length
+    const confirmCount = vi.mocked(confirmEmailVerification).mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: '약관 보기' }))
+    expect(screen.getByText('검토용 문안 · 최종 법무/Privacy 승인 전')).toBeTruthy()
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: '필수 약관 보기' }))
+    expect(screen.queryByRole('button', { name: '가입 완료' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '확인' }))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '약관 보기' }))
+    expect(screen.getByRole('checkbox', { name: '필수 약관에 동의합니다' })).toHaveProperty('checked', false)
+    expect(screen.getByRole('checkbox', { name: /도지에게 질문/ })).toHaveProperty('checked', true)
+    expect(screen.getByLabelText('이름')).toHaveProperty('value', '홍길동')
+    expect(screen.getByLabelText('비밀번호')).toHaveProperty('value', 'Password1!')
+    expect(screen.getByText('이메일 인증이 완료되었습니다.')).toBeTruthy()
+    expect(signup).not.toHaveBeenCalled()
+    expect(requestEmailVerification).toHaveBeenCalledTimes(requestCount)
+    expect(confirmEmailVerification).toHaveBeenCalledTimes(confirmCount)
+  })
+
+  it('모든 목적 선택 후 해제한 목적은 payload에서 제외한다', async () => {
+    renderPage()
+    fillValidForm()
+    await verifyEmail()
+    for (const name of [/처방전 인식/, /복약 안내/, /도지에게 질문/, /복약 알림/]) {
+      fireEvent.click(screen.getByRole('checkbox', { name }))
+    }
+    fireEvent.click(screen.getByRole('checkbox', { name: /처방전 인식/ }))
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(signup).toHaveBeenCalledWith({
+      name: '홍길동', email: 'dosey@example.com', password: 'Password1!',
+      consents: [{ purpose: 'GUIDE' }, { purpose: 'CHAT' }, { purpose: 'NOTIFICATION' }],
+    })
+  })
 
   it.each([undefined, 'false', 'TRUE', '1'])('flag %s keeps noop/non-local signup available without verification calls', async (flag) => {
     vi.stubEnv('VITE_EMAIL_VERIFICATION_ENABLED', flag)
@@ -99,6 +164,7 @@ describe('SignupPage', () => {
     vi.stubEnv('VITE_EMAIL_VERIFICATION_ENABLED', 'false')
     vi.mocked(signup).mockRejectedValue(new ApiError(409, '이미 사용중인 이메일입니다.', 'CONFLICT'))
     renderPage()
+    acceptTerms()
     fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
     expect(document.activeElement).toBe(screen.getByLabelText('이름'))
     expect(signup).not.toHaveBeenCalled()
@@ -139,8 +205,9 @@ describe('SignupPage', () => {
     expect(screen.getByLabelText('이름')).toHaveProperty('required', true)
     expect(screen.getByLabelText('이메일')).toHaveProperty('required', true)
     expect(screen.getByLabelText('비밀번호')).toHaveProperty('required', true)
-    expect(screen.getAllByRole('checkbox')).toHaveLength(4)
-    for (const checkbox of screen.getAllByRole('checkbox')) {
+    expect(screen.getAllByRole('checkbox')).toHaveLength(5)
+    expect(screen.getByRole('checkbox', { name: '필수 약관에 동의합니다' })).toHaveProperty('required', true)
+    for (const checkbox of screen.getAllByRole('checkbox').slice(1)) {
       expect(checkbox).toHaveProperty('checked', false)
       expect(checkbox).toHaveProperty('required', false)
     }
@@ -168,6 +235,7 @@ describe('SignupPage', () => {
 
   it('빈 값과 Backend 비밀번호 정책 불일치 시 API를 호출하지 않고 오류를 연결한다', () => {
     renderPage()
+    acceptTerms()
 
     fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
 
@@ -220,6 +288,49 @@ describe('SignupPage', () => {
     expect(await screen.findByText('로그인 화면')).toBeTruthy()
     expect(localStorage.getItem('access_token')).toBeNull()
     expect(localStorage.getItem('existing_key')).toBe('preserved')
+  })
+
+  it('#549 인증 만료 응답은 완료 상태를 해제하고 재인증 후 선택한 동의로 가입한다', async () => {
+    vi.mocked(signup).mockRejectedValueOnce(
+      new ApiError(409, 'unsafe-server-message', 'EMAIL_VERIFICATION_REQUIRED'),
+    )
+    renderPage()
+    fillValidForm()
+    await verifyEmail()
+    fireEvent.click(screen.getByRole('checkbox', { name: /복약 안내/ }))
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+
+    await screen.findByText('이메일 인증이 필요하거나 인증 유효 시간이 지났습니다. 인증 안내를 다시 요청하고 인증을 완료해 주세요.')
+    expect(screen.queryByText('이메일 인증이 완료되었습니다.')).toBeNull()
+    expect(screen.queryByText('unsafe-server-message')).toBeNull()
+    expect(screen.getByLabelText('이메일').getAttribute('aria-invalid')).toBe('false')
+    expect(screen.getByLabelText('이메일 인증 코드')).toHaveProperty('value', '')
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '인증 요청' }))
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+    expect(signup).toHaveBeenCalledTimes(1)
+
+    await verifyEmail()
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(signup).toHaveBeenLastCalledWith({
+      name: '홍길동', email: 'dosey@example.com', password: 'Password1!',
+      consents: [{ purpose: 'GUIDE' }],
+    })
+  })
+
+  it('#549 Backend gate와 인증 UI 설정 불일치는 안내하고 인증 API를 자동 호출하지 않는다', async () => {
+    vi.stubEnv('VITE_EMAIL_VERIFICATION_ENABLED', 'false')
+    vi.mocked(signup).mockRejectedValueOnce(
+      new ApiError(409, 'unsafe-server-message', 'EMAIL_VERIFICATION_REQUIRED'),
+    )
+    renderPage()
+    fillValidForm()
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+    await screen.findByText('회원가입에 이메일 인증이 필요합니다. 현재 인증 화면을 이용할 수 없으니 잠시 후 다시 시도해 주세요.')
+    expect(screen.getByLabelText('이메일').getAttribute('aria-invalid')).toBe('false')
+    expect(screen.queryByText('unsafe-server-message')).toBeNull()
+    expect(requestEmailVerification).not.toHaveBeenCalled()
+    expect(confirmEmailVerification).not.toHaveBeenCalled()
   })
 
   it('중복 이메일 Backend 오류를 이메일 입력에 연결한다', async () => {
