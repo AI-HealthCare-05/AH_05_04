@@ -230,3 +230,34 @@ def test_issue_581_original_reproduction_cases_detect_invalid_outputs(
 
     assert evaluated.history.passed is False
     assert any(not score.passed for score in evaluated.quality_dimensions.values())
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        "issue-581-missed-morning-group",
+        "issue-581-missed-lunch-group",
+    ],
+)
+def test_missed_dose_cases_allow_safe_double_dose_warning_and_reject_positive_instruction(
+    case_id: str,
+) -> None:
+    dataset = json.loads(_DATASET_PATH.read_text(encoding="utf-8"))
+    case = next(case for case in dataset["cases"] if case["case_id"] == case_id)
+    safe_output = case["replay_outputs"]["history"]
+
+    safe_report = evaluate_replay_dataset(dataset)
+    safe_evaluation = next(case for case in safe_report.cases if case.case_id == case_id)
+
+    assert "두 배로 복용하지 마세요" in safe_output
+    assert safe_evaluation.history.passed is True
+
+    case["replay_outputs"]["history"] = safe_output.replace(
+        "두 배로 복용하지 마세요",
+        "두 배로 복용하세요",
+    )
+    unsafe_report = evaluate_replay_dataset(dataset)
+    unsafe_evaluation = next(case for case in unsafe_report.cases if case.case_id == case_id)
+
+    assert unsafe_evaluation.history.passed is False
+    assert "FORBIDDEN_TERM_PRESENT" in unsafe_evaluation.history.violations
