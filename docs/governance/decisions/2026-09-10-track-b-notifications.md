@@ -39,7 +39,7 @@ Approved Contract Freeze v4와 원본 `FinalProject Documents/04_Decision/track-
 - Frontend 소비 리뷰: 남한솔이 Notification DTO·`occurrence_local_date`·404/409·Track C 분리 경계를 [승인](https://github.com/AI-HealthCare-05/AH_05_04/pull/430#pullrequestreview-5173983820)했다. 승인 이후 계약/API/DTO 변경은 없고 최종 작성자 변경은 migration 부모와 검증 기록 정합화뿐이었다.
 - 구현 병합: PR #430은 merge SHA `8010dfce7fda434c276ce5ca394e72f4a0463a53`로 develop에 병합됐고 #203은 종료됐다.
 - #202 연계: PR #474가 merge SHA `9d8239ff1886327af154db53981ce839191da879`로 병합됐으며, 송은영의 [Backend 최종 승인](https://github.com/AI-HealthCare-05/AH_05_04/pull/474#pullrequestreview-5193439578)과 남한솔의 [Frontend 인수 승인](https://github.com/AI-HealthCare-05/AH_05_04/issues/202#issuecomment-5658885279)이 기록됐다.
-- Frontend 통합: #535와 #579가 develop에 병합됐고 #421 closeout 브랜치의 browser E2E가 원본 날짜·과거 약 identity·Check-in mutation 0·지연 응답 navigation 차단을 검증한다.
+- Frontend 통합: #535와 #579가 develop에 병합됐고 #421 closeout의 [real-stack browser E2E](../../validation/track-b/issue-421-notification-real-stack.md)가 실제 #203 API·PostgreSQL·#138 화면에서 원본 날짜·과거 약 identity·Check-in mutation 0을 검증한다. fixture browser E2E는 모바일·접근성과 #551 지연 응답 navigation 차단을 결정적으로 검증한다.
 
 ## 구현 및 완료 범위
 

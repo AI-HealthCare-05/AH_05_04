@@ -69,6 +69,12 @@ start_stack() {
   echo "[REAL-STACK] 준비 완료: http://127.0.0.1:14173"
 }
 
+cleanup_stack() {
+  if [[ "${KEEP_REAL_STACK:-}" != "1" ]]; then
+    compose down --volumes --remove-orphans
+  fi
+}
+
 case "$ACTION" in
   up)
     start_stack
@@ -76,16 +82,25 @@ case "$ACTION" in
   test)
     require_live_ai_opt_in
     start_stack
-    cleanup() {
-      if [[ "${KEEP_REAL_STACK:-}" != "1" ]]; then
-        compose down --volumes --remove-orphans
-      fi
-    }
-    trap cleanup EXIT
+    trap cleanup_stack EXIT
     (
       cd frontend
       REAL_STACK_WEB_URL=http://127.0.0.1:14173 \
         pnpm exec playwright test --config=playwright.real-stack.config.ts
+    )
+    ;;
+  test-notification)
+    require_env_file
+    trap cleanup_stack EXIT
+    start_stack
+    compose exec -T fastapi uv run --no-sync python -m app.release_validation.notification_round_trip_fixture
+    (
+      cd frontend
+      NOTIFICATION_E2E_EMAIL=notification-421@example.com \
+      NOTIFICATION_E2E_PASSWORD='Synthetic1!' \
+      REAL_STACK_API_URL=http://127.0.0.1:18000 \
+      REAL_STACK_WEB_URL=http://127.0.0.1:14173 \
+        pnpm exec playwright test --config=playwright.real-stack.config.ts e2e-real-stack/notification-round-trip.spec.ts
     )
     ;;
   down)
@@ -97,7 +112,7 @@ case "$ACTION" in
     compose ps
     ;;
   *)
-    echo "사용법: bash scripts/e2e/real_stack.sh {up|test|status|down}" >&2
+    echo "사용법: bash scripts/e2e/real_stack.sh {up|test|test-notification|status|down}" >&2
     exit 2
     ;;
 esac
