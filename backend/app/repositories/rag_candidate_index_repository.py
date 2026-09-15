@@ -6,8 +6,12 @@ Worker package 없이 이 read port만으로 조회할 수 있어야 하기 때�
 분리되어 있다).
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
+import unicodedata
+from array import array
 from dataclasses import asdict, dataclass
 from uuid import UUID
 
@@ -31,6 +35,40 @@ def _canonical_json_bytes(value: object) -> bytes:
 
 def _sha256(value: object) -> str:
     return hashlib.sha256(_canonical_json_bytes(value)).hexdigest()
+
+
+def _stable_text_sort_key(value: str) -> bytes:
+    return unicodedata.normalize("NFC", value).encode("utf-8")
+
+
+def _identity_key(member: RagCandidateIndexMemberCreate) -> str:
+    return f"{member.identity_entity_type.value}:{member.identity_code_system}:{member.identity_canonical_code}"
+
+
+def _member_sort_key(member: RagCandidateIndexMemberCreate) -> tuple[bytes, bytes, bytes]:
+    return (
+        _stable_text_sort_key(_identity_key(member)),
+        _stable_text_sort_key(member.entry_type.value),
+        _stable_text_sort_key(member.entry_ref),
+    )
+
+
+def _canonical_member_order(
+    members: tuple[RagCandidateIndexMemberCreate, ...],
+) -> tuple[RagCandidateIndexMemberCreate, ...]:
+    return tuple(sorted(members, key=_member_sort_key))
+
+
+def _canonical_embedding_values(values: tuple[float, ...]) -> tuple[float, ...]:
+    return tuple(array("f", values))
+
+
+def _embedding_storage_hash(values: tuple[float, ...] | list[float]) -> str:
+    return _sha256({"embedding": _canonical_embedding_values(tuple(values))})
+
+
+def _lexical_storage_hash(member: RagCandidateIndexMemberCreate) -> str:
+    return _recomputed_lexical_member_content_hash(member)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +148,10 @@ class CandidateIndexCatalogMismatchError(CandidateIndexBuildError):
     """catalog_set_id가 가리키는 Catalog Set과 build 입력이 서로 다른 내용을 주장한다."""
 
 
+class CandidateIndexMemberContentHashMismatchError(CandidateIndexBuildError):
+    """전달된 member 행의 실제 필드가 claim된 member_content_hash와 다르다."""
+
+
 class CandidateIndexMemberSetHashMismatchError(CandidateIndexBuildError):
     """전달된 member 행으로부터 재계산한 member_set_hash가 claim된 값과 다르다."""
 
@@ -120,6 +162,18 @@ class CandidateIndexMemberCountMismatchError(CandidateIndexBuildError):
 
 class CandidateIndexContentHashConflictError(CandidateIndexBuildError):
     """이미 저장된 content_hash가 다른 내용을 가리킨다."""
+
+
+class CandidateIndexLifecycleError(CandidateIndexBuildError):
+    """Candidate Index lifecycle 전이를 안전하게 수행할 수 없다."""
+
+
+class CandidateIndexVersionNotFoundError(CandidateIndexLifecycleError):
+    """전이 대상 Candidate Index Version이 존재하지 않는다."""
+
+
+class CandidateIndexVersionNotBuildableError(CandidateIndexLifecycleError):
+    """BUILDING 상태의 완성된 Candidate Index Version만 READY/FAILED로 전이할 수 있다."""
 
 
 _VERSION_IDENTITY_FIELDS = (
@@ -153,13 +207,80 @@ _VERSION_IDENTITY_FIELDS = (
 )
 
 
+def _member_content_payload(member: RagCandidateIndexMemberCreate) -> dict[str, object]:
+    """RAG-07A의 member_content_hash payload 정의와 같은 필드 집합."""
+    return {
+        "identity": {
+            "entity_type": member.identity_entity_type.value,
+            "code_system": member.identity_code_system,
+            "canonical_code": member.identity_canonical_code,
+        },
+        "product_ref": member.product_ref,
+        "entry_ref": member.entry_ref,
+        "entry_type": member.entry_type.value,
+        "display_text": member.display_text,
+        "normalized_text": member.normalized_text,
+        "alias_ref": member.alias_ref,
+        "product_name": member.product_name,
+        "strength_text": member.strength_text,
+        "dosage_form": member.dosage_form,
+        "manufacturer_name": member.manufacturer_name,
+        "product_source_snapshot_id": str(member.product_source_snapshot_id),
+        "entry_source_snapshot_id": str(member.entry_source_snapshot_id),
+        "alias_source_snapshot_id": str(member.alias_source_snapshot_id) if member.alias_source_snapshot_id else None,
+        "catalog_version": member.catalog_version,
+        "catalog_manifest_hash": member.catalog_manifest_hash,
+        "normalization_version": member.normalization_version,
+    }
+
+
+def _recomputed_lexical_member_content_hash(member: RagCandidateIndexMemberCreate) -> str:
+    return _sha256(_member_content_payload(member))
+
+
+def _recomputed_member_content_hash(
+    version: RagCandidateIndexVersion | RagCandidateIndexVersionCreate,
+    member: RagCandidateIndexMemberCreate,
+) -> str:
+    lexical_member_content_hash = _recomputed_lexical_member_content_hash(member)
+    if version.build_mode is RagCandidateIndexBuildMode.LEXICAL_ONLY:
+        return lexical_member_content_hash
+    return _sha256(
+        {
+            "lexical_member_content_hash": lexical_member_content_hash,
+            "embedding_model_version": version.embedding_model_version,
+            "embedding": member.embedding,
+        }
+    )
+
+
 def _recomputed_member_set_hash(members: tuple[RagCandidateIndexMemberCreate, ...]) -> str:
-    """RAG-07A의 ``member_set_hash`` 정의(``candidate_index.py:1051-1053``)와 동일한 재구현."""
-    return _sha256([{"member_key": m.member_key, "member_content_hash": m.member_content_hash} for m in members])
+    """Recompute RAG-07A member_set_hash; see candidate_index.py:1051-1053."""
+    return _sha256(
+        [
+            {"member_key": member.member_key, "member_content_hash": member.member_content_hash}
+            for member in _canonical_member_order(members)
+        ]
+    )
+
+
+def _assert_member_content_hashes_match(
+    version: RagCandidateIndexVersion | RagCandidateIndexVersionCreate,
+    members: tuple[RagCandidateIndexMemberCreate, ...],
+) -> None:
+    mismatched = tuple(
+        member.member_key
+        for member in members
+        if _recomputed_member_content_hash(version, member) != member.member_content_hash
+    )
+    if mismatched:
+        raise CandidateIndexMemberContentHashMismatchError(
+            "member_content_hash does not match member fields: " + ", ".join(mismatched)
+        )
 
 
 def _recomputed_member_counts(members: tuple[RagCandidateIndexMemberCreate, ...]) -> dict[str, int]:
-    """RAG-07A의 manifest count 정의(``candidate_index.py:1062-1066``)와 동일한 재구현."""
+    """Recompute RAG-07A manifest counts; see candidate_index.py:1062-1066."""
     identity_keys = {(m.identity_entity_type, m.identity_code_system, m.identity_canonical_code) for m in members}
     return {
         "member_count": len(members),
@@ -171,26 +292,57 @@ def _recomputed_member_counts(members: tuple[RagCandidateIndexMemberCreate, ...]
 
 
 def _assert_member_metadata_matches(
-    version: RagCandidateIndexVersionCreate, members: tuple[RagCandidateIndexMemberCreate, ...]
+    version: RagCandidateIndexVersion | RagCandidateIndexVersionCreate,
+    members: tuple[RagCandidateIndexMemberCreate, ...],
+    *,
+    verify_member_content_hashes: bool = True,
 ) -> None:
-    """전달된 member 행 자체로부터 재계산한 hash·count가 claim된 값과 같은지 대조한다.
+    """Compare claimed hash/count metadata with values recomputed from member rows.
 
-    신규 저장 경로뿐 아니라 content_hash 재사용 경로에도 호출되어야 한다 -- 그렇지 않으면
-    이미 저장된 content_hash와 우연히 같은 값을 주장하면서 다른(또는 변조된) member 입력을
-    검증 없이 통과시키는 우회로가 남는다.
+    This runs on both new build and content_hash reuse paths; otherwise a caller could
+    claim an existing content_hash while passing unchecked member rows.
     """
+    if verify_member_content_hashes:
+        _assert_member_content_hashes_match(version, members)
     recomputed_hash = _recomputed_member_set_hash(members)
     if recomputed_hash != version.member_set_hash:
         raise CandidateIndexMemberSetHashMismatchError(
-            f"전달된 member로 재계산한 member_set_hash {recomputed_hash[:12]}…이(가) "
-            f"claim된 값 {version.member_set_hash[:12]}…과 다릅니다."
+            f"recomputed member_set_hash {recomputed_hash[:12]} does not match "
+            f"claimed value {version.member_set_hash[:12]}."
         )
     recomputed_counts = _recomputed_member_counts(members)
     mismatched = tuple(field for field, expected in recomputed_counts.items() if getattr(version, field) != expected)
     if mismatched:
         raise CandidateIndexMemberCountMismatchError(
-            f"전달된 member로 재계산한 count가 claim된 값과 다릅니다: {', '.join(mismatched)}"
+            "recomputed member counts do not match claimed values: " + ", ".join(mismatched)
         )
+
+
+def _member_create_from_persisted(member: RagCandidateIndexMember) -> RagCandidateIndexMemberCreate:
+    return RagCandidateIndexMemberCreate(
+        entry_type=member.entry_type,
+        identity_entity_type=member.identity_entity_type,
+        identity_code_system=member.identity_code_system,
+        identity_canonical_code=member.identity_canonical_code,
+        product_ref=member.product_ref,
+        entry_ref=member.entry_ref,
+        display_text=member.display_text,
+        normalized_text=member.normalized_text,
+        product_name=member.product_name,
+        product_source_snapshot_id=member.product_source_snapshot_id,
+        entry_source_snapshot_id=member.entry_source_snapshot_id,
+        catalog_version=member.catalog_version,
+        catalog_manifest_hash=member.catalog_manifest_hash,
+        normalization_version=member.normalization_version,
+        member_key=member.member_key,
+        member_content_hash=member.member_content_hash,
+        alias_ref=member.alias_ref,
+        strength_text=member.strength_text,
+        dosage_form=member.dosage_form,
+        manufacturer_name=member.manufacturer_name,
+        alias_source_snapshot_id=member.alias_source_snapshot_id,
+        embedding=tuple(member.embedding) if member.embedding is not None else None,
+    )
 
 
 def _assert_version_matches(stored: RagCandidateIndexVersion, requested: RagCandidateIndexVersionCreate) -> None:
@@ -234,7 +386,7 @@ class RagCandidateIndexRepository:
         return result.scalar_one_or_none()
 
     async def get_ready_version_by_code(self, index_code: str) -> RagCandidateIndexVersion | None:
-        """RAG-08/RAG-09가 조회할 대상. #168 자신은 READY를 쓰지 않는다 (#583의 몫)."""
+        """RAG-08/RAG-09가 조회할 active Candidate Index Version."""
         result = await self.session.execute(
             select(RagCandidateIndexVersion).where(
                 RagCandidateIndexVersion.index_code == index_code,
@@ -243,11 +395,122 @@ class RagCandidateIndexRepository:
         )
         return result.scalar_one_or_none()
 
+    async def activate_ready_version(self, candidate_index_version_id: UUID) -> RagCandidateIndexVersion:
+        """BUILDING Version을 READY로 전환하고 기존 READY는 RETIRED로 회수한다."""
+        version = await self._get_version_for_update(candidate_index_version_id)
+        versions = await self._lock_versions_by_code(version.index_code)
+        target = next((candidate for candidate in versions if candidate.id == candidate_index_version_id), None)
+        if target is None:
+            raise CandidateIndexVersionNotFoundError(
+                f"Candidate Index Version {candidate_index_version_id}을 찾을 수 없습니다."
+            )
+        if target.status is not RagCandidateIndexStatus.BUILDING:
+            raise CandidateIndexVersionNotBuildableError("BUILDING 상태의 Candidate Index Version만 READY가 됩니다.")
+        await self._assert_persisted_members_match(target)
+
+        retired_existing = False
+        for candidate in versions:
+            if candidate.id != target.id and candidate.status is RagCandidateIndexStatus.READY:
+                candidate.status = RagCandidateIndexStatus.RETIRED
+                retired_existing = True
+        if retired_existing:
+            await self.session.flush()
+
+        target.status = RagCandidateIndexStatus.READY
+        await self.session.flush()
+        return target
+
+    async def mark_failed_version(self, candidate_index_version_id: UUID) -> RagCandidateIndexVersion:
+        """BUILDING Version을 FAILED로 닫는다. READY/RETIRED는 실패 상태로 되돌리지 않는다."""
+        version = await self._get_version_for_update(candidate_index_version_id)
+        if version.status is not RagCandidateIndexStatus.BUILDING:
+            raise CandidateIndexVersionNotBuildableError("BUILDING 상태의 Candidate Index Version만 FAILED가 됩니다.")
+        version.status = RagCandidateIndexStatus.FAILED
+        await self.session.flush()
+        return version
+
+    async def _get_version_for_update(self, candidate_index_version_id: UUID) -> RagCandidateIndexVersion:
+        result = await self.session.execute(
+            select(RagCandidateIndexVersion)
+            .where(RagCandidateIndexVersion.id == candidate_index_version_id)
+            .with_for_update()
+        )
+        version = result.scalar_one_or_none()
+        if version is None:
+            raise CandidateIndexVersionNotFoundError(
+                f"Candidate Index Version {candidate_index_version_id}을 찾을 수 없습니다."
+            )
+        return version
+
+    async def _lock_versions_by_code(self, index_code: str) -> list[RagCandidateIndexVersion]:
+        result = await self.session.execute(
+            select(RagCandidateIndexVersion)
+            .where(RagCandidateIndexVersion.index_code == index_code)
+            .order_by(RagCandidateIndexVersion.created_at, RagCandidateIndexVersion.id)
+            .with_for_update()
+        )
+        return list(result.scalars().all())
+
+    async def _assert_persisted_members_match(self, version: RagCandidateIndexVersion) -> None:
+        persisted_rows = tuple(await self.list_members(version.id))
+        persisted_members = tuple(_member_create_from_persisted(member) for member in persisted_rows)
+        if not persisted_members:
+            raise CandidateIndexVersionNotBuildableError(
+                f"Candidate Index member_count={version.member_count}, but no persisted member rows exist."
+            )
+        self._assert_persisted_lexical_storage_hashes_match(persisted_members, persisted_rows)
+        self._assert_persisted_embedding_storage_hashes_match(version, persisted_rows)
+        try:
+            _assert_member_metadata_matches(
+                version,
+                persisted_members,
+                verify_member_content_hashes=version.build_mode is RagCandidateIndexBuildMode.LEXICAL_ONLY,
+            )
+        except CandidateIndexBuildError as exc:
+            raise CandidateIndexVersionNotBuildableError(
+                "Persisted Candidate Index members do not reproduce manifest metadata before READY promotion."
+            ) from exc
+
+    def _assert_persisted_lexical_storage_hashes_match(
+        self,
+        persisted_members: tuple[RagCandidateIndexMemberCreate, ...],
+        persisted_rows: tuple[RagCandidateIndexMember, ...],
+    ) -> None:
+        mismatched = [
+            row.member_key
+            for payload, row in zip(persisted_members, persisted_rows, strict=True)
+            if row.lexical_storage_hash != _lexical_storage_hash(payload)
+        ]
+        if mismatched:
+            raise CandidateIndexVersionNotBuildableError(
+                "Persisted Candidate Index lexical storage hash does not match DB member rows: " + ", ".join(mismatched)
+            )
+
+    def _assert_persisted_embedding_storage_hashes_match(
+        self,
+        version: RagCandidateIndexVersion,
+        persisted_members: tuple[RagCandidateIndexMember, ...],
+    ) -> None:
+        mismatched: list[str] = []
+        for member in persisted_members:
+            if version.build_mode is RagCandidateIndexBuildMode.LEXICAL_ONLY:
+                if member.embedding is not None or member.embedding_storage_hash is not None:
+                    mismatched.append(member.member_key)
+                continue
+            if member.embedding is None or member.embedding_storage_hash != _embedding_storage_hash(member.embedding):
+                mismatched.append(member.member_key)
+        if mismatched:
+            raise CandidateIndexVersionNotBuildableError(
+                "Persisted Candidate Index embedding storage hash does not match DB vector rows: "
+                + ", ".join(mismatched)
+            )
+
     async def list_members(self, candidate_index_version_id: UUID) -> list[RagCandidateIndexMember]:
         result = await self.session.execute(
             select(RagCandidateIndexMember)
             .where(RagCandidateIndexMember.candidate_index_version_id == candidate_index_version_id)
             .order_by(RagCandidateIndexMember.created_at, RagCandidateIndexMember.id)
+            .execution_options(populate_existing=True)
         )
         return list(result.scalars().all())
 
@@ -270,9 +533,9 @@ class RagCandidateIndexRepository:
     ) -> RagCandidateIndexBuildResult:
         """RAG-07A(#167)가 계산한 build 결과 하나를 ``BUILDING``으로 저장(또는 멱등 재사용)한다.
 
-        ``status``는 항상 ``BUILDING``으로 강제된다. ``READY``/``RETIRED``와 환경 pointer 전환은
-        이 메서드가 쓰지 않는다 (RAG-12A ``build_runtime_bundle``과 동일한 경계, #583 소유). 실패 시
-        이 트랜잭션 전체가 롤백되어 partial row가 남지 않는다.
+        ``status``는 항상 ``BUILDING``으로 강제된다. ``READY``/``FAILED``/``RETIRED`` 전이는
+        #583 lifecycle 메서드가 별도로 수행하며, Runtime 환경 pointer 전환은 이 repository가
+        쓰지 않는다. 실패 시 이 트랜잭션 전체가 롤백되어 partial row가 남지 않는다.
 
         member 검증(``_assert_member_metadata_matches``)은 content_hash 재사용 여부를 정하기
         **전에** 실행된다. 재사용 경로 뒤로 미루면, 이미 저장된 content_hash와 우연히 같은 값을
@@ -357,7 +620,12 @@ class RagCandidateIndexRepository:
         공개 member-insert가 있으면 이미 build된 Version에 member를 덧붙일 수 있게 되어,
         ``member_set_hash``가 식별해야 할 member-set 불변성이 깨진다.
         """
-        member = RagCandidateIndexMember(**asdict(payload), candidate_index_version_id=candidate_index_version_id)
+        values = asdict(payload)
+        values["lexical_storage_hash"] = _lexical_storage_hash(payload)
+        if payload.embedding is not None:
+            values["embedding"] = list(payload.embedding)
+            values["embedding_storage_hash"] = _embedding_storage_hash(payload.embedding)
+        member = RagCandidateIndexMember(**values, candidate_index_version_id=candidate_index_version_id)
         self.session.add(member)
         await self.session.flush()
         return member

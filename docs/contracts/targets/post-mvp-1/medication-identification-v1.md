@@ -2,13 +2,13 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 문서 상태 | Approved Target · Partially implemented — 조회·확정·거절 API(#172)는 구현되었으나 `PUBLIC_TRACK_F_ENABLED`(기본값 false)로 publication gated / 2026-09-07 |
+| 문서 상태 | Approved Target · Partially implemented — 조회·확정·거절 API(#172)와 Candidate Index READY lifecycle·active 조회 기반(#583)은 구현되었으나 `PUBLIC_TRACK_F_ENABLED`(기본값 false)로 publication gated / 2026-09-16 |
 | 구현 담당 | 정현우 — Candidate Resolver·Identification 연계 |
 | 책임 리뷰 | 송은영 — Backend·DB·소유권·Transaction, 김지혜 — OCR 확정 입력 경계, 남한솔 — 확인 UI·공개 DTO, 권가빈 — 제품 범위·안전 문구 |
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; Design `1.50` SHA-256 `e83415326dd08cda61353d7cd8bf4e6d591bb99f51a8a3daa498421d8772535a`; DB `1.47` SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
 | 기준 관계 | Approved Contract Freeze v4의 공식 의약품 식별 기준을 유지하고 RAG-00 Candidate 공유 계약을 이 파일에 통합 · [처방 버전 계약 v1](./prescription-version-v1.md) |
 | 보완 Decision | [`PD-167-20260904`](../../../governance/decisions/2026-09-04-rag-candidate-index-input-boundary.md) · PR #260 최신 HEAD 교차 승인 대기 |
-| Last verified | 2026-09-07 |
+| Last verified | 2026-09-16 |
 
 ## 목적과 변경 분류
 
@@ -53,6 +53,38 @@ Product 또는 유효하지 않은 Alias를 참조하거나, 검증 뒤 Candidat
 활성화하지 않는다. Catalog와 query 문자열은 Unicode NFC여야 하며 입력 경계에서 조용히 변환하지
 않는다. 실패 응답과 내부 failure detail에는 원문 검색 문자열·Alias·vector·credential을 포함하지
 않는다.
+
+### Candidate Index lifecycle·storage integrity (#583)
+
+이 절은 위 기준 관계의 Approved Contract Freeze v4·RAG-00 Candidate Target을 유지하면서 #583 구현
+PR이 추가한 물리 lifecycle·storage-integrity 보완을 기록한다.
+
+Candidate Index Version은 `BUILDING | READY | RETIRED | FAILED` lifecycle을 사용한다.
+`BUILDING`은 build 산출물이 저장되는 중간 상태이며 Runtime·Resolver가 소비하지 않는다.
+`READY`는 구성원 수, member hash, member set hash, content hash와 storage receipt 검증을 모두 통과한
+소비 가능 상태다. 같은 `code`의 active `READY`는 최대 1개이며, 새 Version을 `READY`로 승격할 때 기존
+`READY`는 삭제하지 않고 `RETIRED`로 전환해 provenance를 보존한다. `FAILED`는 build 또는 검증 실패
+상태이며 active 조회 결과가 될 수 없다.
+
+READY 승격 전 Repository는 persisted member row를 다시 읽어 RAG-07A와 동일한 canonical member order
+(identity → entry type → entry ref)로 정렬하고, 다음 값을 재계산·검증한다.
+
+- `member_count`
+- `member_content_hash`
+- `member_set_hash`
+- `content_hash`
+- product/name/alias/source reference projection
+- HYBRID member의 vector count와 storage receipt
+
+RAG-07A의 HYBRID `member_content_hash`는 Provider vector tuple을 포함한 기존 의미를 유지한다. DB 저장
+후 pgvector round-trip 표현 검증은 별도 receipt인 `embedding_storage_hash`가 담당한다. HYBRID member의
+검색·provenance 필드 변조는 `lexical_storage_hash`로 fail-closed 검증한다. `lexical_storage_hash`와
+`embedding_storage_hash`는 64자 lowercase hex이거나 legacy row에서는 `NULL`일 수 있다. receipt가 없는
+legacy HYBRID row는 migration 적용 자체를 막지 않지만 READY 승격 시 최신 storage-integrity 검증을
+통과하지 못하면 fail-closed된다.
+
+#583은 Candidate Index lifecycle과 active 조회 기반을 제공한다. 실제 Resolver ranking/search 본체,
+Candidate Index build orchestration, Runtime Bundle 활성화와 Production 공개 승인은 각각 후속 이슈 범위다.
 
 ### 조건부 보험코드 확장 — P0 비활성
 

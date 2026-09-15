@@ -84,7 +84,7 @@ Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 
 - [처방 버전 계약 v1](./targets/post-mvp-1/prescription-version-v1.md): 불변 snapshot, 활성화, stale 및 기존 데이터 backfill
 - [Check-in과 Barrier 계약 v1](./targets/post-mvp-1/checkin-v1.md): 3개 Check-in 결과와 Barrier 명시적 거절·미제출 구분; #413 Check-in PUT·#456 일정 API 병합, 전체 목표 Current 승격은 별도, [HTTP 구체화 제안](../governance/decisions/2026-09-10-checkin-api-202.md)
 - [OCR 비-RAG LLM 구조화 계약 v1](./targets/post-mvp-1/ocr-llm-structuring-v1.md): 최소전송, 구조화 초안 provenance, 사용자 확정과 실패 복구
-- [MFDS 공식 의약품 식별·Candidate 계약 v1](./targets/post-mvp-1/medication-identification-v1.md): 공식 Source/Catalog·후보 검색·사용자 확인·Preflight 공유 경계
+- [MFDS 공식 의약품 식별·Candidate 계약 v1](./targets/post-mvp-1/medication-identification-v1.md): 공식 Source/Catalog·후보 검색·사용자 확인·Preflight 공유 경계. #583에서 Candidate Index `BUILDING→READY/FAILED`, 기존 READY `RETIRED`, code당 active READY 1개, `lexical_storage_hash`/`embedding_storage_hash` 기반 READY 전 재검증과 legacy receipt fail-closed 의미를 목표 정본에 반영했다. Runtime 활성화와 공개 전환은 후속 범위다.
 - [Safety Result 계약 v1](./targets/post-mvp-1/safety-result-v1.md): Approved v4 이력과 Track C 공통 Safety 기준; Track F 후속 의미는 v2가 대체
 - [RAG Source 수집·활성화 계약 v1](./targets/post-mvp-1/rag-source-ingestion-v1.md): Source 승인, 수집·검증·활성화와 Index 결속 · MFDS 제품 `mfds-product-approval@1` canonicalization과 `ProductIngestionResult` 경계, 실패 재시도 충돌·Verification 불변성·REJECTS 1:1·DB-owned 상태 전이 검증 구현 중(#165), 비FAILED 계보 유지·#335/#347 보존·정리 완료·#362 정책/외부 version/시도 provenance 영속화 구현 및 #165 잔여 allowlist 계약 추적 #436은 invalid Version의 저장 진입 감사와 명시적인 Attempt decision 복원을 포함한다.
 - [RAG Runtime 계약 v1](./targets/post-mvp-1/rag-runtime-v1.md): Guide·Chat·OTC의 Rule-first·Retrieval·Citation·Safety 공통 흐름, Runtime Bundle의 Manifest Hash·저장 정합 계약(`PD-175-20260910` Approved)
@@ -125,7 +125,7 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - 처방 하위 결과는 불변 `prescription_version_id`에 귀속하고 최신 버전이 아니면 `STALE` 처리한다.
 - AI 결과는 생성·검증·공개 결정을 분리하고 근거 부족과 검증 실패를 fail-closed 처리한다.
 - OCR Job은 비-RAG LLM 구조화 초안을 만들 수 있지만 사용자 확인 전 자동 확정하지 않으며 Retrieval·외부 의료 Source 검색을 호출하지 않는다.
-- 공식 제품 Resolver는 사용자 확정 `medication_name + nullable strength_text`와 활성 MFDS Catalog만 사용한다. 내부 Top-K 중 Single Candidate Gate를 통과한 최대 1개만 표시하고 사용자 확인 전 `MATCHED`로 저장하지 않는다.
+- 공식 제품 Resolver는 사용자 확정 `medication_name + nullable strength_text`와 활성 MFDS Catalog만 사용한다. Candidate Index는 #583 lifecycle에 따라 code당 active READY 1개만 소비하며 READY 전 storage-integrity를 재검증한다. 내부 Top-K 중 Single Candidate Gate를 통과한 최대 1개만 표시하고 사용자 확인 전 `MATCHED`로 저장하지 않는다.
 - 자동 Guide는 모든 활성 처방약의 현재 Identification이 Runtime Release Bundle과 호환될 때만 Job을 접수한다. Chat은 Identification 완료 전 최소 Safety Intake Job을 접수할 수 있고, `ROUTINE` 분기만 Identification Preflight 후 일반 RAG를 실행한다.
 - OTC는 기존 Chat의 질문 유형이며 처방약–OTC Rule·Evidence를 먼저 실행한다. 별도 Track D API·화면·공개 flag는 두지 않는다.
 - 비동기 성공 응답은 `{"data": JobStatusResponse}`, 오류는 top-level 공통 오류 envelope를 사용한다.
