@@ -64,11 +64,11 @@
 | --- | --- |
 | 적재 DB | 팀 공용 dev/staging DB를 사용한다. 개인 로컬 DB는 구현 검증용으로만 사용한다. |
 | 운영 DB | 이번 #591 범위에서는 직접 반영하지 않는다. 운영 반영은 검증·승인된 Snapshot 이후 별도 절차로 진행한다. |
-| Artifact 저장소 | `S3_PRIVATE`를 우선한다. 준비되지 않은 경우 팀원이 재조회 가능한 공유 `LOCAL_PRIVATE` 전용 root를 임시 기준으로 사용한다. 개인 PC 로컬 경로는 최종 인계 기준이 아니다. |
+| Artifact 저장소 | 팀 공용 `LOCAL_PRIVATE` root를 우선한다. `S3_PRIVATE`는 후속 전환 후보로만 둔다. 개인 PC 로컬 경로는 최종 인계 기준이 아니다. |
 | 권한 | 수집 writer, 검증 reader, cleanup executor, consumer reader를 역할 기준으로 분리한다. 실제 credential 이름과 secret은 공개 문서에 쓰지 않는다. |
 | 인계 증거 | Snapshot ID, source_version, canonical checksum, artifact key, member count, 재조회 가능 여부를 기준으로 한다. |
 
-운영 DB 반영은 #591 완료 조건이 아니며, Source 공개·Runtime 사용·사용자 응답 근거로 쓰려면 별도 승인과 공개 게이트를 따른다. 실제 DB endpoint, credential, bucket/root 값은 공개 저장소에 기록하지 않고 승인된 제한 접근 위치에 별도 보관한다. 해당 값이 준비되고 재조회가 확인되기 전에는 #591 인계 완료로 보지 않는다.
+운영 DB 반영은 #591 완료 조건이 아니며, Source 공개·Runtime 사용·사용자 응답 근거로 쓰려면 별도 승인과 공개 게이트를 따른다. 실제 DB endpoint, credential, bucket/root 값은 공개 저장소에 기록하지 않고 접근 제한된 비밀 저장소에 별도 보관한다. 해당 값이 준비되고 재조회가 확인되기 전에는 #591 인계 완료로 보지 않는다.
 
 ## 확정해야 할 값
 
@@ -78,8 +78,8 @@
 | --- | --- | --- | --- |
 | 적재 DB/환경 | 팀 공용 dev/staging DB | 송은영 | 로컬은 구현 검증용, 운영 DB는 별도 승인 후 반영 |
 | DB 접속 주체 | 역할 기준 분리 | 송은영 | 수집 writer, 검증 reader, cleanup executor, consumer reader를 분리. 실제 계정명은 제한 접근 위치에 별도 기록 |
-| Artifact backend | `S3_PRIVATE` 우선, 공유 `LOCAL_PRIVATE` fallback | 송은영, 김지혜 | S3 준비 전에는 팀 재조회 가능한 전용 local private root만 임시 허용 |
-| Artifact root/bucket | 접근 제한 위치에 별도 기록 | 송은영 | GitHub/Discord에 secret·원문 경로·credential을 노출하지 않음 |
+| Artifact backend | 팀 공용 `LOCAL_PRIVATE` root 우선, `S3_PRIVATE` 후속 전환 후보 | 송은영, 김지혜 | 가빈님 provision 완료 후 실제 root는 접근 제한된 비밀 저장소에만 기록 |
+| Artifact root/bucket | 접근 제한된 비밀 저장소에 별도 기록 | 가빈, 송은영 | GitHub/Discord에 secret·원문 경로·credential을 노출하지 않음 |
 | Source code | TBD | 김지혜 | #591 수집 대상 Source 식별자 |
 | Endpoint/Operation code | TBD | 김지혜 | 효능효과/용법용량/주의사항 범위 확인 |
 | source_version 형식 | TBD | 김지혜 | 기존 Source version 문법과 충돌 금지 |
@@ -118,16 +118,35 @@
 - AWS SDK 표준 credential provider chain 또는 승인된 실행 역할을 사용한다.
 - 평문 HTTP endpoint, URL credential, query/fragment credential은 허용하지 않는다.
 
+## 실제 provision 담당과 비공개 전달 기준
+
+#591 적재용 dev/staging DB와 팀 공용 `LOCAL_PRIVATE` root provision은 가빈님이 진행한다. 송은영은 #605에서 공개 가능한 환경 기준과 검증 절차를 반영하고, 준비된 환경이 아래 기준과 맞는지 확인한다. 실제 endpoint, credential, root 값은 GitHub Issue, PR, Discord에 남기지 않고 접근 제한된 비밀 저장소로만 전달한다. 공개 채널에는 준비 여부, env key, 검증 결과만 기록한다.
+
+provision 완료 후 공개 채널에는 다음 항목만 확인한다.
+
+- 운영·배포 DB와 분리된 dev/staging DB인지
+- writer / reader / cleanup 권한이 분리됐는지
+- 팀 공용 `LOCAL_PRIVATE` root가 준비됐는지
+- 실제 endpoint·credential·root가 접근 제한된 비밀 저장소에 저장됐는지
+- 작업 담당자와 필요한 검토자에게 접근 권한이 부여됐는지
+
+## 현재 저장소에서 아직 없는 실행 경로
+
+최신 develop 기준으로 #591 MFDS Source용 parser와 실제 적재 진입점은 아직 없다. `scripts/rag/verify_mfds_label_candidate.py`는 후보 구조와 hash를 검증하는 도구이며, 원문 수집 → Artifact 저장 → Source Snapshot commit을 수행하는 실행 command가 아니다. 따라서 provision이 완료되어도 #591 실제 적재는 바로 실행할 수 없다.
+
+#591 실제 적재 전에 #609에서 parser·normalization·Snapshot 저장 command와 실행 문서를 준비한다. #609 또는 동등한 실행 경로 구현이 완료되기 전에는 #591을 원문 저장·Snapshot commit 완료 상태로 보지 않는다.
+
 ## #591 적재 전 확인 체크리스트
 
 아래 체크는 공개 문서에서 확정 가능한 기준의 결정 상태를 뜻한다. 실제 DB 계정, endpoint, artifact root/bucket provision 완료 여부는 제한 접근 위치의 실행 준비 기록으로 별도 확인한다.
 
 - [x] 적재 DB/환경의 기본 방향은 팀 공용 dev/staging DB로 정했다.
-- [x] Artifact backend는 `S3_PRIVATE` 우선, 공유 `LOCAL_PRIVATE` fallback으로 정했다.
+- [x] Artifact backend는 팀 공용 `LOCAL_PRIVATE` root 우선으로 정했다.
 - [x] writer/reader/cleanup/consumer 권한 경계는 역할 기준으로 분리한다.
+- [ ] #591 대상 Source parser·정규화·적재 실행 경로가 존재한다. 후속 #609에서 처리한다.
 - [ ] Source, Endpoint, Operation 식별자가 정해졌다.
 - [ ] source_version, parser/canonicalization version이 정해졌다.
-- [ ] 원문 Artifact를 공개 채널에 올리지 않는 전달 방식이 정해졌다.
+- [ ] 원문 Artifact를 공개 채널에 올리지 않는 접근 제한 비밀 저장소 전달 방식이 정해졌다.
 - [ ] 로컬 검증 결과와 팀 인계용 dev/staging 결과의 차이를 문서화했다.
 - [x] 운영 DB 반영은 이번 범위가 아니며 별도 승인 후 진행한다고 정리했다.
 
@@ -138,11 +157,11 @@
 | 항목 | 성공 기준 |
 | --- | --- |
 | Snapshot | Snapshot ID, status, source_version, canonical checksum 조회 가능 |
-| Member | 효능효과/용법용량/주의사항 등 합의된 member count와 locator 조회 가능 |
+| Member | EE/UD/NB/NN 합의된 member count와 locator 조회 가능 |
 | Ingestion run | run status, collected_at, parser/canonicalization version, record count 조회 가능 |
 | Artifact | backend/key, size, sha256, content type, raw/reject 종류 조회 가능 |
 | Verification | checksum 대조와 검증 상태 조회 가능 |
-| 재실행 | 동일 입력 재실행 시 NO_CHANGE 또는 합의된 멱등 결과 확인 가능 |
+| 재실행 | 동일 입력·동일 source_version·동일 checksum·동일 member set 재실행 시 NO_CHANGE 또는 기존 Snapshot 재사용 등 합의된 멱등 결과 확인 가능. checksum/source_version/member mismatch는 fail-closed 또는 수동 검토로 종료 |
 | 인계 | 후속 AI/RAG consumer가 Snapshot 기준으로 후속 Chunk/Index 입력 범위를 식별 가능 |
 
 위 기준이 충족되지 않으면 로컬 검증 또는 부분 조사 결과로만 기록하고, Source Snapshot 인계 완료로 쓰지 않는다.
@@ -158,7 +177,7 @@
 - Provider 원문, secret, URL credential, 개인정보가 로그나 공개 채널에 노출됐다.
 - 운영 DB에 직접 반영했지만 별도 승인·공개 게이트가 없다.
 
-실패·보류 시에는 원문 없는 고정 reason과 안전한 참조만 남기고, 성공 Snapshot으로 승격하지 않는다.
+실패·보류 시에는 원문 없는 고정 reason과 안전한 참조만 남기고, 성공 Snapshot으로 승격하지 않는다. 적재 transaction 실패는 DB rollback으로 처리하며, Artifact 저장 후 DB commit 전에 실패한 경우 cleanup executor가 #347/#398 경계에 맞춰 미참조 Artifact를 조사·정리한다.
 
 ## 보안·Privacy·의료 안전 기준
 
@@ -166,6 +185,7 @@
 - MFDS 허가사항 원문도 공개 Issue/Discord에 첨부하지 않고 접근 제한 Artifact 저장소에 둔다.
 - DB URL, access key, secret key, Provider credential은 문서·로그·오류 응답에 남기지 않는다.
 - Source Snapshot은 후속 RAG/Guide/Chat 근거가 될 수 있으므로, 검증되지 않은 결과를 Runtime current 또는 운영 공개 근거로 사용하지 않는다.
+- 무결성·중복·상태 판정은 애플리케이션 Service/Repository와 DB 제약으로 처리하며, 이번 범위에서 RLS, Trigger, DB 업무 함수를 추가하지 않는다.
 - 운영 DB 반영, Runtime Bundle 활성화, 사용자 응답 공개는 별도 승인 게이트를 따른다.
 
 ## 담당 인계
@@ -180,6 +200,7 @@
 ## 후속 작업
 
 - #591 본문에 확정된 적재 환경과 인계 기준 반영
+- #609에서 #591 Source parser·정규화·적재 실행 command 구현
 - 필요한 경우 env example 또는 infra 권한 검증 보강
 - #591 첫 제품 실제 수집·검증·Snapshot 저장 PR 작성
 - Snapshot 인계 후 Chunk/Index/Guide/Chat 후속 작업 연결

@@ -61,6 +61,10 @@ def test_source_handoff_readiness_doc_pins_existing_runtime_boundaries() -> None
         "SOURCE_ARTIFACT_S3_ENDPOINT_URL",
         "S3_PRIVATE",
         "LOCAL_PRIVATE",
+        "#609",
+        "EE/UD/NB/NN",
+        "무결성·중복·상태 판정",
+        "DB rollback",
     ]
     for setting in required_settings:
         assert setting in text
@@ -73,6 +77,8 @@ def test_source_handoff_readiness_doc_does_not_claim_provision_or_ingestion_comp
         "실제 DB endpoint, credential, artifact root/bucket 값을 추가하지 않는다",
         "실제 노바스크 원문을 저장소에 추가하지 않는다",
         "#591 실제 적재 성공이나 운영 공개 승인을 주장하지 않는다",
+        "#591 Source parser·정규화·적재 실행 command를 구현하지 않는다",
+        "#609 완료 전에는 provisioning만으로 적재 실행 불가",
         "제한 접근 위치",
         "인계용 Source Snapshot 적재 완료로 보지 않는다",
         "- [x] PR #597의 runbook이 develop에 반영됐다.",
