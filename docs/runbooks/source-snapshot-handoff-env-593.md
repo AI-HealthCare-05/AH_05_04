@@ -125,6 +125,7 @@
 - [x] 적재 DB/환경의 기본 방향은 팀 공용 dev/staging DB로 정했다.
 - [x] Artifact backend는 `S3_PRIVATE` 우선, 공유 `LOCAL_PRIVATE` fallback으로 정했다.
 - [x] writer/reader/cleanup/consumer 권한 경계는 역할 기준으로 분리한다.
+- [ ] writer의 Artifact 삭제가 실제 거부되고 별도 cleanup executor가 #613 요청 조회·DB 참조 조회·검증된 삭제·receipt append만 수행한다.
 - [ ] Source, Endpoint, Operation 식별자가 정해졌다.
 - [ ] source_version, parser/canonicalization version이 정해졌다.
 - [ ] 원문 Artifact를 공개 채널에 올리지 않는 전달 방식이 정해졌다.
@@ -160,6 +161,8 @@
 
 실패·보류 시에는 원문 없는 고정 reason과 안전한 참조만 남기고, 성공 Snapshot으로 승격하지 않는다.
 
+MFDS 원본 보존 뒤 DB rollback이 발생한 경우에는 [#613 전용 절차](./source-artifact-cleanup-613.md)를 사용한다. #347 합성 cleanup schema나 30일 보존 배치를 실제 실패 복구 권한으로 사용하지 않는다. writer가 삭제 가능한 현재 구성은 준비 완료가 아니며, 별도 executor 역할·mount와 private cleanup journal을 제한 접근 환경에서 검증해야 한다.
+
 ## 보안·Privacy·의료 안전 기준
 
 - 실제 환자 정보, 처방전, 사용자 대화, OCR 원문은 #591 Source 적재 대상이 아니다.
@@ -183,4 +186,3 @@
 - 필요한 경우 env example 또는 infra 권한 검증 보강
 - #591 첫 제품 실제 수집·검증·Snapshot 저장 PR 작성
 - Snapshot 인계 후 Chunk/Index/Guide/Chat 후속 작업 연결
-
