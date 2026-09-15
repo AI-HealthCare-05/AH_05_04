@@ -106,6 +106,26 @@ def test_chat_history_context_is_disabled_by_default() -> None:
     assert Config.model_fields["CHAT_HISTORY_CONTEXT_ENABLED"].default is False
 
 
+def test_guide_and_chat_use_gpt_4o_by_default() -> None:
+    assert Config.model_fields["OPENAI_MODEL"].default == "gpt-4o"
+
+
+def test_guide_and_chat_accept_only_gpt_4o() -> None:
+    config = Config.model_validate({**BASE_CONFIG, "OPENAI_MODEL": " gpt-4o "})
+
+    assert config.OPENAI_MODEL == "gpt-4o"
+
+
+@pytest.mark.parametrize("model", ["gpt-4o-mini", "gpt-4", "configured-model", ""])
+def test_guide_and_chat_reject_other_openai_models(model: str) -> None:
+    with pytest.raises(ValidationError, match="OPENAI_MODEL must be gpt-4o"):
+        Config.model_validate({**BASE_CONFIG, "OPENAI_MODEL": model})
+
+
+def test_ocr_structure_model_remains_gpt_4o_mini_by_default() -> None:
+    assert Config.model_fields["OCR_STRUCTURE_MODEL"].default == "gpt-4o-mini"
+
+
 def test_chat_history_context_can_be_enabled_in_local_environment() -> None:
     config = Config.model_validate(
         {
