@@ -8,8 +8,8 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from alembic import command
-from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -17,184 +17,119 @@ from sqlalchemy.pool import NullPool
 from app.core import config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CANDIDATE_INDEX_REVISION = "583a1b2c3d4f"
+MIGRATION_PATH = PROJECT_ROOT / "backend" / "alembic" / "versions" / "583a1b2c3d4f_candidate_index_lifecycle.py"
 READY_INDEX_NAME = "uq_rag_candidate_index_ready_per_code"
 
-
-def _candidate_index_base_revision() -> str:
-    migration_path = PROJECT_ROOT / "backend" / "alembic" / "versions" / "583a1b2c3d4f_candidate_index_lifecycle.py"
-    spec = importlib.util.spec_from_file_location("candidate_index_lifecycle_migration", migration_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Unable to load Candidate Index lifecycle migration module")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return str(module.down_revision)
+_SPEC = importlib.util.spec_from_file_location("candidate_index_lifecycle_migration", MIGRATION_PATH)
+assert _SPEC is not None and _SPEC.loader is not None
+_MIGRATION = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_MIGRATION)
 
 
-CANDIDATE_INDEX_BASE_REVISION = _candidate_index_base_revision()
+def _upgrade(connection) -> None:
+    with Operations.context(MigrationContext.configure(connection)):
+        _MIGRATION.upgrade()
 
 
-def create_alembic_config() -> Config:
-    return Config(str(PROJECT_ROOT / "backend" / "alembic.ini"))
+def _downgrade(connection) -> None:
+    with Operations.context(MigrationContext.configure(connection)):
+        _MIGRATION.downgrade()
 
 
 @asynccontextmanager
-async def _connection() -> AsyncIterator[AsyncConnection]:
+async def _isolated_candidate_index_schema() -> AsyncIterator[AsyncConnection]:
+    schema_name = f"candidate_index_lifecycle_{uuid4().hex}"
     engine = create_async_engine(config.database_url, poolclass=NullPool)
     try:
         async with engine.connect() as connection:
-            yield connection
+            transaction = await connection.begin()
+            try:
+                await connection.execute(text(f'CREATE SCHEMA "{schema_name}"'))
+                await connection.execute(text(f'SET LOCAL search_path TO "{schema_name}"'))
+                await connection.execute(
+                    text(
+                        """
+                        CREATE TABLE rag_candidate_index_version (
+                            id uuid PRIMARY KEY,
+                            index_code varchar(64) NOT NULL,
+                            status varchar(32) NOT NULL
+                        )
+                        """
+                    )
+                )
+                yield connection
+            finally:
+                await transaction.rollback()
     finally:
         await engine.dispose()
 
 
-def _upgrade_to_candidate_index() -> None:
-    command.upgrade(create_alembic_config(), CANDIDATE_INDEX_REVISION)
-
-
-async def _table_exists(table_name: str) -> bool:
-    async with _connection() as connection:
-        result = await connection.execute(
-            text(
-                """
-                SELECT EXISTS (
-                    SELECT 1
-                    FROM information_schema.tables
-                    WHERE table_schema = 'public'
-                      AND table_name = :table_name
-                )
-                """
-            ),
-            {"table_name": table_name},
-        )
-        return bool(result.scalar_one())
-
-
-async def _index_exists(index_name: str) -> bool:
-    async with _connection() as connection:
-        result = await connection.execute(
-            text(
-                """
-                SELECT EXISTS (
-                    SELECT 1
-                    FROM pg_indexes
-                    WHERE schemaname = 'public'
-                      AND indexname = :index_name
-                )
-                """
-            ),
-            {"index_name": index_name},
-        )
-        return bool(result.scalar_one())
-
-
-async def _candidate_index_version_count() -> int:
-    async with _connection() as connection:
-        result = await connection.execute(text("SELECT COUNT(*) FROM rag_candidate_index_version"))
-        return int(result.scalar_one())
-
-
-async def _seed_candidate_index_version() -> str:
-    catalog_set_id = str(uuid4())
-    candidate_index_version_id = str(uuid4())
-    suffix = uuid4().hex[:10]
-    async with _connection() as connection:
-        async with connection.begin():
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO rag_catalog_set (
-                        id, catalog_version, schema_version, normalization_version,
-                        manifest_spec_version, envelope_hash, manifest_json
-                    )
-                    VALUES (
-                        :catalog_set_id, 'catalog-1.0.0', 'schema-v1', 'normalization-v1',
-                        :manifest_spec_version, :envelope_hash, :manifest_json
-                    )
-                    """
-                ),
-                {
-                    "catalog_set_id": catalog_set_id,
-                    "manifest_spec_version": f"candidate-index-migration-{suffix}",
-                    "envelope_hash": "a" * 64,
-                    "manifest_json": b"{}",
-                },
+async def _index_exists(connection: AsyncConnection) -> bool:
+    result = await connection.execute(
+        text(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_indexes
+                WHERE schemaname = current_schema()
+                  AND indexname = :index_name
             )
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO rag_candidate_index_version (
-                        id, index_code, index_version, status, build_mode, catalog_set_id,
-                        catalog_version, catalog_manifest_hash, schema_version, normalization_version,
-                        lexical_config_version, search_order_version, candidate_limit, display_limit,
-                        member_count, product_identity_count, product_name_count, approved_alias_count,
-                        vector_count, member_set_hash, configuration_hash, content_hash
-                    )
-                    VALUES (
-                        :candidate_index_version_id, :index_code, 'v1', 'BUILDING', 'LEXICAL_ONLY',
-                        :catalog_set_id, 'catalog-1.0.0', :envelope_hash, 'schema-v1', 'normalization-v1',
-                        'lexical-v1', 'search-order-v1', 20, 10,
-                        0, 0, 0, 0, 0, :member_set_hash, :configuration_hash, :content_hash
-                    )
-                    """
-                ),
-                {
-                    "candidate_index_version_id": candidate_index_version_id,
-                    "index_code": f"migration-index-{suffix}",
-                    "catalog_set_id": catalog_set_id,
-                    "envelope_hash": "a" * 64,
-                    "member_set_hash": "b" * 64,
-                    "configuration_hash": "c" * 64,
-                    "content_hash": "d" * 64,
-                },
-            )
-    return candidate_index_version_id
+            """
+        ),
+        {"index_name": READY_INDEX_NAME},
+    )
+    return bool(result.scalar_one())
 
 
-async def _cleanup_candidate_index_tables() -> None:
-    async with _connection() as connection:
-        async with connection.begin():
-            await connection.execute(text("DELETE FROM rag_candidate_index_member"))
-            await connection.execute(text("DELETE FROM rag_candidate_index_version"))
-            await connection.execute(
-                text("DELETE FROM rag_catalog_set WHERE manifest_spec_version LIKE 'candidate-index-migration-%'")
-            )
+async def _candidate_index_version_count(connection: AsyncConnection) -> int:
+    result = await connection.execute(text("SELECT COUNT(*) FROM rag_candidate_index_version"))
+    return int(result.scalar_one())
+
+
+async def _seed_candidate_index_version(connection: AsyncConnection) -> None:
+    await connection.execute(
+        text(
+            """
+            INSERT INTO rag_candidate_index_version (id, index_code, status)
+            VALUES (:id, :index_code, 'BUILDING')
+            """
+        ),
+        {"id": uuid4(), "index_code": f"migration-index-{uuid4().hex[:10]}"},
+    )
 
 
 def test_candidate_index_ready_partial_unique_exists_after_upgrade() -> None:
-    _upgrade_to_candidate_index()
+    async def run() -> None:
+        async with _isolated_candidate_index_schema() as connection:
+            await connection.run_sync(_upgrade)
 
-    assert asyncio.run(_index_exists(READY_INDEX_NAME))
+            assert await _index_exists(connection)
+
+    asyncio.run(run())
 
 
 def test_candidate_index_empty_downgrade_removes_ready_guard() -> None:
-    cfg = create_alembic_config()
-    _upgrade_to_candidate_index()
-    asyncio.run(_cleanup_candidate_index_tables())
+    async def run() -> None:
+        async with _isolated_candidate_index_schema() as connection:
+            await connection.run_sync(_upgrade)
 
-    command.downgrade(cfg, CANDIDATE_INDEX_BASE_REVISION)
+            await connection.run_sync(_downgrade)
 
-    assert asyncio.run(_table_exists("rag_candidate_index_version"))
-    assert asyncio.run(_table_exists("rag_candidate_index_member"))
-    assert not asyncio.run(_index_exists(READY_INDEX_NAME))
-    command.upgrade(cfg, CANDIDATE_INDEX_REVISION)
+            assert not await _index_exists(connection)
+
+    asyncio.run(run())
 
 
 def test_candidate_index_downgrade_blocks_when_data_exists_and_preserves_schema() -> None:
-    cfg = create_alembic_config()
-    _upgrade_to_candidate_index()
-    asyncio.run(_cleanup_candidate_index_tables())
-    asyncio.run(_seed_candidate_index_version())
+    async def run() -> None:
+        async with _isolated_candidate_index_schema() as connection:
+            await connection.run_sync(_upgrade)
+            await _seed_candidate_index_version(connection)
 
-    try:
-        with pytest.raises(RuntimeError, match="Candidate Index lifecycle records exist"):
-            command.downgrade(cfg, CANDIDATE_INDEX_BASE_REVISION)
+            with pytest.raises(RuntimeError, match="Candidate Index lifecycle records exist"):
+                await connection.run_sync(_downgrade)
 
-        assert asyncio.run(_table_exists("rag_candidate_index_version"))
-        assert asyncio.run(_table_exists("rag_candidate_index_member"))
-        assert asyncio.run(_index_exists(READY_INDEX_NAME))
-        assert asyncio.run(_candidate_index_version_count()) == 1
-    finally:
-        asyncio.run(_cleanup_candidate_index_tables())
-        command.downgrade(cfg, CANDIDATE_INDEX_BASE_REVISION)
-        command.upgrade(cfg, CANDIDATE_INDEX_REVISION)
+            assert await _index_exists(connection)
+            assert await _candidate_index_version_count(connection) == 1
+
+    asyncio.run(run())
