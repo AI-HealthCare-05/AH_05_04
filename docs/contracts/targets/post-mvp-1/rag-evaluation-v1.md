@@ -3,12 +3,12 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Target · Not implemented — RAG-00 / 2026-09-01 |
-| 구현·리뷰 | Evaluation Schema Set 1.3 Candidate · Review Required · 책임 리뷰어 PR review event 대기 |
+| 구현·리뷰 | Evaluation Schema Set 1.4 Candidate · Review Required · 책임 리뷰어 PR review event 대기 |
 | 실행 환경 | 실제 RAG 평가는 Local Runner에서만 수행 · Development/Staging 서버 미사용 |
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
 | Normative Source | `evaluation-plan.md@1.35` · SHA-256 `526f83dedc05a777c0963bfa10bb8bd8ebd940ab3eb12523f4c8fa15447e542f` |
 | Physical Target | `rag-detailed-db-schema-v1.md@1.47` · SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
-| Last verified | 2026-09-05 |
+| Last verified | 2026-09-15 |
 
 ## 목적과 평가 경계
 
@@ -95,6 +95,28 @@ exact-match하는 Source·Index·build config·Adapter artifact reference의 ver
 canonicalization version은 공백 없는 bounded opaque token으로 보존하며 `mfds-synthetic@1`,
 `knowledge-text@1`, `<artifact-code>@1` 형식을 손실 없이 수용한다. Study Split Receipt의 공통
 `evidence_index_ref`도 같은 runtime reference 계약을 사용한다.
+
+### Evaluation Schema Set 1.4 후보
+
+#160·#161 DEV metric 입력 projection 후보는 `rag-eval.schema-set@1.4.0`, SHA-256 `0f6b69b460af5ea840e009f55b86256942f896be324c7885d709883600799e98`이다. 문서 상태는
+`Candidate · Review Required`이며, 책임 Evaluation·Source provenance·Safety fixture 리뷰어 김지혜
+(`@Jye-rookie`)의 실제 Pull Request review event가 승인 전환에 필요하다.
+
+23개 member는 Schema Set 1.3의 21개 member version과 canonical bytes를 그대로 재사용하고 다음 두
+Evaluation artifact를 member `1.0.0`으로 추가한다.
+
+- `rag-eval.claim-citation-observation@1.0.0`
+- `rag-eval.grounding-signal@1.0.0`
+
+두 artifact는 원문 대신 stable ID·bounded enum·immutable reference·hash만 저장한다. no-claims Safety/E2E
+signal은 null answer뿐 아니라 승인 fallback answer hash도 허용하되 observation 결속은 null이고 failure
+boolean은 모두 false여야 한다. Citation source version은 #180 opaque token을 그대로 보존하고 validation
+거절 뒤에는 authorization not-run만 허용한다. 기존 Schema Set 1.0.0–1.3.0과 exporter 기본 version은 변경하지 않는다.
+상세 후보 경계는 [RAG Evaluation Schema Set 1.4 Candidate](../../../governance/decisions/2026-09-15-rag-evaluation-schema-set-1-4-candidate.md)를 따른다.
+
+이 Candidate는 projection schema/export/registry 구현만 뜻한다. 책임 리뷰 승인 전에는 #160·#161 scorer
+구현 선행조건 완료로 간주하지 않으며 Runtime, HOLDOUT/SAFETY_REGRESSION, Baseline Freeze, Release 판정과
+공개를 허용하지 않는다.
 
 ## 비교 원칙
 
