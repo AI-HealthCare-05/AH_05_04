@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -17,9 +18,20 @@ from app.core import config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CANDIDATE_INDEX_REVISION = "583a1b2c3d4f"
-CANDIDATE_INDEX_BASE_REVISION = "166f50617283"
-CANDIDATE_INDEX_TABLES = {"rag_candidate_index_version", "rag_candidate_index_member"}
 READY_INDEX_NAME = "uq_rag_candidate_index_ready_per_code"
+
+
+def _candidate_index_base_revision() -> str:
+    migration_path = PROJECT_ROOT / "backend" / "alembic" / "versions" / "583a1b2c3d4f_candidate_index_lifecycle.py"
+    spec = importlib.util.spec_from_file_location("candidate_index_lifecycle_migration", migration_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Unable to load Candidate Index lifecycle migration module")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return str(module.down_revision)
+
+
+CANDIDATE_INDEX_BASE_REVISION = _candidate_index_base_revision()
 
 
 def create_alembic_config() -> Config:
@@ -155,15 +167,16 @@ def test_candidate_index_ready_partial_unique_exists_after_upgrade() -> None:
     assert asyncio.run(_index_exists(READY_INDEX_NAME))
 
 
-def test_candidate_index_empty_downgrade_removes_tables() -> None:
+def test_candidate_index_empty_downgrade_removes_ready_guard() -> None:
     cfg = create_alembic_config()
     _upgrade_to_candidate_index()
     asyncio.run(_cleanup_candidate_index_tables())
 
     command.downgrade(cfg, CANDIDATE_INDEX_BASE_REVISION)
 
-    assert not asyncio.run(_table_exists("rag_candidate_index_version"))
-    assert not asyncio.run(_table_exists("rag_candidate_index_member"))
+    assert asyncio.run(_table_exists("rag_candidate_index_version"))
+    assert asyncio.run(_table_exists("rag_candidate_index_member"))
+    assert not asyncio.run(_index_exists(READY_INDEX_NAME))
     command.upgrade(cfg, CANDIDATE_INDEX_REVISION)
 
 
@@ -174,11 +187,12 @@ def test_candidate_index_downgrade_blocks_when_data_exists_and_preserves_schema(
     asyncio.run(_seed_candidate_index_version())
 
     try:
-        with pytest.raises(RuntimeError, match="Candidate Index build records exist"):
+        with pytest.raises(RuntimeError, match="Candidate Index lifecycle records exist"):
             command.downgrade(cfg, CANDIDATE_INDEX_BASE_REVISION)
 
         assert asyncio.run(_table_exists("rag_candidate_index_version"))
         assert asyncio.run(_table_exists("rag_candidate_index_member"))
+        assert asyncio.run(_index_exists(READY_INDEX_NAME))
         assert asyncio.run(_candidate_index_version_count()) == 1
     finally:
         asyncio.run(_cleanup_candidate_index_tables())
