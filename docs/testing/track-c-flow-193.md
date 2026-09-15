@@ -34,6 +34,9 @@ pytest backend/app/tests/track_c/test_track_c_api.py \
   tests/services/test_track_c_operational_config.py tests/contract -q
 444 passed
 
+pytest backend/app/tests -q --tb=short
+1658 passed, 2 skipped
+
 ruff check . / ruff format . --check
 passed
 
@@ -43,10 +46,12 @@ mypy backend/app ai_worker
 
 전용 임시 컨테이너 `codex-193-api-test`, loopback port 15493, PostgreSQL 17 + pgvector,
 tmpfs의 `test` DB 및 비식별 합성 fixture를 사용했다. 공유 개발 DB는 변경하지 않았다.
-테스트 env는 `DB_EXPOSE_PORT=15493`, DB 계정·암호는 폐기 가능한 synthetic 값이다.
+테스트 env는 `DB_PORT=15493`, `DB_EXPOSE_PORT=15493`, DB 계정·암호는 폐기 가능한 synthetic 값이다.
 기존 의존성 venv를 사용했으며 contract subprocess에는 같은 `UV_PROJECT_ENVIRONMENT`와
 `UV_NO_SYNC=1`을 전달했다. 초기 실행의 잘못된 테스트 멱등 키와 subprocess 의존성 누락을
 수정한 뒤 위 결과를 확인했다.
+전체 Backend 최초 실행은 일부 독립 engine 테스트의 `DB_PORT` 미설정으로 2 failures·15 errors가
+발생했다. 같은 전용 포트로 통일한 재실행에서 위 1,658 passed·2 skipped를 확인했다.
 이 결과는 배포 환경 검증, 실제 환자 데이터 검증, 의료·Privacy·Safety 승인 또는
 `PUBLIC_TRACK_C` 해제 근거가 아니다.
 
@@ -59,5 +64,5 @@ assessment·Plan 취소 rollback, Check-in 정정 이후 최초 snapshot 재현�
 - 승인된 non-empty symptom code 목록과 `URGENT|EMERGENCY|UNKNOWN` 판정표
 - 승인 고정 문구, `message_code`, `copy_version`, `source_version` 정본
 - 지정 Backend·Transaction·Security 리뷰와 Frontend 소비 계약 확인
-- 전체 Backend·contract suite 및 배포 환경 검증
+- 배포 환경 검증 (전체 Backend·contract 로컬 합성 검증은 위 실행 완료)
 - #195 Check-in 정정 transaction의 실제 Track C invalidation adapter 연결

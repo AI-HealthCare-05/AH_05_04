@@ -59,6 +59,23 @@ URGENT/EMERGENCY 상태를 받은 이후의 차단은 합성 fixture로 검증�
 사이트 URL만으로 앱 symptom enum·한국어 문구·우선순위·국내 연락 경로가 확정되지는 않는다.
 NHS의 영국 999/111 번호를 한국어 앱에 그대로 복사하지 않는다.
 
+### NHS 기반 판정표 초안 — 아직 런타임에 적용하지 않음
+
+아래 코드는 NHS 자체 코드가 아니라 앱용 제안이다. 2026-09-15 원문 확인 기준이며,
+의료 진단·전체 증상 분류표가 아니다. 담당 검토 때 선택 문구의 조건을 축약하지 않는다.
+
+| 제안 코드 | 선택 문구 의미 | 제안 결과 | 근거 |
+|---|---|---|---|
+| `SUDDEN_AIRWAY_SWELLING` | 입술·입·목·혀가 갑자기 부음 | EMERGENCY | [NHS Angioedema](https://www.nhs.uk/conditions/angioedema/) |
+| `SEVERE_BREATHING_DIFFICULTY` | 매우 빠르게 숨 쉬거나 숨쉬기가 힘듦 | EMERGENCY | 같은 원문의 즉각 응급 도움 조건 |
+| `SUDDEN_PERSISTENT_CHEST_PAIN` | 갑자기 생긴 가슴 통증·불편감이 사라지지 않음 | EMERGENCY | [NHS Chest pain](https://www.nhs.uk/symptoms/chest-pain/) |
+| `SUDDEN_OTHER_BODY_SWELLING` | 손·발 등 다른 신체 부위가 갑자기 부음 | URGENT | NHS Angioedema의 긴급 진료 조건; 기도·호흡 응급 조건 우선 |
+
+이 4개 항목만으로 전체 Safety 검증을 완료할 수 없다. 원문의 다른 응급 징후 누락 검토,
+복수 코드 우선순위, 미등록 코드 혼합, 사용자 선택 문구와 국내 도움 요청 경로,
+고정 message/copy/source version 및 합성 위험 회귀를 함께 확정한 뒤 적용한다.
+현재 API는 위 제안 코드를 보내더라도 UNKNOWN을 반환한다.
+
 ## #139 인계
 
 Backend가 반환한 response_level만 사용하고 Frontend에서 긴급도를 재판정하지 않는다.
