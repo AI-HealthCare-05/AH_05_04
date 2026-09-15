@@ -867,4 +867,3 @@ async def test_hybrid_returns_all_raw_and_fused_signals_in_canonical_order(datab
         )
 
     assert list(res.signals) == sorted(res.signals, key=_sig_key)
-

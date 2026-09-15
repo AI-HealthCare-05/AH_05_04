@@ -505,4 +505,3 @@ async def test_execute_hybrid_retrieve_begin_failure() -> None:
     assert outcome.status == RetrievalExecutionStatus.VALIDATION_ERROR
     assert outcome.persisted_receipt is None
     assert run_store.calls == []
-

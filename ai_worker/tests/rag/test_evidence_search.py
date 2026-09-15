@@ -401,4 +401,3 @@ def test_dense_only_requires_dense_config_and_embedding_adapter_ref() -> None:
     )
     outcome = validate_retrieval_configuration(invalid_dense_only)
     assert outcome == EvidenceSearchFailure(EvidenceSearchFailureReason.RETRIEVAL_CONFIG_INVALID)
-

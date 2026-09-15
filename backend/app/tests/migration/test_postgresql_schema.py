@@ -47,4 +47,3 @@ def test_retrieval_run_downgrade_contract() -> None:
     run_idx = source.index('op.drop_table("retrieval_run")')
     assert hit_idx < run_idx
     assert sig_idx < run_idx
-
