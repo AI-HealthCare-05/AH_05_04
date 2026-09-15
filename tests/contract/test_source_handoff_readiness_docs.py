@@ -1,7 +1,37 @@
 from pathlib import Path
+from typing import Any
+
+from ai_worker.core.config import Config
 
 ROOT = Path(__file__).resolve().parents[2]
 READINESS_DOC = ROOT / "docs/validation/rag/issue-593/source-handoff-readiness.md"
+
+
+def _source_artifact_settings_from_env_example(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        if key.startswith("SOURCE_ARTIFACT_"):
+            values[key] = value
+    return values
+
+
+def _config_from_source_artifact_example(path: Path) -> Config:
+    settings: dict[str, Any] = {
+        "ENV": "local",
+        "DB_HOST": "127.0.0.1",
+        "DB_NAME": "test",
+        "DB_USER": "worker",
+        "DB_PASSWORD": "worker-password",
+        "CLOVA_OCR_INVOKE_URL": "https://clova.test/ocr",
+        "CLOVA_OCR_SECRET": "synthetic-clova-secret",
+        "STORAGE_DIR": "/tmp/medical-documents",
+    }
+    settings.update(_source_artifact_settings_from_env_example(path))
+    return Config(_env_file=None, **settings)  # type: ignore[call-arg]
 
 
 def test_source_handoff_readiness_doc_pins_existing_runtime_boundaries() -> None:
@@ -77,6 +107,17 @@ def test_source_handoff_env_examples_include_artifact_storage_keys() -> None:
         text = env_path.read_text(encoding="utf-8")
         for setting in required_settings:
             assert f"{setting}=" in text
+
+    local_config = _config_from_source_artifact_example(ROOT / "envs/example.local.env")
+    assert local_config.SOURCE_ARTIFACT_STORAGE_BACKEND == "DISABLED"
+    assert local_config.SOURCE_ARTIFACT_LOCAL_ROOT is None
+    assert local_config.SOURCE_ARTIFACT_S3_BUCKET is None
+    assert local_config.SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION is None
+
+    prod_config = _config_from_source_artifact_example(ROOT / "envs/example.prod.env")
+    assert prod_config.SOURCE_ARTIFACT_STORAGE_BACKEND == "DISABLED"
+    assert prod_config.SOURCE_ARTIFACT_LOCAL_ROOT is None
+    assert prod_config.SOURCE_ARTIFACT_S3_KMS_KEY_ID is None
 
     prod_text = (ROOT / "envs/example.prod.env").read_text(encoding="utf-8")
     assert "access key" not in prod_text.lower()
