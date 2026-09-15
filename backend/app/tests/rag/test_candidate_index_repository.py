@@ -45,6 +45,7 @@ from app.repositories.rag_source_catalog_repository import (
 )
 
 _CATALOG_VERSION = "catalog-1.0.0"
+_EMBEDDING_MODEL_VERSION = "synthetic-model-v1"
 
 
 def _hash(label: str) -> str:
@@ -157,6 +158,23 @@ def _member_create(*, snapshot, member_key: str = "member-1") -> RagCandidateInd
     )
 
 
+def _hybrid_member_create(
+    *, snapshot, member_key: str = "member-1", embedding: tuple[float, ...] = (0.1, 0.2, 0.3)
+) -> RagCandidateIndexMemberCreate:
+    lexical_member = _member_create(snapshot=snapshot, member_key=member_key)
+    return replace(
+        lexical_member,
+        embedding=embedding,
+        member_content_hash=_payload_hash(
+            {
+                "lexical_member_content_hash": lexical_member.member_content_hash,
+                "embedding_model_version": _EMBEDDING_MODEL_VERSION,
+                "embedding": embedding,
+            }
+        ),
+    )
+
+
 def _member_set_hash(members: tuple[RagCandidateIndexMemberCreate, ...]) -> str:
     return _payload_hash([{"member_key": m.member_key, "member_content_hash": m.member_content_hash} for m in members])
 
@@ -168,11 +186,13 @@ def _version_create(
     index_code: str,
     content_hash: str,
     index_version: str = "v1",
+    build_mode: RagCandidateIndexBuildMode = RagCandidateIndexBuildMode.LEXICAL_ONLY,
 ) -> RagCandidateIndexVersionCreate:
+    is_hybrid = build_mode is RagCandidateIndexBuildMode.HYBRID
     return RagCandidateIndexVersionCreate(
         index_code=index_code,
         index_version=index_version,
-        build_mode=RagCandidateIndexBuildMode.LEXICAL_ONLY,
+        build_mode=build_mode,
         catalog_set_id=catalog_set.id,
         catalog_version=catalog_set.catalog_version,
         catalog_manifest_hash=catalog_set.envelope_hash,
@@ -186,10 +206,15 @@ def _version_create(
         product_identity_count=1,
         product_name_count=len(members),
         approved_alias_count=0,
-        vector_count=0,
+        vector_count=sum(1 for member in members if member.embedding is not None),
         member_set_hash=_member_set_hash(members),
         configuration_hash=_hash("d"),
         content_hash=content_hash,
+        embedding_provider="synthetic" if is_hybrid else None,
+        embedding_model="synthetic-embedding" if is_hybrid else None,
+        embedding_model_version=_EMBEDDING_MODEL_VERSION if is_hybrid else None,
+        embedding_dimension=3 if is_hybrid else None,
+        distance_metric="COSINE" if is_hybrid else None,
     )
 
 
@@ -221,6 +246,31 @@ async def test_build_persists_version_and_every_member(db_session: AsyncSession)
 
     persisted = await repository.list_members(result.version.id)
     assert {m.id for m in persisted} == {m.id for m in result.members}
+
+
+async def test_build_accepts_hybrid_member_hash_and_promotes_ready(db_session: AsyncSession) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    members = (_hybrid_member_create(snapshot=snapshot),)
+    version = _version_create(
+        catalog_set=catalog_set,
+        members=members,
+        index_code=index_code,
+        content_hash=_hash("hybrid-ready"),
+        build_mode=RagCandidateIndexBuildMode.HYBRID,
+    )
+
+    repository = RagCandidateIndexRepository(db_session)
+    built = await repository.build_index_version(version=version, members=members)
+    activated = await repository.activate_ready_version(built.version.id)
+
+    assert activated.status is RagCandidateIndexStatus.READY
+    assert activated.build_mode is RagCandidateIndexBuildMode.HYBRID
+    assert activated.vector_count == 1
+    ready = await repository.get_ready_version_by_code(index_code)
+    assert ready is not None
+    assert ready.id == built.version.id
 
 
 async def test_build_reuses_identical_content_hash_instead_of_duplicating(db_session: AsyncSession) -> None:
@@ -527,6 +577,43 @@ async def test_activate_ready_version_rejects_incomplete_member_rows(db_session:
 
     await db_session.refresh(built.version)
     assert built.version.status is RagCandidateIndexStatus.BUILDING
+
+
+async def test_activate_ready_version_revalidates_persisted_hybrid_member_hashes(
+    db_session: AsyncSession,
+) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    repository = RagCandidateIndexRepository(db_session)
+
+    first_members = (_member_create(snapshot=snapshot, member_key="member-1"),)
+    first_version = _version_create(
+        catalog_set=catalog_set, members=first_members, index_code=index_code, content_hash=_hash("ready-stays")
+    )
+    first = await repository.build_index_version(version=first_version, members=first_members)
+    await repository.activate_ready_version(first.version.id)
+
+    second_members = (_hybrid_member_create(snapshot=snapshot, member_key="member-2"),)
+    second_version = _version_create(
+        catalog_set=catalog_set,
+        members=second_members,
+        index_code=index_code,
+        content_hash=_hash("ready-hybrid-tampered"),
+        index_version="v2",
+        build_mode=RagCandidateIndexBuildMode.HYBRID,
+    )
+    second = await repository.build_index_version(version=second_version, members=second_members)
+    second.members[0].embedding = [0.9, 0.2, 0.3]
+    await db_session.flush()
+
+    with pytest.raises(CandidateIndexVersionNotBuildableError):
+        await repository.activate_ready_version(second.version.id)
+
+    await db_session.refresh(first.version)
+    await db_session.refresh(second.version)
+    assert first.version.status is RagCandidateIndexStatus.READY
+    assert second.version.status is RagCandidateIndexStatus.BUILDING
 
 
 async def test_mark_failed_version_closes_only_building_version(db_session: AsyncSession) -> None:

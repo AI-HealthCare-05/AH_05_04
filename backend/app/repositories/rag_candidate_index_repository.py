@@ -11,7 +11,7 @@ import json
 from dataclasses import asdict, dataclass
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -196,27 +196,48 @@ def _member_content_payload(member: RagCandidateIndexMemberCreate) -> dict[str, 
     }
 
 
-def _recomputed_member_content_hash(member: RagCandidateIndexMemberCreate) -> str:
+def _recomputed_lexical_member_content_hash(member: RagCandidateIndexMemberCreate) -> str:
     return _sha256(_member_content_payload(member))
 
 
+def _recomputed_member_content_hash(
+    version: RagCandidateIndexVersion | RagCandidateIndexVersionCreate,
+    member: RagCandidateIndexMemberCreate,
+) -> str:
+    lexical_member_content_hash = _recomputed_lexical_member_content_hash(member)
+    if version.build_mode is RagCandidateIndexBuildMode.LEXICAL_ONLY:
+        return lexical_member_content_hash
+    return _sha256(
+        {
+            "lexical_member_content_hash": lexical_member_content_hash,
+            "embedding_model_version": version.embedding_model_version,
+            "embedding": member.embedding,
+        }
+    )
+
+
 def _recomputed_member_set_hash(members: tuple[RagCandidateIndexMemberCreate, ...]) -> str:
-    """RAG-07A의 ``member_set_hash`` 정의(``candidate_index.py:1051-1053``)와 동일한 재구현."""
+    """Recompute RAG-07A member_set_hash; see candidate_index.py:1051-1053."""
     return _sha256([{"member_key": m.member_key, "member_content_hash": m.member_content_hash} for m in members])
 
 
-def _assert_member_content_hashes_match(members: tuple[RagCandidateIndexMemberCreate, ...]) -> None:
+def _assert_member_content_hashes_match(
+    version: RagCandidateIndexVersion | RagCandidateIndexVersionCreate,
+    members: tuple[RagCandidateIndexMemberCreate, ...],
+) -> None:
     mismatched = tuple(
-        member.member_key for member in members if _recomputed_member_content_hash(member) != member.member_content_hash
+        member.member_key
+        for member in members
+        if _recomputed_member_content_hash(version, member) != member.member_content_hash
     )
     if mismatched:
         raise CandidateIndexMemberContentHashMismatchError(
-            "member_content_hash가 실제 member 필드와 다릅니다: " + ", ".join(mismatched)
+            "member_content_hash does not match member fields: " + ", ".join(mismatched)
         )
 
 
 def _recomputed_member_counts(members: tuple[RagCandidateIndexMemberCreate, ...]) -> dict[str, int]:
-    """RAG-07A의 manifest count 정의(``candidate_index.py:1062-1066``)와 동일한 재구현."""
+    """Recompute RAG-07A manifest counts; see candidate_index.py:1062-1066."""
     identity_keys = {(m.identity_entity_type, m.identity_code_system, m.identity_canonical_code) for m in members}
     return {
         "member_count": len(members),
@@ -228,27 +249,54 @@ def _recomputed_member_counts(members: tuple[RagCandidateIndexMemberCreate, ...]
 
 
 def _assert_member_metadata_matches(
-    version: RagCandidateIndexVersionCreate, members: tuple[RagCandidateIndexMemberCreate, ...]
+    version: RagCandidateIndexVersion | RagCandidateIndexVersionCreate,
+    members: tuple[RagCandidateIndexMemberCreate, ...],
 ) -> None:
-    """전달된 member 행 자체로부터 재계산한 hash·count가 claim된 값과 같은지 대조한다.
+    """Compare claimed hash/count metadata with values recomputed from member rows.
 
-    신규 저장 경로뿐 아니라 content_hash 재사용 경로에도 호출되어야 한다 -- 그렇지 않으면
-    이미 저장된 content_hash와 우연히 같은 값을 주장하면서 다른(또는 변조된) member 입력을
-    검증 없이 통과시키는 우회로가 남는다.
+    This runs on both new build and content_hash reuse paths; otherwise a caller could
+    claim an existing content_hash while passing unchecked member rows.
     """
-    _assert_member_content_hashes_match(members)
+    _assert_member_content_hashes_match(version, members)
     recomputed_hash = _recomputed_member_set_hash(members)
     if recomputed_hash != version.member_set_hash:
         raise CandidateIndexMemberSetHashMismatchError(
-            f"전달된 member로 재계산한 member_set_hash {recomputed_hash[:12]}…이(가) "
-            f"claim된 값 {version.member_set_hash[:12]}…과 다릅니다."
+            f"recomputed member_set_hash {recomputed_hash[:12]} does not match "
+            f"claimed value {version.member_set_hash[:12]}."
         )
     recomputed_counts = _recomputed_member_counts(members)
     mismatched = tuple(field for field, expected in recomputed_counts.items() if getattr(version, field) != expected)
     if mismatched:
         raise CandidateIndexMemberCountMismatchError(
-            f"전달된 member로 재계산한 count가 claim된 값과 다릅니다: {', '.join(mismatched)}"
+            "recomputed member counts do not match claimed values: " + ", ".join(mismatched)
         )
+
+
+def _member_create_from_persisted(member: RagCandidateIndexMember) -> RagCandidateIndexMemberCreate:
+    return RagCandidateIndexMemberCreate(
+        entry_type=member.entry_type,
+        identity_entity_type=member.identity_entity_type,
+        identity_code_system=member.identity_code_system,
+        identity_canonical_code=member.identity_canonical_code,
+        product_ref=member.product_ref,
+        entry_ref=member.entry_ref,
+        display_text=member.display_text,
+        normalized_text=member.normalized_text,
+        product_name=member.product_name,
+        product_source_snapshot_id=member.product_source_snapshot_id,
+        entry_source_snapshot_id=member.entry_source_snapshot_id,
+        catalog_version=member.catalog_version,
+        catalog_manifest_hash=member.catalog_manifest_hash,
+        normalization_version=member.normalization_version,
+        member_key=member.member_key,
+        member_content_hash=member.member_content_hash,
+        alias_ref=member.alias_ref,
+        strength_text=member.strength_text,
+        dosage_form=member.dosage_form,
+        manufacturer_name=member.manufacturer_name,
+        alias_source_snapshot_id=member.alias_source_snapshot_id,
+        embedding=tuple(member.embedding) if member.embedding is not None else None,
+    )
 
 
 def _assert_version_matches(stored: RagCandidateIndexVersion, requested: RagCandidateIndexVersionCreate) -> None:
@@ -312,7 +360,7 @@ class RagCandidateIndexRepository:
             )
         if target.status is not RagCandidateIndexStatus.BUILDING:
             raise CandidateIndexVersionNotBuildableError("BUILDING 상태의 Candidate Index Version만 READY가 됩니다.")
-        await self._assert_persisted_member_count_matches(target)
+        await self._assert_persisted_members_match(target)
 
         retired_existing = False
         for candidate in versions:
@@ -357,17 +405,20 @@ class RagCandidateIndexRepository:
         )
         return list(result.scalars().all())
 
-    async def _assert_persisted_member_count_matches(self, version: RagCandidateIndexVersion) -> None:
-        result = await self.session.execute(
-            select(func.count())
-            .select_from(RagCandidateIndexMember)
-            .where(RagCandidateIndexMember.candidate_index_version_id == version.id)
+    async def _assert_persisted_members_match(self, version: RagCandidateIndexVersion) -> None:
+        persisted_members = tuple(
+            _member_create_from_persisted(member) for member in await self.list_members(version.id)
         )
-        actual = int(result.scalar_one())
-        if actual <= 0 or actual != version.member_count:
+        if not persisted_members:
             raise CandidateIndexVersionNotBuildableError(
-                f"Candidate Index member_count={version.member_count}이지만 실제 member row는 {actual}건입니다."
+                f"Candidate Index member_count={version.member_count}, but no persisted member rows exist."
             )
+        try:
+            _assert_member_metadata_matches(version, persisted_members)
+        except CandidateIndexBuildError as exc:
+            raise CandidateIndexVersionNotBuildableError(
+                "Persisted Candidate Index members do not reproduce manifest metadata before READY promotion."
+            ) from exc
 
     async def list_members(self, candidate_index_version_id: UUID) -> list[RagCandidateIndexMember]:
         result = await self.session.execute(
@@ -483,7 +534,10 @@ class RagCandidateIndexRepository:
         공개 member-insert가 있으면 이미 build된 Version에 member를 덧붙일 수 있게 되어,
         ``member_set_hash``가 식별해야 할 member-set 불변성이 깨진다.
         """
-        member = RagCandidateIndexMember(**asdict(payload), candidate_index_version_id=candidate_index_version_id)
+        values = asdict(payload)
+        if payload.embedding is not None:
+            values["embedding"] = list(payload.embedding)
+        member = RagCandidateIndexMember(**values, candidate_index_version_id=candidate_index_version_id)
         self.session.add(member)
         await self.session.flush()
         return member

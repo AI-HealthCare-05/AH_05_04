@@ -22,6 +22,9 @@ from sqlalchemy.pool import NullPool
 
 import app.models  # noqa: F401
 from ai_worker.tasks.rag.candidate_index import (
+    CandidateDistanceMetric,
+    CandidateEmbeddingRequest,
+    CandidateEmbeddingVector,
     CandidateIndexBuildConfig,
     CandidateIndexBuildMode,
     CandidateIndexBuildSuccess,
@@ -190,6 +193,17 @@ class _NoOpCatalogRepository:
         return None
 
 
+class _DeterministicEmbeddingPort:
+    def embed(
+        self,
+        requests: tuple[CandidateEmbeddingRequest, ...],
+        config: CandidateIndexBuildConfig,
+    ) -> tuple[CandidateEmbeddingVector, ...]:
+        return tuple(
+            CandidateEmbeddingVector(member_key=request.member_key, values=(0.1, 0.2, 0.3)) for request in requests
+        )
+
+
 class _ApprovingVerifier:
     async def verify(
         self,
@@ -259,6 +273,25 @@ async def _seed_catalog_set(session, artifacts: CatalogExportArtifacts) -> RagCa
     return catalog_set
 
 
+def _hybrid_config(index_code: str) -> CandidateIndexBuildConfig:
+    return CandidateIndexBuildConfig(
+        index_code=index_code,
+        index_version="candidate-index-v1",
+        normalization_version=CATALOG_NORMALIZATION_VERSION,
+        lexical_config_version="candidate-lexical-v1",
+        search_order_version="candidate-search-order-v1",
+        candidate_limit=20,
+        display_limit=1,
+        build_mode=CandidateIndexBuildMode.HYBRID,
+        embedding_provider="synthetic",
+        embedding_model="synthetic-embedding",
+        embedding_model_version="synthetic-model-v1",
+        embedding_dimension=3,
+        distance_metric=CandidateDistanceMetric.COSINE,
+        ann_config=(("hnsw_m", "16"),),
+    )
+
+
 def _lexical_config(index_code: str) -> CandidateIndexBuildConfig:
     return CandidateIndexBuildConfig(
         index_code=index_code,
@@ -309,6 +342,34 @@ async def test_build_persists_a_building_version_with_its_members() -> None:
         assert isinstance(execution.outcome, CandidateIndexBuildSuccess)
         assert execution.outcome.components == ()
         assert execution.persisted.version.catalog_manifest_hash == artifacts.catalog.catalog_manifest_hash
+
+
+async def test_hybrid_build_persists_and_promotes_ready() -> None:
+    snapshot = await _seed_source_snapshot()
+    index_code = f"idx-{uuid4().hex[:8]}"
+
+    async with session_factory.begin() as session:
+        artifacts = await _build_catalog_export(snapshot=snapshot, catalog_version=f"catalog-{uuid4().hex[:8]}")
+        catalog_set = await _seed_catalog_set(session, artifacts)
+
+        execution = await execute_candidate_index_build(
+            session,
+            artifacts=artifacts,
+            config=_hybrid_config(index_code),
+            catalog_set_id=catalog_set.id,
+            embedding_port=_DeterministicEmbeddingPort(),
+        )
+
+        assert execution.stored is True
+        assert execution.persisted is not None
+        assert isinstance(execution.outcome, CandidateIndexBuildSuccess)
+        assert execution.outcome.manifest.build_mode is CandidateIndexBuildMode.HYBRID
+        assert execution.outcome.manifest.vector_count == 1
+
+        repository = RagCandidateIndexRepository(session)
+        activated = await repository.activate_ready_version(execution.persisted.version.id)
+        assert activated.status is RagCandidateIndexStatus.READY
+        assert activated.build_mode is RagCandidateIndexBuildMode.HYBRID
 
 
 async def test_identical_inputs_reproduce_the_same_content_hash() -> None:
