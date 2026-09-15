@@ -85,6 +85,12 @@ describe('SignupPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
     expect(await screen.findByText('로그인 화면')).toBeTruthy()
     expect(signup).toHaveBeenCalledTimes(1)
+    expect(signup).toHaveBeenCalledWith({
+      name: '홍길동',
+      email: 'dosey@example.com',
+      password: 'Password1!',
+      consents: [],
+    })
     expect(requestEmailVerification).not.toHaveBeenCalled()
     expect(confirmEmailVerification).not.toHaveBeenCalled()
   })
@@ -123,16 +129,21 @@ describe('SignupPage', () => {
       }),
     ).toBeTruthy()
     expect(
-      screen.getByText('의료정보는 본인 확인과 동의 후 안전하게 관리합니다.'),
+      screen.getByText('기능별 동의 상태에 따라 필요한 정보만 처리합니다.'),
     ).toBeTruthy()
     expect(
       screen.getByText(
-        '서비스 이용약관, 개인정보 수집·이용, 민감정보 처리에 필수 동의합니다.',
+        '선택하지 않아도 가입할 수 있습니다. 선택한 기능만 동의 상태로 저장합니다.',
       ),
     ).toBeTruthy()
     expect(screen.getByLabelText('이름')).toHaveProperty('required', true)
     expect(screen.getByLabelText('이메일')).toHaveProperty('required', true)
     expect(screen.getByLabelText('비밀번호')).toHaveProperty('required', true)
+    expect(screen.getAllByRole('checkbox')).toHaveLength(4)
+    for (const checkbox of screen.getAllByRole('checkbox')) {
+      expect(checkbox).toHaveProperty('checked', false)
+      expect(checkbox).toHaveProperty('required', false)
+    }
   })
 
   it('#224 정상 입력 중 현재 필드의 focus와 입력값을 유지한다', () => {
@@ -184,7 +195,7 @@ describe('SignupPage', () => {
     expect(signup).not.toHaveBeenCalled()
   })
 
-  it('#65 계약의 name, email, password만 회원가입 요청에 포함한다', async () => {
+  it('#534 계약의 선택한 목적만 purpose 형태로 회원가입 요청에 포함한다', async () => {
     localStorage.setItem('existing_key', 'preserved')
     renderPage()
     fillValidForm()
@@ -193,6 +204,8 @@ describe('SignupPage', () => {
     expect(screen.queryByLabelText('성별')).toBeNull()
     expect(screen.queryByLabelText('생년월일')).toBeNull()
     expect(screen.queryByLabelText('휴대전화')).toBeNull()
+    fireEvent.click(screen.getByRole('checkbox', { name: /처방전 인식/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /복약 안내/ }))
 
     fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
 
@@ -201,6 +214,7 @@ describe('SignupPage', () => {
         name: '홍길동',
         email: 'dosey@example.com',
         password: 'Password1!',
+        consents: [{ purpose: 'OCR' }, { purpose: 'GUIDE' }],
       })
     })
     expect(await screen.findByText('로그인 화면')).toBeTruthy()
@@ -236,6 +250,25 @@ describe('SignupPage', () => {
     expect(
       await screen.findByText('네트워크 연결을 확인하고 다시 시도해 주세요.'),
     ).toBeTruthy()
+  })
+
+  it('동의 policy 미설정은 서버 문구를 노출하지 않고 선택 해제 또는 재시도를 안내한다', async () => {
+    vi.mocked(signup).mockRejectedValue(
+      new ApiError(503, 'unsafe-server-message', 'CONSENT_POLICY_UNAVAILABLE'),
+    )
+    renderPage()
+    fillValidForm()
+    await verifyEmail()
+    fireEvent.click(screen.getByRole('checkbox', { name: /처방전 인식/ }))
+
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+
+    expect(
+      await screen.findByText(
+        '선택한 기능의 동의 안내를 준비하고 있어요. 해당 선택을 해제하거나 잠시 후 다시 시도해 주세요.',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText('unsafe-server-message')).toBeNull()
   })
 
   it('가입 요청 중 버튼을 비활성화해 중복 제출을 막는다', async () => {

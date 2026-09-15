@@ -213,6 +213,62 @@
   font-weight: 800;
 }
 
+.mvp-signup-consents {
+  display: grid;
+  gap: 10px;
+  margin: 3px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.mvp-signup-consents legend {
+  margin-bottom: 4px;
+  color: var(--ds-text);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.mvp-signup-consents__intro {
+  margin: 0 0 2px;
+  color: var(--ds-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.mvp-signup-consents__option {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  padding: 13px 14px;
+  border: 1px solid #efca72;
+  border-radius: 14px;
+  background: #fff9e9;
+  color: var(--ds-text);
+}
+
+.mvp-signup-consents__option input {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.mvp-signup-consents__option span {
+  display: grid;
+  gap: 3px;
+}
+
+.mvp-signup-consents__option strong {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.mvp-signup-consents__option small {
+  color: var(--ds-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .mvp-form__footer.mvp-auth__signup-link {
   margin-top: 23px;
   font-size: 14px;
