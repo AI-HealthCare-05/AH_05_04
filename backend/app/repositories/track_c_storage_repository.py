@@ -1,4 +1,4 @@
-"""Track C storage, SELF ownership, and ordered C2 mutation locks."""
+"""Track C storage, SELF ownership, and ordered mutation locks."""
 
 from datetime import datetime
 from uuid import UUID
@@ -113,7 +113,23 @@ class TrackCStorageRepository:
         checkin_revision: int,
         cancelled_at: datetime,
     ) -> int:
-        """Lock Barrier then ActionPlan and cancel active descendants without deleting history."""
+        """Lock the historical C graph in global order and cancel active plans only.
+
+        The Track B caller already owns the ``MEDICATION_CHECKIN`` row lock. Reading
+        and locking every matching Safety and Barrier row before any ActionPlan row
+        keeps C4 on the shared lock order and preserves the complete history.
+        """
+
+        safety_rows = await self.session.scalars(
+            select(SafetyAssessment)
+            .where(
+                SafetyAssessment.medication_checkin_id == checkin_id,
+                SafetyAssessment.checkin_revision == checkin_revision,
+            )
+            .order_by(SafetyAssessment.revision, SafetyAssessment.id)
+            .with_for_update(of=SafetyAssessment)
+        )
+        safety_rows.all()
         barriers = tuple(
             (
                 await self.session.scalars(
@@ -140,13 +156,15 @@ class TrackCStorageRepository:
                     )
                     .order_by(SupportActionPlan.id)
                     .with_for_update(of=SupportActionPlan)
+                    .execution_options(populate_existing=True)
                 )
             ).all()
         )
         for plan in plans:
             plan.status = SupportActionPlanStatus.CANCELLED
             plan.cancelled_at = cancelled_at
-        await self.session.flush()
+        if plans:
+            await self.session.flush()
         return len(plans)
 
     async def get_latest_barrier_for_update(self, *, checkin_id: UUID, checkin_revision: int) -> BarrierResponse | None:

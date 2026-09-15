@@ -29,8 +29,8 @@ const progressVisuals: Partial<Record<AiJobVisualStatus, AiJobVisual>> = {
   },
   PROCESSING: {
     indicator: '▱',
-    steps: ['처방전 업로드 완료', '처방전 내용 읽는 중', '읽은 처방정보 정리 예정'],
-    footer: '정리가 끝나면 결과 화면으로 자동으로 이동해요.',
+    steps: ['문서 업로드 완료', '약 이름과 복용법 인식 중', '복약 정보 확인'],
+    footer: '복약 정보 확인이 끝나면 다음 화면으로 자동 이동해요.',
   },
   RETRY_WAIT: {
     indicator: '↻',
