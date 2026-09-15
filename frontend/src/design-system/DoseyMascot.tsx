@@ -7,7 +7,7 @@ export function DoseyMascot({
 }) {
   return (
     <span className={`dosey-mascot dosey-mascot--${variant}`} aria-hidden="true">
-      <img src={doseyCharacterSheet} alt="" />
+      <img src={doseyCharacterSheet} alt="" draggable={false} />
     </span>
   )
 }

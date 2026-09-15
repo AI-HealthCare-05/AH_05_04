@@ -71,7 +71,7 @@ afterEach(() => {
 
 describe('Dosey MVP design pages', () => {
   it('AUTH-00 회원가입 CTA를 실제 signup route에 연결한다', () => {
-    render(
+    const { container } = render(
       <MemoryRouter initialEntries={['/start']}>
         <Routes>
           <Route path="/start" element={<StartPage />} />
@@ -89,6 +89,17 @@ describe('Dosey MVP design pages', () => {
     expect(screen.getByText('쉬운 가이드')).toBeTruthy()
     expect(screen.getByText('도지에게 질문')).toBeTruthy()
     expect(screen.getByText('복약 지속 도움')).toBeTruthy()
+    expect(
+      container.querySelectorAll('.mvp-start__features > li'),
+    ).toHaveLength(4)
+    expect(
+      container.querySelectorAll('.mvp-start__feature-check'),
+    ).toHaveLength(4)
+    expect(
+      container.querySelector('.dosey-mascot--welcome img')?.getAttribute(
+        'draggable',
+      ),
+    ).toBe('false')
     expect(screen.queryByText('AI가 처방을 바꾸지 않아요.')).toBeNull()
     expect(
       screen
