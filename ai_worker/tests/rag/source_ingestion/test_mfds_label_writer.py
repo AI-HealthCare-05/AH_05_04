@@ -11,6 +11,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy.engine import URL
 
+from ai_worker.adapters.local_private_source_artifact_store import LocalPrivateSourceArtifactStore
 from ai_worker.adapters.local_private_source_cleanup import LocalPrivateCleanupExecutorJournal
 from ai_worker.admin import mfds_label_writer
 from ai_worker.admin.mfds_label_writer import (
@@ -41,7 +42,8 @@ def _environment(tmp_path: Path) -> dict[str, str]:
         "SOURCE_WRITER_PASSWORD": "synthetic-password",
         "SOURCE_WRITER_ACTOR": "synthetic-actor",
         "SOURCE_ARTIFACT_STORAGE_BACKEND": "LOCAL_PRIVATE",
-        "SOURCE_ARTIFACT_LOCAL_ROOT": str(tmp_path / "private"),
+        "SOURCE_ARTIFACT_READER_ROOT": str(tmp_path / "private-reader"),
+        "SOURCE_ARTIFACT_FINALIZER_COMMAND": "/usr/local/bin/source591-preserve",
         "SOURCE_CLEANUP_JOURNAL_ROOT": str(tmp_path / "cleanup-journal"),
         "MFDS_LABEL_SOURCE_CODE": "SYNTHETIC_MFDS_LABEL",
         "MFDS_LABEL_ENDPOINT_CODE": "SYNTHETIC_LABEL_XML",
@@ -62,7 +64,9 @@ def test_writer_config_requires_isolated_local_private_inputs(tmp_path: Path) ->
     "changes",
     [
         {"SOURCE_ARTIFACT_STORAGE_BACKEND": "DISABLED"},
-        {"SOURCE_ARTIFACT_LOCAL_ROOT": "relative"},
+        {"SOURCE_ARTIFACT_READER_ROOT": "relative"},
+        {"SOURCE_ARTIFACT_FINALIZER_COMMAND": "relative"},
+        {"SOURCE_ARTIFACT_LOCAL_ROOT": "/private/writable-final-root"},
         {"SOURCE_CLEANUP_JOURNAL_ROOT": "relative"},
         {"MFDS_LABEL_SOURCE_CODE": ""},
         {"MFDS_LABEL_ENDPOINT_RECEIPT_HASH": "invalid"},
@@ -180,9 +184,33 @@ async def test_commit_failure_after_artifact_write_creates_private_cleanup_reque
     monkeypatch.setattr(mfds_label_writer, "lock_source_artifact_mutation", no_validation)
     monkeypatch.setattr(mfds_label_writer, "create_async_engine", lambda *args, **kwargs: _Engine())
     monkeypatch.setattr(mfds_label_writer, "async_sessionmaker", lambda *args, **kwargs: _Sessions())
+    artifact_root = tmp_path / "artifacts"
+    artifact_root.mkdir(mode=0o500)
+
+    class _SyntheticFinalizingStore:
+        def __init__(self) -> None:
+            self.finalized: list[StoredRawArtifact] = []
+
+        def put_verified(self, **kwargs: object) -> StoredRawArtifact:
+            artifact_root.chmod(0o700)
+            try:
+                stored = LocalPrivateSourceArtifactStore(artifact_root).put_verified(
+                    **kwargs  # type: ignore[arg-type]
+                )
+            finally:
+                artifact_root.chmod(0o500)
+            self.finalized.append(stored)
+            return stored
+
+    monkeypatch.setattr(
+        mfds_label_writer,
+        "FinalizingLocalPrivateSourceArtifactStore",
+        lambda **kwargs: _SyntheticFinalizingStore(),
+    )
     config = MfdsLabelWriterConfig(
         writer=WriterConfig(URL.create("postgresql+asyncpg", password="synthetic"), "synthetic-writer"),
-        artifact_root=tmp_path / "artifacts",
+        artifact_reader_root=artifact_root,
+        artifact_finalizer_command=tmp_path / "source591-preserve",
         cleanup_journal_root=tmp_path / "journal",
         identity=SourceOperationIdentity("SYNTHETIC_SOURCE", "SYNTHETIC_ENDPOINT", "SYNTHETIC_OPERATION"),
         endpoint_receipt_hash="a" * 64,

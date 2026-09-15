@@ -93,7 +93,8 @@
 
 | 역할 | 허용 | 금지 |
 | --- | --- | --- |
-| 수집 writer | Source 수집 실행, Snapshot 후보와 Artifact 참조 기록 | 관리 감사 수정, cleanup 실행, 운영 DB 직접 반영 |
+| 수집 writer | Source 수집 실행, Snapshot 후보와 Artifact 참조 기록, 최종 Artifact read-only 재조회 | 최종 Artifact 쓰기·삭제·덮어쓰기, cleanup 실행, 운영 DB 직접 반영 |
+| Artifact finalizer | stdin 원문과 checksum 검증 후 최종 content-addressed 객체 보존 | Source DB 접근, 임의 경로 쓰기, Artifact 삭제 |
 | 검증 reader | Snapshot, member, verification, ingestion run, Artifact receipt 조회 | Source 데이터 수정·삭제 |
 | cleanup executor | 승인된 정책에 따른 미참조 Artifact 조사·정리 | 수집 결과 생성, 승인 없는 삭제 |
 | consumer reader | 인계된 Snapshot ID/checksum/member/artifact 참조 조회 | 원문 bytes 직접 노출, Source 관리 변경 |
@@ -107,6 +108,9 @@
 ### `LOCAL_PRIVATE` 사용 시
 
 - 접근 제한된 전용 root를 사용한다.
+- writer의 업로드·임시 공간과 최종 Artifact root를 분리한다.
+- 최종 Artifact는 별도 owner의 고정 finalizer만 보존하고 writer에는 read-only mount만 제공한다.
+- cleanup executor의 검증된 삭제 mount와 consumer의 read-only mount를 writer 권한과 분리한다.
 - 앱 기본 업로드 저장소나 임시 다운로드 폴더를 공유하지 않는다.
 - root 권한, 파일 권한, checksum 검증이 기존 adapter 기준과 맞아야 한다.
 - 팀원이 같은 환경에서 재조회할 수 없는 개인 로컬 경로는 최종 인계 기준이 아니다.
@@ -131,11 +135,9 @@
 - 실제 endpoint·credential·root가 접근 제한된 비밀 저장소에 저장됐는지
 - 작업 담당자와 필요한 검토자에게 접근 권한이 부여됐는지
 
-## 현재 저장소에서 아직 없는 실행 경로
+## #591 실행 경로 상태
 
-최신 develop 기준으로 #591 MFDS Source용 parser와 실제 적재 진입점은 아직 없다. `scripts/rag/verify_mfds_label_candidate.py`는 후보 구조와 hash를 검증하는 도구이며, 원문 수집 → Artifact 저장 → Source Snapshot commit을 수행하는 실행 command가 아니다. 따라서 dev/staging DB와 `LOCAL_PRIVATE` 저장소가 준비됐더라도 #609 또는 동등한 실행 경로 구현 전에는 #591 실제 적재를 실행할 수 없다.
-
-#591 실제 적재 전에 #609에서 parser·normalization·Snapshot 저장 command와 실행 문서를 준비한다. #609 또는 동등한 실행 경로 구현이 완료되기 전에는 #591을 원문 저장·Snapshot commit 완료 상태로 보지 않는다.
+#609가 병합돼 MFDS EE/UD/NB/NN parser·normalization·Snapshot 저장 command는 준비됐다. 실제 #591 적재는 #613의 finalizer·cleanup 경계와 역할별 OS mount가 적용되고 합성 E2E가 끝난 뒤 시작한다.
 
 ## #591 적재 전 확인 체크리스트
 
@@ -146,8 +148,8 @@
 - [x] Artifact backend는 팀 공용 `LOCAL_PRIVATE` root 우선으로 정했다.
 - [x] 2026-09-15 공유된 준비 결과 기준으로 팀 공용 `LOCAL_PRIVATE` 저장소가 준비됐다.
 - [x] writer/reader/consumer 권한 경계는 역할 기준으로 분리한다.
-- [ ] writer의 최종 Artifact 삭제가 실제 거부되고 별도 cleanup executor가 #613 요청 조회·DB 참조 조회·검증된 삭제·receipt append만 수행한다.
-- [ ] #591 대상 Source parser·정규화·적재 실행 경로가 존재한다. 후속 #609에서 처리한다.
+- [ ] finalizer와 writer read-only·executor delete·consumer read-only mount가 준비되고 합성 cleanup E2E가 통과했다. #613에서 처리한다.
+- [x] #591 대상 Source parser·정규화·적재 실행 경로가 존재한다. #609에서 처리했다.
 - [ ] Source, Endpoint, Operation 식별자가 정해졌다.
 - [ ] source_version, parser/canonicalization version이 정해졌다.
 - [ ] 원문 Artifact를 공개 채널에 올리지 않는 접근 제한 비밀 저장소 전달 방식이 정해졌다.
@@ -206,7 +208,7 @@ MFDS 원본 보존 뒤 DB rollback이 발생한 경우에는 [#613 전용 절차
 ## 후속 작업
 
 - #591 본문에 확정된 적재 환경과 인계 기준 반영
-- #609에서 #591 Source parser·정규화·적재 실행 command 구현
+- #609에서 구현한 #591 Source parser·정규화·적재 실행 command 사용
 - #613에서 #591 적재 실패 artifact cleanup 요청·executor 절차 구현
 - 필요한 경우 env example 또는 infra 권한 검증 보강
 - #591 첫 제품 실제 수집·검증·Snapshot 저장 PR 작성
