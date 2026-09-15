@@ -92,26 +92,29 @@ async def select_snapshot(
     return result
 
 
+async def validate_source_writer_session(session: AsyncSession) -> None:
+    """전용 Source Writer가 관리자·소유자 권한을 함께 갖지 않는지 확인합니다."""
+    unsafe_role = await session.scalar(
+        text(
+            "SELECT r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls OR r.rolreplication "
+            "OR EXISTS (SELECT 1 FROM pg_auth_members WHERE member=r.oid) "
+            "OR EXISTS (SELECT 1 FROM pg_database WHERE datname=current_database() AND datdba=r.oid) "
+            "OR EXISTS (SELECT 1 FROM pg_namespace WHERE nspname=current_schema() AND nspowner=r.oid) "
+            "OR EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+            "WHERE n.nspname=current_schema() AND c.relowner=r.oid) "
+            "FROM pg_roles r WHERE r.rolname=current_user"
+        )
+    )
+    if unsafe_role is not False:
+        raise ValueError("Source Writer requires a non-owner role without administrative privileges or memberships")
+
+
 async def run_selection(config: WriterConfig, args: argparse.Namespace) -> SnapshotSelectionResult:
     engine = create_async_engine(config.url, hide_parameters=True)
     try:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         async with sessions.begin() as session:
-            unsafe_role = await session.scalar(
-                text(
-                    "SELECT r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls OR r.rolreplication "
-                    "OR EXISTS (SELECT 1 FROM pg_auth_members WHERE member=r.oid) "
-                    "OR EXISTS (SELECT 1 FROM pg_database WHERE datname=current_database() AND datdba=r.oid) "
-                    "OR EXISTS (SELECT 1 FROM pg_namespace WHERE nspname=current_schema() AND nspowner=r.oid) "
-                    "OR EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-                    "WHERE n.nspname=current_schema() AND c.relowner=r.oid) "
-                    "FROM pg_roles r WHERE r.rolname=current_user"
-                )
-            )
-            if unsafe_role is not False:
-                raise ValueError(
-                    "Source Writer requires a non-owner role without administrative privileges or memberships"
-                )
+            await validate_source_writer_session(session)
             return await select_snapshot(
                 session,
                 snapshot_id=args.snapshot_id,
