@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: 'jsdom',
-    exclude: [...configDefaults.exclude, 'e2e/**', 'e2e-real-stack/**'],
+    exclude: [...configDefaults.exclude, 'e2e/**', 'e2e-real-stack/**', 'e2e-auth-gate/**'],
     restoreMocks: true,
     setupFiles: ['./tests/setup.ts'],
   },
