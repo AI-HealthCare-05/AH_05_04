@@ -56,6 +56,9 @@ Product 또는 유효하지 않은 Alias를 참조하거나, 검증 뒤 Candidat
 
 ### Candidate Index lifecycle·storage integrity (#583)
 
+이 절은 위 기준 관계의 Approved Contract Freeze v4·RAG-00 Candidate Target을 유지하면서 #583 구현
+PR이 추가한 물리 lifecycle·storage-integrity 보완을 기록한다.
+
 Candidate Index Version은 `BUILDING | READY | RETIRED | FAILED` lifecycle을 사용한다.
 `BUILDING`은 build 산출물이 저장되는 중간 상태이며 Runtime·Resolver가 소비하지 않는다.
 `READY`는 구성원 수, member hash, member set hash, content hash와 storage receipt 검증을 모두 통과한
