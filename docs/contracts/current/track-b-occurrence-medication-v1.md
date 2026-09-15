@@ -2,20 +2,19 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Proposed · 리뷰용 구현 완료 · 승인 대기 |
+| 상태 | Current |
 | Decision | [PD-202-HISTORY-20260913](../../governance/decisions/2026-09-13-track-b-occurrence-medication.md) |
 | 구현 담당 | 권가빈 (`hazelnutflavoured`), #202 배정 |
 | 책임 리뷰 | 송은영 (`phina-io`) — Backend/API·Security; 남한솔 (`solia142`) — Frontend 소비, #202 배정 |
 | 관련 범위 | #202 Backend 인계, #421 알림 연결, #138 복약 기록 |
 
-이 문서는 새 조회 경로의 승인 요청안이다. 현재 API 목록이나 Frontend production 계약으로
-사용하지 않는다. 이 브랜치의 구현과 함께 검토한다.
+이 문서는 develop에 병합된 새 조회 경로의 현재 Backend·OpenAPI·Frontend 소비 계약이다.
 
 ## 문제와 조회 범위
 
 과거 occurrence는 당시 prescription version medication에 귀속된다. 현재 처방 상세/latest는
 활성 version의 medications를 반환하므로 약명·배열 순서로 서로 연결할 수 없다.
-원래 occurrence 한 건에서 당시 확정 약 표시 정보 한 건을 조회하는 읽기 전용 경로를 제안한다.
+원래 occurrence 한 건에서 당시 확정 약 표시 정보 한 건을 조회하는 읽기 전용 경로를 제공한다.
 
 ```http
 GET /api/v1/medication-occurrences/{occurrence_id}/medication
@@ -29,7 +28,7 @@ GET /api/v1/medication-occurrences/{occurrence_id}/medication
 - 날짜·예정 시각·상태·Check-in은 기존 날짜별 occurrence 응답에서 소비한다.
   이 API는 복용 가능 여부나 현재 권장 처방을 판정하지 않는다.
 
-## 성공 응답 후보
+## 성공 응답
 
 HTTP 200, `{"data": {...}}`. 아래 모든 키는 응답에 존재하며 nullable 값은 JSON null로 반환한다.
 
@@ -43,7 +42,7 @@ HTTP 200, `{"data": {...}}`. 아래 모든 키는 응답에 존재하며 nullabl
 | dose_value | number | 예 | 당시 1회 복용량, 기존 MedicationData의 숫자 표현 재사용 |
 | dose_unit | string | 예 | 당시 1회 복용량 단위 |
 
-합성 응답 예시이며 실행된 fixture가 아니다.
+아래는 계약 형태를 나타내는 합성 응답 예시다. 실행 검증은 #202 합성 fixture를 따른다.
 
 ```json
 {
@@ -59,9 +58,9 @@ HTTP 200, `{"data": {...}}`. 아래 모든 키는 응답에 존재하며 nullabl
 }
 ```
 
-최소 표시 범위로 약명·함량·1회 복용량을 제안한다. frequency_per_day, timing_text,
-duration_days까지 #138 화면에서 필요한지는 소비 리뷰에서 확인한다. 이 값이나 기타 필드를
-추가하기로 결정하면 이 Proposed 문서에서 먼저 정렬한다. 원문 OCR·환자 정보·document_id,
+최소 표시 범위는 약명·함량·1회 복용량이다. frequency_per_day, timing_text,
+duration_days는 현재 응답 범위가 아니다. 이 값이나 기타 필드를 추가하려면
+이 Current 계약과 OpenAPI·DTO·테스트를 함께 변경한다. 원문 OCR·환자 정보·document_id,
 다른 약 목록·공식 Identity·Provider 결과는 반환하지 않는다.
 
 ## 소유권·오류·읽기 불변성
@@ -80,13 +79,13 @@ SELF chain은 occurrence → schedule → prescription version medication → pr
 
 404는 기존 Check-in의 `message="복약 일정을 찾을 수 없습니다."`, `details=[]`를 재사용한다.
 요청별 trace_id 외에 없는 ID와 타인 ID를 구별하는 정보는 제공하지 않는다.
-오류는 [공통 envelope](../current/backend-error-response.md)를 사용한다.
+오류는 [공통 envelope](./backend-error-response.md)를 사용한다.
 성공·실패에 기존 `Cache-Control: no-store`, `X-Trace-Id`를 유지한다.
 
 GET은 알림 read_at, occurrence·schedule 상태, Check-in·Audit·멱등성 row를 변경하지 않는다.
 migration·신규 DB 권한·Provider 호출·새 enum·새 오류 code·쓰기 transaction 변경은 필요하지 않다.
 
-## Frontend 인계 후보
+## Frontend 인계
 
 1. 알림의 occurrence_local_date로 기존 날짜별 API를 조회하고 occurrence_id로 기록을 찾는다.
 2. 같은 occurrence_id로 이 GET을 호출한다. 응답의 occurrence ID·version ID·약 ID가
@@ -97,7 +96,7 @@ migration·신규 DB 권한·Provider 호출·새 enum·새 오류 code·쓰기 
 5. 읽음과 복약 저장을 구분한다. Check-in은 기존 PUT의 명시적 사용자 의도·revision·멱등 키로만
    저장하며, 취소 occurrence와 revision 충돌 처리도 기존 계약을 유지한다.
 
-## 구현·검증 조건
+## 구현·검증 근거
 
 아래 항목을 구현·검증 기준으로 사용한다. 실제 실행 결과와 남은 항목은 [검증 기록](../../validation/track-b/issue-202-closure-readiness.md)에 구분한다.
 
@@ -110,6 +109,6 @@ migration·신규 DB 권한·Provider 호출·새 enum·새 오류 code·쓰기 
 - #468과 같은 기존 합성 seed·알림 경로를 재사용해 별도 HTTP fixture로 원래 날짜·세 ID 정합성 검증.
 - 필수 Ruff/Mypy/관련 계약·DB 통합 테스트/전체 runner와 책임 리뷰 결과를 구현 PR에 기록.
 
-새 경로·DTO·문서·계약/통합 테스트는 승인된 동일 기준으로 구현한다. 필요한 승인·구현·실행 증빙이
-갖춰지기 전 Proposed를 Current로 옮기지 않는다. #202 종료 판정은
-[종료 점검표](../../validation/track-b/issue-202-closure-readiness.md)를 따른다.
+새 경로·DTO·문서·계약/통합 테스트는 PR #474 merge SHA
+`9d8239ff1886327af154db53981ce839191da879`에 반영됐다. 송은영의 Backend 최종 승인과
+남한솔의 #202 Frontend 인수 승인 후 #202가 종료됐으며, [종료 점검 기록](../../validation/track-b/issue-202-closure-readiness.md)과 합성 fixture가 회귀 근거를 제공한다.

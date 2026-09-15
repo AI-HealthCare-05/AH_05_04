@@ -138,6 +138,10 @@ class Config(BaseSettings):
     WORKER_LEASE_DURATION_SECONDS: float = Field(default=75.0, gt=0)
     WORKER_HEARTBEAT_INTERVAL_SECONDS: float = Field(default=10.0, gt=0)
     WORKER_HARD_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0)
+    # async-job-v1.md "실행 lease와 보존": PD-91-20260831이 CHAT 실행 상한을
+    # hard timeout 45초 / lease 60초로 고정합니다. OCR·GUIDE는 위 공통 값을 씁니다.
+    WORKER_CHAT_LEASE_DURATION_SECONDS: float = Field(default=60.0, gt=0)
+    WORKER_CHAT_HARD_TIMEOUT_SECONDS: float = Field(default=45.0, gt=0)
     # 한 프로세스가 동시에 처리하는 delivery 수입니다.
     WORKER_CONCURRENCY: int = Field(default=1, ge=1)
     # 종료 신호 후 진행 중 실행을 기다리는 상한입니다.
@@ -261,6 +265,12 @@ class Config(BaseSettings):
 
         if self.WORKER_HARD_TIMEOUT_SECONDS >= self.WORKER_LEASE_DURATION_SECONDS:
             raise ValueError("WORKER_HARD_TIMEOUT_SECONDS는 WORKER_LEASE_DURATION_SECONDS보다 짧아야 합니다.")
+        if self.WORKER_CHAT_HARD_TIMEOUT_SECONDS >= self.WORKER_CHAT_LEASE_DURATION_SECONDS:
+            raise ValueError("WORKER_CHAT_HARD_TIMEOUT_SECONDS는 WORKER_CHAT_LEASE_DURATION_SECONDS보다 짧아야 합니다.")
+        if self.WORKER_HEARTBEAT_INTERVAL_SECONDS >= self.WORKER_CHAT_LEASE_DURATION_SECONDS:
+            raise ValueError(
+                "WORKER_HEARTBEAT_INTERVAL_SECONDS는 WORKER_CHAT_LEASE_DURATION_SECONDS보다 짧아야 합니다."
+            )
         if self.WORKER_HARD_TIMEOUT_SECONDS + self.OCR_RESPONSE_MARGIN_SECONDS > self.WORKER_LEASE_DURATION_SECONDS:
             raise ValueError(
                 "WORKER_HARD_TIMEOUT_SECONDS와 OCR_RESPONSE_MARGIN_SECONDS의 합은 "
@@ -439,6 +449,10 @@ class Config(BaseSettings):
     @property
     def lease_duration(self) -> timedelta:
         return timedelta(seconds=self.WORKER_LEASE_DURATION_SECONDS)
+
+    @property
+    def chat_lease_duration(self) -> timedelta:
+        return timedelta(seconds=self.WORKER_CHAT_LEASE_DURATION_SECONDS)
 
     @property
     def heartbeat_interval(self) -> timedelta:

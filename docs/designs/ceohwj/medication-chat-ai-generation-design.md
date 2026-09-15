@@ -1,6 +1,6 @@
 # 복약 챗봇 AI 응답 생성 설계
 
-> 상태: 현재 동기 MVP의 one-cycle 기본 설계다. 최근 대화 문맥은 [최근 대화 3쌍 문맥 설계](chat-recent-context-design.md)를 따르며, 대상 불명확 시 복수 약물 나열을 금지하는 현재 프롬프트는 `chat-prompt-v3`다. Approved v4 Post-MVP-1 목표는 [MFDS 공식 의약품 식별](../../contracts/targets/post-mvp-1/medication-identification-v1.md), [Safety Result](../../contracts/targets/post-mvp-1/safety-result-v1.md), [Async Job](../../contracts/targets/post-mvp-1/async-job-v1.md)을 따른다. OTC는 모델 자체 지식이나 별도 제품 API가 아니라 기존 Chat의 Rule-first·Evidence·Citation·Safety 경로에서 처리한다.
+> 상태: 현재 동기 MVP의 one-cycle 기본 설계다. 최근 대화 문맥은 [최근 대화 3쌍 문맥 설계](chat-recent-context-design.md)를 따르며, 대상 불명확 시 복수 약물 나열을 금지하고 사용자 정정·미해결 확인을 이어받는 현재 프롬프트는 `chat-prompt-v4`다. Approved Contract Freeze v4 Post-MVP-1 목표는 [MFDS 공식 의약품 식별](../../contracts/targets/post-mvp-1/medication-identification-v1.md), [Safety Result](../../contracts/targets/post-mvp-1/safety-result-v1.md), [Async Job](../../contracts/targets/post-mvp-1/async-job-v1.md)을 따른다. OTC는 모델 자체 지식이나 별도 제품 API가 아니라 기존 Chat의 Rule-first·Evidence·Citation·Safety 경로에서 처리한다.
 
 | 항목 | 내용 |
 | --- | --- |
@@ -206,7 +206,7 @@ result = await chat_generator.generate(chat_input)
 
 - `content`: 한국어 평문으로 생성하도록 프롬프트에서 지시한 응답 텍스트. 코드는 앞뒤 공백 제거, 비어 있지 않음과 최대 10,000자 제약만 검증
 - `model_name`: OpenAI 응답에서 확인한 실제 모델 ID, 최대 100자
-- `prompt_version`: `chat-prompt-v3`
+- `prompt_version`: `chat-prompt-v4`
 
 Provider adapter의 내부 반환형 `ProviderChatResponse`는 `content`와 `model_name`만 가진다. `OpenAIResponsesClient`는 SDK 응답 상태와 출력 구조를 검증하고, `ChatGenerator`는 실제 모델명 길이와 최종 결과 제약을 검증한 뒤 `prompt_version`을 추가한다.
 
@@ -263,16 +263,18 @@ response = await client.responses.create(
 6. 응답의 실제 `model`이 문자열인지 확인한다.
 7. 검증을 통과한 `content`와 `model_name`만 `ProviderChatResponse`로 반환한다.
 
-`ChatGenerator`는 생성 시 공백이 아닌 model과 양의 유한값인 timeout을 요구하며, 잘못된 값은 `ChatGenerationConfigurationError`로 처리한다. 생성 요청에는 MVP 고정값 `max_output_tokens=800`을 Provider에 전달하고 전체 wall-clock timeout을 적용한다. Provider 결과의 `content`가 10,000자 이하인지와 `model_name`이 공백이 아닌 100자 이하 문자열인지 확인하고 금지 제어문자를 거부한 뒤 `chat-prompt-v3`를 추가해 `ChatGenerationResult`를 반환한다. 한국어 여부와 HTML·JSON·Markdown 포함 여부는 프롬프트 지시로 제어한다.
+`ChatGenerator`는 생성 시 공백이 아닌 model과 양의 유한값인 timeout을 요구하며, 잘못된 값은 `ChatGenerationConfigurationError`로 처리한다. 생성 요청에는 MVP 고정값 `max_output_tokens=800`을 Provider에 전달하고 전체 wall-clock timeout을 적용한다. Provider 결과의 `content`가 10,000자 이하인지와 `model_name`이 공백이 아닌 100자 이하 문자열인지 확인하고 금지 제어문자를 거부한 뒤 `chat-prompt-v4`를 추가해 `ChatGenerationResult`를 반환한다. 한국어 여부와 HTML·JSON·Markdown 포함 여부는 프롬프트 지시로 제어한다.
 
 Provider 원문 응답과 SDK 타입은 adapter 밖으로 전달하지 않는다.
 
 ## 프롬프트 규칙
 
-프롬프트 버전은 `chat-prompt-v3`로 코드에 명시한다.
+프롬프트 버전은 `chat-prompt-v4`로 코드에 명시한다.
 
 - 사용자의 현재 질문에 한국어로 직접 답한다.
 - 제공된 medications를 사용자가 현재 복용하는 확정 약물 문맥으로 사용한다.
+- 짧거나 생략된 현재 질문은 관련된 최근 USER 발화와 직전 ASSISTANT의 미해결 확인 질문에 연결한다.
+- 가장 최근의 명시적 USER 정정을 우선하고, 이미 question·history·medications에 있는 정보는 다시 묻지 않는다.
 - 일반적인 약효·부작용·상호작용 질문은 모델 자체 지식을 사용할 수 있다.
 - 입력에 없는 정확한 처방 용량·횟수·시점·기간을 현재 사용자의 처방 사실처럼 만들지 않는다.
 - 약의 중단, 증량·감량 또는 복용 시간 변경을 직접 지시하지 않는다.
@@ -360,7 +362,7 @@ Backend Service
 - 선택 필드 생략과 `Decimal` 문자열 직렬화
 - 불완전한 용량 값·단위 쌍을 모두 provider payload에서 생략
 - `gpt-4o`, instructions, `max_output_tokens=800` 전달
-- Provider 결과에 `chat-prompt-v3` 추가
+- Provider 결과에 `chat-prompt-v4` 추가
 - 공백 model과 0 이하·NaN·무한대 timeout을 설정 오류로 거부
 - 10,000자 초과 content와 공백·100자 초과 model ID 거부
 - 전체 wall-clock timeout을 도메인 오류로 변환
@@ -387,7 +389,7 @@ Backend Service
 - `OPENAI_API_KEY`가 설정되어 있어야 한다.
 - `OPENAI_MODEL`은 명시적으로 `gpt-4o`여야 한다.
 - 사용자·처방 식별자가 없는 비식별 합성 질문, 빈 history 배열과 약물만 사용한다.
-- 반환 content가 비어 있지 않고 model ID와 `chat-prompt-v3`가 기록되는지 확인한다.
+- 반환 content가 비어 있지 않고 model ID와 `chat-prompt-v4`가 기록되는지 확인한다.
 - 실제 질문·답변 본문을 로그나 fixture로 저장하지 않는다.
 
 이 스모크 테스트는 API 연결과 one-cycle 생성 형식만 확인한다. 의료 정확도, 근거 일치와 안전성을 통과 기준으로 삼지 않는다.
@@ -454,7 +456,7 @@ AI 담당 PR은 설정 모듈과 환경변수 예시 파일을 수정하지 않�
 - 입력과 출력 계약이 Pydantic 모델로 구현 가능하게 정의되어 있다.
 - 현재 질문, 허용된 history와 확정 약물 정보가 최소 JSON payload로 전달된다.
 - `gpt-4o` 비스트리밍 응답에서 평문 content와 실제 model ID를 추출한다.
-- 결과에 `chat-prompt-v3`가 포함된다.
+- 결과에 `chat-prompt-v4`가 포함된다.
 - OpenAI SDK 타입과 예외가 client adapter 밖으로 노출되지 않는다.
 - timeout, provider 장애, 설정 오류와 잘못된 응답이 구분된다.
 - 관련 단위 테스트가 실제 API Key와 DB 없이 실행된다.

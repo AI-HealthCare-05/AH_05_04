@@ -914,6 +914,7 @@ export function ScheduleOccurrencePage({
   const [reloadVersion, setReloadVersion] = useState(0)
   const [isSaving, setIsSaving] = useState(false)
   const [mutationMessage, setMutationMessage] = useState('')
+  const headingRef = useRef<HTMLHeadingElement>(null)
   const checkinAttemptRef = useRef<
     LogicalMutationAttempt<LogicalMutationOperation, unknown> | null
   >(null)
@@ -977,6 +978,14 @@ export function ScheduleOccurrencePage({
       controller.abort()
     }
   }, [date, occurrenceId, reloadVersion, services, validRoute])
+
+  const loadedOccurrenceId = occurrence?.occurrence_id
+  const loadedMedicationOccurrenceId = medication?.occurrence_id
+  useEffect(() => {
+    if (loadedOccurrenceId && loadedMedicationOccurrenceId) {
+      headingRef.current?.focus()
+    }
+  }, [loadedMedicationOccurrenceId, loadedOccurrenceId])
 
   const submitCheckin = async (status: MedicationCheckinUserStatus) => {
     if (!occurrence || isSaving || occurrence.status === 'CANCELLED') return
@@ -1054,7 +1063,7 @@ export function ScheduleOccurrencePage({
         <main className="app-scroll schedule-page__content schedule-record">
           <header className="schedule-page__intro">
             <p>{isValidLocalDate(date) ? formatLocalDate(date) : '복약 기록'}</p>
-            <h1>복약 기록</h1>
+            <h1 ref={headingRef} tabIndex={-1}>복약 기록</h1>
           </header>
 
           {isLoading && (

@@ -1,5 +1,7 @@
 # #202 종료 준비 감사
 
+> 최종 상태: PR #474 merge SHA `9d8239ff1886327af154db53981ce839191da879`, Backend 최종 승인과 Frontend 인수 승인 후 #202 종료. 아래 표와 실행 결과는 2026-09-13 당시의 준비 감사 기록이다.
+
 | 항목 | 값 |
 | --- | --- |
 | 기준일 | 2026-09-13 |
@@ -16,7 +18,7 @@
 | 일정·Check-in 정상/오류·OpenAPI·소유권·revision | [일정 API 검증](issue-202-schedule-api.md), [Check-in API 검증](issue-202-checkin-api.md), #413/#456 | 최종 develop에서 필수 검사와 관련 테스트 증빙 연결 |
 | setup_reason 단일값·우선순위 | [PD-417](../../governance/decisions/2026-09-10-track-b-schedule-contract.md), #424/#438 | 과거 이슈 댓글의 4값/TBD 대신 승인된 5값 기준으로 완료 기록 |
 | 알림→원래 날짜·읽음/Check-in 분리 | [#468](https://github.com/AI-HealthCare-05/AH_05_04/pull/468) 테스트·fixture | 병합 SHA·최종 CI·인계 수락 증빙 확인 |
-| 과거 약 상세 표시·fixture | [새 Proposed 계약](../../contracts/proposed/track-b-occurrence-medication-v1.md) | 이 브랜치의 구현·HTTP 검증·합성 fixture 제공 완료; 최종 책임 리뷰·소비 인수 필요 |
+| 과거 약 상세 표시·fixture | [현재 계약](../../contracts/current/track-b-occurrence-medication-v1.md) | 당시에는 책임 리뷰·소비 인수 대기였으며 이후 #474 승인·병합과 #202 Frontend 인수로 완료 |
 | 개인정보·접근성·의료 안전 영향 | 조회 최소 필드·SELF 404·no-store·읽기 불변성 | Backend 검증과 소비 검토 기록; 브라우저 UI 검증은 #421/#138 |
 | reason_code 제외 | 기존 #202 계약·DTO·테스트 | 최종 DTO/OpenAPI 정합성 검사와 연결 |
 
