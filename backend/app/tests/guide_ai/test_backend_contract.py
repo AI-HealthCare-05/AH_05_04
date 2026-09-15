@@ -189,9 +189,7 @@ async def test_backend_contract_preserves_medication_order_in_generation_input()
     ]
 
 
-async def test_backend_contract_blocks_guide_after_ownership_and_before_side_effect_when_guide_consent_is_missing() -> (
-    None
-):
+async def test_backend_contract_blocks_guide_without_consent_before_side_effects() -> None:
     prescription = _prescription()
     consent_gate = AsyncMock(spec=ConsentGateService)
     consent_gate.require_for_intake.side_effect = ApiError(
