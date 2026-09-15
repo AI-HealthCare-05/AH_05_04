@@ -8,7 +8,9 @@ PGVECTOR_IMAGE = "pgvector/pgvector:0.8.6-pg17-bookworm"
 
 
 def test_optional_database_roles_must_be_distinct() -> None:
-    from infra.python.provision_database_roles import validate_distinct_role_names
+    from infra.python.provision_database_roles import RUNTIME_LIFESTYLE_TABLES, validate_distinct_role_names
+
+    assert RUNTIME_LIFESTYLE_TABLES == {"lifestyle_times"}
 
     validate_distinct_role_names("admin", "owner", "runtime", "writer", None, "index-builder")
 

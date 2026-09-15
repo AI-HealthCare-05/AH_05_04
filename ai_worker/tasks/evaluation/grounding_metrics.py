@@ -368,12 +368,12 @@ def build_grounding_metrics(  # noqa: C901
         if obs_evidence_ids != actual_citations:
             obs_integrity_invalid = True
             break
-        # Citation key uniqueness per claim and claim_key binding
+        # Citation key uniqueness across the observation and claim_key binding
+        citation_keys = [edge.citation_key for claim_item in obs.claims for edge in claim_item.citations]
+        if len(citation_keys) != len(set(citation_keys)):
+            obs_integrity_invalid = True
+            break
         for claim_item in obs.claims:
-            cit_keys = [edge.citation_key for edge in claim_item.citations]
-            if len(cit_keys) != len(set(cit_keys)):
-                obs_integrity_invalid = True
-                break
             if any(edge.claim_key != claim_item.claim_key for edge in claim_item.citations):
                 obs_integrity_invalid = True
                 break

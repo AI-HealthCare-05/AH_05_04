@@ -29,6 +29,7 @@ from ai_worker.tasks.rag.evidence_rank_fusion import (
     FractionReceipt,
     HybridFusionCandidate,
     LexicalCandidateInput,
+    LexicalFusionCandidate,
     StableCoordinate,
     fuse_hybrid_rrf,
     fuse_lexical_subsearches,
@@ -42,6 +43,9 @@ from ai_worker.tasks.rag.evidence_search import (
     EvidenceSearchSuccess,
     ProductionEvidenceProvenance,
     ProductionSearchHit,
+    ProductionSearchMethod,
+    ProductionSearchSignal,
+    RetrievalExecutionMode,
     format_observed_score,
     validate_search_request,
 )
@@ -206,6 +210,118 @@ class _IndexMetadata:
     embedding_model_version: str
 
 
+def _to_production_provenance(p: _InternalProvenance) -> ProductionEvidenceProvenance:
+    return ProductionEvidenceProvenance(
+        knowledge_index_id=p.knowledge_index_id,
+        index_code=p.index_code,
+        index_version=p.index_version,
+        index_configuration_hash=p.index_configuration_hash,
+        knowledge_chunk_id=p.knowledge_chunk_id,
+        source_snapshot_id=p.source_snapshot_id,
+        source_snapshot_member_id=p.source_snapshot_member_id,
+        source_code=p.source_code,
+        source_version=p.source_version,
+        canonical_checksum=p.canonical_checksum,
+        external_document_id=p.external_document_id,
+        chunk_index=p.chunk_index,
+        locator=p.locator,
+        content_hash=p.content_hash,
+        canonicalization_spec_version=p.canonicalization_spec_version,
+        normalization_version=p.normalization_version,
+    )
+
+
+def _collect_signals(
+    *,
+    exact_records: list[_SubsearchRecord],
+    trigram_records: list[_SubsearchRecord],
+    fts_records: list[_SubsearchRecord],
+    dense_records: list[_DenseRecord],
+    fused_lexical: Sequence[LexicalFusionCandidate],
+    provenance_map: dict[tuple[str, str, str, int], _InternalProvenance],
+) -> tuple[ProductionSearchSignal, ...]:
+    raw_signals: list[ProductionSearchSignal] = []
+
+    for rank, rec in enumerate(exact_records, start=1):
+        key = (rec.source_code, rec.source_version, rec.external_document_id, rec.chunk_index)
+        p = provenance_map[key]
+        raw_signals.append(
+            ProductionSearchSignal(
+                provenance=_to_production_provenance(p),
+                method=ProductionSearchMethod.EXACT,
+                raw_rank=rank,
+                observed_score="1",
+            )
+        )
+
+    for rank, rec in enumerate(trigram_records, start=1):
+        key = (rec.source_code, rec.source_version, rec.external_document_id, rec.chunk_index)
+        p = provenance_map[key]
+        raw_signals.append(
+            ProductionSearchSignal(
+                provenance=_to_production_provenance(p),
+                method=ProductionSearchMethod.TRIGRAM,
+                raw_rank=rank,
+                observed_score=format_observed_score(rec.score),
+            )
+        )
+
+    for rank, rec in enumerate(fts_records, start=1):
+        key = (rec.source_code, rec.source_version, rec.external_document_id, rec.chunk_index)
+        p = provenance_map[key]
+        raw_signals.append(
+            ProductionSearchSignal(
+                provenance=_to_production_provenance(p),
+                method=ProductionSearchMethod.FTS,
+                raw_rank=rank,
+                observed_score=format_observed_score(rec.score),
+            )
+        )
+
+    for rank, d in enumerate(dense_records, start=1):
+        key = (d.source_code, d.source_version, d.external_document_id, d.chunk_index)
+        p = provenance_map[key]
+        raw_signals.append(
+            ProductionSearchSignal(
+                provenance=_to_production_provenance(p),
+                method=ProductionSearchMethod.DENSE,
+                raw_rank=rank,
+                observed_score=format_observed_score(d.similarity),
+            )
+        )
+
+    for c in fused_lexical:
+        key = (
+            c.coordinate.source_code,
+            c.coordinate.source_version,
+            c.coordinate.external_document_id,
+            c.coordinate.chunk_index,
+        )
+        p = provenance_map[key]
+        score_dec = "1" if c.is_exact else format_observed_score(c.raw_trigram_score or 0.0)
+        raw_signals.append(
+            ProductionSearchSignal(
+                provenance=_to_production_provenance(p),
+                method=ProductionSearchMethod.LEXICAL,
+                raw_rank=c.lexical_rank,
+                observed_score=score_dec,
+            )
+        )
+
+    def _sig_sort_key(s: ProductionSearchSignal) -> tuple[str, int, bytes, bytes, bytes, int]:
+        return (
+            s.method.value,
+            s.raw_rank,
+            s.provenance.source_code.encode("utf-8"),
+            s.provenance.source_version.encode("utf-8"),
+            s.provenance.external_document_id.encode("utf-8"),
+            s.provenance.chunk_index,
+        )
+
+    raw_signals.sort(key=_sig_sort_key)
+    return tuple(raw_signals)
+
+
 class PostgresqlEvidenceSearchAdapter:
     """Production Knowledge Evidence Search port implementation using PostgreSQL."""
 
@@ -226,55 +342,20 @@ class PostgresqlEvidenceSearchAdapter:
             return val_failure
 
         binding = request.execution_binding
-        dense_active = binding.retrieval_config.dense_config is not None and binding.retrieval_config.dense_limit > 0
+        mode = binding.retrieval_config.execution_mode
+        dense_active = mode in (RetrievalExecutionMode.DENSE_ONLY, RetrievalExecutionMode.HYBRID_RRF)
+        lexical_active = mode in (RetrievalExecutionMode.LEXICAL_ONLY, RetrievalExecutionMode.HYBRID_RRF)
 
         try:
-            async with self._session_factory() as session, session.begin():
-                await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
-                trigram_th = binding.retrieval_config.lexical_config.trigram_threshold
-                await session.execute(
-                    text("SELECT set_config('pg_trgm.similarity_threshold', :th, true)"),
-                    {"th": trigram_th},
-                )
-
-                index_meta = await self._fetch_and_validate_index(session, binding)
-                if isinstance(index_meta, EvidenceSearchFailure):
-                    return index_meta
-
-                if dense_active:
-                    assert request.query_embedding_receipt is not None
-                    receipt = request.query_embedding_receipt
-                    if (
-                        receipt.dimension != index_meta.embedding_dimension
-                        or receipt.model_ref != index_meta.embedding_model_ref
-                        or receipt.model_version != index_meta.embedding_model_version
-                    ):
-                        return EvidenceSearchFailure(EvidenceSearchFailureReason.QUERY_EMBEDDING_INVALID)
-
-                lex_res = await self._execute_lexical_searches(
-                    session,
-                    binding,
-                    request.normalized_query.reveal(),
-                    index_meta,
-                )
-                if isinstance(lex_res, EvidenceSearchFailure):
-                    return lex_res
-                exact_records, trigram_records, fts_records, provenance_map = lex_res
-
-                dense_records: list[_DenseRecord] = []
-                if dense_active:
-                    assert request.query_embedding_receipt is not None
-                    dense_res = await self._execute_dense_search(
-                        session,
-                        binding,
-                        request.query_embedding_receipt.embedding.reveal(),
-                        index_meta,
-                        provenance_map,
-                    )
-                    if isinstance(dense_res, EvidenceSearchFailure):
-                        return dense_res
-                    dense_records = dense_res
-
+            tx_res = await self._execute_search_transaction(
+                binding=binding,
+                request=request,
+                dense_active=dense_active,
+                lexical_active=lexical_active,
+            )
+            if isinstance(tx_res, EvidenceSearchFailure):
+                return tx_res
+            exact_records, trigram_records, fts_records, dense_records, provenance_map = tx_res
         except Exception as exc:
             logger.error("Evidence search failed with database exception: %s", exc.__class__.__name__)
             return EvidenceSearchFailure(EvidenceSearchFailureReason.LEXICAL_DEPENDENCY_ERROR)
@@ -289,6 +370,187 @@ class PostgresqlEvidenceSearchAdapter:
             provenance_map=provenance_map,
         )
 
+    async def _execute_search_transaction(
+        self,
+        binding: EvidenceSearchExecutionBinding,
+        request: EvidenceSearchRequest,
+        *,
+        dense_active: bool,
+        lexical_active: bool,
+    ) -> (
+        tuple[
+            list[_SubsearchRecord],
+            list[_SubsearchRecord],
+            list[_SubsearchRecord],
+            list[_DenseRecord],
+            dict[tuple[str, str, str, int], _InternalProvenance],
+        ]
+        | EvidenceSearchFailure
+    ):
+        async with self._session_factory() as session, session.begin():
+            await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+            if lexical_active:
+                trigram_th = binding.retrieval_config.lexical_config.trigram_threshold
+                await session.execute(
+                    text("SELECT set_config('pg_trgm.similarity_threshold', :th, true)"),
+                    {"th": trigram_th},
+                )
+
+            index_meta = await self._fetch_and_validate_index(session, binding)
+            if isinstance(index_meta, EvidenceSearchFailure):
+                return index_meta
+
+            if dense_active:
+                assert request.query_embedding_receipt is not None
+                receipt = request.query_embedding_receipt
+                if (
+                    receipt.dimension != index_meta.embedding_dimension
+                    or receipt.model_ref != index_meta.embedding_model_ref
+                    or receipt.model_version != index_meta.embedding_model_version
+                ):
+                    return EvidenceSearchFailure(EvidenceSearchFailureReason.QUERY_EMBEDDING_INVALID)
+
+            exact_records: list[_SubsearchRecord] = []
+            trigram_records: list[_SubsearchRecord] = []
+            fts_records: list[_SubsearchRecord] = []
+            provenance_map: dict[tuple[str, str, str, int], _InternalProvenance] = {}
+
+            if lexical_active:
+                lex_res = await self._execute_lexical_searches(
+                    session,
+                    binding,
+                    request.normalized_query.reveal(),
+                    index_meta,
+                )
+                if isinstance(lex_res, EvidenceSearchFailure):
+                    return lex_res
+                exact_records, trigram_records, fts_records, provenance_map = lex_res
+
+            dense_records: list[_DenseRecord] = []
+            if dense_active:
+                assert request.query_embedding_receipt is not None
+                dense_res = await self._execute_dense_search(
+                    session,
+                    binding,
+                    request.query_embedding_receipt.embedding.reveal(),
+                    index_meta,
+                    provenance_map,
+                )
+                if isinstance(dense_res, EvidenceSearchFailure):
+                    return dense_res
+                dense_records = dense_res
+
+            return exact_records, trigram_records, fts_records, dense_records, provenance_map
+
+    def _create_search_hit(
+        self,
+        *,
+        coord: StableCoordinate,
+        fusion_rank: int,
+        frac_receipt: FractionReceipt,
+        is_eligible: bool,
+        lex_rank: int | None = None,
+        dense_rank: int | None = None,
+        provenance_map: dict[tuple[str, str, str, int], _InternalProvenance],
+        query_text: str,
+        trigram_score_map: dict[tuple[str, str, str, int], float],
+        fts_score_map: dict[tuple[str, str, str, int], float],
+        dense_signals: dict[tuple[str, str, str, int], CandidateStageSignal],
+    ) -> ProductionSearchHit:
+        key = (coord.source_code, coord.source_version, coord.external_document_id, coord.chunk_index)
+        p = provenance_map[key]
+        prov = _to_production_provenance(p)
+        is_exact = query_text in p.chunk_text
+        trig_score = trigram_score_map.get(key)
+        fts_score = fts_score_map.get(key)
+        dense_sig = dense_signals.get(key)
+        return ProductionSearchHit(
+            provenance=prov,
+            coordinate=coord,
+            exact_hit=is_exact,
+            observed_trigram_score=format_observed_score(trig_score) if trig_score is not None else None,
+            observed_fts_score=format_observed_score(fts_score) if fts_score is not None else None,
+            observed_dense_score=dense_sig.score_decimal if dense_sig is not None else None,
+            lexical_rank=lex_rank,
+            dense_rank=dense_rank,
+            fusion_rank=fusion_rank,
+            fraction_receipt=frac_receipt,
+            is_eligible_for_future_reranker=is_eligible,
+        )
+
+    def _resolve_hybrid_hits(
+        self,
+        *,
+        mode: RetrievalExecutionMode,
+        lexical_hits: tuple[ProductionSearchHit, ...],
+        dense_hits: tuple[ProductionSearchHit, ...],
+        fused_lexical: Sequence[LexicalFusionCandidate],
+        all_lexical_coords: set[tuple[str, str, str, int]],
+        dense_signals: dict[tuple[str, str, str, int], CandidateStageSignal],
+        binding: EvidenceSearchExecutionBinding,
+        provenance_map: dict[tuple[str, str, str, int], _InternalProvenance],
+        query_text: str,
+        trigram_score_map: dict[tuple[str, str, str, int], float],
+        fts_score_map: dict[tuple[str, str, str, int], float],
+    ) -> tuple[ProductionSearchHit, ...]:
+        if mode == RetrievalExecutionMode.LEXICAL_ONLY:
+            return lexical_hits
+        if mode == RetrievalExecutionMode.DENSE_ONLY:
+            return dense_hits
+
+        all_candidate_coords = all_lexical_coords | set(dense_signals.keys())
+        lexical_signals = {
+            (
+                c.coordinate.source_code,
+                c.coordinate.source_version,
+                c.coordinate.external_document_id,
+                c.coordinate.chunk_index,
+            ): CandidateStageSignal(
+                rank=c.lexical_rank,
+                score_decimal="1" if c.is_exact else format_observed_score(c.raw_trigram_score or 0.0),
+            )
+            for c in fused_lexical
+        }
+
+        hybrid_inputs = [
+            HybridFusionCandidate(
+                coordinate=StableCoordinate(
+                    source_code=provenance_map[k].source_code,
+                    source_version=provenance_map[k].source_version,
+                    external_document_id=provenance_map[k].external_document_id,
+                    chunk_index=provenance_map[k].chunk_index,
+                ),
+                content_hash=provenance_map[k].content_hash,
+                lexical_signal=lexical_signals.get(k),
+                dense_signal=dense_signals.get(k),
+            )
+            for k in all_candidate_coords
+        ]
+
+        fused_hybrid = fuse_hybrid_rrf(
+            hybrid_inputs,
+            rrf_k=binding.retrieval_config.rrf_k,
+            hybrid_limit=binding.retrieval_config.hybrid_limit,
+            reranker_input_limit=binding.retrieval_config.future_reranker_input_limit,
+        )
+
+        return tuple(
+            self._create_search_hit(
+                coord=h.coordinate,
+                fusion_rank=h.fusion_rank,
+                frac_receipt=h.fraction_receipt,
+                is_eligible=h.is_eligible_for_future_reranker,
+                lex_rank=h.lexical_signal.rank if h.lexical_signal else None,
+                dense_rank=h.dense_signal.rank if h.dense_signal else None,
+                provenance_map=provenance_map,
+                query_text=query_text,
+                trigram_score_map=trigram_score_map,
+                fts_score_map=fts_score_map,
+                dense_signals=dense_signals,
+            )
+            for h in fused_hybrid
+        )
+
     def _fuse_and_build_hits(
         self,
         request: EvidenceSearchRequest,
@@ -300,6 +562,7 @@ class PostgresqlEvidenceSearchAdapter:
         provenance_map: dict[tuple[str, str, str, int], _InternalProvenance],
     ) -> EvidenceSearchSuccess | EvidenceSearchFailure:
         query_text = request.normalized_query.reveal()
+        mode = binding.retrieval_config.execution_mode
         try:
             all_lexical_coords: set[tuple[str, str, str, int]] = {
                 (r.source_code, r.source_version, r.external_document_id, r.chunk_index)
@@ -313,132 +576,68 @@ class PostgresqlEvidenceSearchAdapter:
                 (r.source_code, r.source_version, r.external_document_id, r.chunk_index): r.score for r in fts_records
             }
 
-            lexical_inputs = [
-                LexicalCandidateInput(
-                    coordinate=StableCoordinate(
-                        source_code=provenance_map[k].source_code,
-                        source_version=provenance_map[k].source_version,
-                        external_document_id=provenance_map[k].external_document_id,
-                        chunk_index=provenance_map[k].chunk_index,
-                    ),
-                    content_hash=provenance_map[k].content_hash,
-                    is_exact=query_text in provenance_map[k].chunk_text,
-                    trigram_score=trigram_score_map.get(k),
-                    fts_score=fts_score_map.get(k),
-                )
-                for k in all_lexical_coords
-            ]
+            fused_lexical = []
+            if mode in (RetrievalExecutionMode.LEXICAL_ONLY, RetrievalExecutionMode.HYBRID_RRF):
+                lexical_inputs = [
+                    LexicalCandidateInput(
+                        coordinate=StableCoordinate(
+                            source_code=provenance_map[k].source_code,
+                            source_version=provenance_map[k].source_version,
+                            external_document_id=provenance_map[k].external_document_id,
+                            chunk_index=provenance_map[k].chunk_index,
+                        ),
+                        content_hash=provenance_map[k].content_hash,
+                        is_exact=query_text in provenance_map[k].chunk_text,
+                        trigram_score=trigram_score_map.get(k),
+                        fts_score=fts_score_map.get(k),
+                    )
+                    for k in all_lexical_coords
+                ]
 
-            fused_lexical = fuse_lexical_subsearches(
-                lexical_inputs,
-                limit=binding.retrieval_config.lexical_limit,
-                rrf_k=binding.retrieval_config.rrf_k,
+                fused_lexical = fuse_lexical_subsearches(
+                    lexical_inputs,
+                    limit=binding.retrieval_config.lexical_limit,
+                    rrf_k=binding.retrieval_config.rrf_k,
+                )
+
+            dense_signals: dict[tuple[str, str, str, int], CandidateStageSignal] = {}
+            if mode in (RetrievalExecutionMode.DENSE_ONLY, RetrievalExecutionMode.HYBRID_RRF):
+                for rank, d in enumerate(dense_records, start=1):
+                    key = (d.source_code, d.source_version, d.external_document_id, d.chunk_index)
+                    dense_signals[key] = CandidateStageSignal(
+                        rank=rank,
+                        score_decimal=format_observed_score(d.similarity),
+                    )
+
+            signals = _collect_signals(
+                exact_records=exact_records,
+                trigram_records=trigram_records,
+                fts_records=fts_records,
+                dense_records=dense_records,
+                fused_lexical=fused_lexical,
+                provenance_map=provenance_map,
             )
-
-            dense_signals: dict[tuple[str, str, str, int], CandidateStageSignal] = {
-                (d.source_code, d.source_version, d.external_document_id, d.chunk_index): CandidateStageSignal(
-                    rank=rank,
-                    score_decimal=format_observed_score(d.similarity),
-                )
-                for rank, d in enumerate(dense_records, start=1)
-            }
-
-            all_candidate_coords = all_lexical_coords | set(dense_signals.keys())
-            lexical_signals = {
-                (
-                    c.coordinate.source_code,
-                    c.coordinate.source_version,
-                    c.coordinate.external_document_id,
-                    c.coordinate.chunk_index,
-                ): CandidateStageSignal(
-                    rank=c.lexical_rank,
-                    score_decimal="1" if c.is_exact else format_observed_score(c.raw_trigram_score or 0.0),
-                )
-                for c in fused_lexical
-            }
-
-            hybrid_inputs = [
-                HybridFusionCandidate(
-                    coordinate=StableCoordinate(
-                        source_code=provenance_map[k].source_code,
-                        source_version=provenance_map[k].source_version,
-                        external_document_id=provenance_map[k].external_document_id,
-                        chunk_index=provenance_map[k].chunk_index,
-                    ),
-                    content_hash=provenance_map[k].content_hash,
-                    lexical_signal=lexical_signals.get(k),
-                    dense_signal=dense_signals.get(k),
-                )
-                for k in all_candidate_coords
-            ]
-
-            fused_hybrid = fuse_hybrid_rrf(
-                hybrid_inputs,
-                rrf_k=binding.retrieval_config.rrf_k,
-                hybrid_limit=binding.retrieval_config.hybrid_limit,
-                reranker_input_limit=binding.retrieval_config.future_reranker_input_limit,
-            )
-
-            def _build_hit(
-                coord: StableCoordinate,
-                fusion_rank: int,
-                frac_receipt: FractionReceipt,
-                is_eligible: bool,
-                lex_rank: int | None = None,
-                dense_rank: int | None = None,
-            ) -> ProductionSearchHit:
-                key = (coord.source_code, coord.source_version, coord.external_document_id, coord.chunk_index)
-                p = provenance_map[key]
-                prov = ProductionEvidenceProvenance(
-                    knowledge_index_id=p.knowledge_index_id,
-                    index_code=p.index_code,
-                    index_version=p.index_version,
-                    index_configuration_hash=p.index_configuration_hash,
-                    knowledge_chunk_id=p.knowledge_chunk_id,
-                    source_snapshot_id=p.source_snapshot_id,
-                    source_snapshot_member_id=p.source_snapshot_member_id,
-                    source_code=p.source_code,
-                    source_version=p.source_version,
-                    canonical_checksum=p.canonical_checksum,
-                    external_document_id=p.external_document_id,
-                    chunk_index=p.chunk_index,
-                    locator=p.locator,
-                    content_hash=p.content_hash,
-                    canonicalization_spec_version=p.canonicalization_spec_version,
-                    normalization_version=p.normalization_version,
-                )
-                is_exact = query_text in p.chunk_text
-                trig_score = trigram_score_map.get(key)
-                fts_score = fts_score_map.get(key)
-                dense_sig = dense_signals.get(key)
-                return ProductionSearchHit(
-                    provenance=prov,
-                    coordinate=coord,
-                    exact_hit=is_exact,
-                    observed_trigram_score=format_observed_score(trig_score) if trig_score is not None else None,
-                    observed_fts_score=format_observed_score(fts_score) if fts_score is not None else None,
-                    observed_dense_score=dense_sig.score_decimal if dense_sig is not None else None,
-                    lexical_rank=lex_rank,
-                    dense_rank=dense_rank,
-                    fusion_rank=fusion_rank,
-                    fraction_receipt=frac_receipt,
-                    is_eligible_for_future_reranker=is_eligible,
-                )
 
             lexical_hits = tuple(
-                _build_hit(
-                    c.coordinate,
+                self._create_search_hit(
+                    coord=c.coordinate,
                     fusion_rank=c.lexical_rank,
                     frac_receipt=c.fraction_receipt,
                     is_eligible=c.lexical_rank <= binding.retrieval_config.future_reranker_input_limit,
                     lex_rank=c.lexical_rank,
+                    dense_rank=None,
+                    provenance_map=provenance_map,
+                    query_text=query_text,
+                    trigram_score_map=trigram_score_map,
+                    fts_score_map=fts_score_map,
+                    dense_signals=dense_signals,
                 )
                 for c in fused_lexical
             )
 
             dense_hits = tuple(
-                _build_hit(
-                    StableCoordinate(
+                self._create_search_hit(
+                    coord=StableCoordinate(
                         source_code=d.source_code,
                         source_version=d.source_version,
                         external_document_id=d.external_document_id,
@@ -447,21 +646,29 @@ class PostgresqlEvidenceSearchAdapter:
                     fusion_rank=r,
                     frac_receipt=FractionReceipt(numerator="1", denominator=str(binding.retrieval_config.rrf_k + r)),
                     is_eligible=r <= binding.retrieval_config.future_reranker_input_limit,
+                    lex_rank=None,
                     dense_rank=r,
+                    provenance_map=provenance_map,
+                    query_text=query_text,
+                    trigram_score_map=trigram_score_map,
+                    fts_score_map=fts_score_map,
+                    dense_signals=dense_signals,
                 )
                 for r, d in enumerate(dense_records, start=1)
             )
 
-            hybrid_hits = tuple(
-                _build_hit(
-                    h.coordinate,
-                    fusion_rank=h.fusion_rank,
-                    frac_receipt=h.fraction_receipt,
-                    is_eligible=h.is_eligible_for_future_reranker,
-                    lex_rank=h.lexical_signal.rank if h.lexical_signal else None,
-                    dense_rank=h.dense_signal.rank if h.dense_signal else None,
-                )
-                for h in fused_hybrid
+            hybrid_hits = self._resolve_hybrid_hits(
+                mode=mode,
+                lexical_hits=lexical_hits,
+                dense_hits=dense_hits,
+                fused_lexical=fused_lexical,
+                all_lexical_coords=all_lexical_coords,
+                dense_signals=dense_signals,
+                binding=binding,
+                provenance_map=provenance_map,
+                query_text=query_text,
+                trigram_score_map=trigram_score_map,
+                fts_score_map=fts_score_map,
             )
 
             return EvidenceSearchSuccess(
@@ -470,6 +677,7 @@ class PostgresqlEvidenceSearchAdapter:
                 lexical_hits=lexical_hits,
                 dense_hits=dense_hits,
                 hybrid_hits=hybrid_hits,
+                signals=signals,
             )
 
         except EvidenceFusionError as e:
