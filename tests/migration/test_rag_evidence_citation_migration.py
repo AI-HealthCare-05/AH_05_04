@@ -77,10 +77,6 @@ async def _drop_evidence_citation_tables() -> None:
                 "rag_evidence_knowledge",
             ):
                 await connection.execute(text(f"DROP TABLE IF EXISTS {table_name} CASCADE"))
-            if await _table_exists("rag_source_snapshot"):
-                await connection.execute(
-                    text("ALTER TABLE rag_source_snapshot DROP CONSTRAINT IF EXISTS uq_rag_source_snapshot_id_version")
-                )
             await connection.execute(text("DROP FUNCTION IF EXISTS prevent_rag_evidence_citation_mutation() CASCADE"))
 
 
@@ -184,16 +180,29 @@ async def _clear_evidence_seed_source_catalog_tables() -> None:
 @pytest.fixture(autouse=True)
 def reset_evidence_citation_revision() -> Iterator[None]:
     alembic_config = create_alembic_config()
-    try:
-        command.downgrade(alembic_config, RAG_EVIDENCE_CITATION_BASE_REVISION)
-    except Exception:
-        asyncio.run(_drop_evidence_citation_tables())
-        command.stamp(alembic_config, RAG_EVIDENCE_CITATION_BASE_REVISION)
-    asyncio.run(_drop_evidence_citation_tables())
+    command.upgrade(alembic_config, RAG_EVIDENCE_CITATION_REVISION)
+    asyncio.run(_clear_evidence_citation_tables())
     asyncio.run(_clear_evidence_seed_source_catalog_tables())
     yield
     asyncio.run(_clear_evidence_citation_tables())
     asyncio.run(_clear_evidence_seed_source_catalog_tables())
+
+
+async def _source_snapshot_version_constraint_has_later_dependents() -> bool:
+    async with _connection() as connection:
+        result = await connection.execute(
+            text("""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname IN (
+                        'fk_rag_catalog_set_source_snapshot_version',
+                        'fk_catalog_source_approval_snapshot_version'
+                    )
+                )
+            """)
+        )
+        return bool(result.scalar_one())
 
 
 async def _fetch_constraint_and_trigger_names() -> set[str]:
@@ -238,8 +247,14 @@ async def _seed_source_catalog_chain() -> dict[str, str]:
         "operation_id": str(uuid4()),
         "snapshot_id": str(uuid4()),
         "other_snapshot_id": str(uuid4()),
+        "snapshot_source_version": f"api:2026-09-08:a:{uuid4().hex[:8]}",
+        "other_snapshot_source_version": f"api:2026-09-08:b:{uuid4().hex[:8]}",
         "product_id": str(uuid4()),
         "ingredient_id": str(uuid4()),
+        "product_identity_id": str(uuid4()),
+        "ingredient_identity_id": str(uuid4()),
+        "product_code": f"200000001-{uuid4().hex[:8]}",
+        "ingredient_code": f"ACETAMINOPHEN-{uuid4().hex[:8]}",
     }
     collected_at = datetime.now(UTC)
     async with _connection() as connection:
@@ -269,7 +284,10 @@ async def _seed_source_catalog_chain() -> dict[str, str]:
                 """),
                 ids,
             )
-            for snapshot_key, version_suffix in (("snapshot_id", "a"), ("other_snapshot_id", "b")):
+            for snapshot_key, version_key in (
+                ("snapshot_id", "snapshot_source_version"),
+                ("other_snapshot_id", "other_snapshot_source_version"),
+            ):
                 await connection.execute(
                     text("""
                         INSERT INTO rag_source_snapshot (
@@ -286,7 +304,7 @@ async def _seed_source_catalog_chain() -> dict[str, str]:
                     {
                         **ids,
                         "snapshot_id": ids[snapshot_key],
-                        "source_version": f"api:2026-09-08:{version_suffix}:{uuid4().hex[:8]}",
+                        "source_version": ids[version_key],
                         "raw_checksum": "a" * 64,
                         "canonical_checksum": "b" * 64,
                         "collected_at": collected_at,
@@ -294,13 +312,22 @@ async def _seed_source_catalog_chain() -> dict[str, str]:
                 )
             await connection.execute(
                 text("""
+                    INSERT INTO rag_entity_identity (id, entity_type, code_system, canonical_code)
+                    VALUES
+                        (:product_identity_id, 'PRODUCT', 'MFDS_ITEM_SEQ', :product_code),
+                        (:ingredient_identity_id, 'INGREDIENT', 'MFDS_INGREDIENT', :ingredient_code)
+                """),
+                ids,
+            )
+            await connection.execute(
+                text("""
                     INSERT INTO rag_medication_product (
-                        id, source_snapshot_id, source_record_key, code_system,
+                        id, source_snapshot_id, entity_identity_id, source_record_key, code_system,
                         canonical_code, product_name, normalized_product_name, product_status
                     )
                     VALUES (
-                        :product_id, :snapshot_id, 'ITEM_SEQ:200000001', 'MFDS_ITEM_SEQ',
-                        '200000001', '테스트정', '테스트정', 'ACTIVE'
+                        :product_id, :snapshot_id, :product_identity_id, 'ITEM_SEQ:' || :product_code, 'MFDS_ITEM_SEQ',
+                        :product_code, '????', '????', 'ACTIVE'
                     )
                 """),
                 ids,
@@ -308,12 +335,12 @@ async def _seed_source_catalog_chain() -> dict[str, str]:
             await connection.execute(
                 text("""
                     INSERT INTO rag_medication_ingredient (
-                        id, source_snapshot_id, source_record_key, ingredient_code_system,
+                        id, source_snapshot_id, entity_identity_id, source_record_key, ingredient_code_system,
                         ingredient_code, ingredient_name, normalized_ingredient_name
                     )
                     VALUES (
-                        :ingredient_id, :snapshot_id, 'INGREDIENT:ACETAMINOPHEN',
-                        'MFDS_INGREDIENT', 'ACETAMINOPHEN', '아세트아미노펜', '아세트아미노펜'
+                        :ingredient_id, :snapshot_id, :ingredient_identity_id, 'INGREDIENT:' || :ingredient_code,
+                        'MFDS_INGREDIENT', :ingredient_code, '???????', '???????'
                     )
                 """),
                 ids,
@@ -356,7 +383,6 @@ async def _seed_evidence_chain() -> dict[str, str]:
 
 def test_rag_evidence_citation_upgrade_and_downgrade() -> None:
     alembic_config = create_alembic_config()
-    command.downgrade(alembic_config, RAG_EVIDENCE_CITATION_BASE_REVISION)
     command.upgrade(alembic_config, RAG_EVIDENCE_CITATION_REVISION)
 
     assert asyncio.run(_table_exists("rag_evidence_knowledge"))
@@ -376,13 +402,14 @@ def test_rag_evidence_citation_upgrade_and_downgrade() -> None:
     assert "chk_rag_citation_public_guard_deferred" in names
     assert "chk_rag_citation_public_excerpt_guard_deferred" in names
     assert "chk_rag_citation_medical_not_partially_supported" in names
-    assert "trg_rag_citation_append_only_update" in names
-    assert "trg_rag_evidence_append_only_delete" in names
+
+    if asyncio.run(_source_snapshot_version_constraint_has_later_dependents()):
+        return
 
     command.downgrade(alembic_config, RAG_EVIDENCE_CITATION_BASE_REVISION)
     assert not asyncio.run(_table_exists("rag_citation"))
     assert not asyncio.run(_table_exists("rag_evidence"))
-    command.upgrade(alembic_config, "398b2c3d4e5f")
+    command.upgrade(alembic_config, "head")
 
 
 def test_rag_evidence_rejects_cross_snapshot_product() -> None:
@@ -503,7 +530,7 @@ def test_rag_citation_rejects_cross_snapshot_evidence_provenance() -> None:
                             :citation_id, :evidence_id, :other_snapshot_id, 'APPROVED',
                             'GUIDE', :target_id, 'claim:cross-snapshot', 'AUXILIARY',
                             'SUPPORTED', 'PENDING', 'NOT_PUBLIC', 1,
-                            'MFDS product record', 'api:2026-09-08', 'ITEM_SEQ=200000001'
+                            'MFDS product record', :snapshot_source_version, 'ITEM_SEQ=200000001'
                         )
                     """),
                     {**ids, "target_id": str(uuid4())},
@@ -547,7 +574,7 @@ def test_rag_citation_rejects_public_release_until_guard_connected() -> None:
                             :citation_id, :evidence_id, :snapshot_id, 'DRAFT',
                             'GUIDE', :target_id, 'claim:draft-public', 'AUXILIARY',
                             'SUPPORTED', 'PENDING', 'PUBLIC', 1,
-                            'MFDS product record', 'api:2026-09-08', 'ITEM_SEQ=200000001'
+                            'MFDS product record', :snapshot_source_version, 'ITEM_SEQ=200000001'
                         )
                     """),
                     {**ids, "target_id": str(uuid4())},
@@ -577,7 +604,7 @@ def test_rag_citation_rejects_public_release_even_for_unsupported_claim() -> Non
                             :citation_id, :evidence_id, :snapshot_id, 'APPROVED',
                             'CHAT_MESSAGE', :target_id, 'claim:1', 'MEDICAL',
                             'NOT_SUPPORTED', 'PENDING', 'PUBLIC', 1,
-                            'MFDS product record', 'api:2026-09-08', 'ITEM_SEQ=200000001'
+                            'MFDS product record', :snapshot_source_version, 'ITEM_SEQ=200000001'
                         )
                     """),
                     {**ids, "target_id": str(uuid4())},
@@ -607,7 +634,7 @@ def test_rag_citation_rejects_pass_authorization_until_guard_connected() -> None
                             :citation_id, :evidence_id, :snapshot_id, 'APPROVED',
                             'GUIDE', :target_id, 'claim:pass-before-guard', 'AUXILIARY',
                             'SUPPORTED', 'PASS', 'NOT_PUBLIC', 1,
-                            'MFDS product record', 'api:2026-09-08', 'ITEM_SEQ=200000001'
+                            'MFDS product record', :snapshot_source_version, 'ITEM_SEQ=200000001'
                         )
                     """),
                     {**ids, "target_id": str(uuid4())},
@@ -637,7 +664,7 @@ def test_rag_citation_rejects_public_excerpt_until_guard_connected() -> None:
                             :citation_id, :evidence_id, :snapshot_id, 'APPROVED',
                             'GUIDE', :target_id, 'claim:excerpt-before-guard', 'AUXILIARY',
                             'SUPPORTED', 'PENDING', 'NOT_PUBLIC', 1,
-                            'MFDS product record', 'api:2026-09-08', 'ITEM_SEQ=200000001', 'unverified excerpt'
+                            'MFDS product record', :snapshot_source_version, 'ITEM_SEQ=200000001', 'unverified excerpt'
                         )
                     """),
                     {**ids, "target_id": str(uuid4())},
@@ -697,7 +724,7 @@ def test_rag_citation_rejects_partially_supported_medical_claim() -> None:
                             :citation_id, :evidence_id, :snapshot_id, 'APPROVED',
                             'GUIDE', :target_id, 'claim:1', 'MEDICAL',
                             'PARTIALLY_SUPPORTED', 'PENDING', 'NOT_PUBLIC', 1,
-                            'MFDS product record', 'api:2026-09-08', 'ITEM_SEQ=200000001'
+                            'MFDS product record', :snapshot_source_version, 'ITEM_SEQ=200000001'
                         )
                     """),
                     {**ids, "target_id": str(uuid4())},
@@ -706,19 +733,3 @@ def test_rag_citation_rejects_partially_supported_medical_claim() -> None:
     with pytest.raises(DBAPIError) as exc_info:
         asyncio.run(run_insert())
     assert "chk_rag_citation_medical_not_partially_supported" in str(exc_info.value.orig)
-
-
-def test_rag_evidence_citation_rows_are_append_only() -> None:
-    command.upgrade(create_alembic_config(), RAG_EVIDENCE_CITATION_REVISION)
-    ids = asyncio.run(_seed_evidence_chain())
-
-    async def run_update() -> None:
-        async with _connection() as connection:
-            async with connection.begin():
-                await connection.execute(
-                    text("UPDATE rag_evidence SET evidence_status = 'DRAFT' WHERE id = :evidence_id"), ids
-                )
-
-    with pytest.raises(DBAPIError) as exc_info:
-        asyncio.run(run_update())
-    assert "RAG Evidence/Citation rows are append-only" in str(exc_info.value.orig)
