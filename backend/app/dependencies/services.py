@@ -29,6 +29,7 @@ from app.repositories.ocr_repository import OcrRepository
 from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.repositories.refresh_session_repository import RefreshSessionRepository
+from app.repositories.track_c_storage_repository import TrackCStorageRepository
 from app.repositories.user_consent_repository import UserConsentRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
@@ -66,7 +67,9 @@ from app.services.ocr_ai import (
 from app.services.ocr_ai.prompt import PROMPT_VERSION as OCR_STRUCTURE_PROMPT_VERSION
 from app.services.ocr_engine import OcrEngine
 from app.services.prescriptions import PrescriptionService
-from app.services.user_consents import OcrConsentService
+from app.services.track_c_api import TrackCApiService
+from app.services.track_c_flow import ContractFoundationSafetyPolicy, TrackCFlowService
+from app.services.user_consents import ConsentGateService, OcrConsentService
 from app.services.users import UserConsentService, UserManageService
 
 
@@ -77,6 +80,12 @@ def get_ocr_consent_service(
         UserConsentRepository(session),
         current_policy_version=config.OCR_CONSENT_POLICY_VERSION,
     )
+
+
+def get_consent_gate_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> ConsentGateService:
+    return ConsentGateService(UserConsentRepository(session))
 
 
 def get_openai_client(request: Request) -> AsyncOpenAI:
@@ -377,6 +386,18 @@ def get_medication_checkin_api_service(
     return MedicationCheckinApiService(MedicationScheduleRepository(session), checkins, idempotency_service)
 
 
+def get_track_c_api_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    idempotency_service: Annotated[
+        SyncMutationIdempotencyService,
+        Depends(get_sync_mutation_idempotency_service),
+    ],
+) -> TrackCApiService:
+    repository = TrackCStorageRepository(session)
+    flow = TrackCFlowService(repository, ContractFoundationSafetyPolicy())
+    return TrackCApiService(repository, flow, idempotency_service)
+
+
 def get_guide_repository(
     session: Annotated[
         AsyncSession,
@@ -420,8 +441,12 @@ def get_guide_service(
         GuideGenerator,
         Depends(get_guide_generator),
     ],
+    consent_gate: Annotated[
+        ConsentGateService,
+        Depends(get_consent_gate_service),
+    ],
 ) -> GuideService:
-    return GuideService(repository, generator)
+    return GuideService(repository, generator, consent_gate)
 
 
 def get_chat_repository(
@@ -498,23 +523,25 @@ def get_email_verification_repository(
     return EmailVerificationRepository(session)
 
 
+def _build_smtp_email_sender() -> SmtpEmailSender:
+    return SmtpEmailSender(
+        SmtpEmailSenderConfig(
+            host=config.SMTP_HOST,
+            port=config.SMTP_PORT,
+            username=config.SMTP_USERNAME,
+            password=config.SMTP_PASSWORD,
+            from_email=config.SMTP_FROM_EMAIL,
+            use_tls=config.SMTP_USE_TLS,
+            timeout_seconds=config.SMTP_TIMEOUT_SECONDS,
+        )
+    )
+
+
 def get_email_sender() -> EmailSender:
     if config.EMAIL_PROVIDER == "smtp":
-        if config.ENV is not Env.LOCAL:
-            raise RuntimeError("SMTP email provider is not enabled outside local environment in this PR")
-        if not config.SMTP_USE_TLS:
-            raise RuntimeError("SMTP_USE_TLS=false is not allowed")
-        return SmtpEmailSender(
-            SmtpEmailSenderConfig(
-                host=config.SMTP_HOST,
-                port=config.SMTP_PORT,
-                username=config.SMTP_USERNAME,
-                password=config.SMTP_PASSWORD,
-                from_email=config.SMTP_FROM_EMAIL,
-                use_tls=config.SMTP_USE_TLS,
-                timeout_seconds=config.SMTP_TIMEOUT_SECONDS,
-            )
-        )
+        return _build_smtp_email_sender()
+    if config.ENV is not Env.LOCAL:
+        raise RuntimeError("EMAIL_PROVIDER=noop is allowed only in local environment")
     return NoopEmailSender()
 
 

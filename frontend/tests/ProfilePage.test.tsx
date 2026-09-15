@@ -3,7 +3,7 @@ import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { ApiError } from '../src/api/client'
-import { getOcrConsent, withdrawOcrConsent, type OcrConsentState } from '../src/api/ocrConsent'
+import { getUserConsents, withdrawUserConsent, CONSENT_PURPOSES, type UserConsent } from '../src/api/userConsents'
 import {
   getCurrentUser,
   updateCurrentUser,
@@ -15,21 +15,18 @@ vi.mock('../src/api/users', () => ({
   getCurrentUser: vi.fn(),
   updateCurrentUser: vi.fn(),
 }))
-vi.mock('../src/api/ocrConsent', () => ({
-  getOcrConsent: vi.fn(),
-  withdrawOcrConsent: vi.fn(),
+vi.mock('../src/api/userConsents', () => ({
+  getUserConsents: vi.fn(),
+  withdrawUserConsent: vi.fn(),
+  CONSENT_PURPOSES: ['OCR', 'GUIDE', 'CHAT', 'NOTIFICATION'],
 }))
 
-const GRANTED_OCR_CONSENT: OcrConsentState = {
-  purpose: 'OCR',
-  status: 'GRANTED',
-  effective: true,
-  reason: null,
-  current_policy_version: 'ocr-test-v2',
-  accepted_policy_version: 'ocr-test-v2',
-  granted_at: '2026-09-14T00:00:00Z',
-  withdrawn_at: null,
-}
+const CONSENTS: UserConsent[] = CONSENT_PURPOSES.map((purpose) => ({
+  purpose, status: 'GRANTED', is_granted: true,
+  current_policy_version: `${purpose}-server-v3`, policy_version: `${purpose}-server-v3`,
+  granted_at: '2026-09-14T00:00:00Z', withdrawn_at: null, updated_at: '2026-09-14T00:00:00Z',
+}))
+const LABELS = ['처방전 외부 처리', '복약 가이드', '복약 챗봇', '알림']
 
 const CURRENT_USER: CurrentUser = {
   id: '00000000-0000-4000-8000-000000000097',
@@ -78,16 +75,11 @@ beforeEach(() => {
   localStorage.setItem('access_token', 'fixture-token')
   vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
   vi.mocked(updateCurrentUser).mockResolvedValue(CURRENT_USER)
-  vi.mocked(getOcrConsent).mockResolvedValue({ data: GRANTED_OCR_CONSENT })
-  vi.mocked(withdrawOcrConsent).mockResolvedValue({
-    data: {
-      ...GRANTED_OCR_CONSENT,
-      status: 'WITHDRAWN',
-      effective: false,
-      reason: 'WITHDRAWN',
-      withdrawn_at: '2026-09-14T01:00:00Z',
-    },
-  })
+  vi.mocked(getUserConsents).mockResolvedValue({ data: CONSENTS })
+  vi.mocked(withdrawUserConsent).mockImplementation(async (purpose, version) => ({
+    data: { ...CONSENTS.find((item) => item.purpose === purpose)!, policy_version: version,
+      status: 'WITHDRAWN', is_granted: false, withdrawn_at: '2026-09-15T00:00:00Z' },
+  }))
 })
 
 afterEach(() => {
@@ -96,40 +88,6 @@ afterEach(() => {
 })
 
 describe('내 정보 조회', () => {
-  it('현재 OCR 동의를 표시하고 철회 후 외부 처리 차단 상태를 표시한다', async () => {
-    renderProfile()
-
-    expect(await screen.findByText('현재 동의한 상태입니다.')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '처방전 외부 처리 동의 철회' }))
-
-    expect(await screen.findByText('철회한 상태입니다.')).toBeTruthy()
-    expect(withdrawOcrConsent).toHaveBeenCalledTimes(1)
-    expect(screen.queryByRole('button', { name: '처방전 외부 처리 동의 철회' })).toBeNull()
-  })
-
-  it('동의 조회 실패 시 상태를 추정하지 않고 철회를 별도로 시도한다', async () => {
-    vi.mocked(getOcrConsent).mockRejectedValue(new Error('database unavailable'))
-    renderProfile()
-
-    expect(await screen.findByText('처방전 처리 동의 상태를 확인할 수 없어요. 잠시 후 다시 시도해 주세요.')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '처방전 외부 처리 동의 철회' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: '동의 철회 시도' }))
-    expect(await screen.findByText('철회한 상태입니다.')).toBeTruthy()
-    expect(withdrawOcrConsent).toHaveBeenCalledTimes(1)
-  })
-
-  it('철회 응답을 받지 못하면 이전 동의 상태를 확정으로 표시하지 않는다', async () => {
-    vi.mocked(withdrawOcrConsent).mockRejectedValue(new Error('response lost'))
-    renderProfile()
-
-    await screen.findByText('현재 동의한 상태입니다.')
-    fireEvent.click(screen.getByRole('button', { name: '처방전 외부 처리 동의 철회' }))
-
-    expect(await screen.findByText('동의를 철회하지 못했습니다. 현재 상태를 다시 확인해 주세요.')).toBeTruthy()
-    expect(screen.queryByText('현재 동의한 상태입니다.')).toBeNull()
-    expect(screen.getByRole('button', { name: '동의 상태 다시 확인' })).toBeTruthy()
-  })
-
   it('GET users/me 정상 응답으로 본인 정보를 표시한다', async () => {
     renderProfile()
 
@@ -361,5 +319,96 @@ describe('인증과 재접근', () => {
     expect(await screen.findByText('로그인 화면')).toBeTruthy()
     expect(getCurrentUser).not.toHaveBeenCalled()
     expect(screen.queryByText(CURRENT_USER.email)).toBeNull()
+  })
+})
+
+
+describe('목적별 동의 관리', () => {
+  it.each(CONSENT_PURPOSES)('%s만 서버 버전으로 철회하고 나머지 목적을 유지한다', async (purpose) => {
+    renderProfile()
+    await screen.findAllByText('현재 동의한 상태입니다.')
+    const label = LABELS[CONSENT_PURPOSES.indexOf(purpose)]
+    fireEvent.click(screen.getByRole('button', { name: `${label} 동의 철회` }))
+    expect(await screen.findByText('철회한 상태입니다.')).toBeTruthy()
+    expect(screen.getAllByText('현재 동의한 상태입니다.')).toHaveLength(3)
+    expect(withdrawUserConsent).toHaveBeenCalledWith(purpose, `${purpose}-server-v3`)
+  })
+
+  it('미동의·철회·구버전 동의를 구분하며 서버 is_granted를 표시한다', async () => {
+    vi.mocked(getUserConsents).mockResolvedValue({ data: [
+      { ...CONSENTS[0], status: null, policy_version: null, is_granted: false, granted_at: null },
+      { ...CONSENTS[1], status: 'WITHDRAWN', is_granted: false },
+      { ...CONSENTS[2], policy_version: 'old', is_granted: false }, CONSENTS[3],
+    ] })
+    renderProfile()
+    expect(await screen.findByText('동의한 내역이 없습니다.')).toBeTruthy()
+    expect(screen.getByText('철회한 상태입니다.')).toBeTruthy()
+    expect(screen.getByText('현재 유효한 동의가 없습니다.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '처방전 외부 처리 동의 철회' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '복약 챗봇 동의 철회' }))
+    await waitFor(() => expect(withdrawUserConsent).toHaveBeenCalledWith('CHAT', 'CHAT-server-v3'))
+  })
+
+  it('OCR 정책 미설정에서도 저장된 버전으로 철회한다', async () => {
+    vi.mocked(getUserConsents).mockResolvedValue({ data: CONSENTS.map((item) => ({
+      ...item, current_policy_version: '', is_granted: false,
+    })) })
+    renderProfile()
+    fireEvent.click(await screen.findByRole('button', { name: '처방전 외부 처리 동의 철회' }))
+    expect(await screen.findByText('철회한 상태입니다.')).toBeTruthy()
+    expect(withdrawUserConsent).toHaveBeenCalledWith('OCR', 'OCR-server-v3')
+    expect(screen.queryByRole('button', { name: '복약 가이드 동의 철회' })).toBeNull()
+  })
+
+  it('조회 실패 시 버전을 추정하지 않고 재조회한 뒤 철회한다', async () => {
+    vi.mocked(getUserConsents).mockRejectedValueOnce(new Error('private raw error'))
+    renderProfile()
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect(screen.queryByText('private raw error')).toBeNull()
+    expect(withdrawUserConsent).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '동의 상태 다시 확인' }))
+    expect(await screen.findAllByText('현재 동의한 상태입니다.')).toHaveLength(4)
+  })
+
+  it.each([
+    new Error('response lost'),
+    new ApiError(422, 'raw', 'VALIDATION_FAILED', [{ field: 'policy_version', reason: 'POLICY_VERSION_MISMATCH' }]),
+    new ApiError(503, 'raw', 'CONSENT_POLICY_UNAVAILABLE'),
+  ])('철회 실패를 성공으로 표시하지 않고 최신 조회값으로 복구한다: %s', async (error) => {
+    vi.mocked(withdrawUserConsent).mockRejectedValueOnce(error)
+    renderProfile()
+    fireEvent.click(await screen.findByRole('button', { name: '복약 가이드 동의 철회' }))
+    await screen.findByRole('alert')
+    expect(screen.queryByText('철회한 상태입니다.')).toBeNull()
+    expect(screen.getByText('동의 상태를 확인할 수 없습니다.')).toBeTruthy()
+    expect(screen.getAllByText('현재 동의한 상태입니다.')).toHaveLength(3)
+    vi.mocked(getUserConsents).mockResolvedValue({ data: CONSENTS.map((item) => ({ ...item, current_policy_version: 'latest-server-version' })) })
+    fireEvent.click(screen.getByRole('button', { name: '동의 상태 다시 확인' }))
+    fireEvent.click(await screen.findByRole('button', { name: '복약 가이드 동의 철회' }))
+    await screen.findByText('철회한 상태입니다.')
+    expect(withdrawUserConsent).toHaveBeenLastCalledWith('GUIDE', 'latest-server-version')
+  })
+
+  it('처리 중 중복 요청과 조회 경합을 막는다', async () => {
+    const pending = deferred<{ data: UserConsent }>()
+    vi.mocked(withdrawUserConsent).mockReturnValueOnce(pending.promise)
+    renderProfile()
+    const button = await screen.findByRole('button', { name: '알림 동의 철회' })
+    fireEvent.click(button)
+    fireEvent.click(button)
+    expect(withdrawUserConsent).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: '동의 상태 다시 확인' })).toHaveProperty('disabled', true)
+    pending.resolve({ data: { ...CONSENTS[3], status: 'WITHDRAWN', is_granted: false } })
+    await screen.findByText('철회한 상태입니다.')
+  })
+
+  it.each(['GET', 'PUT'])('%s 401에서 세션을 정리하고 로그인으로 이동한다', async (method) => {
+    const error = new ApiError(401, 'expired', 'EXPIRED_TOKEN')
+    if (method === 'GET') vi.mocked(getUserConsents).mockRejectedValueOnce(error)
+    else vi.mocked(withdrawUserConsent).mockRejectedValueOnce(error)
+    renderProfile()
+    if (method === 'PUT') fireEvent.click(await screen.findByRole('button', { name: '알림 동의 철회' }))
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(localStorage.getItem('access_token')).toBeNull()
   })
 })

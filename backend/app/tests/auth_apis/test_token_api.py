@@ -11,6 +11,7 @@ from app.core.jwt.tokens import AccessToken, RefreshToken
 from app.dependencies.services import get_user_repository
 from app.main import app, fastapi_app
 from app.models.users import AccountStatus, User
+from app.tests.helpers.auth import signup_verified_user
 
 
 def extract_refresh_token(response) -> str:
@@ -43,7 +44,7 @@ class TestJWTTokenRefreshAPI:
             "name": "리프레시테스터",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup_verified_user(client, signup_data)
 
             login_response = await client.post(
                 "/api/v1/auth/login", json={"email": "refresh@example.com", "password": "Password123!"}
@@ -66,7 +67,7 @@ class TestJWTTokenRefreshAPI:
             "name": "리프레시수명테스터",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup_verified_user(client, signup_data)
 
             login_response = await client.post(
                 "/api/v1/auth/login", json={"email": "refresh-lifetime@example.com", "password": "Password123!"}
@@ -96,7 +97,7 @@ class TestJWTTokenRefreshAPI:
             "name": "로테이션테스터",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup_verified_user(client, signup_data)
             login_response = await client.post(
                 "/api/v1/auth/login", json={"email": "refresh-rotate@example.com", "password": "Password123!"}
             )
@@ -122,7 +123,7 @@ class TestJWTTokenRefreshAPI:
             "name": "절대만료테스터",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup_verified_user(client, signup_data)
             login_response = await client.post(
                 "/api/v1/auth/login", json={"email": "refresh-absolute-exp@example.com", "password": "Password123!"}
             )
@@ -145,7 +146,7 @@ class TestJWTTokenRefreshAPI:
             "name": "만료된리프레시테스터",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup_verified_user(client, signup_data)
             login_response = await client.post(
                 "/api/v1/auth/login",
                 json={"email": "refresh-absolute-expired@example.com", "password": "Password123!"},
@@ -176,7 +177,7 @@ class TestJWTTokenRefreshAPI:
             "name": "재사용탐지테스터",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup_verified_user(client, signup_data)
             login_response = await client.post(
                 "/api/v1/auth/login", json={"email": "refresh-reuse@example.com", "password": "Password123!"}
             )
@@ -207,9 +208,9 @@ class TestJWTTokenRefreshAPI:
         전 `User.active_refresh_jti` 단일 컬럼 구조에서는 실제로 이 문제가 있었다."""
         email = f"two-devices-{uuid4().hex[:10]}@example.com"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client_a:
-            await client_a.post(
-                "/api/v1/auth/signup",
-                json={"email": email, "password": "Password123!", "name": "멀티디바이스테스터"},
+            await signup_verified_user(
+                client_a,
+                {"email": email, "password": "Password123!", "name": "멀티디바이스테스터"},
             )
 
         async with (
@@ -256,7 +257,7 @@ class TestJWTTokenRefreshAPI:
             "name": "타입혼동테스터",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup_verified_user(client, signup_data)
 
             login_response = await client.post(
                 "/api/v1/auth/login",
@@ -339,7 +340,7 @@ class TestLogoutAPI:
         }
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup_verified_user(client, signup_data)
             login_response = await client.post(
                 "/api/v1/auth/login",
                 json={"email": email, "password": "Password123!"},
@@ -383,9 +384,9 @@ class TestLogoutAPI:
         rotation으로 교체된 최신 토큰과 충돌하지 않아야 한다."""
         email = f"logout-rotate-{uuid4().hex[:8]}@example.com"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
-                "/api/v1/auth/signup",
-                json={"email": email, "password": "Password123!", "name": "로테이션후로그아웃테스터"},
+            await signup_verified_user(
+                client,
+                {"email": email, "password": "Password123!", "name": "로테이션후로그아웃테스터"},
             )
             login_response = await client.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
             client.cookies["refresh_token"] = extract_refresh_token(login_response)
@@ -440,7 +441,7 @@ class TestLogoutAPI:
         }
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup_verified_user(client, signup_data)
             login_response = await client.post(
                 "/api/v1/auth/login",
                 json={"email": email, "password": "Password123!"},
@@ -483,7 +484,7 @@ class TestLogoutAPI:
         }
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup_verified_user(client, signup_data)
             login_response = await client.post(
                 "/api/v1/auth/login",
                 json={"email": email, "password": "Password123!"},
@@ -516,9 +517,9 @@ class TestLogoutAPI:
         검증한다."""
         email = f"logout-longlived-{uuid4().hex[:10]}@example.com"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
-                "/api/v1/auth/signup",
-                json={"email": email, "password": "Password123!", "name": "장수명토큰테스터"},
+            await signup_verified_user(
+                client,
+                {"email": email, "password": "Password123!", "name": "장수명토큰테스터"},
             )
             login_response = await client.post(
                 "/api/v1/auth/login",

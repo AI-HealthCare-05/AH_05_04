@@ -144,6 +144,93 @@ def _success_reason(command_kind: ControlCommandKind) -> _SuccessReason:
     return reasons[command_kind]
 
 
+@dataclass(frozen=True, slots=True)
+class _LockedIdentityRow:
+    database_login: str
+    actor_id: str
+    actor_namespace: str
+    principal_role: str | None
+    identity_plane: str
+    approval_role: str | None
+    enabled: bool
+
+    @classmethod
+    def from_row(cls, row: object) -> _LockedIdentityRow:
+        mapping = getattr(row, "_mapping", None)
+        if mapping is None:
+            raise ProtectedSecurityError("INTERNAL_ERROR")
+        return cls(
+            database_login=str(mapping["database_login"]),
+            actor_id=str(mapping["actor_id"]),
+            actor_namespace=str(mapping["actor_namespace"]),
+            principal_role=str(mapping["principal_role"]) if mapping["principal_role"] is not None else None,
+            identity_plane=str(mapping["identity_plane"]),
+            approval_role=str(mapping["approval_role"]) if mapping["approval_role"] is not None else None,
+            enabled=bool(mapping["enabled"]),
+        )
+
+
+def _evaluate_identity_executor_denial(
+    executor_row: _LockedIdentityRow | None,
+    prepared_executor: _ControlExecutor,
+) -> ProtectedAuditReason | None:
+    if (
+        executor_row is None
+        or not executor_row.enabled
+        or executor_row.identity_plane != "CONTROL"
+        or (executor_row.actor_id, executor_row.actor_namespace)
+        != (prepared_executor.actor.actor_id, prepared_executor.actor.namespace)
+        or executor_row.database_login != prepared_executor.database_login
+    ):
+        return ProtectedAuditReason.AUTHORIZATION_NOT_FOUND
+    if executor_row.approval_role != ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER.value:
+        return ProtectedAuditReason.ISSUER_ROLE_DENIED
+    return None
+
+
+def _evaluate_register_denial(
+    executor_row: _LockedIdentityRow | None,
+    prepared_executor: _ControlExecutor,
+    command: RegisterIdentityCommand,
+    conflict_count: int,
+) -> ProtectedAuditReason | None:
+    executor_denial = _evaluate_identity_executor_denial(executor_row, prepared_executor)
+    if executor_denial is not None:
+        return executor_denial
+    if command.database_login == prepared_executor.database_login or (
+        command.actor_namespace,
+        command.actor_id,
+    ) == (prepared_executor.actor.namespace, prepared_executor.actor.actor_id):
+        return ProtectedAuditReason.SELF_APPROVAL_DENIED
+    if conflict_count > 0:
+        return ProtectedAuditReason.CONTROL_COMMAND_CONFLICT
+    return None
+
+
+def _evaluate_disable_denial(
+    executor_row: _LockedIdentityRow | None,
+    prepared_executor: _ControlExecutor,
+    target_row: _LockedIdentityRow | None,
+    command: DisableIdentityCommand,
+) -> ProtectedAuditReason | None:
+    executor_denial = _evaluate_identity_executor_denial(executor_row, prepared_executor)
+    if executor_denial is not None:
+        return executor_denial
+    if command.database_login == prepared_executor.database_login or (
+        command.expected_actor_namespace,
+        command.expected_actor_id,
+    ) == (prepared_executor.actor.namespace, prepared_executor.actor.actor_id):
+        return ProtectedAuditReason.SELF_APPROVAL_DENIED
+    if (
+        target_row is None
+        or not target_row.enabled
+        or target_row.actor_id != command.expected_actor_id
+        or target_row.actor_namespace != command.expected_actor_namespace
+    ):
+        return ProtectedAuditReason.AUTHORIZATION_NOT_FOUND
+    return None
+
+
 class _ControlSession(_ProtectedSession):
     def __init__(
         self,
@@ -186,8 +273,7 @@ class _ControlSession(_ProtectedSession):
         )
 
     async def lock_dataset_executor(self, expected: _ControlExecutor) -> _ControlExecutor:
-        result = await self._execute(
-            f"""
+        query = f"""
             SELECT database_login, actor_id, actor_namespace, identity_plane,
                    principal_role, approval_role, enabled
             FROM {self._schema}.protected_identity
@@ -195,13 +281,14 @@ class _ControlSession(_ProtectedSession):
                OR (actor_id = :actor_id AND actor_namespace = :actor_namespace)
             ORDER BY database_login
             FOR UPDATE
-            """,
-            {
-                "database_login": expected.database_login,
-                "actor_id": expected.actor.actor_id,
-                "actor_namespace": expected.actor.namespace,
-            },
-        )
+        """
+        params: dict[str, object] = {
+            "database_login": expected.database_login,
+            "actor_id": expected.actor.actor_id,
+            "actor_namespace": expected.actor.namespace,
+        }
+        await self._execute(query, params)
+        result = await self._execute(query, params)
         rows = tuple(result)
         executor_rows = tuple(row for row in rows if row.database_login == expected.database_login)
         if len(executor_rows) != 1:
@@ -1390,82 +1477,73 @@ class PostgresqlProtectedAuthorizationControlService:
         async with self._sessions() as preparation:
             async with preparation.begin():
                 prepared_executor = await self._authenticated_executor(preparation)
-        replay = await self._read_replay(
-            request_id=command.request_id,
-            command_kind=command_kind,
-            command_sha256=digest,
-        )
-        if replay is not None:
-            return replay
-
         denial: ProtectedSecurityError | None = None
         async with self._sessions() as session:
             async with session.begin():
                 await self._validate_connection(session)
                 clock = await PostgresqlTrustedClock.from_session(session)
                 control = _ControlSession(session, self._schema, clock)
-                executor = await control.resolve_executor()
-                if executor != prepared_executor:
-                    raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
 
-                existing_row = (
+                # 1. Lock existing protected_identity rows across all planes in deterministic database_login ASC order
+                raw_locked_rows = (
                     await control._execute(
                         f"""
-                        SELECT database_login, actor_id, actor_namespace
+                        SELECT database_login, actor_id, actor_namespace, principal_role, identity_plane, approval_role, enabled
                         FROM {control._schema}.protected_identity
-                        WHERE database_login = :database_login
-                           OR (actor_namespace = :actor_namespace AND actor_id = :actor_id AND identity_plane = :identity_plane)
+                        WHERE database_login = session_user::name
+                           OR database_login = :database_login
+                           OR (actor_namespace = :actor_namespace AND actor_id = :actor_id)
+                        ORDER BY database_login ASC
                         FOR UPDATE
                         """,
                         {
                             "database_login": command.database_login,
                             "actor_namespace": command.actor_namespace,
                             "actor_id": command.actor_id,
-                            "identity_plane": command.identity_plane,
                         },
                     )
-                ).one_or_none()
+                ).all()
+                locked_rows = [_LockedIdentityRow.from_row(r) for r in raw_locked_rows]
 
+                executor_row = next(
+                    (r for r in locked_rows if r.database_login == prepared_executor.database_login),
+                    None,
+                )
+                conflict_rows = [
+                    r
+                    for r in locked_rows
+                    if r.database_login != prepared_executor.database_login
+                    and (
+                        r.database_login == command.database_login
+                        or (
+                            (r.actor_namespace, r.actor_id, r.identity_plane)
+                            == (command.actor_namespace, command.actor_id, command.identity_plane)
+                        )
+                    )
+                ]
+
+                # 2. Replay check with audit_head lock before any new denial evaluation
                 replay = await control.replay(
                     request_id=command.request_id,
                     command_kind=command_kind,
                     command_sha256=digest,
-                    executor=executor.actor,
+                    executor=prepared_executor.actor,
                     lock_head=True,
                 )
                 if replay is not None:
                     return replay
 
-                denial_reason: ProtectedAuditReason | None = None
-                if executor.principal.role != ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER:
-                    denial_reason = ProtectedAuditReason.ISSUER_ROLE_DENIED
-                elif command.database_login == executor.database_login or (
-                    command.actor_namespace,
-                    command.actor_id,
-                ) == (executor.actor.namespace, executor.actor.actor_id):
-                    denial_reason = ProtectedAuditReason.SELF_APPROVAL_DENIED
-                elif existing_row is not None:
-                    denial_reason = ProtectedAuditReason.CONTROL_COMMAND_CONFLICT
+                # 3. Denial precedence check
+                denial_reason = _evaluate_register_denial(
+                    executor_row=executor_row,
+                    prepared_executor=prepared_executor,
+                    command=command,
+                    conflict_count=len(conflict_rows),
+                )
 
-                await control.refresh_clock()
-                entries = await control.verified_entries(lock_head=False)
-                if denial_reason is not None:
-                    await control.append_control(
-                        entries=entries,
-                        request_id=command.request_id,
-                        command_kind=command_kind,
-                        executor=executor.actor,
-                        target_kind=ControlAuditTargetKind.PROTECTED_IDENTITY,
-                        target_id=command.database_login,
-                        command_sha256=digest,
-                        outcome=ControlAuditOutcome.DENIED,
-                        effective_revision=None,
-                        authorization_audit_event_id=None,
-                        reason_code=denial_reason,
-                    )
-                    denial = ProtectedSecurityError(denial_reason.value)
-                else:
-                    await control._execute(
+                # 4. Atomic insert with ON CONFLICT DO NOTHING (2nd-stage collision defense)
+                if denial_reason is None:
+                    insert_result = await control._execute(
                         f"""
                         INSERT INTO {control._schema}.protected_identity (
                             database_login, actor_id, actor_namespace, principal_role,
@@ -1474,6 +1552,8 @@ class PostgresqlProtectedAuthorizationControlService:
                             :database_login, :actor_id, :actor_namespace, :principal_role,
                             :identity_plane, :approval_role, :enabled
                         )
+                        ON CONFLICT DO NOTHING
+                        RETURNING database_login
                         """,
                         {
                             "database_login": command.database_login,
@@ -1487,11 +1567,34 @@ class PostgresqlProtectedAuthorizationControlService:
                             "enabled": command.enabled,
                         },
                     )
+                    inserted_login = insert_result.scalar_one_or_none()
+                    if inserted_login is None:
+                        denial_reason = ProtectedAuditReason.CONTROL_COMMAND_CONFLICT
+
+                # 5. CONTROL audit append in the same transaction
+                await control.refresh_clock()
+                entries = await control.verified_entries(lock_head=False)
+                if denial_reason is not None:
                     await control.append_control(
                         entries=entries,
                         request_id=command.request_id,
                         command_kind=command_kind,
-                        executor=executor.actor,
+                        executor=prepared_executor.actor,
+                        target_kind=ControlAuditTargetKind.PROTECTED_IDENTITY,
+                        target_id=command.database_login,
+                        command_sha256=digest,
+                        outcome=ControlAuditOutcome.DENIED,
+                        effective_revision=None,
+                        authorization_audit_event_id=None,
+                        reason_code=denial_reason,
+                    )
+                    denial = ProtectedSecurityError(denial_reason.value)
+                else:
+                    await control.append_control(
+                        entries=entries,
+                        request_id=command.request_id,
+                        command_kind=command_kind,
+                        executor=prepared_executor.actor,
                         target_kind=ControlAuditTargetKind.PROTECTED_IDENTITY,
                         target_id=command.database_login,
                         command_sha256=digest,
@@ -1518,62 +1621,74 @@ class PostgresqlProtectedAuthorizationControlService:
         async with self._sessions() as preparation:
             async with preparation.begin():
                 prepared_executor = await self._authenticated_executor(preparation)
-        replay = await self._read_replay(
-            request_id=command.request_id,
-            command_kind=command_kind,
-            command_sha256=digest,
-        )
-        if replay is not None:
-            return replay
-
         denial: ProtectedSecurityError | None = None
         async with self._sessions() as session:
             async with session.begin():
                 await self._validate_connection(session)
                 clock = await PostgresqlTrustedClock.from_session(session)
                 control = _ControlSession(session, self._schema, clock)
-                executor = await control.resolve_executor()
-                if executor != prepared_executor:
-                    raise ProtectedSecurityError("AUTHORIZATION_NOT_FOUND")
 
-                target_row = (
+                # 1. Lock executor and target in deterministic database_login ASC order
+                logins = sorted(set([prepared_executor.database_login, command.database_login]))
+                raw_locked_rows = (
                     await control._execute(
                         f"""
-                        SELECT database_login, actor_id, actor_namespace, enabled
+                        SELECT database_login, actor_id, actor_namespace, principal_role, identity_plane, approval_role, enabled
                         FROM {control._schema}.protected_identity
-                        WHERE database_login = :database_login
+                        WHERE database_login = ANY(:logins)
+                        ORDER BY database_login ASC
                         FOR UPDATE
                         """,
-                        {"database_login": command.database_login},
+                        {"logins": logins},
                     )
-                ).one_or_none()
+                ).all()
+                locked_rows = [_LockedIdentityRow.from_row(r) for r in raw_locked_rows]
 
+                executor_row = next(
+                    (r for r in locked_rows if r.database_login == prepared_executor.database_login),
+                    None,
+                )
+                target_row = next(
+                    (r for r in locked_rows if r.database_login == command.database_login),
+                    None,
+                )
+
+                # 2. Replay check with audit_head lock before any new denial evaluation
                 replay = await control.replay(
                     request_id=command.request_id,
                     command_kind=command_kind,
                     command_sha256=digest,
-                    executor=executor.actor,
+                    executor=prepared_executor.actor,
                     lock_head=True,
                 )
                 if replay is not None:
                     return replay
 
-                denial_reason: ProtectedAuditReason | None = None
-                if executor.principal.role != ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER:
-                    denial_reason = ProtectedAuditReason.ISSUER_ROLE_DENIED
-                elif command.database_login == executor.database_login or (
-                    command.expected_actor_namespace,
-                    command.expected_actor_id,
-                ) == (executor.actor.namespace, executor.actor.actor_id):
-                    denial_reason = ProtectedAuditReason.SELF_APPROVAL_DENIED
-                elif (
-                    target_row is None
-                    or not target_row.enabled
-                    or target_row.actor_id != command.expected_actor_id
-                    or target_row.actor_namespace != command.expected_actor_namespace
-                ):
-                    denial_reason = ProtectedAuditReason.AUTHORIZATION_NOT_FOUND
+                # 3. Denial precedence check
+                denial_reason = _evaluate_disable_denial(
+                    executor_row=executor_row,
+                    prepared_executor=prepared_executor,
+                    target_row=target_row,
+                    command=command,
+                )
 
+                # 4. Defensive UPDATE with RETURNING database_login
+                if denial_reason is None:
+                    update_result = await control._execute(
+                        f"""
+                        UPDATE {control._schema}.protected_identity
+                        SET enabled = false
+                        WHERE database_login = :database_login
+                          AND enabled = true
+                        RETURNING database_login
+                        """,
+                        {"database_login": command.database_login},
+                    )
+                    disabled_login = update_result.scalar_one_or_none()
+                    if disabled_login != command.database_login:
+                        denial_reason = ProtectedAuditReason.AUTHORIZATION_NOT_FOUND
+
+                # 5. CONTROL audit append in the same transaction
                 await control.refresh_clock()
                 entries = await control.verified_entries(lock_head=False)
                 if denial_reason is not None:
@@ -1581,7 +1696,7 @@ class PostgresqlProtectedAuthorizationControlService:
                         entries=entries,
                         request_id=command.request_id,
                         command_kind=command_kind,
-                        executor=executor.actor,
+                        executor=prepared_executor.actor,
                         target_kind=ControlAuditTargetKind.PROTECTED_IDENTITY,
                         target_id=command.database_login,
                         command_sha256=digest,
@@ -1592,20 +1707,11 @@ class PostgresqlProtectedAuthorizationControlService:
                     )
                     denial = ProtectedSecurityError(denial_reason.value)
                 else:
-                    await control._execute(
-                        f"""
-                        UPDATE {control._schema}.protected_identity
-                        SET enabled = false
-                        WHERE database_login = :database_login
-                          AND enabled = true
-                        """,
-                        {"database_login": command.database_login},
-                    )
                     await control.append_control(
                         entries=entries,
                         request_id=command.request_id,
                         command_kind=command_kind,
-                        executor=executor.actor,
+                        executor=prepared_executor.actor,
                         target_kind=ControlAuditTargetKind.PROTECTED_IDENTITY,
                         target_id=command.database_login,
                         command_sha256=digest,
@@ -1651,6 +1757,16 @@ class PostgresqlProtectedAuthorizationControlService:
 
                 executor, denial_reason = await self._lock_dataset_control_executor(control, prepared_executor)
 
+                replay = await control.replay(
+                    request_id=command.request_id,
+                    command_kind=command_kind,
+                    command_sha256=digest,
+                    executor=executor.actor,
+                    lock_head=True,
+                )
+                if replay is not None:
+                    return replay
+
                 if denial_reason is None:
                     existing_row = (
                         await control._execute(
@@ -1665,16 +1781,6 @@ class PostgresqlProtectedAuthorizationControlService:
                     ).one_or_none()
                     if existing_row is not None:
                         denial_reason = ProtectedAuditReason.CONTROL_COMMAND_CONFLICT
-
-                replay = await control.replay(
-                    request_id=command.request_id,
-                    command_kind=command_kind,
-                    command_sha256=digest,
-                    executor=executor.actor,
-                    lock_head=True,
-                )
-                if replay is not None:
-                    return replay
 
                 await control.refresh_clock()
                 entries = await control.verified_entries(lock_head=False)
@@ -1804,12 +1910,6 @@ class PostgresqlProtectedAuthorizationControlService:
                 control = _ControlSession(session, self._schema, clock)
 
                 executor, denial_reason = await self._lock_dataset_control_executor(control, prepared_executor)
-
-                if denial_reason is None:
-                    denial_reason = _validate_dataset_transition_invariants(command)
-                if denial_reason is None:
-                    denial_reason = await control.check_dataset_transition(command)
-
                 replay = await control.replay(
                     request_id=command.request_id,
                     command_kind=command_kind,
@@ -1819,6 +1919,11 @@ class PostgresqlProtectedAuthorizationControlService:
                 )
                 if replay is not None:
                     return replay
+
+                if denial_reason is None:
+                    denial_reason = _validate_dataset_transition_invariants(command)
+                if denial_reason is None:
+                    denial_reason = await control.check_dataset_transition(command)
 
                 await control.refresh_clock()
                 entries = await control.verified_entries(lock_head=False)
@@ -2022,12 +2127,6 @@ class PostgresqlProtectedAuthorizationControlService:
                 control = _ControlSession(session, self._schema, clock)
 
                 executor, lock_denial = await self._lock_dataset_control_executor(control, prepared_executor)
-                denial_reason = lock_denial
-                if denial_reason is None:
-                    denial_reason = await self._check_freeze_mutation(
-                        control, command, executor, evidence, fetch_denial
-                    )
-
                 replay = await control.replay(
                     request_id=command.request_id,
                     command_kind=command_kind,
@@ -2037,6 +2136,12 @@ class PostgresqlProtectedAuthorizationControlService:
                 )
                 if replay is not None:
                     return replay
+
+                denial_reason = lock_denial
+                if denial_reason is None:
+                    denial_reason = await self._check_freeze_mutation(
+                        control, command, executor, evidence, fetch_denial
+                    )
 
                 await control.refresh_clock()
                 entries = await control.verified_entries(lock_head=False)

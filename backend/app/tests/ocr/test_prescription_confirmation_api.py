@@ -15,6 +15,7 @@ from app.models.medical_documents import MedicalDocument
 from app.models.ocr import ExtractedField, FieldType, OcrJob, OcrStatus
 from app.repositories.async_job_repository import AsyncJobRepository
 from app.services.ocr_engine import RecognizedField
+from app.tests.helpers.auth import signup_verified_user
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 
@@ -46,15 +47,10 @@ def configure_synthetic_ocr_consent(monkeypatch: pytest.MonkeyPatch) -> None:
 async def _signup_and_login(client: AsyncClient, *, label: str) -> str:
     suffix = uuid4().hex[:8]
     email = f"pc-{label}-{suffix}@example.com"
-    signup_response = await client.post(
-        "/api/v1/auth/signup",
-        json={
-            "email": email,
-            "password": "Password123!",
-            "name": "처방확정테스터",
-        },
+    await signup_verified_user(
+        client,
+        {"email": email, "password": "Password123!", "name": "처방확정테스터"},
     )
-    assert signup_response.status_code == status.HTTP_201_CREATED, signup_response.text
 
     login_response = await client.post(
         "/api/v1/auth/login",

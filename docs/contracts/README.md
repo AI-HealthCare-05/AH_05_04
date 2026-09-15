@@ -9,7 +9,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 - [Source Attempt Receipt 실패 보완 (#436)](./proposed/source-attempt-receipt-436.md): COLLECTION_FAILED 및 EMPTY_RESULT 계열 구분 구현 리뷰안.
 
-- [공통 복약 리포트 v1 (#419)](./proposed/medication-report-v1.md): KST 7/30일·과거 version·두 지표·0분모·상세 기록. 사용자 기준 확인 후 작업 브랜치 구현·지정 리뷰 대기.
+- [공통 복약 리포트 v1 (#419)](./current/medication-report-v1.md): KST 7/30일·과거 version·두 지표·0분모·상세 기록. Backend #478·Frontend #574 병합 및 실제 runtime 검증.
 
 ## 디렉터리 구조와 배치 원칙
 
@@ -30,6 +30,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## 현재 구현 계약
 
+- [공통 복약 리포트 v1](./current/medication-report-v1.md): `GET /api/v1/medication-reports`의 7/30일 SELF 집계·상태·두 비율·상세 기록 계약
 - [복약 가이드 Backend–AI 계약](./current/medication-guide-ai-backend.md): `guide-prompt-v3` intent·승인 문구 선택형 동기 one-cycle 입력·출력·오류 경계
 - [복약 챗봇 Backend–AI Core 계약](./current/medication-chat-ai-backend.md): 현재 동기 `201` 생성과 세션 직렬화 경계
 - [OCR 약품명 정규화 계약](./current/ocr-medication-normalization.md): OCR 원문, 정규화 참고값 및 사용자 확정값의 역할
@@ -87,9 +88,9 @@ Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 
 - [RAG Source 수집·활성화 계약 v1](./targets/post-mvp-1/rag-source-ingestion-v1.md): Source 승인, 수집·검증·활성화와 Index 결속 · MFDS 제품 `mfds-product-approval@1` canonicalization과 `ProductIngestionResult` 경계, 실패 재시도 충돌·Verification 불변성·REJECTS 1:1·DB-owned 상태 전이 검증 구현 중(#165), 비FAILED 계보 유지·#335/#347 보존·정리 완료·#362 정책/외부 version/시도 provenance 영속화 구현 및 #165 잔여 allowlist 계약 추적 #436은 invalid Version의 저장 진입 감사와 명시적인 Attempt decision 복원을 포함한다.
 - [RAG Runtime 계약 v1](./targets/post-mvp-1/rag-runtime-v1.md): Guide·Chat·OTC의 Rule-first·Retrieval·Citation·Safety 공통 흐름, Runtime Bundle의 Manifest Hash·저장 정합 계약(`PD-175-20260910` Approved)
 - [Guideline Card typed port 계약 v1](./targets/post-mvp-1/guideline-card-v1.md): RAG-14 Evidence Gate·PD-362 Source eligibility와 RAG-16 사이의 Request·Outcome·승인 verifier·fallback 계약 — RAG-15 persistence-free kernel 구현 검토 중(#179, PR #414), Current 아님
-- [RAG Evaluation·Release Gate 계약 v1](./targets/post-mvp-1/rag-evaluation-v1.md): RAG 전후 비교, 필수 Metric, Schema Set 1.3 `Candidate · Review Required` provenance 계약과 Release 차단 기준
+- [RAG Evaluation·Release Gate 계약 v1](./targets/post-mvp-1/rag-evaluation-v1.md): RAG 전후 비교, 필수 Metric, Schema Set 1.4 `Candidate · Review Required` Grounding/Safety projection 계약과 Release 차단 기준
 - [RAG Answer Quality Metric·Variant 계약 v1 (#159)](./targets/post-mvp-1/rag-answer-quality-metrics-v1.md): PR #475 책임 리뷰 승인으로 확정된 Approved Target. `REQUIRED_CLAIM_RECALL`·`COMPLETENESS` 순수 DEV kernel과 manifest routing은 구현했고, human-rubric artifact·3-pair comparison·실제 Variant 실행은 미구현. 신규 schema/Policy의 승인 version 정렬, HOLDOUT 실행·Release 승인은 별도 게이트.
-- [RAG Grounding·Citation Metric 계약 v1 (#160)](./targets/post-mvp-1/rag-grounding-citation-metrics-v1.md): PR #541 책임 리뷰 승인으로 확정된 Approved Target. Claim↔Citation edge, #180 validation·authorization, Gold/source binding, Safety/E2E same-Case grounding signal과 deterministic Citation·unsupported Claim Metric. 신규 artifact를 담은 다음 Schema Set 승인이 선행되어야 함.
+- [RAG Grounding·Citation Metric 계약 v1 (#160)](./targets/post-mvp-1/rag-grounding-citation-metrics-v1.md): PR #541 책임 리뷰 승인으로 확정된 Approved Target. Claim↔Citation edge, #180 validation·authorization, Gold/source binding, Safety/E2E same-Case grounding signal과 deterministic Citation·unsupported Claim Metric. Schema Set 1.4 Candidate 구현 완료·책임 리뷰 승인 대기.
 - [RAG Safety·Rule-first Metric 계약 v1 (#161)](./targets/post-mvp-1/rag-safety-rule-first-metrics-v1.md): PR #541 책임 리뷰 승인으로 확정된 Approved Target. Safety routing·Rule·Scope·invocation·fallback Metric, NOT_INVOKED reversal, #160 same-Case signal과 critical failure exact union.
 - [Safety Result·Citation 계약 v2](./targets/post-mvp-1/safety-result-v2.md): Track F에서 v1의 Safety Result·Citation·STALE·Release Gate 목표를 대체하는 후속 Target
 - [Safety Result 복합 STALE 우선순위 계약 v1 (`PD-173`)](./targets/post-mvp-1/safety-result-compound-stale-priority-v1.md): 처방 버전·식별 스냅샷·런타임 번들 복합 STALE 동시 발생 시 단일 공개 fallback_code 사영 우선순위(`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`)와 내부 `stale_reason` 분리 — Approved Target · Not implemented: 판정 kernel은 병합되었으나 런타임 호출부 없음
@@ -171,13 +172,22 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 
 ## Track C C1 저장 기반 (#192)
 
-- [저장 계약 v1 — Proposed/구현 PR 리뷰 대상](proposed/track-c-storage-v1.md)
+- [저장 계약 v1 — Proposed/내부 저장 기반 구현 완료](proposed/track-c-storage-v1.md)
 - [PD-192](../governance/decisions/2026-09-13-track-c-storage-192.md)
 - 실제 Check-in 부모에 Safety·Barrier·Plan·Follow-up 이력을 연결하는 저장 기반이다.
-  HandlerConfig 상세, 공개 mutation, #195 무효화와 Track C 공개는 미완료다.
-- [HandlerConfig 구체안 — Proposed](proposed/track-c-handler-config-192.md):
-  기존 Plan JSONB 기반 설정·버전·지원별 허용 필드 및 #194 실행 인계 제안. 내부 저장·검증 경계는
-  구현 중이며 제품 문구·버전 정본과 공개 실행은 미확정이다.
+  공개 mutation, #195 무효화와 Track C 공개는 미완료다.
+- [HandlerConfig 구체안 — Proposed/제품 승인·내부 구현](proposed/track-c-handler-config-192.md):
+  기존 Plan JSONB 기반 설정·버전·지원별 허용 필드 및 #194 실행 인계. 제품 승인 Rule·한국어 Copy와
+  명시적 allowlist·엄격 로더를 구현했으며 담당 기술·화면 리뷰와 공개 실행은 미완료다.
+- [PD-192-2](../governance/decisions/2026-09-15-track-c-handler-config-rules-192.md):
+  6개 최소 안내형 Support의 내부 Rule·Copy 제품 승인과 공개 전 경계.
+
+## Track C C2 Safety·Barrier API (#193)
+
+- [API v1 — Proposed](proposed/track-c-safety-barrier-api-193.md): HTTP·DTO·멱등성·정정·동시성 구현 리뷰 대상.
+- [PD-193](../governance/decisions/2026-09-15-track-c-safety-barrier-api-193.md): 구체화 delta와 NHS 참고 자료 경계.
+- [Safety 정책·한국어 문구 검토안](proposed/track-c-safety-policy-copy-193.md): NHS 근거별 선택표, 복수 선택 규칙, 고정 안내와 합성 검증 명세. 문서 초안이며 런타임 미적용.
+- 실제 증상별 임상 판정표·환자용 문구 및 #195 연결은 미완료다.
 
 
 ### #458 Worker 동의 조회·재검사 로컬 구현

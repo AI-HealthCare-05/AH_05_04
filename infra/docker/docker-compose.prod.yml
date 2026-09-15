@@ -176,8 +176,9 @@ services:
       DB_CONNECTION_POOL_MAXSIZE: ${DB_CONNECTION_POOL_MAXSIZE:-10}
       SQLALCHEMY_ECHO: ${SQLALCHEMY_ECHO:-false}
 
-      # 이메일 발송 Provider 설정. 이번 범위에서는 production SMTP 활성화를 허용하지 않고 noop을 기본으로 둡니다.
-      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-noop}
+      # 이메일 발송 Provider 설정. Production 발송은 EMAIL_PROVIDER=smtp와 Secret 주입으로 활성화합니다.
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
+      SIGNUP_EMAIL_VERIFICATION_REQUIRED: ${SIGNUP_EMAIL_VERIFICATION_REQUIRED:-false}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
@@ -188,7 +189,7 @@ services:
 
       # 현재 FastAPI가 직접 사용하는 Provider 설정
       OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
       OPENAI_TIMEOUT_SECONDS: ${OPENAI_TIMEOUT_SECONDS:-20}
       CLOVA_OCR_INVOKE_URL: ${CLOVA_OCR_INVOKE_URL}
       CLOVA_OCR_SECRET: ${CLOVA_OCR_SECRET}
