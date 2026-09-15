@@ -146,7 +146,7 @@ result = await guide_generator.generate(guide_input)
 
 ### 내부 구조화 출력
 
-OpenAI에는 SDK가 지원하는 strict JSON Schema 구조화 출력을 요청한다. MVP 모델은 `gpt-4o-mini`이며 Responses API의 Structured Outputs를 사용한다. 모델 결과는 다음 내부 모델로 파싱한다.
+OpenAI에는 SDK가 지원하는 strict JSON Schema 구조화 출력을 요청한다. MVP 모델은 `gpt-4o`이며 Responses API의 Structured Outputs를 사용한다. 모델 결과는 다음 내부 모델로 파싱한다.
 
 - `GeneratedGuideDraft.medications`: `GeneratedMedicationGuidance` 목록
 - `GeneratedMedicationGuidance.source_index`: 입력 약물의 0-based 순번
@@ -167,7 +167,7 @@ Responses API 결과는 다음 순서로 판정한다.
 4. 구조화 출력 파싱 실패와 빈 결과는 `GuideGenerationInvalidResponseError`로 처리한다.
 5. 파싱된 결과의 약물 순번, 항목 수와 안전 규칙을 별도로 검증한다.
 
-설정한 `OPENAI_MODEL`이 strict JSON Schema Structured Outputs를 지원하지 않으면 정상 결과로 대체하지 않고 `GuideGenerationConfigurationError`로 실패한다. `gpt-4o-mini` 호환성은 one-cycle 통합 전 비식별 합성 데이터 실제 API 스모크 검증으로 확인한다.
+설정한 `OPENAI_MODEL`이 strict JSON Schema Structured Outputs를 지원하지 않으면 정상 결과로 대체하지 않고 `GuideGenerationConfigurationError`로 실패한다. `gpt-4o` 호환성은 one-cycle 통합 전 비식별 합성 데이터 실제 API 스모크 검증으로 확인한다.
 
 ## 프롬프트 규칙
 
@@ -280,7 +280,7 @@ Backend의 HTTP 및 GUIDE 실패 저장 계약은 다음과 같다.
 ## 설정과 의존성
 
 - `OPENAI_API_KEY`: 배포 시 필수 비밀 환경변수. 저장소와 로그에 포함하지 않는다.
-- `OPENAI_MODEL`: MVP 값은 `gpt-4o-mini`이다. 생성 로직에 하드코딩하지 않고 배포 환경변수로 주입한다.
+- `OPENAI_MODEL`: MVP 값은 `gpt-4o`이다. 생성 로직에 하드코딩하지 않고 배포 환경변수로 주입한다.
 - `OPENAI_TIMEOUT_SECONDS`: 양수, 현재 기본값 `20`초. OpenAI 호출의 전체 wall-clock 상한이며 테스트에서는 짧은 값으로 대체할 수 있게 한다.
 - 공식 `openai` Python SDK를 `pyproject.toml`의 `app` 의존성 그룹에 추가하고 `uv.lock`을 갱신한다. FastAPI Docker 이미지는 `app` 그룹만 설치하므로 `ai` 그룹에만 추가해서는 안 된다.
 - OpenAI 요청에는 `store=False`를 지정해 Responses API의 애플리케이션 상태 저장을 비활성화한다. 이 설정만으로 모든 provider 보존이 0이 된다고 간주하지 않는다.
@@ -352,7 +352,7 @@ MVP에서는 각 생성 요청이 독립된 GUIDE를 사용하며 `PRESCRIPTION 
 - 약물 수와 문자열 길이의 authoritative 최소·최대 경계
 - 정상적인 부정·상담 안내가 과잉 거부되지 않는 통과 사례
 
-Mock 기반 단위 테스트는 구조화 출력 파싱, 입력 약물 대응, renderer의 원본 처방 표시와 기본 안전 차단을 재현한다. one-cycle 통합 전에는 비식별 합성 처방 한 건 이상으로 `gpt-4o-mini` 실제 호출을 수동 스모크 검증해 구조화된 AI 안내가 생성되는지 확인한다. 실제 응답 본문은 애플리케이션 로그에 남기지 않는다.
+Mock 기반 단위 테스트는 구조화 출력 파싱, 입력 약물 대응, renderer의 원본 처방 표시와 기본 안전 차단을 재현한다. one-cycle 통합 전에는 비식별 합성 처방 한 건 이상으로 `gpt-4o` 실제 호출을 수동 스모크 검증해 구조화된 AI 안내가 생성되는지 확인한다. 실제 응답 본문은 애플리케이션 로그에 남기지 않는다.
 
 반복 실행, 정량 품질 지표, 가독성 점수, 독립 검토 artifact와 배포 threshold를 포함한 본격적인 평가는 one-cycle 완성 후 별도 작업으로 진행한다. 다만 입력에 없는 복용 수치, 처방 변경 권고와 금지된 의료 주장을 정상 결과로 게시하지 않는 기본 안전 검증은 MVP에서도 제외하지 않는다.
 
@@ -373,7 +373,7 @@ Backend 담당 구현과 합쳐진 뒤 다음을 확인한다.
 - AI 입력·출력 계약이 Pydantic 모델로 구현되어 있다.
 - 프롬프트 버전과 실제 모델 ID가 결과에 포함된다.
 - 실제 API Key 없이 단위 테스트가 통과한다.
-- 비식별 합성 처방으로 `gpt-4o-mini` 실제 호출과 one-cycle 스모크 검증을 완료한다.
+- 비식별 합성 처방으로 `gpt-4o` 실제 호출과 one-cycle 스모크 검증을 완료한다.
 - 기본 안전 위반 응답을 게시하지 않는 단위 테스트가 통과한다.
 - Ruff, Ruff format, Mypy와 관련 Pytest가 통과한다.
 - Backend API 명세가 `GUIDE.content`를 검증·렌더링된 최종 평문으로 정의한다.

@@ -37,7 +37,7 @@ Backend가 처음 작성한 전체 Product 명세에는 처방 버전, RAG, 인�
 ## 목표
 
 - 현재 사용자 질문과 현재 채팅 세션의 확정 약물 정보를 하나의 요청 문맥으로 사용한다.
-- `gpt-4o-mini`와 OpenAI Responses API로 짧은 한국어 평문 답변을 생성한다.
+- `gpt-4o`와 OpenAI Responses API로 짧은 한국어 평문 답변을 생성한다.
 - 처방 문맥에 관한 질문뿐 아니라 일반적인 약효·부작용·상호작용 질문도 모델 자체 지식으로 답할 수 있게 한다.
 - Backend가 저장할 수 있도록 최종 `content`, 실제 `model_name`, `prompt_version`을 반환한다.
 - OpenAI SDK와 예외를 adapter 안에 격리하고 Backend에는 provider-neutral 오류만 노출한다.
@@ -245,7 +245,7 @@ response = await client.responses.create(
 )
 ```
 
-- MVP 호출 모델은 `gpt-4o-mini`이며 호출자가 `ChatGenerator`에 명시적으로 주입한다.
+- MVP 호출 모델은 `gpt-4o`이며 호출자가 `ChatGenerator`에 명시적으로 주입한다.
 - 최대 출력은 MVP 고정값 `800` tokens다.
 - OpenAI 측 저장을 요청하지 않도록 `store=False`를 명시한다.
 - SDK 자체 재시도는 Backend 조립 시 `max_retries=0`으로 설정한다. 이번 기능은 자동 재시도하지 않는다.
@@ -331,7 +331,7 @@ Backend Router / Service
           OpenAIResponsesClient
                  │ Responses API
                  ▼
-            gpt-4o-mini
+            gpt-4o
                  │ output_text + actual model
                  ▼
       ChatGenerationResult
@@ -359,7 +359,7 @@ Backend Service
 - 현재 질문, history 배열과 약물 목록을 JSON으로 직렬화
 - 선택 필드 생략과 `Decimal` 문자열 직렬화
 - 불완전한 용량 값·단위 쌍을 모두 provider payload에서 생략
-- `gpt-4o-mini`, instructions, `max_output_tokens=800` 전달
+- `gpt-4o`, instructions, `max_output_tokens=800` 전달
 - Provider 결과에 `chat-prompt-v3` 추가
 - 공백 model과 0 이하·NaN·무한대 timeout을 설정 오류로 거부
 - 10,000자 초과 content와 공백·100자 초과 model ID 거부
@@ -385,7 +385,7 @@ Backend Service
 `RUN_OPENAI_CHAT_SMOKE=1`일 때만 실행되는 테스트를 제공한다.
 
 - `OPENAI_API_KEY`가 설정되어 있어야 한다.
-- `OPENAI_MODEL`은 명시적으로 `gpt-4o-mini`여야 한다.
+- `OPENAI_MODEL`은 명시적으로 `gpt-4o`여야 한다.
 - 사용자·처방 식별자가 없는 비식별 합성 질문, 빈 history 배열과 약물만 사용한다.
 - 반환 content가 비어 있지 않고 model ID와 `chat-prompt-v3`가 기록되는지 확인한다.
 - 실제 질문·답변 본문을 로그나 fixture로 저장하지 않는다.
@@ -442,7 +442,7 @@ Backend가 기존 복약 가이드와 같은 설정을 제공한다.
 | 설정 | 값·의미 |
 | --- | --- |
 | `OPENAI_API_KEY` | Backend 실행 환경의 비밀값 |
-| `OPENAI_MODEL` | MVP에서는 `gpt-4o-mini` |
+| `OPENAI_MODEL` | MVP에서는 `gpt-4o` |
 | `OPENAI_TIMEOUT_SECONDS` | 기본 20초, 양수 유한값 |
 | `RUN_OPENAI_CHAT_SMOKE` | `1`일 때만 선택적 실제 API 테스트 실행 |
 
@@ -453,7 +453,7 @@ AI 담당 PR은 설정 모듈과 환경변수 예시 파일을 수정하지 않�
 - `backend/app/services/chat_ai/`가 DB·FastAPI와 독립된 모듈로 설계되어 있다.
 - 입력과 출력 계약이 Pydantic 모델로 구현 가능하게 정의되어 있다.
 - 현재 질문, 허용된 history와 확정 약물 정보가 최소 JSON payload로 전달된다.
-- `gpt-4o-mini` 비스트리밍 응답에서 평문 content와 실제 model ID를 추출한다.
+- `gpt-4o` 비스트리밍 응답에서 평문 content와 실제 model ID를 추출한다.
 - 결과에 `chat-prompt-v3`가 포함된다.
 - OpenAI SDK 타입과 예외가 client adapter 밖으로 노출되지 않는다.
 - timeout, provider 장애, 설정 오류와 잘못된 응답이 구분된다.
@@ -473,5 +473,5 @@ one-cycle 통합이 완료된 뒤 필요에 따라 이전 메시지 문맥, RAG�
 - [Notion — MVP Must-have 실시간 복약 챗봇 응답](https://app.notion.com/p/eda4b399582783edb07601da5a222f5a)
 - [MVP ERD](https://dbdiagram.io/d/%EB%8B%A4%EC%84%AF%EC%95%8C-ERD_MVP-6a7eb8a7c6a866c907683280)
 - [OpenAI Responses API 텍스트 생성](https://developers.openai.com/api/docs/guides/text)
-- [OpenAI GPT-4o mini 모델](https://developers.openai.com/api/docs/models/gpt-4o-mini)
+- [OpenAI GPT-4o 모델](https://developers.openai.com/api/docs/models/gpt-4o)
 - [기존 복약 가이드 AI 생성 설계](./medication-guide-ai-generation-design.md)
