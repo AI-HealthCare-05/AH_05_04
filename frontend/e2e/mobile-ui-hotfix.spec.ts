@@ -11,9 +11,76 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript((token) => {
     localStorage.clear()
     sessionStorage.clear()
-    localStorage.setItem('access_token', token)
+    if (!['/login', '/signup'].includes(window.location.pathname)) {
+      localStorage.setItem('access_token', token)
+    }
     document.documentElement.style.setProperty('--ds-safe-bottom', '34px')
   }, syntheticToken)
+})
+
+test('320/390/412px에서 전체 대상 화면은 가로 overflow와 Bottom Navigation 겹침이 없다', async ({ page }) => {
+  await page.route('**/api/v1/**', async (route) => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    if (request.method() === 'GET' && path === '/api/v1/users/me') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: ids.user,
+          name: '합성 사용자',
+          email: 'synthetic@example.com',
+          phone_number: null,
+          birthday: null,
+          gender: null,
+          created_at: '2026-09-15T00:00:00Z',
+        }),
+      })
+      return
+    }
+    if (request.method() === 'GET') {
+      await route.fulfill({
+        status: 404,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'synthetic visual state' }),
+      })
+      return
+    }
+    await route.abort()
+  })
+
+  const targets = [
+    { name: 'Signup', path: '/signup', selector: '.mvp-signup-page .app-scroll', hasNavigation: false },
+    { name: 'Login', path: '/login', selector: '.mvp-login-page .app-scroll', hasNavigation: false },
+    { name: 'Schedule', path: '/schedule', selector: '.schedule-page .app-scroll', hasNavigation: true },
+    { name: 'Report', path: '/report', selector: '.mvp-report-page .app-scroll', hasNavigation: true },
+    { name: 'Menu', path: '/menu', selector: '.mvp-menu-page .app-scroll', hasNavigation: true },
+    { name: 'Notification', path: '/notifications', selector: '.mvp-notifications-page .app-scroll', hasNavigation: true },
+  ] as const
+
+  for (const width of mobileWidths) {
+    await page.setViewportSize({ width, height: 844 })
+    for (const target of targets) {
+      await test.step(`${width}px ${target.name}`, async () => {
+        await page.goto(target.path)
+        const content = page.locator(target.selector)
+        await expect(content).toBeVisible()
+        expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0)
+        expect(await content.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0)
+
+        if (target.hasNavigation) {
+          const nav = page.getByRole('navigation', { name: '주요 메뉴' })
+          await content.evaluate((element) => element.scrollTo(0, element.scrollHeight))
+          const lastContent = content.locator(':scope > *').last()
+          const lastBox = await lastContent.boundingBox()
+          const navBox = await nav.boundingBox()
+          expect(lastBox).not.toBeNull()
+          expect(navBox).not.toBeNull()
+          expect((navBox?.y ?? 0) - ((lastBox?.y ?? 0) + (lastBox?.height ?? 0))).toBeGreaterThanOrEqual(12)
+        }
+      })
+    }
+  }
 })
 
 test('320/390/412px에서 Home과 Chat의 Bottom Navigation 안전 영역과 가용 공간을 유지한다', async ({ page }) => {

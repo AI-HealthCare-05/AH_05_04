@@ -271,7 +271,7 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
       >
         <main className="app-scroll mvp-page__content mvp-notifications">
           <div className="mvp-notifications__intro">
-            <h2>알림 목록</h2>
+            <h2>알림</h2>
             <p>복약 알림을 선택해 원래 복약 기록을 확인할 수 있어요.</p>
           </div>
 
@@ -311,7 +311,7 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
                 return (
                   <li key={notification.id}>
                     <button
-                      className="mvp-notifications__item-button"
+                      className={`mvp-notifications__item-button ${isRead ? 'is-read' : 'is-unread'}`}
                       type="button"
                       disabled={isSelecting}
                       aria-busy={isSelecting}
@@ -326,6 +326,11 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
                       <span className={`mvp-notifications__read-state ${isRead ? 'is-read' : ''}`}>
                         {isRead ? '읽음' : '읽지 않음'}
                       </span>
+                      {!isRead && !isSelecting && (
+                        <span className="mvp-notifications__item-action" aria-hidden="true">
+                          복용 여부 기록하기
+                        </span>
+                      )}
                     </button>
                   </li>
                 )

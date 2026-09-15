@@ -749,16 +749,6 @@ export function SchedulePage({
             <h1>복약 일정</h1>
           </header>
 
-          <Card className="schedule-page__unconfirmed-entry">
-            <div>
-              <strong>확인하지 못한 복약 기록</strong>
-              <p>지난 미확인 기록은 따로 모아 직접 보완할 수 있어요.</p>
-            </div>
-            <Button fullWidth variant="secondary" onClick={() => navigate('/schedule/unconfirmed')}>
-              미확인 기록 확인하기
-            </Button>
-          </Card>
-
           {isLoading && (
             <Card className="schedule-state-card" aria-live="polite">
               <div role="status">일정을 불러오는 중입니다.</div>
@@ -883,6 +873,16 @@ export function SchedulePage({
               })}
             </section>
           )}
+
+          <Card className="schedule-page__unconfirmed-entry">
+            <div>
+              <strong>확인하지 못한 복약 기록</strong>
+              <p>지난 미확인 기록은 따로 모아 직접 보완할 수 있어요.</p>
+            </div>
+            <Button fullWidth variant="secondary" onClick={() => navigate('/schedule/unconfirmed')}>
+              미확인 기록 확인하기
+            </Button>
+          </Card>
         </main>
       </NavigationShell>
     </div>

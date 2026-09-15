@@ -1,6 +1,6 @@
 .schedule-page {
-  --ds-action: #0066cc;
-  --ds-action-pressed: #0052a3;
+  --ds-action: #607d8b;
+  --ds-action-pressed: #526b78;
 }
 
 .schedule-page .mobile-app {
@@ -14,6 +14,7 @@
   align-content: start;
   gap: 20px;
   padding-top: 16px;
+  padding-bottom: calc(112px + var(--ds-safe-bottom));
 }
 
 .schedule-page__intro {
@@ -59,6 +60,9 @@
   display: grid;
   gap: 12px;
   padding: 18px;
+  border-color: #d7e0e5;
+  background: #f8fafb;
+  box-shadow: none;
 }
 
 .schedule-page__unconfirmed-entry strong,
@@ -102,8 +106,8 @@
   margin: 0;
   padding: 14px 16px;
   border-radius: 14px;
-  background: #eaf3ff;
-  color: #154f91;
+  background: #eceff1;
+  color: #455a64;
   font-size: 14px;
   font-weight: 700;
 }
@@ -147,16 +151,16 @@
 }
 
 .schedule-occurrence-card {
-  min-height: 132px;
+  min-height: 112px;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px 12px;
   align-content: center;
-  padding: 20px 44px 20px 20px;
+  padding: 18px 44px 18px 18px;
   border-radius: 18px;
 }
 
 .schedule-occurrence-card__period {
-  font-size: 29px;
+  font-size: 25px;
   font-weight: 900;
   letter-spacing: -.04em;
 }
@@ -396,11 +400,13 @@
 
 .schedule-record__actions {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
 .schedule-record__actions h2,
 .schedule-record__actions p {
+  grid-column: 1 / -1;
   margin: 0;
 }
 
@@ -440,5 +446,14 @@
 
   .schedule-editor fieldset {
     grid-template-columns: 1fr;
+  }
+
+  .schedule-record__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .schedule-record__actions h2,
+  .schedule-record__actions p {
+    grid-column: 1;
   }
 }
