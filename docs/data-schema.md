@@ -728,6 +728,21 @@ HIRA 적용약가 데이터는 공식 제품 식별 입력·정답 원장·상�
 
 상세 목표는 [계약 인덱스](./contracts/README.md)의 v1 문서를 따릅니다. 각 행의 구현 상태에 명시되지 않은 목표 enum·컬럼은 현재 코드가 이미 사용한다고 설명하지 않습니다.
 
+### Track B 생활 시간 현재 설정 (#556)
+
+`lifestyle_times`는 인증 사용자의 SELF profile별 현재 생활 시간 설정을 한 행으로 저장한다.
+`profile_id`가 PK이자 `profile.id` CASCADE FK이며 `revision > 0`, `days` JSONB array,
+`updated_at`으로 구성된다. 별도 변경 이력이나 추천 결과는 저장하지 않는다.
+
+최초 저장과 수정은 대상 SELF profile row를 먼저 잠근 뒤 현재 revision을 확인한다. PUT은
+전체 교체이고 `days=[]` 초기화도 행을 삭제하지 않고 revision을 증가시킨다. JSON shape와
+요일·시간·enum·상한은 Python DTO가 검증하고 DB는 행 단위 무결성만 강제한다. Runtime은
+SELECT·INSERT·UPDATE만 사용하며 Source Writer에는 접근 권한을 부여하지 않는다.
+
+구현 후보 계약은 [생활 시간 입력 v1](contracts/proposed/track-b-lifestyle-times-v1.md), 검증과 합성
+Frontend fixture는 [#556 검증 기록](validation/track-b/issue-556-lifestyle-times.md)을 따른다.
+이 저장으로 처방·일정·occurrence·알림·Check-in을 변경하지 않으며 추천 계산은 후속 범위다.
+
 ### Source Verification 후속 보호 (#165 / PR #323)
 
 - 과거 `165d7e6f5041`의 Verification Trigger는 `398c`에서 제거한다. 현재는 Python 감사 INSERT와 Runtime/Writer/Management의 Verification UPDATE·DELETE·TRUNCATE 권한 회수로 이력을 보존한다.

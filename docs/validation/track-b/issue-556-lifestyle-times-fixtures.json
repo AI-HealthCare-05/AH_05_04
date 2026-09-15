@@ -1,0 +1,98 @@
+{
+  "put_request": {
+    "expected_revision": 0,
+    "days": [
+      {
+        "weekday": 1,
+        "meals": [
+          {
+            "kind": "BREAKFAST",
+            "pattern": "REGULAR",
+            "window": {
+              "start_local_time": "07:30",
+              "end_local_time": "08:00",
+              "end_day_offset": 0
+            }
+          },
+          {
+            "kind": "LUNCH",
+            "pattern": "IRREGULAR",
+            "window": null
+          },
+          {
+            "kind": "DINNER",
+            "pattern": "NOT_USUALLY_EATEN",
+            "window": null
+          }
+        ],
+        "anchors": [
+          {
+            "kind": "LEAVE_HOME",
+            "local_time": "08:30"
+          }
+        ],
+        "unavailable_windows": [
+          {
+            "start_local_time": "23:00",
+            "end_local_time": "01:00",
+            "end_day_offset": 1
+          }
+        ]
+      }
+    ]
+  },
+  "put_response": {
+    "data": {
+      "revision": 1,
+      "updated_at": "2026-09-15T17:30:00+09:00",
+      "timezone": "Asia/Seoul",
+      "days": [
+        {
+          "weekday": 1,
+          "meals": [
+            {
+              "kind": "BREAKFAST",
+              "pattern": "REGULAR",
+              "window": {
+                "start_local_time": "07:30",
+                "end_local_time": "08:00",
+                "end_day_offset": 0
+              }
+            },
+            {
+              "kind": "LUNCH",
+              "pattern": "IRREGULAR",
+              "window": null
+            },
+            {
+              "kind": "DINNER",
+              "pattern": "NOT_USUALLY_EATEN",
+              "window": null
+            }
+          ],
+          "anchors": [
+            {
+              "kind": "LEAVE_HOME",
+              "local_time": "08:30"
+            }
+          ],
+          "unavailable_windows": [
+            {
+              "start_local_time": "23:00",
+              "end_local_time": "01:00",
+              "end_day_offset": 1
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "unstored_response": {
+    "data": {
+      "revision": 0,
+      "updated_at": null,
+      "timezone": "Asia/Seoul",
+      "days": []
+    }
+  }
+}

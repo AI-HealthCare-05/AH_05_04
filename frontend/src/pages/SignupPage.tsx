@@ -76,6 +76,36 @@ function validateSignup(form: SignupForm): SignupFieldErrors {
   return errors
 }
 
+function focusAndReveal(target: HTMLElement | null) {
+  if (!target) return
+
+  target.focus({ preventScroll: true })
+
+  window.requestAnimationFrame(() => {
+    const targetRect = target.getBoundingClientRect()
+    const scrollContainer = target.closest<HTMLElement>('.app-scroll')
+    const containerRect = scrollContainer?.getBoundingClientRect()
+    const visibleTop = Math.max(0, containerRect?.top ?? 0)
+    const visibleRight = Math.min(window.innerWidth, containerRect?.right ?? window.innerWidth)
+    const visibleBottom = Math.min(window.innerHeight, containerRect?.bottom ?? window.innerHeight)
+    const visibleLeft = Math.max(0, containerRect?.left ?? 0)
+    const isOutsideViewport =
+      targetRect.top < visibleTop ||
+      targetRect.right > visibleRight ||
+      targetRect.bottom > visibleBottom ||
+      targetRect.left < visibleLeft
+
+    if (isOutsideViewport && typeof target.scrollIntoView === 'function') {
+      const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      target.scrollIntoView({
+        behavior: prefersReducedMotion ? 'auto' : 'smooth',
+        block: 'center',
+        inline: 'nearest',
+      })
+    }
+  })
+}
+
 function SignupPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -149,9 +179,9 @@ function SignupPage() {
   }
 
   const focusField = (field: keyof SignupForm | undefined) => {
-    if (field === 'name') nameInputRef.current?.focus()
-    if (field === 'email') emailInputRef.current?.focus()
-    if (field === 'password') passwordInputRef.current?.focus()
+    if (field === 'name') focusAndReveal(nameInputRef.current)
+    if (field === 'email') focusAndReveal(emailInputRef.current)
+    if (field === 'password') focusAndReveal(passwordInputRef.current)
   }
 
   const toggleConsent = (purpose: SignupConsentPurpose) => {
@@ -215,7 +245,7 @@ function SignupPage() {
 
     if (!requiredTermsAccepted) {
       setTermsError('필수 약관에 동의해 주세요.')
-      termsInputRef.current?.focus()
+      focusAndReveal(termsInputRef.current)
       return
     }
 

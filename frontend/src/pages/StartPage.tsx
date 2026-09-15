@@ -24,10 +24,19 @@ function StartPage() {
           </header>
 
           <ul className="mvp-start__features" aria-label="Dosey 주요 기능">
-            <li>처방전 등록</li>
-            <li>쉬운 가이드</li>
-            <li>도지에게 질문</li>
-            <li>복약 지속 도움</li>
+            {[
+              '처방전 등록',
+              '쉬운 가이드',
+              '도지에게 질문',
+              '복약 지속 도움',
+            ].map((feature) => (
+              <li key={feature}>
+                <span className="mvp-start__feature-check" aria-hidden="true">
+                  ✓
+                </span>
+                <span>{feature}</span>
+              </li>
+            ))}
           </ul>
 
           <Button fullWidth onClick={() => navigate('/signup')}>

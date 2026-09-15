@@ -30,6 +30,7 @@ from app.models.knowledge import (
     RagKnowledgeIndex,
     RagKnowledgeIndexMember,
 )
+from app.models.lifestyle_times import LifestyleTimes
 from app.models.medical_documents import MedicalDocument
 from app.models.medication_schedules import (
     CheckinAudit,
@@ -222,6 +223,7 @@ __all__ = [
     "KnowledgeChunk",
     "KnowledgeDocument",
     "KnowledgeDocumentContractVersion",
+    "LifestyleTimes",
     "Medication",
     "MedicationOccurrence",
     "MedicationOccurrenceStatus",
