@@ -7,6 +7,53 @@ afterEach(() => {
 })
 
 describe('signup API', () => {
+  it('선택 동의 0개를 null이 아닌 빈 배열로 직렬화한다', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ detail: '회원가입 완료' }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await signup({
+      name: '홍길동',
+      email: 'dosey@example.com',
+      password: 'Password1!',
+      consents: [],
+    })
+
+    const [, options] = fetchMock.mock.calls[0]
+    const requestBody = JSON.parse(String(options?.body)) as Record<string, unknown>
+    expect(requestBody.consents).toEqual([])
+    expect(requestBody.consents).not.toBeNull()
+  })
+
+  it('호출 경계에서 null이 들어와도 consents를 빈 배열로 정규화한다', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ detail: '회원가입 완료' }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await signup({
+      name: '홍길동',
+      email: 'dosey@example.com',
+      password: 'Password1!',
+      consents: null as never,
+    })
+
+    const [, options] = fetchMock.mock.calls[0]
+    expect(JSON.parse(String(options?.body))).toEqual({
+      name: '홍길동',
+      email: 'dosey@example.com',
+      password: 'Password1!',
+      consents: [],
+    })
+  })
+
   it('#65 계약 외 필드를 실제 request body에 포함하지 않는다', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ detail: '회원가입 완료' }), {

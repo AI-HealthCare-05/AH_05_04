@@ -4,7 +4,7 @@ export type SignupRequest = {
   email: string
   password: string
   name: string
-  consents?: SignupConsentRequest[]
+  consents: SignupConsentRequest[]
 }
 
 export type SignupConsentPurpose = 'OCR' | 'GUIDE' | 'CHAT' | 'NOTIFICATION'
@@ -23,12 +23,17 @@ export type LoginResponse = {
 }
 
 export async function signup(data: SignupRequest) {
+  const request: SignupRequest = {
+    ...data,
+    consents: data.consents ?? [],
+  }
+
   return apiRequest<{ detail: string }>('/api/v1/auth/signup', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(data),
+    body: JSON.stringify(request),
   })
 }
 
