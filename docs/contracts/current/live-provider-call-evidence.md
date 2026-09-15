@@ -2,7 +2,14 @@
 
 ## 범위
 
-이 계약은 비식별 합성 fixture를 사용하는 `local-live-full` one-cycle에만 적용합니다. staging·production Live 검증, 배포 설정, 공개 API body, DB schema, Provider retry·생성 동작은 변경하지 않습니다. 실제 Live 실행과 Provider 로그 수동 검토는 자동 테스트가 아니라 별도 승인 작업입니다.
+이 계약의 범위는 다음과 같이 분리하여 적용합니다.
+
+1. **공통 범위 (`local-preflight` 및 `local-live-full`)**:
+   - 사전 GUARD, 로그인 성공 후 문서 업로드 및 OCR 접수 전에 반드시 Issue #458 승인 동의 게이트인 `POST /api/v1/users/me/consents/OCR`를 호출하는 실행 순서 및 fail-closed 검증 규약.
+   - 고정 정책 버전 `ocr-local-synthetic-demo-2026-09-14-v1`은 Issue #152 로컬 비식별 합성 실행 전용 폐쇄 allowlist이며, 향후 정책 버전 변경 시 코드와 계약을 함께 갱신해야 합니다.
+2. **`local-live-full` 전용 범위**:
+   - 비식별 합성 fixture를 사용하는 전체 live one-cycle의 요청별 validation header(`X-Validation-Run-Id`), 서버 생성 `trace_id`(`X-Trace-Id`) 수집·일치 검증, Provider call log(`provider-call-log-v1`) 발췌, DB 결과(`llm_processing == "NOT_REQUESTED"` 등) 검증 및 수동 Provider 로그 판정 증빙.
+   - staging·production Live 검증, 배포 설정, 공개 API body, DB schema, Provider retry·생성 동작은 변경하지 않습니다. 실제 Live 실행과 Provider 로그 수동 검토는 자동 테스트가 아니라 별도 승인 작업입니다.
 
 ## 요청과 응답 상관관계
 
@@ -58,6 +65,21 @@ OCR 구조화 활성 경로는 DB `model_version`·`prompt_version`과 `OCR_STRU
 `local-live-full` 실행 경계에 진입한 결과는 성공과 실패 모두 `execution_mode=LIVE`를 기록합니다. `database_verification`은 실제 검증 단계에 따라 `NOT_RUN|FAIL|PASS`, `provider_log_verification`은 trace가 있으면 `MANUAL_REQUIRED`, 없으면 `UNVERIFIED`입니다. 수행하지 않은 검증을 `PASS`로 기록하지 않으며 Provider 로그 판정도 자동으로 `PASS`가 되지 않습니다.
 
 실패 Artifact는 공개 오류 body의 `details.reason` 중 `DEADLINE_EXCEEDED|PROVIDER_TIMEOUT`만 runner 전용 `failure_evidence.api_reason`으로 복사할 수 있습니다. 다른 reason과 `details`의 나머지 내용은 기록하지 않습니다.
+
+### OCR 동의 게이트 연결 및 실패 단계
+
+- AGENTS.md 규칙에 따라, `OCR_CONSENT` failure_stage enum 추가 및 canonical runner 실행 순서는 [#152 로컬 라이브 검증 OCR 동의 게이트 연결 결정안](../../governance/decisions/2026-09-15-local-live-ocr-consent-152.md)에 근거하여 연결된 규약입니다. 본 변경의 최종 승인은 AI 어시스턴트의 자체 판정이 아니며, 단일 책임 리뷰어인 송은영(@phina-io)의 PR 코드 및 문서 리뷰 승인을 통해 완료됩니다.
+- `local-live-full` 및 `local-preflight` runner는 로그인 성공 후 문서 업로드 및 OCR 접수 전에 반드시 Issue #458 승인 동의 게이트인 `POST /api/v1/users/me/consents/OCR`를 호출합니다.
+- 필수 실행 순서는 사전 GUARD → fixture 준비 → 로그인 → OCR 동의 → 이미지 업로드 → OCR 실행 → 후속 검증입니다.
+- 요청 본문의 `policy_version`은 승인된 정책 버전 `ocr-local-synthetic-demo-2026-09-14-v1`(`OCR_CONSENT_POLICY_VERSION`)에서 전달받으며 임의 기본값을 허용하지 않습니다. 이 버전은 Issue #152 로컬 비식별 합성 실행 전용 폐쇄 allowlist이며, 향후 정책 버전 변경 시 코드와 계약을 함께 갱신해야 합니다.
+- 동의 API 응답이 수신되면 runner의 in-flight request 상태를 즉시 완료 처리(`_complete_request`)하여 이후 단계 실패 시 cleanup이 `PENDING`으로 남지 않도록 보장합니다.
+- 동의 응답 검증(status `GRANTED`, `effective is True`, 정책 버전 일치 등) 실패 또는 동의 API 오류(409, 503 등) 시 failure stage는 `OCR_CONSENT`로 기록되며, 문서 업로드나 외부 Provider 호출 없이 즉시 fail-closed 처리됩니다.
+- 환경 검증 단계에서 정책 버전 누락·형식 불일치 또는 `OCR_STRUCTURE_LLM_ENABLED!=false`인 경우 failure stage는 `GUARD`이며, DB fixture나 상태 파일을 생성하지 않고 즉시 fail-closed 처리됩니다.
+- runner 프로세스 환경에는 `OPENAI_API_KEY`와 `CLOVA_OCR_SECRET`이 주입되지 않습니다.
+- `local-live-full` DB 검증 단계에서 OCR Job의 `llm_processing` 상태를 필수로 검증합니다:
+  - `ocr_structuring_expected=False`인 경우: 반드시 `llm_processing == "NOT_REQUESTED"`, `model_version is None`, `prompt_version is None`이어야 합니다. Backend/Worker에서 기능이 활성화되었으나 최소화 정책으로 생략된 `SKIPPED_MINIMIZATION` 상태는 이번 실행 증거로 인정하지 않고 `DB_VERIFICATION` 실패로 처리합니다.
+  - `ocr_structuring_expected=True`인 경우: 반드시 `llm_processing == "APPLIED"`, `model_version` 및 `prompt_version`이 모두 존재해야 합니다. `SKIPPED_MINIMIZATION`, `NOT_REQUESTED`, `None`은 활성 실행 증거로 인정하지 않고 `DB_VERIFICATION` 실패로 처리합니다.
+  - 반환되는 `ocr_database` evidence에도 `llm_processing`을 포함합니다.
 
 전체 증빙은 동일 `run_id`의 다음 세 Artifact와 지정 검토자 수동 판정으로 구성합니다.
 

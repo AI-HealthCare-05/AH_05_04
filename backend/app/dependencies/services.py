@@ -50,7 +50,7 @@ from app.services.job_status import JobStatusService
 from app.services.medical_documents import MedicalDocumentService
 from app.services.medication_candidates import MedicationCandidateService
 from app.services.medication_checkin_api import MedicationCheckinApiService
-from app.services.medication_checkins import MedicationCheckinService, NoopCheckinRevisionInvalidation
+from app.services.medication_checkins import MedicationCheckinService
 from app.services.medication_identification import MedicationIdentificationService
 from app.services.medication_occurrences import PrescriptionVersionMedicationInvalidationService
 from app.services.medication_reports import MedicationReportService
@@ -69,6 +69,7 @@ from app.services.ocr_engine import OcrEngine
 from app.services.prescriptions import PrescriptionService
 from app.services.track_c_api import TrackCApiService
 from app.services.track_c_flow import ContractFoundationSafetyPolicy, TrackCFlowService
+from app.services.track_c_revision_invalidation import TrackCCheckinRevisionInvalidation
 from app.services.track_c_support import TrackCSupportService
 from app.services.user_consents import ConsentGateService, OcrConsentService
 from app.services.users import UserConsentService, UserManageService
@@ -379,10 +380,9 @@ def get_medication_checkin_api_service(
         Depends(get_sync_mutation_idempotency_service),
     ],
 ) -> MedicationCheckinApiService:
-    # B3's explicit no-op remains until Track C #195 supplies its same-session adapter.
     checkins = MedicationCheckinService(
         MedicationCheckinRepository(session),
-        revision_invalidation=NoopCheckinRevisionInvalidation(),
+        revision_invalidation=TrackCCheckinRevisionInvalidation(TrackCStorageRepository(session)),
     )
     return MedicationCheckinApiService(MedicationScheduleRepository(session), checkins, idempotency_service)
 
