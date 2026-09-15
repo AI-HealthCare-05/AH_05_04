@@ -65,7 +65,10 @@ def _config(**overrides: Any) -> Config:
 
 
 def _delivery() -> WorkerDelivery:
-    return WorkerDelivery(stream_message_id="1-0", message=None)  # type: ignore[arg-type]
+    # runtime이 delivery의 job_type으로 종류별 실행 상한을 고르므로 실제 message를 사용합니다.
+    from ai_worker.tests.core.test_consumer_execution import build_message
+
+    return WorkerDelivery(stream_message_id="1-0", message=build_message())
 
 
 class _StubSession:
@@ -433,7 +436,7 @@ async def test_delivery_failure_does_not_escape_execution_boundary(
     )
     inner = _RaisingExecution(error)
     # 실행 경계만 검증하므로 lease·DB 조립 없이 실패하는 실행으로 바꿉니다.
-    execution._build_execution = lambda session: cast(  # type: ignore[method-assign]
+    execution._build_execution = lambda session, *, job_type: cast(  # type: ignore[method-assign]
         LeaseAwareConsumerExecution, inner
     )
 
@@ -509,7 +512,7 @@ async def test_valid_schema_event_mismatch_is_quarantined() -> None:
     )
     lease_execution = _RejectedLeaseExecution()
     quarantine_execution = _RecordingQuarantineExecution()
-    execution._build_execution = lambda session: cast(  # type: ignore[method-assign]
+    execution._build_execution = lambda session, *, job_type: cast(  # type: ignore[method-assign]
         LeaseAwareConsumerExecution,
         lease_execution,
     )

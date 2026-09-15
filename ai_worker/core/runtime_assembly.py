@@ -7,7 +7,7 @@ Consumer 실행과 Pending reclaim·retry·quarantine·DLQ 복구 경계를 조�
 import logging
 import random
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
@@ -54,12 +54,13 @@ from ai_worker.adapters.sqlalchemy_recovery_repository import (
 )
 from ai_worker.adapters.sqlalchemy_transaction import SqlAlchemyTransaction
 from ai_worker.core.config import Config
-from ai_worker.core.consumer_execution import LeaseAwareConsumerExecution
+from ai_worker.core.consumer_execution import DomainExecutionStarter, LeaseAwareConsumerExecution
 from ai_worker.core.consumer_runtime import ConsumerRuntime
 from ai_worker.core.dispatcher import Dispatcher
 from ai_worker.core.dlq import DlqOutboxPublisher
 from ai_worker.core.errors import WorkerError
 from ai_worker.core.event_publisher import EventPublisher
+from ai_worker.core.handler import ContextAwareHandler
 from ai_worker.core.job_execution import LeaseNotAcquired
 from ai_worker.core.outbox_publisher import OutboxPublisher
 from ai_worker.core.provider_observability import (
@@ -127,6 +128,19 @@ class RoutingResultStore:
         await store.save(message=message, result=result)
 
 
+class RoutingExecutionStarter:
+    """도메인 시작 상태가 연결된 종류에만 해당 전이를 실행합니다."""
+
+    def __init__(self, starters: Mapping[JobType, DomainExecutionStarter]) -> None:
+        self._starters = dict(starters)
+
+    async def start(self, *, message: WorkerMessage, started_at: datetime) -> bool:
+        starter = self._starters.get(message.job_type)
+        if starter is None:
+            return True
+        return await starter.start(message=message, started_at=started_at)
+
+
 class ResultStoreLike(Protocol):
     async def save(
         self,
@@ -134,6 +148,11 @@ class ResultStoreLike(Protocol):
         message: WorkerMessage,
         result: HandlerSuccess,
     ) -> None: ...
+
+
+# Handler와 저장소는 delivery의 동일 session에서 함께 조립합니다.
+# runtime은 항상 context를 전달하므로 등록 대상은 ContextAwareHandler 계약을 따릅니다.
+type GuideChatFactory = Callable[[AsyncSession], tuple[ContextAwareHandler, ResultStoreLike]]
 
 
 def create_worker_engine(config: Config) -> AsyncEngine:
@@ -320,6 +339,7 @@ class SessionScopedDeliveryExecution:
         clock: Clock,
         logger: logging.Logger,
         ocr_provider: OcrProvider | None = None,
+        guide_chat_factories: Mapping[JobType, GuideChatFactory] | None = None,
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self._config = config
@@ -328,28 +348,24 @@ class SessionScopedDeliveryExecution:
         self._clock = clock
         self._logger = logger
         self._ocr_provider = ocr_provider
+        self._guide_chat_factories = dict(guide_chat_factories or {})
+        if any(kind not in (JobType.GUIDE, JobType.CHAT) for kind in self._guide_chat_factories):
+            raise ValueError("Guide/Chat factories only accept GUIDE and CHAT")
         self._monotonic_clock = monotonic_clock
-        self._heartbeat = SqlAlchemyLeaseHeartbeat(
-            session_factory=session_factory,
-            lease_duration=config.lease_duration,
-            heartbeat_interval=config.heartbeat_interval,
-            clock=clock,
-        )
 
     @property
     def registered_types(self) -> frozenset[JobType]:
         """조립된 Handler 종류입니다. 등록되지 않은 종류는 Provider를 호출하지 않습니다."""
 
-        if self._ocr_provider is None:
-            return frozenset()
-
-        return frozenset({JobType.OCR})
+        kinds = set(self._guide_chat_factories)
+        if self._ocr_provider is not None:
+            kinds.add(JobType.OCR)
+        return frozenset(kinds)
 
     async def execute(self, delivery: WorkerDelivery) -> object:
         async with self._session_factory() as session:
-            execution = self._build_execution(session)
-
             try:
+                execution = self._build_execution(session, job_type=delivery.message.job_type)
                 result = await execution.execute(delivery)
 
                 if isinstance(result, LeaseNotAcquired) and result.rejection_reason is not None:
@@ -418,7 +434,63 @@ class SessionScopedDeliveryExecution:
             acknowledger=self._acknowledger,
         )
 
-    def _build_execution(self, session: AsyncSession) -> LeaseAwareConsumerExecution:
+    def _execution_limits(self, job_type: JobType) -> tuple[timedelta, float]:
+        """async-job-v1의 종류별 실행 상한입니다. CHAT만 45초/60초를 사용합니다."""
+
+        if job_type is JobType.CHAT:
+            return (
+                self._config.chat_lease_duration,
+                self._config.WORKER_CHAT_HARD_TIMEOUT_SECONDS,
+            )
+        return self._config.lease_duration, self._config.WORKER_HARD_TIMEOUT_SECONDS
+
+    def _register_guide_chat(
+        self,
+        registry: HandlerRegistry,
+        stores: dict[JobType, ResultStoreLike],
+        *,
+        session: AsyncSession,
+        job_type: JobType,
+    ) -> None:
+        """이 delivery 종류의 factory만 조립합니다.
+
+        조립에 실패한 종류는 등록하지 않고 넘어갑니다. 등록되지 않은 job_type은
+        Dispatcher가 승인된 실패(INTERNAL_ERROR)로 처리하므로, lease 획득 뒤의
+        기존 실패 기록·ACK 경계를 그대로 사용합니다. 예외를 밖으로 올리면 실패
+        기록도 ACK도 없이 reclaim이 반복되고 다른 종류까지 막힙니다.
+        """
+
+        factory = self._guide_chat_factories.get(job_type)
+        if factory is None:
+            return
+
+        try:
+            handler, store = factory(session)
+        except Exception:
+            # 조립 예외의 원문에는 Provider 설정이나 secret이 섞일 수 있어 남기지 않습니다.
+            self._logger.error(
+                "guide/chat factory assembly failed",
+                extra={"job_type": job_type.value, "failure_code": "INTERNAL_ERROR"},
+            )
+            return
+
+        if (
+            handler is None
+            or handler.handler_type != job_type
+            or not callable(getattr(handler, "handle", None))
+            or store is None
+            or not callable(getattr(store, "save", None))
+        ):
+            self._logger.error(
+                "guide/chat factory returned an invalid binding",
+                extra={"job_type": job_type.value, "failure_code": "INTERNAL_ERROR"},
+            )
+            return
+
+        registry.register(handler)
+        stores[job_type] = store
+
+    def _build_execution(self, session: AsyncSession, *, job_type: JobType) -> LeaseAwareConsumerExecution:
         registry = self._build_registry(session=session)
         stores: dict[JobType, ResultStoreLike] = {}
         execution_starter = None
@@ -428,18 +500,26 @@ class SessionScopedDeliveryExecution:
                 session,
                 clock=self._clock,
             )
-            execution_starter = SqlAlchemyOcrExecutionStarter(session)
+            execution_starter = RoutingExecutionStarter({JobType.OCR: SqlAlchemyOcrExecutionStarter(session)})
 
+        self._register_guide_chat(registry, stores, session=session, job_type=job_type)
+
+        lease_duration, hard_timeout_seconds = self._execution_limits(job_type)
         keyword_arguments = {
             "dispatcher": Dispatcher(registry),
             "result_store": RoutingResultStore(stores),
             "transaction": SqlAlchemyTransaction(session),
             "acknowledger": self._acknowledger,
             "job_repository": SqlAlchemyJobExecutionRepository(session),
-            "heartbeat": self._heartbeat,
-            "lease_duration": self._config.lease_duration,
+            "heartbeat": SqlAlchemyLeaseHeartbeat(
+                session_factory=self._session_factory,
+                lease_duration=lease_duration,
+                heartbeat_interval=self._config.heartbeat_interval,
+                clock=self._clock,
+            ),
+            "lease_duration": lease_duration,
             "clock": self._clock,
-            "hard_timeout_seconds": self._config.WORKER_HARD_TIMEOUT_SECONDS,
+            "hard_timeout_seconds": hard_timeout_seconds,
             "execution_starter": execution_starter,
         }
 
@@ -641,6 +721,7 @@ def build_worker_runtime(
     clock: Clock,
     ocr_engine: OcrEngine | None = None,
     ocr_provider: OcrProvider | None = None,
+    guide_chat_factories: Mapping[JobType, GuideChatFactory] | None = None,
     redis_client: Redis | None = None,
     engine: AsyncEngine | None = None,
 ) -> AssembledWorkerRuntime:
@@ -675,6 +756,7 @@ def build_worker_runtime(
         clock=clock,
         logger=logger,
         ocr_provider=resolved_ocr_provider,
+        guide_chat_factories=guide_chat_factories,
     )
     rejected_execution = SessionScopedRejectedDeliveryExecution(
         session_factory=session_factory,
