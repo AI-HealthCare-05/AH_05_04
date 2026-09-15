@@ -4,7 +4,7 @@
 
 관련 Issue: #593, #591, #166, #526
 담당: 송은영 (`@phina-io`)
-검토: 김지혜(Source 수집·저장 실행), 정현우(RAG/LLM 소비 인계)
+검토: 김지혜(Source 수집·저장 실행)
 
 ## 목적
 
@@ -35,7 +35,7 @@
 | `SOURCE_ARTIFACT_S3_REGION` | region 자체가 secret이 아니면 기록 가능 |
 | `SOURCE_ARTIFACT_S3_SERVER_SIDE_ENCRYPTION` | `AES256` 또는 `aws:kms` 여부 기록 가능 |
 | `SOURCE_ARTIFACT_S3_ENDPOINT_URL` | credential 없는 HTTPS endpoint 형식만 기록 가능. 실제 endpoint 공개 여부는 환경 정책에 따름 |
-| Source/Endpoint/Operation code | 김지혜·정현우와 합의된 논리 식별자 기록 가능 |
+| Source/Endpoint/Operation code | 김지혜와 합의된 논리 식별자 기록 가능 |
 | source_version/parser/canonicalization version | 원문 내용이나 secret 없이 계약 식별자로 기록 가능 |
 | Snapshot 인계 증거 | Snapshot ID, source_version, canonical checksum, member count, artifact key의 안전한 식별자 기록 가능 |
 
@@ -59,7 +59,7 @@
 | 수집 writer | 지정 dev/staging DB에 Source Snapshot/Run/Artifact/member 저장 경로가 있는지 확인 | credential 이름 없이 writer 역할 준비 여부만 기록 |
 | 검증 reader | 새 session에서 Snapshot→member→artifact receipt 재조회가 가능한지 확인 | 조회 성공, count, checksum 대조 결과 기록 |
 | cleanup executor | 미참조 Artifact 정리 정책과 executor 경계가 #347/#398과 충돌하지 않는지 확인 | 실제 삭제 권한 부여 여부가 아니라 경계 확인 결과 기록 |
-| consumer reader | 정현우가 Snapshot ID와 member ID로 후속 Chunk/Index 입력을 식별할 수 있는지 확인 | 원문 bytes 없이 참조 충분성 확인 결과 기록 |
+| consumer reader | 후속 AI/RAG consumer가 Snapshot ID와 member ID로 후속 Chunk/Index 입력을 식별할 수 있는지 확인 | 원문 bytes 없이 참조 충분성 확인 결과 기록 |
 
 
 ## 실제 환경 준비 기록 양식
@@ -100,7 +100,7 @@
 | Verification | checksum 대조 결과와 verification status |
 | Re-query | commit 후 새 session에서 Snapshot→member→artifact receipt 재조회 결과 |
 | Re-run | 동일 입력 재실행 시 NO_CHANGE 또는 합의된 멱등 결과 |
-| Handoff | 정현우가 Chunk/Index 입력으로 충분하다고 확인한 참조 목록 |
+| Handoff | 후속 Chunk/Index 입력으로 충분한 참조 목록 |
 
 위 증거가 없으면 #591은 로컬 검증 또는 부분 조사 결과로만 기록하고, 인계용 Source Snapshot 적재 완료로 보지 않는다.
 
