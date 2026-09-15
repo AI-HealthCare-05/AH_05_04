@@ -71,7 +71,7 @@ def test_source_handoff_readiness_doc_pins_existing_runtime_boundaries() -> None
         assert setting in text
 
 
-def test_source_handoff_readiness_doc_does_not_claim_provision_or_ingestion_complete() -> None:
+def test_source_handoff_readiness_doc_does_not_claim_ingestion_or_cleanup_complete() -> None:
     text = READINESS_DOC.read_text(encoding="utf-8")
 
     required_boundaries = [
@@ -80,10 +80,12 @@ def test_source_handoff_readiness_doc_does_not_claim_provision_or_ingestion_comp
         "#591 실제 적재 성공이나 운영 공개 승인을 주장하지 않는다",
         "#591 Source parser·정규화·적재 실행 command를 구현하지 않는다",
         "#591 적재 실패 artifact cleanup 요청·executor 절차를 구현하지 않는다",
-        "#609 완료 전에는 provisioning만으로 적재 실행 불가",
+        "dev/staging DB와 `LOCAL_PRIVATE` 준비만으로는 인계 완료가 아님",
         "제한 접근 위치",
         "인계용 Source Snapshot 적재 완료로 보지 않는다",
         "- [x] PR #597의 runbook이 develop에 반영됐다.",
+        "- [x] dev/staging DB가 운영·배포 DB와 분리되어 지정됐고",
+        "- [ ] cleanup executor 실행 권한과 실제 정리 절차가 준비됐다",
     ]
     for boundary in required_boundaries:
         assert boundary in text
