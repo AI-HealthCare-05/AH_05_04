@@ -1453,3 +1453,162 @@ async def test_legacy_empty_result_remains_available_as_audit_without_guessed_de
             await SqlAlchemySourceSnapshotRepository(session).get_attempt_receipt(ingestion_run_id=run_id)
         row = await session.get(RagSourceIngestionRun, run_id)
         assert row is not None and row.failure_code == "EMPTY_RESULT" and row.validation_reason_code is None
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+async def test_three_local_artifacts_members_roundtrip_and_replay(tmp_path, rollback) -> None:
+    """#591 준비: 합성 3문서만 사용해 기존 저장 포트를 검증합니다. MFDS 승인이 아닙니다."""
+    import hashlib
+
+    from sqlalchemy import update
+
+    from ai_worker.adapters.local_private_source_artifact_store import LocalPrivateSourceArtifactStore
+    from ai_worker.tasks.rag.source_ingestion.artifacts import read_verified_raw_artifact
+    from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
+        SourceSnapshotMemberCreate,
+        SourceSnapshotMemberKind,
+        append_snapshot_member,
+    )
+    from app.models.rag_source import RagSource, RagSourceEndpoint, RagSourceOperation, RagSourceSnapshotMember
+
+    identity = await _seed_operation(f"LOCAL_591_{rollback}")
+    # 합성 출처에만 인위적으로 준비 상태를 설정합니다. 실제 Source/Receipt는 변경하지 않습니다.
+    async with session_factory.begin() as session:
+        source_id = await session.scalar(select(RagSource.id).where(RagSource.source_code == identity.source_code))
+        await session.execute(update(RagSource).where(RagSource.id == source_id).values(lifecycle_status="ACTIVE"))
+        await session.execute(
+            update(RagSourceEndpoint)
+            .where(RagSourceEndpoint.source_id == source_id)
+            .values(lifecycle_status="VERIFIED", runtime_status="ENABLED", acquisition_status="APPROVED")
+        )
+        await session.execute(
+            update(RagSourceOperation)
+            .where(RagSourceOperation.operation_code == identity.operation_code)
+            .values(runtime_status="ENABLED", acquisition_status="APPROVED")
+        )
+
+    root = (tmp_path / "private").resolve()
+    store = LocalPrivateSourceArtifactStore(root)
+    artifacts = []
+    originals = {}
+    for index, section in enumerate(("EE", "UD", "NB"), 1):
+        raw = f'<DOC type="{section}"><PARAGRAPH>synthetic-{index}</PARAGRAPH></DOC>'.encode()
+        path = tmp_path / f"{section}.xml"
+        path.write_bytes(raw)
+        metadata = RawArtifactMetadata(section, hashlib.sha256(raw).hexdigest(), len(raw), "application/xml")
+        artifact = store.put_verified(page_number=index, file_path=path, metadata=metadata)
+        assert store.put_verified(page_number=index, file_path=path, metadata=metadata) == artifact
+        artifacts.append(artifact)
+        originals[section] = raw
+    artifacts = tuple(artifacts)
+    ingestion = replace(
+        _ingestion(identity, _CHECKSUM_A),
+        raw_manifest_checksum=raw_manifest_checksum(a.metadata for a in artifacts),
+        artifact_count=3,
+        record_count=3,
+    )
+    async with session_factory() as session:
+        repository = SqlAlchemySourceSnapshotRepository(session)
+        first = await persist_product_ingestion_result(
+            repository=repository,
+            ingestion=ingestion,
+            metadata=_metadata("external:local591"),
+            artifacts=artifacts,
+        )
+        assert first.snapshot_id is not None
+        receipt = await repository.get_snapshot_receipt(snapshot_id=first.snapshot_id)
+        assert receipt is not None
+        assert receipt.verification_status is SnapshotVerificationStatus.PENDING
+        stored = (
+            await session.scalars(
+                select(RagSourceIngestionArtifact)
+                .join(RagSourceIngestionRun)
+                .where(RagSourceIngestionRun.snapshot_id == first.snapshot_id)
+                .order_by(RagSourceIngestionArtifact.page_number)
+            )
+        ).all()
+        assert len(stored) == 3
+        member_ids = []
+        for artifact in stored:
+            member = await append_snapshot_member(
+                repository=repository,
+                request=SourceSnapshotMemberCreate(
+                    provenance=receipt,
+                    member_kind=SourceSnapshotMemberKind.ARTIFACT,
+                    endpoint_id=None,
+                    operation_id=None,
+                    ingestion_artifact_id=artifact.id,
+                    locator=f"synthetic/{artifact.artifact_key}",
+                    content_sha256=artifact.raw_checksum,
+                ),
+            )
+            member_ids.append(member.source_snapshot_member_id)
+        if rollback:
+            await session.rollback()
+        else:
+            await session.commit()
+
+    async with session_factory() as session:
+        snapshot = await session.get(RagSourceSnapshot, first.snapshot_id)
+        if rollback:
+            assert snapshot is None
+            assert not (
+                await session.scalars(select(RagSourceSnapshotMember).where(RagSourceSnapshotMember.id.in_(member_ids)))
+            ).all()
+            assert not (
+                await session.scalars(
+                    select(RagSourceIngestionRun).where(RagSourceIngestionRun.snapshot_id == first.snapshot_id)
+                )
+            ).all()
+        else:
+            assert snapshot is not None
+            assert snapshot.verification_status is RagSnapshotVerificationStatus.PENDING
+            pairs = (
+                await session.execute(
+                    select(RagSourceSnapshotMember, RagSourceIngestionArtifact)
+                    .join(
+                        RagSourceIngestionArtifact,
+                        RagSourceSnapshotMember.ingestion_artifact_id == RagSourceIngestionArtifact.id,
+                    )
+                    .where(RagSourceSnapshotMember.source_snapshot_id == first.snapshot_id)
+                )
+            ).all()
+            assert len(pairs) == 3
+            for member, artifact in pairs:
+                assert member.content_sha256 == artifact.raw_checksum
+                raw = read_verified_raw_artifact(
+                    file_path=root / artifact.object_key,
+                    metadata=RawArtifactMetadata(
+                        artifact.artifact_key,
+                        artifact.raw_checksum,
+                        artifact.byte_size,
+                        artifact.content_type,
+                    ),
+                )
+                assert raw == originals[artifact.artifact_key]
+    # DB rollback은 불변 원문을 삭제하는 권한이 아닙니다. 원문 재검증은 두 경우 모두 수행합니다.
+    for artifact in artifacts:
+        assert (
+            read_verified_raw_artifact(file_path=root / artifact.object_key, metadata=artifact.metadata)
+            == originals[artifact.metadata.artifact_key]
+        )
+    if rollback:
+        return
+    async with session_factory.begin() as session:
+        repeat = await persist_product_ingestion_result(
+            repository=SqlAlchemySourceSnapshotRepository(session),
+            ingestion=ingestion,
+            metadata=_metadata("external:local591", minute=1),
+            artifacts=artifacts,
+        )
+        assert repeat.decision is SnapshotIngestionDecision.NO_CHANGE
+        assert repeat.snapshot_id == first.snapshot_id
+    async with session_factory() as session:
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(RagSourceSnapshotMember)
+                .where(RagSourceSnapshotMember.source_snapshot_id == first.snapshot_id)
+            )
+            == 3
+        )
