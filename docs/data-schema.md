@@ -813,3 +813,11 @@ PD-192-2는 6개 최소 안내형 Support의 내부 Rule·한국어 Copy 불변 
 [결정/기존 합의 근거](governance/decisions/2026-09-13-track-c-storage-192.md),
 [Rule·Copy 제품 승인](governance/decisions/2026-09-15-track-c-handler-config-rules-192.md),
 [검증 기록](testing/track-c-storage-192.md).
+
+### #194 지원 제안·Plan 생성 부분 구현
+
+기존 Barrier와 support_action_plan 모델만 사용한다. Offer 저장 테이블·Plan revision·migration은
+추가하지 않는다. Check-in→Safety→Barrier→Plan 잠금 후 Barrier별 ACTIVE unique를 적용하고,
+서버가 승인된 rule/copy/config snapshot과 SYNC_MUTATION 응답을 같은 transaction에 저장한다.
+필수 사용자 확인과 생성 현재성은 [#194 API 계약](contracts/proposed/track-c-support-plan-api-194.md)을 따른다.
+완료·취소·follow-up API는 후속이며 기존 #193/#195 취소 writer는 변경하지 않는다.

@@ -1,0 +1,204 @@
+{
+  "schema_version": "mfds-label-precheck-manifest-v1",
+  "checked_at": "2026-09-15",
+  "official_host": "nedrug.mfds.go.kr",
+  "status": "LOCAL_PRECHECK_ONLY",
+  "source_ingested": false,
+  "db_requery_verified": false,
+  "rag_use_approved": false,
+  "source_code": null,
+  "endpoint_code": null,
+  "operation_code": null,
+  "source_version": null,
+  "canonicalization_spec_version": null,
+  "validator_version": "mfds-label-xml-candidate-validator-v2",
+  "permit_evidence_rule": "Official detail returned HTTP 200 and cancelCodeName, cancelDate, and cancelCode were all null.",
+  "detail_body_comparison": {
+    "xml_document_count": 53,
+    "result": "ALL_NONEMPTY_PARAGRAPHS_AND_ARTICLE_TITLES_FOUND_IN_MATCHING_DETAIL_SECTION",
+    "comparison_only_normalization": "HTML display tags, whitespace, entities, editor comments, and table captions were separated for comparison; raw hashes were not changed."
+  },
+  "document_coordinate_rule": {
+    "external_document_id": "mfds-label:{item_seq}:{document_type}",
+    "locator": "mfds-label/{item_seq}/{document_type}",
+    "source_url": "https://nedrug.mfds.go.kr/pbp/cmn/xml/drb/{item_seq}/{document_type}"
+  },
+  "products": [
+    {
+      "item_seq": "198500321",
+      "official_name": "다이아벡스정500밀리그램(메트포르민염산염)",
+      "company": "(주)대웅제약",
+      "classification": "전문의약품",
+      "active_ingredient_summary": "메트포르민염산염 500mg/1정; 일반정",
+      "detail_cache_updated_at": "2026-08-15 17:49:51.0",
+      "detail_raw_sha256": "c23ad60db05b7a9d7c60a1d625063c1f9376b6d8c0898ebae4680090b63ed8e3",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "a51bd85a04061348f728300b77b23d3471c295a8c09085f20c574da5a2d6a49e", "UD": "18bce492228cced0efea2a485ba67bea9ec967407430c2962b7b9dba054d66d0", "NB": "d192ae92afc7d523972bd6ce8b1f9eb4751276e7ccf7e80bb8882b3544a437ee"}
+    },
+    {
+      "item_seq": "200410090",
+      "official_name": "리피토정10밀리그램(아토르바스타틴칼슘삼수화물)",
+      "company": "비아트리스코리아(주)",
+      "classification": "전문의약품",
+      "active_ingredient_summary": "아토르바스타틴칼슘삼수화물 10.85mg; 아토르바스타틴으로서 10mg/1정",
+      "detail_cache_updated_at": "2026-08-15 17:49:51.0",
+      "detail_raw_sha256": "62c2611a86a5ec2b1f0ab24c0b58dd9fbc2f75f08e4d6dc322dafe65a7359fa3",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "180af9a160f3b087307a19b805d4b8938101b31ee1d24a0e151607406e961998", "UD": "31029b97cbbadadeb2ed2b09d84f74f5668d16757012a5206ad325fa349188da", "NB": "84ee413df89456b8a17a0cde8d32d2cf3fca771c8d8f30e7f7151b7e5895fc78"}
+    },
+    {
+      "item_seq": "196000008",
+      "official_name": "다이크로짇정(히드로클로로티아지드)",
+      "company": "(주)유한양행",
+      "classification": "전문의약품",
+      "active_ingredient_summary": "히드로클로로티아지드 25mg/1정",
+      "detail_cache_updated_at": "2026-08-15 17:49:51.0",
+      "detail_raw_sha256": "9ec4e66cc5e7d43329d505ad5c1fd501e6bbbe504f590f04a45a6eb64f61c01c",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "e8075e3aed6d9bb5c028f86e8f6763a97c1fb92b96d5abc3aed118447607fae1", "UD": "2c17ea0b26f2c9bd5c3caa035a37d1f393045ba9de0d93134b4063fbe586c2a0", "NB": "a67cd8a2c9b51a4e60638a2fe586d9b9fc96f3751ef88fc8c13a4561881296c2"}
+    },
+    {
+      "item_seq": "200400463",
+      "official_name": "이지엔6애니연질캡슐(이부프로펜)",
+      "company": "(주)대웅제약",
+      "classification": "일반의약품",
+      "active_ingredient_summary": "이부프로펜 200mg/1캡슐; 연질캡슐",
+      "detail_cache_updated_at": "2026-08-15 17:50:01.0",
+      "detail_raw_sha256": "c90c3fce8ba2df40cbc40a650b9de3f4d8b565d3e77fd11fff28852d06acd525",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "c8cb15b4e6257cc942cd0755fe1d7c350dcbfe76be99ff81f3ca8976be7d3578", "UD": "59d87cbcf88ea9430f388e546f2b30b05c193782db393f68fa6245ac2f47d738", "NB": "fab50157915f7f517081c01255dc50a2496edc4c7800ba3b660f58485d7968ce", "NN": "0ade7514abd47375bc2963bc0063ed22b86468faaf3a0d49be3f12d19ba2825d"}
+    },
+    {
+      "item_seq": "200511904",
+      "official_name": "다이아벡스엑스알서방정500밀리그램(메트포르민염산염)",
+      "company": "(주)대웅제약",
+      "classification": "전문의약품",
+      "active_ingredient_summary": "메트포르민염산염 500mg/1정; 서방정",
+      "detail_cache_updated_at": "2026-08-15 17:49:52.0",
+      "detail_raw_sha256": "1b8aae7653cb52d0973cd16f40cc63a33720480fd299d7ae64b406f4f7e376db",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "66a94afc583b90c69197394925d4763120c8826caedb0091b19cab1e06f933ab", "UD": "d4b430f11db85071efd6d4ce453b8b19d9c4624e6507dbefe6725a9147bc9a93", "NB": "20e7f1180ce80a510cb72cfa6d5b831742f013fe5079d4bc2702152af143b43b"}
+    },
+    {
+      "item_seq": "200703804",
+      "official_name": "엑스포지정 5/80밀리그램(암로디핀베실산염, 발사르탄)",
+      "company": "한국노바티스(주)",
+      "classification": "전문의약품",
+      "active_ingredient_summary": "암로디핀베실산염 6.94mg(암로디핀 5mg) + 발사르탄 80mg/1정",
+      "detail_cache_updated_at": "2026-08-15 17:49:54.0",
+      "detail_raw_sha256": "581a1986ad66d6b9b344a07dcdd8ce97e214a40322b5bbb571e578b523e45b42",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "e898eee3072013db3edcc9dc9b71482d359f25169b5675fa445bce15b4952289", "UD": "2188282a4725e6770275c9c7b53f3b69d7555802d256e27b880dd57d97fa39ef", "NB": "b3edc8f5cefc2c5a118f226a4103c4b09d5dee6bb11a7bd11b4817a461701e0f"}
+    },
+    {
+      "item_seq": "200811814",
+      "official_name": "코자정(로사르탄칼륨)",
+      "company": "한국오가논(주)",
+      "classification": "전문의약품",
+      "active_ingredient_summary": "로사르탄칼륨 50mg(로사르탄으로서 45.8mg)/1정",
+      "detail_cache_updated_at": "2026-08-15 17:49:56.0",
+      "detail_raw_sha256": "08f068184edd38a6aeadaf8ee7930deb4c1daab7c058251d70984b7d5bb5134b",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "f9c59885b43924eea1c44189ff8ae6c861f62d7ebbda3d00199fb7315bab49f7", "UD": "2710d4b25d12f577019eb1ea263e43457c5635b52ad043889b5e7bfab193efd5", "NB": "8003c2f2e6dd50b06a7e5523e107265137ee9e1255898a12bdbe12bce1532a3b"}
+    },
+    {
+      "item_seq": "200710759",
+      "official_name": "자누비아정100밀리그램(시타글립틴인산염수화물)",
+      "company": "(주)종근당",
+      "classification": "전문의약품",
+      "active_ingredient_summary": "시타글립틴인산염수화물 128.90mg(시타글립틴으로서 100mg)/1정",
+      "detail_cache_updated_at": "2026-08-15 17:49:57.0",
+      "detail_raw_sha256": "3340a4253da785ca09a9dac8d1467000896f5a2be68c439f789b8c5f8d2ee055",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "d0cab4ad9c0754c54b046b13ff2ac923a04f82e88885b75964c126184409c12a", "UD": "4b979ab9b39a90387ed02f18a718bf1ee73e22cfe21bba888efe79146938fe81", "NB": "30fc8046e1f62233b4a0beac26e1b26fd60ba6d8e673bfa58eac8af9745002a5"}
+    },
+    {
+      "item_seq": "201403744",
+      "official_name": "자디앙정10밀리그램(엠파글리플로진)",
+      "company": "한국베링거인겔하임(주)",
+      "classification": "전문의약품",
+      "active_ingredient_summary": "엠파글리플로진 10mg/1정",
+      "detail_cache_updated_at": "2026-08-15 17:49:58.0",
+      "detail_raw_sha256": "919067ca2b0407115138f6a67ec5dcf6c5fb1b02b374208dda2b9824feeb9bd3",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "202317cc6f8fe0102a44c388e1608b3d9c1029fca20c0b886efb40178ca1dc04", "UD": "6991c1ef27bc743a20907a4f83b4f53a751eaf44b31e7de67023cfb240057b67", "NB": "7fbbc43ef9901dd65db4d95a09c718067ac823108110cad8290751e8ba73e875"}
+    },
+    {
+      "item_seq": "199600864",
+      "official_name": "아마릴정2밀리그람(글리메피리드)",
+      "company": "(주)한독",
+      "classification": "전문의약품",
+      "active_ingredient_summary": "글리메피리드 2mg/1정",
+      "detail_cache_updated_at": "2026-08-15 17:49:59.0",
+      "detail_raw_sha256": "a0d8e736167407d774fe536f61bdd90596ce842901f0cf2d2e0b17f3604c36a5",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "4a174f6eec00f0773ad45d0f221d3da1a1c29ceb4d1c47b4e177980bc0c7eafc", "UD": "282a3e4be450fad6aeefcedd25615310065997bd7bf13d7f45985c45e907b72c", "NB": "9f5a47cf487bc454088d71b06ee219d1574e14bee4d7c0a7a1b3e026744a3343"}
+    },
+    {
+      "item_seq": "200511256",
+      "official_name": "크레스토정5밀리그램(로수바스타틴칼슘)",
+      "company": "한국아스트라제네카(주)",
+      "classification": "전문의약품",
+      "active_ingredient_summary": "로수바스타틴칼슘 5.20mg(로수바스타틴으로서 5mg)/1정",
+      "detail_cache_updated_at": "2026-08-15 17:50:00.0",
+      "detail_raw_sha256": "932d5f0f1fdd1d291a01b758b4ae0c63db808c2b9997584f4b21a10046ae2456",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "641eddabe186e182297ace82aa88f3af2b3aa242af4da680a586bf5470b6bf37", "UD": "bd2a40901cd872e53f36a8a689ef48b43056cb1791a294ad2593744dd01280d1", "NB": "c40c5626986f0a064fc1b26f73077e377798aa4ff64495023dcef0d91829bdcd"}
+    },
+    {
+      "item_seq": "200410337",
+      "official_name": "이지트롤정(에제티미브)",
+      "company": "한국오가논(주)",
+      "classification": "전문의약품",
+      "active_ingredient_summary": "에제티미브 10mg/1정",
+      "detail_cache_updated_at": "2026-08-15 17:50:01.0",
+      "detail_raw_sha256": "b24d29c0ef0f377ebd76130ee7bf79a8babd87335887773a88a4f42f3fa9dd61",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "fbefbbf20630381bbead8f8f9752a8800ec72233312212f6e50b95cd2c61f5cf", "UD": "809b4b497a5cf4a2967b73a9ac88e93f2965445e9a9b823711efb072a24b08aa", "NB": "7f9fa33ca0f70df718b9dd785d439988a4878f0202a48d1547a7034a141d0613"}
+    },
+    {
+      "item_seq": "202106092",
+      "official_name": "타이레놀정500밀리그람(아세트아미노펜)",
+      "company": "켄뷰코리아판매유한회사",
+      "classification": "일반의약품",
+      "active_ingredient_summary": "아세트아미노펜 500mg/1정",
+      "detail_cache_updated_at": "2026-08-15 17:50:03.0",
+      "detail_raw_sha256": "b53d50f91885c9a67b19a0f5733e6c18078530a02636e345661945b39f83025f",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "f005b9b3f7ed9f7e3764300e9078786c56b498f5e54f0766546e7a2f8c03adc3", "UD": "e3df07962bf6cbc8f011a26dc2888f69d9d062bd4d9c9eaa949fbab3d4c61030", "NB": "1134996a4ae35a8f27d18ea9d38eabdb1449b7c257120aa9c933ecbf769b32b4", "NN": "438463a410125c18cf02b04d2ce5507d99f446dd84cdccb7ddc318824ae1795d"}
+    },
+    {
+      "item_seq": "198900672",
+      "official_name": "판콜에스내복액",
+      "company": "동화약품(주)",
+      "classification": "일반의약품",
+      "active_ingredient_summary": "30mL 내수용/수출용 각각 아세트아미노펜 300mg, dl-메틸에페드린염산염 17.5mg, 클로르페니라민말레산염 2.5mg, 카페인무수물 30mg, 구아이페네신 83.3mg",
+      "detail_cache_updated_at": "2026-08-15 17:50:03.0",
+      "detail_raw_sha256": "7e9e64e6e46b304240fd64859f5302f9bc3119df4091509d18fa39eb828baa18",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "3f52ef6596808f5c4e62fa6954f7a8a13077e4806524e4e3b007f5f835460a29", "UD": "dfcf9c4b8664351a89dd3e24d5cad33db5837fd5454ac05b9301ce8c1b772638", "NB": "c0f022c484237f8da08ba55e813b47fa677bb19c6b3817d816e3218818ef40e3", "NN": "dea4fb27e961dbdb3b5ac754aa5fdb11a561c7142989d30b033132d6d0d700ae"}
+    },
+    {
+      "item_seq": "199400883",
+      "official_name": "겔포스엠현탁액",
+      "company": "(주)보령",
+      "classification": "일반의약품",
+      "active_ingredient_summary": "100g 기준 향별 인산알루미늄겔 61.9g, 수산화마그네슘 2g, 시메티콘 0.2g; 4개 향 묶음 보존",
+      "detail_cache_updated_at": "2026-08-15 17:50:04.0",
+      "detail_raw_sha256": "9c3dbae187ebf6127e8e4ae949a734ec685d989196d3f23f545270842421f395",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "38dea187a7870461d9f95740381104a870c5591c8b98e8855a811e3b19b23c24", "UD": "e39925c52c5189fcf298d825edc85d5bf186279481d5640bed5133a7c773f2e0", "NB": "a7b04be77efaa01148771f359be14267b71f417582a393917af1d5300951a878", "NN": "37fd425f1976e74191202980233a54318b260db87ee21bbbb4af3e719c51b416"}
+    },
+    {
+      "item_seq": "200610765",
+      "official_name": "지르텍정(세티리진염산염)",
+      "company": "한국유씨비제약(주)",
+      "classification": "일반의약품",
+      "active_ingredient_summary": "세티리진염산염 10mg/1정",
+      "detail_cache_updated_at": "2026-08-15 17:50:06.0",
+      "detail_raw_sha256": "e2422288dc08b020a56a117c619d2859ee49fa5d5fb6a332eeca13758a55281b",
+      "permit_evidence": "NO_CANCELLATION_MARKER_OBSERVED",
+      "documents": {"EE": "48c993d4bae0eeea11f4558efdaffae2261051b57c26b796cf032f3c84d053a8", "UD": "17292a88446bc3563f9b3095fee107b16ea10dab4ec0064d559a448b9f6bec65", "NB": "ee88fef8ed45ee71200f29fb9f2fa058843e77c929027a4daa8dbcd6ebaf1ef1", "NN": "f9eced37bbe5ae74df1fa50ced0010f8437c7468afc70f7e3e94fe1944c9d4a0"}
+    }
+  ]
+}

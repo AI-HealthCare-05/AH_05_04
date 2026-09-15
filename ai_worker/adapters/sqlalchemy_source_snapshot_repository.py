@@ -14,6 +14,7 @@ from sqlalchemy.sql import Select
 from ai_worker.tasks.rag.source_client.contracts import EmptyResultPolicy, SourceOperationIdentity
 from ai_worker.tasks.rag.source_ingestion.artifacts import IngestionArtifactKind, StoredRawArtifact
 from ai_worker.tasks.rag.source_ingestion.failure_runs import IngestionProcessingFailureCode
+from ai_worker.tasks.rag.source_ingestion.mfds_label import IngestionArtifactReceipt, SnapshotMemberBinding
 from ai_worker.tasks.rag.source_ingestion.reject_codes import (
     parser_location_identity,
     validate_reject_artifact,
@@ -354,6 +355,118 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
             values[key] = UUID(values[key]) if values[key] is not None else None
         values["verification_status"] = SnapshotVerificationStatus(values["verification_status"])
         return SnapshotProvenanceReceipt(**values)
+
+    async def get_ingestion_artifact_receipts(self, *, ingestion_run_id: UUID) -> tuple[IngestionArtifactReceipt, ...]:
+        rows = (
+            (
+                await self._session.execute(
+                    select(
+                        _INGESTION_ARTIFACT.c.id,
+                        _INGESTION_ARTIFACT.c.ingestion_run_id,
+                        _INGESTION_ARTIFACT.c.page_number,
+                        _INGESTION_ARTIFACT.c.artifact_key,
+                        _INGESTION_ARTIFACT.c.storage_backend,
+                        _INGESTION_ARTIFACT.c.object_key,
+                        _INGESTION_ARTIFACT.c.raw_checksum,
+                        _INGESTION_ARTIFACT.c.byte_size,
+                        _INGESTION_ARTIFACT.c.content_type,
+                    ).where(
+                        _INGESTION_ARTIFACT.c.ingestion_run_id == str(ingestion_run_id),
+                        _INGESTION_ARTIFACT.c.artifact_kind == IngestionArtifactKind.RAW_RESPONSE.value,
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+        receipts = []
+        for row in rows:
+            if row["page_number"] is None:
+                raise ValueError("RAW_RESPONSE artifact page number is missing")
+            receipts.append(
+                IngestionArtifactReceipt(
+                    ingestion_artifact_id=UUID(str(row["id"])),
+                    ingestion_run_id=UUID(str(row["ingestion_run_id"])),
+                    page_number=int(row["page_number"]),
+                    artifact_key=str(row["artifact_key"]),
+                    storage_backend=str(row["storage_backend"]),
+                    object_key=str(row["object_key"]),
+                    raw_checksum=str(row["raw_checksum"]),
+                    byte_size=int(row["byte_size"]),
+                    content_type=str(row["content_type"]),
+                )
+            )
+        return tuple(receipts)
+
+    async def get_ingestion_artifact_receipt(self, *, ingestion_artifact_id: UUID) -> IngestionArtifactReceipt | None:
+        row = (
+            (
+                await self._session.execute(
+                    select(
+                        _INGESTION_ARTIFACT.c.id,
+                        _INGESTION_ARTIFACT.c.ingestion_run_id,
+                        _INGESTION_ARTIFACT.c.page_number,
+                        _INGESTION_ARTIFACT.c.artifact_key,
+                        _INGESTION_ARTIFACT.c.storage_backend,
+                        _INGESTION_ARTIFACT.c.object_key,
+                        _INGESTION_ARTIFACT.c.raw_checksum,
+                        _INGESTION_ARTIFACT.c.byte_size,
+                        _INGESTION_ARTIFACT.c.content_type,
+                    ).where(
+                        _INGESTION_ARTIFACT.c.id == str(ingestion_artifact_id),
+                        _INGESTION_ARTIFACT.c.artifact_kind == IngestionArtifactKind.RAW_RESPONSE.value,
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            return None
+        if row["page_number"] is None:
+            raise ValueError("RAW_RESPONSE artifact page number is missing")
+        return IngestionArtifactReceipt(
+            ingestion_artifact_id=UUID(str(row["id"])),
+            ingestion_run_id=UUID(str(row["ingestion_run_id"])),
+            page_number=int(row["page_number"]),
+            artifact_key=str(row["artifact_key"]),
+            storage_backend=str(row["storage_backend"]),
+            object_key=str(row["object_key"]),
+            raw_checksum=str(row["raw_checksum"]),
+            byte_size=int(row["byte_size"]),
+            content_type=str(row["content_type"]),
+        )
+
+    async def get_snapshot_member_bindings(self, *, snapshot_id: UUID) -> tuple[SnapshotMemberBinding, ...]:
+        rows = (
+            (
+                await self._session.execute(
+                    select(
+                        _SOURCE_SNAPSHOT_MEMBER.c.id,
+                        _SOURCE_SNAPSHOT_MEMBER.c.source_snapshot_id,
+                        _SOURCE_SNAPSHOT_MEMBER.c.member_kind,
+                        _SOURCE_SNAPSHOT_MEMBER.c.ingestion_artifact_id,
+                        _SOURCE_SNAPSHOT_MEMBER.c.locator,
+                        _SOURCE_SNAPSHOT_MEMBER.c.content_sha256,
+                    ).where(_SOURCE_SNAPSHOT_MEMBER.c.source_snapshot_id == str(snapshot_id))
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return tuple(
+            SnapshotMemberBinding(
+                source_snapshot_member_id=UUID(str(row["id"])),
+                source_snapshot_id=UUID(str(row["source_snapshot_id"])),
+                member_kind=SourceSnapshotMemberKind(str(row["member_kind"])),
+                ingestion_artifact_id=(
+                    UUID(str(row["ingestion_artifact_id"])) if row["ingestion_artifact_id"] is not None else None
+                ),
+                locator=str(row["locator"]),
+                content_sha256=str(row["content_sha256"]),
+            )
+            for row in rows
+        )
 
     async def get_attempt_receipt(self, *, ingestion_run_id: UUID) -> SnapshotAttemptReceipt | None:
         row = (
