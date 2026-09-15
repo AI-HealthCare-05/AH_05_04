@@ -361,7 +361,8 @@ lease 획득 뒤의 attempt·실패 기록·ACK 경계를 그대로 사용합니
 실행 상한은 종류별로 다릅니다. `async-job-v1`의 `PD-91-20260831`에 따라 OCR·GUIDE는 hard timeout
 60초 / lease 75초, CHAT은 45초 / 60초를 사용합니다. CHAT 값은
 `WORKER_CHAT_HARD_TIMEOUT_SECONDS`·`WORKER_CHAT_LEASE_DURATION_SECONDS`로 분리했고, delivery의
-`job_type`에 따라 Consumer 실행에 적용합니다.
+`job_type`에 따라 Consumer 실행에 적용합니다. 최초 lease 획득과 heartbeat 갱신에는 같은
+종류별 lease를 전달하며, heartbeat 객체는 delivery별로 생성해 동시 실행 간 설정을 격리합니다.
 
 이 변경은 주입 가능한 내부 연결과 합성 대역 검증입니다. 실제 Guide·Chat Handler/payload는
 #180, DB adapter·currentness·STALE은 #174의 인계 후 연결합니다. 실제 구현체·공개 API·

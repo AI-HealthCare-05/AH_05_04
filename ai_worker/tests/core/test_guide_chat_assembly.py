@@ -1,16 +1,19 @@
 """#577: 실제 assembly와 Consumer를 합성 의존성으로 연결합니다."""
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import cast
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_worker.adapters import sqlalchemy_lease_heartbeat as heartbeat_adapter
 from ai_worker.core import runtime_assembly as assembly
 from ai_worker.core.errors import ConsumerPersistenceError, WorkerError
 from ai_worker.core.handler import ContextAwareHandler, HandlerExecutionContext
+from ai_worker.core.registry import HandlerRegistry
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.stream import WorkerDelivery
 from ai_worker.schemas.messages import JobType, WorkerMessage
@@ -448,3 +451,78 @@ async def test_public_execute_isolates_broken_factory_from_other_kinds(monkeypat
     assert "handle" in events
     assert events[-1] == "ack"
     assert len(store.persisted) == 1
+
+
+@pytest.mark.asyncio
+async def test_public_execute_refreshes_job_specific_leases_during_mixed_deliveries(monkeypatch):
+    """실제 heartbeat 루프의 반복 갱신과 혼합 실행의 lease 격리를 검증합니다."""
+    kinds = (JobType.OCR, JobType.GUIDE, JobType.CHAT)
+    deliveries = [_delivery_for(kind, f"577-heartbeat-{kind.value}") for kind in kinds]
+    expected = {
+        delivery.message.job_id: timedelta(seconds=60 if kind is JobType.CHAT else 75)
+        for kind, delivery in zip(kinds, deliveries, strict=True)
+    }
+    refreshed = {job_id: asyncio.Event() for job_id in expected}
+    durations = {job_id: [] for job_id in expected}
+    acquired = {}
+    events = []
+    sessions = []
+
+    class Repository(FakeJobExecutionRepository):
+        async def acquire_lease(self, message, *, now, lease_duration):
+            acquired[message.job_id] = lease_duration
+            return await super().acquire_lease(message, now=now, lease_duration=lease_duration)
+
+        async def refresh_heartbeat(self, lease, *, now, lease_duration):
+            durations[lease.job_id].append(lease_duration)
+            if len(durations[lease.job_id]) >= 2:
+                refreshed[lease.job_id].set()
+            return lease
+
+    class WaitingHandler(SyntheticHandler):
+        async def handle(self, message, *, context=None):
+            await asyncio.gather(*(event.wait() for event in refreshed.values()))
+            return await super().handle(message, context=context)
+
+    def session_factory():
+        session = AsyncMock(spec=AsyncSession)
+        session.__aenter__.return_value = session
+        sessions.append(session)
+        return session
+
+    repository = Repository(events, complete_successfully=True)
+    store = FakeResultStore(events)
+    acknowledger = FakeAcknowledger(events)
+    monkeypatch.setattr(assembly, "SqlAlchemyJobExecutionRepository", lambda session: repository)
+    monkeypatch.setattr(heartbeat_adapter, "SqlAlchemyJobExecutionRepository", lambda session: repository)
+    monkeypatch.setattr(assembly, "SqlAlchemyOcrResultStore", lambda session, **kwargs: store)
+    monkeypatch.setattr(assembly, "SqlAlchemyOcrExecutionStarter", lambda session: AsyncMock())
+
+    execution = assembly.SessionScopedDeliveryExecution(
+        config=_config(WORKER_HEARTBEAT_INTERVAL_SECONDS=0.001),
+        session_factory=session_factory,
+        acknowledger=acknowledger,
+        clock=lambda: datetime.now(UTC),
+        logger=logging.getLogger(__name__),
+        guide_chat_factories={
+            kind: (lambda session, kind=kind: (WaitingHandler(kind, events), store))
+            for kind in (JobType.GUIDE, JobType.CHAT)
+        },
+    )
+
+    def registry_with_synthetic_ocr(*, session):
+        registry = HandlerRegistry()
+        registry.register(WaitingHandler(JobType.OCR, events))
+        return registry
+
+    monkeypatch.setattr(execution, "_build_registry", registry_with_synthetic_ocr)
+    await asyncio.wait_for(asyncio.gather(*(execution.execute(d) for d in deliveries)), timeout=3)
+
+    assert acquired == expected
+    for job_id, values in durations.items():
+        assert len(values) >= 2
+        assert all(value == expected[job_id] for value in values)
+    assert set(acknowledger.acknowledged_ids) == {d.stream_message_id for d in deliveries}
+    for session in sessions:
+        session.commit.assert_awaited()
+        session.rollback.assert_not_awaited()

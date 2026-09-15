@@ -32,7 +32,28 @@ DB schema, RLS, DB Trigger, Stored Procedure는 추가하지 않았다.
 | [MUST FIX] 조립 실패가 Job 실패 경계를 우회하고 다른 종류까지 막음 | 해당 delivery의 factory만 조립하고, 실패 시 예외 대신 미등록으로 처리해 기존 실패 기록·ACK 경계를 사용. public `execute()` 기준 실패 기록·ACK와 타 종류 격리를 검증 |
 | [MUST FIX] Factory 타입과 실제 Handler 호출 계약이 갈라짐 | factory 타입을 `ContextAwareHandler`로 통일하고 Registry 등록이 가능하도록 `context` 기본값을 정렬. README·이 문서의 계약 설명을 함께 갱신 |
 
-## 검증 결과
+## 재리뷰 반영: heartbeat 갱신 (2026-09-15)
+
+- 검토 HEAD `9177f082`에서는 최초 lease 획득만 종류별 값을 사용하고, 공유 heartbeat는
+  공통 lease 75초를 사용했다. CHAT의 반복 갱신이 승인된 60초와 달라지는 문제를 테스트로 재현했다.
+- delivery 조립 시 결정한 `lease_duration`을 Consumer와 새 heartbeat 객체에 함께 전달한다.
+  OCR·GUIDE는 75초, CHAT은 60초로 최초 획득과 반복 갱신이 일치한다.
+- public `execute()`에서 OCR·GUIDE·CHAT을 동시에 실행하고 실제 `SqlAlchemyLeaseHeartbeat` 루프가
+  각 Job에 대해 두 번 이상 `refresh_heartbeat`를 호출하도록 검증한다. 모든 갱신값과 최초 획득값,
+  commit·ACK를 확인한다. Repository·DB session·Handler·ResultStore는 합성 대역이다.
+- 기존 heartbeat adapter의 갱신 실패·fencing 상실 시 rollback 검증도 함께 실행한다.
+- protected runner 증빙을 재생성했다. runtime assembly 원본 해시와 파생 증빙 해시만 변경됐으며
+  승인·활성화 상태는 변경하지 않았다.
+
+### 재리뷰 수정 후 검증 결과
+
+- `pytest ai_worker/tests/core/test_guide_chat_assembly.py ai_worker/tests/core/test_sqlalchemy_lease_heartbeat.py -q --no-cov`: 34개 통과.
+- `pytest ai_worker tests/contract/test_protected_runner_evidence_recovery.py -q --no-cov`: 3,542개 통과.
+- `ruff check .`, `ruff format --check .`, `mypy backend/app ai_worker`, `git diff --check`: 통과.
+- `scripts/ci/run_test.sh`: inventory·단일 head·DB 로직 재도입·보호 테이블 쓰기 검사는 통과했으나
+  `envs/.local.env` 부재로 DB·Redis 통합 파이프라인을 실행하지 못했다.
+
+## 이전 검증 결과 (재리뷰 수정 전)
 
 - `pytest ai_worker/tests/core/test_guide_chat_assembly.py -q`: 30개 통과.
 - `pytest ai_worker -q`: 기존 OCR·Evaluation 검증을 포함해 3,536개 통과.

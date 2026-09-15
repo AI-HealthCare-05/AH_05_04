@@ -352,12 +352,6 @@ class SessionScopedDeliveryExecution:
         if any(kind not in (JobType.GUIDE, JobType.CHAT) for kind in self._guide_chat_factories):
             raise ValueError("Guide/Chat factories only accept GUIDE and CHAT")
         self._monotonic_clock = monotonic_clock
-        self._heartbeat = SqlAlchemyLeaseHeartbeat(
-            session_factory=session_factory,
-            lease_duration=config.lease_duration,
-            heartbeat_interval=config.heartbeat_interval,
-            clock=clock,
-        )
 
     @property
     def registered_types(self) -> frozenset[JobType]:
@@ -517,7 +511,12 @@ class SessionScopedDeliveryExecution:
             "transaction": SqlAlchemyTransaction(session),
             "acknowledger": self._acknowledger,
             "job_repository": SqlAlchemyJobExecutionRepository(session),
-            "heartbeat": self._heartbeat,
+            "heartbeat": SqlAlchemyLeaseHeartbeat(
+                session_factory=self._session_factory,
+                lease_duration=lease_duration,
+                heartbeat_interval=self._config.heartbeat_interval,
+                clock=self._clock,
+            ),
             "lease_duration": lease_duration,
             "clock": self._clock,
             "hard_timeout_seconds": hard_timeout_seconds,
