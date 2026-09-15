@@ -497,12 +497,18 @@
   display: block;
   flex: 0 0 auto;
   overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .dosey-mascot img {
   max-width: none;
   position: absolute;
   display: block;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  -webkit-user-select: none;
 }
 
 .dosey-mascot--welcome {
@@ -620,7 +626,14 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 20px 20px calc(96px + var(--ds-safe-bottom));
-  scrollbar-width: thin;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.app-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .screen-title {

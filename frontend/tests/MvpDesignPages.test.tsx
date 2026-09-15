@@ -296,19 +296,28 @@ describe('Dosey MVP design pages', () => {
     expect(screen.queryByRole('button', { name: /내 처방전 등록하기/ })).toBeNull()
   })
 
-  it('처방 완료 HOME에서도 미구현 OTC는 비활성 상태이고 기존 구 hub를 표시하지 않는다', async () => {
+  it('처방 완료 HOME은 제거된 OTC와 기존 구 hub를 다시 표시하지 않는다', async () => {
     renderHome(CURRENT_USER, false, ACTIVE_HOME_SERVICES)
 
     await screen.findByText('오늘도 건강한 하루 되세요')
     expect(screen.queryByRole('heading', { name: '미확인 기록' })).toBeNull()
-    expect(
-      screen.getByRole('button', { name: '일반의약품 안내 (준비 중)' }),
-    ).toHaveProperty('disabled', true)
+    expect(screen.queryByRole('button', { name: /일반의약품 안내/ })).toBeNull()
     expect(await screen.findByRole('button', { name: '상세 보기 >' })).toHaveProperty('disabled', false)
     expect(screen.getByRole('button', { name: /복약 리포트 보기/ })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /도지에게 질문하기/ })).toBeNull()
     expect(screen.getByRole('button', { name: '알림' })).toHaveProperty('disabled', false)
     expect(screen.getByRole('button', { name: '일정' })).toHaveProperty('disabled', false)
+  })
+
+  it('모든 HOME 마스코트 이미지는 브라우저 기본 드래그를 비활성화한다', async () => {
+    const { container } = renderHome(CURRENT_USER, false, ACTIVE_HOME_SERVICES)
+
+    await screen.findByText('오늘도 건강한 하루 되세요')
+    const mascotImages = container.querySelectorAll<HTMLImageElement>('.dosey-mascot img')
+    expect(mascotImages.length).toBeGreaterThan(0)
+    mascotImages.forEach((image) => {
+      expect(image.draggable).toBe(false)
+    })
   })
 
   it('Home 알림 버튼은 production /notifications route로 이동한다', async () => {

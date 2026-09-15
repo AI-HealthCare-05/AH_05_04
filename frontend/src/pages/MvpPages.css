@@ -462,8 +462,12 @@
 }
 
 .mvp-home-page .mvp-page__content {
-  padding-top: 26px;
-  background: #fff;
+  padding-top: 12px;
+  background: linear-gradient(180deg, #f4f9ff 0%, #fafcfe 58%, #fffdf3 100%);
+}
+
+.mvp-home-page .mvp-page__content.is-active {
+  background: linear-gradient(180deg, #f4f9ff 0%, #fafcfe 62%, #f4fcf7 100%);
 }
 
 .mvp-page__description {
@@ -500,13 +504,56 @@
 }
 
 .mvp-home__hero {
+  min-height: 190px;
   position: relative;
+  margin-inline: -8px;
+  padding: 14px 8px;
+  overflow: hidden;
+  border-radius: 28px;
+  background: #edf5ff;
+  isolation: isolate;
+}
+
+.mvp-home__hero::before,
+.mvp-home__hero::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  border-radius: 50%;
+}
+
+.mvp-home__hero::before {
+  width: 132px;
+  height: 132px;
+  top: 2px;
+  right: -10px;
+  background: #dceeff;
+}
+
+.mvp-home__hero::after {
+  width: 52px;
+  height: 52px;
+  right: 2px;
+  bottom: 12px;
+  background: #fff1bd;
 }
 
 .mvp-home__hero > .dosey-mascot {
   position: absolute;
-  right: 12px;
-  bottom: -7px;
+  right: 15px;
+  bottom: 28px;
+}
+
+.mvp-home__hero > .dosey-mascot--hero {
+  width: 77px;
+  height: 75px;
+}
+
+.mvp-home__hero > .dosey-mascot--hero img {
+  width: 100%;
+  height: 100%;
+  inset: 0;
+  object-fit: contain;
 }
 
 .mvp-home__greeting-row strong {
@@ -543,13 +590,31 @@
 .mvp-home__card-stack {
   display: grid;
   gap: 14px;
-  margin-top: 26px;
+  margin-top: 78px;
 }
 
 .mvp-home__active-stack {
+  position: relative;
   display: grid;
-  gap: 14px;
-  margin-top: 26px;
+  gap: 60px;
+  margin-top: 48px;
+}
+
+.mvp-home__active-stack::before {
+  content: '';
+  height: 292px;
+  position: absolute;
+  z-index: 0;
+  top: -24px;
+  right: -12px;
+  left: -12px;
+  border-radius: 32px;
+  background: #e6f1ff;
+}
+
+.mvp-home__active-stack > * {
+  position: relative;
+  z-index: 1;
 }
 
 .mvp-home__state-card {
@@ -604,15 +669,25 @@
 }
 
 .mvp-home__hub-card--prescription {
+  min-height: 176px;
+  grid-template-columns: 76px minmax(0, 1fr) 20px;
+  gap: 16px;
+  border-radius: 26px;
   background: #fff9e8;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 8%);
 }
 
-.mvp-home__hub-card--otc {
-  background: #edf9f1;
+.mvp-home__hub-card--prescription .mvp-home__hub-icon {
+  width: 76px;
+  height: 76px;
+  border-radius: 22px;
 }
 
 .mvp-home__hub-card--report {
+  min-height: 128px;
+  border-radius: 24px;
   background: #edf5ff;
+  box-shadow: 0 6px 8px rgb(0 0 0 / 5%);
 }
 
 .mvp-home__hub-card:focus-visible,
@@ -660,16 +735,6 @@
   height: 6px;
   position: absolute;
   inset: 13px;
-  background: currentColor;
-}
-
-.mvp-home__shortcut-glyph.is-otc::before {
-  content: '';
-  width: 16px;
-  height: 16px;
-  position: absolute;
-  inset: 8px;
-  border-radius: 50%;
   background: currentColor;
 }
 
@@ -1226,6 +1291,12 @@
   .mvp-home__hub-icon {
     width: 56px;
     height: 56px;
+  }
+
+  .mvp-home__hub-card--prescription .mvp-home__hub-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 18px;
   }
 
   .mvp-home__hub-copy strong {

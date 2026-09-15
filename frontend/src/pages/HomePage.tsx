@@ -27,7 +27,7 @@ const defaultHomeServices: HomeServices = {
 type HomePrescriptionState = 'loading' | 'empty' | 'active' | 'error'
 type HomeReportState = 'idle' | 'loading' | 'ready' | 'error'
 
-function HomeShortcutIcon({ type }: { type: 'prescription' | 'otc' | 'report' }) {
+function HomeShortcutIcon({ type }: { type: 'prescription' | 'report' }) {
   return <span className={`mvp-home__shortcut-glyph is-${type}`} aria-hidden="true" />
 }
 
@@ -306,7 +306,7 @@ function HomePage({
           if (item === '메뉴') navigate('/menu')
         }}
       >
-        <main className="app-scroll mvp-page__content">
+        <main className={`app-scroll mvp-page__content is-${prescriptionState}`}>
           <div className="mvp-home__hero">
             <div className="mvp-home__greeting-row">
               <p>
@@ -383,23 +383,6 @@ function HomePage({
                 <span className="mvp-home__hub-copy">
                   <strong>복약 리포트 보기</strong>
                   <small>7일/30일 복약 현황을<br />한눈에 확인해보세요.</small>
-                </span>
-                <span className="mvp-home__hub-arrow" aria-hidden="true">›</span>
-              </button>
-              <button
-                className="mvp-home__hub-card mvp-home__hub-card--otc"
-                type="button"
-                aria-label="일반의약품 안내 (준비 중)"
-                disabled
-              >
-                <span className="mvp-home__hub-icon">
-                  <HomeShortcutIcon type="otc" />
-                </span>
-                <span className="mvp-home__hub-copy">
-                  <strong>일반의약품 안내</strong>
-                  <small>
-                    궁금한 일반 의약품과 처방된 약을<br />함께 먹어도 되는지 확인해보세요.
-                  </small>
                 </span>
                 <span className="mvp-home__hub-arrow" aria-hidden="true">›</span>
               </button>
