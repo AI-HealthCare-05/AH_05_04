@@ -61,18 +61,21 @@ PR이 추가한 물리 lifecycle·storage-integrity 보완을 기록한다.
 
 Candidate Index Version은 `BUILDING | READY | RETIRED | FAILED` lifecycle을 사용한다.
 `BUILDING`은 build 산출물이 저장되는 중간 상태이며 Runtime·Resolver가 소비하지 않는다.
-`READY`는 구성원 수, member hash, member set hash, content hash와 storage receipt 검증을 모두 통과한
-소비 가능 상태다. 같은 `code`의 active `READY`는 최대 1개이며, 새 Version을 `READY`로 승격할 때 기존
-`READY`는 삭제하지 않고 `RETIRED`로 전환해 provenance를 보존한다. `FAILED`는 build 또는 검증 실패
-상태이며 active 조회 결과가 될 수 없다.
+`READY`는 구성원 수, member hash, member set hash와 storage receipt 검증을 모두 통과한 소비 가능
+상태다. 같은 `code`의 active `READY`는 최대 1개이며, 새 Version을 `READY`로 승격할 때 기존 `READY`는
+삭제하지 않고 `RETIRED`로 전환해 provenance를 보존한다. `FAILED`는 build 또는 검증 실패 상태이며
+active 조회 결과가 될 수 없다.
+
+`content_hash`는 RAG-07A build(#168 `execute_candidate_index_build()`)가 계산해 저장하는 manifest
+provenance로, build 멱등성 키(동일 Catalog+Config 재build 수렴)로만 쓰인다. READY 승격은 이미 저장된
+`content_hash` 값을 그대로 유지할 뿐 persisted member로부터 다시 계산하지 않는다.
 
 READY 승격 전 Repository는 persisted member row를 다시 읽어 RAG-07A와 동일한 canonical member order
 (identity → entry type → entry ref)로 정렬하고, 다음 값을 재계산·검증한다.
 
 - `member_count`
-- `member_content_hash`
+- `member_content_hash` (LEXICAL_ONLY build만; HYBRID는 아래 storage receipt로 검증)
 - `member_set_hash`
-- `content_hash`
 - product/name/alias/source reference projection
 - HYBRID member의 vector count와 storage receipt
 
@@ -83,8 +86,9 @@ RAG-07A의 HYBRID `member_content_hash`는 Provider vector tuple을 포함한 �
 legacy HYBRID row는 migration 적용 자체를 막지 않지만 READY 승격 시 최신 storage-integrity 검증을
 통과하지 못하면 fail-closed된다.
 
-#583은 Candidate Index lifecycle과 active 조회 기반을 제공한다. 실제 Resolver ranking/search 본체,
-Candidate Index build orchestration, Runtime Bundle 활성화와 Production 공개 승인은 각각 후속 이슈 범위다.
+#583은 Candidate Index lifecycle·storage-integrity 검증과 active 조회 기반을 제공한다. Candidate Index
+persistence·build orchestration은 #168에서 이미 구현되어 있으며 #583은 이를 재구현하지 않는다. 실제
+Resolver ranking/search 본체, Runtime Bundle 활성화와 Production 공개 승인은 각각 후속 이슈 범위다.
 
 ### 조건부 보험코드 확장 — P0 비활성
 
