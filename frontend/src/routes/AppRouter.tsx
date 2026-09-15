@@ -18,6 +18,7 @@ import ProfilePage from '../pages/ProfilePage'
 import MenuPage from '../pages/MenuPage'
 import { ScheduleOccurrencePage, SchedulePage } from '../pages/SchedulePage'
 import NotificationsPage from '../pages/NotificationsPage'
+import UnconfirmedCheckinsPage from '../pages/UnconfirmedCheckinsPage'
 
 const DevPreviewPage = import.meta.env.DEV
   ? lazy(() => import('../dev-preview/DevPreviewPage'))
@@ -146,6 +147,10 @@ export function AppRoutes({
       <Route path="/guides" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
       <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
       <Route path="/schedule" element={<ProtectedRoute><SchedulePage /></ProtectedRoute>} />
+      <Route
+        path="/schedule/unconfirmed"
+        element={<ProtectedRoute><UnconfirmedCheckinsPage /></ProtectedRoute>}
+      />
       <Route
         path="/schedule/occurrences/:occurrenceId"
         element={<ProtectedRoute><ScheduleOccurrencePage /></ProtectedRoute>}
