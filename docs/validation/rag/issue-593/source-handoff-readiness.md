@@ -59,7 +59,7 @@
 | --- | --- | --- |
 | 수집 writer | 지정 dev/staging DB에 Source Snapshot/Run/Artifact/member 저장 경로가 있는지 확인 | credential 이름 없이 writer 역할 준비 여부만 기록 |
 | 검증 reader | 새 session에서 Snapshot→member→artifact receipt 재조회가 가능한지 확인 | 조회 성공, count, checksum 대조 결과 기록 |
-| cleanup executor | 미참조 Artifact 정리 정책과 executor 경계가 #347/#398과 충돌하지 않는지 확인 | 실제 삭제 권한 부여 여부가 아니라 경계 확인 결과 기록 |
+| cleanup executor | 미참조 Artifact 정리 정책과 executor 경계가 #347/#398 기존 경계를 참고하면서 #613 구현 범위와 충돌하지 않는지 확인 | 실제 삭제 권한 부여 여부가 아니라 경계 확인 결과 기록 |
 | consumer reader | 후속 AI/RAG consumer가 Snapshot ID와 member ID로 후속 Chunk/Index 입력을 식별할 수 있는지 확인 | 원문 bytes 없이 참조 충분성 확인 결과 기록 |
 
 
@@ -108,13 +108,14 @@
 | Re-run | 동일 입력·동일 source_version·동일 checksum·동일 member set 재실행 시 NO_CHANGE 또는 기존 Snapshot 재사용 등 합의된 멱등 결과. checksum/source_version/member mismatch는 fail-closed 또는 수동 검토 |
 | Handoff | 후속 Chunk/Index 입력으로 충분한 참조 목록 |
 
-위 증거가 없으면 #591은 로컬 검증 또는 부분 조사 결과로만 기록하고, 인계용 Source Snapshot 적재 완료로 보지 않는다. 적재 transaction 실패는 DB rollback으로 처리하고, Artifact 저장 후 DB commit 전에 실패한 미참조 Artifact는 cleanup executor가 #347/#398 경계에 따라 조사·정리한다.
+위 증거가 없으면 #591은 로컬 검증 또는 부분 조사 결과로만 기록하고, 인계용 Source Snapshot 적재 완료로 보지 않는다. 적재 transaction 실패는 DB rollback으로 처리하고, Artifact 저장 후 DB commit 전에 실패한 미참조 Artifact는 writer가 삭제하지 않는다. writer는 run ID·artifact key·checksum·failure reason·requested_at만 cleanup 요청으로 남기고, 지정된 cleanup executor가 Snapshot/member/run/artifact receipt 참조를 확인한다. 참조가 하나라도 있으면 삭제하지 않고 `BLOCKED` 또는 `MANUAL_REVIEW`로 남기며, 삭제 또는 quarantine 결과는 대상 key, checksum, 확인한 참조 범위, 실행자, 실행 시각, 결과 receipt로 남긴다. 실제 요청 기록·executor 검증 절차는 #613에서 추적한다.
 
 ## 이번 PR에서 하지 않는 것
 
 - 실제 DB endpoint, credential, artifact root/bucket 값을 추가하지 않는다.
 - 실제 노바스크 원문을 저장소에 추가하지 않는다.
 - #591 Source parser·정규화·적재 실행 command를 구현하지 않는다. 해당 작업은 #609에서 처리한다.
+- #591 적재 실패 artifact cleanup 요청·executor 절차를 구현하지 않는다. 해당 작업은 #613에서 처리한다.
 - Source/Catalog schema, migration, 공개 API, Runtime currentness를 변경하지 않는다.
 - 신규 RLS, DB Trigger, 업무 DB 함수를 추가하지 않는다. 무결성·중복·상태 판정은 애플리케이션 계층과 DB 제약으로 처리한다.
 - #591 실제 적재 성공이나 운영 공개 승인을 주장하지 않는다.

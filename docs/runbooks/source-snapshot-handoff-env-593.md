@@ -42,7 +42,7 @@
 | Source Snapshot 승인 경계 | `docs/governance/decisions/2026-09-09-source-snapshot-approval-boundary.md` |
 | Source 수집 구현 상태 | `docs/testing/source-ingestion-165.md` |
 | Source·Catalog 관리 경계 | `docs/contracts/proposed/source-catalog-management-398.md` |
-| Artifact 정리·보존 경계 | `docs/runbooks/source-artifact-cleanup-347.md` |
+| Artifact 정리·보존 경계 | `docs/runbooks/source-artifact-cleanup-347.md`는 기존 합성 cleanup 경계 참고, 실제 #591 cleanup 요청·executor 구현 추적은 #613 |
 | 배포 권한 검증 | `tests/contract/test_source_management_deployment.py` |
 | Local Artifact store | `ai_worker/adapters/local_private_source_artifact_store.py` |
 | S3 Artifact store | `ai_worker/adapters/s3_private_source_artifact_store.py` |
@@ -177,7 +177,7 @@ provision 완료 후 공개 채널에는 다음 항목만 확인한다.
 - Provider 원문, secret, URL credential, 개인정보가 로그나 공개 채널에 노출됐다.
 - 운영 DB에 직접 반영했지만 별도 승인·공개 게이트가 없다.
 
-실패·보류 시에는 원문 없는 고정 reason과 안전한 참조만 남기고, 성공 Snapshot으로 승격하지 않는다. 적재 transaction 실패는 DB rollback으로 처리하며, Artifact 저장 후 DB commit 전에 실패한 경우 cleanup executor가 #347/#398 경계에 맞춰 미참조 Artifact를 조사·정리한다.
+실패·보류 시에는 원문 없는 고정 reason과 안전한 참조만 남기고, 성공 Snapshot으로 승격하지 않는다. 적재 transaction 실패는 DB rollback으로 처리하며, Artifact 저장 후 DB commit 전에 실패한 경우 writer는 삭제하지 않고 run ID·artifact key·checksum·failure reason·requested_at만 cleanup 요청으로 남긴다. 지정된 cleanup executor는 Snapshot/member/run/artifact receipt 참조가 없는지 확인하고, 참조가 하나라도 있으면 삭제하지 않고 `BLOCKED` 또는 `MANUAL_REVIEW`로 남긴다. 삭제 또는 quarantine 결과는 대상 key, checksum, 확인한 참조 범위, 실행자, 실행 시각, 결과 receipt로 남긴다. 실제 #591 cleanup 요청·executor 구현과 권한 준비는 #613에서 추적한다.
 
 ## 보안·Privacy·의료 안전 기준
 
@@ -201,6 +201,7 @@ provision 완료 후 공개 채널에는 다음 항목만 확인한다.
 
 - #591 본문에 확정된 적재 환경과 인계 기준 반영
 - #609에서 #591 Source parser·정규화·적재 실행 command 구현
+- #613에서 #591 적재 실패 artifact cleanup 요청·executor 절차 구현
 - 필요한 경우 env example 또는 infra 권한 검증 보강
 - #591 첫 제품 실제 수집·검증·Snapshot 저장 PR 작성
 - Snapshot 인계 후 Chunk/Index/Guide/Chat 후속 작업 연결
