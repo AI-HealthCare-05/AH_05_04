@@ -21,7 +21,7 @@ from app.services.chat_ai.client import OpenAIResponsesClient
 
 _REPOSITORY_ROOT = Path(__file__).parents[3]
 _DEFAULT_CONFIG_PATH = _REPOSITORY_ROOT / "evals" / "generation" / "chat-conversation-quality-blind-ab-v1.json"
-_CANONICAL_CONFIG_SHA256 = "ee2c03210bc408fbfc02607d1fe3518654e2ad3aa91e7715b8528baf73da7bd8"
+_CANONICAL_CONFIG_SHA256 = "bc61b2511945288b5b46d35c2cdfa63bc38601c3965fee2a4ce31da0468f2205"
 _API_KEY_PLACEHOLDERS = frozenset(
     {
         "",
@@ -107,6 +107,8 @@ async def execute_run(arguments: RunArguments, *, environment: Mapping[str, str]
             )
         )
     )
+    arguments.assignment_path.touch(mode=0o600, exist_ok=True)
+    arguments.assignment_path.chmod(0o600)
     arguments.assignment_path.write_bytes(artifact_json_bytes(assignment_artifact))
     variants = assignment_artifact["variants"]
     if not isinstance(variants, list):

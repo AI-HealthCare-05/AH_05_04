@@ -1,6 +1,7 @@
 import hashlib
 import json
 import random
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,7 +32,6 @@ class BlindABExperiment:
     dataset_path: Path
     dataset_id: str
     dataset_sha256: str
-    blind_seed: int
     review_paths: tuple[str, ...]
     human_review_dimensions: tuple[str, ...]
     max_output_tokens: int
@@ -171,9 +171,8 @@ def load_blind_ab_experiment(config_path: Path) -> tuple[BlindABExperiment, dict
     dimensions = tuple(raw_config.get("human_review_dimensions", ()))
     if set(review_paths) != {"baseline", "history"} or not dimensions:
         raise ValueError("Blind A/B review paths and dimensions are incomplete")
-    blind_seed = raw_config.get("blind_seed")
-    if type(blind_seed) is not int:
-        raise ValueError("Blind A/B seed must be an integer")
+    if "blind_seed" in raw_config:
+        raise ValueError("Blind A/B seed must not be public")
 
     max_output_tokens, timeout_seconds = _controlled_settings(settings, dataset)
 
@@ -183,7 +182,6 @@ def load_blind_ab_experiment(config_path: Path) -> tuple[BlindABExperiment, dict
             dataset_path=dataset_path,
             dataset_id=dataset_id,
             dataset_sha256=dataset_sha256,
-            blind_seed=blind_seed,
             review_paths=review_paths,
             human_review_dimensions=dimensions,
             max_output_tokens=max_output_tokens,
@@ -268,7 +266,8 @@ async def run_blind_ab_evaluation(
     provider_factory: Callable[[BlindABVariant], ChatProvider],
     clock: Callable[[], float],
 ) -> tuple[dict[str, object], dict[str, object]]:
-    rng = random.Random(experiment.blind_seed)
+    blind_seed = secrets.randbits(256)
+    rng = random.Random(blind_seed)
     execution_order = list(experiment.variants)
     rng.shuffle(execution_order)
     runs: dict[str, tuple[ExecutionReport, ConfiguredVariantProvider]] = {}
@@ -285,7 +284,8 @@ async def run_blind_ab_evaluation(
         (case_index, path) for case_index, _case in enumerate(dataset["cases"]) for path in experiment.review_paths
     ]
     rng.shuffle(item_specs)
-    response_one_start_index = rng.randrange(2)
+    response_one_positions = [0, 1] * (len(item_specs) // 2)
+    rng.shuffle(response_one_positions)
     sentinels = tuple(
         sentinel for dataset_case in dataset["cases"] for sentinel in dataset_case.get("pii_sentinels", ())
     )
@@ -294,14 +294,14 @@ async def run_blind_ab_evaluation(
     for item_index, (case_index, path) in enumerate(item_specs, start=1):
         case = dataset["cases"][case_index]
         response_index = case_index * 2 + (0 if path == "baseline" else 1)
-        first_variant_index = (response_one_start_index + item_index - 1) % 2
+        first_variant_index = response_one_positions[item_index - 1]
         ordered_variants = (
             experiment.variants[first_variant_index],
             experiment.variants[1 - first_variant_index],
         )
         item_id = f"AB-{item_index:03d}"
         responses = {}
-        review_dimensions = sorted(case.get("quality_expectations", {}))
+        review_dimensions = sorted(case.get("quality_expectations", {})) if path == "history" else []
         assignment: dict[str, object] = {
             "item_id": item_id,
             "review_dimensions": review_dimensions,
@@ -343,6 +343,8 @@ async def run_blind_ab_evaluation(
         "schema_version": 1,
         "experiment_id": experiment.experiment_id,
         "status": "RUN",
+        "blind_seed": blind_seed,
+        "commitment_nonce": secrets.token_hex(32),
         "dataset": {
             "dataset_id": experiment.dataset_id,
             "sha256": experiment.dataset_sha256,
@@ -369,7 +371,21 @@ async def run_blind_ab_evaluation(
             "selected_variant_id": None,
         },
     }
+    commitment = assignment_commitment(assignment_artifact)
+    review_packet["assignment_commitment_sha256"] = commitment
+    assignment_artifact["assignment_commitment_sha256"] = commitment
+    assignment_artifact["review_packet_sha256"] = normalized_sha256(artifact_json_bytes(review_packet))
     return review_packet, assignment_artifact
+
+
+def assignment_commitment(assignment_artifact: dict[str, Any]) -> str:
+    # Exclude the packet hash to avoid a cycle: the packet contains this commitment.
+    payload = {
+        key: value
+        for key, value in assignment_artifact.items()
+        if key not in {"assignment_commitment_sha256", "review_packet_sha256"}
+    }
+    return normalized_sha256(artifact_json_bytes(payload))
 
 
 def build_judgment_template(
@@ -380,6 +396,7 @@ def build_judgment_template(
         "schema_version": 1,
         "experiment_id": review_packet["experiment_id"],
         "review_packet_sha256": review_packet_sha256,
+        "assignment_commitment_sha256": review_packet["assignment_commitment_sha256"],
         "reviewer": None,
         "items": [
             {
@@ -400,6 +417,12 @@ def _validated_judgment_items(
         raise ValueError("Judgment experiment_id does not match")
     if judgments.get("review_packet_sha256") != assignment_artifact.get("review_packet_sha256"):
         raise ValueError("Judgment review packet hash does not match")
+    commitment = assignment_commitment(assignment_artifact)
+    if (
+        judgments.get("assignment_commitment_sha256") != commitment
+        or assignment_artifact.get("assignment_commitment_sha256") != commitment
+    ):
+        raise ValueError("Judgment assignment commitment does not match")
     assignments = {assignment["item_id"]: assignment for assignment in assignment_artifact.get("assignments", [])}
     raw_items = judgments.get("items")
     if not isinstance(raw_items, list) or len(raw_items) != len(assignments):
@@ -484,6 +507,7 @@ def unblind_judgments(
         "schema_version": 1,
         "experiment_id": assignment_artifact["experiment_id"],
         "review_packet_sha256": assignment_artifact["review_packet_sha256"],
+        "assignment_commitment_sha256": assignment_artifact["assignment_commitment_sha256"],
         "reviewer": judgments.get("reviewer"),
         "overall_preference": {"variant_wins": overall_wins, "ties": ties},
         "dimension_preference": {

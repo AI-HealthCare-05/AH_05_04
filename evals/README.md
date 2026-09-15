@@ -276,6 +276,12 @@ PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
 
 ### Chat prompt blind A/B
 
+배치는 실행마다 생성하는 비공개 256-bit seed로 무작위화합니다. 전체 54개 item을 하나의 균형 블록으로 두고 response 1 arm 위치 27개씩을 섞으며, 단순 교대 배치를 사용하지 않습니다. seed와 독립적인 256-bit commitment nonce는 권한 `0600`의 assignment artifact에만 보관합니다. 재현은 판단 제출 후 공개한 private artifact로 수행합니다.
+
+review packet과 judgment template에는 assignment 내용의 SHA-256 commitment를 고정합니다. 리뷰어는 전달받은 packet·template을 보관하고 이 commitment를 유지한 judgment를 제출합니다. unblind는 제출된 commitment와 assignment를 재계산한 hash가 일치해야 진행하므로 사후 mapping 변경을 거부합니다. hash 순환을 피하기 위해 assignment 자체의 commitment 필드와 review packet hash만 commitment 계산에서 제외합니다. 판단 후 template이나 judgment를 새로 생성하면 사전 결속 증거가 사라지므로 원래 전달·제출 파일을 보존해야 합니다.
+
+canonical `quality_expectations`의 dimension 선호는 history item에만 적용합니다. baseline은 전체 응답 선호만 판단하고 `dimension_preferences`는 빈 객체로 제출합니다. history item은 해당 case에 선언된 dimension을 정확히 모두 제출해야 합니다.
+
 `generation/chat-conversation-quality-blind-ab-v1.json`은 #581의 `chat-prompt-v3` 대 `chat-prompt-v4` 비교를 위한 Local 전용 실행 설정입니다. 두 arm은 같은 canonical 27-case dataset, `gpt-4o`, timeout과 출력 token 상한을 사용하고 prompt snapshot만 다릅니다. `generation/prompts/chat-prompt-v3.txt`와 `generation/prompts/chat-prompt-v4.txt`는 각 prompt 문자열의 불변 snapshot이며 config가 dataset·prompt SHA-256을 모두 고정합니다. 이 PR은 runner와 실행 설정만 준비하며 실제 Provider 실행 상태는 `NOT_RUN`입니다.
 
 Live 실행은 arm당 113개, 총 226개의 Provider 응답을 생성합니다. 자동 결과에는 case·품질 축·blocking safety gate, baseline/history/max-history p95 latency, Provider가 반환한 input/output/total token 사용량을 기록합니다. 승인된 버전 고정 요금표가 없으므로 비용은 `NOT_CALCULATED`이며 token 사용량을 비용으로 오인하지 않습니다.

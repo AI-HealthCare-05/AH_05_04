@@ -1,5 +1,6 @@
 import hashlib
 import json
+from copy import deepcopy
 from itertools import count
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ import pytest
 from app.evaluation.chat_blind_ab import (
     BlindABVariant,
     artifact_json_bytes,
+    assignment_commitment,
     build_judgment_template,
     load_blind_ab_experiment,
     run_blind_ab_evaluation,
@@ -154,6 +156,15 @@ async def test_blind_ab_run_creates_balanced_packet_separate_assignment_and_usag
         for variant in experiment.variants
     }
     assert set(response_one_counts.values()) == {27}
+    assert "blind_seed" not in json.loads(_CONFIG_PATH.read_bytes())
+    assert "blind_seed" not in review_packet
+    assert "commitment_nonce" not in review_packet
+    assert review_packet["assignment_commitment_sha256"] == assignment_commitment(assignment)
+    assert judgment_template["assignment_commitment_sha256"] == assignment_commitment(assignment)
+    cases = {case["case_id"]: case for case in dataset["cases"]}
+    for item in review_items:
+        expected = sorted(cases[item["case_id"]].get("quality_expectations", {})) if item["path"] == "history" else []
+        assert item["review_dimensions"] == expected
 
     variants = assignment["variants"]
     assert isinstance(variants, list)
@@ -196,6 +207,43 @@ async def test_blind_ab_packet_redacts_sentinel_even_if_provider_repeats_it() ->
     assert "[SYNTHETIC_SENTINEL_REDACTED]" in serialized
 
 
+async def test_private_randomness_changes_mapping_with_identical_public_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    experiment, dataset = load_blind_ab_experiment(_CONFIG_PATH)
+    seeds = iter([123456789, 987654321])
+    monkeypatch.setattr("app.evaluation.chat_blind_ab.secrets.randbits", lambda _bits: next(seeds))
+    mappings = []
+    ticks = count()
+    for _ in range(2):
+        packet, assignment = await run_blind_ab_evaluation(
+            experiment,
+            dataset,
+            provider_factory=lambda _variant: ScriptedUsageProvider(_provider_outputs(dataset)),
+            clock=lambda: next(ticks) / 1000,
+        )
+        items = packet["items"]
+        assignments = assignment["assignments"]
+        assert isinstance(items, list) and isinstance(assignments, list)
+        mappings.append(
+            {
+                (item["case_id"], item["path"]): entry["response_1_variant_id"]
+                for item, entry in zip(items, assignments, strict=True)
+            }
+        )
+        assert sum(entry["response_1_variant_id"] == experiment.variants[0].variant_id for entry in assignments) == 27
+        judgment = build_judgment_template(packet, str(assignment["review_packet_sha256"]))
+        judgment_items = judgment["items"]
+        assert isinstance(judgment_items, list)
+        for item in judgment_items:
+            item["preference"] = "TIE"
+            item["dimension_preferences"] = dict.fromkeys(item["dimension_preferences"], "TIE")
+        unblind_judgments(assignment, judgment)
+        baseline_index = next(index for index, item in enumerate(items) if item["path"] == "baseline")
+        judgment_items[baseline_index]["dimension_preferences"] = {"context_resolution": "TIE"}
+        with pytest.raises(ValueError, match="every applicable dimension"):
+            unblind_judgments(assignment, judgment)
+    assert mappings[0] != mappings[1]
+
+
 def test_unblind_judgments_maps_preferences_without_selecting_a_winner() -> None:
     assignments = [
         {
@@ -211,7 +259,7 @@ def test_unblind_judgments_maps_preferences_without_selecting_a_winner() -> None
             "response_2_variant_id": "variant-a",
         },
     ]
-    assignment_artifact = {
+    assignment_artifact: dict[str, Any] = {
         "experiment_id": "experiment",
         "review_packet_sha256": "a" * 64,
         "human_review_dimensions": ["naturalness"],
@@ -236,7 +284,17 @@ def test_unblind_judgments_maps_preferences_without_selecting_a_winner() -> None
         ],
     }
 
+    commitment = assignment_commitment(assignment_artifact)
+    assignment_artifact["assignment_commitment_sha256"] = commitment
+    judgments["assignment_commitment_sha256"] = commitment
     result = unblind_judgments(assignment_artifact, judgments)
+
+    tampered = deepcopy(assignment_artifact)
+    tampered["assignments"][0]["response_1_variant_id"] = "variant-b"
+    # Even recomputing the private artifact's hash cannot change the submitted judgment.
+    tampered["assignment_commitment_sha256"] = assignment_commitment(tampered)
+    with pytest.raises(ValueError, match="assignment commitment"):
+        unblind_judgments(tampered, judgments)
 
     assert result["overall_preference"] == {
         "variant_wins": {"variant-a": 1, "variant-b": 1},
@@ -266,12 +324,15 @@ def test_unblind_judgments_rejects_incomplete_item_coverage() -> None:
         ],
     }
 
+    commitment = assignment_commitment(assignment_artifact)
+    assignment_artifact["assignment_commitment_sha256"] = commitment
     with pytest.raises(ValueError, match="cover every blind review item"):
         unblind_judgments(
             assignment_artifact,
             {
                 "experiment_id": "experiment",
                 "review_packet_sha256": "a" * 64,
+                "assignment_commitment_sha256": commitment,
                 "items": [],
             },
         )

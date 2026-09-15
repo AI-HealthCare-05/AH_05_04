@@ -324,6 +324,8 @@ PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
 
 #581 blind A/B runner는 별도 `RUN_OPENAI_CHAT_BLIND_AB_EVAL=1` Local opt-in을 요구하며 canonical config·dataset·v3/v4 prompt snapshot의 고정 SHA-256이 모두 맞아야 Provider client를 생성합니다. 두 arm은 동일한 `gpt-4o`와 생성 설정으로 arm당 113개 응답을 실행합니다. 회귀 테스트는 prompt/model override, 54개 review item의 arm 정체 비노출과 response 1 위치 27:27 균형, PII sentinel 치환, 자동 safety/품질 결과, p95 latency, Provider usage token 집계와 완전한 judgment coverage를 검증합니다. 자동 점수와 blind 선호 집계는 responsible reviewer의 최종 선택을 대신하지 않습니다.
 
+추가 회귀는 같은 공개 config에서 비공개 seed에 따라 case/path별 arm mapping이 달라지면서 27:27 균형을 유지하는지, judgment에 사전 고정된 commitment가 mapping 한 항목의 변조도 거부하는지 검증합니다. baseline의 dimension 목록은 비어 있어야 하며 history에만 canonical case의 `quality_expectations`를 적용합니다. baseline에 history 전용 dimension을 제출해도 unblind는 거부합니다. seed·nonce·mapping은 judgment 제출 전까지 비공개 assignment 파일에 보관합니다.
+
 ### MVP 공통 오류·no-store 회귀
 
 PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Control: no-store` 정책을 회귀 테스트로 고정합니다.

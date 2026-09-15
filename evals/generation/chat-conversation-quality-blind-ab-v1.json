@@ -15,7 +15,6 @@
     "temperature": null,
     "store": false
   },
-  "blind_seed": 58120260915,
   "review_paths": [
     "baseline",
     "history"
