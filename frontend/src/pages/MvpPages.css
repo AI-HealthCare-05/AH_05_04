@@ -21,11 +21,6 @@
   --ds-action-pressed: #0052a3;
 }
 
-.mvp-login-page {
-  --ds-action: #607d8b;
-  --ds-action-pressed: #526b78;
-}
-
 .mvp-page__content {
   padding: 20px 20px calc(96px + var(--ds-safe-bottom));
 }
