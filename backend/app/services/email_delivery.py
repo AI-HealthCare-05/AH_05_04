@@ -19,6 +19,13 @@ class EmailSender(Protocol):
     async def send_password_reset(self, *, email: str, token: str) -> None: ...
 
 
+_DELIVERY_FAILURE_MESSAGE = "Email delivery failed"
+
+
+class EmailDeliveryError(RuntimeError):
+    """Raised with a sanitized message when the email provider call fails."""
+
+
 class NoopEmailSender:
     """실제 Provider 연결 전 기본 sender입니다.
 
@@ -79,7 +86,10 @@ class SmtpEmailSender:
         await self._send(message)
 
     async def _send(self, message: EmailDeliveryMessage) -> None:
-        await asyncio.to_thread(self._send_sync, message)
+        try:
+            await asyncio.to_thread(self._send_sync, message)
+        except (OSError, smtplib.SMTPException):
+            raise EmailDeliveryError(_DELIVERY_FAILURE_MESSAGE) from None
 
     def _send_sync(self, message: EmailDeliveryMessage) -> None:
         email_message = EmailMessage()
