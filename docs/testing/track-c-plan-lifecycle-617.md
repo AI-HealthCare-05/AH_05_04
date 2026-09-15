@@ -3,7 +3,8 @@
 - 구현: 권가빈. 단일 책임 리뷰어: 김지혜.
 - 기준 develop: `1ebac025`. 변경 계약: [lifecycle v1](../contracts/proposed/track-c-plan-lifecycle-617.md).
 - 테스트는 전용 PostgreSQL 17/pgvector 임시 DB와 합성 데이터만 사용한다.
-- 실행 결과는 최종 검증 후 아래에 기록한다.
+- 구현 커밋: `405c0bbf`. 전용 DB는 loopback 15617/15618, Redis는 16618을 사용했다.
+- 로컬 검증 기록이며 원격 CI·책임 리뷰 승인을 포함하지 않는다.
 
 ## 집중 시나리오
 
@@ -16,5 +17,48 @@
 
 ## 실행 결과
 
-검증 진행 중. 책임 리뷰 승인·Frontend 통합·실제 사용자 공개 완료를 의미하지 않는다.
+| 검사 | 결과 |
+| --- | --- |
+| Track C API·HandlerConfig·운영 설정·계약 fixture 및 SMTP 재검증 | 146 passed |
+| Backend·계약·서비스 회귀 최초 실행 | 2,299 passed, 2 skipped, SMTP 환경 의존 실패 3건 |
+| SMTP 환경 수정 후 해당 파일 | 11 passed (146건에 포함) |
+| Worker 설정 재검증 | 76 passed |
+| 필수 스크립트 Backend lane | 2,568 passed, 128 skipped, SMTP 환경 실패 3건, 기존 Candidate Index teardown 오류 4건 |
+| 필수 스크립트 Worker lane | 3,635 passed, Redis 기본값 환경 실패 1건 |
+| 필수 스크립트 migration lane | 232 passed, 4 skipped; 단일 head `178c2d3e4f50` 및 schema 검증 통과 |
+| Ruff check / format | PASS, 960 files |
+| Mypy | PASS, 723 sources |
+| DB logic / 보호 테이블 쓰기 경계 / test inventory | PASS |
+| git diff --check / 변경 Markdown 로컬 참조 | PASS |
+
+집중 실행 명령은 `pytest backend/app/tests/track_c tests/contract/test_track_c_support_fixture.py
+ tests/services/test_track_c_handler_config.py tests/services/test_track_c_operational_config.py
+ tests/services/test_email_delivery.py -q --tb=short`다. 실제 실행 시 한 줄로 연결한다.
+
+### 전체 실행의 제한 및 기존 실패 재현
+
+`ENV_FILE=<전용 합성 env> COMPOSE_FILE=<전용 tmpfs compose> bash scripts/ci/run_test.sh`를 실행했다.
+최초 실행에서 로컬 `.env`의 `CHAT_HISTORY_CONTEXT_ENABLED=true`가 SMTP production-config 테스트를
+먼저 차단했고, 테스트용 Redis 주소가 Worker의 승인 기본값 검사와 충돌했다.
+제품 코드는 변경하지 않고 테스트 환경에 `CHAT_HISTORY_CONTEXT_ENABLED=false`, `REDIS_HOST=redis`,
+`REDIS_PORT=6379`를 지정하자 해당 파일의 11건/76건은 통과했다. 실제 Redis 통합 연결은 runner가
+전용 Compose의 host port로 주입한다.
+
+Candidate Index 테스트 4건은 본문 PASS 뒤 teardown에서
+`rag_candidate_index_build_test.rag_candidate_index_member` 미존재 오류가 발생했다.
+변경 전 develop `1ebac025`를 별도 임시 checkout으로 추출한 후 다음 조합으로 **5 passed, 4 errors**를
+재현했다. Track C 변경의 새 실패로 판단하지 않으며 본 PR에서 RAG 테스트 fixture를 수정하지 않는다.
+
+```bash
+pytest backend/app/tests/track_c/test_track_c_support_api.py::test_openapi_contains_only_scoped_routes_and_strict_confirmation \
+  tests/integration/rag/test_candidate_index_build.py -q --tb=short
+```
+
+기존 Backend metadata fixture가 public 테이블을 만든 환경에서 Candidate Index의 schema 미지정
+`create_all(checkfirst=True)`가 그 테이블을 발견하고, teardown은 전용 schema의 테이블을 TRUNCATE한다.
+이 조합의 기존 fixture 정합화는 별도 범위다. 전체 스크립트는 exit 1로 종료했다.
+Backend lane 실패로 후속 Redis 통합 테스트 및 coverage 합산/gate는 실행되지 않았다.
+전체 스크립트 PASS·coverage gate 통과로 표시하지 않는다.
+
+책임 리뷰 승인·Frontend 통합·실제 사용자 공개 완료를 의미하지 않는다.
 Follow-up·실기기/브라우저 E2E·의료 규칙/Provider live 평가·배포는 이번 범위 밖이다.
