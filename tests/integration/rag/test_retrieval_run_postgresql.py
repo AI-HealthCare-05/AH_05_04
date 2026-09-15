@@ -13,7 +13,18 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from ai_worker.adapters.postgresql_evidence_eligibility import (
+    PostgreSqlEvidenceEligibilityVerifier,
+)
 from ai_worker.adapters.sqlalchemy_retrieval_run import SqlAlchemyRetrievalRunStore
+from ai_worker.tasks.rag.production_evidence_gate import (
+    EvidenceGateReason,
+    PostSearchEligibilityRequest,
+    PostSearchEligibilitySuccess,
+    PreSearchEligibilityFailure,
+    PreSearchEligibilityRequest,
+    PreSearchEligibilitySuccess,
+)
 from ai_worker.tasks.rag.retrieval_run import (
     BeginRetrievalRunFailure,
     BeginRetrievalRunFailureReason,
@@ -26,7 +37,7 @@ from ai_worker.tasks.rag.retrieval_run import (
     PersistedHitInput,
     PersistedSignalInput,
 )
-from app.core import config
+from app.core import config  # type: ignore[attr-defined]
 
 ROOT = Path(__file__).resolve().parents[3]
 pytestmark = pytest.mark.asyncio
@@ -293,3 +304,25 @@ async def test_corrupt_receipt_hash_fails_closed(database) -> None:
     resume_res = await store.begin_run(req)
     assert isinstance(resume_res, BeginRetrievalRunFailure)
     assert resume_res.reason == BeginRetrievalRunFailureReason.DEPENDENCY_ERROR
+
+
+async def test_postgresql_evidence_eligibility_verifier(database) -> None:
+    engine = database
+    job_id, ctx_id, index_id, chunk_id, _ = await _seed_test_prerequisites(engine)
+    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    verifier = PostgreSqlEvidenceEligibilityVerifier(factory)
+
+    # 1. Pre-search check on valid index passes
+    pre_res = await verifier.pre_search(PreSearchEligibilityRequest(knowledge_index_id=index_id))
+    assert isinstance(pre_res, PreSearchEligibilitySuccess)
+    assert pre_res.is_eligible is True
+
+    # 2. Pre-search check on non-existent index fails with INVALID_BINDING
+    pre_fail = await verifier.pre_search(PreSearchEligibilityRequest(knowledge_index_id=uuid4()))
+    assert isinstance(pre_fail, PreSearchEligibilityFailure)
+    assert pre_fail.reason == EvidenceGateReason.INVALID_BINDING
+
+    # 3. Post-search empty hits returns empty eligible set
+    post_empty = await verifier.post_search(PostSearchEligibilityRequest(knowledge_index_id=index_id), ())
+    assert isinstance(post_empty, PostSearchEligibilitySuccess)
+    assert len(post_empty.eligible_chunk_ids) == 0
