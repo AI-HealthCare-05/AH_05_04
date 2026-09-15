@@ -247,6 +247,8 @@ OCR 목적은 전용 경로 `/api/v1/users/me/consents/OCR`에서 `GET` / `POST`
 
 이메일 발송은 `EmailSender` adapter 뒤에 둡니다. `EMAIL_PROVIDER=noop`은 local/test 기본값으로 실제 메일을 보내지 않습니다. Production/Staging 발송은 `EMAIL_PROVIDER=smtp`와 `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_USE_TLS=true`를 배포 Secret으로 주입해야 하며, TLS 없는 SMTP, 필수 설정 누락, non-local placeholder 값은 기동 검증에서 거부합니다. 회원가입 시 이메일 인증 완료 강제는 별도 gate(`#549`)에서 관리하며 이 발송 기반만으로 가입을 차단하지 않습니다. Provider 발송 실패는 공개 응답 상태·본문으로 계정 존재 여부가 드러나지 않도록 요청 응답 경계 밖에서 처리하며, 해당 요청에서 생성한 token은 재시도를 막지 않도록 정리합니다.
 
+현재 외부 메일 발송은 token 저장·commit 이후 메모리 task로 예약합니다. API 응답은 SMTP 완료를 기다리지 않으며, 발송 지연이나 실패가 공개 응답 상태·본문을 바꾸지 않습니다. 정상 종료 중 task 추적·drain과 비정상 종료 시 영속 복구는 아직 제공하지 않으므로, token commit 뒤 프로세스가 종료되면 발송 또는 실패 cleanup이 유실될 수 있습니다. 이 경우 사용자는 동일 요청을 다시 보내 복구하며, 영속 outbox 도입은 별도 후속 판단으로 남깁니다.
+
 ## Post-MVP-1 목표 API — 미구현
 
 아래 내용은 2026-08-27 Approved Contract Freeze v4의 목표 계약 중 아직 구현하지 않은 범위입니다. 현재 Router·OpenAPI 동작이 아닙니다. `GET /api/v1/jobs/{job_id}`와 OCR 접수 `POST /api/v1/documents/{document_id}/ocr-jobs`는 이미 구현되어 위 현재 API 목록으로 이동했습니다(#148). OCR·Guide 재접속 복구 GET은 서비스 로직까지는 구현했지만 라우트 등록을 보류했습니다 — 위 [구현했지만 라우트 등록을 보류한 API](#구현했지만-라우트-등록을-보류한-api)를 참고하세요. 남은 Guide/Chat 접수 POST는 실제 전환 PR에서 route, DTO, OpenAPI, migration, 구현과 계약·통합 테스트를 함께 갱신한 뒤 현재 API 목록으로 이동합니다.
