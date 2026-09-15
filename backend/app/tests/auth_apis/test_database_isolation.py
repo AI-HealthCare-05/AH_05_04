@@ -1,7 +1,7 @@
 from httpx import ASGITransport, AsyncClient
-from starlette import status
 
 from app.main import app
+from app.tests.helpers.auth import signup_verified_user
 
 SIGNUP_DATA = {
     "email": "isolation@example.com",
@@ -15,12 +15,7 @@ async def test_database_isolation_first_signup():
         transport=ASGITransport(app=app),
         base_url="http://test",
     ) as client:
-        response = await client.post(
-            "/api/v1/auth/signup",
-            json=SIGNUP_DATA,
-        )
-
-    assert response.status_code == status.HTTP_201_CREATED
+        await signup_verified_user(client, SIGNUP_DATA)
 
 
 async def test_database_isolation_second_signup():
@@ -28,9 +23,4 @@ async def test_database_isolation_second_signup():
         transport=ASGITransport(app=app),
         base_url="http://test",
     ) as client:
-        response = await client.post(
-            "/api/v1/auth/signup",
-            json=SIGNUP_DATA,
-        )
-
-    assert response.status_code == status.HTTP_201_CREATED
+        await signup_verified_user(client, SIGNUP_DATA)

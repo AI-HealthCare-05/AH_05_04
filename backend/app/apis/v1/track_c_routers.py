@@ -27,7 +27,11 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     400: {"model": ErrorResponse, "description": "Idempotency-Key 누락 또는 형식 오류"},
     401: {"model": ErrorResponse, "description": "인증 필요"},
     404: {"model": ErrorResponse, "description": "존재하지 않거나 SELF 소유가 아닌 Check-in"},
-    409: {"model": ErrorResponse, "description": "Check-in·Safety·Barrier revision 또는 멱등성 충돌"},
+    409: {
+        "model": ErrorResponse,
+        "description": "CHECKIN_FLOW_STALE, SAFETY_ASSESSMENT_REVISION_CONFLICT, "
+        "BARRIER_RESPONSE_REVISION_CONFLICT, SAFETY_FLOW_PRECEDES_BARRIER, IDEMPOTENCY_KEY_CONFLICT",
+    },
     422: {"model": ErrorResponse, "description": "입력 검증 오류 또는 자유 텍스트 증상"},
     503: {"model": ErrorResponse, "description": "멱등성 응답 snapshot 크기 초과"},
 }

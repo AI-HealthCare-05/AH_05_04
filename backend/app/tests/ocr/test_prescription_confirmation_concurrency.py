@@ -29,6 +29,7 @@ from app.models.prescriptions import Prescription, PrescriptionStatus, Prescript
 from app.services.ocr_engine import OcrDeadline, OcrRecognitionResult, RecognizedField
 from app.tests.conftest import test_engine
 from app.tests.fixtures.prescription_fingerprint import fingerprint_values
+from app.tests.helpers.auth import signup_verified_user
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 
@@ -134,11 +135,10 @@ async def _lock_document(session: AsyncSession, document_id: str) -> UUID:
 
 async def _signup_and_login(client: AsyncClient, *, label: str) -> str:
     email = f"cc-{label}-{uuid4().hex[:8]}@example.com"
-    signup = await client.post(
-        "/api/v1/auth/signup",
-        json={"email": email, "password": "Password123!", "name": "동시성테스터"},
+    await signup_verified_user(
+        client,
+        {"email": email, "password": "Password123!", "name": "동시성테스터"},
     )
-    assert signup.status_code == status.HTTP_201_CREATED, signup.text
 
     login = await client.post(
         "/api/v1/auth/login",

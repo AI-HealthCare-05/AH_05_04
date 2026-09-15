@@ -69,7 +69,7 @@ from app.services.ocr_engine import OcrEngine
 from app.services.prescriptions import PrescriptionService
 from app.services.track_c_api import TrackCApiService
 from app.services.track_c_flow import ContractFoundationSafetyPolicy, TrackCFlowService
-from app.services.user_consents import OcrConsentService
+from app.services.user_consents import ConsentGateService, OcrConsentService
 from app.services.users import UserConsentService, UserManageService
 
 
@@ -80,6 +80,12 @@ def get_ocr_consent_service(
         UserConsentRepository(session),
         current_policy_version=config.OCR_CONSENT_POLICY_VERSION,
     )
+
+
+def get_consent_gate_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> ConsentGateService:
+    return ConsentGateService(UserConsentRepository(session))
 
 
 def get_openai_client(request: Request) -> AsyncOpenAI:
@@ -435,8 +441,12 @@ def get_guide_service(
         GuideGenerator,
         Depends(get_guide_generator),
     ],
+    consent_gate: Annotated[
+        ConsentGateService,
+        Depends(get_consent_gate_service),
+    ],
 ) -> GuideService:
-    return GuideService(repository, generator)
+    return GuideService(repository, generator, consent_gate)
 
 
 def get_chat_repository(

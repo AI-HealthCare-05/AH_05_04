@@ -147,7 +147,7 @@ class TrackCFlowService:
         if expected_revision != current_revision:
             raise ApiError(
                 status_code=409,
-                code="CHECKIN_FLOW_STALE",
+                code="BARRIER_RESPONSE_REVISION_CONFLICT",
                 message="현재 미복용 지원 흐름과 요청한 Barrier revision이 일치하지 않습니다.",
                 details=[ErrorDetail(field="expected_revision", reason="CURRENT_REVISION_MISMATCH")],
             )

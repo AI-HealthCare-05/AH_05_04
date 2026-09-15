@@ -4,7 +4,7 @@
 |---|---|
 | 상태 | Proposed · 검토용 초안 · 런타임 미적용 |
 | 작성 기준일 | 2026-09-15 |
-| 구현 소유자 / 책임 리뷰어 | @Jye-rookie / @phina-io (Backend·Transaction·Security) |
+| 구현 소유자 / 책임 리뷰어 | 권가빈 @hazelnutflavoured / @phina-io (Backend·Transaction·Security) |
 | 제품 / 화면 의견 | @hazelnutflavoured / @solia142 |
 | 의료 안전 검토 | 별도 전문 검토 필요 · 검토자·결과 미등록 |
 | 연결 | [API 제안 계약](track-c-safety-barrier-api-193.md), [PD-193](../../governance/decisions/2026-09-15-track-c-safety-barrier-api-193.md) |

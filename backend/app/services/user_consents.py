@@ -6,6 +6,12 @@ from app.dtos.user_consents import OcrConsentState
 from app.models.user_consents import ConsentPurpose, ConsentStatus, UserConsent
 from app.models.users import User
 from app.repositories.user_consent_repository import UserConsentRepository
+from app.services.user_consent_policy import current_consent_policy_version
+
+
+def _require_active_user(user: User) -> None:
+    if user.account_status != "ACTIVE" or not user.is_active:
+        raise ApiError(status_code=403, code="CONSENT_REQUIRED", message="처방전 처리 동의가 필요합니다.")
 
 
 class OcrConsentService:
@@ -22,8 +28,7 @@ class OcrConsentService:
 
     @staticmethod
     def _require_active_user(user: User) -> None:
-        if user.account_status != "ACTIVE" or not user.is_active:
-            raise ApiError(status_code=403, code="CONSENT_REQUIRED", message="처방전 처리 동의가 필요합니다.")
+        _require_active_user(user)
 
     def _state(self, row: UserConsent | None, version: str) -> OcrConsentState:
         if row is None:
@@ -109,3 +114,29 @@ class OcrConsentService:
             changed_at=datetime.now(UTC),
         )
         return self._state(withdrawn, version)
+
+
+class ConsentGateService:
+    def __init__(self, repository: UserConsentRepository) -> None:
+        self._repository = repository
+
+    @staticmethod
+    def _configured_version(purpose: ConsentPurpose) -> str:
+        version = current_consent_policy_version(purpose)
+        if not version.strip():
+            raise ApiError(
+                status_code=503, code="CONSENT_POLICY_UNAVAILABLE", message="현재 동의 안내를 사용할 수 없습니다."
+            )
+        return version
+
+    async def require_for_intake(self, *, user: User, purpose: ConsentPurpose) -> None:
+        _require_active_user(user)
+        version = self._configured_version(purpose)
+        try:
+            allowed = await self._repository.is_granted(user_id=user.id, purpose=purpose, policy_version=version)
+        except Exception:
+            raise ApiError(
+                status_code=503, code="CONSENT_LOOKUP_FAILED", message="동의를 확인할 수 없습니다."
+            ) from None
+        if not allowed:
+            raise ApiError(status_code=403, code="CONSENT_REQUIRED", message="처방전 처리 동의가 필요합니다.")

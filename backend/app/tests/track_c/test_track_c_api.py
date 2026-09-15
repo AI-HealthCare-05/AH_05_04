@@ -322,6 +322,7 @@ def test_openapi_track_c_contract() -> None:
     barrier = schema["paths"]["/api/v1/medication-checkins/{checkin_id}/barrier-response"]["put"]
     assert safety["operationId"] == "safety-assessment.create"
     assert barrier["operationId"] == "barrier-response.put"
+    assert "BARRIER_RESPONSE_REVISION_CONFLICT" in barrier["responses"]["409"]["description"]
     for operation in (safety, barrier):
         header = next(parameter for parameter in operation["parameters"] if parameter["name"] == "Idempotency-Key")
         assert header["required"] is True
@@ -424,13 +425,29 @@ async def test_barrier_precondition_replay_conflict_and_ownership(case: ApiCase)
     assert first.status_code == 200
     changed = {**body, "response_status": "ANSWERED", "barrier_code": "FORGOT"}
     assert_error(await case.barrier(changed), 409, "IDEMPOTENCY_KEY_CONFLICT")
-    assert_error(await case.barrier(body, key="new-stale-barrier-key"), 409, "CHECKIN_FLOW_STALE")
+    assert_error(await case.barrier(body, key="new-stale-barrier-key"), 409, "BARRIER_RESPONSE_REVISION_CONFLICT")
     await case.session.refresh(case.checkin)
     case.checkin.revision = 2
     await case.session.commit()
     assert (await case.barrier(body)).json() == first.json()
     fastapi_app.dependency_overrides[get_request_user] = lambda: SimpleNamespace(id=uuid4())
     assert_error(await case.barrier(body), 404, "MEDICATION_CHECKIN_NOT_FOUND")
+
+
+async def test_barrier_checkin_revision_conflict_keeps_checkin_error(case: ApiCase) -> None:
+    assert (await case.safety(safety_body(case))).status_code == 200
+    assert_error(
+        await case.barrier(
+            {
+                "response_status": "DECLINED",
+                "checkin_revision": 2,
+                "expected_revision": 0,
+            }
+        ),
+        409,
+        "CHECKIN_FLOW_STALE",
+    )
+    assert await case.session.scalar(select(func.count()).select_from(BarrierResponse)) == 0
 
 
 @pytest.mark.parametrize("same_key", [True, False])
@@ -538,7 +555,9 @@ async def test_concurrent_requests_commit_one_revision(
                 assert sorted([first.status_code, second.status_code]) == [200, 409]
                 loser = first if first.status_code == 409 else second
                 assert_error(
-                    loser, 409, "CHECKIN_FLOW_STALE" if barrier_request else "SAFETY_ASSESSMENT_REVISION_CONFLICT"
+                    loser,
+                    409,
+                    "BARRIER_RESPONSE_REVISION_CONFLICT" if barrier_request else "SAFETY_ASSESSMENT_REVISION_CONFLICT",
                 )
             assert (
                 await seed.scalar(

@@ -1,7 +1,7 @@
 # Track C Safety·Barrier API v1 — #193
 
 - 상태: Proposed / 구현 브랜치 검증 대상. 전체 Safety 정책 완료나 Current 승격 아님.
-- 구현 소유자: @Jye-rookie. 책임 리뷰어: @phina-io (Backend·Transaction·Security).
+- 구현 소유자: 권가빈 @hazelnutflavoured. 책임 리뷰어: @phina-io (Backend·Transaction·Security).
 - 소비 계약 의견: @solia142 (#139). 제품 수용: @hazelnutflavoured.
 - 근거: [Check-in target](../targets/post-mvp-1/checkin-v1.md),
   [PD-193](../../governance/decisions/2026-09-15-track-c-safety-barrier-api-193.md).
@@ -25,7 +25,10 @@ Safety code 형식은 `[A-Z][A-Z0-9_]{0,63}`, 목록 최대 32개다. 임상 all
 
 Barrier enum은 기존 6개 그대로다. ANSWERED는 code 필수, DECLINED는 null만 허용한다.
 미제출은 row가 없다. 최초 expected revision=0, 정정은 해당 Check-in revision의
-최신 Barrier revision을 제출한다. 불일치는 `409 CHECKIN_FLOW_STALE`로 구체화한다.
+최신 Barrier revision을 제출한다. 불일치는 `409 BARRIER_RESPONSE_REVISION_CONFLICT`로 구체화한다.
+Check-in 상태·revision 불일치의 `CHECKIN_FLOW_STALE`과 code로 구분한다.
+소비자는 Barrier 충돌에서 선택 입력을 보존하고 최신 Barrier revision을 확인해야 한다.
+전용 Barrier GET은 현재 이 PR에 없으므로 존재하지 않는 조회 경로를 호출하도록 구현하지 않는다.
 
 ## 상태·트랜잭션
 

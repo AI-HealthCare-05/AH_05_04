@@ -2,7 +2,7 @@
 
 - 기준일: 2026-09-15
 - 상태: 구현 브랜치 Local 합성 검증, 지정 리뷰어·외부 승인·Production 검증 전
-- 구현 담당: 김지혜 인계 범위
+- 구현 담당: 권가빈 @hazelnutflavoured (김지혜 담당 #193 인계 범위)
 - 책임 리뷰: Issue #193에 지정된 Backend·Transaction·Security 리뷰 필요
 
 ## 구현 범위
@@ -26,6 +26,9 @@ Approved Contract Freeze v4는 빈 `symptom_codes=[]`를 증상 없음 확인과
 `message_code`, `copy_version`, `source_version`은 Production 승인 자료가 아니다.
 
 ## 실행 결과 (최신 develop #580 반영 후 재검증)
+
+아래 444 / 1,658 결과는 `58aa7286` 기반 최초 구현 검증 이력이다.
+후속 develop 통합 검증을 대신하지 않는다.
 
 ```text
 pytest backend/app/tests/track_c/test_track_c_api.py \
@@ -66,3 +69,13 @@ assessment·Plan 취소 rollback, Check-in 정정 이후 최초 snapshot 재현�
 - 지정 Backend·Transaction·Security 리뷰와 Frontend 소비 계약 확인
 - 배포 환경 검증 (전체 Backend·contract 로컬 합성 검증은 위 실행 완료)
 - #195 Check-in 정정 transaction의 실제 Track C invalidation adapter 연결
+
+## 리뷰 수정 검증 — develop 5880f355 반영
+
+- `services.py` 충돌은 develop의 ConsentGateService와 Track C 연결을 모두 보존해 해소했다.
+- PD-193 revision 2에 따라 Barrier revision 충돌을 `BARRIER_RESPONSE_REVISION_CONFLICT`로 분리했다.
+- `pytest backend/app/tests/track_c/test_track_c_api.py -q --tb=short`: **27 passed**.
+  Barrier의 Check-in revision 충돌은 기존 `CHECKIN_FLOW_STALE` 유지, Barrier 자체 정정 충돌은
+  신규 코드 반환, 다른 키 동시 요청과 OpenAPI 설명까지 검증했다.
+- 전체 Backend·contract 후속 실행 결과와 head별 CI는 [PR #592](https://github.com/AI-HealthCare-05/AH_05_04/pull/592)의
+  검증란·Checks를 정본으로 확인한다. Draft는 판정표·문구의 검토 및 연결 대기 때문에 유지한다.

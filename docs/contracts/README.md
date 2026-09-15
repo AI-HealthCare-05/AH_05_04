@@ -9,7 +9,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 - [Source Attempt Receipt 실패 보완 (#436)](./proposed/source-attempt-receipt-436.md): COLLECTION_FAILED 및 EMPTY_RESULT 계열 구분 구현 리뷰안.
 
-- [공통 복약 리포트 v1 (#419)](./proposed/medication-report-v1.md): KST 7/30일·과거 version·두 지표·0분모·상세 기록. 사용자 기준 확인 후 작업 브랜치 구현·지정 리뷰 대기.
+- [공통 복약 리포트 v1 (#419)](./current/medication-report-v1.md): KST 7/30일·과거 version·두 지표·0분모·상세 기록. Backend #478·Frontend #574 병합 및 실제 runtime 검증.
 
 ## 디렉터리 구조와 배치 원칙
 
@@ -30,6 +30,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## 현재 구현 계약
 
+- [공통 복약 리포트 v1](./current/medication-report-v1.md): `GET /api/v1/medication-reports`의 7/30일 SELF 집계·상태·두 비율·상세 기록 계약
 - [복약 가이드 Backend–AI 계약](./current/medication-guide-ai-backend.md): `guide-prompt-v3` intent·승인 문구 선택형 동기 one-cycle 입력·출력·오류 경계
 - [복약 챗봇 Backend–AI Core 계약](./current/medication-chat-ai-backend.md): 현재 동기 `201` 생성과 세션 직렬화 경계
 - [OCR 약품명 정규화 계약](./current/ocr-medication-normalization.md): OCR 원문, 정규화 참고값 및 사용자 확정값의 역할

@@ -2,7 +2,7 @@
 
 - 날짜: 2026-09-15
 - 상태: Proposed / 담당 리뷰 전. Approved Freeze v4를 재승인한 문서가 아니다.
-- 구현 소유자 @Jye-rookie, 책임 리뷰어 @phina-io (Backend·Transaction·Security).
+- 구현 소유자 권가빈 @hazelnutflavoured, 책임 리뷰어 @phina-io (Backend·Transaction·Security).
 - Frontend 소비 의견 @solia142, 제품 수용 @hazelnutflavoured.
 
 ## 범위
@@ -33,3 +33,14 @@ Track F Safety Intake, #194 지원 선택, #195 Check-in 정정 adapter 및 publ
 최근 24시간 신경학적 신호와 증상 없음 확인의 의미 확장, 성인 SELF 데모 대상 제안은
 기존 승인 계약에 포함된 것으로 간주하지 않는다. 제품·소비 계약·전문 안전 검토 항목이다.
 초안 작성 요청은 판정표 승인이나 구현 요청으로 기록하지 않으며 API·설정은 변경하지 않았다.
+
+## PD-193 revision 2 — 리뷰 반영
+
+2026-09-15 @Jye-rookie의 PR #592 리뷰와 PM의 수정 요청을 반영한다.
+Barrier expected_revision 충돌을 `409 BARRIER_RESPONSE_REVISION_CONFLICT`로 분리한다.
+`CHECKIN_FLOW_STALE`은 Check-in 상태·revision 불일치에 유지한다. HTTP·DB 스키마 변경은 없다.
+이는 기존 승인 Freeze에 있었던 오류가 아니라 이 구현 PR에서 제안·리뷰하는 delta이며,
+API 계약·OpenAPI 설명·동시성 및 API 회귀 검증을 함께 갱신한다.
+POST Safety의 200/data 응답은 저장소 선례와 기존 멱등 snapshot 의미에 맞춰 유지한다.
+구현 담당은 실제 인계받은 권가빈으로 정정하고 책임 리뷰어는 @phina-io로 유지한다.
+Draft 사유는 임상 판정표·환자용 문구의 검토 및 연결 대기이며 CI 미실행 때문이 아니다.
