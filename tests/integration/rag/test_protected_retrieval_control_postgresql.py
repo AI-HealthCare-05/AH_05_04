@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    AsyncTransaction,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from ai_worker.adapters import postgresql_protected_retrieval_control as control_adapter
 from ai_worker.adapters.postgresql_protected_retrieval import (
@@ -25,12 +33,15 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     ApprovalSourceEvidence,
     AuthorizationAuditAction,
     AuthorizationAuditEntry,
+    ControlAuditOutcome,
+    ControlCommandAuditEntry,
     ControlImplementationBinding,
     OpaqueLogicalRef,
     OpaqueRefNamespace,
     ProtectedAction,
     ProtectedApprovalPrincipal,
     ProtectedApprovalRole,
+    ProtectedAuditEntry,
     ProtectedAuditEventKind,
     ProtectedAuditReason,
     ProtectedAuthorizationGrant,
@@ -2629,3 +2640,1309 @@ async def test_dataset_command_conflict_rejects_payload_mutation_on_same_request
         assert await _request_control_audit_count(protected_database, shared_request_id) == 1
     finally:
         await service.close()
+
+
+@asynccontextmanager
+async def _reviewer(
+    database: _ProtectedDatabase,
+    admin_engine: AsyncEngine,
+    actor_id: str | None = None,
+):
+    reviewer_login = f"pr512_rev_{uuid4().hex[:8]}"
+    actor = actor_id or f"safety-reviewer-{uuid4().hex[:6]}"
+    async with admin_engine.begin() as connection:
+        await connection.exec_driver_sql(
+            f"CREATE ROLE \"{reviewer_login}\" LOGIN PASSWORD '{database.password}' "
+            "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+        )
+        await connection.exec_driver_sql(f'GRANT "{database.control}" TO "{reviewer_login}"')
+        await connection.execute(
+            text(
+                f'''INSERT INTO "{database.schema}".protected_identity (
+                    database_login, actor_id, actor_namespace, approval_role, identity_plane, enabled
+                ) VALUES (
+                    :login, :actor_id, 'GITHUB_LOGIN',
+                    'PRODUCT_SAFETY_REVIEWER', 'CONTROL', true
+                )'''
+            ),
+            {"login": reviewer_login, "actor_id": actor},
+        )
+    evidence = _evidence(f"approval-{uuid4()}", "a" * 64)
+    source = _ApprovalSource(evidence)
+    service = _service(database, source, login=reviewer_login)
+    try:
+        yield reviewer_login, actor, service
+    finally:
+        await service.close()
+        async with admin_engine.begin() as connection:
+            await connection.exec_driver_sql(f'DROP ROLE IF EXISTS "{reviewer_login}"')
+
+
+async def _wait_for_blocked_by(
+    admin_engine: AsyncEngine,
+    blocking_pids: int | tuple[int, ...] | None = None,
+    *,
+    blocking_pid: int | None = None,
+    exclude_pids: tuple[int, ...] = (),
+    timeout: float = 10.0,
+) -> int:
+    target = blocking_pids if blocking_pids is not None else blocking_pid
+    assert target is not None
+    blockers = (target,) if isinstance(target, int) else target
+
+    async def _probe() -> int:
+        while True:
+            async with admin_engine.connect() as conn:
+                waiting_pids = await conn.scalars(
+                    text(
+                        "SELECT pid FROM pg_stat_activity "
+                        "WHERE EXISTS ("
+                        "   SELECT 1 FROM unnest(pg_blocking_pids(pg_stat_activity.pid)) AS b(pid) "
+                        "   WHERE b.pid = ANY(:blockers)"
+                        ") "
+                        "AND wait_event_type = 'Lock' "
+                        "ORDER BY pid"
+                    ),
+                    {"blockers": list(blockers)},
+                )
+                for pid in waiting_pids:
+                    if pid not in exclude_pids:
+                        is_waiting = await conn.scalar(
+                            text("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE NOT granted AND pid = :pid)"),
+                            {"pid": pid},
+                        )
+                        if is_waiting:
+                            return int(pid)
+            await asyncio.sleep(0.01)
+
+    return await asyncio.wait_for(_probe(), timeout=timeout)
+
+
+async def _verify_audit_chain(admin_engine: AsyncEngine, schema: str) -> tuple[ProtectedAuditEntry, ...]:
+    async with AsyncSession(admin_engine) as session:
+        clock = await PostgresqlTrustedClock.from_session(session)
+        journal = PostgresqlProtectedAuditJournal(session, schema, clock)
+        return await journal._verified_entries(lock_head=False)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_register_and_executor_disable_disable_first(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with _reviewer(database, admin_engine) as (rev_a_login, rev_a_actor, service_a):
+            async with _reviewer(database, admin_engine) as (rev_b_login, _, service_b):
+                target_login = f"pr512_runner_{uuid4().hex[:8]}"
+                reg_cmd = RegisterIdentityCommand(
+                    request_id=str(uuid4()),
+                    database_login=target_login,
+                    actor_id="runner-actor-1",
+                    actor_namespace="SERVICE_IDENTITY",
+                    identity_plane="DATA",
+                    principal_role=ProtectedPrincipalRole.PROTECTED_RUNNER,
+                )
+                dis_cmd = DisableIdentityCommand(
+                    request_id=str(uuid4()),
+                    database_login=rev_a_login,
+                    expected_actor_id=rev_a_actor,
+                    expected_actor_namespace="GITHUB_LOGIN",
+                )
+
+                aux_engine = create_async_engine(database.url)
+                aux_conn = await aux_engine.connect()
+                aux_trans: AsyncTransaction | None = await aux_conn.begin()
+                tasks: list[asyncio.Task[object]] = []
+                try:
+                    await aux_conn.execute(
+                        text(f'SELECT sequence FROM "{database.schema}".audit_head WHERE singleton FOR UPDATE')
+                    )
+                    aux_pid = await aux_conn.scalar(text("SELECT pg_backend_pid()"))
+                    assert aux_pid is not None
+
+                    task_b: asyncio.Task[object] = asyncio.create_task(service_b.disable_identity(dis_cmd))
+                    tasks.append(task_b)
+
+                    dis_pid = await _wait_for_blocked_by(admin_engine, blocking_pid=int(aux_pid), timeout=10.0)
+                    assert dis_pid is not None
+
+                    task_a: asyncio.Task[object] = asyncio.create_task(service_a.register_identity(reg_cmd))
+                    tasks.append(task_a)
+
+                    reg_pid = await _wait_for_blocked_by(admin_engine, blocking_pid=dis_pid, timeout=10.0)
+                    assert reg_pid is not None
+
+                    assert aux_trans is not None
+                    await aux_trans.rollback()
+                    aux_trans = None
+
+                    dis_result = await asyncio.wait_for(task_b, timeout=10.0)
+                    assert isinstance(dis_result, ControlCommandResult)
+                    assert dis_result.command_kind == "DISABLE_IDENTITY"
+                    assert dis_result.reason_code == "IDENTITY_DISABLED"
+                    assert dis_result.target_id == rev_a_login
+
+                    with pytest.raises(ProtectedSecurityError) as exc_info:
+                        await asyncio.wait_for(task_a, timeout=10.0)
+                    assert exc_info.value.reason_code == "AUTHORIZATION_NOT_FOUND"
+
+                    async with admin_engine.connect() as connection:
+                        exists = await connection.scalar(
+                            text(
+                                f'SELECT EXISTS (SELECT 1 FROM "{database.schema}".protected_identity '
+                                "WHERE database_login = :target)"
+                            ),
+                            {"target": target_login},
+                        )
+                        assert exists is False
+
+                        rev_a_enabled = await connection.scalar(
+                            text(
+                                f'SELECT enabled FROM "{database.schema}".protected_identity '
+                                "WHERE database_login = :login"
+                            ),
+                            {"login": rev_a_login},
+                        )
+                        assert rev_a_enabled is False
+
+                        dis_audit = (
+                            await connection.execute(
+                                text(
+                                    f'SELECT entry_body FROM "{database.schema}".audit_entry '
+                                    "WHERE event_id = CAST(:req_id AS uuid)"
+                                ),
+                                {"req_id": dis_cmd.request_id},
+                            )
+                        ).one()
+                        dis_body = (
+                            json.loads(dis_audit.entry_body)
+                            if isinstance(dis_audit.entry_body, str)
+                            else dis_audit.entry_body
+                        )
+                        assert dis_body["outcome"] == "SUCCEEDED"
+                        assert dis_body["reason_code"] == "IDENTITY_DISABLED"
+                        assert dis_body["target_id"] == rev_a_login
+
+                        reg_audit = (
+                            await connection.execute(
+                                text(
+                                    f'SELECT entry_body FROM "{database.schema}".audit_entry '
+                                    "WHERE event_id = CAST(:req_id AS uuid)"
+                                ),
+                                {"req_id": reg_cmd.request_id},
+                            )
+                        ).one()
+                        reg_body = (
+                            json.loads(reg_audit.entry_body)
+                            if isinstance(reg_audit.entry_body, str)
+                            else reg_audit.entry_body
+                        )
+                        assert reg_body["outcome"] == "DENIED"
+                        assert reg_body["reason_code"] == "AUTHORIZATION_NOT_FOUND"
+                        assert reg_body["target_id"] == target_login
+
+                    entries = await _verify_audit_chain(admin_engine, database.schema)
+                    entry_map = {e.event_id: e for e in entries}
+                    assert dis_cmd.request_id in entry_map
+                    assert reg_cmd.request_id in entry_map
+                    assert entry_map[dis_cmd.request_id].sequence < entry_map[reg_cmd.request_id].sequence
+                finally:
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    if aux_trans is not None:
+                        await aux_trans.rollback()
+                    await aux_conn.close()
+                    await aux_engine.dispose()
+    finally:
+        await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_register_and_executor_disable_register_first(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with _reviewer(database, admin_engine) as (rev_a_login, rev_a_actor, service_a):
+            async with _reviewer(database, admin_engine) as (rev_b_login, _, service_b):
+                target_login = f"pr512_runner_{uuid4().hex[:8]}"
+                reg_cmd = RegisterIdentityCommand(
+                    request_id=str(uuid4()),
+                    database_login=target_login,
+                    actor_id="runner-actor-2",
+                    actor_namespace="SERVICE_IDENTITY",
+                    identity_plane="DATA",
+                    principal_role=ProtectedPrincipalRole.PROTECTED_RUNNER,
+                )
+                dis_cmd = DisableIdentityCommand(
+                    request_id=str(uuid4()),
+                    database_login=rev_a_login,
+                    expected_actor_id=rev_a_actor,
+                    expected_actor_namespace="GITHUB_LOGIN",
+                )
+
+                aux_engine = create_async_engine(database.url)
+                aux_conn = await aux_engine.connect()
+                aux_trans: AsyncTransaction | None = await aux_conn.begin()
+                tasks: list[asyncio.Task[object]] = []
+                try:
+                    await aux_conn.execute(
+                        text(f'SELECT sequence FROM "{database.schema}".audit_head WHERE singleton FOR UPDATE')
+                    )
+                    aux_pid = await aux_conn.scalar(text("SELECT pg_backend_pid()"))
+                    assert aux_pid is not None
+
+                    task_a: asyncio.Task[object] = asyncio.create_task(service_a.register_identity(reg_cmd))
+                    tasks.append(task_a)
+
+                    reg_pid = await _wait_for_blocked_by(admin_engine, blocking_pid=int(aux_pid), timeout=10.0)
+                    assert reg_pid is not None
+
+                    task_b: asyncio.Task[object] = asyncio.create_task(service_b.disable_identity(dis_cmd))
+                    tasks.append(task_b)
+
+                    dis_pid = await _wait_for_blocked_by(admin_engine, blocking_pid=reg_pid, timeout=10.0)
+                    assert dis_pid is not None
+
+                    assert aux_trans is not None
+                    await aux_trans.rollback()
+                    aux_trans = None
+
+                    reg_result = await asyncio.wait_for(task_a, timeout=10.0)
+                    assert isinstance(reg_result, ControlCommandResult)
+                    assert reg_result.command_kind == "REGISTER_IDENTITY"
+                    assert reg_result.reason_code == "IDENTITY_REGISTERED"
+                    assert reg_result.target_id == target_login
+
+                    dis_result = await asyncio.wait_for(task_b, timeout=10.0)
+                    assert isinstance(dis_result, ControlCommandResult)
+                    assert dis_result.command_kind == "DISABLE_IDENTITY"
+                    assert dis_result.reason_code == "IDENTITY_DISABLED"
+                    assert dis_result.target_id == rev_a_login
+
+                    async with admin_engine.connect() as connection:
+                        t_enabled = await connection.scalar(
+                            text(
+                                f'SELECT enabled FROM "{database.schema}".protected_identity '
+                                "WHERE database_login = :target"
+                            ),
+                            {"target": target_login},
+                        )
+                        assert t_enabled is True
+
+                        rev_a_enabled = await connection.scalar(
+                            text(
+                                f'SELECT enabled FROM "{database.schema}".protected_identity '
+                                "WHERE database_login = :login"
+                            ),
+                            {"login": rev_a_login},
+                        )
+                        assert rev_a_enabled is False
+
+                        reg_audit = (
+                            await connection.execute(
+                                text(
+                                    f'SELECT entry_body FROM "{database.schema}".audit_entry '
+                                    "WHERE event_id = CAST(:req_id AS uuid)"
+                                ),
+                                {"req_id": reg_cmd.request_id},
+                            )
+                        ).one()
+                        reg_body = (
+                            json.loads(reg_audit.entry_body)
+                            if isinstance(reg_audit.entry_body, str)
+                            else reg_audit.entry_body
+                        )
+                        assert reg_body["outcome"] == "SUCCEEDED"
+                        assert reg_body["reason_code"] == "IDENTITY_REGISTERED"
+                        assert reg_body["target_id"] == target_login
+
+                        dis_audit = (
+                            await connection.execute(
+                                text(
+                                    f'SELECT entry_body FROM "{database.schema}".audit_entry '
+                                    "WHERE event_id = CAST(:req_id AS uuid)"
+                                ),
+                                {"req_id": dis_cmd.request_id},
+                            )
+                        ).one()
+                        dis_body = (
+                            json.loads(dis_audit.entry_body)
+                            if isinstance(dis_audit.entry_body, str)
+                            else dis_audit.entry_body
+                        )
+                        assert dis_body["outcome"] == "SUCCEEDED"
+                        assert dis_body["reason_code"] == "IDENTITY_DISABLED"
+                        assert dis_body["target_id"] == rev_a_login
+
+                    entries = await _verify_audit_chain(admin_engine, database.schema)
+                    entry_map = {e.event_id: e for e in entries}
+                    assert reg_cmd.request_id in entry_map
+                    assert dis_cmd.request_id in entry_map
+                    assert entry_map[reg_cmd.request_id].sequence < entry_map[dis_cmd.request_id].sequence
+                finally:
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    if aux_trans is not None:
+                        await aux_trans.rollback()
+                    await aux_conn.close()
+                    await aux_engine.dispose()
+    finally:
+        await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_register_identical_database_login(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with _reviewer(database, admin_engine) as (rev_a, _, service_a):
+            async with _reviewer(database, admin_engine) as (rev_b, _, service_b):
+                shared_target = f"pr512_shared_{uuid4().hex[:8]}"
+                cmd1 = RegisterIdentityCommand(
+                    request_id=str(uuid4()),
+                    database_login=shared_target,
+                    actor_id="actor-one",
+                    actor_namespace="SERVICE_IDENTITY",
+                    identity_plane="DATA",
+                    principal_role=ProtectedPrincipalRole.PROTECTED_RUNNER,
+                )
+                cmd2 = RegisterIdentityCommand(
+                    request_id=str(uuid4()),
+                    database_login=shared_target,
+                    actor_id="actor-two",
+                    actor_namespace="SERVICE_IDENTITY",
+                    identity_plane="DATA",
+                    principal_role=ProtectedPrincipalRole.PROTECTED_RUNNER,
+                )
+
+                t1: asyncio.Task[object] = asyncio.create_task(service_a.register_identity(cmd1))
+                t2: asyncio.Task[object] = asyncio.create_task(service_b.register_identity(cmd2))
+                tasks = [t1, t2]
+                try:
+                    results = await asyncio.wait_for(asyncio.gather(t1, t2, return_exceptions=True), timeout=10.0)
+
+                    successes = [r for r in results if isinstance(r, ControlCommandResult)]
+                    conflicts = [
+                        r
+                        for r in results
+                        if isinstance(r, ProtectedSecurityError) and r.reason_code == "CONTROL_COMMAND_CONFLICT"
+                    ]
+                    assert len(successes) == 1, f"Expected 1 success, got {results}"
+                    assert len(conflicts) == 1, f"Expected 1 conflict, got {results}"
+                    assert successes[0].reason_code == "IDENTITY_REGISTERED"
+                    assert successes[0].target_id == shared_target
+
+                    async with admin_engine.connect() as connection:
+                        rows = (
+                            await connection.execute(
+                                text(
+                                    f'SELECT database_login FROM "{database.schema}".protected_identity '
+                                    "WHERE database_login = :login"
+                                ),
+                                {"login": shared_target},
+                            )
+                        ).all()
+                        assert len(rows) == 1
+
+                        audit_rows = (
+                            await connection.execute(
+                                text(
+                                    f'SELECT event_id, entry_body FROM "{database.schema}".audit_entry '
+                                    "WHERE event_id IN (CAST(:req1 AS uuid), CAST(:req2 AS uuid))"
+                                ),
+                                {"req1": cmd1.request_id, "req2": cmd2.request_id},
+                            )
+                        ).all()
+                        assert len(audit_rows) == 2
+                        body_map = {
+                            str(r.event_id): (
+                                json.loads(r.entry_body) if isinstance(r.entry_body, str) else r.entry_body
+                            )
+                            for r in audit_rows
+                        }
+                        assert cmd1.request_id in body_map
+                        assert cmd2.request_id in body_map
+                        outcomes = {body_map[cmd1.request_id]["outcome"], body_map[cmd2.request_id]["outcome"]}
+                        assert outcomes == {"SUCCEEDED", "DENIED"}
+
+                        succeeded_body = next(b for b in body_map.values() if b["outcome"] == "SUCCEEDED")
+                        denied_body = next(b for b in body_map.values() if b["outcome"] == "DENIED")
+                        assert succeeded_body["reason_code"] == "IDENTITY_REGISTERED"
+                        assert succeeded_body["target_id"] == shared_target
+                        assert denied_body["reason_code"] == "CONTROL_COMMAND_CONFLICT"
+                        assert denied_body["target_id"] == shared_target
+
+                    entries = await _verify_audit_chain(admin_engine, database.schema)
+                    assert len(entries) >= 2
+                finally:
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_register_identical_actor_namespace_plane(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with _reviewer(database, admin_engine) as (rev_a, _, service_a):
+            async with _reviewer(database, admin_engine) as (rev_b, _, service_b):
+                shared_actor = f"runner-{uuid4().hex[:6]}"
+                target_login_1 = f"pr512_t1_{uuid4().hex[:8]}"
+                target_login_2 = f"pr512_t2_{uuid4().hex[:8]}"
+                cmd1 = RegisterIdentityCommand(
+                    request_id=str(uuid4()),
+                    database_login=target_login_1,
+                    actor_id=shared_actor,
+                    actor_namespace="SERVICE_IDENTITY",
+                    identity_plane="DATA",
+                    principal_role=ProtectedPrincipalRole.PROTECTED_RUNNER,
+                )
+                cmd2 = RegisterIdentityCommand(
+                    request_id=str(uuid4()),
+                    database_login=target_login_2,
+                    actor_id=shared_actor,
+                    actor_namespace="SERVICE_IDENTITY",
+                    identity_plane="DATA",
+                    principal_role=ProtectedPrincipalRole.PROTECTED_RUNNER,
+                )
+
+                t1: asyncio.Task[object] = asyncio.create_task(service_a.register_identity(cmd1))
+                t2: asyncio.Task[object] = asyncio.create_task(service_b.register_identity(cmd2))
+                tasks = [t1, t2]
+                try:
+                    results = await asyncio.wait_for(asyncio.gather(t1, t2, return_exceptions=True), timeout=10.0)
+
+                    successes = [r for r in results if isinstance(r, ControlCommandResult)]
+                    conflicts = [
+                        r
+                        for r in results
+                        if isinstance(r, ProtectedSecurityError) and r.reason_code == "CONTROL_COMMAND_CONFLICT"
+                    ]
+                    assert len(successes) == 1, f"Expected 1 success, got {results}"
+                    assert len(conflicts) == 1, f"Expected 1 conflict, got {results}"
+                    assert successes[0].reason_code == "IDENTITY_REGISTERED"
+
+                    async with admin_engine.connect() as connection:
+                        rows = (
+                            await connection.execute(
+                                text(
+                                    f'SELECT database_login FROM "{database.schema}".protected_identity '
+                                    "WHERE actor_id = :actor AND actor_namespace = :ns AND identity_plane = :plane"
+                                ),
+                                {"actor": shared_actor, "ns": "SERVICE_IDENTITY", "plane": "DATA"},
+                            )
+                        ).all()
+                        assert len(rows) == 1
+
+                        audit_rows = (
+                            await connection.execute(
+                                text(
+                                    f'SELECT event_id, entry_body FROM "{database.schema}".audit_entry '
+                                    "WHERE event_id IN (CAST(:req1 AS uuid), CAST(:req2 AS uuid))"
+                                ),
+                                {"req1": cmd1.request_id, "req2": cmd2.request_id},
+                            )
+                        ).all()
+                        assert len(audit_rows) == 2
+                        body_map = {
+                            str(r.event_id): (
+                                json.loads(r.entry_body) if isinstance(r.entry_body, str) else r.entry_body
+                            )
+                            for r in audit_rows
+                        }
+                        assert cmd1.request_id in body_map
+                        assert cmd2.request_id in body_map
+                        outcomes = {body_map[cmd1.request_id]["outcome"], body_map[cmd2.request_id]["outcome"]}
+                        assert outcomes == {"SUCCEEDED", "DENIED"}
+
+                        succeeded_body = next(b for b in body_map.values() if b["outcome"] == "SUCCEEDED")
+                        denied_body = next(b for b in body_map.values() if b["outcome"] == "DENIED")
+                        assert succeeded_body["reason_code"] == "IDENTITY_REGISTERED"
+                        assert denied_body["reason_code"] == "CONTROL_COMMAND_CONFLICT"
+
+                    entries = await _verify_audit_chain(admin_engine, database.schema)
+                    assert len(entries) >= 2
+                finally:
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_register_identity_dual_conflict_disjoint_rows(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with _reviewer(database, admin_engine) as (rev_login, _, service):
+            target_login_a = f"pr512_disjoint_a_{uuid4().hex[:8]}"
+            target_login_b = f"pr512_disjoint_b_{uuid4().hex[:8]}"
+            actor_a = f"actor-disjoint-a-{uuid4().hex[:6]}"
+            actor_b = f"actor-disjoint-b-{uuid4().hex[:6]}"
+
+            async with admin_engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        f'''INSERT INTO "{database.schema}".protected_identity (
+                            database_login, actor_id, actor_namespace, principal_role, identity_plane, approval_role, enabled
+                        ) VALUES
+                        (:l_a, :a_a, 'SERVICE_IDENTITY', 'PROTECTED_RUNNER', 'DATA', NULL, true),
+                        (:l_b, :a_b, 'SERVICE_IDENTITY', 'PROTECTED_RUNNER', 'DATA', NULL, true)'''
+                    ),
+                    {"l_a": target_login_a, "a_a": actor_a, "l_b": target_login_b, "a_b": actor_b},
+                )
+
+            cross_cmd = RegisterIdentityCommand(
+                request_id=str(uuid4()),
+                database_login=target_login_a,
+                actor_id=actor_b,
+                actor_namespace="SERVICE_IDENTITY",
+                identity_plane="DATA",
+                principal_role=ProtectedPrincipalRole.PROTECTED_RUNNER,
+            )
+
+            with pytest.raises(ProtectedSecurityError, match="CONTROL_COMMAND_CONFLICT"):
+                await service.register_identity(cross_cmd)
+
+            async with admin_engine.connect() as connection:
+                audit_row = (
+                    await connection.execute(
+                        text(
+                            f'SELECT entry_body FROM "{database.schema}".audit_entry '
+                            "WHERE event_id = CAST(:req_id AS uuid)"
+                        ),
+                        {"req_id": cross_cmd.request_id},
+                    )
+                ).one()
+                body = (
+                    json.loads(audit_row.entry_body) if isinstance(audit_row.entry_body, str) else audit_row.entry_body
+                )
+                assert body["outcome"] == "DENIED"
+                assert body["reason_code"] == "CONTROL_COMMAND_CONFLICT"
+    finally:
+        await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_cross_disable_no_deadlock(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with _reviewer(database, admin_engine) as (rev_a, actor_a, service_a):
+            async with _reviewer(database, admin_engine) as (rev_b, actor_b, service_b):
+                dis_a_to_b = DisableIdentityCommand(
+                    request_id=str(uuid4()),
+                    database_login=rev_b,
+                    expected_actor_id=actor_b,
+                    expected_actor_namespace="GITHUB_LOGIN",
+                )
+                dis_b_to_a = DisableIdentityCommand(
+                    request_id=str(uuid4()),
+                    database_login=rev_a,
+                    expected_actor_id=actor_a,
+                    expected_actor_namespace="GITHUB_LOGIN",
+                )
+
+                aux_engine = create_async_engine(database.url)
+                aux_conn = await aux_engine.connect()
+                aux_trans: AsyncTransaction | None = await aux_conn.begin()
+                tasks: list[asyncio.Task[object]] = []
+                try:
+                    await aux_conn.execute(
+                        text(f'SELECT sequence FROM "{database.schema}".audit_head WHERE singleton FOR UPDATE')
+                    )
+                    aux_pid = await aux_conn.scalar(text("SELECT pg_backend_pid()"))
+                    assert aux_pid is not None
+
+                    task_a: asyncio.Task[object] = asyncio.create_task(service_a.disable_identity(dis_a_to_b))
+                    tasks.append(task_a)
+
+                    pid_a = await _wait_for_blocked_by(admin_engine, blocking_pid=int(aux_pid), timeout=10.0)
+                    assert pid_a is not None
+
+                    task_b: asyncio.Task[object] = asyncio.create_task(service_b.disable_identity(dis_b_to_a))
+                    tasks.append(task_b)
+
+                    pid_b = await _wait_for_blocked_by(admin_engine, blocking_pid=pid_a, timeout=10.0)
+                    assert pid_b is not None
+
+                    assert aux_trans is not None
+                    await aux_trans.rollback()
+                    aux_trans = None
+
+                    results = await asyncio.wait_for(
+                        asyncio.gather(task_a, task_b, return_exceptions=True), timeout=10.0
+                    )
+                    r_a, r_b = results
+                    assert isinstance(r_a, ControlCommandResult)
+                    assert r_a.command_kind == "DISABLE_IDENTITY"
+                    assert r_a.reason_code == "IDENTITY_DISABLED"
+                    assert r_a.target_id == rev_b
+
+                    assert isinstance(r_b, ProtectedSecurityError)
+                    assert r_b.reason_code == "AUTHORIZATION_NOT_FOUND"
+
+                    async with admin_engine.connect() as connection:
+                        states = (
+                            await connection.execute(
+                                text(
+                                    f'SELECT database_login, enabled FROM "{database.schema}".protected_identity '
+                                    "WHERE database_login IN (:a, :b)"
+                                ),
+                                {"a": rev_a, "b": rev_b},
+                            )
+                        ).all()
+                        state_map = {row[0]: row[1] for row in states}
+                        assert state_map[rev_a] is True
+                        assert state_map[rev_b] is False
+
+                        audit_rows = (
+                            await connection.execute(
+                                text(
+                                    f'SELECT event_id, entry_body FROM "{database.schema}".audit_entry '
+                                    "WHERE event_id IN (CAST(:id1 AS uuid), CAST(:id2 AS uuid))"
+                                ),
+                                {"id1": dis_a_to_b.request_id, "id2": dis_b_to_a.request_id},
+                            )
+                        ).all()
+                        assert len(audit_rows) == 2
+                        body_map = {
+                            str(r.event_id): (
+                                json.loads(r.entry_body) if isinstance(r.entry_body, str) else r.entry_body
+                            )
+                            for r in audit_rows
+                        }
+                        assert body_map[dis_a_to_b.request_id]["outcome"] == "SUCCEEDED"
+                        assert body_map[dis_a_to_b.request_id]["reason_code"] == "IDENTITY_DISABLED"
+                        assert body_map[dis_b_to_a.request_id]["outcome"] == "DENIED"
+                        assert body_map[dis_b_to_a.request_id]["reason_code"] == "AUTHORIZATION_NOT_FOUND"
+
+                    entries = await _verify_audit_chain(admin_engine, database.schema)
+                    entry_map = {e.event_id: e for e in entries}
+                    assert dis_a_to_b.request_id in entry_map
+                    assert dis_b_to_a.request_id in entry_map
+                    assert entry_map[dis_a_to_b.request_id].sequence < entry_map[dis_b_to_a.request_id].sequence
+                finally:
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    if aux_trans is not None:
+                        await aux_trans.rollback()
+                    await aux_conn.close()
+                    await aux_engine.dispose()
+    finally:
+        await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_replay_identical_payload_multi_session(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with _reviewer(database, admin_engine) as (rev_login, rev_actor, service_1):
+            evidence = _evidence(f"approval-{uuid4()}", "a" * 64)
+            source_2 = _ApprovalSource(evidence)
+            service_2 = _service(database, source_2, login=rev_login)
+            try:
+                shared_req_id = str(uuid4())
+                target_login = f"pr512_replay_{uuid4().hex[:8]}"
+                cmd = RegisterIdentityCommand(
+                    request_id=shared_req_id,
+                    database_login=target_login,
+                    actor_id="runner-replay",
+                    actor_namespace="SERVICE_IDENTITY",
+                    identity_plane="DATA",
+                    principal_role=ProtectedPrincipalRole.PROTECTED_RUNNER,
+                )
+
+                aux_engine = create_async_engine(database.url)
+                aux_conn = await aux_engine.connect()
+                aux_trans: AsyncTransaction | None = await aux_conn.begin()
+                tasks: list[asyncio.Task[object]] = []
+                try:
+                    await aux_conn.execute(
+                        text(f'SELECT sequence FROM "{database.schema}".audit_head WHERE singleton FOR UPDATE')
+                    )
+                    aux_pid = await aux_conn.scalar(text("SELECT pg_backend_pid()"))
+                    assert aux_pid is not None
+
+                    task_1: asyncio.Task[object] = asyncio.create_task(service_1.register_identity(cmd))
+                    tasks.append(task_1)
+
+                    pid_1 = await _wait_for_blocked_by(admin_engine, blocking_pid=int(aux_pid), timeout=10.0)
+                    assert pid_1 is not None
+
+                    task_2: asyncio.Task[object] = asyncio.create_task(service_2.register_identity(cmd))
+                    tasks.append(task_2)
+
+                    pid_2 = await _wait_for_blocked_by(admin_engine, blocking_pid=pid_1, timeout=10.0)
+                    assert pid_2 is not None
+
+                    assert aux_trans is not None
+                    await aux_trans.rollback()
+                    aux_trans = None
+
+                    results = await asyncio.wait_for(
+                        asyncio.gather(task_1, task_2, return_exceptions=True), timeout=10.0
+                    )
+                    r1, r2 = results
+                    assert isinstance(r1, ControlCommandResult)
+                    assert isinstance(r2, ControlCommandResult)
+                    assert r1 == r2
+                    assert r1.command_kind == "REGISTER_IDENTITY"
+                    assert r1.reason_code == "IDENTITY_REGISTERED"
+
+                    async with admin_engine.connect() as connection:
+                        count = await connection.scalar(
+                            text(
+                                f'SELECT count(*) FROM "{database.schema}".protected_identity WHERE database_login = :login'
+                            ),
+                            {"login": target_login},
+                        )
+                        assert count == 1
+
+                        audit_count = await connection.scalar(
+                            text(
+                                f'SELECT count(*) FROM "{database.schema}".audit_entry '
+                                "WHERE event_id = CAST(:req_id AS uuid)"
+                            ),
+                            {"req_id": shared_req_id},
+                        )
+                        assert audit_count == 1
+
+                    entries = await _verify_audit_chain(admin_engine, database.schema)
+                    assert len(entries) >= 1
+                finally:
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    if aux_trans is not None:
+                        await aux_trans.rollback()
+                    await aux_conn.close()
+                    await aux_engine.dispose()
+            finally:
+                await service_2.close()
+    finally:
+        await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_replay_different_payload_multi_session(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with _reviewer(database, admin_engine) as (rev_login, rev_actor, service_1):
+            evidence = _evidence(f"approval-{uuid4()}", "a" * 64)
+            source_2 = _ApprovalSource(evidence)
+            service_2 = _service(database, source_2, login=rev_login)
+            try:
+                shared_req_id = str(uuid4())
+                target_1 = f"pr512_diff1_{uuid4().hex[:8]}"
+                target_2 = f"pr512_diff2_{uuid4().hex[:8]}"
+                cmd1 = RegisterIdentityCommand(
+                    request_id=shared_req_id,
+                    database_login=target_1,
+                    actor_id="runner-diff-1",
+                    actor_namespace="SERVICE_IDENTITY",
+                    identity_plane="DATA",
+                    principal_role=ProtectedPrincipalRole.PROTECTED_RUNNER,
+                )
+                cmd2 = RegisterIdentityCommand(
+                    request_id=shared_req_id,
+                    database_login=target_2,
+                    actor_id="runner-diff-2",
+                    actor_namespace="SERVICE_IDENTITY",
+                    identity_plane="DATA",
+                    principal_role=ProtectedPrincipalRole.PROTECTED_RUNNER,
+                )
+
+                aux_engine = create_async_engine(database.url)
+                aux_conn = await aux_engine.connect()
+                aux_trans: AsyncTransaction | None = await aux_conn.begin()
+                tasks: list[asyncio.Task[object]] = []
+                try:
+                    await aux_conn.execute(
+                        text(f'SELECT sequence FROM "{database.schema}".audit_head WHERE singleton FOR UPDATE')
+                    )
+                    aux_pid = await aux_conn.scalar(text("SELECT pg_backend_pid()"))
+                    assert aux_pid is not None
+
+                    task_1: asyncio.Task[object] = asyncio.create_task(service_1.register_identity(cmd1))
+                    tasks.append(task_1)
+
+                    pid_1 = await _wait_for_blocked_by(admin_engine, blocking_pid=int(aux_pid), timeout=10.0)
+                    assert pid_1 is not None
+
+                    task_2: asyncio.Task[object] = asyncio.create_task(service_2.register_identity(cmd2))
+                    tasks.append(task_2)
+
+                    pid_2 = await _wait_for_blocked_by(admin_engine, blocking_pid=pid_1, timeout=10.0)
+                    assert pid_2 is not None
+
+                    assert aux_trans is not None
+                    await aux_trans.rollback()
+                    aux_trans = None
+
+                    results = await asyncio.wait_for(
+                        asyncio.gather(task_1, task_2, return_exceptions=True), timeout=10.0
+                    )
+
+                    successes = [r for r in results if isinstance(r, ControlCommandResult)]
+                    conflicts = [
+                        r
+                        for r in results
+                        if isinstance(r, ProtectedSecurityError) and r.reason_code == "CONTROL_COMMAND_CONFLICT"
+                    ]
+                    assert len(successes) == 1, f"Expected 1 success, got {results}"
+                    assert len(conflicts) == 1, f"Expected 1 conflict, got {results}"
+
+                    async with admin_engine.connect() as connection:
+                        inserted_targets = (
+                            (
+                                await connection.execute(
+                                    text(
+                                        f'SELECT database_login FROM "{database.schema}".protected_identity '
+                                        "WHERE database_login IN (:t1, :t2)"
+                                    ),
+                                    {"t1": target_1, "t2": target_2},
+                                )
+                            )
+                            .scalars()
+                            .all()
+                        )
+                        assert len(inserted_targets) == 1
+                        assert inserted_targets[0] == successes[0].target_id
+
+                        audit_entries = (
+                            await connection.execute(
+                                text(
+                                    f'SELECT event_id, entry_body FROM "{database.schema}".audit_entry '
+                                    "WHERE event_id = CAST(:req_id AS uuid)"
+                                ),
+                                {"req_id": shared_req_id},
+                            )
+                        ).all()
+                        assert len(audit_entries) == 1
+                        body = (
+                            json.loads(audit_entries[0].entry_body)
+                            if isinstance(audit_entries[0].entry_body, str)
+                            else audit_entries[0].entry_body
+                        )
+                        assert body["outcome"] == "SUCCEEDED"
+
+                    entries = await _verify_audit_chain(admin_engine, database.schema)
+                    assert len(entries) >= 1
+                finally:
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    if aux_trans is not None:
+                        await aux_trans.rollback()
+                    await aux_conn.close()
+                    await aux_engine.dispose()
+            finally:
+                await service_2.close()
+    finally:
+        await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_author_and_custodian_identities_can_coexist_for_same_actor(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with _reviewer(database, admin_engine) as (reviewer_login, _, reviewer_service):
+            shared_actor = f"dual-actor-{uuid4().hex[:6]}"
+            custodian_login = f"pr512_cust_{uuid4().hex[:8]}"
+            author_login = f"pr512_auth_{uuid4().hex[:8]}"
+
+            # 1. Register CONTROL plane DATASET_CUSTODIAN
+            cmd_custodian = RegisterIdentityCommand(
+                request_id=str(uuid4()),
+                database_login=custodian_login,
+                actor_id=shared_actor,
+                actor_namespace="GITHUB_LOGIN",
+                identity_plane="CONTROL",
+                approval_role=ProtectedApprovalRole.DATASET_CUSTODIAN,
+            )
+            res_cust = await reviewer_service.register_identity(cmd_custodian)
+            assert res_cust.reason_code == "IDENTITY_REGISTERED"
+
+            # 2. Register DATA plane HOLDOUT_AUTHOR for the same actor
+            cmd_author = RegisterIdentityCommand(
+                request_id=str(uuid4()),
+                database_login=author_login,
+                actor_id=shared_actor,
+                actor_namespace="GITHUB_LOGIN",
+                identity_plane="DATA",
+                principal_role=ProtectedPrincipalRole.HOLDOUT_AUTHOR,
+            )
+            res_auth = await reviewer_service.register_identity(cmd_author)
+            assert res_auth.reason_code == "IDENTITY_REGISTERED"
+
+            # 3. Assert both rows exist in protected_identity
+            async with admin_engine.connect() as connection:
+                rows = (
+                    await connection.execute(
+                        text(
+                            f"""
+                            SELECT database_login, actor_id, actor_namespace, identity_plane,
+                                   principal_role, approval_role, enabled
+                            FROM "{database.schema}".protected_identity
+                            WHERE actor_id = :actor_id AND actor_namespace = 'GITHUB_LOGIN'
+                            ORDER BY database_login ASC
+                            """
+                        ),
+                        {"actor_id": shared_actor},
+                    )
+                ).all()
+                assert len(rows) == 2
+                cust_row = next(r for r in rows if r.identity_plane == "CONTROL")
+                auth_row = next(r for r in rows if r.identity_plane == "DATA")
+                assert cust_row.approval_role == "DATASET_CUSTODIAN"
+                assert cust_row.principal_role is None
+                assert auth_row.principal_role == "HOLDOUT_AUTHOR"
+                assert auth_row.approval_role is None
+                assert cust_row.enabled is True
+                assert auth_row.enabled is True
+
+            # 4. Assert audit chain is verified and contains both events
+            entries = await _verify_audit_chain(admin_engine, database.schema)
+            assert len(entries) >= 2
+    finally:
+        await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_register_author_and_custodian_dataset_command_author_first(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with _reviewer(database, admin_engine) as (rev_login, _, rev_service):
+            shared_actor = f"dual-actor-{uuid4().hex[:6]}"
+            custodian_login = f"pr512_cust_{uuid4().hex[:8]}"
+            author_login = f"pr512_auth_{uuid4().hex[:8]}"
+
+            async with admin_engine.begin() as connection:
+                await connection.exec_driver_sql(
+                    f"CREATE ROLE \"{custodian_login}\" LOGIN PASSWORD '{database.password}' "
+                    "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+                )
+                await connection.exec_driver_sql(f'GRANT "{database.control}" TO "{custodian_login}"')
+                await connection.execute(
+                    text(
+                        f"""
+                        INSERT INTO "{database.schema}".protected_identity (
+                            database_login, actor_id, actor_namespace, approval_role, identity_plane, enabled
+                        ) VALUES (
+                            :login, :actor_id, 'GITHUB_LOGIN', 'DATASET_CUSTODIAN', 'CONTROL', true
+                        )
+                        """
+                    ),
+                    {"login": custodian_login, "actor_id": shared_actor},
+                )
+                await connection.exec_driver_sql(
+                    f"CREATE ROLE \"{author_login}\" LOGIN PASSWORD '{database.password}' "
+                    "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+                )
+                await connection.exec_driver_sql(f'GRANT "{database.access}" TO "{author_login}"')
+
+            cust_service = _service(database, _DatasetApprovalSource(), login=custodian_login)
+            try:
+                cmd_dataset = _register_dataset_command()
+                cmd_author = RegisterIdentityCommand(
+                    request_id=str(uuid4()),
+                    database_login=author_login,
+                    actor_id=shared_actor,
+                    actor_namespace="GITHUB_LOGIN",
+                    identity_plane="DATA",
+                    principal_role=ProtectedPrincipalRole.HOLDOUT_AUTHOR,
+                )
+
+                read_replay_done = asyncio.Event()
+                resume_dataset = asyncio.Event()
+                orig_read_replay = cust_service._read_replay
+
+                async def _wrapped_read_replay(*args: Any, **kwargs: Any) -> Any:
+                    res = await orig_read_replay(*args, **kwargs)
+                    read_replay_done.set()
+                    await resume_dataset.wait()
+                    return res
+
+                cust_service._read_replay = _wrapped_read_replay  # type: ignore[assignment]
+
+                aux_engine = create_async_engine(database.url)
+                aux_conn = await aux_engine.connect()
+                aux_trans: AsyncTransaction | None = await aux_conn.begin()
+                tasks: list[asyncio.Task[object]] = []
+                try:
+                    # Dataset command starts -> finishes _read_replay and pauses at barrier before mutation transaction
+                    task_dataset: asyncio.Task[object] = asyncio.create_task(cust_service.register_dataset(cmd_dataset))
+                    tasks.append(task_dataset)
+                    await asyncio.wait_for(read_replay_done.wait(), timeout=10.0)
+
+                    # 1. aux locks audit_head
+                    await aux_conn.execute(
+                        text(f'SELECT sequence FROM "{database.schema}".audit_head WHERE singleton FOR UPDATE')
+                    )
+                    aux_pid = await aux_conn.scalar(text("SELECT pg_backend_pid()"))
+                    assert aux_pid is not None
+
+                    # 2. Author registration starts -> acquires identity row lock for shared_actor, blocks on aux's audit_head
+                    task_author: asyncio.Task[object] = asyncio.create_task(rev_service.register_identity(cmd_author))
+                    tasks.append(task_author)
+
+                    author_pid = await _wait_for_blocked_by(admin_engine, blocking_pid=int(aux_pid), timeout=10.0)
+                    assert author_pid is not None
+
+                    # 3. Resume dataset command -> enters mutation transaction, attempts to lock identity rows,
+                    # and must block specifically on author_pid (which holds the actor identity row lock)
+                    resume_dataset.set()
+
+                    cust_pid = await _wait_for_blocked_by(
+                        admin_engine,
+                        blocking_pid=author_pid,
+                        timeout=10.0,
+                    )
+                    assert cust_pid is not None
+
+                    async with admin_engine.connect() as probe_conn:
+                        blocking_pids = await probe_conn.scalar(
+                            text("SELECT pg_blocking_pids(:pid)"),
+                            {"pid": cust_pid},
+                        )
+                        assert blocking_pids is not None
+                        assert author_pid in blocking_pids
+
+                    # 4. Release audit_head
+                    assert aux_trans is not None
+                    await aux_trans.rollback()
+                    aux_trans = None
+
+                    # Author registration succeeds
+                    res_author = await asyncio.wait_for(task_author, timeout=10.0)
+                    assert isinstance(res_author, ControlCommandResult)
+                    assert res_author.reason_code == "IDENTITY_REGISTERED"
+
+                    # Custodian unblocks, sees newly inserted HOLDOUT_AUTHOR, and fails with SELF_APPROVAL_DENIED
+                    with pytest.raises(ProtectedSecurityError) as exc_info:
+                        await asyncio.wait_for(task_dataset, timeout=10.0)
+                    assert exc_info.value.reason_code == "SELF_APPROVAL_DENIED"
+
+                    # Assert no 40P01 deadlock
+                    assert "40P01" not in str(exc_info.value)
+
+                    entries = await _verify_audit_chain(admin_engine, database.schema)
+                    entry_map = {e.event_id: e for e in entries}
+                    assert cmd_author.request_id in entry_map
+                    assert cmd_dataset.request_id in entry_map
+
+                    author_entry = entry_map[cmd_author.request_id]
+                    assert isinstance(author_entry, ControlCommandAuditEntry)
+                    assert author_entry.outcome == ControlAuditOutcome.SUCCEEDED
+                    assert author_entry.reason_code == ProtectedAuditReason.IDENTITY_REGISTERED
+
+                    cust_entry = entry_map[cmd_dataset.request_id]
+                    assert isinstance(cust_entry, ControlCommandAuditEntry)
+                    assert cust_entry.outcome == ControlAuditOutcome.DENIED
+                    assert cust_entry.reason_code == ProtectedAuditReason.SELF_APPROVAL_DENIED
+
+                    assert author_entry.sequence < cust_entry.sequence
+                finally:
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    if aux_trans is not None:
+                        await aux_trans.rollback()
+                    await aux_conn.close()
+                    await aux_engine.dispose()
+            finally:
+                await cust_service.close()
+                async with admin_engine.begin() as connection:
+                    await connection.exec_driver_sql(f'DROP ROLE IF EXISTS "{custodian_login}"')
+                    await connection.exec_driver_sql(f'DROP ROLE IF EXISTS "{author_login}"')
+    finally:
+        await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_register_author_and_custodian_dataset_command_dataset_first(
+    protected_database: _ProtectedDatabase,
+) -> None:
+    database = protected_database
+    admin_engine = create_async_engine(database.url)
+    try:
+        async with _reviewer(database, admin_engine) as (rev_login, _, rev_service):
+            shared_actor = f"dual-actor-{uuid4().hex[:6]}"
+            custodian_login = f"pr512_cust_{uuid4().hex[:8]}"
+            author_login = f"pr512_auth_{uuid4().hex[:8]}"
+
+            async with admin_engine.begin() as connection:
+                await connection.exec_driver_sql(
+                    f"CREATE ROLE \"{custodian_login}\" LOGIN PASSWORD '{database.password}' "
+                    "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+                )
+                await connection.exec_driver_sql(f'GRANT "{database.control}" TO "{custodian_login}"')
+                await connection.execute(
+                    text(
+                        f"""
+                        INSERT INTO "{database.schema}".protected_identity (
+                            database_login, actor_id, actor_namespace, approval_role, identity_plane, enabled
+                        ) VALUES (
+                            :login, :actor_id, 'GITHUB_LOGIN', 'DATASET_CUSTODIAN', 'CONTROL', true
+                        )
+                        """
+                    ),
+                    {"login": custodian_login, "actor_id": shared_actor},
+                )
+                await connection.exec_driver_sql(
+                    f"CREATE ROLE \"{author_login}\" LOGIN PASSWORD '{database.password}' "
+                    "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+                )
+                await connection.exec_driver_sql(f'GRANT "{database.access}" TO "{author_login}"')
+
+            cust_service = _service(database, _DatasetApprovalSource(), login=custodian_login)
+            try:
+                dataset = _dataset_binding(
+                    dataset_id=str(uuid4()),
+                    state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+                    state_revision=1,
+                )
+                await _insert_dataset(database, dataset)
+
+                cmd_dataset_1 = _transition_command(
+                    dataset,
+                    from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+                    to_state=ProtectedDatasetState.AUTHORING,
+                    revision=1,
+                    authored_count=0,
+                    review_complete=False,
+                )
+                cmd_author = RegisterIdentityCommand(
+                    request_id=str(uuid4()),
+                    database_login=author_login,
+                    actor_id=shared_actor,
+                    actor_namespace="GITHUB_LOGIN",
+                    identity_plane="DATA",
+                    principal_role=ProtectedPrincipalRole.HOLDOUT_AUTHOR,
+                )
+
+                aux_engine = create_async_engine(database.url)
+                aux_conn = await aux_engine.connect()
+                aux_trans: AsyncTransaction | None = await aux_conn.begin()
+                tasks: list[asyncio.Task[object]] = []
+                try:
+                    # Aux locks protected_dataset row
+                    await aux_conn.execute(
+                        text(
+                            f'''SELECT dataset_id FROM "{database.schema}".protected_dataset
+                            WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version FOR UPDATE'''
+                        ),
+                        {"dataset_id": dataset.dataset_id, "dataset_version": dataset.dataset_version},
+                    )
+                    aux_pid = await aux_conn.scalar(text("SELECT pg_backend_pid()"))
+                    assert aux_pid is not None
+
+                    # 1. Custodian dataset command starts first -> acquires identity row locks, blocks on protected_dataset
+                    task_dataset: asyncio.Task[object] = asyncio.create_task(
+                        cust_service.transition_dataset(cmd_dataset_1)
+                    )
+                    tasks.append(task_dataset)
+
+                    cust_pid = await _wait_for_blocked_by(admin_engine, blocking_pid=int(aux_pid), timeout=10.0)
+                    assert cust_pid is not None
+
+                    # 2. Author registration starts -> blocked waiting for identity row lock held by custodian
+                    task_author: asyncio.Task[object] = asyncio.create_task(rev_service.register_identity(cmd_author))
+                    tasks.append(task_author)
+
+                    author_pid = await _wait_for_blocked_by(
+                        admin_engine,
+                        blocking_pids=(int(aux_pid), cust_pid),
+                        exclude_pids=(cust_pid,),
+                        timeout=10.0,
+                    )
+                    assert author_pid is not None
+
+                    # 3. Release protected_dataset
+                    assert aux_trans is not None
+                    await aux_trans.rollback()
+                    aux_trans = None
+
+                    # Custodian dataset command succeeds
+                    res_dataset = await asyncio.wait_for(task_dataset, timeout=10.0)
+                    assert isinstance(res_dataset, ControlCommandResult)
+                    assert res_dataset.reason_code == "DATASET_TRANSITIONED"
+
+                    # Author registration unblocks and succeeds (cross-plane identity coexistence)
+                    res_author = await asyncio.wait_for(task_author, timeout=10.0)
+                    assert isinstance(res_author, ControlCommandResult)
+                    assert res_author.reason_code == "IDENTITY_REGISTERED"
+
+                    # 4. Subsequent dataset command by custodian for the same actor must fail with SELF_APPROVAL_DENIED
+                    cmd_dataset_2 = _transition_command(
+                        dataset,
+                        from_state=ProtectedDatasetState.AUTHORING,
+                        to_state=ProtectedDatasetState.REVIEW_READY,
+                        revision=2,
+                        authored_count=10,
+                        review_complete=False,
+                    )
+                    with pytest.raises(ProtectedSecurityError) as exc_info:
+                        await cust_service.transition_dataset(cmd_dataset_2)
+                    assert exc_info.value.reason_code == "SELF_APPROVAL_DENIED"
+
+                    # Assert no 40P01 deadlock
+                    assert "40P01" not in str(exc_info.value)
+
+                    entries = await _verify_audit_chain(admin_engine, database.schema)
+                    assert len(entries) >= 3
+                finally:
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    if aux_trans is not None:
+                        await aux_trans.rollback()
+                    await aux_conn.close()
+                    await aux_engine.dispose()
+            finally:
+                await cust_service.close()
+                async with admin_engine.begin() as connection:
+                    await connection.exec_driver_sql(f'DROP ROLE IF EXISTS "{custodian_login}"')
+                    await connection.exec_driver_sql(f'DROP ROLE IF EXISTS "{author_login}"')
+    finally:
+        await admin_engine.dispose()

@@ -157,6 +157,7 @@ projection은 `docs/validation/rag/issue-273/`에 있다.
 - `evals/schemas/1.1.0/`: Issue #216의 18-member implemented candidate. Case·Dataset Manifest는 member `1.1.0`, 나머지 16개 member는 `1.0.0`을 byte-for-byte 재사용한다.
 - `evals/schemas/1.2.0/`: Issue #241의 review provenance compatibility 계약. Case·Manifest·Evidence Mapping·Rubric·Profile·Suite·Evaluation Policy·Protected Artifact Receipt 8개 member는 `1.2.0`, 나머지 10개 member는 이전 canonical bytes를 재사용한다.
 - `evals/schemas/1.3.0/`: Issue #273의 `Candidate · Review Required` provenance 확장. Dataset Manifest만 member `1.3.0`으로 교체하고 1.2의 나머지 17개 member를 byte-for-byte 재사용하며, Authoring Identity Manifest·Index Build Receipt·Study Split Receipt를 member `1.0.0`으로 추가한 21-member 후보이다.
+- `evals/schemas/1.4.0/`: Issues #160·#161의 `Candidate · Review Required` Grounding/Safety projection 확장. 1.3의 21개 member를 byte-for-byte 재사용하고 Claim–Citation Observation·Grounding Signal을 member `1.0.0`으로 추가한 23-member 후보이다.
 
 Schema Set `1.1.0`의 불변 참조는 `rag-eval.schema-set@1.1.0`, SHA-256 `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0`이다. #216/PR #222에서 승인·병합된 초기 호환성 계약이다.
 
@@ -164,12 +165,14 @@ Schema Set `1.2.0`의 불변 참조는 `rag-eval.schema-set@1.2.0`, SHA-256 `1bd
 
 Schema Set `1.3.0` 후보 참조는 `rag-eval.schema-set@1.3.0`, SHA-256 `ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325`이다. 상태는 `Candidate · Review Required`이며, 책임 리뷰어 권가빈 (`@hazelnutflavoured`)의 실제 Pull Request review event가 승인 전환에 필요하다. 기존 Schema Set과 exporter 기본 version은 변경하지 않는다.
 
-네 버전은 다음 명령으로 별도 출력한다. 기본값은 하위 호환을 위해 `1.0.0`이다.
+Schema Set `1.4.0` 후보 참조는 `rag-eval.schema-set@1.4.0`, SHA-256 `0f6b69b460af5ea840e009f55b86256942f896be324c7885d709883600799e98`이다. 상태는 `Candidate · Review Required`이며, 책임 리뷰어 김지혜 (`@Jye-rookie`)의 실제 Pull Request review event가 승인 전환에 필요하다. 신규 두 artifact는 Evaluation projection contract만 구현하며 #160·#161 metric kernel, Runtime, HOLDOUT/SAFETY_REGRESSION, Baseline Freeze, Release와 공개는 포함하지 않는다. 기존 Schema Set과 exporter 기본 version은 변경하지 않는다.
+
+다섯 버전은 다음 명령으로 별도 출력한다. 기본값은 하위 호환을 위해 `1.0.0`이다.
 
 ```bash
 uv run python -m ai_worker.tasks.evaluation.schema_exports \
-  --output /tmp/rag-eval-schemas-1.3.0 \
-  --schema-set-version 1.3.0
+  --output /tmp/rag-eval-schemas-1.4.0 \
+  --schema-set-version 1.4.0
 ```
 
 ## RAG HOLDOUT·SAFETY_REGRESSION Dataset Freeze
