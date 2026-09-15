@@ -12,7 +12,12 @@ from app.core.db.databases import get_db_session
 from app.dependencies.security import get_request_user
 from app.main import app, fastapi_app
 from app.models.async_jobs import IdempotencyRecord
-from app.models.medication_schedules import MedicationCheckin, MedicationCheckinStatus, MedicationOccurrenceStatus
+from app.models.medication_schedules import (
+    CheckinAudit,
+    MedicationCheckin,
+    MedicationCheckinStatus,
+    MedicationOccurrenceStatus,
+)
 from app.models.prescriptions import Prescription
 from app.models.track_c import (
     BarrierCode,
@@ -33,9 +38,9 @@ from app.tests.repositories.test_medication_schedule_repository_integration impo
 )
 
 
-@pytest.mark.parametrize("same_key", [True, False])
-async def test_concurrent_plan_requests_create_one_plan_and_one_snapshot(
-    monkeypatch: pytest.MonkeyPatch, same_key: bool
+@pytest.mark.parametrize("same_key,correct_checkin", [(True, False), (False, False), (False, True)])
+async def test_concurrent_plan_requests_and_checkin_correction_serialize(
+    monkeypatch: pytest.MonkeyPatch, same_key: bool, correct_checkin: bool
 ) -> None:
     async with AsyncSession(test_engine, expire_on_commit=False) as seed:
         owner, profile = await _create_user_with_self_profile(seed, label="support-concurrency-synthetic")
@@ -111,7 +116,13 @@ async def test_concurrent_plan_requests_create_one_plan_and_one_snapshot(
                 first, second = await asyncio.wait_for(
                     asyncio.gather(
                         *(
-                            client.post(
+                            client.put(
+                                f"/api/v1/medication-occurrences/{occurrence.id}/check-in",
+                                json={"status": "NOT_TAKEN", "expected_revision": 1},
+                                headers={"Idempotency-Key": "concurrent-checkin-correction"},
+                            )
+                            if correct_checkin and index == 1
+                            else client.post(
                                 "/api/v1/support-action-plans",
                                 json=body,
                                 headers={"Idempotency-Key": f"concurrent-plan-{0 if same_key else index}"},
@@ -121,7 +132,23 @@ async def test_concurrent_plan_requests_create_one_plan_and_one_snapshot(
                     ),
                     timeout=15,
                 )
-            if same_key:
+            expected_plans = 1
+            expected_snapshots = 1
+            if correct_checkin:
+                assert second.status_code == 200, second.text
+                assert first.status_code in (200, 409), first.text
+                expected_plans = int(first.status_code == 200)
+                expected_snapshots += expected_plans
+                if first.status_code == 409:
+                    assert first.json()["code"] == "CHECKIN_FLOW_STALE"
+                else:
+                    assert (
+                        await seed.scalar(
+                            select(SupportActionPlan.status).where(SupportActionPlan.barrier_response_id == barrier.id)
+                        )
+                        == "CANCELLED"
+                    )
+            elif same_key:
                 assert first.status_code == second.status_code == 200, (first.text, second.text)
                 assert first.json() == second.json()
             else:
@@ -134,13 +161,13 @@ async def test_concurrent_plan_requests_create_one_plan_and_one_snapshot(
                     .select_from(SupportActionPlan)
                     .where(SupportActionPlan.barrier_response_id == barrier.id)
                 )
-                == 1
+                == expected_plans
             )
             assert (
                 await seed.scalar(
                     select(func.count()).select_from(IdempotencyRecord).where(IdempotencyRecord.user_id == owner.id)
                 )
-                == 1
+                == expected_snapshots
             )
         finally:
             fastapi_app.dependency_overrides[get_db_session] = previous_session
@@ -149,6 +176,7 @@ async def test_concurrent_plan_requests_create_one_plan_and_one_snapshot(
             await seed.execute(delete(SupportActionPlan).where(SupportActionPlan.barrier_response_id == barrier.id))
             await seed.execute(delete(BarrierResponse).where(BarrierResponse.id == barrier.id))
             await seed.execute(delete(SafetyAssessment).where(SafetyAssessment.id == safety.id))
+            await seed.execute(delete(CheckinAudit).where(CheckinAudit.checkin_id == checkin.id))
             await seed.execute(delete(MedicationCheckin).where(MedicationCheckin.id == checkin.id))
             await _delete_committed_fixture(
                 seed,

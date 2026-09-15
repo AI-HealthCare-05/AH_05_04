@@ -248,6 +248,31 @@ async def test_replay_preserves_original_after_safety_cancels_plan(case: ApiCase
     assert_error(await create(case, body, "new-unsafe-plan-key"), 409, "SAFETY_FLOW_PRECEDES_SUPPORT")
 
 
+@pytest.mark.parametrize("status", ["TAKEN", "NOT_TAKEN"])
+async def test_actual_checkin_correction_cancels_created_plan_and_blocks_old_offer(case: ApiCase, status: str) -> None:
+    barrier_id = await prepare(case)
+    support = (await offer(case, barrier_id)).json()["data"]["supports"][0]
+    body = plan_body(barrier_id, support)
+    first = await create(case, body)
+    assert first.status_code == 200, first.text
+    response = await case.client.put(
+        f"/api/v1/medication-occurrences/{case.checkin.occurrence_id}/check-in",
+        json={"status": status, "expected_revision": 1},
+        headers={"Idempotency-Key": "checkin-after-support-confirmation"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["revision"] == 2
+    stored = await case.session.get(SupportActionPlan, UUID(first.json()["data"]["support_action_plan_id"]))
+    assert stored is not None
+    await case.session.refresh(stored)
+    assert stored.status == "CANCELLED"
+    assert stored.cancelled_at is not None
+    assert stored.action_config_snapshot == support["action_config"]
+    assert (await create(case, body)).json() == first.json()
+    assert_error(await create(case, body, "new-plan-after-checkin-correction"), 409, "CHECKIN_FLOW_STALE")
+    assert_error(await offer(case, barrier_id), 409, "CHECKIN_FLOW_STALE")
+
+
 async def test_ownership_checked_even_on_replay_and_unknown_id_same_error(case: ApiCase) -> None:
     barrier_id = await prepare(case)
     support = (await offer(case, barrier_id)).json()["data"]["supports"][0]

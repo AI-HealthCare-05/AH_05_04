@@ -27,7 +27,14 @@
 새 테스트의 짧은 멱등 키 3개를 기존 16자 이상 계약에 맞춰 수정한 뒤 재실행한 결과다.
 전체 Backend·HandlerConfig·contract 회귀: **2,156 passed, 2 skipped** (242.31초).
 Ruff check/format: PASS (921 files). Mypy: PASS (689 sources).
-최신 #603 통합 후 결과는 아래에 추가한다.
+최신 develop `cc4b6635` (#603 포함) 통합 후 Track C·무효화·Frontend fixture 계약:
+**69 passed** (14.85초). 실제 Check-in PUT의 TAKEN/새 NOT_TAKEN 정정으로 신규 Plan 취소,
+과거 생성 응답 replay와 신규 생성 차단을 추가 검증했다. Ruff check/format: PASS (924 files).
+최종 Backend·HandlerConfig·contract 회귀: **2,198 passed, 2 skipped** (246.91초).
+Mypy: PASS (692 sources). 두 skip은 기존 suite의 skip이며 통과로 합산하지 않는다.
+전체 회귀 뒤 Plan 생성/Check-in 정정 동시 경합 사례를 추가한 최종 집중 검증:
+**70 passed** (14.33초). 정정이 먼저면 생성 409, 생성이 먼저면 저장 Plan CANCELLED이며
+어느 순서에서도 이전 revision의 ACTIVE Plan이 남지 않는다.
 
 ```bash
 DB_HOST=127.0.0.1 DB_PORT=15494 DB_EXPOSE_PORT=15494 \
