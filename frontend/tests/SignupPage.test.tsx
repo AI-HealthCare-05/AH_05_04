@@ -233,6 +233,62 @@ describe('SignupPage', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
+  it.each([
+    ['name', '이름', '', '이름을 입력해 주세요.'],
+    ['email', '이메일', 'invalid-email', '올바른 이메일 주소를 40자 이하로 입력해 주세요.'],
+    ['password', '비밀번호', 'password', '8자 이상이며 대문자·소문자·숫자·특수문자를 포함해 주세요.'],
+  ])('%s validation 오류를 입력과 연결하고 viewport 밖이면 focus·scroll한다', async (_field, label, invalidValue, errorMessage) => {
+    renderPage()
+    acceptTerms()
+    fireEvent.change(screen.getByLabelText('이름'), { target: { value: '홍길동' } })
+    fireEvent.change(screen.getByLabelText('이메일'), { target: { value: 'dosey@example.com' } })
+    fireEvent.change(screen.getByLabelText('비밀번호'), { target: { value: 'Password1!' } })
+
+    const invalidInput = screen.getByLabelText(label)
+    fireEvent.change(invalidInput, { target: { value: invalidValue } })
+    const scrollIntoView = vi.fn()
+    invalidInput.scrollIntoView = scrollIntoView
+    vi.spyOn(invalidInput, 'getBoundingClientRect').mockReturnValue({
+      x: 20, y: -80, top: -80, right: 370, bottom: -32, left: 20,
+      width: 350, height: 48, toJSON: () => ({}),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+
+    expect(document.activeElement).toBe(invalidInput)
+    expect(invalidInput.getAttribute('aria-invalid')).toBe('true')
+    const error = screen.getByText(errorMessage)
+    expect(invalidInput.getAttribute('aria-describedby')).toBe(error.id)
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'smooth', block: 'center', inline: 'nearest',
+    }))
+    expect(signup).not.toHaveBeenCalled()
+  })
+
+  it('필수 약관 validation 오류를 checkbox와 연결하고 viewport 밖이면 focus·scroll한다', async () => {
+    renderPage()
+    fillValidForm()
+    acceptTerms()
+    const terms = screen.getByRole('checkbox', { name: '필수 약관에 동의합니다' })
+    const scrollIntoView = vi.fn()
+    terms.scrollIntoView = scrollIntoView
+    vi.spyOn(terms, 'getBoundingClientRect').mockReturnValue({
+      x: 20, y: 900, top: 900, right: 40, bottom: 920, left: 20,
+      width: 20, height: 20, toJSON: () => ({}),
+    })
+
+    fireEvent.submit(screen.getByRole('button', { name: '가입 완료' }).closest('form')!)
+
+    expect(document.activeElement).toBe(terms)
+    expect(terms.getAttribute('aria-invalid')).toBe('true')
+    const error = screen.getByText('필수 약관에 동의해 주세요.')
+    expect(terms.getAttribute('aria-describedby')).toContain(error.id)
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'smooth', block: 'center', inline: 'nearest',
+    }))
+    expect(signup).not.toHaveBeenCalled()
+  })
+
   it('빈 값과 Backend 비밀번호 정책 불일치 시 API를 호출하지 않고 오류를 연결한다', () => {
     renderPage()
     acceptTerms()

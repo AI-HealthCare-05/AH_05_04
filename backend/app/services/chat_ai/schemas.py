@@ -150,6 +150,9 @@ class ChatPromptPayload(_StrictModel):
 class ProviderChatResponse(_StrictGeneratedModel):
     content: str
     model_name: str
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
 
 
 class ChatGenerationResult(_StrictGeneratedModel):

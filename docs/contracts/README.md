@@ -50,10 +50,11 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## Proposed 계약
 
-- [Track B 생활 시간 입력 v1 (#422 / #556)](./proposed/track-b-lifestyle-times-v1.md): 식사·반복 행동·복용 곤란 시간의 요일별 저장·조회 검토안. Proposed · 미구현; 추천·약별 조건 판정은 별도.
+- [Track B 생활 시간 입력 v1 (#422 / #556)](./proposed/track-b-lifestyle-times-v1.md): 식사·반복 행동·복용 곤란 시간의 SELF별 요일 저장·조회 구현 후보. #556 책임 리뷰 전 Proposed; 추천·약별 조건 판정은 별도.
 
 - [Knowledge Evidence Index v1 (#178 선행 기반)](./proposed/post-mvp-1/knowledge-evidence-index-v1.md): 승인된 RAG Runtime 목표의 Retrieval Adapter가 소비할 Source Snapshot 결속 Chunk·버전별 embedding·재현 가능한 receipt 저장 계약. 구현 브랜치 검증 중이며 #178 Retrieval/RRF/Rerank/Evidence Gate·공개 활성화는 포함하지 않음.
 - [Knowledge Evidence Search 및 Deterministic RRF v1 (#178)](./proposed/post-mvp-1/knowledge-evidence-search-rrf-v1.md): 승인된 Knowledge Evidence Index 대상 PostgreSQL Lexical(Exact/Trigram/FTS)·Dense(pgvector Cosine) 검색 및 결정적 RRF(`rrf-rank-fusion@1`) 융합 계약. 구현 브랜치 검증 중이며 Reranker/Evidence Gate/authoritative Retrieval Run/Runtime graph 연결·공개 활성화는 포함하지 않음.
+- [Retrieval Run 및 Evidence Gate Runtime Core v1 (#178)](./proposed/post-mvp-1/retrieval-run-v1.md): Issue #178 Retrieval Run/Signal/Hit 원자적 persistence, Production Evidence Gate pre/post 검증 및 hybrid_retrieve runtime core 계약. 구현 브랜치 검증 중이며 RET-HR/reranker·actual evaluation·공개 활성화는 포함하지 않음.
 
 - [OCR LLM Worker 범위 정정 (#453)](./proposed/ocr-llm-worker-consent-453.md): 기존 이관 범위와 리뷰 시 별도 검토할 항목. 기존 동의 개정안 미채택.
 - [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태와 row 없음=미동의 기준. #465에서 `user_consent` 저장 기반을 병합했고, #510에서 현재 사용자 목적별 동의 상태 조회·변경 API를 추가했다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전과 Production 공개 승인은 후속 범위다. 전체 목적별 계약은 Proposed 유지.
@@ -187,6 +188,12 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [API v1 — Proposed](proposed/track-c-safety-barrier-api-193.md): HTTP·DTO·멱등성·정정·동시성 구현 리뷰 대상.
 - [PD-193](../governance/decisions/2026-09-15-track-c-safety-barrier-api-193.md): 구체화 delta와 NHS 참고 자료 경계.
 - [Safety 정책·한국어 문구 검토안](proposed/track-c-safety-policy-copy-193.md): NHS 근거별 선택표, 복수 선택 규칙, 고정 안내와 합성 검증 명세. 문서 초안이며 런타임 미적용.
+
+## Track C 지원 1개 제안·Plan 생성 (#194 부분)
+
+- [API v1 — Proposed, 리뷰 revision 2](proposed/track-c-support-plan-api-194.md): 잠금 없는 단일 제안 GET, 설정 로딩 후 잠그는 확정 POST, 현재성·소유권·멱등성.
+- [PD-194](../governance/decisions/2026-09-15-track-c-support-plan-api-194.md): PM의 0/1개 결정과 이번 구현 범위 축소.
+- Plan 조회·완료·취소·follow-up·revision 추가는 이번 범위 밖이며 #194 전체 완료가 아니다.
 - 실제 증상별 임상 판정표·환자용 문구 및 #195 연결은 미완료다.
 
 

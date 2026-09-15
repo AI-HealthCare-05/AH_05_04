@@ -1,8 +1,8 @@
-# Track B 생활 시간 입력 v1 — 검토안
+# Track B 생활 시간 입력 v1
 
 | 항목 | 내용 |
 | --- | --- |
-| 상태 | **Proposed · Not implemented**. 아래 URL·DTO·상한·오류·저장 정책 전부 검토 대상 |
+| 상태 | **Proposed · implementation candidate**. #556 구현 PR의 책임 리뷰와 필수 검사를 통과하기 전에는 Current 계약이 아님 |
 | 범위 | 생활 시간 입력·저장·조회. 추천·약별 조건 판정·일정 확정은 제외 |
 | 제품 방향 / 구현 | [#422](https://github.com/AI-HealthCare-05/AH_05_04/issues/422) / [#556](https://github.com/AI-HealthCare-05/AH_05_04/issues/556) |
 | Decision | [PD-422-LIFESTYLE-20260915](../../governance/decisions/2026-09-15-track-b-lifestyle-times.md) |
@@ -16,7 +16,7 @@
 확정 처방이 없어도 입력 가능하며 저장 자체로 처방·일정·occurrence·알림·Check-in을 변경하지 않는다.
 후속 추천은 별도 계약으로 생활 정보 revision과 처방/근거 version을 확인해야 한다.
 
-## 2. 입력 단위 제안
+## 2. 입력 단위
 
 KST(`Asia/Seoul`)의 반복되는 일주일 패턴을 한 세트로 저장한다. 화면에서는 동일 패턴을 여러 요일에 복사할 수 있지만 서버는 ISO 요일 1(월)~7(일)의 데이터를 명시적으로 받는다. 날짜별 예외·교대근무 달력·다른 시간대 자동 변환은 v1에서 제외한다. 반복 패턴을 표현할 수 없으면 임의 시각을 만들지 않고 불규칙/미입력으로 남긴다.
 
@@ -24,7 +24,7 @@ PUT body의 `expected_revision`, `days`는 필수다. `days`는 최대 7개이�
 
 각 day는 아래 4개 필수 필드를 가진다.
 
-| 필드 | 제안 형식·의미 |
+| 필드 | 형식·의미 |
 | --- | --- |
 | `weekday` | 엄격한 정수 1..7 |
 | `meals` | 최대 3개; `kind=BREAKFAST\|LUNCH\|DINNER` 중복 불가 |
@@ -44,9 +44,9 @@ PUT body의 `expected_revision`, `days`는 필수다. `days`는 최대 7개이�
 
 모든 객체의 알려지지 않은 필드, null 배열, 잘못된 enum·bool형 정수·24:00·동일/역전된 구간은 거부한다. 위 배열 상한은 의료 기준이 아닌 검토용 입력 상한이다.
 
-## 3. HTTP 제안
+## 3. HTTP
 
-Bearer 인증된 본인 SELF만 대상으로 하는 `GET /api/v1/lifestyle-times`, `PUT /api/v1/lifestyle-times`를 제안한다. user_id/profile_id를 요청에서 받지 않는다.
+Bearer 인증된 본인 SELF만 대상으로 `GET /api/v1/lifestyle-times`, `PUT /api/v1/lifestyle-times`를 제공한다. user_id/profile_id를 요청에서 받지 않는다.
 
 GET은 200 `data`에 `revision`, `updated_at`, `timezone`, `days`를 반환한다. 미저장은 `revision=0`, `updated_at=null`, `timezone=Asia/Seoul`, `days=[]`다. 저장된 빈 패턴은 revision>0, updated_at이 있어 미저장과 구분된다. 이는 추천 준비 완료 상태를 의미하지 않는다.
 
@@ -74,15 +74,13 @@ PUT은 엄격한 0 이상 정수 `expected_revision`과 전체 `days`를 받으�
 
 이 예시는 월요일만 입력하며 전체 교체이므로 다른 요일은 미입력으로 남는다.
 
-## 4. 저장·경합·실패 제안
+## 4. 저장·경합·실패
 
-이 절 역시 미승인 제안이며 구현 전에 책임 리뷰로 확정한다.
-
-- SELF profile별 현재 데이터 1행을 저장하는 `lifestyle_times` 테이블 제안: `profile_id` PK/FK, `revision`, `days` JSONB, `updated_at`. 별도 과거 생활 이력/audit 테이블은 추가하지 않는다. Python에서 shape를 검증하고 일반 제약으로 revision을 보호한다.
-- 동시 최초 생성도 직렬화하도록 대상 SELF profile 행을 잠근다. 소유권 확인 후 기존 SYNC_MUTATION 성공 snapshot replay → profile 잠금 → expected revision 검증 → 전체 교체·revision 증가 → 암호화 snapshot 저장을 단일 transaction으로 처리하는 안이다. 실제 공통 코드의 잠금 순서와 정합성은 구현 전 확인한다.
-- PUT은 기존 형식의 Idempotency-Key 필수. scope는 SELF profile을 부모로 하는 생활 시간 PUT으로 검토한다. TTL·암호화·용량 제한은 기존 [멱등성 계약](../targets/post-mvp-1/idempotency-v1.md)을 재사용하고 새 값을 만들지 않는다.
+- SELF profile별 현재 데이터 1행을 `lifestyle_times`에 저장한다: `profile_id` PK/FK, `revision`, `days` JSONB, `updated_at`. 별도 과거 생활 이력/audit 테이블은 추가하지 않는다. Python에서 shape를 검증하고 일반 제약으로 revision을 보호한다.
+- 동시 최초 생성도 직렬화하도록 대상 SELF profile 행을 잠근다. 소유권 확인 후 기존 SYNC_MUTATION 성공 snapshot replay → profile 잠금 → expected revision 검증 → 전체 교체·revision 증가 → 암호화 snapshot 저장을 단일 transaction으로 처리한다.
+- PUT은 기존 형식의 Idempotency-Key 필수다. scope는 SELF profile을 부모로 하는 `lifestyle-times.put`이다. TTL·암호화·용량 제한은 기존 [멱등성 계약](../targets/post-mvp-1/idempotency-v1.md)을 재사용하고 새 값을 만들지 않는다.
 - 초기화는 `days=[]` PUT이다. 이전 payload를 현재 행에 남기지 않는다. 기존 암호화 멱등 snapshot에는 공통 보존 기간 동안 남을 수 있으므로 즉시 완전 삭제로 안내하지 않는다.
-- 401은 기존 인증, SELF 확인 실패는 고정 404(제안 코드 `LIFESTYLE_TIMES_NOT_FOUND`), stale revision은 409(제안 코드 `LIFESTYLE_TIMES_REVISION_CONFLICT`). 입력은 기존 `422 VALIDATION_FAILED`, 키 오류·snapshot 용량 초과는 공통 계약을 따른다. error details에 생활 시간이나 입력 원문을 반환하지 않는다.
+- 401은 기존 인증, SELF 확인 실패는 고정 404 `LIFESTYLE_TIMES_NOT_FOUND`, stale revision은 409 `LIFESTYLE_TIMES_REVISION_CONFLICT`다. 입력은 기존 `422 VALIDATION_FAILED`, 키 오류·snapshot 용량 초과는 공통 계약을 따른다. error details에 생활 시간이나 입력 원문을 반환하지 않는다.
 - 모든 응답은 no-store·공통 trace/error envelope. Runtime은 필요한 최소 DML, Source Writer 등은 접근 금지. 기존 계정 삭제·권한 적용 경로와의 연결을 구현 전에 확인한다.
 
 ## 5. 리뷰 결정 사항과 검증
@@ -92,10 +90,10 @@ PUT은 엄격한 0 이상 정수 `expected_revision`과 전체 `days`를 받으�
 - 권가빈: 최소 입력의 제품 적합성, 보존·초기화 안내 및 필요한 동의 경계. 목적별 동의 enum을 임의 추가하지 않는다.
 - 정현우 후속 협의: 식사 범위만으로 식전·식후 기준 시각을 확정할 수 없는 경우와 anchor 변동 처리. 본 저장 계약으로 약별 추천 규칙을 승인하지 않는다.
 
-구현 검증은 미저장 GET, 최초/수정/빈 패턴 PUT, 누락·불규칙·식사 안 함 구분, 요일 복사 결과, 일요일 자정, 겹침 보존·정확한 중복 거부, 잘못된 형식·상한, 두 동시 최초/수정 요청, replay/키 충돌, snapshot 실패 rollback, 타 사용자 분리·no-store·비로그, OpenAPI 일치, 기존 일정·알림·Check-in 불변을 실제 HTTP/PostgreSQL 합성 테스트로 확인한다. 이번 문서 PR에서 실행한 테스트가 아니다.
+미저장 GET, 최초/수정/빈 패턴 PUT, 누락·불규칙·식사 안 함 구분, 요일 복사 결과, 일요일 자정, 겹침 보존·정확한 중복 거부, 잘못된 형식·상한, 동시 최초 요청과 동시 수정 경합, replay/키 충돌, snapshot 실패 rollback, 타 사용자 분리·no-store, OpenAPI 일치, 기존 일정·알림·Check-in 불변을 실제 HTTP/PostgreSQL 합성 테스트로 확인한다. 실행 결과와 Frontend용 fixture는 [#556 검증 기록](../../validation/track-b/issue-556-lifestyle-times.md)에 둔다.
 
-## 6. 보존·입력 UX 보완안
+## 6. 보존·입력 UX 경계
 
-[Decision의 착수 세부안](../../governance/decisions/2026-09-15-track-b-lifestyle-times.md)을 함께 검토한다. 수집 범주는 확정됐고, 현재 생활 설정 보존·초기화 문구·잔존 멱등 snapshot·탈퇴와 동의 경계를 구체화한 제안이다.
+[Decision의 착수 세부안](../../governance/decisions/2026-09-15-track-b-lifestyle-times.md)을 따른다. 현재 생활 설정 보존·초기화 문구·잔존 멱등 snapshot·탈퇴와 동의 경계는 실사용 적용 전 Privacy 확인 대상이다.
 
-현재 DTO 초안에서 정확한 식사 한 시각과 '출근 준비 완료' 행동은 표현이 부족할 수 있다. 시간 구간으로 임의 확장하거나 LEAVE_HOME으로 자동 매핑하지 않는다. 소비 협의 후 필요한 표현을 구현 PR의 계약·DTO·테스트에 함께 반영한다. 기존 승인으로 이 미결정 표현까지 확정됐다고 해석하지 않는다.
+v1 DTO는 정확한 식사 한 시각과 '출근 준비 완료' 행동을 별도 형태로 표현하지 않는다. 시간 구간으로 임의 확장하거나 LEAVE_HOME으로 자동 매핑하지 않는다. 이 표현이 필요하면 후속 계약 변경으로 DTO·테스트를 함께 갱신한다.

@@ -322,6 +322,10 @@ PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
 
 실제 OpenAI 평가는 별도 Local opt-in 없이는 `NOT_RUN`입니다. `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 없으면 live runner가 실행을 거부합니다. live 모드는 canonical `chat-v4-conversation-quality-eval-v1` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며, 임의 `--dataset` 또는 변경된 fixture는 OpenAI client 생성 전에 거부합니다. SHA-256 입력은 CRLF를 LF로 정규화해 Windows와 Unix checkout을 동일하게 처리하고, CRLF 상태에서도 fixture 내용 변경은 거부하는 회귀 테스트를 유지합니다. 결과 artifact에는 dataset·prompt SHA-256, `live_gate_evaluation`, `full_suite_passed`와 전체 `passed`를 기록합니다. live blocking 기준 미달은 artifact를 남기고 exit code 1, 구성·Provider 실행 오류는 exit code 2를 반환합니다. 결정론적 결과는 Production 공개·Privacy 승인 근거가 아닙니다.
 
+#581 blind A/B runner는 별도 `RUN_OPENAI_CHAT_BLIND_AB_EVAL=1` Local opt-in을 요구하며 canonical config·dataset·v3/v4 prompt snapshot의 고정 SHA-256이 모두 맞아야 Provider client를 생성합니다. 두 arm은 동일한 `gpt-4o`와 생성 설정으로 arm당 113개 응답을 실행합니다. 회귀 테스트는 prompt/model override, 54개 review item의 arm 정체 비노출과 response 1 위치 27:27 균형, PII sentinel 치환, 자동 safety/품질 결과, p95 latency, Provider usage token 집계와 완전한 judgment coverage를 검증합니다. 자동 점수와 blind 선호 집계는 responsible reviewer의 최종 선택을 대신하지 않습니다.
+
+추가 회귀는 같은 공개 config에서 비공개 seed에 따라 case/path별 arm mapping이 달라지면서 27:27 균형을 유지하는지, judgment에 사전 고정된 commitment가 mapping 한 항목의 변조도 거부하는지 검증합니다. baseline의 dimension 목록은 비어 있어야 하며 history에만 canonical case의 `quality_expectations`를 적용합니다. baseline에 history 전용 dimension을 제출해도 unblind는 거부합니다. seed·nonce·mapping은 judgment 제출 전까지 비공개 assignment 파일에 보관합니다.
+
 ### MVP 공통 오류·no-store 회귀
 
 PR #107 이후 현재 MVP API는 공통 오류 envelope와 `/api/v1/*` `Cache-Control: no-store` 정책을 회귀 테스트로 고정합니다.

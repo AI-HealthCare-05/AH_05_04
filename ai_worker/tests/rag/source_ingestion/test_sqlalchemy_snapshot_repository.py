@@ -323,6 +323,57 @@ async def test_artifact_references_are_inserted_without_raw_content_or_commit() 
     session.commit.assert_not_awaited()
 
 
+async def test_ingestion_artifact_receipt_requery_returns_only_safe_reference() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    result = MagicMock()
+    result.mappings.return_value.one_or_none.return_value = {
+        "id": str(_ARTIFACT_ID),
+        "ingestion_run_id": str(_OPERATION_ID),
+        "page_number": 1,
+        "artifact_key": "mfds-label/200610660/EE.xml",
+        "storage_backend": "LOCAL_PRIVATE",
+        "object_key": "sha256/aa/" + "a" * 64 + ".artifact",
+        "raw_checksum": "a" * 64,
+        "byte_size": 128,
+        "content_type": "application/download; UTF-8; charset=UTF-8",
+    }
+    session.execute.return_value = result
+    repository = SqlAlchemySourceSnapshotRepository(session)
+
+    receipt = await repository.get_ingestion_artifact_receipt(ingestion_artifact_id=_ARTIFACT_ID)
+
+    assert receipt is not None
+    assert receipt.ingestion_artifact_id == _ARTIFACT_ID
+    assert receipt.raw_checksum == "a" * 64
+    sql = str(session.execute.await_args.args[0])
+    assert "rag_source_ingestion_artifact.id" in sql
+    assert "rag_source_ingestion_artifact.artifact_kind" in sql
+    assert receipt.object_key not in repr(receipt)
+
+
+async def test_snapshot_member_requery_keeps_locator_out_of_repr() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    result = MagicMock()
+    result.mappings.return_value.all.return_value = [
+        {
+            "id": str(_MEMBER_ID),
+            "source_snapshot_id": str(_SNAPSHOT_ID),
+            "member_kind": "ARTIFACT",
+            "ingestion_artifact_id": str(_ARTIFACT_ID),
+            "locator": "mfds-label/200610660/EE",
+            "content_sha256": "a" * 64,
+        }
+    ]
+    session.execute.return_value = result
+    repository = SqlAlchemySourceSnapshotRepository(session)
+
+    members = await repository.get_snapshot_member_bindings(snapshot_id=_SNAPSHOT_ID)
+
+    assert members[0].source_snapshot_member_id == _MEMBER_ID
+    assert members[0].locator == "mfds-label/200610660/EE"
+    assert "200610660" not in repr(members[0])
+
+
 async def test_snapshot_operation_lock_uses_snapshot_membership() -> None:
     session = AsyncMock(spec=AsyncSession)
     query_result = MagicMock()

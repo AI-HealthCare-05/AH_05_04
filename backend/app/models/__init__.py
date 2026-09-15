@@ -30,6 +30,7 @@ from app.models.knowledge import (
     RagKnowledgeIndex,
     RagKnowledgeIndexMember,
 )
+from app.models.lifestyle_times import LifestyleTimes
 from app.models.medical_documents import MedicalDocument
 from app.models.medication_schedules import (
     CheckinAudit,
@@ -118,6 +119,14 @@ from app.models.rag_evidence import (
     RagEvidenceRuleType,
     RagEvidenceStatus,
     RagEvidenceType,
+)
+from app.models.rag_retrieval import (
+    RetrievalHit,
+    RetrievalRun,
+    RetrievalRunStatus,
+    RetrievalRunVariant,
+    RetrievalSignal,
+    RetrievalSignalMethod,
 )
 from app.models.rag_runtime import (
     AiJobExecutionContext,
@@ -222,6 +231,7 @@ __all__ = [
     "KnowledgeChunk",
     "KnowledgeDocument",
     "KnowledgeDocumentContractVersion",
+    "LifestyleTimes",
     "Medication",
     "MedicationOccurrence",
     "MedicationOccurrenceStatus",
@@ -315,6 +325,12 @@ __all__ = [
     "RagSourceSnapshotVerification",
     "RagSourceUsageStatus",
     "RagVerificationResultStatus",
+    "RetrievalHit",
+    "RetrievalRun",
+    "RetrievalRunStatus",
+    "RetrievalRunVariant",
+    "RetrievalSignal",
+    "RetrievalSignalMethod",
     "SourceManagementAudit",
     "SourceManagementPermission",
     "RefreshSession",
