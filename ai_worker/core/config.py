@@ -95,6 +95,9 @@ class Config(BaseSettings):
     OPENAI_API_KEY: SecretStr = SecretStr("")
     OCR_STRUCTURE_MODEL: str = "gpt-4o-mini"
     OCR_STRUCTURE_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-large"
+    OPENAI_EMBEDDING_DIMENSION: int = Field(default=1536, ge=1, le=2000)
+    OPENAI_EMBEDDING_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0, allow_inf_nan=False)
     STORAGE_DIR: str
 
     # Worker runtime의 DB 연결에는 Job 실행 계정만 사용하며,
@@ -296,6 +299,13 @@ class Config(BaseSettings):
     def _validate_protected_retrieval_connection(self) -> Self:
         if not self.PROTECTED_RETRIEVAL_ENABLED:
             return self
+
+        if self.OPENAI_EMBEDDING_MODEL != "text-embedding-3-large":
+            raise ValueError(
+                "OPENAI_EMBEDDING_MODEL must be text-embedding-3-large when protected retrieval is enabled"
+            )
+        if self.OPENAI_EMBEDDING_DIMENSION != 1536:
+            raise ValueError("OPENAI_EMBEDDING_DIMENSION must be 1536 when protected retrieval is enabled")
 
         values = self._required_protected_values()
 

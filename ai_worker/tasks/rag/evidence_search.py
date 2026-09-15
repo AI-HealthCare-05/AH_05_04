@@ -190,12 +190,19 @@ class VersionedDenseSearchConfiguration:
         return self.artifact_ref.content_sha256 == self.compute_canonical_hash()
 
 
+class RetrievalExecutionMode(StrEnum):
+    LEXICAL_ONLY = "LEXICAL_ONLY"
+    DENSE_ONLY = "DENSE_ONLY"
+    HYBRID_RRF = "HYBRID_RRF"
+
+
 @dataclass(frozen=True, slots=True)
 class VersionedEvidenceRetrievalConfiguration:
     artifact_ref: ImmutableArtifactRef
     lexical_config: VersionedLexicalSearchConfiguration
     dense_config: VersionedDenseSearchConfiguration | None
     expected_query_embedding_adapter_ref: ImmutableArtifactRef | None
+    execution_mode: RetrievalExecutionMode = RetrievalExecutionMode.HYBRID_RRF
     algorithm_id: str = "rrf-rank-fusion@1"
     rrf_k: int = 60
     exact_limit: int = 20
@@ -233,6 +240,11 @@ class VersionedEvidenceRetrievalConfiguration:
             "dense_config_hash": self.dense_config.compute_canonical_hash() if self.dense_config else None,
             "dense_limit": self.dense_limit,
             "exact_limit": self.exact_limit,
+            "execution_mode": (
+                self.execution_mode.value
+                if isinstance(self.execution_mode, RetrievalExecutionMode)
+                else str(self.execution_mode)
+            ),
             "expected_query_embedding_adapter_ref": expected_adapter_val,
             "fts_limit": self.fts_limit,
             "future_reranker_input_limit": self.future_reranker_input_limit,
@@ -297,6 +309,22 @@ class ProductionEvidenceProvenance:
     normalization_version: str
 
 
+class ProductionSearchMethod(StrEnum):
+    EXACT = "EXACT"
+    TRIGRAM = "TRIGRAM"
+    FTS = "FTS"
+    LEXICAL = "LEXICAL"
+    DENSE = "DENSE"
+
+
+@dataclass(frozen=True, slots=True)
+class ProductionSearchSignal:
+    provenance: ProductionEvidenceProvenance
+    method: ProductionSearchMethod
+    raw_rank: int
+    observed_score: str
+
+
 @dataclass(frozen=True, slots=True)
 class ProductionSearchHit:
     provenance: ProductionEvidenceProvenance
@@ -319,6 +347,7 @@ class EvidenceSearchSuccess:
     lexical_hits: tuple[ProductionSearchHit, ...]
     dense_hits: tuple[ProductionSearchHit, ...]
     hybrid_hits: tuple[ProductionSearchHit, ...]
+    signals: tuple[ProductionSearchSignal, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,6 +362,21 @@ class EvidenceSearchPort(Protocol):
     ) -> EvidenceSearchSuccess | EvidenceSearchFailure: ...
 
 
+def validate_retrieval_configuration(config: VersionedEvidenceRetrievalConfiguration) -> EvidenceSearchFailure | None:
+    if not config.is_hash_valid():
+        return EvidenceSearchFailure(EvidenceSearchFailureReason.RETRIEVAL_CONFIG_INVALID)
+    if config.execution_mode == RetrievalExecutionMode.LEXICAL_ONLY:
+        if config.dense_config is not None or config.expected_query_embedding_adapter_ref is not None:
+            return EvidenceSearchFailure(EvidenceSearchFailureReason.RETRIEVAL_CONFIG_INVALID)
+    elif config.execution_mode == RetrievalExecutionMode.DENSE_ONLY:
+        if config.dense_config is None or config.expected_query_embedding_adapter_ref is None:
+            return EvidenceSearchFailure(EvidenceSearchFailureReason.RETRIEVAL_CONFIG_INVALID)
+    elif config.execution_mode == RetrievalExecutionMode.HYBRID_RRF:
+        if config.dense_config is None or config.expected_query_embedding_adapter_ref is None:
+            return EvidenceSearchFailure(EvidenceSearchFailureReason.RETRIEVAL_CONFIG_INVALID)
+    return None
+
+
 def validate_search_request(request: EvidenceSearchRequest) -> EvidenceSearchFailure | None:
     try:
         validate_query_text(request.normalized_query)
@@ -343,12 +387,16 @@ def validate_search_request(request: EvidenceSearchRequest) -> EvidenceSearchFai
     if not binding.allowed_source_snapshot_ids or not binding.allowed_source_snapshot_member_ids:
         return EvidenceSearchFailure(EvidenceSearchFailureReason.FILTER_BINDING_INVALID)
 
-    if not binding.retrieval_config.is_hash_valid():
-        return EvidenceSearchFailure(EvidenceSearchFailureReason.RETRIEVAL_CONFIG_INVALID)
+    config_failure = validate_retrieval_configuration(binding.retrieval_config)
+    if config_failure is not None:
+        return config_failure
 
-    dense_active = binding.retrieval_config.dense_config is not None and binding.retrieval_config.dense_limit > 0
-
-    if dense_active:
+    mode = binding.retrieval_config.execution_mode
+    if mode == RetrievalExecutionMode.LEXICAL_ONLY:
+        if request.query_embedding_receipt is not None:
+            return EvidenceSearchFailure(EvidenceSearchFailureReason.REQUEST_INVALID)
+    else:
+        # DENSE_ONLY or HYBRID_RRF
         if request.query_embedding_receipt is None:
             return EvidenceSearchFailure(EvidenceSearchFailureReason.QUERY_EMBEDDING_INVALID)
         receipt = request.query_embedding_receipt
@@ -357,8 +405,5 @@ def validate_search_request(request: EvidenceSearchRequest) -> EvidenceSearchFai
         expected_adapter = binding.retrieval_config.expected_query_embedding_adapter_ref
         if expected_adapter is not None and receipt.adapter_artifact_ref != expected_adapter:
             return EvidenceSearchFailure(EvidenceSearchFailureReason.QUERY_EMBEDDING_INVALID)
-    else:
-        if request.query_embedding_receipt is not None:
-            return EvidenceSearchFailure(EvidenceSearchFailureReason.REQUEST_INVALID)
 
     return None
