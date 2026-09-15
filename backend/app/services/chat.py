@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Protocol
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -7,6 +8,7 @@ from app.core.errors import ApiError, ErrorDetail
 from app.dtos.chat import ChatMessageData, ChatRole, ChatSessionData, SendChatMessageData, SendChatMessageRequest
 from app.models.chat import ChatGenerationStatus, ChatMessage, ChatSession, ChatSessionStatus
 from app.models.chat import ChatRole as ModelChatRole
+from app.models.user_consents import ConsentPurpose
 from app.models.users import User
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.prescription_repository import PrescriptionRepository
@@ -39,6 +41,10 @@ def _to_message_data(message: ChatMessage) -> ChatMessageData:
     )
 
 
+class ChatConsentGate(Protocol):
+    async def require_for_intake(self, *, user: User, purpose: ConsentPurpose) -> None: ...
+
+
 def _ensure_current_version(chat_session: ChatSession) -> None:
     if chat_session.prescription_version_id != chat_session.prescription.active_version_id:
         raise ApiError(
@@ -55,12 +61,14 @@ class ChatService:
         prescription_repository: PrescriptionRepository,
         chat_repository: ChatRepository,
         engine: ChatEngine,
+        consent_gate: ChatConsentGate,
         *,
         history_context_enabled: bool = False,
     ) -> None:
         self._engine = engine
         self._prescription_repo = prescription_repository
         self._chat_repo = chat_repository
+        self._consent_gate = consent_gate
         self._history_context_enabled = history_context_enabled
 
     async def _reject_stale_generation(
@@ -203,6 +211,8 @@ class ChatService:
             )
 
         _ensure_current_version(chat_session)
+
+        await self._consent_gate.require_for_intake(user=user, purpose=ConsentPurpose.CHAT)
 
         medications = await self._prescription_repo.get_version_medications(
             prescription_version_id=chat_session.prescription_version_id

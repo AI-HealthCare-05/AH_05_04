@@ -13,7 +13,7 @@
 
 이 문서는 `PD-207`에서 정한 목적별 동의 상태와 Provider 호출 Gate를 공유 계약 형태로 정리한다. Backend, Worker/OCR, Guide/Chat, Notification, Frontend가 같은 의미로 동의 상태와 차단 결과를 해석하기 위한 제안이다.
 
-이 문서는 `proposed/` 계약이며 전체 목적별 Gate의 Current 계약이 아니다. PR #465는 `user_consent` migration/model/repository와 Backend·Worker 공통 fixture의 저장 기반을 병합했다. #510은 현재 사용자 목적별 동의 상태 조회·변경 API를 구현했고, 해당 API의 현재 실행 계약은 `docs/contracts/current/user-account.md`에 기록한다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전, 담당 리뷰와 Production 공개 승인은 별도로 남아 있다.
+이 문서는 `proposed/` 계약이며 전체 목적별 Gate의 Current 계약이 아니다. PR #465는 `user_consent` migration/model/repository와 Backend·Worker 공통 fixture의 저장 기반을 병합했다. #510은 현재 사용자 목적별 동의 상태 조회·변경 API를 구현했고, 해당 API의 현재 실행 계약은 `docs/contracts/current/user-account.md`에 기록한다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. Guide와 Chat 동기 Backend Gate는 Current 계약에 반영됐으며, Notification 실행 연결, OCR 최종 정책 문구·버전, 담당 리뷰와 Production 공개 승인은 별도로 남아 있다.
 
 ## 2. 동의 목적
 
@@ -132,7 +132,7 @@ OCR에는 `STALE` 도메인 상태가 없으므로 `OcrStatus.FAILED`와 `error_
 
 필요한 목적의 동의가 없거나 철회되어 Backend 접수 또는 동기 Provider 호출을 시작하지 않는 경우의 공통 오류 코드다.
 
-- OCR 접수 전 차단은 #505에서 `403 CONSENT_REQUIRED`로 구현했다. Guide 동기 생성 차단도 같은 코드를 사용한다. Chat/Notification 목적의 HTTP 계약은 후속 범위다.
+- OCR 접수 전 차단은 #505에서 `403 CONSENT_REQUIRED`로 구현했다. Guide 동기 생성 차단과 Chat 동기 메시지 차단도 같은 코드를 사용한다. Notification 목적의 HTTP 계약은 후속 범위다.
 - 응답 형식은 공통 오류 envelope `{code, message, details, trace_id}`를 따른다.
 - `details[].rejected_value`에는 동의 원문, 환자정보, 처방 원문, Provider 응답을 넣지 않는다.
 
@@ -146,7 +146,7 @@ OCR에는 `STALE` 도메인 상태가 없으므로 `OcrStatus.FAILED`와 `error_
 
 ## 10. Contract Fixture 최소 케이스
 
-Backend와 Worker는 공통 fixture의 동의 판정 기준을 따른다. #505에서 OCR 목적의 조회·철회 차단과 저장 경합을 검증했으며, 아래 Guide/Chat 등 나머지 목적의 실행 연결은 후속 범위다.
+Backend와 Worker는 공통 fixture의 동의 판정 기준을 따른다. #505에서 OCR 목적의 조회·철회 차단과 저장 경합을 검증했다. Guide와 Chat 동기 Provider 호출 Gate는 Backend 경로에 연결됐으며, Notification 등 나머지 목적의 실행 연결은 후속 범위다.
 
 | fixture case | 기대 결과 |
 | --- | --- |
