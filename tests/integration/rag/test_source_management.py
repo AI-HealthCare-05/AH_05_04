@@ -716,7 +716,8 @@ async def test_404_authentication_works_with_only_runtime_token_permissions(data
                 session_id=UUID(row.id), expected_jti=row.active_jti, new_jti="b" * 32
             )
         async with sessions() as session:
-            token = await service(session).request_password_reset(email)
+            reset_result = await service(session).request_password_reset(email)
+            token = reset_result.reset_token
             assert token is not None
         async with sessions.begin() as session:
             await service(session).reset_password(token=token, new_password="UpdatedPass123!")

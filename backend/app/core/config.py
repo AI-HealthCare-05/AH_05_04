@@ -139,8 +139,7 @@ class Config(BaseSettings):
     EMAIL_VERIFICATION_RESPONSE_TARGET_SECONDS: float = 0.03
 
     # 이메일 발송 Provider는 배포 환경변수로 선택합니다. 기본값은 저장·로그 없이 아무것도
-    # 보내지 않는 noop입니다. SMTP 실제 발송은 local 검증용 adapter만 남기고 production 활성화는
-    # 보안·비밀정보 경계 승인 후 후속 PR에서 켭니다.
+    # 보내지 않는 noop입니다. SMTP 실제 발송은 필수 설정과 TLS를 통과한 경우에만 활성화합니다.
     EMAIL_PROVIDER: str = "noop"
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
@@ -282,18 +281,19 @@ class Config(BaseSettings):
         if self.EMAIL_PROVIDER != "smtp":
             return self
 
-        if self.ENV is not Env.LOCAL:
-            raise ValueError("EMAIL_PROVIDER=smtp is not enabled outside local environment in this PR")
         if not self.SMTP_USE_TLS:
             raise ValueError("SMTP_USE_TLS=false is not allowed")
 
-        missing = [
-            name
-            for name in ("SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM_EMAIL")
-            if not getattr(self, name).strip()
-        ]
+        required_fields = ("SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM_EMAIL")
+        missing = [name for name in required_fields if not getattr(self, name).strip()]
         if missing:
             raise ValueError(f"SMTP configuration is required when EMAIL_PROVIDER=smtp: {', '.join(missing)}")
+        if self.ENV is not Env.LOCAL:
+            placeholders = [name for name in required_fields if getattr(self, name).strip().startswith("replace-with-")]
+            if placeholders:
+                raise ValueError(
+                    "SMTP configuration must use real values outside local environment: " + ", ".join(placeholders)
+                )
         if self.SMTP_PORT <= 0:
             raise ValueError("SMTP_PORT must be positive")
         if not math.isfinite(self.SMTP_TIMEOUT_SECONDS) or self.SMTP_TIMEOUT_SECONDS <= 0:
