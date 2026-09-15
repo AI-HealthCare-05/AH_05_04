@@ -113,3 +113,7 @@ Plan과 암호화된 응답 snapshot을 같은 transaction에 저장하고 오�
 - 이번 부분 구현만으로 #194/#139를 닫거나 외부 공개 게이트를 열지 않는다.
 
 검증: [#194 지원·생성 검증 기록](../../testing/track-c-support-194.md).
+
+## #617 후속 구현 후보
+
+[조회·완료·취소 계약](track-c-plan-lifecycle-617.md)이 GET/PATCH를 추가한다. 위의 “이번 범위”는 #608의 역사적 범위다. 생성 응답·DB revision은 유지하며 후속 책임 리뷰어는 김지혜다. Follow-up은 여전히 제외한다.
