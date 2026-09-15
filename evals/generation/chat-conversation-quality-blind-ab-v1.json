@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "experiment_id": "chat-conversation-quality-blind-ab-v1",
+  "execution_status": "NOT_RUN",
+  "environment": "LOCAL",
+  "provider_invocation": true,
+  "dataset": {
+    "path": "evals/generation/chat-v4-conversation-quality-eval-v1.json",
+    "dataset_id": "chat-v4-conversation-quality-eval-v1",
+    "sha256": "a1384a11f99c94e79212137cd9b2849e8c76a8a93a3bb1014e59544d9fe42f1e"
+  },
+  "controlled_settings": {
+    "max_output_tokens": 800,
+    "timeout_seconds": 20,
+    "temperature": null,
+    "store": false
+  },
+  "blind_seed": 58120260915,
+  "review_paths": [
+    "baseline",
+    "history"
+  ],
+  "human_review_dimensions": [
+    "context_resolution",
+    "redundant_clarification",
+    "user_correction",
+    "topic_continuity",
+    "colloquial_language",
+    "safety",
+    "medication_consistency",
+    "naturalness"
+  ],
+  "variants": [
+    {
+      "variant_id": "chat-prompt-v3-gpt-4o",
+      "prompt_version": "chat-prompt-v3",
+      "source_commit": "a987104f1d452437d567369f214f8fb880555216",
+      "prompt_path": "evals/generation/prompts/chat-prompt-v3.txt",
+      "prompt_sha256": "a4a94bb7bb665ea1b1c7d90a02495680956b6a364bdf18787021786b19b607a3",
+      "model": "gpt-4o"
+    },
+    {
+      "variant_id": "chat-prompt-v4-gpt-4o",
+      "prompt_version": "chat-prompt-v4",
+      "source_commit": "94e5fa8daad6d06fc44808eefced1b07c2b784e0",
+      "prompt_path": "evals/generation/prompts/chat-prompt-v4.txt",
+      "prompt_sha256": "a5b5d4a67c795b14da04755a40d4f01f0f05e99111de629a5f2cbbc04c907b92",
+      "model": "gpt-4o"
+    }
+  ]
+}

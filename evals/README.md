@@ -274,4 +274,31 @@ PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
 
 2026-09-08 합성 OpenAI live 실행은 이전 13-case fixture에서 85 response를 사용했으므로 현재 근거로 사용하지 않습니다. [2026-09-09 동결 v1 / `gpt-4o-mini` historical live evidence](../docs/validation/issue-306-chat-live-evaluation.md)는 당시 blocking gate를 통과했지만 현재 canonical v4의 `gpt-4o` 검증 근거, 전체 모델 품질 또는 Production 승인으로 확대 해석하지 않습니다. v4 Provider 평가와 현행 prompt/model 대 후보 prompt/model의 blind A/B는 아직 `NOT_RUN`이며 #581에서 계속 추적합니다. 결정론적 27/27만 실제 모델 품질이나 Production 승인으로 확대 해석하지 않습니다.
 
+### Chat prompt blind A/B
+
+`generation/chat-conversation-quality-blind-ab-v1.json`은 #581의 `chat-prompt-v3` 대 `chat-prompt-v4` 비교를 위한 Local 전용 실행 설정입니다. 두 arm은 같은 canonical 27-case dataset, `gpt-4o`, timeout과 출력 token 상한을 사용하고 prompt snapshot만 다릅니다. `generation/prompts/chat-prompt-v3.txt`와 `generation/prompts/chat-prompt-v4.txt`는 각 prompt 문자열의 불변 snapshot이며 config가 dataset·prompt SHA-256을 모두 고정합니다. 이 PR은 runner와 실행 설정만 준비하며 실제 Provider 실행 상태는 `NOT_RUN`입니다.
+
+Live 실행은 arm당 113개, 총 226개의 Provider 응답을 생성합니다. 자동 결과에는 case·품질 축·blocking safety gate, baseline/history/max-history p95 latency, Provider가 반환한 input/output/total token 사용량을 기록합니다. 승인된 버전 고정 요금표가 없으므로 비용은 `NOT_CALCULATED`이며 token 사용량을 비용으로 오인하지 않습니다.
+
+```bash
+RUN_OPENAI_CHAT_BLIND_AB_EVAL=1 ENV=local \
+PYTHONPATH=backend:. uv run python -m app.evaluation.chat_blind_ab_runner run \
+  --review-packet evals/results/chat-blind-ab-v1-review.json \
+  --judgment-template evals/results/chat-blind-ab-v1-judgments.json \
+  --assignment evals/results/chat-blind-ab-v1-assignment.json
+```
+
+`review` artifact에는 합성 질문·history·medications와 `response_1`·`response_2`만 있으며 variant id, prompt version, model과 assignment를 넣지 않습니다. PII sentinel fixture 문자열은 `[SYNTHETIC_SENTINEL_REDACTED]`로 치환합니다. 담당 리뷰어에게는 review artifact와 arm mapping이 없는 judgment template만 전달하고 assignment artifact는 판단 제출 전까지 공개하지 않습니다. assignment artifact에는 arm mapping, 자동 점수, latency와 token 사용량이 들어가며 원시 질문·history·응답은 들어가지 않습니다.
+
+담당 리뷰어의 judgment JSON은 review item 54개를 각각 정확히 한 번 포함하고 `preference` 및 필요한 `dimension_preferences`에 `RESPONSE_1`, `RESPONSE_2`, `TIE` 중 하나를 기록합니다. coordinator가 review packet SHA-256만 전달하고 arm mapping은 전달하지 않습니다. 다음 명령은 판단을 variant id로 집계하지만 자동으로 winner를 선택하지 않으며 최종 상태를 `PENDING_RESPONSIBLE_REVIEWER_APPROVAL`로 유지합니다.
+
+```bash
+PYTHONPATH=backend:. uv run python -m app.evaluation.chat_blind_ab_runner unblind \
+  --assignment evals/results/chat-blind-ab-v1-assignment.json \
+  --judgments evals/results/chat-blind-ab-v1-judgments.json \
+  --output evals/results/chat-blind-ab-v1-result.json
+```
+
+Blind A/B artifact는 합성 Local 평가 근거일 뿐 실제 의료·약학 안전성, Production history 전송, Privacy 승인 또는 공개 근거가 아닙니다. 어느 arm이든 기존 blocking safety gate를 통과하지 못하면 run 명령은 exit code 1을 반환하며 선택 후보가 될 수 없습니다.
+
 실제 OpenAI 평가는 `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 있을 때만 `--mode live`로 실행할 수 있습니다. live 모드는 저장소의 canonical `chat-v4-conversation-quality-eval-v1` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며 임의 `--dataset`과 변경된 fixture를 OpenAI client 생성 전에 거부합니다. SHA-256은 Windows CRLF checkout과 LF checkout을 동일하게 취급하도록 CRLF를 LF로 정규화한 bytes에 계산하며, 줄바꿈 외 내용 변경은 계속 거부합니다. 결과 artifact에는 실행에 사용한 dataset·prompt SHA-256, live gate 구성요소, `full_suite_passed`와 전체 `passed`를 기록합니다. live blocking 기준 미달은 artifact를 남기고 exit code 1, 구성·Provider 실행 오류는 exit code 2를 반환합니다. 실행하지 않은 Provider 품질·latency·token 결과는 `NOT_RUN`으로 유지하며, 결정론적 replay 결과를 실제 모델 품질이나 Production 승인 근거로 해석하지 않습니다.
