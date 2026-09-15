@@ -181,6 +181,7 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 ```
 
 - `name`, `email`, `password`는 모두 필수입니다.
+- `SIGNUP_EMAIL_VERIFICATION_REQUIRED=true`일 때만 회원가입은 같은 정규화 이메일의 `SIGNUP` 이메일 인증 완료 기록을 요구합니다. 기본값은 `false`이며, #494 운영 Email Provider와 Frontend 인증 UI가 함께 승인되기 전까지 기존 회원가입 흐름을 유지합니다. Gate가 켜진 상태에서 인증이 없거나 인증 완료 기록의 `expires_at`이 지난 경우 `409 EMAIL_VERIFICATION_REQUIRED`, `details[].field=email`, `reason=EMAIL_VERIFICATION_REQUIRED`를 반환합니다.
 - `consents`는 선택 필드입니다. 생략하거나 빈 배열이면 회원가입은 성공하고 목적별 동의 row를 만들지 않습니다.
 - `consents[].purpose`는 `OCR`, `GUIDE`, `CHAT`, `NOTIFICATION`만 허용하며 같은 목적은 한 번만 보낼 수 있습니다.
 - 클라이언트는 `policy_version`이나 `status`를 보내지 않습니다. 서버가 해당 목적의 현재 policy version으로 선택된 목적을 `GRANTED` 저장합니다.
@@ -233,6 +234,8 @@ OCR 목적은 전용 경로 `/api/v1/users/me/consents/OCR`에서 `GET` / `POST`
 | --- | --- | ---: | --- |
 | `POST` | `/api/v1/auth/email-verification/request` | `200 OK` | 회원가입 전 이메일 인증 안내를 요청합니다. 별도 이메일 중복 확인 API가 아니며, 이미 가입된 이메일이거나 쿨다운 중이어도 같은 성공 응답을 반환합니다. `verification_token`은 `LOCAL` 환경에서만 채워집니다. |
 | `POST` | `/api/v1/auth/email-verification/confirm` | `200 OK` | 이메일과 원문 token을 검증하고, 같은 이메일·목적의 유효 token을 인증 완료 처리합니다. |
+
+`SIGNUP_EMAIL_VERIFICATION_REQUIRED=true`일 때 회원가입 요청은 `POST /api/v1/auth/email-verification/confirm`으로 완료된 같은 정규화 이메일의 `SIGNUP` 인증 기록을 요구합니다. 인증 완료 기록이 없거나 인증 완료 기록의 `expires_at`이 지난 경우 `POST /api/v1/auth/signup`은 `409 EMAIL_VERIFICATION_REQUIRED`, `details[].field=email`, `reason=EMAIL_VERIFICATION_REQUIRED`를 반환합니다. 기본값은 `false`이며, #494 운영 Email Provider와 Frontend 인증 UI가 함께 승인되기 전까지 기존 회원가입 흐름을 유지합니다.
 
 `POST /api/v1/auth/email-verification/confirm`의 token 오류는 `422 VALIDATION_FAILED`, `details[].field=token`, `reason=EMAIL_VERIFICATION_TOKEN_INVALID`입니다. 상세 스펙은 [회원가입·사용자 정보 계약의 회원가입 이메일 인증 절](./contracts/current/user-account.md#회원가입-이메일-인증431)을 따릅니다.
 

@@ -137,6 +137,7 @@ class Config(BaseSettings):
     EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES: int = 30
     EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS: int = 60
     EMAIL_VERIFICATION_RESPONSE_TARGET_SECONDS: float = 0.03
+    SIGNUP_EMAIL_VERIFICATION_REQUIRED: bool = False
 
     # 이메일 발송 Provider는 배포 환경변수로 선택합니다. 기본값은 저장·로그 없이 아무것도
     # 보내지 않는 noop입니다. SMTP 실제 발송은 필수 설정과 TLS를 통과한 경우에만 활성화합니다.
@@ -306,6 +307,15 @@ class Config(BaseSettings):
             raise ValueError("SMTP_PORT must be positive")
         if not math.isfinite(self.SMTP_TIMEOUT_SECONDS) or self.SMTP_TIMEOUT_SECONDS <= 0:
             raise ValueError("SMTP_TIMEOUT_SECONDS must be a positive finite number")
+        return self
+
+    @model_validator(mode="after")
+    def validate_signup_email_verification_gate(self) -> "Config":
+        if self.SIGNUP_EMAIL_VERIFICATION_REQUIRED and self.ENV is not Env.LOCAL and self.EMAIL_PROVIDER == "noop":
+            raise ValueError(
+                "SIGNUP_EMAIL_VERIFICATION_REQUIRED=true requires an approved non-noop email provider "
+                "outside local environment"
+            )
         return self
 
     @model_validator(mode="after")
