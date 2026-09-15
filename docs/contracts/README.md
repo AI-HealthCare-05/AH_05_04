@@ -203,3 +203,7 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [#465 대조·구현 범위 및 runtime 연결 조건](../designs/ocr-consent-gate-458-implementation.md)
 - [동의 조회·재검사 검증](../testing/ocr-consent-gate-458.md)
 - 내부 조회와 호출 직전 검사 부품. 동의 API·차단 저장·전송 최소화·공개 활성화 완료 아님.
+
+## Track C Plan 조회·완료·취소 (#617)
+
+- [ActionPlan lifecycle v1](./proposed/track-c-plan-lifecycle-617.md): 권가빈 구현·김지혜 책임 리뷰 대상. 단건 GET, ACTIVE의 단일 완료/취소 PATCH, 멱등성·잠금·SELF 경계. Current 승격 아님.
