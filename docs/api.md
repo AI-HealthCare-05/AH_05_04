@@ -717,7 +717,7 @@ Check-in history route는 포함하지 않는다. [검증 기록](./validation/t
 `no-store`, DTO/오류/계정 전환과 전송 정책은 [정규 계약](contracts/proposed/web-push-v1.md)에
 기록한다. Proposed 상태로 책임 리뷰 대기이며 Production 등록·전송은 차단한다.
 Notification의 앱 내부 게시·읽음 API 의미는 유지한다.
-## #419 공통 복약 리포트 — 작업 브랜치 구현, 지정 리뷰 대기
+## #419 공통 복약 리포트 — Current
 
 `GET /api/v1/medication-reports?period_days=7&end_date=2026-09-13`
 (`operationId=medication-reports.get`)는 기본 리포트와 진료 보기가 함께 사용하는 SELF 집계다.
@@ -736,9 +736,9 @@ PENDING·CANCELLED는 두 비율에서 제외한다. 조회에서 Check-in을 �
 빈 SELF 조회는 `200`과 빈 records·0 count·null 비율이다. 공통 오류·no-store를 유지한다.
 리포트 전용 DTO를 추가했으며 기존 일정·Check-in 응답, DB schema와 쓰기 경계는 바꾸지 않는다.
 
-정본은 [리포트 v1 제안](contracts/proposed/medication-report-v1.md),
+정본은 [리포트 v1 Current 계약](contracts/current/medication-report-v1.md),
 검증과 Frontend fixture는 [#419 검증 기록](validation/track-b/issue-419-medication-report.md)을 따른다.
-사용자 구현 기준 확인과 작업 브랜치 구현은 담당 리뷰 승인·병합·Production 공개를 의미하지 않는다.
+Backend #478과 Frontend #574가 develop에 병합됐으며 Production 공개 승인은 별도다.
 ### #202 occurrence 원래 약 표시 조회 — 리뷰용 구현
 
 `GET /api/v1/medication-occurrences/{occurrence_id}/medication`은 SELF 소유 occurrence의

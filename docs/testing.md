@@ -517,6 +517,11 @@ PostgreSQL·실제 ASGI 앱으로 검증한다. 기본 runner의 Backend 수집 
 재집계, OpenAPI와 Frontend 합성 fixture를 검증한다. 기본 `run_test.sh` Backend lane에
 자동 포함된다. [실행 증빙](validation/track-b/issue-419-medication-report.md)을 참고한다.
 #469와 병렬 실행할 때는 같은 이름의 test DB를 재생성하지 않도록 별도 PostgreSQL 인스턴스를 사용한다.
+
+Frontend 실제 왕복은 `REAL_STACK_ENV_FILE=envs/example.local.env bash scripts/e2e/real_stack.sh test-report`로
+격리된 Backend·PostgreSQL·Frontend를 기동한다. 비식별 합성 사용자의 UNCONFIRMED 기록을 명시적
+사용자 동작으로 NOT_TAKEN 정정하고 Report 복귀 뒤 새 GET과 서버 aggregate 변경을 검증한다.
+이 시나리오는 Report API interception이나 Frontend 자체 집계를 사용하지 않는다.
 ### #202 occurrence 원래 약 표시 조회
 
 `backend/app/tests/notifications/test_occurrence_medication_handoff.py`는 실제 ASGI 앱·PostgreSQL로
