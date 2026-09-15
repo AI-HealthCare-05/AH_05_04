@@ -161,9 +161,15 @@ function StructuredGuideContent({ guide }: { guide: StructuredGuide }) {
       className="guide-page__structured-guide"
       aria-labelledby="guide-medications-heading"
     >
-      <h2 id="guide-medications-heading">
-        확인된 약 목록 · {guide.medications.length}개
+      <h2
+        id="guide-medications-heading"
+        aria-label={`확인된 약 목록 · ${guide.medications.length}개`}
+      >
+        확인된 약 목록
       </h2>
+      <span className="guide-page__medication-count" aria-hidden="true">
+        확인된 약 목록 · {guide.medications.length}개
+      </span>
       <div className="guide-page__medication-list">
         {guide.medications.map((medication, index) => (
           <details className="guide-page__medication-card" key={`${index}-${medication.name}`}>
@@ -347,7 +353,8 @@ function GuidePage({
           <h1 className="screen-title">복약 가이드</h1>
           {guideId && (
             <p className="screen-description">
-              확인한 처방에 맞춰 복용 정보를 정리했어요.
+              약마다 언제·어떻게 복용하는지,<br />
+              어떤 점을 주의하면 좋은지 알려드려요.
             </p>
           )}
 
@@ -418,14 +425,24 @@ function GuidePage({
 
               <Button
                 fullWidth
+                variant="secondary"
+                className="guide-page__schedule-button"
+                disabled
+              >
+                복용 일정 확인하기
+              </Button>
+
+              <Button
+                fullWidth
                 className="guide-page__chat-button"
+                aria-label="복약 챗봇 도지와 이야기하기"
                 onClick={() =>
                   navigate(
                     `/chat?prescription_id=${currentGuide.prescription_id}`,
                   )
                 }
               >
-                복약 챗봇 도지와 이야기하기
+                도지와 대화하기
               </Button>
             </>
           )}

@@ -18,6 +18,7 @@
 ```text
 비식별 합성 데이터 준비
 → 로그인
+→ OCR 동의 게이트 (POST /api/v1/users/me/consents/OCR)
 → 합성 처방 이미지 업로드
 → 실제 CLOVA OCR
 → OCR 필드 확인
@@ -301,10 +302,20 @@ citation → chat message → chat session → guide → medication → prescrip
 → extracted field → OCR job → medical document → user
 ```
 
-로그인, 업로드, OCR 실행, 추출 필드 PATCH, 처방 확정, Guide 생성, Chat session 생성과 메시지 생성 중 하나라도
+로그인, OCR 동의, 업로드, OCR 실행, 추출 필드 PATCH, 처방 확정, Guide 생성, Chat session 생성과 메시지 생성 중 하나라도
 transport 결과가 불명확하면 DB polling 결과와 관계없이 현재 process에서는 삭제하지 않고
 `cleanup=PENDING`, non-zero로 종료한다. 새 DB session에서 row가 보이지 않아도 Backend transaction이 아직
 진행 중일 수 있기 때문이다.
+
+### 5.1 OCR 동의 게이트 연결 (#152, #458)
+
+`local-live-full` 및 `local-preflight` runner는 로그인 직후, 문서 업로드·OCR 접수 전에 `POST /api/v1/users/me/consents/OCR` 게이트를 호출한다.
+
+- 승인된 동의 정책 버전은 `ocr-local-synthetic-demo-2026-09-14-v1`이며, `OCR_CONSENT_POLICY_VERSION` 환경변수에서 주입받는다. 빈 값, placeholder, `<...>` 형식은 GUARD 단계에서 즉시 fail-closed된다.
+- 로컬 라이브 모드에서는 `OCR_STRUCTURE_LLM_ENABLED=false` 경계를 유지하고 runner 프로세스에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`가 주입되지 않는다.
+- 동의 API 응답 수신 직후 in-flight request를 완료 처리(`_complete_request`)하여 이후 단계 실패 시 cleanup이 `PENDING`으로 남지 않도록 보장한다.
+- 동의 API 응답이 실패(409, 503 등)하거나 계약 불일치(effective=false 등)인 경우 `failure_stage=OCR_CONSENT`로 기록하며 문서 업로드나 외부 Provider 호출 없이 즉시 fail-closed된다. (AGENTS.md 규칙에 따라 `OCR_CONSENT` failure stage 추가는 Issue #152 및 #458 Decision에 근거)
+- DB 검증 단계에서 OCR Job의 `llm_processing == "NOT_REQUESTED"` 및 `model_version is None`, `prompt_version is None`을 필수로 검증하며, `SKIPPED_MINIMIZATION`은 `DB_VERIFICATION` 실패로 처리한다. 반환되는 `ocr_database` evidence에 `llm_processing`을 포함한다.
 
 `--cleanup-only`는 가장 긴 Provider timeout보다 긴 grace period 이후에만 실행한다. staging은 run-state에
 추적된 합성 DB root만 정리한다. local cleanup은 다음 조건을 모두 만족해야 한다.
@@ -333,13 +344,14 @@ row·파일이 모두 0개인지 확인한다. 그때만 run-state를 삭제하�
 기준 URL은 staging FastAPI 또는 허용된 loopback FastAPI의 `/api/v1`이다.
 
 1. `POST /auth/login`
-2. `local-live-full`만 `POST /documents`로 합성 이미지를 업로드한다.
-3. `local-live-full`만 `POST /documents/{document_id}/ocr-jobs`로 CLOVA OCR을 실행한다.
-4. `local-live-full`만 `GET /ocr-jobs/{job_id}`와 `PATCH /extracted-fields/{field_id}`로 결과를 확인·수정한다.
-5. `POST /documents/{document_id}/prescription`
-6. `POST /guides`
-7. `POST /prescriptions/{prescription_id}/chat-sessions`
-8. `POST /chat-sessions/{session_id}/messages`
+2. `POST /users/me/consents/OCR`로 OCR 동의를 등록한다 (`local-preflight` 및 `local-live-full` 공통).
+3. `local-live-full`만 `POST /documents`로 합성 이미지를 업로드한다.
+4. `local-live-full`만 `POST /documents/{document_id}/ocr-jobs`로 CLOVA OCR을 실행한다.
+5. `local-live-full`만 `GET /ocr-jobs/{job_id}`와 `PATCH /extracted-fields/{field_id}`로 결과를 확인·수정한다.
+6. `POST /documents/{document_id}/prescription`
+7. `POST /guides`
+8. `POST /prescriptions/{prescription_id}/chat-sessions`
+9. `POST /chat-sessions/{session_id}/messages`
 
 인증 token은 실행 중 메모리에만 둔다. 응답의 ID를 다음 요청에 전달한다. 로그인 응답에는 이번 작업에서
 새 보안 header 계약을 추가하지 않는다. 현재 의료 데이터 흐름에 속하는 업로드, OCR 실행·조회, 추출 필드
@@ -444,8 +456,8 @@ env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
 | `--commit-sha` / `--image-repo-digest` | staging에서 하나 이상 필수. local은 현재 Git commit을 자동 기록한다. |
 | `--cleanup-only` | 기존 `0600` run-state만 읽어 정리하며 새 fixture나 Provider 요청을 만들지 않는다. |
 
-`local-preflight`는 host FastAPI와 별도 runner의 실제 TCP만 사용하고 `POST /auth/login → POST /documents →
-POST /documents/{id}/ocr-jobs → GET /ocr-jobs/{id}`까지만 실행한다. OpenAI 호출, 추출 필드 PATCH, 처방·Guide·
+`local-preflight`는 host FastAPI와 별도 runner의 실제 TCP만 사용하고 `POST /auth/login → POST /users/me/consents/OCR →
+POST /documents → POST /documents/{id}/ocr-jobs → GET /ocr-jobs/{id}`까지만 실행한다. OpenAI 호출, 추출 필드 PATCH, 처방·Guide·
 Chat 생성은 금지한다. 후보 이미지 SHA와 field identity 집합이 draft와 맞으면 `preflight=READY`, 다르면
 `preflight=NOT_READY`다. OCR 원문과 추출 text는 stdout·stderr·Git에 기록하지 않는다. 업로드 또는 OCR 요청의
 transport 결과가 불명확하면 일반 live와 동일하게 `cleanup=PENDING`으로 두고 cleanup-only로 정리한다.
@@ -540,8 +552,8 @@ dirty worktree에서도 개인 진단 실행 결과는 낼 수 있지만 `eviden
 `failure_stage`는 다음 값 또는 null만 허용한다.
 
 ```text
-GUARD | SCENARIO | FIXTURE | AUTH | UPLOAD | OCR_REQUEST | OCR_OUTPUT_MISMATCH
-| EXTRACTED_FIELD_CONFIRMATION | PRESCRIPTION_INPUT | PRESCRIPTION_CREATE
+GUARD | SCENARIO | FIXTURE | AUTH | OCR_CONSENT | UPLOAD | OCR_REQUEST | OCR_STATUS | OCR_RESULT
+| OCR_OUTPUT_MISMATCH | EXTRACTED_FIELD_CONFIRMATION | PRESCRIPTION_INPUT | PRESCRIPTION_CREATE
 | GUIDE_GENERATION_PROCESSING | CHAT_SESSION | CHAT_GENERATION_PROCESSING
 | DB_VERIFICATION | GUIDE_SAFETY | CHAT_SAFETY | CLEANUP
 ```

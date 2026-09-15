@@ -688,7 +688,9 @@ Notification은 B5 범위다.
 Track C 연동은 `CheckinRevisionInvalidationPort.invalidate_for_checkin_revision` 동기 경계로 고정한다. 현재
 `NOT_TAKEN` revision을 `TAKEN` 또는 새 `NOT_TAKEN` revision으로 정정할 때 Track B transaction 안에서 호출하며,
 Track C adapter는 같은 session과 `MEDICATION_CHECKIN → SAFETY_ASSESSMENT → BARRIER_RESPONSE →
-SUPPORT_ACTION_PLAN` 잠금 순서를 사용해야 한다. Track C 저장 모델과 실제 adapter 구현은 후속 범위다.
+SUPPORT_ACTION_PLAN` 잠금 순서를 사용한다. Adapter는 해당 과거 revision의 Safety·Barrier 이력을 삭제하지 않고
+활성 ActionPlan만 `CANCELLED`로 전환하며, 호출 실패 시 Check-in 정정·Audit과 함께 rollback된다. 새 Check-in
+revision이 `NOT_TAKEN`이어도 과거 결과를 재사용하지 않고 Safety부터 다시 시작한다.
 
 Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`의 RAG DB schema v1.47은 다음 구조를 목표로 승인했습니다. PostgreSQL 플랫폼 전환은 완료됐고, RAG/Eval 목표 스키마는 분할 PR 단위로 migration·모델·repository를 반영합니다. 이 섹션은 구현 상태를 함께 표시하며, 실제 도입 시 expand → backfill → 검증 → read cutover → contract 순서와 rollback 계획을 migration PR에서 확정합니다. 기존 Application ID/FK와 이번 분할 PR의 신규 RAG/Eval ID는 호환을 위해 `CHAR(36)`을 사용합니다. PostgreSQL native `UUID` 전환은 별도 승인 migration 범위입니다.
 
