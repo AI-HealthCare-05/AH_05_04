@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -407,7 +408,7 @@ def test_openapi_lifestyle_times_contract() -> None:
 
 
 def test_request_model_preserves_overlaps_and_rejects_exact_duplicates() -> None:
-    overlap = {
+    overlap: dict[str, Any] = {
         "expected_revision": 0,
         "days": [
             {

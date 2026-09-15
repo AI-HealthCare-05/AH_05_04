@@ -14,6 +14,13 @@ branch_labels = None
 depends_on = None
 
 
+def _raise_if_lifestyle_times_exists() -> None:
+    bind = op.get_bind()
+    bind.execute(sa.text("LOCK TABLE lifestyle_times IN ACCESS EXCLUSIVE MODE"))
+    if bind.execute(sa.text("SELECT 1 FROM lifestyle_times LIMIT 1")).first():
+        raise RuntimeError("Cannot downgrade lifestyle_times while lifestyle rows exist")
+
+
 def upgrade() -> None:
     op.create_table(
         "lifestyle_times",
@@ -34,4 +41,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    _raise_if_lifestyle_times_exists()
     op.drop_table("lifestyle_times")
