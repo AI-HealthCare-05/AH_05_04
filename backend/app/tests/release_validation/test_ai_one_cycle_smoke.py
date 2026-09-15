@@ -32,6 +32,7 @@ from app.models.profiles import Profile
 from app.models.user_consents import ConsentPurpose, ConsentStatus
 from app.models.users import User
 from app.release_validation.ai_one_cycle_smoke import (
+    APPROVED_OCR_CONSENT_POLICY_VERSION,
     CleanupPendingError,
     GuardError,
     HttpFlowError,
@@ -68,7 +69,28 @@ _SCENARIO_ROOT = Path(__file__).resolve().parents[2] / "release_validation" / "s
 
 
 def test_async_ocr_failure_stages_are_reportable() -> None:
-    assert {"OCR_STATUS", "OCR_RESULT"} <= smoke_module.ALLOWED_FAILURE_STAGES
+    assert smoke_module.ALLOWED_FAILURE_STAGES == {
+        "GUARD",
+        "SCENARIO",
+        "FIXTURE",
+        "AUTH",
+        "OCR_CONSENT",
+        "UPLOAD",
+        "OCR_REQUEST",
+        "OCR_STATUS",
+        "OCR_RESULT",
+        "OCR_OUTPUT_MISMATCH",
+        "EXTRACTED_FIELD_CONFIRMATION",
+        "PRESCRIPTION_INPUT",
+        "PRESCRIPTION_CREATE",
+        "GUIDE_GENERATION_PROCESSING",
+        "CHAT_SESSION",
+        "CHAT_GENERATION_PROCESSING",
+        "DB_VERIFICATION",
+        "GUIDE_SAFETY",
+        "CHAT_SAFETY",
+        "CLEANUP",
+    }
 
 
 def _ocr_preflight_payload_for_path(
@@ -76,9 +98,27 @@ def _ocr_preflight_payload_for_path(
     path: str,
     document_id: str,
     job_id: str,
+    policy_version: str = "ocr-local-synthetic-demo-2026-09-14-v1",
 ) -> tuple[dict[str, object], str, bool]:
     if path == "/api/v1/auth/login":
         return {"access_token": "synthetic-token"}, "200 OK", False
+    if path == "/api/v1/users/me/consents/OCR":
+        return (
+            {
+                "data": {
+                    "purpose": "OCR",
+                    "status": "GRANTED",
+                    "effective": True,
+                    "reason": None,
+                    "current_policy_version": policy_version,
+                    "accepted_policy_version": policy_version,
+                    "granted_at": "2026-09-01T00:00:00+09:00",
+                    "withdrawn_at": None,
+                }
+            },
+            "200 OK",
+            False,
+        )
     if path == "/api/v1/documents":
         return {"data": {"document_id": document_id}}, "201 Created", False
     if path == f"/api/v1/documents/{document_id}/ocr-jobs":
@@ -431,6 +471,7 @@ def test_local_live_guard_does_not_require_provider_credentials(mode: str, tmp_p
         "ENV": "local",
         "RELEASE_VALIDATION_ALLOWED": "1",
         "CLOVA_OCR_INVOKE_URL": "https://tenant.apigw.ntruss.com/ocr",
+        "OCR_CONSENT_POLICY_VERSION": "ocr-local-synthetic-demo-2026-09-14-v1",
         "STORAGE_DIR": str(tmp_path),
         "DB_HOST": "127.0.0.1",
         "DB_PORT": "5432",
@@ -446,6 +487,88 @@ def test_local_live_guard_does_not_require_provider_credentials(mode: str, tmp_p
 
     assert validated.environment == "local"
     assert validated.storage_dir == tmp_path.resolve()
+    assert validated.ocr_consent_policy_version == "ocr-local-synthetic-demo-2026-09-14-v1"
+
+
+@pytest.mark.parametrize(
+    "invalid_version",
+    [None, "", "placeholder", "PLACEHOLDER", "<ocr-consent.v1>", "wrong-version-v1", "   "],
+)
+@pytest.mark.parametrize("mode", ["local-preflight", "local-live-full"])
+def test_local_live_guard_rejects_missing_or_invalid_consent_policy_version(
+    mode: str, invalid_version: str | None, tmp_path: Path
+) -> None:
+    env = {
+        "ENV": "local",
+        "RELEASE_VALIDATION_ALLOWED": "1",
+        "CLOVA_OCR_INVOKE_URL": "https://tenant.apigw.ntruss.com/ocr",
+        "STORAGE_DIR": str(tmp_path),
+        "DB_HOST": "127.0.0.1",
+        "DB_PORT": "5432",
+    }
+    if invalid_version is not None:
+        env["OCR_CONSENT_POLICY_VERSION"] = invalid_version
+
+    with pytest.raises(GuardError) as exc_info:
+        validate_live_environment(
+            mode=mode,
+            base_url="http://127.0.0.1:8000/api/v1",
+            env=env,
+            commit_sha=None,
+            image_repo_digest=None,
+        )
+    assert "OCR_CONSENT_POLICY_VERSION" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("mode", ["local-preflight", "local-live-full"])
+def test_local_live_guard_rejects_llm_enabled_for_approved_local_validation(mode: str, tmp_path: Path) -> None:
+    env = {
+        "ENV": "local",
+        "RELEASE_VALIDATION_ALLOWED": "1",
+        "CLOVA_OCR_INVOKE_URL": "https://tenant.apigw.ntruss.com/ocr",
+        "OCR_CONSENT_POLICY_VERSION": "ocr-local-synthetic-demo-2026-09-14-v1",
+        "OCR_STRUCTURE_LLM_ENABLED": "true",
+        "STORAGE_DIR": str(tmp_path),
+        "DB_HOST": "127.0.0.1",
+        "DB_PORT": "5432",
+    }
+
+    with pytest.raises(GuardError) as exc_info:
+        validate_live_environment(
+            mode=mode,
+            base_url="http://127.0.0.1:8000/api/v1",
+            env=env,
+            commit_sha=None,
+            image_repo_digest=None,
+        )
+    assert "OCR_STRUCTURE_LLM_ENABLED" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("mode", ["local-preflight", "local-live-full"])
+@pytest.mark.parametrize("cred_name", ["CLOVA_OCR_SECRET", "OPENAI_API_KEY"])
+def test_local_live_guard_rejects_provider_credentials_in_local_environment(
+    mode: str, cred_name: str, tmp_path: Path
+) -> None:
+    env = {
+        "ENV": "local",
+        "RELEASE_VALIDATION_ALLOWED": "1",
+        "CLOVA_OCR_INVOKE_URL": "https://tenant.apigw.ntruss.com/ocr",
+        "OCR_CONSENT_POLICY_VERSION": "ocr-local-synthetic-demo-2026-09-14-v1",
+        "STORAGE_DIR": str(tmp_path),
+        "DB_HOST": "127.0.0.1",
+        "DB_PORT": "5432",
+        cred_name: "secret-value",
+    }
+
+    with pytest.raises(GuardError) as exc_info:
+        validate_live_environment(
+            mode=mode,
+            base_url="http://127.0.0.1:8000/api/v1",
+            env=env,
+            commit_sha=None,
+            image_repo_digest=None,
+        )
+    assert "Provider credentials must not exist" in str(exc_info.value)
 
 
 @pytest.mark.parametrize("mode", ["local-preflight", "local-live-full"])
@@ -522,6 +645,8 @@ def test_local_live_environment_accepts_true_and_one_for_gate(mode: str, value: 
         "STORAGE_DIR": str(tmp_path),
         "DB_HOST": "127.0.0.1",
         "DB_PORT": "5432",
+        "OCR_STRUCTURE_LLM_ENABLED": "false",
+        "OCR_CONSENT_POLICY_VERSION": APPROVED_OCR_CONSENT_POLICY_VERSION,
     }
 
     validated_live = validate_live_environment(
@@ -938,6 +1063,8 @@ async def test_cleanup_only_recovers_fixture_committed_before_state_marker_clear
         "DB_NAME": "test",
         "CLOVA_OCR_TIMEOUT_SECONDS": "20",
         "OPENAI_TIMEOUT_SECONDS": "20",
+        "OCR_STRUCTURE_LLM_ENABLED": "false",
+        "OCR_CONSENT_POLICY_VERSION": APPROVED_OCR_CONSENT_POLICY_VERSION,
     }
     monkeypatch.setenv("RELEASE_VALIDATION_STATE_DIR", str(state_parent))
     monkeypatch.setattr(smoke_module, "_runtime_environment", lambda _mode: runtime_env)
@@ -985,6 +1112,88 @@ async def test_cleanup_only_recovers_fixture_committed_before_state_marker_clear
     assert not store.path.exists()
     async with factory() as verification_session:
         assert await verification_session.get(User, user_id) is None
+
+
+@pytest.mark.asyncio
+async def test_guard_failure_creates_zero_mutations_and_no_state_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    factory = async_sessionmaker(test_engine, expire_on_commit=False)
+    run_id = uuid4()
+    state_parent = tmp_path / "state-parent"
+    storage_dir = tmp_path / "storage"
+    storage_dir.mkdir()
+    candidate = tmp_path / "candidate.png"
+    candidate.write_bytes(b"approved-synthetic-candidate")
+    draft = _scenario_payload(version="ai-one-cycle-clova-openai-v1")
+    draft["expected_field_identities"] = [[0, "PRESCRIBED_DATE"]]
+    draft_path = tmp_path / "draft.json"
+    draft_path.write_text(json.dumps(draft, ensure_ascii=False), encoding="utf-8")
+    runtime_env = {
+        "ENV": "local",
+        "RELEASE_VALIDATION_ALLOWED": "1",
+        "CLOVA_OCR_INVOKE_URL": "https://tenant.apigw.ntruss.com/ocr",
+        "STORAGE_DIR": str(storage_dir),
+        "DB_HOST": "127.0.0.1",
+        "DB_PORT": "5432",
+        "DB_NAME": "test",
+        "CLOVA_OCR_TIMEOUT_SECONDS": "20",
+        "OPENAI_TIMEOUT_SECONDS": "20",
+        "OCR_STRUCTURE_LLM_ENABLED": "false",
+        "OCR_CONSENT_POLICY_VERSION": "invalid-policy-version",
+    }
+    monkeypatch.setenv("RELEASE_VALIDATION_STATE_DIR", str(state_parent))
+    monkeypatch.setattr(smoke_module, "_runtime_environment", lambda _mode: runtime_env)
+    monkeypatch.setattr("app.core.db.databases.AsyncSessionFactory", factory)
+
+    build_fixture_called = False
+    original_build_synthetic_fixture = smoke_module.build_synthetic_fixture
+
+    async def spy_build_synthetic_fixture(*f_args: object, **f_kwargs: object) -> object:
+        nonlocal build_fixture_called
+        build_fixture_called = True
+        return await original_build_synthetic_fixture(*f_args, **f_kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(smoke_module, "build_synthetic_fixture", spy_build_synthetic_fixture)
+
+    from sqlalchemy import func, select
+
+    from app.models.medical_documents import MedicalDocument
+    from app.models.ocr import OcrJob
+    from app.models.users import User
+
+    async with factory() as verification_session:
+        user_count_before = await verification_session.scalar(select(func.count()).select_from(User))
+        doc_count_before = await verification_session.scalar(select(func.count()).select_from(MedicalDocument))
+        job_count_before = await verification_session.scalar(select(func.count()).select_from(OcrJob))
+
+    args = argparse.Namespace(
+        mode="local-preflight",
+        run_id=str(run_id),
+        base_url="http://127.0.0.1:8000/api/v1",
+        scenario=None,
+        candidate_image=str(candidate),
+        scenario_draft=str(draft_path),
+        commit_sha=None,
+        image_repo_digest=None,
+        cleanup_only=False,
+    )
+
+    with pytest.raises(GuardError):
+        await smoke_module._execute(args, run_id)
+
+    assert not build_fixture_called
+    if state_parent.exists():
+        assert list(state_parent.rglob("*")) == []
+
+    async with factory() as verification_session:
+        user_count_after = await verification_session.scalar(select(func.count()).select_from(User))
+        doc_count_after = await verification_session.scalar(select(func.count()).select_from(MedicalDocument))
+        job_count_after = await verification_session.scalar(select(func.count()).select_from(OcrJob))
+
+    assert user_count_before == user_count_after
+    assert doc_count_before == doc_count_after
+    assert job_count_before == job_count_after
 
 
 @pytest.mark.asyncio
@@ -1080,6 +1289,8 @@ async def test_network_runner_uses_real_tcp_and_preserves_http_id_order(tmp_path
             "STORAGE_DIR": str(tmp_path),
             "DB_HOST": "127.0.0.1",
             "DB_PORT": "5432",
+            "OCR_STRUCTURE_LLM_ENABLED": "false",
+            "OCR_CONSENT_POLICY_VERSION": APPROVED_OCR_CONSENT_POLICY_VERSION,
         },
         commit_sha=None,
         image_repo_digest=None,
@@ -1410,7 +1621,10 @@ async def test_preflight_stops_after_ocr_get_and_never_calls_openai_paths(tmp_pa
     try:
         async with server:
             async with NetworkOneCycleRunner(
-                base_url=f"http://127.0.0.1:{port}/api/v1", state=store, read_timeout_seconds=5
+                base_url=f"http://127.0.0.1:{port}/api/v1",
+                state=store,
+                read_timeout_seconds=5,
+                ocr_consent_policy_version="ocr-local-synthetic-demo-2026-09-14-v1",
             ) as runner:
                 result = await runner.run_preflight(
                     email="synthetic@example.invalid",
@@ -1424,6 +1638,7 @@ async def test_preflight_stops_after_ocr_get_and_never_calls_openai_paths(tmp_pa
 
     assert paths == [
         "/api/v1/auth/login",
+        "/api/v1/users/me/consents/OCR",
         "/api/v1/documents",
         f"/api/v1/documents/{document_id}/ocr-jobs",
         f"/api/v1/jobs/{job_id}",
@@ -1434,6 +1649,402 @@ async def test_preflight_stops_after_ocr_get_and_never_calls_openai_paths(tmp_pa
     assert result["field_identities_match"] is True
     assert result["field_count"] == 1
     assert "fields" not in result
+
+
+@pytest.mark.asyncio
+async def test_network_runner_preflight_login_consent_upload_ocr_order_and_payload_mock(tmp_path: Path) -> None:
+    document_id = str(uuid4())
+    job_id = str(uuid4())
+    run_id = str(uuid4())
+    requests_received: list[dict[str, Any]] = []
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        method, path, _ = (await reader.readline()).decode("ascii").split(" ", 2)
+        headers: dict[str, str] = {}
+        content_length = 0
+        while line := await reader.readline():
+            if line == b"\r\n":
+                break
+            name, value = line.decode("ascii").split(":", 1)
+            headers[name.strip().lower()] = value.strip()
+            if name.lower() == "content-length":
+                content_length = int(value.strip())
+        raw_body = await reader.readexactly(content_length) if content_length else b""
+        body_json = None
+        if "application/json" in headers.get("content-type", ""):
+            body_json = json.loads(raw_body.decode("utf-8"))
+        requests_received.append(
+            {
+                "method": method,
+                "path": path,
+                "headers": headers,
+                "body_json": body_json,
+            }
+        )
+        payload, status, _ = _ocr_preflight_payload_for_path(
+            path=path,
+            document_id=document_id,
+            job_id=job_id,
+            policy_version="ocr-local-synthetic-demo-2026-09-14-v1",
+        )
+        body = json.dumps(payload).encode()
+        trace_header = f"X-Trace-Id: {'a' * 32}\r\n"
+        writer.write(
+            f"HTTP/1.1 {status}\r\n".encode()
+            + b"Content-Type: application/json\r\n"
+            + b"Cache-Control: no-store\r\n"
+            + trace_header.encode()
+            + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+            + body
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    candidate = tmp_path / "candidate.png"
+    candidate.write_bytes(b"synthetic-png-candidate")
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    store = RunStateStore.create(tmp_path / "state", run_id, {"run_id": run_id, "mode": "local-live-full", "ids": {}})
+    try:
+        async with server:
+            async with NetworkOneCycleRunner(
+                base_url=f"http://127.0.0.1:{port}/api/v1",
+                state=store,
+                read_timeout_seconds=5,
+                ocr_consent_policy_version="ocr-local-synthetic-demo-2026-09-14-v1",
+            ) as runner:
+                result = await runner.run_preflight(
+                    email="synthetic@example.invalid",
+                    password="Password123!",
+                    candidate_image=candidate,
+                    expected_field_identities=[[0, "PRESCRIBED_DATE"]],
+                )
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert [req["path"] for req in requests_received] == [
+        "/api/v1/auth/login",
+        "/api/v1/users/me/consents/OCR",
+        "/api/v1/documents",
+        f"/api/v1/documents/{document_id}/ocr-jobs",
+        f"/api/v1/jobs/{job_id}",
+        f"/api/v1/ocr-jobs/{job_id}",
+    ]
+    consent_req = requests_received[1]
+    assert consent_req["method"] == "POST"
+    assert consent_req["headers"]["authorization"] == "Bearer synthetic-token"
+    assert consent_req["headers"]["x-validation-run-id"] == run_id
+    assert consent_req["body_json"] == {"policy_version": "ocr-local-synthetic-demo-2026-09-14-v1"}
+    assert result["preflight"] == "READY"
+    assert store.read()["in_flight_stage"] is None
+
+
+@pytest.mark.asyncio
+async def test_network_runner_consent_mismatch_fails_closed_and_not_pending(tmp_path: Path) -> None:
+    paths: list[str] = []
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        _, path, _ = (await reader.readline()).decode("ascii").split(" ", 2)
+        paths.append(path)
+        content_length = 0
+        while line := await reader.readline():
+            if line == b"\r\n":
+                break
+            name, value = line.decode("ascii").split(":", 1)
+            if name.lower() == "content-length":
+                content_length = int(value.strip())
+        if content_length:
+            await reader.readexactly(content_length)
+        if path == "/api/v1/auth/login":
+            status = "200 OK"
+            payload: dict[str, Any] = {"access_token": "synthetic-token"}
+        elif path == "/api/v1/users/me/consents/OCR":
+            status = "409 Conflict"
+            payload = {
+                "code": "CONSENT_POLICY_MISMATCH",
+                "message": "현재 동의 안내를 다시 확인해 주세요.",
+                "trace_id": "b" * 32,
+            }
+        else:
+            status = "500 Internal Server Error"
+            payload = {"code": "UNEXPECTED"}
+        body = json.dumps(payload).encode()
+        writer.write(
+            f"HTTP/1.1 {status}\r\n".encode()
+            + b"Content-Type: application/json\r\n"
+            + b"Cache-Control: no-store\r\n"
+            + f"X-Trace-Id: {'b' * 32}\r\n".encode()
+            + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+            + body
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    candidate = tmp_path / "candidate.png"
+    candidate.write_bytes(b"synthetic-png-candidate")
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    run_id = str(uuid4())
+    store = RunStateStore.create(tmp_path / "state", run_id, {"run_id": run_id, "mode": "local-live-full", "ids": {}})
+    try:
+        async with server:
+            async with NetworkOneCycleRunner(
+                base_url=f"http://127.0.0.1:{port}/api/v1",
+                state=store,
+                read_timeout_seconds=5,
+                ocr_consent_policy_version="ocr-local-synthetic-demo-2026-09-14-v1",
+            ) as runner:
+                with pytest.raises(HttpFlowError) as exc_info:
+                    await runner.run_preflight(
+                        email="synthetic@example.invalid",
+                        password="Password123!",
+                        candidate_image=candidate,
+                        expected_field_identities=[[0, "PRESCRIBED_DATE"]],
+                    )
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert exc_info.value.stage == "OCR_CONSENT"
+    assert exc_info.value.evidence["http_status"] == 409
+    assert exc_info.value.evidence["api_code"] == "CONSENT_POLICY_MISMATCH"
+    assert paths == ["/api/v1/auth/login", "/api/v1/users/me/consents/OCR"]
+    assert store.read()["in_flight_stage"] is None
+
+
+@pytest.mark.asyncio
+async def test_network_runner_consent_unavailable_fails_closed_and_not_pending(tmp_path: Path) -> None:
+    paths: list[str] = []
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        _, path, _ = (await reader.readline()).decode("ascii").split(" ", 2)
+        paths.append(path)
+        content_length = 0
+        while line := await reader.readline():
+            if line == b"\r\n":
+                break
+            name, value = line.decode("ascii").split(":", 1)
+            if name.lower() == "content-length":
+                content_length = int(value.strip())
+        if content_length:
+            await reader.readexactly(content_length)
+        if path == "/api/v1/auth/login":
+            status = "200 OK"
+            payload: dict[str, Any] = {"access_token": "synthetic-token"}
+        elif path == "/api/v1/users/me/consents/OCR":
+            status = "503 Service Unavailable"
+            payload = {
+                "code": "CONSENT_POLICY_UNAVAILABLE",
+                "message": "현재 동의 안내를 사용할 수 없습니다.",
+                "trace_id": "c" * 32,
+            }
+        else:
+            status = "500 Internal Server Error"
+            payload = {"code": "UNEXPECTED"}
+        body = json.dumps(payload).encode()
+        writer.write(
+            f"HTTP/1.1 {status}\r\n".encode()
+            + b"Content-Type: application/json\r\n"
+            + b"Cache-Control: no-store\r\n"
+            + f"X-Trace-Id: {'c' * 32}\r\n".encode()
+            + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+            + body
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    candidate = tmp_path / "candidate.png"
+    candidate.write_bytes(b"synthetic-png-candidate")
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    run_id = str(uuid4())
+    store = RunStateStore.create(tmp_path / "state", run_id, {"run_id": run_id, "mode": "local-live-full", "ids": {}})
+    try:
+        async with server:
+            async with NetworkOneCycleRunner(
+                base_url=f"http://127.0.0.1:{port}/api/v1",
+                state=store,
+                read_timeout_seconds=5,
+                ocr_consent_policy_version="ocr-local-synthetic-demo-2026-09-14-v1",
+            ) as runner:
+                with pytest.raises(HttpFlowError) as exc_info:
+                    await runner.run_preflight(
+                        email="synthetic@example.invalid",
+                        password="Password123!",
+                        candidate_image=candidate,
+                        expected_field_identities=[[0, "PRESCRIBED_DATE"]],
+                    )
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert exc_info.value.stage == "OCR_CONSENT"
+    assert exc_info.value.evidence["http_status"] == 503
+    assert exc_info.value.evidence["api_code"] == "CONSENT_POLICY_UNAVAILABLE"
+    assert paths == ["/api/v1/auth/login", "/api/v1/users/me/consents/OCR"]
+    assert store.read()["in_flight_stage"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("anomaly_key", "anomaly_value"),
+    [
+        ("effective", False),
+        ("status", "WITHDRAWN"),
+        ("purpose", "CHAT"),
+        ("current_policy_version", "wrong-current-v1"),
+        ("accepted_policy_version", "wrong-accepted-v1"),
+        ("reason", "POLICY_VERSION_MISMATCH"),
+    ],
+)
+async def test_network_runner_consent_malformed_response_fails_closed_and_not_pending(
+    anomaly_key: str, anomaly_value: Any, tmp_path: Path
+) -> None:
+    paths: list[str] = []
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        _, path, _ = (await reader.readline()).decode("ascii").split(" ", 2)
+        paths.append(path)
+        content_length = 0
+        while line := await reader.readline():
+            if line == b"\r\n":
+                break
+            name, value = line.decode("ascii").split(":", 1)
+            if name.lower() == "content-length":
+                content_length = int(value.strip())
+        if content_length:
+            await reader.readexactly(content_length)
+        if path == "/api/v1/auth/login":
+            status = "200 OK"
+            payload: dict[str, Any] = {"access_token": "synthetic-token"}
+        elif path == "/api/v1/users/me/consents/OCR":
+            status = "200 OK"
+            data: dict[str, Any] = {
+                "purpose": "OCR",
+                "status": "GRANTED",
+                "effective": True,
+                "reason": None,
+                "current_policy_version": "ocr-local-synthetic-demo-2026-09-14-v1",
+                "accepted_policy_version": "ocr-local-synthetic-demo-2026-09-14-v1",
+                "granted_at": "2026-09-01T00:00:00+09:00",
+                "withdrawn_at": None,
+            }
+            data[anomaly_key] = anomaly_value
+            payload = {"data": data}
+        else:
+            status = "500 Internal Server Error"
+            payload = {"code": "UNEXPECTED"}
+        body = json.dumps(payload).encode()
+        writer.write(
+            f"HTTP/1.1 {status}\r\n".encode()
+            + b"Content-Type: application/json\r\n"
+            + b"Cache-Control: no-store\r\n"
+            + f"X-Trace-Id: {'d' * 32}\r\n".encode()
+            + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+            + body
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    candidate = tmp_path / "candidate.png"
+    candidate.write_bytes(b"synthetic-png-candidate")
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    run_id = str(uuid4())
+    store = RunStateStore.create(tmp_path / "state", run_id, {"run_id": run_id, "mode": "local-live-full", "ids": {}})
+    try:
+        async with server:
+            async with NetworkOneCycleRunner(
+                base_url=f"http://127.0.0.1:{port}/api/v1",
+                state=store,
+                read_timeout_seconds=5,
+                ocr_consent_policy_version="ocr-local-synthetic-demo-2026-09-14-v1",
+            ) as runner:
+                with pytest.raises(HttpFlowError) as exc_info:
+                    await runner.run_preflight(
+                        email="synthetic@example.invalid",
+                        password="Password123!",
+                        candidate_image=candidate,
+                        expected_field_identities=[[0, "PRESCRIBED_DATE"]],
+                    )
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert exc_info.value.stage == "OCR_CONSENT"
+    assert paths == ["/api/v1/auth/login", "/api/v1/users/me/consents/OCR"]
+    assert store.read()["in_flight_stage"] is None
+
+
+@pytest.mark.asyncio
+async def test_network_runner_consent_missing_policy_version_fails_closed_without_upload(tmp_path: Path) -> None:
+    paths: list[str] = []
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        _, path, _ = (await reader.readline()).decode("ascii").split(" ", 2)
+        paths.append(path)
+        content_length = 0
+        while line := await reader.readline():
+            if line == b"\r\n":
+                break
+            name, value = line.decode("ascii").split(":", 1)
+            if name.lower() == "content-length":
+                content_length = int(value.strip())
+        if content_length:
+            await reader.readexactly(content_length)
+        if path == "/api/v1/auth/login":
+            status = "200 OK"
+            payload: dict[str, Any] = {"access_token": "synthetic-token"}
+        else:
+            status = "500 Internal Server Error"
+            payload = {"code": "UNEXPECTED"}
+        body = json.dumps(payload).encode()
+        writer.write(
+            f"HTTP/1.1 {status}\r\n".encode()
+            + b"Content-Type: application/json\r\n"
+            + b"Cache-Control: no-store\r\n"
+            + f"X-Trace-Id: {'e' * 32}\r\n".encode()
+            + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+            + body
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    candidate = tmp_path / "candidate.png"
+    candidate.write_bytes(b"synthetic-png-candidate")
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    run_id = str(uuid4())
+    store = RunStateStore.create(tmp_path / "state", run_id, {"run_id": run_id, "mode": "local-live-full", "ids": {}})
+    try:
+        async with server:
+            async with NetworkOneCycleRunner(
+                base_url=f"http://127.0.0.1:{port}/api/v1",
+                state=store,
+                read_timeout_seconds=5,
+                ocr_consent_policy_version=None,
+            ) as runner:
+                with pytest.raises(HttpFlowError) as exc_info:
+                    await runner.run_preflight(
+                        email="synthetic@example.invalid",
+                        password="Password123!",
+                        candidate_image=candidate,
+                        expected_field_identities=[[0, "PRESCRIBED_DATE"]],
+                    )
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert exc_info.value.stage == "OCR_CONSENT"
+    assert exc_info.value.evidence["api_code"] == "CONSENT_POLICY_VERSION_MISSING"
+    assert paths == ["/api/v1/auth/login"]
+    assert store.read()["in_flight_stage"] is None
 
 
 @pytest.mark.asyncio
@@ -1531,6 +2142,10 @@ async def test_db_verifiers_accept_optional_strength_from_real_scenarios(
     verified = await verify_one_cycle(factory, fixture=fixture, ids=ids, scenario=scenario)
 
     assert verified["input_check"] == "PASS"
+    assert verified["ocr_database"]["status"] == "PASS"
+    assert verified["ocr_database"]["llm_processing"] == "NOT_REQUESTED"
+    assert verified["ocr_database"]["model_version"] is None
+    assert verified["ocr_database"]["prompt_version"] is None
     assert verified["guide"]["prompt_version"] == "guide-prompt-v3"
     assert verified["chat"]["prompt_version"] == "chat-prompt-v4"
     assert verified["guide_content"] == "private guide"
@@ -1624,3 +2239,74 @@ async def test_deterministic_one_cycle_uses_asgi_routes_with_only_provider_bound
     assert result["transport"] == "asgi"
     assert result["input_check"] == "PASS"
     await cleanup_synthetic_fixture(factory, user_id=fixture.user_id)
+
+
+def test_ocr_database_evidence_requires_not_requested_for_disabled_llm() -> None:
+    class DummyOcrJob:
+        def __init__(
+            self,
+            llm_processing: str | None,
+            model_version: str | None,
+            prompt_version: str | None,
+        ) -> None:
+            self.llm_processing = llm_processing
+            self.model_version = model_version
+            self.prompt_version = prompt_version
+
+    # Case 1: NOT_REQUESTED + model/prompt null -> PASS
+    job_pass = DummyOcrJob("NOT_REQUESTED", None, None)
+    evidence = smoke_module._ocr_database_evidence(job_pass, ocr_structuring_expected=False)
+    assert evidence["status"] == "PASS"
+    assert evidence["llm_processing"] == "NOT_REQUESTED"
+    assert evidence["model_version"] is None
+    assert evidence["prompt_version"] is None
+
+    # Case 2: SKIPPED_MINIMIZATION + model/prompt null -> FAIL
+    job_skipped = DummyOcrJob("SKIPPED_MINIMIZATION", None, None)
+    with pytest.raises(HttpFlowError) as exc_skipped:
+        smoke_module._ocr_database_evidence(job_skipped, ocr_structuring_expected=False)
+    assert exc_skipped.value.stage == "DB_VERIFICATION"
+
+    # Case 3: NOT_REQUESTED인데 model 또는 prompt 존재 -> FAIL
+    job_with_model = DummyOcrJob("NOT_REQUESTED", "gpt-4o", None)
+    with pytest.raises(HttpFlowError) as exc_model:
+        smoke_module._ocr_database_evidence(job_with_model, ocr_structuring_expected=False)
+    assert exc_model.value.stage == "DB_VERIFICATION"
+
+    job_with_prompt = DummyOcrJob("NOT_REQUESTED", None, "ocr-structure-v1")
+    with pytest.raises(HttpFlowError) as exc_prompt:
+        smoke_module._ocr_database_evidence(job_with_prompt, ocr_structuring_expected=False)
+    assert exc_prompt.value.stage == "DB_VERIFICATION"
+
+
+def test_ocr_database_evidence_requires_applied_for_enabled_llm() -> None:
+    class DummyOcrJob:
+        def __init__(
+            self,
+            llm_processing: str | None,
+            model_version: str | None,
+            prompt_version: str | None,
+        ) -> None:
+            self.llm_processing = llm_processing
+            self.model_version = model_version
+            self.prompt_version = prompt_version
+
+    # Case 1: APPLIED + model/prompt 존재 -> PASS
+    job_pass = DummyOcrJob("APPLIED", "gpt-4o-mini", "ocr-structure-prompt-v2")
+    evidence = smoke_module._ocr_database_evidence(job_pass, ocr_structuring_expected=True)
+    assert evidence["status"] == "PASS"
+    assert evidence["llm_processing"] == "APPLIED"
+    assert evidence["model_version"] == "gpt-4o-mini"
+    assert evidence["prompt_version"] == "ocr-structure-prompt-v2"
+
+    # Case 2: SKIPPED_MINIMIZATION + model/prompt 존재 -> FAIL
+    job_skipped = DummyOcrJob("SKIPPED_MINIMIZATION", "gpt-4o-mini", "ocr-structure-prompt-v2")
+    with pytest.raises(HttpFlowError) as exc_skipped:
+        smoke_module._ocr_database_evidence(job_skipped, ocr_structuring_expected=True)
+    assert exc_skipped.value.stage == "DB_VERIFICATION"
+
+    # Case 3: null + model/prompt 존재 -> FAIL
+    job_null = DummyOcrJob(None, "gpt-4o-mini", "ocr-structure-prompt-v2")
+    with pytest.raises(HttpFlowError) as exc_null:
+        smoke_module._ocr_database_evidence(job_null, ocr_structuring_expected=True)
+    assert exc_null.value.stage == "DB_VERIFICATION"
