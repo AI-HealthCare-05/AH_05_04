@@ -6,6 +6,7 @@ import { getGuide, getGuideForPrescription } from '../src/api/guides'
 import { getLatestPrescription } from '../src/api/prescriptions'
 import { getCurrentUser } from '../src/api/users'
 import { listNotifications } from '../src/api/notifications'
+import { getUnconfirmedCheckins } from '../src/api/medicationCheckinBacklog'
 import AppRouter from '../src/routes/AppRouter'
 
 vi.mock('../src/api/users', () => ({
@@ -26,6 +27,11 @@ vi.mock('../src/api/prescriptions', async (importOriginal) => ({
 vi.mock('../src/api/notifications', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/api/notifications')>()),
   listNotifications: vi.fn(),
+}))
+
+vi.mock('../src/api/medicationCheckinBacklog', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/api/medicationCheckinBacklog')>()),
+  getUnconfirmedCheckins: vi.fn(),
 }))
 
 const CURRENT_USER = {
@@ -141,8 +147,11 @@ describe('인증 상태별 AppRouter 이동', () => {
     '/prescriptions/review',
     '/chat',
     '/schedule',
+    '/schedule/unconfirmed',
     '/schedule/occurrences/11111111-1111-4111-8111-111111111111?date=2026-09-14',
     '/notifications',
+    '/report',
+    '/report/clinic',
   ])('비로그인 사용자가 회원 전용 화면 %s에 직접 접속하면 로그인 화면으로 이동한다', (path) => {
     renderRoute(path)
 
@@ -223,6 +232,20 @@ describe('인증 상태별 AppRouter 이동', () => {
 
     expect(await screen.findByRole('heading', { name: '알림 목록' })).toBeTruthy()
     expect(await screen.findByText('새로운 알림이 없어요')).toBeTruthy()
+  })
+
+  it('로그인 사용자에게 Schedule 하위 미확인 보완 route를 허용한다', async () => {
+    vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
+    vi.mocked(getUnconfirmedCheckins).mockResolvedValue({
+      data: { items: [], next_cursor: null },
+    })
+    localStorage.setItem('access_token', 'fixture-access-token')
+    renderRoute('/schedule/unconfirmed')
+
+    expect(
+      await screen.findByRole('heading', { name: '확인하지 못한 복약 기록이 있어요' }),
+    ).toBeTruthy()
+    expect(await screen.findByText('확인할 미확인 기록이 없어요')).toBeTruthy()
   })
 
   it('로그인 사용자가 로그인 화면에 접속하면 홈 화면으로 이동한다', async () => {

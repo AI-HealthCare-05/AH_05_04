@@ -55,6 +55,28 @@
   letter-spacing: -.045em;
 }
 
+.schedule-page__unconfirmed-entry {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.schedule-page__unconfirmed-entry strong,
+.schedule-page__unconfirmed-entry p {
+  margin: 0;
+}
+
+.schedule-page__unconfirmed-entry strong {
+  font-size: 17px;
+}
+
+.schedule-page__unconfirmed-entry p {
+  margin-top: 5px;
+  color: var(--ds-text-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 .schedule-state-card {
   display: grid;
   gap: 12px;

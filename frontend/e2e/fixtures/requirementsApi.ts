@@ -43,6 +43,7 @@ type Field = {
 }
 
 export type RequirementsApiState = {
+  signupRequests: Array<Record<string, unknown>>
   jobPollCount: number
   uploadCount: number
   profilePatchCount: number
@@ -102,6 +103,7 @@ export async function installRequirementsApi(
   options: MockApiOptions = {},
 ): Promise<RequirementsApiState> {
   const state: RequirementsApiState = {
+    signupRequests: [],
     jobPollCount: 0,
     uploadCount: 0,
     profilePatchCount: 0,
@@ -203,10 +205,19 @@ export async function installRequirementsApi(
     const key = `${method} ${path}`
 
     if (key === 'POST /api/v1/auth/signup') {
+      state.signupRequests.push(request.postDataJSON() as Record<string, unknown>)
       return json(route, { detail: '회원가입이 완료되었습니다.' }, 201)
     }
     if (key === 'POST /api/v1/auth/login') {
       return json(route, { access_token: syntheticToken })
+    }
+    if (key === 'GET /api/v1/medication-checkins/unconfirmed') {
+      return json(route, {
+        data: {
+          items: [],
+          next_cursor: null,
+        },
+      })
     }
     if (key === 'POST /api/v1/auth/logout') {
       state.logoutCount += 1
@@ -221,6 +232,20 @@ export async function installRequirementsApi(
         birthday: null,
         gender: null,
         created_at: now,
+      })
+    }
+    if (key === 'GET /api/v1/users/me/consents') {
+      return json(route, {
+        data: ['OCR', 'GUIDE', 'CHAT', 'NOTIFICATION'].map((purpose) => ({
+          purpose,
+          status: null,
+          policy_version: null,
+          current_policy_version: `${purpose}-synthetic-v1`,
+          is_granted: false,
+          granted_at: null,
+          withdrawn_at: null,
+          updated_at: null,
+        })),
       })
     }
     if (key === 'GET /api/v1/users/me/consents/OCR') {

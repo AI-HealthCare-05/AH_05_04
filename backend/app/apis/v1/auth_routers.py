@@ -209,10 +209,12 @@ async def request_email_verification(
 ) -> Response:
     # #431: 별도 이메일 중복 확인 API를 만들지 않는다. 이미 가입된 이메일이거나
     # 쿨다운 중이어도 같은 성공 응답을 반환하고, 실제 중복 방어는 signup 409가 담당한다.
-    verification_token = await auth_service.request_email_verification(request.email)
+    result = await auth_service.request_email_verification(request.email)
+    if result.delivery_task is not None:
+        auth_service.schedule_email_verification_delivery(result.delivery_task)
     content = EmailVerificationRequestResponse(
         detail="이메일 인증 안내를 확인해 주세요.",
-        verification_token=verification_token,
+        verification_token=result.verification_token,
     )
     return Response(content=content.model_dump(), status_code=status.HTTP_200_OK)
 
@@ -248,8 +250,12 @@ async def request_password_reset(
     # PD-206 결정 3: 계정 존재 여부를 노출하지 않기 위해 계정이 없거나 쿨다운 중이어도
     # 항상 같은 성공 응답을 반환한다. reset_token은 EmailSender adapter 호출 후
     # LOCAL 환경에서만 채워진다(그 외 환경은 계정 존재 여부가 새지 않도록 항상 None).
-    reset_token = await auth_service.request_password_reset(request.email)
-    content = PasswordResetRequestResponse(detail="비밀번호 재설정 안내를 확인해 주세요.", reset_token=reset_token)
+    result = await auth_service.request_password_reset(request.email)
+    if result.delivery_task is not None:
+        auth_service.schedule_password_reset_delivery(result.delivery_task)
+    content = PasswordResetRequestResponse(
+        detail="비밀번호 재설정 안내를 확인해 주세요.", reset_token=result.reset_token
+    )
     return Response(content=content.model_dump(), status_code=status.HTTP_200_OK)
 
 

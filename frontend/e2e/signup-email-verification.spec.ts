@@ -55,6 +55,7 @@ test('#507 390px keyboard verification, neutral failures, resend and signup conf
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390)
   }
   await page.screenshot({ path: 'test-results/requirements/signup-507-mobile-verified.png', fullPage: true })
+  await page.getByRole('checkbox', { name: '필수 약관에 동의합니다' }).check()
   await page.getByRole('button', { name: '가입 완료' }).click()
   await expect(page.getByRole('alert')).toHaveText('이미 사용중인 이메일입니다.')
   await expect(page.getByLabel('이메일', { exact: true })).toBeFocused()
