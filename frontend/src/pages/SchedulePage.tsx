@@ -41,6 +41,7 @@ import {
   type Medication,
   type PrescriptionResponse,
 } from '../api/prescriptions'
+import bellIcon from '../assets/icon-bell-notification.svg'
 import { Button, Card, MobileShell } from '../design-system/components'
 import { clearAuthenticatedSession } from '../features/auth/authSession'
 import '../design-system/prototype.css'
@@ -254,6 +255,18 @@ function NavigationShell({
       title="Dosey 도지"
       activeNavigation="일정"
       onBack={onBack}
+      headerAction={
+        !onBack ? (
+          <button
+            className="schedule-page__notification"
+            type="button"
+            onClick={() => navigate('/notifications')}
+            aria-label="알림"
+          >
+            <img src={bellIcon} alt="" />
+          </button>
+        ) : undefined
+      }
       onNavigate={(item) => {
         if (item === '홈') navigate('/')
         if (item === '일정') navigate('/schedule')
@@ -457,18 +470,15 @@ function ScheduleEditor({
     <Card className="schedule-editor">
       <div className="schedule-editor__heading">
         <div>
-          <span>{medicationDescription(medication)}</span>
-          <h3>복용할 날짜와 시간을 확인해 주세요</h3>
+          <h2>{medication.medication_name}</h2>
+          <p>{frequencyPerDay ? `하루 ${frequencyPerDay}회 복용` : medicationDescription(medication)}</p>
         </div>
-        <button type="button" onClick={onClose} aria-label="일정 입력 닫기">×</button>
       </div>
-      <p className="schedule-editor__notice">
-        Dosey는 복용 시간을 추정하거나 추천하지 않아요. 정확한 날짜와 시간을 직접 확인해 주세요.
-      </p>
       <form onSubmit={handleSubmit}>
         <label>
-          <span>복용 시작일</span>
+          <span>시작일</span>
           <input
+            aria-label="복용 시작일"
             type="date"
             value={startDate}
             placeholder={selectedDate}
@@ -512,7 +522,7 @@ function ScheduleEditor({
           </label>
         )}
         <div className="schedule-editor__times">
-          <span>복용 시간</span>
+          <span>복용 시간{frequencyPerDay ? ` · ${frequencyPerDay}개 필요` : ''}</span>
           {times.map((time, index) => (
             <div className="schedule-editor__time-row" key={index}>
               <label>
@@ -610,6 +620,17 @@ function occurrenceStateLabel(occurrence: MedicationOccurrenceData): string {
   if (occurrence.checkin?.status === 'NOT_TAKEN') return '복용하지 않음'
   if (occurrence.checkin?.status === 'UNCONFIRMED') return '확인 필요'
   return '복용 예정'
+}
+
+function occurrencePeriodLabel(value: string): string {
+  const hour = Number(new Intl.DateTimeFormat('en-US', {
+    hour: '2-digit',
+    hour12: false,
+    timeZone: KST_TIME_ZONE,
+  }).format(new Date(value)))
+  if (hour < 11) return '아침'
+  if (hour < 17) return '점심'
+  return '저녁'
 }
 
 export function SchedulePage({
@@ -733,19 +754,70 @@ export function SchedulePage({
     navigate('/login', { replace: true })
   }
 
+  if (editingMedicationId) {
+    const item = day?.schedule_items.find(
+      (candidate) => candidate.prescription_version_medication_id === editingMedicationId,
+    )
+    const medication = scheduleMedications[editingMedicationId]
+
+    return (
+      <div className="mvp-page schedule-page schedule-page--editor">
+        <NavigationShell onBack={() => setEditingMedicationId(null)}>
+          <main className="app-scroll schedule-page__content schedule-page__editor-content">
+            {isLoading ? (
+              <Card className="schedule-state-card" aria-live="polite">
+                <div role="status">일정을 불러오는 중입니다.</div>
+              </Card>
+            ) : item && medication ? (
+              <>
+              <header className="schedule-page__editor-intro">
+                <p>복약 일정 설정</p>
+                <h1>복용할 날짜와 시간을<br />확인해 주세요</h1>
+                <span>처방 내용을 기준으로 약별 복용 날짜와 시간을 직접 확인해요.</span>
+              </header>
+              <p className="schedule-editor__notice">
+                <span aria-hidden="true">ⓘ</span>
+                <strong>Dosey는 복용 시간을 추정하거나 추천하지 않아요.<br />정확한 시간을 직접 확인해 주세요.</strong>
+              </p>
+              <ScheduleEditor
+                item={item}
+                medication={medication}
+                selectedDate={selectedDate}
+                services={services}
+                onSaved={reload}
+                onConflict={reload}
+                onClose={() => setEditingMedicationId(null)}
+              />
+              </>
+            ) : (
+              <StatusCard
+                title="일정 설정 정보를 확인할 수 없어요"
+                body="최신 처방과 일정을 다시 확인해 주세요."
+                isAlert
+                action="일정으로 돌아가기"
+                onAction={() => setEditingMedicationId(null)}
+              />
+            )}
+          </main>
+        </NavigationShell>
+      </div>
+    )
+  }
+
   return (
     <div className="mvp-page schedule-page">
       <NavigationShell>
         <main className="app-scroll schedule-page__content">
           <header className="schedule-page__intro">
-            <label htmlFor="schedule-date">복약 날짜</label>
+            <label htmlFor="schedule-date" className="schedule-page__date-label">
+              <span>{formatLocalDate(selectedDate)}</span>
+            </label>
             <input
               id="schedule-date"
               type="date"
               value={selectedDate}
               onChange={(event) => setSearchParams({ date: event.target.value })}
             />
-            <p>{formatLocalDate(selectedDate)}</p>
             <h1>복약 일정</h1>
           </header>
 
@@ -784,17 +856,23 @@ export function SchedulePage({
             />
           )}
 
+          {!isLoading && day && state && isScheduleIdentityUnavailable && (
+            <Card className="schedule-page__empty schedule-page__identity-alert">
+              <p role="alert">약 정보를 확인할 수 없어 일정을 설정할 수 없습니다. 처방 정보를 다시 확인해 주세요.</p>
+            </Card>
+          )}
+
           {!isLoading && day && day.schedule_status === 'READY' && (
             <p className="schedule-page__saved" role="status">
-              일정이 저장되어 있어요. 선택한 날짜의 복약 시간을 확인해 주세요.
+              <span aria-hidden="true">✓</span>
+              <strong>일정이 저장됐어요.<br />복약 시간을 확인해 주세요.</strong>
             </p>
           )}
 
-          {!isLoading && day && day.schedule_status !== 'NO_ACTIVE_PRESCRIPTION' && (
+          {!isLoading && day && (day.schedule_status === 'READY' || occurrences.length > 0) && (
             <section className="schedule-page__occurrences" aria-labelledby="occurrence-list-title">
               <div className="schedule-page__section-heading">
-                <h2 id="occurrence-list-title">선택한 날짜의 복약</h2>
-                <span>{occurrences.length}건</span>
+                <h2 id="occurrence-list-title">오늘의 복약</h2>
               </div>
               {occurrences.length === 0 ? (
                 <Card className="schedule-page__empty">
@@ -804,85 +882,53 @@ export function SchedulePage({
                 const medication = medications[occurrence.occurrence_id]
                 const route = `/schedule/occurrences/${occurrence.occurrence_id}?date=${encodeURIComponent(occurrence.scheduled_local_date)}`
                 return (
-                  <button
+                  <article
                     className="schedule-occurrence-card"
-                    type="button"
                     key={occurrence.occurrence_id}
-                    onClick={() => navigate(route)}
-                    aria-label={`${formatKstTime(occurrence.scheduled_at)} ${
-                      medication ? medication.medication_name : '약 정보 확인 필요'
-                    } ${occurrenceStateLabel(occurrence)}`}
                   >
-                    <span className="schedule-occurrence-card__period">
+                    <span className="schedule-occurrence-card__period-label">
+                      {occurrencePeriodLabel(occurrence.scheduled_at)}
+                    </span>
+                    <strong className="schedule-occurrence-card__time">
                       {formatKstTime(occurrence.scheduled_at)}
+                    </strong>
+                    <span className={`schedule-occurrence-card__state schedule-occurrence-card__state--${occurrence.checkin?.status?.toLowerCase() ?? occurrence.status.toLowerCase()}`}>
+                      {occurrenceStateLabel(occurrence)}
                     </span>
-                    <strong>{medication ? medicationDescription(medication) : '약 정보를 확인할 수 없어요'}</strong>
-                    <span className="schedule-occurrence-card__state">{occurrenceStateLabel(occurrence)}</span>
-                    <span className="schedule-occurrence-card__chevron" aria-hidden="true">›</span>
-                  </button>
+                    <span className="schedule-occurrence-card__medication">
+                      {medication ? medicationDescription(medication) : '약 정보를 확인할 수 없어요'}
+                    </span>
+                    {occurrence.status !== 'CANCELLED' && (
+                      <Button
+                        fullWidth
+                        className="schedule-occurrence-card__action"
+                        onClick={() => navigate(route)}
+                      >
+                        {occurrence.checkin ? '복약 기록 수정하기' : '복용 여부 기록하기'}
+                      </Button>
+                    )}
+                  </article>
                 )
               })}
             </section>
           )}
 
-          {!isLoading && day && day.schedule_items.length > 0 && (
-            <section className="schedule-page__settings" aria-labelledby="schedule-settings-title">
-              <div className="schedule-page__section-heading">
-                <h2 id="schedule-settings-title">복약 일정 설정</h2>
-              </div>
-              {isScheduleIdentityUnavailable ? (
-                <Card className="schedule-page__empty">
-                  <p role="alert">약 정보를 확인할 수 없어 일정을 설정할 수 없습니다. 처방 정보를 다시 확인해 주세요.</p>
-                </Card>
-              ) : day.schedule_items.map((item) => {
-                const medication = scheduleMedications[
-                  item.prescription_version_medication_id
-                ]
-                if (!medication) return null
-                return editingMedicationId === item.prescription_version_medication_id ? (
-                  <ScheduleEditor
-                    key={item.prescription_version_medication_id}
-                    item={item}
-                    medication={medication}
-                    selectedDate={selectedDate}
-                    services={services}
-                    onSaved={reload}
-                    onConflict={reload}
-                    onClose={() => setEditingMedicationId(null)}
-                  />
-                ) : (
-                  <button
-                    className="schedule-setting-row"
-                    type="button"
-                    key={item.prescription_version_medication_id}
-                    onClick={() => setEditingMedicationId(item.prescription_version_medication_id)}
-                  >
-                    <span>
-                      <strong>{medicationDescription(medication)}</strong>
-                      <small>{
-                        item.schedule_item_status === 'READY'
-                          ? '설정됨'
-                          : item.schedule_item_status === 'INACTIVE'
-                            ? '사용 중지됨'
-                            : '설정 필요'
-                      }</small>
-                    </span>
-                    <span>{item.schedule_item_status === 'READY' ? '설정·수정' : '설정'} ›</span>
-                  </button>
-                )
-              })}
-            </section>
+          {!isLoading && day && day.schedule_items.length > 0 && day.schedule_status === 'READY' && (
+            isScheduleIdentityUnavailable ? (
+              <Card className="schedule-page__empty">
+                <p role="alert">약 정보를 확인할 수 없어 일정을 설정할 수 없습니다. 처방 정보를 다시 확인해 주세요.</p>
+              </Card>
+            ) : (
+              <button
+                className="schedule-page__settings-action"
+                type="button"
+                onClick={openRelevantEditor}
+              >
+                <span>복약 일정 설정·수정</span>
+                <span aria-hidden="true">›</span>
+              </button>
+            )
           )}
-
-          <Card className="schedule-page__unconfirmed-entry">
-            <div>
-              <strong>확인하지 못한 복약 기록</strong>
-              <p>지난 미확인 기록은 따로 모아 직접 보완할 수 있어요.</p>
-            </div>
-            <Button fullWidth variant="secondary" onClick={() => navigate('/schedule/unconfirmed')}>
-              미확인 기록 확인하기
-            </Button>
-          </Card>
         </main>
       </NavigationShell>
     </div>
@@ -1058,7 +1104,7 @@ export function ScheduleOccurrencePage({
   }
 
   return (
-    <div className="mvp-page schedule-page">
+    <div className="mvp-page schedule-page schedule-page--record">
       <NavigationShell onBack={() => navigate(backRoute)}>
         <main className="app-scroll schedule-page__content schedule-record">
           <header className="schedule-page__intro">

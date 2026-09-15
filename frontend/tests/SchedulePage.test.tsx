@@ -212,10 +212,40 @@ describe('production 복약 일정', () => {
     expect(services.getMedicationDay).toHaveBeenCalledWith('2026-09-14', expect.any(AbortSignal))
     expect(services.getOccurrenceMedication).toHaveBeenCalledWith(occurrenceId, expect.any(AbortSignal))
 
-    fireEvent.click(screen.getByRole('button', { name: /09:00 당시 처방의 혈압약/ }))
+    fireEvent.click(screen.getByRole('button', { name: '복용 여부 기록하기' }))
     expect(screen.getByTestId('location').textContent).toBe(
       `/schedule/occurrences/${occurrenceId}?date=2026-09-14`,
     )
+  })
+
+  it('READY 기본 화면을 오늘의 복약 Source 위계로 표시한다', async () => {
+    renderSchedule(makeServices())
+
+    expect(await screen.findByRole('heading', { name: '복약 일정' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '오늘의 복약' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '복용 여부 기록하기' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '복약 일정 설정·수정' })).toBeTruthy()
+    expect(screen.queryByText('선택한 날짜의 복약')).toBeNull()
+    expect(screen.queryByText('확인하지 못한 복약 기록')).toBeNull()
+  })
+
+  it('READY인 선택 날짜에 occurrence가 없으면 오늘의 복약 빈 상태를 유지한다', async () => {
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({ occurrences: [] })),
+    })
+    renderSchedule(services)
+
+    expect(await screen.findByRole('heading', { name: '오늘의 복약' })).toBeTruthy()
+    expect(screen.getByText('이 날짜에 표시할 복약 일정이 없어요.')).toBeTruthy()
+  })
+
+  it('일정 설정 진입 시 고정 시각 설정 Source만 표시한다', async () => {
+    renderSchedule(makeServices())
+    fireEvent.click(await screen.findByRole('button', { name: '복약 일정 설정·수정' }))
+
+    expect(screen.getByText('복약 일정 설정')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '복용할 날짜와 시간을 확인해 주세요' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '오늘의 복약' })).toBeNull()
   })
 
   it.each([
@@ -235,14 +265,37 @@ describe('production 복약 일정', () => {
     expect(await screen.findByRole('heading', { name: title })).toBeTruthy()
   })
 
+  it.each(['PARTIAL', 'INACTIVE'] as const)(
+    '%s 상태에서도 Backend가 보존한 occurrence와 Check-in CTA를 숨기지 않는다',
+    async (status) => {
+      const services = makeServices({
+        getMedicationDay: vi.fn().mockResolvedValue(makeDay({ schedule_status: status })),
+      })
+      renderSchedule(services)
+
+      expect(await screen.findByRole('heading', { name: '오늘의 복약' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: '복용 여부 기록하기' })).toBeTruthy()
+    },
+  )
+
   it('신규 처방에 occurrence가 없어도 현재 처방의 ID로 2개 약 정보와 저장 대상을 정확히 매칭한다', async () => {
     const items = [setupItem(), setupItem(secondMedicationId)]
+    const firstSavedItems = [
+      { ...items[0], schedule_item_status: 'READY' as const },
+      items[1],
+    ]
     const services = makeServices({
-      getMedicationDay: vi.fn().mockResolvedValue(makeDay({
-        schedule_status: 'SETUP_REQUIRED',
-        schedule_items: items,
-        occurrences: [],
-      })),
+      getMedicationDay: vi.fn()
+        .mockResolvedValueOnce(makeDay({
+          schedule_status: 'SETUP_REQUIRED',
+          schedule_items: items,
+          occurrences: [],
+        }))
+        .mockResolvedValue(makeDay({
+          schedule_status: 'PARTIAL',
+          schedule_items: firstSavedItems,
+          occurrences: [],
+        })),
       getLatestPrescription: vi.fn().mockResolvedValue(makePrescription({
         medications: [
           {
@@ -262,12 +315,11 @@ describe('production 복약 일정', () => {
     })
     renderSchedule(services)
 
-    expect(await screen.findByText('현재 처방의 혈압약 · 5mg · 1정')).toBeTruthy()
-    expect(screen.getByText('두 번째 혈당약 · 500mg · 2정')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: '일정 설정하기' }))
+    expect(screen.getByRole('heading', { name: '현재 처방의 혈압약' })).toBeTruthy()
     expect(services.getOccurrenceMedication).not.toHaveBeenCalled()
     expect(screen.queryByText(/처방약 \d/)).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: /현재 처방의 혈압약.*설정 필요/ }))
     fillScheduleEditor()
     fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
     await waitFor(() => expect(services.putMedicationSchedule).toHaveBeenCalledTimes(1))
@@ -278,7 +330,8 @@ describe('production 복약 일정', () => {
       'schedule:test-key',
     )
 
-    fireEvent.click(await screen.findByRole('button', { name: /두 번째 혈당약.*설정 필요/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '이어서 설정하기' }))
+    expect(screen.getByRole('heading', { name: '두 번째 혈당약' })).toBeTruthy()
     fillScheduleEditor('2026-09-15', '2026-09-21', '20:30')
     fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
     await waitFor(() => expect(services.putMedicationSchedule).toHaveBeenCalledTimes(2))
@@ -315,9 +368,8 @@ describe('production 복약 일정', () => {
     })
     renderSchedule(services)
 
-    expect(await screen.findByText('미설정 위장약 · 20mg · 1정')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '이어서 설정하기' }))
-    expect(screen.getByText('미설정 위장약 · 20mg · 1정')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: '이어서 설정하기' }))
+    expect(screen.getByRole('heading', { name: '미설정 위장약' })).toBeTruthy()
   })
 
   it.each([
@@ -544,7 +596,7 @@ describe('production 복약 일정', () => {
     renderSchedule(services)
     await screen.findByText('당시 처방의 혈압약 · 5mg · 1정')
 
-    fireEvent.click(screen.getByRole('button', { name: /현재 처방의 혈압약.*설정됨/ }))
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 설정·수정' }))
     fireEvent.click(screen.getByRole('button', { name: '이 일정 사용 중지' }))
     expect(services.cancelMedicationSchedule).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '사용 중지 확인' }))
@@ -569,9 +621,7 @@ describe('production 복약 일정', () => {
       createScheduleIdempotencyKey: createKey,
     })
     renderSchedule(services)
-    await screen.findByText('현재 처방의 혈압약 · 5mg · 1정')
-
-    fireEvent.click(screen.getByRole('button', { name: /현재 처방의 혈압약.*설정됨/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '복약 일정 설정·수정' }))
     fireEvent.click(screen.getByRole('button', { name: '이 일정 사용 중지' }))
     fireEvent.click(screen.getByRole('button', { name: '사용 중지 확인' }))
     expect(await screen.findByText(/일정을 중지하지 못했어요/)).toBeTruthy()
@@ -594,9 +644,7 @@ describe('production 복약 일정', () => {
       createScheduleIdempotencyKey: createKey,
     })
     renderSchedule(services)
-    await screen.findByText('현재 처방의 혈압약 · 5mg · 1정')
-
-    fireEvent.click(screen.getByRole('button', { name: /현재 처방의 혈압약.*설정됨/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '복약 일정 설정·수정' }))
     fillScheduleEditor()
     fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
     await screen.findByText(/연결을 확인한 뒤 다시 시도/)
@@ -623,9 +671,7 @@ describe('production 복약 일정', () => {
       createScheduleIdempotencyKey: createKey,
     })
     renderSchedule(services)
-    await screen.findByText('현재 처방의 혈압약 · 5mg · 1정')
-
-    fireEvent.click(screen.getByRole('button', { name: /현재 처방의 혈압약.*설정됨/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '복약 일정 설정·수정' }))
     fireEvent.click(screen.getByRole('button', { name: '이 일정 사용 중지' }))
     fireEvent.click(screen.getByRole('button', { name: '사용 중지 확인' }))
     await screen.findByText(/일정을 중지하지 못했어요/)
@@ -657,9 +703,7 @@ describe('production 복약 일정', () => {
       createScheduleIdempotencyKey: createKey,
     })
     renderSchedule(services)
-    await screen.findByText('현재 처방의 혈압약 · 5mg · 1정')
-
-    fireEvent.click(screen.getByRole('button', { name: /현재 처방의 혈압약.*설정됨/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '복약 일정 설정·수정' }))
     fireEvent.click(screen.getByRole('button', { name: '이 일정 사용 중지' }))
     fireEvent.click(screen.getByRole('button', { name: '사용 중지 확인' }))
     await waitFor(() => expect(getDay).toHaveBeenCalledTimes(2))

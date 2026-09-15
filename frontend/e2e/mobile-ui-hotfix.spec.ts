@@ -83,6 +83,154 @@ test('320/390/412px에서 전체 대상 화면은 가로 overflow와 Bottom Navi
   }
 })
 
+test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한다', async ({ page }) => {
+  const occurrenceIds = [
+    '77777777-7777-4777-8777-777777777771',
+    '77777777-7777-4777-8777-777777777772',
+    '77777777-7777-4777-8777-777777777773',
+  ]
+  let scheduleStatus: 'READY' | 'PARTIAL' | 'SETUP_REQUIRED' | 'INACTIVE' | 'NO_ACTIVE_PRESCRIPTION' = 'READY'
+  const stateCopy = {
+    PARTIAL: '일부 약의 시간이 비어 있어요',
+    SETUP_REQUIRED: '일정 설정이 필요해요',
+    INACTIVE: '현재 사용 중인 일정이 없어요',
+    NO_ACTIVE_PRESCRIPTION: '활성 처방이 필요해요',
+  } as const
+
+  await page.route('**/api/v1/**', async (route) => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    const json = (body: unknown) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(body),
+    })
+
+    if (request.method() === 'GET' && path === '/api/v1/users/me') {
+      return json({
+        id: ids.user,
+        name: '합성 사용자',
+        email: 'synthetic@example.com',
+        phone_number: null,
+        birthday: null,
+        gender: null,
+        created_at: '2026-09-16T00:00:00Z',
+      })
+    }
+    if (request.method() === 'GET' && path === '/api/v1/medication-occurrences') {
+      const scheduleItemStatus = scheduleStatus === 'INACTIVE'
+        ? 'INACTIVE'
+        : scheduleStatus === 'READY'
+          ? 'READY'
+          : 'SETUP_REQUIRED'
+      return json({
+        data: {
+          schedule_status: scheduleStatus,
+          schedule_items: scheduleStatus === 'NO_ACTIVE_PRESCRIPTION' ? [] : [{
+            prescription_version_medication_id: ids.prescriptionVersionMedication,
+            schedule_item_status: scheduleItemStatus,
+            schedule_id: scheduleStatus === 'SETUP_REQUIRED' ? null : '88888888-8888-4888-8888-888888888888',
+            revision: scheduleStatus === 'SETUP_REQUIRED' ? null : 1,
+            setup_reason: scheduleStatus === 'READY' ? null : 'USER_CONFIRMATION_REQUIRED',
+          }],
+          occurrences: ['READY', 'PARTIAL', 'INACTIVE'].includes(scheduleStatus)
+            ? occurrenceIds.map((occurrenceId, index) => ({
+                occurrence_id: occurrenceId,
+                prescription_version_id: ids.prescriptionVersion,
+                prescription_version_medication_id: ids.prescriptionVersionMedication,
+                scheduled_local_date: '2026-09-16',
+                scheduled_at: [
+                  '2026-09-15T23:00:00Z',
+                  '2026-09-16T04:00:00Z',
+                  '2026-09-16T11:00:00Z',
+                ][index],
+                confirmation_deadline_at: '2026-09-16T18:00:00Z',
+                status: 'PENDING',
+                checkin: null,
+              }))
+            : [],
+        },
+      })
+    }
+    if (request.method() === 'GET' && path === '/api/v1/prescriptions/latest') {
+      return json({
+        data: {
+          prescription_id: ids.prescription,
+          prescription_version_id: ids.prescriptionVersion,
+          revision: 1,
+          current: true,
+          document_id: ids.document,
+          prescribed_date: '2026-09-16',
+          confirmed_at: '2026-09-16T00:00:00Z',
+          medications: [{
+            prescription_version_medication_id: ids.prescriptionVersionMedication,
+            medication_name: '합성 혈압약',
+            strength_text: '5mg',
+            dose_value: 1,
+            dose_unit: '정',
+            frequency_per_day: 3,
+            timing_text: null,
+            duration_days: 7,
+            display_order: 0,
+          }],
+        },
+      })
+    }
+    if (request.method() === 'GET' && path.endsWith('/medication')) {
+      const occurrenceId = path.split('/').at(-2)
+      return json({
+        data: {
+          occurrence_id: occurrenceId,
+          prescription_version_id: ids.prescriptionVersion,
+          prescription_version_medication_id: ids.prescriptionVersionMedication,
+          medication_name: '합성 혈압약',
+          strength_text: '5mg',
+          dose_value: 1,
+          dose_unit: '정',
+        },
+      })
+    }
+    await route.abort()
+  })
+
+  for (const width of mobileWidths) {
+    await page.setViewportSize({ width, height: 844 })
+    await page.goto('/schedule?date=2026-09-16')
+    await expect(page.getByRole('heading', { name: '오늘의 복약' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(3)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0)
+    const content = page.locator('.schedule-page .app-scroll')
+    expect(await content.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0)
+    await content.evaluate((element) => element.scrollTo(0, element.scrollHeight))
+    const settings = page.getByRole('button', { name: '복약 일정 설정·수정' })
+    const nav = page.getByRole('navigation', { name: '주요 메뉴' })
+    const settingsBox = await settings.boundingBox()
+    const navBox = await nav.boundingBox()
+    expect(settingsBox).not.toBeNull()
+    expect(navBox).not.toBeNull()
+    expect((navBox?.y ?? 0) - ((settingsBox?.y ?? 0) + (settingsBox?.height ?? 0))).toBeGreaterThanOrEqual(12)
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  for (const status of ['SETUP_REQUIRED', 'PARTIAL', 'INACTIVE', 'NO_ACTIVE_PRESCRIPTION'] as const) {
+    scheduleStatus = status
+    await page.goto('/schedule?date=2026-09-16')
+    await expect(page.getByRole('heading', { name: stateCopy[status] })).toBeVisible()
+    if (status === 'PARTIAL' || status === 'INACTIVE') {
+      await expect(page.getByRole('heading', { name: '오늘의 복약' })).toBeVisible()
+      await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(3)
+    } else {
+      await expect(page.getByRole('heading', { name: '오늘의 복약' })).toHaveCount(0)
+    }
+  }
+
+  scheduleStatus = 'SETUP_REQUIRED'
+  await page.goto('/schedule?date=2026-09-16')
+  await page.getByRole('button', { name: '일정 설정하기' }).click()
+  await expect(page.getByRole('heading', { name: '복용할 날짜와 시간을 확인해 주세요' })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0)
+})
+
 test('320/390/412px에서 Home과 Chat의 Bottom Navigation 안전 영역과 가용 공간을 유지한다', async ({ page }) => {
   await installRequirementsApi(page, {
     existingPrescription: true,
