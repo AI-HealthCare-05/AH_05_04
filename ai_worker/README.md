@@ -336,3 +336,31 @@ Local/real-stack Compose는 기존 env_file에서, 운영 Compose는 명시적 e
 새 동의·철회·전송 최소화·Frontend 안내는 이번 이관에 추가하지 않는다. 리뷰에서
 필요하면 별도 이슈로 진행한다. 기존 공통 공개 게이트와 실제 환자 데이터 금지는 유지한다.
 [범위 정정 기록](../docs/contracts/proposed/ocr-llm-worker-consent-453.md).
+
+### #577 Guide·Chat 내부 조립
+
+`build_worker_runtime(..., guide_chat_factories=...)`는 `GUIDE`/`CHAT`별
+`Callable[[AsyncSession], tuple[Handler, ResultStoreLike]]`를 선택적으로 받습니다.
+각 delivery에서 동일 session을 전달해 Handler와 저장소를 함께 생성합니다.
+OCR Provider가 없어도 Guide·Chat 주입은 가능하며, 기본 구성은 기존 OCR 경로를 유지합니다.
+OCR과 함께 등록하더라도 OCR 전용 시작 상태 전이는 OCR에만 적용합니다.
+Factory는 외부 호출·commit 없이 조립만 수행해야 합니다. Handler는 Worker의 `context`
+인자와 deadline을 수용하고, 저장소는 `save(message=..., result=...)`에서 현재 transaction에만
+저장합니다. 도메인 payload·권한·무결성 검사는 해당 Application Service/Repository 책임이며,
+Consumer의 결과 식별자·fencing·commit 후 ACK 경계를 재사용합니다.
+
+잘못된 Handler 종류 또는 Handler/저장소 누락은 실행 전에 차단합니다. 조립 예외는 delivery
+경계에서 격리하며 성공 결과나 ACK를 만들지 않습니다. 등록 자체가 없는 Job의 오류 처리는
+기존 Worker 실패 정책을 유지합니다.
+
+이 변경은 주입 가능한 내부 연결과 합성 대역 검증입니다. 실제 Guide·Chat Handler/payload는
+#180, DB adapter·currentness·STALE은 #174의 인계 후 연결합니다. 실제 구현체·공개 API·
+Guide/Chat 비동기 전환·Source 승인·Provider 호출을 추가하지 않습니다. DB schema,
+RLS, Trigger, Stored Procedure 변경은 없습니다. 단순 save 성공을 STALE 처리로 대체해서는
+안 됩니다. #577의 실제 adapter 통합 및 #180 전체 완료와 구분합니다.
+
+2026-09-15 현우님 범위 확인에 따라 이번 상태는 **#577 1차 합성 조립 검증 완료**로
+기록합니다. 확정된 Guide·Chat 전용 결과 클래스나 별도 Handler 구현 브랜치는 아직
+전달되지 않았으며, 전용 payload 타입과 저장 의미를 추정하지 않습니다. 정상 결과와
+승인 fallback의 구분은 #180 인터페이스, 실제 저장 Adapter는 #174 인계 이후 연결합니다.
+[검증 결과와 후속 경계](../docs/testing/worker-guide-chat-577.md).
