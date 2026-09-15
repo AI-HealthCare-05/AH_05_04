@@ -1,7 +1,7 @@
 """Create retrieval_run, retrieval_signal, and retrieval_hit tables (#178).
 
 Revision ID: 178c2d3e4f50
-Revises: 166f50617283
+Revises: 168a1b2c3d4e
 Create Date: 2026-09-15 12:00:00.000000
 """
 
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "178c2d3e4f50"
-down_revision = "166f50617283"
+down_revision = "168a1b2c3d4e"
 branch_labels = None
 depends_on = None
 
