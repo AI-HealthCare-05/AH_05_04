@@ -169,13 +169,15 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 
 ## Track C C1 저장 기반 (#192)
 
-- [저장 계약 v1 — Proposed/구현 PR 리뷰 대상](proposed/track-c-storage-v1.md)
+- [저장 계약 v1 — Proposed/내부 저장 기반 구현 완료](proposed/track-c-storage-v1.md)
 - [PD-192](../governance/decisions/2026-09-13-track-c-storage-192.md)
 - 실제 Check-in 부모에 Safety·Barrier·Plan·Follow-up 이력을 연결하는 저장 기반이다.
-  HandlerConfig 상세, 공개 mutation, #195 무효화와 Track C 공개는 미완료다.
-- [HandlerConfig 구체안 — Proposed](proposed/track-c-handler-config-192.md):
-  기존 Plan JSONB 기반 설정·버전·지원별 허용 필드 및 #194 실행 인계 제안. 내부 저장·검증 경계는
-  구현 중이며 제품 문구·버전 정본과 공개 실행은 미확정이다.
+  공개 mutation, #195 무효화와 Track C 공개는 미완료다.
+- [HandlerConfig 구체안 — Proposed/제품 승인·내부 구현](proposed/track-c-handler-config-192.md):
+  기존 Plan JSONB 기반 설정·버전·지원별 허용 필드 및 #194 실행 인계. 제품 승인 Rule·한국어 Copy와
+  명시적 allowlist·엄격 로더를 구현했으며 담당 기술·화면 리뷰와 공개 실행은 미완료다.
+- [PD-192-2](../governance/decisions/2026-09-15-track-c-handler-config-rules-192.md):
+  6개 최소 안내형 Support의 내부 Rule·Copy 제품 승인과 공개 전 경계.
 
 
 ### #458 Worker 동의 조회·재검사 로컬 구현

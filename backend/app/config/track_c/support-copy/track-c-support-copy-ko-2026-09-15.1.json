@@ -1,0 +1,67 @@
+{
+  "schema_version": "track-c-support-copy-v1",
+  "copy_version": "track-c-support-copy-ko-2026-09-15.1",
+  "locale": "ko-KR",
+  "supports": [
+    {
+      "support_code": "REMINDER_SETUP",
+      "title": "복약 일정과 알림을 확인해 볼까요?",
+      "body": "현재 등록된 복약 일정과 알림 설정을 확인하고 필요하면 직접 변경할 수 있어요. 확인하기 전에는 변경 사항이 적용되지 않아요.",
+      "confirmation": {
+        "prompt": "복약 일정 설정 화면에서 내용을 확인하시겠어요?",
+        "primary_label": "일정 확인하기",
+        "secondary_label": "나중에"
+      }
+    },
+    {
+      "support_code": "ROUTINE_OR_TRAVEL_PLAN",
+      "title": "일정이나 외출 전 준비 사항을 확인해 보세요",
+      "body": "처방된 복용 시간이나 횟수를 바꾸지 않고, 외출 전에 약과 복약 일정을 확인해 보세요. 확실하지 않은 내용은 약사나 의료진에게 문의해 주세요.",
+      "confirmation": {
+        "prompt": "이 준비 안내를 확인하시겠어요?",
+        "primary_label": "안내 확인하기",
+        "secondary_label": "나중에"
+      }
+    },
+    {
+      "support_code": "INSTRUCTION_REVIEW",
+      "title": "처방된 복용 방법을 다시 확인해 보세요",
+      "body": "확인된 처방 정보에서 복용 방법을 살펴볼 수 있어요. 내용이 없거나 헷갈리면 임의로 판단하지 말고 약사나 의료진에게 확인해 주세요.",
+      "confirmation": {
+        "prompt": "확인된 복용 방법 안내를 살펴보시겠어요?",
+        "primary_label": "복용 방법 확인하기",
+        "secondary_label": "나중에"
+      }
+    },
+    {
+      "support_code": "PURPOSE_REVIEW",
+      "title": "복용 목적을 확인해 보세요",
+      "body": "현재 확인된 처방 정보에서 복용 목적을 살펴볼 수 있어요. 정보가 충분하지 않다면 의료진에게 물어볼 질문을 준비해 보세요.",
+      "confirmation": {
+        "prompt": "복용 목적 안내를 확인하시겠어요?",
+        "primary_label": "복용 목적 확인하기",
+        "secondary_label": "나중에"
+      }
+    },
+    {
+      "support_code": "MEDICATION_CONCERN_GUIDANCE",
+      "title": "약 복용과 관련해 걱정되는 내용을 확인해 보세요",
+      "body": "걱정이 있어도 약을 임의로 중단하거나 용량을 바꾸지 마세요. 확인된 안내를 살펴보고 필요하면 약사나 의료진에게 문의해 주세요.",
+      "confirmation": {
+        "prompt": "안전한 확인 방법을 살펴보시겠어요?",
+        "primary_label": "안내 확인하기",
+        "secondary_label": "나중에"
+      }
+    },
+    {
+      "support_code": "ACCESS_SUPPORT",
+      "title": "문의 전에 필요한 내용을 준비해 보세요",
+      "body": "약이 부족하거나 구하기 어렵다면 확인된 처방기관 또는 약국에 문의할 내용을 준비해 보세요. 재고·가격·지원 가능성은 확인 후 안내받아야 해요.",
+      "confirmation": {
+        "prompt": "문의 준비 안내를 확인하시겠어요?",
+        "primary_label": "문의 준비하기",
+        "secondary_label": "나중에"
+      }
+    }
+  ]
+}

@@ -134,7 +134,7 @@ DB 제약:
 - `policy_version`은 빈 문자열 금지
 - `GRANTED`는 `granted_at` 필수 및 `withdrawn_at=NULL`, `WITHDRAWN`은 `withdrawn_at` 필수
 
-row가 없으면 미동의로 판정한다. 이 테이블은 최신 상태만 저장하며 과거 동의 이력을 append-only audit으로 남길지는 후속 Decision 또는 계약 갱신 범위다. 사용자 동의 상태 API는 #510에서 이 최신 row를 조회·변경한다. OCR 목적은 #505에서 `GET/POST/DELETE /api/v1/users/me/consents/OCR`, Backend 접수 전·문서 잠금 후 검사, Worker의 CLOVA 전·LLM 전·결과 저장 전 재검사와 `CONSENT_REQUIRED`/OCR `CONSENT_WITHDRAWN` 차단 저장에 연결했다. `OCR_CONSENT_POLICY_VERSION`이 비어 있으면 fail-closed이며, 최종 안내 문구·policy version과 실제 사용자 대상 LLM 전송은 승인되지 않았다. GUIDE/CHAT/NOTIFICATION 목적의 실행 Gate는 후속 범위다.
+row가 없으면 미동의로 판정한다. 이 테이블은 최신 상태만 저장하며 과거 동의 이력을 append-only audit으로 남길지는 후속 Decision 또는 계약 갱신 범위다. 사용자 동의 상태 API는 #510에서 이 최신 row를 조회·변경한다. OCR 목적은 #505에서 `GET/POST/DELETE /api/v1/users/me/consents/OCR`, Backend 접수 전·문서 잠금 후 검사, Worker의 CLOVA 전·LLM 전·결과 저장 전 재검사와 `CONSENT_REQUIRED`/OCR `CONSENT_WITHDRAWN` 차단 저장에 연결했다. GUIDE 목적은 동기 Guide 생성 요청에서 처방 소유권 확인 후 Provider 호출·Guide row 생성 전 `purpose=GUIDE` 최신 동의 row로 검사한다. `OCR_CONSENT_POLICY_VERSION`이 비어 있으면 fail-closed이며, 최종 안내 문구·policy version과 실제 사용자 대상 LLM 전송은 승인되지 않았다. CHAT/NOTIFICATION 목적의 실행 Gate는 후속 범위다.
 
 ## PROFILE SELF 소유권
 
@@ -769,7 +769,7 @@ Migration `423a1b2c3d4e`는 `medication_schedule_audit`와 occurrence의 nullabl
 
 Migration은 `203a1b2c3d4e`이고 상세 컬럼·FK·rollback 동작은 [Notification 계약](contracts/proposed/track-b-notifications-v1.md)의 구현 절을 따른다. Check-in·일정·처방 변경은 알림 row를 삭제하지 않는다. 부모 occurrence의 정식 삭제는 FK CASCADE로 알림을 정리하지만 부모 자체의 기존 삭제 제한은 유지한다. Notification 이력이 있으면 downgrade는 중단한다.
 
-## Track C C1 저장 기반 — #192 / PR #310 리뷰 대상
+## Track C C1 저장 기반 — #192 / PR #310·#531 병합
 
 최신 Track B Check-in 부모에 `safety_assessment`, `barrier_response`, `support_action_plan`,
 `action_plan_followup`, `action_plan_followup_audit`를 연결한다. Check-in의 현재 revision은
@@ -781,8 +781,12 @@ SELF 소유권은 Python repository가 기존 Prescription 부모 chain으로 �
 이 PR은 저장 기반·소유권 조회만 제공한다. append-only 쓰기, 최신 상태 판정·정정·무효화는
 #193~#195의 Application Service/Repository transaction 연결 범위다.
 신규 RLS·Trigger·업무용 DB 함수는 없고, 5개 테이블에 이력이 있으면 downgrade를 중단한다.
-Handler별 config schema·운영 seed·공개 API는 추가하지 않는다.
+PR #531은 기존 `action_config_snapshot` JSONB에 저장할 HandlerConfig의 엄격 검증·저장·복원을 추가했다.
+PD-192-2는 6개 최소 안내형 Support의 내부 Rule·한국어 Copy 불변 버전을 발행하고 명시적 allowlist와
+로더를 연결한다. 별도 HandlerConfig 테이블·migration·RLS·Trigger는 추가하지 않는다. 기존 무버전 또는
+`{}` snapshot은 자동 backfill하지 않고 복원 거부 상태로 보존한다. 공개 API와 사용자 표시 이행은 #194다.
 
 정본: [저장 계약](contracts/proposed/track-c-storage-v1.md),
 [결정/기존 합의 근거](governance/decisions/2026-09-13-track-c-storage-192.md),
+[Rule·Copy 제품 승인](governance/decisions/2026-09-15-track-c-handler-config-rules-192.md),
 [검증 기록](testing/track-c-storage-192.md).

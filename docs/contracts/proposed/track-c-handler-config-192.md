@@ -1,6 +1,6 @@
 # #192 HandlerConfig 구체안
 
-- 상태: **Proposed / 제품 문구·버전 정본 확인 대기 — 저장·검증 경계 구현 중**
+- 상태: **Proposed / 제품 승인·운영 파일 구현 완료 — 담당 기술 리뷰 대기**
 - 작성 기준: PR #310에서 병합된 #192 C1 저장 기반
 - 구현 제안: 김지혜. 담당 기술 리뷰: 송은영. 제품 범위 확인: 권가빈. 화면 소비 확인: 남한솔.
 
@@ -32,9 +32,12 @@ PENDING 조건을 완화하지 않으며, 일정 설정 성공을 놓친 복약�
 
 ### 승인 설정 파일 제안
 
-향후 `backend/app/config/track_c/support-rules/<rule_version>.json`에 한 버전의 6개 지원 정의를 둔다.
-현재 이 경로나 운영 seed 파일을 생성하지 않는다. 운영 DB에서 수동 수정하는 설정 테이블도 만들지 않는다.
-승인 증빙은 해당 버전과 연결한 Decision 문서에서 관리하고 파일 존재를 승인으로 간주하지 않는다.
+`backend/app/config/track_c/support-rules/<rule_version>.json`에 한 버전의 6개 지원 정의를 두고,
+`backend/app/config/track_c/support-copy/<copy_version>.json`에 한국어 문구와 확인 단계를 둔다.
+승인 버전은 Python의 명시적 allowlist에 연결하며 파일 존재만으로 다른 버전을 활성화하지 않는다.
+두 활성 로더 모두 Rule·Copy 파일의 구조와 버전 참조를 함께 검증한 뒤 결과를 반환한다.
+Rule만 요청해도 Copy 누락·손상·버전 불일치가 있으면 로딩을 거부한다.
+운영 DB에서 수동 수정하는 설정 테이블은 만들지 않고 승인 증빙은 해당 버전의 Decision 문서에서 관리한다.
 
 | 설정 필드 | 타입·검증 제안 | 용도 |
 | --- | --- | --- |
@@ -186,10 +189,21 @@ Track B 일정 PUT과 C Plan 완료가 별도 HTTP 요청이면 원자 완료로
   `REMINDER_SETUP`만 기존 일정 확인·설정 화면에 연결한다. 화면은 실제 Schedule API를 다시 조회하므로
   Plan snapshot에 약 이름·시간·현재 일정 값을 중복 보존하지 않는다. 일정 설정 성공과 Plan `COMPLETED`의
   관계, 화면 DTO 및 완료 전이는 #194에서 확정한다.
-- 지원 사유 코드·안내 문구·사용자 확인 단계의 승인 자료는 가빈님 공유 대기다. 실제 버전 파일과 운영 활성
-  설정을 만들지 않으며 합성 버전만 테스트한다.
+- 지원 사유 코드·안내 문구·사용자 확인 단계는 [PD-192-2](../../governance/decisions/2026-09-15-track-c-handler-config-rules-192.md)로
+  제품 승인했다. 실제 Rule·Copy 버전 파일과 활성 allowlist를 추가하고 합성 검증에 운영 파일 회귀 검증을 더한다.
 - 이 작업은 기존 JSONB에 엄격한 schema/version/field 검증을 거친 snapshot을 저장·복원하는 내부 경계를
   추가한다. `REMINDER_SETUP` 약 항목 ID는 소유한 Barrier의 부모 관계에서 서버가 얻는다.
   #194가 현재 Check-in·Safety·ACTIVE Plan·멱등성을 같은 transaction에서 검증하기 전에는 공개 Plan 생성
   API에 연결하지 않는다. 기존 `{}` snapshot은 자동 보정하지 않고 복원 거부한다.
 - DB 스키마, RLS, DB Trigger, 운영 seed, Frontend와 Provider 호출은 변경하지 않는다.
+
+## 11. 2026-09-15 운영 규칙 제품 승인
+
+[Personalised Adherence Support 상세 v1.3](https://app.notion.com/p/3c0233603e2780c29411d8d271ad60fb)을
+제품 참고자료로 사용해 [Rule·한국어 Copy 승인 기록](assets/track-c-handler-config-192/README.md)을 작성했다.
+비판단적 표현, 사용자 선택권, Safety 우선과 처방 변경 금지 원칙만 반영했다.
+
+Notion에서 연결된 “구현 상세 설계 v2”는 Draft·Product/Contract 재승인 대기 상태이고 현재 승인 목표보다
+확장된 Handler·RAG·LLM·Offer·Follow-up 구조를 포함한다. 따라서 그 확장 범위는 이번 승인 자료와 #192 runtime에
+반영하지 않았다. 제품 승인 뒤 불변 Rule·Copy 버전과 활성 allowlist를 운영 로딩 경로에 연결했다.
+담당 기술·화면 리뷰와 외부 게이트 전에는 공개 API에 연결하거나 기존 데이터를 backfill하지 않는다.
