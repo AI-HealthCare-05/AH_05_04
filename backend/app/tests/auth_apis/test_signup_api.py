@@ -25,7 +25,15 @@ def _email() -> str:
     return f"u{uuid4().hex[:8]}@e.co"
 
 
-async def _signup(client: AsyncClient, *, email: str, consents: list[dict[str, str]] | None = None) -> Response:
+async def _signup(
+    client: AsyncClient,
+    *,
+    email: str,
+    consents: list[dict[str, str]] | None = None,
+    mark_signup_email_verified=None,
+) -> Response:
+    if mark_signup_email_verified is not None:
+        await mark_signup_email_verified(email)
     payload: dict[str, Any] = {
         "email": email,
         "password": "Password123!",
@@ -47,18 +55,79 @@ async def _consents_for_email(db_session: AsyncSession, *, email: str) -> list[U
 
 
 class TestSignupAPI:
-    async def test_signup_success(self):
+    async def test_signup_success(self, mark_signup_email_verified):
         signup_data = {
             "email": "test@example.com",
             "password": "Password123!",
             "name": "테스터",
         }
 
+        await mark_signup_email_verified(signup_data["email"])
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/v1/auth/signup", json=signup_data)
         assert response.status_code == status.HTTP_201_CREATED
         assert response.json() == {"detail": "회원가입이 성공적으로 완료되었습니다."}
         assert response.headers.get_list("cache-control") == ["no-store"]
+
+    async def test_signup_allows_unverified_email_when_verification_gate_is_disabled(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(config, "SIGNUP_EMAIL_VERIFICATION_REQUIRED", False)
+        signup_data = {
+            "email": "gate-disabled@example.com",
+            "password": "Password123!",
+            "name": "인증비활성테스터",
+        }
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/v1/auth/signup", json=signup_data)
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.json() == {"detail": "회원가입이 성공적으로 완료되었습니다."}
+
+    async def test_signup_requires_verified_email_when_verification_gate_is_enabled(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(config, "SIGNUP_EMAIL_VERIFICATION_REQUIRED", True)
+        signup_data = {
+            "email": "unverified@example.com",
+            "password": "Password123!",
+            "name": "미인증테스터",
+        }
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/v1/auth/signup", json=signup_data)
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        body = response.json()
+        assert body["code"] == "EMAIL_VERIFICATION_REQUIRED"
+        assert body["details"] == [
+            {
+                "field": "email",
+                "reason": "EMAIL_VERIFICATION_REQUIRED",
+                "rejected_value": None,
+            }
+        ]
+        assert response.headers.get_list("cache-control") == ["no-store"]
+
+    async def test_signup_rejects_expired_verified_email(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+        mark_expired_signup_email_verified,
+    ):
+        monkeypatch.setattr(config, "SIGNUP_EMAIL_VERIFICATION_REQUIRED", True)
+        email = "expired-verified@example.com"
+        await mark_expired_signup_email_verified(email)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await _signup(client, email=email)
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.json()["code"] == "EMAIL_VERIFICATION_REQUIRED"
+        assert await db_session.scalar(select(User.id).where(User.email == email)) is None
 
     async def test_signup_invalid_email(self):
         signup_data = {
@@ -73,6 +142,7 @@ class TestSignupAPI:
 
     async def test_signup_returns_conflict_for_concurrent_duplicate_email(
         self,
+        mark_signup_email_verified,
     ):
         repository = AsyncMock(spec=UserRepository)
         repository.exists_by_email.return_value = False
@@ -89,6 +159,7 @@ class TestSignupAPI:
             "name": "동시가입테스트",
         }
 
+        await mark_signup_email_verified(signup_data["email"])
         try:
             async with AsyncClient(
                 transport=ASGITransport(app=app),
@@ -137,6 +208,7 @@ class TestSignupAPI:
         self,
         db_session: AsyncSession,
         monkeypatch: pytest.MonkeyPatch,
+        mark_signup_email_verified,
     ) -> None:
         monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
         email = _email()
@@ -148,6 +220,7 @@ class TestSignupAPI:
                     OCR_CONSENT,
                     GUIDE_CONSENT,
                 ],
+                mark_signup_email_verified=mark_signup_email_verified,
             )
 
         assert response.status_code == status.HTTP_201_CREATED
@@ -163,11 +236,16 @@ class TestSignupAPI:
         self,
         db_session: AsyncSession,
         monkeypatch: pytest.MonkeyPatch,
+        mark_signup_email_verified,
     ) -> None:
         monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
         email = _email()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await _signup(client, email=email)
+            response = await _signup(
+                client,
+                email=email,
+                mark_signup_email_verified=mark_signup_email_verified,
+            )
 
         assert response.status_code == status.HTTP_201_CREATED
         assert await _consents_for_email(db_session, email=email) == []
@@ -176,11 +254,17 @@ class TestSignupAPI:
         self,
         db_session: AsyncSession,
         monkeypatch: pytest.MonkeyPatch,
+        mark_signup_email_verified,
     ) -> None:
         monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
         email = _email()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await _signup(client, email=email, consents=[])
+            response = await _signup(
+                client,
+                email=email,
+                consents=[],
+                mark_signup_email_verified=mark_signup_email_verified,
+            )
 
         assert response.status_code == status.HTTP_201_CREATED
         assert await _consents_for_email(db_session, email=email) == []
@@ -189,6 +273,7 @@ class TestSignupAPI:
         self,
         db_session: AsyncSession,
         monkeypatch: pytest.MonkeyPatch,
+        mark_signup_email_verified,
     ) -> None:
         monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
         email = _email()
@@ -202,6 +287,7 @@ class TestSignupAPI:
                     CHAT_CONSENT,
                     NOTIFICATION_CONSENT,
                 ],
+                mark_signup_email_verified=mark_signup_email_verified,
             )
 
         assert response.status_code == status.HTTP_201_CREATED
@@ -260,6 +346,7 @@ class TestSignupAPI:
         self,
         db_session: AsyncSession,
         monkeypatch: pytest.MonkeyPatch,
+        mark_signup_email_verified,
     ) -> None:
         monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "")
         email = _email()
@@ -268,6 +355,7 @@ class TestSignupAPI:
                 client,
                 email=email,
                 consents=[OCR_CONSENT],
+                mark_signup_email_verified=mark_signup_email_verified,
             )
 
         assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
@@ -278,6 +366,7 @@ class TestSignupAPI:
         self,
         db_session: AsyncSession,
         monkeypatch: pytest.MonkeyPatch,
+        mark_signup_email_verified,
     ) -> None:
         monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v1")
         failing_repository = AsyncMock()
@@ -293,7 +382,12 @@ class TestSignupAPI:
                 transport=ASGITransport(app=app, raise_app_exceptions=False),
                 base_url="http://test",
             ) as client:
-                response = await _signup(client, email=email, consents=[OCR_CONSENT])
+                response = await _signup(
+                    client,
+                    email=email,
+                    consents=[OCR_CONSENT],
+                    mark_signup_email_verified=mark_signup_email_verified,
+                )
         finally:
             fastapi_app.dependency_overrides.pop(get_user_consent_repository, None)
 

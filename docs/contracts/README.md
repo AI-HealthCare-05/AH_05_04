@@ -9,7 +9,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 - [Source Attempt Receipt 실패 보완 (#436)](./proposed/source-attempt-receipt-436.md): COLLECTION_FAILED 및 EMPTY_RESULT 계열 구분 구현 리뷰안.
 
-- [공통 복약 리포트 v1 (#419)](./proposed/medication-report-v1.md): KST 7/30일·과거 version·두 지표·0분모·상세 기록. 사용자 기준 확인 후 작업 브랜치 구현·지정 리뷰 대기.
+- [공통 복약 리포트 v1 (#419)](./current/medication-report-v1.md): KST 7/30일·과거 version·두 지표·0분모·상세 기록. Backend #478·Frontend #574 병합 및 실제 runtime 검증.
 
 ## 디렉터리 구조와 배치 원칙
 
@@ -30,6 +30,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## 현재 구현 계약
 
+- [공통 복약 리포트 v1](./current/medication-report-v1.md): `GET /api/v1/medication-reports`의 7/30일 SELF 집계·상태·두 비율·상세 기록 계약
 - [복약 가이드 Backend–AI 계약](./current/medication-guide-ai-backend.md): `guide-prompt-v3` intent·승인 문구 선택형 동기 one-cycle 입력·출력·오류 경계
 - [복약 챗봇 Backend–AI Core 계약](./current/medication-chat-ai-backend.md): 현재 동기 `201` 생성과 세션 직렬화 경계
 - [OCR 약품명 정규화 계약](./current/ocr-medication-normalization.md): OCR 원문, 정규화 참고값 및 사용자 확정값의 역할
@@ -169,13 +170,15 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 
 ## Track C C1 저장 기반 (#192)
 
-- [저장 계약 v1 — Proposed/구현 PR 리뷰 대상](proposed/track-c-storage-v1.md)
+- [저장 계약 v1 — Proposed/내부 저장 기반 구현 완료](proposed/track-c-storage-v1.md)
 - [PD-192](../governance/decisions/2026-09-13-track-c-storage-192.md)
 - 실제 Check-in 부모에 Safety·Barrier·Plan·Follow-up 이력을 연결하는 저장 기반이다.
-  HandlerConfig 상세, 공개 mutation, #195 무효화와 Track C 공개는 미완료다.
-- [HandlerConfig 구체안 — Proposed](proposed/track-c-handler-config-192.md):
-  기존 Plan JSONB 기반 설정·버전·지원별 허용 필드 및 #194 실행 인계 제안. 내부 저장·검증 경계는
-  구현 중이며 제품 문구·버전 정본과 공개 실행은 미확정이다.
+  공개 mutation, #195 무효화와 Track C 공개는 미완료다.
+- [HandlerConfig 구체안 — Proposed/제품 승인·내부 구현](proposed/track-c-handler-config-192.md):
+  기존 Plan JSONB 기반 설정·버전·지원별 허용 필드 및 #194 실행 인계. 제품 승인 Rule·한국어 Copy와
+  명시적 allowlist·엄격 로더를 구현했으며 담당 기술·화면 리뷰와 공개 실행은 미완료다.
+- [PD-192-2](../governance/decisions/2026-09-15-track-c-handler-config-rules-192.md):
+  6개 최소 안내형 Support의 내부 Rule·Copy 제품 승인과 공개 전 경계.
 
 
 ### #458 Worker 동의 조회·재검사 로컬 구현

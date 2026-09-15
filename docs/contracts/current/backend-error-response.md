@@ -238,6 +238,7 @@ Worker 재시도 지연은 `min(5초 × 2^(attempt_count-1), 60초)`에 0~20% �
 | 401 | `EXPIRED_TOKEN` | "인증 정보가 만료되었습니다. 다시 로그인해 주세요." | |
 | 403 | `FORBIDDEN` | "비활성화된 계정입니다." | 현재는 비활성 계정 로그인 시도에만 사용 |
 | 409 | `CONFLICT` | 상황에 따른 안내 문구 (예: "이미 사용중인 이메일입니다.") | 회원가입 중복, 종료된 대화 세션 등 여러 상황에서 재사용 |
+| 409 | `EMAIL_VERIFICATION_REQUIRED` | "이메일 인증을 완료해 주세요." | `SIGNUP_EMAIL_VERIFICATION_REQUIRED=true`인 회원가입에서 같은 정규화 이메일의 `SIGNUP` 인증 완료 기록이 없거나 만료됨 |
 | 409 | `IDEMPOTENCY_KEY_CONFLICT` | "같은 Idempotency-Key로 이전과 다른 요청이 접수되었습니다." | OCR·Guide·Chat 접수 또는 OCR 수동 약물 추가 같은 멱등 mutation에서 같은 `Idempotency-Key`로 이전과 다른 요청 지문이 접수됨 |
 | 422 | `VALIDATION_FAILED` | 상황에 따른 안내 문구 (예: "입력값을 확인해 주세요.", "MVP에서는 처방전 문서만 업로드할 수 있습니다.") | Pydantic 요청 검증 실패 시 자동 발생 또는 Service에서 수동 발생. Auth 도메인은 `details[].reason=PASSWORD_POLICY_VIOLATION`, `RESET_TOKEN_INVALID`, `EMAIL_VERIFICATION_TOKEN_INVALID`를 사용 |
 | 500 | `INTERNAL_SERVER_ERROR` | "서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." | 예상하지 못한 예외의 최종 fallback |
@@ -247,17 +248,18 @@ Worker 재시도 지연은 `min(5초 × 2^(attempt_count-1), 60초)`에 0~20% �
 
 각 코드의 재시도 가능 여부는 「재시도 가능 여부」 절의 표를 따릅니다.
 
-Auth 도메인의 `VALIDATION_FAILED` 세부 reason은 다음처럼 고정합니다. 모두 `details[].rejected_value=null`을 사용하며 원문 token, 새 비밀번호, token hash는 응답에 포함하지 않습니다.
+Auth 도메인의 세부 reason은 다음처럼 고정합니다. 모두 `details[].rejected_value=null`을 사용하며 원문 token, 새 비밀번호, token hash는 응답에 포함하지 않습니다.
 
-| Endpoint | `details[].field` | `details[].reason` | 사용 상황 |
-| --- | --- | --- | --- |
-| `POST /api/v1/auth/email-verification/confirm` | `token` | `EMAIL_VERIFICATION_TOKEN_INVALID` | 이메일 인증 token이 없거나, 만료됐거나, 이미 사용됐거나, 요청 이메일과 맞지 않음 |
-| `POST /api/v1/auth/password-reset/confirm` | `token` | `RESET_TOKEN_INVALID` | 비밀번호 재설정 token이 없거나, 만료됐거나, 이미 사용됐거나, 제출 token이 유효 token 집합에 없음 |
-| `POST /api/v1/auth/password-reset/confirm` | `new_password` | `PASSWORD_POLICY_VIOLATION` | 새 비밀번호가 회원가입과 같은 비밀번호 정책을 만족하지 않음 |
+| Endpoint | HTTP/code | `details[].field` | `details[].reason` | 사용 상황 |
+| --- | --- | --- | --- | --- |
+| `POST /api/v1/auth/signup` | `409 EMAIL_VERIFICATION_REQUIRED` | `email` | `EMAIL_VERIFICATION_REQUIRED` | `SIGNUP_EMAIL_VERIFICATION_REQUIRED=true`인 회원가입에서 같은 정규화 이메일의 `SIGNUP` 인증 완료 기록이 없거나 만료됨 |
+| `POST /api/v1/auth/email-verification/confirm` | `422 VALIDATION_FAILED` | `token` | `EMAIL_VERIFICATION_TOKEN_INVALID` | 이메일 인증 token이 없거나, 만료됐거나, 이미 사용됐거나, 요청 이메일과 맞지 않음 |
+| `POST /api/v1/auth/password-reset/confirm` | `422 VALIDATION_FAILED` | `token` | `RESET_TOKEN_INVALID` | 비밀번호 재설정 token이 없거나, 만료됐거나, 이미 사용됐거나, 제출 token이 유효 token 집합에 없음 |
+| `POST /api/v1/auth/password-reset/confirm` | `422 VALIDATION_FAILED` | `new_password` | `PASSWORD_POLICY_VIOLATION` | 새 비밀번호가 회원가입과 같은 비밀번호 정책을 만족하지 않음 |
 
 ### Post-MVP
 
-이 문서는 현재 Backend 오류 응답 envelope와 MVP에서 실제 응답으로 나가는 오류 코드의 기준 문서다. Post-MVP target 전용 오류 코드는 [비동기 Job 계약 v1](../targets/post-mvp-1/async-job-v1.md), [멱등성 계약 v1](../targets/post-mvp-1/idempotency-v1.md), [처방 버전 계약 v1](../targets/post-mvp-1/prescription-version-v1.md)처럼 승인된 목표 계약에서 먼저 정의하고, 실제 구현 PR에서 이 문서와 코드·테스트를 함께 갱신한다. 승인된 Decision이나 목표 계약이 없는 코드(`CONSENT_REQUIRED`, `RESOURCE_NOT_FOUND`, `RATE_LIMITED` 등)는 어떤 문서에도 등록하지 않는다. 오류 코드·HTTP status 추가는 새 Decision 또는 Contract Freeze 갱신이 필요하다([AGENTS.md](../../../AGENTS.md) 기준).
+이 문서는 현재 Backend 오류 응답 envelope와 MVP에서 실제 응답으로 나가는 오류 코드의 기준 문서다. Post-MVP target 전용 오류 코드는 [비동기 Job 계약 v1](../targets/post-mvp-1/async-job-v1.md), [멱등성 계약 v1](../targets/post-mvp-1/idempotency-v1.md), [처방 버전 계약 v1](../targets/post-mvp-1/prescription-version-v1.md)처럼 승인된 목표 계약에서 먼저 정의하고, 실제 구현 PR에서 이 문서와 코드·테스트를 함께 갱신한다. 승인된 Decision이나 목표 계약이 없는 코드(`RESOURCE_NOT_FOUND`, `RATE_LIMITED` 등)는 어떤 문서에도 등록하지 않는다. 오류 코드·HTTP status 추가는 새 Decision 또는 Contract Freeze 갱신이 필요하다([AGENTS.md](../../../AGENTS.md) 기준).
 
 ## 도메인별 오류 코드
 
@@ -281,6 +283,9 @@ Auth 도메인의 `VALIDATION_FAILED` 세부 reason은 다음처럼 고정합니
 | 500 | `OCR_PROCESSING_FAILED` | "처방전 인식에 실패했습니다. 다시 시도하거나 직접 입력해 주세요." | OCR 처리 자체가 실패함 |
 | 404 | `EXTRACTED_FIELD_NOT_FOUND` | "추출 필드를 찾을 수 없습니다." | 요청한 OCR 추출 필드 ID가 존재하지 않거나 다른 사용자 소유 |
 | 404 | `GUIDE_NOT_FOUND` | "가이드를 찾을 수 없습니다." | 요청한 복약 가이드가 존재하지 않거나 다른 사용자 소유 |
+| 403 | `CONSENT_REQUIRED` | "처방전 처리 동의가 필요합니다." | OCR 접수 또는 Guide 동기 생성에 필요한 목적별 동의 row가 없거나, 철회됐거나, 현재 policy version과 일치하지 않음 |
+| 503 | `CONSENT_LOOKUP_FAILED` | "동의를 확인할 수 없습니다." | 동의 저장소 조회 실패로 외부 처리 시작 여부를 판정할 수 없음 |
+| 503 | `CONSENT_POLICY_UNAVAILABLE` | "현재 동의 안내를 사용할 수 없습니다." | 목적별 현재 policy version이 설정되지 않아 신규 동의 또는 외부 처리 시작을 fail-closed로 차단함 |
 | 500 | `GUIDE_GENERATION_FAILED` | "복약 가이드 생성에 실패했습니다. 다시 시도해 주세요." | AI 가이드 생성 처리에 실패함 |
 | 404 | `CHAT_SESSION_NOT_FOUND` | "대화 세션을 찾을 수 없습니다." | 요청한 상담 세션이 존재하지 않거나 다른 사용자 소유 |
 | 500 | `AI_RESPONSE_FAILED` | "AI 답변 생성에 실패했습니다." | AI 답변 생성에 실패함 |

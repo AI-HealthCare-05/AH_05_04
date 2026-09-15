@@ -1563,11 +1563,19 @@ async def test_deterministic_one_cycle_uses_asgi_routes_with_only_provider_bound
     fixture = await build_synthetic_fixture(factory, run_id=uuid4(), scenario=scenario)
     monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-release-test.v1")
     async with factory() as consent_session:
-        await UserConsentRepository(consent_session).set_status(
+        repository = UserConsentRepository(consent_session)
+        await repository.set_status(
             user_id=fixture.user_id,
             purpose=ConsentPurpose.OCR,
             status=ConsentStatus.GRANTED,
             policy_version="ocr-release-test.v1",
+            changed_at=datetime.now(UTC),
+        )
+        await repository.set_status(
+            user_id=fixture.user_id,
+            purpose=ConsentPurpose.GUIDE,
+            status=ConsentStatus.GRANTED,
+            policy_version="guide-consent.v1",
             changed_at=datetime.now(UTC),
         )
         await consent_session.commit()

@@ -82,6 +82,15 @@ real-stack runner는 `envs/.local.env`의 CLOVA·OpenAI 설정을 컨테이너�
 network, 업로드 volume도 전용 이름으로 격리합니다. 이 E2E는 실제 Provider 호출이므로
 기본 CI에 포함하지 않으며 `RUN_REAL_STACK_AI_E2E=1` 없이는 실행을 거부합니다.
 
+## 회원가입 이메일 인증 gate 연동
+
+`bash scripts/e2e/signup_gate.sh`는 별도 임시 PostgreSQL에 migration을 적용하고 실제
+FastAPI·Frontend를 연결해 미인증·만료·재인증·이메일 중복과 선택 동의 저장을 검증합니다.
+SMTP·외부 AI를 호출하지 않으며 기존 개발/test DB를 사용하지 않습니다. #549 gate를
+지원하는 Backend checkout 지정 방법과 미병합 코드 검증의 한계는
+[회원가입 인증 gate 검증](testing/signup-gate-431.md)을 참고합니다.
+이 경로는 별도 opt-in 검증이며 기본 CI에 추가하지 않습니다.
+
 ## 현재 자동 검증 범위
 
 GitHub Actions와 `scripts/ci/run_test.sh`는 다음 경계로 PostgreSQL migration과 기본 Python 테스트를 검증합니다.
@@ -508,6 +517,11 @@ PostgreSQL·실제 ASGI 앱으로 검증한다. 기본 runner의 Backend 수집 
 재집계, OpenAPI와 Frontend 합성 fixture를 검증한다. 기본 `run_test.sh` Backend lane에
 자동 포함된다. [실행 증빙](validation/track-b/issue-419-medication-report.md)을 참고한다.
 #469와 병렬 실행할 때는 같은 이름의 test DB를 재생성하지 않도록 별도 PostgreSQL 인스턴스를 사용한다.
+
+Frontend 실제 왕복은 `REAL_STACK_ENV_FILE=envs/example.local.env bash scripts/e2e/real_stack.sh test-report`로
+격리된 Backend·PostgreSQL·Frontend를 기동한다. 비식별 합성 사용자의 UNCONFIRMED 기록을 명시적
+사용자 동작으로 NOT_TAKEN 정정하고 Report 복귀 뒤 새 GET과 서버 aggregate 변경을 검증한다.
+이 시나리오는 Report API interception이나 Frontend 자체 집계를 사용하지 않는다.
 ### #202 occurrence 원래 약 표시 조회
 
 `backend/app/tests/notifications/test_occurrence_medication_handoff.py`는 실제 ASGI 앱·PostgreSQL로

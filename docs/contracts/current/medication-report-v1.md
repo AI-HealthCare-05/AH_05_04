@@ -1,19 +1,18 @@
-# 공통 복약 리포트 계약 v1 — #419 제안
+# 공통 복약 리포트 계약 v1 — #419
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Proposed · 사용자 구현 기준 확인, 작업 브랜치 구현·검증, 지정 리뷰 대기 |
+| 상태 | Current · Backend #478, Frontend #574 병합 및 실제 runtime 검증 |
 | Decision | [PD-419-20260913](../../governance/decisions/2026-09-13-medication-report-419.md) |
 | 구현 담당 | 권가빈 (`hazelnutflavoured`) |
-| 담당 리뷰 | 송은영 (`phina-io`): Backend/API·DB·Security; 남한솔 (`solia142`): Frontend 소비 계약 |
+| 리뷰 기준 | 구현 PR별 책임 reviewer 1명. Backend #478은 송은영 (`phina-io`), Frontend #574는 권가빈 (`hazelnutflavoured`) APPROVED; blocking comment 0건 |
 | 추적 | [Issue #419](https://github.com/AI-HealthCare-05/AH_05_04/issues/419) |
-| 조사 기준 | develop `0ea12641`, 2026-09-13 GitHub 이슈 본문(댓글 0건) |
+| 현재 기준 | develop `6e31fb8c`, Backend #478·Frontend #574 병합 |
 
-2026-09-13 사용자가 이 계약안 기준의 구현 진행을 확인했다. 아래 기준으로 작업 브랜치에
-구현했으며, 지정 리뷰어의 승인이나 병합된 runtime 계약을 의미하지 않는다.
-이슈에서 확정된 두 계산식과 기존 Check-in 상태 의미는 유지한다.
+2026-09-13 확인한 계약 기준은 Backend #478과 Frontend #574로 develop에 병합됐다.
+아래 내용은 현재 runtime 계약을 기록하며, 두 계산식과 기존 Check-in 상태 의미를 유지한다.
 
-## HTTP 제안
+## HTTP 계약
 
 `GET /api/v1/medication-reports?period_days=7&end_date=2026-09-13`
 
@@ -25,10 +24,10 @@ OpenAPI operationId: `medication-reports.get`.
 - 미래 end_date와 start_date 계산이 불가능한 날짜, 잘못된 query는 기존 `422 VALIDATION_FAILED`.
 - 인증은 기존 인증 의존성을 사용한다. `200`, `data` envelope, 공통 오류 및 no-store 적용.
 - 사용자·profile 식별자를 query로 받지 않는다. 인증 사용자 SELF 소유 데이터만 조회한다.
-- 빈 집합도 `200`. 신규 오류 코드·DB·migration·환경변수·공개 flag는 필요하지 않다는 설계안이다.
+- 빈 집합도 `200`. 신규 오류 코드·DB·migration·환경변수·공개 flag는 추가하지 않는다.
 - 기본 리포트와 진료 보기는 같은 API 결과를 소비한다. 별도 mode나 저장 모델은 만들지 않는다.
 
-## 기간과 처방 범위 제안
+## 기간과 처방 범위
 
 - 기준은 occurrence에 저장된 `scheduled_local_date`다. Check-in 작성일·정정일·taken_at으로
   기록을 다른 날짜로 이동하지 않는다. UTC 저장 시각은 KST 원래 예정일에 대응한다.
@@ -66,7 +65,7 @@ OpenAPI operationId: `medication-reports.get`.
 - API 결과는 조회 시점의 현재값이다. end_date 시점의 과거 상태 재현 기능이 아니다.
   기간 밖에서 정정해도 원래 예정일의 현재 결과로 반영한다.
 
-## 응답 DTO 제안
+## 응답 DTO
 
 모든 아래 필드는 명시적으로 반환하고 nullable 필드만 null을 허용한다.
 
@@ -101,7 +100,7 @@ Barrier·증상·Support는 이번 DTO에서 생략한다. 미구현을 빈 배�
 #469 Push의 구독·전송·계정 전환 API/DB/Worker는 수정하지 않는다.
 기존 B1/B3 상태 전이, deadline, Schedule/Check-in 쓰기, Notification 처리도 변경하지 않는다.
 
-## 구현 시 필수 검증
+## 필수 검증
 
 1. 7일·30일 양 끝과 바깥 날짜, UTC/KST 자정, 오늘 기본값과 미래/잘못된 query.
 2. TAKEN=2, NOT_TAKEN=1, UNCONFIRMED=1: 복용률 66.7%, 기록 확인률 75.0%.
@@ -115,8 +114,8 @@ Barrier·증상·Support는 이번 DTO에서 생략한다. 미구현을 빈 배�
 
 ## 구현 및 리뷰 상태
 
-사용자는 기간·과거 version·제외 상태·0분모·반올림을 포함한 제안대로 구현 진행을 확인했다.
-Backend/Security(송은영), Frontend(남한솔)의 지정 리뷰는 대기 중이다.
+기간·과거 version·제외 상태·0분모·반올림 계약은 Backend #478과 Frontend #574에 반영됐다.
+Frontend #574는 권가빈 (`hazelnutflavoured`) APPROVED, blocking comment 0건으로 병합됐다.
 [검증 기록](../../validation/track-b/issue-419-medication-report.md)과
 [Frontend 합성 fixture](../../validation/track-b/issue-419-report-fixtures.json)를 함께 검토한다.
-기존 일정·Check-in DTO와 DB는 변경하지 않았다. Current 승격·병합·외부 승인·Production 공개는 별도다.
+기존 일정·Check-in DTO와 DB는 변경하지 않았다. Production 공개 승인은 별도다.

@@ -181,6 +181,7 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 ```
 
 - `name`, `email`, `password`는 모두 필수입니다.
+- `SIGNUP_EMAIL_VERIFICATION_REQUIRED=true`일 때만 회원가입은 같은 정규화 이메일의 `SIGNUP` 이메일 인증 완료 기록을 요구합니다. 기본값은 `false`이며, #494 운영 Email Provider와 Frontend 인증 UI가 함께 승인되기 전까지 기존 회원가입 흐름을 유지합니다. Gate가 켜진 상태에서 인증이 없거나 인증 완료 기록의 `expires_at`이 지난 경우 `409 EMAIL_VERIFICATION_REQUIRED`, `details[].field=email`, `reason=EMAIL_VERIFICATION_REQUIRED`를 반환합니다.
 - `consents`는 선택 필드입니다. 생략하거나 빈 배열이면 회원가입은 성공하고 목적별 동의 row를 만들지 않습니다.
 - `consents[].purpose`는 `OCR`, `GUIDE`, `CHAT`, `NOTIFICATION`만 허용하며 같은 목적은 한 번만 보낼 수 있습니다.
 - 클라이언트는 `policy_version`이나 `status`를 보내지 않습니다. 서버가 해당 목적의 현재 policy version으로 선택된 목적을 `GRANTED` 저장합니다.
@@ -211,7 +212,7 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 
 OCR 목적은 전용 경로 `/api/v1/users/me/consents/OCR`에서 `GET` / `POST` / `DELETE`도 제공합니다. 전용 `POST`는 현재 `OCR_CONSENT_POLICY_VERSION`과 요청 `policy_version`이 일치할 때만 `GRANTED`를 저장하고, 불일치하면 `409 CONSENT_POLICY_MISMATCH`를 반환합니다. 목적별 공통 `PUT /api/v1/users/me/consents/OCR`의 version 불일치는 기존 목적별 API 계약대로 `422 VALIDATION_FAILED`, `reason=POLICY_VERSION_MISMATCH`입니다. `OCR_CONSENT_POLICY_VERSION`이 빈 문자열이면 신규 OCR 동의는 전용 `POST`와 공통 `PUT` 모두 `503 CONSENT_POLICY_UNAVAILABLE`로 거부합니다. 다만 기존 OCR 동의 철회는 허용하며, 전용 `DELETE`는 기존 저장 `policy_version`을 보존해 `WITHDRAWN`으로 전환합니다. 목적별 공통 `PUT` 철회는 기존 OCR row가 있고 요청 `policy_version`이 기존 저장 `policy_version`과 일치할 때만 허용합니다.
 
-이 API는 PD-207의 목적별 최신 동의 상태 저장·조회·변경 경로입니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide/Chat/Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 후속 구현 범위입니다.
+이 API는 PD-207의 목적별 최신 동의 상태 저장·조회·변경 경로입니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide 동기 생성 Gate는 `POST /api/v1/guides`에서 처방 소유권 확인 후 Provider 호출·Guide row 생성 전에 `purpose=GUIDE` 최신 동의 row로 검사합니다. Chat/Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 후속 구현 범위입니다.
 
 ### 토큰 갱신·로그아웃
 
@@ -233,6 +234,8 @@ OCR 목적은 전용 경로 `/api/v1/users/me/consents/OCR`에서 `GET` / `POST`
 | --- | --- | ---: | --- |
 | `POST` | `/api/v1/auth/email-verification/request` | `200 OK` | 회원가입 전 이메일 인증 안내를 요청합니다. 별도 이메일 중복 확인 API가 아니며, 이미 가입된 이메일이거나 쿨다운 중이어도 같은 성공 응답을 반환합니다. `verification_token`은 `LOCAL` 환경에서만 채워집니다. |
 | `POST` | `/api/v1/auth/email-verification/confirm` | `200 OK` | 이메일과 원문 token을 검증하고, 같은 이메일·목적의 유효 token을 인증 완료 처리합니다. |
+
+`SIGNUP_EMAIL_VERIFICATION_REQUIRED=true`일 때 회원가입 요청은 `POST /api/v1/auth/email-verification/confirm`으로 완료된 같은 정규화 이메일의 `SIGNUP` 인증 기록을 요구합니다. 인증 완료 기록이 없거나 인증 완료 기록의 `expires_at`이 지난 경우 `POST /api/v1/auth/signup`은 `409 EMAIL_VERIFICATION_REQUIRED`, `details[].field=email`, `reason=EMAIL_VERIFICATION_REQUIRED`를 반환합니다. 기본값은 `false`이며, #494 운영 Email Provider와 Frontend 인증 UI가 함께 승인되기 전까지 기존 회원가입 흐름을 유지합니다.
 
 `POST /api/v1/auth/email-verification/confirm`의 token 오류는 `422 VALIDATION_FAILED`, `details[].field=token`, `reason=EMAIL_VERIFICATION_TOKEN_INVALID`입니다. 상세 스펙은 [회원가입·사용자 정보 계약의 회원가입 이메일 인증 절](./contracts/current/user-account.md#회원가입-이메일-인증431)을 따릅니다.
 
@@ -716,7 +719,7 @@ Check-in history route는 포함하지 않는다. [검증 기록](./validation/t
 `no-store`, DTO/오류/계정 전환과 전송 정책은 [정규 계약](contracts/proposed/web-push-v1.md)에
 기록한다. Proposed 상태로 책임 리뷰 대기이며 Production 등록·전송은 차단한다.
 Notification의 앱 내부 게시·읽음 API 의미는 유지한다.
-## #419 공통 복약 리포트 — 작업 브랜치 구현, 지정 리뷰 대기
+## #419 공통 복약 리포트 — Current
 
 `GET /api/v1/medication-reports?period_days=7&end_date=2026-09-13`
 (`operationId=medication-reports.get`)는 기본 리포트와 진료 보기가 함께 사용하는 SELF 집계다.
@@ -735,9 +738,10 @@ PENDING·CANCELLED는 두 비율에서 제외한다. 조회에서 Check-in을 �
 빈 SELF 조회는 `200`과 빈 records·0 count·null 비율이다. 공통 오류·no-store를 유지한다.
 리포트 전용 DTO를 추가했으며 기존 일정·Check-in 응답, DB schema와 쓰기 경계는 바꾸지 않는다.
 
-정본은 [리포트 v1 제안](contracts/proposed/medication-report-v1.md),
+정본은 [리포트 v1 Current 계약](contracts/current/medication-report-v1.md),
 검증과 Frontend fixture는 [#419 검증 기록](validation/track-b/issue-419-medication-report.md)을 따른다.
-사용자 구현 기준 확인과 작업 브랜치 구현은 담당 리뷰 승인·병합·Production 공개를 의미하지 않는다.
+Backend #478과 Frontend #574가 develop에 병합됐으며 Production 공개 승인은 별도다.
+
 ### #202 occurrence 원래 약 표시 조회 — develop 반영 완료
 
 `GET /api/v1/medication-occurrences/{occurrence_id}/medication`은 SELF 소유 occurrence의

@@ -2,11 +2,11 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | 작업 브랜치 구현·로컬 검증, 지정 리뷰·병합 대기 |
-| 기준 | develop `f10ca016`에 rebase, `feat/419-medication-report` |
+| 상태 | Current runtime 검증 완료 · Backend #478, Frontend #574 병합 |
+| 기준 | develop `6e31fb8c`, `test/420-report-closeout` |
 | 구현 담당 | 권가빈 (`hazelnutflavoured`) |
-| 담당 리뷰 | 송은영 (`phina-io`): Backend/API·DB·Security; 남한솔 (`solia142`): Frontend 소비 계약 |
-| 계약 | [공통 복약 리포트 v1](../../contracts/proposed/medication-report-v1.md) |
+| 리뷰 기준 | 구현 PR별 책임 reviewer 1명. Backend #478은 송은영 (`phina-io`), Frontend #574는 권가빈 (`hazelnutflavoured`) APPROVED; blocking comment 0건 |
+| 계약 | [공통 복약 리포트 v1](../../contracts/current/medication-report-v1.md) |
 | Decision | [PD-419-20260913](../../governance/decisions/2026-09-13-medication-report-419.md) |
 
 ## 구현
@@ -83,7 +83,21 @@ Ruff check·format check(794 files)와 Mypy(601 source files)도 재통과했다
 기본 리포트와 진료 보기에 같은 fixture를 사용한다. null 비율을 0%로 바꾸거나
 UNCONFIRMED를 NOT_TAKEN에 합산하지 않는다. 이 fixture는 DB seed나 실제 환자 데이터가 아니다.
 
-## 남은 승인
+## #420 실제 Backend browser round-trip
 
-사용자의 구현 진행 확인을 지정 리뷰어 승인으로 대체하지 않는다.
-송은영·남한솔 리뷰 및 병합·Current 승격은 남아 있다. Track C/F 및 공통 Privacy Production gate는 유지한다.
+`scripts/e2e/real_stack.sh test-report`는 기존 격리 real-stack infrastructure를 재사용해
+실제 Backend·PostgreSQL·Frontend와 비식별 합성 사용자·처방·occurrence·Check-in을 준비한다.
+Report 진입의 실제 GET 응답을 그대로 표시한 뒤 사용자가 UNCONFIRMED를 NOT_TAKEN으로 명시 정정하고,
+Report 복귀 뒤 새 GET을 확인했다. API interception과 mock은 사용하지 않았다.
+
+- 정정 전: TAKEN 1, NOT_TAKEN 0, UNCONFIRMED 1; 복용률 1/1=100%, 기록 확인률 1/2=50%.
+- 정정 후: TAKEN 1, NOT_TAKEN 1, UNCONFIRMED 0; 복용률 1/2=50%, 기록 확인률 2/2=100%.
+- UI count·percentage·numerator·denominator는 각 GET의 서버 응답과 직접 대조했다.
+- Check-in PUT은 명시적 버튼 동작 전 0건, 동작 뒤 정확히 1건이며 응답은 NOT_TAKEN revision 2였다.
+- 격리 스택과 전용 volume은 실행 후 제거했다.
+
+## 승인 및 공개 경계
+
+Frontend #574는 현재 팀의 PR당 책임 reviewer 1명 규칙을 충족한다. `phina-io`의 추가 승인은
+#420 closeout 조건이 아니다. Issue #420에 과거 2-reviewer 문구가 남아 있다면 코드 PR에서 수정하지 않고
+stale metadata로 별도 정리한다. Track C/F 및 공통 Privacy Production gate는 유지한다.

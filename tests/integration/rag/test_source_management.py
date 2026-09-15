@@ -4,7 +4,7 @@ import asyncio
 import os
 import subprocess
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -680,6 +680,8 @@ async def test_unverified_unreferenced_snapshot_still_allows_management_deletion
 async def test_404_authentication_works_with_only_runtime_token_permissions(database, monkeypatch):
     from app.core.config import Env
     from app.dtos.auth import LoginRequest, SignUpRequest
+    from app.models.email_verification import EmailVerificationPurpose
+    from app.repositories.email_verification_repository import EmailVerificationRepository
     from app.repositories.password_reset_repository import PasswordResetRepository
     from app.repositories.refresh_session_repository import RefreshSessionRepository
     from app.repositories.user_repository import UserRepository
@@ -697,12 +699,25 @@ async def test_404_authentication_works_with_only_runtime_token_permissions(data
     managed = create_async_engine(url.set(username=manager, password="synthetic-auth-role-only"), hide_parameters=True)
 
     def service(session):
-        return AuthService(UserRepository(session), PasswordResetRepository(session), RefreshSessionRepository(session))
+        return AuthService(
+            UserRepository(session),
+            PasswordResetRepository(session),
+            RefreshSessionRepository(session),
+            email_verification_repository=EmailVerificationRepository(session),
+        )
 
     sessions = async_sessionmaker(reader, expire_on_commit=False)
     email = f"auth-{uuid4().hex[:12]}@example.com"
     try:
         async with sessions.begin() as session:
+            verified_at = datetime.now(config.TIMEZONE)
+            token = await EmailVerificationRepository(session).create_token(
+                email=email,
+                purpose=EmailVerificationPurpose.SIGNUP,
+                token_hash=f"{uuid4().hex}{uuid4().hex}",
+                expires_at=verified_at + timedelta(minutes=config.EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES),
+            )
+            token.verified_at = verified_at
             await service(session).signup(SignUpRequest(email=email, password="Password123!", name="합성 인증 테스트"))
         async with sessions.begin() as session:
             auth = service(session)

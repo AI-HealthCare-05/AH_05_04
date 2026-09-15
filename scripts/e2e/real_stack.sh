@@ -81,12 +81,27 @@ case "$ACTION" in
     ;;
   test)
     require_live_ai_opt_in
-    start_stack
     trap cleanup_stack EXIT
+    start_stack
     (
       cd frontend
       REAL_STACK_WEB_URL=http://127.0.0.1:14173 \
         pnpm exec playwright test --config=playwright.real-stack.config.ts
+    )
+    ;;
+  test-report)
+    require_env_file
+    trap cleanup_stack EXIT
+    start_stack
+    compose exec -T fastapi uv run --no-sync python -m app.release_validation.report_round_trip_fixture
+    (
+      cd frontend
+      REPORT_E2E_EMAIL=report-420@example.com \
+      REPORT_E2E_PASSWORD='Synthetic1!' \
+      REAL_STACK_WEB_URL=http://127.0.0.1:14173 \
+        pnpm exec playwright test \
+          --config=playwright.real-stack.config.ts \
+          e2e-real-stack/report-round-trip.spec.ts
     )
     ;;
   test-notification)
@@ -112,7 +127,7 @@ case "$ACTION" in
     compose ps
     ;;
   *)
-    echo "사용법: bash scripts/e2e/real_stack.sh {up|test|test-notification|status|down}" >&2
+    echo "사용법: bash scripts/e2e/real_stack.sh {up|test|test-report|test-notification|status|down}" >&2
     exit 2
     ;;
 esac

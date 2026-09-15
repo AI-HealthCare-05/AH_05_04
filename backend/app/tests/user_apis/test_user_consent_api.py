@@ -13,14 +13,14 @@ from app.main import app
 from app.models.user_consents import ConsentPurpose, ConsentStatus, UserConsent
 from app.services.user_consent_policy import current_consent_policy_version
 from app.services.users import _is_currently_granted
+from app.tests.helpers.auth import signup_verified_user
 
 
 async def _signup_and_login(client: AsyncClient, *, email: str) -> dict[str, str]:
-    signup_response = await client.post(
-        "/api/v1/auth/signup",
-        json={"email": email, "password": "Password123!", "name": "동의API"},
+    await signup_verified_user(
+        client,
+        {"email": email, "password": "Password123!", "name": "동의API"},
     )
-    assert signup_response.status_code == status.HTTP_201_CREATED, signup_response.text
     login_response = await client.post(
         "/api/v1/auth/login",
         json={"email": email, "password": "Password123!"},
