@@ -1,5 +1,6 @@
 """Static, single-offer Track C support and explicitly confirmed Plan creation."""
 
+from asyncio import to_thread
 from typing import Any
 from uuid import UUID
 
@@ -14,10 +15,11 @@ from app.dtos.track_c_support import (
     SupportOfferItem,
     SupportOfferResponse,
 )
-from app.models.medication_schedules import MedicationCheckinStatus
+from app.models.medication_schedules import MedicationCheckin, MedicationCheckinStatus
 from app.models.track_c import (
     BarrierResponse,
     BarrierResponseStatus,
+    SafetyAssessment,
     SafetyDisposition,
     SafetyResponseLevel,
     SupportCode,
@@ -29,8 +31,7 @@ from app.services.track_c_handler_config import (
     HandlerConfigError,
     SupportCopyCatalog,
     SupportRule,
-    load_active_handler_config,
-    load_active_support_copy_catalog,
+    load_active_support_assets,
     save_action_plan_snapshot,
 )
 
@@ -62,17 +63,28 @@ class TrackCSupportService:
         return parent
 
     async def _lock_current_flow(self, *, barrier: BarrierResponse, user_id: UUID) -> None:
-        # GET also holds these locks until its response is assembled. It writes no rows.
         checkin = await self._repository.lock_checkin_owned(checkin_id=barrier.medication_checkin_id, user_id=user_id)
         if checkin is None:
             raise ApiError(
                 status_code=404, code="BARRIER_RESPONSE_NOT_FOUND", message="지원 대상 응답을 찾을 수 없습니다."
             )
-        if checkin.status != MedicationCheckinStatus.NOT_TAKEN or checkin.revision != barrier.checkin_revision:
-            raise ApiError(status_code=409, code="CHECKIN_FLOW_STALE", message="현재 미복용 기록을 다시 확인해 주세요.")
         safety = await self._repository.get_latest_safety_for_update(
             checkin_id=checkin.id, checkin_revision=checkin.revision
         )
+        latest = await self._repository.get_latest_barrier_for_update(
+            checkin_id=checkin.id, checkin_revision=checkin.revision
+        )
+        self._ensure_current_flow(barrier, checkin, safety, latest.id if latest else None)
+
+    @staticmethod
+    def _ensure_current_flow(
+        barrier: BarrierResponse,
+        checkin: MedicationCheckin,
+        safety: SafetyAssessment | None,
+        latest_barrier_id: UUID | None,
+    ) -> None:
+        if checkin.status != MedicationCheckinStatus.NOT_TAKEN or checkin.revision != barrier.checkin_revision:
+            raise ApiError(status_code=409, code="CHECKIN_FLOW_STALE", message="현재 미복용 기록을 다시 확인해 주세요.")
         if (
             safety is None
             or safety.response_level != SafetyResponseLevel.ROUTINE
@@ -83,22 +95,15 @@ class TrackCSupportService:
                 code="SAFETY_FLOW_PRECEDES_SUPPORT",
                 message="일상 지원 전에 안전 확인을 완료해 주세요.",
             )
-        latest = await self._repository.get_latest_barrier_for_update(
-            checkin_id=checkin.id, checkin_revision=checkin.revision
-        )
-        if latest is None or latest.id != barrier.id or latest.safety_assessment_id != safety.id:
+        if latest_barrier_id != barrier.id or barrier.safety_assessment_id != safety.id:
             raise ApiError(
                 status_code=409, code="BARRIER_FLOW_STALE", message="최신 안전 확인에 맞춰 어려움을 다시 확인해 주세요."
             )
 
     @staticmethod
-    def _load_config() -> tuple[HandlerConfig, SupportCopyCatalog]:
+    async def _load_config() -> tuple[HandlerConfig, SupportCopyCatalog]:
         try:
-            config = load_active_handler_config()
-            catalog = load_active_support_copy_catalog()
-            if {rule.copy_version for rule in config.supports.values()} != {catalog.copy_version}:
-                raise HandlerConfigError("active copy changed during load")
-            return config, catalog
+            return await to_thread(load_active_support_assets)
         except HandlerConfigError:
             # Missing/damaged assets are not an ordinary empty-offer outcome.
             raise ApiError(
@@ -108,9 +113,14 @@ class TrackCSupportService:
             ) from None
 
     async def get_supports(self, *, user_id: UUID, barrier_id: UUID) -> SupportOfferResponse:
-        barrier, medication_id = await self._owned_parent(barrier_id=barrier_id, user_id=user_id)
-        await self._lock_current_flow(barrier=barrier, user_id=user_id)
-        config, catalog = self._load_config()
+        flow = await self._repository.get_support_flow_owned(barrier_id=barrier_id, user_id=user_id)
+        if flow is None:
+            raise ApiError(
+                status_code=404, code="BARRIER_RESPONSE_NOT_FOUND", message="지원 대상 응답을 찾을 수 없습니다."
+            )
+        barrier, medication_id, checkin, safety, latest_barrier_id = flow
+        self._ensure_current_flow(barrier, checkin, safety, latest_barrier_id)
+        config, catalog = await self._load_config()
         supports = []
         for rule in eligible_supports(config, barrier):
             copy = catalog.supports[rule.support_code]
@@ -155,8 +165,8 @@ class TrackCSupportService:
 
         async def mutate() -> dict[str, Any]:
             barrier, _ = await self._owned_parent(barrier_id=request.barrier_response_id, user_id=user_id)
+            config, _ = await self._load_config()
             await self._lock_current_flow(barrier=barrier, user_id=user_id)
-            config, _ = self._load_config()
             offered = eligible_supports(config, barrier)
             if request.rule_version != config.rule_version or (
                 offered and request.copy_version != offered[0].copy_version

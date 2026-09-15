@@ -18,8 +18,15 @@ Plan 조회·완료·취소·follow-up API와 Plan revision column은 추가하�
 `404 BARRIER_RESPONSE_NOT_FOUND`, 응답은 `Cache-Control: no-store`, 성공 `200` + `data` envelope다.
 오류는 기존 `code/message/details/trace_id` 형식이다.
 
-Check-in → 최신 Safety → 최신 Barrier → ACTIVE Plan 순서로 잠근다.
-GET도 일관된 조회를 위해 부모부터 잠그되 row·멱등 레코드를 생성/변경하지 않는다.
+POST만 Check-in → 최신 Safety → 최신 Barrier → ACTIVE Plan 순서로 잠근다.
+GET은 단일 SQL statement의 MVCC snapshot에서 소유권·현재 Check-in·최신 Safety/Barrier를
+읽고 검증한다. FOR UPDATE/행 잠금과 row·멱등 레코드 생성/변경은 없다.
+GET 응답 이후 상태가 바뀔 수 있으므로 POST는 서버에서 현재성을 반드시 다시 검증한다.
+
+리뷰 반영 revision 2: 신규 POST는 소유권/멱등 replay 확인 후 **행 잠금 전에** 승인 Rule·Copy를
+한 쌍으로 로딩·검증한다. 각 파일을 한 번씩 읽고 동기 파일 I/O는 스레드로 분리한다.
+캐시는 추가하지 않으며 파일 누락·손상 차단을 유지한다. 설정 장애와 stale 상태가 동시에 있으면
+신규 POST는 설정 단계의 503이 먼저 반환될 수 있다. 기존 성공 replay는 파일을 읽지 않는다.
 
 - 현재 Check-in이 NOT_TAKEN이 아니거나 Barrier의 checkin_revision과 다르면 `409 CHECKIN_FLOW_STALE`.
 - 최신 Safety가 없거나 ROUTINE/NORMAL이 아니면 `409 SAFETY_FLOW_PRECEDES_SUPPORT`.

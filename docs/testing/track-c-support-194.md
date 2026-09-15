@@ -53,3 +53,19 @@ Frontend 인계 fixture: [합성 0/1개 제안·생성 요청·응답](../../tes
 Frontend 실제 클릭·일정 화면 연결, 배포 환경 검증, Plan 조회·완료·취소·follow-up API는 미실행/미구현이다.
 Snapshot cap 회귀는 commit 전 전체 rollback 검증이며 외부 Provider live 호출을 수행하지 않는다.
 DB schema/migration 변경은 없다. 이 부분 구현으로 #194를 닫지 않는다.
+
+## PR #608 리뷰 revision 2
+
+- GET은 단일 SQL statement snapshot으로 소유권·현재성·최신 Safety/Barrier를 조회하며 행을 잠그지 않는다.
+- 독립 세션에서 GET의 조회 완료 후 반환을 지연시켜도 Check-in 정정 PUT이 먼저 완료됨을 검증했다.
+  GET은 조회 당시 revision=1, 정정은 revision=2를 반환한다. POST는 기존 잠금·현재성 검증을 유지한다.
+- Rule·Copy 쌍을 각 1회 읽고 검증한다. thread ID로 이벤트 루프 밖의 로딩임을 확인하며,
+  POST Check-in 잠금 호출 시 파일 검증이 이미 끝났는지 검사한다. 성공 replay는 파일을 읽지 않는다.
+- 캐시 없이 누락·손상·버전 참조 오류의 fail-closed 동작과 snapshot rollback을 유지한다.
+- 집중 회귀: `backend/app/tests/track_c`, HandlerConfig·운영 설정 서비스 테스트,
+  Frontend fixture 계약 **110 passed** (11.55초).
+- 전체 Backend·HandlerConfig·contract 회귀 **2,201 passed, 2 skipped** (266.50초).
+- Ruff check/format PASS (924 files), Mypy PASS (692 sources).
+- 기존 CI의 집계 test 실패는 `The job was not started because it repeatedly failed to be acquired (5 attempts).`
+  GitHub annotation으로 확인했다. runner_id=0, steps=[]로 gate script 자체가 실행되지 않았고,
+  classifier output 오류나 코드 테스트 실패가 아니다. CI 설정은 변경하지 않는다.

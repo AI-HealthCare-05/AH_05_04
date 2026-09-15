@@ -190,7 +190,7 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 
 ## Track C 지원 1개 제안·Plan 생성 (#194 부분)
 
-- [API v1 — Proposed](proposed/track-c-support-plan-api-194.md): 단일 제안 GET과 명시적 확정 POST, 현재성·소유권·멱등성.
+- [API v1 — Proposed, 리뷰 revision 2](proposed/track-c-support-plan-api-194.md): 잠금 없는 단일 제안 GET, 설정 로딩 후 잠그는 확정 POST, 현재성·소유권·멱등성.
 - [PD-194](../governance/decisions/2026-09-15-track-c-support-plan-api-194.md): PM의 0/1개 결정과 이번 구현 범위 축소.
 - Plan 조회·완료·취소·follow-up·revision 추가는 이번 범위 밖이며 #194 전체 완료가 아니다.
 - 실제 증상별 임상 판정표·환자용 문구 및 #195 연결은 미완료다.

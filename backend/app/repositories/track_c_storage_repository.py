@@ -5,6 +5,7 @@ from uuid import UUID
 
 from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.models.medication_schedules import MedicationCheckin, MedicationOccurrence, MedicationSchedule
 from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
@@ -237,6 +238,52 @@ class TrackCStorageRepository:
         )
         row = result.one_or_none()
         return (row[0], row[1]) if row is not None else None
+
+    async def get_support_flow_owned(
+        self, *, barrier_id: UUID, user_id: UUID
+    ) -> tuple[BarrierResponse, UUID, MedicationCheckin, SafetyAssessment | None, UUID | None] | None:
+        """One MVCC statement snapshot, without row locks or writes, for Offer GET."""
+        candidate = aliased(BarrierResponse)
+        latest_barrier_id = (
+            select(candidate.id)
+            .where(
+                candidate.medication_checkin_id == MedicationCheckin.id,
+                candidate.checkin_revision == MedicationCheckin.revision,
+            )
+            .order_by(candidate.revision.desc())
+            .limit(1)
+            .correlate(MedicationCheckin)
+            .scalar_subquery()
+        )
+        latest_safety_id = (
+            select(SafetyAssessment.id)
+            .where(
+                SafetyAssessment.medication_checkin_id == MedicationCheckin.id,
+                SafetyAssessment.checkin_revision == MedicationCheckin.revision,
+            )
+            .order_by(SafetyAssessment.revision.desc())
+            .limit(1)
+            .correlate(MedicationCheckin)
+            .scalar_subquery()
+        )
+        result = await self.session.execute(
+            select(
+                BarrierResponse,
+                MedicationSchedule.prescription_version_medication_id,
+                MedicationCheckin,
+                SafetyAssessment,
+                latest_barrier_id,
+            )
+            .select_from(BarrierResponse)
+            .join(MedicationCheckin, MedicationCheckin.id == BarrierResponse.medication_checkin_id)
+            .join(MedicationOccurrence, MedicationOccurrence.id == MedicationCheckin.occurrence_id)
+            .join(MedicationSchedule, MedicationSchedule.id == MedicationOccurrence.medication_schedule_id)
+            .outerjoin(SafetyAssessment, SafetyAssessment.id == latest_safety_id)
+            .where(BarrierResponse.id == barrier_id, MedicationCheckin.id.in_(self._owned_checkins(user_id)))
+            .execution_options(populate_existing=True)
+        )
+        row = result.one_or_none()
+        return (row[0], row[1], row[2], row[3], row[4]) if row is not None else None
 
     async def get_active_plan_for_update(self, *, barrier_id: UUID) -> SupportActionPlan | None:
         """Caller must hold the owned Check-in → Safety → Barrier locks first."""

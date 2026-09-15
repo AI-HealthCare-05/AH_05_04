@@ -27,3 +27,13 @@ immutable Barrier ID와 해당 부모의 Check-in revision·최신 Safety ID·�
 
 새 오류·확인 필드·응답 shape는 이 Decision의 구체화 delta이며 Freeze v4에 이미 있던 것으로 쓰지 않는다.
 전체 target의 Current 승격, 임상 Safety 정책 구현, Production 공개 승인과 구분한다.
+
+## Revision 2 — PR #608 리뷰 반영
+
+Jye-rookie의 a37ef794 대상 리뷰 1·2번을 PM 요청으로 반영한다. 책임 리뷰어는 @phina-io로 유지한다.
+GET은 FOR UPDATE 없이 단일 SQL statement snapshot으로 조회한다. 조회 중 Check-in 정정을
+막지 않으며 POST에서만 기존 잠금 순서와 현재성 재검증을 수행한다.
+설정 쌍은 신규 POST의 행 잠금 전에 각 파일을 한 번씩 읽어 검증하며 파일 I/O를 스레드에 위임한다.
+새 캐시/설정 활성화 기능은 추가하지 않는다. 설정 장애와 stale이 겹치면 신규 POST의 설정 503이
+먼저 반환될 수 있다. 기존 성공 멱등 replay는 설정을 로딩하지 않는다.
+DTO·개수·소유권·일반 Safety 허용 조건과 공개 gate는 바꾸지 않는다.

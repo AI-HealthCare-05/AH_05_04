@@ -1,4 +1,6 @@
 from dataclasses import replace
+from pathlib import Path
+from threading import get_ident
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -311,7 +313,7 @@ async def test_broken_config_is_not_empty_offer_and_replay_needs_no_active_confi
     def broken_config():
         raise HandlerConfigError("SYNTHETIC_SECRET_MUST_NOT_LEAK")
 
-    monkeypatch.setattr(track_c_support, "load_active_handler_config", broken_config)
+    monkeypatch.setattr(track_c_support, "load_active_support_assets", broken_config)
     response = await offer(case, barrier_id)
     assert_error(response, 503, "SUPPORT_CONFIG_UNAVAILABLE")
     assert "SYNTHETIC_SECRET" not in response.text
@@ -350,3 +352,36 @@ def test_openapi_contains_only_scoped_routes_and_strict_confirmation() -> None:
     assert schema["components"]["schemas"]["SupportOfferData"]["properties"]["supports"]["maxItems"] == 1
     assert "/api/v1/support-action-plans/{id}" not in schema["paths"]
     assert "/api/v1/support-action-plans/{id}/followups" not in schema["paths"]
+
+
+async def test_assets_read_once_each_off_event_loop_before_post_locks(
+    case: ApiCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    barrier_id = await prepare(case)
+    event_loop_thread = get_ident()
+    reads: list[str] = []
+    original_read = Path.read_text
+
+    def tracked_read(path, *args, **kwargs):
+        if "track_c" in path.parts:
+            assert get_ident() != event_loop_thread
+            reads.append(path.parent.name)
+        return original_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", tracked_read)
+    support = (await offer(case, barrier_id)).json()["data"]["supports"][0]
+    assert reads == ["support-rules", "support-copy"]
+    reads.clear()
+    original_lock = TrackCStorageRepository.lock_checkin_owned
+
+    async def checked_lock(repository, **kwargs):
+        assert reads == ["support-rules", "support-copy"]
+        return await original_lock(repository, **kwargs)
+
+    monkeypatch.setattr(TrackCStorageRepository, "lock_checkin_owned", checked_lock)
+    body = plan_body(barrier_id, support)
+    assert (await create(case, body)).status_code == 200
+    assert reads == ["support-rules", "support-copy"]
+    reads.clear()
+    assert (await create(case, body)).status_code == 200
+    assert reads == []

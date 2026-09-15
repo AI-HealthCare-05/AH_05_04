@@ -29,6 +29,7 @@ from app.models.track_c import (
     SupportActionPlan,
 )
 from app.repositories.idempotency_repository import IdempotencyRepository
+from app.repositories.track_c_storage_repository import TrackCStorageRepository
 from app.services.track_c_handler_config import ACTIVE_COPY_VERSION, ACTIVE_RULE_VERSION
 from app.tests.conftest import test_engine
 from app.tests.repositories.test_medication_checkin_repository_integration import _create_occurrence
@@ -38,9 +39,49 @@ from app.tests.repositories.test_medication_schedule_repository_integration impo
 )
 
 
-@pytest.mark.parametrize("same_key,correct_checkin", [(True, False), (False, False), (False, True)])
+async def assert_race_result(seed, barrier_id, first, second, *, same_key, correct_checkin, read_get):
+    expected_plans = 1
+    expected_snapshots = 1
+    if read_get:
+        assert first.status_code == second.status_code == 200, (first.text, second.text)
+        assert first.json()["data"]["checkin_revision"] == 1
+        assert second.json()["data"]["revision"] == 2
+        expected_plans = 0
+    elif correct_checkin:
+        assert second.status_code == 200, second.text
+        assert first.status_code in (200, 409), first.text
+        expected_plans = int(first.status_code == 200)
+        expected_snapshots += expected_plans
+        if first.status_code == 409:
+            assert first.json()["code"] == "CHECKIN_FLOW_STALE"
+        else:
+            assert (
+                await seed.scalar(
+                    select(SupportActionPlan.status).where(SupportActionPlan.barrier_response_id == barrier_id)
+                )
+                == "CANCELLED"
+            )
+    elif same_key:
+        assert first.status_code == second.status_code == 200, (first.text, second.text)
+        assert first.json() == second.json()
+    else:
+        assert sorted([first.status_code, second.status_code]) == [200, 409], (first.text, second.text)
+        loser = first if first.status_code == 409 else second
+        assert loser.json()["code"] == "ACTION_PLAN_ALREADY_ACTIVE"
+    return expected_plans, expected_snapshots
+
+
+@pytest.mark.parametrize(
+    "same_key,correct_checkin,read_get",
+    [
+        (True, False, False),
+        (False, False, False),
+        (False, True, False),
+        (False, True, True),
+    ],
+)
 async def test_concurrent_plan_requests_and_checkin_correction_serialize(
-    monkeypatch: pytest.MonkeyPatch, same_key: bool, correct_checkin: bool
+    monkeypatch: pytest.MonkeyPatch, same_key: bool, correct_checkin: bool, read_get: bool
 ) -> None:
     async with AsyncSession(test_engine, expire_on_commit=False) as seed:
         owner, profile = await _create_user_with_self_profile(seed, label="support-concurrency-synthetic")
@@ -100,7 +141,20 @@ async def test_concurrent_plan_requests_and_checkin_correction_serialize(
                 await asyncio.wait_for(ready.wait(), timeout=10)
             return result
 
-        monkeypatch.setattr(IdempotencyRepository, "find_sync_idempotency_record", synchronized_find)
+        if not read_get:
+            monkeypatch.setattr(IdempotencyRepository, "find_sync_idempotency_record", synchronized_find)
+        read_finished = asyncio.Event()
+        release_read = asyncio.Event()
+        original_read = TrackCStorageRepository.get_support_flow_owned
+
+        async def held_read(repository, **kwargs):
+            result = await original_read(repository, **kwargs)
+            read_finished.set()
+            await asyncio.wait_for(release_read.wait(), timeout=10)
+            return result
+
+        if read_get:
+            monkeypatch.setattr(TrackCStorageRepository, "get_support_flow_owned", held_read)
         previous_session = fastapi_app.dependency_overrides[get_db_session]
         fastapi_app.dependency_overrides[get_db_session] = request_session
         fastapi_app.dependency_overrides[get_request_user] = lambda: SimpleNamespace(id=owner.id)
@@ -113,10 +167,31 @@ async def test_concurrent_plan_requests_and_checkin_correction_serialize(
         }
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+
+                async def correct_during_get():
+                    await asyncio.wait_for(read_finished.wait(), timeout=10)
+                    try:
+                        return await asyncio.wait_for(
+                            client.put(
+                                f"/api/v1/medication-occurrences/{occurrence.id}/check-in",
+                                json={"status": "NOT_TAKEN", "expected_revision": 1},
+                                headers={"Idempotency-Key": "correction-while-offer-open"},
+                            ),
+                            timeout=3,
+                        )
+                    finally:
+                        release_read.set()
+
                 first, second = await asyncio.wait_for(
                     asyncio.gather(
                         *(
-                            client.put(
+                            (
+                                client.get(f"/api/v1/barrier-responses/{barrier.id}/supports")
+                                if index == 0
+                                else correct_during_get()
+                            )
+                            if read_get
+                            else client.put(
                                 f"/api/v1/medication-occurrences/{occurrence.id}/check-in",
                                 json={"status": "NOT_TAKEN", "expected_revision": 1},
                                 headers={"Idempotency-Key": "concurrent-checkin-correction"},
@@ -132,29 +207,15 @@ async def test_concurrent_plan_requests_and_checkin_correction_serialize(
                     ),
                     timeout=15,
                 )
-            expected_plans = 1
-            expected_snapshots = 1
-            if correct_checkin:
-                assert second.status_code == 200, second.text
-                assert first.status_code in (200, 409), first.text
-                expected_plans = int(first.status_code == 200)
-                expected_snapshots += expected_plans
-                if first.status_code == 409:
-                    assert first.json()["code"] == "CHECKIN_FLOW_STALE"
-                else:
-                    assert (
-                        await seed.scalar(
-                            select(SupportActionPlan.status).where(SupportActionPlan.barrier_response_id == barrier.id)
-                        )
-                        == "CANCELLED"
-                    )
-            elif same_key:
-                assert first.status_code == second.status_code == 200, (first.text, second.text)
-                assert first.json() == second.json()
-            else:
-                assert sorted([first.status_code, second.status_code]) == [200, 409], (first.text, second.text)
-                loser = first if first.status_code == 409 else second
-                assert loser.json()["code"] == "ACTION_PLAN_ALREADY_ACTIVE"
+            expected_plans, expected_snapshots = await assert_race_result(
+                seed,
+                barrier.id,
+                first,
+                second,
+                same_key=same_key,
+                correct_checkin=correct_checkin,
+                read_get=read_get,
+            )
             assert (
                 await seed.scalar(
                     select(func.count())
