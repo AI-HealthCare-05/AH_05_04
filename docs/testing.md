@@ -434,6 +434,13 @@ rollback과 민감 합성 sentinel 비노출을 검증한 뒤 database를 제거
 - OCR·Guide·Chat 처리 중 화면 이탈·재접속 후 새 Job을 만들지 않고 기존 `job_id`와 `status_url`로 polling을 복구합니다. Chat에서 Client에 Job 정보가 없으면 ASSISTANT 메시지의 `job_id`로 복구합니다.
 - 정상·중복 요청·재시도·`FAILED`·`STALE`·재접속 시나리오를 Frontend fixture와 계약 또는 통합 테스트로 검증합니다.
 
+### #148 OCR 접수 비동기 전환 응답 시간
+
+OCR 접수의 동기→비동기 전환 전후 접수 응답 시간을 Provider 지연 0·500·2000 ms 세 조건에서 비교한
+기록은 [#148 접수 응답 시간 비교](validation/issue-148-ocr-async-intake-latency.md)를 따릅니다. 전환 후
+접수 응답은 Provider 지연과 무관하게 p50 19~21 ms로 일정하고, 전환 전에는 지연분이 응답 시간에 그대로
+더해집니다. 로컬 in-process 측정이므로 운영 환경 수치나 공개 승인 근거로 사용하지 않습니다.
+
 ### Track E OCR 회귀 게이트
 
 Worker 이관 전후 OCR 비퇴행은 CI replay와 release smoke를 분리해 검증합니다.
