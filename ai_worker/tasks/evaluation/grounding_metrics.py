@@ -356,17 +356,28 @@ def build_grounding_metrics(  # noqa: C901
         ):
             obs_integrity_invalid = True
             break
-        # Claim keys must exact-match actual_claim_ids
+        # Claim keys uniqueness and exact-match with actual_claim_ids
         actual_claims = tuple(obs_res.actual_claim_ids or ())
-        obs_claim_keys = tuple(c.claim_key for c in obs.claims)
-        if obs_claim_keys != actual_claims:
+        obs_claim_keys = tuple(claim_item.claim_key for claim_item in obs.claims)
+        if len(obs_claim_keys) != len(set(obs_claim_keys)) or obs_claim_keys != actual_claims:
             obs_integrity_invalid = True
             break
         # Citations distinct evidence_ref_ids must exact-match actual_citation_evidence_ids
         actual_citations = set(obs_res.actual_citation_evidence_ids or ())
-        obs_evidence_ids = {edge.evidence_ref_id for c in obs.claims for edge in c.citations}
+        obs_evidence_ids = {edge.evidence_ref_id for claim_item in obs.claims for edge in claim_item.citations}
         if obs_evidence_ids != actual_citations:
             obs_integrity_invalid = True
+            break
+        # Citation key uniqueness per claim and claim_key binding
+        for claim_item in obs.claims:
+            cit_keys = [edge.citation_key for edge in claim_item.citations]
+            if len(cit_keys) != len(set(cit_keys)):
+                obs_integrity_invalid = True
+                break
+            if any(edge.claim_key != claim_item.claim_key for edge in claim_item.citations):
+                obs_integrity_invalid = True
+                break
+        if obs_integrity_invalid:
             break
 
     # Step 3: Index and validate grounding signals
@@ -487,6 +498,7 @@ def build_grounding_metrics(  # noqa: C901
                             or case_sig.critical_unsupported_claim
                             or case_sig.uncited_medical_claim
                             or case_sig.source_binding_misuse
+                            or case_sig.answer_sha256 != result.answer_sha256
                         ):
                             signal_integrity_invalid = True
                             break
@@ -495,7 +507,10 @@ def build_grounding_metrics(  # noqa: C901
                         if (
                             case_sig.status is not GroundingSignalStatus.EVALUATED
                             or case_sig.observation_sha256 != case_obs.observation_sha256
+                            or case_sig.observation_ref is None
+                            or case_sig.observation_ref.hash != case_obs.observation_sha256
                             or case_sig.answer_sha256 != case_obs.answer_sha256
+                            or case_sig.answer_sha256 != result.answer_sha256
                         ):
                             signal_integrity_invalid = True
                             break

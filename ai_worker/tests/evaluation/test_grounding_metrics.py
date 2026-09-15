@@ -210,7 +210,7 @@ def _grounding_case_result(
     *,
     actual_claim_ids: tuple[str, ...],
     actual_citation_evidence_ids: tuple[str, ...],
-    answer_sha256: str = "a" * 64,
+    answer_sha256: str | None = "a" * 64,
     execution_status: str = "COMPLETED",
 ) -> CaseResult:
     return CASE_RESULT_ADAPTER.validate_python(
@@ -462,7 +462,7 @@ def _case_safety(
     *,
     case_id: str = "case-s1",
     input_sha256: str = "4" * 64,
-    answer_sha256: str = "d" * 64,
+    answer_sha256: str | None = "d" * 64,
     group_id: str = "group-s",
     has_claims: bool = True,
     uncited_medical: bool = False,
@@ -470,6 +470,7 @@ def _case_safety(
     source_binding_misuse: bool = False,
     signal_status: str = "EVALUATED",
     observation_ref: dict[str, Any] | None = None,
+    signal_answer_sha256: Any = ...,
 ) -> tuple[EvaluationCaseContract, CaseResult, ClaimCitationObservation | None, GroundingSignal]:
     gold_claims: tuple[GoldClaim, ...] = ()
     expected_citations: tuple[ExpectedCitation, ...] = ()
@@ -563,6 +564,7 @@ def _case_safety(
         )
 
     obs_ref = {"id": "obs-ref", "version": "1.0.0", "hash": obs.observation_sha256} if obs else observation_ref
+    sig_ans = answer_sha256 if signal_answer_sha256 is ... else signal_answer_sha256
     sig_payload: dict[str, Any] = {
         "run_id": RUN_ID,
         "case_id": case_id,
@@ -570,7 +572,7 @@ def _case_safety(
         "dataset_code": DATASET_CODE,
         "dataset_version": DATASET_VERSION,
         "input_sha256": input_sha256,
-        "answer_sha256": answer_sha256 if has_claims else None,
+        "answer_sha256": sig_ans,
         "status": signal_status,
         "observation_ref": obs_ref,
         "observation_sha256": obs.observation_sha256 if obs else None,
@@ -1000,9 +1002,11 @@ def test_structural_integrity_violations() -> None:
     case_a, res_a, obs_a = _case_a()
     ds_a = _dataset_with_cases_and_scopes((case_a,))
 
-    # 1. duplicate citation key in observation -> INVALID
-    bad_edge = obs_a.claims[0].citations[0]
-    bad_claim = obs_a.claims[0].model_copy(update={"citations": (bad_edge, bad_edge)})
+    # 1. duplicate citation key in observation (preserving all original evidence IDs) -> INVALID
+    edge_0 = obs_a.claims[0].citations[0]
+    edge_1 = obs_a.claims[0].citations[1]
+    # duplicate edge_0 while keeping edge_1 so evidence set {"mfds-doc-001", "mfds-doc-002"} is unchanged
+    bad_claim = obs_a.claims[0].model_copy(update={"citations": (edge_0, edge_0, edge_1)})
     obs_dup_cit = obs_a.model_copy(update={"claims": (bad_claim,)})
     canon_dump = cast(dict[str, JsonValue], obs_dup_cit.model_dump(mode="json"))
     real_sha = canonical_sha256(canon_dump, excluded_top_level_keys=frozenset({"observation_sha256"}))
@@ -1189,6 +1193,34 @@ def test_safety_signal_cross_check() -> None:
     )
     assert res.metrics[0].execution_status is ExecutionStatus.COMPLETED
 
+    # Signal observation_ref.hash mismatch against actual observation -> INVALID
+    sig_bad_ref = sig_s.model_dump(mode="json")
+    sig_bad_ref["observation_ref"]["hash"] = "e" * 64
+    res_bad_ref = build_grounding_metrics(
+        ds_s,
+        (res_s,),
+        (obs_s,),
+        (_make_grounding_signal(sig_bad_ref),),
+        expected_run_id=RUN_ID,
+        expected_input_sha256_by_case={case_s.case_id: case_s.input_sha256},
+        expected_answer_variant_manifest_hash=VARIANT_HASH,
+    )
+    assert res_bad_ref.metrics[0].execution_status is ExecutionStatus.INVALID
+
+    # Signal answer_sha256 mismatch against CaseResult/Observation -> INVALID
+    sig_bad_ans = sig_s.model_dump(mode="json")
+    sig_bad_ans["answer_sha256"] = "e" * 64
+    res_bad_ans = build_grounding_metrics(
+        ds_s,
+        (res_s,),
+        (obs_s,),
+        (_make_grounding_signal(sig_bad_ans),),
+        expected_run_id=RUN_ID,
+        expected_input_sha256_by_case={case_s.case_id: case_s.input_sha256},
+        expected_answer_variant_manifest_hash=VARIANT_HASH,
+    )
+    assert res_bad_ans.metrics[0].execution_status is ExecutionStatus.INVALID
+
     # Signal boolean mismatch (e.g. signal claims uncited_medical_claim=True when obs has citation) -> INVALID
     sig_bad = sig_s.model_dump(mode="json")
     sig_bad["uncited_medical_claim"] = True
@@ -1218,28 +1250,106 @@ def test_safety_signal_cross_check() -> None:
 
 
 def test_not_applicable_no_claims_valid_and_invalid() -> None:
-    # Clean fallback: no claims, no citations -> signal NOT_APPLICABLE_NO_CLAIMS
-    case_s, res_s, obs_s, sig_s = _case_safety(
+    fallback_hash = "7" * 64
+
+    # 1. Valid null/null: no claims, result.answer_sha256 is None, signal.answer_sha256 is None -> COMPLETED
+    case_s_null, res_s_null, obs_s_null, sig_s_null = _case_safety(
         has_claims=False,
+        answer_sha256=None,
         signal_status="NOT_APPLICABLE_NO_CLAIMS",
         observation_ref=None,
     )
-    assert obs_s is None
-    ds_s = _dataset_with_cases_and_scopes((case_s,))
-
-    # Valid -> COMPLETED
-    res = build_grounding_metrics(
-        ds_s,
-        (res_s,),
+    assert obs_s_null is None
+    ds_s_null = _dataset_with_cases_and_scopes((case_s_null,))
+    res_null = build_grounding_metrics(
+        ds_s_null,
+        (res_s_null,),
         (),
-        (sig_s,),
+        (sig_s_null,),
         expected_run_id=RUN_ID,
-        expected_input_sha256_by_case={case_s.case_id: case_s.input_sha256},
+        expected_input_sha256_by_case={case_s_null.case_id: case_s_null.input_sha256},
         expected_answer_variant_manifest_hash=VARIANT_HASH,
     )
-    assert res.metrics[0].execution_status is ExecutionStatus.COMPLETED
+    assert res_null.metrics[0].execution_status is ExecutionStatus.COMPLETED
 
-    # Case has claims, but signal says NOT_APPLICABLE_NO_CLAIMS -> INVALID
+    # 2. Valid matching fallback hash: result.answer_sha256 == fallback_hash and signal.answer_sha256 == fallback_hash -> COMPLETED
+    case_s_fb, res_s_fb, obs_s_fb, sig_s_fb = _case_safety(
+        has_claims=False,
+        answer_sha256=fallback_hash,
+        signal_status="NOT_APPLICABLE_NO_CLAIMS",
+        observation_ref=None,
+    )
+    assert obs_s_fb is None
+    ds_s_fb = _dataset_with_cases_and_scopes((case_s_fb,))
+    res_fb = build_grounding_metrics(
+        ds_s_fb,
+        (res_s_fb,),
+        (),
+        (sig_s_fb,),
+        expected_run_id=RUN_ID,
+        expected_input_sha256_by_case={case_s_fb.case_id: case_s_fb.input_sha256},
+        expected_answer_variant_manifest_hash=VARIANT_HASH,
+    )
+    assert res_fb.metrics[0].execution_status is ExecutionStatus.COMPLETED
+
+    # 3. Mismatch null vs non-null: result has None, signal has fallback_hash -> INVALID
+    case_s_m1, res_s_m1, _, sig_s_m1 = _case_safety(
+        has_claims=False,
+        answer_sha256=None,
+        signal_status="NOT_APPLICABLE_NO_CLAIMS",
+        observation_ref=None,
+        signal_answer_sha256=fallback_hash,
+    )
+    res_m1 = build_grounding_metrics(
+        ds_s_null,
+        (res_s_m1,),
+        (),
+        (sig_s_m1,),
+        expected_run_id=RUN_ID,
+        expected_input_sha256_by_case={case_s_m1.case_id: case_s_m1.input_sha256},
+        expected_answer_variant_manifest_hash=VARIANT_HASH,
+    )
+    assert res_m1.metrics[0].execution_status is ExecutionStatus.INVALID
+
+    # 4. Mismatch non-null vs null: result has fallback_hash, signal has None -> INVALID
+    case_s_m2, res_s_m2, _, sig_s_m2 = _case_safety(
+        has_claims=False,
+        answer_sha256=fallback_hash,
+        signal_status="NOT_APPLICABLE_NO_CLAIMS",
+        observation_ref=None,
+        signal_answer_sha256=None,
+    )
+    res_m2 = build_grounding_metrics(
+        ds_s_fb,
+        (res_s_m2,),
+        (),
+        (sig_s_m2,),
+        expected_run_id=RUN_ID,
+        expected_input_sha256_by_case={case_s_m2.case_id: case_s_m2.input_sha256},
+        expected_answer_variant_manifest_hash=VARIANT_HASH,
+    )
+    assert res_m2.metrics[0].execution_status is ExecutionStatus.INVALID
+
+    # 5. Mismatch different answer hashes: result has "1"*64, signal has "2"*64 -> INVALID
+    case_s_m3, res_s_m3, _, sig_s_m3 = _case_safety(
+        has_claims=False,
+        answer_sha256="1" * 64,
+        signal_status="NOT_APPLICABLE_NO_CLAIMS",
+        observation_ref=None,
+        signal_answer_sha256="2" * 64,
+    )
+    res_m3 = build_grounding_metrics(
+        _dataset_with_cases_and_scopes((case_s_m3,)),
+        (res_s_m3,),
+        (),
+        (sig_s_m3,),
+        expected_run_id=RUN_ID,
+        expected_input_sha256_by_case={case_s_m3.case_id: case_s_m3.input_sha256},
+        expected_answer_variant_manifest_hash=VARIANT_HASH,
+    )
+    assert res_m3.metrics[0].execution_status is ExecutionStatus.INVALID
+
+    # 6. Case has claims, but signal says NOT_APPLICABLE_NO_CLAIMS -> INVALID
     case_s2, res_s2, obs_s2, _ = _case_safety(has_claims=True)
     assert obs_s2 is not None
     sig_no_claims_for_claims_case = _make_grounding_signal(
@@ -1260,7 +1370,7 @@ def test_not_applicable_no_claims_valid_and_invalid() -> None:
         }
     )
     res_bad = build_grounding_metrics(
-        ds_s,
+        _dataset_with_cases_and_scopes((case_s2,)),
         (res_s2,),
         (obs_s2,),
         (sig_no_claims_for_claims_case,),
