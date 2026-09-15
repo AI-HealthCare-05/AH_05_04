@@ -4,10 +4,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { login } from '../src/api/auth'
 import { ApiError } from '../src/api/client'
+import { getUnconfirmedCheckins } from '../src/api/medicationCheckinBacklog'
+import { putMedicationCheckin } from '../src/api/medicationCheckins'
 import LoginPage from '../src/pages/LoginPage'
 
 vi.mock('../src/api/auth', () => ({
   login: vi.fn(),
+}))
+
+vi.mock('../src/api/medicationCheckinBacklog', () => ({
+  getUnconfirmedCheckins: vi.fn(),
+}))
+
+vi.mock('../src/api/medicationCheckins', () => ({
+  putMedicationCheckin: vi.fn(),
 }))
 
 beforeEach(() => {
@@ -15,6 +25,9 @@ beforeEach(() => {
   localStorage.clear()
   sessionStorage.clear()
   vi.mocked(login).mockResolvedValue({ access_token: 'synthetic-token' })
+  vi.mocked(getUnconfirmedCheckins).mockResolvedValue({
+    data: { items: [], next_cursor: null },
+  })
 })
 
 afterEach(() => {
@@ -64,6 +77,7 @@ describe('LoginPage', () => {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<div>회원가입 화면</div>} />
           <Route path="/" element={<HomeStateProbe />} />
+          <Route path="/schedule/unconfirmed" element={<div>미확인 기록 보완 화면</div>} />
         </Routes>
       </MemoryRouter>,
     )
@@ -149,6 +163,93 @@ describe('LoginPage', () => {
     expect(localStorage.getItem('access_token')).toBe('synthetic-token')
     expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toBeNull()
     expect(sessionStorage.getItem('dosey_chat_session:previous-prescription')).toBeNull()
+  })
+
+  it('로그인 성공 후 미확인 기록이 있으면 보완 화면으로 이동한다', async () => {
+    vi.mocked(getUnconfirmedCheckins).mockResolvedValue({
+      data: {
+        items: [{
+          checkin_id: '11111111-1111-4111-8111-111111111111',
+          occurrence_id: '22222222-2222-4222-8222-222222222222',
+          prescription_id: '33333333-3333-4333-8333-333333333333',
+          prescription_version_id: '44444444-4444-4444-8444-444444444444',
+          prescription_version_medication_id: '55555555-5555-4555-8555-555555555555',
+          medication_name: '합성 혈압약',
+          strength_text: '5mg',
+          scheduled_local_date: '2026-09-14',
+          scheduled_at: '2026-09-14T00:00:00Z',
+          confirmation_deadline_at: '2026-09-14T01:00:00Z',
+          status: 'UNCONFIRMED',
+          revision: 1,
+        }],
+        next_cursor: null,
+      },
+    })
+    renderPage()
+    fillValidForm()
+
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }))
+
+    expect(await screen.findByText('미확인 기록 보완 화면')).toBeTruthy()
+    expect(getUnconfirmedCheckins).toHaveBeenCalledWith({ limit: 1 })
+    expect(putMedicationCheckin).not.toHaveBeenCalled()
+  })
+
+  it('로그인 성공 후 미확인 기록이 없으면 기존 홈 흐름을 유지한다', async () => {
+    renderPage()
+    fillValidForm()
+
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }))
+
+    expect(await screen.findByText('홈 화면')).toBeTruthy()
+    expect(getUnconfirmedCheckins).toHaveBeenCalledWith({ limit: 1 })
+    expect(putMedicationCheckin).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    new TypeError('Failed to fetch'),
+    new ApiError(503, 'raw backend detail', 'SERVICE_UNAVAILABLE'),
+  ])('미확인 기록 조회 실패가 %s이면 로그인 성공을 유지하고 홈으로 이동한다', async (error) => {
+    vi.mocked(getUnconfirmedCheckins).mockRejectedValue(error)
+    renderPage()
+    fillValidForm()
+
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }))
+
+    expect(await screen.findByText('홈 화면')).toBeTruthy()
+    expect(localStorage.getItem('access_token')).toBe('synthetic-token')
+    expect(screen.queryByText('raw backend detail')).toBeNull()
+    expect(putMedicationCheckin).not.toHaveBeenCalled()
+  })
+
+  it('미확인 기록 200 응답 구조가 잘못되면 성공으로 추정해 Home으로 이동하지 않는다', async () => {
+    vi.mocked(getUnconfirmedCheckins).mockResolvedValue(
+      {} as Awaited<ReturnType<typeof getUnconfirmedCheckins>>,
+    )
+    renderPage()
+    fillValidForm()
+
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }))
+
+    expect(await screen.findByText('네트워크 연결을 확인하고 다시 시도해 주세요.')).toBeTruthy()
+    expect(screen.queryByText('홈 화면')).toBeNull()
+    expect(screen.queryByText('미확인 기록 보완 화면')).toBeNull()
+    expect(putMedicationCheckin).not.toHaveBeenCalled()
+  })
+
+  it('미확인 기록 조회가 401이면 기존 인증 오류 흐름으로 처리한다', async () => {
+    vi.mocked(getUnconfirmedCheckins).mockRejectedValue(
+      new ApiError(401, '로그인이 필요합니다.', 'UNAUTHORIZED'),
+    )
+    renderPage()
+    fillValidForm()
+
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }))
+
+    expect(await screen.findByText('로그인이 필요합니다.')).toBeTruthy()
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(screen.queryByText('홈 화면')).toBeNull()
+    expect(putMedicationCheckin).not.toHaveBeenCalled()
   })
 
   it('Backend 401 자격 증명 오류를 그대로 안내한다', async () => {
