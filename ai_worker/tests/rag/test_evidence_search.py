@@ -15,6 +15,7 @@ from ai_worker.tasks.rag.evidence_search import (
     EvidenceSearchFailureReason,
     EvidenceSearchRequest,
     QueryEmbeddingReceipt,
+    RetrievalExecutionMode,
     SensitiveVector,
     VersionedEvidenceRetrievalConfiguration,
     VersionedLexicalSearchConfiguration,
@@ -204,6 +205,7 @@ def test_versioned_retrieval_configuration_hashes() -> None:
         lexical_config=lex_bound,
         dense_config=None,
         expected_query_embedding_adapter_ref=None,
+        execution_mode=RetrievalExecutionMode.LEXICAL_ONLY,
     )
     ret_hash = ret_config.compute_canonical_hash()
     assert len(ret_hash) == 64
@@ -217,6 +219,7 @@ def test_versioned_retrieval_configuration_hashes() -> None:
         lexical_config=lex_bound,
         dense_config=None,
         expected_query_embedding_adapter_ref=None,
+        execution_mode=RetrievalExecutionMode.LEXICAL_ONLY,
     )
     assert ret_bound.is_hash_valid()
 
@@ -251,6 +254,7 @@ def test_request_validation_dense_active_vs_inactive() -> None:
         lexical_config=lex_bound,
         dense_config=None,
         expected_query_embedding_adapter_ref=None,
+        execution_mode=RetrievalExecutionMode.LEXICAL_ONLY,
     )
     ret_bound = VersionedEvidenceRetrievalConfiguration(
         artifact_ref=ImmutableArtifactRef(
@@ -261,6 +265,7 @@ def test_request_validation_dense_active_vs_inactive() -> None:
         lexical_config=lex_bound,
         dense_config=None,
         expected_query_embedding_adapter_ref=None,
+        execution_mode=RetrievalExecutionMode.LEXICAL_ONLY,
     )
 
     binding = EvidenceSearchExecutionBinding(
@@ -300,3 +305,100 @@ def test_request_validation_dense_active_vs_inactive() -> None:
     )
     res2 = validate_search_request(req_dense_inactive)
     assert res2 is None
+
+
+def test_retrieval_configuration_hash_changes_with_execution_mode() -> None:
+    from ai_worker.tasks.rag.evidence_search import (
+        RetrievalExecutionMode,
+        VersionedDenseSearchConfiguration,
+    )
+
+    lex = _valid_lexical_config()
+    lex_bound = VersionedLexicalSearchConfiguration(
+        artifact_ref=ImmutableArtifactRef("lex-cfg", "1.0", lex.compute_canonical_hash()),
+        exact_strategy=lex.exact_strategy,
+        query_normalization=lex.query_normalization,
+        trigram_match_operator=lex.trigram_match_operator,
+        trigram_score_function=lex.trigram_score_function,
+        trigram_threshold=lex.trigram_threshold,
+        fts_regconfig=lex.fts_regconfig,
+        fts_vector_expression=lex.fts_vector_expression,
+        fts_query_constructor=lex.fts_query_constructor,
+        fts_score_function=lex.fts_score_function,
+        exact_limit=lex.exact_limit,
+        trigram_limit=lex.trigram_limit,
+        fts_limit=lex.fts_limit,
+    )
+    dense_cfg = VersionedDenseSearchConfiguration(
+        artifact_ref=ImmutableArtifactRef("dense-cfg", "1.0", "0" * 64),
+        dense_limit=20,
+    )
+    dense_bound = VersionedDenseSearchConfiguration(
+        artifact_ref=ImmutableArtifactRef("dense-cfg", "1.0", dense_cfg.compute_canonical_hash()),
+        dense_limit=20,
+    )
+    adapter_ref = ImmutableArtifactRef("adapter", "1.0", "d" * 64)
+
+    lexical_cfg = VersionedEvidenceRetrievalConfiguration(
+        artifact_ref=ImmutableArtifactRef("ret-cfg", "1.0", "0" * 64),
+        lexical_config=lex_bound,
+        dense_config=None,
+        expected_query_embedding_adapter_ref=None,
+        execution_mode=RetrievalExecutionMode.LEXICAL_ONLY,
+    )
+    dense_mode_cfg = VersionedEvidenceRetrievalConfiguration(
+        artifact_ref=ImmutableArtifactRef("ret-cfg", "1.0", "0" * 64),
+        lexical_config=lex_bound,
+        dense_config=dense_bound,
+        expected_query_embedding_adapter_ref=adapter_ref,
+        execution_mode=RetrievalExecutionMode.DENSE_ONLY,
+    )
+    hybrid_cfg = VersionedEvidenceRetrievalConfiguration(
+        artifact_ref=ImmutableArtifactRef("ret-cfg", "1.0", "0" * 64),
+        lexical_config=lex_bound,
+        dense_config=dense_bound,
+        expected_query_embedding_adapter_ref=adapter_ref,
+        execution_mode=RetrievalExecutionMode.HYBRID_RRF,
+    )
+
+    hashes = {
+        lexical_cfg.compute_canonical_hash(),
+        dense_mode_cfg.compute_canonical_hash(),
+        hybrid_cfg.compute_canonical_hash(),
+    }
+    assert len(hashes) == 3
+
+
+def test_dense_only_requires_dense_config_and_embedding_adapter_ref() -> None:
+    from ai_worker.tasks.rag.evidence_search import (
+        RetrievalExecutionMode,
+        validate_retrieval_configuration,
+    )
+
+    lex = _valid_lexical_config()
+    lex_bound = VersionedLexicalSearchConfiguration(
+        artifact_ref=ImmutableArtifactRef("lex-cfg", "1.0", lex.compute_canonical_hash()),
+        exact_strategy=lex.exact_strategy,
+        query_normalization=lex.query_normalization,
+        trigram_match_operator=lex.trigram_match_operator,
+        trigram_score_function=lex.trigram_score_function,
+        trigram_threshold=lex.trigram_threshold,
+        fts_regconfig=lex.fts_regconfig,
+        fts_vector_expression=lex.fts_vector_expression,
+        fts_query_constructor=lex.fts_query_constructor,
+        fts_score_function=lex.fts_score_function,
+        exact_limit=lex.exact_limit,
+        trigram_limit=lex.trigram_limit,
+        fts_limit=lex.fts_limit,
+    )
+
+    invalid_dense_only = VersionedEvidenceRetrievalConfiguration(
+        artifact_ref=ImmutableArtifactRef("ret-cfg", "1.0", "0" * 64),
+        lexical_config=lex_bound,
+        dense_config=None,
+        expected_query_embedding_adapter_ref=None,
+        execution_mode=RetrievalExecutionMode.DENSE_ONLY,
+    )
+    outcome = validate_retrieval_configuration(invalid_dense_only)
+    assert outcome == EvidenceSearchFailure(EvidenceSearchFailureReason.RETRIEVAL_CONFIG_INVALID)
+
