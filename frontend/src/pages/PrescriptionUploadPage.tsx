@@ -760,6 +760,13 @@ function PrescriptionUploadPage() {
     ) {
       status = pollingState.status
       presentation = getJobStatusPresentation(pollingState.status)
+      if (pollingState.status === 'PROCESSING') {
+        presentation = {
+          ...presentation,
+          title: '처방전 내용을 확인하고 있어요',
+          description: '파일 업로드 → 글자 인식 → 복약정보 구조화',
+        }
+      }
     }
 
     return (

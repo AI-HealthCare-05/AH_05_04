@@ -660,8 +660,8 @@
 
 /* DOC-03 Final · 705:48 / 상태 기준 634:6-9 */
 .prescription-review-page {
-  --ds-action: #0066cc;
-  --ds-action-pressed: #0052a3;
+  --ds-action: #607d8b;
+  --ds-action-pressed: #526b78;
   --ds-canvas: #f6f8fb;
   background: var(--ds-canvas);
 }
@@ -702,7 +702,7 @@
   height: 48px;
   flex-basis: 48px;
   border-radius: 24px;
-  background: #eaf3ff;
+  background: #eceff1;
   color: var(--ds-action);
   font-size: 20px;
   font-weight: 900;
@@ -745,6 +745,12 @@
 .prescription-review__content .prescription-review__notice span {
   color: #475167;
   font-weight: 500;
+}
+
+.prescription-review__content .prescription-review__notice .prescription-review__state-guidance {
+  color: var(--gray-600);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .prescription-review__prescription-card,
@@ -1037,7 +1043,7 @@
   display: grid;
   place-items: center;
   border-radius: 12px;
-  background: #eaf3ff;
+  background: #eceff1;
   color: var(--ds-action);
   font-size: 15px;
   font-weight: 900;

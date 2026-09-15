@@ -65,6 +65,7 @@
 }
 
 .guide-page__empty-action,
+.guide-page__schedule-button,
 .guide-page__chat-button,
 .guide-page__status .ds-button {
   min-height: 56px;
@@ -99,6 +100,15 @@
   font-size: 22px;
   line-height: 1.3;
   letter-spacing: -.035em;
+}
+
+.guide-page__medication-count {
+  width: 1px;
+  height: 1px;
+  position: absolute;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .guide-page__medication-list {
@@ -321,8 +331,20 @@
   font-size: 11px;
 }
 
-.guide-page__chat-button {
+.guide-page__schedule-button {
   margin-top: 12px;
+}
+
+.guide-page__schedule-button:disabled {
+  border-color: var(--ds-action);
+  background: #fff;
+  color: var(--ds-action);
+  opacity: 1;
+  cursor: default;
+}
+
+.guide-page__chat-button {
+  margin-top: 8px;
 }
 
 .guide-page__status {

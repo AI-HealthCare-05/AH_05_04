@@ -161,9 +161,15 @@ function StructuredGuideContent({ guide }: { guide: StructuredGuide }) {
       className="guide-page__structured-guide"
       aria-labelledby="guide-medications-heading"
     >
-      <h2 id="guide-medications-heading">
-        확인된 약 목록 · {guide.medications.length}개
+      <h2
+        id="guide-medications-heading"
+        aria-label={`확인된 약 목록 · ${guide.medications.length}개`}
+      >
+        확인된 약 목록
       </h2>
+      <span className="guide-page__medication-count" aria-hidden="true">
+        확인된 약 목록 · {guide.medications.length}개
+      </span>
       <div className="guide-page__medication-list">
         {guide.medications.map((medication, index) => (
           <details className="guide-page__medication-card" key={`${index}-${medication.name}`}>
@@ -416,6 +422,15 @@ function GuidePage({
               )}
 
               {completedAt && <p className="guide-page__completed-at">{completedAt} 생성</p>}
+
+              <Button
+                fullWidth
+                variant="secondary"
+                className="guide-page__schedule-button"
+                disabled
+              >
+                복용 일정 확인하기
+              </Button>
 
               <Button
                 fullWidth

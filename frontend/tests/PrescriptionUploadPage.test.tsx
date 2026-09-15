@@ -248,7 +248,9 @@ describe('PrescriptionUploadPage OCR polling', () => {
     }))
 
     expect(await screen.findByText('처방전을 등록해 주세요')).toBeTruthy()
-    expect(getLatestPrescription).not.toHaveBeenCalled()
+    // Home은 최신 화면 상태를 고르기 위해 한 번 조회하지만, direct intent로
+    // 진입한 DOC-01은 같은 조회를 반복하지 않는다.
+    expect(getLatestPrescription).toHaveBeenCalledTimes(1)
     expect(getGuideForPrescription).not.toHaveBeenCalled()
     expect(getJobStatus).not.toHaveBeenCalled()
     expect(screen.queryByText('가이드 화면')).toBeNull()

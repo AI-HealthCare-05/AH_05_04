@@ -8,6 +8,7 @@ import {
 import React from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { ApiError } from '../src/api/client'
 import HomePage from '../src/pages/HomePage'
 import StartPage from '../src/pages/StartPage'
 
@@ -21,9 +22,70 @@ const CURRENT_USER = {
   created_at: '2026-08-28T00:00:00Z',
 }
 
+const PRESCRIPTION_RESPONSE = {
+  data: {
+    prescription_id: '11111111-1111-4111-8111-111111111111',
+    prescription_version_id: '22222222-2222-4222-8222-222222222222',
+    revision: 1,
+    current: true,
+    document_id: '33333333-3333-4333-8333-333333333333',
+    prescribed_date: '2026-09-15',
+    confirmed_at: '2026-09-15T00:00:00Z',
+    medications: [],
+  },
+}
+
+const REPORT_RESPONSE = {
+  data: {
+    period_days: 7 as const,
+    start_date: '2026-09-09',
+    end_date: '2026-09-15',
+    timezone: 'Asia/Seoul' as const,
+    as_of: '2026-09-15T00:00:00Z',
+    counts: {
+      taken_count: 6,
+      not_taken_count: 1,
+      unconfirmed_count: 0,
+      pending_count: 0,
+      cancelled_count: 0,
+    },
+    overdue_pending_count: 0,
+    adherence_rate: { numerator: 6, denominator: 7, percentage: 86 },
+    confirmation_rate: { numerator: 7, denominator: 7, percentage: 100 },
+    records: [],
+  },
+}
+
+const EMPTY_HOME_SERVICES = {
+  getLatestPrescription: async () => {
+    throw new ApiError(404, '처방 없음', 'PRESCRIPTION_NOT_FOUND')
+  },
+  getMedicationReport: async () => REPORT_RESPONSE,
+}
+
+const ACTIVE_HOME_SERVICES = {
+  getLatestPrescription: async () => PRESCRIPTION_RESPONSE,
+  getMedicationReport: async () => REPORT_RESPONSE,
+}
+
+const ERROR_HOME_SERVICES = {
+  getLatestPrescription: async () => {
+    throw new ApiError(500, '조회 실패', 'INTERNAL_SERVER_ERROR')
+  },
+  getMedicationReport: async () => REPORT_RESPONSE,
+}
+
+const NON_ABSENCE_404_HOME_SERVICES = {
+  getLatestPrescription: async () => {
+    throw new ApiError(404, '다른 리소스를 찾을 수 없음', 'RESOURCE_NOT_FOUND')
+  },
+  getMedicationReport: async () => REPORT_RESPONSE,
+}
+
 function renderHome(
   currentUser = CURRENT_USER,
   showPrescriptionOnboarding = false,
+  services = EMPTY_HOME_SERVICES,
 ) {
   function UploadRoute() {
     const location = useLocation()
@@ -50,7 +112,7 @@ function renderHome(
       ]}
     >
       <Routes>
-        <Route path="/" element={<HomePage currentUser={currentUser} />} />
+        <Route path="/" element={<HomePage currentUser={currentUser} services={services} />} />
         <Route
           path="/prescriptions/upload"
           element={<UploadRoute />}
@@ -60,6 +122,7 @@ function renderHome(
         <Route path="/schedule" element={<div>복약 일정 화면</div>} />
         <Route path="/menu" element={<div>메뉴 화면</div>} />
         <Route path="/notifications" element={<div>알림 화면</div>} />
+        <Route path="/report" element={<div>복약 리포트 화면</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -184,7 +247,7 @@ describe('Dosey MVP design pages', () => {
     expect(screen.getByText(/\d+월 \d+일/)).toBeTruthy()
   })
 
-  it('HOME-01은 조회된 사용자의 이름이 비어 있을 때 개인화된 성공처럼 숨기지 않는다', () => {
+  it('HOME-01은 조회된 사용자의 이름이 비어 있을 때 개인화된 성공처럼 숨기지 않는다', async () => {
     renderHome({ ...CURRENT_USER, name: '   ' })
 
     expect(
@@ -194,40 +257,56 @@ describe('Dosey MVP design pages', () => {
     ).toBeTruthy()
     expect(screen.getByText('도지 사용자님!')).toBeTruthy()
     expect(screen.getByRole('heading', { name: '오늘도 건강한 하루 되세요' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /처방약 복용 안내/ })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: /내 처방전 등록하기/ })).toBeTruthy()
   })
 
-  it('HOME-01은 실제 데이터가 없어도 neutral 복약 달성도 영역을 표시한다', async () => {
-    const { container } = renderHome()
+  it('HOME 처방 완료 상태는 실제 7일 리포트의 복약 달성도를 표시한다', async () => {
+    const { container } = renderHome(CURRENT_USER, false, ACTIVE_HOME_SERVICES)
 
     await screen.findByText('오늘도 건강한 하루 되세요')
     expect(screen.getByRole('heading', { name: '이번 주 복약 달성도' })).toBeTruthy()
-    expect(screen.getByText('집계 준비 중')).toBeTruthy()
-    expect(screen.getByLabelText('이번 주 복약 달성도 집계 준비 중')).toBeTruthy()
+    expect(await screen.findByText('86%')).toBeTruthy()
+    expect(screen.getByRole('progressbar', { name: '이번 주 복약 달성도 86%' })).toBeTruthy()
     expect(container.querySelector('.mvp-home__adherence-progress .dosey-mascot')).toBeTruthy()
-    expect(screen.queryByText('85%')).toBeNull()
+    expect(screen.queryByText('집계 준비 중')).toBeNull()
+    expect(screen.queryByRole('button', { name: /내 처방전 등록하기/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /도지에게 질문하기/ })).toBeNull()
   })
 
-  it('HOME-01의 처방약 복용 안내를 새 처방 등록 intent와 함께 업로드 route에 연결한다', async () => {
+  it('미처방 HOME의 등록 카드를 새 처방 등록 intent와 함께 업로드 route에 연결한다', async () => {
     renderHome()
     await screen.findByText('오늘도 건강한 하루 되세요')
-    fireEvent.click(screen.getByRole('button', { name: /처방약 복용 안내/ }))
+    fireEvent.click(screen.getByRole('button', { name: /내 처방전 등록하기/ }))
     expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
     expect(screen.getByTestId('upload-intent').textContent).toBe('new-prescription')
   })
 
-  it('계약 없는 HOME 기능은 비활성 상태이며 미확인 기록을 임의 표시하지 않는다', async () => {
-    renderHome()
+  it('HOME 처방 조회의 404 외 오류는 빈 처방으로 위장하지 않는다', async () => {
+    renderHome(CURRENT_USER, false, ERROR_HOME_SERVICES)
+
+    expect((await screen.findByRole('alert')).textContent).toContain('홈 정보를 불러오지 못했어요')
+    expect(screen.queryByRole('button', { name: /내 처방전 등록하기/ })).toBeNull()
+    expect(screen.getByRole('button', { name: '다시 시도' })).toBeTruthy()
+  })
+
+  it('HOME은 PRESCRIPTION_NOT_FOUND가 아닌 404를 빈 처방으로 위장하지 않는다', async () => {
+    renderHome(CURRENT_USER, false, NON_ABSENCE_404_HOME_SERVICES)
+
+    expect((await screen.findByRole('alert')).textContent).toContain('홈 정보를 불러오지 못했어요')
+    expect(screen.queryByRole('button', { name: /내 처방전 등록하기/ })).toBeNull()
+  })
+
+  it('처방 완료 HOME에서도 미구현 OTC는 비활성 상태이고 기존 구 hub를 표시하지 않는다', async () => {
+    renderHome(CURRENT_USER, false, ACTIVE_HOME_SERVICES)
 
     await screen.findByText('오늘도 건강한 하루 되세요')
     expect(screen.queryByRole('heading', { name: '미확인 기록' })).toBeNull()
     expect(
       screen.getByRole('button', { name: '일반의약품 안내 (준비 중)' }),
     ).toHaveProperty('disabled', true)
-    expect(screen.getByRole('button', { name: '상세 보기 (준비 중)' })).toHaveProperty(
-      'disabled',
-      true,
-    )
+    expect(await screen.findByRole('button', { name: '상세 보기 >' })).toHaveProperty('disabled', false)
+    expect(screen.getByRole('button', { name: /복약 리포트 보기/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /도지에게 질문하기/ })).toBeNull()
     expect(screen.getByRole('button', { name: '알림' })).toHaveProperty('disabled', false)
     expect(screen.getByRole('button', { name: '일정' })).toHaveProperty('disabled', false)
   })
@@ -239,12 +318,11 @@ describe('Dosey MVP design pages', () => {
     expect(screen.getByText('알림 화면')).toBeTruthy()
   })
 
-  it('복약 챗봇은 ID를 추측하지 않고 기존 /chat route로만 이동한다', async () => {
-    renderHome()
+  it('처방 완료 HOME의 리포트 카드는 기존 /report route로 이동한다', async () => {
+    renderHome(CURRENT_USER, false, ACTIVE_HOME_SERVICES)
 
-    await screen.findByText('오늘도 건강한 하루 되세요')
-    fireEvent.click(screen.getByRole('button', { name: /도지에게 질문하기/ }))
-    expect(screen.getByText('처방전 ID 없는 챗봇 진입 화면')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: /복약 리포트 보기/ }))
+    expect(screen.getByText('복약 리포트 화면')).toBeTruthy()
   })
 
   it('가이드 Bottom Navigation은 API 호출 없이 기존 /guides empty route로 이동한다', async () => {
