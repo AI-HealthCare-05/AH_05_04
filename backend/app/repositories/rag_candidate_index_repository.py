@@ -67,6 +67,10 @@ def _embedding_storage_hash(values: tuple[float, ...] | list[float]) -> str:
     return _sha256({"embedding": _canonical_embedding_values(tuple(values))})
 
 
+def _lexical_storage_hash(member: RagCandidateIndexMemberCreate) -> str:
+    return _recomputed_lexical_member_content_hash(member)
+
+
 @dataclass(frozen=True, slots=True)
 class RagCandidateIndexMemberCreate:
     entry_type: RagMedicationSearchEntryType
@@ -454,6 +458,7 @@ class RagCandidateIndexRepository:
             raise CandidateIndexVersionNotBuildableError(
                 f"Candidate Index member_count={version.member_count}, but no persisted member rows exist."
             )
+        self._assert_persisted_lexical_storage_hashes_match(persisted_members, persisted_rows)
         self._assert_persisted_embedding_storage_hashes_match(version, persisted_rows)
         try:
             _assert_member_metadata_matches(
@@ -465,6 +470,21 @@ class RagCandidateIndexRepository:
             raise CandidateIndexVersionNotBuildableError(
                 "Persisted Candidate Index members do not reproduce manifest metadata before READY promotion."
             ) from exc
+
+    def _assert_persisted_lexical_storage_hashes_match(
+        self,
+        persisted_members: tuple[RagCandidateIndexMemberCreate, ...],
+        persisted_rows: tuple[RagCandidateIndexMember, ...],
+    ) -> None:
+        mismatched = [
+            row.member_key
+            for payload, row in zip(persisted_members, persisted_rows, strict=True)
+            if row.lexical_storage_hash != _lexical_storage_hash(payload)
+        ]
+        if mismatched:
+            raise CandidateIndexVersionNotBuildableError(
+                "Persisted Candidate Index lexical storage hash does not match DB member rows: " + ", ".join(mismatched)
+            )
 
     def _assert_persisted_embedding_storage_hashes_match(
         self,
@@ -490,6 +510,7 @@ class RagCandidateIndexRepository:
             select(RagCandidateIndexMember)
             .where(RagCandidateIndexMember.candidate_index_version_id == candidate_index_version_id)
             .order_by(RagCandidateIndexMember.created_at, RagCandidateIndexMember.id)
+            .execution_options(populate_existing=True)
         )
         return list(result.scalars().all())
 
@@ -600,6 +621,7 @@ class RagCandidateIndexRepository:
         ``member_set_hash``가 식별해야 할 member-set 불변성이 깨진다.
         """
         values = asdict(payload)
+        values["lexical_storage_hash"] = _lexical_storage_hash(payload)
         if payload.embedding is not None:
             values["embedding"] = list(payload.embedding)
             values["embedding_storage_hash"] = _embedding_storage_hash(payload.embedding)

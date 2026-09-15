@@ -202,6 +202,14 @@ class RagCandidateIndexMember(Base):
         ),
         CheckConstraint("length(trim(member_key)) > 0", name="chk_rag_candidate_index_member_key_nonblank"),
         CheckConstraint("member_content_hash ~ '^[0-9a-f]{64}$'", name="chk_rag_candidate_index_member_content_hash"),
+        CheckConstraint(
+            "lexical_storage_hash IS NULL OR lexical_storage_hash ~ '^[0-9a-f]{64}$'",
+            name="chk_rag_candidate_index_member_lexical_storage_hash",
+        ),
+        CheckConstraint(
+            "embedding_storage_hash IS NULL OR embedding_storage_hash ~ '^[0-9a-f]{64}$'",
+            name="chk_rag_candidate_index_member_embedding_storage_hash",
+        ),
         # alias_ref와 alias_source_snapshot_id는 함께 있거나 함께 없어야 한다 (APPROVED_ALIAS만 alias를 가짐).
         CheckConstraint(
             "(alias_ref IS NULL) = (alias_source_snapshot_id IS NULL)",
@@ -248,6 +256,7 @@ class RagCandidateIndexMember(Base):
     normalization_version: Mapped[str] = mapped_column(String(100), nullable=False)
     member_key: Mapped[str] = mapped_column(String(300), nullable=False)
     member_content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    lexical_storage_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     embedding_storage_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     embedding: Mapped[list[float] | None] = mapped_column(VECTOR(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

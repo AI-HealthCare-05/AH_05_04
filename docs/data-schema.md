@@ -364,7 +364,11 @@ RAG-09(Candidate Search)가 그 결과를 조회하려면 이 영속 계층이 �
 - `rag_candidate_index_member`: `candidate_index_version_id` FK RESTRICT, `(candidate_index_version_id,
   member_key)` unique. `product_source_snapshot_id`/`entry_source_snapshot_id`/
   `alias_source_snapshot_id`(nullable) 각각 `rag_source_snapshot.id` FK RESTRICT. `embedding`은
-  `rag_knowledge_index_member`와 동일하게 pgvector `vector` 타입 nullable.
+  `rag_knowledge_index_member`와 동일하게 pgvector `vector` 타입 nullable. #583은 READY 승격 전
+  persisted row 자체를 재검증하기 위해 `lexical_storage_hash`와 `embedding_storage_hash`를 nullable
+  receipt로 추가한다. 새 build는 두 receipt를 기록하고, pre-583 legacy row처럼 receipt가 없거나
+  row 필드와 맞지 않으면 READY 승격에서 fail-closed된다. RAG-07A HYBRID `member_content_hash`의
+  기존 provider vector tuple 의미는 바꾸지 않는다.
 
 `backend/app/repositories/rag_candidate_index_repository.py`는 `ai_worker`를 import하지 않는
 read port다 — RAG-08/RAG-09는 이 파일만으로 조회할 수 있다. 저장(build)은

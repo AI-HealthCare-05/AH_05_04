@@ -10,15 +10,20 @@ from uuid import uuid4
 import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from sqlalchemy import text
+from sqlalchemy import CheckConstraint, text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core import config
+from app.models.rag_candidate_index import RagCandidateIndexMember
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MIGRATION_PATH = PROJECT_ROOT / "backend" / "alembic" / "versions" / "583a1b2c3d4f_candidate_index_lifecycle.py"
 READY_INDEX_NAME = "uq_rag_candidate_index_ready_per_code"
+STORAGE_CHECK_NAMES = {
+    "chk_rag_candidate_index_member_lexical_storage_hash",
+    "chk_rag_candidate_index_member_embedding_storage_hash",
+}
 
 _SPEC = importlib.util.spec_from_file_location("candidate_index_lifecycle_migration", MIGRATION_PATH)
 assert _SPEC is not None and _SPEC.loader is not None
@@ -74,6 +79,47 @@ async def _isolated_candidate_index_schema() -> AsyncIterator[AsyncConnection]:
         await engine.dispose()
 
 
+async def _constraint_names(connection: AsyncConnection) -> set[str]:
+    result = await connection.execute(
+        text(
+            """
+            SELECT conname
+            FROM pg_constraint
+            WHERE connamespace = current_schema()::regnamespace
+              AND conrelid = 'rag_candidate_index_member'::regclass
+            """
+        )
+    )
+    return {str(row[0]) for row in result}
+
+
+def _orm_storage_check_names() -> set[str]:
+    return {
+        constraint.name
+        for constraint in RagCandidateIndexMember.__table_args__
+        if isinstance(constraint, CheckConstraint) and constraint.name in STORAGE_CHECK_NAMES
+    }
+
+
+async def _seed_pre_583_hybrid_member(connection: AsyncConnection) -> None:
+    await connection.execute(
+        text(
+            """
+            INSERT INTO rag_candidate_index_member (id, embedding)
+            VALUES (:id, ARRAY[0.123456789, -0.333333333, 123.456789]::double precision[])
+            """
+        ),
+        {"id": uuid4()},
+    )
+
+
+async def _member_storage_hash_rows(connection: AsyncConnection) -> list[tuple[str | None, str | None]]:
+    result = await connection.execute(
+        text("SELECT lexical_storage_hash, embedding_storage_hash FROM rag_candidate_index_member ORDER BY id")
+    )
+    return [(row[0], row[1]) for row in result]
+
+
 async def _index_exists(connection: AsyncConnection) -> bool:
     result = await connection.execute(
         text(
@@ -114,6 +160,21 @@ def test_candidate_index_ready_partial_unique_exists_after_upgrade() -> None:
             await connection.run_sync(_upgrade)
 
             assert await _index_exists(connection)
+            assert STORAGE_CHECK_NAMES <= await _constraint_names(connection)
+            assert STORAGE_CHECK_NAMES <= _orm_storage_check_names()
+
+    asyncio.run(run())
+
+
+def test_candidate_index_upgrade_allows_existing_hybrid_members_without_hash_backfill() -> None:
+    async def run() -> None:
+        async with _isolated_candidate_index_schema() as connection:
+            await _seed_pre_583_hybrid_member(connection)
+
+            await connection.run_sync(_upgrade)
+
+            assert await _member_storage_hash_rows(connection) == [(None, None)]
+            assert STORAGE_CHECK_NAMES <= await _constraint_names(connection)
 
     asyncio.run(run())
 

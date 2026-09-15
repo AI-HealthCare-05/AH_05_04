@@ -695,6 +695,50 @@ async def test_activate_ready_version_revalidates_persisted_hybrid_member_hashes
     assert second.version.status is RagCandidateIndexStatus.BUILDING
 
 
+async def test_activate_ready_version_revalidates_persisted_hybrid_lexical_storage_hash(
+    db_session: AsyncSession,
+) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    repository = RagCandidateIndexRepository(db_session)
+
+    first_members = (_member_create(snapshot=snapshot, member_key="member-1"),)
+    first_version = _version_create(
+        catalog_set=catalog_set, members=first_members, index_code=index_code, content_hash=_hash("ready-lexical-stays")
+    )
+    first = await repository.build_index_version(version=first_version, members=first_members)
+    await repository.activate_ready_version(first.version.id)
+
+    second_members = (_hybrid_member_create(snapshot=snapshot, member_key="member-2"),)
+    second_version = _version_create(
+        catalog_set=catalog_set,
+        members=second_members,
+        index_code=index_code,
+        content_hash=_hash("ready-hybrid-lexical-tampered"),
+        index_version="v2",
+        build_mode=RagCandidateIndexBuildMode.HYBRID,
+    )
+    second = await repository.build_index_version(version=second_version, members=second_members)
+    await db_session.execute(
+        text(
+            "UPDATE rag_candidate_index_member "
+            "SET display_text = 'Tampered Display Text' "
+            "WHERE candidate_index_version_id = :version_id"
+        ),
+        {"version_id": str(second.version.id)},
+    )
+    await db_session.flush()
+
+    with pytest.raises(CandidateIndexVersionNotBuildableError):
+        await repository.activate_ready_version(second.version.id)
+
+    await db_session.refresh(first.version)
+    await db_session.refresh(second.version)
+    assert first.version.status is RagCandidateIndexStatus.READY
+    assert second.version.status is RagCandidateIndexStatus.BUILDING
+
+
 async def test_mark_failed_version_closes_only_building_version(db_session: AsyncSession) -> None:
     snapshot = await _create_source_snapshot(db_session)
     catalog_set = await _create_catalog_set(db_session)
