@@ -1,19 +1,20 @@
 # Track B 과거 약 표시 경로 검토 자료
 
-- 상태: **검토 경과 자료 · B안은 PR #474에서 리뷰용 구현 · 미병합** (2026-09-14 확인)
+- 상태: **검토 경과 자료 · B안은 PR #474 승인·병합 및 #202 Frontend 인수 완료** (2026-09-15 최종 확인)
 - 작성·Backend 구현 담당: 권가빈 (`hazelnutflavoured`)
 - 책임 리뷰: 송은영 (`phina-io`) — Backend·소유권·조회 계약; 남한솔 (`solia142`) — Frontend 표시·연동
 - 관련: [#202](https://github.com/AI-HealthCare-05/AH_05_04/issues/202), [#421](https://github.com/AI-HealthCare-05/AH_05_04/issues/421), [#468](https://github.com/AI-HealthCare-05/AH_05_04/pull/468), Frontend [#138](https://github.com/AI-HealthCare-05/AH_05_04/issues/138)
 
-## 2026-09-14 후속 구현과 리뷰 경과
+## 최종 완료 근거
 
-2026-09-12 작성 당시에는 A안을 우선 추천했고 새 API/DTO는 미구현이었다. 다음 날 같은 구현 담당자가 [PR #474](https://github.com/AI-HealthCare-05/AH_05_04/pull/474)에서 B안인 `GET /api/v1/medication-occurrences/{occurrence_id}/medication`을 리뷰용으로 구현했다. 따라서 A 우선 추천은 당시 비교 의견으로만 보존하며, 현재 후속 검토 대상은 #474의 B안이다.
+2026-09-12 작성 당시에는 A안을 우선 추천했고 새 API/DTO는 미구현이었다. 다음 날 [PR #474](https://github.com/AI-HealthCare-05/AH_05_04/pull/474)에서 B안인 `GET /api/v1/medication-occurrences/{occurrence_id}/medication`을 구현했다. A 우선 추천은 당시 비교 의견으로만 보존하며 현재 계약은 B안이다.
 
-#474의 [Decision 후보 `PD-202-HISTORY-20260913`](https://github.com/AI-HealthCare-05/AH_05_04/blob/ed118be9d8b71c8fdc1a07272450c3f86cfe5170/docs/governance/decisions/2026-09-13-track-b-occurrence-medication.md)는 단일 알림의 `occurrence_id`를 직접 사용하고 기존 날짜별 응답을 보존하기 위해 B안을 권장한다. 이 문서의 A/B 선택 승인을 기다려 확정 구현한 것이 아니라, 별도 Decision 후보·Proposed 계약과 구현을 함께 리뷰에 올린 경과다. 이를 사전 합의나 최종 선택 승인으로 소급 해석하지 않는다.
+#474의 `PD-202-HISTORY-20260913`은 단일 알림의 `occurrence_id`를 직접 사용하고 기존 날짜별 응답을 보존하기 위해 B안을 채택했다.
 
-- 확인한 #474 HEAD: `ed118be9d8b71c8fdc1a07272450c3f86cfe5170`, 상태 `OPEN`, 미병합.
-- 송은영의 [Backend 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/474#pullrequestreview-5193014401)는 2026-09-14 00:47:30 UTC, `f3694e2ff8128739f5aeea5ea720b494aa36bb4c` 대상이다. [#472 수정 요청](https://github.com/AI-HealthCare-05/AH_05_04/pull/472#issuecomment-5657540273)에는 Backend 승인 사실이 기록돼 있으나, 현재 조회한 리뷰 이벤트 상태는 `DISMISSED`다. 검토 내용과 이력은 보존하되 최신 HEAD의 유효한 승인으로 계산하지 않는다. 해제 이유는 확인되지 않았다.
-- 남한솔의 Frontend 소비·인수 승인과 최종 병합은 확인되지 않았다. [Proposed 계약](https://github.com/AI-HealthCare-05/AH_05_04/blob/ed118be9d8b71c8fdc1a07272450c3f86cfe5170/docs/contracts/proposed/track-b-occurrence-medication-v1.md)의 승인·Current 승격은 해당 구현 PR에서 처리한다.
+- #474 최종 HEAD: `4d19d3f034bade6b94bee0eca575dcb4e5d6ff24`; merge SHA: `9d8239ff1886327af154db53981ce839191da879`.
+- 송은영은 최종 HEAD를 [Backend APPROVED](https://github.com/AI-HealthCare-05/AH_05_04/pull/474#pullrequestreview-5193439578)했다.
+- 남한솔은 #474 병합본 DTO·fixture를 [Frontend 인수 승인](https://github.com/AI-HealthCare-05/AH_05_04/issues/202#issuecomment-5658885279)했고 #202의 Frontend 인계 조건 충족을 명시했다.
+- 현재 정규 계약은 [Current occurrence 약 표시 계약](../../contracts/current/track-b-occurrence-medication-v1.md)이다.
 
 ## 확인한 문제 (2026-09-12 기준)
 

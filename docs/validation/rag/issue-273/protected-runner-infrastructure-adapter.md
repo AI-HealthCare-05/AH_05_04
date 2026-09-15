@@ -35,8 +35,8 @@
 | --- | --- | --- |
 | `ASYNC_KERNEL_SEAM` | `ai_worker/tasks/evaluation/protected_retrieval.py` | `26d068434d9ec5147a65302aab57958b689855e86e9173659e7489abb1675c38` |
 | `POSTGRESQL_ADAPTER` | `ai_worker/adapters/postgresql_protected_retrieval.py` | `5936abbe9f3a9136760618d082f6dae010b620d647056b075436e19f1a89969b` |
-| `FAIL_CLOSED_CONFIG` | `ai_worker/core/config.py` | `e0b5708fd2e19d7a79a87f0d61c6df4c7a0c0727677bcc4f5869445d3a69ef00` |
-| `EXPLICIT_RUNTIME_ASSEMBLY` | `ai_worker/core/runtime_assembly.py` | `257af436b194d59b1d735fc73f45c1931a5855e8f66b874eb57bf3a42be12fa0` |
+| `FAIL_CLOSED_CONFIG` | `ai_worker/core/config.py` | `f69eb9db4422027f3f07b9052dda4931567efed3c03b2362fca70de600d759fe` |
+| `EXPLICIT_RUNTIME_ASSEMBLY` | `ai_worker/core/runtime_assembly.py` | `2b91bcf9983e9a00c9c8f07e48a034dd5a68806859ebe3cc508132d78871c2a4` |
 | `PROTECTED_ROLE_POLICY` | `infra/python/protected_retrieval_role_policy.py` | `597bf68229c5830578ddba07aa3652cace08ec3e2474031ef6250cccd91d82a4` |
 | `ISOLATED_MIGRATION_ENV` | `infra/protected_retrieval/env.py` | `4853f8178ea611df177900573e6593c8bdc76db86a039ebd6f299013895fdbf3` |
 | `ISOLATED_MIGRATION` | `infra/protected_retrieval/versions/368000000001_create_protected_retrieval.py` | `20ed57547853a39ae5254d69dd71873e0a26223a705c5231e50dc8aa7416c68d` |
@@ -53,4 +53,4 @@
 - backup·restore·rotation 운영 증빙
 - Track F external gate 충족
 
-Evidence self hash: `405ce58200e37bef15e94393a8a281575f384d40b6abd52029c089b48ec4377b`
+Evidence self hash: `4f6b7a4a45cb9a4f40a1bcb9093e4be2462c6674e2b0c7e4141657ed1b3e4977`

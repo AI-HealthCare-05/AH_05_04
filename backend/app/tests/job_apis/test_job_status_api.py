@@ -19,6 +19,7 @@ from app.models.users import User
 from app.repositories.async_job_repository import AsyncJobRepository
 from app.services.job_intake import DomainReference, JobIntakeService
 from app.tests.conftest import test_engine
+from app.tests.helpers.auth import signup_verified_user
 
 
 @pytest_asyncio.fixture
@@ -52,11 +53,10 @@ async def db_session() -> AsyncIterator[AsyncSession]:
 async def _signup_and_login(client: AsyncClient, *, label: str) -> tuple[str, str]:
     suffix = uuid4().hex[:8]
     email = f"job-status-{label}-{suffix}@example.com"
-    signup_response = await client.post(
-        "/api/v1/auth/signup",
-        json={"email": email, "password": "Password123!", "name": "Job상태테스터"},
+    await signup_verified_user(
+        client,
+        {"email": email, "password": "Password123!", "name": "Job상태테스터"},
     )
-    assert signup_response.status_code == status.HTTP_201_CREATED, signup_response.text
 
     login_response = await client.post(
         "/api/v1/auth/login",

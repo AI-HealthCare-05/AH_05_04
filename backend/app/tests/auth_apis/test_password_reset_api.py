@@ -10,15 +10,16 @@ from app.core.utils.security import generate_password_reset_token, hash_password
 from app.main import app
 from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.user_repository import UserRepository
+from app.tests.helpers.auth import signup_verified_user
 
 
 class TestPasswordResetRequestAPI:
     async def test_request_for_existing_account_returns_reset_token_in_local_env(self):
         email = f"reset-request-{uuid4().hex[:10]}@example.com"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
-                "/api/v1/auth/signup",
-                json={"email": email, "password": "Password123!", "name": "재설정요청테스터"},
+            await signup_verified_user(
+                client,
+                {"email": email, "password": "Password123!", "name": "재설정요청테스터"},
             )
             response = await client.post("/api/v1/auth/password-reset/request", json={"email": email})
 
@@ -44,9 +45,9 @@ class TestPasswordResetRequestAPI:
     async def test_request_within_cooldown_does_not_issue_a_new_token(self):
         email = f"reset-cooldown-{uuid4().hex[:10]}@example.com"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
-                "/api/v1/auth/signup",
-                json={"email": email, "password": "Password123!", "name": "쿨다운테스터"},
+            await signup_verified_user(
+                client,
+                {"email": email, "password": "Password123!", "name": "쿨다운테스터"},
             )
             first_response = await client.post("/api/v1/auth/password-reset/request", json={"email": email})
             second_response = await client.post("/api/v1/auth/password-reset/request", json={"email": email})
@@ -64,9 +65,9 @@ class TestPasswordResetRequestAPI:
         email = f"reset-padding-{uuid4().hex[:10]}@example.com"
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
-                "/api/v1/auth/signup",
-                json={"email": email, "password": "Password123!", "name": "패딩테스터"},
+            await signup_verified_user(
+                client,
+                {"email": email, "password": "Password123!", "name": "패딩테스터"},
             )
 
             start = time.perf_counter()
@@ -90,9 +91,9 @@ class TestPasswordResetConfirmAPI:
     async def test_confirm_with_valid_token_changes_password_and_requires_relogin(self):
         email = f"reset-confirm-{uuid4().hex[:10]}@example.com"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
-                "/api/v1/auth/signup",
-                json={"email": email, "password": "Password123!", "name": "재설정확정테스터"},
+            await signup_verified_user(
+                client,
+                {"email": email, "password": "Password123!", "name": "재설정확정테스터"},
             )
             request_response = await client.post("/api/v1/auth/password-reset/request", json={"email": email})
             reset_token = request_response.json()["reset_token"]
@@ -118,9 +119,9 @@ class TestPasswordResetConfirmAPI:
     async def test_confirm_invalidates_sessions_issued_before_reset(self):
         email = f"reset-session-{uuid4().hex[:10]}@example.com"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
-                "/api/v1/auth/signup",
-                json={"email": email, "password": "Password123!", "name": "세션무효화테스터"},
+            await signup_verified_user(
+                client,
+                {"email": email, "password": "Password123!", "name": "세션무효화테스터"},
             )
             login_response = await client.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
             access_token = login_response.json()["access_token"]
@@ -142,9 +143,9 @@ class TestPasswordResetConfirmAPI:
     async def test_confirm_rejects_reused_token(self):
         email = f"reset-reuse-{uuid4().hex[:10]}@example.com"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
-                "/api/v1/auth/signup",
-                json={"email": email, "password": "Password123!", "name": "토큰재사용테스터"},
+            await signup_verified_user(
+                client,
+                {"email": email, "password": "Password123!", "name": "토큰재사용테스터"},
             )
             request_response = await client.post("/api/v1/auth/password-reset/request", json={"email": email})
             reset_token = request_response.json()["reset_token"]
@@ -178,9 +179,9 @@ class TestPasswordResetConfirmAPI:
     async def test_confirm_rejects_weak_new_password(self):
         email = f"reset-weak-{uuid4().hex[:10]}@example.com"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
-                "/api/v1/auth/signup",
-                json={"email": email, "password": "Password123!", "name": "약한비번테스터"},
+            await signup_verified_user(
+                client,
+                {"email": email, "password": "Password123!", "name": "약한비번테스터"},
             )
             request_response = await client.post("/api/v1/auth/password-reset/request", json={"email": email})
 
@@ -203,9 +204,9 @@ class TestPasswordResetConfirmAPI:
         email = f"reset-toolong-{uuid4().hex[:8]}@example.com"
         too_long_password = "Aa1!" + "a" * 69  # 73자, 모든 문자 종류 포함
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
-                "/api/v1/auth/signup",
-                json={"email": email, "password": "Password123!", "name": "긴비번테스터"},
+            await signup_verified_user(
+                client,
+                {"email": email, "password": "Password123!", "name": "긴비번테스터"},
             )
             request_response = await client.post("/api/v1/auth/password-reset/request", json={"email": email})
 
@@ -225,9 +226,9 @@ class TestPasswordResetConfirmAPI:
         email = f"reset-72char-{uuid4().hex[:8]}@example.com"
         boundary_password = "Aa1!" + "a" * 68  # 정확히 72자
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
-                "/api/v1/auth/signup",
-                json={"email": email, "password": "Password123!", "name": "경계비번테스터"},
+            await signup_verified_user(
+                client,
+                {"email": email, "password": "Password123!", "name": "경계비번테스터"},
             )
             request_response = await client.post("/api/v1/auth/password-reset/request", json={"email": email})
 
@@ -241,9 +242,9 @@ class TestPasswordResetConfirmAPI:
     async def test_confirm_rejects_expired_token(self, db_session):
         email = f"reset-expired-{uuid4().hex[:8]}@example.com"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
-                "/api/v1/auth/signup",
-                json={"email": email, "password": "Password123!", "name": "만료토큰테스터"},
+            await signup_verified_user(
+                client,
+                {"email": email, "password": "Password123!", "name": "만료토큰테스터"},
             )
 
         user = await UserRepository(db_session).get_user_by_email(email)
@@ -272,9 +273,9 @@ class TestPasswordResetConfirmAPI:
         token 2개를 동시에 받을 수 없어, repository로 직접 그 상황을 재현한다)."""
         email = f"reset-multi-{uuid4().hex[:8]}@example.com"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
-                "/api/v1/auth/signup",
-                json={"email": email, "password": "Password123!", "name": "복수토큰테스터"},
+            await signup_verified_user(
+                client,
+                {"email": email, "password": "Password123!", "name": "복수토큰테스터"},
             )
 
         user = await UserRepository(db_session).get_user_by_email(email)

@@ -14,6 +14,7 @@ from app.dependencies.services import get_auth_service
 from app.main import app, fastapi_app
 from app.models.users import Gender, User
 from app.services.auth import AuthService
+from app.tests.helpers.auth import signup_verified_user
 
 
 def _extract_refresh_cookie_expires(response) -> datetime:
@@ -34,7 +35,7 @@ class TestLoginAPI:
         login_data = {"email": "login_test@example.com", "password": "Password123!"}
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup_verified_user(client, signup_data)
 
             # 로그인 시도
             response = await client.post("/api/v1/auth/login", json=login_data)
@@ -60,16 +61,12 @@ class TestLoginAPI:
             transport=ASGITransport(app=app),
             base_url="http://test",
         ) as client:
-            signup_response = await client.post(
-                "/api/v1/auth/signup",
-                json=signup_data,
-            )
+            await signup_verified_user(client, signup_data)
             response = await client.post(
                 "/api/v1/auth/login",
                 json=login_data,
             )
 
-        assert signup_response.status_code == status.HTTP_201_CREATED
         assert response.status_code == status.HTTP_200_OK
         assert "access_token" in response.json()
         assert response.headers.get_list("cache-control") == ["no-store"]
@@ -103,7 +100,7 @@ class TestLoginAPI:
             "name": "비밀번호테스터",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/auth/signup", json=signup_data)
+            await signup_verified_user(client, signup_data)
 
             response = await client.post(
                 "/api/v1/auth/login",
@@ -158,9 +155,9 @@ class TestLoginAPI:
         `exp`나 "int를 상대 offset으로 오인한" 값이 아닌지 모두 검증한다."""
         email = f"cookie-expires-{uuid4().hex[:10]}@example.com"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
-                "/api/v1/auth/signup",
-                json={"email": email, "password": "Password123!", "name": "쿠키만료테스터"},
+            await signup_verified_user(
+                client,
+                {"email": email, "password": "Password123!", "name": "쿠키만료테스터"},
             )
             before_login = datetime.now(UTC)
             response = await client.post(

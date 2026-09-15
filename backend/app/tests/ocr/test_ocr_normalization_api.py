@@ -4,6 +4,7 @@ from starlette import status
 
 from app.core import config
 from app.main import app
+from app.tests.helpers.auth import signup_verified_user
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 
@@ -24,10 +25,7 @@ async def _signup_and_login(
         "name": "OCR정규화테스터",
     }
 
-    await client.post(
-        "/api/v1/auth/signup",
-        json=signup_data,
-    )
+    await signup_verified_user(client, signup_data)
 
     login_response = await client.post(
         "/api/v1/auth/login",

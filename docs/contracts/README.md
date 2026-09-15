@@ -9,7 +9,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 - [Source Attempt Receipt 실패 보완 (#436)](./proposed/source-attempt-receipt-436.md): COLLECTION_FAILED 및 EMPTY_RESULT 계열 구분 구현 리뷰안.
 
-- [공통 복약 리포트 v1 (#419)](./proposed/medication-report-v1.md): KST 7/30일·과거 version·두 지표·0분모·상세 기록. 사용자 기준 확인 후 작업 브랜치 구현·지정 리뷰 대기.
+- [공통 복약 리포트 v1 (#419)](./current/medication-report-v1.md): KST 7/30일·과거 version·두 지표·0분모·상세 기록. Backend #478·Frontend #574 병합 및 실제 runtime 검증.
 
 ## 디렉터리 구조와 배치 원칙
 
@@ -30,6 +30,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## 현재 구현 계약
 
+- [공통 복약 리포트 v1](./current/medication-report-v1.md): `GET /api/v1/medication-reports`의 7/30일 SELF 집계·상태·두 비율·상세 기록 계약
 - [복약 가이드 Backend–AI 계약](./current/medication-guide-ai-backend.md): `guide-prompt-v3` intent·승인 문구 선택형 동기 one-cycle 입력·출력·오류 경계
 - [복약 챗봇 Backend–AI Core 계약](./current/medication-chat-ai-backend.md): 현재 동기 `201` 생성과 세션 직렬화 경계
 - [OCR 약품명 정규화 계약](./current/ocr-medication-normalization.md): OCR 원문, 정규화 참고값 및 사용자 확정값의 역할
@@ -43,6 +44,8 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Local Live Provider 호출 증적 계약](./current/live-provider-call-evidence.md): `local-live-full` 요청 상관관계, Provider JSONL과 수동 증빙 판정
 - [Backend 공통 구현 규칙](./current/backend-common-patterns.md): 소유권 확인, 실패 상태 저장
 - [PROFILE SELF 소유권 전환 계약 v1](./current/profile-self-ownership-v1.md): 본인 단일 SELF profile과 `profile_id` 기반 사용자 리소스 소유권 기준
+- [Track B Notification 계약 v1 (#203)](./current/track-b-notifications-v1.md): 알림 저장·목록·읽음·재알림, 원본 `occurrence_local_date`, 멱등성과 Check-in 분리 경계
+- [Track B occurrence 원래 약 표시 조회 v1 (#202)](./current/track-b-occurrence-medication-v1.md): occurrence의 불변 version medication 조회, SELF 404와 current medication fallback 금지
 - 공통 오류: `code`, `message`, `details`, `trace_id`
 
 ## Proposed 계약
@@ -54,8 +57,6 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태와 row 없음=미동의 기준. #465에서 `user_consent` 저장 기반을 병합했고, #510에서 현재 사용자 목적별 동의 상태 조회·변경 API를 추가했다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전과 Production 공개 승인은 후속 범위다. 전체 목적별 계약은 Proposed 유지.
 
 - [Track B UNCONFIRMED backlog v1](./proposed/unconfirmed-backlog-v1.md): PD-418 URL·cursor·DTO·오류. #426 후보와 #462 실제 등록·PUT 보완·페이지 이동·날짜별 revision 검증 병합 완료; #462 남한솔 APPROVED·최종 CI 7/7 확인. 문서는 Proposed 유지, Current 승격 별도 검토. [승인 범위·상태 근거](../governance/decisions/2026-09-10-unconfirmed-backlog-418.md#승인-증빙과-등록-변경의-병합-조건).
-
-- [Track B Notification 계약 v1 (#203)](./proposed/track-b-notifications-v1.md): PD-203 기반 알림 저장·목록·읽음·재알림 구현 브랜치. 지정 리뷰어 승인 및 #202 일정 API 통합 전이며 current 계약 아님.
 
 - [Source Artifact·REJECTS 보존·삭제 정책 초안 (#335)](./proposed/post-mvp-1/source-artifact-retention-cleanup.md): PM 30일 유예·참조 보존·수동 배치 승인 반영, 통합 검토 대상, 후속 구현 [#347](https://github.com/AI-HealthCare-05/AH_05_04/issues/347)·김지혜 담당. Local 합성 #347의 승인 순서·revision·경합 잠금·DB 감사 근거·참조 범위 보완 연결 포함. 운영 삭제·활성화 승인 아님.
 
@@ -169,13 +170,22 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 
 ## Track C C1 저장 기반 (#192)
 
-- [저장 계약 v1 — Proposed/구현 PR 리뷰 대상](proposed/track-c-storage-v1.md)
+- [저장 계약 v1 — Proposed/내부 저장 기반 구현 완료](proposed/track-c-storage-v1.md)
 - [PD-192](../governance/decisions/2026-09-13-track-c-storage-192.md)
 - 실제 Check-in 부모에 Safety·Barrier·Plan·Follow-up 이력을 연결하는 저장 기반이다.
-  HandlerConfig 상세, 공개 mutation, #195 무효화와 Track C 공개는 미완료다.
-- [HandlerConfig 구체안 — Proposed](proposed/track-c-handler-config-192.md):
-  기존 Plan JSONB 기반 설정·버전·지원별 허용 필드 및 #194 실행 인계 제안. 내부 저장·검증 경계는
-  구현 중이며 제품 문구·버전 정본과 공개 실행은 미확정이다.
+  공개 mutation, #195 무효화와 Track C 공개는 미완료다.
+- [HandlerConfig 구체안 — Proposed/제품 승인·내부 구현](proposed/track-c-handler-config-192.md):
+  기존 Plan JSONB 기반 설정·버전·지원별 허용 필드 및 #194 실행 인계. 제품 승인 Rule·한국어 Copy와
+  명시적 allowlist·엄격 로더를 구현했으며 담당 기술·화면 리뷰와 공개 실행은 미완료다.
+- [PD-192-2](../governance/decisions/2026-09-15-track-c-handler-config-rules-192.md):
+  6개 최소 안내형 Support의 내부 Rule·Copy 제품 승인과 공개 전 경계.
+
+## Track C C2 Safety·Barrier API (#193)
+
+- [API v1 — Proposed](proposed/track-c-safety-barrier-api-193.md): HTTP·DTO·멱등성·정정·동시성 구현 리뷰 대상.
+- [PD-193](../governance/decisions/2026-09-15-track-c-safety-barrier-api-193.md): 구체화 delta와 NHS 참고 자료 경계.
+- [Safety 정책·한국어 문구 검토안](proposed/track-c-safety-policy-copy-193.md): NHS 근거별 선택표, 복수 선택 규칙, 고정 안내와 합성 검증 명세. 문서 초안이며 런타임 미적용.
+- 실제 증상별 임상 판정표·환자용 문구 및 #195 연결은 미완료다.
 
 
 ### #458 Worker 동의 조회·재검사 로컬 구현

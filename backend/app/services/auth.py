@@ -2,15 +2,17 @@ import asyncio
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import cast
 from uuid import UUID, uuid4
 
 from pydantic import EmailStr
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.core import config
 from app.core.config import Env
-from app.core.db.databases import AsyncSessionFactory
 from app.core.errors import ApiError, ErrorDetail
 from app.core.jwt.tokens import AccessToken, RefreshToken
+from app.core.utils.common import normalize_email
 from app.core.utils.security import (
     generate_email_verification_token,
     generate_password_reset_token,
@@ -64,11 +66,21 @@ def _email_verification_token_invalid_error() -> ApiError:
     )
 
 
+def _email_verification_required_error() -> ApiError:
+    return ApiError(
+        status_code=409,
+        code="EMAIL_VERIFICATION_REQUIRED",
+        message="이메일 인증을 완료해 주세요.",
+        details=[ErrorDetail(field="email", reason="EMAIL_VERIFICATION_REQUIRED")],
+    )
+
+
 @dataclass(frozen=True)
 class EmailVerificationDeliveryTask:
     email: str
     token: str
     token_id: UUID
+    session_bind: AsyncEngine
 
 
 @dataclass(frozen=True)
@@ -76,6 +88,7 @@ class PasswordResetDeliveryTask:
     email: str
     token: str
     token_id: UUID
+    session_bind: AsyncEngine
 
 
 @dataclass(frozen=True)
@@ -98,7 +111,7 @@ async def _send_email_verification_and_cleanup_on_failure(
     try:
         await sender.send_email_verification(email=task.email, token=task.token)
     except Exception:
-        async with AsyncSessionFactory() as session:
+        async with AsyncSession(bind=task.session_bind, expire_on_commit=False) as session:
             repo = EmailVerificationRepository(session)
             await repo.delete_token_by_id(task.token_id)
             await session.commit()
@@ -112,7 +125,7 @@ async def _send_password_reset_and_cleanup_on_failure(
     try:
         await sender.send_password_reset(email=task.email, token=task.token)
     except Exception:
-        async with AsyncSessionFactory() as session:
+        async with AsyncSession(bind=task.session_bind, expire_on_commit=False) as session:
             repo = PasswordResetRepository(session)
             await repo.delete_token_by_id(task.token_id)
             await session.commit()
@@ -141,6 +154,8 @@ class AuthService:
         data: SignUpRequest,
     ) -> User:
         await self.check_email_exists(data.email)
+        if config.SIGNUP_EMAIL_VERIFICATION_REQUIRED:
+            await self._require_signup_email_verified(data.email)
         consent_policy_versions = self._validate_signup_consents(data.consents)
 
         try:
@@ -167,6 +182,15 @@ class AuthService:
                 message=detail,
                 details=[ErrorDetail(field=exc.field, reason="ALREADY_EXISTS")],
             ) from exc
+
+    async def _require_signup_email_verified(self, email: str | EmailStr) -> None:
+        repo = self._require_email_verification_repo()
+        verified_token = await repo.latest_verified_token(
+            email=normalize_email(str(email)),
+            purpose=EmailVerificationPurpose.SIGNUP,
+        )
+        if verified_token is None:
+            raise _email_verification_required_error()
 
     def _validate_signup_consents(self, consents: list[SignUpConsentRequest]) -> dict[ConsentPurpose, str]:
         policy_versions: dict[ConsentPurpose, str] = {}
@@ -292,7 +316,7 @@ class AuthService:
         """
         start = time.monotonic()
         repo = self._require_email_verification_repo()
-        email_value = str(email)
+        email_value = normalize_email(str(email))
         purpose = EmailVerificationPurpose.SIGNUP
         now = datetime.now(config.TIMEZONE)
         cooldown_since = now - timedelta(seconds=config.EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS)
@@ -325,6 +349,7 @@ class AuthService:
                 email=email_value,
                 token=raw_token,
                 token_id=created_token.id,
+                session_bind=cast(AsyncEngine, repo.session.bind),
             )
 
         remaining = config.EMAIL_VERIFICATION_RESPONSE_TARGET_SECONDS - (time.monotonic() - start)
@@ -338,7 +363,7 @@ class AuthService:
 
     async def confirm_email_verification(self, *, email: str | EmailStr, token: str) -> None:
         repo = self._require_email_verification_repo()
-        email_value = str(email)
+        email_value = normalize_email(str(email))
         purpose = EmailVerificationPurpose.SIGNUP
         candidate = await repo.find_by_hash(hash_email_verification_token(token))
         if candidate is None or candidate.email != email_value or candidate.purpose != purpose:
@@ -408,6 +433,7 @@ class AuthService:
                 email=str(email),
                 token=raw_token,
                 token_id=created_token.id,
+                session_bind=cast(AsyncEngine, self.password_reset_repo.session.bind),
             )
 
         remaining = config.PASSWORD_RESET_RESPONSE_TARGET_SECONDS - (time.monotonic() - start)

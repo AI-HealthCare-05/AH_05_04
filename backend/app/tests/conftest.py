@@ -1,4 +1,6 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import datetime, timedelta
+from uuid import uuid4
 
 import pytest_asyncio
 from sqlalchemy.engine import URL
@@ -8,7 +10,10 @@ from sqlalchemy.pool import NullPool
 import app.models  # noqa: F401
 from app.core import config
 from app.core.db.databases import Base, get_db_session
+from app.core.utils.common import normalize_email
 from app.main import fastapi_app
+from app.models.email_verification import EmailVerificationPurpose
+from app.repositories.email_verification_repository import EmailVerificationRepository
 from app.tests.db_extensions import EXTENSION_SCHEMA, ensure_trigram_extension, ensure_vector_extension
 
 TEST_DATABASE_URL = URL.create(
@@ -90,3 +95,40 @@ async def db_session(isolate_database: None) -> AsyncSession:
 
     _ = isolate_database
     return fastapi_app.state._test_db_session
+
+
+async def _mark_signup_email_verified(
+    db_session: AsyncSession,
+    *,
+    email: str,
+    expires_at: datetime | None = None,
+) -> None:
+    verified_at = datetime.now(config.TIMEZONE)
+    token = await EmailVerificationRepository(db_session).create_token(
+        email=normalize_email(email),
+        purpose=EmailVerificationPurpose.SIGNUP,
+        token_hash=f"{uuid4().hex}{uuid4().hex}",
+        expires_at=expires_at or verified_at + timedelta(minutes=config.EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES),
+    )
+    token.verified_at = verified_at
+    await db_session.flush()
+
+
+@pytest_asyncio.fixture
+async def mark_signup_email_verified(db_session: AsyncSession) -> Callable[[str], Awaitable[None]]:
+    async def _mark(email: str) -> None:
+        await _mark_signup_email_verified(db_session, email=email)
+
+    return _mark
+
+
+@pytest_asyncio.fixture
+async def mark_expired_signup_email_verified(db_session: AsyncSession) -> Callable[[str], Awaitable[None]]:
+    async def _mark(email: str) -> None:
+        await _mark_signup_email_verified(
+            db_session,
+            email=email,
+            expires_at=datetime.now(config.TIMEZONE) - timedelta(minutes=1),
+        )
+
+    return _mark

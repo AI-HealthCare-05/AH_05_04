@@ -8,6 +8,7 @@
 
 - Endpoint: `POST /api/v1/auth/signup`
 - 요청 body는 필수 계정 필드 `name`, `email`, `password`와 선택 필드 `consents`만 허용합니다(`extra="forbid"`).
+- `SIGNUP_EMAIL_VERIFICATION_REQUIRED=true`일 때만 회원가입은 같은 정규화 이메일의 `SIGNUP` 이메일 인증 완료 기록을 요구합니다. 기본값은 `false`이며, #494 운영 Email Provider와 Frontend 인증 UI가 함께 승인되기 전까지 기존 회원가입 흐름을 유지합니다. Gate가 켜진 상태에서 인증이 없거나 인증 완료 기록의 `expires_at`이 지난 경우 `409 EMAIL_VERIFICATION_REQUIRED`, `details[].field=email`, `reason=EMAIL_VERIFICATION_REQUIRED`를 반환합니다.
 - `consents`를 생략하거나 빈 배열로 보내도 회원가입은 성공하며 목적별 동의 row를 만들지 않습니다.
 - `consents[].purpose`는 `OCR`, `GUIDE`, `CHAT`, `NOTIFICATION`만 허용하고 중복 목적은 `422 VALIDATION_FAILED`로 거부합니다.
 - 클라이언트는 `policy_version`이나 `status`를 보내지 않습니다. 서버는 선택된 목적만 해당 목적의 현재 policy version으로 `GRANTED` 저장합니다.
@@ -51,7 +52,7 @@
 - OCR 목적의 `current_policy_version`은 `OCR_CONSENT_POLICY_VERSION`입니다. 이 값이 빈 문자열이면 현재 OCR 동의 안내가 확정되지 않은 상태로 보고 신규 `GRANTED` 저장을 `503 CONSENT_POLICY_UNAVAILABLE`로 거부합니다.
 - 단, `OCR_CONSENT_POLICY_VERSION`이 빈 문자열이어도 이미 저장된 OCR 동의 row의 철회는 허용합니다. 목적별 `PUT /api/v1/users/me/consents/OCR`은 기존 row가 있고 요청 `status=WITHDRAWN`, 요청 `policy_version`이 기존 row의 저장 `policy_version`과 일치할 때만 철회할 수 있습니다. OCR 전용 `DELETE /api/v1/users/me/consents/OCR`도 같은 기존 저장 version을 보존해 철회합니다.
 - OCR 전용 `GET /api/v1/users/me/consents/OCR`과 OCR 접수 Gate는 빈 `OCR_CONSENT_POLICY_VERSION`에서 fail-closed로 `503 CONSENT_POLICY_UNAVAILABLE`을 반환합니다. 목적별 목록 조회 `GET /api/v1/users/me/consents`는 상태 확인용으로 계속 `200 OK`를 반환하되 OCR 항목의 `current_policy_version=""`, `is_granted=false`를 반환합니다.
-- 이 API는 목적별 동의 저장·조회·변경 기반을 제공합니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide/Chat/Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 [PD-207 Proposed 계약](../proposed/consent-gate-207.md)의 후속 구현 범위입니다.
+- 이 API는 목적별 동의 저장·조회·변경 기반을 제공합니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide 동기 생성 Gate는 처방 소유권 확인 후 Provider 호출·Guide row 생성 전에 `purpose=GUIDE` 최신 동의 row로 검사합니다. Chat/Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 [PD-207 Proposed 계약](../proposed/consent-gate-207.md)의 후속 구현 범위입니다.
 
 ## 인증 세션 무효화
 
@@ -81,6 +82,7 @@
 - `purpose`는 현재 `SIGNUP`만 사용합니다. 같은 이메일·목적에 대해 `EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS`(기본 60초) 안에 다시 요청하면 새 token을 만들지 않고 같은 성공 응답을 반환합니다.
 - `verification_token`은 `LOCAL` 환경에서만 응답에 채워집니다. 그 외 환경에서는 이메일 존재 여부 추론을 줄이기 위해 비웁니다. 실제 외부 Email Provider 연결은 `EmailSender` adapter 뒤에 두며, `EMAIL_PROVIDER=noop`은 local/test 기본값으로 발송하지 않습니다. Production/Staging 발송은 `EMAIL_PROVIDER=smtp`와 SMTP Secret이 모두 설정되고 `SMTP_USE_TLS=true`이며 placeholder 값이 아닐 때만 활성화됩니다. 회원가입 시 이메일 인증 완료 강제는 별도 gate(`#549`)에서 관리하며, 이 발송 기반만으로 가입을 차단하지 않습니다.
 - `POST /api/v1/auth/email-verification/confirm`은 이메일과 원문 token을 받아 `token_hash`, `verified_at IS NULL`, `expires_at > now()` 조건으로 검증합니다. 성공하면 같은 이메일·목적의 미인증·미만료 token 전체를 인증 완료 처리합니다.
+- `SIGNUP_EMAIL_VERIFICATION_REQUIRED=true`일 때 `POST /api/v1/auth/signup`은 같은 정규화 이메일의 `SIGNUP` 인증 완료 기록을 요구합니다. 인증 완료 기록이 없거나 인증 완료 기록의 `expires_at`이 지난 경우 `409 EMAIL_VERIFICATION_REQUIRED`, `details[].field=email`, `reason=EMAIL_VERIFICATION_REQUIRED`를 반환합니다. 기본값은 `false`이며, #494 운영 Email Provider와 Frontend 인증 UI가 함께 승인되기 전까지 기존 회원가입 흐름을 유지합니다.
 - 유효하지 않거나, 만료됐거나, 이미 사용됐거나, 다른 이메일에 발급된 token이면 `422 VALIDATION_FAILED`, `details[].field=token`, `reason=EMAIL_VERIFICATION_TOKEN_INVALID`를 반환합니다.
 - 로그·오류 응답에는 원문 token, token hash, 이메일 존재 여부 추론 정보를 남기지 않습니다. Provider 발송 실패는 공개 응답 상태·본문으로 계정 존재 여부가 드러나지 않도록 요청 응답 경계 밖에서 처리하며, 해당 요청에서 생성한 token은 삭제해 사용자가 발송 실패 후 쿨다운 token에 갇히지 않게 합니다.
 - 현재 발송은 token 저장·commit 이후 메모리 task로 예약합니다. API 응답은 SMTP 완료를 기다리지 않으며, 발송 지연·실패가 공개 응답 상태나 본문을 바꾸지 않습니다. 정상 종료 중 task 추적·drain과 비정상 종료 시 영속 복구는 아직 제공하지 않으므로, token commit 뒤 프로세스가 종료되면 발송 또는 실패 cleanup이 유실될 수 있습니다. 이 경우 사용자는 동일 요청을 다시 보내 복구하며, 영속 outbox 도입은 별도 후속 판단으로 남깁니다.

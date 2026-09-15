@@ -11,7 +11,9 @@ from app.main import app
 from app.models.user_consents import ConsentPurpose, ConsentStatus
 from app.repositories.user_consent_repository import UserConsentRepository
 from app.repositories.user_repository import UserRepository
-from app.services.user_consents import OcrConsentService
+from app.services import user_consent_policy
+from app.services.user_consents import ConsentGateService, OcrConsentService
+from app.tests.helpers.auth import signup_verified_user
 
 
 async def _create_user(session: AsyncSession):
@@ -178,6 +180,96 @@ async def test_user_consent_repository_only_granted_status_allows(
     ) is (status == ConsentStatus.GRANTED)
 
 
+async def test_consent_gate_requires_exact_guide_purpose(db_session: AsyncSession) -> None:
+    user = await _create_user(db_session)
+    repository = UserConsentRepository(db_session)
+    gate = ConsentGateService(repository)
+
+    await repository.set_status(
+        user_id=user.id,
+        purpose=ConsentPurpose.OCR,
+        status=ConsentStatus.GRANTED,
+        policy_version="ocr-consent.v1",
+        changed_at=datetime.now(config.TIMEZONE),
+    )
+
+    with pytest.raises(ApiError) as missing:
+        await gate.require_for_intake(user=user, purpose=ConsentPurpose.GUIDE)
+    assert missing.value.code == "CONSENT_REQUIRED"
+
+    await repository.set_status(
+        user_id=user.id,
+        purpose=ConsentPurpose.GUIDE,
+        status=ConsentStatus.GRANTED,
+        policy_version="guide-consent.v1",
+        changed_at=datetime.now(config.TIMEZONE),
+    )
+
+    await gate.require_for_intake(user=user, purpose=ConsentPurpose.GUIDE)
+
+
+async def test_consent_gate_rejects_withdrawn_guide_consent(db_session: AsyncSession) -> None:
+    user = await _create_user(db_session)
+    repository = UserConsentRepository(db_session)
+    await repository.set_status(
+        user_id=user.id,
+        purpose=ConsentPurpose.GUIDE,
+        status=ConsentStatus.WITHDRAWN,
+        policy_version="guide-consent.v1",
+        changed_at=datetime.now(config.TIMEZONE),
+    )
+
+    with pytest.raises(ApiError) as withdrawn:
+        await ConsentGateService(repository).require_for_intake(user=user, purpose=ConsentPurpose.GUIDE)
+    assert withdrawn.value.code == "CONSENT_REQUIRED"
+
+
+async def test_consent_gate_rejects_guide_policy_version_mismatch(db_session: AsyncSession) -> None:
+    user = await _create_user(db_session)
+    repository = UserConsentRepository(db_session)
+    await repository.set_status(
+        user_id=user.id,
+        purpose=ConsentPurpose.GUIDE,
+        status=ConsentStatus.GRANTED,
+        policy_version="guide-consent.v0",
+        changed_at=datetime.now(config.TIMEZONE),
+    )
+
+    with pytest.raises(ApiError) as mismatch:
+        await ConsentGateService(repository).require_for_intake(user=user, purpose=ConsentPurpose.GUIDE)
+    assert mismatch.value.code == "CONSENT_REQUIRED"
+
+
+async def test_consent_gate_fails_closed_when_guide_policy_version_is_unavailable(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = await _create_user(db_session)
+    repository = UserConsentRepository(db_session)
+    monkeypatch.setitem(user_consent_policy.STATIC_CONSENT_POLICY_VERSIONS, ConsentPurpose.GUIDE, "")
+
+    with pytest.raises(ApiError) as unavailable:
+        await ConsentGateService(repository).require_for_intake(user=user, purpose=ConsentPurpose.GUIDE)
+    assert unavailable.value.code == "CONSENT_POLICY_UNAVAILABLE"
+
+
+async def test_consent_gate_does_not_use_other_users_guide_consent(db_session: AsyncSession) -> None:
+    owner = await _create_user(db_session)
+    requester = await _create_user(db_session)
+    repository = UserConsentRepository(db_session)
+    await repository.set_status(
+        user_id=owner.id,
+        purpose=ConsentPurpose.GUIDE,
+        status=ConsentStatus.GRANTED,
+        policy_version="guide-consent.v1",
+        changed_at=datetime.now(config.TIMEZONE),
+    )
+
+    with pytest.raises(ApiError) as hidden:
+        await ConsentGateService(repository).require_for_intake(user=requester, purpose=ConsentPurpose.GUIDE)
+    assert hidden.value.code == "CONSENT_REQUIRED"
+
+
 async def test_ocr_consent_service_grant_withdraw_and_version_gate(db_session: AsyncSession) -> None:
     user = await _create_user(db_session)
     service = OcrConsentService(UserConsentRepository(db_session), current_policy_version="ocr-consent.v2")
@@ -238,10 +330,10 @@ async def test_ocr_consent_api_reports_distinct_states_and_refuses_old_version(
     monkeypatch.setattr(config, "OCR_CONSENT_POLICY_VERSION", "ocr-consent.v2")
     email = f"ocr-api-{uuid4().hex[:10]}@example.com"
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        signup = await client.post(
-            "/api/v1/auth/signup", json={"email": email, "password": "Password123!", "name": "동의테스터"}
+        await signup_verified_user(
+            client,
+            {"email": email, "password": "Password123!", "name": "동의테스터"},
         )
-        assert signup.status_code in (200, 201)
         login = await client.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
         headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
 

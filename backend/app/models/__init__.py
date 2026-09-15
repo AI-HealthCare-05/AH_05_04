@@ -58,6 +58,13 @@ from app.models.rag_candidate import (
     MedicationIdentificationSource,
     MedicationIdentificationStatus,
 )
+from app.models.rag_candidate_index import (
+    RagCandidateIndexBuildMode,
+    RagCandidateIndexEntityType,
+    RagCandidateIndexMember,
+    RagCandidateIndexStatus,
+    RagCandidateIndexVersion,
+)
 from app.models.rag_catalog import (
     RagCatalogHashKind,
     RagCatalogMemberKind,
@@ -230,6 +237,11 @@ __all__ = [
     "MedicationIdentification",
     "MedicationIdentificationSource",
     "MedicationIdentificationStatus",
+    "RagCandidateIndexBuildMode",
+    "RagCandidateIndexEntityType",
+    "RagCandidateIndexMember",
+    "RagCandidateIndexStatus",
+    "RagCandidateIndexVersion",
     "MedicationCheckin",
     "MedicationCheckinStatus",
     "MedicalDocument",
