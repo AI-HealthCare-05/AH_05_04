@@ -30,7 +30,9 @@ async function expectNoHorizontalOverflow(page: Page) {
 }
 
 async function expectInsideViewport(locator: Locator) {
-  await locator.scrollIntoViewIfNeeded()
+  await locator.evaluate((element) => {
+    element.scrollIntoView({ block: 'center', inline: 'nearest' })
+  })
   const result = await locator.evaluate((element) => {
     const rect = element.getBoundingClientRect()
     const centerX = rect.left + rect.width / 2
@@ -110,7 +112,7 @@ for (const width of widths) {
     await expectInsideViewport(later)
     await later.focus()
     await page.keyboard.press('Enter')
-    await expect(page).toHaveURL(/\/schedule$/)
+    await expect(page).toHaveURL((url) => url.pathname === '/schedule')
     expect(api.checkinPutCount).toBe(0)
   })
 
