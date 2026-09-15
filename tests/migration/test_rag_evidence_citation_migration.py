@@ -80,6 +80,22 @@ async def _drop_evidence_citation_tables() -> None:
             await connection.execute(text("DROP FUNCTION IF EXISTS prevent_rag_evidence_citation_mutation() CASCADE"))
 
 
+async def _reset_public_schema() -> None:
+    engine = create_async_engine(config.database_url, poolclass=NullPool, isolation_level="AUTOCOMMIT")
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+            await connection.execute(text("CREATE SCHEMA public"))
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def reset_public_schema_after_evidence_citation_module() -> Iterator[None]:
+    yield
+    asyncio.run(_reset_public_schema())
+
+
 async def _trigger_exists(table_name: str, trigger_name: str) -> bool:
     async with _connection() as connection:
         result = await connection.execute(
