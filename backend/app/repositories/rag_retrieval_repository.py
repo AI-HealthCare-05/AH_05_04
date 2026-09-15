@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -119,6 +120,21 @@ class RagRetrievalRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    @staticmethod
+    def _validate_run_identity(existing: RetrievalRun, data: RetrievalRunCreate) -> None:
+        if (
+            existing.query_digest != data.query_digest
+            or existing.retrieval_configuration_hash != data.retrieval_configuration_hash
+            or existing.knowledge_index_id != data.knowledge_index_id
+            or existing.variant != data.variant
+            or existing.source_manifest_hash != data.source_manifest_hash
+            or existing.filter_snapshot_hash != data.filter_snapshot_hash
+            or existing.execution_context_id != data.execution_context_id
+        ):
+            raise RetrievalRunConflictError(
+                f"Retrieval run for job {data.job_id} and node {data.node_id} already exists with differing identity"
+            )
+
     async def begin_run(self, data: RetrievalRunCreate) -> tuple[RetrievalRun, bool]:
         """Begin a retrieval run idempotently.
 
@@ -127,50 +143,57 @@ class RagRetrievalRepository:
         """
         existing = await self.get_run_by_job_and_node(data.job_id, data.node_id, for_update=True)
         if existing is not None:
-            # Check identity match
-            if (
-                existing.query_digest != data.query_digest
-                or existing.retrieval_configuration_hash != data.retrieval_configuration_hash
-                or existing.knowledge_index_id != data.knowledge_index_id
-                or existing.variant != data.variant
-                or existing.source_manifest_hash != data.source_manifest_hash
-                or existing.filter_snapshot_hash != data.filter_snapshot_hash
-            ):
-                raise RetrievalRunConflictError(
-                    f"Retrieval run for job {data.job_id} and node {data.node_id} already exists with differing identity"
-                )
+            self._validate_run_identity(existing, data)
             return existing, False
 
-        run = RetrievalRun(
-            id=uuid4(),
-            job_id=data.job_id,
-            execution_context_id=data.execution_context_id,
-            prescription_version_id=data.prescription_version_id,
-            runtime_release_bundle_id=data.runtime_release_bundle_id,
-            runtime_release_bundle_manifest_hash=data.runtime_release_bundle_manifest_hash,
-            runtime_execution_manifest_id=data.runtime_execution_manifest_id,
-            runtime_execution_manifest_hash=data.runtime_execution_manifest_hash,
-            runtime_guard_decision_ref=data.runtime_guard_decision_ref,
-            knowledge_index_id=data.knowledge_index_id,
-            node_id=data.node_id,
-            variant=data.variant,
-            query_digest_algorithm=data.query_digest_algorithm,
-            query_digest_key_version=data.query_digest_key_version,
-            query_digest=data.query_digest,
-            filter_snapshot=data.filter_snapshot,
-            filter_snapshot_hash=data.filter_snapshot_hash,
-            source_manifest_hash=data.source_manifest_hash,
-            retrieval_configuration_hash=data.retrieval_configuration_hash,
-            query_embedding_sha256=data.query_embedding_sha256,
-            lexical_limit=data.lexical_limit,
-            dense_limit=data.dense_limit,
-            hybrid_limit=data.hybrid_limit,
-            final_k=data.final_k,
-            status=RetrievalRunStatus.RUNNING,
+        new_id = uuid4()
+        ins_stmt = (
+            pg_insert(RetrievalRun)
+            .values(
+                id=new_id,
+                job_id=data.job_id,
+                execution_context_id=data.execution_context_id,
+                prescription_version_id=data.prescription_version_id,
+                runtime_release_bundle_id=data.runtime_release_bundle_id,
+                runtime_release_bundle_manifest_hash=data.runtime_release_bundle_manifest_hash,
+                runtime_execution_manifest_id=data.runtime_execution_manifest_id,
+                runtime_execution_manifest_hash=data.runtime_execution_manifest_hash,
+                runtime_guard_decision_ref=data.runtime_guard_decision_ref,
+                knowledge_index_id=data.knowledge_index_id,
+                node_id=data.node_id,
+                variant=data.variant,
+                query_digest_algorithm=data.query_digest_algorithm,
+                query_digest_key_version=data.query_digest_key_version,
+                query_digest=data.query_digest,
+                filter_snapshot=data.filter_snapshot,
+                filter_snapshot_hash=data.filter_snapshot_hash,
+                source_manifest_hash=data.source_manifest_hash,
+                retrieval_configuration_hash=data.retrieval_configuration_hash,
+                query_embedding_sha256=data.query_embedding_sha256,
+                lexical_limit=data.lexical_limit,
+                dense_limit=data.dense_limit,
+                hybrid_limit=data.hybrid_limit,
+                final_k=data.final_k,
+                status=RetrievalRunStatus.RUNNING,
+            )
+            .on_conflict_do_nothing(index_elements=["job_id", "node_id"])
+            .returning(RetrievalRun.id)
         )
-        self._session.add(run)
-        await self._session.flush()
-        return run, True
+        res = await self._session.execute(ins_stmt)
+        inserted_id = res.scalar_one_or_none()
+        if inserted_id is not None:
+            run = await self.get_run(inserted_id)
+            if run is None:
+                raise RuntimeError("Failed to retrieve newly inserted retrieval run")
+            return run, True
+
+        # Concurrent collision: another transaction inserted the run first.
+        existing = await self.get_run_by_job_and_node(data.job_id, data.node_id, for_update=True)
+        if existing is not None:
+            self._validate_run_identity(existing, data)
+            return existing, False
+
+        raise RuntimeError("Failed to begin retrieval run concurrently")
 
     async def finalize_run(self, run_id: UUID, data: RetrievalRunFinalize) -> RetrievalRun:
         """Atomically insert signals/hits and update retrieval_run to terminal status."""

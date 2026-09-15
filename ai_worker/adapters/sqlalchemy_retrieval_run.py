@@ -20,6 +20,7 @@ from sqlalchemy import (
     table,
     update,
 )
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_worker.tasks.rag.retrieval_run import (
@@ -111,6 +112,42 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
     def __init__(self, session_factory: SessionFactory) -> None:
         self._session_factory = session_factory
 
+    async def _validate_and_resume_existing(
+        self,
+        session: AsyncSession,
+        request: BeginRetrievalRunRequest,
+        run_row: Any,
+    ) -> BeginRetrievalRunOutcome:
+        matches = (
+            run_row["query_digest"] == request.query_digest
+            and run_row["retrieval_configuration_hash"] == request.retrieval_configuration_hash
+            and run_row["knowledge_index_id"] == str(request.knowledge_index_id)
+            and run_row["variant"] == request.variant
+            and run_row["source_manifest_hash"] == request.source_manifest_hash
+            and run_row["filter_snapshot_hash"] == request.filter_snapshot_hash
+            and run_row["execution_context_id"] == str(request.execution_context_id)
+        )
+        if not matches:
+            return BeginRetrievalRunFailure(
+                reason=BeginRetrievalRunFailureReason.CONFLICT,
+                message="Existing retrieval run identity differs from request",
+            )
+
+        run_id = UUID(run_row["id"])
+        if run_row["status"] == "COMPLETED":
+            receipt = await self._load_receipt_within_session(session, run_id, run_row)
+            if receipt is None:
+                return BeginRetrievalRunFailure(
+                    reason=BeginRetrievalRunFailureReason.DEPENDENCY_ERROR,
+                    message="Corrupt stored retrieval run receipt",
+                )
+            return BeginRetrievalRunSuccess(
+                run_id=run_id,
+                is_resumed=True,
+                existing_receipt=receipt,
+            )
+        return BeginRetrievalRunSuccess(run_id=run_id, is_resumed=True)
+
     async def begin_run(self, request: BeginRetrievalRunRequest) -> BeginRetrievalRunOutcome:
         try:
             async with self._session_factory() as session:
@@ -127,69 +164,58 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
                     run_row = (await session.execute(run_stmt)).mappings().first()
 
                     if run_row is not None:
-                        # Validate identity match
-                        matches = (
-                            run_row["query_digest"] == request.query_digest
-                            and run_row["retrieval_configuration_hash"] == request.retrieval_configuration_hash
-                            and run_row["knowledge_index_id"] == str(request.knowledge_index_id)
-                            and run_row["variant"] == request.variant
-                            and run_row["source_manifest_hash"] == request.source_manifest_hash
-                            and run_row["filter_snapshot_hash"] == request.filter_snapshot_hash
-                            and run_row["execution_context_id"] == str(request.execution_context_id)
-                        )
-                        if not matches:
-                            return BeginRetrievalRunFailure(
-                                reason=BeginRetrievalRunFailureReason.CONFLICT,
-                                message="Existing retrieval run identity differs from request",
-                            )
+                        return await self._validate_and_resume_existing(session, request, run_row)
 
-                        run_id = UUID(run_row["id"])
-                        if run_row["status"] == "COMPLETED":
-                            receipt = await self._load_receipt_within_session(session, run_id, run_row)
-                            if receipt is None:
-                                return BeginRetrievalRunFailure(
-                                    reason=BeginRetrievalRunFailureReason.DEPENDENCY_ERROR,
-                                    message="Corrupt stored retrieval run receipt",
-                                )
-                            return BeginRetrievalRunSuccess(
-                                run_id=run_id,
-                                is_resumed=True,
-                                existing_receipt=receipt,
-                            )
-                        return BeginRetrievalRunSuccess(run_id=run_id, is_resumed=True)
-
-                    # 4. Insert new RUNNING row
+                    # 2. Insert new RUNNING row with ON CONFLICT DO NOTHING
                     new_run_id = uuid4()
-                    ins_stmt = insert(_RETRIEVAL_RUN).values(
-                        id=str(new_run_id),
-                        job_id=str(request.job_id),
-                        execution_context_id=str(request.execution_context_id),
-                        prescription_version_id=str(request.prescription_version_id),
-                        runtime_release_bundle_id=str(request.runtime_release_bundle_id),
-                        runtime_release_bundle_manifest_hash=request.runtime_release_bundle_manifest_hash,
-                        runtime_execution_manifest_id=str(request.runtime_execution_manifest_id),
-                        runtime_execution_manifest_hash=request.runtime_execution_manifest_hash,
-                        runtime_guard_decision_ref=request.runtime_guard_decision_ref,
-                        knowledge_index_id=str(request.knowledge_index_id),
-                        node_id=request.node_id,
-                        variant=request.variant,
-                        query_digest_algorithm=request.query_digest_algorithm,
-                        query_digest_key_version=request.query_digest_key_version,
-                        query_digest=request.query_digest,
-                        filter_snapshot=request.filter_snapshot,
-                        filter_snapshot_hash=request.filter_snapshot_hash,
-                        source_manifest_hash=request.source_manifest_hash,
-                        retrieval_configuration_hash=request.retrieval_configuration_hash,
-                        query_embedding_sha256=request.query_embedding_sha256,
-                        lexical_limit=request.lexical_limit,
-                        dense_limit=request.dense_limit,
-                        hybrid_limit=request.hybrid_limit,
-                        final_k=request.final_k,
-                        status="RUNNING",
-                        started_at=func.now(),
+                    ins_stmt = (
+                        pg_insert(_RETRIEVAL_RUN)
+                        .values(
+                            id=str(new_run_id),
+                            job_id=str(request.job_id),
+                            execution_context_id=str(request.execution_context_id),
+                            prescription_version_id=str(request.prescription_version_id),
+                            runtime_release_bundle_id=str(request.runtime_release_bundle_id),
+                            runtime_release_bundle_manifest_hash=request.runtime_release_bundle_manifest_hash,
+                            runtime_execution_manifest_id=str(request.runtime_execution_manifest_id),
+                            runtime_execution_manifest_hash=request.runtime_execution_manifest_hash,
+                            runtime_guard_decision_ref=request.runtime_guard_decision_ref,
+                            knowledge_index_id=str(request.knowledge_index_id),
+                            node_id=request.node_id,
+                            variant=request.variant,
+                            query_digest_algorithm=request.query_digest_algorithm,
+                            query_digest_key_version=request.query_digest_key_version,
+                            query_digest=request.query_digest,
+                            filter_snapshot=request.filter_snapshot,
+                            filter_snapshot_hash=request.filter_snapshot_hash,
+                            source_manifest_hash=request.source_manifest_hash,
+                            retrieval_configuration_hash=request.retrieval_configuration_hash,
+                            query_embedding_sha256=request.query_embedding_sha256,
+                            lexical_limit=request.lexical_limit,
+                            dense_limit=request.dense_limit,
+                            hybrid_limit=request.hybrid_limit,
+                            final_k=request.final_k,
+                            status="RUNNING",
+                            started_at=func.now(),
+                        )
+                        .on_conflict_do_nothing(index_elements=["job_id", "node_id"])
+                        .returning(_RETRIEVAL_RUN.c.id)
                     )
-                    await session.execute(ins_stmt)
-                    return BeginRetrievalRunSuccess(run_id=new_run_id, is_resumed=False)
+                    ins_res = await session.execute(ins_stmt)
+                    inserted_id = ins_res.scalar_one_or_none()
+
+                    if inserted_id is not None:
+                        return BeginRetrievalRunSuccess(run_id=new_run_id, is_resumed=False)
+
+                    # 3. Race condition collision: concurrent transaction created the run first.
+                    conflict_row = (await session.execute(run_stmt)).mappings().first()
+                    if conflict_row is not None:
+                        return await self._validate_and_resume_existing(session, request, conflict_row)
+
+                    return BeginRetrievalRunFailure(
+                        reason=BeginRetrievalRunFailureReason.DEPENDENCY_ERROR,
+                        message="Failed to create or retrieve concurrent retrieval run",
+                    )
         except Exception as e:
             logger.exception("begin_run failed: %s", type(e).__name__)
             return BeginRetrievalRunFailure(

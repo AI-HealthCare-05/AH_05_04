@@ -330,3 +330,22 @@ async def test_postgresql_evidence_eligibility_verifier(database) -> None:
     post_empty = await verifier.post_search(PostSearchEligibilityRequest(knowledge_index_id=index_id), ())
     assert isinstance(post_empty, PostSearchEligibilitySuccess)
     assert len(post_empty.eligible_chunk_ids) == 0
+
+
+async def test_begin_run_concurrent_initial_creation_race(database) -> None:
+    engine = database
+    job_id, ctx_id, index_id, _, _ = await _seed_test_prerequisites(engine)
+    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    store = SqlAlchemyRetrievalRunStore(factory)
+
+    req = _create_begin_request(job_id, ctx_id, index_id)
+
+    res1, res2 = await asyncio.gather(
+        store.begin_run(req),
+        store.begin_run(req),
+    )
+
+    assert isinstance(res1, BeginRetrievalRunSuccess)
+    assert isinstance(res2, BeginRetrievalRunSuccess)
+    assert res1.run_id == res2.run_id
+    assert sorted([res1.is_resumed, res2.is_resumed]) == [False, True]

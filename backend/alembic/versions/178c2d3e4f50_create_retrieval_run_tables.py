@@ -178,7 +178,26 @@ def upgrade() -> None:
     op.create_index("idx_retrieval_hit_run_selected", "retrieval_hit", ["retrieval_run_id", "selected"])
 
 
+def _has_rows(table_name: str) -> bool:
+    bind = op.get_bind()
+    return bool(bind.execute(sa.text(f"SELECT 1 FROM {table_name} LIMIT 1")).first())
+
+
+def _raise_if_retrieval_run_data_exists() -> None:
+    tables = (
+        "retrieval_hit",
+        "retrieval_signal",
+        "retrieval_run",
+    )
+    bind = op.get_bind()
+    bind.execute(sa.text("LOCK TABLE " + ", ".join(tables) + " IN ACCESS EXCLUSIVE MODE"))
+    non_empty = [table for table in tables if _has_rows(table)]
+    if non_empty:
+        raise RuntimeError("Refusing to downgrade retrieval run tables with existing data: " + ", ".join(non_empty))
+
+
 def downgrade() -> None:
+    _raise_if_retrieval_run_data_exists()
     op.drop_table("retrieval_hit")
     op.drop_table("retrieval_signal")
     op.drop_table("retrieval_run")
