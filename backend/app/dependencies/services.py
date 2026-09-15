@@ -72,6 +72,7 @@ from app.services.prescriptions import PrescriptionService
 from app.services.track_c_api import TrackCApiService
 from app.services.track_c_flow import ContractFoundationSafetyPolicy, TrackCFlowService
 from app.services.track_c_revision_invalidation import TrackCCheckinRevisionInvalidation
+from app.services.track_c_support import TrackCSupportService
 from app.services.user_consents import ConsentGateService, OcrConsentService
 from app.services.users import UserConsentService, UserManageService
 
@@ -408,6 +409,16 @@ def get_track_c_api_service(
     repository = TrackCStorageRepository(session)
     flow = TrackCFlowService(repository, ContractFoundationSafetyPolicy())
     return TrackCApiService(repository, flow, idempotency_service)
+
+
+def get_track_c_support_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    idempotency_service: Annotated[
+        SyncMutationIdempotencyService,
+        Depends(get_sync_mutation_idempotency_service),
+    ],
+) -> TrackCSupportService:
+    return TrackCSupportService(TrackCStorageRepository(session), idempotency_service)
 
 
 def get_guide_repository(
