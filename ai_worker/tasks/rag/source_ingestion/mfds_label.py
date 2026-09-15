@@ -266,15 +266,21 @@ async def persist_mfds_label_plan(
     if persistence.snapshot_id is None:
         raise RuntimeError("SNAPSHOT_RECEIPT_MISSING")
 
+    artifacts = await _verified_run_artifacts(plan, persistence, repository)
     if persistence.decision is SnapshotIngestionDecision.CREATED:
-        await _append_created_members(plan, persistence, repository)
-    member_ids = await _verify_members(plan, persistence.snapshot_id, repository)
+        await _append_created_members(plan, persistence, artifacts, repository)
+    members = await _verified_members(
+        plan,
+        persistence.snapshot_id,
+        repository,
+        require_current_raw=persistence.decision is SnapshotIngestionDecision.CREATED,
+    )
     provenance = await _verified_provenance(plan, persistence.snapshot_id, repository)
     return MfdsLabelPersistenceReceipt(
         persistence=persistence,
         source_version=provenance.source_version,
         canonical_checksum=plan.ingestion.canonical_checksum,
-        member_ids=member_ids,
+        member_ids=tuple(member.source_snapshot_member_id for member in members),
     )
 
 
@@ -290,24 +296,25 @@ async def requery_mfds_label_persistence(
     if snapshot_id is None:
         raise ValueError("SNAPSHOT_REQUERY_UNAVAILABLE")
     provenance = await _verified_provenance(plan, snapshot_id, repository)
-    members = await repository.get_snapshot_member_bindings(snapshot_id=snapshot_id)
+    await _verified_run_artifacts(plan, receipt.persistence, repository)
+    members = await _verified_members(
+        plan,
+        snapshot_id,
+        repository,
+        require_current_raw=receipt.persistence.decision is SnapshotIngestionDecision.CREATED,
+    )
     documents = {f"mfds-label/{plan.item_seq}/{document.section}": document for document in plan.documents}
-    if len(members) != len(documents):
-        raise ValueError("SNAPSHOT_MEMBER_SET_MISMATCH")
     for member in members:
         document = documents.get(member.locator)
-        if (
-            document is None
-            or member.member_kind is not SourceSnapshotMemberKind.ARTIFACT
-            or member.ingestion_artifact_id is None
-            or member.content_sha256 != document.metadata.raw_checksum
-        ):
-            raise ValueError("SNAPSHOT_MEMBER_SET_MISMATCH")
+        assert document is not None
+        assert member.ingestion_artifact_id is not None
         artifact = await repository.get_ingestion_artifact_receipt(ingestion_artifact_id=member.ingestion_artifact_id)
         if artifact is None:
             raise ValueError("INGESTION_ARTIFACT_RECEIPT_MISSING")
-        _validate_artifact_document(artifact, document)
-        raw = artifact_reader.read_verified(object_key=artifact.object_key, metadata=document.metadata)
+        artifact_metadata = _member_artifact_metadata(member, artifact)
+        if receipt.persistence.decision is SnapshotIngestionDecision.CREATED:
+            _validate_artifact_document(artifact, document)
+        raw = artifact_reader.read_verified(object_key=artifact.object_key, metadata=artifact_metadata)
         if hashlib.sha256(raw).hexdigest() != member.content_sha256:
             raise ValueError("ARTIFACT_MEMBER_CHECKSUM_MISMATCH")
     return MfdsLabelRequeryReceipt(
@@ -569,19 +576,16 @@ def _validate_plan(plan: MfdsLabelIngestionPlan) -> None:
 async def _append_created_members(
     plan: MfdsLabelIngestionPlan,
     persistence: SnapshotPersistenceResult,
+    artifacts: tuple[IngestionArtifactReceipt, ...],
     repository: MfdsLabelRepository,
 ) -> None:
     assert persistence.snapshot_id is not None
     provenance = await repository.get_snapshot_receipt(snapshot_id=persistence.snapshot_id)
     if provenance is None:
         raise RuntimeError("SNAPSHOT_PROVENANCE_MISSING")
-    artifacts = await repository.get_ingestion_artifact_receipts(ingestion_run_id=persistence.ingestion_run_id)
     by_page = {artifact.page_number: artifact for artifact in artifacts}
-    if len(by_page) != len(artifacts) or set(by_page) != set(range(1, len(plan.documents) + 1)):
-        raise ValueError("INGESTION_ARTIFACT_SET_MISMATCH")
     for page_number, document in enumerate(plan.documents, start=1):
         artifact = by_page[page_number]
-        _validate_artifact_receipt(artifact, document, persistence.ingestion_run_id)
         await append_snapshot_member(
             SourceSnapshotMemberCreate(
                 provenance=provenance,
@@ -640,25 +644,64 @@ def _validate_artifact_document(artifact: IngestionArtifactReceipt, document: Mf
         raise ValueError("INGESTION_ARTIFACT_RECEIPT_MISMATCH")
 
 
-async def _verify_members(
+async def _verified_run_artifacts(
+    plan: MfdsLabelIngestionPlan,
+    persistence: SnapshotPersistenceResult,
+    repository: MfdsLabelRepository,
+) -> tuple[IngestionArtifactReceipt, ...]:
+    artifacts = await repository.get_ingestion_artifact_receipts(ingestion_run_id=persistence.ingestion_run_id)
+    by_page = {artifact.page_number: artifact for artifact in artifacts}
+    if len(by_page) != len(artifacts) or set(by_page) != set(range(1, len(plan.documents) + 1)):
+        raise ValueError("INGESTION_ARTIFACT_SET_MISMATCH")
+    for page_number, document in enumerate(plan.documents, start=1):
+        _validate_artifact_receipt(by_page[page_number], document, persistence.ingestion_run_id)
+    return artifacts
+
+
+async def _verified_members(
     plan: MfdsLabelIngestionPlan,
     snapshot_id: UUID,
     repository: MfdsLabelRepository,
-) -> tuple[UUID, ...]:
+    *,
+    require_current_raw: bool,
+) -> tuple[SnapshotMemberBinding, ...]:
     members = await repository.get_snapshot_member_bindings(snapshot_id=snapshot_id)
-    expected = {
-        (f"mfds-label/{plan.item_seq}/{document.section}", document.metadata.raw_checksum)
-        for document in plan.documents
-    }
-    observed = {(member.locator, member.content_sha256) for member in members}
-    if observed != expected or any(
+    documents = {f"mfds-label/{plan.item_seq}/{document.section}": document for document in plan.documents}
+    if {member.locator for member in members} != set(documents) or any(
         member.source_snapshot_id != snapshot_id
         or member.member_kind is not SourceSnapshotMemberKind.ARTIFACT
         or member.ingestion_artifact_id is None
         for member in members
     ):
         raise ValueError("SNAPSHOT_MEMBER_SET_MISMATCH")
-    return tuple(member.source_snapshot_member_id for member in members)
+    for member in members:
+        assert member.ingestion_artifact_id is not None
+        artifact = await repository.get_ingestion_artifact_receipt(ingestion_artifact_id=member.ingestion_artifact_id)
+        if artifact is None:
+            raise ValueError("INGESTION_ARTIFACT_RECEIPT_MISSING")
+        _member_artifact_metadata(member, artifact)
+        if require_current_raw and member.content_sha256 != documents[member.locator].metadata.raw_checksum:
+            raise ValueError("SNAPSHOT_MEMBER_SET_MISMATCH")
+    return members
+
+
+def _member_artifact_metadata(
+    member: SnapshotMemberBinding,
+    artifact: IngestionArtifactReceipt,
+) -> RawArtifactMetadata:
+    if (
+        artifact.storage_backend != LOCAL_PRIVATE_STORAGE_BACKEND
+        or artifact.artifact_key != f"{member.locator}.xml"
+        or artifact.raw_checksum != member.content_sha256
+        or artifact.content_type != OBSERVED_CONTENT_TYPE
+    ):
+        raise ValueError("INGESTION_ARTIFACT_RECEIPT_MISMATCH")
+    return RawArtifactMetadata(
+        artifact_key=artifact.artifact_key,
+        raw_checksum=artifact.raw_checksum,
+        byte_size=artifact.byte_size,
+        content_type=artifact.content_type,
+    )
 
 
 async def _verified_provenance(

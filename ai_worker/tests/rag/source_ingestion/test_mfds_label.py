@@ -366,7 +366,11 @@ async def test_persist_commit_boundary_and_requery_are_complete_and_idempotent(t
 
     second_plan = load_mfds_label_plan(
         item_seq="200610660",
-        input_dir=_input_directory(tmp_path, collected_at=_COLLECTED_AT + timedelta(hours=1)),
+        input_dir=_input_directory(
+            tmp_path,
+            data_value="changed-editor-metadata",
+            collected_at=_COLLECTED_AT + timedelta(hours=1),
+        ),
         identity=_IDENTITY,
         endpoint_receipt_hash=_RECEIPT_HASH,
         collected_at=_COLLECTED_AT + timedelta(hours=1),
@@ -381,6 +385,16 @@ async def test_persist_commit_boundary_and_requery_are_complete_and_idempotent(t
     assert second.persistence.decision is SnapshotIngestionDecision.NO_CHANGE
     assert second.member_ids == first.member_ids
     assert second.source_version == first.source_version
+    assert second_plan.ingestion.raw_manifest_checksum != first_plan.ingestion.raw_manifest_checksum
+    assert len(repository.artifacts_by_run[second.persistence.ingestion_run_id]) == 3
+    checked_again = await requery_mfds_label_persistence(
+        plan=second_plan,
+        receipt=second,
+        repository=repository,
+        artifact_reader=store,
+    )
+    assert checked_again.snapshot_id == checked.snapshot_id
+    assert checked_again.member_count == 3
 
 
 async def test_no_change_with_missing_member_fails_closed(tmp_path: Path) -> None:

@@ -77,6 +77,14 @@ class MfdsLabelCommittedReceipt:
     requery: MfdsLabelRequeryReceipt
 
 
+class MfdsLabelPostCommitVerificationError(RuntimeError):
+    """DB commit 뒤 재조회 검증 실패를 rollback 실패와 구분합니다."""
+
+    def __init__(self, persistence: MfdsLabelPersistenceReceipt) -> None:
+        self.persistence = persistence
+        super().__init__("MFDS_LABEL_POST_COMMIT_VERIFICATION_FAILED")
+
+
 def parse_collected_at(value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -131,14 +139,17 @@ async def run_ingestion(
                 artifact_store=artifact_store,
                 metadata=metadata,
             )
-        async with sessions() as session:
-            await validate_source_writer_session(session)
-            requery = await requery_mfds_label_persistence(
-                plan=plan,
-                receipt=persistence,
-                repository=SqlAlchemySourceSnapshotRepository(session),
-                artifact_reader=artifact_store,
-            )
+        try:
+            async with sessions() as session:
+                await validate_source_writer_session(session)
+                requery = await requery_mfds_label_persistence(
+                    plan=plan,
+                    receipt=persistence,
+                    repository=SqlAlchemySourceSnapshotRepository(session),
+                    artifact_reader=artifact_store,
+                )
+        except Exception:
+            raise MfdsLabelPostCommitVerificationError(persistence) from None
         return MfdsLabelCommittedReceipt(persistence, requery)
     finally:
         await engine.dispose()
@@ -161,8 +172,23 @@ def main() -> int:
                 include_e_drug=args.include_e_drug,
             )
         )
+    except MfdsLabelPostCommitVerificationError as exc:
+        persistence = exc.persistence.persistence
+        print(
+            "MFDS label ingestion committed but post-commit verification failed; "
+            f"decision={persistence.decision.value} "
+            f"snapshot_id={persistence.snapshot_id} "
+            f"ingestion_run_id={persistence.ingestion_run_id}. "
+            "Do not rerun until the committed state is investigated.",
+            file=sys.stderr,
+        )
+        return 1
     except Exception:
-        print("MFDS label ingestion failed; database transaction rolled back.", file=sys.stderr)
+        print(
+            "MFDS label ingestion did not confirm a database commit; an opened transaction was rolled back. "
+            "Immutable artifact objects may require the approved cleanup procedure.",
+            file=sys.stderr,
+        )
         return 1
     print(
         "MFDS label ingestion committed: "

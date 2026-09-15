@@ -52,9 +52,9 @@ NN을 포함하는 일반의약품은 `--include-e-drug`를 추가한다. 예시
 3. 원본을 content-addressed `LOCAL_PRIVATE` 저장소에 보존한다.
 4. 기존 Python Snapshot lifecycle에서 Operation 잠금, 정책, 동일 version 충돌과 `NO_CHANGE`를 판정한다.
 5. 생성된 Run의 Artifact ID를 다시 읽고 raw checksum과 metadata를 대조한 뒤 ARTIFACT member를 추가한다.
-6. member까지 성공해야 호출자 transaction이 commit된다. 오류는 DB transaction을 rollback하며, 이미 보존된 불변 객체는 기존 cleanup 절차로만 처리한다.
+6. member까지 성공해야 호출자 transaction이 commit된다. commit 전 오류는 DB transaction을 rollback한다. 이미 보존된 불변 객체는 자동 삭제하지 않으며, 안전한 Run ID·Artifact key·checksum으로 참조 부재를 확인한 뒤 지정된 cleanup executor가 정리하고 Receipt를 남기는 절차가 확정돼야 실제 적재를 실행할 수 있다.
 7. commit 후 새 DB session에서 Snapshot→member→Artifact를 재조회하고 저장 원문 크기·SHA-256을 다시 검증한다.
-8. 동일 내용 재실행은 기존 Snapshot과 member가 완전할 때만 `NO_CHANGE`로 성공한다. member 누락을 성공으로 숨기지 않는다.
+8. 동일 canonical 내용 재실행은 기존 Snapshot과 member가 완전할 때만 `NO_CHANGE`로 성공한다. 새 Run의 원문은 별도 Artifact로 기록하고, 기존 Snapshot member는 생성 당시 원문 checksum을 유지한다. member 누락을 성공으로 숨기지 않는다.
 
 비즈니스 규칙과 데이터 무결성 판정은 Python Service/Repository에서 수행한다. 신규 RLS·DB Trigger·Stored Procedure·업무 DB 함수는 사용하지 않는다.
 
@@ -62,4 +62,4 @@ NN을 포함하는 일반의약품은 `--include-e-drug`를 추가한다. 예시
 
 명령 성공 출력에는 decision, Snapshot ID, canonical checksum과 member count만 포함한다. DB URL, credential, 실제 Artifact root와 원문은 출력하지 않는다.
 
-이 구현과 합성 테스트 통과만으로 노바스크 적재가 완료된 것은 아니다. #593 provisioning 후 실제 원문으로 명령을 실행하고, 새 session 재조회 결과와 동일 입력 재실행 결과를 확인한 다음 현우님에게 Snapshot/member/locator를 전달해야 첫 제품 Source 범위가 완료된다. Retrieval·Citation·Runtime 사용 승인은 별도다.
+이 구현과 합성 테스트 통과만으로 노바스크 적재가 완료된 것은 아니다. #593 provisioning과 실제 실패 Artifact/Run cleanup 절차가 확인된 뒤 실제 원문으로 명령을 실행하고, 새 session 재조회 결과와 동일 입력 재실행 결과를 확인한 다음 현우님에게 Snapshot/member/locator를 전달해야 첫 제품 Source 범위가 완료된다. cleanup 실행 주체·명령·Receipt 위치가 확정되기 전에는 실제 적재 명령을 실행하지 않는다. Retrieval·Citation·Runtime 사용 승인은 별도다.
