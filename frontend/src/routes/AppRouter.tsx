@@ -19,6 +19,7 @@ import MenuPage from '../pages/MenuPage'
 import { ScheduleOccurrencePage, SchedulePage } from '../pages/SchedulePage'
 import NotificationsPage from '../pages/NotificationsPage'
 import UnconfirmedCheckinsPage from '../pages/UnconfirmedCheckinsPage'
+import ReportPage from '../pages/ReportPage'
 
 const DevPreviewPage = import.meta.env.DEV
   ? lazy(() => import('../dev-preview/DevPreviewPage'))
@@ -158,6 +159,8 @@ export function AppRoutes({
       <Route path="/menu" element={<ProtectedRoute><MenuPage /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
       <Route path="/notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
+      <Route path="/report" element={<ProtectedRoute><ReportPage /></ProtectedRoute>} />
+      <Route path="/report/clinic" element={<ProtectedRoute><ReportPage /></ProtectedRoute>} />
     </Routes>
   )
 }
