@@ -135,7 +135,9 @@ async def test_blind_ab_run_creates_balanced_packet_separate_assignment_and_usag
         hashlib.sha256(artifact_json_bytes(review_packet)).hexdigest(),
     )
     template_serialized = json.dumps(judgment_template, ensure_ascii=False)
-    assert len(judgment_template["items"]) == 54
+    judgment_items = judgment_template["items"]
+    assert isinstance(judgment_items, list)
+    assert len(judgment_items) == 54
     assert "chat-prompt-v3-gpt-4o" not in template_serialized
     assert "chat-prompt-v4-gpt-4o" not in template_serialized
 
