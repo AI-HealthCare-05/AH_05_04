@@ -40,6 +40,10 @@ ALLOWED_AI_WORKER_MODULES = frozenset(
         # I/O·시계·session이 없는 순수 모듈이며, backend가 이미 import하는
         # `provider_contracts`와 같은 형태입니다.
         "ai_worker.tasks.rag.runtime_bundle_builder",
+        # PD-168-20260915: RAG-07B Candidate Index build 진입점과 그 필수 파라미터 타입.
+        # 전체 import 체인이 stdlib-only임을 확인했다(문서 참고).
+        "ai_worker.tasks.rag.candidate_index",
+        "ai_worker.tasks.rag.catalog.export",
     }
 )
 
