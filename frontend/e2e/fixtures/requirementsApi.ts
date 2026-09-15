@@ -223,6 +223,20 @@ export async function installRequirementsApi(
         created_at: now,
       })
     }
+    if (key === 'GET /api/v1/users/me/consents') {
+      return json(route, {
+        data: ['OCR', 'GUIDE', 'CHAT', 'NOTIFICATION'].map((purpose) => ({
+          purpose,
+          status: null,
+          policy_version: null,
+          current_policy_version: `${purpose}-synthetic-v1`,
+          is_granted: false,
+          granted_at: null,
+          withdrawn_at: null,
+          updated_at: null,
+        })),
+      })
+    }
     if (key === 'GET /api/v1/users/me/consents/OCR') {
       return json(route, {
         data: {
