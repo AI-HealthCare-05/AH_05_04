@@ -781,3 +781,21 @@ nullable입니다. 없는/타인 occurrence는 동일 404 MEDICATION_OCCURRENCE_
 
 [현재 계약·Decision](contracts/current/track-b-occurrence-medication-v1.md)은 #474 Backend 승인·병합과 #202 Frontend 인수 승인을 근거로 Current입니다.
 [실제 합성 응답과 검증](validation/track-b/issue-202-closure-readiness.md)을 함께 확인합니다.
+
+## #556 생활 시간 저장·조회 API — 구현 브랜치 검토 대상
+
+인증 사용자의 SELF profile을 대상으로 `GET /api/v1/lifestyle-times`와
+`PUT /api/v1/lifestyle-times`를 제공한다. 사용자나 profile 식별자를 요청으로 받지 않는다.
+
+- GET 미저장은 `revision=0`, `updated_at=null`, `timezone="Asia/Seoul"`, `days=[]`를 반환한다.
+- PUT body의 `expected_revision`과 `days`는 필수이며 생략한 요일까지 초기화하는 전체 교체다.
+- PUT에는 기존 형식의 `Idempotency-Key`가 필수다. 성공마다 revision이 증가하고 같은 key·같은
+  정규 요청 replay는 최초 200 snapshot을 반환해 증가하지 않는다.
+- stale revision은 `409 LIFESTYLE_TIMES_REVISION_CONFLICT`, SELF profile 확인 실패는
+  `404 LIFESTYLE_TIMES_NOT_FOUND`다. 공통 401·422와 멱등성 400·409·503 오류를 유지한다.
+- 모든 응답은 `Cache-Control: no-store`이며 입력 원문을 오류 details나 로그에 넣지 않는다.
+
+요일·식사 상태·행동 종류·자정 구간의 정확한 DTO와 상한은
+[Proposed 계약](contracts/proposed/track-b-lifestyle-times-v1.md), 합성 요청·응답은
+[#556 검증 기록](validation/track-b/issue-556-lifestyle-times.md)을 따른다. 저장 자체는 처방,
+일정, occurrence, 알림 또는 Check-in을 변경하지 않고 추천·의료 규칙을 실행하지 않는다.

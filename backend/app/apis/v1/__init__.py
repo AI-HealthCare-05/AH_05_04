@@ -5,6 +5,7 @@ from app.apis.v1.chat_routers import chat_router
 from app.apis.v1.extracted_field_routers import extracted_field_router
 from app.apis.v1.guide_routers import guide_router
 from app.apis.v1.job_routers import job_router
+from app.apis.v1.lifestyle_times_routers import lifestyle_times_router
 from app.apis.v1.medical_document_routers import medical_document_router
 from app.apis.v1.medication_candidate_routers import medication_candidate_router
 from app.apis.v1.medication_checkin_backlog_routers import medication_checkin_backlog_router
@@ -33,6 +34,7 @@ v1_routers.include_router(medication_checkin_router)
 v1_routers.include_router(medication_checkin_backlog_router)
 v1_routers.include_router(track_c_router)
 v1_routers.include_router(job_router)
+v1_routers.include_router(lifestyle_times_router)
 
 v1_routers.include_router(notification_router)
 
