@@ -1,0 +1,91 @@
+{
+  "checked_at": "2026-09-15T06:49:41.144395+00:00",
+  "item_seq": "200610660",
+  "sections": [
+    {
+      "section": "EE",
+      "url": "https://nedrug.mfds.go.kr/pbp/cmn/xml/drb/200610660/EE",
+      "status": 200,
+      "content_type": "application/download; UTF-8; charset=UTF-8",
+      "bytes": 757,
+      "sha256": "e0481cf0134377c918192252c2130c7511c561cdc6cdd8d901ba35a28daa53eb",
+      "root": "DOC",
+      "root_attributes": {
+        "title": "효능효과",
+        "type": "EE"
+      },
+      "paragraph_count": 2,
+      "text_characters": 42,
+      "tag_counts": {
+        "ARTICLE": 2,
+        "DOC": 1,
+        "PARAGRAPH": 2,
+        "SECTION": 1
+      },
+      "last_modified": null,
+      "paragraphs_found_in_detail": 2,
+      "detail_text_characters": 137,
+      "article_title_count": 2,
+      "article_titles_found_in_detail": 2,
+      "unmatched_paragraph_metadata": []
+    },
+    {
+      "section": "UD",
+      "url": "https://nedrug.mfds.go.kr/pbp/cmn/xml/drb/200610660/UD",
+      "status": 200,
+      "content_type": "application/download; UTF-8; charset=UTF-8",
+      "bytes": 965,
+      "sha256": "3abaaeea590bb41e675d56faf8a272e528d8f84fe19d2138abf29c2a625a8bf4",
+      "root": "DOC",
+      "root_attributes": {
+        "title": "용법용량",
+        "type": "UD"
+      },
+      "paragraph_count": 5,
+      "text_characters": 194,
+      "tag_counts": {
+        "ARTICLE": 1,
+        "DOC": 1,
+        "PARAGRAPH": 5,
+        "SECTION": 1
+      },
+      "last_modified": null,
+      "paragraphs_found_in_detail": 5,
+      "detail_text_characters": 144,
+      "article_title_count": 0,
+      "article_titles_found_in_detail": 0,
+      "unmatched_paragraph_metadata": []
+    },
+    {
+      "section": "NB",
+      "url": "https://nedrug.mfds.go.kr/pbp/cmn/xml/drb/200610660/NB",
+      "status": 200,
+      "content_type": "application/download; UTF-8; charset=UTF-8",
+      "bytes": 22750,
+      "sha256": "2970de8f769470cd6590226b8fe15d044b18dfba64bf745380b1f5e46abd29e1",
+      "root": "DOC",
+      "root_attributes": {
+        "title": "사용상의주의사항",
+        "type": "NB"
+      },
+      "paragraph_count": 85,
+      "text_characters": 6335,
+      "tag_counts": {
+        "ARTICLE": 11,
+        "DOC": 1,
+        "PARAGRAPH": 85,
+        "SECTION": 1
+      },
+      "last_modified": null,
+      "paragraphs_found_in_detail": 85,
+      "detail_text_characters": 5198,
+      "article_title_count": 11,
+      "article_titles_found_in_detail": 11,
+      "unmatched_paragraph_metadata": []
+    }
+  ],
+  "base_commit": "58aa72867ed57b0423f52f6a6c2ea754c8a40dd2",
+  "status": "ACQUISITION_PATH_VERIFIED_NOT_INGESTED",
+  "db_written": false,
+  "source_use_approved": false
+}
