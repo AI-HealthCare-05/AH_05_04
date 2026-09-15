@@ -1,6 +1,6 @@
 # #591 로컬 후보 검사·Source 저장 기반 검증
 
-- 기준: develop `5880f355`, 2026-09-15.
+- 기준: 최초 검증 develop `5880f355`, 16개 후보 확장 develop `94e5fa8d`, 2026-09-15.
 - 구현 담당: 김지혜. 단일 책임 리뷰어 제안: 송은영(수락 여부는 별도 확인).
 - 범위: 은영님이 인계 환경을 정리하는 동안 가능한 로컬 검사·합성 통합 검증.
 - **실제 노바스크 원문 저장, 실제 MFDS Snapshot 생성, 인계용 적재 및 Retrieval/Citation 승인은 미완료다.**
@@ -9,17 +9,19 @@
 
 ### 1. 원문 후보 검사 도구
 
-`scripts/rag/verify_mfds_label_candidate.py`는 기존에 확보한 로컬 `EE.xml`, `UD.xml`, `NB.xml`을 검사한다.
+`scripts/rag/verify_mfds_label_candidate.py`는 기존에 확보한 로컬 `EE.xml`, `UD.xml`, `NB.xml`과 선택적 `NN.xml`을 검사한다.
 
 ```sh
 uv run python scripts/rag/verify_mfds_label_candidate.py --input-dir /approved/private/candidate
 ```
 
+EE/UD/NB는 비어 있지 않은 `PARAGRAPH` 또는 `ARTICLE title`을 본문으로 인정한다. NB는 실제 MFDS에서 관측된 `사용상의주의사항`과 `사용상주의사항` 제목을 지원한다. NN이 있으면 e약은요 7개 항목의 순서·중복·누락을 검사하고, 공식 문서의 빈 항목은 `PARTIAL_OFFICIAL`과 항목명으로 보고한다. 빈 항목을 임의 본문으로 채우지 않는다.
+
 위 경로는 설명용이며 실제 저장 위치가 아니다. 실제 원문은 승인된 비공개 위치를 사용한다.
 이 명령은 네트워크 수집·Source 등록·DB 쓰기·원문 복사·활성화를 하지 않는다.
 
-- 세 파일 모두 존재하고 각 XML DOC의 type/title이 해당 본문과 일치해야 결과를 출력한다.
-- UTF-8만 지원하고, DTD/entity 선언·잘못된 XML·빈 본문·파일 크기 초과·파일 symlink를 거부한다.
+- EE/UD/NB 세 파일은 필수이며, 각 XML DOC의 type/title이 해당 본문과 일치해야 결과를 출력한다. NN은 파일이 있을 때 함께 검사한다.
+- UTF-8만 지원하고, DTD/entity 선언·잘못된 XML·본문 단위가 전혀 없는 문서·파일 크기 초과·파일 symlink를 거부한다. NN의 개별 빈 항목은 문서 전체 실패로 숨기지 않고 부분 상태로 보고한다.
 - 원문 바이트를 요약·정규화·재직렬화하지 않는다. 출력은 원본 SHA-256·바이트 크기·구조 집계뿐이다.
 - 원문 및 파일 경로를 실패 메시지에 포함하지 않는다.
 - 이 도구는 제품 Identity·허가상태·웹 링크와 XML의 결속·의료 본문 완전성을 검증하지 않는다.

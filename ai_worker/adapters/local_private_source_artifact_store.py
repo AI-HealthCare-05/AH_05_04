@@ -10,6 +10,7 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import (
     IngestionArtifactKind,
     RawArtifactMetadata,
     StoredRawArtifact,
+    read_verified_raw_artifact,
     validate_artifact_binding,
     verify_raw_artifact,
 )
@@ -100,6 +101,11 @@ class LocalPrivateSourceArtifactStore:
             reject_code,
             parser_location,
         )
+
+    def read_verified(self, *, object_key: str, metadata: RawArtifactMetadata) -> bytes:
+        """저장소 root 안의 객체만 원본 metadata와 대조해 반환합니다."""
+        path = self._resolve_object_key(object_key)
+        return read_verified_raw_artifact(file_path=path, metadata=metadata)
 
     @staticmethod
     def _reject_symlink_path(root: Path) -> None:
