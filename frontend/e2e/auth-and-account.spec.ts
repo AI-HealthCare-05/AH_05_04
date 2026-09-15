@@ -48,7 +48,8 @@ test('[REQ-USR-007] 유효한 정보로 가입한 사용자는 로그인 화면�
   await page.getByLabel('이름').fill('합성 사용자')
   await page.getByLabel('이메일', { exact: true }).fill('synthetic@example.com')
   await page.getByLabel('비밀번호').fill('Synthetic1!')
-  await page.getByRole('checkbox', { name: /기능 이용 선택 동의/ }).check()
+  await page.getByRole('checkbox', { name: /처방전 인식/ }).check()
+  await page.getByRole('checkbox', { name: /복약 안내/ }).check()
   await expect(page.getByLabel('이메일 인증 코드')).toHaveCount(0)
   await page.getByRole('checkbox', { name: '필수 약관에 동의합니다' }).check()
   await page.getByRole('button', { name: '가입 완료' }).click()
@@ -59,9 +60,7 @@ test('[REQ-USR-007] 유효한 정보로 가입한 사용자는 로그인 화면�
     name: '합성 사용자',
     email: 'synthetic@example.com',
     password: 'Synthetic1!',
-    consents: [
-      { purpose: 'OCR' }, { purpose: 'GUIDE' }, { purpose: 'CHAT' }, { purpose: 'NOTIFICATION' },
-    ],
+    consents: [{ purpose: 'OCR' }, { purpose: 'GUIDE' }],
   }])
   expect(api.unexpectedRequests).toEqual([])
 })
