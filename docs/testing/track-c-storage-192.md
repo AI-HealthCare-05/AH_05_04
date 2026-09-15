@@ -117,6 +117,8 @@ HandlerConfig 상세·운영 seed·Track C 공개는 이 테스트 결과로 승
 - 명시적 allowlist 밖의 version, 누락·중복 Support, 추가 필드, 공백·빈 문구, 미지원 locale,
   중복 JSON key와 경로 이탈을 거부한다.
 - Rule의 copy 참조와 활성 Copy version 불일치를 거부한다.
+- 두 활성 로더에서 Copy 누락·JSON 손상·지원 항목 누락·미승인 버전·승인 버전 간 참조 불일치를
+  주입한 회귀 10건을 추가했다. 수정 전 Rule 로더의 5건이 실패했고, 수정 후 집중 검사 총 44건이 통과했다.
 - 기존 무버전 또는 `{}` snapshot 자동 backfill은 하지 않으며 기존 복원 거부 테스트를 유지한다.
 
 집중 검증은 `tests/services/test_track_c_handler_config.py`와

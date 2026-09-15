@@ -35,6 +35,8 @@ PENDING 조건을 완화하지 않으며, 일정 설정 성공을 놓친 복약�
 `backend/app/config/track_c/support-rules/<rule_version>.json`에 한 버전의 6개 지원 정의를 두고,
 `backend/app/config/track_c/support-copy/<copy_version>.json`에 한국어 문구와 확인 단계를 둔다.
 승인 버전은 Python의 명시적 allowlist에 연결하며 파일 존재만으로 다른 버전을 활성화하지 않는다.
+두 활성 로더 모두 Rule·Copy 파일의 구조와 버전 참조를 함께 검증한 뒤 결과를 반환한다.
+Rule만 요청해도 Copy 누락·손상·버전 불일치가 있으면 로딩을 거부한다.
 운영 DB에서 수동 수정하는 설정 테이블은 만들지 않고 승인 증빙은 해당 버전의 Decision 문서에서 관리한다.
 
 | 설정 필드 | 타입·검증 제안 | 용도 |

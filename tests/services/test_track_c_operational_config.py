@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.models.track_c import SupportCode
+from app.services import track_c_handler_config as handler_config
 from app.services.track_c_handler_config import (
     ACTIVE_COPY_VERSION,
     ACTIVE_RULE_VERSION,
@@ -17,6 +18,35 @@ from app.services.track_c_handler_config import (
 )
 
 COPY_DIR = Path("backend/app/config/track_c/support-copy")
+
+
+@pytest.mark.parametrize("loader", [load_active_handler_config, load_active_support_copy_catalog])
+@pytest.mark.parametrize("failure", ["missing", "invalid_json", "incomplete", "wrong_version"])
+def test_active_loaders_reject_unusable_copy(loader, failure: str, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(handler_config, "_COPY_DIR", tmp_path)
+    if failure != "missing":
+        payload = active_copy_payload()
+        if failure == "incomplete":
+            payload["supports"].pop()
+        elif failure == "wrong_version":
+            payload["copy_version"] = "synthetic-other-copy"
+        content = "{" if failure == "invalid_json" else json.dumps(payload)
+        (tmp_path / f"{ACTIVE_COPY_VERSION}.json").write_text(content, encoding="utf-8")
+    with pytest.raises(HandlerConfigError):
+        loader()
+
+
+@pytest.mark.parametrize("loader", [load_active_handler_config, load_active_support_copy_catalog])
+def test_active_loaders_reject_approved_but_mismatched_copy(loader, tmp_path: Path, monkeypatch) -> None:
+    other_version = "synthetic-other-copy"
+    payload = active_copy_payload()
+    payload["copy_version"] = other_version
+    (tmp_path / f"{other_version}.json").write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(handler_config, "_COPY_DIR", tmp_path)
+    monkeypatch.setattr(handler_config, "ACTIVE_COPY_VERSION", other_version)
+    monkeypatch.setattr(handler_config, "APPROVED_COPY_VERSIONS", APPROVED_COPY_VERSIONS | {other_version})
+    with pytest.raises(HandlerConfigError, match="active rule and copy versions do not match"):
+        loader()
 
 
 def active_copy_payload() -> dict:

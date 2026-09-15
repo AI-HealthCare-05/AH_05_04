@@ -308,25 +308,32 @@ def load_support_copy_catalog(
     return catalog
 
 
-def load_active_handler_config() -> HandlerConfig:
-    return load_handler_config(
+def _load_active_rule_and_copy() -> tuple[HandlerConfig, SupportCopyCatalog]:
+    """Return active assets only after both files and their references validate."""
+    config = load_handler_config(
         _RULES_DIR,
         ACTIVE_RULE_VERSION,
         approved_rule_versions=APPROVED_RULE_VERSIONS,
         approved_copy_versions=APPROVED_COPY_VERSIONS,
         approved_rationale_codes=APPROVED_RATIONALE_CODES,
     )
-
-
-def load_active_support_copy_catalog() -> SupportCopyCatalog:
     catalog = load_support_copy_catalog(
         _COPY_DIR,
         ACTIVE_COPY_VERSION,
         approved_copy_versions=APPROVED_COPY_VERSIONS,
     )
-    config = load_active_handler_config()
     if {rule.copy_version for rule in config.supports.values()} != {catalog.copy_version}:
         raise HandlerConfigError("active rule and copy versions do not match")
+    return config, catalog
+
+
+def load_active_handler_config() -> HandlerConfig:
+    config, _ = _load_active_rule_and_copy()
+    return config
+
+
+def load_active_support_copy_catalog() -> SupportCopyCatalog:
+    _, catalog = _load_active_rule_and_copy()
     return catalog
 
 
