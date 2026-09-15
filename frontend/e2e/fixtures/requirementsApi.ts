@@ -211,6 +211,14 @@ export async function installRequirementsApi(
     if (key === 'POST /api/v1/auth/login') {
       return json(route, { access_token: syntheticToken })
     }
+    if (key === 'GET /api/v1/medication-checkins/unconfirmed') {
+      return json(route, {
+        data: {
+          items: [],
+          next_cursor: null,
+        },
+      })
+    }
     if (key === 'POST /api/v1/auth/logout') {
       state.logoutCount += 1
       return json(route, { detail: '로그아웃되었습니다.' })
@@ -224,6 +232,20 @@ export async function installRequirementsApi(
         birthday: null,
         gender: null,
         created_at: now,
+      })
+    }
+    if (key === 'GET /api/v1/users/me/consents') {
+      return json(route, {
+        data: ['OCR', 'GUIDE', 'CHAT', 'NOTIFICATION'].map((purpose) => ({
+          purpose,
+          status: null,
+          policy_version: null,
+          current_policy_version: `${purpose}-synthetic-v1`,
+          is_granted: false,
+          granted_at: null,
+          withdrawn_at: null,
+          updated_at: null,
+        })),
       })
     }
     if (key === 'GET /api/v1/users/me/consents/OCR') {

@@ -686,6 +686,42 @@ describe('production 복약 일정', () => {
 })
 
 describe('production 복약 기록 handoff', () => {
+  it('최초 조회 실패 후 다시 시도하면 같은 occurrence 상세를 복구하며 Check-in을 저장하지 않는다', async () => {
+    const getDay = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValue(makeDay())
+    const services = makeServices({ getMedicationDay: getDay })
+    renderOccurrence(services)
+
+    expect(await screen.findByRole('heading', { name: '인터넷 연결을 확인해 주세요' })).toBeTruthy()
+    expect(screen.getByRole('alert').getAttribute('aria-live')).toBe('assertive')
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
+
+    expect(await screen.findByRole('heading', { name: '당시 처방의 혈압약' })).toBeTruthy()
+    expect(getDay).toHaveBeenCalledTimes(2)
+    expect(services.putMedicationCheckin).not.toHaveBeenCalled()
+  })
+
+  it('상세 조회 재시도도 실패하면 오류 상태와 다시 시도를 유지하며 Check-in을 저장하지 않는다', async () => {
+    const getDay = vi.fn().mockRejectedValue(new ApiError(
+      503,
+      'raw backend detail',
+      'SERVICE_UNAVAILABLE',
+    ))
+    const services = makeServices({ getMedicationDay: getDay })
+    renderOccurrence(services)
+
+    expect(await screen.findByRole('heading', { name: '일정을 잠시 불러오지 못했어요' })).toBeTruthy()
+    expect(screen.getByRole('alert').getAttribute('aria-live')).toBe('assertive')
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
+
+    await waitFor(() => expect(getDay).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('heading', { name: '일정을 잠시 불러오지 못했어요' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '다시 시도' })).toBeTruthy()
+    expect(screen.queryByText('raw backend detail')).toBeNull()
+    expect(services.putMedicationCheckin).not.toHaveBeenCalled()
+  })
+
   it('path occurrenceId와 query date를 day/detail ID와 검증한 뒤에만 표시한다', async () => {
     const services = makeServices()
     renderOccurrence(services)

@@ -218,20 +218,26 @@ function StatusCard({
   body,
   action,
   onAction,
+  isAlert = false,
 }: {
   title: string
   body: string
   action?: string
   onAction?: () => void
+  isAlert?: boolean
 }) {
   return (
-    <Card className="schedule-state-card">
+    <section
+      className="ds-card schedule-state-card"
+      role={isAlert ? 'alert' : undefined}
+      aria-live={isAlert ? 'assertive' : undefined}
+    >
       <h2>{title}</h2>
       <p>{body}</p>
       {action && onAction && (
         <Button fullWidth onClick={onAction}>{action}</Button>
       )}
-    </Card>
+    </section>
   )
 }
 
@@ -765,6 +771,7 @@ export function SchedulePage({
               <StatusCard
                 title={copy.title}
                 body={copy.body}
+                isAlert
                 action={loadFailure === 'AUTH' ? '로그인하기' : '다시 시도'}
                 onAction={loadFailure === 'AUTH' ? goToLogin : () => void reload()}
               />
@@ -1055,12 +1062,22 @@ export function ScheduleOccurrencePage({
           )}
           {!isLoading && loadFailure && (() => {
             const copy = failureCopy(loadFailure)
+            const canRetry = loadFailure === 'NETWORK' || loadFailure === 'SERVER'
             return (
               <StatusCard
                 title={copy.title}
                 body={copy.body}
-                action={loadFailure === 'AUTH' ? '로그인하기' : '일정으로 돌아가기'}
-                onAction={loadFailure === 'AUTH' ? goToLogin : () => navigate(backRoute)}
+                isAlert
+                action={loadFailure === 'AUTH'
+                  ? '로그인하기'
+                  : canRetry
+                    ? '다시 시도'
+                    : '일정으로 돌아가기'}
+                onAction={loadFailure === 'AUTH'
+                  ? goToLogin
+                  : canRetry
+                    ? () => void reload()
+                    : () => navigate(backRoute)}
               />
             )
           })()}

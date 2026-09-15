@@ -220,10 +220,18 @@ class Config(BaseSettings):
     # CI의 test 잡 env에는 OPENAI_API_KEY가 없어서 필수값(DB_*처럼)으로 두면 전체 테스트가 깨집니다.
     # 실제 키가 없으면 OpenAI 호출 시점에만 401 -> 500으로 실패하도록 placeholder 기본값을 둡니다.
     OPENAI_API_KEY: str = "sk-not-configured"
-    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_MODEL: str = "gpt-4o"
     OPENAI_TIMEOUT_SECONDS: float = 20.0
     CHAT_HISTORY_CONTEXT_ENABLED: bool = False
     RELEASE_VALIDATION_ALLOWED: bool = False
+
+    @field_validator("OPENAI_MODEL", mode="after")
+    @classmethod
+    def validate_openai_model(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized != "gpt-4o":
+            raise ValueError("OPENAI_MODEL must be gpt-4o")
+        return normalized
 
     # medication-identification-v1.md "공개 게이트": RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는
     # 실제 사용자 트래픽에 Candidate 조회·확정·거절 API를 공개하지 않습니다. 명시적으로 활성화하지

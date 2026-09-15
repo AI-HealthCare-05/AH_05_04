@@ -12,12 +12,12 @@ from app.services.chat_ai.schemas import ChatGenerationInput, ChatMedicationInpu
     os.getenv("RUN_OPENAI_CHAT_SMOKE") != "1",
     reason="set RUN_OPENAI_CHAT_SMOKE=1 for the live synthetic chat smoke test",
 )
-async def test_gpt_4o_mini_synthetic_chat_smoke() -> None:
+async def test_gpt_4o_synthetic_chat_smoke() -> None:
     if not os.getenv("OPENAI_API_KEY"):
         pytest.fail("OPENAI_API_KEY must be configured when RUN_OPENAI_CHAT_SMOKE=1")
     model = os.getenv("OPENAI_MODEL")
-    if model != "gpt-4o-mini":
-        pytest.fail("OPENAI_MODEL must be explicitly set to gpt-4o-mini when RUN_OPENAI_CHAT_SMOKE=1")
+    if model != "gpt-4o":
+        pytest.fail("OPENAI_MODEL must be explicitly set to gpt-4o when RUN_OPENAI_CHAT_SMOKE=1")
 
     from openai import AsyncOpenAI
 
@@ -42,5 +42,6 @@ async def test_gpt_4o_mini_synthetic_chat_smoke() -> None:
         await sdk_client.close()
 
     assert result.content
-    assert result.model_name.startswith("gpt-4o-mini")
+    assert result.model_name.startswith("gpt-4o")
+    assert "mini" not in result.model_name
     assert result.prompt_version == "chat-prompt-v3"
