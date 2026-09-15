@@ -1211,6 +1211,7 @@ describe('ChatPage', () => {
   })
 
   it('Home과 Bottom Nav의 /chat 진입은 최신 처방의 기존 session으로 초기 화면을 표시한다', async () => {
+    const onLocationCommit = vi.fn()
     vi.mocked(getChatSessionForPrescription).mockResolvedValue({
       data: {
         session_id: sessionId,
@@ -1248,14 +1249,20 @@ describe('ChatPage', () => {
       },
     })
 
-    renderPage('/chat')
+    renderPage('/chat', { onLocationCommit })
 
     expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
+    expect(onLocationCommit).toHaveBeenCalledWith(
+      `?prescription_id=${prescriptionId}`,
+      expect.any(String),
+    )
     expect(screen.queryByText('latest 경로에서 숨겨야 할 과거 답변')).toBeNull()
     expect(getLatestPrescription).toHaveBeenCalledTimes(1)
-    expect(getChatSessionForPrescription).toHaveBeenCalledWith(prescriptionId)
+    await waitFor(() =>
+      expect(getChatSessionForPrescription).toHaveBeenCalledWith(prescriptionId),
+    )
     expect(createChatSession).not.toHaveBeenCalled()
-    expect(getChatMessages).toHaveBeenCalledWith(sessionId)
+    await waitFor(() => expect(getChatMessages).toHaveBeenCalledWith(sessionId))
 
     const input = screen.getByLabelText('복약 질문')
     fireEvent.change(input, { target: { value: 'latest 진입 후 새 질문' } })

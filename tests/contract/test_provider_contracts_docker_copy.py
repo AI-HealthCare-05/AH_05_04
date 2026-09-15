@@ -70,6 +70,14 @@ def test_production_worker_receives_required_environment() -> None:
     assert "      STORAGE_DIR: ${STORAGE_DIR:-/app/media/medical_documents}" in worker_environment
 
 
+def test_production_api_defaults_guide_and_chat_to_gpt_4o() -> None:
+    compose_file = PROJECT_ROOT / "infra" / "docker" / "docker-compose.prod.yml"
+    production_compose = compose_file.read_text(encoding="utf-8")
+
+    assert "      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}\n" in production_compose
+    assert "      OCR_STRUCTURE_MODEL: ${OCR_STRUCTURE_MODEL:-gpt-4o-mini}\n" in production_compose
+
+
 def test_worker_mounts_shared_upload_storage_read_only() -> None:
     local_compose = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     production_compose = (PROJECT_ROOT / "infra" / "docker" / "docker-compose.prod.yml").read_text(encoding="utf-8")
