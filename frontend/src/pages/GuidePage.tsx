@@ -347,7 +347,8 @@ function GuidePage({
           <h1 className="screen-title">복약 가이드</h1>
           {guideId && (
             <p className="screen-description">
-              확인한 처방에 맞춰 복용 정보를 정리했어요.
+              약마다 언제·어떻게 복용하는지,<br />
+              어떤 점을 주의하면 좋은지 알려드려요.
             </p>
           )}
 
@@ -419,13 +420,14 @@ function GuidePage({
               <Button
                 fullWidth
                 className="guide-page__chat-button"
+                aria-label="복약 챗봇 도지와 이야기하기"
                 onClick={() =>
                   navigate(
                     `/chat?prescription_id=${currentGuide.prescription_id}`,
                   )
                 }
               >
-                복약 챗봇 도지와 이야기하기
+                도지와 대화하기
               </Button>
             </>
           )}

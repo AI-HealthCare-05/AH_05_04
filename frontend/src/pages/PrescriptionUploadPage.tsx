@@ -799,7 +799,7 @@ function PrescriptionUploadPage() {
           <Card className="mvp-upload__summary">
             <span>
               <strong>처방전</strong>
-              <small>OCR 인식 · 복약 가이드 연결</small>
+              <small>처방전을 인식해 복약 가이드를 생성할게요</small>
             </span>
           </Card>
 

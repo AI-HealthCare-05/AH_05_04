@@ -210,6 +210,7 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
               ref={homePrescriptionButtonRef}
               className="mvp-home__hub-card mvp-home__hub-card--prescription"
               type="button"
+              aria-label="처방약 복용 안내 · 내 처방전 등록하기"
               onClick={() => navigate('/prescriptions/upload', {
                 state: { intent: 'new-prescription' },
               })}
@@ -218,7 +219,7 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
                 <HomeShortcutIcon type="prescription" />
               </span>
               <span className="mvp-home__hub-copy">
-                <strong>처방약 복용 안내</strong>
+                <strong>내 처방전 등록하기</strong>
                 <small>처방전을 등록하고 복약 가이드를 확인해보세요.</small>
               </span>
               <span className="mvp-home__hub-arrow" aria-hidden="true">›</span>

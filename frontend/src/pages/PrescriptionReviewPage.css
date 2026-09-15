@@ -1,8 +1,10 @@
 .prescription-review-page {
+  --ds-action: #526b78;
+  --ds-action-pressed: #526b78;
   width: min(100%, 390px);
   min-height: 100dvh;
   margin: 0 auto;
-  background: #f4f7fb;
+  background: #f6f8fb;
   color: var(--ds-text);
   font-family: var(--ds-font);
 }
@@ -15,7 +17,7 @@
 .prescription-review-page .app-topbar {
   min-height: 68px;
   padding-inline: 20px;
-  border-bottom-color: #edf0f4;
+  border-bottom-color: #d8dee8;
   background: #fff;
 }
 
@@ -28,7 +30,7 @@
 .prescription-review-page .app-back-row {
   min-height: 44px;
   padding-inline: 14px;
-  background: #f4f7fb;
+  background: #f6f8fb;
 }
 
 .prescription-review {
@@ -46,8 +48,8 @@
   display: grid;
   justify-items: start;
   padding: 24px 20px;
-  border: 1px solid #dde5ee;
-  border-radius: 22px;
+  border: 1px solid #d8dee8;
+  border-radius: 20px;
   background: #fff;
   box-shadow: 0 10px 30px rgb(41 65 92 / 7%);
 }
