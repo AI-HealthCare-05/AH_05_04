@@ -25,30 +25,34 @@ Approved Contract Freeze v4는 빈 `symptom_codes=[]`를 증상 없음 확인과
 처리하고 그 밖의 목록을 `UNKNOWN/UNKNOWN_RISK`로 fail-closed 처리한다. 합성 foundation의
 `message_code`, `copy_version`, `source_version`은 Production 승인 자료가 아니다.
 
-## 실행 결과
+## 실행 결과 (최신 develop #580 반영 후 재검증)
 
 ```text
-pytest backend/app/tests/track_c/test_track_c_api.py -q
-12 passed
-
 pytest backend/app/tests/track_c/test_track_c_api.py \
   backend/app/tests/medication_checkins/test_medication_checkin_api.py \
-  tests/services/test_track_c_handler_config.py -q
-57 passed
+  tests/services/test_track_c_handler_config.py \
+  tests/services/test_track_c_operational_config.py tests/contract -q
+444 passed
 
-pytest tests/contract -q
-350 passed
-
-ruff check (수정 Python 파일)
+ruff check . / ruff format . --check
 passed
 
-mypy (신규 DTO·Service·Router·Repository)
-passed
+mypy backend/app ai_worker
+675 source files passed
 ```
 
-PostgreSQL 17과 pgvector 이미지의 literal `test` DB, 비식별 합성 fixture를 사용했다.
+전용 임시 컨테이너 `codex-193-api-test`, loopback port 15493, PostgreSQL 17 + pgvector,
+tmpfs의 `test` DB 및 비식별 합성 fixture를 사용했다. 공유 개발 DB는 변경하지 않았다.
+테스트 env는 `DB_EXPOSE_PORT=15493`, DB 계정·암호는 폐기 가능한 synthetic 값이다.
+기존 의존성 venv를 사용했으며 contract subprocess에는 같은 `UV_PROJECT_ENVIRONMENT`와
+`UV_NO_SYNC=1`을 전달했다. 초기 실행의 잘못된 테스트 멱등 키와 subprocess 의존성 누락을
+수정한 뒤 위 결과를 확인했다.
 이 결과는 배포 환경 검증, 실제 환자 데이터 검증, 의료·Privacy·Safety 승인 또는
 `PUBLIC_TRACK_C` 해제 근거가 아니다.
+
+추가 회귀는 Safety/Barrier 각각 같은 키·다른 키의 동시 요청, snapshot 실패의
+assessment·Plan 취소 rollback, Check-in 정정 이후 최초 snapshot 재현과 새 흐름 재시작,
+배열 안 자유 텍스트 거부, URGENT/EMERGENCY/UNKNOWN의 Barrier 차단을 포함한다.
 
 ## 남은 차단 조건
 

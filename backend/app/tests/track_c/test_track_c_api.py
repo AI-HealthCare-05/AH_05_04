@@ -202,7 +202,10 @@ async def test_nonempty_unapproved_symptom_fails_closed_and_blocks_barrier(case:
     assert await case.session.scalar(select(func.count()).select_from(BarrierResponse)) == 0
 
 
-async def test_nonroutine_safety_correction_cancels_active_plan(case: ApiCase) -> None:
+@pytest.mark.parametrize("snapshot_failure", [True, False])
+async def test_nonroutine_safety_correction_cancels_active_plan(
+    case: ApiCase, monkeypatch: pytest.MonkeyPatch, snapshot_failure: bool
+) -> None:
     safety = SafetyAssessment(
         medication_checkin_id=case.checkin.id,
         checkin_revision=1,
@@ -237,14 +240,22 @@ async def test_nonroutine_safety_correction_cancels_active_plan(case: ApiCase) -
     case.session.add(plan)
     await case.session.commit()
 
+    if snapshot_failure:
+        monkeypatch.setattr("app.services.idempotency.SNAPSHOT_SIZE_CAP_BYTES", 1)
     response = await case.safety(
         safety_body(case, symptoms=["SYNTHETIC_UNAPPROVED_CODE"], expected_revision=1),
         key="safety-nonroutine-correction",
     )
-    assert response.status_code == 200, response.text
     await case.session.refresh(plan)
-    assert plan.status == SupportActionPlanStatus.CANCELLED
-    assert plan.cancelled_at is not None
+    if snapshot_failure:
+        assert_error(response, 503, "IDEMPOTENCY_RESPONSE_TOO_LARGE")
+        assert plan.status == SupportActionPlanStatus.ACTIVE
+        assert plan.cancelled_at is None
+        assert await case.session.scalar(select(func.count()).select_from(SafetyAssessment)) == 1
+    else:
+        assert response.status_code == 200, response.text
+        assert plan.status == SupportActionPlanStatus.CANCELLED
+        assert plan.cancelled_at is not None
     assert await case.session.scalar(select(func.count()).select_from(BarrierResponse)) == 1
 
 
@@ -331,7 +342,102 @@ def test_openapi_track_c_contract() -> None:
     assert set(barrier_request["required"]) == {"response_status", "checkin_revision", "expected_revision"}
 
 
-async def test_concurrent_same_key_safety_requests_commit_one_assessment(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("symptoms", [["아파요"], ["free text"], [""], ["A" * 65]])
+async def test_free_text_inside_array_is_not_persisted(case: ApiCase, symptoms: list[str]) -> None:
+    assert_error(await case.safety(safety_body(case, symptoms=symptoms)), 422, "FREE_TEXT_SYMPTOM_NOT_SUPPORTED")
+    assert await case.session.scalar(select(func.count()).select_from(SafetyAssessment)) == 0
+
+
+@pytest.mark.parametrize(
+    "level,disposition",
+    [
+        (SafetyResponseLevel.URGENT, SafetyDisposition.URGENT_ROUTED),
+        (SafetyResponseLevel.EMERGENCY, SafetyDisposition.EMERGENCY_ROUTED),
+        (SafetyResponseLevel.UNKNOWN, SafetyDisposition.UNKNOWN_RISK),
+    ],
+)
+async def test_each_nonroutine_level_blocks_barrier(case: ApiCase, level, disposition) -> None:
+    case.session.add(
+        SafetyAssessment(
+            medication_checkin_id=case.checkin_id,
+            checkin_revision=1,
+            revision=1,
+            symptom_codes=["SYNTHETIC"],
+            response_level=level,
+            safety_disposition=disposition,
+            message_code="SYNTHETIC",
+            copy_version="synthetic-v1",
+            source_version="synthetic-v1",
+        )
+    )
+    await case.session.commit()
+    assert_error(
+        await case.barrier(
+            {
+                "response_status": "DECLINED",
+                "checkin_revision": 1,
+                "expected_revision": 0,
+            }
+        ),
+        409,
+        "SAFETY_FLOW_PRECEDES_BARRIER",
+    )
+
+
+async def test_replay_survives_checkin_correction_but_new_key_is_stale(case: ApiCase) -> None:
+    body = safety_body(case)
+    first = await case.safety(body)
+    case.checkin.revision = 2
+    await case.session.commit()
+    assert (await case.safety(body)).json() == first.json()
+    assert_error(await case.safety(body, key="new-key-after-correction"), 409, "CHECKIN_FLOW_STALE")
+    assert_error(
+        await case.barrier(
+            {
+                "response_status": "DECLINED",
+                "checkin_revision": 2,
+                "expected_revision": 0,
+            }
+        ),
+        409,
+        "SAFETY_FLOW_PRECEDES_BARRIER",
+    )
+    fresh = {**body, "checkin_revision": 2}
+    restarted = await case.safety(fresh, key="new-checkin-flow-key")
+    assert restarted.status_code == 200, restarted.text
+    assert restarted.json()["data"]["revision"] == 1
+
+
+async def test_snapshot_failure_rolls_back_assessment(case: ApiCase, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.services.idempotency.SNAPSHOT_SIZE_CAP_BYTES", 1)
+    assert_error(await case.safety(safety_body(case)), 503, "IDEMPOTENCY_RESPONSE_TOO_LARGE")
+    assert await case.session.scalar(select(func.count()).select_from(SafetyAssessment)) == 0
+    assert await case.session.scalar(select(func.count()).select_from(IdempotencyRecord)) == 0
+
+
+async def test_barrier_precondition_replay_conflict_and_ownership(case: ApiCase) -> None:
+    body = {"response_status": "DECLINED", "checkin_revision": 1, "expected_revision": 0}
+    assert_error(await case.barrier(body), 409, "SAFETY_FLOW_PRECEDES_BARRIER")
+    assert_error(await case.safety(safety_body(case), key=None), 400, "IDEMPOTENCY_KEY_REQUIRED")
+    assert (await case.safety(safety_body(case))).status_code == 200
+    first = await case.barrier(body)
+    assert first.status_code == 200
+    changed = {**body, "response_status": "ANSWERED", "barrier_code": "FORGOT"}
+    assert_error(await case.barrier(changed), 409, "IDEMPOTENCY_KEY_CONFLICT")
+    assert_error(await case.barrier(body, key="new-stale-barrier-key"), 409, "CHECKIN_FLOW_STALE")
+    await case.session.refresh(case.checkin)
+    case.checkin.revision = 2
+    await case.session.commit()
+    assert (await case.barrier(body)).json() == first.json()
+    fastapi_app.dependency_overrides[get_request_user] = lambda: SimpleNamespace(id=uuid4())
+    assert_error(await case.barrier(body), 404, "MEDICATION_CHECKIN_NOT_FOUND")
+
+
+@pytest.mark.parametrize("same_key", [True, False])
+@pytest.mark.parametrize("barrier_request", [True, False])
+async def test_concurrent_requests_commit_one_revision(
+    monkeypatch: pytest.MonkeyPatch, same_key: bool, barrier_request: bool
+) -> None:
     async with AsyncSession(test_engine, expire_on_commit=False) as seed:
         owner, profile = await _create_user_with_self_profile(seed, label="concurrent-track-c-api")
         occurrence = await _create_occurrence(
@@ -359,6 +465,22 @@ async def test_concurrent_same_key_safety_requests_commit_one_assessment(monkeyp
         prescription_id = prescription.id
         await seed.commit()
 
+        if barrier_request:
+            seed.add(
+                SafetyAssessment(
+                    medication_checkin_id=checkin_id,
+                    checkin_revision=1,
+                    revision=1,
+                    symptom_codes=[],
+                    response_level=SafetyResponseLevel.ROUTINE,
+                    safety_disposition=SafetyDisposition.NORMAL,
+                    message_code="SYNTHETIC_ROUTINE",
+                    copy_version="synthetic-v1",
+                    source_version="synthetic-v1",
+                )
+            )
+            await seed.commit()
+
         async def request_session() -> AsyncIterator[AsyncSession]:
             async with AsyncSession(test_engine, expire_on_commit=False) as session:
                 try:
@@ -384,6 +506,7 @@ async def test_concurrent_same_key_safety_requests_commit_one_assessment(monkeyp
 
         monkeypatch.setattr(IdempotencyRepository, "find_sync_idempotency_record", synchronized_find)
         previous_session = fastapi_app.dependency_overrides.get(get_db_session)
+        assert previous_session is not None
         fastapi_app.dependency_overrides[get_db_session] = request_session
         fastapi_app.dependency_overrides[get_request_user] = lambda: SimpleNamespace(id=owner_id)
         body = {
@@ -392,19 +515,31 @@ async def test_concurrent_same_key_safety_requests_commit_one_assessment(monkeyp
             "symptom_codes": [],
             "expected_revision": 0,
         }
+        if barrier_request:
+            body = {"response_status": "DECLINED", "checkin_revision": 1, "expected_revision": 0}
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
 
-                async def send() -> Response:
-                    return await client.post(
-                        "/api/v1/safety-assessments",
+                async def send(index: int) -> Response:
+                    return await client.request(
+                        "PUT" if barrier_request else "POST",
+                        f"/api/v1/medication-checkins/{checkin_id}/barrier-response"
+                        if barrier_request
+                        else "/api/v1/safety-assessments",
                         json=body,
-                        headers={"Idempotency-Key": "concurrent-safety-key"},
+                        headers={"Idempotency-Key": f"concurrent-key-{0 if same_key else index}"},
                     )
 
-                first, second = await asyncio.wait_for(asyncio.gather(send(), send()), timeout=15)
-            assert first.status_code == second.status_code == 200
-            assert first.json() == second.json()
+                first, second = await asyncio.wait_for(asyncio.gather(send(0), send(1)), timeout=15)
+            if same_key:
+                assert first.status_code == second.status_code == 200
+                assert first.json() == second.json()
+            else:
+                assert sorted([first.status_code, second.status_code]) == [200, 409]
+                loser = first if first.status_code == 409 else second
+                assert_error(
+                    loser, 409, "CHECKIN_FLOW_STALE" if barrier_request else "SAFETY_ASSESSMENT_REVISION_CONFLICT"
+                )
             assert (
                 await seed.scalar(
                     select(func.count())
@@ -419,13 +554,16 @@ async def test_concurrent_same_key_safety_requests_commit_one_assessment(monkeyp
                 )
                 == 1
             )
+            assert await seed.scalar(
+                select(func.count())
+                .select_from(BarrierResponse)
+                .where(BarrierResponse.medication_checkin_id == checkin_id)
+            ) == int(barrier_request)
         finally:
             fastapi_app.dependency_overrides.pop(get_request_user, None)
-            if previous_session is not None:
-                fastapi_app.dependency_overrides[get_db_session] = previous_session
-            else:
-                fastapi_app.dependency_overrides.pop(get_db_session, None)
+            fastapi_app.dependency_overrides[get_db_session] = previous_session
             await seed.execute(delete(IdempotencyRecord).where(IdempotencyRecord.user_id == owner_id))
+            await seed.execute(delete(BarrierResponse).where(BarrierResponse.medication_checkin_id == checkin_id))
             await seed.execute(delete(SafetyAssessment).where(SafetyAssessment.medication_checkin_id == checkin_id))
             await seed.execute(delete(MedicationCheckin).where(MedicationCheckin.id == checkin_id))
             await _delete_committed_fixture(

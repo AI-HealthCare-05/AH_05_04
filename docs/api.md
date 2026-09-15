@@ -712,6 +712,8 @@ Check-in history route는 포함하지 않는다. [검증 기록](./validation/t
 
 ## #193 Safety → Barrier API — 구현 PR 리뷰 대상
 
+요청·응답 및 구체화 delta 정본은 [제안 계약](./contracts/proposed/track-c-safety-barrier-api-193.md)이다.
+
 Track C의 첫 두 쓰기 경로를 실제 v1 Router에 연결한다.
 
 | Method | Path | 성공 | operationId |

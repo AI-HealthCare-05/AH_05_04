@@ -24,6 +24,9 @@ HTTP 응답 필드와 정규화 상세는 연결된 Decision에서 리뷰하며 
 
 ## #193 Safety·Barrier API 부분 구현 기록
 
+[HTTP 구체화 제안](../../proposed/track-c-safety-barrier-api-193.md)과
+[PD-193](../../../governance/decisions/2026-09-15-track-c-safety-barrier-api-193.md)을 함께 리뷰한다.
+
 #193 구현 브랜치는 `POST /api/v1/safety-assessments`와
 `PUT /api/v1/medication-checkins/{checkin_id}/barrier-response`를 실제 v1 Router,
 OpenAPI와 암호화 `SYNC_MUTATION` 멱등 처리에 연결한다. Check-in → Safety → Barrier →

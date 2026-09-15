@@ -179,6 +179,12 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [PD-192-2](../governance/decisions/2026-09-15-track-c-handler-config-rules-192.md):
   6개 최소 안내형 Support의 내부 Rule·Copy 제품 승인과 공개 전 경계.
 
+## Track C C2 Safety·Barrier API (#193)
+
+- [API v1 — Proposed](proposed/track-c-safety-barrier-api-193.md): HTTP·DTO·멱등성·정정·동시성 구현 리뷰 대상.
+- [PD-193](../governance/decisions/2026-09-15-track-c-safety-barrier-api-193.md): 구체화 delta와 NHS 참고 자료 경계.
+- 실제 증상별 임상 판정표·환자용 문구 및 #195 연결은 미완료다.
+
 
 ### #458 Worker 동의 조회·재검사 로컬 구현
 

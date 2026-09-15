@@ -1,4 +1,5 @@
-from typing import Literal, Self
+import re
+from typing import Annotated, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -17,13 +18,16 @@ class CreateSafetyAssessmentRequest(BaseModel):
 
     medication_checkin_id: UUID
     checkin_revision: int = Field(gt=0, strict=True)
-    symptom_codes: list[str]
+    symptom_codes: list[Annotated[str, Field(pattern=r"^[A-Z][A-Z0-9_]{0,63}$", max_length=64)]] = Field(max_length=32)
     expected_revision: int = Field(ge=0, strict=True)
 
     @field_validator("symptom_codes", mode="before")
     @classmethod
     def reject_free_text_symptoms(cls, value: object) -> object:
-        if isinstance(value, str):
+        if isinstance(value, str) or (
+            isinstance(value, list)
+            and any(isinstance(code, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", code) is None for code in value)
+        ):
             raise ApiError(
                 status_code=422,
                 code="FREE_TEXT_SYMPTOM_NOT_SUPPORTED",
