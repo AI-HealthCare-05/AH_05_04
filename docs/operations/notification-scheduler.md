@@ -2,8 +2,8 @@
 
 구현·조율 권가빈 (`hazelnutflavoured`), 기술 리뷰 송은영 (`phina-io`).
 이 문서는 기존 #430 명령을 소비하는 운영 설정이다. API·DTO·DB·게시 조건·잠금 순서를
-변경하지 않는다. [알림 계약 문서](../contracts/proposed/track-b-notifications-v1.md)는
-저장소에 여전히 Proposed로 남아 있으며 이 PR에서 상태를 승격하지 않는다.
+변경하지 않는다. API·DTO·DB·게시 조건의 정본은
+[현재 알림 계약](../contracts/current/track-b-notifications-v1.md)이다.
 
 ## 실행 방식과 범위
 
