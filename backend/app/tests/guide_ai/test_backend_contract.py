@@ -11,6 +11,7 @@ from app.core.errors import ApiError
 from app.dtos.guides import CreateGuideRequest
 from app.models.guides import Guide, GuideGenerationStatus
 from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
+from app.models.user_consents import ConsentPurpose
 from app.models.users import User
 from app.repositories.guide_repository import GuideRepository
 from app.services.guide_ai.exceptions import (
@@ -24,6 +25,7 @@ from app.services.guide_ai.exceptions import (
 from app.services.guide_ai.generator import GuideGenerator
 from app.services.guide_ai.schemas import GuideGenerationResult
 from app.services.guides import GuideService
+from app.services.user_consents import ConsentGateService
 from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 
 
@@ -107,9 +109,12 @@ def _guide(prescription_id: UUID, *, completed: bool = False) -> Guide:
 
 def _service(
     prescription: Prescription,
-) -> tuple[GuideService, AsyncMock, AsyncMock]:
+    *,
+    consent_gate: AsyncMock | None = None,
+) -> tuple[GuideService, AsyncMock, AsyncMock, AsyncMock]:
     repository = AsyncMock(spec=GuideRepository)
     generator = AsyncMock(spec=GuideGenerator)
+    consent_gate = consent_gate or AsyncMock(spec=ConsentGateService)
     repository.get_prescription_owned.return_value = prescription
     repository.create.return_value = _guide(prescription.id)
     repository.mark_failed.return_value = repository.create.return_value
@@ -117,15 +122,17 @@ def _service(
         GuideService(
             repository=cast(GuideRepository, repository),
             generator=cast(GuideGenerator, generator),
+            consent_gate=cast(ConsentGateService, consent_gate),
         ),
         repository,
         generator,
+        consent_gate,
     )
 
 
 async def test_backend_contract_stores_and_returns_exact_generation_result() -> None:
     prescription = _prescription()
-    service, repository, generator = _service(prescription)
+    service, repository, generator, consent_gate = _service(prescription)
     result = GuideGenerationResult(
         content="검증된 최종 평문",
         model_name="gpt-4o-mini-2024-07-18",
@@ -134,11 +141,13 @@ async def test_backend_contract_stores_and_returns_exact_generation_result() -> 
     generator.generate.return_value = result
     repository.mark_completed.return_value = _guide(prescription.id, completed=True)
 
+    user = User(id=uuid4())
     response = await service.create_guide(
-        user=User(id=uuid4()),
+        user=user,
         request=CreateGuideRequest(prescription_id=prescription.id),
     )
 
+    consent_gate.require_for_intake.assert_awaited_once_with(user=user, purpose=ConsentPurpose.GUIDE)
     generation_input = generator.generate.await_args.args[0]
     assert generation_input.medications[0].model_dump() == {
         "medication_name": "합성약 A",
@@ -159,7 +168,7 @@ async def test_backend_contract_stores_and_returns_exact_generation_result() -> 
 
 async def test_backend_contract_preserves_medication_order_in_generation_input() -> None:
     prescription = _prescription_with_ordered_medications()
-    service, repository, generator = _service(prescription)
+    service, repository, generator, _consent_gate = _service(prescription)
     generator.generate.return_value = GuideGenerationResult(
         content="검증된 최종 평문",
         model_name="gpt-4o-mini-2024-07-18",
@@ -178,6 +187,30 @@ async def test_backend_contract_preserves_medication_order_in_generation_input()
         "두번째 약",
         "세번째 약",
     ]
+
+
+async def test_backend_contract_blocks_guide_after_ownership_and_before_side_effect_when_guide_consent_is_missing() -> (
+    None
+):
+    prescription = _prescription()
+    consent_gate = AsyncMock(spec=ConsentGateService)
+    consent_gate.require_for_intake.side_effect = ApiError(
+        status_code=403,
+        code="CONSENT_REQUIRED",
+        message="처방전 처리 동의가 필요합니다.",
+    )
+    service, repository, generator, _consent_gate = _service(prescription, consent_gate=consent_gate)
+    user = User(id=uuid4())
+
+    with pytest.raises(ApiError) as caught:
+        await service.create_guide(user=user, request=CreateGuideRequest(prescription_id=prescription.id))
+
+    assert caught.value.status_code == 403
+    assert caught.value.code == "CONSENT_REQUIRED"
+    repository.get_prescription_owned.assert_awaited_once_with(prescription_id=prescription.id, user_id=user.id)
+    consent_gate.require_for_intake.assert_awaited_once_with(user=user, purpose=ConsentPurpose.GUIDE)
+    repository.create.assert_not_awaited()
+    generator.generate.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -235,7 +268,7 @@ async def test_backend_contract_maps_generation_errors_and_marks_failed(
     stored_error_message: str,
 ) -> None:
     prescription = _prescription()
-    service, repository, generator = _service(prescription)
+    service, repository, generator, _consent_gate = _service(prescription)
     generator.generate.side_effect = generation_error
 
     with pytest.raises(ApiError) as caught:
@@ -257,7 +290,7 @@ async def test_backend_contract_maps_generation_errors_and_marks_failed(
 async def test_backend_contract_does_not_call_provider_when_prescription_input_is_invalid() -> None:
     prescription = _prescription()
     prescription.active_version.medications[0].medication_name = "   "
-    service, repository, generator = _service(prescription)
+    service, repository, generator, _consent_gate = _service(prescription)
 
     with pytest.raises(ApiError) as caught:
         await service.create_guide(
@@ -277,7 +310,7 @@ async def test_backend_contract_does_not_expose_prescription_values_in_logs_or_e
 ) -> None:
     sentinel = "SENTINEL-RX-NAME-5MG-AFTER-MEAL-RX-ID"
     prescription = _prescription(medication_name=sentinel)
-    service, repository, generator = _service(prescription)
+    service, repository, generator, _consent_gate = _service(prescription)
     generator.generate.side_effect = GuideGenerationInvalidResponseError(sentinel)
 
     with pytest.raises(ApiError) as caught:

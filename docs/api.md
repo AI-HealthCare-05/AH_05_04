@@ -211,7 +211,7 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 
 OCR 목적은 전용 경로 `/api/v1/users/me/consents/OCR`에서 `GET` / `POST` / `DELETE`도 제공합니다. 전용 `POST`는 현재 `OCR_CONSENT_POLICY_VERSION`과 요청 `policy_version`이 일치할 때만 `GRANTED`를 저장하고, 불일치하면 `409 CONSENT_POLICY_MISMATCH`를 반환합니다. 목적별 공통 `PUT /api/v1/users/me/consents/OCR`의 version 불일치는 기존 목적별 API 계약대로 `422 VALIDATION_FAILED`, `reason=POLICY_VERSION_MISMATCH`입니다. `OCR_CONSENT_POLICY_VERSION`이 빈 문자열이면 신규 OCR 동의는 전용 `POST`와 공통 `PUT` 모두 `503 CONSENT_POLICY_UNAVAILABLE`로 거부합니다. 다만 기존 OCR 동의 철회는 허용하며, 전용 `DELETE`는 기존 저장 `policy_version`을 보존해 `WITHDRAWN`으로 전환합니다. 목적별 공통 `PUT` 철회는 기존 OCR row가 있고 요청 `policy_version`이 기존 저장 `policy_version`과 일치할 때만 허용합니다.
 
-이 API는 PD-207의 목적별 최신 동의 상태 저장·조회·변경 경로입니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide/Chat/Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 후속 구현 범위입니다.
+이 API는 PD-207의 목적별 최신 동의 상태 저장·조회·변경 경로입니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide 동기 생성 Gate는 `POST /api/v1/guides`에서 처방 소유권 확인 후 Provider 호출·Guide row 생성 전에 `purpose=GUIDE` 최신 동의 row로 검사합니다. Chat/Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 후속 구현 범위입니다.
 
 ### 토큰 갱신·로그아웃
 

@@ -133,7 +133,7 @@ DB 제약:
 - `policy_version`은 빈 문자열 금지
 - `GRANTED`는 `granted_at` 필수 및 `withdrawn_at=NULL`, `WITHDRAWN`은 `withdrawn_at` 필수
 
-row가 없으면 미동의로 판정한다. 이 테이블은 최신 상태만 저장하며 과거 동의 이력을 append-only audit으로 남길지는 후속 Decision 또는 계약 갱신 범위다. 사용자 동의 상태 API는 #510에서 이 최신 row를 조회·변경한다. OCR 목적은 #505에서 `GET/POST/DELETE /api/v1/users/me/consents/OCR`, Backend 접수 전·문서 잠금 후 검사, Worker의 CLOVA 전·LLM 전·결과 저장 전 재검사와 `CONSENT_REQUIRED`/OCR `CONSENT_WITHDRAWN` 차단 저장에 연결했다. `OCR_CONSENT_POLICY_VERSION`이 비어 있으면 fail-closed이며, 최종 안내 문구·policy version과 실제 사용자 대상 LLM 전송은 승인되지 않았다. GUIDE/CHAT/NOTIFICATION 목적의 실행 Gate는 후속 범위다.
+row가 없으면 미동의로 판정한다. 이 테이블은 최신 상태만 저장하며 과거 동의 이력을 append-only audit으로 남길지는 후속 Decision 또는 계약 갱신 범위다. 사용자 동의 상태 API는 #510에서 이 최신 row를 조회·변경한다. OCR 목적은 #505에서 `GET/POST/DELETE /api/v1/users/me/consents/OCR`, Backend 접수 전·문서 잠금 후 검사, Worker의 CLOVA 전·LLM 전·결과 저장 전 재검사와 `CONSENT_REQUIRED`/OCR `CONSENT_WITHDRAWN` 차단 저장에 연결했다. GUIDE 목적은 동기 Guide 생성 요청에서 처방 소유권 확인 후 Provider 호출·Guide row 생성 전 `purpose=GUIDE` 최신 동의 row로 검사한다. `OCR_CONSENT_POLICY_VERSION`이 비어 있으면 fail-closed이며, 최종 안내 문구·policy version과 실제 사용자 대상 LLM 전송은 승인되지 않았다. CHAT/NOTIFICATION 목적의 실행 Gate는 후속 범위다.
 
 ## PROFILE SELF 소유권
 

@@ -5,6 +5,7 @@ from app.core.errors import ApiError, ErrorDetail
 from app.core.logger import default_logger
 from app.dtos.guides import CreateGuideRequest, GuideData, GuideStatus
 from app.models.guides import Guide
+from app.models.user_consents import ConsentPurpose
 from app.models.users import User
 from app.repositories.guide_repository import GuideRepository
 from app.repositories.prescription_integrity import verify_loaded_version
@@ -14,6 +15,7 @@ from app.services.guide_ai.exceptions import (
     GuideGenerationTimeoutError,
     GuideGenerationUnavailableError,
 )
+from app.services.user_consents import ConsentGateService
 
 # OpenAI SDK/도메인 예외 메시지를 그대로 저장하면 요청 payload(약물 정보 등)가 노출될 수 있어
 # 고정된 문구만 DB에 저장합니다.
@@ -51,9 +53,11 @@ class GuideService:
         self,
         repository: GuideRepository,
         generator: GuideGenerator,
+        consent_gate: ConsentGateService,
     ) -> None:
         self._repo = repository
         self._generator = generator
+        self._consent_gate = consent_gate
 
     async def create_guide(
         self,
@@ -80,6 +84,8 @@ class GuideService:
                     )
                 ],
             )
+
+        await self._consent_gate.require_for_intake(user=user, purpose=ConsentPurpose.GUIDE)
 
         version = prescription.active_version
         if version is None or not version.medications:
