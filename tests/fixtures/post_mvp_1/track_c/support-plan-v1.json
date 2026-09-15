@@ -1,0 +1,74 @@
+{
+  "classification": "SYNTHETIC",
+  "contract": "track-c-support-plan-api-194-v1",
+  "scope": "Support Offer and Plan creation only; not completion, follow-up or production evidence",
+  "single_offer": {
+    "data": {
+      "barrier_response_id": "00000000-0000-4000-8000-000000000001",
+      "medication_checkin_id": "00000000-0000-4000-8000-000000000002",
+      "checkin_revision": 1,
+      "safety_assessment_id": "00000000-0000-4000-8000-000000000003",
+      "supports": [{
+        "support_code": "REMINDER_SETUP",
+        "rule_version": "track-c-support-rule-2026-09-15.1",
+        "copy_version": "track-c-support-copy-ko-2026-09-15.1",
+        "priority": 10,
+        "rationale_code": "ROUTINE_REMINDER_SETUP_AVAILABLE",
+        "action_config": {
+          "schema_version": "track-c-handler-config-v1",
+          "rationale_code": "ROUTINE_REMINDER_SETUP_AVAILABLE",
+          "parameters": {
+            "destination": "MEDICATION_SCHEDULE_SETUP",
+            "prescription_version_medication_id": "00000000-0000-4000-8000-000000000004"
+          }
+        },
+        "support_copy": {
+          "title": "복약 일정과 알림을 확인해 볼까요?",
+          "body": "현재 등록된 복약 일정과 알림 설정을 확인하고 필요하면 직접 변경할 수 있어요. 확인하기 전에는 변경 사항이 적용되지 않아요.",
+          "confirmation_prompt": "복약 일정 설정 화면에서 내용을 확인하시겠어요?",
+          "primary_label": "일정 확인하기",
+          "secondary_label": "나중에"
+        }
+      }],
+      "reason_code": null
+    }
+  },
+  "declined_offer": {
+    "data": {
+      "barrier_response_id": "00000000-0000-4000-8000-000000000005",
+      "medication_checkin_id": "00000000-0000-4000-8000-000000000002",
+      "checkin_revision": 1,
+      "safety_assessment_id": "00000000-0000-4000-8000-000000000003",
+      "supports": [],
+      "reason_code": "NO_ELIGIBLE_SUPPORT"
+    }
+  },
+  "create_request": {
+    "barrier_response_id": "00000000-0000-4000-8000-000000000001",
+    "support_code": "REMINDER_SETUP",
+    "rule_version": "track-c-support-rule-2026-09-15.1",
+    "copy_version": "track-c-support-copy-ko-2026-09-15.1",
+    "confirmed": true
+  },
+  "create_response": {
+    "data": {
+      "support_action_plan_id": "00000000-0000-4000-8000-000000000006",
+      "barrier_response_id": "00000000-0000-4000-8000-000000000001",
+      "support_code": "REMINDER_SETUP",
+      "rule_version": "track-c-support-rule-2026-09-15.1",
+      "copy_version": "track-c-support-copy-ko-2026-09-15.1",
+      "action_config_snapshot": {
+        "schema_version": "track-c-handler-config-v1",
+        "rationale_code": "ROUTINE_REMINDER_SETUP_AVAILABLE",
+        "parameters": {
+          "destination": "MEDICATION_SCHEDULE_SETUP",
+          "prescription_version_medication_id": "00000000-0000-4000-8000-000000000004"
+        }
+      },
+      "status": "ACTIVE",
+      "created_at": "2026-09-15T00:00:00Z",
+      "completed_at": null,
+      "cancelled_at": null
+    }
+  }
+}
