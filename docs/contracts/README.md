@@ -50,7 +50,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## Proposed 계약
 
-- [Track B 생활 시간 입력 v1 (#422 / #556)](./proposed/track-b-lifestyle-times-v1.md): 식사·반복 행동·복용 곤란 시간의 요일별 저장·조회 검토안. Proposed · 미구현; 추천·약별 조건 판정은 별도.
+- [Track B 생활 시간 입력 v1 (#422 / #556)](./proposed/track-b-lifestyle-times-v1.md): 식사·반복 행동·복용 곤란 시간의 SELF별 요일 저장·조회 구현 후보. #556 책임 리뷰 전 Proposed; 추천·약별 조건 판정은 별도.
 
 - [Knowledge Evidence Index v1 (#178 선행 기반)](./proposed/post-mvp-1/knowledge-evidence-index-v1.md): 승인된 RAG Runtime 목표의 Retrieval Adapter가 소비할 Source Snapshot 결속 Chunk·버전별 embedding·재현 가능한 receipt 저장 계약. 구현 브랜치 검증 중이며 #178 Retrieval/RRF/Rerank/Evidence Gate·공개 활성화는 포함하지 않음.
 - [Knowledge Evidence Search 및 Deterministic RRF v1 (#178)](./proposed/post-mvp-1/knowledge-evidence-search-rrf-v1.md): 승인된 Knowledge Evidence Index 대상 PostgreSQL Lexical(Exact/Trigram/FTS)·Dense(pgvector Cosine) 검색 및 결정적 RRF(`rrf-rank-fusion@1`) 융합 계약. 구현 브랜치 검증 중이며 Reranker/Evidence Gate/authoritative Retrieval Run/Runtime graph 연결·공개 활성화는 포함하지 않음.
