@@ -24,32 +24,12 @@ const EMAIL_VERIFICATION_REQUIRED_MESSAGE =
   '이메일 인증이 필요하거나 인증 유효 시간이 지났습니다. 인증 안내를 다시 요청하고 인증을 완료해 주세요.'
 const CONSENT_POLICY_UNAVAILABLE_MESSAGE =
   '선택한 기능의 동의 안내를 준비하고 있어요. 해당 선택을 해제하거나 잠시 후 다시 시도해 주세요.'
-const CONSENT_OPTIONS: ReadonlyArray<{
-  purpose: SignupConsentPurpose
-  label: string
-  description: string
-}> = [
-  {
-    purpose: 'OCR',
-    label: '처방전 인식',
-    description: '처방전 인식에는 외부 OCR 서비스가 사용됩니다.',
-  },
-  {
-    purpose: 'GUIDE',
-    label: '복약 안내',
-    description: '복약 안내 생성에는 외부 AI 서비스가 사용됩니다.',
-  },
-  {
-    purpose: 'CHAT',
-    label: '도지에게 질문',
-    description: '답변 생성에는 질문과 필요한 복약정보가 외부 AI 서비스로 전달됩니다.',
-  },
-  {
-    purpose: 'NOTIFICATION',
-    label: '복약 알림',
-    description: '동의한 설정에 따라 복약 알림을 보내드립니다.',
-  },
-]
+const SIGNUP_CONSENT_PURPOSES = [
+  'OCR',
+  'GUIDE',
+  'CHAT',
+  'NOTIFICATION',
+] as const satisfies readonly SignupConsentPurpose[]
 
 function validateSignup(form: SignupForm): SignupFieldErrors {
   const errors: SignupFieldErrors = {}
@@ -136,7 +116,7 @@ function SignupPage() {
     name: '',
   })
   const [fieldErrors, setFieldErrors] = useState<SignupFieldErrors>({})
-  const [selectedConsentPurposes, setSelectedConsentPurposes] = useState<SignupConsentPurpose[]>([])
+  const [featureConsentAccepted, setFeatureConsentAccepted] = useState(false)
   const [message, setMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const isSubmittingRef = useRef(false)
@@ -182,15 +162,6 @@ function SignupPage() {
     if (field === 'name') focusAndReveal(nameInputRef.current)
     if (field === 'email') focusAndReveal(emailInputRef.current)
     if (field === 'password') focusAndReveal(passwordInputRef.current)
-  }
-
-  const toggleConsent = (purpose: SignupConsentPurpose) => {
-    setSelectedConsentPurposes((current) =>
-      current.includes(purpose)
-        ? current.filter((value) => value !== purpose)
-        : [...current, purpose],
-    )
-    setMessage('')
   }
 
   const handleVerification = async (action: 'request' | 'confirm') => {
@@ -272,7 +243,9 @@ function SignupPage() {
         name: form.name.trim(),
         email: form.email.trim(),
         password: form.password,
-        consents: selectedConsentPurposes.map((purpose) => ({ purpose })),
+        consents: featureConsentAccepted
+          ? SIGNUP_CONSENT_PURPOSES.map((purpose) => ({ purpose }))
+          : [],
       })
       navigate('/login', {
         state: { fromSignup: true },
@@ -489,22 +462,24 @@ function SignupPage() {
             <fieldset className="mvp-signup-consents">
               <legend>기능별 선택 동의</legend>
               <p className="mvp-signup-consents__intro">
-                선택하지 않아도 가입할 수 있습니다. 선택한 기능만 동의 상태로 저장합니다.
+                선택하지 않아도 가입할 수 있습니다. 선택 시 아래 4개 기능 목적에 모두 동의합니다.
               </p>
-              {CONSENT_OPTIONS.map((option) => (
-                <label className="mvp-signup-consents__option" key={option.purpose}>
-                  <input
-                    type="checkbox"
-                    checked={selectedConsentPurposes.includes(option.purpose)}
-                    disabled={isSubmitting || verificationBusy}
-                    onChange={() => toggleConsent(option.purpose)}
-                  />
-                  <span>
-                    <strong>{option.label}</strong>
-                    <small>{option.description}</small>
-                  </span>
-                </label>
-              ))}
+              <label className="mvp-signup-consents__option">
+                <input
+                  type="checkbox"
+                  checked={featureConsentAccepted}
+                  disabled={isSubmitting || verificationBusy}
+                  onChange={(event) => {
+                    setFeatureConsentAccepted(event.target.checked)
+                    setMessage('')
+                  }}
+                />
+                <span>
+                  <strong>기능 이용 선택 동의</strong>
+                  <small>처방전 인식 · 복약 안내 · 도지 질문 · 복약 알림</small>
+                  <small>각 기능의 목적별 동의 상태는 기존 계약대로 별도 저장됩니다.</small>
+                </span>
+              </label>
             </fieldset>
 
             {message && <p className="mvp-form__message" role="alert">{message}</p>}
