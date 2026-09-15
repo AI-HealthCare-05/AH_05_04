@@ -132,7 +132,7 @@ OCR에는 `STALE` 도메인 상태가 없으므로 `OcrStatus.FAILED`와 `error_
 
 필요한 목적의 동의가 없거나 철회되어 Backend 접수 또는 동기 Provider 호출을 시작하지 않는 경우의 공통 오류 코드다.
 
-- OCR 접수 전 차단은 #505에서 `403 CONSENT_REQUIRED`로 구현했다. 다른 목적의 HTTP 계약은 후속 범위다.
+- OCR 접수 전 차단은 #505에서 `403 CONSENT_REQUIRED`로 구현했다. Guide 동기 생성 차단도 같은 코드를 사용한다. Chat/Notification 목적의 HTTP 계약은 후속 범위다.
 - 응답 형식은 공통 오류 envelope `{code, message, details, trace_id}`를 따른다.
 - `details[].rejected_value`에는 동의 원문, 환자정보, 처방 원문, Provider 응답을 넣지 않는다.
 

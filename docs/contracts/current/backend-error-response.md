@@ -257,7 +257,7 @@ Auth 도메인의 `VALIDATION_FAILED` 세부 reason은 다음처럼 고정합니
 
 ### Post-MVP
 
-이 문서는 현재 Backend 오류 응답 envelope와 MVP에서 실제 응답으로 나가는 오류 코드의 기준 문서다. Post-MVP target 전용 오류 코드는 [비동기 Job 계약 v1](../targets/post-mvp-1/async-job-v1.md), [멱등성 계약 v1](../targets/post-mvp-1/idempotency-v1.md), [처방 버전 계약 v1](../targets/post-mvp-1/prescription-version-v1.md)처럼 승인된 목표 계약에서 먼저 정의하고, 실제 구현 PR에서 이 문서와 코드·테스트를 함께 갱신한다. 승인된 Decision이나 목표 계약이 없는 코드(`CONSENT_REQUIRED`, `RESOURCE_NOT_FOUND`, `RATE_LIMITED` 등)는 어떤 문서에도 등록하지 않는다. 오류 코드·HTTP status 추가는 새 Decision 또는 Contract Freeze 갱신이 필요하다([AGENTS.md](../../../AGENTS.md) 기준).
+이 문서는 현재 Backend 오류 응답 envelope와 MVP에서 실제 응답으로 나가는 오류 코드의 기준 문서다. Post-MVP target 전용 오류 코드는 [비동기 Job 계약 v1](../targets/post-mvp-1/async-job-v1.md), [멱등성 계약 v1](../targets/post-mvp-1/idempotency-v1.md), [처방 버전 계약 v1](../targets/post-mvp-1/prescription-version-v1.md)처럼 승인된 목표 계약에서 먼저 정의하고, 실제 구현 PR에서 이 문서와 코드·테스트를 함께 갱신한다. 승인된 Decision이나 목표 계약이 없는 코드(`RESOURCE_NOT_FOUND`, `RATE_LIMITED` 등)는 어떤 문서에도 등록하지 않는다. 오류 코드·HTTP status 추가는 새 Decision 또는 Contract Freeze 갱신이 필요하다([AGENTS.md](../../../AGENTS.md) 기준).
 
 ## 도메인별 오류 코드
 
@@ -281,6 +281,9 @@ Auth 도메인의 `VALIDATION_FAILED` 세부 reason은 다음처럼 고정합니
 | 500 | `OCR_PROCESSING_FAILED` | "처방전 인식에 실패했습니다. 다시 시도하거나 직접 입력해 주세요." | OCR 처리 자체가 실패함 |
 | 404 | `EXTRACTED_FIELD_NOT_FOUND` | "추출 필드를 찾을 수 없습니다." | 요청한 OCR 추출 필드 ID가 존재하지 않거나 다른 사용자 소유 |
 | 404 | `GUIDE_NOT_FOUND` | "가이드를 찾을 수 없습니다." | 요청한 복약 가이드가 존재하지 않거나 다른 사용자 소유 |
+| 403 | `CONSENT_REQUIRED` | "처방전 처리 동의가 필요합니다." | OCR 접수 또는 Guide 동기 생성에 필요한 목적별 동의 row가 없거나, 철회됐거나, 현재 policy version과 일치하지 않음 |
+| 503 | `CONSENT_LOOKUP_FAILED` | "동의를 확인할 수 없습니다." | 동의 저장소 조회 실패로 외부 처리 시작 여부를 판정할 수 없음 |
+| 503 | `CONSENT_POLICY_UNAVAILABLE` | "현재 동의 안내를 사용할 수 없습니다." | 목적별 현재 policy version이 설정되지 않아 신규 동의 또는 외부 처리 시작을 fail-closed로 차단함 |
 | 500 | `GUIDE_GENERATION_FAILED` | "복약 가이드 생성에 실패했습니다. 다시 시도해 주세요." | AI 가이드 생성 처리에 실패함 |
 | 404 | `CHAT_SESSION_NOT_FOUND` | "대화 세션을 찾을 수 없습니다." | 요청한 상담 세션이 존재하지 않거나 다른 사용자 소유 |
 | 500 | `AI_RESPONSE_FAILED` | "AI 답변 생성에 실패했습니다." | AI 답변 생성에 실패함 |
