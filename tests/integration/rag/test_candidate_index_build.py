@@ -142,6 +142,12 @@ async def clean_candidate_index_tables() -> AsyncIterator[None]:
     """Candidate Index rows only; Source/Catalog Set rows are seeded under per-test unique keys."""
     yield
     async with test_engine.begin() as connection:
+        candidate_index_member_exists = await connection.scalar(
+            text("SELECT to_regclass(:table_name)"),
+            {"table_name": f"{TEST_SCHEMA}.rag_candidate_index_member"},
+        )
+        if candidate_index_member_exists is None:
+            return
         await connection.execute(
             text(f"TRUNCATE TABLE {TEST_SCHEMA}.rag_candidate_index_member, {TEST_SCHEMA}.rag_candidate_index_version")
         )
@@ -372,6 +378,34 @@ def _race_member_set_hash(members: tuple[RagCandidateIndexMemberCreate, ...]) ->
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def _race_member_content_hash(*, snapshot_id) -> str:
+    payload = {
+        "identity": {
+            "entity_type": RagCandidateIndexEntityType.PRODUCT.value,
+            "code_system": "MFDS_ITEM_SEQ",
+            "canonical_code": "race-product",
+        },
+        "product_ref": "product:race",
+        "entry_ref": "entry:race",
+        "entry_type": RagMedicationSearchEntryType.PRODUCT_NAME.value,
+        "display_text": "레이스 테스트정",
+        "normalized_text": "레이스 테스트정",
+        "alias_ref": None,
+        "product_name": "레이스 테스트정",
+        "strength_text": None,
+        "dosage_form": None,
+        "manufacturer_name": None,
+        "product_source_snapshot_id": str(snapshot_id),
+        "entry_source_snapshot_id": str(snapshot_id),
+        "alias_source_snapshot_id": None,
+        "catalog_version": "catalog-race-1.0.0",
+        "catalog_manifest_hash": _label_hash("race-envelope"),
+        "normalization_version": "normalization-race-v1",
+    }
+    serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
 async def _seed_race_catalog_set(session: AsyncSession) -> RagCatalogSet:
     catalog_set = RagCatalogSet(
         catalog_version="catalog-race-1.0.0",
@@ -403,7 +437,7 @@ def _race_member(*, snapshot) -> RagCandidateIndexMemberCreate:
         catalog_manifest_hash=_label_hash("race-envelope"),
         normalization_version="normalization-race-v1",
         member_key="race-member",
-        member_content_hash=_label_hash("race-member-content"),
+        member_content_hash=_race_member_content_hash(snapshot_id=snapshot.id),
     )
 
 

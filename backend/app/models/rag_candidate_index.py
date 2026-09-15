@@ -64,6 +64,12 @@ class RagCandidateIndexVersion(Base):
             unique=True,
             postgresql_where=text("status = 'BUILDING'"),
         ),
+        Index(
+            "uq_rag_candidate_index_ready_per_code",
+            "index_code",
+            unique=True,
+            postgresql_where=text("status = 'READY'"),
+        ),
         CheckConstraint(
             f"status IN ({_sql_in_list(RagCandidateIndexStatus)})",
             name="chk_rag_candidate_index_status",

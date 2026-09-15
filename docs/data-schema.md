@@ -39,7 +39,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 비동기 실행 | `ai_job`, `outbox_event`, `idempotency_record` | `JobIntakeService`(#147)의 Job 접수 transaction과 DB Outbox 선점·`WorkerMessage` 조립·Redis 발행·fencing 완료(#219)가 repository·service 계층에 연결됨. 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 미연결(#148) |
 | 비동기 실행(schema-only) | `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event` | Schema-only Post-MVP 골격, 현재 repository·service·API 경로에서 미사용 |
 | RAG Source·Catalog | `rag_source`, `rag_source_endpoint`, `rag_source_operation`, `rag_source_snapshot`, `rag_source_snapshot_member`, `rag_source_ingestion_run`, `rag_source_ingestion_artifact`, `rag_source_snapshot_verification`, `rag_entity_identity`, `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component`, `rag_medication_search_entry`, `rag_catalog_set`, `rag_catalog_set_source`, `rag_catalog_set_member`, `rag_catalog_set_hash` | #164·#165 기반과 #166 안정 Identity·Catalog 구성원·불변 v2 Set/manifest, #178 선행 Snapshot member 저장 기반. D-02 실행 provenance와 Runtime 활성화는 후속 범위 |
-| RAG Candidate Index | `rag_candidate_index_version`, `rag_candidate_index_member` | #168(RAG-07B) RAG-07A(#167) build 결과의 영속·멱등 build transaction. `status`는 항상 `BUILDING`이며 READY/RETIRED 전환은 #583 후속 범위 |
+| RAG Candidate Index | `rag_candidate_index_version`, `rag_candidate_index_member` | #168(RAG-07B) RAG-07A(#167) build 결과의 영속·멱등 build transaction. #583은 `BUILDING → READY/FAILED`와 기존 READY `RETIRED` 전이를 repository transaction으로 추가 |
 
 본인 단일 `SELF` profile과 `profile_id` 기반 소유권 전환은 #117 구현 PR에서 도입했습니다. 보호자·멀티 프로필·위임 권한은 후속 범위이며, 현재 구현은 사용자 1명당 `SELF` profile 1개만 허용합니다. 복약 일정·occurrence와 Check-in 저장·정정 경계는 아래 분할 구현 상태를 따르며, B4 공개 API와 Track C 상세 구현은 아직 목표 계약이다.
 
@@ -349,10 +349,12 @@ build 결과를 저장하는 경계를 추가한다. RAG-07A 자체는 DB에 아
 RAG-09(Candidate Search)가 그 결과를 조회하려면 이 영속 계층이 필요하다.
 
 - `rag_candidate_index_version`: `index_code`+`index_version` unique, `content_hash` unique(멱등성
-  키), `catalog_set_id`로 `rag_catalog_set.id`를 FK RESTRICT 참조, `status`는 이 build transaction
-  안에서 항상 `BUILDING`으로 강제된다. `(index_code) WHERE status = 'BUILDING'` partial unique
-  index로 같은 index에 대한 동시 build를 DB 레벨에서 막는다. `build_mode = 'LEXICAL_ONLY'`와
-  embedding 관련 컬럼 전부 NULL, `HYBRID`와 전부 NOT NULL을 CHECK 제약으로 강제한다.
+  키), `catalog_set_id`로 `rag_catalog_set.id`를 FK RESTRICT 참조. #168 build transaction은 새 row를
+  `BUILDING`으로 만들고, #583 lifecycle transaction은 완성된 `BUILDING`만 `READY` 또는 `FAILED`로
+  닫는다. `(index_code) WHERE status = 'BUILDING'` partial unique index로 같은 index에 대한 동시
+  build를 막고, `(index_code) WHERE status = 'READY'` partial unique index로 RAG-08/RAG-09 read path의
+  active READY를 code당 최대 1개로 제한한다. `build_mode = 'LEXICAL_ONLY'`와 embedding 관련 컬럼 전부
+  NULL, `HYBRID`와 전부 NOT NULL을 CHECK 제약으로 강제한다.
 - `rag_candidate_index_member`: `candidate_index_version_id` FK RESTRICT, `(candidate_index_version_id,
   member_key)` unique. `product_source_snapshot_id`/`entry_source_snapshot_id`/
   `alias_source_snapshot_id`(nullable) 각각 `rag_source_snapshot.id` FK RESTRICT. `embedding`은
@@ -361,9 +363,11 @@ RAG-09(Candidate Search)가 그 결과를 조회하려면 이 영속 계층이 �
 `backend/app/repositories/rag_candidate_index_repository.py`는 `ai_worker`를 import하지 않는
 read port다 — RAG-08/RAG-09는 이 파일만으로 조회할 수 있다. 저장(build)은
 `backend/app/services/rag_candidate_index_build.py`가 유일하게 `ai_worker`를 import하는 지점에서
-수행하며, 전달된 member 행으로부터 `member_set_hash`를 재계산해 claim된 값과 대조함으로써 위조를
-막는다. `READY`/`RETIRED` 전환과 환경 pointer 연결은 #583 후속 범위이며, partial/failed
-build는 어떤 row도 남기지 않는다.
+수행하며, 전달된 member 행으로부터 각 `member_content_hash`, `member_set_hash`, count를 재계산해
+claim된 값과 대조함으로써 위조를 막는다. #583 lifecycle은 같은 transaction 안에서 기존 READY를
+`RETIRED`로 보존한 뒤 새 READY를 승격하고, member row 수와 count/hash 정합성이 맞는
+완성된 build만 READY가 되도록 확인한다. 환경 pointer/Runtime Bundle FK 연결과 최종 release gate는
+RAG-17(#181) 후속 범위다.
 
 구현 테이블:
 
@@ -699,10 +703,10 @@ Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contr
 | 복약 기록 | `medication_schedule`, `medication_occurrence`, `medication_checkin`, audit | Check-in 3결과, occurrence별 단일 현재 결과, 정정 이력 보존 |
 | Barrier·Support | `safety_assessment`, `barrier_response`, `support_action_plan`, follow-up | Safety 우선, 거절과 미제출 구분, revision별 무효화 |
 | 공식 Source·Catalog | `rag_source`, source approval·ingestion·normalization·snapshot·verification 계열, medication product·ingredient·component·alias | #164 최소 DB 기반은 반영 완료. source_version 상한·external_version은 #362 확정 후 별도 migration이며, Citation FK 때문에 `rag_source_snapshot.source_version`과 `rag_citation.source_version`을 같은 migration에서 함께 정렬합니다. 실제 수집·적재·Runtime 활성화·검색 연결은 후속 |
-| Candidate·Identification | candidate index·search·result, append-only medication identification | candidate index 자체의 영속·build transaction은 #168로 반영 완료(`rag_candidate_index_version`/`member`, 위 RAG Candidate Index 절 참고). search·result·identification은 confirmed `medication_name + nullable strength_text`만 입력, 내부 Top-K와 외부 최대 1개 분리, 사용자 확인·거절·소유권·멱등성·현재성 |
+| Candidate·Identification | candidate index·search·result, append-only medication identification | candidate index 자체의 영속·build transaction은 #168로, READY lifecycle은 #583으로 반영(`rag_candidate_index_version`/`member`, 위 RAG Candidate Index 절 참고). search·result·identification은 confirmed `medication_name + nullable strength_text`만 입력, 내부 Top-K와 외부 최대 1개 분리, 사용자 확인·거절·소유권·멱등성·현재성 |
 | Rule·Evidence | `rag_evidence_knowledge`, `rag_evidence`, `rag_evidence_rule`, `rag_evidence_guideline`, rule set 계열 | Evidence/Citation 최소 DB 기반은 PR #369에서 추가. 처방약–OTC Rule-first 실행, ranking, resolver, 품질 평가와 Runtime 활성화는 후속 |
 | RAG 실행·안전 결과 | retrieval run·signal·hit, result·claim·citation·safety 계열, `rag_citation` | `rag_citation`은 Evidence와 동일 Source Snapshot 및 `source_version`에 묶인 claim-Evidence 비공개 저장 기반만 제공합니다. 이번 최소 DB 기반의 Evidence 상태는 `DRAFT`/`APPROVED`를 명시 입력으로만 사용하고, Citation 공개 상태는 `NOT_PUBLIC`만 사용합니다. STALE·retire·revoke lifecycle과 공개 Guard 연결은 #178/#180/#181 후속 전환 설계에서 추가합니다. 실제 Retrieval, Provider 호출, 답변 생성, Safety/Fallback 문구 생성, 화면 표시는 후속 |
-| Runtime 배포 | `rag_runtime_execution_manifest`, `rag_runtime_release_bundle`, `rag_runtime_bundle_source`, `rag_runtime_environment`, `rag_runtime_environment_transition`, `rag_release_evaluation_approval` 최소 DB 기반 반영 완료 | Source Snapshot과 Evaluation Run은 FK로 결속합니다. Candidate Index는 #168로 `rag_candidate_index_version`/`member`에 영속되지만, `rag_runtime_release_bundle`은 여전히 `candidate_index_ref`/`version`/`manifest_hash` 문자열로만 결속합니다 — FK 연결은 RAG-17(#181) 후속 범위입니다. Evaluation PASS는 release approval 입력일 뿐 자동 Runtime 활성화가 아니며, 실제 activation·rollback·Production 공개는 후속 범위입니다. |
+| Runtime 배포 | `rag_runtime_execution_manifest`, `rag_runtime_release_bundle`, `rag_runtime_bundle_source`, `rag_runtime_environment`, `rag_runtime_environment_transition`, `rag_release_evaluation_approval` 최소 DB 기반 반영 완료 | Source Snapshot과 Evaluation Run은 FK로 결속합니다. Candidate Index는 #168로 `rag_candidate_index_version`/`member`에 영속되고 #583으로 READY lifecycle을 갖지만, `rag_runtime_release_bundle`은 여전히 `candidate_index_ref`/`version`/`manifest_hash` 문자열로만 결속합니다 — Runtime Bundle FK 연결은 RAG-17(#181) 후속 범위입니다. Evaluation PASS는 release approval 입력일 뿐 자동 Runtime 활성화가 아니며, 실제 activation·rollback·Production 공개는 후속 범위입니다. |
 | RAG 실행 Context | `ai_job_intake_context`, `ai_job_execution_context`, `ai_job_execution_identification` 저장 기반 반영 완료 | Chat Intake Context와 Guide/Chat Full Execution Context가 고정한 Prescription Version·Runtime Bundle·Execution Manifest·Guard ref·Identification member를 보존합니다. Guard 물리 테이블 전까지 `runtime_guard_decision_ref`를 사용하며, Guide/Chat 202 접수 transaction, Worker 실행, currentness 재검증, `STALE` 종결과 공개 DTO 연결은 후속 범위입니다. |
 | Evaluation | `eval_dataset`, `eval_case`, `eval_experiment`, `eval_variant`, `eval_run`, `eval_case_result`, `eval_metric`, `eval_failure` 최소 DB 기반 반영 완료 | `HOLDOUT`·`SAFETY_REGRESSION`·`END_TO_END_RAG`, 분모·신뢰구간과 재현 version 저장. `eval_run`은 `dataset_id + dataset_manifest_hash`가 실제 Dataset manifest와 일치해야 하고, `eval_case_result`는 Run·Case의 `dataset_id + experiment_type` 혼용을 DB에서 차단합니다. 미실행은 `execution_status=NOT_EVALUATED`, `decision_status=null`; 실행 완료(`COMPLETED`)는 `decision_status`를 반드시 기록하며 분모·표본·독립 Group 부족일 때만 `INCONCLUSIVE`입니다. Runner·Release approval·Runtime 활성화 연결은 후속 |
 

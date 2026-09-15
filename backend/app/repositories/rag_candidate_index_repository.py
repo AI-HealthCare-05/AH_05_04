@@ -11,7 +11,7 @@ import json
 from dataclasses import asdict, dataclass
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -110,6 +110,10 @@ class CandidateIndexCatalogMismatchError(CandidateIndexBuildError):
     """catalog_set_id가 가리키는 Catalog Set과 build 입력이 서로 다른 내용을 주장한다."""
 
 
+class CandidateIndexMemberContentHashMismatchError(CandidateIndexBuildError):
+    """전달된 member 행의 실제 필드가 claim된 member_content_hash와 다르다."""
+
+
 class CandidateIndexMemberSetHashMismatchError(CandidateIndexBuildError):
     """전달된 member 행으로부터 재계산한 member_set_hash가 claim된 값과 다르다."""
 
@@ -120,6 +124,18 @@ class CandidateIndexMemberCountMismatchError(CandidateIndexBuildError):
 
 class CandidateIndexContentHashConflictError(CandidateIndexBuildError):
     """이미 저장된 content_hash가 다른 내용을 가리킨다."""
+
+
+class CandidateIndexLifecycleError(CandidateIndexBuildError):
+    """Candidate Index lifecycle 전이를 안전하게 수행할 수 없다."""
+
+
+class CandidateIndexVersionNotFoundError(CandidateIndexLifecycleError):
+    """전이 대상 Candidate Index Version이 존재하지 않는다."""
+
+
+class CandidateIndexVersionNotBuildableError(CandidateIndexLifecycleError):
+    """BUILDING 상태의 완성된 Candidate Index Version만 READY/FAILED로 전이할 수 있다."""
 
 
 _VERSION_IDENTITY_FIELDS = (
@@ -153,9 +169,50 @@ _VERSION_IDENTITY_FIELDS = (
 )
 
 
+def _member_content_payload(member: RagCandidateIndexMemberCreate) -> dict[str, object]:
+    """RAG-07A의 member_content_hash payload 정의와 같은 필드 집합."""
+    return {
+        "identity": {
+            "entity_type": member.identity_entity_type.value,
+            "code_system": member.identity_code_system,
+            "canonical_code": member.identity_canonical_code,
+        },
+        "product_ref": member.product_ref,
+        "entry_ref": member.entry_ref,
+        "entry_type": member.entry_type.value,
+        "display_text": member.display_text,
+        "normalized_text": member.normalized_text,
+        "alias_ref": member.alias_ref,
+        "product_name": member.product_name,
+        "strength_text": member.strength_text,
+        "dosage_form": member.dosage_form,
+        "manufacturer_name": member.manufacturer_name,
+        "product_source_snapshot_id": str(member.product_source_snapshot_id),
+        "entry_source_snapshot_id": str(member.entry_source_snapshot_id),
+        "alias_source_snapshot_id": str(member.alias_source_snapshot_id) if member.alias_source_snapshot_id else None,
+        "catalog_version": member.catalog_version,
+        "catalog_manifest_hash": member.catalog_manifest_hash,
+        "normalization_version": member.normalization_version,
+    }
+
+
+def _recomputed_member_content_hash(member: RagCandidateIndexMemberCreate) -> str:
+    return _sha256(_member_content_payload(member))
+
+
 def _recomputed_member_set_hash(members: tuple[RagCandidateIndexMemberCreate, ...]) -> str:
     """RAG-07A의 ``member_set_hash`` 정의(``candidate_index.py:1051-1053``)와 동일한 재구현."""
     return _sha256([{"member_key": m.member_key, "member_content_hash": m.member_content_hash} for m in members])
+
+
+def _assert_member_content_hashes_match(members: tuple[RagCandidateIndexMemberCreate, ...]) -> None:
+    mismatched = tuple(
+        member.member_key for member in members if _recomputed_member_content_hash(member) != member.member_content_hash
+    )
+    if mismatched:
+        raise CandidateIndexMemberContentHashMismatchError(
+            "member_content_hash가 실제 member 필드와 다릅니다: " + ", ".join(mismatched)
+        )
 
 
 def _recomputed_member_counts(members: tuple[RagCandidateIndexMemberCreate, ...]) -> dict[str, int]:
@@ -179,6 +236,7 @@ def _assert_member_metadata_matches(
     이미 저장된 content_hash와 우연히 같은 값을 주장하면서 다른(또는 변조된) member 입력을
     검증 없이 통과시키는 우회로가 남는다.
     """
+    _assert_member_content_hashes_match(members)
     recomputed_hash = _recomputed_member_set_hash(members)
     if recomputed_hash != version.member_set_hash:
         raise CandidateIndexMemberSetHashMismatchError(
@@ -234,7 +292,7 @@ class RagCandidateIndexRepository:
         return result.scalar_one_or_none()
 
     async def get_ready_version_by_code(self, index_code: str) -> RagCandidateIndexVersion | None:
-        """RAG-08/RAG-09가 조회할 대상. #168 자신은 READY를 쓰지 않는다 (#583의 몫)."""
+        """RAG-08/RAG-09가 조회할 active Candidate Index Version."""
         result = await self.session.execute(
             select(RagCandidateIndexVersion).where(
                 RagCandidateIndexVersion.index_code == index_code,
@@ -242,6 +300,74 @@ class RagCandidateIndexRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def activate_ready_version(self, candidate_index_version_id: UUID) -> RagCandidateIndexVersion:
+        """BUILDING Version을 READY로 전환하고 기존 READY는 RETIRED로 회수한다."""
+        version = await self._get_version_for_update(candidate_index_version_id)
+        versions = await self._lock_versions_by_code(version.index_code)
+        target = next((candidate for candidate in versions if candidate.id == candidate_index_version_id), None)
+        if target is None:
+            raise CandidateIndexVersionNotFoundError(
+                f"Candidate Index Version {candidate_index_version_id}을 찾을 수 없습니다."
+            )
+        if target.status is not RagCandidateIndexStatus.BUILDING:
+            raise CandidateIndexVersionNotBuildableError("BUILDING 상태의 Candidate Index Version만 READY가 됩니다.")
+        await self._assert_persisted_member_count_matches(target)
+
+        retired_existing = False
+        for candidate in versions:
+            if candidate.id != target.id and candidate.status is RagCandidateIndexStatus.READY:
+                candidate.status = RagCandidateIndexStatus.RETIRED
+                retired_existing = True
+        if retired_existing:
+            await self.session.flush()
+
+        target.status = RagCandidateIndexStatus.READY
+        await self.session.flush()
+        return target
+
+    async def mark_failed_version(self, candidate_index_version_id: UUID) -> RagCandidateIndexVersion:
+        """BUILDING Version을 FAILED로 닫는다. READY/RETIRED는 실패 상태로 되돌리지 않는다."""
+        version = await self._get_version_for_update(candidate_index_version_id)
+        if version.status is not RagCandidateIndexStatus.BUILDING:
+            raise CandidateIndexVersionNotBuildableError("BUILDING 상태의 Candidate Index Version만 FAILED가 됩니다.")
+        version.status = RagCandidateIndexStatus.FAILED
+        await self.session.flush()
+        return version
+
+    async def _get_version_for_update(self, candidate_index_version_id: UUID) -> RagCandidateIndexVersion:
+        result = await self.session.execute(
+            select(RagCandidateIndexVersion)
+            .where(RagCandidateIndexVersion.id == candidate_index_version_id)
+            .with_for_update()
+        )
+        version = result.scalar_one_or_none()
+        if version is None:
+            raise CandidateIndexVersionNotFoundError(
+                f"Candidate Index Version {candidate_index_version_id}을 찾을 수 없습니다."
+            )
+        return version
+
+    async def _lock_versions_by_code(self, index_code: str) -> list[RagCandidateIndexVersion]:
+        result = await self.session.execute(
+            select(RagCandidateIndexVersion)
+            .where(RagCandidateIndexVersion.index_code == index_code)
+            .order_by(RagCandidateIndexVersion.created_at, RagCandidateIndexVersion.id)
+            .with_for_update()
+        )
+        return list(result.scalars().all())
+
+    async def _assert_persisted_member_count_matches(self, version: RagCandidateIndexVersion) -> None:
+        result = await self.session.execute(
+            select(func.count())
+            .select_from(RagCandidateIndexMember)
+            .where(RagCandidateIndexMember.candidate_index_version_id == version.id)
+        )
+        actual = int(result.scalar_one())
+        if actual <= 0 or actual != version.member_count:
+            raise CandidateIndexVersionNotBuildableError(
+                f"Candidate Index member_count={version.member_count}이지만 실제 member row는 {actual}건입니다."
+            )
 
     async def list_members(self, candidate_index_version_id: UUID) -> list[RagCandidateIndexMember]:
         result = await self.session.execute(
@@ -270,9 +396,9 @@ class RagCandidateIndexRepository:
     ) -> RagCandidateIndexBuildResult:
         """RAG-07A(#167)가 계산한 build 결과 하나를 ``BUILDING``으로 저장(또는 멱등 재사용)한다.
 
-        ``status``는 항상 ``BUILDING``으로 강제된다. ``READY``/``RETIRED``와 환경 pointer 전환은
-        이 메서드가 쓰지 않는다 (RAG-12A ``build_runtime_bundle``과 동일한 경계, #583 소유). 실패 시
-        이 트랜잭션 전체가 롤백되어 partial row가 남지 않는다.
+        ``status``는 항상 ``BUILDING``으로 강제된다. ``READY``/``FAILED``/``RETIRED`` 전이는
+        #583 lifecycle 메서드가 별도로 수행하며, Runtime 환경 pointer 전환은 이 repository가
+        쓰지 않는다. 실패 시 이 트랜잭션 전체가 롤백되어 partial row가 남지 않는다.
 
         member 검증(``_assert_member_metadata_matches``)은 content_hash 재사용 여부를 정하기
         **전에** 실행된다. 재사용 경로 뒤로 미루면, 이미 저장된 content_hash와 우연히 같은 값을
