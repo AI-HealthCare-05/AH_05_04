@@ -15,6 +15,7 @@ from app.apis.v1.notification_routers import notification_router
 from app.apis.v1.ocr_routers import ocr_router
 from app.apis.v1.prescription_routers import prescription_router
 from app.apis.v1.push_routers import push_router
+from app.apis.v1.track_c_routers import track_c_router
 from app.apis.v1.user_routers import user_router
 
 v1_routers = APIRouter(prefix="/api/v1")
@@ -30,6 +31,7 @@ v1_routers.include_router(chat_router)
 v1_routers.include_router(medication_candidate_router)
 v1_routers.include_router(medication_checkin_router)
 v1_routers.include_router(medication_checkin_backlog_router)
+v1_routers.include_router(track_c_router)
 v1_routers.include_router(job_router)
 
 v1_routers.include_router(notification_router)
