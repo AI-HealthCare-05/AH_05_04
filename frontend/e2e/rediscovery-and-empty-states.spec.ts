@@ -33,6 +33,32 @@ test('[CURRENT-RUNTIME][REQ-HIS-009] 현재 처방의 Guide와 기존 Chat sessi
   expect(api.unexpectedRequests).toEqual([])
 })
 
+test('[CURRENT-RUNTIME][REQ-HIS-009] 재로그인과 같은 빈 client state의 도지 진입은 최신 처방 session으로 복약 질문을 보낸다', async ({ page }) => {
+  const api = await installRequirementsApi(page, {
+    existingPrescription: true,
+    existingChat: true,
+  })
+
+  await page.goto('/chat')
+  await expect(page).toHaveURL(
+    new RegExp(`/chat[?]prescription_id=${ids.prescription}$`),
+  )
+  await expect(page.getByText('무엇을 도와드릴까요?')).toBeVisible()
+
+  const question = '현재 복용 중인 약은 무엇인가요?'
+  await page.getByLabel('복약 질문').fill(question)
+  await page.getByRole('button', { name: '질문 전송' }).click()
+  await expect(
+    page.getByText(`${question}에 대한 합성 안전 답변입니다.`),
+  ).toBeVisible()
+
+  expect(api.chatSessionRediscoveryCount).toBe(1)
+  expect(api.chatSessionCreationCount).toBe(0)
+  expect(api.chatMessagesGetCount).toBe(1)
+  expect(await page.evaluate(() => sessionStorage.length)).toBe(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
 test('[NFR-SYS-009] 현재 처방이나 가이드가 없으면 빈 상태와 다음 행동을 표시한다', async ({ page }) => {
   const api = await installRequirementsApi(page)
 
