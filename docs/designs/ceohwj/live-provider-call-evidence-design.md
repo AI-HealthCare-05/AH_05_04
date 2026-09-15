@@ -158,8 +158,16 @@ Provider 어댑터는 일반 요청과 검증 요청 모두에 같은 안전한 
 
 기존 live runner를 확장합니다.
 
+- canonical runner의 TCP-only 구조를 유지하며 mock transport/app 주입을 허용하지 않습니다.
+- runner 프로세스에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`가 주입되지 않습니다.
+- 로컬 라이브 모드에서는 `OCR_STRUCTURE_LLM_ENABLED=false` 경계를 유지합니다.
+- 사전 GUARD에서 `OCR_CONSENT_POLICY_VERSION`의 존재와 승인된 버전(`ocr-local-synthetic-demo-2026-09-14-v1`) 일치를 검증합니다. (빈 값, placeholder, `<...>` 형식은 GUARD 단계에서 즉시 fail-closed)
+- 로그인 성공 후 문서 업로드·OCR 접수 전에 반드시 Issue #458 OCR 동의 게이트(`POST /api/v1/users/me/consents/OCR`)를 호출합니다.
+- 동의 API 응답 수신 직후 in-flight request를 완료 처리(`_complete_request`)하여 이후 단계 실패 시 cleanup이 PENDING으로 남지 않도록 합니다.
+- 동의 API 오류(409, 503 등) 또는 응답 계약 불일치(effective=false 등) 시 `OCR_CONSENT` 단계로 기록되며 외부 Provider 호출 없이 즉시 fail-closed됩니다. (AGENTS.md 규칙에 따라 `OCR_CONSENT` failure stage 추가는 Issue #152 및 #458 Decision에 근거)
+- DB 검증 단계에서 OCR Job의 `llm_processing == "NOT_REQUESTED"` 및 `model_version`/`prompt_version`의 `None`을 검증하며, `SKIPPED_MINIMIZATION`은 `DB_VERIFICATION` 실패로 처리합니다.
 - 모든 요청에 동일 `X-Validation-Run-Id`를 유지합니다.
-- 로그인 후 Authorization을 추가할 때 validation header를 덮어쓰지 않습니다.
+- 로그인 및 동의 후 Authorization을 추가할 때 validation header를 덮어쓰지 않습니다.
 - 모든 응답에서 `X-Trace-Id`를 수집합니다.
 - Provider가 실행되는 OCR·Guide·Chat 요청 trace를 별도로 보존합니다.
 - 오류 body의 `trace_id`와 응답 header가 모두 있으면 일치를 검증합니다.

@@ -23,7 +23,13 @@ Frontend E2E 또는 Production 배포 승인이 아닙니다. `local-live-ai`는
 - [ ] staging의 `RELEASE_VALIDATION_STATE_DIR`가 별도 one-off 사이에 공유되는 private mount이며, `0700`
   directory와 `0600` file의 write-close-read 선행 검사를 통과했습니다.
 - [ ] 실제 Provider 호출 비용이 발생하는 local live 실행임을 operator가 확인했습니다.
-- [ ] runner의 `OCR_STRUCTURE_LLM_ENABLED`, `CLOVA_OCR_TIMEOUT_SECONDS`, `OCR_STRUCTURE_TIMEOUT_SECONDS`, `OPENAI_TIMEOUT_SECONDS`가 검증 대상 Backend 설정과 일치합니다.
+- [ ] runner뿐 아니라 실제 Backend와 Worker 프로세스 환경에도 다음 설정이 동일하게 적용되어 있습니다:
+  - `OCR_CONSENT_POLICY_VERSION=ocr-local-synthetic-demo-2026-09-14-v1`
+  - `OCR_STRUCTURE_LLM_ENABLED=false`
+  Backend 기본 `OCR_CONSENT_POLICY_VERSION`은 빈 문자열(`""`)이므로 이를 설정하지 않으면 `POST /api/v1/users/me/consents/OCR` 호출 시 503 `CONSENT_POLICY_UNAVAILABLE`로 실패합니다.
+- [ ] runner가 Backend/Worker의 설정 자체를 직접 증명하지 않고, 동의 응답의 policy version과 DB의 `llm_processing == "NOT_REQUESTED"` evidence를 통해 실행 결과를 검증합니다.
+- [ ] runner 환경에 승인된 `OCR_CONSENT_POLICY_VERSION=ocr-local-synthetic-demo-2026-09-14-v1`이 주입되어 있습니다. (빈 값, placeholder, `<...>` 형식은 GUARD에서 거부)
+- [ ] runner 실행 순서가 로그인 → OCR 동의(`POST /api/v1/users/me/consents/OCR`) → 이미지 업로드 → OCR 실행 순으로 진행되며, 동의 실패 시 `OCR_CONSENT` 단계에서 Provider 호출 없이 fail-closed되고 in-flight request가 정상 완료 처리됩니다.
 - [ ] `local-live-full` 실행 전 Backend process에도 별도로 `ENV=local`, `RELEASE_VALIDATION_ALLOWED=true`를 주입했습니다. runner의 같은 이름 설정은 Backend 설정을 대신하거나 증명하지 않습니다.
 - [ ] runner의 `RELEASE_VALIDATION_ALLOWED`는 raw 문자열 `true` 또는 `1`만 허용하며, 공백/대소문자 변경은 허용하지 않습니다. 이는 Backend의 boolean 설정 파싱 계약을 변경하지 않습니다.
 - [ ] Backend stdout Provider log의 접근·발췌·보존 범위와 지정 수동 검토자를 Security·Privacy 책임자가 승인했습니다.
@@ -40,6 +46,8 @@ Chat endpoint는 호출하지 않으며 결과가 `READY`여도 one-cycle PASS �
 # DB_*, ENV, RELEASE_VALIDATION_ALLOWED, CLOVA_OCR_INVOKE_URL, STORAGE_DIR는
 # credential을 출력하지 않는 별도 runner 환경으로 먼저 주입합니다.
 env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
+  OCR_CONSENT_POLICY_VERSION=ocr-local-synthetic-demo-2026-09-14-v1 \
+  OCR_STRUCTURE_LLM_ENABLED=false \
   PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-preflight \
   --run-id <uuid> \
@@ -52,6 +60,8 @@ env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
 
 ```bash
 env -u CLOVA_OCR_SECRET -u OPENAI_API_KEY \
+  OCR_CONSENT_POLICY_VERSION=ocr-local-synthetic-demo-2026-09-14-v1 \
+  OCR_STRUCTURE_LLM_ENABLED=false \
   PYTHONPATH=backend uv run python -m app.release_validation.ai_one_cycle_smoke \
   --mode local-live-full \
   --run-id <uuid> \
@@ -100,11 +110,13 @@ dirty worktree 결과는 진단에는 사용할 수 있지만 `evidence_qualifie
 
 `failure_evidence.api_reason`은 `DEADLINE_EXCEEDED` 또는 `PROVIDER_TIMEOUT`일 때만 존재합니다. 전자는 애플리케이션 전체 예산 소진, 후자는 Provider transport timeout을 뜻합니다. 임의의 API `details` 값은 증빙에 복사하지 않습니다.
 
+실패 시 `failure_stage`는 `GUARD`, `SCENARIO`, `FIXTURE`, `AUTH`, `OCR_CONSENT`, `UPLOAD`, `OCR_REQUEST`, `OCR_STATUS`, `OCR_RESULT`, `OCR_OUTPUT_MISMATCH`, `EXTRACTED_FIELD_CONFIRMATION`, `PRESCRIPTION_INPUT`, `PRESCRIPTION_CREATE`, `GUIDE_GENERATION_PROCESSING`, `CHAT_SESSION`, `CHAT_GENERATION_PROCESSING`, `DB_VERIFICATION`, `GUIDE_SAFETY`, `CHAT_SAFETY`, `CLEANUP` 중 하나로 기록됩니다. 특히 동의 게이트 실패(HTTP 409/503, effective=false, 정책 버전 불일치 등)는 `OCR_CONSENT` 단계로 기록되며 이미지 업로드나 외부 Provider 호출 전에 중단되어 fail-closed를 보장합니다. 동의 API 응답 수신 직후 in-flight request가 완료 처리되어 cleanup은 정상 진행됩니다.
+
 ## Issue #152 Local Provider 로그 증빙
 
 이 절차는 `local-live-full`에만 적용합니다. staging·production Live 검증이나 배포 설정을 변경하지 않습니다. runner는 모든 Backend 요청에 동일 `X-Validation-Run-Id`를 보내고 응답별 `X-Trace-Id`를 수집합니다. 로그인 후 Authorization을 추가해도 validation Header를 유지합니다.
 
-Backend process는 Provider Secret을 승인된 방식으로 주입받지만 runner process에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`가 없어야 합니다. `RELEASE_VALIDATION_ALLOWED`도 두 process에 각각 주입합니다. local Compose의 `fastapi`는 `envs/.local.env`를 읽으므로 Backend 쪽 값은 그 파일 또는 동등한 Backend 전용 실행 환경에 설정하고, runner는 credential 없는 별도 환경을 사용합니다.
+Backend process는 Provider Secret을 승인된 방식으로 주입받지만 runner process에는 `CLOVA_OCR_SECRET`, `OPENAI_API_KEY`가 없어야 합니다. `RELEASE_VALIDATION_ALLOWED`도 두 process에 각각 주입합니다. local Compose의 `fastapi`는 `envs/.local.env`를 읽으므로 Backend 쪽 값은 그 파일 또는 동등한 Backend 전용 실행 환경에 설정하고, runner는 credential 없는 별도 환경을 사용합니다. 또한 Backend와 Worker 프로세스에도 `OCR_CONSENT_POLICY_VERSION=ocr-local-synthetic-demo-2026-09-14-v1`과 `OCR_STRUCTURE_LLM_ENABLED=false`가 반드시 주입되어야 합니다. Backend 기본 `OCR_CONSENT_POLICY_VERSION`은 빈 문자열이므로 이를 설정하지 않으면 `POST /api/v1/users/me/consents/OCR`가 503 `CONSENT_POLICY_UNAVAILABLE`로 실패합니다. runner가 Backend/Worker 설정 자체를 직접 증명하지 않고, 동의 응답의 policy version과 DB의 `llm_processing == "NOT_REQUESTED"` evidence를 통해 실행 결과를 검증합니다.
 
 실행 직후 결과의 `run_id`로 Docker Desktop의 `fastapi` Logs를 검색합니다. 빠른 조회는 다음 명령을 사용할 수 있습니다.
 
