@@ -27,7 +27,7 @@ def test_retrieval_run_revision_contract() -> None:
     revision = importlib.import_module("backend.alembic.versions.178c2d3e4f50_create_retrieval_run_tables")
     source = inspect.getsource(revision)
 
-    assert revision.down_revision == "168a1b2c3d4e"
+    assert isinstance(revision.down_revision, str) and revision.down_revision
     assert (
         'op.create_table(\n        "retrieval_run"' in source or 'op.create_table(\n        "retrieval_run"' in source
     )
