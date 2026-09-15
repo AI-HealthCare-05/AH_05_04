@@ -5,7 +5,7 @@ from typing import Any, cast
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_sha256
 from ai_worker.tasks.evaluation.grounding_metrics import build_grounding_metrics
 from ai_worker.tasks.evaluation.loaders import EvaluationCaseContract, ValidatedDataset, load_dataset
-from ai_worker.tasks.evaluation.schemas.artifacts import CASE_RESULT_ADAPTER, CaseResult
+from ai_worker.tasks.evaluation.schemas.artifacts import CASE_RESULT_ADAPTER, CaseResult, MetricResults
 from ai_worker.tasks.evaluation.schemas.authoring import (
     Criticality,
     EvidenceMappingEntry,
@@ -1092,7 +1092,7 @@ def test_structural_integrity_violations() -> None:
     assert res.metrics[0].execution_status is ExecutionStatus.INVALID
 
 
-def test_duplicate_citation_key_across_claims_is_invalid() -> None:
+def _duplicate_key_case(*, duplicate: bool) -> MetricResults:
     case_a, _, obs_a = _case_a()
     expected = cast(Any, case_a.expected)
     case_a = _grounding_case(
@@ -1114,8 +1114,8 @@ def test_duplicate_citation_key_across_claims_is_invalid() -> None:
             ExpectedCitation(claim_id="claim-a2", evidence_ref_id=EVIDENCE_REF_2, locator="$.rule_2"),
         ),
     )
-    ds_a = _dataset_with_cases_and_scopes((case_a,))
     first_edge, second_edge = obs_a.claims[0].citations
+    citation_key = first_edge.citation_key if duplicate else second_edge.citation_key
     first_claim = obs_a.claims[0].model_copy(update={"citations": (first_edge,)})
     second_claim = obs_a.claims[0].model_copy(
         update={
@@ -1123,32 +1123,36 @@ def test_duplicate_citation_key_across_claims_is_invalid() -> None:
             "citations": (
                 second_edge.model_copy(
                     update={
-                        "citation_key": first_edge.citation_key,
+                        "citation_key": citation_key,
                         "claim_key": "claim-a2",
                     }
                 ),
             ),
         }
     )
-    duplicate_key_observation = obs_a.model_copy(update={"claims": (first_claim, second_claim)})
-    canon_dump = cast(dict[str, JsonValue], duplicate_key_observation.model_dump(mode="json"))
+    observation = obs_a.model_copy(update={"claims": (first_claim, second_claim)})
+    canon_dump = cast(dict[str, JsonValue], observation.model_dump(mode="json"))
     real_sha = canonical_sha256(canon_dump, excluded_top_level_keys=frozenset({"observation_sha256"}))
-    duplicate_key_observation = duplicate_key_observation.model_copy(update={"observation_sha256": real_sha})
+    observation = observation.model_copy(update={"observation_sha256": real_sha})
     case_result = _grounding_case_result(
         case_a,
         actual_claim_ids=("claim-a1", "claim-a2"),
         actual_citation_evidence_ids=(EVIDENCE_REF_1, EVIDENCE_REF_2),
     )
 
-    result = build_grounding_metrics(
-        ds_a,
+    return build_grounding_metrics(
+        _dataset_with_cases_and_scopes((case_a,)),
         (case_result,),
-        (duplicate_key_observation,),
+        (observation,),
         (),
         expected_run_id=RUN_ID,
         expected_input_sha256_by_case={"case-a": case_a.input_sha256},
         expected_answer_variant_manifest_hash=VARIANT_HASH,
     )
+
+
+def test_duplicate_citation_key_across_claims_is_invalid() -> None:
+    result = _duplicate_key_case(duplicate=True)
 
     assert all(metric.execution_status is ExecutionStatus.INVALID for metric in result.metrics)
     assert all(
@@ -1159,6 +1163,15 @@ def test_duplicate_citation_key_across_claims_is_invalid() -> None:
         and metric.ci_upper is None
         for metric in result.metrics
     )
+
+
+def test_unique_citation_key_across_claims_is_aggregated() -> None:
+    result = _duplicate_key_case(duplicate=False)
+    by_id = {metric.metric_id: metric for metric in result.metrics}
+
+    assert all(metric.execution_status is ExecutionStatus.COMPLETED for metric in result.metrics)
+    assert (by_id["CITATION_PRECISION"].numerator, by_id["CITATION_PRECISION"].denominator) == (1, 2)
+    assert (by_id["CITATION_COVERAGE"].numerator, by_id["CITATION_COVERAGE"].denominator) == (1, 3)
 
 
 def test_binding_mismatches_and_expected_variant_hash() -> None:
