@@ -130,7 +130,9 @@ async def isolated_schema() -> AsyncIterator[None]:
         await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     tables = _required_tables()
     async with test_engine.begin() as connection:
-        await connection.run_sync(lambda sync_connection: Base.metadata.create_all(sync_connection, tables=tables))
+        await connection.run_sync(
+            lambda sync_connection: Base.metadata.create_all(sync_connection, tables=tables, checkfirst=False)
+        )
     try:
         yield
     finally:

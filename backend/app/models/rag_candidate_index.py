@@ -248,6 +248,7 @@ class RagCandidateIndexMember(Base):
     normalization_version: Mapped[str] = mapped_column(String(100), nullable=False)
     member_key: Mapped[str] = mapped_column(String(300), nullable=False)
     member_content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    embedding_storage_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     embedding: Mapped[list[float] | None] = mapped_column(VECTOR(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

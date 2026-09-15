@@ -57,6 +57,16 @@ async def _isolated_candidate_index_schema() -> AsyncIterator[AsyncConnection]:
                         """
                     )
                 )
+                await connection.execute(
+                    text(
+                        """
+                        CREATE TABLE rag_candidate_index_member (
+                            id uuid PRIMARY KEY,
+                            embedding double precision[]
+                        )
+                        """
+                    )
+                )
                 yield connection
             finally:
                 await transaction.rollback()

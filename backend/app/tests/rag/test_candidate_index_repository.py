@@ -7,7 +7,6 @@ member 하나라도 바뀌면 ``member_set_hash``가 달라지는 성질을 이�
 
 import hashlib
 import json
-from array import array
 from dataclasses import replace
 from datetime import datetime
 from uuid import uuid4
@@ -172,23 +171,18 @@ def _member_create(
     )
 
 
-def _canonical_embedding_values(values: tuple[float, ...]) -> tuple[float, ...]:
-    return tuple(array("f", values))
-
-
 def _hybrid_member_create(
     *, snapshot, member_key: str = "member-1", embedding: tuple[float, ...] = (0.123456789, -0.333333333, 123.456789)
 ) -> RagCandidateIndexMemberCreate:
     lexical_member = _member_create(snapshot=snapshot, member_key=member_key)
-    canonical_embedding = _canonical_embedding_values(embedding)
     return replace(
         lexical_member,
-        embedding=canonical_embedding,
+        embedding=embedding,
         member_content_hash=_payload_hash(
             {
                 "lexical_member_content_hash": lexical_member.member_content_hash,
                 "embedding_model_version": _EMBEDDING_MODEL_VERSION,
-                "embedding": canonical_embedding,
+                "embedding": embedding,
             }
         ),
     )

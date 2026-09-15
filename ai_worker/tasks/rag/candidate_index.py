@@ -950,18 +950,19 @@ def _build_lexical_members(
 
 
 def _embedding_values_are_valid(values: object, dimension: int) -> bool:
-    return (
+    if not (
         isinstance(values, tuple)
         and len(values) == dimension
         and all(
             isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) for value in values
         )
-    )
-
-
-def _canonical_embedding_values(values: tuple[float, ...]) -> tuple[float, ...]:
-    """Use the same float32 representation that pgvector persists."""
-    return tuple(array("f", values))
+    ):
+        return False
+    try:
+        float32_values = tuple(array("f", values))
+    except (OverflowError, ValueError):
+        return False
+    return all(math.isfinite(value) for value in float32_values)
 
 
 def _attach_embeddings(
@@ -1008,23 +1009,20 @@ def _attach_embeddings(
             CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
             ("embedding_output",),
         )
-    embedded_members = []
-    for member, vector in zip(members, vectors, strict=True):
-        embedding = _canonical_embedding_values(vector.values)
-        embedded_members.append(
-            dataclasses.replace(
-                member,
-                embedding=embedding,
-                member_content_hash=_sha256(
-                    {
-                        "lexical_member_content_hash": member.member_content_hash,
-                        "embedding_model_version": config.embedding_model_version,
-                        "embedding": embedding,
-                    }
-                ),
-            )
+    return tuple(
+        dataclasses.replace(
+            member,
+            embedding=vector.values,
+            member_content_hash=_sha256(
+                {
+                    "lexical_member_content_hash": member.member_content_hash,
+                    "embedding_model_version": config.embedding_model_version,
+                    "embedding": vector.values,
+                }
+            ),
         )
-    return tuple(embedded_members)
+        for member, vector in zip(members, vectors, strict=True)
+    )
 
 
 def _configuration_payload(config: CandidateIndexBuildConfig) -> dict[str, object]:

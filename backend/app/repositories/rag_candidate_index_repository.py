@@ -63,6 +63,10 @@ def _canonical_embedding_values(values: tuple[float, ...]) -> tuple[float, ...]:
     return tuple(array("f", values))
 
 
+def _embedding_storage_hash(values: tuple[float, ...] | list[float]) -> str:
+    return _sha256({"embedding": _canonical_embedding_values(tuple(values))})
+
+
 @dataclass(frozen=True, slots=True)
 class RagCandidateIndexMemberCreate:
     entry_type: RagMedicationSearchEntryType
@@ -237,12 +241,11 @@ def _recomputed_member_content_hash(
     lexical_member_content_hash = _recomputed_lexical_member_content_hash(member)
     if version.build_mode is RagCandidateIndexBuildMode.LEXICAL_ONLY:
         return lexical_member_content_hash
-    embedding = _canonical_embedding_values(member.embedding) if member.embedding is not None else None
     return _sha256(
         {
             "lexical_member_content_hash": lexical_member_content_hash,
             "embedding_model_version": version.embedding_model_version,
-            "embedding": embedding,
+            "embedding": member.embedding,
         }
     )
 
@@ -287,13 +290,16 @@ def _recomputed_member_counts(members: tuple[RagCandidateIndexMemberCreate, ...]
 def _assert_member_metadata_matches(
     version: RagCandidateIndexVersion | RagCandidateIndexVersionCreate,
     members: tuple[RagCandidateIndexMemberCreate, ...],
+    *,
+    verify_member_content_hashes: bool = True,
 ) -> None:
     """Compare claimed hash/count metadata with values recomputed from member rows.
 
     This runs on both new build and content_hash reuse paths; otherwise a caller could
     claim an existing content_hash while passing unchecked member rows.
     """
-    _assert_member_content_hashes_match(version, members)
+    if verify_member_content_hashes:
+        _assert_member_content_hashes_match(version, members)
     recomputed_hash = _recomputed_member_set_hash(members)
     if recomputed_hash != version.member_set_hash:
         raise CandidateIndexMemberSetHashMismatchError(
@@ -442,19 +448,42 @@ class RagCandidateIndexRepository:
         return list(result.scalars().all())
 
     async def _assert_persisted_members_match(self, version: RagCandidateIndexVersion) -> None:
-        persisted_members = tuple(
-            _member_create_from_persisted(member) for member in await self.list_members(version.id)
-        )
+        persisted_rows = tuple(await self.list_members(version.id))
+        persisted_members = tuple(_member_create_from_persisted(member) for member in persisted_rows)
         if not persisted_members:
             raise CandidateIndexVersionNotBuildableError(
                 f"Candidate Index member_count={version.member_count}, but no persisted member rows exist."
             )
+        self._assert_persisted_embedding_storage_hashes_match(version, persisted_rows)
         try:
-            _assert_member_metadata_matches(version, persisted_members)
+            _assert_member_metadata_matches(
+                version,
+                persisted_members,
+                verify_member_content_hashes=version.build_mode is RagCandidateIndexBuildMode.LEXICAL_ONLY,
+            )
         except CandidateIndexBuildError as exc:
             raise CandidateIndexVersionNotBuildableError(
                 "Persisted Candidate Index members do not reproduce manifest metadata before READY promotion."
             ) from exc
+
+    def _assert_persisted_embedding_storage_hashes_match(
+        self,
+        version: RagCandidateIndexVersion,
+        persisted_members: tuple[RagCandidateIndexMember, ...],
+    ) -> None:
+        mismatched: list[str] = []
+        for member in persisted_members:
+            if version.build_mode is RagCandidateIndexBuildMode.LEXICAL_ONLY:
+                if member.embedding is not None or member.embedding_storage_hash is not None:
+                    mismatched.append(member.member_key)
+                continue
+            if member.embedding is None or member.embedding_storage_hash != _embedding_storage_hash(member.embedding):
+                mismatched.append(member.member_key)
+        if mismatched:
+            raise CandidateIndexVersionNotBuildableError(
+                "Persisted Candidate Index embedding storage hash does not match DB vector rows: "
+                + ", ".join(mismatched)
+            )
 
     async def list_members(self, candidate_index_version_id: UUID) -> list[RagCandidateIndexMember]:
         result = await self.session.execute(
@@ -572,7 +601,8 @@ class RagCandidateIndexRepository:
         """
         values = asdict(payload)
         if payload.embedding is not None:
-            values["embedding"] = list(_canonical_embedding_values(payload.embedding))
+            values["embedding"] = list(payload.embedding)
+            values["embedding_storage_hash"] = _embedding_storage_hash(payload.embedding)
         member = RagCandidateIndexMember(**values, candidate_index_version_id=candidate_index_version_id)
         self.session.add(member)
         await self.session.flush()
