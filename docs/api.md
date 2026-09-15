@@ -686,18 +686,17 @@ Cursor 404에서는 cursor를 생략해 첫 페이지부터 재조회한다.
 Proposed 경로를 유지하며 Current 승격은 저장소 절차에 따라 별도 검토한다.
 이 변경은 #138 Frontend 소비 검증이나 Production 공개 승인을 대신하지 않는다.
 
-## #203 앱 내부 알림 — 구현 브랜치 검토 대상
+## #203 앱 내부 알림 — develop 반영 완료
 
-PD-203의 [Notification 계약](contracts/proposed/track-b-notifications-v1.md)을 구현한다. 이 절은 해당 구현 PR의 명세이며 지정 리뷰어 승인 전 current 승격 근거가 아니다.
+PD-203의 [현재 Notification 계약](contracts/current/track-b-notifications-v1.md)을 구현한다. #430의 Backend 책임 리뷰·Frontend 소비 리뷰와 병합, #202/#474 인수를 근거로 Current에 반영됐다.
 
 | Method | Path | 성공 | 동작 |
 | --- | --- | --- | --- |
 | GET | /api/v1/notifications?limit=20&offset=0 | 200 | 자신의 DELIVERED 목록, scheduled_at DESC·id DESC, items·next_offset |
-| PATCH | /api/v1/notifications/{notification_id}/read | 200 | body {}, 최초 read_at 유지, 
-otification.read |
+| PATCH | /api/v1/notifications/{notification_id}/read | 200 | body {}, 최초 read_at 유지, notification.read |
 | POST | /api/v1/medication-occurrences/{occurrence_id}/reminders | 201 | body {scheduled_at}, 확인 기한 전 PENDING occurrence의 사용자 요청 1회, medication-reminder.create |
 
-쓰기에는 기존 Idempotency-Key 형식(16~255 ASCII 허용 문자)과 암호화 동기 snapshot이 적용된다. 성공은 data envelope, 오류는 공통 형식, 전체 응답은 no-store다. 알림 read/목록의 occurrence_local_date는 원본 occurrence 날짜이며 재알림 시각에서 추정하지 않는다. Track C REMINDER_SETUP은 기존 일정 PUT 흐름을 사용하며 위 재알림 POST를 호출하지 않는다. #202 약 정보 조회 경로의 통합 검증은 별도 대기다.
+쓰기에는 기존 Idempotency-Key 형식(16~255 ASCII 허용 문자)과 암호화 동기 snapshot이 적용된다. 성공은 data envelope, 오류는 공통 형식, 전체 응답은 no-store다. 알림 read/목록의 occurrence_local_date는 원본 occurrence 날짜이며 재알림 시각에서 추정하지 않는다. Track C REMINDER_SETUP은 기존 일정 PUT 흐름을 사용하며 위 재알림 POST를 호출하지 않는다. #202/#474 원래 약 조회와 Frontend 통합 검증이 완료됐다.
 
 
 ## #202 일정 API 연결 — 구현 PR 리뷰 대상
@@ -767,7 +766,8 @@ PENDING·CANCELLED는 두 비율에서 제외한다. 조회에서 Check-in을 �
 정본은 [리포트 v1 Current 계약](contracts/current/medication-report-v1.md),
 검증과 Frontend fixture는 [#419 검증 기록](validation/track-b/issue-419-medication-report.md)을 따른다.
 Backend #478과 Frontend #574가 develop에 병합됐으며 Production 공개 승인은 별도다.
-### #202 occurrence 원래 약 표시 조회 — 리뷰용 구현
+
+### #202 occurrence 원래 약 표시 조회 — develop 반영 완료
 
 `GET /api/v1/medication-occurrences/{occurrence_id}/medication`은 SELF 소유 occurrence의
 원래 prescription version medication에서 약명·제품 함량·1회 복용량/단위를 읽습니다.
@@ -779,5 +779,5 @@ medication_name, strength_text, dose_value, dose_unit입니다. 모든 키가 �
 nullable입니다. 없는/타인 occurrence는 동일 404 MEDICATION_OCCURRENCE_NOT_FOUND,
 무인증 401, UUID 형식 오류 422 및 기존 no-store·trace 정책을 적용합니다.
 
-[계약·Decision](contracts/proposed/track-b-occurrence-medication-v1.md)은 Proposed이며 리뷰 대기입니다.
+[현재 계약·Decision](contracts/current/track-b-occurrence-medication-v1.md)은 #474 Backend 승인·병합과 #202 Frontend 인수 승인을 근거로 Current입니다.
 [실제 합성 응답과 검증](validation/track-b/issue-202-closure-readiness.md)을 함께 확인합니다.

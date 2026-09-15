@@ -39,7 +39,7 @@
 - Candidate 응답의 공식 제품명은 원래 처방의 약명·용량 snapshot을 대신하지 않는다.
 - #462의 backlog는 아직 등록 변경 리뷰 대기이고 UNCONFIRMED만 대상으로 한다.
   병합돼도 TAKEN/NOT_TAKEN 등의 모든 과거 알림을 위한 범용 약 상세 조회로 사용할 수 없다.
-- 기존 [알림 Proposed 문서의 표시 정보 소비 경로](../../contracts/proposed/track-b-notifications-v1.md)에
+- 기존 [현재 알림 계약의 표시 정보 소비 경로](../../contracts/current/track-b-notifications-v1.md)에
   같은 후속 확인 항목이 남아 있다. 이 PR에서 상태를 Current로 이동하거나 새 필드를 추가하지 않는다.
 
 ## 실제 HTTP 시나리오
