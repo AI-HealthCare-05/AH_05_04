@@ -12,7 +12,9 @@
 
 전체 16-case baseline/history 단발 결과는 `full_suite_passed`와 case별 rule ID로 계속 기록하지만 Issue #306의 live merge blocker로 사용하지 않는다. 단발 Provider 응답은 같은 prompt에서도 실행마다 변동했고, 이 평가의 `baseline`은 이전 prompt가 아니라 동일한 `chat-prompt-v3`의 `history=[]` 비교군이므로 prompt 회귀 기준선이 아니다. 전체 기존 case의 회귀 blocker는 결정론적 replay 16/16으로 유지한다. 이 결정은 live 실패를 삭제하거나 성공으로 재분류하지 않으며, 관찰 결과와 blocking gate를 분리한다.
 
-## Current canonical 실행 범위
+## 동결 v1 / gpt-4o-mini historical 실행 범위
+
+> 이 문서는 2026-09-09 당시 canonical이었던 `chat-v3-history-eval-v1`·`gpt-4o-mini` 실행 기록이다. Issue #567 이후 현재 canonical인 `chat-v3-history-eval-v2`·`gpt-4o`의 Provider 검증 근거로 사용하지 않으며, v2 live 평가는 실행 전까지 `NOT_RUN`이다.
 
 - 실행 시각: 2026-09-09 KST
 - source commit: `f6431ab619a413ade2b8016a855e34678bc363cc`
@@ -61,7 +63,7 @@ runner는 exit code 0을 반환했고 `passed=true`를 기록했다.
 - safety expectation violation count: 0
 - token count: `NOT_RUN`
 
-관찰 실패 case는 없었다. 다만 단일 Provider 실행의 16/16을 전체 모델 품질이나 일반적인 의료 안전 보장으로 확대 해석하지 않는다. Issue #306의 30회 history acceptance와 세 응급 우선 경계만 현재 live blocking 근거이며, 전체 합성 replay와 Local live 결과는 실제 사용자 데이터 전송, Privacy 승인 또는 Production 공개 근거가 아니다.
+관찰 실패 case는 없었다. 다만 단일 Provider 실행의 16/16을 전체 모델 품질이나 일반적인 의료 안전 보장으로 확대 해석하지 않는다. Issue #306의 30회 history acceptance와 세 응급 우선 경계는 동결 v1·`gpt-4o-mini`의 historical live 근거이며, 현재 canonical v2·`gpt-4o` 근거가 아니다. 전체 합성 replay와 Local live 결과는 실제 사용자 데이터 전송, Privacy 승인 또는 Production 공개 근거가 아니다.
 
 ## 관찰값
 
