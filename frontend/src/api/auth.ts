@@ -4,7 +4,7 @@ export type SignupRequest = {
   email: string
   password: string
   name: string
-  consents: SignupConsentRequest[]
+  consents?: SignupConsentRequest[]
 }
 
 export type SignupConsentPurpose = 'OCR' | 'GUIDE' | 'CHAT' | 'NOTIFICATION'
@@ -23,7 +23,7 @@ export type LoginResponse = {
 }
 
 export async function signup(data: SignupRequest) {
-  const request: SignupRequest = {
+  const request = {
     ...data,
     consents: data.consents ?? [],
   }
