@@ -43,3 +43,6 @@
   .mvp-profile__details:not(.mvp-profile__account-details) > div { grid-template-columns: 1fr; gap: 5px; }
   .mvp-profile__details:not(.mvp-profile__account-details) dd { text-align: left; }
 }
+
+.mvp-profile__consent-card h4 { margin: 0 0 8px; font-size: 17px; }
+.mvp-profile__consent-card .ds-button { margin-top: 12px; min-height: 48px; white-space: normal; }

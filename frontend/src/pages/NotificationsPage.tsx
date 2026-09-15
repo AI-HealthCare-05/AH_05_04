@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
@@ -40,6 +40,11 @@ type HandoffFailure = {
   notification: NotificationData
   message: string
   requiresLogin: boolean
+}
+
+type HandoffRequest = {
+  token: number
+  controller: AbortController
 }
 
 function getFailureMessage(error: unknown): string {
@@ -92,6 +97,9 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
   const [selectingId, setSelectingId] = useState<string | null>(null)
   const [readFailure, setReadFailure] = useState<ReadFailure | null>(null)
   const [handoffFailure, setHandoffFailure] = useState<HandoffFailure | null>(null)
+  const isMountedRef = useRef(true)
+  const nextHandoffTokenRef = useRef(0)
+  const handoffRequestRef = useRef<HandoffRequest | null>(null)
 
   const load = useCallback(async () => {
     setLoadError(null)
@@ -115,13 +123,47 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
     void load()
   }, [load])
 
-  const prepareHandoff = async (notification: NotificationData) => {
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+      handoffRequestRef.current?.controller.abort()
+      handoffRequestRef.current = null
+    }
+  }, [])
+
+  const startHandoffRequest = (): HandoffRequest => {
+    handoffRequestRef.current?.controller.abort()
+    const request = {
+      token: nextHandoffTokenRef.current + 1,
+      controller: new AbortController(),
+    }
+    nextHandoffTokenRef.current = request.token
+    handoffRequestRef.current = request
+    return request
+  }
+
+  const isHandoffRequestActive = (request: HandoffRequest): boolean =>
+    isMountedRef.current &&
+    handoffRequestRef.current?.token === request.token &&
+    !request.controller.signal.aborted
+
+  const prepareHandoff = async (
+    notification: NotificationData,
+    request: HandoffRequest,
+  ) => {
     const nextHandoff = createNotificationOccurrenceHandoff(notification)
     try {
-      await resolveNotificationOccurrenceMedication(nextHandoff)
+      await resolveNotificationOccurrenceMedication(
+        nextHandoff,
+        request.controller.signal,
+      )
+      if (!isHandoffRequestActive(request)) return
       onHandoffReady?.(nextHandoff)
+      if (!isHandoffRequestActive(request)) return
       navigate(createNotificationOccurrenceRoute(nextHandoff))
     } catch (error) {
+      if (!isHandoffRequestActive(request)) return
       setHandoffFailure({
         notification,
         message: getHandoffFailureMessage(error),
@@ -171,7 +213,7 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
     notification: NotificationData,
     idempotencyKey = createNotificationReadIdempotencyKey(),
   ) => {
-    if (selectingId) return
+    const request = startHandoffRequest()
 
     setReadFailure(null)
     setHandoffFailure(null)
@@ -184,7 +226,9 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
         const response = await markNotificationRead(
           notification.id,
           idempotencyKey,
+          request.controller.signal,
         )
+        if (!isHandoffRequestActive(request)) return
         selectedNotification = {
           ...notification,
           read_at: response.data.read_at,
@@ -195,8 +239,10 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
           ) ?? current,
         )
       }
-      await prepareHandoff(selectedNotification)
+      if (!isHandoffRequestActive(request)) return
+      await prepareHandoff(selectedNotification, request)
     } catch (error) {
+      if (!isHandoffRequestActive(request)) return
       setReadFailure({
         notification,
         idempotencyKey,
@@ -204,7 +250,9 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
         requiresLogin: isAuthenticationError(error),
       })
     } finally {
-      setSelectingId(null)
+      if (isHandoffRequestActive(request)) {
+        setSelectingId(null)
+      }
     }
   }
 
@@ -265,7 +313,7 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
                     <button
                       className="mvp-notifications__item-button"
                       type="button"
-                      disabled={selectingId !== null}
+                      disabled={isSelecting}
                       aria-busy={isSelecting}
                       aria-label={`${getNotificationTitle(notification.kind)}, 복약일 ${notification.occurrence_local_date}, ${isSelecting ? '복약 기록 확인 중' : isRead ? '읽음' : '읽지 않음'}`}
                       onClick={() => void handleSelect(notification)}
