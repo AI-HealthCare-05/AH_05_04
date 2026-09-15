@@ -64,6 +64,11 @@ class EvaluationReport:
         return {
             "dataset_id": self.dataset_id,
             "run_mode": "DETERMINISTIC_REPLAY",
+            "prompt_provenance": {
+                "execution_semantics": "CURRENT_RUNTIME_PROMPT",
+                "runtime_prompt_version": PROMPT_VERSION,
+                "historical_prompt_reproduction": False,
+            },
             "provider_evaluation": {
                 "status": "NOT_RUN",
                 "reason": "Actual OpenAI evaluation requires explicit opt-in and was not requested.",

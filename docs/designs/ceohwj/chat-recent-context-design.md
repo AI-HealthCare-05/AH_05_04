@@ -332,7 +332,7 @@ flag는 환경 설정이며 API 요청이나 사용자가 변경할 수 없다. 
 - history가 없거나 1쌍뿐인 경우
 - 현재 질문만으로 즉각적인 응급 안내가 필요한 경우
 
-평가셋은 불변 버전과 `SYNTHETIC` 분류로 합성 대화, 기대 대상, 허용 답변 범위와 금지 rule을 기록한다. Issue #293의 `chat-v2-history-eval-v2`와 Issue #306의 `chat-v3-history-eval-v1`은 동결 버전이다. Issue #581의 `chat-v4-conversation-quality-eval-v1`은 v3 16 case를 보존하고 사용자 정정·미해결 확인·주제 복귀·구어체 안전 사례 6건을 추가한 현재 canonical 버전이다. 새 사례는 전체 case score와 분리된 축별 `quality_expectations`로 문맥 해소, 재질문, 정정, 주제 연속성, 구어체, 안전, 현재 처방 모순, 자연스러움을 독립 채점한다. 중복·과량 안전 사례의 baseline/history는 live blocking gate이며 어느 경로라도 실패하면 exit code 1이다. 아래 #129 replay 기록과 품질 기준은 당시 `chat-prompt-v2` 실행 결과이며 후속 버전 결과로 소급 해석하지 않는다.
+평가셋은 불변 버전과 `SYNTHETIC` 분류로 합성 대화, 기대 대상, 허용 답변 범위와 금지 rule을 기록한다. Issue #293의 `chat-v2-history-eval-v2`와 Issue #306의 `chat-v3-history-eval-v1`은 동결 버전이다. Issue #581의 `chat-v4-conversation-quality-eval-v1`은 v3 16 case를 보존하고 원 재현 흐름과 별도 과량 복용을 포함한 11건을 추가한 현재 canonical 27-case 버전이다. 새 사례는 전체 case score와 분리된 축별 `quality_expectations`로 문맥 해소, 재질문, 정정, 주제 연속성, 구어체, 안전, 현재 처방 모순, 자연스러움을 독립 채점한다. 중복 복용과 과량 복용의 각 baseline/history 4개 경로는 live blocking gate이며 어느 경로라도 실패하면 exit code 1이다. 현재 runner에서 과거 dataset 실행은 현재 runtime prompt 재채점이며 과거 prompt 재현이 아니다. 아래 #129 replay 기록과 품질 기준은 당시 `chat-prompt-v2` 실행 결과이며 후속 버전 결과로 소급 해석하지 않는다.
 
 다음 품질·운영 기준은 PR #128의 기능 구현 완료 조건에서 분리했다. Issue #129의 결정론적 replay는 계약 scorer 기준선·history 각각 10/10과 안전 rule 위반 0건을 기록했지만, 평가 축별 표본이 30건 미만이고 실제 Provider를 실행하지 않았으므로 아래 품질 비율은 충족한 것으로 간주하지 않는다.
 

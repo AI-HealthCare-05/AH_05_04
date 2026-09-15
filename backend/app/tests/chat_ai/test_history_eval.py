@@ -303,6 +303,11 @@ def test_replay_evaluation_reports_comparison_metrics_without_raw_text_or_sentin
 
     assert report["dataset_id"] == "chat-v3-history-eval-v2"
     assert report["run_mode"] == "DETERMINISTIC_REPLAY"
+    assert report["prompt_provenance"] == {
+        "execution_semantics": "CURRENT_RUNTIME_PROMPT",
+        "runtime_prompt_version": "chat-prompt-v4",
+        "historical_prompt_reproduction": False,
+    }
     assert report["provider_evaluation"] == {
         "status": "NOT_RUN",
         "reason": "Actual OpenAI evaluation requires explicit opt-in and was not requested.",
