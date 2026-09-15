@@ -332,6 +332,17 @@ def evaluate_replay_dataset(dataset: dict[str, Any]) -> EvaluationReport:
         ),
         "threshold_status": "NOT_APPLICABLE_SAMPLE_LT_30",
     }
+    quality_dimensions = dataset.get("quality_dimensions", {})
+    if isinstance(quality_dimensions, dict):
+        for dimension in quality_dimensions:
+            tagged_case_ids = {
+                raw_case["case_id"] for raw_case in dataset["cases"] if dimension in raw_case.get("metric_tags", ())
+            }
+            if not tagged_case_ids:
+                continue
+            tagged_cases = [case for case in cases if case.case_id in tagged_case_ids]
+            metrics[f"{dimension}_case_count"] = len(tagged_cases)
+            metrics[f"{dimension}_history_pass_count"] = sum(case.history.passed for case in tagged_cases)
     return EvaluationReport(dataset_id=dataset["dataset_id"], metrics=metrics, cases=tuple(cases))
 
 
