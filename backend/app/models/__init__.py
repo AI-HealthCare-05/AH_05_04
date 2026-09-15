@@ -120,6 +120,14 @@ from app.models.rag_evidence import (
     RagEvidenceStatus,
     RagEvidenceType,
 )
+from app.models.rag_retrieval import (
+    RetrievalHit,
+    RetrievalRun,
+    RetrievalRunStatus,
+    RetrievalRunVariant,
+    RetrievalSignal,
+    RetrievalSignalMethod,
+)
 from app.models.rag_runtime import (
     AiJobExecutionContext,
     AiJobExecutionIdentification,
@@ -317,6 +325,12 @@ __all__ = [
     "RagSourceSnapshotVerification",
     "RagSourceUsageStatus",
     "RagVerificationResultStatus",
+    "RetrievalHit",
+    "RetrievalRun",
+    "RetrievalRunStatus",
+    "RetrievalRunVariant",
+    "RetrievalSignal",
+    "RetrievalSignalMethod",
     "SourceManagementAudit",
     "SourceManagementPermission",
     "RefreshSession",
