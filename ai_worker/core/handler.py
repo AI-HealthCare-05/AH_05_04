@@ -29,7 +29,15 @@ class HandlerExecutionContext:
 
 
 class ContextAwareHandler(Protocol):
-    """Worker 내부 실행 context를 명시적으로 받는 Handler 계약입니다."""
+    """Worker 내부 실행 context를 받는 Handler 정본입니다.
+
+    runtime에 등록하는 Handler는 이 계약을 따릅니다. Dispatcher가 항상
+    `context=`를 전달하므로 `context` 인자를 받지 않는 구현체는 정적 검사에서
+    걸러집니다. 기본값 `None`은 `Handler`와 같은 호출 형태를 유지해 Registry
+    등록을 가능하게 하기 위한 것이며, runtime이 context를 생략한다는 뜻이
+    아닙니다. 구현체는 `OcrHandler`처럼 `context is None`을 `INTERNAL_ERROR`로
+    닫아야 합니다.
+    """
 
     handler_type: JobType
 
@@ -37,7 +45,7 @@ class ContextAwareHandler(Protocol):
         self,
         message: WorkerMessage,
         *,
-        context: HandlerExecutionContext,
+        context: HandlerExecutionContext | None = None,
     ) -> HandlerSuccess:
         """Worker deadline이 포함된 내부 context로 실행합니다."""
         ...

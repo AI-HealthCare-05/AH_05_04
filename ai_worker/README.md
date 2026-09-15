@@ -340,18 +340,28 @@ Local/real-stack Compose는 기존 env_file에서, 운영 Compose는 명시적 e
 ### #577 Guide·Chat 내부 조립
 
 `build_worker_runtime(..., guide_chat_factories=...)`는 `GUIDE`/`CHAT`별
-`Callable[[AsyncSession], tuple[Handler, ResultStoreLike]]`를 선택적으로 받습니다.
-각 delivery에서 동일 session을 전달해 Handler와 저장소를 함께 생성합니다.
+`Callable[[AsyncSession], tuple[ContextAwareHandler, ResultStoreLike]]`를 선택적으로 받습니다.
+등록 대상 Handler의 정본은 `ContextAwareHandler`입니다. runtime은 모든 실행에 `context=`를
+전달하므로 `handle(message)`만 받는 구현체는 정적 검사에서 걸러지며, 구현체는 `OcrHandler`처럼
+`context is None`을 `INTERNAL_ERROR`로 닫아야 합니다.
+
+각 delivery에서 동일 session을 전달해 Handler와 저장소를 함께 생성합니다. 조립은 그 delivery의
+`job_type`에 해당하는 factory만 실행하므로, 한 종류의 조립 실패가 다른 종류를 막지 않습니다.
 OCR Provider가 없어도 Guide·Chat 주입은 가능하며, 기본 구성은 기존 OCR 경로를 유지합니다.
 OCR과 함께 등록하더라도 OCR 전용 시작 상태 전이는 OCR에만 적용합니다.
-Factory는 외부 호출·commit 없이 조립만 수행해야 합니다. Handler는 Worker의 `context`
-인자와 deadline을 수용하고, 저장소는 `save(message=..., result=...)`에서 현재 transaction에만
-저장합니다. 도메인 payload·권한·무결성 검사는 해당 Application Service/Repository 책임이며,
-Consumer의 결과 식별자·fencing·commit 후 ACK 경계를 재사용합니다.
+Factory는 외부 호출·commit 없이 조립만 수행해야 합니다. 저장소는 `save(message=..., result=...)`에서
+현재 transaction에만 저장합니다. 도메인 payload·권한·무결성 검사는 해당 Application
+Service/Repository 책임이며, Consumer의 결과 식별자·fencing·commit 후 ACK 경계를 재사용합니다.
 
-잘못된 Handler 종류 또는 Handler/저장소 누락은 실행 전에 차단합니다. 조립 예외는 delivery
-경계에서 격리하며 성공 결과나 ACK를 만들지 않습니다. 등록 자체가 없는 Job의 오류 처리는
-기존 Worker 실패 정책을 유지합니다.
+Factory 예외, 잘못된 Handler 종류, Handler/저장소 누락은 해당 종류를 **등록하지 않는 것**으로
+끝냅니다. 예외를 delivery 밖으로 올리면 실패 기록도 ACK도 없이 reclaim이 반복되기 때문입니다.
+등록되지 않은 job_type은 Dispatcher가 기존 Worker 실패 정책대로 `INTERNAL_ERROR`로 처리하므로,
+lease 획득 뒤의 attempt·실패 기록·ACK 경계를 그대로 사용합니다.
+
+실행 상한은 종류별로 다릅니다. `async-job-v1`의 `PD-91-20260831`에 따라 OCR·GUIDE는 hard timeout
+60초 / lease 75초, CHAT은 45초 / 60초를 사용합니다. CHAT 값은
+`WORKER_CHAT_HARD_TIMEOUT_SECONDS`·`WORKER_CHAT_LEASE_DURATION_SECONDS`로 분리했고, delivery의
+`job_type`에 따라 Consumer 실행에 적용합니다.
 
 이 변경은 주입 가능한 내부 연결과 합성 대역 검증입니다. 실제 Guide·Chat Handler/payload는
 #180, DB adapter·currentness·STALE은 #174의 인계 후 연결합니다. 실제 구현체·공개 API·

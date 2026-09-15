@@ -1,7 +1,7 @@
 """#577: 실제 assembly와 Consumer를 합성 의존성으로 연결합니다."""
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 from unittest.mock import MagicMock
 
@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_worker.core import runtime_assembly as assembly
-from ai_worker.core.errors import ConsumerPersistenceError, WorkerError
+from ai_worker.core.errors import ConsumerPersistenceError
 from ai_worker.core.handler import HandlerExecutionContext
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.stream import WorkerDelivery
@@ -105,7 +105,7 @@ async def test_delivery_save_commit_ack(monkeypatch, kind, failure, with_ocr):
     if with_ocr:
         execution._ocr_provider = MagicMock()
     assert execution.registered_types == frozenset({kind} | ({JobType.OCR} if with_ocr else set()))
-    consumer = execution._build_execution(session)
+    consumer = execution._build_execution(session, job_type=kind)
     message = WorkerMessage.model_validate(
         build_message().model_dump()
         | {"job_type": kind, "domain_type": "GUIDE" if kind == JobType.GUIDE else "CHAT_MESSAGE"}
@@ -135,19 +135,25 @@ async def test_delivery_save_commit_ack(monkeypatch, kind, failure, with_ocr):
 
 @pytest.mark.parametrize("kind", [JobType.GUIDE, JobType.CHAT])
 @pytest.mark.parametrize("missing", ["handler", "store"])
-def test_incomplete_binding_fails_before_execution(monkeypatch, kind, missing):
+def test_incomplete_binding_is_not_registered(monkeypatch, kind, missing):
+    """불완전한 binding은 예외를 올리지 않고 등록만 건너뜁니다.
+
+    예외를 delivery 밖으로 올리면 실패 기록도 ACK도 없이 reclaim이 반복됩니다.
+    등록되지 않은 job_type은 Dispatcher가 승인된 실패로 처리합니다.
+    """
+
     execution, session, store, events = assemble(monkeypatch, kind, invalid=missing)
-    with pytest.raises(WorkerError):
-        execution._build_execution(session)
+    consumer = execution._build_execution(session, job_type=kind)
+    assert kind not in consumer._dispatcher._registry.registered_types
     assert not events
     assert not store.persisted
 
 
-def test_wrong_handler_kind_fails_closed(monkeypatch):
+def test_wrong_handler_kind_is_not_registered(monkeypatch):
     execution, session, _, _ = assemble(monkeypatch, JobType.GUIDE)
     execution._guide_chat_factories[JobType.CHAT] = execution._guide_chat_factories.pop(JobType.GUIDE)
-    with pytest.raises(WorkerError):
-        execution._build_execution(session)
+    consumer = execution._build_execution(session, job_type=JobType.CHAT)
+    assert JobType.CHAT not in consumer._dispatcher._registry.registered_types
 
 
 def test_both_factories_and_ocr_registration(monkeypatch):
@@ -155,8 +161,57 @@ def test_both_factories_and_ocr_registration(monkeypatch):
     execution._guide_chat_factories[JobType.CHAT] = lambda s: (SyntheticHandler(JobType.CHAT, []), FakeResultStore([]))
     execution._ocr_provider = MagicMock()
     assert execution.registered_types == frozenset({JobType.OCR, JobType.GUIDE, JobType.CHAT})
-    consumer = execution._build_execution(session)
-    assert consumer._dispatcher._registry.registered_types == execution.registered_types
+
+    # delivery마다 해당 종류만 조립하므로 OCR과 그 delivery의 종류만 등록됩니다.
+    for kind in (JobType.GUIDE, JobType.CHAT):
+        consumer = execution._build_execution(session, job_type=kind)
+        assert consumer._dispatcher._registry.registered_types == frozenset({JobType.OCR, kind})
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected_lease_seconds", "expected_hard_timeout_seconds"),
+    [
+        (JobType.OCR, 75.0, 60.0),
+        (JobType.GUIDE, 75.0, 60.0),
+        (JobType.CHAT, 60.0, 45.0),
+    ],
+)
+def test_execution_limits_follow_async_job_contract(
+    monkeypatch,
+    kind,
+    expected_lease_seconds,
+    expected_hard_timeout_seconds,
+):
+    """PD-91-20260831: OCR·GUIDE는 60초/75초, CHAT은 45초/60초로 고정합니다."""
+
+    execution, session, _, _ = assemble(monkeypatch, JobType.GUIDE)
+    execution._guide_chat_factories[JobType.CHAT] = lambda s: (SyntheticHandler(JobType.CHAT, []), FakeResultStore([]))
+    execution._ocr_provider = MagicMock()
+
+    consumer = execution._build_execution(session, job_type=kind)
+
+    assert consumer._lease_duration == timedelta(seconds=expected_lease_seconds)
+    assert consumer._hard_timeout_seconds == expected_hard_timeout_seconds
+
+
+def test_broken_factory_does_not_block_other_kinds(monkeypatch):
+    """한 종류의 factory 예외가 다른 종류의 조립을 막지 않습니다."""
+
+    def broken(received):
+        raise RuntimeError("synthetic factory failure")
+
+    execution, session, _, _ = assemble(monkeypatch, JobType.GUIDE)
+    execution._guide_chat_factories[JobType.CHAT] = broken
+    execution._ocr_provider = MagicMock()
+
+    chat_consumer = execution._build_execution(session, job_type=JobType.CHAT)
+    assert chat_consumer._dispatcher._registry.registered_types == frozenset({JobType.OCR})
+
+    guide_consumer = execution._build_execution(session, job_type=JobType.GUIDE)
+    assert guide_consumer._dispatcher._registry.registered_types == frozenset({JobType.OCR, JobType.GUIDE})
+
+    ocr_consumer = execution._build_execution(session, job_type=JobType.OCR)
+    assert ocr_consumer._dispatcher._registry.registered_types == frozenset({JobType.OCR})
 
 
 @pytest.mark.asyncio
@@ -192,8 +247,53 @@ def test_factories_are_delivery_scoped(monkeypatch):
 
     execution._guide_chat_factories[JobType.GUIDE] = factory
     other_session = cast(AsyncSession, MagicMock(spec=AsyncSession))
-    execution._build_execution(session)
-    execution._build_execution(other_session)
+    execution._build_execution(session, job_type=JobType.GUIDE)
+    execution._build_execution(other_session, job_type=JobType.GUIDE)
     assert calls[0][0] is session and calls[1][0] is other_session
     assert calls[0][1][0] is not calls[1][1][0]
     assert calls[0][1][1] is not calls[1][1][1]
+
+
+class _SessionFactoryStub:
+    """`async with self._session_factory() as session` 경계를 흉내냅니다."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    def __call__(self):
+        return self
+
+    async def __aenter__(self):
+        return self._session
+
+    async def __aexit__(self, *_):
+        return False
+
+
+@pytest.mark.parametrize("failure", ["raises", "invalid"])
+@pytest.mark.asyncio
+async def test_public_execute_records_failure_and_acks_for_broken_factory(monkeypatch, failure):
+    """조립 실패도 Job 실패 경계 안에서 끝나야 합니다.
+
+    public execute()가 예외를 삼키고 None으로 끝나면 실패 기록도 ACK도 없이
+    reclaim이 반복됩니다. 등록되지 않은 종류로 떨어뜨려 기존 실패 정책을 태웁니다.
+    """
+
+    execution, session, _, events = assemble(monkeypatch, JobType.GUIDE)
+    repository = FakeJobExecutionRepository(events, complete_successfully=True)
+    monkeypatch.setattr(assembly, "SqlAlchemyJobExecutionRepository", lambda received: repository)
+
+    def broken(received):
+        raise RuntimeError("synthetic factory failure")
+
+    execution._guide_chat_factories[JobType.GUIDE] = broken if failure == "raises" else (lambda received: (None, None))
+    execution._session_factory = _SessionFactoryStub(session)
+
+    message = WorkerMessage.model_validate(
+        build_message().model_dump() | {"job_type": JobType.GUIDE, "domain_type": "GUIDE"}
+    )
+    await execution.execute(WorkerDelivery(stream_message_id="577-1", message=message))
+
+    assert repository.recorded_failure is not None
+    assert repository.recorded_failure[0] == "INTERNAL_ERROR"
+    assert "ack" in events

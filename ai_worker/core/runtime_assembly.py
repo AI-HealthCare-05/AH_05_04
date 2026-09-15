@@ -60,7 +60,7 @@ from ai_worker.core.dispatcher import Dispatcher
 from ai_worker.core.dlq import DlqOutboxPublisher
 from ai_worker.core.errors import WorkerError
 from ai_worker.core.event_publisher import EventPublisher
-from ai_worker.core.handler import Handler
+from ai_worker.core.handler import ContextAwareHandler
 from ai_worker.core.job_execution import LeaseNotAcquired
 from ai_worker.core.outbox_publisher import OutboxPublisher
 from ai_worker.core.provider_observability import (
@@ -151,7 +151,8 @@ class ResultStoreLike(Protocol):
 
 
 # Handler와 저장소는 delivery의 동일 session에서 함께 조립합니다.
-type GuideChatFactory = Callable[[AsyncSession], tuple[Handler, ResultStoreLike]]
+# runtime은 항상 context를 전달하므로 등록 대상은 ContextAwareHandler 계약을 따릅니다.
+type GuideChatFactory = Callable[[AsyncSession], tuple[ContextAwareHandler, ResultStoreLike]]
 
 
 def create_worker_engine(config: Config) -> AsyncEngine:
@@ -370,7 +371,7 @@ class SessionScopedDeliveryExecution:
     async def execute(self, delivery: WorkerDelivery) -> object:
         async with self._session_factory() as session:
             try:
-                execution = self._build_execution(session)
+                execution = self._build_execution(session, job_type=delivery.message.job_type)
                 result = await execution.execute(delivery)
 
                 if isinstance(result, LeaseNotAcquired) and result.rejection_reason is not None:
@@ -439,7 +440,63 @@ class SessionScopedDeliveryExecution:
             acknowledger=self._acknowledger,
         )
 
-    def _build_execution(self, session: AsyncSession) -> LeaseAwareConsumerExecution:
+    def _execution_limits(self, job_type: JobType) -> tuple[timedelta, float]:
+        """async-job-v1의 종류별 실행 상한입니다. CHAT만 45초/60초를 사용합니다."""
+
+        if job_type is JobType.CHAT:
+            return (
+                self._config.chat_lease_duration,
+                self._config.WORKER_CHAT_HARD_TIMEOUT_SECONDS,
+            )
+        return self._config.lease_duration, self._config.WORKER_HARD_TIMEOUT_SECONDS
+
+    def _register_guide_chat(
+        self,
+        registry: HandlerRegistry,
+        stores: dict[JobType, ResultStoreLike],
+        *,
+        session: AsyncSession,
+        job_type: JobType,
+    ) -> None:
+        """이 delivery 종류의 factory만 조립합니다.
+
+        조립에 실패한 종류는 등록하지 않고 넘어갑니다. 등록되지 않은 job_type은
+        Dispatcher가 승인된 실패(INTERNAL_ERROR)로 처리하므로, lease 획득 뒤의
+        기존 실패 기록·ACK 경계를 그대로 사용합니다. 예외를 밖으로 올리면 실패
+        기록도 ACK도 없이 reclaim이 반복되고 다른 종류까지 막힙니다.
+        """
+
+        factory = self._guide_chat_factories.get(job_type)
+        if factory is None:
+            return
+
+        try:
+            handler, store = factory(session)
+        except Exception:
+            # 조립 예외의 원문에는 Provider 설정이나 secret이 섞일 수 있어 남기지 않습니다.
+            self._logger.error(
+                "guide/chat factory assembly failed",
+                extra={"job_type": job_type.value, "failure_code": "INTERNAL_ERROR"},
+            )
+            return
+
+        if (
+            handler is None
+            or handler.handler_type != job_type
+            or not callable(getattr(handler, "handle", None))
+            or store is None
+            or not callable(getattr(store, "save", None))
+        ):
+            self._logger.error(
+                "guide/chat factory returned an invalid binding",
+                extra={"job_type": job_type.value, "failure_code": "INTERNAL_ERROR"},
+            )
+            return
+
+        registry.register(handler)
+        stores[job_type] = store
+
+    def _build_execution(self, session: AsyncSession, *, job_type: JobType) -> LeaseAwareConsumerExecution:
         registry = self._build_registry(session=session)
         stores: dict[JobType, ResultStoreLike] = {}
         execution_starter = None
@@ -451,19 +508,9 @@ class SessionScopedDeliveryExecution:
             )
             execution_starter = RoutingExecutionStarter({JobType.OCR: SqlAlchemyOcrExecutionStarter(session)})
 
-        for kind, factory in self._guide_chat_factories.items():
-            handler, store = factory(session)
-            if (
-                handler is None
-                or handler.handler_type != kind
-                or not callable(getattr(handler, "handle", None))
-                or store is None
-                or not callable(getattr(store, "save", None))
-            ):
-                raise WorkerError(failure_code="INTERNAL_ERROR")
-            registry.register(handler)
-            stores[kind] = store
+        self._register_guide_chat(registry, stores, session=session, job_type=job_type)
 
+        lease_duration, hard_timeout_seconds = self._execution_limits(job_type)
         keyword_arguments = {
             "dispatcher": Dispatcher(registry),
             "result_store": RoutingResultStore(stores),
@@ -471,9 +518,9 @@ class SessionScopedDeliveryExecution:
             "acknowledger": self._acknowledger,
             "job_repository": SqlAlchemyJobExecutionRepository(session),
             "heartbeat": self._heartbeat,
-            "lease_duration": self._config.lease_duration,
+            "lease_duration": lease_duration,
             "clock": self._clock,
-            "hard_timeout_seconds": self._config.WORKER_HARD_TIMEOUT_SECONDS,
+            "hard_timeout_seconds": hard_timeout_seconds,
             "execution_starter": execution_starter,
         }
 
