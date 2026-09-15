@@ -52,7 +52,7 @@
 - OCR 목적의 `current_policy_version`은 `OCR_CONSENT_POLICY_VERSION`입니다. 이 값이 빈 문자열이면 현재 OCR 동의 안내가 확정되지 않은 상태로 보고 신규 `GRANTED` 저장을 `503 CONSENT_POLICY_UNAVAILABLE`로 거부합니다.
 - 단, `OCR_CONSENT_POLICY_VERSION`이 빈 문자열이어도 이미 저장된 OCR 동의 row의 철회는 허용합니다. 목적별 `PUT /api/v1/users/me/consents/OCR`은 기존 row가 있고 요청 `status=WITHDRAWN`, 요청 `policy_version`이 기존 row의 저장 `policy_version`과 일치할 때만 철회할 수 있습니다. OCR 전용 `DELETE /api/v1/users/me/consents/OCR`도 같은 기존 저장 version을 보존해 철회합니다.
 - OCR 전용 `GET /api/v1/users/me/consents/OCR`과 OCR 접수 Gate는 빈 `OCR_CONSENT_POLICY_VERSION`에서 fail-closed로 `503 CONSENT_POLICY_UNAVAILABLE`을 반환합니다. 목적별 목록 조회 `GET /api/v1/users/me/consents`는 상태 확인용으로 계속 `200 OK`를 반환하되 OCR 항목의 `current_policy_version=""`, `is_granted=false`를 반환합니다.
-- 이 API는 목적별 동의 저장·조회·변경 기반을 제공합니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide 동기 생성 Gate는 처방 소유권 확인 후 Provider 호출·Guide row 생성 전에 `purpose=GUIDE` 최신 동의 row로 검사합니다. Chat/Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 [PD-207 Proposed 계약](../proposed/consent-gate-207.md)의 후속 구현 범위입니다.
+- 이 API는 목적별 동의 저장·조회·변경 기반을 제공합니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide 동기 생성 Gate는 처방 소유권 확인 후 Provider 호출·Guide row 생성 전에 `purpose=GUIDE` 최신 동의 row로 검사합니다. Chat 동기 메시지 Gate는 세션 소유권·처방 version currentness 확인 후 메시지 저장·Provider 호출 전에 `purpose=CHAT` 최신 동의 row로 검사합니다. Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 [PD-207 Proposed 계약](../proposed/consent-gate-207.md)의 후속 구현 범위입니다.
 
 ## 인증 세션 무효화
 
@@ -131,7 +131,7 @@
 - `PATCH /api/v1/users/me`에서 위 필드를 수정 대상으로 확장
 - 회원탈퇴 API의 세부 transaction 구현
 - 정교한 rate limit, 이메일 템플릿 디자인 고도화, 회원가입 이메일 인증 강제 gate 활성화
-- Guide/Chat/Notification 목적별 동의 Gate, OCR 최종 정책 문구·version 승인, Frontend 동의 UI
+- Notification 목적별 동의 Gate, OCR 최종 정책 문구·version 승인, Frontend 동의 UI
 
 ## 검증과 변경 규칙
 
