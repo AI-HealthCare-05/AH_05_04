@@ -241,19 +241,24 @@ def test_local_live_failure_preserves_provider_trace_references() -> None:
 
 
 @pytest.mark.parametrize(
-    ("enabled", "model_version", "prompt_version"),
+    ("enabled", "model_version", "prompt_version", "llm_processing"),
     [
-        (True, "gpt-4o-mini-2024-07-18", "ocr-structure-prompt-v2"),
-        (False, None, None),
+        (True, "gpt-4o-mini-2024-07-18", "ocr-structure-prompt-v2", "APPLIED"),
+        (False, None, None, "NOT_REQUESTED"),
     ],
 )
 def test_ocr_database_evidence_matches_configured_structuring_path(
     enabled: bool,
     model_version: str | None,
     prompt_version: str | None,
+    llm_processing: str | None,
 ) -> None:
     evidence = _ocr_database_evidence(
-        SimpleNamespace(model_version=model_version, prompt_version=prompt_version),
+        SimpleNamespace(
+            model_version=model_version,
+            prompt_version=prompt_version,
+            llm_processing=llm_processing,
+        ),
         ocr_structuring_expected=enabled,
     )
 
@@ -261,25 +266,31 @@ def test_ocr_database_evidence_matches_configured_structuring_path(
         "status": "PASS",
         "model_version": model_version,
         "prompt_version": prompt_version,
+        "llm_processing": llm_processing,
     }
 
 
 @pytest.mark.parametrize(
-    ("enabled", "model_version", "prompt_version"),
+    ("enabled", "model_version", "prompt_version", "llm_processing"),
     [
-        (True, None, None),
-        (True, "model", None),
-        (False, "unexpected-model", "unexpected-prompt"),
+        (True, None, None, None),
+        (True, "model", None, None),
+        (False, "unexpected-model", "unexpected-prompt", "NOT_REQUESTED"),
     ],
 )
 def test_ocr_database_evidence_rejects_config_and_database_mismatch(
     enabled: bool,
     model_version: str | None,
     prompt_version: str | None,
+    llm_processing: str | None,
 ) -> None:
     with pytest.raises(HttpFlowError, match="DB_VERIFICATION") as exc_info:
         _ocr_database_evidence(
-            SimpleNamespace(model_version=model_version, prompt_version=prompt_version),
+            SimpleNamespace(
+                model_version=model_version,
+                prompt_version=prompt_version,
+                llm_processing=llm_processing,
+            ),
             ocr_structuring_expected=enabled,
         )
 
@@ -288,4 +299,5 @@ def test_ocr_database_evidence_rejects_config_and_database_mismatch(
         "ocr_structuring_expected": enabled,
         "model_version_present": bool(model_version),
         "prompt_version_present": bool(prompt_version),
+        "llm_processing": llm_processing,
     }

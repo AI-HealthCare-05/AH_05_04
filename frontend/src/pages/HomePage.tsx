@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent } from 'react'
+import type { CSSProperties, KeyboardEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { ApiError } from '../api/client'
+import {
+  getMedicationReport,
+  type MedicationReportData,
+} from '../api/medicationReports'
+import { getLatestPrescription } from '../api/prescriptions'
 import type { CurrentUser } from '../api/users'
 import bellIcon from '../assets/icon-bell-notification.svg'
 import { Button, MobileShell } from '../design-system/components'
@@ -8,34 +14,89 @@ import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
 import './MvpPages.css'
 
-function HomeShortcutIcon({ type }: { type: 'prescription' | 'otc' | 'chat' }) {
-  if (type === 'prescription') {
-    return (
-      <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
-        <rect x="7" y="7" width="18" height="18" stroke="currentColor" strokeWidth="2.2" />
-        <rect x="13" y="13" width="6" height="6" fill="currentColor" />
-      </svg>
-    )
-  }
+type HomeServices = {
+  getLatestPrescription: typeof getLatestPrescription
+  getMedicationReport: typeof getMedicationReport
+}
 
-  if (type === 'otc') {
-    return (
-      <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
-        <circle cx="16" cy="16" r="8" fill="currentColor" />
-      </svg>
-    )
-  }
+const defaultHomeServices: HomeServices = {
+  getLatestPrescription,
+  getMedicationReport,
+}
 
+type HomePrescriptionState = 'loading' | 'empty' | 'active' | 'error'
+type HomeReportState = 'idle' | 'loading' | 'ready' | 'error'
+
+function HomeShortcutIcon({ type }: { type: 'prescription' | 'report' }) {
+  return <span className={`mvp-home__shortcut-glyph is-${type}`} aria-hidden="true" />
+}
+
+function HomeAdherenceCrown() {
   return (
-    <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <circle cx="8" cy="16" r="2.5" fill="currentColor" />
-      <circle cx="16" cy="16" r="2.5" fill="currentColor" />
-      <circle cx="24" cy="16" r="2.5" fill="currentColor" />
+    <svg
+      className="mvp-home__adherence-crown"
+      viewBox="0 0 18 14"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M2 11.5L1.2 3.6L5.3 6.2L9 1.3L12.7 6.2L16.8 3.6L16 11.5H2Z"
+        fill="#F8B84E"
+        stroke="#D58A18"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M3 12.5H15"
+        stroke="#D58A18"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
     </svg>
   )
 }
 
-function HomeAdherenceCard() {
+function HomeAdherenceCard({
+  report,
+  state,
+  onOpenReport,
+}: {
+  report: MedicationReportData | null
+  state: HomeReportState
+  onOpenReport: () => void
+}) {
+  const percentage = report?.adherence_rate.percentage ?? null
+  const hasRate =
+    state === 'ready' &&
+    report !== null &&
+    report.adherence_rate.denominator > 0 &&
+    percentage !== null
+  const safePercentage = hasRate
+    ? Math.min(100, Math.max(0, percentage))
+    : 0
+  const progressRatio = safePercentage / 100
+  const progressStyle = {
+    '--home-adherence-fill': `calc(${safePercentage}% - ${48 * progressRatio}px)`,
+    '--home-adherence-mascot': `clamp(0px, calc(${safePercentage}% + ${4 - 48 * progressRatio}px), calc(100% - 40px))`,
+  } as CSSProperties
+
+  const statusText = state === 'loading'
+    ? '기록 확인 중'
+    : state === 'error'
+      ? '리포트에서 확인'
+      : hasRate
+        ? `${safePercentage}%`
+        : '계산할 기록 없음'
+  const message = state === 'loading'
+    ? '최근 복약 기록을 불러오고 있어요.'
+    : state === 'error'
+      ? '상세 리포트에서 최근 기록을 확인해 주세요.'
+      : !hasRate
+        ? '이번 주 계산할 복약 기록이 아직 없어요.'
+        : safePercentage === 100
+          ? '일주일 동안 꾸준히 약을 챙기셨어요! 대단해요!'
+          : '이번 주도 꾸준히 약을 챙기고 있어요!'
+
   return (
     <section
       className="mvp-home__adherence-card"
@@ -43,24 +104,37 @@ function HomeAdherenceCard() {
     >
       <div className="mvp-home__adherence-header">
         <h2 id="home-adherence-heading">이번 주 복약 달성도</h2>
-        <button type="button" aria-label="상세 보기 (준비 중)" disabled>
+        <button type="button" onClick={onOpenReport}>
           상세 보기 &gt;
         </button>
       </div>
-      <strong className="mvp-home__adherence-status">집계 준비 중</strong>
+      <strong className="mvp-home__adherence-status">{statusText}</strong>
       <div
         className="mvp-home__adherence-progress"
-        aria-label="이번 주 복약 달성도 집계 준비 중"
+        aria-label={hasRate ? `이번 주 복약 달성도 ${safePercentage}%` : statusText}
+        role={hasRate ? 'progressbar' : 'status'}
+        aria-valuemin={hasRate ? 0 : undefined}
+        aria-valuemax={hasRate ? 100 : undefined}
+        aria-valuenow={hasRate ? safePercentage : undefined}
+        style={progressStyle}
       >
         <span className="mvp-home__adherence-track" aria-hidden="true" />
+        <span className="mvp-home__adherence-fill" aria-hidden="true" />
         <DoseyMascot variant="progress" />
+        {safePercentage === 100 && <HomeAdherenceCrown />}
       </div>
-      <p>복약 기록이 쌓이면 주간 달성도를 보여드려요.</p>
+      <p>{message}</p>
     </section>
   )
 }
 
-function HomePage({ currentUser }: { currentUser: CurrentUser }) {
+function HomePage({
+  currentUser,
+  services = defaultHomeServices,
+}: {
+  currentUser: CurrentUser
+  services?: HomeServices
+}) {
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -73,6 +147,11 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
 
   const [isOnboardingOpen, setIsOnboardingOpen] =
     useState(shouldShowOnboarding)
+  const [prescriptionState, setPrescriptionState] =
+    useState<HomePrescriptionState>('loading')
+  const [reportState, setReportState] = useState<HomeReportState>('idle')
+  const [report, setReport] = useState<MedicationReportData | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
 
   const onboardingDialogRef = useRef<HTMLElement>(null)
   const pageRef = useRef<HTMLDivElement>(null)
@@ -148,6 +227,47 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
       }
     }
   }, [isOnboardingOpen])
+
+  useEffect(() => {
+    const controller = new AbortController()
+
+    setPrescriptionState('loading')
+    setReportState('idle')
+    setReport(null)
+
+    const loadHomeState = async () => {
+      try {
+        await services.getLatestPrescription(controller.signal)
+        if (controller.signal.aborted) return
+
+        setPrescriptionState('active')
+        setReportState('loading')
+
+        try {
+          const response = await services.getMedicationReport(7, controller.signal)
+          if (controller.signal.aborted) return
+          setReport(response.data)
+          setReportState('ready')
+        } catch {
+          if (!controller.signal.aborted) setReportState('error')
+        }
+      } catch (error) {
+        if (controller.signal.aborted) return
+        setPrescriptionState(
+          error instanceof ApiError &&
+            error.status === 404 &&
+            error.code === 'PRESCRIPTION_NOT_FOUND'
+            ? 'empty'
+            : 'error',
+        )
+      }
+    }
+
+    void loadHomeState()
+
+    return () => controller.abort()
+  }, [reloadKey, services])
+
   const userName = currentUser.name.trim()
   const today = useMemo(
     () =>
@@ -186,7 +306,7 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
           if (item === '메뉴') navigate('/menu')
         }}
       >
-        <main className="app-scroll mvp-page__content">
+        <main className={`app-scroll mvp-page__content is-${prescriptionState}`}>
           <div className="mvp-home__hero">
             <div className="mvp-home__greeting-row">
               <p>
@@ -205,58 +325,69 @@ function HomePage({ currentUser }: { currentUser: CurrentUser }) {
             </p>
           )}
 
-          <section className="mvp-home__card-stack" aria-label="Home 주요 기능">
-            <button
-              ref={homePrescriptionButtonRef}
-              className="mvp-home__hub-card mvp-home__hub-card--prescription"
-              type="button"
-              onClick={() => navigate('/prescriptions/upload', {
-                state: { intent: 'new-prescription' },
-              })}
-            >
-              <span className="mvp-home__hub-icon">
-                <HomeShortcutIcon type="prescription" />
-              </span>
-              <span className="mvp-home__hub-copy">
-                <strong>처방약 복용 안내</strong>
-                <small>처방전을 등록하고 복약 가이드를 확인해보세요.</small>
-              </span>
-              <span className="mvp-home__hub-arrow" aria-hidden="true">›</span>
-            </button>
-            <button
-              className="mvp-home__hub-card mvp-home__hub-card--otc"
-              type="button"
-              aria-label="일반의약품 안내 (준비 중)"
-              disabled
-            >
-              <span className="mvp-home__hub-icon">
-                <HomeShortcutIcon type="otc" />
-              </span>
-              <span className="mvp-home__hub-copy">
-                <strong>일반의약품 안내</strong>
-                <small>
-                  궁금한 일반 의약품과 처방된 약을 함께 먹어도 되는지 확인해보세요.
-                </small>
-              </span>
-              <span className="mvp-home__hub-arrow" aria-hidden="true">›</span>
-            </button>
-            <button
-              className="mvp-home__hub-card mvp-home__hub-card--doji"
-              type="button"
-              onClick={() => navigate('/chat')}
-            >
-              <span className="mvp-home__hub-icon">
-                <HomeShortcutIcon type="chat" />
-              </span>
-              <span className="mvp-home__hub-copy">
-                <strong>도지에게 질문하기</strong>
-                <small>복약 중 궁금한 점을 도지와 대화해보세요.</small>
-              </span>
-              <span className="mvp-home__hub-arrow" aria-hidden="true">›</span>
-            </button>
-          </section>
+          {prescriptionState === 'loading' && (
+            <section className="mvp-home__state-card" role="status">
+              <strong>홈 정보를 불러오고 있어요</strong>
+              <p>현재 처방 상태를 확인하고 있어요.</p>
+            </section>
+          )}
 
-          <HomeAdherenceCard />
+          {prescriptionState === 'error' && (
+            <section className="mvp-home__state-card is-error" role="alert">
+              <strong>홈 정보를 불러오지 못했어요</strong>
+              <p>네트워크 연결을 확인한 뒤 다시 시도해 주세요.</p>
+              <button type="button" onClick={() => setReloadKey((key) => key + 1)}>
+                다시 시도
+              </button>
+            </section>
+          )}
+
+          {prescriptionState === 'empty' && (
+            <section className="mvp-home__card-stack is-empty" aria-label="Home 주요 기능">
+              <button
+                ref={homePrescriptionButtonRef}
+                className="mvp-home__hub-card mvp-home__hub-card--prescription"
+                type="button"
+                aria-label="처방약 복용 안내 · 내 처방전 등록하기"
+                onClick={() => navigate('/prescriptions/upload', {
+                  state: { intent: 'new-prescription' },
+                })}
+              >
+                <span className="mvp-home__hub-icon">
+                  <HomeShortcutIcon type="prescription" />
+                </span>
+                <span className="mvp-home__hub-copy">
+                  <strong>내 처방전 등록하기</strong>
+                  <small>처방전을 등록하고<br />복약 가이드를 확인해보세요.</small>
+                </span>
+                <span className="mvp-home__hub-arrow" aria-hidden="true">›</span>
+              </button>
+            </section>
+          )}
+
+          {prescriptionState === 'active' && (
+            <section className="mvp-home__active-stack" aria-label="Home 처방 등록 완료">
+              <HomeAdherenceCard
+                report={report}
+                state={reportState}
+                onOpenReport={() => navigate('/report')}
+              />
+              <button
+                className="mvp-home__hub-card mvp-home__hub-card--report"
+                type="button"
+                onClick={() => navigate('/report')}
+              >
+                <span className="mvp-home__hub-icon">
+                  <HomeShortcutIcon type="report" />
+                </span>
+                <span className="mvp-home__hub-copy">
+                  <strong>복약 리포트 보기</strong>
+                  <small>7일/30일 복약 현황을<br />한눈에 확인해보세요.</small>
+                </span>
+                <span className="mvp-home__hub-arrow" aria-hidden="true">›</span>
+              </button>
+            </section>
+          )}
         </main>
       </MobileShell>
       {isOnboardingOpen && (
