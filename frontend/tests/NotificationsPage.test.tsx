@@ -1,7 +1,7 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { ApiError } from '../src/api/client'
 import {
   OccurrenceMedicationUnavailableError,
@@ -83,16 +83,33 @@ function LocationProbe() {
   return <output data-testid="location">{location.pathname}{location.search}</output>
 }
 
+function RouteLeaveControl() {
+  const navigate = useNavigate()
+  return <button type="button" onClick={() => navigate('/away')}>테스트 경로 이동</button>
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 function renderPage(
   onHandoffReady?: (handoff: NotificationOccurrenceHandoff) => void,
 ) {
   return render(
     <MemoryRouter initialEntries={['/notifications']}>
+      <RouteLeaveControl />
       <Routes>
         <Route path="/notifications" element={<NotificationsPage onHandoffReady={onHandoffReady} />} />
         <Route path="/schedule/occurrences/:occurrenceId" element={<LocationProbe />} />
         <Route path="/schedule" element={<div>일정 화면</div>} />
         <Route path="/login" element={<div>로그인 화면</div>} />
+        <Route path="/away" element={<LocationProbe />} />
       </Routes>
     </MemoryRouter>,
   )
@@ -161,11 +178,18 @@ describe('NotificationsPage', () => {
     expect((await screen.findByTestId('location')).textContent).toBe(
       `/schedule/occurrences/${UNREAD_NOTIFICATION.occurrence_id}?date=2026-09-10`,
     )
-    expect(markNotificationRead).toHaveBeenCalledWith(UNREAD_NOTIFICATION.id, 'notification-read:test-key')
-    expect(resolveNotificationOccurrenceMedication).toHaveBeenCalledWith({
-      occurrenceId: UNREAD_NOTIFICATION.occurrence_id,
-      occurrenceLocalDate: UNREAD_NOTIFICATION.occurrence_local_date,
-    })
+    expect(markNotificationRead).toHaveBeenCalledWith(
+      UNREAD_NOTIFICATION.id,
+      'notification-read:test-key',
+      expect.anything(),
+    )
+    expect(resolveNotificationOccurrenceMedication).toHaveBeenCalledWith(
+      {
+        occurrenceId: UNREAD_NOTIFICATION.occurrence_id,
+        occurrenceLocalDate: UNREAD_NOTIFICATION.occurrence_local_date,
+      },
+      expect.anything(),
+    )
     expect(markNotificationRead.mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(resolveNotificationOccurrenceMedication).mock.invocationCallOrder[0]!,
     )
@@ -173,6 +197,7 @@ describe('NotificationsPage', () => {
       occurrenceId: UNREAD_NOTIFICATION.occurrence_id,
       occurrenceLocalDate: '2026-09-10',
     })
+    expect(onHandoffReady).toHaveBeenCalledTimes(1)
     expect(putMedicationCheckin).not.toHaveBeenCalled()
   })
 
@@ -185,10 +210,13 @@ describe('NotificationsPage', () => {
       `/schedule/occurrences/${READ_NOTIFICATION.occurrence_id}?date=2026-09-09`,
     )
     expect(markNotificationRead).not.toHaveBeenCalled()
-    expect(resolveNotificationOccurrenceMedication).toHaveBeenCalledWith({
-      occurrenceId: READ_NOTIFICATION.occurrence_id,
-      occurrenceLocalDate: READ_NOTIFICATION.occurrence_local_date,
-    })
+    expect(resolveNotificationOccurrenceMedication).toHaveBeenCalledWith(
+      {
+        occurrenceId: READ_NOTIFICATION.occurrence_id,
+        occurrenceLocalDate: READ_NOTIFICATION.occurrence_local_date,
+      },
+      expect.anything(),
+    )
     expect(putMedicationCheckin).not.toHaveBeenCalled()
   })
 
@@ -200,6 +228,166 @@ describe('NotificationsPage', () => {
       name: '복약 재알림, 복약일 2026-09-10, 읽지 않음',
     }))
     expect((await screen.findByTestId('location')).textContent).toContain('date=2026-09-10')
+  })
+
+  it('read PATCH pending 중 route를 떠나면 late resolve가 navigation하지 않는다', async () => {
+    const read = createDeferred<Awaited<ReturnType<typeof markNotificationRead>>>()
+    const onHandoffReady = vi.fn()
+    vi.mocked(markNotificationRead).mockReturnValueOnce(read.promise)
+    renderPage(onHandoffReady)
+
+    fireEvent.click(await screen.findByRole('button', {
+      name: '복약 재알림, 복약일 2026-09-10, 읽지 않음',
+    }))
+    const readSignal = vi.mocked(markNotificationRead).mock.calls[0]?.[2]
+    expect(readSignal?.aborted).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: '테스트 경로 이동' }))
+    expect(screen.getByTestId('location').textContent).toBe('/away')
+    expect(readSignal?.aborted).toBe(true)
+
+    await act(async () => {
+      read.resolve({
+        data: { ...UNREAD_NOTIFICATION, read_at: '2026-09-11T02:00:00Z' },
+      })
+      await read.promise
+    })
+
+    expect(screen.getByTestId('location').textContent).toBe('/away')
+    expect(resolveNotificationOccurrenceMedication).not.toHaveBeenCalled()
+    expect(onHandoffReady).not.toHaveBeenCalled()
+  })
+
+  it('occurrence GET pending 중 route를 떠나면 late resolve가 navigation하지 않는다', async () => {
+    const occurrence = createDeferred<void>()
+    const medication = createDeferred<ReturnType<typeof resolvedFixture>>()
+    const onHandoffReady = vi.fn()
+    vi.mocked(resolveNotificationOccurrenceMedication).mockImplementationOnce(
+      async (handoff) => {
+        await occurrence.promise
+        return medication.promise.then(() => resolvedFixture(handoff))
+      },
+    )
+    renderPage(onHandoffReady)
+
+    fireEvent.click(await screen.findByRole('button', {
+      name: '복약 알림, 복약일 2026-09-09, 읽음',
+    }))
+    const lookupSignal = vi.mocked(resolveNotificationOccurrenceMedication).mock.calls[0]?.[1]
+    expect(lookupSignal?.aborted).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: '테스트 경로 이동' }))
+    expect(screen.getByTestId('location').textContent).toBe('/away')
+    expect(lookupSignal?.aborted).toBe(true)
+
+    await act(async () => {
+      occurrence.resolve()
+      medication.resolve(resolvedFixture({
+        occurrenceId: READ_NOTIFICATION.occurrence_id,
+        occurrenceLocalDate: READ_NOTIFICATION.occurrence_local_date,
+      }))
+      await medication.promise
+    })
+
+    expect(screen.getByTestId('location').textContent).toBe('/away')
+    expect(onHandoffReady).not.toHaveBeenCalled()
+  })
+
+  it('medication validation pending 중 route를 떠나면 late resolve가 navigation하지 않는다', async () => {
+    const occurrence = createDeferred<void>()
+    const medication = createDeferred<ReturnType<typeof resolvedFixture>>()
+    const onHandoffReady = vi.fn()
+    vi.mocked(resolveNotificationOccurrenceMedication).mockImplementationOnce(
+      async (handoff) => {
+        await occurrence.promise
+        return medication.promise.then(() => resolvedFixture(handoff))
+      },
+    )
+    renderPage(onHandoffReady)
+
+    fireEvent.click(await screen.findByRole('button', {
+      name: '복약 재알림, 복약일 2026-09-10, 읽지 않음',
+    }))
+    await act(async () => occurrence.resolve())
+    const lookupSignal = vi.mocked(resolveNotificationOccurrenceMedication).mock.calls[0]?.[1]
+    expect(lookupSignal?.aborted).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: '테스트 경로 이동' }))
+    expect(lookupSignal?.aborted).toBe(true)
+
+    await act(async () => {
+      medication.resolve(resolvedFixture({
+        occurrenceId: UNREAD_NOTIFICATION.occurrence_id,
+        occurrenceLocalDate: UNREAD_NOTIFICATION.occurrence_local_date,
+      }))
+      await medication.promise
+    })
+
+    expect(screen.getByTestId('location').textContent).toBe('/away')
+    expect(onHandoffReady).not.toHaveBeenCalled()
+  })
+
+  it('이미 read된 notification의 pending 조회도 route 이탈 뒤 navigation하지 않는다', async () => {
+    const lookup = createDeferred<ReturnType<typeof resolvedFixture>>()
+    const onHandoffReady = vi.fn()
+    vi.mocked(resolveNotificationOccurrenceMedication).mockReturnValueOnce(lookup.promise)
+    renderPage(onHandoffReady)
+
+    fireEvent.click(await screen.findByRole('button', {
+      name: '복약 알림, 복약일 2026-09-09, 읽음',
+    }))
+    const lookupSignal = vi.mocked(resolveNotificationOccurrenceMedication).mock.calls[0]?.[1]
+    fireEvent.click(screen.getByRole('button', { name: '테스트 경로 이동' }))
+    expect(lookupSignal?.aborted).toBe(true)
+    await act(async () => {
+      lookup.resolve(resolvedFixture({
+        occurrenceId: READ_NOTIFICATION.occurrence_id,
+        occurrenceLocalDate: READ_NOTIFICATION.occurrence_local_date,
+      }))
+      await lookup.promise
+    })
+
+    expect(markNotificationRead).not.toHaveBeenCalled()
+    expect(screen.getByTestId('location').textContent).toBe('/away')
+    expect(onHandoffReady).not.toHaveBeenCalled()
+  })
+
+  it('notification A의 late resolve가 이후 선택한 B의 handoff를 덮어쓰지 않는다', async () => {
+    const firstLookup = createDeferred<ReturnType<typeof resolvedFixture>>()
+    const onHandoffReady = vi.fn()
+    vi.mocked(resolveNotificationOccurrenceMedication)
+      .mockReturnValueOnce(firstLookup.promise)
+      .mockImplementationOnce(async (handoff) => resolvedFixture(handoff))
+    renderPage(onHandoffReady)
+
+    fireEvent.click(await screen.findByRole('button', {
+      name: '복약 재알림, 복약일 2026-09-10, 읽지 않음',
+    }))
+    fireEvent.click(await screen.findByRole('button', {
+      name: '복약 알림, 복약일 2026-09-09, 읽음',
+    }))
+    expect(
+      vi.mocked(resolveNotificationOccurrenceMedication).mock.calls[0]?.[1]?.aborted,
+    ).toBe(true)
+
+    expect((await screen.findByTestId('location')).textContent).toBe(
+      `/schedule/occurrences/${READ_NOTIFICATION.occurrence_id}?date=2026-09-09`,
+    )
+
+    await act(async () => {
+      firstLookup.resolve(resolvedFixture({
+        occurrenceId: UNREAD_NOTIFICATION.occurrence_id,
+        occurrenceLocalDate: UNREAD_NOTIFICATION.occurrence_local_date,
+      }))
+      await firstLookup.promise
+    })
+
+    expect(screen.getByTestId('location').textContent).toBe(
+      `/schedule/occurrences/${READ_NOTIFICATION.occurrence_id}?date=2026-09-09`,
+    )
+    expect(onHandoffReady).toHaveBeenCalledTimes(1)
+    expect(onHandoffReady).toHaveBeenCalledWith({
+      occurrenceId: READ_NOTIFICATION.occurrence_id,
+      occurrenceLocalDate: READ_NOTIFICATION.occurrence_local_date,
+    })
+    expect(putMedicationCheckin).not.toHaveBeenCalled()
   })
 
   it('선택 중 상태를 accessible name과 aria-busy로 알린다', async () => {
@@ -246,6 +434,7 @@ describe('NotificationsPage', () => {
       2,
       UNREAD_NOTIFICATION.id,
       'notification-read:test-key',
+      expect.anything(),
     )
   })
 
