@@ -29,6 +29,7 @@ ALLOWED_FAILURE_STAGES = frozenset(
         "SCENARIO",
         "FIXTURE",
         "AUTH",
+        "OCR_CONSENT",
         "UPLOAD",
         "OCR_REQUEST",
         "OCR_STATUS",
@@ -46,6 +47,7 @@ ALLOWED_FAILURE_STAGES = frozenset(
         "CLEANUP",
     }
 )
+APPROVED_OCR_CONSENT_POLICY_VERSION: str = "ocr-local-synthetic-demo-2026-09-14-v1"
 PLACEHOLDERS = frozenset(
     {
         "",
@@ -194,6 +196,7 @@ class ValidatedEnvironment:
     db_port: int | None
     db_name: str | None
     storage_dir: Path | None
+    ocr_consent_policy_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -262,8 +265,10 @@ def validate_live_environment(
     if mode == "staging-live":
         _validate_staging_environment(env, commit_sha=commit_sha, image_repo_digest=image_repo_digest)
         storage_dir = None
+        ocr_consent_policy_version = None
     elif mode in LOCAL_MODES:
         storage_dir = _validate_local_environment(env)
+        ocr_consent_policy_version = env.get("OCR_CONSENT_POLICY_VERSION", "").strip() or None
     else:
         raise GuardError("unsupported validation mode")
     db_port_value = env.get("DB_PORT")
@@ -278,6 +283,7 @@ def validate_live_environment(
         db_port=db_port,
         db_name=env.get("DB_NAME"),
         storage_dir=storage_dir,
+        ocr_consent_policy_version=ocr_consent_policy_version,
     )
 
 
@@ -359,6 +365,24 @@ def _validate_local_environment(env: Mapping[str, str]) -> Path:
         raise GuardError("local live validation requires ENV=local")
     if env.get("DB_HOST", "").lower() not in {"127.0.0.1", "localhost", "::1"}:
         raise GuardError("local host runner requires a loopback database host")
+    if env.get("CLOVA_OCR_SECRET") is not None or env.get("OPENAI_API_KEY") is not None:
+        raise GuardError("Provider credentials must not exist in the local runner environment")
+    llm_enabled = env.get("OCR_STRUCTURE_LLM_ENABLED", "false").strip().lower()
+    if llm_enabled != "false":
+        raise GuardError("OCR_STRUCTURE_LLM_ENABLED must be false for approved local live validation")
+    raw_version = env.get("OCR_CONSENT_POLICY_VERSION")
+    if raw_version is None:
+        raise GuardError("OCR_CONSENT_POLICY_VERSION is required")
+    version = raw_version.strip()
+    if (
+        not version
+        or version in PLACEHOLDERS
+        or "placeholder" in version.lower()
+        or (version.startswith("<") and version.endswith(">"))
+    ):
+        raise GuardError("OCR_CONSENT_POLICY_VERSION contains forbidden placeholder or empty value")
+    if version != APPROVED_OCR_CONSENT_POLICY_VERSION:
+        raise GuardError(f"OCR_CONSENT_POLICY_VERSION must be {APPROVED_OCR_CONSENT_POLICY_VERSION}")
     validate_clova_url(env.get("CLOVA_OCR_INVOKE_URL", ""))
     storage_value = env.get("STORAGE_DIR")
     if not storage_value:
@@ -480,6 +504,7 @@ async def build_synthetic_fixture(
         completed_at=now,
         error_code=None,
         error_message=None,
+        llm_processing="NOT_REQUESTED",
     )
     field_values: list[tuple[int, FieldType, str]] = [
         (0, FieldType.PRESCRIBED_DATE, str(scenario["prescribed_date"])),
@@ -701,6 +726,7 @@ async def verify_one_cycle(
 def _ocr_database_evidence(ocr_job: Any, *, ocr_structuring_expected: bool) -> dict[str, Any]:
     model_version = getattr(ocr_job, "model_version", None)
     prompt_version = getattr(ocr_job, "prompt_version", None)
+    llm_processing = getattr(ocr_job, "llm_processing", None)
     has_both = (
         isinstance(model_version, str)
         and bool(model_version)
@@ -708,20 +734,47 @@ def _ocr_database_evidence(ocr_job: Any, *, ocr_structuring_expected: bool) -> d
         and bool(prompt_version)
     )
     has_neither = model_version is None and prompt_version is None
-    if (ocr_structuring_expected and not has_both) or (not ocr_structuring_expected and not has_neither):
-        raise HttpFlowError(
-            "DB_VERIFICATION",
-            {
-                "api_code": "OCR_STRUCTURE_EVIDENCE_MISMATCH",
-                "ocr_structuring_expected": ocr_structuring_expected,
-                "model_version_present": bool(model_version),
-                "prompt_version_present": bool(prompt_version),
-            },
-        )
+    if ocr_structuring_expected:
+        # ocr_structuring_expected=True이면 반드시:
+        # - llm_processing == "APPLIED"
+        # - model_version 존재
+        # - prompt_version 존재
+        # SKIPPED_MINIMIZATION, NOT_REQUESTED, null은 활성 실행 증거로 인정하지 않고
+        # DB_VERIFICATION 실패로 처리합니다.
+        if not has_both or llm_processing != "APPLIED":
+            raise HttpFlowError(
+                "DB_VERIFICATION",
+                {
+                    "api_code": "OCR_STRUCTURE_EVIDENCE_MISMATCH",
+                    "ocr_structuring_expected": ocr_structuring_expected,
+                    "model_version_present": bool(model_version),
+                    "prompt_version_present": bool(prompt_version),
+                    "llm_processing": llm_processing,
+                },
+            )
+    else:
+        # 이번 #152 승인 실행에서는 반드시:
+        # - llm_processing == "NOT_REQUESTED"
+        # - model_version is None
+        # - prompt_version is None
+        # SKIPPED_MINIMIZATION은 Backend/Worker에서 기능이 활성화됐지만 최소화 정책으로 생략된 상태이므로
+        # 이번 OCR_STRUCTURE_LLM_ENABLED=false 실행 증거로 인정하지 않고 DB_VERIFICATION 실패로 처리합니다.
+        if not has_neither or llm_processing != "NOT_REQUESTED":
+            raise HttpFlowError(
+                "DB_VERIFICATION",
+                {
+                    "api_code": "OCR_STRUCTURE_EVIDENCE_MISMATCH",
+                    "ocr_structuring_expected": ocr_structuring_expected,
+                    "model_version_present": bool(model_version),
+                    "prompt_version_present": bool(prompt_version),
+                    "llm_processing": llm_processing,
+                },
+            )
     return {
         "status": "PASS",
         "model_version": model_version,
         "prompt_version": prompt_version,
+        "llm_processing": llm_processing,
     }
 
 
@@ -997,6 +1050,7 @@ class NetworkOneCycleRunner:
         read_timeout_seconds: float,
         prescription_check: Callable[[str, str], Awaitable[None]] | None = None,
         ocr_structuring_expected: bool = False,
+        ocr_consent_policy_version: str | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._state = state
@@ -1009,6 +1063,9 @@ class NetworkOneCycleRunner:
         )
         self._preflight_fields: list[dict[str, Any]] = []
         self._prescription_check = prescription_check
+        self._ocr_consent_policy_version = (
+            ocr_consent_policy_version.strip() if isinstance(ocr_consent_policy_version, str) else None
+        )
         self._provider_traces: dict[str, dict[str, Any]] = {}
         if self._local_live_full:
             self._provider_traces = {
@@ -1202,6 +1259,67 @@ class NetworkOneCycleRunner:
         self._headers["Authorization"] = f"Bearer {token}"
         self._complete_request()
 
+    async def _grant_ocr_consent(self) -> None:
+        if not self._ocr_consent_policy_version:
+            raise HttpFlowError(
+                "OCR_CONSENT",
+                {"http_status": None, "api_code": "CONSENT_POLICY_VERSION_MISSING"},
+            )
+        body = await self._request(
+            "OCR_CONSENT",
+            "POST",
+            "/users/me/consents/OCR",
+            expected_status=200,
+            json_body={"policy_version": self._ocr_consent_policy_version},
+        )
+        self._complete_request()
+        self._validate_ocr_consent_response(body)
+
+    def _validate_ocr_consent_response(self, body: Mapping[str, Any]) -> None:
+        data = body.get("data")
+        if not isinstance(data, Mapping):
+            raise HttpFlowError(
+                "OCR_CONSENT",
+                {"http_status": 200, "api_code": "INVALID_CONSENT_RESPONSE_SHAPE"},
+            )
+        purpose = data.get("purpose")
+        status_value = data.get("status")
+        effective = data.get("effective")
+        current_version = data.get("current_policy_version")
+        accepted_version = data.get("accepted_policy_version")
+        reason = data.get("reason")
+
+        if purpose != "OCR":
+            raise HttpFlowError(
+                "OCR_CONSENT",
+                {"http_status": 200, "api_code": "CONSENT_PURPOSE_MISMATCH"},
+            )
+        if status_value != "GRANTED":
+            raise HttpFlowError(
+                "OCR_CONSENT",
+                {"http_status": 200, "api_code": "CONSENT_STATUS_INVALID"},
+            )
+        if effective is not True:
+            raise HttpFlowError(
+                "OCR_CONSENT",
+                {"http_status": 200, "api_code": "CONSENT_NOT_EFFECTIVE"},
+            )
+        if current_version != self._ocr_consent_policy_version:
+            raise HttpFlowError(
+                "OCR_CONSENT",
+                {"http_status": 200, "api_code": "CONSENT_CURRENT_POLICY_MISMATCH"},
+            )
+        if accepted_version != self._ocr_consent_policy_version:
+            raise HttpFlowError(
+                "OCR_CONSENT",
+                {"http_status": 200, "api_code": "CONSENT_ACCEPTED_POLICY_MISMATCH"},
+            )
+        if reason is not None:
+            raise HttpFlowError(
+                "OCR_CONSENT",
+                {"http_status": 200, "api_code": "CONSENT_REASON_NOT_NULL"},
+            )
+
     async def _run_generation(self, *, document_id: str, question: str) -> dict[str, Any]:
         prescription = await self._request(
             "PRESCRIPTION_CREATE",
@@ -1285,6 +1403,7 @@ class NetworkOneCycleRunner:
         candidate_sha = _sha256_file(candidate_image)
         self._state.update(source_image_sha256=candidate_sha)
         await self._login(email=email, password=password)
+        await self._grant_ocr_consent()
         upload = await self._request(
             "UPLOAD",
             "POST",
@@ -1544,6 +1663,7 @@ def _runtime_environment(mode: str) -> dict[str, str]:
         "ENV": os.environ.get("ENV", "local"),
         "RELEASE_VALIDATION_ALLOWED": os.environ.get("RELEASE_VALIDATION_ALLOWED", ""),
         "CLOVA_OCR_INVOKE_URL": os.environ.get("CLOVA_OCR_INVOKE_URL", ""),
+        "OCR_CONSENT_POLICY_VERSION": os.environ.get("OCR_CONSENT_POLICY_VERSION", ""),
         "STORAGE_DIR": str(Path(os.environ.get("STORAGE_DIR", default_storage_dir)).resolve()),
         "DB_HOST": os.environ["DB_HOST"],
         "DB_PORT": os.environ.get("DB_PORT", "5432"),
@@ -1850,6 +1970,7 @@ async def _execute(args: argparse.Namespace, run_id: UUID) -> tuple[dict[str, An
             read_timeout_seconds=read_timeout,
             prescription_check=prescription_check,
             ocr_structuring_expected=(runtime_env.get("OCR_STRUCTURE_LLM_ENABLED", "false").strip().lower() == "true"),
+            ocr_consent_policy_version=validated.ocr_consent_policy_version,
         ) as runner:
             if args.mode == "local-preflight":
                 result = await runner.run_preflight(
