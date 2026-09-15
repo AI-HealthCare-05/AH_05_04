@@ -53,6 +53,10 @@ logger = logging.getLogger(__name__)
 HYBRID_RETRIEVE_NODE_ID = "hybrid_retrieve"
 EVIDENCE_GATE_NODE_ID = "evidence_gate"
 
+PRODUCTION_EMBEDDING_MODEL_REF = "openai:text-embedding-3-large"
+PRODUCTION_EMBEDDING_MODEL_VERSION = "text-embedding-3-large"
+PRODUCTION_EMBEDDING_DIMENSION = 1536
+
 
 class RetrievalExecutionStatus(StrEnum):
     SUCCEEDED = "SUCCEEDED"
@@ -245,9 +249,9 @@ async def execute_production_retrieval(
 
             embed_res = await text_embedding_port.embed(
                 sr.normalized_query,
-                model_ref="text-embedding-3-large",
-                model_version="1.0",
-                dimension=1536,
+                model_ref=PRODUCTION_EMBEDDING_MODEL_REF,
+                model_version=PRODUCTION_EMBEDDING_MODEL_VERSION,
+                dimension=PRODUCTION_EMBEDDING_DIMENSION,
             )
             if not isinstance(embed_res, TextEmbeddingSuccess):
                 return ProductionRetrievalOutcome(
@@ -264,9 +268,9 @@ async def execute_production_retrieval(
             query_embedding_sha = canonical_embedding_sha256(embed_res.embedding.reveal())
             q_receipt = QueryEmbeddingReceipt(
                 query_fingerprint=sr.query_fingerprint,
-                model_ref="text-embedding-3-large",
-                model_version="1.0",
-                dimension=1536,
+                model_ref=PRODUCTION_EMBEDDING_MODEL_REF,
+                model_version=PRODUCTION_EMBEDDING_MODEL_VERSION,
+                dimension=PRODUCTION_EMBEDDING_DIMENSION,
                 embedding=embed_res.embedding,
                 adapter_artifact_ref=embed_res.adapter_artifact_ref,
             )
@@ -399,9 +403,9 @@ async def execute_hybrid_retrieve(
         elif text_embedding_port is not None:
             embed_res = await text_embedding_port.embed(
                 sr.normalized_query,
-                model_ref="text-embedding-3-large",
-                model_version="1.0",
-                dimension=1536,
+                model_ref=PRODUCTION_EMBEDDING_MODEL_REF,
+                model_version=PRODUCTION_EMBEDDING_MODEL_VERSION,
+                dimension=PRODUCTION_EMBEDDING_DIMENSION,
             )
             if not isinstance(embed_res, TextEmbeddingSuccess):
                 return HybridRetrieveOutcome(
@@ -418,9 +422,9 @@ async def execute_hybrid_retrieve(
             query_embedding_sha = canonical_embedding_sha256(embed_res.embedding.reveal())
             q_receipt = QueryEmbeddingReceipt(
                 query_fingerprint=sr.query_fingerprint,
-                model_ref="text-embedding-3-large",
-                model_version="1.0",
-                dimension=1536,
+                model_ref=PRODUCTION_EMBEDDING_MODEL_REF,
+                model_version=PRODUCTION_EMBEDDING_MODEL_VERSION,
+                dimension=PRODUCTION_EMBEDDING_DIMENSION,
                 embedding=embed_res.embedding,
                 adapter_artifact_ref=embed_res.adapter_artifact_ref,
             )

@@ -93,6 +93,7 @@ class ReportData:
     blocking_execution_statuses: Sequence[ExecutionStatus]
     task_case_counts: Mapping[str, int]
     failure_codes: Sequence[str]
+    latency_summary: Mapping[str, int] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,6 +321,21 @@ def build_artifact_draft(material: RunMaterial) -> ArtifactDraft:
             key=lambda value: value.encode("utf-16-be"),
         )
     )
+    latencies = [result.latency_ms for result in material.outcome.case_results if result.latency_ms is not None]
+    latency_summary: dict[str, int] | None = None
+    if latencies:
+        import math
+
+        sorted_lat = sorted(latencies)
+        n = len(sorted_lat)
+        p95_idx = min(n - 1, int(math.ceil(0.95 * n)) - 1)
+        latency_summary = {
+            "count": n,
+            "min_ms": sorted_lat[0],
+            "median_ms": sorted_lat[n // 2],
+            "p95_ms": sorted_lat[p95_idx],
+            "max_ms": sorted_lat[-1],
+        }
     report_data = ReportData(
         run_id=material.run_id,
         experiment_id=resolved.request.experiment_id,
@@ -337,6 +353,7 @@ def build_artifact_draft(material: RunMaterial) -> ArtifactDraft:
         blocking_execution_statuses=material.outcome.blocking_execution_statuses,
         task_case_counts=dict(task_case_counts),
         failure_codes=failure_codes,
+        latency_summary=latency_summary,
     )
     run_payload: dict[str, JsonValue] = {
         "schema_id": "rag-eval.run",

@@ -47,7 +47,12 @@ def _retrieval_sections(
     baseline_metrics: MetricResults | None,
 ) -> list[str]:
     replay_source = report_data.adapter_id == "retrieval-replay.v1"
-    data_source = "SYNTHETIC_REPLAY_DEV" if replay_source else "ADAPTER_EXECUTION_DEV"
+    if replay_source:
+        data_source = "SYNTHETIC_REPLAY_DEV"
+    elif report_data.adapter_id in {"knowledge-evidence-retrieval.actual.v1", "actual-retrieval.v1"}:
+        data_source = "ACTUAL_RETRIEVAL_DEV"
+    else:
+        data_source = "ADAPTER_EXECUTION_DEV"
     production_integration = "BLOCKED_BY_RAG_07A_07B_OR_08" if replay_source else "NOT_ASSESSED_BY_DEV_REPORT"
     lines = [
         "",
@@ -61,6 +66,20 @@ def _retrieval_sections(
         "| --- | --- | ---: | ---: | ---: | --- | --- | --- | --- |",
     ]
     lines.extend(_metric_row(metric) for metric in metrics.metrics)
+    if report_data.latency_summary is not None:
+        ls = report_data.latency_summary
+        lines.extend(
+            [
+                "",
+                "### Latency Summary",
+                "",
+                f"- Sample Count: `{ls['count']}`",
+                f"- Min: `{ls['min_ms']}` ms",
+                f"- Median: `{ls['median_ms']}` ms",
+                f"- P95: `{ls['p95_ms']}` ms",
+                f"- Max: `{ls['max_ms']}` ms",
+            ]
+        )
     if comparison is None:
         return lines
     if not baseline_variant_id or baseline_metrics is None:
