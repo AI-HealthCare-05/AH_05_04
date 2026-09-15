@@ -157,6 +157,7 @@ projection은 `docs/validation/rag/issue-273/`에 있다.
 - `evals/schemas/1.1.0/`: Issue #216의 18-member implemented candidate. Case·Dataset Manifest는 member `1.1.0`, 나머지 16개 member는 `1.0.0`을 byte-for-byte 재사용한다.
 - `evals/schemas/1.2.0/`: Issue #241의 review provenance compatibility 계약. Case·Manifest·Evidence Mapping·Rubric·Profile·Suite·Evaluation Policy·Protected Artifact Receipt 8개 member는 `1.2.0`, 나머지 10개 member는 이전 canonical bytes를 재사용한다.
 - `evals/schemas/1.3.0/`: Issue #273의 `Candidate · Review Required` provenance 확장. Dataset Manifest만 member `1.3.0`으로 교체하고 1.2의 나머지 17개 member를 byte-for-byte 재사용하며, Authoring Identity Manifest·Index Build Receipt·Study Split Receipt를 member `1.0.0`으로 추가한 21-member 후보이다.
+- `evals/schemas/1.4.0/`: Issues #160·#161의 `Candidate · Review Required` Grounding/Safety projection 확장. 1.3의 21개 member를 byte-for-byte 재사용하고 Claim–Citation Observation·Grounding Signal을 member `1.0.0`으로 추가한 23-member 후보이다.
 
 Schema Set `1.1.0`의 불변 참조는 `rag-eval.schema-set@1.1.0`, SHA-256 `5cfb113e45a4c333fef05830b0d7c2401975ce66b53dc68ff054b08ba79822c0`이다. #216/PR #222에서 승인·병합된 초기 호환성 계약이다.
 
@@ -164,12 +165,14 @@ Schema Set `1.2.0`의 불변 참조는 `rag-eval.schema-set@1.2.0`, SHA-256 `1bd
 
 Schema Set `1.3.0` 후보 참조는 `rag-eval.schema-set@1.3.0`, SHA-256 `ca1f324c701dd5e86d811a4430ddbf2d394bd3aa0e7eb0e32dabcb8b63d1e325`이다. 상태는 `Candidate · Review Required`이며, 책임 리뷰어 권가빈 (`@hazelnutflavoured`)의 실제 Pull Request review event가 승인 전환에 필요하다. 기존 Schema Set과 exporter 기본 version은 변경하지 않는다.
 
-네 버전은 다음 명령으로 별도 출력한다. 기본값은 하위 호환을 위해 `1.0.0`이다.
+Schema Set `1.4.0` 후보 참조는 `rag-eval.schema-set@1.4.0`, SHA-256 `0f6b69b460af5ea840e009f55b86256942f896be324c7885d709883600799e98`이다. 상태는 `Candidate · Review Required`이며, 책임 리뷰어 김지혜 (`@Jye-rookie`)의 실제 Pull Request review event가 승인 전환에 필요하다. 신규 두 artifact는 Evaluation projection contract만 구현하며 #160·#161 metric kernel, Runtime, HOLDOUT/SAFETY_REGRESSION, Baseline Freeze, Release와 공개는 포함하지 않는다. 기존 Schema Set과 exporter 기본 version은 변경하지 않는다.
+
+다섯 버전은 다음 명령으로 별도 출력한다. 기본값은 하위 호환을 위해 `1.0.0`이다.
 
 ```bash
 uv run python -m ai_worker.tasks.evaluation.schema_exports \
-  --output /tmp/rag-eval-schemas-1.3.0 \
-  --schema-set-version 1.3.0
+  --output /tmp/rag-eval-schemas-1.4.0 \
+  --schema-set-version 1.4.0
 ```
 
 ## RAG HOLDOUT·SAFETY_REGRESSION Dataset Freeze
@@ -240,21 +243,22 @@ Critical Claim Rubric, Leakage 배치를 제자리에서 수정하지 않는다.
 
 ## Chat history 평가
 
-`generation/chat-v2-history-eval-v1.json`, `generation/chat-v2-history-eval-v2.json`, `generation/chat-v3-history-eval-v1.json`은 `SYNTHETIC`으로 분류된 불변 평가셋입니다. 각 버전의 기준선과 처리 경로는 같은 prompt version을 사용하며, 차이는 각각 `history=[]`와 합성 history뿐입니다. 결정론적 replay는 실제 `ChatGenerator`의 메시지 조립·검증 경로를 실행합니다.
+`generation/chat-v2-history-eval-v1.json`, `generation/chat-v2-history-eval-v2.json`, `generation/chat-v3-history-eval-v1.json`, `generation/chat-v3-history-eval-v2.json`은 `SYNTHETIC`으로 분류된 불변 평가셋입니다. 각 버전의 기준선과 처리 경로는 같은 prompt version을 사용하며, 차이는 각각 `history=[]`와 합성 history뿐입니다. 결정론적 replay는 실제 `ChatGenerator`의 메시지 조립·검증 경로를 실행합니다.
 
 | 버전 | Case 수 | 상태 | 비고 |
 | --- | --- | --- | --- |
 | `chat-v2-history-eval-v1` | 10 | 동결 | Issue #129 / PR #145에서 승인된 불변 버전이다. 제자리에서 수정하지 않는다. |
 | `chat-v2-history-eval-v2` | 11 | 동결 | Issue #293 조사에서 확인한 커버리지 갭을 메운 `followup-earlier-subject-over-latest`를 추가했다. v1의 10 case는 byte-for-byte 재사용한다. |
-| `chat-v3-history-eval-v1` | 16 | canonical | v2의 11 case를 유지하고 Issue #306의 대상 불명확 처방약 사례, 단일 약물 암시 질문 회귀, 대상 불명확 현재 호흡곤란과 과거 증상 해소 뒤 현재 의식 저하·경련을 결합한 응급 우선 사례, 30회 live 분류 설정을 추가했다. |
+| `chat-v3-history-eval-v1` | 16 | 동결 | v2의 11 case를 유지하고 Issue #306의 대상 불명확 처방약 사례, 단일 약물 암시 질문 회귀, 대상 불명확 현재 호흡곤란과 과거 증상 해소 뒤 현재 의식 저하·경련을 결합한 응급 우선 사례, 30회 live 분류 설정을 추가했다. `gpt-4o-mini` 실행 기준이다. |
+| `chat-v3-history-eval-v2` | 16 | canonical | v1의 16개 `cases` payload를 byte-for-byte 재사용하고 Issue #567의 `gpt-4o` 모델 전환만 반영했다. |
 
-세 버전 모두 저장소에 유지한다. 과거 실행 결과는 해당 버전 경로로 그대로 재현하고, 현재 실행은 v3를 사용한다. runner의 canonical 경로·`dataset_id`·고정 SHA-256은 v3를 가리킨다.
+네 버전 모두 저장소에 유지한다. 과거 실행 결과는 해당 버전 경로로 그대로 재현하고, 현재 실행은 v3-v2를 사용한다. runner의 canonical 경로·`dataset_id`·고정 SHA-256은 v3-v2를 가리킨다.
 
 ```bash
-# canonical(v3)
+# canonical(v3-v2, gpt-4o)
 PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
   --mode deterministic \
-  --output evals/results/chat-v3-history-eval-v1-local-deterministic.json
+  --output evals/results/chat-v3-history-eval-v2-local-deterministic.json
 
 # 동결된 v1 재현
 PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
@@ -265,6 +269,6 @@ PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
 
 결과에는 rule ID와 집계값만 기록하고 원시 질문·history·응답과 PII sentinel은 기록하지 않습니다. 응급 사례는 공백·Unicode·종결부호를 정규화한 전체 응답이 승인된 긴급 행동 문장과 일치할 때만 통과해 부정·유예·후행 상쇄 문장을 fail-closed로 거부합니다. v3 live 실행은 Issue #306 사례의 history 경로를 총 30회 측정하고 `IDENTIFIED_TARGET`, `CLARIFICATION_REQUESTED`, `MULTIPLE_MEDICATIONS_LISTED`, `WRONG_SELECTION`, `UNCLASSIFIED` 분포만 저장합니다. 같은 전체 응답 정규화 기준으로 승인된 두 고정 재확인 문장 중 하나와 전체가 일치할 때만 `CLARIFICATION_REQUESTED`로 집계합니다. 단순 약명 언급이나 뒤따르는 복약 조언은 통과로 집계하지 않으며, 30회가 모두 `CLARIFICATION_REQUESTED`일 때만 해당 반복 평가를 통과합니다. live blocking gate는 이 30회 분포, 세 응급 case의 baseline/history 6개 경로와 PII 비복제로 구성됩니다. 전체 16-case 단발 결과는 `full_suite_passed` 관찰 지표이며, 결정론적 replay 16/16이 전체 회귀 blocker입니다.
 
-2026-09-08 합성 OpenAI live 실행은 이전 13-case fixture에서 85 response를 사용했으므로 현재 근거로 사용하지 않습니다. [2026-09-09 current canonical 실행](../docs/validation/issue-306-chat-live-evaluation.md)은 dataset SHA `8e7b7f50…`, prompt SHA `7c737b75…`로 91 response를 측정해 blocking gate `passed=true`, 대상 불명확 재확인 30/30, 세 응급 case의 baseline/history 6/6과 PII 비복제 0건을 기록했습니다. 전체 단발 관찰도 baseline 16/16, history 16/16, `full_suite_passed=true`였지만 전체 모델 품질이나 Production 승인으로 확대 해석하지 않습니다.
+2026-09-08 합성 OpenAI live 실행은 이전 13-case fixture에서 85 response를 사용했으므로 현재 근거로 사용하지 않습니다. [2026-09-09 동결 v1 / `gpt-4o-mini` historical live evidence](../docs/validation/issue-306-chat-live-evaluation.md)는 dataset SHA `8e7b7f50…`, prompt SHA `7c737b75…`로 91 response를 측정해 당시 blocking gate `passed=true`, 대상 불명확 재확인 30/30, 세 응급 case의 baseline/history 6/6과 PII 비복제 0건을 기록했습니다. 전체 단발 관찰도 baseline 16/16, history 16/16, `full_suite_passed=true`였지만 현재 canonical v2의 `gpt-4o` 검증 근거, 전체 모델 품질 또는 Production 승인으로 확대 해석하지 않습니다. v2의 실제 Provider 평가는 실행 전까지 `NOT_RUN`입니다.
 
-실제 OpenAI 평가는 `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 있을 때만 `--mode live`로 실행할 수 있습니다. live 모드는 저장소의 canonical `chat-v3-history-eval-v1` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며 임의 `--dataset`과 변경된 fixture를 OpenAI client 생성 전에 거부합니다. SHA-256은 Windows CRLF checkout과 LF checkout을 동일하게 취급하도록 CRLF를 LF로 정규화한 bytes에 계산하며, 줄바꿈 외 내용 변경은 계속 거부합니다. 결과 artifact에는 실행에 사용한 dataset·prompt SHA-256, live gate 구성요소, `full_suite_passed`와 전체 `passed`를 기록합니다. live blocking 기준 미달은 artifact를 남기고 exit code 1, 구성·Provider 실행 오류는 exit code 2를 반환합니다. 실행하지 않은 Provider 품질·latency·token 결과는 `NOT_RUN`으로 유지하며, 결정론적 replay 결과를 실제 모델 품질이나 Production 승인 근거로 해석하지 않습니다.
+실제 OpenAI 평가는 `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 있을 때만 `--mode live`로 실행할 수 있습니다. live 모드는 저장소의 canonical `chat-v3-history-eval-v2` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며 임의 `--dataset`과 변경된 fixture를 OpenAI client 생성 전에 거부합니다. SHA-256은 Windows CRLF checkout과 LF checkout을 동일하게 취급하도록 CRLF를 LF로 정규화한 bytes에 계산하며, 줄바꿈 외 내용 변경은 계속 거부합니다. 결과 artifact에는 실행에 사용한 dataset·prompt SHA-256, live gate 구성요소, `full_suite_passed`와 전체 `passed`를 기록합니다. live blocking 기준 미달은 artifact를 남기고 exit code 1, 구성·Provider 실행 오류는 exit code 2를 반환합니다. 실행하지 않은 Provider 품질·latency·token 결과는 `NOT_RUN`으로 유지하며, 결정론적 replay 결과를 실제 모델 품질이나 Production 승인 근거로 해석하지 않습니다.

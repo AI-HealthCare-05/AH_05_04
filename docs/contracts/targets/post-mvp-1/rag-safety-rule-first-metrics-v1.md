@@ -10,6 +10,9 @@
 | 책임 리뷰 | 김지혜 (`@Jye-rookie`) — `APPROVED` |
 | 승인 Evidence | [PR #541 review `5198114002`](https://github.com/AI-HealthCare-05/AH_05_04/pull/541#pullrequestreview-5198114002) · [`decision-approval-evidence.json`](../../../validation/rag/issue-161/decision-approval-evidence.json) |
 
+#160의 `rag-eval.grounding-signal@1.0.0`은 Schema Set `1.4.0` Candidate에 등록됐지만 아직 책임 리뷰가
+필요하다. 해당 Candidate 승인 전에는 이 계약의 scorer 선행조건이 완료된 것으로 보지 않는다.
+
 ## 1. 목적과 입력 경계
 
 이 계약은 RAG-EVAL-006 Safety·Rule-first 회귀 Metric의 deterministic 계산을 고정한다. 입력은 승인된

@@ -1,12 +1,14 @@
+import smtplib
 from email.message import EmailMessage
 from typing import Any
 
 import pytest
+from cryptography.fernet import Fernet
 from pydantic import ValidationError
 
 from app.core.config import Config, Env
 from app.dependencies import services
-from app.services.email_delivery import NoopEmailSender, SmtpEmailSender, SmtpEmailSenderConfig
+from app.services.email_delivery import EmailDeliveryError, NoopEmailSender, SmtpEmailSender, SmtpEmailSenderConfig
 
 
 class FakeSmtp:
@@ -35,6 +37,11 @@ class FakeSmtp:
 
     def send_message(self, message: EmailMessage) -> None:
         self.sent_messages.append(message)
+
+
+class RejectingSmtp(FakeSmtp):
+    def send_message(self, message: EmailMessage) -> None:
+        raise smtplib.SMTPRecipientsRefused({message["To"]: (550, b"recipient rejected")})
 
 
 @pytest.mark.asyncio
@@ -75,8 +82,8 @@ def test_get_email_sender_uses_noop_by_default(monkeypatch: pytest.MonkeyPatch) 
     assert isinstance(services.get_email_sender(), NoopEmailSender)
 
 
-def test_get_email_sender_uses_smtp_when_configured_in_local(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(services.config, "ENV", Env.LOCAL)
+def test_get_email_sender_uses_smtp_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(services.config, "ENV", Env.PRODUCTION)
     monkeypatch.setattr(services.config, "EMAIL_PROVIDER", "smtp")
     monkeypatch.setattr(services.config, "SMTP_HOST", "smtp.example.test")
     monkeypatch.setattr(services.config, "SMTP_PORT", 587)
@@ -89,21 +96,11 @@ def test_get_email_sender_uses_smtp_when_configured_in_local(monkeypatch: pytest
     assert isinstance(services.get_email_sender(), SmtpEmailSender)
 
 
-def test_get_email_sender_rejects_smtp_outside_local(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_email_sender_rejects_noop_outside_local(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(services.config, "ENV", Env.PRODUCTION)
-    monkeypatch.setattr(services.config, "EMAIL_PROVIDER", "smtp")
-    monkeypatch.setattr(services.config, "SMTP_USE_TLS", True)
+    monkeypatch.setattr(services.config, "EMAIL_PROVIDER", "noop")
 
-    with pytest.raises(RuntimeError, match="not enabled outside local"):
-        services.get_email_sender()
-
-
-def test_get_email_sender_rejects_plaintext_smtp(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(services.config, "ENV", Env.LOCAL)
-    monkeypatch.setattr(services.config, "EMAIL_PROVIDER", "smtp")
-    monkeypatch.setattr(services.config, "SMTP_USE_TLS", False)
-
-    with pytest.raises(RuntimeError, match="SMTP_USE_TLS=false"):
+    with pytest.raises(RuntimeError, match="EMAIL_PROVIDER=noop"):
         services.get_email_sender()
 
 
@@ -114,6 +111,16 @@ def _config_kwargs(**overrides: Any) -> dict[str, Any]:
         "DB_PASSWORD": "dummy",
         "DB_NAME": "dummy",
     }
+    base.update(overrides)
+    return base
+
+
+def _production_config_kwargs(**overrides: Any) -> dict[str, Any]:
+    base = _config_kwargs(
+        ENV=Env.PRODUCTION,
+        IDEMPOTENCY_HMAC_KEY="production-idempotency-hmac-key-32chars",
+        IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY=Fernet.generate_key().decode("utf-8"),
+    )
     base.update(overrides)
     return base
 
@@ -139,25 +146,24 @@ def test_config_normalizes_smtp_email_provider_in_local() -> None:
     assert config.EMAIL_PROVIDER == "smtp"
 
 
-def test_config_rejects_smtp_provider_outside_local() -> None:
-    with pytest.raises(ValidationError, match="not enabled outside local"):
-        Config(
-            **_config_kwargs(
-                ENV=Env.PRODUCTION,
-                EMAIL_PROVIDER="smtp",
-                SMTP_HOST="smtp.example.test",
-                SMTP_USERNAME="mailer@example.test",
-                SMTP_PASSWORD="secret-password",
-                SMTP_FROM_EMAIL="no-reply@example.test",
-            )
+def test_config_accepts_smtp_provider_outside_local_when_required_settings_are_present() -> None:
+    config = Config(
+        **_production_config_kwargs(
+            EMAIL_PROVIDER="smtp",
+            SMTP_HOST="smtp.example.test",
+            SMTP_USERNAME="mailer@example.test",
+            SMTP_PASSWORD="secret-password",
+            SMTP_FROM_EMAIL="no-reply@example.test",
         )
+    )
+
+    assert config.EMAIL_PROVIDER == "smtp"
 
 
 def test_config_rejects_plaintext_smtp() -> None:
     with pytest.raises(ValidationError, match="SMTP_USE_TLS=false"):
         Config(
-            **_config_kwargs(
-                ENV=Env.LOCAL,
+            **_production_config_kwargs(
                 EMAIL_PROVIDER="smtp",
                 SMTP_HOST="smtp.example.test",
                 SMTP_USERNAME="mailer@example.test",
@@ -171,3 +177,38 @@ def test_config_rejects_plaintext_smtp() -> None:
 def test_config_rejects_smtp_provider_without_required_secret_settings() -> None:
     with pytest.raises(ValidationError, match="SMTP configuration is required"):
         Config(**_config_kwargs(EMAIL_PROVIDER="smtp", SMTP_HOST="smtp.example.test"))
+
+
+def test_config_rejects_smtp_placeholder_values_outside_local() -> None:
+    with pytest.raises(ValidationError, match="SMTP configuration must use real values"):
+        Config(
+            **_production_config_kwargs(
+                EMAIL_PROVIDER="smtp",
+                SMTP_HOST="replace-with-production-smtp-host",
+                SMTP_USERNAME="mailer@example.test",
+                SMTP_PASSWORD="secret-password",
+                SMTP_FROM_EMAIL="no-reply@example.test",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_smtp_email_sender_sanitizes_provider_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.services.email_delivery.smtplib.SMTP", RejectingSmtp)
+    sender = SmtpEmailSender(
+        SmtpEmailSenderConfig(
+            host="smtp.example.test",
+            port=587,
+            username="mailer@example.test",
+            password="secret-password",
+            from_email="no-reply@example.test",
+        )
+    )
+
+    with pytest.raises(EmailDeliveryError) as exc_info:
+        await sender.send_email_verification(email="private-user@example.test", token="verification-token")
+
+    assert str(exc_info.value) == "Email delivery failed"
+    assert exc_info.value.__cause__ is None
+    assert "private-user@example.test" not in str(exc_info.value)
+    assert "verification-token" not in str(exc_info.value)

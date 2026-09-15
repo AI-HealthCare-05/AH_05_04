@@ -3,6 +3,7 @@ import type { ChangeEvent, FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { login } from '../api/auth'
 import { ApiError } from '../api/client'
+import { getUnconfirmedCheckins } from '../api/medicationCheckinBacklog'
 import { clearAuthenticatedSession } from '../features/auth/authSession'
 import { Button, MobileShell } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
@@ -96,6 +97,29 @@ function LoginPage() {
       })
       clearAuthenticatedSession()
       localStorage.setItem('access_token', response.access_token)
+
+      let backlog: Awaited<ReturnType<typeof getUnconfirmedCheckins>> | null = null
+      try {
+        backlog = await getUnconfirmedCheckins({ limit: 1 })
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          clearAuthenticatedSession()
+          throw error
+        }
+        if (error instanceof ApiError && error.status >= 500) {
+          backlog = null
+        } else if (error instanceof TypeError) {
+          backlog = null
+        } else {
+          throw error
+        }
+      }
+
+      if (backlog && backlog.data.items.length > 0) {
+        navigate('/schedule/unconfirmed')
+        return
+      }
+
       navigate('/', {
         state: cameFromSignup
           ? { showPrescriptionOnboarding: true }

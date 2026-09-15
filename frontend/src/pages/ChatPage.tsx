@@ -300,6 +300,17 @@ function ChatPage({
 
           activePrescriptionRef.current = requestedPrescriptionId
           setStatePrescriptionId(requestedPrescriptionId)
+
+          if (!uuidPattern.test(requestedPrescriptionId)) {
+            setIsLoading(false)
+            return
+          }
+
+          navigate(
+            `/chat?prescription_id=${encodeURIComponent(requestedPrescriptionId)}`,
+            { replace: true },
+          )
+          return
         } catch (error) {
           if (initializationRequestRef.current !== requestId) return
 
@@ -405,7 +416,7 @@ function ChatPage({
         setIsLoading(false)
       }
     }
-  }, [prescriptionId, previewState, services])
+  }, [navigate, prescriptionId, previewState, services])
 
   useEffect(() => {
     sendRequestRef.current += 1

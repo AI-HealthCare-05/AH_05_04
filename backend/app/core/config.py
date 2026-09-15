@@ -140,8 +140,7 @@ class Config(BaseSettings):
     SIGNUP_EMAIL_VERIFICATION_REQUIRED: bool = False
 
     # 이메일 발송 Provider는 배포 환경변수로 선택합니다. 기본값은 저장·로그 없이 아무것도
-    # 보내지 않는 noop입니다. SMTP 실제 발송은 local 검증용 adapter만 남기고 production 활성화는
-    # 보안·비밀정보 경계 승인 후 후속 PR에서 켭니다.
+    # 보내지 않는 noop입니다. SMTP 실제 발송은 필수 설정과 TLS를 통과한 경우에만 활성화합니다.
     EMAIL_PROVIDER: str = "noop"
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
@@ -222,10 +221,18 @@ class Config(BaseSettings):
     # CI의 test 잡 env에는 OPENAI_API_KEY가 없어서 필수값(DB_*처럼)으로 두면 전체 테스트가 깨집니다.
     # 실제 키가 없으면 OpenAI 호출 시점에만 401 -> 500으로 실패하도록 placeholder 기본값을 둡니다.
     OPENAI_API_KEY: str = "sk-not-configured"
-    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_MODEL: str = "gpt-4o"
     OPENAI_TIMEOUT_SECONDS: float = 20.0
     CHAT_HISTORY_CONTEXT_ENABLED: bool = False
     RELEASE_VALIDATION_ALLOWED: bool = False
+
+    @field_validator("OPENAI_MODEL", mode="after")
+    @classmethod
+    def validate_openai_model(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized != "gpt-4o":
+            raise ValueError("OPENAI_MODEL must be gpt-4o")
+        return normalized
 
     # medication-identification-v1.md "공개 게이트": RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는
     # 실제 사용자 트래픽에 Candidate 조회·확정·거절 API를 공개하지 않습니다. 명시적으로 활성화하지
@@ -283,18 +290,19 @@ class Config(BaseSettings):
         if self.EMAIL_PROVIDER != "smtp":
             return self
 
-        if self.ENV is not Env.LOCAL:
-            raise ValueError("EMAIL_PROVIDER=smtp is not enabled outside local environment in this PR")
         if not self.SMTP_USE_TLS:
             raise ValueError("SMTP_USE_TLS=false is not allowed")
 
-        missing = [
-            name
-            for name in ("SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM_EMAIL")
-            if not getattr(self, name).strip()
-        ]
+        required_fields = ("SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM_EMAIL")
+        missing = [name for name in required_fields if not getattr(self, name).strip()]
         if missing:
             raise ValueError(f"SMTP configuration is required when EMAIL_PROVIDER=smtp: {', '.join(missing)}")
+        if self.ENV is not Env.LOCAL:
+            placeholders = [name for name in required_fields if getattr(self, name).strip().startswith("replace-with-")]
+            if placeholders:
+                raise ValueError(
+                    "SMTP configuration must use real values outside local environment: " + ", ".join(placeholders)
+                )
         if self.SMTP_PORT <= 0:
             raise ValueError("SMTP_PORT must be positive")
         if not math.isfinite(self.SMTP_TIMEOUT_SECONDS) or self.SMTP_TIMEOUT_SECONDS <= 0:

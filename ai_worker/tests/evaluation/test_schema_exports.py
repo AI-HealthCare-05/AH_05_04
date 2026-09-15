@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
 
+import jsonschema  # type: ignore[import-untyped]
 import pytest
 
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes
@@ -195,6 +196,333 @@ def test_schema_set_1_3_reuses_unchanged_1_2_members_byte_for_byte() -> None:
 
     for path in set(version_1_2) - {"authoring/rag-eval.dataset-manifest.schema.json"}:
         assert canonical_json_bytes(version_1_3[path]) == canonical_json_bytes(version_1_2[path])
+
+
+def test_schema_set_1_4_adds_only_grounding_projection_members() -> None:
+    registry_v1_3 = SCHEMA_REGISTRIES["1.3.0"]
+    registry_v1_4 = SCHEMA_REGISTRIES["1.4.0"]
+    entries_v1_3 = {entry.relative_path: entry for entry in registry_v1_3}
+    entries_v1_4 = {entry.relative_path: entry for entry in registry_v1_4}
+    new_members = {
+        "artifacts/rag-eval.claim-citation-observation.schema.json": (
+            "rag-eval.claim-citation-observation",
+            "1.0.0",
+        ),
+        "artifacts/rag-eval.grounding-signal.schema.json": (
+            "rag-eval.grounding-signal",
+            "1.0.0",
+        ),
+    }
+
+    assert len(registry_v1_4) == len(entries_v1_4) == 23
+    assert len({entry.schema_id for entry in registry_v1_4}) == 23
+    assert set(entries_v1_4) == set(entries_v1_3) | set(new_members)
+    assert {
+        path: (entry.schema_id, entry.member_version) for path, entry in entries_v1_4.items() if path in new_members
+    } == new_members
+    for path in entries_v1_3:
+        assert entries_v1_4[path] == entries_v1_3[path]
+
+
+def test_schema_set_1_4_reuses_every_1_3_member_byte_for_byte() -> None:
+    version_1_3 = schema_documents("1.3.0")
+    version_1_4 = schema_documents("1.4.0")
+
+    for path, document in version_1_3.items():
+        assert canonical_json_bytes(version_1_4[path]) == canonical_json_bytes(document)
+
+
+def test_schema_set_1_4_exports_observation_state_conditions() -> None:
+    document = cast(
+        dict[str, Any],
+        schema_documents("1.4.0")["artifacts/rag-eval.claim-citation-observation.schema.json"],
+    )
+    conditions = cast(list[dict[str, Any]], document["allOf"])
+    decisions = {
+        condition["if"]["properties"]["validation_decision"]["const"]
+        for condition in conditions
+        if "validation_decision" in condition.get("if", {}).get("properties", {})
+    }
+    authorization_states = {
+        condition["if"]["properties"]["authorization_decision"].get("const", "NULL")
+        for condition in conditions
+        if "authorization_decision" in condition.get("if", {}).get("properties", {})
+    }
+
+    assert decisions == {"VALIDATED", "REJECTED"}
+    assert authorization_states == {"AUTHORIZED", "REJECTED", "NULL"}
+    assert "allOf" in document["$defs"]["CitationEdgeObservation"]
+    assert "allOf" in document["$defs"]["ClaimObservation"]
+
+
+def test_schema_set_1_4_exports_grounding_signal_state_conditions() -> None:
+    document = cast(
+        dict[str, Any],
+        schema_documents("1.4.0")["artifacts/rag-eval.grounding-signal.schema.json"],
+    )
+    conditions = cast(list[dict[str, Any]], document["allOf"])
+
+    assert {
+        condition["if"]["properties"]["status"]["const"]
+        for condition in conditions
+        if "status" in condition.get("if", {}).get("properties", {})
+    } == {"EVALUATED", "NOT_APPLICABLE_NO_CLAIMS"}
+
+
+def _schema_set_1_4_observation_payload() -> dict[str, Any]:
+    return {
+        "schema_id": "rag-eval.claim-citation-observation",
+        "schema_version": "1.0.0",
+        "observation_sha256": "a" * 64,
+        "run_id": "12345678-1234-4234-8234-123456789abc",
+        "case_id": "case-001",
+        "task_type": "ANSWER_GROUNDING",
+        "dataset_code": "dev-foundation-v1",
+        "dataset_version": "1.0.0",
+        "input_sha256": "a" * 64,
+        "answer_sha256": "b" * 64,
+        "answer_variant_manifest_hash": "c" * 64,
+        "validation_execution_status": "EVALUATED",
+        "validation_decision": "VALIDATED",
+        "validation_reason_codes": [],
+        "validated_selection_sha256": "a" * 64,
+        "authorization_decision": "AUTHORIZED",
+        "authorization_reason_codes": [],
+        "authorization_receipt_ref": {"id": "authorization-receipt", "version": "1.0.0", "hash": "b" * 64},
+        "authorization_receipt_sha256": "c" * 64,
+        "claims": [
+            {
+                "claim_key": "claim-001",
+                "claim_kind": "MEDICAL",
+                "criticality": "CRITICAL",
+                "criticality_source": "GOLD_EXACT_MATCH",
+                "criticality_review_ref": None,
+                "support_status": "SUPPORTED",
+                "support_receipt_sha256": "a" * 64,
+                "citations": [
+                    {
+                        "citation_key": "citation-001",
+                        "claim_key": "claim-001",
+                        "source_type": "KNOWLEDGE_CHUNK",
+                        "evidence_ref_id": "evidence-001",
+                        "source_version": "1.0.0",
+                        "locator": "section 1",
+                        "content_sha256": "b" * 64,
+                        "accepted": True,
+                        "validation_reason_code": None,
+                        "authorized": True,
+                        "authorization_reason_code": None,
+                        "authorization_selection_sha256": "c" * 64,
+                        "gold_source_matched": True,
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _schema_set_1_4_signal_payload() -> dict[str, Any]:
+    return {
+        "schema_id": "rag-eval.grounding-signal",
+        "schema_version": "1.0.0",
+        "signal_sha256": "a" * 64,
+        "run_id": "12345678-1234-4234-8234-123456789abc",
+        "case_id": "case-001",
+        "task_type": "SAFETY",
+        "dataset_code": "dev-foundation-v1",
+        "dataset_version": "1.0.0",
+        "input_sha256": "a" * 64,
+        "answer_sha256": None,
+        "status": "NOT_APPLICABLE_NO_CLAIMS",
+        "observation_ref": None,
+        "observation_sha256": None,
+        "critical_unsupported_claim": False,
+        "uncited_medical_claim": False,
+        "source_binding_misuse": False,
+    }
+
+
+def test_schema_set_1_4_observation_state_matrix_is_portable() -> None:
+    document = schema_documents("1.4.0")["artifacts/rag-eval.claim-citation-observation.schema.json"]
+    validator = jsonschema.Draft202012Validator(document)
+    valid = _schema_set_1_4_observation_payload()
+
+    assert validator.is_valid(valid)
+    opaque_source_version = deepcopy(valid)
+    opaque_source_version["claims"][0]["citations"][0]["source_version"] = "rules-v1"
+    assert validator.is_valid(opaque_source_version)
+    invalid_source_version = deepcopy(valid)
+    invalid_source_version["claims"][0]["citations"][0]["source_version"] = "rules v1"
+    assert not validator.is_valid(invalid_source_version)
+    for field in ("validated_selection_sha256", "authorization_receipt_ref", "authorization_receipt_sha256"):
+        invalid = deepcopy(valid)
+        invalid[field] = None
+        assert not validator.is_valid(invalid)
+    invalid = deepcopy(valid)
+    invalid["claims"][0]["citations"][0]["authorization_selection_sha256"] = None
+    assert not validator.is_valid(invalid)
+
+    rejected_before_authorization = deepcopy(valid)
+    rejected_before_authorization["validation_decision"] = "REJECTED"
+    rejected_before_authorization["validation_reason_codes"] = ["CLAIM_NOT_SUPPORTED"]
+    rejected_before_authorization["validated_selection_sha256"] = None
+    rejected_before_authorization["authorization_decision"] = None
+    rejected_before_authorization["authorization_reason_codes"] = []
+    rejected_before_authorization["authorization_receipt_ref"] = None
+    rejected_before_authorization["authorization_receipt_sha256"] = None
+    rejected_citation = rejected_before_authorization["claims"][0]["citations"][0]
+    rejected_citation["authorized"] = False
+    rejected_citation["authorization_reason_code"] = None
+    rejected_citation["authorization_selection_sha256"] = None
+    assert validator.is_valid(rejected_before_authorization)
+
+    fabricated_authorization = deepcopy(valid)
+    fabricated_authorization["validation_decision"] = "REJECTED"
+    fabricated_authorization["validation_reason_codes"] = ["CLAIM_NOT_SUPPORTED"]
+    fabricated_authorization["validated_selection_sha256"] = None
+    assert not validator.is_valid(fabricated_authorization)
+
+
+def test_schema_set_1_4_observation_criticality_judgment_states_are_portable() -> None:
+    document = schema_documents("1.4.0")["artifacts/rag-eval.claim-citation-observation.schema.json"]
+    validator = jsonschema.Draft202012Validator(document)
+    missing_judgment = _schema_set_1_4_observation_payload()
+    claim = missing_judgment["claims"][0]
+    claim["criticality"] = None
+    claim["criticality_source"] = None
+    claim["criticality_review_ref"] = None
+
+    assert validator.is_valid(missing_judgment)
+    for field, value in (
+        ("criticality", "CRITICAL"),
+        ("criticality_source", "GOLD_EXACT_MATCH"),
+        ("criticality_review_ref", {"id": "review", "version": "1.0.0", "hash": "a" * 64}),
+    ):
+        partial = deepcopy(missing_judgment)
+        partial["claims"][0][field] = value
+        assert not validator.is_valid(partial)
+
+
+def test_schema_set_1_4_observation_arrays_reject_exact_duplicates_portably() -> None:
+    document = schema_documents("1.4.0")["artifacts/rag-eval.claim-citation-observation.schema.json"]
+    validator = jsonschema.Draft202012Validator(document)
+
+    duplicate_citation = _schema_set_1_4_observation_payload()
+    duplicate_citation["claims"][0]["citations"].append(deepcopy(duplicate_citation["claims"][0]["citations"][0]))
+    assert not validator.is_valid(duplicate_citation)
+
+    duplicate_validation_reason = _schema_set_1_4_observation_payload()
+    duplicate_validation_reason["validation_decision"] = "REJECTED"
+    duplicate_validation_reason["validation_reason_codes"] = ["CLAIM_NOT_SUPPORTED", "CLAIM_NOT_SUPPORTED"]
+    duplicate_validation_reason["validated_selection_sha256"] = None
+    duplicate_validation_reason["authorization_decision"] = None
+    duplicate_validation_reason["authorization_reason_codes"] = []
+    duplicate_validation_reason["authorization_receipt_ref"] = None
+    duplicate_validation_reason["authorization_receipt_sha256"] = None
+    citation = duplicate_validation_reason["claims"][0]["citations"][0]
+    citation["authorized"] = False
+    citation["authorization_reason_code"] = None
+    citation["authorization_selection_sha256"] = None
+    assert not validator.is_valid(duplicate_validation_reason)
+
+    duplicate_authorization_reason = _schema_set_1_4_observation_payload()
+    duplicate_authorization_reason["authorization_decision"] = "REJECTED"
+    duplicate_authorization_reason["authorization_reason_codes"] = [
+        "SELECTION_NOT_AUTHORIZED",
+        "SELECTION_NOT_AUTHORIZED",
+    ]
+    duplicate_authorization_reason["authorization_receipt_ref"] = None
+    duplicate_authorization_reason["authorization_receipt_sha256"] = None
+    citation = duplicate_authorization_reason["claims"][0]["citations"][0]
+    citation["authorized"] = False
+    citation["authorization_reason_code"] = "SELECTION_NOT_AUTHORIZED"
+    citation["authorization_selection_sha256"] = None
+    assert not validator.is_valid(duplicate_authorization_reason)
+
+
+def test_schema_set_1_4_grounding_signal_state_matrix_is_portable() -> None:
+    document = schema_documents("1.4.0")["artifacts/rag-eval.grounding-signal.schema.json"]
+    validator = jsonschema.Draft202012Validator(document)
+    valid = _schema_set_1_4_signal_payload()
+
+    assert validator.is_valid(valid)
+    for field, value in (
+        ("observation_sha256", "c" * 64),
+        ("critical_unsupported_claim", True),
+    ):
+        invalid = deepcopy(valid)
+        invalid[field] = value
+        assert not validator.is_valid(invalid)
+
+
+def test_schema_set_1_4_new_members_are_strict_body_free_contracts() -> None:
+    documents = schema_documents("1.4.0")
+    observation = documents["artifacts/rag-eval.claim-citation-observation.schema.json"]
+    signal = documents["artifacts/rag-eval.grounding-signal.schema.json"]
+    expected_required = {
+        "rag-eval.claim-citation-observation": {
+            "schema_id",
+            "schema_version",
+            "observation_sha256",
+            "run_id",
+            "case_id",
+            "task_type",
+            "dataset_code",
+            "dataset_version",
+            "input_sha256",
+            "answer_sha256",
+            "answer_variant_manifest_hash",
+            "validation_execution_status",
+            "validation_decision",
+            "validation_reason_codes",
+            "validated_selection_sha256",
+            "authorization_decision",
+            "authorization_reason_codes",
+            "authorization_receipt_ref",
+            "authorization_receipt_sha256",
+            "claims",
+        },
+        "rag-eval.grounding-signal": {
+            "schema_id",
+            "schema_version",
+            "signal_sha256",
+            "run_id",
+            "case_id",
+            "task_type",
+            "dataset_code",
+            "dataset_version",
+            "input_sha256",
+            "answer_sha256",
+            "status",
+            "observation_ref",
+            "observation_sha256",
+            "critical_unsupported_claim",
+            "uncited_medical_claim",
+            "source_binding_misuse",
+        },
+    }
+
+    for schema_id, document in (
+        ("rag-eval.claim-citation-observation", observation),
+        ("rag-eval.grounding-signal", signal),
+    ):
+        assert document["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+        assert document["$id"] == f"urn:ah05:rag-eval:schema:{schema_id.removeprefix('rag-eval.')}:1.0.0"
+        assert document["additionalProperties"] is False
+        assert set(cast(list[str], document["required"])) == expected_required[schema_id]
+
+    encoded = repr({"observation": observation, "signal": signal}).casefold()
+    for forbidden in (
+        "'query'",
+        "'question'",
+        "'answer_text'",
+        "'claim_text'",
+        "'source_body'",
+        "'provider_payload'",
+        "'credential'",
+        "'patient'",
+    ):
+        assert forbidden not in encoded
 
 
 @pytest.mark.parametrize(
@@ -499,7 +827,6 @@ def test_schema_set_1_3_review_provenance_v12_state_matrix_is_portable(
         },
     }
 
-    jsonschema = pytest.importorskip("jsonschema", reason="portable Draft 2020-12 validation requires jsonschema")
     invalid_draft: dict[str, Any] = {
         "authored_by": {
             "namespace": "GITHUB_LOGIN",
@@ -557,7 +884,6 @@ def test_schema_set_1_3_positive_integers_match_the_canonical_safe_integer_bound
     assert field_schema["exclusiveMinimum"] == 0
     assert field_schema["maximum"] == (2**53) - 1
 
-    jsonschema = pytest.importorskip("jsonschema", reason="portable Draft 2020-12 validation requires jsonschema")
     validator = jsonschema.Draft202012Validator(field_schema)
 
     assert validator.is_valid((2**53) - 1)
@@ -576,7 +902,6 @@ def test_schema_set_1_3_study_split_axis_cardinality_is_portable() -> None:
     assert "minLength" not in axis_summaries
     assert "maxLength" not in axis_summaries
 
-    jsonschema = pytest.importorskip("jsonschema", reason="portable Draft 2020-12 validation requires jsonschema")
     portable_schema = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$defs": document["$defs"],
@@ -698,6 +1023,14 @@ def test_committed_schema_set_1_3_matches_fresh_canonical_export_byte_for_byte(t
     assert _files(tmp_path) == _files(committed_root)
 
 
+def test_committed_schema_set_1_4_matches_fresh_canonical_export_byte_for_byte(tmp_path: Path) -> None:
+    write_schema_documents(tmp_path, "1.4.0")
+
+    committed_root = Path("evals/schemas/1.4.0")
+    assert len(_files(tmp_path)) == 23
+    assert _files(tmp_path) == _files(committed_root)
+
+
 @pytest.mark.parametrize(
     ("relative_path", "pattern"),
     [
@@ -750,3 +1083,31 @@ def test_documented_schema_set_1_3_hash_matches_committed_schema_set(
 
     assert documented is not None
     assert documented.group("hash") == _schema_set_hash(_SnapshotReader(EVALS_ROOT), "1.3.0")
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "pattern"),
+    [
+        (
+            "docs/contracts/targets/post-mvp-1/rag-evaluation-v1.md",
+            r"rag-eval\.schema-set@1\.4\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
+        ),
+        (
+            "docs/governance/decisions/2026-09-15-rag-evaluation-schema-set-1-4-candidate.md",
+            r"Schema Set SHA-256 \| `(?P<hash>[0-9a-f]{64})`",
+        ),
+        (
+            "evals/README.md",
+            r"rag-eval\.schema-set@1\.4\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
+        ),
+    ],
+)
+def test_documented_schema_set_1_4_hash_matches_committed_schema_set(
+    relative_path: str,
+    pattern: str,
+) -> None:
+    path = REPOSITORY_ROOT / relative_path
+    documented = re.search(pattern, path.read_text(encoding="utf-8")) if path.exists() else None
+
+    assert documented is not None
+    assert documented.group("hash") == _schema_set_hash(_SnapshotReader(EVALS_ROOT), "1.4.0")

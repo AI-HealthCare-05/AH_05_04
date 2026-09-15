@@ -498,23 +498,25 @@ def get_email_verification_repository(
     return EmailVerificationRepository(session)
 
 
+def _build_smtp_email_sender() -> SmtpEmailSender:
+    return SmtpEmailSender(
+        SmtpEmailSenderConfig(
+            host=config.SMTP_HOST,
+            port=config.SMTP_PORT,
+            username=config.SMTP_USERNAME,
+            password=config.SMTP_PASSWORD,
+            from_email=config.SMTP_FROM_EMAIL,
+            use_tls=config.SMTP_USE_TLS,
+            timeout_seconds=config.SMTP_TIMEOUT_SECONDS,
+        )
+    )
+
+
 def get_email_sender() -> EmailSender:
     if config.EMAIL_PROVIDER == "smtp":
-        if config.ENV is not Env.LOCAL:
-            raise RuntimeError("SMTP email provider is not enabled outside local environment in this PR")
-        if not config.SMTP_USE_TLS:
-            raise RuntimeError("SMTP_USE_TLS=false is not allowed")
-        return SmtpEmailSender(
-            SmtpEmailSenderConfig(
-                host=config.SMTP_HOST,
-                port=config.SMTP_PORT,
-                username=config.SMTP_USERNAME,
-                password=config.SMTP_PASSWORD,
-                from_email=config.SMTP_FROM_EMAIL,
-                use_tls=config.SMTP_USE_TLS,
-                timeout_seconds=config.SMTP_TIMEOUT_SECONDS,
-            )
-        )
+        return _build_smtp_email_sender()
+    if config.ENV is not Env.LOCAL:
+        raise RuntimeError("EMAIL_PROVIDER=noop is allowed only in local environment")
     return NoopEmailSender()
 
 

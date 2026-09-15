@@ -1,6 +1,6 @@
 # D-04 상세 수집 생산 경계
 
-- 상태: Proposed / #166 수집기 구현 PR에서 검토. 담당자 승인·실제 수집 완료 선언 아님.
+- 상태: Proposed 유지(계약 승격 없음). #543·#547 병합으로 완료된 실측·QNT 증빙 범위는 아래 「2026-09-15 완료 기록」에서 구분한다. Source 승인·Snapshot DB 저장·Catalog 인계 완료 선언은 아니다.
 - 기존 근거: [D-04 관찰 출처 결정](2026-09-13-component-observation-handoff.md),
   [MFDS 공식 명세](https://www.data.go.kr/data/15095677/openapi.do).
 - 구현 김지혜 / Source 저장·무결성 담당 리뷰 송은영. 기존 MFDS 의미·Candidate 범위는 정현우의 #477 검토를 유지.
@@ -82,3 +82,53 @@ Catalog 매핑에서 빈 행을 통과시켜도 수집 계층의 primary key 검
 유지보수 추가분은 상세 endpoint 후보·parser/수집 진입점·합성 회귀이며 API key·운영 승인 관리 경로는 확장하지 않는다.
 
 [구현 계약과 실제 실행 전 조건](../../contracts/proposed/post-mvp-1/mfds-detail-acquisition-166.md)
+
+## 2026-09-15 완료 기록 — 이번 배포의 QNT 대응
+
+이 절은 기존 구현과 2026-09-14 팀 답변을 연결하는 상태 기록이다. 새 적재 방식·차단 예외나
+계약 승격을 추가하지 않는다. 아래 완료 범위만으로 상위 [#166](https://github.com/AI-HealthCare-05/AH_05_04/issues/166)을 종료하지 않는다.
+
+### 병합된 범위와 증거
+
+| 범위 | 완료 근거 |
+| --- | --- |
+| 상세 Endpoint 전체 실측·Receipt 1.2 | [#543](https://github.com/AI-HealthCare-05/AH_05_04/pull/543), `16b6fd2385c3af3d3f07a7657270e6b341e19f02`. 1,269페이지·126,823행, 빈 행 31,702건. 원본 null 통계와 통과 판정 분리 |
+| QNT 누락·identity 손상 구분 및 inspection 사유별 집계 | [#547](https://github.com/AI-HealthCare-05/AH_05_04/pull/547), `fba61d84`. 공식 화면 대조 결과와 두 차단 reason·회귀 테스트 반영 |
+| Catalog 전체 차단 유지 | `MISSING_COMPONENT_QUANTITY`·`INVALID_COMPONENT_KEY_FIELDS` 모두 `_BLOCKING_EXCLUSION_REASONS`에 포함. `eligible_for_mapping=false`이면 Loader가 build를 반환하지 않음 |
+
+- 실측 정본: [Endpoint Receipt](../../validation/rag/endpoints/LIST_PRODUCT_COMPONENT_DETAILS.json).
+- 차단·집계 구현: [Component inspection](../../../ai_worker/tasks/rag/catalog/mfds_component.py),
+  [Catalog Loader](../../../ai_worker/tasks/rag/catalog/mfds_loader.py).
+- 회귀 근거: [Component 테스트](../../../ai_worker/tests/rag/catalog/test_mfds_component.py)의
+  `test_quantity_only_gap_is_separated_from_key_damage_but_still_blocks`,
+  `test_identity_field_damage_is_not_reported_as_a_quantity_gap`,
+  `test_exclusion_counts_are_reported_by_reason`.
+- 과거 테스트 실행 결과는 #547 본문에 기록돼 있다. 이번 문서 변경에서 재실측·테스트 재실행·배포를 수행한 것은 아니다.
+
+### 최종 팀 답변과 Snapshot 경계
+
+기록 근거는 김지혜가 공유한 2026-09-14 팀 대화다. 권가빈은 20:48에 이번 배포를 실측 Receipt·증빙
+정리까지로 제한하고 Catalog 인계를 후속으로 두는 데 동의했다. 송은영은 23:24에 같은 범위와
+아래 저장 경계를 확인했다. 개인 대화 링크·스크린샷 원본 대신 합의 내용을 여기에 요약한다.
+
+- QNT를 nullable로 저장하거나 누락 행만 제외해 부분 Catalog를 구성하지 않는다.
+- 일부 성분만 남은 제품을 완전한 성분 목록으로 소비하지 않는다.
+- Snapshot은 기존 Source 수집·검증 증적의 계약상 가능한 범위에 한정한다.
+  Source 응답 수집과 Catalog 인계 차단 사유의 증거이며, 승인 Catalog·Candidate·Runtime 입력으로 승격하지 않는다.
+- 이 경계 합의가 실제 Snapshot 저장 성공을 뜻하지 않는다.
+  [현행 상세 수집기](../../../ai_worker/tasks/rag/source_ingestion/mfds_detail.py)는 inspection 부적격 또는 중복 시
+  Snapshot 생산을 거부한다. 이 거부를 우회하는 별도 저장 경로는 이번 문서에서 만들지 않는다.
+
+### 완료와 후속 구분
+
+**이번 배포의 실측 Receipt·inspection 증빙/집계·reason 세분화는 완료다.** Plan B 전환 자체로
+추가 QNT 구현이나 Catalog 차단 해제가 발생하지 않는다.
+
+- 실제 Source Snapshot DB 저장·Catalog 인계·활성화는 완료로 표시하지 않는다.
+- 부분 집합 Catalog, 제품별 불완전 상태, Candidate·Runtime·안전성 판단의 소비 제한은 후속 계약으로 남긴다.
+- 기존 [#526](https://github.com/AI-HealthCare-05/AH_05_04/issues/526) 승인 저장소,
+  [#527](https://github.com/AI-HealthCare-05/AH_05_04/issues/527) Runtime hash,
+  [#528](https://github.com/AI-HealthCare-05/AH_05_04/issues/528) 실행 모델,
+  [#529](https://github.com/AI-HealthCare-05/AH_05_04/issues/529) Component 자연키 추적은 유지한다.
+  이 이슈들의 완료가 QNT 차단 해제나 부분 Catalog 계약 승인을 대신하지 않는다.
+- #526의 Plan B 착수 순서는 실제 적격 데이터와 소비 경로를 확인해 정한다. 이번 기록에서 Catalog 인계를 약속하지 않는다.

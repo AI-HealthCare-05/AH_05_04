@@ -20,6 +20,7 @@ describe('signup API', () => {
       name: '홍길동',
       email: 'dosey@example.com',
       password: 'Password1!',
+      consents: [{ purpose: 'OCR' }, { purpose: 'GUIDE' }],
     })
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -35,7 +36,10 @@ describe('signup API', () => {
       name: '홍길동',
       email: 'dosey@example.com',
       password: 'Password1!',
+      consents: [{ purpose: 'OCR' }, { purpose: 'GUIDE' }],
     })
+    expect(requestBody).not.toHaveProperty('policy_version')
+    expect(requestBody).not.toHaveProperty('status')
     expect(requestBody).not.toHaveProperty('gender')
     expect(requestBody).not.toHaveProperty('birth_date')
     expect(requestBody).not.toHaveProperty('phone_number')

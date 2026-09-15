@@ -33,6 +33,10 @@ import {
   type PutMedicationCheckinInput,
 } from '../api/medicationCheckins'
 import {
+  resolveLogicalMutationAttempt,
+  type LogicalMutationAttempt,
+} from '../api/logicalMutationAttempt'
+import {
   getLatestPrescription,
   type Medication,
   type PrescriptionResponse,
@@ -73,46 +77,6 @@ const defaultServices: SchedulePageServices = {
 type MedicationDetail = MedicationOccurrenceMedicationResponse['data']
 type LoadFailure = 'AUTH' | 'NOT_FOUND' | 'VALIDATION' | 'NETWORK' | 'SERVER'
 type LogicalMutationOperation = 'SCHEDULE_PUT' | 'SCHEDULE_CANCEL' | 'CHECKIN_PUT'
-
-type LogicalMutationAttempt<TPayload = unknown> = {
-  operation: LogicalMutationOperation
-  targetId: string
-  requestPayload: TPayload
-  expectedRevision: number
-  idempotencyKey: string
-}
-
-function resolveLogicalMutationAttempt<TPayload>(
-  current: LogicalMutationAttempt | null,
-  operation: LogicalMutationOperation,
-  targetId: string,
-  requestPayload: TPayload,
-  expectedRevision: number,
-  createIdempotencyKey: () => string,
-): LogicalMutationAttempt<TPayload> {
-  if (
-    current?.operation === operation &&
-    current.targetId === targetId &&
-    current.expectedRevision === expectedRevision &&
-    JSON.stringify(current.requestPayload) === JSON.stringify(requestPayload)
-  ) {
-    return {
-      operation,
-      targetId,
-      requestPayload,
-      expectedRevision,
-      idempotencyKey: current.idempotencyKey,
-    }
-  }
-
-  return {
-    operation,
-    targetId,
-    requestPayload,
-    expectedRevision,
-    idempotencyKey: createIdempotencyKey(),
-  }
-}
 
 function kstToday(): string {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -254,20 +218,26 @@ function StatusCard({
   body,
   action,
   onAction,
+  isAlert = false,
 }: {
   title: string
   body: string
   action?: string
   onAction?: () => void
+  isAlert?: boolean
 }) {
   return (
-    <Card className="schedule-state-card">
+    <section
+      className="ds-card schedule-state-card"
+      role={isAlert ? 'alert' : undefined}
+      aria-live={isAlert ? 'assertive' : undefined}
+    >
       <h2>{title}</h2>
       <p>{body}</p>
       {action && onAction && (
         <Button fullWidth onClick={onAction}>{action}</Button>
       )}
-    </Card>
+    </section>
   )
 }
 
@@ -328,7 +298,9 @@ function ScheduleEditor({
   const [isSaving, setIsSaving] = useState(false)
   const [message, setMessage] = useState('')
   const [isConfirmingCancel, setIsConfirmingCancel] = useState(false)
-  const scheduleMutationAttemptRef = useRef<LogicalMutationAttempt | null>(null)
+  const scheduleMutationAttemptRef = useRef<
+    LogicalMutationAttempt<LogicalMutationOperation, unknown> | null
+  >(null)
 
   const changeScheduleInput = (change: () => void) => {
     scheduleMutationAttemptRef.current = null
@@ -777,6 +749,16 @@ export function SchedulePage({
             <h1>복약 일정</h1>
           </header>
 
+          <Card className="schedule-page__unconfirmed-entry">
+            <div>
+              <strong>확인하지 못한 복약 기록</strong>
+              <p>지난 미확인 기록은 따로 모아 직접 보완할 수 있어요.</p>
+            </div>
+            <Button fullWidth variant="secondary" onClick={() => navigate('/schedule/unconfirmed')}>
+              미확인 기록 확인하기
+            </Button>
+          </Card>
+
           {isLoading && (
             <Card className="schedule-state-card" aria-live="polite">
               <div role="status">일정을 불러오는 중입니다.</div>
@@ -789,6 +771,7 @@ export function SchedulePage({
               <StatusCard
                 title={copy.title}
                 body={copy.body}
+                isAlert
                 action={loadFailure === 'AUTH' ? '로그인하기' : '다시 시도'}
                 onAction={loadFailure === 'AUTH' ? goToLogin : () => void reload()}
               />
@@ -931,7 +914,9 @@ export function ScheduleOccurrencePage({
   const [reloadVersion, setReloadVersion] = useState(0)
   const [isSaving, setIsSaving] = useState(false)
   const [mutationMessage, setMutationMessage] = useState('')
-  const checkinAttemptRef = useRef<LogicalMutationAttempt | null>(null)
+  const checkinAttemptRef = useRef<
+    LogicalMutationAttempt<LogicalMutationOperation, unknown> | null
+  >(null)
 
   const reload = useCallback(async () => {
     setIsLoading(true)
@@ -1077,12 +1062,22 @@ export function ScheduleOccurrencePage({
           )}
           {!isLoading && loadFailure && (() => {
             const copy = failureCopy(loadFailure)
+            const canRetry = loadFailure === 'NETWORK' || loadFailure === 'SERVER'
             return (
               <StatusCard
                 title={copy.title}
                 body={copy.body}
-                action={loadFailure === 'AUTH' ? '로그인하기' : '일정으로 돌아가기'}
-                onAction={loadFailure === 'AUTH' ? goToLogin : () => navigate(backRoute)}
+                isAlert
+                action={loadFailure === 'AUTH'
+                  ? '로그인하기'
+                  : canRetry
+                    ? '다시 시도'
+                    : '일정으로 돌아가기'}
+                onAction={loadFailure === 'AUTH'
+                  ? goToLogin
+                  : canRetry
+                    ? () => void reload()
+                    : () => navigate(backRoute)}
               />
             )
           })()}

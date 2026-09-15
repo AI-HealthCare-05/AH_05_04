@@ -80,17 +80,19 @@
 - `POST /api/v1/auth/email-verification/request`는 회원가입 전 이메일 소유 확인 token을 발급합니다. 별도 공개 이메일 중복 확인 API를 만들지 않으며, 이미 가입된 이메일이어도 같은 성공 응답 형태를 반환하고 token을 만들거나 발송하지 않습니다. 최종 중복 방어는 기존 `POST /api/v1/auth/signup`의 `409 CONFLICT`가 담당합니다.
 - `email_verification_token(id, email, purpose, token_hash, created_at, expires_at, verified_at)` — 아직 User row가 없을 수 있는 단계이므로 `user_id` FK를 두지 않습니다. 원문 token은 저장하지 않고 SHA-256 해시만 저장합니다.
 - `purpose`는 현재 `SIGNUP`만 사용합니다. 같은 이메일·목적에 대해 `EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS`(기본 60초) 안에 다시 요청하면 새 token을 만들지 않고 같은 성공 응답을 반환합니다.
-- `verification_token`은 `LOCAL` 환경에서만 응답에 채워집니다. 그 외 환경에서는 이메일 존재 여부 추론을 줄이기 위해 비웁니다. 실제 외부 Email Provider 연결은 `EmailSender` adapter 뒤에 두며, 기본값 `EMAIL_PROVIDER=noop`은 발송하지 않습니다. 이번 범위에서 SMTP adapter는 local 검증용으로만 사용할 수 있고 Production/Staging 활성화는 fail-closed됩니다. 실제 Provider 선택·계정·비용 정책은 후속 보안·배포 설정 PR에서 확정합니다.
+- `verification_token`은 `LOCAL` 환경에서만 응답에 채워집니다. 그 외 환경에서는 이메일 존재 여부 추론을 줄이기 위해 비웁니다. 실제 외부 Email Provider 연결은 `EmailSender` adapter 뒤에 두며, `EMAIL_PROVIDER=noop`은 local/test 기본값으로 발송하지 않습니다. Production/Staging 발송은 `EMAIL_PROVIDER=smtp`와 SMTP Secret이 모두 설정되고 `SMTP_USE_TLS=true`이며 placeholder 값이 아닐 때만 활성화됩니다. 회원가입 시 이메일 인증 완료 강제는 별도 gate(`#549`)에서 관리하며, 이 발송 기반만으로 가입을 차단하지 않습니다.
 - `POST /api/v1/auth/email-verification/confirm`은 이메일과 원문 token을 받아 `token_hash`, `verified_at IS NULL`, `expires_at > now()` 조건으로 검증합니다. 성공하면 같은 이메일·목적의 미인증·미만료 token 전체를 인증 완료 처리합니다.
 - `SIGNUP_EMAIL_VERIFICATION_REQUIRED=true`일 때 `POST /api/v1/auth/signup`은 같은 정규화 이메일의 `SIGNUP` 인증 완료 기록을 요구합니다. 인증 완료 기록이 없거나 인증 완료 기록의 `expires_at`이 지난 경우 `409 EMAIL_VERIFICATION_REQUIRED`, `details[].field=email`, `reason=EMAIL_VERIFICATION_REQUIRED`를 반환합니다. 기본값은 `false`이며, #494 운영 Email Provider와 Frontend 인증 UI가 함께 승인되기 전까지 기존 회원가입 흐름을 유지합니다.
 - 유효하지 않거나, 만료됐거나, 이미 사용됐거나, 다른 이메일에 발급된 token이면 `422 VALIDATION_FAILED`, `details[].field=token`, `reason=EMAIL_VERIFICATION_TOKEN_INVALID`를 반환합니다.
-- 로그·오류 응답에는 원문 token, token hash, 이메일 존재 여부 추론 정보를 남기지 않습니다.
+- 로그·오류 응답에는 원문 token, token hash, 이메일 존재 여부 추론 정보를 남기지 않습니다. Provider 발송 실패는 공개 응답 상태·본문으로 계정 존재 여부가 드러나지 않도록 요청 응답 경계 밖에서 처리하며, 해당 요청에서 생성한 token은 삭제해 사용자가 발송 실패 후 쿨다운 token에 갇히지 않게 합니다.
+- 현재 발송은 token 저장·commit 이후 메모리 task로 예약합니다. API 응답은 SMTP 완료를 기다리지 않으며, 발송 지연·실패가 공개 응답 상태나 본문을 바꾸지 않습니다. 정상 종료 중 task 추적·drain과 비정상 종료 시 영속 복구는 아직 제공하지 않으므로, token commit 뒤 프로세스가 종료되면 발송 또는 실패 cleanup이 유실될 수 있습니다. 이 경우 사용자는 동일 요청을 다시 보내 복구하며, 영속 outbox 도입은 별도 후속 판단으로 남깁니다.
 
 ### 비밀번호 재설정(#206, `PD-206` 결정 3)
 
 - `password_reset_token(id, user_id, token_hash, created_at, expires_at, used_at)` — 원문 토큰은 저장하지 않고 해시(SHA-256)만 저장합니다.
 - 새 비밀번호는 [회원가입 비밀번호 기준](#회원가입)과 동일하게 필수, 8~72자, 대문자·소문자·숫자·특수문자 각 1개 이상 포함을 적용합니다. 회원가입 비밀번호 정책이 바뀌면 재설정 정책도 같은 변경에서 함께 갱신합니다.
-- `POST /api/v1/auth/password-reset/request`는 계정 존재 여부와 무관하게 항상 같은 성공 응답(`detail`)을 반환합니다(anti-enumeration). 원문 token은 `EmailSender` adapter 호출 경계까지만 전달하고 DB에는 저장하지 않습니다. `reset_token`은 `LOCAL` 환경에서만 채워지며, 그 외 환경에서는 항상 비웁니다. 같은 사용자가 `PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS`(기본 60초) 안에 다시 요청하면 새 token을 발급하지 않고 같은 성공 응답만 반환합니다. 이메일 발송 Provider는 회원가입 이메일 인증과 같은 `EMAIL_PROVIDER` 설정을 사용합니다. SMTP 실제 운영 연결은 이번 범위 밖이며 후속 보안·배포 설정 PR에서 확정합니다.
+- `POST /api/v1/auth/password-reset/request`는 계정 존재 여부와 무관하게 항상 같은 성공 응답(`detail`)을 반환합니다(anti-enumeration). 원문 token은 `EmailSender` adapter 호출 경계까지만 전달하고 DB에는 저장하지 않습니다. `reset_token`은 `LOCAL` 환경에서만 채워지며, 그 외 환경에서는 항상 비웁니다. 같은 사용자가 `PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS`(기본 60초) 안에 다시 요청하면 새 token을 발급하지 않고 같은 성공 응답만 반환합니다. 이메일 발송 Provider는 회원가입 이메일 인증과 같은 `EMAIL_PROVIDER` 설정을 사용합니다. Production/Staging SMTP 발송은 #494 범위에서 설정·검증하며, Provider 실패는 공개 응답 상태·본문으로 계정 존재 여부가 드러나지 않도록 요청 응답 경계 밖에서 처리합니다.
+- 비밀번호 재설정 메일도 token 저장·commit 이후 메모리 task로 예약합니다. API 응답은 SMTP 완료를 기다리지 않으며, 발송 실패 시 해당 요청에서 생성한 token을 삭제해 재요청을 허용합니다. 프로세스 종료로 메모리 task가 유실되면 발송 또는 cleanup이 완료되지 않을 수 있고, 이 경우 사용자는 동일 요청을 다시 보내 복구합니다.
 - **처리시간 기반 anti-enumeration(PR #404 리뷰)**: 계정이 없어도 있는 경우와 같은 수의 DB 조회·해싱 연산을 수행하지만, 존재하는 계정만 수행하는 `password_reset_token` INSERT 때문에 남는 처리시간 차이가 있습니다. 이 차이를 없애기 위해 실제 쓰기(있다면)를 마치고 commit까지 끝낸 뒤, 요청 진입 시각 기준 `PASSWORD_RESET_RESPONSE_TARGET_SECONDS`(기본 0.03초)까지 응답을 지연시킵니다. 이 값은 `scripts/measure_password_reset_timing.py`로 CI(Linux 러너, 격리된 컨테이너) 기준 측정한 가장 느린 경로의 최대 관측치(약 14ms)에 여유를 둔 것입니다. **잔존 리스크**: 동시 요청이 많아 DB 커넥션 풀 대기가 지배적인 상황에서는 응답 시간이 이 목표치를 넘을 수 있고, 그 구간에서는 계정 존재 여부에 따른 미세한 시간차가 다시 드러날 수 있습니다 — 이는 설계된 방어가 아니라 알려진 한계로 남겨둡니다. 전역 요청 빈도 제한(IP 기준 등)은 이번 범위에 포함하지 않으며 별도 후속 이슈로 다룹니다.
 - 재설정 완료(`POST /api/v1/auth/password-reset/confirm`)는 `token`·`new_password`를 받아 원자적 일회성 소비로 처리합니다. **재설정 성공 자체는 `password_reset_token` 소지만으로 인증되므로 anti-enumeration을 적용하지 않습니다.**
 
@@ -128,7 +130,7 @@
 - 가입 후 `gender`, `birthday`, `phone_number` 등 추가 개인정보·건강정보 입력 및 저장
 - `PATCH /api/v1/users/me`에서 위 필드를 수정 대상으로 확장
 - 회원탈퇴 API의 세부 transaction 구현
-- 실제 외부 Email Provider 연동, 정교한 rate limit
+- 정교한 rate limit, 이메일 템플릿 디자인 고도화, 회원가입 이메일 인증 강제 gate 활성화
 - Guide/Chat/Notification 목적별 동의 Gate, OCR 최종 정책 문구·version 승인, Frontend 동의 UI
 
 ## 검증과 변경 규칙
