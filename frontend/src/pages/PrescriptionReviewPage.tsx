@@ -1340,7 +1340,11 @@ function PrescriptionReviewPage({
   const allMedicationGroupsReviewed =
     medicationGroups.length > 0 &&
     reviewedMedicationCount === medicationGroups.length
-
+  const reviewStatusMessage = editingSections.size > 0
+    ? '수정 중인 정보는 검토 완료가 해제돼요. 입력값 저장 후 다시 검토 완료해 주세요.'
+    : prescriptionDateReviewed && allMedicationGroupsReviewed
+      ? '처방일과 모든 약의 검토를 완료했어요. 원본 처방전과 직접 대조한 뒤 아래 항목을 체크해 주세요.'
+      : '처방일과 약별 정보를 확인하거나 수정한 뒤 각 항목의 검토 완료를 눌러 주세요.'
   const renderBadge = (
     state: 'reviewed' | 'editing' | 'required' | 'unreviewed',
   ) => {
@@ -1814,20 +1818,11 @@ function PrescriptionReviewPage({
           </section>
 
           <div className="prescription-review__notice">
-            <strong>
-              {editingSections.size > 0
-                ? '수정 중인 정보는 검토 완료가 해제돼요.'
-                : prescriptionDateReviewed && allMedicationGroupsReviewed
-                  ? '처방일과 모든 약의 검토를 완료했어요.'
-                  : '처방일과 약별 정보를 확인해 주세요.'}
-            </strong>
-            <span>
-              {editingSections.size > 0
-                ? '입력값 저장 후 조회 상태에서 다시 검토 완료해 주세요.'
-                : prescriptionDateReviewed && allMedicationGroupsReviewed
-                  ? '원본 처방전과 직접 대조한 뒤 아래 항목을 체크해 주세요.'
-                  : '값을 확인하거나 수정한 뒤, 처방일과 각 약의 검토 완료를 눌러 주세요.'}
-            </span>
+            <strong>도지는 처방 내용을 바꾸지 않아요.</strong>
+            <span>원본 처방전과 인식된 내용을 직접 비교해 주세요.</span>
+            <small className="prescription-review__state-guidance" role="status">
+              {reviewStatusMessage}
+            </small>
           </div>
 
           {llmProcessing === 'SKIPPED_MINIMIZATION' && (
