@@ -26,6 +26,24 @@ from app.models.track_c import (
 from app.repositories.track_c_storage_repository import TrackCStorageRepository
 
 SCHEMA_VERSION = "track-c-handler-config-v1"
+COPY_SCHEMA_VERSION = "track-c-support-copy-v1"
+ACTIVE_RULE_VERSION = "track-c-support-rule-2026-09-15.1"
+ACTIVE_COPY_VERSION = "track-c-support-copy-ko-2026-09-15.1"
+APPROVED_RULE_VERSIONS = frozenset({ACTIVE_RULE_VERSION})
+APPROVED_COPY_VERSIONS = frozenset({ACTIVE_COPY_VERSION})
+APPROVED_RATIONALE_CODES = frozenset(
+    {
+        "ROUTINE_REMINDER_SETUP_AVAILABLE",
+        "ROUTINE_OR_TRAVEL_GUIDANCE_AVAILABLE",
+        "ROUTINE_INSTRUCTION_REVIEW_AVAILABLE",
+        "ROUTINE_PURPOSE_REVIEW_AVAILABLE",
+        "ROUTINE_MEDICATION_CONCERN_GUIDANCE_AVAILABLE",
+        "ROUTINE_ACCESS_SUPPORT_AVAILABLE",
+    }
+)
+_CONFIG_ROOT = Path(__file__).resolve().parents[1] / "config" / "track_c"
+_RULES_DIR = _CONFIG_ROOT / "support-rules"
+_COPY_DIR = _CONFIG_ROOT / "support-copy"
 _VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
 _EXPECTED: dict[SupportCode, tuple[tuple[BarrierCode, ...], int]] = {
     SupportCode.REMINDER_SETUP: ((BarrierCode.FORGOT, BarrierCode.SCHEDULE_OR_TRAVEL), 10),
@@ -99,6 +117,23 @@ class HandlerConfig:
         return deepcopy(snapshot)
 
 
+@dataclass(frozen=True)
+class SupportCopy:
+    support_code: SupportCode
+    title: str
+    body: str
+    confirmation_prompt: str
+    primary_label: str
+    secondary_label: str
+
+
+@dataclass(frozen=True)
+class SupportCopyCatalog:
+    copy_version: str
+    locale: str
+    supports: Mapping[SupportCode, SupportCopy]
+
+
 def _exact_object(value: Any, keys: set[str]) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != keys:
         raise HandlerConfigError("invalid rule fields")
@@ -108,6 +143,12 @@ def _exact_object(value: Any, keys: set[str]) -> dict[str, Any]:
 def _approved_string(value: Any, approved: frozenset[str]) -> str:
     if not isinstance(value, str) or not 1 <= len(value) <= 100 or value not in approved:
         raise HandlerConfigError("unapproved or invalid reference")
+    return value
+
+
+def _display_string(value: Any, *, maximum: int) -> str:
+    if not isinstance(value, str) or value != value.strip() or not 1 <= len(value) <= maximum:
+        raise HandlerConfigError("invalid support copy")
     return value
 
 
@@ -173,6 +214,42 @@ def parse_handler_config(
     return HandlerConfig(rule_version, MappingProxyType(supports))
 
 
+def parse_support_copy_catalog(
+    data: Any,
+    *,
+    approved_copy_versions: frozenset[str],
+) -> SupportCopyCatalog:
+    root = _exact_object(data, {"schema_version", "copy_version", "locale", "supports"})
+    if root["schema_version"] != COPY_SCHEMA_VERSION or root["locale"] != "ko-KR":
+        raise HandlerConfigError("unsupported copy schema or locale")
+    copy_version = _approved_string(root["copy_version"], approved_copy_versions)
+    entries = root["supports"]
+    if not isinstance(entries, list) or len(entries) != len(SupportCode):
+        raise HandlerConfigError("all support copy definitions required")
+    supports: dict[SupportCode, SupportCopy] = {}
+    for value in entries:
+        item = _exact_object(value, {"support_code", "title", "body", "confirmation"})
+        try:
+            support_code = SupportCode(item["support_code"])
+        except (ValueError, TypeError) as exc:
+            raise HandlerConfigError("unknown support copy code") from exc
+        if support_code in supports:
+            raise HandlerConfigError("duplicate support copy code")
+        confirmation = _exact_object(
+            item["confirmation"],
+            {"prompt", "primary_label", "secondary_label"},
+        )
+        supports[support_code] = SupportCopy(
+            support_code=support_code,
+            title=_display_string(item["title"], maximum=100),
+            body=_display_string(item["body"], maximum=500),
+            confirmation_prompt=_display_string(confirmation["prompt"], maximum=200),
+            primary_label=_display_string(confirmation["primary_label"], maximum=50),
+            secondary_label=_display_string(confirmation["secondary_label"], maximum=50),
+        )
+    return SupportCopyCatalog(copy_version, root["locale"], MappingProxyType(supports))
+
+
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -208,6 +285,49 @@ def load_handler_config(
     if config.rule_version != rule_version:
         raise HandlerConfigError("rule file version mismatch")
     return config
+
+
+def load_support_copy_catalog(
+    copy_dir: Path,
+    copy_version: str,
+    *,
+    approved_copy_versions: frozenset[str],
+) -> SupportCopyCatalog:
+    if copy_version not in approved_copy_versions or not _VERSION.fullmatch(copy_version):
+        raise HandlerConfigError("unapproved copy file")
+    path = copy_dir / f"{copy_version}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_pairs)
+    except HandlerConfigError:
+        raise
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise HandlerConfigError("copy file unreadable or invalid") from exc
+    catalog = parse_support_copy_catalog(data, approved_copy_versions=approved_copy_versions)
+    if catalog.copy_version != copy_version:
+        raise HandlerConfigError("copy file version mismatch")
+    return catalog
+
+
+def load_active_handler_config() -> HandlerConfig:
+    return load_handler_config(
+        _RULES_DIR,
+        ACTIVE_RULE_VERSION,
+        approved_rule_versions=APPROVED_RULE_VERSIONS,
+        approved_copy_versions=APPROVED_COPY_VERSIONS,
+        approved_rationale_codes=APPROVED_RATIONALE_CODES,
+    )
+
+
+def load_active_support_copy_catalog() -> SupportCopyCatalog:
+    catalog = load_support_copy_catalog(
+        _COPY_DIR,
+        ACTIVE_COPY_VERSION,
+        approved_copy_versions=APPROVED_COPY_VERSIONS,
+    )
+    config = load_active_handler_config()
+    if {rule.copy_version for rule in config.supports.values()} != {catalog.copy_version}:
+        raise HandlerConfigError("active rule and copy versions do not match")
+    return catalog
 
 
 async def save_action_plan_snapshot(
