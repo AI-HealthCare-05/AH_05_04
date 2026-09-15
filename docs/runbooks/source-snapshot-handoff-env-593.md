@@ -4,7 +4,7 @@
 
 관련 Issue: #593, #591, #166, #526
 담당: 송은영 (`@phina-io`)
-검토: 김지혜(Source 수집·Worker 실행 가능성), 정현우(RAG/LLM 소비·인계 가능성)
+검토: 김지혜(Source 수집·Worker 실행 가능성)
 
 ## 목적
 
@@ -56,7 +56,7 @@
 | 팀 공용 dev/staging DB | 팀원이 같은 Snapshot과 Artifact 참조를 재조회하는 인계 기준 | 권장 |
 | 운영 DB | 검증·승인된 Source만 별도 절차로 반영 | 이번 범위 제외 |
 
-#591의 기본 결정은 팀 공용 dev/staging 적재 환경이다. 로컬 DB 결과는 구현 검증에는 사용할 수 있지만, 현우님이 후속 Chunk/Index 작업에서 같은 증거를 재조회해야 하는 인계 완료 기준으로 사용하지 않는다.
+#591의 기본 결정은 팀 공용 dev/staging 적재 환경이다. 로컬 DB 결과는 구현 검증에는 사용할 수 있지만, 후속 AI/RAG consumer가 Chunk/Index 작업에서 같은 증거를 재조회해야 하는 인계 완료 기준으로 사용하지 않는다.
 
 ## 기본 결정
 
@@ -80,12 +80,12 @@
 | DB 접속 주체 | 역할 기준 분리 | 송은영 | 수집 writer, 검증 reader, cleanup executor, consumer reader를 분리. 실제 계정명은 제한 접근 위치에 별도 기록 |
 | Artifact backend | `S3_PRIVATE` 우선, 공유 `LOCAL_PRIVATE` fallback | 송은영, 김지혜 | S3 준비 전에는 팀 재조회 가능한 전용 local private root만 임시 허용 |
 | Artifact root/bucket | 접근 제한 위치에 별도 기록 | 송은영 | GitHub/Discord에 secret·원문 경로·credential을 노출하지 않음 |
-| Source code | TBD | 김지혜, 정현우 | #591 수집 대상 Source 식별자 |
-| Endpoint/Operation code | TBD | 김지혜, 정현우 | 효능효과/용법용량/주의사항 범위 확인 |
-| source_version 형식 | TBD | 김지혜, 정현우 | 기존 Source version 문법과 충돌 금지 |
+| Source code | TBD | 김지혜 | #591 수집 대상 Source 식별자 |
+| Endpoint/Operation code | TBD | 김지혜 | 효능효과/용법용량/주의사항 범위 확인 |
+| source_version 형식 | TBD | 김지혜 | 기존 Source version 문법과 충돌 금지 |
 | canonicalization/parser version | TBD | 김지혜 | 저장 결과 checksum 재현 기준 |
 | 인계 대상 product | 노바스크정 5mg / ITEM_SEQ `200610660` | 김지혜 | 첫 제품 범위 |
-| 후속 consumer | 정현우 | 정현우 | Chunk/Index/Guide/Chat 인계 |
+| 후속 consumer | 후속 AI/RAG consumer | 김지혜 | Chunk/Index/Guide/Chat 인계 기준만 기록 |
 
 ## 권한 경계
 
@@ -143,7 +143,7 @@
 | Artifact | backend/key, size, sha256, content type, raw/reject 종류 조회 가능 |
 | Verification | checksum 대조와 검증 상태 조회 가능 |
 | 재실행 | 동일 입력 재실행 시 NO_CHANGE 또는 합의된 멱등 결과 확인 가능 |
-| 인계 | 정현우가 Snapshot 기준으로 후속 Chunk/Index 입력 범위를 식별 가능 |
+| 인계 | 후속 AI/RAG consumer가 Snapshot 기준으로 후속 Chunk/Index 입력 범위를 식별 가능 |
 
 위 기준이 충족되지 않으면 로컬 검증 또는 부분 조사 결과로만 기록하고, Source Snapshot 인계 완료로 쓰지 않는다.
 
@@ -174,7 +174,7 @@
 | --- | --- |
 | 송은영 | 적재 DB, 권한, Artifact 저장소, 보안 경계 확정 |
 | 김지혜 | #591 수집·검증·Snapshot 저장 실행 가능성, 실패 시 안전한 reason 기록 |
-| 정현우 | Snapshot ID/checksum/member/artifact 참조가 Chunk/Index 후속 입력으로 충분한지 확인 |
+| 후속 AI/RAG consumer | Snapshot ID/checksum/member/artifact 참조가 Chunk/Index 후속 입력으로 충분한지 확인 |
 | 권가빈 | 운영 공개 또는 사용자-facing 근거로 쓰는 경우 제품·Privacy 승인 필요 여부 확인 |
 
 ## 후속 작업
