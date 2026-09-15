@@ -93,7 +93,7 @@ function MenuPage() {
           <section className="mvp-menu__section" aria-labelledby="menu-medication-title">
             <h3 id="menu-medication-title">복약 관리</h3>
             <div className="mvp-menu__card">
-              <MenuRow icon="clipboard" label="복약 기록" onClick={() => navigate('/schedule')} />
+              <MenuRow icon="clipboard" label="복약 일정" onClick={() => navigate('/schedule')} />
               <MenuRow icon="report" label="복약 리포트" detail="7일 · 30일" onClick={() => navigate('/report')} />
             </div>
           </section>

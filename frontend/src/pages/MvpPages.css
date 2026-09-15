@@ -513,6 +513,7 @@
 
 .mvp-home-page .mvp-page__content {
   padding-top: 12px;
+  padding-bottom: calc(112px + var(--ds-safe-bottom));
   background: linear-gradient(180deg, #f4f9ff 0%, #fafcfe 58%, #fffdf3 100%);
 }
 

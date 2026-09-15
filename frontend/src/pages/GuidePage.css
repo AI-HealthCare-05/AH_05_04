@@ -335,14 +335,6 @@
   margin-top: 12px;
 }
 
-.guide-page__schedule-button:disabled {
-  border-color: var(--ds-action);
-  background: #fff;
-  color: var(--ds-action);
-  opacity: 1;
-  cursor: default;
-}
-
 .guide-page__chat-button {
   margin-top: 8px;
 }

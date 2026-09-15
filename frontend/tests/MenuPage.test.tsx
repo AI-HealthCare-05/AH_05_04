@@ -47,14 +47,14 @@ afterEach(() => {
 })
 
 describe('Dosey 메뉴', () => {
-  it('사용자 정보·복약 기록·복약 리포트는 실제 route로 이동하고 미연결 항목은 비활성화한다', () => {
+  it('사용자 정보·복약 일정·복약 리포트는 실제 route로 이동하고 미연결 항목은 비활성화한다', () => {
     const first = renderMenu()
 
     for (const label of ['알림 설정']) {
       expect(screen.getByRole('button', { name: `${label} (준비 중)` })).toHaveProperty('disabled', true)
     }
 
-    fireEvent.click(screen.getByRole('button', { name: '복약 기록' }))
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정' }))
     expect(screen.getByText('복약 일정 화면')).toBeTruthy()
 
     first.unmount()
