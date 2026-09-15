@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.rag_candidate_index import (
@@ -62,10 +63,12 @@ class RagCandidateIndexMemberCreate:
 class RagCandidateIndexVersionCreate:
     """RAG-07A ``CandidateIndexManifest``를 저장 가능한 컬럼 집합으로 투영한 값.
 
-    ``member_set_hash``·``configuration_hash``·``content_hash``는 호출자(Service)가 RAG-07A의
-    순수 로직으로 이미 계산한 값을 그대로 전달한다. 이 중 ``member_set_hash``만은 실제로 함께
-    전달되는 member 행으로부터 재계산해 대조한다 (:meth:`RagCandidateIndexRepository.build_index_version`
-    참고) -- member 하나라도 바뀌면 반드시 달라지는 값이라 위조를 가장 저렴하게 잡아낼 수 있다.
+    ``member_set_hash``·``member_count``·``product_identity_count``·``product_name_count``·
+    ``approved_alias_count``·``vector_count``·``configuration_hash``·``content_hash``는
+    호출자(Service)가 RAG-07A의 순수 로직으로 이미 계산한 값을 그대로 전달한다. 이 중
+    ``member_set_hash``와 5개 count는 실제로 함께 전달되는 member 행으로부터 재계산해
+    대조한다 (:meth:`RagCandidateIndexRepository.build_index_version` 참고) -- member 하나만
+    바뀌어도 반드시 달라지는 값이라 위조나 count 불일치를 저장 전에 잡아낼 수 있다.
     """
 
     index_code: str
@@ -111,6 +114,10 @@ class CandidateIndexMemberSetHashMismatchError(CandidateIndexBuildError):
     """전달된 member 행으로부터 재계산한 member_set_hash가 claim된 값과 다르다."""
 
 
+class CandidateIndexMemberCountMismatchError(CandidateIndexBuildError):
+    """전달된 member 행으로부터 재계산한 count가 claim된 값과 다르다."""
+
+
 class CandidateIndexContentHashConflictError(CandidateIndexBuildError):
     """이미 저장된 content_hash가 다른 내용을 가리킨다."""
 
@@ -149,6 +156,41 @@ _VERSION_IDENTITY_FIELDS = (
 def _recomputed_member_set_hash(members: tuple[RagCandidateIndexMemberCreate, ...]) -> str:
     """RAG-07A의 ``member_set_hash`` 정의(``candidate_index.py:1051-1053``)와 동일한 재구현."""
     return _sha256([{"member_key": m.member_key, "member_content_hash": m.member_content_hash} for m in members])
+
+
+def _recomputed_member_counts(members: tuple[RagCandidateIndexMemberCreate, ...]) -> dict[str, int]:
+    """RAG-07A의 manifest count 정의(``candidate_index.py:1062-1066``)와 동일한 재구현."""
+    identity_keys = {(m.identity_entity_type, m.identity_code_system, m.identity_canonical_code) for m in members}
+    return {
+        "member_count": len(members),
+        "product_identity_count": len(identity_keys),
+        "product_name_count": sum(1 for m in members if m.entry_type is RagMedicationSearchEntryType.PRODUCT_NAME),
+        "approved_alias_count": sum(1 for m in members if m.entry_type is RagMedicationSearchEntryType.APPROVED_ALIAS),
+        "vector_count": sum(1 for m in members if m.embedding is not None),
+    }
+
+
+def _assert_member_metadata_matches(
+    version: RagCandidateIndexVersionCreate, members: tuple[RagCandidateIndexMemberCreate, ...]
+) -> None:
+    """전달된 member 행 자체로부터 재계산한 hash·count가 claim된 값과 같은지 대조한다.
+
+    신규 저장 경로뿐 아니라 content_hash 재사용 경로에도 호출되어야 한다 -- 그렇지 않으면
+    이미 저장된 content_hash와 우연히 같은 값을 주장하면서 다른(또는 변조된) member 입력을
+    검증 없이 통과시키는 우회로가 남는다.
+    """
+    recomputed_hash = _recomputed_member_set_hash(members)
+    if recomputed_hash != version.member_set_hash:
+        raise CandidateIndexMemberSetHashMismatchError(
+            f"전달된 member로 재계산한 member_set_hash {recomputed_hash[:12]}…이(가) "
+            f"claim된 값 {version.member_set_hash[:12]}…과 다릅니다."
+        )
+    recomputed_counts = _recomputed_member_counts(members)
+    mismatched = tuple(field for field, expected in recomputed_counts.items() if getattr(version, field) != expected)
+    if mismatched:
+        raise CandidateIndexMemberCountMismatchError(
+            f"전달된 member로 재계산한 count가 claim된 값과 다릅니다: {', '.join(mismatched)}"
+        )
 
 
 def _assert_version_matches(stored: RagCandidateIndexVersion, requested: RagCandidateIndexVersionCreate) -> None:
@@ -192,7 +234,7 @@ class RagCandidateIndexRepository:
         return result.scalar_one_or_none()
 
     async def get_ready_version_by_code(self, index_code: str) -> RagCandidateIndexVersion | None:
-        """RAG-08/RAG-09가 조회할 대상. #168 자신은 READY를 쓰지 않는다 (RAG-17/#180의 몫)."""
+        """RAG-08/RAG-09가 조회할 대상. #168 자신은 READY를 쓰지 않는다 (RAG-17/#181의 몫)."""
         result = await self.session.execute(
             select(RagCandidateIndexVersion).where(
                 RagCandidateIndexVersion.index_code == index_code,
@@ -229,14 +271,27 @@ class RagCandidateIndexRepository:
         """RAG-07A(#167)가 계산한 build 결과 하나를 ``BUILDING``으로 저장(또는 멱등 재사용)한다.
 
         ``status``는 항상 ``BUILDING``으로 강제된다. ``READY``/``RETIRED``와 환경 pointer 전환은
-        RAG-17(#180)의 몫이므로 이 메서드는 그것들을 쓰지 않는다 (RAG-12A
-        ``build_runtime_bundle``과 동일한 경계). 실패 시 이 트랜잭션 전체가 롤백되어 partial row가
-        남지 않는다.
+        이 메서드가 쓰지 않는다 (RAG-12A ``build_runtime_bundle``과 동일한 경계). 실패 시 이
+        트랜잭션 전체가 롤백되어 partial row가 남지 않는다.
+
+        member 검증(``_assert_member_metadata_matches``)은 content_hash 재사용 여부를 정하기
+        **전에** 실행된다. 재사용 경로 뒤로 미루면, 이미 저장된 content_hash와 우연히 같은 값을
+        주장하면서 실제로는 다른(또는 변조된) member 입력을 넘겨도 검증 없이 기존 row를
+        돌려주게 된다.
+
+        동일 ``content_hash``의 진짜 동시 build는 하나의 결과로 수렴한다: 두 독립 transaction이
+        모두 "존재하지 않음"을 보고 저장을 시도하면 unique 제약 위반은 loser 쪽에서만 나는데,
+        이를 SAVEPOINT로 감싸 잡아내고 winner가 만든 행을 재조회해 멱등 재사용으로 전환한다.
+        같은 ``index_code``의 서로 다른 내용은 이 경로를 타지 않고 그대로 fail-closed된다
+        (``uq_rag_candidate_index_building_per_code`` 위반은 content_hash 재조회로 해소되지
+        않으므로 예외가 그대로 전파된다).
 
         Raises:
             CandidateIndexEmptyMemberSetError: member가 0개다.
             CandidateIndexMemberSetHashMismatchError: 전달된 member 행이 claim된
                 ``member_set_hash``를 재현하지 못한다.
+            CandidateIndexMemberCountMismatchError: 전달된 member 행으로부터 재계산한 count가
+                claim된 값과 다르다.
             CandidateIndexCatalogMismatchError: ``catalog_set_id``가 가리키는 Catalog Set과
                 내용이 다르다.
             CandidateIndexContentHashConflictError: 같은 ``content_hash``가 다른 내용으로 이미
@@ -247,6 +302,7 @@ class RagCandidateIndexRepository:
                 "member 없는 Candidate Index Version은 저장할 수 없습니다. member_set_hash가 빈 "
                 "member set을 가리키면 검색 대상 동일성을 재검증할 수 없습니다."
             )
+        _assert_member_metadata_matches(version, members)
 
         existing = await self.get_version_by_content_hash(version.content_hash)
         if existing is not None:
@@ -254,17 +310,20 @@ class RagCandidateIndexRepository:
             existing_members = await self.list_members(existing.id)
             return RagCandidateIndexBuildResult(version=existing, members=tuple(existing_members), reused_existing=True)
 
-        recomputed_member_set_hash = _recomputed_member_set_hash(members)
-        if recomputed_member_set_hash != version.member_set_hash:
-            raise CandidateIndexMemberSetHashMismatchError(
-                f"전달된 member로 재계산한 member_set_hash {recomputed_member_set_hash[:12]}…이(가) "
-                f"claim된 값 {version.member_set_hash[:12]}…과 다릅니다."
-            )
         await self._assert_catalog_set_matches(version)
 
-        created_version = RagCandidateIndexVersion(**asdict(version), status=RagCandidateIndexStatus.BUILDING)
-        self.session.add(created_version)
-        await self.session.flush()
+        try:
+            async with self.session.begin_nested():
+                created_version = RagCandidateIndexVersion(**asdict(version), status=RagCandidateIndexStatus.BUILDING)
+                self.session.add(created_version)
+                await self.session.flush()
+        except IntegrityError:
+            existing = await self.get_version_by_content_hash(version.content_hash)
+            if existing is None:
+                raise
+            _assert_version_matches(existing, version)
+            existing_members = await self.list_members(existing.id)
+            return RagCandidateIndexBuildResult(version=existing, members=tuple(existing_members), reused_existing=True)
 
         created_members = tuple(
             [await self._create_member(payload, candidate_index_version_id=created_version.id) for payload in members]

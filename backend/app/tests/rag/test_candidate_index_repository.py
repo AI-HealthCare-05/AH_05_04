@@ -26,7 +26,9 @@ from app.models.rag_candidate_index import (
 from app.models.rag_catalog import RagCatalogSet, RagMedicationSearchEntryType
 from app.repositories.rag_candidate_index_repository import (
     CandidateIndexCatalogMismatchError,
+    CandidateIndexContentHashConflictError,
     CandidateIndexEmptyMemberSetError,
+    CandidateIndexMemberCountMismatchError,
     CandidateIndexMemberSetHashMismatchError,
     RagCandidateIndexMemberCreate,
     RagCandidateIndexRepository,
@@ -196,6 +198,57 @@ async def test_build_reuses_identical_content_hash_instead_of_duplicating(db_ses
     assert len(second.members) == 1
 
 
+async def test_reuse_path_rejects_members_that_do_not_match_the_claimed_hash(db_session: AsyncSession) -> None:
+    """재사용 경로도 신규 경로와 동일하게 incoming member를 검증한다.
+
+    ``content_hash``와 ``version`` 메타데이터(``member_set_hash`` 포함)가 기존 저장값과
+    완전히 같아도, 실제로 넘어온 member 행이 그 ``member_set_hash``를 재현하지 못하면
+    재사용을 거부해야 한다. 재사용 여부만 보고 넘어가면 이미 저장된 content_hash를
+    우연히(혹은 의도적으로) 다시 주장하면서 검증되지 않은 member 입력을 통과시키는
+    우회로가 남는다.
+    """
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    members = (_member_create(snapshot=snapshot),)
+    version = _version_create(
+        catalog_set=catalog_set, members=members, index_code=f"idx-{uuid4().hex[:8]}", content_hash=_hash("reuse-1")
+    )
+
+    repository = RagCandidateIndexRepository(db_session)
+    first = await repository.build_index_version(version=version, members=members)
+    assert first.reused_existing is False
+
+    tampered_members = (replace(members[0], member_content_hash=_hash("tampered")),)
+    with pytest.raises(CandidateIndexMemberSetHashMismatchError):
+        await repository.build_index_version(version=version, members=tampered_members)
+
+    # 위조 시도가 기존 저장 row나 member를 바꾸지 않았는지 확인한다.
+    persisted = await repository.list_members(first.version.id)
+    assert {m.member_content_hash for m in persisted} == {members[0].member_content_hash}
+
+
+@pytest.mark.parametrize(
+    "count_field",
+    ["member_count", "product_identity_count", "product_name_count", "approved_alias_count", "vector_count"],
+)
+async def test_member_count_mismatch_is_rejected(db_session: AsyncSession, count_field: str) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    members = (_member_create(snapshot=snapshot),)
+    version = _version_create(
+        catalog_set=catalog_set,
+        members=members,
+        index_code=f"idx-{uuid4().hex[:8]}",
+        content_hash=_hash(f"count-{count_field}"),
+    )
+    tampered_version = replace(version, **{count_field: getattr(version, count_field) + 1})
+
+    with pytest.raises(CandidateIndexMemberCountMismatchError):
+        await RagCandidateIndexRepository(db_session).build_index_version(version=tampered_version, members=members)
+
+    assert await _version_count(db_session, version.content_hash) == 0
+
+
 async def test_content_hash_reused_with_different_content_is_refused(db_session: AsyncSession) -> None:
     """content_hash가 우연히 같아도 실제 내용이 다르면 재사용하지 않고 거부한다."""
     snapshot = await _create_source_snapshot(db_session)
@@ -218,8 +271,6 @@ async def test_content_hash_reused_with_different_content_is_refused(db_session:
             content_hash=shared_hash,
         ),
     )
-
-    from app.repositories.rag_candidate_index_repository import CandidateIndexContentHashConflictError
 
     with pytest.raises(CandidateIndexContentHashConflictError):
         await repository.build_index_version(version=other_version, members=other_members)

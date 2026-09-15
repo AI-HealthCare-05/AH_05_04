@@ -6,15 +6,18 @@ that the same fixture always reproduces the same ``content_hash`` (determinism) 
 re-run reuses the row instead of duplicating it (idempotency).
 """
 
+import asyncio
+import hashlib
+import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import Table, text
+from sqlalchemy import Table, func, select, text
 from sqlalchemy.engine import URL
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 import app.models  # noqa: F401
@@ -41,9 +44,20 @@ from ai_worker.tasks.rag.catalog.types import (
 )
 from app.core import config
 from app.core.db.databases import Base
-from app.models.rag_candidate_index import RagCandidateIndexStatus
-from app.models.rag_catalog import RagCatalogSet
-from app.repositories.rag_candidate_index_repository import RagCandidateIndexRepository
+from app.models.rag_candidate_index import (
+    RagCandidateIndexBuildMode,
+    RagCandidateIndexEntityType,
+    RagCandidateIndexMember,
+    RagCandidateIndexStatus,
+    RagCandidateIndexVersion,
+)
+from app.models.rag_catalog import RagCatalogSet, RagMedicationSearchEntryType
+from app.repositories.rag_candidate_index_repository import (
+    RagCandidateIndexBuildResult,
+    RagCandidateIndexMemberCreate,
+    RagCandidateIndexRepository,
+    RagCandidateIndexVersionCreate,
+)
 from app.repositories.rag_source_catalog_repository import (
     RagSourceCatalogRepository,
     RagSourceCreate,
@@ -346,3 +360,135 @@ async def test_rerunning_the_same_build_reuses_the_stored_version() -> None:
         )
         assert rows is not None
         assert rows.id == first.persisted.version.id
+
+
+def _label_hash(label: str) -> str:
+    return hashlib.sha256(label.encode("utf-8")).hexdigest()
+
+
+def _race_member_set_hash(members: tuple[RagCandidateIndexMemberCreate, ...]) -> str:
+    payload = [{"member_key": m.member_key, "member_content_hash": m.member_content_hash} for m in members]
+    serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+async def _seed_race_catalog_set(session: AsyncSession) -> RagCatalogSet:
+    catalog_set = RagCatalogSet(
+        catalog_version="catalog-race-1.0.0",
+        schema_version="schema-race-v1",
+        normalization_version="normalization-race-v1",
+        manifest_spec_version=f"manifest-spec-race-{uuid4().hex[:10]}",
+        envelope_hash=_label_hash("race-envelope"),
+        manifest_json=b"{}",
+    )
+    session.add(catalog_set)
+    await session.flush()
+    return catalog_set
+
+
+def _race_member(*, snapshot) -> RagCandidateIndexMemberCreate:
+    return RagCandidateIndexMemberCreate(
+        entry_type=RagMedicationSearchEntryType.PRODUCT_NAME,
+        identity_entity_type=RagCandidateIndexEntityType.PRODUCT,
+        identity_code_system="MFDS_ITEM_SEQ",
+        identity_canonical_code="race-product",
+        product_ref="product:race",
+        entry_ref="entry:race",
+        display_text="레이스 테스트정",
+        normalized_text="레이스 테스트정",
+        product_name="레이스 테스트정",
+        product_source_snapshot_id=snapshot.id,
+        entry_source_snapshot_id=snapshot.id,
+        catalog_version="catalog-race-1.0.0",
+        catalog_manifest_hash=_label_hash("race-envelope"),
+        normalization_version="normalization-race-v1",
+        member_key="race-member",
+        member_content_hash=_label_hash("race-member-content"),
+    )
+
+
+class _BarrierCandidateIndexRepository(RagCandidateIndexRepository):
+    """content_hash precheck 직후 barrier에서 대기해 두 세션의 select-then-insert 경쟁을 강제한다."""
+
+    def __init__(self, session: AsyncSession, *, precheck_barrier: asyncio.Barrier) -> None:
+        super().__init__(session)
+        self._precheck_barrier = precheck_barrier
+
+    async def get_version_by_content_hash(self, content_hash: str) -> RagCandidateIndexVersion | None:
+        existing = await super().get_version_by_content_hash(content_hash)
+        if existing is None:
+            await self._precheck_barrier.wait()
+        return existing
+
+
+async def _build_once_after_precheck_barrier(
+    *,
+    version: RagCandidateIndexVersionCreate,
+    members: tuple[RagCandidateIndexMemberCreate, ...],
+    precheck_barrier: asyncio.Barrier,
+) -> RagCandidateIndexBuildResult:
+    async with session_factory() as session:
+        repository = _BarrierCandidateIndexRepository(session, precheck_barrier=precheck_barrier)
+        result = await repository.build_index_version(version=version, members=members)
+        await session.commit()
+        return result
+
+
+async def test_true_concurrent_identical_builds_converge_to_one_row() -> None:
+    """두 독립 session이 동시에 같은 content_hash로 build해도 하나의 row로 수렴한다.
+
+    barrier로 두 session 모두 "존재하지 않음" precheck를 통과한 뒤에야 저장을 계속하도록
+    강제해, select-then-insert 경쟁을 타이밍에 기대지 않고 실제로 재현한다. loser는
+    unique 제약 위반을 겪지만 이를 IntegrityError로 잡아 winner의 row를 재조회해 멱등
+    재사용으로 수렴해야 한다.
+    """
+    snapshot = await _seed_source_snapshot()
+    async with session_factory.begin() as session:
+        catalog_set_id = (await _seed_race_catalog_set(session)).id
+
+    members = (_race_member(snapshot=snapshot),)
+    version = RagCandidateIndexVersionCreate(
+        index_code=f"idx-race-{uuid4().hex[:8]}",
+        index_version="v1",
+        build_mode=RagCandidateIndexBuildMode.LEXICAL_ONLY,
+        catalog_set_id=catalog_set_id,
+        catalog_version="catalog-race-1.0.0",
+        catalog_manifest_hash=_label_hash("race-envelope"),
+        schema_version="schema-race-v1",
+        normalization_version="normalization-race-v1",
+        lexical_config_version="lexical-race-v1",
+        search_order_version="search-order-race-v1",
+        candidate_limit=20,
+        display_limit=1,
+        member_count=1,
+        product_identity_count=1,
+        product_name_count=1,
+        approved_alias_count=0,
+        vector_count=0,
+        member_set_hash=_race_member_set_hash(members),
+        configuration_hash=_label_hash("race-config"),
+        content_hash=_label_hash(f"race-content-{uuid4().hex[:8]}"),
+    )
+
+    barrier = asyncio.Barrier(2)
+    first, second = await asyncio.gather(
+        _build_once_after_precheck_barrier(version=version, members=members, precheck_barrier=barrier),
+        _build_once_after_precheck_barrier(version=version, members=members, precheck_barrier=barrier),
+    )
+
+    assert first.version.id == second.version.id
+    assert {first.reused_existing, second.reused_existing} == {False, True}
+
+    async with session_factory() as session:
+        version_row_count = await session.scalar(
+            select(func.count())
+            .select_from(RagCandidateIndexVersion)
+            .where(RagCandidateIndexVersion.content_hash == version.content_hash)
+        )
+        member_row_count = await session.scalar(
+            select(func.count())
+            .select_from(RagCandidateIndexMember)
+            .where(RagCandidateIndexMember.candidate_index_version_id == first.version.id)
+        )
+    assert version_row_count == 1
+    assert member_row_count == 1

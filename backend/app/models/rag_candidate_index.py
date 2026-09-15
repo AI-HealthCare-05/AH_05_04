@@ -48,7 +48,7 @@ class RagCandidateIndexVersion(Base):
     """RAG-07A(#167) 순수 build 결과의 영속 스냅샷 (RAG-07B, #168).
 
     ``status``는 이 테이블을 쓰는 build transaction에서 항상 ``BUILDING``으로 강제된다.
-    ``READY``/``RETIRED``와 환경 pointer 전환은 RAG-17(#180)의 몫이므로 여기서는 다루지 않는다
+    ``READY``/``RETIRED``와 환경 pointer 전환은 RAG-17(#181)의 몫이므로 여기서는 다루지 않는다
     (RAG-12A ``rag_runtime_release_bundle``과 동일한 경계, ``rag_runtime_repository.py``의
     ``build_runtime_bundle`` 참고). partial/failed build는 row 자체를 남기지 않는다.
     """
