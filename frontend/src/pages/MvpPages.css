@@ -220,6 +220,23 @@
   padding-inline: 16px;
   border-radius: 14px;
   font-size: 13px;
+  scroll-margin-block: 96px 32px;
+}
+
+.mvp-auth .mvp-form__field input:focus-visible {
+  border-color: var(--ds-action);
+  outline: 3px solid var(--ds-focus);
+  outline-offset: 2px;
+}
+
+.mvp-auth .mvp-form__field input[aria-invalid='true'] {
+  border-color: var(--ds-danger);
+}
+
+.mvp-auth .mvp-form__field input[aria-invalid='true']:focus {
+  border-color: var(--ds-danger);
+  outline: 3px solid rgb(179 38 30 / 32%);
+  outline-offset: 2px;
 }
 
 .mvp-auth .mvp-form__field:has(.mvp-form__field-error) {
@@ -251,6 +268,13 @@
   gap: 12px;
 }
 
+.mvp-signup-required:has(input:focus-visible),
+.mvp-signup-required:has(input[aria-invalid='true']:focus) {
+  border-color: var(--ds-action);
+  outline: 3px solid var(--ds-focus);
+  outline-offset: 2px;
+}
+
 .mvp-signup-required label {
   display: flex;
   align-items: flex-start;
@@ -264,6 +288,7 @@
   height: 20px;
   flex: 0 0 auto;
   margin: 0;
+  scroll-margin-block: 96px 32px;
 }
 
 .mvp-signup-required span {
