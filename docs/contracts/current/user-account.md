@@ -83,12 +83,14 @@
 - `POST /api/v1/auth/email-verification/confirm`은 이메일과 원문 token을 받아 `token_hash`, `verified_at IS NULL`, `expires_at > now()` 조건으로 검증합니다. 성공하면 같은 이메일·목적의 미인증·미만료 token 전체를 인증 완료 처리합니다.
 - 유효하지 않거나, 만료됐거나, 이미 사용됐거나, 다른 이메일에 발급된 token이면 `422 VALIDATION_FAILED`, `details[].field=token`, `reason=EMAIL_VERIFICATION_TOKEN_INVALID`를 반환합니다.
 - 로그·오류 응답에는 원문 token, token hash, 이메일 존재 여부 추론 정보를 남기지 않습니다. Provider 발송 실패는 공개 응답 상태·본문으로 계정 존재 여부가 드러나지 않도록 요청 응답 경계 밖에서 처리하며, 해당 요청에서 생성한 token은 삭제해 사용자가 발송 실패 후 쿨다운 token에 갇히지 않게 합니다.
+- 현재 발송은 token 저장·commit 이후 메모리 task로 예약합니다. API 응답은 SMTP 완료를 기다리지 않으며, 발송 지연·실패가 공개 응답 상태나 본문을 바꾸지 않습니다. 정상 종료 중 task 추적·drain과 비정상 종료 시 영속 복구는 아직 제공하지 않으므로, token commit 뒤 프로세스가 종료되면 발송 또는 실패 cleanup이 유실될 수 있습니다. 이 경우 사용자는 동일 요청을 다시 보내 복구하며, 영속 outbox 도입은 별도 후속 판단으로 남깁니다.
 
 ### 비밀번호 재설정(#206, `PD-206` 결정 3)
 
 - `password_reset_token(id, user_id, token_hash, created_at, expires_at, used_at)` — 원문 토큰은 저장하지 않고 해시(SHA-256)만 저장합니다.
 - 새 비밀번호는 [회원가입 비밀번호 기준](#회원가입)과 동일하게 필수, 8~72자, 대문자·소문자·숫자·특수문자 각 1개 이상 포함을 적용합니다. 회원가입 비밀번호 정책이 바뀌면 재설정 정책도 같은 변경에서 함께 갱신합니다.
 - `POST /api/v1/auth/password-reset/request`는 계정 존재 여부와 무관하게 항상 같은 성공 응답(`detail`)을 반환합니다(anti-enumeration). 원문 token은 `EmailSender` adapter 호출 경계까지만 전달하고 DB에는 저장하지 않습니다. `reset_token`은 `LOCAL` 환경에서만 채워지며, 그 외 환경에서는 항상 비웁니다. 같은 사용자가 `PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS`(기본 60초) 안에 다시 요청하면 새 token을 발급하지 않고 같은 성공 응답만 반환합니다. 이메일 발송 Provider는 회원가입 이메일 인증과 같은 `EMAIL_PROVIDER` 설정을 사용합니다. Production/Staging SMTP 발송은 #494 범위에서 설정·검증하며, Provider 실패는 공개 응답 상태·본문으로 계정 존재 여부가 드러나지 않도록 요청 응답 경계 밖에서 처리합니다.
+- 비밀번호 재설정 메일도 token 저장·commit 이후 메모리 task로 예약합니다. API 응답은 SMTP 완료를 기다리지 않으며, 발송 실패 시 해당 요청에서 생성한 token을 삭제해 재요청을 허용합니다. 프로세스 종료로 메모리 task가 유실되면 발송 또는 cleanup이 완료되지 않을 수 있고, 이 경우 사용자는 동일 요청을 다시 보내 복구합니다.
 - **처리시간 기반 anti-enumeration(PR #404 리뷰)**: 계정이 없어도 있는 경우와 같은 수의 DB 조회·해싱 연산을 수행하지만, 존재하는 계정만 수행하는 `password_reset_token` INSERT 때문에 남는 처리시간 차이가 있습니다. 이 차이를 없애기 위해 실제 쓰기(있다면)를 마치고 commit까지 끝낸 뒤, 요청 진입 시각 기준 `PASSWORD_RESET_RESPONSE_TARGET_SECONDS`(기본 0.03초)까지 응답을 지연시킵니다. 이 값은 `scripts/measure_password_reset_timing.py`로 CI(Linux 러너, 격리된 컨테이너) 기준 측정한 가장 느린 경로의 최대 관측치(약 14ms)에 여유를 둔 것입니다. **잔존 리스크**: 동시 요청이 많아 DB 커넥션 풀 대기가 지배적인 상황에서는 응답 시간이 이 목표치를 넘을 수 있고, 그 구간에서는 계정 존재 여부에 따른 미세한 시간차가 다시 드러날 수 있습니다 — 이는 설계된 방어가 아니라 알려진 한계로 남겨둡니다. 전역 요청 빈도 제한(IP 기준 등)은 이번 범위에 포함하지 않으며 별도 후속 이슈로 다룹니다.
 - 재설정 완료(`POST /api/v1/auth/password-reset/confirm`)는 `token`·`new_password`를 받아 원자적 일회성 소비로 처리합니다. **재설정 성공 자체는 `password_reset_token` 소지만으로 인증되므로 anti-enumeration을 적용하지 않습니다.**
 
