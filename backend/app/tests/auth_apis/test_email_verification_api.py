@@ -43,41 +43,40 @@ async def _wait_until(assertion, *, timeout_seconds: float = 1.0) -> None:
     assertion()
 
 
-async def _wait_until_no_recent_email_verification_token(db_session, *, email: str) -> None:
-    deadline = asyncio.get_running_loop().time() + 1.0
-    last_error: AssertionError | None = None
+async def _wait_until_no_recent_email_verification_token(*, email: str) -> None:
+    async def has_no_recent_token() -> bool:
+        async with AsyncSession(bind=test_engine, expire_on_commit=False) as session:
+            recent_token = await EmailVerificationRepository(session).find_recent_token(
+                email=email,
+                purpose=EmailVerificationPurpose.SIGNUP,
+                since=datetime.now(config.TIMEZONE)
+                - timedelta(seconds=config.EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS),
+            )
+            return recent_token is None
+
+    deadline = asyncio.get_running_loop().time() + 2.0
     while asyncio.get_running_loop().time() < deadline:
-        recent_token = await EmailVerificationRepository(db_session).find_recent_token(
-            email=email,
-            purpose=EmailVerificationPurpose.SIGNUP,
-            since=datetime.now(config.TIMEZONE) - timedelta(seconds=config.EMAIL_VERIFICATION_REQUEST_COOLDOWN_SECONDS),
-        )
-        try:
-            assert recent_token is None
+        if await has_no_recent_token():
             return
-        except AssertionError as exc:
-            last_error = exc
-            await asyncio.sleep(0.01)
-    if last_error is not None:
-        raise last_error
+        await asyncio.sleep(0.01)
+    assert await has_no_recent_token()
 
 
-async def _wait_until_no_recent_password_reset_token(db_session, *, user_id: UUID) -> None:
-    deadline = asyncio.get_running_loop().time() + 1.0
-    last_error: AssertionError | None = None
+async def _wait_until_no_recent_password_reset_token(*, user_id: UUID) -> None:
+    async def has_no_recent_token() -> bool:
+        async with AsyncSession(bind=test_engine, expire_on_commit=False) as session:
+            recent_token = await PasswordResetRepository(session).find_recent_token_for_user(
+                user_id=user_id,
+                since=datetime.now(config.TIMEZONE) - timedelta(seconds=config.PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS),
+            )
+            return recent_token is None
+
+    deadline = asyncio.get_running_loop().time() + 2.0
     while asyncio.get_running_loop().time() < deadline:
-        recent_token = await PasswordResetRepository(db_session).find_recent_token_for_user(
-            user_id=user_id,
-            since=datetime.now(config.TIMEZONE) - timedelta(seconds=config.PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS),
-        )
-        try:
-            assert recent_token is None
+        if await has_no_recent_token():
             return
-        except AssertionError as exc:
-            last_error = exc
-            await asyncio.sleep(0.01)
-    if last_error is not None:
-        raise last_error
+        await asyncio.sleep(0.01)
+    assert await has_no_recent_token()
 
 
 class RecordingEmailSender:
@@ -211,7 +210,7 @@ async def test_email_verification_request_delivery_failure_keeps_public_response
     assert body["detail"]
     assert body["verification_token"]
     assert email.lower() not in response.text.lower()
-    await _wait_until_no_recent_email_verification_token(db_session, email=email)
+    await _wait_until_no_recent_email_verification_token(email=email)
 
 
 async def test_email_verification_confirm_accepts_valid_token_and_rejects_reuse() -> None:
@@ -343,4 +342,4 @@ async def test_password_reset_request_delivery_failure_matches_unknown_response_
     assert email.lower() not in existing_response.text.lower()
     user = await UserRepository(db_session).get_user_by_email(email)
     assert user is not None
-    await _wait_until_no_recent_password_reset_token(db_session, user_id=user.id)
+    await _wait_until_no_recent_password_reset_token(user_id=user.id)

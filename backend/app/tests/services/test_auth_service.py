@@ -375,7 +375,9 @@ async def test_request_password_reset_concurrent_requests_only_create_one_token(
 
     # winner가 이미 토큰을 만들어 커밋했으므로, loser는 쿨다운 중으로 처리돼 새
     # 토큰을 만들지 않아야 한다(둘 다 생성되는 lost update가 아니어야 한다).
-    assert loser_result is None
+    assert loser_result is not None
+    assert loser_result.reset_token is None
+    assert loser_result.delivery_task is None
     assert token_count == 1
 
 
