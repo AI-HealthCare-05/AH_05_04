@@ -98,7 +98,7 @@ canonicalization version은 공백 없는 bounded opaque token으로 보존하�
 
 ### Evaluation Schema Set 1.4 후보
 
-#160·#161 DEV metric 입력 projection 후보는 `rag-eval.schema-set@1.4.0`, SHA-256 `13cb59316be25c80ecaad2e3ae87bff6d0a4f1ebfb5f75c888ff3c7ae85a0a8c`이다. 문서 상태는
+#160·#161 DEV metric 입력 projection 후보는 `rag-eval.schema-set@1.4.0`, SHA-256 `0f6b69b460af5ea840e009f55b86256942f896be324c7885d709883600799e98`이다. 문서 상태는
 `Candidate · Review Required`이며, 책임 Evaluation·Source provenance·Safety fixture 리뷰어 김지혜
 (`@Jye-rookie`)의 실제 Pull Request review event가 승인 전환에 필요하다.
 

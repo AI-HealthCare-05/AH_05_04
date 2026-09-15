@@ -368,6 +368,43 @@ def test_observation_rejects_criticality_review_binding_mismatch(
     _assert_observation_schema_invalid(payload)
 
 
+def test_observation_allows_emitted_claim_without_criticality_judgment() -> None:
+    payload = _observation_payload()
+    claim = payload["claims"][0]
+    claim["criticality"] = None
+    claim["criticality_source"] = None
+    claim["criticality_review_ref"] = None
+
+    observation = _parse_observation(_rehash(payload, "observation_sha256"))
+
+    assert observation.claims[0].criticality is None
+    assert observation.claims[0].criticality_source is None
+    assert observation.claims[0].criticality_review_ref is None
+
+
+@pytest.mark.parametrize(
+    ("criticality", "criticality_source", "review_ref"),
+    [
+        ("CRITICAL", None, None),
+        (None, "GOLD_EXACT_MATCH", None),
+        (None, None, _ref("unexpected-review")),
+        (None, "APPROVED_REVIEW", _ref("approved-review")),
+    ],
+)
+def test_observation_rejects_partial_missing_criticality_judgment(
+    criticality: str | None,
+    criticality_source: str | None,
+    review_ref: Payload | None,
+) -> None:
+    payload = _observation_payload()
+    claim = payload["claims"][0]
+    claim["criticality"] = criticality
+    claim["criticality_source"] = criticality_source
+    claim["criticality_review_ref"] = review_ref
+
+    _assert_observation_schema_invalid(payload)
+
+
 @pytest.mark.parametrize(
     ("accepted", "reason"),
     [(True, "CITATION_IDENTITY_INVALID"), (False, None)],

@@ -90,16 +90,18 @@ Each Claim contains:
 
 - `claim_key`;
 - `claim_kind`: `MEDICAL | AUXILIARY | SAFETY_FALLBACK`;
-- `criticality`: `CRITICAL | NON_CRITICAL`;
-- `criticality_source`: `GOLD_EXACT_MATCH | APPROVED_REVIEW`;
+- nullable `criticality`: judgment가 있으면 `CRITICAL | NON_CRITICAL`;
+- nullable `criticality_source`: judgment가 있으면 `GOLD_EXACT_MATCH | APPROVED_REVIEW`;
 - nullable `criticality_review_ref`;
 - `support_status`: `SUPPORTED | PARTIALLY_SUPPORTED | CONTRADICTED | NOT_SUPPORTED`;
 - `support_receipt_sha256`;
 - sorted `citations`.
 
-`GOLD_EXACT_MATCH` forbids a criticality review reference. `APPROVED_REVIEW` requires an immutable reference that is
-bound to the same Run, Case, answer, and Claim key. The observation schema validates the structural condition; the
-future projection builder validates the referenced judgment contents.
+All three criticality fields are null when an emitted Claim has no Gold match and no approved judgment; partial-null
+states are invalid. `GOLD_EXACT_MATCH` requires a criticality value and forbids a criticality review reference.
+`APPROVED_REVIEW` requires both a criticality value and an immutable reference bound to the same Run, Case, answer,
+and Claim key. The observation schema validates the structural condition; the future projection builder validates the
+referenced judgment contents.
 
 Claim keys are unique and sorted by the repository's canonical UTF-16 ordering. The exact Claim key set must equal the
 Case Result's `actual_claim_ids` set during future same-Case input validation.

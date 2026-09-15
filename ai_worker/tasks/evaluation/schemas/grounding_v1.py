@@ -217,8 +217,8 @@ class CitationEdgeObservation(StrictContractModel):
 class ClaimObservation(StrictContractModel):
     claim_key: StableId
     claim_kind: ClaimKindValue
-    criticality: ClaimCriticalityValue
-    criticality_source: CriticalitySourceValue
+    criticality: ClaimCriticalityValue | None
+    criticality_source: CriticalitySourceValue | None
     criticality_review_ref: ImmutableReference | None
     support_status: ClaimSupportStatusValue
     support_receipt_sha256: Sha256Hex
@@ -226,6 +226,11 @@ class ClaimObservation(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_claim(self) -> ClaimObservation:
+        if self.criticality_source is None:
+            if self.criticality is not None or self.criticality_review_ref is not None:
+                raise ValueError("missing criticality judgment requires all criticality fields to be null")
+        elif self.criticality is None:
+            raise ValueError("criticality source requires a criticality value")
         if (self.criticality_source is CriticalitySource.APPROVED_REVIEW) != (self.criticality_review_ref is not None):
             raise ValueError("approved criticality requires exactly one review reference")
         citation_keys = [citation.citation_key for citation in self.citations]

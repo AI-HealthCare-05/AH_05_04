@@ -80,8 +80,8 @@ class CitationEdgeObservation(StrictContractModel):
 class ClaimObservation(StrictContractModel):
     claim_key: StableId
     claim_kind: ClaimKindValue
-    criticality: ClaimCriticalityValue
-    criticality_source: CriticalitySourceValue
+    criticality: ClaimCriticalityValue | None
+    criticality_source: CriticalitySourceValue | None
     criticality_review_ref: ImmutableReference | None
     support_status: ClaimSupportStatusValue
     support_receipt_sha256: Sha256Hex
@@ -111,7 +111,7 @@ class ClaimCitationObservation(StrictContractModel):
     claims: tuple[ClaimObservation, ...]
 ```
 
-`AnswerGroundingTaskTypeValue` accepts only `ANSWER_GROUNDING | SAFETY | END_TO_END_RAG`. Require unique UTF-16-sorted Claim keys, globally unique and UTF-16-sorted flattened Citation keys, each Citation's `claim_key` equal to its containing Claim, unique sorted reason tuples, correct criticality-reference pairing, consistent accepted/authorized reason/hash pairing, validation-before-authorization causality, and the canonical self-hash excluding `observation_sha256`. A rejected validation records authorization as not run at both envelope and edge levels; only a validated selection can carry a non-null authorization decision.
+`AnswerGroundingTaskTypeValue` accepts only `ANSWER_GROUNDING | SAFETY | END_TO_END_RAG`. Require unique UTF-16-sorted Claim keys, globally unique and UTF-16-sorted flattened Citation keys, each Citation's `claim_key` equal to its containing Claim, unique sorted reason tuples, an all-null criticality tuple when judgment is absent, correct non-null criticality-reference pairing when judgment exists, consistent accepted/authorized reason/hash pairing, validation-before-authorization causality, and the canonical self-hash excluding `observation_sha256`. A rejected validation records authorization as not run at both envelope and edge levels; only a validated selection can carry a non-null authorization decision.
 
 Use a Grounding-specific annotated `RuntimeVersionToken` that rejects non-NFC source-version bytes without normalizing them. Draft 2020-12 tests cover the portable bounded lexical subset; parser tests cover the NFC-only invariant.
 
@@ -145,7 +145,7 @@ Run the Task 1 command. Expected: valid-payload and enum tests pass.
 
 - [ ] **Step 5: Write failing invariant and privacy tests**
 
-Parameterize literal mutations for duplicate/unsorted Claim and Citation keys including cross-Claim flattened ordering, opaque #180 source-version tokens, orphan Citation, self-hash mismatch, criticality-reference mismatch, accepted/authorized reason mismatch, invalid authorization hash tuple, rejected-validation authorization not-run state, fabricated post-rejection authorization, and every invalid no-claims tuple. Add a field-name sentinel rejecting `query`, `question`, `answer_text`, `claim_text`, `source_body`, `provider_payload`, `credential`, and `patient`.
+Parameterize literal mutations for duplicate/unsorted Claim and Citation keys including cross-Claim flattened ordering, exact duplicate Draft arrays, opaque #180 source-version tokens, orphan Citation, self-hash mismatch, absent and partial criticality judgment states, criticality-reference mismatch, accepted/authorized reason mismatch, invalid authorization hash tuple, rejected-validation authorization not-run state, fabricated post-rejection authorization, and every invalid no-claims tuple. Add a field-name sentinel rejecting `query`, `question`, `answer_text`, `claim_text`, `source_body`, `provider_payload`, `credential`, and `patient`.
 
 - [ ] **Step 6: Run invariant tests and verify RED**
 

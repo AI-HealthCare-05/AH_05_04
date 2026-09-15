@@ -148,6 +148,20 @@ def _add_claim_citation_observation_conditions(document: dict[str, JsonValue]) -
     if not isinstance(citation, dict) or not isinstance(claim, dict):
         raise TypeError("claim-citation observation definitions are incomplete")
 
+    properties = document.get("properties")
+    claim_properties = claim.get("properties")
+    if not isinstance(properties, dict) or not isinstance(claim_properties, dict):
+        raise TypeError("claim-citation observation properties are incomplete")
+    for field in ("validation_reason_codes", "authorization_reason_codes"):
+        reason_codes = properties.get(field)
+        if not isinstance(reason_codes, dict):
+            raise TypeError(f"{field} schema must be an object")
+        reason_codes["uniqueItems"] = True
+    citations = claim_properties.get("citations")
+    if not isinstance(citations, dict):
+        raise TypeError("claim citations schema must be an object")
+    citations["uniqueItems"] = True
+
     citation["allOf"] = [
         {
             "if": {"properties": {"accepted": {"const": True}}, "required": ["accepted"]},
@@ -172,12 +186,25 @@ def _add_claim_citation_observation_conditions(document: dict[str, JsonValue]) -
     claim["allOf"] = [
         {
             "if": {
+                "properties": {"criticality_source": {"type": "null"}},
+                "required": ["criticality_source"],
+            },
+            "then": {
+                "properties": {
+                    "criticality": {"type": "null"},
+                    "criticality_review_ref": {"type": "null"},
+                }
+            },
+            "else": {"properties": {"criticality": {"not": {"type": "null"}}}},
+        },
+        {
+            "if": {
                 "properties": {"criticality_source": {"const": "APPROVED_REVIEW"}},
                 "required": ["criticality_source"],
             },
             "then": {"properties": {"criticality_review_ref": {"not": {"type": "null"}}}},
             "else": {"properties": {"criticality_review_ref": {"type": "null"}}},
-        }
+        },
     ]
 
     conditions = document.setdefault("allOf", [])

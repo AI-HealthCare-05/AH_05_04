@@ -20,7 +20,7 @@ same-Case signal 입력에 필요한 최소 후보 Schema Set으로 제안한다
 | --- | --- |
 | Schema Set ID | `rag-eval.schema-set` |
 | Schema Set version | `1.4.0` |
-| Schema Set SHA-256 | `13cb59316be25c80ecaad2e3ae87bff6d0a4f1ebfb5f75c888ff3c7ae85a0a8c` |
+| Schema Set SHA-256 | `0f6b69b460af5ea840e009f55b86256942f896be324c7885d709883600799e98` |
 | Canonical member root | `evals/schemas/1.4.0/` |
 | Member count | `23` |
 
@@ -55,9 +55,11 @@ no-claims 상태는 generation 미실행·폐기의 `answer_sha256=null`과 승�
 허용하지만 observation reference/hash는 null이고 세 failure boolean은 모두 false여야 한다.
 
 Python strict model과 exported Draft 2020-12 schema는 task enum, validation-before-authorization 인과와 receipt tuple,
-criticality judgment reference, no-claims state를 fail-closed한다. 정렬·중복·orphan과 canonical self-hash는
-Python parser가 추가 검증하며 source-version NFC도 정규화하지 않고 거부한다. Draft schema는 portable한
-길이·lexical subset만 표현한다. portable 조건 검증은 required dev dependency인 `jsonschema`로 실행한다.
+criticality judgment state, no-claims state를 fail-closed한다. Gold에 없는 emitted Claim의 criticality judgment가
+전혀 없으면 세 criticality field를 모두 null로 보존하고, 부분 null은 거부한다. reason-code 배열과 Claim별
+Citation 배열의 exact duplicate는 Draft의 `uniqueItems`로도 거부한다. 정렬·key 기준 중복·orphan과 canonical
+self-hash는 Python parser가 추가 검증하며 source-version NFC도 정규화하지 않고 거부한다. Draft schema는
+portable한 길이·lexical subset만 표현한다. portable 조건 검증은 required dev dependency인 `jsonschema`로 실행한다.
 Run·Case Result·Gold·#180 receipt 사이의 실제 외부 artifact exact matching은
 후속 pure projection builder 입력 검증의 책임이다.
 

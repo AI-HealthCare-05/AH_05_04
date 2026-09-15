@@ -383,6 +383,63 @@ def test_schema_set_1_4_observation_state_matrix_is_portable() -> None:
     assert not validator.is_valid(fabricated_authorization)
 
 
+def test_schema_set_1_4_observation_criticality_judgment_states_are_portable() -> None:
+    document = schema_documents("1.4.0")["artifacts/rag-eval.claim-citation-observation.schema.json"]
+    validator = jsonschema.Draft202012Validator(document)
+    missing_judgment = _schema_set_1_4_observation_payload()
+    claim = missing_judgment["claims"][0]
+    claim["criticality"] = None
+    claim["criticality_source"] = None
+    claim["criticality_review_ref"] = None
+
+    assert validator.is_valid(missing_judgment)
+    for field, value in (
+        ("criticality", "CRITICAL"),
+        ("criticality_source", "GOLD_EXACT_MATCH"),
+        ("criticality_review_ref", {"id": "review", "version": "1.0.0", "hash": "a" * 64}),
+    ):
+        partial = deepcopy(missing_judgment)
+        partial["claims"][0][field] = value
+        assert not validator.is_valid(partial)
+
+
+def test_schema_set_1_4_observation_arrays_reject_exact_duplicates_portably() -> None:
+    document = schema_documents("1.4.0")["artifacts/rag-eval.claim-citation-observation.schema.json"]
+    validator = jsonschema.Draft202012Validator(document)
+
+    duplicate_citation = _schema_set_1_4_observation_payload()
+    duplicate_citation["claims"][0]["citations"].append(deepcopy(duplicate_citation["claims"][0]["citations"][0]))
+    assert not validator.is_valid(duplicate_citation)
+
+    duplicate_validation_reason = _schema_set_1_4_observation_payload()
+    duplicate_validation_reason["validation_decision"] = "REJECTED"
+    duplicate_validation_reason["validation_reason_codes"] = ["CLAIM_NOT_SUPPORTED", "CLAIM_NOT_SUPPORTED"]
+    duplicate_validation_reason["validated_selection_sha256"] = None
+    duplicate_validation_reason["authorization_decision"] = None
+    duplicate_validation_reason["authorization_reason_codes"] = []
+    duplicate_validation_reason["authorization_receipt_ref"] = None
+    duplicate_validation_reason["authorization_receipt_sha256"] = None
+    citation = duplicate_validation_reason["claims"][0]["citations"][0]
+    citation["authorized"] = False
+    citation["authorization_reason_code"] = None
+    citation["authorization_selection_sha256"] = None
+    assert not validator.is_valid(duplicate_validation_reason)
+
+    duplicate_authorization_reason = _schema_set_1_4_observation_payload()
+    duplicate_authorization_reason["authorization_decision"] = "REJECTED"
+    duplicate_authorization_reason["authorization_reason_codes"] = [
+        "SELECTION_NOT_AUTHORIZED",
+        "SELECTION_NOT_AUTHORIZED",
+    ]
+    duplicate_authorization_reason["authorization_receipt_ref"] = None
+    duplicate_authorization_reason["authorization_receipt_sha256"] = None
+    citation = duplicate_authorization_reason["claims"][0]["citations"][0]
+    citation["authorized"] = False
+    citation["authorization_reason_code"] = "SELECTION_NOT_AUTHORIZED"
+    citation["authorization_selection_sha256"] = None
+    assert not validator.is_valid(duplicate_authorization_reason)
+
+
 def test_schema_set_1_4_grounding_signal_state_matrix_is_portable() -> None:
     document = schema_documents("1.4.0")["artifacts/rag-eval.grounding-signal.schema.json"]
     validator = jsonschema.Draft202012Validator(document)

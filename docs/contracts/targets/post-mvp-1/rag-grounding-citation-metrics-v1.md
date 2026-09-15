@@ -47,7 +47,7 @@ Claim/Citation이 있는데 observation이 없거나, no-claims 상태가 observ
 `INVALID/null`이다.
 
 이 신규 member들은 Schema Set `1.4.0` Candidate에 등록됐으며 canonical member manifest hash는
-`13cb59316be25c80ecaad2e3ae87bff6d0a4f1ebfb5f75c888ff3c7ae85a0a8c`이다. 기존 Schema Set과 기존 member의
+`0f6b69b460af5ea840e009f55b86256942f896be324c7885d709883600799e98`이다. 기존 Schema Set과 기존 member의
 version·canonical bytes는 변경하지 않는다. 책임 리뷰어의 실제 Pull Request 승인 전에는 이 Candidate를
 Approved 입력이나 Metric kernel 구현 선행조건 완료로 취급하지 않는다.
 
@@ -79,12 +79,16 @@ Approved 입력이나 Metric kernel 구현 선행조건 완료로 취급하지 �
 
 - `claim_key`: Case Result의 `actual_claim_ids` member와 exact-match하는 stable key
 - `claim_kind`: #180 `ClaimKind`
-- `criticality`: Case Gold/Rubric의 `CRITICAL | NON_CRITICAL`
-- `criticality_source`: `GOLD_EXACT_MATCH | APPROVED_REVIEW`
-- `criticality_review_ref`: Gold에 없는 emitted Claim이면 필수인 immutable 승인 judgment reference
+- nullable `criticality`: judgment가 있으면 `CRITICAL | NON_CRITICAL`
+- nullable `criticality_source`: judgment가 있으면 `GOLD_EXACT_MATCH | APPROVED_REVIEW`
+- nullable `criticality_review_ref`: `APPROVED_REVIEW`이면 필수인 immutable 승인 judgment reference
 - `support_status`: #180 `SUPPORTED | PARTIALLY_SUPPORTED | CONTRADICTED | NOT_SUPPORTED`
 - `support_receipt_sha256`: Claim support-verification receipt의 canonical hash
 - 정렬된 `citations[]`
+
+Gold exact-match 또는 approved judgment가 있으면 `criticality`와 `criticality_source`는 모두 non-null이다.
+`GOLD_EXACT_MATCH`는 review reference를 금지하고 `APPROVED_REVIEW`는 이를 요구한다. Gold에 없는 emitted
+Claim의 judgment가 전혀 없으면 세 필드는 모두 null이며, 일부만 null이거나 값이 추가된 상태는 `INVALID`다.
 
 ### Citation edge projection
 
