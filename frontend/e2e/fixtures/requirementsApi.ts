@@ -211,6 +211,14 @@ export async function installRequirementsApi(
     if (key === 'POST /api/v1/auth/login') {
       return json(route, { access_token: syntheticToken })
     }
+    if (key === 'GET /api/v1/medication-checkins/unconfirmed') {
+      return json(route, {
+        data: {
+          items: [],
+          next_cursor: null,
+        },
+      })
+    }
     if (key === 'POST /api/v1/auth/logout') {
       state.logoutCount += 1
       return json(route, { detail: '로그아웃되었습니다.' })
