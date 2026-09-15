@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import unicodedata
+from array import array
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -958,6 +959,11 @@ def _embedding_values_are_valid(values: object, dimension: int) -> bool:
     )
 
 
+def _canonical_embedding_values(values: tuple[float, ...]) -> tuple[float, ...]:
+    """Use the same float32 representation that pgvector persists."""
+    return tuple(array("f", values))
+
+
 def _attach_embeddings(
     members: tuple[CandidateIndexMember, ...],
     config: CandidateIndexBuildConfig,
@@ -1002,20 +1008,23 @@ def _attach_embeddings(
             CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
             ("embedding_output",),
         )
-    return tuple(
-        dataclasses.replace(
-            member,
-            embedding=vector.values,
-            member_content_hash=_sha256(
-                {
-                    "lexical_member_content_hash": member.member_content_hash,
-                    "embedding_model_version": config.embedding_model_version,
-                    "embedding": vector.values,
-                }
-            ),
+    embedded_members = []
+    for member, vector in zip(members, vectors, strict=True):
+        embedding = _canonical_embedding_values(vector.values)
+        embedded_members.append(
+            dataclasses.replace(
+                member,
+                embedding=embedding,
+                member_content_hash=_sha256(
+                    {
+                        "lexical_member_content_hash": member.member_content_hash,
+                        "embedding_model_version": config.embedding_model_version,
+                        "embedding": embedding,
+                    }
+                ),
+            )
         )
-        for member, vector in zip(members, vectors, strict=True)
-    )
+    return tuple(embedded_members)
 
 
 def _configuration_payload(config: CandidateIndexBuildConfig) -> dict[str, object]:

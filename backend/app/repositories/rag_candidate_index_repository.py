@@ -6,8 +6,12 @@ Worker package 없이 이 read port만으로 조회할 수 있어야 하기 때�
 분리되어 있다).
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
+import unicodedata
+from array import array
 from dataclasses import asdict, dataclass
 from uuid import UUID
 
@@ -31,6 +35,32 @@ def _canonical_json_bytes(value: object) -> bytes:
 
 def _sha256(value: object) -> str:
     return hashlib.sha256(_canonical_json_bytes(value)).hexdigest()
+
+
+def _stable_text_sort_key(value: str) -> bytes:
+    return unicodedata.normalize("NFC", value).encode("utf-8")
+
+
+def _identity_key(member: RagCandidateIndexMemberCreate) -> str:
+    return f"{member.identity_entity_type.value}:{member.identity_code_system}:{member.identity_canonical_code}"
+
+
+def _member_sort_key(member: RagCandidateIndexMemberCreate) -> tuple[bytes, bytes, bytes]:
+    return (
+        _stable_text_sort_key(_identity_key(member)),
+        _stable_text_sort_key(member.entry_type.value),
+        _stable_text_sort_key(member.entry_ref),
+    )
+
+
+def _canonical_member_order(
+    members: tuple[RagCandidateIndexMemberCreate, ...],
+) -> tuple[RagCandidateIndexMemberCreate, ...]:
+    return tuple(sorted(members, key=_member_sort_key))
+
+
+def _canonical_embedding_values(values: tuple[float, ...]) -> tuple[float, ...]:
+    return tuple(array("f", values))
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,18 +237,24 @@ def _recomputed_member_content_hash(
     lexical_member_content_hash = _recomputed_lexical_member_content_hash(member)
     if version.build_mode is RagCandidateIndexBuildMode.LEXICAL_ONLY:
         return lexical_member_content_hash
+    embedding = _canonical_embedding_values(member.embedding) if member.embedding is not None else None
     return _sha256(
         {
             "lexical_member_content_hash": lexical_member_content_hash,
             "embedding_model_version": version.embedding_model_version,
-            "embedding": member.embedding,
+            "embedding": embedding,
         }
     )
 
 
 def _recomputed_member_set_hash(members: tuple[RagCandidateIndexMemberCreate, ...]) -> str:
     """Recompute RAG-07A member_set_hash; see candidate_index.py:1051-1053."""
-    return _sha256([{"member_key": m.member_key, "member_content_hash": m.member_content_hash} for m in members])
+    return _sha256(
+        [
+            {"member_key": member.member_key, "member_content_hash": member.member_content_hash}
+            for member in _canonical_member_order(members)
+        ]
+    )
 
 
 def _assert_member_content_hashes_match(
@@ -536,7 +572,7 @@ class RagCandidateIndexRepository:
         """
         values = asdict(payload)
         if payload.embedding is not None:
-            values["embedding"] = list(payload.embedding)
+            values["embedding"] = list(_canonical_embedding_values(payload.embedding))
         member = RagCandidateIndexMember(**values, candidate_index_version_id=candidate_index_version_id)
         self.session.add(member)
         await self.session.flush()

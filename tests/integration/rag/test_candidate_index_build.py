@@ -200,7 +200,8 @@ class _DeterministicEmbeddingPort:
         config: CandidateIndexBuildConfig,
     ) -> tuple[CandidateEmbeddingVector, ...]:
         return tuple(
-            CandidateEmbeddingVector(member_key=request.member_key, values=(0.1, 0.2, 0.3)) for request in requests
+            CandidateEmbeddingVector(member_key=request.member_key, values=(0.123456789, -0.333333333, 123.456789))
+            for request in requests
         )
 
 
