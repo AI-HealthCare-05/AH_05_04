@@ -710,6 +710,26 @@ v1 앱에 등록한다. PD-417의 승인된 의미와 #438 저장 서비스·#43
 요청·응답·오류 requiredness는 계약과 실제 OpenAPI를 따른다. #418 backlog 라우터 등록과
 Check-in history route는 포함하지 않는다. [검증 기록](./validation/track-b/issue-202-schedule-api.md).
 
+## #193 Safety → Barrier API — 구현 PR 리뷰 대상
+
+Track C의 첫 두 쓰기 경로를 실제 v1 Router에 연결한다.
+
+| Method | Path | 성공 | operationId |
+| --- | --- | ---: | --- |
+| POST | `/api/v1/safety-assessments` | 200 | `safety-assessment.create` |
+| PUT | `/api/v1/medication-checkins/{checkin_id}/barrier-response` | 200 | `barrier-response.put` |
+
+두 경로는 16~255자 `Idempotency-Key`, SELF 소유권 확인과 `no-store`를 적용하고 성공은
+`data` envelope로 반환한다. Safety는 현재 `NOT_TAKEN` Check-in revision에서만 append-only로
+저장하며, Barrier는 같은 revision의 최신 Safety가 `ROUTINE`일 때만 append-only로 저장한다.
+`ANSWERED`는 `barrier_code`가 필요하고 `DECLINED`는 null이어야 한다. 동일 키·동일 요청은
+최초 snapshot을 재현하고 동일 키·다른 요청은 `IDEMPOTENCY_KEY_CONFLICT`다.
+
+승인 symptom code 판정표와 사용자 문구 version은 아직 연결되지 않았다. 기본 foundation은
+빈 `symptom_codes=[]`만 `ROUTINE/NORMAL`, 비어 있지 않은 목록은 `UNKNOWN/UNKNOWN_RISK`로
+fail-closed 처리한다. 따라서 이 API 등록은 `PUBLIC_TRACK_C` 공개 승인이나 의료 Safety
+정책 완료를 뜻하지 않는다. [검증 기록](./testing/track-c-flow-193.md).
+
 ## #469 Web Push 구현 PR 검토 범위
 
 `GET /api/v1/push/config`, `PUT /api/v1/push/subscriptions`,

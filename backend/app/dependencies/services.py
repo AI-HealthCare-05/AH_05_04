@@ -29,6 +29,7 @@ from app.repositories.ocr_repository import OcrRepository
 from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.repositories.refresh_session_repository import RefreshSessionRepository
+from app.repositories.track_c_storage_repository import TrackCStorageRepository
 from app.repositories.user_consent_repository import UserConsentRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
@@ -66,6 +67,8 @@ from app.services.ocr_ai import (
 from app.services.ocr_ai.prompt import PROMPT_VERSION as OCR_STRUCTURE_PROMPT_VERSION
 from app.services.ocr_engine import OcrEngine
 from app.services.prescriptions import PrescriptionService
+from app.services.track_c_api import TrackCApiService
+from app.services.track_c_flow import ContractFoundationSafetyPolicy, TrackCFlowService
 from app.services.user_consents import OcrConsentService
 from app.services.users import UserConsentService, UserManageService
 
@@ -375,6 +378,18 @@ def get_medication_checkin_api_service(
         revision_invalidation=NoopCheckinRevisionInvalidation(),
     )
     return MedicationCheckinApiService(MedicationScheduleRepository(session), checkins, idempotency_service)
+
+
+def get_track_c_api_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    idempotency_service: Annotated[
+        SyncMutationIdempotencyService,
+        Depends(get_sync_mutation_idempotency_service),
+    ],
+) -> TrackCApiService:
+    repository = TrackCStorageRepository(session)
+    flow = TrackCFlowService(repository, ContractFoundationSafetyPolicy())
+    return TrackCApiService(repository, flow, idempotency_service)
 
 
 def get_guide_repository(

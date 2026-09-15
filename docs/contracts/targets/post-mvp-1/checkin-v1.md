@@ -3,10 +3,10 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 검증 |
-| 구현·리뷰 | B1/B2 Schedule·Occurrence와 B3 Check-in 구현 · B4 Check-in PUT 병합, 일정 조회·PUT/PATCH와 실제 알림 adapter 연동 #456 병합; 전체 목표 Current 승격 별도 |
+| 구현·리뷰 | B1/B2 Schedule·Occurrence와 B3 Check-in 구현 · B4 Check-in PUT 병합, 일정 조회·PUT/PATCH와 실제 알림 adapter 연동 #456 병합 · C2 Safety·Barrier API #193 구현 브랜치 검토 대상; 전체 목표 Current 승격 별도 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-b-adherence-v1.md`, `track-c-support-v1.md` |
 | 승인 delta | `setup_reason` 추가 값·우선순위는 PD-417 / #424 승인 delta이며 최초 Freeze v4 자체의 내용은 아님 |
-| Last verified | 2026-09-12 |
+| Last verified | 2026-09-15 |
 
 ## #202 Check-in API 최초 부분 구현 기록
 
@@ -21,6 +21,22 @@ HTTP 응답 필드와 정규화 상세는 연결된 Decision에서 리뷰하며 
 요구와 B1 모델의 불일치 때문에 미구현이었다. 당시 history·backlog·Notification·Track C 실제
 무효화 연결도 해당 부분 구현 PR의 완료 주장에 포함하지 않았다. 이 문서는 target에 유지하며
 책임 리뷰어 승인 없이 Current로 승격하지 않는다.
+
+## #193 Safety·Barrier API 부분 구현 기록
+
+#193 구현 브랜치는 `POST /api/v1/safety-assessments`와
+`PUT /api/v1/medication-checkins/{checkin_id}/barrier-response`를 실제 v1 Router,
+OpenAPI와 암호화 `SYNC_MUTATION` 멱등 처리에 연결한다. Check-in → Safety → Barrier →
+ActionPlan 잠금 순서, SELF 소유권 은닉형 404, 현재 `NOT_TAKEN`·revision 검증,
+Safety·Barrier append-only revision, 최신 `ROUTINE` Safety 선행, non-`ROUTINE` 정정의
+ACTIVE Plan 동기 취소를 구현·검증한다. 성공 응답은 기존 Backend 규칙에 따라 `data`
+envelope를 사용한다.
+
+승인된 비어 있지 않은 symptom code 목록·판정표와 고정 문구·version 자료는 아직 없다.
+따라서 이 구현의 기본 정책은 동결된 빈 목록만 `ROUTINE/NORMAL`로 처리하고, 비어 있지
+않은 목록은 `UNKNOWN/UNKNOWN_RISK`로 fail-closed 처리한다. 이 foundation version을
+의료 검토 완료나 Production 활성 설정으로 해석하지 않는다. 승인 자료가 연결되기 전
+`PUBLIC_TRACK_C` 공개 gate는 계속 닫혀 있으며 target의 Current 승격도 하지 않는다.
 
 ## 소유권 경계
 
