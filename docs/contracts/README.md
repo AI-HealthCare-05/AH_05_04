@@ -188,6 +188,12 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [API v1 — Proposed](proposed/track-c-safety-barrier-api-193.md): HTTP·DTO·멱등성·정정·동시성 구현 리뷰 대상.
 - [PD-193](../governance/decisions/2026-09-15-track-c-safety-barrier-api-193.md): 구체화 delta와 NHS 참고 자료 경계.
 - [Safety 정책·한국어 문구 검토안](proposed/track-c-safety-policy-copy-193.md): NHS 근거별 선택표, 복수 선택 규칙, 고정 안내와 합성 검증 명세. 문서 초안이며 런타임 미적용.
+
+## Track C 지원 1개 제안·Plan 생성 (#194 부분)
+
+- [API v1 — Proposed, 리뷰 revision 2](proposed/track-c-support-plan-api-194.md): 잠금 없는 단일 제안 GET, 설정 로딩 후 잠그는 확정 POST, 현재성·소유권·멱등성.
+- [PD-194](../governance/decisions/2026-09-15-track-c-support-plan-api-194.md): PM의 0/1개 결정과 이번 구현 범위 축소.
+- Plan 조회·완료·취소·follow-up·revision 추가는 이번 범위 밖이며 #194 전체 완료가 아니다.
 - 실제 증상별 임상 판정표·환자용 문구 및 #195 연결은 미완료다.
 
 
