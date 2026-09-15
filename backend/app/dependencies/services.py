@@ -18,6 +18,7 @@ from app.repositories.chat_repository import ChatRepository
 from app.repositories.email_verification_repository import EmailVerificationRepository
 from app.repositories.guide_repository import GuideRepository
 from app.repositories.idempotency_repository import IdempotencyRepository
+from app.repositories.lifestyle_times_repository import LifestyleTimesRepository
 from app.repositories.medical_document_repository import MedicalDocumentRepository
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
 from app.repositories.medication_checkin_repository import MedicationCheckinRepository
@@ -47,6 +48,7 @@ from app.services.guides import GuideService
 from app.services.idempotency import SnapshotCipher, SyncMutationIdempotencyService, get_default_snapshot_cipher
 from app.services.job_intake import JobIntakeService
 from app.services.job_status import JobStatusService
+from app.services.lifestyle_times import LifestyleTimesService
 from app.services.medical_documents import MedicalDocumentService
 from app.services.medication_candidates import MedicationCandidateService
 from app.services.medication_checkin_api import MedicationCheckinApiService
@@ -354,6 +356,16 @@ def get_sync_mutation_idempotency_service(
     ],
 ) -> SyncMutationIdempotencyService:
     return SyncMutationIdempotencyService(repository, cipher)
+
+
+def get_lifestyle_times_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    idempotency: Annotated[
+        SyncMutationIdempotencyService,
+        Depends(get_sync_mutation_idempotency_service),
+    ],
+) -> LifestyleTimesService:
+    return LifestyleTimesService(LifestyleTimesRepository(session), idempotency)
 
 
 def get_medication_candidate_service(

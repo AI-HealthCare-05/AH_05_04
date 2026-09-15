@@ -33,6 +33,7 @@ from app.services.rag_runtime import RagRuntimeEnvironmentTransitionService
 from infra.python.provision_database_roles import (
     RUNTIME_APPEND_ONLY_TABLES,
     RUNTIME_AUTH_UPDATE_COLUMNS,
+    RUNTIME_LIFESTYLE_TABLES,
     RUNTIME_MUTABLE_TABLES,
     run_provisioning,
 )
@@ -115,6 +116,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             for table in sorted(
                 RUNTIME_MUTABLE_TABLES
                 | RUNTIME_APPEND_ONLY_TABLES
+                | RUNTIME_LIFESTYLE_TABLES
                 | CATALOG_TABLES
                 | set(SOURCE_TABLES)
                 | set(RUNTIME_AUTH_UPDATE_COLUMNS)
@@ -162,7 +164,9 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             await connection.execute(text("INSERT INTO prescription_version VALUES (1)"))
             await connection.execute(text("INSERT INTO push_subscription VALUES (1)"))
             await connection.execute(text("INSERT INTO push_delivery VALUES (1)"))
+            await connection.execute(text("INSERT INTO lifestyle_times VALUES (1)"))
             await connection.execute(text("UPDATE push_subscription SET id=2"))
+            await connection.execute(text("UPDATE lifestyle_times SET id=2"))
             await connection.execute(text("DELETE FROM push_delivery"))
         async with producer.begin() as connection:
             await connection.execute(text("INSERT INTO rag_source_snapshot (id) VALUES (1)"))
@@ -176,6 +180,8 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             (producer, "INSERT INTO push_delivery VALUES (2)"),
             (reader, "TRUNCATE push_subscription"),
             (reader, "TRUNCATE push_delivery"),
+            (reader, "DELETE FROM lifestyle_times"),
+            (reader, "TRUNCATE lifestyle_times"),
             (reader, "UPDATE medication_schedule_audit SET id=2"),
             (reader, "DELETE FROM medication_schedule_audit"),
             (reader, "TRUNCATE medication_schedule_audit"),

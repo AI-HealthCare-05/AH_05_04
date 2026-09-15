@@ -694,14 +694,19 @@ function ChatPage({
 
               {currentMessages.map((message) => (
                 <div
-                  className={`chat-message ${message.role === 'USER' ? 'user' : 'assistant'}`}
+                  className={`chat-message-row ${message.role === 'USER' ? 'user' : 'assistant'}`}
                   key={message.message_id}
                 >
-                  {message.role === 'ASSISTANT' && message.content ? (
-                    <AssistantMessageContent content={message.content} />
-                  ) : (
-                    message.content ?? '답변을 생성하지 못했어요.'
+                  {message.role === 'ASSISTANT' && (
+                    <DoseyMascot variant="chat" />
                   )}
+                  <div className={`chat-message ${message.role === 'USER' ? 'user' : 'assistant'}`}>
+                    {message.role === 'ASSISTANT' && message.content ? (
+                      <AssistantMessageContent content={message.content} />
+                    ) : (
+                      message.content ?? '답변을 생성하지 못했어요.'
+                    )}
+                  </div>
                 </div>
               ))}
 
@@ -733,7 +738,8 @@ function ChatPage({
 
             <form className="chat-composer" onSubmit={handleSend}>
               <label className="chat-page__composer-label" htmlFor="dosey-chat-input">
-                복약 질문
+                <span className="chat-page__composer-label-legacy">복약 질문</span>
+                <span aria-hidden="true">복약 챗봇 도지에게 질문</span>
               </label>
               <textarea
                 id="dosey-chat-input"

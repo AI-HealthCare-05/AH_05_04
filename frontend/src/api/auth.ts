@@ -23,12 +23,17 @@ export type LoginResponse = {
 }
 
 export async function signup(data: SignupRequest) {
+  const request = {
+    ...data,
+    consents: data.consents ?? [],
+  }
+
   return apiRequest<{ detail: string }>('/api/v1/auth/signup', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(data),
+    body: JSON.stringify(request),
   })
 }
 

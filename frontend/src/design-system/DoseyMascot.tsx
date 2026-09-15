@@ -1,4 +1,5 @@
 import doseyCharacterSheet from '../assets/dosey-auth-welcome.png'
+import doseyHomeHero from '../assets/dosey-home-hero.png'
 
 export function DoseyMascot({
   variant,
@@ -7,7 +8,11 @@ export function DoseyMascot({
 }) {
   return (
     <span className={`dosey-mascot dosey-mascot--${variant}`} aria-hidden="true">
-      <img src={doseyCharacterSheet} alt="" />
+      <img
+        src={variant === 'hero' ? doseyHomeHero : doseyCharacterSheet}
+        alt=""
+        draggable={false}
+      />
     </span>
   )
 }

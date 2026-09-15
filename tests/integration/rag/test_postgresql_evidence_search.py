@@ -29,7 +29,10 @@ from ai_worker.tasks.rag.evidence_search import (
     EvidenceSearchFailureReason,
     EvidenceSearchRequest,
     EvidenceSearchSuccess,
+    ProductionSearchMethod,
+    ProductionSearchSignal,
     QueryEmbeddingReceipt,
+    RetrievalExecutionMode,
     SensitiveVector,
     VersionedDenseSearchConfiguration,
     VersionedEvidenceRetrievalConfiguration,
@@ -309,6 +312,7 @@ def _create_binding(
     index_config_hash: str,
     *,
     dense_enabled: bool = True,
+    execution_mode: RetrievalExecutionMode | None = None,
 ) -> EvidenceSearchExecutionBinding:
     lex_cfg = VersionedLexicalSearchConfiguration(
         artifact_ref=ImmutableArtifactRef("lex-cfg", "1.0", "0" * 64),
@@ -354,17 +358,22 @@ def _create_binding(
         )
         expected_adapter_ref = ImmutableArtifactRef("test-embed-adapter", "1.0", "e" * 64)
 
+    if execution_mode is None:
+        execution_mode = RetrievalExecutionMode.HYBRID_RRF if dense_enabled else RetrievalExecutionMode.LEXICAL_ONLY
+
     ret_cfg = VersionedEvidenceRetrievalConfiguration(
         artifact_ref=ImmutableArtifactRef("ret-cfg", "1.0", "0" * 64),
         lexical_config=lex_bound,
         dense_config=dense_bound,
         expected_query_embedding_adapter_ref=expected_adapter_ref,
+        execution_mode=execution_mode,
     )
     ret_bound = VersionedEvidenceRetrievalConfiguration(
         artifact_ref=ImmutableArtifactRef("ret-cfg", "1.0", ret_cfg.compute_canonical_hash()),
         lexical_config=lex_bound,
         dense_config=dense_bound,
         expected_query_embedding_adapter_ref=expected_adapter_ref,
+        execution_mode=execution_mode,
     )
 
     return EvidenceSearchExecutionBinding(
@@ -660,3 +669,203 @@ async def test_transaction_isolation_and_read_only_verified_during_search(databa
         default_ro = await session.scalar(text("SHOW transaction_read_only"))
         assert default_iso.lower() == "read committed"
         assert default_ro.lower() == "off"
+
+
+async def test_lexical_only_does_not_execute_dense_sql(database) -> None:
+    engine = database
+    index_id, member_id, index_hash = await _seed_test_data(engine)
+    raw_factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+
+    executed_statements: list[str] = []
+
+    class StatementObservingSession:
+        def __init__(self, delegate):
+            self._delegate = delegate
+
+        async def execute(self, statement, *args, **kwargs):
+            executed_statements.append(str(statement))
+            return await self._delegate.execute(statement, *args, **kwargs)
+
+        def begin(self):
+            return self._delegate.begin()
+
+        def __getattr__(self, name):
+            return getattr(self._delegate, name)
+
+    @asynccontextmanager
+    async def observing_factory():
+        async with raw_factory() as session:
+            yield StatementObservingSession(session)
+
+    adapter = PostgresqlEvidenceSearchAdapter(observing_factory, ImmutableArtifactRef("adapter", "1.0", "a" * 64))
+    binding = _create_binding(
+        index_id,
+        member_id,
+        index_hash,
+        dense_enabled=False,
+        execution_mode=RetrievalExecutionMode.LEXICAL_ONLY,
+    )
+    query = SensitiveText("아스피린")
+    fp = QueryFingerprint("sha256", "v1", "1" * 64)
+
+    # 1. Providing query embedding receipt to LEXICAL_ONLY fails closed before opening search transaction
+    unwanted_receipt = QueryEmbeddingReceipt(
+        query_fingerprint=fp,
+        model_ref="test-embedding-model",
+        model_version="1.0",
+        dimension=2,
+        embedding=SensitiveVector((1.0, 0.0)),
+        adapter_artifact_ref=ImmutableArtifactRef("test-embed-adapter", "1.0", "e" * 64),
+    )
+    invalid_req = EvidenceSearchRequest(
+        normalized_query=query,
+        query_fingerprint=fp,
+        execution_binding=binding,
+        query_embedding_receipt=unwanted_receipt,
+    )
+    fail_res = await adapter.search(invalid_req)
+    assert fail_res == EvidenceSearchFailure(EvidenceSearchFailureReason.REQUEST_INVALID)
+    assert len(executed_statements) == 0
+
+    # 2. Valid LEXICAL_ONLY search executes without dense SQL
+    valid_req = EvidenceSearchRequest(
+        normalized_query=query,
+        query_fingerprint=fp,
+        execution_binding=binding,
+        query_embedding_receipt=None,
+    )
+    res = await adapter.search(valid_req)
+    assert isinstance(res, EvidenceSearchSuccess)
+    assert len(res.lexical_hits) > 0
+    assert len(res.dense_hits) == 0
+    assert len(res.hybrid_hits) == len(res.lexical_hits)
+    for h, lex_h in zip(res.hybrid_hits, res.lexical_hits, strict=True):
+        assert h.coordinate == lex_h.coordinate
+        assert h.fusion_rank == lex_h.fusion_rank
+    # Assert no cosine distance / dense query in executed statements
+    assert not any("cosine_distance" in stmt or "<=>" in stmt for stmt in executed_statements)
+    # Assert no DENSE signal exists
+    assert all(sig.method != ProductionSearchMethod.DENSE for sig in res.signals)
+    assert any(sig.method == ProductionSearchMethod.LEXICAL for sig in res.signals)
+
+
+async def test_dense_only_does_not_execute_lexical_sql(database) -> None:
+    engine = database
+    index_id, member_id, index_hash = await _seed_test_data(engine)
+    raw_factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+
+    executed_statements: list[str] = []
+
+    class StatementObservingSession:
+        def __init__(self, delegate):
+            self._delegate = delegate
+
+        async def execute(self, statement, *args, **kwargs):
+            executed_statements.append(str(statement))
+            return await self._delegate.execute(statement, *args, **kwargs)
+
+        def begin(self):
+            return self._delegate.begin()
+
+        def __getattr__(self, name):
+            return getattr(self._delegate, name)
+
+    @asynccontextmanager
+    async def observing_factory():
+        async with raw_factory() as session:
+            yield StatementObservingSession(session)
+
+    adapter = PostgresqlEvidenceSearchAdapter(observing_factory, ImmutableArtifactRef("adapter", "1.0", "a" * 64))
+    binding = _create_binding(
+        index_id,
+        member_id,
+        index_hash,
+        dense_enabled=True,
+        execution_mode=RetrievalExecutionMode.DENSE_ONLY,
+    )
+    query = SensitiveText("아스피린")
+    fp = QueryFingerprint("sha256", "v1", "1" * 64)
+    receipt = QueryEmbeddingReceipt(
+        query_fingerprint=fp,
+        model_ref="test-embedding-model",
+        model_version="1.0",
+        dimension=2,
+        embedding=SensitiveVector((1.0, 0.0)),
+        adapter_artifact_ref=ImmutableArtifactRef("test-embed-adapter", "1.0", "e" * 64),
+    )
+    req = EvidenceSearchRequest(
+        normalized_query=query,
+        query_fingerprint=fp,
+        execution_binding=binding,
+        query_embedding_receipt=receipt,
+    )
+
+    res = await adapter.search(req)
+    assert isinstance(res, EvidenceSearchSuccess)
+    assert len(res.lexical_hits) == 0
+    assert len(res.dense_hits) > 0
+    assert len(res.hybrid_hits) == len(res.dense_hits)
+    for r, h in enumerate(res.hybrid_hits, start=1):
+        assert h.fusion_rank == r
+    # Assert lexical SQL (similarity / ts_rank_cd / % operator) was not executed
+    assert not any(
+        "similarity" in stmt or "ts_rank_cd" in stmt or "plainto_tsquery" in stmt for stmt in executed_statements
+    )
+    # Assert signals only have DENSE method
+    assert len(res.signals) > 0
+    assert all(sig.method == ProductionSearchMethod.DENSE for sig in res.signals)
+
+
+async def test_hybrid_returns_all_raw_and_fused_signals_in_canonical_order(database) -> None:
+    engine = database
+    index_id, member_id, index_hash = await _seed_test_data(engine)
+    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    adapter = PostgresqlEvidenceSearchAdapter(factory, ImmutableArtifactRef("adapter", "1.0", "a" * 64))
+
+    binding = _create_binding(
+        index_id,
+        member_id,
+        index_hash,
+        dense_enabled=True,
+        execution_mode=RetrievalExecutionMode.HYBRID_RRF,
+    )
+    query = SensitiveText("아스피린 장용정 100mg 복용 안내")
+    fp = QueryFingerprint("sha256", "v1", "1" * 64)
+    receipt = QueryEmbeddingReceipt(
+        query_fingerprint=fp,
+        model_ref="test-embedding-model",
+        model_version="1.0",
+        dimension=2,
+        embedding=SensitiveVector((1.0, 0.0)),
+        adapter_artifact_ref=ImmutableArtifactRef("test-embed-adapter", "1.0", "e" * 64),
+    )
+    req = EvidenceSearchRequest(
+        normalized_query=query,
+        query_fingerprint=fp,
+        execution_binding=binding,
+        query_embedding_receipt=receipt,
+    )
+
+    res = await adapter.search(req)
+    assert isinstance(res, EvidenceSearchSuccess)
+    assert len(res.signals) > 0
+
+    signal_methods = {sig.method for sig in res.signals}
+    assert ProductionSearchMethod.EXACT in signal_methods
+    assert ProductionSearchMethod.TRIGRAM in signal_methods
+    assert ProductionSearchMethod.FTS in signal_methods
+    assert ProductionSearchMethod.LEXICAL in signal_methods
+    assert ProductionSearchMethod.DENSE in signal_methods
+
+    # Verify canonical signal ordering: method -> raw_rank -> StableCoordinate UTF-8
+    def _sig_key(s: ProductionSearchSignal):
+        return (
+            s.method.value,
+            s.raw_rank,
+            s.provenance.source_code.encode("utf-8"),
+            s.provenance.source_version.encode("utf-8"),
+            s.provenance.external_document_id.encode("utf-8"),
+            s.provenance.chunk_index,
+        )
+
+    assert list(res.signals) == sorted(res.signals, key=_sig_key)
