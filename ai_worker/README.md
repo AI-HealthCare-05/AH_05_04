@@ -117,6 +117,9 @@ Source ingestion Artifact 저장소는 기본 `DISABLED`이며 #166 Runtime 연�
 | --- | --- | --- |
 | `SOURCE_ARTIFACT_STORAGE_BACKEND` | `DISABLED` | `DISABLED`, `LOCAL_PRIVATE`, `S3_PRIVATE` 중 하나 |
 | `SOURCE_ARTIFACT_LOCAL_ROOT` | 없음 | `LOCAL_PRIVATE` 전용 접근 통제 경로 |
+| `SOURCE_ARTIFACT_READER_ROOT` | 없음 | #591 writer의 최종 Artifact read-only mount |
+| `SOURCE_ARTIFACT_FINALIZER_COMMAND` | 없음 | 별도 Artifact owner로 실행되는 고정 preserve 명령 |
+| `SOURCE_ARTIFACT_FINALIZER_STAGING_ROOT` | 없음 | finalizer owner 전용 임시 입력 root |
 | `SOURCE_ARTIFACT_S3_BUCKET` | 없음 | `S3_PRIVATE` 전용 비공개 bucket |
 | `SOURCE_ARTIFACT_S3_PREFIX` | `source-artifacts` | bucket 내부 내용 주소 prefix |
 | `SOURCE_ARTIFACT_S3_REGION` | 없음 | S3 region |
