@@ -9,8 +9,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_worker.core import runtime_assembly as assembly
-from ai_worker.core.errors import ConsumerPersistenceError
-from ai_worker.core.handler import HandlerExecutionContext
+from ai_worker.core.errors import ConsumerPersistenceError, WorkerError
+from ai_worker.core.handler import ContextAwareHandler, HandlerExecutionContext
 from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.stream import WorkerDelivery
 from ai_worker.schemas.messages import JobType, WorkerMessage
@@ -297,3 +297,154 @@ async def test_public_execute_records_failure_and_acks_for_broken_factory(monkey
     assert repository.recorded_failure is not None
     assert repository.recorded_failure[0] == "INTERNAL_ERROR"
     assert "ack" in events
+
+
+class MinimalGuideHandler:
+    """등록 가능한 최소 Guide Handler 구현체입니다.
+
+    `ContextAwareHandler` 정본을 그대로 따르며, runtime이 context를 생략하면
+    `INTERNAL_ERROR`로 닫습니다. 아래 `_STATICALLY_CHECKED_FACTORY`에서 정적 검사를,
+    `test_minimal_handler_passes_static_check_and_real_dispatch`에서 실제 dispatch를
+    확인합니다.
+    """
+
+    handler_type = JobType.GUIDE
+
+    async def handle(
+        self,
+        message: WorkerMessage,
+        *,
+        context: HandlerExecutionContext | None = None,
+    ) -> HandlerSuccess:
+        if context is None:
+            raise WorkerError(failure_code="INTERNAL_ERROR")
+        return HandlerSuccess(message.event_id, message.job_id, self.handler_type)
+
+
+def _minimal_guide_factory(session: AsyncSession) -> tuple[ContextAwareHandler, assembly.ResultStoreLike]:
+    return MinimalGuideHandler(), FakeResultStore([])
+
+
+# 주석이 아니라 mypy가 검사하는 선언입니다. 최소 구현체가 GuideChatFactory 계약을
+# 만족하지 못하면 이 대입에서 정적 검사가 실패합니다.
+_STATICALLY_CHECKED_FACTORY: assembly.GuideChatFactory = _minimal_guide_factory
+
+
+class _LeaseRecordingRepository(FakeJobExecutionRepository):
+    """실행에 실제로 쓰인 lease_duration을 기록합니다."""
+
+    def __init__(self, events: list[str]) -> None:
+        super().__init__(events, complete_successfully=True)
+        self.lease_durations: list[timedelta] = []
+
+    async def acquire_lease(self, message, *, now, lease_duration):
+        self.lease_durations.append(lease_duration)
+        return await super().acquire_lease(message, now=now, lease_duration=lease_duration)
+
+
+def _public_execution(monkeypatch, factories, events=None, store=None):
+    """public execute()를 태울 수 있는 assembly를 구성합니다.
+
+    transaction이 commit에서 옮기는 저장소와 factory가 돌려주는 저장소는 같아야
+    persisted 검증이 의미를 가집니다.
+    """
+
+    events = [] if events is None else events
+    session = cast(AsyncSession, MagicMock(spec=AsyncSession))
+    store = StagedStore(events) if store is None else store
+    repository = _LeaseRecordingRepository(events)
+
+    monkeypatch.setattr(assembly, "SqlAlchemyTransaction", lambda received: StagedTransaction(events, store, False))
+    monkeypatch.setattr(assembly, "SqlAlchemyJobExecutionRepository", lambda received: repository)
+    monkeypatch.setattr(assembly, "SqlAlchemyLeaseHeartbeat", lambda **kwargs: FakeLeaseHeartbeat(events))
+
+    execution = assembly.SessionScopedDeliveryExecution(
+        config=_config(),
+        session_factory=MagicMock(),
+        acknowledger=FakeAcknowledger(events),
+        clock=lambda: datetime.now(UTC),
+        logger=logging.getLogger(__name__),
+        guide_chat_factories=factories,
+    )
+    execution._session_factory = _SessionFactoryStub(session)
+    return execution, repository, store, events
+
+
+def _delivery_for(kind: JobType, stream_message_id: str) -> WorkerDelivery:
+    domain_type = {JobType.GUIDE: "GUIDE", JobType.CHAT: "CHAT_MESSAGE", JobType.OCR: "OCR_JOB"}[kind]
+    message = WorkerMessage.model_validate(
+        build_message().model_dump() | {"job_type": kind, "domain_type": domain_type}
+    )
+    return WorkerDelivery(stream_message_id=stream_message_id, message=message)
+
+
+@pytest.mark.asyncio
+async def test_minimal_handler_passes_static_check_and_real_dispatch(monkeypatch):
+    """정적 검사를 통과한 최소 구현체가 실제 dispatch에서도 동작해야 합니다."""
+
+    execution, _, store, events = _public_execution(
+        monkeypatch,
+        {JobType.GUIDE: _STATICALLY_CHECKED_FACTORY},
+    )
+    # factory가 자체 저장소를 만들므로 assembly가 쓰는 저장소를 계측 대상으로 바꿉니다.
+    execution._guide_chat_factories[JobType.GUIDE] = lambda session: (MinimalGuideHandler(), store)
+
+    await execution.execute(_delivery_for(JobType.GUIDE, "577-static-0"))
+
+    assert len(store.persisted) == 1
+    assert events[-1] == "ack"
+    assert "handle" not in events  # SyntheticHandler가 아니라 최소 구현체가 실행됐습니다.
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected_lease_seconds"),
+    [(JobType.GUIDE, 75.0), (JobType.CHAT, 60.0)],
+)
+@pytest.mark.asyncio
+async def test_public_execute_uses_contract_lease_per_job_type(monkeypatch, kind, expected_lease_seconds):
+    """실행에 실제로 전달되는 lease가 종류별 승인 계약과 같아야 합니다."""
+
+    events: list[str] = []
+    store = StagedStore(events)
+    execution, repository, _, events = _public_execution(
+        monkeypatch,
+        {kind: lambda session: (SyntheticHandler(kind, events), store)},
+        events=events,
+        store=store,
+    )
+
+    await execution.execute(_delivery_for(kind, "577-lease-0"))
+
+    assert repository.lease_durations == [timedelta(seconds=expected_lease_seconds)]
+
+
+@pytest.mark.asyncio
+async def test_public_execute_isolates_broken_factory_from_other_kinds(monkeypatch):
+    """깨진 CHAT factory가 같은 runtime의 GUIDE 실행을 막지 않아야 합니다."""
+
+    def broken(received):
+        raise RuntimeError("synthetic factory failure")
+
+    events: list[str] = []
+    store = StagedStore(events)
+    execution, repository, _, events = _public_execution(
+        monkeypatch,
+        {
+            JobType.CHAT: broken,
+            JobType.GUIDE: lambda session: (SyntheticHandler(JobType.GUIDE, events), store),
+        },
+        events=events,
+        store=store,
+    )
+
+    await execution.execute(_delivery_for(JobType.CHAT, "577-iso-chat"))
+    assert repository.recorded_failure is not None
+    assert repository.recorded_failure[0] == "INTERNAL_ERROR"
+    assert "ack" in events
+
+    events.clear()
+    await execution.execute(_delivery_for(JobType.GUIDE, "577-iso-guide"))
+
+    assert "handle" in events
+    assert events[-1] == "ack"
+    assert len(store.persisted) == 1

@@ -34,11 +34,15 @@ DB schema, RLS, DB Trigger, Stored Procedure는 추가하지 않았다.
 
 ## 검증 결과
 
-- `pytest ai_worker/tests/core/test_guide_chat_assembly.py -q`: 26개 통과.
-- `pytest ai_worker/tests/core ai_worker/tests/ocr -q`: 기존 OCR 관련 검증을 포함해 475개 통과.
-- 종류별 실행 상한(OCR 60/75, GUIDE 60/75, CHAT 45/60)을 Consumer 실행 값으로 고정 검증했다.
+- `pytest ai_worker/tests/core/test_guide_chat_assembly.py -q`: 30개 통과.
+- `pytest ai_worker -q`: 기존 OCR·Evaluation 검증을 포함해 3,536개 통과.
+- 종류별 실행 상한을 두 층위로 확인했다. Consumer 조립 값(OCR 60/75, GUIDE 60/75, CHAT 45/60)과
+  public `execute()`가 실제로 `acquire_lease`에 전달하는 lease(GUIDE 75초, CHAT 60초)를 각각 고정했다.
+- 최소 구현체를 `GuideChatFactory`로 선언해 정적 검사를 받게 하고, 같은 구현체를 public `execute()`로
+  실행해 저장·ACK까지 도달하는 것을 확인했다. `context` 인자를 제거하면 mypy가 대입에서 실패한다.
+- public `execute()` 경로에서 조립 실패가 `INTERNAL_ERROR` 실패 기록과 ACK로 끝나고, 같은 runtime의
+  다른 종류(GUIDE)는 정상 실행·저장·ACK로 끝나는 것을 확인했다.
 - factory 예외·잘못된 종류·누락에서 해당 종류만 미등록되고 다른 종류와 OCR은 정상 조립됨을 확인했다.
-- public `execute()` 경로에서 조립 실패가 `INTERNAL_ERROR` 실패 기록과 ACK로 끝나는 것을 확인했다.
 - Guide/Chat 각각 OCR 유무에 따른 실행·저장·commit·ACK 순서를 확인했다.
 - 저장 실패 및 결과 commit 실패 시 rollback, 미저장, ACK 금지를 확인했다.
 - Handler/저장소 누락, 종류 불일치, delivery별 생성, 외부 factory mapping 복사와 public builder 전달을 확인했다.
