@@ -21,7 +21,7 @@ from app.models.users import User
 from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.user_repository import UserRepository
-from app.services.auth import AuthService
+from app.services.auth import AuthService, PasswordResetRequestResult
 from app.tests.conftest import test_engine
 
 _TEST_PASSWORD = "Password123!"
@@ -311,7 +311,7 @@ async def test_request_password_reset_concurrent_requests_only_create_one_token(
     winner_session = AsyncSession(bind=test_engine, expire_on_commit=False)
     loser_session = AsyncSession(bind=test_engine, expire_on_commit=False)
     loser_task: asyncio.Task | None = None
-    loser_result: str | None = None
+    loser_result: PasswordResetRequestResult | None = None
     try:
         # winner가 request_password_reset()과 동일하게 user row를 먼저 잠근 뒤
         # 아직 커밋 전인 상태(row lock 보유)를 만들어, 아직 끝나지 않은 동시
