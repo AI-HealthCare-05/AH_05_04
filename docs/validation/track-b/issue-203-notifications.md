@@ -6,8 +6,8 @@
 | 구현 담당 | 권가빈 (`hazelnutflavoured`) |
 | 기술 리뷰 | 송은영 (`phina-io`) |
 | 소비 계약 리뷰 | 남한솔 (`solia142`) |
-| 상태 | 구현 브랜치 검증 · 지정 리뷰어 승인 및 #202 일정 API/Frontend 통합 대기 |
-| 계약 | [PD-203 Notification](../../contracts/proposed/track-b-notifications-v1.md), 선행 문서 PR #415 |
+| 상태 | #430 승인·병합 및 #202/#474 Frontend 통합 완료 · Current |
+| 계약 | [PD-203 Notification](../../contracts/current/track-b-notifications-v1.md), 선행 문서 PR #415 |
 | 기반 | develop `29e163e6` (#438·#449 병합 반영) |
 | Migration head | `203a1b2c3d4e` (base `423a1b2c3d4e`), 단일 head |
 | Fixture | `notification-v1`: 코드에 고정된 합성 사용자·처방·KST 자정 사례 |

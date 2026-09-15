@@ -104,6 +104,20 @@ case "$ACTION" in
           e2e-real-stack/report-round-trip.spec.ts
     )
     ;;
+  test-notification)
+    require_env_file
+    trap cleanup_stack EXIT
+    start_stack
+    compose exec -T fastapi uv run --no-sync python -m app.release_validation.notification_round_trip_fixture
+    (
+      cd frontend
+      NOTIFICATION_E2E_EMAIL=notification-421@example.com \
+      NOTIFICATION_E2E_PASSWORD='Synthetic1!' \
+      REAL_STACK_API_URL=http://127.0.0.1:18000 \
+      REAL_STACK_WEB_URL=http://127.0.0.1:14173 \
+        pnpm exec playwright test --config=playwright.real-stack.config.ts e2e-real-stack/notification-round-trip.spec.ts
+    )
+    ;;
   down)
     require_env_file
     compose down --volumes --remove-orphans
@@ -113,7 +127,7 @@ case "$ACTION" in
     compose ps
     ;;
   *)
-    echo "사용법: bash scripts/e2e/real_stack.sh {up|test|test-report|status|down}" >&2
+    echo "사용법: bash scripts/e2e/real_stack.sh {up|test|test-report|test-notification|status|down}" >&2
     exit 2
     ;;
 esac

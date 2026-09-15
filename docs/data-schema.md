@@ -767,11 +767,11 @@ Migration `423a1b2c3d4e`는 `medication_schedule_audit`와 occurrence의 nullabl
 
 기존 Schedule은 migration 시 별도 JSON baseline으로 보존하고 과거 감사로 재구성하지 않는다. 기존 CANCELLED의 알 수 없는 취소 시각은 null이다. 실제 신규 감사/취소 이력이 있으면 downgrade를 거부한다. baseline 접근·보존·실패 재시도는 [PD-423](governance/decisions/2026-09-10-schedule-audit-storage.md), 검증 범위와 후속 연동은 [#423 기록](validation/issue-423-schedule-audit.md)을 따른다. 실제 #202 일정 API·#203 알림·Frontend 완료를 뜻하지 않는다.
 
-## #203 Notification 저장 — 구현 PR 검토 대상
+## #203 Notification 저장 — develop 반영 완료
 
 `notification_record`는 occurrence FK와 `(occurrence_id, kind)` unique를 가지며 최초 알림·재알림을 각각 하나만 보존한다. kind는 `SCHEDULED|REMINDER`, status는 `PENDING|DELIVERED|CANCELLED`이며 전달·취소 timestamp와 attempt `0|1` 정합성을 DB CHECK로 강제한다. `read_at`은 전달 후 최초 시각만 저장한다. occurrence parent chain으로 SELF 소유권을 확인하며 별도 사용자·의료 본문 복제는 없다.
 
-Migration은 `203a1b2c3d4e`이고 상세 컬럼·FK·rollback 동작은 [Notification 계약](contracts/proposed/track-b-notifications-v1.md)의 구현 절을 따른다. Check-in·일정·처방 변경은 알림 row를 삭제하지 않는다. 부모 occurrence의 정식 삭제는 FK CASCADE로 알림을 정리하지만 부모 자체의 기존 삭제 제한은 유지한다. Notification 이력이 있으면 downgrade는 중단한다.
+Migration은 `203a1b2c3d4e`이고 상세 컬럼·FK·rollback 동작은 [현재 Notification 계약](contracts/current/track-b-notifications-v1.md)의 구현 절을 따른다. Check-in·일정·처방 변경은 알림 row를 삭제하지 않는다. 부모 occurrence의 정식 삭제는 FK CASCADE로 알림을 정리하지만 부모 자체의 기존 삭제 제한은 유지한다. Notification 이력이 있으면 downgrade는 중단한다.
 
 ## Track C C1 저장 기반 — #192 / PR #310·#531 병합
 
