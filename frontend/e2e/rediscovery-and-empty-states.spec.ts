@@ -40,7 +40,9 @@ test('[CURRENT-RUNTIME][REQ-HIS-009] 재로그인과 같은 빈 client state의 
   })
 
   await page.goto('/chat')
-  await expect(page).toHaveURL(/\/chat$/)
+  await expect(page).toHaveURL(
+    new RegExp(`/chat[?]prescription_id=${ids.prescription}$`),
+  )
   await expect(page.getByText('무엇을 도와드릴까요?')).toBeVisible()
 
   const question = '현재 복용 중인 약은 무엇인가요?'

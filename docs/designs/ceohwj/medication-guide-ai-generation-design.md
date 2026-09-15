@@ -280,7 +280,7 @@ Backend의 HTTP 및 GUIDE 실패 저장 계약은 다음과 같다.
 ## 설정과 의존성
 
 - `OPENAI_API_KEY`: 배포 시 필수 비밀 환경변수. 저장소와 로그에 포함하지 않는다.
-- `OPENAI_MODEL`: MVP 값은 `gpt-4o`이다. 생성 로직에 하드코딩하지 않고 배포 환경변수로 주입한다.
+- `OPENAI_MODEL`: MVP 값은 `gpt-4o`로 고정한다. 배포 환경변수로 주입하되 다른 값은 Backend 기동 검증에서 거부한다.
 - `OPENAI_TIMEOUT_SECONDS`: 양수, 현재 기본값 `20`초. OpenAI 호출의 전체 wall-clock 상한이며 테스트에서는 짧은 값으로 대체할 수 있게 한다.
 - 공식 `openai` Python SDK를 `pyproject.toml`의 `app` 의존성 그룹에 추가하고 `uv.lock`을 갱신한다. FastAPI Docker 이미지는 `app` 그룹만 설치하므로 `ai` 그룹에만 추가해서는 안 된다.
 - OpenAI 요청에는 `store=False`를 지정해 Responses API의 애플리케이션 상태 저장을 비활성화한다. 이 설정만으로 모든 provider 보존이 0이 된다고 간주하지 않는다.

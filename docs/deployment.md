@@ -172,7 +172,7 @@ Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후
 
 수용량이 부족하거나 비AI 요청의 connection 대기가 허용 범위를 넘으면 배포하지 않습니다. 세션 잠금을 조용히 약화하는 대신 admission/rate limiting 또는 비동기 worker 설계를 먼저 도입합니다.
 
-현재 두 OpenAI live smoke test는 `OPENAI_MODEL=gpt-4o`만 허용합니다. 실제 배포 모델이 다르면 현재 smoke 결과로 승인할 수 없으며, 해당 모델을 명시적으로 검증하도록 smoke test를 먼저 갱신해야 합니다. `OCR_STRUCTURE_MODEL`은 별도 설정이며 이 전환의 대상이 아닙니다.
+Guide·Chat의 `OPENAI_MODEL`은 `gpt-4o`로 고정되어 있으며 다른 값은 Backend 기동 검증에서 거부됩니다. 두 OpenAI live smoke test도 `OPENAI_MODEL=gpt-4o`만 허용합니다. `OCR_STRUCTURE_MODEL`은 별도 설정이며 `gpt-4o-mini`를 유지합니다.
 
 ## 의료 AI 안전 승인
 

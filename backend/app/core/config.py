@@ -225,6 +225,14 @@ class Config(BaseSettings):
     CHAT_HISTORY_CONTEXT_ENABLED: bool = False
     RELEASE_VALIDATION_ALLOWED: bool = False
 
+    @field_validator("OPENAI_MODEL", mode="after")
+    @classmethod
+    def validate_openai_model(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized != "gpt-4o":
+            raise ValueError("OPENAI_MODEL must be gpt-4o")
+        return normalized
+
     # medication-identification-v1.md "공개 게이트": RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는
     # 실제 사용자 트래픽에 Candidate 조회·확정·거절 API를 공개하지 않습니다. 명시적으로 활성화하지
     # 않은 환경에서는 GET/confirm/reject가 503으로 fail-closed됩니다.

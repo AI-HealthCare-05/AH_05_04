@@ -442,7 +442,7 @@ Backend가 기존 복약 가이드와 같은 설정을 제공한다.
 | 설정 | 값·의미 |
 | --- | --- |
 | `OPENAI_API_KEY` | Backend 실행 환경의 비밀값 |
-| `OPENAI_MODEL` | MVP에서는 `gpt-4o` |
+| `OPENAI_MODEL` | MVP에서는 `gpt-4o`로 고정하며 다른 값은 기동 시 거부 |
 | `OPENAI_TIMEOUT_SECONDS` | 기본 20초, 양수 유한값 |
 | `RUN_OPENAI_CHAT_SMOKE` | `1`일 때만 선택적 실제 API 테스트 실행 |
 
