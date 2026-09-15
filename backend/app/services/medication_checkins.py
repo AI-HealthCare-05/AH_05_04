@@ -29,7 +29,7 @@ class CheckinRevisionInvalidationPort(Protocol):
 
 
 class NoopCheckinRevisionInvalidation:
-    """Track C 저장 모델이 연결되기 전 사용하는 명시적 no-op adapter."""
+    """Explicit no-op for isolated callers and tests; runtime DI uses Track C."""
 
     async def invalidate_for_checkin_revision(
         self,
