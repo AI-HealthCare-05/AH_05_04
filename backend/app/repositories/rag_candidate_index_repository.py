@@ -234,7 +234,7 @@ class RagCandidateIndexRepository:
         return result.scalar_one_or_none()
 
     async def get_ready_version_by_code(self, index_code: str) -> RagCandidateIndexVersion | None:
-        """RAG-08/RAG-09가 조회할 대상. #168 자신은 READY를 쓰지 않는다 (RAG-17/#181의 몫)."""
+        """RAG-08/RAG-09가 조회할 대상. #168 자신은 READY를 쓰지 않는다 (#583의 몫)."""
         result = await self.session.execute(
             select(RagCandidateIndexVersion).where(
                 RagCandidateIndexVersion.index_code == index_code,
@@ -271,8 +271,8 @@ class RagCandidateIndexRepository:
         """RAG-07A(#167)가 계산한 build 결과 하나를 ``BUILDING``으로 저장(또는 멱등 재사용)한다.
 
         ``status``는 항상 ``BUILDING``으로 강제된다. ``READY``/``RETIRED``와 환경 pointer 전환은
-        이 메서드가 쓰지 않는다 (RAG-12A ``build_runtime_bundle``과 동일한 경계). 실패 시 이
-        트랜잭션 전체가 롤백되어 partial row가 남지 않는다.
+        이 메서드가 쓰지 않는다 (RAG-12A ``build_runtime_bundle``과 동일한 경계, #583 소유). 실패 시
+        이 트랜잭션 전체가 롤백되어 partial row가 남지 않는다.
 
         member 검증(``_assert_member_metadata_matches``)은 content_hash 재사용 여부를 정하기
         **전에** 실행된다. 재사용 경로 뒤로 미루면, 이미 저장된 content_hash와 우연히 같은 값을

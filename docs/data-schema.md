@@ -39,7 +39,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 비동기 실행 | `ai_job`, `outbox_event`, `idempotency_record` | `JobIntakeService`(#147)의 Job 접수 transaction과 DB Outbox 선점·`WorkerMessage` 조립·Redis 발행·fencing 완료(#219)가 repository·service 계층에 연결됨. 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 미연결(#148) |
 | 비동기 실행(schema-only) | `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event` | Schema-only Post-MVP 골격, 현재 repository·service·API 경로에서 미사용 |
 | RAG Source·Catalog | `rag_source`, `rag_source_endpoint`, `rag_source_operation`, `rag_source_snapshot`, `rag_source_snapshot_member`, `rag_source_ingestion_run`, `rag_source_ingestion_artifact`, `rag_source_snapshot_verification`, `rag_entity_identity`, `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component`, `rag_medication_search_entry`, `rag_catalog_set`, `rag_catalog_set_source`, `rag_catalog_set_member`, `rag_catalog_set_hash` | #164·#165 기반과 #166 안정 Identity·Catalog 구성원·불변 v2 Set/manifest, #178 선행 Snapshot member 저장 기반. D-02 실행 provenance와 Runtime 활성화는 후속 범위 |
-| RAG Candidate Index | `rag_candidate_index_version`, `rag_candidate_index_member` | #168(RAG-07B) RAG-07A(#167) build 결과의 영속·멱등 build transaction. `status`는 항상 `BUILDING`이며 READY/RETIRED 전환은 RAG-17(#181) 후속 범위 |
+| RAG Candidate Index | `rag_candidate_index_version`, `rag_candidate_index_member` | #168(RAG-07B) RAG-07A(#167) build 결과의 영속·멱등 build transaction. `status`는 항상 `BUILDING`이며 READY/RETIRED 전환은 #583 후속 범위 |
 
 본인 단일 `SELF` profile과 `profile_id` 기반 소유권 전환은 #117 구현 PR에서 도입했습니다. 보호자·멀티 프로필·위임 권한은 후속 범위이며, 현재 구현은 사용자 1명당 `SELF` profile 1개만 허용합니다. 복약 일정·occurrence와 Check-in 저장·정정 경계는 아래 분할 구현 상태를 따르며, B4 공개 API와 Track C 상세 구현은 아직 목표 계약이다.
 
@@ -362,7 +362,7 @@ RAG-09(Candidate Search)가 그 결과를 조회하려면 이 영속 계층이 �
 read port다 — RAG-08/RAG-09는 이 파일만으로 조회할 수 있다. 저장(build)은
 `backend/app/services/rag_candidate_index_build.py`가 유일하게 `ai_worker`를 import하는 지점에서
 수행하며, 전달된 member 행으로부터 `member_set_hash`를 재계산해 claim된 값과 대조함으로써 위조를
-막는다. `READY`/`RETIRED` 전환과 환경 pointer 연결은 RAG-17(#181) 후속 범위이며, partial/failed
+막는다. `READY`/`RETIRED` 전환과 환경 pointer 연결은 #583 후속 범위이며, partial/failed
 build는 어떤 row도 남기지 않는다.
 
 구현 테이블:

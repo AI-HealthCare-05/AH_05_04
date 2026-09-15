@@ -1,6 +1,6 @@
 """Create RAG-07B Candidate Index persistence tables (#168).
 
-BUILDING만 이 스키마로 쓸 수 있다. READY/RETIRED 전환과 환경 pointer는 RAG-17(#181)의
+BUILDING만 이 스키마로 쓸 수 있다. READY/RETIRED 전환과 환경 pointer는 #583의
 몫이라 이 revision은 그 컬럼을 건드리지 않는다. partial/failed build는 row 자체를 남기지
 않으므로 별도의 실패 상태 정리 로직이 필요 없다.
 """
