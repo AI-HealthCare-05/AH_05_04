@@ -145,11 +145,16 @@ Set 확장이 필요하며 이는 후속 작업이다.
 
 이 `APPROVED`는 60개 DEV Case, Evidence Mapping, Dataset Manifest의 review provenance에 한정된다. Dataset
 lifecycle은 계속 `DRAFT`이며 Dataset Freeze와 HOLDOUT Freeze는 완료되지 않았다. 실제 Knowledge Evidence
-Retrieval Adapter는 `NOT_IMPLEMENTED`이고 actual retrieval Run과 baseline Metric도 존재하지 않는다. 따라서 이
-DEV Dataset은 Release `PASS`를 만들 수 없고 Production 공개 근거가 아니다. HOLDOUT 질문 본문은 저장소에
-없으며, 접근 승인·protected runner·actual Adapter·HOLDOUT Freeze는 후속 차단 조건으로 남아 있다. 증상 기반 OTC 후보·
+Retrieval Adapter `knowledge-evidence-retrieval.actual.v1`은 이제 `IMPLEMENTED`이고, DEV 60개 Case에 대해
+RET-L·RET-D·RET-H를 각각 2회씩 실제로 실행한 actual retrieval Run과 diagnostic Metric이 존재한다. 이 결과는
+`DIAGNOSTIC_ONLY` 관찰값이며 threshold나 baseline 승인으로 전이하지 않았다. 따라서 이 DEV Dataset은 여전히
+Release `PASS`를 만들 수 없고 Production 공개 근거가 아니다. HOLDOUT 질문 본문은 저장소에 없으며, 접근
+승인·protected runner·HOLDOUT Freeze는 후속 차단 조건으로 남아 있다. 증상 기반 OTC 후보·
 상호작용 평가는 별도 Issue #278 범위이며 #273을 차단하지 않는다. 현재 기계 상태와 결정적 Markdown
-projection은 `docs/validation/rag/issue-273/`에 있다.
+projection은 `docs/validation/rag/issue-273/`에 있다. 상세 수치·hash·재현성 증빙은 여기에 중복하지 않고
+`docs/validation/rag/issue-273/experiments/`의 날짜별 experiment log가 담당하며, 이번 실행은
+`experiments/2026-09-16-dev-actual-retrieval-ret-l-d-h.md`이다. 후속 재실험은 기존 파일을 덮어쓰지 않고
+같은 디렉터리에 새 날짜 파일로 추가한다.
 
 ### Evaluation Schema Sets
 

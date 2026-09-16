@@ -1,9 +1,9 @@
-# Issue #273 Phase B3 Protected Runner Policy Foundation Validation Report
+# Issue #273 Phase B4 DEV Actual Retrieval Evaluation Validation Report
 
-> Phase B3 · Protected Runner Policy Foundation Implemented — executable policy tests exist, but effective
-> infrastructure enforcement, authorization, Freeze, actual run, and Release remain incomplete.
+> Phase B4 · DEV Actual Retrieval Evaluation Completed — DEV retrieval execution completed and verified,
+> but protected Runner infrastructure enforcement, authorization, Freeze, and Release remain incomplete.
 
-- Phase: `PHASE_B3_PROTECTED_RUNNER_FOUNDATION`
+- Phase: `PHASE_B4_DEV_ACTUAL_RUN_COMPLETED`
 - Schema Set Status: `REVIEW_REQUIRED`
 - Dataset: `rag-natural-language-retrieval-dev@1.0.0` (`DRAFT`)
 - Dataset Manifest SHA-256: `b8c7a1a2b529b73ce1a275e9b0210794de3dcbab72d1b50dec4def15166aada2`
@@ -39,8 +39,8 @@
 - Infrastructure Adapter: `PARTIALLY_IMPLEMENTED`
 - Reconciliation Adapter: `NOT_IMPLEMENTED`
 - HOLDOUT Freeze: `NOT_STARTED`
-- Actual Adapter: `NOT_IMPLEMENTED`
-- Actual Run Artifact: `NOT_CREATED`
+- Actual Adapter: `IMPLEMENTED`
+- Actual Run Artifact: `rag-eval.run@1.0.0` `228ca8ad3ad47d12888801e8a114a93484c80ebc41ca4a7a32127fce075e4f79`
 
 한국어 자연어 합성 DEV 질문 60개와 합성 Gold/corpus authoring graph가 저장소에 존재하며, 실제 환자 발화나 실제 제품 데이터가 아니다.
 DEV Dataset approval is recorded as APPROVED for the 60 Cases, Evidence Mapping, and Dataset Manifest.
@@ -48,14 +48,16 @@ Dataset remains DRAFT and unfrozen; preparation does not create or Freeze HOLDOU
 The protected Runner policy foundation and data-plane adapter are partially implemented and verified.
 Control-plane services and the actual protected loader/CLI remain NOT_IMPLEMENTED.
 Access authorization is not recorded, and HOLDOUT authoring has not started.
-Actual retrieval was not run because the actual Adapter is NOT_IMPLEMENTED.
-No baseline Metric exists, and no Metric fields are recorded in the machine status.
+Actual DEV retrieval evaluation was executed and verified.
+DEV Metric values are DIAGNOSTIC_ONLY observations in the experiment log; no baseline Metric is approved and no Metric fields are recorded in the machine status.
 DEV cannot produce a Release PASS; Production remains closed.
+
+Actual DEV Retrieval experiment evidence: [DEV Actual Retrieval RET-L/D/H experiment](experiments/2026-09-16-dev-actual-retrieval-ret-l-d-h.md)
+Later re-runs are preserved as additional dated logs under `docs/validation/rag/issue-273/experiments/` and do not overwrite this one.
 
 ## Blocking Codes
 
 - `BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER`
-- `BLOCKED_BY_RAG_14_ADAPTER`
 - `WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION`
 - `WAITING_FOR_HOLDOUT_FREEZE`
 
@@ -65,9 +67,9 @@ DEV cannot produce a Release PASS; Production remains closed.
 | --- | --- | ---: | --- |
 | `PHASE_A_DEV_FIXTURE` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q` | `0` | 26 passed |
 | `PHASE_A_LOADER` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py -q` | `0` | 132 passed |
-| `PHASE_A_REPORT_PROJECTION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q` | `0` | 51 passed |
-| `PHASE_A_SCHEMA_EXPORT` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_schema_exports.py ai_worker/tests/evaluation/test_external_schema_parity.py ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q` | `0` | 94 passed, 7 skipped |
-| `PHASE_B3_PROTECTED_RUNNER_FOUNDATION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_protected_runner_foundation.py ai_worker/tests/evaluation/test_protected_retrieval.py -q` | `0` | 83 passed |
+| `PHASE_A_REPORT_PROJECTION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q` | `0` | 55 passed |
+| `PHASE_A_SCHEMA_EXPORT` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_schema_exports.py ai_worker/tests/evaluation/test_external_schema_parity.py ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q` | `0` | 158 passed |
+| `PHASE_B3_PROTECTED_RUNNER_FOUNDATION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_protected_runner_foundation.py ai_worker/tests/evaluation/test_protected_retrieval.py -q` | `0` | 85 passed |
 | `PHASE_B_DATASET_APPROVAL_PROVENANCE` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py::test_issue_273_graph_records_the_actual_dataset_custodian_approval_event -q` | `0` | 1 passed |
 | `PHASE_B_GOLD_REVIEW_PROVENANCE` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py::test_issue_273_graph_records_only_the_actual_gold_review_event -q` | `0` | 1 passed |
 | `PHASE_B_HOLDOUT_FREEZE_PREPARATION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_holdout_preparation.py -q` | `0` | 27 passed |
@@ -83,4 +85,4 @@ DEV cannot produce a Release PASS; Production remains closed.
 - HOLDOUT authoring may start only after an independent Dataset Custodian authorization event is recorded.
 - The #158 replay uses a different Dataset and is `NOT_COMPARABLE_DIFFERENT_DATASET`.
 
-Status updated at `2026-09-09T00:00:00.000000Z`. Canonical status SHA-256: `5762d690a1678292a85edb593cd8f1cf2ca62c425652e87efc652e2055d7e9d6`.
+Status updated at `2026-09-16T15:00:00.000000Z`. Canonical status SHA-256: `693b2ef93fecf5292a0a93910f242865fccece857b95cbd6204957e978c08c9f`.
