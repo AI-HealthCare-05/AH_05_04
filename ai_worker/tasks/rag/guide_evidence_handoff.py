@@ -18,14 +18,16 @@ Scope & Authority Boundaries:
   ownership/PASS/assessment content, #180 runtime cannot directly consume
   this handoff as authority.
 - Upstream #178 canonical hash contract alignment:
-  The selection manifest and ProductionSearchReceipt (v2.0) now conform to the
-  canonical RFC 8785 JCS specification of PD-178-20260916. The former
-  BLOCKED_BY_178_CANONICAL_HASH_CONTRACT dependency marker has been resolved.
-- Downstream #180 endpoint-member blocker marker:
-  PD-315/PD-362 allow nullable endpoint operation_code, while the current
-  Citation validators reject it. BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT is a
-  non-enforcing marker; runtime integration remains blocked until the shared
-  contract and downstream validators are aligned.
+  The selection manifest and ProductionSearchReceipt (v2.0) conform to the
+  canonical RFC 8785 JCS specification of PD-178-20260916 (PR #636 merged).
+  The former BLOCKED_BY_178_CANONICAL_HASH_CONTRACT dependency marker has been resolved.
+- Downstream #180 endpoint-member contract resolution:
+  The former non-enforcing BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT marker was resolved
+  via PD-180-EM-20260916 and the shared source_member_identity kernel.
+  Downstream validators now accept nullable operation_code via typed validation
+  delegated to is_valid_source_member_identity. Note that pure validation does not grant
+  authenticated authority; runtime integration remains blocked until PD-315 approval,
+  #174 authenticated assembler implementation, and #180 runtime orchestration wiring.
 """
 
 from __future__ import annotations
@@ -43,7 +45,6 @@ from ai_worker.tasks.evaluation.canonical import (
     canonical_json_bytes,
     canonical_sha256,
 )
-from ai_worker.tasks.rag.claim_citation_validator import SourceMemberKind
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, QueryFingerprint, SensitiveText
 from ai_worker.tasks.rag.evidence_search import (
     ProductionEvidenceProvenance,
@@ -56,6 +57,11 @@ from ai_worker.tasks.rag.retrieval_runtime import (
     RetrievalExecutionStatus,
     compute_production_search_receipt,
     compute_selection_manifest_hash,
+)
+from ai_worker.tasks.rag.source_member_identity import (
+    SourceMemberIdentity,
+    SourceMemberKind,
+    is_valid_source_member_identity,
 )
 
 __all__ = [
@@ -73,9 +79,6 @@ def canonical_jcs_sha256(value: object) -> str:
 
 
 GUIDE_EVIDENCE_HANDOFF_PROJECTION_VERSION = "guide-evidence-handoff-v1"
-# Non-enforcing dependency markers. Future orchestration must enforce these as
-# typed preconditions with integration tests.
-BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT = "BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT"
 
 
 class ObservedDecisionOutcome(StrEnum):
@@ -515,23 +518,14 @@ def _check_receipt_and_manifest(request: GuideEvidenceHandoffRequest) -> list[Gu
 
 
 def _check_member_identity_for_kind(b: RequestSourceMemberBinding) -> list[GuideEvidenceHandoffReason]:
-    if b.member_kind == SourceMemberKind.ENDPOINT_OPERATION:
-        if (
-            not _is_nonblank_nfc(b.endpoint_code)
-            or (b.operation_code is not None and not _is_nonblank_nfc(b.operation_code))
-            or b.artifact_code is not None
-            or b.artifact_version is not None
-        ):
-            return [GuideEvidenceHandoffReason.MEMBER_IDENTITY_INVALID]
-    elif b.member_kind == SourceMemberKind.ARTIFACT_MEMBER:
-        if (
-            not _is_nonblank_nfc(b.artifact_code)
-            or not _is_nonblank_nfc(b.artifact_version)
-            or b.endpoint_code is not None
-            or b.operation_code is not None
-        ):
-            return [GuideEvidenceHandoffReason.MEMBER_IDENTITY_INVALID]
-    else:
+    identity = SourceMemberIdentity(
+        member_kind=b.member_kind,
+        endpoint_code=b.endpoint_code,
+        operation_code=b.operation_code,
+        artifact_code=b.artifact_code,
+        artifact_version=b.artifact_version,
+    )
+    if not is_valid_source_member_identity(identity):
         return [GuideEvidenceHandoffReason.MEMBER_IDENTITY_INVALID]
     return []
 
