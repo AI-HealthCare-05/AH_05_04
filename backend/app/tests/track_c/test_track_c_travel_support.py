@@ -1,12 +1,15 @@
 """Synthetic integration coverage for explicit schedule/travel support selection."""
 
+from typing import get_args
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select
 
+from app.dtos.track_c_support import TravelSituation
 from app.main import fastapi_app
 from app.models.track_c import SupportActionPlan
+from app.services.track_c_support import TRAVEL_SUPPORT_CODES
 from app.tests.track_c.test_track_c_api import ApiCase, assert_error, safety_body
 from app.tests.track_c.test_track_c_api import case as track_c_case
 from app.tests.track_c.test_track_c_support_api import create, plan_body, prepare
@@ -115,3 +118,7 @@ async def test_omitted_and_null_choice_keep_legacy_idempotency_fingerprint(case:
     replayed = await create(case, {**body, "travel_situation": None})
     assert replayed.status_code == 200, replayed.text
     assert replayed.json() == created.json()
+
+
+def test_travel_support_mapping_covers_every_situation() -> None:
+    assert set(TRAVEL_SUPPORT_CODES) == set(get_args(TravelSituation))

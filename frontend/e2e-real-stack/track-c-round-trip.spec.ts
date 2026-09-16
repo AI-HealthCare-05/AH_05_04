@@ -18,19 +18,26 @@ test('[REAL-STACK][Track C #139] create, reload, complete and cancel plans throu
   expect(occurrences).toHaveLength(2)
   await page.addInitScript(value => localStorage.setItem('access_token', value), token)
 
-  for (const [index, occurrence] of occurrences.entries()) {
+  for (const index of [0, 1, 2]) {
+    const occurrence = occurrences[index % occurrences.length]
+    const freshDay = await request.get(`${api}/api/v1/medication-occurrences?date=${date}`, { headers })
+    expect(freshDay.status()).toBe(200)
+    const fresh: MedicationDayResponse = await freshDay.json()
+    const current = fresh.data.occurrences.find(item => item.occurrence_id === occurrence.occurrence_id)!
     const correction = await request.put(`${api}/api/v1/medication-occurrences/${occurrence.occurrence_id}/check-in`, {
       headers: { ...headers, 'Idempotency-Key': `track-c-139-checkin-${crypto.randomUUID()}` },
-      data: { status: 'NOT_TAKEN', expected_revision: occurrence.checkin?.revision ?? 0 },
+      data: { status: 'NOT_TAKEN', expected_revision: current.checkin?.revision ?? 0 },
     })
     expect(correction.status()).toBe(200)
     await page.goto(`/schedule/occurrences/${occurrence.occurrence_id}?date=${date}`)
     await page.getByRole('button', { name: '이유와 도움 찾기' }).click()
     await page.getByRole('button', { name: '증상이 없어요' }).click()
-    await page.getByRole('radio', { name: '일정이나 이동 때문에 어려웠어요' }).check()
+    await page.getByRole('radio', { name: index === 2 ? '깜빡했어요' : '일정이나 이동 때문에 어려웠어요' }).check()
     await page.getByRole('button', { name: '선택한 어려움으로 도움 찾기' }).click()
-    await page.getByRole('radio', { name: index === 0 ? '생활 일정이 바뀌었어요' : '약을 가지고 나오지 않았어요' }).check()
-    await page.getByRole('button', { name: '선택한 상황으로 도움 찾기' }).click()
+    if (index !== 2) {
+      await page.getByRole('radio', { name: index === 0 ? '생활 일정이 바뀌었어요' : '약을 가지고 나오지 않았어요' }).check()
+      await page.getByRole('button', { name: '선택한 상황으로 도움 찾기' }).click()
+    }
     await page.getByRole('checkbox').check()
     const creation = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/support-action-plans'))
     await page.locator('.track-c-content .ds-card button').first().click()
@@ -40,15 +47,20 @@ test('[REAL-STACK][Track C #139] create, reload, complete and cancel plans throu
     await expect(page.getByText('진행 중', { exact: true })).toBeVisible()
     await page.reload()
     await expect(page.getByText('진행 중', { exact: true })).toBeVisible()
-    if (index === 0) {
+    if (index !== 1) {
       const popupPromise = page.waitForEvent('popup')
       await page.getByRole('link', { name: '일정 확인·설정 (새 탭)' }).click()
       const schedule = await popupPromise
       await expect(schedule.getByRole('heading', { name: '실천 계획의 복약 일정' })).toBeVisible()
       await expect(schedule.getByRole('button', { name: '이 약의 일정 확인·설정' })).toBeVisible()
       await schedule.close()
+      if (index === 2) {
+        await expect(page.getByRole('button', { name: '완료 확인하기' })).toBeDisabled()
+        await page.getByRole('button', { name: '알림 설정 상태 확인' }).click()
+        await expect(page.getByText(/알림 설정 없이 복약 일정만 확인한 뒤/)).toBeVisible()
+      }
       await page.getByRole('button', { name: '완료 확인하기' }).click()
-      await page.getByRole('checkbox', { name: '기존 복약 일정을 확인했거나 일정 저장을 마쳤어요.' }).check()
+      await page.getByRole('checkbox', { name: index === 2 ? '알림 설정 없이 복약 일정만 확인했어요.' : '기존 복약 일정을 확인했거나 일정 저장을 마쳤어요.' }).check()
       await page.getByRole('button', { name: '완료로 저장' }).click()
       await expect(page.getByText('완료됨', { exact: true })).toBeVisible()
     } else {
@@ -60,7 +72,7 @@ test('[REAL-STACK][Track C #139] create, reload, complete and cancel plans throu
     const savedResponse = await request.get(`${api}/api/v1/support-action-plans/${created.support_action_plan_id}`, { headers })
     expect(savedResponse.status()).toBe(200)
     const saved = (await savedResponse.json()).data
-    expect(saved.status).toBe(index === 0 ? 'COMPLETED' : 'CANCELLED')
+    expect(saved.status).toBe(index === 1 ? 'CANCELLED' : 'COMPLETED')
     expect(saved.action_config_snapshot).toEqual(created.action_config_snapshot)
   }
 })

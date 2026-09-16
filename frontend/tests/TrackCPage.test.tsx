@@ -1,3 +1,4 @@
+import supportFixture from '../../tests/fixtures/post_mvp_1/track_c/support-plan-v1.json'
 import React, { StrictMode } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -5,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import TrackCPage, { type TrackCServices } from '../src/pages/TrackCPage'
 import { ApiError } from '../src/api/client'
 
+const activeCopyVersion = supportFixture.single_offer.data.supports[0].copy_version
 const occurrenceId = '11111111-1111-4111-8111-111111111111'
 const planId = '22222222-2222-4222-8222-222222222222'
 const checkin = { checkin_id: 'checkin', occurrence_id: occurrenceId, status: 'NOT_TAKEN', revision: 3, taken_at: null, corrected: false }
@@ -169,8 +171,8 @@ it('retries the travel offer without writing another Barrier', async () => {
   expect(svc.getOffers).toHaveBeenNthCalledWith(2, 'barrier', 'MEDICATION_NOT_WITH_ME')
 })
 
-it('requires actual packing confirmation on the new preparation plan', async () => {
-  const packing = { ...plan, support_code: 'ROUTINE_OR_TRAVEL_PLAN', copy_version: 'track-c-support-copy-ko-2026-09-16.1' }
+it.each([activeCopyVersion, 'track-c-support-copy-ko-2099-01-01.1'])('retains packing confirmation for %s', async copy_version => {
+  const packing = { ...plan, support_code: 'ROUTINE_OR_TRAVEL_PLAN', copy_version }
   const svc = services({ getPlan: vi.fn().mockResolvedValue(packing) })
   show(svc, `/dev/track-c/plans/${planId}`)
   await screen.findByRole('heading', { name: '다음 외출 전 약 챙기기' })
@@ -204,10 +206,10 @@ it('halts general concern guidance when symptoms arise without marking the plan 
   expect(svc.createSafety).not.toHaveBeenCalled()
 })
 
-it('requires a successful push check and rechecks before completing a new forgotten-medication plan', async () => {
+it.each([activeCopyVersion, 'track-c-support-copy-ko-2099-01-01.1'])('checks notifications and rechecks before completing copy %s', async copy_version => {
   const getPushState = vi.fn().mockResolvedValueOnce('denied').mockResolvedValueOnce('granted').mockResolvedValueOnce('revoked')
   const svc = services({
-    getPlan: vi.fn().mockResolvedValue({ ...plan, copy_version: 'track-c-support-copy-ko-2026-09-16.1' }),
+    getPlan: vi.fn().mockResolvedValue({ ...plan, copy_version }),
     getPlanResources: vi.fn().mockResolvedValue({ support_action_plan_id: planId, barrier_code: 'FORGOT', occurrence_id: occurrenceId, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: support.support_copy }),
     getPushState,
   })
@@ -217,11 +219,63 @@ it('requires a successful push check and rechecks before completing a new forgot
   expect(getPushState).not.toHaveBeenCalled()
   expect((screen.getByRole('button', { name: '완료 확인하기' }) as HTMLButtonElement).disabled).toBe(true)
   fireEvent.click(check); await screen.findByText('기기·브라우저 설정에서 알림 허용이 필요해요.')
-  expect((screen.getByRole('button', { name: '완료 확인하기' }) as HTMLButtonElement).disabled).toBe(true)
-  fireEvent.click(check); await screen.findByText(/이 기기의 알림 수신 등록을 확인했어요/)
+  expect((screen.getByRole('button', { name: '완료 확인하기' }) as HTMLButtonElement).disabled).toBe(false)
+  fireEvent.click(check); await screen.findByText(/이 브라우저에 저장된 알림 권한과 구독을 확인했어요/)
   fireEvent.click(screen.getByRole('button', { name: '완료 확인하기' }))
   fireEvent.click(screen.getByRole('checkbox', { name: '복약 일정을 확인했고 이 기기의 알림 설정을 마쳤어요.' }))
   fireEvent.click(screen.getByRole('button', { name: '완료로 저장' }))
   await screen.findByText(/알림 설정 화면에서 권한과 수신 등록을 확인한 뒤/)
   expect(svc.patchPlan).not.toHaveBeenCalled()
+})
+
+
+it.each(['granted', 'unsupported', 'denied', 'subscription_failed', 'revoked', 'unrequested'])('allows explicitly confirmed completion for %s', async state => {
+  const svc = services({
+    getPlanResources: vi.fn().mockResolvedValue({ support_action_plan_id: planId, barrier_code: 'FORGOT', occurrence_id: occurrenceId, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: support.support_copy }),
+    getPushState: vi.fn().mockResolvedValue(state),
+  })
+  show(svc, `/dev/track-c/plans/${planId}`)
+  fireEvent.click(await screen.findByRole('button', { name: '알림 설정 상태 확인' }))
+  await screen.findByText(state === 'granted' ? /이 브라우저에 저장된 알림 권한과 구독/ : /알림 설정 없이 복약 일정만 확인한 뒤/)
+  fireEvent.click(screen.getByRole('button', { name: '완료 확인하기' }))
+  fireEvent.click(screen.getByRole('checkbox', { name: state === 'granted' ? '복약 일정을 확인했고 이 기기의 알림 설정을 마쳤어요.' : '알림 설정 없이 복약 일정만 확인했어요.' }))
+  fireEvent.click(screen.getByRole('button', { name: '완료로 저장' }))
+  await screen.findByRole('button', { name: '완료 확인하기' })
+  expect(svc.patchPlan).toHaveBeenCalledWith(planId, { status: 'COMPLETED', confirmed: true }, expect.any(String))
+  expect(svc.getPushState).toHaveBeenCalledTimes(2)
+})
+
+it('keeps cancellation after resources fail, but blocks completion', async () => {
+  const svc = services({ getPlanResources: vi.fn().mockRejectedValue(new ApiError(503, 'PRIVATE_RAW_DETAIL')) })
+  show(svc, `/dev/track-c/plans/${planId}`)
+  await screen.findByText('진행 중')
+  expect(screen.queryByText('PRIVATE_RAW_DETAIL')).toBeNull()
+  expect((screen.getByRole('button', { name: '완료 확인하기' }) as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(screen.getByRole('button', { name: '계획 취소하기' }))
+  fireEvent.click(screen.getByRole('checkbox', { name: '이 계획을 취소할게요.' }))
+  fireEvent.click(screen.getByRole('button', { name: '취소로 저장' }))
+  await screen.findByRole('button', { name: '계획 취소하기' })
+  expect(svc.patchPlan).toHaveBeenCalledWith(planId, { status: 'CANCELLED', confirmed: true }, expect.any(String))
+})
+
+it('restores completion after retrying only the resources read', async () => {
+  const svc = services()
+  vi.mocked(svc.getPlanResources).mockRejectedValueOnce(new TypeError('offline'))
+  show(svc, `/dev/track-c/plans/${planId}`)
+  fireEvent.click(await screen.findByRole('button', { name: '안내 다시 조회' }))
+  await screen.findByText('서버의 승인된 설명')
+  expect((screen.getByRole('button', { name: '완료 확인하기' }) as HTMLButtonElement).disabled).toBe(false)
+  expect(svc.patchPlan).not.toHaveBeenCalled()
+})
+
+it.each([401, 403, 404, 409])('blocks resources error %s', async status => {
+  show(services({ getPlanResources: vi.fn().mockRejectedValue(new ApiError(status, 'PRIVATE')) }), `/dev/track-c/plans/${planId}`)
+  await screen.findByText(status === 401 ? '로그인 화면' : '현재 도움을 계속 진행할 수 없어요')
+  expect(screen.queryByRole('button', { name: '계획 취소하기' })).toBeNull()
+})
+
+it('preserves historical travel confirmation', async () => {
+  show(services({ getPlan: vi.fn().mockResolvedValue({ ...plan, support_code: 'ROUTINE_OR_TRAVEL_PLAN', copy_version: 'track-c-support-copy-ko-2026-09-15.1' }) }), `/dev/track-c/plans/${planId}`)
+  fireEvent.click(await screen.findByRole('button', { name: '완료 확인하기' }))
+  expect(screen.getByRole('checkbox', { name: '선택한 실천 계획의 실행을 마쳤어요.' })).toBeTruthy()
 })

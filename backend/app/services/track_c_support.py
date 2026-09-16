@@ -57,6 +57,12 @@ ACTION_PLAN_FOLLOWUP_POST_OPERATION_ID = "support-action-plan.followup.submit"
 ACTION_PLAN_FOLLOWUP_GET_OPERATION_ID = "support-action-plan.followup.get"
 
 
+TRAVEL_SUPPORT_CODES: dict[TravelSituation, SupportCode] = {
+    "SCHEDULE_CHANGED": SupportCode.REMINDER_SETUP,
+    "MEDICATION_NOT_WITH_ME": SupportCode.ROUTINE_OR_TRAVEL_PLAN,
+}
+
+
 def eligible_supports(
     config: HandlerConfig, barrier: BarrierResponse, travel_situation: TravelSituation | None = None
 ) -> list[SupportRule]:
@@ -68,14 +74,7 @@ def eligible_supports(
         raise ApiError(
             status_code=422, code="VALIDATION_FAILED", message="일정 변경·외출 사유에서만 상황을 선택해 주세요."
         )
-    selected = (
-        {
-            "SCHEDULE_CHANGED": SupportCode.REMINDER_SETUP,
-            "MEDICATION_NOT_WITH_ME": SupportCode.ROUTINE_OR_TRAVEL_PLAN,
-        }.get(travel_situation)
-        if travel_situation is not None
-        else None
-    )
+    selected = TRAVEL_SUPPORT_CODES[travel_situation] if travel_situation is not None else None
     if barrier.response_status != BarrierResponseStatus.ANSWERED:
         return []
     return sorted(

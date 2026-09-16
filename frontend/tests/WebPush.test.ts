@@ -6,6 +6,7 @@ import {
   enableWebPush,
   getWebPushLaunchContext,
   getWebPushState,
+  inspectWebPushState,
 } from '../src/features/push/webPush'
 
 vi.mock('../src/api/push', () => ({
@@ -284,4 +285,46 @@ describe('Web Push permission과 구독', () => {
       expect.any(Array),
     )
   })
+})
+
+
+describe('read-only notification inspection', () => {
+  it.each([
+    ['granted', true, true, 'granted'],
+    ['granted', true, false, 'revoked'],
+    ['granted', false, true, 'unrequested'],
+    ['denied', true, true, 'revoked'],
+    ['denied', false, true, 'denied'],
+    ['default', false, false, 'unrequested'],
+  ] as const)('observes %s binding=%s subscription=%s without mutation', async (permission, binding, subscribed, expected) => {
+    installBrowserSupport(permission)
+    const unsubscribe = vi.fn()
+    getSubscription.mockResolvedValue(subscribed ? { unsubscribe } : null)
+    if (binding) localStorage.setItem('dosey_web_push_binding:v1', JSON.stringify({ id: 'synthetic', generation: 'synthetic-generation' }))
+    const before = localStorage.getItem('dosey_web_push_binding:v1')
+    expect(await inspectWebPushState()).toBe(expected)
+    expect(localStorage.getItem('dosey_web_push_binding:v1')).toBe(before)
+    expect(navigator.serviceWorker.register).not.toHaveBeenCalled()
+    expect(requestPermission).not.toHaveBeenCalled()
+    expect(subscribe).not.toHaveBeenCalled()
+    expect(unsubscribe).not.toHaveBeenCalled()
+    expect(upsertPushSubscription).not.toHaveBeenCalled()
+    expect(deletePushSubscription).not.toHaveBeenCalled()
+    expect(postMessage).not.toHaveBeenCalled()
+    expect(getPushConfig).not.toHaveBeenCalled()
+  })
+  it('reports read failure without reconciling subscriptions', async () => {
+    installBrowserSupport('granted')
+    vi.mocked(navigator.serviceWorker.getRegistration).mockRejectedValue(new Error('offline'))
+    expect(await inspectWebPushState()).toBe('subscription_failed')
+    expect(upsertPushSubscription).not.toHaveBeenCalled()
+    expect(deletePushSubscription).not.toHaveBeenCalled()
+  })
+})
+
+
+it('inspects an unsupported environment without registering a worker', async () => {
+  Object.defineProperty(window, 'isSecureContext', { configurable: true, value: false })
+  expect(await inspectWebPushState()).toBe('unsupported')
+  expect(navigator.serviceWorker.register).not.toHaveBeenCalled()
 })
