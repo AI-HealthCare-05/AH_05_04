@@ -47,10 +47,10 @@ class RagCandidateIndexEntityType(StrEnum):
 class RagCandidateIndexVersion(Base):
     """RAG-07A(#167) 순수 build 결과의 영속 스냅샷 (RAG-07B, #168).
 
-    ``status``는 이 테이블을 쓰는 build transaction에서 항상 ``BUILDING``으로 강제된다.
-    ``READY``/``RETIRED``와 환경 pointer 전환은 #583의 몫이므로 여기서는 다루지 않는다
-    (RAG-12A ``rag_runtime_release_bundle``과 동일한 경계, ``rag_runtime_repository.py``의
-    ``build_runtime_bundle`` 참고). partial/failed build는 row 자체를 남기지 않는다.
+    #168 build transaction은 새 row를 ``BUILDING``으로 저장한다. #583 repository
+    transaction은 완성된 build만 ``READY`` 또는 ``FAILED``로 닫고, 기존 ``READY``는
+    ``RETIRED``로 보존한다. Runtime environment pointer와 release gate 연결은 #181
+    후속 범위다.
     """
 
     __tablename__ = "rag_candidate_index_version"
@@ -63,6 +63,12 @@ class RagCandidateIndexVersion(Base):
             "index_code",
             unique=True,
             postgresql_where=text("status = 'BUILDING'"),
+        ),
+        Index(
+            "uq_rag_candidate_index_ready_per_code",
+            "index_code",
+            unique=True,
+            postgresql_where=text("status = 'READY'"),
         ),
         CheckConstraint(
             f"status IN ({_sql_in_list(RagCandidateIndexStatus)})",
@@ -196,6 +202,14 @@ class RagCandidateIndexMember(Base):
         ),
         CheckConstraint("length(trim(member_key)) > 0", name="chk_rag_candidate_index_member_key_nonblank"),
         CheckConstraint("member_content_hash ~ '^[0-9a-f]{64}$'", name="chk_rag_candidate_index_member_content_hash"),
+        CheckConstraint(
+            "lexical_storage_hash IS NULL OR lexical_storage_hash ~ '^[0-9a-f]{64}$'",
+            name="chk_rag_candidate_index_member_lexical_storage_hash",
+        ),
+        CheckConstraint(
+            "embedding_storage_hash IS NULL OR embedding_storage_hash ~ '^[0-9a-f]{64}$'",
+            name="chk_rag_candidate_index_member_embedding_storage_hash",
+        ),
         # alias_ref와 alias_source_snapshot_id는 함께 있거나 함께 없어야 한다 (APPROVED_ALIAS만 alias를 가짐).
         CheckConstraint(
             "(alias_ref IS NULL) = (alias_source_snapshot_id IS NULL)",
@@ -242,6 +256,8 @@ class RagCandidateIndexMember(Base):
     normalization_version: Mapped[str] = mapped_column(String(100), nullable=False)
     member_key: Mapped[str] = mapped_column(String(300), nullable=False)
     member_content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    lexical_storage_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    embedding_storage_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     embedding: Mapped[list[float] | None] = mapped_column(VECTOR(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

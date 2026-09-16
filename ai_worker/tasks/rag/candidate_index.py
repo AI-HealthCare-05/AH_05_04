@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import unicodedata
+from array import array
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -949,13 +950,19 @@ def _build_lexical_members(
 
 
 def _embedding_values_are_valid(values: object, dimension: int) -> bool:
-    return (
+    if not (
         isinstance(values, tuple)
         and len(values) == dimension
         and all(
             isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) for value in values
         )
-    )
+    ):
+        return False
+    try:
+        float32_values = tuple(array("f", values))
+    except (OverflowError, ValueError):
+        return False
+    return all(math.isfinite(value) for value in float32_values)
 
 
 def _attach_embeddings(
