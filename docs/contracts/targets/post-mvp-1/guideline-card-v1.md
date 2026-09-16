@@ -127,6 +127,22 @@ RAG-14 assessment 유효기간 만료가 `NO_APPROVED_EVIDENCE`로 사영되는 
 PD-362 Snapshot freshness 거부의 운영 대응은 위 Source eligibility 경계대로 Source 판정·감사
 Receipt에서 구분한다.
 
+## Guideline Generator 내부 경계
+
+`GuidelineGeneratorPort`(`ai_worker.tasks.rag.guideline_generator.GuidelineGeneratorPort`)는
+RAG-15 내부의 draft generation boundary다.
+
+1. `GuidelineGeneratorPort`는 RAG-15 내부 generation boundary다.
+2. 입력은 `GuidelineGenerationRequest`(`medication_identities`, `evidence_gate_outcome`, `policy`).
+3. 출력은 정확히 `GuidelineCardDraft | GuidelineGenerationFailure`이다.
+4. 실제 Provider adapter는 아직 구현하지 않는다.
+5. DB/persistence는 이 slice 밖이다.
+6. Guide API는 이 slice 밖이다.
+7. #180 orchestration은 이 slice 밖이다.
+8. RAG-16 연결은 이 slice 밖이다.
+9. Finalizer는 validation/approval/binding/fallback 책임을 계속 가진다.
+10. 이 Protocol 추가만으로 Production Runtime 활성화나 public release를 의미하지 않는다.
+
 ## RAG-16 소비 경계
 
 RAG-16은 이 outcome을 입력으로 받되 다음을 추정하지 않는다.

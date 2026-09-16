@@ -64,6 +64,18 @@ async def test_disabled_sender_does_not_touch_database(push_settings):
     factory.begin.assert_not_called()
 
 
+async def test_recreated_production_off_settings_do_not_call_sender(push_settings, monkeypatch):
+    monkeypatch.setattr(config, "ENV", "production")
+    sender = Mock()
+    monkeypatch.setattr(process_push, "send_push", sender)
+    factory = Mock()
+    restarted_settings = push_settings.model_copy(update={"production_enabled": False})
+
+    assert await process_push.process_push_once(settings=restarted_settings, session_factory=factory) == 0
+    factory.begin.assert_not_called()
+    sender.assert_not_called()
+
+
 async def test_invalid_configuration_logs_fixed_reason(monkeypatch, caplog):
     def fail():
         raise ValueError("SENSITIVE_SECRET_SENTINEL")

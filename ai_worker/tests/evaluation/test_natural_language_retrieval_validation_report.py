@@ -628,3 +628,98 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
         assert result in REPORT_PATH.read_bytes()
     assert DATASET_MANIFEST_HASH.encode() in raw_status
     assert DATASET_MANIFEST_HASH.encode() in REPORT_PATH.read_bytes()
+
+
+def test_phase_b4_status_and_report_projection_success() -> None:
+    payload = _status_payload()
+    payload["schema_version"] = "1.3.0"
+    payload["phase"] = "PHASE_B4_DEV_ACTUAL_RUN_COMPLETED"
+    payload["status_label"] = "Phase B4 · DEV Actual Retrieval Evaluation Completed"
+    payload["adapter_status"] = "IMPLEMENTED"
+    payload["actual_run_ref"] = {
+        "id": "rag-eval.run",
+        "version": "1.0.0",
+        "hash": "a" * 64,
+    }
+    payload["blocking_codes"] = [
+        "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
+        "WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION",
+        "WAITING_FOR_HOLDOUT_FREEZE",
+    ]
+    payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
+
+    raw_bytes = _status_bytes(payload)
+    status = parse_status_bytes(raw_bytes)
+    assert status.phase == "PHASE_B4_DEV_ACTUAL_RUN_COMPLETED"
+    assert status.schema_version == "1.3.0"
+    assert status.adapter_status == "IMPLEMENTED"
+    assert status.actual_run_ref is not None
+    assert len(status.blocking_codes) == 3
+    assert "BLOCKED_BY_RAG_14_ADAPTER" not in status.blocking_codes
+
+    report_bytes = render_report(raw_bytes)
+    assert b"# Issue #273 Phase B4 DEV Actual Retrieval Evaluation Validation Report" in report_bytes
+    assert b"Phase B4 \xc2\xb7 DEV Actual Retrieval Evaluation Completed" in report_bytes
+    assert b"Actual DEV retrieval evaluation was executed and verified." in report_bytes
+    assert f"- Actual Run Artifact: `rag-eval.run@1.0.0` `{'a' * 64}`".encode() in report_bytes
+
+
+def test_phase_b4_rejects_retaining_rag_14_adapter_blocker() -> None:
+    payload = _status_payload()
+    payload["schema_version"] = "1.3.0"
+    payload["phase"] = "PHASE_B4_DEV_ACTUAL_RUN_COMPLETED"
+    payload["status_label"] = "Phase B4 · DEV Actual Retrieval Evaluation Completed"
+    payload["adapter_status"] = "IMPLEMENTED"
+    payload["actual_run_ref"] = {
+        "id": "rag-eval.run",
+        "version": "1.0.0",
+        "hash": "a" * 64,
+    }
+    # Retaining BLOCKED_BY_RAG_14_ADAPTER is invalid in Phase B4
+    payload["blocking_codes"] = [
+        "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
+        "BLOCKED_BY_RAG_14_ADAPTER",
+        "WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION",
+        "WAITING_FOR_HOLDOUT_FREEZE",
+    ]
+    payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
+
+    with pytest.raises(EvaluationValidationError) as raised:
+        parse_status_bytes(_status_bytes(payload))
+
+    assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+def test_phase_b4_rejects_null_actual_run_ref() -> None:
+    payload = _status_payload()
+    payload["schema_version"] = "1.3.0"
+    payload["phase"] = "PHASE_B4_DEV_ACTUAL_RUN_COMPLETED"
+    payload["status_label"] = "Phase B4 · DEV Actual Retrieval Evaluation Completed"
+    payload["adapter_status"] = "IMPLEMENTED"
+    payload["actual_run_ref"] = None
+    payload["blocking_codes"] = [
+        "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
+        "WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION",
+        "WAITING_FOR_HOLDOUT_FREEZE",
+    ]
+    payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
+
+    with pytest.raises(EvaluationValidationError) as raised:
+        parse_status_bytes(_status_bytes(payload))
+
+    assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+def test_phase_b3_rejects_premature_b4_blockers() -> None:
+    payload = _status_payload()
+    payload["blocking_codes"] = [
+        "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
+        "WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION",
+        "WAITING_FOR_HOLDOUT_FREEZE",
+    ]
+    payload["status_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"status_sha256"}))
+
+    with pytest.raises(EvaluationValidationError) as raised:
+        parse_status_bytes(_status_bytes(payload))
+
+    assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID

@@ -379,15 +379,15 @@ def _load_document(
         content_type=evidence.content_type,
     )
     raw = read_verified_raw_artifact(file_path=path, metadata=metadata)
-    parsed = parse_mfds_label_artifact(raw, section)
+    payload, body = canonicalize_label_xml(raw, section)
     return MfdsLabelDocument(
         section=section,
-        document_title=parsed.document_title,
+        document_title=str(payload["document_title"]),
         file_path=path,
         metadata=metadata,
-        canonical_structure=_canonical_element(parsed.root),
-        content_status=parsed.content_status,
-        empty_article_titles=parsed.empty_article_titles,
+        canonical_structure=cast(dict[str, object], payload["structure"]),
+        content_status=str(body["content_status"]),
+        empty_article_titles=tuple(cast(list[str], body["empty_article_titles"])),
     )
 
 
@@ -538,18 +538,13 @@ def _canonical_text(value: str) -> str:
 
 def canonicalize_label_xml(raw: bytes, section: str) -> tuple[dict[str, object], dict[str, object]]:
     """Receipt와 ingestion이 같은 XML 검증·정규화 결과를 사용합니다."""
-    parsed = parse_mfds_label_artifact(raw, section)
+    root = _parse_xml(raw, section)
+    body = _inspect_body(root, section)
     return {
         "document_type": section,
-        "document_title": parsed.document_title,
-        "structure": _canonical_element(parsed.root),
-    }, {
-        "article_count": parsed.article_count,
-        "paragraph_count": parsed.paragraph_count,
-        "nonempty_paragraph_count": parsed.nonempty_paragraph_count,
-        "empty_article_titles": list(parsed.empty_article_titles),
-        "content_status": parsed.content_status,
-    }
+        "document_title": root.get("title") or "",
+        "structure": _canonical_element(root),
+    }, body
 
 
 def label_canonical_checksum(item_seq: str, documents: list[dict[str, object]]) -> str:

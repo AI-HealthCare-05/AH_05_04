@@ -3,11 +3,13 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-315-20260908` |
-| 상태 | Review pending · Issue #315 |
+| 상태 | **승인 조건 미해소 (Condition unresolved)** — PR #361 최종 HEAD에서 책임 리뷰 `APPROVED` event는 확보했으나 그 승인 본문이 요구한 specialist 최신 HEAD 확인이 없어 원 승인 조건의 해소가 기록되지 않았다. 「승인 절차 provenance와 미해소 조건」 참조 |
+| 제안일 | 2026-09-08 |
 | 제안·구현 | 정현우 (`@ceohwj`) — AI/RAG |
-| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Evidence 계약·Safety 경계 |
-| 교차 리뷰 | 송은영 (`@phina-io`) — DB·hash domain / 김지혜 (`@Jye-rookie`) — Source provenance |
-| 추적 Issue | [#315](https://github.com/AI-HealthCare-05/AH_05_04/issues/315) |
+| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Evidence 계약·Safety 경계. 현행 governance상 이 Decision의 최종 승인 책임자 |
+| Specialist evidence | 송은영 (`@phina-io`) — DB·hash domain / 김지혜 (`@Jye-rookie`) — Source provenance. 추가 필수 PR 리뷰어가 아니며 PR #361 timeline에 historical evidence로 보존한다 |
+| 추적 Issue·PR | [#315](https://github.com/AI-HealthCare-05/AH_05_04/issues/315) (CLOSED 2026-09-08) · [PR #361](https://github.com/AI-HealthCare-05/AH_05_04/pull/361) (merge `6dff8887`) · 상태 정합 [#662](https://github.com/AI-HealthCare-05/AH_05_04/issues/662) · [PR #666](https://github.com/AI-HealthCare-05/AH_05_04/pull/666) |
+| Evidence | [`docs/validation/rag/issue-315/decision-approval-evidence.json`](../../validation/rag/issue-315/decision-approval-evidence.json) |
 | 상위 결정 | [`PD-125-20260831`](./2026-08-31-rag-p0-contract-freeze.md) |
 
 ## 목적과 권위 경계
@@ -205,9 +207,85 @@ Evidence Gate·Composer 구현, Evaluation 실행 또는 공개 flag 변경을 �
 유지한다. #166 D-05가 소유하는 Candidate Catalog projection hash와 Runtime medication Catalog manifest hash,
 PR #329/#167 v2 Catalog envelope 계산식은 이 Decision이 변경하지 않는다.
 
-## 승인과 후속 구현 조건
+## 승인 절차 provenance와 미해소 조건
 
-이 문서는 책임 리뷰어와 두 교차 리뷰어의 담당 범위 승인을 받기 전까지 `Review pending`이다. 승인은
-Production Adapter나 DB 연결이 구현됐다는 뜻이 아니다. 후속 구현 PR은 이 Decision의 단계·필드·문법을
-코드, configuration artifact, schema와 계약·통합·Evaluation 테스트에 함께 반영하고, 구현 증빙 없이
-`current/` 계약으로 승격하지 않는다.
+이 절은 세 가지를 분리해서 기록한다. (1) PR #361에 실재하는 책임 리뷰 `APPROVED` event, (2) 그 승인 본문이
+명시한 조건, (3) 그 조건의 해소 여부. **event의 실재를 조건 충족으로 투영하지 않는다.**
+
+구조화 사본은
+[`docs/validation/rag/issue-315/decision-approval-evidence.json`](../../validation/rag/issue-315/decision-approval-evidence.json)에 있다.
+
+### 1. Historical evidence — PR #361 책임 리뷰 APPROVED event
+
+| 항목 | 값 |
+| --- | --- |
+| Decision PR | [#361](https://github.com/AI-HealthCare-05/AH_05_04/pull/361) `docs/315-rag-retrieval-contract-divergence` -> `develop` |
+| 최종 HEAD | `d8ad7407105138873b6c9299303b0f056a223527` |
+| 책임 리뷰 event | [review 5142835401](https://github.com/AI-HealthCare-05/AH_05_04/pull/361#pullrequestreview-5142835401) · state `APPROVED` · 권가빈 (`@hazelnutflavoured`) · `2026-09-08T14:13:04Z` |
+| 승인 대상 commit | `d8ad7407105138873b6c9299303b0f056a223527` — PR 최종 HEAD와 동일 |
+| 승인 후 추가 commit | 0건 |
+| 승인 시점 문서 hash | `7de0d0c2722154317f96cde3784a93ca5869ea7b58bc4686d2c45c4bc72991c6` (이 파일의 `d8ad7407` blob SHA-256) |
+| CI (`d8ad7407`) | `lint`, `test`, `frontend` 전부 `success` |
+| Merge | merge commit `6dff888771ae25ed1e9357a11d999f4c2de8168e` · `2026-09-08T14:29:16Z` · `@ceohwj` |
+| 추적 Issue | [#315](https://github.com/AI-HealthCare-05/AH_05_04/issues/315) `CLOSED` `2026-09-08T14:29:18Z` (`completed`) |
+
+PR #361 전체에서 state가 `APPROVED`인 review event는 위 1건이며, 그 `commit_id`가 최종 HEAD와 같다. 이
+event의 실재·시각·commit·문서 hash는 GitHub 기록과 일치한다. 이것은 **event가 있었다는 historical
+evidence이며, 아래 조건이 충족됐다는 근거가 아니다.**
+
+### 2. 승인 본문이 명시한 조건 (원문 보존)
+
+review 5142835401 본문 말미는 다음 조건을 명시한다.
+
+> 승인합니다. 다만 이 승인은 최신 head에 대한 Source·DB 교차 리뷰와 외부 의료·Source·Privacy 승인 게이트를
+> 대체하지 않으므로, 해당 담당 리뷰어의 최신 승인까지 확인한 뒤 merge해 주세요.
+
+즉 책임 리뷰어 본인이 자신의 `APPROVED`를 최신 HEAD specialist 확인의 대체물이 아니라고 적었다.
+
+### 3. 조건 해소 여부 — 미해소
+
+specialist 검토는 PR #361 timeline에 historical evidence로 보존한다. 두 리뷰어는 중간 commit에서 승인 의사를
+담은 review를 제출했으나, 그 event는 이후 push로 stale dismiss되어 현재 GitHub state가 `DISMISSED`이고 최종
+HEAD `d8ad7407`에 대한 재승인 event는 없다. 이 문서는 해당 review를 최종 HEAD `APPROVED` event로
+재해석하지 않는다.
+
+| Specialist | 제출 시각 | 대상 commit | 현재 GitHub state | dismiss 계기 commit |
+| --- | --- | --- | --- | --- |
+| 송은영 (`@phina-io`) — DB·hash domain | `2026-09-08T11:50:27Z` | `520ade34` | `DISMISSED` | `70c04129` |
+| 송은영 (`@phina-io`) — DB·hash domain | `2026-09-08T12:49:36Z` | `1b907712` | `DISMISSED` | `80654be8` |
+| 김지혜 (`@Jye-rookie`) — Source provenance | `2026-09-08T13:14:48Z` | `80654be8` | `DISMISSED` | `c2db98c4` |
+
+세 dismissal 모두 `dismissal_message`가 없고 계기는 작성자의 후속 push다. 철회 의사 표시나 반대 의견 제출은
+기록되어 있지 않다.
+
+따라서 **2026-09-08 merge 시점에 §2의 조건이 충족됐다고 소급 판단하지 않는다.** PR #361은 §2가 요구한 최신
+HEAD specialist 확인 없이 병합됐으며, 이 문서는 그 사실을 철회하거나 사후 서명으로 대체하지 않는다.
+
+### 4. 조건 해소 경로
+
+현행 저장소 governance(`CONTRIBUTING.md`, `AGENTS.md`)는 PR의 최종 승인 책임자를 정확히 1명의 responsible
+reviewer로 두고, specialist·domain 리뷰 의견은 필요한 evidence로 첨부하며 추가 필수 PR 리뷰어로 지정하지
+않는다. 그러나 현행 governance의 존재만으로 §2의 조건이 당시 충족됐다는 결론을 만들 수는 없다.
+
+이 Decision을 `Approved`로 전이하려면 다음 중 하나의 근거가 기록되어야 한다.
+
+1. 최종 HEAD `d8ad7407`를 대상으로 한 specialist 확인 근거, 또는
+2. 지정 책임 리뷰어가 §2 조건을 현행 단일 책임 리뷰 체계에 맞춰 조정한다는 **명시적 재판정과 그 적용 시점**.
+
+작성 시점에 두 근거 모두 기록되어 있지 않다. 이 미해소 조건은 [PR #666](https://github.com/AI-HealthCare-05/AH_05_04/pull/666)의
+책임 리뷰어 blocking finding([comment 5698513038](https://github.com/AI-HealthCare-05/AH_05_04/pull/666#issuecomment-5698513038),
+`2026-09-16T13:45:38Z`)으로 제기됐고, 이 문서는 그 지적에 따라 조건 미해소를 명시적으로 기록한다.
+
+## 후속 구현 조건
+
+§4의 조건이 해소되어 이 Decision이 `Approved`로 전이하더라도, 승인은 Production Adapter나 DB 연결이
+구현됐다는 뜻이 아니다. `Approved` 상태는 다음 중 어느 것도 의미하지 않는다.
+
+- Production Evidence Retrieval 구현 완료
+- Runtime 활성화 또는 `PUBLIC_TRACK_F` 해제
+- Proposed·Target 계약의 `docs/contracts/current/` 승격
+- 외부 의료·약학·Source·Privacy·Safety 승인 완료
+- #174 authenticated assembler 또는 #180 runtime orchestration·persistence·E2E 완료
+
+후속 구현 PR은 이 Decision의 단계·필드·문법을 코드, configuration artifact, schema와 계약·통합·Evaluation
+테스트에 함께 반영하고, 구현 증빙 없이 `current/` 계약으로 승격하지 않는다.
