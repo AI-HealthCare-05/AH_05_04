@@ -25,7 +25,7 @@
    - 실제 데이터베이스 레코드 존재, 의사결정 소유권(Decision ownership), #174 REQUEST Guard의 실제 `PASS` 판정, 발급자의 진위(issuer authenticity)는 보증하지 않는다.
    - 용어 불변성 원칙에 따라 이 단계의 결과에는 `Authorized` 명칭을 사용할 수 없으며 오직 `Verified` 또는 일치 검증으로만 다룬다.
 3. **선행 계약 상태 (Proposed Status)**:
-   - 본 계약은 `PD-315-20260908`(Review pending)의 nullable operation_code 정책을 반영한 **Proposed** 계약이며, 권가빈 승인 전까지 `docs/contracts/current/`로 승격하지 않는다.
+   - 본 계약은 `PD-315-20260908`(PR #361 책임 리뷰 `APPROVED` event 확보, 승인 조건 미해소)의 nullable operation_code 정책을 반영한 **Proposed** 계약이다. 해당 조건 해소와, 구현·migration·OpenAPI/DTO·자동 테스트·실행 증빙 및 지정 책임 리뷰어 승인을 갖춘 별도 PR 전까지 `docs/contracts/current/`로 승격하지 않는다.
 
 ---
 
