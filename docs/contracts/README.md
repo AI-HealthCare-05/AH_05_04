@@ -34,7 +34,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 - [공통 복약 리포트 v1](./current/medication-report-v1.md): `GET /api/v1/medication-reports`의 7/30일 SELF 집계·상태·두 비율·상세 기록 계약
 - [복약 가이드 Backend–AI 계약](./current/medication-guide-ai-backend.md): `guide-prompt-v3` intent·승인 문구 선택형 동기 one-cycle 입력·출력·오류 경계
-- [복약 챗봇 Backend–AI Core 계약](./current/medication-chat-ai-backend.md): 현재 동기 `201` 생성과 세션 직렬화 경계
+- [복약 챗봇 Backend–AI Core 계약](./current/medication-chat-ai-backend.md): 현재 동기 `201` 생성과 세션 직렬화 경계, v5 짧은 후속 질문 프롬프트 지침
 - [OCR 약품명 정규화 계약](./current/ocr-medication-normalization.md): OCR 원문, 정규화 참고값 및 사용자 확정값의 역할
 - [OCR Provider 약품명 필드 Alias 예방 계약](./current/ocr-provider-field-aliases.md): 현재 외부 alias가 없는 상태에서 `medication_name`·`MEDICATION_NAME` 정본과 향후 Source별 Provider Adapter 변환 경계를 고정
 - [OCR 약품 행 구조화 계약](./current/ocr-medication-structuring.md): #144 빈 검수 필드 개정은 작업 브랜치 검증 완료·리뷰/병합 대기. 현재 약품 행 판정·부분 인식·사용자 확인 경계
@@ -58,6 +58,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Knowledge Evidence Index v1 (#178 선행 기반)](./proposed/post-mvp-1/knowledge-evidence-index-v1.md): 승인된 RAG Runtime 목표의 Retrieval Adapter가 소비할 Source Snapshot 결속 Chunk·버전별 embedding·재현 가능한 receipt 저장 계약. 구현 브랜치 검증 중이며 #178 Retrieval/RRF/Rerank/Evidence Gate·공개 활성화는 포함하지 않음.
 - [Knowledge Evidence Search 및 Deterministic RRF v1 (#178)](./proposed/post-mvp-1/knowledge-evidence-search-rrf-v1.md): 승인된 Knowledge Evidence Index 대상 PostgreSQL Lexical(Exact/Trigram/FTS)·Dense(pgvector Cosine) 검색 및 결정적 RRF(`rrf-rank-fusion@1`) 융합 계약. 구현 브랜치 검증 중이며 Reranker/Evidence Gate/authoritative Retrieval Run/Runtime graph 연결·공개 활성화는 포함하지 않음.
 - [Retrieval Run 및 Evidence Gate Runtime Core v1 (#178)](./proposed/post-mvp-1/retrieval-run-v1.md): Issue #178 Retrieval Run/Signal/Hit 원자적 persistence, Production Evidence Gate pre/post 검증 및 hybrid_retrieve runtime core 계약. 구현 브랜치 검증 중이며 RET-HR/reranker·actual evaluation·공개 활성화는 포함하지 않음.
+- [Guide Evidence Handoff Contract Kernel v1 (#180 선행 계약)](./proposed/post-mvp-1/guide-evidence-handoff-v1.md): #174 REQUEST Guard의 Source/Member 결정 관측 결과와 #178 Production Retrieval selections 사이의 exact-match 결속, JCS 정규 해시 프로젝션, Two-input 재검증 순수 계약 커널. 순수 계약 커널 구현 브랜치 검토 중; authority 발급·영속화·런타임 통합은 미구현.
 
 - [OCR LLM Worker 범위 정정 (#453)](./proposed/ocr-llm-worker-consent-453.md): 기존 이관 범위와 리뷰 시 별도 검토할 항목. 기존 동의 개정안 미채택.
 - [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태와 row 없음=미동의 기준. #465에서 `user_consent` 저장 기반을 병합했고, #510에서 현재 사용자 목적별 동의 상태 조회·변경 API를 추가했다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전과 Production 공개 승인은 후속 범위다. 전체 목적별 계약은 Proposed 유지.

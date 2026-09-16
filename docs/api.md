@@ -386,7 +386,7 @@ snapshot cap 오류 `503 IDEMPOTENCY_RESPONSE_TOO_LARGE`는 공통 오류 형식
     "generation_status": "COMPLETED",
     "content": "합성 답변",
     "model_name": "synthetic-model",
-    "prompt_version": "chat-prompt-v4",
+    "prompt_version": "chat-prompt-v5",
     "created_at": "2026-08-21T10:00:00Z",
     "completed_at": "2026-08-21T10:00:01Z"
   }
