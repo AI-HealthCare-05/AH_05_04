@@ -49,11 +49,12 @@ _DUPLICATE_DOSE_EXPECTATION = ResponseExpectation(
 
 
 def _require_live_environment() -> None:
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    api_key = config.OPENAI_API_KEY.strip()
     if (
         os.environ.get("RUN_TEMPERATURE_VARIANCE_CHECK") != "1"
-        or os.environ.get("ENV") != "local"
+        or getattr(config.ENV, "value", str(config.ENV)).lower() != "local"
         or not api_key
+        or api_key == "sk-not-configured"
         or "placeholder" in api_key.casefold()
     ):
         raise SystemExit(

@@ -3,7 +3,13 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from app.services.chat_ai.schemas import ChatGenerationInput, ChatGenerationResult, ChatHistoryItem, ChatMedicationInput
+from app.services.chat_ai.schemas import (
+    ChatGenerationInput,
+    ChatGenerationResult,
+    ChatHistoryItem,
+    ChatMedicationInput,
+    normalize_chat_answer,
+)
 
 
 def test_chat_input_normalizes_question_and_medication_fields() -> None:
@@ -113,6 +119,23 @@ def test_optional_medication_strings_allow_missing_values() -> None:
 
     assert medication.dose_unit is None
     assert medication.timing_text is None
+
+
+@pytest.mark.parametrize(
+    ("raw_answer", "expected"),
+    [
+        (
+            '"약을 이미 중복 복용하셨군요. 복용한 약 이름·용량·복용 시각을 확인해 주세요."',
+            "약을 이미 중복 복용하셨군요. 복용한 약 이름·용량·복용 시각을 확인해 주세요.",
+        ),
+        (
+            "“약을 이미 중복 복용하셨군요. 의료진이나 약사에게 알려주세요.”",
+            "약을 이미 중복 복용하셨군요. 의료진이나 약사에게 알려주세요.",
+        ),
+    ],
+)
+def test_normalize_chat_answer_strips_only_outer_response_quotes(raw_answer: str, expected: str) -> None:
+    assert normalize_chat_answer(raw_answer) == expected
 
 
 @pytest.mark.parametrize(
