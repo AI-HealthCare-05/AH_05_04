@@ -11,6 +11,8 @@ from app.models.medication_schedules import MedicationCheckin, MedicationOccurre
 from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.track_c import (
     ActionPlanFollowup,
+    ActionPlanFollowupAudit,
+    ActionPlanFollowupResponse,
     BarrierCode,
     BarrierResponse,
     BarrierResponseStatus,
@@ -327,3 +329,66 @@ class TrackCStorageRepository:
                 BarrierResponse.medication_checkin_id.in_(self._owned_checkins(user_id)),
             )
         )
+
+    async def get_plan_followup_owned(
+        self, *, plan_id: UUID, user_id: UUID
+    ) -> tuple[SupportActionPlan, ActionPlanFollowup | None] | None:
+        row = (
+            await self.session.execute(
+                select(SupportActionPlan, ActionPlanFollowup)
+                .join(BarrierResponse, BarrierResponse.id == SupportActionPlan.barrier_response_id)
+                .outerjoin(ActionPlanFollowup, ActionPlanFollowup.support_action_plan_id == SupportActionPlan.id)
+                .where(
+                    SupportActionPlan.id == plan_id,
+                    BarrierResponse.medication_checkin_id.in_(self._owned_checkins(user_id)),
+                )
+                .execution_options(populate_existing=True)
+            )
+        ).one_or_none()
+        return (row[0], row[1]) if row else None
+
+    async def get_plan_followup_for_update(self, *, plan_id: UUID) -> ActionPlanFollowup | None:
+        """The caller holds the parent Plan lock, including when no follow-up exists."""
+        return await self.session.scalar(
+            select(ActionPlanFollowup)
+            .where(ActionPlanFollowup.support_action_plan_id == plan_id)
+            .with_for_update(of=ActionPlanFollowup)
+            .execution_options(populate_existing=True)
+        )
+
+    async def save_plan_followup(
+        self,
+        *,
+        plan_id: UUID,
+        current: ActionPlanFollowup | None,
+        response: ActionPlanFollowupResponse,
+        user_id: UUID,
+        changed_at: datetime,
+    ) -> ActionPlanFollowup:
+        """Save the response and correction audit in the caller's transaction."""
+        if current is None:
+            current = ActionPlanFollowup(
+                support_action_plan_id=plan_id,
+                response=response,
+                revision=1,
+                created_at=changed_at,
+                updated_at=changed_at,
+            )
+            self.session.add(current)
+        else:
+            self.session.add(
+                ActionPlanFollowupAudit(
+                    followup_id=current.id,
+                    from_response=current.response,
+                    to_response=response,
+                    from_revision=current.revision,
+                    to_revision=current.revision + 1,
+                    changed_by=user_id,
+                    changed_at=changed_at,
+                )
+            )
+            current.response = response
+            current.revision += 1
+            current.updated_at = changed_at
+        await self.session.flush()
+        return current

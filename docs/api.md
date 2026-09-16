@@ -221,7 +221,7 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 
 OCR 목적은 전용 경로 `/api/v1/users/me/consents/OCR`에서 `GET` / `POST` / `DELETE`도 제공합니다. 전용 `POST`는 현재 `OCR_CONSENT_POLICY_VERSION`과 요청 `policy_version`이 일치할 때만 `GRANTED`를 저장하고, 불일치하면 `409 CONSENT_POLICY_MISMATCH`를 반환합니다. 목적별 공통 `PUT /api/v1/users/me/consents/OCR`의 version 불일치는 기존 목적별 API 계약대로 `422 VALIDATION_FAILED`, `reason=POLICY_VERSION_MISMATCH`입니다. `OCR_CONSENT_POLICY_VERSION`이 빈 문자열이면 신규 OCR 동의는 전용 `POST`와 공통 `PUT` 모두 `503 CONSENT_POLICY_UNAVAILABLE`로 거부합니다. 다만 기존 OCR 동의 철회는 허용하며, 전용 `DELETE`는 기존 저장 `policy_version`을 보존해 `WITHDRAWN`으로 전환합니다. 목적별 공통 `PUT` 철회는 기존 OCR row가 있고 요청 `policy_version`이 기존 저장 `policy_version`과 일치할 때만 허용합니다.
 
-이 API는 PD-207의 목적별 최신 동의 상태 저장·조회·변경 경로입니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide 동기 생성 Gate는 `POST /api/v1/guides`에서 처방 소유권 확인 후 Provider 호출·Guide row 생성 전에 `purpose=GUIDE` 최신 동의 row로 검사합니다. Chat 동기 메시지 Gate는 `POST /api/v1/chat-sessions/{session_id}/messages`에서 세션 소유권·처방 version currentness 확인 후 메시지 저장·Provider 호출 전에 `purpose=CHAT` 최신 동의 row로 검사합니다. Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 후속 구현 범위입니다.
+이 API는 PD-207의 목적별 최신 동의 상태 저장·조회·변경 경로입니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide 동기 생성 Gate는 `POST /api/v1/guides`에서 처방 소유권 확인 후 Provider 호출·Guide row 생성 전에 `purpose=GUIDE` 최신 동의 row로 검사합니다. Chat 동기 메시지 Gate는 `POST /api/v1/chat-sessions/{session_id}/messages`에서 세션 소유권·처방 version currentness 확인 후 메시지 저장·Provider 호출 전에 `purpose=CHAT` 최신 동의 row로 검사합니다. Notification 실행 Gate는 #621에서 앱 내부 게시 직전과 Web Push 전송 직전에 `purpose=NOTIFICATION` 최신 동의 row로 검사합니다. OCR 최종 정책 문구·version 승인은 후속 구현 범위입니다.
 
 ### 토큰 갱신·로그아웃
 
@@ -815,4 +815,18 @@ nullable입니다. 없는/타인 occurrence는 동일 404 MEDICATION_OCCURRENCE_
 `status=COMPLETED|CANCELLED`, strict `confirmed=true`와 Idempotency-Key로 ACTIVE의 단일 종료를 기록한다.
 응답은 기존 SupportActionPlanResponse다. 완료는 최신 Safety·Barrier를 재검증하며, 종료 상태의 새 요청은
 409 ACTION_PLAN_STATE_CONFLICT다. 상세 오류·잠금·재전송은 [Current 계약](contracts/current/track-c-plan-lifecycle-617.md)을 따른다.
-권가빈 구현·김지혜 책임 리뷰로 PR #618에서 계약과 구현을 함께 반영한다. 최종 승인·병합은 대기 중이며 병합 전 develop의 동작은 아니다. Follow-up·Frontend 연결·외부 공개 승인은 별도다.
+권가빈 구현·김지혜 승인 후 PR #618이 `a542bcc2`로 병합됐다. Follow-up·Frontend 연결·외부 공개 승인은 별도다.
+
+### Track C 완료 계획 Follow-up (#194 후속 / PR #631 구현)
+
+`GET /api/v1/support-action-plans/{id}/followups`는 SELF 소유 Plan의 현재 평가 또는 `data=null`을 반환한다.
+`POST`는 `response=HELPED|NOT_HELPED|NOT_SURE`, strict integer `expected_revision>=0`과 Idempotency-Key를 받는다.
+COMPLETED 계획에만 최초 제출(기대 revision 0)·정정(현재 평가 revision)을 허용하며 최초 1, 정정 +1을 기록한다.
+완료 뒤 Check-in·Safety·Barrier가 바뀌어도 과거 평가를 제출·정정할 수 있다. 최초 성공 snapshot replay와
+현재값 GET을 구분하며 평가·정정 audit·암호화 snapshot은 원자적이다. Plan 상태·복약 기록은 변경하지 않는다.
+성공은 200이며 `data`는 followup_id, support_action_plan_id, response, revision, created_at, updated_at이다.
+나중에는 요청하지 않는다. SELF 404, 상태/revision/멱등 409, no-store와 상세 오류는
+[Current 계약](contracts/current/track-c-followup-api-194.md)을 따른다. 권가빈 구현·김지혜 책임 리뷰로 같은 PR에서
+상태를 정렬한다. 최종 승인·병합 대기이며 병합 전 develop의 동작이나 Frontend 인수·외부 공개 완료를 뜻하지 않는다.
+`ACTION_PLAN_STATE_CONFLICT`는 작업의 Plan 상태 전제조건 불충족을 뜻하는 공용 code다.
+Plan PATCH는 ACTIVE가 아니면, Follow-up POST는 COMPLETED가 아니면 반환하므로 호출한 endpoint별로 복구한다.

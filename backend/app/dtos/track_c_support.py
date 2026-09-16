@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.track_c import SupportActionPlanStatus, SupportCode
+from app.models.track_c import ActionPlanFollowupResponse, SupportActionPlanStatus, SupportCode
 
 
 class ReminderParameters(BaseModel):
@@ -111,3 +111,27 @@ class PatchSupportActionPlanRequest(BaseModel):
         if value is not True:
             raise ValueError("explicit user confirmation required")
         return value
+
+
+class SubmitActionPlanFollowupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    response: ActionPlanFollowupResponse
+    expected_revision: int = Field(ge=0, strict=True)
+
+
+class ActionPlanFollowupData(BaseModel):
+    followup_id: UUID
+    support_action_plan_id: UUID
+    response: ActionPlanFollowupResponse
+    revision: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ActionPlanFollowupEnvelope(BaseModel):
+    data: ActionPlanFollowupData
+
+
+class ActionPlanFollowupReadEnvelope(BaseModel):
+    data: ActionPlanFollowupData | None
