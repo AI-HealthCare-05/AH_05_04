@@ -33,6 +33,7 @@ from app.services.rag_runtime import RagRuntimeEnvironmentTransitionService
 from infra.python.provision_database_roles import (
     RUNTIME_APPEND_ONLY_TABLES,
     RUNTIME_AUTH_UPDATE_COLUMNS,
+    RUNTIME_CHECKIN_LOCK_TABLES,
     RUNTIME_LIFESTYLE_TABLES,
     RUNTIME_MUTABLE_TABLES,
     run_provisioning,
@@ -117,12 +118,15 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 RUNTIME_MUTABLE_TABLES
                 | RUNTIME_APPEND_ONLY_TABLES
                 | RUNTIME_LIFESTYLE_TABLES
+                | RUNTIME_CHECKIN_LOCK_TABLES
+                | {"support_action_plan"}
                 | CATALOG_TABLES
                 | set(SOURCE_TABLES)
                 | set(RUNTIME_AUTH_UPDATE_COLUMNS)
                 | {"notification_record", "user_consent"}
             ):
                 await connection.execute(text(f'CREATE TABLE "{table}" (id integer PRIMARY KEY)'))
+            await _add_checkin_lock_fixture_columns(connection)
             await connection.execute(
                 text(
                     "ALTER TABLE rag_source_ingestion_run ADD COLUMN snapshot_id integer, ADD COLUMN run_status text, ADD COLUMN failure_code text, ADD COLUMN failure_message text, ADD COLUMN duration_ms integer, ADD COLUMN finished_at timestamptz, ADD COLUMN attempted_source_version text"
@@ -420,6 +424,8 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
     await _exercise_preflight_context_runtime_permissions(reader, producer)
     await _exercise_notification_runtime_permissions(reader, producer)
     await _exercise_feedback_runtime_permissions(reader, producer)
+    for with_history in (False, True):
+        await _exercise_checkin_correction_runtime_permissions(admin, reader, producer, with_history=with_history)
     writer_config = WriterConfig(url.set(database=database, username=writer, password=password), "synthetic-operator")
     args = Namespace(snapshot_id=snapshot_id, expected_checksum="a" * 64, reason_code="SYNTHETIC_TEST")
     assert (await run_selection(writer_config, args)).decision.value == "ACTIVATED"
@@ -989,3 +995,170 @@ async def _exercise_notification_runtime_permissions(reader, producer):
                 async with engine.begin() as connection:
                     await connection.execute(text(statement))
             assert error.value.orig.sqlstate == "42501"
+
+
+async def _exercise_checkin_correction_runtime_permissions(admin, reader, producer, *, with_history):
+    """Both backlog correction and subsequent schedule correction use Runtime credentials."""
+    from app.models.medication_schedules import MedicationCheckinStatus
+    from app.models.track_c import BarrierResponse, SafetyAssessment, SupportActionPlan
+    from app.repositories.medication_checkin_repository import MedicationCheckinRepository
+    from app.repositories.track_c_storage_repository import TrackCStorageRepository
+    from app.services.medication_checkins import MedicationCheckinService
+    from app.services.track_c_revision_invalidation import TrackCCheckinRevisionInvalidation
+    from app.tests.repositories.test_medication_checkin_repository_integration import _create_occurrence
+    from app.tests.repositories.test_medication_schedule_repository_integration import _create_user_with_self_profile
+
+    async with async_sessionmaker(admin, expire_on_commit=False)() as session:
+        owner, profile = await _create_user_with_self_profile(session, label="issue668-runtime")
+        occurrence = await _create_occurrence(
+            session, owner=owner, profile=profile, deadline_at=datetime(2026, 9, 16, 4, tzinfo=UTC)
+        )
+        repository = MedicationCheckinRepository(session)
+        await repository.create_if_absent(
+            occurrence_id=occurrence.id, status=MedicationCheckinStatus.UNCONFIRMED, taken_at=None
+        )
+        await repository.close_occurrence(occurrence=occurrence)
+        await session.commit()
+        owner_id, occurrence_id = owner.id, occurrence.id
+
+    for revision, status in ((1, MedicationCheckinStatus.NOT_TAKEN), (2, MedicationCheckinStatus.TAKEN)):
+        async with async_sessionmaker(reader, expire_on_commit=False)() as session:
+            service = MedicationCheckinService(
+                MedicationCheckinRepository(session),
+                revision_invalidation=TrackCCheckinRevisionInvalidation(TrackCStorageRepository(session)),
+            )
+            result = await service.put_owned(
+                occurrence_id=occurrence_id,
+                user_id=owner_id,
+                status=status,
+                taken_at=None,
+                expected_revision=revision,
+            )
+            await session.commit()
+            assert result.status == status
+            assert result.revision == revision + 1
+
+        if revision == 1 and with_history:
+            async with async_sessionmaker(admin, expire_on_commit=False)() as session:
+                safety = SafetyAssessment(
+                    medication_checkin_id=result.checkin_id,
+                    checkin_revision=2,
+                    revision=1,
+                    symptom_codes=[],
+                    response_level="ROUTINE",
+                    safety_disposition="NORMAL",
+                    message_code="SYNTHETIC",
+                    copy_version="synthetic-v1",
+                    source_version="synthetic-v1",
+                )
+                session.add(safety)
+                await session.flush()
+                barrier = BarrierResponse(
+                    medication_checkin_id=result.checkin_id,
+                    checkin_revision=2,
+                    safety_assessment_id=safety.id,
+                    revision=1,
+                    response_status="ANSWERED",
+                    barrier_code="FORGOT",
+                )
+                session.add(barrier)
+                await session.flush()
+                active = SupportActionPlan(
+                    barrier_response_id=barrier.id,
+                    support_code="REMINDER_SETUP",
+                    rule_version="synthetic-v1",
+                    copy_version="synthetic-v1",
+                    action_config_snapshot={},
+                    status="ACTIVE",
+                )
+                completed = SupportActionPlan(
+                    barrier_response_id=barrier.id,
+                    support_code="REMINDER_SETUP",
+                    rule_version="synthetic-v1",
+                    copy_version="synthetic-v1",
+                    action_config_snapshot={},
+                    status="COMPLETED",
+                    completed_at=datetime(2026, 9, 16, 5, tzinfo=UTC),
+                )
+                session.add_all([active, completed])
+                await session.commit()
+                active_id, completed_id = str(active.id), str(completed.id)
+
+    async with reader.connect() as connection:
+        assert (
+            await connection.scalar(
+                text("SELECT count(*) FROM checkin_audit WHERE checkin_id=:id"), {"id": str(result.checkin_id)}
+            )
+            == 2
+        )
+
+    if with_history:
+        async with reader.connect() as connection:
+            assert (
+                await connection.scalar(text("SELECT status FROM support_action_plan WHERE id=:id"), {"id": active_id})
+                == "CANCELLED"
+            )
+            assert await connection.scalar(
+                text("SELECT cancelled_at IS NOT NULL FROM support_action_plan WHERE id=:id"), {"id": active_id}
+            )
+            assert (
+                await connection.scalar(
+                    text("SELECT status FROM support_action_plan WHERE id=:id"), {"id": completed_id}
+                )
+                == "COMPLETED"
+            )
+            assert (
+                await connection.scalar(
+                    text("SELECT symptom_codes FROM safety_assessment WHERE id=:id"), {"id": str(safety.id)}
+                )
+                == []
+            )
+            assert (
+                await connection.scalar(
+                    text("SELECT barrier_code FROM barrier_response WHERE id=:id"), {"id": str(barrier.id)}
+                )
+                == "FORGOT"
+            )
+        for table in RUNTIME_CHECKIN_LOCK_TABLES:
+            async with reader.begin() as connection:
+                await connection.execute(text(f"SELECT id FROM {table} FOR UPDATE"))
+                await connection.execute(text(f"UPDATE {table} SET checkin_lock_marker=0"))
+            with pytest.raises(DBAPIError) as error:
+                async with reader.begin() as connection:
+                    await connection.execute(text(f"UPDATE {table} SET checkin_lock_marker=1"))
+            assert error.value.orig.sqlstate == "23514"
+
+    for table in sorted(RUNTIME_CHECKIN_LOCK_TABLES | {"support_action_plan"}):
+        for engine, sql in (
+            (reader, f"INSERT INTO {table} DEFAULT VALUES"),
+            (reader, f"DELETE FROM {table}"),
+            (reader, f"TRUNCATE {table}"),
+            (reader, f"UPDATE {table} SET id=id"),
+            (producer, f"SELECT * FROM {table}"),
+        ):
+            with pytest.raises(DBAPIError) as error:
+                async with engine.begin() as connection:
+                    await connection.execute(text(sql))
+            assert error.value.orig.sqlstate == "42501"
+    for sql in (
+        "UPDATE safety_assessment SET symptom_codes='[]'",
+        "UPDATE barrier_response SET revision=revision+1",
+        "UPDATE support_action_plan SET action_config_snapshot='{}'",
+        "UPDATE support_action_plan SET completed_at=now()",
+    ):
+        with pytest.raises(DBAPIError) as error:
+            async with reader.begin() as connection:
+                await connection.execute(text(sql))
+        assert error.value.orig.sqlstate == "42501"
+
+
+async def _add_checkin_lock_fixture_columns(connection):
+    for table in RUNTIME_CHECKIN_LOCK_TABLES:
+        await connection.execute(
+            text(
+                f'ALTER TABLE "{table}" ADD COLUMN checkin_lock_marker integer NOT NULL DEFAULT 0 CHECK (checkin_lock_marker=0)'
+            )
+        )
+    await connection.execute(
+        text("ALTER TABLE support_action_plan ADD COLUMN status text, ADD COLUMN cancelled_at timestamptz")
+    )

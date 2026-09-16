@@ -33,6 +33,8 @@ RUNTIME_APPEND_ONLY_TABLES = frozenset(
     "rag_runtime_environment_transition medication_candidate_search_result "
     "ai_job_intake_context ai_job_execution_context ai_job_execution_identification".split()
 )
+RUNTIME_CHECKIN_LOCK_TABLES = frozenset({"safety_assessment", "barrier_response"})
+
 RUNTIME_LIFESTYLE_TABLES = frozenset({"lifestyle_times"})
 
 
@@ -98,6 +100,8 @@ async def provision_roles(
         | set(SOURCE_TABLES)
         | set(RUNTIME_AUTH_UPDATE_COLUMNS)
         | RUNTIME_LIFESTYLE_TABLES
+        | RUNTIME_CHECKIN_LOCK_TABLES
+        | {"support_action_plan"}
         | {"notification_record", "user_consent"}
     )
     if not required.issubset(present):
@@ -110,6 +114,15 @@ async def provision_roles(
             await connection.execute(
                 text(f"GRANT {privileges} ON TABLE public.{quoted_identifier(table)} TO {runtime_sql}")
             )
+    # #668: Check-in correction locks historical Safety/Barrier rows without editing them.
+    for table in sorted(RUNTIME_CHECKIN_LOCK_TABLES):
+        target = f"public.{quoted_identifier(table)}"
+        await connection.execute(text(f"GRANT SELECT ON TABLE {target} TO {runtime_sql}"))
+        await connection.execute(text(f"GRANT UPDATE (checkin_lock_marker) ON TABLE {target} TO {runtime_sql}"))
+    await connection.execute(text(f"GRANT SELECT ON TABLE public.support_action_plan TO {runtime_sql}"))
+    await connection.execute(
+        text(f"GRANT UPDATE (status, cancelled_at) ON TABLE public.support_action_plan TO {runtime_sql}")
+    )
     # #434: notification creation/publication/read require DML, never history deletion.
     await connection.execute(text(f"GRANT SELECT, INSERT, UPDATE ON TABLE public.notification_record TO {runtime_sql}"))
     # #556: reset keeps the current row and replaces days with [], so Runtime never deletes lifestyle data directly.
