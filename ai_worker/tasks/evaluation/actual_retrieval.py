@@ -502,14 +502,17 @@ def build_actual_adapter_registry(  # noqa: C901
     dense_config = VersionedDenseSearchConfiguration(
         artifact_ref=ImmutableArtifactRef("dense_search_config", "1.0", "b" * 64),
     )
+    expected_adapter_ref = getattr(
+        text_embedding_port,
+        "_adapter_artifact_ref",
+        ImmutableArtifactRef("deterministic-fake-embedding", "1.0.0", "0" * 64),
+    )
     retrieval_config = VersionedEvidenceRetrievalConfiguration(
         artifact_ref=ImmutableArtifactRef("retrieval_config", "1.0", "c" * 64),
         execution_mode=RetrievalExecutionMode.HYBRID_RRF,
         lexical_config=lexical_config,
         dense_config=dense_config,
-        expected_query_embedding_adapter_ref=ImmutableArtifactRef(
-            "openai:text-embedding-3-large", "text-embedding-3-large", "e" * 64
-        ),
+        expected_query_embedding_adapter_ref=expected_adapter_ref,
     )
 
     assert search_port is not None
