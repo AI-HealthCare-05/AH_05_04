@@ -46,7 +46,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [PROFILE SELF 소유권 전환 계약 v1](./current/profile-self-ownership-v1.md): 본인 단일 SELF profile과 `profile_id` 기반 사용자 리소스 소유권 기준
 - [Track B Notification 계약 v1 (#203)](./current/track-b-notifications-v1.md): 알림 저장·목록·읽음·재알림, 원본 `occurrence_local_date`, 멱등성과 Check-in 분리 경계
 - [Track B occurrence 원래 약 표시 조회 v1 (#202)](./current/track-b-occurrence-medication-v1.md): occurrence의 불변 version medication 조회, SELF 404와 current medication fallback 금지
-- [Track C ActionPlan 조회·완료·취소 v1 (#617)](./current/track-c-plan-lifecycle-617.md): PR #618의 단건 GET·단일 종료 PATCH·멱등성·SELF 계약. 권가빈 구현·김지혜 책임 리뷰; 최종 승인·병합 대기, 외부 공개 게이트 별도.
+- [Track C ActionPlan 조회·완료·취소 v1 (#617)](./current/track-c-plan-lifecycle-617.md): PR #618의 단건 GET·단일 종료 PATCH·멱등성·SELF 계약. 권가빈 구현·김지혜 승인 후 PR #618 병합(`a542bcc2`), 외부 공개 게이트 별도.
 - 공통 오류: `code`, `message`, `details`, `trace_id`
 
 ## Proposed 계약
@@ -208,6 +208,6 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 
 ## Track C 완료 계획 Follow-up (#194 후속)
 
-- [Follow-up API v1 — Proposed](proposed/track-c-followup-api-194.md): 완료 계획의 평가 GET/POST, 현재값·revision 정정·audit·멱등성·동시성. 기존 생성/Plan 응답은 유지한다.
+- [Follow-up API v1 — Current, PR #631 반영](current/track-c-followup-api-194.md): 완료 계획의 평가 GET/POST, 현재값·revision 정정·audit·멱등성·동시성. 기존 생성/Plan 응답은 유지한다. 최종 책임 리뷰 승인·병합은 대기 중이며 외부 공개는 별도다.
 - [PD-194-2](../governance/decisions/2026-09-16-track-c-followup-194.md): 완료 계획만 평가, 이후 Check-in 정정에도 과거 평가 허용. 권가빈 구현·김지혜 단일 책임 리뷰.
 - #139 Frontend·Constraint/RAG Handler·외부 공개 및 #194 전체 완료는 별도 범위다.

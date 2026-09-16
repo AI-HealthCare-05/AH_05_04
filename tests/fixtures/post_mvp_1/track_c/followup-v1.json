@@ -1,6 +1,6 @@
 {
   "fixture_version": "track-c-followup-v1",
-  "status": "synthetic implementation fixture; proposed contract; not production evidence",
+  "status": "synthetic implementation fixture; final review and merge pending; not production evidence",
   "plan_id": "00000000-0000-4000-8000-000000000194",
   "empty": {"data": null},
   "initial_request": {"response": "HELPED", "expected_revision": 0},

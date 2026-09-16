@@ -74,4 +74,14 @@ Worker 설정에는 승인 기본값 `REDIS_HOST=redis`, `REDIS_PORT=6379`를 �
 ## 인수와 공개
 
 실제 Frontend 클릭·브라우저 E2E(#139), 배포·실제 의료 평가·외부 공개 승인은 미실행이다.
-계약은 Proposed이며 책임 리뷰와 승인 전 Current로 승격하지 않는다. #194 전체 이슈는 종료하지 않는다.
+계약은 김지혜의 상태 정렬 요청에 따라 같은 구현 PR #631에서 Current 경로로 이동했다.
+최종 책임 리뷰 승인·병합은 대기 중이다. #194 전체 이슈는 종료하지 않는다.
+
+## PR #631 책임 리뷰 반영
+
+- 김지혜의 [리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/631#pullrequestreview-5217946195)에 따라 계약을 Current로 이동하고 index·API·schema·Decision·인계 참조를 정렬했다.
+- `ACTION_PLAN_STATE_CONFLICT`의 endpoint별 전제조건을 문서화했다. #618은 실제 승인·병합 기록으로 갱신했다.
+- 구현 HEAD `ab5321d2`의 [원격 CI](https://github.com/AI-HealthCare-05/AH_05_04/actions/runs/35048292456)는 모든 lane과 required check가 SUCCESS다.
+- 이번 수정은 문서와 fixture 상태 설명뿐이다. runtime 코드와 fixture payload가 그대로임을 확인했다.
+- fixture 계약 검사: 1 passed. 변경 Markdown 9개 HTML 렌더링·상대 링크·전체 diff 검토 및 `git diff --check` PASS. 이전 계약 경로 참조는 남아 있지 않다.
+- runtime 변경이 없어 전체 Backend·Worker 회귀 검사는 재실행하지 않았다. 최종 책임 리뷰 승인·병합은 대기 중이다.

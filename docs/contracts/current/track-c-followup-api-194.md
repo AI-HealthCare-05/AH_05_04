@@ -1,10 +1,18 @@
 # Track C ActionPlan Follow-up API v1 — #194 후속
 
-- 상태: Proposed / 구현·책임 리뷰 대상. Current 승격·#194 전체 완료·Production 공개 승인 아님.
+- 상태: Current — PR #631의 GET/POST 구현과 함께 반영하는 런타임 계약.
 - 구현 담당: 권가빈 (@hazelnutflavoured).
 - 단일 책임 리뷰어: 김지혜 (@Jye-rookie) — Backend·API/DTO·Transaction·Security·Frontend 소비 계약.
 - 제품 결정: [PD-194-2](../../governance/decisions/2026-09-16-track-c-followup-194.md).
-- 기반: [저장 계약](track-c-storage-v1.md), [Plan lifecycle](../current/track-c-plan-lifecycle-617.md), [멱등성](../targets/post-mvp-1/idempotency-v1.md).
+- 기반: [저장 계약](../proposed/track-c-storage-v1.md), [Plan lifecycle](track-c-plan-lifecycle-617.md), [멱등성](../targets/post-mvp-1/idempotency-v1.md).
+
+## 구현·검증 및 반영 상태
+
+- [PR #631](https://github.com/AI-HealthCare-05/AH_05_04/pull/631)에 Router·DTO·Service·Repository와 계약·통합·동시성 테스트를 포함한다. 기존 테이블을 사용하므로 신규 migration은 없다.
+- 구현 HEAD `ab5321d2`의 [CI](https://github.com/AI-HealthCare-05/AH_05_04/actions/runs/35048292456)는 모든 lane과 required check가 SUCCESS다.
+- 김지혜의 [책임 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/631#pullrequestreview-5217946195)는 구현의 차단 결함을 발견하지 않았으며, 같은 구현 PR에서 Current 경로로 이동하고 상태·참조를 정렬하도록 요청했다.
+- 이 이동은 해당 요청의 반영이다. 최종 책임 리뷰 승인·병합은 아직 대기 중이며, 병합 전 develop의 동작으로 해석하지 않는다.
+- 외부 공개 승인·#194 전체 완료·#139 화면 인수는 별도이며 기존 공개 게이트는 유지한다.
 
 ## 의미와 범위
 
@@ -84,6 +92,11 @@ Check-in/Safety 정정과 같은 Check-in lock으로 직렬화한다. 완료 Pla
 | 409 | ACTION_PLAN_STATE_CONFLICT / ACTION_PLAN_FOLLOWUP_REVISION_CONFLICT / IDEMPOTENCY_KEY_CONFLICT (POST) |
 | 422 | VALIDATION_FAILED |
 | 503 | IDEMPOTENCY_RESPONSE_TOO_LARGE (POST) |
+
+`ACTION_PLAN_STATE_CONFLICT`는 호출한 작업에 필요한 Plan 상태를 만족하지 않는다는 공용 code다.
+Plan PATCH는 `ACTIVE`가 아니면, Follow-up POST는 `COMPLETED`가 아니면 이 code를 반환한다.
+Frontend는 code만으로 두 조건을 합치지 않고 호출한 endpoint와 Plan GET 결과를 기준으로 복구한다.
+이 설명은 기존 오류 code·HTTP status·상태 전이를 변경하지 않는다.
 
 ## #139 소비 인계
 
