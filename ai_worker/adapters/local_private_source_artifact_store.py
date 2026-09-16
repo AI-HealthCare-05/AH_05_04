@@ -108,6 +108,13 @@ class LocalPrivateSourceArtifactStore:
         return read_verified_raw_artifact(file_path=path, metadata=metadata)
 
     @staticmethod
+    def object_key_for_checksum(raw_checksum: str) -> str:
+        """cleanup 요청도 writer와 같은 content-addressed key를 사용하게 합니다."""
+        if len(raw_checksum) != 64 or any(character not in "0123456789abcdef" for character in raw_checksum):
+            raise ValueError("Source artifact checksum is invalid.")
+        return LocalPrivateSourceArtifactStore._object_key(raw_checksum)
+
+    @staticmethod
     def _reject_symlink_path(root: Path) -> None:
         for path in (root, *root.parents):
             if path.is_symlink():
