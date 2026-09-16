@@ -23,7 +23,7 @@ from ai_worker.adapters.sqlalchemy_retrieval_run import SqlAlchemyRetrievalRunSt
 from ai_worker.adapters.sqlalchemy_source_snapshot_repository import (
     SqlAlchemySourceSnapshotRepository,
 )
-from ai_worker.tasks.evaluation.actual_retrieval import DeterministicFakeEmbeddingAdapter
+from ai_worker.tasks.evaluation.actual_retrieval_index import DeterministicFakeEmbeddingAdapter
 from ai_worker.tasks.rag.evidence_retrieval import (
     ImmutableArtifactRef,
     QueryFingerprint,
@@ -33,7 +33,6 @@ from ai_worker.tasks.rag.evidence_search import (
     EvidenceSearchExecutionBinding,
     EvidenceSearchRequest,
     RetrievalExecutionMode,
-    SensitiveVector,
     VersionedDenseSearchConfiguration,
     VersionedEvidenceRetrievalConfiguration,
     VersionedLexicalSearchConfiguration,
@@ -57,6 +56,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SourceSnapshotMemberCreate,
     SourceSnapshotMemberKind,
 )
+from ai_worker.tasks.rag.text_embedding import TextEmbeddingSuccess
 from app.core import config
 from app.release_validation.ret_h_synthetic_smoke import run_verification_transaction
 
@@ -214,8 +214,8 @@ async def _seed_data(engine) -> tuple[UUID, UUID]:
         await connection.execute(
             text(
                 "INSERT INTO knowledge_chunk "
-                "(id, document_id, chunk_index, chunk_text, content_hash, heading, page_number) "
-                "VALUES (:id, :doc_id, 0, :text_val, :hash_val, 'Usage', 1)"
+                "(id, knowledge_document_id, chunk_index, chunk_text, content_hash, normalization_version, embedding_model, vector_store_key) "
+                "VALUES (:id, :doc_id, 0, :text_val, :hash_val, '1.0.0', 'openai:text-embedding-3-large', 'key-1')"
             ),
             {
                 "id": str(_CHUNK_ID),
@@ -226,47 +226,55 @@ async def _seed_data(engine) -> tuple[UUID, UUID]:
         )
 
     # Build knowledge index
-    builder = DeterministicFakeEmbeddingAdapter(dimensions=1536)
+    builder = DeterministicFakeEmbeddingAdapter(dimension=1536)
     embed_res = await builder.embed(
         SensitiveText(_TEXT),
         model_ref="synthetic-embed",
         model_version="1.0.0",
         dimension=1536,
     )
-    assert embed_res.is_success
+    assert isinstance(embed_res, TextEmbeddingSuccess)
     vec = embed_res.embedding.reveal()
 
     member_draft = KnowledgeIndexMemberDraft(
         identity=KnowledgeChunkIdentity(
-            knowledge_document_id=_DOCUMENT_ID,
             knowledge_chunk_id=_CHUNK_ID,
+            source_snapshot_id=_SNAPSHOT_ID,
+            source_snapshot_member_id=member_id,
+            source_code="MFDS_SYNTHETIC",
+            source_version="external:v1",
+            canonical_checksum="b" * 64,
+            external_document_id="doc-1",
             chunk_index=0,
             content_hash=content_hash,
+            locator="$.records[0]",
         ),
-        chunk_text=SensitiveEvidenceText(_TEXT),
-        embedding=SensitiveVector(vec),
+        content_text=SensitiveEvidenceText(_TEXT),
+        embedding=tuple(vec),
     )
-    built_index = build_knowledge_evidence_index(
-        KnowledgeIndexBuildRequest(
-            members=[member_draft],
-            embedding_model="synthetic-embed",
-            embedding_model_version="1.0.0",
-            embedding_dimensions=1536,
-            distance_metric=DistanceMetric.COSINE,
-            built_by="synthetic-builder",
+    build_req = KnowledgeIndexBuildRequest(
+        index_code="synthetic-index",
+        index_version="1.0.0",
+        embedding_model_ref="openai:text-embedding-3-large",
+        embedding_model_version="text-embedding-3-large",
+        embedding_dimension=1536,
+        distance_metric=DistanceMetric.COSINE,
+        members=(member_draft,),
+    )
+
+    repo = SqlAlchemyKnowledgeEvidenceIndexRepository(factory)
+    receipt = await build_knowledge_evidence_index(build_req, repository=repo)
+
+    async with factory() as session:
+        index_id_res = await session.scalar(
+            text("SELECT id FROM rag_knowledge_index WHERE index_code = 'synthetic-index' AND index_version = '1.0.0'")
         )
-    )
 
-    async with factory() as session, session.begin():
-        repo = SqlAlchemyKnowledgeEvidenceIndexRepository(session)
-        created_index = await repo.create_index(built_index)
-        await repo.publish_index(created_index.id, activated_by="synthetic-builder")
-
-    return created_index.id, _SNAPSHOT_ID
+    return UUID(str(index_id_res)), _SNAPSHOT_ID, member_id, receipt.index_configuration_hash
 
 
 async def test_actual_retrieval_evaluation_two_transaction_flow(database) -> None:
-    index_id, snapshot_id = await _seed_data(database)
+    index_id, snapshot_id, member_id, index_hash = await _seed_data(database)
     factory = async_sessionmaker(database, expire_on_commit=False, autoflush=False)
 
     search_port = PostgresqlEvidenceSearchAdapter(
@@ -274,50 +282,100 @@ async def test_actual_retrieval_evaluation_two_transaction_flow(database) -> Non
     )
     run_store = SqlAlchemyRetrievalRunStore(session_factory=factory)
     eligibility_verifier = PostgreSqlEvidenceEligibilityVerifier(session_factory=factory)
-    embedding_adapter = DeterministicFakeEmbeddingAdapter(dimensions=1536)
+    embedding_adapter = DeterministicFakeEmbeddingAdapter(dimension=1536)
 
-    # Create dummy job_id and prescription_id in ai_job table to satisfy foreign key
+    # Create dummy user, job_id and prescription_id in ai_job table to satisfy foreign key
+    user_id = uuid4()
     job_id = uuid4()
     context_id = uuid4()
     prescription_id = uuid4()
     async with database.begin() as conn:
         await conn.execute(
             text(
-                "INSERT INTO ai_job (id, status, job_type, created_at, updated_at) "
-                "VALUES (:id, 'PENDING', 'RETRIEVAL', :now, :now)"
+                'INSERT INTO "user" (id, email, hashed_password, name, is_active, is_admin) '
+                "VALUES (:id, :email, 'hash', '테스트', true, false)"
             ),
-            {"id": str(job_id), "now": _NOW},
+            {"id": str(user_id), "email": f"test-{uuid4().hex[:8]}@example.com"},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO ai_job (id, user_id, status, job_type, max_attempts, attempt_count, created_at, updated_at) "
+                "VALUES (:id, :uid, 'PENDING', 'OCR', 3, 0, :now, :now)"
+            ),
+            {"id": str(job_id), "uid": str(user_id), "now": _NOW},
         )
 
-    retrieval_cfg = VersionedEvidenceRetrievalConfiguration(
-        artifact_ref=ImmutableArtifactRef(id="ret-h-config", version="1.0.0", hash="a" * 64),
-        execution_mode=RetrievalExecutionMode.HYBRID,
-        lexical_config=VersionedLexicalSearchConfiguration(
-            artifact_ref=ImmutableArtifactRef(id="lex-cfg", version="1.0.0", hash="b" * 64),
-            candidate_limit=5,
-            trigram_similarity_threshold=0.3,
-        ),
-        dense_config=VersionedDenseSearchConfiguration(
-            artifact_ref=ImmutableArtifactRef(id="dense-cfg", version="1.0.0", hash="c" * 64),
-            candidate_limit=5,
-            distance_threshold=0.9,
-        ),
-        expected_query_embedding_adapter_ref=ImmutableArtifactRef(id="fake-embed", version="1.0.0", hash="d" * 64),
-        algorithm_id="RRF_HYBRID_SEARCH",
-        rrf_k=60,
+    lex_cfg = VersionedLexicalSearchConfiguration(
+        artifact_ref=ImmutableArtifactRef("lex-cfg", "1.0", "0" * 64),
+        exact_strategy="case-sensitive-substring-v1",
+        query_normalization="caller-supplied-nonblank-nfc-no-silent-transform-v1",
+        trigram_match_operator="%",
+        trigram_score_function="similarity",
+        trigram_threshold="0.3",
+        fts_regconfig="simple",
+        fts_vector_expression="to_tsvector('simple', chunk_text)",
+        fts_query_constructor="plainto_tsquery('simple', query)",
+        fts_score_function="ts_rank_cd",
+        exact_limit=20,
+        trigram_limit=20,
+        fts_limit=20,
+    )
+    lex_bound = VersionedLexicalSearchConfiguration(
+        artifact_ref=ImmutableArtifactRef("lex-cfg", "1.0", lex_cfg.compute_canonical_hash()),
+        exact_strategy=lex_cfg.exact_strategy,
+        query_normalization=lex_cfg.query_normalization,
+        trigram_match_operator=lex_cfg.trigram_match_operator,
+        trigram_score_function=lex_cfg.trigram_score_function,
+        trigram_threshold=lex_cfg.trigram_threshold,
+        fts_regconfig=lex_cfg.fts_regconfig,
+        fts_vector_expression=lex_cfg.fts_vector_expression,
+        fts_query_constructor=lex_cfg.fts_query_constructor,
+        fts_score_function=lex_cfg.fts_score_function,
+        exact_limit=lex_cfg.exact_limit,
+        trigram_limit=lex_cfg.trigram_limit,
+        fts_limit=lex_cfg.fts_limit,
+    )
+
+    d_cfg = VersionedDenseSearchConfiguration(
+        artifact_ref=ImmutableArtifactRef("dense-cfg", "1.0", "0" * 64),
+        dense_limit=20,
+    )
+    dense_bound = VersionedDenseSearchConfiguration(
+        artifact_ref=ImmutableArtifactRef("dense-cfg", "1.0", d_cfg.compute_canonical_hash()),
+        dense_limit=20,
+    )
+    expected_adapter_ref = ImmutableArtifactRef("deterministic-fake-embedding", "1.0.0", "0" * 64)
+
+    ret_cfg = VersionedEvidenceRetrievalConfiguration(
+        artifact_ref=ImmutableArtifactRef("ret-cfg", "1.0", "0" * 64),
+        lexical_config=lex_bound,
+        dense_config=dense_bound,
+        expected_query_embedding_adapter_ref=expected_adapter_ref,
+        execution_mode=RetrievalExecutionMode.HYBRID_RRF,
+    )
+    ret_bound = VersionedEvidenceRetrievalConfiguration(
+        artifact_ref=ImmutableArtifactRef("ret-cfg", "1.0", ret_cfg.compute_canonical_hash()),
+        lexical_config=lex_bound,
+        dense_config=dense_bound,
+        expected_query_embedding_adapter_ref=expected_adapter_ref,
+        execution_mode=RetrievalExecutionMode.HYBRID_RRF,
     )
 
     binding = EvidenceSearchExecutionBinding(
-        retrieval_config=retrieval_cfg,
-        filter_snapshot_ref=ImmutableArtifactRef(id="snapshot", version="1.0.0", hash="e" * 64),
-        evidence_index_ref=ImmutableArtifactRef(id="index", version="1.0.0", hash="f" * 64),
+        filter_snapshot_ref=ImmutableArtifactRef("filter-ref", "1.0", "f" * 64),
+        evidence_index_ref=ImmutableArtifactRef("synthetic-index", "1.0.0", index_hash),
+        knowledge_index_id=index_id,
+        allowed_source_snapshot_ids=(snapshot_id,),
+        allowed_source_snapshot_member_ids=(member_id,),
+        retrieval_config=ret_bound,
     )
 
     request = HybridRetrieveRequest(
         search_request=EvidenceSearchRequest(
             normalized_query=SensitiveText("아세트아미노펜 복용법"),
-            query_fingerprint=QueryFingerprint("f" * 64),
+            query_fingerprint=QueryFingerprint("sha256", "v1", "1" * 64),
             execution_binding=binding,
+            query_embedding_receipt=None,
         ),
         job_id=job_id,
         execution_context_id=context_id,
@@ -327,8 +385,6 @@ async def test_actual_retrieval_evaluation_two_transaction_flow(database) -> Non
         runtime_execution_manifest_id=uuid4(),
         runtime_execution_manifest_hash="2" * 64,
         runtime_guard_decision_ref="decision-1",
-        evidence_index_id=index_id,
-        filter_snapshot_id=snapshot_id,
     )
 
     # Transaction 1: execute_hybrid_retrieve
@@ -340,7 +396,7 @@ async def test_actual_retrieval_evaluation_two_transaction_flow(database) -> Non
         eligibility_verifier=eligibility_verifier,
     )
 
-    assert outcome.status == RetrievalExecutionStatus.SUCCEEDED
+    assert outcome.status == RetrievalExecutionStatus.SUCCEEDED, f"Failed with message: {outcome.message}"
     assert outcome.persisted_receipt is not None
     run_id = str(outcome.persisted_receipt.run_id)
     receipt_hash = outcome.persisted_receipt.receipt_hash
