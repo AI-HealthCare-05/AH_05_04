@@ -422,6 +422,11 @@ def build_actual_adapter_registry(  # noqa: C901
     session_factory: Any = None
     if engine is None and (search_port is None or eligibility_verifier is None):
         try:
+            import sys
+
+            backend_dir = str(resolved.repository_root / "backend")
+            if backend_dir not in sys.path:
+                sys.path.insert(0, backend_dir)
             from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
             from app.core import config as app_config
