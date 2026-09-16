@@ -3,6 +3,7 @@
 - 구현 담당자: 송은영 (@phina-io)
 - 담당 리뷰어: 정현우 (@ceohwj), Guide/Chat AI 응답 편차·안전 응답 평가 기준
 - 기준 브랜치: `develop`
+- 실행 commit HEAD: `4321ce2529dc47c4971084472c58daf6f8a75a0d` (#640 branch head)
 - 검증 일자: 2026-09-16 KST
 - 상태: Guide/Chat OpenAI Responses 호출에 `temperature=0` 적용 후 합성 입력 live 30회 반복 측정 완료
 
@@ -58,7 +59,7 @@ Chat general 답변은 `저녁 식후` 복용 시점, 의료진·약사 확인 �
 ```bash
 DB_HOST=127.0.0.1 DB_USER=test DB_PASSWORD=test DB_NAME=test PYTHONPATH=backend:. \
   uv run pytest backend/app/tests/chat_ai/test_schemas.py \
-  tests/scripts/test_measure_guide_chat_output_variance.py \
+  tests/services/test_measure_guide_chat_output_variance.py \
   backend/app/tests/chat_ai/test_client.py \
   backend/app/tests/guide_ai/test_client.py -q
 ```
