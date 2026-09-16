@@ -39,8 +39,20 @@ SYNC_MUTATION이 snapshot을 저장한 뒤 요청 DB 의존성이 transaction을
 | 필드 | 표현 |
 | --- | --- |
 | schedule_status | READY, PARTIAL, SETUP_REQUIRED, INACTIVE, NO_ACTIVE_PRESCRIPTION |
-| schedule_items | 현재 활성 처방 version의 약별 항목 배열 |
+| schedule_items | SELF 최신 처방 한 건의 활성 version 약별 항목 배열 (#628 구현 리뷰 대상) |
 | occurrences | 지정한 원래 KST 날짜의 본인 occurrence 배열; 과거 version·취소·현재 Check-in 포함 |
+
+#628의 [PD-628-20260916](../../governance/decisions/2026-09-16-latest-prescription-schedule-628.md)에
+따라 최신 처방은 `GET /prescriptions/latest`와 동일하게 SELF 소유 처방 중
+`created_at DESC, id DESC LIMIT 1`로 선택한다. `current=true`는 해당 처방 내부의
+활성 version이라는 뜻이며 다른 처방이 존재하지 않는다는 의미가 아니다.
+`schedule_status`도 이 한 건의 약별 항목만으로 계산한다. 처방 없음은 빈 항목과
+`NO_ACTIVE_PRESCRIPTION`이다. 날짜는 occurrence 조회에만 적용하며 latest 선택에는
+처방일·조회 날짜·schedule 존재 여부를 사용하지 않는다.
+이전 별도 처방의 활성 약은 schedule_items에서 제외하지만 occurrence·당시 약 조회·
+Check-in 이력은 기존 소유권/날짜 기준으로 보존한다. 기존 일정 저장·취소·생성·알림
+규칙은 변경하지 않는다. 두 GET 사이에 처방이 변경되면 기존 Frontend ID 불일치
+차단은 유지한다. 담당 리뷰어 승인·병합 전 Current 계약으로 승격하지 않는다.
 
 schedule_items의 각 항목은 `prescription_version_medication_id`, `schedule_item_status`,
 nullable `schedule_id`, nullable `revision`, nullable `setup_reason`이다. reason은 PD-417의

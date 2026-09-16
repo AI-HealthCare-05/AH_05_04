@@ -93,3 +93,9 @@ GET은 추가하지 않아 새로고침 시 선택 상태는 복원하지 않는
 `python -m app.commands.purge_feedback`는 최초 생성 후 30일 이상 지난 두 테이블 row를 transaction으로 삭제한다.
 출력은 삭제 개수뿐이며 Local 외 실행은 거부한다. 일일 스케줄 설치는 운영 배포 단계다.
 FK cascade는 Guide/ChatMessage 직접 삭제에 적용한다. 현재 회원탈퇴 API가 없어 계정 전체 삭제 이행은 후속 검증이다.
+
+## DB runtime 권한
+
+기존 runtime role에는 두 피드백 테이블의 SELECT·INSERT·UPDATE·DELETE만 허용한다.
+Source writer에는 접근을 허용하지 않고 runtime TRUNCATE·DDL 권한은 추가하지 않는다.
+실제 role provisioning 통합 검사로 이를 확인하며 Production 개방을 의미하지 않는다.

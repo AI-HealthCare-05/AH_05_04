@@ -20,7 +20,7 @@ RUNTIME_MUTABLE_TABLES = frozenset(
     "user profile medical_document prescription medication guide guide_citation "
     "ai_job ai_job_attempt outbox_event idempotency_record message_quarantine dlq_outbox_event "
     "medication_candidate_search medication_identification "
-    "ocr_job extracted_field chat_session chat_message chat_citation "
+    "ocr_job extracted_field chat_session chat_message chat_citation guide_feedback chat_message_feedback "
     "medication_schedule medication_schedule_time medication_occurrence medication_checkin "
     "push_subscription push_delivery "
     "eval_dataset eval_case eval_experiment eval_variant eval_run eval_case_result eval_metric eval_failure "

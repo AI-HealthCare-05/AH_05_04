@@ -84,3 +84,9 @@ Guide는 `profile_id`, ChatMessage는 `session.profile_id`로 SELF 소유권을 
 새 DELETE·Local 404·만료 후 신규 접수는 이 Decision의 구체화 delta다.
 회원탈퇴 HTTP API는 현재 없어 부모 계정 삭제 완료를 이번 변경으로 주장하지 않는다.
 후속 계정 삭제 구현에서는 부모 리소스·피드백·검토 연결 기록·백업 삭제를 함께 검증해야 한다.
+
+## DB runtime 권한
+
+기존 runtime role에는 두 피드백 테이블의 SELECT·INSERT·UPDATE·DELETE만 허용한다.
+Source writer에는 접근을 허용하지 않고 runtime TRUNCATE·DDL 권한은 추가하지 않는다.
+실제 role provisioning 통합 검사로 이를 확인하며 Production 개방을 의미하지 않는다.

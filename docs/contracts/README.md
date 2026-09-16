@@ -11,6 +11,8 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 - [공통 복약 리포트 v1 (#419)](./current/medication-report-v1.md): KST 7/30일·과거 version·두 지표·0분모·상세 기록. Backend #478·Frontend #574 병합 및 실제 runtime 검증.
 
+- [Track B 일정 API v1 / #628 최신 처방 범위](./proposed/track-b-schedule-api-v1.md): SELF 최신 처방 한 건으로 schedule_items 정합화; 요청자 범위 확인, 구현 리뷰 대기. 과거 occurrence 이력 보존.
+
 ## 디렉터리 구조와 배치 원칙
 
 - [PD-398-M1 Source·Catalog 관리](./proposed/source-catalog-management-398.md): 분리된 관리 API, 서버 권한, 미사용 자료 수정·삭제와 감사 transaction, PD-398-R2 Snapshot 잠금 권한 분리, #372 Alias review_status 승인 보호 연동.
@@ -46,7 +48,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [PROFILE SELF 소유권 전환 계약 v1](./current/profile-self-ownership-v1.md): 본인 단일 SELF profile과 `profile_id` 기반 사용자 리소스 소유권 기준
 - [Track B Notification 계약 v1 (#203)](./current/track-b-notifications-v1.md): 알림 저장·목록·읽음·재알림, 원본 `occurrence_local_date`, 멱등성과 Check-in 분리 경계
 - [Track B occurrence 원래 약 표시 조회 v1 (#202)](./current/track-b-occurrence-medication-v1.md): occurrence의 불변 version medication 조회, SELF 404와 current medication fallback 금지
-- [Track C ActionPlan 조회·완료·취소 v1 (#617)](./current/track-c-plan-lifecycle-617.md): PR #618의 단건 GET·단일 종료 PATCH·멱등성·SELF 계약. 권가빈 구현·김지혜 책임 리뷰; 최종 승인·병합 대기, 외부 공개 게이트 별도.
+- [Track C ActionPlan 조회·완료·취소 v1 (#617)](./current/track-c-plan-lifecycle-617.md): PR #618의 단건 GET·단일 종료 PATCH·멱등성·SELF 계약. 권가빈 구현·김지혜 승인 후 PR #618 병합(`a542bcc2`), 외부 공개 게이트 별도.
 - 공통 오류: `code`, `message`, `details`, `trace_id`
 
 ## Proposed 계약
@@ -72,7 +74,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Staging Release Validation Ledger 계약](./proposed/operations/release-validation-ledger.md): staging control DB, 상태 전이, crash recovery와 migration 상호 배제
 - [개발환경·비밀정보 주입 경로 점검 운영 계약](./proposed/operations/development-env-secret-injection-check.md): Redis, PostgreSQL, Provider secret 주입 경로와 운영 배포 전 차단 조건
 - [Track A migration·rollback 계획 제안 v1](./proposed/track-a-migration-rollback-v1.md): 문서 상태 Proposed · 구현 상태 Partially implemented — 공통 Job 기반과 OCR–AI Job mapping을 구현했으며 Guide·Chat 연결, Prescription Version, 전체 비동기 전환·backfill·read cutover는 미구현
-- [계정 생명주기 후속 계약 v1 (`PD-206`)](./proposed/account-lifecycle-v1.md): 회원탈퇴의 transaction 경계와 후속 구현 기준. 로그아웃·`token_version` 재검증·refresh token rotation·비밀번호 재설정은 현재 구현 계약([`user-account.md`](./current/user-account.md))에 반영됨
+- [계정 생명주기 후속 계약 v1 (`PD-206`)](./proposed/account-lifecycle-v1.md): 문서 상태 Proposed · 구현 상태 Partially implemented — 회원탈퇴의 transaction 경계와 후속 구현 기준. 로그아웃·`token_version` 재검증·refresh token rotation·비밀번호 재설정은 현재 구현 계약([`user-account.md`](./current/user-account.md))에 반영됨. `account_deletion_request` 저장 기반(5절)은 작업 브랜치 구현·로컬 검증 완료; 탈퇴 요청 접수 API(4절)와 삭제·보존 처리는 미구현
 - [Guide·Chat Session·Message 상태 구현 골격 v1](./proposed/guide-chat-session-message-status-ui-v1.md): Session/Message/Job 결과 상태축, SAFETY-STALE 경계, PROFILE 기반 소유권의 Frontend 구현 골격
 
 Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 구현은 전체 계약 완료나 Current 승격을 의미하지 않으며, 관련 schema·service·CLI·테스트와 남은 전환 단계가 완료되고 상태가 갱신되기 전에는 실행 가능한 전체 계약으로 간주하지 않습니다.
@@ -207,3 +209,9 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [#465 대조·구현 범위 및 runtime 연결 조건](../designs/ocr-consent-gate-458-implementation.md)
 - [동의 조회·재검사 검증](../testing/ocr-consent-gate-458.md)
 - 내부 조회와 호출 직전 검사 부품. 동의 API·차단 저장·전송 최소화·공개 활성화 완료 아님.
+
+## Track C 완료 계획 Follow-up (#194 후속)
+
+- [Follow-up API v1 — Current, PR #631 반영](current/track-c-followup-api-194.md): 완료 계획의 평가 GET/POST, 현재값·revision 정정·audit·멱등성·동시성. 기존 생성/Plan 응답은 유지한다. 최종 책임 리뷰 승인·병합은 대기 중이며 외부 공개는 별도다.
+- [PD-194-2](../governance/decisions/2026-09-16-track-c-followup-194.md): 완료 계획만 평가, 이후 Check-in 정정에도 과거 평가 허용. 권가빈 구현·김지혜 단일 책임 리뷰.
+- #139 Frontend·Constraint/RAG Handler·외부 공개 및 #194 전체 완료는 별도 범위다.

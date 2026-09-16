@@ -24,17 +24,29 @@ Backend는 Local만 허용하고 Frontend는 개발 빌드에서만 표시한다
 | Mypy Backend·Worker | 통과 |
 | Alembic 단일 head | `633a1b2c3d4e` 확인 |
 | DB logic / protected write 검사 | 통과 |
+| 실제 DB runtime·Source writer 권한 / fresh head | 1 passed; 별도 임시 DB에 전체 migration 적용 후 DML 허용·TRUNCATE/Source writer 접근 거절 |
 | Frontend build / lint | 통과; 기존 bundle 크기 경고 유지 |
 | Frontend 전체 단위 | 36 files / 628 passed (`VITE_API_BASE_URL=http://localhost:8000`, `--maxWorkers=2`) |
 | Guide·Chat 브라우저 | 4 passed; Guide 320·390·412px, Chat 완료 ASSISTANT 연결 |
-| 저장소 전체 `scripts/ci/run_test.sh` | migration 235 passed / 4 skipped·실제 최신 head 통과; Backend·Worker 실행 중 |
+| 저장소 전체 `scripts/ci/run_test.sh` | migration 235 passed / 4 skipped, 당시 head 통과; Backend 2632 passed / 128 skipped / 1 failed로 exit 1 |
+| Worker 환경 수정 후 전체 lane | 3786 passed |
+| 후속 Redis 통합 4개 파일 | 29 passed |
+| 최신 develop 통합 후 피드백·복약 일정 | 44 passed / 1 skipped / 3 failed; 실패는 복약 일정 파일의 기존 검증 |
 
 첫 DB 실행은 sandbox TCP 제한, 다음 실행은 합성 이메일 길이와 ASGI wrapper·rollback 뒤 fixture identity 문제로
 실패했다. 해당 테스트 환경·fixture를 수정한 뒤 16개 테스트를 통과했다.
 Frontend 전체 최초 실행은 API 주소 누락, 주소를 지정한 병렬 실행은 기존 Chat 초기화 시각 테스트 1건이 실패했다.
 동시 worker 수를 2로 제한한 전체 재실행은 628개 모두 통과했다. 이 문제를 숨기기 위해 기존 테스트를 수정하지 않았다.
 첫 전체 Python 실행의 Worker 설정 검사 1건은 임시 환경의 Redis 주소·포트를 host 매핑값으로 덮어쓴 탓에
-실패했다. Worker 기본값은 redis:6379로 복원하고 실제 통합 연결은 runner의 host 포트 override를 사용한다.
+실패했다. Worker 기본값은 redis:6379로 복원한 전체 lane에서 3786개 통과했다.
+실제 통합 연결은 host 포트 override를 사용해 Redis 29개를 별도로 통과했다.
+
+최초 전체 Backend 실패는 `test_old_version_replays_but_new_write_conflicts_and_history_stays`의
+처방 버전 충돌 409 기대에 200을 반환한 것이다. `66328a09` develop을 병합한 뒤 같은 검증과
+`test_latest_prescription_only_preserves_older_occurrences` 두 parameter가 실패했다.
+해당 service·repository·test 파일은 origin/develop과 diff가 없으며 #633에서 수정하지 않았다.
+피드백 16개는 같은 재실행에서 통과했다. 전체 runner 성공 또는 통합 coverage 통과로 보고하지 않는다.
+신규 #633 migration 부모는 아직 미병합 상태에서 develop의 `206b2c3d4e5f` 뒤로 정렬했다.
 
 실제 migration 테스트는 격리 schema에서 신규 revision을 실행하고 두 테이블의 FK·rating·길이·unique,
 대상 cascade, 데이터 보존 downgrade guard와 빈 상태 downgrade/reupgrade를 검증한다.

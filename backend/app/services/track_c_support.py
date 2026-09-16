@@ -8,8 +8,12 @@ from uuid import UUID
 from app.core.errors import ApiError
 from app.dtos.track_c_support import (
     ActionConfigSnapshot,
+    ActionPlanFollowupData,
+    ActionPlanFollowupEnvelope,
+    ActionPlanFollowupReadEnvelope,
     CreateSupportActionPlanRequest,
     PatchSupportActionPlanRequest,
+    SubmitActionPlanFollowupRequest,
     SupportActionPlanData,
     SupportActionPlanResponse,
     SupportCopyData,
@@ -19,6 +23,7 @@ from app.dtos.track_c_support import (
 )
 from app.models.medication_schedules import MedicationCheckin, MedicationCheckinStatus
 from app.models.track_c import (
+    ActionPlanFollowup,
     BarrierResponse,
     BarrierResponseStatus,
     SafetyAssessment,
@@ -43,6 +48,8 @@ SUPPORT_OFFER_GET_OPERATION_ID = "barrier-response.supports"
 SUPPORT_ACTION_PLAN_POST_OPERATION_ID = "support-action-plan.create"
 SUPPORT_ACTION_PLAN_GET_OPERATION_ID = "support-action-plan.get"
 SUPPORT_ACTION_PLAN_PATCH_OPERATION_ID = "support-action-plan.patch"
+ACTION_PLAN_FOLLOWUP_POST_OPERATION_ID = "support-action-plan.followup.submit"
+ACTION_PLAN_FOLLOWUP_GET_OPERATION_ID = "support-action-plan.followup.get"
 
 
 def eligible_supports(config: HandlerConfig, barrier: BarrierResponse) -> list[SupportRule]:
@@ -239,6 +246,81 @@ class TrackCSupportService:
 
     async def get_plan(self, *, user_id: UUID, plan_id: UUID) -> SupportActionPlanResponse:
         return self._plan_response(await self._owned_plan(user_id=user_id, plan_id=plan_id))
+
+    @staticmethod
+    def _followup_data(followup: ActionPlanFollowup) -> ActionPlanFollowupData:
+        return ActionPlanFollowupData(
+            followup_id=followup.id,
+            support_action_plan_id=followup.support_action_plan_id,
+            response=followup.response,
+            revision=followup.revision,
+            created_at=followup.created_at,
+            updated_at=followup.updated_at,
+        )
+
+    async def get_followup(self, *, user_id: UUID, plan_id: UUID) -> ActionPlanFollowupReadEnvelope:
+        owned = await self._repository.get_plan_followup_owned(plan_id=plan_id, user_id=user_id)
+        if owned is None:
+            raise self._plan_not_found()
+        _, followup = owned
+        return ActionPlanFollowupReadEnvelope(data=self._followup_data(followup) if followup else None)
+
+    async def submit_followup(
+        self, *, user_id: UUID, plan_id: UUID, request: SubmitActionPlanFollowupRequest, idempotency_key: str
+    ) -> SyncMutationResult:
+        await self._owned_plan(user_id=user_id, plan_id=plan_id)
+
+        async def mutate() -> dict[str, Any]:
+            owned = await self._owned_plan(user_id=user_id, plan_id=plan_id)
+            barrier = await self._repository.get_barrier_owned(barrier_id=owned.barrier_response_id, user_id=user_id)
+            if barrier is None:
+                raise self._plan_not_found()
+            checkin = await self._repository.lock_checkin_owned(
+                checkin_id=barrier.medication_checkin_id, user_id=user_id
+            )
+            if checkin is None:
+                raise self._plan_not_found()
+            # Preserve the shared lock order without treating historical feedback as a new support action.
+            await self._repository.get_latest_safety_for_update(
+                checkin_id=checkin.id, checkin_revision=checkin.revision
+            )
+            await self._repository.get_latest_barrier_for_update(
+                checkin_id=checkin.id, checkin_revision=checkin.revision
+            )
+            plan = await self._repository.get_action_plan_for_update(plan_id=plan_id)
+            if plan is None:
+                raise self._plan_not_found()
+            if plan.status != SupportActionPlanStatus.COMPLETED:
+                raise ApiError(
+                    status_code=409,
+                    code="ACTION_PLAN_STATE_CONFLICT",
+                    message="완료한 지원 계획에만 평가를 남길 수 있습니다.",
+                )
+            current = await self._repository.get_plan_followup_for_update(plan_id=plan_id)
+            if request.expected_revision != (current.revision if current else 0):
+                raise ApiError(
+                    status_code=409,
+                    code="ACTION_PLAN_FOLLOWUP_REVISION_CONFLICT",
+                    message="평가가 변경되었습니다. 최신 응답을 다시 확인해 주세요.",
+                )
+            followup = await self._repository.save_plan_followup(
+                plan_id=plan_id,
+                current=current,
+                response=request.response,
+                user_id=user_id,
+                changed_at=datetime.now(UTC),
+            )
+            return ActionPlanFollowupEnvelope(data=self._followup_data(followup)).model_dump(mode="json")
+
+        return await self._idempotency.execute(
+            user_id=user_id,
+            operation_id=ACTION_PLAN_FOLLOWUP_POST_OPERATION_ID,
+            parent_resource_id=plan_id,
+            idempotency_key=idempotency_key,
+            fingerprint=request.model_dump(mode="json"),
+            success_status=200,
+            mutate=mutate,
+        )
 
     async def patch_plan(
         self, *, user_id: UUID, plan_id: UUID, request: PatchSupportActionPlanRequest, idempotency_key: str
