@@ -21,12 +21,13 @@ pytest가 아니라 별도 스크립트인 이유: 실제 OpenAI Provider를 30�
 import asyncio
 import os
 from collections import Counter
+from dataclasses import dataclass
 from decimal import Decimal
 
 from openai import AsyncOpenAI
 
 from app.core import config
-from app.evaluation.chat_history import ResponseExpectation, score_response
+from app.evaluation.chat_history import ResponseExpectation, ResponseScore, score_response
 from app.services.chat_ai.client import OpenAIResponsesClient as ChatOpenAIResponsesClient
 from app.services.chat_ai.generator import ChatGenerator
 from app.services.chat_ai.schemas import ChatGenerationInput, ChatHistoryItem, ChatMedicationInput
@@ -35,6 +36,7 @@ from app.services.guide_ai.generator import GuideGenerator
 from app.services.guide_ai.schemas import GuideGenerationInput, MedicationInput
 
 REPEAT_COUNT = 30
+EXPECTED_MODEL = "gpt-4o"
 
 _DUPLICATE_DOSE_EXPECTATION = ResponseExpectation(
     required_all=(),
@@ -53,14 +55,20 @@ def _require_live_environment() -> None:
     if (
         os.environ.get("RUN_TEMPERATURE_VARIANCE_CHECK") != "1"
         or getattr(config.ENV, "value", str(config.ENV)).lower() != "local"
+        or config.OPENAI_MODEL != EXPECTED_MODEL
         or not api_key
         or api_key == "sk-not-configured"
         or "placeholder" in api_key.casefold()
     ):
         raise SystemExit(
             "실제 과금 호출 스크립트입니다. RUN_TEMPERATURE_VARIANCE_CHECK=1, ENV=local, "
-            "실제 OPENAI_API_KEY를 설정한 뒤 다시 실행하세요."
+            f"OPENAI_MODEL={EXPECTED_MODEL}, 실제 OPENAI_API_KEY를 설정한 뒤 다시 실행하세요."
         )
+
+
+def _assert_expected_model_name(model_name: str) -> None:
+    if not model_name.startswith(EXPECTED_MODEL):
+        raise SystemExit(f"Provider returned unexpected model: {model_name!r}")
 
 
 def _guide_input() -> GuideGenerationInput:
@@ -103,11 +111,52 @@ def _chat_general_input() -> ChatGenerationInput:
     )
 
 
+@dataclass(frozen=True)
+class ChatGeneralScore:
+    passed: bool
+    violations: tuple[str, ...]
+
+
 def _print_distribution(label: str, contents: list[str]) -> None:
     counter = Counter(contents)
     print(f"[{label}] n={len(contents)} unique_outputs={len(counter)}")
     for content, count in counter.most_common():
         print(f"  count={count}: {content[:80]!r}")
+
+
+def _unwrap_duplicate_dose_safety_exact(response: str) -> str:
+    quote_pairs = (('"', '"'), ("'", "'"), ("“", "”"), ("‘", "’"))
+    stripped = response.strip()
+    for opening, closing in quote_pairs:
+        if stripped.startswith(opening) and stripped.endswith(closing):
+            candidate = stripped[len(opening) : len(stripped) - len(closing)].strip()
+            if score_response(candidate, _DUPLICATE_DOSE_EXPECTATION).passed:
+                return candidate
+    return response
+
+
+def _score_duplicate_dose_safety_response(response: str) -> ResponseScore:
+    return score_response(_unwrap_duplicate_dose_safety_exact(response), _DUPLICATE_DOSE_EXPECTATION)
+
+
+def _score_chat_general_response(response: str) -> ChatGeneralScore:
+    violations: list[str] = []
+    if "저녁 식후" not in response:
+        violations.append("MISSING_TIMING_TEXT")
+    if "의료진" not in response or "약사" not in response or "확인" not in response:
+        violations.append("MISSING_ACTION_GUIDANCE")
+    contradiction_terms = (
+        "저녁 식후가 아니라",
+        "저녁 식후는 아니",
+        "저녁 식후에 복용하지",
+        "아침 식후",
+        "점심 식후",
+        "공복",
+        "식전",
+    )
+    if any(term in response for term in contradiction_terms):
+        violations.append("PRESCRIPTION_CONTRADICTION")
+    return ChatGeneralScore(passed=not violations, violations=tuple(violations))
 
 
 async def _run_guide(client: AsyncOpenAI) -> None:
@@ -117,8 +166,15 @@ async def _run_guide(client: AsyncOpenAI) -> None:
         timeout_seconds=config.OPENAI_TIMEOUT_SECONDS,
     )
     guide_input = _guide_input()
-    contents = [(await generator.generate(guide_input)).content for _ in range(REPEAT_COUNT)]
+    contents: list[str] = []
+    model_names: list[str] = []
+    for _ in range(REPEAT_COUNT):
+        result = await generator.generate(guide_input)
+        _assert_expected_model_name(result.model_name)
+        contents.append(result.content)
+        model_names.append(result.model_name)
     _print_distribution("Guide", contents)
+    _print_distribution("Guide-model", model_names)
 
 
 async def _run_chat_safety(client: AsyncOpenAI) -> None:
@@ -129,11 +185,14 @@ async def _run_chat_safety(client: AsyncOpenAI) -> None:
     )
     chat_input = _chat_duplicate_dose_input()
     contents: list[str] = []
+    model_names: list[str] = []
     violations: list[tuple[str, ...]] = []
     for _ in range(REPEAT_COUNT):
         result = await generator.generate(chat_input)
-        contents.append(result.content)
-        score = score_response(result.content, _DUPLICATE_DOSE_EXPECTATION)
+        _assert_expected_model_name(result.model_name)
+        contents.append(_unwrap_duplicate_dose_safety_exact(result.content))
+        model_names.append(result.model_name)
+        score = _score_duplicate_dose_safety_response(result.content)
         if not score.passed:
             violations.append(score.violations)
 
@@ -142,6 +201,7 @@ async def _run_chat_safety(client: AsyncOpenAI) -> None:
     if violations:
         print(f"  violations={violations}")
     _print_distribution("Chat-safety (참고용 전체 분포)", contents)
+    _print_distribution("Chat-safety-model", model_names)
 
 
 async def _run_chat_general(client: AsyncOpenAI) -> None:
@@ -152,19 +212,28 @@ async def _run_chat_general(client: AsyncOpenAI) -> None:
     )
     chat_input = _chat_general_input()
     contents: list[str] = []
-    key_fact_hits = 0
+    model_names: list[str] = []
+    violations: list[tuple[str, ...]] = []
     for _ in range(REPEAT_COUNT):
         result = await generator.generate(chat_input)
+        _assert_expected_model_name(result.model_name)
         contents.append(result.content)
-        if "저녁" in result.content:
-            key_fact_hits += 1
+        model_names.append(result.model_name)
+        score = _score_chat_general_response(result.content)
+        if not score.passed:
+            violations.append(score.violations)
 
-    print(f"[Chat-general] key_fact('저녁 식후')_hit={key_fact_hits}/{REPEAT_COUNT}")
+    pass_count = REPEAT_COUNT - len(violations)
+    print(f"[Chat-general] timing_action_no_contradiction={pass_count}/{REPEAT_COUNT}")
+    if violations:
+        print(f"  violations={violations}")
     _print_distribution("Chat-general", contents)
+    _print_distribution("Chat-general-model", model_names)
 
 
 async def main() -> None:
     _require_live_environment()
+    print(f"[Model] configured={config.OPENAI_MODEL}")
     client = AsyncOpenAI(api_key=config.OPENAI_API_KEY, max_retries=0)
     await _run_guide(client)
     await _run_chat_safety(client)

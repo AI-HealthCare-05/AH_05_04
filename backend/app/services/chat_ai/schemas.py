@@ -55,17 +55,8 @@ def _normalize_generated_content(value: object) -> str:
     return unicodedata.normalize("NFC", value.strip())
 
 
-def _strip_wrapping_quotes(value: str) -> str:
-    quote_pairs = (('"', '"'), ("'", "'"), ("“", "”"), ("‘", "’"))
-    for opening, closing in quote_pairs:
-        if value.startswith(opening) and value.endswith(closing):
-            unwrapped = value[len(opening) : len(value) - len(closing)].strip()
-            return unwrapped or value
-    return value
-
-
 def normalize_chat_answer(value: object) -> str:
-    normalized = _strip_wrapping_quotes(_normalize_generated_content(value))
+    normalized = _normalize_generated_content(value)
     _reject_forbidden_input_characters(normalized)
     if not normalized:
         raise ValueError("chat answer must not be blank")
