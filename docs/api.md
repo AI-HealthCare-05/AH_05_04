@@ -875,3 +875,12 @@ MEDICATION_NOT_WITH_ME다. 일정 변경·외출에만 허용하고 각각 일�
 미완료/USER target은 409 FEEDBACK_TARGET_NOT_READY, 타인·없는 target은 404 NOT_FOUND다.
 NUL·잘못된 Unicode·길이 초과·잘못된 rating은 공통 422다. 모든 응답에 no-store를 적용한다.
 ENV=local 외에는 POST/DELETE 모두 404이며 실제 사용자 수집·Production 공개 승인은 별도다.
+
+### #193 내부 합성 데모 — Proposed 구현 검토
+
+`POST /safety-assessments`의 body·response shape는 그대로다. 기본 OFF인 Local 7일 데모를
+명시적으로 켜면 지정 합성 계정의 구조화 증상을 EMERGENCY/URGENT/UNKNOWN으로 분기하며,
+빈 목록은 기존 foundation과 같다. 데모 환경·기간·계정·artifact 실패는 새 mutation에
+`503 SAFETY_DEMO_UNAVAILABLE`를 반환한다. 이미 성공한 멱등 요청은 최초 snapshot을 재현한다.
+자세한 버전·입력 매핑은 [Proposed 계약](contracts/proposed/track-c-safety-barrier-api-193.md)을 따른다.
+공개 승인·환자용 문구 승인·Frontend 증상 UI 연결을 의미하지 않는다.

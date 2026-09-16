@@ -223,3 +223,10 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [계획별 안내·화면 연결 자료 — Current, PR #639 반영](current/track-c-plan-resources-194.md): 원래 약·복약 기록과 저장 당시 Copy의 SELF 조회, 잊음·복용법·필요성·걱정 루트의 연결 범위와 미완료 의존성.
 
 PR #639의 두 계약은 구현 PR 내 이동이며 #629 병합·최종 책임 리뷰와 외부 공개 승인은 별도다.
+
+## Track C 내부 합성 데모 및 RAG 준비 상태 (2026-09-16)
+
+- [#193 Safety API Proposed의 Local 7일 데모](proposed/track-c-safety-barrier-api-193.md): 기본 OFF,
+  합성 계정·시간창 제한과 별도 demo version. [PD-193 revision 3](../governance/decisions/2026-09-16-track-c-internal-demo-193.md).
+- [#196 연결 준비 상태](../testing/track-c-rag-readiness-196.md): 공용 kernel과 실제 handoff·Source·Bundle
+  승인 Receipt를 구분한다. 새 공용 계약을 정의하거나 RAG 완료를 주장하지 않는다.

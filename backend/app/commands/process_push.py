@@ -20,7 +20,7 @@ from app.services.user_consents import ConsentGateService
 async def process_push_once(
     *, settings: PushSettings, session_factory: async_sessionmaker[AsyncSession] = AsyncSessionFactory, limit: int = 100
 ) -> int:
-    if not settings.enabled or config.ENV == "production":
+    if not settings.enabled or (config.ENV == "production" and not settings.production_enabled):
         return 0
     if not 1 <= limit <= 500:
         raise ValueError("limit must be between 1 and 500")
@@ -73,7 +73,7 @@ async def process_push_once(
 async def run() -> bool:
     try:
         settings = get_push_settings()
-        if not settings.enabled or config.ENV == "production":
+        if not settings.enabled or (config.ENV == "production" and not settings.production_enabled):
             return True
         async with asyncio.timeout(45):
             accepted = await process_push_once(settings=settings)

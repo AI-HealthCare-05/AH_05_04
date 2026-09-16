@@ -2,8 +2,9 @@
 
 The approved contract does not yet contain a medically reviewed non-empty symptom
 code table. The default policy therefore handles the approved empty-list path and
-fails closed to UNKNOWN for every non-empty list. Replacing that mapping requires
-the separately approved versioned policy/copy artifact.
+fails closed to UNKNOWN for every non-empty list. InternalDemoSafetyPolicy is a
+separate opt-in Local synthetic demo policy, not a medically reviewed replacement
+or a public release.
 """
 
 from dataclasses import dataclass
@@ -34,7 +35,7 @@ class SafetyPolicyResult:
 
 
 class SafetyPolicy(Protocol):
-    def evaluate(self, symptom_codes: tuple[str, ...]) -> SafetyPolicyResult: ...
+    def evaluate(self, symptom_codes: tuple[str, ...], *, user_id: UUID | None = None) -> SafetyPolicyResult: ...
 
 
 class ContractFoundationSafetyPolicy:
@@ -43,7 +44,7 @@ class ContractFoundationSafetyPolicy:
     _COPY_VERSION = "track-c-safety-foundation-v1"
     _SOURCE_VERSION = "contract-freeze-v4"
 
-    def evaluate(self, symptom_codes: tuple[str, ...]) -> SafetyPolicyResult:
+    def evaluate(self, symptom_codes: tuple[str, ...], *, user_id: UUID | None = None) -> SafetyPolicyResult:
         if not symptom_codes:
             return SafetyPolicyResult(
                 response_level=SafetyResponseLevel.ROUTINE,
@@ -93,7 +94,7 @@ class TrackCFlowService:
                 details=[ErrorDetail(field="expected_revision", reason="CURRENT_REVISION_MISMATCH")],
             )
 
-        policy_result = self._safety_policy.evaluate(tuple(symptom_codes))
+        policy_result = self._safety_policy.evaluate(tuple(symptom_codes), user_id=user_id)
         assessment = await self._repository.create_safety(
             checkin_id=checkin.id,
             checkin_revision=checkin_revision,

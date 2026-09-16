@@ -16,6 +16,13 @@ class PushSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="WEB_PUSH_", extra="ignore")
 
     enabled: bool = False
+    production_enabled: bool = False
+    # Stage 2 롤아웃(팀/테스트 계정만) 대상 제한용 placeholder. 현재는 어디서도 참조하지 않는다.
+    # 대상 제한이 실제로 필요해지면 user_id(UUID) 문자열 목록을 넣고,
+    # PushDeliveryService/PushSubscriptionService 등 발송·등록 경로에서 이 값을 체크하도록
+    # 연결하는 작업을 별도로 완료해야 한다. 빈 리스트를 "제한 없음"으로 두지 말고,
+    # 연결 전까지는 이 필드가 아무 안전 효과가 없다는 점을 리뷰 시 명시할 것.
+    production_allowed_user_ids: list[str] = []
     allowed_hosts: list[str] = []
     vapid_private_key: SecretStr = SecretStr("")
     vapid_public_key: str = ""
