@@ -20,6 +20,8 @@ from app.dtos.track_c_support import (
     SupportOfferData,
     SupportOfferItem,
     SupportOfferResponse,
+    SupportPlanResourcesData,
+    SupportPlanResourcesResponse,
     TravelSituation,
 )
 from app.models.medication_schedules import MedicationCheckin, MedicationCheckinStatus
@@ -43,6 +45,7 @@ from app.services.track_c_handler_config import (
     SupportCopyCatalog,
     SupportRule,
     load_active_support_assets,
+    load_historical_plan_copy,
     save_action_plan_snapshot,
 )
 
@@ -271,6 +274,34 @@ class TrackCSupportService:
 
     async def get_plan(self, *, user_id: UUID, plan_id: UUID) -> SupportActionPlanResponse:
         return self._plan_response(await self._owned_plan(user_id=user_id, plan_id=plan_id))
+
+    async def get_plan_resources(self, *, user_id: UUID, plan_id: UUID) -> SupportPlanResourcesResponse:
+        row = await self._repository.get_plan_resources_owned(plan_id=plan_id, user_id=user_id)
+        if row is None:
+            raise self._plan_not_found()
+        plan, barrier_code, occurrence_id, occurrence_date, medication_id = row
+        try:
+            copy = await to_thread(load_historical_plan_copy, plan)
+        except HandlerConfigError:
+            raise ApiError(
+                status_code=503, code="SUPPORT_CONFIG_UNAVAILABLE", message="저장된 계획 안내를 불러올 수 없습니다."
+            ) from None
+        return SupportPlanResourcesResponse(
+            data=SupportPlanResourcesData(
+                support_action_plan_id=plan.id,
+                barrier_code=barrier_code,
+                occurrence_id=occurrence_id,
+                occurrence_local_date=occurrence_date,
+                prescription_version_medication_id=medication_id,
+                support_copy=SupportCopyData(
+                    title=copy.title,
+                    body=copy.body,
+                    confirmation_prompt=copy.confirmation_prompt,
+                    primary_label=copy.primary_label,
+                    secondary_label=copy.secondary_label,
+                ),
+            )
+        )
 
     @staticmethod
     def _followup_data(followup: ActionPlanFollowup) -> ActionPlanFollowupData:

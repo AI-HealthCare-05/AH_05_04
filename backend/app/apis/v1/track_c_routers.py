@@ -22,6 +22,7 @@ from app.dtos.track_c_support import (
     SubmitActionPlanFollowupRequest,
     SupportActionPlanResponse,
     SupportOfferResponse,
+    SupportPlanResourcesResponse,
     TravelSituation,
 )
 from app.models.users import User
@@ -284,3 +285,22 @@ async def submit_action_plan_followup(
         user_id=user.id, plan_id=id, request=request, idempotency_key=idempotency_key
     )
     return JSONResponse(content=result.response_body, status_code=result.response_status)
+
+
+@track_c_router.get(
+    "/support-action-plans/{id}/resources",
+    response_model=SupportPlanResourcesResponse,
+    operation_id="support-action-plan.resources.get",
+    responses={
+        401: {"model": ErrorResponse, "description": "인증 필요"},
+        404: {"model": ErrorResponse, "description": "ACTION_PLAN_NOT_FOUND"},
+        422: {"model": ErrorResponse, "description": "VALIDATION_FAILED"},
+        503: {"model": ErrorResponse, "description": "SUPPORT_CONFIG_UNAVAILABLE"},
+    },
+)
+async def get_support_plan_resources(
+    id: UUID,
+    user: Annotated[User, Depends(get_request_user)],
+    service: Annotated[TrackCSupportService, Depends(get_track_c_support_service)],
+) -> SupportPlanResourcesResponse:
+    return await service.get_plan_resources(user_id=user.id, plan_id=id)

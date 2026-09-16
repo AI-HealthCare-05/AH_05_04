@@ -212,3 +212,9 @@ Notion에서 연결된 “구현 상세 설계 v2”는 Draft·Product/Contract 
 확장된 Handler·RAG·LLM·Offer·Follow-up 구조를 포함한다. 따라서 그 확장 범위는 이번 승인 자료와 #192 runtime에
 반영하지 않았다. 제품 승인 뒤 불변 Rule·Copy 버전과 활성 allowlist를 운영 로딩 경로에 연결했다.
 담당 기술·화면 리뷰와 외부 게이트 전에는 공개 API에 연결하거나 기존 데이터를 backfill하지 않는다.
+
+## PD-194-3 상황 선택과 문구 후속
+
+[상황 선택 계약](track-c-travel-situation-194.md)에서 명시적 일정 변경·약 미지참 선택을 추가한다.
+Rule·Copy 2026-09-16.1은 기존 6개 코드·priority·parameters를 유지하고 약 챙기기 안내를 구체화한다.
+과거 2026-09-15.1은 수정하지 않으며 기존 Plan은 해당 버전으로 복원한다. 기술 리뷰·공개 승인과 구분한다.

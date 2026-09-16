@@ -18,6 +18,8 @@ const support = {
 const plan = { support_action_plan_id: planId, barrier_response_id: 'barrier', support_code: 'REMINDER_SETUP', rule_version: 'rule-v1', copy_version: 'copy-v1', action_config_snapshot: support.action_config, status: 'ACTIVE', created_at: '2026-09-16T00:00:00Z', completed_at: null, cancelled_at: null }
 function services(overrides: Partial<TrackCServices> = {}): TrackCServices {
   return {
+    getPushState: vi.fn().mockResolvedValue('granted'),
+    getPlanResources: vi.fn().mockResolvedValue({ support_action_plan_id: planId, barrier_code: 'SCHEDULE_OR_TRAVEL', occurrence_id: occurrenceId, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: support.support_copy }),
     getDay: vi.fn().mockResolvedValue({ data: { occurrences: [{ occurrence_id: occurrenceId, scheduled_local_date: '2026-09-16', status: 'CLOSED', checkin }] } }),
     createSafety: vi.fn().mockResolvedValue(safety), putBarrier: vi.fn().mockResolvedValue(barrier),
     getOffers: vi.fn().mockResolvedValue({ ...barrier, supports: [support], reason_code: null }),
@@ -180,4 +182,46 @@ it('requires actual packing confirmation on the new preparation plan', async () 
   fireEvent.click(screen.getByRole('button', { name: '완료로 저장' }))
   await screen.findByRole('button', { name: '완료 확인하기' })
   expect(svc.patchPlan).toHaveBeenCalledWith(planId, { status: 'COMPLETED', confirmed: true }, expect.any(String))
+})
+
+it.each(['INSTRUCTION_REVIEW', 'PURPOSE_REVIEW'])('shows original records and missing evidence for %s', async code => {
+  const svc = services({ getPlan: vi.fn().mockResolvedValue({ ...plan, support_code: code }) })
+  show(svc, `/dev/track-c/plans/${planId}`)
+  const link = await screen.findByRole('link', { name: '이 기록의 확인된 약 정보 보기 (새 탭)' })
+  expect(link.getAttribute('href')).toBe(`/schedule/occurrences/${occurrenceId}?date=2026-09-16`)
+  expect(screen.getByText(/설명과 근거를 아직 제공할 수 없어요/)).toBeTruthy()
+  if (code === 'INSTRUCTION_REVIEW') expect(screen.getByRole('link', { name: '현재 복약 일정 확인 (새 탭)' }).getAttribute('href')).toBe('/schedule?support_medication=medication')
+  expect(svc.patchPlan).not.toHaveBeenCalled()
+})
+
+it('halts general concern guidance when symptoms arise without marking the plan complete', async () => {
+  const svc = services({ getPlan: vi.fn().mockResolvedValue({ ...plan, support_code: 'MEDICATION_CONCERN_GUIDANCE' }) })
+  show(svc, `/dev/track-c/plans/${planId}`)
+  fireEvent.click(await screen.findByRole('button', { name: '증상이 생겼거나 확실하지 않아요' }))
+  await screen.findByText('현재 도움을 계속 진행할 수 없어요')
+  expect(screen.queryByRole('button', { name: '완료 확인하기' })).toBeNull()
+  expect(svc.patchPlan).not.toHaveBeenCalled()
+  expect(svc.createSafety).not.toHaveBeenCalled()
+})
+
+it('requires a successful push check and rechecks before completing a new forgotten-medication plan', async () => {
+  const getPushState = vi.fn().mockResolvedValueOnce('denied').mockResolvedValueOnce('granted').mockResolvedValueOnce('revoked')
+  const svc = services({
+    getPlan: vi.fn().mockResolvedValue({ ...plan, copy_version: 'track-c-support-copy-ko-2026-09-16.1' }),
+    getPlanResources: vi.fn().mockResolvedValue({ support_action_plan_id: planId, barrier_code: 'FORGOT', occurrence_id: occurrenceId, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: support.support_copy }),
+    getPushState,
+  })
+  show(svc, `/dev/track-c/plans/${planId}`)
+  const check = await screen.findByRole('button', { name: '알림 설정 상태 확인' })
+  expect(screen.getByRole('link', { name: '이 기기 알림 설정 (새 탭)' }).getAttribute('href')).toBe('/settings/notifications')
+  expect(getPushState).not.toHaveBeenCalled()
+  expect((screen.getByRole('button', { name: '완료 확인하기' }) as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(check); await screen.findByText('기기·브라우저 설정에서 알림 허용이 필요해요.')
+  expect((screen.getByRole('button', { name: '완료 확인하기' }) as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(check); await screen.findByText(/이 기기의 알림 수신 등록을 확인했어요/)
+  fireEvent.click(screen.getByRole('button', { name: '완료 확인하기' }))
+  fireEvent.click(screen.getByRole('checkbox', { name: '복약 일정을 확인했고 이 기기의 알림 설정을 마쳤어요.' }))
+  fireEvent.click(screen.getByRole('button', { name: '완료로 저장' }))
+  await screen.findByText(/알림 설정 화면에서 권한과 수신 등록을 확인한 뒤/)
+  expect(svc.patchPlan).not.toHaveBeenCalled()
 })

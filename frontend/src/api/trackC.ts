@@ -104,3 +104,13 @@ export const getOffers = async (id: string, situation?: TravelSituation) => {
 export const createPlan = (body: CreatePlanRequest, key: string) => write<Plan>('/api/v1/support-action-plans', 'POST', body, key)
 export const getPlan = async (id: string) => (await apiRequest<{ data: Plan }>(`/api/v1/support-action-plans/${encodeURIComponent(id)}`, { cache: 'no-store' })).data
 export const patchPlan = (id: string, body: PatchPlanRequest, key: string) => write<Plan>(`/api/v1/support-action-plans/${encodeURIComponent(id)}`, 'PATCH', body, key)
+
+export type PlanResources = {
+  support_action_plan_id: string
+  barrier_code: BarrierCode
+  occurrence_id: string
+  occurrence_local_date: string
+  prescription_version_medication_id: string
+  support_copy: Support['support_copy']
+}
+export const getPlanResources = async (id: string) => (await apiRequest<{ data: PlanResources }>(`/api/v1/support-action-plans/${encodeURIComponent(id)}/resources`, { cache: 'no-store' })).data

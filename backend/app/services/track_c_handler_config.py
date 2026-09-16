@@ -327,6 +327,24 @@ def load_active_support_assets() -> tuple[HandlerConfig, SupportCopyCatalog]:
     return config, catalog
 
 
+def load_historical_plan_copy(plan: SupportActionPlan) -> SupportCopy:
+    config = load_handler_config(
+        _RULES_DIR,
+        plan.rule_version,
+        approved_rule_versions=APPROVED_RULE_VERSIONS,
+        approved_copy_versions=APPROVED_COPY_VERSIONS,
+        approved_rationale_codes=APPROVED_RATIONALE_CODES,
+    )
+    rule = config.supports.get(plan.support_code)
+    if rule is None or rule.copy_version != plan.copy_version:
+        raise HandlerConfigError("historical plan copy reference mismatch")
+    return load_support_copy_catalog(
+        _COPY_DIR,
+        plan.copy_version,
+        approved_copy_versions=APPROVED_COPY_VERSIONS,
+    ).supports[plan.support_code]
+
+
 def load_active_handler_config() -> HandlerConfig:
     config, _ = load_active_support_assets()
     return config

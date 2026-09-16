@@ -8,6 +8,7 @@ import type { MedicationCheckinResponse } from '../api/medicationCheckins'
 import * as api from '../api/trackC'
 import { clearAuthenticatedSession } from '../features/auth/authSession'
 import { Button, Card, MobileShell } from '../design-system/components'
+import { getWebPushState, type WebPushState } from '../features/push/webPush'
 import './TrackCPage.css'
 
 const choices: [api.BarrierCode, string][] = [
@@ -21,7 +22,7 @@ const supportNames: Record<api.SupportCode, string> = {
   MEDICATION_CONCERN_GUIDANCE: '약에 대한 걱정 확인', ACCESS_SUPPORT: '약 접근·비용 도움 확인',
 }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const services = { ...api, getDay: getMedicationOccurrencesByDate }
+const services = { ...api, getPushState: getWebPushState, getDay: getMedicationOccurrencesByDate }
 export type TrackCServices = typeof services
 
 // Each route gets fresh memory-only attempts; never store health data or keys in browser storage.
@@ -41,6 +42,8 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   const [barrier, setBarrier] = useState<api.Barrier | null>(null)
   const [offer, setOffer] = useState<api.Offer | null>(null)
   const [plan, setPlan] = useState<api.Plan | null>(null)
+  const [resources, setResources] = useState<api.PlanResources | null>(null)
+  const [pushState, setPushState] = useState<WebPushState | null>(null)
   const [selected, setSelected] = useState<api.BarrierCode | ''>('')
   const [travelSituation, setTravelSituation] = useState<api.TravelSituation | undefined>()
   const [confirmed, setConfirmed] = useState(false)
@@ -98,7 +101,9 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
       if (planId) {
         if (!uuid.test(planId)) throw new ApiError(404, '')
         const result = await service.getPlan(planId)
-        if (alive.current) { setPlan(result); setStep('plan') }
+        const details = await service.getPlanResources(planId)
+        if (details.support_action_plan_id !== result.support_action_plan_id) throw new ApiError(409, '')
+        if (alive.current) { setPlan(result); setResources(details); setStep('plan') }
       } else {
         if (!uuid.test(occurrenceId) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date) throw new ApiError(404, '')
         const result = await service.getDay(date)
@@ -154,6 +159,12 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
 
   async function changePlan() {
     if (!plan || !terminal || !confirmed) return
+    if (terminal === 'COMPLETED' && needsPushSetup) {
+      const current = await service.getPushState()
+      if (!alive.current) return
+      setPushState(current)
+      if (current !== 'granted') { setConfirmed(false); return }
+    }
     const body: api.PatchPlanRequest = { status: terminal, confirmed: true }
     await service.patchPlan(plan.support_action_plan_id, body, key('patch-plan', plan.support_action_plan_id, body))
     const result = await service.getPlan(plan.support_action_plan_id)
@@ -161,6 +172,10 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   }
 
   const item = offer?.supports[0]
+  const needsPushSetup = plan?.support_code === 'REMINDER_SETUP' && resources?.barrier_code === 'FORGOT' && plan.copy_version === 'track-c-support-copy-ko-2026-09-16.1'
+  const instructionPlan = plan?.support_code === 'INSTRUCTION_REVIEW'
+  const purposePlan = plan?.support_code === 'PURPOSE_REVIEW'
+  const concernPlan = plan?.support_code === 'MEDICATION_CONCERN_GUIDANCE'
   const packingPlan = plan?.support_code === 'ROUTINE_OR_TRAVEL_PLAN' && plan.copy_version === 'track-c-support-copy-ko-2026-09-16.1'
   const reminderTarget = plan?.support_code === 'REMINDER_SETUP' &&
     'prescription_version_medication_id' in plan.action_config_snapshot.parameters
@@ -203,16 +218,27 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
       </Card> : <Card><h2>지금 제안할 수 있는 도움이 없어요</h2><p>복약 기록과 응답은 저장되어 있어요.</p><Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button></Card>)}
       {step === 'plan' && plan && <Card>
         <h2>{packingPlan ? '다음 외출 전 약 챙기기' : supportNames[plan.support_code]}</h2>
-        {packingPlan && <p>다음 외출 전에 필요한 약과 현재 복약 일정을 확인하고 약을 챙겨 두세요. 실제로 준비를 마친 뒤 완료로 표시해 주세요.</p>}
+        {resources && <p>{resources.support_copy.body}</p>}
+        {(instructionPlan || purposePlan) && resources && <>
+          <p><Link to={`/schedule/occurrences/${encodeURIComponent(resources.occurrence_id)}?date=${encodeURIComponent(resources.occurrence_local_date)}`} target="_blank" rel="noopener noreferrer">이 기록의 확인된 약 정보 보기 (새 탭)</Link></p>
+          {instructionPlan && <><p>현재 설정한 일정은 승인된 복용법 설명과 구분해서 확인해 주세요.</p><p><Link to={`/schedule?support_medication=${encodeURIComponent(resources.prescription_version_medication_id)}`} target="_blank" rel="noopener noreferrer">현재 복약 일정 확인 (새 탭)</Link></p></>}
+          <p>이 약에 연결된 {instructionPlan ? '복용법' : '복용 목적'} 설명과 근거를 아직 제공할 수 없어요. 필요한 내용은 약사나 의료진에게 확인해 주세요.</p>
+        </>}
+        {concernPlan && plan.status === 'ACTIVE' && <Button variant="secondary" disabled={busy} onClick={() => { setTerminal(null); setConfirmed(false); setStep('blocked') }}>증상이 생겼거나 확실하지 않아요</Button>}
         <p role="status">{plan.status === 'ACTIVE' ? '진행 중' : plan.status === 'COMPLETED' ? '완료됨' : '취소됨'}</p>
         <p>계획 조회만으로 실행이나 완료가 처리되지 않아요.</p>
         {plan.status === 'ACTIVE' && <>
           {plan.support_code === 'REMINDER_SETUP' && <p><Link to={`/schedule?support_medication=${encodeURIComponent(reminderTarget ?? '')}`} target="_blank" rel="noopener noreferrer">일정 확인·설정 (새 탭)</Link></p>}
+          {needsPushSetup && <>
+            <p><Link to="/settings/notifications" target="_blank" rel="noopener noreferrer">이 기기 알림 설정 (새 탭)</Link></p>
+            <Button variant="secondary" disabled={busy || !!retry} onClick={() => void run(async () => { const state = await service.getPushState(); if (alive.current) setPushState(state) })}>알림 설정 상태 확인</Button>
+            <p role="status">{pushState === 'granted' ? '이 기기의 알림 수신 등록을 확인했어요. 실제 도착 여부는 기기와 네트워크 상태에 따라 달라질 수 있어요.' : pushState === 'denied' ? '기기·브라우저 설정에서 알림 허용이 필요해요.' : pushState === 'unsupported' ? '이 환경에서는 알림 설정을 완료할 수 없어요. 알림 설정 화면에서 지원 환경을 확인해 주세요.' : pushState === 'subscription_failed' ? '알림 연결을 확인하지 못했어요. 설정 화면에서 다시 시도해 주세요.' : '알림 설정 화면에서 권한과 수신 등록을 확인한 뒤 설정 상태를 확인해 주세요.'}</p>
+          </>}
           {!terminal ? <>
-            <Button fullWidth disabled={busy || !!retry} onClick={() => { setTerminal('COMPLETED'); setConfirmed(false) }}>완료 확인하기</Button>
+            <Button fullWidth disabled={busy || !!retry || (needsPushSetup && pushState !== 'granted')} onClick={() => { setTerminal('COMPLETED'); setConfirmed(false) }}>완료 확인하기</Button>
             <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => { setTerminal('CANCELLED'); setConfirmed(false) }}>계획 취소하기</Button>
           </> : <>
-            <label className="track-c-choice"><input type="checkbox" checked={confirmed} disabled={busy || !!retry} onChange={e => setConfirmed(e.target.checked)} /><span>{terminal === 'CANCELLED' ? '이 계획을 취소할게요.' : plan.support_code === 'REMINDER_SETUP' ? '기존 복약 일정을 확인했거나 일정 저장을 마쳤어요.' : packingPlan ? '다음 외출에 필요한 약을 챙겼어요.' : '선택한 실천 계획의 실행을 마쳤어요.'}</span></label>
+            <label className="track-c-choice"><input type="checkbox" checked={confirmed} disabled={busy || !!retry} onChange={e => setConfirmed(e.target.checked)} /><span>{terminal === 'CANCELLED' ? '이 계획을 취소할게요.' : needsPushSetup ? '복약 일정을 확인했고 이 기기의 알림 설정을 마쳤어요.' : plan.support_code === 'REMINDER_SETUP' ? '기존 복약 일정을 확인했거나 일정 저장을 마쳤어요.' : packingPlan ? '다음 외출에 필요한 약을 챙겼어요.' : '선택한 실천 계획의 실행을 마쳤어요.'}</span></label>
             <Button fullWidth disabled={!confirmed || busy || !!retry} onClick={() => void run(changePlan)}>{terminal === 'COMPLETED' ? '완료로 저장' : '취소로 저장'}</Button>
             <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => { setTerminal(null); setConfirmed(false) }}>돌아가기</Button>
           </>}

@@ -61,7 +61,7 @@ Copy는 #192의 버전 파일을 그대로 사용한다. 잘못된 Rule·Copy는
 원문 설정·파일 경로를 오류에 담지 않는다.
 
 6개 설정 모두 현재는 최소 정적 안내형이다. 고급 Constraint/RAG/LLM 라우팅을 임의 구현하지 않는다.
-FORGOT·SCHEDULE_OR_TRAVEL에서 ROUTINE_OR_TRAVEL_PLAN도 후보지만 priority 10의 REMINDER_SETUP만 제안된다.
+상황 선택을 생략한 FORGOT·SCHEDULE_OR_TRAVEL에서는 ROUTINE_OR_TRAVEL_PLAN도 후보지만 priority 10의 REMINDER_SETUP만 제안된다.
 두 번째 후보를 직접 POST로 선택하는 것은 허용되지 않는다.
 
 ## Plan 생성
@@ -122,3 +122,9 @@ Plan과 암호화된 응답 snapshot을 같은 transaction에 저장하고 오�
 
 [Follow-up API v1](../current/track-c-followup-api-194.md)은 완료한 계획의 평가 조회·제출·정정을 별도 계약으로 구체화한다.
 기존 제안·생성·Plan 응답은 변경하지 않는다. 권가빈 구현·김지혜 단일 책임 리뷰로 PR #631에서 Current 경로에 반영하며 최종 승인·병합은 대기 중이다.
+
+## 상황별 연결 후속 — PD-194-3
+
+[상황 선택 계약](track-c-travel-situation-194.md)은 일정 변경·외출의 선택적 입력으로 후보를 제한한다.
+[계획별 자료 계약](track-c-plan-resources-194.md)은 원래 약·기록과 저장 당시 안내의 SELF 조회를 추가한다.
+둘 다 이번 구현·리뷰 대상이며 약별 Citation·임상 Safety 정책의 완료를 뜻하지 않는다.

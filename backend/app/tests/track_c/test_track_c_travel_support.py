@@ -102,3 +102,16 @@ def test_openapi_documents_optional_choice_for_get_and_create_only() -> None:
     assert "travel_situation" in dto["properties"]
     assert "travel_situation" not in dto["required"]
     assert "travel_situation" not in schema["components"]["schemas"]["PatchSupportActionPlanRequest"]["properties"]
+
+
+async def test_omitted_and_null_choice_keep_legacy_idempotency_fingerprint(case: ApiCase) -> None:
+    barrier_id = await prepare(case, "SCHEDULE_OR_TRAVEL")
+    response = await case.client.get(f"/api/v1/barrier-responses/{barrier_id}/supports")
+    support = response.json()["data"]["supports"][0]
+    assert support["support_code"] == "REMINDER_SETUP"
+    body = plan_body(barrier_id, support)
+    created = await create(case, body)
+    assert created.status_code == 200, created.text
+    replayed = await create(case, {**body, "travel_situation": None})
+    assert replayed.status_code == 200, replayed.text
+    assert replayed.json() == created.json()
