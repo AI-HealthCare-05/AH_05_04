@@ -154,6 +154,15 @@ Track C의 목표 API는 다음으로 고정한다.
 - 잠금 순서는 `MEDICATION_CHECKIN → SAFETY_ASSESSMENT → BARRIER_RESPONSE → SUPPORT_ACTION_PLAN`이다.
 - Check-in write transaction의 owner는 Track B다. 현재 `NOT_TAKEN` revision이 `TAKEN` 또는 새 `NOT_TAKEN` revision으로 바뀌면 B가 Track C의 `invalidate_for_checkin_revision` port를 별도 queue·Outbox를 거치지 않는 in-process 동기 함수로 같은 transaction에서 호출한다. 이 호출도 `MEDICATION_CHECKIN → SAFETY_ASSESSMENT → BARRIER_RESPONSE → SUPPORT_ACTION_PLAN` 잠금 순서를 그대로 따르며, 이전 revision의 Safety·Barrier 이력을 보존하고 활성 ActionPlan을 취소한다. 새 상태가 `NOT_TAKEN`이면 Safety부터 다시 시작하며 과거 revision 결과를 현재 흐름에 사용하지 않는다.
 
+## #194 단일 Support 제안·생성 delta
+
+2026-09-15 PM은 기존 최대 2개를 **eligible 후보가 있으면 정렬의 첫 1개, 없으면 0개와
+NO_ELIGIBLE_SUPPORT**로 변경했다. 아래 원본 Freeze v4의 최대 2개 표기는 이력이며
+#194 구현에서는 [PD-194](../../../governance/decisions/2026-09-15-track-c-support-plan-api-194.md)와
+[지원·생성 API 구체화](../../proposed/track-c-support-plan-api-194.md)의 개수 조건을 적용한다.
+PM은 이번 구현을 GET 지원 제안·POST Plan 생성으로 제한했다. Plan 변경·follow-up은 후속이다.
+HTTP 구체화는 기술 리뷰 대상이며 전체 target의 Current 승격이 아니다.
+
 ## Support와 실행계획
 
 - 표시 문구는 enum과 분리해 `copy_version`으로 관리한다.

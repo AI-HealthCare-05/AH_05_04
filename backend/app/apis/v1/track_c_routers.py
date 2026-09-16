@@ -7,21 +7,89 @@ from fastapi.responses import JSONResponse
 from app.core.errors import ErrorResponse
 from app.core.utils.idempotency import build_idempotency_key_openapi_parameter, validate_idempotency_key_format
 from app.dependencies.security import get_request_user
-from app.dependencies.services import get_track_c_api_service
+from app.dependencies.services import get_track_c_api_service, get_track_c_support_service
 from app.dtos.track_c import (
     BarrierResponseEnvelope,
     CreateSafetyAssessmentRequest,
     PutBarrierResponseRequest,
     SafetyAssessmentResponse,
 )
+from app.dtos.track_c_support import CreateSupportActionPlanRequest, SupportActionPlanResponse, SupportOfferResponse
 from app.models.users import User
 from app.services.track_c_api import (
     BARRIER_RESPONSE_PUT_OPERATION_ID,
     SAFETY_ASSESSMENT_POST_OPERATION_ID,
     TrackCApiService,
 )
+from app.services.track_c_support import (
+    SUPPORT_ACTION_PLAN_POST_OPERATION_ID,
+    SUPPORT_OFFER_GET_OPERATION_ID,
+    TrackCSupportService,
+)
 
 track_c_router = APIRouter(tags=["track-c"])
+
+_SUPPORT_ERRORS: dict[int | str, dict[str, Any]] = {
+    401: {"model": ErrorResponse, "description": "인증 필요"},
+    404: {"model": ErrorResponse, "description": "BARRIER_RESPONSE_NOT_FOUND — 미존재·타인 동일 응답"},
+    409: {
+        "model": ErrorResponse,
+        "description": "CHECKIN_FLOW_STALE, SAFETY_FLOW_PRECEDES_SUPPORT, BARRIER_FLOW_STALE",
+    },
+    422: {"model": ErrorResponse, "description": "VALIDATION_FAILED"},
+    503: {"model": ErrorResponse, "description": "SUPPORT_CONFIG_UNAVAILABLE"},
+}
+
+
+@track_c_router.get(
+    "/barrier-responses/{id}/supports",
+    response_model=SupportOfferResponse,
+    operation_id=SUPPORT_OFFER_GET_OPERATION_ID,
+    responses=_SUPPORT_ERRORS,
+)
+async def get_support_offers(
+    id: UUID,
+    user: Annotated[User, Depends(get_request_user)],
+    service: Annotated[TrackCSupportService, Depends(get_track_c_support_service)],
+) -> SupportOfferResponse:
+    return await service.get_supports(user_id=user.id, barrier_id=id)
+
+
+@track_c_router.post(
+    "/support-action-plans",
+    response_model=SupportActionPlanResponse,
+    status_code=200,
+    operation_id=SUPPORT_ACTION_PLAN_POST_OPERATION_ID,
+    responses={
+        **_SUPPORT_ERRORS,
+        400: {"model": ErrorResponse, "description": "Idempotency-Key 누락 또는 형식 오류"},
+        409: {
+            "model": ErrorResponse,
+            "description": "CHECKIN_FLOW_STALE, SAFETY_FLOW_PRECEDES_SUPPORT, BARRIER_FLOW_STALE, "
+            "SUPPORT_VERSION_CONFLICT, SUPPORT_NOT_OFFERED, ACTION_PLAN_ALREADY_ACTIVE, IDEMPOTENCY_KEY_CONFLICT",
+        },
+        503: {
+            "model": ErrorResponse,
+            "description": "SUPPORT_CONFIG_UNAVAILABLE, IDEMPOTENCY_RESPONSE_TOO_LARGE",
+        },
+    },
+    openapi_extra={
+        "parameters": [
+            build_idempotency_key_openapi_parameter(description="사용자가 확정한 지원 계획 생성의 멱등성 키")
+        ]
+    },
+)
+async def create_support_action_plan(
+    request: CreateSupportActionPlanRequest,
+    user: Annotated[User, Depends(get_request_user)],
+    service: Annotated[TrackCSupportService, Depends(get_track_c_support_service)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", include_in_schema=False)] = None,
+) -> JSONResponse:
+    validate_idempotency_key_format(idempotency_key or "")
+    assert idempotency_key is not None
+    result = await service.create_plan(user_id=user.id, request=request, idempotency_key=idempotency_key)
+    return JSONResponse(content=result.response_body, status_code=result.response_status)
+
 
 _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     400: {"model": ErrorResponse, "description": "Idempotency-Key 누락 또는 형식 오류"},

@@ -23,9 +23,11 @@ from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
+from app.models.user_consents import ConsentPurpose, ConsentStatus, UserConsent
 from app.models.users import Gender, User
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.services import user_consent_policy
 from app.services.chat_ai import (
     ChatGenerationFailedError,
     ChatReplyInput,
@@ -43,6 +45,7 @@ SAFE_TIMEOUT_MESSAGE = "OpenAI 호출이 제한 시간 내에 완료되지 않�
 @dataclass(frozen=True)
 class ApiChatFixture:
     owner_id: UUID
+    foreign_user_id: UUID
     active_session_id: UUID
     closed_session_id: UUID
     foreign_session_id: UUID
@@ -239,12 +242,26 @@ async def api_chat_fixture(api_db_session: AsyncSession) -> ApiChatFixture:
         prescription_version_id=foreign_prescription.active_version_id,
         profile_id=foreign_prescription.profile_id,
     )
-    api_db_session.add_all([active, closed, foreign])
+    api_db_session.add_all(
+        [
+            active,
+            closed,
+            foreign,
+            UserConsent(
+                user_id=owner.id,
+                purpose=ConsentPurpose.CHAT,
+                status=ConsentStatus.GRANTED,
+                policy_version="chat-consent.v1",
+                granted_at=datetime.now(UTC),
+            ),
+        ]
+    )
     await api_db_session.flush()
     await api_db_session.commit()
     assert owner_prescription.active_version_id is not None
     return ApiChatFixture(
         owner_id=owner.id,
+        foreign_user_id=outsider.id,
         active_session_id=active.id,
         closed_session_id=closed.id,
         foreign_session_id=foreign.id,
@@ -274,7 +291,11 @@ def clear_chat_dependency_overrides() -> Iterator[None]:
 
 
 def _use_owner_and_engine(fixture: ApiChatFixture, engine: FakeChatEngine) -> None:
-    fastapi_app.dependency_overrides[get_request_user] = lambda: SimpleNamespace(id=fixture.owner_id)
+    fastapi_app.dependency_overrides[get_request_user] = lambda: SimpleNamespace(
+        id=fixture.owner_id,
+        account_status="ACTIVE",
+        is_active=True,
+    )
     fastapi_app.dependency_overrides[get_chat_engine] = lambda: engine
 
 
@@ -333,6 +354,171 @@ async def test_send_message_201_matches_completed_assistant_persisted_content_an
     assert engine.inputs[0].content == "현재 합성 질문"
     assert response.headers.get_list("cache-control") == ["no-store"]
     assert response.headers["access-control-allow-origin"] == TEST_ORIGIN
+
+
+@pytest.mark.parametrize("state", ["missing", "withdrawn", "policy_mismatch"])
+async def test_send_message_requires_chat_consent_before_message_or_engine_side_effects(
+    client: AsyncClient,
+    api_db_session: AsyncSession,
+    api_chat_fixture: ApiChatFixture,
+    state: str,
+) -> None:
+    engine = FakeChatEngine()
+    _use_owner_and_engine(api_chat_fixture, engine)
+    consent = await api_db_session.scalar(
+        select(UserConsent).where(
+            UserConsent.user_id == api_chat_fixture.owner_id,
+            UserConsent.purpose == ConsentPurpose.CHAT,
+        )
+    )
+    assert consent is not None
+    if state == "missing":
+        await api_db_session.delete(consent)
+    elif state == "withdrawn":
+        consent.status = ConsentStatus.WITHDRAWN
+        consent.withdrawn_at = datetime.now(UTC)
+    else:
+        consent.policy_version = "chat-consent.old"
+    await api_db_session.commit()
+
+    response = await client.post(
+        f"/api/v1/chat-sessions/{api_chat_fixture.active_session_id}/messages",
+        json={"content": "동의 차단 합성 질문"},
+    )
+
+    _assert_private_error(
+        response,
+        status_code=403,
+        code="CONSENT_REQUIRED",
+        message="처방전 처리 동의가 필요합니다.",
+        details=[],
+    )
+    message_count = await api_db_session.scalar(
+        select(func.count(ChatMessage.id)).where(ChatMessage.session_id == api_chat_fixture.active_session_id)
+    )
+    assert message_count == 0
+    assert engine.inputs == []
+
+
+@pytest.mark.parametrize("purpose", [ConsentPurpose.OCR, ConsentPurpose.GUIDE])
+async def test_send_message_rejects_other_purpose_consent_before_provider_call(
+    client: AsyncClient,
+    api_db_session: AsyncSession,
+    api_chat_fixture: ApiChatFixture,
+    purpose: ConsentPurpose,
+) -> None:
+    engine = FakeChatEngine()
+    _use_owner_and_engine(api_chat_fixture, engine)
+    consent = await api_db_session.scalar(
+        select(UserConsent).where(
+            UserConsent.user_id == api_chat_fixture.owner_id,
+            UserConsent.purpose == ConsentPurpose.CHAT,
+        )
+    )
+    assert consent is not None
+    await api_db_session.delete(consent)
+    api_db_session.add(
+        UserConsent(
+            user_id=api_chat_fixture.owner_id,
+            purpose=purpose,
+            status=ConsentStatus.GRANTED,
+            policy_version=f"{purpose.value.lower()}-consent.v1",
+            granted_at=datetime.now(UTC),
+        )
+    )
+    await api_db_session.commit()
+
+    response = await client.post(
+        f"/api/v1/chat-sessions/{api_chat_fixture.active_session_id}/messages",
+        json={"content": "다른 목적 동의 차단 합성 질문"},
+    )
+
+    _assert_private_error(
+        response,
+        status_code=403,
+        code="CONSENT_REQUIRED",
+        message="처방전 처리 동의가 필요합니다.",
+        details=[],
+    )
+    message_count = await api_db_session.scalar(
+        select(func.count(ChatMessage.id)).where(ChatMessage.session_id == api_chat_fixture.active_session_id)
+    )
+    assert message_count == 0
+    assert engine.inputs == []
+
+
+async def test_send_message_ignores_other_users_chat_consent_before_provider_call(
+    client: AsyncClient,
+    api_db_session: AsyncSession,
+    api_chat_fixture: ApiChatFixture,
+) -> None:
+    engine = FakeChatEngine()
+    _use_owner_and_engine(api_chat_fixture, engine)
+    consent = await api_db_session.scalar(
+        select(UserConsent).where(
+            UserConsent.user_id == api_chat_fixture.owner_id,
+            UserConsent.purpose == ConsentPurpose.CHAT,
+        )
+    )
+    assert consent is not None
+    await api_db_session.delete(consent)
+    api_db_session.add(
+        UserConsent(
+            user_id=api_chat_fixture.foreign_user_id,
+            purpose=ConsentPurpose.CHAT,
+            status=ConsentStatus.GRANTED,
+            policy_version="chat-consent.v1",
+            granted_at=datetime.now(UTC),
+        )
+    )
+    await api_db_session.commit()
+
+    response = await client.post(
+        f"/api/v1/chat-sessions/{api_chat_fixture.active_session_id}/messages",
+        json={"content": "타 사용자 동의 차단 합성 질문"},
+    )
+
+    _assert_private_error(
+        response,
+        status_code=403,
+        code="CONSENT_REQUIRED",
+        message="처방전 처리 동의가 필요합니다.",
+        details=[],
+    )
+    message_count = await api_db_session.scalar(
+        select(func.count(ChatMessage.id)).where(ChatMessage.session_id == api_chat_fixture.active_session_id)
+    )
+    assert message_count == 0
+    assert engine.inputs == []
+
+
+async def test_send_message_fails_closed_when_chat_policy_version_is_unavailable(
+    client: AsyncClient,
+    api_db_session: AsyncSession,
+    api_chat_fixture: ApiChatFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = FakeChatEngine()
+    _use_owner_and_engine(api_chat_fixture, engine)
+    monkeypatch.setitem(user_consent_policy.STATIC_CONSENT_POLICY_VERSIONS, ConsentPurpose.CHAT, "")
+
+    response = await client.post(
+        f"/api/v1/chat-sessions/{api_chat_fixture.active_session_id}/messages",
+        json={"content": "정책 미설정 차단 합성 질문"},
+    )
+
+    _assert_private_error(
+        response,
+        status_code=503,
+        code="CONSENT_POLICY_UNAVAILABLE",
+        message="현재 동의 안내를 사용할 수 없습니다.",
+        details=[],
+    )
+    message_count = await api_db_session.scalar(
+        select(func.count(ChatMessage.id)).where(ChatMessage.session_id == api_chat_fixture.active_session_id)
+    )
+    assert message_count == 0
+    assert engine.inputs == []
 
 
 async def test_create_and_list_route_successes_have_exact_no_store(
