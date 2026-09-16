@@ -7,7 +7,7 @@
 | 구현 담당 | 정현우 (`@ceohwj`) |
 | 단일 책임 리뷰 | 송은영 (`@phina-io`) — Backend·DB·Security·AI Worker Search/RRF 경계 |
 | 전문 검토 근거 | Evidence·Scope·Safety 권가빈, Source provenance 김지혜; 추가 필수 PR 리뷰어가 아님 |
-| 기준 | RAG P0 Approved Target, Approved `PD-362`, Approved `PD-315-20260908`(PR #361), PR #482 저장 기반 |
+| 기준 | RAG P0 Approved Target, Approved `PD-362`, PR #482 저장 기반; `PD-315-20260908`은 PR #361 책임 리뷰 `APPROVED` event 확보·승인 조건 미해소 |
 | 공개 | `PUBLIC_TRACK_F=false` 유지 |
 
 ## 1. 결정
@@ -33,8 +33,9 @@ RRF를 `EvidenceRerankPort` 구현이라고 부르지 않는다. 정규 파이�
 ### 1.1 권위·승인 선행조건
 
 사용자가 승인한 것은 **이번 PR을 Search + RRF로 제한하는 범위 분리**다. Exact/Trigram/FTS 세부
-configuration, `rrf_k=60`, Top-K와 안정 좌표를 정한 `PD-315-20260908`은 PR #361에서 `Approved`다. 다만
-Decision 승인은 구현·Current 승격·Runtime 활성화가 아니며 이 문서가 구현 승인을 대신하지도 않는다.
+configuration, `rrf_k=60`, Top-K와 안정 좌표를 정한 `PD-315-20260908`은 PR #361에서 책임 리뷰 `APPROVED`
+event를 확보했으나 승인 본문이 요구한 최신 HEAD specialist 확인이 없어 조건이 미해소다. 이 문서가 그 조건
+해소나 구현 승인을 대신하지 않는다.
 
 - Gemini는 설계·테스트 초안을 준비할 수 있지만, Production 동작을 구현하기 전 #178 또는 후속 Decision에
   권가빈의 Evidence·Safety 책임 승인과 김지혜의 Source provenance 검토 근거를 기록한다.
@@ -714,6 +715,7 @@ Gemini는 다음 순서를 따른다.
 - Runtime Guard·Retrieval Run·Evidence Gate transaction을 이 PR에 포함해야만 테스트가 통과함
 - HNSW dimension/version-specific DDL 계약 없이 ANN 성능을 주장해야 함
 - 기존 shared contract와 이 설계가 충돌함
+- `PD-315` 승인 조건 미해소 상태에서 그 세부값을 확정 승인으로 소비해야 함
 - Proposed lexical/index-ref 계약의 책임 승인 근거가 없음
 - PostgreSQL locale/collation에서 제안 Exact·Trigram·FTS 의미를 재현하지 못함
 

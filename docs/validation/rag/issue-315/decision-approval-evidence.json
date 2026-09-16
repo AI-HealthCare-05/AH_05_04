@@ -3,13 +3,12 @@
   "format_version": "1.0.0",
   "issue": "#315",
   "decision_id": "PD-315-20260908",
-  "decision_status": "APPROVED",
+  "decision_status": "RESPONSIBLE_APPROVAL_EVENT_RECORDED_CONDITION_UNRESOLVED",
   "approval_recorded": true,
-  "approval_condition_met": true,
   "contract_status": "REPOSITORY_LOCAL_NON_RUNTIME_PROJECTION",
   "contract_status_directory": "docs/contracts/targets/post-mvp-1",
-  "purpose": "DECISION_APPROVAL_EVIDENCE",
-  "purpose_note": "PD-315-20260908의 Approved 전이 근거. PR #361 최종 HEAD d8ad7407에 결속된 지정 책임 리뷰어 1인의 APPROVED review와 PR merge가 승인 정본이다. 이 파일은 #662에서 저장소 문서 상태를 immutable GitHub evidence와 정합할 때 수집했으며, 새 승인 event를 만들지 않고 기존 event를 기록만 한다.",
+  "purpose": "DECISION_APPROVAL_PROVENANCE_AND_UNRESOLVED_CONDITION",
+  "purpose_note": "PR #361 최종 HEAD d8ad7407에 결속된 지정 책임 리뷰어의 APPROVED review event를 historical evidence로 기록한다. 그 승인 본문이 명시한 최신 HEAD specialist 확인 조건은 해소되지 않았으므로, 이 파일은 event의 실재를 원 승인 조건의 충족으로 투영하지 않는다. #662에서 저장소 문서 상태를 immutable GitHub evidence와 정합할 때 수집했으며 새 승인 event를 만들지 않는다.",
   "collected_in": {
     "issue": "#662",
     "note": "승인 상태 및 stale reference 정합 작업. 과거 evidence를 변경하지 않고 저장소 문서 표현만 정합한다."
@@ -66,7 +65,7 @@
     "rule_note": "PR의 최종 승인 책임자는 정확히 1명의 responsible reviewer다. specialist·domain 리뷰 의견은 필요한 evidence로 첨부하며 추가 필수 PR 리뷰어로 지정하지 않는다.",
     "final_approval_owner": "hazelnutflavoured",
     "approved_review_events_on_pull_request": 1,
-    "note": "PR #361 전체 review event 중 state=APPROVED인 것은 review 5142835401 단 1건이며, 그 commit_id가 최종 HEAD와 같다."
+    "note": "PR #361 전체 review event 중 state=APPROVED인 것은 review 5142835401 단 1건이며, 그 commit_id가 최종 HEAD와 같다. 다만 그 승인 본문이 명시한 최신 HEAD specialist 확인 조건은 해소되지 않았다 — original_approval_condition 참조."
   },
   "head_freshness_check": {
     "approvals_target_head": true,
@@ -204,9 +203,14 @@
     "current_contract": false,
     "production_enabled": false,
     "public": false,
-    "note": "Approved Decision은 Implemented·Current Contract·Production Enabled·Public 중 어느 것도 의미하지 않는다."
+    "note": "이 Decision은 현재 Approved가 아니다. 조건이 해소되어 Approved로 전이하더라도 Approved Decision은 Implemented·Current Contract·Production Enabled·Public 중 어느 것도 의미하지 않는다."
   },
   "remaining_blockers": [
+    {
+      "item": "PD_315_ORIGINAL_APPROVAL_CONDITION",
+      "status": "NOT_RESOLVED",
+      "note": "review 5142835401 본문이 요구한 최신 HEAD Source·DB specialist 확인이 없다. current_approval_condition.resolution_paths 참조."
+    },
     {
       "item": "ISSUE_174_AUTHENTICATED_ASSEMBLER",
       "status": "NOT_COMPLETE",
@@ -227,5 +231,51 @@
       "status": "NOT_COMPLETE",
       "note": "외부 의료·약학·Source·Privacy·Safety 승인은 코드 리뷰와 별도 게이트이며 docs/release-gates/post-mvp-1-external-approvals.md를 따른다."
     }
-  ]
+  ],
+  "original_approval_condition": {
+    "source": "github-pr-361-review-5142835401-body",
+    "condition_text": "승인합니다. 다만 이 승인은 최신 head에 대한 Source·DB 교차 리뷰와 외부 의료·Source·Privacy 승인 게이트를 대체하지 않으므로, 해당 담당 리뷰어의 최신 승인까지 확인한 뒤 merge해 주세요.",
+    "met_at_merge": false,
+    "assessment": "NOT_ESTABLISHED_AT_FINAL_HEAD",
+    "reason": "specialist final-head confirmations were not present; PR #361 최종 HEAD d8ad7407에 대한 specialist 재승인 event가 없다.",
+    "retroactive_satisfaction_claimed": false,
+    "note": "PR #361은 이 조건이 요구한 최신 HEAD specialist 확인 없이 2026-09-08T14:29:16Z에 병합됐다. 이 파일은 그 사실을 철회하거나 사후 서명으로 대체하지 않는다."
+  },
+  "governance_readjudication": {
+    "status": "NOT_RECORDED",
+    "responsible_reviewer": "hazelnutflavoured",
+    "effective_at": null,
+    "evidence_url": null,
+    "decision": null,
+    "note": "현행 governance(CONTRIBUTING.md, AGENTS.md)는 최종 승인 책임자를 단일 responsible reviewer로 두지만, 그 사실만으로 original_approval_condition이 당시 충족됐다는 결론을 만들 수 없다. 조건 조정에는 지정 책임 리뷰어의 명시적 재판정과 적용 시점 기록이 필요하며, 작성 시점에 해당 기록이 없다."
+  },
+  "current_approval_condition": {
+    "met": false,
+    "basis": "NONE_RECORDED",
+    "resolution_paths": [
+      "최종 HEAD d8ad7407를 대상으로 한 specialist 확인 근거 기록",
+      "지정 책임 리뷰어가 original_approval_condition을 현행 단일 책임 리뷰 체계에 맞춰 조정한다는 명시적 재판정과 적용 시점 기록"
+    ]
+  },
+  "open_findings": [
+    {
+      "evidence_id": "github-pr-666-comment-5698513038",
+      "comment_id": 5698513038,
+      "comment_node_id": "IC_kwDOT3EWNs8AAAABU6hojg",
+      "comment_url": "https://github.com/AI-HealthCare-05/AH_05_04/pull/666#issuecomment-5698513038",
+      "created_at": "2026-09-16T13:45:38.000000Z",
+      "actor": {
+        "actor_id": "hazelnutflavoured",
+        "namespace": "GITHUB_LOGIN",
+        "role": "RESPONSIBLE_REVIEWER_ISSUE_662"
+      },
+      "pull_request": 666,
+      "reviewed_head_commit_sha": "bb5843bb552849e0fca3b41ec1c69317f899548a",
+      "verdict": "REQUEST_CHANGES",
+      "finding": "MUST FIX — 승인 이벤트와 원 승인 조건 충족을 구분해 기록할 것.",
+      "status": "APPLIED",
+      "applied_note": "이 파일에서 approval_condition_met를 제거하고 original_approval_condition / governance_readjudication / current_approval_condition로 분리했다. Decision 문서의 상태도 '승인 조건 미해소'로 정합했다."
+    }
+  ],
+  "approval_events_note": "approval_events는 GitHub에 실재하는 책임 리뷰 APPROVED event의 historical evidence다. 이 배열의 존재가 original_approval_condition의 충족을 의미하지 않는다. 조건 충족 여부는 current_approval_condition이 소유한다."
 }

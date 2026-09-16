@@ -28,7 +28,7 @@ Issue #180 Runtime Orchestration 구현에 앞서, #174 REQUEST Guard의 Source/
 3. **#180 Endpoint Member 계약 정렬 및 차단 해소 (`PD-180-EM-20260916`)**:
    - 기존에는 PD-315/PD-362가 Endpoint Member의 `operation_code`를 nullable로 허용하는 반면 Citation validator와 Citation Authorization이 non-null 값을 요구하여, `BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT` 비강제 marker로 차단 사항을 기록했었다.
    - **해소 경위**: `PD-180-EM-20260916` 결정 및 `source-member-identity-v1` 공유 순수 커널 도입을 통해 downstream validator의 nullable `operation_code` 계약 정렬이 완료되었으며, `BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT` 비강제 marker는 코드와 계약에서 완전히 제거되고 typed 검증으로 대체되었다.
-   - **Authority Boundary 유지**: 본 계약 정렬은 순수 검증 계층에 국한되며 runtime authority 활성화를 의미하지 않는다. PD-315 정책 승인은 PR #361에서 충족됐으나, #174 authenticated assembler 구현과 #180에 남아 있는 runtime integration 조건은 별도로 충족되어야 한다.
+   - **Authority Boundary 유지**: 본 계약 정렬은 순수 검증 계층에 국한되며 runtime authority 활성화를 의미하지 않는다. PD-315 승인 조건(최신 HEAD specialist 확인) 미해소, #174 authenticated assembler 구현, #180에 남아 있는 runtime integration 조건은 별도로 충족되어야 한다.
 4. **비식별 및 민감 텍스트 보호 경계 (SensitiveText Boundary)**:
    - 검색된 증거 원문(Content A)은 인메모리 `SensitiveText`로만 전달되며, 영구 저장소·로그·`repr`·해시 preimage에 절대 원문 그대로 노출되어서는 안 된다 (`<redacted>` 보호).
    - 해시 프로젝션에는 `content_sha256` 다이제스트만 포함한다.
