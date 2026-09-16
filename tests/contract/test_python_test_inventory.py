@@ -308,6 +308,17 @@ def test_python_test_inventory_ignores_directories_named_like_tests(tmp_path: Pa
     assert "misc/test_not_a_file.py" not in result.stderr
 
 
+def test_python_test_inventory_ignores_local_worktrees(tmp_path: Path) -> None:
+    worktree_test = tmp_path / ".worktrees" / "feature" / "tests" / "test_worktree.py"
+    worktree_test.parent.mkdir(parents=True)
+    worktree_test.touch()
+
+    result = _run_inventory_check(tmp_path)
+
+    assert ".worktrees" not in result.stderr
+    assert "test_worktree.py" not in result.stderr
+
+
 def test_repository_python_tests_are_all_classified_for_default_or_opt_in_execution() -> None:
     result = _run_inventory_check(PROJECT_ROOT)
 
