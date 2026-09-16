@@ -74,6 +74,7 @@ class OpenAIResponsesClient:
                 max_output_tokens=max_output_tokens,
                 store=False,
                 stream=False,
+                temperature=0,
             )
         except asyncio.CancelledError:
             self._observer.failed(
