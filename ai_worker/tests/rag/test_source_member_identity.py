@@ -2,21 +2,28 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from enum import StrEnum
 from uuid import UUID
 
 import pytest
 
 from ai_worker.tasks.rag.citation_authorization import (
+    CitationAuthorizationRequest,
+    CitationAuthorizationSelectionEntry,
     GuardDecision,
     GuardOperation,
     OriginRequestGuardBinding,
     RuntimeAuthorizationBinding,
     RuntimeEnvironment,
     _authorization_entries,
+    _request_is_valid,
+    _selection_is_valid,
     build_citation_authorization_request,
     canonical_scope_manifest_hash,
 )
 from ai_worker.tasks.rag.claim_citation_validator import (
+    CandidateValidationDecision,
+    CandidateValidationReason,
     CitationCandidate,
     CitationSourceType,
     ClaimCandidate,
@@ -35,9 +42,12 @@ from ai_worker.tasks.rag.claim_citation_validator import (
 )
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
 from ai_worker.tasks.rag.guide_evidence_handoff import (
+    GuideEvidenceHandoffBuildDecision,
+    GuideEvidenceHandoffReason,
     RequestDecisionStage,
     SensitiveText,
     VerifiedGuideEvidenceSelection,
+    build_guide_evidence_handoff,
     compute_guide_evidence_handoff_hash,
 )
 from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import SourceSnapshotMemberKind
@@ -280,13 +290,150 @@ def test_non_source_member_identity_type_rejected_immediately() -> None:
     assert validate_source_member_identity(None) == (SourceMemberIdentityReason.MEMBER_KIND_INVALID,)
 
 
-def test_invalid_member_kind_rejected_without_field_checks() -> None:
-    # Construct an invalid object with arbitrary member_kind
-    class FakeIdentity:
-        member_kind = "UNKNOWN"
-        endpoint_code = None
+class ForeignStrEnum(StrEnum):
+    ENDPOINT_OPERATION = "ENDPOINT_OPERATION"
+    ARTIFACT_MEMBER = "ARTIFACT_MEMBER"
 
-    assert validate_source_member_identity(FakeIdentity()) == (SourceMemberIdentityReason.MEMBER_KIND_INVALID,)
+
+@pytest.mark.parametrize(
+    "member_kind, endpoint_code, operation_code, artifact_code, artifact_version, expected_reasons",
+    [
+        # 1. Enum all members (valid cases)
+        (
+            SourceMemberKind.ENDPOINT_OPERATION,
+            "ep_01",
+            "op_01",
+            None,
+            None,
+            (),
+        ),
+        (
+            SourceMemberKind.ENDPOINT_OPERATION,
+            "ep_01",
+            None,
+            None,
+            None,
+            (),
+        ),
+        (
+            SourceMemberKind.ARTIFACT_MEMBER,
+            None,
+            None,
+            "art_01",
+            "v1",
+            (),
+        ),
+        # 2. Identical strings (2 kinds) - MUST be rejected with MEMBER_KIND_INVALID
+        (
+            "ENDPOINT_OPERATION",
+            "ep_01",
+            "op_01",
+            None,
+            None,
+            (SourceMemberIdentityReason.MEMBER_KIND_INVALID,),
+        ),
+        (
+            "ENDPOINT_OPERATION",
+            None,
+            None,
+            "doc",
+            "v1",
+            (SourceMemberIdentityReason.MEMBER_KIND_INVALID,),
+        ),  # Reviewer's exact bypass trick
+        (
+            "ARTIFACT_MEMBER",
+            None,
+            None,
+            "art_01",
+            "v1",
+            (SourceMemberIdentityReason.MEMBER_KIND_INVALID,),
+        ),
+        (
+            "ARTIFACT_MEMBER",
+            "ep_01",
+            "op_01",
+            None,
+            None,
+            (SourceMemberIdentityReason.MEMBER_KIND_INVALID,),
+        ),
+        # 3. Foreign StrEnums with identical values
+        (
+            ForeignStrEnum.ENDPOINT_OPERATION,
+            "ep_01",
+            "op_01",
+            None,
+            None,
+            (SourceMemberIdentityReason.MEMBER_KIND_INVALID,),
+        ),
+        (
+            ForeignStrEnum.ARTIFACT_MEMBER,
+            None,
+            None,
+            "art_01",
+            "v1",
+            (SourceMemberIdentityReason.MEMBER_KIND_INVALID,),
+        ),
+        (
+            SourceSnapshotMemberKind.ENDPOINT_OPERATION,
+            "ep_01",
+            "op_01",
+            None,
+            None,
+            (SourceMemberIdentityReason.MEMBER_KIND_INVALID,),
+        ),
+        (
+            SourceSnapshotMemberKind.ARTIFACT,
+            None,
+            None,
+            "art_01",
+            "v1",
+            (SourceMemberIdentityReason.MEMBER_KIND_INVALID,),
+        ),
+        # 4. Unsupported values
+        (
+            "UNKNOWN_KIND",
+            "ep_01",
+            None,
+            None,
+            None,
+            (SourceMemberIdentityReason.MEMBER_KIND_INVALID,),
+        ),
+        (
+            None,
+            "ep_01",
+            None,
+            None,
+            None,
+            (SourceMemberIdentityReason.MEMBER_KIND_INVALID,),
+        ),
+        (
+            12345,
+            "ep_01",
+            None,
+            None,
+            None,
+            (SourceMemberIdentityReason.MEMBER_KIND_INVALID,),
+        ),
+    ],
+)
+def test_member_kind_strict_type_enforcement_parameterized(
+    member_kind,
+    endpoint_code,
+    operation_code,
+    artifact_code,
+    artifact_version,
+    expected_reasons,
+) -> None:
+    identity = SourceMemberIdentity(
+        member_kind=member_kind,
+        endpoint_code=endpoint_code,
+        operation_code=operation_code,
+        artifact_code=artifact_code,
+        artifact_version=artifact_version,
+    )
+    reasons = validate_source_member_identity(identity)
+    assert reasons == expected_reasons
+    assert is_valid_source_member_identity(identity) is (len(expected_reasons) == 0)
 
 
 def test_reasons_are_strictly_deduplicated_and_sorted() -> None:
@@ -635,3 +782,119 @@ def test_selection_payload_deduplication_preserves_single_member_entry() -> None
     assert len(entries) == 1
     assert entries[0].endpoint_code == "endpoint-001"
     assert entries[0].operation_code == "get_knowledge"
+
+
+# -----------------------------------------------------------------------------
+# Consumer Typed Rejection Tests: Invalid member_kind without exception
+# -----------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "invalid_kind",
+    [
+        "ENDPOINT_OPERATION",
+        "ARTIFACT_MEMBER",
+        ForeignStrEnum.ENDPOINT_OPERATION,
+        SourceSnapshotMemberKind.ENDPOINT_OPERATION,
+        "UNSUPPORTED",
+    ],
+)
+def test_claim_citation_validator_rejects_invalid_member_kind_without_exception(invalid_kind) -> None:
+    binding = SourceExecutionProvenance(
+        source_code="knowledge-source",
+        source_version="2026-09-01",
+        member_kind=invalid_kind,
+        endpoint_code="endpoint-001",
+        operation_code="get_knowledge",
+        artifact_code=None,
+        artifact_version=None,
+        request_source_decision_ref=_art("knowledge-source-decision", _B),
+        request_member_decision_ref=_art("knowledge-source-member-decision", _C),
+    )
+    cs = _make_golden_candidate_set(binding)
+    rcpt = ClaimSupportVerificationReceipt(
+        claim_key=cs.claims[0].claim_key,
+        support_status=cs.claims[0].support_assertion.support_status,
+        claim_text_digest=cs.claims[0].text_digest,
+        assessment_ref=cs.claims[0].support_assertion.assessment_ref,
+        verifier_artifact_ref=_art("support-verifier", _C),
+        projection_sha256=_A,
+    )
+
+    outcome = validate_claim_citations(cs, (rcpt,))
+
+    assert outcome.decision is CandidateValidationDecision.REJECTED
+    assert CandidateValidationReason.EVIDENCE_PROVENANCE_INVALID in outcome.reasons
+    assert outcome.validated_selection is None
+
+
+@pytest.mark.parametrize(
+    "invalid_kind",
+    [
+        "ENDPOINT_OPERATION",
+        "ARTIFACT_MEMBER",
+        ForeignStrEnum.ENDPOINT_OPERATION,
+        SourceSnapshotMemberKind.ENDPOINT_OPERATION,
+        "UNSUPPORTED",
+    ],
+)
+def test_citation_authorization_rejects_invalid_member_kind_without_exception(invalid_kind) -> None:
+    entry = CitationAuthorizationSelectionEntry(
+        source_code="knowledge-source",
+        source_version="2026-09-01",
+        member_kind=invalid_kind,
+        endpoint_code="endpoint-001",
+        operation_code="get_knowledge",
+        artifact_code=None,
+        artifact_version=None,
+    )
+    assert _selection_is_valid(entry) is False
+
+    runtime = RuntimeAuthorizationBinding(
+        environment=RuntimeEnvironment.TEST,
+        bundle_id="bundle-001",
+        bundle_manifest_hash=_A,
+        request_scope_codes=("GUIDE", "PATIENT_CITATION"),
+        scope_manifest_hash=canonical_scope_manifest_hash(("GUIDE", "PATIENT_CITATION")),
+    )
+    origin = OriginRequestGuardBinding(
+        guard_ref=_art("origin-guard"),
+        decision=GuardDecision.PASS,
+        operation=GuardOperation.REQUEST,
+        environment=RuntimeEnvironment.TEST,
+        bundle_id="bundle-001",
+        bundle_manifest_hash=_A,
+        request_scope_codes=("GUIDE", "PATIENT_CITATION"),
+        scope_manifest_hash=canonical_scope_manifest_hash(("GUIDE", "PATIENT_CITATION")),
+    )
+    req = CitationAuthorizationRequest(
+        origin_request_guard=origin,
+        runtime_binding=runtime,
+        validated_selection_sha256=_B,
+        selection_manifest=(entry,),
+        selection_manifest_sha256=_C,
+        request_sha256=_D,
+    )
+    assert _request_is_valid(req) is False
+
+
+@pytest.mark.parametrize(
+    "invalid_kind",
+    [
+        "ENDPOINT_OPERATION",
+        "ARTIFACT_MEMBER",
+        ForeignStrEnum.ENDPOINT_OPERATION,
+        SourceSnapshotMemberKind.ENDPOINT_OPERATION,
+        "UNSUPPORTED",
+    ],
+)
+def test_guide_evidence_handoff_rejects_invalid_member_kind_without_exception(invalid_kind) -> None:
+    from ai_worker.tests.rag.test_guide_evidence_handoff import _make_valid_handoff_components
+
+    req, _ = _make_valid_handoff_components()
+    mutated_binding = replace(req.selections[0].binding, member_kind=invalid_kind)
+    mutated_sel = replace(req.selections[0], binding=mutated_binding)
+    mutated_req = replace(req, selections=(mutated_sel, req.selections[1]))
+
+    outcome = build_guide_evidence_handoff(mutated_req)
+    assert outcome.decision == GuideEvidenceHandoffBuildDecision.REJECTED
+    assert GuideEvidenceHandoffReason.MEMBER_IDENTITY_INVALID in outcome.reasons
+    assert outcome.handoff is None

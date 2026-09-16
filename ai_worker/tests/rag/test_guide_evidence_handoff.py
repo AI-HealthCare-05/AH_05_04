@@ -1906,3 +1906,19 @@ def test_rejects_query_fingerprint_with_wrong_runtime_type() -> None:
 
     assert outcome.decision == GuideEvidenceHandoffBuildDecision.REJECTED
     assert GuideEvidenceHandoffReason.RETRIEVAL_RECEIPT_MISMATCH in outcome.reasons
+
+
+@pytest.mark.parametrize(
+    "invalid_kind",
+    ["ENDPOINT_OPERATION", "ARTIFACT_MEMBER", "UNSUPPORTED"],
+)
+def test_rejects_non_enum_member_kind_without_exception(invalid_kind: object) -> None:
+    req, _ = _make_valid_handoff_components()
+    mutated_binding = replace(req.selections[0].binding, member_kind=invalid_kind)  # type: ignore[arg-type]
+    mutated_sel = replace(req.selections[0], binding=mutated_binding)
+    mutated_req = replace(req, selections=(mutated_sel, req.selections[1]))
+
+    outcome = build_guide_evidence_handoff(mutated_req)
+
+    assert outcome.decision == GuideEvidenceHandoffBuildDecision.REJECTED
+    assert GuideEvidenceHandoffReason.MEMBER_IDENTITY_INVALID in outcome.reasons

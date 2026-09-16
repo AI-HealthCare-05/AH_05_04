@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import cast
 
 import pytest
 
@@ -9,6 +10,8 @@ from ai_worker.tasks.rag.citation_authorization import (
     AuthorizationReason,
     AuthorizationVerificationDecision,
     CitationAuthorizationReceipt,
+    CitationAuthorizationRequest,
+    CitationAuthorizationSelectionEntry,
     CitationAuthorizationSelectionReceipt,
     GuardDecision,
     GuardOperation,
@@ -16,11 +19,16 @@ from ai_worker.tasks.rag.citation_authorization import (
     RuntimeAuthorizationBinding,
     RuntimeEnvironment,
     UsePurpose,
+    _request_is_valid,
     build_citation_authorization_request,
     canonical_scope_manifest_hash,
     verify_citation_authorization_receipt,
 )
-from ai_worker.tasks.rag.claim_citation_validator import CitationSourceType, validate_claim_citations
+from ai_worker.tasks.rag.claim_citation_validator import (
+    CitationSourceType,
+    SourceMemberKind,
+    validate_claim_citations,
+)
 from ai_worker.tests.rag.test_claim_citation_validator import _artifact, _candidate_set, _support_receipt
 
 _A = "a" * 64
@@ -290,3 +298,30 @@ def test_accepts_endpoint_operation_with_nullable_operation_code() -> None:
     assert outcome.reasons == ()
     assert outcome.request is not None
     assert outcome.request.selection_manifest[0].operation_code is None
+
+
+@pytest.mark.parametrize(
+    "invalid_kind",
+    ["ENDPOINT_OPERATION", "ARTIFACT_MEMBER", "UNSUPPORTED"],
+)
+def test_rejects_non_enum_member_kind_in_selection_manifest_without_exception(invalid_kind: object) -> None:
+    entry = CitationAuthorizationSelectionEntry(
+        source_code="knowledge-source",
+        source_version="2026-09-01",
+        member_kind=cast(SourceMemberKind, invalid_kind),
+        endpoint_code="endpoint-001",
+        operation_code=None,
+        artifact_code=None,
+        artifact_version=None,
+    )
+    runtime = _runtime_binding()
+    origin = _origin_guard(runtime)
+    req = CitationAuthorizationRequest(
+        origin_request_guard=origin,
+        runtime_binding=runtime,
+        validated_selection_sha256=_A,
+        selection_manifest=(entry,),
+        selection_manifest_sha256=_B,
+        request_sha256=_C,
+    )
+    assert _request_is_valid(req) is False

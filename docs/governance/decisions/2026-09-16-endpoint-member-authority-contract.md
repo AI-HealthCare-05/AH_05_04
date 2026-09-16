@@ -43,6 +43,7 @@
   - `endpoint_code`, `operation_code`: 반드시 `None`
 - 기존 3개 소비처(`claim_citation_validator`, `citation_authorization`, `guide_evidence_handoff`)의 member 검증 분기를 공유 순수 모듈 `source_member_identity`의 `is_valid_source_member_identity`로 단일 위임한다.
 - 위임 시 duck typing을 금지하며 각 소비처의 호출부에서 5개 필드로 `SourceMemberIdentity`를 명시적으로 인스턴스화하여 엄격한 `type(value) is SourceMemberIdentity` 검사를 통과시킨다.
+- `StrEnum`과 문자열의 동등 비교로 인한 검증 우회(예: 문자열 `"ENDPOINT_OPERATION"`이 `in` 조건을 통과하고 `is` 분기에서 artifact 분기로 빠지는 결함)를 방지하기 위해, 분기 전에 `type(value.member_kind) is SourceMemberKind`를 강제하여 동일 값의 문자열 및 타 StrEnum을 fail-closed로 `MEMBER_KIND_INVALID` 거부한다.
 
 ### 2. 영속 저장값 분기(F7) 해소 및 매핑 결정 ("왜 DB 값을 바꾸지 않는가")
 - **현상 (F7)**:

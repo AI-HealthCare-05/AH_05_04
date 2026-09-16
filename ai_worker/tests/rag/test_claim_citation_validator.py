@@ -421,3 +421,43 @@ def test_validates_endpoint_operation_with_nullable_operation_code() -> None:
     assert outcome.reasons == ()
     assert outcome.validated_selection is not None
     assert outcome.validated_selection.selection_sha256 is not None
+
+
+@pytest.mark.parametrize(
+    "invalid_kind",
+    ["ENDPOINT_OPERATION", "ARTIFACT_MEMBER", "UNSUPPORTED"],
+)
+def test_rejects_non_enum_member_kind_with_typed_rejection_without_exception(invalid_kind: object) -> None:
+    binding = SourceExecutionProvenance(
+        source_code="knowledge-source",
+        source_version="2026-09-01",
+        member_kind=cast(SourceMemberKind, invalid_kind),
+        endpoint_code="endpoint-001",
+        operation_code=None,
+        artifact_code=None,
+        artifact_version=None,
+        request_source_decision_ref=_artifact("knowledge-source-decision", _B),
+        request_member_decision_ref=_artifact("knowledge-source-member-decision", _C),
+    )
+    evidence = KnowledgeChunkEvidenceRef(
+        knowledge_chunk_ref="knowledge-chunk-001",
+        source_snapshot_ref=_artifact("knowledge-snapshot"),
+        source_version="2026-09-01",
+        locator="section-1",
+        content_sha256=_A,
+        execution_provenance=binding,
+    )
+    candidate_set = _candidate_set(evidence=evidence)
+    receipt = ClaimSupportVerificationReceipt(
+        claim_key=candidate_set.claims[0].claim_key,
+        support_status=candidate_set.claims[0].support_assertion.support_status,
+        claim_text_digest=candidate_set.claims[0].text_digest,
+        assessment_ref=candidate_set.claims[0].support_assertion.assessment_ref,
+        verifier_artifact_ref=_artifact("support-verifier", _C),
+        projection_sha256=_A,
+    )
+
+    outcome = validate_claim_citations(candidate_set, (receipt,))
+
+    assert outcome.decision is CandidateValidationDecision.REJECTED
+    assert CandidateValidationReason.EVIDENCE_PROVENANCE_INVALID in outcome.reasons

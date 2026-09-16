@@ -101,6 +101,8 @@ _KIND_TO_PERSISTED: dict[SourceMemberKind, str] = {
 
 def persisted_member_kind_value(kind: SourceMemberKind) -> str:
     """Map a kernel SourceMemberKind enum to the persisted database wire value."""
+    if type(kind) is not SourceMemberKind:
+        raise SourceMemberIdentityError(SourceMemberIdentityReason.MEMBER_KIND_INVALID)
     persisted = _KIND_TO_PERSISTED.get(kind)
     if persisted is None:
         raise SourceMemberIdentityError(SourceMemberIdentityReason.MEMBER_KIND_INVALID)
@@ -159,7 +161,8 @@ def validate_source_member_identity(value: object) -> tuple[SourceMemberIdentity
 
     Rules:
     - value must be of exact type SourceMemberIdentity.
-    - member_kind must be a valid SourceMemberKind. If not, returns (MEMBER_KIND_INVALID,) only.
+    - member_kind must be of exact type SourceMemberKind (strings and foreign StrEnums are rejected).
+      If not, returns (MEMBER_KIND_INVALID,) only.
     - ENDPOINT_OPERATION:
         - endpoint_code is required (non-blank NFC string).
         - operation_code is nullable; if not None, must be a non-blank NFC string.
@@ -170,6 +173,8 @@ def validate_source_member_identity(value: object) -> tuple[SourceMemberIdentity
     - All reasons are collected and returned as a sorted tuple without duplicates.
     """
     if type(value) is not SourceMemberIdentity:
+        return (SourceMemberIdentityReason.MEMBER_KIND_INVALID,)
+    if type(value.member_kind) is not SourceMemberKind:
         return (SourceMemberIdentityReason.MEMBER_KIND_INVALID,)
     if value.member_kind not in (SourceMemberKind.ENDPOINT_OPERATION, SourceMemberKind.ARTIFACT_MEMBER):
         return (SourceMemberIdentityReason.MEMBER_KIND_INVALID,)

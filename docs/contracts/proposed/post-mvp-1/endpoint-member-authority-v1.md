@@ -62,7 +62,7 @@ class SourceMemberIdentity:
 
 | 사유 코드 | 발생 조건 |
 |---|---|
-| `MEMBER_KIND_INVALID` | 대상 객체의 타입이 `SourceMemberIdentity`가 아니거나 `member_kind`가 유효한 enum 값이 아님 |
+| `MEMBER_KIND_INVALID` | 대상 객체의 타입이 `SourceMemberIdentity`가 아니거나 `type(member_kind) is not SourceMemberKind`인 경우 (동일 값의 문자열 및 타 StrEnum은 StrEnum 동등 비교 우회를 방지하기 위해 엄격히 거부) |
 | `ENDPOINT_CODE_REQUIRED` | `ENDPOINT_OPERATION`에서 `endpoint_code`가 `None`, 빈 문자열, 공백만 있거나 non-NFC인 경우 |
 | `OPERATION_CODE_INVALID` | `ENDPOINT_OPERATION`에서 `operation_code`가 `None`이 아니면서 빈 문자열, 공백만 있거나 non-NFC인 경우 |
 | `ARTIFACT_FIELDS_FORBIDDEN` | `ENDPOINT_OPERATION`에서 `artifact_code` 또는 `artifact_version`이 `None`이 아닌 경우 |
