@@ -280,7 +280,12 @@ build_and_push() {
   local tag="$4"
   local dockerfile="$5"
   local context="$6"
-  local build_arg="${7:-}"
+  shift 6
+  local build_args=(--platform linux/amd64)
+  local build_arg
+  for build_arg in "$@"; do
+    build_args+=(--build-arg "$build_arg")
+  done
   local tag_base
 
   case "$name" in
@@ -295,20 +300,11 @@ build_and_push() {
 
   echo "${COLOR_BLUE}${name} Docker image build start.${COLOR_NC}"
 
-  if [ -n "$build_arg" ]; then
-    docker build \
-      --platform linux/amd64 \
-      --build-arg "$build_arg" \
-      -t "${docker_user}/${docker_repo}:${tag_base}-${tag}" \
-      -f "$dockerfile" \
-      "$context"
-  else
-    docker build \
-      --platform linux/amd64 \
-      -t "${docker_user}/${docker_repo}:${tag_base}-${tag}" \
-      -f "$dockerfile" \
-      "$context"
-  fi
+  docker build \
+    "${build_args[@]}" \
+    -t "${docker_user}/${docker_repo}:${tag_base}-${tag}" \
+    -f "$dockerfile" \
+    "$context"
 
   echo "${COLOR_BLUE}${name} Docker image push start.${COLOR_NC}"
 
@@ -361,7 +357,9 @@ build_and_push \
   "$FRONTEND_VERSION" \
   "frontend/Dockerfile.prod" \
   "." \
-  "VITE_API_BASE_URL=$PRODUCTION_PUBLIC_ORIGIN"
+  "VITE_API_BASE_URL=$PRODUCTION_PUBLIC_ORIGIN" \
+  "VITE_SIGNUP_TERMS_APPROVED=${VITE_SIGNUP_TERMS_APPROVED:-true}" \
+  "VITE_EMAIL_VERIFICATION_ENABLED=${VITE_EMAIL_VERIFICATION_ENABLED:-false}"
 
 build_and_push \
   "$docker_user" \
