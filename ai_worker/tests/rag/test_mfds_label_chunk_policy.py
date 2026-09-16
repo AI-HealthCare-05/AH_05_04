@@ -282,3 +282,38 @@ def test_table_in_inline_position_is_rejected(inner: str) -> None:
     with pytest.raises(ChunkPolicyError) as error:
         _drafts("EE", inner)
     assert error.value.reason is ChunkPolicyFailureReason.CHUNK_POLICY_UNSUPPORTED
+
+
+def test_table_uppercase_and_mixed_case_preserves_content() -> None:
+    uppercase_table = "<TABLE><TR><TD>A</TD><TD>B</TD></TR></TABLE>"
+    mixed_table = "<Table><Tr><Td>A</Td><Th>B</Th></Tr></Table>"
+    lower_table = "<table><tr><td>A</td><td>B</td></tr></table>"
+
+    draft_upper = _drafts("EE", f'<ARTICLE title="T"><PARAGRAPH>{uppercase_table}</PARAGRAPH></ARTICLE>')[0]
+    draft_mixed = _drafts("EE", f'<ARTICLE title="T"><PARAGRAPH>{mixed_table}</PARAGRAPH></ARTICLE>')[0]
+    draft_lower = _drafts("EE", f'<ARTICLE title="T"><PARAGRAPH>{lower_table}</PARAGRAPH></ARTICLE>')[0]
+
+    assert draft_upper.chunk_text == "# T\n\nA\tB"
+    assert draft_mixed.chunk_text == "# T\n\nA\tB"
+    assert draft_upper.chunk_text == draft_lower.chunk_text
+    assert draft_upper.content_hash == draft_lower.content_hash
+    assert draft_mixed.content_hash == draft_lower.content_hash
+
+
+@pytest.mark.parametrize(
+    "invalid_table_inner",
+    [
+        "<table>주석<tr><td>A</td><td>B</td></tr></table>",  # table direct text
+        "<table><tr><td>A</td><td>B</td></tr>주석</table>",  # row tail text
+        "<table><caption>설명</caption>주석<tr><td>A</td><td>B</td></tr></table>",  # caption tail text
+        "<table><tr>셀밖텍스트<td>A</td><td>B</td></tr></table>",  # row direct text
+        "<table><tr><td>A</td>셀밖tail<td>B</td></tr></table>",  # cell tail text
+        "<table><tbody><tr><td>A</td><td>B</td></tr></tbody></table>",  # unsupported wrapper tbody
+        "<table><thead><tr><th>A</th><th>B</th></tr></thead></table>",  # unsupported wrapper thead
+        "<table><tr><td>A</td><p>unsupported</p></tr></table>",  # unsupported child in row
+    ],
+)
+def test_table_silent_omission_is_rejected(invalid_table_inner: str) -> None:
+    with pytest.raises(ChunkPolicyError) as error:
+        _drafts("EE", f'<ARTICLE title="T"><PARAGRAPH>{invalid_table_inner}</PARAGRAPH></ARTICLE>')
+    assert error.value.reason is ChunkPolicyFailureReason.CHUNK_POLICY_UNSUPPORTED

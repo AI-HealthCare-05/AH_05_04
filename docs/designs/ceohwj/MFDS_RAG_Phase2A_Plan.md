@@ -4,6 +4,10 @@
 Implement Phase 2A (Source Snapshot Member -> KnowledgeDocument & KnowledgeChunk materialization) based on `docs/designs/ceohwj/MFDS_RAG_Phase2A_Design.md` and `MFDS_RAG_Agent_Handoff_Final.md`.
 This phase bridges verified private Source Snapshot Members (EE/UD/NB XML artifacts, and optional standalone NN) into active `KnowledgeDocument` and `KnowledgeChunk` rows ready for evidence indexing, without altering existing database schemas, introducing triggers/RLS, or modifying existing XML parser semantics.
 
+- 구현 담당: 정현우 (`@ceohwj`)
+- 단일 책임 reviewer: 김지혜 (`@Jye-rookie`) 1명
+- 전문 검토 근거: Backend·DB·Security 송은영 (`@phina-io`) (트랜잭션·DB 권한·인덱스 호환성 검토 근거 제공)
+
 ---
 
 ## Addressing Review Findings (Revision 11–12 Adjustments)
@@ -59,102 +63,57 @@ This phase bridges verified private Source Snapshot Members (EE/UD/NB XML artifa
 
 ---
 
-## 미결정 사항 결정 표 (책임 리뷰어 판단 대상)
+## 결정 사항 확정 및 구현 상태 표 (D1~D5 정합화 완료)
 
-Revision 12에서 신설. 이 표가 미결정 사항의 **단일 출처**다. 설계서·계약의 개별 보류 문구는 이 표를
-참조하며, 선택지를 더 늘리지 않는다. 각 항목은 `현재 확인된 근거 / 제안 / 영향 범위 / 미결정 부분 /
-착수 가능 조건` 순서로 기록한다.
+이 표는 설계 및 계획 단계에서 논의되었던 주요 결정 사항(D1~D5)의 최종 확정 결과 및 구현 상태의 **단일 출처**다.
+구현 및 검증이 완료된 항목들의 실제 확정 계약을 기록한다.
 
-이미 기록된 결정은 재질문하지 않는다. `@phina-io`의 [#634 코멘트](https://github.com/AI-HealthCare-05/AH_05_04/issues/634#issuecomment-5691849912)는
-범위 구분과 저장·검증 조건 6개(짧은 transaction 재검증, 두 hash 등식, byte-identical replay, fail-closed,
-비노출, NN 명시적 보류)에 대한 **확정된 결정**이므로 아래 표에 다시 올리지 않는다. 같은 코멘트의
-"이 조건이면 진행 가능하다고 봅니다"는 **범위 수준 의견**이며, 아래 세부 계약의 승인으로 확대하지 않는다.
+### D1. Reader 오류 typed boundary (확정 및 구현 완료)
+- **확정 결과**: 옵션 A의 최소 변경 채택.
+- `ai_worker/tasks/rag/source_ingestion/artifacts.py` 및 finalizer에 `ValueError` 하위 typed 예외 계층 적용:
+  - `RawArtifactIntegrityError` → `ARTIFACT_INTEGRITY_MISMATCH`
+  - `RawArtifactUnavailableError` → `DEPENDENCY_ERROR`
+  - `ArtifactObjectKeyError` / `ArtifactPathTraversalError` → `SOURCE_BINDING_INVALID`
+- **구현 상태**: Task 2b 및 Task 3, 4 구현 및 회귀 테스트 100% 통과 완료.
 
-### D1. Reader 오류 typed boundary (Task 2b 차단)
+### D2. Snapshot Advisory Lock 및 Cross-flow 직렬화 (확정 및 검증 완료)
+- **확정 결과**:
+  - Snapshot 단위의 공통 advisory lock 사용:
+    `SELECT pg_advisory_xact_lock(hashtextextended('knowledge-source-snapshot:' || snapshot_id, 0)::bit(32)::bigint)` (namespace `0`)
+  - 다중 Snapshot 시 `snapshot_id.bytes` 순으로 정렬하여 lock을 획득함으로써 교착 상태 방지.
+  - Evidence Index 빌더(`SqlAlchemyKnowledgeEvidenceIndexRepository`)와 Materialization 저장소(`SqlAlchemyKnowledgeMaterializationRepository`) 양쪽 모두 동일한 snapshot advisory lock에 참여하여 완벽한 상호 배제 보장.
+- **구현 상태**: Task 4 PostgreSQL integration 테스트(`test_d2_cross_flow_materialization_and_index_mutual_exclusion`)를 통해 두 Repository 간의 동시 경합 및 직렬화 검증 100% PASS 완료.
 
-| 항목 | 내용 |
-|---|---|
-| 현재 확인된 근거 | `LocalPrivateSourceArtifactReader.read_verified()`(`local_private_source_artifact_finalizer.py:45`)는 `read_verified_raw_artifact()`에 위임한다. 실패 지점은 5곳이고 **전부 평문 `ValueError`**다 — ① `_resolve_object_key()` root 이탈(`:60`) ② 동일 함수의 writer-writable 거부(`:62`) ③ `_read_verified_raw_artifact()`의 `OSError` → "Raw artifact could not be read."(`artifacts.py`) ④ byte size mismatch(2개 지점) ⑤ checksum mismatch. 생성자 오류 6종(`:31~42`)은 **커널 호출 전** 조립 시점에 발생한다. 기존 선례: `requery_mfds_label_persistence()`(`mfds_label.py:355`)는 이미 `MfdsLabelArtifactReader` **Protocol**을 통해 읽으면서 reader 오류를 **분류하지 않고** 그대로 전파한다. |
-| 제안 | **A의 최소 변경**을 권고한다. Revision 11에서 권고했던 **B(래핑)는 철회**한다 — 래핑만으로는 ③④⑤를 구분할 수 없고, 구분하려면 메시지 비교가 필요한데 그것은 금지 사항이다. A 최소 변경: `artifacts.py`에 `RawArtifactIntegrityError(ValueError)`(④⑤)와 `RawArtifactUnavailableError(ValueError)`(③), `local_private_source_artifact_finalizer.py`에 `ArtifactObjectKeyError(ValueError)`(①②)를 추가하고 **raise 문만 교체**한다. 메시지 문자열은 바꾸지 않는다. |
-| 영향 범위 | 기존 호출자 4곳(`persistence.py:370`, `acquire.py:94·175`, `mfds_detail.py:135·154`, `mfds_label.py:355·381`)과 adapter 3곳(local store, S3 store, finalizer). **모두 `ValueError` 하위 클래스이므로 기존 `except ValueError`(`mfds_label.py:422`, `mfds_detail.py:315`, `persistence.py:320` 등)는 그대로 동작**한다. 비노출: 새 예외도 경로·원문·checksum 값을 메시지에 넣지 않는다. 회귀: 기존 5개 실패 지점별 예외 타입 + 메시지 불변 테스트, `except ValueError`로 계속 잡히는지 확인하는 호환성 테스트. |
-| 미결정 부분 | (a) A / C(단일 `DEPENDENCY_ERROR`) 중 택일. (b) A 채택 시 `artifacts.py`·finalizer는 **다른 owner의 파일**이므로 변경 주체(#634 범위 / 별도 이슈 / `@Jye-rookie` 직접)를 정해야 한다. (c) ①②를 integrity로 볼지 binding으로 볼지. |
-| 착수 가능 조건 | `@Jye-rookie` 전문 검토(=실패 지점 5곳 분류가 parser/reader 경계 의미와 맞는지, 메시지 불변으로 충분한지)와 `@phina-io` 책임 결정(=A/C 택일, 다른 owner 파일 변경 허용 여부, 보안 비노출 경계)이 **모두** 필요. 결정 전에는 `artifacts.py`·`local_private_source_artifact_finalizer.py`를 변경하지 않고, reader 우회·독립 파일 읽기·보안 검증 복제도 하지 않는다. |
+### D3. `SUCCEEDED_WITH_REJECTIONS` 및 IngestionRun 상태 검증 (확정 및 구현 완료)
+- **확정 결과**:
+  - 허용 상태는 `RagIngestionRunStatus.SUCCEEDED` 단일 상태만 허용.
+  - 그 외 상태(`SUCCEEDED_WITH_REJECTIONS`, `RUNNING`, `FAILED`, `NO_CHANGE`)는 fail-closed 원칙에 따라 `SOURCE_NOT_ELIGIBLE`로 거절.
+- **구현 상태**: Task 3 단위 테스트 및 Task 4 PostgreSQL 통합 테스트에서 FAILED, NO_CHANGE, RUNNING, SUCCEEDED_WITH_REJECTIONS 상태 거절 검증 완료.
 
-**C를 택할 경우의 축소 범위**: 다른 owner 파일을 전혀 건드리지 않는다. Phase 2A가 스스로 판정할 수 있는
-것은 reader 호출 **전**의 2건뿐이다 — `object_key != object_key_for_checksum(raw_checksum)` (순수 문자열
-비교), `RawArtifactMetadata` 생성 실패 (자기 코드). `read_verified()`가 던지는 모든 것은 단일
-`DEPENDENCY_ERROR`가 된다. 대가는 크기·checksum 불일치가 integrity 신호로 구분되지 않는 것이다.
+### D4. Post-commit audit의 지위 (확정 및 구현 완료)
+- **확정 결과**:
+  - `RECEIPT_MISMATCH` 및 트랜잭션 롤백은 commit 전 동일 트랜잭션 내부의 재조회/비교로 완결.
+  - commit 이후의 감사는 독립 함수 `audit_post_commit(session_factory, result) -> bool`로 구현.
+  - 감사 실패 시 이미 commit된 row를 롤백하지 않으며 `False`를 반환하는 관측 감사로 위치 고정.
+- **구현 상태**: Task 3 및 Task 4에서 commit 전 검증과 독립 사후 audit 분리 구현 및 검증 완료.
 
-### D2. Cross-flow lock 전략 (Task 3 차단)
-
-| 항목 | 내용 |
-|---|---|
-| 현재 확인된 근거 | 기존 Index 경로(`sqlalchemy_knowledge_evidence_index.py`)의 실측 순서: `pg_advisory_xact_lock`(namespace 0) → `FOR UPDATE OF rag_source, rag_source_endpoint, rag_source_operation, rag_source_snapshot, rag_source_snapshot_member, knowledge_document, knowledge_chunk` → `FOR UPDATE OF rag_source_ingestion_run, rag_source_ingestion_artifact` → `rag_knowledge_index`. member 순회는 `knowledge_chunk_id.bytes` 순. receipt 재계산(`_load_and_recompute_receipt()`)은 `session.begin()` **안**. 권한: `knowledge_index_role_policy.py`상 builder는 knowledge 테이블에 `SELECT, INSERT` + lock marker 컬럼 `UPDATE`만 가진다. `rag_source_snapshot`은 `management_lock_marker`를 쓰고 `rag_source_snapshot_verification`은 builder SELECT에서 제외된다. |
-| 제안 | Phase 2A materialization을 **동일 테이블 순서**로 맞추고, member 순회 기준만 양쪽 모두 `source_snapshot_member_id` 오름차순으로 통일한다. advisory lock은 namespace 1을 제안한다. |
-| 영향 범위 | 테이블 순서 정렬만으로는 부족하다 — Index는 `knowledge_chunk_id` 순, materialization은 section 순으로 member를 순회하므로 **실제 row 획득 순서가 달라져 교착이 가능**하다. 순회 기준 통일은 기존 Index adapter의 정렬 코드 변경을 의미하므로 **#634 범위를 벗어난다**. 대안인 상위 직렬화(두 흐름이 같은 advisory key를 먼저 잡음)는 Index adapter를 바꾸지 않지만 동시성을 낮춘다. |
-| 미결정 부분 | ① 공유 ordering key를 쓸지 상위 직렬화로 갈지. ② ordering key 통일 시 Index adapter 변경을 누가/어느 이슈에서 할지. ③ advisory lock namespace 번호. ④ builder role이 `rag_source_snapshot`에 `FOR UPDATE`를 걸 수 있는지는 **권한 정책에서 미확인** — `management_lock_marker` UPDATE 권한과 row lock 획득 권한은 별개다. |
-| 착수 가능 조건 | `@phina-io` 확정 후 Task 3 착수. **확정 전에는 Repository lock 구현도, 가정된 순서를 전제한 mock 테스트도 작성하지 않는다.** Task 4 cross-flow 테스트는 확정된 전략을 *검증*하는 단계이며 *결정*하는 단계가 아니다. |
-
-### D3. `SUCCEEDED_WITH_REJECTIONS` 허용 여부
-
-| 항목 | 내용 |
-|---|---|
-| 현재 확인된 근거 | `RagIngestionRunStatus` = {RUNNING, SUCCEEDED, SUCCEEDED_WITH_REJECTIONS, NO_CHANGE, FAILED}. MFDS label 경로의 `_validate_metadata()`는 `rejected_record_count == 0`을 **강제**하므로 artifact를 만드는 MFDS run이 도달할 수 있는 성공 상태는 `SUCCEEDED` 하나뿐이다. |
-| 제안 | Phase 2A는 **명시적 허용 결정 전까지 `SUCCEEDED` 단일 허용**, `SUCCEEDED_WITH_REJECTIONS`는 거절한다. Source 전체의 기존 상태 정의는 **바꾸지 않는다** — 다른 Source 경로에서 이 상태는 계속 정상이며, 여기서 좁히는 것은 #634 materialization 입력 gate뿐이다. |
-| 영향 범위 | Task 3/4의 run status gate 거절 테스트 1건. 다른 Source·다른 consumer에는 영향 없음. |
-| 미결정 부분 | 향후 부분 거절이 허용되는 Source가 materialization 입력이 될 때 "일부 member만 성공한 run"을 어떻게 다룰지. 지금은 해당 입력이 존재하지 않는다. |
-| 착수 가능 조건 | `@phina-io`가 "거절이 맞다"만 확인하면 착수 가능. 제안대로면 현재 동작에 변화가 없으므로 **다른 항목을 막지 않는다**. |
-
-### D4. post-commit audit의 지위 (#634 이슈 본문 정렬 필요)
-
-| 항목 | 내용 |
-|---|---|
-| 현재 확인된 근거 | **3단계를 구분한다.** ① **commit 전 검증**: `persist_complete_index()`가 `session.begin()` 안에서 `_load_and_recompute_receipt()`를 호출하고 불일치 시 commit 전에 raise → rollback 가능. ② **commit 성공**: 원자적 저장 확정. ③ **commit 이후 audit**: 새 session 재조회. 불일치해도 **rollback 불가능**하다. 기존 ingestion 경로에는 ③이 실제로 존재한다 — `run_ingestion`이 commit 후 새 session에서 `requery_mfds_label_persistence()`를 호출하고, `#649` 실측에 `post_commit_requery_passed=true`가 기록돼 있다. |
-| 제안 | `RECEIPT_MISMATCH`와 성공 조건은 ①에만 결속한다. ③은 **rollback 불가능한 선택적 audit**으로 유지하되, 기존 ingestion 선례가 있으므로 구현은 한다. ③ 실패는 `RECEIPT_MISMATCH`가 아니라 별도 경보로 보고한다. |
-| 영향 범위 | Design §7.1 실행 순서, 오류 표, §10.4 테스트 3곳은 이미 ①로 통일했다(finding 34). 남은 것은 **#634 이슈 본문**이다. |
-| 미결정 부분 | ③을 #634 **완료 조건**에 포함할지. 포함하면 "검증된다"의 의미를 "①에서 검증하고 ③에서 재확인한다"로 명확히 해야 한다. |
-| 착수 가능 조건 | `@phina-io` 확인 후 이슈 본문 문구를 정렬한다. 정렬 문구 초안은 아래 "#634 이슈 본문 정렬" 절에 있다. |
-
-### D5. Golden vector 승인 (Task 2a 산출물 확정)
-
-| 항목 | 내용 |
-|---|---|
-| 현재 확인된 근거 | G1~G8(10개 parametrized 행; G5·G7이 각 2 chunk)의 `chunk_text`와 SHA-256이 계약 표와 테스트 표에서 **문자열·hash 모두 일치**함을 기계 대조로 확인했다(drift 0). 선언된 hash가 **기대 문자열의 UTF-8 bytes**에서 나온 값임을 구현과 무관하게 독립 계산으로 확인했고(10/10 MATCH), 10개 기대 문자열이 전부 NFC임도 확인했다. |
-| 제안 | 표 그대로 확정한다. 값 변경은 `CHUNK_POLICY_VERSION` bump + 계약 표·테스트·구현 동시 정렬을 요구한다. |
-| 영향 범위 | heading marker(`#`)와 table 배치는 **공유 계약 값**이다. 후속 embedding/검색 품질에 영향을 주지만 Phase 2A는 hash 결정성만 책임진다. |
-| 미결정 부분 | ① heading marker로 `#`가 적절한지(대안: marker 없음, `[제목]`). ② 인라인 위치 table의 fail-closed(finding 42)가 과한지 — 실제 MFDS 문서에서 관측되지 않은 구조라 표현을 추정하지 않는 쪽을 택했다. ③ title-only ARTICLE이 heading 한 줄짜리 chunk가 되는 것이 검색에서 유용한지. |
-| 착수 가능 조건 | Task 2a는 이미 구현·검증 완료다. 승인은 **계약 값 확정**을 위한 것이며 Task 2b/3을 막지 않는다. |
-
-### D6. `ParsedMfdsLabelDocument` 모듈 위치 (비차단)
-
-| 항목 | 내용 |
-|---|---|
-| 현재 확인된 근거 | finding 44 실측. 순수 renderer가 타입 하나를 가져오려고 `httpx`를 포함한 27개 모듈을 끌어온다. DB·ORM·`backend.app`은 없다. |
-| 제안 | `ParsedMfdsLabelDocument`를 의존성 없는 leaf 모듈로 분리하고 `mfds_label`이 재수출한다. |
-| 영향 범위 | Task 1 파일 구조 변경. 기존 import 경로는 재수출로 유지되므로 호출자 변경 없음. |
-| 미결정 부분 | 이번 #634 범위에서 할지, 별도 정리 이슈로 뺄지. |
-| 착수 가능 조건 | 비차단. Task 2b/3/4 어느 것도 막지 않는다. |
+### D5. Golden vector 및 chunk policy (확정 및 검증 완료)
+- **확정 결과**:
+  - G1~G8 golden vector(10개 vector)의 `chunk_text` UTF-8 SHA-256 계약 확정.
+  - table 배치는 항상 블록 위치로 규약 고정, 인라인 table은 `CHUNK_POLICY_UNSUPPORTED` fail-closed.
+- **구현 상태**: Task 2a에서 40개 테스트를 통해 전건 검증 완료.
 
 ---
 
-## 결정 후 Task 2b·3·4 실행 순서
+## Task 1~4 완료 요약
 
-각 단계는 앞 단계의 **결정**이 내려진 뒤에만 시작한다. 결정 없이 앞당길 수 있는 작업은 없다.
-
-| 순서 | 선행 결정 | 작업 | 종료 조건 |
+| 순서 | 작업 | 상태 | 검증 결과 |
 |---|---|---|---|
-| 1 | **D1 확정** | (A 채택 시) `artifacts.py`·finalizer에 `ValueError` 하위 typed 예외 추가. raise 문만 교체하고 메시지는 불변. 변경 주체가 `@Jye-rookie`로 정해지면 #634는 대기만 한다 | 기존 5개 실패 지점별 타입·메시지 회귀 테스트 통과, 기존 `except ValueError` 호환성 테스트 통과 |
-| 2 | 1 완료 | **Task 2b RED**: materialization 커널의 loader/오류 변환 실패 테스트 작성. D1이 A면 reason 3종, C면 `DEPENDENCY_ERROR` 단일 | RED가 의도한 이유로 실패 |
-| 3 | 2 | **Task 2b GREEN**: `ai_worker/tasks/rag/knowledge_materialization.py` 구현. DTO·draft·reason-only 오류. DB 미사용 | Task 2b 테스트 전건 통과, reader는 Protocol로만 주입 |
-| 4 | **D2 확정** | **Task 3 RED**: mock Repository 테스트. lock 획득 순서와 member 순회 기준을 **확정된 전략 그대로** 기술한다. 확정 전에는 이 단계를 시작하지 않는다 | RED가 의도한 이유로 실패 |
-| 5 | 4, **D3 확정** | **Task 3 GREEN**: `sqlalchemy_knowledge_materialization.py`. advisory lock → `FOR UPDATE OF` 순서 → provenance 재검증 → all-or-nothing insert → **commit 전** receipt 재구성·비교 → exact replay / `CONTENT_CONFLICT`. run status gate는 D3 결과 적용 | mock unit 전건 통과, `uv run mypy backend/app ai_worker` 통과 |
-| 6 | 5, **D4 확정** | commit 이후 audit 재조회 구현. D4가 "완료 조건 포함"이면 성공 조건에, 아니면 별도 경보로 | audit 실패가 `RECEIPT_MISMATCH`로 보고되지 않음을 테스트로 고정 |
-| 7 | 6 | **Task 4**: 격리 PostgreSQL 통합 테스트. transaction rollback, concurrent replay, content conflict, 기존 Index compatibility | `prepare_test_environment` + `run_with_integration_test_environment` lane 통과 |
-| 8 | 7 | **Task 4 cross-flow**: D2에서 확정된 lock 전략을 *검증*한다. 교착이 관측되면 D2로 되돌린다 | cross-flow 테스트 통과 |
-| 9 | 8 + `#591` gate (§13.1) | actual persistence. **consumer read-only mount 준비(#613)와 consumer acceptance 완료가 선행**이며, 완료돼도 embedding·index·검색·Guide/Chat으로 자동 진행하지 않는다 | 별도 gate |
-
-**D5(golden vector)와 D6(모듈 위치)는 위 순서를 막지 않는다.** D5는 이미 구현·검증된 Task 2a 산출물의
-계약 값 확정이고, D6은 비차단 정리 항목이다.
+| Task 1 | Parser Seam 분리 (`parse_mfds_label_artifact`) | 완료 | parser 회귀 및 DTO 비노출 통과 |
+| Task 2a | Deterministic chunk policy & G1~G8 golden vectors | 완료 | 40개 unit tests 통과 |
+| Task 2b | Pure materialization kernel & Reader typed error mapping | 완료 | fake reader 기반 kernel 단위 테스트 통과 |
+| Task 3 | PostgreSQL Materialization Repository 구현 | 완료 | mock unit tests 및 mypy 통과 |
+| Task 4 | PostgreSQL 격리 통합 테스트 (All-or-Nothing, exact replay, cross-flow lock) | 완료 | 24개 PostgreSQL integration tests 통과 |
 
 
 ## #634 이슈 본문 정렬이 필요한 문구
@@ -317,9 +276,21 @@ class KnowledgeMaterializationReceipt:
     snapshot_canonical_checksum: str
     canonicalization_spec_version: str
     item_seq: str
-    is_exact_replay: bool
     chunk_policy_version: str
     documents: tuple[MaterializedDocumentReceipt, ...]
+
+class MaterializationOutcome(StrEnum):
+    CREATED = "CREATED"
+    EXACT_REPLAY = "EXACT_REPLAY"
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeMaterializationResult:
+    receipt: KnowledgeMaterializationReceipt
+    outcome: MaterializationOutcome
+
+    @property
+    def is_exact_replay(self) -> bool:
+        return self.outcome == MaterializationOutcome.EXACT_REPLAY
 ```
 
 `MaterializationSourceDocument`는 `RawArtifactMetadata(artifact_key, raw_checksum, byte_size, content_type)`를
@@ -673,7 +644,7 @@ Task 2에서 이동한 DB provenance·receipt 검증을 포함한다.
   - `test_receipt_is_verified_before_commit`: INSERT/replay 판정 직후 **같은 transaction 안에서** 재조회·재구성·비교가 수행되고, 불일치 시 `RECEIPT_MISMATCH`로 commit 전에 rollback됨. 기존 `persist_complete_index()`와 동일한 순서
   - `test_no_post_commit_rollback_path`: commit 이후 경로에 rollback 시도가 없음. commit 뒤 확인은 rollback 불가능한 선택적 audit이며 실패를 `RECEIPT_MISMATCH`로 보고하지 않음
   - `test_receipt_constructs_full_knowledge_chunk_identity`: DB 부여 UUID를 포함해 `KnowledgeChunkIdentity`를 완전 구성 가능
-  - `test_repeated_receipt_equal_except_is_exact_replay`: 반복 실행 receipt가 **`is_exact_replay`를 제외한** 전 필드 동일 (첫 실행 `False`, 재실행 `True`)
+  - `test_repeated_receipt_identical`: 반복 실행 시 `KnowledgeMaterializationReceipt`가 100% 전 필드 완전 동일 (`res1.receipt == res2.receipt`), `KnowledgeMaterializationResult.outcome`은 첫 실행 `CREATED`, 재실행 `EXACT_REPLAY`
   - Exact replay 소유 불변 필드 전체 비교
     - Document: `title`, `document_status`, `record_contract_version`, `canonicalization_spec_version`, `document_content_hash`, `external_document_id`, `locator`, `publisher IS NULL`, `source_url IS NULL`, `document_version IS NULL`, `knowledge_index_lock_marker == 0`, `chunk_count`
     - Chunk: `chunk_index`, `chunk_text`, `content_hash`, `normalization_version`, `knowledge_index_lock_marker == 0`
@@ -760,7 +731,7 @@ Task 2에서 이동한 DB provenance·receipt 검증을 포함한다.
     - **commit 전 같은 transaction 안에서** 재조회 데이터가 receipt와 불일치하면 `RECEIPT_MISMATCH`이고 write는 0건
     - commit 이후에는 rollback 경로가 없음을 확인 (commit 뒤 확인은 rollback 불가능한 audit)
   - **Receipt 동일성**:
-    - 반복 실행 receipt가 `is_exact_replay`를 제외한 전 필드 동일 (첫 실행 `False`, 재실행 `True`)
+    - 반복 실행 receipt가 100% 전 필드 완전 동일 (`res1.receipt == res2.receipt`), outcome은 첫 실행 `CREATED`, 재실행 `EXACT_REPLAY`
   - **DB 권한 검증**:
     - 일반 runtime role 연결로 Knowledge 테이블 INSERT 시도 시 DB 권한 거부
     - `knowledge_index_builder` role 연결로 SELECT/INSERT 성공

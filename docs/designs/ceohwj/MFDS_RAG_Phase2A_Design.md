@@ -7,9 +7,9 @@
 - 구현 Issue: `#634`
 - 관련 작업: `Related/Refs #591, #178`; server handoff `#593, #613`
 - 구현 담당: 정현우 (`@ceohwj`)
-- 단일 책임 reviewer: 송은영 (`@phina-io`) — Backend·DB·Security, Source lifecycle,
+- 단일 책임 reviewer: 김지혜 (`@Jye-rookie`) — Worker, parser, private artifact reader 경계
+- specialist evidence: 송은영 (`@phina-io`) — Backend·DB·Security, Source lifecycle,
   transaction·권한·Index 호환
-- specialist evidence: 김지혜 (`@Jye-rookie`) — Worker, parser, private artifact reader 경계
 
 > 이 문서는 구현 지시서가 아니라 Phase 2A 구현 전에 합의할 설계 기준이다. 특히 아래의
 > “보류 접점”은 현재 계약으로 추정하지 않는다. 보류 접점과 무관한 순수 변환·저장 설계와
@@ -573,18 +573,13 @@ Phase 2A는 `raw_manifest_checksum`·`canonical_checksum`의 **생성 알고리�
 
 한 request의 EE/UD/NB 문서와 chunk를 하나의 짧은 transaction으로 저장한다.
 
-1. `snapshot_id + expected_item_seq`에서 안정적으로 만든 PostgreSQL transaction advisory lock을
-   획득한다. 기존 Index builder는 namespace `0`과 `f"{index_code}:{index_version}"`를 쓰므로
-   materialization은 namespace `1`과 `f"mfds-materialize:{snapshot_id}:{expected_item_seq}"`를 쓴다.
-2. **기존 Index flow와 정렬한 공통 테이블 순서**로 row lock을 획득한다.
-
-   > **상태: 확정 아님 — Task 3/4 검증 전 가설.** 아래 순서는 *한 member 문장 안에서 잠기는 테이블 순서*를
-   > Index와 맞춘 것이다. 기존 Index는 member를 `knowledge_chunk_id.bytes` 오름차순으로 순회하고
-   > materialization은 아직 chunk id가 없어 `SECTION_ORDER` 오름차순으로 순회하므로 **두 flow의 실제 row
-   > 획득 순서가 같다고 보장되지 않는다.** 서로 다른 member 사이에서 row 집합이 교차하면 테이블 순서 일치
-   > 만으로 deadlock을 배제할 수 없다. 따라서 "deadlock-safe 공통 순서 확정"이라고 기술하지 않고 Task 4의
-   > cross-flow 동시 실행 테스트로 검증할 가설로 둔다. 교착이 재현되면 순회 기준 통일(예: 양쪽 모두
-   > `source_snapshot_member_id` 오름차순)이나 상위 직렬화 수단을 책임 리뷰어와 재결정한다.
+1. Snapshot 단위의 advisory lock을 획득한다:
+   `SELECT pg_advisory_xact_lock(hashtextextended(:key, 0)::bit(32)::bigint)`
+   `:key = f"knowledge-source-snapshot:{snapshot_id}"` (namespace `0`)
+   복수 snapshot 시 `UUID.bytes` 순으로 정렬하여 lock을 획득하여 교착 상태를 원천 차단한다.
+   Evidence Index 빌더와 Materialization 양쪽 모두 동일한 snapshot advisory lock에 참여하므로 동일 Snapshot에 대한 쓰기/인덱스 구축이 완벽히 상호 배제된다 (Task 4 cross-flow 검증 완료).
+2. **Index flow와 정렬한 공통 테이블 순서**로 row lock을 획득한다 (확정 및 cross-flow 검증 완료).
+   Snapshot 단위 advisory lock에 의해 동일 Snapshot에 대한 동시 접근이 우선 직렬화되며, 트랜잭션 내부의 row lock은 Index와 일치된 테이블 순서로 안전하게 진행된다.
 
    `member_ids` 순회는 `SECTION_ORDER` 오름차순으로 고정하여 **자기 자신의 실행 간 순서만** 결정적으로 만든다
    (materialization은 아직 chunk id가 없어 section 순서가 유일한 결정적 기준이다).
@@ -687,9 +682,7 @@ persistence entrypoint를 활성화하지 않는다.
 
 - Document/Chunk row count 불변
 - 기존 UUID 불변
-- `is_exact_replay`를 **제외한** 모든 receipt 필드가 동일 (`is_exact_replay`는 첫 실행 `False`,
-  재실행 `True`가 정상이므로 동일성 비교에서 제외한다. "field-equivalent receipt"라고 쓸 때는 항상 이 제외
-  규칙을 함께 명시한다. 순수 draft에는 이 필드가 없으므로 draft 수준에서는 전체 필드 동일성을 요구할 수 있다)
+- `KnowledgeMaterializationReceipt`의 모든 필드가 100% 동일 (`is_exact_replay`는 canonical receipt에 포함되지 않으며 상위 `KnowledgeMaterializationResult.outcome`으로 제공됨. 따라서 `res1.receipt == res2.receipt` 완전 동일성 성립)
 - `created_at` 변경 없음
 - update/delete 수행 없음
 - 두 concurrent request 중 하나가 insert한 뒤 다른 하나는 exact replay로 종료
@@ -744,22 +737,11 @@ Revision 10에서 기재한 3-way 매핑 표는 **철회한다.** 현재 인터�
 - `LocalPrivateSourceArtifactReader.__init__`의 root 절대경로·디렉터리·world-writable·writer-writable
   ·symlink 위반은 **생성자에서** 평문 `ValueError`로 발생한다. reader가 `materialize_documents()`에 전달되기
   전이므로 순수 커널이 변환할 대상이 아니다 → **composition boundary(DI 조립 지점/entrypoint)에서 처리**하고
-  계약의 failure reason 체계로 투영하지 않는다.
-- `read_verified()` 경로의 크기 불일치·checksum 불일치·I/O 실패·object key root 이탈은 **모두 구분 없는
-  일반 `ValueError`**다. 타입으로 나뉘지 않으므로 reason 3분류는 메시지 문자열 비교를 요구하고, 이는
-  "메시지에 의존하지 않는다"는 계약과 모순된다.
-
-결정 옵션과 권고는 계약 문서 "Parser 계층 격리 및 오류 변환 계약" 3절에 기록했다. 요약: **옵션 B(Phase 2A
-소유 typed loader adapter)** 를 기본 권고로 하고, integrity/access 구분이 필요하면 **옵션 A(reader typed
-예외)** 로 승격한다. reader 실패 전체를 `DEPENDENCY_ERROR`로 합치는 옵션 C는 integrity fail-closed 신호를
-약화하므로 권고하지 않는다.
-
-reader 호출 **전에** Phase 2A가 스스로 판정할 수 있어 지금도 세분화가 가능한 항목은 둘뿐이다.
-
-- `object_key != LocalPrivateSourceArtifactStore.object_key_for_checksum(raw_checksum)` →
-  `SOURCE_BINDING_INVALID` (reader를 호출하지 않는다)
-- Phase 2A가 직접 구성하는 `RawArtifactMetadata(...)`의 `ValueError` → `SOURCE_BINDING_INVALID`
-  (예외 타입이 아니라 **자기 호출 위치**로 구분된다)
+- reader 계층은 typed 예외(`RawArtifactIntegrityError`, `RawArtifactUnavailableError`, `ArtifactObjectKeyError`, `ArtifactPathTraversalError`)를 발생시키며, materialization 커널 및 repository는 이를 각각 다음 failure reason으로 1:1 매핑한다:
+  - `RawArtifactIntegrityError` → `ARTIFACT_INTEGRITY_MISMATCH`
+  - `RawArtifactUnavailableError` → `DEPENDENCY_ERROR`
+  - `ArtifactObjectKeyError` / `ArtifactPathTraversalError` → `SOURCE_BINDING_INVALID`
+- reader 생성자 오류(root 디렉터리 권한, symlink 등 환경 오류)는 composition boundary에서 발생하며 요청 failure reason으로 변환하지 않는다.
 
 #### 공개 오류 계약 (reason-only)
 
@@ -1020,7 +1002,7 @@ lane은 `prepare_test_environment` + `run_with_integration_test_environment`를 
 
 | 결정 | 현재 근거 | 보류 범위 | 독립 진행 가능 범위 |
 |---|---|---|---|
-| Phase 2A의 주 Issue와 reviewer | `#634`; 구현 `@ceohwj`, 단일 책임 reviewer `@phina-io`, specialist `@Jye-rookie` 지정. 실제 review 승인은 아직 없음 | reviewer 승인 전 병합 및 실제 서버 persistence | 설계·로컬 구현·검증 |
+| Phase 2A의 주 Issue와 reviewer | `#634`; 구현 `@ceohwj`, 단일 책임 reviewer `@Jye-rookie`, specialist evidence `@phina-io` 지정 | reviewer 승인 전 병합 및 실제 서버 persistence | 설계·로컬 구현·검증 |
 | `external_document_id`/locator의 계약 지위 | `#591` precheck의 후보 | DB persistence 활성화 | parser/chunk draft |
 | persistence lifecycle gate | Index gate는 존재, materialization 전용 계약 없음 | actual/ACTIVE 저장 | pure draft, synthetic 양방향 test |
 | NN 공식 빈 ARTICLE 표현 | parser는 보존, Knowledge schema는 상태 표현 없음 | 해당 NN member 저장 | EE/UD/NB 전체, nonempty NN draft |
@@ -1029,10 +1011,10 @@ lane은 `prepare_test_environment` + `run_with_integration_test_environment`를 
 | standalone server execution identity | builder role policy는 있으나 mount/실행 경계 미확정 | actual entrypoint 배포 | DI 기반 service/repository |
 | Proposed 계약의 Current 승격 | 구현·migration/OpenAPI/test/evidence 동반 원칙 | 승격 | Proposed 문서와 구현 증거 준비 |
 | `KnowledgeChunk.embedding_model` / `vector_store_key` authoritative owner | 기존 Index adapter가 읽지·쓰지 않고, `knowledge_index_builder`에 두 컬럼 UPDATE 권한이 없다. 값이 관측되는 유일 사례는 `LEGACY_V1` migration 보존 회귀 row | 두 컬럼의 write 경로 설계·확장 | owner와 write 경로 확정 (Backend·DB 책임 리뷰어). Phase 2B 착수 전 | insert NULL + replay 비교 제외 + 기존 값 보존 |
-| `SUCCEEDED_WITH_REJECTIONS` 허용 여부 | MFDS label 경로는 `_validate_metadata()`에서 `rejected_record_count == 0`을 강제하므로 이 상태를 만들 수 없다 | enum 존재만으로 허용 입력에 포함 | 실제 MFDS 생성 경로 변경 또는 `@phina-io`의 명시적 계약 결정. Task 3 착수 전 | `SUCCEEDED` 단일 허용 구현 |
-| **두 flow의 공유 ordering key 또는 상위 serialization 방식** | 테이블 순서는 Index와 정렬했으나 member 순회 기준이 다르다 (Index `knowledge_chunk_id.bytes` / materialization `SECTION_ORDER`). `FOR UPDATE OF` 테이블 목록이 같다고 실제 row 획득 순서가 같아지지 않는다 | 테이블 순서 일치만으로 deadlock이 배제된다는 판단 | **Task 3 시작 전** `@phina-io`가 전략을 확정해야 한다. Task 4는 확정된 전략을 *검증*하는 단계이며 전략을 *결정*하는 단계가 아니다 | 전략 확정 전에는 Repository lock 구현·mock 순서 검증을 시작하지 않는다 |
-| **Artifact reader 오류의 typed boundary** | reader 생성자 오류는 커널 전달 전에 발생하고, `read_verified()` 실패는 크기·checksum·I/O·path 이탈이 모두 구분 없는 `ValueError`다 | 메시지 문자열 비교 없이 3-way reason 분류가 가능하다는 판단 | **결정 표 D1 참조** (`MFDS_RAG_Phase2A_Plan.md`). Revision 12에서 **옵션 B(래핑) 권고를 철회**했다 — 래핑만으로는 크기·checksum·I/O를 구분할 수 없고 구분하려면 금지된 메시지 비교가 필요하다. 이제 **A의 최소 변경**을 권고하며 C(단일 `DEPENDENCY_ERROR`)가 대안이다. `@Jye-rookie` 전문 검토 + `@phina-io` 책임 결정 모두 필요. Task 2b 착수 전 | Task 2a(순수 renderer/chunker, reader 미사용)는 독립 진행 가능 |
-| commit 이후 audit을 성공 조건에 포함할지 | 기존 Index는 receipt 비교를 commit 전 같은 transaction에서 끝낸다 | post-commit 불일치를 rollback할 수 있다는 기술 | audit 포함 여부 결정. Task 3 착수 전 | commit 전 receipt 비교 구현 |
+| `SUCCEEDED_WITH_REJECTIONS` 허용 여부 | MFDS label 경로는 `_validate_metadata()`에서 `rejected_record_count == 0`을 강제하므로 이 상태를 만들 수 없다 | enum 존재만으로 허용 입력에 포함 | **해결 완료**: `SUCCEEDED` 단일 허용 유지, fail-closed 거절 | `SUCCEEDED` 단일 허용 구현 |
+| **두 flow의 공유 Snapshot advisory lock 및 직렬화** | Snapshot 단위 advisory lock(`knowledge-source-snapshot:{snapshot_id}`, namespace 0)에 Materialization과 Index 양쪽 모두 참여하여 상호 배제 | 상이한 namespace 분리 | **해결 완료**: 동일 lock 참여 및 cross-flow 상호 배제 PostgreSQL integration 검증 완료 | Task 4 완료 |
+| **Artifact reader 오류의 typed boundary** | reader 계층의 `RawArtifactIntegrityError`, `RawArtifactUnavailableError`, `ArtifactObjectKeyError`, `ArtifactPathTraversalError` | 문자열 비교 없는 reason 3분류 불가능 판단 | **해결 완료**: typed exception 1:1 매핑 구현 및 검증 완료 | Task 3 완료 |
+| commit 이후 audit의 위치 | 독립 audit 함수 `audit_post_commit(...) -> bool`로 구현, rollback 불가능한 독립 검증 | post-commit 불일치를 rollback할 수 있다는 기술 | **해결 완료**: boolean 독립 감사로 확정 완료 | Task 3 완료 |
 
 ### 13.1 `#591` 실데이터 gate — 증거 등급별 분리
 

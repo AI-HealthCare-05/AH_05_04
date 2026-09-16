@@ -30,7 +30,12 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import (
     RawArtifactUnavailableError,
 )
 from ai_worker.tasks.rag.source_ingestion.mfds_label import (
+    CANONICALIZATION_SPEC_VERSION,
     LOCAL_PRIVATE_STORAGE_BACKEND,
+    NORMALIZATION_VERSION,
+    OBSERVED_CONTENT_TYPE,
+    PARSER_VERSION,
+    SCHEMA_VERSION,
     parse_mfds_label_artifact,
 )
 
@@ -42,6 +47,7 @@ _ALLOWED_SECTION_SETS = (
 _ITEM_SEQ_PATTERN = re.compile(r"[0-9]{9}\Z")
 _EXPECTED_STORAGE_BACKEND = LOCAL_PRIVATE_STORAGE_BACKEND
 _EXPECTED_ARTIFACT_KIND = "RAW_RESPONSE"
+_EXPECTED_CONTENT_TYPE = OBSERVED_CONTENT_TYPE
 
 
 class KnowledgeMaterializationFailureReason(StrEnum):
@@ -113,6 +119,8 @@ class MaterializationSourceDocument:
     byte_size: int
     content_type: str
     object_key: str = field(repr=False)
+    ingestion_run_snapshot_id: UUID | None = None
+    ingestion_run_operation_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,17 +218,37 @@ def _validate_source_documents_set(
             raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.REQUEST_INVALID)
 
 
+def _validate_source_document_versions_and_run(doc: MaterializationSourceDocument) -> None:
+    if (
+        doc.schema_version != SCHEMA_VERSION
+        or doc.parser_version != PARSER_VERSION
+        or doc.normalization_version != NORMALIZATION_VERSION
+        or doc.canonicalization_spec_version != CANONICALIZATION_SPEC_VERSION
+    ):
+        raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
+
+    if doc.ingestion_run_status == "SUCCEEDED":
+        if doc.ingestion_run_snapshot_id is not None and doc.ingestion_run_snapshot_id != doc.snapshot_id:
+            raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
+        if doc.ingestion_run_operation_id is not None and doc.ingestion_run_operation_id != doc.operation_id:
+            raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
+
+
+def _validate_source_document_storage(doc: MaterializationSourceDocument) -> None:
+    if doc.storage_backend != _EXPECTED_STORAGE_BACKEND:
+        raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
+    if doc.artifact_kind != _EXPECTED_ARTIFACT_KIND:
+        raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
+    if doc.content_type != _EXPECTED_CONTENT_TYPE:
+        raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
+    if doc.reject_code is not None or doc.parser_location is not None:
+        raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
+
+
 def _validate_source_document_binding(
     doc: MaterializationSourceDocument,
 ) -> RawArtifactMetadata:
-    if doc.storage_backend != _EXPECTED_STORAGE_BACKEND:
-        raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
-
-    if doc.artifact_kind != _EXPECTED_ARTIFACT_KIND:
-        raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
-
-    if doc.reject_code is not None or doc.parser_location is not None:
-        raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
+    _validate_source_document_storage(doc)
 
     expected_page = SECTION_ORDER.index(doc.section) + 1
     if doc.page_number != expected_page:
@@ -239,6 +267,8 @@ def _validate_source_document_binding(
 
     if doc.object_key != expected_object_key:
         raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
+
+    _validate_source_document_versions_and_run(doc)
 
     try:
         return RawArtifactMetadata(

@@ -24,7 +24,14 @@ from ai_worker.tasks.rag.knowledge_materialization import (
     MaterializedChunkReceipt,
     MaterializedDocumentReceipt,
 )
-from ai_worker.tasks.rag.source_ingestion.mfds_label import LOCAL_PRIVATE_STORAGE_BACKEND
+from ai_worker.tasks.rag.source_ingestion.mfds_label import (
+    CANONICALIZATION_SPEC_VERSION,
+    LOCAL_PRIVATE_STORAGE_BACKEND,
+    NORMALIZATION_VERSION,
+    OBSERVED_CONTENT_TYPE,
+    PARSER_VERSION,
+    SCHEMA_VERSION,
+)
 
 SessionFactory = Callable[[], AsyncSession]
 
@@ -173,6 +180,8 @@ def _fetch_source_documents_statement(snapshot_id: UUID, member_ids: Sequence[UU
             _SNAPSHOT_MEMBER.c.content_sha256,
             _INGESTION_RUN.c.id.label("ingestion_run_id"),
             _INGESTION_RUN.c.run_status.label("ingestion_run_status"),
+            _INGESTION_RUN.c.snapshot_id.label("ingestion_run_snapshot_id"),
+            _INGESTION_RUN.c.operation_id.label("ingestion_run_operation_id"),
             _INGESTION_ARTIFACT.c.id.label("ingestion_artifact_id"),
             _INGESTION_ARTIFACT.c.artifact_key,
             _INGESTION_ARTIFACT.c.artifact_kind,
@@ -241,6 +250,8 @@ def _materialization_row_lock_statement(snapshot_id: UUID, member_ids: Sequence[
             _SNAPSHOT_MEMBER.c.content_sha256,
             _INGESTION_RUN.c.id.label("ingestion_run_id"),
             _INGESTION_RUN.c.run_status.label("ingestion_run_status"),
+            _INGESTION_RUN.c.snapshot_id.label("ingestion_run_snapshot_id"),
+            _INGESTION_RUN.c.operation_id.label("ingestion_run_operation_id"),
             _INGESTION_ARTIFACT.c.id.label("ingestion_artifact_id"),
             _INGESTION_ARTIFACT.c.artifact_key,
             _INGESTION_ARTIFACT.c.artifact_kind,
@@ -333,6 +344,16 @@ class SqlAlchemyKnowledgeMaterializationRepository:
                         byte_size=int(row["byte_size"]),
                         content_type=str(row["content_type"]),
                         object_key=str(row["object_key"]),
+                        ingestion_run_snapshot_id=(
+                            UUID(str(row["ingestion_run_snapshot_id"]))
+                            if row["ingestion_run_snapshot_id"] is not None
+                            else None
+                        ),
+                        ingestion_run_operation_id=(
+                            UUID(str(row["ingestion_run_operation_id"]))
+                            if row["ingestion_run_operation_id"] is not None
+                            else None
+                        ),
                     )
                 )
 
@@ -660,6 +681,7 @@ def _validate_locked_provenance_rows(
             raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
 
         _validate_eligibility(row)
+        _validate_run_snapshot_binding(row)
         _validate_artifact_binding(row, doc)
         _validate_snapshot_race(row, doc)
 
@@ -681,6 +703,17 @@ def _validate_eligibility(row: RowMapping) -> None:
         raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_NOT_ELIGIBLE)
 
 
+def _validate_run_snapshot_binding(row: RowMapping) -> None:
+    run_snap_id = row["ingestion_run_snapshot_id"]
+    snap_id = row["snapshot_id"]
+    if run_snap_id is None or str(run_snap_id) != str(snap_id):
+        raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
+    run_op_id = row["ingestion_run_operation_id"]
+    op_id = row["operation_id"]
+    if run_op_id is None or str(run_op_id) != str(op_id):
+        raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
+
+
 def _validate_artifact_metadata_and_path(row: RowMapping, doc: MaterializationSourceDocument) -> None:
     if row["member_kind"] != "ARTIFACT":
         raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
@@ -694,6 +727,12 @@ def _validate_artifact_metadata_and_path(row: RowMapping, doc: MaterializationSo
     if row["page_number"] != expected_page:
         raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
     if row["artifact_key"] != f"{doc.locator}.xml":
+        raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
+    if (
+        row["content_type"] != OBSERVED_CONTENT_TYPE
+        or doc.content_type != OBSERVED_CONTENT_TYPE
+        or row["content_type"] != doc.content_type
+    ):
         raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
 
 
@@ -722,6 +761,13 @@ def _validate_snapshot_race(row: RowMapping, doc: MaterializationSourceDocument)
         or row["raw_manifest_checksum"] != doc.raw_manifest_checksum
         or row["canonical_checksum"] != doc.canonical_checksum
         or row["canonicalization_spec_version"] != doc.canonicalization_spec_version
+        or row["canonicalization_spec_version"] != CANONICALIZATION_SPEC_VERSION
+        or row["schema_version"] != doc.schema_version
+        or row["schema_version"] != SCHEMA_VERSION
+        or row["parser_version"] != doc.parser_version
+        or row["parser_version"] != PARSER_VERSION
+        or row["normalization_version"] != doc.normalization_version
+        or row["normalization_version"] != NORMALIZATION_VERSION
     ):
         raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.ARTIFACT_INTEGRITY_MISMATCH)
 

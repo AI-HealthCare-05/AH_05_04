@@ -26,6 +26,14 @@ from ai_worker.tasks.rag.knowledge_materialization import (
     MaterializationSourceDocument,
 )
 from ai_worker.tasks.rag.mfds_label_chunk_policy import KnowledgeChunkDraft
+from ai_worker.tasks.rag.source_ingestion.mfds_label import (
+    CANONICALIZATION_SPEC_VERSION,
+    LOCAL_PRIVATE_STORAGE_BACKEND,
+    NORMALIZATION_VERSION,
+    OBSERVED_CONTENT_TYPE,
+    PARSER_VERSION,
+    SCHEMA_VERSION,
+)
 
 ITEM_SEQ = "200610660"
 SNAPSHOT_ID = UUID("00000000-0000-4000-8000-000000000001")
@@ -55,10 +63,17 @@ def _make_source_doc(
     endpoint_acquisition_status: str = "APPROVED",
     operation_runtime_status: str = "ENABLED",
     operation_acquisition_status: str = "APPROVED",
-    storage_backend: str = "LOCAL_PRIVATE",
+    storage_backend: str = LOCAL_PRIVATE_STORAGE_BACKEND,
     artifact_kind: str = "RAW_RESPONSE",
     reject_code: str | None = None,
     parser_location: str | None = None,
+    content_type: str = OBSERVED_CONTENT_TYPE,
+    schema_version: str = SCHEMA_VERSION,
+    parser_version: str = PARSER_VERSION,
+    normalization_version: str = NORMALIZATION_VERSION,
+    canonicalization_spec_version: str = CANONICALIZATION_SPEC_VERSION,
+    ingestion_run_snapshot_id: UUID | None = SNAPSHOT_ID,
+    ingestion_run_operation_id: UUID | None = OPERATION_ID,
 ) -> MaterializationSourceDocument:
     checksum = raw_checksum or hashlib.sha256(f"content-{section}".encode()).hexdigest()
     m_id = member_id or uuid4()
@@ -81,10 +96,10 @@ def _make_source_doc(
         source_version="external:20260901",
         canonical_checksum="1" * 64,
         raw_manifest_checksum="2" * 64,
-        schema_version="schema-v1",
-        parser_version="parser-v1",
-        normalization_version="norm-v1",
-        canonicalization_spec_version="canon-v1",
+        schema_version=schema_version,
+        parser_version=parser_version,
+        normalization_version=normalization_version,
+        canonicalization_spec_version=canonicalization_spec_version,
         snapshot_verification_status=snapshot_verification_status,
         ingestion_run_id=INGESTION_RUN_ID,
         ingestion_run_status=ingestion_run_status,
@@ -102,8 +117,10 @@ def _make_source_doc(
         parser_location=parser_location,
         raw_checksum=checksum,
         byte_size=100,
-        content_type="application/xml",
+        content_type=content_type,
         object_key=f"sha256/{checksum[:2]}/{checksum}.artifact",
+        ingestion_run_snapshot_id=ingestion_run_snapshot_id,
+        ingestion_run_operation_id=ingestion_run_operation_id,
     )
 
 
@@ -514,6 +531,8 @@ def _row_from_source_doc(doc: MaterializationSourceDocument) -> dict[str, object
         "byte_size": doc.byte_size,
         "content_type": doc.content_type,
         "object_key": doc.object_key,
+        "ingestion_run_snapshot_id": str(doc.ingestion_run_snapshot_id) if doc.ingestion_run_snapshot_id else None,
+        "ingestion_run_operation_id": str(doc.ingestion_run_operation_id) if doc.ingestion_run_operation_id else None,
     }
 
 

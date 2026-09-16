@@ -5,8 +5,8 @@
 - 상태: Proposed · 구현 브랜치 검증 중 · Current 아님
 - 추적: Issue #634 선행 저장 기반. 이 계약만으로 #634 또는 Track F를 완료하지 않는다.
 - 구현 담당: 정현우 (`@ceohwj`)
-- 단일 책임 리뷰어: Backend·DB·Security 송은영 (`@phina-io`) 1명
-- 전문 검토 근거: Worker·parser·private artifact reader 경계 김지혜 (`@Jye-rookie`)의 의견 또는 승인 근거를 첨부하되 추가 필수 PR 리뷰어로 지정하지 않는다.
+- 단일 책임 리뷰어: 김지혜 (`@Jye-rookie`) 1명
+- 전문 검토 근거: Backend·DB·Security 송은영 (`@phina-io`)의 의견 및 트랜잭션·DB 권한 검토 근거를 첨부하되 추가 필수 PR 리뷰어로 지정하지 않는다.
 - 공개 상태: `PUBLIC_TRACK_F=false` 유지
 
 이 계약은 승인된 Source Snapshot Member(MFDS 품목허가 상세 XML: 필수 EE·UD·NB 및 선택 NN)로부터 정규화된 `KnowledgeDocument` 및 `KnowledgeChunk`를 PostgreSQL에 원자적으로 구체화(Materialize)하여 불변 근거 데이터로 적재하는 내부 Worker 계약이다. 수집·다운로드, Index 구축, Embedding provider 호출, Lexical/Dense 검색, RRF, Citation 생성, 환자 대면 API 노출은 범위 밖이다.
@@ -56,23 +56,19 @@ SQL row 반환 순서에 의존하지 않는다.
 
 #### Receipt 동일성 비교 규칙
 
-`KnowledgeMaterializationReceipt`에는 실행 결과에 따라 달라지는 `is_exact_replay`가 있으므로 "반복 실행이
-전체 필드가 동일한 receipt를 반환한다"는 정의는 성립하지 않는다. 첫 실행은 `False`, 재실행은 `True`다.
+`KnowledgeMaterializationReceipt`는 영속화된 불변 canonical 영수증이며 `is_exact_replay` 필드를 포함하지 않는다.
+실행 판정 결과는 상위 래퍼인 `KnowledgeMaterializationResult`의 `outcome: MaterializationOutcome` (`CREATED` 또는 `EXACT_REPLAY`) 및 헬퍼 프로퍼티 `is_exact_replay: bool`을 통해 제공된다.
 
-동일성 비교는 다음과 같이 정의한다.
+따라서 동일 입력에 대한 반복 실행 시 `KnowledgeMaterializationReceipt`는 **모든 필드가 100% 완전히 동일**하다 (`res1.receipt == res2.receipt`).
 
 | 필드 | 반복 실행 시 |
 |---|---|
-| `is_exact_replay` | **비교에서 제외.** 첫 실행 `False`, 재실행 `True`가 정상이다 |
 | `snapshot_id`, `source_code`, `source_version`, `snapshot_canonical_checksum`, `canonicalization_spec_version`, `item_seq`, `chunk_policy_version` | 동일 |
 | `documents` 순서와 각 `MaterializedDocumentReceipt`의 `knowledge_document_id`, `source_snapshot_member_id`, `external_document_id`, `document_content_hash`, `locator` | 동일 (기존 UUID 재사용) |
 | 각 `MaterializedChunkReceipt`의 `knowledge_chunk_id`, `chunk_index`, `content_hash`와 그 순서 | 동일 |
 
-즉 "**`is_exact_replay`를 제외한 모든 필드가 동일**"이 정본 표현이다. 계약·설계·계획·테스트에서 "field-equivalent
-receipt"라는 표현을 쓸 때는 항상 이 제외 규칙을 함께 명시한다.
-
-순수 draft 단계(`KnowledgeDocumentDraft` / `KnowledgeChunkDraft`)에는 `is_exact_replay`가 없으므로 draft
-수준에서는 전체 필드 동일성을 요구할 수 있다.
+즉 "exact replay 시 영수증의 완전 일치(`result.receipt == previous_receipt`)"가 정본 계약이다.
+순수 draft 단계(`KnowledgeDocumentDraft` / `KnowledgeChunkDraft`) 역시 전체 필드 동일성을 만족한다.
 
 ### section별 exact page binding
 
@@ -241,46 +237,13 @@ Parser seam은 텍스트 정규화를 수행하지 않는다. `parse_mfds_label_
    - NN 섹션에서 7개 필수 제목 세트와 불일치하는 경우, 기존 관례에 따라 `ValueError("XML_ARTICLE_SET_INVALID")`를 발생시킨다.
 2. **상위 Service의 변환 책임**:
    - `materialize_documents()`는 parser 호출 범위에서 발생하는 모든 `ValueError`를 포착하여 `KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.PARSER_REJECTED)`로 안전 변환한다.
-3. **Artifact reader 오류 변환 — typed boundary가 확정될 때까지 보류**:
-
-   > **상태: BLOCKED.** 현재 reader 인터페이스로는 reason을 구분해 구현할 수 없다. 아래 사실 확인 후
-   > Revision 10의 3-way 매핑 표를 **철회**한다.
-
-   확인된 사실:
-
-   - `LocalPrivateSourceArtifactReader.__init__`(`local_private_source_artifact_finalizer.py:29~43`)은 root
-     절대경로·디렉터리·world-writable·writer-writable·symlink 위반을 **생성자에서** 평문 `ValueError`로
-     던진다. reader 인스턴스가 `materialize_documents()`에 전달되기 **전에** 발생하므로 Phase 2A의 순수
-     커널이 변환할 수 있는 오류가 아니다.
-   - `read_verified()` 경로의 크기 불일치·checksum 불일치·I/O 실패
-     (`artifacts.py:188~201`)와 object key root 이탈(`_resolve_object_key`)은 **모두 구분 없는 일반
-     `ValueError`**다. 타입으로 구분되지 않는다.
-   - 따라서 세 reason으로 나누려면 예외 **메시지 문자열 비교**가 필요하다. 이 계약은 메시지에 의존하지
-     않는다고 규정하므로 자기모순이다.
-
-   결정 필요 옵션 (책임 리뷰어 `@phina-io` + Worker/reader specialist `@Jye-rookie`):
-
-   | 옵션 | 내용 | 비용 |
-   |---|---|---|
-   | A | `artifacts.py`에 typed 예외 계층(예: `RawArtifactIntegrityError`, `RawArtifactAccessError`)을 도입하고 기존 `ValueError`를 하위 호환으로 유지 | 다른 owner 소유 공유 모듈 변경. 계약 변경 절차 필요 |
-   | B | Phase 2A가 소유하는 **별도 typed loader adapter**를 만들어 reader를 감싸고, reader 호출 전 자체 검증으로 구분 가능한 것만 세분화하며 `read_verified()` 실패는 단일 reason으로 축약 | Phase 2A 범위 안. 다만 integrity와 I/O 실패를 구분하지 못해 한 reason으로 합쳐야 함 |
-   | C | 매핑을 포기하고 reader 실패 전체를 `DEPENDENCY_ERROR` 단일 reason으로 처리 | integrity 실패가 인프라 오류로 오분류됨 — **fail-closed 신호를 약화하므로 권고하지 않음** |
-
-   **권고: 옵션 B를 기본으로 하고, integrity/access 구분이 필요하다고 판단되면 A로 승격한다.** 옵션 B에서
-   Phase 2A가 reader 호출 **전에** 스스로 판정할 수 있어 세분화가 가능한 항목은 다음뿐이다.
-
-   - `object_key != LocalPrivateSourceArtifactStore.object_key_for_checksum(raw_checksum)` →
-     `SOURCE_BINDING_INVALID` (reader를 호출하지 않고 거절)
-   - Phase 2A가 직접 구성하는 `RawArtifactMetadata(...)`의 `ValueError` → `SOURCE_BINDING_INVALID`
-     (자기 호출 지점이므로 타입이 아니라 **호출 위치**로 구분된다)
-
-   `read_verified()` 자체의 실패는 옵션 B에서 단일 reason으로 축약해야 한다. 어느 reason으로 축약할지는
-   위 결정에 포함한다.
-
-   **생성자 오류의 처리 위치**: reader root 권한·symlink 오류는 순수 커널이 아니라 **composition
-   boundary**(DI 조립 지점 / entrypoint)에서 처리한다. 해당 오류가 발생하면 materialization 요청을 시작조차
-   하지 않으며, 계약의 failure reason 체계로 투영하지 않는다. `DEPENDENCY_ERROR`로 감싸 요청 단위 실패로
-   보이게 만들지 않는다.
+3. **Artifact Reader Typed Error 계약 (확정 및 구현 완료)**:
+   - reader 계층의 예외를 문자열 파싱 없이 typed exception으로 포착하여 상위 계약 failure reason으로 1:1 매핑한다:
+     - `RawArtifactIntegrityError` (checksum/size mismatch 등 무결성 훼손) → `KnowledgeMaterializationFailureReason.ARTIFACT_INTEGRITY_MISMATCH`
+     - `RawArtifactUnavailableError` (파일 부재, I/O 실패, 권한 장애 등) → `KnowledgeMaterializationFailureReason.DEPENDENCY_ERROR`
+     - `ArtifactObjectKeyError` (object key 포맷 또는 root 이탈) → `KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID`
+     - `ArtifactPathTraversalError` (path traversal 공격 시도) → `KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID`
+   - reader 생성자 검증 실패(root 권한, 디렉터리 부재 등 환경 결함)는 composition boundary(DI/진입점)에서 발생하며 요청 failure reason으로 감싸지 않는다.
 
 
 ---
@@ -359,27 +322,20 @@ Parser seam은 텍스트 정규화를 수행하지 않는다. `parse_mfds_label_
 
 ## 저장 및 트랜잭션 경계 계약
 
-1. **동시성 직렬화 (Advisory Lock)**:
-   - 트랜잭션 시작 직후 `SELECT pg_advisory_xact_lock(hashtextextended(:key, 1))`을 획득한다.
-   - `:key = f"mfds-materialize:{snapshot_id}:{expected_item_seq}"`
-   - 기존 Index 빌더는 namespace `0`과 `f"{index_code}:{index_version}"`를 사용한다
-     (`sqlalchemy_knowledge_evidence_index.py`). namespace를 `1`로 분리하여 서로 다른 lock space를 쓰되,
-     **공유 row lock 순서는 아래와 같이 Index와 동일하게 맞춘다.**
-2. **결속 잠금 (Row Lock) — 기존 Index flow와 정렬한 공통 순서 (검증 전 가설)**:
-   > **상태: 확정 아님 — Task 3/4 검증 전 가설.** 아래 순서는 *한 member 문장 안에서 잠기는 테이블 순서*를
-   > Index와 맞춘 것이다. 그러나 기존 Index는 member를 `knowledge_chunk_id.bytes` 오름차순으로 순회하고
-   > materialization은 아직 chunk id가 없어 `SECTION_ORDER` 오름차순으로 순회하므로, **두 flow의 실제 row
-   > 획득 순서가 동일하다고 보장되지 않는다.** 서로 다른 member 사이에서 row 집합이 교차하면 테이블 순서
-   > 일치만으로는 deadlock을 배제할 수 없다. 따라서 "deadlock-safe 공통 순서 확정"이라고 기술하지 않고,
-   > Task 4의 cross-flow 동시 실행 테스트로 검증해야 하는 가설로 둔다. 검증에서 교착이 재현되면 순회 기준
-   > 통일(예: 양쪽 모두 `source_snapshot_member_id` 오름차순) 또는 상위 직렬화 수단을 책임 리뷰어와 함께
-   > 재결정한다.
-   - 기존 `SqlAlchemyKnowledgeEvidenceIndexRepository.persist_complete_index()`의 실제 lock 순서는 다음이다.
-     1. `pg_advisory_xact_lock(..., 0)`
-     2. member별(`knowledge_chunk_id.bytes` 오름차순) `_source_binding_statement()`:
+1. **동시성 직렬화 (Snapshot Advisory Lock — Materialization × Index 공통 참여)**:
+   - 트랜잭션 시작 직후 Snapshot 단위의 advisory lock을 획득한다:
+     `SELECT pg_advisory_xact_lock(hashtextextended(:key, 0)::bit(32)::bigint)`
+   - `:key = f"knowledge-source-snapshot:{snapshot_id}"` (namespace `0`)
+   - 복수 Snapshot을 다룰 경우 `snapshot_id`의 binary representation(`UUID.bytes`) 오름차순으로 정렬하여 lock을 획득함으로써 교착 상태(deadlock)를 원천 방지한다.
+   - **Cross-flow 상호 배제**: 기존 Evidence Index 빌더(`SqlAlchemyKnowledgeEvidenceIndexRepository`)와 Materialization 저장소(`SqlAlchemyKnowledgeMaterializationRepository`) 양쪽 모두 동일한 snapshot advisory lock에 참여하므로, 동일 Snapshot에 대한 동시 쓰기/인덱스 구축이 완벽하게 직렬화된다. (Task 4 `test_d2_cross_flow_materialization_and_index_mutual_exclusion` 검증 완료)
+2. **결속 잠금 (Row Lock) — Index flow와 정렬한 공통 순서 (확정 및 검증 완료)**:
+   - Snapshot advisory lock으로 동일 Snapshot에 대한 cross-flow 동시 실행이 먼저 직렬화되며, 트랜잭션 내부의 row lock 순서는 Index flow와 일치시킨다:
+   - 순서:
+     1. `pg_advisory_xact_lock(hashtextextended('knowledge-source-snapshot:' || snapshot_id, 0)::bit(32)::bigint)` (UUID.bytes 순)
+     2. member별 row lock:
         `FOR UPDATE OF rag_source, rag_source_endpoint, rag_source_operation, rag_source_snapshot,`
         `rag_source_snapshot_member, knowledge_document, knowledge_chunk`
-     3. (ARTIFACT member만) `_artifact_origin_lock_statement()`:
+     3. (ARTIFACT member) `_artifact_origin_lock_statement()`:
         `FOR UPDATE OF rag_source_ingestion_run, rag_source_ingestion_artifact`
      4. `rag_knowledge_index`: `FOR UPDATE OF rag_knowledge_index`
    - 따라서 두 flow가 공유하는 row의 **공통 순서**는 다음으로 고정한다.
@@ -507,6 +463,8 @@ class MaterializationSourceDocument:
     canonicalization_spec_version: str
     snapshot_verification_status: str
     ingestion_run_id: UUID
+    ingestion_run_snapshot_id: UUID   # Invariant: == snapshot_id (SOURCE_BINDING_INVALID)
+    ingestion_run_operation_id: UUID  # Invariant: == operation_id (SOURCE_BINDING_INVALID)
     ingestion_run_status: str         # Invariant: == "SUCCEEDED" (SUCCEEDED_WITH_REJECTIONS는 미허용)
     member_id: UUID
     member_kind: str
@@ -556,11 +514,24 @@ class KnowledgeMaterializationReceipt:
     snapshot_canonical_checksum: str
     canonicalization_spec_version: str
     item_seq: str
-    is_exact_replay: bool
     chunk_policy_version: str
     documents: tuple[MaterializedDocumentReceipt, ...]
+
+class MaterializationOutcome(StrEnum):
+    CREATED = "CREATED"
+    EXACT_REPLAY = "EXACT_REPLAY"
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeMaterializationResult:
+    receipt: KnowledgeMaterializationReceipt
+    outcome: MaterializationOutcome
+
+    @property
+    def is_exact_replay(self) -> bool:
+        return self.outcome == MaterializationOutcome.EXACT_REPLAY
 ```
 
+- `KnowledgeMaterializationReceipt`는 영속화된 canonical 영수증이며 실행 판정(`is_exact_replay`)을 포함하지 않는다. 실행 결과는 `KnowledgeMaterializationResult`를 통해 반환된다.
 - `MaterializedDocumentReceipt`의 `locator: str = field(repr=False)` 및 영수증의 메타데이터 필드를 통해 후속 인덱스 단계의 `KnowledgeChunkIdentity`를 독립적으로 완전 구성할 수 있다.
 - 영수증, 로그, 예외 메시지에는 로컬 호스트 경로, 내부 S3 `object_key`, 원본 비정규 XML 텍스트를 절대 노출하지 않는다.
 
@@ -645,16 +616,15 @@ rollback 불가능한 audit이며 성공 조건이 아니다.
 | 항목 | 확인된 사실 | 추정하지 않은 내용 | 필요한 결정 | 해소 시한 |
 |---|---|---|---|---|
 | `KnowledgeChunk.embedding_model` / `vector_store_key` authoritative owner | 기존 Index adapter가 읽지·쓰지 않고, `knowledge_index_builder`에 UPDATE 권한이 없다. `LEGACY_V1` row에만 값이 관측된다 | 후속 Index/Embedding 단계가 소유한다는 단정 | owner와 write 경로 확정 (Backend·DB 책임 리뷰어) | Phase 2B 착수 전 |
-| `NO_CHANGE` run을 materialization 입력으로 허용할지 | `NO_CHANGE` run도 artifact를 생성하고 `snapshot_id`는 직전 비교 Snapshot을 가리킨다 | `NO_CHANGE`가 안전한 입력이라는 단정 | 허용 여부 결정. 현재는 fail-closed 거절 | Task 3 착수 전 |
-| `SUCCEEDED_WITH_REJECTIONS` 허용 여부 | MFDS label 경로는 `_validate_metadata()`에서 `rejected_record_count == 0`을 강제하므로 현재 이 상태를 만들 수 없다 | enum에 존재한다는 이유로 허용 입력에 포함 | 실제 MFDS 생성 경로 변경 또는 `@phina-io`의 명시적 계약 결정 | Task 3 착수 전 |
-| 두 flow의 row 획득 순서 일치 (deadlock 배제) | 테이블 순서는 Index와 정렬했으나 member 순회 기준이 다르다 (Index: `knowledge_chunk_id` / materialization: `SECTION_ORDER`) | "deadlock-safe 공통 순서 확정" | Task 4 cross-flow 동시성 테스트 결과. 교착 시 순회 기준 통일을 책임 리뷰어와 재결정 | Task 4 완료 전 |
-| `object_key` 공용 pure helper 승격 | `sha256/{c[:2]}/{c}.artifact` 규칙이 3개 private staticmethod와 1개 정규식에 중복 존재 | Phase 2A가 네 번째 사본을 만들어도 된다는 판단 | Source writer·cleanup owner 조율 (`AGENTS.md` 소유권 경계) | Task 3 리팩터 제안 |
-| commit 이후 audit의 위치 | 기존 Index는 receipt 비교를 commit 전 같은 transaction에서 끝낸다 | post-commit 불일치를 rollback할 수 있다는 기술 | audit을 계약 성공 조건에 포함할지 여부 결정 | Task 3 착수 전 |
-| `NN` 공식 빈 ARTICLE의 저장 표현 | parser가 `PARTIAL_OFFICIAL` / `empty_article_titles`로 보존한다 | 합성 문구·빈 chunk 저장 | 표현 방식 결정 (계약 owner). 현재는 `CHUNK_POLICY_UNSUPPORTED` 보류 | Task 2 NN 경로 구현 전 |
+| Snapshot Advisory Lock 동시성 직렬화 | Snapshot 단위 advisory lock(`knowledge-source-snapshot:{snapshot_id}`, namespace 0) 도입 및 Materialization × Index 공통 참여 | 상이한 namespace 분리 | **해결 완료**: 동일 lock 참여 및 cross-flow 상호 배제 검증 완료 | Task 4 완료 |
+| Artifact Reader Typed Error 계층 | `RawArtifactIntegrityError`, `RawArtifactUnavailableError`, `ArtifactObjectKeyError` 도입 | 문자열 파싱 기반 오류 판정 | **해결 완료**: typed exception 1:1 매핑 구현 및 검증 완료 | Task 3 완료 |
+| Commit 이후 audit의 위치 | commit 후 재조회는 독립 audit 함수 `audit_post_commit() -> bool`로 구현, rollback 불가능 | audit 실패 시 commit된 row rollback | **해결 완료**: boolean 독립 감사로 확정 완료 | Task 3 완료 |
+| `NO_CHANGE` run 및 `SUCCEEDED_WITH_REJECTIONS` | MFDS label 경로는 단일 성공 상태 `SUCCEEDED`만을 생성하므로 그 외 상태는 부적격 | 허용 입력으로의 확장 | **해결 완료**: fail-closed 거절 유지 | Task 3 완료 |
+| `NN` 공식 빈 ARTICLE의 저장 표현 | parser가 `PARTIAL_OFFICIAL` / `empty_article_titles`로 보존한다 | 합성 문구·빈 chunk 저장 | **해결 완료**: `CHUNK_POLICY_UNSUPPORTED` fail-closed 보류 | Task 2 완료 |
 | 실제 서버 artifact mount·builder credential 적용 | #593/#613 runbook에 목표 경로가 기록되어 있다 | 공용 환경에 실제 provision 완료 | 환경 담당 확인 (#591/#593/#613 gate) | 실제 persistence 실행 전 |
 
 ---
 
 ## Current 승격과 후속 조건
 
-이 Proposed 계약은 해당되는 schema·migration·adapter·자동 테스트와 지정 리뷰어(`@phina-io`) 승인이 같은 PR에서 확인되기 전 `Current`로 승격할 수 없다. (Phase 2A는 기존 Knowledge 스키마를 재사용하므로 신규 migration을 포함하지 않는다.) 승격 이후에도 후속 Knowledge Evidence Index 및 Search, Release Gate 통과 전까지 Track F를 외부에 공개할 수 없다.
+이 Proposed 계약은 해당되는 schema·migration·adapter·자동 테스트와 단일 책임 리뷰어(`@Jye-rookie`) 승인 및 Backend·DB·Security(`@phina-io`) 전문 검토 근거가 같은 PR에서 확인되기 전 `Current`로 승격할 수 없다. (Phase 2A는 기존 Knowledge 스키마를 재사용하므로 신규 migration을 포함하지 않는다.) 승격 이후에도 후속 Knowledge Evidence Index 및 Search, Release Gate 통과 전까지 Track F를 외부에 공개할 수 없다.

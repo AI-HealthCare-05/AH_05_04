@@ -140,6 +140,16 @@ def _chunk_texts(root: ElementTree.Element) -> list[str]:
     return texts
 
 
+def _norm_tag(tag: object) -> str:
+    if not isinstance(tag, str):
+        raise ChunkPolicyError(ChunkPolicyFailureReason.CHUNK_POLICY_UNSUPPORTED)
+    return tag.lower()
+
+
+def _is_table(tag: object) -> bool:
+    return _norm_tag(tag) == _TABLE_TAG
+
+
 def _render_article(article: ElementTree.Element, level: int) -> str:
     """ARTICLE을 heading 한 줄과 하위 블록으로 렌더링합니다."""
     blocks: list[str] = []
@@ -162,13 +172,14 @@ def _render_blocks(element: ElementTree.Element, level: int) -> list[str]:
             blocks.append(buffered)
 
     for child in element:
+        child_tag = _norm_tag(child.tag)
         if child.tag == "ARTICLE":
             flush_inline()
             blocks.append(_render_article(child, level + 1))
         elif child.tag == "PARAGRAPH":
             flush_inline()
             blocks.extend(_render_blocks(child, level))
-        elif _is_table(child.tag):
+        elif child_tag == _TABLE_TAG:
             flush_inline()
             blocks.append(_render_table(child))
         else:
@@ -194,17 +205,48 @@ def _render_inline(element: ElementTree.Element) -> str:
     return "".join(parts)
 
 
+def _render_table_row(row: ElementTree.Element) -> str:
+    if row.text and row.text.strip():
+        raise ChunkPolicyError(ChunkPolicyFailureReason.CHUNK_POLICY_UNSUPPORTED)
+    cells: list[str] = []
+    for cell in row:
+        cell_tag = _norm_tag(cell.tag)
+        if cell_tag not in _CELL_TAGS:
+            raise ChunkPolicyError(ChunkPolicyFailureReason.CHUNK_POLICY_UNSUPPORTED)
+        if cell.tail and cell.tail.strip():
+            raise ChunkPolicyError(ChunkPolicyFailureReason.CHUNK_POLICY_UNSUPPORTED)
+        cells.append(_render_inline(cell).strip())
+    return CELL_SEPARATOR.join(cells)
+
+
 def _render_table(table: ElementTree.Element) -> str:
-    """caption을 첫 줄에 두고 나머지 행을 source order로 배치합니다."""
-    lines: list[str] = []
+    """caption을 첫 줄에 두고 나머지 행을 source order로 배치합니다.
+
+    TABLE 직하는 optional CAPTION과 TR만 허용하며, 행 밖 텍스트나 알 수 없는
+    구조(tbody/thead/tfoot 등) 또는 cell 밖 텍스트가 있으면 fail-closed합니다.
+    """
+    if table.text and table.text.strip():
+        raise ChunkPolicyError(ChunkPolicyFailureReason.CHUNK_POLICY_UNSUPPORTED)
+
+    caption_line: str | None = None
+    rows: list[str] = []
+
     for child in table:
-        if child.tag == _CAPTION_TAG:
-            lines.append(_render_inline(child).strip())
-    for row in table.iter(_ROW_TAG):
-        cells = [_render_inline(cell).strip() for cell in row if cell.tag in _CELL_TAGS]
-        lines.append(CELL_SEPARATOR.join(cells))
+        child_tag = _norm_tag(child.tag)
+        if child.tail and child.tail.strip():
+            raise ChunkPolicyError(ChunkPolicyFailureReason.CHUNK_POLICY_UNSUPPORTED)
+
+        if child_tag == _CAPTION_TAG:
+            if caption_line is not None or rows:
+                raise ChunkPolicyError(ChunkPolicyFailureReason.CHUNK_POLICY_UNSUPPORTED)
+            caption_line = _render_inline(child).strip()
+        elif child_tag == _ROW_TAG:
+            rows.append(_render_table_row(child))
+        else:
+            raise ChunkPolicyError(ChunkPolicyFailureReason.CHUNK_POLICY_UNSUPPORTED)
+
+    lines: list[str] = []
+    if caption_line:
+        lines.append(caption_line)
+    lines.extend(rows)
     return ROW_SEPARATOR.join(line for line in lines if line)
-
-
-def _is_table(tag: str) -> bool:
-    return tag.lower() == _TABLE_TAG

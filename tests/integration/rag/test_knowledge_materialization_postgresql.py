@@ -53,7 +53,15 @@ from ai_worker.tasks.rag.mfds_label_chunk_policy import (
     KnowledgeChunkDraft,
     build_chunk_drafts,
 )
-from ai_worker.tasks.rag.source_ingestion.mfds_label import ParsedMfdsLabelDocument
+from ai_worker.tasks.rag.source_ingestion.mfds_label import (
+    CANONICALIZATION_SPEC_VERSION,
+    LOCAL_PRIVATE_STORAGE_BACKEND,
+    NORMALIZATION_VERSION,
+    OBSERVED_CONTENT_TYPE,
+    PARSER_VERSION,
+    SCHEMA_VERSION,
+    ParsedMfdsLabelDocument,
+)
 from app.core import config
 from infra.python.knowledge_index_role_policy import apply_knowledge_index_role_policy
 
@@ -61,7 +69,7 @@ ROOT = Path(__file__).resolve().parents[3]
 pytestmark = pytest.mark.asyncio
 
 _NOW = datetime(2026, 9, 13, 1, 0, tzinfo=UTC)
-_CANONICAL_SPEC = "canonical-v1"
+_CANONICAL_SPEC = CANONICALIZATION_SPEC_VERSION
 _SOURCE_VERSION = "external:v1"
 _ITEM_SEQ = "200610660"
 
@@ -102,6 +110,15 @@ async def _seed_provenance(
     run_status: str = "SUCCEEDED",
     snapshot_status: str = "CURRENT",
     sections: tuple[str, ...] = ("EE", "UD", "NB"),
+    schema_version: str = SCHEMA_VERSION,
+    parser_version: str = PARSER_VERSION,
+    normalization_version: str = NORMALIZATION_VERSION,
+    canonicalization_spec_version: str = CANONICALIZATION_SPEC_VERSION,
+    content_type: str = OBSERVED_CONTENT_TYPE,
+    storage_backend: str = LOCAL_PRIVATE_STORAGE_BACKEND,
+    run_snapshot_id: UUID | None = None,
+    source_version: str = _SOURCE_VERSION,
+    operation_code: str = "LIST",
 ) -> tuple[
     KnowledgeMaterializationRequest,
     tuple[MaterializationSourceDocument, ...],
@@ -113,52 +130,81 @@ async def _seed_provenance(
     run_id = ingestion_run_id or uuid4()
     snap_id = snapshot_id or uuid4()
     verification_id = uuid4()
+    effective_run_snap_id = (
+        run_snapshot_id if run_snapshot_id is not None else (None if run_status == "FAILED" else snap_id)
+    )
 
     canonical_checksum = hashlib.sha256(b"canonical_snapshot").hexdigest()
     raw_manifest_checksum = hashlib.sha256(b"raw_manifest").hexdigest()
 
     async with engine.begin() as connection:
-        await connection.execute(
-            text(
-                "INSERT INTO rag_source "
-                "(id, source_code, display_name, lifecycle_status, max_rejected_records, "
-                "max_rejection_rate, empty_result_policy) "
-                "VALUES (:id, 'MFDS', 'Synthetic MFDS', 'ACTIVE', 0, 0, 'REJECT')"
-            ),
-            {"id": str(src_id)},
+        existing_source = await connection.execute(text("SELECT id FROM rag_source WHERE source_code = 'MFDS'"))
+        src_row = existing_source.mappings().first()
+        if src_row is not None:
+            src_id = UUID(str(src_row["id"]))
+        else:
+            await connection.execute(
+                text(
+                    "INSERT INTO rag_source "
+                    "(id, source_code, display_name, lifecycle_status, max_rejected_records, "
+                    "max_rejection_rate, empty_result_policy) "
+                    "VALUES (:id, 'MFDS', 'Synthetic MFDS', 'ACTIVE', 0, 0, 'REJECT')"
+                ),
+                {"id": str(src_id)},
+            )
+
+        existing_ep = await connection.execute(
+            text("SELECT id FROM rag_source_endpoint WHERE source_id = :source_id AND endpoint_code = 'PRODUCTS'"),
+            {"source_id": str(src_id)},
         )
-        await connection.execute(
-            text(
-                "INSERT INTO rag_source_endpoint "
-                "(id, source_id, endpoint_code, display_name, lifecycle_status, runtime_status, acquisition_status) "
-                "VALUES (:id, :source_id, 'PRODUCTS', 'Synthetic products', 'VERIFIED', 'ENABLED', 'APPROVED')"
-            ),
-            {"id": str(ep_id), "source_id": str(src_id)},
+        ep_row = existing_ep.mappings().first()
+        if ep_row is not None:
+            ep_id = UUID(str(ep_row["id"]))
+        else:
+            await connection.execute(
+                text(
+                    "INSERT INTO rag_source_endpoint "
+                    "(id, source_id, endpoint_code, display_name, lifecycle_status, runtime_status, acquisition_status) "
+                    "VALUES (:id, :source_id, 'PRODUCTS', 'Synthetic products', 'VERIFIED', 'ENABLED', 'APPROVED')"
+                ),
+                {"id": str(ep_id), "source_id": str(src_id)},
+            )
+
+        existing_op = await connection.execute(
+            text("SELECT id FROM rag_source_operation WHERE endpoint_id = :endpoint_id AND operation_code = :op_code"),
+            {"endpoint_id": str(ep_id), "op_code": operation_code},
         )
-        await connection.execute(
-            text(
-                "INSERT INTO rag_source_operation "
-                "(id, endpoint_id, operation_code, display_name, runtime_status, acquisition_status) "
-                "VALUES (:id, :endpoint_id, 'LIST', 'Synthetic list', 'ENABLED', 'APPROVED')"
-            ),
-            {"id": str(op_id), "endpoint_id": str(ep_id)},
-        )
+        op_row = existing_op.mappings().first()
+        if op_row is not None:
+            op_id = UUID(str(op_row["id"]))
+        else:
+            await connection.execute(
+                text(
+                    "INSERT INTO rag_source_operation "
+                    "(id, endpoint_id, operation_code, display_name, runtime_status, acquisition_status) "
+                    "VALUES (:id, :endpoint_id, :op_code, 'Synthetic list', 'ENABLED', 'APPROVED')"
+                ),
+                {"id": str(op_id), "endpoint_id": str(ep_id), "op_code": operation_code},
+            )
         await connection.execute(
             text(
                 "INSERT INTO rag_source_snapshot "
                 "(id, operation_id, source_version, external_version, raw_manifest_checksum, canonical_checksum, "
                 "schema_version, parser_version, normalization_version, canonicalization_spec_version, "
                 "endpoint_receipt_hash, record_count, rejected_record_count, verification_status, collected_at) "
-                "VALUES (:id, :operation_id, :source_version, 'v1', :raw_hash, :canonical_hash, 'schema-v1', "
-                "'parser-v1', 'normalization-v1', :canon_spec, :receipt_hash, 1, 0, 'PENDING', :now)"
+                "VALUES (:id, :operation_id, :source_version, 'v1', :raw_hash, :canonical_hash, :schema_ver, "
+                ":parser_ver, :norm_ver, :canon_spec, :receipt_hash, 1, 0, 'PENDING', :now)"
             ),
             {
                 "id": str(snap_id),
                 "operation_id": str(op_id),
-                "source_version": _SOURCE_VERSION,
+                "source_version": source_version,
                 "raw_hash": raw_manifest_checksum,
                 "canonical_hash": canonical_checksum,
-                "canon_spec": _CANONICAL_SPEC,
+                "schema_ver": schema_version,
+                "parser_ver": parser_version,
+                "norm_ver": normalization_version,
+                "canon_spec": canonicalization_spec_version,
                 "receipt_hash": "c" * 64,
                 "now": _NOW,
             },
@@ -189,7 +235,7 @@ async def _seed_provenance(
                 "id": str(run_id),
                 "operation_id": str(op_id),
                 "run_group_key": "mfds-group-1",
-                "snapshot_id": None if run_status == "FAILED" else str(snap_id),
+                "snapshot_id": str(effective_run_snap_id) if effective_run_snap_id is not None else None,
                 "status": run_status,
                 "now": _NOW,
             },
@@ -217,17 +263,19 @@ async def _seed_provenance(
                     "INSERT INTO rag_source_ingestion_artifact "
                     "(id, ingestion_run_id, storage_backend, page_number, artifact_key, "
                     "object_key, raw_checksum, byte_size, content_type) "
-                    "VALUES (:id, :run_id, 'LOCAL_PRIVATE', :page_number, :art_key, "
-                    ":obj_key, :checksum, :size, 'application/xml')"
+                    "VALUES (:id, :run_id, :storage_backend, :page_number, :art_key, "
+                    ":obj_key, :checksum, :size, :content_type)"
                 ),
                 {
                     "id": str(artifact_id),
                     "run_id": str(run_id),
+                    "storage_backend": storage_backend,
                     "page_number": idx,
                     "art_key": artifact_key,
                     "obj_key": object_key,
                     "checksum": sha,
                     "size": len(xml_body),
+                    "content_type": content_type,
                 },
             )
             await connection.execute(
@@ -257,18 +305,18 @@ async def _seed_provenance(
             endpoint_runtime_status="ENABLED",
             endpoint_acquisition_status="APPROVED",
             operation_id=op_id,
-            operation_code="LIST",
+            operation_code=operation_code,
             operation_runtime_status="ENABLED",
             operation_acquisition_status="APPROVED",
             snapshot_id=snap_id,
-            source_version=_SOURCE_VERSION,
+            source_version=source_version,
             snapshot_verification_status=snapshot_status,
             raw_manifest_checksum=raw_manifest_checksum,
             canonical_checksum=canonical_checksum,
-            schema_version="schema-v1",
-            parser_version="parser-v1",
-            normalization_version="normalization-v1",
-            canonicalization_spec_version=_CANONICAL_SPEC,
+            schema_version=schema_version,
+            parser_version=parser_version,
+            normalization_version=normalization_version,
+            canonicalization_spec_version=canonicalization_spec_version,
             member_id=member_id,
             member_kind="ARTIFACT",
             locator=locator,
@@ -278,15 +326,17 @@ async def _seed_provenance(
             ingestion_artifact_id=artifact_id,
             artifact_key=artifact_key,
             section=section,
-            storage_backend="LOCAL_PRIVATE",
+            storage_backend=storage_backend,
             artifact_kind="RAW_RESPONSE",
             page_number=idx,
             reject_code=None,
             parser_location=None,
             raw_checksum=sha,
             byte_size=len(xml_body),
-            content_type="application/xml",
+            content_type=content_type,
             object_key=object_key,
+            ingestion_run_snapshot_id=effective_run_snap_id,
+            ingestion_run_operation_id=op_id,
         )
         source_docs.append(src_doc)
 
@@ -319,7 +369,7 @@ async def _seed_provenance(
 
 
 # =============================================================================
-# 2. Concurrency Tests (D2 Cases A ~ F with Real PostgreSQL independent TXs)
+# 2. Concurrency Tests (D2 Cases A ~ F: Helper Semantic Tests on Advisory Lock)
 # =============================================================================
 
 
@@ -484,6 +534,123 @@ async def test_d2_case_f_commit_releases_lock(database) -> None:
     async with factory() as session, session.begin():
         locked = await acquire_snapshot_advisory_locks(session, [snap_id])
         assert len(locked) == 1
+
+
+async def test_d2_cross_flow_materialization_and_index_mutual_exclusion(database, monkeypatch) -> None:
+    """Materialization and Index repositories concurrently accessing the same Snapshot
+
+    prove PostgreSQL advisory lock mutual exclusion via pg_locks observation (no sleeps).
+    """
+    engine = database
+    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    mat_repo = SqlAlchemyKnowledgeMaterializationRepository(factory)
+    idx_repo = SqlAlchemyKnowledgeEvidenceIndexRepository(factory)
+
+    # 1. Seed provenance & perform initial materialization create
+    request, source_docs, drafts = await _seed_provenance(engine)
+    snapshot_id = request.snapshot_id
+    initial_res = await mat_repo.persist_materialization(request, drafts, source_docs)
+    assert initial_res.outcome == MaterializationOutcome.CREATED
+    first_chunk_receipt = initial_res.receipt.documents[0].chunks[0]
+
+    # 2. Prepare Index build request for the materialized chunk
+    first_doc = source_docs[0]
+    first_draft = drafts[0]
+    first_chunk_draft = first_draft.chunks[0]
+
+    identity = KnowledgeChunkIdentity(
+        knowledge_chunk_id=first_chunk_receipt.knowledge_chunk_id,
+        source_snapshot_id=snapshot_id,
+        source_snapshot_member_id=first_doc.member_id,
+        source_code=first_doc.source_code,
+        source_version=first_doc.source_version,
+        canonical_checksum=first_doc.canonical_checksum,
+        external_document_id=first_draft.external_document_id,
+        chunk_index=first_chunk_draft.chunk_index,
+        content_hash=first_chunk_draft.content_hash,
+        locator=first_doc.locator,
+    )
+    index_request = KnowledgeIndexBuildRequest(
+        index_code="mfds-evidence-index-cross",
+        index_version="v1.0.0",
+        embedding_model_ref="synthetic-model",
+        embedding_model_version="1.0.0",
+        embedding_dimension=2,
+        distance_metric=DistanceMetric.COSINE,
+        members=(
+            KnowledgeIndexMemberDraft(
+                identity=identity,
+                content_text=SensitiveEvidenceText(first_chunk_draft.chunk_text),
+                embedding=(1.0, 0.0),
+            ),
+        ),
+    )
+
+    # 3. Synchronizing barriers (no sleeps)
+    event_mat_locked = asyncio.Event()
+    event_release_mat = asyncio.Event()
+    event_idx_attempting = asyncio.Event()
+
+    import ai_worker.adapters.sqlalchemy_knowledge_materialization as mat_mod
+
+    orig_mat_acquire = mat_mod.acquire_snapshot_advisory_locks
+
+    async def _hooked_mat_acquire(session, snapshot_ids):
+        keys = await orig_mat_acquire(session, snapshot_ids)
+        event_mat_locked.set()
+        await event_release_mat.wait()
+        return keys
+
+    monkeypatch.setattr(mat_mod, "acquire_snapshot_advisory_locks", _hooked_mat_acquire)
+
+    # 4. Task 1: Start Materialization exact replay (acquires lock, waits on barrier)
+    mat_task = asyncio.create_task(mat_repo.persist_materialization(request, drafts, source_docs))
+    await event_mat_locked.wait()
+
+    # 5. Task 2: Start Index Build concurrently for the same snapshot
+    import ai_worker.adapters.sqlalchemy_knowledge_evidence_index as idx_mod
+
+    orig_idx_acquire = idx_mod.acquire_snapshot_advisory_locks
+
+    async def _hooked_idx_acquire(session, snapshot_ids):
+        event_idx_attempting.set()
+        return await orig_idx_acquire(session, snapshot_ids)
+
+    monkeypatch.setattr(idx_mod, "acquire_snapshot_advisory_locks", _hooked_idx_acquire)
+
+    idx_task = asyncio.create_task(build_knowledge_evidence_index(index_request, repository=idx_repo))
+    await event_idx_attempting.wait()
+
+    # 6. Observe pg_locks directly from an independent connection
+    lock_key = snapshot_advisory_lock_key(snapshot_id)
+    observed_conflict = False
+    for _ in range(50):
+        async with factory() as check_session:
+            res = await check_session.execute(
+                text(
+                    "SELECT granted FROM pg_locks "
+                    "WHERE locktype = 'advisory' "
+                    "AND objid = (hashtextextended(:key, 0)::bit(32)::bigint)"
+                ),
+                {"key": lock_key},
+            )
+            statuses = [r[0] for r in res.fetchall()]
+            if len(statuses) >= 2 and True in statuses and False in statuses:
+                observed_conflict = True
+                break
+        await asyncio.sleep(0.01)
+
+    assert observed_conflict, "Expected one granted lock and one waiting lock on pg_locks"
+
+    # 7. Release Materialization exact replay to commit
+    event_release_mat.set()
+
+    # 8. Both Materialization exact replay and Index persist complete successfully
+    mat_res, idx_receipt = await asyncio.gather(mat_task, idx_task)
+    assert mat_res.outcome == MaterializationOutcome.EXACT_REPLAY
+    assert mat_res.receipt == initial_res.receipt
+    assert idx_receipt.index_code == "mfds-evidence-index-cross"
+    assert idx_receipt.member_count == 1
 
 
 # =============================================================================
@@ -809,3 +976,149 @@ async def test_nn_empty_article_fail_closed_unsupported() -> None:
     with pytest.raises(ChunkPolicyError) as exc_info:
         build_chunk_drafts(parsed, chunk_policy_version=CHUNK_POLICY_VERSION)
     assert exc_info.value.reason is ChunkPolicyFailureReason.CHUNK_POLICY_UNSUPPORTED
+
+
+# =============================================================================
+# 9. Provenance & Version Negative Regressions (MUST FIX 1)
+# =============================================================================
+
+
+async def test_negative_snapshot_member_run_snapshot_mismatch_rejected(database) -> None:
+    engine = database
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    repo = SqlAlchemyKnowledgeMaterializationRepository(factory)
+
+    # 1. Seed Snapshot B (with its own run and artifact)
+    _, source_docs_b, _ = await _seed_provenance(engine, operation_code="LIST_B")
+    doc_b = source_docs_b[0]
+
+    # 2. Seed Snapshot A
+    request_a, source_docs_a, drafts_a = await _seed_provenance(engine, source_version="external:v2")
+
+    # 3. Point Snapshot A member to Snapshot B artifact
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE rag_source_snapshot_member SET ingestion_artifact_id = :artifact_id WHERE id = :member_id"),
+            {
+                "artifact_id": str(doc_b.ingestion_artifact_id),
+                "member_id": str(source_docs_a[0].member_id),
+            },
+        )
+
+    # Update in-memory source doc to mirror the cross-snapshot artifact
+    mutated_doc_0 = replace(
+        source_docs_a[0],
+        ingestion_artifact_id=doc_b.ingestion_artifact_id,
+        artifact_key=doc_b.artifact_key,
+        content_sha256=doc_b.content_sha256,
+        raw_checksum=doc_b.raw_checksum,
+        object_key=doc_b.object_key,
+        ingestion_run_id=doc_b.ingestion_run_id,
+        ingestion_run_status=doc_b.ingestion_run_status,
+        ingestion_run_snapshot_id=doc_b.snapshot_id,
+        ingestion_run_operation_id=doc_b.operation_id,
+    )
+    test_docs = (mutated_doc_0, source_docs_a[1], source_docs_a[2])
+
+    with pytest.raises(KnowledgeMaterializationError) as exc_info:
+        await repo.persist_materialization(request_a, drafts_a, test_docs)
+    assert exc_info.value.reason is KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID
+
+    async with factory() as session:
+        doc_count = await session.scalar(select(text("count(*)")).select_from(_DOCUMENT))
+        chunk_count = await session.scalar(select(text("count(*)")).select_from(_CHUNK))
+        assert doc_count == 0
+        assert chunk_count == 0
+
+
+async def test_negative_content_type_mismatch_rejected(database) -> None:
+    engine = database
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    repo = SqlAlchemyKnowledgeMaterializationRepository(factory)
+
+    request, source_docs, drafts = await _seed_provenance(
+        engine,
+        content_type="text/plain",
+    )
+
+    with pytest.raises(KnowledgeMaterializationError) as exc_info:
+        await repo.persist_materialization(request, drafts, source_docs)
+    assert exc_info.value.reason is KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID
+
+    async with factory() as session:
+        doc_count = await session.scalar(select(text("count(*)")).select_from(_DOCUMENT))
+        chunk_count = await session.scalar(select(text("count(*)")).select_from(_CHUNK))
+        assert doc_count == 0
+        assert chunk_count == 0
+
+
+async def test_negative_schema_version_mismatch_fail_closed(database) -> None:
+    engine = database
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    repo = SqlAlchemyKnowledgeMaterializationRepository(factory)
+
+    request, source_docs, drafts = await _seed_provenance(
+        engine,
+        schema_version="invalid-schema@99",
+    )
+
+    with pytest.raises(KnowledgeMaterializationError) as exc_info:
+        await repo.persist_materialization(request, drafts, source_docs)
+    assert exc_info.value.reason in (
+        KnowledgeMaterializationFailureReason.ARTIFACT_INTEGRITY_MISMATCH,
+        KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID,
+    )
+
+    async with factory() as session:
+        doc_count = await session.scalar(select(text("count(*)")).select_from(_DOCUMENT))
+        chunk_count = await session.scalar(select(text("count(*)")).select_from(_CHUNK))
+        assert doc_count == 0
+        assert chunk_count == 0
+
+
+async def test_negative_parser_version_mismatch_fail_closed(database) -> None:
+    engine = database
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    repo = SqlAlchemyKnowledgeMaterializationRepository(factory)
+
+    request, source_docs, drafts = await _seed_provenance(
+        engine,
+        parser_version="invalid-parser@99",
+    )
+
+    with pytest.raises(KnowledgeMaterializationError) as exc_info:
+        await repo.persist_materialization(request, drafts, source_docs)
+    assert exc_info.value.reason in (
+        KnowledgeMaterializationFailureReason.ARTIFACT_INTEGRITY_MISMATCH,
+        KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID,
+    )
+
+    async with factory() as session:
+        doc_count = await session.scalar(select(text("count(*)")).select_from(_DOCUMENT))
+        chunk_count = await session.scalar(select(text("count(*)")).select_from(_CHUNK))
+        assert doc_count == 0
+        assert chunk_count == 0
+
+
+async def test_negative_normalization_version_mismatch_fail_closed(database) -> None:
+    engine = database
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    repo = SqlAlchemyKnowledgeMaterializationRepository(factory)
+
+    request, source_docs, drafts = await _seed_provenance(
+        engine,
+        normalization_version="invalid-norm@99",
+    )
+
+    with pytest.raises(KnowledgeMaterializationError) as exc_info:
+        await repo.persist_materialization(request, drafts, source_docs)
+    assert exc_info.value.reason in (
+        KnowledgeMaterializationFailureReason.ARTIFACT_INTEGRITY_MISMATCH,
+        KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID,
+    )
+
+    async with factory() as session:
+        doc_count = await session.scalar(select(text("count(*)")).select_from(_DOCUMENT))
+        chunk_count = await session.scalar(select(text("count(*)")).select_from(_CHUNK))
+        assert doc_count == 0
+        assert chunk_count == 0

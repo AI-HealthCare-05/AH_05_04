@@ -21,7 +21,15 @@ from ai_worker.tasks.rag.source_ingestion.artifacts import (
     RawArtifactMetadata,
     RawArtifactUnavailableError,
 )
-from ai_worker.tasks.rag.source_ingestion.mfds_label import NN_ARTICLE_TITLES
+from ai_worker.tasks.rag.source_ingestion.mfds_label import (
+    CANONICALIZATION_SPEC_VERSION,
+    LOCAL_PRIVATE_STORAGE_BACKEND,
+    NN_ARTICLE_TITLES,
+    NORMALIZATION_VERSION,
+    OBSERVED_CONTENT_TYPE,
+    PARSER_VERSION,
+    SCHEMA_VERSION,
+)
 
 ITEM_SEQ = "200610660"
 SNAPSHOT_ID = UUID("00000000-0000-4000-8000-000000000001")
@@ -59,6 +67,7 @@ def _make_source_doc(
     object_key = LocalPrivateSourceArtifactStore.object_key_for_checksum(raw_sha)
     section_order = ("EE", "UD", "NB", "NN")
     page_number = section_order.index(section) + 1 if section in section_order else 99
+    op_id = UUID("00000000-0000-4000-8000-000000000030")
     return MaterializationSourceDocument(
         source_id=UUID("00000000-0000-4000-8000-000000000010"),
         source_code="MFDS",
@@ -68,7 +77,7 @@ def _make_source_doc(
         endpoint_lifecycle_status="APPROVED",
         endpoint_runtime_status="ENABLED",
         endpoint_acquisition_status="VERIFIED",
-        operation_id=UUID("00000000-0000-4000-8000-000000000030"),
+        operation_id=op_id,
         operation_code="GET_LABEL",
         operation_runtime_status="ENABLED",
         operation_acquisition_status="APPROVED",
@@ -76,10 +85,10 @@ def _make_source_doc(
         source_version="api:2026-09-15T06:00:00Z",
         canonical_checksum="b" * 64,
         raw_manifest_checksum="c" * 64,
-        schema_version="mfds-label-schema@1",
-        parser_version="mfds-label-parser@1",
-        normalization_version="mfds-label-norm@1",
-        canonicalization_spec_version="canonical-spec@1",
+        schema_version=SCHEMA_VERSION,
+        parser_version=PARSER_VERSION,
+        normalization_version=NORMALIZATION_VERSION,
+        canonicalization_spec_version=CANONICALIZATION_SPEC_VERSION,
         snapshot_verification_status="CURRENT",
         ingestion_run_id=UUID("00000000-0000-4000-8000-000000000040"),
         ingestion_run_status="SUCCEEDED",
@@ -92,13 +101,15 @@ def _make_source_doc(
         section=section,
         artifact_kind="RAW_RESPONSE",
         page_number=page_number,
-        storage_backend="LOCAL_PRIVATE",
+        storage_backend=LOCAL_PRIVATE_STORAGE_BACKEND,
         reject_code=None,
         parser_location=None,
         raw_checksum=raw_sha,
         byte_size=len(raw_bytes),
-        content_type="application/download; UTF-8; charset=UTF-8",
+        content_type=OBSERVED_CONTENT_TYPE,
         object_key=object_key,
+        ingestion_run_snapshot_id=snapshot_id,
+        ingestion_run_operation_id=op_id,
     )
 
 
