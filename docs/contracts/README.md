@@ -11,6 +11,8 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 - [공통 복약 리포트 v1 (#419)](./current/medication-report-v1.md): KST 7/30일·과거 version·두 지표·0분모·상세 기록. Backend #478·Frontend #574 병합 및 실제 runtime 검증.
 
+- [Track B 일정 API v1 / #628 최신 처방 범위](./proposed/track-b-schedule-api-v1.md): SELF 최신 처방 한 건으로 schedule_items 정합화; 요청자 범위 확인, 구현 리뷰 대기. 과거 occurrence 이력 보존.
+
 ## 디렉터리 구조와 배치 원칙
 
 - [PD-398-M1 Source·Catalog 관리](./proposed/source-catalog-management-398.md): 분리된 관리 API, 서버 권한, 미사용 자료 수정·삭제와 감사 transaction, PD-398-R2 Snapshot 잠금 권한 분리, #372 Alias review_status 승인 보호 연동.
