@@ -80,6 +80,7 @@ class ProductionSearchReceipt:
 
 RETRIEVAL_SELECTION_MANIFEST_PROJECTION_VERSION = "retrieval-selection-manifest-v2"
 PRODUCTION_SEARCH_RECEIPT_VERSION = "2.0"
+PRODUCTION_SEARCH_RECEIPT_PROJECTION_VERSION = "production-search-receipt-v2"
 
 
 def selection_manifest_projection(selected_hits: Sequence[ProductionSearchHit]) -> JsonValue:
@@ -124,35 +125,84 @@ def compute_selection_manifest_hash(selected_hits: Sequence[ProductionSearchHit]
     return sha256_canonical_json(selection_manifest_projection(selected_hits))
 
 
+def _artifact_ref_projection(ref: ImmutableArtifactRef) -> dict[str, JsonValue]:
+    return {
+        "artifact_code": ref.artifact_code,
+        "content_sha256": ref.content_sha256,
+        "version": ref.version,
+    }
+
+
+def _query_fingerprint_projection(fp: QueryFingerprint) -> dict[str, JsonValue]:
+    return {
+        "algorithm": fp.algorithm,
+        "digest": fp.digest,
+        "key_version": fp.key_version,
+    }
+
+
+def production_search_receipt_projection(
+    *,
+    variant: str,
+    status: RetrievalExecutionStatus,
+    diagnostic_code: str,
+    query_fingerprint: QueryFingerprint,
+    filter_snapshot_ref: ImmutableArtifactRef,
+    evidence_index_ref: ImmutableArtifactRef,
+    retrieval_config_ref: ImmutableArtifactRef,
+    adapter_artifact_ref: ImmutableArtifactRef,
+    query_embedding_sha256: str | None,
+    signal_manifest_sha256: str,
+    hit_manifest_sha256: str,
+    selection_manifest_sha256: str,
+) -> JsonValue:
+    return {
+        "adapter_artifact_ref": _artifact_ref_projection(adapter_artifact_ref),
+        "diagnostic_code": diagnostic_code,
+        "evidence_index_ref": _artifact_ref_projection(evidence_index_ref),
+        "filter_snapshot_ref": _artifact_ref_projection(filter_snapshot_ref),
+        "hit_manifest_sha256": hit_manifest_sha256,
+        "projection_version": PRODUCTION_SEARCH_RECEIPT_PROJECTION_VERSION,
+        "query_embedding_sha256": query_embedding_sha256,
+        "query_fingerprint": _query_fingerprint_projection(query_fingerprint),
+        "retrieval_config_ref": _artifact_ref_projection(retrieval_config_ref),
+        "selection_manifest_sha256": selection_manifest_sha256,
+        "signal_manifest_sha256": signal_manifest_sha256,
+        "status": status.value,
+        "variant": variant,
+    }
+
+
 def compute_production_search_receipt(
     *,
     variant: str,
     status: RetrievalExecutionStatus,
     diagnostic_code: str,
     query_fingerprint: QueryFingerprint,
-    filter_snapshot_hash: str,
-    evidence_index_config_hash: str,
-    retrieval_config_hash: str,
+    filter_snapshot_ref: ImmutableArtifactRef,
+    evidence_index_ref: ImmutableArtifactRef,
+    retrieval_config_ref: ImmutableArtifactRef,
     adapter_artifact_ref: ImmutableArtifactRef,
     query_embedding_sha256: str | None,
     signal_manifest_sha256: str,
     hit_manifest_sha256: str,
     selection_manifest_sha256: str,
 ) -> ProductionSearchReceipt:
-    envelope = {
-        "diagnostic_code": diagnostic_code,
-        "evidence_index_ref": evidence_index_config_hash,
-        "filter_snapshot_ref": filter_snapshot_hash,
-        "hit_manifest_sha256": hit_manifest_sha256,
-        "query_digest": query_fingerprint.digest,
-        "query_embedding_sha256": query_embedding_sha256,
-        "retrieval_config_ref": retrieval_config_hash,
-        "selection_manifest_sha256": selection_manifest_sha256,
-        "signal_manifest_sha256": signal_manifest_sha256,
-        "status": status.value,
-        "variant": variant,
-    }
-    artifact_hash = sha256_canonical_json(envelope)
+    projection = production_search_receipt_projection(
+        variant=variant,
+        status=status,
+        diagnostic_code=diagnostic_code,
+        query_fingerprint=query_fingerprint,
+        filter_snapshot_ref=filter_snapshot_ref,
+        evidence_index_ref=evidence_index_ref,
+        retrieval_config_ref=retrieval_config_ref,
+        adapter_artifact_ref=adapter_artifact_ref,
+        query_embedding_sha256=query_embedding_sha256,
+        signal_manifest_sha256=signal_manifest_sha256,
+        hit_manifest_sha256=hit_manifest_sha256,
+        selection_manifest_sha256=selection_manifest_sha256,
+    )
+    artifact_hash = sha256_canonical_json(projection)
     artifact_ref = ImmutableArtifactRef(
         artifact_code="production_search_receipt",
         version=PRODUCTION_SEARCH_RECEIPT_VERSION,
@@ -164,9 +214,9 @@ def compute_production_search_receipt(
         retrieval_execution_status=status,
         diagnostic_code=diagnostic_code,
         query_fingerprint=query_fingerprint,
-        filter_snapshot_ref=ImmutableArtifactRef("filter_snapshot", "1.0", filter_snapshot_hash),
-        evidence_index_ref=ImmutableArtifactRef("knowledge_index", "1.0", evidence_index_config_hash),
-        retrieval_config_ref=ImmutableArtifactRef("retrieval_config", "1.0", retrieval_config_hash),
+        filter_snapshot_ref=filter_snapshot_ref,
+        evidence_index_ref=evidence_index_ref,
+        retrieval_config_ref=retrieval_config_ref,
         adapter_artifact_ref=adapter_artifact_ref,
         query_embedding_sha256=query_embedding_sha256,
         signal_manifest_sha256=signal_manifest_sha256,
@@ -389,9 +439,9 @@ async def execute_production_retrieval(
         status=RetrievalExecutionStatus.SUCCEEDED,
         diagnostic_code=gate_outcome.reason.value,
         query_fingerprint=sr.query_fingerprint,
-        filter_snapshot_hash=b.filter_snapshot_ref.content_sha256,
-        evidence_index_config_hash=b.evidence_index_ref.content_sha256,
-        retrieval_config_hash=cfg.compute_canonical_hash(),
+        filter_snapshot_ref=b.filter_snapshot_ref,
+        evidence_index_ref=b.evidence_index_ref,
+        retrieval_config_ref=ImmutableArtifactRef("retrieval_config", "1.0", cfg.compute_canonical_hash()),
         adapter_artifact_ref=search_outcome.adapter_artifact_ref,
         query_embedding_sha256=query_embedding_sha,
         signal_manifest_sha256=signal_hash,

@@ -61,6 +61,7 @@ from ai_worker.tasks.rag.retrieval_run import (
 )
 from ai_worker.tasks.rag.retrieval_runtime import (
     HYBRID_RETRIEVE_NODE_ID,
+    PRODUCTION_SEARCH_RECEIPT_PROJECTION_VERSION,
     PRODUCTION_SEARCH_RECEIPT_VERSION,
     RETRIEVAL_SELECTION_MANIFEST_PROJECTION_VERSION,
     HybridRetrieveRequest,
@@ -70,6 +71,7 @@ from ai_worker.tasks.rag.retrieval_runtime import (
     compute_selection_manifest_hash,
     execute_hybrid_retrieve,
     execute_production_retrieval,
+    production_search_receipt_projection,
     selection_manifest_projection,
 )
 from ai_worker.tasks.rag.text_embedding import (
@@ -650,9 +652,9 @@ def test_compute_production_search_receipt_cutover_to_v2() -> None:
         status=RetrievalExecutionStatus.SUCCEEDED,
         diagnostic_code="OK",
         query_fingerprint=QueryFingerprint("sha256", "v1", "0" * 64),
-        filter_snapshot_hash="f" * 64,
-        evidence_index_config_hash="e" * 64,
-        retrieval_config_hash="3" * 64,
+        filter_snapshot_ref=ImmutableArtifactRef("filter_snapshot", "1.0", "f" * 64),
+        evidence_index_ref=ImmutableArtifactRef("knowledge_index", "1.0", "e" * 64),
+        retrieval_config_ref=ImmutableArtifactRef("retrieval_config", "1.0", "3" * 64),
         adapter_artifact_ref=ImmutableArtifactRef("adapter", "1.0", "a" * 64),
         query_embedding_sha256="d" * 64,
         signal_manifest_sha256="1" * 64,
@@ -662,6 +664,105 @@ def test_compute_production_search_receipt_cutover_to_v2() -> None:
     assert receipt.artifact_ref.artifact_code == "production_search_receipt"
     assert receipt.artifact_ref.version == "2.0"
     assert receipt.artifact_ref.version == PRODUCTION_SEARCH_RECEIPT_VERSION
+
+    # Verify projection structure and version
+    proj = production_search_receipt_projection(
+        variant=receipt.variant,
+        status=receipt.retrieval_execution_status,
+        diagnostic_code=receipt.diagnostic_code,
+        query_fingerprint=receipt.query_fingerprint,
+        filter_snapshot_ref=receipt.filter_snapshot_ref,
+        evidence_index_ref=receipt.evidence_index_ref,
+        retrieval_config_ref=receipt.retrieval_config_ref,
+        adapter_artifact_ref=receipt.adapter_artifact_ref,
+        query_embedding_sha256=receipt.query_embedding_sha256,
+        signal_manifest_sha256=receipt.signal_manifest_sha256,
+        hit_manifest_sha256=receipt.hit_manifest_sha256,
+        selection_manifest_sha256=receipt.selection_manifest_sha256,
+    )
+    assert isinstance(proj, dict)
+    assert proj["projection_version"] == PRODUCTION_SEARCH_RECEIPT_PROJECTION_VERSION
+    assert proj["projection_version"] == "production-search-receipt-v2"
+    assert proj["adapter_artifact_ref"] == {"artifact_code": "adapter", "content_sha256": "a" * 64, "version": "1.0"}
+    assert proj["query_fingerprint"] == {"algorithm": "sha256", "digest": "0" * 64, "key_version": "v1"}
+    assert proj["filter_snapshot_ref"] == {
+        "artifact_code": "filter_snapshot",
+        "content_sha256": "f" * 64,
+        "version": "1.0",
+    }
+    assert proj["evidence_index_ref"] == {
+        "artifact_code": "knowledge_index",
+        "content_sha256": "e" * 64,
+        "version": "1.0",
+    }
+    assert proj["retrieval_config_ref"] == {
+        "artifact_code": "retrieval_config",
+        "content_sha256": "3" * 64,
+        "version": "1.0",
+    }
+
+
+def test_production_search_receipt_field_tampering_sensitivity() -> None:
+    base_kwargs: dict[str, object] = {
+        "variant": "RET-H",
+        "status": RetrievalExecutionStatus.SUCCEEDED,
+        "diagnostic_code": "OK",
+        "query_fingerprint": QueryFingerprint("sha256", "v1", "0" * 64),
+        "filter_snapshot_ref": ImmutableArtifactRef("filter_snapshot", "1.0", "f" * 64),
+        "evidence_index_ref": ImmutableArtifactRef("knowledge_index", "1.0", "e" * 64),
+        "retrieval_config_ref": ImmutableArtifactRef("retrieval_config", "1.0", "3" * 64),
+        "adapter_artifact_ref": ImmutableArtifactRef("adapter", "1.0", "a" * 64),
+        "query_embedding_sha256": "d" * 64,
+        "signal_manifest_sha256": "1" * 64,
+        "hit_manifest_sha256": "2" * 64,
+        "selection_manifest_sha256": "3" * 64,
+    }
+    baseline_receipt = compute_production_search_receipt(**base_kwargs)  # type: ignore[arg-type]
+    baseline_hash = baseline_receipt.artifact_ref.content_sha256
+
+    tampered_cases = [
+        # variant
+        ("variant", "RET-L"),
+        # status
+        ("status", RetrievalExecutionStatus.DEPENDENCY_ERROR),
+        # diagnostic_code
+        ("diagnostic_code", "FAIL_GATE"),
+        # query_fingerprint subfields
+        ("query_fingerprint", QueryFingerprint("blake2b", "v1", "0" * 64)),
+        ("query_fingerprint", QueryFingerprint("sha256", "v2", "0" * 64)),
+        ("query_fingerprint", QueryFingerprint("sha256", "v1", "9" * 64)),
+        # filter_snapshot_ref subfields
+        ("filter_snapshot_ref", ImmutableArtifactRef("other_code", "1.0", "f" * 64)),
+        ("filter_snapshot_ref", ImmutableArtifactRef("filter_snapshot", "2.0", "f" * 64)),
+        ("filter_snapshot_ref", ImmutableArtifactRef("filter_snapshot", "1.0", "9" * 64)),
+        # evidence_index_ref subfields
+        ("evidence_index_ref", ImmutableArtifactRef("other_index", "1.0", "e" * 64)),
+        ("evidence_index_ref", ImmutableArtifactRef("knowledge_index", "2.0", "e" * 64)),
+        ("evidence_index_ref", ImmutableArtifactRef("knowledge_index", "1.0", "9" * 64)),
+        # retrieval_config_ref subfields
+        ("retrieval_config_ref", ImmutableArtifactRef("other_config", "1.0", "3" * 64)),
+        ("retrieval_config_ref", ImmutableArtifactRef("retrieval_config", "2.0", "3" * 64)),
+        ("retrieval_config_ref", ImmutableArtifactRef("retrieval_config", "1.0", "9" * 64)),
+        # adapter_artifact_ref subfields
+        ("adapter_artifact_ref", ImmutableArtifactRef("other_adapter", "1.0", "a" * 64)),
+        ("adapter_artifact_ref", ImmutableArtifactRef("adapter", "2.0", "a" * 64)),
+        ("adapter_artifact_ref", ImmutableArtifactRef("adapter", "1.0", "9" * 64)),
+        # query_embedding_sha256
+        ("query_embedding_sha256", None),
+        ("query_embedding_sha256", "9" * 64),
+        # manifests
+        ("signal_manifest_sha256", "9" * 64),
+        ("hit_manifest_sha256", "9" * 64),
+        ("selection_manifest_sha256", "9" * 64),
+    ]
+
+    for key, tampered_val in tampered_cases:
+        modified_kwargs = dict(base_kwargs)
+        modified_kwargs[key] = tampered_val
+        tampered_receipt = compute_production_search_receipt(**modified_kwargs)  # type: ignore[arg-type]
+        assert tampered_receipt.artifact_ref.content_sha256 != baseline_hash, (
+            f"Tampering {key} to {tampered_val!r} did not alter receipt hash!"
+        )
 
 
 def test_legacy_digest_golden_regression_frozen_constants() -> None:

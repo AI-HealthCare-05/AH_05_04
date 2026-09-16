@@ -22,6 +22,7 @@
    - `retrieval-selection-manifest-v2` 및 `ProductionSearchReceipt` (v2.0)가 RFC 8785 JCS 규격(`canonical_json_bytes`)으로 정렬 완료되었다.
    - `BLOCKED_BY_178_CANONICAL_HASH_CONTRACT` 비강제 marker는 코드와 계약에서 완전히 제거되었으며 차단이 해소되었다.
    - 영수증 버전은 2.0만 허용하며 legacy 1.0은 fail-close(`RETRIEVAL_RECEIPT_MISMATCH`)된다.
+   - **해시 도메인 독립성**: 공용 JCS 직렬화 모듈(`ai_worker.tasks.evaluation.canonical`)을 공유하지만, `guide-evidence-handoff-v1`, `retrieval-selection-manifest-v2`, `production-search-receipt-v2` 세 프로젝션 및 해시 도메인은 상호 완전히 독립적이며 각 도메인의 preimage가 혼용되지 않는다.
 3. **#180 Endpoint Member 계약 차단 기록 (`BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT`)**:
    - PD-315/PD-362는 Endpoint Member의 `operation_code`를 nullable로 허용하지만 현재 Citation validator와 Citation Authorization은 non-null 값을 요구한다.
    - `BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT`는 이 차이를 기록하는 **비강제 marker**이며, 공유 계약과 downstream validator가 정렬되기 전에는 nullable Endpoint Member handoff를 #180 runtime에 연결할 수 없다.

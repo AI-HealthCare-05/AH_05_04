@@ -208,9 +208,9 @@ def _make_valid_handoff_components() -> tuple[GuideEvidenceHandoffRequest, Produ
         status=RetrievalExecutionStatus.SUCCEEDED,
         diagnostic_code="OK",
         query_fingerprint=QueryFingerprint("sha256", "v1", "0" * 64),
-        filter_snapshot_hash="f" * 64,
-        evidence_index_config_hash="e" * 64,
-        retrieval_config_hash="3" * 64,
+        filter_snapshot_ref=ImmutableArtifactRef("filter_snapshot", "1.0", "f" * 64),
+        evidence_index_ref=ImmutableArtifactRef("knowledge_index", "1.0", "e" * 64),
+        retrieval_config_ref=ImmutableArtifactRef("retrieval_config", "1.0", "3" * 64),
         adapter_artifact_ref=_make_artifact("adapter"),
         query_embedding_sha256="d" * 64,
         signal_manifest_sha256="1" * 64,
@@ -392,9 +392,9 @@ def test_allows_multiple_chunks_under_same_source_snapshot_member() -> None:
         status=RetrievalExecutionStatus.SUCCEEDED,
         diagnostic_code="OK",
         query_fingerprint=QueryFingerprint("sha256", "v1", "0" * 64),
-        filter_snapshot_hash="f" * 64,
-        evidence_index_config_hash="e" * 64,
-        retrieval_config_hash="3" * 64,
+        filter_snapshot_ref=ImmutableArtifactRef("filter_snapshot", "1.0", "f" * 64),
+        evidence_index_ref=ImmutableArtifactRef("knowledge_index", "1.0", "e" * 64),
+        retrieval_config_ref=ImmutableArtifactRef("retrieval_config", "1.0", "3" * 64),
         adapter_artifact_ref=_make_artifact("adapter"),
         query_embedding_sha256="d" * 64,
         signal_manifest_sha256="1" * 64,
@@ -462,9 +462,9 @@ def test_rejects_rank_out_of_range() -> None:
             status=RetrievalExecutionStatus.SUCCEEDED,
             diagnostic_code="OK",
             query_fingerprint=QueryFingerprint("sha256", "v1", "0" * 64),
-            filter_snapshot_hash="f" * 64,
-            evidence_index_config_hash="e" * 64,
-            retrieval_config_hash="3" * 64,
+            filter_snapshot_ref=ImmutableArtifactRef("filter_snapshot", "1.0", "f" * 64),
+            evidence_index_ref=ImmutableArtifactRef("knowledge_index", "1.0", "e" * 64),
+            retrieval_config_ref=ImmutableArtifactRef("retrieval_config", "1.0", "3" * 64),
             adapter_artifact_ref=_make_artifact("adapter"),
             query_embedding_sha256="d" * 64,
             signal_manifest_sha256="1" * 64,
@@ -514,9 +514,9 @@ def test_allows_rank_gaps_in_strictly_increasing_order() -> None:
         status=RetrievalExecutionStatus.SUCCEEDED,
         diagnostic_code="OK",
         query_fingerprint=QueryFingerprint("sha256", "v1", "0" * 64),
-        filter_snapshot_hash="f" * 64,
-        evidence_index_config_hash="e" * 64,
-        retrieval_config_hash="3" * 64,
+        filter_snapshot_ref=ImmutableArtifactRef("filter_snapshot", "1.0", "f" * 64),
+        evidence_index_ref=ImmutableArtifactRef("knowledge_index", "1.0", "e" * 64),
+        retrieval_config_ref=ImmutableArtifactRef("retrieval_config", "1.0", "3" * 64),
         adapter_artifact_ref=_make_artifact("adapter"),
         query_embedding_sha256="d" * 64,
         signal_manifest_sha256="1" * 64,
@@ -689,9 +689,9 @@ def test_rejects_retrieval_receipt_invalid_variant() -> None:
         status=receipt.retrieval_execution_status,
         diagnostic_code=receipt.diagnostic_code,
         query_fingerprint=receipt.query_fingerprint,
-        filter_snapshot_hash=receipt.filter_snapshot_ref.content_sha256,
-        evidence_index_config_hash=receipt.evidence_index_ref.content_sha256,
-        retrieval_config_hash=receipt.retrieval_config_ref.content_sha256,
+        filter_snapshot_ref=receipt.filter_snapshot_ref,
+        evidence_index_ref=receipt.evidence_index_ref,
+        retrieval_config_ref=receipt.retrieval_config_ref,
         adapter_artifact_ref=receipt.adapter_artifact_ref,
         query_embedding_sha256=receipt.query_embedding_sha256,
         signal_manifest_sha256=receipt.signal_manifest_sha256,
@@ -725,9 +725,9 @@ def test_rejects_retrieval_receipt_failed_execution_status() -> None:
         status=RetrievalExecutionStatus.DEPENDENCY_ERROR,  # not SUCCEEDED!
         diagnostic_code="DEPENDENCY_FAILED",
         query_fingerprint=receipt.query_fingerprint,
-        filter_snapshot_hash=receipt.filter_snapshot_ref.content_sha256,
-        evidence_index_config_hash=receipt.evidence_index_ref.content_sha256,
-        retrieval_config_hash=receipt.retrieval_config_ref.content_sha256,
+        filter_snapshot_ref=receipt.filter_snapshot_ref,
+        evidence_index_ref=receipt.evidence_index_ref,
+        retrieval_config_ref=receipt.retrieval_config_ref,
         adapter_artifact_ref=receipt.adapter_artifact_ref,
         query_embedding_sha256=receipt.query_embedding_sha256,
         signal_manifest_sha256=receipt.signal_manifest_sha256,
@@ -1473,9 +1473,9 @@ def test_rejects_retrieval_receipt_ret_h_none_query_embedding() -> None:
         status=RetrievalExecutionStatus.SUCCEEDED,
         diagnostic_code=receipt.diagnostic_code,
         query_fingerprint=receipt.query_fingerprint,
-        filter_snapshot_hash=receipt.filter_snapshot_ref.content_sha256,
-        evidence_index_config_hash=receipt.evidence_index_ref.content_sha256,
-        retrieval_config_hash=receipt.retrieval_config_ref.content_sha256,
+        filter_snapshot_ref=receipt.filter_snapshot_ref,
+        evidence_index_ref=receipt.evidence_index_ref,
+        retrieval_config_ref=receipt.retrieval_config_ref,
         adapter_artifact_ref=receipt.adapter_artifact_ref,
         query_embedding_sha256=None,  # RET-H must have non-null query_embedding_sha256!
         signal_manifest_sha256=receipt.signal_manifest_sha256,
@@ -1882,9 +1882,9 @@ def test_rejects_structurally_invalid_query_fingerprint(fingerprint: QueryFinger
         status=receipt.retrieval_execution_status,
         diagnostic_code=receipt.diagnostic_code,
         query_fingerprint=fingerprint,
-        filter_snapshot_hash=receipt.filter_snapshot_ref.content_sha256,
-        evidence_index_config_hash=receipt.evidence_index_ref.content_sha256,
-        retrieval_config_hash=receipt.retrieval_config_ref.content_sha256,
+        filter_snapshot_ref=receipt.filter_snapshot_ref,
+        evidence_index_ref=receipt.evidence_index_ref,
+        retrieval_config_ref=receipt.retrieval_config_ref,
         adapter_artifact_ref=receipt.adapter_artifact_ref,
         query_embedding_sha256=receipt.query_embedding_sha256,
         signal_manifest_sha256=receipt.signal_manifest_sha256,
@@ -1935,3 +1935,45 @@ def test_guide_evidence_handoff_matches_178_manifest_digest() -> None:
     assert outcome.decision == GuideEvidenceHandoffBuildDecision.BUILT
     assert outcome.handoff is not None
     assert outcome.handoff.retrieval_selection_manifest_sha256 == expected_178_digest
+
+
+@pytest.mark.parametrize(
+    "tamper_field,tamper_value",
+    [
+        # adapter_artifact_ref code / version / hash
+        ("adapter_artifact_ref", ImmutableArtifactRef("tampered_adapter", "1.0", "a" * 64)),
+        ("adapter_artifact_ref", ImmutableArtifactRef("adapter", "2.0", "a" * 64)),
+        ("adapter_artifact_ref", ImmutableArtifactRef("adapter", "1.0", "9" * 64)),
+        # query_fingerprint algorithm / key_version / digest
+        ("query_fingerprint", QueryFingerprint("blake2b", "v1", "0" * 64)),
+        ("query_fingerprint", QueryFingerprint("sha256", "v2", "0" * 64)),
+        ("query_fingerprint", QueryFingerprint("sha256", "v1", "9" * 64)),
+        # filter_snapshot_ref code / version / hash
+        ("filter_snapshot_ref", ImmutableArtifactRef("other_code", "1.0", "f" * 64)),
+        ("filter_snapshot_ref", ImmutableArtifactRef("filter_snapshot", "2.0", "f" * 64)),
+        ("filter_snapshot_ref", ImmutableArtifactRef("filter_snapshot", "1.0", "9" * 64)),
+        # evidence_index_ref code / version / hash
+        ("evidence_index_ref", ImmutableArtifactRef("other_code", "1.0", "e" * 64)),
+        ("evidence_index_ref", ImmutableArtifactRef("knowledge_index", "2.0", "e" * 64)),
+        ("evidence_index_ref", ImmutableArtifactRef("knowledge_index", "1.0", "9" * 64)),
+        # retrieval_config_ref code / version / hash
+        ("retrieval_config_ref", ImmutableArtifactRef("other_code", "1.0", "3" * 64)),
+        ("retrieval_config_ref", ImmutableArtifactRef("retrieval_config", "2.0", "3" * 64)),
+        ("retrieval_config_ref", ImmutableArtifactRef("retrieval_config", "1.0", "9" * 64)),
+    ],
+)
+def test_guide_evidence_handoff_rejects_tampered_receipt_identity_preserving_artifact_ref(
+    tamper_field: str,
+    tamper_value: object,
+) -> None:
+    req, receipt = _make_valid_handoff_components()
+    original_artifact_ref = receipt.artifact_ref
+
+    # Keep original receipt.artifact_ref, but mutate the internal identity field
+    tampered_receipt = replace(receipt, **{tamper_field: tamper_value, "artifact_ref": original_artifact_ref})  # type: ignore[arg-type]
+
+    outcome = build_guide_evidence_handoff(
+        GuideEvidenceHandoffRequest(tampered_receipt, req.selections, req.evaluated_at)
+    )
+    assert outcome.decision == GuideEvidenceHandoffBuildDecision.REJECTED
+    assert GuideEvidenceHandoffReason.RETRIEVAL_RECEIPT_MISMATCH in outcome.reasons
