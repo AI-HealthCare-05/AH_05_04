@@ -9,7 +9,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core import config
-from infra.python.source_role_policy import SOURCE_TABLES, apply_source_role_policy
+from infra.python.source_role_policy import SOURCE_TABLES, WRITER_LOCK_TABLES, apply_source_role_policy
 
 
 @pytest.mark.asyncio
@@ -60,6 +60,12 @@ async def test_separate_credentials_and_future_tables_are_fail_closed() -> None:
                     f'ALTER TABLE "{schema}".rag_source_snapshot ADD COLUMN verification_status text, ADD COLUMN verified_at timestamptz, ADD COLUMN effective_at timestamptz, ADD COLUMN verification_seal_id char(36)'
                 )
             )
+            for table in WRITER_LOCK_TABLES:
+                await connection.execute(
+                    text(
+                        f'ALTER TABLE "{schema}"."{table}" ADD COLUMN knowledge_index_lock_marker integer NOT NULL DEFAULT 0 CHECK (knowledge_index_lock_marker=0)'
+                    )
+                )
             await connection.execute(text(f'CREATE TABLE "{schema}".unrelated (id integer)'))
             await connection.execute(text(f'GRANT USAGE ON SCHEMA "{schema}" TO "{runtime}", "{writer}"'))
             await connection.execute(text(f'GRANT INSERT (id), UPDATE (id) ON "{schema}".unrelated TO "{writer}"'))
@@ -80,6 +86,7 @@ async def test_separate_credentials_and_future_tables_are_fail_closed() -> None:
                     connection, schema=schema, owner=config.DB_USER, runtime=runtime, writer=writer
                 )
             await connection.execute(text(f'ALTER ROLE "{writer}" NOREPLICATION'))
+            await _assert_invalid_markers_rejected(connection, schema, runtime, writer)
             for _ in range(2):
                 await apply_source_role_policy(
                     connection, schema=schema, owner=config.DB_USER, runtime=runtime, writer=writer
@@ -100,6 +107,7 @@ async def test_separate_credentials_and_future_tables_are_fail_closed() -> None:
             await connection.execute(
                 text(f'UPDATE "{schema}".rag_source_ingestion_run SET run_status=:status'), {"status": "FAILED"}
             )
+        await _assert_writer_lock_boundaries(producer, schema)
         async with reader.connect() as connection:
             assert await connection.scalar(text(f'SELECT id FROM "{schema}".rag_source_snapshot')) == 1
         denied = [
@@ -134,3 +142,44 @@ async def test_separate_credentials_and_future_tables_are_fail_closed() -> None:
                     await connection.execute(text(f'DROP OWNED BY "{role}"'))
                     await connection.execute(text(f'DROP ROLE "{role}"'))
         await admin.dispose()
+
+
+async def _assert_writer_lock_boundaries(producer, schema):
+    for table in WRITER_LOCK_TABLES:
+        async with producer.begin() as connection:
+            await connection.execute(text(f'INSERT INTO "{schema}"."{table}" (id) VALUES (1)'))
+            await connection.execute(text(f'SELECT id FROM "{schema}"."{table}" FOR UPDATE'))
+        for statement, sqlstate in (
+            (f'UPDATE "{schema}"."{table}" SET id=2', "42501"),
+            (f'DELETE FROM "{schema}"."{table}"', "42501"),
+            (f'UPDATE "{schema}"."{table}" SET knowledge_index_lock_marker=1', "23514"),
+        ):
+            with pytest.raises(DBAPIError) as error:
+                async with producer.begin() as connection:
+                    await connection.execute(text(statement))
+            assert error.value.orig.sqlstate == sqlstate
+
+
+async def _assert_invalid_markers_rejected(connection, schema, runtime, writer):
+    target = f'"{schema}".rag_source'
+    for alteration in (
+        "ALTER COLUMN knowledge_index_lock_marker DROP NOT NULL",
+        "DROP COLUMN knowledge_index_lock_marker",
+        "DROP CONSTRAINT rag_source_knowledge_index_lock_marker_check",
+        "DROP CONSTRAINT rag_source_knowledge_index_lock_marker_check, "
+        "ADD CONSTRAINT marker_not_valid CHECK (knowledge_index_lock_marker=0) NOT VALID",
+        "DROP CONSTRAINT rag_source_knowledge_index_lock_marker_check, "
+        "ADD CONSTRAINT marker_wrong_value CHECK (knowledge_index_lock_marker=1)",
+    ):
+        transaction = await connection.begin_nested()
+        try:
+            await connection.execute(text(f"ALTER TABLE {target} {alteration}"))
+            with pytest.raises(ValueError, match="validated CHECK equal to zero"):
+                await apply_source_role_policy(
+                    connection, schema=schema, owner=config.DB_USER, runtime=runtime, writer=writer
+                )
+            assert await connection.scalar(
+                text(f"SELECT has_column_privilege('{runtime}', '{schema}.rag_source', 'id', 'UPDATE')")
+            )
+        finally:
+            await transaction.rollback()

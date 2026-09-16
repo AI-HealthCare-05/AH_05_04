@@ -38,7 +38,7 @@ from infra.python.provision_database_roles import (
     run_provisioning,
 )
 from infra.python.source_management_role_policy import CATALOG_TABLES
-from infra.python.source_role_policy import SOURCE_TABLES
+from infra.python.source_role_policy import SOURCE_TABLES, WRITER_LOCK_TABLES
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -133,6 +133,12 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                     "ALTER TABLE rag_source_snapshot ADD COLUMN verification_status text, ADD COLUMN verified_at timestamptz, ADD COLUMN effective_at timestamptz, ADD COLUMN verification_seal_id char(36)"
                 )
             )
+            for table in WRITER_LOCK_TABLES:
+                await connection.execute(
+                    text(
+                        f"ALTER TABLE {table} ADD COLUMN knowledge_index_lock_marker integer NOT NULL DEFAULT 0 CHECK (knowledge_index_lock_marker=0)"
+                    )
+                )
             await _add_auth_fixture_columns(connection)
             await connection.execute(text("CREATE TABLE future_table (id serial PRIMARY KEY)"))
             await connection.execute(text('ALTER TABLE "user" ADD COLUMN sequence_id serial'))
