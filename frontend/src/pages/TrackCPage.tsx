@@ -11,9 +11,9 @@ import { Button, Card, MobileShell } from '../design-system/components'
 import './TrackCPage.css'
 
 const choices: [api.BarrierCode, string][] = [
-  ['FORGOT', '깜빡했어요'], ['SCHEDULE_OR_TRAVEL', '일정이나 이동 때문에 어려웠어요'],
-  ['INSTRUCTIONS_UNCLEAR', '복용 방법이 헷갈렸어요'], ['NEED_DOUBT', '복용이 필요한지 궁금했어요'],
-  ['MEDICATION_CONCERN', '약에 대한 걱정이 있었어요'], ['ACCESS_OR_COST', '약을 구하거나 비용을 감당하기 어려웠어요'],
+  ['FORGOT', '깜빡했어요'], ['SCHEDULE_OR_TRAVEL', '일정이나 외출 때문에 어려웠어요'],
+  ['INSTRUCTIONS_UNCLEAR', '복용 방법이 헷갈렸어요'], ['NEED_DOUBT', '약이 꼭 필요한지 모르겠어요'],
+  ['MEDICATION_CONCERN', '약에 대한 걱정이 있었어요'], ['ACCESS_OR_COST', '약이 없거나 구하기 어려웠어요'],
 ]
 const supportNames: Record<api.SupportCode, string> = {
   REMINDER_SETUP: '복약 일정과 알림 확인', ROUTINE_OR_TRAVEL_PLAN: '일상·이동 중 복약 계획 확인',
@@ -155,37 +155,45 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   const reminderTarget = plan?.support_code === 'REMINDER_SETUP' &&
     'prescription_version_medication_id' in plan.action_config_snapshot.parameters
     ? plan.action_config_snapshot.parameters.prescription_version_medication_id : null
-  return <div className="mvp-page track-c-page"><MobileShell title="복약 도움" hideNavigation onBack={() => navigate(back)}>
-    <main className="app-scroll track-c-content" aria-busy={busy}>
-      <p className="track-c-eyebrow">개발 환경 · 합성 데이터 연결 확인</p>
-      <h1 ref={heading} tabIndex={-1}>{step === 'barrier' ? '이번에는 어떤 점이 가장 크게 영향을 주었나요?' : step === 'plan' ? '실천 계획' : '복약 도움 확인'}</h1>
+  return <div className="mvp-page track-c-page"><MobileShell activeNavigation="일정" onBack={() => navigate(back)} onNavigate={item => {
+    const destinations = { 홈: '/', 일정: '/schedule', 도지: '/chat', 가이드: '/guides', 메뉴: '/menu' }
+    navigate(destinations[item])
+  }}>
+    <main className={`app-scroll track-c-content track-c-content--${step}`} aria-busy={busy}>
+      {step === 'safety' && <p className="track-c-eyebrow">복약 안전 확인</p>}
+      {step === 'offer' && <p className="track-c-eyebrow">나에게 맞는 도움</p>}
+      {step === 'plan' && plan && <p className={`track-c-status track-c-status--${plan.status.toLowerCase()}`} role="status">{plan.status === 'ACTIVE' ? '진행 중' : plan.status === 'COMPLETED' ? '완료됨' : '취소됨'}</p>}
+      <h1 ref={heading} tabIndex={-1}>{step === 'barrier' ? '이번에는 어떤 점이 가장 크게 영향을 주었나요?' : step === 'safety' ? '현재 불편한 증상이 있나요?' : step === 'offer' ? '도움 방법을 확인해 주세요' : step === 'plan' ? '내 실천 계획' : '복약 도움 확인'}</h1>
       {error && <p role="alert">{error}</p>}
       {retry && <Button disabled={busy} onClick={() => void run(retry)}>같은 요청 다시 시도</Button>}
       {step === 'loading' && <p role="status">기록을 확인하고 있어요.</p>}
-      {step === 'safety' && <Card>
-        <h2>증상 경험 여부를 먼저 확인해 주세요</h2>
-        <p>증상이 없음을 직접 확인한 경우에만 다음 단계로 진행해요.</p>
-        <Button fullWidth disabled={busy || !!retry} onClick={() => void run(submitSafety)}>증상이 없어요</Button>
-        <Button fullWidth variant="secondary" disabled={busy} onClick={() => { setRetry(null); setStep('blocked') }}>증상이 있거나 확실하지 않아요</Button>
-      </Card>}
+      {step === 'safety' && <>
+        <p className="track-c-description">복용하지 못한 이유를 확인하기 전에 현재 몸 상태를 먼저 확인할게요.</p>
+        <div className="track-c-safety-actions">
+          <Button fullWidth variant="secondary" disabled={busy} onClick={() => { setRetry(null); setStep('blocked') }}>증상이 있어요</Button>
+          <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => void run(submitSafety)}>증상은 없어요</Button>
+        </div>
+        <p className="track-c-help">확실하지 않다면 증상이 있어요를 선택해 주세요.</p>
+      </>}
       {step === 'blocked' && <Card><h2>현재 도움을 계속 진행할 수 없어요</h2><p>복약 기록은 그대로 유지돼요.</p><Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button>{planId && <Button fullWidth variant="secondary" onClick={() => { window.location.reload() }}>계획 상태 다시 조회</Button>}</Card>}
       {step === 'barrier' && <>
         <p>하나만 골라주세요. 답하지 않아도 복약 상태는 그대로 저장돼요.</p>
-        <fieldset disabled={busy || !!retry}><legend>이번 복용의 어려움</legend>{choices.map(([code, label]) => <label className="track-c-choice" key={code}><input type="radio" name="barrier" value={code} checked={selected === code} onChange={() => setSelected(code)} /><span>{label}</span></label>)}</fieldset>
+        <fieldset disabled={busy || !!retry}><legend className="track-c-sr-only">이번 복용의 어려움</legend>{choices.map(([code, label]) => <label className="track-c-choice" key={code}><input type="radio" name="barrier" value={code} checked={selected === code} onChange={() => setSelected(code)} /><span>{label}</span></label>)}</fieldset>
         <Button fullWidth disabled={!selected || busy || !!retry} onClick={() => void run(() => submitBarrier(selected || null))}>선택한 어려움으로 도움 찾기</Button>
-        <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => void run(() => submitBarrier(null))}>답하지 않고 계속하기</Button>
+        <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => void run(() => submitBarrier(null))}>답하지 않고 복약 상태만 저장</Button>
       </>}
-      {step === 'offer' && (item ? <Card>
-        <h2>{item.support_copy.title}</h2><p>{item.support_copy.body}</p>
-        <label className="track-c-choice"><input type="checkbox" disabled={busy || !!retry} checked={confirmed} onChange={e => setConfirmed(e.target.checked)} /><span>{item.support_copy.confirmation_prompt}</span></label>
-        <Button fullWidth disabled={!confirmed || busy || !!retry} onClick={() => void run(savePlan)}>{item.support_copy.primary_label}</Button>
-        <Button fullWidth variant="secondary" disabled={busy} onClick={() => navigate(back)}>{item.support_copy.secondary_label}</Button>
-      </Card> : <Card><h2>지금 제안할 수 있는 도움이 없어요</h2><p>복약 기록과 응답은 저장되어 있어요.</p><Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button></Card>)}
-      {step === 'plan' && plan && <Card>
-        <h2>{supportNames[plan.support_code]}</h2>
-        <p role="status">{plan.status === 'ACTIVE' ? '진행 중' : plan.status === 'COMPLETED' ? '완료됨' : '취소됨'}</p>
+      {step === 'offer' && (item ? <>
+        <Card className="track-c-offer"><h2>{item.support_copy.title}</h2><p>{item.support_copy.body}</p></Card>
+        <div className="track-c-actions">
+          <label className="track-c-choice"><input type="checkbox" disabled={busy || !!retry} checked={confirmed} onChange={e => setConfirmed(e.target.checked)} /><span>{item.support_copy.confirmation_prompt}</span></label>
+          <Button fullWidth disabled={!confirmed || busy || !!retry} onClick={() => void run(savePlan)}>{item.support_copy.primary_label}</Button>
+          <Button fullWidth variant="secondary" disabled={busy} onClick={() => navigate(back)}>{item.support_copy.secondary_label}</Button>
+        </div>
+      </> : <Card><h2>지금 제안할 수 있는 도움이 없어요</h2><p>복약 기록과 응답은 저장되어 있어요.</p><Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button></Card>)}
+      {step === 'plan' && plan && <>
+        <Card className="track-c-plan-field"><p>방법</p><h2>{supportNames[plan.support_code]}</h2></Card>
         <p>계획 조회만으로 실행이나 완료가 처리되지 않아요.</p>
-        {plan.status === 'ACTIVE' && <>
+        {plan.status === 'ACTIVE' && <div className="track-c-actions">
           {plan.support_code === 'REMINDER_SETUP' && <p><Link to={`/schedule?support_medication=${encodeURIComponent(reminderTarget ?? '')}`} target="_blank" rel="noopener noreferrer">일정 확인·설정 (새 탭)</Link></p>}
           {!terminal ? <>
             <Button fullWidth disabled={busy || !!retry} onClick={() => { setTerminal('COMPLETED'); setConfirmed(false) }}>완료 확인하기</Button>
@@ -195,8 +203,8 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
             <Button fullWidth disabled={!confirmed || busy || !!retry} onClick={() => void run(changePlan)}>{terminal === 'COMPLETED' ? '완료로 저장' : '취소로 저장'}</Button>
             <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => { setTerminal(null); setConfirmed(false) }}>돌아가기</Button>
           </>}
-        </>}
-      </Card>}
+        </div>}
+      </>}
       {busy && <p role="status">처리 중이에요.</p>}
     </main>
   </MobileShell></div>

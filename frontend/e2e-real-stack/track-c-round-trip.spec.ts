@@ -26,12 +26,12 @@ test('[REAL-STACK][Track C #139] create, reload, complete and cancel plans throu
     expect(correction.status()).toBe(200)
     await page.goto(`/schedule/occurrences/${occurrence.occurrence_id}?date=${date}`)
     await page.getByRole('button', { name: '이유와 도움 찾기' }).click()
-    await page.getByRole('button', { name: '증상이 없어요' }).click()
+    await page.getByRole('button', { name: '증상은 없어요' }).click()
     await page.getByRole('radio', { name: '깜빡했어요' }).check()
     await page.getByRole('button', { name: '선택한 어려움으로 도움 찾기' }).click()
     await page.getByRole('checkbox').check()
     const creation = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/support-action-plans'))
-    await page.locator('.track-c-content .ds-card button').first().click()
+    await page.locator('.track-c-actions button').first().click()
     const createdResponse = await creation
     expect(createdResponse.status()).toBe(200)
     const created = (await createdResponse.json()).data

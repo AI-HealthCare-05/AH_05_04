@@ -31,7 +31,7 @@ function show(service: TrackCServices, entry = `/dev/track-c/occurrences/${occur
     <Route path="/login" element={<p>로그인 화면</p>} />
   </Routes></MemoryRouter></StrictMode>)
 }
-async function enterBarrier() { fireEvent.click(await screen.findByRole('button', { name: '증상이 없어요' })); await screen.findByRole('radio', { name: '깜빡했어요' }) }
+async function enterBarrier() { fireEvent.click(await screen.findByRole('button', { name: '증상은 없어요' })); await screen.findByRole('radio', { name: '깜빡했어요' }) }
 async function enterOffer() { await enterBarrier(); fireEvent.click(screen.getByRole('radio', { name: '깜빡했어요' })); fireEvent.click(screen.getByRole('button', { name: '선택한 어려움으로 도움 찾기' })); await screen.findByText('서버에서 받은 제안') }
 afterEach(cleanup)
 
@@ -51,11 +51,11 @@ describe('Track C API flow', () => {
   })
   it.each(['URGENT', 'EMERGENCY', 'UNKNOWN'])('blocks %s before Barrier', async response_level => {
     const svc = services({ createSafety: vi.fn().mockResolvedValue({ ...safety, response_level }) }); show(svc)
-    fireEvent.click(await screen.findByRole('button', { name: '증상이 없어요' }))
+    fireEvent.click(await screen.findByRole('button', { name: '증상은 없어요' }))
     await screen.findByText('현재 도움을 계속 진행할 수 없어요'); expect(svc.putBarrier).not.toHaveBeenCalled(); expect(svc.getOffers).not.toHaveBeenCalled()
   })
   it('does not invent symptom codes', async () => {
-    const svc = services(); show(svc); fireEvent.click(await screen.findByRole('button', { name: '증상이 있거나 확실하지 않아요' }))
+    const svc = services(); show(svc); fireEvent.click(await screen.findByRole('button', { name: '증상이 있어요' }))
     await screen.findByText('현재 도움을 계속 진행할 수 없어요'); expect(svc.createSafety).not.toHaveBeenCalled()
   })
   it('submits one barrier with the fetched revision', async () => {
@@ -67,19 +67,19 @@ describe('Track C API flow', () => {
   })
   it('persists explicit decline and handles no eligible support', async () => {
     const svc = services({ getOffers: vi.fn().mockResolvedValue({ ...barrier, supports: [], reason_code: 'NO_ELIGIBLE_SUPPORT' }) }); show(svc); await enterBarrier()
-    fireEvent.click(screen.getByRole('button', { name: '답하지 않고 계속하기' })); await screen.findByText('지금 제안할 수 있는 도움이 없어요')
+    fireEvent.click(screen.getByRole('button', { name: '답하지 않고 복약 상태만 저장' })); await screen.findByText('지금 제안할 수 있는 도움이 없어요')
     expect(svc.putBarrier).toHaveBeenCalledWith('checkin', { response_status: 'DECLINED', barrier_code: null, checkin_revision: 3, expected_revision: 0 }, expect.any(String))
     expect(svc.createPlan).not.toHaveBeenCalled()
   })
   it('retains the idempotency key after response loss and writes no storage', async () => {
     const createSafety = vi.fn().mockRejectedValueOnce(new TypeError('offline')).mockResolvedValue(safety)
-    show(services({ createSafety })); fireEvent.click(await screen.findByRole('button', { name: '증상이 없어요' }))
+    show(services({ createSafety })); fireEvent.click(await screen.findByRole('button', { name: '증상은 없어요' }))
     fireEvent.click(await screen.findByRole('button', { name: '같은 요청 다시 시도' })); await screen.findByRole('radio', { name: '깜빡했어요' })
     expect(createSafety.mock.calls[0]).toEqual(createSafety.mock.calls[1]); expect(localStorage.length).toBe(0); expect(sessionStorage.length).toBe(0)
   })
   it.each([403, 404, 409])('halts on %s without raw details', async status => {
     const svc = services({ putBarrier: vi.fn().mockRejectedValue(new ApiError(status, 'PRIVATE_RAW_DETAIL')) }); show(svc); await enterBarrier()
-    fireEvent.click(screen.getByRole('button', { name: '답하지 않고 계속하기' })); await screen.findByText('현재 도움을 계속 진행할 수 없어요')
+    fireEvent.click(screen.getByRole('button', { name: '답하지 않고 복약 상태만 저장' })); await screen.findByText('현재 도움을 계속 진행할 수 없어요')
     expect(screen.queryByText('PRIVATE_RAW_DETAIL')).toBeNull(); expect(svc.getOffers).not.toHaveBeenCalled()
   })
   it('clears expired authentication', async () => {
@@ -107,14 +107,14 @@ describe('Track C API flow', () => {
   })
   it('does not reuse offers from another Safety assessment', async () => {
     const svc = services({ getOffers: vi.fn().mockResolvedValue({ ...barrier, safety_assessment_id: 'other', supports: [support], reason_code: null }) })
-    show(svc); await enterBarrier(); fireEvent.click(screen.getByRole('button', { name: '답하지 않고 계속하기' }))
+    show(svc); await enterBarrier(); fireEvent.click(screen.getByRole('button', { name: '답하지 않고 복약 상태만 저장' }))
     await screen.findByText('현재 도움을 계속 진행할 수 없어요')
     expect(svc.createPlan).not.toHaveBeenCalled()
   })
   it('suppresses rapid double writes', async () => {
     let complete!: (value: typeof safety) => void
     const svc = services({ createSafety: vi.fn().mockReturnValue(new Promise(resolve => { complete = resolve })) })
-    show(svc); const button = await screen.findByRole('button', { name: '증상이 없어요' })
+    show(svc); const button = await screen.findByRole('button', { name: '증상은 없어요' })
     fireEvent.click(button); fireEvent.click(button)
     expect(svc.createSafety).toHaveBeenCalledTimes(1)
     complete(safety); await screen.findByRole('radio', { name: '깜빡했어요' })
