@@ -11,7 +11,7 @@
 - [PR #618](https://github.com/AI-HealthCare-05/AH_05_04/pull/618)에 Router·DTO·Service·Repository와 계약·통합 테스트를 포함한다. 기존 DB column을 사용하므로 신규 migration은 없다.
 - 구현 HEAD `f8e4986f`의 [CI](https://github.com/AI-HealthCare-05/AH_05_04/actions/runs/34991259236)는 test·lint 및 Backend·RAG·contract lane이 통과했다. frontend·migration·worker lane은 변경 범위에 따라 skipped다.
 - 김지혜의 [책임 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/618#pullrequestreview-5216913531)는 구현에서 별도 차단 결함을 발견하지 않았으며, 같은 구현 PR에서 Current 경로로 이동하고 상태·참조를 정렬하도록 요청했다.
-- 이 이동은 해당 요청의 반영이다. 최종 리뷰 승인과 PR 병합은 아직 대기 중이며, 병합 전 develop의 동작으로 해석하지 않는다. 승인·병합 증빙은 연결된 PR의 최종 상태를 따른다.
+- 이 이동은 해당 요청의 반영이다. 이후 김지혜의 최종 승인으로 PR #618이 2026-09-16 `a542bcc2`로 병합됐다. 승인·병합 증빙은 연결된 PR에서 확인한다.
 - Current 구현 계약과 외부 공개 승인은 별개다. Track C 및 공통 Privacy Production gate는 계속 닫혀 있다.
 
 ## 범위와 상태

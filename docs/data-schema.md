@@ -854,3 +854,14 @@ PD-192-2는 6개 최소 안내형 Support의 내부 Rule·한국어 Copy 불변 
 기존 support_action_plan.status 및 completed_at/cancelled_at을 사용하며 schema/migration 추가는 없다.
 ACTIVE에서 단일 종료만 허용해 Check-in→Safety→Barrier→Plan 잠금과 ACTIVE 검사로 충돌을 검출한다.
 기존 무효화는 ACTIVE만 취소하고 COMPLETED 이력은 보존한다. [Current 계약·PR 반영 상태](contracts/current/track-c-plan-lifecycle-617.md).
+
+### Track C Follow-up 쓰기 연결 (#194 후속 / PR #631 구현)
+
+기존 `action_plan_followup`과 `action_plan_followup_audit`를 사용하며 migration은 추가하지 않는다.
+완료 Plan당 현재 평가 1개, 최초 revision 1, 정정 시 revision +1과 from/to 응답·revision·인증 변경자·UTC 시각을
+같은 transaction에 기록한다. 완료 후 부모 흐름이 바뀌어도 과거 평가를 보존·정정할 수 있다.
+Check-in → Safety → Barrier → Plan → Follow-up 잠금 순서와 Plan 잠금으로 최초 생성 경쟁을 직렬화한다.
+평가·audit·암호화 멱등 snapshot은 함께 성공/rollback한다. 응답을 미루면 쓰지 않으며 기존 응답도 지우지 않는다.
+Plan·Check-in은 변경하지 않는다.
+최종 책임 리뷰 승인·병합은 대기 중이며 외부 공개 승인은 별도다.
+상세: [Follow-up 계약](contracts/current/track-c-followup-api-194.md), [PD-194-2](governance/decisions/2026-09-16-track-c-followup-194.md).
