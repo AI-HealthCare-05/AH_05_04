@@ -835,3 +835,13 @@ PD-192-2는 6개 최소 안내형 Support의 내부 Rule·한국어 Copy 불변 
 기존 support_action_plan.status 및 completed_at/cancelled_at을 사용하며 schema/migration 추가는 없다.
 ACTIVE에서 단일 종료만 허용해 Check-in→Safety→Barrier→Plan 잠금과 ACTIVE 검사로 충돌을 검출한다.
 기존 무효화는 ACTIVE만 취소하고 COMPLETED 이력은 보존한다. [Current 계약·PR 반영 상태](contracts/current/track-c-plan-lifecycle-617.md).
+
+## #633 피드백 저장 — Local 구현, Proposed
+
+[계약](contracts/proposed/guide-chat-feedback-v1.md), migration `633a1b2c3d4e`에서
+`guide_feedback`, `chat_message_feedback`을 추가한다. 각 row는 UUIDChar id, 대상별 UNIQUE FK
+(guide_id / chat_message_id, ON DELETE CASCADE), rating VARCHAR(8) CHECK, nullable comment VARCHAR(1000),
+created_at·updated_at TIMESTAMPTZ를 가진다. 소유권은 부모 SELF chain으로 확인하고 별도 user_id를 복제하지 않는다.
+최초 생성 후 30일 만료이며 수정은 created_at을 보존한다. 만료 후 POST는 이전 row를 제거하고 새 row를 생성한다.
+created_at index는 만료 삭제, rating·updated_at·id index는 부정 피드백 검토를 지원한다.
+정책은 [PD-633](governance/decisions/2026-09-16-guide-chat-feedback-633.md)을 따르며 Current 승격·실사용 승인 전이다.

@@ -816,3 +816,16 @@ nullable입니다. 없는/타인 occurrence는 동일 404 MEDICATION_OCCURRENCE_
 응답은 기존 SupportActionPlanResponse다. 완료는 최신 Safety·Barrier를 재검증하며, 종료 상태의 새 요청은
 409 ACTION_PLAN_STATE_CONFLICT다. 상세 오류·잠금·재전송은 [Current 계약](contracts/current/track-c-plan-lifecycle-617.md)을 따른다.
 권가빈 구현·김지혜 책임 리뷰로 PR #618에서 계약과 구현을 함께 반영한다. 최종 승인·병합은 대기 중이며 병합 전 develop의 동작은 아니다. Follow-up·Frontend 연결·외부 공개 승인은 별도다.
+
+## #633 Guide·Chat 피드백 — Local 구현, 책임 리뷰 대기
+
+[계약](contracts/proposed/guide-chat-feedback-v1.md)과 [PD-633](governance/decisions/2026-09-16-guide-chat-feedback-633.md)을 따른다.
+`POST /api/v1/guides/{guide_id}/feedback`,
+`POST /api/v1/chat-sessions/{session_id}/messages/{message_id}/feedback`은
+`rating: POSITIVE | NEGATIVE`, 선택 `comment`를 받아 신규 201·재제출 200을 반환한다.
+완료 Guide·ASSISTANT/COMPLETED Chat만 허용하며 부모 SELF 소유권을 검증한다.
+같은 경로의 DELETE는 본인 target의 feedback을 제거하고 204를 반환한다. GET은 추가하지 않는다.
+응답 data는 id·rating·created_at·updated_at이며 comment·의료 원문은 반환하지 않는다.
+미완료/USER target은 409 FEEDBACK_TARGET_NOT_READY, 타인·없는 target은 404 NOT_FOUND다.
+NUL·잘못된 Unicode·길이 초과·잘못된 rating은 공통 422다. 모든 응답에 no-store를 적용한다.
+ENV=local 외에는 POST/DELETE 모두 404이며 실제 사용자 수집·Production 공개 승인은 별도다.

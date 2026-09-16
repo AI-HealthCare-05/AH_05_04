@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.apis.v1.auth_routers import auth_router
 from app.apis.v1.chat_routers import chat_router
 from app.apis.v1.extracted_field_routers import extracted_field_router
+from app.apis.v1.feedback_routers import feedback_router
 from app.apis.v1.guide_routers import guide_router
 from app.apis.v1.job_routers import job_router
 from app.apis.v1.lifestyle_times_routers import lifestyle_times_router
@@ -28,6 +29,7 @@ v1_routers.include_router(ocr_router)
 v1_routers.include_router(extracted_field_router)
 v1_routers.include_router(prescription_router)
 v1_routers.include_router(guide_router)
+v1_routers.include_router(feedback_router)
 v1_routers.include_router(chat_router)
 v1_routers.include_router(medication_candidate_router)
 v1_routers.include_router(medication_checkin_router)

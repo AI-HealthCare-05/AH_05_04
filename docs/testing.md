@@ -555,3 +555,12 @@ Frontend 실제 왕복은 `REAL_STACK_ENV_FILE=envs/example.local.env bash scrip
 
 [검증 기록](testing/track-c-plan-lifecycle-617.md): 조회·완료·취소, SELF 404, strict confirmation, terminal 충돌,
 멱등 replay/충돌/rollback, Safety·Barrier·Check-in 정정 및 동시 mutation을 확인한다.
+
+### #633 Guide·Chat 피드백
+
+`backend/app/tests/feedback/`에서 실제 PostgreSQL·ASGI의 SELF 소유권·완료 상태·입력 오류·no-store,
+재제출·동시 최초 접수·rollback·30일 만료·대상 삭제 cascade와 실제 migration 제약·downgrade guard를 검증한다.
+새 합성 부정 feedback을 검토용 `chat-feedback-gold-v1` case로 연결하고 기존 27-case 보존·hash 및 잘못된 재질문 거절을 확인한다.
+`frontend/tests/ResponseFeedback.test.tsx`와 `frontend/e2e/response-feedback.spec.ts`는 실패 후 입력 유지·재시도·평가 변경·삭제,
+중복 전송 차단, 완료 ASSISTANT만 노출, 320·390·412px 키보드·레이아웃을 확인한다.
+[실행 기록](validation/issue-633-feedback.md)의 합성 replay와 실제 Provider 개선 효과·책임 리뷰 승인을 구분한다.

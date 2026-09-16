@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "SYNTHETIC_DEMO",
+  "review_status": "PENDING",
+  "reviewer": null,
+  "reviewed_at": null,
+  "source_dataset": "chat-v4-conversation-quality-eval-v1.json",
+  "source_sha256": "a1384a11f99c94e79212137cd9b2849e8c76a8a93a3bb1014e59544d9fe42f1e",
+  "dataset": "chat-feedback-gold-v1.json",
+  "dataset_sha256": "dee2d1d7dc6eb0290404e341add337bd22ddc83d2b9e332b099a973321e947c4",
+  "case_id": "issue-633-synthetic-correction-feedback",
+  "failure_type": "REDUNDANT_CLARIFICATION_AFTER_CORRECTION",
+  "synthetic_feedback": {
+    "rating": "NEGATIVE",
+    "comment": "합성 검증: 약을 정정했는데 같은 정보를 다시 물어요."
+  },
+  "provider_invocation": false,
+  "prompt_comparison_status": "NOT_RUN",
+  "note": "원본 사용자 피드백 또는 책임 리뷰 승인 증거가 아니다. 27개 기존 case를 보존한 28-case 검토용 합성 버전."
+}

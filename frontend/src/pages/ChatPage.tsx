@@ -19,6 +19,7 @@ import {
 import { AssistantMessageContent } from './AssistantMessageContent'
 import '../design-system/prototype.css'
 import './ChatPage.css'
+import { ResponseFeedback } from '../components/ResponseFeedback'
 
 export type ChatPageServices = {
   createChatSession: typeof createChatSession
@@ -705,6 +706,9 @@ function ChatPage({
                       <AssistantMessageContent content={message.content} />
                     ) : (
                       message.content ?? '답변을 생성하지 못했어요.'
+                    )}
+                    {import.meta.env.DEV && currentSessionId && message.role === 'ASSISTANT' && message.generation_status === 'COMPLETED' && (
+                      <ResponseFeedback key={message.message_id} target={{ sessionId: currentSessionId, messageId: message.message_id }} />
                     )}
                   </div>
                 </div>

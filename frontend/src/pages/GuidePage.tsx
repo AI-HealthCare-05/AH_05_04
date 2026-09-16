@@ -20,6 +20,7 @@ import {
 import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
 import './GuidePage.css'
+import { ResponseFeedback } from '../components/ResponseFeedback'
 
 export type GuidePageServices = {
   getGuide: typeof getGuide
@@ -420,6 +421,8 @@ function GuidePage({
                   </details>
                 </Card>
               )}
+
+              {import.meta.env.DEV && <ResponseFeedback key={currentGuide.guide_id} target={{ guideId: currentGuide.guide_id }} />}
 
               {completedAt && <p className="guide-page__completed-at">{completedAt} 생성</p>}
 
