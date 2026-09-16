@@ -946,3 +946,21 @@ describe('production 복약 기록 handoff', () => {
     ])
   })
 })
+
+
+describe('Track C reminder target handoff', () => {
+  it('preserves the target while normalizing date and opens only that medication editor', async () => {
+    const services = makeServices()
+    renderSchedule(services, `/schedule?support_medication=${medicationId}`)
+    fireEvent.click(await screen.findByRole('button', { name: '이 약의 일정 확인·설정' }))
+    expect(screen.getByRole('heading', { name: '실천 계획의 복약 일정' })).toBeTruthy()
+    expect(services.putMedicationSchedule).not.toHaveBeenCalled()
+  })
+  it('does not substitute another medication if the saved target is absent', async () => {
+    const services = makeServices()
+    renderSchedule(services, `/schedule?support_medication=${secondMedicationId}`)
+    await screen.findByText(/이 계획에 연결된 약의 일정을 확인할 수 없어요/)
+    expect(screen.queryByRole('button', { name: '이 약의 일정 확인·설정' })).toBeNull()
+    expect(services.putMedicationSchedule).not.toHaveBeenCalled()
+  })
+})

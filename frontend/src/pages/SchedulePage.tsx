@@ -619,6 +619,9 @@ export function SchedulePage({
 }) {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const requestedSupportMedicationId = searchParams.get('support_medication')
+  const supportMedicationId = import.meta.env.DEV && requestedSupportMedicationId && UUID_PATTERN.test(requestedSupportMedicationId)
+    ? requestedSupportMedicationId : null
   const requestedDate = searchParams.get('date')
   const selectedDate = isValidLocalDate(requestedDate) ? requestedDate : kstToday()
   const [day, setDay] = useState<MedicationDayResponse['data'] | null>(null)
@@ -637,9 +640,9 @@ export function SchedulePage({
 
   useEffect(() => {
     if (requestedDate !== selectedDate) {
-      setSearchParams({ date: selectedDate }, { replace: true })
+      setSearchParams(supportMedicationId ? { date: selectedDate, support_medication: supportMedicationId } : { date: selectedDate }, { replace: true })
     }
-  }, [requestedDate, selectedDate, setSearchParams])
+  }, [requestedDate, selectedDate, setSearchParams, supportMedicationId])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -743,7 +746,7 @@ export function SchedulePage({
               id="schedule-date"
               type="date"
               value={selectedDate}
-              onChange={(event) => setSearchParams({ date: event.target.value })}
+              onChange={(event) => setSearchParams(supportMedicationId ? { date: event.target.value, support_medication: supportMedicationId } : { date: event.target.value })}
             />
             <p>{formatLocalDate(selectedDate)}</p>
             <h1>복약 일정</h1>
@@ -777,6 +780,17 @@ export function SchedulePage({
               />
             )
           })()}
+
+          {!isLoading && day && supportMedicationId && (
+            <Card className="schedule-state-card">
+              {scheduleMedications[supportMedicationId] ? <>
+                <h2>실천 계획의 복약 일정</h2>
+                <p>{scheduleMedications[supportMedicationId].medication_name}</p>
+                <Button fullWidth onClick={() => setEditingMedicationId(supportMedicationId)}>이 약의 일정 확인·설정</Button>
+                <p>확인이나 저장을 마친 뒤 실천 계획 탭으로 돌아가 완료 여부를 직접 확인해 주세요.</p>
+              </> : <p role="alert">이 계획에 연결된 약의 일정을 확인할 수 없어요. 다른 약의 일정으로 대신 처리하지 않고 실천 계획 탭으로 돌아가 주세요.</p>}
+            </Card>
+          )}
 
           {!isLoading && day && state && (
             <StatusCard
@@ -1108,6 +1122,11 @@ export function ScheduleOccurrencePage({
                 </p>
               )}
 
+              {import.meta.env.DEV && occurrence.status !== 'CANCELLED' && occurrence.checkin?.status === 'NOT_TAKEN' && (
+                <Button fullWidth disabled={isSaving} onClick={() => navigate(`/dev/track-c/occurrences/${occurrence.occurrence_id}?date=${encodeURIComponent(date ?? '')}`)}>
+                  이유와 도움 찾기
+                </Button>
+              )}
               {occurrence.status !== 'CANCELLED' && (
                 <section className="schedule-record__actions" aria-labelledby="checkin-question">
                   <h2 id="checkin-question">이 약을 복용했나요?</h2>

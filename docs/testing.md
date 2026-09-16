@@ -564,3 +564,11 @@ revision/소유권/입력 오류, snapshot 실패 rollback, Check-in·Safety·Ba
 독립 PostgreSQL transaction으로 첫 제출·정정 경쟁, 같은 key/다른 body, Check-in·Safety 정정 경쟁을 검증한다.
 [합성 fixture](../tests/fixtures/post_mvp_1/track_c/followup-v1.json)와 OpenAPI/DTO 소비 계약도 대조한다.
 실행 결과 및 제한: [검증 기록](testing/track-c-followup-194.md). #139 브라우저 인수·외부 공개 검증은 별도다.
+
+### Track C Frontend 연결 (#139)
+
+개발 전용 Safety→Barrier→Support Offer→Plan 생성·조회·완료·취소 연결과
+320·390·412px mock 브라우저 검증, 실제 FastAPI·PostgreSQL 왕복 결과는
+[#139 검증 기록](validation/issue-139-track-c-frontend.md)을 따른다.
+`frontend/e2e-real-stack/track-c-round-trip.spec.ts`는 새 격리 DB의 합성 fixture를 사용하며,
+이 검증으로 임상 Safety·Follow-up 구현이나 Production 공개 게이트를 완료 처리하지 않는다.
