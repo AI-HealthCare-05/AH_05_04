@@ -411,6 +411,7 @@ def build_actual_adapter_registry(  # noqa: C901
     from ai_worker.adapters.postgresql_evidence_eligibility import PostgreSqlEvidenceEligibilityVerifier
     from ai_worker.adapters.postgresql_evidence_search import PostgresqlEvidenceSearchAdapter
     from ai_worker.tasks.evaluation.actual_retrieval_index import (
+        ACTUAL_RETRIEVAL_ADAPTER_REF,
         DeterministicFakeEmbeddingAdapter,
         bootstrap_dev_knowledge_index,
     )
@@ -476,15 +477,33 @@ def build_actual_adapter_registry(  # noqa: C901
         if loop and loop.is_running():
             import concurrent.futures
 
+            url = getattr(engine, "url", None)
+
+            def _run_bootstrap():
+                async def _inner():
+                    if url is not None:
+                        from sqlalchemy.ext.asyncio import create_async_engine
+
+                        thread_engine = create_async_engine(url, hide_parameters=True)
+                        try:
+                            return await bootstrap_dev_knowledge_index(
+                                thread_engine,
+                                text_embedding_port=text_embedding_port,
+                                synthetic_index_path=synthetic_index_path,
+                            )
+                        finally:
+                            await thread_engine.dispose()
+                    else:
+                        return await bootstrap_dev_knowledge_index(
+                            engine,
+                            text_embedding_port=text_embedding_port,
+                            synthetic_index_path=synthetic_index_path,
+                        )
+
+                return asyncio.run(_inner())
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                summary = executor.submit(
-                    asyncio.run,
-                    bootstrap_dev_knowledge_index(
-                        engine,
-                        text_embedding_port=text_embedding_port,
-                        synthetic_index_path=synthetic_index_path,
-                    ),
-                ).result()
+                summary = executor.submit(_run_bootstrap).result()
         else:
             summary = asyncio.run(
                 bootstrap_dev_knowledge_index(
@@ -495,11 +514,13 @@ def build_actual_adapter_registry(  # noqa: C901
             )
         knowledge_index_id = summary.knowledge_index_id
         source_snapshot_id = summary.source_snapshot_id
-        source_snapshot_member_id = summary.source_snapshot_member_id
+        source_snapshot_member_ids = summary.source_snapshot_member_ids
+        evidence_index_ref = summary.evidence_index_ref
     else:
         knowledge_index_id = uuid4()
         source_snapshot_id = uuid4()
-        source_snapshot_member_id = uuid4()
+        source_snapshot_member_ids = (uuid4(),)
+        evidence_index_ref = ImmutableArtifactRef("rag-knowledge-index-dev-v1", "1.0.0", "0" * 64)
 
     lexical_config = VersionedLexicalSearchConfiguration(
         artifact_ref=ImmutableArtifactRef("lexical_search_config", "1.0", "a" * 64),
@@ -527,11 +548,11 @@ def build_actual_adapter_registry(  # noqa: C901
         text_embedding_port=text_embedding_port,
         eligibility_verifier=eligibility_verifier,
         filter_snapshot_ref=ImmutableArtifactRef("filter_snapshot", "1.0", "0" * 64),
-        evidence_index_ref=ImmutableArtifactRef("evidence_index", "1.0", "0" * 64),
+        evidence_index_ref=evidence_index_ref,
         knowledge_index_id=knowledge_index_id,
         allowed_source_snapshot_ids=(source_snapshot_id,),
-        allowed_source_snapshot_member_ids=(source_snapshot_member_id,),
+        allowed_source_snapshot_member_ids=source_snapshot_member_ids,
         retrieval_config=retrieval_config,
-        adapter_artifact_ref=ImmutableArtifactRef("adapter_artifact", "1.0", "0" * 64),
+        adapter_artifact_ref=ACTUAL_RETRIEVAL_ADAPTER_REF,
     )
     return ActualAdapterRegistry(adapter)
