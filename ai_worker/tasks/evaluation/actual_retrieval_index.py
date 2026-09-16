@@ -310,7 +310,7 @@ async def bootstrap_dev_knowledge_index(
                 "schema_version, parser_version, normalization_version, canonicalization_spec_version, "
                 "endpoint_receipt_hash, record_count, rejected_record_count, verification_status, collected_at) "
                 "VALUES (:id, :op_id, '1.0.0', '1.0.0', :raw_hash, :canon_hash, 'schema-v1', "
-                "'parser-v1', 'canonical-v1', '1.0.0', :receipt_hash, 100, 0, 'CURRENT', :now) "
+                "'parser-v1', 'canonical-v1', '1.0.0', :receipt_hash, 100, 0, 'PENDING', :now) "
                 "ON CONFLICT (id) DO NOTHING"
             ),
             {
@@ -321,6 +321,22 @@ async def bootstrap_dev_knowledge_index(
                 "receipt_hash": file_sha256,
                 "now": now,
             },
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO rag_source_snapshot_verification "
+                "(id, snapshot_id, check_name, verification_result, verified_by, verified_at) "
+                "VALUES (:id, :snapshot_id, 'source-ingestion-integrity', 'PASSED', 'synthetic-reviewer', :now) "
+                "ON CONFLICT (id) DO NOTHING"
+            ),
+            {"id": str(_FIXED_VERIFICATION_ID), "snapshot_id": str(_FIXED_SNAPSHOT_ID), "now": now},
+        )
+        await connection.execute(
+            text(
+                "UPDATE rag_source_snapshot SET verification_status = 'CURRENT', verification_seal_id = :seal_id, "
+                "verified_at = :now, effective_at = :now WHERE id = :snapshot_id"
+            ),
+            {"seal_id": str(_FIXED_VERIFICATION_ID), "snapshot_id": str(_FIXED_SNAPSHOT_ID), "now": now},
         )
         snapshot_id = _FIXED_SNAPSHOT_ID
 
@@ -335,7 +351,7 @@ async def bootstrap_dev_knowledge_index(
         canonical_checksum=file_sha256,
         canonicalization_spec_version="1.0.0",
         endpoint_receipt_hash=file_sha256,
-        verification_seal_id=None,
+        verification_seal_id=_FIXED_VERIFICATION_ID,
         verification_status=SnapshotVerificationStatus.CURRENT,
         rejected_record_count=0,
         publication_verification_id=None,
