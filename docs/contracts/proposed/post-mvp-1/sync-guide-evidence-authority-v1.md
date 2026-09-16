@@ -8,8 +8,8 @@
 | 관련 선행 계약 | [`guide-evidence-handoff-v1`](./guide-evidence-handoff-v1.md), [`endpoint-member-authority-v1`](./endpoint-member-authority-v1.md) |
 | 구현 위치 | `ai_worker/tasks/rag/guide_evidence_authority.py` |
 | 계약 및 구현 책임 | 정현우 (`@ceohwj`) — AI/RAG |
-| 단일 책임 리뷰 | 송은영 (`@phina-io`) — Backend / REQUEST Guard Authority / Decision Ownership |
-| 교차 검토 참고 | 권가빈 (`@hazelnutflavoured`) — PM·Product Acceptance·Privacy Gate / 김지혜 (`@Jye-rookie`) — Worker & Source Provenance |
+| 단일 책임 리뷰 | 김지혜 (`@Jye-rookie`) — Worker & Source Provenance / Pure Authority Assembly Seam |
+| 교차 검토 참고 | 송은영 (`@phina-io`) — Backend / REQUEST Guard Authority / Decision Ownership / 권가빈 (`@hazelnutflavoured`) — PM·Product Acceptance·Privacy Gate |
 
 ---
 

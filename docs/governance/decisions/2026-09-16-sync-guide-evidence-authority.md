@@ -5,8 +5,8 @@
 | Decision ID | `PD-672-20260916` |
 | 상태 | Proposed / Review pending · Issue #672 |
 | 제안·구현 | 정현우 (`@ceohwj`) — AI/RAG |
-| 단일 책임 리뷰 | 송은영 (`@phina-io`) — Backend / REQUEST Guard Authority / Decision Ownership |
-| 필요 교차 리뷰 | 권가빈 (`@hazelnutflavoured`) — PM·Product Acceptance·Privacy Gate / 김지혜 (`@Jye-rookie`) — Worker & Source Provenance |
+| 단일 책임 리뷰 | 김지혜 (`@Jye-rookie`) — Worker & Source Provenance / Pure Authority Assembly Seam |
+| 필요 교차 리뷰 | 송은영 (`@phina-io`) — Backend / REQUEST Guard Authority / Decision Ownership / 권가빈 (`@hazelnutflavoured`) — PM·Product Acceptance·Privacy Gate |
 | 추적 Issue | [#672](https://github.com/AI-HealthCare-05/AH_05_04/issues/672) |
 | 상위·관련 결정 | [`PD-180-EM-20260916`](./2026-09-16-endpoint-member-authority-contract.md), [`PD-180-20260915`](./2026-09-15-guide-evidence-handoff.md), [`PD-315-20260908`](./2026-09-08-production-evidence-retrieval-contract-divergence.md) |
 
