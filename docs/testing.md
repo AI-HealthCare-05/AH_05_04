@@ -553,3 +553,11 @@ Frontend 실제 왕복은 `REAL_STACK_ENV_FILE=envs/example.local.env bash scrip
 
 [검증 기록](testing/track-c-plan-lifecycle-617.md): 조회·완료·취소, SELF 404, strict confirmation, terminal 충돌,
 멱등 replay/충돌/rollback, Safety·Barrier·Check-in 정정 및 동시 mutation을 확인한다.
+
+### Track C Frontend 연결 (#139)
+
+개발 전용 Safety→Barrier→Support Offer→Plan 생성·조회·완료·취소 연결과
+320·390·412px mock 브라우저 검증, 실제 FastAPI·PostgreSQL 왕복 결과는
+[#139 검증 기록](validation/issue-139-track-c-frontend.md)을 따른다.
+`frontend/e2e-real-stack/track-c-round-trip.spec.ts`는 새 격리 DB의 합성 fixture를 사용하며,
+이 검증으로 임상 Safety·Follow-up 구현이나 Production 공개 게이트를 완료 처리하지 않는다.

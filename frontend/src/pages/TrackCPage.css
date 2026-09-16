@@ -1,0 +1,13 @@
+.track-c-content { display: flex; flex-direction: column; gap: 16px; padding: 20px; background: var(--ds-canvas); overflow-wrap: anywhere; }
+.track-c-content h1 { font-size: 24px; line-height: 1.42; margin: 0; }
+.track-c-content h2 { font-size: 18px; line-height: 1.42; }
+.track-c-content p { line-height: 1.6; }
+.track-c-content .ds-card { display: flex; flex-direction: column; gap: 12px; }
+.track-c-eyebrow { color: var(--ds-action); font-size: 13px; margin: 0; }
+.track-c-content fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.track-c-content legend { margin-bottom: 10px; }
+.track-c-choice { display: flex; align-items: center; gap: 12px; padding: 14px; min-height: 48px; background: var(--ds-surface); border: 1px solid var(--ds-line); border-radius: 14px; font-size: 14px; line-height: 1.5; cursor: pointer; }
+.track-c-choice:has(input:checked) { background: var(--ds-muted); border-color: var(--ds-action); }
+.track-c-choice input { width: 20px; height: 20px; flex-shrink: 0; accent-color: var(--ds-action); }
+.track-c-choice:focus-within { outline: 2px solid var(--ds-action); outline-offset: 2px; }
+.track-c-content .ds-button { min-height: 48px; height: auto; white-space: normal; padding: 14px; }
