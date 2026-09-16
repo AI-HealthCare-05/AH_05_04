@@ -14,7 +14,7 @@
 .mvp-start-page {
   --ds-action: #607d8b;
   --ds-action-pressed: #526b78;
-  --ds-text-muted: #78909c;
+  --ds-text-muted: #526b78;
 }
 
 .mvp-auth-page {
@@ -175,10 +175,19 @@
   border-radius: 16px;
 }
 
+.mvp-start > .ds-button:not(:disabled) {
+  /* White text needs 4.5:1; preserve the Figma action color for non-text surfaces. */
+  background: #5d7a88;
+}
+
+.mvp-start > .ds-button:not(:disabled):active {
+  background: var(--ds-action-pressed);
+}
+
 .mvp-start__login {
   align-self: center;
   margin-top: 23px;
-  color: var(--ds-action);
+  color: var(--ds-action-pressed);
   font-size: 14px;
   font-weight: 800;
   line-height: 17px;

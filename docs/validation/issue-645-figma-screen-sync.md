@@ -50,3 +50,11 @@ pnpm run test:e2e:requirements
 ```
 
 로컬 검증은 다른 작업의 4173/4174 서버를 재사용하지 않도록 전용 14645~14648 포트와 일시적 config로 실행했다. 일시적 config는 커밋하지 않는다. API는 합성 fixture로 가로챘으며 실제 Backend/DB/Provider/기기 Push 검증은 아니다. Python·DB·의료 AI 전체 suite는 Frontend 표시 변경 범위 밖이라 재실행하지 않았다. 지정 리뷰어 승인과 CI는 별도이며 병합·배포하지 않는다.
+
+## PR #646 리뷰 보완: 텍스트 대비
+
+남한솔 리뷰어의 WATCH 코멘트를 재확인했다. `#607d8b`와 흰색의 대비는 4.3717015837:1로, 17px/700 알림 CTA와 18px/800 프로필 CTA 등 일반 크기 텍스트의 WCAG AA 4.5:1 기준을 충족하지 않았다. 시작 화면 보조 문구와 링크, 프로필 배지, 알림 읽음 상태·날짜에도 대비 부족이 있었다.
+
+Figma 원본 SVG·브랜드·장식용 action 색은 유지하고 시작·프로필·알림의 흰색 CTA 표면에만 기존 계열 `#5d7a88`(흰색 대비 4.5604989042:1)을 적용했다. 작은 강조·보조 글자는 기존 pressed 색 `#526b78`로 보정했다. 활성/비활성 버튼 동작과 크기는 유지한다.
+
+[WCAG 2.2 Contrast Minimum](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html)의 상대 휘도 계산을 사용했다. 새 모바일 E2E는 실제 computed foreground/background와 상속된 표면을 읽어 반올림 없이 4.5:1 이상인지 검사한다. 320/390/412px 화면·대비 및 기존 알림 E2E **9 PASS**, lint·TypeScript·git diff --check PASS. CSS와 E2E 검사만 보완하여 전체 unit suite는 재실행하지 않았다. 보완 후 캡처 12개를 갱신했다.

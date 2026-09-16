@@ -26,6 +26,32 @@ async function expectContentFits(page: Page) {
   await content.evaluate((element) => element.scrollTo(0, 0))
 }
 
+// Use browser-computed colors so CSS overrides and inherited surfaces are covered.
+async function expectReadableText(page: Page, selector: string) {
+  const samples = await page.locator(selector).evaluateAll((elements) => elements.map((element) => {
+    const style = getComputedStyle(element)
+    let background = style.backgroundColor
+    let parent = element.parentElement
+    while (background === 'rgba(0, 0, 0, 0)' && parent) {
+      background = getComputedStyle(parent).backgroundColor
+      parent = parent.parentElement
+    }
+    return { text: element.textContent, color: style.color, background }
+  }))
+  expect(samples.length).toBeGreaterThan(0)
+  const luminance = (color: string) => {
+    const channels = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map((value) => {
+      const channel = value / 255
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+    })
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+  }
+  for (const sample of samples) {
+    const levels = [luminance(sample.color), luminance(sample.background)].sort((a, b) => b - a)
+    expect((levels[0] + 0.05) / (levels[1] + 0.05), sample.text ?? selector).toBeGreaterThanOrEqual(4.5)
+  }
+}
+
 for (const width of [320, 390, 412]) {
   test(`[Figma #645][${width}px] 시작·메뉴·사용자 정보·알림의 실제 콘텐츠와 모바일 배치`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 })
@@ -42,6 +68,7 @@ for (const width of [320, 390, 412]) {
     await page.goto('/start')
     await expect(page.getByRole('button', { name: '회원가입하고 시작하기' })).toBeVisible()
     await expectContentFits(page)
+    await expectReadableText(page, '.mvp-start > .ds-button, .mvp-start__login, .mvp-start__hero p')
     await page.screenshot({ path: `test-results/requirements/figma-645-start-${width}.png` })
 
     await page.goto('/menu')
@@ -54,6 +81,7 @@ for (const width of [320, 390, 412]) {
     await page.getByRole('button', { name: '사용자 정보', exact: true }).click()
     await expect(page.getByText('synthetic@example.com')).toBeVisible()
     await expectContentFits(page)
+    await expectReadableText(page, '.mvp-profile .ds-button:not(:disabled), .mvp-profile__account-details span')
     await page.screenshot({ path: `test-results/requirements/figma-645-profile-${width}.png` })
 
     // Long user-supplied text must wrap without pushing badges or actions off-screen.
@@ -88,6 +116,7 @@ for (const width of [320, 390, 412]) {
     expect(parts[0].y).toBeLessThan(parts[1].y)
     expect(parts[1].y).toBeLessThan(parts[2].y)
     await expectContentFits(page)
+    await expectReadableText(page, '.mvp-notifications__item-action, .mvp-notifications__read-state, .mvp-notifications__item-copy small')
     await page.screenshot({ path: `test-results/requirements/figma-645-notifications-${width}.png` })
     expect(notifications.readPatchCount).toBe(0)
     expect(notifications.checkinMutationCount).toBe(0)

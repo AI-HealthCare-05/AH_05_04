@@ -1,7 +1,7 @@
 .mvp-notifications-page {
   --ds-action: #607d8b;
   --ds-action-pressed: #526b78;
-  --ds-text-muted: #78909c;
+  --ds-text-muted: #526b78;
   --ds-line: #d8dee8;
 }
 
@@ -95,7 +95,7 @@
   align-items: center;
   gap: 8px;
   min-height: 22px;
-  color: var(--ds-action);
+  color: var(--ds-action-pressed);
   font-size: 14px;
   line-height: 20px;
   font-weight: 700;
@@ -104,7 +104,7 @@
 .mvp-notifications__read-state.is-read { color: var(--ds-text-muted); font-weight: 600; }
 .mvp-notifications__item-button.is-read strong { font-size: 18px; line-height: 26px; font-weight: 600; }
 .mvp-notifications__item-button.is-read small { color: var(--ds-text-muted); font-size: 15px; }
-.mvp-notifications__item-action { min-height: 52px; display: grid; place-items: center; padding: 10px; border-radius: 14px; background: var(--ds-action); color: #fff; font-size: 17px; line-height: 24px; font-weight: 700; }
+.mvp-notifications__item-action { min-height: 52px; display: grid; place-items: center; padding: 10px; border-radius: 14px; background: #5d7a88; color: #fff; font-size: 17px; line-height: 24px; font-weight: 700; }
 .mvp-notifications__handoff { border-color: var(--ds-line); background: #eceff1; }
 .mvp-notifications__handoff code { overflow-wrap: anywhere; color: #334155; font-size: 12px; }
 
