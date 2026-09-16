@@ -80,8 +80,8 @@ describe('SignupPage', () => {
     await screen.findByText('이메일 인증이 완료되었습니다.')
   }
 
-  it('미승인 초안을 확정 필수 동의로 처리하거나 회원가입 요청에 사용하지 않는다', () => {
-    vi.stubEnv('VITE_SIGNUP_TERMS_APPROVED', 'false')
+  it.each([undefined, '', 'false', 'TRUE'])('승인값 %s에서는 필수 동의와 가입을 차단한다', (value) => {
+    vi.stubEnv('VITE_SIGNUP_TERMS_APPROVED', value)
     renderPage()
 
     const terms = screen.getByRole('checkbox', { name: '필수 약관 승인 대기 중' })
@@ -248,7 +248,11 @@ describe('SignupPage', () => {
     expect(screen.getByLabelText('이름')).toHaveProperty('required', true)
     expect(screen.getByLabelText('이메일')).toHaveProperty('required', true)
     expect(screen.getByLabelText('비밀번호')).toHaveProperty('required', true)
-    expect(screen.getByRole('button', { name: '중복확인 (기능 준비 중)' })).toHaveProperty('disabled', true)
+    expect(screen.queryByRole('button', { name: /중복확인/ })).toBeNull()
+    expect(screen.getByText('이메일 중복 여부는 가입 시 확인합니다.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '약관 보기' }))
+    expect(screen.queryByRole('note', { name: '승인 전 초안 · 검토용' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '확인' }))
     expect(screen.getAllByRole('checkbox')).toHaveLength(2)
     expect(screen.getByRole('checkbox', { name: '필수 약관에 동의합니다' })).toHaveProperty('required', true)
     const optionalConsent = screen.getByRole('checkbox', { name: /기능 이용 선택 동의/ })
