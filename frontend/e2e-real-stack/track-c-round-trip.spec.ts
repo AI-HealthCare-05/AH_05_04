@@ -74,5 +74,21 @@ test('[REAL-STACK][Track C #139] create, reload, complete and cancel plans throu
     const saved = (await savedResponse.json()).data
     expect(saved.status).toBe(index === 1 ? 'CANCELLED' : 'COMPLETED')
     expect(saved.action_config_snapshot).toEqual(created.action_config_snapshot)
+    if (index === 0) {
+      await page.getByRole('button', { name: '도움 사용 후기' }).click()
+      await page.getByRole('radio', { name: '도움이 됐어요', exact: true }).check()
+      await page.getByRole('button', { name: '후기 저장', exact: true }).click()
+      await expect(page.getByText('저장된 후기: 도움이 됐어요', { exact: true })).toBeVisible()
+      await page.reload()
+      await page.getByRole('button', { name: '도움 사용 후기' }).click()
+      await expect(page.getByText('저장된 후기: 도움이 됐어요', { exact: true })).toBeVisible()
+      await page.getByRole('button', { name: '후기 수정하기' }).click()
+      await page.getByRole('radio', { name: '도움이 되지 않았어요', exact: true }).check()
+      await page.getByRole('button', { name: '후기 수정 저장' }).click()
+      await expect(page.getByText('저장된 후기: 도움이 되지 않았어요', { exact: true })).toBeVisible()
+      const feedbackResponse = await request.get(`${api}/api/v1/support-action-plans/${created.support_action_plan_id}/followups`, { headers })
+      expect(feedbackResponse.status()).toBe(200)
+      expect((await feedbackResponse.json()).data).toMatchObject({ response: 'NOT_HELPED', revision: 2, support_action_plan_id: created.support_action_plan_id })
+    }
   }
 })
