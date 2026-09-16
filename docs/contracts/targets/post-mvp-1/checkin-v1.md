@@ -205,7 +205,7 @@ HTTP 구체화는 기술 리뷰 대상이며 전체 target의 Current 승격이 
 
 ## PD-194-3 상황별 연결 구현·리뷰 대상
 
-[일정 변경·외출 선택](../../proposed/track-c-travel-situation-194.md)은 기존 Barrier enum을 유지하면서
+[일정 변경·외출 선택](../../current/track-c-travel-situation-194.md)은 기존 Barrier enum을 유지하면서
 Support GET/Plan 생성에 선택적 travel_situation을 추가한다. 후보 제한 후 기존 정렬·최대 1개를 유지한다.
-[계획별 자료 조회](../../proposed/track-c-plan-resources-194.md)는 원래 약·기록·저장 당시 안내를 연결한다.
+[계획별 자료 조회](../../current/track-c-plan-resources-194.md)는 원래 약·기록·저장 당시 안내를 연결한다.
 약별 승인 설명/Citation·임상 Safety 확장은 별도 미완료 범위이며 전체 target을 Current로 승격하지 않는다.

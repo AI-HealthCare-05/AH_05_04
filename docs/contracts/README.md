@@ -53,6 +53,8 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## Proposed 계약
 
+- [Guide·Chat 피드백 v1 (#633)](./proposed/guide-chat-feedback-v1.md): 완료 결과별 rating·선택 의견 저장 API, SELF 소유권·재제출·합성 Gold 연결 계약. Proposed / Local 구현 반영·최종 승인 대기, Frontend·Backend 확인과 사용자 운영안 채택 반영; 실사용 처리 승인·최종 책임 리뷰 별도.
+
 - [Track B 생활 시간 입력 v1 (#422 / #556)](./proposed/track-b-lifestyle-times-v1.md): 식사·반복 행동·복용 곤란 시간의 SELF별 요일 저장·조회 구현 후보. #556 책임 리뷰 전 Proposed; 추천·약별 조건 판정은 별도.
 
 - [Knowledge Evidence Index v1 (#178 선행 기반)](./proposed/post-mvp-1/knowledge-evidence-index-v1.md): 승인된 RAG Runtime 목표의 Retrieval Adapter가 소비할 Source Snapshot 결속 Chunk·버전별 embedding·재현 가능한 receipt 저장 계약. 구현 브랜치 검증 중이며 #178 Retrieval/RRF/Rerank/Evidence Gate·공개 활성화는 포함하지 않음.
@@ -216,5 +218,7 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 
 ## Track C 일정 변경·외출 상황 선택 (#194 후속)
 
-- [상황 선택 — Proposed](proposed/track-c-travel-situation-194.md): 생활 일정 변경과 약 미지참에 따른 단일 제안, Plan 재검증·멱등성·명시 완료. 권가빈 구현·김지혜 단일 책임 리뷰, Frontend #139 영향 포함.
-- [계획별 안내·화면 연결 자료 — Proposed](proposed/track-c-plan-resources-194.md): 원래 약·복약 기록과 저장 당시 Copy의 SELF 조회, 잊음·복용법·필요성·걱정 루트의 연결 범위와 미완료 의존성.
+- [상황 선택 — Current, PR #639 반영](current/track-c-travel-situation-194.md): 생활 일정 변경과 약 미지참에 따른 단일 제안, Plan 재검증·멱등성·명시 완료. 권가빈 구현·김지혜 단일 책임 리뷰, Frontend #139 영향 포함.
+- [계획별 안내·화면 연결 자료 — Current, PR #639 반영](current/track-c-plan-resources-194.md): 원래 약·복약 기록과 저장 당시 Copy의 SELF 조회, 잊음·복용법·필요성·걱정 루트의 연결 범위와 미완료 의존성.
+
+PR #639의 두 계약은 구현 PR 내 이동이며 #629 병합·최종 책임 리뷰와 외부 공개 승인은 별도다.

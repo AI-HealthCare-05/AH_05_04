@@ -367,3 +367,12 @@ raise ApiError(
 | 409 | REMINDER_LIMIT_REACHED | 동일 occurrence의 재알림이 이미 DELIVERED/CANCELLED |
 
 활성 재알림 중복은 기존 목표 `REMINDER_ALREADY_SCHEDULED`, 취소된 occurrence는 `OCCURRENCE_CANCELLED`, 시간 검증은 `VALIDATION_FAILED`다. 상세 순서는 Notification 계약을 따른다.
+
+## Guide·Chat 피드백 (#633 / PR #638 구현 반영)
+
+[피드백 계약](../proposed/guide-chat-feedback-v1.md)의 Local POST는 소유권 확인 후
+Guide가 COMPLETED가 아니거나 Chat 메시지가 ASSISTANT·COMPLETED가 아니면
+`409 / FEEDBACK_TARGET_NOT_READY`를 반환한다. message는 “완료된 AI 응답에만 의견을 남길 수 있습니다.”,
+details는 빈 배열이며 공통 trace_id·no-store를 적용한다. 원문·comment는 포함하지 않는다.
+없는/타인 대상·세션 불일치는 `404 / NOT_FOUND`다. DELETE에는 완료 상태 조건을 적용하지 않는다.
+최종 책임 리뷰·병합 대기이며 Local 외 POST/DELETE는 `404 / NOT_FOUND`로 차단한다.

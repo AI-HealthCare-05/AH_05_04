@@ -582,3 +582,12 @@ Frontend `TrackCPage.test.tsx`는 상황 선택·명시 채택·실제 준비 �
 약별 승인 설명·Citation, 증상별 임상 판정과 실제 Push 도착은 별도 미완료 범위다.
 
 실행 결과·선행 PR·미완료 의존성: [사유별 연결 검증 기록](testing/track-c-support-routes-194.md).
+
+### #633 Guide·Chat 피드백
+
+`backend/app/tests/feedback/`에서 실제 PostgreSQL·ASGI의 SELF 소유권·완료 상태·입력 오류·no-store,
+재제출·동시 최초 접수·rollback·30일 만료·대상 삭제 cascade와 실제 migration 제약·downgrade guard를 검증한다.
+새 합성 부정 feedback을 검토용 `chat-feedback-gold-v1` case로 연결하고 v5 기존 30-case 보존·hash 및 잘못된 재질문 거절을 확인한다.
+`frontend/tests/ResponseFeedback.test.tsx`와 `frontend/e2e/response-feedback.spec.ts`는 실패 후 입력 유지·재시도·평가 변경·삭제,
+중복 전송 차단, 완료 ASSISTANT만 노출, 320·390·412px 키보드·레이아웃을 확인한다.
+[실행 기록](validation/issue-633-feedback.md)의 합성 replay와 실제 Provider 개선 효과·책임 리뷰 승인을 구분한다.

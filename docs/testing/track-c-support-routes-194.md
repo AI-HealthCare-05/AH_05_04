@@ -58,3 +58,17 @@ lockfile·dependency 변경은 없다.
 Track C 브라우저 5개, 실제 API 왕복 시나리오 1개(세 사유 분기), TypeScript·빌드·oxlint,
 전체 Ruff check/format, Mypy 747개 파일, `git diff --check` 통과.
 빌드의 기존 500 kB chunk 경고는 남아 있다. 실제 Push 도착·임상 승인·공개 승인 증거는 아니다.
+
+## develop 통합 및 최종 리뷰 정렬 (2026-09-16)
+
+- `0203803b`에서 develop의 일정 화면 변경을 합칠 때 Track C 버튼에 제거된
+  `setEditingMedicationId` 호출이 남아 frontend CI가 실패했다.
+- `b118a71a`에서 대상 약 ID state와 현재 일정 편집 진입을 연결했다. 두 약이 있는 fixture에서
+  대상 약만 표시하고 support_medication 쿼리를 보존하는 검사를 보강했다.
+- 이 라운드 Frontend 전체 729개, TypeScript·oxlint·production build가 통과했고,
+  [CI 35065376564](https://github.com/AI-HealthCare-05/AH_05_04/actions/runs/35065376564)의 10개 lane도 모두 통과했다.
+- 이후 develop의 #638은 api.md·data-schema.md·testing.md의 동일 말미에 피드백 문서를 추가했다.
+  #639의 Track C 추가 설명과 겹친 텍스트 충돌은 두 영역을 모두 보존해 해결했다. 코드 충돌은 없다.
+- 책임 리뷰 요청에 따라 상황 선택·계획 자료 계약을 Current로 이동하고 참조를 정렬했다.
+  #635는 병합 완료, #629는 승인됐지만 아직 OPEN이다. #629 병합 후 이번 기능 diff만 남는지
+  최종 확인해야 한다. 이 PR이 #629를 대체하거나 먼저 배포하는 것으로 해석하지 않는다.

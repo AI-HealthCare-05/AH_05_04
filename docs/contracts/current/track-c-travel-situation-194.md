@@ -1,9 +1,17 @@
 # Track C 일정 변경·외출 상황 선택 — #194
 
-- 상태: Proposed / 구현·리뷰 대상. 병합된 runtime 또는 외부 공개 승인 아님.
+- 상태: Current — PR #639의 구현과 함께 반영하는 런타임 계약. 최종 책임 리뷰·병합 대기, 외부 공개 승인 아님.
 - 구현 담당: 권가빈. 단일 책임 리뷰어: 김지혜.
 - 영향: Backend API/DTO·Support 선택·멱등성, Frontend #139의 선택·채택·완료 흐름.
 - 근거: [PD-194-3](../../governance/decisions/2026-09-16-track-c-travel-situation-194.md).
+
+## 구현·검증 및 반영 상태
+
+- [PR #639](https://github.com/AI-HealthCare-05/AH_05_04/pull/639)에 Router·DTO·Service·Repository와 통합 테스트를 포함한다. 기존 테이블을 사용하며 새 migration은 없다.
+- 구현 HEAD `b118a71a`의 [CI](https://github.com/AI-HealthCare-05/AH_05_04/actions/runs/35065376564)는 10개 lane 모두 SUCCESS다. [검증 기록](../../testing/track-c-support-routes-194.md)을 따른다.
+- 김지혜의 [책임 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/639#pullrequestreview-5219449254)는 코드의 추가 결함이 없음을 확인하고, 같은 구현 PR에서 Current 이동과 상태·참조 정렬을 요청했다.
+- 이 이동은 해당 요청의 반영이다. #629 병합과 정리된 diff의 최종 책임 리뷰는 대기 중이다. 병합 전 develop의 동작이나 #194 전체 완료로 해석하지 않는다.
+- 약별 Citation·증상별 임상 정책·실제 Push 도착·외부 공개 승인은 별도이며 공개 게이트를 유지한다.
 
 ## GET 및 Plan 생성
 

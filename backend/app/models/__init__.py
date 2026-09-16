@@ -22,6 +22,7 @@ from app.models.catalog_approval import (
 )
 from app.models.chat import ChatCitation, ChatMessage, ChatSession
 from app.models.email_verification import EmailVerificationPurpose, EmailVerificationToken
+from app.models.feedback import ChatMessageFeedback, GuideFeedback
 from app.models.guides import Guide, GuideCitation
 from app.models.knowledge import (
     KnowledgeChunk,
@@ -178,6 +179,8 @@ from app.models.user_consents import ConsentPurpose, ConsentStatus, UserConsent
 from app.models.users import AccountStatus, Gender, User
 
 __all__ = [
+    "ChatMessageFeedback",
+    "GuideFeedback",
     "CatalogBuildApproval",
     "CatalogBuildApprovalSource",
     "CatalogSourceApproval",

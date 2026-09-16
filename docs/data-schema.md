@@ -807,6 +807,13 @@ Source·Knowledge 업무 필드는 수정할 수 없다. Builder는 Knowledge do
 SELECT·INSERT만, Runtime은 같은 read set에 SELECT만 가진다. Builder 환경변수가 비어 있으면 이 선택형
 권한 경계는 활성화되지 않으며 Track F 공개 상태에도 영향을 주지 않는다.
 
+#642는 Source Snapshot/member 저장 경로의 writer에게도 같은 원칙을 적용한다. `rag_source`,
+`rag_source_endpoint`, `rag_source_ingestion_artifact`의 `knowledge_index_lock_marker`에만
+writer의 열 단위 `UPDATE` 권한을 추가해 member 저장 시 필요한 `SELECT ... FOR UPDATE` 잠금을
+허용하고, 업무 데이터 열은 계속 차단한다(`infra/python/source_role_policy.py`). ACL을 적용하기
+전에 세 컬럼이 실제로 `integer` + `NOT NULL` + 검증된 `CHECK (... = 0)`인지 먼저 확인하고,
+조건을 만족하지 않으면 권한 변경 자체를 중단한다.
+
 ## #423 Schedule Audit — develop 반영 완료
 
 Migration `423a1b2c3d4e`는 `medication_schedule_audit`와 occurrence의 nullable UTC `cancelled_at`을 추가한다. 감사 컬럼·revision/actor/unique·snapshot 의미는 [일정 정합화 v1 §3](contracts/targets/post-mvp-1/track-b-schedule-reconciliation-v1.md)을 따른다. Schedule·actor FK는 RESTRICT이며 기존 #398 역할 provisioning은 Runtime에 SELECT/INSERT만 부여해 감사 UPDATE/DELETE/TRUNCATE를 차단한다. Migration 이후 역할 provisioning을 재실행한다. DB trigger와 ORM event는 사용하지 않는다. 기존 time row는 보존하고 retire는 schedule 상태·revision으로 판정한다. 종료는 revision과 SCHEDULER audit을 같이 추가하며 기존 occurrence·Check-in·time FK를 보존한다.
@@ -870,5 +877,15 @@ Plan·Check-in은 변경하지 않는다.
 
 선택적 travel_situation은 선택한 지원의 재검증·멱등 fingerprint에 사용하며 새 column을 추가하지 않는다.
 계획은 기존 support_code·rule/copy/config snapshot으로 보존한다. 자료 GET은 기존 부모 관계에서
-원래 occurrence·약 항목을 읽는다. [상황 선택](contracts/proposed/track-c-travel-situation-194.md),
-[자료 조회](contracts/proposed/track-c-plan-resources-194.md). 새 migration·DB 함수·trigger는 없다.
+원래 occurrence·약 항목을 읽는다. [상황 선택](contracts/current/track-c-travel-situation-194.md),
+[자료 조회](contracts/current/track-c-plan-resources-194.md). 새 migration·DB 함수·trigger는 없다.
+
+## #633 피드백 저장 — Local 구현, Proposed
+
+[계약](contracts/proposed/guide-chat-feedback-v1.md), migration `633a1b2c3d4e`에서
+`guide_feedback`, `chat_message_feedback`을 추가한다. 각 row는 UUIDChar id, 대상별 UNIQUE FK
+(guide_id / chat_message_id, ON DELETE CASCADE), rating VARCHAR(8) CHECK, nullable comment VARCHAR(1000),
+created_at·updated_at TIMESTAMPTZ를 가진다. 소유권은 부모 SELF chain으로 확인하고 별도 user_id를 복제하지 않는다.
+최초 생성 후 30일 만료이며 수정은 created_at을 보존한다. 만료 후 POST는 이전 row를 제거하고 새 row를 생성한다.
+created_at index는 만료 삭제, rating·updated_at·id index는 부정 피드백 검토를 지원한다.
+정책은 [PD-633](governance/decisions/2026-09-16-guide-chat-feedback-633.md)을 따르며 Current 승격·실사용 승인 전이다.

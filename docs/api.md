@@ -856,9 +856,22 @@ Plan PATCH는 ACTIVE가 아니면, Follow-up POST는 COMPLETED가 아니면 반�
 Support GET query와 Plan 생성 body의 선택적 `travel_situation`은 SCHEDULE_CHANGED 또는
 MEDICATION_NOT_WITH_ME다. 일정 변경·외출에만 허용하고 각각 일정 확인·약 챙기기 계획을 제안한다.
 생략은 기존 단일 제안을 유지한다. 입력 조건·422·Plan 재검증·멱등성은
-[제안 계약](contracts/proposed/track-c-travel-situation-194.md)을 따른다. 최종 승인·병합 전이다.
+[Current 계약](contracts/current/track-c-travel-situation-194.md)을 따른다. 최종 승인·병합 전이다.
 
 `GET /api/v1/support-action-plans/{id}/resources`는 SELF 소유 계획의 원래 사유·복약 기록 ID/날짜·약 항목 ID와
 저장 당시 정적 안내를 반환한다. 과거 문구를 활성 문구로 대체하지 않는다.
-[계획별 자료 계약](contracts/proposed/track-c-plan-resources-194.md)은 구현·리뷰 대상이며
+[계획별 자료 계약](contracts/current/track-c-plan-resources-194.md)은 PR #639에서 Current로 정렬하며, 최종 리뷰·병합 대기다.
 약별 Citation 또는 임상 Safety 정책의 구현 완료가 아니다.
+
+## #633 Guide·Chat 피드백 — Local 구현, 책임 리뷰 대기
+
+[계약](contracts/proposed/guide-chat-feedback-v1.md)과 [PD-633](governance/decisions/2026-09-16-guide-chat-feedback-633.md)을 따른다.
+`POST /api/v1/guides/{guide_id}/feedback`,
+`POST /api/v1/chat-sessions/{session_id}/messages/{message_id}/feedback`은
+`rating: POSITIVE | NEGATIVE`, 선택 `comment`를 받아 신규 201·재제출 200을 반환한다.
+완료 Guide·ASSISTANT/COMPLETED Chat만 허용하며 부모 SELF 소유권을 검증한다.
+같은 경로의 DELETE는 본인 target의 feedback을 제거하고 204를 반환한다. GET은 추가하지 않는다.
+응답 data는 id·rating·created_at·updated_at이며 comment·의료 원문은 반환하지 않는다.
+미완료/USER target은 409 FEEDBACK_TARGET_NOT_READY, 타인·없는 target은 404 NOT_FOUND다.
+NUL·잘못된 Unicode·길이 초과·잘못된 rating은 공통 422다. 모든 응답에 no-store를 적용한다.
+ENV=local 외에는 POST/DELETE 모두 404이며 실제 사용자 수집·Production 공개 승인은 별도다.
