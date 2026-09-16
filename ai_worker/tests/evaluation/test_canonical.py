@@ -77,3 +77,31 @@ def test_validation_error_formats_only_code_and_safe_path() -> None:
     error = EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID, safe_path="/resources/0")
 
     assert str(error) == "EVAL_RESOURCE_PATH_INVALID at /resources/0"
+
+
+def test_canonical_json_explicit_null_differs_from_missing_key() -> None:
+    with_null: JsonValue = {"optional_field": None}
+    without_field: JsonValue = {}
+
+    bytes_with_null = canonical_json_bytes(with_null)
+    bytes_without_field = canonical_json_bytes(without_field)
+
+    assert bytes_with_null == b'{"optional_field":null}'
+    assert bytes_without_field == b"{}"
+    assert canonical_sha256(with_null) != canonical_sha256(without_field)
+
+
+def test_canonical_json_preserves_nfc_and_nfd_without_auto_normalization() -> None:
+    # RFC 8785 Section 3.2.2: JCS does NOT normalize Unicode strings (e.g., NFD -> NFC).
+    # Normalization must be performed at application input boundaries.
+    nfc_text = "caf\u00e9"  # 'café' in NFC
+    nfd_text = "cafe\u0301"  # 'café' in NFD (e + combining acute accent)
+
+    assert nfc_text != nfd_text
+    nfc_bytes = canonical_json_bytes({"name": nfc_text})
+    nfd_bytes = canonical_json_bytes({"name": nfd_text})
+
+    assert nfc_bytes == b'{"name":"caf\xc3\xa9"}'
+    assert nfd_bytes == b'{"name":"cafe\xcc\x81"}'
+    assert nfc_bytes != nfd_bytes
+    assert canonical_sha256({"name": nfc_text}) != canonical_sha256({"name": nfd_text})
