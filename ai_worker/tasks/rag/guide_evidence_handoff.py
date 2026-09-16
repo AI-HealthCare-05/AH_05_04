@@ -45,7 +45,12 @@ from ai_worker.tasks.evaluation.canonical import (
     canonical_json_bytes,
     canonical_sha256,
 )
-from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, QueryFingerprint, SensitiveText
+from ai_worker.tasks.rag.evidence_retrieval import (
+    ImmutableArtifactRef,
+    QueryFingerprint,
+    SensitiveText,
+    is_valid_immutable_artifact_ref,
+)
 from ai_worker.tasks.rag.evidence_search import (
     ProductionEvidenceProvenance,
     ProductionSearchHit,
@@ -298,15 +303,6 @@ def _is_nonblank_nfc(val: object) -> bool:
     return isinstance(val, str) and len(val) > 0 and val == val.strip() and unicodedata.is_normalized("NFC", val)
 
 
-def _artifact_is_valid(ref: object) -> bool:
-    return (
-        type(ref) is ImmutableArtifactRef
-        and _is_nonblank_nfc(ref.artifact_code)
-        and _is_nonblank_nfc(ref.version)
-        and _is_sha256(ref.content_sha256)
-    )
-
-
 def _is_utc_datetime(dt: object) -> bool:
     from datetime import timedelta
 
@@ -429,11 +425,11 @@ def _check_ordering_and_duplicates(
 
 def _receipt_structure_is_valid(receipt: ProductionSearchReceipt) -> bool:
     if (
-        not _artifact_is_valid(receipt.artifact_ref)
-        or not _artifact_is_valid(receipt.filter_snapshot_ref)
-        or not _artifact_is_valid(receipt.evidence_index_ref)
-        or not _artifact_is_valid(receipt.retrieval_config_ref)
-        or not _artifact_is_valid(receipt.adapter_artifact_ref)
+        not is_valid_immutable_artifact_ref(receipt.artifact_ref)
+        or not is_valid_immutable_artifact_ref(receipt.filter_snapshot_ref)
+        or not is_valid_immutable_artifact_ref(receipt.evidence_index_ref)
+        or not is_valid_immutable_artifact_ref(receipt.retrieval_config_ref)
+        or not is_valid_immutable_artifact_ref(receipt.adapter_artifact_ref)
     ):
         return False
 
@@ -501,9 +497,9 @@ def _check_receipt_and_manifest(request: GuideEvidenceHandoffRequest) -> list[Gu
         if sel.retrieval_receipt_ref != receipt.artifact_ref:
             reasons.append(GuideEvidenceHandoffReason.RETRIEVAL_RECEIPT_MISMATCH)
         if (
-            not _artifact_is_valid(sel.eligibility_receipt_ref)
-            or not _artifact_is_valid(sel.assessment_artifact_ref)
-            or not _artifact_is_valid(sel.verifier_artifact_ref)
+            not is_valid_immutable_artifact_ref(sel.eligibility_receipt_ref)
+            or not is_valid_immutable_artifact_ref(sel.assessment_artifact_ref)
+            or not is_valid_immutable_artifact_ref(sel.verifier_artifact_ref)
         ):
             reasons.append(GuideEvidenceHandoffReason.OBSERVED_PROVENANCE_REF_REQUIRED)
 
@@ -535,11 +531,11 @@ def _check_source_member_binding(sel: GuideEvidenceSelectionRequest) -> list[Gui
     b = sel.binding
     prov = sel.hit.provenance
 
-    if not _artifact_is_valid(b.request_guard_ref):
+    if not is_valid_immutable_artifact_ref(b.request_guard_ref):
         reasons.append(GuideEvidenceHandoffReason.REQUEST_GUARD_REF_REQUIRED)
-    if not _artifact_is_valid(b.request_source_decision_ref):
+    if not is_valid_immutable_artifact_ref(b.request_source_decision_ref):
         reasons.append(GuideEvidenceHandoffReason.REQUEST_SOURCE_DECISION_REQUIRED)
-    if not _artifact_is_valid(b.request_member_decision_ref):
+    if not is_valid_immutable_artifact_ref(b.request_member_decision_ref):
         reasons.append(GuideEvidenceHandoffReason.REQUEST_MEMBER_DECISION_REQUIRED)
 
     if (

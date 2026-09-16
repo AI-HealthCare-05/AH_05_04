@@ -72,7 +72,7 @@ class AuthoritativeRequestGuardObservation:
     artifact_ref: ImmutableArtifactRef
     user_id: UUID
     request_operation_code: str
-    decision_stage: str = "REQUEST"
+    decision_stage: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +190,14 @@ flowchart TD
    - `verify_member_authority_binding(observed=mem_obs.member_identity, selected=sel.member_identity)` 빈 튜플 확인: 불일치 시 `MEMBER_BINDING_MISMATCH`
 3. **바인딩 생성**:
    모든 selection이 성공하면 각 selection에 대해 `RequestSourceMemberBinding`을 조립하며, `observed_source_decision_outcome`과 `observed_member_decision_outcome`은 reader 관측치에서 확정된 `PASS`로 설정된다.
+
+### Selection 순서 보존 및 중복 처리 원칙
+
+Sync Guide Evidence Authority Assembly은 caller가 전달한 selection 순서를 보존한다.
+selection uniqueness / deduplication / canonicalization은 이 계약에서 정의하지 않으며
+상위 orchestration의 책임이다.
+
+중복 selection은 본 authority seam에서 별도 권위 우회로 간주하지 않는다.
 
 ---
 

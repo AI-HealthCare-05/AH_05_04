@@ -1053,3 +1053,12 @@ async def test_rejects_malformed_request_shape() -> None:
     assert outcome.decision == SyncGuideEvidenceAuthorityDecision.REJECTED
     assert outcome.reasons == (SyncGuideEvidenceAuthorityReason.REQUEST_INVALID,)
     assert reader.call_counts["guard"] == 0
+
+
+def test_authoritative_request_guard_observation_requires_decision_stage() -> None:
+    with pytest.raises(TypeError):
+        AuthoritativeRequestGuardObservation(  # type: ignore[call-arg]
+            artifact_ref=_art("g"),
+            user_id=uuid4(),
+            request_operation_code="op",
+        )

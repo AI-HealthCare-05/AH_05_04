@@ -29,7 +29,10 @@ from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
-from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
+from ai_worker.tasks.rag.evidence_retrieval import (
+    ImmutableArtifactRef,
+    is_valid_immutable_artifact_ref,
+)
 from ai_worker.tasks.rag.guide_evidence_handoff import (
     ObservedDecisionOutcome,
     RequestDecisionStage,
@@ -82,7 +85,7 @@ class AuthoritativeRequestGuardObservation:
     artifact_ref: ImmutableArtifactRef
     user_id: UUID
     request_operation_code: str
-    decision_stage: str = "REQUEST"
+    decision_stage: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,21 +168,8 @@ class SyncGuideEvidenceAuthorityOutcome:
     bindings: tuple[RequestSourceMemberBinding, ...] = ()
 
 
-def _is_sha256(val: object) -> bool:
-    return isinstance(val, str) and len(val) == 64 and all(c in "0123456789abcdef" for c in val)
-
-
 def _is_nonblank_nfc(val: object) -> bool:
     return isinstance(val, str) and len(val) > 0 and val == val.strip() and unicodedata.is_normalized("NFC", val)
-
-
-def _artifact_is_valid(ref: object) -> bool:
-    return (
-        type(ref) is ImmutableArtifactRef
-        and _is_nonblank_nfc(ref.artifact_code)
-        and _is_nonblank_nfc(ref.version)
-        and _is_sha256(ref.content_sha256)
-    )
 
 
 def _request_shape_is_valid(request: SyncGuideEvidenceAuthorityRequest) -> bool:
@@ -187,7 +177,7 @@ def _request_shape_is_valid(request: SyncGuideEvidenceAuthorityRequest) -> bool:
         return False
     if (
         type(request.user_id) is not UUID
-        or not _artifact_is_valid(request.request_guard_ref)
+        or not is_valid_immutable_artifact_ref(request.request_guard_ref)
         or not _is_nonblank_nfc(request.request_operation_code)
         or type(request.selections) is not tuple
         or not request.selections
@@ -203,8 +193,8 @@ def _request_shape_is_valid(request: SyncGuideEvidenceAuthorityRequest) -> bool:
             or not _is_nonblank_nfc(sel.source_version)
             or type(sel.member_identity) is not SourceMemberIdentity
             or not is_valid_source_member_identity(sel.member_identity)
-            or not _artifact_is_valid(sel.request_source_decision_ref)
-            or not _artifact_is_valid(sel.request_member_decision_ref)
+            or not is_valid_immutable_artifact_ref(sel.request_source_decision_ref)
+            or not is_valid_immutable_artifact_ref(sel.request_member_decision_ref)
         ):
             return False
 
