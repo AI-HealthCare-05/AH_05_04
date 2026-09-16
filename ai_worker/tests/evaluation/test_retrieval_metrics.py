@@ -10,7 +10,7 @@ import pytest
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes
 from ai_worker.tasks.evaluation.config import RepositoryState, load_dev_execution_request
-from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_dataset
+from ai_worker.tasks.evaluation.loaders import EvaluationCaseContract, ValidatedDataset, load_dataset
 from ai_worker.tasks.evaluation.retrieval_metrics import (
     RetrievalObservation,
     build_retrieval_metrics,
@@ -440,3 +440,149 @@ def test_metric_results_use_contract_sort_key_not_policy_order() -> None:
         "PRECISION_AT_5",
         "RECALL_AT_5",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Declared independence axis support (#273 approved DEV comparison policy)
+# ---------------------------------------------------------------------------
+
+NLR_MANIFEST = EVALS_ROOT / "retrieval/manifests/rag-natural-language-retrieval-dev-v1.dataset.json"
+NLR_DATASET = load_dataset(NLR_MANIFEST, evals_root=EVALS_ROOT)
+
+
+def _nlr_case_result(case: EvaluationCaseContract) -> CaseResult:
+    return CASE_RESULT_ADAPTER.validate_python(
+        {
+            "schema_id": "rag-eval.case-result",
+            "schema_version": "1.0.0",
+            "run_id": RUN_ID,
+            "case_id": case.case_id,
+            "dataset_code": case.dataset_code,
+            "dataset_version": case.dataset_version,
+            "task_type": "RETRIEVAL",
+            "partition": case.partition.value,
+            "input_sha256": case.input_sha256,
+            "execution_status": "COMPLETED",
+            "decision_status": "N/A",
+            "failure_codes": [],
+            "retrieved_evidence_ids": list(case.expected.required_evidence_refs or ()),
+            "selected_evidence_ids": list(case.expected.required_evidence_refs or ()),
+            "actual_claim_ids": None,
+            "actual_citation_evidence_ids": None,
+            "actual_rule_ids": None,
+            "actual_scope_codes": None,
+            "actual_response_level": None,
+            "actual_safety_disposition": None,
+            "actual_execution_status": None,
+            "actual_release_decision": None,
+            "actual_fallback_code": None,
+            "actual_provider_invocation": None,
+            "actual_retrieval_invocation": True,
+            "actual_publication_allowed": None,
+            "actual_sections": None,
+            "omitted_sections": None,
+            "risk_level": None,
+            "answer_sha256": None,
+            "latency_ms": 12,
+            "input_token_count": None,
+            "output_token_count": None,
+            "estimated_cost": None,
+        }
+    )
+
+
+def _nlr_case_results() -> tuple[CaseResult, ...]:
+    return tuple(_nlr_case_result(case) for case in NLR_DATASET.cases)
+
+
+def test_transform_origin_independence_axis_is_supported() -> None:
+    metrics = build_retrieval_metrics(NLR_DATASET, _nlr_case_results()).metrics
+
+    scope = NLR_DATASET.comparison_policy.scopes[0]
+    assert scope.independence_unit == "transform_origin"
+    assert scope.cluster_dimension is LeakageAxis.TRANSFORM_ORIGIN
+    for metric in metrics:
+        assert metric.execution_status.value == "COMPLETED", metric.metric_id
+    overall = next(metric for metric in metrics if metric.metric_id == "RECALL_AT_5" and metric.slice_id == "ALL")
+    assert overall.sample_case_count == 60
+    assert overall.sample_independent_group_count == 20
+    assert overall.metric_value is not None
+    assert overall.ci_lower is not None and overall.ci_upper is not None
+
+
+@pytest.mark.parametrize(
+    ("axis", "expected_groups"),
+    [
+        (LeakageAxis.QUESTION_TEMPLATE, 6),
+        (LeakageAxis.SOURCE_SEGMENT, 20),
+        (LeakageAxis.MEDICATION_FAMILY, 20),
+        (LeakageAxis.TRANSFORM_ORIGIN, 20),
+    ],
+)
+def test_every_declared_leakage_axis_groups_by_its_own_dimension(
+    axis: LeakageAxis,
+    expected_groups: int,
+) -> None:
+    """Each LeakageAxis must be supported and must drive the independent grouping."""
+
+    target = NLR_DATASET.comparison_policy.scopes[0]
+    changed_scope = target.model_copy(update={"cluster_dimension": axis, "independence_unit": axis.value})
+    changed_policy = NLR_DATASET.comparison_policy.model_copy(
+        update={"scopes": (changed_scope, *NLR_DATASET.comparison_policy.scopes[1:])}
+    )
+    dataset = replace(NLR_DATASET, comparison_policy=changed_policy)
+
+    metric = _metric(build_retrieval_metrics(dataset, _nlr_case_results()).metrics, target.metric_id)
+
+    assert metric.execution_status.value == "COMPLETED"
+    assert metric.sample_case_count == 60
+    assert metric.sample_independent_group_count == expected_groups
+
+
+@pytest.mark.parametrize(
+    "unsupported_unit",
+    ["question_template", "unknown_axis"],
+)
+def test_independence_unit_that_disagrees_with_the_axis_is_rejected(unsupported_unit: str) -> None:
+    """A declared unit that does not name the declared axis must not be computed."""
+
+    target = NLR_DATASET.comparison_policy.scopes[0]
+    assert target.cluster_dimension is LeakageAxis.TRANSFORM_ORIGIN
+    changed_scope = target.model_copy(update={"independence_unit": unsupported_unit})
+    changed_policy = NLR_DATASET.comparison_policy.model_copy(
+        update={"scopes": (changed_scope, *NLR_DATASET.comparison_policy.scopes[1:])}
+    )
+    dataset = replace(NLR_DATASET, comparison_policy=changed_policy)
+
+    metric = _metric(build_retrieval_metrics(dataset, _nlr_case_results()).metrics, target.metric_id)
+
+    assert metric.execution_status.value == "NOT_IMPLEMENTED"
+    assert metric.decision_status is None
+
+
+def test_absent_cluster_dimension_is_not_supported() -> None:
+    """A scope without a declared LeakageAxis must not be computed."""
+
+    target = NLR_DATASET.comparison_policy.scopes[0]
+    changed_scope = target.model_copy(update={"cluster_dimension": None})
+    changed_policy = NLR_DATASET.comparison_policy.model_copy(
+        update={"scopes": (changed_scope, *NLR_DATASET.comparison_policy.scopes[1:])}
+    )
+    dataset = replace(NLR_DATASET, comparison_policy=changed_policy)
+
+    metric = _metric(build_retrieval_metrics(dataset, _nlr_case_results()).metrics, target.metric_id)
+
+    assert metric.execution_status.value == "NOT_IMPLEMENTED"
+
+
+def test_independence_unit_must_match_declared_cluster_dimension() -> None:
+    target = NLR_DATASET.comparison_policy.scopes[0]
+    changed_scope = target.model_copy(update={"independence_unit": "question_template"})
+    changed_policy = NLR_DATASET.comparison_policy.model_copy(
+        update={"scopes": (changed_scope, *NLR_DATASET.comparison_policy.scopes[1:])}
+    )
+    dataset = replace(NLR_DATASET, comparison_policy=changed_policy)
+
+    metric = _metric(build_retrieval_metrics(dataset, _nlr_case_results()).metrics, target.metric_id)
+
+    assert metric.execution_status.value == "NOT_IMPLEMENTED"
