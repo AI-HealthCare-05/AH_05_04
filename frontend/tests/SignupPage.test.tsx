@@ -222,6 +222,7 @@ describe('SignupPage', () => {
     expect(screen.getByLabelText('이름')).toHaveProperty('required', true)
     expect(screen.getByLabelText('이메일')).toHaveProperty('required', true)
     expect(screen.getByLabelText('비밀번호')).toHaveProperty('required', true)
+    expect(screen.getByRole('button', { name: '중복확인 (기능 준비 중)' })).toHaveProperty('disabled', true)
     expect(screen.getAllByRole('checkbox')).toHaveLength(2)
     expect(screen.getByRole('checkbox', { name: '필수 약관에 동의합니다' })).toHaveProperty('required', true)
     const optionalConsent = screen.getByRole('checkbox', { name: /기능 이용 선택 동의/ })

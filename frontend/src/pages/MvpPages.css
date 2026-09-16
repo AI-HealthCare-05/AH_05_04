@@ -239,6 +239,31 @@
   border-radius: 12px;
 }
 
+.mvp-signup-email-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 94px;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mvp-signup-email-check {
+  min-width: 0;
+  min-height: 48px;
+  padding: 0 10px;
+  border: 1.5px solid #607d8b;
+  border-radius: 12px;
+  background: #fff;
+  color: #607d8b;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.mvp-signup-email-check:disabled {
+  opacity: 1;
+  cursor: not-allowed;
+}
+
 .mvp-auth .mvp-form__field input:focus-visible {
   border-color: var(--ds-action);
   outline: 3px solid var(--ds-focus);

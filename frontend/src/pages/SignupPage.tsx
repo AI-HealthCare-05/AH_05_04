@@ -353,21 +353,31 @@ function SignupPage() {
               </div>
               <div className="mvp-form__field">
                 <label htmlFor="signup-email">이메일</label>
-                <input
-                  id="signup-email"
-                  ref={emailInputRef}
-                  name="email"
-                  type="email"
-                  readOnly={verificationBusy || isSubmitting}
-                  placeholder="이메일을 입력해 주세요"
-                  autoComplete="email"
-                  required
-                  maxLength={40}
-                  aria-invalid={Boolean(fieldErrors.email)}
-                  aria-describedby={fieldErrors.email ? 'signup-email-error' : undefined}
-                  value={form.email}
-                  onChange={handleChange}
-                />
+                <div className="mvp-signup-email-row">
+                  <input
+                    id="signup-email"
+                    ref={emailInputRef}
+                    name="email"
+                    type="email"
+                    readOnly={verificationBusy || isSubmitting}
+                    placeholder="이메일을 입력해 주세요"
+                    autoComplete="email"
+                    required
+                    maxLength={40}
+                    aria-invalid={Boolean(fieldErrors.email)}
+                    aria-describedby={fieldErrors.email ? 'signup-email-error' : undefined}
+                    value={form.email}
+                    onChange={handleChange}
+                  />
+                  <button
+                    type="button"
+                    className="mvp-signup-email-check"
+                    aria-label="중복확인 (기능 준비 중)"
+                    disabled
+                  >
+                    중복확인
+                  </button>
+                </div>
                 {fieldErrors.email && (
                   <span className="mvp-form__field-error" id="signup-email-error" role="alert">
                     {fieldErrors.email}

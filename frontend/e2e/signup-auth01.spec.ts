@@ -12,7 +12,9 @@ test('AUTH-01 responsive layout, accessibility and consent payload contract', as
 
     const optionalConsent = page.getByRole('checkbox', { name: /기능 이용 선택 동의/ })
     await expect(page.getByRole('checkbox')).toHaveCount(2)
-    await expect(page.getByRole('button', { name: '중복확인' })).toHaveCount(0)
+    const duplicateCheck = page.getByRole('button', { name: '중복확인 (기능 준비 중)' })
+    await expect(duplicateCheck).toBeVisible()
+    await expect(duplicateCheck).toBeDisabled()
     await expect(optionalConsent).not.toBeChecked()
 
     const layout = await page.evaluate(() => {
@@ -71,6 +73,8 @@ test('AUTH-01 responsive layout, accessibility and consent payload contract', as
         }
         return {
           name: size('#signup-name'),
+          email: size('#signup-email'),
+          duplicateCheck: size('.mvp-signup-email-check'),
           password: size('#signup-password'),
           required: size('.mvp-signup-required'),
           optional: size('.mvp-signup-consents__option'),
@@ -79,6 +83,8 @@ test('AUTH-01 responsive layout, accessibility and consent payload contract', as
       })
       expect(geometry).toEqual({
         name: { width: 350, height: 48 },
+        email: { width: 246, height: 48 },
+        duplicateCheck: { width: 94, height: 48 },
         password: { width: 350, height: 48 },
         required: { width: 350, height: 86 },
         optional: { width: 350, height: 86 },
