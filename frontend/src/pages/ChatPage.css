@@ -15,19 +15,28 @@
 }
 
 .chat-page .app-topbar {
-  min-height: 68px;
-  padding-inline: 8px 20px;
+  min-height: 50px;
+  gap: 5px;
+  padding: 4px max(20px, env(safe-area-inset-right)) 3px max(4px, env(safe-area-inset-left));
   border-bottom-color: #edf0f4;
   background: #fff;
 }
 
+.chat-page .app-topbar .icon-button {
+  min-width: 40px;
+  min-height: 42px;
+  margin-right: 0;
+}
+
 .chat-page .app-topbar h1 {
+  margin-left: 3px;
   font-size: 17px;
   font-weight: 800;
 }
 
 .chat-page .app-topbar .dosey-mascot--header {
-  margin-left: -1px;
+  width: 37px;
+  height: 42px;
 }
 
 .chat-page .chat-layout {
@@ -40,7 +49,7 @@
 
 .chat-page__intro {
   flex: 0 0 auto;
-  padding: 18px 16px 12px;
+  padding: 18px 20px 12px;
 }
 
 .chat-page__intro h1 {
@@ -62,7 +71,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  margin: 0 12px;
+  margin: 0 14px;
   overflow: hidden;
   background: transparent;
 }
@@ -181,6 +190,7 @@
 
 .chat-page__empty {
   align-content: start;
+  justify-items: start;
   gap: 22px;
   padding-top: 0;
 }
@@ -189,14 +199,27 @@
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  width: 100%;
+  width: min(346px, 100%);
+}
+
+.chat-page__greeting > .dosey-mascot--chat {
+  width: 36px;
+  height: 42.84px;
+  flex: 0 0 36px;
+}
+
+.chat-page__greeting > .dosey-mascot--chat img {
+  width: 262.989px;
+  height: 214.674px;
+  left: -56.842px;
+  top: -162.568px;
 }
 
 .chat-page__empty-card {
   display: grid;
   gap: 6px;
   justify-self: start;
-  width: min(300px, calc(100% - 54px));
+  width: min(300px, calc(100% - 46px));
   max-width: none;
   padding: 14px 16px;
   border: 1px solid #d8dee8;
@@ -219,10 +242,10 @@
 }
 
 .chat-page__presets {
-  width: calc(100% - 54px);
+  width: min(300px, calc(100vw - 82px));
   display: grid;
   gap: 8px;
-  margin-left: 54px;
+  margin-left: 46px;
   text-align: left;
 }
 
@@ -320,6 +343,8 @@
 }
 
 .chat-page .chat-composer {
+  width: min(350px, calc(100% - 12px));
+  align-self: center;
   grid-template-columns: minmax(0, 1fr) 48px;
   column-gap: 8px;
   row-gap: 8px;
@@ -351,11 +376,12 @@
 }
 
 .chat-page__composer-label {
-  grid-column: 1 / -1;
-  color: var(--ds-text);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 20px;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .chat-page__composer-label-legacy {
