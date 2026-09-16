@@ -3,11 +3,13 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-168-20260915` |
-| 상태 | Candidate · Review Required |
+| 상태 | Approved |
 | 제안일 | 2026-09-15 |
+| 승인일 | 2026-09-15 |
 | 제안·구현 | 송은영 (`@phina-io`) |
 | 책임 리뷰 | 정현우 (`@ceohwj`) — RAG-07A Manifest·search contract, PD-175 원 제안자 |
 | 추적 Issue·PR | [#168](https://github.com/AI-HealthCare-05/AH_05_04/issues/168) · [PR #576](https://github.com/AI-HealthCare-05/AH_05_04/pull/576) |
+| 승인 근거 | PR #576 reviewer approval and active tests/contract/test_backend_ai_worker_import_boundary.py allowlist contract test |
 | 선행 Decision | [`PD-175-20260910`](2026-09-10-runtime-bundle-canonical-configuration-persistence.md) — `backend`가 `ai_worker`의 순수 kernel 모듈 하나만 production import한다는 (A)안을 확정하고, 그 경계를 지키는 계약 테스트(`tests/contract/test_backend_ai_worker_import_boundary.py`) 도입을 후속 조건으로 남겼다. |
 
 ## 목적

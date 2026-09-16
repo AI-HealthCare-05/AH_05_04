@@ -297,6 +297,15 @@ class TrackCStorageRepository:
             .execution_options(populate_existing=True)
         )
 
+    async def get_action_plan_for_update(self, *, plan_id: UUID) -> SupportActionPlan | None:
+        """Caller holds the owned Check-in → Safety → Barrier locks first."""
+        return await self.session.scalar(
+            select(SupportActionPlan)
+            .where(SupportActionPlan.id == plan_id)
+            .with_for_update(of=SupportActionPlan)
+            .execution_options(populate_existing=True)
+        )
+
     async def get_action_plan_owned(self, *, plan_id: UUID, user_id: UUID) -> SupportActionPlan | None:
         return await self.session.scalar(
             select(SupportActionPlan)
@@ -305,6 +314,7 @@ class TrackCStorageRepository:
                 SupportActionPlan.id == plan_id,
                 BarrierResponse.medication_checkin_id.in_(self._owned_checkins(user_id)),
             )
+            .execution_options(populate_existing=True)
         )
 
     async def get_followup_owned(self, *, followup_id: UUID, user_id: UUID) -> ActionPlanFollowup | None:

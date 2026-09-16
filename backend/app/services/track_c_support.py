@@ -1,6 +1,7 @@
 """Static, single-offer Track C support and explicitly confirmed Plan creation."""
 
 from asyncio import to_thread
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -8,6 +9,7 @@ from app.core.errors import ApiError
 from app.dtos.track_c_support import (
     ActionConfigSnapshot,
     CreateSupportActionPlanRequest,
+    PatchSupportActionPlanRequest,
     SupportActionPlanData,
     SupportActionPlanResponse,
     SupportCopyData,
@@ -22,6 +24,8 @@ from app.models.track_c import (
     SafetyAssessment,
     SafetyDisposition,
     SafetyResponseLevel,
+    SupportActionPlan,
+    SupportActionPlanStatus,
     SupportCode,
 )
 from app.repositories.track_c_storage_repository import TrackCStorageRepository
@@ -37,6 +41,8 @@ from app.services.track_c_handler_config import (
 
 SUPPORT_OFFER_GET_OPERATION_ID = "barrier-response.supports"
 SUPPORT_ACTION_PLAN_POST_OPERATION_ID = "support-action-plan.create"
+SUPPORT_ACTION_PLAN_GET_OPERATION_ID = "support-action-plan.get"
+SUPPORT_ACTION_PLAN_PATCH_OPERATION_ID = "support-action-plan.patch"
 
 
 def eligible_supports(config: HandlerConfig, barrier: BarrierResponse) -> list[SupportRule]:
@@ -192,25 +198,92 @@ class TrackCSupportService:
                 support_code=request.support_code,
                 config=config,
             )
-            return SupportActionPlanResponse(
-                data=SupportActionPlanData(
-                    support_action_plan_id=plan.id,
-                    barrier_response_id=plan.barrier_response_id,
-                    support_code=plan.support_code,
-                    rule_version=plan.rule_version,
-                    copy_version=plan.copy_version,
-                    action_config_snapshot=ActionConfigSnapshot.model_validate(plan.action_config_snapshot),
-                    status=plan.status,
-                    created_at=plan.created_at,
-                    completed_at=plan.completed_at,
-                    cancelled_at=plan.cancelled_at,
-                )
-            ).model_dump(mode="json")
+            return self._plan_response(plan).model_dump(mode="json")
 
         return await self._idempotency.execute(
             user_id=user_id,
             operation_id=SUPPORT_ACTION_PLAN_POST_OPERATION_ID,
             parent_resource_id=request.barrier_response_id,
+            idempotency_key=idempotency_key,
+            fingerprint=request.model_dump(mode="json"),
+            success_status=200,
+            mutate=mutate,
+        )
+
+    @staticmethod
+    def _plan_response(plan: SupportActionPlan) -> SupportActionPlanResponse:
+        return SupportActionPlanResponse(
+            data=SupportActionPlanData(
+                support_action_plan_id=plan.id,
+                barrier_response_id=plan.barrier_response_id,
+                support_code=plan.support_code,
+                rule_version=plan.rule_version,
+                copy_version=plan.copy_version,
+                action_config_snapshot=ActionConfigSnapshot.model_validate(plan.action_config_snapshot),
+                status=plan.status,
+                created_at=plan.created_at,
+                completed_at=plan.completed_at,
+                cancelled_at=plan.cancelled_at,
+            )
+        )
+
+    @staticmethod
+    def _plan_not_found() -> ApiError:
+        return ApiError(status_code=404, code="ACTION_PLAN_NOT_FOUND", message="지원 계획을 찾을 수 없습니다.")
+
+    async def _owned_plan(self, *, user_id: UUID, plan_id: UUID) -> SupportActionPlan:
+        plan = await self._repository.get_action_plan_owned(plan_id=plan_id, user_id=user_id)
+        if plan is None:
+            raise self._plan_not_found()
+        return plan
+
+    async def get_plan(self, *, user_id: UUID, plan_id: UUID) -> SupportActionPlanResponse:
+        return self._plan_response(await self._owned_plan(user_id=user_id, plan_id=plan_id))
+
+    async def patch_plan(
+        self, *, user_id: UUID, plan_id: UUID, request: PatchSupportActionPlanRequest, idempotency_key: str
+    ) -> SyncMutationResult:
+        # A stored successful response never bypasses current SELF ownership.
+        await self._owned_plan(user_id=user_id, plan_id=plan_id)
+
+        async def mutate() -> dict[str, Any]:
+            owned = await self._owned_plan(user_id=user_id, plan_id=plan_id)
+            barrier = await self._repository.get_barrier_owned(barrier_id=owned.barrier_response_id, user_id=user_id)
+            if barrier is None:
+                raise self._plan_not_found()
+            checkin = await self._repository.lock_checkin_owned(
+                checkin_id=barrier.medication_checkin_id, user_id=user_id
+            )
+            if checkin is None:
+                raise self._plan_not_found()
+            safety = await self._repository.get_latest_safety_for_update(
+                checkin_id=checkin.id, checkin_revision=checkin.revision
+            )
+            latest = await self._repository.get_latest_barrier_for_update(
+                checkin_id=checkin.id, checkin_revision=checkin.revision
+            )
+            plan = await self._repository.get_action_plan_for_update(plan_id=plan_id)
+            if plan is None:
+                raise self._plan_not_found()
+            if plan.status != SupportActionPlanStatus.ACTIVE:
+                raise ApiError(
+                    status_code=409, code="ACTION_PLAN_STATE_CONFLICT", message="이미 종료된 지원 계획입니다."
+                )
+            if request.status == "COMPLETED":
+                self._ensure_current_flow(barrier, checkin, safety, latest.id if latest else None)
+                plan.status = SupportActionPlanStatus.COMPLETED
+                plan.completed_at = datetime.now(UTC)
+            else:
+                # Cancellation remains available when the original support flow is stale.
+                plan.status = SupportActionPlanStatus.CANCELLED
+                plan.cancelled_at = datetime.now(UTC)
+            await self._repository.session.flush()
+            return self._plan_response(plan).model_dump(mode="json")
+
+        return await self._idempotency.execute(
+            user_id=user_id,
+            operation_id=SUPPORT_ACTION_PLAN_PATCH_OPERATION_ID,
+            parent_resource_id=plan_id,
             idempotency_key=idempotency_key,
             fingerprint=request.model_dump(mode="json"),
             success_status=200,

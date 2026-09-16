@@ -22,6 +22,9 @@ from sqlalchemy.pool import NullPool
 
 import app.models  # noqa: F401
 from ai_worker.tasks.rag.candidate_index import (
+    CandidateDistanceMetric,
+    CandidateEmbeddingRequest,
+    CandidateEmbeddingVector,
     CandidateIndexBuildConfig,
     CandidateIndexBuildMode,
     CandidateIndexBuildSuccess,
@@ -127,7 +130,9 @@ async def isolated_schema() -> AsyncIterator[None]:
         await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     tables = _required_tables()
     async with test_engine.begin() as connection:
-        await connection.run_sync(lambda sync_connection: Base.metadata.create_all(sync_connection, tables=tables))
+        await connection.run_sync(
+            lambda sync_connection: Base.metadata.create_all(sync_connection, tables=tables, checkfirst=False)
+        )
     try:
         yield
     finally:
@@ -142,6 +147,12 @@ async def clean_candidate_index_tables() -> AsyncIterator[None]:
     """Candidate Index rows only; Source/Catalog Set rows are seeded under per-test unique keys."""
     yield
     async with test_engine.begin() as connection:
+        candidate_index_member_exists = await connection.scalar(
+            text("SELECT to_regclass(:table_name)"),
+            {"table_name": f"{TEST_SCHEMA}.rag_candidate_index_member"},
+        )
+        if candidate_index_member_exists is None:
+            return
         await connection.execute(
             text(f"TRUNCATE TABLE {TEST_SCHEMA}.rag_candidate_index_member, {TEST_SCHEMA}.rag_candidate_index_version")
         )
@@ -182,6 +193,18 @@ async def _seed_source_snapshot():
 class _NoOpCatalogRepository:
     async def save_build(self, *, members: object, artifacts: object) -> None:
         return None
+
+
+class _DeterministicEmbeddingPort:
+    def embed(
+        self,
+        requests: tuple[CandidateEmbeddingRequest, ...],
+        config: CandidateIndexBuildConfig,
+    ) -> tuple[CandidateEmbeddingVector, ...]:
+        return tuple(
+            CandidateEmbeddingVector(member_key=request.member_key, values=(0.123456789, -0.333333333, 123.456789))
+            for request in requests
+        )
 
 
 class _ApprovingVerifier:
@@ -253,6 +276,25 @@ async def _seed_catalog_set(session, artifacts: CatalogExportArtifacts) -> RagCa
     return catalog_set
 
 
+def _hybrid_config(index_code: str) -> CandidateIndexBuildConfig:
+    return CandidateIndexBuildConfig(
+        index_code=index_code,
+        index_version="candidate-index-v1",
+        normalization_version=CATALOG_NORMALIZATION_VERSION,
+        lexical_config_version="candidate-lexical-v1",
+        search_order_version="candidate-search-order-v1",
+        candidate_limit=20,
+        display_limit=1,
+        build_mode=CandidateIndexBuildMode.HYBRID,
+        embedding_provider="synthetic",
+        embedding_model="synthetic-embedding",
+        embedding_model_version="synthetic-model-v1",
+        embedding_dimension=3,
+        distance_metric=CandidateDistanceMetric.COSINE,
+        ann_config=(("hnsw_m", "16"),),
+    )
+
+
 def _lexical_config(index_code: str) -> CandidateIndexBuildConfig:
     return CandidateIndexBuildConfig(
         index_code=index_code,
@@ -303,6 +345,34 @@ async def test_build_persists_a_building_version_with_its_members() -> None:
         assert isinstance(execution.outcome, CandidateIndexBuildSuccess)
         assert execution.outcome.components == ()
         assert execution.persisted.version.catalog_manifest_hash == artifacts.catalog.catalog_manifest_hash
+
+
+async def test_hybrid_build_persists_and_promotes_ready() -> None:
+    snapshot = await _seed_source_snapshot()
+    index_code = f"idx-{uuid4().hex[:8]}"
+
+    async with session_factory.begin() as session:
+        artifacts = await _build_catalog_export(snapshot=snapshot, catalog_version=f"catalog-{uuid4().hex[:8]}")
+        catalog_set = await _seed_catalog_set(session, artifacts)
+
+        execution = await execute_candidate_index_build(
+            session,
+            artifacts=artifacts,
+            config=_hybrid_config(index_code),
+            catalog_set_id=catalog_set.id,
+            embedding_port=_DeterministicEmbeddingPort(),
+        )
+
+        assert execution.stored is True
+        assert execution.persisted is not None
+        assert isinstance(execution.outcome, CandidateIndexBuildSuccess)
+        assert execution.outcome.manifest.build_mode is CandidateIndexBuildMode.HYBRID
+        assert execution.outcome.manifest.vector_count == 1
+
+        repository = RagCandidateIndexRepository(session)
+        activated = await repository.activate_ready_version(execution.persisted.version.id)
+        assert activated.status is RagCandidateIndexStatus.READY
+        assert activated.build_mode is RagCandidateIndexBuildMode.HYBRID
 
 
 async def test_identical_inputs_reproduce_the_same_content_hash() -> None:
@@ -372,6 +442,34 @@ def _race_member_set_hash(members: tuple[RagCandidateIndexMemberCreate, ...]) ->
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def _race_member_content_hash(*, snapshot_id) -> str:
+    payload = {
+        "identity": {
+            "entity_type": RagCandidateIndexEntityType.PRODUCT.value,
+            "code_system": "MFDS_ITEM_SEQ",
+            "canonical_code": "race-product",
+        },
+        "product_ref": "product:race",
+        "entry_ref": "entry:race",
+        "entry_type": RagMedicationSearchEntryType.PRODUCT_NAME.value,
+        "display_text": "레이스 테스트정",
+        "normalized_text": "레이스 테스트정",
+        "alias_ref": None,
+        "product_name": "레이스 테스트정",
+        "strength_text": None,
+        "dosage_form": None,
+        "manufacturer_name": None,
+        "product_source_snapshot_id": str(snapshot_id),
+        "entry_source_snapshot_id": str(snapshot_id),
+        "alias_source_snapshot_id": None,
+        "catalog_version": "catalog-race-1.0.0",
+        "catalog_manifest_hash": _label_hash("race-envelope"),
+        "normalization_version": "normalization-race-v1",
+    }
+    serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
 async def _seed_race_catalog_set(session: AsyncSession) -> RagCatalogSet:
     catalog_set = RagCatalogSet(
         catalog_version="catalog-race-1.0.0",
@@ -403,7 +501,7 @@ def _race_member(*, snapshot) -> RagCandidateIndexMemberCreate:
         catalog_manifest_hash=_label_hash("race-envelope"),
         normalization_version="normalization-race-v1",
         member_key="race-member",
-        member_content_hash=_label_hash("race-member-content"),
+        member_content_hash=_race_member_content_hash(snapshot_id=snapshot.id),
     )
 
 

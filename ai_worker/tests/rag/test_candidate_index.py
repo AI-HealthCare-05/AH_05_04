@@ -859,6 +859,27 @@ def test_hybrid_build_binds_vectors_to_sorted_members() -> None:
     assert result.manifest.distance_metric is CandidateDistanceMetric.COSINE
 
 
+class OverflowEmbeddingPort:
+    def embed(
+        self,
+        requests: tuple[CandidateEmbeddingRequest, ...],
+        config: CandidateIndexBuildConfig,
+    ) -> tuple[CandidateEmbeddingVector, ...]:
+        return tuple(
+            CandidateEmbeddingVector(member_key=request.member_key, values=vector)
+            for request, vector in zip(requests, ((1e39, 0.0), (0.0, 1.0)), strict=True)
+        )
+
+
+def test_hybrid_embedding_float32_overflow_returns_typed_failure() -> None:
+    result = build_candidate_index(valid_catalog(), hybrid_config(), OverflowEmbeddingPort())
+
+    assert result == CandidateIndexBuildFailure(
+        reason=CandidateIndexBuildFailureReason.EMBEDDING_OUTPUT_INVALID,
+        details=("embedding_output",),
+    )
+
+
 def test_ann_configuration_order_does_not_change_manifest_hashes() -> None:
     first_config = replace(
         hybrid_config(),

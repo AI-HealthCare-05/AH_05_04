@@ -550,3 +550,8 @@ Frontend 실제 왕복은 `REAL_STACK_ENV_FILE=envs/example.local.env bash scrip
 합성 응답 export는 `TRACK_B_OCCURRENCE_MEDICATION_FIXTURE_OUTPUT`에 출력 경로를 지정할 때만
 실행합니다. 기본 CI는 fixture를 갱신하지 않습니다. 검증 환경·결과는
 [검증 기록](validation/track-b/issue-202-closure-readiness.md)을 참조합니다.
+
+### Track C Plan lifecycle (#617)
+
+[검증 기록](testing/track-c-plan-lifecycle-617.md): 조회·완료·취소, SELF 404, strict confirmation, terminal 충돌,
+멱등 replay/충돌/rollback, Safety·Barrier·Check-in 정정 및 동시 mutation을 확인한다.
