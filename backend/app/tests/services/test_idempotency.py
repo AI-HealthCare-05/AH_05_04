@@ -9,7 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
-from app.core.utils.idempotency import IdempotencyKeyFormatError, compute_key_hmac
+from app.core.utils.idempotency import (
+    IdempotencyHmacDigest,
+    IdempotencyKeyFormatError,
+    compute_key_hmac,
+)
 from app.models.async_jobs import IdempotencyRecord
 from app.models.users import Gender, User
 from app.repositories.idempotency_repository import IdempotencyRepository
@@ -23,6 +27,8 @@ from app.services.idempotency import (
 from app.tests.conftest import test_engine
 
 OPERATION_ID = "medication-candidate.confirm"
+OLD_HMAC_KEY = "old-production-secret-at-least-32-chars"
+NEW_HMAC_KEY = "new-production-secret-at-least-32-chars"
 REAL_FERNET_KEY = "mNZgOOlYI_KL5_6HjgyDFGPkMW7xU7CBpPYY5awEaRg="
 
 
@@ -69,6 +75,18 @@ async def _create_user(session: AsyncSession) -> User:
     session.add(user)
     await session.flush()
     return user
+
+
+def _set_idempotency_hmac_config(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    key: str,
+    version: str,
+    retained_keys: dict[str, str] | None = None,
+) -> None:
+    monkeypatch.setattr(config, "IDEMPOTENCY_HMAC_KEY", key)
+    monkeypatch.setattr(config, "IDEMPOTENCY_HMAC_KEY_VERSION", version)
+    monkeypatch.setattr(config, "IDEMPOTENCY_HMAC_RETIRED_KEYS", retained_keys or {})
 
 
 def _service(session: AsyncSession) -> SyncMutationIdempotencyService:
@@ -132,6 +150,102 @@ async def test_execute_runs_mutation_once_and_stores_snapshot_on_first_call(
     assert result.response_status == 200
     assert result.response_body == {"identification_id": "abc", "status": "MATCHED"}
     assert await _count_idempotency_records(db_session) == 1
+
+
+async def test_execute_replays_record_created_before_hmac_key_rotation(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = await _create_user(db_session)
+    parent_resource_id = uuid4()
+    idempotency_key = "sync-idempotency-key-rotation-0001"
+    fingerprint = {"action": "confirm", "candidate_search_result_id": "r1"}
+    calls = 0
+
+    async def mutate() -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {"identification_id": "abc", "status": "MATCHED"}
+
+    _set_idempotency_hmac_config(monkeypatch, key=OLD_HMAC_KEY, version="v1")
+    service = _service(db_session)
+    first = await service.execute(
+        user_id=user.id,
+        operation_id=OPERATION_ID,
+        parent_resource_id=parent_resource_id,
+        idempotency_key=idempotency_key,
+        fingerprint=fingerprint,
+        success_status=200,
+        mutate=mutate,
+    )
+
+    record = await db_session.scalar(select(IdempotencyRecord).where(IdempotencyRecord.user_id == user.id))
+    assert record is not None
+    assert record.key_hmac_version == "v1"
+    assert record.key_hmac == compute_key_hmac(idempotency_key, hmac_key=OLD_HMAC_KEY)
+
+    _set_idempotency_hmac_config(monkeypatch, key=NEW_HMAC_KEY, version="v2", retained_keys={"v1": OLD_HMAC_KEY})
+
+    second = await service.execute(
+        user_id=user.id,
+        operation_id=OPERATION_ID,
+        parent_resource_id=parent_resource_id,
+        idempotency_key=idempotency_key,
+        fingerprint=fingerprint,
+        success_status=200,
+        mutate=mutate,
+    )
+
+    assert calls == 1
+    assert second.is_replay is True
+    assert second.response_body == first.response_body
+    assert await _count_idempotency_records(db_session) == 1
+
+
+async def test_execute_creates_current_record_after_retained_hmac_key_is_removed(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = await _create_user(db_session)
+    parent_resource_id = uuid4()
+    idempotency_key = "sync-idempotency-key-retired-removed"
+    fingerprint = {"action": "confirm", "candidate_search_result_id": "r1"}
+    calls = 0
+
+    async def mutate() -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {"identification_id": str(calls), "status": "MATCHED"}
+
+    _set_idempotency_hmac_config(monkeypatch, key=OLD_HMAC_KEY, version="v1")
+    service = _service(db_session)
+    first = await service.execute(
+        user_id=user.id,
+        operation_id=OPERATION_ID,
+        parent_resource_id=parent_resource_id,
+        idempotency_key=idempotency_key,
+        fingerprint=fingerprint,
+        success_status=200,
+        mutate=mutate,
+    )
+
+    _set_idempotency_hmac_config(monkeypatch, key=NEW_HMAC_KEY, version="v2")
+    second = await service.execute(
+        user_id=user.id,
+        operation_id=OPERATION_ID,
+        parent_resource_id=parent_resource_id,
+        idempotency_key=idempotency_key,
+        fingerprint=fingerprint,
+        success_status=200,
+        mutate=mutate,
+    )
+
+    records = (await db_session.scalars(select(IdempotencyRecord).where(IdempotencyRecord.user_id == user.id))).all()
+    assert calls == 2
+    assert first.is_replay is False
+    assert second.is_replay is False
+    assert second.response_body != first.response_body
+    assert {record.key_hmac_version for record in records} == {"v1", "v2"}
 
 
 async def test_execute_replays_stored_snapshot_without_rerunning_mutation(
@@ -311,6 +425,7 @@ async def test_execute_reclaims_expired_record_and_reruns_mutation(
         user_id=user.id,
         operation_id=OPERATION_ID,
         parent_resource_id=parent_resource_id,
+        key_hmac_version=config.IDEMPOTENCY_HMAC_KEY_VERSION,
         key_hmac=key_hmac,
         request_hash="stale-request-hash",
         response_status=200,
@@ -383,7 +498,11 @@ async def test_execute_resolves_concurrent_insert_race_by_replaying_winner(
     call_count = 0
 
     async def find_once_missing(
-        *, user_id: UUID, operation_id: str, parent_resource_id: UUID, key_hmac: str
+        *,
+        user_id: UUID,
+        operation_id: str,
+        parent_resource_id: UUID,
+        key_hmac_candidates: tuple[IdempotencyHmacDigest, ...],
     ) -> IdempotencyRecord | None:
         nonlocal call_count
         call_count += 1
@@ -393,7 +512,7 @@ async def test_execute_resolves_concurrent_insert_race_by_replaying_winner(
             user_id=user_id,
             operation_id=operation_id,
             parent_resource_id=parent_resource_id,
-            key_hmac=key_hmac,
+            key_hmac_candidates=key_hmac_candidates,
         )
 
     repository.find_sync_idempotency_record = find_once_missing  # type: ignore[method-assign]
@@ -465,14 +584,21 @@ async def test_execute_replays_winner_snapshot_when_mutation_raises_domain_confl
     call_count = 0
 
     async def find_once_missing(
-        *, user_id: UUID, operation_id: str, parent_resource_id: UUID, key_hmac: str
+        *,
+        user_id: UUID,
+        operation_id: str,
+        parent_resource_id: UUID,
+        key_hmac_candidates: tuple[IdempotencyHmacDigest, ...],
     ) -> IdempotencyRecord | None:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             return None
         return await original_find(
-            user_id=user_id, operation_id=operation_id, parent_resource_id=parent_resource_id, key_hmac=key_hmac
+            user_id=user_id,
+            operation_id=operation_id,
+            parent_resource_id=parent_resource_id,
+            key_hmac_candidates=key_hmac_candidates,
         )
 
     repository.find_sync_idempotency_record = find_once_missing  # type: ignore[method-assign]
@@ -548,14 +674,21 @@ async def test_execute_raises_conflict_when_domain_error_coincides_with_differen
     call_count = 0
 
     async def find_once_missing(
-        *, user_id: UUID, operation_id: str, parent_resource_id: UUID, key_hmac: str
+        *,
+        user_id: UUID,
+        operation_id: str,
+        parent_resource_id: UUID,
+        key_hmac_candidates: tuple[IdempotencyHmacDigest, ...],
     ) -> IdempotencyRecord | None:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             return None
         return await original_find(
-            user_id=user_id, operation_id=operation_id, parent_resource_id=parent_resource_id, key_hmac=key_hmac
+            user_id=user_id,
+            operation_id=operation_id,
+            parent_resource_id=parent_resource_id,
+            key_hmac_candidates=key_hmac_candidates,
         )
 
     repository.find_sync_idempotency_record = find_once_missing  # type: ignore[method-assign]

@@ -350,6 +350,67 @@ def test_idempotency_hmac_key_accepts_configured_value_outside_local(environment
     assert config.IDEMPOTENCY_HMAC_KEY == "a-real-idempotency-hmac-secret-value"
 
 
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_retired_keys_accept_configured_previous_key(environment: str) -> None:
+    config = Config.model_validate(
+        {
+            **BASE_CONFIG,
+            "ENV": environment,
+            "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
+            "IDEMPOTENCY_HMAC_KEY_VERSION": "v2",
+            "IDEMPOTENCY_HMAC_RETIRED_KEYS": {" v1 ": "  a-previous-idempotency-hmac-secret-value  "},
+            "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": REAL_SNAPSHOT_ENCRYPTION_KEY,
+        }
+    )
+
+    assert config.IDEMPOTENCY_HMAC_RETIRED_KEYS == {"v1": "a-previous-idempotency-hmac-secret-value"}
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_retired_keys_reject_active_version_collision(environment: str) -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
+                "IDEMPOTENCY_HMAC_KEY_VERSION": "v2",
+                "IDEMPOTENCY_HMAC_RETIRED_KEYS": {"v2": "a-previous-idempotency-hmac-secret-value"},
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": REAL_SNAPSHOT_ENCRYPTION_KEY,
+            }
+        )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_retired_keys_reject_active_key_collision(environment: str) -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
+                "IDEMPOTENCY_HMAC_KEY_VERSION": "v2",
+                "IDEMPOTENCY_HMAC_RETIRED_KEYS": {"v1": "a-real-idempotency-hmac-secret-value"},
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": REAL_SNAPSHOT_ENCRYPTION_KEY,
+            }
+        )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_retired_keys_reject_placeholder_outside_local(environment: str) -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
+                "IDEMPOTENCY_HMAC_KEY_VERSION": "v2",
+                "IDEMPOTENCY_HMAC_RETIRED_KEYS": {"v1": "not-configured-idempotency-hmac-key"},
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": REAL_SNAPSHOT_ENCRYPTION_KEY,
+            }
+        )
+
+
 def test_idempotency_snapshot_encryption_key_default_is_a_fixed_placeholder() -> None:
     """IDEMPOTENCY_HMAC_KEY와 같은 이유로, 기본값이 프로세스마다 달라지면 서버 재시작
     사이에 저장된 snapshot을 복호화하지 못합니다. 고정 literal인지 model_fields로 확인합니다."""

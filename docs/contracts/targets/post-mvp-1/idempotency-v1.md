@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Contract Freeze v4 target — 2026-08-27 |
-| 구현·리뷰 | Partially implemented — SYNC_MUTATION 공통 조회·저장·재현·409 인프라와 F Candidate 확인·거절 연결(#311)까지는 구현·승인 완료. `response_body_snapshot` 암호화 envelope·키 관리(Fernet, key rotation 포함)는 담당 리뷰어(권가빈) 최종 승인 완료(PR #346), Track B·C 실제 API는 미구현, HMAC key rotation은 여전히 #235 대기 |
+| 구현·리뷰 | Partially implemented — SYNC_MUTATION 공통 조회·저장·재현·409 인프라와 F Candidate 확인·거절 연결(#311)까지는 구현·승인 완료. `response_body_snapshot` 암호화 envelope·키 관리(Fernet, key rotation 포함)는 담당 리뷰어(권가빈) 최종 승인 완료(PR #346), Track B·C 실제 API는 미구현. HMAC key rotation은 #235에서 active+retained key 조회로 구현 |
 | Source of Truth | `FinalProject Documents/04_Decision/contract-freeze-v1.md`, `track-a-async-foundation-v1.md`, `track-f-rag-citation-safety-v1.md`, [`PD-91-20260831`](../../../governance/decisions/2026-08-31-ocr-timeout-idempotency.md) |
 | Last verified | 2026-09-08 |
 
@@ -24,7 +24,7 @@ HMAC key rotation 중에는 구 writer와 신 writer가 동시에 최초 요청�
 
 위 조건이 충족되지 않으면 HMAC key rotation 중 신규 멱등성 write를 배포하지 않는다.
 
-현재 Backend 구현(#147/#215)은 `IDEMPOTENCY_HMAC_KEY`를 단일 active version만 조회한다. "rotation 주기를 보존기간보다 길게 제한"하는 세 번째 조건은 reader가 current+직전(N-1) key version을 함께 조회할 때만 성립하는데, 지금 구현은 current만 조회하므로 이 조건을 실제로 만족하지 못한다 — 교체 직전 생성된 레코드가 교체 이후에도 최대 `IDEMPOTENCY_RECORD_TTL_DAYS`만큼 남아 있어, 그 기간 안에 같은 요청이 새 키로 재시도되면 기존 레코드를 찾지 못한다. 따라서 현재는 네 조건 중 어느 것도 충족하지 못하는 상태이며, reader가 retained key version 전체를 조회하도록 구현하는 #235가 병합되기 전까지는 `IDEMPOTENCY_HMAC_KEY`를 교체하지 않는다.
+현재 Backend 구현은 `IDEMPOTENCY_HMAC_KEY_VERSION`으로 새 레코드를 쓰고, `IDEMPOTENCY_HMAC_RETIRED_KEYS`에 보관된 이전 key version까지 조회 후보로 계산한다. 따라서 key rotation 시 운영자는 새 active key/version을 배포하면서 이전 active key를 retained map에 추가하고, `IDEMPOTENCY_RECORD_TTL_DAYS`가 지난 뒤 제거해야 한다. 구 writer와 신 writer가 서로 다른 active key version으로 같은 원문 key의 최초 write를 동시에 수행하는 혼합 배포는 여전히 금지한다.
 
 요청 지문은 다음 값을 canonical JSON으로 직렬화한 SHA-256이다.
 

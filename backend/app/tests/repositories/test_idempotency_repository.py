@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
+from app.core.utils.idempotency import IdempotencyHmacDigest
 from app.models.async_jobs import IdempotencyRecord, IdempotencyRecordType
 from app.models.users import Gender, User
 from app.repositories.idempotency_repository import (
@@ -50,6 +51,10 @@ async def _create_user(session: AsyncSession) -> User:
     return user
 
 
+def _candidate(version: str, digest: str) -> tuple[IdempotencyHmacDigest, ...]:
+    return (IdempotencyHmacDigest(key_hmac_version=version, key_hmac=digest),)
+
+
 async def test_find_sync_idempotency_record_returns_none_without_matching_record(
     db_session: AsyncSession,
 ) -> None:
@@ -59,7 +64,7 @@ async def test_find_sync_idempotency_record_returns_none_without_matching_record
         user_id=user.id,
         operation_id="medication-candidate.confirm",
         parent_resource_id=uuid4(),
-        key_hmac="digest",
+        key_hmac_candidates=_candidate(config.IDEMPOTENCY_HMAC_KEY_VERSION, "digest"),
     )
 
     assert record is None
@@ -75,6 +80,7 @@ async def test_create_sync_idempotency_record_persists_expected_fields(
         user_id=user.id,
         operation_id="medication-candidate.confirm",
         parent_resource_id=parent_resource_id,
+        key_hmac_version=config.IDEMPOTENCY_HMAC_KEY_VERSION,
         key_hmac="digest",
         request_hash="request-fingerprint",
         response_status=200,
@@ -104,6 +110,7 @@ async def test_find_sync_idempotency_record_returns_created_record(
         user_id=user.id,
         operation_id="medication-candidate.confirm",
         parent_resource_id=parent_resource_id,
+        key_hmac_version=config.IDEMPOTENCY_HMAC_KEY_VERSION,
         key_hmac="digest",
         request_hash="request-fingerprint",
         response_status=200,
@@ -115,7 +122,7 @@ async def test_find_sync_idempotency_record_returns_created_record(
         user_id=user.id,
         operation_id="medication-candidate.confirm",
         parent_resource_id=parent_resource_id,
-        key_hmac="digest",
+        key_hmac_candidates=_candidate(config.IDEMPOTENCY_HMAC_KEY_VERSION, "digest"),
     )
 
     assert found is not None
@@ -134,6 +141,7 @@ async def test_find_sync_idempotency_record_scopes_by_parent_resource_id(
         user_id=user.id,
         operation_id="medication-candidate.confirm",
         parent_resource_id=uuid4(),
+        key_hmac_version=config.IDEMPOTENCY_HMAC_KEY_VERSION,
         key_hmac="digest",
         request_hash="request-fingerprint",
         response_status=200,
@@ -145,7 +153,7 @@ async def test_find_sync_idempotency_record_scopes_by_parent_resource_id(
         user_id=user.id,
         operation_id="medication-candidate.confirm",
         parent_resource_id=uuid4(),
-        key_hmac="digest",
+        key_hmac_candidates=_candidate(config.IDEMPOTENCY_HMAC_KEY_VERSION, "digest"),
     )
 
     assert found is None
@@ -160,6 +168,7 @@ async def test_delete_expired_idempotency_record_removes_row_when_expired(
         user_id=user.id,
         operation_id="medication-candidate.confirm",
         parent_resource_id=uuid4(),
+        key_hmac_version=config.IDEMPOTENCY_HMAC_KEY_VERSION,
         key_hmac="digest",
         request_hash="request-fingerprint",
         response_status=200,
@@ -183,6 +192,7 @@ async def test_delete_expired_idempotency_record_keeps_row_when_not_expired(
         user_id=user.id,
         operation_id="medication-candidate.confirm",
         parent_resource_id=uuid4(),
+        key_hmac_version=config.IDEMPOTENCY_HMAC_KEY_VERSION,
         key_hmac="digest",
         request_hash="request-fingerprint",
         response_status=200,
@@ -205,6 +215,7 @@ async def test_is_sync_idempotency_scope_conflict_detects_unique_violation(
         user_id=user.id,
         operation_id="medication-candidate.confirm",
         parent_resource_id=parent_resource_id,
+        key_hmac_version=config.IDEMPOTENCY_HMAC_KEY_VERSION,
         key_hmac="digest",
         request_hash="request-fingerprint",
         response_status=200,
@@ -217,6 +228,7 @@ async def test_is_sync_idempotency_scope_conflict_detects_unique_violation(
             user_id=user.id,
             operation_id="medication-candidate.confirm",
             parent_resource_id=parent_resource_id,
+            key_hmac_version=config.IDEMPOTENCY_HMAC_KEY_VERSION,
             key_hmac="digest",
             request_hash="different-request-fingerprint",
             response_status=200,
