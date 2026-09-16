@@ -11,8 +11,10 @@ from app.core import config, default_logger
 from app.core.db.databases import AsyncSessionFactory, close_database
 from app.core.push import PushSettings, get_push_settings
 from app.repositories.push_repository import PushRepository
+from app.repositories.user_consent_repository import UserConsentRepository
 from app.services.push import PushDeliveryService
 from app.services.push_transport import PushSendResult, send_push
+from app.services.user_consents import ConsentGateService
 
 
 async def process_push_once(
@@ -36,7 +38,9 @@ async def process_push_once(
     outcomes: Counter[tuple[str, str]] = Counter()
     for delivery_id in candidates:
         async with session_factory.begin() as session:
-            claim = await PushDeliveryService(PushRepository(session)).prepare(delivery_id)
+            claim = await PushDeliveryService(
+                PushRepository(session), ConsentGateService(UserConsentRepository(session))
+            ).prepare(delivery_id)
         if claim is None:
             continue
         ttl = min(300, int((claim.expires_at - datetime.now(UTC)).total_seconds()))
