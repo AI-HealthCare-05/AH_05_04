@@ -27,7 +27,7 @@
 실제 UUID·사용자 정보·의견·의료 원문 또는 이를 유추할 수 있는 원문 hash는 공개 provenance에 넣지 않는다.
 신규 수집을 흉내 낸 fixture는 `SYNTHETIC_DEMO`로 표시하며 실제 사용자 검토 사례라고 보고하지 않는다.
 
-Chat은 `evals/generation/chat-v4-conversation-quality-eval-v1.json`의 기존 27 case를 보존한 새 버전을
+Chat은 `evals/generation/chat-v5-short-followup-eval-v1.json`의 기존 30 case를 보존한 새 버전을
 만든다. 기존 schema의 question/history/medications, expected와 금지 조건을 활용한다.
 Guide는 `evals/generation/guide-v3-eval-v1.json` 기반의 별도 회귀 사례로 관리한다.
 Guide는 제한 생성·Backend renderer 계약이 있으므로 자유 의료 답변용 Chat 기대 문장을 그대로 이식하지 않는다.
@@ -58,10 +58,10 @@ Provider 호출 여부·latency·token, safety gate, blind review와 unblind 결
 |---|---|---|
 | 저장·API·UI | migration·실제 DB/API·브라우저 테스트 | Local 구현·통과, 실사용 승인 별도 |
 | 검토 | 승인된 접근·정책과 부정 피드백 처리 기록 | 미확보 |
-| 합성 Gold 편입 | 내부 연결 기록, 합성 case·버전·hash·책임 리뷰 | 28-case 합성 데모 추가, 책임 리뷰 대기 |
+| 합성 Gold 편입 | 내부 연결 기록, 합성 case·버전·hash·책임 리뷰 | 31-case 합성 데모 추가, 책임 리뷰 대기 |
 | 개선 활용 | 동일 평가셋의 prompt 전후 결과와 안전·사람 검토 | 미실행 |
 
-#581에 이미 있는 27-case와 비교 설정만으로 #633의 신규 피드백 수집·개선 루프를 완료 처리하지 않는다.
+#581의 기존 v5 30-case와 비교 설정만으로 #633의 신규 피드백 수집·개선 루프를 완료 처리하지 않는다.
 실제 검토 사례가 없으면 합성 데모의 저장→변환→평가 연결과 실제 운영 실적을 분리해 보고한다.
 
 ## 채택한 보존·실행 안내

@@ -60,8 +60,8 @@ API 동시성 테스트는 서로 다른 PostgreSQL connection에서 두 최초 
 
 ## 합성 평가 연결
 
-`evals/generation/chat-feedback-gold-v1.json`은 기존 #581 27개 case를 그대로 보존하고
-사용자 정정 후 재질문 실패 유형의 새 합성 case 1개를 추가한 **검토용 28-case 버전**이다.
+`evals/generation/chat-feedback-gold-v1.json`은 현재 v5 30개 case를 그대로 보존하고
+사용자 정정 후 재질문 실패 유형의 새 합성 case 1개를 추가한 **검토용 31-case 버전**이다.
 provenance 파일은 `SYNTHETIC_DEMO`, `review_status=PENDING`, reviewer/reviewed_at=null을 명시한다.
 실제 사용자 의견에서 추출했거나 정현우가 승인한 것으로 표시하지 않는다.
 
@@ -69,11 +69,11 @@ DB 테스트는 합성 부정 의견을 실제 저장하고 NEGATIVE로 조회�
 올바른 합성 replay 출력은 통과하고, 의도적으로 잘못된 재질문으로 바꾸면 기존 판정기가 거절한다.
 자동 원문 export·LLM 변환 또는 운영 검토자 권한을 추가하지 않는다.
 
-[결정론적 실행 artifact](issue-633-feedback-replay.json): 28/28 baseline·history replay 통과,
+[결정론적 실행 artifact](issue-633-feedback-replay.json): 31/31 baseline·history replay 통과,
 안전 위반 0. **같은 고정 출력의 판정기 검증이며 prompt 개선 전후나 Provider 생성 품질 측정이 아니다.**
 실행 시 현재 runtime prompt는 `chat-prompt-v5`이며 artifact에 실제 version/hash를 기록했다.
 기존 v3/v4 blind A/B 설정은 별도 비교용 설정이고 이번 작업에서 실행하지 않았다.
-새 28-case를 live canonical allowlist로 승격하거나 기존 prompt를 변경하지 않았다.
+새 31-case를 live canonical allowlist로 승격하거나 기존 prompt를 변경하지 않았다.
 
 재현:
 
@@ -102,3 +102,14 @@ Service 반환 후 세 번째 connection의 부모 row 잠금이 55P03으로 거
 부모 잠금이 outer commit까지 유지됨을 검증한다. 생성 1회·재제출 1회도 유지한다.
 피드백 20개와 복약 일정 31개를 같은 프로세스에서 실행해 **51 passed**.
 이 검증은 책임 리뷰어의 최종 승인이나 실사용 공개 증거가 아니다.
+
+## v5 회귀 기준 및 오류 코드 리뷰 반영
+
+source를 `chat-v5-short-followup-eval-v1.json` 30-case로 고정했다. 원본 cases JSON 블록을
+UTF-8 byte-for-byte 보존하고 v5의 live_gate도 동일하게 유지한 뒤 피드백 합성 case 하나만 추가했다.
+source·dataset hash와 31-case 결정론적 replay를 다시 생성했다. 원본 v5 파일은 수정하지 않았다.
+기존 대상 교체·구어체 이유·병용 안전 단정 사례를 포함하며, 필수 안내를 포함해도
+“같이 먹어도 안전합니다”를 주입하면 history와 safety 판정이 모두 실패하는지 검증한다.
+Guide 미완료 3개 상태와 Chat USER·미완료 4개 조합 모두 409와 정확한
+`FEEDBACK_TARGET_NOT_READY` code를 확인한다. 피드백·복약 일정 순차 검증은 51 passed다.
+계약 Current 이동은 최종 책임 리뷰 승인 전 승격 조건 때문에 보류 중이다.

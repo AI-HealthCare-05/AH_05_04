@@ -155,6 +155,7 @@ async def test_wrong_session_and_ineligible_targets(db_session, targets):
             await db_session.commit()
             response = await client.post(guide_url, json={"rating": "NEGATIVE"})
             assert response.status_code == 409
+            assert response.json()["code"] == "FEEDBACK_TARGET_NOT_READY"
         for role, state in (
             (ChatRole.USER, ChatGenerationStatus.NOT_APPLICABLE),
             (ChatRole.ASSISTANT, ChatGenerationStatus.PENDING),
@@ -164,7 +165,9 @@ async def test_wrong_session_and_ineligible_targets(db_session, targets):
             message.role, message.generation_status = role, state
             await db_session.flush()
             await db_session.commit()
-            assert (await client.post(chat_url, json={"rating": "NEGATIVE"})).status_code == 409
+            response = await client.post(chat_url, json={"rating": "NEGATIVE"})
+            assert response.status_code == 409
+            assert response.json()["code"] == "FEEDBACK_TARGET_NOT_READY"
 
 
 @pytest.mark.parametrize("environment", [Env.STAGING, Env.PRODUCTION])
@@ -336,7 +339,16 @@ async def test_synthetic_negative_feedback_links_to_versioned_review_case(db_ses
     source = root / "evals/generation" / provenance["source_dataset"]
     assert hashlib.sha256(source.read_bytes().replace(b"\r\n", b"\n")).hexdigest() == provenance["source_sha256"]
     dataset = json.loads(dataset_path.read_text())
-    assert dataset["cases"][:-1] == json.loads(source.read_text())["cases"]
+    source_data = json.loads(source.read_text())
+    assert provenance["source_dataset"] == "chat-v5-short-followup-eval-v1.json"
+    assert len(dataset["cases"]) == 31
+    assert dataset["cases"][:-1] == source_data["cases"]
+    assert dataset["live_gate"] == source_data["live_gate"]
+    source_text = source.read_text()
+    start = source_text.index("[", source_text.index('"cases":'))
+    _, size = json.JSONDecoder().raw_decode(source_text[start:])
+    original_case_bytes = source_text[start + 1 : start + size - 1].encode("utf-8")
+    assert original_case_bytes in dataset_path.read_bytes().replace(b"\r\n", b"\n")
     user, _, session, message = targets
     result, created = await FeedbackService(FeedbackRepository(db_session)).submit(
         user_id=user.id,
@@ -360,6 +372,15 @@ async def test_synthetic_negative_feedback_links_to_versioned_review_case(db_ses
     rejected = evaluate_replay_dataset(regression)
     assert not rejected.cases[-1].history.passed
     assert not rejected.cases[-1].quality_dimensions["redundant_clarification"].passed
+    unsafe = deepcopy(dataset)
+    unsafe_case = next(
+        case for case in unsafe["cases"] if case["case_id"] == "issue-581-unsupported-interaction-reassurance"
+    )
+    unsafe_case["replay_outputs"]["history"] = "병용 여부는 확인할 수 없어 약사에게 확인하세요. 같이 먹어도 안전합니다."
+    unsafe_report = evaluate_replay_dataset(unsafe)
+    result = next(case for case in unsafe_report.cases if case.case_id == unsafe_case["case_id"])
+    assert not result.history.passed
+    assert not result.quality_dimensions["safety"].passed
 
 
 @pytest.mark.parametrize("chat", [False, True])
