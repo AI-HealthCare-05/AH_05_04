@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { deletePushSubscription, getPushConfig, upsertPushSubscription } from '../src/api/push'
 import { ApiError } from '../src/api/client'
-import { beginWebPushLogoutCleanup, enableWebPush, getWebPushState } from '../src/features/push/webPush'
+import {
+  beginWebPushLogoutCleanup,
+  enableWebPush,
+  getWebPushLaunchContext,
+  getWebPushState,
+} from '../src/features/push/webPush'
 
 vi.mock('../src/api/push', () => ({
   getPushConfig: vi.fn(),
@@ -37,12 +42,42 @@ function installBrowserSupport(permission: NotificationPermission = 'default') {
   })
 }
 
+function installDeviceContext({
+  userAgent,
+  platform,
+  maxTouchPoints = 0,
+  standalone = false,
+  displayModeStandalone = false,
+}: {
+  userAgent: string
+  platform: string
+  maxTouchPoints?: number
+  standalone?: boolean
+  displayModeStandalone?: boolean
+}) {
+  Object.defineProperty(navigator, 'userAgent', { configurable: true, value: userAgent })
+  Object.defineProperty(navigator, 'platform', { configurable: true, value: platform })
+  Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: maxTouchPoints })
+  Object.defineProperty(navigator, 'standalone', { configurable: true, value: standalone })
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(display-mode: standalone)' && displayModeStandalone,
+      media: query,
+    })),
+  })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   postMessage.mockImplementation((_, transfer: MessagePort[] | undefined) => {
     transfer?.[0]?.postMessage('stored')
   })
   installBrowserSupport()
+  installDeviceContext({
+    userAgent: 'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36',
+    platform: 'Linux armv8l',
+  })
   vi.mocked(getPushConfig).mockResolvedValue({ data: { public_key: 'BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' } })
   vi.mocked(upsertPushSubscription).mockResolvedValue({ data: { id: 'subscription-id', generation: 'generation-id' } })
 })
@@ -52,6 +87,52 @@ afterEach(() => {
 })
 
 describe('Web Push permission과 구독', () => {
+  it('iPhone Safari 일반 탭은 설치 안내 대상으로 구분하고 권한을 요청하지 않는다', async () => {
+    installDeviceContext({
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 Version/18.6 Mobile/15E148 Safari/604.1',
+      platform: 'iPhone',
+    })
+
+    expect(getWebPushLaunchContext()).toBe('ios-browser')
+    expect(await enableWebPush()).toBe('unsupported')
+    expect(requestPermission).not.toHaveBeenCalled()
+  })
+
+  it('iPad 홈 화면 웹앱은 navigator.standalone으로 standalone을 감지한다', () => {
+    installDeviceContext({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 Version/18.6 Mobile/15E148 Safari/604.1',
+      platform: 'MacIntel',
+      maxTouchPoints: 5,
+      standalone: true,
+    })
+
+    expect(getWebPushLaunchContext()).toBe('standalone')
+  })
+
+  it('데스크톱 UA를 사용하는 iPad Safari 일반 탭도 설치 안내 대상으로 구분한다', () => {
+    installDeviceContext({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 Version/18.6 Mobile/15E148 Safari/604.1',
+      platform: 'MacIntel',
+      maxTouchPoints: 5,
+    })
+
+    expect(getWebPushLaunchContext()).toBe('ios-browser')
+  })
+
+  it('설치 웹앱은 display-mode standalone도 감지한다', () => {
+    installDeviceContext({
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148',
+      platform: 'iPhone',
+      displayModeStandalone: true,
+    })
+
+    expect(getWebPushLaunchContext()).toBe('standalone')
+  })
+
+  it('Android Chrome 일반 탭은 기존 browser 권한 흐름을 유지한다', () => {
+    expect(getWebPushLaunchContext()).toBe('browser')
+  })
+
   it('상태 확인만으로 권한 prompt를 띄우지 않는다', async () => {
     expect(await getWebPushState()).toBe('unrequested')
     expect(requestPermission).not.toHaveBeenCalled()

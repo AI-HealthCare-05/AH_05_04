@@ -4,8 +4,10 @@ import { MobileShell } from '../design-system/components'
 import {
   disableWebPush,
   enableWebPush,
+  getWebPushLaunchContext,
   getWebPushState,
   hasStoredWebPushBinding,
+  type WebPushLaunchContext,
   type WebPushState,
 } from '../features/push/webPush'
 import '../design-system/prototype.css'
@@ -41,12 +43,15 @@ const STATE_COPY: Record<WebPushState, { title: string; detail: string }> = {
 
 function NotificationSettingsPage() {
   const navigate = useNavigate()
+  const [launchContext] = useState<WebPushLaunchContext>(() => getWebPushLaunchContext())
   const [state, setState] = useState<WebPushState | null>(null)
   const [isUpdating, setIsUpdating] = useState(false)
+  const needsIOSInstall = launchContext === 'ios-browser'
 
   const refreshState = useCallback(() => {
+    if (needsIOSInstall) return
     void getWebPushState().then(setState)
-  }, [])
+  }, [needsIOSInstall])
 
   useEffect(() => {
     refreshState()
@@ -89,7 +94,12 @@ function NotificationSettingsPage() {
     void handleDisable()
   }
 
-  const copy = state ? STATE_COPY[state] : null
+  const copy = needsIOSInstall
+    ? {
+        title: '홈 화면에 추가해 주세요',
+        detail: 'Safari의 공유 버튼을 누른 뒤 ‘홈 화면에 추가’를 선택하세요. 설치한 Dosey 도지를 홈 화면에서 열면 알림을 켤 수 있어요.',
+      }
+    : state ? STATE_COPY[state] : null
   const hasPendingBindingCleanup = state === 'subscription_failed' && hasStoredWebPushBinding()
   const canEnable = state !== null && !['unsupported', 'denied', 'granted'].includes(state) && !hasPendingBindingCleanup
 
@@ -115,19 +125,21 @@ function NotificationSettingsPage() {
             </p>
           </header>
 
-          <section className="mvp-notification-settings__status" aria-live="polite" aria-busy={state === null}>
+          <section className="mvp-notification-settings__status" aria-live="polite" aria-busy={!needsIOSInstall && state === null}>
             <h3>{copy?.title ?? '알림 상태를 확인하고 있어요'}</h3>
             <p>{copy?.detail ?? '잠시만 기다려 주세요.'}</p>
           </section>
 
-          {state === 'granted' || hasPendingBindingCleanup ? (
-            <button type="button" className="mvp-notification-settings__secondary" disabled={isUpdating} onClick={hasPendingBindingCleanup ? handleRecovery : () => void handleDisable()}>
-              {isUpdating ? '알림 연결 확인 중...' : hasPendingBindingCleanup ? '연결 다시 시도' : '알림 끄기'}
-            </button>
-          ) : (
-            <button type="button" className="mvp-notification-settings__primary" disabled={!canEnable || isUpdating} onClick={() => void handleEnable()}>
-              {isUpdating ? '알림 연결 중...' : '알림 켜기'}
-            </button>
+          {!needsIOSInstall && (
+            state === 'granted' || hasPendingBindingCleanup ? (
+              <button type="button" className="mvp-notification-settings__secondary" disabled={isUpdating} onClick={hasPendingBindingCleanup ? handleRecovery : () => void handleDisable()}>
+                {isUpdating ? '알림 연결 확인 중...' : hasPendingBindingCleanup ? '연결 다시 시도' : '알림 끄기'}
+              </button>
+            ) : (
+              <button type="button" className="mvp-notification-settings__primary" disabled={!canEnable || isUpdating} onClick={() => void handleEnable()}>
+                {isUpdating ? '알림 연결 중...' : '알림 켜기'}
+              </button>
+            )
           )}
 
           <button type="button" className="mvp-notification-settings__fallback" onClick={() => navigate('/notifications')}>

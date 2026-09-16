@@ -17,6 +17,12 @@ export type WebPushState =
   | 'revoked'
   | 'subscription_failed'
 
+export type WebPushLaunchContext = 'ios-browser' | 'standalone' | 'browser'
+
+type IOSNavigator = Navigator & {
+  standalone?: boolean
+}
+
 type StoredPushBinding = {
   id: string
   generation: string
@@ -46,6 +52,22 @@ function supportsWebPush(): boolean {
     'PushManager' in window &&
     'Notification' in window
   )
+}
+
+function isIOSDevice(): boolean {
+  const isAppleMobileDevice = /iPad|iPhone|iPod/.test(navigator.userAgent)
+  const isIPadDesktopMode = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1
+  return isAppleMobileDevice || isIPadDesktopMode
+}
+
+export function getWebPushLaunchContext(): WebPushLaunchContext {
+  const displayModeStandalone = typeof window.matchMedia === 'function'
+    && window.matchMedia('(display-mode: standalone)').matches
+  const iosStandalone = (navigator as IOSNavigator).standalone === true
+
+  if (displayModeStandalone || iosStandalone) return 'standalone'
+  if (isIOSDevice()) return 'ios-browser'
+  return 'browser'
 }
 
 function decodeApplicationServerKey(value: string): Uint8Array<ArrayBuffer> {
@@ -131,6 +153,7 @@ export async function getWebPushState(): Promise<WebPushState> {
 }
 
 export async function enableWebPush(): Promise<WebPushState> {
+  if (getWebPushLaunchContext() === 'ios-browser') return 'unsupported'
   if (!supportsWebPush()) return 'unsupported'
   if (Notification.permission === 'denied') return 'denied'
 
