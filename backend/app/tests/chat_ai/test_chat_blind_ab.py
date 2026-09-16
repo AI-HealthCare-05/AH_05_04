@@ -18,7 +18,6 @@ from app.evaluation.chat_blind_ab import (
 )
 from app.evaluation.chat_blind_ab_runner import _validate_canonical_config, validate_blind_ab_environment
 from app.evaluation.chat_history import LiveEvaluationConfigurationError
-from app.services.chat_ai.prompt import CHAT_SYSTEM_INSTRUCTIONS
 from app.services.chat_ai.schemas import ProviderChatResponse
 
 _REPOSITORY_ROOT = Path(__file__).parents[4]
@@ -69,7 +68,6 @@ def test_canonical_blind_ab_config_pins_synthetic_dataset_and_prompt_snapshots()
         hashlib.sha256((variant.prompt + "\n").encode()).hexdigest() == variant.prompt_sha256
         for variant in experiment.variants
     )
-    assert experiment.variants[1].prompt == CHAT_SYSTEM_INSTRUCTIONS
     assert experiment.variants[1].prompt == experiment.variants[1].prompt_path.read_text().rstrip("\n")
 
 

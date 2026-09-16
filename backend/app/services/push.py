@@ -3,6 +3,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Protocol
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -11,6 +12,7 @@ from app.core.errors import ApiError
 from app.core.push import PushSettings
 from app.dtos.push import PushSubscriptionData, PushSubscriptionRequest, PushSubscriptionResponse
 from app.models.medication_schedules import MedicationCheckin, MedicationOccurrence
+from app.models.user_consents import ConsentPurpose
 from app.models.users import User
 from app.repositories.notification_repository import NotificationRepository
 from app.repositories.push_repository import PushRepository
@@ -27,6 +29,10 @@ def unavailable() -> ApiError:
 
 def active(user: User, token_version: int) -> bool:
     return user.is_active and user.account_status == "ACTIVE" and user.token_version == token_version
+
+
+class NotificationConsentGate(Protocol):
+    async def require_for_intake(self, *, user: User, purpose: ConsentPurpose) -> None: ...
 
 
 class PushSubscriptionService:
@@ -126,8 +132,9 @@ class PushClaim:
 
 
 class PushDeliveryService:
-    def __init__(self, repository: PushRepository) -> None:
+    def __init__(self, repository: PushRepository, consent_gate: NotificationConsentGate | None = None) -> None:
         self.repository = repository
+        self._consent_gate = consent_gate
 
     async def prepare(self, delivery_id: UUID, *, clock: Callable[[], datetime] = utc_now) -> PushClaim | None:
         repo = self.repository
@@ -173,6 +180,12 @@ class PushDeliveryService:
             delivery.updated_at = now
             await repo.session.flush()
             return None
+        if not await self._can_deliver(user):
+            delivery.status = "CANCELLED"
+            delivery.failure_reason = "NO_LONGER_ELIGIBLE"
+            delivery.updated_at = now
+            await repo.session.flush()
+            return None
         token = uuid4()
         delivery.status = "SENDING"
         delivery.attempt_count += 1
@@ -195,6 +208,15 @@ class PushDeliveryService:
             },
             delivery.expires_at,
         )
+
+    async def _can_deliver(self, user: User) -> bool:
+        if self._consent_gate is None:
+            return True
+        try:
+            await self._consent_gate.require_for_intake(user=user, purpose=ConsentPurpose.NOTIFICATION)
+        except ApiError:
+            return False
+        return True
 
     async def finish(self, claim: PushClaim, result: PushSendResult, now: datetime) -> str | None:
         repo = self.repository

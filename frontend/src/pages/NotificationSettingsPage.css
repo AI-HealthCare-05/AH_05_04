@@ -1,0 +1,17 @@
+.mvp-notification-settings { display: grid; align-content: start; gap: 20px; overflow-x: hidden; padding-top: 20px; }
+.mvp-notification-settings header { display: grid; gap: 8px; }
+.mvp-notification-settings__status { display: grid; gap: 8px; padding: 20px; border: 1px solid #dbe7f5; border-radius: 20px; background: #f5f9ff; }
+.mvp-notification-settings__status h3 { margin: 0; color: #152238; font-size: 18px; line-height: 1.45; }
+.mvp-notification-settings__status p { margin: 0; color: #526074; font-size: 15px; line-height: 1.55; }
+.mvp-notification-settings__primary,
+.mvp-notification-settings__secondary,
+.mvp-notification-settings__fallback { width: 100%; min-height: 52px; border-radius: 16px; font: inherit; font-weight: 700; cursor: pointer; }
+.mvp-notification-settings__primary { border: 0; background: #1677ea; color: #fff; }
+.mvp-notification-settings__secondary { border: 1px solid #c7d2e2; background: #fff; color: #334155; }
+.mvp-notification-settings__fallback { border: 0; background: transparent; color: #1677ea; }
+.mvp-notification-settings__primary:disabled,
+.mvp-notification-settings__secondary:disabled { cursor: not-allowed; opacity: .55; }
+.mvp-notification-settings__primary:focus-visible,
+.mvp-notification-settings__secondary:focus-visible,
+.mvp-notification-settings__fallback:focus-visible { outline: 3px solid rgb(22 119 234 / 35%); outline-offset: 2px; }
+.mvp-notification-settings__notice { margin: 0; padding: 16px; border-radius: 16px; background: #f8fafc; color: #526074; font-size: 14px; line-height: 1.55; }

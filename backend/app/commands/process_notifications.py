@@ -9,7 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core import default_logger
 from app.core.db.databases import AsyncSessionFactory, close_database
 from app.repositories.notification_repository import NotificationRepository
+from app.repositories.user_consent_repository import UserConsentRepository
 from app.services.notifications import NotificationBatchResult, NotificationScheduler
+from app.services.user_consents import ConsentGateService
 
 
 async def process_notifications_once(
@@ -28,9 +30,9 @@ async def process_notifications_once(
     # PENDING rows survive a crash here and are picked up by the next invocation.
     async with session_factory() as session:
         async with session.begin():
-            published = await NotificationScheduler(NotificationRepository(session)).publish_once(
-                now=instant, limit=limit
-            )
+            published = await NotificationScheduler(
+                NotificationRepository(session), ConsentGateService(UserConsentRepository(session))
+            ).publish_once(now=instant, limit=limit)
     return NotificationBatchResult(generated.created_count, published.delivered_count, published.cancelled_count)
 
 

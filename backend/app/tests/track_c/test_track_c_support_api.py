@@ -351,7 +351,7 @@ def test_openapi_contains_only_scoped_routes_and_strict_confirmation() -> None:
     assert request["properties"]["confirmed"]["const"] is True
     assert schema["components"]["schemas"]["SupportOfferData"]["properties"]["supports"]["maxItems"] == 1
     assert set(schema["paths"]["/api/v1/support-action-plans/{id}"]) == {"get", "patch"}
-    assert "/api/v1/support-action-plans/{id}/followups" not in schema["paths"]
+    assert set(schema["paths"]["/api/v1/support-action-plans/{id}/followups"]) == {"get", "post"}
 
 
 async def test_assets_read_once_each_off_event_loop_before_post_locks(

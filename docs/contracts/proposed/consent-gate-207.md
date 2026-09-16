@@ -13,7 +13,7 @@
 
 이 문서는 `PD-207`에서 정한 목적별 동의 상태와 Provider 호출 Gate를 공유 계약 형태로 정리한다. Backend, Worker/OCR, Guide/Chat, Notification, Frontend가 같은 의미로 동의 상태와 차단 결과를 해석하기 위한 제안이다.
 
-이 문서는 `proposed/` 계약이며 전체 목적별 Gate의 Current 계약이 아니다. PR #465는 `user_consent` migration/model/repository와 Backend·Worker 공통 fixture의 저장 기반을 병합했다. #510은 현재 사용자 목적별 동의 상태 조회·변경 API를 구현했고, 해당 API의 현재 실행 계약은 `docs/contracts/current/user-account.md`에 기록한다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. Guide와 Chat 동기 Backend Gate는 Current 계약에 반영됐으며, Notification 실행 연결, OCR 최종 정책 문구·버전, 담당 리뷰와 Production 공개 승인은 별도로 남아 있다.
+이 문서는 `proposed/` 계약이며 전체 목적별 Gate의 Current 계약이 아니다. PR #465는 `user_consent` migration/model/repository와 Backend·Worker 공통 fixture의 저장 기반을 병합했다. #510은 현재 사용자 목적별 동의 상태 조회·변경 API를 구현했고, 해당 API의 현재 실행 계약은 `docs/contracts/current/user-account.md`에 기록한다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. Guide와 Chat 동기 Backend Gate는 Current 계약에 반영됐으며, Notification 실행 Gate는 #621에서 앱 내부 게시와 Web Push 전송 직전 경계에 연결했다. OCR 최종 정책 문구·버전, 담당 리뷰와 Production 공개 승인은 별도로 남아 있다.
 
 ## 2. 동의 목적
 
@@ -49,7 +49,7 @@ OCR 목적의 현재 policy version은 `OCR_CONSENT_POLICY_VERSION`으로 공급
 
 ## 4. `user_consent` 스키마 제안
 
-구현 상태: PR #465에서 아래 최소 저장 기반을 병합했다. 물리 테이블은 `backend/alembic/versions/207b1c2d3e4_create_user_consent.py`, SQLAlchemy 모델은 `backend/app/models/user_consents.py`, repository 판정은 `backend/app/repositories/user_consent_repository.py`, 공통 fixture는 `tests/fixtures/consent/consent_gate_207_cases.json`에 있다. #505에서 OCR 목적의 실제 Gate와 외부 Provider 호출 차단을 연결했으며 다른 목적의 연결은 후속 범위다.
+구현 상태: PR #465에서 아래 최소 저장 기반을 병합했다. 물리 테이블은 `backend/alembic/versions/207b1c2d3e4_create_user_consent.py`, SQLAlchemy 모델은 `backend/app/models/user_consents.py`, repository 판정은 `backend/app/repositories/user_consent_repository.py`, 공통 fixture는 `tests/fixtures/consent/consent_gate_207_cases.json`에 있다. #505에서 OCR 목적의 실제 Gate와 외부 Provider 호출 차단을 연결했고, #589/#619에서 Guide/Chat 동기 Backend Gate를 연결했으며, #621에서 Notification 게시·Web Push 전송 직전 Gate를 연결했다.
 
 최소 테이블은 다음 필드를 가진다.
 
@@ -91,7 +91,7 @@ Backend와 Worker는 런타임 코드를 공유하지 않는다. 대신 같은 D
 | OCR | Backend 접수 전에 `OCR` 동의 확인 | OCR Worker handler에서 CLOVA Provider 호출 직전 재검사 |
 | Guide | 현재 동기 경로에서는 Provider 호출 직전 확인. 비동기 접수 연결 후 접수 전 확인 | 비동기 Worker 경로가 연결되면 Provider 호출 직전 재검사 |
 | Chat | 현재 동기 경로에서는 Provider 호출 직전 확인. 비동기 접수 연결 후 접수 전 확인 | 비동기 Worker 경로가 연결되면 Provider 호출 직전 재검사 |
-| Notification | 실제 게시·발송 경로가 연결된 범위의 직전 확인 | 별도 Worker가 생기면 발송 직전 재검사 |
+| Notification | 앱 내부 게시 직전과 Web Push 전송 직전 확인(#621) | 별도 Worker가 생기면 발송 직전 재검사 |
 
 이 계약은 Guide·Chat `202 + Job` 전환 자체를 구현하지 않는다. 해당 전환 PR에서 같은 Gate를 적용한다.
 
@@ -132,7 +132,7 @@ OCR에는 `STALE` 도메인 상태가 없으므로 `OcrStatus.FAILED`와 `error_
 
 필요한 목적의 동의가 없거나 철회되어 Backend 접수 또는 동기 Provider 호출을 시작하지 않는 경우의 공통 오류 코드다.
 
-- OCR 접수 전 차단은 #505에서 `403 CONSENT_REQUIRED`로 구현했다. Guide 동기 생성 차단과 Chat 동기 메시지 차단도 같은 코드를 사용한다. Notification 목적의 HTTP 계약은 후속 범위다.
+- OCR 접수 전 차단은 #505에서 `403 CONSENT_REQUIRED`로 구현했다. Guide 동기 생성 차단과 Chat 동기 메시지 차단도 같은 코드를 사용한다. Notification 목적은 #621에서 별도 HTTP 오류를 노출하지 않고 batch 게시·Web Push 전송 직전 fail-closed로 연결했다.
 - 응답 형식은 공통 오류 envelope `{code, message, details, trace_id}`를 따른다.
 - `details[].rejected_value`에는 동의 원문, 환자정보, 처방 원문, Provider 응답을 넣지 않는다.
 
@@ -146,7 +146,7 @@ OCR에는 `STALE` 도메인 상태가 없으므로 `OcrStatus.FAILED`와 `error_
 
 ## 10. Contract Fixture 최소 케이스
 
-Backend와 Worker는 공통 fixture의 동의 판정 기준을 따른다. #505에서 OCR 목적의 조회·철회 차단과 저장 경합을 검증했다. Guide와 Chat 동기 Provider 호출 Gate는 Backend 경로에 연결됐으며, Notification 등 나머지 목적의 실행 연결은 후속 범위다.
+Backend와 Worker는 공통 fixture의 동의 판정 기준을 따른다. #505에서 OCR 목적의 조회·철회 차단과 저장 경합을 검증했다. Guide와 Chat 동기 Provider 호출 Gate는 Backend 경로에 연결됐으며, Notification 실행 Gate는 #621에서 앱 내부 게시·Web Push 전송 경로에 연결됐다.
 
 | fixture case | 기대 결과 |
 | --- | --- |
@@ -185,7 +185,7 @@ Backend와 Worker는 공통 fixture의 동의 판정 기준을 따른다. #505�
 
 ## 13. Current 승격 조건
 
-이 Proposed 계약은 다음이 같은 구현 PR 또는 명시적으로 연결된 PR 묶음에서 충족된 뒤에만 `current/` 승격을 검토한다. PR #465는 저장 기반을 병합했고, #510은 사용자 동의 상태 조회·변경 API를 `current/user-account.md`의 실행 계약으로 기록했다. #505는 OCR 목적의 Gate/API·Worker·Frontend 연결을 구현했다. 다른 목적의 실행 연결, OCR 최종 정책·최소 전송과 담당 리뷰·공개 승인은 후속 범위다.
+이 Proposed 계약은 다음이 같은 구현 PR 또는 명시적으로 연결된 PR 묶음에서 충족된 뒤에만 `current/` 승격을 검토한다. PR #465는 저장 기반을 병합했고, #510은 사용자 동의 상태 조회·변경 API를 `current/user-account.md`의 실행 계약으로 기록했다. #505는 OCR 목적의 Gate/API·Worker·Frontend 연결을 구현했다. OCR 최종 정책·최소 전송과 담당 리뷰·공개 승인은 후속 범위다.
 
 - `user_consent` migration/model 구현
 - 목적·상태 enum과 DB 제약 구현
