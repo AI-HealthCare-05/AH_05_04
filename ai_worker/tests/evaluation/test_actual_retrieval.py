@@ -272,3 +272,62 @@ async def test_execute_ret_h_smoke_transaction_orchestration() -> None:
         run_store=fake_run_store,
         eligibility_verifier=fake_eligibility_verifier,
     )
+
+
+# ---------------------------------------------------------------------------
+# Variant execution-mode configuration sealing (#273 actual DEV execution)
+# ---------------------------------------------------------------------------
+
+from ai_worker.tasks.evaluation.actual_retrieval import (  # noqa: E402
+    sealed_retrieval_config,
+    variant_retrieval_config,
+)
+from ai_worker.tasks.rag.evidence_search import validate_retrieval_configuration  # noqa: E402
+
+
+def _placeholder_retrieval_config() -> VersionedEvidenceRetrievalConfiguration:
+    return VersionedEvidenceRetrievalConfiguration(
+        artifact_ref=ImmutableArtifactRef("retrieval_config", "1.0", "c" * 64),
+        execution_mode=RetrievalExecutionMode.HYBRID_RRF,
+        lexical_config=VersionedLexicalSearchConfiguration(
+            artifact_ref=ImmutableArtifactRef("lexical_search_config", "1.0", "a" * 64),
+        ),
+        dense_config=VersionedDenseSearchConfiguration(
+            artifact_ref=ImmutableArtifactRef("dense_search_config", "1.0", "b" * 64),
+        ),
+        expected_query_embedding_adapter_ref=ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "e" * 64),
+    )
+
+
+def test_sealed_retrieval_config_binds_each_artifact_ref_to_its_canonical_hash() -> None:
+    sealed = sealed_retrieval_config(_placeholder_retrieval_config())
+
+    assert sealed.is_hash_valid()
+    assert sealed.lexical_config.is_hash_valid()
+    assert sealed.dense_config is not None and sealed.dense_config.is_hash_valid()
+
+
+def test_lexical_only_variant_config_drops_dense_inputs_and_validates() -> None:
+    config = variant_retrieval_config(_placeholder_retrieval_config(), RetrievalExecutionMode.LEXICAL_ONLY)
+
+    assert config.execution_mode is RetrievalExecutionMode.LEXICAL_ONLY
+    assert config.dense_config is None
+    assert config.expected_query_embedding_adapter_ref is None
+    assert validate_retrieval_configuration(config) is None
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [RetrievalExecutionMode.DENSE_ONLY, RetrievalExecutionMode.HYBRID_RRF],
+)
+def test_dense_and_hybrid_variant_configs_keep_dense_inputs_and_validate(mode: RetrievalExecutionMode) -> None:
+    config = variant_retrieval_config(_placeholder_retrieval_config(), mode)
+
+    assert config.execution_mode is mode
+    assert config.dense_config is not None
+    assert config.expected_query_embedding_adapter_ref is not None
+    assert validate_retrieval_configuration(config) is None
+
+
+def test_placeholder_configuration_is_rejected_before_sealing() -> None:
+    assert validate_retrieval_configuration(_placeholder_retrieval_config()) is not None
