@@ -132,3 +132,40 @@
 
 - 원문 query text, chunk 텍스트 전문, embedding raw vector, OpenAI API 에러 전문은 테이블에 저장하지 않는다.
 - 본 PR 1 구현은 Citation 발행 권한(`RagCitationReleaseStatus`)을 부여하지 않으며, `PUBLIC_TRACK_F=false` 배포 게이트를 유지한다.
+
+---
+
+## 6. Selection Manifest 및 Search Receipt 정규 직렬화 사양 (PD-178-20260916)
+
+### 6.1 RFC 8785 JCS 표준 직렬화
+- 모든 매니페스트 및 영수증 해시 preimage 직렬화는 `ai_worker.tasks.evaluation.canonical.canonical_json_bytes`를 통해 RFC 8785 JSON Canonicalization Scheme (JCS, UTF-16 code unit 정렬)을 준수한다.
+- Non-BMP 키를 포함한 모든 객체 키는 `utf-16-be` 바이트 정렬 순서로 직렬화된다.
+- 기영속된 Run, Signal, Hit 매니페스트는 ASCII 키만을 사용하므로 기존 산출 해시와 100% 호환된다.
+
+### 6.2 Retrieval Selection Manifest v2 프로젝션
+- 프로젝션 버전 식별자: `retrieval-selection-manifest-v2`
+- 반환 형식: `JsonValue`
+- `final_rank`는 `ProductionSearchHit.fusion_rank`로부터 엄격하게 투영 및 오름차순 정렬된다.
+- 불변식: `fusion_rank <= 0`이거나 selection 내 중복 `fusion_rank`가 존재하는 경우 `ValueError`를 발생시켜 즉시 거부한다.
+- 17개 프로젝션 필드:
+  - `canonical_checksum` (`str`)
+  - `canonicalization_spec_version` (`str`)
+  - `chunk_index` (`int`)
+  - `content_sha256` (`str`, from `h.provenance.content_hash`)
+  - `external_document_id` (`str`)
+  - `final_rank` (`int`, from `h.fusion_rank`)
+  - `index_code` (`str`)
+  - `index_configuration_hash` (`str`)
+  - `index_version` (`str`)
+  - `knowledge_chunk_id` (`str`)
+  - `knowledge_index_id` (`str`)
+  - `locator` (`str`)
+  - `normalization_version` (`str`)
+  - `source_code` (`str`)
+  - `source_snapshot_id` (`str`)
+  - `source_snapshot_member_id` (`str`)
+  - `source_version` (`str`)
+
+### 6.3 ProductionSearchReceipt 2.0
+- 발급 버전: `version="2.0"` (`PRODUCTION_SEARCH_RECEIPT_VERSION`)
+- `production_search_receipt` 아티팩트 참조의 버전은 `2.0`으로 고정되며, legacy `1.0` 영수증은 다운스트림 Handoff 경계에서 fail-closed 거부된다.

@@ -17,13 +17,10 @@ Scope & Authority Boundaries:
   authenticity. Until the #174 authenticated assembler verifies Decision
   ownership/PASS/assessment content, #180 runtime cannot directly consume
   this handoff as authority.
-- Upstream #178 contract blocker marker:
-  The selection manifest and ProductionSearchReceipt inherited from #178 use
-  sha256_canonical_json(sort_keys=True), which does not conform to the RFC 8785
-  JCS requirements of PD-315. BLOCKED_BY_178_CANONICAL_HASH_CONTRACT records
-  this dependency but does not enforce it. A later #180 orchestration boundary
-  must implement a typed precondition and integration test after the #178 owner
-  fixes the hash contract.
+- Upstream #178 canonical hash contract alignment:
+  The selection manifest and ProductionSearchReceipt (v2.0) now conform to the
+  canonical RFC 8785 JCS specification of PD-178-20260916. The former
+  BLOCKED_BY_178_CANONICAL_HASH_CONTRACT dependency marker has been resolved.
 - Downstream #180 endpoint-member blocker marker:
   PD-315/PD-362 allow nullable endpoint operation_code, while the current
   Citation validators reject it. BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT is a
@@ -34,13 +31,18 @@ Scope & Authority Boundaries:
 from __future__ import annotations
 
 import hashlib
-import json
 import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import cast
 from uuid import UUID
 
+from ai_worker.tasks.evaluation.canonical import (
+    JsonValue,
+    canonical_json_bytes,
+    canonical_sha256,
+)
 from ai_worker.tasks.rag.claim_citation_validator import SourceMemberKind
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, QueryFingerprint, SensitiveText
 from ai_worker.tasks.rag.evidence_search import (
@@ -49,21 +51,31 @@ from ai_worker.tasks.rag.evidence_search import (
     StableCoordinate,
 )
 from ai_worker.tasks.rag.retrieval_runtime import (
+    PRODUCTION_SEARCH_RECEIPT_VERSION,
     ProductionSearchReceipt,
     RetrievalExecutionStatus,
     compute_production_search_receipt,
     compute_selection_manifest_hash,
 )
 
+__all__ = [
+    "canonical_jcs_bytes",
+    "canonical_jcs_sha256",
+]
+
+
+def canonical_jcs_bytes(value: object) -> bytes:
+    return canonical_json_bytes(cast(JsonValue, value))
+
+
+def canonical_jcs_sha256(value: object) -> str:
+    return canonical_sha256(cast(JsonValue, value))
+
+
 GUIDE_EVIDENCE_HANDOFF_PROJECTION_VERSION = "guide-evidence-handoff-v1"
 # Non-enforcing dependency markers. Future orchestration must enforce these as
 # typed preconditions with integration tests.
-BLOCKED_BY_178_CANONICAL_HASH_CONTRACT = "BLOCKED_BY_178_CANONICAL_HASH_CONTRACT"
 BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT = "BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT"
-
-
-_MIN_SAFE_INTEGER = -(2**53) + 1
-_MAX_SAFE_INTEGER = (2**53) - 1
 
 
 class ObservedDecisionOutcome(StrEnum):
@@ -210,54 +222,6 @@ class GuideEvidenceHandoffBuildOutcome:
 class GuideEvidenceHandoffVerificationOutcome:
     decision: GuideEvidenceHandoffVerificationDecision
     reasons: tuple[GuideEvidenceHandoffReason, ...]
-
-
-def _validate_jcs_string(value: str) -> None:
-    if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
-        raise ValueError("JSON_UNICODE_INVALID: lone surrogate character forbidden")
-
-
-def _validated_jcs_value(value: object) -> object:
-    if value is None or isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        if not (_MIN_SAFE_INTEGER <= value <= _MAX_SAFE_INTEGER):
-            raise ValueError(f"JSON_NUMBER_INVALID: integer {value} outside safe range")
-        return value
-    if isinstance(value, float):
-        raise ValueError("JSON_NUMBER_INVALID: float forbidden in canonical JSON")
-    if isinstance(value, str):
-        _validate_jcs_string(value)
-        return value
-    if isinstance(value, list):
-        return [_validated_jcs_value(item) for item in value]
-    if isinstance(value, dict):
-        validated: dict[str, object] = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise ValueError("JSON_TYPE_INVALID: object key must be string")
-            _validate_jcs_string(key)
-            validated[key] = _validated_jcs_value(item)
-        return validated
-    raise ValueError(f"JSON_TYPE_INVALID: unsupported type {type(value)}")
-
-
-def _order_jcs_objects(value: object) -> object:
-    if isinstance(value, list):
-        return [_order_jcs_objects(item) for item in value]
-    if isinstance(value, dict):
-        return {k: _order_jcs_objects(value[k]) for k in sorted(value, key=lambda item: item.encode("utf-16-be"))}
-    return value
-
-
-def canonical_jcs_bytes(value: object) -> bytes:
-    validated = _validated_jcs_value(value)
-    ordered = _order_jcs_objects(validated)
-    return json.dumps(ordered, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
-
-
-def canonical_jcs_sha256(value: object) -> str:
-    return hashlib.sha256(canonical_jcs_bytes(value)).hexdigest()
 
 
 def _artifact_projection(ref: ImmutableArtifactRef) -> dict[str, str]:
@@ -470,6 +434,12 @@ def _receipt_structure_is_valid(receipt: ProductionSearchReceipt) -> bool:
     ):
         return False
 
+    if receipt.artifact_ref.artifact_code != "production_search_receipt":
+        return False
+
+    if receipt.artifact_ref.version != PRODUCTION_SEARCH_RECEIPT_VERSION:
+        return False
+
     if receipt.variant != "RET-H":
         return False
 
@@ -534,8 +504,11 @@ def _check_receipt_and_manifest(request: GuideEvidenceHandoffRequest) -> list[Gu
         ):
             reasons.append(GuideEvidenceHandoffReason.OBSERVED_PROVENANCE_REF_REQUIRED)
 
-    recalculated_manifest = compute_selection_manifest_hash([sel.hit for sel in request.selections])
-    if recalculated_manifest != receipt.selection_manifest_sha256:
+    try:
+        recalculated_manifest = compute_selection_manifest_hash([sel.hit for sel in request.selections])
+        if recalculated_manifest != receipt.selection_manifest_sha256:
+            reasons.append(GuideEvidenceHandoffReason.SELECTION_MANIFEST_MISMATCH)
+    except (TypeError, ValueError):
         reasons.append(GuideEvidenceHandoffReason.SELECTION_MANIFEST_MISMATCH)
 
     return reasons

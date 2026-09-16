@@ -8,6 +8,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
+from ai_worker.tasks.evaluation.canonical import JsonValue
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, QueryFingerprint
 from ai_worker.tasks.rag.evidence_search import (
     EvidenceSearchPort,
@@ -77,20 +78,50 @@ class ProductionSearchReceipt:
     selection_manifest_sha256: str
 
 
-def compute_selection_manifest_hash(selected_hits: Sequence[ProductionSearchHit]) -> str:
+RETRIEVAL_SELECTION_MANIFEST_PROJECTION_VERSION = "retrieval-selection-manifest-v2"
+PRODUCTION_SEARCH_RECEIPT_VERSION = "2.0"
+
+
+def selection_manifest_projection(selected_hits: Sequence[ProductionSearchHit]) -> JsonValue:
+    seen_ranks: set[int] = set()
+    for h in selected_hits:
+        if h.fusion_rank <= 0:
+            raise ValueError(f"Invalid fusion_rank {h.fusion_rank}: must be > 0")
+        if h.fusion_rank in seen_ranks:
+            raise ValueError(f"Duplicate fusion_rank {h.fusion_rank} in selection")
+        seen_ranks.add(h.fusion_rank)
+
     sorted_hits = sorted(selected_hits, key=lambda h: h.fusion_rank)
-    payload = [
+    selections: list[JsonValue] = [
         {
-            "chunk_index": h.coordinate.chunk_index,
-            "external_document_id": h.coordinate.external_document_id,
+            "canonical_checksum": h.provenance.canonical_checksum,
+            "canonicalization_spec_version": h.provenance.canonicalization_spec_version,
+            "chunk_index": h.provenance.chunk_index,
+            "content_sha256": h.provenance.content_hash,
+            "external_document_id": h.provenance.external_document_id,
             "final_rank": h.fusion_rank,
+            "index_code": h.provenance.index_code,
+            "index_configuration_hash": h.provenance.index_configuration_hash,
+            "index_version": h.provenance.index_version,
             "knowledge_chunk_id": str(h.provenance.knowledge_chunk_id),
-            "source_code": h.coordinate.source_code,
-            "source_version": h.coordinate.source_version,
+            "knowledge_index_id": str(h.provenance.knowledge_index_id),
+            "locator": h.provenance.locator,
+            "normalization_version": h.provenance.normalization_version,
+            "source_code": h.provenance.source_code,
+            "source_snapshot_id": str(h.provenance.source_snapshot_id),
+            "source_snapshot_member_id": str(h.provenance.source_snapshot_member_id),
+            "source_version": h.provenance.source_version,
         }
         for h in sorted_hits
     ]
-    return sha256_canonical_json(payload)
+    return {
+        "projection_version": RETRIEVAL_SELECTION_MANIFEST_PROJECTION_VERSION,
+        "selections": selections,
+    }
+
+
+def compute_selection_manifest_hash(selected_hits: Sequence[ProductionSearchHit]) -> str:
+    return sha256_canonical_json(selection_manifest_projection(selected_hits))
 
 
 def compute_production_search_receipt(
@@ -124,7 +155,7 @@ def compute_production_search_receipt(
     artifact_hash = sha256_canonical_json(envelope)
     artifact_ref = ImmutableArtifactRef(
         artifact_code="production_search_receipt",
-        version="1.0",
+        version=PRODUCTION_SEARCH_RECEIPT_VERSION,
         content_sha256=artifact_hash,
     )
     return ProductionSearchReceipt(

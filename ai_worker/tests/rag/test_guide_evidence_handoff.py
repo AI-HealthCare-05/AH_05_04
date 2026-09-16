@@ -453,7 +453,10 @@ def test_allows_multiple_chunks_under_same_source_snapshot_member() -> None:
 def test_rejects_rank_out_of_range() -> None:
     for bad_rank in [0, 6]:
         hit, text = _make_search_hit(rank=bad_rank)
-        manifest_sha = compute_selection_manifest_hash([hit])
+        try:
+            manifest_sha = compute_selection_manifest_hash([hit])
+        except ValueError:
+            manifest_sha = "0" * 64
         receipt = compute_production_search_receipt(
             variant="RET-H",
             status=RetrievalExecutionStatus.SUCCEEDED,
@@ -1906,3 +1909,29 @@ def test_rejects_query_fingerprint_with_wrong_runtime_type() -> None:
 
     assert outcome.decision == GuideEvidenceHandoffBuildDecision.REJECTED
     assert GuideEvidenceHandoffReason.RETRIEVAL_RECEIPT_MISMATCH in outcome.reasons
+
+
+def test_guide_evidence_handoff_rejects_v1_receipt_fails_closed() -> None:
+    request, valid_receipt = _make_valid_handoff_components()
+    # Mutate receipt artifact_ref to version 1.0 (legacy v1 receipt)
+    v1_artifact_ref = replace(valid_receipt.artifact_ref, version="1.0")
+    v1_receipt = replace(valid_receipt, artifact_ref=v1_artifact_ref)
+    # Also update selections' retrieval_receipt_ref to match v1_artifact_ref
+    v1_selections = tuple(replace(sel, retrieval_receipt_ref=v1_artifact_ref) for sel in request.selections)
+    v1_request = replace(request, retrieval_receipt=v1_receipt, selections=v1_selections)
+
+    outcome = build_guide_evidence_handoff(v1_request)
+    assert outcome.decision == GuideEvidenceHandoffBuildDecision.REJECTED
+    assert GuideEvidenceHandoffReason.RETRIEVAL_RECEIPT_MISMATCH in outcome.reasons
+    assert outcome.handoff is None
+
+
+def test_guide_evidence_handoff_matches_178_manifest_digest() -> None:
+    request, receipt = _make_valid_handoff_components()
+    hits = [sel.hit for sel in request.selections]
+    expected_178_digest = compute_selection_manifest_hash(hits)
+
+    outcome = build_guide_evidence_handoff(request)
+    assert outcome.decision == GuideEvidenceHandoffBuildDecision.BUILT
+    assert outcome.handoff is not None
+    assert outcome.handoff.retrieval_selection_manifest_sha256 == expected_178_digest

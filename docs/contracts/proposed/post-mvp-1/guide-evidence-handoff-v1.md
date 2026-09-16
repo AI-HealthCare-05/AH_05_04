@@ -18,11 +18,10 @@
    - `assessment_artifact_ref`, `eligibility_receipt_ref`, `verifier_artifact_ref`, `request_guard_ref`, `request_source_decision_ref`, `request_member_decision_ref`는 불변 아티팩트 참조 규격에 따른 불투명 관측 출처 참조(opaque observed provenance ref)이자 구조적 결속일 뿐이다.
    - `Verified`는 호출자가 전달한 불투명 관측 결과(opaque caller observations: `request_guard_ref`, `request_source_decision_ref`, `request_member_decision_ref`, `retrieval_receipt`, `eligibility_receipt_ref`, `assessment_artifact_ref`, `verifier_artifact_ref`)의 구조·해시·식별자 일관성(structure, hash, and identity consistency)만을 메모리 상에서 결정론적으로 검증한다는 의미로 엄격히 제한된다.
    - **#174 Authenticated Assembler 의존성**: #174 authenticated assembler가 Decision ownership, 실제 `PASS` 판정, assessment artifact content의 진위를 검증하기 전에는, #180 runtime이 이 handoff를 독자적 authority로 직접 소비할 수 없다.
-2. **#178 외부 차단 기록 (`BLOCKED_BY_178_CANONICAL_HASH_CONTRACT`)**:
-   - selection manifest와 `ProductionSearchReceipt`가 상속하는 `sha256_canonical_json(sort_keys=True)` 직렬화는 PD-315가 요구하는 RFC 8785 JCS 규격과 불일치한다.
-   - 본 PR에서는 #178 코어를 수정하지 않는다. `BLOCKED_BY_178_CANONICAL_HASH_CONTRACT`는 의존성을 기록하는 **비강제 marker**이며 그 자체로 실행을 차단하지 않는다.
-   - 실제 차단은 후속 #180 orchestration 경계에서 typed precondition과 integration test로 구현해야 한다.
-   - 이 불일치는 별도 #178 owner의 후속 수정을 통해 JCS 표준으로 정렬되어야 한다.
+2. **#178 표준 JCS 정렬 및 차단 해소 (`PD-178-20260916`)**:
+   - `retrieval-selection-manifest-v2` 및 `ProductionSearchReceipt` (v2.0)가 RFC 8785 JCS 규격(`canonical_json_bytes`)으로 정렬 완료되었다.
+   - `BLOCKED_BY_178_CANONICAL_HASH_CONTRACT` 비강제 marker는 코드와 계약에서 완전히 제거되었으며 차단이 해소되었다.
+   - 영수증 버전은 2.0만 허용하며 legacy 1.0은 fail-close(`RETRIEVAL_RECEIPT_MISMATCH`)된다.
 3. **#180 Endpoint Member 계약 차단 기록 (`BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT`)**:
    - PD-315/PD-362는 Endpoint Member의 `operation_code`를 nullable로 허용하지만 현재 Citation validator와 Citation Authorization은 non-null 값을 요구한다.
    - `BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT`는 이 차이를 기록하는 **비강제 marker**이며, 공유 계약과 downstream validator가 정렬되기 전에는 nullable Endpoint Member handoff를 #180 runtime에 연결할 수 없다.
@@ -133,13 +132,12 @@ class VerifiedGuideEvidenceHandoff:
 
 ## 3. 검증 규칙 (Validation Rules)
 
-1. **JCS Canonical Serializer (RFC 8785, PD-315) 및 해시 도메인 구분**:
+1. **JCS Canonical Serializer (RFC 8785, PD-315)**:
    - 프로젝션 직렬화는 RFC 8785 JCS 사양을 엄격히 준수한다.
    - 키 정렬은 UTF-16 code unit (big-endian byte order) 순서다.
    - `json.dumps(sort_keys=True)` 금지, `float` 금지, lone surrogate 금지.
    - 안전 정수 범위 $[-(2^{53}-1), 2^{53}-1]$, 명시적 `null` 지원.
-   - **해시 도메인 구분**: Handoff JCS 해시 domain(RFC 8785)과 Selection Manifest 해시 domain(#178 `compute_selection_manifest_hash` / `sha256_canonical_json`)은 명확히 분리되며 상호 대체되지 않는다.
-   - `#178 compute_selection_manifest_hash`의 JCS 불일치는 `BLOCKED_BY_178_CANONICAL_HASH_CONTRACT` 비강제 marker로 기록하며, 후속 orchestration이 typed precondition과 integration test로 실제 차단해야 한다.
+   - Handoff JCS 및 Selection Manifest JCS는 동일한 공용 모듈(`ai_worker.tasks.evaluation.canonical`)의 RFC 8785 정규 직렬화기를 사용한다 (`PD-178-20260916`으로 해시 도메인 정렬 완료 및 `BLOCKED_BY_178_CANONICAL_HASH_CONTRACT` 해소).
 2. **입력 형상, 타입 검증 및 Narrow Exception Handling**:
    - `GuideEvidenceHandoffRequest`, `ProductionSearchReceipt`, `GuideEvidenceSelectionRequest`, `ProductionSearchHit`, `RequestSourceMemberBinding`, `SensitiveText` 타입 확인.
    - UUID 필드(`knowledge_chunk_id`, `source_snapshot_id`, `source_snapshot_member_id`)는 정확한 `uuid.UUID` 타입이어야 함.
@@ -158,6 +156,7 @@ class VerifiedGuideEvidenceHandoff:
    - 동일 member 하위 복수 chunk 허용: 서로 다른 chunk 간 동일한 `source_snapshot_member_id` 공유는 허용된다 (`DUPLICATE_SOURCE_MEMBER` 제약 없음).
 4. **Receipt & Selection Manifest 검증**:
    - `receipt.variant == "RET-H"` 및 `receipt.retrieval_execution_status == RetrievalExecutionStatus.SUCCEEDED` 필수.
+   - `receipt.artifact_ref.artifact_code == "production_search_receipt"` 및 `receipt.artifact_ref.version == "2.0"` 필수 (`PRODUCTION_SEARCH_RECEIPT_VERSION`, legacy "1.0"은 `RETRIEVAL_RECEIPT_MISMATCH` fail-closed).
    - `retrieval-run-v1` 계약에 따라 RET-H의 `receipt.query_embedding_sha256`는 반드시 non-null 64자리 소문자 SHA-256 다이제스트여야 함 (`RETRIEVAL_RECEIPT_MISMATCH`).
    - `signal_manifest_sha256`, `hit_manifest_sha256`, `selection_manifest_sha256`는 64자리 소문자 SHA-256이어야 함 (`RETRIEVAL_RECEIPT_MISMATCH`).
    - `receipt.artifact_ref`, `filter_snapshot_ref`, `evidence_index_ref`, `retrieval_config_ref`, `adapter_artifact_ref`가 모두 유효한 `ImmutableArtifactRef`여야 함 (`RETRIEVAL_RECEIPT_MISMATCH`).
