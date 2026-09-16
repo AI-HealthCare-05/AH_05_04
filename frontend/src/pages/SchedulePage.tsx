@@ -41,6 +41,7 @@ import {
   type Medication,
   type PrescriptionResponse,
 } from '../api/prescriptions'
+import bellIcon from '../assets/icon-bell-notification.svg'
 import { Button, Card, MobileShell } from '../design-system/components'
 import { clearAuthenticatedSession } from '../features/auth/authSession'
 import '../design-system/prototype.css'
@@ -254,6 +255,18 @@ function NavigationShell({
       title="Dosey 도지"
       activeNavigation="일정"
       onBack={onBack}
+      headerAction={
+        !onBack ? (
+          <button
+            className="schedule-page__notification"
+            type="button"
+            onClick={() => navigate('/notifications')}
+            aria-label="알림"
+          >
+            <img src={bellIcon} alt="" />
+          </button>
+        ) : undefined
+      }
       onNavigate={(item) => {
         if (item === '홈') navigate('/')
         if (item === '일정') navigate('/schedule')
@@ -267,308 +280,425 @@ function NavigationShell({
   )
 }
 
+type ScheduleDraft = {
+  startDate: string
+  endMode: 'DATE' | 'OPEN_ENDED'
+  endDate: string
+  times: string[]
+}
+
+type ScheduleSaveState = {
+  status: 'IDLE' | 'SAVING' | 'SUCCESS' | 'ERROR'
+  message: string
+  kind?: 'VALIDATION' | 'MUTATION'
+}
+
+function initialScheduleDraft(medication: Medication): ScheduleDraft {
+  const frequency =
+    Number.isInteger(medication.frequency_per_day) &&
+    (medication.frequency_per_day ?? 0) > 0
+      ? medication.frequency_per_day!
+      : 1
+  return {
+    startDate: '',
+    endMode: 'DATE',
+    endDate: '',
+    times: Array.from({ length: frequency }, () => ''),
+  }
+}
+
+function validateScheduleDraft(
+  draft: ScheduleDraft,
+  frequencyPerDay: number | null,
+): string | null {
+  if (!isValidLocalDate(draft.startDate)) return '복용 시작일을 확인해 주세요.'
+  if (draft.endMode === 'DATE' && !isValidLocalDate(draft.endDate)) {
+    return '종료일을 확인해 주세요.'
+  }
+  if (draft.endMode === 'DATE' && draft.endDate < draft.startDate) {
+    return '종료일은 시작일보다 빠를 수 없어요.'
+  }
+  if (draft.times.some((time) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(time))) {
+    return '모든 복용 시간을 확인해 주세요.'
+  }
+  if (new Set(draft.times).size !== draft.times.length) {
+    return '같은 시간은 한 번만 입력해 주세요.'
+  }
+  if (frequencyPerDay === null || draft.times.length !== frequencyPerDay) {
+    return frequencyPerDay === null
+      ? '처방의 하루 복용 횟수를 확인할 수 없어요.'
+      : `처방의 하루 복용 횟수(${frequencyPerDay}회)와 복용 시간 ${draft.times.length}개가 일치하지 않아요.`
+  }
+  return null
+}
+
 function ScheduleEditor({
-  item,
-  medication,
+  items,
+  medications,
   selectedDate,
   services,
   onSaved,
   onConflict,
-  onClose,
+  isReloading,
 }: {
-  item: MedicationScheduleItem
-  medication: Medication
+  items: MedicationScheduleItem[]
+  medications: Record<string, Medication>
   selectedDate: string
   services: SchedulePageServices
   onSaved: () => Promise<void>
   onConflict: () => Promise<void>
-  onClose: () => void
+  isReloading: boolean
 }) {
-  const frequencyPerDay =
-    Number.isInteger(medication.frequency_per_day) &&
-    (medication.frequency_per_day ?? 0) > 0
-      ? medication.frequency_per_day
-      : null
-  const [startDate, setStartDate] = useState('')
-  const [endMode, setEndMode] = useState<'DATE' | 'OPEN_ENDED'>('DATE')
-  const [endDate, setEndDate] = useState('')
-  const [times, setTimes] = useState(() =>
-    Array.from({ length: frequencyPerDay ?? 1 }, () => ''),
+  const orderedItems = useMemo(
+    () => [...items].sort((left, right) => {
+      const leftMedication = medications[left.prescription_version_medication_id]
+      const rightMedication = medications[right.prescription_version_medication_id]
+      return (leftMedication?.display_order ?? 0) - (rightMedication?.display_order ?? 0)
+    }),
+    [items, medications],
   )
+  const [drafts, setDrafts] = useState<Record<string, ScheduleDraft>>(() =>
+    Object.fromEntries(orderedItems.map((item) => {
+      const id = item.prescription_version_medication_id
+      return [id, initialScheduleDraft(medications[id])]
+    })),
+  )
+  const [saveStates, setSaveStates] = useState<Record<string, ScheduleSaveState>>({})
   const [isSaving, setIsSaving] = useState(false)
-  const [message, setMessage] = useState('')
-  const [isConfirmingCancel, setIsConfirmingCancel] = useState(false)
-  const scheduleMutationAttemptRef = useRef<
-    LogicalMutationAttempt<LogicalMutationOperation, unknown> | null
-  >(null)
+  const [summaryMessage, setSummaryMessage] = useState('')
+  const scheduleMutationAttemptsRef = useRef<Record<
+    string,
+    LogicalMutationAttempt<LogicalMutationOperation, unknown>
+  >>({})
 
-  const changeScheduleInput = (change: () => void) => {
-    scheduleMutationAttemptRef.current = null
-    change()
-  }
+  useEffect(() => {
+    setDrafts((current) => {
+      const next: Record<string, ScheduleDraft> = {}
+      for (const item of orderedItems) {
+        const id = item.prescription_version_medication_id
+        next[id] = current[id] ?? initialScheduleDraft(medications[id])
+      }
+      return next
+    })
+  }, [medications, orderedItems])
 
-  const validate = (): string | null => {
-    if (!isValidLocalDate(startDate)) return '복용 시작일을 확인해 주세요.'
-    if (endMode === 'DATE' && !isValidLocalDate(endDate)) {
-      return '종료일을 확인해 주세요.'
-    }
-    if (endMode === 'DATE' && endDate < startDate) {
-      return '종료일은 시작일보다 빠를 수 없어요.'
-    }
-    if (times.some((time) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(time))) {
-      return '모든 복용 시간을 확인해 주세요.'
-    }
-    if (new Set(times).size !== times.length) return '같은 시간은 한 번만 입력해 주세요.'
-    if (frequencyPerDay !== null && times.length !== frequencyPerDay) {
-      return `처방의 하루 복용 횟수(${frequencyPerDay}회)와 복용 시간 ${times.length}개가 일치하지 않아요.`
-    }
-    return null
+  const changeScheduleInput = (
+    medicationId: string,
+    update: (current: ScheduleDraft) => ScheduleDraft,
+  ) => {
+    delete scheduleMutationAttemptsRef.current[medicationId]
+    setDrafts((current) => ({
+      ...current,
+      [medicationId]: update(current[medicationId]),
+    }))
+    setSaveStates((current) => ({
+      ...current,
+      [medicationId]: { status: 'IDLE', message: '' },
+    }))
+    setSummaryMessage('')
   }
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
     if (isSaving) return
-    const validationMessage = validate()
-    if (validationMessage) {
-      setMessage(validationMessage)
+    const validationStates: Record<string, ScheduleSaveState> = {}
+    for (const item of orderedItems) {
+      const id = item.prescription_version_medication_id
+      const medication = medications[id]
+      const frequencyPerDay =
+        Number.isInteger(medication.frequency_per_day) &&
+        (medication.frequency_per_day ?? 0) > 0
+          ? medication.frequency_per_day
+          : null
+      const validationMessage = validateScheduleDraft(drafts[id], frequencyPerDay)
+      if (validationMessage) {
+        validationStates[id] = {
+          status: 'ERROR',
+          message: validationMessage,
+          kind: 'VALIDATION',
+        }
+      }
+    }
+    if (Object.keys(validationStates).length > 0) {
+      setSaveStates((current) => ({ ...current, ...validationStates }))
+      setSummaryMessage('입력하지 않았거나 확인이 필요한 항목이 있어요.')
+      const firstInvalidMedicationId = Object.keys(validationStates)[0]
+      event.currentTarget
+        .querySelector<HTMLInputElement>(`[data-medication-id="${firstInvalidMedicationId}"] input`)
+        ?.focus()
       return
     }
 
-    const requestPayload: PutMedicationScheduleInput =
-      endMode === 'DATE'
-        ? {
-            startLocalDate: startDate,
-            endMode,
-            endLocalDate: endDate,
-            localTimes: times,
-            expectedRevision: item.revision ?? 0,
-          }
-        : {
-            startLocalDate: startDate,
-            endMode,
-            localTimes: times,
-            expectedRevision: item.revision ?? 0,
-          }
-    const attempt = resolveLogicalMutationAttempt(
-      scheduleMutationAttemptRef.current,
-      'SCHEDULE_PUT',
-      item.prescription_version_medication_id,
-      requestPayload,
-      requestPayload.expectedRevision,
-      services.createScheduleIdempotencyKey,
-    )
-    scheduleMutationAttemptRef.current = attempt
-
     setIsSaving(true)
-    setMessage('')
-    try {
-      await services.putMedicationSchedule(
-        attempt.targetId,
-        attempt.requestPayload,
-        attempt.idempotencyKey,
+    setSummaryMessage('')
+    let successCount = 0
+    let failureCount = 0
+    let shouldReload = false
+    let stoppedForConflict = false
+    let shouldRefreshAfterStop = false
+
+    for (const item of orderedItems) {
+      const id = item.prescription_version_medication_id
+      if (saveStates[id]?.status === 'SUCCESS') continue
+      const draft = drafts[id]
+      const requestPayload: PutMedicationScheduleInput =
+        draft.endMode === 'DATE'
+          ? {
+              startLocalDate: draft.startDate,
+              endMode: draft.endMode,
+              endLocalDate: draft.endDate,
+              localTimes: draft.times,
+              expectedRevision: item.revision ?? 0,
+            }
+          : {
+              startLocalDate: draft.startDate,
+              endMode: draft.endMode,
+              localTimes: draft.times,
+              expectedRevision: item.revision ?? 0,
+            }
+      const attempt = resolveLogicalMutationAttempt(
+        scheduleMutationAttemptsRef.current[id] ?? null,
+        'SCHEDULE_PUT',
+        id,
+        requestPayload,
+        requestPayload.expectedRevision,
+        services.createScheduleIdempotencyKey,
       )
-      scheduleMutationAttemptRef.current = null
-      await onSaved()
-      onClose()
-    } catch (error) {
-      if (isScheduleRevisionConflictError(error)) {
-        scheduleMutationAttemptRef.current = null
-        await onConflict()
-        setMessage('일정이 다른 곳에서 변경됐어요. 최신 상태를 불러왔으니 내용을 다시 확인해 주세요.')
-      } else if (
-        isPrescriptionVersionConflictError(error) ||
-        isPrescriptionMedicationNotFoundError(error)
-      ) {
-        scheduleMutationAttemptRef.current = null
-        await onConflict()
-        setMessage('현재 처방 내용이 변경됐어요. 최신 일정을 확인해 주세요.')
-      } else if (error instanceof ApiError && error.status === 401) {
-        setMessage('로그인 정보를 다시 확인해 주세요.')
-      } else if (error instanceof ApiError && error.status === 422) {
-        setMessage(
-          frequencyPerDay === null
-            ? '입력한 날짜와 시간을 확인해 주세요.'
-            : `처방의 하루 복용 횟수(${frequencyPerDay}회)와 복용 시간 개수를 확인해 주세요.`,
+      scheduleMutationAttemptsRef.current[id] = attempt
+      setSaveStates((current) => ({
+        ...current,
+        [id]: { status: 'SAVING', message: '저장 중…' },
+      }))
+
+      try {
+        await services.putMedicationSchedule(
+          attempt.targetId,
+          attempt.requestPayload,
+          attempt.idempotencyKey,
         )
-      } else if (error instanceof ApiError && error.status >= 500) {
-        setMessage('일정을 저장하지 못했어요. 입력값을 유지한 채 다시 시도해 주세요.')
-      } else {
-        setMessage('연결을 확인한 뒤 다시 시도해 주세요. 입력한 내용은 그대로 유지돼요.')
+        delete scheduleMutationAttemptsRef.current[id]
+        successCount += 1
+        shouldReload = true
+        setSaveStates((current) => ({
+          ...current,
+          [id]: { status: 'SUCCESS', message: '이 약의 일정이 저장됐어요.' },
+        }))
+      } catch (error) {
+        failureCount += 1
+        let message = '연결을 확인한 뒤 다시 시도해 주세요. 입력한 내용은 그대로 유지돼요.'
+        if (isScheduleRevisionConflictError(error)) {
+          delete scheduleMutationAttemptsRef.current[id]
+          message = '일정이 다른 곳에서 변경됐어요. 최신 상태를 확인한 뒤 다시 저장해 주세요.'
+          stoppedForConflict = true
+          shouldRefreshAfterStop = true
+        } else if (
+          isPrescriptionVersionConflictError(error) ||
+          isPrescriptionMedicationNotFoundError(error) ||
+          (error instanceof ApiError && error.status === 404)
+        ) {
+          delete scheduleMutationAttemptsRef.current[id]
+          message = '현재 처방 내용이 변경됐어요. 최신 처방을 확인한 뒤 다시 저장해 주세요.'
+          stoppedForConflict = true
+          shouldRefreshAfterStop = true
+        } else if (error instanceof ApiError && error.status === 401) {
+          delete scheduleMutationAttemptsRef.current[id]
+          message = '로그인 정보를 다시 확인해 주세요.'
+          stoppedForConflict = true
+        } else if (error instanceof ApiError && error.status === 422) {
+          delete scheduleMutationAttemptsRef.current[id]
+          message = '입력한 날짜와 복용 시간을 다시 확인해 주세요.'
+        } else if (error instanceof ApiError && error.status >= 500) {
+          message = '일정을 저장하지 못했어요. 입력값을 유지한 채 다시 시도해 주세요.'
+        } else if (error instanceof ApiError) {
+          delete scheduleMutationAttemptsRef.current[id]
+        }
+        setSaveStates((current) => ({
+          ...current,
+          [id]: { status: 'ERROR', message, kind: 'MUTATION' },
+        }))
+        if (stoppedForConflict) break
       }
-    } finally {
-      setIsSaving(false)
     }
-  }
 
-  const handleCancel = async () => {
-    if (!isConfirmingCancel) {
-      setIsConfirmingCancel(true)
-      setMessage('일정을 중지하면 앞으로의 복약 시간이 생성되지 않아요. 한 번 더 눌러 확인해 주세요.')
-      return
-    }
-    if (item.revision === null || isSaving) return
-
-    const requestPayload = {
-      status: 'CANCELLED' as const,
-      expectedRevision: item.revision,
-    }
-    const attempt = resolveLogicalMutationAttempt(
-      scheduleMutationAttemptRef.current,
-      'SCHEDULE_CANCEL',
-      item.prescription_version_medication_id,
-      requestPayload,
-      requestPayload.expectedRevision,
-      services.createScheduleIdempotencyKey,
-    )
-    scheduleMutationAttemptRef.current = attempt
-
-    setIsSaving(true)
-    setMessage('')
-    try {
-      await services.cancelMedicationSchedule(
-        attempt.targetId,
-        attempt.requestPayload.expectedRevision,
-        attempt.idempotencyKey,
+    if (stoppedForConflict) {
+      if (shouldRefreshAfterStop) {
+        setSummaryMessage('최신 일정과 처방을 다시 불러오는 중이에요. 저장되지 않은 약은 내용을 확인한 뒤 다시 저장해 주세요.')
+        await onConflict()
+      } else {
+        setSummaryMessage('저장을 중단했어요. 로그인 정보를 확인한 뒤 다시 시도해 주세요.')
+      }
+    } else if (failureCount > 0) {
+      setSummaryMessage(
+        successCount > 0
+          ? '일부 약만 저장됐어요. 실패한 약의 입력값을 확인하고 다시 시도해 주세요.'
+          : '일정을 저장하지 못했어요. 입력값을 유지한 채 다시 시도할 수 있어요.',
       )
-      scheduleMutationAttemptRef.current = null
+      if (shouldReload) await onSaved()
+    } else {
+      setSummaryMessage('모든 약의 복약 일정이 저장됐어요.')
       await onSaved()
-      onClose()
-    } catch (error) {
-      if (isScheduleRevisionConflictError(error)) {
-        scheduleMutationAttemptRef.current = null
-        await onConflict()
-        setMessage('일정이 다른 곳에서 변경됐어요. 최신 상태를 확인해 주세요.')
-      } else if (
-        isPrescriptionVersionConflictError(error) ||
-        isPrescriptionMedicationNotFoundError(error)
-      ) {
-        scheduleMutationAttemptRef.current = null
-        await onConflict()
-        setMessage('현재 처방 내용이 변경됐어요. 최신 일정을 확인해 주세요.')
-      } else {
-        setMessage('일정을 중지하지 못했어요. 잠시 후 다시 시도해 주세요.')
-      }
-    } finally {
-      setIsSaving(false)
     }
+    setIsSaving(false)
   }
 
   return (
-    <Card className="schedule-editor">
-      <div className="schedule-editor__heading">
-        <div>
-          <span>{medicationDescription(medication)}</span>
-          <h3>복용할 날짜와 시간을 확인해 주세요</h3>
-        </div>
-        <button type="button" onClick={onClose} aria-label="일정 입력 닫기">×</button>
-      </div>
-      <p className="schedule-editor__notice">
-        Dosey는 복용 시간을 추정하거나 추천하지 않아요. 정확한 날짜와 시간을 직접 확인해 주세요.
-      </p>
-      <form onSubmit={handleSubmit}>
-        <label>
-          <span>복용 시작일</span>
-          <input
-            type="date"
-            value={startDate}
-            placeholder={selectedDate}
-            onChange={(event) => changeScheduleInput(() => setStartDate(event.target.value))}
-            required
-          />
-        </label>
-        <fieldset>
-          <legend>복용 종료</legend>
-          <label>
-            <input
-              type="radio"
-              name={`end-mode-${item.prescription_version_medication_id}`}
-              value="DATE"
-              checked={endMode === 'DATE'}
-              onChange={() => changeScheduleInput(() => setEndMode('DATE'))}
-            />
-            종료일 지정
-          </label>
-          <label>
-            <input
-              type="radio"
-              name={`end-mode-${item.prescription_version_medication_id}`}
-              value="OPEN_ENDED"
-              checked={endMode === 'OPEN_ENDED'}
-              onChange={() => changeScheduleInput(() => setEndMode('OPEN_ENDED'))}
-            />
-            계속 복용
-          </label>
-        </fieldset>
-        {endMode === 'DATE' && (
-          <label>
-            <span>복용 종료일</span>
-            <input
-              type="date"
-              value={endDate}
-              min={startDate || undefined}
-              onChange={(event) => changeScheduleInput(() => setEndDate(event.target.value))}
-              required
-            />
-          </label>
-        )}
-        <div className="schedule-editor__times">
-          <span>복용 시간</span>
-          {times.map((time, index) => (
-            <div className="schedule-editor__time-row" key={index}>
-              <label>
-                <span className="sr-only">{index + 1}번째 복용 시간</span>
-                <input
-                  type="time"
-                  value={time}
-                  onChange={(event) => {
-                    const next = [...times]
-                    next[index] = event.target.value
-                    changeScheduleInput(() => setTimes(next))
-                  }}
-                  required
-                />
-              </label>
-              {times.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => changeScheduleInput(() => setTimes(
-                    times.filter((_, candidate) => candidate !== index),
-                  ))}
-                  aria-label={`${index + 1}번째 복용 시간 삭제`}
+    <form className="schedule-editor-form" onSubmit={handleSubmit} noValidate>
+      <div className="schedule-editor-list">
+        {orderedItems.map((item) => {
+          const id = item.prescription_version_medication_id
+          const medication = medications[id]
+          const draft = drafts[id]
+          const frequencyPerDay =
+            Number.isInteger(medication.frequency_per_day) &&
+            (medication.frequency_per_day ?? 0) > 0
+              ? medication.frequency_per_day!
+              : null
+          const saveState = saveStates[id]
+          const hasValidationError =
+            saveState?.status === 'ERROR' && saveState.kind === 'VALIDATION'
+          const errorMessageId = `schedule-error-${id}`
+          return (
+            <Card className="schedule-editor" key={id}>
+              <div className="schedule-editor__heading">
+                <div>
+                  <h2>{medication.medication_name}</h2>
+                  <p>{frequencyPerDay ? `하루 ${frequencyPerDay}회 복용` : medicationDescription(medication)}</p>
+                </div>
+                {saveState?.status === 'SUCCESS' && (
+                  <span className="schedule-editor__success-badge">저장 완료</span>
+                )}
+              </div>
+              <div className="schedule-editor__fields" data-medication-id={id}>
+                <label>
+                  <span>시작일</span>
+                  <input
+                    aria-label={`${medication.medication_name} 복용 시작일`}
+                    type="date"
+                    value={draft.startDate}
+                    placeholder={selectedDate}
+                    disabled={isSaving || isReloading}
+                    aria-invalid={hasValidationError || undefined}
+                    aria-describedby={hasValidationError ? errorMessageId : undefined}
+                    onChange={(event) => changeScheduleInput(id, (current) => ({
+                      ...current,
+                      startDate: event.target.value,
+                    }))}
+                    required
+                  />
+                </label>
+                <fieldset>
+                  <legend>복용 종료</legend>
+                  <label>
+                    <input
+                      type="radio"
+                      name={`end-mode-${id}`}
+                      value="DATE"
+                      checked={draft.endMode === 'DATE'}
+                      disabled={isSaving || isReloading}
+                      aria-invalid={hasValidationError || undefined}
+                      aria-describedby={hasValidationError ? errorMessageId : undefined}
+                      onChange={() => changeScheduleInput(id, (current) => ({
+                        ...current,
+                        endMode: 'DATE',
+                      }))}
+                    />
+                    종료일 지정
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name={`end-mode-${id}`}
+                      value="OPEN_ENDED"
+                      checked={draft.endMode === 'OPEN_ENDED'}
+                      disabled={isSaving || isReloading}
+                      aria-invalid={hasValidationError || undefined}
+                      aria-describedby={hasValidationError ? errorMessageId : undefined}
+                      onChange={() => changeScheduleInput(id, (current) => ({
+                        ...current,
+                        endMode: 'OPEN_ENDED',
+                      }))}
+                    />
+                    계속 복용
+                  </label>
+                </fieldset>
+                {draft.endMode === 'DATE' && (
+                  <label>
+                    <span>종료일</span>
+                    <input
+                      aria-label={`${medication.medication_name} 복용 종료일`}
+                      type="date"
+                      value={draft.endDate}
+                      min={draft.startDate || undefined}
+                      disabled={isSaving || isReloading}
+                      aria-invalid={hasValidationError || undefined}
+                      aria-describedby={hasValidationError ? errorMessageId : undefined}
+                      onChange={(event) => changeScheduleInput(id, (current) => ({
+                        ...current,
+                        endDate: event.target.value,
+                      }))}
+                      required
+                    />
+                  </label>
+                )}
+                <div className="schedule-editor__times">
+                  <span>복용 시간{frequencyPerDay ? ` · ${frequencyPerDay}개 필요` : ''}</span>
+                  <div className="schedule-editor__time-grid">
+                    {draft.times.map((time, index) => (
+                      <label className="schedule-editor__time-field" key={index}>
+                        <span className="sr-only">{medication.medication_name} {index + 1}번째 복용 시간</span>
+                        <input
+                          aria-label={`${medication.medication_name} ${index + 1}번째 복용 시간`}
+                          type="time"
+                          value={time}
+                          disabled={isSaving || isReloading}
+                          aria-invalid={hasValidationError || undefined}
+                          aria-describedby={hasValidationError ? errorMessageId : undefined}
+                          onChange={(event) => changeScheduleInput(id, (current) => {
+                            const nextTimes = [...current.times]
+                            nextTimes[index] = event.target.value
+                            return { ...current, times: nextTimes }
+                          })}
+                          required
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  {frequencyPerDay !== null && (
+                    <small>
+                      {frequencyPerDay > 1
+                        ? '처방된 하루 복용 횟수와 같은 개수의 시간을 입력해 주세요.'
+                        : '정확한 시각은 사용자가 직접 확인해요.'}
+                    </small>
+                  )}
+                  {frequencyPerDay === null && (
+                    <small>처방의 하루 복용 횟수를 확인할 수 없어 저장할 수 없어요.</small>
+                  )}
+                </div>
+              </div>
+              {saveState?.message && (
+                <p
+                  id={errorMessageId}
+                  className={`schedule-editor__message schedule-editor__message--${saveState.status.toLowerCase()}`}
+                  role={saveState.status === 'ERROR' ? 'alert' : 'status'}
                 >
-                  삭제
-                </button>
+                  {saveState.message}
+                </p>
               )}
-            </div>
-          ))}
-          <button
-            type="button"
-            className="schedule-editor__add-time"
-            onClick={() => changeScheduleInput(() => setTimes([...times, '']))}
-          >
-            + 복용 시간 추가
-          </button>
-          {frequencyPerDay !== null && (
-            <small>하루 {frequencyPerDay}회 처방이에요. 복용 시간을 {frequencyPerDay}개 입력해 주세요.</small>
-          )}
-        </div>
-        {message && <p className="schedule-editor__message" role="alert">{message}</p>}
-        <Button fullWidth type="submit" disabled={isSaving}>
-          {isSaving ? '저장 중…' : '복약 일정 저장하기'}
+            </Card>
+          )
+        })}
+      </div>
+      {summaryMessage && (
+        <p className="schedule-editor-form__message" role="status" aria-live="polite">
+          {summaryMessage}
+        </p>
+      )}
+      <div className="schedule-editor-form__footer">
+        <Button fullWidth type="submit" disabled={isSaving || isReloading}>
+          {isSaving || isReloading ? '저장 중…' : '복약 일정 저장하기'}
         </Button>
-        {item.schedule_id && item.schedule_item_status === 'READY' && (
-          <Button
-            fullWidth
-            variant="ghost"
-            className={isConfirmingCancel ? 'schedule-editor__cancel-confirm' : ''}
-            disabled={isSaving}
-            onClick={() => void handleCancel()}
-          >
-            {isConfirmingCancel ? '사용 중지 확인' : '이 일정 사용 중지'}
-          </Button>
-        )}
-      </form>
-    </Card>
+      </div>
+    </form>
   )
 }
 
@@ -612,6 +742,17 @@ function occurrenceStateLabel(occurrence: MedicationOccurrenceData): string {
   return '복용 예정'
 }
 
+function occurrencePeriodLabel(value: string): string {
+  const hour = Number(new Intl.DateTimeFormat('en-US', {
+    hour: '2-digit',
+    hour12: false,
+    timeZone: KST_TIME_ZONE,
+  }).format(new Date(value)))
+  if (hour < 11) return '아침'
+  if (hour < 17) return '점심'
+  return '저녁'
+}
+
 export function SchedulePage({
   services = defaultServices,
 }: {
@@ -631,7 +772,7 @@ export function SchedulePage({
   const [isLoading, setIsLoading] = useState(true)
   const [loadFailure, setLoadFailure] = useState<LoadFailure | null>(null)
   const [reloadVersion, setReloadVersion] = useState(0)
-  const [editingMedicationId, setEditingMedicationId] = useState<string | null>(null)
+  const [isEditingSchedule, setIsEditingSchedule] = useState(false)
 
   const reload = useCallback(async () => {
     setIsLoading(true)
@@ -725,10 +866,7 @@ export function SchedulePage({
 
   const openRelevantEditor = () => {
     if (isScheduleIdentityUnavailable) return
-    const preferred = day?.schedule_items.find(
-      (item) => item.schedule_item_status !== 'READY',
-    ) ?? day?.schedule_items[0]
-    if (preferred) setEditingMedicationId(preferred.prescription_version_medication_id)
+    if (day?.schedule_items.length) setIsEditingSchedule(true)
   }
 
   const goToLogin = () => {
@@ -736,31 +874,74 @@ export function SchedulePage({
     navigate('/login', { replace: true })
   }
 
+  if (isEditingSchedule) {
+    const hasCompleteEditorData = Boolean(
+      day?.schedule_items.length &&
+      !isScheduleIdentityUnavailable &&
+      day.schedule_items.every(
+        (item) => scheduleMedications[item.prescription_version_medication_id],
+      ),
+    )
+    return (
+      <div className="mvp-page schedule-page schedule-page--editor">
+        <NavigationShell onBack={() => setIsEditingSchedule(false)}>
+          <main className="app-scroll schedule-page__content schedule-page__editor-content">
+            {!day && isLoading ? (
+              <Card className="schedule-state-card" aria-live="polite">
+                <div role="status">일정을 불러오는 중입니다.</div>
+              </Card>
+            ) : hasCompleteEditorData && day ? (
+              <>
+              <header className="schedule-page__editor-intro">
+                <p>복약 일정 설정</p>
+                <h1>복용할 날짜와 시간을<br />확인해 주세요</h1>
+                <span>처방 내용을 기준으로 약별 복용 날짜와 시간을 직접 확인해요.</span>
+              </header>
+              <p className="schedule-editor__notice">
+                <span aria-hidden="true">ⓘ</span>
+                <strong>Dosey는 복용 시간을 추정하거나 추천하지 않아요.<br />정확한 시간을 직접 확인해 주세요.</strong>
+              </p>
+              <ScheduleEditor
+                items={day.schedule_items}
+                medications={scheduleMedications}
+                selectedDate={selectedDate}
+                services={services}
+                onSaved={reload}
+                onConflict={reload}
+                isReloading={isLoading}
+              />
+              </>
+            ) : (
+              <StatusCard
+                title="일정 설정 정보를 확인할 수 없어요"
+                body="최신 처방과 일정을 다시 확인해 주세요."
+                isAlert
+                action="일정으로 돌아가기"
+                onAction={() => setIsEditingSchedule(false)}
+              />
+            )}
+          </main>
+        </NavigationShell>
+      </div>
+    )
+  }
+
   return (
     <div className="mvp-page schedule-page">
       <NavigationShell>
         <main className="app-scroll schedule-page__content">
           <header className="schedule-page__intro">
-            <label htmlFor="schedule-date">복약 날짜</label>
+            <label htmlFor="schedule-date" className="schedule-page__date-label">
+              <span>{formatLocalDate(selectedDate)}</span>
+            </label>
             <input
               id="schedule-date"
               type="date"
               value={selectedDate}
               onChange={(event) => setSearchParams(supportMedicationId ? { date: event.target.value, support_medication: supportMedicationId } : { date: event.target.value })}
             />
-            <p>{formatLocalDate(selectedDate)}</p>
             <h1>복약 일정</h1>
           </header>
-
-          <Card className="schedule-page__unconfirmed-entry">
-            <div>
-              <strong>확인하지 못한 복약 기록</strong>
-              <p>지난 미확인 기록은 따로 모아 직접 보완할 수 있어요.</p>
-            </div>
-            <Button fullWidth variant="secondary" onClick={() => navigate('/schedule/unconfirmed')}>
-              미확인 기록 확인하기
-            </Button>
-          </Card>
 
           {isLoading && (
             <Card className="schedule-state-card" aria-live="polite">
@@ -808,17 +989,23 @@ export function SchedulePage({
             />
           )}
 
+          {!isLoading && day && state && isScheduleIdentityUnavailable && (
+            <Card className="schedule-page__empty schedule-page__identity-alert">
+              <p role="alert">약 정보를 확인할 수 없어 일정을 설정할 수 없습니다. 처방 정보를 다시 확인해 주세요.</p>
+            </Card>
+          )}
+
           {!isLoading && day && day.schedule_status === 'READY' && (
             <p className="schedule-page__saved" role="status">
-              일정이 저장되어 있어요. 선택한 날짜의 복약 시간을 확인해 주세요.
+              <span aria-hidden="true">✓</span>
+              <strong>일정이 저장됐어요.<br />복약 시간을 확인해 주세요.</strong>
             </p>
           )}
 
-          {!isLoading && day && day.schedule_status !== 'NO_ACTIVE_PRESCRIPTION' && (
+          {!isLoading && day && (day.schedule_status === 'READY' || occurrences.length > 0) && (
             <section className="schedule-page__occurrences" aria-labelledby="occurrence-list-title">
               <div className="schedule-page__section-heading">
-                <h2 id="occurrence-list-title">선택한 날짜의 복약</h2>
-                <span>{occurrences.length}건</span>
+                <h2 id="occurrence-list-title">오늘의 복약</h2>
               </div>
               {occurrences.length === 0 ? (
                 <Card className="schedule-page__empty">
@@ -828,74 +1015,52 @@ export function SchedulePage({
                 const medication = medications[occurrence.occurrence_id]
                 const route = `/schedule/occurrences/${occurrence.occurrence_id}?date=${encodeURIComponent(occurrence.scheduled_local_date)}`
                 return (
-                  <button
+                  <article
                     className="schedule-occurrence-card"
-                    type="button"
                     key={occurrence.occurrence_id}
-                    onClick={() => navigate(route)}
-                    aria-label={`${formatKstTime(occurrence.scheduled_at)} ${
-                      medication ? medication.medication_name : '약 정보 확인 필요'
-                    } ${occurrenceStateLabel(occurrence)}`}
                   >
-                    <span className="schedule-occurrence-card__period">
-                      {formatKstTime(occurrence.scheduled_at)}
+                    <span className="schedule-occurrence-card__period-label">
+                      {occurrencePeriodLabel(occurrence.scheduled_at)}
                     </span>
-                    <strong>{medication ? medicationDescription(medication) : '약 정보를 확인할 수 없어요'}</strong>
-                    <span className="schedule-occurrence-card__state">{occurrenceStateLabel(occurrence)}</span>
-                    <span className="schedule-occurrence-card__chevron" aria-hidden="true">›</span>
-                  </button>
+                    <strong className="schedule-occurrence-card__time">
+                      {formatKstTime(occurrence.scheduled_at)}
+                    </strong>
+                    <span className={`schedule-occurrence-card__state schedule-occurrence-card__state--${occurrence.checkin?.status?.toLowerCase() ?? occurrence.status.toLowerCase()}`}>
+                      {occurrenceStateLabel(occurrence)}
+                    </span>
+                    <span className="schedule-occurrence-card__medication">
+                      {medication ? medicationDescription(medication) : '약 정보를 확인할 수 없어요'}
+                    </span>
+                    {occurrence.status !== 'CANCELLED' && (
+                      <Button
+                        fullWidth
+                        className="schedule-occurrence-card__action"
+                        onClick={() => navigate(route)}
+                      >
+                        {occurrence.checkin ? '복약 기록 수정하기' : '복용 여부 기록하기'}
+                      </Button>
+                    )}
+                  </article>
                 )
               })}
             </section>
           )}
 
-          {!isLoading && day && day.schedule_items.length > 0 && (
-            <section className="schedule-page__settings" aria-labelledby="schedule-settings-title">
-              <div className="schedule-page__section-heading">
-                <h2 id="schedule-settings-title">복약 일정 설정</h2>
-              </div>
-              {isScheduleIdentityUnavailable ? (
-                <Card className="schedule-page__empty">
-                  <p role="alert">약 정보를 확인할 수 없어 일정을 설정할 수 없습니다. 처방 정보를 다시 확인해 주세요.</p>
-                </Card>
-              ) : day.schedule_items.map((item) => {
-                const medication = scheduleMedications[
-                  item.prescription_version_medication_id
-                ]
-                if (!medication) return null
-                return editingMedicationId === item.prescription_version_medication_id ? (
-                  <ScheduleEditor
-                    key={item.prescription_version_medication_id}
-                    item={item}
-                    medication={medication}
-                    selectedDate={selectedDate}
-                    services={services}
-                    onSaved={reload}
-                    onConflict={reload}
-                    onClose={() => setEditingMedicationId(null)}
-                  />
-                ) : (
-                  <button
-                    className="schedule-setting-row"
-                    type="button"
-                    key={item.prescription_version_medication_id}
-                    onClick={() => setEditingMedicationId(item.prescription_version_medication_id)}
-                  >
-                    <span>
-                      <strong>{medicationDescription(medication)}</strong>
-                      <small>{
-                        item.schedule_item_status === 'READY'
-                          ? '설정됨'
-                          : item.schedule_item_status === 'INACTIVE'
-                            ? '사용 중지됨'
-                            : '설정 필요'
-                      }</small>
-                    </span>
-                    <span>{item.schedule_item_status === 'READY' ? '설정·수정' : '설정'} ›</span>
-                  </button>
-                )
-              })}
-            </section>
+          {!isLoading && day && day.schedule_items.length > 0 && day.schedule_status === 'READY' && (
+            isScheduleIdentityUnavailable ? (
+              <Card className="schedule-page__empty">
+                <p role="alert">약 정보를 확인할 수 없어 일정을 설정할 수 없습니다. 처방 정보를 다시 확인해 주세요.</p>
+              </Card>
+            ) : (
+              <button
+                className="schedule-page__settings-action"
+                type="button"
+                onClick={openRelevantEditor}
+              >
+                <span>복약 일정 설정·수정</span>
+                <span aria-hidden="true">›</span>
+              </button>
+            )
           )}
         </main>
       </NavigationShell>
@@ -1072,7 +1237,7 @@ export function ScheduleOccurrencePage({
   }
 
   return (
-    <div className="mvp-page schedule-page">
+    <div className="mvp-page schedule-page schedule-page--record">
       <NavigationShell onBack={() => navigate(backRoute)}>
         <main className="app-scroll schedule-page__content schedule-record">
           <header className="schedule-page__intro">

@@ -8,6 +8,7 @@ import { Button, MobileShell } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
 import './MvpPages.css'
+import TermsOfService from './TermsOfService'
 
 type SignupForm = {
   email: string
@@ -24,31 +25,13 @@ const EMAIL_VERIFICATION_REQUIRED_MESSAGE =
   '이메일 인증이 필요하거나 인증 유효 시간이 지났습니다. 인증 안내를 다시 요청하고 인증을 완료해 주세요.'
 const CONSENT_POLICY_UNAVAILABLE_MESSAGE =
   '선택한 기능의 동의 안내를 준비하고 있어요. 해당 선택을 해제하거나 잠시 후 다시 시도해 주세요.'
-const CONSENT_OPTIONS: ReadonlyArray<{
-  purpose: SignupConsentPurpose
-  label: string
-  description: string
-}> = [
-  {
-    purpose: 'OCR',
-    label: '처방전 인식',
-    description: '처방전 인식에는 외부 OCR 서비스가 사용됩니다.',
-  },
-  {
-    purpose: 'GUIDE',
-    label: '복약 안내',
-    description: '복약 안내 생성에는 외부 AI 서비스가 사용됩니다.',
-  },
-  {
-    purpose: 'CHAT',
-    label: '도지에게 질문',
-    description: '답변 생성에는 질문과 필요한 복약정보가 외부 AI 서비스로 전달됩니다.',
-  },
-  {
-    purpose: 'NOTIFICATION',
-    label: '복약 알림',
-    description: '동의한 설정에 따라 복약 알림을 보내드립니다.',
-  },
+const TERMS_REVIEW_PENDING_MESSAGE =
+  '필수 약관이 최종 법무/Privacy 승인 대기 중이라 현재 회원가입을 완료할 수 없습니다.'
+const OPTIONAL_CONSENT_PURPOSES: ReadonlyArray<SignupConsentPurpose> = [
+  'OCR',
+  'GUIDE',
+  'CHAT',
+  'NOTIFICATION',
 ]
 
 function validateSignup(form: SignupForm): SignupFieldErrors {
@@ -128,15 +111,32 @@ function SignupPage() {
     else if (previouslyShowingTerms.current) termsButtonRef.current?.focus()
     previouslyShowingTerms.current = showingTerms
   }, [showingTerms])
+
+  useEffect(() => {
+    if (!showingTerms) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+
+      const next = new URLSearchParams(searchParams)
+      next.delete('terms')
+      setSearchParams(next, { replace: true })
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [searchParams, setSearchParams, showingTerms])
   // Opt in only after email delivery is available (#494); noop must not block signup.
   const emailVerificationEnabled = import.meta.env.VITE_EMAIL_VERIFICATION_ENABLED === 'true'
+  // Fail closed until the exact legal/privacy-approved document is deployed.
+  const requiredTermsApproved = import.meta.env.VITE_SIGNUP_TERMS_APPROVED === 'true'
   const [form, setForm] = useState<SignupForm>({
     email: '',
     password: '',
     name: '',
   })
   const [fieldErrors, setFieldErrors] = useState<SignupFieldErrors>({})
-  const [selectedConsentPurposes, setSelectedConsentPurposes] = useState<SignupConsentPurpose[]>([])
+  const [optionalConsentAccepted, setOptionalConsentAccepted] = useState(false)
   const [message, setMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const isSubmittingRef = useRef(false)
@@ -182,15 +182,6 @@ function SignupPage() {
     if (field === 'name') focusAndReveal(nameInputRef.current)
     if (field === 'email') focusAndReveal(emailInputRef.current)
     if (field === 'password') focusAndReveal(passwordInputRef.current)
-  }
-
-  const toggleConsent = (purpose: SignupConsentPurpose) => {
-    setSelectedConsentPurposes((current) =>
-      current.includes(purpose)
-        ? current.filter((value) => value !== purpose)
-        : [...current, purpose],
-    )
-    setMessage('')
   }
 
   const handleVerification = async (action: 'request' | 'confirm') => {
@@ -243,6 +234,12 @@ function SignupPage() {
 
     if (isSubmittingRef.current || verificationBusyRef.current) return
 
+    if (!requiredTermsApproved) {
+      setTermsError(TERMS_REVIEW_PENDING_MESSAGE)
+      focusAndReveal(termsButtonRef.current)
+      return
+    }
+
     if (!requiredTermsAccepted) {
       setTermsError('필수 약관에 동의해 주세요.')
       focusAndReveal(termsInputRef.current)
@@ -272,7 +269,9 @@ function SignupPage() {
         name: form.name.trim(),
         email: form.email.trim(),
         password: form.password,
-        consents: selectedConsentPurposes.map((purpose) => ({ purpose })),
+        consents: optionalConsentAccepted
+          ? OPTIONAL_CONSENT_PURPOSES.map((purpose) => ({ purpose }))
+          : [],
       })
       navigate('/login', {
         state: { fromSignup: true },
@@ -325,32 +324,10 @@ function SignupPage() {
       >
         {showingTerms ? (
           <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-signup-legal">
-            <h1 className="mvp-page__title" ref={termsHeadingRef} tabIndex={-1}>필수 약관 보기</h1>
-            <aside className="notice attention mvp-signup-legal__review">
-              <strong>검토용 문안 · 최종 법무/Privacy 승인 전</strong>
-              <p>서비스 구조와 현재 계약을 바탕으로 한 UX 검토용 본문입니다.</p>
-            </aside>
-            <section>
-              <h2>1. 서비스 이용약관 · 검토용</h2>
-              <p>Dosey는 사용자가 직접 등록하고 확인한 처방 정보와 복약 기록을 바탕으로 복약 일정 확인, 복약 기록 관리, 복약 가이드와 관련 기능을 제공합니다.</p>
-              <p>의료문서의 OCR 결과는 사용자가 확인·수정·확정한 이후에만 확정 정보로 사용합니다. Dosey는 사용자의 처방을 임의로 변경하거나 약의 중단·용량·복용 시간을 임의로 권고하지 않습니다.</p>
-              <p>근거가 없거나 서로 상충하는 경우에는 안내 범위를 제한하며, 필요한 경우 의료진 또는 약사 확인을 안내합니다.</p>
-            </section>
-            <section>
-              <h2>2. 개인정보 수집·이용 안내 · 검토용</h2>
-              <p>서비스 이용 과정에서 계정 정보와 사용자가 직접 등록·확정한 처방 및 복약 관련 정보가 처리될 수 있습니다. 외부 서비스를 사용하는 경우에도 목적 달성에 필요한 최소 정보만 처리하는 것을 원칙으로 합니다.</p>
-              <p>세부 보존·삭제 기간과 최종 공개 문구는 Privacy 승인 후 확정됩니다.</p>
-            </section>
-            <section>
-              <h2>3. 목적별 선택 동의</h2>
-              <p>OCR · GUIDE · CHAT · NOTIFICATION은 목적별로 동의를 관리합니다. 선택 동의를 하지 않아도 회원가입 자체는 차단하지 않으며, 선택한 목적만 동의 상태로 저장됩니다.</p>
-            </section>
-            <section>
-              <h2>4. 동의 변경 및 철회</h2>
-              <p>현재 내 정보 화면에서는 처방전 인식(OCR) 동의 상태를 확인하고 철회할 수 있습니다. GUIDE · CHAT · NOTIFICATION의 동의 관리 화면은 준비 중입니다.</p>
-              <p>OCR 동의를 철회하면 새로운 처방전 외부 처리가 제한됩니다.</p>
-            </section>
-            <p className="mvp-signup-legal__footer">본문 보기만으로 동의 처리되지 않습니다.</p>
+            <h1 className="mvp-page__title" ref={termsHeadingRef} tabIndex={-1}>
+              {requiredTermsApproved ? '필수 약관 보기' : '필수 약관 검토본'}
+            </h1>
+            <TermsOfService />
             <Button type="button" fullWidth onClick={closeTerms}>확인</Button>
           </main>
         ) : <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-auth">
@@ -359,7 +336,7 @@ function SignupPage() {
               Dosey 도지와 복약<br />관리를 시작해 주세요
             </h1>
             <p className="mvp-page__description">
-              기능별 동의 상태에 따라 필요한 정보만 처리합니다.
+              의료정보는 본인 확인과 동의 후 안전하게 관리합니다.
             </p>
           </header>
 
@@ -388,21 +365,31 @@ function SignupPage() {
               </div>
               <div className="mvp-form__field">
                 <label htmlFor="signup-email">이메일</label>
-                <input
-                  id="signup-email"
-                  ref={emailInputRef}
-                  name="email"
-                  type="email"
-                  readOnly={verificationBusy || isSubmitting}
-                  placeholder="이메일을 입력해 주세요"
-                  autoComplete="email"
-                  required
-                  maxLength={40}
-                  aria-invalid={Boolean(fieldErrors.email)}
-                  aria-describedby={fieldErrors.email ? 'signup-email-error' : undefined}
-                  value={form.email}
-                  onChange={handleChange}
-                />
+                <div className="mvp-signup-email-row">
+                  <input
+                    id="signup-email"
+                    ref={emailInputRef}
+                    name="email"
+                    type="email"
+                    readOnly={verificationBusy || isSubmitting}
+                    placeholder="이메일을 입력해 주세요"
+                    autoComplete="email"
+                    required
+                    maxLength={40}
+                    aria-invalid={Boolean(fieldErrors.email)}
+                    aria-describedby={fieldErrors.email ? 'signup-email-error' : undefined}
+                    value={form.email}
+                    onChange={handleChange}
+                  />
+                  <button
+                    type="button"
+                    className="mvp-signup-email-check"
+                    aria-label="중복확인 (기능 준비 중)"
+                    disabled
+                  >
+                    중복확인
+                  </button>
+                </div>
                 {fieldErrors.email && (
                   <span className="mvp-form__field-error" id="signup-email-error" role="alert">
                     {fieldErrors.email}
@@ -467,16 +454,22 @@ function SignupPage() {
             </div>
             <div className="notice attention mvp-auth__notice mvp-signup-required">
               <label>
-                <input type="checkbox" ref={termsInputRef} required
-                  checked={requiredTermsAccepted} disabled={isSubmitting || verificationBusy}
+                <input type="checkbox" ref={termsInputRef} required={requiredTermsApproved}
+                  checked={requiredTermsApproved && requiredTermsAccepted}
+                  disabled={!requiredTermsApproved || isSubmitting || verificationBusy}
                   aria-labelledby="signup-required-label"
                   aria-describedby={`signup-required-description${termsError ? ' signup-required-error' : ''}`}
                   aria-invalid={Boolean(termsError)}
                   onChange={(event) => { setRequiredTermsAccepted(event.target.checked); setTermsError('') }} />
                 <span>
-                  <strong id="signup-required-label">필수 약관에 동의합니다</strong>
-                  <small id="signup-required-description">서비스 이용약관 및 개인정보 수집·이용</small>
-                  <small>필수 동의 후 가입 가능</small>
+                  <strong id="signup-required-label">
+                    {requiredTermsApproved ? '필수 약관에 동의합니다' : '필수 약관 승인 대기 중'}
+                  </strong>
+                  <small id="signup-required-description">
+                    {requiredTermsApproved
+                      ? '필수 동의 후 가입 가능'
+                      : '최종 법무/Privacy 승인 후 동의할 수 있습니다'}
+                  </small>
                 </span>
               </label>
               <button type="button" ref={termsButtonRef} className="mvp-signup-required__link"
@@ -488,28 +481,30 @@ function SignupPage() {
             {termsError && <p id="signup-required-error" className="mvp-form__field-error" role="alert">{termsError}</p>}
             <fieldset className="mvp-signup-consents">
               <legend>기능별 선택 동의</legend>
-              <p className="mvp-signup-consents__intro">
-                선택하지 않아도 가입할 수 있습니다. 선택한 기능만 동의 상태로 저장합니다.
-              </p>
-              {CONSENT_OPTIONS.map((option) => (
-                <label className="mvp-signup-consents__option" key={option.purpose}>
-                  <input
-                    type="checkbox"
-                    checked={selectedConsentPurposes.includes(option.purpose)}
-                    disabled={isSubmitting || verificationBusy}
-                    onChange={() => toggleConsent(option.purpose)}
-                  />
-                  <span>
-                    <strong>{option.label}</strong>
-                    <small>{option.description}</small>
-                  </span>
-                </label>
-              ))}
+              <label className="mvp-signup-consents__option">
+                <input
+                  type="checkbox"
+                  checked={optionalConsentAccepted}
+                  disabled={isSubmitting || verificationBusy}
+                  onChange={(event) => {
+                    setOptionalConsentAccepted(event.target.checked)
+                    setMessage('')
+                  }}
+                />
+                <span>
+                  <strong>기능 이용 선택 동의</strong>
+                  <small>
+                    처방전 인식 · 복약 안내 · 도지 질문 · 복약 알림<br />
+                    선택 시 4개 목적에 모두 동의
+                  </small>
+                </span>
+              </label>
             </fieldset>
 
             {message && <p className="mvp-form__message" role="alert">{message}</p>}
 
-            <Button fullWidth type="submit" disabled={!requiredTermsAccepted || isSubmitting || verificationBusy}>
+            <Button className="mvp-signup-submit" fullWidth type="submit"
+              disabled={!requiredTermsApproved || !requiredTermsAccepted || isSubmitting || verificationBusy}>
               {isSubmitting ? '가입 중...' : '가입 완료'}
             </Button>
           </form>

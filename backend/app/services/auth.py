@@ -25,7 +25,8 @@ from app.core.validators import validate_password
 from app.dtos.auth import LoginRequest, SignUpConsentRequest, SignUpRequest
 from app.models.email_verification import EmailVerificationPurpose
 from app.models.user_consents import ConsentPurpose, ConsentStatus
-from app.models.users import User
+from app.models.users import AccountStatus, User
+from app.repositories.account_deletion_request_repository import AccountDeletionRequestRepository
 from app.repositories.email_verification_repository import EmailVerificationRepository
 from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.refresh_session_repository import RefreshSessionRepository
@@ -72,6 +73,15 @@ def _email_verification_required_error() -> ApiError:
         code="EMAIL_VERIFICATION_REQUIRED",
         message="이메일 인증을 완료해 주세요.",
         details=[ErrorDetail(field="email", reason="EMAIL_VERIFICATION_REQUIRED")],
+    )
+
+
+def _account_withdrawal_confirmation_error() -> ApiError:
+    return ApiError(
+        status_code=422,
+        code="VALIDATION_FAILED",
+        message="회원탈퇴 최종 확인이 필요합니다.",
+        details=[ErrorDetail(field="confirmed", reason="CONFIRMATION_REQUIRED")],
     )
 
 
@@ -140,6 +150,7 @@ class AuthService:
         email_verification_repository: EmailVerificationRepository | None = None,
         email_sender: EmailSender | None = None,
         user_consent_repository: UserConsentRepository | None = None,
+        account_deletion_request_repository: AccountDeletionRequestRepository | None = None,
     ) -> None:
         self.user_repo = user_repository
         self.password_reset_repo = password_reset_repository
@@ -147,6 +158,7 @@ class AuthService:
         self.email_verification_repo = email_verification_repository
         self.email_sender = email_sender or NoopEmailSender()
         self.user_consent_repo = user_consent_repository
+        self.account_deletion_request_repo = account_deletion_request_repository
         self.jwt_service = JwtService()
 
     async def signup(
@@ -283,6 +295,26 @@ class AuthService:
             jti=str(refresh_token.payload["jti"]),
         )
         return tokens
+
+    async def request_account_withdrawal(self, *, user: User, password: str, confirmed: bool) -> None:
+        if not confirmed:
+            raise _account_withdrawal_confirmation_error()
+        if self.account_deletion_request_repo is None:
+            raise RuntimeError("AccountDeletionRequestRepository is required to request account withdrawal.")
+
+        await self.authenticate(LoginRequest(email=user.email, password=password))
+        locked_user = await self.user_repo.get_user_for_update(user.id)
+        if locked_user is None:
+            raise _invalid_credentials_error()
+        if locked_user.account_status != AccountStatus.ACTIVE or not locked_user.is_active:
+            return
+        if not verify_password(password, locked_user.hashed_password):
+            raise _invalid_credentials_error()
+
+        requested_at = datetime.now(config.TIMEZONE)
+        changed = await self.user_repo.mark_withdrawal_requested(locked_user.id)
+        if changed:
+            await self.account_deletion_request_repo.create_pending(user_id=locked_user.id, requested_at=requested_at)
 
     async def check_email_exists(
         self,

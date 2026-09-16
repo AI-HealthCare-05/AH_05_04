@@ -649,7 +649,7 @@ function ChatPage({
           </header>
 
           <div className="chat-page__conversation">
-            <div className="chat-messages" aria-live="polite">
+            <div className="app-scroll chat-messages" aria-live="polite">
               {currentIsLoading && (
                 <div className="chat-page__state" role="status">
                   대화를 불러오고 있어요.
@@ -683,8 +683,7 @@ function ChatPage({
                     <button
                       type="button"
                       className="chat-page__schedule-cta"
-                      aria-label="복약 일정 설정하기 (준비 중)"
-                      disabled
+                      onClick={() => navigate('/schedule')}
                     >
                       복약 일정 설정하기
                     </button>

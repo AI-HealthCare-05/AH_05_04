@@ -625,6 +625,7 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 20px 20px calc(96px + var(--ds-safe-bottom));
   scrollbar-width: none;
   -ms-overflow-style: none;

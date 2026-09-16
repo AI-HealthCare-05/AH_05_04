@@ -162,6 +162,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             await connection.execute(text("INSERT INTO checkin_audit VALUES (1)"))
             await connection.execute(text("INSERT INTO medication_schedule_audit VALUES (1)"))
             await connection.execute(text("INSERT INTO prescription_version VALUES (1)"))
+            await connection.execute(text("INSERT INTO account_deletion_request VALUES (1)"))
             await connection.execute(text("INSERT INTO push_subscription VALUES (1)"))
             await connection.execute(text("INSERT INTO push_delivery VALUES (1)"))
             await connection.execute(text("INSERT INTO lifestyle_times VALUES (1)"))
@@ -195,6 +196,9 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             (reader, "DELETE FROM rag_medication_alias"),
             (reader, "TRUNCATE checkin_audit"),
             (reader, "UPDATE prescription_version SET id=2"),
+            (reader, "UPDATE account_deletion_request SET id=2"),
+            (reader, "DELETE FROM account_deletion_request"),
+            (reader, "TRUNCATE account_deletion_request"),
             (reader, "INSERT INTO rag_source_snapshot (id) VALUES (3)"),
             (producer, "DELETE FROM rag_source_snapshot"),
             (producer, 'INSERT INTO "user" (id) VALUES (3)'),
@@ -878,6 +882,7 @@ async def _grant_historical_test_permissions(admin, environment):
                 "ai_job_intake_context",
                 "ai_job_execution_context",
                 "ai_job_execution_identification",
+                "account_deletion_request",  # Added after the historical Source cutover.
                 "medication_schedule_audit",  # Added after the historical Source cutover.
                 "push_subscription",  # #469 does not exist at the historical revision.
                 "push_delivery",
