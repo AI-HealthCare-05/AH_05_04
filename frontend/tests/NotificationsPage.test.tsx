@@ -83,6 +83,12 @@ function LocationProbe() {
   return <output data-testid="location">{location.pathname}{location.search}</output>
 }
 
+function LoginStateProbe() {
+  const location = useLocation()
+  const returnTo = (location.state as { returnTo?: string } | null)?.returnTo
+  return <output data-testid="login-return">{returnTo ?? 'none'}</output>
+}
+
 function RouteLeaveControl() {
   const navigate = useNavigate()
   return <button type="button" onClick={() => navigate('/away')}>테스트 경로 이동</button>
@@ -100,15 +106,16 @@ function createDeferred<T>() {
 
 function renderPage(
   onHandoffReady?: (handoff: NotificationOccurrenceHandoff) => void,
+  path = '/notifications',
 ) {
   return render(
-    <MemoryRouter initialEntries={['/notifications']}>
+    <MemoryRouter initialEntries={[path]}>
       <RouteLeaveControl />
       <Routes>
         <Route path="/notifications" element={<NotificationsPage onHandoffReady={onHandoffReady} />} />
         <Route path="/schedule/occurrences/:occurrenceId" element={<LocationProbe />} />
         <Route path="/schedule" element={<div>일정 화면</div>} />
-        <Route path="/login" element={<div>로그인 화면</div>} />
+        <Route path="/login" element={<LoginStateProbe />} />
         <Route path="/away" element={<LocationProbe />} />
       </Routes>
     </MemoryRouter>,
@@ -199,6 +206,54 @@ describe('NotificationsPage', () => {
     })
     expect(onHandoffReady).toHaveBeenCalledTimes(1)
     expect(putMedicationCheckin).not.toHaveBeenCalled()
+  })
+
+  it('Push click target은 read PATCH나 Check-in 없이 최신 occurrence를 검증해 이동한다', async () => {
+    renderPage(undefined, `/notifications?push_notification_id=${UNREAD_NOTIFICATION.id}`)
+
+    expect((await screen.findByTestId('location')).textContent).toBe(
+      `/schedule/occurrences/${UNREAD_NOTIFICATION.occurrence_id}?date=2026-09-10`,
+    )
+    expect(markNotificationRead).not.toHaveBeenCalled()
+    expect(putMedicationCheckin).not.toHaveBeenCalled()
+    expect(resolveNotificationOccurrenceMedication).toHaveBeenCalledWith(
+      {
+        occurrenceId: UNREAD_NOTIFICATION.occurrence_id,
+        occurrenceLocalDate: UNREAD_NOTIFICATION.occurrence_local_date,
+      },
+      expect.any(AbortSignal),
+    )
+  })
+
+  it('Push target이 다음 페이지에 있으면 bounded pagination으로 찾아 mutation 없이 이동한다', async () => {
+    vi.mocked(listNotifications)
+      .mockResolvedValueOnce({ data: { items: [READ_NOTIFICATION], next_offset: 20 } })
+      .mockResolvedValueOnce({ data: { items: [UNREAD_NOTIFICATION], next_offset: null } })
+    renderPage(undefined, `/notifications?push_notification_id=${UNREAD_NOTIFICATION.id}`)
+
+    expect((await screen.findByTestId('location')).textContent).toBe(
+      `/schedule/occurrences/${UNREAD_NOTIFICATION.occurrence_id}?date=2026-09-10`,
+    )
+    expect(listNotifications).toHaveBeenNthCalledWith(2, {
+      offset: 20,
+      signal: expect.any(AbortSignal),
+    })
+    expect(markNotificationRead).not.toHaveBeenCalled()
+    expect(putMedicationCheckin).not.toHaveBeenCalled()
+  })
+
+  it('Push handoff 중 401이면 로그인 후 복구할 원래 notification target을 보존한다', async () => {
+    vi.mocked(resolveNotificationOccurrenceMedication).mockRejectedValue(
+      new ApiError(401, '로그인이 필요합니다.', 'INVALID_TOKEN'),
+    )
+    renderPage(undefined, `/notifications?push_notification_id=${UNREAD_NOTIFICATION.id}`)
+
+    fireEvent.click(await screen.findByRole('button', { name: '다시 로그인' }))
+
+    expect((await screen.findByTestId('login-return')).textContent).toBe(
+      `/notifications?push_notification_id=${UNREAD_NOTIFICATION.id}`,
+    )
+    expect(markNotificationRead).not.toHaveBeenCalled()
   })
 
   it('이미 read 알림은 PATCH 없이 occurrence를 검증하고 같은 route로 이동한다', async () => {

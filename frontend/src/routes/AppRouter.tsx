@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { getCurrentUser, type CurrentUser } from '../api/users'
 import {
@@ -20,6 +20,7 @@ import { ScheduleOccurrencePage, SchedulePage } from '../pages/SchedulePage'
 import NotificationsPage from '../pages/NotificationsPage'
 import UnconfirmedCheckinsPage from '../pages/UnconfirmedCheckinsPage'
 import ReportPage from '../pages/ReportPage'
+import NotificationSettingsPage from '../pages/NotificationSettingsPage'
 
 const DevPreviewPage = import.meta.env.DEV
   ? lazy(() => import('../dev-preview/DevPreviewPage'))
@@ -103,10 +104,17 @@ function PublicOnlyRoute({ children }: { children: ReactNode }) {
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const authState = useAuthStatus()
+  const location = useLocation()
 
   if (authState.status === 'checking') return <AuthCheckingFallback />
   // 회원 전용 화면은 화면 렌더링 전에 토큰 존재 여부를 먼저 확인합니다.
-  return authState.status === 'authenticated' ? children : <Navigate to="/login" replace />
+  return authState.status === 'authenticated' ? children : (
+    <Navigate
+      to="/login"
+      replace
+      state={{ returnTo: `${location.pathname}${location.search}` }}
+    />
+  )
 }
 
 export function AppRoutes({
@@ -159,6 +167,7 @@ export function AppRoutes({
       <Route path="/menu" element={<ProtectedRoute><MenuPage /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
       <Route path="/notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
+      <Route path="/settings/notifications" element={<ProtectedRoute><NotificationSettingsPage /></ProtectedRoute>} />
       <Route path="/report" element={<ProtectedRoute><ReportPage /></ProtectedRoute>} />
       <Route path="/report/clinic" element={<ProtectedRoute><ReportPage /></ProtectedRoute>} />
     </Routes>
