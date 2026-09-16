@@ -8,6 +8,7 @@ import { Button, MobileShell } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
 import './MvpPages.css'
+import TermsOfService from './TermsOfService'
 
 type SignupForm = {
   email: string
@@ -108,6 +109,21 @@ function SignupPage() {
     else if (previouslyShowingTerms.current) termsButtonRef.current?.focus()
     previouslyShowingTerms.current = showingTerms
   }, [showingTerms])
+
+  useEffect(() => {
+    if (!showingTerms) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+
+      const next = new URLSearchParams(searchParams)
+      next.delete('terms')
+      setSearchParams(next, { replace: true })
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [searchParams, setSearchParams, showingTerms])
   // Opt in only after email delivery is available (#494); noop must not block signup.
   const emailVerificationEnabled = import.meta.env.VITE_EMAIL_VERIFICATION_ENABLED === 'true'
   const [form, setForm] = useState<SignupForm>({
@@ -299,31 +315,7 @@ function SignupPage() {
         {showingTerms ? (
           <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-signup-legal">
             <h1 className="mvp-page__title" ref={termsHeadingRef} tabIndex={-1}>필수 약관 보기</h1>
-            <aside className="notice attention mvp-signup-legal__review">
-              <strong>검토용 문안 · 최종 법무/Privacy 승인 전</strong>
-              <p>서비스 구조와 현재 계약을 바탕으로 한 UX 검토용 본문입니다.</p>
-            </aside>
-            <section>
-              <h2>1. 서비스 이용약관 · 검토용</h2>
-              <p>Dosey는 사용자가 직접 등록하고 확인한 처방 정보와 복약 기록을 바탕으로 복약 일정 확인, 복약 기록 관리, 복약 가이드와 관련 기능을 제공합니다.</p>
-              <p>의료문서의 OCR 결과는 사용자가 확인·수정·확정한 이후에만 확정 정보로 사용합니다. Dosey는 사용자의 처방을 임의로 변경하거나 약의 중단·용량·복용 시간을 임의로 권고하지 않습니다.</p>
-              <p>근거가 없거나 서로 상충하는 경우에는 안내 범위를 제한하며, 필요한 경우 의료진 또는 약사 확인을 안내합니다.</p>
-            </section>
-            <section>
-              <h2>2. 개인정보 수집·이용 안내 · 검토용</h2>
-              <p>서비스 이용 과정에서 계정 정보와 사용자가 직접 등록·확정한 처방 및 복약 관련 정보가 처리될 수 있습니다. 외부 서비스를 사용하는 경우에도 목적 달성에 필요한 최소 정보만 처리하는 것을 원칙으로 합니다.</p>
-              <p>세부 보존·삭제 기간과 최종 공개 문구는 Privacy 승인 후 확정됩니다.</p>
-            </section>
-            <section>
-              <h2>3. 목적별 선택 동의</h2>
-              <p>OCR · GUIDE · CHAT · NOTIFICATION은 목적별로 동의를 관리합니다. 선택 동의를 하지 않아도 회원가입 자체는 차단하지 않으며, 선택한 목적만 동의 상태로 저장됩니다.</p>
-            </section>
-            <section>
-              <h2>4. 동의 변경 및 철회</h2>
-              <p>현재 내 정보 화면에서는 처방전 인식(OCR) 동의 상태를 확인하고 철회할 수 있습니다. GUIDE · CHAT · NOTIFICATION의 동의 관리 화면은 준비 중입니다.</p>
-              <p>OCR 동의를 철회하면 새로운 처방전 외부 처리가 제한됩니다.</p>
-            </section>
-            <p className="mvp-signup-legal__footer">본문 보기만으로 동의 처리되지 않습니다.</p>
+            <TermsOfService />
             <Button type="button" fullWidth onClick={closeTerms}>확인</Button>
           </main>
         ) : <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-auth">

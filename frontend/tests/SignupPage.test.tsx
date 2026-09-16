@@ -108,7 +108,10 @@ describe('SignupPage', () => {
     const requestCount = vi.mocked(requestEmailVerification).mock.calls.length
     const confirmCount = vi.mocked(confirmEmailVerification).mock.calls.length
     fireEvent.click(screen.getByRole('button', { name: '약관 보기' }))
-    expect(screen.getByText('검토용 문안 · 최종 법무/Privacy 승인 전')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '2. 이용약관' })).toBeTruthy()
+    expect(screen.getByText('시행일자: 2026년 09월 15일')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '제10조 (약관의 개정)' })).toBeTruthy()
+    expect(screen.queryByText('개인정보 수집·이용 안내 · 검토용')).toBeNull()
     expect(document.activeElement).toBe(screen.getByRole('heading', { name: '필수 약관 보기' }))
     expect(screen.queryByRole('button', { name: '가입 완료' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '확인' }))
@@ -121,6 +124,18 @@ describe('SignupPage', () => {
     expect(signup).not.toHaveBeenCalled()
     expect(requestEmailVerification).toHaveBeenCalledTimes(requestCount)
     expect(confirmEmailVerification).toHaveBeenCalledTimes(confirmCount)
+  })
+
+  it('약관 화면은 Escape로 닫고 약관 보기 버튼으로 focus를 복원한다', () => {
+    renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: '약관 보기' }))
+    expect(screen.getByRole('heading', { name: '필수 약관 보기' })).toBe(document.activeElement)
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    expect(screen.queryByRole('heading', { name: '2. 이용약관' })).toBeNull()
+    expect(screen.getByRole('button', { name: '약관 보기' })).toBe(document.activeElement)
   })
 
   it('기능 이용 선택 동의는 정확한 4개 목적을 한 번에 payload에 포함한다', async () => {

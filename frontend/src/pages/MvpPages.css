@@ -340,36 +340,54 @@
 
 .mvp-signup-legal {
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 1.7;
 }
 
-.mvp-page .mvp-signup-legal__review {
-  margin-block: 16px 24px;
-  border: 0;
-  background: #fff6de;
-  color: #73520f;
+.mvp-signup-legal__document {
+  display: grid;
+  gap: 26px;
+  margin-block: 18px 28px;
 }
 
-.mvp-signup-legal__review p {
-  margin: 4px 0 0;
-  font-size: 11px;
+.mvp-signup-legal__header {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--ds-line);
 }
 
-.mvp-signup-legal section + section {
-  margin-top: 26px;
+.mvp-signup-legal__header h2,
+.mvp-signup-legal__header p,
+.mvp-signup-legal section p {
+  margin: 0;
 }
 
-.mvp-signup-legal h2 {
+.mvp-signup-legal__header h2 {
   font-size: 18px;
+  line-height: 1.4;
+}
+
+.mvp-signup-legal section {
+  display: grid;
+  gap: 10px;
+}
+
+.mvp-signup-legal h3 {
+  margin: 0;
+  color: var(--ds-text);
+  font-size: 16px;
   line-height: 1.5;
 }
 
-.mvp-signup-legal__footer {
-  margin-top: 24px;
-  padding-top: 12px;
-  border-top: 1px solid var(--ds-line);
-  color: var(--ds-text-muted);
-  font-size: 12px;
+.mvp-signup-legal ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-inline-start: 22px;
+}
+
+.mvp-signup-legal li {
+  padding-inline-start: 3px;
 }
 
 .mvp-signup-consents legend {

@@ -41,6 +41,23 @@ test('AUTH-01 responsive layout, accessibility and consent payload contract', as
     await expect(requiredTerms).toHaveAttribute('aria-invalid', 'true')
     await expect(page.getByText('필수 약관에 동의해 주세요.')).toBeVisible()
 
+    await page.getByRole('button', { name: '약관 보기' }).click()
+    await expect(page.getByRole('heading', { name: '필수 약관 보기' })).toBeFocused()
+    const termsLayout = await page.evaluate(() => {
+      const horizontalOverflow = document.documentElement.scrollWidth - window.innerWidth
+      const content = document.querySelector<HTMLElement>('.mvp-signup-legal__document')
+      return {
+        horizontalOverflow,
+        contentOverflow: content ? content.scrollWidth - content.clientWidth : null,
+      }
+    })
+    expect(termsLayout).toEqual({ horizontalOverflow: 0, contentOverflow: 0 })
+    await expect(page.getByRole('heading', { name: '제1조 (목적)' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '제10조 (약관의 개정)' })).toBeAttached()
+    await page.screenshot({ path: `test-results/requirements/signup-terms-${width}.png`, fullPage: true })
+    await page.getByRole('button', { name: '이전 화면' }).click()
+    await expect(page.getByRole('button', { name: '약관 보기' })).toBeFocused()
+
     await page.getByLabel('이름').fill('합성 사용자')
     await email.fill(`auth01-${width}@example.com`)
     await page.getByLabel('비밀번호').fill('Synthetic1!')
