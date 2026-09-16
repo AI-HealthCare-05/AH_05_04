@@ -273,9 +273,9 @@ uv run pytest backend/app/tests/guide_ai/test_v3_eval.py -q
 
 버전된 비식별 합성 평가셋은 `evals/generation/guide-v3-eval-v1.json`이며 `data_classification=SYNTHETIC`으로 고정합니다. 이 평가는 자유 생성 품질이나 실제 Provider 응답을 측정하지 않고 승인 문구 선택·안전 차단 계약을 재현합니다. 별도 승인 없이 `RUN_OPENAI_SMOKE=1`을 설정하지 않으며, skip된 실호출 테스트를 성공으로 해석하지 않습니다.
 
-### Chat AI v4 대화 품질 Local 검증
+### Chat AI v5 대화 품질 Local 검증
 
-실제 Provider 호출 없이 다음 결정론적 테스트로 최근 대화 조회와 단일 `chat-prompt-v4` 계약을 검증합니다.
+실제 Provider 호출 없이 다음 결정론적 테스트로 최근 대화 조회와 단일 `chat-prompt-v5` 계약을 검증합니다.
 
 ```bash
 uv run pytest backend/app/tests/chat backend/app/tests/repositories/test_chat_repository.py backend/app/tests/chat_ai backend/app/tests/chat_integration tests/contract/test_chat_ai_backend_contract.py -q
@@ -285,7 +285,7 @@ uv run pytest backend/app/tests/chat backend/app/tests/repositories/test_chat_re
 - 답변 없음·FAILED·PENDING·GENERATING·비연속 pair 제외와 최대 30개 후보·12,000자 예산
 - 현재 질문 중복 제외와 다른 사용자·세션·처방 소유권 경계
 - flag OFF의 조회 생략·`history: []`와 flag ON Local 합성 history 전달
-- flag와 history 유무에 관계없는 `prompt_version == chat-prompt-v4`
+- flag와 history 유무에 관계없는 `prompt_version == chat-prompt-v5`
 - JSON 문자열을 지시가 아닌 데이터로 취급하는 프롬프트 인젝션 방어
 - 과거 USER의 부정확하거나 오래된 증상·진단·알레르기·복용 여부를 현재 사실로 단정하지 않고, 안전상 중요하면 현재도 해당하는지 확인하는 프롬프트 규칙
 - 과거 ASSISTANT 비신뢰, 현재 확정 medications 우선과 기존 응답·오류 회귀
@@ -323,6 +323,8 @@ PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
 실제 OpenAI 평가는 별도 Local opt-in 없이는 `NOT_RUN`입니다. `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 없으면 live runner가 실행을 거부합니다. live 모드는 canonical `chat-v4-conversation-quality-eval-v1` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며, 임의 `--dataset` 또는 변경된 fixture는 OpenAI client 생성 전에 거부합니다. SHA-256 입력은 CRLF를 LF로 정규화해 Windows와 Unix checkout을 동일하게 처리하고, CRLF 상태에서도 fixture 내용 변경은 거부하는 회귀 테스트를 유지합니다. 결과 artifact에는 dataset·prompt SHA-256, `live_gate_evaluation`, `full_suite_passed`와 전체 `passed`를 기록합니다. live blocking 기준 미달은 artifact를 남기고 exit code 1, 구성·Provider 실행 오류는 exit code 2를 반환합니다. 결정론적 결과는 Production 공개·Privacy 승인 근거가 아닙니다.
 
 #581 blind A/B runner는 별도 `RUN_OPENAI_CHAT_BLIND_AB_EVAL=1` Local opt-in을 요구하며 canonical config·dataset·v3/v4 prompt snapshot의 고정 SHA-256이 모두 맞아야 Provider client를 생성합니다. 두 arm은 동일한 `gpt-4o`와 생성 설정으로 arm당 113개 응답을 실행합니다. 회귀 테스트는 prompt/model override, 54개 review item의 arm 정체 비노출과 response 1 위치 27:27 균형, PII sentinel 치환, 자동 safety/품질 결과, p95 latency, Provider usage token 집계와 완전한 judgment coverage를 검증합니다. 자동 점수와 blind 선호 집계는 responsible reviewer의 최종 선택을 대신하지 않습니다.
+
+현재 runtime은 `chat-prompt-v5`이며 v3/v4 blind snapshot은 고정된 비교 버전으로 보존합니다. #581 추가 피드백의 `파라시타몰은?`, `왱?`, 첫 병용 답변의 미확인 안전 단정은 `chat-v5-short-followup-eval-v1.json`의 신규 3개 사례에서 검증합니다. 기존 27개 사례·안전 gate 보존, 고정 안전 프롬프트의 동일성, 실패 문구 검출 및 문맥 성공과 안전 실패의 독립 판정을 `test_short_followup_eval.py`에서 검사합니다. [검증 기록](validation/issue-581-short-followup-v5.md)은 결정론적 replay와 실제 Provider 평가를 구분합니다.
 
 추가 회귀는 같은 공개 config에서 비공개 seed에 따라 case/path별 arm mapping이 달라지면서 27:27 균형을 유지하는지, judgment에 사전 고정된 commitment가 mapping 한 항목의 변조도 거부하는지 검증합니다. baseline의 dimension 목록은 비어 있어야 하며 history에만 canonical case의 `quality_expectations`를 적용합니다. baseline에 history 전용 dimension을 제출해도 unblind는 거부합니다. seed·nonce·mapping은 judgment 제출 전까지 비공개 assignment 파일에 보관합니다.
 
@@ -548,3 +550,8 @@ Frontend 실제 왕복은 `REAL_STACK_ENV_FILE=envs/example.local.env bash scrip
 합성 응답 export는 `TRACK_B_OCCURRENCE_MEDICATION_FIXTURE_OUTPUT`에 출력 경로를 지정할 때만
 실행합니다. 기본 CI는 fixture를 갱신하지 않습니다. 검증 환경·결과는
 [검증 기록](validation/track-b/issue-202-closure-readiness.md)을 참조합니다.
+
+### Track C Plan lifecycle (#617)
+
+[검증 기록](testing/track-c-plan-lifecycle-617.md): 조회·완료·취소, SELF 404, strict confirmation, terminal 충돌,
+멱등 replay/충돌/rollback, Safety·Barrier·Check-in 정정 및 동시 mutation을 확인한다.

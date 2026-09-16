@@ -27,7 +27,8 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 영역 | 테이블 | 현재 사용 상태 |
 | --- | --- | --- |
 | 사용자 | `user` | 인증·사용자 정보에 사용 |
-| 사용자 동의 | `user_consent` | PD-207 목적별 최신 동의 상태 저장 기반. 사용자 동의 상태 API는 #510에서 구현. OCR 목적은 #505에서 Backend 동의 API·접수 Gate와 Worker 재검사에 연결; GUIDE/CHAT/NOTIFICATION 실행 Gate는 후속 범위 |
+| 회원탈퇴 | `account_deletion_request` | account-lifecycle-v1(#206) 5절: 회원탈퇴 요청 이후 삭제·보존 처리 감사 기준. migration/model만 구현, 탈퇴 요청 접수 API와 삭제·보존 처리는 후속 PR 범위 |
+| 사용자 동의 | `user_consent` | PD-207 목적별 최신 동의 상태 저장 기반. 사용자 동의 상태 API는 #510에서 구현. OCR 목적은 #505에서 Backend 동의 API·접수 Gate와 Worker 재검사에 연결; GUIDE/CHAT 목적은 동기 Provider 호출 전 Gate에 연결; NOTIFICATION 실행 Gate는 후속 범위 |
 | 프로필 | `profile` | 본인 단일 `SELF` profile과 사용자 리소스 소유권 기준에 사용 |
 | 의료문서 | `medical_document` | 처방전 metadata와 로컬 파일 object key 저장 |
 | OCR | `ocr_job`, `extracted_field` | 동기 OCR 상태, 원문·정규화·사용자 확정값 저장 |
@@ -39,7 +40,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 비동기 실행 | `ai_job`, `outbox_event`, `idempotency_record` | `JobIntakeService`(#147)의 Job 접수 transaction과 DB Outbox 선점·`WorkerMessage` 조립·Redis 발행·fencing 완료(#219)가 repository·service 계층에 연결됨. 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 미연결(#148) |
 | 비동기 실행(schema-only) | `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event` | Schema-only Post-MVP 골격, 현재 repository·service·API 경로에서 미사용 |
 | RAG Source·Catalog | `rag_source`, `rag_source_endpoint`, `rag_source_operation`, `rag_source_snapshot`, `rag_source_snapshot_member`, `rag_source_ingestion_run`, `rag_source_ingestion_artifact`, `rag_source_snapshot_verification`, `rag_entity_identity`, `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component`, `rag_medication_search_entry`, `rag_catalog_set`, `rag_catalog_set_source`, `rag_catalog_set_member`, `rag_catalog_set_hash` | #164·#165 기반과 #166 안정 Identity·Catalog 구성원·불변 v2 Set/manifest, #178 선행 Snapshot member 저장 기반. D-02 실행 provenance와 Runtime 활성화는 후속 범위 |
-| RAG Candidate Index | `rag_candidate_index_version`, `rag_candidate_index_member` | #168(RAG-07B) RAG-07A(#167) build 결과의 영속·멱등 build transaction. `status`는 항상 `BUILDING`이며 READY/RETIRED 전환은 #583 후속 범위 |
+| RAG Candidate Index | `rag_candidate_index_version`, `rag_candidate_index_member` | #168(RAG-07B) RAG-07A(#167) build 결과의 영속·멱등 build transaction. #583은 `BUILDING → READY/FAILED`와 기존 READY `RETIRED` 전이를 repository transaction으로 추가 |
 
 본인 단일 `SELF` profile과 `profile_id` 기반 소유권 전환은 #117 구현 PR에서 도입했습니다. 보호자·멀티 프로필·위임 권한은 후속 범위이며, 현재 구현은 사용자 1명당 `SELF` profile 1개만 허용합니다. 복약 일정·occurrence와 Check-in 저장·정정 경계는 아래 분할 구현 상태를 따르며, B4 공개 API와 Track C 상세 구현은 아직 목표 계약이다.
 
@@ -96,6 +97,24 @@ access token과 refresh token에는 발급 시점의 `token_version`을 포함�
 
 재설정 완료 시 같은 transaction에서 비밀번호 변경, 해당 사용자의 미사용·미만료 `password_reset_token` 전체 소비, `token_version + 1`을 함께 처리합니다. 만료된 행을 지우는 별도 정리 배치는 두지 않고(`idempotency_record`와 동일하게 lazy cleanup), 조회 시 `expires_at` 조건으로만 거릅니다.
 
+`account_deletion_request` 테이블은 회원탈퇴 요청 이후 개인정보·건강정보 삭제·보존 처리의 감사 기준입니다(`docs/contracts/proposed/account-lifecycle-v1.md` 5절). 로그인 가능 여부는 `user.account_status`가 판단하고, 이 테이블은 삭제·보존 처리의 대기·진행·완료·실패 상태와 재처리 근거만 관리합니다. 이번 PR은 이 테이블의 migration/model만 추가하며, 탈퇴 요청 접수 API와 삭제·보존 처리 로직은 후속 PR 범위입니다.
+
+| 컬럼 | 타입 | Nullable | 설명 |
+| --- | --- | ---: | --- |
+| `id` | `CHAR(36)` | No | Account Deletion Request PK |
+| `user_id` | `CHAR(36)` | No | `user.id` FK |
+| `status` | `VARCHAR(20)` | No | `PENDING`\|`IN_PROGRESS`\|`COMPLETED`\|`FAILED` |
+| `requested_at` | timezone datetime | No | 탈퇴 요청 transaction이 커밋된 시각 |
+| `started_at` | timezone datetime | Yes | 삭제·보존 처리 시작 시각 |
+| `completed_at` | timezone datetime | Yes | 삭제·보존 처리 완료 시각 |
+| `failed_at` | timezone datetime | Yes | 마지막 실패 시각 |
+| `retry_count` | `INTEGER` | No | 내부 재시도 횟수. 기본값 `0` |
+| `last_error_code` | `VARCHAR(100)` | Yes | 운영 확인용 내부 실패 사유. 원문 예외 메시지나 개인정보는 저장하지 않음 |
+| `created_at` | timezone datetime | No | row 생성 시각 |
+| `updated_at` | timezone datetime | No | 마지막 갱신 시각 |
+
+한 사용자에게 terminal 전 상태(`PENDING`/`IN_PROGRESS`/`FAILED`)의 활성 요청이 동시에 여러 개 생기지 않도록 `user_id` 기준 partial unique index(`status IN ('PENDING', 'IN_PROGRESS', 'FAILED')`)를 둡니다. `COMPLETED`는 이 제약 대상이 아니라 과거 이력으로 여러 개 남을 수 있습니다.
+
 `email_verification_token` 테이블은 회원가입 전 이메일 소유 확인용 1회성 token을 관리합니다. 별도 공개 이메일 중복 확인 API를 만들지 않으며, 최종 중복 방어는 기존 `POST /api/v1/auth/signup`의 `409 CONFLICT`가 담당합니다.
 
 | 컬럼 | 타입 | Nullable | 설명 |
@@ -134,7 +153,7 @@ DB 제약:
 - `policy_version`은 빈 문자열 금지
 - `GRANTED`는 `granted_at` 필수 및 `withdrawn_at=NULL`, `WITHDRAWN`은 `withdrawn_at` 필수
 
-row가 없으면 미동의로 판정한다. 이 테이블은 최신 상태만 저장하며 과거 동의 이력을 append-only audit으로 남길지는 후속 Decision 또는 계약 갱신 범위다. 사용자 동의 상태 API는 #510에서 이 최신 row를 조회·변경한다. OCR 목적은 #505에서 `GET/POST/DELETE /api/v1/users/me/consents/OCR`, Backend 접수 전·문서 잠금 후 검사, Worker의 CLOVA 전·LLM 전·결과 저장 전 재검사와 `CONSENT_REQUIRED`/OCR `CONSENT_WITHDRAWN` 차단 저장에 연결했다. GUIDE 목적은 동기 Guide 생성 요청에서 처방 소유권 확인 후 Provider 호출·Guide row 생성 전 `purpose=GUIDE` 최신 동의 row로 검사한다. `OCR_CONSENT_POLICY_VERSION`이 비어 있으면 fail-closed이며, 최종 안내 문구·policy version과 실제 사용자 대상 LLM 전송은 승인되지 않았다. CHAT/NOTIFICATION 목적의 실행 Gate는 후속 범위다.
+row가 없으면 미동의로 판정한다. 이 테이블은 최신 상태만 저장하며 과거 동의 이력을 append-only audit으로 남길지는 후속 Decision 또는 계약 갱신 범위다. 사용자 동의 상태 API는 #510에서 이 최신 row를 조회·변경한다. OCR 목적은 #505에서 `GET/POST/DELETE /api/v1/users/me/consents/OCR`, Backend 접수 전·문서 잠금 후 검사, Worker의 CLOVA 전·LLM 전·결과 저장 전 재검사와 `CONSENT_REQUIRED`/OCR `CONSENT_WITHDRAWN` 차단 저장에 연결했다. GUIDE/CHAT 목적은 동기 Guide 생성 요청과 Chat 메시지 생성 요청에서 소유권 확인 후 Provider 호출·Guide/Message row 생성 전 각각 `purpose=GUIDE`/`purpose=CHAT` 최신 동의 row로 검사한다. `OCR_CONSENT_POLICY_VERSION`이 비어 있으면 fail-closed이며, 최종 안내 문구·policy version과 실제 사용자 대상 LLM 전송은 승인되지 않았다. NOTIFICATION 목적의 실행 Gate는 후속 범위다.
 
 ## PROFILE SELF 소유권
 
@@ -355,21 +374,29 @@ build 결과를 저장하는 경계를 추가한다. RAG-07A 자체는 DB에 아
 RAG-09(Candidate Search)가 그 결과를 조회하려면 이 영속 계층이 필요하다.
 
 - `rag_candidate_index_version`: `index_code`+`index_version` unique, `content_hash` unique(멱등성
-  키), `catalog_set_id`로 `rag_catalog_set.id`를 FK RESTRICT 참조, `status`는 이 build transaction
-  안에서 항상 `BUILDING`으로 강제된다. `(index_code) WHERE status = 'BUILDING'` partial unique
-  index로 같은 index에 대한 동시 build를 DB 레벨에서 막는다. `build_mode = 'LEXICAL_ONLY'`와
-  embedding 관련 컬럼 전부 NULL, `HYBRID`와 전부 NOT NULL을 CHECK 제약으로 강제한다.
+  키), `catalog_set_id`로 `rag_catalog_set.id`를 FK RESTRICT 참조. #168 build transaction은 새 row를
+  `BUILDING`으로 만들고, #583 lifecycle transaction은 완성된 `BUILDING`만 `READY` 또는 `FAILED`로
+  닫는다. `(index_code) WHERE status = 'BUILDING'` partial unique index로 같은 index에 대한 동시
+  build를 막고, `(index_code) WHERE status = 'READY'` partial unique index로 RAG-08/RAG-09 read path의
+  active READY를 code당 최대 1개로 제한한다. `build_mode = 'LEXICAL_ONLY'`와 embedding 관련 컬럼 전부
+  NULL, `HYBRID`와 전부 NOT NULL을 CHECK 제약으로 강제한다.
 - `rag_candidate_index_member`: `candidate_index_version_id` FK RESTRICT, `(candidate_index_version_id,
   member_key)` unique. `product_source_snapshot_id`/`entry_source_snapshot_id`/
   `alias_source_snapshot_id`(nullable) 각각 `rag_source_snapshot.id` FK RESTRICT. `embedding`은
-  `rag_knowledge_index_member`와 동일하게 pgvector `vector` 타입 nullable.
+  `rag_knowledge_index_member`와 동일하게 pgvector `vector` 타입 nullable. #583은 READY 승격 전
+  persisted row 자체를 재검증하기 위해 `lexical_storage_hash`와 `embedding_storage_hash`를 nullable
+  receipt로 추가한다. 새 build는 두 receipt를 기록하고, pre-583 legacy row처럼 receipt가 없거나
+  row 필드와 맞지 않으면 READY 승격에서 fail-closed된다. RAG-07A HYBRID `member_content_hash`의
+  기존 provider vector tuple 의미는 바꾸지 않는다.
 
 `backend/app/repositories/rag_candidate_index_repository.py`는 `ai_worker`를 import하지 않는
 read port다 — RAG-08/RAG-09는 이 파일만으로 조회할 수 있다. 저장(build)은
 `backend/app/services/rag_candidate_index_build.py`가 유일하게 `ai_worker`를 import하는 지점에서
-수행하며, 전달된 member 행으로부터 `member_set_hash`를 재계산해 claim된 값과 대조함으로써 위조를
-막는다. `READY`/`RETIRED` 전환과 환경 pointer 연결은 #583 후속 범위이며, partial/failed
-build는 어떤 row도 남기지 않는다.
+수행하며, 전달된 member 행으로부터 각 `member_content_hash`, `member_set_hash`, count를 재계산해
+claim된 값과 대조함으로써 위조를 막는다. #583 lifecycle은 같은 transaction 안에서 기존 READY를
+`RETIRED`로 보존한 뒤 새 READY를 승격하고, member row 수와 count/hash 정합성이 맞는
+완성된 build만 READY가 되도록 확인한다. 환경 pointer/Runtime Bundle FK 연결과 최종 release gate는
+RAG-17(#181) 후속 범위다.
 
 구현 테이블:
 
@@ -707,10 +734,10 @@ Approved Contract Freeze v4와 Authority Manifest `post-mvp-rag-evaluation-contr
 | 복약 기록 | `medication_schedule`, `medication_occurrence`, `medication_checkin`, audit | Check-in 3결과, occurrence별 단일 현재 결과, 정정 이력 보존 |
 | Barrier·Support | `safety_assessment`, `barrier_response`, `support_action_plan`, follow-up | Safety 우선, 거절과 미제출 구분, revision별 무효화 |
 | 공식 Source·Catalog | `rag_source`, source approval·ingestion·normalization·snapshot·verification 계열, medication product·ingredient·component·alias | #164 최소 DB 기반은 반영 완료. source_version 상한·external_version은 #362 확정 후 별도 migration이며, Citation FK 때문에 `rag_source_snapshot.source_version`과 `rag_citation.source_version`을 같은 migration에서 함께 정렬합니다. 실제 수집·적재·Runtime 활성화·검색 연결은 후속 |
-| Candidate·Identification | candidate index·search·result, append-only medication identification | candidate index 자체의 영속·build transaction은 #168로 반영 완료(`rag_candidate_index_version`/`member`, 위 RAG Candidate Index 절 참고). search·result·identification은 confirmed `medication_name + nullable strength_text`만 입력, 내부 Top-K와 외부 최대 1개 분리, 사용자 확인·거절·소유권·멱등성·현재성 |
+| Candidate·Identification | candidate index·search·result, append-only medication identification | candidate index 자체의 영속·build transaction은 #168로, READY lifecycle은 #583으로 반영(`rag_candidate_index_version`/`member`, 위 RAG Candidate Index 절 참고). search·result·identification은 confirmed `medication_name + nullable strength_text`만 입력, 내부 Top-K와 외부 최대 1개 분리, 사용자 확인·거절·소유권·멱등성·현재성 |
 | Rule·Evidence | `rag_evidence_knowledge`, `rag_evidence`, `rag_evidence_rule`, `rag_evidence_guideline`, rule set 계열 | Evidence/Citation 최소 DB 기반은 PR #369에서 추가. 처방약–OTC Rule-first 실행, ranking, resolver, 품질 평가와 Runtime 활성화는 후속 |
 | RAG 실행·안전 결과 | retrieval run·signal·hit, result·claim·citation·safety 계열, `rag_citation` | `rag_citation`은 Evidence와 동일 Source Snapshot 및 `source_version`에 묶인 claim-Evidence 비공개 저장 기반만 제공합니다. 이번 최소 DB 기반의 Evidence 상태는 `DRAFT`/`APPROVED`를 명시 입력으로만 사용하고, Citation 공개 상태는 `NOT_PUBLIC`만 사용합니다. STALE·retire·revoke lifecycle과 공개 Guard 연결은 #178/#180/#181 후속 전환 설계에서 추가합니다. 실제 Retrieval, Provider 호출, 답변 생성, Safety/Fallback 문구 생성, 화면 표시는 후속 |
-| Runtime 배포 | `rag_runtime_execution_manifest`, `rag_runtime_release_bundle`, `rag_runtime_bundle_source`, `rag_runtime_environment`, `rag_runtime_environment_transition`, `rag_release_evaluation_approval` 최소 DB 기반 반영 완료 | Source Snapshot과 Evaluation Run은 FK로 결속합니다. Candidate Index는 #168로 `rag_candidate_index_version`/`member`에 영속되지만, `rag_runtime_release_bundle`은 여전히 `candidate_index_ref`/`version`/`manifest_hash` 문자열로만 결속합니다 — FK 연결은 RAG-17(#181) 후속 범위입니다. Evaluation PASS는 release approval 입력일 뿐 자동 Runtime 활성화가 아니며, 실제 activation·rollback·Production 공개는 후속 범위입니다. |
+| Runtime 배포 | `rag_runtime_execution_manifest`, `rag_runtime_release_bundle`, `rag_runtime_bundle_source`, `rag_runtime_environment`, `rag_runtime_environment_transition`, `rag_release_evaluation_approval` 최소 DB 기반 반영 완료 | Source Snapshot과 Evaluation Run은 FK로 결속합니다. Candidate Index는 #168로 `rag_candidate_index_version`/`member`에 영속되고 #583으로 READY lifecycle을 갖지만, `rag_runtime_release_bundle`은 여전히 `candidate_index_ref`/`version`/`manifest_hash` 문자열로만 결속합니다 — Runtime Bundle FK 연결은 RAG-17(#181) 후속 범위입니다. Evaluation PASS는 release approval 입력일 뿐 자동 Runtime 활성화가 아니며, 실제 activation·rollback·Production 공개는 후속 범위입니다. |
 | RAG 실행 Context | `ai_job_intake_context`, `ai_job_execution_context`, `ai_job_execution_identification` 저장 기반 반영 완료 | Chat Intake Context와 Guide/Chat Full Execution Context가 고정한 Prescription Version·Runtime Bundle·Execution Manifest·Guard ref·Identification member를 보존합니다. Guard 물리 테이블 전까지 `runtime_guard_decision_ref`를 사용하며, Guide/Chat 202 접수 transaction, Worker 실행, currentness 재검증, `STALE` 종결과 공개 DTO 연결은 후속 범위입니다. |
 | Evaluation | `eval_dataset`, `eval_case`, `eval_experiment`, `eval_variant`, `eval_run`, `eval_case_result`, `eval_metric`, `eval_failure` 최소 DB 기반 반영 완료 | `HOLDOUT`·`SAFETY_REGRESSION`·`END_TO_END_RAG`, 분모·신뢰구간과 재현 version 저장. `eval_run`은 `dataset_id + dataset_manifest_hash`가 실제 Dataset manifest와 일치해야 하고, `eval_case_result`는 Run·Case의 `dataset_id + experiment_type` 혼용을 DB에서 차단합니다. 미실행은 `execution_status=NOT_EVALUATED`, `decision_status=null`; 실행 완료(`COMPLETED`)는 `decision_status`를 반드시 기록하며 분모·표본·독립 Group 부족일 때만 `INCONCLUSIVE`입니다. Runner·Release approval·Runtime 활성화 연결은 후속 |
 
@@ -821,3 +848,9 @@ PD-192-2는 6개 최소 안내형 Support의 내부 Rule·한국어 Copy 불변 
 서버가 승인된 rule/copy/config snapshot과 SYNC_MUTATION 응답을 같은 transaction에 저장한다.
 필수 사용자 확인과 생성 현재성은 [#194 API 계약](contracts/proposed/track-c-support-plan-api-194.md)을 따른다.
 완료·취소·follow-up API는 후속이며 기존 #193/#195 취소 writer는 변경하지 않는다.
+
+### Track C Plan 종료 (#617 / PR #618 구현)
+
+기존 support_action_plan.status 및 completed_at/cancelled_at을 사용하며 schema/migration 추가는 없다.
+ACTIVE에서 단일 종료만 허용해 Check-in→Safety→Barrier→Plan 잠금과 ACTIVE 검사로 충돌을 검출한다.
+기존 무효화는 ACTIVE만 취소하고 COMPLETED 이력은 보존한다. [Current 계약·PR 반영 상태](contracts/current/track-c-plan-lifecycle-617.md).

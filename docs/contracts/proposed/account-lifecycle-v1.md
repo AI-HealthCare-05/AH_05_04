@@ -6,7 +6,7 @@
 **관련 트랙**: Account/Auth
 **근거 Decision**: [Product Decision `PD-206-20260902`](../../governance/decisions/2026-09-02-account-lifecycle-contract.md) — 결정 배경·대안 검토·거부된 설계(jti 폐기 목록, 타임스탬프 비교)의 근거는 이 Decision 문서를 참고한다.
 
-로그아웃, `token_version` 기반 access/refresh token 재검증, refresh token rotation, 비밀번호 재설정은 현재 구현 계약인 [회원가입·사용자 정보 계약](../current/user-account.md)에 반영되어 있다. 이 문서는 아직 구현되지 않은 회원탈퇴의 후속 transaction 경계만 관리한다.
+로그아웃, `token_version` 기반 access/refresh token 재검증, refresh token rotation, 비밀번호 재설정은 현재 구현 계약인 [회원가입·사용자 정보 계약](../current/user-account.md)에 반영되어 있다. 이 문서는 회원탈퇴의 후속 transaction 경계를 관리한다. `account_deletion_request` 저장 기반(5절)은 구현됐고, 탈퇴 요청 접수 API(4절)와 삭제·보존 처리는 아직 구현되지 않았다.
 
 이 문서의 `P0`는 구현 릴리즈 순서가 아니라 구현 전에 먼저 고정해야 하는 계약 확정 우선순위를 뜻한다. 요구사항정의서 기준으로 비밀번호 재설정은 Post-MVP-1, 회원탈퇴는 Post-MVP-2 범위이며, 실제 API·DB 구현이 완료되기 전에는 current 계약으로 승격하지 않는다.
 
@@ -100,6 +100,8 @@
 ## 5) account_deletion_request 테이블
 
 `account_deletion_request`는 회원탈퇴 요청 이후 개인정보·건강정보 삭제·보존 처리의 감사 기준 테이블이다. 사용자 로그인 가능 여부는 `user.account_status`가 판단하고, 삭제·보존 처리의 대기·진행·완료·실패 상태와 재처리 근거는 이 테이블이 관리한다.
+
+migration/model 구현 완료(`backend/alembic/versions/206b2c3d4e5f_create_account_deletion_request.py`, `backend/app/models/account_deletion_request.py`) — 아래 5.1~5.4절 기준을 반영했다. 탈퇴 요청 접수 API(4절)와 삭제·보존 처리(6절 PM/Privacy 정책 확정 이후)는 후속 PR 범위다.
 
 ### 5.1 최소 컬럼
 

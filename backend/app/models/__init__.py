@@ -1,3 +1,4 @@
+from app.models.account_deletion_request import AccountDeletionRequest, AccountDeletionRequestStatus
 from app.models.async_jobs import (
     AiJob,
     AiJobAttempt,
@@ -189,6 +190,8 @@ __all__ = [
     "NotificationRecord",
     "NotificationStatus",
     "AccountStatus",
+    "AccountDeletionRequest",
+    "AccountDeletionRequestStatus",
     "AiJob",
     "AiJobAttempt",
     "AiJobAttemptStatus",
