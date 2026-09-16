@@ -29,6 +29,7 @@ Issue #180 Runtime Orchestration 구현에 앞서, #174 REQUEST Guard의 Source/
    - PD-315/PD-362는 Endpoint Member의 `operation_code`를 nullable로 허용하지만 현재 Citation validator와 Citation Authorization은 non-null 값을 요구한다.
    - `BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT`는 이 차이를 기록하는 **비강제 marker**이며, 공유 계약과 downstream validator가 정렬되기 전에는 nullable Endpoint Member handoff를 #180 runtime에 연결할 수 없다.
    - 실제 차단은 후속 orchestration typed precondition과 integration test로 구현해야 한다.
+   - **해소 경위**: `BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT`는 `PD-180-EM-20260916`과 `source-member-identity-v1` 공유 커널로 **해소되었다**. 비강제 marker는 제거하고 typed 검증으로 대체했다. 단, PD-315 승인 전까지 #180 runtime 연결은 여전히 차단 상태다.
 4. **비식별 및 민감 텍스트 보호 경계 (SensitiveText Boundary)**:
    - 검색된 증거 원문(Content A)은 인메모리 `SensitiveText`로만 전달되며, 영구 저장소·로그·`repr`·해시 preimage에 절대 원문 그대로 노출되어서는 안 된다 (`<redacted>` 보호).
    - 해시 프로젝션에는 `content_sha256` 다이제스트만 포함한다.

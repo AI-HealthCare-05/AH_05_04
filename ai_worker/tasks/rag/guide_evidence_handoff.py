@@ -24,11 +24,11 @@ Scope & Authority Boundaries:
   this dependency but does not enforce it. A later #180 orchestration boundary
   must implement a typed precondition and integration test after the #178 owner
   fixes the hash contract.
-- Downstream #180 endpoint-member blocker marker:
-  PD-315/PD-362 allow nullable endpoint operation_code, while the current
-  Citation validators reject it. BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT is a
-  non-enforcing marker; runtime integration remains blocked until the shared
-  contract and downstream validators are aligned.
+- Downstream #180 endpoint-member contract resolution:
+  The former non-enforcing BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT marker was resolved
+  via PD-180-EM-20260916 and the shared source_member_identity kernel.
+  Validation is delegated to is_valid_source_member_identity. Note that runtime integration
+  remains blocked until PD-315 approval and #174 authenticated assembler implementation.
 """
 
 from __future__ import annotations
@@ -41,7 +41,6 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID
 
-from ai_worker.tasks.rag.claim_citation_validator import SourceMemberKind
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, QueryFingerprint, SensitiveText
 from ai_worker.tasks.rag.evidence_search import (
     ProductionEvidenceProvenance,
@@ -54,12 +53,16 @@ from ai_worker.tasks.rag.retrieval_runtime import (
     compute_production_search_receipt,
     compute_selection_manifest_hash,
 )
+from ai_worker.tasks.rag.source_member_identity import (
+    SourceMemberIdentity,
+    SourceMemberKind,
+    is_valid_source_member_identity,
+)
 
 GUIDE_EVIDENCE_HANDOFF_PROJECTION_VERSION = "guide-evidence-handoff-v1"
 # Non-enforcing dependency markers. Future orchestration must enforce these as
 # typed preconditions with integration tests.
 BLOCKED_BY_178_CANONICAL_HASH_CONTRACT = "BLOCKED_BY_178_CANONICAL_HASH_CONTRACT"
-BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT = "BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT"
 
 
 _MIN_SAFE_INTEGER = -(2**53) + 1
@@ -542,23 +545,14 @@ def _check_receipt_and_manifest(request: GuideEvidenceHandoffRequest) -> list[Gu
 
 
 def _check_member_identity_for_kind(b: RequestSourceMemberBinding) -> list[GuideEvidenceHandoffReason]:
-    if b.member_kind == SourceMemberKind.ENDPOINT_OPERATION:
-        if (
-            not _is_nonblank_nfc(b.endpoint_code)
-            or (b.operation_code is not None and not _is_nonblank_nfc(b.operation_code))
-            or b.artifact_code is not None
-            or b.artifact_version is not None
-        ):
-            return [GuideEvidenceHandoffReason.MEMBER_IDENTITY_INVALID]
-    elif b.member_kind == SourceMemberKind.ARTIFACT_MEMBER:
-        if (
-            not _is_nonblank_nfc(b.artifact_code)
-            or not _is_nonblank_nfc(b.artifact_version)
-            or b.endpoint_code is not None
-            or b.operation_code is not None
-        ):
-            return [GuideEvidenceHandoffReason.MEMBER_IDENTITY_INVALID]
-    else:
+    identity = SourceMemberIdentity(
+        member_kind=b.member_kind,
+        endpoint_code=b.endpoint_code,
+        operation_code=b.operation_code,
+        artifact_code=b.artifact_code,
+        artifact_version=b.artifact_version,
+    )
+    if not is_valid_source_member_identity(identity):
         return [GuideEvidenceHandoffReason.MEMBER_IDENTITY_INVALID]
     return []
 

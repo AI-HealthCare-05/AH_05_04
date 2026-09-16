@@ -249,3 +249,44 @@ def test_receipt_verifier_rejects_a_request_with_a_mutated_self_hash() -> None:
 
     assert outcome.decision is AuthorizationVerificationDecision.REJECTED
     assert outcome.reasons == (AuthorizationReason.AUTHORIZATION_REQUEST_INVALID,)
+
+
+def test_accepts_endpoint_operation_with_nullable_operation_code() -> None:
+    from ai_worker.tasks.rag.claim_citation_validator import (
+        KnowledgeChunkEvidenceRef,
+        SourceExecutionProvenance,
+        SourceMemberKind,
+    )
+
+    binding = SourceExecutionProvenance(
+        source_code="knowledge-source",
+        source_version="2026-09-01",
+        member_kind=SourceMemberKind.ENDPOINT_OPERATION,
+        endpoint_code="endpoint-001",
+        operation_code=None,
+        artifact_code=None,
+        artifact_version=None,
+        request_source_decision_ref=_artifact("knowledge-source-decision", _B),
+        request_member_decision_ref=_artifact("knowledge-source-member-decision", _C),
+    )
+    evidence = KnowledgeChunkEvidenceRef(
+        knowledge_chunk_ref="knowledge-chunk-001",
+        source_snapshot_ref=_artifact("knowledge-snapshot"),
+        source_version="2026-09-01",
+        locator="section-1",
+        content_sha256=_A,
+        execution_provenance=binding,
+    )
+    candidate_set = _candidate_set(evidence=evidence)
+    receipt = _support_receipt(candidate_set)
+    val_outcome = validate_claim_citations(candidate_set, (receipt,))
+    assert val_outcome.validated_selection is not None
+
+    runtime = _runtime_binding()
+    origin = _origin_guard(runtime)
+    outcome = build_citation_authorization_request(val_outcome.validated_selection, runtime, origin)
+
+    assert outcome.decision is AuthorizationBuildDecision.BUILT
+    assert outcome.reasons == ()
+    assert outcome.request is not None
+    assert outcome.request.selection_manifest[0].operation_code is None

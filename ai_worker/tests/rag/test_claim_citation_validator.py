@@ -390,3 +390,34 @@ def test_canonical_projection_hashes_match_the_reviewed_v2_fixture() -> None:
     assert outcome.validated_selection.selection_sha256 == (
         "e5e54a8146f4e6a2771e9d35730351475361773a2b2df4832b6c8a60dc354b9f"
     )
+
+
+def test_validates_endpoint_operation_with_nullable_operation_code() -> None:
+    binding = SourceExecutionProvenance(
+        source_code="knowledge-source",
+        source_version="2026-09-01",
+        member_kind=SourceMemberKind.ENDPOINT_OPERATION,
+        endpoint_code="endpoint-001",
+        operation_code=None,
+        artifact_code=None,
+        artifact_version=None,
+        request_source_decision_ref=_artifact("knowledge-source-decision", _B),
+        request_member_decision_ref=_artifact("knowledge-source-member-decision", _C),
+    )
+    evidence = KnowledgeChunkEvidenceRef(
+        knowledge_chunk_ref="knowledge-chunk-001",
+        source_snapshot_ref=_artifact("knowledge-snapshot"),
+        source_version="2026-09-01",
+        locator="section-1",
+        content_sha256=_A,
+        execution_provenance=binding,
+    )
+    candidate_set = _candidate_set(evidence=evidence)
+    receipt = _support_receipt(candidate_set)
+
+    outcome = validate_claim_citations(candidate_set, (receipt,))
+
+    assert outcome.decision is CandidateValidationDecision.VALIDATED
+    assert outcome.reasons == ()
+    assert outcome.validated_selection is not None
+    assert outcome.validated_selection.selection_sha256 is not None
