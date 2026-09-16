@@ -720,3 +720,31 @@
     grid-column: 1;
   }
 }
+
+.schedule-page__cancelled-history {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #dce3ec;
+  border-radius: 16px;
+  color: #4d576b;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.schedule-page__cancelled-history summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.schedule-page__cancelled-history ul {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.schedule-page__cancelled-history li {
+  display: grid;
+  gap: 4px;
+}
