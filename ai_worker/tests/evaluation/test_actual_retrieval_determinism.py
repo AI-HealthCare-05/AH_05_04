@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from decimal import Decimal
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -219,3 +220,216 @@ async def test_determinism_verifier_fails_closed_on_semantic_mismatch() -> None:
 
     with pytest.raises(AssertionError):
         assert result.retrieved_evidence_ids == tampered_evidence
+
+
+# ---------------------------------------------------------------------------
+# Run Bundle level determinism comparator (#273 actual DEV evidence)
+# ---------------------------------------------------------------------------
+
+from dataclasses import replace as _dataclass_replace  # noqa: E402
+
+from ai_worker.tasks.evaluation.actual_retrieval_determinism import (  # noqa: E402
+    compare_actual_retrieval_runs,
+    latency_observation,
+)
+from ai_worker.tasks.evaluation.comparison import load_published_run_bundle  # noqa: E402
+from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError  # noqa: E402
+from ai_worker.tasks.evaluation.manifest import (  # noqa: E402
+    ArtifactDraft,
+    build_artifact_draft,
+    finalize_artifacts,
+)
+from ai_worker.tests.evaluation.test_result_manifest import (  # noqa: E402
+    RUN_ID_A,
+    RUN_ID_B,
+    TIME_A,
+    TIME_B,
+    retrieval_run_material,
+)
+
+
+def _bundle_draft(variant: str = "RET-L", *, run_id: str = RUN_ID_A, started_at: str = TIME_A) -> ArtifactDraft:
+    return build_artifact_draft(retrieval_run_material(variant, run_id=run_id, started_at=started_at))
+
+
+def _publish_bundle(root: Path, draft: ArtifactDraft, *, completed_at: str = TIME_B):
+    artifacts = finalize_artifacts(draft, b"safe retrieval report\n", completed_at=completed_at)
+    run_root = root / draft.report_data.run_id
+    run_root.mkdir()
+    for name, payload in artifacts.files.items():
+        (run_root / name).write_bytes(payload)
+    return load_published_run_bundle(root, draft.report_data.run_id)
+
+
+def _pair(root: Path, *, second: ArtifactDraft | None = None, started_at: str = TIME_A, completed_at: str = TIME_B):
+    first = _publish_bundle(root, _bundle_draft(run_id=RUN_ID_A))
+    other = second if second is not None else _bundle_draft(run_id=RUN_ID_B, started_at=started_at)
+    return first, _publish_bundle(root, other, completed_at=completed_at)
+
+
+def _with_cases(draft: ArtifactDraft, cases: Sequence[object]) -> ArtifactDraft:
+    return _dataclass_replace(draft, cases=tuple(cases))
+
+
+def test_comparator_reports_equality_when_only_run_id_differs(tmp_path: Path) -> None:
+    first, second = _pair(tmp_path)
+
+    report = compare_actual_retrieval_runs(first, second)
+
+    assert report.run_ids == (RUN_ID_A, RUN_ID_B)
+    assert report.retrieval_semantic_equal is True
+    assert report.metric_equal is True
+    assert report.failure_equal is True
+    assert report.retrieval_semantic_hashes[0] == report.retrieval_semantic_hashes[1]
+    assert report.compared_case_count == len(first.cases)
+
+
+def test_comparator_ignores_started_and_completed_timestamps(tmp_path: Path) -> None:
+    first, second = _pair(
+        tmp_path, started_at="2026-02-02T00:00:00.000000Z", completed_at="2026-02-02T01:00:00.000000Z"
+    )
+
+    report = compare_actual_retrieval_runs(first, second)
+
+    assert first.run.started_at != second.run.started_at
+    assert report.retrieval_semantic_equal is True
+    assert report.metric_equal is True
+
+
+def test_comparator_ignores_latency_but_observes_it(tmp_path: Path) -> None:
+    second_draft = _bundle_draft(run_id=RUN_ID_B)
+    second_draft = _with_cases(
+        second_draft,
+        [case.model_copy(update={"latency_ms": (case.latency_ms or 0) + 137}) for case in second_draft.cases],
+    )
+    first, second = _pair(tmp_path, second=second_draft)
+
+    report = compare_actual_retrieval_runs(first, second)
+
+    assert report.retrieval_semantic_equal is True
+    assert report.metric_equal is True
+    assert report.latency_observations[0] != report.latency_observations[1]
+
+
+def test_comparator_detects_retrieved_evidence_order_change(tmp_path: Path) -> None:
+    second_draft = _bundle_draft(run_id=RUN_ID_B)
+    target = second_draft.cases[0]
+    reordered = tuple(reversed(target.retrieved_evidence_ids))
+    second_draft = _with_cases(
+        second_draft,
+        [target.model_copy(update={"retrieved_evidence_ids": reordered}), *second_draft.cases[1:]],
+    )
+    first, second = _pair(tmp_path, second=second_draft)
+
+    report = compare_actual_retrieval_runs(first, second)
+
+    assert report.retrieval_semantic_equal is False
+    assert target.case_id in report.mismatched_case_ids
+
+
+def test_comparator_detects_selected_evidence_change(tmp_path: Path) -> None:
+    second_draft = _bundle_draft(run_id=RUN_ID_B)
+    target = second_draft.cases[0]
+    second_draft = _with_cases(
+        second_draft,
+        [
+            target.model_copy(update={"selected_evidence_ids": target.selected_evidence_ids[:1]}),
+            *second_draft.cases[1:],
+        ],
+    )
+    first, second = _pair(tmp_path, second=second_draft)
+
+    report = compare_actual_retrieval_runs(first, second)
+
+    assert report.retrieval_semantic_equal is False
+    assert target.case_id in report.mismatched_case_ids
+
+
+def test_comparator_detects_failure_code_change(tmp_path: Path) -> None:
+    second_draft = _bundle_draft(run_id=RUN_ID_B)
+    target = second_draft.cases[0]
+    second_draft = _with_cases(
+        second_draft,
+        [
+            target.model_copy(update={"failure_codes": ("BLOCKED_BY_QUERY_EMBEDDING_CREDENTIAL",)}),
+            *second_draft.cases[1:],
+        ],
+    )
+    first, second = _pair(tmp_path, second=second_draft)
+
+    report = compare_actual_retrieval_runs(first, second)
+
+    assert report.retrieval_semantic_equal is False
+    assert target.case_id in report.mismatched_case_ids
+
+
+def _bumped(value: object) -> str:
+    return format(Decimal(str(value)) + Decimal("0.01"), "f")
+
+
+def test_comparator_detects_metric_value_change(tmp_path: Path) -> None:
+    first, second = _pair(tmp_path)
+    target = next(metric for metric in second.metrics.metrics if metric.metric_value is not None)
+    mutated = tuple(
+        metric.model_copy(update={"metric_value": _bumped(metric.metric_value)}) if metric is target else metric
+        for metric in second.metrics.metrics
+    )
+    changed = _dataclass_replace(second, metrics=second.metrics.model_copy(update={"metrics": mutated}))
+
+    report = compare_actual_retrieval_runs(first, changed)
+
+    assert report.retrieval_semantic_equal is True
+    assert report.metric_equal is False
+    assert report.mismatched_metric_keys
+
+
+def test_comparator_refuses_when_dataset_manifest_sha_differs(tmp_path: Path) -> None:
+    first, second = _pair(tmp_path)
+    tampered = _dataclass_replace(
+        second,
+        run=second.run.model_copy(update={"dataset_manifest_sha256": "f" * 64}),
+    )
+
+    with pytest.raises(EvaluationValidationError) as error:
+        compare_actual_retrieval_runs(first, tampered)
+    assert error.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+def test_comparator_refuses_when_resolved_evaluation_config_hash_differs(tmp_path: Path) -> None:
+    first, second = _pair(tmp_path)
+    tampered = _dataclass_replace(
+        second,
+        run=second.run.model_copy(update={"resolved_evaluation_config_hash": "b" * 64}),
+    )
+
+    with pytest.raises(EvaluationValidationError):
+        compare_actual_retrieval_runs(first, tampered)
+
+
+def test_comparator_refuses_when_variant_differs(tmp_path: Path) -> None:
+    first, second = _pair(tmp_path)
+    tampered = _dataclass_replace(second, run=second.run.model_copy(update={"variant_id": "RET-D"}))
+
+    with pytest.raises(EvaluationValidationError):
+        compare_actual_retrieval_runs(first, tampered)
+
+
+def test_comparator_refuses_when_knowledge_index_ref_differs(tmp_path: Path) -> None:
+    first, second = _pair(tmp_path)
+    ref = {"id": "rag-natural-language-retrieval-dev-synthetic-index", "version": "1.0.0", "hash": "1" * 64}
+
+    with pytest.raises(EvaluationValidationError):
+        compare_actual_retrieval_runs(first, second, knowledge_index_refs=(ref, {**ref, "hash": "2" * 64}))
+
+
+def test_comparator_refuses_when_case_sets_differ(tmp_path: Path) -> None:
+    first, second = _pair(tmp_path)
+    truncated = _dataclass_replace(second, cases=second.cases[:-1])
+
+    with pytest.raises(EvaluationValidationError):
+        compare_actual_retrieval_runs(first, truncated)
+
+
+def test_latency_observation_handles_missing_and_present_samples() -> None:
+    empty = latency_observation(())
+    assert empty.count == 0 and empty.median is None
