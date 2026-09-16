@@ -3,7 +3,7 @@ import contextlib
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
@@ -14,10 +14,12 @@ from app.core.utils.security import (
     hash_password_reset_token,
 )
 from app.dtos.auth import LoginRequest
+from app.models.account_deletion_request import AccountDeletionRequest, AccountDeletionRequestStatus
 from app.models.password_reset import PasswordResetToken
 from app.models.profiles import Profile
 from app.models.refresh_session import RefreshSession
-from app.models.users import User
+from app.models.users import AccountStatus, User
+from app.repositories.account_deletion_request_repository import AccountDeletionRequestRepository
 from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.user_repository import UserRepository
@@ -48,6 +50,7 @@ async def _delete_user(user_id: UUID) -> None:
     session = AsyncSession(bind=test_engine, expire_on_commit=False)
     try:
         await session.execute(delete(Profile).where(Profile.user_id == user_id))
+        await session.execute(delete(AccountDeletionRequest).where(AccountDeletionRequest.user_id == user_id))
         await session.execute(delete(PasswordResetToken).where(PasswordResetToken.user_id == user_id))
         await session.execute(delete(RefreshSession).where(RefreshSession.user_id == user_id))
         await session.execute(delete(User).where(User.id == user_id))
@@ -79,6 +82,68 @@ async def _is_blocked_on_query_matching(query_substring: str) -> bool:
         return bool(result.scalar_one())
     finally:
         await session.close()
+
+
+async def test_account_withdrawal_concurrent_requests_create_single_pending_request(monkeypatch) -> None:
+    user = await _create_committed_user(email=f"withdrawal-race-{uuid4().hex[:10]}@example.com")
+    barrier = asyncio.Barrier(2)
+    original_authenticate = AuthService.authenticate
+
+    async def synchronized_authenticate(self, data):
+        authenticated_user = await original_authenticate(self, data)
+        await asyncio.wait_for(barrier.wait(), timeout=10)
+        return authenticated_user
+
+    monkeypatch.setattr(AuthService, "authenticate", synchronized_authenticate)
+
+    async def request_withdrawal() -> str:
+        session = AsyncSession(bind=test_engine, expire_on_commit=False)
+        try:
+            service = AuthService(
+                UserRepository(session),
+                PasswordResetRepository(session),
+                RefreshSessionRepository(session),
+                account_deletion_request_repository=AccountDeletionRequestRepository(session),
+            )
+            await service.request_account_withdrawal(user=user, password=_TEST_PASSWORD, confirmed=True)
+            await session.commit()
+            return "accepted"
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(request_withdrawal(), request_withdrawal()),
+            timeout=15,
+        )
+
+        verification_session = AsyncSession(bind=test_engine, expire_on_commit=False)
+        try:
+            stored_user = await verification_session.get(User, user.id)
+            assert stored_user is not None
+            deletion_request_count = await verification_session.scalar(
+                select(func.count())
+                .select_from(AccountDeletionRequest)
+                .where(AccountDeletionRequest.user_id == user.id)
+            )
+            deletion_request = await verification_session.scalar(
+                select(AccountDeletionRequest).where(AccountDeletionRequest.user_id == user.id)
+            )
+        finally:
+            await verification_session.close()
+    finally:
+        await _delete_user(user.id)
+
+    assert results == ["accepted", "accepted"]
+    assert stored_user.account_status == AccountStatus.WITHDRAWAL_REQUESTED
+    assert stored_user.is_active is False
+    assert stored_user.token_version == 1
+    assert deletion_request_count == 1
+    assert deletion_request is not None
+    assert deletion_request.status == AccountDeletionRequestStatus.PENDING
 
 
 async def test_login_waits_for_concurrent_logout_and_issues_latest_token_version() -> None:

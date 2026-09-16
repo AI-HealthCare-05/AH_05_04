@@ -6,9 +6,9 @@
 **관련 트랙**: Account/Auth
 **근거 Decision**: [Product Decision `PD-206-20260902`](../../governance/decisions/2026-09-02-account-lifecycle-contract.md) — 결정 배경·대안 검토·거부된 설계(jti 폐기 목록, 타임스탬프 비교)의 근거는 이 Decision 문서를 참고한다.
 
-로그아웃, `token_version` 기반 access/refresh token 재검증, refresh token rotation, 비밀번호 재설정은 현재 구현 계약인 [회원가입·사용자 정보 계약](../current/user-account.md)에 반영되어 있다. 이 문서는 회원탈퇴의 후속 transaction 경계를 관리한다. `account_deletion_request` 저장 기반(5절)은 구현됐고, 탈퇴 요청 접수 API(4절)와 삭제·보존 처리는 아직 구현되지 않았다.
+로그아웃, `token_version` 기반 access/refresh token 재검증, refresh token rotation, 비밀번호 재설정, 회원탈퇴 요청 접수 API는 현재 구현 계약인 [회원가입·사용자 정보 계약](../current/user-account.md)에 반영되어 있다. 이 문서는 회원탈퇴의 후속 transaction 경계와 삭제·보존 처리 기준을 관리한다. `account_deletion_request` 저장 기반(5절)과 탈퇴 요청 접수 API(4절)는 구현됐고, 개인정보·건강정보 삭제·보존 처리는 아직 구현되지 않았다.
 
-이 문서의 `P0`는 구현 릴리즈 순서가 아니라 구현 전에 먼저 고정해야 하는 계약 확정 우선순위를 뜻한다. 요구사항정의서 기준으로 비밀번호 재설정은 Post-MVP-1, 회원탈퇴는 Post-MVP-2 범위이며, 실제 API·DB 구현이 완료되기 전에는 current 계약으로 승격하지 않는다.
+이 문서의 `P0`는 구현 릴리즈 순서가 아니라 구현 전에 먼저 고정해야 하는 계약 확정 우선순위를 뜻한다. 요구사항정의서 기준으로 비밀번호 재설정은 Post-MVP-1, 회원탈퇴는 Post-MVP-2 범위이며, 회원탈퇴 삭제·보존 처리까지 완료되기 전에는 전체 계약을 current로 승격하지 않는다.
 
 ## 1) 계정 상태
 
@@ -66,7 +66,7 @@
 
 탈퇴 대상은 `get_request_user()` 결과의 `user_id`로만 결정한다. 요청 body나 path parameter로 받은 `user_id`를 기준으로 다른 계정을 탈퇴 처리하지 않는다.
 
-재인증은 현재 access token이 유효한지만 확인하는 것이 아니라, `authenticate()`와 동일한 비밀번호 검증 경로로 현재 비밀번호를 다시 확인하는 것을 의미한다. 이 재인증 엔드포인트에는 로그인과 동일 수준의 rate limit/lockout을 적용한다. 정확한 횟수·기간·잠금 해제 기준은 구현 PR에서 Backend/Security 리뷰로 확정한다. 최종 확인 신호의 구체적인 필드명은 구현 PR의 OpenAPI에서 확정하되, 재인증과 최종 확인이 모두 성공하기 전에는 어떤 계정 상태도 변경하지 않는다.
+재인증은 현재 access token이 유효한지만 확인하는 것이 아니라, `authenticate()`와 동일한 비밀번호 검증 경로로 현재 비밀번호를 다시 확인하는 것을 의미한다. 이 재인증 엔드포인트에는 로그인과 동일 수준의 rate limit/lockout을 적용한다. 현재 로그인 경로에는 별도 rate limit/lockout이 없으므로 이번 구현도 동일하게 별도 제한을 추가하지 않으며, 정확한 횟수·기간·잠금 해제 기준은 Backend/Security 후속 이슈에서 고정한다. 최종 확인 신호는 구현 OpenAPI에서 `confirmed=true`로 확정하며, 재인증과 최종 확인이 모두 성공하기 전에는 어떤 계정 상태도 변경하지 않는다.
 
 탈퇴 요청 접수 transaction은 아래 순서로 처리한다.
 
@@ -83,9 +83,9 @@
 
 위 transaction은 조건부 원자적 전이(`WHERE account_status='ACTIVE'`)로 구현한다. 영향받은 user row가 0이면 이미 탈퇴 요청이 접수되었거나 탈퇴 완료된 계정으로 보고 새 `account_deletion_request`를 만들지 않으며, 사용자에게는 동일한 계정 이용 종료·탈퇴 요청 접수 완료 응답을 반환한다. 재인증 성공 후 아주 좁은 경쟁 구간에서 중복 요청이 들어와도 계정 상태와 삭제 요청 row가 중복 생성되면 안 된다.
 
-개인정보·건강정보 삭제·보존 처리는 사용자에게 별도 상태 조회 API를 제공하지 않고 Backend 내부 처리로 진행한다. 탈퇴 기능을 실제 사용자에게 제공하는 구현 PR은 `account_deletion_request.status=PENDING` row만 만들고 종료하지 않으며, PM/Privacy가 확정한 삭제·보존 정책에 맞춰 삭제·보존 처리와 최종 계정 상태 전이를 함께 포함한다.
+개인정보·건강정보 삭제·보존 처리는 사용자에게 별도 상태 조회 API를 제공하지 않고 Backend 내부 처리로 진행한다. 요청 접수 API는 `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false` 기본값으로 닫아 두고, 활성화된 환경에서만 `account_deletion_request.status=PENDING` row를 생성한다. 실제 사용자에게 공개하기 전에는 PM/Privacy가 확정한 삭제·보존 정책에 맞춰 삭제·보존 처리와 최종 계정 상태 전이 후속 범위를 완료해야 한다.
 
-`EXT-PRIV-001` 승인 전에는 Production에서 물리 삭제·보존 job을 실행하거나 `account_deletion_request`를 `IN_PROGRESS`/`COMPLETED`로 전이하지 않고, `user.account_status=WITHDRAWN`도 기록하지 않는다. 미승인 상태에서는 비식별 합성 fixture를 사용한 Local/Test 구현·검증만 허용한다. 실제 사용자 대상 탈퇴 기능도 삭제·보존 정책과 `EXT-PRIV-001` 승인 없이 `PENDING` 요청만 쌓는 형태로 공개하지 않는다.
+`EXT-PRIV-001` 승인 전에는 Production에서 물리 삭제·보존 job을 실행하거나 `account_deletion_request`를 `IN_PROGRESS`/`COMPLETED`로 전이하지 않고, `user.account_status=WITHDRAWN`도 기록하지 않는다. 미승인 상태에서는 비식별 합성 fixture를 사용한 Local/Test 구현·검증만 허용한다. 실제 사용자 대상 탈퇴 기능도 삭제·보존 정책과 `EXT-PRIV-001` 승인 없이 `PENDING` 요청만 쌓는 형태로 공개하지 않는다. 현재 요청 접수 API는 `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false` 기본값으로 닫혀 있으며, 승인 전 Production에서 활성화하지 않는다.
 
 삭제·보존 처리 상태는 Track A `AI_JOB` 상태 머신을 재사용하지 않고 Account 전용 `account_deletion_request`가 관리한다. 상태값과 계정 상태 정합성은 [5) account_deletion_request 테이블](#5-account_deletion_request-테이블)을 따른다.
 
@@ -101,7 +101,7 @@
 
 `account_deletion_request`는 회원탈퇴 요청 이후 개인정보·건강정보 삭제·보존 처리의 감사 기준 테이블이다. 사용자 로그인 가능 여부는 `user.account_status`가 판단하고, 삭제·보존 처리의 대기·진행·완료·실패 상태와 재처리 근거는 이 테이블이 관리한다.
 
-migration/model 구현 완료(`backend/alembic/versions/206b2c3d4e5f_create_account_deletion_request.py`, `backend/app/models/account_deletion_request.py`) — 아래 5.1~5.4절 기준을 반영했다. 탈퇴 요청 접수 API(4절)와 삭제·보존 처리(6절 PM/Privacy 정책 확정 이후)는 후속 PR 범위다.
+migration/model 구현 완료(`backend/alembic/versions/206b2c3d4e5f_create_account_deletion_request.py`, `backend/app/models/account_deletion_request.py`) — 아래 5.1~5.4절 기준을 반영했다. 탈퇴 요청 접수 API(4절)는 구현됐고, 삭제·보존 처리(6절 PM/Privacy 정책 확정 이후)는 후속 PR 범위다.
 
 ### 5.1 최소 컬럼
 
@@ -215,7 +215,7 @@ PM/Privacy 정책이 확정되지 않은 항목을 Backend에서 임의로 정�
 | 현재 구현 회귀 | 로그인, 토큰 갱신, 로그아웃, 내 정보 조회 | 기존 정상 흐름이 유지되고 `token_version` 재검증이 깨지지 않는다. |
 | `token_version` 무효화 | 로그아웃, 비밀번호 재설정 성공, 회원탈퇴 요청 | 각 transaction 이후 기존 access/refresh token으로 보호 API 또는 token refresh를 호출하면 `401 INVALID_TOKEN`을 반환한다. |
 | 회원탈퇴 재인증 | 올바른 비밀번호와 잘못된 비밀번호 | 올바른 비밀번호만 탈퇴 transaction을 시작하고, 실패 시 계정 상태·token·deletion request를 변경하지 않는다. |
-| 회원탈퇴 재인증 남용 방지 | 연속 실패와 rate limit/lockout 적용 중 요청 | 로그인과 동일 수준의 제어가 적용되고, 제한된 요청은 계정 상태·token·deletion request를 변경하지 않는다. 정확한 수치와 오류 응답은 구현 PR의 Backend/Security 리뷰 및 API 계약으로 고정한다. |
+| 회원탈퇴 재인증 남용 방지 | 연속 실패와 rate limit/lockout 적용 중 요청 | 현재 로그인과 동일하게 별도 rate limit/lockout은 없다. 제한 정책을 도입하기 전까지 실패 요청은 계정 상태·token·deletion request를 변경하지 않으며, 정확한 수치와 오류 응답은 Backend/Security 후속 이슈에서 고정한다. |
 | 회원탈퇴 transaction | 성공 요청 | `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at`, `token_version + 1`, `account_deletion_request.status=PENDING`이 같은 commit 단위로 반영된다. |
 | 회원탈퇴 중복 요청 | 거의 동시에 들어온 동일 사용자 탈퇴 요청 | 활성 `account_deletion_request`가 사용자별 1개만 생성되고, 계정 상태와 `token_version`이 중복으로 증가하지 않는다. |
 | 삭제·보존 처리 완료 | PM/Privacy 정책에 따른 처리 성공 및 `EXT-PRIV-001` 승인 | `account_deletion_request.status=COMPLETED`, `completed_at`, `user.account_status=WITHDRAWN`, `withdrawn_at`이 정합성을 유지한다. |
