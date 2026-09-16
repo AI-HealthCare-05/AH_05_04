@@ -300,10 +300,23 @@
   text-align: center;
 }
 
+.chat-page__error h2 {
+  margin: 10px 0 0;
+  font-size: 17px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .chat-page__error p {
-  margin: 10px 0 14px;
+  margin: 6px 0 0;
   color: var(--ds-text-muted);
   font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.chat-page__error .ds-button {
+  margin-top: 14px;
 }
 
 .chat-page .chat-composer {

@@ -21,6 +21,11 @@ import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
 import './GuidePage.css'
 import { ResponseFeedback } from '../components/ResponseFeedback'
+import {
+  getChatGuideErrorPresentation,
+  hasChatGuideErrorPresentation,
+  type ChatGuideErrorPresentation,
+} from './chatGuideErrorPresentation'
 
 export type GuidePageServices = {
   getGuide: typeof getGuide
@@ -52,22 +57,22 @@ function formatCompletedAt(value: string | null) {
   }).format(date)
 }
 
-function getGuideLoadFailureMessage(error: unknown) {
-  if (error instanceof ApiError) {
-    if (error.status === 401) return '로그인 정보를 다시 확인한 뒤 시도해 주세요.'
-    if (error.status === 404) return '요청한 복약 가이드를 찾을 수 없어요.'
-    if (error.status >= 500) return '서버 응답이 원활하지 않아요. 잠시 후 다시 시도해 주세요.'
-  }
-
-  if (error instanceof TypeError) {
-    return '네트워크 연결을 확인한 뒤 다시 시도해 주세요.'
-  }
-
-  return '복약 가이드를 불러오지 못했어요. 다시 시도해 주세요.'
+function getGuideLoadFailurePresentation(error: unknown) {
+  return getChatGuideErrorPresentation(error, {
+    unauthorized: '로그인 정보를 다시 확인한 뒤 시도해 주세요.',
+    notFound: '요청한 복약 가이드를 찾을 수 없어요.',
+    server: '서버 응답이 원활하지 않아요. 잠시 후 다시 시도해 주세요.',
+    network: '네트워크 연결을 확인한 뒤 다시 시도해 주세요.',
+    unknown: '복약 가이드를 불러오지 못했어요. 다시 시도해 주세요.',
+  })
 }
 
 function isNotFound(error: unknown) {
-  return error instanceof ApiError && error.status === 404
+  return (
+    error instanceof ApiError &&
+    error.status === 404 &&
+    !hasChatGuideErrorPresentation(error)
+  )
 }
 
 type GuideDetail = {
@@ -398,6 +403,8 @@ function GuidePage({
     : previewGuideId ?? undefined
   const [guide, setGuide] = useState<GuideData | null>(null)
   const [message, setMessage] = useState('')
+  const [errorPresentation, setErrorPresentation] =
+    useState<ChatGuideErrorPresentation | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [stateGuideId, setStateGuideId] = useState<string | null>(null)
   const guideRequestIdRef = useRef(0)
@@ -412,6 +419,7 @@ function GuidePage({
     try {
       setIsLoading(true)
       setMessage('')
+      setErrorPresentation(null)
       setGuide(null)
 
       if (!requestedGuideId) {
@@ -469,7 +477,7 @@ function GuidePage({
         return
       }
       setGuide(null)
-      setMessage(getGuideLoadFailureMessage(error))
+      setErrorPresentation(getGuideLoadFailurePresentation(error))
     } finally {
       if (isCurrentRequest()) {
         setIsLoading(false)
@@ -488,6 +496,9 @@ function GuidePage({
   const isCurrentGuideState = stateGuideId === routeGuideId
   const currentGuide = isCurrentGuideState ? guide : null
   const currentMessage = isCurrentGuideState ? message : ''
+  const currentErrorPresentation = isCurrentGuideState
+    ? errorPresentation
+    : null
   const currentIsLoading = isCurrentGuideState ? isLoading : Boolean(guideId)
 
   const completedAt = formatCompletedAt(currentGuide?.completed_at ?? null)
@@ -526,7 +537,7 @@ function GuidePage({
             </p>
           )}
 
-          {!currentIsLoading && !currentMessage && !currentGuide && (
+          {!currentIsLoading && !currentMessage && !currentErrorPresentation && !currentGuide && (
             <div className="guide-page__empty-state">
               <Card className="guide-page__empty">
                 <span className="guide-page__spark" aria-hidden="true" />
@@ -553,21 +564,39 @@ function GuidePage({
             </section>
           )}
 
-          {!currentIsLoading && currentMessage && (
+          {!currentIsLoading && (currentMessage || currentErrorPresentation) && (
             <section className="guide-page__status" role="alert">
               <div className="guide-page__status-visual guide-page__status-visual--failed">
                 <DoseyMascot variant="chat" />
               </div>
-              <h2>가이드를 표시할 수 없어요</h2>
-              <p role="alert">{currentMessage}</p>
-              <Button fullWidth onClick={() => void loadGuide()}>
-                다시 불러오기
+              <h2>
+                {currentErrorPresentation?.title ?? '가이드를 표시할 수 없어요'}
+              </h2>
+              {(currentErrorPresentation?.helper || currentMessage) && (
+                <p>{currentErrorPresentation?.helper ?? currentMessage}</p>
+              )}
+              <Button
+                fullWidth
+                onClick={() => {
+                  if (currentErrorPresentation?.action === 'CONSENT_SETTINGS') {
+                    navigate('/profile')
+                    return
+                  }
+                  void loadGuide()
+                }}
+              >
+                {currentErrorPresentation?.action === 'CONSENT_SETTINGS'
+                  ? '동의 설정 확인하기'
+                  : currentErrorPresentation?.action === 'RETRY'
+                    ? '다시 시도'
+                    : '다시 불러오기'}
               </Button>
             </section>
           )}
 
           {!currentIsLoading &&
             !currentMessage &&
+            !currentErrorPresentation &&
             currentGuide &&
             hasCompletedContent && (
             <>
@@ -619,6 +648,7 @@ function GuidePage({
 
           {!currentIsLoading &&
             !currentMessage &&
+            !currentErrorPresentation &&
             currentGuide &&
             !hasCompletedContent && (
             <section

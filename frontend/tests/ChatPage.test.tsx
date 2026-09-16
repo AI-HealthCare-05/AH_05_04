@@ -130,6 +130,7 @@ function renderPage(
         <Route path="/prescriptions/upload" element={<UploadRoute />} />
         <Route path="/guides" element={<div>복약 가이드 화면</div>} />
         <Route path="/menu" element={<div>메뉴 화면</div>} />
+        <Route path="/profile" element={<div>동의 설정 화면</div>} />
         <Route path="/schedule" element={<div>복약 일정 화면</div>} />
       </Routes>
     </MemoryRouter>
@@ -719,6 +720,133 @@ describe('ChatPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '대화 다시 불러오기' }))
 
     expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
+    expect(createChatSession).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    [
+      'CONSENT_REQUIRED',
+      '이 기능을 이용하려면 동의가 필요해요.',
+    ],
+    [
+      'CONSENT_WITHDRAWN',
+      '동의가 철회되어 처리를 계속할 수 없어요.',
+    ],
+  ])('%s을 구분해 안내하고 동의 설정으로 이동한다', async (code, title) => {
+    vi.mocked(getChatSessionForPrescription).mockRejectedValue(
+      new ApiError(403, '노출하면 안 되는 Backend 메시지', code),
+    )
+    renderPage()
+
+    expect(await screen.findByRole('heading', { name: title })).toBeTruthy()
+    expect(
+      screen.getByText('동의 설정을 확인한 뒤 다시 이용해 주세요.'),
+    ).toBeTruthy()
+    expect(screen.queryByText('노출하면 안 되는 Backend 메시지')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '동의 설정 확인하기' }))
+
+    expect(await screen.findByText('동의 설정 화면')).toBeTruthy()
+  })
+
+  it('PRESCRIPTION_VERSION_STALE은 동의로 보내지 않고 현재 대화를 다시 조회한다', async () => {
+    vi.mocked(getChatSessionForPrescription)
+      .mockRejectedValueOnce(
+        new ApiError(409, '구버전 처방', 'PRESCRIPTION_VERSION_STALE'),
+      )
+      .mockResolvedValueOnce({
+        data: {
+          session_id: sessionId,
+          prescription_id: prescriptionId,
+          prescription_version_id: prescriptionVersionId,
+          session_status: 'ACTIVE',
+          created_at: '2026-09-16T00:00:00Z',
+        },
+      })
+    renderPage()
+
+    expect(
+      await screen.findByRole('heading', { name: '처방 정보가 변경되었어요.' }),
+    ).toBeTruthy()
+    expect(
+      screen.getByText('최신 처방 정보를 다시 불러온 뒤 이용해 주세요.'),
+    ).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '동의 설정 확인하기' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '대화 다시 불러오기' }))
+
+    expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
+    expect(getChatSessionForPrescription).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText('동의 설정 화면')).toBeNull()
+    expect(createChatSession).not.toHaveBeenCalled()
+  })
+
+  it('PRESCRIPTION_VERSION_STALE 복구 중 session이 없어도 새 session을 자동 생성하지 않는다', async () => {
+    vi.mocked(getChatSessionForPrescription)
+      .mockRejectedValueOnce(
+        new ApiError(409, '구버전 처방', 'PRESCRIPTION_VERSION_STALE'),
+      )
+      .mockRejectedValueOnce(
+        new ApiError(404, '대화 없음', 'CHAT_SESSION_NOT_FOUND'),
+      )
+    renderPage()
+
+    expect(
+      await screen.findByRole('heading', { name: '처방 정보가 변경되었어요.' }),
+    ).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '대화 다시 불러오기' }))
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '대화 정보를 찾지 못했어요. 다시 불러와 주세요.',
+      }),
+    ).toBeTruthy()
+    expect(getChatSessionForPrescription).toHaveBeenCalledTimes(2)
+    expect(createChatSession).not.toHaveBeenCalled()
+  })
+
+  it('CONSENT_POLICY_UNAVAILABLE 메시지 전송은 자동 반복 없이 사용자 클릭 후 같은 요청만 재시도한다', async () => {
+    vi.mocked(sendChatMessage)
+      .mockRejectedValueOnce(
+        new ApiError(503, '정책 원문', 'CONSENT_POLICY_UNAVAILABLE'),
+      )
+      .mockResolvedValueOnce({
+        data: {
+          user_message_id: 'policy-retry-user',
+          assistant_message_id: 'policy-retry-assistant',
+          session_id: sessionId,
+          generation_status: 'COMPLETED',
+          content: '정책 복구 후 받은 답변',
+          model_name: 'chat-model',
+          prompt_version: 'chat-v1',
+          created_at: '2026-09-16T00:00:00Z',
+          completed_at: '2026-09-16T00:00:01Z',
+        },
+      })
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.change(input, { target: { value: '정책 복구 질문' } })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '동의 안내를 준비하고 있어요. 잠시 후 다시 시도해 주세요.',
+      }),
+    ).toBeTruthy()
+    expect(sendChatMessage).toHaveBeenCalledTimes(1)
+    expect(screen.getAllByText('정책 복구 질문')).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: '동의 설정 확인하기' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
+
+    expect(await screen.findByText('정책 복구 후 받은 답변')).toBeTruthy()
+    expect(sendChatMessage).toHaveBeenCalledTimes(2)
+    expect(sendChatMessage).toHaveBeenNthCalledWith(1, sessionId, '정책 복구 질문')
+    expect(sendChatMessage).toHaveBeenNthCalledWith(2, sessionId, '정책 복구 질문')
+    expect(screen.getAllByText('정책 복구 질문')).toHaveLength(1)
+    expect(getChatSessionForPrescription).toHaveBeenCalledTimes(1)
     expect(createChatSession).toHaveBeenCalledTimes(1)
   })
 
