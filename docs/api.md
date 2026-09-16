@@ -816,3 +816,15 @@ nullable입니다. 없는/타인 occurrence는 동일 404 MEDICATION_OCCURRENCE_
 응답은 기존 SupportActionPlanResponse다. 완료는 최신 Safety·Barrier를 재검증하며, 종료 상태의 새 요청은
 409 ACTION_PLAN_STATE_CONFLICT다. 상세 오류·잠금·재전송은 [Current 계약](contracts/current/track-c-plan-lifecycle-617.md)을 따른다.
 권가빈 구현·김지혜 책임 리뷰로 PR #618에서 계약과 구현을 함께 반영한다. 최종 승인·병합은 대기 중이며 병합 전 develop의 동작은 아니다. Follow-up·Frontend 연결·외부 공개 승인은 별도다.
+
+### Track C 완료 계획 Follow-up (#194 후속, 구현·리뷰 대상)
+
+`GET /api/v1/support-action-plans/{id}/followups`는 SELF 소유 Plan의 현재 평가 또는 `data=null`을 반환한다.
+`POST`는 `response=HELPED|NOT_HELPED|NOT_SURE`, strict integer `expected_revision>=0`과 Idempotency-Key를 받는다.
+COMPLETED 계획에만 최초 제출(기대 revision 0)·정정(현재 평가 revision)을 허용하며 최초 1, 정정 +1을 기록한다.
+완료 뒤 Check-in·Safety·Barrier가 바뀌어도 과거 평가를 제출·정정할 수 있다. 최초 성공 snapshot replay와
+현재값 GET을 구분하며 평가·정정 audit·암호화 snapshot은 원자적이다. Plan 상태·복약 기록은 변경하지 않는다.
+성공은 200이며 `data`는 followup_id, support_action_plan_id, response, revision, created_at, updated_at이다.
+나중에는 요청하지 않는다. SELF 404, 상태/revision/멱등 409, no-store와 상세 오류는
+[Proposed 계약](contracts/proposed/track-c-followup-api-194.md)을 따른다. 권가빈 구현·김지혜 책임 리뷰이며
+Frontend 연결·외부 공개·Current 승격은 완료 주장이 아니다.

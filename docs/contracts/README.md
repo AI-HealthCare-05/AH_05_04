@@ -205,3 +205,9 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [#465 대조·구현 범위 및 runtime 연결 조건](../designs/ocr-consent-gate-458-implementation.md)
 - [동의 조회·재검사 검증](../testing/ocr-consent-gate-458.md)
 - 내부 조회와 호출 직전 검사 부품. 동의 API·차단 저장·전송 최소화·공개 활성화 완료 아님.
+
+## Track C 완료 계획 Follow-up (#194 후속)
+
+- [Follow-up API v1 — Proposed](proposed/track-c-followup-api-194.md): 완료 계획의 평가 GET/POST, 현재값·revision 정정·audit·멱등성·동시성. 기존 생성/Plan 응답은 유지한다.
+- [PD-194-2](../governance/decisions/2026-09-16-track-c-followup-194.md): 완료 계획만 평가, 이후 Check-in 정정에도 과거 평가 허용. 권가빈 구현·김지혜 단일 책임 리뷰.
+- #139 Frontend·Constraint/RAG Handler·외부 공개 및 #194 전체 완료는 별도 범위다.

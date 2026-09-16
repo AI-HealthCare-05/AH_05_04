@@ -163,6 +163,14 @@ NO_ELIGIBLE_SUPPORT**로 변경했다. 아래 원본 Freeze v4의 최대 2개 �
 PM은 이번 구현을 GET 지원 제안·POST Plan 생성으로 제한했다. Plan 변경·follow-up은 후속이다.
 HTTP 구체화는 기술 리뷰 대상이며 전체 target의 Current 승격이 아니다.
 
+### #194 Follow-up 후속 delta
+
+[PD-194-2](../../../governance/decisions/2026-09-16-track-c-followup-194.md)는 완료한 계획만 평가하고,
+완료 후 Check-in이 정정돼도 과거 평가를 제출·정정할 수 있도록 제품 범위를 확정한다.
+기존 followups POST와 같은 경로의 GET, 응답·expected_revision·정정 audit·멱등성은
+[Follow-up API v1](../../proposed/track-c-followup-api-194.md)의 구현·책임 리뷰 대상이다.
+기존 Plan 응답·세 평가 enum·저장 테이블을 유지하며 #194 전체 완료나 공개 승인을 뜻하지 않는다.
+
 ## Support와 실행계획
 
 - 표시 문구는 enum과 분리해 `copy_version`으로 관리한다.
