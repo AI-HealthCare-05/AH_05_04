@@ -132,7 +132,7 @@ function renderSchedule(services: SchedulePageServices, entry = '/schedule?date=
   return render(
     <MemoryRouter initialEntries={[entry]}>
       <Routes>
-        <Route path="/schedule" element={<SchedulePage services={services} />} />
+        <Route path="/schedule" element={<><SchedulePage services={services} /><LocationProbe /></>} />
         <Route
           path="/schedule/occurrences/:occurrenceId"
           element={<><div>복약 기록 route</div><LocationProbe /></>}
@@ -1108,10 +1108,24 @@ describe('production 복약 기록 handoff', () => {
 
 describe('Track C reminder target handoff', () => {
   it('preserves the target while normalizing date and opens only that medication editor', async () => {
-    const services = makeServices()
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({
+        schedule_items: [setupItem(), setupItem(secondMedicationId)],
+      })),
+      getLatestPrescription: vi.fn().mockResolvedValue(makePrescription({
+        medications: [makePrescription().data.medications[0], {
+          ...makePrescription().data.medications[0],
+          prescription_version_medication_id: secondMedicationId,
+          medication_name: '두 번째 혈당약',
+        }],
+      })),
+    })
     renderSchedule(services, `/schedule?support_medication=${medicationId}`)
     fireEvent.click(await screen.findByRole('button', { name: '이 약의 일정 확인·설정' }))
-    expect(screen.getByRole('heading', { name: '실천 계획의 복약 일정' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '현재 처방의 혈압약' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '두 번째 혈당약' })).toBeNull()
+    expect(screen.getByLabelText('현재 처방의 혈압약 복용 시작일')).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toContain(`support_medication=${medicationId}`)
     expect(services.putMedicationSchedule).not.toHaveBeenCalled()
   })
   it('does not substitute another medication if the saved target is absent', async () => {
