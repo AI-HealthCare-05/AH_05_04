@@ -116,4 +116,9 @@ Plan과 암호화된 응답 snapshot을 같은 transaction에 저장하고 오�
 
 ## #617 / PR #618 조회·완료·취소 구현
 
-[Current 조회·완료·취소 계약](../current/track-c-plan-lifecycle-617.md)이 GET/PATCH를 추가한다. 위의 “이번 범위”는 #608의 역사적 범위다. 생성 응답·DB revision은 유지하며 책임 리뷰어는 김지혜다. #617 계약은 책임 리뷰의 상태 정렬 요청에 따라 같은 구현 PR에서 Current 경로로 이동한다. 최종 승인·병합은 대기 중이며, 생성 계약 전체나 Follow-up·공개 승인으로 범위를 확대하지 않는다.
+[Current 조회·완료·취소 계약](../current/track-c-plan-lifecycle-617.md)이 GET/PATCH를 추가한다. 위의 “이번 범위”는 #608의 역사적 범위다. 생성 응답·DB revision은 유지하며 책임 리뷰어는 김지혜다. #617 계약은 책임 리뷰의 상태 정렬 요청에 따라 같은 구현 PR에서 Current 경로로 이동한다. 김지혜 승인 후 PR #618이 `a542bcc2`로 병합됐다. 생성 계약 전체나 Follow-up·공개 승인으로 범위를 확대하지 않는다.
+
+## #194 Follow-up 후속
+
+[Follow-up API v1](../current/track-c-followup-api-194.md)은 완료한 계획의 평가 조회·제출·정정을 별도 계약으로 구체화한다.
+기존 제안·생성·Plan 응답은 변경하지 않는다. 권가빈 구현·김지혜 단일 책임 리뷰로 PR #631에서 Current 경로에 반영하며 최종 승인·병합은 대기 중이다.
