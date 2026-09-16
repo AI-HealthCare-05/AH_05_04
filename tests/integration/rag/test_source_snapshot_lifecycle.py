@@ -1069,7 +1069,7 @@ async def test_verification_insert_waits_for_operation_transition_lock(writer_pa
         )
 
 
-async def test_writer_login_can_acquire_and_persist_without_source_update_privilege() -> None:
+async def test_writer_login_can_acquire_and_persist_without_source_payload_update_privilege() -> None:
     from uuid import uuid4
 
     from infra.python.source_role_policy import apply_source_role_policy
@@ -1093,7 +1093,7 @@ async def test_writer_login_can_acquire_and_persist_without_source_update_privil
                 connection, schema=TEST_SCHEMA, owner=config.DB_USER, runtime=runtime, writer=writer
             )
             assert not await connection.scalar(
-                text("SELECT has_any_column_privilege(:role, :table, 'UPDATE')"),
+                text("SELECT has_column_privilege(:role, :table, 'lifecycle_status', 'UPDATE')"),
                 {"role": writer, "table": f"{TEST_SCHEMA}.rag_source"},
             )
         factory = async_sessionmaker(producer)
@@ -1612,3 +1612,180 @@ async def test_three_local_artifacts_members_roundtrip_and_replay(tmp_path, roll
             )
             == 3
         )
+
+
+async def test_mfds_member_failure_rolls_back_then_cleanup_and_retry(tmp_path, monkeypatch):
+    """Real member INSERT/DB failure and separated DB logins; filesystem finalizer is synthetic."""
+    from uuid import uuid4
+
+    from ai_worker.adapters.local_private_source_artifact_store import LocalPrivateSourceArtifactStore
+    from ai_worker.adapters.local_private_source_cleanup import LocalPrivateCleanupExecutorJournal
+    from ai_worker.admin import mfds_label_writer, source_artifact_cleanup
+    from ai_worker.admin.source_writer import WriterConfig
+    from ai_worker.tests.rag.source_ingestion.test_mfds_label import (
+        _COLLECTED_AT,
+        _RECEIPT_HASH,
+        _input_directory,
+    )
+    from infra.python.source_role_policy import apply_source_role_policy
+
+    suffix = uuid4().hex[:10]
+    runtime, writer, executor = (f"mfds591_{kind}_{suffix}" for kind in ("runtime", "writer", "executor"))
+    password = "synthetic-member-cleanup-only"
+    identity = await _seed_operation(suffix.upper())
+    root = tmp_path / "artifacts"
+    root.mkdir(mode=0o500)
+    journal_root = tmp_path / "journal"
+    journal_root.mkdir(mode=0o700)
+    for name in ("requests", "receipts"):
+        (journal_root / name).mkdir(mode=0o700)
+    directory = _input_directory(tmp_path)
+    roles = (runtime, writer, executor)
+    try:
+        async with test_engine.begin() as connection:
+            for role in roles:
+                await connection.execute(text(f"CREATE ROLE {role} LOGIN PASSWORD '{password}'"))
+            await connection.execute(
+                text("UPDATE rag_source SET lifecycle_status='ACTIVE' WHERE source_code=:code"),
+                {"code": identity.source_code},
+            )
+            await connection.execute(
+                text(
+                    "UPDATE rag_source_endpoint SET lifecycle_status='VERIFIED',runtime_status='ENABLED',acquisition_status='APPROVED' WHERE endpoint_code=:code"
+                ),
+                {"code": identity.endpoint_code},
+            )
+            await connection.execute(
+                text(
+                    "UPDATE rag_source_operation SET runtime_status='ENABLED',acquisition_status='APPROVED' WHERE operation_code=:code"
+                ),
+                {"code": identity.operation_code},
+            )
+            await apply_source_role_policy(
+                connection, schema=TEST_SCHEMA, owner=config.DB_USER, runtime=runtime, writer=writer
+            )
+            await connection.execute(text(f"GRANT USAGE ON SCHEMA {TEST_SCHEMA} TO {executor}"))
+            await connection.execute(
+                text(
+                    f"GRANT SELECT ON rag_source_ingestion_artifact,rag_source_ingestion_run,rag_source_snapshot_member TO {executor}"
+                )
+            )
+
+        def isolated_engine(url, **kwargs):
+            return create_async_engine(url, connect_args={"server_settings": {"search_path": TEST_SCHEMA}}, **kwargs)
+
+        monkeypatch.setattr(mfds_label_writer, "create_async_engine", isolated_engine)
+        monkeypatch.setattr(source_artifact_cleanup, "create_async_engine", isolated_engine)
+
+        class SyntheticFinalizer:
+            def __init__(self, **kwargs):
+                self.finalized = []
+
+            def put_verified(self, **kwargs):
+                _set_synthetic_artifact_access(root, writable=True)
+                try:
+                    stored = LocalPrivateSourceArtifactStore(root).put_verified(**kwargs)
+                finally:
+                    _set_synthetic_artifact_access(root, writable=False)
+                self.finalized.append(stored)
+                return stored
+
+        monkeypatch.setattr(mfds_label_writer, "FinalizingLocalPrivateSourceArtifactStore", SyntheticFinalizer)
+        writer_config = mfds_label_writer.MfdsLabelWriterConfig(
+            WriterConfig(TEST_DATABASE_URL.set(username=writer, password=password), "synthetic-writer"),
+            root,
+            tmp_path / "synthetic-finalizer",
+            journal_root,
+            identity,
+            _RECEIPT_HASH,
+        )
+        cleanup_config = source_artifact_cleanup.CleanupExecutorConfig(
+            TEST_DATABASE_URL.set(username=executor, password=password), root, journal_root, "synthetic-executor"
+        )
+        original_append = SqlAlchemySourceSnapshotRepository.append_snapshot_member
+        inserted = []
+
+        async def fail_after_real_member(self, request):
+            receipt = await original_append(self, request)
+            inserted.append(receipt)
+            if len(inserted) == 2:
+                await self._session.execute(text("SELECT 1/0"))
+            return receipt
+
+        monkeypatch.setattr(SqlAlchemySourceSnapshotRepository, "append_snapshot_member", fail_after_real_member)
+        with pytest.raises(mfds_label_writer.MfdsLabelTransactionCleanupRequiredError) as failure:
+            await mfds_label_writer.run_ingestion(
+                writer_config,
+                item_seq="200610660",
+                input_dir=directory,
+                collected_at=_COLLECTED_AT,
+                include_e_drug=False,
+            )
+        assert len(inserted) == 2
+        journal = LocalPrivateCleanupExecutorJournal(journal_root)
+        request = journal.read_request(failure.value.request_id)
+        assert len(request.targets) == 3
+        async with test_engine.connect() as connection:
+            operation = await connection.scalar(
+                text("SELECT id FROM rag_source_operation WHERE operation_code=:code"),
+                {"code": identity.operation_code},
+            )
+            for table in ("rag_source_snapshot", "rag_source_ingestion_run"):
+                assert (
+                    await connection.scalar(
+                        text(f"SELECT count(*) FROM {table} WHERE operation_id=:id"), {"id": operation}
+                    )
+                    == 0
+                )
+            for receipt in inserted:
+                assert (
+                    await connection.scalar(
+                        text("SELECT count(*) FROM rag_source_snapshot_member WHERE id=:id"),
+                        {"id": str(receipt.source_snapshot_member_id)},
+                    )
+                    == 0
+                )
+        _set_synthetic_artifact_access(root, writable=True)
+        cleaned = await source_artifact_cleanup.run_cleanup(cleanup_config, request.request_id)
+        assert [item.result.value for item in cleaned.items] == ["DELETED"] * 3
+        assert all(not (root / target.object_key).exists() for target in request.targets)
+        receipts = journal.read_receipts(request.request_id)
+        assert sum(item.result.value == "INTENT" for receipt in receipts for item in receipt.items) == 3
+        assert sum(item.result.value == "DELETED" for receipt in receipts for item in receipt.items) == 3
+        repeated = await source_artifact_cleanup.run_cleanup(cleanup_config, request.request_id)
+        assert [item.result.value for item in repeated.items] == ["NOT_FOUND"] * 3
+        monkeypatch.setattr(SqlAlchemySourceSnapshotRepository, "append_snapshot_member", original_append)
+        _set_synthetic_artifact_access(root, writable=False)
+        first = await mfds_label_writer.run_ingestion(
+            writer_config, item_seq="200610660", input_dir=directory, collected_at=_COLLECTED_AT, include_e_drug=False
+        )
+        second = await mfds_label_writer.run_ingestion(
+            writer_config, item_seq="200610660", input_dir=directory, collected_at=_COLLECTED_AT, include_e_drug=False
+        )
+        assert first.persistence.persistence.decision.value == "CREATED"
+        assert second.persistence.persistence.decision.value == "NO_CHANGE"
+        assert first.requery.member_count == second.requery.member_count == 3
+        assert first.requery.snapshot_id == second.requery.snapshot_id
+        assert first.requery.canonical_checksum == second.requery.canonical_checksum
+        _set_synthetic_artifact_access(root, writable=True)
+        blocked = await source_artifact_cleanup.run_cleanup(cleanup_config, request.request_id)
+        assert [item.result.value for item in blocked.items] == ["BLOCKED"] * 3
+        assert all((root / target.object_key).exists() for target in request.targets)
+    finally:
+        _set_synthetic_artifact_access(root, writable=True)
+        await _drop_mfds_test_roles(roles)
+
+
+async def _drop_mfds_test_roles(roles):
+    async with test_engine.begin() as connection:
+        for role in roles:
+            if await connection.scalar(text("SELECT 1 FROM pg_roles WHERE rolname=:role"), {"role": role}):
+                await connection.execute(text(f"DROP OWNED BY {role}"))
+                await connection.execute(text(f"DROP ROLE {role}"))
+
+
+def _set_synthetic_artifact_access(root, *, writable):
+    root.chmod(0o700)
+    for path in root.rglob("*"):
+        path.chmod((0o700 if writable else 0o500) if path.is_dir() else (0o600 if writable else 0o400))
+    root.chmod(0o700 if writable else 0o500)
