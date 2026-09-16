@@ -10,7 +10,7 @@
 - 별도 Artifact owner의 고정 finalizer만 stdin 원문과 checksum을 검증해 최종 content-addressed 객체를 저장한다. finalizer의 실행 파일은 writer 소유가 아니고 writer가 수정할 수 없어야 한다.
 - writer는 최종 Artifact의 read-only mount로 commit 후 원문 checksum을 재조회한다.
 - cleanup executor는 Source DB의 전역 참조를 읽고, checksum을 확인한 객체만 삭제하며, 결과 receipt를 기록한다.
-- 요청·receipt는 `SOURCE_CLEANUP_JOURNAL_ROOT` 아래 생성 전용 JSON으로 보존한다. Artifact root와 다른 제한 접근 root를 사용한다. 별도 OS 계정을 쓰면 승인된 cleanup 공용 그룹/ACL로 writer의 request append와 executor의 read·receipt append만 열고 world 권한은 열지 않는다.
+- 요청·receipt는 `SOURCE_CLEANUP_JOURNAL_ROOT` 아래 생성 전용 JSON으로 보존한다. Artifact root와 다른 제한 접근 root를 사용한다. `requests/`와 `receipts/`는 실행 전에 승인된 cleanup 공용 그룹/ACL로 사전 생성해야 하며 애플리케이션은 누락된 디렉터리를 만들지 않고 중단한다. writer의 request append와 executor의 request read·receipt append만 열고 world 권한은 열지 않는다.
 - 요청에는 request ID, durable run group key, nullable ingestion run ID, Artifact key·object key·checksum, 고정 failure reason, 요청 시각만 기록한다.
 - 원문 bytes, credential, DB URL, signed URL, 실제 root는 요청·receipt·표준 출력에 기록하지 않는다.
 
@@ -80,6 +80,7 @@ uv run python -m ai_worker.admin.source_artifact_cleanup CLEANUP_REQUEST_UUID
 - [ ] 별도 cleanup executor가 DB read와 대상 Artifact 삭제, receipt append만 할 수 있다.
 - [ ] consumer가 최종 Artifact를 read-only로 재조회할 수 있다.
 - [ ] writer가 요청을 append하고 executor가 같은 요청을 읽을 수 있다.
+- [ ] 사전 provision된 `requests/`·`receipts/`에서 writer append → executor read → executor receipt append → writer/검증자 read를 서로 다른 OS 계정으로 실측했다.
 - [ ] journal과 Artifact root의 실제 값은 제한 접근 위치에만 있다.
 - [ ] 합성 실패 객체로 요청 → 전역 무참조 → 삭제 → receipt 재조회 검증을 완료했다.
 

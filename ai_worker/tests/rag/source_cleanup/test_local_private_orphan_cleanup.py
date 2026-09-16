@@ -33,9 +33,18 @@ def _request() -> CleanupRequest:
     )
 
 
+def _journal_root(tmp_path: Path) -> Path:
+    root = tmp_path / "journal"
+    root.mkdir(mode=0o770)
+    (root / "requests").mkdir(mode=0o770)
+    (root / "receipts").mkdir(mode=0o770)
+    return root
+
+
 def test_private_journal_round_trips_request_without_sensitive_fields(tmp_path: Path) -> None:
-    writer = LocalPrivateCleanupRequestJournal(tmp_path / "journal")
-    journal = LocalPrivateCleanupExecutorJournal(tmp_path / "journal")
+    root = _journal_root(tmp_path)
+    writer = LocalPrivateCleanupRequestJournal(root)
+    journal = LocalPrivateCleanupExecutorJournal(root)
     request = _request()
     writer.append_request(request)
 
@@ -58,7 +67,7 @@ def test_private_journal_round_trips_request_without_sensitive_fields(tmp_path: 
 
 
 def test_private_journal_is_append_only_for_same_request(tmp_path: Path) -> None:
-    journal = LocalPrivateCleanupRequestJournal(tmp_path / "journal")
+    journal = LocalPrivateCleanupRequestJournal(_journal_root(tmp_path))
     request = _request()
     journal.append_request(request)
     with pytest.raises(FileExistsError):
@@ -67,6 +76,7 @@ def test_private_journal_is_append_only_for_same_request(tmp_path: Path) -> None
 
 def test_executor_verifies_checksum_before_deleting(tmp_path: Path) -> None:
     root = tmp_path / "artifacts"
+    root.mkdir(mode=0o700)
     executor = LocalPrivateArtifactCleanupExecutor(root)
     target = _request().targets[0]
     path = root / target.object_key
@@ -79,6 +89,7 @@ def test_executor_verifies_checksum_before_deleting(tmp_path: Path) -> None:
 
 def test_executor_does_not_treat_symlink_as_missing_or_delete_target(tmp_path: Path) -> None:
     root = tmp_path / "artifacts"
+    root.mkdir(mode=0o700)
     executor = LocalPrivateArtifactCleanupExecutor(root)
     target = _request().targets[0]
     outside = tmp_path / "outside"
@@ -102,7 +113,7 @@ def test_receipt_records_reference_scope_and_result(tmp_path: Path) -> None:
         CleanupResult.DELETED,
         "DELETE_CONFIRMED",
     )
-    journal = LocalPrivateCleanupExecutorJournal(tmp_path / "journal")
+    journal = LocalPrivateCleanupExecutorJournal(_journal_root(tmp_path))
     journal.append_receipt(CleanupReceipt(request.request_id, "synthetic-executor", request.requested_at, (item,)))
     raw = json.loads(next((tmp_path / "journal" / "receipts").iterdir()).read_text())
     assert raw["items"][0]["references"] == {
@@ -116,3 +127,24 @@ def test_receipt_records_reference_scope_and_result(tmp_path: Path) -> None:
     restored = journal.read_receipts(request.request_id)
     assert len(restored) == 1
     assert restored[0].items == (item,)
+
+
+def test_writer_rejects_journal_directories_that_were_not_preprovisioned(tmp_path: Path) -> None:
+    root = tmp_path / "journal"
+    root.mkdir(mode=0o700)
+
+    with pytest.raises(ValueError, match="CLEANUP_ROOT_NOT_PROVISIONED"):
+        LocalPrivateCleanupRequestJournal(root)
+
+    assert not (root / "requests").exists()
+
+
+def test_executor_requires_both_shared_journal_directories(tmp_path: Path) -> None:
+    root = tmp_path / "journal"
+    root.mkdir(mode=0o700)
+    (root / "requests").mkdir(mode=0o700)
+
+    with pytest.raises(ValueError, match="CLEANUP_ROOT_NOT_PROVISIONED"):
+        LocalPrivateCleanupExecutorJournal(root)
+
+    assert not (root / "receipts").exists()

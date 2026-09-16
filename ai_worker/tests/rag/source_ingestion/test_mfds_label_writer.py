@@ -52,6 +52,14 @@ def _environment(tmp_path: Path) -> dict[str, str]:
     }
 
 
+def _provision_cleanup_journal(tmp_path: Path) -> Path:
+    root = tmp_path / "journal"
+    root.mkdir(mode=0o770)
+    (root / "requests").mkdir(mode=0o770)
+    (root / "receipts").mkdir(mode=0o770)
+    return root
+
+
 def test_writer_config_requires_isolated_local_private_inputs(tmp_path: Path) -> None:
     config = MfdsLabelWriterConfig.from_environment(_environment(tmp_path))
     rendered = repr(config)
@@ -93,7 +101,8 @@ def test_rollback_request_uses_only_artifacts_confirmed_by_store(tmp_path: Path)
         storage_backend="LOCAL_PRIVATE",
         object_key=f"sha256/{checksum[:2]}/{checksum}.artifact",
     )
-    journal = mfds_label_writer.LocalPrivateCleanupRequestJournal(tmp_path / "journal")
+    journal_root = _provision_cleanup_journal(tmp_path)
+    journal = mfds_label_writer.LocalPrivateCleanupRequestJournal(journal_root)
 
     request_id = record_transaction_cleanup_request(
         journal=journal,
@@ -104,7 +113,7 @@ def test_rollback_request_uses_only_artifacts_confirmed_by_store(tmp_path: Path)
     )
 
     assert request_id is not None
-    request = LocalPrivateCleanupExecutorJournal(tmp_path / "journal").read_request(request_id)
+    request = LocalPrivateCleanupExecutorJournal(journal_root).read_request(request_id)
     assert request.ingestion_run_id == UUID("00000000-0000-4000-8000-000000000610")
     assert request.failure_reason == "MFDS_LABEL_TRANSACTION_FAILED"
     assert request.targets[0].object_key == stored.object_key
@@ -186,6 +195,7 @@ async def test_commit_failure_after_artifact_write_creates_private_cleanup_reque
     monkeypatch.setattr(mfds_label_writer, "async_sessionmaker", lambda *args, **kwargs: _Sessions())
     artifact_root = tmp_path / "artifacts"
     artifact_root.mkdir(mode=0o500)
+    journal_root = _provision_cleanup_journal(tmp_path)
 
     class _SyntheticFinalizingStore:
         def __init__(self) -> None:
@@ -211,7 +221,7 @@ async def test_commit_failure_after_artifact_write_creates_private_cleanup_reque
         writer=WriterConfig(URL.create("postgresql+asyncpg", password="synthetic"), "synthetic-writer"),
         artifact_reader_root=artifact_root,
         artifact_finalizer_command=tmp_path / "source591-preserve",
-        cleanup_journal_root=tmp_path / "journal",
+        cleanup_journal_root=journal_root,
         identity=SourceOperationIdentity("SYNTHETIC_SOURCE", "SYNTHETIC_ENDPOINT", "SYNTHETIC_OPERATION"),
         endpoint_receipt_hash="a" * 64,
     )
@@ -225,8 +235,8 @@ async def test_commit_failure_after_artifact_write_creates_private_cleanup_reque
             include_e_drug=False,
         )
 
-    request_file = next((tmp_path / "journal" / "requests").iterdir())
-    request = LocalPrivateCleanupExecutorJournal(tmp_path / "journal").read_request(UUID(request_file.stem))
+    request_file = next((journal_root / "requests").iterdir())
+    request = LocalPrivateCleanupExecutorJournal(journal_root).read_request(UUID(request_file.stem))
     assert request.ingestion_run_id == persistence.persistence.ingestion_run_id
     assert request.targets[0].checksum == checksum
 

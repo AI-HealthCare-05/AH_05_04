@@ -27,7 +27,7 @@ class _LocalPrivateCleanupJournal:
     """비공개 root에 요청과 결과를 생성 전용 파일로 기록합니다."""
 
     def __init__(self, root: Path) -> None:
-        self._root = _private_root(root)
+        self._root = _private_root(root, require_write=False)
 
     def append_request(self, request: CleanupRequest) -> None:
         payload: dict[str, object] = {
@@ -213,6 +213,7 @@ class LocalPrivateCleanupRequestJournal:
 
     def __init__(self, root: Path) -> None:
         self._journal = _LocalPrivateCleanupJournal(root)
+        self._journal._directory("requests")
 
     def append_request(self, request: CleanupRequest) -> None:
         self._journal.append_request(request)
@@ -223,6 +224,8 @@ class LocalPrivateCleanupExecutorJournal:
 
     def __init__(self, root: Path) -> None:
         self._journal = _LocalPrivateCleanupJournal(root)
+        self._journal._directory("requests", require_write=False)
+        self._journal._directory("receipts")
 
     def read_request(self, request_id: UUID) -> CleanupRequest:
         return self._journal.read_request(request_id)
@@ -277,10 +280,8 @@ class LocalPrivateArtifactCleanupExecutor:
 def _private_root(root: Path, *, require_write: bool = True) -> Path:
     if not root.is_absolute() or any(path.is_symlink() for path in (root, *root.parents)):
         raise ValueError("CLEANUP_ROOT_INVALID")
-    if require_write:
-        root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    elif not root.is_dir():
-        raise ValueError("CLEANUP_ROOT_INVALID")
+    if not root.is_dir():
+        raise ValueError("CLEANUP_ROOT_NOT_PROVISIONED")
     info = root.lstat()
     mode = stat.S_IMODE(info.st_mode)
     if (
