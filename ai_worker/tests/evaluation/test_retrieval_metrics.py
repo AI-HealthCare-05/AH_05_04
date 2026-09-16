@@ -10,7 +10,7 @@ import pytest
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes
 from ai_worker.tasks.evaluation.config import RepositoryState, load_dev_execution_request
-from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_dataset
+from ai_worker.tasks.evaluation.loaders import EvaluationCaseContract, ValidatedDataset, load_dataset
 from ai_worker.tasks.evaluation.retrieval_metrics import (
     RetrievalObservation,
     build_retrieval_metrics,
@@ -450,7 +450,7 @@ NLR_MANIFEST = EVALS_ROOT / "retrieval/manifests/rag-natural-language-retrieval-
 NLR_DATASET = load_dataset(NLR_MANIFEST, evals_root=EVALS_ROOT)
 
 
-def _nlr_case_result(case: object) -> CaseResult:
+def _nlr_case_result(case: EvaluationCaseContract) -> CaseResult:
     return CASE_RESULT_ADAPTER.validate_python(
         {
             "schema_id": "rag-eval.case-result",

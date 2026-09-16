@@ -239,6 +239,7 @@ from ai_worker.tasks.evaluation.manifest import (  # noqa: E402
     build_artifact_draft,
     finalize_artifacts,
 )
+from ai_worker.tasks.evaluation.schemas.artifacts import CaseResult  # noqa: E402
 from ai_worker.tests.evaluation.test_result_manifest import (  # noqa: E402
     RUN_ID_A,
     RUN_ID_B,
@@ -267,7 +268,7 @@ def _pair(root: Path, *, second: ArtifactDraft | None = None, started_at: str = 
     return first, _publish_bundle(root, other, completed_at=completed_at)
 
 
-def _with_cases(draft: ArtifactDraft, cases: Sequence[object]) -> ArtifactDraft:
+def _with_cases(draft: ArtifactDraft, cases: Sequence[CaseResult]) -> ArtifactDraft:
     return _dataclass_replace(draft, cases=tuple(cases))
 
 
@@ -314,6 +315,7 @@ def test_comparator_ignores_latency_but_observes_it(tmp_path: Path) -> None:
 def test_comparator_detects_retrieved_evidence_order_change(tmp_path: Path) -> None:
     second_draft = _bundle_draft(run_id=RUN_ID_B)
     target = second_draft.cases[0]
+    assert target.retrieved_evidence_ids is not None
     reordered = tuple(reversed(target.retrieved_evidence_ids))
     second_draft = _with_cases(
         second_draft,
@@ -330,12 +332,11 @@ def test_comparator_detects_retrieved_evidence_order_change(tmp_path: Path) -> N
 def test_comparator_detects_selected_evidence_change(tmp_path: Path) -> None:
     second_draft = _bundle_draft(run_id=RUN_ID_B)
     target = second_draft.cases[0]
+    assert target.selected_evidence_ids is not None
+    truncated = target.selected_evidence_ids[:1]
     second_draft = _with_cases(
         second_draft,
-        [
-            target.model_copy(update={"selected_evidence_ids": target.selected_evidence_ids[:1]}),
-            *second_draft.cases[1:],
-        ],
+        [target.model_copy(update={"selected_evidence_ids": truncated}), *second_draft.cases[1:]],
     )
     first, second = _pair(tmp_path, second=second_draft)
 
