@@ -237,3 +237,47 @@ async def test_is_sync_idempotency_scope_conflict_detects_unique_violation(
         )
 
     assert is_sync_idempotency_scope_conflict(exc_info.value)
+
+
+async def test_sync_idempotency_scope_allows_same_digest_with_different_hmac_version(
+    db_session: AsyncSession,
+) -> None:
+    user = await _create_user(db_session)
+    repository = IdempotencyRepository(db_session)
+    parent_resource_id = uuid4()
+
+    await repository.create_sync_idempotency_record(
+        user_id=user.id,
+        operation_id="medication-candidate.confirm",
+        parent_resource_id=parent_resource_id,
+        key_hmac_version="v1",
+        key_hmac="digest",
+        request_hash="request-fingerprint",
+        response_status=200,
+        response_body_snapshot=b"encrypted-bytes",
+        encryption_key_version="v1",
+    )
+    await repository.create_sync_idempotency_record(
+        user_id=user.id,
+        operation_id="medication-candidate.confirm",
+        parent_resource_id=parent_resource_id,
+        key_hmac_version="v2",
+        key_hmac="digest",
+        request_hash="request-fingerprint",
+        response_status=200,
+        response_body_snapshot=b"encrypted-bytes",
+        encryption_key_version="v1",
+    )
+
+    found = await repository.find_sync_idempotency_record(
+        user_id=user.id,
+        operation_id="medication-candidate.confirm",
+        parent_resource_id=parent_resource_id,
+        key_hmac_candidates=(
+            IdempotencyHmacDigest(key_hmac_version="v2", key_hmac="digest"),
+            IdempotencyHmacDigest(key_hmac_version="v1", key_hmac="digest"),
+        ),
+    )
+
+    assert found is not None
+    assert found.key_hmac_version in {"v1", "v2"}

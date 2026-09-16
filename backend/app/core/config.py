@@ -221,10 +221,19 @@ class Config(BaseSettings):
     def _strip_idempotency_hmac_key_version(cls, value: str) -> str:
         return value.strip()
 
-    @field_validator("IDEMPOTENCY_HMAC_RETIRED_KEYS", mode="after")
+    @field_validator("IDEMPOTENCY_HMAC_RETIRED_KEYS", mode="before")
     @classmethod
-    def _strip_idempotency_hmac_retired_keys(cls, value: dict[str, str]) -> dict[str, str]:
-        return {version.strip(): retired_key.strip() for version, retired_key in value.items()}
+    def _normalize_idempotency_hmac_retired_keys(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+
+        normalized: dict[str, str] = {}
+        for raw_version, raw_key in value.items():
+            version = str(raw_version).strip()
+            if version in normalized:
+                raise ValueError("IDEMPOTENCY_HMAC_RETIRED_KEYS must not contain duplicate versions after trimming")
+            normalized[version] = str(raw_key).strip()
+        return normalized
 
     # app/services/guide_ai 및 chat_ai 연동용 OpenAI 설정.
     # CI의 test 잡 env에는 OPENAI_API_KEY가 없어서 필수값(DB_*처럼)으로 두면 전체 테스트가 깨집니다.

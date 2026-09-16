@@ -13,7 +13,7 @@
 
 ## 식별 범위와 요청 해시
 
-비동기 접수의 고유 범위는 `(user_id, OpenAPI operation_id, key_hmac)`이다. `key_hmac`은 원문 키를 서버 비밀키로 versioned HMAC-SHA-256 처리한 값이며 원문은 저장하지 않는다. 동기 상태 변경도 같은 `key_hmac` 컬럼명을 사용하되 아래와 같이 `parent_resource_id`를 scope에 추가한다. Post-MVP-1은 인증 사용자가 직접 소유한 리소스에 수행하는 요청만 지원한다.
+비동기 접수의 물리 고유 범위는 `(user_id, OpenAPI operation_id, key_hmac_version, key_hmac)`이다. `key_hmac`은 원문 키를 서버 비밀키로 versioned HMAC-SHA-256 처리한 값이며 원문은 저장하지 않는다. 동기 상태 변경도 같은 `key_hmac` 컬럼명을 사용하되 아래와 같이 `parent_resource_id`를 scope에 추가한다. Post-MVP-1은 인증 사용자가 직접 소유한 리소스에 수행하는 요청만 지원한다.
 
 HMAC key rotation 중에는 구 writer와 신 writer가 동시에 최초 요청을 쓰지 못하게 한다. reader는 미만료 멱등 레코드가 존재할 수 있는 모든 retained key version을 조회해야 한다. 현재 key version과 직전 key version만 조회하는 방식은 rotation 주기가 최대 멱등 레코드 보존기간보다 길어 N-2 이하 미만료 레코드가 존재할 수 없을 때만 허용한다. writer가 서로 다른 active key version으로 같은 원문 key를 동시에 insert하면 서로 다른 `key_hmac`이 만들어져 DB unique constraint가 중복 Job을 막지 못한다. 따라서 key rotation 배포는 다음 중 하나를 만족해야 한다.
 
@@ -48,18 +48,18 @@ HMAC key rotation 중에는 구 writer와 신 writer가 동시에 최초 요청�
 
 동시 최초 요청은 DB unique constraint로 하나만 승리시킨 뒤, 패자는 저장된 요청 지문을 비교해 위 규칙을 적용한다.
 
-DB unique 제약은 최소 다음 범위를 보장한다. `expires_at`은 unique key에 포함하지 않는다. 만료 row를 새 요청처럼 처리하려면 위 보존 규칙처럼 기존 row를 먼저 원자적으로 reclaim하거나 삭제한 뒤 새 row를 생성한다.
+DB unique 제약은 최소 다음 범위를 보장한다. `key_hmac_version`을 포함하는 이유는 원문 Idempotency-Key를 저장하지 않는 상태에서 active/retained key별 digest를 같은 scope에 보존하고, reader가 후보 version/digest pair 전체를 조회해 replay를 복원하기 위해서다. 혼합 writer의 동시 최초 write는 여전히 금지하며, 이 제약은 rotation 중 replay 조회 범위와 물리 저장 범위를 정렬한다. `expires_at`은 unique key에 포함하지 않는다. 만료 row를 새 요청처럼 처리하려면 위 보존 규칙처럼 기존 row를 먼저 원자적으로 reclaim하거나 삭제한 뒤 새 row를 생성한다.
 
 | 구분 | unique 기준 |
 | --- | --- |
-| 비동기 요청 | `record_type`, `user_id`, `operation_id`, `key_hmac` |
-| 동기 요청 | `record_type`, `user_id`, `operation_id`, `parent_resource_id`, `key_hmac` |
+| 비동기 요청 | `record_type`, `user_id`, `operation_id`, `key_hmac_version`, `key_hmac` |
+| 동기 요청 | `record_type`, `user_id`, `operation_id`, `parent_resource_id`, `key_hmac_version`, `key_hmac` |
 
 비동기 Job 멱등 레코드는 응답 body snapshot을 저장하지 않는다. 동일 요청은 저장된 `job_id`로 현재 Job을 조회해 최신 `202`를 반환한다.
 
 ## 동기 상태 변경 처리 규칙
 
-동기 B·C·F 쓰기의 고유 범위는 `(user_id, OpenAPI operation_id, parent_resource_id, key_hmac)`이다. parent resource는 다음과 같다.
+동기 B·C·F 쓰기의 물리 고유 범위는 `(user_id, OpenAPI operation_id, parent_resource_id, key_hmac_version, key_hmac)`이다. parent resource는 다음과 같다.
 
 - B 일정: `prescription_version_medication_id`
 - B Check-in·재알림: `occurrence_id`

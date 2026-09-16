@@ -367,6 +367,28 @@ def test_idempotency_hmac_retired_keys_accept_configured_previous_key(environmen
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
+def test_idempotency_hmac_retired_keys_reject_trimmed_version_collision(environment: str) -> None:
+    with pytest.raises(ValidationError) as error:
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
+                "IDEMPOTENCY_HMAC_KEY_VERSION": "v3",
+                "IDEMPOTENCY_HMAC_RETIRED_KEYS": {
+                    "v1": "a-previous-idempotency-hmac-secret-value-a",
+                    " v1 ": "a-previous-idempotency-hmac-secret-value-b",
+                },
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": REAL_SNAPSHOT_ENCRYPTION_KEY,
+            }
+        )
+
+    message = str(error.value)
+    assert "duplicate versions after trimming" in message
+    assert "a-previous-idempotency-hmac-secret-value" not in message
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
 def test_idempotency_hmac_retired_keys_reject_active_version_collision(environment: str) -> None:
     with pytest.raises(ValidationError):
         Config.model_validate(
