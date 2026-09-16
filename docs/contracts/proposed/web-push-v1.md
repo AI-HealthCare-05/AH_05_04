@@ -134,7 +134,9 @@ Push 명령을 실행한다. 회당 기본 100개, 최대 500개, 배치 제한 
 생성/게시 transaction에 외부 요청을 추가하지 않는다. opt-in 기본 off,
 Push 장애는 기존 앱 내부 목록·Check-in을 막지 않는다. AI Worker 및 새 queue는
 범위 밖이며 운영 scheduler 연결은 #434 담당 범위와 함께 리뷰한다. Production에서는
-환경변수 enabled 값과 무관하게 config/등록/전송을 차단하며 DELETE는 유지한다.
+`WEB_PUSH_PRODUCTION_ENABLED`(기본 false, [PD-469-2](../../governance/decisions/2026-09-16-web-push-production-gate-651.md))가
+true여야 `WEB_PUSH_ENABLED` 값에 따라 config/등록/전송이 열리며, false면 enabled 값과
+무관하게 차단한다. DELETE는 이 두 플래그와 무관하게 유지한다.
 
 ## 검증 범위
 

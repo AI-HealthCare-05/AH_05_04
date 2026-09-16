@@ -24,7 +24,7 @@ def push_settings() -> PushSettings:
         settings = get_push_settings()
     except Exception:
         raise unavailable() from None
-    if config.ENV == "production":
+    if config.ENV == "production" and not settings.production_enabled:
         return settings.model_copy(update={"enabled": False})
     return settings
 

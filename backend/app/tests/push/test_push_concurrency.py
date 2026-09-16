@@ -188,6 +188,47 @@ async def test_one_shot_command_does_not_send_without_notification_consent_row(
         assert delivery.attempt_count == 0
 
 
+async def test_production_enabled_flag_allows_real_registration_and_send(
+    push_database, push_settings, subscription_request, monkeypatch
+):
+    process_push, sender = freeze_push_command(monkeypatch)
+    push_settings.production_enabled = True
+    monkeypatch.setattr(config, "ENV", "production")
+    factory, user_id, version, _ = push_database
+    delivery_id = await seed_delivery(factory, user_id, version, push_settings, subscription_request)
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(PushSubscription)) == 1
+
+    assert await process_push.process_push_once(settings=push_settings, session_factory=factory) == 1
+    sender.assert_called_once()
+    async with factory() as session:
+        delivery = await session.get(PushDelivery, delivery_id)
+        assert delivery.status == "ACCEPTED"
+        assert delivery.accepted_at is not None
+
+
+async def test_production_enabled_flag_still_requires_notification_consent(
+    push_database, push_settings, subscription_request, monkeypatch
+):
+    process_push, sender = freeze_push_command(monkeypatch)
+    push_settings.production_enabled = True
+    monkeypatch.setattr(config, "ENV", "production")
+    factory, user_id, version, _ = push_database
+    delivery_id = await seed_delivery(factory, user_id, version, push_settings, subscription_request)
+    async with factory.begin() as session:
+        row = await UserConsentRepository(session).get_current(user_id=user_id, purpose=ConsentPurpose.NOTIFICATION)
+        assert row is not None
+        await session.delete(row)
+
+    assert await process_push.process_push_once(settings=push_settings, session_factory=factory) == 0
+    sender.assert_not_called()
+    async with factory() as session:
+        delivery = await session.get(PushDelivery, delivery_id)
+        assert delivery.status == "CANCELLED"
+        assert delivery.failure_reason == "NO_LONGER_ELIGIBLE"
+        assert delivery.attempt_count == 0
+
+
 async def test_one_shot_command_does_not_send_when_notification_policy_unavailable(
     push_database, push_settings, subscription_request, monkeypatch
 ):
