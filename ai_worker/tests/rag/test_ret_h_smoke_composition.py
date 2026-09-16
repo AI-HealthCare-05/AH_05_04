@@ -17,6 +17,7 @@ from ai_worker.tasks.evaluation.ret_h_smoke import (
     make_stale_hit,
     verify_gate_fail_closed,
 )
+from ai_worker.tasks.rag.evidence_rank_fusion import FractionReceipt
 from ai_worker.tasks.rag.evidence_search import (
     ProductionEvidenceProvenance,
     ProductionSearchHit,
@@ -74,7 +75,7 @@ def _hit() -> ProductionSearchHit:
         lexical_rank=1,
         dense_rank=1,
         fusion_rank=1,
-        fraction_receipt=None,
+        fraction_receipt=FractionReceipt("1", "61"),
         is_eligible_for_future_reranker=True,
     )
 
