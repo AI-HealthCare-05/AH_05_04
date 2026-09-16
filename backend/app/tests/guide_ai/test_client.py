@@ -111,6 +111,7 @@ async def test_client_uses_non_streaming_parse_and_returns_single_parsed_draft()
         "text_format": GeneratedGuideDraft,
         "max_output_tokens": 560,
         "store": False,
+        "temperature": 0,
     }
 
 

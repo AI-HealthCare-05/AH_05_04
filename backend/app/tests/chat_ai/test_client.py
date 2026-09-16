@@ -107,6 +107,7 @@ async def test_client_uses_non_streaming_create_and_returns_plain_text() -> None
         "max_output_tokens": 800,
         "store": False,
         "stream": False,
+        "temperature": 0,
     }
 
 
