@@ -27,6 +27,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 영역 | 테이블 | 현재 사용 상태 |
 | --- | --- | --- |
 | 사용자 | `user` | 인증·사용자 정보에 사용 |
+| 회원탈퇴 | `account_deletion_request` | account-lifecycle-v1(#206) 5절: 회원탈퇴 요청 이후 삭제·보존 처리 감사 기준. migration/model만 구현, 탈퇴 요청 접수 API와 삭제·보존 처리는 후속 PR 범위 |
 | 사용자 동의 | `user_consent` | PD-207 목적별 최신 동의 상태 저장 기반. 사용자 동의 상태 API는 #510에서 구현. OCR 목적은 #505에서 Backend 동의 API·접수 Gate와 Worker 재검사에 연결; GUIDE/CHAT 목적은 동기 Provider 호출 전 Gate에 연결; NOTIFICATION 실행 Gate는 후속 범위 |
 | 프로필 | `profile` | 본인 단일 `SELF` profile과 사용자 리소스 소유권 기준에 사용 |
 | 의료문서 | `medical_document` | 처방전 metadata와 로컬 파일 object key 저장 |
@@ -95,6 +96,24 @@ access token과 refresh token에는 발급 시점의 `token_version`을 포함�
 | `used_at` | timezone datetime | Yes | 소비 시각. `NULL`이면 미사용 |
 
 재설정 완료 시 같은 transaction에서 비밀번호 변경, 해당 사용자의 미사용·미만료 `password_reset_token` 전체 소비, `token_version + 1`을 함께 처리합니다. 만료된 행을 지우는 별도 정리 배치는 두지 않고(`idempotency_record`와 동일하게 lazy cleanup), 조회 시 `expires_at` 조건으로만 거릅니다.
+
+`account_deletion_request` 테이블은 회원탈퇴 요청 이후 개인정보·건강정보 삭제·보존 처리의 감사 기준입니다(`docs/contracts/proposed/account-lifecycle-v1.md` 5절). 로그인 가능 여부는 `user.account_status`가 판단하고, 이 테이블은 삭제·보존 처리의 대기·진행·완료·실패 상태와 재처리 근거만 관리합니다. 이번 PR은 이 테이블의 migration/model만 추가하며, 탈퇴 요청 접수 API와 삭제·보존 처리 로직은 후속 PR 범위입니다.
+
+| 컬럼 | 타입 | Nullable | 설명 |
+| --- | --- | ---: | --- |
+| `id` | `CHAR(36)` | No | Account Deletion Request PK |
+| `user_id` | `CHAR(36)` | No | `user.id` FK |
+| `status` | `VARCHAR(20)` | No | `PENDING`\|`IN_PROGRESS`\|`COMPLETED`\|`FAILED` |
+| `requested_at` | timezone datetime | No | 탈퇴 요청 transaction이 커밋된 시각 |
+| `started_at` | timezone datetime | Yes | 삭제·보존 처리 시작 시각 |
+| `completed_at` | timezone datetime | Yes | 삭제·보존 처리 완료 시각 |
+| `failed_at` | timezone datetime | Yes | 마지막 실패 시각 |
+| `retry_count` | `INTEGER` | No | 내부 재시도 횟수. 기본값 `0` |
+| `last_error_code` | `VARCHAR(100)` | Yes | 운영 확인용 내부 실패 사유. 원문 예외 메시지나 개인정보는 저장하지 않음 |
+| `created_at` | timezone datetime | No | row 생성 시각 |
+| `updated_at` | timezone datetime | No | 마지막 갱신 시각 |
+
+한 사용자에게 terminal 전 상태(`PENDING`/`IN_PROGRESS`/`FAILED`)의 활성 요청이 동시에 여러 개 생기지 않도록 `user_id` 기준 partial unique index(`status IN ('PENDING', 'IN_PROGRESS', 'FAILED')`)를 둡니다. `COMPLETED`는 이 제약 대상이 아니라 과거 이력으로 여러 개 남을 수 있습니다.
 
 `email_verification_token` 테이블은 회원가입 전 이메일 소유 확인용 1회성 token을 관리합니다. 별도 공개 이메일 중복 확인 API를 만들지 않으며, 최종 중복 방어는 기존 `POST /api/v1/auth/signup`의 `409 CONFLICT`가 담당합니다.
 
