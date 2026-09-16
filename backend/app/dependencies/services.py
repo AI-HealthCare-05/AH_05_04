@@ -519,11 +519,16 @@ def get_chat_service(
         ChatEngine,
         Depends(get_chat_engine),
     ],
+    consent_gate: Annotated[
+        ConsentGateService,
+        Depends(get_consent_gate_service),
+    ],
 ) -> ChatService:
     return ChatService(
         prescription_repository,
         chat_repository,
         engine,
+        consent_gate,
         history_context_enabled=config.CHAT_HISTORY_CONTEXT_ENABLED,
     )
 
