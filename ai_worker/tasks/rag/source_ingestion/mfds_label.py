@@ -341,14 +341,13 @@ def _load_document(
         content_type=evidence.content_type,
     )
     raw = read_verified_raw_artifact(file_path=path, metadata=metadata)
-    root = _parse_xml(raw, section)
-    body = _inspect_body(root, section)
+    payload, body = canonicalize_label_xml(raw, section)
     return MfdsLabelDocument(
         section=section,
-        document_title=root.get("title") or "",
+        document_title=str(payload["document_title"]),
         file_path=path,
         metadata=metadata,
-        canonical_structure=_canonical_element(root),
+        canonical_structure=cast(dict[str, object], payload["structure"]),
         content_status=str(body["content_status"]),
         empty_article_titles=tuple(cast(list[str], body["empty_article_titles"])),
     )
@@ -499,11 +498,34 @@ def _canonical_text(value: str) -> str:
     return unicodedata.normalize("NFC", value.replace("\r\n", "\n").replace("\r", "\n"))
 
 
+def canonicalize_label_xml(raw: bytes, section: str) -> tuple[dict[str, object], dict[str, object]]:
+    """Receipt와 ingestion이 같은 XML 검증·정규화 결과를 사용합니다."""
+    root = _parse_xml(raw, section)
+    body = _inspect_body(root, section)
+    return {
+        "document_type": section,
+        "document_title": root.get("title") or "",
+        "structure": _canonical_element(root),
+    }, body
+
+
+def label_canonical_checksum(item_seq: str, documents: list[dict[str, object]]) -> str:
+    """기존 제품 전체 canonical manifest 계산을 공유합니다."""
+    return hashlib.sha256(
+        canonical_json_bytes(
+            {
+                "canonicalization_spec_version": CANONICALIZATION_SPEC_VERSION,
+                "item_seq": item_seq,
+                "documents": documents,
+            }
+        )
+    ).hexdigest()
+
+
 def _canonical_checksum(item_seq: str, documents: tuple[MfdsLabelDocument, ...]) -> str:
-    canonical_manifest = {
-        "canonicalization_spec_version": CANONICALIZATION_SPEC_VERSION,
-        "item_seq": item_seq,
-        "documents": [
+    return label_canonical_checksum(
+        item_seq,
+        [
             {
                 "document_type": document.section,
                 "document_title": document.document_title,
@@ -511,8 +533,7 @@ def _canonical_checksum(item_seq: str, documents: tuple[MfdsLabelDocument, ...])
             }
             for document in documents
         ],
-    }
-    return hashlib.sha256(canonical_json_bytes(canonical_manifest)).hexdigest()
+    )
 
 
 def _validate_item_seq(item_seq: str) -> None:

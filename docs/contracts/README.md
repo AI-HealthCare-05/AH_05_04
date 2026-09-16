@@ -1,5 +1,7 @@
 # 공통 데이터 계약
 
+- [#591 XML 제한 수집 Receipt](targets/post-mvp-1/mfds-label-xml-receipts-591.md): 승인된 필드·hash·단방향 결속 및 private 발급 도구. 구현 리뷰/서버 적용 대기, DB 등록·READY·공개 게이트 별도.
+
 - [OCR LLM 동의·전송 후속 (#458)](proposed/ocr-llm-transfer-458.md): #505에서 OCR 목적 Backend API·접수 Gate, Worker 재검사, Frontend 연결과 안전한 LLM 생략을 구현. 최종 안내 문구·policy version, 검증된 최소 전송 selector와 실제 사용자 대상 LLM 활성화는 미완료.
 - [OCR 동의 안내·정책 버전 검토안 (#458)](proposed/ocr-consent-notice-policy-review-458.md): 데모 OCR 안내와 향후 LLM 안내, 기존 동의자의 재동의 및 버전 결정 질문. 승인된 운영 문구·버전은 아님.
 
