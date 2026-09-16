@@ -397,12 +397,21 @@ async def bootstrap_dev_knowledge_index(
         chunk_id = uuid4()
 
         # Get embedding vector
-        if hasattr(text_embedding_port, "embed_query"):
+        if hasattr(text_embedding_port, "embed"):
+            embed_res = await text_embedding_port.embed(
+                SensitiveText(statement),
+                model_ref=PRODUCTION_EMBEDDING_MODEL_REF,
+                model_version=PRODUCTION_EMBEDDING_MODEL_VERSION,
+                dimension=PRODUCTION_EMBEDDING_DIMENSION,
+            )
+            if not isinstance(embed_res, TextEmbeddingSuccess):
+                raise EvaluationValidationError(
+                    EvaluationErrorCode.DEPENDENCY_UNAVAILABLE, f"Embedding failed: {embed_res}"
+                )
+            vec_tuple = embed_res.embedding.reveal()
+        elif hasattr(text_embedding_port, "embed_query"):
             v_res = await text_embedding_port.embed_query(SensitiveText(statement))
-            vec_tuple = v_res.vector
-        elif hasattr(text_embedding_port, "embed"):
-            v_res = (await text_embedding_port.embed([SensitiveText(statement)]))[0]
-            vec_tuple = v_res.vector
+            vec_tuple = v_res.reveal() if hasattr(v_res, "reveal") else tuple(v_res)
         else:
             raise EvaluationValidationError(
                 EvaluationErrorCode.DEPENDENCY_UNAVAILABLE, "Embedding port missing embed method"
