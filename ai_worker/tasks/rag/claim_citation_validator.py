@@ -15,6 +15,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
+from ai_worker.tasks.rag.source_member_identity import (
+    SourceMemberIdentity,
+    SourceMemberKind,
+    is_valid_source_member_identity,
+)
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 CLAIM_SUPPORT_PROJECTION_VERSION = "rag-claim-support-v1"
@@ -40,11 +45,6 @@ class ClaimSupportStatus(StrEnum):
     PARTIALLY_SUPPORTED = "PARTIALLY_SUPPORTED"
     CONTRADICTED = "CONTRADICTED"
     NOT_SUPPORTED = "NOT_SUPPORTED"
-
-
-class SourceMemberKind(StrEnum):
-    ENDPOINT_OPERATION = "ENDPOINT_OPERATION"
-    ARTIFACT_MEMBER = "ARTIFACT_MEMBER"
 
 
 class CandidateValidationExecutionStatus(StrEnum):
@@ -258,24 +258,17 @@ def _artifact_payload(value: ImmutableArtifactRef) -> dict[str, str]:
 def _source_binding_is_valid(value: object) -> bool:
     if type(value) is not SourceExecutionProvenance:
         return False
-    endpoint_member = (
-        value.member_kind is SourceMemberKind.ENDPOINT_OPERATION
-        and _is_nfc_text(value.endpoint_code)
-        and _is_nfc_text(value.operation_code)
-        and value.artifact_code is None
-        and value.artifact_version is None
-    )
-    artifact_member = (
-        value.member_kind is SourceMemberKind.ARTIFACT_MEMBER
-        and value.endpoint_code is None
-        and value.operation_code is None
-        and _is_nfc_text(value.artifact_code)
-        and _is_nfc_text(value.artifact_version)
+    identity = SourceMemberIdentity(
+        member_kind=value.member_kind,
+        endpoint_code=value.endpoint_code,
+        operation_code=value.operation_code,
+        artifact_code=value.artifact_code,
+        artifact_version=value.artifact_version,
     )
     return (
         _is_nfc_text(value.source_code)
         and _is_nfc_text(value.source_version)
-        and (endpoint_member or artifact_member)
+        and is_valid_source_member_identity(identity)
         and _artifact_is_valid(value.request_source_decision_ref)
         and _artifact_is_valid(value.request_member_decision_ref)
     )
