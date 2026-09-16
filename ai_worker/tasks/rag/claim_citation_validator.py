@@ -14,7 +14,10 @@ import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 
-from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
+from ai_worker.tasks.rag.evidence_retrieval import (
+    ImmutableArtifactRef,
+    is_valid_immutable_artifact_ref,
+)
 from ai_worker.tasks.rag.source_member_identity import (
     SourceMemberIdentity,
     SourceMemberKind,
@@ -238,15 +241,6 @@ def _is_positive_int(value: object) -> bool:
     return type(value) is int and value > 0
 
 
-def _artifact_is_valid(value: object) -> bool:
-    return (
-        type(value) is ImmutableArtifactRef
-        and _is_nfc_text(value.artifact_code)
-        and _is_nfc_text(value.version)
-        and _is_sha256(value.content_sha256)
-    )
-
-
 def _artifact_payload(value: ImmutableArtifactRef) -> dict[str, str]:
     return {
         "artifact_code": value.artifact_code,
@@ -269,8 +263,8 @@ def _source_binding_is_valid(value: object) -> bool:
         _is_nfc_text(value.source_code)
         and _is_nfc_text(value.source_version)
         and is_valid_source_member_identity(identity)
-        and _artifact_is_valid(value.request_source_decision_ref)
-        and _artifact_is_valid(value.request_member_decision_ref)
+        and is_valid_immutable_artifact_ref(value.request_source_decision_ref)
+        and is_valid_immutable_artifact_ref(value.request_member_decision_ref)
     )
 
 
@@ -296,7 +290,7 @@ def _evidence_is_valid(value: CitationEvidenceRef) -> bool:
     if type(value) is KnowledgeChunkEvidenceRef:
         return (
             all(_is_nfc_text(item) for item in (value.knowledge_chunk_ref, value.source_version, value.locator))
-            and _artifact_is_valid(value.source_snapshot_ref)
+            and is_valid_immutable_artifact_ref(value.source_snapshot_ref)
             and _is_sha256(value.content_sha256)
             and _source_binding_is_valid(value.execution_provenance)
             and value.source_version == value.execution_provenance.source_version
@@ -304,7 +298,7 @@ def _evidence_is_valid(value: CitationEvidenceRef) -> bool:
     if type(value) is InteractionRuleEvidenceRef:
         return (
             all(_is_nfc_text(item) for item in (value.interaction_rule_ref, value.source_version, value.locator))
-            and _artifact_is_valid(value.rule_artifact_ref)
+            and is_valid_immutable_artifact_ref(value.rule_artifact_ref)
             and _is_sha256(value.content_sha256)
             and _source_binding_is_valid(value.execution_provenance)
             and value.source_version == value.execution_provenance.source_version
@@ -312,7 +306,7 @@ def _evidence_is_valid(value: CitationEvidenceRef) -> bool:
     if type(value) is LifestyleGuidelineEvidenceRef:
         return (
             all(_is_nfc_text(item) for item in (value.guideline_evidence_ref, value.source_version, value.locator))
-            and _artifact_is_valid(value.guideline_artifact_ref)
+            and is_valid_immutable_artifact_ref(value.guideline_artifact_ref)
             and _is_sha256(value.content_sha256)
             and _source_binding_is_valid(value.execution_provenance)
             and value.source_version == value.execution_provenance.source_version
@@ -320,7 +314,7 @@ def _evidence_is_valid(value: CitationEvidenceRef) -> bool:
     if type(value) is SafetyPolicyEvidenceRef:
         return (
             all(_is_nfc_text(item) for item in (value.safety_policy_ref, value.source_version, value.locator))
-            and _artifact_is_valid(value.policy_artifact_ref)
+            and is_valid_immutable_artifact_ref(value.policy_artifact_ref)
             and _is_sha256(value.content_sha256)
             and _source_binding_is_valid(value.execution_provenance)
             and value.source_version == value.execution_provenance.source_version
@@ -462,7 +456,7 @@ def _request_shape_reasons(candidate_set: object) -> list[CandidateValidationRea
         or not candidate_set.claims
         or type(candidate_set.generation_provenance) is not GenerationProvenance
         or not all(
-            _artifact_is_valid(ref)
+            is_valid_immutable_artifact_ref(ref)
             for ref in (
                 candidate_set.generation_provenance.prompt_ref,
                 candidate_set.generation_provenance.model_ref,
@@ -484,7 +478,7 @@ def _claim_reasons(claims: tuple[ClaimCandidate, ...]) -> list[CandidateValidati
         and _is_positive_int(claim.display_order)
         and type(claim.support_assertion) is ClaimSupportAssertion
         and type(claim.support_assertion.support_status) is ClaimSupportStatus
-        and _artifact_is_valid(claim.support_assertion.assessment_ref)
+        and is_valid_immutable_artifact_ref(claim.support_assertion.assessment_ref)
         for claim in claims
     ):
         return [CandidateValidationReason.REQUEST_INVALID]
@@ -551,8 +545,8 @@ def _support_reasons(
         and _is_nfc_text(receipt.claim_key)
         and type(receipt.support_status) is ClaimSupportStatus
         and _is_sha256(receipt.claim_text_digest)
-        and _artifact_is_valid(receipt.assessment_ref)
-        and _artifact_is_valid(receipt.verifier_artifact_ref)
+        and is_valid_immutable_artifact_ref(receipt.assessment_ref)
+        and is_valid_immutable_artifact_ref(receipt.verifier_artifact_ref)
         and _is_sha256(receipt.projection_sha256)
         for receipt in receipts
     ):

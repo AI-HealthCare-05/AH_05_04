@@ -59,6 +59,27 @@ class ImmutableArtifactRef:
     content_sha256: str
 
 
+def is_valid_immutable_artifact_ref(value: object) -> bool:
+    if type(value) is not ImmutableArtifactRef:
+        return False
+    try:
+        return (
+            isinstance(value.artifact_code, str)
+            and len(value.artifact_code) > 0
+            and value.artifact_code == value.artifact_code.strip()
+            and unicodedata.is_normalized("NFC", value.artifact_code)
+            and isinstance(value.version, str)
+            and len(value.version) > 0
+            and value.version == value.version.strip()
+            and unicodedata.is_normalized("NFC", value.version)
+            and isinstance(value.content_sha256, str)
+            and len(value.content_sha256) == 64
+            and bool(_SHA256_RE.fullmatch(value.content_sha256))
+        )
+    except AttributeError:
+        return False
+
+
 @dataclass(frozen=True, slots=True)
 class EvidenceRetrievalKernelRequest:
     normalized_query: SensitiveText
@@ -1166,16 +1187,7 @@ def _is_valid_fingerprint(value: object) -> bool:
 
 
 def _is_valid_artifact_ref(value: object) -> bool:
-    try:
-        return (
-            isinstance(value, ImmutableArtifactRef)
-            and _is_nonempty_nfc_string(value.artifact_code)
-            and _is_nonempty_nfc_string(value.version)
-            and isinstance(value.content_sha256, str)
-            and bool(_SHA256_RE.fullmatch(value.content_sha256))
-        )
-    except Exception:
-        return False
+    return is_valid_immutable_artifact_ref(value)
 
 
 def _is_nonempty_nfc_string(value: object) -> bool:
