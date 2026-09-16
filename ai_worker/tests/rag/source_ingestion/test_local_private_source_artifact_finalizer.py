@@ -172,5 +172,41 @@ def test_reader_rejects_world_writable_or_symlink_root(tmp_path: Path) -> None:
     private.mkdir(mode=0o500)
     link = tmp_path / "link"
     link.symlink_to(private, target_is_directory=True)
-    with pytest.raises(ValueError, match="symlinks"):
+    with pytest.raises(ValueError, match="symlinks") as captured:
         LocalPrivateSourceArtifactReader(link)
+    from ai_worker.adapters.local_private_source_artifact_finalizer import ArtifactObjectKeyError
+
+    assert not isinstance(captured.value, ArtifactObjectKeyError)
+
+
+def test_reader_object_key_and_path_security_errors(tmp_path: Path) -> None:
+    from ai_worker.adapters.local_private_source_artifact_finalizer import (
+        ArtifactObjectKeyError,
+        LocalPrivateSourceArtifactReader,
+    )
+
+    final_root = tmp_path / "final-read-only"
+    final_root.mkdir(mode=0o500)
+    reader = LocalPrivateSourceArtifactReader(final_root)
+    metadata = _metadata(b"synthetic")
+
+    # 1. Root escape -> ArtifactObjectKeyError
+    with pytest.raises(ArtifactObjectKeyError) as exc_info:
+        reader.read_verified(object_key="../escape.artifact", metadata=metadata)
+    assert isinstance(exc_info.value, ValueError)
+    assert str(exc_info.value) == "Source artifact object key is outside reader root."
+
+    # 2. Writer-writable parent or file -> ArtifactObjectKeyError
+    # Create an artifact inside final_root but leave it or its parent writer-writable
+    final_root.chmod(0o700)
+    sub = final_root / "writable_sub"
+    sub.mkdir(mode=0o700)
+    art = sub / "test.artifact"
+    art.write_bytes(b"synthetic")
+    art.chmod(0o600)
+    final_root.chmod(0o500)
+
+    with pytest.raises(ArtifactObjectKeyError) as exc_info:
+        reader.read_verified(object_key="writable_sub/test.artifact", metadata=metadata)
+    assert isinstance(exc_info.value, ValueError)
+    assert str(exc_info.value) == "Final Source artifact path must be read-only for the writer account."

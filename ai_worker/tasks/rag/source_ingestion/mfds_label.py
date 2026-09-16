@@ -180,17 +180,55 @@ class MfdsLabelRequeryReceipt:
     member_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class ParsedMfdsLabelDocument:
+    section: str
+    document_title: str
+    article_count: int
+    paragraph_count: int
+    nonempty_paragraph_count: int
+    content_status: str
+    empty_article_titles: tuple[str, ...]
+    root: ElementTree.Element = field(repr=False)
+
+
+def parse_mfds_label_artifact(raw_bytes: bytes, section: str) -> ParsedMfdsLabelDocument:
+    """원시 XML 바이트열과 섹션 코드를 입력받아 검증된 구조화 문서를 반환합니다.
+
+    기존 parser 오류 계약(ValueError: XML_SECTION_MISMATCH, XML_INVALID,
+    XML_BODY_EMPTY, XML_ARTICLE_SET_INVALID 등)을 온전히 유지합니다.
+    canonical structure는 이 seam에서 만들지 않습니다. 기존에 canonicalization을
+    수행하던 `_load_document()` 경로만 `_canonical_element()`를 호출하므로
+    `inspect_xml()`의 기존 구조 검사 동작이 그대로 유지됩니다.
+    """
+    root = _parse_xml(raw_bytes, section)
+    body = _inspect_body(root, section)
+    return ParsedMfdsLabelDocument(
+        section=section,
+        document_title=root.get("title") or "",
+        article_count=cast(int, body["article_count"]),
+        paragraph_count=cast(int, body["paragraph_count"]),
+        nonempty_paragraph_count=cast(int, body["nonempty_paragraph_count"]),
+        content_status=str(body["content_status"]),
+        empty_article_titles=tuple(cast(list[str], body["empty_article_titles"])),
+        root=root,
+    )
+
+
 def inspect_xml(raw: bytes, section: str) -> dict[str, object]:
     """원문을 바꾸지 않고 구조와 완전성 상태만 검사합니다."""
-    root = _parse_xml(raw, section)
-    body = _inspect_body(root, section)
+    parsed = parse_mfds_label_artifact(raw, section)
     return {
         "section": section,
         "byte_size": len(raw),
         "raw_sha256": hashlib.sha256(raw).hexdigest(),
-        "document_title": root.get("title"),
-        **body,
-        "table_element_count": sum(node.tag.lower() == "table" for node in root.iter()),
+        "document_title": parsed.document_title,
+        "article_count": parsed.article_count,
+        "paragraph_count": parsed.paragraph_count,
+        "nonempty_paragraph_count": parsed.nonempty_paragraph_count,
+        "empty_article_titles": list(parsed.empty_article_titles),
+        "content_status": parsed.content_status,
+        "table_element_count": sum(node.tag.lower() == "table" for node in parsed.root.iter()),
     }
 
 
@@ -341,16 +379,15 @@ def _load_document(
         content_type=evidence.content_type,
     )
     raw = read_verified_raw_artifact(file_path=path, metadata=metadata)
-    root = _parse_xml(raw, section)
-    body = _inspect_body(root, section)
+    parsed = parse_mfds_label_artifact(raw, section)
     return MfdsLabelDocument(
         section=section,
-        document_title=root.get("title") or "",
+        document_title=parsed.document_title,
         file_path=path,
         metadata=metadata,
-        canonical_structure=_canonical_element(root),
-        content_status=str(body["content_status"]),
-        empty_article_titles=tuple(cast(list[str], body["empty_article_titles"])),
+        canonical_structure=_canonical_element(parsed.root),
+        content_status=parsed.content_status,
+        empty_article_titles=parsed.empty_article_titles,
     )
 
 
@@ -499,11 +536,39 @@ def _canonical_text(value: str) -> str:
     return unicodedata.normalize("NFC", value.replace("\r\n", "\n").replace("\r", "\n"))
 
 
+def canonicalize_label_xml(raw: bytes, section: str) -> tuple[dict[str, object], dict[str, object]]:
+    """Receipt와 ingestion이 같은 XML 검증·정규화 결과를 사용합니다."""
+    parsed = parse_mfds_label_artifact(raw, section)
+    return {
+        "document_type": section,
+        "document_title": parsed.document_title,
+        "structure": _canonical_element(parsed.root),
+    }, {
+        "article_count": parsed.article_count,
+        "paragraph_count": parsed.paragraph_count,
+        "nonempty_paragraph_count": parsed.nonempty_paragraph_count,
+        "empty_article_titles": list(parsed.empty_article_titles),
+        "content_status": parsed.content_status,
+    }
+
+
+def label_canonical_checksum(item_seq: str, documents: list[dict[str, object]]) -> str:
+    """기존 제품 전체 canonical manifest 계산을 공유합니다."""
+    return hashlib.sha256(
+        canonical_json_bytes(
+            {
+                "canonicalization_spec_version": CANONICALIZATION_SPEC_VERSION,
+                "item_seq": item_seq,
+                "documents": documents,
+            }
+        )
+    ).hexdigest()
+
+
 def _canonical_checksum(item_seq: str, documents: tuple[MfdsLabelDocument, ...]) -> str:
-    canonical_manifest = {
-        "canonicalization_spec_version": CANONICALIZATION_SPEC_VERSION,
-        "item_seq": item_seq,
-        "documents": [
+    return label_canonical_checksum(
+        item_seq,
+        [
             {
                 "document_type": document.section,
                 "document_title": document.document_title,
@@ -511,8 +576,7 @@ def _canonical_checksum(item_seq: str, documents: tuple[MfdsLabelDocument, ...])
             }
             for document in documents
         ],
-    }
-    return hashlib.sha256(canonical_json_bytes(canonical_manifest)).hexdigest()
+    )
 
 
 def _validate_item_seq(item_seq: str) -> None:

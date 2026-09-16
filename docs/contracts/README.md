@@ -1,5 +1,7 @@
 # 공통 데이터 계약
 
+- [#591 XML 제한 수집 Receipt](targets/post-mvp-1/mfds-label-xml-receipts-591.md): 승인된 필드·hash·단방향 결속 및 private 발급 도구. 구현 리뷰/서버 적용 대기, DB 등록·READY·공개 게이트 별도.
+
 - [OCR LLM 동의·전송 후속 (#458)](proposed/ocr-llm-transfer-458.md): #505에서 OCR 목적 Backend API·접수 Gate, Worker 재검사, Frontend 연결과 안전한 LLM 생략을 구현. 최종 안내 문구·policy version, 검증된 최소 전송 selector와 실제 사용자 대상 LLM 활성화는 미완료.
 - [OCR 동의 안내·정책 버전 검토안 (#458)](proposed/ocr-consent-notice-policy-review-458.md): 데모 OCR 안내와 향후 LLM 안내, 기존 동의자의 재동의 및 버전 결정 질문. 승인된 운영 문구·버전은 아님.
 
@@ -53,6 +55,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## Proposed 계약
 
+- [Web Push v1 (#469/#651)](./proposed/web-push-v1.md): Backend Web Push 등록·전송·Production gate 계약. Proposed 상태이며 `WEB_PUSH_PRODUCTION_ENABLED` OFF 반영은 API/scheduler 전 인스턴스 재시작 완료 후 기준으로 해석한다. 실기기 수신 검증은 #471 범위.
 - [Guide·Chat 피드백 v1 (#633)](./proposed/guide-chat-feedback-v1.md): 완료 결과별 rating·선택 의견 저장 API, SELF 소유권·재제출·합성 Gold 연결 계약. Proposed / Local 구현 반영·최종 승인 대기, Frontend·Backend 확인과 사용자 운영안 채택 반영; 실사용 처리 승인·최종 책임 리뷰 별도.
 
 - [Track B 생활 시간 입력 v1 (#422 / #556)](./proposed/track-b-lifestyle-times-v1.md): 식사·반복 행동·복용 곤란 시간의 SELF별 요일 저장·조회 구현 후보. #556 책임 리뷰 전 Proposed; 추천·약별 조건 판정은 별도.
@@ -61,6 +64,8 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Knowledge Evidence Search 및 Deterministic RRF v1 (#178)](./proposed/post-mvp-1/knowledge-evidence-search-rrf-v1.md): 승인된 Knowledge Evidence Index 대상 PostgreSQL Lexical(Exact/Trigram/FTS)·Dense(pgvector Cosine) 검색 및 결정적 RRF(`rrf-rank-fusion@1`) 융합 계약. 구현 브랜치 검증 중이며 Reranker/Evidence Gate/authoritative Retrieval Run/Runtime graph 연결·공개 활성화는 포함하지 않음.
 - [Retrieval Run 및 Evidence Gate Runtime Core v1 (#178)](./proposed/post-mvp-1/retrieval-run-v1.md): Issue #178 Retrieval Run/Signal/Hit 원자적 persistence, Production Evidence Gate pre/post 검증 및 hybrid_retrieve runtime core 계약. 구현 브랜치 검증 중이며 RET-HR/reranker·actual evaluation·공개 활성화는 포함하지 않음.
 - [Guide Evidence Handoff Contract Kernel v1 (#180 선행 계약)](./proposed/post-mvp-1/guide-evidence-handoff-v1.md): #174 REQUEST Guard의 Source/Member 결정 관측 결과와 #178 Production Retrieval selections 사이의 exact-match 결속, JCS 정규 해시 프로젝션, Two-input 재검증 순수 계약 커널. 순수 계약 커널 구현 브랜치 검토 중; authority 발급·영속화·런타임 통합은 미구현.
+- [Endpoint Member Authority Contract Kernel v1 (#180 선행 계약)](./proposed/post-mvp-1/endpoint-member-authority-v1.md): #180 Endpoint Member 권위 계약 단일화, operation_code nullable 규칙 및 typed precondition, 영속 wire value("ARTIFACT" ↔ "ARTIFACT_MEMBER") 매핑, exact-match verifier 순수 계약 커널. 순수 계약 커널 구현 브랜치 검토 중; authority 발급·영속화·런타임 통합은 미구현.
+- [Knowledge Materialization 계약 v1 (Phase 2A, #634)](./proposed/post-mvp-1/knowledge-materialization-v1.md): #634 Proposed. 승인된 Source Snapshot Member(MFDS 품목허가 XML: EE·UD·NB 및 선택 NN)로부터 KnowledgeDocument·KnowledgeChunk 구체화 및 트랜잭션 저장 기반 구현 검토 대상. 전용 Builder 최소 권한, RAW_RESPONSE artifact 결속 검증, All-or-Nothing 롤백, Exact Replay, 6대 해시 도메인 보존과 KnowledgeChunkIdentity 인계 완비.
 
 - [OCR LLM Worker 범위 정정 (#453)](./proposed/ocr-llm-worker-consent-453.md): 기존 이관 범위와 리뷰 시 별도 검토할 항목. 기존 동의 개정안 미채택.
 - [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태와 row 없음=미동의 기준. #465에서 `user_consent` 저장 기반을 병합했고, #510에서 현재 사용자 목적별 동의 상태 조회·변경 API를 추가했다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전과 Production 공개 승인은 후속 범위다. 전체 목적별 계약은 Proposed 유지.
