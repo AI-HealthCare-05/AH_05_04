@@ -275,7 +275,7 @@ uv run pytest backend/app/tests/guide_ai/test_v3_eval.py -q
 
 ### Chat AI v4 대화 품질 Local 검증
 
-실제 Provider 호출 없이 다음 결정론적 테스트로 최근 대화 조회와 단일 `chat-prompt-v4` 계약을 검증합니다.
+실제 Provider 호출 없이 다음 결정론적 테스트로 최근 대화 조회와 단일 `chat-prompt-v5` 계약을 검증합니다.
 
 ```bash
 uv run pytest backend/app/tests/chat backend/app/tests/repositories/test_chat_repository.py backend/app/tests/chat_ai backend/app/tests/chat_integration tests/contract/test_chat_ai_backend_contract.py -q
@@ -285,7 +285,7 @@ uv run pytest backend/app/tests/chat backend/app/tests/repositories/test_chat_re
 - 답변 없음·FAILED·PENDING·GENERATING·비연속 pair 제외와 최대 30개 후보·12,000자 예산
 - 현재 질문 중복 제외와 다른 사용자·세션·처방 소유권 경계
 - flag OFF의 조회 생략·`history: []`와 flag ON Local 합성 history 전달
-- flag와 history 유무에 관계없는 `prompt_version == chat-prompt-v4`
+- flag와 history 유무에 관계없는 `prompt_version == chat-prompt-v5`
 - JSON 문자열을 지시가 아닌 데이터로 취급하는 프롬프트 인젝션 방어
 - 과거 USER의 부정확하거나 오래된 증상·진단·알레르기·복용 여부를 현재 사실로 단정하지 않고, 안전상 중요하면 현재도 해당하는지 확인하는 프롬프트 규칙
 - 과거 ASSISTANT 비신뢰, 현재 확정 medications 우선과 기존 응답·오류 회귀

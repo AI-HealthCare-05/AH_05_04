@@ -16,7 +16,7 @@ v4에는 병용 답변 후 새 약명만 묻는 질문, 직전 안내의 이유�
 - prompt: `chat-prompt-v5`
 - prompt SHA-256 (runtime 문자열, 끝 개행 제외): `891415d165720f9fbcc8a44dfc0f9fbf8e271a5371c3a0b34e2e366715bada70`
 - dataset: `chat-v5-short-followup-eval-v1`
-- dataset SHA-256: `97d7da3ff6216e5fbf524518076fc8ea5b9828030d3074c686667e59bfa5e0ff`
+- dataset SHA-256: `edca523ada9793fef13821c7a2b9b93267d2c0b69e9d358478aef23edeabc3bf`
 - 모델 설정: `gpt-4o`, max output tokens 800, timeout 20초. 실행 Provider는 deterministic replay 대역입니다.
 - history: baseline은 빈 배열, treatment는 case의 합성 최근 대화. 운영 flag 활성화나 실제 사용자 history 전송은 수행하지 않습니다.
 - 재현 명령: `evals/README.md`의 v5 deterministic 명령
@@ -28,3 +28,5 @@ v4에는 병용 답변 후 새 약명만 묻는 질문, 직전 안내의 이유�
 회귀는 관찰된 문맥 초기화·불필요한 재질문·근거 없는 안심 표현을 검출하며, 문맥 평가가 통과해도 안전 평가는 독립적으로 실패합니다. 단어 기반 검사는 모든 의미적 변형을 검출하지 못합니다. 자연스러움과 실제 모델의 수정 전후 품질은 별도 Provider 실행 및 리뷰어 평가가 필요합니다. 현재 결과는 의료 안전성 또는 Production 공개 승인을 의미하지 않습니다.
 
 API·DTO·DB·상태/오류 의미 변경 없이 프롬프트와 평가 fixture를 개선했습니다. 기존 고정 응급·중복·과량 응답 문자열은 동일성 테스트로 보존합니다. v3/v4 blind artifact는 v5 근거로 전용하지 않습니다.
+
+리뷰 반영: 현재 contract test·one-cycle release verifier·관련 runtime 문서를 v5로 정렬했습니다. 새 Gold에는 Identity 단정, `괜찮다/문제없다`, `중단해도/끊어도 된다`의 대표 변형을 추가했으며, 정상 문맥과 상담 권고를 함께 포함해도 baseline/history 및 safety 검사가 실패함을 테스트합니다. 이 유한한 금지 목록은 범용 의미 분류기가 아니며 모든 의역 검출을 보장하지 않습니다.
