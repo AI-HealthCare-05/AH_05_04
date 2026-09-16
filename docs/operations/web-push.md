@@ -1,7 +1,8 @@
 # Web Push — #469 검토 중 운영 연결
 
 상태: 구현 PR 검토 중. 기본 OFF, Production 등록·전송 차단.
-[계약](../contracts/proposed/web-push-v1.md) 및 [Decision](../governance/decisions/2026-09-13-web-push-469.md).
+[계약](../contracts/proposed/web-push-v1.md), [Decision](../governance/decisions/2026-09-13-web-push-469.md)
+및 [Production 게이트 Decision(#651)](../governance/decisions/2026-09-16-web-push-production-gate-651.md).
 
 `schedule_notifications`는 앱 내부 게시를 먼저 완료하고 별도 `process_push.run()`을
 호출한다. 두 작업의 transaction은 분리한다. Push 예외는 고정 분류 로그를 남기고
@@ -17,7 +18,7 @@ Push가 활성화되면 회당 최대 45초가 추가될 수 있으며 정시 �
 | 환경변수 | 형식/운영 경계 |
 | --- | --- |
 | `WEB_PUSH_ENABLED` | 기본 false. Production에서는 `WEB_PUSH_PRODUCTION_ENABLED`도 true여야 등록·전송이 열린다 |
-| `WEB_PUSH_PRODUCTION_ENABLED` | 기본 false(#651). Production에서 이 값이 false면 `WEB_PUSH_ENABLED` 값과 무관하게 등록·전송을 차단한다. 다른 Production 전용 안전장치(이메일 인증 강제 등)에는 영향을 주지 않는다. 문제가 생기면 이 값만 다시 false로 두면 재배포 없이 즉시 차단된다 |
+| `WEB_PUSH_PRODUCTION_ENABLED` | 기본 false(#651). Production에서 이 값이 false면 `WEB_PUSH_ENABLED` 값과 무관하게 등록·전송을 차단한다. 다른 Production 전용 안전장치(이메일 인증 강제 등)에는 영향을 주지 않는다. 문제가 생기면 이 값만 다시 false로 두고 API/scheduler를 재시작하면 코드 롤백이나 재배포 없이 차단된다. 아래 cache 설명대로 재시작 전까지는 이미 뜬 프로세스가 이전 값을 계속 쓴다 |
 | `WEB_PUSH_ALLOWED_HOSTS` | 정확한 provider hostname의 JSON 배열. 기본 빈 배열, wildcard 금지 |
 | `WEB_PUSH_VAPID_PRIVATE_KEY` | 저장소 밖 secret에서 주입하는 P-256 PEM private key |
 | `WEB_PUSH_VAPID_PUBLIC_KEY` | 해당 키의 uncompressed public key, base64url no padding |
