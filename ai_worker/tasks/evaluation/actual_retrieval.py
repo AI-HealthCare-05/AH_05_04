@@ -60,6 +60,55 @@ class ActualRetrievalReceipts:
     latency_summary: LatencySummary
 
 
+def sealed_retrieval_config(
+    config: VersionedEvidenceRetrievalConfiguration,
+) -> VersionedEvidenceRetrievalConfiguration:
+    """Rebind every configuration artifact ref to its own canonical hash.
+
+    ``validate_retrieval_configuration`` rejects a configuration whose artifact
+    ref does not carry its canonical hash, so placeholder refs must be sealed
+    before the configuration reaches the search port.
+    """
+
+    lexical = config.lexical_config
+    lexical = replace(
+        lexical,
+        artifact_ref=replace(lexical.artifact_ref, content_sha256=lexical.compute_canonical_hash()),
+    )
+    dense = config.dense_config
+    if dense is not None:
+        dense = replace(
+            dense,
+            artifact_ref=replace(dense.artifact_ref, content_sha256=dense.compute_canonical_hash()),
+        )
+    shaped = replace(config, lexical_config=lexical, dense_config=dense)
+    return replace(
+        shaped,
+        artifact_ref=replace(shaped.artifact_ref, content_sha256=shaped.compute_canonical_hash()),
+    )
+
+
+def variant_retrieval_config(
+    config: VersionedEvidenceRetrievalConfiguration,
+    mode: RetrievalExecutionMode,
+) -> VersionedEvidenceRetrievalConfiguration:
+    """Shape one retrieval configuration for a variant's execution mode.
+
+    ``LEXICAL_ONLY`` must not carry dense inputs; the other modes require them.
+    """
+
+    if mode is RetrievalExecutionMode.LEXICAL_ONLY:
+        shaped = replace(
+            config,
+            execution_mode=mode,
+            dense_config=None,
+            expected_query_embedding_adapter_ref=None,
+        )
+    else:
+        shaped = replace(config, execution_mode=mode)
+    return sealed_retrieval_config(shaped)
+
+
 class ActualRetrievalEvaluationAdapter(AsyncEvaluationAdapter):
     """Adapter executing actual production retrieval through execute_production_retrieval."""
 
@@ -207,7 +256,7 @@ class ActualRetrievalEvaluationAdapter(AsyncEvaluationAdapter):
                 ),
             )
 
-        effective_config = replace(self._retrieval_config, execution_mode=mode)
+        effective_config = variant_retrieval_config(self._retrieval_config, mode)
 
         binding = EvidenceSearchExecutionBinding(
             filter_snapshot_ref=self._filter_snapshot_ref,
