@@ -555,3 +555,12 @@ Frontend 실제 왕복은 `REAL_STACK_ENV_FILE=envs/example.local.env bash scrip
 
 [검증 기록](testing/track-c-plan-lifecycle-617.md): 조회·완료·취소, SELF 404, strict confirmation, terminal 충돌,
 멱등 replay/충돌/rollback, Safety·Barrier·Check-in 정정 및 동시 mutation을 확인한다.
+
+### Track C 완료 계획 Follow-up (#194 후속)
+
+`backend/app/tests/track_c/test_track_c_followup.py`와 `test_track_c_followup_concurrency.py`에서
+완료 전·취소 계획 거부, 미응답 조회, 세 응답·정정 audit, 같은 key 과거 replay와 최신값 GET,
+revision/소유권/입력 오류, snapshot 실패 rollback, Check-in·Safety·Barrier 정정 후 과거 평가를 검증한다.
+독립 PostgreSQL transaction으로 첫 제출·정정 경쟁, 같은 key/다른 body, Check-in·Safety 정정 경쟁을 검증한다.
+[합성 fixture](../tests/fixtures/post_mvp_1/track_c/followup-v1.json)와 OpenAPI/DTO 소비 계약도 대조한다.
+실행 결과 및 제한: [검증 기록](testing/track-c-followup-194.md). #139 브라우저 인수·외부 공개 검증은 별도다.
