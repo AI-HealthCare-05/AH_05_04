@@ -10,8 +10,8 @@
       "safety_assessment_id": "00000000-0000-4000-8000-000000000003",
       "supports": [{
         "support_code": "REMINDER_SETUP",
-        "rule_version": "track-c-support-rule-2026-09-15.1",
-        "copy_version": "track-c-support-copy-ko-2026-09-15.1",
+        "rule_version": "track-c-support-rule-2026-09-16.1",
+        "copy_version": "track-c-support-copy-ko-2026-09-16.1",
         "priority": 10,
         "rationale_code": "ROUTINE_REMINDER_SETUP_AVAILABLE",
         "action_config": {
@@ -46,8 +46,8 @@
   "create_request": {
     "barrier_response_id": "00000000-0000-4000-8000-000000000001",
     "support_code": "REMINDER_SETUP",
-    "rule_version": "track-c-support-rule-2026-09-15.1",
-    "copy_version": "track-c-support-copy-ko-2026-09-15.1",
+    "rule_version": "track-c-support-rule-2026-09-16.1",
+    "copy_version": "track-c-support-copy-ko-2026-09-16.1",
     "confirmed": true
   },
   "create_response": {
@@ -55,8 +55,8 @@
       "support_action_plan_id": "00000000-0000-4000-8000-000000000006",
       "barrier_response_id": "00000000-0000-4000-8000-000000000001",
       "support_code": "REMINDER_SETUP",
-      "rule_version": "track-c-support-rule-2026-09-15.1",
-      "copy_version": "track-c-support-copy-ko-2026-09-15.1",
+      "rule_version": "track-c-support-rule-2026-09-16.1",
+      "copy_version": "track-c-support-copy-ko-2026-09-16.1",
       "action_config_snapshot": {
         "schema_version": "track-c-handler-config-v1",
         "rationale_code": "ROUTINE_REMINDER_SETUP_AVAILABLE",

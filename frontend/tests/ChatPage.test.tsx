@@ -1262,9 +1262,11 @@ describe('ChatPage', () => {
     renderPage('/chat', { onLocationCommit })
 
     expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
-    expect(onLocationCommit).toHaveBeenCalledWith(
-      `?prescription_id=${prescriptionId}`,
-      expect.any(String),
+    await waitFor(() =>
+      expect(onLocationCommit).toHaveBeenCalledWith(
+        `?prescription_id=${prescriptionId}`,
+        expect.any(String),
+      ),
     )
     expect(screen.queryByText('latest 경로에서 숨겨야 할 과거 답변')).toBeNull()
     expect(getLatestPrescription).toHaveBeenCalledTimes(1)

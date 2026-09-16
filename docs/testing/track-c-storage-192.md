@@ -110,8 +110,8 @@ HandlerConfig 상세·운영 seed·Track C 공개는 이 테스트 결과로 승
 ## 제품 승인 Rule·Copy 운영 로더 — 2026-09-15
 
 - 제품 승인 기록: [PD-192-2](../governance/decisions/2026-09-15-track-c-handler-config-rules-192.md)
-- 내부 활성 버전은 `track-c-support-rule-2026-09-15.1`과
-  `track-c-support-copy-ko-2026-09-15.1`로 고정한다.
+- 내부 활성 버전은 #194에서 `track-c-support-rule-2026-09-16.1`과
+  `track-c-support-copy-ko-2026-09-16.1`로 갱신했다. 2026-09-15.1 파일은 과거 계획 복원을 위해 보존한다.
 - Rule은 기존 6개 support_code의 Barrier 대응·priority·rationale·허용 parameter를 보존한다.
 - Copy는 `ko-KR` 제목·본문·확인 prompt·주/보조 label을 정확히 한 세트씩 요구한다.
 - 명시적 allowlist 밖의 version, 누락·중복 Support, 추가 필드, 공백·빈 문구, 미지원 locale,

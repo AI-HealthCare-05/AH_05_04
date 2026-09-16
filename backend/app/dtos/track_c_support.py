@@ -1,10 +1,12 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.track_c import ActionPlanFollowupResponse, SupportActionPlanStatus, SupportCode
+from app.models.track_c import ActionPlanFollowupResponse, BarrierCode, SupportActionPlanStatus, SupportCode
+
+TravelSituation = Literal["SCHEDULE_CHANGED", "MEDICATION_NOT_WITH_ME"]
 
 
 class ReminderParameters(BaseModel):
@@ -72,6 +74,7 @@ class CreateSupportActionPlanRequest(BaseModel):
     support_code: SupportCode
     rule_version: str = Field(min_length=1, max_length=100)
     copy_version: str = Field(min_length=1, max_length=100)
+    travel_situation: TravelSituation | None = None
     confirmed: Literal[True]
 
     @field_validator("confirmed", mode="before")
@@ -135,3 +138,16 @@ class ActionPlanFollowupEnvelope(BaseModel):
 
 class ActionPlanFollowupReadEnvelope(BaseModel):
     data: ActionPlanFollowupData | None
+
+
+class SupportPlanResourcesData(BaseModel):
+    support_action_plan_id: UUID
+    barrier_code: BarrierCode
+    occurrence_id: UUID
+    occurrence_local_date: date
+    prescription_version_medication_id: UUID
+    support_copy: SupportCopyData
+
+
+class SupportPlanResourcesResponse(BaseModel):
+    data: SupportPlanResourcesData

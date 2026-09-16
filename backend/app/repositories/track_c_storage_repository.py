@@ -1,6 +1,6 @@
 """Track C storage, SELF ownership, and ordered mutation locks."""
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from sqlalchemy import Select, select
@@ -329,6 +329,31 @@ class TrackCStorageRepository:
                 BarrierResponse.medication_checkin_id.in_(self._owned_checkins(user_id)),
             )
         )
+
+    async def get_plan_resources_owned(
+        self, *, plan_id: UUID, user_id: UUID
+    ) -> tuple[SupportActionPlan, BarrierCode, UUID, date, UUID] | None:
+        result = await self.session.execute(
+            select(
+                SupportActionPlan,
+                BarrierResponse.barrier_code,
+                MedicationOccurrence.id,
+                MedicationOccurrence.scheduled_local_date,
+                MedicationSchedule.prescription_version_medication_id,
+            )
+            .join(BarrierResponse, BarrierResponse.id == SupportActionPlan.barrier_response_id)
+            .join(MedicationCheckin, MedicationCheckin.id == BarrierResponse.medication_checkin_id)
+            .join(MedicationOccurrence, MedicationOccurrence.id == MedicationCheckin.occurrence_id)
+            .join(MedicationSchedule, MedicationSchedule.id == MedicationOccurrence.medication_schedule_id)
+            .where(
+                SupportActionPlan.id == plan_id,
+                BarrierResponse.medication_checkin_id.in_(self._owned_checkins(user_id)),
+            )
+        )
+        row = result.one_or_none()
+        if row is None or row[1] is None:
+            return None
+        return row[0], row[1], row[2], row[3], row[4]
 
     async def get_plan_followup_owned(
         self, *, plan_id: UUID, user_id: UUID

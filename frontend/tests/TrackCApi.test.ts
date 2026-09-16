@@ -20,3 +20,15 @@ it('sends exact contract bodies and caller-owned keys, and does not mutate on GE
   expect(new Headers(calls[0][1].headers).get('Content-Type')).toBe('application/json')
   expect(JSON.parse(calls[5][1].body as string)).toEqual({ status: 'CANCELLED', confirmed: true })
 })
+
+it('transmits the chosen situation on offer GET and confirmed Plan POST', async () => {
+  const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ data: {} }), { headers: { 'Content-Type': 'application/json' } }))
+  vi.stubGlobal('fetch', fetchMock)
+  await getOffers('barrier', 'MEDICATION_NOT_WITH_ME')
+  await createPlan({ barrier_response_id: 'barrier', support_code: 'ROUTINE_OR_TRAVEL_PLAN', rule_version: 'rule1', copy_version: 'copy1', travel_situation: 'MEDICATION_NOT_WITH_ME', confirmed: true }, 'packing-attempt')
+  const calls = fetchMock.mock.calls as unknown as [string, RequestInit][]
+  expect(new URL(calls[0][0]).searchParams.get('travel_situation')).toBe('MEDICATION_NOT_WITH_ME')
+  expect(calls[0][1].body).toBeUndefined()
+  expect(JSON.parse(calls[1][1].body as string).travel_situation).toBe('MEDICATION_NOT_WITH_ME')
+  expect(new Headers(calls[1][1].headers).get('Idempotency-Key')).toBe('packing-attempt')
+})

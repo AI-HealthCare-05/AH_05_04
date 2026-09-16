@@ -120,6 +120,24 @@ export async function registerDoseyServiceWorker(): Promise<ServiceWorkerRegistr
   return navigator.serviceWorker.register(SERVICE_WORKER_PATH, { scope: '/' })
 }
 
+// Observe existing browser state only; subscription reconciliation belongs to settings.
+export async function inspectWebPushState(): Promise<WebPushState> {
+  if (!supportsWebPush() || getWebPushLaunchContext() === 'ios-browser') return 'unsupported'
+  const binding = readStoredBinding()
+  if (Notification.permission !== 'granted') {
+    if (binding) return 'revoked'
+    return Notification.permission === 'denied' ? 'denied' : 'unrequested'
+  }
+  try {
+    const registration = await navigator.serviceWorker.getRegistration('/')
+    const subscription = await registration?.pushManager.getSubscription()
+    if (binding && subscription) return 'granted'
+    return binding ? 'revoked' : 'unrequested'
+  } catch {
+    return 'subscription_failed'
+  }
+}
+
 export async function getWebPushState(): Promise<WebPushState> {
   if (!supportsWebPush()) return 'unsupported'
 

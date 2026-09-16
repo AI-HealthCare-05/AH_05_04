@@ -873,6 +873,13 @@ Plan·Check-in은 변경하지 않는다.
 최종 책임 리뷰 승인·병합은 대기 중이며 외부 공개 승인은 별도다.
 상세: [Follow-up 계약](contracts/current/track-c-followup-api-194.md), [PD-194-2](governance/decisions/2026-09-16-track-c-followup-194.md).
 
+### Track C 상황별 연결 후속 — 구현·리뷰 대상
+
+선택적 travel_situation은 선택한 지원의 재검증·멱등 fingerprint에 사용하며 새 column을 추가하지 않는다.
+계획은 기존 support_code·rule/copy/config snapshot으로 보존한다. 자료 GET은 기존 부모 관계에서
+원래 occurrence·약 항목을 읽는다. [상황 선택](contracts/current/track-c-travel-situation-194.md),
+[자료 조회](contracts/current/track-c-plan-resources-194.md). 새 migration·DB 함수·trigger는 없다.
+
 ## #633 피드백 저장 — Local 구현, Proposed
 
 [계약](contracts/proposed/guide-chat-feedback-v1.md), migration `633a1b2c3d4e`에서

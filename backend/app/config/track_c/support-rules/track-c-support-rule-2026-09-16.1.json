@@ -1,0 +1,80 @@
+{
+  "schema_version": "track-c-handler-config-v1",
+  "rule_version": "track-c-support-rule-2026-09-16.1",
+  "supports": [
+    {
+      "support_code": "REMINDER_SETUP",
+      "barrier_codes": [
+        "FORGOT",
+        "SCHEDULE_OR_TRAVEL"
+      ],
+      "priority": 10,
+      "copy_version": "track-c-support-copy-ko-2026-09-16.1",
+      "rationale_code": "ROUTINE_REMINDER_SETUP_AVAILABLE",
+      "parameters": {
+        "destination": "MEDICATION_SCHEDULE_SETUP"
+      }
+    },
+    {
+      "support_code": "ROUTINE_OR_TRAVEL_PLAN",
+      "barrier_codes": [
+        "SCHEDULE_OR_TRAVEL",
+        "FORGOT"
+      ],
+      "priority": 20,
+      "copy_version": "track-c-support-copy-ko-2026-09-16.1",
+      "rationale_code": "ROUTINE_OR_TRAVEL_GUIDANCE_AVAILABLE",
+      "parameters": {
+        "content_key": "ROUTINE_OR_TRAVEL_PLAN"
+      }
+    },
+    {
+      "support_code": "INSTRUCTION_REVIEW",
+      "barrier_codes": [
+        "INSTRUCTIONS_UNCLEAR"
+      ],
+      "priority": 10,
+      "copy_version": "track-c-support-copy-ko-2026-09-16.1",
+      "rationale_code": "ROUTINE_INSTRUCTION_REVIEW_AVAILABLE",
+      "parameters": {
+        "content_key": "INSTRUCTION_REVIEW"
+      }
+    },
+    {
+      "support_code": "PURPOSE_REVIEW",
+      "barrier_codes": [
+        "NEED_DOUBT"
+      ],
+      "priority": 10,
+      "copy_version": "track-c-support-copy-ko-2026-09-16.1",
+      "rationale_code": "ROUTINE_PURPOSE_REVIEW_AVAILABLE",
+      "parameters": {
+        "content_key": "PURPOSE_REVIEW"
+      }
+    },
+    {
+      "support_code": "MEDICATION_CONCERN_GUIDANCE",
+      "barrier_codes": [
+        "MEDICATION_CONCERN"
+      ],
+      "priority": 10,
+      "copy_version": "track-c-support-copy-ko-2026-09-16.1",
+      "rationale_code": "ROUTINE_MEDICATION_CONCERN_GUIDANCE_AVAILABLE",
+      "parameters": {
+        "content_key": "MEDICATION_CONCERN_GUIDANCE"
+      }
+    },
+    {
+      "support_code": "ACCESS_SUPPORT",
+      "barrier_codes": [
+        "ACCESS_OR_COST"
+      ],
+      "priority": 10,
+      "copy_version": "track-c-support-copy-ko-2026-09-16.1",
+      "rationale_code": "ROUTINE_ACCESS_SUPPORT_AVAILABLE",
+      "parameters": {
+        "content_key": "ACCESS_SUPPORT"
+      }
+    }
+  ]
+}

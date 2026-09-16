@@ -215,3 +215,10 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [Follow-up API v1 — Current, PR #631 반영](current/track-c-followup-api-194.md): 완료 계획의 평가 GET/POST, 현재값·revision 정정·audit·멱등성·동시성. 기존 생성/Plan 응답은 유지한다. 최종 책임 리뷰 승인·병합은 대기 중이며 외부 공개는 별도다.
 - [PD-194-2](../governance/decisions/2026-09-16-track-c-followup-194.md): 완료 계획만 평가, 이후 Check-in 정정에도 과거 평가 허용. 권가빈 구현·김지혜 단일 책임 리뷰.
 - #139 Frontend·Constraint/RAG Handler·외부 공개 및 #194 전체 완료는 별도 범위다.
+
+## Track C 일정 변경·외출 상황 선택 (#194 후속)
+
+- [상황 선택 — Current, PR #639 반영](current/track-c-travel-situation-194.md): 생활 일정 변경과 약 미지참에 따른 단일 제안, Plan 재검증·멱등성·명시 완료. 권가빈 구현·김지혜 단일 책임 리뷰, Frontend #139 영향 포함.
+- [계획별 안내·화면 연결 자료 — Current, PR #639 반영](current/track-c-plan-resources-194.md): 원래 약·복약 기록과 저장 당시 Copy의 SELF 조회, 잊음·복용법·필요성·걱정 루트의 연결 범위와 미완료 의존성.
+
+PR #639의 두 계약은 구현 PR 내 이동이며 #629 병합·최종 책임 리뷰와 외부 공개 승인은 별도다.

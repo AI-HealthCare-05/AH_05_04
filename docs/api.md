@@ -851,6 +851,18 @@ COMPLETED 계획에만 최초 제출(기대 revision 0)·정정(현재 평가 re
 `ACTION_PLAN_STATE_CONFLICT`는 작업의 Plan 상태 전제조건 불충족을 뜻하는 공용 code다.
 Plan PATCH는 ACTIVE가 아니면, Follow-up POST는 COMPLETED가 아니면 반환하므로 호출한 endpoint별로 복구한다.
 
+### Track C 일정 변경·외출 상황 선택 (#194 구현·리뷰 대상)
+
+Support GET query와 Plan 생성 body의 선택적 `travel_situation`은 SCHEDULE_CHANGED 또는
+MEDICATION_NOT_WITH_ME다. 일정 변경·외출에만 허용하고 각각 일정 확인·약 챙기기 계획을 제안한다.
+생략은 기존 단일 제안을 유지한다. 입력 조건·422·Plan 재검증·멱등성은
+[Current 계약](contracts/current/track-c-travel-situation-194.md)을 따른다. 최종 승인·병합 전이다.
+
+`GET /api/v1/support-action-plans/{id}/resources`는 SELF 소유 계획의 원래 사유·복약 기록 ID/날짜·약 항목 ID와
+저장 당시 정적 안내를 반환한다. 과거 문구를 활성 문구로 대체하지 않는다.
+[계획별 자료 계약](contracts/current/track-c-plan-resources-194.md)은 PR #639에서 Current로 정렬하며, 최종 리뷰·병합 대기다.
+약별 Citation 또는 임상 Safety 정책의 구현 완료가 아니다.
+
 ## #633 Guide·Chat 피드백 — Local 구현, 책임 리뷰 대기
 
 [계약](contracts/proposed/guide-chat-feedback-v1.md)과 [PD-633](governance/decisions/2026-09-16-guide-chat-feedback-633.md)을 따른다.

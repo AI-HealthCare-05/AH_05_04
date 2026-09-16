@@ -565,6 +565,24 @@ revision/소유권/입력 오류, snapshot 실패 rollback, Check-in·Safety·Ba
 [합성 fixture](../tests/fixtures/post_mvp_1/track_c/followup-v1.json)와 OpenAPI/DTO 소비 계약도 대조한다.
 실행 결과 및 제한: [검증 기록](testing/track-c-followup-194.md). #139 브라우저 인수·외부 공개 검증은 별도다.
 
+### Track C Frontend 연결 (#139)
+
+개발 전용 Safety→Barrier→Support Offer→Plan 생성·조회·완료·취소 연결과
+320·390·412px mock 브라우저 검증, 실제 FastAPI·PostgreSQL 왕복 결과는
+[#139 검증 기록](validation/issue-139-track-c-frontend.md)을 따른다.
+`frontend/e2e-real-stack/track-c-round-trip.spec.ts`는 새 격리 DB의 합성 fixture를 사용하며,
+이 검증으로 임상 Safety·Follow-up 구현이나 Production 공개 게이트를 완료 처리하지 않는다.
+
+### Track C 상황별 연결 (#194 후속)
+
+`test_track_c_travel_support.py`는 두 상황의 단일 제안·재검증·멱등성과 Safety 경계를,
+`test_track_c_plan_resources.py`는 원래 약·기록의 SELF 조회와 과거 Copy 복원을 검증한다.
+Frontend `TrackCPage.test.tsx`는 상황 선택·명시 채택·실제 준비 확인·기기 알림 상태 재확인,
+약 정보·일정 링크와 근거 미제공·일반 안내 중단을 검증한다.
+약별 승인 설명·Citation, 증상별 임상 판정과 실제 Push 도착은 별도 미완료 범위다.
+
+실행 결과·선행 PR·미완료 의존성: [사유별 연결 검증 기록](testing/track-c-support-routes-194.md).
+
 ### #633 Guide·Chat 피드백
 
 `backend/app/tests/feedback/`에서 실제 PostgreSQL·ASGI의 SELF 소유권·완료 상태·입력 오류·no-store,
