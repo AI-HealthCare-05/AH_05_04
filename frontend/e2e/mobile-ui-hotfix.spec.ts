@@ -90,6 +90,7 @@ test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한�
     '77777777-7777-4777-8777-777777777773',
   ]
   let scheduleStatus: 'READY' | 'PARTIAL' | 'SETUP_REQUIRED' | 'INACTIVE' | 'NO_ACTIVE_PRESCRIPTION' = 'READY'
+  const scheduleMutations: string[] = []
   const stateCopy = {
     PARTIAL: '일부 약의 시간이 비어 있어요',
     SETUP_REQUIRED: '일정 설정이 필요해요',
@@ -190,6 +191,13 @@ test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한�
         },
       })
     }
+    if (
+      request.method() === 'PUT' &&
+      path === `/api/v1/prescription-version-medications/${ids.prescriptionVersionMedication}/schedule`
+    ) {
+      scheduleMutations.push(await request.postData() ?? '')
+      return json({ data: {} })
+    }
     await route.abort()
   })
 
@@ -225,10 +233,45 @@ test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한�
   }
 
   scheduleStatus = 'SETUP_REQUIRED'
+  for (const width of mobileWidths) {
+    await test.step(`${width}px 통합 Schedule 편집 화면`, async () => {
+      await page.setViewportSize({ width, height: 844 })
+      await page.goto('/schedule?date=2026-09-16')
+      await page.getByRole('button', { name: '일정 설정하기' }).click()
+      await expect(page.getByRole('heading', { name: '복용할 날짜와 시간을 확인해 주세요' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: '합성 혈압약' })).toBeVisible()
+      await expect(page.getByLabel(/합성 혈압약 .*번째 복용 시간/)).toHaveCount(3)
+      await expect(page.getByRole('button', { name: '복약 일정 저장하기' })).toHaveCount(1)
+
+      const content = page.locator('.schedule-page .app-scroll')
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0)
+      expect(await content.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0)
+      expect(await page.getByLabel('합성 혈압약 복용 시작일').evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(52)
+
+      await content.evaluate((element) => element.scrollTo(0, element.scrollHeight))
+      const cta = page.getByRole('button', { name: '복약 일정 저장하기' })
+      const nav = page.getByRole('navigation', { name: '주요 메뉴' })
+      const ctaBox = await cta.boundingBox()
+      const navBox = await nav.boundingBox()
+      expect(ctaBox).not.toBeNull()
+      expect(navBox).not.toBeNull()
+      expect((navBox?.y ?? 0) - ((ctaBox?.y ?? 0) + (ctaBox?.height ?? 0))).toBeGreaterThanOrEqual(12)
+    })
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/schedule?date=2026-09-16')
   await page.getByRole('button', { name: '일정 설정하기' }).click()
-  await expect(page.getByRole('heading', { name: '복용할 날짜와 시간을 확인해 주세요' })).toBeVisible()
-  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0)
+  await page.getByLabel('합성 혈압약 복용 시작일').fill('2026-09-16')
+  await page.getByLabel('합성 혈압약 복용 종료일').fill('2026-09-22')
+  await page.getByLabel('합성 혈압약 1번째 복용 시간').fill('08:00')
+  await page.getByLabel('합성 혈압약 2번째 복용 시간').fill('13:00')
+  await page.getByLabel('합성 혈압약 3번째 복용 시간').fill('20:00')
+  const cta = page.getByRole('button', { name: '복약 일정 저장하기' })
+  await cta.focus()
+  await expect(cta).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect.poll(() => scheduleMutations.length).toBe(1)
 })
 
 test('320/390/412px에서 Home과 Chat의 Bottom Navigation 안전 영역과 가용 공간을 유지한다', async ({ page }) => {
