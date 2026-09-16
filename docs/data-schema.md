@@ -822,8 +822,8 @@ PD-192-2는 6개 최소 안내형 Support의 내부 Rule·한국어 Copy 불변 
 필수 사용자 확인과 생성 현재성은 [#194 API 계약](contracts/proposed/track-c-support-plan-api-194.md)을 따른다.
 완료·취소·follow-up API는 후속이며 기존 #193/#195 취소 writer는 변경하지 않는다.
 
-### Track C Plan 종료 (#617 구현 후보)
+### Track C Plan 종료 (#617 / PR #618 구현)
 
 기존 support_action_plan.status 및 completed_at/cancelled_at을 사용하며 schema/migration 추가는 없다.
 ACTIVE에서 단일 종료만 허용해 Check-in→Safety→Barrier→Plan 잠금과 ACTIVE 검사로 충돌을 검출한다.
-기존 무효화는 ACTIVE만 취소하고 COMPLETED 이력은 보존한다. [계약·review 상태](contracts/proposed/track-c-plan-lifecycle-617.md).
+기존 무효화는 ACTIVE만 취소하고 COMPLETED 이력은 보존한다. [Current 계약·PR 반영 상태](contracts/current/track-c-plan-lifecycle-617.md).

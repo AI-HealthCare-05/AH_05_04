@@ -1,10 +1,10 @@
 # #617 Plan 조회·완료·취소 검증
 
 - 구현: 권가빈. 단일 책임 리뷰어: 김지혜.
-- 기준 develop: `1ebac025`. 변경 계약: [lifecycle v1](../contracts/proposed/track-c-plan-lifecycle-617.md).
+- 기준 develop: `1ebac025`. 변경 계약: [lifecycle v1](../contracts/current/track-c-plan-lifecycle-617.md).
 - 테스트는 전용 PostgreSQL 17/pgvector 임시 DB와 합성 데이터만 사용한다.
 - 구현 커밋: `405c0bbf`. 전용 DB는 loopback 15617/15618, Redis는 16618을 사용했다.
-- 로컬 검증 기록이며 원격 CI·책임 리뷰 승인을 포함하지 않는다.
+- 로컬 검증과 원격 CI 결과를 구분한다. 최종 책임 리뷰 승인·병합은 PR #618에서 확인한다.
 
 ## 집중 시나리오
 
@@ -62,3 +62,12 @@ Backend lane 실패로 후속 Redis 통합 테스트 및 coverage 합산/gate는
 
 책임 리뷰 승인·Frontend 통합·실제 사용자 공개 완료를 의미하지 않는다.
 Follow-up·실기기/브라우저 E2E·의료 규칙/Provider live 평가·배포는 이번 범위 밖이다.
+
+## 원격 CI 및 문서 상태 리뷰
+
+- 구현 HEAD `f8e4986f`의 [CI 실행](https://github.com/AI-HealthCare-05/AH_05_04/actions/runs/34991259236): test·lint 및 test-inventory·test-backend·test-rag·test-contract SUCCESS. frontend·test-migration·test-worker는 경로 분류로 SKIPPED.
+- 위 원격 CI 결과는 앞서 기록한 로컬 통합 실행 실패나 미실행 coverage gate를 소급해 PASS로 바꾸지 않는다.
+- [김지혜 책임 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/618#pullrequestreview-5216913531)의 계약 상태 정렬 요청을 반영했다. 현재 최종 승인·병합은 대기 중이다.
+- 이번 수정은 문서만 변경한다. Markdown 렌더링·상대 링크·옛 경로 잔존·전체 diff 및 `git diff --check`를 확인하며, API 의미와 테스트 코드는 바꾸지 않아 Python 전체 회귀를 반복하지 않는다.
+
+- 렌더링 확인은 로컬 Markdown→HTML 결과의 제목·표 구조와 텍스트를 대조했다. 브라우저 시각 확인은 file URL 접근 정책으로 실행하지 못했다.
