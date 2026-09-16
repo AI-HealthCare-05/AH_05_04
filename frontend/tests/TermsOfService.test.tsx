@@ -44,6 +44,21 @@ const listItems = [
 ]
 
 describe('TermsOfService', () => {
+  it('placeholder를 포함한 원문을 최종 시행 약관이 아닌 승인 전 초안으로 표시한다', () => {
+    render(<TermsOfService />)
+
+    expect(screen.getByRole('note', { name: '승인 전 초안 · 검토용' })).toBeTruthy()
+    expect(
+      screen.getByText(
+        '최종 법무/Privacy 승인 전 문서입니다. 현재 사용자의 확정 필수 동의 계약으로 사용되지 않습니다.',
+      ),
+    ).toBeTruthy()
+    expect(screen.getByText(/회사명이 제공하는/)).toBeTruthy()
+    expect(screen.getByText(/\[관할 법원 – 예: 회사 소재지 관할 법원\]/)).toBeTruthy()
+    expect(screen.getByText(/생활 스케줄 기반 복약 일정 추천·확정/)).toBeTruthy()
+    expect(screen.queryByText('최종 시행 약관')).toBeNull()
+  })
+
   it('PDF 2. 이용약관의 시행일자와 제1조부터 제10조까지 원문을 렌더링한다', () => {
     render(<TermsOfService />)
 

@@ -6,6 +6,7 @@ import SignupPage from '../src/pages/SignupPage'
 
 beforeEach(() => {
   vi.stubEnv('VITE_EMAIL_VERIFICATION_ENABLED', 'false')
+  vi.stubEnv('VITE_SIGNUP_TERMS_APPROVED', 'true')
   localStorage.clear()
 })
 

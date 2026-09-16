@@ -368,6 +368,19 @@
   line-height: 1.7;
 }
 
+.mvp-page .mvp-signup-legal__review {
+  margin-block: 16px 24px;
+  border: 0;
+  background: #fff6de;
+  color: #73520f;
+}
+
+.mvp-signup-legal__review p {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
 .mvp-signup-legal__document {
   display: grid;
   gap: 26px;

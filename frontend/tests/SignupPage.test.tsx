@@ -16,6 +16,7 @@ vi.mock('../src/api/auth', () => ({
 beforeEach(() => {
   vi.resetAllMocks()
   vi.stubEnv('VITE_EMAIL_VERIFICATION_ENABLED', 'true')
+  vi.stubEnv('VITE_SIGNUP_TERMS_APPROVED', 'true')
   vi.mocked(requestEmailVerification).mockResolvedValue(undefined)
   vi.mocked(confirmEmailVerification).mockResolvedValue(undefined)
   localStorage.clear()
@@ -78,6 +79,31 @@ describe('SignupPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '인증 확인' }))
     await screen.findByText('이메일 인증이 완료되었습니다.')
   }
+
+  it('미승인 초안을 확정 필수 동의로 처리하거나 회원가입 요청에 사용하지 않는다', () => {
+    vi.stubEnv('VITE_SIGNUP_TERMS_APPROVED', 'false')
+    renderPage()
+
+    const terms = screen.getByRole('checkbox', { name: '필수 약관 승인 대기 중' })
+    const submit = screen.getByRole('button', { name: '가입 완료' })
+
+    expect(terms).toHaveProperty('disabled', true)
+    expect(terms).toHaveProperty('checked', false)
+    expect(submit).toHaveProperty('disabled', true)
+
+    fireEvent.submit(submit.closest('form')!)
+
+    expect(
+      screen.getByText('필수 약관이 최종 법무/Privacy 승인 대기 중이라 현재 회원가입을 완료할 수 없습니다.'),
+    ).toBeTruthy()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '약관 보기' }))
+    expect(signup).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '약관 보기' }))
+    expect(screen.getByRole('heading', { name: '필수 약관 검토본' })).toBeTruthy()
+    expect(screen.getByRole('note', { name: '승인 전 초안 · 검토용' })).toBeTruthy()
+    expect(screen.queryByText('최종 시행 약관')).toBeNull()
+  })
 
   it('필수 약관 미동의는 CTA와 form 직접 제출을 차단한다', async () => {
     renderPage()

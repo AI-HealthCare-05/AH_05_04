@@ -1,6 +1,21 @@
 function TermsOfService() {
   return (
-    <article className="mvp-signup-legal__document" aria-labelledby="terms-of-service-title">
+    <>
+      <aside
+        className="notice attention mvp-signup-legal__review"
+        role="note"
+        aria-labelledby="terms-review-title"
+      >
+        <strong id="terms-review-title">승인 전 초안 · 검토용</strong>
+        <p>
+          최종 법무/Privacy 승인 전 문서입니다. 현재 사용자의 확정 필수 동의 계약으로 사용되지 않습니다.
+        </p>
+      </aside>
+      <article
+        className="mvp-signup-legal__document"
+        aria-labelledby="terms-of-service-title"
+        aria-describedby="terms-review-title"
+      >
       <header className="mvp-signup-legal__header">
         <h2 id="terms-of-service-title">2. 이용약관</h2>
         <p><strong>시행일자: 2026년 09월 15일</strong></p>
@@ -92,7 +107,8 @@ function TermsOfService() {
           회사는 관계 법령을 위배하지 않는 범위에서 약관을 개정할 수 있으며, 개정 시 적용일자 및 개정사유를 명시하여 최소 7일 전(이용자에게 불리한 변경은 30일 전)부터 공지합니다.
         </p>
       </section>
-    </article>
+      </article>
+    </>
   )
 }
 

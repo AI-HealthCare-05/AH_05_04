@@ -25,6 +25,8 @@ const EMAIL_VERIFICATION_REQUIRED_MESSAGE =
   '이메일 인증이 필요하거나 인증 유효 시간이 지났습니다. 인증 안내를 다시 요청하고 인증을 완료해 주세요.'
 const CONSENT_POLICY_UNAVAILABLE_MESSAGE =
   '선택한 기능의 동의 안내를 준비하고 있어요. 해당 선택을 해제하거나 잠시 후 다시 시도해 주세요.'
+const TERMS_REVIEW_PENDING_MESSAGE =
+  '필수 약관이 최종 법무/Privacy 승인 대기 중이라 현재 회원가입을 완료할 수 없습니다.'
 const OPTIONAL_CONSENT_PURPOSES: ReadonlyArray<SignupConsentPurpose> = [
   'OCR',
   'GUIDE',
@@ -126,6 +128,8 @@ function SignupPage() {
   }, [searchParams, setSearchParams, showingTerms])
   // Opt in only after email delivery is available (#494); noop must not block signup.
   const emailVerificationEnabled = import.meta.env.VITE_EMAIL_VERIFICATION_ENABLED === 'true'
+  // Fail closed until the exact legal/privacy-approved document is deployed.
+  const requiredTermsApproved = import.meta.env.VITE_SIGNUP_TERMS_APPROVED === 'true'
   const [form, setForm] = useState<SignupForm>({
     email: '',
     password: '',
@@ -230,6 +234,12 @@ function SignupPage() {
 
     if (isSubmittingRef.current || verificationBusyRef.current) return
 
+    if (!requiredTermsApproved) {
+      setTermsError(TERMS_REVIEW_PENDING_MESSAGE)
+      focusAndReveal(termsButtonRef.current)
+      return
+    }
+
     if (!requiredTermsAccepted) {
       setTermsError('필수 약관에 동의해 주세요.')
       focusAndReveal(termsInputRef.current)
@@ -314,7 +324,9 @@ function SignupPage() {
       >
         {showingTerms ? (
           <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-signup-legal">
-            <h1 className="mvp-page__title" ref={termsHeadingRef} tabIndex={-1}>필수 약관 보기</h1>
+            <h1 className="mvp-page__title" ref={termsHeadingRef} tabIndex={-1}>
+              {requiredTermsApproved ? '필수 약관 보기' : '필수 약관 검토본'}
+            </h1>
             <TermsOfService />
             <Button type="button" fullWidth onClick={closeTerms}>확인</Button>
           </main>
@@ -442,15 +454,22 @@ function SignupPage() {
             </div>
             <div className="notice attention mvp-auth__notice mvp-signup-required">
               <label>
-                <input type="checkbox" ref={termsInputRef} required
-                  checked={requiredTermsAccepted} disabled={isSubmitting || verificationBusy}
+                <input type="checkbox" ref={termsInputRef} required={requiredTermsApproved}
+                  checked={requiredTermsApproved && requiredTermsAccepted}
+                  disabled={!requiredTermsApproved || isSubmitting || verificationBusy}
                   aria-labelledby="signup-required-label"
                   aria-describedby={`signup-required-description${termsError ? ' signup-required-error' : ''}`}
                   aria-invalid={Boolean(termsError)}
                   onChange={(event) => { setRequiredTermsAccepted(event.target.checked); setTermsError('') }} />
                 <span>
-                  <strong id="signup-required-label">필수 약관에 동의합니다</strong>
-                  <small id="signup-required-description">필수 동의 후 가입 가능</small>
+                  <strong id="signup-required-label">
+                    {requiredTermsApproved ? '필수 약관에 동의합니다' : '필수 약관 승인 대기 중'}
+                  </strong>
+                  <small id="signup-required-description">
+                    {requiredTermsApproved
+                      ? '필수 동의 후 가입 가능'
+                      : '최종 법무/Privacy 승인 후 동의할 수 있습니다'}
+                  </small>
                 </span>
               </label>
               <button type="button" ref={termsButtonRef} className="mvp-signup-required__link"
@@ -484,7 +503,8 @@ function SignupPage() {
 
             {message && <p className="mvp-form__message" role="alert">{message}</p>}
 
-            <Button className="mvp-signup-submit" fullWidth type="submit" disabled={!requiredTermsAccepted || isSubmitting || verificationBusy}>
+            <Button className="mvp-signup-submit" fullWidth type="submit"
+              disabled={!requiredTermsApproved || !requiredTermsAccepted || isSubmitting || verificationBusy}>
               {isSubmitting ? '가입 중...' : '가입 완료'}
             </Button>
           </form>
