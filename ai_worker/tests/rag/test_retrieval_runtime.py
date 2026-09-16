@@ -589,6 +589,8 @@ async def test_embedding_identity_aligns_with_openai_text_embedding_adapter() ->
     assert call["model_ref"] == EXPECTED_MODEL_REF
     assert call["model_version"] == EXPECTED_MODEL_VERSION
     assert call["dimension"] == EXPECTED_DIMENSION
+
+
 def test_retrieval_run_canonical_json_bytes_conforms_to_rfc8785_utf16_ordering() -> None:
     payload = {"\ue000": 1, "\U00010000": 2, "a": 3}
     # RFC 8785 UTF-16 code unit order: "a" (0x0061), "\U00010000" (surrogates 0xD800 0xDC00), "\ue000" (0xE000)
