@@ -62,17 +62,48 @@ Follow-up, RAG/Citation, 승인된 임상 코드·문구, Safety/Barrier 복원�
 
 ## 디자인·접근성
 
-Figma 파일 `hT9J1Rq8R1ynS4aCa4Zk55`에서 QA Barrier `845:48`과 ActionPlan `846:111`의
-디자인 context/screenshot을 확인했다. Support `845:161`, Safety `846:29`의 추가 조회는
-Figma View seat 호출 한도로 실패했다. 해당 화면의 최신 pixel parity는 확인 완료로 주장하지 않는다.
-기존 MobileShell·Card·Button·디자인 토큰을 사용하며, Figma의 미구현 상황/후속 시점 필드는 추가하지 않았다.
+### PR #629 리뷰 반영 (2026-09-16)
 
-320·390·412px에서 단일 radio 의미, 단계 전환 heading focus, native checkbox, disabled,
-status/alert, 긴 문구 줄바꿈, 세로 스크롤, 가로 overflow 부재를 검증했다.
-기존 shell의 최대 폭은 390px다. 스크린샷은 로컬 `frontend/test-results/track-c-*.png`이며
-생성물은 commit하지 않는다.
+QA clone만 대조했던 한계를 수정하고 아래 최신 원본의 design context와 screenshot을
+직접 확인했다. 파일 내 일부 원본 이름에는 WIP/후보 표기가 남아 있으므로 디자인 조회가
+API 또는 임상 계약 승인을 뜻하지 않는다.
 
-## 검증 결과
+| 화면 | 대조 원본 | 반영 |
+| --- | --- | --- |
+| Safety | [SAFETY-01](https://www.figma.com/design/hT9J1Rq8R1ynS4aCa4Zk55/?node-id=1487-80) | 공통 Dosey Header·5개 탭, 질문·설명·증상 유무 CTA, 36px 상단 여백·64px 선택 버튼 |
+| Barrier | [C-02A](https://www.figma.com/design/hT9J1Rq8R1ynS4aCa4Zk55/?node-id=1489-524) | 26/36px 제목, 여섯 radio, 8px 선택 간격·56px 최소 높이, 선택/건너뛰기 CTA |
+| Support | [SUPPORT-F01](https://www.figma.com/design/hT9J1Rq8R1ynS4aCa4Zk55/?node-id=506-7) | 공통 shell·카드·하단 실행 영역. 서버의 단일 제안·승인 copy·명시적 확인 유지 |
+| Plan | [C-07](https://www.figma.com/design/hT9J1Rq8R1ynS4aCa4Zk55/?node-id=1519-80) | 상태→제목→방법 카드→하단 실행 영역. 현재 GET 상태와 완료/취소 확인 유지 |
+
+개발 환경 안내 문구는 제품 화면에서 제거했다. DEV-only route와 Production 제외 조건은 유지한다.
+기존 MobileShell·Dosey mascot·Button·Card를 재사용하고 스타일은 Track C 내부로 제한했다.
+하단 메뉴의 다섯 버튼은 기존 실제 경로로 연결하며 일정 context를 표시한다.
+
+**계약을 보존한 차이:** 디자인의 알림 시점·일상 행동 편집, 언제/어디서·다시 살펴볼 때는
+현재 DTO에 없어 추가하지 않았다. Support 제목·본문·CTA는 서버 승인 copy를 그대로 쓴다.
+계획 생성만으로 실제 실행을 단정하지 않도록 `진행 중 / 내 실천 계획`으로 표시한다.
+MEDICATION_CONCERN에는 기존 `약에 대한 걱정이 있었어요`를 유지한다. 디자인의 과거 증상까지
+포함한 문구로 바꾸면 빈 symptom_codes로 확인된 Safety 뒤에 증상 입력을 일반 지원으로
+보내는 의미가 될 수 있어, 임상 계약 없이 이 부분을 확대하지 않았다.
+Safety의 불확실한 경우는 `증상이 있어요` 선택 안내로 기존 차단 경로를 유지한다.
+따라서 원본 전체의 1:1 구현이나 #139 완료를 주장하지 않는다.
+
+320·390·412px browser 검증에서 공통 shell, 여섯 radio와 방향키 단일 선택, 단계 전환 focus,
+긴 서버 문구 줄바꿈·세로 스크롤·가로 overflow 부재, 명시적 확인과 lifecycle을 확인했다.
+기존 shell 최대 폭 390px를 유지한다. Safety·Barrier·Offer·Plan screenshot은 로컬
+`frontend/test-results/track-c-*.png`이며 직접 시각 검토했고 생성물은 commit하지 않는다.
+
+### 리뷰 반영 후 재검증
+
+- Node 24.19.0 Frontend 전체 Vitest: **650 PASS**.
+- 전체 요구사항 browser: **37 PASS**, Track C 320/390/412px **3 PASS** 포함.
+- 새 격리 PostgreSQL·Redis와 이 PR Backend/Frontend 실제 왕복: **1 PASS**.
+  API interception 없이 생성→새로고침→약 ID 일정 전달→완료/취소→GET snapshot 보존 확인.
+- Frontend lint·TypeScript·production build 및 production Track C 제외: PASS.
+- 기존 500kB main chunk 경고는 남아 있다.
+- Python 구현·계약 변경이 없어 아래 최초 검증의 Python suite는 재실행하지 않았다.
+
+## 최초 연결 검증 결과
 
 - Node 24.19.0: Frontend Vitest **650 PASS**.
 - Frontend lint, TypeScript, production build PASS. 기존 main chunk 500kB 경고는 유지.

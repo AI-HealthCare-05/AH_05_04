@@ -880,10 +880,10 @@ export function SchedulePage({
 
   if (isEditingSchedule) {
     const editorItems = (day?.schedule_items ?? []).filter(
-      item => !editingMedicationId || item.prescription_version_medication_id === editingMedicationId,
+      (item) => !editingMedicationId || item.prescription_version_medication_id === editingMedicationId,
     )
     const hasCompleteEditorData = Boolean(
-      editorItems.length &&
+      editorItems.length > 0 &&
       !isScheduleIdentityUnavailable &&
       editorItems.every(
         (item) => scheduleMedications[item.prescription_version_medication_id],

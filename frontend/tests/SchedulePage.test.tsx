@@ -1117,6 +1117,7 @@ describe('Track C reminder target handoff', () => {
           ...makePrescription().data.medications[0],
           prescription_version_medication_id: secondMedicationId,
           medication_name: '두 번째 혈당약',
+          display_order: 1,
         }],
       })),
     })
@@ -1127,6 +1128,17 @@ describe('Track C reminder target handoff', () => {
     expect(screen.getByLabelText('현재 처방의 혈압약 복용 시작일')).toBeTruthy()
     expect(screen.getByTestId('location').textContent).toContain(`support_medication=${medicationId}`)
     expect(services.putMedicationSchedule).not.toHaveBeenCalled()
+    fillScheduleEditor()
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+    await waitFor(() => expect(services.putMedicationSchedule).toHaveBeenCalledTimes(1))
+    expect(services.putMedicationSchedule).toHaveBeenCalledWith(
+      medicationId,
+      expect.objectContaining({ localTimes: ['08:30'], expectedRevision: 0 }),
+      'schedule:test-key',
+    )
+    fireEvent.click(screen.getByRole('button', { name: '이전 화면' }))
+    fireEvent.click(await screen.findByRole('button', { name: '복약 일정 설정·수정' }))
+    expect(screen.getByRole('heading', { name: '두 번째 혈당약' })).toBeTruthy()
   })
   it('does not substitute another medication if the saved target is absent', async () => {
     const services = makeServices()
