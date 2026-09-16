@@ -273,7 +273,7 @@ uv run pytest backend/app/tests/guide_ai/test_v3_eval.py -q
 
 버전된 비식별 합성 평가셋은 `evals/generation/guide-v3-eval-v1.json`이며 `data_classification=SYNTHETIC`으로 고정합니다. 이 평가는 자유 생성 품질이나 실제 Provider 응답을 측정하지 않고 승인 문구 선택·안전 차단 계약을 재현합니다. 별도 승인 없이 `RUN_OPENAI_SMOKE=1`을 설정하지 않으며, skip된 실호출 테스트를 성공으로 해석하지 않습니다.
 
-### Chat AI v4 대화 품질 Local 검증
+### Chat AI v5 대화 품질 Local 검증
 
 실제 Provider 호출 없이 다음 결정론적 테스트로 최근 대화 조회와 단일 `chat-prompt-v5` 계약을 검증합니다.
 

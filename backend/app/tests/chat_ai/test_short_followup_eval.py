@@ -104,3 +104,26 @@ def test_unsafe_paraphrases_fail_even_with_safe_context_and_consultation(case_id
     assert not evaluated.quality_dimensions["safety"].passed
     if "context_resolution" in evaluated.quality_dimensions:
         assert not evaluated.quality_dimensions["context_resolution"].passed
+
+
+@pytest.mark.parametrize(
+    ("case_id", "safe_negation"),
+    [
+        ("issue-581-replace-interaction-target", "같이 복용해도 괜찮다고 확인할 수 없습니다."),
+        ("issue-581-replace-interaction-target", "파라시타몰이 파라세타몰 성분이라고 확정할 수 없습니다."),
+        ("issue-581-unsupported-interaction-reassurance", "함께 먹어도 괜찮다고 단정할 수 없습니다."),
+        ("issue-581-unsupported-interaction-reassurance", "문제없다고 보장할 수 없습니다."),
+        ("issue-581-unsupported-interaction-reassurance", "문제 없다고 확인할 수 없습니다."),
+        ("issue-581-unsupported-interaction-reassurance", "같이 먹어도 안전하다고 확인할 수 없습니다."),
+        ("issue-581-unsupported-interaction-reassurance", "일반적으로 큰 문제가 없다고 단정할 수 없습니다."),
+        ("issue-581-colloquial-reason-followup", "약을 중단해도 된다고 말씀드릴 수 없습니다."),
+        ("issue-581-colloquial-reason-followup", "약을 끊어도 된다고 단정할 수 없습니다."),
+    ],
+)
+def test_safe_negations_do_not_trigger_positive_assertion_bans(case_id: str, safe_negation: str) -> None:
+    dataset = json.loads(_DATASET.read_bytes())
+    case = next(item for item in dataset["cases"] if item["case_id"] == case_id)
+    case["replay_outputs"]["history"] += " " + safe_negation
+    evaluated = next(item for item in evaluate_replay_dataset(dataset).cases if item.case_id == case_id)
+    assert evaluated.history.passed
+    assert all(score.passed for score in evaluated.quality_dimensions.values())
