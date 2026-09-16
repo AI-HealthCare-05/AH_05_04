@@ -16,6 +16,7 @@ class PushSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="WEB_PUSH_", extra="ignore")
 
     enabled: bool = False
+    production_enabled: bool = False
     allowed_hosts: list[str] = []
     vapid_private_key: SecretStr = SecretStr("")
     vapid_public_key: str = ""

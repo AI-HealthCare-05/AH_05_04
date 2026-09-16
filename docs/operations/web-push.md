@@ -16,7 +16,8 @@ Push가 활성화되면 회당 최대 45초가 추가될 수 있으며 정시 �
 
 | 환경변수 | 형식/운영 경계 |
 | --- | --- |
-| `WEB_PUSH_ENABLED` | 기본 false. Production에서는 true여도 등록·전송 차단 |
+| `WEB_PUSH_ENABLED` | 기본 false. Production에서는 `WEB_PUSH_PRODUCTION_ENABLED`도 true여야 등록·전송이 열린다 |
+| `WEB_PUSH_PRODUCTION_ENABLED` | 기본 false(#651). Production에서 이 값이 false면 `WEB_PUSH_ENABLED` 값과 무관하게 등록·전송을 차단한다. 다른 Production 전용 안전장치(이메일 인증 강제 등)에는 영향을 주지 않는다. 문제가 생기면 이 값만 다시 false로 두면 재배포 없이 즉시 차단된다 |
 | `WEB_PUSH_ALLOWED_HOSTS` | 정확한 provider hostname의 JSON 배열. 기본 빈 배열, wildcard 금지 |
 | `WEB_PUSH_VAPID_PRIVATE_KEY` | 저장소 밖 secret에서 주입하는 P-256 PEM private key |
 | `WEB_PUSH_VAPID_PUBLIC_KEY` | 해당 키의 uncompressed public key, base64url no padding |
