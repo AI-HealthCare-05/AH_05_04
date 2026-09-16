@@ -591,3 +591,10 @@ Frontend `TrackCPage.test.tsx`는 상황 선택·명시 채택·실제 준비 �
 `frontend/tests/ResponseFeedback.test.tsx`와 `frontend/e2e/response-feedback.spec.ts`는 실패 후 입력 유지·재시도·평가 변경·삭제,
 중복 전송 차단, 완료 ASSISTANT만 노출, 320·390·412px 키보드·레이아웃을 확인한다.
 [실행 기록](validation/issue-633-feedback.md)의 합성 replay와 실제 Provider 개선 효과·책임 리뷰 승인을 구분한다.
+
+## #193 내부 합성 증상 데모 / #196 RAG 준비 상태
+
+- [Local 7일 증상 정책 검증·실행](testing/track-c-demo-safety-193.md): versioned 정책, 만료·계정·환경 제한,
+  실제 API 저장·Barrier 차단·Plan 취소·멱등 replay. Frontend 증상 UI·임상 평가와 구분한다.
+- [공용 RAG 연결 준비 상태](testing/track-c-rag-readiness-196.md): kernel 구현과 실제 Source/Bundle/handoff
+  인계를 구분하며, 확인되지 않은 근거를 데모 승인으로 대체하지 않는다.

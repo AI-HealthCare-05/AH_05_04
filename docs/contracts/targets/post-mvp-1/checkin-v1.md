@@ -41,6 +41,10 @@ envelope를 사용한다.
 의료 검토 완료나 Production 활성 설정으로 해석하지 않는다. 승인 자료가 연결되기 전
 `PUBLIC_TRACK_C` 공개 gate는 계속 닫혀 있으며 target의 Current 승격도 하지 않는다.
 
+2026-09-16 사용자 요청에 따른 [Local 7일 합성 demo](../../proposed/track-c-safety-barrier-api-193.md)는
+별도 opt-in 구현 검토 범위다. 의료 승인된 정책이나 이 target의 Current 승격이 아니며,
+기본 foundation·외부 공개 gate는 유지한다.
+
 ## 소유권 경계
 
 모든 Track B·C 직접 조회·쓰기 API는 인증 사용자가 직접 소유한 resource만 허용한다. #117 병합 이후 occurrence → schedule·prescription version → prescription, Check-in → occurrence, Safety·Barrier·ActionPlan → Check-in의 parent chain은 SELF `profile_id` 또는 부모 chain의 `profile_id`를 기준으로 소유권을 확인한다. 존재하지 않거나 소유하지 않은 ID는 존재 여부를 숨기기 위해 모두 `404`다. 이 문서는 새 권한 역할이나 잠금 순서를 추가하지 않는다.

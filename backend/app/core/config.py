@@ -3,7 +3,7 @@ import os
 import uuid
 import zoneinfo
 from dataclasses import field
-from datetime import UTC, timedelta, timezone, tzinfo
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -225,6 +225,26 @@ class Config(BaseSettings):
     OPENAI_TIMEOUT_SECONDS: float = 20.0
     CHAT_HISTORY_CONTEXT_ENABLED: bool = False
     RELEASE_VALIDATION_ALLOWED: bool = False
+
+    TRACK_C_SAFETY_DEMO_ENABLED: bool = False
+    TRACK_C_SAFETY_DEMO_STARTS_AT: datetime | None = None
+    TRACK_C_SAFETY_DEMO_EXPIRES_AT: datetime | None = None
+    TRACK_C_SAFETY_DEMO_USER_IDS: frozenset[uuid.UUID] = frozenset()
+
+    @model_validator(mode="after")
+    def validate_track_c_safety_demo(self) -> "Config":
+        if not self.TRACK_C_SAFETY_DEMO_ENABLED:
+            return self
+        if self.ENV is not Env.LOCAL:
+            raise ValueError("TRACK_C_SAFETY_DEMO_ENABLED is allowed only in local environment")
+        start, end = self.TRACK_C_SAFETY_DEMO_STARTS_AT, self.TRACK_C_SAFETY_DEMO_EXPIRES_AT
+        if start is None or end is None or start.utcoffset() is None or end.utcoffset() is None:
+            raise ValueError("Track C demo requires timezone-aware start and expiry")
+        if not timedelta(0) < end - start <= timedelta(days=7):
+            raise ValueError("Track C demo window must be positive and at most seven days")
+        if not self.TRACK_C_SAFETY_DEMO_USER_IDS:
+            raise ValueError("Track C demo requires an explicit synthetic-user allowlist")
+        return self
 
     @field_validator("OPENAI_MODEL", mode="after")
     @classmethod
