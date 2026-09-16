@@ -116,7 +116,7 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
         "BARRIER_RESPONSE_REVISION_CONFLICT, SAFETY_FLOW_PRECEDES_BARRIER, IDEMPOTENCY_KEY_CONFLICT",
     },
     422: {"model": ErrorResponse, "description": "입력 검증 오류 또는 자유 텍스트 증상"},
-    503: {"model": ErrorResponse, "description": "멱등성 응답 snapshot 크기 초과"},
+    503: {"model": ErrorResponse, "description": "IDEMPOTENCY_RESPONSE_TOO_LARGE, SAFETY_DEMO_UNAVAILABLE"},
 }
 
 

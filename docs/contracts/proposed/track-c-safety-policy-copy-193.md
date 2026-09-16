@@ -2,7 +2,7 @@
 
 | 항목 | 내용 |
 |---|---|
-| 상태 | Proposed · 검토용 초안 · 런타임 미적용 |
+| 상태 | Proposed · 의료 검토 미완료 · 기본 runtime 미적용; 별도 Local 합성 demo는 하단 기록 참조 |
 | 작성 기준일 | 2026-09-15 |
 | 구현 소유자 / 책임 리뷰어 | 권가빈 @hazelnutflavoured / @phina-io (Backend·Transaction·Security) |
 | 제품 / 화면 의견 | @hazelnutflavoured / @solia142 |
@@ -181,5 +181,19 @@ S2·S4는 원문에 표시된 다음 검토일이 지났다. 곧바로 틀렸다
 - [ ] Source·공개 검토: 원문 현행성·재사용 조건·국내 적용 및 실제 사용자 공개 범위
 
 PM의 제품 방향 수용, 전문 안전 검토, 코드 리뷰, 배포 검증은 각각 기록한다.
-현재 코드는 여전히 빈 목록만 ROUTINE이고 모든 non-empty 입력은 UNKNOWN이다.
-문서 승인 없이 이 초안의 코드를 API에 적용하거나 #193 완료·공개 승인으로 표시하지 않는다.
+기본 foundation은 빈 목록만 ROUTINE이고 모든 non-empty 입력은 UNKNOWN이다.
+일반 정책으로 적용하거나 #193 임상 정책 완료·공개 승인으로 표시하지 않는다. 별도 사용자 요청에 따른 내부 합성 demo는 아래 제한을 따른다.
+
+## 2026-09-16 내부 합성 데모 적용 기록
+
+사용자는 의료 검토를 이번 내부 7일 합성 데모의 선행조건에서 제외하고 구현하도록 요청했다.
+[PD-193 revision 3](../../governance/decisions/2026-09-16-track-c-internal-demo-193.md)은
+이 문서 전체의 임상 승인이 아니라, 별도 Local 데모 범위를 정의한다.
+E01~E11/U01/X01/X02와 non-ROUTINE 고정 문구만
+[hash-pinned demo artifact](../../../backend/app/config/track_c/safety-demo/track-c-safety-demo-2026-09-16.1.json)에 연결한다.
+빈 목록의 최근 24시간 의미 확장과 Frontend 선택 UI·CTA 구현은 적용하지 않는다.
+
+S1/S2/S3 원문을 2026-09-16 재확인했다. S1은 last reviewed 2026-08-25 / next review
+2029-08-25로 표시된다. S2는 여전히 next review 2026-08-08로 표시되므로 현행성 전문 검토가
+남는다. 원문 열람은 임상·국내 적용·재사용 승인과 다르다. 실제 사용자 공개는 계속 차단한다.
+기본 OFF에서는 기존 foundation이 유지되며 이 문서의 의료·Source 검토 체크리스트는 미완료다.

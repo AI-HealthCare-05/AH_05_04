@@ -71,7 +71,8 @@ from app.services.ocr_ai.prompt import PROMPT_VERSION as OCR_STRUCTURE_PROMPT_VE
 from app.services.ocr_engine import OcrEngine
 from app.services.prescriptions import PrescriptionService
 from app.services.track_c_api import TrackCApiService
-from app.services.track_c_flow import ContractFoundationSafetyPolicy, TrackCFlowService
+from app.services.track_c_demo_safety import InternalDemoSafetyPolicy
+from app.services.track_c_flow import ContractFoundationSafetyPolicy, SafetyPolicy, TrackCFlowService
 from app.services.track_c_revision_invalidation import TrackCCheckinRevisionInvalidation
 from app.services.track_c_support import TrackCSupportService
 from app.services.user_consents import ConsentGateService, OcrConsentService
@@ -417,7 +418,10 @@ def get_track_c_api_service(
     ],
 ) -> TrackCApiService:
     repository = TrackCStorageRepository(session)
-    flow = TrackCFlowService(repository, ContractFoundationSafetyPolicy())
+    policy: SafetyPolicy = (
+        InternalDemoSafetyPolicy(config) if config.TRACK_C_SAFETY_DEMO_ENABLED else ContractFoundationSafetyPolicy()
+    )
+    flow = TrackCFlowService(repository, policy)
     return TrackCApiService(repository, flow, idempotency_service)
 
 

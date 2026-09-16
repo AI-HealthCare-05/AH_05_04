@@ -889,3 +889,10 @@ created_at·updated_at TIMESTAMPTZ를 가진다. 소유권은 부모 SELF chain�
 최초 생성 후 30일 만료이며 수정은 created_at을 보존한다. 만료 후 POST는 이전 row를 제거하고 새 row를 생성한다.
 created_at index는 만료 삭제, rating·updated_at·id index는 부정 피드백 검토를 지원한다.
 정책은 [PD-633](governance/decisions/2026-09-16-guide-chat-feedback-633.md)을 따르며 Current 승격·실사용 승인 전이다.
+
+### #193 Local 합성 데모 provenance
+
+새 migration/column은 없다. 기존 `safety_assessment.copy_version`·`source_version` 쌍에
+전용 demo 버전을 저장하고 그 쌍은 hash-pinned rule/copy/source artifact 하나에 결속된다.
+빈 증상 목록은 기존 foundation 버전을 유지한다. 과거 assessment·snapshot은 소급 변경하지 않는다.
+[Proposed API·버전 계약](contracts/proposed/track-c-safety-barrier-api-193.md)을 참고한다.

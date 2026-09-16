@@ -1,0 +1,155 @@
+{
+  "rule_version": "track-c-safety-demo-rule-2026-09-16.1",
+  "copy_version": "track-c-safety-demo-ko-2026-09-16.1",
+  "source_version": "track-c-safety-demo-source-2026-09-16.1",
+  "status": "INTERNAL_SYNTHETIC_DEMO_NOT_MEDICALLY_REVIEWED",
+  "notice": "의료 검토를 받지 않은 내부 합성 시연용입니다. 실제 증상 판단에 사용하지 않습니다.",
+  "choices": [
+    {
+      "code": "SUDDEN_AIRWAY_SWELLING",
+      "label": "입술·입안·혀·목이 갑자기 부었어요",
+      "response_level": "EMERGENCY",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "code": "SEVERE_BREATHING_DIFFICULTY",
+      "label": "숨쉬기가 힘들거나 숨을 매우 빠르게 쉬고 있어요",
+      "response_level": "EMERGENCY",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "code": "THROAT_TIGHTNESS_OR_SWALLOWING_DIFFICULTY",
+      "label": "목이 조이는 느낌이 들거나 삼키기가 어려워요",
+      "response_level": "EMERGENCY",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "code": "BLUE_GREY_OR_PALE_SKIN_LIPS_TONGUE",
+      "label": "피부·입술·혀가 파랗거나 회색빛 또는 창백하게 변했어요",
+      "response_level": "EMERGENCY",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "code": "SUDDEN_CONFUSION_DROWSINESS_OR_DIZZINESS",
+      "label": "갑자기 정신이 혼란스럽거나, 졸리거나, 어지러워졌어요",
+      "response_level": "EMERGENCY",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "code": "SUDDEN_PERSISTENT_CHEST_PAIN",
+      "label": "갑자기 생긴 가슴 통증이나 불편감이 계속돼요",
+      "response_level": "EMERGENCY",
+      "source_ids": [
+        "S2"
+      ]
+    },
+    {
+      "code": "CHEST_PAIN_SPREADING",
+      "label": "가슴 통증이 팔·목·턱·배·등으로 퍼져요",
+      "response_level": "EMERGENCY",
+      "source_ids": [
+        "S2"
+      ]
+    },
+    {
+      "code": "CHEST_PAIN_WITH_ASSOCIATED_SYMPTOMS",
+      "label": "가슴 통증과 함께 식은땀·메스꺼움·어지러움·숨참 중 하나 이상이 있어요",
+      "response_level": "EMERGENCY",
+      "source_ids": [
+        "S2"
+      ]
+    },
+    {
+      "code": "CURRENT_OR_RECENT_FACE_WEAKNESS",
+      "label": "갑자기 얼굴 한쪽이 처지거나 웃기 어려워졌어요. 지금 증상이 있거나 최근 24시간 안에 있었다면 선택해 주세요",
+      "response_level": "EMERGENCY",
+      "source_ids": [
+        "S3"
+      ]
+    },
+    {
+      "code": "CURRENT_OR_RECENT_ARM_WEAKNESS",
+      "label": "갑자기 한쪽 팔의 힘이 빠지거나 감각이 둔해져 양팔을 들고 있기 어려워졌어요. 지금 증상이 있거나 최근 24시간 안에 있었다면 선택해 주세요",
+      "response_level": "EMERGENCY",
+      "source_ids": [
+        "S3"
+      ]
+    },
+    {
+      "code": "CURRENT_OR_RECENT_SPEECH_CHANGE",
+      "label": "갑자기 말이 어눌해지거나 말하기 어려워졌어요. 지금 증상이 있거나 최근 24시간 안에 있었다면 선택해 주세요",
+      "response_level": "EMERGENCY",
+      "source_ids": [
+        "S3"
+      ]
+    },
+    {
+      "code": "SUDDEN_OTHER_BODY_SWELLING",
+      "label": "손·발 등 다른 신체 부위가 갑자기 부었어요",
+      "response_level": "URGENT",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "code": "OTHER_SYMPTOM",
+      "label": "목록에 없는 다른 증상이 있어요",
+      "response_level": "UNKNOWN",
+      "source_ids": []
+    },
+    {
+      "code": "UNSURE_ABOUT_SYMPTOMS",
+      "label": "증상이 있는지 잘 모르겠어요",
+      "response_level": "UNKNOWN",
+      "source_ids": []
+    }
+  ],
+  "messages": {
+    "EMERGENCY": {
+      "message_code": "DEMO_SAFETY_EMERGENCY_HELP",
+      "title": "지금 응급 도움을 요청해 주세요",
+      "body": "선택하신 증상은 즉시 응급 도움이 필요할 수 있어요. 지금 119에 연락해 주세요. 직접 운전하지 말고, 가능하면 주변 사람에게 도움을 요청해 주세요."
+    },
+    "URGENT": {
+      "message_code": "DEMO_SAFETY_URGENT_CARE",
+      "title": "지금 진료 안내를 받아 주세요",
+      "body": "선택하신 증상은 신속한 진료가 필요할 수 있어요. 지금 의료기관에 연락해 진료 안내를 받아 주세요. 이 확인만으로 다른 증상의 긴급도까지 판단할 수는 없어요. 숨쉬기 어려움이나 갑작스러운 입·혀·목 부종이 있으면 바로 119에 연락해 주세요."
+    },
+    "UNKNOWN": {
+      "message_code": "DEMO_SAFETY_UNCERTAIN",
+      "title": "증상을 더 확인할 필요가 있어요",
+      "body": "입력하신 정보만으로 긴급도를 판단하기 어려워요. 의료진에게 증상을 확인해 주세요. 숨쉬기 어려움이나 갑작스러운 입·혀·목 부종 등 응급 신호가 있으면 바로 119에 연락해 주세요."
+    }
+  },
+  "sources": [
+    {
+      "id": "S1",
+      "url": "https://www.nhs.uk/conditions/angioedema/",
+      "section": "When and where to get medical help",
+      "checked_on": "2026-09-16"
+    },
+    {
+      "id": "S2",
+      "url": "https://www.nhs.uk/symptoms/chest-pain/",
+      "section": "Immediate action required",
+      "checked_on": "2026-09-16",
+      "review_due_passed": true
+    },
+    {
+      "id": "S3",
+      "url": "https://www.nhs.uk/conditions/stroke/symptoms/",
+      "section": "Check for signs of a stroke; Immediate action required",
+      "checked_on": "2026-09-16"
+    }
+  ]
+}
