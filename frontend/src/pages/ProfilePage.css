@@ -1,11 +1,19 @@
-.mvp-profile { overflow-x: hidden; padding-top: 26px; }
+.mvp-profile-page {
+  --ds-action: #607d8b;
+  --ds-action-pressed: #526b78;
+}
+.mvp-profile-page .ds-button:not(.secondary):not(.ghost):not(:disabled) { background: #5d7a88; }
+.mvp-profile-page .ds-button:not(.secondary):not(.ghost):not(:disabled):active { background: var(--ds-action-pressed); }
+.mvp-profile-page .ds-button.secondary:not(:disabled),
+.mvp-profile-page .ds-button.ghost:not(:disabled) { color: var(--ds-action-pressed); }
+.mvp-profile { overflow-x: hidden; padding-top: 26px; background: var(--ds-surface); }
 .mvp-profile--editing { padding-top: 31px; }
 .mvp-profile__intro { margin-bottom: 18px; }
 .mvp-profile__intro .mvp-page__title { font-size: 28px; }
 .mvp-profile--editing .mvp-profile__intro .mvp-page__title { line-height: 40px; }
 .mvp-profile__section { display: grid; gap: 12px; margin-bottom: 30px; }
 .mvp-profile__section > h3 { margin: 0; font-size: 18px; line-height: 1.35; }
-.mvp-profile__card { min-width: 0; padding: 0; overflow: hidden; border: 1px solid #e5eaf1; border-radius: 20px; box-shadow: none; }
+.mvp-profile__card { min-width: 0; padding: 0; overflow: hidden; border: 1px solid #cfd8dc; border-radius: 20px; box-shadow: none; }
 .mvp-profile__section > .ds-button,
 .mvp-profile__actions .ds-button { min-height: 56px; border-radius: 16px; font-size: 18px; }
 .mvp-profile__details { margin: 0; }
@@ -15,7 +23,7 @@
 .mvp-profile__details dd { min-width: 0; margin: 0; color: #151a23; font-size: 18px; font-weight: 800; text-align: right; overflow-wrap: anywhere; }
 .mvp-profile__account-details > div { grid-template-columns: 52px minmax(0, 1fr) auto; }
 .mvp-profile__account-details dd { font-size: 16px; text-align: left; }
-.mvp-profile__account-details span { min-height: 32px; display: inline-flex; align-items: center; justify-content: center; padding: 5px 10px; border-radius: 12px; background: #eaf4ff; color: #1677ea; font-size: 13px; font-weight: 700; white-space: nowrap; }
+.mvp-profile__account-details span { min-height: 32px; display: inline-flex; align-items: center; justify-content: center; padding: 5px 10px; border-radius: 12px; background: #eceff1; color: var(--ds-action-pressed); font-size: 13px; font-weight: 700; white-space: nowrap; }
 .mvp-profile__readonly-note { margin: -2px 0 0; color: #526074; font-size: 16px; line-height: 1.5; }
 .mvp-profile__consent-card { padding: 16px; }
 .mvp-profile__consent-card p { margin: 0; color: #526074; font-size: 15px; line-height: 1.5; }

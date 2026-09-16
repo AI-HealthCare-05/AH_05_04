@@ -27,10 +27,10 @@ from app.repositories.track_c_storage_repository import TrackCStorageRepository
 
 SCHEMA_VERSION = "track-c-handler-config-v1"
 COPY_SCHEMA_VERSION = "track-c-support-copy-v1"
-ACTIVE_RULE_VERSION = "track-c-support-rule-2026-09-15.1"
-ACTIVE_COPY_VERSION = "track-c-support-copy-ko-2026-09-15.1"
-APPROVED_RULE_VERSIONS = frozenset({ACTIVE_RULE_VERSION})
-APPROVED_COPY_VERSIONS = frozenset({ACTIVE_COPY_VERSION})
+ACTIVE_RULE_VERSION = "track-c-support-rule-2026-09-16.1"
+ACTIVE_COPY_VERSION = "track-c-support-copy-ko-2026-09-16.1"
+APPROVED_RULE_VERSIONS = frozenset({"track-c-support-rule-2026-09-15.1", ACTIVE_RULE_VERSION})
+APPROVED_COPY_VERSIONS = frozenset({"track-c-support-copy-ko-2026-09-15.1", ACTIVE_COPY_VERSION})
 APPROVED_RATIONALE_CODES = frozenset(
     {
         "ROUTINE_REMINDER_SETUP_AVAILABLE",
@@ -308,7 +308,7 @@ def load_support_copy_catalog(
     return catalog
 
 
-def _load_active_rule_and_copy() -> tuple[HandlerConfig, SupportCopyCatalog]:
+def load_active_support_assets() -> tuple[HandlerConfig, SupportCopyCatalog]:
     """Return active assets only after both files and their references validate."""
     config = load_handler_config(
         _RULES_DIR,
@@ -327,13 +327,31 @@ def _load_active_rule_and_copy() -> tuple[HandlerConfig, SupportCopyCatalog]:
     return config, catalog
 
 
+def load_historical_plan_copy(plan: SupportActionPlan) -> SupportCopy:
+    config = load_handler_config(
+        _RULES_DIR,
+        plan.rule_version,
+        approved_rule_versions=APPROVED_RULE_VERSIONS,
+        approved_copy_versions=APPROVED_COPY_VERSIONS,
+        approved_rationale_codes=APPROVED_RATIONALE_CODES,
+    )
+    rule = config.supports.get(plan.support_code)
+    if rule is None or rule.copy_version != plan.copy_version:
+        raise HandlerConfigError("historical plan copy reference mismatch")
+    return load_support_copy_catalog(
+        _COPY_DIR,
+        plan.copy_version,
+        approved_copy_versions=APPROVED_COPY_VERSIONS,
+    ).supports[plan.support_code]
+
+
 def load_active_handler_config() -> HandlerConfig:
-    config, _ = _load_active_rule_and_copy()
+    config, _ = load_active_support_assets()
     return config
 
 
 def load_active_support_copy_catalog() -> SupportCopyCatalog:
-    _, catalog = _load_active_rule_and_copy()
+    _, catalog = load_active_support_assets()
     return catalog
 
 

@@ -1,22 +1,30 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from uuid import UUID
+
+from ai_worker.tasks.evaluation.canonical import (
+    JsonValue,
+)
+from ai_worker.tasks.evaluation.canonical import (
+    canonical_json_bytes as _canonical_json_bytes_eval,
+)
+from ai_worker.tasks.evaluation.canonical import (
+    canonical_sha256 as _canonical_sha256_eval,
+)
 
 
 def canonical_json_bytes(payload: Any) -> bytes:
     """RFC 8785 JSON Canonicalization Scheme (JCS)."""
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return _canonical_json_bytes_eval(cast(JsonValue, payload))
 
 
 def sha256_canonical_json(payload: Any) -> str:
-    return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
+    return _canonical_sha256_eval(cast(JsonValue, payload))
 
 
 class BeginRetrievalRunFailureReason(StrEnum):

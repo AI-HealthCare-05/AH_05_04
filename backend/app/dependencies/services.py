@@ -13,6 +13,7 @@ from app.core.provider_observability import (
     ProviderCallDescriptor,
     ProviderOperation,
 )
+from app.repositories.account_deletion_request_repository import AccountDeletionRequestRepository
 from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.email_verification_repository import EmailVerificationRepository
@@ -70,8 +71,10 @@ from app.services.ocr_ai.prompt import PROMPT_VERSION as OCR_STRUCTURE_PROMPT_VE
 from app.services.ocr_engine import OcrEngine
 from app.services.prescriptions import PrescriptionService
 from app.services.track_c_api import TrackCApiService
-from app.services.track_c_flow import ContractFoundationSafetyPolicy, TrackCFlowService
+from app.services.track_c_demo_safety import InternalDemoSafetyPolicy
+from app.services.track_c_flow import ContractFoundationSafetyPolicy, SafetyPolicy, TrackCFlowService
 from app.services.track_c_revision_invalidation import TrackCCheckinRevisionInvalidation
+from app.services.track_c_support import TrackCSupportService
 from app.services.user_consents import ConsentGateService, OcrConsentService
 from app.services.users import UserConsentService, UserManageService
 
@@ -139,6 +142,15 @@ def get_user_consent_repository(
     ],
 ) -> UserConsentRepository:
     return UserConsentRepository(session)
+
+
+def get_account_deletion_request_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> AccountDeletionRequestRepository:
+    return AccountDeletionRequestRepository(session)
 
 
 def get_medical_document_repository(
@@ -406,8 +418,21 @@ def get_track_c_api_service(
     ],
 ) -> TrackCApiService:
     repository = TrackCStorageRepository(session)
-    flow = TrackCFlowService(repository, ContractFoundationSafetyPolicy())
+    policy: SafetyPolicy = (
+        InternalDemoSafetyPolicy(config) if config.TRACK_C_SAFETY_DEMO_ENABLED else ContractFoundationSafetyPolicy()
+    )
+    flow = TrackCFlowService(repository, policy)
     return TrackCApiService(repository, flow, idempotency_service)
+
+
+def get_track_c_support_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    idempotency_service: Annotated[
+        SyncMutationIdempotencyService,
+        Depends(get_sync_mutation_idempotency_service),
+    ],
+) -> TrackCSupportService:
+    return TrackCSupportService(TrackCStorageRepository(session), idempotency_service)
 
 
 def get_guide_repository(
@@ -508,11 +533,16 @@ def get_chat_service(
         ChatEngine,
         Depends(get_chat_engine),
     ],
+    consent_gate: Annotated[
+        ConsentGateService,
+        Depends(get_consent_gate_service),
+    ],
 ) -> ChatService:
     return ChatService(
         prescription_repository,
         chat_repository,
         engine,
+        consent_gate,
         history_context_enabled=config.CHAT_HISTORY_CONTEXT_ENABLED,
     )
 
@@ -591,6 +621,10 @@ def get_auth_service(
         UserConsentRepository,
         Depends(get_user_consent_repository),
     ],
+    account_deletion_request_repository: Annotated[
+        AccountDeletionRequestRepository,
+        Depends(get_account_deletion_request_repository),
+    ],
 ) -> AuthService:
     return AuthService(
         repository,
@@ -599,6 +633,7 @@ def get_auth_service(
         email_verification_repository,
         email_sender,
         user_consent_repository,
+        account_deletion_request_repository,
     )
 
 

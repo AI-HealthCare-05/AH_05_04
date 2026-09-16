@@ -74,6 +74,7 @@ class OpenAIResponsesClient:
                 max_output_tokens=max_output_tokens,
                 store=False,
                 stream=False,
+                temperature=0,
             )
         except asyncio.CancelledError:
             self._observer.failed(
@@ -192,7 +193,19 @@ class OpenAIResponsesClient:
         if not isinstance(model_name, str):
             raise ChatGenerationInvalidResponseError("Chat provider returned no model identifier")
 
-        return ProviderChatResponse(content=content.strip(), model_name=model_name)
+        usage = getattr(response, "usage", None)
+
+        def usage_value(name: str) -> int | None:
+            value = getattr(usage, name, None)
+            return value if type(value) is int and value >= 0 else None
+
+        return ProviderChatResponse(
+            content=content.strip(),
+            model_name=model_name,
+            input_tokens=usage_value("input_tokens"),
+            output_tokens=usage_value("output_tokens"),
+            total_tokens=usage_value("total_tokens"),
+        )
 
     @staticmethod
     def _contains_refusal(output: Any) -> bool:

@@ -56,6 +56,17 @@ class LogoutResponse(BaseModel):
     detail: str
 
 
+class AccountWithdrawalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    password: Annotated[str, Field(min_length=8)]
+    confirmed: bool
+
+
+class AccountWithdrawalResponse(BaseModel):
+    detail: str
+
+
 class EmailVerificationRequestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

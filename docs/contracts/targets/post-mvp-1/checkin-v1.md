@@ -41,6 +41,10 @@ envelope를 사용한다.
 의료 검토 완료나 Production 활성 설정으로 해석하지 않는다. 승인 자료가 연결되기 전
 `PUBLIC_TRACK_C` 공개 gate는 계속 닫혀 있으며 target의 Current 승격도 하지 않는다.
 
+2026-09-16 사용자 요청에 따른 [Local 7일 합성 demo](../../proposed/track-c-safety-barrier-api-193.md)는
+별도 opt-in 구현 검토 범위다. 의료 승인된 정책이나 이 target의 Current 승격이 아니며,
+기본 foundation·외부 공개 gate는 유지한다.
+
 ## 소유권 경계
 
 모든 Track B·C 직접 조회·쓰기 API는 인증 사용자가 직접 소유한 resource만 허용한다. #117 병합 이후 occurrence → schedule·prescription version → prescription, Check-in → occurrence, Safety·Barrier·ActionPlan → Check-in의 parent chain은 SELF `profile_id` 또는 부모 chain의 `profile_id`를 기준으로 소유권을 확인한다. 존재하지 않거나 소유하지 않은 ID는 존재 여부를 숨기기 위해 모두 `404`다. 이 문서는 새 권한 역할이나 잠금 순서를 추가하지 않는다.
@@ -154,6 +158,24 @@ Track C의 목표 API는 다음으로 고정한다.
 - 잠금 순서는 `MEDICATION_CHECKIN → SAFETY_ASSESSMENT → BARRIER_RESPONSE → SUPPORT_ACTION_PLAN`이다.
 - Check-in write transaction의 owner는 Track B다. 현재 `NOT_TAKEN` revision이 `TAKEN` 또는 새 `NOT_TAKEN` revision으로 바뀌면 B가 Track C의 `invalidate_for_checkin_revision` port를 별도 queue·Outbox를 거치지 않는 in-process 동기 함수로 같은 transaction에서 호출한다. 이 호출도 `MEDICATION_CHECKIN → SAFETY_ASSESSMENT → BARRIER_RESPONSE → SUPPORT_ACTION_PLAN` 잠금 순서를 그대로 따르며, 이전 revision의 Safety·Barrier 이력을 보존하고 활성 ActionPlan을 취소한다. 새 상태가 `NOT_TAKEN`이면 Safety부터 다시 시작하며 과거 revision 결과를 현재 흐름에 사용하지 않는다.
 
+## #194 단일 Support 제안·생성 delta
+
+2026-09-15 PM은 기존 최대 2개를 **eligible 후보가 있으면 정렬의 첫 1개, 없으면 0개와
+NO_ELIGIBLE_SUPPORT**로 변경했다. 아래 원본 Freeze v4의 최대 2개 표기는 이력이며
+#194 구현에서는 [PD-194](../../../governance/decisions/2026-09-15-track-c-support-plan-api-194.md)와
+[지원·생성 API 구체화](../../proposed/track-c-support-plan-api-194.md)의 개수 조건을 적용한다.
+PM은 이번 구현을 GET 지원 제안·POST Plan 생성으로 제한했다. Plan 변경·follow-up은 후속이다.
+HTTP 구체화는 기술 리뷰 대상이며 전체 target의 Current 승격이 아니다.
+
+### #194 Follow-up 후속 delta
+
+[PD-194-2](../../../governance/decisions/2026-09-16-track-c-followup-194.md)는 완료한 계획만 평가하고,
+완료 후 Check-in이 정정돼도 과거 평가를 제출·정정할 수 있도록 제품 범위를 확정한다.
+기존 followups POST와 같은 경로의 GET, 응답·expected_revision·정정 audit·멱등성은
+[Follow-up API v1](../../current/track-c-followup-api-194.md)의 Current 구현 계약으로 PR #631에 함께 반영한다.
+김지혜의 최종 책임 리뷰 승인·병합은 대기 중이며 병합 전 develop의 동작으로 해석하지 않는다.
+기존 Plan 응답·세 평가 enum·저장 테이블을 유지하며 #194 전체 완료나 공개 승인을 뜻하지 않는다.
+
 ## Support와 실행계획
 
 - 표시 문구는 enum과 분리해 `copy_version`으로 관리한다.
@@ -184,3 +206,10 @@ Track C의 목표 API는 다음으로 고정한다.
 위 최초 부분 구현의 blocker 기록은 과거 상태이며 현재 진행 상태는
 [검증 기록](../../../validation/track-b/issue-202-schedule-api.md)을 따른다.
 전체 Track B/Track C 계약의 Current 승격이나 공개 승인을 뜻하지 않는다.
+
+## PD-194-3 상황별 연결 구현·리뷰 대상
+
+[일정 변경·외출 선택](../../current/track-c-travel-situation-194.md)은 기존 Barrier enum을 유지하면서
+Support GET/Plan 생성에 선택적 travel_situation을 추가한다. 후보 제한 후 기존 정렬·최대 1개를 유지한다.
+[계획별 자료 조회](../../current/track-c-plan-resources-194.md)는 원래 약·기록·저장 당시 안내를 연결한다.
+약별 승인 설명/Citation·임상 Safety 확장은 별도 미완료 범위이며 전체 target을 Current로 승격하지 않는다.

@@ -1,15 +1,18 @@
 """Track C storage, SELF ownership, and ordered mutation locks."""
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.models.medication_schedules import MedicationCheckin, MedicationOccurrence, MedicationSchedule
 from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.track_c import (
     ActionPlanFollowup,
+    ActionPlanFollowupAudit,
+    ActionPlanFollowupResponse,
     BarrierCode,
     BarrierResponse,
     BarrierResponseStatus,
@@ -238,6 +241,73 @@ class TrackCStorageRepository:
         row = result.one_or_none()
         return (row[0], row[1]) if row is not None else None
 
+    async def get_support_flow_owned(
+        self, *, barrier_id: UUID, user_id: UUID
+    ) -> tuple[BarrierResponse, UUID, MedicationCheckin, SafetyAssessment | None, UUID | None] | None:
+        """One MVCC statement snapshot, without row locks or writes, for Offer GET."""
+        candidate = aliased(BarrierResponse)
+        latest_barrier_id = (
+            select(candidate.id)
+            .where(
+                candidate.medication_checkin_id == MedicationCheckin.id,
+                candidate.checkin_revision == MedicationCheckin.revision,
+            )
+            .order_by(candidate.revision.desc())
+            .limit(1)
+            .correlate(MedicationCheckin)
+            .scalar_subquery()
+        )
+        latest_safety_id = (
+            select(SafetyAssessment.id)
+            .where(
+                SafetyAssessment.medication_checkin_id == MedicationCheckin.id,
+                SafetyAssessment.checkin_revision == MedicationCheckin.revision,
+            )
+            .order_by(SafetyAssessment.revision.desc())
+            .limit(1)
+            .correlate(MedicationCheckin)
+            .scalar_subquery()
+        )
+        result = await self.session.execute(
+            select(
+                BarrierResponse,
+                MedicationSchedule.prescription_version_medication_id,
+                MedicationCheckin,
+                SafetyAssessment,
+                latest_barrier_id,
+            )
+            .select_from(BarrierResponse)
+            .join(MedicationCheckin, MedicationCheckin.id == BarrierResponse.medication_checkin_id)
+            .join(MedicationOccurrence, MedicationOccurrence.id == MedicationCheckin.occurrence_id)
+            .join(MedicationSchedule, MedicationSchedule.id == MedicationOccurrence.medication_schedule_id)
+            .outerjoin(SafetyAssessment, SafetyAssessment.id == latest_safety_id)
+            .where(BarrierResponse.id == barrier_id, MedicationCheckin.id.in_(self._owned_checkins(user_id)))
+            .execution_options(populate_existing=True)
+        )
+        row = result.one_or_none()
+        return (row[0], row[1], row[2], row[3], row[4]) if row is not None else None
+
+    async def get_active_plan_for_update(self, *, barrier_id: UUID) -> SupportActionPlan | None:
+        """Caller must hold the owned Check-in → Safety → Barrier locks first."""
+        return await self.session.scalar(
+            select(SupportActionPlan)
+            .where(
+                SupportActionPlan.barrier_response_id == barrier_id,
+                SupportActionPlan.status == SupportActionPlanStatus.ACTIVE,
+            )
+            .with_for_update(of=SupportActionPlan)
+            .execution_options(populate_existing=True)
+        )
+
+    async def get_action_plan_for_update(self, *, plan_id: UUID) -> SupportActionPlan | None:
+        """Caller holds the owned Check-in → Safety → Barrier locks first."""
+        return await self.session.scalar(
+            select(SupportActionPlan)
+            .where(SupportActionPlan.id == plan_id)
+            .with_for_update(of=SupportActionPlan)
+            .execution_options(populate_existing=True)
+        )
+
     async def get_action_plan_owned(self, *, plan_id: UUID, user_id: UUID) -> SupportActionPlan | None:
         return await self.session.scalar(
             select(SupportActionPlan)
@@ -246,6 +316,7 @@ class TrackCStorageRepository:
                 SupportActionPlan.id == plan_id,
                 BarrierResponse.medication_checkin_id.in_(self._owned_checkins(user_id)),
             )
+            .execution_options(populate_existing=True)
         )
 
     async def get_followup_owned(self, *, followup_id: UUID, user_id: UUID) -> ActionPlanFollowup | None:
@@ -258,3 +329,91 @@ class TrackCStorageRepository:
                 BarrierResponse.medication_checkin_id.in_(self._owned_checkins(user_id)),
             )
         )
+
+    async def get_plan_resources_owned(
+        self, *, plan_id: UUID, user_id: UUID
+    ) -> tuple[SupportActionPlan, BarrierCode, UUID, date, UUID] | None:
+        result = await self.session.execute(
+            select(
+                SupportActionPlan,
+                BarrierResponse.barrier_code,
+                MedicationOccurrence.id,
+                MedicationOccurrence.scheduled_local_date,
+                MedicationSchedule.prescription_version_medication_id,
+            )
+            .join(BarrierResponse, BarrierResponse.id == SupportActionPlan.barrier_response_id)
+            .join(MedicationCheckin, MedicationCheckin.id == BarrierResponse.medication_checkin_id)
+            .join(MedicationOccurrence, MedicationOccurrence.id == MedicationCheckin.occurrence_id)
+            .join(MedicationSchedule, MedicationSchedule.id == MedicationOccurrence.medication_schedule_id)
+            .where(
+                SupportActionPlan.id == plan_id,
+                BarrierResponse.medication_checkin_id.in_(self._owned_checkins(user_id)),
+            )
+        )
+        row = result.one_or_none()
+        if row is None or row[1] is None:
+            return None
+        return row[0], row[1], row[2], row[3], row[4]
+
+    async def get_plan_followup_owned(
+        self, *, plan_id: UUID, user_id: UUID
+    ) -> tuple[SupportActionPlan, ActionPlanFollowup | None] | None:
+        row = (
+            await self.session.execute(
+                select(SupportActionPlan, ActionPlanFollowup)
+                .join(BarrierResponse, BarrierResponse.id == SupportActionPlan.barrier_response_id)
+                .outerjoin(ActionPlanFollowup, ActionPlanFollowup.support_action_plan_id == SupportActionPlan.id)
+                .where(
+                    SupportActionPlan.id == plan_id,
+                    BarrierResponse.medication_checkin_id.in_(self._owned_checkins(user_id)),
+                )
+                .execution_options(populate_existing=True)
+            )
+        ).one_or_none()
+        return (row[0], row[1]) if row else None
+
+    async def get_plan_followup_for_update(self, *, plan_id: UUID) -> ActionPlanFollowup | None:
+        """The caller holds the parent Plan lock, including when no follow-up exists."""
+        return await self.session.scalar(
+            select(ActionPlanFollowup)
+            .where(ActionPlanFollowup.support_action_plan_id == plan_id)
+            .with_for_update(of=ActionPlanFollowup)
+            .execution_options(populate_existing=True)
+        )
+
+    async def save_plan_followup(
+        self,
+        *,
+        plan_id: UUID,
+        current: ActionPlanFollowup | None,
+        response: ActionPlanFollowupResponse,
+        user_id: UUID,
+        changed_at: datetime,
+    ) -> ActionPlanFollowup:
+        """Save the response and correction audit in the caller's transaction."""
+        if current is None:
+            current = ActionPlanFollowup(
+                support_action_plan_id=plan_id,
+                response=response,
+                revision=1,
+                created_at=changed_at,
+                updated_at=changed_at,
+            )
+            self.session.add(current)
+        else:
+            self.session.add(
+                ActionPlanFollowupAudit(
+                    followup_id=current.id,
+                    from_response=current.response,
+                    to_response=response,
+                    from_revision=current.revision,
+                    to_revision=current.revision + 1,
+                    changed_by=user_id,
+                    changed_at=changed_at,
+                )
+            )
+            current.response = response
+            current.revision += 1
+            current.updated_at = changed_at
+        await self.session.flush()
+        return current

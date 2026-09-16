@@ -1,0 +1,27 @@
+{
+  "evidence_source": "User-provided server stdout, 2026-09-16; not independently executed by reviewer",
+  "server_commit": "91b6062df4bb8437786fb4fca6b5cef0e94a24ec",
+  "execution_timestamp_utc": null,
+  "exit_code": null,
+  "first": {
+    "phase": "first",
+    "decision": "CREATED",
+    "snapshot_id": "073ee706-d039-49b5-8ca5-e92cd021f087",
+    "member_count": 3,
+    "canonical_checksum": "a5df76494560f07db5f919b5c37dce4c681cbc214b27450466348a1849039cd3",
+    "source_version": "api:2026-09-16T01:16:39.187000Z:a5df76494560f07db5f919b5c37dce4c681cbc214b27450466348a1849039cd3",
+    "post_commit_requery_passed": true,
+    "expected_result_matches": true
+  },
+  "repeat": {
+    "phase": "repeat",
+    "decision": "NO_CHANGE",
+    "snapshot_id": "073ee706-d039-49b5-8ca5-e92cd021f087",
+    "member_count": 3,
+    "canonical_checksum": "a5df76494560f07db5f919b5c37dce4c681cbc214b27450466348a1849039cd3",
+    "source_version": "api:2026-09-16T01:16:39.187000Z:a5df76494560f07db5f919b5c37dce4c681cbc214b27450466348a1849039cd3",
+    "post_commit_requery_passed": true,
+    "expected_result_matches": true
+  },
+  "consumer_acceptance": "PENDING"
+}

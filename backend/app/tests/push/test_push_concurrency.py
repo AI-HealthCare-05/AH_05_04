@@ -1,5 +1,6 @@
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
@@ -11,11 +12,14 @@ from app.core import config
 from app.core.db.databases import Base
 from app.models.medication_schedules import MedicationOccurrence
 from app.models.push import PushDelivery, PushSubscription
+from app.models.user_consents import ConsentPurpose, ConsentStatus
 from app.repositories.notification_repository import NotificationRepository
 from app.repositories.push_repository import PushRepository
+from app.repositories.user_consent_repository import UserConsentRepository
 from app.services.notifications import NotificationScheduler
 from app.services.push import PushDeliveryService, PushSubscriptionService
 from app.services.push_transport import PushSendResult
+from app.services.user_consent_policy import current_consent_policy_version
 from app.tests.db_extensions import EXTENSION_SCHEMA, ensure_trigram_extension
 from app.tests.push.conftest import NOW
 from app.tests.repositories.test_medication_checkin_repository_integration import _create_occurrence
@@ -44,6 +48,13 @@ async def push_database(push_settings, subscription_request, monkeypatch):
             occurrence = await _create_occurrence(
                 session, owner=user, profile=profile, deadline_at=NOW + timedelta(hours=4)
             )
+            await UserConsentRepository(session).set_status(
+                user_id=user.id,
+                purpose=ConsentPurpose.NOTIFICATION,
+                status=ConsentStatus.GRANTED,
+                policy_version=current_consent_policy_version(ConsentPurpose.NOTIFICATION),
+                changed_at=NOW,
+            )
         yield factory, user.id, user.token_version, occurrence.id
     finally:
         await engine.dispose()
@@ -61,6 +72,22 @@ async def seed_delivery(factory, user_id, version, settings, request):
         await scheduler.publish_once(now=NOW)
         await repo.generate(NOW, 100)
         return await session.scalar(select(PushDelivery.id))
+
+
+def freeze_push_command(monkeypatch):
+    from app.commands import process_push
+    from app.services import push
+
+    class FrozenTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW
+
+    monkeypatch.setattr(process_push, "datetime", FrozenTime)
+    monkeypatch.setattr(push, "datetime", FrozenTime)
+    sender = Mock(return_value=PushSendResult("ACCEPTED"))
+    monkeypatch.setattr(process_push, "send_push", sender)
+    return process_push, sender
 
 
 async def test_concurrent_registration_returns_one_generation(push_database, push_settings, subscription_request):
@@ -141,24 +168,112 @@ async def test_revoke_during_http_does_not_hold_medication_locks(push_database, 
         assert (await session.get(PushDelivery, delivery_id)).status == "CANCELLED"
 
 
+async def test_one_shot_command_does_not_send_without_notification_consent_row(
+    push_database, push_settings, subscription_request, monkeypatch
+):
+    process_push, sender = freeze_push_command(monkeypatch)
+    factory, user_id, version, _ = push_database
+    delivery_id = await seed_delivery(factory, user_id, version, push_settings, subscription_request)
+    async with factory.begin() as session:
+        row = await UserConsentRepository(session).get_current(user_id=user_id, purpose=ConsentPurpose.NOTIFICATION)
+        assert row is not None
+        await session.delete(row)
+
+    assert await process_push.process_push_once(settings=push_settings, session_factory=factory) == 0
+    sender.assert_not_called()
+    async with factory() as session:
+        delivery = await session.get(PushDelivery, delivery_id)
+        assert delivery.status == "CANCELLED"
+        assert delivery.failure_reason == "NO_LONGER_ELIGIBLE"
+        assert delivery.attempt_count == 0
+
+
+async def test_production_enabled_flag_allows_real_registration_and_send(
+    push_database, push_settings, subscription_request, monkeypatch
+):
+    process_push, sender = freeze_push_command(monkeypatch)
+    push_settings.production_enabled = True
+    monkeypatch.setattr(config, "ENV", "production")
+    factory, user_id, version, _ = push_database
+    delivery_id = await seed_delivery(factory, user_id, version, push_settings, subscription_request)
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(PushSubscription)) == 1
+
+    assert await process_push.process_push_once(settings=push_settings, session_factory=factory) == 1
+    sender.assert_called_once()
+    async with factory() as session:
+        delivery = await session.get(PushDelivery, delivery_id)
+        assert delivery.status == "ACCEPTED"
+        assert delivery.accepted_at is not None
+
+
+async def test_production_enabled_flag_still_requires_notification_consent(
+    push_database, push_settings, subscription_request, monkeypatch
+):
+    process_push, sender = freeze_push_command(monkeypatch)
+    push_settings.production_enabled = True
+    monkeypatch.setattr(config, "ENV", "production")
+    factory, user_id, version, _ = push_database
+    delivery_id = await seed_delivery(factory, user_id, version, push_settings, subscription_request)
+    async with factory.begin() as session:
+        row = await UserConsentRepository(session).get_current(user_id=user_id, purpose=ConsentPurpose.NOTIFICATION)
+        assert row is not None
+        await session.delete(row)
+
+    assert await process_push.process_push_once(settings=push_settings, session_factory=factory) == 0
+    sender.assert_not_called()
+    async with factory() as session:
+        delivery = await session.get(PushDelivery, delivery_id)
+        assert delivery.status == "CANCELLED"
+        assert delivery.failure_reason == "NO_LONGER_ELIGIBLE"
+        assert delivery.attempt_count == 0
+
+
+async def test_one_shot_command_does_not_send_when_notification_policy_unavailable(
+    push_database, push_settings, subscription_request, monkeypatch
+):
+    from app.services import user_consent_policy
+
+    process_push, sender = freeze_push_command(monkeypatch)
+    monkeypatch.setitem(user_consent_policy.STATIC_CONSENT_POLICY_VERSIONS, ConsentPurpose.NOTIFICATION, "")
+    factory, user_id, version, _ = push_database
+    delivery_id = await seed_delivery(factory, user_id, version, push_settings, subscription_request)
+
+    assert await process_push.process_push_once(settings=push_settings, session_factory=factory) == 0
+    sender.assert_not_called()
+    async with factory() as session:
+        delivery = await session.get(PushDelivery, delivery_id)
+        assert delivery.status == "CANCELLED"
+        assert delivery.failure_reason == "NO_LONGER_ELIGIBLE"
+        assert delivery.attempt_count == 0
+
+
+async def test_one_shot_command_does_not_send_without_notification_consent(
+    push_database, push_settings, subscription_request, monkeypatch
+):
+    process_push, sender = freeze_push_command(monkeypatch)
+    factory, user_id, version, _ = push_database
+    delivery_id = await seed_delivery(factory, user_id, version, push_settings, subscription_request)
+    async with factory.begin() as session:
+        row = await UserConsentRepository(session).get_current(user_id=user_id, purpose=ConsentPurpose.NOTIFICATION)
+        assert row is not None
+        row.status = ConsentStatus.WITHDRAWN
+        row.withdrawn_at = NOW
+        row.granted_at = None
+
+    assert await process_push.process_push_once(settings=push_settings, session_factory=factory) == 0
+    sender.assert_not_called()
+    async with factory() as session:
+        delivery = await session.get(PushDelivery, delivery_id)
+        assert delivery.status == "CANCELLED"
+        assert delivery.failure_reason == "NO_LONGER_ELIGIBLE"
+        assert delivery.attempt_count == 0
+
+
 async def test_one_shot_command_sends_once_with_committed_ledger(
     push_database, push_settings, subscription_request, monkeypatch
 ):
-    from datetime import datetime
-    from unittest.mock import Mock
-
-    from app.commands import process_push
-    from app.services import push
-
-    class FrozenTime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return NOW
-
-    monkeypatch.setattr(process_push, "datetime", FrozenTime)
-    monkeypatch.setattr(push, "datetime", FrozenTime)
-    sender = Mock(return_value=PushSendResult("ACCEPTED"))
-    monkeypatch.setattr(process_push, "send_push", sender)
+    process_push, sender = freeze_push_command(monkeypatch)
     factory, user_id, version, _ = push_database
     await seed_delivery(factory, user_id, version, push_settings, subscription_request)
     assert await process_push.process_push_once(settings=push_settings, session_factory=factory) == 1

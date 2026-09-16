@@ -24,6 +24,15 @@ class MedicationScheduleQueries:
     async def active_items(
         self, user_id: UUID
     ) -> list[tuple[PrescriptionVersionMedication, MedicationSchedule | None]]:
+        # Match /prescriptions/latest, including its deterministic tie-breaker.
+        latest_prescription_id = (
+            select(Prescription.id)
+            .where(owned_by_self(Prescription.profile_id, user_id))
+            .order_by(Prescription.created_at.desc(), Prescription.id.desc())
+            .limit(1)
+            .correlate(None)
+            .scalar_subquery()
+        )
         rows = await self.session.execute(
             select(PrescriptionVersionMedication, MedicationSchedule)
             .join(Prescription, Prescription.active_version_id == PrescriptionVersionMedication.prescription_version_id)
@@ -31,7 +40,7 @@ class MedicationScheduleQueries:
                 MedicationSchedule,
                 MedicationSchedule.prescription_version_medication_id == PrescriptionVersionMedication.id,
             )
-            .where(owned_by_self(Prescription.profile_id, user_id))
+            .where(Prescription.id == latest_prescription_id, owned_by_self(Prescription.profile_id, user_id))
         )
         return [(medication, schedule) for medication, schedule in rows]
 

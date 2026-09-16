@@ -28,8 +28,10 @@ from app.repositories.rag_candidate_index_repository import (
     CandidateIndexCatalogMismatchError,
     CandidateIndexContentHashConflictError,
     CandidateIndexEmptyMemberSetError,
+    CandidateIndexMemberContentHashMismatchError,
     CandidateIndexMemberCountMismatchError,
     CandidateIndexMemberSetHashMismatchError,
+    CandidateIndexVersionNotBuildableError,
     RagCandidateIndexMemberCreate,
     RagCandidateIndexRepository,
     RagCandidateIndexVersionCreate,
@@ -43,6 +45,7 @@ from app.repositories.rag_source_catalog_repository import (
 )
 
 _CATALOG_VERSION = "catalog-1.0.0"
+_EMBEDDING_MODEL_VERSION = "synthetic-model-v1"
 
 
 def _hash(label: str) -> str:
@@ -93,31 +96,118 @@ async def _create_catalog_set(session: AsyncSession, *, suffix: str | None = Non
     return catalog_set
 
 
-def _member_create(*, snapshot, member_key: str = "member-1") -> RagCandidateIndexMemberCreate:
+def _payload_hash(value: object) -> str:
+    serialized = json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _member_content_hash(
+    *,
+    snapshot_id,
+    entry_type: RagMedicationSearchEntryType = RagMedicationSearchEntryType.PRODUCT_NAME,
+    entry_ref: str = "entry:200012345:name",
+    display_text: str = "Test Tablet 500mg",
+    normalized_text: str = "test tablet 500mg",
+    alias_ref: str | None = None,
+    alias_source_snapshot_id=None,
+) -> str:
+    return _payload_hash(
+        {
+            "identity": {
+                "entity_type": RagCandidateIndexEntityType.PRODUCT.value,
+                "code_system": "MFDS_ITEM_SEQ",
+                "canonical_code": "200012345",
+            },
+            "product_ref": "product:200012345",
+            "entry_ref": entry_ref,
+            "entry_type": entry_type.value,
+            "display_text": display_text,
+            "normalized_text": normalized_text,
+            "alias_ref": alias_ref,
+            "product_name": "Test Tablet",
+            "strength_text": None,
+            "dosage_form": None,
+            "manufacturer_name": None,
+            "product_source_snapshot_id": str(snapshot_id),
+            "entry_source_snapshot_id": str(snapshot_id),
+            "alias_source_snapshot_id": str(alias_source_snapshot_id) if alias_source_snapshot_id else None,
+            "catalog_version": _CATALOG_VERSION,
+            "catalog_manifest_hash": _hash("9"),
+            "normalization_version": "normalization-v1",
+        }
+    )
+
+
+def _member_create(
+    *,
+    snapshot,
+    member_key: str = "member-1",
+    entry_ref: str = "entry:200012345:name",
+    display_text: str = "Test Tablet 500mg",
+    normalized_text: str = "test tablet 500mg",
+) -> RagCandidateIndexMemberCreate:
     return RagCandidateIndexMemberCreate(
         entry_type=RagMedicationSearchEntryType.PRODUCT_NAME,
         identity_entity_type=RagCandidateIndexEntityType.PRODUCT,
         identity_code_system="MFDS_ITEM_SEQ",
         identity_canonical_code="200012345",
         product_ref="product:200012345",
-        entry_ref="entry:200012345:name",
-        display_text="테스트정 500mg",
-        normalized_text="테스트정 500mg",
-        product_name="테스트정",
+        entry_ref=entry_ref,
+        display_text=display_text,
+        normalized_text=normalized_text,
+        product_name="Test Tablet",
         product_source_snapshot_id=snapshot.id,
         entry_source_snapshot_id=snapshot.id,
         catalog_version=_CATALOG_VERSION,
         catalog_manifest_hash=_hash("9"),
         normalization_version="normalization-v1",
         member_key=member_key,
-        member_content_hash=_hash("c"),
+        member_content_hash=_member_content_hash(
+            snapshot_id=snapshot.id,
+            entry_ref=entry_ref,
+            display_text=display_text,
+            normalized_text=normalized_text,
+        ),
+    )
+
+
+def _hybrid_member_create(
+    *, snapshot, member_key: str = "member-1", embedding: tuple[float, ...] = (0.123456789, -0.333333333, 123.456789)
+) -> RagCandidateIndexMemberCreate:
+    lexical_member = _member_create(snapshot=snapshot, member_key=member_key)
+    return replace(
+        lexical_member,
+        embedding=embedding,
+        member_content_hash=_payload_hash(
+            {
+                "lexical_member_content_hash": lexical_member.member_content_hash,
+                "embedding_model_version": _EMBEDDING_MODEL_VERSION,
+                "embedding": embedding,
+            }
+        ),
+    )
+
+
+def _stable_text_sort_key(value: str) -> bytes:
+    return value.encode("utf-8")
+
+
+def _member_sort_key(member: RagCandidateIndexMemberCreate) -> tuple[bytes, bytes, bytes]:
+    identity_key = f"{member.identity_entity_type.value}:{member.identity_code_system}:{member.identity_canonical_code}"
+    return (
+        _stable_text_sort_key(identity_key),
+        _stable_text_sort_key(member.entry_type.value),
+        _stable_text_sort_key(member.entry_ref),
     )
 
 
 def _member_set_hash(members: tuple[RagCandidateIndexMemberCreate, ...]) -> str:
-    payload = [{"member_key": m.member_key, "member_content_hash": m.member_content_hash} for m in members]
-    serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    return _payload_hash(
+        [
+            {"member_key": member.member_key, "member_content_hash": member.member_content_hash}
+            for member in sorted(members, key=_member_sort_key)
+        ]
+    )
 
 
 def _version_create(
@@ -126,11 +216,14 @@ def _version_create(
     members: tuple[RagCandidateIndexMemberCreate, ...],
     index_code: str,
     content_hash: str,
+    index_version: str = "v1",
+    build_mode: RagCandidateIndexBuildMode = RagCandidateIndexBuildMode.LEXICAL_ONLY,
 ) -> RagCandidateIndexVersionCreate:
+    is_hybrid = build_mode is RagCandidateIndexBuildMode.HYBRID
     return RagCandidateIndexVersionCreate(
         index_code=index_code,
-        index_version="v1",
-        build_mode=RagCandidateIndexBuildMode.LEXICAL_ONLY,
+        index_version=index_version,
+        build_mode=build_mode,
         catalog_set_id=catalog_set.id,
         catalog_version=catalog_set.catalog_version,
         catalog_manifest_hash=catalog_set.envelope_hash,
@@ -144,10 +237,15 @@ def _version_create(
         product_identity_count=1,
         product_name_count=len(members),
         approved_alias_count=0,
-        vector_count=0,
+        vector_count=sum(1 for member in members if member.embedding is not None),
         member_set_hash=_member_set_hash(members),
         configuration_hash=_hash("d"),
         content_hash=content_hash,
+        embedding_provider="synthetic" if is_hybrid else None,
+        embedding_model="synthetic-embedding" if is_hybrid else None,
+        embedding_model_version=_EMBEDDING_MODEL_VERSION if is_hybrid else None,
+        embedding_dimension=3 if is_hybrid else None,
+        distance_metric="COSINE" if is_hybrid else None,
     )
 
 
@@ -179,6 +277,31 @@ async def test_build_persists_version_and_every_member(db_session: AsyncSession)
 
     persisted = await repository.list_members(result.version.id)
     assert {m.id for m in persisted} == {m.id for m in result.members}
+
+
+async def test_build_accepts_hybrid_member_hash_and_promotes_ready(db_session: AsyncSession) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    members = (_hybrid_member_create(snapshot=snapshot),)
+    version = _version_create(
+        catalog_set=catalog_set,
+        members=members,
+        index_code=index_code,
+        content_hash=_hash("hybrid-ready"),
+        build_mode=RagCandidateIndexBuildMode.HYBRID,
+    )
+
+    repository = RagCandidateIndexRepository(db_session)
+    built = await repository.build_index_version(version=version, members=members)
+    activated = await repository.activate_ready_version(built.version.id)
+
+    assert activated.status is RagCandidateIndexStatus.READY
+    assert activated.build_mode is RagCandidateIndexBuildMode.HYBRID
+    assert activated.vector_count == 1
+    ready = await repository.get_ready_version_by_code(index_code)
+    assert ready is not None
+    assert ready.id == built.version.id
 
 
 async def test_build_reuses_identical_content_hash_instead_of_duplicating(db_session: AsyncSession) -> None:
@@ -219,12 +342,30 @@ async def test_reuse_path_rejects_members_that_do_not_match_the_claimed_hash(db_
     assert first.reused_existing is False
 
     tampered_members = (replace(members[0], member_content_hash=_hash("tampered")),)
-    with pytest.raises(CandidateIndexMemberSetHashMismatchError):
+    with pytest.raises(CandidateIndexMemberContentHashMismatchError):
         await repository.build_index_version(version=version, members=tampered_members)
 
     # 위조 시도가 기존 저장 row나 member를 바꾸지 않았는지 확인한다.
     persisted = await repository.list_members(first.version.id)
     assert {m.member_content_hash for m in persisted} == {members[0].member_content_hash}
+
+
+async def test_member_set_hash_mismatch_is_rejected(db_session: AsyncSession) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    members = (_member_create(snapshot=snapshot),)
+    version = _version_create(
+        catalog_set=catalog_set,
+        members=members,
+        index_code=f"idx-{uuid4().hex[:8]}",
+        content_hash=_hash("member-set-mismatch"),
+    )
+    tampered_version = replace(version, member_set_hash=_hash("wrong-member-set"))
+
+    with pytest.raises(CandidateIndexMemberSetHashMismatchError):
+        await RagCandidateIndexRepository(db_session).build_index_version(version=tampered_version, members=members)
+
+    assert await _version_count(db_session, version.content_hash) == 0
 
 
 @pytest.mark.parametrize(
@@ -299,7 +440,7 @@ async def test_tampered_member_content_hash_is_rejected(db_session: AsyncSession
 
     tampered_members = (replace(members[0], member_content_hash=_hash("f")),)
 
-    with pytest.raises(CandidateIndexMemberSetHashMismatchError):
+    with pytest.raises(CandidateIndexMemberContentHashMismatchError):
         await RagCandidateIndexRepository(db_session).build_index_version(version=version, members=tampered_members)
 
     assert await _version_count(db_session, version.content_hash) == 0
@@ -372,6 +513,280 @@ async def test_get_ready_version_by_code_returns_none_while_only_building(db_ses
     await repository.build_index_version(version=version, members=members)
 
     assert await repository.get_ready_version_by_code(index_code) is None
+
+
+async def test_build_recomputes_member_content_hash_from_actual_member_fields(db_session: AsyncSession) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    members = (replace(_member_create(snapshot=snapshot), display_text="변조된 표시명"),)
+    version = _version_create(
+        catalog_set=catalog_set,
+        members=members,
+        index_code=f"idx-{uuid4().hex[:8]}",
+        content_hash=_hash("member-content-tamper"),
+    )
+
+    with pytest.raises(CandidateIndexMemberContentHashMismatchError):
+        await RagCandidateIndexRepository(db_session).build_index_version(version=version, members=members)
+
+    assert await _version_count(db_session, version.content_hash) == 0
+
+
+async def test_activate_ready_version_uses_canonical_member_order_for_member_set_hash(
+    db_session: AsyncSession,
+) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    members = (
+        _member_create(
+            snapshot=snapshot,
+            member_key="member-z",
+            entry_ref="entry:200012345:z",
+            display_text="Zeta Test Tablet",
+            normalized_text="zeta test tablet",
+        ),
+        _member_create(
+            snapshot=snapshot,
+            member_key="member-a",
+            entry_ref="entry:200012345:a",
+            display_text="Alpha Test Tablet",
+            normalized_text="alpha test tablet",
+        ),
+    )
+    version = _version_create(
+        catalog_set=catalog_set, members=members, index_code=index_code, content_hash=_hash("ready-order")
+    )
+
+    repository = RagCandidateIndexRepository(db_session)
+    built = await repository.build_index_version(version=version, members=members)
+    await db_session.execute(
+        text(
+            "UPDATE rag_candidate_index_member "
+            "SET created_at = CASE member_key "
+            "WHEN 'member-z' THEN TIMESTAMPTZ '2026-09-15 00:00:00+00' "
+            "WHEN 'member-a' THEN TIMESTAMPTZ '2026-09-15 00:00:01+00' "
+            "ELSE created_at END "
+            "WHERE candidate_index_version_id = :version_id"
+        ),
+        {"version_id": str(built.version.id)},
+    )
+    persisted = await repository.list_members(built.version.id)
+
+    assert [member.member_key for member in persisted] == ["member-z", "member-a"]
+
+    activated = await repository.activate_ready_version(built.version.id)
+
+    assert activated.status is RagCandidateIndexStatus.READY
+
+
+async def test_activate_ready_version_marks_building_version_ready(db_session: AsyncSession) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    members = (_member_create(snapshot=snapshot),)
+    version = _version_create(
+        catalog_set=catalog_set, members=members, index_code=index_code, content_hash=_hash("ready-1")
+    )
+
+    repository = RagCandidateIndexRepository(db_session)
+    built = await repository.build_index_version(version=version, members=members)
+    activated = await repository.activate_ready_version(built.version.id)
+
+    assert activated.status is RagCandidateIndexStatus.READY
+    ready = await repository.get_ready_version_by_code(index_code)
+    assert ready is not None
+    assert ready.id == built.version.id
+
+
+async def test_activate_ready_version_retires_existing_ready_for_same_code(db_session: AsyncSession) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    repository = RagCandidateIndexRepository(db_session)
+
+    first_members = (_member_create(snapshot=snapshot, member_key="member-1"),)
+    first_version = _version_create(
+        catalog_set=catalog_set, members=first_members, index_code=index_code, content_hash=_hash("ready-old")
+    )
+    first = await repository.build_index_version(version=first_version, members=first_members)
+    await repository.activate_ready_version(first.version.id)
+
+    second_members = (_member_create(snapshot=snapshot, member_key="member-2"),)
+    second_version = _version_create(
+        catalog_set=catalog_set,
+        members=second_members,
+        index_code=index_code,
+        content_hash=_hash("ready-new"),
+        index_version="v2",
+    )
+    second = await repository.build_index_version(version=second_version, members=second_members)
+    await repository.activate_ready_version(second.version.id)
+
+    await db_session.refresh(first.version)
+    await db_session.refresh(second.version)
+    ready = await repository.get_ready_version_by_code(index_code)
+
+    assert first.version.status is RagCandidateIndexStatus.RETIRED
+    assert second.version.status is RagCandidateIndexStatus.READY
+    assert ready is not None
+    assert ready.id == second.version.id
+
+
+async def test_activate_ready_version_rejects_incomplete_member_rows(db_session: AsyncSession) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    members = (_member_create(snapshot=snapshot),)
+    version = _version_create(
+        catalog_set=catalog_set,
+        members=members,
+        index_code=f"idx-{uuid4().hex[:8]}",
+        content_hash=_hash("ready-incomplete"),
+    )
+
+    repository = RagCandidateIndexRepository(db_session)
+    built = await repository.build_index_version(version=version, members=members)
+    await db_session.execute(
+        text("DELETE FROM rag_candidate_index_member WHERE candidate_index_version_id = :version_id"),
+        {"version_id": str(built.version.id)},
+    )
+
+    with pytest.raises(CandidateIndexVersionNotBuildableError):
+        await repository.activate_ready_version(built.version.id)
+
+    await db_session.refresh(built.version)
+    assert built.version.status is RagCandidateIndexStatus.BUILDING
+
+
+async def test_activate_ready_version_revalidates_persisted_hybrid_member_hashes(
+    db_session: AsyncSession,
+) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    repository = RagCandidateIndexRepository(db_session)
+
+    first_members = (_member_create(snapshot=snapshot, member_key="member-1"),)
+    first_version = _version_create(
+        catalog_set=catalog_set, members=first_members, index_code=index_code, content_hash=_hash("ready-stays")
+    )
+    first = await repository.build_index_version(version=first_version, members=first_members)
+    await repository.activate_ready_version(first.version.id)
+
+    second_members = (_hybrid_member_create(snapshot=snapshot, member_key="member-2"),)
+    second_version = _version_create(
+        catalog_set=catalog_set,
+        members=second_members,
+        index_code=index_code,
+        content_hash=_hash("ready-hybrid-tampered"),
+        index_version="v2",
+        build_mode=RagCandidateIndexBuildMode.HYBRID,
+    )
+    second = await repository.build_index_version(version=second_version, members=second_members)
+    second.members[0].embedding = [0.9, 0.2, 0.3]
+    await db_session.flush()
+
+    with pytest.raises(CandidateIndexVersionNotBuildableError):
+        await repository.activate_ready_version(second.version.id)
+
+    await db_session.refresh(first.version)
+    await db_session.refresh(second.version)
+    assert first.version.status is RagCandidateIndexStatus.READY
+    assert second.version.status is RagCandidateIndexStatus.BUILDING
+
+
+async def test_activate_ready_version_revalidates_persisted_hybrid_lexical_storage_hash(
+    db_session: AsyncSession,
+) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    repository = RagCandidateIndexRepository(db_session)
+
+    first_members = (_member_create(snapshot=snapshot, member_key="member-1"),)
+    first_version = _version_create(
+        catalog_set=catalog_set, members=first_members, index_code=index_code, content_hash=_hash("ready-lexical-stays")
+    )
+    first = await repository.build_index_version(version=first_version, members=first_members)
+    await repository.activate_ready_version(first.version.id)
+
+    second_members = (_hybrid_member_create(snapshot=snapshot, member_key="member-2"),)
+    second_version = _version_create(
+        catalog_set=catalog_set,
+        members=second_members,
+        index_code=index_code,
+        content_hash=_hash("ready-hybrid-lexical-tampered"),
+        index_version="v2",
+        build_mode=RagCandidateIndexBuildMode.HYBRID,
+    )
+    second = await repository.build_index_version(version=second_version, members=second_members)
+    await db_session.execute(
+        text(
+            "UPDATE rag_candidate_index_member "
+            "SET display_text = 'Tampered Display Text' "
+            "WHERE candidate_index_version_id = :version_id"
+        ),
+        {"version_id": str(second.version.id)},
+    )
+    await db_session.flush()
+
+    with pytest.raises(CandidateIndexVersionNotBuildableError):
+        await repository.activate_ready_version(second.version.id)
+
+    await db_session.refresh(first.version)
+    await db_session.refresh(second.version)
+    assert first.version.status is RagCandidateIndexStatus.READY
+    assert second.version.status is RagCandidateIndexStatus.BUILDING
+
+
+async def test_mark_failed_version_closes_only_building_version(db_session: AsyncSession) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    members = (_member_create(snapshot=snapshot),)
+    version = _version_create(
+        catalog_set=catalog_set, members=members, index_code=index_code, content_hash=_hash("failed-1")
+    )
+
+    repository = RagCandidateIndexRepository(db_session)
+    built = await repository.build_index_version(version=version, members=members)
+    failed = await repository.mark_failed_version(built.version.id)
+
+    assert failed.status is RagCandidateIndexStatus.FAILED
+    assert await repository.get_ready_version_by_code(index_code) is None
+    with pytest.raises(CandidateIndexVersionNotBuildableError):
+        await repository.activate_ready_version(built.version.id)
+
+
+async def test_ready_partial_unique_rejects_second_ready_without_retire(db_session: AsyncSession) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    repository = RagCandidateIndexRepository(db_session)
+
+    first_members = (_member_create(snapshot=snapshot, member_key="member-1"),)
+    first_version = _version_create(
+        catalog_set=catalog_set, members=first_members, index_code=index_code, content_hash=_hash("db-ready-old")
+    )
+    first = await repository.build_index_version(version=first_version, members=first_members)
+    await repository.activate_ready_version(first.version.id)
+
+    second_members = (_member_create(snapshot=snapshot, member_key="member-2"),)
+    second_version = _version_create(
+        catalog_set=catalog_set,
+        members=second_members,
+        index_code=index_code,
+        content_hash=_hash("db-ready-new"),
+        index_version="v2",
+    )
+    second = await repository.build_index_version(version=second_version, members=second_members)
+
+    with pytest.raises(IntegrityError):
+        await db_session.execute(
+            text("UPDATE rag_candidate_index_version SET status = 'READY' WHERE id = :version_id"),
+            {"version_id": str(second.version.id)},
+        )
+    await db_session.rollback()
 
 
 async def test_get_version_by_code_and_version_finds_the_building_row(db_session: AsyncSession) -> None:

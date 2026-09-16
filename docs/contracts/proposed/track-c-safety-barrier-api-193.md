@@ -75,3 +75,48 @@ Backend가 반환한 response_level만 사용하고 Frontend에서 긴급도를 
 ROUTINE만 Barrier 진행, 나머지는 일반 지원 진행 차단이다.
 API 합성 fixture는 `backend/app/tests/track_c/test_track_c_api.py`에 있다.
 Support 조회·선택·Plan 완료는 #194, Check-in 정정 무효화 연결은 #195다.
+
+## PD-193 revision 3 — 내부 Local 7일 합성 데모
+
+위 foundation은 기본 동작이다. 사용자 요청에 따른 opt-in 구현은
+[PD-193 revision 3](../../governance/decisions/2026-09-16-track-c-internal-demo-193.md)을 따른다.
+의료 검토나 외부 승인을 주장하지 않으며 이 문서의 Proposed 상태를 유지한다.
+
+| 설정 | 기본값 / 조건 |
+| --- | --- |
+| `TRACK_C_SAFETY_DEMO_ENABLED` | `false`; `ENV=local`만 허용 |
+| `TRACK_C_SAFETY_DEMO_STARTS_AT` | null; 활성 시 timezone-aware 시각 필수 |
+| `TRACK_C_SAFETY_DEMO_EXPIRES_AT` | null; 시작보다 크고 최대 7일 이내 |
+| `TRACK_C_SAFETY_DEMO_USER_IDS` | 빈 목록; 활성 시 합성 계정 UUID 목록 필수 |
+
+환경·기간 형식·계정 목록은 기동 시 검증한다. 신규 Safety mutation 시 다시
+`start <= now < expiry`, Local, 사용자 allowlist 및 artifact SHA-256을 검사한다.
+잘못된 설정으로 기동하거나 만료 후 서버 재시작으로 기간이 자동 연장되지 않는다.
+합성 여부를 자유 텍스트에서 자동 판별하지 않는다. 운영자는 격리된 합성 DB·계정을 사용한다.
+
+| 입력 | 결과 | message_code |
+| --- | --- | --- |
+| `[]` | 기존 `ROUTINE/NORMAL`과 foundation 버전 유지 | `NO_SYMPTOMS_CONFIRMED` |
+| 정책 검토안 E01~E11 중 하나 이상 | `EMERGENCY/EMERGENCY_ROUTED` | `DEMO_SAFETY_EMERGENCY_HELP` |
+| 응급 없이 U01 | `URGENT/URGENT_ROUTED` | `DEMO_SAFETY_URGENT_CARE` |
+| 그 외 모든 non-empty | `UNKNOWN/UNKNOWN_RISK` | `DEMO_SAFETY_UNCERTAIN` |
+
+응급 + 미등록/불확실 및 긴급 + 미등록/불확실 입력도 각각 응급/긴급 안내를 유지한다.
+모두 일반 지원을 차단한다. 순서·중복은 판정에 영향을 주지 않지만 기존 fingerprint에는 그대로 남긴다.
+형식 위반은 기존 422다. 새 증상이나 시간 조건을 서버가 추론하지 않는다.
+
+non-empty 결과의 `copy_version=track-c-safety-demo-ko-2026-09-16.1`,
+`source_version=track-c-safety-demo-source-2026-09-16.1`은
+`rule_version=track-c-safety-demo-rule-2026-09-16.1`과 일대일로 결속된다.
+정본은 [데모 artifact](../../../backend/app/config/track_c/safety-demo/track-c-safety-demo-2026-09-16.1.json)다.
+SHA-256 `ba2579c1299ba800fca2d23c450a7d9abaf2f47bcec5490eb8c61ec0c9a7893b`를 코드에서 검사한다.
+파일 누락·변조·버전/문구/출처 변경을 묵인하지 않는다.
+
+`503 SAFETY_DEMO_UNAVAILABLE`는 새로운 mutation의 환경·기간·계정·artifact 실패다.
+Safety/Plan/멱등 snapshot을 새로 저장하지 않는다. 기존 성공 replay는 소유권 확인 후
+최초 snapshot을 재현한다. Barrier 오류·취소 transaction·소유권 404는 바뀌지 않는다.
+
+이 API 응답에는 문구 본문이나 선택 목록 필드를 추가하지 않는다. 기존 화면은 증상 없음 경로만
+호출하므로 이번 Backend 구현만으로 증상 선택 UI까지 연결됐다고 보지 않는다.
+소비자는 artifact의 `notice`, 선택 조건, copy/source 쌍을 함께 확인해야 하며,
+알 수 없는 버전·저장 실패를 정상 판정으로 표시하면 안 된다. Frontend 변경은 별도 작업이다.

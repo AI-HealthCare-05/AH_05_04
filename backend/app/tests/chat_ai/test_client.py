@@ -60,6 +60,7 @@ def _response(
     output_text: object = "  합성 답변입니다.  ",
     model: object = "gpt-4o-mini-2024-07-18",
     output: object | None = None,
+    usage: object | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         status=status,
@@ -71,11 +72,20 @@ def _response(
             else output
         ),
         error=None,
+        usage=usage,
     )
 
 
 async def test_client_uses_non_streaming_create_and_returns_plain_text() -> None:
-    sdk_client = FakeAsyncOpenAI(_response())
+    sdk_client = FakeAsyncOpenAI(
+        _response(
+            usage=SimpleNamespace(
+                input_tokens=123,
+                output_tokens=45,
+                total_tokens=168,
+            )
+        )
+    )
     client = _client(sdk_client)
 
     result = await client.generate(
@@ -87,6 +97,9 @@ async def test_client_uses_non_streaming_create_and_returns_plain_text() -> None
 
     assert result.content == "합성 답변입니다."
     assert result.model_name == "gpt-4o-mini-2024-07-18"
+    assert result.input_tokens == 123
+    assert result.output_tokens == 45
+    assert result.total_tokens == 168
     assert sdk_client.responses.kwargs == {
         "model": "gpt-4o-mini",
         "instructions": "system rules",
@@ -94,6 +107,7 @@ async def test_client_uses_non_streaming_create_and_returns_plain_text() -> None
         "max_output_tokens": 800,
         "store": False,
         "stream": False,
+        "temperature": 0,
     }
 
 

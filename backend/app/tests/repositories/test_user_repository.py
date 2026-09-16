@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.models.profiles import Profile
-from app.models.users import Gender, User
+from app.models.users import AccountStatus, Gender, User
 from app.repositories.user_repository import (
     DuplicateUserFieldError,
     UserRepository,
@@ -217,6 +217,48 @@ async def test_create_user_creates_self_profile() -> None:
             )
             assert len(profiles) == 1
             assert profiles[0].display_name == "SELF프로필생성"
+    finally:
+        async with session_factory() as cleanup_session:
+            await cleanup_session.execute(delete(Profile).where(Profile.user_id == user_id))
+            await cleanup_session.execute(delete(User).where(User.id == user_id))
+            await cleanup_session.commit()
+
+
+async def test_mark_withdrawal_requested_transitions_active_user_once() -> None:
+    email = f"withdrawal-repo-{uuid4().hex[:12]}@example.com"
+    session_factory = async_sessionmaker(
+        test_engine,
+        expire_on_commit=False,
+    )
+
+    async with session_factory() as session:
+        repository = UserRepository(session)
+        user = await repository.create_user(
+            email=email,
+            hashed_password="synthetic-hashed-password",
+            name="탈퇴전이테스트",
+        )
+        await session.commit()
+        user_id = user.id
+
+    try:
+        async with session_factory() as session:
+            repository = UserRepository(session)
+
+            first_changed = await repository.mark_withdrawal_requested(user_id)
+            second_changed = await repository.mark_withdrawal_requested(user_id)
+            await session.commit()
+
+        async with session_factory() as verification_session:
+            stored_user = await verification_session.get(User, user_id)
+            assert stored_user is not None
+
+            assert first_changed is True
+            assert second_changed is False
+            assert stored_user.account_status == AccountStatus.WITHDRAWAL_REQUESTED
+            assert stored_user.is_active is False
+            assert stored_user.withdrawal_requested_at is not None
+            assert stored_user.token_version == 1
     finally:
         async with session_factory() as cleanup_session:
             await cleanup_session.execute(delete(Profile).where(Profile.user_id == user_id))

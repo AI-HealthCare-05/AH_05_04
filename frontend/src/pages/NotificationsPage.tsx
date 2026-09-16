@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
   createNotificationOccurrenceHandoff,
@@ -47,6 +47,13 @@ type HandoffRequest = {
   controller: AbortController
 }
 
+const notificationDay = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Seoul',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
 function getFailureMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 401) {
@@ -89,6 +96,8 @@ function getHandoffFailureMessage(error: unknown): string {
 
 function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const pushNotificationId = searchParams.get('push_notification_id')
   const [notifications, setNotifications] = useState<NotificationData[] | null>(null)
   const [nextOffset, setNextOffset] = useState<number | null>(null)
   const [loadError, setLoadError] = useState<LoadFailure | null>(null)
@@ -100,6 +109,8 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
   const isMountedRef = useRef(true)
   const nextHandoffTokenRef = useRef(0)
   const handoffRequestRef = useRef<HandoffRequest | null>(null)
+  const handledPushNotificationRef = useRef<string | null>(null)
+  const [pushHandoffMessage, setPushHandoffMessage] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoadError(null)
@@ -132,7 +143,7 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
     }
   }, [])
 
-  const startHandoffRequest = (): HandoffRequest => {
+  const startHandoffRequest = useCallback((): HandoffRequest => {
     handoffRequestRef.current?.controller.abort()
     const request = {
       token: nextHandoffTokenRef.current + 1,
@@ -141,14 +152,14 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
     nextHandoffTokenRef.current = request.token
     handoffRequestRef.current = request
     return request
-  }
+  }, [])
 
-  const isHandoffRequestActive = (request: HandoffRequest): boolean =>
+  const isHandoffRequestActive = useCallback((request: HandoffRequest): boolean =>
     isMountedRef.current &&
     handoffRequestRef.current?.token === request.token &&
-    !request.controller.signal.aborted
+    !request.controller.signal.aborted, [])
 
-  const prepareHandoff = async (
+  const prepareHandoff = useCallback(async (
     notification: NotificationData,
     request: HandoffRequest,
   ) => {
@@ -170,11 +181,69 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
         requiresLogin: isAuthenticationError(error),
       })
     }
-  }
+  }, [isHandoffRequestActive, navigate, onHandoffReady])
+
+  useEffect(() => {
+    if (!pushNotificationId || notifications === null || loadError !== null) return
+    if (handledPushNotificationRef.current === pushNotificationId) return
+    handledPushNotificationRef.current = pushNotificationId
+
+    let notification = notifications.find((item) => item.id === pushNotificationId)
+    setSearchParams({}, { replace: true })
+    setPushHandoffMessage('알림의 최신 복약 기록을 확인하고 있어요.')
+    const request = startHandoffRequest()
+    setSelectingId(pushNotificationId)
+    void (async () => {
+      let offset = nextOffset
+      let pages = 0
+      while (!notification && offset !== null && pages < 10) {
+        const response = await listNotifications({ offset, signal: request.controller.signal })
+        if (!isHandoffRequestActive(request)) return
+        const items = response.data.items
+        setNotifications((current) => {
+          const existing = current ?? []
+          const ids = new Set(existing.map((item) => item.id))
+          return [...existing, ...items.filter((item) => !ids.has(item.id))]
+        })
+        notification = items.find((item) => item.id === pushNotificationId)
+        offset = response.data.next_offset
+        setNextOffset(offset)
+        pages += 1
+      }
+
+      if (!notification) {
+        setPushHandoffMessage('이 알림의 최신 기록을 찾을 수 없어 알림 목록을 표시해요.')
+        return
+      }
+      await prepareHandoff(notification, request)
+    })().catch((error: unknown) => {
+      if (!isHandoffRequestActive(request)) return
+      setLoadError({
+        message: getFailureMessage(error),
+        requiresLogin: isAuthenticationError(error),
+      })
+    }).finally(() => {
+      if (isHandoffRequestActive(request)) setSelectingId(null)
+    })
+  }, [
+    isHandoffRequestActive,
+    loadError,
+    notifications,
+    nextOffset,
+    prepareHandoff,
+    pushNotificationId,
+    setSearchParams,
+    startHandoffRequest,
+  ])
 
   const handleLoginRecovery = () => {
+    const notificationId = pushNotificationId ?? handledPushNotificationRef.current
     clearAuthenticatedSession()
-    navigate('/login')
+    navigate('/login', {
+      state: notificationId
+        ? { returnTo: `/notifications?push_notification_id=${encodeURIComponent(notificationId)}` }
+        : null,
+    })
   }
 
   const loadMore = async () => {
@@ -256,10 +325,17 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
     }
   }
 
+  // Group by delivery day, independently of read state and the original dose date.
+  const today = notificationDay.format(new Date())
+  const notificationGroups = [
+    { id: 'today', title: '오늘', items: notifications?.filter((item) => notificationDay.format(new Date(item.delivered_at)) === today) ?? [] },
+    { id: 'previous', title: '이전 알림', items: notifications?.filter((item) => notificationDay.format(new Date(item.delivered_at)) !== today) ?? [] },
+  ]
+
   return (
     <div className="mvp-page mvp-notifications-page">
       <MobileShell
-        title="알림"
+        title="Dosey 도지"
         onBack={() => navigate('/')}
         onNavigate={(item) => {
           if (item === '홈') navigate('/')
@@ -271,9 +347,14 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
       >
         <main className="app-scroll mvp-page__content mvp-notifications">
           <div className="mvp-notifications__intro">
-            <h2>알림 목록</h2>
-            <p>복약 알림을 선택해 원래 복약 기록을 확인할 수 있어요.</p>
+            <h2>알림</h2>
           </div>
+
+          {pushHandoffMessage && (
+            <p className="mvp-notifications__push-status" role="status" aria-live="polite">
+              {pushHandoffMessage}
+            </p>
+          )}
 
           {notifications === null && loadError === null && (
             <section className="mvp-notifications__state" role="status" aria-live="polite">
@@ -302,36 +383,44 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
             </section>
           )}
 
-          {notifications && notifications.length > 0 && (
-            <ul className="mvp-notifications__list" aria-label="복약 알림">
-              {notifications.map((notification) => {
-                const isRead = notification.read_at !== null
-                const isSelecting = selectingId === notification.id
+          {notificationGroups.filter((group) => group.items.length > 0).map((group) => (
+            <section className="mvp-notifications__group" key={group.id} aria-labelledby={`notifications-${group.id}`}>
+              <h3 id={`notifications-${group.id}`}>{group.title}</h3>
+              <ul className="mvp-notifications__list" aria-label={`${group.title} 복약 알림`}>
+                {group.items.map((notification) => {
+                  const isRead = notification.read_at !== null
+                  const isSelecting = selectingId === notification.id
 
-                return (
-                  <li key={notification.id}>
-                    <button
-                      className="mvp-notifications__item-button"
-                      type="button"
-                      disabled={isSelecting}
-                      aria-busy={isSelecting}
-                      aria-label={`${getNotificationTitle(notification.kind)}, 복약일 ${notification.occurrence_local_date}, ${isSelecting ? '복약 기록 확인 중' : isRead ? '읽음' : '읽지 않음'}`}
-                      onClick={() => void handleSelect(notification)}
-                    >
-                      <span className={`mvp-notifications__unread-dot ${isRead ? 'is-read' : ''}`} aria-hidden="true" />
-                      <span className="mvp-notifications__item-copy">
-                        <strong>{isSelecting ? '복약 기록 확인 중...' : getNotificationTitle(notification.kind)}</strong>
-                        <small>복약일 {notification.occurrence_local_date}</small>
-                      </span>
-                      <span className={`mvp-notifications__read-state ${isRead ? 'is-read' : ''}`}>
-                        {isRead ? '읽음' : '읽지 않음'}
-                      </span>
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
+                  return (
+                    <li key={notification.id}>
+                      <button
+                        className={`mvp-notifications__item-button ${isRead ? 'is-read' : 'is-unread'}`}
+                        type="button"
+                        disabled={isSelecting}
+                        aria-busy={isSelecting}
+                        aria-label={`${getNotificationTitle(notification.kind)}, 복약일 ${notification.occurrence_local_date}, ${isSelecting ? '복약 기록 확인 중' : isRead ? '읽음' : '읽지 않음'}`}
+                        onClick={() => void handleSelect(notification)}
+                      >
+                        <span className={`mvp-notifications__read-state ${isRead ? 'is-read' : ''}`}>
+                          <span className="mvp-notifications__read-mark" aria-hidden="true">{isRead ? '✓' : '●'}</span>
+                          {isRead ? '읽음' : '새 알림'}
+                        </span>
+                        <span className="mvp-notifications__item-copy">
+                          <strong>{isSelecting ? '복약 기록 확인 중...' : getNotificationTitle(notification.kind)}</strong>
+                          <small>복약일 {notification.occurrence_local_date}</small>
+                        </span>
+                        {!isRead && !isSelecting && (
+                          <span className="mvp-notifications__item-action" aria-hidden="true">
+                            복용 여부 기록하기
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            </section>
+          ))}
 
           {notifications && notifications.length > 0 && nextOffset !== null && (
             <button

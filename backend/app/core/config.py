@@ -3,7 +3,7 @@ import os
 import uuid
 import zoneinfo
 from dataclasses import field
-from datetime import UTC, timedelta, timezone, tzinfo
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -226,6 +226,26 @@ class Config(BaseSettings):
     CHAT_HISTORY_CONTEXT_ENABLED: bool = False
     RELEASE_VALIDATION_ALLOWED: bool = False
 
+    TRACK_C_SAFETY_DEMO_ENABLED: bool = False
+    TRACK_C_SAFETY_DEMO_STARTS_AT: datetime | None = None
+    TRACK_C_SAFETY_DEMO_EXPIRES_AT: datetime | None = None
+    TRACK_C_SAFETY_DEMO_USER_IDS: frozenset[uuid.UUID] = frozenset()
+
+    @model_validator(mode="after")
+    def validate_track_c_safety_demo(self) -> "Config":
+        if not self.TRACK_C_SAFETY_DEMO_ENABLED:
+            return self
+        if self.ENV is not Env.LOCAL:
+            raise ValueError("TRACK_C_SAFETY_DEMO_ENABLED is allowed only in local environment")
+        start, end = self.TRACK_C_SAFETY_DEMO_STARTS_AT, self.TRACK_C_SAFETY_DEMO_EXPIRES_AT
+        if start is None or end is None or start.utcoffset() is None or end.utcoffset() is None:
+            raise ValueError("Track C demo requires timezone-aware start and expiry")
+        if not timedelta(0) < end - start <= timedelta(days=7):
+            raise ValueError("Track C demo window must be positive and at most seven days")
+        if not self.TRACK_C_SAFETY_DEMO_USER_IDS:
+            raise ValueError("Track C demo requires an explicit synthetic-user allowlist")
+        return self
+
     @field_validator("OPENAI_MODEL", mode="after")
     @classmethod
     def validate_openai_model(cls, value: str) -> str:
@@ -238,6 +258,10 @@ class Config(BaseSettings):
     # 실제 사용자 트래픽에 Candidate 조회·확정·거절 API를 공개하지 않습니다. 명시적으로 활성화하지
     # 않은 환경에서는 GET/confirm/reject가 503으로 fail-closed됩니다.
     PUBLIC_TRACK_F_ENABLED: bool = False
+
+    # EXT-PRIV-001 삭제·보존 정책 승인 전 실제 사용자에게 회원탈퇴 요청 접수 API를 공개하지 않습니다.
+    # 명시적으로 활성화하지 않은 환경에서는 요청 접수 전 503으로 fail-closed됩니다.
+    ACCOUNT_WITHDRAWAL_REQUEST_ENABLED: bool = False
 
     CLOVA_OCR_INVOKE_URL: str = ""
     CLOVA_OCR_SECRET: str = ""

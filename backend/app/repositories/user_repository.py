@@ -1,17 +1,18 @@
 from collections.abc import Iterator
 from datetime import UTC, date, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from pydantic import EmailStr
 from sqlalchemy import exists, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
 from app.core.utils.common import normalize_email
 from app.models.profiles import Profile, ProfileType
-from app.models.users import Gender, User
+from app.models.users import AccountStatus, Gender, User
 from app.repositories.push_repository import PushRepository
 
 DuplicateUserField = Literal["email", "phone_number"]
@@ -228,6 +229,30 @@ class UserRepository:
             )
         )
         await PushRepository(self.session).revoke_for_user(user.id, datetime.now(UTC))
+
+    async def mark_withdrawal_requested(self, user_id: UUID) -> bool:
+        now = datetime.now(UTC)
+        result = cast(
+            CursorResult[Any],
+            await self.session.execute(
+                update(User)
+                .where(
+                    User.id == user_id,
+                    User.account_status == AccountStatus.ACTIVE,
+                    User.is_active.is_(True),
+                )
+                .values(
+                    account_status=AccountStatus.WITHDRAWAL_REQUESTED,
+                    is_active=False,
+                    withdrawal_requested_at=now,
+                    token_version=User.token_version + 1,
+                )
+            ),
+        )
+        if result.rowcount != 1:
+            return False
+        await PushRepository(self.session).revoke_for_user(user_id, now)
+        return True
 
     async def update_instance(
         self,

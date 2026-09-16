@@ -273,9 +273,9 @@ uv run pytest backend/app/tests/guide_ai/test_v3_eval.py -q
 
 버전된 비식별 합성 평가셋은 `evals/generation/guide-v3-eval-v1.json`이며 `data_classification=SYNTHETIC`으로 고정합니다. 이 평가는 자유 생성 품질이나 실제 Provider 응답을 측정하지 않고 승인 문구 선택·안전 차단 계약을 재현합니다. 별도 승인 없이 `RUN_OPENAI_SMOKE=1`을 설정하지 않으며, skip된 실호출 테스트를 성공으로 해석하지 않습니다.
 
-### Chat AI v4 대화 품질 Local 검증
+### Chat AI v5 대화 품질 Local 검증
 
-실제 Provider 호출 없이 다음 결정론적 테스트로 최근 대화 조회와 단일 `chat-prompt-v4` 계약을 검증합니다.
+실제 Provider 호출 없이 다음 결정론적 테스트로 최근 대화 조회와 단일 `chat-prompt-v5` 계약을 검증합니다.
 
 ```bash
 uv run pytest backend/app/tests/chat backend/app/tests/repositories/test_chat_repository.py backend/app/tests/chat_ai backend/app/tests/chat_integration tests/contract/test_chat_ai_backend_contract.py -q
@@ -285,7 +285,7 @@ uv run pytest backend/app/tests/chat backend/app/tests/repositories/test_chat_re
 - 답변 없음·FAILED·PENDING·GENERATING·비연속 pair 제외와 최대 30개 후보·12,000자 예산
 - 현재 질문 중복 제외와 다른 사용자·세션·처방 소유권 경계
 - flag OFF의 조회 생략·`history: []`와 flag ON Local 합성 history 전달
-- flag와 history 유무에 관계없는 `prompt_version == chat-prompt-v4`
+- flag와 history 유무에 관계없는 `prompt_version == chat-prompt-v5`
 - JSON 문자열을 지시가 아닌 데이터로 취급하는 프롬프트 인젝션 방어
 - 과거 USER의 부정확하거나 오래된 증상·진단·알레르기·복용 여부를 현재 사실로 단정하지 않고, 안전상 중요하면 현재도 해당하는지 확인하는 프롬프트 규칙
 - 과거 ASSISTANT 비신뢰, 현재 확정 medications 우선과 기존 응답·오류 회귀
@@ -321,6 +321,12 @@ PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
 ```
 
 실제 OpenAI 평가는 별도 Local opt-in 없이는 `NOT_RUN`입니다. `RUN_OPENAI_CHAT_HISTORY_EVAL=1`, `ENV=local`, 공백이 아니고 저장소 placeholder와 일치하지 않는 `OPENAI_API_KEY`가 모두 없으면 live runner가 실행을 거부합니다. live 모드는 canonical `chat-v4-conversation-quality-eval-v1` 경로, `dataset_id`, `SYNTHETIC` 분류와 고정 SHA-256이 모두 일치하는 경우만 허용하며, 임의 `--dataset` 또는 변경된 fixture는 OpenAI client 생성 전에 거부합니다. SHA-256 입력은 CRLF를 LF로 정규화해 Windows와 Unix checkout을 동일하게 처리하고, CRLF 상태에서도 fixture 내용 변경은 거부하는 회귀 테스트를 유지합니다. 결과 artifact에는 dataset·prompt SHA-256, `live_gate_evaluation`, `full_suite_passed`와 전체 `passed`를 기록합니다. live blocking 기준 미달은 artifact를 남기고 exit code 1, 구성·Provider 실행 오류는 exit code 2를 반환합니다. 결정론적 결과는 Production 공개·Privacy 승인 근거가 아닙니다.
+
+#581 blind A/B runner는 별도 `RUN_OPENAI_CHAT_BLIND_AB_EVAL=1` Local opt-in을 요구하며 canonical config·dataset·v3/v4 prompt snapshot의 고정 SHA-256이 모두 맞아야 Provider client를 생성합니다. 두 arm은 동일한 `gpt-4o`와 생성 설정으로 arm당 113개 응답을 실행합니다. 회귀 테스트는 prompt/model override, 54개 review item의 arm 정체 비노출과 response 1 위치 27:27 균형, PII sentinel 치환, 자동 safety/품질 결과, p95 latency, Provider usage token 집계와 완전한 judgment coverage를 검증합니다. 자동 점수와 blind 선호 집계는 responsible reviewer의 최종 선택을 대신하지 않습니다.
+
+현재 runtime은 `chat-prompt-v5`이며 v3/v4 blind snapshot은 고정된 비교 버전으로 보존합니다. #581 추가 피드백의 `파라시타몰은?`, `왱?`, 첫 병용 답변의 미확인 안전 단정은 `chat-v5-short-followup-eval-v1.json`의 신규 3개 사례에서 검증합니다. 기존 27개 사례·안전 gate 보존, 고정 안전 프롬프트의 동일성, 실패 문구 검출 및 문맥 성공과 안전 실패의 독립 판정을 `test_short_followup_eval.py`에서 검사합니다. [검증 기록](validation/issue-581-short-followup-v5.md)은 결정론적 replay와 실제 Provider 평가를 구분합니다.
+
+추가 회귀는 같은 공개 config에서 비공개 seed에 따라 case/path별 arm mapping이 달라지면서 27:27 균형을 유지하는지, judgment에 사전 고정된 commitment가 mapping 한 항목의 변조도 거부하는지 검증합니다. baseline의 dimension 목록은 비어 있어야 하며 history에만 canonical case의 `quality_expectations`를 적용합니다. baseline에 history 전용 dimension을 제출해도 unblind는 거부합니다. seed·nonce·mapping은 judgment 제출 전까지 비공개 assignment 파일에 보관합니다.
 
 ### MVP 공통 오류·no-store 회귀
 
@@ -544,3 +550,51 @@ Frontend 실제 왕복은 `REAL_STACK_ENV_FILE=envs/example.local.env bash scrip
 합성 응답 export는 `TRACK_B_OCCURRENCE_MEDICATION_FIXTURE_OUTPUT`에 출력 경로를 지정할 때만
 실행합니다. 기본 CI는 fixture를 갱신하지 않습니다. 검증 환경·결과는
 [검증 기록](validation/track-b/issue-202-closure-readiness.md)을 참조합니다.
+
+### Track C Plan lifecycle (#617)
+
+[검증 기록](testing/track-c-plan-lifecycle-617.md): 조회·완료·취소, SELF 404, strict confirmation, terminal 충돌,
+멱등 replay/충돌/rollback, Safety·Barrier·Check-in 정정 및 동시 mutation을 확인한다.
+
+### Track C 완료 계획 Follow-up (#194 후속)
+
+`backend/app/tests/track_c/test_track_c_followup.py`와 `test_track_c_followup_concurrency.py`에서
+완료 전·취소 계획 거부, 미응답 조회, 세 응답·정정 audit, 같은 key 과거 replay와 최신값 GET,
+revision/소유권/입력 오류, snapshot 실패 rollback, Check-in·Safety·Barrier 정정 후 과거 평가를 검증한다.
+독립 PostgreSQL transaction으로 첫 제출·정정 경쟁, 같은 key/다른 body, Check-in·Safety 정정 경쟁을 검증한다.
+[합성 fixture](../tests/fixtures/post_mvp_1/track_c/followup-v1.json)와 OpenAPI/DTO 소비 계약도 대조한다.
+실행 결과 및 제한: [검증 기록](testing/track-c-followup-194.md). #139 브라우저 인수·외부 공개 검증은 별도다.
+
+### Track C Frontend 연결 (#139)
+
+개발 전용 Safety→Barrier→Support Offer→Plan 생성·조회·완료·취소 연결과
+320·390·412px mock 브라우저 검증, 실제 FastAPI·PostgreSQL 왕복 결과는
+[#139 검증 기록](validation/issue-139-track-c-frontend.md)을 따른다.
+`frontend/e2e-real-stack/track-c-round-trip.spec.ts`는 새 격리 DB의 합성 fixture를 사용하며,
+이 검증으로 임상 Safety·Follow-up 구현이나 Production 공개 게이트를 완료 처리하지 않는다.
+
+### Track C 상황별 연결 (#194 후속)
+
+`test_track_c_travel_support.py`는 두 상황의 단일 제안·재검증·멱등성과 Safety 경계를,
+`test_track_c_plan_resources.py`는 원래 약·기록의 SELF 조회와 과거 Copy 복원을 검증한다.
+Frontend `TrackCPage.test.tsx`는 상황 선택·명시 채택·실제 준비 확인·기기 알림 상태 재확인,
+약 정보·일정 링크와 근거 미제공·일반 안내 중단을 검증한다.
+약별 승인 설명·Citation, 증상별 임상 판정과 실제 Push 도착은 별도 미완료 범위다.
+
+실행 결과·선행 PR·미완료 의존성: [사유별 연결 검증 기록](testing/track-c-support-routes-194.md).
+
+### #633 Guide·Chat 피드백
+
+`backend/app/tests/feedback/`에서 실제 PostgreSQL·ASGI의 SELF 소유권·완료 상태·입력 오류·no-store,
+재제출·동시 최초 접수·rollback·30일 만료·대상 삭제 cascade와 실제 migration 제약·downgrade guard를 검증한다.
+새 합성 부정 feedback을 검토용 `chat-feedback-gold-v1` case로 연결하고 v5 기존 30-case 보존·hash 및 잘못된 재질문 거절을 확인한다.
+`frontend/tests/ResponseFeedback.test.tsx`와 `frontend/e2e/response-feedback.spec.ts`는 실패 후 입력 유지·재시도·평가 변경·삭제,
+중복 전송 차단, 완료 ASSISTANT만 노출, 320·390·412px 키보드·레이아웃을 확인한다.
+[실행 기록](validation/issue-633-feedback.md)의 합성 replay와 실제 Provider 개선 효과·책임 리뷰 승인을 구분한다.
+
+## #193 내부 합성 증상 데모 / #196 RAG 준비 상태
+
+- [Local 7일 증상 정책 검증·실행](testing/track-c-demo-safety-193.md): versioned 정책, 만료·계정·환경 제한,
+  실제 API 저장·Barrier 차단·Plan 취소·멱등 replay. Frontend 증상 UI·임상 평가와 구분한다.
+- [공용 RAG 연결 준비 상태](testing/track-c-rag-readiness-196.md): kernel 구현과 실제 Source/Bundle/handoff
+  인계를 구분하며, 확인되지 않은 근거를 데모 승인으로 대체하지 않는다.

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
+from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -46,15 +49,30 @@ from ai_worker.tasks.rag.retrieval_run import (
     FinalizeRetrievalRunOutcome,
     FinalizeRetrievalRunRequest,
     FinalizeRetrievalRunSuccess,
+    PersistedHitInput,
     PersistedRetrievalRunReceipt,
+    PersistedSignalInput,
+    compute_hit_manifest_hash,
+    compute_receipt_hash,
+    compute_signal_manifest_hash,
+)
+from ai_worker.tasks.rag.retrieval_run import (
+    canonical_json_bytes as retrieval_run_canonical_json_bytes,
 )
 from ai_worker.tasks.rag.retrieval_runtime import (
     HYBRID_RETRIEVE_NODE_ID,
+    PRODUCTION_SEARCH_RECEIPT_PROJECTION_VERSION,
+    PRODUCTION_SEARCH_RECEIPT_VERSION,
+    RETRIEVAL_SELECTION_MANIFEST_PROJECTION_VERSION,
     HybridRetrieveRequest,
     ProductionRetrievalRequest,
     RetrievalExecutionStatus,
+    compute_production_search_receipt,
+    compute_selection_manifest_hash,
     execute_hybrid_retrieve,
     execute_production_retrieval,
+    production_search_receipt_projection,
+    selection_manifest_projection,
 )
 from ai_worker.tasks.rag.text_embedding import (
     TextEmbeddingFailure,
@@ -571,3 +589,315 @@ async def test_embedding_identity_aligns_with_openai_text_embedding_adapter() ->
     assert call["model_ref"] == EXPECTED_MODEL_REF
     assert call["model_version"] == EXPECTED_MODEL_VERSION
     assert call["dimension"] == EXPECTED_DIMENSION
+def test_retrieval_run_canonical_json_bytes_conforms_to_rfc8785_utf16_ordering() -> None:
+    payload = {"\ue000": 1, "\U00010000": 2, "a": 3}
+    # RFC 8785 UTF-16 code unit order: "a" (0x0061), "\U00010000" (surrogates 0xD800 0xDC00), "\ue000" (0xE000)
+    expected = '{"a":3,"𐀀":2,"":1}'.encode()
+    assert retrieval_run_canonical_json_bytes(payload) == expected
+
+
+def test_selection_manifest_projection_structure_and_invariants() -> None:
+    chunk_1 = uuid4()
+    chunk_2 = uuid4()
+    hit1 = _make_dummy_hit(1, chunk_1)
+    hit2 = _make_dummy_hit(2, chunk_2)
+
+    proj = selection_manifest_projection([hit2, hit1])
+    assert isinstance(proj, dict)
+    assert proj["projection_version"] == RETRIEVAL_SELECTION_MANIFEST_PROJECTION_VERSION
+    assert RETRIEVAL_SELECTION_MANIFEST_PROJECTION_VERSION == "retrieval-selection-manifest-v2"
+
+    selections = proj["selections"]
+    assert isinstance(selections, list)
+    assert len(selections) == 2
+    item0 = selections[0]
+    item1 = selections[1]
+    assert isinstance(item0, dict)
+    assert isinstance(item1, dict)
+    # Sorted strictly by fusion_rank ascending
+    assert item0["final_rank"] == 1
+    assert item1["final_rank"] == 2
+
+    expected_keys = {
+        "knowledge_index_id",
+        "index_code",
+        "index_version",
+        "index_configuration_hash",
+        "knowledge_chunk_id",
+        "source_snapshot_id",
+        "source_snapshot_member_id",
+        "source_code",
+        "source_version",
+        "canonical_checksum",
+        "external_document_id",
+        "chunk_index",
+        "locator",
+        "content_sha256",
+        "canonicalization_spec_version",
+        "normalization_version",
+        "final_rank",
+    }
+    assert set(item0.keys()) == expected_keys
+    assert set(item1.keys()) == expected_keys
+    assert item0["content_sha256"] == hit1.provenance.content_hash
+
+    # Order invariance: reversing input hits produces identical manifest digest
+    hash_forward = compute_selection_manifest_hash([hit1, hit2])
+    hash_reversed = compute_selection_manifest_hash([hit2, hit1])
+    assert hash_forward == hash_reversed
+
+
+def test_selection_manifest_projection_fails_closed_on_invalid_fusion_rank() -> None:
+    chunk_1 = uuid4()
+    chunk_2 = uuid4()
+
+    # 1. Non-positive fusion_rank (0 or negative) raises ValueError
+    invalid_hit_zero = replace(_make_dummy_hit(1, chunk_1), fusion_rank=0)
+    with pytest.raises(ValueError, match="fusion_rank"):
+        selection_manifest_projection([invalid_hit_zero])
+
+    invalid_hit_neg = replace(_make_dummy_hit(1, chunk_1), fusion_rank=-1)
+    with pytest.raises(ValueError, match="fusion_rank"):
+        selection_manifest_projection([invalid_hit_neg])
+
+    # 2. Duplicate fusion_rank raises ValueError
+    hit1 = _make_dummy_hit(1, chunk_1)
+    hit2_dup_rank = replace(_make_dummy_hit(2, chunk_2), fusion_rank=1)
+    with pytest.raises(ValueError, match="fusion_rank"):
+        selection_manifest_projection([hit1, hit2_dup_rank])
+
+
+@pytest.mark.parametrize(
+    "mutator",
+    [
+        lambda p: replace(p, knowledge_index_id=uuid4()),
+        lambda p: replace(p, index_code="OTHER_IDX"),
+        lambda p: replace(p, index_version="2.0"),
+        lambda p: replace(p, index_configuration_hash="e" * 64),
+        lambda p: replace(p, knowledge_chunk_id=uuid4()),
+        lambda p: replace(p, source_snapshot_id=uuid4()),
+        lambda p: replace(p, source_snapshot_member_id=uuid4()),
+        lambda p: replace(p, source_code="OTHER_SRC"),
+        lambda p: replace(p, source_version="2.0"),
+        lambda p: replace(p, canonical_checksum="9" * 64),
+        lambda p: replace(p, external_document_id="doc-999"),
+        lambda p: replace(p, chunk_index=99),
+        lambda p: replace(p, locator="loc-mutated"),
+        lambda p: replace(p, content_hash="8" * 64),
+        lambda p: replace(p, canonicalization_spec_version="v2"),
+        lambda p: replace(p, normalization_version="v2"),
+    ],
+)
+def test_selection_manifest_projection_provenance_field_sensitivity(mutator: Any) -> None:
+    hit = _make_dummy_hit(1, uuid4())
+    original_hash = compute_selection_manifest_hash([hit])
+
+    mutated_prov = mutator(hit.provenance)
+    mutated_hit = replace(hit, provenance=mutated_prov)
+    mutated_hash = compute_selection_manifest_hash([mutated_hit])
+
+    assert mutated_hash != original_hash
+
+
+def test_selection_manifest_projection_rank_and_version_sensitivity() -> None:
+    hit = _make_dummy_hit(1, uuid4())
+    original_hash = compute_selection_manifest_hash([hit])
+
+    # Mutating fusion_rank changes final_rank in selection
+    rank_mutated_hit = replace(hit, fusion_rank=2)
+    assert compute_selection_manifest_hash([rank_mutated_hit]) != original_hash
+
+
+def test_compute_production_search_receipt_cutover_to_v2() -> None:
+    receipt = compute_production_search_receipt(
+        variant="RET-H",
+        status=RetrievalExecutionStatus.SUCCEEDED,
+        diagnostic_code="OK",
+        query_fingerprint=QueryFingerprint("sha256", "v1", "0" * 64),
+        filter_snapshot_ref=ImmutableArtifactRef("filter_snapshot", "1.0", "f" * 64),
+        evidence_index_ref=ImmutableArtifactRef("knowledge_index", "1.0", "e" * 64),
+        retrieval_config_ref=ImmutableArtifactRef("retrieval_config", "1.0", "3" * 64),
+        adapter_artifact_ref=ImmutableArtifactRef("adapter", "1.0", "a" * 64),
+        query_embedding_sha256="d" * 64,
+        signal_manifest_sha256="1" * 64,
+        hit_manifest_sha256="2" * 64,
+        selection_manifest_sha256="3" * 64,
+    )
+    assert receipt.artifact_ref.artifact_code == "production_search_receipt"
+    assert receipt.artifact_ref.version == "2.0"
+    assert receipt.artifact_ref.version == PRODUCTION_SEARCH_RECEIPT_VERSION
+
+    # Verify projection structure and version
+    proj = production_search_receipt_projection(
+        variant=receipt.variant,
+        status=receipt.retrieval_execution_status,
+        diagnostic_code=receipt.diagnostic_code,
+        query_fingerprint=receipt.query_fingerprint,
+        filter_snapshot_ref=receipt.filter_snapshot_ref,
+        evidence_index_ref=receipt.evidence_index_ref,
+        retrieval_config_ref=receipt.retrieval_config_ref,
+        adapter_artifact_ref=receipt.adapter_artifact_ref,
+        query_embedding_sha256=receipt.query_embedding_sha256,
+        signal_manifest_sha256=receipt.signal_manifest_sha256,
+        hit_manifest_sha256=receipt.hit_manifest_sha256,
+        selection_manifest_sha256=receipt.selection_manifest_sha256,
+    )
+    assert isinstance(proj, dict)
+    assert proj["projection_version"] == PRODUCTION_SEARCH_RECEIPT_PROJECTION_VERSION
+    assert proj["projection_version"] == "production-search-receipt-v2"
+    assert proj["adapter_artifact_ref"] == {"artifact_code": "adapter", "content_sha256": "a" * 64, "version": "1.0"}
+    assert proj["query_fingerprint"] == {"algorithm": "sha256", "digest": "0" * 64, "key_version": "v1"}
+    assert proj["filter_snapshot_ref"] == {
+        "artifact_code": "filter_snapshot",
+        "content_sha256": "f" * 64,
+        "version": "1.0",
+    }
+    assert proj["evidence_index_ref"] == {
+        "artifact_code": "knowledge_index",
+        "content_sha256": "e" * 64,
+        "version": "1.0",
+    }
+    assert proj["retrieval_config_ref"] == {
+        "artifact_code": "retrieval_config",
+        "content_sha256": "3" * 64,
+        "version": "1.0",
+    }
+
+
+def test_production_search_receipt_field_tampering_sensitivity() -> None:
+    base_kwargs: dict[str, object] = {
+        "variant": "RET-H",
+        "status": RetrievalExecutionStatus.SUCCEEDED,
+        "diagnostic_code": "OK",
+        "query_fingerprint": QueryFingerprint("sha256", "v1", "0" * 64),
+        "filter_snapshot_ref": ImmutableArtifactRef("filter_snapshot", "1.0", "f" * 64),
+        "evidence_index_ref": ImmutableArtifactRef("knowledge_index", "1.0", "e" * 64),
+        "retrieval_config_ref": ImmutableArtifactRef("retrieval_config", "1.0", "3" * 64),
+        "adapter_artifact_ref": ImmutableArtifactRef("adapter", "1.0", "a" * 64),
+        "query_embedding_sha256": "d" * 64,
+        "signal_manifest_sha256": "1" * 64,
+        "hit_manifest_sha256": "2" * 64,
+        "selection_manifest_sha256": "3" * 64,
+    }
+    baseline_receipt = compute_production_search_receipt(**base_kwargs)  # type: ignore[arg-type]
+    baseline_hash = baseline_receipt.artifact_ref.content_sha256
+
+    tampered_cases = [
+        # variant
+        ("variant", "RET-L"),
+        # status
+        ("status", RetrievalExecutionStatus.DEPENDENCY_ERROR),
+        # diagnostic_code
+        ("diagnostic_code", "FAIL_GATE"),
+        # query_fingerprint subfields
+        ("query_fingerprint", QueryFingerprint("blake2b", "v1", "0" * 64)),
+        ("query_fingerprint", QueryFingerprint("sha256", "v2", "0" * 64)),
+        ("query_fingerprint", QueryFingerprint("sha256", "v1", "9" * 64)),
+        # filter_snapshot_ref subfields
+        ("filter_snapshot_ref", ImmutableArtifactRef("other_code", "1.0", "f" * 64)),
+        ("filter_snapshot_ref", ImmutableArtifactRef("filter_snapshot", "2.0", "f" * 64)),
+        ("filter_snapshot_ref", ImmutableArtifactRef("filter_snapshot", "1.0", "9" * 64)),
+        # evidence_index_ref subfields
+        ("evidence_index_ref", ImmutableArtifactRef("other_index", "1.0", "e" * 64)),
+        ("evidence_index_ref", ImmutableArtifactRef("knowledge_index", "2.0", "e" * 64)),
+        ("evidence_index_ref", ImmutableArtifactRef("knowledge_index", "1.0", "9" * 64)),
+        # retrieval_config_ref subfields
+        ("retrieval_config_ref", ImmutableArtifactRef("other_config", "1.0", "3" * 64)),
+        ("retrieval_config_ref", ImmutableArtifactRef("retrieval_config", "2.0", "3" * 64)),
+        ("retrieval_config_ref", ImmutableArtifactRef("retrieval_config", "1.0", "9" * 64)),
+        # adapter_artifact_ref subfields
+        ("adapter_artifact_ref", ImmutableArtifactRef("other_adapter", "1.0", "a" * 64)),
+        ("adapter_artifact_ref", ImmutableArtifactRef("adapter", "2.0", "a" * 64)),
+        ("adapter_artifact_ref", ImmutableArtifactRef("adapter", "1.0", "9" * 64)),
+        # query_embedding_sha256
+        ("query_embedding_sha256", None),
+        ("query_embedding_sha256", "9" * 64),
+        # manifests
+        ("signal_manifest_sha256", "9" * 64),
+        ("hit_manifest_sha256", "9" * 64),
+        ("selection_manifest_sha256", "9" * 64),
+    ]
+
+    for key, tampered_val in tampered_cases:
+        modified_kwargs = dict(base_kwargs)
+        modified_kwargs[key] = tampered_val
+        tampered_receipt = compute_production_search_receipt(**modified_kwargs)  # type: ignore[arg-type]
+        assert tampered_receipt.artifact_ref.content_sha256 != baseline_hash, (
+            f"Tampering {key} to {tampered_val!r} did not alter receipt hash!"
+        )
+
+
+def test_legacy_digest_golden_regression_frozen_constants() -> None:
+    # Frozen legacy expected values computed with historical codebase before canonical JCS alignment
+    frozen_legacy_signal_hash = "80949196c75ff5de674d05d4971c35c540e941ca51750d05914a9524170825e7"
+    frozen_legacy_hit_hash = "1f15571ed69526a78f7d4f341a746e55b2a0f368efc6700866b24fb345d2314b"
+    frozen_legacy_receipt_hash = "094833a6c8ce15863990257d143c55c6626ac879a3b09d9adf41d2a8b2b7947e"
+
+    chunk_id = UUID("11111111-1111-1111-1111-111111111111")
+    sig = PersistedSignalInput(
+        method="EXACT",
+        raw_rank=1,
+        raw_score=Decimal("1.000000000000000000"),
+        knowledge_chunk_id=chunk_id,
+        score_projection_version="v1",
+    )
+    hit = PersistedHitInput(
+        knowledge_chunk_id=chunk_id,
+        rrf_rank=1,
+        rrf_score=Decimal("0.016393442622950820"),
+        rrf_score_numerator="1",
+        rrf_score_denominator="61",
+        final_rank=1,
+        selected=True,
+        lexical_rank=1,
+        dense_rank=None,
+        rerank_score=None,
+    )
+
+    sig_hash = compute_signal_manifest_hash([sig])
+    hit_hash = compute_hit_manifest_hash([hit])
+
+    assert sig_hash == frozen_legacy_signal_hash
+    assert hit_hash == frozen_legacy_hit_hash
+
+    receipt_hash = compute_receipt_hash(
+        run_id=UUID("22222222-2222-2222-2222-222222222222"),
+        job_id=UUID("33333333-3333-3333-3333-333333333333"),
+        node_id="hybrid_retrieve",
+        variant="RET-H",
+        status="COMPLETED",
+        query_digest="4" * 64,
+        retrieval_configuration_hash="5" * 64,
+        source_manifest_hash="6" * 64,
+        search_receipt_hash="7" * 64,
+        total_signals=1,
+        total_hits=1,
+        selected_count=1,
+        signal_manifest_hash=sig_hash,
+        hit_manifest_hash=hit_hash,
+    )
+    assert receipt_hash == frozen_legacy_receipt_hash
+
+
+def test_legacy_persisted_retrieval_run_replay_compatibility() -> None:
+    frozen_legacy_signal_hash = "80949196c75ff5de674d05d4971c35c540e941ca51750d05914a9524170825e7"
+    frozen_legacy_hit_hash = "1f15571ed69526a78f7d4f341a746e55b2a0f368efc6700866b24fb345d2314b"
+    frozen_legacy_receipt_hash = "094833a6c8ce15863990257d143c55c6626ac879a3b09d9adf41d2a8b2b7947e"
+
+    recomputed = compute_receipt_hash(
+        run_id=UUID("22222222-2222-2222-2222-222222222222"),
+        job_id=UUID("33333333-3333-3333-3333-333333333333"),
+        node_id="hybrid_retrieve",
+        variant="RET-H",
+        status="COMPLETED",
+        query_digest="4" * 64,
+        retrieval_configuration_hash="5" * 64,
+        source_manifest_hash="6" * 64,
+        search_receipt_hash="7" * 64,
+        total_signals=1,
+        total_hits=1,
+        selected_count=1,
+        signal_manifest_hash=frozen_legacy_signal_hash,
+        hit_manifest_hash=frozen_legacy_hit_hash,
+    )
+    assert recomputed == frozen_legacy_receipt_hash
