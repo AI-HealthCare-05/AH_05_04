@@ -346,8 +346,8 @@ def _algorithm_signature_supported(scope: ComparisonScope) -> bool:
         and scope.unit_of_analysis == "CASE"
         and scope.estimator_id == "CASE_MEAN"
         and scope.estimator_version == "1.0.0"
-        and scope.independence_unit == "question_template"
-        and scope.cluster_dimension is LeakageAxis.QUESTION_TEMPLATE
+        and isinstance(scope.cluster_dimension, LeakageAxis)
+        and scope.independence_unit == scope.cluster_dimension.value
         and scope.ci_method_id == "PERCENTILE_CLUSTER_BOOTSTRAP"
         and scope.ci_method_version == "1.0.0"
         and parameters.get("sidedness") == "TWO_SIDED"
