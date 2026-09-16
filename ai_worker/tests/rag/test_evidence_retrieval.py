@@ -1,6 +1,7 @@
 import dataclasses
 import hashlib
 import json
+import unicodedata
 from dataclasses import replace
 from decimal import localcontext
 from pathlib import Path
@@ -33,6 +34,7 @@ from ai_worker.tasks.rag.evidence_retrieval import (
     SensitiveText,
     StageSignal,
     canonical_rerank_input_hash,
+    is_valid_immutable_artifact_ref,
     retrieve_knowledge_evidence,
     to_sanitized_trace_dict,
 )
@@ -3502,3 +3504,58 @@ def test_kernel_rejects_stateful_records_tuple_subclass_end_to_end() -> None:
 
     assert outcome.execution_status is KernelExecutionStatus.DEPENDENCY_ERROR
     assert outcome.untrusted_selections == ()
+
+
+def test_is_valid_immutable_artifact_ref_canonical_rules() -> None:
+    valid_sha = "a" * 64
+    valid_ref = ImmutableArtifactRef("evidence_chunk", "v1.0", valid_sha)
+
+    # 1. Valid ref -> True
+    assert is_valid_immutable_artifact_ref(valid_ref) is True
+
+    # 2. Blank artifact_code / version -> False
+    assert is_valid_immutable_artifact_ref(ImmutableArtifactRef("", "v1.0", valid_sha)) is False
+    assert is_valid_immutable_artifact_ref(ImmutableArtifactRef("   ", "v1.0", valid_sha)) is False
+    assert is_valid_immutable_artifact_ref(ImmutableArtifactRef("evidence_chunk", "", valid_sha)) is False
+    assert is_valid_immutable_artifact_ref(ImmutableArtifactRef("evidence_chunk", "   ", valid_sha)) is False
+
+    # 3. Leading / trailing whitespace -> False
+    assert is_valid_immutable_artifact_ref(ImmutableArtifactRef(" evidence_chunk", "v1.0", valid_sha)) is False
+    assert is_valid_immutable_artifact_ref(ImmutableArtifactRef("evidence_chunk ", "v1.0", valid_sha)) is False
+    assert is_valid_immutable_artifact_ref(ImmutableArtifactRef("evidence_chunk", " v1.0", valid_sha)) is False
+    assert is_valid_immutable_artifact_ref(ImmutableArtifactRef("evidence_chunk", "v1.0 ", valid_sha)) is False
+
+    # 4. Non-NFC -> False
+    nfd_code = unicodedata.normalize("NFD", "의약품문서")
+    assert unicodedata.is_normalized("NFC", nfd_code) is False
+    assert is_valid_immutable_artifact_ref(ImmutableArtifactRef(nfd_code, "v1.0", valid_sha)) is False
+
+    nfd_ver = unicodedata.normalize("NFD", "버전1")
+    assert unicodedata.is_normalized("NFC", nfd_ver) is False
+    assert is_valid_immutable_artifact_ref(ImmutableArtifactRef("evidence_chunk", nfd_ver, valid_sha)) is False
+
+    # 5. Uppercase SHA-256 -> False
+    assert is_valid_immutable_artifact_ref(ImmutableArtifactRef("evidence_chunk", "v1.0", "A" * 64)) is False
+    assert is_valid_immutable_artifact_ref(ImmutableArtifactRef("evidence_chunk", "v1.0", ("a" * 63) + "F")) is False
+
+    # 6. Wrong length SHA-256 or invalid hex -> False
+    assert is_valid_immutable_artifact_ref(ImmutableArtifactRef("evidence_chunk", "v1.0", "a" * 63)) is False
+    assert is_valid_immutable_artifact_ref(ImmutableArtifactRef("evidence_chunk", "v1.0", "a" * 65)) is False
+    assert is_valid_immutable_artifact_ref(ImmutableArtifactRef("evidence_chunk", "v1.0", "g" * 64)) is False
+
+    # 7. Wrong object type -> False
+    assert is_valid_immutable_artifact_ref(None) is False
+    assert is_valid_immutable_artifact_ref("not-a-ref") is False
+    assert (
+        is_valid_immutable_artifact_ref({"artifact_code": "code", "version": "v1", "content_sha256": valid_sha})
+        is False
+    )
+
+    class SubArtifactRef(ImmutableArtifactRef):
+        pass
+
+    assert is_valid_immutable_artifact_ref(SubArtifactRef("evidence_chunk", "v1.0", valid_sha)) is False
+
+    corrupted_ref = ImmutableArtifactRef("evidence_chunk", "v1.0", valid_sha)
+    object.__delattr__(corrupted_ref, "version")
+    assert is_valid_immutable_artifact_ref(corrupted_ref) is False
