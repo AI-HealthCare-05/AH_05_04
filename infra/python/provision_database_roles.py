@@ -28,7 +28,7 @@ RUNTIME_MUTABLE_TABLES = frozenset(
     "rag_runtime_environment rag_release_evaluation_approval".split()
 )
 RUNTIME_APPEND_ONLY_TABLES = frozenset(
-    "prescription_version prescription_version_medication checkin_audit medication_schedule_audit rag_citation "
+    "prescription_version prescription_version_medication checkin_audit medication_schedule_audit account_deletion_request rag_citation "
     "rag_evidence_guideline rag_evidence_rule rag_evidence rag_evidence_knowledge "
     "rag_runtime_environment_transition medication_candidate_search_result "
     "ai_job_intake_context ai_job_execution_context ai_job_execution_identification".split()
@@ -98,7 +98,7 @@ async def provision_roles(
         | set(SOURCE_TABLES)
         | set(RUNTIME_AUTH_UPDATE_COLUMNS)
         | RUNTIME_LIFESTYLE_TABLES
-        | {"notification_record"}
+        | {"notification_record", "user_consent"}
     )
     if not required.issubset(present):
         raise ValueError("Required application tables are missing; apply migrations before provisioning")
@@ -114,6 +114,9 @@ async def provision_roles(
     await connection.execute(text(f"GRANT SELECT, INSERT, UPDATE ON TABLE public.notification_record TO {runtime_sql}"))
     # #556: reset keeps the current row and replaces days with [], so Runtime never deletes lifestyle data directly.
     await connection.execute(text(f"GRANT SELECT, INSERT, UPDATE ON TABLE public.lifestyle_times TO {runtime_sql}"))
+    # #207/#621: set_status() only upserts the per-purpose current row (ON CONFLICT DO UPDATE),
+    # never deletes it, so Runtime needs SELECT/INSERT/UPDATE and nothing more.
+    await connection.execute(text(f"GRANT SELECT, INSERT, UPDATE ON TABLE public.user_consent TO {runtime_sql}"))
     for table, columns in RUNTIME_AUTH_UPDATE_COLUMNS.items():
         target = f"public.{quoted_identifier(table)}"
         names = ", ".join(quoted_identifier(column) for column in columns)

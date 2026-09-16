@@ -53,7 +53,7 @@ describe('Dosey 메뉴', () => {
 
     expect(screen.getByRole('button', { name: '알림 설정' })).toHaveProperty('disabled', false)
 
-    fireEvent.click(screen.getByRole('button', { name: '복약 기록' }))
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정' }))
     expect(screen.getByText('복약 일정 화면')).toBeTruthy()
 
     first.unmount()

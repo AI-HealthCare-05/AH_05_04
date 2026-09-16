@@ -124,37 +124,46 @@
   background: #fff;
 }
 
-.guide-page__medication-card summary {
+.guide-page__medication-toggle {
+  width: 100%;
   min-height: 84px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 18px;
   gap: 12px;
   align-items: center;
   padding: 16px 20px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
-  list-style: none;
 }
 
-.guide-page__medication-card summary::-webkit-details-marker,
+.guide-page__medication-toggle:focus-visible {
+  outline: 3px solid var(--ds-focus);
+  outline-offset: -3px;
+}
+
 .guide-page__disclosure summary::-webkit-details-marker {
   display: none;
 }
 
-.guide-page__medication-card summary h3,
-.guide-page__medication-card summary small {
+.guide-page__medication-name,
+.guide-page__medication-toggle small {
   display: block;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.guide-page__medication-card summary h3 {
+.guide-page__medication-name {
   margin: 0;
   font-size: 18px;
   line-height: 1.35;
   letter-spacing: -.025em;
 }
 
-.guide-page__medication-card summary small {
+.guide-page__medication-toggle small {
   margin-top: 4px;
   color: var(--ds-text-muted);
   font-size: 12px;
@@ -171,7 +180,7 @@
   transition: transform .18s ease;
 }
 
-.guide-page__medication-card[open] .guide-page__chevron {
+.guide-page__medication-card.is-expanded .guide-page__chevron {
   transform: rotate(225deg) translate(-2px, -2px);
 }
 
@@ -210,6 +219,12 @@
   overflow-wrap: anywhere;
 }
 
+.guide-page__medication-details dd.is-empty,
+.guide-page .is-empty {
+  color: var(--ds-text-muted);
+  font-weight: 500;
+}
+
 .guide-page__medication-notice {
   margin: 14px 0 0;
   color: #d7352d;
@@ -218,35 +233,124 @@
 }
 
 .guide-page__guidance {
-  margin-top: 16px;
   padding: 16px;
+  border: 1px solid #e3e8ef;
   border-radius: 14px;
+  background: #f7f9fb;
+}
+
+.guide-page__medical-sections {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.guide-page__medical-sections .guide-page__guidance:nth-child(1) {
   background: #edf0f2;
 }
 
-.guide-page__guidance h3,
-.guide-page__common-notice h3,
-.guide-page__safety-notice h3 {
-  margin: 0;
-  font-size: 14px;
+.guide-page__medical-sections .guide-page__guidance:nth-child(5) {
+  border-color: #f0d77a;
+  background: #fff9e8;
 }
 
-.guide-page__guidance p,
-.guide-page__common-notice p,
-.guide-page__safety-notice p {
+.guide-page__guidance h4 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.guide-page__guidance p {
   margin: 7px 0 0;
   font-size: 13px;
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
 
+.guide-page__source-guidance {
+  margin-top: 8px;
+  padding: 14px 16px;
+  border-left: 3px solid #9aa8b2;
+  border-radius: 10px;
+  background: #f7f9fb;
+}
+
+.guide-page__source-guidance h4 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.guide-page__source-guidance p {
+  margin: 6px 0 0;
+  color: var(--ds-text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.guide-page__unclassified {
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid #e3e8ef;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.guide-page__unclassified summary {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  color: var(--ds-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.guide-page__unclassified dl {
+  margin: 0;
+  padding: 0 14px 12px;
+}
+
+.guide-page__unclassified dl > div {
+  padding: 10px 0;
+  border-top: 1px solid #eef1f4;
+}
+
+.guide-page__unclassified dt {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.guide-page__unclassified dd {
+  margin: 5px 0 0;
+  color: var(--ds-text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
 .guide-page__common-notice,
 .guide-page__safety-notice {
-  margin-top: 12px;
   padding: 16px;
+  margin-top: 12px;
   border: 1px solid var(--ds-line);
   border-radius: 16px;
   background: #fff;
+}
+
+.guide-page__common-notice h3,
+.guide-page__safety-notice h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.guide-page__common-notice p,
+.guide-page__safety-notice p {
+  margin: 7px 0 0;
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
 }
 
 .guide-page__safety-notice {
@@ -333,14 +437,6 @@
 
 .guide-page__schedule-button {
   margin-top: 12px;
-}
-
-.guide-page__schedule-button:disabled {
-  border-color: var(--ds-action);
-  background: #fff;
-  color: var(--ds-action);
-  opacity: 1;
-  cursor: default;
 }
 
 .guide-page__chat-button {
@@ -442,7 +538,7 @@
     padding-inline: 16px;
   }
 
-  .guide-page__medication-card summary {
+  .guide-page__medication-toggle {
     padding-inline: 16px;
   }
 

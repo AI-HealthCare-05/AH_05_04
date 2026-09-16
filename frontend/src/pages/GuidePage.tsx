@@ -71,54 +71,123 @@ function isNotFound(error: unknown) {
 
 type GuideDetail = {
   label: string
-  value: string
+  value: string | null
 }
+
+type UnclassifiedGuideField = {
+  sourceLabel: string
+  value: string | null
+}
+
+type GuideSectionKey =
+  | 'medicationCaution'
+  | 'foodAndDrink'
+  | 'alcoholAndSmoking'
+  | 'possibleDiscomfort'
+  | 'seekMedicalCare'
+  | 'pregnancyAndBreastfeeding'
 
 type StructuredMedication = {
   name: string
   details: GuideDetail[]
-  guidance: string
+  sections: Record<GuideSectionKey, string | null>
+  legacyGuidance: string | null
+  unclassifiedFields: UnclassifiedGuideField[]
   notices: string[]
 }
 
 type StructuredGuide = {
   medications: StructuredMedication[]
-  generalNotice: string
-  safetyNotice: string
+  generalNotice: string | null
+  safetyNotice: string | null
+  unclassifiedFields: UnclassifiedGuideField[]
 }
 
-const GUIDE_DETAIL_LABELS: Record<string, string> = {
-  '용량': '1회량',
-  '복용 횟수': '하루 횟수',
-  '복용 시점': '복용 시점',
-  '복용 기간': '복용 기간',
+const EMPTY_GUIDE_SECTION = '현재 제공된 안내가 없어요.'
+
+const GUIDE_DETAIL_FIELDS = [
+  { key: 'dose', label: '1회량' },
+  { key: 'frequency', label: '하루 횟수' },
+  { key: 'timing', label: '복용 시점' },
+  { key: 'duration', label: '복용 기간' },
+] as const
+
+type GuideDetailKey = typeof GUIDE_DETAIL_FIELDS[number]['key']
+
+const GUIDE_DETAIL_LABELS: Record<string, GuideDetailKey> = {
+  '용량': 'dose',
+  '1회량': 'dose',
+  '복용 횟수': 'frequency',
+  '하루 횟수': 'frequency',
+  '복용 시점': 'timing',
+  '복용 기간': 'duration',
+}
+
+const GUIDE_SECTION_FIELDS: ReadonlyArray<{
+  key: GuideSectionKey
+  label: string
+}> = [
+  { key: 'medicationCaution', label: '복용 시 주의해야 할 점' },
+  { key: 'foodAndDrink', label: '주의해야 할 음식·음료' },
+  { key: 'alcoholAndSmoking', label: '음주/흡연 안내' },
+  { key: 'possibleDiscomfort', label: '나타날 수 있는 불편감' },
+  { key: 'seekMedicalCare', label: '이런 증상은 병원에 가세요' },
+  { key: 'pregnancyAndBreastfeeding', label: '임신·수유 중 안내' },
+]
+
+const GUIDE_SECTION_LABELS: Record<string, GuideSectionKey> = {
+  ...Object.fromEntries(GUIDE_SECTION_FIELDS.map(({ key, label }) => [label, key])),
 }
 
 const INCOMPLETE_DOSE_NOTICE =
   '용량 정보는 처방전 또는 의료진 안내를 확인해 주세요.'
 
 function parseGuideContent(content: string): StructuredGuide | null {
-  const blocks = content.replace(/\r\n?/g, '\n').trim().split(/\n{2}/)
-  if (blocks.length < 3 || blocks[0].trim() !== '복약 가이드') return null
+  const normalizedContent = content.replace(/\r\n?/g, '\n').trim()
+  if (!normalizedContent) return null
 
-  const noticeLines = blocks.at(-1)?.split('\n') ?? []
-  if (noticeLines.length !== 2) return null
-
-  const generalNotice = noticeLines[0].match(/^공통 안내:\s*(.+)$/)?.[1]
-  const safetyNotice = noticeLines[1].match(/^안전 안내:\s*(.+)$/)?.[1]
-  if (!generalNotice || !safetyNotice) return null
+  const blocks = normalizedContent.split(/\n{2,}/)
+  if (blocks.shift()?.trim() !== '복약 가이드') return null
 
   const medications: StructuredMedication[] = []
+  let generalNotice: string | null = null
+  let safetyNotice: string | null = null
+  let hasGeneralNotice = false
+  let hasSafetyNotice = false
+  const unclassifiedFields: UnclassifiedGuideField[] = []
 
-  for (const [medicationIndex, block] of blocks.slice(1, -1).entries()) {
+  for (const block of blocks) {
     const lines = block.split('\n')
-    const heading = lines.shift()?.match(/^\[(\d+)]\s+(.+)$/)
-    if (!heading || Number(heading[1]) !== medicationIndex + 1) return null
+    const heading = lines[0]?.match(/^\[(\d+)]\s+(.+)$/)
 
-    const details: GuideDetail[] = []
+    if (!heading) {
+      for (const line of lines) {
+        const field = line.match(/^([^:]+):\s*(.*)$/)
+        if (!field) return null
+        const value = field[2].trim() || null
+
+        if (field[1] === '공통 안내' && !hasGeneralNotice) {
+          hasGeneralNotice = true
+          generalNotice = value
+        } else if (field[1] === '안전 안내' && !hasSafetyNotice) {
+          hasSafetyNotice = true
+          safetyNotice = value
+        } else {
+          unclassifiedFields.push({ sourceLabel: field[1], value })
+        }
+      }
+      continue
+    }
+
+    if (Number(heading[1]) !== medications.length + 1) return null
+    lines.shift()
+
+    const detailValues = new Map<GuideDetailKey, string>()
+    const sectionValues = new Map<GuideSectionKey, string>()
+    let legacyGuidance: string | null = null
+    let hasLegacyGuidance = false
+    const medicationUnclassifiedFields: UnclassifiedGuideField[] = []
     const notices: string[] = []
-    let guidance: string | null = null
-    const seenLabels = new Set<string>()
 
     for (const line of lines) {
       if (line === INCOMPLETE_DOSE_NOTICE) {
@@ -126,33 +195,151 @@ function parseGuideContent(content: string): StructuredGuide | null {
         continue
       }
 
-      const field = line.match(/^([^:]+):\s*(.+)$/)
+      const field = line.match(/^([^:]+):\s*(.*)$/)
       if (!field) return null
 
-      const [, sourceLabel, value] = field
+      const [, sourceLabel, rawValue] = field
+      const value = rawValue.trim()
       if (sourceLabel === '복약 안내') {
-        if (guidance !== null) return null
-        guidance = value
+        if (hasLegacyGuidance) return null
+        hasLegacyGuidance = true
+        legacyGuidance = value || null
         continue
       }
 
-      const displayLabel = GUIDE_DETAIL_LABELS[sourceLabel]
-      if (!displayLabel || seenLabels.has(sourceLabel)) return null
-      seenLabels.add(sourceLabel)
-      details.push({ label: displayLabel, value })
+      const detailKey = GUIDE_DETAIL_LABELS[sourceLabel]
+      if (detailKey) {
+        if (!value || detailValues.has(detailKey)) return null
+        detailValues.set(detailKey, value)
+        continue
+      }
+
+      const sectionKey = GUIDE_SECTION_LABELS[sourceLabel]
+      if (!sectionKey) {
+        medicationUnclassifiedFields.push({ sourceLabel, value: value || null })
+        continue
+      }
+      if (sectionValues.has(sectionKey)) return null
+      if (value) sectionValues.set(sectionKey, value)
     }
 
-    if (!heading[2].trim() || !guidance) return null
+    if (!heading[2].trim()) return null
     medications.push({
-      name: heading[2],
-      details,
-      guidance,
+      name: heading[2].trim(),
+      details: GUIDE_DETAIL_FIELDS.map(({ key, label }) => ({
+        label,
+        value: detailValues.get(key) ?? null,
+      })),
+      sections: Object.fromEntries(
+        GUIDE_SECTION_FIELDS.map(({ key }) => [key, sectionValues.get(key) ?? null]),
+      ) as Record<GuideSectionKey, string | null>,
+      legacyGuidance,
+      unclassifiedFields: medicationUnclassifiedFields,
       notices,
     })
   }
 
   if (medications.length === 0) return null
-  return { medications, generalNotice, safetyNotice }
+  return { medications, generalNotice, safetyNotice, unclassifiedFields }
+}
+
+function UnclassifiedGuideFields({
+  fields,
+}: {
+  fields: UnclassifiedGuideField[]
+}) {
+  if (fields.length === 0) return null
+
+  return (
+    <details className="guide-page__unclassified">
+      <summary>추가 안내 원문</summary>
+      <dl>
+        {fields.map((field, index) => (
+          <div key={`${index}-${field.sourceLabel}`}>
+            <dt>{field.sourceLabel}</dt>
+            <dd>{field.value ?? EMPTY_GUIDE_SECTION}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  )
+}
+
+function MedicationCard({
+  medication,
+  index,
+}: {
+  medication: StructuredMedication
+  index: number
+}) {
+  const [isExpanded, setIsExpanded] = useState(false)
+  const medicationPanelId = `guide-medication-panel-${index}`
+  const summary = medication.details
+    .filter((detail) =>
+      detail.value && (detail.label === '하루 횟수' || detail.label === '복용 시점'),
+    )
+    .map((detail) => detail.value)
+    .join(' · ')
+
+  return (
+    <article className={`guide-page__medication-card ${isExpanded ? 'is-expanded' : ''}`}>
+      <button
+        type="button"
+        className="guide-page__medication-toggle"
+        aria-expanded={isExpanded}
+        aria-controls={medicationPanelId}
+        onClick={() => setIsExpanded((expanded) => !expanded)}
+      >
+        <span>
+          <span className="guide-page__medication-name" role="heading" aria-level={3}>
+            {medication.name}
+          </span>
+          <small>{summary || '복용 정보를 확인해 주세요'}</small>
+        </span>
+        <span className="guide-page__chevron" aria-hidden="true" />
+      </button>
+      {isExpanded && (
+        <div className="guide-page__medication-body" id={medicationPanelId}>
+          <dl className="guide-page__medication-details">
+            {medication.details.map((detail) => (
+              <div key={detail.label}>
+                <dt>{detail.label}</dt>
+                <dd className={detail.value ? '' : 'is-empty'}>
+                  {detail.value ?? EMPTY_GUIDE_SECTION}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          {medication.notices.map((notice) => (
+            <p className="guide-page__medication-notice" key={notice}>
+              {notice}
+            </p>
+          ))}
+          <div className="guide-page__medical-sections">
+            {GUIDE_SECTION_FIELDS.map(({ key, label }) => (
+              <section
+                className="guide-page__guidance"
+                aria-labelledby={`guide-${key}-${index}`}
+                key={key}
+              >
+                <h4 id={`guide-${key}-${index}`}>{label}</h4>
+                <p className={medication.sections[key] ? '' : 'is-empty'}>
+                  {medication.sections[key] ?? EMPTY_GUIDE_SECTION}
+                </p>
+              </section>
+            ))}
+          </div>
+          {medication.legacyGuidance && (
+            <section className="guide-page__source-guidance" aria-labelledby={`guide-source-${index}`}>
+              <h4 id={`guide-source-${index}`}>복약 안내</h4>
+              <p>{medication.legacyGuidance}</p>
+            </section>
+          )}
+          <UnclassifiedGuideFields fields={medication.unclassifiedFields} />
+        </div>
+      )}
+    </article>
+  )
 }
 
 function StructuredGuideContent({ guide }: { guide: StructuredGuide }) {
@@ -172,52 +359,27 @@ function StructuredGuideContent({ guide }: { guide: StructuredGuide }) {
       </span>
       <div className="guide-page__medication-list">
         {guide.medications.map((medication, index) => (
-          <details className="guide-page__medication-card" key={`${index}-${medication.name}`}>
-            <summary>
-              <span>
-                <h3>{medication.name}</h3>
-                <small>
-                  {medication.details
-                    .filter((detail) => detail.label === '하루 횟수' || detail.label === '복용 시점')
-                    .map((detail) => detail.value)
-                    .join(' · ') || '복용 정보를 확인해 주세요'}
-                </small>
-              </span>
-              <span className="guide-page__chevron" aria-hidden="true" />
-            </summary>
-            <div className="guide-page__medication-body">
-              {medication.details.length > 0 && (
-                <dl className="guide-page__medication-details">
-                  {medication.details.map((detail) => (
-                    <div key={detail.label}>
-                      <dt>{detail.label}</dt>
-                      <dd>{detail.value}</dd>
-                    </div>
-                  ))}
-                </dl>
-              )}
-              {medication.notices.map((notice) => (
-                <p className="guide-page__medication-notice" key={notice}>
-                  {notice}
-                </p>
-              ))}
-              <section className="guide-page__guidance" aria-labelledby={`guide-guidance-${index}`}>
-                <h3 id={`guide-guidance-${index}`}>복약 안내</h3>
-                <p>{medication.guidance}</p>
-              </section>
-            </div>
-          </details>
+          <MedicationCard
+            medication={medication}
+            index={index}
+            key={`${index}-${medication.name}`}
+          />
         ))}
       </div>
 
       <aside className="guide-page__common-notice" aria-labelledby="guide-common-heading">
         <h3 id="guide-common-heading">공통 복약 안내</h3>
-        <p>{guide.generalNotice}</p>
+        <p className={guide.generalNotice ? '' : 'is-empty'}>
+          {guide.generalNotice ?? EMPTY_GUIDE_SECTION}
+        </p>
       </aside>
       <aside className="guide-page__safety-notice" aria-labelledby="guide-safety-heading">
         <h3 id="guide-safety-heading">안전 안내</h3>
-        <p>{guide.safetyNotice}</p>
+        <p className={guide.safetyNotice ? '' : 'is-empty'}>
+          {guide.safetyNotice ?? EMPTY_GUIDE_SECTION}
+        </p>
       </aside>
+      <UnclassifiedGuideFields fields={guide.unclassifiedFields} />
     </section>
   )
 }
@@ -300,6 +462,11 @@ function GuidePage({
         navigate('/login', { replace: true })
         return
       }
+      if (isNotFound(error)) {
+        setGuide(null)
+        setMessage('')
+        return
+      }
       setGuide(null)
       setMessage(getGuideLoadFailureMessage(error))
     } finally {
@@ -351,14 +518,14 @@ function GuidePage({
       >
         <main className="app-scroll guide-page__content">
           <h1 className="screen-title">복약 가이드</h1>
-          {guideId && (
+          {currentGuide && (
             <p className="screen-description">
               약마다 언제·어떻게 복용하는지,<br />
               어떤 점을 주의하면 좋은지 알려드려요.
             </p>
           )}
 
-          {!currentIsLoading && !currentMessage && !currentGuide && !guideId && (
+          {!currentIsLoading && !currentMessage && !currentGuide && (
             <div className="guide-page__empty-state">
               <Card className="guide-page__empty">
                 <span className="guide-page__spark" aria-hidden="true" />
@@ -427,7 +594,7 @@ function GuidePage({
                 fullWidth
                 variant="secondary"
                 className="guide-page__schedule-button"
-                disabled
+                onClick={() => navigate('/schedule')}
               >
                 복용 일정 확인하기
               </Button>

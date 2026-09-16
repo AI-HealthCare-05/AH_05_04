@@ -8,6 +8,7 @@ import {
   useLocation,
   useNavigate,
 } from 'react-router-dom'
+import type { NavigateFunction } from 'react-router-dom'
 import {
   createChatSession,
   getChatMessages,
@@ -107,6 +108,7 @@ function renderPage(
   options: {
     strict?: boolean
     onLocationCommit?: (search: string, bodyText: string) => void
+    navigation?: NavigateFunction
     services?: ChatPageServices
   } = {},
 ) {
@@ -115,7 +117,15 @@ function renderPage(
       <NavigationHarness />
       <LocationCommitProbe onCommit={options.onLocationCommit} />
       <Routes>
-        <Route path="/chat" element={<ChatPage services={options.services} />} />
+        <Route
+          path="/chat"
+          element={(
+            <ChatPage
+              services={options.services}
+              navigation={options.navigation}
+            />
+          )}
+        />
         <Route path="/login" element={<div>로그인 화면</div>} />
         <Route path="/prescriptions/upload" element={<UploadRoute />} />
         <Route path="/guides" element={<div>복약 가이드 화면</div>} />
@@ -1290,8 +1300,9 @@ describe('ChatPage', () => {
     expect(getChatMessages).not.toHaveBeenCalled()
   })
 
-  it('질문 예시는 API 호출 없이 입력창에만 채우고 일정 CTA는 비활성화한다', async () => {
-    renderPage()
+  it('질문 예시는 입력창에만 채우고 일정 CTA는 mutation 없이 기존 route로 한 번 이동한다', async () => {
+    const navigation = vi.fn<NavigateFunction>()
+    renderPage(undefined, { navigation })
 
     expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '아침 약은 언제 먹나요?' }))
@@ -1301,9 +1312,13 @@ describe('ChatPage', () => {
       'value',
       '아침 약은 언제 먹나요?',
     )
-    expect(
-      screen.getByRole('button', { name: '복약 일정 설정하기 (준비 중)' }),
-    ).toHaveProperty('disabled', true)
+    const scheduleCta = screen.getByRole('button', { name: '복약 일정 설정하기' })
+    expect(scheduleCta).toHaveProperty('disabled', false)
+    fireEvent.click(scheduleCta)
+
+    expect(navigation).toHaveBeenCalledTimes(1)
+    expect(navigation).toHaveBeenCalledWith('/schedule')
+    expect(sendChatMessage).not.toHaveBeenCalled()
   })
 
   it('활성 처방이 없을 때 등록 CTA가 새 처방 등록 intent로 이동한다', async () => {

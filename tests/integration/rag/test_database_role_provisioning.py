@@ -120,7 +120,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 | CATALOG_TABLES
                 | set(SOURCE_TABLES)
                 | set(RUNTIME_AUTH_UPDATE_COLUMNS)
-                | {"notification_record"}
+                | {"notification_record", "user_consent"}
             ):
                 await connection.execute(text(f'CREATE TABLE "{table}" (id integer PRIMARY KEY)'))
             await connection.execute(
@@ -162,6 +162,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             await connection.execute(text("INSERT INTO checkin_audit VALUES (1)"))
             await connection.execute(text("INSERT INTO medication_schedule_audit VALUES (1)"))
             await connection.execute(text("INSERT INTO prescription_version VALUES (1)"))
+            await connection.execute(text("INSERT INTO account_deletion_request VALUES (1)"))
             await connection.execute(text("INSERT INTO push_subscription VALUES (1)"))
             await connection.execute(text("INSERT INTO push_delivery VALUES (1)"))
             await connection.execute(text("INSERT INTO lifestyle_times VALUES (1)"))
@@ -195,6 +196,9 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             (reader, "DELETE FROM rag_medication_alias"),
             (reader, "TRUNCATE checkin_audit"),
             (reader, "UPDATE prescription_version SET id=2"),
+            (reader, "UPDATE account_deletion_request SET id=2"),
+            (reader, "DELETE FROM account_deletion_request"),
+            (reader, "TRUNCATE account_deletion_request"),
             (reader, "INSERT INTO rag_source_snapshot (id) VALUES (3)"),
             (producer, "DELETE FROM rag_source_snapshot"),
             (producer, 'INSERT INTO "user" (id) VALUES (3)'),
@@ -878,6 +882,7 @@ async def _grant_historical_test_permissions(admin, environment):
                 "ai_job_intake_context",
                 "ai_job_execution_context",
                 "ai_job_execution_identification",
+                "account_deletion_request",  # Added after the historical Source cutover.
                 "medication_schedule_audit",  # Added after the historical Source cutover.
                 "push_subscription",  # #469 does not exist at the historical revision.
                 "push_delivery",
@@ -920,6 +925,9 @@ async def _exercise_notification_runtime_permissions(reader, producer):
     from datetime import timedelta
 
     from app.commands.process_notifications import process_notifications_once
+    from app.models.user_consents import ConsentPurpose, ConsentStatus
+    from app.repositories.user_consent_repository import UserConsentRepository
+    from app.services.user_consent_policy import current_consent_policy_version
     from app.tests.notifications.test_notifications import NOW
     from app.tests.repositories.test_medication_checkin_repository_integration import _create_occurrence
     from app.tests.repositories.test_medication_schedule_repository_integration import _create_user_with_self_profile
@@ -928,6 +936,16 @@ async def _exercise_notification_runtime_permissions(reader, producer):
     async with factory.begin() as session:
         owner, profile = await _create_user_with_self_profile(session, label="notification-runtime-synthetic")
         await _create_occurrence(session, owner=owner, profile=profile, deadline_at=NOW + timedelta(hours=4))
+        # #621: publish_once()의 ConsentGateService가 NOTIFICATION 미동의 사용자를 걸러내므로,
+        # 이 fixture도 실제 Runtime 권한 경계(reader)를 통해 동의를 저장해야 배포 후 실제
+        # 허용 경로(1/1)를 검증한다.
+        await UserConsentRepository(session).set_status(
+            user_id=owner.id,
+            purpose=ConsentPurpose.NOTIFICATION,
+            status=ConsentStatus.GRANTED,
+            policy_version=current_consent_policy_version(ConsentPurpose.NOTIFICATION),
+            changed_at=NOW,
+        )
     result = await process_notifications_once(now=NOW, session_factory=factory)
     assert result.created_count == result.delivered_count == 1
     assert (await process_notifications_once(now=NOW, session_factory=factory)).delivered_count == 0
