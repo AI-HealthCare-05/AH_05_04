@@ -11,7 +11,7 @@
 **Spec:** `docs/designs/ceohwj/issue-178-rag-evidence-retrieval-design.md`
 
 **Production Decision:** `docs/governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md`
-(`PD-315-20260908`, Review pending)
+(`PD-315-20260908`, Approved 2026-09-08 · PR #361)
 
 ## Global Constraints
 
@@ -1232,7 +1232,6 @@ Catalog, persistence 또는 Evaluation 연결을 구현하지 않는다.
 
 ### Production 후속 완료 주장 차단 조건
 
-- `PD-315-20260908` 책임·교차 리뷰 미완료
 - #166의 승인 Catalog export Receipt 미확정
 - #362의 Production `source_version` 생산·검증·200자 상한과 Source Snapshot 승인 경계 미완료
 - #178의 별도 Knowledge Evidence Index/Corpus Receipt와 소유 경계 미확정

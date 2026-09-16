@@ -7,7 +7,7 @@
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
 | Normative Source | `post-mvp-patient-rule-first-curated-evidence-rag-v1.7.md@1.50` · SHA-256 `e83415326dd08cda61353d7cd8bf4e6d591bb99f51a8a3daa498421d8772535a` |
 | Physical Target | `rag-detailed-db-schema-v1.md@1.47` · SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
-| 후속 결정 | [`PD-315-20260908`](../../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md) · Review pending · [`PD-175-20260910`](../../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md) · Approved (2026-09-10) |
+| 후속 결정 | [`PD-315-20260908`](../../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md) · Approved (2026-09-08) · [`PD-175-20260910`](../../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md) · Approved (2026-09-10) |
 | Last verified | 2026-09-10 |
 
 ## 목적과 적용 범위

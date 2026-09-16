@@ -1,13 +1,16 @@
-# Product Decision Candidate: Production Evidence Retrieval 정규 계약
+# Product Decision: Production Evidence Retrieval 정규 계약
 
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-315-20260908` |
-| 상태 | Review pending · Issue #315 |
+| 상태 | **Approved** — PR #361 최종 HEAD(`d8ad7407`)에서 지정 책임 리뷰어 승인 (2026-09-08) |
+| 승인일 | 2026-09-08 (책임 리뷰 승인 `2026-09-08T14:13:04Z`) |
+| 제안일 | 2026-09-08 |
 | 제안·구현 | 정현우 (`@ceohwj`) — AI/RAG |
-| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Evidence 계약·Safety 경계 |
-| 교차 리뷰 | 송은영 (`@phina-io`) — DB·hash domain / 김지혜 (`@Jye-rookie`) — Source provenance |
-| 추적 Issue | [#315](https://github.com/AI-HealthCare-05/AH_05_04/issues/315) |
+| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Evidence 계약·Safety 경계. 이 Decision의 최종 승인 책임자 |
+| Specialist evidence | 송은영 (`@phina-io`) — DB·hash domain / 김지혜 (`@Jye-rookie`) — Source provenance. 추가 필수 PR 리뷰어가 아니며 PR #361 timeline에 historical evidence로 보존한다. 「승인 provenance」 참조 |
+| 추적 Issue·PR | [#315](https://github.com/AI-HealthCare-05/AH_05_04/issues/315) (CLOSED 2026-09-08) · [PR #361](https://github.com/AI-HealthCare-05/AH_05_04/pull/361) (merge `6dff8887`) |
+| 승인 Evidence | [`docs/validation/rag/issue-315/decision-approval-evidence.json`](../../validation/rag/issue-315/decision-approval-evidence.json) |
 | 상위 결정 | [`PD-125-20260831`](./2026-08-31-rag-p0-contract-freeze.md) |
 
 ## 목적과 권위 경계
@@ -205,9 +208,54 @@ Evidence Gate·Composer 구현, Evaluation 실행 또는 공개 flag 변경을 �
 유지한다. #166 D-05가 소유하는 Candidate Catalog projection hash와 Runtime medication Catalog manifest hash,
 PR #329/#167 v2 Catalog envelope 계산식은 이 Decision이 변경하지 않는다.
 
-## 승인과 후속 구현 조건
+## 승인 provenance
 
-이 문서는 책임 리뷰어와 두 교차 리뷰어의 담당 범위 승인을 받기 전까지 `Review pending`이다. 승인은
-Production Adapter나 DB 연결이 구현됐다는 뜻이 아니다. 후속 구현 PR은 이 Decision의 단계·필드·문법을
-코드, configuration artifact, schema와 계약·통합·Evaluation 테스트에 함께 반영하고, 구현 증빙 없이
-`current/` 계약으로 승격하지 않는다.
+이 Decision의 최종 승인 책임은 저장소 reviewer governance(`CONTRIBUTING.md`, `AGENTS.md`)에 따라 지정
+책임 리뷰어 1명이 소유한다. Specialist·domain 리뷰 의견은 필요한 evidence로 첨부하며 추가 필수 PR
+리뷰어로 지정하지 않는다. 상태 정본은 아래 immutable GitHub evidence이고, 구조화 사본은
+[`docs/validation/rag/issue-315/decision-approval-evidence.json`](../../validation/rag/issue-315/decision-approval-evidence.json)에 있다.
+
+| 항목 | 값 |
+| --- | --- |
+| Decision PR | [#361](https://github.com/AI-HealthCare-05/AH_05_04/pull/361) `docs/315-rag-retrieval-contract-divergence` -> `develop` |
+| 최종 HEAD | `d8ad7407105138873b6c9299303b0f056a223527` |
+| 책임 리뷰 승인 | [review 5142835401](https://github.com/AI-HealthCare-05/AH_05_04/pull/361#pullrequestreview-5142835401) · state `APPROVED` · 권가빈 (`@hazelnutflavoured`) · `2026-09-08T14:13:04Z` |
+| 승인 대상 commit | `d8ad7407105138873b6c9299303b0f056a223527` — PR 최종 HEAD와 동일 |
+| 승인 후 추가 commit | 0건 |
+| 승인 시점 문서 hash | `7de0d0c2722154317f96cde3784a93ca5869ea7b58bc4686d2c45c4bc72991c6` (이 파일의 `d8ad7407` blob SHA-256) |
+| CI (`d8ad7407`) | `lint`, `test`, `frontend` 전부 `success` |
+| Merge | merge commit `6dff888771ae25ed1e9357a11d999f4c2de8168e` · `2026-09-08T14:29:16Z` · `@ceohwj` |
+| 추적 Issue | [#315](https://github.com/AI-HealthCare-05/AH_05_04/issues/315) `CLOSED` `2026-09-08T14:29:18Z` (`completed`) |
+
+PR #361 전체에서 state가 `APPROVED`인 review event는 위 1건뿐이며, 그 `commit_id`가 최종 HEAD와 같다.
+
+### Specialist review history
+
+DB·hash domain과 Source provenance의 specialist 검토는 PR #361 timeline에 historical evidence로 보존한다.
+두 리뷰어는 중간 commit에서 승인 의사를 담은 review를 제출했으나, 그 event는 이후 push로 stale dismiss되어
+현재 GitHub state가 `DISMISSED`이고 최종 HEAD에 대한 재승인 event는 없다. 이 문서는 해당 review를 최종 HEAD
+`APPROVED` event로 재해석하지 않는다.
+
+| Specialist | 제출 시각 | 대상 commit | 현재 GitHub state | dismiss 계기 commit |
+| --- | --- | --- | --- | --- |
+| 송은영 (`@phina-io`) — DB·hash domain | `2026-09-08T11:50:27Z` | `520ade34` | `DISMISSED` | `70c04129` |
+| 송은영 (`@phina-io`) — DB·hash domain | `2026-09-08T12:49:36Z` | `1b907712` | `DISMISSED` | `80654be8` |
+| 김지혜 (`@Jye-rookie`) — Source provenance | `2026-09-08T13:14:48Z` | `80654be8` | `DISMISSED` | `c2db98c4` |
+
+세 dismissal 모두 `dismissal_message`가 없고 dismiss 계기는 작성자의 후속 push다. 별도의 철회 의사 표시나
+반대 의견 제출은 기록되어 있지 않다. 승인 여부의 정본은 위 「승인 provenance」의 책임 리뷰어 event이며,
+specialist history는 그 판단을 대체하지도 보강하지도 않는 참고 기록이다.
+
+## 후속 구현 조건
+
+승인은 Production Adapter나 DB 연결이 구현됐다는 뜻이 아니다. 이 Decision의 `Approved` 상태는 다음 중
+어느 것도 의미하지 않는다.
+
+- Production Evidence Retrieval 구현 완료
+- Runtime 활성화 또는 `PUBLIC_TRACK_F` 해제
+- Proposed·Target 계약의 `docs/contracts/current/` 승격
+- 외부 의료·약학·Source·Privacy·Safety 승인 완료
+- #174 authenticated assembler 또는 #180 runtime orchestration·persistence·E2E 완료
+
+후속 구현 PR은 이 Decision의 단계·필드·문법을 코드, configuration artifact, schema와 계약·통합·Evaluation
+테스트에 함께 반영하고, 구현 증빙 없이 `current/` 계약으로 승격하지 않는다.

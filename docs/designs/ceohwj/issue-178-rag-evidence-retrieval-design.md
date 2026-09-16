@@ -9,7 +9,7 @@
 - 담당 리뷰어: 권가빈 (`@hazelnutflavoured`) — Evidence·Scope·Safety
 - DB·Source 리뷰어: 송은영 (`@phina-io`), 김지혜 (`@Jye-rookie`)
 - 공개 게이트: `PUBLIC_TRACK_F=false`
-- Production 후속 결정: [`PD-315-20260908`](../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md) (`Review pending`)
+- Production 후속 결정: [`PD-315-20260908`](../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md) (`Approved` 2026-09-08, PR #361). 승인은 구현·Current 승격·Runtime 활성화를 의미하지 않는다
 
 ## 정본과 착수 상태
 
@@ -36,7 +36,7 @@ Evidence Index는 version과 물리 경계를 공유하지 않는다.
 - 후속 slice: RAG-06 공식 Catalog·Evidence Index, PostgreSQL `pg_trgm`·pgvector, Retrieval Run persistence,
   EVAL `#160` 연결을 담당한다.
 
-Production 후속 slice는 Issue #315의 `PD-315-20260908` 승인을 선행한다. 이 Decision은 RRF·top-K,
+Production 후속 slice의 선행 조건인 Issue #315의 `PD-315-20260908`은 승인됐다. 이 Decision은 RRF·top-K,
 RFC 8785 JCS, 정규 Source provenance, Retrieval 상태축, canonical Node ID, PostgreSQL FTS,
 `source_version`과 Evaluation bridge 검증 위치를 고정한다. PR #290의 synthetic 동작은 변경하지 않는다.
 
