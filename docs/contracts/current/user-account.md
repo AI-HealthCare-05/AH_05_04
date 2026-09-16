@@ -56,7 +56,7 @@
 
 ## 인증 세션 무효화
 
-이 절은 [`PD-206`](../../governance/decisions/2026-09-02-account-lifecycle-contract.md) 중 현재 구현된 로그아웃·refresh token rotation·비밀번호 재설정 범위를 기록합니다. 회원탈퇴 API는 아직 현재 실행 계약이 아니며 후속 구현 범위입니다.
+이 절은 [`PD-206`](../../governance/decisions/2026-09-02-account-lifecycle-contract.md) 중 현재 구현된 로그아웃·refresh token rotation·비밀번호 재설정·회원탈퇴 요청 접수 범위를 기록합니다. 회원탈퇴의 개인정보·건강정보 삭제·보존 처리는 아직 후속 구현 범위입니다.
 
 - `User.account_status`는 `ACTIVE`, `WITHDRAWAL_REQUESTED`, `WITHDRAWN` 중 하나입니다.
 - `User.token_version`은 access/refresh token 무효화 판정에 사용하는 정수 카운터이며 기본값은 `0`입니다.
@@ -64,6 +64,7 @@
 - 모든 인증된 요청은 `get_request_user()`에서 DB의 사용자 상태를 다시 조회합니다.
 - `account_status != ACTIVE`, `is_active=false`, 또는 토큰의 `token_version != user.token_version`이면 `401 INVALID_TOKEN`을 반환합니다.
 - `POST /api/v1/auth/logout`은 현재 사용자의 `token_version`을 DB에서 원자적으로 `+1`하고, 응답에서 `refresh_token` httponly 쿠키를 만료·삭제합니다.
+- `POST /api/v1/auth/account/withdrawal`은 `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true`에서만 현재 인증 사용자 대상으로 열립니다. 기본값 `false`에서는 `503 SERVICE_UNAVAILABLE`(`reason=ACCOUNT_WITHDRAWAL_REQUEST_DISABLED`)로 fail-closed되고 계정 상태·token·deletion request를 변경하지 않습니다. 활성화된 환경에서도 body에 다른 `user_id`를 받지 않습니다. 요청 body는 현재 비밀번호 `password`와 최종 확인 신호 `confirmed=true`만 허용합니다. 비밀번호가 틀리면 `401 UNAUTHORIZED`, `confirmed=false`이면 `422 VALIDATION_FAILED`(`details[].field=confirmed`, `reason=CONFIRMATION_REQUIRED`)를 반환하고 계정 상태·token·deletion request를 변경하지 않습니다. 성공하면 같은 transaction에서 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at`, `token_version + 1`, `account_deletion_request.status=PENDING`을 저장하고 refresh token 쿠키를 삭제합니다. 이 성공 응답은 계정 이용 종료와 탈퇴 요청 접수만 의미하며 물리 삭제 완료를 뜻하지 않습니다.
 - 로그아웃 후 기존 access token으로 보호 API에 접근하거나 기존 refresh token으로 토큰 갱신을 시도하면 `401 INVALID_TOKEN`을 반환합니다.
 - 현재 구현은 기기·세션 단위 로그아웃을 구분하지 않습니다. 한 기기에서 로그아웃하면 같은 사용자의 기존 access/refresh token이 함께 무효화됩니다.
 

@@ -20,6 +20,18 @@ type LoginFieldErrors = Partial<Record<keyof LoginForm, string>>
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const NETWORK_ERROR_MESSAGE = '네트워크 연결을 확인하고 다시 시도해 주세요.'
 
+function getPushReturnTarget(state: unknown): string | null {
+  if (typeof state !== 'object' || state === null) return null
+  const returnTo = (state as { returnTo?: unknown }).returnTo
+  if (typeof returnTo !== 'string') return null
+
+  const target = new URL(returnTo, window.location.origin)
+  if (target.origin !== window.location.origin || target.pathname !== '/notifications') return null
+  const notificationId = target.searchParams.get('push_notification_id')
+  if (!notificationId || target.searchParams.size !== 1) return null
+  return `${target.pathname}?push_notification_id=${encodeURIComponent(notificationId)}`
+}
+
 function validateLogin(form: LoginForm): LoginFieldErrors {
   const errors: LoginFieldErrors = {}
   const email = form.email.trim()
@@ -43,6 +55,7 @@ function LoginPage() {
 
   const cameFromSignup =
     (location.state as { fromSignup?: boolean } | null)?.fromSignup === true
+  const pushReturnTarget = getPushReturnTarget(location.state)
 
   const [form, setForm] = useState<LoginForm>({ email: '', password: '' })
   const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({})
@@ -97,6 +110,11 @@ function LoginPage() {
       })
       clearAuthenticatedSession()
       localStorage.setItem('access_token', response.access_token)
+
+      if (pushReturnTarget) {
+        navigate(pushReturnTarget, { replace: true, state: null })
+        return
+      }
 
       let backlog: Awaited<ReturnType<typeof getUnconfirmedCheckins>> | null = null
       try {

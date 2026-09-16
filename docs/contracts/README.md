@@ -53,6 +53,8 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## Proposed 계약
 
+- [Guide·Chat 피드백 v1 (#633)](./proposed/guide-chat-feedback-v1.md): 완료 결과별 rating·선택 의견 저장 API, SELF 소유권·재제출·합성 Gold 연결 계약. Proposed / Local 구현 반영·최종 승인 대기, Frontend·Backend 확인과 사용자 운영안 채택 반영; 실사용 처리 승인·최종 책임 리뷰 별도.
+
 - [Track B 생활 시간 입력 v1 (#422 / #556)](./proposed/track-b-lifestyle-times-v1.md): 식사·반복 행동·복용 곤란 시간의 SELF별 요일 저장·조회 구현 후보. #556 책임 리뷰 전 Proposed; 추천·약별 조건 판정은 별도.
 
 - [Knowledge Evidence Index v1 (#178 선행 기반)](./proposed/post-mvp-1/knowledge-evidence-index-v1.md): 승인된 RAG Runtime 목표의 Retrieval Adapter가 소비할 Source Snapshot 결속 Chunk·버전별 embedding·재현 가능한 receipt 저장 계약. 구현 브랜치 검증 중이며 #178 Retrieval/RRF/Rerank/Evidence Gate·공개 활성화는 포함하지 않음.
@@ -73,7 +75,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Staging Release Validation Ledger 계약](./proposed/operations/release-validation-ledger.md): staging control DB, 상태 전이, crash recovery와 migration 상호 배제
 - [개발환경·비밀정보 주입 경로 점검 운영 계약](./proposed/operations/development-env-secret-injection-check.md): Redis, PostgreSQL, Provider secret 주입 경로와 운영 배포 전 차단 조건
 - [Track A migration·rollback 계획 제안 v1](./proposed/track-a-migration-rollback-v1.md): 문서 상태 Proposed · 구현 상태 Partially implemented — 공통 Job 기반과 OCR–AI Job mapping을 구현했으며 Guide·Chat 연결, Prescription Version, 전체 비동기 전환·backfill·read cutover는 미구현
-- [계정 생명주기 후속 계약 v1 (`PD-206`)](./proposed/account-lifecycle-v1.md): 문서 상태 Proposed · 구현 상태 Partially implemented — 회원탈퇴의 transaction 경계와 후속 구현 기준. 로그아웃·`token_version` 재검증·refresh token rotation·비밀번호 재설정은 현재 구현 계약([`user-account.md`](./current/user-account.md))에 반영됨. `account_deletion_request` 저장 기반(5절)은 작업 브랜치 구현·로컬 검증 완료; 탈퇴 요청 접수 API(4절)와 삭제·보존 처리는 미구현
+- [계정 생명주기 후속 계약 v1 (`PD-206`)](./proposed/account-lifecycle-v1.md): 문서 상태 Proposed · 구현 상태 Partially implemented — 회원탈퇴의 transaction 경계와 후속 구현 기준. 로그아웃·`token_version` 재검증·refresh token rotation·비밀번호 재설정·탈퇴 요청 접수 API는 현재 구현 계약([`user-account.md`](./current/user-account.md))에 반영됨. `account_deletion_request` 저장 기반(5절)과 탈퇴 요청 접수 API(4절)는 구현됐지만 ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false 기본값으로 공개 차단; 삭제·보존 처리는 미구현
 - [Guide·Chat Session·Message 상태 구현 골격 v1](./proposed/guide-chat-session-message-status-ui-v1.md): Session/Message/Job 결과 상태축, SAFETY-STALE 경계, PROFILE 기반 소유권의 Frontend 구현 골격
 
 Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 구현은 전체 계약 완료나 Current 승격을 의미하지 않으며, 관련 schema·service·CLI·테스트와 남은 전환 단계가 완료되고 상태가 갱신되기 전에는 실행 가능한 전체 계약으로 간주하지 않습니다.
@@ -214,3 +216,10 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [Follow-up API v1 — Current, PR #631 반영](current/track-c-followup-api-194.md): 완료 계획의 평가 GET/POST, 현재값·revision 정정·audit·멱등성·동시성. 기존 생성/Plan 응답은 유지한다. 최종 책임 리뷰 승인·병합은 대기 중이며 외부 공개는 별도다.
 - [PD-194-2](../governance/decisions/2026-09-16-track-c-followup-194.md): 완료 계획만 평가, 이후 Check-in 정정에도 과거 평가 허용. 권가빈 구현·김지혜 단일 책임 리뷰.
 - #139 Frontend·Constraint/RAG Handler·외부 공개 및 #194 전체 완료는 별도 범위다.
+
+## Track C 일정 변경·외출 상황 선택 (#194 후속)
+
+- [상황 선택 — Current, PR #639 반영](current/track-c-travel-situation-194.md): 생활 일정 변경과 약 미지참에 따른 단일 제안, Plan 재검증·멱등성·명시 완료. 권가빈 구현·김지혜 단일 책임 리뷰, Frontend #139 영향 포함.
+- [계획별 안내·화면 연결 자료 — Current, PR #639 반영](current/track-c-plan-resources-194.md): 원래 약·복약 기록과 저장 당시 Copy의 SELF 조회, 잊음·복용법·필요성·걱정 루트의 연결 범위와 미완료 의존성.
+
+PR #639의 두 계약은 구현 PR 내 이동이며 #629 병합·최종 책임 리뷰와 외부 공개 승인은 별도다.

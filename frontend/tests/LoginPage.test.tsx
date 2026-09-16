@@ -83,6 +83,23 @@ describe('LoginPage', () => {
     )
   }
 
+  function renderPushRecoveryPage(returnTo: string) {
+    return render(
+      <MemoryRouter initialEntries={[{ pathname: '/login', state: { returnTo } }]}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/notifications" element={<LocationProbe />} />
+          <Route path="/" element={<HomeStateProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  function LocationProbe() {
+    const location = useLocation()
+    return <div>복구 화면 {location.pathname}{location.search}</div>
+  }
+
   it('#395 가입 직후 로그인 성공 시 Home onboarding 상태를 전달한다', async () => {
     renderPage(true)
     fillValidForm()
@@ -101,6 +118,25 @@ describe('LoginPage', () => {
 
     expect(await screen.findByText('홈 화면')).toBeTruthy()
     expect(screen.getByText('false')).toBeTruthy()
+  })
+
+  it('Push 클릭 뒤 로그인하면 검증된 알림 target을 한 번 복구한다', async () => {
+    renderPushRecoveryPage('/notifications?push_notification_id=synthetic-notification')
+    fillValidForm()
+
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }))
+
+    expect(await screen.findByText('복구 화면 /notifications?push_notification_id=synthetic-notification')).toBeTruthy()
+    expect(getUnconfirmedCheckins).not.toHaveBeenCalled()
+  })
+
+  it('외부 origin 또는 허용되지 않은 로그인 target은 폐기한다', async () => {
+    renderPushRecoveryPage('https://example.test/schedule')
+    fillValidForm()
+
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }))
+
+    expect(await screen.findByText('홈 화면')).toBeTruthy()
   })
 
 

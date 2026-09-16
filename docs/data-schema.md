@@ -27,7 +27,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 영역 | 테이블 | 현재 사용 상태 |
 | --- | --- | --- |
 | 사용자 | `user` | 인증·사용자 정보에 사용 |
-| 회원탈퇴 | `account_deletion_request` | account-lifecycle-v1(#206) 5절: 회원탈퇴 요청 이후 삭제·보존 처리 감사 기준. migration/model만 구현, 탈퇴 요청 접수 API와 삭제·보존 처리는 후속 PR 범위 |
+| 회원탈퇴 | `account_deletion_request` | account-lifecycle-v1(#206) 4~5절: 회원탈퇴 요청 접수 transaction과 이후 삭제·보존 처리 감사 기준. 탈퇴 요청 접수 API는 구현, 삭제·보존 처리는 후속 PR 범위 |
 | 사용자 동의 | `user_consent` | PD-207 목적별 최신 동의 상태 저장 기반. 사용자 동의 상태 API는 #510에서 구현. OCR 목적은 #505에서 Backend 동의 API·접수 Gate와 Worker 재검사에 연결; GUIDE/CHAT 목적은 동기 Provider 호출 전 Gate에 연결; NOTIFICATION 실행 Gate는 후속 범위 |
 | 프로필 | `profile` | 본인 단일 `SELF` profile과 사용자 리소스 소유권 기준에 사용 |
 | 의료문서 | `medical_document` | 처방전 metadata와 로컬 파일 object key 저장 |
@@ -97,7 +97,7 @@ access token과 refresh token에는 발급 시점의 `token_version`을 포함�
 
 재설정 완료 시 같은 transaction에서 비밀번호 변경, 해당 사용자의 미사용·미만료 `password_reset_token` 전체 소비, `token_version + 1`을 함께 처리합니다. 만료된 행을 지우는 별도 정리 배치는 두지 않고(`idempotency_record`와 동일하게 lazy cleanup), 조회 시 `expires_at` 조건으로만 거릅니다.
 
-`account_deletion_request` 테이블은 회원탈퇴 요청 이후 개인정보·건강정보 삭제·보존 처리의 감사 기준입니다(`docs/contracts/proposed/account-lifecycle-v1.md` 5절). 로그인 가능 여부는 `user.account_status`가 판단하고, 이 테이블은 삭제·보존 처리의 대기·진행·완료·실패 상태와 재처리 근거만 관리합니다. 이번 PR은 이 테이블의 migration/model만 추가하며, 탈퇴 요청 접수 API와 삭제·보존 처리 로직은 후속 PR 범위입니다.
+`account_deletion_request` 테이블은 회원탈퇴 요청 이후 개인정보·건강정보 삭제·보존 처리의 감사 기준입니다(`docs/contracts/proposed/account-lifecycle-v1.md` 5절). 로그인 가능 여부는 `user.account_status`가 판단하고, 이 테이블은 삭제·보존 처리의 대기·진행·완료·실패 상태와 재처리 근거만 관리합니다. 탈퇴 요청 접수 API는 `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true`에서만 성공 transaction으로 `PENDING` row를 생성합니다. 기본값은 `false`이며, 실제 삭제·보존 처리 로직은 후속 PR 범위입니다.
 
 | 컬럼 | 타입 | Nullable | 설명 |
 | --- | --- | ---: | --- |
@@ -807,6 +807,13 @@ Source·Knowledge 업무 필드는 수정할 수 없다. Builder는 Knowledge do
 SELECT·INSERT만, Runtime은 같은 read set에 SELECT만 가진다. Builder 환경변수가 비어 있으면 이 선택형
 권한 경계는 활성화되지 않으며 Track F 공개 상태에도 영향을 주지 않는다.
 
+#642는 Source Snapshot/member 저장 경로의 writer에게도 같은 원칙을 적용한다. `rag_source`,
+`rag_source_endpoint`, `rag_source_ingestion_artifact`의 `knowledge_index_lock_marker`에만
+writer의 열 단위 `UPDATE` 권한을 추가해 member 저장 시 필요한 `SELECT ... FOR UPDATE` 잠금을
+허용하고, 업무 데이터 열은 계속 차단한다(`infra/python/source_role_policy.py`). ACL을 적용하기
+전에 세 컬럼이 실제로 `integer` + `NOT NULL` + 검증된 `CHECK (... = 0)`인지 먼저 확인하고,
+조건을 만족하지 않으면 권한 변경 자체를 중단한다.
+
 ## #423 Schedule Audit — develop 반영 완료
 
 Migration `423a1b2c3d4e`는 `medication_schedule_audit`와 occurrence의 nullable UTC `cancelled_at`을 추가한다. 감사 컬럼·revision/actor/unique·snapshot 의미는 [일정 정합화 v1 §3](contracts/targets/post-mvp-1/track-b-schedule-reconciliation-v1.md)을 따른다. Schedule·actor FK는 RESTRICT이며 기존 #398 역할 provisioning은 Runtime에 SELECT/INSERT만 부여해 감사 UPDATE/DELETE/TRUNCATE를 차단한다. Migration 이후 역할 provisioning을 재실행한다. DB trigger와 ORM event는 사용하지 않는다. 기존 time row는 보존하고 retire는 schedule 상태·revision으로 판정한다. 종료는 revision과 SCHEDULER audit을 같이 추가하며 기존 occurrence·Check-in·time FK를 보존한다.
@@ -865,3 +872,20 @@ Check-in → Safety → Barrier → Plan → Follow-up 잠금 순서와 Plan 잠
 Plan·Check-in은 변경하지 않는다.
 최종 책임 리뷰 승인·병합은 대기 중이며 외부 공개 승인은 별도다.
 상세: [Follow-up 계약](contracts/current/track-c-followup-api-194.md), [PD-194-2](governance/decisions/2026-09-16-track-c-followup-194.md).
+
+### Track C 상황별 연결 후속 — 구현·리뷰 대상
+
+선택적 travel_situation은 선택한 지원의 재검증·멱등 fingerprint에 사용하며 새 column을 추가하지 않는다.
+계획은 기존 support_code·rule/copy/config snapshot으로 보존한다. 자료 GET은 기존 부모 관계에서
+원래 occurrence·약 항목을 읽는다. [상황 선택](contracts/current/track-c-travel-situation-194.md),
+[자료 조회](contracts/current/track-c-plan-resources-194.md). 새 migration·DB 함수·trigger는 없다.
+
+## #633 피드백 저장 — Local 구현, Proposed
+
+[계약](contracts/proposed/guide-chat-feedback-v1.md), migration `633a1b2c3d4e`에서
+`guide_feedback`, `chat_message_feedback`을 추가한다. 각 row는 UUIDChar id, 대상별 UNIQUE FK
+(guide_id / chat_message_id, ON DELETE CASCADE), rating VARCHAR(8) CHECK, nullable comment VARCHAR(1000),
+created_at·updated_at TIMESTAMPTZ를 가진다. 소유권은 부모 SELF chain으로 확인하고 별도 user_id를 복제하지 않는다.
+최초 생성 후 30일 만료이며 수정은 created_at을 보존한다. 만료 후 POST는 이전 row를 제거하고 새 row를 생성한다.
+created_at index는 만료 삭제, rating·updated_at·id index는 부정 피드백 검토를 지원한다.
+정책은 [PD-633](governance/decisions/2026-09-16-guide-chat-feedback-633.md)을 따르며 Current 승격·실사용 승인 전이다.

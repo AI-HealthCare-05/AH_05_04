@@ -132,3 +132,60 @@
 
 - 원문 query text, chunk 텍스트 전문, embedding raw vector, OpenAI API 에러 전문은 테이블에 저장하지 않는다.
 - 본 PR 1 구현은 Citation 발행 권한(`RagCitationReleaseStatus`)을 부여하지 않으며, `PUBLIC_TRACK_F=false` 배포 게이트를 유지한다.
+
+---
+
+## 6. Selection Manifest 및 Search Receipt 정규 직렬화 사양 (PD-178-20260916)
+
+### 6.1 RFC 8785 JCS 표준 직렬화
+- 모든 매니페스트 및 영수증 해시 preimage 직렬화는 `ai_worker.tasks.evaluation.canonical.canonical_json_bytes`를 통해 RFC 8785 JSON Canonicalization Scheme (JCS, UTF-16 code unit 정렬)을 준수한다.
+- Non-BMP 키를 포함한 모든 객체 키는 `utf-16-be` 바이트 정렬 순서로 직렬화된다.
+- 기영속된 Run, Signal, Hit 매니페스트는 ASCII 키만을 사용하므로 기존 산출 해시와 100% 호환된다.
+
+### 6.2 Retrieval Selection Manifest v2 프로젝션
+- 프로젝션 버전 식별자: `retrieval-selection-manifest-v2`
+- 반환 형식: `JsonValue`
+- `final_rank`는 `ProductionSearchHit.fusion_rank`로부터 엄격하게 투영 및 오름차순 정렬된다.
+- 불변식: `fusion_rank <= 0`이거나 selection 내 중복 `fusion_rank`가 존재하는 경우 `ValueError`를 발생시켜 즉시 거부한다.
+- 17개 프로젝션 필드:
+  - `canonical_checksum` (`str`)
+  - `canonicalization_spec_version` (`str`)
+  - `chunk_index` (`int`)
+  - `content_sha256` (`str`, from `h.provenance.content_hash`)
+  - `external_document_id` (`str`)
+  - `final_rank` (`int`, from `h.fusion_rank`)
+  - `index_code` (`str`)
+  - `index_configuration_hash` (`str`)
+  - `index_version` (`str`)
+  - `knowledge_chunk_id` (`str`)
+  - `knowledge_index_id` (`str`)
+  - `locator` (`str`)
+  - `normalization_version` (`str`)
+  - `source_code` (`str`)
+  - `source_snapshot_id` (`str`)
+  - `source_snapshot_member_id` (`str`)
+  - `source_version` (`str`)
+
+### 6.3 ProductionSearchReceipt 2.0 및 Identity Binding
+- 프로젝션 버전 식별자: `production-search-receipt-v2`
+- 발급 버전: `version="2.0"` (`PRODUCTION_SEARCH_RECEIPT_VERSION`)
+- 인자 인터페이스: `filter_snapshot_ref`, `evidence_index_ref`, `retrieval_config_ref`, `adapter_artifact_ref` 4개 참조를 모두 `ImmutableArtifactRef`로만 전달받으며, 레거시 hash 문자열 인자와의 혼용을 엄격히 금지한다.
+- 결속 identity 필드:
+  - `adapter_artifact_ref` (`code`, `version`, `content_sha256`)
+  - `diagnostic_code`
+  - `evidence_index_ref` (`code`, `version`, `content_sha256`)
+  - `filter_snapshot_ref` (`code`, `version`, `content_sha256`)
+  - `hit_manifest_sha256`
+  - `projection_version` (`production-search-receipt-v2`)
+  - `query_embedding_sha256`
+  - `query_fingerprint` (`algorithm`, `digest`, `key_version`)
+  - `retrieval_config_ref` (`code`, `version`, `content_sha256`)
+  - `selection_manifest_sha256`
+  - `signal_manifest_sha256`
+  - `status`, `variant`
+- 각 identity 필드 또는 서브필드 변조 시 영수증 해시가 변경되며, 원본 `artifact_ref`를 유지한 채 내부 속성만 변조한 경우 다운스트림 Handoff 경계에서 `RETRIEVAL_RECEIPT_MISMATCH`로 fail-closed 거부된다.
+- legacy `1.0` 영수증은 다운스트림 Handoff 경계에서 fail-closed 거부된다.
+
+### 6.4 공용 JCS 직렬화기 공유 및 해시 도메인 독립성
+- `guide-evidence-handoff-v1`, `retrieval-selection-manifest-v2`, `production-search-receipt-v2` 세 프로젝션 및 해시 도메인은 표준 RFC 8785 직렬화 모듈(`ai_worker.tasks.evaluation.canonical`)을 공통 직렬화기로 공유하지만, 각 프로젝션 스키마와 해시 도메인은 상호 완전히 독립적이다.
+- 특정 도메인의 규칙이나 필드가 타 도메인의 해시 계산에 영향을 주지 않는다.

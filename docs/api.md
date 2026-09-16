@@ -66,6 +66,7 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | 인증 | `POST` | `/api/v1/auth/login` | `200` |
 | 인증 | `GET` | `/api/v1/auth/token/refresh` | `200` |
 | 인증 | `POST` | `/api/v1/auth/logout` | `200` |
+| 인증 | `POST` | `/api/v1/auth/account/withdrawal` | `200` |
 | 사용자 | `GET` | `/api/v1/users/me` | `200` |
 | 사용자 | `PATCH` | `/api/v1/users/me` | `200` |
 | 사용자 동의 | `GET` | `/api/v1/users/me/consents` | `200` |
@@ -221,7 +222,7 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 
 OCR 목적은 전용 경로 `/api/v1/users/me/consents/OCR`에서 `GET` / `POST` / `DELETE`도 제공합니다. 전용 `POST`는 현재 `OCR_CONSENT_POLICY_VERSION`과 요청 `policy_version`이 일치할 때만 `GRANTED`를 저장하고, 불일치하면 `409 CONSENT_POLICY_MISMATCH`를 반환합니다. 목적별 공통 `PUT /api/v1/users/me/consents/OCR`의 version 불일치는 기존 목적별 API 계약대로 `422 VALIDATION_FAILED`, `reason=POLICY_VERSION_MISMATCH`입니다. `OCR_CONSENT_POLICY_VERSION`이 빈 문자열이면 신규 OCR 동의는 전용 `POST`와 공통 `PUT` 모두 `503 CONSENT_POLICY_UNAVAILABLE`로 거부합니다. 다만 기존 OCR 동의 철회는 허용하며, 전용 `DELETE`는 기존 저장 `policy_version`을 보존해 `WITHDRAWN`으로 전환합니다. 목적별 공통 `PUT` 철회는 기존 OCR row가 있고 요청 `policy_version`이 기존 저장 `policy_version`과 일치할 때만 허용합니다.
 
-이 API는 PD-207의 목적별 최신 동의 상태 저장·조회·변경 경로입니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide 동기 생성 Gate는 `POST /api/v1/guides`에서 처방 소유권 확인 후 Provider 호출·Guide row 생성 전에 `purpose=GUIDE` 최신 동의 row로 검사합니다. Chat 동기 메시지 Gate는 `POST /api/v1/chat-sessions/{session_id}/messages`에서 세션 소유권·처방 version currentness 확인 후 메시지 저장·Provider 호출 전에 `purpose=CHAT` 최신 동의 row로 검사합니다. Notification 실행 Gate와 OCR 최종 정책 문구·version 승인은 후속 구현 범위입니다.
+이 API는 PD-207의 목적별 최신 동의 상태 저장·조회·변경 경로입니다. OCR 목적의 접수 Gate, Worker 실행 직전 재검사, `CONSENT_REQUIRED`, OCR `CONSENT_WITHDRAWN` 차단 저장은 #505에서 연결됐습니다. Guide 동기 생성 Gate는 `POST /api/v1/guides`에서 처방 소유권 확인 후 Provider 호출·Guide row 생성 전에 `purpose=GUIDE` 최신 동의 row로 검사합니다. Chat 동기 메시지 Gate는 `POST /api/v1/chat-sessions/{session_id}/messages`에서 세션 소유권·처방 version currentness 확인 후 메시지 저장·Provider 호출 전에 `purpose=CHAT` 최신 동의 row로 검사합니다. Notification 실행 Gate는 #621에서 앱 내부 게시 직전과 Web Push 전송 직전에 `purpose=NOTIFICATION` 최신 동의 row로 검사합니다. OCR 최종 정책 문구·version 승인은 후속 구현 범위입니다.
 
 ### 토큰 갱신·로그아웃
 
@@ -229,6 +230,7 @@ OCR 목적은 전용 경로 `/api/v1/users/me/consents/OCR`에서 `GET` / `POST`
 | --- | --- | ---: | --- |
 | `GET` | `/api/v1/auth/token/refresh` | `200 OK` | httponly `refresh_token` 쿠키를 검증하고 새 access token과 **새 refresh token(rotation)**을 발급해 쿠키를 교체합니다. |
 | `POST` | `/api/v1/auth/logout` | `200 OK` | 현재 사용자의 세션 무효화 카운터를 증가시키고 `refresh_token` 쿠키를 삭제합니다. |
+| `POST` | `/api/v1/auth/account/withdrawal` | `200 OK` | `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true`에서만 현재 비밀번호 재인증과 `confirmed=true` 최종 확인 후 계정 이용 종료와 탈퇴 요청을 접수합니다. |
 
 - access token과 refresh token에는 발급 시점의 `token_version`이 포함됩니다.
 - 인증된 요청과 토큰 갱신은 DB의 현재 사용자 상태를 다시 확인합니다.
@@ -236,6 +238,24 @@ OCR 목적은 전용 경로 `/api/v1/users/me/consents/OCR`에서 `GET` / `POST`
 - 로그아웃 성공 후 기존 access token으로 보호 API를 호출하거나 기존 refresh token으로 재발급을 시도하면 `401 INVALID_TOKEN`을 반환합니다.
 - 현재 구현은 기기·세션 단위 로그아웃을 구분하지 않습니다. 한 기기에서 로그아웃하면 같은 사용자의 기존 access/refresh token이 함께 무효화됩니다.
 - refresh token은 매 갱신마다 새 값으로 교체되며(rotation), 절대 만료(로그인 시점 기준)는 rotation으로 늘어나지 않습니다. 이미 교체돼 무효해진 refresh token이 다시 제출되면 탈취 의심 신호로 간주해 그 사용자의 모든 세션을 강제로 무효화합니다.
+
+### 회원탈퇴 요청 접수
+
+`POST /api/v1/auth/account/withdrawal`은 인증된 현재 사용자 본인만 대상으로 합니다. `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false` 기본 상태에서는 `503 SERVICE_UNAVAILABLE`, `details[].field=account_withdrawal`, `reason=ACCOUNT_WITHDRAWAL_REQUEST_DISABLED`로 fail-closed되며, 계정 상태와 `account_deletion_request`를 변경하지 않습니다. 요청 body에는 `password`와 `confirmed`만 허용하며, 다른 `user_id`를 지정할 수 없습니다.
+
+```json
+{
+  "password": "Password123!",
+  "confirmed": true
+}
+```
+
+- `password`는 현재 비밀번호로 재인증합니다. 실패하면 `401 UNAUTHORIZED`를 반환하고 계정 상태, token, `account_deletion_request`를 변경하지 않습니다.
+- `confirmed`는 반드시 `true`여야 합니다. `false`이면 `422 VALIDATION_FAILED`, `details[].field=confirmed`, `reason=CONFIRMATION_REQUIRED`를 반환하고 저장하지 않습니다.
+- 성공하면 같은 transaction에서 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at`, `token_version + 1`, `account_deletion_request.status=PENDING`이 반영됩니다.
+- 응답은 `{"detail":"계정 이용 종료와 탈퇴 요청 접수가 완료되었습니다."}`이며, `refresh_token` 쿠키를 삭제합니다. 이 응답은 물리 삭제 완료가 아니라 계정 이용 종료와 삭제 요청 접수 완료를 뜻합니다.
+- 재인증 rate limit/lockout은 현재 로그인과 동일하게 별도 제한이 없으며, 정확한 제한 정책은 Backend/Security 후속 이슈에서 다룹니다.
+- 개인정보·건강정보 삭제·보존 처리, `IN_PROGRESS`/`COMPLETED` 전이, `WITHDRAWN` 기록, 사용자-facing 완료 고지는 PM/Privacy 승인 후속 범위입니다.
 
 ### 회원가입 이메일 인증
 
@@ -830,3 +850,28 @@ COMPLETED 계획에만 최초 제출(기대 revision 0)·정정(현재 평가 re
 상태를 정렬한다. 최종 승인·병합 대기이며 병합 전 develop의 동작이나 Frontend 인수·외부 공개 완료를 뜻하지 않는다.
 `ACTION_PLAN_STATE_CONFLICT`는 작업의 Plan 상태 전제조건 불충족을 뜻하는 공용 code다.
 Plan PATCH는 ACTIVE가 아니면, Follow-up POST는 COMPLETED가 아니면 반환하므로 호출한 endpoint별로 복구한다.
+
+### Track C 일정 변경·외출 상황 선택 (#194 구현·리뷰 대상)
+
+Support GET query와 Plan 생성 body의 선택적 `travel_situation`은 SCHEDULE_CHANGED 또는
+MEDICATION_NOT_WITH_ME다. 일정 변경·외출에만 허용하고 각각 일정 확인·약 챙기기 계획을 제안한다.
+생략은 기존 단일 제안을 유지한다. 입력 조건·422·Plan 재검증·멱등성은
+[Current 계약](contracts/current/track-c-travel-situation-194.md)을 따른다. 최종 승인·병합 전이다.
+
+`GET /api/v1/support-action-plans/{id}/resources`는 SELF 소유 계획의 원래 사유·복약 기록 ID/날짜·약 항목 ID와
+저장 당시 정적 안내를 반환한다. 과거 문구를 활성 문구로 대체하지 않는다.
+[계획별 자료 계약](contracts/current/track-c-plan-resources-194.md)은 PR #639에서 Current로 정렬하며, 최종 리뷰·병합 대기다.
+약별 Citation 또는 임상 Safety 정책의 구현 완료가 아니다.
+
+## #633 Guide·Chat 피드백 — Local 구현, 책임 리뷰 대기
+
+[계약](contracts/proposed/guide-chat-feedback-v1.md)과 [PD-633](governance/decisions/2026-09-16-guide-chat-feedback-633.md)을 따른다.
+`POST /api/v1/guides/{guide_id}/feedback`,
+`POST /api/v1/chat-sessions/{session_id}/messages/{message_id}/feedback`은
+`rating: POSITIVE | NEGATIVE`, 선택 `comment`를 받아 신규 201·재제출 200을 반환한다.
+완료 Guide·ASSISTANT/COMPLETED Chat만 허용하며 부모 SELF 소유권을 검증한다.
+같은 경로의 DELETE는 본인 target의 feedback을 제거하고 204를 반환한다. GET은 추가하지 않는다.
+응답 data는 id·rating·created_at·updated_at이며 comment·의료 원문은 반환하지 않는다.
+미완료/USER target은 409 FEEDBACK_TARGET_NOT_READY, 타인·없는 target은 404 NOT_FOUND다.
+NUL·잘못된 Unicode·길이 초과·잘못된 rating은 공통 422다. 모든 응답에 no-store를 적용한다.
+ENV=local 외에는 POST/DELETE 모두 404이며 실제 사용자 수집·Production 공개 승인은 별도다.

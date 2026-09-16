@@ -13,11 +13,14 @@ from app.core.db.databases import Base
 from app.core.errors import ApiError
 from app.dtos.notifications import CreateReminderRequest
 from app.models.notifications import NotificationRecord, NotificationStatus
+from app.models.user_consents import ConsentPurpose, ConsentStatus
 from app.repositories.idempotency_repository import IdempotencyRepository
 from app.repositories.medication_checkin_repository import MedicationCheckinRepository
 from app.repositories.notification_repository import NotificationRepository
+from app.repositories.user_consent_repository import UserConsentRepository
 from app.services.idempotency import SyncMutationIdempotencyService, get_default_snapshot_cipher
 from app.services.notifications import NotificationScheduler, NotificationService
+from app.services.user_consent_policy import current_consent_policy_version
 from app.tests.db_extensions import EXTENSION_SCHEMA, ensure_trigram_extension, ensure_vector_extension
 from app.tests.notifications.test_notifications import NOW
 from app.tests.repositories.test_medication_checkin_repository_integration import _create_occurrence
@@ -47,6 +50,13 @@ async def race_database() -> AsyncIterator[tuple]:
             owner, profile = await _create_user_with_self_profile(session, label="race-owner")
             occurrence = await _create_occurrence(
                 session, owner=owner, profile=profile, deadline_at=NOW + timedelta(hours=4)
+            )
+            await UserConsentRepository(session).set_status(
+                user_id=owner.id,
+                purpose=ConsentPurpose.NOTIFICATION,
+                status=ConsentStatus.GRANTED,
+                policy_version=current_consent_policy_version(ConsentPurpose.NOTIFICATION),
+                changed_at=NOW,
             )
             occurrence_id, user_id = occurrence.id, owner.id
         yield factory, occurrence_id, user_id
@@ -257,3 +267,63 @@ async def test_repeated_command_generates_before_due_and_publishes_only_when_due
     assert (
         await process_notifications_once(now=NOW + timedelta(seconds=60), session_factory=factory)
     ).delivered_count == 0
+
+
+async def test_command_does_not_publish_without_notification_consent_row(race_database):
+    from app.commands.process_notifications import process_notifications_once
+
+    factory, _, user_id = race_database
+    async with factory.begin() as session:
+        row = await UserConsentRepository(session).get_current(user_id=user_id, purpose=ConsentPurpose.NOTIFICATION)
+        assert row is not None
+        await session.delete(row)
+
+    result = await process_notifications_once(now=NOW, session_factory=factory)
+
+    assert result.created_count == 1
+    assert result.delivered_count == 0
+    async with factory() as session:
+        record = await session.scalar(select(NotificationRecord))
+        assert record is not None
+        assert record.status == NotificationStatus.PENDING
+        assert record.delivered_at is None
+
+
+async def test_command_does_not_publish_without_notification_consent(race_database):
+    from app.commands.process_notifications import process_notifications_once
+
+    factory, _, user_id = race_database
+    async with factory.begin() as session:
+        row = await UserConsentRepository(session).get_current(user_id=user_id, purpose=ConsentPurpose.NOTIFICATION)
+        assert row is not None
+        row.status = ConsentStatus.WITHDRAWN
+        row.withdrawn_at = NOW
+        row.granted_at = None
+
+    result = await process_notifications_once(now=NOW, session_factory=factory)
+
+    assert result.created_count == 1
+    assert result.delivered_count == 0
+    async with factory() as session:
+        record = await session.scalar(select(NotificationRecord))
+        assert record is not None
+        assert record.status == NotificationStatus.PENDING
+        assert record.delivered_at is None
+
+
+async def test_command_does_not_publish_when_notification_policy_unavailable(race_database, monkeypatch):
+    from app.commands.process_notifications import process_notifications_once
+    from app.services import user_consent_policy
+
+    monkeypatch.setitem(user_consent_policy.STATIC_CONSENT_POLICY_VERSIONS, ConsentPurpose.NOTIFICATION, "")
+    factory, _, _ = race_database
+
+    result = await process_notifications_once(now=NOW, session_factory=factory)
+
+    assert result.created_count == 1
+    assert result.delivered_count == 0
+    async with factory() as session:
+        record = await session.scalar(select(NotificationRecord))
+        assert record is not None
+        assert record.status == NotificationStatus.PENDING
+        assert record.delivered_at is None

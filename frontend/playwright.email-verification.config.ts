@@ -19,6 +19,7 @@ export default defineConfig({
     env: {
       VITE_API_BASE_URL: 'http://127.0.0.1:4174',
       VITE_EMAIL_VERIFICATION_ENABLED: 'true',
+      VITE_SIGNUP_TERMS_APPROVED: 'true',
     },
   },
 })

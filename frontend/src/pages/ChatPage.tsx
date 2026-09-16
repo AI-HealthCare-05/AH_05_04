@@ -19,6 +19,7 @@ import {
 import { AssistantMessageContent } from './AssistantMessageContent'
 import '../design-system/prototype.css'
 import './ChatPage.css'
+import { ResponseFeedback } from '../components/ResponseFeedback'
 
 export type ChatPageServices = {
   createChatSession: typeof createChatSession
@@ -649,7 +650,7 @@ function ChatPage({
           </header>
 
           <div className="chat-page__conversation">
-            <div className="chat-messages" aria-live="polite">
+            <div className="app-scroll chat-messages" aria-live="polite">
               {currentIsLoading && (
                 <div className="chat-page__state" role="status">
                   대화를 불러오고 있어요.
@@ -683,8 +684,7 @@ function ChatPage({
                     <button
                       type="button"
                       className="chat-page__schedule-cta"
-                      aria-label="복약 일정 설정하기 (준비 중)"
-                      disabled
+                      onClick={() => navigate('/schedule')}
                     >
                       복약 일정 설정하기
                     </button>
@@ -705,6 +705,9 @@ function ChatPage({
                       <AssistantMessageContent content={message.content} />
                     ) : (
                       message.content ?? '답변을 생성하지 못했어요.'
+                    )}
+                    {import.meta.env.DEV && currentSessionId && message.role === 'ASSISTANT' && message.generation_status === 'COMPLETED' && (
+                      <ResponseFeedback key={message.message_id} target={{ sessionId: currentSessionId, messageId: message.message_id }} />
                     )}
                   </div>
                 </div>

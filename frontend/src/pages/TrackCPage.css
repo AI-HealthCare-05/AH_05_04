@@ -1,0 +1,42 @@
+.track-c-page {
+  --ds-action: #607d8b;
+  --ds-action-pressed: #526b78;
+  --ds-canvas: #f8fafd;
+  --ds-text: #151a23;
+  --ds-text-muted: #4d576b;
+  --ds-line: #d5dfed;
+  --ds-muted: #eceff1;
+}
+.track-c-page .app-topbar { min-height: 72px; }
+.track-c-page .app-topbar h1 { font-size: 25px; }
+.track-c-content { display: flex; flex-direction: column; gap: 10px; padding: 20px; background: var(--ds-canvas); overflow-wrap: anywhere; }
+.track-c-content > * { flex-shrink: 0; }
+.track-c-content h1 { font-size: 28px; line-height: 38px; margin: 0; }
+.track-c-content h2 { font-size: 17px; line-height: 26px; margin: 0; }
+.track-c-content p { margin: 0; line-height: 24px; color: var(--ds-text-muted); }
+.track-c-content .ds-card { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 18px; }
+.track-c-content .track-c-eyebrow { color: var(--ds-action); font-size: 14px; font-weight: 600; line-height: 20px; }
+.track-c-content--safety { padding-top: 36px; gap: 14px; }
+.track-c-content .track-c-description { font-size: 17px; line-height: 27px; }
+.track-c-safety-actions { display: flex; flex-direction: column; gap: 14px; margin-top: 26px; }
+.track-c-safety-actions .ds-button { min-height: 64px; border-radius: 16px; border-color: var(--ds-line); color: #38475c; font-size: 18px; }
+.track-c-content .track-c-help { font-size: 14px; line-height: 22px; text-align: center; color: var(--ds-action); }
+.track-c-content--barrier { padding-top: 16px; }
+.track-c-content--barrier h1 { font-size: 26px; line-height: 36px; }
+.track-c-content--barrier > p { font-size: 15px; }
+.track-c-content fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.track-c-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.track-c-choice { display: flex; align-items: center; gap: 12px; padding: 14px 16px; min-height: 56px; background: var(--ds-surface); border: 1px solid var(--ds-line); border-radius: 16px; font-size: 17px; font-weight: 600; line-height: 24px; color: #38475c; cursor: pointer; }
+.track-c-choice:has(input:checked) { background: var(--ds-muted); border-color: var(--ds-action); color: var(--ds-action); }
+.track-c-choice input { width: 20px; height: 20px; margin: 0; flex-shrink: 0; accent-color: var(--ds-action); }
+.track-c-choice:focus-within { outline: 2px solid var(--ds-action); outline-offset: 2px; }
+.track-c-content .ds-button { min-height: 54px; height: auto; white-space: normal; padding: 14px; font-size: 17px; line-height: 24px; }
+.track-c-content .ds-button.secondary { border-color: var(--ds-action); }
+.track-c-actions { display: flex; flex-direction: column; gap: 8px; margin: auto -20px -20px; padding: 18px 20px; background: var(--ds-surface); box-shadow: 0 -4px 14px rgb(0 0 0 / 6%); }
+.track-c-content .track-c-plan-field { gap: 6px; padding: 14px; }
+.track-c-plan-field p { color: var(--ds-action); font-size: 15px; font-weight: 600; }
+.track-c-content .track-c-status { border: 1px solid var(--ds-line); border-radius: 18px; padding: 14px; font-size: 16px; font-weight: 700; }
+.track-c-content .track-c-status--active { border-color: var(--ds-action); background: var(--ds-muted); color: var(--ds-action); }
+.track-c-page .bottom-nav { position: relative; inset: auto; flex-shrink: 0; }
+.track-c-page .bottom-nav button[aria-current='page'] { color: var(--ds-action); }
+.track-c-page .track-c-safety-actions .ds-button { min-height: 64px; border-color: var(--ds-line); font-size: 18px; }
