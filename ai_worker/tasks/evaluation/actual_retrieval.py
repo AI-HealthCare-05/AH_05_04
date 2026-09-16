@@ -6,7 +6,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
@@ -104,45 +104,48 @@ class ActualRetrievalEvaluationAdapter(AsyncEvaluationAdapter):
         dataset_version = getattr(request.case, "dataset_version", "1.0.0")
         input_sha = getattr(request, "input_sha256", None) or getattr(request, "case_input_sha256", "0" * 64)
         if not user_query or not str(user_query).strip():
-            return CASE_RESULT_ADAPTER.validate_python(
-                {
-                    "schema_id": "rag-eval.case-result",
-                    "schema_version": "1.0.0",
-                    "run_id": str(request.run_id),
-                    "case_id": request.case.case_id,
-                    "dataset_code": dataset_code,
-                    "dataset_version": dataset_version,
-                    "partition": request.case.partition.value
-                    if hasattr(request.case.partition, "value")
-                    else str(request.case.partition),
-                    "task_type": "RETRIEVAL",
-                    "input_sha256": input_sha,
-                    "execution_status": "INVALID",
-                    "decision_status": None,
-                    "failure_codes": ["EMPTY_USER_QUERY"],
-                    "retrieved_evidence_ids": [],
-                    "selected_evidence_ids": [],
-                    "actual_claim_ids": None,
-                    "actual_citation_evidence_ids": None,
-                    "actual_rule_ids": None,
-                    "actual_scope_codes": None,
-                    "actual_response_level": None,
-                    "actual_safety_disposition": None,
-                    "actual_execution_status": None,
-                    "actual_release_decision": None,
-                    "actual_fallback_code": None,
-                    "actual_provider_invocation": None,
-                    "actual_retrieval_invocation": True,
-                    "actual_publication_allowed": None,
-                    "actual_sections": None,
-                    "omitted_sections": None,
-                    "risk_level": None,
-                    "answer_sha256": None,
-                    "latency_ms": 0,
-                    "input_token_count": None,
-                    "output_token_count": None,
-                    "estimated_cost": None,
-                }
+            return cast(
+                RetrievalCaseResult,
+                CASE_RESULT_ADAPTER.validate_python(
+                    {
+                        "schema_id": "rag-eval.case-result",
+                        "schema_version": "1.0.0",
+                        "run_id": str(request.run_id),
+                        "case_id": request.case.case_id,
+                        "dataset_code": dataset_code,
+                        "dataset_version": dataset_version,
+                        "partition": request.case.partition.value
+                        if hasattr(request.case.partition, "value")
+                        else str(request.case.partition),
+                        "task_type": "RETRIEVAL",
+                        "input_sha256": input_sha,
+                        "execution_status": "INVALID",
+                        "decision_status": None,
+                        "failure_codes": ["EMPTY_USER_QUERY"],
+                        "retrieved_evidence_ids": [],
+                        "selected_evidence_ids": [],
+                        "actual_claim_ids": None,
+                        "actual_citation_evidence_ids": None,
+                        "actual_rule_ids": None,
+                        "actual_scope_codes": None,
+                        "actual_response_level": None,
+                        "actual_safety_disposition": None,
+                        "actual_execution_status": None,
+                        "actual_release_decision": None,
+                        "actual_fallback_code": None,
+                        "actual_provider_invocation": None,
+                        "actual_retrieval_invocation": True,
+                        "actual_publication_allowed": None,
+                        "actual_sections": None,
+                        "omitted_sections": None,
+                        "risk_level": None,
+                        "answer_sha256": None,
+                        "latency_ms": 0,
+                        "input_token_count": None,
+                        "output_token_count": None,
+                        "estimated_cost": None,
+                    }
+                ),
             )
 
         # Map variant to Execution Mode
@@ -155,6 +158,54 @@ class ActualRetrievalEvaluationAdapter(AsyncEvaluationAdapter):
             mode = RetrievalExecutionMode.HYBRID_RRF
         else:
             mode = self._retrieval_config.execution_mode
+
+        if (
+            mode in (RetrievalExecutionMode.DENSE_ONLY, RetrievalExecutionMode.HYBRID_RRF)
+            and self._text_embedding_port is None
+        ):
+            return cast(
+                RetrievalCaseResult,
+                CASE_RESULT_ADAPTER.validate_python(
+                    {
+                        "schema_id": "rag-eval.case-result",
+                        "schema_version": "1.0.0",
+                        "run_id": str(request.run_id),
+                        "case_id": request.case.case_id,
+                        "dataset_code": dataset_code,
+                        "dataset_version": dataset_version,
+                        "partition": request.case.partition.value
+                        if hasattr(request.case.partition, "value")
+                        else str(request.case.partition),
+                        "task_type": "RETRIEVAL",
+                        "input_sha256": input_sha,
+                        "execution_status": "INVALID",
+                        "decision_status": None,
+                        "failure_codes": ["BLOCKED_BY_QUERY_EMBEDDING_CREDENTIAL"],
+                        "retrieved_evidence_ids": [],
+                        "selected_evidence_ids": [],
+                        "actual_claim_ids": None,
+                        "actual_citation_evidence_ids": None,
+                        "actual_rule_ids": None,
+                        "actual_scope_codes": None,
+                        "actual_response_level": None,
+                        "actual_safety_disposition": None,
+                        "actual_execution_status": None,
+                        "actual_release_decision": None,
+                        "actual_fallback_code": None,
+                        "actual_provider_invocation": None,
+                        "actual_retrieval_invocation": True,
+                        "actual_publication_allowed": None,
+                        "actual_sections": None,
+                        "omitted_sections": None,
+                        "risk_level": None,
+                        "answer_sha256": None,
+                        "latency_ms": 0,
+                        "input_token_count": None,
+                        "output_token_count": None,
+                        "estimated_cost": None,
+                    }
+                ),
+            )
 
         effective_config = replace(self._retrieval_config, execution_mode=mode)
 
@@ -191,45 +242,48 @@ class ActualRetrievalEvaluationAdapter(AsyncEvaluationAdapter):
             )
         except Exception:
             elapsed_ms = max(0, int(round((time.monotonic() - start_time) * 1000.0)))
-            return CASE_RESULT_ADAPTER.validate_python(
-                {
-                    "schema_id": "rag-eval.case-result",
-                    "schema_version": "1.0.0",
-                    "run_id": str(request.run_id),
-                    "case_id": request.case.case_id,
-                    "dataset_code": dataset_code,
-                    "dataset_version": dataset_version,
-                    "partition": request.case.partition.value
-                    if hasattr(request.case.partition, "value")
-                    else str(request.case.partition),
-                    "task_type": "RETRIEVAL",
-                    "input_sha256": input_sha,
-                    "execution_status": "ERROR",
-                    "decision_status": None,
-                    "failure_codes": ["RETRIEVAL_UNEXPECTED_ERROR"],
-                    "retrieved_evidence_ids": [],
-                    "selected_evidence_ids": [],
-                    "actual_claim_ids": None,
-                    "actual_citation_evidence_ids": None,
-                    "actual_rule_ids": None,
-                    "actual_scope_codes": None,
-                    "actual_response_level": None,
-                    "actual_safety_disposition": None,
-                    "actual_execution_status": None,
-                    "actual_release_decision": None,
-                    "actual_fallback_code": None,
-                    "actual_provider_invocation": None,
-                    "actual_retrieval_invocation": True,
-                    "actual_publication_allowed": None,
-                    "actual_sections": None,
-                    "omitted_sections": None,
-                    "risk_level": None,
-                    "answer_sha256": None,
-                    "latency_ms": elapsed_ms,
-                    "input_token_count": None,
-                    "output_token_count": None,
-                    "estimated_cost": None,
-                }
+            return cast(
+                RetrievalCaseResult,
+                CASE_RESULT_ADAPTER.validate_python(
+                    {
+                        "schema_id": "rag-eval.case-result",
+                        "schema_version": "1.0.0",
+                        "run_id": str(request.run_id),
+                        "case_id": request.case.case_id,
+                        "dataset_code": dataset_code,
+                        "dataset_version": dataset_version,
+                        "partition": request.case.partition.value
+                        if hasattr(request.case.partition, "value")
+                        else str(request.case.partition),
+                        "task_type": "RETRIEVAL",
+                        "input_sha256": input_sha,
+                        "execution_status": "ERROR",
+                        "decision_status": None,
+                        "failure_codes": ["RETRIEVAL_UNEXPECTED_ERROR"],
+                        "retrieved_evidence_ids": [],
+                        "selected_evidence_ids": [],
+                        "actual_claim_ids": None,
+                        "actual_citation_evidence_ids": None,
+                        "actual_rule_ids": None,
+                        "actual_scope_codes": None,
+                        "actual_response_level": None,
+                        "actual_safety_disposition": None,
+                        "actual_execution_status": None,
+                        "actual_release_decision": None,
+                        "actual_fallback_code": None,
+                        "actual_provider_invocation": None,
+                        "actual_retrieval_invocation": True,
+                        "actual_publication_allowed": None,
+                        "actual_sections": None,
+                        "omitted_sections": None,
+                        "risk_level": None,
+                        "answer_sha256": None,
+                        "latency_ms": elapsed_ms,
+                        "input_token_count": None,
+                        "output_token_count": None,
+                        "estimated_cost": None,
+                    }
+                ),
             )
 
         elapsed_ms = max(0, int(round((time.monotonic() - start_time) * 1000.0)))
@@ -239,45 +293,48 @@ class ActualRetrievalEvaluationAdapter(AsyncEvaluationAdapter):
             self._receipts_by_case[request.case.case_id] = outcome.receipt
 
         if outcome.status != RetrievalExecutionStatus.SUCCEEDED:
-            return CASE_RESULT_ADAPTER.validate_python(
-                {
-                    "schema_id": "rag-eval.case-result",
-                    "schema_version": "1.0.0",
-                    "run_id": str(request.run_id),
-                    "case_id": request.case.case_id,
-                    "dataset_code": dataset_code,
-                    "dataset_version": dataset_version,
-                    "partition": request.case.partition.value
-                    if hasattr(request.case.partition, "value")
-                    else str(request.case.partition),
-                    "task_type": "RETRIEVAL",
-                    "input_sha256": input_sha,
-                    "execution_status": "ERROR",
-                    "decision_status": None,
-                    "failure_codes": ["RETRIEVAL_EXECUTION_FAILED"],
-                    "retrieved_evidence_ids": [],
-                    "selected_evidence_ids": [],
-                    "actual_claim_ids": None,
-                    "actual_citation_evidence_ids": None,
-                    "actual_rule_ids": None,
-                    "actual_scope_codes": None,
-                    "actual_response_level": None,
-                    "actual_safety_disposition": None,
-                    "actual_execution_status": None,
-                    "actual_release_decision": None,
-                    "actual_fallback_code": None,
-                    "actual_provider_invocation": None,
-                    "actual_retrieval_invocation": True,
-                    "actual_publication_allowed": None,
-                    "actual_sections": None,
-                    "omitted_sections": None,
-                    "risk_level": None,
-                    "answer_sha256": None,
-                    "latency_ms": elapsed_ms,
-                    "input_token_count": None,
-                    "output_token_count": None,
-                    "estimated_cost": None,
-                }
+            return cast(
+                RetrievalCaseResult,
+                CASE_RESULT_ADAPTER.validate_python(
+                    {
+                        "schema_id": "rag-eval.case-result",
+                        "schema_version": "1.0.0",
+                        "run_id": str(request.run_id),
+                        "case_id": request.case.case_id,
+                        "dataset_code": dataset_code,
+                        "dataset_version": dataset_version,
+                        "partition": request.case.partition.value
+                        if hasattr(request.case.partition, "value")
+                        else str(request.case.partition),
+                        "task_type": "RETRIEVAL",
+                        "input_sha256": input_sha,
+                        "execution_status": "ERROR",
+                        "decision_status": None,
+                        "failure_codes": ["RETRIEVAL_EXECUTION_FAILED"],
+                        "retrieved_evidence_ids": [],
+                        "selected_evidence_ids": [],
+                        "actual_claim_ids": None,
+                        "actual_citation_evidence_ids": None,
+                        "actual_rule_ids": None,
+                        "actual_scope_codes": None,
+                        "actual_response_level": None,
+                        "actual_safety_disposition": None,
+                        "actual_execution_status": None,
+                        "actual_release_decision": None,
+                        "actual_fallback_code": None,
+                        "actual_provider_invocation": None,
+                        "actual_retrieval_invocation": True,
+                        "actual_publication_allowed": None,
+                        "actual_sections": None,
+                        "omitted_sections": None,
+                        "risk_level": None,
+                        "answer_sha256": None,
+                        "latency_ms": elapsed_ms,
+                        "input_token_count": None,
+                        "output_token_count": None,
+                        "estimated_cost": None,
+                    }
+                ),
             )
 
         # Collect Pre-Gate Hits (Top 5)
@@ -309,45 +366,48 @@ class ActualRetrievalEvaluationAdapter(AsyncEvaluationAdapter):
                 if len(selected_ids) >= 5:
                     break
 
-        return CASE_RESULT_ADAPTER.validate_python(
-            {
-                "schema_id": "rag-eval.case-result",
-                "schema_version": "1.0.0",
-                "run_id": str(request.run_id),
-                "case_id": request.case.case_id,
-                "dataset_code": dataset_code,
-                "dataset_version": dataset_version,
-                "partition": request.case.partition.value
-                if hasattr(request.case.partition, "value")
-                else str(request.case.partition),
-                "task_type": "RETRIEVAL",
-                "input_sha256": input_sha,
-                "execution_status": "COMPLETED",
-                "decision_status": "N/A",
-                "failure_codes": [],
-                "retrieved_evidence_ids": list(pre_gate_ids),
-                "selected_evidence_ids": list(selected_ids),
-                "actual_claim_ids": None,
-                "actual_citation_evidence_ids": None,
-                "actual_rule_ids": None,
-                "actual_scope_codes": None,
-                "actual_response_level": None,
-                "actual_safety_disposition": None,
-                "actual_execution_status": None,
-                "actual_release_decision": None,
-                "actual_fallback_code": None,
-                "actual_provider_invocation": None,
-                "actual_retrieval_invocation": True,
-                "actual_publication_allowed": None,
-                "actual_sections": None,
-                "omitted_sections": None,
-                "risk_level": None,
-                "answer_sha256": None,
-                "latency_ms": elapsed_ms,
-                "input_token_count": None,
-                "output_token_count": None,
-                "estimated_cost": None,
-            }
+        return cast(
+            RetrievalCaseResult,
+            CASE_RESULT_ADAPTER.validate_python(
+                {
+                    "schema_id": "rag-eval.case-result",
+                    "schema_version": "1.0.0",
+                    "run_id": str(request.run_id),
+                    "case_id": request.case.case_id,
+                    "dataset_code": dataset_code,
+                    "dataset_version": dataset_version,
+                    "partition": request.case.partition.value
+                    if hasattr(request.case.partition, "value")
+                    else str(request.case.partition),
+                    "task_type": "RETRIEVAL",
+                    "input_sha256": input_sha,
+                    "execution_status": "COMPLETED",
+                    "decision_status": "N/A",
+                    "failure_codes": [],
+                    "retrieved_evidence_ids": list(pre_gate_ids),
+                    "selected_evidence_ids": list(selected_ids),
+                    "actual_claim_ids": None,
+                    "actual_citation_evidence_ids": None,
+                    "actual_rule_ids": None,
+                    "actual_scope_codes": None,
+                    "actual_response_level": None,
+                    "actual_safety_disposition": None,
+                    "actual_execution_status": None,
+                    "actual_release_decision": None,
+                    "actual_fallback_code": None,
+                    "actual_provider_invocation": None,
+                    "actual_retrieval_invocation": True,
+                    "actual_publication_allowed": None,
+                    "actual_sections": None,
+                    "omitted_sections": None,
+                    "risk_level": None,
+                    "answer_sha256": None,
+                    "latency_ms": elapsed_ms,
+                    "input_token_count": None,
+                    "output_token_count": None,
+                    "estimated_cost": None,
+                }
+            ),
         )
 
     def get_latency_summary(self) -> LatencySummary:
@@ -412,7 +472,6 @@ def build_actual_adapter_registry(  # noqa: C901
     from ai_worker.adapters.postgresql_evidence_search import PostgresqlEvidenceSearchAdapter
     from ai_worker.tasks.evaluation.actual_retrieval_index import (
         ACTUAL_RETRIEVAL_ADAPTER_REF,
-        DeterministicFakeEmbeddingAdapter,
         bootstrap_dev_knowledge_index,
     )
     from ai_worker.tasks.rag.evidence_search import (
@@ -423,16 +482,12 @@ def build_actual_adapter_registry(  # noqa: C901
     session_factory: Any = None
     if engine is None and (search_port is None or eligibility_verifier is None):
         try:
-            import sys
-
-            backend_dir = str(resolved.repository_root / "backend")
-            if backend_dir not in sys.path:
-                sys.path.insert(0, backend_dir)
             from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-            from app.core import config as app_config
+            from ai_worker.core import get_config
 
-            engine = create_async_engine(app_config.database_url, hide_parameters=True)
+            worker_config = get_config()
+            engine = create_async_engine(worker_config.database_url, hide_parameters=True)
             session_factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
         except Exception:
             engine = None
@@ -440,7 +495,7 @@ def build_actual_adapter_registry(  # noqa: C901
     elif engine is not None:
         from sqlalchemy.ext.asyncio import async_sessionmaker
 
-        session_factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+        session_factory = async_sessionmaker(cast(Any, engine), expire_on_commit=False, autoflush=False)
 
     if search_port is None and session_factory is not None:
         search_port = PostgresqlEvidenceSearchAdapter(
@@ -461,7 +516,7 @@ def build_actual_adapter_registry(  # noqa: C901
                 adapter_artifact_ref=ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "e" * 64),
             )
         else:
-            text_embedding_port = DeterministicFakeEmbeddingAdapter()
+            text_embedding_port = None
 
     if synthetic_index_path is None:
         synthetic_index_path = (
@@ -470,48 +525,44 @@ def build_actual_adapter_registry(  # noqa: C901
         )
 
     if engine is not None:
+        url = getattr(engine, "url", None)
+
+        def _run_bootstrap():
+            async def _inner():
+                if url is not None:
+                    from sqlalchemy.ext.asyncio import create_async_engine
+
+                    bootstrap_engine = create_async_engine(url, hide_parameters=True)
+                    try:
+                        return await bootstrap_dev_knowledge_index(
+                            bootstrap_engine,
+                            text_embedding_port=text_embedding_port,
+                            synthetic_index_path=synthetic_index_path,
+                        )
+                    finally:
+                        await bootstrap_engine.dispose()
+                else:
+                    return await bootstrap_dev_knowledge_index(
+                        engine,
+                        text_embedding_port=text_embedding_port,
+                        synthetic_index_path=synthetic_index_path,
+                    )
+
+            return asyncio.run(_inner())
+
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = None
+
         if loop and loop.is_running():
             import concurrent.futures
-
-            url = getattr(engine, "url", None)
-
-            def _run_bootstrap():
-                async def _inner():
-                    if url is not None:
-                        from sqlalchemy.ext.asyncio import create_async_engine
-
-                        thread_engine = create_async_engine(url, hide_parameters=True)
-                        try:
-                            return await bootstrap_dev_knowledge_index(
-                                thread_engine,
-                                text_embedding_port=text_embedding_port,
-                                synthetic_index_path=synthetic_index_path,
-                            )
-                        finally:
-                            await thread_engine.dispose()
-                    else:
-                        return await bootstrap_dev_knowledge_index(
-                            engine,
-                            text_embedding_port=text_embedding_port,
-                            synthetic_index_path=synthetic_index_path,
-                        )
-
-                return asyncio.run(_inner())
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 summary = executor.submit(_run_bootstrap).result()
         else:
-            summary = asyncio.run(
-                bootstrap_dev_knowledge_index(
-                    engine,
-                    text_embedding_port=text_embedding_port,
-                    synthetic_index_path=synthetic_index_path,
-                )
-            )
+            summary = _run_bootstrap()
+
         knowledge_index_id = summary.knowledge_index_id
         source_snapshot_id = summary.source_snapshot_id
         source_snapshot_member_ids = summary.source_snapshot_member_ids
@@ -531,7 +582,7 @@ def build_actual_adapter_registry(  # noqa: C901
     expected_adapter_ref = getattr(
         text_embedding_port,
         "_adapter_artifact_ref",
-        ImmutableArtifactRef("deterministic-fake-embedding", "1.0.0", "0" * 64),
+        ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "e" * 64),
     )
     retrieval_config = VersionedEvidenceRetrievalConfiguration(
         artifact_ref=ImmutableArtifactRef("retrieval_config", "1.0", "c" * 64),

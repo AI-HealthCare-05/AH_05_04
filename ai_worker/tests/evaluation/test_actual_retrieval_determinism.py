@@ -194,8 +194,8 @@ async def test_consecutive_runs_produce_identical_semantic_results() -> None:
         assert r1.retrieved_evidence_ids == r2.retrieved_evidence_ids
         assert r1.selected_evidence_ids == r2.selected_evidence_ids
         # Latency is positive
-        assert r1.latency_ms >= 0
-        assert r2.latency_ms >= 0
+        assert r1.latency_ms is not None and r1.latency_ms >= 0
+        assert r2.latency_ms is not None and r2.latency_ms >= 0
 
 
 @pytest.mark.asyncio

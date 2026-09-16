@@ -169,7 +169,7 @@ def _make_adapter_request(case_id: str = "rag-nlr-dev-001", variant_id: str = "R
     repo_root = Path(__file__).resolve().parents[3]
     case_path = repo_root / f"evals/retrieval/cases/rag-natural-language-retrieval-dev-v1/{case_id}.json"
     case_data = json.loads(case_path.read_text(encoding="utf-8"))
-    case = TypeAdapter(EvaluationCaseContract).validate_python(case_data)
+    case: EvaluationCaseContract = TypeAdapter(EvaluationCaseContract).validate_python(case_data)
 
     return AdapterRequest(
         run_id="00000000-0000-0000-0000-000000000001",
@@ -238,3 +238,37 @@ def test_actual_adapter_registry_resolution() -> None:
     assert reg.resolve("knowledge-evidence-retrieval.actual.v1") is adapter
     assert reg.resolve("actual-retrieval.v1") is adapter
     assert reg.resolve("unknown") is None
+
+
+@pytest.mark.asyncio
+async def test_execute_ret_h_smoke_transaction_orchestration() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from ai_worker.tasks.evaluation.ret_h_smoke import execute_ret_h_smoke_transaction
+
+    fake_request = MagicMock()
+    fake_search_port = MagicMock()
+    fake_text_embedding_port = MagicMock()
+    fake_run_store = MagicMock()
+    fake_eligibility_verifier = MagicMock()
+
+    with patch(
+        "ai_worker.tasks.evaluation.ret_h_smoke.execute_hybrid_retrieve",
+        new=AsyncMock(return_value="smoke_outcome"),
+    ) as mock_exec:
+        outcome = await execute_ret_h_smoke_transaction(
+            request=fake_request,
+            search_port=fake_search_port,
+            text_embedding_port=fake_text_embedding_port,
+            run_store=fake_run_store,
+            eligibility_verifier=fake_eligibility_verifier,
+        )
+
+    assert outcome == "smoke_outcome"
+    mock_exec.assert_awaited_once_with(
+        fake_request,
+        search_port=fake_search_port,
+        text_embedding_port=fake_text_embedding_port,
+        run_store=fake_run_store,
+        eligibility_verifier=fake_eligibility_verifier,
+    )

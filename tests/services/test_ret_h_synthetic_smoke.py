@@ -315,3 +315,92 @@ async def test_run_ret_h_smoke_full_success_flow() -> None:
     assert receipt.cloudwatch_logs_verified is True
     assert receipt.sqs_dlq_verified is True
     assert receipt.retrieval_run_id == run_id
+
+
+@pytest.mark.asyncio
+async def test_run_ret_h_smoke_delegates_to_execution_fn() -> None:
+    from ai_worker.tasks.rag.retrieval_runtime import (
+        HybridRetrieveOutcome,
+        RetrievalExecutionStatus,
+    )
+
+    run_id = str(uuid4())
+    receipt_hash = "f" * 64
+    persisted_receipt_mock = MagicMock(run_id=run_id, receipt_hash=receipt_hash)
+    fake_outcome = HybridRetrieveOutcome(
+        status=RetrievalExecutionStatus.SUCCEEDED,
+        persisted_receipt=persisted_receipt_mock,
+        search_receipt=MagicMock(),
+        gate_outcome=MagicMock(),
+        message="Success",
+    )
+
+    mock_exec_fn = AsyncMock(return_value=fake_outcome)
+
+    with (
+        patch("app.release_validation.ret_h_synthetic_smoke.check_aws_credentials_available", return_value=True),
+        patch(
+            "app.release_validation.ret_h_synthetic_smoke.run_verification_transaction",
+            new=AsyncMock(return_value={"verified": True}),
+        ),
+    ):
+        receipt = await run_ret_h_smoke(
+            mode="staging-live",
+            commit_sha="sha-test",
+            image_repo_digest="sha256:abc123",
+            session_factory=MagicMock(),
+            search_port=MagicMock(),
+            run_store=MagicMock(),
+            hybrid_retrieve_request=MagicMock(),
+            execution_fn=mock_exec_fn,
+        )
+
+    assert receipt.status == STATUS_SUCCESS
+    assert receipt.execution_transaction_verified is True
+    mock_exec_fn.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_ret_h_smoke_real_composition_with_worker_transaction() -> None:
+    from ai_worker.tasks.evaluation.ret_h_smoke import execute_ret_h_smoke_transaction
+    from ai_worker.tasks.rag.retrieval_runtime import (
+        HybridRetrieveOutcome,
+        RetrievalExecutionStatus,
+    )
+
+    run_id = str(uuid4())
+    receipt_hash = "e" * 64
+    persisted_receipt_mock = MagicMock(run_id=run_id, receipt_hash=receipt_hash)
+    fake_outcome = HybridRetrieveOutcome(
+        status=RetrievalExecutionStatus.SUCCEEDED,
+        persisted_receipt=persisted_receipt_mock,
+        search_receipt=MagicMock(),
+        gate_outcome=MagicMock(),
+        message="Success",
+    )
+
+    with (
+        patch(
+            "ai_worker.tasks.evaluation.ret_h_smoke.execute_hybrid_retrieve",
+            new=AsyncMock(return_value=fake_outcome),
+        ) as mock_exec,
+        patch("app.release_validation.ret_h_synthetic_smoke.check_aws_credentials_available", return_value=True),
+        patch(
+            "app.release_validation.ret_h_synthetic_smoke.run_verification_transaction",
+            new=AsyncMock(return_value={"verified": True}),
+        ),
+    ):
+        receipt = await run_ret_h_smoke(
+            mode="staging-live",
+            commit_sha="sha-test",
+            image_repo_digest="sha256:abc123",
+            session_factory=MagicMock(),
+            search_port=MagicMock(),
+            run_store=MagicMock(),
+            hybrid_retrieve_request=MagicMock(),
+            execution_fn=execute_ret_h_smoke_transaction,
+        )
+
+    assert receipt.status == STATUS_SUCCESS
+    assert receipt.execution_transaction_verified is True
+    mock_exec.assert_awaited_once()

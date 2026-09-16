@@ -5,7 +5,7 @@ import inspect
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, sha256_hex
 from ai_worker.tasks.evaluation.config import ResolvedDevExecution
@@ -67,7 +67,7 @@ class AdapterRegistry(Protocol):
 
 
 class CaseSetValidator(Protocol):
-    def validate_case_set(self, case_ids: Sequence[str]) -> None: ...
+    def validate_case_set(self, case_ids: Sequence[str]) -> Any: ...
 
 
 class EmptyAdapterRegistry:
@@ -479,9 +479,11 @@ def execute_dev_cases(
             code = error.code if status is ExecutionStatus.INVALID else EvaluationErrorCode.INTERNAL_ERROR
             case_results = tuple(_neutral_result(request, status, code) for request in requests)
         else:
-            case_results = tuple(_execute_once(request, adapter) for request in requests)
+            case_results = tuple(
+                _execute_once(request, cast(EvaluationAdapter | None, adapter)) for request in requests
+            )
     else:
-        case_results = tuple(_execute_once(request, adapter) for request in requests)
+        case_results = tuple(_execute_once(request, cast(EvaluationAdapter | None, adapter)) for request in requests)
     status, decision, blockers = aggregate_statuses([result.execution_status for result in case_results])
     failure_records = _retrieval_failure_records(
         dataset,

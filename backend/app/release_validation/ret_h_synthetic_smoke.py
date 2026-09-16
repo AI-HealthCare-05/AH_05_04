@@ -104,23 +104,28 @@ def verify_task_container_image(
 
 async def run_execution_transaction(
     *,
-    request: Any,
-    search_port: Any,
-    text_embedding_port: Any,
-    run_store: Any,
-    eligibility_verifier: Any,
+    execution_fn: Any = None,
+    request: Any = None,
+    search_port: Any = None,
+    text_embedding_port: Any = None,
+    run_store: Any = None,
+    eligibility_verifier: Any = None,
+    **kwargs: Any,
 ) -> Any:
-    """Transaction 1: execute_hybrid_retrieve begin/finalize."""
-    from ai_worker.tasks.rag.retrieval_runtime import execute_hybrid_retrieve
+    """Delegate retrieval execution to the provided worker callable.
 
-    outcome = await execute_hybrid_retrieve(
-        request,
-        search_port=search_port,
-        text_embedding_port=text_embedding_port,
-        run_store=run_store,
-        eligibility_verifier=eligibility_verifier,
-    )
-    return outcome
+    Backend release validation does not import ai_worker runtime directly.
+    """
+    if execution_fn is not None:
+        return await execution_fn(
+            request=request,
+            search_port=search_port,
+            text_embedding_port=text_embedding_port,
+            run_store=run_store,
+            eligibility_verifier=eligibility_verifier,
+            **kwargs,
+        )
+    raise ValueError("Execution callable must be supplied by the caller (ai_worker).")
 
 
 _RETRIEVAL_RUN = table(
@@ -275,6 +280,7 @@ async def run_ret_h_smoke(  # noqa: C901
     hybrid_retrieve_request: Any = None,
     stale_verify_callable: Any = None,
     locator_mismatch_verify_callable: Any = None,
+    execution_fn: Any = None,
 ) -> RetHSmokeReceipt:
     """Execute the complete RET-H synthetic smoke verification."""
     executed_at = datetime.now(UTC).isoformat()
@@ -329,6 +335,7 @@ async def run_ret_h_smoke(  # noqa: C901
 
     start_ms = int(datetime.now(UTC).timestamp() * 1000)
     outcome = await run_execution_transaction(
+        execution_fn=execution_fn,
         request=hybrid_retrieve_request,
         search_port=search_port,
         text_embedding_port=text_embedding_port,
@@ -336,20 +343,22 @@ async def run_ret_h_smoke(  # noqa: C901
         eligibility_verifier=eligibility_verifier,
     )
 
-    from ai_worker.tasks.rag.retrieval_runtime import RetrievalExecutionStatus
+    status_val = getattr(outcome, "status", None)
+    status_str = str(getattr(status_val, "name", status_val))
+    persisted_receipt = getattr(outcome, "persisted_receipt", None)
 
-    if outcome.status != RetrievalExecutionStatus.SUCCEEDED or outcome.persisted_receipt is None:
+    if status_str != "SUCCEEDED" or persisted_receipt is None:
         return RetHSmokeReceipt(
             status=STATUS_FAILED,
             mode=mode,
             executed_at=executed_at,
             commit_sha=resolved_commit_sha,
             image_digest=resolved_image_digest,
-            error_message=f"execute_hybrid_retrieve failed with status {outcome.status}: {outcome.message}",
+            error_message=f"execute_hybrid_retrieve failed with status {status_val}: {getattr(outcome, 'message', '')}",
         )
 
-    run_id = str(outcome.persisted_receipt.run_id)
-    expected_receipt_hash = outcome.persisted_receipt.receipt_hash
+    run_id = str(persisted_receipt.run_id)
+    expected_receipt_hash = persisted_receipt.receipt_hash
 
     # 3. Transaction 2: Read-only query verification
     details: dict[str, Any] = {}
