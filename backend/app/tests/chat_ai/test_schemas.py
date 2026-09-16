@@ -115,6 +115,18 @@ def test_optional_medication_strings_allow_missing_values() -> None:
     assert medication.timing_text is None
 
 
+def test_chat_history_and_generated_answer_preserve_user_quotes() -> None:
+    history = ChatHistoryItem(question="복용 시점이 뭐예요?", answer='"식후"와 "공복"은 다릅니다.')
+    result = ChatGenerationResult(
+        content="“아침” 또는 “저녁”처럼 입력된 인용은 보존합니다.",
+        model_name="gpt-4o",
+        prompt_version="chat-prompt-v5",
+    )
+
+    assert history.answer == '"식후"와 "공복"은 다릅니다.'
+    assert result.content == "“아침” 또는 “저녁”처럼 입력된 인용은 보존합니다."
+
+
 @pytest.mark.parametrize(
     ("field", "max_length"),
     [
