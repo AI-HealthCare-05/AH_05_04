@@ -276,6 +276,17 @@ PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
 
 ### Chat prompt blind A/B
 
+현재 runtime prompt는 #581 짧은 후속 질문 보강 버전 `chat-prompt-v5`입니다. 기존 v3/v4 blind config와 snapshot은 해당 두 버전을 재현하는 자료이며 v5 평가 결과가 아닙니다. `chat-v5-short-followup-eval-v1.json`은 기존 v4 27-case를 그대로 보존하고 비교 대상 교체, 구어체 이유 질문, 첫 병용 답변의 근거 없는 안전 단정 사례를 추가한 30-case 합성 평가셋입니다. 기대 문구는 리뷰 대상이며 실제 모델 출력이 아닙니다.
+
+```bash
+PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
+  --mode deterministic \
+  --dataset evals/generation/chat-v5-short-followup-eval-v1.json \
+  --output evals/results/chat-v5-short-followup-replay.json
+```
+
+결정론적 실행은 준비된 답변으로 평가 규칙과 입력 전달을 검증합니다. 관찰된 실패 문구를 주입하는 회귀도 함께 실행하며 실제 Provider의 수정 전후 개선 증거로 해석하지 않습니다. 이 새 dataset은 기존 live CLI allowlist에 포함하지 않았으므로 실제 v4/v5 비교에는 별도로 고정한 config·snapshot과 Local 실행 준비가 필요합니다. 기존 live CLI의 27-case 실행은 실행 당시 runtime prompt version/hash를 기록하므로 dataset 이름만 보고 v4 실행으로 해석하지 않습니다. 자세한 결과는 [v5 합성 회귀 기록](../docs/validation/issue-581-short-followup-v5.md)을 참고하세요.
+
 배치는 실행마다 생성하는 비공개 256-bit seed로 무작위화합니다. 전체 54개 item을 하나의 균형 블록으로 두고 response 1 arm 위치 27개씩을 섞으며, 단순 교대 배치를 사용하지 않습니다. seed와 독립적인 256-bit commitment nonce는 권한 `0600`의 assignment artifact에만 보관합니다. 재현은 판단 제출 후 공개한 private artifact로 수행합니다.
 
 review packet과 judgment template에는 assignment 내용의 SHA-256 commitment를 고정합니다. 리뷰어는 전달받은 packet·template을 보관하고 이 commitment를 유지한 judgment를 제출합니다. unblind는 제출된 commitment와 assignment를 재계산한 hash가 일치해야 진행하므로 사후 mapping 변경을 거부합니다. hash 순환을 피하기 위해 assignment 자체의 commitment 필드와 review packet hash만 commitment 계산에서 제외합니다. 판단 후 template이나 judgment를 새로 생성하면 사전 결속 증거가 사라지므로 원래 전달·제출 파일을 보존해야 합니다.
