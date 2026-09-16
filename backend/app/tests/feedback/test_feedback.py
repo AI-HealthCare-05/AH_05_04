@@ -22,6 +22,11 @@ from app.main import app, fastapi_app
 from app.models.chat import ChatGenerationStatus, ChatMessage, ChatRole, ChatSession
 from app.models.feedback import ChatMessageFeedback, GuideFeedback
 from app.models.guides import Guide, GuideGenerationStatus
+from app.models.medical_documents import MedicalDocument
+from app.models.ocr import OcrJob
+from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
+from app.models.profiles import Profile
+from app.models.users import User
 from app.repositories.feedback_repository import FeedbackRepository
 from app.services.feedback import FeedbackService
 from app.tests.conftest import test_engine
@@ -234,17 +239,45 @@ async def test_duplicate_first_requests_on_independent_connections(chat):
                 request=FeedbackRequest(rating="NEGATIVE"),
             )
 
-    results = await asyncio.gather(submit(), submit())
-    assert sorted(created for _, created in results) == [False, True]
-    assert results[0][0] == results[1][0]
-    async with AsyncSession(test_engine) as cleanup:
-        await cleanup.execute(
-            delete(ChatMessageFeedback if chat else GuideFeedback).where(
-                (ChatMessageFeedback.chat_message_id if chat else GuideFeedback.guide_id)
-                == (message.id if chat else guide.id)
-            )
-        )
-        await cleanup.commit()
+    try:
+        results = await asyncio.gather(submit(), submit(), return_exceptions=True)
+        assert not any(isinstance(result, BaseException) for result in results), results
+        assert sorted(created for _, created in results) == [False, True]
+        assert results[0][0] == results[1][0]
+    finally:
+        # These connections commit outside the shared fixture's rollback boundary.
+        # Remove the entire synthetic graph, including both targets and their parents.
+        async with AsyncSession(test_engine) as cleanup:
+            prescription = await cleanup.get(Prescription, guide.prescription_id)
+            assert prescription is not None
+            document_id, ocr_job_id = prescription.document_id, prescription.source_ocr_job_id
+            for model, condition in (
+                (ChatMessage, ChatMessage.id == message.id),
+                (ChatSession, ChatSession.id == session.id),
+                (Guide, Guide.id == guide.id),
+                (Medication, Medication.prescription_id == prescription.id),
+                (
+                    PrescriptionVersionMedication,
+                    PrescriptionVersionMedication.prescription_version_id == prescription.active_version_id,
+                ),
+                (PrescriptionVersion, PrescriptionVersion.prescription_id == prescription.id),
+                (Prescription, Prescription.id == prescription.id),
+                (OcrJob, OcrJob.id == ocr_job_id),
+                (MedicalDocument, MedicalDocument.id == document_id),
+                (Profile, Profile.id == guide.profile_id),
+                (User, User.id == user.id),
+            ):
+                await cleanup.execute(delete(model).where(condition))
+            await cleanup.commit()
+        async with AsyncSession(test_engine) as verification:
+            for model, identity in (
+                (User, user.id),
+                (Prescription, guide.prescription_id),
+                (Guide, guide.id),
+                (ChatSession, session.id),
+                (ChatMessage, message.id),
+            ):
+                assert await verification.get(model, identity) is None
 
 
 async def test_failed_flush_rolls_back_feedback(db_session, targets, monkeypatch):

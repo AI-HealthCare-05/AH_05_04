@@ -31,7 +31,7 @@ Backend는 Local만 허용하고 Frontend는 개발 빌드에서만 표시한다
 | 저장소 전체 `scripts/ci/run_test.sh` | migration 235 passed / 4 skipped, 당시 head 통과; Backend 2632 passed / 128 skipped / 1 failed로 exit 1 |
 | Worker 환경 수정 후 전체 lane | 3786 passed |
 | 후속 Redis 통합 4개 파일 | 29 passed |
-| 최신 develop 통합 후 피드백·복약 일정 | 44 passed / 1 skipped / 3 failed; 실패는 복약 일정 파일의 기존 검증 |
+| 동시성 fixture 정리 수정 후 피드백·복약 일정 | 47 passed; 두 파일을 같은 프로세스에서 순서대로 검증 |
 
 첫 DB 실행은 sandbox TCP 제한, 다음 실행은 합성 이메일 길이와 ASGI wrapper·rollback 뒤 fixture identity 문제로
 실패했다. 해당 테스트 환경·fixture를 수정한 뒤 16개 테스트를 통과했다.
@@ -44,8 +44,13 @@ Frontend 전체 최초 실행은 API 주소 누락, 주소를 지정한 병렬 �
 최초 전체 Backend 실패는 `test_old_version_replays_but_new_write_conflicts_and_history_stays`의
 처방 버전 충돌 409 기대에 200을 반환한 것이다. `66328a09` develop을 병합한 뒤 같은 검증과
 `test_latest_prescription_only_preserves_older_occurrences` 두 parameter가 실패했다.
-해당 service·repository·test 파일은 origin/develop과 diff가 없으며 #633에서 수정하지 않았다.
-피드백 16개는 같은 재실행에서 통과했다. 전체 runner 성공 또는 통합 coverage 통과로 보고하지 않는다.
+CI run `35057999229`에서도 복약 일정 2개가 실패했다. 원인은 #633 동시성 테스트가 별도 connection으로
+commit한 부모 User·Profile·처방 graph를 남긴 것이었다. 수정되지 않은 복약 일정 파일의 실패라는 이유로
+별개 문제라고 판단한 초기 결론은 잘못이었다. 테스트 실패 여부와 관계없이 `finally`에서 생성한 전체 graph를
+FK 순서대로 지우고, 새 connection으로 User·처방·Guide·Chat이 남지 않았는지 검증하도록 수정했다.
+동시 제출도 두 task가 모두 종료한 뒤 정리한다. 복약 일정의 제품 코드·기대값은 바꾸지 않았다.
+수정 후 피드백과 복약 일정 파일을 이어서 실행한 47개가 통과했다.
+전체 로컬 runner 성공 또는 통합 coverage 통과로 보고하지 않는다.
 신규 #633 migration 부모는 아직 미병합 상태에서 develop의 `206b2c3d4e5f` 뒤로 정렬했다.
 
 실제 migration 테스트는 격리 schema에서 신규 revision을 실행하고 두 테이블의 FK·rating·길이·unique,
