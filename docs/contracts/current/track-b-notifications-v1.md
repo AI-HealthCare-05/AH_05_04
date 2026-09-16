@@ -139,7 +139,7 @@ body는 `{scheduled_at: UTC RFC3339 timestamp}`이며 필수다. 서버는 시�
 - 읽음 operation ID는 `notification.read`, parent는 notification_id, fingerprint는 빈 object다. 재알림은 `medication-reminder.create`, parent는 occurrence_id, fingerprint는 UTC로 정규화된 scheduled_at이다. 정규화는 같은 instant의 offset 표현 차이를 제거한다.
 - Pydantic 구조 검증(필수 필드·timezone·추가 필드)은 서비스 진입 전 422다. 위 번호로 열거한 도메인 검증 순서는 유효 DTO의 신규 요청에 적용한다. 인증·소유권 확인 뒤 멱등 replay를 수행한다.
 - 저장·소유권·멱등성은 기존 같은 AsyncSession을 사용하며 처방 취소 adapter도 상위 transaction을 commit하지 않는다.
-- `python -m app.commands.process_notifications`는 한 번에 생성 최대 500 occurrence와 게시/취소 최대 500 occurrence를 처리한다. 생성과 게시는 각각 독립 transaction이다. 생성 commit 뒤 중단돼도 PENDING이 보존되어 다음 실행이 게시한다. 각 단계는 occurrence UUID 순으로 잠그고 `SKIP LOCKED`로 경쟁 중인 대상은 다음 실행에 처리한다. Notification row는 occurrence 뒤 ID 순으로 잠근다.
+- `python -m app.commands.process_notifications`는 한 번에 생성 최대 500 occurrence와 게시/취소 최대 500 occurrence를 처리한다. 게시 직전에는 `purpose=NOTIFICATION`의 현재 동의가 `GRANTED`이고 current policy version과 일치해야 하며, 미동의·철회·정책 미설정 상태에서는 `DELIVERED`로 전환하지 않는다. 생성과 게시는 각각 독립 transaction이다. 생성 commit 뒤 중단돼도 PENDING이 보존되어 다음 실행이 게시한다. 각 단계는 occurrence UUID 순으로 잠그고 `SKIP LOCKED`로 경쟁 중인 대상은 다음 실행에 처리한다. Notification row는 occurrence 뒤 ID 순으로 잠근다. Web Push 전송은 외부 Provider 호출 전 동일한 `NOTIFICATION` 동의를 다시 확인하고, 차단 시 `send_push`를 호출하지 않는다.
 - 프로세스 외부 정기 호출은 배포 설정에 연결해야 한다. 이번 PR은 수동 one-shot 명령까지 제공하며 scheduler 배포·실행 주기·운영 활성화는 수행하지 않는다. 외부 전송 채널은 없다.
 - #202의 Schedule PUT/PATCH·Occurrence GET과 #474 원래 약 조회는 develop에 반영됐다. 미전달 취소 adapter는 기존 B2 port에 연결하고 일정 API와 같은 session을 사용한다.
 - downgrade는 notification_record를 배타 잠금한 뒤 이력이 있으면 중단한다. 이력 삭제를 동반한 자동 rollback은 하지 않는다. 빈 DB의 downgrade/upgrade와 실제 제약은 migration 테스트로 검증한다.
