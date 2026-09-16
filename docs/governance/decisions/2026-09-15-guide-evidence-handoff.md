@@ -20,11 +20,11 @@ Issue #180 Runtime Orchestration 구현에 앞서, #174 REQUEST Guard의 Source/
    - 본 커널은 권한(authority)을 자체 발급하지 않으며, 데이터베이스 존재 여부나 발급자의 진위(issuer authenticity)를 증명하거나 외부 인가를 수행하지 않는다.
    - `Verified`는 호출자가 전달한 불투명 관측 결과(opaque caller observations: `request_guard_ref`, `request_source_decision_ref`, `request_member_decision_ref`, `retrieval_receipt`, `eligibility_receipt_ref`, `assessment_artifact_ref`, `verifier_artifact_ref`)의 구조·해시·식별자 일관성(structure, hash, and identity consistency)만을 검증한다는 의미로 엄격히 제한된다.
    - **#174 Authenticated Assembler 의존성**: #174 authenticated assembler가 Decision ownership, 실제 `PASS` 판정, assessment artifact content의 진위를 검증하기 전에는, #180 runtime이 이 handoff를 독자적 authority로 직접 소비할 수 없다.
-2. **#178 외부 차단 기록 (`BLOCKED_BY_178_CANONICAL_HASH_CONTRACT`)**:
-   - #178의 `compute_selection_manifest_hash` 및 `ProductionSearchReceipt`가 상속하는 `sha256_canonical_json(sort_keys=True)` 직렬화는 PD-315가 요구하는 RFC 8785 JCS 규격과 불일치한다.
-   - 본 PR에서는 #178 코어를 수정하지 않는다. `BLOCKED_BY_178_CANONICAL_HASH_CONTRACT`는 의존성을 기록하는 **비강제 marker**이며 그 자체로 실행을 차단하지 않는다.
-   - 실제 차단은 후속 #180 orchestration 경계에서 typed precondition과 integration test로 구현해야 한다.
-   - 이 불일치는 별도 #178 owner의 후속 수정을 통해 JCS 표준으로 정렬되어야 한다.
+2. **#178 표준 JCS 정렬 및 차단 해소 (`PD-178-20260916`)**:
+   - 2026-09-16 결정 `PD-178-20260916`을 통해 #178의 `compute_selection_manifest_hash` 및 `ProductionSearchReceipt` (v2.0)가 RFC 8785 JCS 규격으로 정렬되었다.
+   - `BLOCKED_BY_178_CANONICAL_HASH_CONTRACT` 비강제 marker는 해소되어 코드와 계약에서 제거되었다.
+   - Receipt v2.0만 허용하며 legacy v1은 fail-close(`RETRIEVAL_RECEIPT_MISMATCH`) 거부된다.
+   - **해시 도메인 독립성**: 공용 JCS 직렬화 모듈(`ai_worker.tasks.evaluation.canonical`)을 공유하지만, `guide-evidence-handoff-v1`, `retrieval-selection-manifest-v2`, `production-search-receipt-v2` 세 프로젝션 및 해시 도메인은 상호 완전히 독립적이며 각 도메인의 preimage가 혼용되지 않는다.
 3. **#180 Endpoint Member 계약 차단 기록 (`BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT`)**:
    - PD-315/PD-362는 Endpoint Member의 `operation_code`를 nullable로 허용하지만 현재 Citation validator와 Citation Authorization은 non-null 값을 요구한다.
    - `BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT`는 이 차이를 기록하는 **비강제 marker**이며, 공유 계약과 downstream validator가 정렬되기 전에는 nullable Endpoint Member handoff를 #180 runtime에 연결할 수 없다.
@@ -38,12 +38,10 @@ Issue #180 Runtime Orchestration 구현에 앞서, #174 REQUEST Guard의 Source/
 
 ## 핵심 결정 사항
 
-### 1. RFC 8785 JCS 정규 직렬화 및 해시 도메인 구분
+### 1. RFC 8785 JCS 정규 직렬화
 - `guide-evidence-handoff-v1`의 표준 정규 바이트 직렬화는 RFC 8785 JSON Canonicalization Scheme (JCS) 표준을 엄격히 준수한다.
-- **해시 도메인 구분**:
-  - Handoff JCS 해시 domain: RFC 8785 표준 (UTF-16 BE code unit 정렬, IEEE 754 안전 정수, float 거부, lone surrogate 거부).
-  - Selection manifest 해시 domain: #178의 `compute_selection_manifest_hash` (`sha256_canonical_json`, Python sorted keys / codepoints)를 불투명 상속값으로 소비.
-  - 상술한 JCS 불일치는 `BLOCKED_BY_178_CANONICAL_HASH_CONTRACT` 비강제 marker로 기록한다. 후속 orchestration이 typed precondition과 integration test로 실제 차단해야 한다.
+- Handoff JCS 및 Selection Manifest JCS는 `PD-178-20260916`을 통해 동일한 공용 RFC 8785 직렬화 모듈(`ai_worker.tasks.evaluation.canonical`)로 정렬 완료되었으며, `BLOCKED_BY_178_CANONICAL_HASH_CONTRACT` 비강제 marker는 해소되었다.
+- 공용 직렬화기를 공유하지만 세 projection 및 해시 도메인(`guide-evidence-handoff-v1`, `retrieval-selection-manifest-v2`, `production-search-receipt-v2`)은 상호 완전히 독립적이다.
 
 ### 2. RequestSourceMemberBinding 구조 및 exact-match
 #174 REQUEST Guard와의 결속을 위해 아래 필드를 정규화한다:
