@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
@@ -136,10 +136,37 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.clearAllMocks()
 })
 
 describe('NotificationsPage', () => {
+  it('KST 배달 날짜로 오늘·이전 알림을 나누며 읽음과 원래 복약일을 섞지 않는다', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-11T15:10:00Z'))
+    vi.mocked(listNotifications).mockResolvedValue({
+      data: {
+        items: [
+          { ...READ_NOTIFICATION, delivered_at: '2026-09-11T15:00:00Z' },
+          { ...UNREAD_NOTIFICATION, delivered_at: '2026-09-11T14:59:59Z' },
+        ],
+        next_offset: null,
+      },
+    })
+    renderPage()
+
+    const today = await screen.findByRole('region', { name: '오늘' })
+    const previous = screen.getByRole('region', { name: '이전 알림' })
+    expect(within(today).getByRole('button', {
+      name: '복약 알림, 복약일 2026-09-09, 읽음',
+    })).toBeTruthy()
+    expect(within(previous).getByRole('button', {
+      name: '복약 재알림, 복약일 2026-09-10, 읽지 않음',
+    })).toBeTruthy()
+    expect(markNotificationRead).not.toHaveBeenCalled()
+    expect(putMedicationCheckin).not.toHaveBeenCalled()
+  })
+
   it('loading 뒤 빈 상태를 표시한다', async () => {
     vi.mocked(listNotifications).mockImplementation(() => new Promise(() => undefined))
     const first = renderPage()
