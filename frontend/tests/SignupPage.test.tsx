@@ -80,8 +80,8 @@ describe('SignupPage', () => {
     await screen.findByText('이메일 인증이 완료되었습니다.')
   }
 
-  it('미승인 초안을 확정 필수 동의로 처리하거나 회원가입 요청에 사용하지 않는다', () => {
-    vi.stubEnv('VITE_SIGNUP_TERMS_APPROVED', 'false')
+  it.each([undefined, '', 'false', 'TRUE'])('승인값 %s에서는 필수 동의와 가입을 차단한다', (value) => {
+    vi.stubEnv('VITE_SIGNUP_TERMS_APPROVED', value)
     renderPage()
 
     const terms = screen.getByRole('checkbox', { name: '필수 약관 승인 대기 중' })

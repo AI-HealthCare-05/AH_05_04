@@ -28,6 +28,7 @@ done
 
 # 이미지 버전 등 운영 배포 설정을 읽습니다.
 # 실제 secret이 포함된 .prod.env는 저장소에 커밋하지 않습니다.
+unset VITE_SIGNUP_TERMS_APPROVED
 set -a
 source "$PROD_ENV_FILE"
 set +a
@@ -250,6 +251,22 @@ for variable_name in PUBLIC_TRACK_F_ENABLED OCR_STRUCTURE_LLM_ENABLED CHAT_HISTO
   esac
 done
 
+# 약관 승인은 환경파일에 직접 선언해야 하며 실행 셸의 값을 상속하지 않습니다.
+validate_signup_terms_configuration() {
+  if ! grep -Eq '^VITE_SIGNUP_TERMS_APPROVED=' "$PROD_ENV_FILE"; then
+    echo "${PROD_ENV_FILE}에 VITE_SIGNUP_TERMS_APPROVED를 명시해야 합니다."
+    return 1
+  fi
+  case "${VITE_SIGNUP_TERMS_APPROVED:-}" in
+    true | false) ;;
+    *)
+      echo "VITE_SIGNUP_TERMS_APPROVED는 true 또는 false여야 합니다."
+      return 1
+      ;;
+  esac
+}
+validate_signup_terms_configuration
+
 for required_command in docker ssh scp; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     echo "필수 명령을 찾을 수 없습니다: $required_command"
@@ -358,7 +375,7 @@ build_and_push \
   "frontend/Dockerfile.prod" \
   "." \
   "VITE_API_BASE_URL=$PRODUCTION_PUBLIC_ORIGIN" \
-  "VITE_SIGNUP_TERMS_APPROVED=${VITE_SIGNUP_TERMS_APPROVED:-true}" \
+  "VITE_SIGNUP_TERMS_APPROVED=$VITE_SIGNUP_TERMS_APPROVED" \
   "VITE_EMAIL_VERIFICATION_ENABLED=${VITE_EMAIL_VERIFICATION_ENABLED:-false}"
 
 build_and_push \
