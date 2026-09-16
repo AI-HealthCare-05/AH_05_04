@@ -47,6 +47,13 @@ type HandoffRequest = {
   controller: AbortController
 }
 
+const notificationDay = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Seoul',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
 function getFailureMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 401) {
@@ -318,10 +325,17 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
     }
   }
 
+  // Group by delivery day, independently of read state and the original dose date.
+  const today = notificationDay.format(new Date())
+  const notificationGroups = [
+    { id: 'today', title: '오늘', items: notifications?.filter((item) => notificationDay.format(new Date(item.delivered_at)) === today) ?? [] },
+    { id: 'previous', title: '이전 알림', items: notifications?.filter((item) => notificationDay.format(new Date(item.delivered_at)) !== today) ?? [] },
+  ]
+
   return (
     <div className="mvp-page mvp-notifications-page">
       <MobileShell
-        title="알림"
+        title="Dosey 도지"
         onBack={() => navigate('/')}
         onNavigate={(item) => {
           if (item === '홈') navigate('/')
@@ -334,7 +348,6 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
         <main className="app-scroll mvp-page__content mvp-notifications">
           <div className="mvp-notifications__intro">
             <h2>알림</h2>
-            <p>복약 알림을 선택해 원래 복약 기록을 확인할 수 있어요.</p>
           </div>
 
           {pushHandoffMessage && (
@@ -370,41 +383,44 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
             </section>
           )}
 
-          {notifications && notifications.length > 0 && (
-            <ul className="mvp-notifications__list" aria-label="복약 알림">
-              {notifications.map((notification) => {
-                const isRead = notification.read_at !== null
-                const isSelecting = selectingId === notification.id
+          {notificationGroups.filter((group) => group.items.length > 0).map((group) => (
+            <section className="mvp-notifications__group" key={group.id} aria-labelledby={`notifications-${group.id}`}>
+              <h3 id={`notifications-${group.id}`}>{group.title}</h3>
+              <ul className="mvp-notifications__list" aria-label={`${group.title} 복약 알림`}>
+                {group.items.map((notification) => {
+                  const isRead = notification.read_at !== null
+                  const isSelecting = selectingId === notification.id
 
-                return (
-                  <li key={notification.id}>
-                    <button
-                      className={`mvp-notifications__item-button ${isRead ? 'is-read' : 'is-unread'}`}
-                      type="button"
-                      disabled={isSelecting}
-                      aria-busy={isSelecting}
-                      aria-label={`${getNotificationTitle(notification.kind)}, 복약일 ${notification.occurrence_local_date}, ${isSelecting ? '복약 기록 확인 중' : isRead ? '읽음' : '읽지 않음'}`}
-                      onClick={() => void handleSelect(notification)}
-                    >
-                      <span className={`mvp-notifications__unread-dot ${isRead ? 'is-read' : ''}`} aria-hidden="true" />
-                      <span className="mvp-notifications__item-copy">
-                        <strong>{isSelecting ? '복약 기록 확인 중...' : getNotificationTitle(notification.kind)}</strong>
-                        <small>복약일 {notification.occurrence_local_date}</small>
-                      </span>
-                      <span className={`mvp-notifications__read-state ${isRead ? 'is-read' : ''}`}>
-                        {isRead ? '읽음' : '읽지 않음'}
-                      </span>
-                      {!isRead && !isSelecting && (
-                        <span className="mvp-notifications__item-action" aria-hidden="true">
-                          복용 여부 기록하기
+                  return (
+                    <li key={notification.id}>
+                      <button
+                        className={`mvp-notifications__item-button ${isRead ? 'is-read' : 'is-unread'}`}
+                        type="button"
+                        disabled={isSelecting}
+                        aria-busy={isSelecting}
+                        aria-label={`${getNotificationTitle(notification.kind)}, 복약일 ${notification.occurrence_local_date}, ${isSelecting ? '복약 기록 확인 중' : isRead ? '읽음' : '읽지 않음'}`}
+                        onClick={() => void handleSelect(notification)}
+                      >
+                        <span className={`mvp-notifications__read-state ${isRead ? 'is-read' : ''}`}>
+                          <span className="mvp-notifications__read-mark" aria-hidden="true">{isRead ? '✓' : '●'}</span>
+                          {isRead ? '읽음' : '새 알림'}
                         </span>
-                      )}
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
+                        <span className="mvp-notifications__item-copy">
+                          <strong>{isSelecting ? '복약 기록 확인 중...' : getNotificationTitle(notification.kind)}</strong>
+                          <small>복약일 {notification.occurrence_local_date}</small>
+                        </span>
+                        {!isRead && !isSelecting && (
+                          <span className="mvp-notifications__item-action" aria-hidden="true">
+                            복용 여부 기록하기
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            </section>
+          ))}
 
           {notifications && notifications.length > 0 && nextOffset !== null && (
             <button

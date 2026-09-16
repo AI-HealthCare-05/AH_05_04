@@ -12,8 +12,9 @@
 }
 
 .mvp-start-page {
-  --ds-action: #5d7a88;
+  --ds-action: #607d8b;
   --ds-action-pressed: #526b78;
+  --ds-text-muted: #78909c;
 }
 
 .mvp-auth-page {
@@ -161,7 +162,7 @@
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: #ef7d5d;
+  background: var(--ds-action);
   color: #fff;
   font-size: 16px;
   font-weight: 900;
