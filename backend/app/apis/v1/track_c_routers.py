@@ -14,7 +14,12 @@ from app.dtos.track_c import (
     PutBarrierResponseRequest,
     SafetyAssessmentResponse,
 )
-from app.dtos.track_c_support import CreateSupportActionPlanRequest, SupportActionPlanResponse, SupportOfferResponse
+from app.dtos.track_c_support import (
+    CreateSupportActionPlanRequest,
+    PatchSupportActionPlanRequest,
+    SupportActionPlanResponse,
+    SupportOfferResponse,
+)
 from app.models.users import User
 from app.services.track_c_api import (
     BARRIER_RESPONSE_PUT_OPERATION_ID,
@@ -22,6 +27,8 @@ from app.services.track_c_api import (
     TrackCApiService,
 )
 from app.services.track_c_support import (
+    SUPPORT_ACTION_PLAN_GET_OPERATION_ID,
+    SUPPORT_ACTION_PLAN_PATCH_OPERATION_ID,
     SUPPORT_ACTION_PLAN_POST_OPERATION_ID,
     SUPPORT_OFFER_GET_OPERATION_ID,
     TrackCSupportService,
@@ -160,4 +167,57 @@ async def put_barrier_response(
         request=request,
         idempotency_key=idempotency_key,
     )
+    return JSONResponse(content=result.response_body, status_code=result.response_status)
+
+
+@track_c_router.get(
+    "/support-action-plans/{id}",
+    response_model=SupportActionPlanResponse,
+    operation_id=SUPPORT_ACTION_PLAN_GET_OPERATION_ID,
+    responses={
+        401: {"model": ErrorResponse, "description": "인증 필요"},
+        404: {"model": ErrorResponse, "description": "ACTION_PLAN_NOT_FOUND — 미존재·타인 동일 응답"},
+        422: {"model": ErrorResponse, "description": "VALIDATION_FAILED"},
+    },
+)
+async def get_support_action_plan(
+    id: UUID,
+    user: Annotated[User, Depends(get_request_user)],
+    service: Annotated[TrackCSupportService, Depends(get_track_c_support_service)],
+) -> SupportActionPlanResponse:
+    return await service.get_plan(user_id=user.id, plan_id=id)
+
+
+@track_c_router.patch(
+    "/support-action-plans/{id}",
+    response_model=SupportActionPlanResponse,
+    operation_id=SUPPORT_ACTION_PLAN_PATCH_OPERATION_ID,
+    responses={
+        400: {"model": ErrorResponse, "description": "Idempotency-Key 누락 또는 형식 오류"},
+        401: {"model": ErrorResponse, "description": "인증 필요"},
+        404: {"model": ErrorResponse, "description": "ACTION_PLAN_NOT_FOUND — 미존재·타인 동일 응답"},
+        409: {
+            "model": ErrorResponse,
+            "description": "ACTION_PLAN_STATE_CONFLICT, CHECKIN_FLOW_STALE, SAFETY_FLOW_PRECEDES_SUPPORT, "
+            "BARRIER_FLOW_STALE, IDEMPOTENCY_KEY_CONFLICT",
+        },
+        422: {"model": ErrorResponse, "description": "VALIDATION_FAILED"},
+        503: {"model": ErrorResponse, "description": "IDEMPOTENCY_RESPONSE_TOO_LARGE"},
+    },
+    openapi_extra={
+        "parameters": [
+            build_idempotency_key_openapi_parameter(description="사용자가 확인한 지원 계획 완료·취소 멱등성 키")
+        ]
+    },
+)
+async def patch_support_action_plan(
+    id: UUID,
+    request: PatchSupportActionPlanRequest,
+    user: Annotated[User, Depends(get_request_user)],
+    service: Annotated[TrackCSupportService, Depends(get_track_c_support_service)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", include_in_schema=False)] = None,
+) -> JSONResponse:
+    validate_idempotency_key_format(idempotency_key or "")
+    assert idempotency_key is not None
+    result = await service.patch_plan(user_id=user.id, plan_id=id, request=request, idempotency_key=idempotency_key)
     return JSONResponse(content=result.response_body, status_code=result.response_status)
