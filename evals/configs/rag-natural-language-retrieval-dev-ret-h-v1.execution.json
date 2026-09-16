@@ -1,0 +1,57 @@
+{
+  "config_id": "rag-natural-language-retrieval-dev-ret-h-v1",
+  "config_version": "1.0.0",
+  "experiment_id": "rag-natural-language-retrieval-dev",
+  "experiment_type": "KNOWLEDGE_RETRIEVAL",
+  "variant_id": "RET-H",
+  "evaluated_partitions": [
+    "DEV"
+  ],
+  "environment": "LOCAL",
+  "dataset_manifest_path": "evals/retrieval/manifests/rag-natural-language-retrieval-dev-v1.dataset.json",
+  "profile_path": "evals/profiles/rag-natural-language-retrieval-dev-v1.profile.json",
+  "comparison_policy_path": "evals/policies/rag-natural-language-retrieval-dev-v1.comparison-policy.json",
+  "evaluation_policy_path": "evals/policies/rag-natural-language-retrieval-dev-v1.evaluation-policy.json",
+  "suite_path": "evals/suites/rag-natural-language-retrieval-dev-v1.suite.json",
+  "upstream_contract_manifest_hash": "f2c98884c841d3fccdbec552f14aad1fd471730eae6d80c472c1b332ed95a570",
+  "retrieval_variant": {
+    "variant_id": "RET-H",
+    "variant_version": "1.0.0",
+    "kind": "RETRIEVAL",
+    "model_config": {
+      "adapter_id": "knowledge-evidence-retrieval.actual.v1",
+      "provider_invocation": true,
+      "source_snapshot_ref": {
+        "id": "rag-natural-language-retrieval-dev-evidence",
+        "version": "1.0.0",
+        "hash": "e3949bfecebefbd73abf279d6919e13bb42685751d7aa1d96197a15379f6acd5"
+      },
+      "knowledge_index_ref": {
+        "id": "rag-natural-language-retrieval-dev-synthetic-index",
+        "version": "1.0.0",
+        "hash": "1821b1b89bcb358759df9dbe655cdbbdfe1ac8fd9fbf80a701a6570c58c993f7"
+      },
+      "embedding_model_ref": {
+        "id": "openai:text-embedding-3-large",
+        "version": "1.0.0",
+        "hash": "bc0ade8fb05496c8e44f4ae9d282784fda829bf062dd33fa5246ed20fe03bd70"
+      },
+      "parser_ref": {
+        "id": "synthetic-parser",
+        "version": "1.0.0",
+        "hash": "30a900b7174c8e90716b7b3d49bfa1e21326bdec15ed655a3b89454bd3c3ba76"
+      },
+      "filter_snapshot_hash": "bad0a6773e18a26a42e80da531b5489c2249b80687f985e4cc162d88b796db18"
+    },
+    "prompt_version": "actual-retrieval-v1",
+    "parameters": {
+      "retrieval_strategy": "ACTUAL_HYBRID_RRF_DEV",
+      "reranker_enabled": false
+    },
+    "replay_artifact_path": null
+  },
+  "answer_variant": null,
+  "seed": 178,
+  "retry_policy": "NO_AUTOMATIC_RETRY",
+  "max_attempts": 1
+}

@@ -251,7 +251,7 @@
 
 .mvp-signup-email-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 94px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   min-width: 0;
 }

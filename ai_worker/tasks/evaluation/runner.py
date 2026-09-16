@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, sha256_hex
 from ai_worker.tasks.evaluation.config import ResolvedDevExecution
@@ -56,12 +58,16 @@ class EvaluationAdapter(Protocol):
     def execute(self, request: AdapterRequest) -> CaseResult: ...
 
 
+class AsyncEvaluationAdapter(Protocol):
+    async def execute(self, request: AdapterRequest) -> CaseResult: ...
+
+
 class AdapterRegistry(Protocol):
-    def resolve(self, adapter_id: str) -> EvaluationAdapter | None: ...
+    def resolve(self, adapter_id: str) -> EvaluationAdapter | AsyncEvaluationAdapter | None: ...
 
 
 class CaseSetValidator(Protocol):
-    def validate_case_set(self, case_ids: Sequence[str]) -> None: ...
+    def validate_case_set(self, case_ids: Sequence[str]) -> Any: ...
 
 
 class EmptyAdapterRegistry:
@@ -249,6 +255,40 @@ def _execute_once(request: AdapterRequest, adapter: EvaluationAdapter | None) ->
     return result
 
 
+async def _execute_once_async(
+    request: AdapterRequest,
+    adapter: EvaluationAdapter | AsyncEvaluationAdapter | None,
+) -> CaseResult:
+    if adapter is None:
+        return _neutral_result(request, ExecutionStatus.NOT_IMPLEMENTED, None)
+    try:
+        raw_result = adapter.execute(request)
+        if inspect.isawaitable(raw_result):
+            raw_result = await raw_result
+        result = CASE_RESULT_ADAPTER.validate_python(raw_result)
+    except EvaluationValidationError as error:
+        if error.code is EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID:
+            return _neutral_result(request, ExecutionStatus.INVALID, error.code)
+        return _neutral_result(request, ExecutionStatus.ERROR, EvaluationErrorCode.INTERNAL_ERROR)
+    except Exception:
+        return _neutral_result(request, ExecutionStatus.ERROR, EvaluationErrorCode.INTERNAL_ERROR)
+    if not _binding_matches(result, request):
+        return _neutral_result(request, ExecutionStatus.INVALID, EvaluationErrorCode.MANIFEST_INVALID)
+    if not _result_contract_matches(result):
+        return _neutral_result(
+            request,
+            ExecutionStatus.INVALID,
+            EvaluationErrorCode.RETRIEVAL_RESULT_INVALID,
+        )
+    return result
+
+
+def _is_async_adapter(adapter: EvaluationAdapter | AsyncEvaluationAdapter | None) -> bool:
+    if adapter is None:
+        return False
+    return inspect.iscoroutinefunction(adapter.execute)
+
+
 def _select_cases(
     dataset: ValidatedDataset,
     experiment_type: ExperimentType,
@@ -318,7 +358,7 @@ def _retrieval_failure_records(
     return tuple(failures)
 
 
-def execute_dev_cases(
+async def execute_dev_cases_async(
     dataset: ValidatedDataset,
     resolved: ResolvedDevExecution,
     *,
@@ -343,6 +383,92 @@ def execute_dev_cases(
     validator = getattr(adapter, "validate_case_set", None)
     if callable(validator):
         try:
+            val_res = cast(CaseSetValidator, adapter).validate_case_set(tuple(case.case_id for case in selected))
+            if inspect.isawaitable(val_res):
+                await val_res
+        except EvaluationValidationError as error:
+            status = (
+                ExecutionStatus.INVALID
+                if error.code is EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID
+                else ExecutionStatus.ERROR
+            )
+            code = error.code if status is ExecutionStatus.INVALID else EvaluationErrorCode.INTERNAL_ERROR
+            case_results = tuple(_neutral_result(request, status, code) for request in requests)
+        else:
+            case_results = tuple([await _execute_once_async(request, adapter) for request in requests])
+    else:
+        case_results = tuple([await _execute_once_async(request, adapter) for request in requests])
+    status, decision, blockers = aggregate_statuses([result.execution_status for result in case_results])
+    failure_records = _retrieval_failure_records(
+        dataset,
+        case_results,
+        created_at=failure_created_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+    )
+    return RunOutcome(
+        case_results=case_results,
+        failure_records=failure_records,
+        execution_status=status,
+        decision_status=decision,
+        blocking_execution_statuses=blockers,
+        selected_case_ids=tuple(result.case_id for result in case_results),
+        task_types=task_types,
+    )
+
+
+def execute_dev_cases(
+    dataset: ValidatedDataset,
+    resolved: ResolvedDevExecution,
+    *,
+    run_id: str,
+    adapter_registry: AdapterRegistry,
+    failure_created_at: str | None = None,
+) -> RunOutcome:
+    adapter = adapter_registry.resolve(dataset.suite.adapter_id)
+    if _is_async_adapter(adapter):
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                return executor.submit(
+                    asyncio.run,
+                    execute_dev_cases_async(
+                        dataset,
+                        resolved,
+                        run_id=run_id,
+                        adapter_registry=adapter_registry,
+                        failure_created_at=failure_created_at,
+                    ),
+                ).result()
+        return asyncio.run(
+            execute_dev_cases_async(
+                dataset,
+                resolved,
+                run_id=run_id,
+                adapter_registry=adapter_registry,
+                failure_created_at=failure_created_at,
+            )
+        )
+
+    task_types = TASK_TYPES_BY_EXPERIMENT[resolved.request.experiment_type]
+    selected = _select_cases(dataset, resolved.request.experiment_type)
+    if not selected:
+        return RunOutcome(
+            case_results=(),
+            failure_records=(),
+            execution_status=ExecutionStatus.INVALID,
+            decision_status=None,
+            blocking_execution_statuses=(ExecutionStatus.INVALID,),
+            selected_case_ids=(),
+            task_types=task_types,
+        )
+    requests = tuple(_case_request(case, dataset, resolved, run_id) for case in selected)
+    validator = getattr(adapter, "validate_case_set", None)
+    if callable(validator):
+        try:
             cast(CaseSetValidator, adapter).validate_case_set(tuple(case.case_id for case in selected))
         except EvaluationValidationError as error:
             status = (
@@ -353,9 +479,11 @@ def execute_dev_cases(
             code = error.code if status is ExecutionStatus.INVALID else EvaluationErrorCode.INTERNAL_ERROR
             case_results = tuple(_neutral_result(request, status, code) for request in requests)
         else:
-            case_results = tuple(_execute_once(request, adapter) for request in requests)
+            case_results = tuple(
+                _execute_once(request, cast(EvaluationAdapter | None, adapter)) for request in requests
+            )
     else:
-        case_results = tuple(_execute_once(request, adapter) for request in requests)
+        case_results = tuple(_execute_once(request, cast(EvaluationAdapter | None, adapter)) for request in requests)
     status, decision, blockers = aggregate_statuses([result.execution_status for result in case_results])
     failure_records = _retrieval_failure_records(
         dataset,

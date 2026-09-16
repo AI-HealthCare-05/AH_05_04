@@ -527,6 +527,70 @@ async def test_execute_hybrid_retrieve_begin_failure() -> None:
     assert run_store.calls == []
 
 
+@pytest.mark.asyncio
+async def test_embedding_identity_aligns_with_openai_text_embedding_adapter() -> None:
+    from ai_worker.adapters.openai_text_embedding import (
+        EXPECTED_DIMENSION,
+        EXPECTED_MODEL_REF,
+        EXPECTED_MODEL_VERSION,
+    )
+    from ai_worker.tasks.rag.retrieval_runtime import (
+        PRODUCTION_EMBEDDING_DIMENSION,
+        PRODUCTION_EMBEDDING_MODEL_REF,
+        PRODUCTION_EMBEDDING_MODEL_VERSION,
+    )
+
+    # 1. Exact constant alignment
+    assert PRODUCTION_EMBEDDING_MODEL_REF == EXPECTED_MODEL_REF == "openai:text-embedding-3-large"
+    assert PRODUCTION_EMBEDDING_MODEL_VERSION == EXPECTED_MODEL_VERSION == "text-embedding-3-large"
+    assert PRODUCTION_EMBEDDING_DIMENSION == EXPECTED_DIMENSION == 1536
+
+    # 2. Verify runtime passes these exact values to embed()
+    class RecordingEmbedder:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def embed(
+            self,
+            text: SensitiveText,
+            *,
+            model_ref: str,
+            model_version: str,
+            dimension: int,
+        ) -> TextEmbeddingSuccess:
+            self.calls.append(
+                {
+                    "text": text,
+                    "model_ref": model_ref,
+                    "model_version": model_version,
+                    "dimension": dimension,
+                }
+            )
+            return TextEmbeddingSuccess(
+                embedding=SensitiveVector((1.0,) + (0.0,) * (dimension - 1)),
+                adapter_artifact_ref=ImmutableArtifactRef("openai_embed", "1.0", "e" * 64),
+            )
+
+    embedder = RecordingEmbedder()
+    verifier = RecordingVerifier()
+    search_port = RecordingSearchPort(hits=())
+    sr = _make_dummy_search_request(RetrievalExecutionMode.DENSE_ONLY)
+
+    outcome = await execute_production_retrieval(
+        ProductionRetrievalRequest(search_request=sr),
+        search_port=search_port,
+        text_embedding_port=embedder,  # type: ignore[arg-type]
+        eligibility_verifier=verifier,
+    )
+
+    assert outcome.status == RetrievalExecutionStatus.SUCCEEDED
+    assert len(embedder.calls) == 1
+    call = embedder.calls[0]
+    assert call["model_ref"] == EXPECTED_MODEL_REF
+    assert call["model_version"] == EXPECTED_MODEL_VERSION
+    assert call["dimension"] == EXPECTED_DIMENSION
+
+
 def test_retrieval_run_canonical_json_bytes_conforms_to_rfc8785_utf16_ordering() -> None:
     payload = {"\ue000": 1, "\U00010000": 2, "a": 3}
     # RFC 8785 UTF-16 code unit order: "a" (0x0061), "\U00010000" (surrogates 0xD800 0xDC00), "\ue000" (0xE000)

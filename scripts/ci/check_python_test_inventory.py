@@ -85,6 +85,7 @@ IGNORED_DIRECTORY_NAMES = {
     ".pytest_cache",
     ".ruff_cache",
     ".venv",
+    ".worktrees",
     "node_modules",
 }
 

@@ -178,11 +178,11 @@ class PostgreSqlEvidenceEligibilityVerifier(ProductionEvidenceEligibilityVerifie
                 for row in rows:
                     is_active = (
                         row["source_lifecycle"] == "ACTIVE"
-                        and row["endpoint_lifecycle"] == "ACTIVE"
-                        and row["endpoint_runtime"] in ("ACTIVE", "APPROVED")
-                        and row["endpoint_acquisition"] in ("ACTIVE", "SUCCESS")
-                        and row["operation_runtime"] in ("ACTIVE", "APPROVED")
-                        and row["operation_acquisition"] in ("ACTIVE", "SUCCESS")
+                        and row["endpoint_lifecycle"] in ("ACTIVE", "VERIFIED")
+                        and row["endpoint_runtime"] in ("ACTIVE", "APPROVED", "ENABLED")
+                        and row["endpoint_acquisition"] in ("ACTIVE", "SUCCESS", "APPROVED")
+                        and row["operation_runtime"] in ("ACTIVE", "APPROVED", "ENABLED")
+                        and row["operation_acquisition"] in ("ACTIVE", "SUCCESS", "APPROVED")
                         and row["snapshot_verification"] in ("VERIFIED", "CURRENT", "ACTIVE")
                     )
                     if not is_active:

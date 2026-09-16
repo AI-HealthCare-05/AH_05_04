@@ -381,15 +381,8 @@ function SignupPage() {
                     value={form.email}
                     onChange={handleChange}
                   />
-                  <button
-                    type="button"
-                    className="mvp-signup-email-check"
-                    aria-label="중복확인 (기능 준비 중)"
-                    disabled
-                  >
-                    중복확인
-                  </button>
                 </div>
+                <small>이메일 중복 여부는 가입 시 확인합니다.</small>
                 {fieldErrors.email && (
                   <span className="mvp-form__field-error" id="signup-email-error" role="alert">
                     {fieldErrors.email}

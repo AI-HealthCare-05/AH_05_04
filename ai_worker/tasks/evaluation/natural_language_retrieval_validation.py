@@ -30,6 +30,11 @@ _PHASE_B2_BLOCKERS = (
     "WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION",
     "WAITING_FOR_HOLDOUT_FREEZE",
 )
+_PHASE_B4_BLOCKERS = (
+    "BLOCKED_BY_PROTECTED_RETRIEVAL_RUNNER",
+    "WAITING_FOR_HOLDOUT_ACCESS_AUTHORIZATION",
+    "WAITING_FOR_HOLDOUT_FREEZE",
+)
 _DECISION_DOCS_PREFIX = "docs/"
 _VALIDATION_CHECK_CATALOG = {
     "PHASE_A_DEV_FIXTURE": (
@@ -162,11 +167,23 @@ class ProtectedRunnerFoundationRef(StrictContractModel):
     self_sha256: Literal["edb69fea41af1ee2aec34e54ef44d7d0dc8273ab27135b26829c096ed842b3b2"]
 
 
+class ActualRunRef(StrictContractModel):
+    id: NonEmptyString
+    version: NonEmptyString
+    hash: Sha256Hex
+
+
 class Issue273ValidationStatus(StrictContractModel):
-    schema_version: Literal["1.2.1"]
+    schema_version: Literal["1.2.1", "1.3.0"]
     issue: Literal["#273"]
-    phase: Literal["PHASE_B3_PROTECTED_RUNNER_FOUNDATION"]
-    status_label: Literal["Phase B3 · Protected Runner Policy Foundation Implemented"]
+    phase: Literal[
+        "PHASE_B3_PROTECTED_RUNNER_FOUNDATION",
+        "PHASE_B4_DEV_ACTUAL_RUN_COMPLETED",
+    ]
+    status_label: Literal[
+        "Phase B3 · Protected Runner Policy Foundation Implemented",
+        "Phase B4 · DEV Actual Retrieval Evaluation Completed",
+    ]
     schema_set_status: Literal["REVIEW_REQUIRED"]
     dataset_ref: Literal["rag-natural-language-retrieval-dev@1.0.0"]
     planned_counts: PlannedCounts
@@ -189,8 +206,8 @@ class Issue273ValidationStatus(StrictContractModel):
     infrastructure_adapter_status: Literal["PARTIALLY_IMPLEMENTED"]
     reconciliation_adapter_status: Literal["NOT_IMPLEMENTED"]
     holdout_freeze_status: Literal["NOT_STARTED"]
-    adapter_status: Literal["NOT_IMPLEMENTED"]
-    actual_run_ref: None
+    adapter_status: Literal["NOT_IMPLEMENTED", "IMPLEMENTED"]
+    actual_run_ref: ActualRunRef | None = None
     release_eligible: Literal[False]
     blocking_codes: Annotated[
         tuple[
@@ -203,7 +220,7 @@ class Issue273ValidationStatus(StrictContractModel):
             ...,
         ],
         BeforeValidator(_tuple_from_wire),
-        Field(min_length=4, max_length=4),
+        Field(min_length=3, max_length=4),
     ]
     checks: Annotated[
         tuple[ValidationCheck, ...],
@@ -214,9 +231,28 @@ class Issue273ValidationStatus(StrictContractModel):
     status_sha256: Sha256Hex
 
     @model_validator(mode="after")
-    def validate_ordered_collections(self) -> Issue273ValidationStatus:
-        if self.blocking_codes != _PHASE_B2_BLOCKERS:
-            raise ValueError("Issue 273 blockers must be the exact UTF-16-sorted set")
+    def validate_ordered_collections(self) -> Issue273ValidationStatus:  # noqa: C901
+        if self.phase == "PHASE_B3_PROTECTED_RUNNER_FOUNDATION":
+            if self.schema_version != "1.2.1":
+                raise ValueError("Phase B3 must use schema_version 1.2.1")
+            if self.status_label != "Phase B3 · Protected Runner Policy Foundation Implemented":
+                raise ValueError("Phase B3 status label mismatch")
+            if self.adapter_status != "NOT_IMPLEMENTED" or self.actual_run_ref is not None:
+                raise ValueError("Phase B3 requires adapter_status NOT_IMPLEMENTED and actual_run_ref None")
+            if self.blocking_codes != _PHASE_B2_BLOCKERS:
+                raise ValueError("Phase B3 blockers must be the exact 4 UTF-16-sorted set")
+        elif self.phase == "PHASE_B4_DEV_ACTUAL_RUN_COMPLETED":
+            if self.schema_version != "1.3.0":
+                raise ValueError("Phase B4 must use schema_version 1.3.0")
+            if self.status_label != "Phase B4 · DEV Actual Retrieval Evaluation Completed":
+                raise ValueError("Phase B4 status label mismatch")
+            if self.adapter_status != "IMPLEMENTED" or self.actual_run_ref is None:
+                raise ValueError("Phase B4 requires adapter_status IMPLEMENTED and valid actual_run_ref")
+            if self.blocking_codes != _PHASE_B4_BLOCKERS:
+                raise ValueError("Phase B4 blockers must be the exact 3 UTF-16-sorted set")
+        else:
+            raise ValueError(f"Unsupported phase: {self.phase}")
+
         check_ids = [check.check_id for check in self.checks]
         commands = [check.command for check in self.checks]
         if tuple(check_ids) != _VALIDATION_CHECK_IDS:
@@ -301,11 +337,37 @@ def render_report(raw_status: bytes) -> bytes:
     status = parse_status_bytes(raw_status)
     schema_set = status.schema_set_ref
     decision_href = _decision_href(status.schema_set_decision)
+    is_b4 = status.phase == "PHASE_B4_DEV_ACTUAL_RUN_COMPLETED"
+    title_line = (
+        "# Issue #273 Phase B4 DEV Actual Retrieval Evaluation Validation Report"
+        if is_b4
+        else "# Issue #273 Phase B3 Protected Runner Policy Foundation Validation Report"
+    )
+    quote_1 = (
+        "> Phase B4 · DEV Actual Retrieval Evaluation Completed — DEV retrieval execution completed and verified,"
+        if is_b4
+        else "> Phase B3 · Protected Runner Policy Foundation Implemented — executable policy tests exist, but effective"
+    )
+    quote_2 = (
+        "> but protected Runner infrastructure enforcement, authorization, Freeze, and Release remain incomplete."
+        if is_b4
+        else "> infrastructure enforcement, authorization, Freeze, actual run, and Release remain incomplete."
+    )
+    actual_run_line = (
+        f"- Actual Run Artifact: `{status.actual_run_ref.id}@{status.actual_run_ref.version}` `{status.actual_run_ref.hash}`"
+        if is_b4 and status.actual_run_ref is not None
+        else "- Actual Run Artifact: `NOT_CREATED`"
+    )
+    actual_run_narrative = (
+        "Actual DEV retrieval evaluation was executed and verified."
+        if is_b4
+        else "Actual retrieval was not run because the actual Adapter is NOT_IMPLEMENTED."
+    )
     lines = [
-        "# Issue #273 Phase B3 Protected Runner Policy Foundation Validation Report",
+        title_line,
         "",
-        "> Phase B3 · Protected Runner Policy Foundation Implemented — executable policy tests exist, but effective",
-        "> infrastructure enforcement, authorization, Freeze, actual run, and Release remain incomplete.",
+        quote_1,
+        quote_2,
         "",
         f"- Phase: `{status.phase}`",
         f"- Schema Set Status: `{status.schema_set_status}`",
@@ -363,7 +425,7 @@ def render_report(raw_status: bytes) -> bytes:
         f"- Reconciliation Adapter: `{status.reconciliation_adapter_status}`",
         f"- HOLDOUT Freeze: `{status.holdout_freeze_status}`",
         f"- Actual Adapter: `{status.adapter_status}`",
-        "- Actual Run Artifact: `NOT_CREATED`",
+        actual_run_line,
         "",
         (
             "한국어 자연어 합성 DEV 질문 60개와 합성 Gold/corpus authoring graph가 저장소에 존재하며, "
@@ -374,7 +436,7 @@ def render_report(raw_status: bytes) -> bytes:
         "The protected Runner policy foundation and data-plane adapter are partially implemented and verified.",
         "Control-plane services and the actual protected loader/CLI remain NOT_IMPLEMENTED.",
         "Access authorization is not recorded, and HOLDOUT authoring has not started.",
-        "Actual retrieval was not run because the actual Adapter is NOT_IMPLEMENTED.",
+        actual_run_narrative,
         "No baseline Metric exists, and no Metric fields are recorded in the machine status.",
         "DEV cannot produce a Release PASS; Production remains closed.",
         "",

@@ -1,7 +1,8 @@
 function TermsOfService() {
+  const approved = import.meta.env.VITE_SIGNUP_TERMS_APPROVED === 'true'
   return (
     <>
-      <aside
+      {!approved && <aside
         className="notice attention mvp-signup-legal__review"
         role="note"
         aria-labelledby="terms-review-title"
@@ -10,11 +11,11 @@ function TermsOfService() {
         <p>
           최종 법무/Privacy 승인 전 문서입니다. 현재 사용자의 확정 필수 동의 계약으로 사용되지 않습니다.
         </p>
-      </aside>
+      </aside>}
       <article
         className="mvp-signup-legal__document"
         aria-labelledby="terms-of-service-title"
-        aria-describedby="terms-review-title"
+        aria-describedby={approved ? undefined : 'terms-review-title'}
       >
       <header className="mvp-signup-legal__header">
         <h2 id="terms-of-service-title">2. 이용약관</h2>
