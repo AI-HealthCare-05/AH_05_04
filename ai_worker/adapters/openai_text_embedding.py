@@ -24,6 +24,10 @@ EXPECTED_DIMENSION = 1536
 class OpenAITextEmbeddingAdapter(TextEmbeddingPort):
     """Concrete adapter for OpenAI text-embedding-3-large generating 1536-dimensional vectors."""
 
+    model_ref: str = EXPECTED_MODEL_REF
+    model_version: str = EXPECTED_MODEL_VERSION
+    dimension: int = EXPECTED_DIMENSION
+
     def __init__(
         self,
         client: Any,
@@ -31,6 +35,9 @@ class OpenAITextEmbeddingAdapter(TextEmbeddingPort):
     ) -> None:
         self._client = client
         self._adapter_artifact_ref = adapter_artifact_ref
+        self.model_ref = EXPECTED_MODEL_REF
+        self.model_version = EXPECTED_MODEL_VERSION
+        self.dimension = EXPECTED_DIMENSION
 
     async def embed(
         self,

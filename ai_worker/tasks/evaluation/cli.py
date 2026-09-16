@@ -708,6 +708,17 @@ def _validate_baseline_candidate_state(
     )
 
 
+def _resolve_adapter_registry(resolved: ResolvedDevExecution) -> AdapterRegistry:
+    variant = resolved.request.retrieval_variant
+    if variant is not None:
+        adapter_id = variant.model_config_payload.get("adapter_id")
+        if adapter_id in {"knowledge-evidence-retrieval.actual.v1", "actual-retrieval.v1"}:
+            from ai_worker.tasks.evaluation.actual_retrieval import build_actual_adapter_registry
+
+            return build_actual_adapter_registry(resolved)
+    return build_adapter_registry(resolved)
+
+
 def _run_dev(
     arguments: argparse.Namespace,
     *,
@@ -748,7 +759,7 @@ def _run_dev(
             dataset,
             resolved,
             run_id=arguments.run_id,
-            adapter_registry=adapter_registry if adapter_registry is not None else build_adapter_registry(resolved),
+            adapter_registry=adapter_registry if adapter_registry is not None else _resolve_adapter_registry(resolved),
             failure_created_at=started_at,
         )
         draft = build_artifact_draft(

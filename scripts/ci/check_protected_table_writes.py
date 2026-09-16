@@ -19,6 +19,7 @@ _SOURCE_WRITERS = frozenset(
         "ai_worker/tasks/rag/source_cleanup/execution.py",
     }
 )
+_EVALUATION_BOOTSTRAP_WRITERS = frozenset({"ai_worker/adapters/sqlalchemy_evaluation_bootstrap_repository.py"})
 _CATALOG_WRITERS = frozenset(
     {"backend/app/repositories/rag_source_catalog_repository.py", "backend/app/admin/source_management_service.py"}
 )
@@ -32,13 +33,14 @@ APPROVED_WRITERS: dict[str, frozenset[str]] = {
     "source_management_audit": frozenset(
         {"backend/app/admin/source_management_permissions.py", "backend/app/admin/source_management_service.py"}
     ),
-    "rag_source": _SOURCE_WRITERS,
-    "rag_source_endpoint": _SOURCE_WRITERS,
-    "rag_source_operation": _SOURCE_WRITERS,
-    "rag_source_snapshot": _SOURCE_WRITERS,
+    "rag_source": _SOURCE_WRITERS | _EVALUATION_BOOTSTRAP_WRITERS,
+    "rag_source_endpoint": _SOURCE_WRITERS | _EVALUATION_BOOTSTRAP_WRITERS,
+    "rag_source_operation": _SOURCE_WRITERS | _EVALUATION_BOOTSTRAP_WRITERS,
+    "rag_source_snapshot": _SOURCE_WRITERS | _EVALUATION_BOOTSTRAP_WRITERS,
+    "rag_source_snapshot_member": _SOURCE_WRITERS | _EVALUATION_BOOTSTRAP_WRITERS,
     "rag_source_ingestion_run": _SOURCE_WRITERS,
     "rag_source_ingestion_artifact": _SOURCE_WRITERS,
-    "rag_source_snapshot_verification": _SOURCE_WRITERS,
+    "rag_source_snapshot_verification": _SOURCE_WRITERS | _EVALUATION_BOOTSTRAP_WRITERS,
     "rag_medication_product": _CATALOG_WRITERS | _CATALOG_BUILD_WRITERS,
     "rag_medication_ingredient": _CATALOG_WRITERS | _CATALOG_BUILD_WRITERS,
     "rag_medication_alias": _CATALOG_WRITERS | _CATALOG_BUILD_WRITERS,
@@ -74,6 +76,7 @@ MODEL_TABLES = {
     "RagSourceEndpoint": "rag_source_endpoint",
     "RagSourceOperation": "rag_source_operation",
     "RagSourceSnapshot": "rag_source_snapshot",
+    "RagSourceSnapshotMember": "rag_source_snapshot_member",
     "RagSourceIngestionRun": "rag_source_ingestion_run",
     "RagSourceIngestionArtifact": "rag_source_ingestion_artifact",
     "RagSourceSnapshotVerification": "rag_source_snapshot_verification",

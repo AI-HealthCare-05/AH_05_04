@@ -61,6 +61,16 @@ class RetrievalReplayModelConfig(StrictContractModel):
     filter_snapshot_hash: Sha256Hex
 
 
+class ActualRetrievalModelConfig(StrictContractModel):
+    adapter_id: Literal["knowledge-evidence-retrieval.actual.v1", "actual-retrieval.v1"]
+    provider_invocation: bool
+    source_snapshot_ref: ImmutableReference
+    knowledge_index_ref: ImmutableReference
+    embedding_model_ref: ImmutableReference
+    parser_ref: ImmutableReference
+    filter_snapshot_hash: Sha256Hex
+
+
 class DevExecutionRequest(StrictContractModel):
     config_id: StableId
     config_version: SemanticVersion
@@ -171,7 +181,7 @@ def _validate_replay_dataset_binding(
         raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID)
 
 
-def _validate_request_semantics(request: DevExecutionRequest) -> tuple[tuple[DevVariant, ...], bytes, str]:
+def _validate_request_semantics(request: DevExecutionRequest) -> tuple[tuple[DevVariant, ...], bytes, str]:  # noqa: C901
     if any(not cast(str, getattr(request, field)).startswith("evals/") for field in _REFERENCE_FIELDS):
         raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID)
     if request.upstream_contract_manifest_hash != AUTHORITY_MANIFEST_HASH:
@@ -206,6 +216,18 @@ def _validate_request_semantics(request: DevExecutionRequest) -> tuple[tuple[Dev
             RetrievalReplayModelConfig.model_validate(retrieval.model_config_payload)
         except ValidationError:
             raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID) from None
+    elif retrieval is not None and retrieval.model_config_payload.get("adapter_id") in {
+        "knowledge-evidence-retrieval.actual.v1",
+        "actual-retrieval.v1",
+    }:
+        if request.experiment_type is not ExperimentType.KNOWLEDGE_RETRIEVAL:
+            raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+        if request.variant_id != retrieval.variant_id or retrieval.replay_artifact_path is not None:
+            raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+        try:
+            ActualRetrievalModelConfig.model_validate(retrieval.model_config_payload)
+        except ValidationError:
+            raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID) from None
     elif retrieval is not None and retrieval.replay_artifact_path is not None:
         raise EvaluationValidationError(EvaluationErrorCode.RETRIEVAL_REPLAY_INVALID)
     model_payloads = {canonical_json_bytes(variant.model_config_payload) for variant in active_variants}
