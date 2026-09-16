@@ -23,7 +23,12 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from ai_worker.adapters.sqlalchemy_retrieval_run import SqlAlchemyRetrievalRunStore
-from ai_worker.tasks.evaluation.ret_h_smoke import verify_persisted_receipt
+from ai_worker.tasks.evaluation.actual_retrieval_index import SYNTHETIC_INDEX_CODE
+from ai_worker.tasks.evaluation.ret_h_smoke import (
+    verify_fixture_is_synthetic,
+    verify_persisted_receipt,
+    verify_source_sentinel_indexed,
+)
 from ai_worker.tasks.rag.retrieval_run import (
     BeginRetrievalRunRequest,
     BeginRetrievalRunSuccess,
@@ -278,3 +283,174 @@ async def test_unknown_run_id_is_rejected(database) -> None:
             run_id=str(uuid4()),
             expected_receipt_hash="9" * 64,
         )
+
+
+# --------------------------------------------------------------------------------------
+# Synthetic-fixture authenticity and Source sentinel binding against real rows
+# --------------------------------------------------------------------------------------
+
+SOURCE_SENTINEL = "RET_H_SMOKE_S_integration0001"
+
+
+async def _seed_index(engine, *, index_code: str, chunk_text: str) -> tuple[UUID, UUID]:
+    """Create one Knowledge Index with a single member chunk over a real Source snapshot.
+
+    The snapshot is left ``PENDING``: sealing a ``CURRENT`` snapshot needs a verification
+    row, and neither check under test reads verification_status. These tests cover index
+    authenticity and Source sentinel presence only.
+    """
+    index_id, doc_id, chunk_id = uuid4(), uuid4(), uuid4()
+    source_id, endpoint_id, operation_id = uuid4(), uuid4(), uuid4()
+    snapshot_id, snapshot_member_id = uuid4(), uuid4()
+    digest = "c" * 64
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO rag_source (id, source_code, display_name, lifecycle_status) "
+                "VALUES (:id, :code, 'Synthetic Smoke Source', 'ACTIVE')"
+            ),
+            {"id": str(source_id), "code": f"SYNTHETIC_DEV_{uuid4().hex[:8]}"},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO rag_source_endpoint (id, source_id, endpoint_code, display_name, "
+                "lifecycle_status, runtime_status, acquisition_status) "
+                "VALUES (:id, :src, 'SYNTHETIC_SMOKE_ENDPOINT', 'Synthetic', 'VERIFIED', 'ENABLED', 'APPROVED')"
+            ),
+            {"id": str(endpoint_id), "src": str(source_id)},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO rag_source_operation (id, endpoint_id, operation_code, display_name, "
+                "runtime_status, acquisition_status) "
+                "VALUES (:id, :ep, 'SYNTHETIC_SMOKE_RECORDS', 'Synthetic', 'ENABLED', 'APPROVED')"
+            ),
+            {"id": str(operation_id), "ep": str(endpoint_id)},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO rag_source_snapshot (id, operation_id, source_version, raw_manifest_checksum, "
+                "canonical_checksum, schema_version, parser_version, normalization_version, "
+                "canonicalization_spec_version, record_count, rejected_record_count, verification_status, "
+                "collected_at) VALUES (:id, :op, '1.0', :h, :h, '1.0', '1.0', 'v1', 'canonical-v1', 1, 0, "
+                "'PENDING', now())"
+            ),
+            {"id": str(snapshot_id), "op": str(operation_id), "h": digest},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO rag_source_snapshot_member (id, source_snapshot_id, member_kind, endpoint_id, "
+                "operation_id, locator, content_sha256) "
+                "VALUES (:id, :snap, 'ENDPOINT_OPERATION', :ep, :op, '$.records[0]', :h)"
+            ),
+            {
+                "id": str(snapshot_member_id),
+                "snap": str(snapshot_id),
+                "ep": str(endpoint_id),
+                "op": str(operation_id),
+                "h": digest,
+            },
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO rag_knowledge_index (id, index_code, index_version, corpus_manifest_hash, "
+                "embedding_manifest_hash, index_configuration_hash, embedding_model_ref, "
+                "embedding_model_version, embedding_dimension, distance_metric, member_count) "
+                "VALUES (:id, :code, '1.0', :h, :h, :h, 'text-embedding-3-large', '1.0', 1536, 'COSINE', 1)"
+            ),
+            {"id": str(index_id), "code": index_code, "h": "a" * 64},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO knowledge_document (id, title, source_url, document_version, document_status, "
+                "record_contract_version, publisher) "
+                "VALUES (:id, 'Synthetic', :url, '1.0', 'ACTIVE', 'LEGACY_V1', 'Synthetic')"
+            ),
+            {"id": str(doc_id), "url": f"https://example.invalid/{uuid4()}"},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO knowledge_chunk (id, knowledge_document_id, chunk_index, chunk_text, "
+                "content_hash, normalization_version) VALUES (:id, :doc, 0, :body, :h, 'v1')"
+            ),
+            {"id": str(chunk_id), "doc": str(doc_id), "body": chunk_text, "h": "b" * 64},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO rag_knowledge_index_member (id, knowledge_index_id, knowledge_chunk_id, "
+                "source_snapshot_id, source_snapshot_member_id, source_code, source_version, "
+                "canonical_checksum, external_document_id, chunk_index, content_hash, member_order, embedding, "
+                "embedding_sha256) "
+                "VALUES (:id, :idx, :chunk, :snap, :snapm, 'SYNTHETIC_DEV', '1.0', :h, 'doc-1', 0, :h, 1, "
+                ":vec, :h)"
+            ),
+            {
+                "id": str(uuid4()),
+                "idx": str(index_id),
+                "chunk": str(chunk_id),
+                "snap": str(snapshot_id),
+                "snapm": str(snapshot_member_id),
+                "h": digest,
+                "vec": "[" + ",".join(["0.0"] * 1536) + "]",
+            },
+        )
+    return index_id, snapshot_id
+
+
+async def test_approved_synthetic_index_is_accepted(database) -> None:
+    index_id, snapshot_id = await _seed_index(
+        database, index_code=SYNTHETIC_INDEX_CODE, chunk_text=f"본문 {SOURCE_SENTINEL} 입니다"
+    )
+    factory = async_sessionmaker(database, expire_on_commit=False, autoflush=False)
+
+    genuine, _ = await verify_fixture_is_synthetic(
+        session_factory=factory, knowledge_index_id=index_id, allowed_source_snapshot_ids=(snapshot_id,)
+    )
+    assert genuine is True
+
+    bound, _ = await verify_source_sentinel_indexed(
+        session_factory=factory, knowledge_index_id=index_id, source_sentinel=SOURCE_SENTINEL
+    )
+    assert bound is True
+
+
+async def test_non_synthetic_index_code_is_rejected(database) -> None:
+    index_id, snapshot_id = await _seed_index(
+        database, index_code="mfds-production-index", chunk_text=f"본문 {SOURCE_SENTINEL}"
+    )
+    factory = async_sessionmaker(database, expire_on_commit=False, autoflush=False)
+    genuine, message = await verify_fixture_is_synthetic(
+        session_factory=factory, knowledge_index_id=index_id, allowed_source_snapshot_ids=(snapshot_id,)
+    )
+    assert genuine is False
+    assert "not an approved synthetic index" in message
+
+
+async def test_unknown_index_is_rejected(database) -> None:
+    factory = async_sessionmaker(database, expire_on_commit=False, autoflush=False)
+    genuine, message = await verify_fixture_is_synthetic(
+        session_factory=factory, knowledge_index_id=uuid4(), allowed_source_snapshot_ids=(uuid4(),)
+    )
+    assert genuine is False
+    assert "does not exist" in message
+
+
+async def test_member_snapshot_outside_the_allow_list_is_rejected(database) -> None:
+    index_id, _ = await _seed_index(database, index_code=SYNTHETIC_INDEX_CODE, chunk_text=f"본문 {SOURCE_SENTINEL}")
+    factory = async_sessionmaker(database, expire_on_commit=False, autoflush=False)
+    genuine, message = await verify_fixture_is_synthetic(
+        session_factory=factory, knowledge_index_id=index_id, allowed_source_snapshot_ids=(uuid4(),)
+    )
+    assert genuine is False
+    assert "outside the declared allow-list" in message
+
+
+async def test_source_sentinel_absent_from_the_corpus_is_rejected(database) -> None:
+    index_id, _ = await _seed_index(database, index_code=SYNTHETIC_INDEX_CODE, chunk_text="본문에 sentinel 이 없다")
+    factory = async_sessionmaker(database, expire_on_commit=False, autoflush=False)
+    bound, message = await verify_source_sentinel_indexed(
+        session_factory=factory, knowledge_index_id=index_id, source_sentinel=SOURCE_SENTINEL
+    )
+    assert bound is False
+    assert "no indexed chunk carries" in message

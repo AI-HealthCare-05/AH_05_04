@@ -76,6 +76,8 @@ BLOCKED_BY_PUBLIC_TRACK_F_ENABLED = "BLOCKED_BY_PUBLIC_TRACK_F_ENABLED"
 BLOCKED_BY_PUBLIC_TRACK_F_UNVERIFIED = "BLOCKED_BY_PUBLIC_TRACK_F_UNVERIFIED"
 BLOCKED_BY_DEPLOYMENT_IDENTITY_UNVERIFIED = "BLOCKED_BY_DEPLOYMENT_IDENTITY_UNVERIFIED"
 BLOCKED_BY_RUNTIME_DEPENDENCY_MISSING = "BLOCKED_BY_RUNTIME_DEPENDENCY_MISSING"
+BLOCKED_BY_SENTINEL_BINDING_UNVERIFIED = "BLOCKED_BY_SENTINEL_BINDING_UNVERIFIED"
+BLOCKED_BY_NON_SYNTHETIC_FIXTURE = "BLOCKED_BY_NON_SYNTHETIC_FIXTURE"
 
 FAILED_BY_WORKER_MEMORY_LIMIT = "FAILED_BY_WORKER_MEMORY_LIMIT"
 FAILED_BY_WORKER_OOM_KILLED = "FAILED_BY_WORKER_OOM_KILLED"
@@ -123,6 +125,39 @@ REQUIRED_SCAN_TARGETS = ("ai_worker_logs", "fastapi_logs", "redis_stream", "redi
 
 
 @dataclass(frozen=True, slots=True)
+class CheckResult:
+    """Outcome of one fail-closed check.
+
+    ``executed=False`` means the check never ran, which is never a PASS.
+    """
+
+    executed: bool
+    passed: bool
+    reason_code: str = ""
+    message: str = ""
+
+    @property
+    def verified(self) -> bool:
+        return self.executed and self.passed
+
+
+CheckCallable = Callable[[], Awaitable["CheckResult"]]
+
+
+async def run_check(case: CheckCallable | None) -> CheckResult:
+    """Await a check, converting absence or failure into an explicit non-PASS."""
+    if case is None:
+        return CheckResult(executed=False, passed=False, message="verifier not supplied")
+    try:
+        result = await case()
+    except Exception as error:  # noqa: BLE001 - never leak query/Source/provider detail
+        return CheckResult(executed=False, passed=False, message=f"verifier error: {type(error).__name__}")
+    if not isinstance(result, CheckResult):
+        return CheckResult(executed=False, passed=False, message="verifier returned an unusable result")
+    return result
+
+
+@dataclass(frozen=True, slots=True)
 class SmokeSentinels:
     """Per-run unique synthetic sentinels.
 
@@ -146,10 +181,49 @@ class SmokeSentinels:
 
 
 def generate_sentinels(token_factory: Callable[[], str] = lambda: secrets.token_hex(16)) -> SmokeSentinels:
+    """Mint a fresh sentinel pair.
+
+    This belongs to the **bootstrap** that builds the synthetic fixture: the minted
+    values must be embedded in the synthetic query and the indexed Source text, then
+    recorded in the fixture manifest. The smoke runner never mints its own sentinels -
+    scanning for a string that was never submitted would pass vacuously.
+    """
     return SmokeSentinels(
         query_sentinel=f"{SENTINEL_PREFIX}Q_{token_factory()}",
         source_sentinel=f"{SENTINEL_PREFIX}S_{token_factory()}",
     )
+
+
+def sentinels_from_fixture(fixture: Mapping[str, Any]) -> SmokeSentinels | None:
+    """Read the sentinel pair the approved fixture declares, or ``None`` if absent."""
+    query_sentinel = str(fixture.get("query_sentinel") or "").strip()
+    source_sentinel = str(fixture.get("source_sentinel") or "").strip()
+    if not query_sentinel or not source_sentinel or query_sentinel == source_sentinel:
+        return None
+    return SmokeSentinels(query_sentinel=query_sentinel, source_sentinel=source_sentinel)
+
+
+def verify_query_sentinel_binding(*, synthetic_query: str, sentinels: SmokeSentinels) -> CheckResult:
+    """Prove the submitted query actually carries the sentinel the scanner looks for.
+
+    Without this the privacy scan is vacuous: it would search the logs for a string
+    that never entered the system and always report SCANNED_AND_NOT_FOUND.
+    """
+    if not synthetic_query.strip():
+        return CheckResult(executed=True, passed=False, message="fixture declares an empty synthetic query")
+    if sentinels.query_sentinel not in synthetic_query:
+        return CheckResult(
+            executed=True,
+            passed=False,
+            message="fixture synthetic_query does not contain the declared query sentinel",
+        )
+    if sentinels.source_sentinel in synthetic_query:
+        return CheckResult(
+            executed=True,
+            passed=False,
+            message="query and Source sentinels must stay distinguishable in a scan",
+        )
+    return CheckResult(executed=True, passed=True, message="query sentinel is bound to the submitted query")
 
 
 # --------------------------------------------------------------------------------------
@@ -536,6 +610,8 @@ class RetHSmokeReceipt:
     hit_count: int = 0
     selected_hit_count: int = 0
 
+    sentinel_binding_verified: bool = False
+    fixture_authenticity_verified: bool = False
     execution_transaction_verified: bool = False
     verification_transaction_verified: bool = False
     evidence_gate_positive_verified: bool = False
@@ -578,6 +654,8 @@ class RetHSmokeReceipt:
             "fixture": {
                 "fixture_id": self.fixture_id,
                 "knowledge_index_ref": self.knowledge_index_ref,
+                "sentinel_binding_verified": self.sentinel_binding_verified,
+                "authenticity_verified": self.fixture_authenticity_verified,
                 "embedding_model": EMBEDDING_MODEL_REF,
                 "embedding_model_version": EMBEDDING_MODEL_VERSION,
                 "embedding_dimension": EMBEDDING_DIMENSION,
@@ -665,12 +743,17 @@ class LiveSmokeDependencies:
     hybrid_retrieve_request: Any = None
     execution_fn: Any = None
     receipt_verifier: Callable[[Any], bool] | None = None
+    # Proves the indexed Source text actually carries the declared source sentinel.
+    source_sentinel_binding_case: CheckCallable | None = None
+    # Proves the pinned Knowledge Index / Source Snapshot really is the approved
+    # synthetic fixture, not a production Index that a manifest merely names as one.
+    fixture_authenticity_case: CheckCallable | None = None
     stale_case: GateNegativeCallable | None = None
     locator_mismatch_case: GateNegativeCallable | None = None
     scan_targets: tuple[ScanTarget, ...] = ()
     knowledge_index_ref: str | None = None
 
-    def missing(self) -> list[str]:
+    def missing(self, *, has_host_scan: bool = False) -> list[str]:
         required = (
             "session_factory",
             "verification_session_factory",
@@ -681,12 +764,15 @@ class LiveSmokeDependencies:
             "hybrid_retrieve_request",
             "execution_fn",
             "receipt_verifier",
+            "source_sentinel_binding_case",
+            "fixture_authenticity_case",
             "stale_case",
             "locator_mismatch_case",
         )
         absent = [name for name in required if getattr(self, name) is None]
-        scanned = {target.name for target in self.scan_targets}
-        absent.extend(f"scan_target:{name}" for name in REQUIRED_SCAN_TARGETS if name not in scanned)
+        if not has_host_scan:
+            scanned = {target.name for target in self.scan_targets}
+            absent.extend(f"scan_target:{name}" for name in REQUIRED_SCAN_TARGETS if name not in scanned)
         return absent
 
 
@@ -700,14 +786,15 @@ async def run_ret_h_smoke(  # noqa: C901, PLR0911, PLR0912, PLR0915
     worker_image_digest: str | None = None,
     resource_observation: ResourceObservation | None = None,
     sentinels: SmokeSentinels | None = None,
+    submitted_query: str | None = None,
+    host_scan_results: Mapping[str, ScanState] | None = None,
     expected_memory_limit_bytes: int = EXPECTED_WORKER_MEMORY_LIMIT_BYTES,
 ) -> RetHSmokeReceipt:
     """Execute the RET-H AWS synthetic deployment smoke, fail-closed throughout."""
     started_at = _now()
-    sentinels = sentinels or generate_sentinels()
     sentinel_fields: dict[str, Any] = {
-        "query_sentinel_sha256": sentinels.query_sentinel_sha256,
-        "source_sentinel_sha256": sentinels.source_sentinel_sha256,
+        "query_sentinel_sha256": sentinels.query_sentinel_sha256 if sentinels else None,
+        "source_sentinel_sha256": sentinels.source_sentinel_sha256 if sentinels else None,
         "git_commit_sha": git_commit_sha,
     }
 
@@ -799,7 +886,7 @@ async def run_ret_h_smoke(  # noqa: C901, PLR0911, PLR0912, PLR0915
 
     # 5. All production dependencies must be present before anything executes.
     dependencies = dependencies or LiveSmokeDependencies()
-    missing = dependencies.missing()
+    missing = dependencies.missing(has_host_scan=host_scan_results is not None)
     if missing:
         return _blocked(
             mode=mode,
@@ -809,6 +896,45 @@ async def run_ret_h_smoke(  # noqa: C901, PLR0911, PLR0912, PLR0915
             **sentinel_fields,
         )
     deployment_fields["knowledge_index_ref"] = dependencies.knowledge_index_ref
+
+    # 5b. The scanner must look for a string that the run actually submits.
+    if sentinels is None:
+        return _blocked(
+            mode=mode,
+            started_at=started_at,
+            code=BLOCKED_BY_SENTINEL_BINDING_UNVERIFIED,
+            message="Approved fixture does not declare a query/Source sentinel pair.",
+            **sentinel_fields,
+        )
+
+    query_binding = verify_query_sentinel_binding(
+        synthetic_query=submitted_query or "",
+        sentinels=sentinels,
+    )
+    source_binding = await run_check(dependencies.source_sentinel_binding_case)
+    deployment_fields["sentinel_binding_verified"] = query_binding.verified and source_binding.verified
+    for label, result in (("query", query_binding), ("Source", source_binding)):
+        if not result.verified:
+            return _blocked(
+                mode=mode,
+                started_at=started_at,
+                code=BLOCKED_BY_SENTINEL_BINDING_UNVERIFIED,
+                message=f"{label} sentinel binding not proven: {result.message}",
+                **sentinel_fields,
+            )
+
+    # 5c. Synthetic-only must be proven against the database, not inferred from a
+    # manifest's naming. A mis-pointed manifest must not reach OpenAI or write a Run.
+    authenticity = await run_check(dependencies.fixture_authenticity_case)
+    deployment_fields["fixture_authenticity_verified"] = authenticity.verified
+    if not authenticity.verified:
+        return _blocked(
+            mode=mode,
+            started_at=started_at,
+            code=BLOCKED_BY_NON_SYNTHETIC_FIXTURE,
+            message=f"Fixture is not a proven synthetic fixture: {authenticity.message}",
+            **sentinel_fields,
+        )
 
     # 6. Real production RET-H execution.
     start_monotonic = datetime.now(UTC)
@@ -853,7 +979,8 @@ async def run_ret_h_smoke(  # noqa: C901, PLR0911, PLR0912, PLR0915
             expected_receipt_hash=expected_receipt_hash,
         )
     except Exception as error:  # noqa: BLE001
-        return _failed(FAILED_BY_RUN_VERIFICATION, f"Verification transaction failed: {error}")
+        # The assertion text can quote persisted values; only the exception kind is safe to record.
+        return _failed(FAILED_BY_RUN_VERIFICATION, f"Verification transaction failed: {type(error).__name__}")
 
     deployment_fields.update(
         verification_transaction_verified=True,
@@ -880,20 +1007,24 @@ async def run_ret_h_smoke(  # noqa: C901, PLR0911, PLR0912, PLR0915
         evidence_gate_stale_fail_closed_verified=stale_result.verified,
         evidence_gate_locator_fail_closed_verified=locator_result.verified,
     )
-    for label, result in (("stale", stale_result), ("locator mismatch", locator_result)):
-        if not result.executed:
+    for label, gate_result in (("stale", stale_result), ("locator mismatch", locator_result)):
+        if not gate_result.executed:
             return _failed(
                 FAILED_BY_EVIDENCE_GATE_UNVERIFIED,
-                f"Evidence Gate {label} negative case did not execute: {result.message}",
+                f"Evidence Gate {label} negative case did not execute: {gate_result.message}",
             )
-        if not result.fail_closed:
+        if not gate_result.fail_closed:
             return _failed(
                 FAILED_BY_EVIDENCE_GATE_FAIL_OPEN,
                 f"Evidence Gate {label} negative case was not fail-closed",
             )
 
-    # 10. Raw query/Source sentinels must be provably absent.
-    scan_results = await scan_targets_for_sentinels(dependencies.scan_targets, sentinels)
+    # 10. Raw query/Source sentinels must be provably absent. The scan normally runs on
+    # the EC2 host (it needs the Docker CLI); an in-process scan is used by tests.
+    if host_scan_results is not None:
+        scan_results = dict(host_scan_results)
+    else:
+        scan_results = await scan_targets_for_sentinels(dependencies.scan_targets, sentinels)
     deployment_fields["privacy_scan"] = {name: str(state) for name, state in scan_results.items()}
     privacy_ok, privacy_code = classify_privacy_scan(scan_results)
     deployment_fields["privacy_scan_verified"] = privacy_ok
@@ -919,20 +1050,112 @@ async def run_ret_h_smoke(  # noqa: C901, PLR0911, PLR0912, PLR0915
 
 
 # --------------------------------------------------------------------------------------
-# Docker observation helpers (EC2 + Docker Compose)
+# Host-produced deployment observation
+# --------------------------------------------------------------------------------------
+#
+# The retrieval half of the smoke runs inside a one-shot application container so it can
+# reach PostgreSQL and the embedding provider. That container has no Docker CLI and no
+# Docker daemon socket, and it must not be given one: mounting the daemon socket into a
+# runtime container is a privilege escalation, not an observation strategy.
+#
+# So the deployment half - container identity, memory limit, OOM/restart state, resource
+# sampling and the log sentinel scan - is produced on the EC2 *host*, where the Docker
+# CLI already exists, and handed to the container as a JSON document. The host scan
+# reports only the four scan states; raw log content never leaves the host.
+
+
+BLOCKED_BY_OBSERVATION_DOCUMENT_INVALID = "BLOCKED_BY_OBSERVATION_DOCUMENT_INVALID"
+
+OBSERVATION_SCHEMA_VERSION = "ret-h-aws-smoke-observation-v1"
+
+
+@dataclass(frozen=True, slots=True)
+class DeploymentObservation:
+    worker: WorkerRuntimeFacts
+    image_digest: str | None
+    resources: ResourceObservation
+    scan_results: dict[str, ScanState]
+
+
+def parse_observation_document(payload: Mapping[str, Any]) -> DeploymentObservation:
+    """Parse the host-produced observation document, fail-closed on anything unknown.
+
+    An unrecognised scan state becomes ``NOT_EXECUTED`` rather than being trusted, and a
+    missing required field raises instead of defaulting to something that would pass.
+    """
+    if payload.get("schema_version") != OBSERVATION_SCHEMA_VERSION:
+        raise ValueError("observation document has an unexpected schema_version")
+
+    worker_payload = payload.get("worker")
+    if not isinstance(worker_payload, Mapping):
+        raise ValueError("observation document is missing the worker section")
+    memory_limit = worker_payload.get("memory_limit_bytes")
+    if not isinstance(memory_limit, int):
+        raise ValueError("observation document is missing worker.memory_limit_bytes")
+
+    worker = WorkerRuntimeFacts(
+        image=str(worker_payload.get("image") or ""),
+        image_id=str(worker_payload.get("image_id") or ""),
+        memory_limit_bytes=memory_limit,
+        restart_count=int(worker_payload.get("restart_count") or 0),
+        oom_killed=bool(worker_payload.get("oom_killed", False)),
+        state_status=str(worker_payload.get("state_status") or ""),
+        health_status=str(worker_payload["health_status"]) if worker_payload.get("health_status") else None,
+    )
+
+    resource_payload = payload.get("resources")
+    if not isinstance(resource_payload, Mapping):
+        raise ValueError("observation document is missing the resources section")
+    usage = resource_payload.get("memory_usage_bytes")
+    if not isinstance(usage, int):
+        raise ValueError("observation document is missing resources.memory_usage_bytes")
+    cpu_raw = resource_payload.get("cpu_percent")
+    resources = ResourceObservation(
+        memory_usage_bytes=usage,
+        memory_limit_bytes=int(resource_payload.get("memory_limit_bytes") or memory_limit),
+        cpu_percent=float(cpu_raw) if isinstance(cpu_raw, (int, float)) else None,
+    )
+
+    raw_scan = payload.get("privacy_scan")
+    scan_results: dict[str, ScanState] = {}
+    if isinstance(raw_scan, Mapping):
+        for name, value in raw_scan.items():
+            try:
+                scan_results[str(name)] = ScanState(str(value))
+            except ValueError:
+                scan_results[str(name)] = ScanState.NOT_EXECUTED
+
+    digest = payload.get("image_digest")
+    return DeploymentObservation(
+        worker=worker,
+        image_digest=str(digest) if digest else None,
+        resources=resources,
+        scan_results=scan_results,
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Docker observation helpers (run on the EC2 host, never inside a runtime container)
 # --------------------------------------------------------------------------------------
 
 CommandRunner = Callable[[Sequence[str]], str]
 
 
 def default_command_runner(args: Sequence[str]) -> str:
+    """Run a command and return stdout **and** stderr merged.
+
+    ``docker logs`` replays the container's stderr stream on its own stderr, and
+    Python logging writes to stderr by default. Returning stdout alone would hide
+    exactly the stream a leaked query or Source is most likely to appear in.
+    """
     executable = shutil.which(args[0])
     if executable is None:
         raise FileNotFoundError(f"{args[0]} is not available on this host")
     completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
         [executable, *args[1:]],
         check=True,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
         timeout=60,
     )

@@ -38,6 +38,9 @@ PASS로 기록하지 않는다. 최종 상태는 셋 중 하나다.
 
 ## 4. 실행 순서
 
+0. fixture가 선언한 sentinel이 실제 제출 query와 색인된 Source에 결속돼 있는지 증명한다 (§7.1).
+0. pinned Index가 승인된 합성 Index인지 DB로 증명한다 (§7.2). 미증명이면 Provider 호출과
+   Run 생성 이전에 차단한다.
 1. `PUBLIC_TRACK_F_ENABLED`가 증명 가능하게 `false`인지 확인 (`false`/`False`/`FALSE`/`0` 허용).
    값을 읽을 수 없으면 묵시적 false로 간주하지 않고 차단한다.
 2. 승인된 OpenAI embedding credential 존재 확인. **존재 여부만** 확인하며 값은 로그·artifact·
@@ -73,22 +76,95 @@ quarantine 저장소가 없으므로 `quarantine`은 `NOT_APPLICABLE`로 기록�
 sentinel 원문은 artifact에 남기지 않으며 `query_sentinel_sha256`, `source_sentinel_sha256`만
 기록한다.
 
-## 6. 실행 명령
+## 6. 실행 명령 — host 관측 + container 실행 2단계
+
+> **미검증 표시**: 아래 절차는 실제 EC2와 빌드된 image에서 **아직 실행해 본 적이 없다.**
+> 이 PR은 조립과 로컬 회귀까지만 검증했다. 실제 EC2 실행은 후속에서 확인한다.
+
+retrieval 실행은 DB와 embedding provider에 닿아야 하므로 **application container**에서,
+배포 관측(`docker inspect` / `stats` / `logs`)은 Docker CLI가 이미 있는 **EC2 host**에서 수행한다.
+runtime container에 Docker daemon socket을 mount하지 않는다. 그것은 관측 수단이 아니라
+권한 상승이다.
+
+### 6.1 host 단계 — 관측 문서 생성
+
+EC2 host에서 실행한다. `docker`와 POSIX shell만 필요하다. `$QS`/`$SS`는 fixture manifest의
+`query_sentinel` / `source_sentinel`이다. 원문 로그는 host를 떠나지 않으며 문서에는 4상태만 남는다.
+
+```bash
+scan() {  # 인자: 대상 이름, 로그를 내보내는 명령
+  if out=$("${@:2}" 2>&1); then
+    if printf '%s' "$out" | grep -qF -e "$QS" -e "$SS"; then echo "FOUND"; else echo "SCANNED_AND_NOT_FOUND"; fi
+  else
+    echo "NOT_EXECUTED"
+  fi
+}
+
+MEM=$(docker inspect -f '{{.HostConfig.Memory}}' ai-worker)
+USAGE=$(docker stats --no-stream --format '{{.MemUsage}}' ai-worker | cut -d/ -f1)
+
+cat > observation.json <<JSON
+{
+  "schema_version": "ret-h-aws-smoke-observation-v1",
+  "image_digest": "$(docker inspect -f '{{index .RepoDigests 0}}' "$(docker inspect -f '{{.Image}}' ai-worker)")",
+  "worker": {
+    "image": "$(docker inspect -f '{{.Config.Image}}' ai-worker)",
+    "image_id": "$(docker inspect -f '{{.Image}}' ai-worker)",
+    "memory_limit_bytes": ${MEM},
+    "restart_count": $(docker inspect -f '{{.RestartCount}}' ai-worker),
+    "oom_killed": $(docker inspect -f '{{.State.OOMKilled}}' ai-worker),
+    "state_status": "$(docker inspect -f '{{.State.Status}}' ai-worker)",
+    "health_status": "$(docker inspect -f '{{.State.Health.Status}}' ai-worker)"
+  },
+  "resources": {
+    "memory_usage_bytes": $(numfmt --from=iec "${USAGE%i*}i" 2>/dev/null || echo 0),
+    "memory_limit_bytes": ${MEM},
+    "cpu_percent": $(docker stats --no-stream --format '{{.CPUPerc}}' ai-worker | tr -d '%')
+  },
+  "privacy_scan": {
+    "ai_worker_logs": "$(scan ai_worker_logs docker logs --no-color ai-worker)",
+    "fastapi_logs":   "$(scan fastapi_logs docker logs --no-color fastapi)",
+    "redis_stream":   "$(scan redis_stream docker exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --no-auth-warning XREVRANGE oryak:jobs + - COUNT 500')",
+    "redis_dlq":      "$(scan redis_dlq docker exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --no-auth-warning XREVRANGE oryak:jobs:dead-letter + - COUNT 500')",
+    "quarantine":     "NOT_APPLICABLE"
+  }
+}
+JSON
+```
+
+`scan`은 stdout과 stderr를 모두 본다. `docker logs`는 컨테이너 stderr를 자신의 stderr로
+재생하고 Python logging도 기본이 stderr이므로, stdout만 보면 유출이 가장 잘 드러나는 stream을
+놓친다.
+
+### 6.2 container 단계 — 실제 RET-H 실행
+
+관측 문서와 fixture manifest를 mount하고, artifact는 **mount된 경로**에 쓴다. `--rm`으로도
+결과가 사라지지 않는다.
 
 ```bash
 docker compose \
   --env-file envs/.prod.env \
   -f infra/docker/docker-compose.prod.yml \
-  run --rm --no-deps -T fastapi \
+  run --rm --no-deps -T \
+  -v "$PWD/ret-h-smoke-fixture.json:/smoke/fixture.json:ro" \
+  -v "$PWD/observation.json:/smoke/observation.json:ro" \
+  -v "$PWD/smoke-out:/smoke/out" \
+  fastapi \
   uv run --no-sync python -m scripts.ret_h_aws_synthetic_smoke \
     --mode aws-live \
     --git-commit-sha "$(git rev-parse HEAD)" \
-    --fixture-manifest /app/ret-h-smoke-fixture.json \
-    --output-path /app/ret-h-aws-synthetic-smoke.json
+    --fixture-manifest /smoke/fixture.json \
+    --observation-file /smoke/observation.json \
+    --output-path /smoke/out/ret-h-aws-synthetic-smoke.json
 ```
 
-새 permanent service를 만들지 않는 one-shot 실행이다. `--mode`를 생략하면 `local-preflight`이며
-절대 실행되지 않는다.
+`backend/app/Dockerfile`이 `scripts/ret_h_aws_synthetic_smoke.py`를 image에 포함한다.
+image에 Docker CLI는 추가하지 않는다.
+
+관측 대상 구분에 주의한다. **elapsed_ms는 application one-shot container의 실행 시간**이고,
+**memory/CPU/OOM/restart는 별도 `ai-worker` container의 snapshot**이다. 둘은 같은 프로세스가
+아니며 artifact도 이를 분리해 기록한다. 이 snapshot은 배포 자원 상태 관측이지 이번 실행의
+자원 사용량 측정이 아니다.
 
 ## 7. fixture manifest
 
@@ -96,13 +172,37 @@ docker compose \
 binding을 가리킨다. smoke 자체는 Knowledge Index를 생성하지 않으며 runtime identity로만 동작한다.
 
 필수 key: `knowledge_index_id`, `knowledge_index_ref`, `allowed_source_snapshot_ids`,
-`allowed_source_snapshot_member_ids`, `synthetic_query`, `job_id`, `execution_context_id`,
-`prescription_version_id`, `runtime_release_bundle_id`,
+`allowed_source_snapshot_member_ids`, `synthetic_query`, `query_sentinel`, `source_sentinel`,
+`job_id`, `execution_context_id`, `prescription_version_id`, `runtime_release_bundle_id`,
 `runtime_release_bundle_manifest_hash`, `runtime_execution_manifest_id`,
 `runtime_execution_manifest_hash`, `runtime_guard_decision_ref`, `source_manifest_hash`,
 그리고 `filter_snapshot_ref` / `evidence_index_ref` / `lexical_config_ref` / `dense_config_ref` /
 `retrieval_config_ref` / `embedding_adapter_ref` / `search_adapter_ref`
 (각각 `artifact_code`, `version`, `content_sha256`).
+
+### 7.1 sentinel은 fixture가 선언하고 runner가 결속을 증명한다
+
+sentinel은 bootstrap이 생성해 **실제 query 문자열과 색인된 Source 본문에 심고** manifest에
+기록한다. runner는 자체 sentinel을 만들지 않는다. 무작위로 만든 문자열은 제출된 query에도
+corpus에도 없으므로 그 scan은 항상 통과하는 공허한 검사가 된다.
+
+실행 전에 두 결속을 증명하고, 하나라도 증명되지 않으면 Provider 호출과 Run 생성 이전에
+`BLOCKED_BY_SENTINEL_BINDING_UNVERIFIED`로 차단한다.
+
+- `synthetic_query`가 `query_sentinel`을 실제로 포함한다.
+- 색인된 chunk 본문 중 최소 하나가 `source_sentinel`을 포함한다 (read-only DB 조회).
+
+### 7.2 synthetic-only는 DB로 증명한다
+
+manifest가 스스로를 "synthetic"이라 부르는 것은 증거가 아니다. 실행 전에 read-only로 확인한다.
+
+- pinned `knowledge_index_id`가 DB에 존재하고 `index_code`가 승인된 합성 index code다.
+  승인 목록은 PR #663이 이미 정한 `SYNTHETIC_INDEX_CODE`를 read-only로 재사용하며 새 규약을
+  만들지 않는다.
+- 해당 index의 모든 member snapshot이 manifest가 선언한 allow-list 안에 있다.
+
+증명되지 않으면 `BLOCKED_BY_NON_SYNTHETIC_FIXTURE`로 차단한다. `PUBLIC_TRACK_F=false`는 공개
+여부만 보므로 이 검사를 대신하지 못한다.
 
 ## 8. DB identity 분리
 

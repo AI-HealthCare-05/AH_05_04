@@ -18,10 +18,12 @@ from app.release_validation.ret_h_synthetic_smoke import (
     AWS_SMOKE_NOT_EXECUTED,
     BLOCKED_BY_DEPLOYMENT_IDENTITY_UNVERIFIED,
     BLOCKED_BY_LOCAL_PREFLIGHT,
+    BLOCKED_BY_NON_SYNTHETIC_FIXTURE,
     BLOCKED_BY_PUBLIC_TRACK_F_ENABLED,
     BLOCKED_BY_PUBLIC_TRACK_F_UNVERIFIED,
     BLOCKED_BY_QUERY_EMBEDDING_CREDENTIAL,
     BLOCKED_BY_RUNTIME_DEPENDENCY_MISSING,
+    BLOCKED_BY_SENTINEL_BINDING_UNVERIFIED,
     EXPECTED_WORKER_MEMORY_LIMIT_BYTES,
     FAILED_BY_EVIDENCE_GATE_FAIL_OPEN,
     FAILED_BY_EVIDENCE_GATE_UNVERIFIED,
@@ -35,6 +37,7 @@ from app.release_validation.ret_h_synthetic_smoke import (
     SCHEMA_VERSION,
     STATUS_FAILED,
     STATUS_SUCCESS,
+    CheckResult,
     GateNegativeResult,
     LiveSmokeDependencies,
     ScanState,
@@ -52,12 +55,14 @@ from app.release_validation.ret_h_synthetic_smoke import (
     run_ret_h_smoke,
     run_verification_transaction,
     scan_targets_for_sentinels,
+    verify_query_sentinel_binding,
     write_artifact,
 )
 
 QUERY_SENTINEL = "RET_H_SMOKE_Q_0123456789abcdef"
 SOURCE_SENTINEL = "RET_H_SMOKE_S_fedcba9876543210"
 SENTINELS = SmokeSentinels(query_sentinel=QUERY_SENTINEL, source_sentinel=SOURCE_SENTINEL)
+SUBMITTED_QUERY = f"합성 스모크 질문 {QUERY_SENTINEL}"
 
 LIVE_ENV = {"PUBLIC_TRACK_F_ENABLED": "false", "OPENAI_API_KEY": "sk-live-not-a-real-key"}
 
@@ -344,6 +349,9 @@ def _dependencies(**overrides: Any) -> LiveSmokeDependencies:
     async def _pass() -> GateNegativeResult:
         return GateNegativeResult(executed=True, fail_closed=True)
 
+    async def _check_pass() -> CheckResult:
+        return CheckResult(executed=True, passed=True)
+
     base: dict[str, Any] = {
         "session_factory": MagicMock(),
         "verification_session_factory": _session_factory(_healthy_rows(run_id, receipt_hash)),
@@ -354,6 +362,8 @@ def _dependencies(**overrides: Any) -> LiveSmokeDependencies:
         "hybrid_retrieve_request": MagicMock(),
         "execution_fn": AsyncMock(return_value=_outcome(run_id, receipt_hash)),
         "receipt_verifier": lambda _receipt: True,
+        "source_sentinel_binding_case": _check_pass,
+        "fixture_authenticity_case": _check_pass,
         "stale_case": _pass,
         "locator_mismatch_case": _pass,
         "scan_targets": (
@@ -385,6 +395,7 @@ async def _run(**overrides: Any) -> Any:
             cpu_percent=4.0,
         ),
         "sentinels": SENTINELS,
+        "submitted_query": SUBMITTED_QUERY,
     }
     kwargs.update(overrides)
     return await run_ret_h_smoke(**kwargs)
@@ -459,6 +470,8 @@ async def test_oom_killed_fails() -> None:
         "hybrid_retrieve_request",
         "execution_fn",
         "receipt_verifier",
+        "source_sentinel_binding_case",
+        "fixture_authenticity_case",
         "stale_case",
         "locator_mismatch_case",
     ],
@@ -596,3 +609,124 @@ async def test_blocked_artifact_never_claims_a_pass(tmp_path: Any) -> None:
     assert all(value is False for value in gate.values())
     assert document["privacy"]["scan_verified"] is False
     assert document["resources"]["observation_verified"] is False
+
+
+# --------------------------------------------------------------------------------------
+# Sentinel binding and synthetic-fixture authenticity
+# --------------------------------------------------------------------------------------
+
+
+def test_query_sentinel_binding_accepts_a_query_that_carries_the_sentinel() -> None:
+    assert verify_query_sentinel_binding(synthetic_query=SUBMITTED_QUERY, sentinels=SENTINELS).verified is True
+
+
+@pytest.mark.parametrize(
+    ("query", "fragment"),
+    [
+        ("합성 스모크 질문 without any marker", "does not contain"),
+        ("   ", "empty synthetic query"),
+        (f"{QUERY_SENTINEL} and also {SOURCE_SENTINEL}", "distinguishable"),
+    ],
+)
+def test_query_sentinel_binding_rejects_unbound_queries(query: str, fragment: str) -> None:
+    result = verify_query_sentinel_binding(synthetic_query=query, sentinels=SENTINELS)
+    assert result.verified is False
+    assert fragment in result.message
+
+
+async def test_query_not_carrying_the_sentinel_blocks_before_execution() -> None:
+    execution = AsyncMock()
+    receipt = await _run(
+        submitted_query="질문에 sentinel 이 없다",
+        dependencies=_dependencies(execution_fn=execution),
+    )
+    assert receipt.status == AWS_SMOKE_NOT_EXECUTED
+    assert receipt.blocked_code == BLOCKED_BY_SENTINEL_BINDING_UNVERIFIED
+    # Nothing may reach the provider or the database.
+    execution.assert_not_awaited()
+    assert receipt.retrieval_run_id is None
+
+
+async def test_missing_fixture_sentinels_block_before_execution() -> None:
+    execution = AsyncMock()
+    receipt = await _run(sentinels=None, dependencies=_dependencies(execution_fn=execution))
+    assert receipt.status == AWS_SMOKE_NOT_EXECUTED
+    assert receipt.blocked_code == BLOCKED_BY_SENTINEL_BINDING_UNVERIFIED
+    execution.assert_not_awaited()
+
+
+async def test_unindexed_source_sentinel_blocks_before_execution() -> None:
+    async def _unbound() -> CheckResult:
+        return CheckResult(executed=True, passed=False, message="no indexed chunk carries the sentinel")
+
+    execution = AsyncMock()
+    receipt = await _run(dependencies=_dependencies(source_sentinel_binding_case=_unbound, execution_fn=execution))
+    assert receipt.status == AWS_SMOKE_NOT_EXECUTED
+    assert receipt.blocked_code == BLOCKED_BY_SENTINEL_BINDING_UNVERIFIED
+    execution.assert_not_awaited()
+
+
+async def test_unexecuted_source_sentinel_check_is_never_a_pass() -> None:
+    async def _never_ran() -> CheckResult:
+        return CheckResult(executed=False, passed=False, message="database unreachable")
+
+    execution = AsyncMock()
+    receipt = await _run(dependencies=_dependencies(source_sentinel_binding_case=_never_ran, execution_fn=execution))
+    assert receipt.status == AWS_SMOKE_NOT_EXECUTED
+    assert receipt.blocked_code == BLOCKED_BY_SENTINEL_BINDING_UNVERIFIED
+    execution.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        CheckResult(executed=True, passed=False, message="pinned knowledge index is not an approved synthetic index"),
+        CheckResult(executed=False, passed=False, message="database unreachable"),
+    ],
+)
+async def test_non_synthetic_or_unproven_fixture_blocks_provider_and_db(result: CheckResult) -> None:
+    async def _case() -> CheckResult:
+        return result
+
+    execution = AsyncMock()
+    receipt = await _run(dependencies=_dependencies(fixture_authenticity_case=_case, execution_fn=execution))
+    assert receipt.status == AWS_SMOKE_NOT_EXECUTED
+    assert receipt.blocked_code == BLOCKED_BY_NON_SYNTHETIC_FIXTURE
+    # Zero provider calls and zero Retrieval Run writes.
+    execution.assert_not_awaited()
+    assert receipt.retrieval_run_id is None
+    assert receipt.fixture_authenticity_verified is False
+
+
+async def test_sentinel_leaked_only_on_stderr_is_still_detected() -> None:
+    """docker logs replays container stderr on its own stderr; the reader must merge it."""
+    from app.release_validation.ret_h_synthetic_smoke import default_command_runner
+
+    combined = default_command_runner(
+        [
+            "sh",
+            "-c",
+            f"echo out-only; echo {QUERY_SENTINEL} 1>&2",
+        ]
+    )
+    assert QUERY_SENTINEL in combined
+    assert "out-only" in combined
+
+
+async def test_verification_failure_message_does_not_embed_raw_assertion_text(tmp_path: Any) -> None:
+    async def _boom(**_kwargs: Any) -> Any:
+        raise AssertionError(f"leaky detail {QUERY_SENTINEL}")
+
+    from app.release_validation import ret_h_synthetic_smoke as module
+
+    original = module.run_verification_transaction
+    module.run_verification_transaction = _boom  # type: ignore[assignment]
+    try:
+        receipt = await _run()
+    finally:
+        module.run_verification_transaction = original  # type: ignore[assignment]
+
+    assert receipt.status == STATUS_FAILED
+    payload = write_artifact(receipt, tmp_path / "failed.json")
+    assert QUERY_SENTINEL not in payload
+    assert "leaky detail" not in payload

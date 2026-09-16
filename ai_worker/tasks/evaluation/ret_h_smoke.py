@@ -17,6 +17,9 @@ from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import text
+
+from ai_worker.tasks.evaluation.actual_retrieval_index import SYNTHETIC_INDEX_CODE
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
 from ai_worker.tasks.rag.evidence_search import ProductionSearchHit
 from ai_worker.tasks.rag.production_evidence_gate import (
@@ -204,3 +207,103 @@ async def verify_gate_fail_closed(
     if isinstance(gate_outcome, EvidenceGateSuccess) and gate_outcome.selected_hits:
         return False, "Evidence Gate selected a tampered candidate"
     return True, "Evidence Gate excluded every tampered candidate"
+
+
+# --------------------------------------------------------------------------------------
+# Synthetic fixture authenticity and Source sentinel binding
+# --------------------------------------------------------------------------------------
+#
+# Both checks run read-only and *before* any embedding call or Retrieval Run write, so a
+# mis-pointed manifest cannot send a real question to the provider or create smoke rows
+# against a production Index.
+
+# The approved synthetic Knowledge Index identity is the one PR #663 already established.
+# This module reuses that constant read-only rather than defining a new convention.
+APPROVED_SYNTHETIC_INDEX_CODES: frozenset[str] = frozenset({SYNTHETIC_INDEX_CODE})
+
+
+async def verify_fixture_is_synthetic(
+    *,
+    session_factory: Any,
+    knowledge_index_id: UUID,
+    allowed_source_snapshot_ids: tuple[UUID, ...],
+    approved_index_codes: frozenset[str] = APPROVED_SYNTHETIC_INDEX_CODES,
+) -> tuple[bool, str]:
+    """Prove the pinned Index really is an approved synthetic Index in the database.
+
+    Naming a manifest "synthetic" proves nothing. This resolves the pinned
+    ``knowledge_index_id`` in PostgreSQL and requires its ``index_code`` to be an
+    approved synthetic code, and every member snapshot to be inside the declared
+    allow-list.
+    """
+    async with session_factory() as session:
+        row = (
+            (
+                await session.execute(
+                    text("SELECT index_code, index_version FROM rag_knowledge_index WHERE id = :id"),
+                    {"id": str(knowledge_index_id)},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if row is None:
+            return False, "pinned knowledge index does not exist"
+        if str(row["index_code"]) not in approved_index_codes:
+            return False, "pinned knowledge index is not an approved synthetic index"
+
+        member_rows = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT DISTINCT source_snapshot_id FROM rag_knowledge_index_member "
+                        "WHERE knowledge_index_id = :id"
+                    ),
+                    {"id": str(knowledge_index_id)},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not member_rows:
+            return False, "pinned knowledge index has no members"
+
+        allowed = {str(value) for value in allowed_source_snapshot_ids}
+        if not allowed:
+            return False, "fixture declares no allowed source snapshot"
+        outside = {str(value) for value in member_rows} - allowed
+        if outside:
+            return False, "knowledge index members reference snapshots outside the declared allow-list"
+
+    return True, "pinned index is an approved synthetic index within the declared snapshots"
+
+
+async def verify_source_sentinel_indexed(
+    *,
+    session_factory: Any,
+    knowledge_index_id: UUID,
+    source_sentinel: str,
+) -> tuple[bool, str]:
+    """Prove the declared Source sentinel really is present in the indexed chunk text.
+
+    Without this, the log scan would hunt for a Source marker that the corpus never
+    contained and report SCANNED_AND_NOT_FOUND no matter what leaked.
+    """
+    if not source_sentinel.strip():
+        return False, "fixture declares an empty Source sentinel"
+
+    async with session_factory() as session:
+        matches = (
+            await session.execute(
+                text(
+                    "SELECT COUNT(*) FROM rag_knowledge_index_member m "
+                    "JOIN knowledge_chunk c ON c.id = m.knowledge_chunk_id "
+                    "WHERE m.knowledge_index_id = :id AND c.chunk_text LIKE :needle"
+                ),
+                {"id": str(knowledge_index_id), "needle": f"%{source_sentinel}%"},
+            )
+        ).scalar_one()
+
+    if not matches:
+        return False, "no indexed chunk carries the declared Source sentinel"
+    return True, "declared Source sentinel is present in the indexed corpus"

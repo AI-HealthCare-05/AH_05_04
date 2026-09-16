@@ -38,15 +38,15 @@ from app.release_validation.ret_h_synthetic_smoke import (
     FASTAPI_CONTAINER_NAME,
     STATUS_FAILED,
     WORKER_CONTAINER_NAME,
+    CheckResult,
     GateNegativeResult,
     LiveSmokeDependencies,
     ScanTarget,
     build_docker_log_reader,
     build_redis_stream_reader,
-    collect_resource_observation,
-    collect_worker_facts,
-    generate_sentinels,
+    parse_observation_document,
     run_ret_h_smoke,
+    sentinels_from_fixture,
     write_artifact,
 )
 
@@ -56,6 +56,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=["aws-live", "local-preflight"], default="local-preflight")
     parser.add_argument("--git-commit-sha", default=None)
     parser.add_argument("--fixture-manifest", type=Path, default=None)
+    parser.add_argument(
+        "--observation-file",
+        type=Path,
+        default=None,
+        help="Host-produced deployment observation JSON (see docs/testing/ret-h-aws-synthetic-smoke-178.md).",
+    )
     parser.add_argument("--output-path", type=Path, default=None)
     parser.add_argument("--redis-stream", default="oryak:jobs")
     parser.add_argument("--redis-dlq-stream", default="oryak:jobs:dead-letter")
@@ -75,6 +81,7 @@ def build_live_dependencies(
     environment: Any,
     redis_stream: str,
     redis_dlq_stream: str,
+    sentinels: Any = None,
 ) -> LiveSmokeDependencies:
     """Assemble real production dependencies, or leave them absent (fail-closed)."""
     scan_targets = (
@@ -86,7 +93,7 @@ def build_live_dependencies(
         ScanTarget("quarantine", reader=None, applicable=False),
     )
 
-    if fixture is None:
+    if fixture is None or sentinels is None:
         return LiveSmokeDependencies(scan_targets=scan_targets)
 
     from uuid import UUID
@@ -102,7 +109,9 @@ def build_live_dependencies(
         execute_ret_h_smoke_transaction,
         make_locator_mismatch_hit,
         make_stale_hit,
+        verify_fixture_is_synthetic,
         verify_gate_fail_closed,
+        verify_source_sentinel_indexed,
     )
 
     worker_config = get_config()
@@ -146,6 +155,24 @@ def build_live_dependencies(
 
         return _case
 
+    allowed_snapshot_ids = tuple(UUID(str(v)) for v in fixture["allowed_source_snapshot_ids"])
+
+    async def _source_sentinel_binding_case() -> CheckResult:
+        bound, message = await verify_source_sentinel_indexed(
+            session_factory=verification_session_factory,
+            knowledge_index_id=knowledge_index_id,
+            source_sentinel=sentinels.source_sentinel,
+        )
+        return CheckResult(executed=True, passed=bound, message=message)
+
+    async def _fixture_authenticity_case() -> CheckResult:
+        genuine, message = await verify_fixture_is_synthetic(
+            session_factory=verification_session_factory,
+            knowledge_index_id=knowledge_index_id,
+            allowed_source_snapshot_ids=allowed_snapshot_ids,
+        )
+        return CheckResult(executed=True, passed=genuine, message=message)
+
     return LiveSmokeDependencies(
         session_factory=session_factory,
         verification_session_factory=verification_session_factory,
@@ -156,6 +183,8 @@ def build_live_dependencies(
         hybrid_retrieve_request=request,
         execution_fn=_execution_fn,
         receipt_verifier=build_receipt_verifier(),
+        source_sentinel_binding_case=_source_sentinel_binding_case,
+        fixture_authenticity_case=_fixture_authenticity_case,
         stale_case=_negative(make_stale_hit),
         locator_mismatch_case=_negative(make_locator_mismatch_hit),
         scan_targets=scan_targets,
@@ -243,24 +272,30 @@ def main(argv: list[str] | None = None) -> int:
     import os
 
     args = build_parser().parse_args(argv)
-    sentinels = generate_sentinels()
-
-    worker_facts = None
-    worker_digest = None
-    resources = None
-    if args.mode == "aws-live":
-        try:
-            worker_facts, worker_digest = collect_worker_facts()
-            resources = collect_resource_observation()
-        except Exception as error:  # noqa: BLE001 - observation failure must block, not crash
-            print(f"deployment observation unavailable: {type(error).__name__}", file=sys.stderr)
-
     fixture = _load_fixture(args.fixture_manifest) if args.mode == "aws-live" else None
+
+    # Sentinels come from the approved fixture. This runner never mints its own: a
+    # freshly generated string is not in the submitted query or the indexed Source, so
+    # scanning for it would pass vacuously.
+    sentinels = sentinels_from_fixture(fixture) if fixture else None
+    submitted_query = str(fixture.get("synthetic_query", "")) if fixture else None
+
+    # Deployment identity, resource sampling and the log sentinel scan are produced on
+    # the EC2 host, which already has the Docker CLI. This container is never given a
+    # Docker daemon socket.
+    observation = None
+    if args.mode == "aws-live" and args.observation_file and args.observation_file.is_file():
+        try:
+            observation = parse_observation_document(json.loads(args.observation_file.read_text(encoding="utf-8")))
+        except Exception as error:  # noqa: BLE001 - a bad document must block, not crash
+            print(f"observation document unusable: {type(error).__name__}", file=sys.stderr)
+
     dependencies = build_live_dependencies(
         fixture,
         environment=os.environ,
         redis_stream=args.redis_stream,
         redis_dlq_stream=args.redis_dlq_stream,
+        sentinels=sentinels,
     )
 
     receipt = asyncio.run(
@@ -269,10 +304,12 @@ def main(argv: list[str] | None = None) -> int:
             environment=os.environ,
             git_commit_sha=args.git_commit_sha,
             dependencies=dependencies,
-            worker_facts=worker_facts,
-            worker_image_digest=worker_digest,
-            resource_observation=resources,
+            worker_facts=observation.worker if observation else None,
+            worker_image_digest=observation.image_digest if observation else None,
+            resource_observation=observation.resources if observation else None,
             sentinels=sentinels,
+            submitted_query=submitted_query,
+            host_scan_results=observation.scan_results if observation else None,
         )
     )
 
