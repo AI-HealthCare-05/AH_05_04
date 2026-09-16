@@ -30,6 +30,10 @@ const DesignPrototypePage = import.meta.env.DEV
   ? lazy(() => import('../pages/DesignPrototypePage'))
   : null
 
+const TrackCPage = import.meta.env.DEV
+  ? lazy(() => import('../pages/TrackCPage'))
+  : null
+
 type AuthState =
   | { status: 'checking'; user: null }
   | { status: 'guest'; user: null }
@@ -155,6 +159,10 @@ export function AppRoutes({
       <Route path="/guides/:guideId" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
       <Route path="/guides" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
       <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
+      {TrackCPage && <>
+        <Route path="/dev/track-c/occurrences/:occurrenceId" element={<ProtectedRoute><Suspense fallback={<div role="status">불러오는 중입니다.</div>}><TrackCPage /></Suspense></ProtectedRoute>} />
+        <Route path="/dev/track-c/plans/:planId" element={<ProtectedRoute><Suspense fallback={<div role="status">불러오는 중입니다.</div>}><TrackCPage /></Suspense></ProtectedRoute>} />
+      </>}
       <Route path="/schedule" element={<ProtectedRoute><SchedulePage /></ProtectedRoute>} />
       <Route
         path="/schedule/unconfirmed"

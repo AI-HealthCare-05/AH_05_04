@@ -53,6 +53,8 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## Proposed 계약
 
+- [Guide·Chat 피드백 v1 (#633)](./proposed/guide-chat-feedback-v1.md): 완료 결과별 rating·선택 의견 저장 API, SELF 소유권·재제출·합성 Gold 연결 계약. Proposed / Local 구현 반영·최종 승인 대기, Frontend·Backend 확인과 사용자 운영안 채택 반영; 실사용 처리 승인·최종 책임 리뷰 별도.
+
 - [Track B 생활 시간 입력 v1 (#422 / #556)](./proposed/track-b-lifestyle-times-v1.md): 식사·반복 행동·복용 곤란 시간의 SELF별 요일 저장·조회 구현 후보. #556 책임 리뷰 전 Proposed; 추천·약별 조건 판정은 별도.
 
 - [Knowledge Evidence Index v1 (#178 선행 기반)](./proposed/post-mvp-1/knowledge-evidence-index-v1.md): 승인된 RAG Runtime 목표의 Retrieval Adapter가 소비할 Source Snapshot 결속 Chunk·버전별 embedding·재현 가능한 receipt 저장 계약. 구현 브랜치 검증 중이며 #178 Retrieval/RRF/Rerank/Evidence Gate·공개 활성화는 포함하지 않음.
@@ -72,7 +74,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Staging Release Validation Ledger 계약](./proposed/operations/release-validation-ledger.md): staging control DB, 상태 전이, crash recovery와 migration 상호 배제
 - [개발환경·비밀정보 주입 경로 점검 운영 계약](./proposed/operations/development-env-secret-injection-check.md): Redis, PostgreSQL, Provider secret 주입 경로와 운영 배포 전 차단 조건
 - [Track A migration·rollback 계획 제안 v1](./proposed/track-a-migration-rollback-v1.md): 문서 상태 Proposed · 구현 상태 Partially implemented — 공통 Job 기반과 OCR–AI Job mapping을 구현했으며 Guide·Chat 연결, Prescription Version, 전체 비동기 전환·backfill·read cutover는 미구현
-- [계정 생명주기 후속 계약 v1 (`PD-206`)](./proposed/account-lifecycle-v1.md): 문서 상태 Proposed · 구현 상태 Partially implemented — 회원탈퇴의 transaction 경계와 후속 구현 기준. 로그아웃·`token_version` 재검증·refresh token rotation·비밀번호 재설정은 현재 구현 계약([`user-account.md`](./current/user-account.md))에 반영됨. `account_deletion_request` 저장 기반(5절)은 작업 브랜치 구현·로컬 검증 완료; 탈퇴 요청 접수 API(4절)와 삭제·보존 처리는 미구현
+- [계정 생명주기 후속 계약 v1 (`PD-206`)](./proposed/account-lifecycle-v1.md): 문서 상태 Proposed · 구현 상태 Partially implemented — 회원탈퇴의 transaction 경계와 후속 구현 기준. 로그아웃·`token_version` 재검증·refresh token rotation·비밀번호 재설정·탈퇴 요청 접수 API는 현재 구현 계약([`user-account.md`](./current/user-account.md))에 반영됨. `account_deletion_request` 저장 기반(5절)과 탈퇴 요청 접수 API(4절)는 구현됐지만 ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false 기본값으로 공개 차단; 삭제·보존 처리는 미구현
 - [Guide·Chat Session·Message 상태 구현 골격 v1](./proposed/guide-chat-session-message-status-ui-v1.md): Session/Message/Job 결과 상태축, SAFETY-STALE 경계, PROFILE 기반 소유권의 Frontend 구현 골격
 
 Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 구현은 전체 계약 완료나 Current 승격을 의미하지 않으며, 관련 schema·service·CLI·테스트와 남은 전환 단계가 완료되고 상태가 갱신되기 전에는 실행 가능한 전체 계약으로 간주하지 않습니다.

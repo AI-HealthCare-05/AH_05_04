@@ -239,6 +239,10 @@ class Config(BaseSettings):
     # 않은 환경에서는 GET/confirm/reject가 503으로 fail-closed됩니다.
     PUBLIC_TRACK_F_ENABLED: bool = False
 
+    # EXT-PRIV-001 삭제·보존 정책 승인 전 실제 사용자에게 회원탈퇴 요청 접수 API를 공개하지 않습니다.
+    # 명시적으로 활성화하지 않은 환경에서는 요청 접수 전 503으로 fail-closed됩니다.
+    ACCOUNT_WITHDRAWAL_REQUEST_ENABLED: bool = False
+
     CLOVA_OCR_INVOKE_URL: str = ""
     CLOVA_OCR_SECRET: str = ""
     CLOVA_OCR_TIMEOUT_SECONDS: float = 20.0

@@ -16,6 +16,7 @@ import {
   useLocation,
   useNavigate,
 } from 'react-router-dom'
+import type { NavigateFunction } from 'react-router-dom'
 import { ApiError } from '../src/api/client'
 import {
   getGuide,
@@ -61,14 +62,18 @@ function ChatRouteProbe() {
   )
 }
 
-function renderPage(entry = '/guides/guide-1', withRouteControls = false) {
+function renderPage(
+  entry = '/guides/guide-1',
+  withRouteControls = false,
+  navigation?: NavigateFunction,
+) {
   return render(
     <MemoryRouter initialEntries={[entry]}>
       {withRouteControls && <GuideRouteControls />}
       <LocationProbe />
       <Routes>
-        <Route path="/guides" element={<GuidePage />} />
-        <Route path="/guides/:guideId" element={<GuidePage />} />
+        <Route path="/guides" element={<GuidePage navigation={navigation} />} />
+        <Route path="/guides/:guideId" element={<GuidePage navigation={navigation} />} />
         <Route path="/prescriptions/upload" element={<div>처방전 업로드 화면</div>} />
         <Route path="/login" element={<div>로그인 화면</div>} />
         <Route path="/" element={<div>홈 화면</div>} />
@@ -154,6 +159,25 @@ afterEach(() => {
 })
 
 describe('GuidePage', () => {
+  it('완료 Guide의 복용 일정 CTA는 mutation 없이 기존 route로 한 번 이동한다', async () => {
+    const navigation = vi.fn<NavigateFunction>()
+    vi.mocked(getGuide).mockResolvedValue(
+      completedGuideResponse('guide-1', structuredGuideContent()),
+    )
+
+    renderPage('/guides/guide-1', false, navigation)
+
+    const scheduleCta = await screen.findByRole('button', {
+      name: '복용 일정 확인하기',
+    })
+    expect(scheduleCta).toHaveProperty('disabled', false)
+    fireEvent.click(scheduleCta)
+
+    expect(navigation).toHaveBeenCalledTimes(1)
+    expect(navigation).toHaveBeenCalledWith('/schedule')
+    expect(getGuide).toHaveBeenCalledTimes(1)
+  })
+
   it('표준 Guide 원문을 약별 카드와 의미 있는 라벨 구조로 표시한다', async () => {
     vi.mocked(getGuide).mockResolvedValue(
       completedGuideResponse('guide-1', structuredGuideContent()),
@@ -164,15 +188,19 @@ describe('GuidePage', () => {
     expect(
       await screen.findByRole('heading', { name: '확인된 약 목록 · 1개' }),
     ).toBeTruthy()
-    const medicationCard = screen
-      .getByRole('heading', { name: '합성 처방약 1 매우 긴 이름' })
-      .closest('details')
+    const medicationToggle = screen.getByRole('button', {
+      name: /합성 처방약 1 매우 긴 이름/,
+    })
+    const medicationCard = medicationToggle.closest('article')
     expect(medicationCard).not.toBeNull()
-    expect(medicationCard!.hasAttribute('open')).toBe(false)
+    expect(medicationToggle.getAttribute('aria-expanded')).toBe('false')
+    expect(medicationToggle.getAttribute('aria-controls')).toBe(
+      'guide-medication-panel-0',
+    )
 
-    fireEvent.click(within(medicationCard!).getByText('합성 처방약 1 매우 긴 이름'))
+    fireEvent.click(medicationToggle)
 
-    expect(medicationCard!.hasAttribute('open')).toBe(true)
+    expect(medicationToggle.getAttribute('aria-expanded')).toBe('true')
     expect(within(medicationCard!).getByText('1회량').tagName).toBe('DT')
     expect(within(medicationCard!).getByText('1 정').tagName).toBe('DD')
     expect(within(medicationCard!).getByText('하루 횟수').tagName).toBe('DT')
@@ -181,12 +209,33 @@ describe('GuidePage', () => {
     expect(within(medicationCard!).getByText('아침 저녁 식후').tagName).toBe('DD')
     expect(within(medicationCard!).getByText('복용 기간').tagName).toBe('DT')
     expect(within(medicationCard!).getByText('5일').tagName).toBe('DD')
-    expect(within(medicationCard!).getByRole('heading', { name: '복약 안내' })).toBeTruthy()
+    expect(
+      within(medicationCard!).getByRole('heading', {
+        name: '복약 안내',
+      }),
+    ).toBeTruthy()
     expect(
       within(medicationCard!).getByText(
         '처방에 안내된 복용 계획을 확인하고 지켜 주세요.',
       ),
     ).toBeTruthy()
+    const requestedSectionHeadings = [
+      '복용 시 주의해야 할 점',
+      '주의해야 할 음식·음료',
+      '음주/흡연 안내',
+      '나타날 수 있는 불편감',
+      '이런 증상은 병원에 가세요',
+      '임신·수유 중 안내',
+    ]
+    expect(
+      within(medicationCard!.querySelector('.guide-page__medical-sections')!)
+        .getAllByRole('heading', { level: 4 })
+        .map((heading) => heading.textContent),
+    ).toEqual(requestedSectionHeadings)
+    expect(
+      within(medicationCard!.querySelector('.guide-page__medical-sections')!)
+        .getAllByText('현재 제공된 안내가 없어요.'),
+    ).toHaveLength(6)
     const commonNotice = screen
       .getByRole('heading', { name: '공통 복약 안내' })
       .closest('aside')
@@ -206,6 +255,107 @@ describe('GuidePage', () => {
       ),
     ).toBeTruthy()
     expect(within(medicationCard!).getByText('하루 1회 · 아침 저녁 식후')).toBeTruthy()
+    expect(screen.queryByText('가이드 전체 내용')).toBeNull()
+  })
+
+  it('세부 의료 섹션 데이터가 전혀 없어도 여섯 섹션을 중립 문구로 유지한다', async () => {
+    const content = [
+      '복약 가이드',
+      [
+        '[1] 합성 처방약',
+        '용량: 1 정',
+        '복용 횟수: 하루 1회',
+        '복용 시점: 아침 식후',
+        '복용 기간: 5일',
+      ].join('\n'),
+      '공통 안내:\n안전 안내:',
+    ].join('\n\n')
+    vi.mocked(getGuide).mockResolvedValue(completedGuideResponse('guide-1', content))
+
+    renderPage()
+
+    const toggle = await screen.findByRole('button', { name: /합성 처방약/ })
+    fireEvent.click(toggle)
+    const medicationCard = toggle.closest('article')
+    expect(medicationCard).not.toBeNull()
+    expect(
+      within(medicationCard!.querySelector('.guide-page__medical-sections')!)
+        .getAllByRole('heading', { level: 4 }),
+    ).toHaveLength(6)
+    expect(
+      within(medicationCard!.querySelector('.guide-page__medical-sections')!)
+        .getAllByText('현재 제공된 안내가 없어요.'),
+    ).toHaveLength(6)
+    expect(screen.getAllByText('현재 제공된 안내가 없어요.')).toHaveLength(8)
+    expect(screen.queryByText(/주의사항 없음|상호작용 없음|위험 없음/)).toBeNull()
+  })
+
+  it('향후 명시 라벨은 해당 섹션에만 매핑하고 누락 섹션은 추측하지 않는다', async () => {
+    const content = [
+      '복약 가이드',
+      [
+        '[1] 합성 처방약',
+        '용량: 1 정',
+        '복용 횟수: 하루 2회',
+        '복용 시점: 아침 저녁 식후',
+        '복용 기간: 7일',
+        '주의해야 할 음식·음료: 자몽 관련 안내는 의료진 또는 약사에게 확인하세요.',
+        '나타날 수 있는 불편감: 어지러움이 지속되면 의료진과 상담하세요.',
+        '임신·수유 중 안내: 복용 전에 의료진과 상담하세요.',
+      ].join('\n'),
+      '공통 안내: 공통으로 확인할 내용입니다.\n안전 안내: 임의로 복용을 변경하지 마세요.',
+    ].join('\n\n')
+    vi.mocked(getGuide).mockResolvedValue(completedGuideResponse('guide-1', content))
+
+    renderPage()
+
+    const toggle = await screen.findByRole('button', { name: /합성 처방약/ })
+    fireEvent.click(toggle)
+    const medicationCard = toggle.closest('article')
+    expect(medicationCard).not.toBeNull()
+    expect(
+      within(medicationCard!).getByText(
+        '자몽 관련 안내는 의료진 또는 약사에게 확인하세요.',
+      ),
+    ).toBeTruthy()
+    expect(
+      within(medicationCard!).getByText(
+        '어지러움이 지속되면 의료진과 상담하세요.',
+      ),
+    ).toBeTruthy()
+    expect(
+      within(medicationCard!).getByText('복용 전에 의료진과 상담하세요.'),
+    ).toBeTruthy()
+    expect(
+      within(medicationCard!).getAllByText('현재 제공된 안내가 없어요.'),
+    ).toHaveLength(3)
+  })
+
+  it('알려지지 않은 의료 라벨은 섹션 shell을 유지하고 추가 원문으로만 보존한다', async () => {
+    const content = [
+      '복약 가이드',
+      '[1] 합성 처방약\n용량: 1 정\n새 의료 판단: 임의 분류하지 않을 내용',
+      '공통 안내: 공통 안내\n안전 안내: 안전 안내',
+    ].join('\n\n')
+    vi.mocked(getGuide).mockResolvedValue(completedGuideResponse('guide-1', content))
+
+    renderPage()
+
+    const toggle = await screen.findByRole('button', { name: /합성 처방약/ })
+    fireEvent.click(toggle)
+    const medicationCard = toggle.closest('article')
+    expect(medicationCard).not.toBeNull()
+    expect(
+      within(medicationCard!.querySelector('.guide-page__medical-sections')!)
+        .getAllByRole('heading', { level: 4 }),
+    ).toHaveLength(6)
+    expect(
+      within(medicationCard!.querySelector('.guide-page__medical-sections')!)
+        .getAllByText('현재 제공된 안내가 없어요.'),
+    ).toHaveLength(6)
+    fireEvent.click(within(medicationCard!).getByText('추가 안내 원문'))
+    expect(within(medicationCard!).getByText('새 의료 판단')).toBeTruthy()
+    expect(within(medicationCard!).getByText('임의 분류하지 않을 내용')).toBeTruthy()
     expect(screen.queryByText('가이드 전체 내용')).toBeNull()
   })
 
@@ -301,13 +451,13 @@ describe('GuidePage', () => {
     await waitFor(() => expect(getGuide).toHaveBeenCalledWith('guide-1'))
   })
 
-  it('완료된 content가 없으면 빈 상태를 표시한다', async () => {
+  it.each([null, '', '   \n'])('완료된 content가 %p이면 안전한 빈 상태를 표시한다', async (content) => {
     vi.mocked(getGuide).mockResolvedValue({
       data: {
         guide_id: 'guide-1',
         prescription_id: 'prescription-1',
         generation_status: 'COMPLETED',
-        content: null,
+        content,
         model_name: null,
         prompt_version: null,
         requested_at: '2026-08-22T00:00:00Z',
@@ -379,6 +529,18 @@ describe('GuidePage', () => {
     expect(await screen.findByText('아직 만들어진 가이드가 없어요')).toBeTruthy()
     expect(screen.getByRole('button', { name: '처방전 등록하기' })).toBeTruthy()
     expect(screen.getByTestId('location').textContent).toBe('/guides')
+  })
+
+  it('직접 조회한 Guide 404도 GUIDE-01 empty copy와 CTA로 표시한다', async () => {
+    vi.mocked(getGuide).mockRejectedValue(
+      new ApiError(404, '가이드를 찾을 수 없습니다.', 'GUIDE_NOT_FOUND'),
+    )
+
+    renderPage('/guides/guide-missing')
+
+    expect(await screen.findByText('아직 만들어진 가이드가 없어요')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '처방전 등록하기' })).toBeTruthy()
+    expect(screen.queryByText('요청한 복약 가이드를 찾을 수 없어요.')).toBeNull()
   })
 
   it.each([

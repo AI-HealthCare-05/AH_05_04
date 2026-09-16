@@ -8,9 +8,10 @@ from fastapi.security import HTTPAuthorizationCredentials
 
 from app.core import config
 from app.core.config import Env
-from app.core.errors import ApiError, ErrorResponse
+from app.core.errors import ApiError, ErrorDetail, ErrorResponse
 from app.core.jwt.tokens import Token
 from app.dependencies.security import (
+    get_request_user,
     invalid_token_error,
     resolve_active_user_from_payload,
     resolve_logout_user,
@@ -18,6 +19,8 @@ from app.dependencies.security import (
 )
 from app.dependencies.services import get_auth_service, get_refresh_session_repository, get_user_repository
 from app.dtos.auth import (
+    AccountWithdrawalRequest,
+    AccountWithdrawalResponse,
     EmailVerificationConfirmRequest,
     EmailVerificationConfirmResponse,
     EmailVerificationRequestRequest,
@@ -32,12 +35,28 @@ from app.dtos.auth import (
     SignUpRequest,
     TokenRefreshResponse,
 )
+from app.models.users import User
 from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth import AuthService
 from app.services.jwt import JwtService
 
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _ensure_account_withdrawal_request_enabled() -> None:
+    if not config.ACCOUNT_WITHDRAWAL_REQUEST_ENABLED:
+        raise ApiError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="SERVICE_UNAVAILABLE",
+            message="회원탈퇴 요청 접수 기능은 아직 공개되지 않았습니다.",
+            details=[
+                ErrorDetail(
+                    field="account_withdrawal",
+                    reason="ACCOUNT_WITHDRAWAL_REQUEST_DISABLED",
+                )
+            ],
+        )
 
 
 def should_use_secure_cookie(env: Env) -> bool:
@@ -195,6 +214,40 @@ async def logout(
         key="refresh_token",
         domain=config.COOKIE_DOMAIN or None,
     )
+    return response
+
+
+@auth_router.post(
+    "/account/withdrawal",
+    response_model=AccountWithdrawalResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "model": ErrorResponse,
+            "description": "`code=SERVICE_UNAVAILABLE`, `reason=ACCOUNT_WITHDRAWAL_REQUEST_DISABLED`.",
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "model": ErrorResponse,
+            "description": "인증 정보가 없거나 현재 비밀번호 재인증에 실패했습니다.",
+        },
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {
+            "model": ErrorResponse,
+            "description": "`code=VALIDATION_FAILED`. `details[].field=confirmed`, `reason=CONFIRMATION_REQUIRED`.",
+        },
+    },
+)
+async def request_account_withdrawal(
+    request: AccountWithdrawalRequest,
+    user: Annotated[User, Depends(get_request_user)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> Response:
+    _ensure_account_withdrawal_request_enabled()
+    await auth_service.request_account_withdrawal(user=user, password=request.password, confirmed=request.confirmed)
+    response = Response(
+        content=AccountWithdrawalResponse(detail="계정 이용 종료와 탈퇴 요청 접수가 완료되었습니다.").model_dump(),
+        status_code=status.HTTP_200_OK,
+    )
+    response.delete_cookie(key="refresh_token", domain=config.COOKIE_DOMAIN or None)
     return response
 
 

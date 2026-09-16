@@ -6,6 +6,7 @@ import SignupPage from '../src/pages/SignupPage'
 
 beforeEach(() => {
   vi.stubEnv('VITE_EMAIL_VERIFICATION_ENABLED', 'false')
+  vi.stubEnv('VITE_SIGNUP_TERMS_APPROVED', 'true')
   localStorage.clear()
 })
 
@@ -49,5 +50,44 @@ describe('SignupPage signup API integration', () => {
       consents: [],
     })
     expect(await screen.findByText('로그인 화면')).toBeTruthy()
+  })
+
+  it('기능 이용 선택 동의는 실제 request body에 정확한 4개 purpose를 전송한다', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ detail: '회원가입 완료' }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    render(
+      <MemoryRouter initialEntries={['/signup']}>
+        <Routes>
+          <Route path="/signup" element={<SignupPage />} />
+          <Route path="/login" element={<div>로그인 화면</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.change(screen.getByLabelText('이름'), { target: { value: '홍길동' } })
+    fireEvent.change(screen.getByLabelText('이메일'), { target: { value: 'dosey@example.com' } })
+    fireEvent.change(screen.getByLabelText('비밀번호'), { target: { value: 'Password1!' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: '필수 약관에 동의합니다' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /기능 이용 선택 동의/ }))
+    fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    const [, options] = fetchMock.mock.calls[0]
+    expect(JSON.parse(String(options?.body))).toEqual({
+      name: '홍길동',
+      email: 'dosey@example.com',
+      password: 'Password1!',
+      consents: [
+        { purpose: 'OCR' },
+        { purpose: 'GUIDE' },
+        { purpose: 'CHAT' },
+        { purpose: 'NOTIFICATION' },
+      ],
+    })
   })
 })

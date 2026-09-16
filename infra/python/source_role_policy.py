@@ -21,6 +21,7 @@ SOURCE_TABLES = (
 )
 # 승인 이력·원본은 append-only입니다. 관리용 수정/삭제는 별도 권한 경로로 연결합니다.
 WRITER_UPDATE_TABLES = {"rag_source_operation"}
+WRITER_LOCK_TABLES = ("rag_source", "rag_source_endpoint", "rag_source_ingestion_artifact")
 
 
 def quoted_identifier(value: str) -> str:
@@ -55,6 +56,7 @@ async def apply_source_role_policy(
     present = set(tables.scalars())
     if not set(SOURCE_TABLES).issubset(present):
         raise ValueError("Apply Source migrations before provisioning Writer privileges")
+    await _validate_lock_markers(connection, schema=schema)
     await connection.execute(text(f"REVOKE CREATE ON SCHEMA {schema_sql} FROM PUBLIC"))
     await connection.execute(text(f"REVOKE ALL ON ALL TABLES IN SCHEMA {schema_sql} FROM {writer_sql}"))
     await _revoke_column_grants(connection, schema=schema, runtime=runtime, writer=writer)
@@ -87,6 +89,10 @@ async def apply_source_role_policy(
                 text(
                     f"GRANT UPDATE (snapshot_id, run_status, failure_code, failure_message, duration_ms, finished_at) ON TABLE {target} TO {writer_sql}"
                 )
+            )
+        if table in WRITER_LOCK_TABLES:
+            await connection.execute(
+                text(f"GRANT UPDATE (knowledge_index_lock_marker) ON TABLE {target} TO {writer_sql}")
             )
         if table in WRITER_UPDATE_TABLES:
             await connection.execute(text(f"GRANT UPDATE ON TABLE {target} TO {writer_sql}"))
@@ -165,3 +171,31 @@ async def _revoke_column_grants(connection: AsyncConnection, *, schema: str, run
     )
     for statement in statements:
         await connection.execute(text(statement))
+
+
+async def _validate_lock_markers(connection: AsyncConnection, *, schema: str) -> None:
+    """Fail before ACL changes unless the existing lock-only columns are constrained to zero."""
+    for table in WRITER_LOCK_TABLES:
+        rows = (
+            (
+                await connection.execute(
+                    text(
+                        "SELECT a.attnotnull, pg_get_expr(k.conbin,k.conrelid) AS expression "
+                        "FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid "
+                        "JOIN pg_namespace n ON n.oid=c.relnamespace "
+                        "LEFT JOIN pg_constraint k ON k.conrelid=c.oid AND k.contype='c' AND k.convalidated "
+                        "WHERE n.nspname=:schema AND c.relname=:table "
+                        "AND a.attname='knowledge_index_lock_marker' AND NOT a.attisdropped "
+                        "AND a.atttypid='integer'::regtype"
+                    ),
+                    {"schema": schema, "table": table},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        if not any(
+            row["attnotnull"] and re.sub(r"[\s()]", "", row["expression"] or "") == "knowledge_index_lock_marker=0"
+            for row in rows
+        ):
+            raise ValueError("Source lock markers require NOT NULL and a validated CHECK equal to zero")
