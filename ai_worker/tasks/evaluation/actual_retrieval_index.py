@@ -309,7 +309,7 @@ async def bootstrap_dev_knowledge_index(
                 "(id, operation_id, source_version, external_version, raw_manifest_checksum, canonical_checksum, "
                 "schema_version, parser_version, normalization_version, canonicalization_spec_version, "
                 "endpoint_receipt_hash, record_count, rejected_record_count, verification_status, collected_at) "
-                "VALUES (:id, :op_id, '1.0.0', '1.0.0', :raw_hash, :canon_hash, 'schema-v1', "
+                "VALUES (:id, :op_id, 'external:1.0.0', '1.0.0', :raw_hash, :canon_hash, 'schema-v1', "
                 "'parser-v1', 'canonical-v1', '1.0.0', :receipt_hash, 100, 0, 'PENDING', :now) "
                 "ON CONFLICT (id) DO NOTHING"
             ),
@@ -330,7 +330,7 @@ async def bootstrap_dev_knowledge_index(
         endpoint_id=endpoint_id,
         operation_id=operation_id,
         source_snapshot_id=snapshot_id,
-        source_version="1.0.0",
+        source_version="external:1.0.0",
         external_version="1.0.0",
         canonical_checksum=file_sha256,
         canonicalization_spec_version="1.0.0",
