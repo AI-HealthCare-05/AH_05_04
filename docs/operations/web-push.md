@@ -18,7 +18,7 @@ Push가 활성화되면 회당 최대 45초가 추가될 수 있으며 정시 �
 | 환경변수 | 형식/운영 경계 |
 | --- | --- |
 | `WEB_PUSH_ENABLED` | 기본 false. Production에서는 `WEB_PUSH_PRODUCTION_ENABLED`도 true여야 등록·전송이 열린다 |
-| `WEB_PUSH_PRODUCTION_ENABLED` | 기본 false(#651). Production에서 이 값이 false면 `WEB_PUSH_ENABLED` 값과 무관하게 등록·전송을 차단한다. 다른 Production 전용 안전장치(이메일 인증 강제 등)에는 영향을 주지 않는다. 문제가 생기면 이 값만 다시 false로 두고 API/scheduler를 재시작하면 코드 롤백이나 재배포 없이 차단된다. 아래 cache 설명대로 재시작 전까지는 이미 뜬 프로세스가 이전 값을 계속 쓴다 |
+| `WEB_PUSH_PRODUCTION_ENABLED` | 기본 false(#651). Production에서 이 값이 false면 새 설정을 읽은 API/scheduler 인스턴스에서 `WEB_PUSH_ENABLED` 값과 무관하게 등록·전송을 차단한다. 다른 Production 전용 안전장치(이메일 인증 강제 등)에는 영향을 주지 않는다. 문제가 생기면 이 값만 다시 false로 두고 API/scheduler 전 인스턴스를 재시작해야 OFF 절차가 완료된다. 코드 롤백이나 재배포는 필요하지 않지만, 아래 cache 설명대로 재시작 전까지는 이미 뜬 프로세스가 이전 값을 계속 쓴다 |
 | `WEB_PUSH_ALLOWED_HOSTS` | 정확한 provider hostname의 JSON 배열. 기본 빈 배열, wildcard 금지 |
 | `WEB_PUSH_VAPID_PRIVATE_KEY` | 저장소 밖 secret에서 주입하는 P-256 PEM private key |
 | `WEB_PUSH_VAPID_PUBLIC_KEY` | 해당 키의 uncompressed public key, base64url no padding |
@@ -31,6 +31,14 @@ VAPID private/public key가 맞지 않거나 활성화 필수 설정이 빠지�
 API는 고정 `503 PUSH_UNAVAILABLE`로 응답하며 DELETE는 secret 설정 오류와 무관하게
 사용할 수 있다. 등록 시 DNS 실패도 503, 허용되지 않는 주소는 422다.
 설정은 프로세스에서 cache하므로 교체 후 API/scheduler를 함께 재시작한다.
+
+## Production OFF 절차
+
+`WEB_PUSH_PRODUCTION_ENABLED=false` 전환은 env 값을 바꾸는 것만으로 완료되지 않는다.
+운영 차단 완료 기준은 API와 scheduler의 모든 실행 인스턴스가 재시작되어 새 설정을 읽은 뒤다.
+재시작 전 인스턴스는 cached 설정으로 기존 값을 계속 사용할 수 있으므로, 운영자는 재시작
+완료 전 신규 등록·전송이 이미 차단됐다고 기록하지 않는다. 재시작 후에는 config/등록과
+전송 batch가 차단되고, 구독 DELETE와 logout/reset의 동기 키 삭제 경계는 유지한다.
 
 암호화 키 회전은 새 key_id를 추가하고 active_key_id를 바꾼다. 기존 키는 유지한다.
 동일 구독 재등록은 새 키로 암호화하되 generation/activated_at을 바꾸지 않는다.
