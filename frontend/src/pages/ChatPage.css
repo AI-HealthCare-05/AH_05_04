@@ -15,28 +15,41 @@
 }
 
 .chat-page .app-topbar {
-  min-height: 50px;
-  gap: 5px;
-  padding: 4px max(20px, env(safe-area-inset-right)) 3px max(4px, env(safe-area-inset-left));
+  min-height: 68px;
+  padding-inline: 8px 20px;
   border-bottom-color: #edf0f4;
   background: #fff;
 }
 
-.chat-page .app-topbar .icon-button {
+.chat-page:has(.chat-layout) .app-topbar {
+  min-height: 50px;
+  gap: 5px;
+  padding: 4px max(20px, env(safe-area-inset-right)) 3px max(4px, env(safe-area-inset-left));
+}
+
+.chat-page:has(.chat-layout) .app-topbar .icon-button {
   min-width: 40px;
   min-height: 42px;
   margin-right: 0;
 }
 
 .chat-page .app-topbar h1 {
-  margin-left: 3px;
   font-size: 17px;
   font-weight: 800;
 }
 
 .chat-page .app-topbar .dosey-mascot--header {
+  margin-left: -1px;
+}
+
+.chat-page:has(.chat-layout) .app-topbar h1 {
+  margin-left: 3px;
+}
+
+.chat-page:has(.chat-layout) .app-topbar .dosey-mascot--header {
   width: 37px;
   height: 42px;
+  margin-left: 0;
 }
 
 .chat-page .chat-layout {
@@ -71,12 +84,14 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  margin: 0 14px;
+  margin: 0 12px;
   overflow: hidden;
   background: transparent;
 }
 
 .chat-page .chat-messages {
+  width: min(362px, 100%);
+  align-self: center;
   overscroll-behavior: contain;
   padding: 8px;
 }
