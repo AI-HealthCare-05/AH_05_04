@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -502,7 +502,7 @@ async def test_execute_resolves_concurrent_insert_race_by_replaying_winner(
         user_id: UUID,
         operation_id: str,
         parent_resource_id: UUID,
-        key_hmac_candidates: tuple[IdempotencyHmacDigest, ...],
+        key_hmac_candidates: Sequence[IdempotencyHmacDigest],
     ) -> IdempotencyRecord | None:
         nonlocal call_count
         call_count += 1
@@ -588,7 +588,7 @@ async def test_execute_replays_winner_snapshot_when_mutation_raises_domain_confl
         user_id: UUID,
         operation_id: str,
         parent_resource_id: UUID,
-        key_hmac_candidates: tuple[IdempotencyHmacDigest, ...],
+        key_hmac_candidates: Sequence[IdempotencyHmacDigest],
     ) -> IdempotencyRecord | None:
         nonlocal call_count
         call_count += 1
@@ -678,7 +678,7 @@ async def test_execute_raises_conflict_when_domain_error_coincides_with_differen
         user_id: UUID,
         operation_id: str,
         parent_resource_id: UUID,
-        key_hmac_candidates: tuple[IdempotencyHmacDigest, ...],
+        key_hmac_candidates: Sequence[IdempotencyHmacDigest],
     ) -> IdempotencyRecord | None:
         nonlocal call_count
         call_count += 1
