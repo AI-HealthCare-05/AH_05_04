@@ -13,6 +13,7 @@ from app.core.provider_observability import (
     ProviderCallDescriptor,
     ProviderOperation,
 )
+from app.repositories.account_deletion_request_repository import AccountDeletionRequestRepository
 from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.email_verification_repository import EmailVerificationRepository
@@ -140,6 +141,15 @@ def get_user_consent_repository(
     ],
 ) -> UserConsentRepository:
     return UserConsentRepository(session)
+
+
+def get_account_deletion_request_repository(
+    session: Annotated[
+        AsyncSession,
+        Depends(get_db_session),
+    ],
+) -> AccountDeletionRequestRepository:
+    return AccountDeletionRequestRepository(session)
 
 
 def get_medical_document_repository(
@@ -607,6 +617,10 @@ def get_auth_service(
         UserConsentRepository,
         Depends(get_user_consent_repository),
     ],
+    account_deletion_request_repository: Annotated[
+        AccountDeletionRequestRepository,
+        Depends(get_account_deletion_request_repository),
+    ],
 ) -> AuthService:
     return AuthService(
         repository,
@@ -615,6 +629,7 @@ def get_auth_service(
         email_verification_repository,
         email_sender,
         user_consent_repository,
+        account_deletion_request_repository,
     )
 
 

@@ -57,6 +57,13 @@ def test_credentials_and_admin_process_are_separated() -> None:
     assert not any("KNOWLEDGE_INDEX_BUILDER" in key for key in worker["environment"])
 
 
+def test_account_deletion_request_runtime_role_is_append_only() -> None:
+    from infra.python.provision_database_roles import RUNTIME_APPEND_ONLY_TABLES, RUNTIME_MUTABLE_TABLES
+
+    assert "account_deletion_request" in RUNTIME_APPEND_ONLY_TABLES
+    assert "account_deletion_request" not in RUNTIME_MUTABLE_TABLES
+
+
 def test_knowledge_index_role_policy_is_explicit_and_least_privilege() -> None:
     from infra.python.knowledge_index_role_policy import (
         KNOWLEDGE_INDEX_LOCK_COLUMNS,
