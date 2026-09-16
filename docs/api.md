@@ -830,3 +830,10 @@ COMPLETED 계획에만 최초 제출(기대 revision 0)·정정(현재 평가 re
 상태를 정렬한다. 최종 승인·병합 대기이며 병합 전 develop의 동작이나 Frontend 인수·외부 공개 완료를 뜻하지 않는다.
 `ACTION_PLAN_STATE_CONFLICT`는 작업의 Plan 상태 전제조건 불충족을 뜻하는 공용 code다.
 Plan PATCH는 ACTIVE가 아니면, Follow-up POST는 COMPLETED가 아니면 반환하므로 호출한 endpoint별로 복구한다.
+
+### Track C 일정 변경·외출 상황 선택 (#194 구현·리뷰 대상)
+
+Support GET query와 Plan 생성 body의 선택적 `travel_situation`은 SCHEDULE_CHANGED 또는
+MEDICATION_NOT_WITH_ME다. 일정 변경·외출에만 허용하고 각각 일정 확인·약 챙기기 계획을 제안한다.
+생략은 기존 단일 제안을 유지한다. 입력 조건·422·Plan 재검증·멱등성은
+[제안 계약](contracts/proposed/track-c-travel-situation-194.md)을 따른다. 최종 승인·병합 전이다.

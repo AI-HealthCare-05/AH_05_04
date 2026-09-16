@@ -20,10 +20,12 @@ from app.dtos.track_c_support import (
     SupportOfferData,
     SupportOfferItem,
     SupportOfferResponse,
+    TravelSituation,
 )
 from app.models.medication_schedules import MedicationCheckin, MedicationCheckinStatus
 from app.models.track_c import (
     ActionPlanFollowup,
+    BarrierCode,
     BarrierResponse,
     BarrierResponseStatus,
     SafetyAssessment,
@@ -52,12 +54,33 @@ ACTION_PLAN_FOLLOWUP_POST_OPERATION_ID = "support-action-plan.followup.submit"
 ACTION_PLAN_FOLLOWUP_GET_OPERATION_ID = "support-action-plan.followup.get"
 
 
-def eligible_supports(config: HandlerConfig, barrier: BarrierResponse) -> list[SupportRule]:
-    """All six approved handlers are static guidance; no provider routing is needed."""
+def eligible_supports(
+    config: HandlerConfig, barrier: BarrierResponse, travel_situation: TravelSituation | None = None
+) -> list[SupportRule]:
+    """Filter by explicit travel situation before the stable single-offer ordering."""
+    if travel_situation is not None and (
+        barrier.response_status != BarrierResponseStatus.ANSWERED
+        or barrier.barrier_code != BarrierCode.SCHEDULE_OR_TRAVEL
+    ):
+        raise ApiError(
+            status_code=422, code="VALIDATION_FAILED", message="일정 변경·외출 사유에서만 상황을 선택해 주세요."
+        )
+    selected = (
+        {
+            "SCHEDULE_CHANGED": SupportCode.REMINDER_SETUP,
+            "MEDICATION_NOT_WITH_ME": SupportCode.ROUTINE_OR_TRAVEL_PLAN,
+        }.get(travel_situation)
+        if travel_situation is not None
+        else None
+    )
     if barrier.response_status != BarrierResponseStatus.ANSWERED:
         return []
     return sorted(
-        (rule for rule in config.supports.values() if barrier.barrier_code in rule.barrier_codes),
+        (
+            rule
+            for rule in config.supports.values()
+            if barrier.barrier_code in rule.barrier_codes and (selected is None or rule.support_code == selected)
+        ),
         key=lambda rule: (rule.priority, rule.support_code.value),
     )[:1]
 
@@ -125,7 +148,9 @@ class TrackCSupportService:
                 message="지원 안내를 불러올 수 없습니다. 다시 시도해 주세요.",
             ) from None
 
-    async def get_supports(self, *, user_id: UUID, barrier_id: UUID) -> SupportOfferResponse:
+    async def get_supports(
+        self, *, user_id: UUID, barrier_id: UUID, travel_situation: TravelSituation | None = None
+    ) -> SupportOfferResponse:
         flow = await self._repository.get_support_flow_owned(barrier_id=barrier_id, user_id=user_id)
         if flow is None:
             raise ApiError(
@@ -135,7 +160,7 @@ class TrackCSupportService:
         self._ensure_current_flow(barrier, checkin, safety, latest_barrier_id)
         config, catalog = await self._load_config()
         supports = []
-        for rule in eligible_supports(config, barrier):
+        for rule in eligible_supports(config, barrier, travel_situation):
             copy = catalog.supports[rule.support_code]
             supports.append(
                 SupportOfferItem(
@@ -180,7 +205,7 @@ class TrackCSupportService:
             barrier, _ = await self._owned_parent(barrier_id=request.barrier_response_id, user_id=user_id)
             config, _ = await self._load_config()
             await self._lock_current_flow(barrier=barrier, user_id=user_id)
-            offered = eligible_supports(config, barrier)
+            offered = eligible_supports(config, barrier, request.travel_situation)
             if request.rule_version != config.rule_version or (
                 offered and request.copy_version != offered[0].copy_version
             ):
@@ -212,7 +237,7 @@ class TrackCSupportService:
             operation_id=SUPPORT_ACTION_PLAN_POST_OPERATION_ID,
             parent_resource_id=request.barrier_response_id,
             idempotency_key=idempotency_key,
-            fingerprint=request.model_dump(mode="json"),
+            fingerprint=request.model_dump(mode="json", exclude_none=True),
             success_status=200,
             mutate=mutate,
         )

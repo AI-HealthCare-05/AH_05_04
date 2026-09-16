@@ -22,6 +22,7 @@ from app.dtos.track_c_support import (
     SubmitActionPlanFollowupRequest,
     SupportActionPlanResponse,
     SupportOfferResponse,
+    TravelSituation,
 )
 from app.models.users import User
 from app.services.track_c_api import (
@@ -63,8 +64,9 @@ async def get_support_offers(
     id: UUID,
     user: Annotated[User, Depends(get_request_user)],
     service: Annotated[TrackCSupportService, Depends(get_track_c_support_service)],
+    travel_situation: TravelSituation | None = None,
 ) -> SupportOfferResponse:
-    return await service.get_supports(user_id=user.id, barrier_id=id)
+    return await service.get_supports(user_id=user.id, barrier_id=id, travel_situation=travel_situation)
 
 
 @track_c_router.post(

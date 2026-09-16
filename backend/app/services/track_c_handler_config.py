@@ -27,10 +27,10 @@ from app.repositories.track_c_storage_repository import TrackCStorageRepository
 
 SCHEMA_VERSION = "track-c-handler-config-v1"
 COPY_SCHEMA_VERSION = "track-c-support-copy-v1"
-ACTIVE_RULE_VERSION = "track-c-support-rule-2026-09-15.1"
-ACTIVE_COPY_VERSION = "track-c-support-copy-ko-2026-09-15.1"
-APPROVED_RULE_VERSIONS = frozenset({ACTIVE_RULE_VERSION})
-APPROVED_COPY_VERSIONS = frozenset({ACTIVE_COPY_VERSION})
+ACTIVE_RULE_VERSION = "track-c-support-rule-2026-09-16.1"
+ACTIVE_COPY_VERSION = "track-c-support-copy-ko-2026-09-16.1"
+APPROVED_RULE_VERSIONS = frozenset({"track-c-support-rule-2026-09-15.1", ACTIVE_RULE_VERSION})
+APPROVED_COPY_VERSIONS = frozenset({"track-c-support-copy-ko-2026-09-15.1", ACTIVE_COPY_VERSION})
 APPROVED_RATIONALE_CODES = frozenset(
     {
         "ROUTINE_REMINDER_SETUP_AVAILABLE",

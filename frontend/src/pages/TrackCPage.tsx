@@ -35,13 +35,14 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   const [query] = useSearchParams()
   const date = query.get('date') ?? ''
   const navigate = useNavigate()
-  const [step, setStep] = useState<'loading' | 'safety' | 'barrier' | 'offer' | 'plan' | 'blocked'>('loading')
+  const [step, setStep] = useState<'loading' | 'safety' | 'barrier' | 'travel' | 'offer' | 'plan' | 'blocked'>('loading')
   const [checkin, setCheckin] = useState<MedicationCheckinResponse['data'] | null>(null)
   const [safety, setSafety] = useState<api.Safety | null>(null)
   const [barrier, setBarrier] = useState<api.Barrier | null>(null)
   const [offer, setOffer] = useState<api.Offer | null>(null)
   const [plan, setPlan] = useState<api.Plan | null>(null)
   const [selected, setSelected] = useState<api.BarrierCode | ''>('')
+  const [travelSituation, setTravelSituation] = useState<api.TravelSituation | undefined>()
   const [confirmed, setConfirmed] = useState(false)
   const [terminal, setTerminal] = useState<'COMPLETED' | 'CANCELLED' | null>(null)
   const [busy, setBusy] = useState(false)
@@ -127,8 +128,16 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
     if (!alive.current) return
     if (result.medication_checkin_id !== checkin.checkin_id || result.checkin_revision !== checkin.revision || result.safety_assessment_id !== safety.assessment_id) throw new ApiError(409, '')
     setBarrier(result)
+    if (code === 'SCHEDULE_OR_TRAVEL') {
+      setTravelSituation(undefined); setStep('travel'); return
+    }
     // Replaying this write after a lost GET response retains the same key.
-    const offered = await service.getOffers(result.barrier_response_id)
+    await loadOffers(result)
+  }
+
+  async function loadOffers(result: api.Barrier, situation?: api.TravelSituation) {
+    if (!checkin || !safety) return
+    const offered = await service.getOffers(result.barrier_response_id, situation)
     if (!alive.current) return
     if (offered.barrier_response_id !== result.barrier_response_id || offered.medication_checkin_id !== checkin.checkin_id || offered.checkin_revision !== checkin.revision || offered.safety_assessment_id !== safety.assessment_id || offered.supports.length > 1 || (offered.supports.length === 0 && offered.reason_code !== 'NO_ELIGIBLE_SUPPORT') || (offered.supports.length === 1 && offered.reason_code !== null)) throw new ApiError(409, '')
     setOffer(offered); setConfirmed(false); setStep('offer')
@@ -137,7 +146,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   async function savePlan() {
     const item = offer?.supports[0]
     if (!barrier || !item || !confirmed) return
-    const body: api.CreatePlanRequest = { barrier_response_id: barrier.barrier_response_id, support_code: item.support_code, rule_version: item.rule_version, copy_version: item.copy_version, confirmed: true }
+    const body: api.CreatePlanRequest = { barrier_response_id: barrier.barrier_response_id, support_code: item.support_code, rule_version: item.rule_version, copy_version: item.copy_version, confirmed: true, ...(travelSituation ? { travel_situation: travelSituation } : {}) }
     const result = await service.createPlan(body, key('create-plan', barrier.barrier_response_id, body))
     if (alive.current) navigate(`/dev/track-c/plans/${result.support_action_plan_id}`, { replace: true })
     // Destination always GETs current status; creation replay is only a saved snapshot.
@@ -152,6 +161,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   }
 
   const item = offer?.supports[0]
+  const packingPlan = plan?.support_code === 'ROUTINE_OR_TRAVEL_PLAN' && plan.copy_version === 'track-c-support-copy-ko-2026-09-16.1'
   const reminderTarget = plan?.support_code === 'REMINDER_SETUP' &&
     'prescription_version_medication_id' in plan.action_config_snapshot.parameters
     ? plan.action_config_snapshot.parameters.prescription_version_medication_id : null
@@ -175,6 +185,16 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
         <Button fullWidth disabled={!selected || busy || !!retry} onClick={() => void run(() => submitBarrier(selected || null))}>선택한 어려움으로 도움 찾기</Button>
         <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => void run(() => submitBarrier(null))}>답하지 않고 계속하기</Button>
       </>}
+      {step === 'travel' && <Card>
+        <h2>어떤 상황이었나요?</h2>
+        <fieldset disabled={busy || !!retry}>
+          <legend>일정 변경·외출 상황</legend>
+          <label className="track-c-choice"><input type="radio" name="travel" checked={travelSituation === 'SCHEDULE_CHANGED'} onChange={() => setTravelSituation('SCHEDULE_CHANGED')} /><span>생활 일정이 바뀌었어요</span></label>
+          <label className="track-c-choice"><input type="radio" name="travel" checked={travelSituation === 'MEDICATION_NOT_WITH_ME'} onChange={() => setTravelSituation('MEDICATION_NOT_WITH_ME')} /><span>약을 가지고 나오지 않았어요</span></label>
+        </fieldset>
+        <Button fullWidth disabled={!travelSituation || busy || !!retry} onClick={() => { if (barrier && travelSituation) void run(() => loadOffers(barrier, travelSituation)) }}>선택한 상황으로 도움 찾기</Button>
+        <Button fullWidth variant="secondary" disabled={busy} onClick={() => navigate(back)}>나중에</Button>
+      </Card>}
       {step === 'offer' && (item ? <Card>
         <h2>{item.support_copy.title}</h2><p>{item.support_copy.body}</p>
         <label className="track-c-choice"><input type="checkbox" disabled={busy || !!retry} checked={confirmed} onChange={e => setConfirmed(e.target.checked)} /><span>{item.support_copy.confirmation_prompt}</span></label>
@@ -182,7 +202,8 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
         <Button fullWidth variant="secondary" disabled={busy} onClick={() => navigate(back)}>{item.support_copy.secondary_label}</Button>
       </Card> : <Card><h2>지금 제안할 수 있는 도움이 없어요</h2><p>복약 기록과 응답은 저장되어 있어요.</p><Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button></Card>)}
       {step === 'plan' && plan && <Card>
-        <h2>{supportNames[plan.support_code]}</h2>
+        <h2>{packingPlan ? '다음 외출 전 약 챙기기' : supportNames[plan.support_code]}</h2>
+        {packingPlan && <p>다음 외출 전에 필요한 약과 현재 복약 일정을 확인하고 약을 챙겨 두세요. 실제로 준비를 마친 뒤 완료로 표시해 주세요.</p>}
         <p role="status">{plan.status === 'ACTIVE' ? '진행 중' : plan.status === 'COMPLETED' ? '완료됨' : '취소됨'}</p>
         <p>계획 조회만으로 실행이나 완료가 처리되지 않아요.</p>
         {plan.status === 'ACTIVE' && <>
@@ -191,7 +212,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
             <Button fullWidth disabled={busy || !!retry} onClick={() => { setTerminal('COMPLETED'); setConfirmed(false) }}>완료 확인하기</Button>
             <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => { setTerminal('CANCELLED'); setConfirmed(false) }}>계획 취소하기</Button>
           </> : <>
-            <label className="track-c-choice"><input type="checkbox" checked={confirmed} disabled={busy || !!retry} onChange={e => setConfirmed(e.target.checked)} /><span>{terminal === 'CANCELLED' ? '이 계획을 취소할게요.' : plan.support_code === 'REMINDER_SETUP' ? '기존 복약 일정을 확인했거나 일정 저장을 마쳤어요.' : '선택한 실천 계획의 실행을 마쳤어요.'}</span></label>
+            <label className="track-c-choice"><input type="checkbox" checked={confirmed} disabled={busy || !!retry} onChange={e => setConfirmed(e.target.checked)} /><span>{terminal === 'CANCELLED' ? '이 계획을 취소할게요.' : plan.support_code === 'REMINDER_SETUP' ? '기존 복약 일정을 확인했거나 일정 저장을 마쳤어요.' : packingPlan ? '다음 외출에 필요한 약을 챙겼어요.' : '선택한 실천 계획의 실행을 마쳤어요.'}</span></label>
             <Button fullWidth disabled={!confirmed || busy || !!retry} onClick={() => void run(changePlan)}>{terminal === 'COMPLETED' ? '완료로 저장' : '취소로 저장'}</Button>
             <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => { setTerminal(null); setConfirmed(false) }}>돌아가기</Button>
           </>}

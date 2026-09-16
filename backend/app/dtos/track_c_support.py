@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.track_c import ActionPlanFollowupResponse, SupportActionPlanStatus, SupportCode
 
+TravelSituation = Literal["SCHEDULE_CHANGED", "MEDICATION_NOT_WITH_ME"]
+
 
 class ReminderParameters(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -72,6 +74,7 @@ class CreateSupportActionPlanRequest(BaseModel):
     support_code: SupportCode
     rule_version: str = Field(min_length=1, max_length=100)
     copy_version: str = Field(min_length=1, max_length=100)
+    travel_situation: TravelSituation | None = None
     confirmed: Literal[True]
 
     @field_validator("confirmed", mode="before")

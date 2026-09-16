@@ -129,3 +129,55 @@ describe('Track C API flow', () => {
   })
 
 })
+
+it.each([
+  ['생활 일정이 바뀌었어요', 'SCHEDULE_CHANGED', 'REMINDER_SETUP'],
+  ['약을 가지고 나오지 않았어요', 'MEDICATION_NOT_WITH_ME', 'ROUTINE_OR_TRAVEL_PLAN'],
+])('routes %s through server offers and explicit adoption', async (label, situation, code) => {
+  const travelBarrier = { ...barrier, barrier_code: 'SCHEDULE_OR_TRAVEL' }
+  const svc = services({ putBarrier: vi.fn().mockResolvedValue(travelBarrier), getOffers: vi.fn().mockResolvedValue({ ...travelBarrier, supports: [{ ...support, support_code: code }], reason_code: null }) })
+  show(svc); await enterBarrier()
+  fireEvent.click(screen.getByRole('radio', { name: '일정이나 이동 때문에 어려웠어요' }))
+  fireEvent.click(screen.getByRole('button', { name: '선택한 어려움으로 도움 찾기' }))
+  await screen.findByRole('heading', { name: '어떤 상황이었나요?' })
+  expect(svc.getOffers).not.toHaveBeenCalled()
+  expect((screen.getByRole('button', { name: '선택한 상황으로 도움 찾기' }) as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(screen.getByRole('radio', { name: label }))
+  fireEvent.click(screen.getByRole('button', { name: '선택한 상황으로 도움 찾기' }))
+  await screen.findByText('서버에서 받은 제안')
+  expect(svc.getOffers).toHaveBeenCalledWith('barrier', situation)
+  expect(svc.createPlan).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  await screen.findByText('진행 중')
+  expect(svc.createPlan).toHaveBeenCalledWith(expect.objectContaining({ travel_situation: situation, support_code: code }), expect.any(String))
+  expect(svc.patchPlan).not.toHaveBeenCalled()
+})
+
+it('retries the travel offer without writing another Barrier', async () => {
+  const svc = services({ getOffers: vi.fn().mockRejectedValueOnce(new TypeError('offline')).mockResolvedValue({ ...barrier, supports: [support], reason_code: null }) })
+  show(svc); await enterBarrier()
+  fireEvent.click(screen.getByRole('radio', { name: '일정이나 이동 때문에 어려웠어요' }))
+  fireEvent.click(screen.getByRole('button', { name: '선택한 어려움으로 도움 찾기' }))
+  fireEvent.click(await screen.findByRole('radio', { name: '약을 가지고 나오지 않았어요' }))
+  fireEvent.click(screen.getByRole('button', { name: '선택한 상황으로 도움 찾기' }))
+  fireEvent.click(await screen.findByRole('button', { name: '같은 요청 다시 시도' }))
+  await screen.findByText('서버에서 받은 제안')
+  expect(svc.putBarrier).toHaveBeenCalledTimes(1)
+  expect(svc.getOffers).toHaveBeenNthCalledWith(1, 'barrier', 'MEDICATION_NOT_WITH_ME')
+  expect(svc.getOffers).toHaveBeenNthCalledWith(2, 'barrier', 'MEDICATION_NOT_WITH_ME')
+})
+
+it('requires actual packing confirmation on the new preparation plan', async () => {
+  const packing = { ...plan, support_code: 'ROUTINE_OR_TRAVEL_PLAN', copy_version: 'track-c-support-copy-ko-2026-09-16.1' }
+  const svc = services({ getPlan: vi.fn().mockResolvedValue(packing) })
+  show(svc, `/dev/track-c/plans/${planId}`)
+  await screen.findByRole('heading', { name: '다음 외출 전 약 챙기기' })
+  expect(screen.queryByRole('link', { name: '일정 확인·설정 (새 탭)' })).toBeNull()
+  expect(svc.patchPlan).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: '완료 확인하기' }))
+  expect((screen.getByRole('button', { name: '완료로 저장' }) as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(screen.getByRole('checkbox', { name: '다음 외출에 필요한 약을 챙겼어요.' }))
+  fireEvent.click(screen.getByRole('button', { name: '완료로 저장' }))
+  await screen.findByRole('button', { name: '완료 확인하기' })
+  expect(svc.patchPlan).toHaveBeenCalledWith(planId, { status: 'COMPLETED', confirmed: true }, expect.any(String))
+})
