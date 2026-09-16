@@ -475,8 +475,8 @@ async def bootstrap_dev_knowledge_index(
         distance_metric=DistanceMetric.COSINE,
         members=tuple(drafts),
     )
-    built_index = build_knowledge_evidence_index(build_req)
     repo = SqlAlchemyKnowledgeEvidenceIndexRepository(factory)
+    built_index = build_knowledge_evidence_index(build_req, repository=repo)
     persisted = await repo.persist_complete_index(built_index)
 
     sorted_bridges = tuple(
