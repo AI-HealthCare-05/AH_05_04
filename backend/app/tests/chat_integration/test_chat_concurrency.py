@@ -24,6 +24,11 @@ REFERENCE_GENERATION_DELAY_SECONDS = 0.08
 FINAL_FENCE_LOCK_TIMEOUT_SECONDS = 3
 
 
+class AllowingConsentGate:
+    async def require_for_intake(self, **kwargs: object) -> None:
+        del kwargs
+
+
 class CommitControlledEngine:
     def __init__(self) -> None:
         self.calls = 0
@@ -117,7 +122,7 @@ async def _send(
     content: str,
     commit: bool,
 ) -> None:
-    service = ChatService(PrescriptionRepository(db_session), ChatRepository(db_session), engine)
+    service = ChatService(PrescriptionRepository(db_session), ChatRepository(db_session), engine, AllowingConsentGate())
     await service.send_message(
         user=user,
         session_id=chat_session_id,
@@ -307,7 +312,7 @@ async def test_correction_committed_during_generation_rejects_stale_result(
     chat_session_id = committed_chat_fixture.session_ids[0]
     engine = CommitControlledEngine()
     async with AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as send_db:
-        service = ChatService(PrescriptionRepository(send_db), ChatRepository(send_db), engine)
+        service = ChatService(PrescriptionRepository(send_db), ChatRepository(send_db), engine, AllowingConsentGate())
         send_task = asyncio.create_task(
             service.send_message(
                 user=committed_chat_fixture.user,
@@ -427,7 +432,9 @@ async def test_provider_failure_pair_survives_request_and_later_request_rollback
     failing_engine = FailingEngine(provider_error)
 
     async with AsyncSession(bind=test_engine, expire_on_commit=False, autoflush=False) as failed_db:
-        service = ChatService(PrescriptionRepository(failed_db), ChatRepository(failed_db), failing_engine)
+        service = ChatService(
+            PrescriptionRepository(failed_db), ChatRepository(failed_db), failing_engine, AllowingConsentGate()
+        )
         with pytest.raises(ApiError) as captured:
             await service.send_message(
                 user=committed_chat_fixture.user,

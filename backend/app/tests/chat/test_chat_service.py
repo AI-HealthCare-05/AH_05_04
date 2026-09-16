@@ -10,6 +10,7 @@ import pytest
 from app.core.errors import ApiError
 from app.dtos.chat import SendChatMessageRequest
 from app.models.chat import ChatGenerationStatus, ChatRole, ChatSessionStatus
+from app.models.user_consents import ConsentPurpose
 from app.services.chat import ChatService
 from app.services.chat_ai import (
     ChatGenerationFailedError,
@@ -45,6 +46,19 @@ class RecordingEngine:
             raise self.error
         assert self.result is not None
         return self.result
+
+
+class RecordingConsentGate:
+    def __init__(self, events: list[str], *, error: ApiError | None = None) -> None:
+        self.events = events
+        self.error = error
+        self.calls: list[tuple[object, ConsentPurpose]] = []
+
+    async def require_for_intake(self, *, user: object, purpose: ConsentPurpose) -> None:
+        self.events.append("consent.require." + purpose.value)
+        self.calls.append((user, purpose))
+        if self.error is not None:
+            raise self.error
 
 
 class RecordingPrescriptionRepository:
@@ -165,6 +179,7 @@ def _service_fixture(
     history_context_enabled: bool = False,
     recent_pairs: list[tuple[SimpleNamespace, SimpleNamespace]] | None = None,
     current_version_at_completion: bool = True,
+    consent_error: ApiError | None = None,
 ) -> tuple[ChatService, RecordingChatRepository, list[str], SimpleNamespace]:
     events: list[str] = []
     chat_session = SimpleNamespace(
@@ -203,12 +218,14 @@ def _service_fixture(
         current_version_at_completion=current_version_at_completion,
     )
     prescription_repo = RecordingPrescriptionRepository(medications, events)
+    consent_gate = RecordingConsentGate(events, error=consent_error)
     engine.events = events
     return (
         ChatService(
             prescription_repo,  # type: ignore[arg-type]
             chat_repo,  # type: ignore[arg-type]
             engine,
+            consent_gate,  # type: ignore[arg-type]
             history_context_enabled=history_context_enabled,
         ),
         chat_repo,
@@ -239,6 +256,7 @@ async def test_send_message_locks_then_preserves_ordered_medication_fields_and_c
 
     assert events == [
         "chat.lock_owned",
+        "consent.require.CHAT",
         "prescription.get_version_medications",
         "chat.next_seq",
         f"chat.create.{ChatRole.USER}",
@@ -460,6 +478,25 @@ async def test_send_message_rejects_ownership_or_status_before_engine(
 
     assert captured.value.code == expected_code
     assert events == ["chat.lock_owned"]
+    assert engine.inputs == []
+
+
+async def test_send_message_requires_chat_consent_before_message_or_engine_side_effects() -> None:
+    engine = RecordingEngine(result=ChatReplyOutput(content="unused", model_name="unused", prompt_version="unused"))
+    consent_error = ApiError(status_code=403, code="CONSENT_REQUIRED", message="처방전 처리 동의가 필요합니다.")
+    service, chat_repo, events, chat_session = _service_fixture(engine=engine, consent_error=consent_error)
+
+    with pytest.raises(ApiError) as captured:
+        await service.send_message(
+            user=SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
+            session_id=chat_session.id,
+            request=SendChatMessageRequest(content="동의 없는 합성 질문"),
+        )
+
+    assert captured.value is consent_error
+    assert events == ["chat.lock_owned", "consent.require.CHAT"]
+    assert chat_repo.messages == []
+    assert chat_repo.created_snapshots == []
     assert engine.inputs == []
 
 

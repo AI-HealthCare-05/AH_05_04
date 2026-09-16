@@ -8,7 +8,10 @@ from openai import AsyncOpenAI
 from app.core.config import Env
 from app.core.provider_observability import ProviderCallContext, ProviderCallDescriptor
 from app.dependencies.services import get_chat_engine, get_chat_service
+from app.repositories.chat_repository import ChatRepository
+from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.chat_ai import ChatEngine, ChatProvider, ChatReplyInput, ChatReplyOutput
+from app.services.user_consents import ConsentGateService
 
 
 class StubEngine:
@@ -78,12 +81,19 @@ def test_get_chat_engine_wires_process_client_and_existing_configuration(monkeyp
 def test_get_chat_service_requires_and_injects_chat_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.dependencies import services
 
-    prescription_repository = object()
-    chat_repository = object()
+    prescription_repository = cast(PrescriptionRepository, object())
+    chat_repository = cast(ChatRepository, object())
     engine: ChatEngine = StubEngine()
+    consent_gate = cast(ConsentGateService, object())
     monkeypatch.setattr(services.config, "CHAT_HISTORY_CONTEXT_ENABLED", True)
 
-    service = get_chat_service(prescription_repository, chat_repository, engine)  # type: ignore[arg-type]
+    service = get_chat_service(
+        prescription_repository,
+        chat_repository,
+        engine,
+        consent_gate,
+    )
 
     assert service._engine is engine
+    assert service._consent_gate is consent_gate
     assert service._history_context_enabled is True
