@@ -89,6 +89,7 @@ FAILED_BY_EVIDENCE_GATE_UNVERIFIED = "FAILED_BY_EVIDENCE_GATE_UNVERIFIED"
 FAILED_BY_SENTINEL_FOUND = "FAILED_BY_SENTINEL_FOUND"
 FAILED_BY_PRIVACY_SCAN_UNVERIFIED = "FAILED_BY_PRIVACY_SCAN_UNVERIFIED"
 FAILED_BY_RESOURCE_OBSERVATION_UNVERIFIED = "FAILED_BY_RESOURCE_OBSERVATION_UNVERIFIED"
+FAILED_BY_PRIVACY_OBSERVATION_UNBOUND = "FAILED_BY_PRIVACY_OBSERVATION_UNBOUND"
 
 LEXICAL_SIGNAL_METHODS = frozenset({"EXACT", "TRIGRAM", "FTS", "LEXICAL"})
 DENSE_SIGNAL_METHODS = frozenset({"DENSE"})
@@ -116,7 +117,15 @@ class ScanState(StrEnum):
 
 
 # Targets that must actually be scanned before the smoke may report SUCCESS.
-REQUIRED_SCAN_TARGETS = ("ai_worker_logs", "fastapi_logs", "redis_stream", "redis_dlq")
+REQUIRED_SCAN_TARGETS = (
+    "ai_worker_logs",
+    "fastapi_logs",
+    "redis_stream",
+    "redis_dlq",
+    # The one-shot container that actually submits the query is itself a place the
+    # query can leak, so its own log stream must be scanned too.
+    "smoke_one_shot_logs",
+)
 
 
 # --------------------------------------------------------------------------------------
@@ -203,14 +212,36 @@ def sentinels_from_fixture(fixture: Mapping[str, Any]) -> SmokeSentinels | None:
     return SmokeSentinels(query_sentinel=query_sentinel, source_sentinel=source_sentinel)
 
 
-def verify_query_sentinel_binding(*, synthetic_query: str, sentinels: SmokeSentinels) -> CheckResult:
-    """Prove the submitted query actually carries the sentinel the scanner looks for.
+def verify_query_sentinel_binding(
+    *,
+    synthetic_query: str,
+    sentinels: SmokeSentinels,
+    approved_query_sha256: str | None,
+) -> CheckResult:
+    """Prove the submitted query is the approved one *and* carries the scanner's marker.
 
-    Without this the privacy scan is vacuous: it would search the logs for a string
-    that never entered the system and always report SCANNED_AND_NOT_FOUND.
+    Marker containment alone is not a trust basis: any other question with the marker
+    appended would pass it and still be sent to the embedding provider. The fixture
+    therefore declares the approved query's SHA-256 and the submitted text must match it
+    exactly, so the approved content - not just the marker - is what gets submitted.
     """
     if not synthetic_query.strip():
         return CheckResult(executed=True, passed=False, message="fixture declares an empty synthetic query")
+
+    if not approved_query_sha256:
+        return CheckResult(
+            executed=True,
+            passed=False,
+            message="fixture does not declare the approved synthetic_query_sha256",
+        )
+    actual = hashlib.sha256(synthetic_query.encode("utf-8")).hexdigest()
+    if actual != approved_query_sha256.strip().lower():
+        return CheckResult(
+            executed=True,
+            passed=False,
+            message="submitted query does not match the approved synthetic_query_sha256",
+        )
+
     if sentinels.query_sentinel not in synthetic_query:
         return CheckResult(
             executed=True,
@@ -223,7 +254,11 @@ def verify_query_sentinel_binding(*, synthetic_query: str, sentinels: SmokeSenti
             passed=False,
             message="query and Source sentinels must stay distinguishable in a scan",
         )
-    return CheckResult(executed=True, passed=True, message="query sentinel is bound to the submitted query")
+    return CheckResult(
+        executed=True,
+        passed=True,
+        message="submitted query matches the approved content and carries the query sentinel",
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -610,6 +645,8 @@ class RetHSmokeReceipt:
     hit_count: int = 0
     selected_hit_count: int = 0
 
+    execution_started_at: str | None = None
+    execution_finished_at: str | None = None
     sentinel_binding_verified: bool = False
     fixture_authenticity_verified: bool = False
     execution_transaction_verified: bool = False
@@ -665,6 +702,8 @@ class RetHSmokeReceipt:
             "retrieval": {
                 "variant": EXPECTED_VARIANT,
                 "retrieval_run_id": self.retrieval_run_id,
+                "execution_started_at": self.execution_started_at,
+                "execution_finished_at": self.execution_finished_at,
                 "terminal_status": self.terminal_status,
                 "execution_transaction_verified": self.execution_transaction_verified,
                 "verification_transaction_verified": self.verification_transaction_verified,
@@ -696,6 +735,65 @@ class RetHSmokeReceipt:
             "limitations": list(LIMITATIONS),
             "details": dict(self.details),
         }
+
+
+def finalize_smoke_artifact(
+    document: Mapping[str, Any],
+    *,
+    privacy_observation: PrivacyObservation,
+    sentinels: SmokeSentinels,
+) -> dict[str, Any]:
+    """Complete an interim artifact using a bound, post-execution privacy scan.
+
+    The interim document must be one this tool produced in the execute phase and must be
+    awaiting exactly this step; anything else is refused rather than upgraded.
+    """
+    result = json.loads(json.dumps(document))
+    retrieval = result.get("retrieval") or {}
+    privacy = result.setdefault("privacy", {})
+
+    def _fail(code: str, message: str) -> dict[str, Any]:
+        result["status"] = STATUS_FAILED
+        result["blocked_code"] = code
+        result["error_message"] = message
+        privacy["scan_verified"] = False
+        return result
+
+    if result.get("schema_version") != SCHEMA_VERSION:
+        return _fail(BLOCKED_BY_PRIVACY_OBSERVATION_UNBOUND, "interim artifact has an unexpected schema_version")
+    if result.get("blocked_code") != BLOCKED_BY_AWAITING_PRIVACY_OBSERVATION:
+        return _fail(
+            BLOCKED_BY_PRIVACY_OBSERVATION_UNBOUND,
+            "interim artifact is not awaiting a privacy observation",
+        )
+
+    run_id = str(retrieval.get("retrieval_run_id") or "")
+    started_raw = retrieval.get("execution_started_at")
+    finished_raw = retrieval.get("execution_finished_at")
+    if not run_id or not started_raw or not finished_raw:
+        return _fail(BLOCKED_BY_PRIVACY_OBSERVATION_UNBOUND, "interim artifact does not record the execution window")
+
+    binding = verify_privacy_observation_binding(
+        privacy_observation,
+        retrieval_run_id=run_id,
+        sentinels=sentinels,
+        execution_started_at=_parse_timestamp(started_raw, "execution_started_at"),
+        execution_finished_at=_parse_timestamp(finished_raw, "execution_finished_at"),
+    )
+    if not binding.verified:
+        return _fail(FAILED_BY_PRIVACY_OBSERVATION_UNBOUND, binding.message)
+
+    privacy["targets"] = {name: str(state) for name, state in privacy_observation.targets.items()}
+    verified, code = classify_privacy_scan(privacy_observation.targets)
+    privacy["scan_verified"] = verified
+    if not verified:
+        return _fail(code or FAILED_BY_PRIVACY_SCAN_UNVERIFIED, "Privacy sentinel scan did not pass")
+
+    result["status"] = STATUS_SUCCESS
+    result["blocked_code"] = None
+    result["error_message"] = None
+    result["finished_at"] = _now()
+    return result
 
 
 def _now() -> str:
@@ -787,7 +885,10 @@ async def run_ret_h_smoke(  # noqa: C901, PLR0911, PLR0912, PLR0915
     resource_observation: ResourceObservation | None = None,
     sentinels: SmokeSentinels | None = None,
     submitted_query: str | None = None,
+    approved_query_sha256: str | None = None,
     host_scan_results: Mapping[str, ScanState] | None = None,
+    privacy_observation: PrivacyObservation | None = None,
+    defer_privacy: bool = False,
     expected_memory_limit_bytes: int = EXPECTED_WORKER_MEMORY_LIMIT_BYTES,
 ) -> RetHSmokeReceipt:
     """Execute the RET-H AWS synthetic deployment smoke, fail-closed throughout."""
@@ -886,7 +987,7 @@ async def run_ret_h_smoke(  # noqa: C901, PLR0911, PLR0912, PLR0915
 
     # 5. All production dependencies must be present before anything executes.
     dependencies = dependencies or LiveSmokeDependencies()
-    missing = dependencies.missing(has_host_scan=host_scan_results is not None)
+    missing = dependencies.missing(has_host_scan=host_scan_results is not None or privacy_observation is not None)
     if missing:
         return _blocked(
             mode=mode,
@@ -910,6 +1011,7 @@ async def run_ret_h_smoke(  # noqa: C901, PLR0911, PLR0912, PLR0915
     query_binding = verify_query_sentinel_binding(
         synthetic_query=submitted_query or "",
         sentinels=sentinels,
+        approved_query_sha256=approved_query_sha256,
     )
     source_binding = await run_check(dependencies.source_sentinel_binding_case)
     deployment_fields["sentinel_binding_verified"] = query_binding.verified and source_binding.verified
@@ -937,7 +1039,9 @@ async def run_ret_h_smoke(  # noqa: C901, PLR0911, PLR0912, PLR0915
         )
 
     # 6. Real production RET-H execution.
-    start_monotonic = datetime.now(UTC)
+    execution_started_at = datetime.now(UTC)
+    deployment_fields["execution_started_at"] = execution_started_at.isoformat()
+    start_monotonic = execution_started_at
     try:
         outcome = await run_execution_transaction(
             execution_fn=dependencies.execution_fn,
@@ -949,8 +1053,10 @@ async def run_ret_h_smoke(  # noqa: C901, PLR0911, PLR0912, PLR0915
         )
     except Exception as error:  # noqa: BLE001 - never leak query/Source text
         return _failed(FAILED_BY_RETRIEVAL_EXECUTION, f"execute_hybrid_retrieve raised {type(error).__name__}")
-    elapsed_ms = int((datetime.now(UTC) - start_monotonic).total_seconds() * 1000)
+    execution_finished_at = datetime.now(UTC)
+    elapsed_ms = int((execution_finished_at - start_monotonic).total_seconds() * 1000)
     deployment_fields["elapsed_ms"] = elapsed_ms
+    deployment_fields["execution_finished_at"] = execution_finished_at.isoformat()
 
     status_val = getattr(outcome, "status", None)
     status_str = str(getattr(status_val, "name", status_val))
@@ -1019,12 +1125,43 @@ async def run_ret_h_smoke(  # noqa: C901, PLR0911, PLR0912, PLR0915
                 f"Evidence Gate {label} negative case was not fail-closed",
             )
 
-    # 10. Raw query/Source sentinels must be provably absent. The scan normally runs on
-    # the EC2 host (it needs the Docker CLI); an in-process scan is used by tests.
-    if host_scan_results is not None:
+    # 10. Raw query/Source sentinels must be provably absent. A scan only counts when it
+    # was taken *after* this execution finished and is bound to this run: a pre-execution
+    # scan cannot see a leak the execution itself produced, and an unbound scan could come
+    # from an entirely different run. ``privacy_observation`` carries that binding; the
+    # in-process ``scan_targets`` path exists for tests that drive the scan directly.
+    if defer_privacy:
+        # Execute phase: the host cannot scan for a leak this run produced until the run
+        # has finished, so the artifact stops here as explicitly not-yet-verified and the
+        # finalize phase completes it from a bound, post-execution scan.
+        deployment_fields["privacy_scan_verified"] = False
+        return RetHSmokeReceipt(
+            status=AWS_SMOKE_NOT_EXECUTED,
+            mode=mode,
+            started_at=started_at,
+            finished_at=_now(),
+            blocked_code=BLOCKED_BY_AWAITING_PRIVACY_OBSERVATION,
+            error_message="Execution finished; awaiting the post-execution host privacy scan.",
+            **deployment_fields,
+        )
+
+    if privacy_observation is not None:
+        binding = verify_privacy_observation_binding(
+            privacy_observation,
+            retrieval_run_id=run_id,
+            sentinels=sentinels,
+            execution_started_at=execution_started_at,
+            execution_finished_at=execution_finished_at,
+        )
+        if not binding.verified:
+            deployment_fields["privacy_scan_verified"] = False
+            return _failed(FAILED_BY_PRIVACY_OBSERVATION_UNBOUND, binding.message)
+        scan_results = dict(privacy_observation.targets)
+    elif host_scan_results is not None:
         scan_results = dict(host_scan_results)
     else:
         scan_results = await scan_targets_for_sentinels(dependencies.scan_targets, sentinels)
+
     deployment_fields["privacy_scan"] = {name: str(state) for name, state in scan_results.items()}
     privacy_ok, privacy_code = classify_privacy_scan(scan_results)
     deployment_fields["privacy_scan_verified"] = privacy_ok
@@ -1109,6 +1246,10 @@ def parse_observation_document(payload: Mapping[str, Any]) -> DeploymentObservat
     usage = resource_payload.get("memory_usage_bytes")
     if not isinstance(usage, int):
         raise ValueError("observation document is missing resources.memory_usage_bytes")
+    if usage <= 0:
+        # A host-side unit conversion that failed and fell back to 0 must block rather
+        # than be recorded as a real measurement.
+        raise ValueError("observation document reports a non-positive memory usage")
     cpu_raw = resource_payload.get("cpu_percent")
     resources = ResourceObservation(
         memory_usage_bytes=usage,
@@ -1132,6 +1273,96 @@ def parse_observation_document(payload: Mapping[str, Any]) -> DeploymentObservat
         resources=resources,
         scan_results=scan_results,
     )
+
+
+PRIVACY_OBSERVATION_SCHEMA_VERSION = "ret-h-aws-smoke-privacy-observation-v1"
+
+BLOCKED_BY_PRIVACY_OBSERVATION_UNBOUND = "BLOCKED_BY_PRIVACY_OBSERVATION_UNBOUND"
+BLOCKED_BY_AWAITING_PRIVACY_OBSERVATION = "BLOCKED_BY_AWAITING_PRIVACY_OBSERVATION"
+
+
+@dataclass(frozen=True, slots=True)
+class PrivacyObservation:
+    """A host log scan bound to one specific execution.
+
+    The binding fields exist so that a scan cannot be reused: it names the Retrieval Run
+    it covers, the sentinel digests it searched for, and the window it covers. A scan
+    taken before the run, or belonging to a different run, cannot certify this one.
+    """
+
+    retrieval_run_id: str
+    query_sentinel_sha256: str
+    source_sentinel_sha256: str
+    scanned_since: datetime
+    scanned_at: datetime
+    targets: dict[str, ScanState]
+
+
+def _parse_timestamp(raw: Any, field: str) -> datetime:
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError(f"privacy observation is missing {field}")
+    value = datetime.fromisoformat(raw.strip())
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def parse_privacy_observation(payload: Mapping[str, Any]) -> PrivacyObservation:
+    """Parse the host-produced, run-bound privacy scan document, fail-closed."""
+    if payload.get("schema_version") != PRIVACY_OBSERVATION_SCHEMA_VERSION:
+        raise ValueError("privacy observation has an unexpected schema_version")
+
+    targets: dict[str, ScanState] = {}
+    raw_targets = payload.get("targets")
+    if isinstance(raw_targets, Mapping):
+        for name, value in raw_targets.items():
+            try:
+                targets[str(name)] = ScanState(str(value))
+            except ValueError:
+                targets[str(name)] = ScanState.NOT_EXECUTED
+
+    run_id = str(payload.get("retrieval_run_id") or "").strip()
+    if not run_id:
+        raise ValueError("privacy observation is missing retrieval_run_id")
+
+    return PrivacyObservation(
+        retrieval_run_id=run_id,
+        query_sentinel_sha256=str(payload.get("query_sentinel_sha256") or "").strip().lower(),
+        source_sentinel_sha256=str(payload.get("source_sentinel_sha256") or "").strip().lower(),
+        scanned_since=_parse_timestamp(payload.get("scanned_since"), "scanned_since"),
+        scanned_at=_parse_timestamp(payload.get("scanned_at"), "scanned_at"),
+        targets=targets,
+    )
+
+
+def verify_privacy_observation_binding(
+    observation: PrivacyObservation,
+    *,
+    retrieval_run_id: str,
+    sentinels: SmokeSentinels,
+    execution_started_at: datetime,
+    execution_finished_at: datetime,
+) -> CheckResult:
+    """Reject a scan that does not actually cover this execution."""
+    if observation.retrieval_run_id != retrieval_run_id:
+        return CheckResult(
+            executed=True, passed=False, message="privacy observation belongs to a different Retrieval Run"
+        )
+    if observation.query_sentinel_sha256 != sentinels.query_sentinel_sha256:
+        return CheckResult(
+            executed=True, passed=False, message="privacy observation scanned a different query sentinel"
+        )
+    if observation.source_sentinel_sha256 != sentinels.source_sentinel_sha256:
+        return CheckResult(
+            executed=True, passed=False, message="privacy observation scanned a different Source sentinel"
+        )
+    if observation.scanned_since > execution_started_at:
+        return CheckResult(
+            executed=True, passed=False, message="privacy observation window starts after the execution began"
+        )
+    if observation.scanned_at < execution_finished_at:
+        return CheckResult(
+            executed=True, passed=False, message="privacy observation was taken before the execution finished"
+        )
+    return CheckResult(executed=True, passed=True, message="privacy observation is bound to this execution")
 
 
 # --------------------------------------------------------------------------------------

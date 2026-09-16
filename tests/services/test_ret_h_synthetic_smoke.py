@@ -6,8 +6,10 @@ and pass can never be reported as a PASS.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -16,9 +18,11 @@ import pytest
 
 from app.release_validation.ret_h_synthetic_smoke import (
     AWS_SMOKE_NOT_EXECUTED,
+    BLOCKED_BY_AWAITING_PRIVACY_OBSERVATION,
     BLOCKED_BY_DEPLOYMENT_IDENTITY_UNVERIFIED,
     BLOCKED_BY_LOCAL_PREFLIGHT,
     BLOCKED_BY_NON_SYNTHETIC_FIXTURE,
+    BLOCKED_BY_PRIVACY_OBSERVATION_UNBOUND,
     BLOCKED_BY_PUBLIC_TRACK_F_ENABLED,
     BLOCKED_BY_PUBLIC_TRACK_F_UNVERIFIED,
     BLOCKED_BY_QUERY_EMBEDDING_CREDENTIAL,
@@ -27,6 +31,7 @@ from app.release_validation.ret_h_synthetic_smoke import (
     EXPECTED_WORKER_MEMORY_LIMIT_BYTES,
     FAILED_BY_EVIDENCE_GATE_FAIL_OPEN,
     FAILED_BY_EVIDENCE_GATE_UNVERIFIED,
+    FAILED_BY_PRIVACY_OBSERVATION_UNBOUND,
     FAILED_BY_PRIVACY_SCAN_UNVERIFIED,
     FAILED_BY_RECEIPT_MISMATCH,
     FAILED_BY_RESOURCE_OBSERVATION_UNVERIFIED,
@@ -34,12 +39,14 @@ from app.release_validation.ret_h_synthetic_smoke import (
     FAILED_BY_SENTINEL_FOUND,
     FAILED_BY_WORKER_MEMORY_LIMIT,
     FAILED_BY_WORKER_OOM_KILLED,
+    REQUIRED_SCAN_TARGETS,
     SCHEMA_VERSION,
     STATUS_FAILED,
     STATUS_SUCCESS,
     CheckResult,
     GateNegativeResult,
     LiveSmokeDependencies,
+    PrivacyObservation,
     ScanState,
     ScanTarget,
     SmokeSentinels,
@@ -47,6 +54,7 @@ from app.release_validation.ret_h_synthetic_smoke import (
     classify_privacy_scan,
     embedding_credential_present,
     evaluate_public_track_f,
+    finalize_smoke_artifact,
     generate_sentinels,
     parse_image_digest,
     parse_memory_quantity,
@@ -55,6 +63,7 @@ from app.release_validation.ret_h_synthetic_smoke import (
     run_ret_h_smoke,
     run_verification_transaction,
     scan_targets_for_sentinels,
+    verify_privacy_observation_binding,
     verify_query_sentinel_binding,
     write_artifact,
 )
@@ -63,6 +72,7 @@ QUERY_SENTINEL = "RET_H_SMOKE_Q_0123456789abcdef"
 SOURCE_SENTINEL = "RET_H_SMOKE_S_fedcba9876543210"
 SENTINELS = SmokeSentinels(query_sentinel=QUERY_SENTINEL, source_sentinel=SOURCE_SENTINEL)
 SUBMITTED_QUERY = f"합성 스모크 질문 {QUERY_SENTINEL}"
+APPROVED_QUERY_SHA256 = hashlib.sha256(SUBMITTED_QUERY.encode("utf-8")).hexdigest()
 
 LIVE_ENV = {"PUBLIC_TRACK_F_ENABLED": "false", "OPENAI_API_KEY": "sk-live-not-a-real-key"}
 
@@ -185,6 +195,7 @@ def test_unscanned_required_target_is_not_a_pass() -> None:
             "ai_worker_logs": ScanState.SCANNED_AND_NOT_FOUND,
             "fastapi_logs": ScanState.SCANNED_AND_NOT_FOUND,
             "redis_stream": ScanState.SCANNED_AND_NOT_FOUND,
+            "smoke_one_shot_logs": ScanState.SCANNED_AND_NOT_FOUND,
             "redis_dlq": ScanState.NOT_EXECUTED,
         }
     )
@@ -198,6 +209,7 @@ def test_required_target_may_not_be_declared_not_applicable() -> None:
             "ai_worker_logs": ScanState.SCANNED_AND_NOT_FOUND,
             "fastapi_logs": ScanState.SCANNED_AND_NOT_FOUND,
             "redis_stream": ScanState.SCANNED_AND_NOT_FOUND,
+            "smoke_one_shot_logs": ScanState.SCANNED_AND_NOT_FOUND,
             "redis_dlq": ScanState.NOT_APPLICABLE,
         }
     )
@@ -371,6 +383,7 @@ def _dependencies(**overrides: Any) -> LiveSmokeDependencies:
             ScanTarget("fastapi_logs", lambda: "clean"),
             ScanTarget("redis_stream", lambda: "clean"),
             ScanTarget("redis_dlq", lambda: "clean"),
+            ScanTarget("smoke_one_shot_logs", lambda: "clean"),
             ScanTarget("quarantine", reader=None, applicable=False),
         ),
         "knowledge_index_ref": "rag-synthetic-index:1.0.0",
@@ -396,6 +409,7 @@ async def _run(**overrides: Any) -> Any:
         ),
         "sentinels": SENTINELS,
         "submitted_query": SUBMITTED_QUERY,
+        "approved_query_sha256": APPROVED_QUERY_SHA256,
     }
     kwargs.update(overrides)
     return await run_ret_h_smoke(**kwargs)
@@ -545,6 +559,7 @@ async def test_leaked_sentinel_fails() -> None:
         ScanTarget("fastapi_logs", lambda: "clean"),
         ScanTarget("redis_stream", lambda: "clean"),
         ScanTarget("redis_dlq", lambda: "clean"),
+        ScanTarget("smoke_one_shot_logs", lambda: "clean"),
     )
     receipt = await _run(dependencies=_dependencies(scan_targets=targets))
     assert receipt.status == STATUS_FAILED
@@ -558,6 +573,7 @@ async def test_unscanned_log_target_fails() -> None:
         ScanTarget("fastapi_logs", lambda: "clean"),
         ScanTarget("redis_stream", lambda: "clean"),
         ScanTarget("redis_dlq", reader=None),
+        ScanTarget("smoke_one_shot_logs", lambda: "clean"),
     )
     receipt = await _run(dependencies=_dependencies(scan_targets=targets))
     assert receipt.status == STATUS_FAILED
@@ -616,20 +632,38 @@ async def test_blocked_artifact_never_claims_a_pass(tmp_path: Any) -> None:
 # --------------------------------------------------------------------------------------
 
 
-def test_query_sentinel_binding_accepts_a_query_that_carries_the_sentinel() -> None:
-    assert verify_query_sentinel_binding(synthetic_query=SUBMITTED_QUERY, sentinels=SENTINELS).verified is True
+def test_query_binding_accepts_the_approved_query() -> None:
+    assert (
+        verify_query_sentinel_binding(
+            synthetic_query=SUBMITTED_QUERY,
+            sentinels=SENTINELS,
+            approved_query_sha256=APPROVED_QUERY_SHA256,
+        ).verified
+        is True
+    )
 
 
 @pytest.mark.parametrize(
-    ("query", "fragment"),
+    ("query", "approved", "fragment"),
     [
-        ("합성 스모크 질문 without any marker", "does not contain"),
-        ("   ", "empty synthetic query"),
-        (f"{QUERY_SENTINEL} and also {SOURCE_SENTINEL}", "distinguishable"),
+        ("합성 스모크 질문 without any marker", None, "approved synthetic_query_sha256"),
+        ("   ", APPROVED_QUERY_SHA256, "empty synthetic query"),
+        # A different question carrying the marker must not reach the provider.
+        (f"완전히 다른 질문 {QUERY_SENTINEL}", APPROVED_QUERY_SHA256, "does not match the approved"),
+        (SUBMITTED_QUERY, "0" * 64, "does not match the approved"),
+        (
+            f"{QUERY_SENTINEL} and also {SOURCE_SENTINEL}",
+            hashlib.sha256(f"{QUERY_SENTINEL} and also {SOURCE_SENTINEL}".encode()).hexdigest(),
+            "distinguishable",
+        ),
     ],
 )
-def test_query_sentinel_binding_rejects_unbound_queries(query: str, fragment: str) -> None:
-    result = verify_query_sentinel_binding(synthetic_query=query, sentinels=SENTINELS)
+def test_query_binding_rejects_unapproved_or_unbound_queries(query: str, approved: str | None, fragment: str) -> None:
+    result = verify_query_sentinel_binding(
+        synthetic_query=query,
+        sentinels=SENTINELS,
+        approved_query_sha256=approved,
+    )
     assert result.verified is False
     assert fragment in result.message
 
@@ -638,6 +672,7 @@ async def test_query_not_carrying_the_sentinel_blocks_before_execution() -> None
     execution = AsyncMock()
     receipt = await _run(
         submitted_query="질문에 sentinel 이 없다",
+        approved_query_sha256=hashlib.sha256("질문에 sentinel 이 없다".encode()).hexdigest(),
         dependencies=_dependencies(execution_fn=execution),
     )
     assert receipt.status == AWS_SMOKE_NOT_EXECUTED
@@ -730,3 +765,149 @@ async def test_verification_failure_message_does_not_embed_raw_assertion_text(tm
     payload = write_artifact(receipt, tmp_path / "failed.json")
     assert QUERY_SENTINEL not in payload
     assert "leaky detail" not in payload
+
+
+# --------------------------------------------------------------------------------------
+# Run-bound, post-execution privacy observation
+# --------------------------------------------------------------------------------------
+
+EXEC_START = datetime(2026, 9, 17, 3, 0, 0, tzinfo=UTC)
+EXEC_END = datetime(2026, 9, 17, 3, 0, 30, tzinfo=UTC)
+RUN_ID = "11111111-2222-4333-8444-555555555555"
+
+CLEAN_TARGETS = {name: ScanState.SCANNED_AND_NOT_FOUND for name in REQUIRED_SCAN_TARGETS}
+
+
+def _observation(**overrides: Any) -> PrivacyObservation:
+    base: dict[str, Any] = {
+        "retrieval_run_id": RUN_ID,
+        "query_sentinel_sha256": SENTINELS.query_sentinel_sha256,
+        "source_sentinel_sha256": SENTINELS.source_sentinel_sha256,
+        "scanned_since": EXEC_START - timedelta(seconds=5),
+        "scanned_at": EXEC_END + timedelta(seconds=5),
+        "targets": dict(CLEAN_TARGETS),
+    }
+    base.update(overrides)
+    return PrivacyObservation(**base)
+
+
+def _binding(observation: PrivacyObservation) -> Any:
+    return verify_privacy_observation_binding(
+        observation,
+        retrieval_run_id=RUN_ID,
+        sentinels=SENTINELS,
+        execution_started_at=EXEC_START,
+        execution_finished_at=EXEC_END,
+    )
+
+
+def test_bound_observation_covering_the_execution_is_accepted() -> None:
+    assert _binding(_observation()).verified is True
+
+
+@pytest.mark.parametrize(
+    ("override", "fragment"),
+    [
+        ({"retrieval_run_id": "99999999-2222-4333-8444-555555555555"}, "different Retrieval Run"),
+        ({"query_sentinel_sha256": "0" * 64}, "different query sentinel"),
+        ({"source_sentinel_sha256": "0" * 64}, "different Source sentinel"),
+        # A scan taken before the run finished cannot see a leak the run produced.
+        ({"scanned_at": EXEC_END - timedelta(seconds=1)}, "before the execution finished"),
+        ({"scanned_since": EXEC_START + timedelta(seconds=1)}, "starts after the execution began"),
+    ],
+)
+def test_stale_or_different_run_observation_is_rejected(override: dict[str, Any], fragment: str) -> None:
+    result = _binding(_observation(**override))
+    assert result.verified is False
+    assert fragment in result.message
+
+
+async def test_execute_phase_never_certifies_privacy() -> None:
+    receipt = await _run(defer_privacy=True)
+    assert receipt.status == AWS_SMOKE_NOT_EXECUTED
+    assert receipt.blocked_code == BLOCKED_BY_AWAITING_PRIVACY_OBSERVATION
+    assert receipt.privacy_scan_verified is False
+    # Everything before privacy is still recorded, including the window finalize needs.
+    assert receipt.execution_transaction_verified is True
+    assert receipt.receipt_verified is True
+    assert receipt.execution_started_at is not None
+    assert receipt.execution_finished_at is not None
+
+
+async def _interim() -> dict[str, Any]:
+    receipt = await _run(defer_privacy=True)
+    document = receipt.to_artifact()
+    document["retrieval"]["retrieval_run_id"] = RUN_ID
+    document["retrieval"]["execution_started_at"] = EXEC_START.isoformat()
+    document["retrieval"]["execution_finished_at"] = EXEC_END.isoformat()
+    return document
+
+
+async def test_finalize_completes_a_clean_bound_scan() -> None:
+    final = finalize_smoke_artifact(await _interim(), privacy_observation=_observation(), sentinels=SENTINELS)
+    assert final["status"] == STATUS_SUCCESS
+    assert final["privacy"]["scan_verified"] is True
+    assert final["blocked_code"] is None
+
+
+async def test_finalize_rejects_a_different_run_observation() -> None:
+    final = finalize_smoke_artifact(
+        await _interim(),
+        privacy_observation=_observation(retrieval_run_id="99999999-2222-4333-8444-555555555555"),
+        sentinels=SENTINELS,
+    )
+    assert final["status"] == STATUS_FAILED
+    assert final["blocked_code"] == FAILED_BY_PRIVACY_OBSERVATION_UNBOUND
+    assert final["privacy"]["scan_verified"] is False
+
+
+async def test_finalize_rejects_a_scan_taken_before_the_run_finished() -> None:
+    final = finalize_smoke_artifact(
+        await _interim(),
+        privacy_observation=_observation(scanned_at=EXEC_END - timedelta(seconds=1)),
+        sentinels=SENTINELS,
+    )
+    assert final["status"] == STATUS_FAILED
+    assert final["blocked_code"] == FAILED_BY_PRIVACY_OBSERVATION_UNBOUND
+
+
+async def test_finalize_fails_when_the_one_shot_log_was_not_scanned() -> None:
+    targets = dict(CLEAN_TARGETS)
+    targets["smoke_one_shot_logs"] = ScanState.NOT_EXECUTED
+    final = finalize_smoke_artifact(
+        await _interim(), privacy_observation=_observation(targets=targets), sentinels=SENTINELS
+    )
+    assert final["status"] == STATUS_FAILED
+    assert final["blocked_code"] == FAILED_BY_PRIVACY_SCAN_UNVERIFIED
+
+
+async def test_finalize_fails_when_the_run_leaked_into_its_own_log() -> None:
+    targets = dict(CLEAN_TARGETS)
+    targets["smoke_one_shot_logs"] = ScanState.FOUND
+    final = finalize_smoke_artifact(
+        await _interim(), privacy_observation=_observation(targets=targets), sentinels=SENTINELS
+    )
+    assert final["status"] == STATUS_FAILED
+    assert final["blocked_code"] == FAILED_BY_SENTINEL_FOUND
+
+
+async def test_finalize_refuses_an_artifact_that_is_not_awaiting_privacy() -> None:
+    receipt = await _run()
+    final = finalize_smoke_artifact(receipt.to_artifact(), privacy_observation=_observation(), sentinels=SENTINELS)
+    assert final["status"] == STATUS_FAILED
+    assert final["blocked_code"] == BLOCKED_BY_PRIVACY_OBSERVATION_UNBOUND
+
+
+def test_zero_memory_usage_from_a_failed_host_conversion_is_rejected() -> None:
+    from app.release_validation.ret_h_synthetic_smoke import (
+        OBSERVATION_SCHEMA_VERSION,
+        parse_observation_document,
+    )
+
+    payload = {
+        "schema_version": OBSERVATION_SCHEMA_VERSION,
+        "worker": {"memory_limit_bytes": EXPECTED_WORKER_MEMORY_LIMIT_BYTES},
+        "resources": {"memory_usage_bytes": 0},
+    }
+    with pytest.raises(ValueError, match="non-positive memory usage"):
+        parse_observation_document(payload)

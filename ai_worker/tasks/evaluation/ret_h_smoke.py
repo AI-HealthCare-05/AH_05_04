@@ -283,14 +283,23 @@ async def verify_source_sentinel_indexed(
     session_factory: Any,
     knowledge_index_id: UUID,
     source_sentinel: str,
+    allowed_source_snapshot_member_ids: tuple[UUID, ...],
 ) -> tuple[bool, str]:
-    """Prove the declared Source sentinel really is present in the indexed chunk text.
+    """Prove the declared Source sentinel is present in an *allowed* indexed chunk.
 
-    Without this, the log scan would hunt for a Source marker that the corpus never
-    contained and report SCANNED_AND_NOT_FOUND no matter what leaked.
+    Two properties matter and neither is free:
+
+    * ``strpos`` is a literal substring search. ``LIKE`` would treat ``_`` and ``%`` in
+      the sentinel as wildcards, so a sentinel of ``a_c`` would match ``abc`` and the
+      binding proof would accept a corpus that never carried the marker.
+    * The search is restricted to the snapshot members the fixture declares. Otherwise a
+      marker sitting in some unrelated chunk of the index could manufacture the binding
+      proof for a Source the run never retrieves.
     """
     if not source_sentinel.strip():
         return False, "fixture declares an empty Source sentinel"
+    if not allowed_source_snapshot_member_ids:
+        return False, "fixture declares no allowed source snapshot member"
 
     async with session_factory() as session:
         matches = (
@@ -298,12 +307,51 @@ async def verify_source_sentinel_indexed(
                 text(
                     "SELECT COUNT(*) FROM rag_knowledge_index_member m "
                     "JOIN knowledge_chunk c ON c.id = m.knowledge_chunk_id "
-                    "WHERE m.knowledge_index_id = :id AND c.chunk_text LIKE :needle"
+                    "WHERE m.knowledge_index_id = :id "
+                    "AND m.source_snapshot_member_id = ANY(:members) "
+                    "AND strpos(c.chunk_text, :needle) > 0"
                 ),
-                {"id": str(knowledge_index_id), "needle": f"%{source_sentinel}%"},
+                {
+                    "id": str(knowledge_index_id),
+                    "members": [str(value) for value in allowed_source_snapshot_member_ids],
+                    "needle": source_sentinel,
+                },
             )
         ).scalar_one()
 
     if not matches:
-        return False, "no indexed chunk carries the declared Source sentinel"
-    return True, "declared Source sentinel is present in the indexed corpus"
+        return False, "no allowed indexed chunk carries the declared Source sentinel"
+    return True, "declared Source sentinel is present in an allowed indexed chunk"
+
+
+async def verify_selected_candidates_carry_sentinel(
+    *,
+    session_factory: Any,
+    selected_chunk_ids: tuple[UUID, ...],
+    source_sentinel: str,
+) -> tuple[bool, str]:
+    """Prove the candidates the Gate actually selected carry the Source sentinel.
+
+    The pre-execution binding proof only shows the marker exists somewhere allowed. This
+    closes the remaining gap: the Source whose non-logging is being certified must be the
+    Source this run actually retrieved.
+    """
+    if not selected_chunk_ids:
+        return False, "no selected candidate to check"
+    if not source_sentinel.strip():
+        return False, "fixture declares an empty Source sentinel"
+
+    async with session_factory() as session:
+        matches = (
+            await session.execute(
+                text(
+                    "SELECT COUNT(*) FROM knowledge_chunk c "
+                    "WHERE c.id = ANY(:ids) AND strpos(c.chunk_text, :needle) > 0"
+                ),
+                {"ids": [str(value) for value in selected_chunk_ids], "needle": source_sentinel},
+            )
+        ).scalar_one()
+
+    if matches != len(selected_chunk_ids):
+        return False, "a selected candidate does not carry the declared Source sentinel"
+    return True, "every selected candidate carries the declared Source sentinel"

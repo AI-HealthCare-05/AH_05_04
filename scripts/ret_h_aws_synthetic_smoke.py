@@ -44,7 +44,9 @@ from app.release_validation.ret_h_synthetic_smoke import (
     ScanTarget,
     build_docker_log_reader,
     build_redis_stream_reader,
+    finalize_smoke_artifact,
     parse_observation_document,
+    parse_privacy_observation,
     run_ret_h_smoke,
     sentinels_from_fixture,
     write_artifact,
@@ -53,9 +55,29 @@ from app.release_validation.ret_h_synthetic_smoke import (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--mode", choices=["aws-live", "local-preflight"], default="local-preflight")
+    parser.add_argument(
+        "--mode",
+        choices=["aws-live-execute", "aws-live-finalize", "local-preflight"],
+        default="local-preflight",
+        help=(
+            "aws-live-execute runs RET-H and stops before privacy certification; the host then "
+            "scans and aws-live-finalize completes the artifact from that bound scan."
+        ),
+    )
     parser.add_argument("--git-commit-sha", default=None)
     parser.add_argument("--fixture-manifest", type=Path, default=None)
+    parser.add_argument(
+        "--privacy-observation-file",
+        type=Path,
+        default=None,
+        help="Host-produced, run-bound POST-execution privacy scan (aws-live-finalize).",
+    )
+    parser.add_argument(
+        "--interim-artifact",
+        type=Path,
+        default=None,
+        help="Interim artifact emitted by aws-live-execute (aws-live-finalize).",
+    )
     parser.add_argument(
         "--observation-file",
         type=Path,
@@ -156,12 +178,14 @@ def build_live_dependencies(
         return _case
 
     allowed_snapshot_ids = tuple(UUID(str(v)) for v in fixture["allowed_source_snapshot_ids"])
+    allowed_member_ids = tuple(UUID(str(v)) for v in fixture["allowed_source_snapshot_member_ids"])
 
     async def _source_sentinel_binding_case() -> CheckResult:
         bound, message = await verify_source_sentinel_indexed(
             session_factory=verification_session_factory,
             knowledge_index_id=knowledge_index_id,
             source_sentinel=sentinels.source_sentinel,
+            allowed_source_snapshot_member_ids=allowed_member_ids,
         )
         return CheckResult(executed=True, passed=bound, message=message)
 
@@ -268,23 +292,60 @@ def _build_hybrid_retrieve_request(fixture: dict[str, Any]) -> Any:
     )
 
 
+def _finalize(args: Any) -> int:
+    """Complete an interim artifact from the bound post-execution host scan."""
+    if not args.interim_artifact or not args.interim_artifact.is_file():
+        print("aws-live-finalize requires --interim-artifact", file=sys.stderr)
+        return 1
+    if not args.privacy_observation_file or not args.privacy_observation_file.is_file():
+        print("aws-live-finalize requires --privacy-observation-file", file=sys.stderr)
+        return 1
+
+    fixture = _load_fixture(args.fixture_manifest)
+    sentinels = sentinels_from_fixture(fixture) if fixture else None
+    if sentinels is None:
+        print("aws-live-finalize requires the approved fixture manifest", file=sys.stderr)
+        return 1
+
+    document = json.loads(args.interim_artifact.read_text(encoding="utf-8"))
+    try:
+        observation = parse_privacy_observation(json.loads(args.privacy_observation_file.read_text(encoding="utf-8")))
+    except Exception as error:  # noqa: BLE001 - a bad document must block, not crash
+        print(f"privacy observation unusable: {type(error).__name__}", file=sys.stderr)
+        return 1
+
+    final = finalize_smoke_artifact(document, privacy_observation=observation, sentinels=sentinels)
+    payload = json.dumps(final, indent=2, ensure_ascii=False, sort_keys=True)
+    if args.output_path:
+        args.output_path.parent.mkdir(parents=True, exist_ok=True)
+        args.output_path.write_text(payload + "\n", encoding="utf-8")
+        print(f"{final['status']} -> {args.output_path}")
+    else:
+        print(payload)
+    return 1 if final["status"] == STATUS_FAILED else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     import os
 
     args = build_parser().parse_args(argv)
-    fixture = _load_fixture(args.fixture_manifest) if args.mode == "aws-live" else None
+    if args.mode == "aws-live-finalize":
+        return _finalize(args)
+
+    live = args.mode == "aws-live-execute"
+    fixture = _load_fixture(args.fixture_manifest) if live else None
 
     # Sentinels come from the approved fixture. This runner never mints its own: a
     # freshly generated string is not in the submitted query or the indexed Source, so
     # scanning for it would pass vacuously.
     sentinels = sentinels_from_fixture(fixture) if fixture else None
     submitted_query = str(fixture.get("synthetic_query", "")) if fixture else None
+    approved_query_sha256 = str(fixture.get("synthetic_query_sha256", "")) if fixture else None
 
-    # Deployment identity, resource sampling and the log sentinel scan are produced on
-    # the EC2 host, which already has the Docker CLI. This container is never given a
-    # Docker daemon socket.
+    # Deployment identity and resource sampling are produced on the EC2 host, which
+    # already has the Docker CLI. This container is never given a Docker daemon socket.
     observation = None
-    if args.mode == "aws-live" and args.observation_file and args.observation_file.is_file():
+    if live and args.observation_file and args.observation_file.is_file():
         try:
             observation = parse_observation_document(json.loads(args.observation_file.read_text(encoding="utf-8")))
         except Exception as error:  # noqa: BLE001 - a bad document must block, not crash
@@ -300,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
 
     receipt = asyncio.run(
         run_ret_h_smoke(
-            mode=args.mode,
+            mode="aws-live" if live else args.mode,
             environment=os.environ,
             git_commit_sha=args.git_commit_sha,
             dependencies=dependencies,
@@ -309,7 +370,10 @@ def main(argv: list[str] | None = None) -> int:
             resource_observation=observation.resources if observation else None,
             sentinels=sentinels,
             submitted_query=submitted_query,
-            host_scan_results=observation.scan_results if observation else None,
+            approved_query_sha256=approved_query_sha256,
+            # The execute phase never certifies privacy; only a bound post-execution
+            # host scan can do that, in aws-live-finalize.
+            defer_privacy=live,
         )
     )
 

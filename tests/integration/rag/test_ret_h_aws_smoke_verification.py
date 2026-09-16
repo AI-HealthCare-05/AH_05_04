@@ -27,6 +27,7 @@ from ai_worker.tasks.evaluation.actual_retrieval_index import SYNTHETIC_INDEX_CO
 from ai_worker.tasks.evaluation.ret_h_smoke import (
     verify_fixture_is_synthetic,
     verify_persisted_receipt,
+    verify_selected_candidates_carry_sentinel,
     verify_source_sentinel_indexed,
 )
 from ai_worker.tasks.rag.retrieval_run import (
@@ -292,7 +293,7 @@ async def test_unknown_run_id_is_rejected(database) -> None:
 SOURCE_SENTINEL = "RET_H_SMOKE_S_integration0001"
 
 
-async def _seed_index(engine, *, index_code: str, chunk_text: str) -> tuple[UUID, UUID]:
+async def _seed_index(engine, *, index_code: str, chunk_text: str) -> tuple[UUID, UUID, UUID, UUID]:
     """Create one Knowledge Index with a single member chunk over a real Source snapshot.
 
     The snapshot is left ``PENDING``: sealing a ``CURRENT`` snapshot needs a verification
@@ -357,9 +358,11 @@ async def _seed_index(engine, *, index_code: str, chunk_text: str) -> tuple[UUID
                 "INSERT INTO rag_knowledge_index (id, index_code, index_version, corpus_manifest_hash, "
                 "embedding_manifest_hash, index_configuration_hash, embedding_model_ref, "
                 "embedding_model_version, embedding_dimension, distance_metric, member_count) "
-                "VALUES (:id, :code, '1.0', :h, :h, :h, 'text-embedding-3-large', '1.0', 1536, 'COSINE', 1)"
+                "VALUES (:id, :code, :ver, :h, :h, :h, 'text-embedding-3-large', '1.0', 1536, 'COSINE', 1)"
             ),
-            {"id": str(index_id), "code": index_code, "h": "a" * 64},
+            # A unique version keeps repeated seeds inside one test distinct; the
+            # authenticity check keys on index_code, not version.
+            {"id": str(index_id), "code": index_code, "ver": uuid4().hex[:8], "h": "a" * 64},
         )
         await conn.execute(
             text(
@@ -395,11 +398,11 @@ async def _seed_index(engine, *, index_code: str, chunk_text: str) -> tuple[UUID
                 "vec": "[" + ",".join(["0.0"] * 1536) + "]",
             },
         )
-    return index_id, snapshot_id
+    return index_id, snapshot_id, snapshot_member_id, chunk_id
 
 
 async def test_approved_synthetic_index_is_accepted(database) -> None:
-    index_id, snapshot_id = await _seed_index(
+    index_id, snapshot_id, member_id, chunk_id = await _seed_index(
         database, index_code=SYNTHETIC_INDEX_CODE, chunk_text=f"본문 {SOURCE_SENTINEL} 입니다"
     )
     factory = async_sessionmaker(database, expire_on_commit=False, autoflush=False)
@@ -410,13 +413,16 @@ async def test_approved_synthetic_index_is_accepted(database) -> None:
     assert genuine is True
 
     bound, _ = await verify_source_sentinel_indexed(
-        session_factory=factory, knowledge_index_id=index_id, source_sentinel=SOURCE_SENTINEL
+        session_factory=factory,
+        knowledge_index_id=index_id,
+        source_sentinel=SOURCE_SENTINEL,
+        allowed_source_snapshot_member_ids=(member_id,),
     )
     assert bound is True
 
 
 async def test_non_synthetic_index_code_is_rejected(database) -> None:
-    index_id, snapshot_id = await _seed_index(
+    index_id, snapshot_id, member_id, chunk_id = await _seed_index(
         database, index_code="mfds-production-index", chunk_text=f"본문 {SOURCE_SENTINEL}"
     )
     factory = async_sessionmaker(database, expire_on_commit=False, autoflush=False)
@@ -437,7 +443,9 @@ async def test_unknown_index_is_rejected(database) -> None:
 
 
 async def test_member_snapshot_outside_the_allow_list_is_rejected(database) -> None:
-    index_id, _ = await _seed_index(database, index_code=SYNTHETIC_INDEX_CODE, chunk_text=f"본문 {SOURCE_SENTINEL}")
+    index_id, _, member_id, chunk_id = await _seed_index(
+        database, index_code=SYNTHETIC_INDEX_CODE, chunk_text=f"본문 {SOURCE_SENTINEL}"
+    )
     factory = async_sessionmaker(database, expire_on_commit=False, autoflush=False)
     genuine, message = await verify_fixture_is_synthetic(
         session_factory=factory, knowledge_index_id=index_id, allowed_source_snapshot_ids=(uuid4(),)
@@ -447,10 +455,81 @@ async def test_member_snapshot_outside_the_allow_list_is_rejected(database) -> N
 
 
 async def test_source_sentinel_absent_from_the_corpus_is_rejected(database) -> None:
-    index_id, _ = await _seed_index(database, index_code=SYNTHETIC_INDEX_CODE, chunk_text="본문에 sentinel 이 없다")
+    index_id, _, member_id, chunk_id = await _seed_index(
+        database, index_code=SYNTHETIC_INDEX_CODE, chunk_text="본문에 sentinel 이 없다"
+    )
     factory = async_sessionmaker(database, expire_on_commit=False, autoflush=False)
     bound, message = await verify_source_sentinel_indexed(
-        session_factory=factory, knowledge_index_id=index_id, source_sentinel=SOURCE_SENTINEL
+        session_factory=factory,
+        knowledge_index_id=index_id,
+        source_sentinel=SOURCE_SENTINEL,
+        allowed_source_snapshot_member_ids=(member_id,),
     )
     assert bound is False
-    assert "no indexed chunk carries" in message
+    assert "no allowed indexed chunk carries" in message
+
+
+async def test_like_wildcards_do_not_satisfy_the_source_binding(database) -> None:
+    """``_`` and ``%`` must be literal. A LIKE-based check would accept this corpus."""
+    index_id, _, member_id, _chunk = await _seed_index(
+        database, index_code=SYNTHETIC_INDEX_CODE, chunk_text="본문 RET_H_SMOKE_SXintegration0001 입니다"
+    )
+    factory = async_sessionmaker(database, expire_on_commit=False, autoflush=False)
+    bound, message = await verify_source_sentinel_indexed(
+        session_factory=factory,
+        knowledge_index_id=index_id,
+        # Underscores here would be single-character wildcards under LIKE.
+        source_sentinel="RET_H_SMOKE_S_integration0001",
+        allowed_source_snapshot_member_ids=(member_id,),
+    )
+    assert bound is False
+    assert "no allowed indexed chunk carries" in message
+
+
+async def test_marker_outside_the_allowed_members_does_not_bind(database) -> None:
+    index_id, _, _member, _chunk = await _seed_index(
+        database, index_code=SYNTHETIC_INDEX_CODE, chunk_text=f"본문 {SOURCE_SENTINEL} 입니다"
+    )
+    factory = async_sessionmaker(database, expire_on_commit=False, autoflush=False)
+    bound, message = await verify_source_sentinel_indexed(
+        session_factory=factory,
+        knowledge_index_id=index_id,
+        source_sentinel=SOURCE_SENTINEL,
+        # The marker exists in the index, but not under any declared member.
+        allowed_source_snapshot_member_ids=(uuid4(),),
+    )
+    assert bound is False
+    assert "no allowed indexed chunk carries" in message
+
+
+async def test_selected_candidates_must_carry_the_source_sentinel(database) -> None:
+    index_id, _, _member, chunk_id = await _seed_index(
+        database, index_code=SYNTHETIC_INDEX_CODE, chunk_text=f"본문 {SOURCE_SENTINEL} 입니다"
+    )
+    other_index, _, _m2, other_chunk = await _seed_index(
+        database, index_code=SYNTHETIC_INDEX_CODE, chunk_text="marker 없는 본문"
+    )
+    assert other_index != index_id
+    factory = async_sessionmaker(database, expire_on_commit=False, autoflush=False)
+
+    ok, _ = await verify_selected_candidates_carry_sentinel(
+        session_factory=factory, selected_chunk_ids=(chunk_id,), source_sentinel=SOURCE_SENTINEL
+    )
+    assert ok is True
+
+    bad, message = await verify_selected_candidates_carry_sentinel(
+        session_factory=factory,
+        selected_chunk_ids=(chunk_id, other_chunk),
+        source_sentinel=SOURCE_SENTINEL,
+    )
+    assert bad is False
+    assert "selected candidate does not carry" in message
+
+
+async def test_no_selected_candidate_is_never_a_pass(database) -> None:
+    factory = async_sessionmaker(database, expire_on_commit=False, autoflush=False)
+    ok, message = await verify_selected_candidates_carry_sentinel(
+        session_factory=factory, selected_chunk_ids=(), source_sentinel=SOURCE_SENTINEL
+    )
+    assert ok is False
+    assert "no selected candidate" in message

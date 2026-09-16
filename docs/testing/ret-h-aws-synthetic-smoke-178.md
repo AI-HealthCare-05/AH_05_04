@@ -69,7 +69,9 @@ PASS로 기록하지 않는다. 최종 상태는 셋 중 하나다.
 - `NOT_APPLICABLE` — 이 배포에 해당 저장소가 존재하지 않음
 - `NOT_EXECUTED` — 조회하지 못함 (PASS 아님)
 
-필수 대상은 `ai_worker_logs`, `fastapi_logs`, `redis_stream`, `redis_dlq`다. 필수 대상이
+필수 대상은 `ai_worker_logs`, `fastapi_logs`, `redis_stream`, `redis_dlq`,
+`smoke_one_shot_logs`다. 마지막 항목은 질문을 실제로 제출하는 one-shot 컨테이너 자신의 로그이며
+이것도 유출 지점이므로 필수다. 필수 대상이
 `NOT_EXECUTED`이거나 `NOT_APPLICABLE`이면 `SUCCESS`가 될 수 없다. 현재 배포에는 retrieval 전용
 quarantine 저장소가 없으므로 `quarantine`은 `NOT_APPLICABLE`로 기록한다.
 
@@ -86,22 +88,16 @@ retrieval 실행은 DB와 embedding provider에 닿아야 하므로 **applicatio
 runtime container에 Docker daemon socket을 mount하지 않는다. 그것은 관측 수단이 아니라
 권한 상승이다.
 
-### 6.1 host 단계 — 관측 문서 생성
+### 6.1 host 단계 A — 배포 관측 (실행 전)
 
-EC2 host에서 실행한다. `docker`와 POSIX shell만 필요하다. `$QS`/`$SS`는 fixture manifest의
-`query_sentinel` / `source_sentinel`이다. 원문 로그는 host를 떠나지 않으며 문서에는 4상태만 남는다.
+EC2 host에서 실행한다. 컨테이너 identity와 자원 snapshot만 담는다. **privacy scan은 여기에
+포함하지 않는다** — 실행 전 scan은 그 실행이 만든 유출을 볼 수 없다.
 
 ```bash
-scan() {  # 인자: 대상 이름, 로그를 내보내는 명령
-  if out=$("${@:2}" 2>&1); then
-    if printf '%s' "$out" | grep -qF -e "$QS" -e "$SS"; then echo "FOUND"; else echo "SCANNED_AND_NOT_FOUND"; fi
-  else
-    echo "NOT_EXECUTED"
-  fi
-}
-
 MEM=$(docker inspect -f '{{.HostConfig.Memory}}' ai-worker)
-USAGE=$(docker stats --no-stream --format '{{.MemUsage}}' ai-worker | cut -d/ -f1)
+USAGE_RAW=$(docker stats --no-stream --format '{{.MemUsage}}' ai-worker | cut -d/ -f1 | tr -d ' ')
+USAGE=$(numfmt --from=iec "${USAGE_RAW%i*}i")   # 실패하면 여기서 중단한다. 0 fallback 금지.
+test "${USAGE:-0}" -gt 0 || { echo "memory conversion failed" >&2; exit 1; }
 
 cat > observation.json <<JSON
 {
@@ -116,17 +112,68 @@ cat > observation.json <<JSON
     "state_status": "$(docker inspect -f '{{.State.Status}}' ai-worker)",
     "health_status": "$(docker inspect -f '{{.State.Health.Status}}' ai-worker)"
   },
-  "resources": {
-    "memory_usage_bytes": $(numfmt --from=iec "${USAGE%i*}i" 2>/dev/null || echo 0),
-    "memory_limit_bytes": ${MEM},
-    "cpu_percent": $(docker stats --no-stream --format '{{.CPUPerc}}' ai-worker | tr -d '%')
-  },
-  "privacy_scan": {
-    "ai_worker_logs": "$(scan ai_worker_logs docker logs --no-color ai-worker)",
-    "fastapi_logs":   "$(scan fastapi_logs docker logs --no-color fastapi)",
-    "redis_stream":   "$(scan redis_stream docker exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --no-auth-warning XREVRANGE oryak:jobs + - COUNT 500')",
-    "redis_dlq":      "$(scan redis_dlq docker exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --no-auth-warning XREVRANGE oryak:jobs:dead-letter + - COUNT 500')",
-    "quarantine":     "NOT_APPLICABLE"
+  "resources": { "memory_usage_bytes": ${USAGE}, "memory_limit_bytes": ${MEM},
+                 "cpu_percent": $(docker stats --no-stream --format '{{.CPUPerc}}' ai-worker | tr -d '%') }
+}
+JSON
+```
+
+단위 변환이 실패하면 **0으로 대체하지 않고 중단한다.** runner도 `memory_usage_bytes <= 0`을
+거부한다 — 실패한 변환을 실측치로 기록하지 않기 위해서다.
+
+### 6.2 container 단계 — 실제 RET-H 실행 (execute)
+
+```bash
+SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)   # host scan 창의 시작점
+
+docker compose --env-file envs/.prod.env -f infra/docker/docker-compose.prod.yml \
+  run --rm --no-deps -T --name ret-h-smoke-oneshot \
+  -v "$PWD/ret-h-smoke-fixture.json:/smoke/fixture.json:ro" \
+  -v "$PWD/observation.json:/smoke/observation.json:ro" \
+  -v "$PWD/smoke-out:/smoke/out" \
+  fastapi \
+  uv run --no-sync python -m scripts.ret_h_aws_synthetic_smoke \
+    --mode aws-live-execute \
+    --git-commit-sha "$(git rev-parse HEAD)" \
+    --fixture-manifest /smoke/fixture.json \
+    --observation-file /smoke/observation.json \
+    --output-path /smoke/out/interim.json
+```
+
+execute 단계는 **절대 SUCCESS를 내지 않는다.** `AWS_SMOKE_NOT_EXECUTED` /
+`BLOCKED_BY_AWAITING_PRIVACY_OBSERVATION`으로 끝나며 `retrieval_run_id`와
+`execution_started_at` / `execution_finished_at`을 기록한다.
+
+### 6.3 host 단계 B — 실행 후 privacy scan (bound)
+
+실행이 끝난 뒤 scan한다. 문서는 **이번 실행에 결속**된다 — Retrieval Run ID, sentinel digest,
+조회 창. one-shot 컨테이너 자신의 로그도 필수 대상이다.
+
+```bash
+RUN_ID=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["retrieval"]["retrieval_run_id"])' smoke-out/interim.json)
+QS=<fixture의 query_sentinel>; SS=<fixture의 source_sentinel>
+
+scan() {  # 인자: 로그를 내보내는 명령
+  if out=$("$@" 2>&1); then
+    if printf '%s' "$out" | grep -qF -e "$QS" -e "$SS"; then echo FOUND; else echo SCANNED_AND_NOT_FOUND; fi
+  else echo NOT_EXECUTED; fi
+}
+
+cat > privacy.json <<JSON
+{
+  "schema_version": "ret-h-aws-smoke-privacy-observation-v1",
+  "retrieval_run_id": "${RUN_ID}",
+  "query_sentinel_sha256": "$(printf '%s' "$QS" | shasum -a 256 | cut -d' ' -f1)",
+  "source_sentinel_sha256": "$(printf '%s' "$SS" | shasum -a 256 | cut -d' ' -f1)",
+  "scanned_since": "${SINCE}",
+  "scanned_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "targets": {
+    "ai_worker_logs":      "$(scan docker logs --since "$SINCE" --no-color ai-worker)",
+    "fastapi_logs":        "$(scan docker logs --since "$SINCE" --no-color fastapi)",
+    "smoke_one_shot_logs": "$(scan docker logs --no-color ret-h-smoke-oneshot)",
+    "redis_stream":        "$(scan docker exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --no-auth-warning XREVRANGE oryak:jobs + - COUNT 500')",
+    "redis_dlq":           "$(scan docker exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --no-auth-warning XREVRANGE oryak:jobs:dead-letter + - COUNT 500')",
+    "quarantine":          "NOT_APPLICABLE"
   }
 }
 JSON
@@ -134,37 +181,35 @@ JSON
 
 `scan`은 stdout과 stderr를 모두 본다. `docker logs`는 컨테이너 stderr를 자신의 stderr로
 재생하고 Python logging도 기본이 stderr이므로, stdout만 보면 유출이 가장 잘 드러나는 stream을
-놓친다.
+놓친다. 원문 로그는 host를 떠나지 않으며 문서에는 4상태만 남는다.
 
-### 6.2 container 단계 — 실제 RET-H 실행
-
-관측 문서와 fixture manifest를 mount하고, artifact는 **mount된 경로**에 쓴다. `--rm`으로도
-결과가 사라지지 않는다.
+### 6.4 container 단계 — finalize
 
 ```bash
-docker compose \
-  --env-file envs/.prod.env \
-  -f infra/docker/docker-compose.prod.yml \
+docker compose --env-file envs/.prod.env -f infra/docker/docker-compose.prod.yml \
   run --rm --no-deps -T \
   -v "$PWD/ret-h-smoke-fixture.json:/smoke/fixture.json:ro" \
-  -v "$PWD/observation.json:/smoke/observation.json:ro" \
+  -v "$PWD/privacy.json:/smoke/privacy.json:ro" \
   -v "$PWD/smoke-out:/smoke/out" \
   fastapi \
   uv run --no-sync python -m scripts.ret_h_aws_synthetic_smoke \
-    --mode aws-live \
-    --git-commit-sha "$(git rev-parse HEAD)" \
+    --mode aws-live-finalize \
     --fixture-manifest /smoke/fixture.json \
-    --observation-file /smoke/observation.json \
+    --interim-artifact /smoke/out/interim.json \
+    --privacy-observation-file /smoke/privacy.json \
     --output-path /smoke/out/ret-h-aws-synthetic-smoke.json
 ```
+
+finalize는 결속을 먼저 확인한다. Run ID 불일치, sentinel digest 불일치, 실행 시작 이후에
+시작된 scan 창, 실행 종료 이전에 찍힌 scan은 모두 `FAILED_BY_PRIVACY_OBSERVATION_UNBOUND`다.
+다른 실행의 깨끗한 scan으로 이번 실행을 통과시킬 수 없다.
 
 `backend/app/Dockerfile`이 `scripts/ret_h_aws_synthetic_smoke.py`를 image에 포함한다.
 image에 Docker CLI는 추가하지 않는다.
 
 관측 대상 구분에 주의한다. **elapsed_ms는 application one-shot container의 실행 시간**이고,
 **memory/CPU/OOM/restart는 별도 `ai-worker` container의 snapshot**이다. 둘은 같은 프로세스가
-아니며 artifact도 이를 분리해 기록한다. 이 snapshot은 배포 자원 상태 관측이지 이번 실행의
-자원 사용량 측정이 아니다.
+아니며 artifact도 이를 분리해 기록한다.
 
 ## 7. fixture manifest
 
@@ -172,7 +217,8 @@ image에 Docker CLI는 추가하지 않는다.
 binding을 가리킨다. smoke 자체는 Knowledge Index를 생성하지 않으며 runtime identity로만 동작한다.
 
 필수 key: `knowledge_index_id`, `knowledge_index_ref`, `allowed_source_snapshot_ids`,
-`allowed_source_snapshot_member_ids`, `synthetic_query`, `query_sentinel`, `source_sentinel`,
+`allowed_source_snapshot_member_ids`, `synthetic_query`, `synthetic_query_sha256`,
+`query_sentinel`, `source_sentinel`,
 `job_id`, `execution_context_id`, `prescription_version_id`, `runtime_release_bundle_id`,
 `runtime_release_bundle_manifest_hash`, `runtime_execution_manifest_id`,
 `runtime_execution_manifest_hash`, `runtime_guard_decision_ref`, `source_manifest_hash`,
@@ -189,8 +235,13 @@ corpus에도 없으므로 그 scan은 항상 통과하는 공허한 검사가 �
 실행 전에 두 결속을 증명하고, 하나라도 증명되지 않으면 Provider 호출과 Run 생성 이전에
 `BLOCKED_BY_SENTINEL_BINDING_UNVERIFIED`로 차단한다.
 
+- 제출 query가 **승인된 `synthetic_query_sha256`과 정확히 일치**한다. marker 포함만으로는
+  부족하다 — marker를 붙인 다른 질문도 통과해 embedding provider로 전송될 수 있다.
 - `synthetic_query`가 `query_sentinel`을 실제로 포함한다.
-- 색인된 chunk 본문 중 최소 하나가 `source_sentinel`을 포함한다 (read-only DB 조회).
+- **선언된 allowed member에 속한** chunk 본문 중 최소 하나가 `source_sentinel`을 포함한다
+  (read-only DB 조회). 검색하지 않는 chunk의 marker로 증빙을 만들 수 없도록 범위를 제한한다.
+  비교는 `LIKE`가 아니라 `strpos` 리터럴 검색이다. `LIKE`는 sentinel 안의 `_`/`%`를 wildcard로
+  취급해 marker 없는 corpus도 통과시킨다.
 
 ### 7.2 synthetic-only는 DB로 증명한다
 

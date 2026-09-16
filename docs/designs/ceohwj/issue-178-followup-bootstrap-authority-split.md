@@ -131,7 +131,24 @@ Runbook에 SQL/명령 절차만 문서화하고 코드로 만들지 않는다.
 - 이 후속이 해소되기 전에는 RET-H AWS live smoke가 `SUCCESS`가 될 수 없고
   `AWS_SMOKE_NOT_EXECUTED`로 fail-closed 유지된다.
 
-## 8. 관련
+## 8. 함께 후속으로 고정할 미검증 항목
+
+PR #683 리뷰에서 공개된, 이번 범위에서 해소하지 않은 검증 한계다. 별도 후속으로 고정한다.
+
+- **실제 빌드 image에서의 module import 확인** — `backend/app/Dockerfile`이
+  `scripts/ret_h_aws_synthetic_smoke.py`를 복사하도록 바꿨으나, 실제로 build한 image에서
+  `python -m scripts.ret_h_aws_synthetic_smoke`가 import되는지 확인하지 않았다.
+- **host 명령 지원 확인** — EC2 host에 `docker`, `numfmt`, `shasum`, `grep -F`가 존재하는지,
+  `docker logs --since`가 기대대로 동작하는지 실제 배포에서 확인하지 않았다.
+- **자원 변환 실패 차단의 실배포 확인** — runner는 `memory_usage_bytes <= 0`을 거부하고 host
+  절차도 변환 실패 시 중단하지만, 실제 `docker stats` 출력 형식에서 검증하지 않았다.
+- **artifact 회수 확인** — mount된 경로로 `--rm` 회수가 실제로 되는지 확인하지 않았다.
+- **execute → host scan → finalize 3단계의 실제 순서 실행** — 결속 검증 로직은 단위/통합
+  테스트로 고정했으나 실제 EC2에서 전체 순서를 돌려보지 않았다.
+
+이 항목들이 확인되기 전에는 AWS live smoke를 `SUCCESS`로 주장하지 않는다.
+
+## 9. 관련
 
 - Issue #178, PR #663 (`bootstrap_dev_knowledge_index`), PR #482 (최소권한 Builder)
 - `docs/testing/ret-h-aws-synthetic-smoke-178.md` §8
