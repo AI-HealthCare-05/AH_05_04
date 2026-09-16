@@ -419,6 +419,7 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
     await run_provisioning(environment)
     await _exercise_preflight_context_runtime_permissions(reader, producer)
     await _exercise_notification_runtime_permissions(reader, producer)
+    await _exercise_feedback_runtime_permissions(reader, producer)
     writer_config = WriterConfig(url.set(database=database, username=writer, password=password), "synthetic-operator")
     args = Namespace(snapshot_id=snapshot_id, expected_checksum="a" * 64, reason_code="SYNTHETIC_TEST")
     assert (await run_selection(writer_config, args)).decision.value == "ACTIVATED"
@@ -892,6 +893,8 @@ async def _grant_historical_test_permissions(admin, environment):
                 "medication_schedule_audit",  # Added after the historical Source cutover.
                 "push_subscription",  # #469 does not exist at the historical revision.
                 "push_delivery",
+                "guide_feedback",  # #633 follows the historical Source cutover.
+                "chat_message_feedback",
             }:
                 await connection.execute(text(f'GRANT {privileges} ON "{table}" TO "{runtime}"'))
         for table in set(SOURCE_TABLES) & present:
@@ -918,6 +921,28 @@ async def _exercise_preflight_context_runtime_permissions(reader, producer):
     for table in ("ai_job_intake_context", "ai_job_execution_context", "ai_job_execution_identification"):
         for engine, statements in (
             (reader, (f"UPDATE {table} SET id=id", f"DELETE FROM {table}", f"TRUNCATE {table}")),
+            (producer, (f"SELECT * FROM {table}", f"INSERT INTO {table} DEFAULT VALUES")),
+        ):
+            for statement in statements:
+                with pytest.raises(DBAPIError) as error:
+                    async with engine.begin() as connection:
+                        await connection.execute(text(statement))
+                assert error.value.orig.sqlstate == "42501"
+
+
+async def _exercise_feedback_runtime_permissions(reader, producer):
+    for table in ("guide_feedback", "chat_message_feedback"):
+        async with reader.begin() as connection:
+            for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+                assert await connection.scalar(
+                    text("SELECT has_table_privilege(current_user, :table, :privilege)"),
+                    {"table": table, "privilege": privilege},
+                )
+            await connection.execute(text(f"SELECT * FROM {table}"))
+            await connection.execute(text(f"UPDATE {table} SET rating=rating WHERE false"))
+            await connection.execute(text(f"DELETE FROM {table} WHERE false"))
+        for engine, statements in (
+            (reader, (f"TRUNCATE {table}",)),
             (producer, (f"SELECT * FROM {table}", f"INSERT INTO {table} DEFAULT VALUES")),
         ):
             for statement in statements:

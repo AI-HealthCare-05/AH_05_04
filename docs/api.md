@@ -850,3 +850,16 @@ COMPLETED 계획에만 최초 제출(기대 revision 0)·정정(현재 평가 re
 상태를 정렬한다. 최종 승인·병합 대기이며 병합 전 develop의 동작이나 Frontend 인수·외부 공개 완료를 뜻하지 않는다.
 `ACTION_PLAN_STATE_CONFLICT`는 작업의 Plan 상태 전제조건 불충족을 뜻하는 공용 code다.
 Plan PATCH는 ACTIVE가 아니면, Follow-up POST는 COMPLETED가 아니면 반환하므로 호출한 endpoint별로 복구한다.
+
+## #633 Guide·Chat 피드백 — Local 구현, 책임 리뷰 대기
+
+[계약](contracts/proposed/guide-chat-feedback-v1.md)과 [PD-633](governance/decisions/2026-09-16-guide-chat-feedback-633.md)을 따른다.
+`POST /api/v1/guides/{guide_id}/feedback`,
+`POST /api/v1/chat-sessions/{session_id}/messages/{message_id}/feedback`은
+`rating: POSITIVE | NEGATIVE`, 선택 `comment`를 받아 신규 201·재제출 200을 반환한다.
+완료 Guide·ASSISTANT/COMPLETED Chat만 허용하며 부모 SELF 소유권을 검증한다.
+같은 경로의 DELETE는 본인 target의 feedback을 제거하고 204를 반환한다. GET은 추가하지 않는다.
+응답 data는 id·rating·created_at·updated_at이며 comment·의료 원문은 반환하지 않는다.
+미완료/USER target은 409 FEEDBACK_TARGET_NOT_READY, 타인·없는 target은 404 NOT_FOUND다.
+NUL·잘못된 Unicode·길이 초과·잘못된 rating은 공통 422다. 모든 응답에 no-store를 적용한다.
+ENV=local 외에는 POST/DELETE 모두 404이며 실제 사용자 수집·Production 공개 승인은 별도다.
