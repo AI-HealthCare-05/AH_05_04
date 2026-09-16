@@ -278,16 +278,112 @@ def test_openapi_schedule_contract() -> None:
     assert next(p for p in query["parameters"] if p["name"] == "date")["required"]
 
 
-async def test_partial_keeps_ready_occurrences_and_current_checkin(case: Case) -> None:
+async def expand_prescription_medications(case: Case, medication_id: UUID, count: int) -> list[UUID]:
+    from app.models.prescriptions import PrescriptionVersion, PrescriptionVersionMedication
+    from app.tests.fixtures.prescription_fingerprint import fingerprint_values
+
+    original = await case.session.get(PrescriptionVersionMedication, medication_id)
+    assert original is not None
+    version = await case.session.get(PrescriptionVersion, original.prescription_version_id)
+    assert version is not None
+    original_id = original.id
+    await case.session.delete(original)
+    await case.session.flush()
+    original = PrescriptionVersionMedication(
+        id=original_id,
+        prescription_version_id=version.id,
+        medication_count=count,
+        medication_name="합성테스트약",
+        frequency_per_day=1,
+        display_order=1,
+    )
+    rows = [original]
+    for order in range(2, count + 1):
+        row = PrescriptionVersionMedication(
+            prescription_version_id=version.id,
+            medication_count=count,
+            medication_name=f"합성시험약 {order}",
+            frequency_per_day=1,
+            display_order=order,
+        )
+        rows.append(row)
+    values = [
+        {"medication_name": row.medication_name, "frequency_per_day": 1, "display_order": row.display_order}
+        for row in rows
+    ]
+    for field, value in fingerprint_values(version.prescribed_date, values).items():
+        setattr(version, field, value)
+    await case.session.flush()
+    case.session.add_all(rows)
+    await case.session.flush()
+    return [row.id for row in rows]
+
+
+@pytest.mark.parametrize("same_created_at", [False, True])
+async def test_latest_prescription_only_preserves_older_occurrences(case: Case, same_created_at: bool) -> None:
+    from app.models.prescriptions import Prescription
     from app.models.profiles import Profile
     from app.models.users import User
 
-    assert (await case.write(case.body)).status_code == 200
     owner = await case.session.get(User, case.owner_id)
     profile = await case.session.scalar(select(Profile).where(Profile.user_id == case.owner_id))
-    assert owner is not None and profile is not None
-    await _create_active_version_medication(case.session, owner=owner, profile=profile)
+    older = await case.session.scalar(select(Prescription))
+    assert owner is not None and profile is not None and older is not None
+    other, other_medication = await _create_active_version_medication(case.session, owner=owner, profile=profile)
+    timestamp = datetime(2026, 9, 15, tzinfo=UTC)
+    older.created_at = timestamp
+    other.created_at = timestamp if same_created_at else timestamp + timedelta(days=1)
+    if same_created_at and older.id.int > other.id.int:
+        latest_medication_id = case.medication_id
+        old_medication_id = other_medication.id
+    else:
+        latest_medication_id = other_medication.id
+        old_medication_id = case.medication_id
+    old_ids = await expand_prescription_medications(case, old_medication_id, 3)
+    latest_ids = await expand_prescription_medications(case, latest_medication_id, 2)
+    stranger, stranger_profile = await _create_user_with_self_profile(case.session, label="latest-stranger")
+    stranger_prescription, _ = await _create_active_version_medication(
+        case.session, owner=stranger, profile=stranger_profile
+    )
+    stranger_prescription.created_at = timestamp + timedelta(days=2)
     await case.session.commit()
+    assert (await case.write(case.body, medication_id=old_medication_id, key="older-schedule-key")).status_code == 200
+    latest_response = await case.client.get("/api/v1/prescriptions/latest")
+    assert latest_response.status_code == 200, latest_response.text
+    latest_data = latest_response.json()["data"]
+    assert {m["prescription_version_medication_id"] for m in latest_data["medications"]} == set(map(str, latest_ids))
+    day = (await case.read()).json()["data"]
+    assert {item["prescription_version_medication_id"] for item in day["schedule_items"]} == set(map(str, latest_ids))
+    assert day["schedule_status"] == "SETUP_REQUIRED"
+    assert not set(map(str, old_ids)) & {item["prescription_version_medication_id"] for item in day["schedule_items"]}
+    for medication_id in latest_ids:
+        response = await case.write(case.body, medication_id=medication_id, key=f"latest-{medication_id}")
+        assert response.status_code == 200, response.text
+    day = (await case.read()).json()["data"]
+    assert day["schedule_status"] == "READY"
+    assert {o["prescription_version_medication_id"] for o in day["occurrences"]} == set(
+        map(str, [old_medication_id, *latest_ids])
+    )
+    for occurrence in day["occurrences"]:
+        response = await case.client.get(f"/api/v1/medication-occurrences/{occurrence['occurrence_id']}/medication")
+        assert response.status_code == 200, response.text
+        assert (
+            response.json()["data"]["prescription_version_medication_id"]
+            == occurrence["prescription_version_medication_id"]
+        )
+        response = await case.client.put(
+            f"/api/v1/medication-occurrences/{occurrence['occurrence_id']}/check-in",
+            json={"status": "TAKEN", "expected_revision": 0},
+            headers={"Idempotency-Key": f"checkin-{occurrence['occurrence_id']}"},
+        )
+        assert response.status_code == 200, response.text
+    assert all(o["checkin"]["status"] == "TAKEN" for o in (await case.read()).json()["data"]["occurrences"])
+
+
+async def test_partial_keeps_ready_occurrences_and_current_checkin(case: Case) -> None:
+    await expand_prescription_medications(case, case.medication_id, 2)
+    await case.session.commit()
+    assert (await case.write(case.body)).status_code == 200
     day = (await case.read()).json()["data"]
     assert day["schedule_status"] == "PARTIAL"
     assert len(day["schedule_items"]) == 2
