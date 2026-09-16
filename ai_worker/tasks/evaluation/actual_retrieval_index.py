@@ -322,22 +322,6 @@ async def bootstrap_dev_knowledge_index(
                 "now": now,
             },
         )
-        await connection.execute(
-            text(
-                "INSERT INTO rag_source_snapshot_verification "
-                "(id, snapshot_id, check_name, verification_result, verified_by, verified_at) "
-                "VALUES (:id, :snapshot_id, 'source-ingestion-integrity', 'PASSED', 'synthetic-reviewer', :now) "
-                "ON CONFLICT (id) DO NOTHING"
-            ),
-            {"id": str(_FIXED_VERIFICATION_ID), "snapshot_id": str(_FIXED_SNAPSHOT_ID), "now": now},
-        )
-        await connection.execute(
-            text(
-                "UPDATE rag_source_snapshot SET verification_status = 'CURRENT', verification_seal_id = :seal_id, "
-                "verified_at = :now, effective_at = :now WHERE id = :snapshot_id"
-            ),
-            {"seal_id": str(_FIXED_VERIFICATION_ID), "snapshot_id": str(_FIXED_SNAPSHOT_ID), "now": now},
-        )
         snapshot_id = _FIXED_SNAPSHOT_ID
 
     prov = SnapshotProvenanceReceipt(
@@ -351,8 +335,8 @@ async def bootstrap_dev_knowledge_index(
         canonical_checksum=file_sha256,
         canonicalization_spec_version="1.0.0",
         endpoint_receipt_hash=file_sha256,
-        verification_seal_id=_FIXED_VERIFICATION_ID,
-        verification_status=SnapshotVerificationStatus.CURRENT,
+        verification_seal_id=None,
+        verification_status=SnapshotVerificationStatus.PENDING,
         rejected_record_count=0,
         publication_verification_id=None,
     )
@@ -383,7 +367,7 @@ async def bootstrap_dev_knowledge_index(
         )
         await connection.execute(
             text(
-                "UPDATE rag_source_snapshot SET verification_seal_id = :seal_id, "
+                "UPDATE rag_source_snapshot SET verification_status = 'CURRENT', verification_seal_id = :seal_id, "
                 "verified_at = :now, effective_at = :now WHERE id = :snapshot_id"
             ),
             {"seal_id": str(_FIXED_VERIFICATION_ID), "snapshot_id": str(snapshot_id), "now": now},
