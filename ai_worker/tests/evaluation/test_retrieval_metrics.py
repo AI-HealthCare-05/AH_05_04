@@ -510,6 +510,71 @@ def test_transform_origin_independence_axis_is_supported() -> None:
     assert overall.ci_lower is not None and overall.ci_upper is not None
 
 
+@pytest.mark.parametrize(
+    ("axis", "expected_groups"),
+    [
+        (LeakageAxis.QUESTION_TEMPLATE, 6),
+        (LeakageAxis.SOURCE_SEGMENT, 20),
+        (LeakageAxis.MEDICATION_FAMILY, 20),
+        (LeakageAxis.TRANSFORM_ORIGIN, 20),
+    ],
+)
+def test_every_declared_leakage_axis_groups_by_its_own_dimension(
+    axis: LeakageAxis,
+    expected_groups: int,
+) -> None:
+    """Each LeakageAxis must be supported and must drive the independent grouping."""
+
+    target = NLR_DATASET.comparison_policy.scopes[0]
+    changed_scope = target.model_copy(update={"cluster_dimension": axis, "independence_unit": axis.value})
+    changed_policy = NLR_DATASET.comparison_policy.model_copy(
+        update={"scopes": (changed_scope, *NLR_DATASET.comparison_policy.scopes[1:])}
+    )
+    dataset = replace(NLR_DATASET, comparison_policy=changed_policy)
+
+    metric = _metric(build_retrieval_metrics(dataset, _nlr_case_results()).metrics, target.metric_id)
+
+    assert metric.execution_status.value == "COMPLETED"
+    assert metric.sample_case_count == 60
+    assert metric.sample_independent_group_count == expected_groups
+
+
+@pytest.mark.parametrize(
+    "unsupported_unit",
+    ["question_template", "unknown_axis"],
+)
+def test_independence_unit_that_disagrees_with_the_axis_is_rejected(unsupported_unit: str) -> None:
+    """A declared unit that does not name the declared axis must not be computed."""
+
+    target = NLR_DATASET.comparison_policy.scopes[0]
+    assert target.cluster_dimension is LeakageAxis.TRANSFORM_ORIGIN
+    changed_scope = target.model_copy(update={"independence_unit": unsupported_unit})
+    changed_policy = NLR_DATASET.comparison_policy.model_copy(
+        update={"scopes": (changed_scope, *NLR_DATASET.comparison_policy.scopes[1:])}
+    )
+    dataset = replace(NLR_DATASET, comparison_policy=changed_policy)
+
+    metric = _metric(build_retrieval_metrics(dataset, _nlr_case_results()).metrics, target.metric_id)
+
+    assert metric.execution_status.value == "NOT_IMPLEMENTED"
+    assert metric.decision_status is None
+
+
+def test_absent_cluster_dimension_is_not_supported() -> None:
+    """A scope without a declared LeakageAxis must not be computed."""
+
+    target = NLR_DATASET.comparison_policy.scopes[0]
+    changed_scope = target.model_copy(update={"cluster_dimension": None})
+    changed_policy = NLR_DATASET.comparison_policy.model_copy(
+        update={"scopes": (changed_scope, *NLR_DATASET.comparison_policy.scopes[1:])}
+    )
+    dataset = replace(NLR_DATASET, comparison_policy=changed_policy)
+
+    metric = _metric(build_retrieval_metrics(dataset, _nlr_case_results()).metrics, target.metric_id)
+
+    assert metric.execution_status.value == "NOT_IMPLEMENTED"
+
+
 def test_independence_unit_must_match_declared_cluster_dimension() -> None:
     target = NLR_DATASET.comparison_policy.scopes[0]
     changed_scope = target.model_copy(update={"independence_unit": "question_template"})

@@ -434,3 +434,34 @@ def test_comparator_refuses_when_case_sets_differ(tmp_path: Path) -> None:
 def test_latency_observation_handles_missing_and_present_samples() -> None:
     empty = latency_observation(())
     assert empty.count == 0 and empty.median is None
+
+
+def test_comparator_refuses_duplicate_case_ids_that_the_loader_accepts(tmp_path: Path) -> None:
+    """A duplicated case_id must not be collapsed into a single comparison row.
+
+    The published Run Bundle loader does not enforce case_id uniqueness. If the
+    comparator keys cases by ID, an earlier duplicate carrying different
+    retrieval results is silently dropped, so two runs can be reported equal
+    while their stable projection hashes disagree.
+    """
+
+    def _duplicated(draft: ArtifactDraft, ranked: tuple[str, ...]) -> ArtifactDraft:
+        target = draft.cases[0]
+        assert target.retrieved_evidence_ids is not None
+        shadowed = target.model_copy(update={"retrieved_evidence_ids": ranked, "selected_evidence_ids": ranked})
+        return _with_cases(draft, [shadowed, *draft.cases])
+
+    first_draft = _duplicated(_bundle_draft(run_id=RUN_ID_A), ("ev-shadowed-first",))
+    second_draft = _duplicated(_bundle_draft(run_id=RUN_ID_B), ("ev-shadowed-second",))
+
+    first = _publish_bundle(tmp_path, first_draft)
+    second = _publish_bundle(tmp_path, second_draft)
+
+    # The loader accepts both bundles, and only the duplicated row differs.
+    duplicated_id = first_draft.cases[0].case_id
+    assert [case.case_id for case in first.cases].count(duplicated_id) == 2
+    assert first.cases[0].retrieved_evidence_ids != second.cases[0].retrieved_evidence_ids
+
+    with pytest.raises(EvaluationValidationError) as error:
+        compare_actual_retrieval_runs(first, second)
+    assert error.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID

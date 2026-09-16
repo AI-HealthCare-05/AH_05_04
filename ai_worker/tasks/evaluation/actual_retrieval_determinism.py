@@ -151,6 +151,21 @@ def latency_observation(cases: Sequence[CaseResult]) -> LatencyObservation:
     )
 
 
+def _cases_by_unique_id(cases: Sequence[CaseResult]) -> dict[str, CaseResult]:
+    """Index cases by ID, refusing a bundle that repeats one.
+
+    The published Run Bundle loader does not enforce ``case_id`` uniqueness.
+    Keying by ID without this check would drop an earlier duplicate carrying
+    different retrieval results, so two runs could be reported equal while the
+    stable projection hashes, which cover every row, disagree.
+    """
+
+    mapping = {case.case_id: case for case in cases}
+    if len(mapping) != len(cases):
+        raise _refuse()
+    return mapping
+
+
 def _require_same_controlled_state(first: RagEvaluationRun, second: RagEvaluationRun) -> None:
     for field in _CONTROLLED_RUN_FIELDS:
         if getattr(first, field) != getattr(second, field):
@@ -178,8 +193,8 @@ def compare_actual_retrieval_runs(
     if knowledge_index_refs is not None and dict(knowledge_index_refs[0]) != dict(knowledge_index_refs[1]):
         raise _refuse()
 
-    first_cases = {case.case_id: case for case in first.cases}
-    second_cases = {case.case_id: case for case in second.cases}
+    first_cases = _cases_by_unique_id(first.cases)
+    second_cases = _cases_by_unique_id(second.cases)
     if not first_cases or first_cases.keys() != second_cases.keys():
         raise _refuse()
 
