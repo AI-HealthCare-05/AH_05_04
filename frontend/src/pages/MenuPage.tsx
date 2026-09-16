@@ -4,6 +4,7 @@ import { logout } from '../api/auth'
 import notificationIcon from '../assets/icon-bell-notification.svg'
 import { MobileShell } from '../design-system/components'
 import { clearAuthenticatedSession } from '../features/auth/authSession'
+import { beginWebPushLogoutCleanup } from '../features/push/webPush'
 import '../design-system/prototype.css'
 import './MvpPages.css'
 import './MenuPage.css'
@@ -53,6 +54,7 @@ function MenuPage() {
   const handleLogout = () => {
     if (isLoggingOut) return
     setIsLoggingOut(true)
+    beginWebPushLogoutCleanup()
     logout().catch(() => undefined)
     clearAuthenticatedSession()
     navigate('/start', { replace: true })
@@ -101,7 +103,7 @@ function MenuPage() {
           <section className="mvp-menu__section" aria-labelledby="menu-settings-title">
             <h3 id="menu-settings-title">설정</h3>
             <div className="mvp-menu__card">
-              <MenuRow icon="bell" label="알림 설정" disabled />
+              <MenuRow icon="bell" label="알림 설정" onClick={() => navigate('/settings/notifications')} />
             </div>
           </section>
 

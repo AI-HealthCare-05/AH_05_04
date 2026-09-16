@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.medication_schedules import MedicationOccurrence, MedicationOccurrenceStatus, MedicationSchedule
 from app.models.notifications import NotificationKind, NotificationRecord, NotificationStatus
 from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
+from app.models.profiles import Profile
+from app.models.users import User
 from app.repositories.medication_schedule_repository import as_utc_instant
 from app.repositories.profile_ownership import owned_by_self
 
@@ -118,30 +120,38 @@ class NotificationRepository:
             )
         ).all()
 
-    async def publication_targets(self, *, now: datetime, limit: int) -> Sequence[MedicationOccurrence]:
+    async def publication_targets(self, *, now: datetime, limit: int) -> Sequence[tuple[MedicationOccurrence, User]]:
         # Lock the occurrence first, matching Check-in and prescription invalidation.
-        return (
-            await self.session.scalars(
-                select(MedicationOccurrence)
-                .where(
-                    exists(
-                        select(NotificationRecord.id).where(
-                            NotificationRecord.occurrence_id == MedicationOccurrence.id,
-                            NotificationRecord.status == NotificationStatus.PENDING,
-                            or_(
-                                NotificationRecord.scheduled_at <= now,
-                                MedicationOccurrence.status != MedicationOccurrenceStatus.PENDING,
-                                MedicationOccurrence.confirmation_deadline_at <= now,
-                            ),
-                        )
+        rows = await self.session.execute(
+            select(MedicationOccurrence, User)
+            .join(MedicationSchedule, MedicationSchedule.id == MedicationOccurrence.medication_schedule_id)
+            .join(
+                PrescriptionVersionMedication,
+                PrescriptionVersionMedication.id == MedicationSchedule.prescription_version_medication_id,
+            )
+            .join(PrescriptionVersion, PrescriptionVersion.id == PrescriptionVersionMedication.prescription_version_id)
+            .join(Prescription, Prescription.id == PrescriptionVersion.prescription_id)
+            .join(Profile, Profile.id == Prescription.profile_id)
+            .join(User, User.id == Profile.user_id)
+            .where(
+                exists(
+                    select(NotificationRecord.id).where(
+                        NotificationRecord.occurrence_id == MedicationOccurrence.id,
+                        NotificationRecord.status == NotificationStatus.PENDING,
+                        or_(
+                            NotificationRecord.scheduled_at <= now,
+                            MedicationOccurrence.status != MedicationOccurrenceStatus.PENDING,
+                            MedicationOccurrence.confirmation_deadline_at <= now,
+                        ),
                     )
                 )
-                .order_by(MedicationOccurrence.id)
-                .limit(limit)
-                .with_for_update(skip_locked=True)
-                .execution_options(populate_existing=True)
             )
-        ).all()
+            .order_by(MedicationOccurrence.id)
+            .limit(limit)
+            .with_for_update(of=MedicationOccurrence, skip_locked=True)
+            .execution_options(populate_existing=True)
+        )
+        return [(occurrence, user) for occurrence, user in rows.all()]
 
     async def pending_for_update(self, *, occurrence_id: UUID) -> Sequence[NotificationRecord]:
         return (

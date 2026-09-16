@@ -98,7 +98,7 @@ async def provision_roles(
         | set(SOURCE_TABLES)
         | set(RUNTIME_AUTH_UPDATE_COLUMNS)
         | RUNTIME_LIFESTYLE_TABLES
-        | {"notification_record"}
+        | {"notification_record", "user_consent"}
     )
     if not required.issubset(present):
         raise ValueError("Required application tables are missing; apply migrations before provisioning")
@@ -114,6 +114,9 @@ async def provision_roles(
     await connection.execute(text(f"GRANT SELECT, INSERT, UPDATE ON TABLE public.notification_record TO {runtime_sql}"))
     # #556: reset keeps the current row and replaces days with [], so Runtime never deletes lifestyle data directly.
     await connection.execute(text(f"GRANT SELECT, INSERT, UPDATE ON TABLE public.lifestyle_times TO {runtime_sql}"))
+    # #207/#621: set_status() only upserts the per-purpose current row (ON CONFLICT DO UPDATE),
+    # never deletes it, so Runtime needs SELECT/INSERT/UPDATE and nothing more.
+    await connection.execute(text(f"GRANT SELECT, INSERT, UPDATE ON TABLE public.user_consent TO {runtime_sql}"))
     for table, columns in RUNTIME_AUTH_UPDATE_COLUMNS.items():
         target = f"public.{quoted_identifier(table)}"
         names = ", ".join(quoted_identifier(column) for column in columns)

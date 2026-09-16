@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
   createNotificationOccurrenceHandoff,
@@ -89,6 +89,8 @@ function getHandoffFailureMessage(error: unknown): string {
 
 function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const pushNotificationId = searchParams.get('push_notification_id')
   const [notifications, setNotifications] = useState<NotificationData[] | null>(null)
   const [nextOffset, setNextOffset] = useState<number | null>(null)
   const [loadError, setLoadError] = useState<LoadFailure | null>(null)
@@ -100,6 +102,8 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
   const isMountedRef = useRef(true)
   const nextHandoffTokenRef = useRef(0)
   const handoffRequestRef = useRef<HandoffRequest | null>(null)
+  const handledPushNotificationRef = useRef<string | null>(null)
+  const [pushHandoffMessage, setPushHandoffMessage] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoadError(null)
@@ -132,7 +136,7 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
     }
   }, [])
 
-  const startHandoffRequest = (): HandoffRequest => {
+  const startHandoffRequest = useCallback((): HandoffRequest => {
     handoffRequestRef.current?.controller.abort()
     const request = {
       token: nextHandoffTokenRef.current + 1,
@@ -141,14 +145,14 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
     nextHandoffTokenRef.current = request.token
     handoffRequestRef.current = request
     return request
-  }
+  }, [])
 
-  const isHandoffRequestActive = (request: HandoffRequest): boolean =>
+  const isHandoffRequestActive = useCallback((request: HandoffRequest): boolean =>
     isMountedRef.current &&
     handoffRequestRef.current?.token === request.token &&
-    !request.controller.signal.aborted
+    !request.controller.signal.aborted, [])
 
-  const prepareHandoff = async (
+  const prepareHandoff = useCallback(async (
     notification: NotificationData,
     request: HandoffRequest,
   ) => {
@@ -170,11 +174,69 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
         requiresLogin: isAuthenticationError(error),
       })
     }
-  }
+  }, [isHandoffRequestActive, navigate, onHandoffReady])
+
+  useEffect(() => {
+    if (!pushNotificationId || notifications === null || loadError !== null) return
+    if (handledPushNotificationRef.current === pushNotificationId) return
+    handledPushNotificationRef.current = pushNotificationId
+
+    let notification = notifications.find((item) => item.id === pushNotificationId)
+    setSearchParams({}, { replace: true })
+    setPushHandoffMessage('알림의 최신 복약 기록을 확인하고 있어요.')
+    const request = startHandoffRequest()
+    setSelectingId(pushNotificationId)
+    void (async () => {
+      let offset = nextOffset
+      let pages = 0
+      while (!notification && offset !== null && pages < 10) {
+        const response = await listNotifications({ offset, signal: request.controller.signal })
+        if (!isHandoffRequestActive(request)) return
+        const items = response.data.items
+        setNotifications((current) => {
+          const existing = current ?? []
+          const ids = new Set(existing.map((item) => item.id))
+          return [...existing, ...items.filter((item) => !ids.has(item.id))]
+        })
+        notification = items.find((item) => item.id === pushNotificationId)
+        offset = response.data.next_offset
+        setNextOffset(offset)
+        pages += 1
+      }
+
+      if (!notification) {
+        setPushHandoffMessage('이 알림의 최신 기록을 찾을 수 없어 알림 목록을 표시해요.')
+        return
+      }
+      await prepareHandoff(notification, request)
+    })().catch((error: unknown) => {
+      if (!isHandoffRequestActive(request)) return
+      setLoadError({
+        message: getFailureMessage(error),
+        requiresLogin: isAuthenticationError(error),
+      })
+    }).finally(() => {
+      if (isHandoffRequestActive(request)) setSelectingId(null)
+    })
+  }, [
+    isHandoffRequestActive,
+    loadError,
+    notifications,
+    nextOffset,
+    prepareHandoff,
+    pushNotificationId,
+    setSearchParams,
+    startHandoffRequest,
+  ])
 
   const handleLoginRecovery = () => {
+    const notificationId = pushNotificationId ?? handledPushNotificationRef.current
     clearAuthenticatedSession()
-    navigate('/login')
+    navigate('/login', {
+      state: notificationId
+        ? { returnTo: `/notifications?push_notification_id=${encodeURIComponent(notificationId)}` }
+        : null,
+    })
   }
 
   const loadMore = async () => {
@@ -274,6 +336,12 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
             <h2>알림</h2>
             <p>복약 알림을 선택해 원래 복약 기록을 확인할 수 있어요.</p>
           </div>
+
+          {pushHandoffMessage && (
+            <p className="mvp-notifications__push-status" role="status" aria-live="polite">
+              {pushHandoffMessage}
+            </p>
+          )}
 
           {notifications === null && loadError === null && (
             <section className="mvp-notifications__state" role="status" aria-live="polite">

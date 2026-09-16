@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID
 
 from app.core.errors import ApiError
@@ -16,6 +16,8 @@ from app.dtos.notifications import (
 )
 from app.models.medication_schedules import MedicationOccurrenceStatus
 from app.models.notifications import NotificationKind, NotificationRecord, NotificationStatus
+from app.models.user_consents import ConsentPurpose
+from app.models.users import User
 from app.repositories.medication_checkin_repository import MedicationCheckinRepository
 from app.repositories.medication_schedule_repository import MedicationScheduleRepository, as_utc_instant
 from app.repositories.notification_repository import NotificationRepository
@@ -23,6 +25,10 @@ from app.services.idempotency import SyncMutationIdempotencyService, SyncMutatio
 
 NOTIFICATION_READ_OPERATION_ID = "notification.read"
 REMINDER_CREATE_OPERATION_ID = "medication-reminder.create"
+
+
+class NotificationConsentGate(Protocol):
+    async def require_for_intake(self, *, user: User, purpose: ConsentPurpose) -> None: ...
 
 
 def _now() -> datetime:
@@ -165,8 +171,9 @@ class NotificationBatchResult:
 
 
 class NotificationScheduler:
-    def __init__(self, repository: NotificationRepository) -> None:
+    def __init__(self, repository: NotificationRepository, consent_gate: NotificationConsentGate | None = None) -> None:
         self._repository = repository
+        self._consent_gate = consent_gate
 
     async def generate_once(self, *, now: datetime, limit: int = 500) -> NotificationBatchResult:
         if limit < 1:
@@ -189,7 +196,7 @@ class NotificationScheduler:
             raise ValueError("limit must be positive")
         now = as_utc_instant(now, field="now")
         delivered = cancelled = 0
-        for occurrence in await self._repository.publication_targets(now=now, limit=limit):
+        for occurrence, user in await self._repository.publication_targets(now=now, limit=limit):
             for record in await self._repository.pending_for_update(occurrence_id=occurrence.id):
                 if (
                     occurrence.status != MedicationOccurrenceStatus.PENDING
@@ -198,10 +205,19 @@ class NotificationScheduler:
                     record.status = NotificationStatus.CANCELLED
                     record.cancelled_at = now
                     cancelled += 1
-                elif record.scheduled_at <= now:
+                elif record.scheduled_at <= now and await self._can_deliver(user):
                     record.status = NotificationStatus.DELIVERED
                     record.attempt = 1
                     record.delivered_at = now
                     delivered += 1
         await self._repository.session.flush()
         return NotificationBatchResult(0, delivered, cancelled)
+
+    async def _can_deliver(self, user: User) -> bool:
+        if self._consent_gate is None:
+            return True
+        try:
+            await self._consent_gate.require_for_intake(user=user, purpose=ConsentPurpose.NOTIFICATION)
+        except ApiError:
+            return False
+        return True

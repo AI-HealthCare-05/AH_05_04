@@ -150,6 +150,7 @@ describe('인증 상태별 AppRouter 이동', () => {
     '/schedule/unconfirmed',
     '/schedule/occurrences/11111111-1111-4111-8111-111111111111?date=2026-09-14',
     '/notifications',
+    '/settings/notifications',
     '/report',
     '/report/clinic',
   ])('비로그인 사용자가 회원 전용 화면 %s에 직접 접속하면 로그인 화면으로 이동한다', (path) => {

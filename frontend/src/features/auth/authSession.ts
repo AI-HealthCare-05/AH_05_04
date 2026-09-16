@@ -1,5 +1,6 @@
 import { ApiError } from '../../api/client'
 import { clearOcrJobRecovery } from '../ai-jobs/ocrJobRecovery'
+import { clearBrowserPushBinding } from '../push/webPush'
 
 const AUTH_ERROR_CODES = new Set([
   'UNAUTHORIZED',
@@ -26,6 +27,7 @@ export function isStaleTokenError(error: unknown) {
 
 export function clearAuthenticatedSession() {
   localStorage.removeItem('access_token')
+  clearBrowserPushBinding()
   clearOcrJobRecovery()
   clearChatSessionRecovery()
 }
