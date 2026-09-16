@@ -36,7 +36,7 @@ _PHASE_B4_BLOCKERS = (
     "WAITING_FOR_HOLDOUT_FREEZE",
 )
 _DECISION_DOCS_PREFIX = "docs/"
-_ACTUAL_EXPERIMENT_LOG_HREF = "experiments/2026-09-16-dev-actual-retrieval-ret-l-d-h.md"
+_ACTUAL_EXPERIMENT_INDEX_HREF = "experiments/README.md"
 _VALIDATION_CHECK_CATALOG = {
     "PHASE_A_DEV_FIXTURE": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
@@ -52,7 +52,7 @@ _VALIDATION_CHECK_CATALOG = {
     "PHASE_A_REPORT_PROJECTION": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
         "ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q",
-        "55 passed",
+        "57 passed",
     ),
     "PHASE_A_SCHEMA_EXPORT": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
@@ -375,11 +375,11 @@ def render_report(raw_status: bytes) -> bytes:
             "",
             (
                 "Actual DEV Retrieval experiment evidence: "
-                f"[DEV Actual Retrieval RET-L/D/H experiment]({_ACTUAL_EXPERIMENT_LOG_HREF})"
+                f"[#273 Actual Retrieval experiment logs]({_ACTUAL_EXPERIMENT_INDEX_HREF})"
             ),
             (
                 "Later re-runs are preserved as additional dated logs under "
-                "`docs/validation/rag/issue-273/experiments/` and do not overwrite this one."
+                "`docs/validation/rag/issue-273/experiments/` and do not overwrite historical experiments."
             ),
         ]
         if is_b4

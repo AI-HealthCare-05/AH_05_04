@@ -52,8 +52,8 @@ Actual DEV retrieval evaluation was executed and verified.
 DEV Metric values are DIAGNOSTIC_ONLY observations in the experiment log; no baseline Metric is approved and no Metric fields are recorded in the machine status.
 DEV cannot produce a Release PASS; Production remains closed.
 
-Actual DEV Retrieval experiment evidence: [DEV Actual Retrieval RET-L/D/H experiment](experiments/2026-09-16-dev-actual-retrieval-ret-l-d-h.md)
-Later re-runs are preserved as additional dated logs under `docs/validation/rag/issue-273/experiments/` and do not overwrite this one.
+Actual DEV Retrieval experiment evidence: [#273 Actual Retrieval experiment logs](experiments/README.md)
+Later re-runs are preserved as additional dated logs under `docs/validation/rag/issue-273/experiments/` and do not overwrite historical experiments.
 
 ## Blocking Codes
 
@@ -67,7 +67,7 @@ Later re-runs are preserved as additional dated logs under `docs/validation/rag/
 | --- | --- | ---: | --- |
 | `PHASE_A_DEV_FIXTURE` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py -q` | `0` | 26 passed |
 | `PHASE_A_LOADER` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_authoring_identity_loader.py ai_worker/tests/evaluation/test_loaders.py -q` | `0` | 132 passed |
-| `PHASE_A_REPORT_PROJECTION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q` | `0` | 55 passed |
+| `PHASE_A_REPORT_PROJECTION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q` | `0` | 57 passed |
 | `PHASE_A_SCHEMA_EXPORT` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_schema_exports.py ai_worker/tests/evaluation/test_external_schema_parity.py ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q` | `0` | 158 passed |
 | `PHASE_B3_PROTECTED_RUNNER_FOUNDATION` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_protected_runner_foundation.py ai_worker/tests/evaluation/test_protected_retrieval.py -q` | `0` | 85 passed |
 | `PHASE_B_DATASET_APPROVAL_PROVENANCE` | `UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_dev_fixture.py::test_issue_273_graph_records_the_actual_dataset_custodian_approval_event -q` | `0` | 1 passed |
@@ -85,4 +85,4 @@ Later re-runs are preserved as additional dated logs under `docs/validation/rag/
 - HOLDOUT authoring may start only after an independent Dataset Custodian authorization event is recorded.
 - The #158 replay uses a different Dataset and is `NOT_COMPARABLE_DIFFERENT_DATASET`.
 
-Status updated at `2026-09-16T15:00:00.000000Z`. Canonical status SHA-256: `693b2ef93fecf5292a0a93910f242865fccece857b95cbd6204957e978c08c9f`.
+Status updated at `2026-09-16T15:00:00.000000Z`. Canonical status SHA-256: `29c3a5d603dc6fccf727dd971130a70d18eca50572cf4dae05e4c9e779113b62`.

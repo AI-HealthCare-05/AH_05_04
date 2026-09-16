@@ -152,9 +152,8 @@ Release `PASS`를 만들 수 없고 Production 공개 근거가 아니다. HOLDO
 승인·protected runner·HOLDOUT Freeze는 후속 차단 조건으로 남아 있다. 증상 기반 OTC 후보·
 상호작용 평가는 별도 Issue #278 범위이며 #273을 차단하지 않는다. 현재 기계 상태와 결정적 Markdown
 projection은 `docs/validation/rag/issue-273/`에 있다. 상세 수치·hash·재현성 증빙은 여기에 중복하지 않고
-`docs/validation/rag/issue-273/experiments/`의 날짜별 experiment log가 담당하며, 이번 실행은
-`experiments/2026-09-16-dev-actual-retrieval-ret-l-d-h.md`이다. 후속 재실험은 기존 파일을 덮어쓰지 않고
-같은 디렉터리에 새 날짜 파일로 추가한다.
+날짜별 experiment log가 담당하며, 목록은 `docs/validation/rag/issue-273/experiments/README.md`에서 본다.
+후속 재실험은 기존 로그를 덮어쓰지 않고 같은 디렉터리에 새 날짜 파일로 추가한 뒤 그 index에 한 줄을 더한다.
 
 ### Evaluation Schema Sets
 
