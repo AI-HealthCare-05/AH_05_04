@@ -361,7 +361,9 @@ describe('SignupPage', () => {
     expect(screen.queryByText('unsafe-server-message')).toBeNull()
     expect(screen.getByLabelText('이메일').getAttribute('aria-invalid')).toBe('false')
     expect(screen.getByLabelText('이메일 인증 코드')).toHaveProperty('value', '')
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: '인증 요청' }))
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: '인증 요청' }))
+    })
     fireEvent.click(screen.getByRole('button', { name: '가입 완료' }))
     expect(signup).toHaveBeenCalledTimes(1)
 
