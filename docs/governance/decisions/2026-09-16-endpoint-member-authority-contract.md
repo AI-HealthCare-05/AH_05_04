@@ -64,12 +64,13 @@
 ### 4. 기존 비강제 마커의 해소
 - `guide_evidence_handoff.py`의 `BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT` 비강제 문자열 상수를 제거하고, 공유 모듈 참조와 typed 검증 위임으로 교체한다.
 - `guide-evidence-handoff-v1.md` 및 `2026-09-15-guide-evidence-handoff.md`의 충돌 항목에 해소 경위를 명시한다.
-- 단, 상위 PR #636 소유의 `BLOCKED_BY_178_CANONICAL_HASH_CONTRACT`는 한 글자도 변경하지 않고 온전히 보존한다.
+- 선행 PR #636(`fix/178-retrieval-selection-manifest-jcs`)이 `develop`에 병합되어 canonical JCS 해시 계약 정렬 및 `BLOCKED_BY_178_CANONICAL_HASH_CONTRACT` 해소가 완료되었으며, 본 결정에서는 endpoint/member 권위 계약 단일화를 통해 `BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT`를 해소한다.
 
 ## 남아 있는 차단 사항 (Runtime 연결 불가 근거)
 
-본 결정으로 계약 수준의 단일화는 완료되었으나, 아래 세 가지 선행 사유로 인해 #180 런타임 연결은 여전히 차단 상태로 유지된다:
+본 결정으로 계약 수준의 단일화는 완료되었으나, 아래 네 가지 선행 사유로 인해 #180 런타임 연결은 여전히 차단 상태로 유지된다:
 
-1. **`PD-315-20260908`**: `Review pending` (nullable operation_code 승인 대기)
-2. **`BLOCKED_BY_178_CANONICAL_HASH_CONTRACT`**: PR #636 (`fix/178-retrieval-selection-manifest-jcs`) 미머지 상태
-3. **`#174 REQUEST Guard`**: Authenticated Assembler 미구현 (결정 진위 및 PASS 판정 검증 선행 필요)
+1. **`PD-315-20260908`**: `Review pending` (nullable operation_code 승인 및 `docs/contracts/current/` 승격 대기)
+2. **`#174 REQUEST Guard`**: Authenticated Assembler 미구현 (결정 진위, 실제 `PASS` 판정, Decision ownership 검증 선행 필요; 순수 구조/identity 검증만으로 authenticated runtime authority가 성립하지 않음)
+3. **`#180 런타임 오케스트레이션 및 파이프라인 연결`**: LangGraph runtime pipeline, Outbox/Job/Worker integration, DB persistence port 연결 및 E2E 평가 미완료 (계약 정렬은 완료되었으나 runtime integration 책임은 #180에 여전히 유효하게 잔존함)
+4. **프로덕션 공개 게이트 (Production Release Gate)**: 외부 의료·약학·Source·Privacy·Safety 승인 및 `PUBLIC_TRACK_F=false` 유지 조건 별도 충족 필요
