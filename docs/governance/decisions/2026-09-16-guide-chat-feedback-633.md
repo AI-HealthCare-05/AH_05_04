@@ -1,6 +1,6 @@
 # PD-633 — Guide·Chat 피드백 수집과 합성 평가셋 연결
 
-- 상태: **Proposed / 구현·검증 중**. 작업 대화에서 아래 운영안을 채택했다. 책임 리뷰·병합·실사용 공개 승인은 별도다.
+- 상태: **구현 반영 / 최종 책임 리뷰 승인·병합 대기**. 작업 대화에서 아래 운영안을 채택했다. 책임 리뷰·병합·실사용 공개 승인은 별도다.
 - 근거: [Issue #633](https://github.com/AI-HealthCare-05/AH_05_04/issues/633),
   [선행 #581](https://github.com/AI-HealthCare-05/AH_05_04/issues/581).
 - 구현: 송은영 (`@phina-io`) — DB·API·Security, 권가빈 (`@hazelnutflavoured`) — UX·Privacy·Gold·평가.
@@ -48,7 +48,7 @@ Guide는 `profile_id`, ChatMessage는 `session.profile_id`로 SELF 소유권을 
 5. 사람이 실패 유형만 추출해 새 합성 대화를 작성한다. 저장소에는 실제 식별자와 자유 의견을 반입하지 않는다.
 6. 새 버전 평가셋·비교 설정과 review evidence를 함께 만들어 기존 불변 평가셋을 보존한다.
 
-세부 후보는 [피드백 계약 v1](../../contracts/proposed/guide-chat-feedback-v1.md),
+세부 구현 계약은 [피드백 계약 v1](../../contracts/proposed/guide-chat-feedback-v1.md),
 검토·평가 연결은 [운영 절차 초안](../../operations/guide-chat-feedback-633.md)을 따른다.
 
 ## 구현 전 확인할 결정
@@ -90,3 +90,10 @@ Guide는 `profile_id`, ChatMessage는 `session.profile_id`로 SELF 소유권을 
 기존 runtime role에는 두 피드백 테이블의 SELECT·INSERT·UPDATE·DELETE만 허용한다.
 Source writer에는 접근을 허용하지 않고 runtime TRUNCATE·DDL 권한은 추가하지 않는다.
 실제 role provisioning 통합 검사로 이를 확인하며 Production 개방을 의미하지 않는다.
+
+## 책임 리뷰 반영
+
+[정현우 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/638#pullrequestreview-5218797819)에 따라
+Service 직접 commit을 제거하고 요청 성공 시 get_db_session에서만 최종 commit한다.
+부모 잠금은 최종 commit까지 유지하고 응답 조립 실패도 저장·삭제 전체를 rollback한다.
+공통 오류 정본에 FEEDBACK_TARGET_NOT_READY를 등록한다. 최종 승인·병합·실사용 공개는 별도다.

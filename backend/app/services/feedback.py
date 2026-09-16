@@ -53,7 +53,6 @@ class FeedbackService:
                 row.rating, row.comment, row.updated_at = request.rating, request.comment, now
             await session.flush()
             data = FeedbackData.model_validate(row)
-        await session.commit()
         return data, created
 
     async def remove(self, *, user_id: UUID, target_id: UUID, session_id: UUID | None = None) -> None:
@@ -64,4 +63,3 @@ class FeedbackService:
             if row is not None:
                 await session.delete(row)
                 await session.flush()
-        await session.commit()

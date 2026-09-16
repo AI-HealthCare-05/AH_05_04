@@ -1,9 +1,9 @@
 # Guide·Chat 피드백 v1 — #633
 
-상태: **Proposed / 구현·검증 중**. [PD-633](../../governance/decisions/2026-09-16-guide-chat-feedback-633.md)의
+상태: **Proposed / Local 구현 반영·최종 책임 리뷰 승인 대기**. [PD-633](../../governance/decisions/2026-09-16-guide-chat-feedback-633.md)의
 로컬 구현 계약이며 책임 리뷰·병합 전이다. 책임 리뷰어는 정현우이며 영향 영역은 Backend·Frontend·Privacy·AI 평가다.
 
-## HTTP 후보
+## HTTP 계약
 
 | 메서드·경로 (`/api/v1` 기준) | 대상 |
 |---|---|
@@ -11,10 +11,10 @@
 | `POST /chat-sessions/{session_id}/messages/{message_id}/feedback` | 본인 SELF 세션에 속한 `ASSISTANT`·`COMPLETED` 메시지 |
 
 요청은 `rating: "POSITIVE" | "NEGATIVE"` 필수, `comment: string | null` 선택이다.
-`comment`는 trim 후 빈 문자열을 null로 정규화하고 정규화 후 1,000자까지 허용하는 방안을 제안한다.
+`comment`는 trim 후 빈 문자열을 null로 정규화하고 정규화 후 1,000자까지 허용한다.
 추가 필드·숫자 rating·잘못된 UUID·길이 초과·NUL·잘못된 Unicode는 공통 422다. 식별자·작성자·시각·검토 결과는 요청받지 않는다.
 
-응답 후보는 첫 저장 201, 기존 대상 재제출 200이며 공통 envelope를 따른다.
+응답은 첫 저장 201, 기존 대상 재제출 200이며 공통 envelope를 따른다.
 
 ```json
 {
@@ -29,17 +29,17 @@
 
 같은 정규화 값의 재전송은 id·두 시각을 보존한다. 값 변경은 기존 id·created_at을 보존하고
 updated_at을 갱신한다. comment와 원본 응답은 응답에 복제하지 않는다.
-읽기 endpoint·기존 Guide/Chat DTO 확장은 이번 후보에 포함하지 않는다. 따라서 새로고침 뒤 기존 선택
+읽기 endpoint·기존 Guide/Chat DTO 확장은 이번 범위에 포함하지 않는다. 따라서 새로고침 뒤 기존 선택
 표시를 복원하지 않는 최소 UI다. 남한솔의 전달 의견에서 이번 범위에 GET을 추가하지 않기로 확인했다.
 
 인증 실패는 공통 401이다. 타인·없는 대상·session/message 불일치는 동일 404다.
-소유권을 확인한 대상이 미완료이거나 USER 메시지이면 409 `FEEDBACK_TARGET_NOT_READY`를 제안한다.
+소유권을 확인한 대상이 미완료이거나 USER 메시지이면 409 `FEEDBACK_TARGET_NOT_READY`를 반환한다.
 오류는 공통 `code/message/details/trace_id`를 따르며 원본·의견을 포함하지 않는다.
 모든 성공·오류 응답은 기존 `/api/v1` no-store 정책을 따른다.
 
-## 저장·트랜잭션 후보
+## 저장·트랜잭션
 
-`guide_feedback`, `chat_message_feedback` 두 테이블을 제안한다.
+`guide_feedback`, `chat_message_feedback` 두 테이블을 사용한다.
 각각 `id` UUID PK, 대상 FK(`guide_id` / `chat_message_id`) NOT NULL UNIQUE,
 `rating` VARCHAR(8) NOT NULL + CHECK, `comment` VARCHAR(1000) NULL,
 `created_at`, `updated_at` timezone-aware NOT NULL을 가진다.
@@ -49,11 +49,12 @@ updated_at을 갱신한다. comment와 원본 응답은 응답에 복제하지 �
 Router → Service → Repository의 단일 transaction에서 소유권과 대상 완료 상태를 확인하고,
 부모 대상 row를 잠근 뒤 기존 feedback 조회·동일 값 재현·삽입 또는 갱신을 수행한다.
 대상별 unique constraint와 부모 잠금으로 중복 클릭·동시 최초 요청을 직렬화한다.
-실패는 전체 rollback한다. DB trigger·RLS·업무 DB 함수는 추가하지 않는다.
+Service는 flush까지만 수행하며 최종 commit은 요청 성공 시 `get_db_session`이 수행한다.
+부모 row 잠금은 이 최종 commit까지 유지한다. Service 반환 후 응답 조립 실패도 전체 rollback한다. DB trigger·RLS·업무 DB 함수는 추가하지 않는다.
 
-대상 삭제 시 피드백도 함께 삭제하는 FK CASCADE 후보를 제안한다. 계정 삭제 경로가 실제로 부모를
+대상 삭제 시 피드백도 함께 삭제하는 FK CASCADE를 적용한다. 계정 삭제 경로가 실제로 부모를
 삭제하는지 구현 시 검증해야 하며 cascade 정의만으로 계정 삭제 이행을 주장하지 않는다.
-고유 대상 FK index와 부정 검토용 `(rating, updated_at, id)` index만 둔다.
+고유 대상 FK index, 만료 삭제용 created_at index와 부정 검토용 `(rating, updated_at, id)` index를 둔다.
 보존은 최초 created_at부터 최대 30일이다. 수정 시 연장하지 않고 만료 시 삭제한다.
 만료 row에 POST하면 기존 row를 제거하고 새 id·created_at으로 201을 반환한다.
 검토 목적 달성·사용자 요청 시 조기 삭제하며 연결 기록도 정리한다.

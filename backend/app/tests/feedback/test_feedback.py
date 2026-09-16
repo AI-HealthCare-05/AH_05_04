@@ -9,8 +9,8 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from sqlalchemy import delete, func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import delete, func, select, text
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
@@ -231,13 +231,22 @@ async def test_duplicate_first_requests_on_independent_connections(chat):
         await seed_session.commit()
 
     async def submit():
-        async with AsyncSession(test_engine, expire_on_commit=False) as connection:
-            return await FeedbackService(FeedbackRepository(connection)).submit(
+        async with AsyncSession(test_engine, expire_on_commit=False) as connection, connection.begin():
+            result = await FeedbackService(FeedbackRepository(connection)).submit(
                 user_id=user.id,
                 target_id=message.id if chat else guide.id,
                 session_id=session.id if chat else None,
                 request=FeedbackRequest(rating="NEGATIVE"),
             )
+            if result[1]:
+                # Service has returned; its parent lock must survive until this outer commit.
+                model, target_id = (ChatMessage, message.id) if chat else (Guide, guide.id)
+                async with AsyncSession(test_engine) as probe:
+                    await probe.execute(text("SET LOCAL lock_timeout = '100ms'"))
+                    with pytest.raises(DBAPIError) as error:
+                        await probe.execute(select(model.id).where(model.id == target_id).with_for_update())
+                    assert error.value.orig.sqlstate == "55P03"
+            return result
 
     try:
         results = await asyncio.gather(submit(), submit(), return_exceptions=True)
@@ -351,3 +360,40 @@ async def test_synthetic_negative_feedback_links_to_versioned_review_case(db_ses
     rejected = evaluate_replay_dataset(regression)
     assert not rejected.cases[-1].history.passed
     assert not rejected.cases[-1].quality_dimensions["redundant_clarification"].passed
+
+
+@pytest.mark.parametrize("chat", [False, True])
+@pytest.mark.parametrize("method", ["POST", "DELETE"])
+async def test_response_failure_rolls_back_request(db_session, targets, monkeypatch, chat, method):
+    from app.apis.v1 import feedback_routers
+    from app.core.db import databases
+
+    url = path(targets, chat)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        if method == "DELETE":
+            assert (await client.post(url, json={"rating": "NEGATIVE"})).status_code == 201
+    model = ChatMessageFeedback if chat else GuideFeedback
+    target_id = targets[3].id if chat else targets[1].id
+    target_column = model.chat_message_id if chat else model.guide_id
+    # Exercise the real request dependency's commit/rollback, inside the test's outer transaction.
+    original_override = fastapi_app.dependency_overrides.pop(databases.get_db_session)
+    monkeypatch.setattr(
+        databases,
+        "AsyncSessionFactory",
+        lambda: AsyncSession(bind=db_session.bind, expire_on_commit=False, join_transaction_mode="create_savepoint"),
+    )
+
+    def fail_response(*args, **kwargs):
+        raise RuntimeError("synthetic response assembly failure")
+
+    monkeypatch.setattr(feedback_routers, "JSONResponse" if method == "POST" else "Response", fail_response)
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+        ) as client:
+            response = await client.request(method, url, json={"rating": "NEGATIVE"} if method == "POST" else None)
+        assert response.status_code == 500
+        count = await db_session.scalar(select(func.count()).select_from(model).where(target_column == target_id))
+        assert count == (1 if method == "DELETE" else 0)
+    finally:
+        fastapi_app.dependency_overrides[databases.get_db_session] = original_override

@@ -91,3 +91,14 @@ PYTHONPATH=backend:. uv run --env-file envs/.local.env python -m app.evaluation.
 - 실제 사용자 수집 시 고지·처리 근거·감사 접근 수단·일일 삭제 스케줄·백업 파기 확인.
 
 따라서 현재 PR만으로 #633 전체 완료 조건을 체크하거나 이슈를 자동 종료하지 않는다.
+
+## PR 책임 리뷰 반영 검증
+
+Service 직접 commit을 제거하고 get_db_session의 요청 transaction으로 통일했다.
+Guide·Chat 각각 POST·DELETE 응답 조립에 합성 실패를 주입해 실제 get_db_session이
+저장을 rollback하고 삭제한 row를 복구하는 4개 검사를 추가했다.
+동시 최초 제출은 두 독립 transaction에서 호출자가 commit하도록 변경했다.
+Service 반환 후 세 번째 connection의 부모 row 잠금이 55P03으로 거절되는 것을 확인해
+부모 잠금이 outer commit까지 유지됨을 검증한다. 생성 1회·재제출 1회도 유지한다.
+피드백 20개와 복약 일정 31개를 같은 프로세스에서 실행해 **51 passed**.
+이 검증은 책임 리뷰어의 최종 승인이나 실사용 공개 증거가 아니다.
