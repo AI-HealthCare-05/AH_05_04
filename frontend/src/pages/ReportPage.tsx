@@ -248,11 +248,9 @@ function ReportPage() {
         <main className="app-scroll mvp-page__content mvp-report" aria-busy={report === null && failure === null}>
           <div className="report-intro">
             <div>
-              <h2 className="mvp-page__title">{clinic ? '최근 복약 기록 요약' : '나의 복약 기록'}</h2>
+              <h2 className="mvp-page__title">{clinic ? '최근 복약 기록 요약' : '복약 리포트'}</h2>
+              <p>{clinic ? '진료 시 확인할 객관적인 기록을 모았어요.' : '최근 복약 기록을 기간별로 확인해요.'}</p>
             </div>
-            <button type="button" className="report-view-link" onClick={() => navigate(targetView)}>
-              {clinic ? '기본 보기' : '진료 시 보여주기'}
-            </button>
           </div>
 
           <fieldset className="report-period">
@@ -270,6 +268,16 @@ function ReportPage() {
               ))}
             </div>
           </fieldset>
+
+          <button
+            type="button"
+            className="report-view-link"
+            aria-label={clinic ? '기본 보기' : '진료 시 보여주기'}
+            onClick={() => navigate(targetView)}
+          >
+            <span>{clinic ? '기본 리포트로 돌아가기' : '진료 시 보여주기'}</span>
+            <small>{clinic ? '기간별 복약 리포트를 확인해요.' : '최근 기록을 의료진에게 간편하게 보여줘요.'}</small>
+          </button>
 
           {report === null && failure === null && (
             <StatusPanel variant="loading" title="복약 리포트를 불러오는 중이에요" description="서버의 집계 결과를 확인하고 있어요." />

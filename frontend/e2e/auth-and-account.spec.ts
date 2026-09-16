@@ -15,7 +15,10 @@ test('#562 필수 약관 보기와 복귀는 mutation 없이 선택 0개 가입�
   await expect(page.getByRole('button', { name: '가입 완료' })).toBeDisabled()
   await page.getByRole('button', { name: '약관 보기' }).click()
   await expect(page.getByRole('heading', { name: '필수 약관 보기' })).toBeFocused()
-  await expect(page.getByText('검토용 문안 · 최종 법무/Privacy 승인 전')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '2. 이용약관' })).toBeVisible()
+  await expect(page.getByText('시행일자: 2026년 09월 15일')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '제10조 (약관의 개정)' })).toBeVisible()
+  await expect(page.getByText('개인정보 수집·이용 안내 · 검토용')).toHaveCount(0)
   await page.screenshot({ path: 'test-results/requirements/signup-562-legal.png', fullPage: true })
   await page.getByRole('button', { name: '확인', exact: true }).click()
   await expect(page.getByRole('button', { name: '약관 보기' })).toBeFocused()
@@ -23,6 +26,10 @@ test('#562 필수 약관 보기와 복귀는 mutation 없이 선택 0개 가입�
   await page.goBack()
   await expect(page.getByRole('button', { name: '약관 보기' })).toBeFocused()
   await page.getByRole('button', { name: '약관 보기' }).click()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('button', { name: '약관 보기' })).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('heading', { name: '필수 약관 보기' })).toBeFocused()
   await page.getByRole('button', { name: '확인', exact: true }).scrollIntoViewIfNeeded()
   await page.screenshot({ path: 'test-results/requirements/signup-562-legal-footer.png', fullPage: true })
   await page.getByRole('button', { name: '이전 화면' }).click()
@@ -48,8 +55,7 @@ test('[REQ-USR-007] 유효한 정보로 가입한 사용자는 로그인 화면�
   await page.getByLabel('이름').fill('합성 사용자')
   await page.getByLabel('이메일', { exact: true }).fill('synthetic@example.com')
   await page.getByLabel('비밀번호').fill('Synthetic1!')
-  await page.getByRole('checkbox', { name: /처방전 인식/ }).check()
-  await page.getByRole('checkbox', { name: /복약 안내/ }).check()
+  await page.getByRole('checkbox', { name: /기능 이용 선택 동의/ }).check()
   await expect(page.getByLabel('이메일 인증 코드')).toHaveCount(0)
   await page.getByRole('checkbox', { name: '필수 약관에 동의합니다' }).check()
   await page.getByRole('button', { name: '가입 완료' }).click()
@@ -60,7 +66,12 @@ test('[REQ-USR-007] 유효한 정보로 가입한 사용자는 로그인 화면�
     name: '합성 사용자',
     email: 'synthetic@example.com',
     password: 'Synthetic1!',
-    consents: [{ purpose: 'OCR' }, { purpose: 'GUIDE' }],
+    consents: [
+      { purpose: 'OCR' },
+      { purpose: 'GUIDE' },
+      { purpose: 'CHAT' },
+      { purpose: 'NOTIFICATION' },
+    ],
   }])
   expect(api.unexpectedRequests).toEqual([])
 })
