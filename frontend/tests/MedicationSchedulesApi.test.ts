@@ -69,6 +69,13 @@ describe('Schedule and occurrence GET adapters', () => {
       schedule_id: null,
       revision: null,
       setup_reason: 'MISSING_START_DATE',
+      schedule: null,
+    })
+    expect(response.data.schedule_items[0]?.schedule).toMatchObject({
+      start_local_date: '2026-09-11',
+      end_mode: 'OPEN_ENDED',
+      end_local_date: null,
+      local_times: ['23:00'],
     })
     expect(response.data.occurrences[0]).toMatchObject({
       prescription_version_medication_id:

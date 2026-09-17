@@ -1,5 +1,6 @@
 import { ApiError, apiRequest } from './client'
 import type { MedicationCheckinResponse } from './medicationCheckins'
+import type { MedicationScheduleData } from './medicationSchedules'
 import type { NotificationOccurrenceHandoff } from './notifications'
 
 // Contract sources:
@@ -26,6 +27,7 @@ export type MedicationScheduleItem = {
   schedule_id: string | null
   revision: number | null
   setup_reason: MedicationScheduleSetupReason | null
+  schedule: MedicationScheduleData | null
 }
 
 export type MedicationOccurrenceData = {

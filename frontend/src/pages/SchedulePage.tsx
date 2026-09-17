@@ -317,7 +317,18 @@ type ScheduleSaveState = {
   kind?: 'VALIDATION' | 'MUTATION'
 }
 
-function initialScheduleDraft(medication: Medication): ScheduleDraft {
+function initialScheduleDraft(
+  medication: Medication,
+  item: MedicationScheduleItem,
+): ScheduleDraft {
+  if (item.schedule_item_status === 'READY' && item.schedule?.status === 'ACTIVE') {
+    return {
+      startDate: item.schedule.start_local_date,
+      endMode: item.schedule.end_mode,
+      endDate: item.schedule.end_local_date ?? '',
+      times: [...item.schedule.local_times],
+    }
+  }
   const frequency =
     Number.isInteger(medication.frequency_per_day) &&
     (medication.frequency_per_day ?? 0) > 0
@@ -386,7 +397,7 @@ function ScheduleEditor({
   const [drafts, setDrafts] = useState<Record<string, ScheduleDraft>>(() =>
     Object.fromEntries(orderedItems.map((item) => {
       const id = item.prescription_version_medication_id
-      return [id, initialScheduleDraft(medications[id])]
+      return [id, initialScheduleDraft(medications[id], item)]
     })),
   )
   const [saveStates, setSaveStates] = useState<Record<string, ScheduleSaveState>>({})
@@ -402,7 +413,7 @@ function ScheduleEditor({
       const next: Record<string, ScheduleDraft> = {}
       for (const item of orderedItems) {
         const id = item.prescription_version_medication_id
-        next[id] = current[id] ?? initialScheduleDraft(medications[id])
+        next[id] = current[id] ?? initialScheduleDraft(medications[id], item)
       }
       return next
     })
