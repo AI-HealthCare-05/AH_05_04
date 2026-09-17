@@ -362,7 +362,12 @@ async def test_synthetic_negative_feedback_links_to_versioned_review_case(db_ses
     )
     assert negative is not None
     # Only this test's synthetic fixture is linked; operational feedback is never exported.
-    assert provenance["review_status"] == "PENDING"
+    assert provenance["review_status"] == "PENDING_RESPONSIBLE_REVIEW"
+    assert provenance["responsible_reviewer"] == "ceohwj"
+    assert provenance["reviewer"] is None
+    assert provenance["prompt_comparison_status"] == "NOT_RUN"
+    assert provenance["deterministic_replay"]["case_count"] == 31
+    assert provenance["deterministic_replay"]["safety_violation_count"] == 0
     assert provenance["provider_invocation"] is False
     report = evaluate_replay_dataset(dataset)
     case = next(case for case in report.cases if case.case_id == provenance["case_id"])
