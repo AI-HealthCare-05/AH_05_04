@@ -8,6 +8,7 @@ fail-closed verification without unearned approvals or runtime bundle DB mutatio
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -17,6 +18,7 @@ from typing import Literal
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
 from ai_worker.tasks.rag.guideline_card import (
     ApprovedGuidelineFallback,
+    GuidelineApprovalVerificationFailure,
     GuidelineApprovalVerificationSuccess,
     GuidelineApprovalVerifierPort,
     GuidelineFallbackCode,
@@ -73,6 +75,16 @@ def _validate_artifact_ref(ref: ImmutableArtifactRef, field_name: str) -> None:
         raise ValueError(f"{field_name}.content_sha256 must be a 64-char lowercase hex sha256: {ref.content_sha256}")
 
 
+def _is_valid_artifact_ref(ref: object) -> bool:
+    try:
+        if not isinstance(ref, ImmutableArtifactRef):
+            return False
+        _validate_artifact_ref(ref, "ref")
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
 @dataclass(frozen=True, slots=True)
 class Rag15FallbackPin:
     code: GuidelineFallbackCode
@@ -81,6 +93,7 @@ class Rag15FallbackPin:
 
 @dataclass(frozen=True, slots=True)
 class Rag15ApprovalEvidence:
+    artifact_ref: ImmutableArtifactRef
     scope: str
     approval_status: Rag15ApprovalStatus
     candidate_ref: ImmutableArtifactRef
@@ -105,6 +118,85 @@ class Rag15ApprovalPackVerification:
     approval_evidence_verified: bool
     production_consumable: bool
     issues: tuple[str, ...]
+
+
+def compute_rag15_approval_evidence_ref(
+    *,
+    scope: str,
+    approval_status: Rag15ApprovalStatus,
+    candidate_ref: ImmutableArtifactRef,
+    decision_ref: ImmutableArtifactRef | None,
+) -> ImmutableArtifactRef:
+    """Computes deterministic approval evidence identity bound to candidate, scope, status, and decision."""
+    if not isinstance(scope, str) or not scope.strip():
+        raise ValueError("scope must be a non-empty string")
+    if approval_status not in _VALID_APPROVAL_STATUSES:
+        raise ValueError(f"Invalid approval_status: {approval_status}")
+    _validate_artifact_ref(candidate_ref, "candidate_ref")
+    if decision_ref is not None:
+        _validate_artifact_ref(decision_ref, "decision_ref")
+
+    payload = {
+        "approval_status": approval_status,
+        "candidate_ref": _artifact_payload(candidate_ref),
+        "decision_ref": _artifact_payload(decision_ref) if decision_ref is not None else None,
+        "scope": scope,
+    }
+    content_sha256 = _canonical_sha256(payload)
+    return ImmutableArtifactRef("rag15-approval-evidence", "rag15-guideline-v1", content_sha256)
+
+
+def create_rag15_approval_evidence(
+    *,
+    scope: str,
+    approval_status: Rag15ApprovalStatus,
+    candidate_ref: ImmutableArtifactRef,
+    decision_ref: ImmutableArtifactRef | None,
+) -> Rag15ApprovalEvidence:
+    """Creates a canonical Rag15ApprovalEvidence with self-verifying artifact identity."""
+    if scope not in RAG15_REQUIRED_APPROVAL_SCOPES:
+        raise ValueError(f"scope must be one of {RAG15_REQUIRED_APPROVAL_SCOPES}, got '{scope}'")
+    if approval_status not in _VALID_APPROVAL_STATUSES:
+        raise ValueError(f"Invalid approval_status: {approval_status}")
+    _validate_artifact_ref(candidate_ref, "candidate_ref")
+
+    if approval_status in ("APPROVED", "REJECTED"):
+        if decision_ref is None:
+            raise ValueError(f"decision_ref is required for {approval_status} evidence in scope '{scope}'")
+        _validate_artifact_ref(decision_ref, f"decision_ref for {scope}")
+    elif decision_ref is not None:
+        _validate_artifact_ref(decision_ref, f"decision_ref for {scope}")
+
+    artifact_ref = compute_rag15_approval_evidence_ref(
+        scope=scope,
+        approval_status=approval_status,
+        candidate_ref=candidate_ref,
+        decision_ref=decision_ref,
+    )
+    return Rag15ApprovalEvidence(
+        artifact_ref=artifact_ref,
+        scope=scope,
+        approval_status=approval_status,
+        candidate_ref=candidate_ref,
+        decision_ref=decision_ref,
+    )
+
+
+def create_pending_approval_evidence(
+    *,
+    candidate_ref: ImmutableArtifactRef,
+) -> tuple[Rag15ApprovalEvidence, ...]:
+    """Builds initial PENDING approval evidence bound to the exact candidate_ref."""
+    _validate_artifact_ref(candidate_ref, "candidate_ref")
+    return tuple(
+        create_rag15_approval_evidence(
+            scope=scope,
+            approval_status="PENDING",
+            candidate_ref=candidate_ref,
+            decision_ref=None,
+        )
+        for scope in RAG15_REQUIRED_APPROVAL_SCOPES
+    )
 
 
 def _extract_and_validate_fallback_pins(
@@ -142,12 +234,27 @@ def _validate_evidence_item(ev: Rag15ApprovalEvidence, candidate_ref: ImmutableA
         raise ValueError(
             f"Approval evidence candidate_ref mismatch: evidence bound to {ev.candidate_ref}, candidate_ref is {candidate_ref}"
         )
+    if ev.scope not in RAG15_REQUIRED_APPROVAL_SCOPES:
+        raise ValueError(f"Unexpected evidence scope: {ev.scope}")
+
     if ev.approval_status in ("APPROVED", "REJECTED"):
         if ev.decision_ref is None:
             raise ValueError(f"decision_ref is required for {ev.approval_status} evidence in scope {ev.scope}")
         _validate_artifact_ref(ev.decision_ref, f"decision_ref for {ev.scope}")
-    elif ev.approval_status == "PENDING" and ev.decision_ref is not None:
+    elif ev.decision_ref is not None:
         _validate_artifact_ref(ev.decision_ref, f"decision_ref for {ev.scope}")
+
+    _validate_artifact_ref(ev.artifact_ref, f"artifact_ref for {ev.scope}")
+    expected_ref = compute_rag15_approval_evidence_ref(
+        scope=ev.scope,
+        approval_status=ev.approval_status,
+        candidate_ref=ev.candidate_ref,
+        decision_ref=ev.decision_ref,
+    )
+    if ev.artifact_ref != expected_ref:
+        raise ValueError(
+            f"Approval evidence artifact_ref mismatch for scope {ev.scope}: expected {expected_ref}, got {ev.artifact_ref}"
+        )
 
 
 def _validate_and_sort_approval_evidence(
@@ -215,6 +322,7 @@ def compute_rag15_pack_ref(
         "approval_evidence": [
             {
                 "approval_status": ev.approval_status,
+                "artifact_ref": _artifact_payload(ev.artifact_ref),
                 "candidate_ref": _artifact_payload(ev.candidate_ref),
                 "decision_ref": _artifact_payload(ev.decision_ref) if ev.decision_ref is not None else None,
                 "scope": ev.scope,
@@ -225,23 +333,6 @@ def compute_rag15_pack_ref(
     }
     content_sha256 = _canonical_sha256(payload)
     return ImmutableArtifactRef("rag15-approval-pack", "rag15-guideline-v1", content_sha256)
-
-
-def create_pending_approval_evidence(
-    *,
-    candidate_ref: ImmutableArtifactRef,
-) -> tuple[Rag15ApprovalEvidence, ...]:
-    """Builds initial PENDING approval evidence bound to the exact candidate_ref."""
-    _validate_artifact_ref(candidate_ref, "candidate_ref")
-    return tuple(
-        Rag15ApprovalEvidence(
-            scope=scope,
-            approval_status="PENDING",
-            candidate_ref=candidate_ref,
-            decision_ref=None,
-        )
-        for scope in RAG15_REQUIRED_APPROVAL_SCOPES
-    )
 
 
 def build_rag15_approval_pack(
@@ -383,6 +474,47 @@ def _verify_fallback_pins(pins: tuple[Rag15FallbackPin, ...] | object, issues: l
     return valid
 
 
+def _verify_evidence_decision_ref(ev: Rag15ApprovalEvidence, issues: list[str]) -> bool:
+    if ev.approval_status in ("APPROVED", "REJECTED"):
+        if ev.decision_ref is None:
+            issues.append(f"decision_ref required for {ev.approval_status} evidence in scope {ev.scope}")
+            return False
+        try:
+            _validate_artifact_ref(ev.decision_ref, f"decision_ref for {ev.scope}")
+            return True
+        except (ValueError, TypeError) as e:
+            issues.append(f"Decision ref invalid for scope {ev.scope}: {e}")
+            return False
+    if ev.decision_ref is not None:
+        try:
+            _validate_artifact_ref(ev.decision_ref, f"decision_ref for {ev.scope}")
+            return True
+        except (ValueError, TypeError) as e:
+            issues.append(f"Decision ref invalid for scope {ev.scope}: {e}")
+            return False
+    return True
+
+
+def _verify_evidence_artifact_ref(ev: Rag15ApprovalEvidence, issues: list[str]) -> bool:
+    try:
+        _validate_artifact_ref(ev.artifact_ref, f"artifact_ref for {ev.scope}")
+        expected_ref = compute_rag15_approval_evidence_ref(
+            scope=ev.scope,
+            approval_status=ev.approval_status,
+            candidate_ref=ev.candidate_ref,
+            decision_ref=ev.decision_ref,
+        )
+        if ev.artifact_ref != expected_ref:
+            issues.append(
+                f"Approval evidence artifact_ref mismatch for scope {ev.scope}: expected {expected_ref}, got {ev.artifact_ref}"
+            )
+            return False
+        return True
+    except (ValueError, TypeError) as e:
+        issues.append(f"Evidence artifact ref invalid for scope {ev.scope}: {e}")
+        return False
+
+
 def _verify_evidence_element(
     ev: Rag15ApprovalEvidence,
     candidate_ref: ImmutableArtifactRef,
@@ -403,22 +535,15 @@ def _verify_evidence_element(
         )
         valid = False
 
-    if ev.approval_status in ("APPROVED", "REJECTED"):
-        if ev.decision_ref is None:
-            issues.append(f"decision_ref required for {ev.approval_status} evidence in scope {ev.scope}")
-            valid = False
-        else:
-            try:
-                _validate_artifact_ref(ev.decision_ref, f"decision_ref for {ev.scope}")
-            except (ValueError, TypeError) as e:
-                issues.append(f"Decision ref invalid for scope {ev.scope}: {e}")
-                valid = False
-    elif ev.approval_status == "PENDING" and ev.decision_ref is not None:
-        try:
-            _validate_artifact_ref(ev.decision_ref, f"decision_ref for {ev.scope}")
-        except (ValueError, TypeError) as e:
-            issues.append(f"Decision ref invalid for scope {ev.scope}: {e}")
-            valid = False
+    if ev.scope not in RAG15_REQUIRED_APPROVAL_SCOPES:
+        issues.append(f"Unexpected evidence scope: {ev.scope}")
+        valid = False
+
+    if not _verify_evidence_decision_ref(ev, issues):
+        valid = False
+
+    if not _verify_evidence_artifact_ref(ev, issues):
+        valid = False
 
     return valid
 
@@ -498,6 +623,38 @@ def _evaluate_aggregate_status(evidence: tuple[Rag15ApprovalEvidence, ...]) -> R
     return "APPROVED"
 
 
+def _verify_single_evidence(
+    ev: Rag15ApprovalEvidence,
+    verifier: GuidelineApprovalVerifierPort,
+    issues: list[str],
+) -> bool:
+    if not _is_valid_artifact_ref(ev.artifact_ref):
+        issues.append(f"Invalid artifact_ref in evidence for scope {ev.scope}")
+        return False
+
+    try:
+        verifier_input = copy.deepcopy(ev.artifact_ref)
+        expected_input = copy.deepcopy(verifier_input)
+        response = copy.deepcopy(verifier.verify(verifier_input))
+        if verifier_input != expected_input:
+            issues.append(f"Verifier mutated input artifact_ref for scope {ev.scope}")
+            return False
+        if type(response) is GuidelineApprovalVerificationFailure:
+            issues.append(f"Authority verifier returned failure for scope {ev.scope}")
+            return False
+        if (
+            type(response) is not GuidelineApprovalVerificationSuccess
+            or response.artifact_ref != ev.artifact_ref
+            or not _is_valid_artifact_ref(response.verifier_artifact_ref)
+        ):
+            issues.append(f"Authority verifier returned invalid success response for scope {ev.scope}")
+            return False
+        return True
+    except Exception as e:
+        issues.append(f"Authority verifier raised exception for scope {ev.scope}: {e}")
+        return False
+
+
 def _verify_external_evidence(
     evidence: tuple[Rag15ApprovalEvidence, ...],
     verifier: GuidelineApprovalVerifierPort,
@@ -505,18 +662,8 @@ def _verify_external_evidence(
 ) -> bool:
     all_passed = True
     for ev in evidence:
-        if ev.decision_ref is None:
+        if not _verify_single_evidence(ev, verifier, issues):
             all_passed = False
-            issues.append(f"Missing decision_ref for APPROVED scope {ev.scope}")
-            continue
-        try:
-            ver_res = verifier.verify(ev.decision_ref)
-            if not isinstance(ver_res, GuidelineApprovalVerificationSuccess):
-                all_passed = False
-                issues.append(f"Authority verifier failed for decision_ref {ev.decision_ref} in scope {ev.scope}")
-        except Exception as e:
-            all_passed = False
-            issues.append(f"Authority verifier raised exception for scope {ev.scope}: {e}")
     return all_passed
 
 
