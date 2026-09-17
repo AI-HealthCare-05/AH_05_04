@@ -91,6 +91,10 @@ SMTP·외부 AI를 호출하지 않으며 기존 개발/test DB를 사용하지 
 [회원가입 인증 gate 검증](testing/signup-gate-431.md)을 참고합니다.
 이 경로는 별도 opt-in 검증이며 기본 CI에 추가하지 않습니다.
 
+## 부하테스트 프레임워크 (#627)
+
+#627의 1단계는 API별 완성 시나리오가 아니라 부하테스트 실행 구조와 운영 절차를 준비하는 범위입니다. Locust 기반 엔트리포인트, 기본 smoke 경로, 결과 요약 형식과 후속 API 시나리오 추가 순서는 [부하테스트 프레임워크](testing/load-testing-627.md)를 따릅니다. 현재 문서는 Production 수용량 증빙이나 `p95 <= 3s` 달성을 의미하지 않으며, 로그인·OCR·Guide·Chat 등 실제 API별 시나리오는 API 계약 안정화 후 후속 PR에서 추가합니다.
+
 ## 현재 자동 검증 범위
 
 GitHub Actions와 `scripts/ci/run_test.sh`는 다음 경계로 PostgreSQL migration과 기본 Python 테스트를 검증합니다.
@@ -662,3 +666,13 @@ runtime vs `knowledge_index_builder` role 권한 분리, Index 어댑터 binding
 테이블 목록을 맞추더라도 Index는 `knowledge_chunk_id` 순, materialization은 section 순으로 member를 순회하므로
 실제 row 획득 순서가 같아지지 않는다. 공유 ordering key 또는 상위 serialization 방식은 Task 3 착수 전 책임
 리뷰어가 확정하며, 이 lane의 cross-flow 테스트는 확정된 전략을 검증하는 단계다.
+
+## #670 명시적 시간 후보 검증
+
+`tests/contract/test_schedule_recommendations.py`는 합성 문구의 계산·보수적 거부·OpenAPI·non-local gate를,
+`backend/app/tests/medication_schedules/test_medication_schedule_api.py`는 PostgreSQL 기반
+계산 무저장·소유권·처방 변경·기존 일정 보존·멱등 저장을 검증한다.
+Frontend ScheduleRecommendation/SchedulePage/MedicationSchedulesApi 테스트는 명시적 적용·입력 수정·
+늦은 응답 무효화·저장 실패 재시도·직접 입력 전환을 확인한다.
+[검증 기록](validation/track-b/issue-670-recommendation.md)을 참고한다. Provider 호출·RAG 변경은 없으며
+이 검증은 약학적 적절성이나 Production 승인을 대신하지 않는다.

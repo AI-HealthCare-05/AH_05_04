@@ -891,3 +891,11 @@ ENV=local 외에는 POST/DELETE 모두 404이며 실제 사용자 수집·Produc
 `503 SAFETY_DEMO_UNAVAILABLE`를 반환한다. 이미 성공한 멱등 요청은 최초 snapshot을 재현한다.
 자세한 버전·입력 매핑은 [Proposed 계약](contracts/proposed/track-c-safety-barrier-api-193.md)을 따른다.
 공개 승인·환자용 문구 승인·Frontend 증상 UI 연결을 의미하지 않는다.
+
+## #670 명시적 처방 시간 후보 — Local 구현 검토안
+
+POST `/api/v1/prescription-version-medications/{id}/schedule-recommendation`은 확정 처방 문구와
+입력 식사 종료 시각으로 후보만 계산한다. 기존 일정 PUT의 선택 `recommendation_context`가 있으면
+서버가 저장 시 재계산한다. `409 SCHEDULE_RECOMMENDATION_CONFLICT` 및 전체 DTO는
+[Proposed 계약](contracts/proposed/track-b-explicit-schedule-recommendation-v1.md)을 따른다.
+Backend non-local은 404, Frontend는 DEV 전용이며 공개 승인을 뜻하지 않는다.

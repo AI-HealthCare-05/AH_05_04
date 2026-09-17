@@ -36,7 +36,9 @@
 
 consumer acceptance는 세 제품 모두 결과 대기다. 담당자는 인계 자료를 전달했다고 확인했으며, 현우님 요청에 따라 리피토·다이크로짇 자료는 묶어서 전달했다. 이 PR의 승인을 consumer acceptance 완료로 간주하지 않는다.
 
-2그룹 일반약 5개의 실제 DB 적재는 아직 시작하지 않았다. 이번 계획은 PR 검토와 1그룹 consumer acceptance 완료 확인 후 2그룹 실제 적재를 진행하는 것이다. 공통 consumer 결함이 발견되면 확대를 중단한다.
+아래는 1그룹 기록 당시의 진행 계획이며, 이후 [2그룹 적재 기록](group2-ingestion-record.md#남은-단계와-진행-경계)에서 적재 결과와 consumer 확인 시점 변경을 갱신했다.
+
+기록 당시 2그룹 일반약 5개의 실제 DB 적재는 아직 시작하지 않았다. 이번 계획은 PR 검토와 1그룹 consumer acceptance 완료 확인 후 2그룹 실제 적재를 진행하는 것이다. 공통 consumer 결함이 발견되면 확대를 중단한다.
 
 CURRENT 선정, 내부 RAG, Document/Chunk materialization, embedding/Index, Runtime/Citation 및 서비스 공개 승인은 이번 기록에 포함하지 않는다. 노바스크의 별도 승인·실행 범위를 이 세 제품에 자동 적용하지 않는다. #591 전체 완료 또는 이슈 종료를 요청하지 않는다.
 
