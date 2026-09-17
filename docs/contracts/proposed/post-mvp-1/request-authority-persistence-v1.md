@@ -111,13 +111,46 @@ Source 수명주기(cleanup·retention)와 authority 증거의 보존 기간을 
 Trigger, RLS Policy, Stored Procedure, 사용자 정의 DB 함수를 추가하지 않는다. 불변성은 typed
 schema · NOT NULL · UNIQUE · FK · CHECK와 Python append-only writer로만 구성한다.
 
+### 2.6 Downgrade 데이터 보호
+
+세 표는 append-only historical 증거이므로 migration `downgrade()`는 무조건 drop하지 않는다.
+`LOCK TABLE ... IN ACCESS EXCLUSIVE MODE`로 세 표를 먼저 잠근 뒤 행 존재를 확인하고, 하나라도
+비어 있지 않으면 `RuntimeError`로 거부한다. 검사와 drop 사이에 write race가 생기지 않는다.
+`retrieval_run`(#596)·`user_consent`(#465)의 기존 관례와 같은 패턴이다.
+
+```text
+비어 있음      → upgrade → downgrade → upgrade 정상
+데이터 존재    → downgrade 거부 (fail closed, 표·행 보존)
+```
+
 ---
 
 ## 3. Immutable Artifact Identity
 
-`ai_worker/tasks/rag/request_authority_artifact.py`가 identity를 확정한다. 새 hash domain을
-정의하지 않고 기존 RFC 8785 JCS canonical helper(`ai_worker.tasks.evaluation.canonical`)와
-`ImmutableArtifactRef`를 재사용한다.
+### 3.0 공유 경계
+
+계약 정본은 `rag_runtime/request_authority.py`다. Backend Repository와 AI Worker가 같은 의미를
+소비하므로 wire contract(`RequestAuthorityArtifactRef`, `RequestAuthorityDecisionStage`,
+`RequestAuthorityDecisionOutcome`, `RequestAuthorityMemberKind`,
+`RequestAuthorityMemberIdentity`)와 canonical identity 계산을 두 이미지에 함께 복사되는 공유 순수
+package가 소유한다. 이로써 `PD-175-20260910`이 고정한 `backend` → `ai_worker` import 경계를
+우회하지 않는다. Backend production 코드는 `ai_worker.*`를 직접 import하지 않으며
+`ALLOWED_AI_WORKER_MODULES`도 변경하지 않는다.
+
+`ai_worker/tasks/rag/request_authority_artifact.py`는 기존 kernel 타입
+(`ImmutableArtifactRef`, `ObservedDecisionOutcome`, `RequestDecisionStage`,
+`SourceMemberIdentity`)과 공유 계약 사이의 얇은 lossless projection만 담당하며 별도 hash 구현을
+두지 않는다. 따라서 #713 identity 계산의 정본은 하나다.
+
+공유 모듈은 stdlib만 사용하고 DB I/O·network·clock·session이 없다. canonicalization은
+`rag_runtime.identification_preflight`와 같은 방식(`json.dumps(sort_keys=True,
+ensure_ascii=False, separators=(",", ":"))` + SHA-256)이며, projection key가 모두 ASCII이므로
+저장소의 RFC 8785 JCS helper와 동일한 바이트열을 만든다. 이 동등성과 기존 digest 값은 golden
+테스트로 고정한다.
+
+### 3.1 규칙
+
+새 hash domain을 정의하지 않는다.
 
 ```text
 artifact_code  = 종류별 고정 상수
@@ -134,7 +167,7 @@ content_sha256 = sha256(canonical_json(semantic projection))
 caller는 artifact identity를 고르지 않는다. writer가 authority 사실로부터 계산하고 그 값을
 반환한다.
 
-### 3.1 Canonical projection
+### 3.2 Canonical projection
 
 DB primary key, `created_at`, transaction timestamp, 임의 UUID, 행 삽입 순서는 digest에
 포함하지 않는다. 동일한 semantic authority 입력은 항상 동일한 digest를 만든다.
@@ -285,6 +318,8 @@ authority persistence는 ID·code·hash·outcome 수준의 provenance만 저장�
 ## 8. 검증
 
 ```text
-ai_worker/tests/rag/test_request_authority_artifact.py          canonical identity 32건
-backend/app/tests/rag/test_rag_request_authority_repository.py  persistence·binding·conflict·DB integration 34건
+ai_worker/tests/rag/test_request_authority_artifact.py          canonical identity·golden digest·공유 경계 projection 37건
+backend/app/tests/rag/test_rag_request_authority_repository.py  persistence·binding·conflict·DB integration 35건
+tests/migration/test_request_authority_persistence_migration.py migration 제약·downgrade 데이터 보호 7건
+tests/contract/test_backend_ai_worker_import_boundary.py        PD-175 경계 3건
 ```

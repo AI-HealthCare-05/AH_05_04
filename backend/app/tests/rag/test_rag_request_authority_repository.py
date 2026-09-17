@@ -9,15 +9,6 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
-from ai_worker.tasks.rag.guide_evidence_handoff import ObservedDecisionOutcome, RequestDecisionStage
-from ai_worker.tasks.rag.request_authority_artifact import (
-    REQUEST_AUTHORITY_ARTIFACT_VERSION,
-    REQUEST_GUARD_AUTHORITY_ARTIFACT_CODE,
-    compute_request_guard_authority_ref,
-    compute_request_source_decision_authority_ref,
-)
-from ai_worker.tasks.rag.source_member_identity import SourceMemberIdentity, SourceMemberKind
 from app.models.rag_request_authority import (
     RagRequestGuardAuthority,
     RagRequestMemberDecision,
@@ -33,14 +24,25 @@ from app.repositories.rag_request_authority_repository import (
     RequestMemberDecisionRecord,
     RequestSourceDecisionRecord,
 )
+from rag_runtime.request_authority import (
+    REQUEST_AUTHORITY_ARTIFACT_VERSION,
+    REQUEST_GUARD_AUTHORITY_ARTIFACT_CODE,
+    RequestAuthorityArtifactRef,
+    RequestAuthorityDecisionOutcome,
+    RequestAuthorityDecisionStage,
+    RequestAuthorityMemberIdentity,
+    RequestAuthorityMemberKind,
+    compute_request_guard_authority_ref,
+    compute_request_source_decision_authority_ref,
+)
 
 OPERATION = "GUIDE_SYNC_ANSWER"
-ENDPOINT_IDENTITY = SourceMemberIdentity(
-    member_kind=SourceMemberKind.ENDPOINT_OPERATION,
+ENDPOINT_IDENTITY = RequestAuthorityMemberIdentity(
+    member_kind=RequestAuthorityMemberKind.ENDPOINT_OPERATION,
     endpoint_code="MFDS_DUR",
 )
-ARTIFACT_IDENTITY = SourceMemberIdentity(
-    member_kind=SourceMemberKind.ARTIFACT_MEMBER,
+ARTIFACT_IDENTITY = RequestAuthorityMemberIdentity(
+    member_kind=RequestAuthorityMemberKind.ARTIFACT_MEMBER,
     artifact_code="mfds_label_bundle",
     artifact_version="2026.09",
 )
@@ -62,34 +64,34 @@ def _guard_record(user_id: UUID) -> RequestGuardAuthorityRecord:
     return RequestGuardAuthorityRecord(
         user_id=user_id,
         request_operation_code=OPERATION,
-        decision_stage=RequestDecisionStage.REQUEST,
+        decision_stage=RequestAuthorityDecisionStage.REQUEST,
     )
 
 
-def _source_record(user_id: UUID, guard_ref: ImmutableArtifactRef, **overrides) -> RequestSourceDecisionRecord:
+def _source_record(user_id: UUID, guard_ref: RequestAuthorityArtifactRef, **overrides) -> RequestSourceDecisionRecord:
     base = RequestSourceDecisionRecord(
         request_guard_ref=guard_ref,
         user_id=user_id,
         request_operation_code=OPERATION,
-        decision_stage=RequestDecisionStage.REQUEST,
+        decision_stage=RequestAuthorityDecisionStage.REQUEST,
         source_snapshot_id=uuid4(),
         source_code="MFDS",
         source_version="2026.09.01",
-        actual_decision_outcome=ObservedDecisionOutcome.PASS,
+        actual_decision_outcome=RequestAuthorityDecisionOutcome.PASS,
     )
     return replace(base, **overrides) if overrides else base
 
 
-def _member_record(user_id: UUID, guard_ref: ImmutableArtifactRef, **overrides) -> RequestMemberDecisionRecord:
+def _member_record(user_id: UUID, guard_ref: RequestAuthorityArtifactRef, **overrides) -> RequestMemberDecisionRecord:
     base = RequestMemberDecisionRecord(
         request_guard_ref=guard_ref,
         user_id=user_id,
         request_operation_code=OPERATION,
-        decision_stage=RequestDecisionStage.REQUEST,
+        decision_stage=RequestAuthorityDecisionStage.REQUEST,
         source_snapshot_id=uuid4(),
         source_snapshot_member_id=uuid4(),
         member_identity=ENDPOINT_IDENTITY,
-        actual_decision_outcome=ObservedDecisionOutcome.PASS,
+        actual_decision_outcome=RequestAuthorityDecisionOutcome.PASS,
     )
     return replace(base, **overrides) if overrides else base
 
@@ -97,7 +99,7 @@ def _member_record(user_id: UUID, guard_ref: ImmutableArtifactRef, **overrides) 
 async def _persisted_guard(
     repository: RagRequestAuthorityRepository,
     user_id: UUID,
-) -> tuple[RequestGuardAuthorityRecord, ImmutableArtifactRef]:
+) -> tuple[RequestGuardAuthorityRecord, RequestAuthorityArtifactRef]:
     record = _guard_record(user_id)
     ref = await repository.record_request_guard_authority(record)
     return record, ref
@@ -117,7 +119,7 @@ async def test_guard_write_then_exact_read(db_session: AsyncSession) -> None:
     assert ref == compute_request_guard_authority_ref(
         user_id=user.id,
         request_operation_code=OPERATION,
-        decision_stage=RequestDecisionStage.REQUEST,
+        decision_stage=RequestAuthorityDecisionStage.REQUEST,
     )
     assert await repository.get_request_guard_authority_by_artifact_ref(ref) == record
 
@@ -127,7 +129,7 @@ async def test_guard_read_returns_none_for_wrong_artifact_code(db_session: Async
     user = await _seed_user(db_session)
     _, ref = await _persisted_guard(repository, user.id)
 
-    wrong = ImmutableArtifactRef(
+    wrong = RequestAuthorityArtifactRef(
         artifact_code="request_source_decision_authority",
         version=ref.version,
         content_sha256=ref.content_sha256,
@@ -140,7 +142,7 @@ async def test_guard_read_returns_none_for_wrong_version(db_session: AsyncSessio
     user = await _seed_user(db_session)
     _, ref = await _persisted_guard(repository, user.id)
 
-    wrong = ImmutableArtifactRef(
+    wrong = RequestAuthorityArtifactRef(
         artifact_code=ref.artifact_code,
         version="9.9",
         content_sha256=ref.content_sha256,
@@ -153,7 +155,7 @@ async def test_guard_read_returns_none_for_wrong_content_sha256(db_session: Asyn
     user = await _seed_user(db_session)
     _, ref = await _persisted_guard(repository, user.id)
 
-    wrong = ImmutableArtifactRef(
+    wrong = RequestAuthorityArtifactRef(
         artifact_code=ref.artifact_code,
         version=ref.version,
         content_sha256="f" * 64,
@@ -170,7 +172,7 @@ async def test_guard_read_has_no_latest_fallback(db_session: AsyncSession) -> No
     await _persisted_guard(repository, second.id)
     await db_session.flush()
 
-    unknown = ImmutableArtifactRef(
+    unknown = RequestAuthorityArtifactRef(
         artifact_code=first_ref.artifact_code,
         version=first_ref.version,
         content_sha256="a" * 64,
@@ -206,7 +208,7 @@ async def test_guard_write_rejects_blank_operation_code(db_session: AsyncSession
             RequestGuardAuthorityRecord(
                 user_id=user.id,
                 request_operation_code="  ",
-                decision_stage=RequestDecisionStage.REQUEST,
+                decision_stage=RequestAuthorityDecisionStage.REQUEST,
             )
         )
 
@@ -228,11 +230,11 @@ async def test_source_decision_write_then_exact_read(db_session: AsyncSession) -
         request_guard_ref=guard_ref,
         user_id=user.id,
         request_operation_code=OPERATION,
-        decision_stage=RequestDecisionStage.REQUEST,
+        decision_stage=RequestAuthorityDecisionStage.REQUEST,
         source_snapshot_id=record.source_snapshot_id,
         source_code=record.source_code,
         source_version=record.source_version,
-        actual_decision_outcome=ObservedDecisionOutcome.PASS,
+        actual_decision_outcome=RequestAuthorityDecisionOutcome.PASS,
     )
     assert await repository.get_request_source_decision_by_artifact_ref(ref) == record
 
@@ -242,12 +244,12 @@ async def test_source_decision_persists_fail_outcome_exactly(db_session: AsyncSe
     user = await _seed_user(db_session)
     _, guard_ref = await _persisted_guard(repository, user.id)
 
-    record = _source_record(user.id, guard_ref, actual_decision_outcome=ObservedDecisionOutcome.FAIL)
+    record = _source_record(user.id, guard_ref, actual_decision_outcome=RequestAuthorityDecisionOutcome.FAIL)
     ref = await repository.record_request_source_decision(record)
 
     read_back = await repository.get_request_source_decision_by_artifact_ref(ref)
     assert read_back is not None
-    assert read_back.actual_decision_outcome is ObservedDecisionOutcome.FAIL
+    assert read_back.actual_decision_outcome is RequestAuthorityDecisionOutcome.FAIL
 
 
 async def test_source_decision_rejects_unknown_outcome(db_session: AsyncSession) -> None:
@@ -276,7 +278,7 @@ async def test_source_decision_rejects_missing_guard(db_session: AsyncSession) -
     repository = RagRequestAuthorityRepository(db_session)
     user = await _seed_user(db_session)
 
-    unknown_guard = ImmutableArtifactRef(
+    unknown_guard = RequestAuthorityArtifactRef(
         artifact_code=REQUEST_GUARD_AUTHORITY_ARTIFACT_CODE,
         version=REQUEST_AUTHORITY_ARTIFACT_VERSION,
         content_sha256="b" * 64,
@@ -330,7 +332,7 @@ async def test_source_decision_read_returns_none_for_wrong_hash(db_session: Asyn
     _, guard_ref = await _persisted_guard(repository, user.id)
     ref = await repository.record_request_source_decision(_source_record(user.id, guard_ref))
 
-    wrong = ImmutableArtifactRef(
+    wrong = RequestAuthorityArtifactRef(
         artifact_code=ref.artifact_code,
         version=ref.version,
         content_sha256="c" * 64,
@@ -354,7 +356,7 @@ async def test_member_decision_endpoint_projection_round_trip(db_session: AsyncS
     read_back = await repository.get_request_member_decision_by_artifact_ref(ref)
     assert read_back == record
     assert read_back is not None
-    assert read_back.member_identity.member_kind is SourceMemberKind.ENDPOINT_OPERATION
+    assert read_back.member_identity.member_kind is RequestAuthorityMemberKind.ENDPOINT_OPERATION
 
 
 async def test_member_decision_preserves_null_operation_code(db_session: AsyncSession) -> None:
@@ -376,8 +378,8 @@ async def test_member_decision_preserves_present_operation_code(db_session: Asyn
     user = await _seed_user(db_session)
     _, guard_ref = await _persisted_guard(repository, user.id)
 
-    identity = SourceMemberIdentity(
-        member_kind=SourceMemberKind.ENDPOINT_OPERATION,
+    identity = RequestAuthorityMemberIdentity(
+        member_kind=RequestAuthorityMemberKind.ENDPOINT_OPERATION,
         endpoint_code="MFDS_DUR",
         operation_code="LIST",
     )
@@ -408,12 +410,12 @@ async def test_member_decision_persists_fail_outcome_exactly(db_session: AsyncSe
     _, guard_ref = await _persisted_guard(repository, user.id)
 
     ref = await repository.record_request_member_decision(
-        _member_record(user.id, guard_ref, actual_decision_outcome=ObservedDecisionOutcome.FAIL)
+        _member_record(user.id, guard_ref, actual_decision_outcome=RequestAuthorityDecisionOutcome.FAIL)
     )
 
     read_back = await repository.get_request_member_decision_by_artifact_ref(ref)
     assert read_back is not None
-    assert read_back.actual_decision_outcome is ObservedDecisionOutcome.FAIL
+    assert read_back.actual_decision_outcome is RequestAuthorityDecisionOutcome.FAIL
 
 
 async def test_member_decision_rejects_invalid_member_identity(db_session: AsyncSession) -> None:
@@ -421,7 +423,7 @@ async def test_member_decision_rejects_invalid_member_identity(db_session: Async
     user = await _seed_user(db_session)
     _, guard_ref = await _persisted_guard(repository, user.id)
 
-    invalid = SourceMemberIdentity(member_kind=SourceMemberKind.ENDPOINT_OPERATION)
+    invalid = RequestAuthorityMemberIdentity(member_kind=RequestAuthorityMemberKind.ENDPOINT_OPERATION)
     with pytest.raises(RequestAuthorityValidationError):
         await repository.record_request_member_decision(_member_record(user.id, guard_ref, member_identity=invalid))
 
@@ -543,7 +545,7 @@ async def test_conflicting_content_under_same_identity_fails_closed(db_session: 
     ref = compute_request_guard_authority_ref(
         user_id=owner.id,
         request_operation_code=OPERATION,
-        decision_stage=RequestDecisionStage.REQUEST,
+        decision_stage=RequestAuthorityDecisionStage.REQUEST,
     )
 
     # writer를 우회해 동일 identity·다른 소유자로 위조된 행을 심는다.
@@ -582,7 +584,7 @@ async def test_corrupt_persisted_authority_is_not_hidden_as_not_found(db_session
     """persisted 사실이 artifact identity와 어긋나면 None이 아니라 명시적 오류다."""
     repository = RagRequestAuthorityRepository(db_session)
     user = await _seed_user(db_session)
-    forged_ref = ImmutableArtifactRef(
+    forged_ref = RequestAuthorityArtifactRef(
         artifact_code=REQUEST_GUARD_AUTHORITY_ARTIFACT_CODE,
         version=REQUEST_AUTHORITY_ARTIFACT_VERSION,
         content_sha256="d" * 64,
@@ -649,20 +651,20 @@ async def test_member_decision_fail_outcome_survives_commit(db_session: AsyncSes
     user = await _seed_user(db_session)
     _, guard_ref = await _persisted_guard(repository, user.id)
 
-    record = _member_record(user.id, guard_ref, actual_decision_outcome=ObservedDecisionOutcome.FAIL)
+    record = _member_record(user.id, guard_ref, actual_decision_outcome=RequestAuthorityDecisionOutcome.FAIL)
     ref = await repository.record_request_member_decision(record)
     await db_session.commit()
 
     read_back = await RagRequestAuthorityRepository(db_session).get_request_member_decision_by_artifact_ref(ref)
     assert read_back is not None
-    assert read_back.actual_decision_outcome is ObservedDecisionOutcome.FAIL
+    assert read_back.actual_decision_outcome is RequestAuthorityDecisionOutcome.FAIL
 
 
 async def test_noncanonical_persisted_operation_code_is_corrupt_not_none(db_session: AsyncSession) -> None:
     """DB CHECK를 통과하는 값이라도 계약 identity를 계산할 수 없으면 손상으로 드러낸다."""
     repository = RagRequestAuthorityRepository(db_session)
     user = await _seed_user(db_session)
-    forged_ref = ImmutableArtifactRef(
+    forged_ref = RequestAuthorityArtifactRef(
         artifact_code=REQUEST_GUARD_AUTHORITY_ARTIFACT_CODE,
         version=REQUEST_AUTHORITY_ARTIFACT_VERSION,
         content_sha256="e" * 64,

@@ -37,8 +37,9 @@ exact `ImmutableArtifactRef`로 조회하는 persistence 계약을 확정한다.
    opaque guard ref를 authority로 재사용하지 않는다. 조회 시점에 과거 Decision을 재구성하지 않는다.
 2. **Typed 3표 분리**: `rag_request_guard_authority`, `rag_request_source_decision`,
    `rag_request_member_decision`. generic JSON authority 표를 만들지 않는다.
-3. **Writer가 identity를 소유**: artifact identity는 기존 RFC 8785 JCS canonical helper로 계산한
-   semantic projection digest다. 새 hash domain을 정의하지 않고 caller가 identity를 고를 수 없다.
+3. **Writer가 identity를 소유**: artifact identity는 공유 순수 package `rag_runtime`이 계산하는
+   semantic projection digest다. 저장소의 RFC 8785 JCS helper와 바이트 동등하며(계약 테스트로 고정)
+   새 hash domain을 정의하지 않고 caller가 identity를 고를 수 없다.
 4. **actual PASS/FAIL만 저장**: `ObservedDecisionOutcome` 어휘를 그대로 쓰며 unknown·NULL을 PASS로
    해석하지 않는다.
 5. **Append-only**: update/delete API를 두지 않는다. 동일 identity·동일 내용 retry는 결정론적
@@ -47,6 +48,14 @@ exact `ImmutableArtifactRef`로 조회하는 persistence 계약을 확정한다.
    latest/CURRENT fallback을 두지 않는다. 정상 no-row만 `None`이며 손상·중복은 드러낸다.
 7. **DB 로직 금지 준수**: Trigger·RLS·Stored Procedure·사용자 정의 DB 함수를 추가하지 않는다.
    판정과 접근 검증은 Python Repository에서 명시적으로 수행한다.
+8. **Downgrade 데이터 보호**: 세 표가 비어 있지 않으면 migration downgrade를 거부한다. 검사 전에
+   `LOCK TABLE ... IN ACCESS EXCLUSIVE MODE`를 잡아 write race를 막는다. append-only 증거를
+   조용히 잃지 않기 위한 조건이며 `retrieval_run`(#596)·`user_consent`(#465) 관례를 따른다.
+9. **공유 경계 준수**: wire contract와 canonical identity 계산은 Backend·AI Worker가 공유하는 순수
+   package `rag_runtime`이 소유한다. Backend production 코드가 `ai_worker.*`를 직접 import하지
+   않으므로 `PD-175-20260910` 경계를 우회하지 않고 `ALLOWED_AI_WORKER_MODULES`도 넓히지 않는다.
+   AI Worker 쪽 모듈은 기존 kernel 타입과의 얇은 lossless projection만 담당하며 별도 hash 구현을
+   두지 않는다.
 
 ## 3. 권위 한계
 
@@ -71,6 +80,8 @@ Writer는 Decision을 새로 평가하지 않는다. 이미 authoritative한 결
 | `runtime_guard_decision_ref` 확장 | 호출자가 전달한 값을 그대로 기록하는 경로라 authoritative observation이 될 수 없다 |
 | 단일 generic authority 표 + JSON payload | 종류별 NOT NULL·CHECK·FK 불변식을 표현할 수 없어 fail-closed 보장이 약해진다 |
 | `source_snapshot_id`에 FK 부여 | Source cleanup·retention 수명주기와 authority 증거 보존을 결합시킨다. 정합성은 writer 검증으로 충분하다 |
+| Backend가 `ai_worker.*`를 직접 import (allowlist 확대) | `PD-175-20260910` 경계를 넓히려면 별도 후속 Decision이 필요하다. 공유 순수 package로 옮기면 경계를 지키면서 정본을 하나로 유지할 수 있다 |
+| Backend와 AI Worker에 canonical hash를 각각 구현 | hash contract drift와 artifact identity divergence를 만들어 #709 read-back 검증이 어긋날 수 있다 |
 
 ## 5. 후속
 

@@ -20,6 +20,13 @@ _GUARD_REF_COLUMNS = (
 )
 _GUARD_TARGET_COLUMNS = ("artifact_code", "artifact_version", "artifact_content_sha256")
 
+# downgrade 검사·drop 순서. 자식 Decision부터 본다.
+_AUTHORITY_TABLES = (
+    "rag_request_member_decision",
+    "rag_request_source_decision",
+    "rag_request_guard_authority",
+)
+
 
 def upgrade() -> None:
     op.create_table(
@@ -212,7 +219,26 @@ def upgrade() -> None:
     )
 
 
+def _has_rows(table_name: str) -> bool:
+    bind = op.get_bind()
+    return bool(bind.execute(sa.text(f"SELECT 1 FROM {table_name} LIMIT 1")).first())
+
+
+def _raise_if_request_authority_data_exists() -> None:
+    """실제 authority 증거가 남아 있으면 downgrade를 거부합니다.
+
+    세 표는 append-only historical 증거이므로 drop은 조용한 데이터 손실입니다. 검사와 drop
+    사이에 write가 끼어들지 않도록 먼저 ACCESS EXCLUSIVE lock을 잡습니다.
+    """
+    bind = op.get_bind()
+    bind.execute(sa.text("LOCK TABLE " + ", ".join(_AUTHORITY_TABLES) + " IN ACCESS EXCLUSIVE MODE"))
+    non_empty = [table for table in _AUTHORITY_TABLES if _has_rows(table)]
+    if non_empty:
+        raise RuntimeError("Refusing to downgrade request authority tables with existing data: " + ", ".join(non_empty))
+
+
 def downgrade() -> None:
+    _raise_if_request_authority_data_exists()
     op.drop_index("idx_rag_request_member_decision_guard", table_name="rag_request_member_decision")
     op.drop_table("rag_request_member_decision")
     op.drop_index("idx_rag_request_source_decision_guard", table_name="rag_request_source_decision")

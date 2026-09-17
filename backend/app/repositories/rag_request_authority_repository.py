@@ -1,7 +1,7 @@
 """#713 REQUEST authority append-only writer and exact artifact-ref read primitive.
 
 이 Repository는 이미 authoritative한 Decision 결과를 받아 historical 증거로 남기고, 그 증거를
-exact `ImmutableArtifactRef`로 되돌려 주는 것까지만 담당합니다. Source·Member eligibility 재평가,
+exact `RequestAuthorityArtifactRef`로 되돌려 주는 것까지만 담당합니다. Source·Member eligibility 재평가,
 Retrieval, Evidence Gate, Guideline 생성, Citation 권한 판정은 하지 않습니다.
 
 경계:
@@ -27,24 +27,23 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, is_valid_immutable_artifact_ref
-from ai_worker.tasks.rag.guide_evidence_handoff import ObservedDecisionOutcome, RequestDecisionStage
-from ai_worker.tasks.rag.request_authority_artifact import (
-    RequestAuthorityArtifactError,
-    compute_request_guard_authority_ref,
-    compute_request_member_decision_authority_ref,
-    compute_request_source_decision_authority_ref,
-)
-from ai_worker.tasks.rag.source_member_identity import (
-    SourceMemberIdentity,
-    SourceMemberIdentityError,
-    member_kind_from_persisted,
-    persisted_member_kind_value,
-)
 from app.models.rag_request_authority import (
     RagRequestGuardAuthority,
     RagRequestMemberDecision,
     RagRequestSourceDecision,
+)
+from rag_runtime.request_authority import (
+    RequestAuthorityArtifactError,
+    RequestAuthorityArtifactRef,
+    RequestAuthorityDecisionOutcome,
+    RequestAuthorityDecisionStage,
+    RequestAuthorityMemberIdentity,
+    compute_request_guard_authority_ref,
+    compute_request_member_decision_authority_ref,
+    compute_request_source_decision_authority_ref,
+    is_valid_request_authority_artifact_ref,
+    member_kind_from_persisted,
+    persisted_member_kind_value,
 )
 
 __all__ = [
@@ -74,61 +73,61 @@ class RequestAuthorityCorruptError(Exception):
 class RequestGuardAuthorityRecord:
     user_id: UUID
     request_operation_code: str
-    decision_stage: RequestDecisionStage
+    decision_stage: RequestAuthorityDecisionStage
 
 
 @dataclass(frozen=True, slots=True)
 class RequestSourceDecisionRecord:
-    request_guard_ref: ImmutableArtifactRef
+    request_guard_ref: RequestAuthorityArtifactRef
     user_id: UUID
     request_operation_code: str
-    decision_stage: RequestDecisionStage
+    decision_stage: RequestAuthorityDecisionStage
     source_snapshot_id: UUID
     source_code: str
     source_version: str
-    actual_decision_outcome: ObservedDecisionOutcome
+    actual_decision_outcome: RequestAuthorityDecisionOutcome
 
 
 @dataclass(frozen=True, slots=True)
 class RequestMemberDecisionRecord:
-    request_guard_ref: ImmutableArtifactRef
+    request_guard_ref: RequestAuthorityArtifactRef
     user_id: UUID
     request_operation_code: str
-    decision_stage: RequestDecisionStage
+    decision_stage: RequestAuthorityDecisionStage
     source_snapshot_id: UUID
     source_snapshot_member_id: UUID
-    member_identity: SourceMemberIdentity
-    actual_decision_outcome: ObservedDecisionOutcome
+    member_identity: RequestAuthorityMemberIdentity
+    actual_decision_outcome: RequestAuthorityDecisionOutcome
 
 
-def _outcome_from_persisted(value: str) -> ObservedDecisionOutcome:
+def _outcome_from_persisted(value: str) -> RequestAuthorityDecisionOutcome:
     try:
-        return ObservedDecisionOutcome(value)
+        return RequestAuthorityDecisionOutcome(value)
     except ValueError as error:
         raise RequestAuthorityCorruptError(f"지원하지 않는 decision outcome 값입니다: {value!r}") from error
 
 
-def _stage_from_persisted(value: str) -> RequestDecisionStage:
+def _stage_from_persisted(value: str) -> RequestAuthorityDecisionStage:
     try:
-        return RequestDecisionStage(value)
+        return RequestAuthorityDecisionStage(value)
     except ValueError as error:
         raise RequestAuthorityCorruptError(f"지원하지 않는 decision stage 값입니다: {value!r}") from error
 
 
-def _guard_ref_from_row(row: RagRequestSourceDecision | RagRequestMemberDecision) -> ImmutableArtifactRef:
-    return ImmutableArtifactRef(
+def _guard_ref_from_row(row: RagRequestSourceDecision | RagRequestMemberDecision) -> RequestAuthorityArtifactRef:
+    return RequestAuthorityArtifactRef(
         artifact_code=row.request_guard_artifact_code,
         version=row.request_guard_artifact_version,
         content_sha256=row.request_guard_content_sha256,
     )
 
 
-def _member_identity_from_row(row: RagRequestMemberDecision) -> SourceMemberIdentity:
+def _member_identity_from_row(row: RagRequestMemberDecision) -> RequestAuthorityMemberIdentity:
     try:
         member_kind = member_kind_from_persisted(row.member_kind)
-    except SourceMemberIdentityError as error:
+    except RequestAuthorityArtifactError as error:
         raise RequestAuthorityCorruptError(f"지원하지 않는 member kind 값입니다: {row.member_kind!r}") from error
-    return SourceMemberIdentity(
+    return RequestAuthorityMemberIdentity(
         member_kind=member_kind,
         endpoint_code=row.endpoint_code,
         operation_code=row.operation_code,
@@ -147,7 +146,7 @@ class RagRequestAuthorityRepository:
     # REQUEST Guard
     # ------------------------------------------------------------------
 
-    async def record_request_guard_authority(self, record: RequestGuardAuthorityRecord) -> ImmutableArtifactRef:
+    async def record_request_guard_authority(self, record: RequestGuardAuthorityRecord) -> RequestAuthorityArtifactRef:
         """REQUEST Guard 관측치를 append-only로 기록하고 확정된 artifact ref를 돌려줍니다."""
         if type(record) is not RequestGuardAuthorityRecord:
             raise RequestAuthorityValidationError("RequestGuardAuthorityRecord 형식이 아닙니다")
@@ -186,7 +185,7 @@ class RagRequestAuthorityRepository:
 
     async def get_request_guard_authority_by_artifact_ref(
         self,
-        artifact_ref: ImmutableArtifactRef,
+        artifact_ref: RequestAuthorityArtifactRef,
     ) -> RequestGuardAuthorityRecord | None:
         """exact artifact ref로만 조회합니다. 정상 no-row는 None입니다."""
         row = await self._select_guard_row(self._validated_ref(artifact_ref))
@@ -205,7 +204,7 @@ class RagRequestAuthorityRepository:
     # Source Decision
     # ------------------------------------------------------------------
 
-    async def record_request_source_decision(self, record: RequestSourceDecisionRecord) -> ImmutableArtifactRef:
+    async def record_request_source_decision(self, record: RequestSourceDecisionRecord) -> RequestAuthorityArtifactRef:
         """Source Decision 관측치를 append-only로 기록하고 확정된 artifact ref를 돌려줍니다."""
         if type(record) is not RequestSourceDecisionRecord:
             raise RequestAuthorityValidationError("RequestSourceDecisionRecord 형식이 아닙니다")
@@ -256,7 +255,7 @@ class RagRequestAuthorityRepository:
 
     async def get_request_source_decision_by_artifact_ref(
         self,
-        artifact_ref: ImmutableArtifactRef,
+        artifact_ref: RequestAuthorityArtifactRef,
     ) -> RequestSourceDecisionRecord | None:
         """exact artifact ref로만 조회합니다. 정상 no-row는 None입니다."""
         row = await self._select_source_row(self._validated_ref(artifact_ref))
@@ -280,7 +279,7 @@ class RagRequestAuthorityRepository:
     # Member Decision
     # ------------------------------------------------------------------
 
-    async def record_request_member_decision(self, record: RequestMemberDecisionRecord) -> ImmutableArtifactRef:
+    async def record_request_member_decision(self, record: RequestMemberDecisionRecord) -> RequestAuthorityArtifactRef:
         """Member Decision 관측치를 append-only로 기록하고 확정된 artifact ref를 돌려줍니다."""
         if type(record) is not RequestMemberDecisionRecord:
             raise RequestAuthorityValidationError("RequestMemberDecisionRecord 형식이 아닙니다")
@@ -295,7 +294,7 @@ class RagRequestAuthorityRepository:
 
         try:
             member_kind = persisted_member_kind_value(record.member_identity.member_kind)
-        except SourceMemberIdentityError as error:
+        except RequestAuthorityArtifactError as error:
             raise RequestAuthorityValidationError("지원하지 않는 member kind입니다") from error
 
         existing = await self._select_member_row(artifact_ref)
@@ -341,7 +340,7 @@ class RagRequestAuthorityRepository:
 
     async def get_request_member_decision_by_artifact_ref(
         self,
-        artifact_ref: ImmutableArtifactRef,
+        artifact_ref: RequestAuthorityArtifactRef,
     ) -> RequestMemberDecisionRecord | None:
         """exact artifact ref로만 조회합니다. 정상 no-row는 None입니다."""
         row = await self._select_member_row(self._validated_ref(artifact_ref))
@@ -366,7 +365,7 @@ class RagRequestAuthorityRepository:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _compute_guard_ref(record: RequestGuardAuthorityRecord) -> ImmutableArtifactRef:
+    def _compute_guard_ref(record: RequestGuardAuthorityRecord) -> RequestAuthorityArtifactRef:
         try:
             return compute_request_guard_authority_ref(
                 user_id=record.user_id,
@@ -377,7 +376,7 @@ class RagRequestAuthorityRepository:
             raise RequestAuthorityValidationError(f"REQUEST Guard authority 검증 실패: {error.reason}") from error
 
     @staticmethod
-    def _compute_source_ref(record: RequestSourceDecisionRecord) -> ImmutableArtifactRef:
+    def _compute_source_ref(record: RequestSourceDecisionRecord) -> RequestAuthorityArtifactRef:
         try:
             return compute_request_source_decision_authority_ref(
                 request_guard_ref=record.request_guard_ref,
@@ -393,7 +392,7 @@ class RagRequestAuthorityRepository:
             raise RequestAuthorityValidationError(f"Source Decision authority 검증 실패: {error.reason}") from error
 
     @staticmethod
-    def _compute_member_ref(record: RequestMemberDecisionRecord) -> ImmutableArtifactRef:
+    def _compute_member_ref(record: RequestMemberDecisionRecord) -> RequestAuthorityArtifactRef:
         try:
             return compute_request_member_decision_authority_ref(
                 request_guard_ref=record.request_guard_ref,
@@ -409,15 +408,15 @@ class RagRequestAuthorityRepository:
             raise RequestAuthorityValidationError(f"Member Decision authority 검증 실패: {error.reason}") from error
 
     @staticmethod
-    def _validated_ref(artifact_ref: ImmutableArtifactRef) -> ImmutableArtifactRef:
-        if not is_valid_immutable_artifact_ref(artifact_ref):
-            raise RequestAuthorityValidationError("ImmutableArtifactRef 형식이 아닙니다")
+    def _validated_ref(artifact_ref: RequestAuthorityArtifactRef) -> RequestAuthorityArtifactRef:
+        if not is_valid_request_authority_artifact_ref(artifact_ref):
+            raise RequestAuthorityValidationError("RequestAuthorityArtifactRef 형식이 아닙니다")
         return artifact_ref
 
     @staticmethod
     def _assert_persisted_identity(
-        requested: ImmutableArtifactRef,
-        recompute: Callable[[], ImmutableArtifactRef],
+        requested: RequestAuthorityArtifactRef,
+        recompute: Callable[[], RequestAuthorityArtifactRef],
     ) -> None:
         """저장된 사실로 identity를 다시 계산해 대조합니다.
 
@@ -437,7 +436,7 @@ class RagRequestAuthorityRepository:
     # Exact lookups (no latest / CURRENT / newest fallback)
     # ------------------------------------------------------------------
 
-    async def _select_guard_row(self, artifact_ref: ImmutableArtifactRef) -> RagRequestGuardAuthority | None:
+    async def _select_guard_row(self, artifact_ref: RequestAuthorityArtifactRef) -> RagRequestGuardAuthority | None:
         statement = select(RagRequestGuardAuthority).where(
             RagRequestGuardAuthority.artifact_code == artifact_ref.artifact_code,
             RagRequestGuardAuthority.artifact_version == artifact_ref.version,
@@ -445,7 +444,7 @@ class RagRequestAuthorityRepository:
         )
         return (await self._session.execute(statement)).scalar_one_or_none()
 
-    async def _select_source_row(self, artifact_ref: ImmutableArtifactRef) -> RagRequestSourceDecision | None:
+    async def _select_source_row(self, artifact_ref: RequestAuthorityArtifactRef) -> RagRequestSourceDecision | None:
         statement = select(RagRequestSourceDecision).where(
             RagRequestSourceDecision.artifact_code == artifact_ref.artifact_code,
             RagRequestSourceDecision.artifact_version == artifact_ref.version,
@@ -453,7 +452,7 @@ class RagRequestAuthorityRepository:
         )
         return (await self._session.execute(statement)).scalar_one_or_none()
 
-    async def _select_member_row(self, artifact_ref: ImmutableArtifactRef) -> RagRequestMemberDecision | None:
+    async def _select_member_row(self, artifact_ref: RequestAuthorityArtifactRef) -> RagRequestMemberDecision | None:
         statement = select(RagRequestMemberDecision).where(
             RagRequestMemberDecision.artifact_code == artifact_ref.artifact_code,
             RagRequestMemberDecision.artifact_version == artifact_ref.version,
@@ -468,13 +467,13 @@ class RagRequestAuthorityRepository:
     async def _assert_guard_binding(
         self,
         *,
-        request_guard_ref: ImmutableArtifactRef,
+        request_guard_ref: RequestAuthorityArtifactRef,
         user_id: UUID,
         request_operation_code: str,
-        decision_stage: RequestDecisionStage,
+        decision_stage: RequestAuthorityDecisionStage,
     ) -> None:
-        if not is_valid_immutable_artifact_ref(request_guard_ref):
-            raise RequestAuthorityValidationError("request_guard_ref가 ImmutableArtifactRef 형식이 아닙니다")
+        if not is_valid_request_authority_artifact_ref(request_guard_ref):
+            raise RequestAuthorityValidationError("request_guard_ref가 RequestAuthorityArtifactRef 형식이 아닙니다")
 
         guard = await self._select_guard_row(request_guard_ref)
         if guard is None:

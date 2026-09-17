@@ -363,3 +363,60 @@ def test_migrated_schema_blocks_guard_deletion_while_decisions_exist(isolated_au
                     )
 
     asyncio.run(delete_guard())
+
+
+async def _seed_full_authority_chain() -> tuple[str, str]:
+    """Guard → Source Decision → Member Decision 한 체인을 실제로 남긴다."""
+    user_id, guard_sha256 = await _seeded_guard()
+    async with _connection() as connection:
+        async with connection.begin():
+            await connection.execute(_INSERT_SOURCE, _source_params(user_id, guard_sha256))
+            await connection.execute(_INSERT_MEMBER, _member_params(user_id, guard_sha256))
+    return user_id, guard_sha256
+
+
+async def _authority_row_counts() -> dict[str, int]:
+    counts: dict[str, int] = {}
+    async with _connection() as connection:
+        for table in AUTHORITY_TABLES:
+            result = await connection.execute(text(f"SELECT count(*) FROM {table}"))  # noqa: S608
+            counts[table] = int(result.scalar_one())
+    return counts
+
+
+def test_downgrade_refuses_when_authority_data_exists(isolated_authority_database: None) -> None:
+    """append-only historical 증거를 조용히 잃지 않는다."""
+    cfg = create_alembic_config()
+    command.upgrade(cfg, "713a1b2c3d4e")
+
+    asyncio.run(_seed_full_authority_chain())
+    assert asyncio.run(_authority_row_counts()) == {table: 1 for table in AUTHORITY_TABLES}
+
+    with pytest.raises(RuntimeError) as error:
+        command.downgrade(cfg, _load_migration().down_revision)
+
+    message = str(error.value)
+    assert "Refusing to downgrade request authority tables with existing data" in message
+    for table in AUTHORITY_TABLES:
+        assert table in message
+
+    # 세 표가 drop되지 않고 기존 행도 그대로 남아 있어야 한다.
+    assert asyncio.run(_table_names()) == set(AUTHORITY_TABLES)
+    assert asyncio.run(_authority_row_counts()) == {table: 1 for table in AUTHORITY_TABLES}
+
+
+def test_downgrade_guard_checks_every_authority_table(isolated_authority_database: None) -> None:
+    """Guard만 남아 있어도(자식 Decision 없이) downgrade를 거부한다."""
+    cfg = create_alembic_config()
+    command.upgrade(cfg, "713a1b2c3d4e")
+
+    asyncio.run(_seeded_guard())
+
+    with pytest.raises(RuntimeError) as error:
+        command.downgrade(cfg, _load_migration().down_revision)
+
+    message = str(error.value)
+    assert "rag_request_guard_authority" in message
+    assert "rag_request_member_decision" not in message
+    assert "rag_request_source_decision" not in message
+    assert asyncio.run(_authority_row_counts())["rag_request_guard_authority"] == 1

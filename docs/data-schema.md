@@ -934,5 +934,15 @@ Source cleanup·retention 수명주기와 authority 증거 보존을 결합하�
 Repository 한 곳만 승인된다. Trigger·RLS·Stored Procedure·사용자 정의 DB 함수는 추가하지 않는다.
 
 조회는 artifact identity 3열 exact equality만 제공하고 latest/CURRENT fallback을 두지 않는다.
+
+세 표는 append-only 증거이므로 migration `downgrade()`가 무조건 drop하지 않는다.
+`LOCK TABLE ... IN ACCESS EXCLUSIVE MODE`로 세 표를 먼저 잠근 뒤 행 존재를 확인하고, 하나라도
+비어 있지 않으면 `RuntimeError`로 거부한다. `retrieval_run`(#596)·`user_consent`(#465)와 같은
+패턴이며 검사와 drop 사이의 write race를 막는다.
+
+artifact identity 계산과 wire contract는 Backend·AI Worker가 공유하는 순수 package
+`rag_runtime/request_authority.py`가 소유한다. Backend production 코드는 `ai_worker.*`를 직접
+import하지 않으며 `PD-175-20260910` 경계와 `ALLOWED_AI_WORKER_MODULES`를 변경하지 않는다.
+
 정책은 [PD-713](governance/decisions/2026-09-17-request-authority-persistence.md)을 따르며
 Current 승격과 #709 Production Reader 연결은 별도다.

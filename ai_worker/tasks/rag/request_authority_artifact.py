@@ -1,37 +1,22 @@
-"""REQUEST Authority Artifact Identity Kernel (#713).
+"""REQUEST Authority Artifact Identity projection for AI Worker kernels (#713).
 
-Pure, side-effect-free derivation of the `ImmutableArtifactRef` identity for the
-three historical request-bound authority records persisted by #713:
+계약 정본은 `rag_runtime.request_authority`입니다. Backend Repository와 AI Worker가 같은 의미를
+소비하므로 wire contract와 canonical identity 계산은 두 이미지에 함께 복사되는 공유 순수
+package가 소유하고(`PD-175-20260910` 경계 유지), 이 모듈은 기존 AI Worker kernel 타입과 그
+공유 계약 사이의 얇은 projection만 담당합니다.
 
-```text
-REQUEST Guard Authority
-Source Decision Authority
-Member Decision Authority
-```
+즉 여기에는 hash 구현이 없습니다. `ImmutableArtifactRef` / `ObservedDecisionOutcome` /
+`RequestDecisionStage` / `SourceMemberIdentity`를 공유 wire 타입으로 옮긴 뒤 계산은 전부
+`rag_runtime`에 위임하므로, artifact identity는 Backend와 AI Worker에서 항상 동일합니다.
 
-Scope & Authority Boundaries:
-- Identity only: this module derives artifact identity from already-authoritative
-  Decision facts. It never evaluates Source/Member eligibility, never computes a
-  PASS outcome, and performs no I/O.
-- Writer-owned identity: `artifact_code` and `version` are fixed contract constants
-  and `content_sha256` is the canonical digest of the semantic projection, so a
-  caller cannot choose an arbitrary authority identity.
-- Reused contracts: canonical serialization uses the repository's RFC 8785 JCS
-  helper (`ai_worker.tasks.evaluation.canonical`), identity uses
-  `ImmutableArtifactRef`, outcome/stage vocabulary uses `ObservedDecisionOutcome`
-  and `RequestDecisionStage`, and member identity uses `SourceMemberIdentity`.
-  No new hash domain is introduced.
-- Non-deterministic values (database primary keys, `created_at`, transaction
-  timestamps, insertion order) are never part of a projection.
+`ImmutableArtifactRef`, `ObservedDecisionOutcome`, `RequestDecisionStage`, `SourceMemberIdentity`,
+`SourceMemberKind`의 의미는 바꾸지 않습니다.
 """
 
 from __future__ import annotations
 
-from enum import StrEnum
-from typing import cast
 from uuid import UUID
 
-from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_sha256
 from ai_worker.tasks.rag.evidence_retrieval import (
     ImmutableArtifactRef,
     is_valid_immutable_artifact_ref,
@@ -42,8 +27,32 @@ from ai_worker.tasks.rag.guide_evidence_handoff import (
 )
 from ai_worker.tasks.rag.source_member_identity import (
     SourceMemberIdentity,
-    is_valid_source_member_identity,
-    source_member_identity_payload,
+    SourceMemberKind,
+)
+from rag_runtime.request_authority import (
+    REQUEST_AUTHORITY_ARTIFACT_VERSION,
+    REQUEST_GUARD_AUTHORITY_ARTIFACT_CODE,
+    REQUEST_GUARD_AUTHORITY_PROJECTION_VERSION,
+    REQUEST_MEMBER_DECISION_AUTHORITY_ARTIFACT_CODE,
+    REQUEST_MEMBER_DECISION_AUTHORITY_PROJECTION_VERSION,
+    REQUEST_SOURCE_DECISION_AUTHORITY_ARTIFACT_CODE,
+    REQUEST_SOURCE_DECISION_AUTHORITY_PROJECTION_VERSION,
+    RequestAuthorityArtifactError,
+    RequestAuthorityArtifactReason,
+    RequestAuthorityArtifactRef,
+    RequestAuthorityDecisionOutcome,
+    RequestAuthorityDecisionStage,
+    RequestAuthorityMemberIdentity,
+    RequestAuthorityMemberKind,
+)
+from rag_runtime.request_authority import (
+    compute_request_guard_authority_ref as _shared_guard_ref,
+)
+from rag_runtime.request_authority import (
+    compute_request_member_decision_authority_ref as _shared_member_ref,
+)
+from rag_runtime.request_authority import (
+    compute_request_source_decision_authority_ref as _shared_source_ref,
 )
 
 __all__ = [
@@ -59,112 +68,87 @@ __all__ = [
     "compute_request_guard_authority_ref",
     "compute_request_member_decision_authority_ref",
     "compute_request_source_decision_authority_ref",
-    "request_guard_authority_projection",
-    "request_member_decision_authority_projection",
-    "request_source_decision_authority_projection",
+    "shared_artifact_ref",
+    "shared_member_identity",
+    "worker_artifact_ref",
+    "worker_member_identity",
 ]
 
-REQUEST_AUTHORITY_ARTIFACT_VERSION = "1.0"
+_KIND_TO_SHARED: dict[SourceMemberKind, RequestAuthorityMemberKind] = {
+    SourceMemberKind.ENDPOINT_OPERATION: RequestAuthorityMemberKind.ENDPOINT_OPERATION,
+    SourceMemberKind.ARTIFACT_MEMBER: RequestAuthorityMemberKind.ARTIFACT_MEMBER,
+}
+_KIND_FROM_SHARED: dict[RequestAuthorityMemberKind, SourceMemberKind] = {
+    shared: worker for worker, shared in _KIND_TO_SHARED.items()
+}
 
-REQUEST_GUARD_AUTHORITY_ARTIFACT_CODE = "request_guard_authority"
-REQUEST_SOURCE_DECISION_AUTHORITY_ARTIFACT_CODE = "request_source_decision_authority"
-REQUEST_MEMBER_DECISION_AUTHORITY_ARTIFACT_CODE = "request_member_decision_authority"
-
-REQUEST_GUARD_AUTHORITY_PROJECTION_VERSION = "request-guard-authority-v1"
-REQUEST_SOURCE_DECISION_AUTHORITY_PROJECTION_VERSION = "request-source-decision-authority-v1"
-REQUEST_MEMBER_DECISION_AUTHORITY_PROJECTION_VERSION = "request-member-decision-authority-v1"
-
-
-class RequestAuthorityArtifactReason(StrEnum):
-    USER_ID_INVALID = "USER_ID_INVALID"
-    REQUEST_OPERATION_CODE_INVALID = "REQUEST_OPERATION_CODE_INVALID"
-    DECISION_STAGE_INVALID = "DECISION_STAGE_INVALID"
-    DECISION_OUTCOME_INVALID = "DECISION_OUTCOME_INVALID"
-    REQUEST_GUARD_REF_INVALID = "REQUEST_GUARD_REF_INVALID"
-    SOURCE_BINDING_INVALID = "SOURCE_BINDING_INVALID"
-    MEMBER_BINDING_INVALID = "MEMBER_BINDING_INVALID"
-    MEMBER_IDENTITY_INVALID = "MEMBER_IDENTITY_INVALID"
+_OUTCOME_TO_SHARED: dict[ObservedDecisionOutcome, RequestAuthorityDecisionOutcome] = {
+    ObservedDecisionOutcome.PASS: RequestAuthorityDecisionOutcome.PASS,
+    ObservedDecisionOutcome.FAIL: RequestAuthorityDecisionOutcome.FAIL,
+}
 
 
-class RequestAuthorityArtifactError(Exception):
-    """Raised fail-closed when authority facts cannot form a canonical artifact identity."""
-
-    def __init__(self, reason: RequestAuthorityArtifactReason) -> None:
-        self.reason = reason
-        super().__init__(str(reason))
-
-
-def _is_canonical_code(value: object) -> bool:
-    return type(value) is str and len(value) > 0 and value == value.strip()
-
-
-def _require_user_id(user_id: object) -> UUID:
-    if type(user_id) is not UUID:
-        raise RequestAuthorityArtifactError(RequestAuthorityArtifactReason.USER_ID_INVALID)
-    return user_id
-
-
-def _require_operation_code(request_operation_code: object) -> str:
-    if not _is_canonical_code(request_operation_code):
-        raise RequestAuthorityArtifactError(RequestAuthorityArtifactReason.REQUEST_OPERATION_CODE_INVALID)
-    return cast(str, request_operation_code)
-
-
-def _require_request_stage(decision_stage: object) -> RequestDecisionStage:
-    if decision_stage is not RequestDecisionStage.REQUEST:
-        raise RequestAuthorityArtifactError(RequestAuthorityArtifactReason.DECISION_STAGE_INVALID)
-    return RequestDecisionStage.REQUEST
-
-
-def _require_outcome(actual_decision_outcome: object) -> ObservedDecisionOutcome:
-    if type(actual_decision_outcome) is not ObservedDecisionOutcome:
-        raise RequestAuthorityArtifactError(RequestAuthorityArtifactReason.DECISION_OUTCOME_INVALID)
-    return actual_decision_outcome
-
-
-def _require_guard_ref(request_guard_ref: object) -> ImmutableArtifactRef:
-    if not is_valid_immutable_artifact_ref(request_guard_ref):
+def shared_artifact_ref(value: object) -> RequestAuthorityArtifactRef:
+    """AI Worker `ImmutableArtifactRef`를 공유 wire ref로 옮깁니다."""
+    if not is_valid_immutable_artifact_ref(value):
         raise RequestAuthorityArtifactError(RequestAuthorityArtifactReason.REQUEST_GUARD_REF_INVALID)
-    guard_ref = cast(ImmutableArtifactRef, request_guard_ref)
-    if guard_ref.artifact_code != REQUEST_GUARD_AUTHORITY_ARTIFACT_CODE:
-        raise RequestAuthorityArtifactError(RequestAuthorityArtifactReason.REQUEST_GUARD_REF_INVALID)
-    return guard_ref
-
-
-def _artifact_projection(ref: ImmutableArtifactRef) -> dict[str, JsonValue]:
-    return {
-        "artifact_code": ref.artifact_code,
-        "content_sha256": ref.content_sha256,
-        "version": ref.version,
-    }
-
-
-def _digest_ref(*, artifact_code: str, projection: JsonValue) -> ImmutableArtifactRef:
-    return ImmutableArtifactRef(
-        artifact_code=artifact_code,
-        version=REQUEST_AUTHORITY_ARTIFACT_VERSION,
-        content_sha256=canonical_sha256(projection),
+    assert isinstance(value, ImmutableArtifactRef)
+    return RequestAuthorityArtifactRef(
+        artifact_code=value.artifact_code,
+        version=value.version,
+        content_sha256=value.content_sha256,
     )
 
 
-# ---------------------------------------------------------------------------
-# REQUEST Guard
-# ---------------------------------------------------------------------------
+def worker_artifact_ref(value: RequestAuthorityArtifactRef) -> ImmutableArtifactRef:
+    """공유 wire ref를 AI Worker `ImmutableArtifactRef`로 되돌립니다."""
+    return ImmutableArtifactRef(
+        artifact_code=value.artifact_code,
+        version=value.version,
+        content_sha256=value.content_sha256,
+    )
 
 
-def request_guard_authority_projection(
-    *,
-    user_id: UUID,
-    request_operation_code: str,
-    decision_stage: RequestDecisionStage,
-) -> JsonValue:
-    """Canonical semantic projection of a REQUEST Guard authority observation."""
-    return {
-        "decision_stage": _require_request_stage(decision_stage).value,
-        "projection_version": REQUEST_GUARD_AUTHORITY_PROJECTION_VERSION,
-        "request_operation_code": _require_operation_code(request_operation_code),
-        "user_id": str(_require_user_id(user_id)),
-    }
+def shared_member_identity(value: object) -> RequestAuthorityMemberIdentity:
+    """`SourceMemberIdentity`를 공유 wire identity로 옮깁니다 (lossless)."""
+    if type(value) is not SourceMemberIdentity or type(value.member_kind) is not SourceMemberKind:
+        raise RequestAuthorityArtifactError(RequestAuthorityArtifactReason.MEMBER_IDENTITY_INVALID)
+    shared_kind = _KIND_TO_SHARED.get(value.member_kind)
+    if shared_kind is None:
+        raise RequestAuthorityArtifactError(RequestAuthorityArtifactReason.MEMBER_IDENTITY_INVALID)
+    return RequestAuthorityMemberIdentity(
+        member_kind=shared_kind,
+        endpoint_code=value.endpoint_code,
+        operation_code=value.operation_code,
+        artifact_code=value.artifact_code,
+        artifact_version=value.artifact_version,
+    )
+
+
+def worker_member_identity(value: RequestAuthorityMemberIdentity) -> SourceMemberIdentity:
+    """공유 wire identity를 `SourceMemberIdentity`로 되돌립니다 (lossless)."""
+    worker_kind = _KIND_FROM_SHARED.get(value.member_kind)
+    if worker_kind is None:
+        raise RequestAuthorityArtifactError(RequestAuthorityArtifactReason.MEMBER_IDENTITY_INVALID)
+    return SourceMemberIdentity(
+        member_kind=worker_kind,
+        endpoint_code=value.endpoint_code,
+        operation_code=value.operation_code,
+        artifact_code=value.artifact_code,
+        artifact_version=value.artifact_version,
+    )
+
+
+def _shared_stage(decision_stage: object) -> RequestAuthorityDecisionStage:
+    if decision_stage is not RequestDecisionStage.REQUEST:
+        raise RequestAuthorityArtifactError(RequestAuthorityArtifactReason.DECISION_STAGE_INVALID)
+    return RequestAuthorityDecisionStage.REQUEST
+
+
+def _shared_outcome(actual_decision_outcome: object) -> RequestAuthorityDecisionOutcome:
+    if type(actual_decision_outcome) is not ObservedDecisionOutcome:
+        raise RequestAuthorityArtifactError(RequestAuthorityArtifactReason.DECISION_OUTCOME_INVALID)
+    return _OUTCOME_TO_SHARED[actual_decision_outcome]
 
 
 def compute_request_guard_authority_ref(
@@ -173,49 +157,13 @@ def compute_request_guard_authority_ref(
     request_operation_code: str,
     decision_stage: RequestDecisionStage,
 ) -> ImmutableArtifactRef:
-    projection = request_guard_authority_projection(
-        user_id=user_id,
-        request_operation_code=request_operation_code,
-        decision_stage=decision_stage,
+    return worker_artifact_ref(
+        _shared_guard_ref(
+            user_id=user_id,
+            request_operation_code=request_operation_code,
+            decision_stage=_shared_stage(decision_stage),
+        )
     )
-    return _digest_ref(artifact_code=REQUEST_GUARD_AUTHORITY_ARTIFACT_CODE, projection=projection)
-
-
-# ---------------------------------------------------------------------------
-# Source Decision
-# ---------------------------------------------------------------------------
-
-
-def request_source_decision_authority_projection(
-    *,
-    request_guard_ref: ImmutableArtifactRef,
-    user_id: UUID,
-    request_operation_code: str,
-    decision_stage: RequestDecisionStage,
-    source_snapshot_id: UUID,
-    source_code: str,
-    source_version: str,
-    actual_decision_outcome: ObservedDecisionOutcome,
-) -> JsonValue:
-    """Canonical semantic projection of a request-bound Source Decision observation."""
-    if (
-        type(source_snapshot_id) is not UUID
-        or not _is_canonical_code(source_code)
-        or not _is_canonical_code(source_version)
-    ):
-        raise RequestAuthorityArtifactError(RequestAuthorityArtifactReason.SOURCE_BINDING_INVALID)
-
-    return {
-        "actual_decision_outcome": _require_outcome(actual_decision_outcome).value,
-        "decision_stage": _require_request_stage(decision_stage).value,
-        "projection_version": REQUEST_SOURCE_DECISION_AUTHORITY_PROJECTION_VERSION,
-        "request_guard_ref": _artifact_projection(_require_guard_ref(request_guard_ref)),
-        "request_operation_code": _require_operation_code(request_operation_code),
-        "source_code": source_code,
-        "source_snapshot_id": str(source_snapshot_id),
-        "source_version": source_version,
-        "user_id": str(_require_user_id(user_id)),
-    }
 
 
 def compute_request_source_decision_authority_ref(
@@ -229,52 +177,18 @@ def compute_request_source_decision_authority_ref(
     source_version: str,
     actual_decision_outcome: ObservedDecisionOutcome,
 ) -> ImmutableArtifactRef:
-    projection = request_source_decision_authority_projection(
-        request_guard_ref=request_guard_ref,
-        user_id=user_id,
-        request_operation_code=request_operation_code,
-        decision_stage=decision_stage,
-        source_snapshot_id=source_snapshot_id,
-        source_code=source_code,
-        source_version=source_version,
-        actual_decision_outcome=actual_decision_outcome,
+    return worker_artifact_ref(
+        _shared_source_ref(
+            request_guard_ref=shared_artifact_ref(request_guard_ref),
+            user_id=user_id,
+            request_operation_code=request_operation_code,
+            decision_stage=_shared_stage(decision_stage),
+            source_snapshot_id=source_snapshot_id,
+            source_code=source_code,
+            source_version=source_version,
+            actual_decision_outcome=_shared_outcome(actual_decision_outcome),
+        )
     )
-    return _digest_ref(artifact_code=REQUEST_SOURCE_DECISION_AUTHORITY_ARTIFACT_CODE, projection=projection)
-
-
-# ---------------------------------------------------------------------------
-# Member Decision
-# ---------------------------------------------------------------------------
-
-
-def request_member_decision_authority_projection(
-    *,
-    request_guard_ref: ImmutableArtifactRef,
-    user_id: UUID,
-    request_operation_code: str,
-    decision_stage: RequestDecisionStage,
-    source_snapshot_id: UUID,
-    source_snapshot_member_id: UUID,
-    member_identity: SourceMemberIdentity,
-    actual_decision_outcome: ObservedDecisionOutcome,
-) -> JsonValue:
-    """Canonical semantic projection of a request-bound Member Decision observation."""
-    if type(source_snapshot_id) is not UUID or type(source_snapshot_member_id) is not UUID:
-        raise RequestAuthorityArtifactError(RequestAuthorityArtifactReason.MEMBER_BINDING_INVALID)
-    if not is_valid_source_member_identity(member_identity):
-        raise RequestAuthorityArtifactError(RequestAuthorityArtifactReason.MEMBER_IDENTITY_INVALID)
-
-    return {
-        "actual_decision_outcome": _require_outcome(actual_decision_outcome).value,
-        "decision_stage": _require_request_stage(decision_stage).value,
-        "member_identity": cast(JsonValue, source_member_identity_payload(member_identity)),
-        "projection_version": REQUEST_MEMBER_DECISION_AUTHORITY_PROJECTION_VERSION,
-        "request_guard_ref": _artifact_projection(_require_guard_ref(request_guard_ref)),
-        "request_operation_code": _require_operation_code(request_operation_code),
-        "source_snapshot_id": str(source_snapshot_id),
-        "source_snapshot_member_id": str(source_snapshot_member_id),
-        "user_id": str(_require_user_id(user_id)),
-    }
 
 
 def compute_request_member_decision_authority_ref(
@@ -288,14 +202,15 @@ def compute_request_member_decision_authority_ref(
     member_identity: SourceMemberIdentity,
     actual_decision_outcome: ObservedDecisionOutcome,
 ) -> ImmutableArtifactRef:
-    projection = request_member_decision_authority_projection(
-        request_guard_ref=request_guard_ref,
-        user_id=user_id,
-        request_operation_code=request_operation_code,
-        decision_stage=decision_stage,
-        source_snapshot_id=source_snapshot_id,
-        source_snapshot_member_id=source_snapshot_member_id,
-        member_identity=member_identity,
-        actual_decision_outcome=actual_decision_outcome,
+    return worker_artifact_ref(
+        _shared_member_ref(
+            request_guard_ref=shared_artifact_ref(request_guard_ref),
+            user_id=user_id,
+            request_operation_code=request_operation_code,
+            decision_stage=_shared_stage(decision_stage),
+            source_snapshot_id=source_snapshot_id,
+            source_snapshot_member_id=source_snapshot_member_id,
+            member_identity=shared_member_identity(member_identity),
+            actual_decision_outcome=_shared_outcome(actual_decision_outcome),
+        )
     )
-    return _digest_ref(artifact_code=REQUEST_MEMBER_DECISION_AUTHORITY_ARTIFACT_CODE, projection=projection)
