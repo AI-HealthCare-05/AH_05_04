@@ -109,6 +109,7 @@ async def test_create_update_cancel_reactivate_and_replay(case: Case) -> None:
     assert before.status_code == 200
     assert before.json()["data"]["schedule_status"] == "SETUP_REQUIRED"
     assert before.json()["data"]["schedule_items"][0]["setup_reason"] == "MISSING_START_DATE"
+    assert before.json()["data"]["schedule_items"][0]["schedule"] is None
     first = await case.write(case.body)
     assert first.status_code == 200, first.text
     assert MedicationScheduleResponse.model_validate(first.json()).data.revision == 1
@@ -130,6 +131,10 @@ async def test_create_update_cancel_reactivate_and_replay(case: Case) -> None:
     inactive = await case.read()
     assert inactive.json()["data"]["schedule_status"] == "INACTIVE"
     assert inactive.json()["data"]["schedule_items"][0]["setup_reason"] is None
+    assert inactive.json()["data"]["schedule_items"][0]["schedule"] == {
+        **cancelled.json()["data"],
+        "local_times": ["09:00"],
+    }
     reactivated = await case.write({**case.body, "expected_revision": 3}, key="schedule-reactivate-key")
     assert reactivated.status_code == 200, reactivated.text
     assert reactivated.json()["data"]["schedule_id"] == schedule_id
@@ -139,6 +144,8 @@ async def test_create_update_cancel_reactivate_and_replay(case: Case) -> None:
     parsed = MedicationDayResponse.model_validate(day.json()).data
     assert parsed.schedule_status == "READY"
     assert parsed.schedule_items[0].setup_reason is None
+    assert parsed.schedule_items[0].schedule is not None
+    assert parsed.schedule_items[0].schedule.model_dump(mode="json") == reactivated.json()["data"]
     assert any(o.status == "PENDING" and o.scheduled_local_date == case.day for o in parsed.occurrences)
     assert day.headers["cache-control"] == "no-store"
     assert day.headers["x-trace-id"]
@@ -286,6 +293,8 @@ def test_openapi_schedule_contract() -> None:
     assert "reason_code" not in put["properties"]
     query = schema["paths"]["/api/v1/medication-occurrences"]["get"]
     assert next(p for p in query["parameters"] if p["name"] == "date")["required"]
+    item = schema["components"]["schemas"]["MedicationScheduleItem"]
+    assert "schedule" in item["required"]
 
 
 async def expand_prescription_medications(case: Case, medication_id: UUID, count: int) -> list[UUID]:

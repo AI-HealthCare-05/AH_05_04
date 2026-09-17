@@ -13,7 +13,8 @@ for (const width of [320, 390]) {
       if (path === '/api/v1/medication-occurrences') return json({ data: {
         schedule_status: 'SETUP_REQUIRED', occurrences: [], schedule_items: [{
           prescription_version_medication_id: ids.prescriptionVersionMedication,
-          schedule_item_status: 'SETUP_REQUIRED', schedule_id: null, revision: null, setup_reason: 'MISSING_START_DATE',
+          schedule_item_status: 'SETUP_REQUIRED', schedule_id: null, revision: null,
+          setup_reason: 'MISSING_START_DATE', schedule: null,
         }],
       } })
       if (path === '/api/v1/prescriptions/latest') return json({ data: {
