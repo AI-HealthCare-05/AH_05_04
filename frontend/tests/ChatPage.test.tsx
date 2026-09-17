@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import React, { useLayoutEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -17,6 +17,7 @@ import {
 } from '../src/api/chat'
 import { ApiError } from '../src/api/client'
 import { getLatestPrescription } from '../src/api/prescriptions'
+import { deleteFeedback, submitFeedback } from '../src/api/feedback'
 import ChatPage, { type ChatPageServices } from '../src/pages/ChatPage'
 
 vi.mock('../src/api/chat', () => ({
@@ -30,18 +31,9 @@ vi.mock('../src/api/prescriptions', () => ({
   getLatestPrescription: vi.fn(),
 }))
 
-vi.mock('../src/components/ResponseFeedback', () => ({
-  ResponseFeedback: ({
-    target,
-  }: {
-    target: { sessionId: string; messageId: string }
-  }) => (
-    <section
-      aria-label="답변 피드백"
-      data-session-id={target.sessionId}
-      data-message-id={target.messageId}
-    />
-  ),
+vi.mock('../src/api/feedback', () => ({
+  submitFeedback: vi.fn(),
+  deleteFeedback: vi.fn(),
 }))
 
 const prescriptionId = '11111111-1111-4111-8111-111111111111'
@@ -199,6 +191,15 @@ beforeEach(() => {
     latestPrescriptionResponse(),
   )
   mockSessionCreation()
+  vi.mocked(submitFeedback).mockResolvedValue({
+    data: {
+      id: 'feedback',
+      rating: 'POSITIVE',
+      created_at: '2026-09-17T00:00:00Z',
+      updated_at: '2026-09-17T00:00:00Z',
+    },
+  })
+  vi.mocked(deleteFeedback).mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -460,6 +461,139 @@ describe('ChatPage', () => {
     )
     expect(feedback.closest('.chat-message')?.textContent).toContain(
       '두 번째 완료 답변',
+    )
+  })
+
+  it('이전 답변에 저장한 feedback은 새 답변 후에도 삭제할 수 있다', async () => {
+    vi.mocked(sendChatMessage)
+      .mockResolvedValueOnce({
+        data: {
+          user_message_id: 'saved-user-a',
+          assistant_message_id: 'saved-assistant-a',
+          session_id: sessionId,
+          generation_status: 'COMPLETED',
+          content: 'A 완료 답변',
+          model_name: 'chat-model',
+          prompt_version: 'chat-v1',
+          created_at: '2026-09-17T00:00:01Z',
+          completed_at: '2026-09-17T00:00:02Z',
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          user_message_id: 'saved-user-b',
+          assistant_message_id: 'saved-assistant-b',
+          session_id: sessionId,
+          generation_status: 'COMPLETED',
+          content: 'B 완료 답변',
+          model_name: 'chat-model',
+          prompt_version: 'chat-v1',
+          created_at: '2026-09-17T00:01:01Z',
+          completed_at: '2026-09-17T00:01:02Z',
+        },
+      })
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.change(input, { target: { value: 'A 질문' } })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+    await screen.findByText('A 완료 답변')
+
+    fireEvent.click(screen.getByRole('button', { name: '👍 도움이 됐어요' }))
+    fireEvent.click(screen.getByRole('button', { name: '피드백 보내기' }))
+    await screen.findByText('저장된 평가: 도움이 됐어요')
+
+    fireEvent.change(input, { target: { value: 'B 질문' } })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+    await screen.findByText('B 완료 답변')
+
+    const previousFeedback = screen
+      .getAllByRole('region', { name: '답변 피드백' })
+      .find((region) => region.getAttribute('data-message-id') === 'saved-assistant-a')
+    expect(previousFeedback).toBeTruthy()
+    fireEvent.click(within(previousFeedback!).getByRole('button', { name: '피드백 삭제' }))
+
+    await waitFor(() =>
+      expect(deleteFeedback).toHaveBeenCalledWith({
+        sessionId,
+        messageId: 'saved-assistant-a',
+      }),
+    )
+  })
+
+  it('이전 feedback 전송이 실패해도 입력을 보존하고 원래 target으로 재시도한다', async () => {
+    const firstFeedback = deferred<Awaited<ReturnType<typeof submitFeedback>>>()
+    vi.mocked(submitFeedback)
+      .mockReturnValueOnce(firstFeedback.promise)
+      .mockResolvedValueOnce({
+        data: {
+          id: 'retried-feedback',
+          rating: 'NEGATIVE',
+          created_at: '2026-09-17T00:02:00Z',
+          updated_at: '2026-09-17T00:02:00Z',
+        },
+      })
+    vi.mocked(sendChatMessage)
+      .mockResolvedValueOnce({
+        data: {
+          user_message_id: 'pending-user-a',
+          assistant_message_id: 'pending-assistant-a',
+          session_id: sessionId,
+          generation_status: 'COMPLETED',
+          content: 'pending A 답변',
+          model_name: 'chat-model',
+          prompt_version: 'chat-v1',
+          created_at: '2026-09-17T00:00:01Z',
+          completed_at: '2026-09-17T00:00:02Z',
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          user_message_id: 'pending-user-b',
+          assistant_message_id: 'pending-assistant-b',
+          session_id: sessionId,
+          generation_status: 'COMPLETED',
+          content: 'pending B 답변',
+          model_name: 'chat-model',
+          prompt_version: 'chat-v1',
+          created_at: '2026-09-17T00:01:01Z',
+          completed_at: '2026-09-17T00:01:02Z',
+        },
+      })
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.change(input, { target: { value: 'pending A 질문' } })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+    await screen.findByText('pending A 답변')
+
+    fireEvent.click(screen.getByRole('button', { name: '👎 아쉬워요' }))
+    fireEvent.change(screen.getByLabelText('의견 (선택)'), {
+      target: { value: '이전 target 입력' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '피드백 보내기' }))
+
+    fireEvent.change(input, { target: { value: 'pending B 질문' } })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+    await screen.findByText('pending B 답변')
+
+    await act(async () => firstFeedback.reject(new Error('synthetic failure')))
+    const previousFeedback = screen
+      .getAllByRole('region', { name: '답변 피드백' })
+      .find((region) => region.getAttribute('data-message-id') === 'pending-assistant-a')
+    expect(previousFeedback).toBeTruthy()
+    expect(await within(previousFeedback!).findByRole('alert')).toBeTruthy()
+    expect(within(previousFeedback!).getByLabelText('의견 (선택)')).toHaveProperty(
+      'value',
+      '이전 target 입력',
+    )
+
+    fireEvent.click(within(previousFeedback!).getByRole('button', { name: '피드백 보내기' }))
+    await waitFor(() => expect(submitFeedback).toHaveBeenCalledTimes(2))
+    expect(submitFeedback).toHaveBeenLastCalledWith(
+      { sessionId, messageId: 'pending-assistant-a' },
+      'NEGATIVE',
+      '이전 target 입력',
     )
   })
 

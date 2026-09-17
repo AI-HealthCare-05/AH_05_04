@@ -2,7 +2,13 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { deleteFeedback, submitFeedback, type FeedbackRating, type FeedbackTarget } from '../api/feedback'
 import './ResponseFeedback.css'
 
-export function ResponseFeedback({ target }: { target: FeedbackTarget }) {
+export function ResponseFeedback({
+  target,
+  active = true,
+}: {
+  target: FeedbackTarget
+  active?: boolean
+}) {
   const [rating, setRating] = useState<FeedbackRating | null>(null)
   const [comment, setComment] = useState('')
   const [saved, setSaved] = useState<FeedbackRating | null>(null)
@@ -60,8 +66,42 @@ export function ResponseFeedback({ target }: { target: FeedbackTarget }) {
     }
   }
 
+  const targetData = 'guideId' in target
+    ? { 'data-guide-id': target.guideId }
+    : {
+        'data-session-id': target.sessionId,
+        'data-message-id': target.messageId,
+      }
+
+  if (!active && !busy && !saved && !error) return null
+
+  if (!active && saved) {
+    return (
+      <section
+        className="response-feedback"
+        aria-label="답변 피드백"
+        aria-busy={busy}
+        {...targetData}
+      >
+        <p className="response-feedback__notice">
+          저장된 평가: {saved === 'POSITIVE' ? '도움이 됐어요' : '아쉬워요'}
+        </p>
+        <button type="button" disabled={busy} onClick={() => void send(true)}>
+          {busy ? '처리 중…' : '피드백 삭제'}
+        </button>
+        {notice && <p role="status">{notice}</p>}
+        {error && <p role="alert">{error}</p>}
+      </section>
+    )
+  }
+
   return (
-    <section className="response-feedback" aria-label="답변 피드백" aria-busy={busy}>
+    <section
+      className="response-feedback"
+      aria-label="답변 피드백"
+      aria-busy={busy}
+      {...targetData}
+    >
       <p>도움이 되었나요?</p>
       <div className="response-feedback__ratings">
         {([['POSITIVE', '👍 도움이 됐어요'], ['NEGATIVE', '👎 아쉬워요']] as const).map(([value, label]) => (

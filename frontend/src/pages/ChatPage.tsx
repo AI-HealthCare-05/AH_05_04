@@ -765,8 +765,15 @@ function ChatPage({
                     ) : (
                       message.content ?? '답변을 생성하지 못했어요.'
                     )}
-                    {import.meta.env.DEV && currentSessionId && message.message_id === feedbackMessageId && (
-                      <ResponseFeedback key={message.message_id} target={{ sessionId: currentSessionId, messageId: message.message_id }} />
+                    {import.meta.env.DEV &&
+                      currentSessionId &&
+                      message.role === 'ASSISTANT' &&
+                      message.generation_status === 'COMPLETED' && (
+                      <ResponseFeedback
+                        key={message.message_id}
+                        target={{ sessionId: currentSessionId, messageId: message.message_id }}
+                        active={message.message_id === feedbackMessageId}
+                      />
                     )}
                   </div>
                 </div>
