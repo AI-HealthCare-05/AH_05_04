@@ -15,7 +15,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from ai_worker.adapters.postgresql_evidence_eligibility import (
     PostgreSqlEvidenceEligibilityVerifier,
 )
-from ai_worker.adapters.postgresql_evidence_search import PostgresqlEvidenceSearchAdapter
+from ai_worker.adapters.postgresql_evidence_search import (
+    POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF,
+    PostgresqlEvidenceSearchAdapter,
+)
 from ai_worker.adapters.sqlalchemy_knowledge_evidence_index import (
     SqlAlchemyKnowledgeEvidenceIndexRepository,
 )
@@ -277,9 +280,7 @@ async def test_actual_retrieval_evaluation_two_transaction_flow(database) -> Non
     index_id, snapshot_id, member_id, index_hash = await _seed_data(database)
     factory = async_sessionmaker(database, expire_on_commit=False, autoflush=False)
 
-    search_port = PostgresqlEvidenceSearchAdapter(
-        factory, ImmutableArtifactRef("postgresql-evidence-search-adapter", "1.0.0", "a" * 64)
-    )
+    search_port = PostgresqlEvidenceSearchAdapter(factory, POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF)
     run_store = SqlAlchemyRetrievalRunStore(session_factory=factory)
     eligibility_verifier = PostgreSqlEvidenceEligibilityVerifier(session_factory=factory)
     embedding_adapter = DeterministicFakeEmbeddingAdapter(dimension=1536)

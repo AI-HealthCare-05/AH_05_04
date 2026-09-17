@@ -518,7 +518,10 @@ def build_actual_adapter_registry(  # noqa: C901
     from uuid import uuid4
 
     from ai_worker.adapters.postgresql_evidence_eligibility import PostgreSqlEvidenceEligibilityVerifier
-    from ai_worker.adapters.postgresql_evidence_search import PostgresqlEvidenceSearchAdapter
+    from ai_worker.adapters.postgresql_evidence_search import (
+        POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF,
+        PostgresqlEvidenceSearchAdapter,
+    )
     from ai_worker.tasks.evaluation.actual_retrieval_index import (
         ACTUAL_RETRIEVAL_ADAPTER_REF,
         bootstrap_dev_knowledge_index,
@@ -548,7 +551,8 @@ def build_actual_adapter_registry(  # noqa: C901
 
     if search_port is None and session_factory is not None:
         search_port = PostgresqlEvidenceSearchAdapter(
-            session_factory, ImmutableArtifactRef("postgresql-evidence-search-adapter", "1.0.0", "a" * 64)
+            session_factory,
+            adapter_artifact_ref=POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF,
         )
 
     if eligibility_verifier is None and session_factory is not None:
