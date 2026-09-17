@@ -3,6 +3,7 @@ import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { ApiError } from '../src/api/client'
+import { requestAccountWithdrawal } from '../src/api/auth'
 import { getUserConsents, withdrawUserConsent, CONSENT_PURPOSES, type UserConsent } from '../src/api/userConsents'
 import {
   getCurrentUser,
@@ -10,10 +11,14 @@ import {
   type CurrentUser,
 } from '../src/api/users'
 import ProfilePage from '../src/pages/ProfilePage'
+import StartPage from '../src/pages/StartPage'
 
 vi.mock('../src/api/users', () => ({
   getCurrentUser: vi.fn(),
   updateCurrentUser: vi.fn(),
+}))
+vi.mock('../src/api/auth', () => ({
+  requestAccountWithdrawal: vi.fn(),
 }))
 vi.mock('../src/api/userConsents', () => ({
   getUserConsents: vi.fn(),
@@ -55,6 +60,7 @@ function renderProfile() {
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/menu" element={<div>메뉴 화면</div>} />
         <Route path="/login" element={<div>로그인 화면</div>} />
+        <Route path="/start" element={<StartPage />} />
         <Route path="/" element={<div>홈 화면</div>} />
         <Route path="/guides" element={<div>가이드 화면</div>} />
         <Route path="/chat" element={<div>도지 화면</div>} />
@@ -69,12 +75,18 @@ async function openEditForm() {
   fireEvent.click(screen.getByRole('button', { name: '이름·이메일 수정' }))
 }
 
+async function openWithdrawalForm() {
+  await screen.findByText(CURRENT_USER.email)
+  fireEvent.click(screen.getByRole('button', { name: '회원탈퇴' }))
+}
+
 beforeEach(() => {
   localStorage.clear()
   sessionStorage.clear()
   localStorage.setItem('access_token', 'fixture-token')
   vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
   vi.mocked(updateCurrentUser).mockResolvedValue(CURRENT_USER)
+  vi.mocked(requestAccountWithdrawal).mockResolvedValue({ detail: '탈퇴 요청 접수 완료' })
   vi.mocked(getUserConsents).mockResolvedValue({ data: CONSENTS })
   vi.mocked(withdrawUserConsent).mockImplementation(async (purpose, version) => ({
     data: { ...CONSENTS.find((item) => item.purpose === purpose)!, policy_version: version,
@@ -319,6 +331,227 @@ describe('인증과 재접근', () => {
     expect(await screen.findByText('로그인 화면')).toBeTruthy()
     expect(getCurrentUser).not.toHaveBeenCalled()
     expect(screen.queryByText(CURRENT_USER.email)).toBeNull()
+  })
+})
+
+describe('회원탈퇴 요청', () => {
+  it('최종 확인 전에는 CTA를 비활성화하고 API를 호출하지 않는다', async () => {
+    renderProfile()
+    await openWithdrawalForm()
+
+    const passwordInput = screen.getByLabelText('현재 비밀번호')
+    fireEvent.change(passwordInput, { target: { value: 'Password1!' } })
+
+    expect(passwordInput.getAttribute('autocomplete')).toBe('current-password')
+    expect(screen.getByRole('button', { name: '회원탈퇴 요청' })).toHaveProperty(
+      'disabled',
+      true,
+    )
+    expect(requestAccountWithdrawal).not.toHaveBeenCalled()
+  })
+
+  it('성공 응답 후에만 인증·사용자 세션을 정리하고 접수 완료 상태를 표시한다', async () => {
+    sessionStorage.setItem('dosey_chat_session:fixture-prescription', 'fixture-session')
+    sessionStorage.setItem('dosey_ocr_job_recovery:v1', 'fixture-ocr-recovery')
+    localStorage.setItem('dosey_web_push_binding:v1', 'fixture-push-binding')
+    sessionStorage.setItem('unrelated-session', 'keep-me')
+    renderProfile()
+    await openWithdrawalForm()
+
+    fireEvent.change(screen.getByLabelText('현재 비밀번호'), {
+      target: { value: 'Password1!' },
+    })
+    fireEvent.click(
+      screen.getByLabelText(
+        '회원탈퇴 요청 후 계정을 더 이상 이용할 수 없음을 확인했습니다.',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '회원탈퇴 요청' }))
+
+    expect(await screen.findByText('회원탈퇴 요청이 접수되었어요.')).toBeTruthy()
+    expect(requestAccountWithdrawal).toHaveBeenCalledWith('Password1!', 'fixture-token')
+    expect(requestAccountWithdrawal).toHaveBeenCalledTimes(1)
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(sessionStorage.getItem('dosey_chat_session:fixture-prescription')).toBeNull()
+    expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toBeNull()
+    expect(localStorage.getItem('dosey_web_push_binding:v1')).toBeNull()
+    expect(sessionStorage.getItem('unrelated-session')).toBe('keep-me')
+    expect(screen.queryByText(CURRENT_USER.email)).toBeNull()
+    expect(screen.getByText(/삭제·보존은 서비스 정책에 따라 처리됩니다/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '시작 화면으로 이동' }))
+    expect(screen.getByRole('heading', { name: '처방과 일정을 쉽게 살펴봐요.' })).toBeTruthy()
+  })
+
+  it('제출 중 입력과 CTA를 비활성화하고 중복 요청을 막는다', async () => {
+    const pending = deferred<{ detail: string }>()
+    vi.mocked(requestAccountWithdrawal).mockReturnValue(pending.promise)
+    renderProfile()
+    await openWithdrawalForm()
+
+    fireEvent.change(screen.getByLabelText('현재 비밀번호'), {
+      target: { value: 'Password1!' },
+    })
+    fireEvent.click(
+      screen.getByLabelText(
+        '회원탈퇴 요청 후 계정을 더 이상 이용할 수 없음을 확인했습니다.',
+      ),
+    )
+    const form = screen.getByLabelText('현재 비밀번호').closest('form')!
+    fireEvent.submit(form)
+    fireEvent.submit(form)
+
+    expect(requestAccountWithdrawal).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: '요청 중...' })).toHaveProperty('disabled', true)
+    expect(screen.getByLabelText('현재 비밀번호')).toHaveProperty('disabled', true)
+
+    pending.resolve({ detail: '탈퇴 요청 접수 완료' })
+    expect(await screen.findByText('회원탈퇴 요청이 접수되었어요.')).toBeTruthy()
+  })
+
+  it('잘못된 비밀번호는 field 오류로 표시하고 인증 상태를 유지한다', async () => {
+    vi.mocked(requestAccountWithdrawal).mockRejectedValue(
+      new ApiError(401, 'raw credential fixture', 'UNAUTHORIZED'),
+    )
+    renderProfile()
+    await openWithdrawalForm()
+
+    fireEvent.change(screen.getByLabelText('현재 비밀번호'), {
+      target: { value: 'WrongPass1!' },
+    })
+    fireEvent.click(
+      screen.getByLabelText(
+        '회원탈퇴 요청 후 계정을 더 이상 이용할 수 없음을 확인했습니다.',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '회원탈퇴 요청' }))
+
+    const error = await screen.findByText('비밀번호가 올바르지 않습니다.')
+    expect(screen.getByLabelText('현재 비밀번호').getAttribute('aria-describedby')).toBe(error.id)
+    expect(localStorage.getItem('access_token')).toBe('fixture-token')
+    expect(screen.queryByText('회원탈퇴 요청이 접수되었어요.')).toBeNull()
+  })
+
+  it('INVALID_TOKEN 401은 인증 상태와 사용자 정보를 정리하고 로그인으로 이동한다', async () => {
+    sessionStorage.setItem('dosey_chat_session:fixture-prescription', 'fixture-session')
+    vi.mocked(requestAccountWithdrawal).mockRejectedValue(
+      new ApiError(401, 'raw expired fixture', 'INVALID_TOKEN'),
+    )
+    renderProfile()
+    await openWithdrawalForm()
+
+    fireEvent.change(screen.getByLabelText('현재 비밀번호'), {
+      target: { value: 'Password1!' },
+    })
+    fireEvent.click(
+      screen.getByLabelText(
+        '회원탈퇴 요청 후 계정을 더 이상 이용할 수 없음을 확인했습니다.',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '회원탈퇴 요청' }))
+
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(sessionStorage.getItem('dosey_chat_session:fixture-prescription')).toBeNull()
+    expect(screen.queryByText(CURRENT_USER.email)).toBeNull()
+  })
+
+  it('제출 직전 local token이 사라지면 API를 호출하지 않고 인증 만료로 처리한다', async () => {
+    renderProfile()
+    await openWithdrawalForm()
+
+    fireEvent.change(screen.getByLabelText('현재 비밀번호'), {
+      target: { value: 'Password1!' },
+    })
+    fireEvent.click(
+      screen.getByLabelText(
+        '회원탈퇴 요청 후 계정을 더 이상 이용할 수 없음을 확인했습니다.',
+      ),
+    )
+    localStorage.removeItem('access_token')
+    fireEvent.click(screen.getByRole('button', { name: '회원탈퇴 요청' }))
+
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
+    expect(requestAccountWithdrawal).not.toHaveBeenCalled()
+    expect(screen.queryByText('비밀번호가 올바르지 않습니다.')).toBeNull()
+    expect(screen.queryByText(CURRENT_USER.email)).toBeNull()
+  })
+
+  it('요청 중 다른 보호 화면으로 이동해도 성공 응답 후 접수 완료 화면으로 전환한다', async () => {
+    const pending = deferred<{ detail: string }>()
+    vi.mocked(requestAccountWithdrawal).mockReturnValue(pending.promise)
+    renderProfile()
+    await openWithdrawalForm()
+
+    fireEvent.change(screen.getByLabelText('현재 비밀번호'), {
+      target: { value: 'Password1!' },
+    })
+    fireEvent.click(
+      screen.getByLabelText(
+        '회원탈퇴 요청 후 계정을 더 이상 이용할 수 없음을 확인했습니다.',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '회원탈퇴 요청' }))
+    fireEvent.click(screen.getByRole('button', { name: '홈' }))
+    expect(screen.getByText('홈 화면')).toBeTruthy()
+
+    pending.resolve({ detail: '탈퇴 요청 접수 완료' })
+
+    expect(await screen.findByText('회원탈퇴 요청이 접수되었어요.')).toBeTruthy()
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(screen.queryByText('홈 화면')).toBeNull()
+    expect(screen.queryByText(CURRENT_USER.email)).toBeNull()
+  })
+
+  it('503 Gate OFF는 처리 불가 상태를 표시하고 인증·입력을 유지한다', async () => {
+    vi.mocked(requestAccountWithdrawal).mockRejectedValue(
+      new ApiError(503, 'raw gate fixture', 'SERVICE_UNAVAILABLE', [
+        {
+          field: 'account_withdrawal',
+          reason: 'ACCOUNT_WITHDRAWAL_REQUEST_DISABLED',
+        },
+      ]),
+    )
+    renderProfile()
+    await openWithdrawalForm()
+
+    const passwordInput = screen.getByLabelText('현재 비밀번호')
+    fireEvent.change(passwordInput, { target: { value: 'Password1!' } })
+    fireEvent.click(
+      screen.getByLabelText(
+        '회원탈퇴 요청 후 계정을 더 이상 이용할 수 없음을 확인했습니다.',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '회원탈퇴 요청' }))
+
+    expect(await screen.findByText('회원탈퇴 요청을 현재 처리할 수 없어요.')).toBeTruthy()
+    expect((passwordInput as HTMLInputElement).value).toBe('Password1!')
+    expect(localStorage.getItem('access_token')).toBe('fixture-token')
+    expect(screen.queryByText('회원탈퇴 요청이 접수되었어요.')).toBeNull()
+  })
+
+  it.each([
+    ['network', new Error('network unavailable')],
+    ['server', new ApiError(500, 'raw server fixture', 'INTERNAL_SERVER_ERROR')],
+  ])('%s 실패는 재시도 안내와 인증 상태를 유지한다', async (_label, failure) => {
+    vi.mocked(requestAccountWithdrawal).mockRejectedValue(failure)
+    renderProfile()
+    await openWithdrawalForm()
+
+    fireEvent.change(screen.getByLabelText('현재 비밀번호'), {
+      target: { value: 'Password1!' },
+    })
+    fireEvent.click(
+      screen.getByLabelText(
+        '회원탈퇴 요청 후 계정을 더 이상 이용할 수 없음을 확인했습니다.',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '회원탈퇴 요청' }))
+
+    expect(await screen.findByText('회원탈퇴 요청을 접수하지 못했어요.')).toBeTruthy()
+    expect(localStorage.getItem('access_token')).toBe('fixture-token')
+    expect(screen.queryByText('raw server fixture')).toBeNull()
+    expect(screen.queryByText('회원탈퇴 요청이 접수되었어요.')).toBeNull()
   })
 })
 
