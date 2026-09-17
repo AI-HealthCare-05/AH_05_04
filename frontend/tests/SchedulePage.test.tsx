@@ -982,6 +982,120 @@ describe('production 복약 일정', () => {
 })
 
 describe('production 복약 기록 handoff', () => {
+  it('예정 시각 전에는 Check-in 버튼을 비활성화하고 가능한 시각을 안내한다', async () => {
+    const futureScheduledAt = new Date(Date.now() + 60_000).toISOString()
+    const original = makeDay().data.occurrences[0]
+
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(
+        makeDay({
+          occurrences: [
+            {
+              ...original,
+              scheduled_at: futureScheduledAt,
+            },
+          ],
+        }),
+      ),
+    })
+
+    renderOccurrence(services)
+
+    expect(
+      await screen.findByText(/예정 시각 전에는 복용 여부를 기록할 수 없어요/),
+    ).toBeTruthy()
+
+    expect(
+      (screen.getByRole('button', { name: '복용했어요' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true)
+
+    expect(
+      (
+        screen.getByRole('button', {
+          name: '복용하지 않았어요',
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: '복용했어요' }))
+
+    expect(services.putMedicationCheckin).not.toHaveBeenCalled()
+  })
+
+  it('화면을 열어 둔 상태에서 예정 시각이 지나면 Check-in 버튼을 활성화한다', async () => {
+    const futureScheduledAt = new Date(Date.now() + 1500).toISOString()
+    const original = makeDay().data.occurrences[0]
+
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(
+        makeDay({
+          occurrences: [
+            {
+              ...original,
+              scheduled_at: futureScheduledAt,
+            },
+          ],
+        }),
+      ),
+    })
+
+    renderOccurrence(services)
+
+    await screen.findByText(
+      /예정 시각 전에는 복용 여부를 기록할 수 없어요/,
+    )
+
+    const takenButton = screen.getByRole('button', {
+      name: '복용했어요',
+    })
+    const notTakenButton = screen.getByRole('button', {
+      name: '복용하지 않았어요',
+    })
+
+    expect((takenButton as HTMLButtonElement).disabled).toBe(true)
+    expect((notTakenButton as HTMLButtonElement).disabled).toBe(true)
+    await waitFor(
+      () => {
+        expect((takenButton as HTMLButtonElement).disabled).toBe(false)
+        expect((notTakenButton as HTMLButtonElement).disabled).toBe(false)
+      },
+      { timeout: 3000 },
+    )
+
+    expect(
+      screen.queryByText(/예정 시각 전에는 복용 여부를 기록할 수 없어요/),
+    ).toBeNull()
+  })
+
+  it('Backend가 예정 시각 전 Check-in을 거부하면 전용 사용자 안내를 표시한다', async () => {
+    const putMedicationCheckin = vi.fn().mockRejectedValue(
+      new ApiError(
+        422,
+        'raw backend detail',
+        'VALIDATION_FAILED',
+        [{ reason: 'CHECKIN_BEFORE_SCHEDULED_AT' }],
+      ),
+    )
+
+    const services = makeServices({ putMedicationCheckin })
+
+    renderOccurrence(services)
+
+    const takenButton = await screen.findByRole('button', {
+      name: '복용했어요',
+    })
+
+    fireEvent.click(takenButton)
+
+    expect(
+      await screen.findByText(/아직 복용 여부를 기록할 수 없어요/),
+    ).toBeTruthy()
+
+    expect(screen.queryByText('raw backend detail')).toBeNull()
+
+    expect(putMedicationCheckin).toHaveBeenCalledTimes(1)
+  })
   it('최초 조회 실패 후 다시 시도하면 같은 occurrence 상세를 복구하며 Check-in을 저장하지 않는다', async () => {
     const getDay = vi.fn()
       .mockRejectedValueOnce(new TypeError('Failed to fetch'))

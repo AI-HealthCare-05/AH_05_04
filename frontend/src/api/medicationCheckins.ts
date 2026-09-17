@@ -105,9 +105,29 @@ export function isOccurrenceNotFoundError(error: unknown): boolean {
 }
 
 /**
+ * 예정 시각 전 Check-in 차단.
+ *
+ * Backend #723 계약:
+ * 422 VALIDATION_FAILED +
+ * details.reason=CHECKIN_BEFORE_SCHEDULED_AT
+ */
+
+export function isCheckinBeforeScheduledAtError(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 422 &&
+    error.code === 'VALIDATION_FAILED' &&
+    error.details.some(
+      (detail) => detail.reason === 'CHECKIN_BEFORE_SCHEDULED_AT',
+    )
+  )
+}
+
+/**
  * 입력 검증 실패 (`VALIDATION_FAILED`) 또는 사용자 `UNCONFIRMED` 제출
  * (`CHECKIN_STATUS_NOT_USER_SETTABLE`).
  */
+
 export function isCheckinValidationError(error: unknown): boolean {
   return error instanceof ApiError && error.status === 422
 }

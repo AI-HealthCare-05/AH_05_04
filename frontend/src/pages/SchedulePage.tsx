@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   useNavigate,
@@ -26,6 +26,7 @@ import {
 } from '../api/medicationSchedules'
 import {
   createCheckinIdempotencyKey,
+  isCheckinBeforeScheduledAtError,
   isCheckinConflictError,
   isCheckinRevisionConflictError,
   isCheckinValidationError,
@@ -1185,6 +1186,7 @@ export function ScheduleOccurrencePage({
   const [reloadVersion, setReloadVersion] = useState(0)
   const [isSaving, setIsSaving] = useState(false)
   const [mutationMessage, setMutationMessage] = useState('')
+  const [isBeforeScheduledAt, setIsBeforeScheduledAt] = useState(false)
   const headingRef = useRef<HTMLHeadingElement>(null)
   const checkinAttemptRef = useRef<
     LogicalMutationAttempt<LogicalMutationOperation, unknown> | null
@@ -1258,8 +1260,50 @@ export function ScheduleOccurrencePage({
     }
   }, [loadedMedicationOccurrenceId, loadedOccurrenceId])
 
+  useLayoutEffect(() => {
+    if (!occurrence) {
+      setIsBeforeScheduledAt(false)
+      return
+    }
+
+    const scheduledAt = Date.parse(occurrence.scheduled_at)
+
+    if (Number.isNaN(scheduledAt)) {
+      setIsBeforeScheduledAt(false)
+      return
+    }
+
+    const updateAvailability = () => {
+      setIsBeforeScheduledAt(Date.now() < scheduledAt)
+    }
+
+    updateAvailability()
+
+    const remaining = scheduledAt - Date.now()
+
+    if (remaining <= 0) {
+      return
+    }
+
+    const timer = window.setTimeout(
+      updateAvailability,
+      remaining + 100,
+    )
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [occurrence])
+
   const submitCheckin = async (status: MedicationCheckinUserStatus) => {
-    if (!occurrence || isSaving || occurrence.status === 'CANCELLED') return
+    if (
+      !occurrence ||
+      isSaving ||
+      occurrence.status === 'CANCELLED' ||
+      isBeforeScheduledAt
+    ) {
+      return
+    }
     const requestPayload: PutMedicationCheckinInput = {
       status,
       expectedRevision: occurrence.checkin?.revision ?? 0,
@@ -1299,6 +1343,12 @@ export function ScheduleOccurrencePage({
         setLoadFailure('NOT_FOUND')
         setOccurrence(null)
         setMedication(null)
+      } else if (isCheckinBeforeScheduledAtError(error)) {
+        setMutationMessage(
+          `아직 복용 여부를 기록할 수 없어요. ${formatKstTime(
+            occurrence.scheduled_at,
+          )}부터 기록할 수 있어요.`,
+        )
       } else if (isCheckinValidationError(error)) {
         setMutationMessage('선택한 복약 기록을 저장할 수 없어요. 상태를 확인해 주세요.')
       } else if (isCheckinConflictError(error)) {
@@ -1379,6 +1429,13 @@ export function ScheduleOccurrencePage({
                 </p>
               )}
 
+              {isBeforeScheduledAt && (
+                <p className="schedule-record__message" role="status">
+                  예정 시각 전에는 복용 여부를 기록할 수 없어요.{' '}
+                  {formatKstTime(occurrence.scheduled_at)}부터 기록할 수 있어요.
+                </p>
+              )}
+
               {import.meta.env.DEV && occurrence.status !== 'CANCELLED' && occurrence.checkin?.status === 'NOT_TAKEN' && (
                 <Button fullWidth disabled={isSaving} onClick={() => navigate(`/dev/track-c/occurrences/${occurrence.occurrence_id}?date=${encodeURIComponent(date ?? '')}`)}>
                   이유와 도움 찾기
@@ -1388,10 +1445,10 @@ export function ScheduleOccurrencePage({
                 <section className="schedule-record__actions" aria-labelledby="checkin-question">
                   <h2 id="checkin-question">이 약을 복용했나요?</h2>
                   <p>현재 상태를 확인하고 직접 선택해 주세요.</p>
-                  <Button fullWidth disabled={isSaving} onClick={() => void submitCheckin('TAKEN')}>
+                  <Button fullWidth disabled={isSaving || isBeforeScheduledAt} onClick={() => void submitCheckin('TAKEN')}>
                     {isSaving ? '저장 중…' : '복용했어요'}
                   </Button>
-                  <Button fullWidth variant="secondary" disabled={isSaving} onClick={() => void submitCheckin('NOT_TAKEN')}>
+                  <Button fullWidth variant="secondary" disabled={isSaving || isBeforeScheduledAt} onClick={() => void submitCheckin('NOT_TAKEN')}>
                     복용하지 않았어요
                   </Button>
                 </section>

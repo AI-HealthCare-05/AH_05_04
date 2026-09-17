@@ -3,6 +3,7 @@ import { ApiError } from '../src/api/client'
 import {
   type MedicationCheckinResponse,
   createCheckinIdempotencyKey,
+  isCheckinBeforeScheduledAtError,
   isCheckinConflictError,
   isCheckinRevisionConflictError,
   isCheckinValidationError,
@@ -190,6 +191,20 @@ describe('Check-in PUT adapter', () => {
 })
 
 describe('Check-in 오류 판별 helper', () => {
+  it('422 예정 시각 전 Check-in 차단을 reason으로 판별한다', () => {
+    const error = new ApiError(
+        422,
+        '아직 기록할 수 없습니다.',
+        'VALIDATION_FAILED',
+        [{ reason: 'CHECKIN_BEFORE_SCHEDULED_AT' }],
+    )
+
+    expect(isCheckinBeforeScheduledAtError(error)).toBe(true)
+    expect(isCheckinValidationError(error)).toBe(true)
+    expect(isCheckinConflictError(error)).toBe(false)
+    expect(isOccurrenceNotFoundError(error)).toBe(false)
+  })
+
   it('409 revision 충돌을 판별한다', async () => {
     stubFetch(makeErrorBody('CHECKIN_REVISION_CONFLICT'), 409)
 
@@ -253,6 +268,7 @@ describe('Check-in 오류 판별 helper', () => {
       expect(isCheckinRevisionConflictError(value)).toBe(false)
       expect(isCheckinValidationError(value)).toBe(false)
       expect(isOccurrenceNotFoundError(value)).toBe(false)
+      expect(isCheckinBeforeScheduledAtError(value)).toBe(false)
     }
   })
 })
