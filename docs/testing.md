@@ -91,6 +91,10 @@ SMTP·외부 AI를 호출하지 않으며 기존 개발/test DB를 사용하지 
 [회원가입 인증 gate 검증](testing/signup-gate-431.md)을 참고합니다.
 이 경로는 별도 opt-in 검증이며 기본 CI에 추가하지 않습니다.
 
+## 부하테스트 프레임워크 (#627)
+
+#627의 1단계는 API별 완성 시나리오가 아니라 부하테스트 실행 구조와 운영 절차를 준비하는 범위입니다. Locust 기반 엔트리포인트, 기본 smoke 경로, 결과 요약 형식과 후속 API 시나리오 추가 순서는 [부하테스트 프레임워크](testing/load-testing-627.md)를 따릅니다. 현재 문서는 Production 수용량 증빙이나 `p95 <= 3s` 달성을 의미하지 않으며, 로그인·OCR·Guide·Chat 등 실제 API별 시나리오는 API 계약 안정화 후 후속 PR에서 추가합니다.
+
 ## 현재 자동 검증 범위
 
 GitHub Actions와 `scripts/ci/run_test.sh`는 다음 경계로 PostgreSQL migration과 기본 Python 테스트를 검증합니다.
