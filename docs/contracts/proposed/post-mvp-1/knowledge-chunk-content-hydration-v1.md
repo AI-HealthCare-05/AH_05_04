@@ -8,7 +8,8 @@
 | 구현 위치 | `ai_worker/tasks/rag/knowledge_chunk_content_hydration.py`, `ai_worker/adapters/sqlalchemy_knowledge_chunk_content.py` |
 | 테스트 위치 | `ai_worker/tests/rag/test_knowledge_chunk_content_hydration.py`, `ai_worker/tests/rag/test_sqlalchemy_knowledge_chunk_content.py`, `tests/integration/rag/test_knowledge_chunk_content_hydration_postgresql.py` |
 | 계약 및 구현 책임 | 정현우 (`@ceohwj`) — AI/RAG |
-| 단일 책임 리뷰 | 미지정 — Backend/DB read-only 결속과 provenance 검증을 확인할 수 있는 담당자 1명을 Issue #711과 PR에 명시한다 |
+| 단일 책임 리뷰 | `@phina-io` — production SQLAlchemy read-only adapter, REPEATABLE READ / READ ONLY transaction, `knowledge_index_id + knowledge_chunk_id` persisted binding, persisted provenance 재구성, fail-closed DB/dependency 경계, DB write/schema/migration 없음 |
+| 전문 근거 제공 | Source provenance 확인이 필요할 경우 `@Jye-rookie` (specialist evidence provider, 추가 필수 PR reviewer 아님) |
 
 ---
 
