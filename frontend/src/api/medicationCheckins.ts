@@ -112,6 +112,20 @@ export function isCheckinValidationError(error: unknown): boolean {
   return error instanceof ApiError && error.status === 422
 }
 
+/** 예정 시각 전 Check-in 요청 (`VALIDATION_FAILED/CHECKIN_BEFORE_SCHEDULED_AT`). */
+export function isCheckinBeforeScheduledAtError(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 422 &&
+    error.code === 'VALIDATION_FAILED' &&
+    error.details.some(
+      (detail) =>
+        detail.field === 'occurrence_id' &&
+        detail.reason === 'CHECKIN_BEFORE_SCHEDULED_AT',
+    )
+  )
+}
+
 /**
  * revision 충돌·취소된 occurrence·`Idempotency-Key` 충돌을 모두 포함하는 409.
  * 각각 후속 처리가 다르므로 revision 충돌은 `isCheckinRevisionConflictError` 로 구분합니다.

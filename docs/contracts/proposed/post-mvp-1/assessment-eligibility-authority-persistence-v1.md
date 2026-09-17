@@ -6,7 +6,7 @@
 | 추적 Issue | [#712](https://github.com/AI-HealthCare-05/AH_05_04/issues/712) |
 | 선행 결정 | [`PD-722-20260917`](../../../governance/decisions/2026-09-17-evidence-assessment-validity.md) (Approved, PR #725 merged) |
 | 선행·관련 | [#713 REQUEST Authority Persistence](./request-authority-persistence-v1.md), [#697 Guide Retrieval Composition](./guide-retrieval-composition-v1.md), [#180 Guide Evidence Handoff](./guide-evidence-handoff-v1.md), #178 |
-| 소비자 | 후속 read-only Assessment·Eligibility Authority Reader, 이후 `GuideEvidenceHandoffRequest` 조립 (#180) |
+| 소비자 | read-only Assessment·Eligibility Authority Reader (#746), 이후 `GuideEvidenceHandoffRequest` authoritative assembly ([#760](./authoritative-guide-evidence-handoff-assembly-v1.md)) |
 
 ---
 
@@ -44,13 +44,13 @@ PUBLIC_TRACK_F 활성화
 | --- | --- |
 | REQUEST Guard / Source / Member Production Reader | DONE (#709, `ai_worker/adapters/sqlalchemy_guide_evidence_authority.py`) |
 | Assessment / Eligibility Authority Persistence | 본 PR (#712) |
-| Assessment / Eligibility Reader | NOT IMPLEMENTED |
-| GuideEvidenceHandoff authoritative assembly | NOT IMPLEMENTED |
+| Assessment / Eligibility Reader | DONE (#746, `ai_worker/adapters/sqlalchemy_evidence_authority.py`) |
+| GuideEvidenceHandoff authoritative assembly | DONE (#760, [`authoritative-guide-evidence-handoff-assembly-v1`](./authoritative-guide-evidence-handoff-assembly-v1.md)) |
 | #180 orchestration | NOT IMPLEMENTED |
 
 #709 Production Reader는 REQUEST 단위 Guard·Source·Member authority를 읽는다. 본 계약이 발급하는
-selected hit 단위 Assessment·Eligibility authority와는 책임 경계가 다르며, 이를 읽는 Reader는 아직
-구현되지 않았다.
+selected hit 단위 Assessment·Eligibility authority와는 책임 경계가 다르며, 이를 읽는 Reader는 #746이
+담당한다.
 
 ### 이 표가 대체하지 않는 것
 
@@ -244,4 +244,4 @@ authority는 불변 사실이고, 현재 사용 가능 여부는 소비 계층�
   digest 변조 DB 거부, artifact_code 변조 읽기 fail-closed, ref 형식).
 - `tests/integration/rag/test_database_role_provisioning.py` — append-only 권한 경계.
 
-Reader·Handoff·런타임 연결은 여전히 미구현이며, 본 계약의 Current 승격은 별도다.
+Reader(#746)와 authoritative Handoff assembly(#760)는 연결되었고, #180 런타임 연결은 여전히 미구현이며 본 계약의 Current 승격은 별도다.
