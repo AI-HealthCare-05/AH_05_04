@@ -71,6 +71,7 @@ class MedicationScheduleItem(BaseModel):
     schedule_id: UUID | None
     revision: int | None
     setup_reason: SetupReason | None
+    schedule: MedicationScheduleData | None
 
 
 class MedicationOccurrenceData(BaseModel):
