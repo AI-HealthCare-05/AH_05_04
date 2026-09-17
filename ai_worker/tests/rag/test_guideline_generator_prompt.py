@@ -2,24 +2,11 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
-from ai_worker.tasks.rag.evidence_gate import (
-    EvidenceGateExecutionStatus,
-    EvidenceGateOutcome,
-    EvidenceGateReason,
-    EvidenceGateTrace,
-    EvidenceStatus,
-    GatePassedKnowledgeEvidenceSelection,
-)
 from ai_worker.tasks.rag.evidence_retrieval import (
-    CanonicalScore,
-    EvidenceSearchStage,
     ImmutableArtifactRef,
-    KnowledgeEvidenceCandidate,
-    KnowledgeEvidenceProvenance,
     SensitiveText,
-    StageSignal,
-    UntrustedKnowledgeEvidenceSelection,
 )
 from ai_worker.tasks.rag.guideline_card import (
     ApprovedGuidelineEvidenceBinding,
@@ -49,6 +36,11 @@ from ai_worker.tasks.rag.guideline_generator_prompt import (
     build_guideline_generation_input_projection,
     parse_guideline_structured_output,
 )
+from ai_worker.tasks.rag.guideline_production_evidence import (
+    ProductionGuidelineEvidence,
+    ProductionGuidelineEvidenceSet,
+    compute_production_guideline_evidence_selection_hash,
+)
 
 EVALUATED_AT = datetime(2026, 9, 10, 3, 0, tzinfo=UTC)
 FOOD_AVOIDANCE_TEXT = (
@@ -74,38 +66,26 @@ def make_medication(
     )
 
 
-def make_gate_passed_selection(
+def make_production_selection(
     *,
     evidence_key: str = "knowledge:guideline-1",
     locator: str = "$.items[0].useMethodQesitm",
     source_version: str = "api:" + "1" * 64,
     content_text: str = FOOD_AVOIDANCE_TEXT,
-) -> GatePassedKnowledgeEvidenceSelection:
-    provenance = KnowledgeEvidenceProvenance(
+) -> ProductionGuidelineEvidence:
+    return ProductionGuidelineEvidence(
         evidence_key=evidence_key,
-        knowledge_chunk_ref=f"chunk-{evidence_key}",
-        evidence_index_ref=artifact("knowledge-index"),
-        source_snapshot_ref=artifact("source-snapshot"),
+        source_snapshot_id=UUID("33333333-3333-4333-8333-333333333333"),
+        source_snapshot_member_id=UUID("44444444-4444-4444-8444-444444444444"),
+        source_code="MFDS_DUR",
         source_version=source_version,
         locator=locator,
         content_sha256=hashlib.sha256(content_text.encode()).hexdigest(),
-        canonicalization_spec_version="knowledge-text@1",
-    )
-    selection = UntrustedKnowledgeEvidenceSelection(
-        candidate=KnowledgeEvidenceCandidate(
-            provenance=provenance,
-            content_text=SensitiveText(content_text),
-            stage_signals=(StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.9")),),
-        ),
-        rerank_rank=1,
-        rerank_score=CanonicalScore("0.9"),
-    )
-    return GatePassedKnowledgeEvidenceSelection(
-        selection=selection,
-        assessment_artifact_ref=artifact("assessment"),
-        eligibility_receipt_ref=artifact("eligibility-receipt"),
+        content_text=SensitiveText(content_text),
         retrieval_receipt_ref=artifact("retrieval-receipt"),
-        verifier_artifact_ref=artifact("eligibility-verifier"),
+        eligibility_receipt_ref=artifact("eligibility-receipt"),
+        assessment_artifact_ref=artifact("assessment"),
+        verifier_artifact_ref=artifact("assessment-verifier"),
     )
 
 
@@ -124,27 +104,18 @@ def make_policy(*, maximum_claims: int = 4) -> VersionedGuidelinePolicy:
 def make_generation_request(
     *,
     medications: tuple[MedicationIdentityRef, ...] | None = None,
-    selections: tuple[GatePassedKnowledgeEvidenceSelection, ...] | None = None,
+    selections: tuple[ProductionGuidelineEvidence, ...] | None = None,
     maximum_claims: int = 4,
 ) -> GuidelineGenerationRequest:
     meds = medications if medications is not None else (make_medication(),)
-    sels = selections if selections is not None else (make_gate_passed_selection(),)
-    gate_outcome = EvidenceGateOutcome(
-        execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
-        evidence_status=EvidenceStatus.SUFFICIENT,
-        reason=EvidenceGateReason.EVIDENCE_SUFFICIENT,
-        gate_passed_selections=sels,
-        trace=EvidenceGateTrace(
-            policy_ref=artifact("evidence-gate-policy"),
-            retrieval_receipt_ref=sels[0].retrieval_receipt_ref,
-            evaluated_at=EVALUATED_AT,
-            assessment_artifact_refs=tuple(s.assessment_artifact_ref for s in sels),
-            selected_evidence_keys=tuple(s.selection.candidate.provenance.evidence_key for s in sels),
-        ),
-    )
+    sels = selections if selections is not None else (make_production_selection(),)
     return GuidelineGenerationRequest(
         medication_identities=meds,
-        evidence_gate_outcome=gate_outcome,
+        evidence=ProductionGuidelineEvidenceSet(
+            evaluated_at=EVALUATED_AT,
+            handoff_sha256="e" * 64,
+            selections=sels,
+        ),
         policy=make_policy(maximum_claims=maximum_claims),
     )
 
@@ -220,13 +191,13 @@ def test_build_guideline_generation_input_projection_slot_determinism_and_privac
         item_id="11111111-1111-4111-8111-111111111111",
         canonical_code="ITEM-A",
     )
-    sel1 = make_gate_passed_selection(
+    sel1 = make_production_selection(
         evidence_key="knowledge:z-last",
         locator="$.items[1]",
         source_version="api:ver-2",
         content_text=DAILY_ACTIVITY_TEXT,
     )
-    sel2 = make_gate_passed_selection(
+    sel2 = make_production_selection(
         evidence_key="knowledge:a-first",
         locator="$.items[0]",
         source_version="api:ver-1",
@@ -266,11 +237,19 @@ def test_build_guideline_generation_input_projection_slot_determinism_and_privac
 
     # Evidence payload privacy verification:
     # No locators, source snapshots, hashes, or receipt refs!
-    assert "source_snapshot_ref" not in input_json
-    assert "source-snapshot" not in input_json
+    assert "source_snapshot_id" not in input_json
+    assert "source_snapshot_member_id" not in input_json
+    assert "33333333-3333-4333-8333-333333333333" not in input_json
+    assert "44444444-4444-4444-8444-444444444444" not in input_json
+    assert "source_code" not in input_json
+    assert "MFDS_DUR" not in input_json
+    assert "locator" not in input_json
     assert "content_sha256" not in input_json
+    assert "handoff_sha256" not in input_json
     assert "retrieval_receipt_ref" not in input_json
+    assert "eligibility_receipt_ref" not in input_json
     assert "assessment_artifact_ref" not in input_json
+    assert "verifier_artifact_ref" not in input_json
     assert payload["evidence"][0] == {
         "evidence_slot": "e0",
         "content_text": FOOD_AVOIDANCE_TEXT,
@@ -279,13 +258,13 @@ def test_build_guideline_generation_input_projection_slot_determinism_and_privac
 
 def test_parse_guideline_structured_output_success_and_deduplication() -> None:
     med = make_medication()
-    sel1 = make_gate_passed_selection(
+    sel1 = make_production_selection(
         evidence_key="knowledge:ev-1",
         source_version="api:1",
         locator="$.items[0]",
         content_text=FOOD_AVOIDANCE_TEXT,
     )
-    sel2 = make_gate_passed_selection(
+    sel2 = make_production_selection(
         evidence_key="knowledge:ev-2",
         source_version="api:2",
         locator="$.items[1]",
@@ -353,7 +332,7 @@ def test_parse_does_not_merge_different_medications_with_same_canonical_code() -
         item_id="22222222-2222-4222-8222-222222222222",
         canonical_code="SAME-CODE",
     )
-    sel = make_gate_passed_selection()
+    sel = make_production_selection()
 
     request = make_generation_request(medications=(med1, med2), selections=(sel,))
     _, slot_to_med, slot_to_ev = build_guideline_generation_input_projection(request)
@@ -497,7 +476,9 @@ def test_canonical_copy_helpers() -> None:
     med = make_medication()
     citation = GuidelineCitationDraft(
         evidence_key="ev-1",
-        source_snapshot_ref=artifact("snap"),
+        source_snapshot_id=UUID("33333333-3333-4333-8333-333333333333"),
+        source_snapshot_member_id=UUID("44444444-4444-4444-8444-444444444444"),
+        source_code="MFDS_DUR",
         source_version="v1",
         locator="loc",
         content_sha256="b" * 64,
@@ -531,7 +512,7 @@ class SyntheticApprovalVerifier:
 def test_finalizer_compatibility_regression() -> None:
     """Verifies that GuidelineCardDraft built by parser cleanly passes existing finalize_guideline_card."""
     med = make_medication()
-    sel = make_gate_passed_selection()
+    sel = make_production_selection()
     request = make_generation_request(medications=(med,), selections=(sel,))
     _, slot_to_med, slot_to_ev = build_guideline_generation_input_projection(request)
 
@@ -552,23 +533,21 @@ def test_finalizer_compatibility_regression() -> None:
     )
     assert draft is not None
 
-    from ai_worker.tasks.rag.evidence_gate import canonical_gate_selection_hash
-
     binding = ApprovedGuidelineEvidenceBinding.create(
         "evidence-binding",
         "evidence-binding@synthetic-1",
         medication_identity=med,
         scope=GuidelineScope.FOOD_CAUTION,
         action_class=GuidelineActionClass.FOOD_AVOIDANCE,
-        evidence_key=sel.selection.candidate.provenance.evidence_key,
+        evidence_key=sel.evidence_key,
         assessment_artifact_ref=sel.assessment_artifact_ref,
-        selection_projection_sha256=canonical_gate_selection_hash(sel.selection),
+        selection_projection_sha256=compute_production_guideline_evidence_selection_hash(sel),
         action_text_sha256=hashlib.sha256(FOOD_AVOIDANCE_TEXT.encode()).hexdigest(),
     )
 
     card_request = GuidelineCardRequest(
         medication_identities=(med,),
-        evidence_gate_outcome=request.evidence_gate_outcome,
+        evidence=request.evidence,
         draft=draft,
         generation_failure=None,
         policy=request.policy,

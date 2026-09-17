@@ -19,11 +19,6 @@ from openai import (
 )
 from pydantic import ValidationError
 
-from ai_worker.tasks.rag.evidence_gate import (
-    EvidenceGateExecutionStatus,
-    EvidenceGateReason,
-    EvidenceStatus,
-)
 from ai_worker.tasks.rag.guideline_card import (
     GuidelineGenerationFailure,
     GuidelineGenerationProvenance,
@@ -40,6 +35,7 @@ from ai_worker.tasks.rag.guideline_generator_prompt import (
     build_guideline_generation_input_projection,
     parse_guideline_structured_output,
 )
+from ai_worker.tasks.rag.guideline_production_evidence import ProductionGuidelineEvidenceSet
 from provider_contracts.observability import (
     Provider,
     ProviderCallContext,
@@ -111,13 +107,18 @@ class OpenAIGuidelineGeneratorAdapter(GuidelineGeneratorPort):
         return self._provenance
 
     @staticmethod
-    def _is_valid_gate_precondition(request: GuidelineGenerationRequest) -> bool:
-        gate = request.evidence_gate_outcome
+    def _is_valid_evidence_precondition(request: GuidelineGenerationRequest) -> bool:
+        """Fail closed before any Provider call if the production request is unusable.
+
+        The #760 handoff already decided evidence authority and sufficiency, so there
+        is no legacy Gate status to consult here. What the adapter checks is that it
+        was actually handed production evidence with at least one selection and one
+        medication, and a policy that allows at least one claim.
+        """
+        evidence = request.evidence
         return (
-            gate.execution_status is EvidenceGateExecutionStatus.SUCCEEDED
-            and gate.evidence_status is EvidenceStatus.SUFFICIENT
-            and gate.reason is EvidenceGateReason.EVIDENCE_SUFFICIENT
-            and bool(gate.gate_passed_selections)
+            type(evidence) is ProductionGuidelineEvidenceSet
+            and bool(evidence.selections)
             and bool(request.medication_identities)
             and request.policy.maximum_claims >= 1
         )
@@ -236,8 +237,8 @@ class OpenAIGuidelineGeneratorAdapter(GuidelineGeneratorPort):
 
     async def generate(self, request: GuidelineGenerationRequest) -> GuidelineGenerationResult:
         """Generates a GuidelineCardDraft by selecting claims from provided evidence."""
-        # 1. Defensive Gate Precondition Boundary: Fail closed before Provider call
-        if not self._is_valid_gate_precondition(request):
+        # 1. Defensive production evidence precondition boundary: fail closed before Provider call
+        if not self._is_valid_evidence_precondition(request):
             return GuidelineGenerationFailure.VALIDATION_FAILED
 
         # 2. Build minimal projection & slot lookup tables
@@ -268,7 +269,7 @@ class OpenAIGuidelineGeneratorAdapter(GuidelineGeneratorPort):
             )
             return GuidelineGenerationFailure.VALIDATION_FAILED
 
-        # 7. Strict deterministic parser & Gate provenance restoration
+        # 7. Strict deterministic parser & production evidence provenance restoration
         draft = parse_guideline_structured_output(
             structured_selection,
             slot_to_medication=slot_to_med,
