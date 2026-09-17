@@ -56,7 +56,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 ## Proposed 계약
 
 - [Web Push v1 (#469/#651)](./proposed/web-push-v1.md): Backend Web Push 등록·전송·Production gate 계약. Proposed 상태이며 `WEB_PUSH_PRODUCTION_ENABLED` OFF 반영은 API/scheduler 전 인스턴스 재시작 완료 후 기준으로 해석한다. 실기기 수신 검증은 #471 범위.
-- [Guide·Chat 피드백 v1 (#633)](./proposed/guide-chat-feedback-v1.md): 완료 결과별 rating·선택 의견 저장 API, SELF 소유권·재제출·합성 Gold 연결 계약. Proposed / Local 구현 반영·최종 승인 대기, Frontend·Backend 확인과 사용자 운영안 채택 반영; 실사용 처리 승인·최종 책임 리뷰 별도.
+- [Guide·Chat 피드백 v1 (#633)](./proposed/guide-chat-feedback-v1.md): 완료 결과별 rating·선택 의견 저장 API, SELF 소유권·재제출·합성 Gold 연결 계약. Proposed / Local 구현 병합 완료·제품/운영 기준 확인 중; 실사용 처리 승인과 AI/RAG 평가 연결 책임 리뷰 별도.
 
 - [Track B 생활 시간 입력 v1 (#422 / #556)](./proposed/track-b-lifestyle-times-v1.md): 식사·반복 행동·복용 곤란 시간의 SELF별 요일 저장·조회 구현 후보. #556 책임 리뷰 전 Proposed; 추천·약별 조건 판정은 별도.
 
@@ -224,6 +224,11 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [Follow-up API v1 — Current, PR #631 반영](current/track-c-followup-api-194.md): 완료 계획의 평가 GET/POST, 현재값·revision 정정·audit·멱등성·동시성. 기존 생성/Plan 응답은 유지한다. 최종 책임 리뷰 승인·병합은 대기 중이며 외부 공개는 별도다.
 - [PD-194-2](../governance/decisions/2026-09-16-track-c-followup-194.md): 완료 계획만 평가, 이후 Check-in 정정에도 과거 평가 허용. 권가빈 구현·김지혜 단일 책임 리뷰.
 - #139 Frontend·Constraint/RAG Handler·외부 공개 및 #194 전체 완료는 별도 범위다.
+
+## Track C 규칙 기반 개인화 지원 (#718)
+
+- [규칙 기반 개인화 지원 — Current, 구현 PR 반영](current/track-c-rule-based-personalization-718.md): 세부 이유, 최대 2개 지원, 고정 상담 질문, Plan snapshot·재조회 계약. RAG·LLM·실시간 웹 조회를 호출하지 않으며 기존 Safety·SELF·현재성·공개 게이트를 유지한다.
+- [PD-718](../governance/decisions/2026-09-17-track-c-rule-based-personalization-718.md): 기존 정적 Rule·Copy 확장과 JSONB snapshot 재사용 결정. Follow-up v2는 별도 migration·계약으로 남긴다.
 
 ## Track C 일정 변경·외출 상황 선택 (#194 후속)
 

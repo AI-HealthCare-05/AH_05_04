@@ -1,8 +1,15 @@
 import { apiRequest } from './client'
 
-// Mirrors backend/app/dtos/track_c{,_support}.py. No client-side support selection.
+// Mirrors backend/app/dtos/track_c{,_support}.py; the server owns eligibility and ordering.
 export type BarrierCode = 'FORGOT' | 'SCHEDULE_OR_TRAVEL' | 'INSTRUCTIONS_UNCLEAR' | 'NEED_DOUBT' | 'MEDICATION_CONCERN' | 'ACCESS_OR_COST'
 export type TravelSituation = 'SCHEDULE_CHANGED' | 'MEDICATION_NOT_WITH_ME'
+export type SubreasonCode =
+  | 'MISSED_ALERT' | 'POSTPONED' | 'MEDICATION_CONFUSION'
+  | 'SCHEDULE_CHANGED' | 'MEDICATION_NOT_WITH_ME' | 'PREPARATION_DIFFICULT'
+  | 'DOSE_AMOUNT_UNCLEAR' | 'TIMING_OR_FOOD_UNCLEAR' | 'MEDICATION_IDENTITY_UNCLEAR' | 'LANGUAGE_TOO_COMPLEX'
+  | 'NO_SYMPTOMS' | 'NO_NOTICEABLE_EFFECT' | 'VALUES_IMPROVED' | 'NEED_UNCLEAR'
+  | 'LONG_TERM_USE' | 'DEPENDENCE_OR_TOLERANCE' | 'BODY_HARM' | 'PILL_BURDEN' | 'CONFLICTING_INFORMATION'
+  | 'RUNNING_LOW' | 'REFILL_MISSED' | 'VISIT_DIFFICULT' | 'COST_BURDEN'
 export type SupportCode = 'REMINDER_SETUP' | 'ROUTINE_OR_TRAVEL_PLAN' | 'INSTRUCTION_REVIEW' | 'PURPOSE_REVIEW' | 'MEDICATION_CONCERN_GUIDANCE' | 'ACCESS_SUPPORT'
 export type Safety = {
   assessment_id: string
@@ -30,7 +37,10 @@ export type ActionConfig = {
   parameters: {
     destination: 'MEDICATION_SCHEDULE_SETUP'
     prescription_version_medication_id: string
-  } | { content_key: Exclude<SupportCode, 'REMINDER_SETUP'> }
+    subreason_code?: SubreasonCode
+    selected_question_ids?: string[]
+    selected_questions?: { question_id: string; text: string }[]
+  } | { content_key: Exclude<SupportCode, 'REMINDER_SETUP'>; subreason_code?: SubreasonCode; selected_question_ids?: string[]; selected_questions?: { question_id: string; text: string }[] }
 }
 export type Support = {
   support_code: SupportCode
@@ -46,12 +56,14 @@ export type Support = {
     primary_label: string
     secondary_label: string
   }
+  questions: { question_id: string; text: string }[]
 }
 export type Offer = {
   barrier_response_id: string
   medication_checkin_id: string
   checkin_revision: number
   safety_assessment_id: string
+  subreason_code: SubreasonCode | null
   supports: Support[]
   reason_code: 'NO_ELIGIBLE_SUPPORT' | null
 }
@@ -81,6 +93,8 @@ export type BarrierRequest = {
 }
 export type CreatePlanRequest = {
   travel_situation?: TravelSituation
+  subreason_code?: SubreasonCode
+  selected_question_ids?: string[]
   barrier_response_id: string
   support_code: SupportCode
   rule_version: string
@@ -97,8 +111,11 @@ async function write<T>(path: string, method: string, body: unknown, key: string
 }
 export const createSafety = (body: SafetyRequest, key: string) => write<Safety>('/api/v1/safety-assessments', 'POST', body, key)
 export const putBarrier = (id: string, body: BarrierRequest, key: string) => write<Barrier>(`/api/v1/medication-checkins/${encodeURIComponent(id)}/barrier-response`, 'PUT', body, key)
-export const getOffers = async (id: string, situation?: TravelSituation) => {
-  const query = situation ? `?travel_situation=${encodeURIComponent(situation)}` : ''
+export const getOffers = async (id: string, situation?: TravelSituation, subreason?: SubreasonCode) => {
+  const params = new URLSearchParams()
+  if (situation) params.set('travel_situation', situation)
+  if (subreason) params.set('subreason_code', subreason)
+  const query = params.size ? `?${params.toString()}` : ''
   return (await apiRequest<{ data: Offer }>(`/api/v1/barrier-responses/${encodeURIComponent(id)}/supports${query}`, { cache: 'no-store' })).data
 }
 export const createPlan = (body: CreatePlanRequest, key: string) => write<Plan>('/api/v1/support-action-plans', 'POST', body, key)
@@ -112,6 +129,8 @@ export type PlanResources = {
   occurrence_local_date: string
   prescription_version_medication_id: string
   support_copy: Support['support_copy']
+  subreason_code: SubreasonCode | null
+  selected_questions: { question_id: string; text: string }[]
 }
 export const getPlanResources = async (id: string) => (await apiRequest<{ data: PlanResources }>(`/api/v1/support-action-plans/${encodeURIComponent(id)}/resources`, { cache: 'no-store' })).data
 

@@ -9,11 +9,19 @@ from app.models.track_c import ActionPlanFollowupResponse, BarrierCode, SupportA
 TravelSituation = Literal["SCHEDULE_CHANGED", "MEDICATION_NOT_WITH_ME"]
 
 
+class SupportQuestion(BaseModel):
+    question_id: str = Field(min_length=1, max_length=100)
+    text: str = Field(min_length=1, max_length=300)
+
+
 class ReminderParameters(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     destination: Literal["MEDICATION_SCHEDULE_SETUP"]
     prescription_version_medication_id: UUID
+    subreason_code: str | None = Field(default=None, min_length=1, max_length=100)
+    selected_question_ids: list[str] = Field(default_factory=list, max_length=3)
+    selected_questions: list[SupportQuestion] = Field(default_factory=list, max_length=3)
 
 
 class GuidanceParameters(BaseModel):
@@ -26,6 +34,9 @@ class GuidanceParameters(BaseModel):
         "MEDICATION_CONCERN_GUIDANCE",
         "ACCESS_SUPPORT",
     ]
+    subreason_code: str | None = Field(default=None, min_length=1, max_length=100)
+    selected_question_ids: list[str] = Field(default_factory=list, max_length=3)
+    selected_questions: list[SupportQuestion] = Field(default_factory=list, max_length=3)
 
 
 class ActionConfigSnapshot(BaseModel):
@@ -52,6 +63,7 @@ class SupportOfferItem(BaseModel):
     rationale_code: str
     action_config: ActionConfigSnapshot
     support_copy: SupportCopyData
+    questions: list[SupportQuestion] = Field(default_factory=list, max_length=5)
 
 
 class SupportOfferData(BaseModel):
@@ -59,7 +71,8 @@ class SupportOfferData(BaseModel):
     medication_checkin_id: UUID
     checkin_revision: int
     safety_assessment_id: UUID
-    supports: list[SupportOfferItem] = Field(max_length=1)
+    subreason_code: str | None = None
+    supports: list[SupportOfferItem] = Field(max_length=2)
     reason_code: Literal["NO_ELIGIBLE_SUPPORT"] | None
 
 
@@ -75,6 +88,8 @@ class CreateSupportActionPlanRequest(BaseModel):
     rule_version: str = Field(min_length=1, max_length=100)
     copy_version: str = Field(min_length=1, max_length=100)
     travel_situation: TravelSituation | None = None
+    subreason_code: str | None = Field(default=None, min_length=1, max_length=100)
+    selected_question_ids: list[str] = Field(default_factory=list, max_length=3)
     confirmed: Literal[True]
 
     @field_validator("confirmed", mode="before")
@@ -147,6 +162,8 @@ class SupportPlanResourcesData(BaseModel):
     occurrence_local_date: date
     prescription_version_medication_id: UUID
     support_copy: SupportCopyData
+    subreason_code: str | None = None
+    selected_questions: list[SupportQuestion] = Field(default_factory=list, max_length=3)
 
 
 class SupportPlanResourcesResponse(BaseModel):
