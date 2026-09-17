@@ -19,6 +19,7 @@ import {
 import type { NavigateFunction } from 'react-router-dom'
 import { ApiError } from '../src/api/client'
 import {
+  createGuide,
   getGuide,
   getGuideForPrescription,
   type GuideResponse,
@@ -30,6 +31,7 @@ import {
 import GuidePage from '../src/pages/GuidePage'
 
 vi.mock('../src/api/guides', () => ({
+  createGuide: vi.fn(),
   getGuide: vi.fn(),
   getGuideForPrescription: vi.fn(),
 }))
@@ -78,6 +80,7 @@ function renderPage(
         <Route path="/login" element={<div>로그인 화면</div>} />
         <Route path="/" element={<div>홈 화면</div>} />
         <Route path="/menu" element={<div>메뉴 화면</div>} />
+        <Route path="/profile" element={<div>동의 설정 화면</div>} />
         <Route path="/chat" element={<ChatRouteProbe />} />
         <Route path="/schedule" element={<div>복약 일정 화면</div>} />
       </Routes>
@@ -451,6 +454,83 @@ describe('GuidePage', () => {
     await waitFor(() => expect(getGuide).toHaveBeenCalledWith('guide-1'))
   })
 
+  it('미동의·철회 공통 CONSENT_REQUIRED 계약을 안내하고 별도 상태 추론 없이 동의 설정으로 이동한다', async () => {
+    vi.mocked(getGuide).mockRejectedValue(
+      new ApiError(403, '노출하면 안 되는 Backend 메시지', 'CONSENT_REQUIRED'),
+    )
+    renderPage()
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '이 기능을 이용하려면 동의가 필요해요.',
+      }),
+    ).toBeTruthy()
+    expect(
+      screen.getByText('동의 설정을 확인한 뒤 다시 이용해 주세요.'),
+    ).toBeTruthy()
+    expect(screen.queryByText('노출하면 안 되는 Backend 메시지')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '동의 설정 확인하기' }))
+
+    expect(await screen.findByText('동의 설정 화면')).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe('/profile')
+    expect(getGuide).toHaveBeenCalledTimes(1)
+  })
+
+  it('PRESCRIPTION_VERSION_STALE은 동의로 보내지 않고 현재 Guide를 다시 조회한다', async () => {
+    vi.mocked(getGuide)
+      .mockRejectedValueOnce(
+        new ApiError(409, '구버전 처방', 'PRESCRIPTION_VERSION_STALE'),
+      )
+      .mockResolvedValueOnce(
+        completedGuideResponse('guide-1', structuredGuideContent()),
+      )
+    renderPage()
+
+    expect(
+      await screen.findByRole('heading', { name: '처방 정보가 변경되었어요.' }),
+    ).toBeTruthy()
+    expect(
+      screen.getByText('최신 처방 정보를 다시 불러온 뒤 이용해 주세요.'),
+    ).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '동의 설정 확인하기' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 불러오기' }))
+
+    expect(
+      await screen.findByRole('heading', { name: '확인된 약 목록 · 1개' }),
+    ).toBeTruthy()
+    expect(getGuide).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('location').textContent).toBe('/guides/guide-1')
+  })
+
+  it('CONSENT_POLICY_UNAVAILABLE은 현재 Guide 요청만 사용자가 다시 시도한다', async () => {
+    vi.mocked(getGuide)
+      .mockRejectedValueOnce(
+        new ApiError(503, '정책 원문', 'CONSENT_POLICY_UNAVAILABLE'),
+      )
+      .mockResolvedValueOnce(
+        completedGuideResponse('guide-1', structuredGuideContent()),
+      )
+    renderPage()
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '동의 안내를 준비하고 있어요. 잠시 후 다시 시도해 주세요.',
+      }),
+    ).toBeTruthy()
+    expect(getGuide).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: '동의 설정 확인하기' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
+
+    expect(
+      await screen.findByRole('heading', { name: '확인된 약 목록 · 1개' }),
+    ).toBeTruthy()
+    expect(getGuide).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('location').textContent).toBe('/guides/guide-1')
+  })
+
   it.each([null, '', '   \n'])('완료된 content가 %p이면 안전한 빈 상태를 표시한다', async (content) => {
     vi.mocked(getGuide).mockResolvedValue({
       data: {
@@ -470,7 +550,9 @@ describe('GuidePage', () => {
     expect(
       await screen.findByText('가이드 내용이 아직 없어요'),
     ).toBeTruthy()
-    expect(screen.getByRole('button', { name: '다시 불러오기' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '다시 불러오기' }))
+    await waitFor(() => expect(getGuide).toHaveBeenCalledTimes(2))
+    expect(createGuide).not.toHaveBeenCalled()
   })
 
   it('latest 처방이 없으면 GUIDE-01 empty state와 업로드 CTA를 표시한다', async () => {
@@ -624,6 +706,7 @@ describe('GuidePage', () => {
     expect(screen.getByText('가이드를 생성하고 있어요...')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '다시 확인하기' }))
     await waitFor(() => expect(getGuide).toHaveBeenCalledTimes(2))
+    expect(createGuide).not.toHaveBeenCalled()
   })
 
   it('FAILED 응답을 최신 실패 상태로 표시하고 raw 오류 상태를 만들지 않는다', async () => {
@@ -758,5 +841,91 @@ describe('GuidePage', () => {
     fireEvent.click(screen.getByRole('button', { name: '뒤로가기' }))
     expect(await screen.findByRole('heading', { name: '확인된 약 목록 · 1개' })).toBeTruthy()
     expect(screen.getByTestId('location').textContent).toBe('/guides/guide-1')
+  })
+})
+
+
+describe('실패한 가이드 생성 재시도', () => {
+  beforeEach(() => {
+    vi.mocked(getGuide).mockImplementation(async (id) => id === 'guide-1'
+      ? { data: { ...completedGuideResponse(id, null).data, generation_status: 'FAILED' } }
+      : completedGuideResponse(id, '새 가이드 내용'))
+    vi.mocked(createGuide).mockReset()
+  })
+
+  it('해당 처방으로 한 번 생성하고 새 가이드 상세로 이동한다', async () => {
+    const pending = deferred<GuideResponse>()
+    vi.mocked(createGuide).mockReturnValue(pending.promise)
+    renderPage()
+    const button = await screen.findByRole('button', { name: '다시 시도하기' })
+    fireEvent.click(button)
+    fireEvent.click(button)
+    expect(createGuide).toHaveBeenCalledExactlyOnceWith('prescription-guide-1')
+    expect(screen.getByRole('button', { name: '가이드를 생성하고 있어요...' })).toHaveProperty('disabled', true)
+    expect(getGuide).toHaveBeenCalledTimes(1)
+    await act(async () => pending.resolve({ data: {
+      ...completedGuideResponse('guide-new', '새 가이드 내용').data,
+      prescription_id: 'prescription-guide-1',
+    } }))
+    expect(await screen.findByText('새 가이드 내용')).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe('/guides/guide-new')
+  })
+
+  it('생성 실패 안내와 기존 처방을 보존하고 명시적으로 다시 시도할 수 있다', async () => {
+    vi.mocked(createGuide).mockRejectedValue(new ApiError(503, '잠시 후 다시 시도해 주세요.', 'SERVICE_UNAVAILABLE'))
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: '다시 시도하기' }))
+    expect(await screen.findByText('잠시 후 다시 시도해 주세요.')).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe('/guides/guide-1')
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도하기' }))
+    await waitFor(() => expect(createGuide).toHaveBeenCalledTimes(2))
+    expect(getGuide).toHaveBeenCalledTimes(1)
+  })
+
+  it('다른 처방의 생성 응답으로 이동하지 않는다', async () => {
+    vi.mocked(createGuide).mockResolvedValue(completedGuideResponse('wrong-guide', '다른 처방 내용'))
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: '다시 시도하기' }))
+    expect(await screen.findByText('확인한 처방과 다른 가이드 응답을 받았어요. 다시 확인해 주세요.')).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe('/guides/guide-1')
+    expect(screen.queryByText('다른 처방 내용')).toBeNull()
+  })
+
+  it.each(['resolve', 'reject'] as const)('화면 전환 후 늦은 %s 응답을 무시한다', async (outcome) => {
+    const pending = deferred<GuideResponse>()
+    vi.mocked(createGuide).mockReturnValue(pending.promise)
+    renderPage('/guides/guide-1', true)
+    fireEvent.click(await screen.findByRole('button', { name: '다시 시도하기' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Guide B로 이동' }))
+    await screen.findByText('새 가이드 내용')
+    await act(async () => {
+      if (outcome === 'resolve') pending.resolve({ data: {
+        ...completedGuideResponse('guide-new', '오래된 생성 결과').data,
+        prescription_id: 'prescription-guide-1',
+      } })
+      else pending.reject(new ApiError(401, '만료', 'TOKEN_EXPIRED'))
+    })
+    expect(screen.getByTestId('location').textContent).toBe('/guides/guide-b')
+    expect(screen.getByText('새 가이드 내용')).toBeTruthy()
+  })
+
+  it('언마운트 후 완료되어도 다른 화면에서 이동하지 않는다', async () => {
+    const pending = deferred<GuideResponse>()
+    vi.mocked(createGuide).mockReturnValue(pending.promise)
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: '다시 시도하기' }))
+    fireEvent.click(screen.getByRole('button', { name: '메뉴' }))
+    await act(async () => pending.resolve({ data: {
+      ...completedGuideResponse('guide-new', '늦은 결과').data,
+      prescription_id: 'prescription-guide-1',
+    } }))
+    expect(screen.getByTestId('location').textContent).toBe('/menu')
+  })
+
+  it('현재 재시도 요청의 인증 만료는 로그인으로 이동한다', async () => {
+    vi.mocked(createGuide).mockRejectedValue(new ApiError(401, '만료', 'TOKEN_EXPIRED'))
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: '다시 시도하기' }))
+    expect(await screen.findByText('로그인 화면')).toBeTruthy()
   })
 })

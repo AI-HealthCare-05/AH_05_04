@@ -54,3 +54,25 @@
 
 .mvp-profile__consent-card h4 { margin: 0 0 8px; font-size: 17px; }
 .mvp-profile__consent-card .ds-button { margin-top: 12px; min-height: 48px; white-space: normal; }
+.mvp-profile__danger-button.ds-button { border-color: var(--ds-danger); color: var(--ds-danger); }
+.mvp-profile__danger-button.ds-button:not(:disabled) { background: #fff7f6; }
+.mvp-profile__danger-button.ds-button:not(:disabled):hover,
+.mvp-profile__danger-button.ds-button:not(:disabled):focus-visible { background: #ffebe8; }
+.mvp-profile__danger-button.ds-button:not(.secondary):not(.ghost):not(:disabled) { background: var(--ds-danger); color: #fff; }
+.mvp-profile__danger-button.ds-button:not(.secondary):not(.ghost):not(:disabled):hover,
+.mvp-profile__danger-button.ds-button:not(.secondary):not(.ghost):not(:disabled):focus-visible { background: #8f1f19; }
+.mvp-profile__withdrawal-card { padding: 20px 16px; overflow: visible; border-color: #efc3be; }
+.mvp-profile__withdrawal-card .mvp-form { gap: 16px; }
+.mvp-profile__withdrawal-intro h4 { margin: 0; color: var(--ds-danger); font-size: 18px; }
+.mvp-profile__withdrawal-intro ul { margin: 12px 0 20px; padding-left: 20px; color: #526074; font-size: 15px; line-height: 1.6; }
+.mvp-profile__withdrawal-intro li + li { margin-top: 6px; }
+.mvp-profile__withdrawal-card .mvp-form__field { gap: 8px; }
+.mvp-profile__withdrawal-card .mvp-form__field > label { font-size: 17px; font-weight: 700; }
+.mvp-profile__withdrawal-card .mvp-form__field input { min-height: 56px; padding: 0 16px; border: 1.5px solid #bdc7d6; border-radius: 16px; font-size: 18px; }
+.mvp-profile__withdrawal-confirmation { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: start; gap: 10px; color: #283548; font-size: 15px; font-weight: 700; line-height: 1.55; cursor: pointer; }
+.mvp-profile__withdrawal-confirmation input { width: 22px; height: 22px; margin: 1px 0 0; accent-color: var(--ds-danger); }
+.mvp-profile__withdrawal-confirmation input:focus-visible { outline: 3px solid rgba(179, 38, 30, .25); outline-offset: 3px; }
+@media (max-width: 340px) {
+  .mvp-profile__withdrawal-card { padding-inline: 14px; }
+  .mvp-profile__withdrawal-confirmation { font-size: 14px; }
+}

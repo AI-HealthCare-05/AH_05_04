@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import unicodedata
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -15,15 +16,18 @@ from ai_worker.tasks.rag.source_client.contracts import SourceOperationIdentity
 from ai_worker.tasks.rag.source_ingestion.mfds_label import (
     ACQUISITION_EVIDENCE_FILE,
     ACQUISITION_EVIDENCE_VERSION,
+    NN_ARTICLE_TITLES,
     NORMALIZATION_VERSION,
     OBSERVED_CONTENT_TYPE,
     PARSER_VERSION,
     SCHEMA_VERSION,
     IngestionArtifactReceipt,
     MfdsLabelIngestionPlan,
+    ParsedMfdsLabelDocument,
     SnapshotMemberBinding,
     inspect_xml,
     load_mfds_label_plan,
+    parse_mfds_label_artifact,
     persist_mfds_label_plan,
     requery_mfds_label_persistence,
 )
@@ -55,8 +59,6 @@ def _xml(section: str, *, data_value: str = "ignored") -> bytes:
 
 
 def _nn_xml(*, empty_index: int | None = None) -> bytes:
-    from ai_worker.tasks.rag.source_ingestion.mfds_label import NN_ARTICLE_TITLES
-
     articles = "".join(
         f'<ARTICLE title="{title}"><PARAGRAPH>{"" if index == empty_index else "합성 본문"}</PARAGRAPH></ARTICLE>'
         for index, title in enumerate(NN_ARTICLE_TITLES)
@@ -456,3 +458,141 @@ async def test_metadata_mismatch_is_rejected_before_storage(tmp_path: Path) -> N
             metadata=replace(_metadata(plan), parser_version="wrong"),
         )
     assert not repository.snapshots
+
+
+def test_parse_mfds_label_artifact_public_seam() -> None:
+    raw = _xml("EE")
+    parsed = parse_mfds_label_artifact(raw, "EE")
+    assert isinstance(parsed, ParsedMfdsLabelDocument)
+    assert parsed.section == "EE"
+    assert parsed.document_title == "효능효과"
+    assert parsed.content_status == "COMPLETE"
+    assert parsed.empty_article_titles == ()
+    assert parsed.root.tag == "DOC"
+    assert parsed.article_count == 1
+    assert parsed.paragraph_count == 1
+    assert parsed.nonempty_paragraph_count == 1
+    assert not hasattr(parsed, "canonical_structure")
+
+
+def test_parse_mfds_label_artifact_empty_title_rejected() -> None:
+    raw = b'<DOC type="EE" title=""><ARTICLE title="\xed\x95\xa9\xec\x84\xb1"><PARAGRAPH>\xeb\xb3\xb8\xeb\xac\xb8</PARAGRAPH></ARTICLE></DOC>'
+    with pytest.raises(ValueError, match="XML_SECTION_MISMATCH"):
+        parse_mfds_label_artifact(raw, "EE")
+
+
+def test_parse_mfds_label_artifact_section_mismatch() -> None:
+    raw = _xml("UD")
+    with pytest.raises(ValueError, match="XML_SECTION_MISMATCH"):
+        parse_mfds_label_artifact(raw, "EE")
+
+
+def test_parse_mfds_label_artifact_empty_body() -> None:
+    raw = ('<DOC type="EE" title="효능효과"><ARTICLE title=""><PARAGRAPH></PARAGRAPH></ARTICLE></DOC>').encode()
+    with pytest.raises(ValueError, match="XML_BODY_EMPTY"):
+        parse_mfds_label_artifact(raw, "EE")
+
+
+def test_parse_mfds_label_artifact_nn_article_set_invalid() -> None:
+    raw = (
+        '<DOC type="NN" title="e약은요 정보"><ARTICLE title="잘못된 제목"><PARAGRAPH>본문</PARAGRAPH></ARTICLE></DOC>'
+    ).encode()
+    with pytest.raises(ValueError, match="XML_ARTICLE_SET_INVALID"):
+        parse_mfds_label_artifact(raw, "NN")
+
+
+def test_parsed_document_repr_hides_source_body() -> None:
+    parsed = parse_mfds_label_artifact(_xml("EE"), "EE")
+    rendered = repr(parsed)
+    assert "합성 제목" not in rendered
+    assert "합성 본문" not in rendered
+    assert "<table>" not in rendered
+    assert "root=" not in rendered
+    assert "canonical_structure" not in rendered
+    assert "section='EE'" in rendered
+    assert "content_status='COMPLETE'" in rendered
+
+
+def _deeply_nested_xml(depth: int) -> bytes:
+    inner = "합성 본문" + "<SPAN>" * depth + "심층" + "</SPAN>" * depth
+    return (
+        f'<DOC type="EE" title="효능효과"><ARTICLE title="합성 제목"><PARAGRAPH>{inner}</PARAGRAPH></ARTICLE></DOC>'
+    ).encode()
+
+
+def test_inspect_xml_accepts_deeply_nested_valid_document() -> None:
+    raw = _deeply_nested_xml(1_100)
+    assert len(raw) < 2 * 1024 * 1024
+    report = inspect_xml(raw, "EE")
+    assert report["content_status"] == "COMPLETE"
+    assert report["article_count"] == 1
+    assert report["paragraph_count"] == 1
+    assert report["nonempty_paragraph_count"] == 1
+    assert report["table_element_count"] == 0
+
+
+def test_parse_mfds_label_artifact_accepts_deeply_nested_valid_document() -> None:
+    parsed = parse_mfds_label_artifact(_deeply_nested_xml(1_100), "EE")
+    assert parsed.content_status == "COMPLETE"
+    assert parsed.nonempty_paragraph_count == 1
+
+
+def test_inspect_xml_report_keys_and_values_are_preserved() -> None:
+    raw = _xml("EE")
+    report = inspect_xml(raw, "EE")
+    assert list(report) == [
+        "section",
+        "byte_size",
+        "raw_sha256",
+        "document_title",
+        "article_count",
+        "paragraph_count",
+        "nonempty_paragraph_count",
+        "empty_article_titles",
+        "content_status",
+        "table_element_count",
+    ]
+    assert report == {
+        "section": "EE",
+        "byte_size": len(raw),
+        "raw_sha256": hashlib.sha256(raw).hexdigest(),
+        "document_title": "효능효과",
+        "article_count": 1,
+        "paragraph_count": 1,
+        "nonempty_paragraph_count": 1,
+        "empty_article_titles": [],
+        "content_status": "COMPLETE",
+        "table_element_count": 1,
+    }
+
+
+def test_inspect_xml_nn_partial_report_is_preserved() -> None:
+    report = inspect_xml(_nn_xml(empty_index=2), "NN")
+    assert report["content_status"] == "PARTIAL_OFFICIAL"
+    assert report["empty_article_titles"] == [NN_ARTICLE_TITLES[2]]
+    assert report["article_count"] == len(NN_ARTICLE_TITLES)
+
+
+def test_parse_mfds_label_artifact_preserves_raw_parsed_structure() -> None:
+    """seam은 parsed 원문 구조를 보존하고 NFC 정규화·공백 정리를 수행하지 않는다.
+
+    NFC 정규화, trailing space 제거, 빈 줄 축약, text projection은 Task 2
+    renderer/materialization의 책임이다. (XML 1.0이 요구하는 line-ending 정규화는
+    expat의 동작이며 이 seam의 책임 경계가 아니다.)
+    """
+    decomposed = unicodedata.normalize("NFD", "효능")
+    assert decomposed != unicodedata.normalize("NFC", decomposed)
+    raw = (
+        '<DOC type="EE" title="효능효과">'
+        f'<ARTICLE title="합성 제목"><PARAGRAPH>{decomposed}\n\n\n둘째 줄  </PARAGRAPH></ARTICLE>'
+        "</DOC>"
+    ).encode()
+
+    parsed = parse_mfds_label_artifact(raw, "EE")
+    paragraph = next(iter(parsed.root.iter("PARAGRAPH")))
+    text = "".join(paragraph.itertext())
+
+    assert decomposed in text
+    assert unicodedata.normalize("NFC", decomposed) not in text
+    assert "\n\n\n" in text
+    assert text.endswith("둘째 줄  ")

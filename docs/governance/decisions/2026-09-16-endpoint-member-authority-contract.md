@@ -19,7 +19,7 @@
 ### 권위 한계 (Authority Boundary)
 
 1. **PD-315 상태와 제안(Proposed) 경계**:
-   - 상위 결정 `PD-315-20260908`은 PR #361 최종 HEAD에서 책임 리뷰 `APPROVED` event를 확보했으나, 그 승인 본문이 요구한 최신 HEAD specialist 확인이 없어 **승인 조건이 미해소**다([승인 절차 provenance와 미해소 조건](./2026-09-08-production-evidence-retrieval-contract-divergence.md#승인-절차-provenance와-미해소-조건)). 따라서 본 결정에서 정의하는 `operation_code` nullable 규칙의 채택은 **제안(Proposed)** 단계이며 순수 계약 계층에만 적용된다.
+   - 상위 결정 `PD-315-20260908`은 PR #361 최종 HEAD 책임 리뷰 `APPROVED` event 및 Issue #680 Path B 재판정으로 **승인 조건이 해소(Approved)**되었다([승인 절차 provenance와 조건 해소](./2026-09-08-production-evidence-retrieval-contract-divergence.md#승인-절차-provenance와-조건-해소)). 다만 Decision 승인이 곧 구현 완료는 아니므로, 본 결정에서 정의하는 `operation_code` nullable 규칙의 채택은 **제안(Proposed)** 단계이며 순수 계약 계층에만 적용된다.
    - 본 계약의 `docs/contracts/current/` 승격 및 #180 런타임 오케스트레이션과의 연결은 구현·migration·OpenAPI/DTO·자동 테스트·실행 증빙을 갖춘 별도 PR에서 지정 책임 리뷰어 승인과 함께 수행한다.
 2. **순수 검증 및 결속 한계 (Pure Kernel Scope)**:
    - `verify_member_authority_binding` verifier는 구조적 정합성 및 5개 필드의 인메모리 exact-match 일치 여부만을 검증한다.
@@ -70,7 +70,7 @@
 
 본 결정으로 계약 수준의 단일화는 완료되었으나, 아래 네 가지 선행 사유로 인해 #180 런타임 연결은 여전히 차단 상태로 유지된다:
 
-1. **`PD-315-20260908` 승인 조건**: 책임 리뷰 `APPROVED` event는 PR #361 최종 HEAD에 확보됐으나 그 승인 본문이 요구한 최신 HEAD specialist 확인이 없어 조건이 미해소다. 조건이 해소되어도 Decision 승인은 구현 증빙이 아니므로, 구현·migration·OpenAPI/DTO·자동 테스트·실행 증빙을 갖춘 별도 PR 전까지 본 계약은 `Proposed`로 유지한다.
+1. **`PD-315-20260908` 거버넌스 승인 조건 해소와 계약 상태**: Issue #680 Path B 재판정으로 PD-315 승인 조건은 해소(Approved)되었으나, Decision 승인 자체는 구현 증빙이 아니므로 구현·migration·OpenAPI/DTO·자동 테스트·실행 증빙을 갖춘 별도 PR 전까지 본 계약은 `Proposed`로 유지한다.
 2. **`#174 REQUEST Guard`**: Authenticated Assembler 미구현 (결정 진위, 실제 `PASS` 판정, Decision ownership 검증 선행 필요; 순수 구조/identity 검증만으로 authenticated runtime authority가 성립하지 않음)
 3. **`#180 런타임 오케스트레이션 및 파이프라인 연결`**: LangGraph runtime pipeline, Outbox/Job/Worker integration, DB persistence port 연결 및 E2E 평가 미완료 (계약 정렬은 완료되었으나 runtime integration 책임은 #180에 여전히 유효하게 잔존함)
 4. **프로덕션 공개 게이트 (Production Release Gate)**: 외부 의료·약학·Source·Privacy·Safety 승인 및 `PUBLIC_TRACK_F=false` 유지 조건 별도 충족 필요

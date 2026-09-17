@@ -200,6 +200,41 @@
   outline-offset: 4px;
 }
 
+.mvp-start--withdrawal-complete {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+}
+
+.mvp-start__withdrawal-status {
+  width: 100%;
+  display: grid;
+  gap: 18px;
+  padding: 24px 18px;
+  border: 1px solid #cfd8dc;
+  border-radius: 20px;
+  box-shadow: none;
+  text-align: center;
+}
+
+.mvp-start__withdrawal-status h1,
+.mvp-start__withdrawal-status p {
+  margin: 0;
+}
+
+.mvp-start__withdrawal-status h1 {
+  font-size: 20px;
+  line-height: 1.4;
+}
+
+.mvp-start__withdrawal-status p {
+  margin-top: 8px;
+  color: var(--ds-text-muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
 .mvp-auth {
   padding-top: 39px;
 }

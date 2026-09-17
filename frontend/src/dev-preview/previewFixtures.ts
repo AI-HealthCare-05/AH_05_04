@@ -339,6 +339,7 @@ export function createGuidePreview(scenario: GuideScenario): {
             : guideResponse('GENERATING', null)
 
   const services: GuidePageServices = {
+    createGuide: async () => guideResponse('COMPLETED', structuredGuideContent),
     getGuide: () =>
       scenario === 'loading'
         ? new Promise<GuideResponse>(() => undefined)
