@@ -9,7 +9,7 @@ type WithdrawalMock = {
 
 async function installWithdrawalApi(
   page: Page,
-  response: 'success' | 'gate-off' = 'success',
+  response: 'success' | 'failed' | 'gate-off' = 'success',
 ): Promise<WithdrawalMock> {
   const state: WithdrawalMock = { withdrawalRequests: [], logoutCount: 0 }
 
@@ -43,6 +43,12 @@ async function installWithdrawalApi(
       state.withdrawalRequests.push(request.postDataJSON() as Record<string, unknown>)
       expect(request.headers().authorization).toBe(`Bearer ${token}`)
 
+      if (response === 'failed') {
+        return route.fulfill({ json: {
+          detail: '탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다.',
+        } })
+      }
+
       if (response === 'gate-off') {
         return route.fulfill({
           status: 503,
@@ -60,7 +66,7 @@ async function installWithdrawalApi(
       }
 
       return route.fulfill({ json: {
-        detail: '계정 이용 종료와 탈퇴 요청 접수가 완료되었습니다.',
+        detail: '회원탈퇴가 완료되었습니다.',
       } })
     }
 
@@ -110,7 +116,7 @@ for (const width of [320, 390, 412]) {
     expect(submitBox!.y + submitBox!.height).toBeLessThanOrEqual(navigationBox!.y)
 
     await submit.click()
-    await expect(page.getByText('회원탈퇴 요청이 접수되었어요.')).toBeVisible()
+    await expect(page.getByText('회원탈퇴가 완료되었습니다.')).toBeVisible()
     await expect(page.getByText(/삭제·보존은 서비스 정책에 따라 처리됩니다/)).toBeVisible()
     await expect(page.getByText('withdrawal@example.com')).toHaveCount(0)
     await expect(page.getByRole('navigation', { name: '주요 메뉴' })).toHaveCount(0)
@@ -151,8 +157,31 @@ test('회원탈퇴 Gate OFF는 성공이나 local-only 탈퇴로 처리하지 �
   await page.getByRole('button', { name: '회원탈퇴 요청' }).click()
 
   await expect(page.getByText('회원탈퇴 요청을 현재 처리할 수 없어요.')).toBeVisible()
-  await expect(page.getByText('회원탈퇴 요청이 접수되었어요.')).toHaveCount(0)
+  await expect(page.getByText('회원탈퇴가 완료되었습니다.')).toHaveCount(0)
   expect(await page.evaluate(() => localStorage.getItem('access_token'))).toBe(token)
+  expect(api.withdrawalRequests).toEqual([{ password: 'Synthetic1!', confirmed: true }])
+  expect(api.logoutCount).toBe(0)
+})
+
+
+test('회원탈퇴 실패 detail 200은 완료 화면으로 소비하지 않는다', async ({ page }) => {
+  await page.addInitScript((accessToken) => localStorage.setItem('access_token', accessToken), token)
+  const api = await installWithdrawalApi(page, 'failed')
+
+  await page.goto('/profile')
+  await page.getByRole('button', { name: '회원탈퇴', exact: true }).scrollIntoViewIfNeeded()
+  await page.getByRole('button', { name: '회원탈퇴', exact: true }).click()
+  await page.getByLabel('현재 비밀번호').fill('Synthetic1!')
+  await page.getByRole('checkbox', {
+    name: '회원탈퇴 요청 후 계정을 더 이상 이용할 수 없음을 확인했습니다.',
+  }).check()
+  await page.getByRole('button', { name: '회원탈퇴 요청' }).click()
+
+  await expect(page.getByText('회원탈퇴 처리를 완료하지 못했어요.')).toBeVisible()
+  await expect(page.getByText('관리자 확인이 필요합니다. 완료 화면으로 이동하지 않습니다.')).toBeVisible()
+  await expect(page.getByText('회원탈퇴가 완료되었습니다.')).toHaveCount(0)
+  await expect(page.getByText('withdrawal@example.com')).toHaveCount(0)
+  expect(await page.evaluate(() => localStorage.getItem('access_token'))).toBeNull()
   expect(api.withdrawalRequests).toEqual([{ password: 'Synthetic1!', confirmed: true }])
   expect(api.logoutCount).toBe(0)
 })
