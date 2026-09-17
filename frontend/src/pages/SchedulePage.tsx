@@ -95,6 +95,22 @@ function kstToday(): string {
   return `${value.year}-${value.month}-${value.day}`
 }
 
+function hasElapsedTimeToday(draft: ScheduleDraft): boolean {
+  if (draft.startDate !== kstToday()) return false
+
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: KST_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date())
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  const currentTime = `${value.hour}:${value.minute}`
+  return draft.times.some(
+    (localTime) => /^([01]\d|2[0-3]):[0-5]\d$/.test(localTime) && localTime <= currentTime,
+  )
+}
+
 function isValidLocalDate(value: string | null): value is string {
   if (!value || !LOCAL_DATE_PATTERN.test(value)) return false
   const parsed = new Date(`${value}T12:00:00Z`)
@@ -578,6 +594,8 @@ function ScheduleEditor({
             saveState?.status === 'ERROR' && saveState.kind === 'VALIDATION'
           const errorMessageId = `schedule-error-${id}`
           const directionsId = `schedule-directions-${id}`
+          const elapsedTimeNoticeId = `schedule-elapsed-time-notice-${id}`
+          const showElapsedTimeNotice = hasElapsedTimeToday(draft)
           return (
             <Card className="schedule-editor" key={id}>
               <div className="schedule-editor__heading">
@@ -690,7 +708,11 @@ function ScheduleEditor({
                           value={time}
                           disabled={isSaving || isReloading}
                           aria-invalid={hasValidationError || undefined}
-                          aria-describedby={[directionsId, hasValidationError ? errorMessageId : ''].filter(Boolean).join(' ')}
+                          aria-describedby={[
+                            directionsId,
+                            showElapsedTimeNotice ? elapsedTimeNoticeId : '',
+                            hasValidationError ? errorMessageId : '',
+                          ].filter(Boolean).join(' ')}
                           onChange={(event) => changeScheduleInput(id, (current) => {
                             const nextTimes = [...current.times]
                             nextTimes[index] = event.target.value
@@ -701,6 +723,11 @@ function ScheduleEditor({
                       </label>
                     ))}
                   </div>
+                  {showElapsedTimeNotice && (
+                    <p className="schedule-editor__elapsed-time-notice" id={elapsedTimeNoticeId} role="note">
+                      오늘 이미 지난 복용 시간은 오늘 일정에 표시되지 않아요. 이후 날짜에는 설정한 시간대로 표시돼요.
+                    </p>
+                  )}
                   {frequencyPerDay !== null && (
                     <small>
                       {frequencyPerDay > 1
