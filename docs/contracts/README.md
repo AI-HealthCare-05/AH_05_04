@@ -236,3 +236,5 @@ PR #639의 두 계약은 구현 PR 내 이동이며 #629 병합·최종 책임 �
   합성 계정·시간창 제한과 별도 demo version. [PD-193 revision 3](../governance/decisions/2026-09-16-track-c-internal-demo-193.md).
 - [#196 연결 준비 상태](../testing/track-c-rag-readiness-196.md): 공용 kernel과 실제 handoff·Source·Bundle
   승인 Receipt를 구분한다. 새 공용 계약을 정의하거나 RAG 완료를 주장하지 않는다.
+
+- [Track B 명시적 식후 시간 후보 v1 (#670)](proposed/track-b-explicit-schedule-recommendation-v1.md): Local 구현 검토안. 확정 문구의 간격·사용자 식사 종료 시각 계산, 선택 저장 context·서버 재계산. 담당·전문 리뷰와 공개 승인 대기.
