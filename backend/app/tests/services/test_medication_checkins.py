@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -10,15 +11,24 @@ from app.models.medication_schedules import MedicationCheckinStatus, MedicationO
 from app.services.medication_checkins import MedicationCheckinDeadlineScheduler, MedicationCheckinService
 
 
-def _service(repository: AsyncMock, invalidation: AsyncMock | None = None) -> MedicationCheckinService:
+def _service(
+    repository: AsyncMock,
+    invalidation: AsyncMock | None = None,
+    clock: Callable[[], datetime] | None = None,
+) -> MedicationCheckinService:
     return MedicationCheckinService(
         repository,
         revision_invalidation=invalidation or AsyncMock(),
+        clock=clock,
     )
 
 
 async def test_first_user_checkin_is_created_once_and_closes_occurrence() -> None:
-    occurrence = SimpleNamespace(id=uuid4(), status=MedicationOccurrenceStatus.PENDING)
+    occurrence = SimpleNamespace(
+        id=uuid4(),
+        status=MedicationOccurrenceStatus.PENDING,
+        scheduled_at=datetime(2000, 1, 1, 0, tzinfo=UTC),
+    )
     created = SimpleNamespace(
         id=uuid4(),
         occurrence_id=occurrence.id,
@@ -74,6 +84,68 @@ async def test_invalid_user_states_are_rejected_before_storage(
     repository.lock_occurrence_owned.assert_not_awaited()
 
 
+async def test_future_occurrence_checkin_is_rejected_before_storage() -> None:
+    occurrence = SimpleNamespace(
+        id=uuid4(),
+        status=MedicationOccurrenceStatus.PENDING,
+        scheduled_at=datetime(2026, 9, 9, 10, tzinfo=UTC),
+    )
+    repository = AsyncMock()
+    repository.lock_occurrence_owned.return_value = occurrence
+
+    with pytest.raises(ApiError) as caught:
+        await _service(repository, clock=lambda: datetime(2026, 9, 9, 9, 59, 59, tzinfo=UTC)).put_owned(
+            occurrence_id=occurrence.id,
+            user_id=uuid4(),
+            status=MedicationCheckinStatus.TAKEN,
+            taken_at=None,
+            expected_revision=0,
+        )
+
+    assert caught.value.status_code == 422
+    assert caught.value.code == "VALIDATION_FAILED"
+    assert caught.value.details[0].field == "occurrence_id"
+    assert caught.value.details[0].reason == "CHECKIN_BEFORE_SCHEDULED_AT"
+    repository.get_current_for_update.assert_not_awaited()
+    repository.create_if_absent.assert_not_awaited()
+    repository.close_occurrence.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "current_time",
+    [datetime(2026, 9, 9, 10, tzinfo=UTC), datetime(2026, 9, 9, 10, 0, 1, tzinfo=UTC)],
+)
+async def test_checkin_is_allowed_at_or_after_scheduled_time(current_time: datetime) -> None:
+    occurrence = SimpleNamespace(
+        id=uuid4(),
+        status=MedicationOccurrenceStatus.PENDING,
+        scheduled_at=datetime(2026, 9, 9, 10, tzinfo=UTC),
+    )
+    created = SimpleNamespace(
+        id=uuid4(),
+        occurrence_id=occurrence.id,
+        status=MedicationCheckinStatus.NOT_TAKEN,
+        taken_at=None,
+        revision=1,
+    )
+    repository = AsyncMock()
+    repository.lock_occurrence_owned.return_value = occurrence
+    repository.get_current_for_update.return_value = None
+    repository.create_if_absent.return_value = created
+
+    result = await _service(repository, clock=lambda: current_time).put_owned(
+        occurrence_id=occurrence.id,
+        user_id=uuid4(),
+        status=MedicationCheckinStatus.NOT_TAKEN,
+        taken_at=None,
+        expected_revision=0,
+    )
+
+    assert result.revision == 1
+    repository.create_if_absent.assert_awaited_once()
+    repository.close_occurrence.assert_awaited_once_with(occurrence=occurrence)
+
+
 async def test_missing_or_other_users_occurrence_is_hidden_as_404() -> None:
     repository = AsyncMock()
     repository.lock_occurrence_owned.return_value = None
@@ -94,7 +166,7 @@ async def test_missing_or_other_users_occurrence_is_hidden_as_404() -> None:
 async def test_cancelled_occurrence_and_stale_revision_do_not_mutate() -> None:
     repository = AsyncMock()
     repository.lock_occurrence_owned.return_value = SimpleNamespace(
-        id=uuid4(), status=MedicationOccurrenceStatus.CANCELLED
+        id=uuid4(), status=MedicationOccurrenceStatus.CANCELLED, scheduled_at=datetime(2000, 1, 1, 0, tzinfo=UTC)
     )
 
     with pytest.raises(ApiError) as cancelled:
@@ -108,7 +180,7 @@ async def test_cancelled_occurrence_and_stale_revision_do_not_mutate() -> None:
     assert cancelled.value.code == "OCCURRENCE_CANCELLED"
 
     repository.lock_occurrence_owned.return_value = SimpleNamespace(
-        id=uuid4(), status=MedicationOccurrenceStatus.CLOSED
+        id=uuid4(), status=MedicationOccurrenceStatus.CLOSED, scheduled_at=datetime(2000, 1, 1, 0, tzinfo=UTC)
     )
     repository.get_current_for_update.return_value = SimpleNamespace(revision=2)
     with pytest.raises(ApiError) as conflict:
@@ -125,7 +197,9 @@ async def test_cancelled_occurrence_and_stale_revision_do_not_mutate() -> None:
 
 async def test_correction_appends_audit_and_invalidates_previous_not_taken_revision() -> None:
     user_id = uuid4()
-    occurrence = SimpleNamespace(id=uuid4(), status=MedicationOccurrenceStatus.CLOSED)
+    occurrence = SimpleNamespace(
+        id=uuid4(), status=MedicationOccurrenceStatus.CLOSED, scheduled_at=datetime(2000, 1, 1, 0, tzinfo=UTC)
+    )
     checkin = SimpleNamespace(
         id=uuid4(),
         occurrence_id=occurrence.id,

@@ -81,6 +81,16 @@ async def case(db_session: AsyncSession) -> AsyncIterator[Case]:
         fastapi_app.dependency_overrides.pop(get_request_user, None)
 
 
+async def mark_occurrences_due(case: Case, occurrence_ids: list[str]) -> None:
+    due_at = datetime.now(UTC) - timedelta(minutes=1)
+    for occurrence_id in occurrence_ids:
+        occurrence = await case.session.get(MedicationOccurrence, UUID(occurrence_id))
+        assert occurrence is not None
+        occurrence.scheduled_at = due_at
+        occurrence.confirmation_deadline_at = due_at + timedelta(hours=4)
+    await case.session.commit()
+
+
 async def counts(case: Case) -> list[int | None]:
     return [
         await case.session.scalar(select(func.count()).select_from(model))
@@ -364,6 +374,7 @@ async def test_latest_prescription_only_preserves_older_occurrences(case: Case, 
     assert {o["prescription_version_medication_id"] for o in day["occurrences"]} == set(
         map(str, [old_medication_id, *latest_ids])
     )
+    await mark_occurrences_due(case, [o["occurrence_id"] for o in day["occurrences"]])
     for occurrence in day["occurrences"]:
         response = await case.client.get(f"/api/v1/medication-occurrences/{occurrence['occurrence_id']}/medication")
         assert response.status_code == 200, response.text
@@ -388,6 +399,7 @@ async def test_partial_keeps_ready_occurrences_and_current_checkin(case: Case) -
     assert day["schedule_status"] == "PARTIAL"
     assert len(day["schedule_items"]) == 2
     occurrence = next(o for o in day["occurrences"] if o["status"] == "PENDING")
+    await mark_occurrences_due(case, [occurrence["occurrence_id"]])
     response = await case.client.put(
         f"/api/v1/medication-occurrences/{occurrence['occurrence_id']}/check-in",
         json={"status": "TAKEN", "expected_revision": 0},
