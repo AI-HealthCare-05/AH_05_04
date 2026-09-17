@@ -720,3 +720,18 @@
     grid-column: 1;
   }
 }
+
+.schedule-editor__directions {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border-radius: 12px;
+  background: #f3f6fa;
+  color: #4d576b;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}

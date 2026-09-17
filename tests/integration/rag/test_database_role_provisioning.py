@@ -11,6 +11,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import DBAPIError
@@ -35,6 +36,7 @@ from infra.python.provision_database_roles import (
     RUNTIME_AUTH_UPDATE_COLUMNS,
     RUNTIME_LIFESTYLE_TABLES,
     RUNTIME_MUTABLE_TABLES,
+    RUNTIME_RETRIEVAL_RUN_TABLES,
     run_provisioning,
 )
 from infra.python.source_management_role_policy import CATALOG_TABLES
@@ -117,6 +119,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 RUNTIME_MUTABLE_TABLES
                 | RUNTIME_APPEND_ONLY_TABLES
                 | RUNTIME_LIFESTYLE_TABLES
+                | RUNTIME_RETRIEVAL_RUN_TABLES
                 | CATALOG_TABLES
                 | set(SOURCE_TABLES)
                 | set(RUNTIME_AUTH_UPDATE_COLUMNS)
@@ -420,6 +423,7 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
     await _exercise_preflight_context_runtime_permissions(reader, producer)
     await _exercise_notification_runtime_permissions(reader, producer)
     await _exercise_feedback_runtime_permissions(reader, producer)
+    await _exercise_retrieval_run_runtime_permissions(reader, producer, admin)
     writer_config = WriterConfig(url.set(database=database, username=writer, password=password), "synthetic-operator")
     args = Namespace(snapshot_id=snapshot_id, expected_checksum="a" * 64, reason_code="SYNTHETIC_TEST")
     assert (await run_selection(writer_config, args)).decision.value == "ACTIVATED"
@@ -443,6 +447,7 @@ async def _exercise_source_cutover(admin, reader, producer, environment, url, pa
     await run_provisioning(environment)
     async with reader.connect() as connection:
         assert await connection.scalar(text("SELECT count(*) FROM rag_source_snapshot")) == 0
+    await _exercise_retrieval_run_runtime_permissions(reader, producer, admin)
 
 
 async def _exercise_audit_cutover(admin, reader, producer, environment):
@@ -895,6 +900,8 @@ async def _grant_historical_test_permissions(admin, environment):
                 "push_delivery",
                 "guide_feedback",  # #633 follows the historical Source cutover.
                 "chat_message_feedback",
+                "retrieval_signal",  # #178/#689 added after historical cutover.
+                "retrieval_hit",
             }:
                 await connection.execute(text(f'GRANT {privileges} ON "{table}" TO "{runtime}"'))
         for table in set(SOURCE_TABLES) & present:
@@ -989,3 +996,305 @@ async def _exercise_notification_runtime_permissions(reader, producer):
                 async with engine.begin() as connection:
                     await connection.execute(text(statement))
             assert error.value.orig.sqlstate == "42501"
+
+
+async def _exercise_retrieval_run_runtime_permissions(reader, producer, admin) -> None:
+    from decimal import Decimal
+
+    from ai_worker.adapters.sqlalchemy_retrieval_run import SqlAlchemyRetrievalRunStore
+    from ai_worker.tasks.rag.retrieval_run import (
+        BeginRetrievalRunRequest,
+        BeginRetrievalRunSuccess,
+        FinalizeRetrievalRunRequest,
+        FinalizeRetrievalRunSuccess,
+        PersistedHitInput,
+        PersistedSignalInput,
+    )
+
+    user_id = uuid4()
+    job_id = uuid4()
+    ctx_id = uuid4()
+    index_id = uuid4()
+    doc_id = uuid4()
+    chunk_id = uuid4()
+
+    # Prerequisites: seed knowledge index, document, and chunk using admin (owner)
+    async with admin.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO rag_knowledge_index (id, index_code, index_version, corpus_manifest_hash, "
+                "embedding_manifest_hash, index_configuration_hash, embedding_model_ref, "
+                "embedding_model_version, embedding_dimension, distance_metric, member_count) "
+                "VALUES (:id, 'TEST_IDX', '1.0', :h, :h, :h, 'text-embedding-3-large', '1.0', 1536, 'COSINE', 1)"
+            ),
+            {"id": str(index_id), "h": "a" * 64},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO knowledge_document (id, title, source_url, document_version, document_status, "
+                "record_contract_version, publisher) "
+                "VALUES (:id, 'Test Doc', :url, '1.0', 'ACTIVE', 'LEGACY_V1', 'Publisher')"
+            ),
+            {"id": str(doc_id), "url": f"https://example.invalid/{uuid4()}"},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO knowledge_chunk (id, knowledge_document_id, chunk_index, chunk_text, "
+                "content_hash, normalization_version) "
+                "VALUES (:id, :doc_id, 0, '테스트 청크 내용', :h, 'v1')"
+            ),
+            {"id": str(chunk_id), "doc_id": str(doc_id), "h": "b" * 64},
+        )
+
+    # Runtime user and ai_job created by reader (DB_APP_USER has SELECT, INSERT, UPDATE, DELETE on user, ai_job)
+    async with reader.begin() as conn:
+        await conn.execute(
+            text(
+                'INSERT INTO "user" (id, email, hashed_password, name, is_active, is_admin) '
+                "VALUES (:id, :email, 'synthetic-hash', '합성사용자', true, false)"
+            ),
+            {"id": str(user_id), "email": f"test-{uuid4().hex[:8]}@example.invalid"},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO ai_job (id, user_id, job_type, status, max_attempts, attempt_count) "
+                "VALUES (:id, :uid, 'OCR', 'PENDING', 3, 0)"
+            ),
+            {"id": str(job_id), "uid": str(user_id)},
+        )
+
+    # 1 & 2: SqlAlchemyRetrievalRunStore.begin_run() succeeds with DB_APP_USER session
+    store = SqlAlchemyRetrievalRunStore(async_sessionmaker(reader, expire_on_commit=False, autoflush=False))
+    begin_req = BeginRetrievalRunRequest(
+        job_id=job_id,
+        node_id="hybrid_retrieve",
+        execution_context_id=ctx_id,
+        prescription_version_id=uuid4(),
+        runtime_release_bundle_id=uuid4(),
+        runtime_release_bundle_manifest_hash="3" * 64,
+        runtime_execution_manifest_id=uuid4(),
+        runtime_execution_manifest_hash="4" * 64,
+        runtime_guard_decision_ref="synthetic-guard-ref",
+        knowledge_index_id=index_id,
+        variant="RET-H",
+        query_digest_algorithm="sha256",
+        query_digest_key_version="v1",
+        query_digest="1" * 64,
+        filter_snapshot={"code": "ASPIRIN"},
+        filter_snapshot_hash="5" * 64,
+        source_manifest_hash="6" * 64,
+        retrieval_configuration_hash="2" * 64,
+        lexical_limit=20,
+        dense_limit=20,
+        hybrid_limit=30,
+        final_k=5,
+        query_embedding_sha256="7" * 64,
+    )
+    outcome = await store.begin_run(begin_req)
+    assert isinstance(outcome, BeginRetrievalRunSuccess)
+    assert outcome.is_resumed is False
+    run_id = outcome.run_id
+
+    # 3: finalize_run() succeeds with DB_APP_USER session
+    sig = PersistedSignalInput(
+        knowledge_chunk_id=chunk_id,
+        method="EXACT",
+        raw_rank=1,
+        raw_score=Decimal("1.0"),
+        score_projection_version="observed-stage-score-decimal@1",
+    )
+    hit = PersistedHitInput(
+        knowledge_chunk_id=chunk_id,
+        rrf_rank=1,
+        rrf_score=Decimal("0.016393442622950820"),
+        rrf_score_numerator="1",
+        rrf_score_denominator="61",
+        final_rank=1,
+        selected=True,
+        lexical_rank=1,
+        dense_rank=1,
+    )
+    fin_req = FinalizeRetrievalRunRequest(
+        run_id=run_id,
+        status="COMPLETED",
+        search_receipt_hash="8" * 64,
+        signals=(sig,),
+        hits=(hit,),
+    )
+    fin_outcome = await store.finalize_run(fin_req)
+    assert isinstance(fin_outcome, FinalizeRetrievalRunSuccess)
+    assert fin_outcome.receipt.receipt_hash is not None
+
+    # 4: Runtime session can SELECT run, signal, and hit
+    async with reader.begin() as conn:
+        run_row = (
+            await conn.execute(
+                text("SELECT status, receipt_hash FROM retrieval_run WHERE id = :id"),
+                {"id": str(run_id)},
+            )
+        ).first()
+        assert run_row is not None
+        assert run_row.status == "COMPLETED"
+        assert run_row.receipt_hash == fin_outcome.receipt.receipt_hash
+
+        sig_count = await conn.scalar(
+            text("SELECT count(*) FROM retrieval_signal WHERE retrieval_run_id = :id"),
+            {"id": str(run_id)},
+        )
+        assert sig_count == 1
+
+        hit_count = await conn.scalar(
+            text("SELECT count(*) FROM retrieval_hit WHERE retrieval_run_id = :id"),
+            {"id": str(run_id)},
+        )
+        assert hit_count == 1
+
+    # 5: retrieval_signal UPDATE rejected
+    with pytest.raises(DBAPIError) as error:
+        async with reader.begin() as conn:
+            await conn.execute(
+                text("UPDATE retrieval_signal SET raw_rank = 2 WHERE retrieval_run_id = :id"),
+                {"id": str(run_id)},
+            )
+    assert error.value.orig.sqlstate == "42501"
+
+    # 6: retrieval_hit UPDATE rejected
+    with pytest.raises(DBAPIError) as error:
+        async with reader.begin() as conn:
+            await conn.execute(
+                text("UPDATE retrieval_hit SET final_rank = 2 WHERE retrieval_run_id = :id"),
+                {"id": str(run_id)},
+            )
+    assert error.value.orig.sqlstate == "42501"
+
+    # 7: direct DELETE rejected on all 3 tables
+    for table in ("retrieval_run", "retrieval_signal", "retrieval_hit"):
+        with pytest.raises(DBAPIError) as error:
+            async with reader.begin() as conn:
+                await conn.execute(text(f"DELETE FROM {table} WHERE false"))
+        assert error.value.orig.sqlstate == "42501"
+
+    # 8: TRUNCATE rejected on all 3 tables
+    for table in ("retrieval_run", "retrieval_signal", "retrieval_hit"):
+        with pytest.raises(DBAPIError) as error:
+            async with reader.begin() as conn:
+                await conn.execute(text(f"TRUNCATE {table}"))
+        assert error.value.orig.sqlstate == "42501"
+
+    # 9: DB_APP_USER Source write rejection maintained
+    for stmt in (
+        "INSERT INTO rag_source (id, source_code, display_name, lifecycle_status) VALUES ('00000000-0000-0000-0000-000000000001', 'SRC', 'SRC', 'ACTIVE')",
+        "UPDATE rag_source SET display_name = 'changed'",
+        "DELETE FROM rag_source",
+    ):
+        with pytest.raises(DBAPIError) as error:
+            async with reader.begin() as conn:
+                await conn.execute(text(stmt))
+        assert error.value.orig.sqlstate == "42501"
+
+    # 10: DB_APP_USER Knowledge Index write rejection maintained
+    for stmt in (
+        "INSERT INTO rag_knowledge_index (id, index_code) VALUES ('00000000-0000-0000-0000-000000000002', 'IDX')",
+        "INSERT INTO knowledge_document (id, title) VALUES ('00000000-0000-0000-0000-000000000003', 'Doc')",
+        "INSERT INTO knowledge_chunk (id, knowledge_document_id, chunk_index, chunk_text) VALUES ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000003', 0, 'text')",
+        "DELETE FROM rag_knowledge_index",
+    ):
+        with pytest.raises(DBAPIError) as error:
+            async with reader.begin() as conn:
+                await conn.execute(text(stmt))
+        assert error.value.orig.sqlstate == "42501"
+
+    # Producer (writer) also has no access to retrieval tables
+    for table in ("retrieval_run", "retrieval_signal", "retrieval_hit"):
+        for stmt in (f"SELECT * FROM {table}", f"INSERT INTO {table} DEFAULT VALUES"):
+            with pytest.raises(DBAPIError) as error:
+                async with producer.begin() as conn:
+                    await conn.execute(text(stmt))
+            assert error.value.orig.sqlstate == "42501"
+
+    # 11: ai_job parent delete -> Retrieval child cascade cleanup confirmed
+    async with reader.begin() as conn:
+        await conn.execute(text("DELETE FROM ai_job WHERE id = :id"), {"id": str(job_id)})
+
+    async with reader.begin() as conn:
+        assert await conn.scalar(text("SELECT count(*) FROM retrieval_run WHERE id = :id"), {"id": str(run_id)}) == 0
+        assert (
+            await conn.scalar(
+                text("SELECT count(*) FROM retrieval_signal WHERE retrieval_run_id = :id"),
+                {"id": str(run_id)},
+            )
+            == 0
+        )
+        assert (
+            await conn.scalar(
+                text("SELECT count(*) FROM retrieval_hit WHERE retrieval_run_id = :id"),
+                {"id": str(run_id)},
+            )
+            == 0
+        )
+
+    # Cleanup user with reader and seeded knowledge with admin
+    async with reader.begin() as conn:
+        await conn.execute(text('DELETE FROM "user" WHERE id = :id'), {"id": str(user_id)})
+
+    async with admin.begin() as conn:
+        await conn.execute(text("DELETE FROM knowledge_chunk WHERE id = :id"), {"id": str(chunk_id)})
+        await conn.execute(text("DELETE FROM knowledge_document WHERE id = :id"), {"id": str(doc_id)})
+        await conn.execute(text("DELETE FROM rag_knowledge_index WHERE id = :id"), {"id": str(index_id)})
+
+
+@pytest_asyncio.fixture
+async def database(monkeypatch):
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy.engine import make_url
+
+    def _alembic_config() -> Config:
+        alembic_config = Config()
+        alembic_config.set_main_option("script_location", str(ROOT / "backend/alembic"))
+        return alembic_config
+
+    name = "retrieval_acl_" + uuid4().hex
+    original = config.database_url
+    cluster = create_async_engine(original, isolation_level="AUTOCOMMIT", hide_parameters=True)
+    engine = create_async_engine(make_url(original).set(database=name), hide_parameters=True)
+    try:
+        async with cluster.connect() as connection:
+            await connection.execute(text(f'CREATE DATABASE "{name}"'))
+        monkeypatch.setattr(config, "DB_NAME", name)
+        await asyncio.to_thread(command.upgrade, _alembic_config(), "head")
+        yield engine
+    finally:
+        await engine.dispose()
+        async with cluster.connect() as connection:
+            await connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+        await cluster.dispose()
+
+
+async def test_retrieval_run_provisioned_runtime_role_lifecycle(database) -> None:
+    from infra.python.provision_database_roles import provision_roles
+
+    admin = database
+    suffix = uuid4().hex[:12]
+    runtime, writer = (f"retacl_{part}_{suffix}" for part in ("runtime", "writer"))
+    password = f"synthetic-{suffix}-only"
+    reader = create_async_engine(admin.url.set(username=runtime, password=password))
+    producer = create_async_engine(admin.url.set(username=writer, password=password))
+    try:
+        async with admin.begin() as connection:
+            for role in (runtime, writer):
+                await connection.execute(text(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"))
+            await provision_roles(
+                connection,
+                owner=config.DB_USER,
+                runtime=runtime,
+                writer=writer,
+            )
+        await _exercise_retrieval_run_runtime_permissions(reader, producer, admin)
+    finally:
+        await reader.dispose()
+        await producer.dispose()
+        async with admin.begin() as connection:
+            for role in (runtime, writer):
+                await connection.execute(text(f'DROP OWNED BY "{role}"'))
+                await connection.execute(text(f'DROP ROLE IF EXISTS "{role}"'))
