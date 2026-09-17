@@ -1013,11 +1013,10 @@
   background: transparent;
   color: #667085;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 400;
 }
 
-.bottom-nav__icon,
-.bottom-nav__home {
+.bottom-nav__icon {
   width: 28px;
   height: 28px;
   flex: 0 0 28px;
@@ -1033,12 +1032,6 @@
   mask-size: contain;
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
-}
-
-.bottom-nav__home {
-  font-size: 24px;
-  font-weight: 700;
-  line-height: 1;
 }
 
 .bottom-nav__doji {
@@ -1084,8 +1077,7 @@
 }
 
 /* 아이콘도 함께 흐리게 해 활성 탭과 혼동되지 않게 합니다. */
-.bottom-nav button:disabled .bottom-nav__icon,
-.bottom-nav button:disabled .bottom-nav__home {
+.bottom-nav button:disabled .bottom-nav__icon {
   opacity: 0.6;
 }
 
@@ -1103,15 +1095,10 @@
   font-weight: 400;
 }
 
-:is(.mvp-home-page, .mvp-menu-page, .guide-page, .chat-page) .bottom-nav__icon,
-:is(.mvp-home-page, .mvp-menu-page, .guide-page, .chat-page) .bottom-nav__home {
+:is(.mvp-home-page, .mvp-menu-page, .guide-page, .chat-page) .bottom-nav__icon {
   width: 22px;
   height: 22px;
   flex-basis: 22px;
-}
-
-:is(.mvp-home-page, .mvp-menu-page, .guide-page, .chat-page) .bottom-nav__home {
-  font-size: 20px;
 }
 
 :is(.mvp-home-page, .mvp-menu-page, .guide-page, .chat-page) .bottom-nav__doji {

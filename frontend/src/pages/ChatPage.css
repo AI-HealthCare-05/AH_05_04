@@ -483,8 +483,7 @@
   font-weight: 400;
 }
 
-.chat-page .bottom-nav__icon,
-.chat-page .bottom-nav__home {
+.chat-page .bottom-nav__icon {
   width: 22px;
   height: 22px;
   flex-basis: 22px;
