@@ -720,3 +720,31 @@
     grid-column: 1;
   }
 }
+
+.schedule-recommendation {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--ds-border, #d9e3df);
+  border-radius: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.schedule-recommendation h3,
+.schedule-recommendation p {
+  margin: 0;
+}
+
+.schedule-recommendation p {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.schedule-recommendation input[type="time"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.schedule-recommendation .schedule-editor__time-grid {
+  grid-template-columns: 1fr;
+}

@@ -6,6 +6,7 @@ import {
   cancelMedicationSchedule,
   createScheduleIdempotencyKey,
   getMedicationDay,
+  getScheduleRecommendation,
   getOccurrenceMedication,
   isOccurrenceMedicationNotFoundError,
   isPrescriptionMedicationNotFoundError,
@@ -243,4 +244,19 @@ describe('Schedule 오류 판별 helper', () => {
       expect(isOccurrenceMedicationNotFoundError(error)).toBe(occurrence)
     },
   )
+})
+
+
+it('previews without persistence and serializes optional recomputation context only when supplied', async () => {
+  const fetchMock = stubFetch(scheduleResponse)
+  const input = { meal_end_times: { DINNER: '19:30' }, same_times_every_day: true as const }
+  await getScheduleRecommendation(medicationId, input)
+  expect(fetchMock.mock.calls[0]?.[0]).toContain('/schedule-recommendation')
+  expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual(input)
+  fetchMock.mockResolvedValue(new Response(JSON.stringify(scheduleResponse), { headers: { 'Content-Type': 'application/json' } }))
+  await putMedicationSchedule(medicationId, {
+    startLocalDate: '2026-09-17', endMode: 'OPEN_ENDED', localTimes: ['20:00'], expectedRevision: 0,
+    recommendationContext: { ...input, rule_version: 'explicit-after-meal-v1' },
+  }, idempotencyKey)
+  expect(JSON.parse(fetchMock.mock.calls[1]?.[1]?.body as string).recommendation_context).toEqual({ ...input, rule_version: 'explicit-after-meal-v1' })
 })

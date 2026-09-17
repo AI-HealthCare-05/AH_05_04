@@ -16,6 +16,7 @@ from app.dtos.medication_schedules import (
     MedicationScheduleResponse,
     PutMedicationScheduleRequest,
 )
+from app.dtos.schedule_recommendations import RecommendationInput, RecommendationResponse
 from app.models.medication_schedule_snapshots import ScheduleAuditSnapshot
 from app.models.medication_schedules import MedicationScheduleSource, MedicationScheduleStatus
 from app.repositories.medication_schedule_queries import MedicationScheduleQueries
@@ -25,6 +26,11 @@ from app.services.medication_schedule_mutations import (
     ScheduleOwnershipNotFoundError,
     ScheduleRevisionConflictError,
     ScheduleVersionConflictError,
+)
+from app.services.schedule_recommendations import (
+    recommend_times,
+    require_local_recommendations,
+    validate_recommendation,
 )
 
 
@@ -38,6 +44,22 @@ class MedicationScheduleApiService:
         self.queries = queries
         self.mutations = mutations
         self.idempotency = idempotency
+
+    async def recommend(
+        self, *, user_id: UUID, medication_id: UUID, request: RecommendationInput
+    ) -> RecommendationResponse:
+        require_local_recommendations()
+        medication = await self.queries.medication_owned(medication_id, user_id)
+        if medication is None:
+            raise ApiError(
+                status_code=404, code="PRESCRIPTION_MEDICATION_NOT_FOUND", message="처방 약제를 찾을 수 없습니다."
+            )
+        ownership = self.mutations.repository.ownership
+        if not await ownership.lock_active_owned(prescription_version_medication_id=medication_id, user_id=user_id):
+            raise ApiError(
+                status_code=409, code="PRESCRIPTION_VERSION_CONFLICT", message="현재 처방 버전을 확인해 주세요."
+            )
+        return RecommendationResponse(data=recommend_times(medication, request))
 
     async def occurrence_medication(
         self, *, user_id: UUID, occurrence_id: UUID
@@ -69,6 +91,8 @@ class MedicationScheduleApiService:
         request: PutMedicationScheduleRequest | CancelMedicationScheduleRequest,
         idempotency_key: str,
     ) -> SyncMutationResult:
+        if isinstance(request, PutMedicationScheduleRequest) and request.recommendation_context is not None:
+            require_local_recommendations()
         medication = await self.queries.medication_owned(medication_id, user_id)
         if medication is None:
             raise ApiError(
@@ -79,6 +103,7 @@ class MedicationScheduleApiService:
             effective_at = datetime.now(UTC)
             try:
                 if isinstance(request, PutMedicationScheduleRequest):
+                    validate_recommendation(medication, request)
                     if medication.frequency_per_day is not None and medication.frequency_per_day != len(
                         request.local_times
                     ):
@@ -89,7 +114,7 @@ class MedicationScheduleApiService:
                             details=[ErrorDetail(field="local_times", reason="FREQUENCY_MISMATCH")],
                         )
                     settings = ScheduleAuditSnapshot(
-                        **request.model_dump(exclude={"expected_revision"}),
+                        **request.model_dump(exclude={"expected_revision", "recommendation_context"}),
                         status=MedicationScheduleStatus.ACTIVE,
                         source=MedicationScheduleSource.USER_CONFIRMED,
                     )
@@ -136,7 +161,12 @@ class MedicationScheduleApiService:
             else "medication-schedule.patch",
             parent_resource_id=medication_id,
             idempotency_key=idempotency_key,
-            fingerprint=request.model_dump(mode="json"),
+            fingerprint=request.model_dump(
+                mode="json",
+                exclude={"recommendation_context"}
+                if isinstance(request, PutMedicationScheduleRequest) and request.recommendation_context is None
+                else set(),
+            ),
             success_status=200,
             mutate=mutate,
         )

@@ -92,6 +92,7 @@ type PutMedicationScheduleBaseInput = {
   startLocalDate: string
   localTimes: string[]
   expectedRevision: number
+  recommendationContext?: RecommendationContext
 }
 
 export type PutMedicationScheduleInput = PutMedicationScheduleBaseInput &
@@ -163,6 +164,7 @@ export async function putMedicationSchedule(
     ...(input.endMode === 'DATE' ? { end_local_date: input.endLocalDate } : {}),
     local_times: input.localTimes,
     expected_revision: input.expectedRevision,
+    ...(input.recommendationContext ? { recommendation_context: input.recommendationContext } : {}),
   }
 
   return apiRequest<MedicationScheduleResponse>(
@@ -235,4 +237,38 @@ export function isOccurrenceMedicationNotFoundError(error: unknown): boolean {
     error.status === 404 &&
     error.code === 'MEDICATION_OCCURRENCE_NOT_FOUND'
   )
+}
+
+export type RecommendationInput = {
+  meal_end_times: Partial<Record<'BREAKFAST' | 'LUNCH' | 'DINNER', string>>
+  same_times_every_day: true
+}
+export type RecommendationContext = RecommendationInput & { rule_version: string }
+export type RecommendationResponse = {
+  data: {
+    prescription_version_medication_id: string
+    prescription_version_id: string
+    rule_version: string
+    timing_text: string | null
+    local_times: string[]
+    reason:
+      | 'EXPLICIT_AFTER_MEAL'
+      | 'UNSUPPORTED_INSTRUCTION'
+      | 'FREQUENCY_MISMATCH'
+      | 'MISSING_MEAL_END'
+      | 'DAY_BOUNDARY'
+      | 'DUPLICATE_TIME'
+  }
+}
+
+export async function getScheduleRecommendation(
+  medicationId: string,
+  input: RecommendationInput,
+  signal?: AbortSignal,
+): Promise<RecommendationResponse> {
+  return apiRequest(`/api/v1/prescription-version-medications/${medicationId}/schedule-recommendation`, {
+    method: 'POST', signal,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
 }
