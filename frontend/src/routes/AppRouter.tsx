@@ -9,6 +9,8 @@ import {
 import HomePage from '../pages/HomePage'
 import LoginPage from '../pages/LoginPage'
 import SignupPage from '../pages/SignupPage'
+import ForgotPasswordPage from '../pages/ForgotPasswordPage'
+import ResetPasswordPage from '../pages/ResetPasswordPage'
 import PrescriptionUploadPage from '../pages/PrescriptionUploadPage'
 import PrescriptionReviewPage from '../pages/PrescriptionReviewPage'
 import GuidePage from '../pages/GuidePage'
@@ -134,6 +136,8 @@ export function AppRoutes({
       <Route path="/start" element={<PublicOnlyRoute><StartPage /></PublicOnlyRoute>} />
       <Route path="/signup" element={<PublicOnlyRoute><SignupPage /></PublicOnlyRoute>} />
       <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
+      <Route path="/forgot-password" element={<PublicOnlyRoute><ForgotPasswordPage /></PublicOnlyRoute>} />
+      <Route path="/reset-password" element={<PublicOnlyRoute><ResetPasswordPage /></PublicOnlyRoute>} />
       <Route path="/prescriptions/upload" element={<ProtectedRoute><PrescriptionUploadPage /></ProtectedRoute>} />
       {enableDesignPrototype && DesignPrototypePage && (
         <Route

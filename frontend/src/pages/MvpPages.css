@@ -545,6 +545,16 @@
   margin-top: 22px;
 }
 
+.mvp-form__footer.mvp-auth__forgot-password-link {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 17px;
+}
+
+.mvp-auth__forgot-password-link + .mvp-auth__notice {
+  margin-top: 22px;
+}
+
 .mvp-login-page .mvp-auth__form > .ds-button {
   margin-top: 3px;
 }

@@ -76,6 +76,7 @@ describe('LoginPage', () => {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<div>회원가입 화면</div>} />
+          <Route path="/forgot-password" element={<div>비밀번호 찾기 화면</div>} />
           <Route path="/" element={<HomeStateProbe />} />
           <Route path="/schedule/unconfirmed" element={<div>미확인 기록 보완 화면</div>} />
         </Routes>
@@ -151,6 +152,9 @@ describe('LoginPage', () => {
     expect(
       screen.getByRole('link', { name: '계정이 없다면 회원가입' }).getAttribute('href'),
     ).toBe('/signup')
+    expect(
+      screen.getByRole('link', { name: '비밀번호를 잊으셨나요' }).getAttribute('href'),
+    ).toBe('/forgot-password')
   })
 
   it('입력 검증 실패 시 API를 호출하지 않고 aria-invalid를 설정한다', () => {

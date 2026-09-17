@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  confirmPasswordReset,
   login,
   logout,
   requestAccountWithdrawal,
+  requestPasswordReset,
   signup,
   type SignupRequest,
 } from '../src/api/auth'
@@ -162,6 +164,53 @@ describe('logout API', () => {
         headers: expect.objectContaining({
           Authorization: 'Bearer fixture-access-token',
         }),
+      }),
+    )
+  })
+})
+
+describe('password reset request API', () => {
+  it('이메일만 request endpoint로 전송하고 응답을 그대로 반환한다', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ detail: '비밀번호 재설정 안내를 확인해 주세요.', reset_token: null }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await requestPasswordReset('dosey@example.com')
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/auth/password-reset/request',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ email: 'dosey@example.com' }),
+      }),
+    )
+    expect(response).toEqual({ detail: '비밀번호 재설정 안내를 확인해 주세요.', reset_token: null })
+  })
+})
+
+describe('password reset confirm API', () => {
+  it('token과 new_password를 confirm endpoint로 전송한다', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ detail: '비밀번호가 변경되었습니다. 다시 로그인해 주세요.' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await confirmPasswordReset('reset-token-value', 'NewPassword1!')
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/auth/password-reset/confirm',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ token: 'reset-token-value', new_password: 'NewPassword1!' }),
       }),
     )
   })
