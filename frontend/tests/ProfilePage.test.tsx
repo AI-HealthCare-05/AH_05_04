@@ -72,7 +72,7 @@ function renderProfile() {
 
 async function openEditForm() {
   await screen.findByText(CURRENT_USER.email)
-  fireEvent.click(screen.getByRole('button', { name: '이름·이메일 수정' }))
+  fireEvent.click(screen.getByRole('button', { name: '사용자 정보 수정' }))
 }
 
 async function openWithdrawalForm() {
@@ -107,8 +107,10 @@ describe('내 정보 조회', () => {
     expect(screen.getByText(CURRENT_USER.phone_number!)).toBeTruthy()
     expect(screen.getByText(CURRENT_USER.birthday!)).toBeTruthy()
     expect(screen.getByText('여성')).toBeTruthy()
-    expect(screen.getAllByText('수정 가능')).toHaveLength(2)
-    expect(screen.getByText('현재 기본 정보는 조회만 가능해요.')).toBeTruthy()
+    expect(screen.queryByText('수정 가능')).toBeNull()
+    expect(
+      screen.getByText('휴대폰 번호, 생년월일, 성별은 선택 입력이에요.'),
+    ).toBeTruthy()
     expect(getCurrentUser).toHaveBeenCalledTimes(1)
   })
 
@@ -693,5 +695,134 @@ describe('목적별 동의 관리', () => {
     if (method === 'PUT') fireEvent.click(await screen.findByRole('button', { name: '알림 동의 철회' }))
     expect(await screen.findByText('로그인 화면')).toBeTruthy()
     expect(localStorage.getItem('access_token')).toBeNull()
+  })
+})
+
+describe('#691 기본정보 선택 입력', () => {
+  it('바뀐 필드만 보내고 손대지 않은 필드는 생략한다', async () => {
+    vi.mocked(updateCurrentUser).mockResolvedValue({
+      ...CURRENT_USER,
+      gender: 'MALE',
+    })
+    renderProfile()
+    await openEditForm()
+
+    fireEvent.change(screen.getByLabelText('성별'), { target: { value: 'MALE' } })
+    fireEvent.click(screen.getByRole('button', { name: '저장' }))
+
+    expect(await screen.findByText('내 정보가 저장되었습니다.')).toBeTruthy()
+    expect(updateCurrentUser).toHaveBeenCalledWith({ gender: 'MALE' })
+  })
+
+  it('휴대폰 번호는 입력값을 가공하지 않고 그대로 보낸다', async () => {
+    vi.mocked(updateCurrentUser).mockResolvedValue({
+      ...CURRENT_USER,
+      phone_number: '01012345678',
+    })
+    renderProfile()
+    await openEditForm()
+
+    fireEvent.change(screen.getByLabelText('휴대폰 번호'), {
+      target: { value: '01012345678' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '저장' }))
+
+    expect(await screen.findByText('내 정보가 저장되었습니다.')).toBeTruthy()
+    expect(updateCurrentUser).toHaveBeenCalledWith({ phone_number: '01012345678' })
+  })
+
+  it('생년월일을 수정하면 YYYY-MM-DD 로 보낸다', async () => {
+    vi.mocked(updateCurrentUser).mockResolvedValue({
+      ...CURRENT_USER,
+      birthday: '1990-01-02',
+    })
+    renderProfile()
+    await openEditForm()
+
+    fireEvent.change(screen.getByLabelText('생년월일'), {
+      target: { value: '1990-01-02' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '저장' }))
+
+    expect(await screen.findByText('내 정보가 저장되었습니다.')).toBeTruthy()
+    expect(updateCurrentUser).toHaveBeenCalledWith({ birthday: '1990-01-02' })
+  })
+
+  it('값을 비우고 저장하면 null 을 보내 미입력으로 되돌린다', async () => {
+    vi.mocked(updateCurrentUser).mockResolvedValue({
+      ...CURRENT_USER,
+      phone_number: null,
+      birthday: null,
+      gender: null,
+    })
+    renderProfile()
+    await openEditForm()
+
+    fireEvent.change(screen.getByLabelText('휴대폰 번호'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('생년월일'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('성별'), { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: '저장' }))
+
+    expect(await screen.findByText('내 정보가 저장되었습니다.')).toBeTruthy()
+    expect(updateCurrentUser).toHaveBeenCalledWith({
+      phone_number: null,
+      birthday: null,
+      gender: null,
+    })
+    expect(screen.getAllByText('미입력').length).toBeGreaterThan(0)
+  })
+
+  it('휴대폰 번호 409 ALREADY_EXISTS 를 해당 field 오류로 표시하고 입력을 유지한다', async () => {
+    vi.mocked(updateCurrentUser).mockRejectedValue(
+      new ApiError(409, 'conflict', 'CONFLICT', [
+        { field: 'phone_number', reason: 'ALREADY_EXISTS' },
+      ]),
+    )
+    renderProfile()
+    await openEditForm()
+
+    const phoneInput = screen.getByLabelText('휴대폰 번호')
+    fireEvent.change(phoneInput, { target: { value: '01099998888' } })
+    fireEvent.click(screen.getByRole('button', { name: '저장' }))
+
+    expect(
+      await screen.findByText('이미 등록된 휴대폰 번호예요. 다른 번호를 입력해 주세요.'),
+    ).toBeTruthy()
+    expect(screen.getByLabelText('휴대폰 번호')).toHaveProperty('value', '01099998888')
+    expect(document.activeElement).toBe(screen.getByLabelText('휴대폰 번호'))
+  })
+
+  it('휴대폰 번호 422 는 raw message 대신 안내 문구로 표시한다', async () => {
+    vi.mocked(updateCurrentUser).mockRejectedValue(
+      new ApiError(422, 'phone_number must contain digits only', 'VALIDATION_FAILED', [
+        { field: 'phone_number', reason: 'INVALID' },
+      ]),
+    )
+    renderProfile()
+    await openEditForm()
+
+    fireEvent.change(screen.getByLabelText('휴대폰 번호'), { target: { value: '010abc' } })
+    fireEvent.click(screen.getByRole('button', { name: '저장' }))
+
+    expect(await screen.findByText('휴대폰 번호는 숫자만 입력해 주세요.')).toBeTruthy()
+    expect(screen.queryByText(/digits only/)).toBeNull()
+  })
+
+  it('5xx 에서는 입력값을 유지하고 재시도를 안내한다', async () => {
+    vi.mocked(updateCurrentUser).mockRejectedValue(
+      new ApiError(500, 'server error', 'INTERNAL_SERVER_ERROR'),
+    )
+    renderProfile()
+    await openEditForm()
+
+    fireEvent.change(screen.getByLabelText('성별'), { target: { value: 'MALE' } })
+    fireEvent.click(screen.getByRole('button', { name: '저장' }))
+
+    expect(
+      await screen.findByText(
+        '내 정보를 저장하지 못했습니다. 입력값을 유지한 채 다시 시도해 주세요.',
+      ),
+    ).toBeTruthy()
+    expect(screen.getByLabelText('성별')).toHaveProperty('value', 'MALE')
   })
 })
