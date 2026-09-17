@@ -15,12 +15,16 @@ import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid5
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from ai_worker.adapters.sqlalchemy_evaluation_bootstrap_repository import (
+    SqlAlchemyEvaluationBootstrapRepository,
+)
 from ai_worker.adapters.sqlalchemy_knowledge_evidence_index import (
     SqlAlchemyKnowledgeEvidenceIndexRepository,
 )
@@ -102,144 +106,82 @@ async def bootstrap_ret_h_smoke_stage1_source(
     snapshot_id = uuid5(NAMESPACE_SYNTHETIC_RET_H_SMOKE, f"snapshot:{fixture.file_sha256}")
     verification_id = uuid5(NAMESPACE_SYNTHETIC_RET_H_SMOKE, f"verification:{fixture.file_sha256}")
     member_id = uuid5(NAMESPACE_SYNTHETIC_RET_H_SMOKE, f"member:{fixture.file_sha256}:0")
+    now = datetime.now(UTC)
 
     async with session_factory() as session, session.begin():
-        # Check if snapshot already exists and is CURRENT
-        existing_snap = (
-            (
-                await session.execute(
-                    text(
-                        "SELECT id, verification_status, verification_seal_id "
-                        "FROM rag_source_snapshot WHERE id = :id FOR UPDATE"
-                    ),
-                    {"id": str(snapshot_id)},
-                )
-            )
-            .mappings()
-            .one_or_none()
+        eval_repo = SqlAlchemyEvaluationBootstrapRepository(session)
+
+        source_id = await eval_repo.ensure_synthetic_source(
+            source_id=SMOKE_SOURCE_ID,
+            source_code=fixture.source_code,
+            display_name="Synthetic Smoke Source",
+        )
+        endpoint_id = await eval_repo.ensure_synthetic_endpoint(
+            endpoint_id=SMOKE_ENDPOINT_ID,
+            source_id=source_id,
+            endpoint_code=fixture.endpoint_code,
+            display_name="Synthetic Smoke Endpoint",
+        )
+        operation_id = await eval_repo.ensure_synthetic_operation(
+            operation_id=SMOKE_OPERATION_ID,
+            endpoint_id=endpoint_id,
+            operation_code=fixture.operation_code,
+            display_name="Synthetic Smoke Operation",
+        )
+        snapshot_is_current = await eval_repo.ensure_pending_snapshot(
+            snapshot_id=snapshot_id,
+            operation_id=operation_id,
+            raw_hash=fixture.file_sha256,
+            canon_hash=fixture.file_sha256,
+            receipt_hash=fixture.file_sha256,
+            now=now,
+            record_count=len(fixture.records),
+            source_version="1.0.0",
+            external_version="1.0.0",
+            schema_version="1.0",
+            parser_version="1.0",
+            normalization_version="v1",
+            canonicalization_spec_version="canonical-v1",
         )
 
-        if (
-            existing_snap is not None
-            and existing_snap["verification_status"] == "CURRENT"
-            and existing_snap["verification_seal_id"] is not None
-        ):
-            # Check existing member
-            existing_members = (
-                (
-                    await session.execute(
-                        text("SELECT id FROM rag_source_snapshot_member WHERE source_snapshot_id = :sid"),
-                        {"sid": str(snapshot_id)},
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            if existing_members:
-                return Stage1SourceReceipt(
-                    source_id=SMOKE_SOURCE_ID,
-                    endpoint_id=SMOKE_ENDPOINT_ID,
-                    operation_id=SMOKE_OPERATION_ID,
-                    snapshot_id=snapshot_id,
-                    member_ids=tuple(UUID(str(m)) for m in existing_members),
-                    canonical_checksum=fixture.file_sha256,
-                    verification_seal_id=UUID(str(existing_snap["verification_seal_id"])),
-                    reused=True,
-                )
-
-        # 1. Upsert rag_source
-        await session.execute(
-            text(
-                "INSERT INTO rag_source (id, source_code, display_name, lifecycle_status) "
-                "VALUES (:id, :code, 'Synthetic Smoke Source', 'ACTIVE') "
-                "ON CONFLICT (id) DO NOTHING"
-            ),
-            {"id": str(SMOKE_SOURCE_ID), "code": fixture.source_code},
-        )
-
-        # 2. Upsert rag_source_endpoint
-        await session.execute(
-            text(
-                "INSERT INTO rag_source_endpoint (id, source_id, endpoint_code, display_name, lifecycle_status, runtime_status, acquisition_status) "
-                "VALUES (:id, :sid, 'SYNTHETIC_SMOKE_EP', 'Synthetic Smoke Endpoint', 'VERIFIED', 'ENABLED', 'APPROVED') "
-                "ON CONFLICT (id) DO NOTHING"
-            ),
-            {"id": str(SMOKE_ENDPOINT_ID), "sid": str(SMOKE_SOURCE_ID)},
-        )
-
-        # 3. Upsert rag_source_operation
-        await session.execute(
-            text(
-                "INSERT INTO rag_source_operation (id, endpoint_id, operation_code, display_name, runtime_status, acquisition_status) "
-                "VALUES (:id, :eid, 'SYNTHETIC_SMOKE_OP', 'Synthetic Smoke Operation', 'ENABLED', 'APPROVED') "
-                "ON CONFLICT (id) DO NOTHING"
-            ),
-            {"id": str(SMOKE_OPERATION_ID), "eid": str(SMOKE_ENDPOINT_ID)},
-        )
-
-        # 4. Insert or update rag_source_snapshot
-        if existing_snap is None:
-            await session.execute(
-                text(
-                    "INSERT INTO rag_source_snapshot ("
-                    "id, operation_id, source_version, raw_manifest_checksum, canonical_checksum, "
-                    "schema_version, parser_version, normalization_version, canonicalization_spec_version, "
-                    "record_count, rejected_record_count, verification_status, collected_at"
-                    ") VALUES ("
-                    ":id, :op_id, '1.0.0', :checksum, :checksum, "
-                    "'1.0', '1.0', 'v1', 'canonical-v1', "
-                    "1, 0, 'PENDING', now()"
-                    ") ON CONFLICT (id) DO NOTHING"
-                ),
-                {"id": str(snapshot_id), "op_id": str(SMOKE_OPERATION_ID), "checksum": fixture.file_sha256},
+        if snapshot_is_current:
+            existing_members = await eval_repo.get_snapshot_members(snapshot_id=snapshot_id)
+            seal_id = await eval_repo.get_snapshot_verification_seal_id(snapshot_id=snapshot_id)
+            return Stage1SourceReceipt(
+                source_id=source_id,
+                endpoint_id=endpoint_id,
+                operation_id=operation_id,
+                snapshot_id=snapshot_id,
+                member_ids=tuple(existing_members),
+                canonical_checksum=fixture.file_sha256,
+                verification_seal_id=seal_id,
+                reused=True,
             )
 
-        # 5. Insert member
-        await session.execute(
-            text(
-                "INSERT INTO rag_source_snapshot_member ("
-                "id, source_snapshot_id, member_kind, endpoint_id, operation_id, locator, content_sha256"
-                ") VALUES ("
-                ":id, :sid, 'ENDPOINT_OPERATION', :eid, :op_id, '$.records[0]', :c_hash"
-                ") ON CONFLICT (id) DO NOTHING"
-            ),
-            {
-                "id": str(member_id),
-                "sid": str(snapshot_id),
-                "eid": str(SMOKE_ENDPOINT_ID),
-                "op_id": str(SMOKE_OPERATION_ID),
-                "c_hash": fixture.records[0].content_sha256,
-            },
+        m_id = await eval_repo.ensure_snapshot_member(
+            member_id=member_id,
+            snapshot_id=snapshot_id,
+            endpoint_id=endpoint_id,
+            operation_id=operation_id,
+            locator="$.records[0]",
+            content_sha256=fixture.records[0].content_sha256,
+            member_kind="ENDPOINT_OPERATION",
         )
-
-        # 6. Insert verification seal
-        await session.execute(
-            text(
-                "INSERT INTO rag_source_snapshot_verification ("
-                "id, snapshot_id, check_name, verification_result, details_summary, verified_at"
-                ") VALUES ("
-                ":id, :sid, 'synthetic-ret-h-smoke-verification', 'PASSED', 'synthetic_smoke', now()"
-                ") ON CONFLICT (id) DO NOTHING"
-            ),
-            {"id": str(verification_id), "sid": str(snapshot_id)},
-        )
-
-        # 7. Update snapshot to CURRENT and link seal
-        await session.execute(
-            text(
-                "UPDATE rag_source_snapshot "
-                "SET verification_status = 'CURRENT', verification_seal_id = :seal_id, verified_at = now(), effective_at = now() "
-                "WHERE id = :id"
-            ),
-            {"id": str(snapshot_id), "seal_id": str(verification_id)},
+        await eval_repo.seal_snapshot(
+            snapshot_id=snapshot_id,
+            verification_id=verification_id,
+            now=now,
+            check_name="synthetic-ret-h-smoke-verification",
+            verified_by="synthetic_smoke",
+            details_summary="synthetic_smoke",
         )
 
     return Stage1SourceReceipt(
-        source_id=SMOKE_SOURCE_ID,
-        endpoint_id=SMOKE_ENDPOINT_ID,
-        operation_id=SMOKE_OPERATION_ID,
+        source_id=source_id,
+        endpoint_id=endpoint_id,
+        operation_id=operation_id,
         snapshot_id=snapshot_id,
-        member_ids=(member_id,),
+        member_ids=(m_id,),
         canonical_checksum=fixture.file_sha256,
         verification_seal_id=verification_id,
         reused=False,

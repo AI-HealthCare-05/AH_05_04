@@ -10,7 +10,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 
@@ -18,7 +18,7 @@ from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationVal
 class SqlAlchemyEvaluationBootstrapRepository:
     """Explicit repository adapter for evaluation synthetic data bootstrap."""
 
-    def __init__(self, connection: AsyncConnection) -> None:
+    def __init__(self, connection: AsyncConnection | AsyncSession) -> None:
         self._connection = connection
 
     async def ensure_synthetic_source(
@@ -147,6 +147,13 @@ class SqlAlchemyEvaluationBootstrapRepository:
         canon_hash: str,
         receipt_hash: str,
         now: datetime,
+        record_count: int = 100,
+        source_version: str = "external:1.0.0",
+        external_version: str = "1.0.0",
+        schema_version: str = "schema-v1",
+        parser_version: str = "parser-v1",
+        normalization_version: str = "canonical-v1",
+        canonicalization_spec_version: str = "1.0.0",
     ) -> bool:
         snap_row = (
             (
@@ -168,21 +175,29 @@ class SqlAlchemyEvaluationBootstrapRepository:
                     "(id, operation_id, source_version, external_version, raw_manifest_checksum, canonical_checksum, "
                     "schema_version, parser_version, normalization_version, canonicalization_spec_version, "
                     "endpoint_receipt_hash, record_count, rejected_record_count, verification_status, collected_at) "
-                    "VALUES (:id, :op_id, 'external:1.0.0', '1.0.0', :raw_hash, :canon_hash, 'schema-v1', "
-                    "'parser-v1', 'canonical-v1', '1.0.0', :receipt_hash, 100, 0, 'PENDING', :now)"
+                    "VALUES (:id, :op_id, :source_version, :external_version, :raw_hash, :canon_hash, :schema_version, "
+                    ":parser_version, :normalization_version, :canonicalization_spec_version, :receipt_hash, :record_count, 0, 'PENDING', :now) "
+                    "ON CONFLICT (id) DO NOTHING"
                 ),
                 {
                     "id": str(snapshot_id),
                     "op_id": str(operation_id),
+                    "source_version": source_version,
+                    "external_version": external_version,
                     "raw_hash": raw_hash,
                     "canon_hash": canon_hash,
+                    "schema_version": schema_version,
+                    "parser_version": parser_version,
+                    "normalization_version": normalization_version,
+                    "canonicalization_spec_version": canonicalization_spec_version,
                     "receipt_hash": receipt_hash,
+                    "record_count": record_count,
                     "now": now,
                 },
             )
             return False
 
-        if snap_row["source_version"] != "external:1.0.0" or snap_row["canonical_checksum"] != canon_hash:
+        if snap_row["source_version"] != source_version or snap_row["canonical_checksum"] != canon_hash:
             raise EvaluationValidationError(
                 EvaluationErrorCode.REPOSITORY_STATE_INVALID,
                 f"Snapshot {snapshot_id} exists but metadata differs from synthetic dev contract",
@@ -203,21 +218,111 @@ class SqlAlchemyEvaluationBootstrapRepository:
                 f"Unsupported snapshot verification status: {snap_row['verification_status']}",
             )
 
+    async def ensure_snapshot_member(
+        self,
+        *,
+        member_id: UUID,
+        snapshot_id: UUID,
+        endpoint_id: UUID,
+        operation_id: UUID,
+        locator: str,
+        content_sha256: str,
+        member_kind: str = "ENDPOINT_OPERATION",
+    ) -> UUID:
+        await self._connection.execute(
+            text(
+                "INSERT INTO rag_source_snapshot_member "
+                "(id, source_snapshot_id, member_kind, endpoint_id, operation_id, locator, content_sha256) "
+                "VALUES (:id, :sid, :kind, :eid, :op_id, :locator, :c_hash) "
+                "ON CONFLICT (id) DO NOTHING"
+            ),
+            {
+                "id": str(member_id),
+                "sid": str(snapshot_id),
+                "kind": member_kind,
+                "eid": str(endpoint_id),
+                "op_id": str(operation_id),
+                "locator": locator,
+                "c_hash": content_sha256,
+            },
+        )
+        row = (
+            (
+                await self._connection.execute(
+                    text(
+                        "SELECT id, content_sha256 FROM rag_source_snapshot_member "
+                        "WHERE source_snapshot_id = :sid AND locator = :locator"
+                    ),
+                    {"sid": str(snapshot_id), "locator": locator},
+                )
+            )
+            .mappings()
+            .one()
+        )
+        if row["content_sha256"] != content_sha256:
+            raise EvaluationValidationError(
+                EvaluationErrorCode.REPOSITORY_STATE_INVALID,
+                f"Existing snapshot member for {locator} has hash mismatch",
+            )
+        return UUID(str(row["id"]))
+
+    async def get_snapshot_members(self, *, snapshot_id: UUID) -> list[UUID]:
+        rows = (
+            (
+                await self._connection.execute(
+                    text("SELECT id FROM rag_source_snapshot_member WHERE source_snapshot_id = :sid ORDER BY locator"),
+                    {"sid": str(snapshot_id)},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [UUID(str(r)) for r in rows]
+
+    async def get_snapshot_verification_seal_id(self, *, snapshot_id: UUID) -> UUID:
+        row = (
+            (
+                await self._connection.execute(
+                    text("SELECT verification_seal_id FROM rag_source_snapshot WHERE id = :id"),
+                    {"id": str(snapshot_id)},
+                )
+            )
+            .mappings()
+            .one()
+        )
+        seal_id = row["verification_seal_id"]
+        if seal_id is None:
+            raise EvaluationValidationError(
+                EvaluationErrorCode.REPOSITORY_STATE_INVALID,
+                f"Snapshot {snapshot_id} has no verification seal",
+            )
+        return UUID(str(seal_id))
+
     async def seal_snapshot(
         self,
         *,
         snapshot_id: UUID,
         verification_id: UUID,
         now: datetime,
+        check_name: str = "synthetic-dev-verification",
+        verified_by: str = "synthetic-reviewer",
+        details_summary: str | None = None,
     ) -> None:
         await self._connection.execute(
             text(
                 "INSERT INTO rag_source_snapshot_verification "
-                "(id, snapshot_id, check_name, verification_result, verified_by, verified_at) "
-                "VALUES (:id, :snapshot_id, 'synthetic-dev-verification', 'PASSED', 'synthetic-reviewer', :now) "
+                "(id, snapshot_id, check_name, verification_result, verified_by, details_summary, verified_at) "
+                "VALUES (:id, :snapshot_id, :check_name, 'PASSED', :verified_by, :details_summary, :now) "
                 "ON CONFLICT (id) DO NOTHING"
             ),
-            {"id": str(verification_id), "snapshot_id": str(snapshot_id), "now": now},
+            {
+                "id": str(verification_id),
+                "snapshot_id": str(snapshot_id),
+                "check_name": check_name,
+                "verified_by": verified_by,
+                "details_summary": details_summary,
+                "now": now,
+            },
         )
         update_res = await self._connection.execute(
             text(
