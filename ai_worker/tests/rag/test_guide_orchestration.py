@@ -15,6 +15,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -135,10 +136,12 @@ def test_foreign_request_member_stops_before_preflight(
 ) -> None:
     preflight_request, verifier = _approved_preflight()
     generator = make_generator()
-    request = replace(
-        GuideOrchestrationRequest(preflight_request=preflight_request, handoff_request=_valid_request()),
-        **{field: object()},
-    )
+    members: dict[str, Any] = {
+        "preflight_request": preflight_request,
+        "handoff_request": _valid_request(),
+    }
+    members[field] = object()
+    request = GuideOrchestrationRequest(**members)
 
     outcome = _run(request, generator=generator, decision_verifier=verifier)
 
