@@ -1,11 +1,12 @@
-# Product Decision Candidate: Evidence Assessment Validity Contract (#722)
+# Product Decision: Evidence Assessment Validity Contract (#722)
 
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-722-20260917` |
-| 상태 | Candidate / Review Pending · Issue #722 |
+| 상태 | **Approved** (단일 책임 리뷰어 승인 확정 · PR #725 repository integration pending merge) |
+| 승인 근거 | PR #725 단일 책임 리뷰어(`@phina-io`)의 Path B 공식 승인 의사결정 코멘트 (2026-09-17) |
 | 제안·구현 | 정현우 (`@ceohwj`) — AI/RAG |
-| 단일 책임 리뷰 | 송은영 (`@phina-io`) — Backend, DB·Security 기술 통제 및 Track F Chat 데이터 경계 |
+| 단일 책임 리뷰 | 송은영 (`@phina-io`) — Backend, DB·Security 기술 통제 및 Track F Chat 데이터 경계 (승인 완료) |
 | 필요 교차 리뷰 | 권가빈 (`@hazelnutflavoured`) — PM·Product Acceptance·Privacy Gate / 김지혜 (`@Jye-rookie`) — Worker & Source Provenance |
 | 추적 Issue | [#722](https://github.com/AI-HealthCare-05/AH_05_04/issues/722) |
 | 소비 Issue | [#712](https://github.com/AI-HealthCare-05/AH_05_04/issues/712) (Production Assessment·Eligibility Authority Persistence & Issuer), [#180](https://github.com/AI-HealthCare-05/AH_05_04/issues/180) |
@@ -25,9 +26,10 @@ assessment_valid_until
 ```
 
 Guide Evidence Handoff 계약([guide-evidence-handoff-v1.md](../../contracts/proposed/post-mvp-1/guide-evidence-handoff-v1.md) 및 `PD-180-20260915`)은 증거의 신선도 조건으로 `assessment_valid_from <= evaluated_at < assessment_valid_until`을 필수로 요구한다.
-그러나 상류 런타임 검색 계층에 `assessment_valid_until`을 산출할 승인된 권위(authoritative expiry/deadline)가 부재하였고, 근거 없는 임의 TTL(`valid_until = evaluated_at + timedelta(hours=24)`)의 코드 날조가 엄격히 금지됨에 따라 #712 작업은 `BLOCKED_BY_ASSESSMENT_VALIDITY_AUTHORITY`로 fail-closed 중단되었다.
+그러나 상류 런타임 검색 계층에 `assessment_valid_until`을 산출할 승인된 권위(authoritative expiry/deadline)가 부재하였고, 근거 없는 임의 TTL의 코드 날조가 엄격히 금지됨에 따라 #712 작업은 `BLOCKED_BY_ASSESSMENT_VALIDITY_AUTHORITY`로 fail-closed 중단되었다.
 
-본 결정은 #712의 유일한 차단 요인인 `assessment_valid_from`과 `assessment_valid_until`의 authoritative contract를 명시적으로 확정하기 위한 경량 거버넌스 계약이다.
+본 결정은 #712의 유일한 차단 요인인 `assessment_valid_from`과 `assessment_valid_until`의 authoritative contract를 확정하기 위한 거버넌스 계약이다.
+PR #725 리뷰 과정에서 단일 책임 리뷰어(`@phina-io`)가 Path B 정책 채택을 명시적으로 승인함에 따라, 본 문서는 승인된 운영 안전 상한(operational safety ceiling)의 정본 계약과 권위 경계를 normative하게 확정한다.
 본 결정은 새로운 Freshness 하위 시스템, DB 스키마, 마이그레이션, 런타임 구현으로 확장하지 않으며, 오직 #712 Issuer 및 후속 #180 Orchestrator가 소비할 유효 기간 권위의 의미와 산출 규칙을 봉인한다.
 
 ---
@@ -48,82 +50,123 @@ Guide Evidence Handoff 계약([guide-evidence-handoff-v1.md](../../contracts/pro
 4. **기존 versioned freshness/validity policy 부재**:
    - `VersionedEvidenceGatePolicy` 등 기존 provisional 정책에는 coverage item 개수만 정의되어 있으며 유효 기간 산출 로직이 없다.
 
-**결론**: 실제 Runtime Evidence에 직접 exact-bind할 수 있는 기존 authoritative expiry/deadline이 0건이므로, 아래 **Path B (versioned Assessment Validity Policy)** 를 공식 적용한다.
+**결론**: 실제 Runtime Evidence에 직접 exact-bind할 수 있는 기존 authoritative expiry/deadline이 0건이므로, 책임 리뷰어의 승인을 거친 **Path B (versioned Assessment Validity Policy)** 를 공식 적용한다.
 
 ---
 
-## 3. `assessment_valid_from` 정본 계약
+## 3. "Arbitrary TTL" 논리 정정과 권위의 근거 (Grounding of Policy Authority)
 
-`assessment_valid_from`은 다음과 같이 고정한다:
+본 결정에 도입된 `24h` 정책값의 권위적 성격에 대해 다음 사항을 명확히 기록한다:
 
-> **해당 selected evidence의 Production Evidence Gate 및 Eligibility evaluation이 성공하여 assessment artifact가 성립한 authoritative evaluation timestamp.**
+1. **기존 데이터/시스템 사실로부터의 유도 부인**:
+   - `24h`는 기존 Source/Runtime 원장, 의약품 허가사항 갱신 주기, 또는 데이터 자체의 유효기간에서 유도(derive)된 값이 아니다.
+2. **형식에 의한 비임의성 주장 배제**:
+   - 단순히 versioned policy 형식을 갖추었거나 `ImmutableArtifactRef`로 감쌌다는 절차적 포장만으로 임의값이 비임의적 값으로 전환되는 것은 아니다.
+3. **책임 거버넌스 결정에 의한 권위 부여 (Approved Policy Authority)**:
+   - `24h`는 본 결정(`PD-722`)에서 단일 책임 리뷰어(`@phina-io`)의 명시적인 검토와 승인을 통해 새로 확정된 **versioned operational safety policy value**이다.
+   - 따라서 승인 이벤트 전에는 제안안(proposal)이었으며, 책임 리뷰어의 승인 이벤트(PR #725 decision comment) 이후 본 결정(`PD-722`) 자체가 해당 정책값의 authority가 된다.
 
-* **산출식**:
-  ```text
-  assessment_valid_from = authoritative evaluated_at
-  ```
+---
+
+## 4. 승인된 정본 계약 (Approved Normative Contract)
+
+### 4.1 `assessment_valid_from` 정본
+
+```text
+assessment_valid_from = authoritative evaluated_at
+```
+
+* **정의**: Production Evidence Gate 및 Eligibility evaluation이 성공하여 해당 assessment artifact가 성립한 최초 authoritative evaluation timestamp.
 * **시간대 규칙**: 반드시 **timezone-aware UTC** (`datetime.timezone.utc`)여야 하며, naive datetime 또는 비-UTC 값은 fail-closed 거부된다.
-* **불변성**: 평가 완료 시점의 evaluation context timestamp를 그대로 고정하며, 과거 CURRENT 상태를 보고 사후에 재계산하지 않는다.
+* **불변성**: 최초 평가 시점의 evaluation context timestamp를 그대로 동결하며, retry 시 `now()`로 재계산하거나 CURRENT Source/Snapshot 상태에서 사후 재구성하지 않는다.
 
----
+### 4.2 `assessment_valid_until` 정본 및 우선순위 규칙
 
-## 4. `assessment_valid_until` 정본 및 우선순위 규칙
-
-`assessment_valid_until` 산출 우선순위는 다음과 같이 엄격히 계층화한다.
-
-```text
-[평가 시점 (evaluated_at)]
-       │
-       ▼
-Path A: 실제 Runtime authority 존재 여부 확인
-       ├── [YES] ──► min(applicable runtime approval expiry, applicable source freshness deadline)
-       │
-       └── [NO]  ──► Path B: EvidenceAssessmentValidityPolicy v1 (ceiling: 24h)
-                           │
-                           ▼
-              effective_valid_until = min(valid_from + policy.max_validity_duration, applicable authoritative upper bounds)
-```
-
-### Path A — 기존 Runtime authority가 존재하는 경우
-실제 Runtime Evidence에 적용 가능하고 해당 selection에 exact-bind할 수 있는 authoritative expiry/freshness boundary가 존재하는 경우:
 ```text
 assessment_valid_until = min(
-    applicable runtime approval expiry,
-    applicable source/snapshot freshness deadline,
-    other explicitly applicable authoritative expiry
-)
-```
-단, 실제로 존재하고 해당 selection에 exact-bind할 수 있는 upper bound만 포함하며, Catalog 전용 승인, Job lease 등 무관한 만료 시점은 결합 대상에서 제외한다.
-
-### Path B — 기존 Runtime upper bound가 없는 경우 (현 Post-MVP-1 기준)
-기존 Runtime Evidence upper bound가 부재하므로, 명시적인 Product/Runtime 거버넌스 계약인 **`EvidenceAssessmentValidityPolicy v1`** 을 도입한다.
-본 정책에 따른 산출 규칙:
-```text
-assessment_valid_until = min(
-    assessment_valid_from + policy.max_validity_duration,
+    assessment_valid_from + 24h,
     applicable authoritative upper bounds
 )
 ```
-* `policy.max_validity_duration`은 **maximum operational ceiling**으로 기능한다.
-* 평가 시점에 유효한 더 이른 authoritative boundary가 존재할 경우 그것이 ceiling보다 우선한다.
+
+* **산출 규칙**:
+  - `24h`는 승인된 `EvidenceAssessmentValidityPolicy` (`policy_code = "evidence-assessment-validity"`, `version = "v1"`)의 **operational maximum ceiling**이다.
+  - 실제 Runtime Evidence에 exact-bind 가능한 더 이른 authoritative upper bound(예: 실제 적용 가능한 승인 만료 시점 등)가 존재하는 경우 그것이 우선한다 (`min(...)`).
+  - 존재하지 않는 상한을 허구로 만들어내지 않으며, Catalog 전용 승인 만료일(`catalog_source_approval.expires_at`)이나 Job lease 등 무관한 만료 시점은 결합 대상에 포함하지 않는다.
 
 ---
 
-## 5. `EvidenceAssessmentValidityPolicy v1` 규격
+## 5. 반드시 명시할 비의미 (Explicit Non-Claims)
 
-본 값은 애플리케이션 코드에 은닉된 임의 TTL이 아니며, 공식 승인 대상 거버넌스 계약이다.
+본 정책 승인(`PD-722`)으로 다음 사항을 결코 주장하거나 보증하지 않는다:
 
-### 5.1 정책 정의
-* **`policy_code`**: `evidence-assessment-validity`
-* **`version`**: `v1`
-* **`max_validity_duration`**: `24 hours` (`timedelta(hours=24)` / `86,400 seconds`)
-* **`semantics`**:
-  > **하나의 Production Evidence assessment 결과를 재검증 없이 Runtime Handoff에서 재사용할 수 있는 최대 operational lifetime.**
-  * 본 24시간은 의약품 소스 데이터가 24시간마다 변경된다는 의학적·데이터적 주장이 아니며, 시스템의 fail-closed 운영 안전 상한(operational safety ceiling)이다.
+```text
+[X] Source가 24시간 동안 의학적으로 최신이라는 주장
+[X] Source가 24시간 동안 데이터적으로 최신이라는 주장
+[X] 의약품 허가사항이 24시간 동안 변하지 않는다는 주장
+[X] Source publication freshness가 24시간이라는 주장
+[X] Runtime Evidence 자체를 사용자 공개 근거로 승인한다는 의미
+[X] 실제 사용자 대상의 의료 안전성을 승인한다는 의미
+[X] PUBLIC_TRACK_F 게이트를 해제한다는 의미
+[X] Guide/Chat Runtime 공개를 승인한다는 의미
+[X] #709 완료, content hydration 완료, #180 orchestration 완료 선언
+```
 
-### 5.2 Canonical Projection 및 식별자 (`ImmutableArtifactRef`)
-Issuer는 본 정책 identity를 assessment artifact 및 authority provenance에 결속해야 한다.
+**`24h`의 유일한 정규 의미**:
+> **Production Evidence assessment 결과를 재검증 없이 Handoff에서 재사용할 수 있는 최대 operational lifetime (fail-closed operational safety ceiling).**
 
+---
+
+## 6. 구간, 결정론 및 불변성 규칙 (Interval, Determinism & Immutability)
+
+### 6.1 Half-Open Interval 규칙
+기존 Handoff 계약([guide-evidence-handoff-v1.md](../../contracts/proposed/post-mvp-1/guide-evidence-handoff-v1.md))과 100% 일치한다:
+```text
+assessment_valid_from <= evaluated_at < assessment_valid_until
+```
+* 시작 시점(`assessment_valid_from`)은 **inclusive** (`<=`).
+* 종료 시점(`assessment_valid_until`)은 **strictly exclusive** (`<`).
+* 모든 비교는 timezone-aware UTC 기준이다.
+
+### 6.2 Retry 결정론 (Retry Determinism)
+* 동일한 production assessment를 재시도(retry)할 때 wall-clock `now()`를 재조회하여 validity window를 연장하는 행위는 엄격히 금지된다.
+* 최초 authoritative evaluation timestamp를 동결(`T0`)한다:
+  - 최초 assessment evaluation = `T0`
+  - retry execution = `T0 + 10분`
+  - 결과:
+    ```text
+    assessment_valid_from = T0
+    assessment_valid_until = T0 + 24h
+    ```
+    (결코 `(T0 + 10분) + 24h`로 밀어내지 않는다).
+* 재시도가 validity window를 연장하는 것은 fail-closed 계약 위반이다.
+
+### 6.3 과거 이력 불변성 (Historical Immutability)
+* Assessment authority가 발급되어 영속화된 이후, 외부 환경에서 다음과 같은 변화가 발생하더라도 과거 persisted assessment validity window 자체를 사후 수정하거나 CURRENT state로 재계산하지 않는다:
+  - Source snapshot 상태가 `STALE`로 변경됨
+  - 특정 operator approval이 revoke됨
+  - 새로운 Snapshot이 인입되어 `CURRENT`가 교체됨
+  - Source 메타데이터 상태 변경
+* 과거 영속화된 authority는 불변 사실(`historical artifact = immutable`)이다.
+* 현재 시점의 적격성/유효성(viability/currentness/revocation) 판정은 런타임 소비 계층의 별도 검사 책임이다.
+
+---
+
+## 7. `validity_policy_ref` 및 #712 소비 인터페이스 계약
+
+후속 Issue #712 authority issuer는 authority 레코드를 발급할 때 다음 불변 provenance를 결속해야 한다:
+
+```text
+Bound Provenance:
+  - validity_policy_ref: ImmutableArtifactRef
+  - assessment_valid_from: datetime (UTC tz-aware)
+  - assessment_valid_until: datetime (UTC tz-aware)
+```
+
+### 7.1 `EvidenceAssessmentValidityPolicy v1` 아티팩트 규격
+* **`policy_code`**: `"evidence-assessment-validity"`
+* **`version`**: `"v1"`
+* **`max_validity_duration`**: `24 hours` (`86,400 seconds`)
 * **Canonical Projection Payload (RFC 8785 JCS)**:
   ```json
   {
@@ -134,51 +177,11 @@ Issuer는 본 정책 identity를 assessment artifact 및 authority provenance에
   }
   ```
 * **식별자**:
-  * `artifact_code = "evidence-assessment-validity"`
-  * `version = "v1"`
-  * `content_sha256 = SHA256(canonical_json_bytes(payload))` (lowercase 64-hex)
-  * `ref = ImmutableArtifactRef("evidence-assessment-validity", "v1", content_sha256)`
+  - 기존 저장소 공용 직렬화 모듈(`canonical_json_bytes`)을 재사용한다 (신규 serializer 작성 금지).
+  - `content_sha256 = SHA256(canonical_json_bytes(payload))` (lowercase 64-hex).
+  - `validity_policy_ref = ImmutableArtifactRef("evidence-assessment-validity", "v1", content_sha256)`.
 
----
-
-## 6. 구간 및 결정론 불변식 (Interval & Determinism Rules)
-
-### 6.1 Half-Open Interval 규칙
-기존 Handoff 계약과 100% 일관성을 유지한다:
-```text
-assessment_valid_from <= evaluated_at < assessment_valid_until
-```
-* 시작 시점(`assessment_valid_from`)은 **inclusive** (`<=`).
-* 종료 시점(`assessment_valid_until`)은 **strictly exclusive** (`<`).
-* 모든 datetime 비교는 UTC tz-aware 기준이어야 한다.
-
-### 6.2 Retry 결정론 (Retry Determinism)
-* 동일한 production assessment를 재시도(retry)할 때 wall-clock `now()`를 재조회하여 validity window를 연장하는 행위는 엄격히 금지된다.
-* 최초 authoritative evaluation timestamp를 고정한다:
-  ```text
-  assessment_valid_from = frozen evaluated_at (T0)
-  ```
-* 동일한 policy 및 applicable upper bounds 하에서:
-  ```text
-  same assessment_valid_from
-  same assessment_valid_until
-  ```
-  이 보장되어야 한다 (예: T0 시점 평가 후 T0 + 10분에 재시도하더라도 `valid_from = T0`, `valid_until = T0 + 24h`로 고정되며, `(T0 + 10m) + 24h`로 밀어내지 않는다).
-
-### 6.3 과거 이력 불변성 (Historical Immutability)
-* Assessment authority가 발급·영속화된 후, 외부 환경에서 다음과 같은 변화가 발생하더라도 과거 persisted assessment validity window 자체를 사후 수정(mutate)하거나 다시 쓰지 않는다:
-  - Source snapshot 상태가 `STALE`로 변경됨
-  - 특정 operator approval이 revoke됨
-  - 새로운 Snapshot이 인입되어 `CURRENT`가 교체됨
-* 과거 아티팩트는 불변(`historical artifact = immutable`)이다.
-* 현재 시점의 적격성 확인이 필요한 경우, 다운스트림 런타임에서 별도의 currentness / revocation 검사를 수행하며, 과거 authority 레코드를 CURRENT DB state로 재구성하지 않는다.
-
----
-
-## 7. Issue #712 소비 인터페이스 계약 (Input Contract for #712)
-
-본 결정을 통해 Issue #712 구현 담당자는 다음 입력 계약을 기반으로 Authority Issuer 및 Persistence를 구현한다:
-
+### 7.2 #712 Issuer 입력 및 영속화 스키마 계약
 ```text
 Inputs:
   - evaluated_at: datetime (UTC tz-aware)
@@ -189,21 +192,17 @@ Derivations:
   - assessment_valid_from = evaluated_at
   - assessment_valid_until = min(evaluated_at + policy.max_validity_duration, *applicable_upper_bounds)
 
-Bound Provenance:
-  - validity_policy_ref: ImmutableArtifactRef
-  - assessment_valid_from: datetime
-  - assessment_valid_until: datetime
-
 Persistence Constraints:
   - UNIQUE (retrieval_run_id, knowledge_chunk_id)
   - CHECK (assessment_valid_from < assessment_valid_until)
 ```
+*주의: 이번 PR #725에서는 실제 DB persistence, 모델, 마이그레이션, Issuer 코드를 구현하지 않는다.*
 
 ---
 
 ## 8. 범위 한계 및 절대 금지 사항 (Scope & Strict Prohibitions)
 
-본 결정 문서의 범위는 거버넌스 계약 확정에 한정되며 다음 사항은 배제 및 금지된다:
+본 결정의 범위는 거버넌스 권위 계약 확정에 엄격히 한정되며 다음 사항은 배제 및 금지된다:
 1. `rag_evidence_authority` DB 모델 추가 및 Alembic 마이그레이션 작성 금지 (#712 소관).
 2. Assessment/Eligibility Issuer 및 Reader 구현 금지 (#712 소관).
 3. #709 REQUEST Guard/Source/Member persistence 구현 금지.
@@ -215,19 +214,17 @@ Persistence Constraints:
 
 ---
 
-## 9. 차단 해소 및 승인 절차 (Resolution & Blocker Transition)
+## 9. 차단 해소 및 승인·통합 상태 (Resolution & Integration Status)
 
-* **기술적 설계 종결**: 본 결정으로 `assessment_valid_from`과 `assessment_valid_until`의 산출 규칙, 우선순위, 불변식, projection 사양이 완전히 확정되었다. 더 이상의 열린 기술 설계나 브레인스토밍은 불필요하다.
-* **단일 책임 리뷰어 승인 대기**:
-  - [AGENTS.md](../../../AGENTS.md) 규칙에 따라 구현자(`@ceohwj`)의 자가 승인은 불허되며, 단일 책임 리뷰어 송은영(`@phina-io`)의 검토 및 승인이 필요하다.
-  - 따라서 Issue #712의 구현 차단 코드는 원인 불명 정책 부재였던:
-    ```text
-    BLOCKED_BY_ASSESSMENT_VALIDITY_AUTHORITY
-    ```
-    에서, 공식 거버넌스 정책 승인 이벤트 대기 상태인:
-    ```text
-    BLOCKED_BY_VALIDITY_POLICY_APPROVAL
-    ```
-    단 하나로 좁혀진다.
-* **#712 재개 조건**:
-  - 책임 리뷰어의 승인(`APPROVED`) 이벤트 확인 즉시 상태는 `ASSESSMENT_VALIDITY_CONTRACT_RESOLVED`로 전환되며, Issue #712의 persistence 및 issuer 구현이 즉시 재개된다.
+* **정책 의사결정 상태**:
+  - 단일 책임 리뷰어(`@phina-io`)의 명시적 Path B 승인(PR #725 코멘트)에 따라, 기존의 기술 블로커였던 `BLOCKED_BY_VALIDITY_POLICY_APPROVAL`은 완전히 해소되었다.
+  - Issue #712에서 발견된 `BLOCKED_BY_ASSESSMENT_VALIDITY_AUTHORITY`를 해결하는 권위 계약이 본 결정(`PD-722`)으로 확정되었다.
+* **명확한 상태 구분**:
+  ```text
+  Policy authority contract:       RESOLVED (Approved by responsible reviewer @phina-io)
+  PR #725 repository integration:  PENDING MERGE (문서 개정 검토 및 머지 대기)
+  #712 implementation:             NOT STARTED / RESUME AFTER MERGE
+  ```
+* **후속 작업 연결**:
+  - PR #725가 `develop` 브랜치에 머지되기 전에는 `#712 구현 완료`나 `ASSESSMENT_ELIGIBILITY_AUTHORITY_PERSISTED`를 선언하지 않는다.
+  - PR #725 머지 완료 확인 후 Issue #712의 authority persistence 및 issuer 구현을 공식 재개한다.
