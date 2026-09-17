@@ -5,9 +5,11 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account_deletion_request import AccountDeletionRequest, AccountDeletionRequestStatus
+from app.repositories.medication_candidate_repository import MedicationCandidateRepository
 
 FAILED_DEMO_DELETION_CODE = "DEMO_DELETION_FAILED"
 WITHDRAWN_PROFILE_NAME = "withdrawn"
+CANDIDATE_CLEANUP_MARKER = "__candidate_cleanup__"
 
 
 class AccountDeletionRequestRepository:
@@ -82,6 +84,9 @@ class AccountDeletionRequestRepository:
     async def _delete_user_owned_runtime_data(self, user_id: UUID) -> None:
         params = {"user_id": str(user_id)}
         for statement in USER_DATA_DELETE_STATEMENTS:
+            if statement == CANDIDATE_CLEANUP_MARKER:
+                await MedicationCandidateRepository(self.session).delete_for_account_withdrawal(user_id=user_id)
+                continue
             await self._execute(statement, **params)
 
     async def _anonymize_withdrawn_user(
@@ -131,17 +136,7 @@ USER_DATA_DELETE_STATEMENTS = (
     "DELETE FROM refresh_session WHERE user_id = :user_id",
     "DELETE FROM password_reset_token WHERE user_id = :user_id",
     "DELETE FROM user_consent WHERE user_id = :user_id",
-    "DELETE FROM source_management_audit WHERE actor_id = :user_id",
-    "DELETE FROM source_management_permission WHERE user_id = :user_id",
     "DELETE FROM retrieval_run WHERE job_id IN (SELECT id FROM ai_job WHERE user_id = :user_id)",
-    """
-    DELETE FROM ai_job_execution_identification
-     WHERE execution_context_id IN (
-        SELECT id FROM ai_job_execution_context WHERE ai_job_id IN (SELECT id FROM ai_job WHERE user_id = :user_id)
-     )
-    """,
-    "DELETE FROM ai_job_execution_context WHERE ai_job_id IN (SELECT id FROM ai_job WHERE user_id = :user_id)",
-    "DELETE FROM ai_job_intake_context WHERE ai_job_id IN (SELECT id FROM ai_job WHERE user_id = :user_id)",
     """
     DELETE FROM guide_feedback
      WHERE guide_id IN (SELECT id FROM guide WHERE profile_id IN (SELECT id FROM profile WHERE user_id = :user_id))
@@ -179,25 +174,7 @@ USER_DATA_DELETE_STATEMENTS = (
         WHERE p.profile_id IN (SELECT id FROM profile WHERE user_id = :user_id)
      )
     """,
-    """
-    DELETE FROM medication_candidate_search_result
-     WHERE search_id IN (
-        SELECT mcs.id FROM medication_candidate_search mcs
-        JOIN prescription_version_medication pvm ON pvm.id = mcs.prescription_version_medication_id
-        JOIN prescription_version pv ON pv.id = pvm.prescription_version_id
-        JOIN prescription p ON p.id = pv.prescription_id
-        WHERE p.profile_id IN (SELECT id FROM profile WHERE user_id = :user_id)
-     )
-    """,
-    """
-    DELETE FROM medication_candidate_search
-     WHERE prescription_version_medication_id IN (
-        SELECT pvm.id FROM prescription_version_medication pvm
-        JOIN prescription_version pv ON pv.id = pvm.prescription_version_id
-        JOIN prescription p ON p.id = pv.prescription_id
-        WHERE p.profile_id IN (SELECT id FROM profile WHERE user_id = :user_id)
-     )
-    """,
+    CANDIDATE_CLEANUP_MARKER,
     """
     DELETE FROM push_delivery
      WHERE subscription_id IN (SELECT id FROM push_subscription WHERE profile_id IN (SELECT id FROM profile WHERE user_id = :user_id))
@@ -291,19 +268,6 @@ USER_DATA_DELETE_STATEMENTS = (
      )
     """,
     """
-    DELETE FROM checkin_audit
-     WHERE changed_by = :user_id
-        OR checkin_id IN (
-            SELECT mc.id FROM medication_checkin mc
-            JOIN medication_occurrence mo ON mo.id = mc.occurrence_id
-            JOIN medication_schedule ms ON ms.id = mo.medication_schedule_id
-            JOIN prescription_version_medication pvm ON pvm.id = ms.prescription_version_medication_id
-            JOIN prescription_version pv ON pv.id = pvm.prescription_version_id
-            JOIN prescription p ON p.id = pv.prescription_id
-            WHERE p.profile_id IN (SELECT id FROM profile WHERE user_id = :user_id)
-        )
-    """,
-    """
     DELETE FROM medication_checkin
      WHERE occurrence_id IN (
         SELECT mo.id FROM medication_occurrence mo
@@ -313,17 +277,6 @@ USER_DATA_DELETE_STATEMENTS = (
         JOIN prescription p ON p.id = pv.prescription_id
         WHERE p.profile_id IN (SELECT id FROM profile WHERE user_id = :user_id)
      )
-    """,
-    """
-    DELETE FROM medication_schedule_audit
-     WHERE changed_by = :user_id
-        OR medication_schedule_id IN (
-            SELECT ms.id FROM medication_schedule ms
-            JOIN prescription_version_medication pvm ON pvm.id = ms.prescription_version_medication_id
-            JOIN prescription_version pv ON pv.id = pvm.prescription_version_id
-            JOIN prescription p ON p.id = pv.prescription_id
-            WHERE p.profile_id IN (SELECT id FROM profile WHERE user_id = :user_id)
-        )
     """,
     """
     DELETE FROM medication_occurrence

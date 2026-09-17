@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
@@ -45,6 +45,37 @@ class MedicationCandidateSelection:
 class MedicationCandidateRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    async def delete_for_account_withdrawal(self, *, user_id: UUID) -> None:
+        await self.session.execute(
+            text(
+                """
+                DELETE FROM medication_candidate_search_result
+                 WHERE search_id IN (
+                    SELECT mcs.id FROM medication_candidate_search mcs
+                    JOIN prescription_version_medication pvm ON pvm.id = mcs.prescription_version_medication_id
+                    JOIN prescription_version pv ON pv.id = pvm.prescription_version_id
+                    JOIN prescription p ON p.id = pv.prescription_id
+                    WHERE p.profile_id IN (SELECT id FROM profile WHERE user_id = :user_id)
+                 )
+                """
+            ),
+            {"user_id": str(user_id)},
+        )
+        await self.session.execute(
+            text(
+                """
+                DELETE FROM medication_candidate_search
+                 WHERE prescription_version_medication_id IN (
+                    SELECT pvm.id FROM prescription_version_medication pvm
+                    JOIN prescription_version pv ON pv.id = pvm.prescription_version_id
+                    JOIN prescription p ON p.id = pv.prescription_id
+                    WHERE p.profile_id IN (SELECT id FROM profile WHERE user_id = :user_id)
+                 )
+                """
+            ),
+            {"user_id": str(user_id)},
+        )
 
     async def _lock_active_prescription_for_medication_owned(
         self,
