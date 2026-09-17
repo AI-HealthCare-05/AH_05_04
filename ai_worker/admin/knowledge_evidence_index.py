@@ -19,21 +19,13 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, text
+from pgvector.sqlalchemy import VECTOR
+from sqlalchemy import Integer, String, column, select, table, text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ai_worker.adapters.openai_text_embedding import OpenAITextEmbeddingAdapter
 from ai_worker.adapters.sqlalchemy_knowledge_evidence_index import (
-    _CHUNK,
-    _DOCUMENT,
-    _ENDPOINT,
-    _INDEX,
-    _INDEX_MEMBER,
-    _OPERATION,
-    _SNAPSHOT,
-    _SNAPSHOT_MEMBER,
-    _SOURCE,
     SqlAlchemyKnowledgeEvidenceIndexRepository,
 )
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, SensitiveText
@@ -53,6 +45,97 @@ from ai_worker.tasks.rag.knowledge_evidence_index import (
 from ai_worker.tasks.rag.text_embedding import (
     TextEmbeddingPort,
     TextEmbeddingSuccess,
+)
+
+# --------------------------------------------------------------------------------------
+# Internal Read-Only Table Definitions (Runner Queries)
+# --------------------------------------------------------------------------------------
+
+_SOURCE = table(
+    "rag_source",
+    column("id", String(36)),
+    column("source_code", String(100)),
+    column("lifecycle_status", String(20)),
+)
+_ENDPOINT = table(
+    "rag_source_endpoint",
+    column("id", String(36)),
+    column("source_id", String(36)),
+    column("lifecycle_status", String(20)),
+    column("runtime_status", String(20)),
+    column("acquisition_status", String(20)),
+)
+_OPERATION = table(
+    "rag_source_operation",
+    column("id", String(36)),
+    column("endpoint_id", String(36)),
+    column("runtime_status", String(20)),
+    column("acquisition_status", String(20)),
+)
+_SNAPSHOT = table(
+    "rag_source_snapshot",
+    column("id", String(36)),
+    column("operation_id", String(36)),
+    column("source_version", String(200)),
+    column("canonical_checksum", String(64)),
+    column("verification_status", String(20)),
+)
+_SNAPSHOT_MEMBER = table(
+    "rag_source_snapshot_member",
+    column("id", String(36)),
+    column("source_snapshot_id", String(36)),
+    column("member_kind", String(30)),
+    column("locator", String(500)),
+    column("content_sha256", String(64)),
+)
+_DOCUMENT = table(
+    "knowledge_document",
+    column("id", String(36)),
+    column("source_snapshot_member_id", String(36)),
+    column("record_contract_version", String(40)),
+    column("document_status", String(20)),
+    column("external_document_id", String(300)),
+    column("document_content_hash", String(64)),
+)
+_CHUNK = table(
+    "knowledge_chunk",
+    column("id", String(36)),
+    column("knowledge_document_id", String(36)),
+    column("chunk_index", Integer),
+    column("chunk_text", String),
+    column("content_hash", String(64)),
+    column("normalization_version", String(100)),
+)
+_INDEX = table(
+    "rag_knowledge_index",
+    column("id", String(36)),
+    column("index_code", String(120)),
+    column("index_version", String(80)),
+    column("corpus_manifest_hash", String(64)),
+    column("embedding_manifest_hash", String(64)),
+    column("index_configuration_hash", String(64)),
+    column("embedding_model_ref", String(255)),
+    column("embedding_model_version", String(80)),
+    column("embedding_dimension", Integer),
+    column("distance_metric", String(20)),
+    column("member_count", Integer),
+)
+_INDEX_MEMBER = table(
+    "rag_knowledge_index_member",
+    column("id", String(36)),
+    column("knowledge_index_id", String(36)),
+    column("knowledge_chunk_id", String(36)),
+    column("source_snapshot_id", String(36)),
+    column("source_snapshot_member_id", String(36)),
+    column("source_code", String(100)),
+    column("source_version", String(200)),
+    column("canonical_checksum", String(64)),
+    column("external_document_id", String(300)),
+    column("chunk_index", Integer),
+    column("content_hash", String(64)),
+    column("embedding", VECTOR()),
+    column("embedding_sha256", String(64)),
+    column("member_order", Integer),
 )
 
 # --------------------------------------------------------------------------------------
