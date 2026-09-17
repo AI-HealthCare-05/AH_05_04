@@ -51,6 +51,7 @@ from ai_worker.tasks.rag.guideline_generator_prompt import (
     GuidelineStructuredSelection,
     build_candidate_provenance,
 )
+from ai_worker.tests.rag.test_rag15_production_evidence_input import make_production_handoff
 from provider_contracts.observability import (
     DeploymentEnvironment,
     ProviderCallContext,
@@ -502,6 +503,40 @@ async def test_gate_precondition_empty_selections_or_medications_fail_closed() -
         policy=base_req.policy,
     )
     assert await adapter.generate(req_empty_meds) is GuidelineGenerationFailure.VALIDATION_FAILED
+    assert client.responses.parse.call_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["both", "neither"])
+async def test_gate_and_handoff_xor_fail_closed(case: str) -> None:
+    client = build_mock_client()
+    adapter = OpenAIGuidelineGeneratorAdapter(
+        client=client,
+        model="gpt-4o-synthetic",
+        timeout_seconds=5.0,
+        context=make_context(),
+    )
+    base_req = make_valid_request()
+    assert base_req.evidence_gate_outcome is not None
+    handoff = make_production_handoff()
+
+    if case == "both":
+        req = GuidelineGenerationRequest(
+            medication_identities=base_req.medication_identities,
+            evidence_gate_outcome=base_req.evidence_gate_outcome,
+            evidence_handoff=handoff,
+            policy=base_req.policy,
+        )
+    else:  # neither
+        req = GuidelineGenerationRequest(
+            medication_identities=base_req.medication_identities,
+            evidence_gate_outcome=None,
+            evidence_handoff=None,
+            policy=base_req.policy,
+        )
+
+    res = await adapter.generate(req)
+    assert res is GuidelineGenerationFailure.VALIDATION_FAILED
     assert client.responses.parse.call_count == 0
 
 

@@ -4,6 +4,8 @@ import hashlib
 from dataclasses import replace
 from datetime import UTC, datetime
 
+import pytest
+
 from ai_worker.tasks.rag.evidence_gate import (
     EvidenceGateExecutionStatus,
     EvidenceGateOutcome,
@@ -46,6 +48,7 @@ from ai_worker.tasks.rag.guideline_card import (
     finalize_guideline_card as _finalize_guideline_card,
 )
 from ai_worker.tests.rag import test_evidence_gate as rag14_fixture
+from ai_worker.tests.rag.test_rag15_production_evidence_input import make_production_handoff
 
 EVALUATED_AT = datetime(2026, 9, 10, 3, 0, tzinfo=UTC)
 FOOD_AVOIDANCE_TEXT = (
@@ -772,6 +775,25 @@ def test_inconsistent_evidence_gate_outcome_is_rejected() -> None:
     assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
     assert outcome.reason is GuidelineCardReason.VALIDATION_FAILED
     assert outcome.fallback_code is GuidelineFallbackCode.VALIDATION_FAILED
+
+
+@pytest.mark.parametrize("case", ["both", "neither"])
+def test_evidence_gate_and_handoff_xor_fail_closed(case: str) -> None:
+    request = valid_request()
+    assert request.evidence_gate_outcome is not None
+    handoff = make_production_handoff()
+
+    if case == "both":
+        test_request = replace(request, evidence_handoff=handoff)
+    else:  # neither
+        test_request = replace(request, evidence_gate_outcome=None, evidence_handoff=None)
+
+    outcome = finalize_guideline_card(test_request)
+    assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
+    assert outcome.reason is GuidelineCardReason.VALIDATION_FAILED
+    assert outcome.fallback_code is GuidelineFallbackCode.VALIDATION_FAILED
+    assert outcome.card is None
+    assert outcome.fallback is not None
 
 
 def test_mutated_gate_passed_content_is_rejected() -> None:

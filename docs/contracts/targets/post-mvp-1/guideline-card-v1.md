@@ -27,14 +27,24 @@ Authorization·Release Gate 연결은 이 구현에 포함되지 않는다. 따�
 | 필드 | 필수성 | 계약 |
 | --- | --- | --- |
 | `medication_identities` | 필수, 1개 이상 | 확정 처방 Version의 약품 식별자만 허용하고 중복을 거부한다. |
-| `evidence_gate_outcome` | 필수 | RAG-14 `EvidenceGateOutcome`. 성공 경로는 같은 요청에서 평가된 `SUCCEEDED/SUFFICIENT` 결과만 허용한다. |
+| `evidence_gate_outcome` | 조건부 (XOR) | synthetic/legacy RAG-14 경로의 `EvidenceGateOutcome`. 성공 경로는 같은 요청에서 평가된 `SUCCEEDED/SUFFICIENT` 결과만 허용한다. `evidence_handoff`와 상호 배타적이다. |
+| `evidence_handoff` | 조건부 (XOR) | production #760 authority 경로의 `VerifiedGuideEvidenceHandoff`. `evidence_gate_outcome`과 상호 배타적이다. |
 | `draft` | 조건부 | 생성 성공 경로에서 필수다. `generation_failure`가 있으면 partial draft는 검증·공개하지 않고 버린다. |
 | `generation_failure` | 조건부 | 생성 실패 경로에서 필수다. partial `draft`와 함께 전달돼도 이 실패가 우선한다. |
 | `policy` | 필수 | action template, 최대 Claim 수, 불확실성·상담 문구 hash를 결속한 `VersionedGuidelinePolicy`. |
 | `provenance` | 필수 | prompt·model·parser·validator의 불변 Artifact 참조다. |
 | `approved_fallbacks` | 필수 | `GuidelineFallbackCode` 전체에 대해 코드별 정확히 하나의 승인 Artifact가 있어야 한다. |
-| `evaluated_at` | 필수 | timezone-aware UTC이며 RAG-14 `trace.evaluated_at`과 정확히 같아야 한다. |
-| `approved_evidence_bindings` | 성공 시 필수, 1개 이상 | Gate가 선택한 Evidence와 medication·scope·action·assessment를 결속한다. 실패 fallback 경로에서는 비어 있을 수 있다. |
+| `evaluated_at` | 필수 | timezone-aware UTC이며 RAG-14 `trace.evaluated_at` 또는 #760 handoff `evaluated_at`과 정확히 같아야 한다. |
+| `approved_evidence_bindings` | 성공 시 필수, 1개 이상 | Gate 또는 Handoff가 선택한 Evidence와 medication·scope·action·assessment를 결속한다. 실패 fallback 경로에서는 비어 있을 수 있다. |
+
+`evidence_gate_outcome`과 `evidence_handoff`는 둘 중 정확히 하나만 제공해야 한다(XOR).
+
+- synthetic/legacy RAG-14 경로: `evidence_gate_outcome` 사용
+- production #760 authority 경로: `evidence_handoff` 사용
+- 둘 다 없음: invalid (`VALIDATION_REJECTED / VALIDATION_FAILED`)
+- 둘 다 있음: invalid (`VALIDATION_REJECTED / VALIDATION_FAILED`)
+
+이는 `_is_valid_request_shell()`의 실제 fail-closed 검증과 정확히 일치한다.
 
 입력 객체는 호출자가 소유한 mutable graph로 간주한다. Finalizer는 어떤 외부 verifier도
 호출하기 전에 전체 request graph와 verifier 입력을 분리 snapshot하고, 이후 구조 검증·승인·
@@ -133,7 +143,15 @@ Receipt에서 구분한다.
 RAG-15 내부의 draft generation boundary다.
 
 1. `GuidelineGeneratorPort`는 RAG-15 내부 generation boundary다.
-2. 입력은 `GuidelineGenerationRequest`(`medication_identities`, `evidence_gate_outcome`, `policy`).
+2. 입력 계약: `GuidelineGenerationRequest`
+   - required:
+     * `medication_identities` (1개 이상)
+     * `policy` (`VersionedGuidelinePolicy`)
+   - evidence input XOR:
+     * `evidence_gate_outcome`: synthetic/legacy RAG-14 경로 (`EvidenceGateOutcome`)
+     * `evidence_handoff`: production #760 authority 경로 (`VerifiedGuideEvidenceHandoff`)
+     * 둘 중 정확히 하나만 제공되어야 하며, 둘 다 없거나 둘 다 있는 경우 Provider 호출 없이 즉시 거부(`VALIDATION_FAILED`)된다.
+   - legacy positional compatibility constructor `GuidelineGenerationRequest(medication_identities, evidence_gate_outcome, policy)`는 기존 레거시 호출 호환용 shim이며, production contract의 정본 signature가 아니다.
 3. 출력은 정확히 `GuidelineCardDraft | GuidelineGenerationFailure`이다.
 4. #179에서 `GuidelineGeneratorPort`를 구현하는 `OpenAIGuidelineGeneratorAdapter`(`ai_worker.adapters.openai_guideline_generator.OpenAIGuidelineGeneratorAdapter`)를 추가했다:
    - 환자 식별자(UUID) 및 내부 evidence provenance를 제거하고 불투명 슬롯(`medication_slot`, `evidence_slot`)만을 Provider에 제공하는 최소 투영(`build_guideline_generation_input_projection`)을 사용한다.
