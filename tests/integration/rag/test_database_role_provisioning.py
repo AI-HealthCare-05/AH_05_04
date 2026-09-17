@@ -34,6 +34,7 @@ from app.services.rag_runtime import RagRuntimeEnvironmentTransitionService
 from infra.python.catalog_role_policy import CATALOG_WRITE_TABLES
 from infra.python.knowledge_index_role_policy import KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
 from infra.python.provision_database_roles import (
+    CANDIDATE_INDEX_RUNTIME_READ_TABLES,
     RUNTIME_APPEND_ONLY_TABLES,
     RUNTIME_AUTH_UPDATE_COLUMNS,
     RUNTIME_CHECKIN_LOCK_TABLES,
@@ -51,6 +52,13 @@ ROOT = Path(__file__).resolve().parents[3]
 _APPEND_ONLY_PRIVILEGES = {
     "SELECT": True,
     "INSERT": True,
+    "UPDATE": False,
+    "DELETE": False,
+    "TRUNCATE": False,
+}
+_READ_ONLY_PRIVILEGES = {
+    "SELECT": True,
+    "INSERT": False,
     "UPDATE": False,
     "DELETE": False,
     "TRUNCATE": False,
@@ -152,6 +160,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 | RUNTIME_RETRIEVAL_RUN_TABLES
                 | CATALOG_WRITE_TABLES
                 | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
+                | CANDIDATE_INDEX_RUNTIME_READ_TABLES
                 | set(SOURCE_TABLES)
                 | set(RUNTIME_AUTH_UPDATE_COLUMNS)
                 | {"notification_record", "user_consent"}
@@ -174,6 +183,13 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                         f"ALTER TABLE {table} ADD COLUMN knowledge_index_lock_marker integer NOT NULL DEFAULT 0 CHECK (knowledge_index_lock_marker=0)"
                     )
                 )
+            await connection.execute(
+                text(
+                    "ALTER TABLE rag_candidate_index_version "
+                    "ADD COLUMN candidate_index_lock_marker integer NOT NULL DEFAULT 0 "
+                    "CHECK (candidate_index_lock_marker=0)"
+                )
+            )
             await _add_auth_fixture_columns(connection)
             await connection.execute(text("CREATE TABLE future_table (id serial PRIMARY KEY)"))
             await connection.execute(text('ALTER TABLE "user" ADD COLUMN sequence_id serial'))
@@ -243,6 +259,13 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             (reader, "INSERT INTO rag_source_snapshot (id) VALUES (3)"),
             (producer, "DELETE FROM rag_source_snapshot"),
             (producer, 'INSERT INTO "user" (id) VALUES (3)'),
+            (reader, "INSERT INTO rag_candidate_index_version VALUES (1)"),
+            (reader, "DELETE FROM rag_candidate_index_version"),
+            (reader, "TRUNCATE rag_candidate_index_version"),
+            (reader, "INSERT INTO rag_candidate_index_member VALUES (1)"),
+            (reader, "UPDATE rag_candidate_index_member SET id=2"),
+            (reader, "DELETE FROM rag_candidate_index_member"),
+            (reader, "TRUNCATE rag_candidate_index_member"),
             (reader, "INSERT INTO future_table VALUES (1)"),
             (reader, "INSERT INTO future_after_provision VALUES (1)"),
             (producer, "INSERT INTO future_after_provision VALUES (1)"),
@@ -260,11 +283,24 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 "rag_request_guard_authority": _APPEND_ONLY_PRIVILEGES,
                 "rag_request_source_decision": _APPEND_ONLY_PRIVILEGES,
                 "rag_request_member_decision": _APPEND_ONLY_PRIVILEGES,
+                # #780: Candidate Index tables are runtime read-only
+                "rag_candidate_index_version": _READ_ONLY_PRIVILEGES,
+                "rag_candidate_index_member": _READ_ONLY_PRIVILEGES,
                 # 대조군: 기존 lifecycle/append-only 권한이 바뀌지 않았는지 확인한다.
                 "retrieval_run": _RETRIEVAL_RUN_PRIVILEGES,
                 "ai_job_intake_context": _APPEND_ONLY_PRIVILEGES,
             },
         )
+        async with admin.connect() as connection:
+            assert (
+                await connection.scalar(
+                    text(
+                        "SELECT has_column_privilege(:role, 'rag_candidate_index_version', 'candidate_index_lock_marker', 'UPDATE')"
+                    ),
+                    {"role": runtime},
+                )
+                is True
+            )
         # #731: authority 표가 빠진 schema에서는 provisioning이 fail closed여야 한다.
         async with admin.begin() as connection:
             await connection.execute(text("DROP TABLE rag_request_member_decision"))
