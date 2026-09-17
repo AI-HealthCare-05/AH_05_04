@@ -333,10 +333,11 @@ class SqlAlchemyEvaluationBootstrapRepository:
             ),
             {"seal_id": str(verification_id), "snapshot_id": str(snapshot_id), "now": now},
         )
-        if update_res.rowcount != 1:
+        rowcount = getattr(update_res, "rowcount", None)
+        if rowcount != 1:
             raise EvaluationValidationError(
                 EvaluationErrorCode.REPOSITORY_STATE_INVALID,
-                f"CAS snapshot seal failed for {snapshot_id}: expected 1 updated row, got {update_res.rowcount}",
+                f"CAS snapshot seal failed for {snapshot_id}: expected 1 updated row, got {rowcount}",
             )
 
     async def insert_knowledge_document(
