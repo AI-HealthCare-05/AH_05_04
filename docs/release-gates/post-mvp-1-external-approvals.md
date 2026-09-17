@@ -21,7 +21,7 @@
 
 ## Flag 해제 조건
 
-- `PUBLIC_TRACK_C`: `EXT-MED-001`, `EXT-MED-002`, `EXT-PRIV-002`, `EXT-SAFETY-001` 승인과 해당 version 회귀 결과.
+- `PUBLIC_TRACK_C`: `EXT-MED-001`, `EXT-MED-002`, `EXT-PRIV-002`, `EXT-SAFETY-001` 승인과 해당 version 회귀 결과. Frontend build-time flag `VITE_PUBLIC_TRACK_C`로 구현되어 있으며 기본값은 `false`다. flag 해제는 위 승인 없이 수행하지 않고, 해제 시 Frontend 이미지 재build가 필요하다. 구현 위치와 검사 절차는 [배포 문서](../deployment.md)를 따른다.
 - OTC Chat은 별도 `PUBLIC_TRACK_D`를 두지 않고 `PUBLIC_TRACK_F`를 공유한다. OTC 범위에는 `EXT-PHARM-001`, `EXT-SOURCE-002`, `EXT-PRIV-002`, `EXT-SAFETY-001` 승인과 실제형 질문 fixture 검증이 필요하다.
 - `PUBLIC_TRACK_F`: `EXT-MED-002`, `EXT-PHARM-001`, `EXT-SOURCE-001`, `EXT-SOURCE-002`, `EXT-PRIV-001`, `EXT-PRIV-002`, `EXT-SAFETY-001` 승인과 공식 Identity·Preflight·Rule/Evidence·Citation UI·fallback 회귀 결과.
 

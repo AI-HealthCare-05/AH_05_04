@@ -29,6 +29,7 @@ done
 # 이미지 버전 등 운영 배포 설정을 읽습니다.
 # 실제 secret이 포함된 .prod.env는 저장소에 커밋하지 않습니다.
 unset VITE_SIGNUP_TERMS_APPROVED
+unset VITE_PUBLIC_TRACK_C
 set -a
 source "$PROD_ENV_FILE"
 set +a
@@ -267,6 +268,23 @@ validate_signup_terms_configuration() {
 }
 validate_signup_terms_configuration
 
+# Track C 공개 게이트도 환경파일에 직접 선언해야 하며 실행 셸의 값을 상속하지 않습니다.
+# 승인 조건은 docs/release-gates/post-mvp-1-external-approvals.md를 따릅니다.
+validate_public_track_c_configuration() {
+  if ! grep -Eq '^VITE_PUBLIC_TRACK_C=' "$PROD_ENV_FILE"; then
+    echo "${PROD_ENV_FILE}에 VITE_PUBLIC_TRACK_C를 명시해야 합니다."
+    return 1
+  fi
+  case "${VITE_PUBLIC_TRACK_C:-}" in
+    true | false) ;;
+    *)
+      echo "VITE_PUBLIC_TRACK_C는 true 또는 false여야 합니다."
+      return 1
+      ;;
+  esac
+}
+validate_public_track_c_configuration
+
 for required_command in docker ssh scp; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     echo "필수 명령을 찾을 수 없습니다: $required_command"
@@ -376,7 +394,8 @@ build_and_push \
   "." \
   "VITE_API_BASE_URL=$PRODUCTION_PUBLIC_ORIGIN" \
   "VITE_SIGNUP_TERMS_APPROVED=$VITE_SIGNUP_TERMS_APPROVED" \
-  "VITE_EMAIL_VERIFICATION_ENABLED=${VITE_EMAIL_VERIFICATION_ENABLED:-false}"
+  "VITE_EMAIL_VERIFICATION_ENABLED=${VITE_EMAIL_VERIFICATION_ENABLED:-false}" \
+  "VITE_PUBLIC_TRACK_C=$VITE_PUBLIC_TRACK_C"
 
 build_and_push \
   "$docker_user" \

@@ -53,7 +53,9 @@ CloudFront 기본 hostname 사용은 별도 도메인 구매만 생략하며 AWS
 | Rollback 실행 | 권가빈과 Infrastructure·Backend 담당 공동 합의 | 실행 권한, backup·복구 검증, Worker drain 포함 Runbook 확인 | Issue #230 |
 | 각 역할의 대체 담당 | 해당 역할의 결정 주체 | 주 담당과 같은 권한·증빙·Runbook 수행 가능성 확인 | Issue #230 |
 
-`미정/배포 차단`은 이 문서가 정의하는 governance 상태이며 저장소에 `production_enabled`라는 runtime flag가 구현되어 있다는 뜻이 아니다. `PUBLIC_TRACK_C`와 `PUBLIC_TRACK_F`는 [외부 승인·공개 게이트](./release-gates/post-mvp-1-external-approvals.md)가 정의한 Publication gate 식별자와 해제 기준이며, 현재 runtime 설정으로 구현되어 있다는 의미가 아니다. 문서상의 gate 상태를 runtime 차단 증빙으로 대신 사용하지 않는다.
+`미정/배포 차단`은 이 문서가 정의하는 governance 상태이며 저장소에 `production_enabled`라는 runtime flag가 구현되어 있다는 뜻이 아니다. `PUBLIC_TRACK_C`와 `PUBLIC_TRACK_F`는 [외부 승인·공개 게이트](./release-gates/post-mvp-1-external-approvals.md)가 정의한 Publication gate 식별자와 해제 기준이다. 문서상의 gate 상태를 runtime 차단 증빙으로 대신 사용하지 않는다.
+
+`PUBLIC_TRACK_C`는 Frontend build-time flag `VITE_PUBLIC_TRACK_C`로 구현되어 있다. 기본값은 `false`이며 `envs/*.prod.env`에 직접 선언해야 한다. `scripts/deployment.sh`가 선언 여부와 `true|false` 여부를 검사하고, 실행 셸의 값은 상속하지 않는다. `false`인 build에서는 Track C route·page chunk·진입 버튼과 `/schedule`의 `support_medication` 처리가 번들에서 제거된다. flag를 `true`로 바꾸려면 Frontend 이미지를 다시 build해야 하며, 해제 조건은 게이트 문서의 "Flag 해제 조건"을 따른다. `PUBLIC_TRACK_F`는 아직 runtime 설정으로 구현되어 있지 않다.
 
 ### 운영 증빙 기록
 

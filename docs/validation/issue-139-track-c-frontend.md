@@ -42,15 +42,27 @@ Proposed 문서의 미구현 부분까지 구현된 것으로 간주하지 않�
 409는 이전 흐름 차단을 표시한다. 422·네트워크·5xx는 원문을 숨기고 같은 요청의 재시도를
 제공한다. 다른 check-in/revision/Safety에 속한 응답은 사용하지 않는다.
 
+사용자가 직접 "증상이 있어요"를 고르거나 계획 화면에서 "증상이 생겼거나 확실하지 않아요"를
+고른 경우에는 중단 화면에서 이전 단계로 되돌아가는 버튼을 제공한다. 서버가 non-ROUTINE ·
+non-NORMAL을 반환했거나 403/404/409로 멈춘 경우에는 제공하지 않는다. 되돌아가기는 화면
+전환일 뿐이며 이미 생성된 Safety 기록을 정정하거나 재전송하지 않는다.
+
 **현재 한계:** Safety/Barrier GET이 없어 새로고침 후 기존 revision의 진행 상태를 복원할 수
 없다. 초기 expected revision은 0이며, 이미 생성된 흐름이면 409로 멈춘다. 임의 revision을
 추측하거나 check-in을 자동 정정하지 않는다. 알려진 Plan URL의 조회·취소는 별도로 가능하다.
 
 ## 공개 및 미구현 경계
 
-`import.meta.env.DEV`로 route·lazy import·진입 버튼을 제한했다. Production 번들에서
-Track C route, API adapter, 진입 문구가 제거되는 것을 확인했다. 공개 승인이나 운영 활성화
-완료를 의미하지 않는다. [외부 승인 게이트](../release-gates/post-mvp-1-external-approvals.md)는 유지한다.
+Frontend build-time flag `VITE_PUBLIC_TRACK_C`로 route·lazy import·진입 버튼과
+`/schedule`의 `support_medication` 처리를 제한한다. 기본값은 `false`이며, vite dev 서버에서는
+값과 무관하게 켜진다. `false`인 production 번들에서 Track C route, page chunk, 진입 문구가
+제거되는 것을 확인했다. flag가 생겼다는 것이 공개 승인이나 운영 활성화 완료를 의미하지
+않는다. [외부 승인 게이트](../release-gates/post-mvp-1-external-approvals.md)는 유지하며,
+`EXT-MED-001` · `EXT-MED-002` · `EXT-PRIV-002` · `EXT-SAFETY-001` 승인과 해당 version 회귀
+결과 없이 `true`로 두지 않는다.
+
+route는 `/dev/track-c/...`에서 `/track-c/...`로 옮겼다. 공개 여부를 경로가 아니라 flag가
+결정하므로, 공개 시점에 사용자에게 `/dev/` 경로가 노출되지 않게 한다.
 
 현재 Safety foundation에는 승인된 증상 코드와 임상 안내 카탈로그가 없다. 증상이 있거나
 불확실하면 코드를 만들지 않고 일반 도움 흐름을 중단한다. 서버가 non-ROUTINE 또는
