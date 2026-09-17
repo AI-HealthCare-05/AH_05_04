@@ -56,7 +56,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 ## Proposed 계약
 
 - [Web Push v1 (#469/#651)](./proposed/web-push-v1.md): Backend Web Push 등록·전송·Production gate 계약. Proposed 상태이며 `WEB_PUSH_PRODUCTION_ENABLED` OFF 반영은 API/scheduler 전 인스턴스 재시작 완료 후 기준으로 해석한다. 실기기 수신 검증은 #471 범위.
-- [Guide·Chat 피드백 v1 (#633)](./proposed/guide-chat-feedback-v1.md): 완료 결과별 rating·선택 의견 저장 API, SELF 소유권·재제출·합성 Gold 연결 계약. Proposed / Local 구현 반영·최종 승인 대기, Frontend·Backend 확인과 사용자 운영안 채택 반영; 실사용 처리 승인·최종 책임 리뷰 별도.
+- [Guide·Chat 피드백 v1 (#633)](./proposed/guide-chat-feedback-v1.md): 완료 결과별 rating·선택 의견 저장 API, SELF 소유권·재제출·합성 Gold 연결 계약. Proposed / Local 구현 병합 완료·제품/운영 기준 확인 중; 실사용 처리 승인과 AI/RAG 평가 연결 책임 리뷰 별도.
 
 - [Track B 생활 시간 입력 v1 (#422 / #556)](./proposed/track-b-lifestyle-times-v1.md): 식사·반복 행동·복용 곤란 시간의 SELF별 요일 저장·조회 구현 후보. #556 책임 리뷰 전 Proposed; 추천·약별 조건 판정은 별도.
 
@@ -69,6 +69,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Knowledge Materialization 계약 v1 (Phase 2A, #634)](./proposed/post-mvp-1/knowledge-materialization-v1.md): #634 Proposed. 승인된 Source Snapshot Member(MFDS 품목허가 XML: EE·UD·NB 및 선택 NN)로부터 KnowledgeDocument·KnowledgeChunk 구체화 및 트랜잭션 저장 기반 구현 검토 대상. 전용 Builder 최소 권한, RAW_RESPONSE artifact 결속 검증, All-or-Nothing 롤백, Exact Replay, 6대 해시 도메인 보존과 KnowledgeChunkIdentity 인계 완비.
 - [Sync Guide Evidence Authority Assembly Contract v1 (#672 선행 계약)](./proposed/post-mvp-1/sync-guide-evidence-authority-v1.md): #174 REQUEST Guard의 Source/Member 결정 관측 결과와 Reader 사이의 exact-match 결속, phase-ordered fail-fast 검증, RequestSourceMemberBinding 조립 순수 계약 커널. 순수 계약 커널 구현 브랜치 검토 중; DB 영속 Reader 어댑터·런타임 오케스트레이션은 미구현.
 - [Guide Authority × Production Retrieval Composition 계약 v1 (#697)](./proposed/post-mvp-1/guide-retrieval-composition-v1.md): #672 AUTHENTICATED `RequestSourceMemberBinding`과 #178 production `EvidenceGateSuccess.selected_hits`를 Source/Snapshot/Member/Version exact join으로 결합하는 순수 composition 계약. Cardinality는 N chunk hits : 1 member binding이며 duplicate hit은 production stable coordinate 기준, rejection은 fail-fast single typed reason이다. 순수 composition 구현 브랜치 검토 중; Production Reader·assessment 권위·content hydration·Handoff 연결·#180 런타임 오케스트레이션은 미구현.
+- [REQUEST Authority Persistence 계약 v1 (#713)](./proposed/post-mvp-1/request-authority-persistence-v1.md): #709가 차단 사유로 확인한 REQUEST Guard·Source Decision·Member Decision의 historical request-bound persistence. migration `713a1b2c3d4e`의 typed 3표, canonical JCS projection 기반 immutable artifact identity, append-only writer와 exact `ImmutableArtifactRef` 조회 primitive를 확정한다. `catalog_source_approval`·CURRENT Snapshot·`runtime_guard_decision_ref` 계열은 REQUEST authority가 아님을 함께 고정한다. 구현·로컬 검증 완료·담당 리뷰 대기이며, #709 Production Reader와 #180 런타임 오케스트레이션은 여전히 미구현.
 
 - [OCR LLM Worker 범위 정정 (#453)](./proposed/ocr-llm-worker-consent-453.md): 기존 이관 범위와 리뷰 시 별도 검토할 항목. 기존 동의 개정안 미채택.
 - [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태와 row 없음=미동의 기준. #465에서 `user_consent` 저장 기반을 병합했고, #510에서 현재 사용자 목적별 동의 상태 조회·변경 API를 추가했다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전과 Production 공개 승인은 후속 범위다. 전체 목적별 계약은 Proposed 유지.
@@ -223,6 +224,11 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [Follow-up API v1 — Current, PR #631 반영](current/track-c-followup-api-194.md): 완료 계획의 평가 GET/POST, 현재값·revision 정정·audit·멱등성·동시성. 기존 생성/Plan 응답은 유지한다. 최종 책임 리뷰 승인·병합은 대기 중이며 외부 공개는 별도다.
 - [PD-194-2](../governance/decisions/2026-09-16-track-c-followup-194.md): 완료 계획만 평가, 이후 Check-in 정정에도 과거 평가 허용. 권가빈 구현·김지혜 단일 책임 리뷰.
 - #139 Frontend·Constraint/RAG Handler·외부 공개 및 #194 전체 완료는 별도 범위다.
+
+## Track C 규칙 기반 개인화 지원 (#718)
+
+- [규칙 기반 개인화 지원 — Current, 구현 PR 반영](current/track-c-rule-based-personalization-718.md): 세부 이유, 최대 2개 지원, 고정 상담 질문, Plan snapshot·재조회 계약. RAG·LLM·실시간 웹 조회를 호출하지 않으며 기존 Safety·SELF·현재성·공개 게이트를 유지한다.
+- [PD-718](../governance/decisions/2026-09-17-track-c-rule-based-personalization-718.md): 기존 정적 Rule·Copy 확장과 JSONB snapshot 재사용 결정. Follow-up v2는 별도 migration·계약으로 남긴다.
 
 ## Track C 일정 변경·외출 상황 선택 (#194 후속)
 

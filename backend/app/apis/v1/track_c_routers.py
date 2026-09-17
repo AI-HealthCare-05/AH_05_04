@@ -66,8 +66,14 @@ async def get_support_offers(
     user: Annotated[User, Depends(get_request_user)],
     service: Annotated[TrackCSupportService, Depends(get_track_c_support_service)],
     travel_situation: TravelSituation | None = None,
+    subreason_code: str | None = None,
 ) -> SupportOfferResponse:
-    return await service.get_supports(user_id=user.id, barrier_id=id, travel_situation=travel_situation)
+    return await service.get_supports(
+        user_id=user.id,
+        barrier_id=id,
+        travel_situation=travel_situation,
+        subreason_code=subreason_code,
+    )
 
 
 @track_c_router.post(
