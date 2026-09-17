@@ -1,11 +1,39 @@
-import { Link, useNavigate } from 'react-router-dom'
-import { Button, MobileShell } from '../design-system/components'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Button, Card, MobileShell } from '../design-system/components'
 import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
 import './MvpPages.css'
 
 function StartPage() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const accountWithdrawalAccepted = Boolean(
+    (location.state as { accountWithdrawalAccepted?: boolean } | null)
+      ?.accountWithdrawalAccepted,
+  )
+
+  if (accountWithdrawalAccepted) {
+    return (
+      <div className="mvp-page mvp-start-page">
+        <MobileShell hideHeader hideNavigation>
+          <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-start mvp-start--withdrawal-complete">
+            <Card className="mvp-start__withdrawal-status">
+              <div role="status" aria-live="polite">
+                <h1>회원탈퇴 요청이 접수되었어요.</h1>
+                <p>
+                  계정 이용이 종료되었습니다. 개인정보와 건강정보의 삭제·보존은
+                  서비스 정책에 따라 처리됩니다.
+                </p>
+              </div>
+              <Button fullWidth onClick={() => navigate('/start', { replace: true })}>
+                시작 화면으로 이동
+              </Button>
+            </Card>
+          </main>
+        </MobileShell>
+      </div>
+    )
+  }
 
   return (
     <div className="mvp-page mvp-start-page">
