@@ -4,7 +4,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_worker.adapters.openai_text_embedding import OpenAITextEmbeddingAdapter
+from ai_worker.adapters.openai_text_embedding import (
+    OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
+    OpenAITextEmbeddingAdapter,
+)
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, SensitiveText
 from ai_worker.tasks.rag.text_embedding import (
     TextEmbeddingFailure,
@@ -15,11 +18,7 @@ from ai_worker.tasks.rag.text_embedding import (
 _MODEL_REF = "openai:text-embedding-3-large"
 _MODEL_VERSION = "text-embedding-3-large"
 _DIMENSION = 1536
-_ADAPTER_REF = ImmutableArtifactRef(
-    artifact_code="openai-text-embedding-adapter",
-    version="1",
-    content_sha256="0" * 64,
-)
+_ADAPTER_REF = OPENAI_TEXT_EMBEDDING_ADAPTER_REF
 
 
 def _make_embedding_response(
@@ -195,3 +194,45 @@ async def test_openai_embedding_handles_dependency_error_without_leaking_message
         dimension=_DIMENSION,
     )
     assert res == TextEmbeddingFailure(TextEmbeddingFailureReason.DEPENDENCY_ERROR)
+
+
+def test_openai_text_embedding_adapter_canonical_projection_and_golden_hash() -> None:
+    from ai_worker.adapters.openai_text_embedding import (
+        OPENAI_TEXT_EMBEDDING_ADAPTER_HASH,
+        OPENAI_TEXT_EMBEDDING_ADAPTER_PROJECTION,
+        OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
+    )
+    from ai_worker.tasks.evaluation.canonical import canonical_sha256
+
+    expected_projection = {
+        "projection_version": "openai-text-embedding-adapter@1",
+        "artifact_code": "openai-text-embedding-adapter",
+        "artifact_version": "1.0.0",
+        "provider": "openai",
+        "model_ref": "openai:text-embedding-3-large",
+        "model_version": "text-embedding-3-large",
+        "dimension": 1536,
+        "encoding_format": "float",
+        "runtime_module": "ai_worker.adapters.openai_text_embedding",
+    }
+    assert OPENAI_TEXT_EMBEDDING_ADAPTER_PROJECTION == expected_projection
+
+    expected_hash = "608364dae260bed7d053c6ce4736fd83ab20621e701c29c7b0e6c1fbef10a102"
+    recomputed_hash = canonical_sha256(OPENAI_TEXT_EMBEDDING_ADAPTER_PROJECTION)
+    assert recomputed_hash == expected_hash
+    assert OPENAI_TEXT_EMBEDDING_ADAPTER_HASH == expected_hash
+
+    assert OPENAI_TEXT_EMBEDDING_ADAPTER_REF == ImmutableArtifactRef(
+        artifact_code="openai-text-embedding-adapter",
+        version="1.0.0",
+        content_sha256=expected_hash,
+    )
+
+
+def test_openai_text_embedding_adapter_constructor_requires_explicit_ref() -> None:
+    import inspect
+
+    sig = inspect.signature(OpenAITextEmbeddingAdapter.__init__)
+    param = sig.parameters.get("adapter_artifact_ref")
+    assert param is not None
+    assert param.default is inspect.Parameter.empty
