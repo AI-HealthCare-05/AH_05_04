@@ -437,6 +437,7 @@ describe('production 복약 일정', () => {
         ...makePrescription().data.medications[0],
         prescription_version_medication_id: secondMedicationId,
         medication_name: '하루 두 번 약',
+        timing_text: '아침·저녁 식후',
         frequency_per_day: 2,
         display_order: 1,
       },
@@ -460,7 +461,32 @@ describe('production 복약 일정', () => {
     fireEvent.click(await screen.findByRole('button', { name: '일정 설정하기' }))
 
     expect(screen.getAllByLabelText(/번째 복용 시간$/)).toHaveLength(6)
+    const secondInput = screen.getByLabelText('하루 두 번 약 1번째 복용 시간')
+    expect(document.getElementById(secondInput.getAttribute('aria-describedby')!)?.textContent).toBe('처방 복용 지시아침·저녁 식후')
+    const firstInput = screen.getByLabelText('현재 처방의 혈압약 1번째 복용 시간')
+    expect(document.getElementById(firstInput.getAttribute('aria-describedby')!)?.textContent).toContain('복용 시점 미확인')
     expect(screen.queryByRole('button', { name: /복용 시간 (추가|삭제)/ })).toBeNull()
+  })
+
+  it.each(['아침·저녁 식후 30분', '아침·점심 식전', '긴 지시 '.repeat(40), null, '   '])('설정·수정 시 복용 지시 %s를 입력과 연결한다', async (timingText) => {
+    const services = makeServices({
+      getLatestPrescription: vi.fn().mockResolvedValue(makePrescription({
+        medications: [{ ...makePrescription().data.medications[0], frequency_per_day: 2, timing_text: timingText }],
+      })),
+    })
+    renderSchedule(services)
+    fireEvent.click(await screen.findByRole('button', { name: '복약 일정 설정·수정' }))
+    for (const input of screen.getAllByLabelText(/번째 복용 시간$/)) {
+      const description = document.getElementById(input.getAttribute('aria-describedby')!)!
+      expect(description.textContent).toBe(`처방 복용 지시${timingText?.trim() || '복용 시점 미확인 · 처방전의 복용 지시를 확인해 주세요.'}`)
+      expect((input as HTMLInputElement).value).toBe('')
+    }
+    fillScheduleEditor('현재 처방의 혈압약', '2026-09-14', '2026-09-20', ['08:30', '18:30'])
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+    await waitFor(() => expect(services.putMedicationSchedule).toHaveBeenCalledWith(medicationId, {
+      startLocalDate: '2026-09-14', endMode: 'DATE', endLocalDate: '2026-09-20',
+      localTimes: ['08:30', '18:30'], expectedRevision: 3,
+    }, expect.any(String)))
   })
 
   it('PARTIAL의 미설정 약도 현재 처방 identity로 표시한다', async () => {

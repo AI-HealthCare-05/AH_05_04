@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core import config
 from app.core.utils.idempotency import (
-    compute_key_hmac,
+    compute_key_hmac_candidates,
     compute_request_hash,
     validate_idempotency_key_format,
 )
@@ -159,14 +159,20 @@ class SyncMutationIdempotencyService:
     ) -> SyncMutationResult:
         validate_idempotency_key_format(idempotency_key)
 
-        key_hmac = compute_key_hmac(idempotency_key, hmac_key=config.IDEMPOTENCY_HMAC_KEY)
+        key_hmac_candidates = compute_key_hmac_candidates(
+            idempotency_key,
+            active_hmac_key=config.IDEMPOTENCY_HMAC_KEY,
+            active_key_version=config.IDEMPOTENCY_HMAC_KEY_VERSION,
+            retained_hmac_keys=config.IDEMPOTENCY_HMAC_RETIRED_KEYS,
+        )
+        current_key_hmac = key_hmac_candidates[0]
         request_hash = compute_request_hash(fingerprint)
 
         existing = await self._repository.find_sync_idempotency_record(
             user_id=user_id,
             operation_id=operation_id,
             parent_resource_id=parent_resource_id,
-            key_hmac=key_hmac,
+            key_hmac_candidates=key_hmac_candidates,
         )
         if existing is not None:
             if existing.expires_at > datetime.now(config.TIMEZONE):
@@ -187,7 +193,8 @@ class SyncMutationIdempotencyService:
                     user_id=user_id,
                     operation_id=operation_id,
                     parent_resource_id=parent_resource_id,
-                    key_hmac=key_hmac,
+                    key_hmac_version=current_key_hmac.key_hmac_version,
+                    key_hmac=current_key_hmac.key_hmac,
                     request_hash=request_hash,
                     response_status=success_status,
                     response_body_snapshot=ciphertext,
@@ -204,7 +211,7 @@ class SyncMutationIdempotencyService:
                 user_id=user_id,
                 operation_id=operation_id,
                 parent_resource_id=parent_resource_id,
-                key_hmac=key_hmac,
+                key_hmac_candidates=key_hmac_candidates,
             )
             if existing is None:
                 raise
@@ -222,7 +229,7 @@ class SyncMutationIdempotencyService:
                 user_id=user_id,
                 operation_id=operation_id,
                 parent_resource_id=parent_resource_id,
-                key_hmac=key_hmac,
+                key_hmac_candidates=key_hmac_candidates,
             )
             if existing is None:
                 raise

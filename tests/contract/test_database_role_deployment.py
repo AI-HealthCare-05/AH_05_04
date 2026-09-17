@@ -64,6 +64,38 @@ def test_account_deletion_request_runtime_role_is_append_only() -> None:
     assert "account_deletion_request" not in RUNTIME_MUTABLE_TABLES
 
 
+def test_retrieval_run_tables_runtime_role_privileges_are_least_privilege() -> None:
+    from infra.python.provision_database_roles import (
+        RUNTIME_APPEND_ONLY_TABLES,
+        RUNTIME_MUTABLE_TABLES,
+        RUNTIME_RETRIEVAL_RUN_TABLES,
+    )
+
+    # #689: retrieval_run lifecycle requires SELECT, INSERT, UPDATE; direct DELETE is prohibited.
+    assert RUNTIME_RETRIEVAL_RUN_TABLES == {"retrieval_run"}
+    assert "retrieval_run" not in RUNTIME_MUTABLE_TABLES
+    assert "retrieval_run" not in RUNTIME_APPEND_ONLY_TABLES
+
+    # #689: child tables retrieval_signal and retrieval_hit are strictly append-only.
+    assert "retrieval_signal" in RUNTIME_APPEND_ONLY_TABLES
+    assert "retrieval_hit" in RUNTIME_APPEND_ONLY_TABLES
+    assert "retrieval_signal" not in RUNTIME_MUTABLE_TABLES
+    assert "retrieval_hit" not in RUNTIME_MUTABLE_TABLES
+
+    # Ensure no overlap with RUNTIME_MUTABLE_TABLES
+    assert not (RUNTIME_RETRIEVAL_RUN_TABLES & RUNTIME_MUTABLE_TABLES)
+    assert not ({"retrieval_signal", "retrieval_hit"} & RUNTIME_MUTABLE_TABLES)
+
+    source = (ROOT / "infra/python/provision_database_roles.py").read_text()
+    assert "GRANT SELECT, INSERT, UPDATE ON TABLE public.retrieval_run" in source
+    assert "GRANT DELETE ON TABLE public.retrieval_run" not in source
+    assert "GRANT TRUNCATE ON TABLE public.retrieval_run" not in source
+    assert "GRANT DELETE ON TABLE public.retrieval_signal" not in source
+    assert "GRANT UPDATE ON TABLE public.retrieval_signal" not in source
+    assert "GRANT DELETE ON TABLE public.retrieval_hit" not in source
+    assert "GRANT UPDATE ON TABLE public.retrieval_hit" not in source
+
+
 def test_knowledge_index_role_policy_is_explicit_and_least_privilege() -> None:
     from infra.python.knowledge_index_role_policy import (
         KNOWLEDGE_INDEX_LOCK_COLUMNS,

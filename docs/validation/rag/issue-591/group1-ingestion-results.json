@@ -1,0 +1,154 @@
+{
+  "recorded_on": "2026-09-17",
+  "evidence_source": "User-provided server execution outputs cross-checked with locally preserved collection evidence and issued Receipts; not a fresh independent server execution",
+  "scope": "Group 1 producer ingestion results only",
+  "products": [
+    {
+      "item_seq": "198500321",
+      "official_product_name": "다이아벡스정500밀리그램(메트포르민염산염)",
+      "operation_code": "COLLECT_MFDS_198500321_LABEL_XML",
+      "snapshot_id": "aa703936-6c80-4267-a608-62b81e0367a9",
+      "collected_at": "2026-09-16T11:09:34.276326+00:00",
+      "canonical_checksum": "244b67041fe19916a3600396ec6b3578701a85efed1bb143531dde64303e032d",
+      "source_version": "api:2026-09-16T11:09:34.276326Z:244b67041fe19916a3600396ec6b3578701a85efed1bb143531dde64303e032d",
+      "product_manifest_hash": "a051b8b30f870e0059bd921a4a0698ccaded2ec9c36ce0bbd479fee2d0647867",
+      "endpoint_receipt_hash": "f2df28a5c81206f6a5ad445bb058f291550a51713ddb3b14457be4d145bec3bc",
+      "policy_approval_ref": "GABIN:591:EXPANSION16:EE_UD_NB:OTC5_NN",
+      "technical_approval_ref": "technical:591:eunyoung:xml-receipts-v1",
+      "implementation_git_sha": "00cf01af86c467b20335e3cd90293747ea5e0ff8",
+      "documents": [
+        {
+          "document_type": "EE",
+          "byte_size": 814,
+          "raw_sha256": "a51bd85a04061348f728300b77b23d3471c295a8c09085f20c574da5a2d6a49e",
+          "content_type": "application/download; UTF-8; charset=UTF-8"
+        },
+        {
+          "document_type": "UD",
+          "byte_size": 3872,
+          "raw_sha256": "18bce492228cced0efea2a485ba67bea9ec967407430c2962b7b9dba054d66d0",
+          "content_type": "application/download; UTF-8; charset=UTF-8"
+        },
+        {
+          "document_type": "NB",
+          "byte_size": 39660,
+          "raw_sha256": "d192ae92afc7d523972bd6ce8b1f9eb4751276e7ccf7e80bb8882b3544a437ee",
+          "content_type": "application/download; UTF-8; charset=UTF-8"
+        }
+      ],
+      "first_decision": "CREATED",
+      "repeat_decision": "NO_CHANGE",
+      "same_snapshot": true,
+      "member_count": 3,
+      "post_commit_requery_passed": true,
+      "expected_result_matches": true,
+      "receipt_profile_verify": "XML_RECEIPTS_VERIFIED",
+      "profile_state": "READY",
+      "handoff_metadata": "HANDOFF_METADATA_VERIFIED",
+      "snapshot_verification_status": "PENDING",
+      "consumer_acceptance": "PENDING",
+      "first_exit_code": 0,
+      "repeat_exit_code": 0,
+      "handoff_exit_code": 0
+    },
+    {
+      "item_seq": "200410090",
+      "official_product_name": "리피토정10밀리그램(아토르바스타틴칼슘삼수화물)",
+      "operation_code": "COLLECT_MFDS_200410090_LABEL_XML",
+      "snapshot_id": "a5811293-5437-4f00-be44-9e65a0b32914",
+      "collected_at": "2026-09-16T11:42:33.283584+00:00",
+      "canonical_checksum": "07d5c1105e020dc2852693b624e82ce5dea9bbd232840559beb5944b6ef96f57",
+      "source_version": "api:2026-09-16T11:42:33.283584Z:07d5c1105e020dc2852693b624e82ce5dea9bbd232840559beb5944b6ef96f57",
+      "product_manifest_hash": "bb01317b04f1cba80a6357651e4eec5748bfb4d5482c9103142ead29d70cf767",
+      "endpoint_receipt_hash": "f29a5b020c5e2b583ae4bb270f4a3015d3275065b3530f8d52cb452f0418600f",
+      "policy_approval_ref": "GABIN:591:EXPANSION16:EE_UD_NB:OTC5_NN",
+      "technical_approval_ref": "technical:591:eunyoung:xml-receipts-v1",
+      "implementation_git_sha": "00cf01af86c467b20335e3cd90293747ea5e0ff8",
+      "documents": [
+        {
+          "document_type": "EE",
+          "byte_size": 4581,
+          "raw_sha256": "180af9a160f3b087307a19b805d4b8938101b31ee1d24a0e151607406e961998",
+          "content_type": "application/download; UTF-8; charset=UTF-8"
+        },
+        {
+          "document_type": "UD",
+          "byte_size": 3414,
+          "raw_sha256": "31029b97cbbadadeb2ed2b09d84f74f5668d16757012a5206ad325fa349188da",
+          "content_type": "application/download; UTF-8; charset=UTF-8"
+        },
+        {
+          "document_type": "NB",
+          "byte_size": 80963,
+          "raw_sha256": "84ee413df89456b8a17a0cde8d32d2cf3fca771c8d8f30e7f7151b7e5895fc78",
+          "content_type": "application/download; UTF-8; charset=UTF-8"
+        }
+      ],
+      "first_decision": "CREATED",
+      "repeat_decision": "NO_CHANGE",
+      "same_snapshot": true,
+      "member_count": 3,
+      "post_commit_requery_passed": true,
+      "expected_result_matches": true,
+      "receipt_profile_verify": "XML_RECEIPTS_VERIFIED",
+      "profile_state": "READY",
+      "handoff_metadata": "HANDOFF_METADATA_VERIFIED",
+      "snapshot_verification_status": "PENDING",
+      "consumer_acceptance": "PENDING",
+      "first_exit_code": 0,
+      "repeat_exit_code": 0,
+      "handoff_exit_code": 0
+    },
+    {
+      "item_seq": "196000008",
+      "official_product_name": "다이크로짇정(히드로클로로티아지드)",
+      "operation_code": "COLLECT_MFDS_196000008_LABEL_XML",
+      "snapshot_id": "d4834276-f2b7-48d9-bbe9-c9a29541097b",
+      "collected_at": "2026-09-16T11:42:33.762680+00:00",
+      "canonical_checksum": "47d440e58f414d39bf8743e929fde6acbff737bc62495d324b3c26d5d39046cf",
+      "source_version": "api:2026-09-16T11:42:33.762680Z:47d440e58f414d39bf8743e929fde6acbff737bc62495d324b3c26d5d39046cf",
+      "product_manifest_hash": "93e3881ed981eaa45463aa3d76b6329ea311c289445c1314bcbee010742d40aa",
+      "endpoint_receipt_hash": "e32e59e3bb12a50bbc98f836ecac659b5c68ec7e8c1a18254ec3f444701588ed",
+      "policy_approval_ref": "GABIN:591:EXPANSION16:EE_UD_NB:OTC5_NN",
+      "technical_approval_ref": "technical:591:eunyoung:xml-receipts-v1",
+      "implementation_git_sha": "00cf01af86c467b20335e3cd90293747ea5e0ff8",
+      "documents": [
+        {
+          "document_type": "EE",
+          "byte_size": 544,
+          "raw_sha256": "e8075e3aed6d9bb5c028f86e8f6763a97c1fb92b96d5abc3aed118447607fae1",
+          "content_type": "application/download; UTF-8; charset=UTF-8"
+        },
+        {
+          "document_type": "UD",
+          "byte_size": 1018,
+          "raw_sha256": "2c17ea0b26f2c9bd5c3caa035a37d1f393045ba9de0d93134b4063fbe586c2a0",
+          "content_type": "application/download; UTF-8; charset=UTF-8"
+        },
+        {
+          "document_type": "NB",
+          "byte_size": 17915,
+          "raw_sha256": "a67cd8a2c9b51a4e60638a2fe586d9b9fc96f3751ef88fc8c13a4561881296c2",
+          "content_type": "application/download; UTF-8; charset=UTF-8"
+        }
+      ],
+      "first_decision": "CREATED",
+      "repeat_decision": "NO_CHANGE",
+      "same_snapshot": true,
+      "member_count": 3,
+      "post_commit_requery_passed": true,
+      "expected_result_matches": true,
+      "receipt_profile_verify": "XML_RECEIPTS_VERIFIED",
+      "profile_state": "READY",
+      "handoff_metadata": "HANDOFF_METADATA_VERIFIED",
+      "snapshot_verification_status": "PENDING",
+      "consumer_acceptance": "PENDING",
+      "first_exit_code": 0,
+      "repeat_exit_code": 0,
+      "handoff_exit_code": 0
+    }
+  ],
+  "consumer_handoff": "User reports materials delivered to consumer owner; acceptance results not yet received",
+  "group2_actual_ingestion": "NOT_STARTED",
+  "publication_gate_changed": false
+}

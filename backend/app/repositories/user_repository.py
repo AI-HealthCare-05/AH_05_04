@@ -115,6 +115,12 @@ ALLOWED_UPDATE_FIELDS = {
     "birthday",
 }
 
+NULLABLE_UPDATE_FIELDS = {
+    "phone_number",
+    "gender",
+    "birthday",
+}
+
 
 class UserRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -260,7 +266,10 @@ class UserRepository:
         data: dict[str, Any],
     ) -> User:
         for key, value in data.items():
-            if key not in ALLOWED_UPDATE_FIELDS or value is None:
+            if key not in ALLOWED_UPDATE_FIELDS:
+                continue
+
+            if value is None and key not in NULLABLE_UPDATE_FIELDS:
                 continue
 
             if key == "email":

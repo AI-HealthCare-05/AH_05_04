@@ -19,7 +19,10 @@ from app.models.password_reset import PasswordResetToken
 from app.models.profiles import Profile
 from app.models.refresh_session import RefreshSession
 from app.models.users import AccountStatus, User
-from app.repositories.account_deletion_request_repository import AccountDeletionRequestRepository
+from app.repositories.account_deletion_request_repository import (
+    FAILED_DEMO_DELETION_CODE,
+    AccountDeletionRequestRepository,
+)
 from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.user_repository import UserRepository
@@ -84,7 +87,7 @@ async def _is_blocked_on_query_matching(query_substring: str) -> bool:
         await session.close()
 
 
-async def test_account_withdrawal_concurrent_requests_create_single_pending_request(monkeypatch) -> None:
+async def test_account_withdrawal_concurrent_requests_complete_single_deletion_request(monkeypatch) -> None:
     user = await _create_committed_user(email=f"withdrawal-race-{uuid4().hex[:10]}@example.com")
     barrier = asyncio.Barrier(2)
     original_authenticate = AuthService.authenticate
@@ -138,12 +141,56 @@ async def test_account_withdrawal_concurrent_requests_create_single_pending_requ
         await _delete_user(user.id)
 
     assert results == ["accepted", "accepted"]
-    assert stored_user.account_status == AccountStatus.WITHDRAWAL_REQUESTED
+    assert stored_user.account_status == AccountStatus.WITHDRAWN
     assert stored_user.is_active is False
     assert stored_user.token_version == 1
     assert deletion_request_count == 1
     assert deletion_request is not None
-    assert deletion_request.status == AccountDeletionRequestStatus.PENDING
+    assert deletion_request.status == AccountDeletionRequestStatus.COMPLETED
+
+
+async def test_account_withdrawal_finalization_failure_marks_request_failed_without_withdrawing_user(
+    monkeypatch,
+) -> None:
+    user = await _create_committed_user(email=f"wd-fail-{uuid4().hex[:10]}@example.com")
+    session = AsyncSession(bind=test_engine, expire_on_commit=False)
+
+    async def fail_cleanup(self, user_id):
+        raise RuntimeError("synthetic cleanup failure")
+
+    monkeypatch.setattr(AccountDeletionRequestRepository, "_delete_user_owned_runtime_data", fail_cleanup)
+
+    try:
+        repo = AccountDeletionRequestRepository(session)
+        requested_at = datetime.now()
+        request = await repo.create_pending(user_id=user.id, requested_at=requested_at)
+        with contextlib.suppress(RuntimeError):
+            await repo.complete_demo_withdrawal(
+                request_id=request.id,
+                completed_at=requested_at,
+                anonymized_email=f"wd-{user.id.hex[:20]}@deleted.local",
+                disabled_password_hash=hash_password("disabled-password"),
+            )
+        await session.commit()
+
+        verification_session = AsyncSession(bind=test_engine, expire_on_commit=False)
+        try:
+            stored_user = await verification_session.get(User, user.id)
+            stored_request = await verification_session.get(AccountDeletionRequest, request.id)
+        finally:
+            await verification_session.close()
+    finally:
+        await session.close()
+        await _delete_user(user.id)
+
+    assert stored_user is not None
+    assert stored_user.account_status == AccountStatus.ACTIVE
+    assert stored_user.is_active is True
+    assert stored_user.withdrawn_at is None
+    assert stored_request is not None
+    assert stored_request.status == AccountDeletionRequestStatus.FAILED
+    assert stored_request.last_error_code == FAILED_DEMO_DELETION_CODE
+    assert stored_request.failed_at is not None
 
 
 async def test_login_waits_for_concurrent_logout_and_issues_latest_token_version() -> None:
