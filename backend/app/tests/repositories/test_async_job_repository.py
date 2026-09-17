@@ -4,8 +4,10 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.utils.idempotency import IdempotencyHmacDigest
 from app.models.async_jobs import (
     AiJob,
     AiJobStatus,
@@ -16,7 +18,7 @@ from app.models.async_jobs import (
     OutboxEventStatus,
 )
 from app.models.users import Gender, User
-from app.repositories.async_job_repository import AsyncJobRepository
+from app.repositories.async_job_repository import AsyncJobRepository, is_async_idempotency_scope_conflict
 from app.tests.conftest import test_engine
 
 
@@ -200,3 +202,71 @@ async def test_get_interim_domain_reference_returns_none_when_no_attempt_has_dom
     reference = await AsyncJobRepository(db_session).get_interim_domain_reference(job=job)
 
     assert reference is None
+
+
+async def test_async_idempotency_scope_rejects_same_hmac_version_and_digest(
+    db_session: AsyncSession,
+) -> None:
+    user = await _create_user(db_session)
+    repository = AsyncJobRepository(db_session)
+    first_job = await _create_job(db_session, user=user)
+    second_job = await _create_job(db_session, user=user)
+
+    await repository.create_async_idempotency_record(
+        user_id=user.id,
+        operation_id="ocr.create",
+        key_hmac_version="v1",
+        key_hmac="digest",
+        request_hash="request-fingerprint",
+        job_id=first_job.id,
+    )
+
+    with pytest.raises(IntegrityError) as exc_info:
+        await repository.create_async_idempotency_record(
+            user_id=user.id,
+            operation_id="ocr.create",
+            key_hmac_version="v1",
+            key_hmac="digest",
+            request_hash="different-request-fingerprint",
+            job_id=second_job.id,
+        )
+
+    assert is_async_idempotency_scope_conflict(exc_info.value)
+
+
+async def test_async_idempotency_scope_allows_same_digest_with_different_hmac_version(
+    db_session: AsyncSession,
+) -> None:
+    user = await _create_user(db_session)
+    repository = AsyncJobRepository(db_session)
+    first_job = await _create_job(db_session, user=user)
+    second_job = await _create_job(db_session, user=user)
+
+    await repository.create_async_idempotency_record(
+        user_id=user.id,
+        operation_id="ocr.create",
+        key_hmac_version="v1",
+        key_hmac="digest",
+        request_hash="request-fingerprint",
+        job_id=first_job.id,
+    )
+    await repository.create_async_idempotency_record(
+        user_id=user.id,
+        operation_id="ocr.create",
+        key_hmac_version="v2",
+        key_hmac="digest",
+        request_hash="request-fingerprint",
+        job_id=second_job.id,
+    )
+
+    found = await repository.find_async_idempotency_record(
+        user_id=user.id,
+        operation_id="ocr.create",
+        key_hmac_candidates=(
+            IdempotencyHmacDigest(key_hmac_version="v2", key_hmac="digest"),
+            IdempotencyHmacDigest(key_hmac_version="v1", key_hmac="digest"),
+        ),
+    )
+
+    assert found is not None
+    assert found.key_hmac_version in {"v1", "v2"}
