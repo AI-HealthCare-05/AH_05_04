@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.models.track_c import SupportCode
+from app.models.track_c import SupportActionPlan, SupportCode
 from app.services import track_c_handler_config as handler_config
 from app.services.track_c_handler_config import (
     ACTIVE_COPY_VERSION,
@@ -63,7 +63,40 @@ def test_active_rule_and_copy_catalog_are_complete_and_linked() -> None:
     assert catalog.locale == "ko-KR"
     assert set(config.supports) == set(SupportCode)
     assert set(catalog.supports) == set(SupportCode)
+    assert len(catalog.questions) == 12
     assert {rule.copy_version for rule in config.supports.values()} == {catalog.copy_version}
+
+
+def test_historical_question_snapshot_is_validated_by_its_copy_catalog() -> None:
+    config = load_active_handler_config()
+    catalog = load_active_support_copy_catalog()
+    support_code = SupportCode.INSTRUCTION_REVIEW
+    snapshot = config.snapshot(support_code)
+    snapshot["parameters"].update(
+        {
+            "subreason_code": "DOSE_AMOUNT_UNCLEAR",
+            "selected_question_ids": ["INSTRUCTION_AMOUNT"],
+            "selected_questions": [
+                {
+                    "question_id": "INSTRUCTION_AMOUNT",
+                    "text": catalog.questions["INSTRUCTION_AMOUNT"].text,
+                }
+            ],
+        }
+    )
+    plan = SupportActionPlan(
+        support_code=support_code,
+        rule_version=config.rule_version,
+        copy_version=catalog.copy_version,
+        action_config_snapshot=snapshot,
+    )
+
+    assert config.restore(plan, copy_catalog=catalog) == snapshot
+    with pytest.raises(HandlerConfigError, match="question catalog required"):
+        config.restore(plan)
+    plan.action_config_snapshot["parameters"]["selected_questions"][0]["text"] = "changed active copy"
+    with pytest.raises(HandlerConfigError, match="does not match copy version"):
+        config.restore(plan, copy_catalog=catalog)
 
 
 @pytest.mark.parametrize(

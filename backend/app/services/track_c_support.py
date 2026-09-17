@@ -1,4 +1,4 @@
-"""Static, single-offer Track C support and explicitly confirmed Plan creation."""
+"""Static Track C support offers and explicitly confirmed Plan creation."""
 
 from asyncio import to_thread
 from datetime import UTC, datetime
@@ -22,6 +22,7 @@ from app.dtos.track_c_support import (
     SupportOfferResponse,
     SupportPlanResourcesData,
     SupportPlanResourcesResponse,
+    SupportQuestion,
     TravelSituation,
 )
 from app.models.medication_schedules import MedicationCheckin, MedicationCheckinStatus
@@ -45,8 +46,14 @@ from app.services.track_c_handler_config import (
     SupportCopyCatalog,
     SupportRule,
     load_active_support_assets,
-    load_historical_plan_copy,
+    load_historical_plan_assets,
     save_action_plan_snapshot,
+)
+from app.services.track_c_personalization import (
+    question_texts,
+    questions_for_support,
+    validate_questions,
+    validate_subreason,
 )
 
 SUPPORT_OFFER_GET_OPERATION_ID = "barrier-response.supports"
@@ -63,29 +70,19 @@ TRAVEL_SUPPORT_CODES: dict[TravelSituation, SupportCode] = {
 }
 
 
-def _is_schedule_or_travel_answer(barrier: BarrierResponse) -> bool:
-    return (
-        barrier.response_status == BarrierResponseStatus.ANSWERED
-        and barrier.barrier_code == BarrierCode.SCHEDULE_OR_TRAVEL
-    )
-
-
 def eligible_supports(
-    config: HandlerConfig,
-    barrier: BarrierResponse,
-    travel_situation: TravelSituation | None = None,
-    *,
-    require_travel_situation: bool = False,
+    config: HandlerConfig, barrier: BarrierResponse, travel_situation: TravelSituation | None = None
 ) -> list[SupportRule]:
-    """Filter by explicit travel situation before the stable single-offer ordering."""
-    if travel_situation is not None and not _is_schedule_or_travel_answer(barrier):
+    """Filter by explicit travel situation before the stable offer ordering."""
+    if travel_situation is not None and (
+        barrier.response_status != BarrierResponseStatus.ANSWERED
+        or barrier.barrier_code != BarrierCode.SCHEDULE_OR_TRAVEL
+    ):
         raise ApiError(
             status_code=422, code="VALIDATION_FAILED", message="일정 변경·외출 사유에서만 상황을 선택해 주세요."
         )
     selected = TRAVEL_SUPPORT_CODES[travel_situation] if travel_situation is not None else None
     if barrier.response_status != BarrierResponseStatus.ANSWERED:
-        return []
-    if require_travel_situation and _is_schedule_or_travel_answer(barrier) and selected is None:
         return []
     return sorted(
         (
@@ -94,7 +91,7 @@ def eligible_supports(
             if barrier.barrier_code in rule.barrier_codes and (selected is None or rule.support_code == selected)
         ),
         key=lambda rule: (rule.priority, rule.support_code.value),
-    )[:1]
+    )[:2]
 
 
 class TrackCSupportService:
@@ -161,7 +158,12 @@ class TrackCSupportService:
             ) from None
 
     async def get_supports(
-        self, *, user_id: UUID, barrier_id: UUID, travel_situation: TravelSituation | None = None
+        self,
+        *,
+        user_id: UUID,
+        barrier_id: UUID,
+        travel_situation: TravelSituation | None = None,
+        subreason_code: str | None = None,
     ) -> SupportOfferResponse:
         flow = await self._repository.get_support_flow_owned(barrier_id=barrier_id, user_id=user_id)
         if flow is None:
@@ -170,10 +172,30 @@ class TrackCSupportService:
             )
         barrier, medication_id, checkin, safety, latest_barrier_id = flow
         self._ensure_current_flow(barrier, checkin, safety, latest_barrier_id)
+        if barrier.barrier_code is None:
+            subreason_code = None
+        else:
+            try:
+                subreason_code = validate_subreason(barrier.barrier_code, subreason_code)
+            except ValueError:
+                raise ApiError(
+                    status_code=422, code="VALIDATION_FAILED", message="선택한 세부 이유를 확인해 주세요."
+                ) from None
+        if travel_situation is not None:
+            if subreason_code is not None and subreason_code != travel_situation:
+                raise ApiError(status_code=422, code="VALIDATION_FAILED", message="선택한 상황을 다시 확인해 주세요.")
+            subreason_code = travel_situation
         config, catalog = await self._load_config()
         supports = []
         for rule in eligible_supports(config, barrier, travel_situation):
             copy = catalog.supports[rule.support_code]
+            action_config = config.snapshot(
+                rule.support_code,
+                medication_id=medication_id if rule.support_code == SupportCode.REMINDER_SETUP else None,
+            )
+            action_config["parameters"]["subreason_code"] = subreason_code
+            action_config["parameters"]["selected_question_ids"] = []
+            action_config["parameters"]["selected_questions"] = []
             supports.append(
                 SupportOfferItem(
                     support_code=rule.support_code,
@@ -181,12 +203,7 @@ class TrackCSupportService:
                     copy_version=rule.copy_version,
                     priority=rule.priority,
                     rationale_code=rule.rationale_code,
-                    action_config=ActionConfigSnapshot.model_validate(
-                        config.snapshot(
-                            rule.support_code,
-                            medication_id=medication_id if rule.support_code == SupportCode.REMINDER_SETUP else None,
-                        )
-                    ),
+                    action_config=ActionConfigSnapshot.model_validate(action_config),
                     support_copy=SupportCopyData(
                         title=copy.title,
                         body=copy.body,
@@ -194,6 +211,10 @@ class TrackCSupportService:
                         primary_label=copy.primary_label,
                         secondary_label=copy.secondary_label,
                     ),
+                    questions=[
+                        SupportQuestion(question_id=item[0], text=item[1])
+                        for item in questions_for_support(catalog, rule.support_code, subreason_code)
+                    ],
                 )
             )
         return SupportOfferResponse(
@@ -202,6 +223,7 @@ class TrackCSupportService:
                 medication_checkin_id=barrier.medication_checkin_id,
                 checkin_revision=barrier.checkin_revision,
                 safety_assessment_id=barrier.safety_assessment_id,
+                subreason_code=subreason_code,
                 supports=supports,
                 reason_code=None if supports else "NO_ELIGIBLE_SUPPORT",
             )
@@ -215,21 +237,41 @@ class TrackCSupportService:
 
         async def mutate() -> dict[str, Any]:
             barrier, _ = await self._owned_parent(barrier_id=request.barrier_response_id, user_id=user_id)
-            config, _ = await self._load_config()
+            config, catalog = await self._load_config()
             await self._lock_current_flow(barrier=barrier, user_id=user_id)
-            offered = eligible_supports(config, barrier, request.travel_situation, require_travel_situation=True)
+            offered = eligible_supports(config, barrier, request.travel_situation)
+            try:
+                selected_rule = next(item for item in offered if item.support_code == request.support_code)
+            except StopIteration:
+                selected_rule = None
             if request.rule_version != config.rule_version or (
-                offered and request.copy_version != offered[0].copy_version
+                selected_rule is not None and request.copy_version != selected_rule.copy_version
             ):
                 raise ApiError(
                     status_code=409,
                     code="SUPPORT_VERSION_CONFLICT",
                     message="지원 안내가 변경되었습니다. 다시 확인해 주세요.",
                 )
-            if not offered or request.support_code != offered[0].support_code:
+            if selected_rule is None:
                 raise ApiError(
                     status_code=409, code="SUPPORT_NOT_OFFERED", message="현재 제안된 지원만 선택할 수 있습니다."
                 )
+            if barrier.barrier_code is None:
+                raise ApiError(
+                    status_code=409, code="SUPPORT_NOT_OFFERED", message="현재 제안된 지원만 선택할 수 있습니다."
+                )
+            try:
+                subreason_code = validate_subreason(barrier.barrier_code, request.subreason_code)
+                if request.travel_situation is not None and subreason_code not in (None, request.travel_situation):
+                    raise ValueError("travel situation and subreason do not match")
+                subreason_code = subreason_code or request.travel_situation
+                selected_question_ids = validate_questions(
+                    catalog, request.support_code, subreason_code, request.selected_question_ids
+                )
+            except ValueError:
+                raise ApiError(
+                    status_code=422, code="VALIDATION_FAILED", message="세부 이유나 상담 질문을 확인해 주세요."
+                ) from None
             active = await self._repository.get_active_plan_for_update(barrier_id=barrier.id)
             if active is not None:
                 raise ApiError(
@@ -241,6 +283,9 @@ class TrackCSupportService:
                 barrier_id=barrier.id,
                 support_code=request.support_code,
                 config=config,
+                copy_catalog=catalog,
+                subreason_code=subreason_code,
+                selected_question_ids=selected_question_ids,
             )
             return self._plan_response(plan).model_dump(mode="json")
 
@@ -290,8 +335,36 @@ class TrackCSupportService:
             raise self._plan_not_found()
         plan, barrier_code, occurrence_id, occurrence_date, medication_id = row
         try:
-            copy = await to_thread(load_historical_plan_copy, plan)
+            copy, catalog = await to_thread(load_historical_plan_assets, plan)
         except HandlerConfigError:
+            raise ApiError(
+                status_code=503, code="SUPPORT_CONFIG_UNAVAILABLE", message="저장된 계획 안내를 불러올 수 없습니다."
+            ) from None
+        parameters = plan.action_config_snapshot.get("parameters", {})
+        selected_ids = parameters.get("selected_question_ids", []) if isinstance(parameters, dict) else []
+        selected_questions = parameters.get("selected_questions", []) if isinstance(parameters, dict) else []
+        subreason_code = parameters.get("subreason_code") if isinstance(parameters, dict) else None
+        try:
+            if not isinstance(selected_ids, list) or not all(isinstance(item, str) for item in selected_ids):
+                raise HandlerConfigError("invalid historical question selection")
+            if not isinstance(selected_questions, list) or not (
+                subreason_code is None or isinstance(subreason_code, str)
+            ):
+                raise HandlerConfigError("invalid historical personalization")
+            restored_questions = (
+                [SupportQuestion.model_validate(item) for item in selected_questions]
+                if selected_questions
+                else [
+                    SupportQuestion(question_id=item[0], text=item[1]) for item in question_texts(catalog, selected_ids)
+                ]
+            )
+            catalog.validate_question_snapshot(
+                plan.support_code,
+                subreason_code if isinstance(subreason_code, str) else None,
+                selected_ids,
+                [item.model_dump() for item in restored_questions],
+            )
+        except (HandlerConfigError, TypeError, ValueError):
             raise ApiError(
                 status_code=503, code="SUPPORT_CONFIG_UNAVAILABLE", message="저장된 계획 안내를 불러올 수 없습니다."
             ) from None
@@ -309,6 +382,8 @@ class TrackCSupportService:
                     primary_label=copy.primary_label,
                     secondary_label=copy.secondary_label,
                 ),
+                subreason_code=subreason_code if isinstance(subreason_code, str) else None,
+                selected_questions=restored_questions,
             )
         )
 

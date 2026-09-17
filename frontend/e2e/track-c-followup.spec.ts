@@ -20,7 +20,7 @@ for (const width of [320, 390, 412]) {
         }
         data = saved
       } else if (path.endsWith('/resources')) {
-        data = { support_action_plan_id: planId, barrier_code: 'SCHEDULE_OR_TRAVEL', occurrence_id: planId, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: { body: '다음 외출을 위해 준비하는 계획이에요.' } }
+        data = { support_action_plan_id: planId, barrier_code: 'SCHEDULE_OR_TRAVEL', occurrence_id: planId, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: { body: '다음 외출을 위해 준비하는 계획이에요.' }, subreason_code: null, selected_questions: [] }
       } else {
         expect(request.method()).toBe('GET')
         data = { support_action_plan_id: planId, support_code: 'ROUTINE_OR_TRAVEL_PLAN', copy_version: 'track-c-support-copy-ko-2026-09-16.1', action_config_snapshot: { parameters: { content_key: 'ROUTINE_OR_TRAVEL_PLAN' } }, status: 'COMPLETED' }

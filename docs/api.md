@@ -873,7 +873,7 @@ MEDICATION_NOT_WITH_ME다. 일정 변경·외출에만 허용하고 각각 일�
 [계획별 자료 계약](contracts/current/track-c-plan-resources-194.md)은 PR #639에서 Current로 정렬하며, 최종 리뷰·병합 대기다.
 약별 Citation 또는 임상 Safety 정책의 구현 완료가 아니다.
 
-## #633 Guide·Chat 피드백 — Local 구현, 책임 리뷰 대기
+## #633 Guide·Chat 피드백 — Local 구현 병합, 제품/운영 기준 확인 중
 
 [계약](contracts/proposed/guide-chat-feedback-v1.md)과 [PD-633](governance/decisions/2026-09-16-guide-chat-feedback-633.md)을 따른다.
 `POST /api/v1/guides/{guide_id}/feedback`,

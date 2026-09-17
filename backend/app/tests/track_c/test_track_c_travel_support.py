@@ -70,14 +70,14 @@ async def test_travel_choice_rejected_for_other_barriers(case: ApiCase, barrier_
     assert await case.session.scalar(select(func.count()).select_from(SupportActionPlan)) == 0
 
 
-async def test_cannot_adopt_different_support_or_omit_packing_choice(case: ApiCase) -> None:
+async def test_general_offer_allows_second_support_but_conflicting_travel_is_rejected(case: ApiCase) -> None:
     barrier_id = await prepare(case, "SCHEDULE_OR_TRAVEL")
     support = (await offers(case, barrier_id, "MEDICATION_NOT_WITH_ME")).json()["data"]["supports"][0]
     body = plan_body(barrier_id, support)
-    assert_error(await create(case, body), 409, "SUPPORT_NOT_OFFERED")
     assert_error(await create(case, {**body, "travel_situation": "SCHEDULE_CHANGED"}), 409, "SUPPORT_NOT_OFFERED")
     assert_error(await create(case, {**body, "travel_situation": "invented"}), 422, "VALIDATION_FAILED")
     assert_error(await offers(case, barrier_id, "invented"), 422, "VALIDATION_FAILED")
+    assert (await create(case, body)).status_code == 200
 
 
 async def test_travel_choice_cannot_bypass_ownership_or_stale_safety(case: ApiCase) -> None:
@@ -107,18 +107,17 @@ def test_openapi_documents_optional_choice_for_get_and_create_only() -> None:
     assert "travel_situation" not in schema["components"]["schemas"]["PatchSupportActionPlanRequest"]["properties"]
 
 
-@pytest.mark.parametrize("situation", ["SCHEDULE_CHANGED", "MEDICATION_NOT_WITH_ME"])
-@pytest.mark.parametrize("omitted", [True, False])
-async def test_schedule_or_travel_plan_creation_requires_selected_situation(
-    case: ApiCase, situation: str, omitted: bool
-) -> None:
+async def test_omitted_and_null_choice_keep_legacy_idempotency_fingerprint(case: ApiCase) -> None:
     barrier_id = await prepare(case, "SCHEDULE_OR_TRAVEL")
-    support = (await offers(case, barrier_id, situation)).json()["data"]["supports"][0]
+    response = await case.client.get(f"/api/v1/barrier-responses/{barrier_id}/supports")
+    support = response.json()["data"]["supports"][0]
+    assert support["support_code"] == "REMINDER_SETUP"
     body = plan_body(barrier_id, support)
-    if not omitted:
-        body["travel_situation"] = None
-    assert_error(await create(case, body), 409, "SUPPORT_NOT_OFFERED")
-    assert await case.session.scalar(select(func.count()).select_from(SupportActionPlan)) == 0
+    created = await create(case, body)
+    assert created.status_code == 200, created.text
+    replayed = await create(case, {**body, "travel_situation": None})
+    assert replayed.status_code == 200, replayed.text
+    assert replayed.json() == created.json()
 
 
 def test_travel_support_mapping_covers_every_situation() -> None:
