@@ -261,6 +261,7 @@ Production/Public activation
 - `ProductionSearchHit`에는 `SensitiveText content_text`가 없으므로 content hydration, KnowledgeChunk reader, chunk text lookup, `SensitiveText` 생성을 수행하지 않는다. `AuthenticatedGuideRetrievalSelection`은 `hit` + `binding`까지만 보존한다.
 - downstream Handoff는 `content_text`, `eligibility_receipt_ref`, `assessment_artifact_ref`, `verifier_artifact_ref`, `assessment_valid_from/until` 권위를 추가로 요구하므로 본 계약은 거기까지 연결하지 않는다.
 - `GuideEvidenceAuthorityReaderPort`의 production DB 구현은 본 계약 범위가 아니다.
+- 후속 content hydration은 [`knowledge-chunk-content-hydration-v1`](./knowledge-chunk-content-hydration-v1.md)(#711)가 별도 read-only 경계로 규정한다. 본 계약의 산출물은 여전히 `AuthenticatedGuideRetrievalSelection[]`에서 멈춘다.
 - provisional `evidence_gate.py` 및 `EvidenceGateRetrievalReceipt`를 사용하지 않는다.
 
 본 계약은 `docs/contracts/current/`로 승격하지 않는다. 승격은 구현·자동 테스트·실행 증빙 및 지정 책임 리뷰어 승인을 갖춘 별도 PR에서만 수행하며, 본 계약 정렬은 #180 runtime authority 활성화나 Production/Public 전환을 의미하지 않는다.
