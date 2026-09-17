@@ -36,6 +36,15 @@ async function login(page: Page) {
   await expect(page.getByText('오늘도 건강한 하루 되세요')).toBeVisible()
 }
 
+function kstDateAfter(days: number): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(Date.now() + days * 24 * 60 * 60 * 1000))
+}
+
 test('[REAL-STACK][Notification #421] unread/read handoff preserves historical identity without Check-in mutation', async ({ page }) => {
   test.skip(!seededEmail || !seededPassword, 'requires the isolated synthetic Notification seed')
 
@@ -208,4 +217,30 @@ test('[REAL-STACK][Notification #421] unread/read handoff preserves historical i
   expect(readPatchCount - readPatchCountBeforeAlreadyRead).toBe(0)
   expect(currentPrescriptionGetCount).toBe(0)
   expect(checkinMutationCount).toBe(0)
+})
+
+test('[REAL-STACK][Schedule #699] full save exits editor and immediately renders generated occurrence', async ({ page }) => {
+  test.skip(!seededEmail || !seededPassword, 'requires the isolated synthetic Notification seed')
+
+  const targetDate = kstDateAfter(2)
+  await login(page)
+  await page.goto(`/schedule?date=${targetDate}`)
+  await page.getByRole('button', { name: '일정 설정하기' }).click()
+  await expect(page.getByRole('heading', { name: '합성 현재 처방약' })).toBeVisible()
+
+  await page.getByRole('radio', { name: '계속 복용' }).click()
+  await page.getByLabel('합성 현재 처방약 복용 시작일').fill(targetDate)
+  await page.getByLabel('합성 현재 처방약 1번째 복용 시간').fill('09:00')
+
+  const putResponse = page.waitForResponse((response) =>
+    response.request().method() === 'PUT' &&
+    /\/api\/v1\/prescription-version-medications\/[0-9a-f-]+\/schedule$/i.test(new URL(response.url()).pathname),
+  )
+  await page.getByRole('button', { name: '복약 일정 저장하기' }).click()
+  expect((await putResponse).status()).toBe(200)
+
+  await expect(page.getByRole('heading', { name: '오늘의 복약' })).toBeVisible()
+  await expect(page.getByText('합성 현재 처방약', { exact: false })).toBeVisible()
+  await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(1)
+  await expect(page.getByRole('heading', { name: '복용할 날짜와 시간을 확인해 주세요' })).toHaveCount(0)
 })
