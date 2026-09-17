@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -57,11 +58,46 @@ def test_credentials_and_admin_process_are_separated() -> None:
     assert not any("KNOWLEDGE_INDEX_BUILDER" in key for key in worker["environment"])
 
 
-def test_account_deletion_request_runtime_role_is_append_only() -> None:
-    from infra.python.provision_database_roles import RUNTIME_APPEND_ONLY_TABLES, RUNTIME_MUTABLE_TABLES
+def test_account_deletion_request_runtime_role_updates_only_lifecycle_columns() -> None:
+    from infra.python.provision_database_roles import (
+        RUNTIME_ACCOUNT_DELETION_REQUEST_UPDATE_COLUMNS,
+        RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES,
+        RUNTIME_APPEND_ONLY_TABLES,
+        RUNTIME_MUTABLE_TABLES,
+    )
 
-    assert "account_deletion_request" in RUNTIME_APPEND_ONLY_TABLES
+    assert "account_deletion_request" not in RUNTIME_APPEND_ONLY_TABLES
     assert "account_deletion_request" not in RUNTIME_MUTABLE_TABLES
+    assert set(RUNTIME_ACCOUNT_DELETION_REQUEST_UPDATE_COLUMNS) == {
+        "status",
+        "started_at",
+        "completed_at",
+        "failed_at",
+        "retry_count",
+        "last_error_code",
+        "updated_at",
+    }
+    assert RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES == {
+        "action_plan_followup",
+        "action_plan_followup_audit",
+        "barrier_response",
+        "medication_candidate_search_result",
+        "notification_record",
+        "password_reset_token",
+        "refresh_session",
+        "retrieval_run",
+        "safety_assessment",
+        "support_action_plan",
+        "user_consent",
+    }
+    assert "account_deletion_request" not in RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES
+
+    source = (ROOT / "infra/python/provision_database_roles.py").read_text()
+    assert "GRANT SELECT, INSERT ON TABLE public.account_deletion_request" in source
+    assert "GRANT UPDATE ({names}) ON TABLE public.account_deletion_request" in source
+    assert "GRANT SELECT, INSERT, UPDATE ON TABLE public.account_deletion_request" not in source
+    assert re.search(r"GRANT[^\n]*DELETE[^\n]*account_deletion_request", source) is None
+    assert "GRANT TRUNCATE ON TABLE public.account_deletion_request" not in source
 
 
 def test_retrieval_run_tables_runtime_role_privileges_are_least_privilege() -> None:

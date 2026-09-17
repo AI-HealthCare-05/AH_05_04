@@ -32,6 +32,8 @@ from app.repositories.rag_source_catalog_repository import (
 )
 from app.services.rag_runtime import RagRuntimeEnvironmentTransitionService
 from infra.python.provision_database_roles import (
+    RUNTIME_ACCOUNT_DELETION_REQUEST_UPDATE_COLUMNS,
+    RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES,
     RUNTIME_APPEND_ONLY_TABLES,
     RUNTIME_AUTH_UPDATE_COLUMNS,
     RUNTIME_CHECKIN_LOCK_TABLES,
@@ -53,8 +55,8 @@ _APPEND_ONLY_PRIVILEGES = {
     "DELETE": False,
     "TRUNCATE": False,
 }
-# #178/#689: retrieval_run만 실행 lifecycle 때문에 UPDATE를 유지한다.
-_RETRIEVAL_RUN_PRIVILEGES = {**_APPEND_ONLY_PRIVILEGES, "UPDATE": True}
+# #178/#689: retrieval_run lifecycle needs UPDATE; #748 withdrawal cleanup needs DELETE.
+_RETRIEVAL_RUN_PRIVILEGES = {**_APPEND_ONLY_PRIVILEGES, "UPDATE": True, "DELETE": True}
 
 
 async def _assert_runtime_table_privileges(admin, runtime: str, expected: dict[str, dict[str, bool]]) -> None:
@@ -69,6 +71,22 @@ async def _assert_runtime_table_privileges(admin, runtime: str, expected: dict[s
                 for privilege in privileges
             }
             assert observed == privileges, table
+
+
+async def _assert_account_withdrawal_cleanup_delete_privileges(connection, runtime: str) -> None:
+    for table in sorted(RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES):
+        assert await connection.scalar(
+            text("SELECT has_table_privilege(:role, :table, 'SELECT')"),
+            {"role": runtime, "table": table},
+        ), table
+        assert await connection.scalar(
+            text("SELECT has_table_privilege(:role, :table, 'DELETE')"),
+            {"role": runtime, "table": table},
+        ), table
+        assert not await connection.scalar(
+            text("SELECT has_table_privilege(:role, :table, 'TRUNCATE')"),
+            {"role": runtime, "table": table},
+        ), table
 
 
 async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions() -> None:
@@ -151,10 +169,12 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 | CATALOG_TABLES
                 | set(SOURCE_TABLES)
                 | set(RUNTIME_AUTH_UPDATE_COLUMNS)
-                | {"notification_record", "user_consent"}
+                | RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES
+                | {"account_deletion_request", "notification_record", "user_consent"}
             ):
                 await connection.execute(text(f'CREATE TABLE "{table}" (id integer PRIMARY KEY)'))
             await _add_checkin_lock_fixture_columns(connection)
+            await _add_account_deletion_request_fixture_columns(connection)
             await connection.execute(
                 text(
                     "ALTER TABLE rag_source_ingestion_run ADD COLUMN snapshot_id integer, ADD COLUMN run_status text, ADD COLUMN failure_code text, ADD COLUMN failure_message text, ADD COLUMN duration_ms integer, ADD COLUMN finished_at timestamptz, ADD COLUMN attempted_source_version text"
@@ -200,7 +220,9 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             await connection.execute(text("INSERT INTO checkin_audit VALUES (1)"))
             await connection.execute(text("INSERT INTO medication_schedule_audit VALUES (1)"))
             await connection.execute(text("INSERT INTO prescription_version VALUES (1)"))
-            await connection.execute(text("INSERT INTO account_deletion_request VALUES (1)"))
+            await connection.execute(text("INSERT INTO account_deletion_request (id) VALUES (1)"))
+            await connection.execute(text("SELECT * FROM account_deletion_request FOR UPDATE"))
+            await connection.execute(text("UPDATE account_deletion_request SET status='IN_PROGRESS'"))
             await connection.execute(text("INSERT INTO push_subscription VALUES (1)"))
             await connection.execute(text("INSERT INTO push_delivery VALUES (1)"))
             await connection.execute(text("INSERT INTO lifestyle_times VALUES (1)"))
@@ -235,6 +257,9 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             (reader, "TRUNCATE checkin_audit"),
             (reader, "UPDATE prescription_version SET id=2"),
             (reader, "UPDATE account_deletion_request SET id=2"),
+            (reader, "UPDATE account_deletion_request SET user_id=2"),
+            (reader, "UPDATE account_deletion_request SET requested_at=now()"),
+            (reader, "UPDATE account_deletion_request SET created_at=now()"),
             (reader, "DELETE FROM account_deletion_request"),
             (reader, "TRUNCATE account_deletion_request"),
             (reader, "INSERT INTO rag_source_snapshot (id) VALUES (3)"),
@@ -262,6 +287,32 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 "ai_job_intake_context": _APPEND_ONLY_PRIVILEGES,
             },
         )
+        async with admin.connect() as connection:
+            account_deletion_request_columns = (
+                "id",
+                "user_id",
+                "status",
+                "requested_at",
+                "started_at",
+                "completed_at",
+                "failed_at",
+                "retry_count",
+                "last_error_code",
+                "created_at",
+                "updated_at",
+            )
+            observed = {
+                column: await connection.scalar(
+                    text("SELECT has_column_privilege(:role, 'account_deletion_request', :column, 'UPDATE')"),
+                    {"role": runtime, "column": column},
+                )
+                for column in account_deletion_request_columns
+            }
+            assert observed == {
+                column: column in RUNTIME_ACCOUNT_DELETION_REQUEST_UPDATE_COLUMNS
+                for column in account_deletion_request_columns
+            }
+            await _assert_account_withdrawal_cleanup_delete_privileges(connection, runtime)
         # #731: authority 표가 빠진 schema에서는 provisioning이 fail closed여야 한다.
         async with admin.begin() as connection:
             await connection.execute(text("DROP TABLE rag_request_member_decision"))
@@ -978,6 +1029,23 @@ async def _add_auth_fixture_columns(connection):
             await connection.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{name}" text'))
 
 
+async def _add_account_deletion_request_fixture_columns(connection):
+    columns = {
+        "user_id": "uuid",
+        "status": ("varchar(32) CHECK (status IN ('REQUESTED', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED'))"),
+        "requested_at": "timestamptz",
+        "started_at": "timestamptz",
+        "completed_at": "timestamptz",
+        "failed_at": "timestamptz",
+        "retry_count": "integer CHECK (retry_count >= 0)",
+        "last_error_code": "varchar(128)",
+        "created_at": "timestamptz",
+        "updated_at": "timestamptz",
+    }
+    for name, column_type in columns.items():
+        await connection.execute(text(f"ALTER TABLE account_deletion_request ADD COLUMN {name} {column_type}"))
+
+
 async def _exercise_preflight_context_runtime_permissions(reader, producer):
     from app.tests.rag.test_ai_job_preflight_context_repository import persist_and_verify_chat_context
 
@@ -1392,8 +1460,10 @@ async def _exercise_retrieval_run_runtime_permissions(reader, producer, admin) -
             )
     assert error.value.orig.sqlstate == "42501"
 
-    # 7: direct DELETE rejected on all 3 tables
-    for table in ("retrieval_run", "retrieval_signal", "retrieval_hit"):
+    # 7: withdrawal cleanup can delete retrieval_run directly; child evidence remains protected.
+    async with reader.begin() as conn:
+        await conn.execute(text("DELETE FROM retrieval_run WHERE false"))
+    for table in ("retrieval_signal", "retrieval_hit"):
         with pytest.raises(DBAPIError) as error:
             async with reader.begin() as conn:
                 await conn.execute(text(f"DELETE FROM {table} WHERE false"))
