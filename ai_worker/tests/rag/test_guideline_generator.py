@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime
+from uuid import UUID
 
 import pytest
 
-from ai_worker.tasks.rag.evidence_gate import (
-    EvidenceGateExecutionStatus,
-    EvidenceGateOutcome,
-    EvidenceGateReason,
-    EvidenceStatus,
-)
 from ai_worker.tasks.rag.evidence_retrieval import (
     ImmutableArtifactRef,
     SensitiveText,
@@ -30,6 +26,10 @@ from ai_worker.tasks.rag.guideline_generator import (
     GuidelineGenerationRequest,
     GuidelineGenerationResult,
     GuidelineGeneratorPort,
+)
+from ai_worker.tasks.rag.guideline_production_evidence import (
+    ProductionGuidelineEvidence,
+    ProductionGuidelineEvidenceSet,
 )
 
 
@@ -61,10 +61,25 @@ def make_synthetic_request() -> GuidelineGenerationRequest:
         code_system="SYNTHETIC_CODE_SYSTEM",
         canonical_code="SYNTHETIC-CODE-001",
     )
-    evidence_gate_outcome = EvidenceGateOutcome(
-        execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
-        evidence_status=EvidenceStatus.SUFFICIENT,
-        reason=EvidenceGateReason.EVIDENCE_SUFFICIENT,
+    evidence = ProductionGuidelineEvidenceSet(
+        evaluated_at=datetime(2026, 9, 10, 3, 0, tzinfo=UTC),
+        handoff_sha256="e" * 64,
+        selections=(
+            ProductionGuidelineEvidence(
+                evidence_key="synthetic-evidence-001",
+                source_snapshot_id=UUID("33333333-3333-4333-8333-333333333333"),
+                source_snapshot_member_id=UUID("44444444-4444-4444-8444-444444444444"),
+                source_code="SYNTHETIC_SOURCE",
+                source_version="synthetic-source-v1",
+                locator="$.synthetic.locator",
+                content_sha256="4" * 64,
+                content_text=SensitiveText("합성 근거 본문입니다."),
+                retrieval_receipt_ref=ImmutableArtifactRef("retrieval-receipt", "v1", "5" * 64),
+                eligibility_receipt_ref=ImmutableArtifactRef("eligibility-receipt", "v1", "6" * 64),
+                assessment_artifact_ref=ImmutableArtifactRef("assessment", "v1", "7" * 64),
+                verifier_artifact_ref=ImmutableArtifactRef("assessment-verifier", "v1", "8" * 64),
+            ),
+        ),
     )
     policy = VersionedGuidelinePolicy(
         artifact_ref=ImmutableArtifactRef(
@@ -78,7 +93,7 @@ def make_synthetic_request() -> GuidelineGenerationRequest:
     )
     return GuidelineGenerationRequest(
         medication_identities=(medication_identity,),
-        evidence_gate_outcome=evidence_gate_outcome,
+        evidence=evidence,
         policy=policy,
     )
 
@@ -99,11 +114,9 @@ def make_synthetic_draft() -> GuidelineCardDraft:
                 citations=(
                     GuidelineCitationDraft(
                         evidence_key="synthetic-evidence-001",
-                        source_snapshot_ref=ImmutableArtifactRef(
-                            artifact_code="synthetic-source-snapshot",
-                            version="snapshot@v1",
-                            content_sha256="3" * 64,
-                        ),
+                        source_snapshot_id=UUID("33333333-3333-4333-8333-333333333333"),
+                        source_snapshot_member_id=UUID("44444444-4444-4444-8444-444444444444"),
+                        source_code="SYNTHETIC_SOURCE",
                         source_version="synthetic-source-v1",
                         locator="$.synthetic.locator",
                         content_sha256="4" * 64,
@@ -138,7 +151,7 @@ async def test_generator_success_path() -> None:
     assert result is expected_draft
     assert generator.last_request is not None
     assert generator.last_request.medication_identities == request.medication_identities
-    assert generator.last_request.evidence_gate_outcome == request.evidence_gate_outcome
+    assert generator.last_request.evidence == request.evidence
     assert generator.last_request.policy == request.policy
 
 
@@ -158,5 +171,5 @@ async def test_generator_preserves_typed_failure(
     assert isinstance(result, GuidelineGenerationFailure)
     assert generator.last_request is not None
     assert generator.last_request.medication_identities == request.medication_identities
-    assert generator.last_request.evidence_gate_outcome == request.evidence_gate_outcome
+    assert generator.last_request.evidence == request.evidence
     assert generator.last_request.policy == request.policy
