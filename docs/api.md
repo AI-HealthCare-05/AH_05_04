@@ -361,6 +361,9 @@ Track B·C 쓰기 API는 [멱등성 계약](./contracts/targets/post-mvp-1/idemp
 정정은 현재 revision과 새 키를 사용한다. 같은 키·같은 지문은 최초 응답을 재현한다.
 `reason_code`는 거부한다. 사용자 `UNCONFIRMED` 제출은
 `422 CHECKIN_STATUS_NOT_USER_SETTABLE`, 다른 입력 오류는 `422 VALIDATION_FAILED`다.
+서버 현재시각이 occurrence의 `scheduled_at`보다 이르면 기록을 저장하지 않고
+`422 VALIDATION_FAILED`와 `details.reason=CHECKIN_BEFORE_SCHEDULED_AT`를 반환한다.
+정확히 `scheduled_at`에 도달한 순간부터는 다른 조건을 충족하는 경우 기록할 수 있다.
 없는 ID와 타 사용자 ID는 동일한 `404 MEDICATION_OCCURRENCE_NOT_FOUND`로 숨긴다.
 `409 CHECKIN_REVISION_CONFLICT`, `OCCURRENCE_CANCELLED`, `IDEMPOTENCY_KEY_CONFLICT`와
 snapshot cap 오류 `503 IDEMPOTENCY_RESPONSE_TOO_LARGE`는 공통 오류 형식을 사용한다.

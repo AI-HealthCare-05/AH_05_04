@@ -46,7 +46,7 @@ class ApiCase:
 async def case(db_session: AsyncSession) -> AsyncIterator[ApiCase]:
     owner, profile = await _create_user_with_self_profile(db_session, label="api-owner")
     occurrence = await _create_occurrence(
-        db_session, owner=owner, profile=profile, deadline_at=datetime(2026, 9, 10, 4, tzinfo=UTC)
+        db_session, owner=owner, profile=profile, deadline_at=datetime(2000, 1, 1, 4, tzinfo=UTC)
     )
     await db_session.commit()
     authenticated_user = SimpleNamespace(id=owner.id)
@@ -108,7 +108,7 @@ async def test_same_key_changed_request_and_new_key_stale_revision(case: ApiCase
 @pytest.mark.parametrize("status", ["TAKEN", "NOT_TAKEN"])
 async def test_scheduler_unconfirmed_can_be_corrected(case: ApiCase, status: str) -> None:
     await MedicationCheckinDeadlineScheduler(MedicationCheckinRepository(case.session)).generate_unconfirmed(
-        now=datetime(2026, 9, 10, 4, tzinfo=UTC)
+        now=datetime(2000, 1, 1, 4, tzinfo=UTC)
     )
     await case.session.commit()
     response = await case.put({"status": status, "expected_revision": 1})
@@ -151,6 +151,32 @@ async def test_utc_normalization_and_equivalent_replay(case: ApiCase) -> None:
     body["taken_at"] = "2026-09-10T03:00:00Z"
     replay = await case.put(body)
     assert replay.status_code == 200 and replay.json() == first.json()
+
+
+async def test_future_occurrence_checkin_is_rejected_without_side_effect(case: ApiCase) -> None:
+    case.occurrence.scheduled_at = datetime(2100, 1, 1, 9, tzinfo=UTC)
+    case.occurrence.confirmation_deadline_at = datetime(2100, 1, 1, 13, tzinfo=UTC)
+    await case.session.commit()
+
+    response = await case.put({"status": "TAKEN", "expected_revision": 0})
+
+    assert_error(response, 422, "VALIDATION_FAILED")
+    assert response.json()["details"] == [
+        {"field": "occurrence_id", "reason": "CHECKIN_BEFORE_SCHEDULED_AT", "rejected_value": None}
+    ]
+    await case.session.refresh(case.occurrence)
+    assert case.occurrence.status == MedicationOccurrenceStatus.PENDING
+    assert await case.session.scalar(select(func.count()).select_from(MedicationCheckin)) == 0
+    assert await case.session.scalar(select(func.count()).select_from(IdempotencyRecord)) == 0
+
+    case.occurrence.scheduled_at = datetime(2000, 1, 1, 0, tzinfo=UTC)
+    case.occurrence.confirmation_deadline_at = datetime(2000, 1, 1, 4, tzinfo=UTC)
+    await case.session.commit()
+
+    allowed = await case.put({"status": "TAKEN", "expected_revision": 0})
+    assert allowed.status_code == 200, allowed.text
+    assert await case.session.scalar(select(func.count()).select_from(MedicationCheckin)) == 1
+    assert await case.session.scalar(select(func.count()).select_from(IdempotencyRecord)) == 1
 
 
 async def test_cancelled_occurrence_is_not_mutated(case: ApiCase) -> None:
@@ -234,7 +260,7 @@ async def test_concurrent_same_key_first_requests_commit_one_checkin(monkeypatch
     async with AsyncSession(test_engine, expire_on_commit=False) as seed:
         owner, profile = await _create_user_with_self_profile(seed, label="concurrent-api")
         occurrence = await _create_occurrence(
-            seed, owner=owner, profile=profile, deadline_at=datetime(2026, 9, 10, 4, tzinfo=UTC)
+            seed, owner=owner, profile=profile, deadline_at=datetime(2000, 1, 1, 4, tzinfo=UTC)
         )
         prescription = await seed.scalar(select(Prescription).where(Prescription.profile_id == profile.id))
         assert prescription is not None
