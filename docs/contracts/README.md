@@ -56,7 +56,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 ## Proposed 계약
 
 - [Web Push v1 (#469/#651)](./proposed/web-push-v1.md): Backend Web Push 등록·전송·Production gate 계약. Proposed 상태이며 `WEB_PUSH_PRODUCTION_ENABLED` OFF 반영은 API/scheduler 전 인스턴스 재시작 완료 후 기준으로 해석한다. 실기기 수신 검증은 #471 범위.
-- [Guide·Chat 피드백 v1 (#633)](./proposed/guide-chat-feedback-v1.md): 완료 결과별 rating·선택 의견 저장 API, SELF 소유권·재제출·합성 Gold 연결 계약. Proposed / Local 구현 반영·최종 승인 대기, Frontend·Backend 확인과 사용자 운영안 채택 반영; 실사용 처리 승인·최종 책임 리뷰 별도.
+- [Guide·Chat 피드백 v1 (#633)](./proposed/guide-chat-feedback-v1.md): 완료 결과별 rating·선택 의견 저장 API, SELF 소유권·재제출·합성 Gold 연결 계약. Proposed / Local 구현 병합 완료·제품/운영 기준 확인 중; 실사용 처리 승인과 AI/RAG 평가 연결 책임 리뷰 별도.
 
 - [Track B 생활 시간 입력 v1 (#422 / #556)](./proposed/track-b-lifestyle-times-v1.md): 식사·반복 행동·복용 곤란 시간의 SELF별 요일 저장·조회 구현 후보. #556 책임 리뷰 전 Proposed; 추천·약별 조건 판정은 별도.
 
