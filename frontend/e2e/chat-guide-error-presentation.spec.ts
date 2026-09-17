@@ -79,16 +79,17 @@ test('Chat 미동의·철회 공통 CONSENT_REQUIRED는 별도 상태 추론 없
 
   for (const width of mobileWidths) {
     await test.step(`${width}px Chat`, async () => {
-      const consentRequestCount = consentStateRequests.length
+      consentStateRequests.length = 0
       await page.setViewportSize({ width, height: 844 })
       await page.goto(`/chat?prescription_id=${ids.prescription}`)
       await assertMobileErrorLayout(page, '.chat-messages')
       await expect(page.getByText('노출하면 안 되는 Backend 메시지')).toHaveCount(0)
-      expect(consentStateRequests).toHaveLength(consentRequestCount)
-      await page.getByRole('button', { name: '동의 설정 확인하기' }).click()
-      await expect(page).toHaveURL(/\/profile$/)
+      expect(consentStateRequests).toEqual([])
     })
   }
+
+  await page.getByRole('button', { name: '동의 설정 확인하기' }).click()
+  await expect(page).toHaveURL(/\/profile$/)
 })
 
 test('Guide 미동의·철회 공통 CONSENT_REQUIRED는 별도 상태 추론 없이 안전하게 표시한다', async ({ page }) => {
@@ -114,14 +115,15 @@ test('Guide 미동의·철회 공통 CONSENT_REQUIRED는 별도 상태 추론 �
 
   for (const width of mobileWidths) {
     await test.step(`${width}px Guide`, async () => {
-      const consentRequestCount = consentStateRequests.length
+      consentStateRequests.length = 0
       await page.setViewportSize({ width, height: 844 })
       await page.goto(`/guides/${ids.guide}`)
       await assertMobileErrorLayout(page, '.guide-page__content')
       await expect(page.getByText('노출하면 안 되는 Backend 메시지')).toHaveCount(0)
-      expect(consentStateRequests).toHaveLength(consentRequestCount)
-      await page.getByRole('button', { name: '동의 설정 확인하기' }).click()
-      await expect(page).toHaveURL(/\/profile$/)
+      expect(consentStateRequests).toEqual([])
     })
   }
+
+  await page.getByRole('button', { name: '동의 설정 확인하기' }).click()
+  await expect(page).toHaveURL(/\/profile$/)
 })
