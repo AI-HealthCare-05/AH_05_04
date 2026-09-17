@@ -891,6 +891,8 @@ export function SchedulePage({
         .sort((left, right) => left.scheduled_at.localeCompare(right.scheduled_at)),
     [day, selectedDate],
   )
+  const currentOccurrences = occurrences.filter((occurrence) => occurrence.status !== 'CANCELLED')
+  const cancelledOccurrences = occurrences.filter((occurrence) => occurrence.status === 'CANCELLED')
   const state = day ? statusContent(day.schedule_status) : null
 
   const openRelevantEditor = () => {
@@ -1042,11 +1044,11 @@ export function SchedulePage({
               <div className="schedule-page__section-heading">
                 <h2 id="occurrence-list-title">오늘의 복약</h2>
               </div>
-              {occurrences.length === 0 ? (
+              {currentOccurrences.length === 0 ? (
                 <Card className="schedule-page__empty">
                   <p>이 날짜에 표시할 복약 일정이 없어요.</p>
                 </Card>
-              ) : occurrences.map((occurrence) => {
+              ) : currentOccurrences.map((occurrence) => {
                 const medication = medications[occurrence.occurrence_id]
                 const route = `/schedule/occurrences/${occurrence.occurrence_id}?date=${encodeURIComponent(occurrence.scheduled_local_date)}`
                 return (
@@ -1078,6 +1080,25 @@ export function SchedulePage({
                   </article>
                 )
               })}
+              {cancelledOccurrences.length > 0 && (
+                <details className="schedule-page__cancelled-history" key={selectedDate}>
+                  <summary>취소된 일정 {cancelledOccurrences.length}건 보기</summary>
+                  <p>일정 변경 등으로 취소된 이력이에요. 현재 복용할 일정이 아니에요.</p>
+                  <ul>
+                    {cancelledOccurrences.map((occurrence) => {
+                      const medication = medications[occurrence.occurrence_id]
+                      return (
+                      <li key={occurrence.occurrence_id}>
+                        <span>{formatKstTime(occurrence.scheduled_at)} · 취소된 일정</span>
+                        <span>{medication
+                          ? medicationDescription(medication)
+                          : '약 정보를 확인할 수 없어요'}</span>
+                      </li>
+                      )
+                    })}
+                  </ul>
+                </details>
+              )}
             </section>
           )}
 
