@@ -31,6 +31,8 @@ from app.repositories.rag_source_catalog_repository import (
     RagSourceOperationCreate,
 )
 from app.services.rag_runtime import RagRuntimeEnvironmentTransitionService
+from infra.python.catalog_role_policy import CATALOG_WRITE_TABLES
+from infra.python.knowledge_index_role_policy import KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
 from infra.python.provision_database_roles import (
     RUNTIME_APPEND_ONLY_TABLES,
     RUNTIME_AUTH_UPDATE_COLUMNS,
@@ -148,7 +150,8 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 | RUNTIME_CHECKIN_LOCK_TABLES
                 | {"support_action_plan"}
                 | RUNTIME_RETRIEVAL_RUN_TABLES
-                | CATALOG_TABLES
+                | CATALOG_WRITE_TABLES
+                | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
                 | set(SOURCE_TABLES)
                 | set(RUNTIME_AUTH_UPDATE_COLUMNS)
                 | {"notification_record", "user_consent"}
@@ -1521,5 +1524,92 @@ async def test_retrieval_run_provisioned_runtime_role_lifecycle(database) -> Non
         await producer.dispose()
         async with admin.begin() as connection:
             for role in (runtime, writer):
+                await connection.execute(text(f'DROP OWNED BY "{role}"'))
+                await connection.execute(text(f'DROP ROLE IF EXISTS "{role}"'))
+
+
+async def test_runtime_catalog_and_knowledge_read_acl_parity_without_optional_roles(database) -> None:
+    """#779: Verify Runtime Catalog & Knowledge read ACL parity when optional roles are omitted."""
+    from infra.python.catalog_role_policy import CATALOG_WRITE_TABLES
+    from infra.python.knowledge_index_role_policy import KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
+    from infra.python.provision_database_roles import provision_roles
+
+    admin = database
+    suffix = uuid4().hex[:12]
+    runtime, writer, unrelated = (f"parity_{part}_{suffix}" for part in ("runtime", "writer", "unrelated"))
+    password = f"synthetic-{suffix}-only"
+    reader = create_async_engine(admin.url.set(username=runtime, password=password))
+
+    expected_runtime = {
+        table: {
+            "SELECT": True,
+            "INSERT": False,
+            "UPDATE": False,
+            "DELETE": False,
+            "TRUNCATE": False,
+            "REFERENCES": False,
+            "TRIGGER": False,
+        }
+        for table in (CATALOG_WRITE_TABLES | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES)
+    }
+    expected_none = {
+        table: {
+            "SELECT": False,
+            "INSERT": False,
+            "UPDATE": False,
+            "DELETE": False,
+            "TRUNCATE": False,
+            "REFERENCES": False,
+            "TRIGGER": False,
+        }
+        for table in (CATALOG_WRITE_TABLES | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES)
+    }
+
+    try:
+        async with admin.begin() as connection:
+            for role in (runtime, writer, unrelated):
+                await connection.execute(text(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"))
+            await provision_roles(
+                connection,
+                owner=config.DB_USER,
+                runtime=runtime,
+                writer=writer,
+                catalog_writer=None,
+                knowledge_index_builder=None,
+            )
+
+        # 1: Runtime has SELECT only across all Catalog & Knowledge tables
+        await _assert_runtime_table_privileges(admin, runtime, expected_runtime)
+
+        # 2: PUBLIC has no privileges across Catalog & Knowledge tables
+        await _assert_runtime_table_privileges(admin, "public", expected_none)
+
+        # 3: Unrelated role has no privileges across Catalog & Knowledge tables
+        await _assert_runtime_table_privileges(admin, unrelated, expected_none)
+
+        # 4: Runtime read queries succeed, write/modification queries fail with 42501
+        async with reader.begin() as conn:
+            assert await conn.scalar(text("SELECT count(*) FROM rag_catalog_set")) == 0
+            assert await conn.scalar(text("SELECT count(*) FROM rag_knowledge_index")) == 0
+
+        for stmt in (
+            "INSERT INTO rag_catalog_set (catalog_version) VALUES ('v1')",
+            "UPDATE rag_catalog_set SET catalog_version = 'v2'",
+            "DELETE FROM rag_catalog_set",
+            "TRUNCATE rag_catalog_set",
+            "INSERT INTO rag_knowledge_index (index_code) VALUES ('IDX')",
+            "UPDATE rag_knowledge_index SET index_code = 'IDX2'",
+            "DELETE FROM rag_knowledge_index",
+            "TRUNCATE rag_knowledge_index",
+        ):
+            with pytest.raises(DBAPIError) as error:
+                async with reader.begin() as conn:
+                    await conn.execute(text(stmt))
+            assert error.value.orig.sqlstate == "42501"
+
+    finally:
+        await reader.dispose()
+        async with admin.begin() as connection:
+            for role in (runtime, writer, unrelated):
                 await connection.execute(text(f'DROP OWNED BY "{role}"'))
                 await connection.execute(text(f'DROP ROLE IF EXISTS "{role}"'))

@@ -9,9 +9,12 @@ from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
-from infra.python.catalog_role_policy import apply_catalog_role_policy
-from infra.python.knowledge_index_role_policy import apply_knowledge_index_role_policy
-from infra.python.source_management_role_policy import CATALOG_TABLES, apply_management_role_policy
+from infra.python.catalog_role_policy import CATALOG_WRITE_TABLES, apply_catalog_role_policy
+from infra.python.knowledge_index_role_policy import (
+    KNOWLEDGE_INDEX_RUNTIME_READ_TABLES,
+    apply_knowledge_index_role_policy,
+)
+from infra.python.source_management_role_policy import apply_management_role_policy
 from infra.python.source_role_policy import SOURCE_TABLES, apply_source_role_policy, quoted_identifier
 
 # Explicit compatibility permissions for domains whose Writer cutover is still pending.
@@ -107,7 +110,8 @@ async def provision_roles(
     required = (
         RUNTIME_MUTABLE_TABLES
         | RUNTIME_APPEND_ONLY_TABLES
-        | CATALOG_TABLES
+        | CATALOG_WRITE_TABLES
+        | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
         | set(SOURCE_TABLES)
         | set(RUNTIME_AUTH_UPDATE_COLUMNS)
         | RUNTIME_LIFESTYLE_TABLES
@@ -120,7 +124,8 @@ async def provision_roles(
         raise ValueError("Required application tables are missing; apply migrations before provisioning")
     for tables, privileges in (
         (RUNTIME_MUTABLE_TABLES, "SELECT, INSERT, UPDATE, DELETE"),
-        (RUNTIME_APPEND_ONLY_TABLES | CATALOG_TABLES, "SELECT, INSERT"),
+        (RUNTIME_APPEND_ONLY_TABLES, "SELECT, INSERT"),
+        (CATALOG_WRITE_TABLES | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES, "SELECT"),
     ):
         for table in sorted(tables):
             await connection.execute(
