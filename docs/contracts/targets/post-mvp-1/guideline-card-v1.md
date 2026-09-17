@@ -178,11 +178,11 @@ RAG-15 Approval Pack boundary (Issue #179)
 
 2. **승인 상태 및 소비 가능성 (Approval Status & Consumability)**:
    - 승인 어휘는 런타임 표준 어휘(`PENDING`, `APPROVED`, `REJECTED`)만을 사용한다.
-   - 각 승인 증적(`Rag15ApprovalEvidence`)은 `candidate_ref + scope + approval_status + decision_ref` 전체를 canonical하게 결속한 불변 아티팩트(`artifact_ref`)를 가진다.
-   - RAG-15 approval evidence authority is candidate-bound: `APPROVED` 상태의 authority verification 대상은 `decision_ref` 단독이 아니라 candidate/scope/status/decision을 canonical하게 결속한 approval evidence artifact다.
+   - RAG-15 Approval Pack의 `APPROVED` 상태는 caller 선언만으로 소비할 수 없다.
+   - 각 required approval decision은 `candidate_ref`, approval `scope`, `approval_status`, `decision_ref`를 authority verifier(`Rag15ApprovalDecisionVerifierPort`)가 인증하고, 그 결과가 pack evidence와 exact-match해야 한다. `decision_ref` 단독 승인 검증은 충분하지 않다.
    - 외부 승인 증적이 없는 초기 상태의 팩은 구조적으로 완전하고 유효(`integrity_verified = true`)하더라도 `approval_status = PENDING`이며, 결코 프로덕션에서 소비될 수 없다(`production_consumable = false`).
    - 프로덕션 소비 가능(`production_consumable = true`) 판정은 오직 `integrity_verified AND approval_status == APPROVED AND approval_evidence_verified`를 모두 만족할 때만 성립한다.
-   - 동일한 `decision_ref`를 다른 candidate에 재결속하는 replay 시도는 새로운 approval evidence artifact가 생성되어 권위자 승인 부재로 fail-closed 거부된다.
+   - 동일한 `decision_ref`를 다른 candidate에 재포장하거나 다른 scope에 재사용하는 replay 시도는 verifier exact-match 실패로 fail-closed 거부된다.
 
 3. **요청별 동적 결속 분리 (Stateless Pack Boundary)**:
    - `Rag15ApprovalPack`은 정적 승인 봉인체이며, 환자/요청별 가변 데이터(`MedicationIdentityRef`, `EvidenceGateOutcome`, `ApprovedGuidelineEvidenceBinding`, retrieval/assessment receipt 등)를 포함하지 않는다. 이는 #180 오케스트레이터의 런타임 결속 책임이다.

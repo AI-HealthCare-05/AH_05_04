@@ -48,7 +48,7 @@ production_consumable = false
    - 기술 후보와 외부 승인 증적 상태를 결속한 canonical projection SHA-256 해시로 구성된다.
    - 구성 요소:
      * `candidate_ref`: 위 기술 후보 참조
-     * `approval_evidence`: 각 승인 영역별 증적 (`artifact_ref`, `scope`, `approval_status`, `candidate_ref`, `decision_ref`; scope 기준 정렬)
+     * `approval_evidence`: 각 승인 영역별 증적 (`scope`, `approval_status`, `candidate_ref`, `decision_ref`; scope 기준 정렬)
    - 식별자:
      * `artifact_code = "rag15-approval-pack"`
      * `version = "rag15-guideline-v1"`
@@ -76,11 +76,29 @@ production_consumable = false
 - 5개 영역은 exact set이어야 하며 누락·중복·임의 확장은 fail-closed 거부된다.
 
 ### 4. 증적 결속 및 Replay 방지 (Evidence Binding & Replay Protection)
-- 각 `Rag15ApprovalEvidence`는 `candidate_ref + scope + approval_status + decision_ref` 전체 canonical projection을 자체 content-addressed `artifact_ref`(`rag15-approval-evidence@rag15-guideline-v1`)로 가진다.
-- `APPROVED` evidence는 그 exact approval evidence `artifact_ref` 자체가 `GuidelineApprovalVerifierPort`를 통해 검증·승인되어야 한다.
-- 따라서 과거 유효했던 `decision_ref`를 유지한 채 `candidate_ref`만 새 후보로 재작성하면 완전히 다른 `artifact_ref`가 도출되므로, 권위자의 승인 증적 없이 기존 candidate에 대한 approval authority를 재결속/재사용할 수 없다.
-- `evidence.candidate_ref != pack.candidate_ref`인 경우뿐 아니라 `ev.artifact_ref`의 재계산 해시 불일치, verifier exact-match 실패 시에도 검증 커널은 fail-closed로 거부한다.
-- `APPROVED` 및 `REJECTED` 상태의 증적은 반드시 권위 결정 참조(`decision_ref`)를 포함해야 하며, `PENDING` 증적의 경우 `decision_ref`는 생략될 수 있다.
+단순히 `decision_ref`의 존재나 호출자의 일방적 선언만으로는 승인이 성립하지 않으며, 다음 **2단계 결속(Two-Stage Binding)**을 모두 충족해야만 승인 증적이 검증된다:
+
+1. **Internal Pack Binding (내부 팩 정합성)**:
+   - 각 증적의 `evidence.candidate_ref == pack.candidate_ref`가 강제된다.
+   - 다른 후보에 속한 증적을 팩 내부에 혼입하는 것을 차단한다.
+
+2. **External Decision Authority Binding (외부 권위 결정 결속)**:
+   - 전용 결정 검증 포트(`Rag15ApprovalDecisionVerifierPort`)를 통해 외부 권위가 인증한 실제 결정 레코드와 대조한다:
+     ```text
+     verifier가 인증한:
+       decision_ref
+       candidate_ref
+       scope
+       approval_status
+     ==
+     pack evidence가 선언한:
+       decision_ref
+       candidate_ref
+       scope
+       approval_status
+     ```
+   - Candidate A에 대해 발급된 결정을 Candidate B에 재포장하거나, SAFETY 결정을 MEDICAL에 재사용하거나, REJECTED 결정을 APPROVED로 허위 선언하는 모든 행위는 verifier와의 exact-match 실패로 fail-closed 거부된다.
+   - `APPROVED` 및 `REJECTED` 상태의 증적은 반드시 권위 결정 참조(`decision_ref`)를 포함해야 하며, `PENDING` 증적의 경우 외부 결정 검증을 호출하지 않는다.
 
 ### 5. 순수 검증 커널 및 소비 가능성 경계 (Pure Verification & Production Consumability)
 - 검증 인터페이스는 DB 의존성 및 네트워크 호출이 없는 순수 함수로 구현된다:
@@ -88,16 +106,16 @@ production_consumable = false
   def verify_rag15_approval_pack(
       pack: Rag15ApprovalPack,
       *,
-      approval_verifier: GuidelineApprovalVerifierPort,
+      decision_verifier: Rag15ApprovalDecisionVerifierPort,
   ) -> Rag15ApprovalPackVerification:
   ```
 - **검증 항목**:
   1. Runtime Candidate Drift: 현재 실행 코드의 candidate provenance(`prompt`, `model`, `parser`, `validator`)와 pack의 provenance exact match
   2. Policy ref 및 Fallback pins 구조·완전성 검증
   3. `candidate_ref` 재계산 일치 검증
-  4. 5개 필수 승인 영역 완전성 및 candidate-bound `artifact_ref` 재계산 무결성 검증
+  4. 5개 필수 승인 영역 완전성 및 internal candidate binding 검증
   5. `pack_ref` 재계산 일치 검증
-  6. 외부 결정 참조 검증: 주입된 `GuidelineApprovalVerifierPort`를 통해 `ev.artifact_ref`를 검증하고, 반환된 `response.artifact_ref == ev.artifact_ref` exact match 및 `verifier_artifact_ref` 유효성, 입력 mutation 방어를 엄격히 검증
+  6. 외부 결정 참조 검증: 주입된 `Rag15ApprovalDecisionVerifierPort`를 통해 `(decision_ref, candidate_ref, scope, approval_status)`를 검증하고, 반환된 response의 전 필드 exact match 및 `verifier_artifact_ref` 유효성, 입력 mutation 방어를 엄격히 검증
 - **승인 상태 집계(Aggregation)**:
   * 어느 하나라도 `REJECTED` -> `approval_status = "REJECTED"`
   * 그렇지 않고 하나라도 `PENDING` -> `approval_status = "PENDING"`
