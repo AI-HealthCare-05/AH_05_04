@@ -96,6 +96,36 @@ async def test_create_user_converts_postgresql_unique_violation(
     assert exc_info.value.field == expected_field
 
 
+async def test_update_instance_allows_basic_profile_fields_to_be_cleared() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    repository = UserRepository(session)
+    user = User(
+        email="profile-clear-repo@example.com",
+        hashed_password="synthetic-hashed-password",
+        name="프로필초기화",
+        phone_number="01012345678",
+        gender=Gender.FEMALE,
+        birthday=date(1990, 1, 1),
+    )
+
+    updated_user = await repository.update_instance(
+        user=user,
+        data={
+            "name": None,
+            "phone_number": None,
+            "gender": None,
+            "birthday": None,
+        },
+    )
+
+    assert updated_user is user
+    assert user.name == "프로필초기화"
+    assert user.phone_number is None
+    assert user.gender is None
+    assert user.birthday is None
+    session.flush.assert_awaited_once()
+
+
 async def test_update_user_converts_postgresql_email_unique_violation() -> None:
     """이메일 수정 중 발생한 PostgreSQL unique 오류를 공통 중복 오류로 변환합니다."""
     session = AsyncMock(spec=AsyncSession)

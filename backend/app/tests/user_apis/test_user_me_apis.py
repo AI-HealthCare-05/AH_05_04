@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -66,7 +66,31 @@ class TestUserMeApis:
         assert response.json()["phone_number"] is None
         assert response.headers.get_list("cache-control") == ["no-store"]
 
-    async def test_update_user_me_rejects_post_mvp_profile_fields(self):
+    async def test_update_user_me_updates_email_with_normalization(self):
+        email = "update_email_me@example.com"
+        signup_data = {
+            "email": email,
+            "password": "Password123!",
+            "name": "이메일수정전",
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await signup_verified_user(client, signup_data)
+
+            login_response = await client.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
+            access_token = login_response.json()["access_token"]
+
+            headers = {"Authorization": f"Bearer {access_token}"}
+            response = await client.patch(
+                "/api/v1/users/me",
+                json={"email": "UPDATED_EMAIL_ME@EXAMPLE.COM"},
+                headers=headers,
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["email"] == "updated_email_me@example.com"
+        assert response.headers.get_list("cache-control") == ["no-store"]
+
+    async def test_update_user_me_accepts_basic_profile_fields(self):
         email = "update_profile_fields@example.com"
         signup_data = {
             "email": email,
@@ -77,6 +101,165 @@ class TestUserMeApis:
             "gender": "MALE",
             "birthday": "1990-10-10",
             "phone_number": "01077778888",
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await signup_verified_user(client, signup_data)
+
+            login_response = await client.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
+            access_token = login_response.json()["access_token"]
+
+            headers = {"Authorization": f"Bearer {access_token}"}
+            response = await client.patch("/api/v1/users/me", json=update_data, headers=headers)
+            get_response = await client.get("/api/v1/users/me", headers=headers)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["gender"] == "MALE"
+        assert response.json()["birthday"] == "1990-10-10"
+        assert response.json()["phone_number"] == "01077778888"
+        assert response.headers.get_list("cache-control") == ["no-store"]
+        assert get_response.status_code == status.HTTP_200_OK
+        assert get_response.json()["gender"] == "MALE"
+        assert get_response.json()["birthday"] == "1990-10-10"
+        assert get_response.json()["phone_number"] == "01077778888"
+
+    async def test_update_user_me_rejects_duplicate_phone_number(self):
+        unique_suffix = uuid4().hex[:12]
+        first_email = f"phone-owner-{unique_suffix}@example.com"
+        second_email = f"phone-conflict-{unique_suffix}@example.com"
+        phone_number = "01012345678"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await signup_verified_user(
+                client,
+                {
+                    "email": first_email,
+                    "password": "Password123!",
+                    "name": "번호소유자",
+                },
+            )
+            await signup_verified_user(
+                client,
+                {
+                    "email": second_email,
+                    "password": "Password123!",
+                    "name": "번호충돌자",
+                },
+            )
+
+            first_login = await client.post(
+                "/api/v1/auth/login",
+                json={"email": first_email, "password": "Password123!"},
+            )
+            second_login = await client.post(
+                "/api/v1/auth/login",
+                json={"email": second_email, "password": "Password123!"},
+            )
+            first_headers = {"Authorization": f"Bearer {first_login.json()['access_token']}"}
+            second_headers = {"Authorization": f"Bearer {second_login.json()['access_token']}"}
+
+            first_response = await client.patch(
+                "/api/v1/users/me",
+                json={"phone_number": phone_number},
+                headers=first_headers,
+            )
+            second_response = await client.patch(
+                "/api/v1/users/me",
+                json={"phone_number": phone_number},
+                headers=second_headers,
+            )
+
+        assert first_response.status_code == status.HTTP_200_OK
+        assert second_response.status_code == status.HTTP_409_CONFLICT
+        assert second_response.json()["code"] == "CONFLICT"
+        assert second_response.json()["details"] == [
+            {
+                "field": "phone_number",
+                "reason": "ALREADY_EXISTS",
+                "rejected_value": None,
+            }
+        ]
+        assert second_response.headers.get_list("cache-control") == ["no-store"]
+
+    async def test_update_user_me_preserves_profile_fields_when_omitted(self):
+        email = "omit_profile_fields@example.com"
+        signup_data = {
+            "email": email,
+            "password": "Password123!",
+            "name": "수정전",
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await signup_verified_user(client, signup_data)
+
+            login_response = await client.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
+            access_token = login_response.json()["access_token"]
+            headers = {"Authorization": f"Bearer {access_token}"}
+
+            await client.patch(
+                "/api/v1/users/me",
+                json={
+                    "gender": "FEMALE",
+                    "birthday": "1991-11-11",
+                    "phone_number": "01099998888",
+                },
+                headers=headers,
+            )
+            response = await client.patch("/api/v1/users/me", json={"name": "수정후"}, headers=headers)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["name"] == "수정후"
+        assert response.json()["gender"] == "FEMALE"
+        assert response.json()["birthday"] == "1991-11-11"
+        assert response.json()["phone_number"] == "01099998888"
+
+    async def test_update_user_me_clears_basic_profile_fields_with_null(self):
+        email = "clear_profile_fields@example.com"
+        signup_data = {
+            "email": email,
+            "password": "Password123!",
+            "name": "초기화전",
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await signup_verified_user(client, signup_data)
+
+            login_response = await client.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
+            access_token = login_response.json()["access_token"]
+            headers = {"Authorization": f"Bearer {access_token}"}
+
+            await client.patch(
+                "/api/v1/users/me",
+                json={
+                    "gender": "MALE",
+                    "birthday": "1990-10-10",
+                    "phone_number": "01077778888",
+                },
+                headers=headers,
+            )
+            response = await client.patch(
+                "/api/v1/users/me",
+                json={"gender": None, "birthday": None, "phone_number": None},
+                headers=headers,
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["gender"] is None
+        assert response.json()["birthday"] is None
+        assert response.json()["phone_number"] is None
+        assert response.headers.get_list("cache-control") == ["no-store"]
+
+    @pytest.mark.parametrize(
+        "update_data",
+        [
+            {"phone_number": ""},
+            {"phone_number": "010-7777-8888"},
+            {"birthday": (date.today() + timedelta(days=1)).isoformat()},
+            {"gender": "UNKNOWN"},
+        ],
+    )
+    async def test_update_user_me_rejects_invalid_basic_profile_fields(self, update_data):
+        email = f"invalid-profile-{uuid4().hex[:12]}@example.com"
+        signup_data = {
+            "email": email,
+            "password": "Password123!",
+            "name": "검증테스터",
         }
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await signup_verified_user(client, signup_data)

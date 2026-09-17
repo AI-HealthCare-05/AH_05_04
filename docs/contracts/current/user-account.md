@@ -2,7 +2,7 @@
 
 ## 목적
 
-회원가입과 내 정보 조회·수정 API에서 MVP 범위의 입력 필드와 개인정보 nullable 상태를 Frontend와 공유하는 기준을 기록합니다.
+회원가입과 내 정보 조회·수정 API에서 허용하는 입력 필드와 개인정보 nullable 상태를 Frontend와 공유하는 기준을 기록합니다.
 
 ## 회원가입
 
@@ -35,8 +35,14 @@
 
 - Endpoint: `GET /api/v1/users/me`, `PATCH /api/v1/users/me`
 - 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다(`USER` 테이블 nullable).
-- MVP의 `PATCH /api/v1/users/me`는 `name`, `email`만 수정 대상으로 받습니다(`extra="forbid"`).
-- `gender`, `birthday`, `phone_number` 수정은 Post-MVP의 가입 후 추가 개인정보·건강정보 입력 기능에서 다룹니다.
+- `PATCH /api/v1/users/me`는 `name`, `email`, `phone_number`, `birthday`, `gender`만 수정 대상으로 받습니다(`extra="forbid"`).
+- 생략한 필드는 기존 값을 유지합니다.
+- `phone_number`, `birthday`, `gender`는 명시적 `null`로 보내면 미입력 상태로 초기화합니다.
+- `phone_number`는 숫자만 허용합니다. 공백 문자열과 구분자(`-`)가 포함된 값은 `422 VALIDATION_FAILED`입니다.
+- 다른 사용자와 같은 `phone_number`가 DB unique 제약과 충돌하면 `409 CONFLICT`, `details[].field=phone_number`, `reason=ALREADY_EXISTS`를 반환합니다. 별도 휴대폰 번호 중복확인 API는 이번 범위에 포함하지 않습니다.
+- `birthday`는 `YYYY-MM-DD` 날짜 문자열이며 미래 날짜는 `422 VALIDATION_FAILED`입니다.
+- `gender`는 `MALE`, `FEMALE`, `null`만 허용합니다.
+- 휴대폰 번호 SMS 인증·중복 확인, 회원가입 필수 입력, Frontend 입력 UI 연결은 이번 Backend 계약 범위에 포함하지 않습니다.
 
 ## 목적별 동의 상태 API(#207)
 
@@ -132,8 +138,7 @@
 
 ## Post-MVP 이관
 
-- 가입 후 `gender`, `birthday`, `phone_number` 등 추가 개인정보·건강정보 입력 및 저장
-- `PATCH /api/v1/users/me`에서 위 필드를 수정 대상으로 확장
+- Frontend 사용자 정보 화면에서 `gender`, `birthday`, `phone_number` 입력·수정 UI 연결
 - 회원탈퇴 API의 세부 transaction 구현
 - 정교한 rate limit, 이메일 템플릿 디자인 고도화, 회원가입 이메일 인증 강제 gate 활성화
 - Notification 목적별 동의 Gate, OCR 최종 정책 문구·version 승인, Frontend 동의 UI

@@ -20,6 +20,18 @@ from app.repositories.user_repository import (
 from app.services.auth import AuthService
 from app.services.user_consent_policy import current_consent_policy_version
 
+PROFILE_CLEARABLE_FIELDS = {"phone_number", "birthday", "gender"}
+
+
+def _user_update_data(data: UserUpdateRequest) -> dict[str, object]:
+    update_data = data.model_dump(exclude_unset=True)
+
+    for required_field in ("name", "email"):
+        if update_data.get(required_field) is None:
+            update_data.pop(required_field, None)
+
+    return {key: value for key, value in update_data.items() if value is not None or key in PROFILE_CLEARABLE_FIELDS}
+
 
 class UserManageService:
     def __init__(
@@ -35,9 +47,9 @@ class UserManageService:
         user: User,
         data: UserUpdateRequest,
     ) -> User:
-        update_data = data.model_dump(exclude_none=True)
+        update_data = _user_update_data(data)
 
-        if data.email:
+        if data.email is not None:
             normalized_email = normalize_email(str(data.email))
 
             if normalized_email != user.email:
