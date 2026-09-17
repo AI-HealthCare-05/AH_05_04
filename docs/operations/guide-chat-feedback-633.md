@@ -14,7 +14,7 @@
 - 자유 의견은 민감정보가 포함될 수 있으므로 원문을 GitHub, Discord, 일반 로그, Provider payload, 평가 artifact에 복사하지 않는다.
 - #633 완료 판단은 “피드백 저장 구조와 개선 활용 절차가 존재한다”는 평가 기준 3-4 대응에 한정한다. 실제 운영 공개, 실제 사용자 피드백 실적, 반복 prompt 개선 완료는 Production 공개 gate에서 별도로 판단한다.
 
-PR #730 병합으로 제품/운영 기준은 정리됐다. PR #740은 합성 Gold 기대·금지 응답, deterministic replay, 안전 gate 보존, #581/#632와의 연결을 정리한다. 다만 PR #730에서 남긴 동일 평가셋 prompt 전후 비교와 안전·사람 검토는 아직 실행하지 않았으므로 #633 종료 증빙으로 대체하지 않는다.
+PR #730 병합으로 제품/운영 기준은 정리됐다. PR #740은 합성 Gold 기대·금지 응답, deterministic replay, 안전 gate 보존 기준을 정리한다. 다만 PR #730에서 남긴 동일 평가셋 prompt 전후 비교와 안전·사람 검토는 아직 실행하지 않았으므로 #633 완료 증빙으로 대체하지 않는다.
 
 ## 부정 피드백 검토
 
@@ -64,6 +64,40 @@ Provider 호출 여부·latency·token, safety gate, blind review와 unblind 결
 실행하지 않은 운영 검증 항목은 별도 상태로 명시한다. deterministic replay는 합성 fixture와 판정기 보존 증빙이며 prompt 전후 비교나 사람 검토를 대체하지 않는다.
 응급·중복·과량 안전 gate가 실패하면 일반 품질 점수가 올라도 개선 후보를 채택하지 않는다.
 
+## 후속 evidence PR 기준
+
+#633 후속 evidence PR은 정현우 책임 리뷰어가 확인한 아래 기준을 따른다.
+
+1. `evals/generation/chat-feedback-gold-v1.json`의 synthetic Gold 31-case를 동일 비교 평가셋으로 사용한다. 실제 사용자 feedback 원문은 사용하지 않는다.
+2. 31-case는 Chat prompt 개선용 Gold이며 기존 Track F RAG Gold와 목적을 분리해 기록한다.
+3. 같은 31-case에서 feedback 반영 전 prompt와 현재 prompt를 비교한다. Dataset, model, temperature, max tokens, timeout, medication/history fixture를 고정하고 prompt version/hash만 달라지는 paired comparison으로 실행한다.
+4. 비교 항목은 기대 응답 충족, 금지 응답 위반, safety violation, 문맥 대상 식별, 불필요한 재질문, 처방 모순 등 현재 Gold에 정의된 품질 기준으로 둔다.
+5. deterministic replay만으로는 prompt 전후 비교 evidence로 보지 않는다. baseline/candidate 결과가 각각 생성되어야 한다.
+6. 기존 `chat-conversation-quality-blind-ab-v1.json`의 prompt variant 비교 구조를 재사용하고 새 평가 프레임워크를 만들지 않는다.
+7. RAG 전후 비교용 Gold는 #159 및 기존 Retrieval/HOLDOUT Gold 체계와 분리한다. #633에서 새로 만들거나 31-case와 합치지 않는다.
+8. 기존 Gold Conversation 안전 기준과 #632 direct Guide/Chat Provider 경로의 live safety/variance evidence는 supporting evidence로 연결할 수 있다. #632를 RAG 전후 성능 evidence로 표현하지 않는다.
+9. 이번 31-case baseline/candidate 비교에서 emergency·duplicate/overdose·금지 응답 관련 safety regression이 없음을 확인한다. 별도 대규모 의료 safety dataset을 추가하지 않는다.
+10. 사람 검토는 전체 31-case 수동 PASS/FAIL 재작성 대신 dataset version/hash, baseline/candidate prompt version/hash, 통제 실행 조건, case별 기계 판정 결과 또는 failure list, safety regression 결과, 전체 비교 요약 artifact와 정현우 책임 리뷰 승인 코멘트로 연결한다.
+11. `guide-chat-feedback-v1`은 Proposed 유지가 맞다. Current 승격은 #633 Close 필수 조건이 아니며, 운영 공개 승인 시 별도 승격한다.
+
+위 기준을 충족하기 전에는 deterministic replay만으로 #633 완료 또는 Current 승격을 주장하지 않는다.
+
+고정된 실행 입력은 다음과 같다.
+
+- comparison config: `evals/generation/chat-feedback-gold-prompt-comparison-v1.json`
+- dataset: `evals/generation/chat-feedback-gold-v1.json`
+- baseline prompt snapshot: `evals/generation/prompts/chat-prompt-v4.txt`
+- current prompt snapshot: `evals/generation/prompts/chat-prompt-v5.txt`
+- 실행 구조: 기존 `app.evaluation.chat_blind_ab_runner`의 `run`/`unblind` command
+
+후속 evidence PR의 산출물은 아래 경로를 사용한다.
+
+- review packet: `docs/validation/issue-633-feedback-prompt-comparison-review-packet.json`
+- private assignment artifact: 공개 저장소에 커밋하지 않고 승인된 제한 접근 위치에 보관
+- judgment template: `docs/validation/issue-633-feedback-prompt-comparison-judgment-template.json`
+- unblind summary: `docs/validation/issue-633-feedback-prompt-comparison.json`
+- human review summary: `docs/validation/issue-633-feedback-prompt-comparison.md`
+
 ## #633 완료 증빙
 
 | 단계 | 필요한 증빙 | 현재 상태 |
@@ -73,8 +107,8 @@ Provider 호출 여부·latency·token, safety gate, blind review와 unblind 결
 | 합성 Gold 편입 | 내부 연결 기록, 합성 case·버전·hash·책임 리뷰 | 31-case 합성 demo와 provenance 고정; PR 2에서 현우 책임 리뷰 대상 |
 | 개선 활용 | 동일 평가셋의 prompt 전후 결과와 안전·사람 검토 | NOT_RUN. PR #740은 deterministic replay 31/31·safety violation 0만 재확인하며 prompt 전후 비교·사람 검토 evidence가 아니다. |
 
-#581의 기존 v5 30-case와 비교 설정만으로 #633의 신규 피드백 수집·개선 루프를 완료 처리하지 않는다.
-#638의 31-case 합성 demo는 저장된 NEGATIVE feedback을 비식별 합성 Gold 후보로 연결하고, replay artifact로 기대·금지 응답과 안전 gate 보존을 검증한다. #581은 기존 품질·history 평가 기반, #632는 temperature=0 변동성 축소 evidence로 참조한다. 실제 운영 실적은 Production 공개 gate에서 별도로 다루지만, prompt 전후 비교·안전/사람 검토가 완료되기 전에는 #633 전체 종료로 보지 않는다.
+기존 Chat 품질 평가와 비교 설정만으로 #633의 신규 피드백 수집·개선 루프를 완료 처리하지 않는다.
+#638의 31-case 합성 demo는 저장된 NEGATIVE feedback을 비식별 합성 Gold 후보로 연결하고, replay artifact로 기대·금지 응답과 안전 gate 보존을 검증한다. 일반 Chat 대화 품질 개선 이슈는 별도로 유지하며, #633은 feedback 수집·합성 Gold 연결·검증 기준 정렬에 한정한다. 실제 운영 실적은 Production 공개 gate에서 별도로 다루지만, prompt 전후 비교·안전/사람 검토가 완료되기 전에는 #633 전체 완료로 보지 않는다.
 
 ## 채택한 보존·실행 안내
 

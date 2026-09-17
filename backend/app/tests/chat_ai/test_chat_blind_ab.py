@@ -22,6 +22,7 @@ from app.services.chat_ai.schemas import ProviderChatResponse
 
 _REPOSITORY_ROOT = Path(__file__).parents[4]
 _CONFIG_PATH = _REPOSITORY_ROOT / "evals" / "generation" / "chat-conversation-quality-blind-ab-v1.json"
+_FEEDBACK_CONFIG_PATH = _REPOSITORY_ROOT / "evals" / "generation" / "chat-feedback-gold-prompt-comparison-v1.json"
 
 
 class ScriptedUsageProvider:
@@ -71,6 +72,36 @@ def test_canonical_blind_ab_config_pins_synthetic_dataset_and_prompt_snapshots()
     assert experiment.variants[1].prompt == experiment.variants[1].prompt_path.read_text().rstrip("\n")
 
 
+def test_feedback_gold_prompt_comparison_config_pins_v4_v5_snapshots() -> None:
+    experiment, dataset = load_blind_ab_experiment(_FEEDBACK_CONFIG_PATH)
+    raw_config = json.loads(_FEEDBACK_CONFIG_PATH.read_text(encoding="utf-8"))
+
+    assert experiment.experiment_id == "chat-feedback-gold-prompt-comparison-v1"
+    assert experiment.dataset_id == "chat-feedback-gold-v1"
+    assert dataset["data_classification"] == "SYNTHETIC"
+    assert len(dataset["cases"]) == 31
+    assert raw_config["execution_status"] == "NOT_RUN"
+    assert raw_config["evidence_scope"] == {
+        "issue": "#633",
+        "purpose": "feedback prompt paired comparison readiness",
+        "rag_gold_scope": "OUT_OF_SCOPE_EXISTING_TRACK_F_GOLD_ONLY",
+        "current_contract_status": "PROPOSED",
+    }
+    assert tuple(variant.prompt_version for variant in experiment.variants) == (
+        "chat-prompt-v4",
+        "chat-prompt-v5",
+    )
+    assert tuple(variant.variant_id for variant in experiment.variants) == (
+        "chat-prompt-v4-gpt-4o-baseline",
+        "chat-prompt-v5-gpt-4o-current",
+    )
+    assert {variant.model for variant in experiment.variants} == {"gpt-4o"}
+    assert all(
+        hashlib.sha256((variant.prompt + "\n").encode()).hexdigest() == variant.prompt_sha256
+        for variant in experiment.variants
+    )
+
+
 def test_blind_ab_config_rejects_prompt_hash_drift(tmp_path: Path) -> None:
     config = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
     config["variants"][0]["prompt_sha256"] = "0" * 64
@@ -83,6 +114,7 @@ def test_blind_ab_config_rejects_prompt_hash_drift(tmp_path: Path) -> None:
 
 def test_live_runner_accepts_only_the_canonical_config_path(tmp_path: Path) -> None:
     _validate_canonical_config(_CONFIG_PATH)
+    _validate_canonical_config(_FEEDBACK_CONFIG_PATH)
     copied_config = tmp_path / _CONFIG_PATH.name
     copied_config.write_bytes(_CONFIG_PATH.read_bytes())
 

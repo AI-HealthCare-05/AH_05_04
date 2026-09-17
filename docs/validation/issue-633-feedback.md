@@ -1,7 +1,7 @@
 # #633 Guide·Chat 피드백 검증 기록
 
 2026-09-16 Local 합성 검증. 구현: 송은영·권가빈, 단일 책임 리뷰: 정현우.
-이 문서는 실제 사용자 수집·Production 배포 증거가 아니다. PR #638 병합 이후 #730에서 제품/운영 기준을 정리했고, PR #740은 AI/RAG 합성 replay evidence를 정렬한다. prompt 전후 비교·사람 검토가 아직 없어 #633 종료 판단으로 사용하지 않는다.
+이 문서는 실제 사용자 수집·Production 배포 증거가 아니다. PR #638 병합 이후 #730에서 제품/운영 기준을 정리했고, PR #740은 AI/RAG 합성 replay evidence를 정렬한다. prompt 전후 비교·사람 검토가 아직 없어 #633 완료 증거로 사용하지 않는다.
 
 ## 구현과 범위
 
@@ -87,10 +87,13 @@ PYTHONPATH=backend:. uv run --env-file envs/.local.env python -m app.evaluation.
 
 - PR #730 병합으로 Local 합성 demo를 제품/운영 기준의 검토 가능한 증빙으로 사용할 수 있는 범위가 정리됐다. 실제 사용자 feedback 운영 실적과 Production 공개 승인은 별도 공개 gate다.
 - 신규 합성 Gold case의 기대 응답·금지 응답은 `evals/generation/chat-feedback-gold-v1.json`과 이 replay artifact에 고정되어 있으며, 실제 comment 원문·대화 원문·약명·수치·사용자 상황을 복사하지 않는다.
-- 최신 develop base `57a8d2d3` 위의 PR 작업트리에서 deterministic replay를 재실행했고 기존 `docs/validation/issue-633-feedback-replay.json`과 byte-for-byte 동일함을 확인했다. 결과는 31/31 baseline·history replay 통과, safety violation 0, dataset SHA-256 `748c5f420e05c224a0ecc258e1dead71b553195be2ea1d4aac445dda1bba137e`, prompt version `chat-prompt-v5`, prompt SHA-256 `891415d165720f9fbcc8a44dfc0f9fbf8e271a5371c3a0b34e2e366715bada70`이다.
+- PR #740 실행 source는 `evals/generation/chat-feedback-gold-v1.json`과 `docs/validation/issue-633-feedback-replay.json`이며, 실행 기준 base/head는 PR #740 병합 전 작업트리의 Git commit으로 해석한다. 후속 evidence PR에서는 상대적인 최신 브랜치 표현 대신 실행 source SHA, base SHA, head SHA를 모두 기록한다. PR #740 재실행 결과는 기존 `docs/validation/issue-633-feedback-replay.json`과 byte-for-byte 동일했고, 결과는 31/31 baseline·history replay 통과, safety violation 0, dataset SHA-256 `748c5f420e05c224a0ecc258e1dead71b553195be2ea1d4aac445dda1bba137e`, prompt version `chat-prompt-v5`, prompt SHA-256 `891415d165720f9fbcc8a44dfc0f9fbf8e271a5371c3a0b34e2e366715bada70`이다.
 - 이 replay는 `run_mode=DETERMINISTIC_REPLAY`, `historical_prompt_reproduction=false`, `provider_evaluation.status=NOT_RUN`인 현재 `chat-prompt-v5` 단일 prompt 판정기 검증이다. 동일 평가셋 prompt 전후 비교, live Provider A/B, 사람 blind review를 실행하지 않았다.
-- #581은 기존 Chat 품질·history 평가 기반이고, #632는 temperature=0과 live 30회 편차 evidence로 응답 변동성을 낮춘 근거다. #633은 그 위에 feedback에서 만든 synthetic Gold case와 replay evidence를 추가했지만, PR #730에서 남긴 개선 전후 evidence 완료 조건은 아직 남아 있다.
-- 정현우 책임 리뷰는 위 synthetic Gold 기대·금지 응답, deterministic replay, 안전 gate 보존, #581/#632와의 연결을 검토한다. 이 PR 승인만으로 #633을 종료하거나 `guide-chat-feedback-v1`을 Current로 승격하지 않는다.
+- #633 후속 evidence는 이 31-case를 Chat prompt 개선용 동일 평가셋으로 사용한다. Track F RAG 전후 비교용 Gold와는 목적을 분리하며, #633에서 RAG Gold를 새로 만들거나 합치지 않는다.
+- 후속 evidence PR은 feedback 반영 전 prompt와 현재 prompt를 동일 조건으로 비교하고 baseline/candidate 결과를 각각 생성한다. deterministic replay만으로는 prompt 전후 비교 evidence가 아니다.
+- 후속 prompt comparison 입력은 `evals/generation/chat-feedback-gold-prompt-comparison-v1.json`에 고정했다. 이 config는 `chat-feedback-gold-v1` dataset, `chat-prompt-v4` baseline snapshot, `chat-prompt-v5` current snapshot, `gpt-4o`, `max_output_tokens=800`, `timeout_seconds=20`, `temperature=null`, `store=false`를 고정하며 `execution_status=NOT_RUN`이다.
+- #632는 temperature=0과 direct Guide/Chat Provider 경로의 live safety/variance evidence로 응답 변동성을 낮춘 근거다. RAG 전후 성능 evidence로 표현하지 않는다.
+- 정현우 책임 리뷰는 dataset/prompt version·hash, 통제 실행 조건, case별 기계 판정 결과 또는 failure list, safety regression 결과, 전체 비교 요약 artifact를 기준으로 승인 코멘트를 남긴다. 이 PR 승인만으로 #633을 완료하거나 `guide-chat-feedback-v1`을 Current로 승격하지 않는다.
 
 ## PR 책임 리뷰 반영 검증
 
