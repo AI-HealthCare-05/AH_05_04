@@ -8,8 +8,8 @@
 - Authorization control C1: `IMPLEMENTED_IN_REPOSITORY`
 - Implemented scope: approval ingestion and grant/revoke/expire transaction·audit services
 - Production approval source connector: `NOT_IMPLEMENTED`
-- Dataset lifecycle/FREEZE service: `NOT_IMPLEMENTED`
-- Identity registration/disable service: `NOT_IMPLEMENTED`
+- Dataset lifecycle/FREEZE service: `IMPLEMENTED_IN_REPOSITORY`
+- Identity registration/disable service: `IMPLEMENTED_IN_REPOSITORY`
 - Effective enforcement: `NOT_IMPLEMENTED`
 - Access authorized: `false`
 - HOLDOUT authored: `false`
@@ -53,4 +53,4 @@
 - backup·restore·rotation 운영 증빙
 - Track F external gate 충족
 
-Evidence self hash: `b54edbe8fd6b9094da59fb20c0b80be428585f452213d03572f8f176a0df60a1`
+Evidence self hash: `69cc8d85e1a63dc8627f8c4c8df01b3e385f72c040fabd80af20eec0813a28e3`
