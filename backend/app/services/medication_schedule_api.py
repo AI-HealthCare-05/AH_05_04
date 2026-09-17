@@ -176,9 +176,7 @@ class MedicationScheduleApiService:
         for medication, schedule in await self.queries.active_items(user_id):
             # Immutable medication snapshots have no exact start/time/pattern fields.
             # PD-417 forbids deriving them from prescribed_date or timing_text.
-            snapshot = (
-                await self.mutations.repository.snapshot(schedule) if schedule is not None else None
-            )
+            snapshot = await self.mutations.repository.snapshot(schedule) if schedule is not None else None
             items.append(
                 MedicationScheduleItem(
                     prescription_version_medication_id=medication.id,

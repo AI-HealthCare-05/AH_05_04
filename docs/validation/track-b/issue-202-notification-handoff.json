@@ -62,7 +62,8 @@
           "schedule_item_status": "READY",
           "schedule_id": "7f6e883c-4030-47f6-a167-8b911cf28934",
           "revision": 1,
-          "setup_reason": null
+          "setup_reason": null,
+          "schedule": null
         }
       ],
       "occurrences": [
@@ -106,7 +107,8 @@
           "schedule_item_status": "READY",
           "schedule_id": "7f6e883c-4030-47f6-a167-8b911cf28934",
           "revision": 1,
-          "setup_reason": null
+          "setup_reason": null,
+          "schedule": null
         }
       ],
       "occurrences": [
@@ -182,7 +184,8 @@
           "schedule_item_status": "SETUP_REQUIRED",
           "schedule_id": null,
           "revision": null,
-          "setup_reason": "MISSING_START_DATE"
+          "setup_reason": "MISSING_START_DATE",
+          "schedule": null
         }
       ],
       "occurrences": [
