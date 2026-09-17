@@ -28,6 +28,8 @@ _CATALOG_IDENTITY_WRITERS = _CATALOG_BUILD_WRITERS | frozenset(
     {"backend/app/repositories/rag_source_catalog_repository.py"}
 )
 
+_REQUEST_AUTHORITY_WRITERS = frozenset({"backend/app/repositories/rag_request_authority_repository.py"})
+
 APPROVED_WRITERS: dict[str, frozenset[str]] = {
     "source_management_permission": frozenset({"backend/app/admin/source_management_permissions.py"}),
     "source_management_audit": frozenset(
@@ -61,6 +63,10 @@ APPROVED_WRITERS: dict[str, frozenset[str]] = {
     "ai_job_execution_context": frozenset({"backend/app/repositories/rag_runtime_repository.py"}),
     "ai_job_execution_identification": frozenset({"backend/app/repositories/rag_runtime_repository.py"}),
     "rag_runtime_environment_transition": frozenset({"backend/app/repositories/rag_runtime_repository.py"}),
+    # #713 REQUEST authority는 historical 증거이므로 append-only writer 한 곳만 허용한다.
+    "rag_request_guard_authority": _REQUEST_AUTHORITY_WRITERS,
+    "rag_request_source_decision": _REQUEST_AUTHORITY_WRITERS,
+    "rag_request_member_decision": _REQUEST_AUTHORITY_WRITERS,
     "rag_evidence_knowledge": frozenset({"backend/app/repositories/rag_evidence_citation_repository.py"}),
     "rag_evidence": frozenset({"backend/app/repositories/rag_evidence_citation_repository.py"}),
     "rag_evidence_rule": frozenset({"backend/app/repositories/rag_evidence_citation_repository.py"}),
@@ -98,6 +104,9 @@ MODEL_TABLES = {
     "AiJobExecutionContext": "ai_job_execution_context",
     "AiJobExecutionIdentification": "ai_job_execution_identification",
     "RagRuntimeEnvironmentTransition": "rag_runtime_environment_transition",
+    "RagRequestGuardAuthority": "rag_request_guard_authority",
+    "RagRequestSourceDecision": "rag_request_source_decision",
+    "RagRequestMemberDecision": "rag_request_member_decision",
     "RagEvidenceKnowledge": "rag_evidence_knowledge",
     "RagEvidence": "rag_evidence",
     "RagEvidenceRule": "rag_evidence_rule",

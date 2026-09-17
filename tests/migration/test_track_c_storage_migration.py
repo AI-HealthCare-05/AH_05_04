@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
+from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
@@ -407,3 +408,44 @@ def test_safety_revisions_preserve_separate_checkin_histories():
     asyncio.run(_run("UPDATE medication_checkin SET revision=2 WHERE id=:checkin_id", ids))
     asyncio.run(_run(SAFETY.replace("1, 1,", "2, 1,"), {**ids, "safety_id": str(uuid4())}))
     assert asyncio.run(_run("SELECT count(*) FROM safety_assessment")) == 3
+
+
+def test_checkin_lock_marker_downgrade_preserves_history_and_reupgrade():
+    cfg = create_alembic_config()
+    command.upgrade(cfg, "head")
+    asyncio.run(_seed_all())
+
+    async def snapshot():
+        return {
+            table.name: await _run(
+                f"SELECT jsonb_agg(to_jsonb(t) - 'checkin_lock_marker' ORDER BY id) FROM {table.name} t"
+            )
+            for table in TABLES
+        }
+
+    before = asyncio.run(snapshot())
+    lock_revision = ScriptDirectory.from_config(cfg).get_revision("668a1b2c3d4e")
+    assert lock_revision is not None and isinstance(lock_revision.down_revision, str)
+    command.downgrade(cfg, lock_revision.down_revision)
+    assert asyncio.run(snapshot()) == before
+
+    async def verify_markers(present):
+        async with _connection() as connection:
+            for table, prefix in (("safety_assessment", "safety"), ("barrier_response", "barrier")):
+
+                def metadata(sync_connection, table=table, prefix=prefix):
+                    inspector = inspect(sync_connection)
+                    assert ("checkin_lock_marker" in {c["name"] for c in inspector.get_columns(table)}) is present
+                    assert (
+                        f"chk_{prefix}_checkin_lock_marker"
+                        in {c["name"] for c in inspector.get_check_constraints(table)}
+                    ) is present
+
+                await connection.run_sync(metadata)
+                if present:
+                    assert await connection.scalar(text(f"SELECT checkin_lock_marker FROM {table}")) == 0
+
+    asyncio.run(verify_markers(False))
+    command.upgrade(cfg, "head")
+    assert asyncio.run(snapshot()) == before
+    asyncio.run(verify_markers(True))

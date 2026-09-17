@@ -897,6 +897,14 @@ created_at index는 만료 삭제, rating·updated_at·id index는 부정 피드
 빈 증상 목록은 기존 foundation 버전을 유지한다. 과거 assessment·snapshot은 소급 변경하지 않는다.
 [Proposed API·버전 계약](contracts/proposed/track-c-safety-barrier-api-193.md)을 참고한다.
 
+## #668 Proposed: Check-in 정정 잠금 권한 보완
+
+[잠금 권한 계약](contracts/proposed/checkin-runtime-lock-v1.md)은 safety_assessment·barrier_response에
+`checkin_lock_marker INTEGER NOT NULL DEFAULT 0 CHECK (checkin_lock_marker = 0)`를 추가한다.
+업무 데이터 변경 없이 PostgreSQL 행 잠금 권한을 분리하기 위한 필드이며 API에는 노출하지 않는다.
+Runtime은 이 두 테이블의 SELECT/marker UPDATE와 support_action_plan의 SELECT/UPDATE(status, cancelled_at)만 받는다.
+Migration·검토 상태는 [PD-668](governance/decisions/2026-09-16-checkin-runtime-lock-668.md)을 따른다.
+
 ## #670 명시적 시간 후보 — 저장 경계
 
 [Local 후보 계약](contracts/proposed/track-b-explicit-schedule-recommendation-v1.md)은 기존 확정
@@ -904,3 +912,45 @@ PrescriptionVersionMedication을 읽고 임시 식사 종료 시각으로 계산
 후보와 식사 입력은 별도 저장하지 않으며, 명시적 저장 시 기존 MedicationSchedule·time·occurrence·audit와
 USER_CONFIRMED source를 재사용한다. 선택 context는 기존 HMAC 멱등 fingerprint에 결속하며
 일정 응답·audit에 추가하지 않는다. 기존 생활 시간 window·revision은 이 계산의 입력이 아니다.
+
+## #713 REQUEST Authority 영속 — 구현, Proposed
+
+[계약](contracts/proposed/post-mvp-1/request-authority-persistence-v1.md), migration `713a1b2c3d4e`에서
+`rag_request_guard_authority`, `rag_request_source_decision`, `rag_request_member_decision`을 추가한다.
+세 표는 그 REQUEST 시점에 실제로 발행된 authority 관측치를 남기는 append-only 증거이며, 현재 상태를
+조회 시점에 해석해 만들지 않는다. 따라서 `catalog_source_approval`(운영자 기준 현재 승인 상태),
+`rag_source_snapshot`의 CURRENT 상태, `rag_source_snapshot_member`(구성원 존재 사실),
+`runtime_guard_decision_ref` 계열(호출자가 전달한 opaque 참조)은 이 표를 대신하지 않는다.
+
+각 행은 UUIDChar id와 artifact identity 3열(`artifact_code`, `artifact_version`,
+`artifact_content_sha256`)을 가지며 그 3열에 UNIQUE를 둔다. `artifact_content_sha256`은
+`ai_worker/tasks/rag/request_authority_artifact.py`가 기존 RFC 8785 JCS canonical helper로 계산한
+semantic projection digest이고, DB PK·`created_at` 같은 비결정적 값은 digest에 포함하지 않는다.
+`artifact_code`는 종류별 고정값으로 CHECK하며 `decision_stage`는 CHECK `= 'REQUEST'`다.
+
+Source·Member Decision은 Guard를 opaque 문자열이 아니라 복합 FK
+`(request_guard_artifact_code, request_guard_artifact_version, request_guard_content_sha256)` →
+`rag_request_guard_authority`의 UNIQUE artifact identity로 참조하며 `ON DELETE RESTRICT`다.
+`actual_decision_outcome`은 NOT NULL·CHECK `IN ('PASS','FAIL')`이라 unknown/NULL을 PASS로
+해석할 여지를 두지 않는다. Member 행은 기존 `source_member_identity` 계약을 lossless하게 보존해
+`member_kind IN ('ENDPOINT_OPERATION','ARTIFACT')`와 종류별 필드 조합 CHECK를 갖고
+`operation_code`는 계약대로 nullable이다.
+
+`source_snapshot_id`·`source_snapshot_member_id`는 기록 사실로 보존하고 FK를 두지 않는다.
+Source cleanup·retention 수명주기와 authority 증거 보존을 결합하지 않기 위한 선택이며, 정합성은
+`RagRequestAuthorityRepository`의 writer 검증이 담당한다. 쓰기는 보호 테이블 경계에 따라 그
+Repository 한 곳만 승인된다. Trigger·RLS·Stored Procedure·사용자 정의 DB 함수는 추가하지 않는다.
+
+조회는 artifact identity 3열 exact equality만 제공하고 latest/CURRENT fallback을 두지 않는다.
+
+세 표는 append-only 증거이므로 migration `downgrade()`가 무조건 drop하지 않는다.
+`LOCK TABLE ... IN ACCESS EXCLUSIVE MODE`로 세 표를 먼저 잠근 뒤 행 존재를 확인하고, 하나라도
+비어 있지 않으면 `RuntimeError`로 거부한다. `retrieval_run`(#596)·`user_consent`(#465)와 같은
+패턴이며 검사와 drop 사이의 write race를 막는다.
+
+artifact identity 계산과 wire contract는 Backend·AI Worker가 공유하는 순수 package
+`rag_runtime/request_authority.py`가 소유한다. Backend production 코드는 `ai_worker.*`를 직접
+import하지 않으며 `PD-175-20260910` 경계와 `ALLOWED_AI_WORKER_MODULES`를 변경하지 않는다.
+
+정책은 [PD-713](governance/decisions/2026-09-17-request-authority-persistence.md)을 따르며
+Current 승격과 #709 Production Reader 연결은 별도다.

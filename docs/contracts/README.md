@@ -69,6 +69,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Knowledge Materialization 계약 v1 (Phase 2A, #634)](./proposed/post-mvp-1/knowledge-materialization-v1.md): #634 Proposed. 승인된 Source Snapshot Member(MFDS 품목허가 XML: EE·UD·NB 및 선택 NN)로부터 KnowledgeDocument·KnowledgeChunk 구체화 및 트랜잭션 저장 기반 구현 검토 대상. 전용 Builder 최소 권한, RAW_RESPONSE artifact 결속 검증, All-or-Nothing 롤백, Exact Replay, 6대 해시 도메인 보존과 KnowledgeChunkIdentity 인계 완비.
 - [Sync Guide Evidence Authority Assembly Contract v1 (#672 선행 계약)](./proposed/post-mvp-1/sync-guide-evidence-authority-v1.md): #174 REQUEST Guard의 Source/Member 결정 관측 결과와 Reader 사이의 exact-match 결속, phase-ordered fail-fast 검증, RequestSourceMemberBinding 조립 순수 계약 커널. 순수 계약 커널 구현 브랜치 검토 중; DB 영속 Reader 어댑터·런타임 오케스트레이션은 미구현.
 - [Guide Authority × Production Retrieval Composition 계약 v1 (#697)](./proposed/post-mvp-1/guide-retrieval-composition-v1.md): #672 AUTHENTICATED `RequestSourceMemberBinding`과 #178 production `EvidenceGateSuccess.selected_hits`를 Source/Snapshot/Member/Version exact join으로 결합하는 순수 composition 계약. Cardinality는 N chunk hits : 1 member binding이며 duplicate hit은 production stable coordinate 기준, rejection은 fail-fast single typed reason이다. 순수 composition 구현 브랜치 검토 중; Production Reader·assessment 권위·content hydration·Handoff 연결·#180 런타임 오케스트레이션은 미구현.
+- [REQUEST Authority Persistence 계약 v1 (#713)](./proposed/post-mvp-1/request-authority-persistence-v1.md): #709가 차단 사유로 확인한 REQUEST Guard·Source Decision·Member Decision의 historical request-bound persistence. migration `713a1b2c3d4e`의 typed 3표, canonical JCS projection 기반 immutable artifact identity, append-only writer와 exact `ImmutableArtifactRef` 조회 primitive를 확정한다. `catalog_source_approval`·CURRENT Snapshot·`runtime_guard_decision_ref` 계열은 REQUEST authority가 아님을 함께 고정한다. 구현·로컬 검증 완료·담당 리뷰 대기이며, #709 Production Reader와 #180 런타임 오케스트레이션은 여전히 미구현.
 
 - [OCR LLM Worker 범위 정정 (#453)](./proposed/ocr-llm-worker-consent-453.md): 기존 이관 범위와 리뷰 시 별도 검토할 항목. 기존 동의 개정안 미채택.
 - [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태와 row 없음=미동의 기준. #465에서 `user_consent` 저장 기반을 병합했고, #510에서 현재 사용자 목적별 동의 상태 조회·변경 API를 추가했다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전과 Production 공개 승인은 후속 범위다. 전체 목적별 계약은 Proposed 유지.
@@ -239,3 +240,7 @@ PR #639의 두 계약은 구현 PR 내 이동이며 #629 병합·최종 책임 �
   승인 Receipt를 구분한다. 새 공용 계약을 정의하거나 RAG 완료를 주장하지 않는다.
 
 - [Track B 명시적 식후 시간 후보 v1 (#670)](proposed/track-b-explicit-schedule-recommendation-v1.md): Local 구현 검토안. 확정 문구의 간격·사용자 식사 종료 시각 계산, 선택 저장 context·서버 재계산. 담당·전문 리뷰와 공개 승인 대기.
+
+### Check-in 정정 Runtime 권한 보완 (#668)
+
+- [잠금 권한 v1 — Proposed](proposed/checkin-runtime-lock-v1.md): Safety·Barrier 잠금 전용 컬럼과 Runtime 최소 권한, 기존 Track B 정정·Track C 무효화 보존. Downgrade는 고정 marker/CHECK만 제거하고 업무 이력을 보존. API/DTO·공개 gate 변경 없음.
