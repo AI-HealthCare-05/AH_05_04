@@ -1,6 +1,7 @@
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from 'react'
 import navCalendarIcon from '../assets/nav-calendar.svg'
 import navGuideIcon from '../assets/nav-guide.svg'
+import navHomeIcon from '../assets/nav-home.svg'
 import navMenuIcon from '../assets/nav-menu.svg'
 import { DoseyMascot } from './DoseyMascot'
 
@@ -23,11 +24,9 @@ function NavigationIcon({ item }: { item: MainNavigationItem }) {
     )
   }
 
-  if (item === '홈') {
-    return <span className="bottom-nav__home" aria-hidden="true">⌂</span>
-  }
-
-  const icon = item === '일정' ? navCalendarIcon : item === '가이드' ? navGuideIcon : navMenuIcon
+  const icon = item === '홈'
+    ? navHomeIcon
+    : item === '일정' ? navCalendarIcon : item === '가이드' ? navGuideIcon : navMenuIcon
 
   return (
     <span
