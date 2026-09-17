@@ -599,7 +599,7 @@ async def _run_cli_stage1() -> None:
         await engine.dispose()
 
 
-async def _run_cli_stage2() -> None:
+async def _run_cli_stage2(embedding_adapter_sha256: str | None = None) -> None:
     user = os.environ.get("KNOWLEDGE_INDEX_BUILDER_USER")
     password = os.environ.get("KNOWLEDGE_INDEX_BUILDER_PASSWORD")
     if not user or not password:
@@ -609,6 +609,11 @@ async def _run_cli_stage2() -> None:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         logger.error("OPENAI_API_KEY must be set for Stage 2 index builder")
+        sys.exit(1)
+
+    emb_sha = (embedding_adapter_sha256 or os.environ.get("EMBEDDING_ADAPTER_SHA256") or "").strip().lower()
+    if not emb_sha or len(emb_sha) != 64 or emb_sha == "0" * 64 or not all(c in "0123456789abcdef" for c in emb_sha):
+        logger.error("A valid 64-character lowercase hex EMBEDDING_ADAPTER_SHA256 must be provided")
         sys.exit(1)
 
     url = _build_database_url_for_role(user, password)
@@ -623,7 +628,7 @@ async def _run_cli_stage2() -> None:
 
     adapter = OpenAITextEmbeddingAdapter(
         client=AsyncOpenAI(api_key=api_key),
-        adapter_artifact_ref=ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "e" * 64),
+        adapter_artifact_ref=ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", emb_sha),
     )
 
     stage1_snapshot_id = uuid5(NAMESPACE_SYNTHETIC_RET_H_SMOKE, f"snapshot:{fixture.file_sha256}")
@@ -644,13 +649,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="RET-H AWS synthetic smoke bootstrap stages")
     subparsers = parser.add_subparsers(dest="stage", required=True)
     subparsers.add_parser("stage1", help="Run Stage 1 Source bootstrap (SOURCE_WRITER)")
-    subparsers.add_parser("stage2", help="Run Stage 2 Knowledge Index bootstrap (KNOWLEDGE_INDEX_BUILDER)")
+    stage2_parser = subparsers.add_parser(
+        "stage2", help="Run Stage 2 Knowledge Index bootstrap (KNOWLEDGE_INDEX_BUILDER)"
+    )
+    stage2_parser.add_argument(
+        "--embedding-adapter-sha256",
+        required=False,
+        help="SHA256 hash of openai-text-embedding-adapter",
+    )
 
     args = parser.parse_args()
     if args.stage == "stage1":
         asyncio.run(_run_cli_stage1())
     elif args.stage == "stage2":
-        asyncio.run(_run_cli_stage2())
+        asyncio.run(_run_cli_stage2(embedding_adapter_sha256=getattr(args, "embedding_adapter_sha256", None)))
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -14,6 +15,7 @@ from ai_worker.tasks.evaluation.actual_retrieval_index import SYNTHETIC_INDEX_CO
 from ai_worker.tasks.evaluation.errors import EvaluationValidationError
 from ai_worker.tasks.evaluation.resources import (
     DEFAULT_SMOKE_FIXTURE_PATH,
+    RetHSmokeRuntimeProvenance,
     build_ret_h_smoke_fixture_manifest,
     load_ret_h_smoke_synthetic_fixture,
 )
@@ -31,6 +33,7 @@ from ai_worker.tasks.evaluation.ret_h_smoke import (
     APPROVED_SYNTHETIC_INDEX_CODES,
     verify_fixture_is_synthetic,
 )
+from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
 from backend.app.release_validation.ret_h_synthetic_smoke import (
     sentinels_from_fixture,
     verify_query_sentinel_binding,
@@ -289,8 +292,7 @@ async def test_stage2_preflight_fails_closed_when_checksum_mismatch() -> None:
     assert embedding_port.embed_text.call_count == 0
 
 
-def test_build_ret_h_smoke_fixture_manifest_and_round_trip() -> None:
-    fixture_input = load_ret_h_smoke_synthetic_fixture(DEFAULT_SMOKE_FIXTURE_PATH)
+def _make_sample_receipts(fixture_input: Any) -> tuple[Stage1SourceReceipt, Stage2IndexReceipt, dict[str, Any]]:
     source_id = uuid4()
     endpoint_id = uuid4()
     operation_id = uuid4()
@@ -305,7 +307,7 @@ def test_build_ret_h_smoke_fixture_manifest_and_round_trip() -> None:
     ctx_id = uuid4()
     prescription_id = uuid4()
 
-    stage1_receipt = Stage1SourceReceipt(
+    stage1 = Stage1SourceReceipt(
         source_id=source_id,
         endpoint_id=endpoint_id,
         operation_id=operation_id,
@@ -315,8 +317,7 @@ def test_build_ret_h_smoke_fixture_manifest_and_round_trip() -> None:
         verification_seal_id=seal_id,
         reused=False,
     )
-
-    stage2_receipt = Stage2IndexReceipt(
+    stage2 = Stage2IndexReceipt(
         knowledge_index_id=index_id,
         index_code=RET_H_SMOKE_INDEX_CODE,
         index_version=RET_H_SMOKE_INDEX_VERSION,
@@ -326,17 +327,160 @@ def test_build_ret_h_smoke_fixture_manifest_and_round_trip() -> None:
         member_id=index_member_id,
         reused=False,
     )
+    ids = {
+        "job_id": job_id,
+        "ctx_id": ctx_id,
+        "prescription_id": prescription_id,
+        "snapshot_id": snapshot_id,
+        "member_id": member_id,
+        "index_id": index_id,
+    }
+    return stage1, stage2, ids
+
+
+def _valid_pinned_provenance() -> dict[str, Any]:
+    return {
+        "lexical_config_ref": ImmutableArtifactRef("lexical-search-config", "1.0.0", "1" * 64),
+        "dense_config_ref": ImmutableArtifactRef("dense-search-config", "1.0.0", "2" * 64),
+        "retrieval_config_ref": ImmutableArtifactRef("retrieval-config", "1.0.0", "3" * 64),
+        "filter_snapshot_ref": ImmutableArtifactRef("filter-snapshot", "1.0.0", "4" * 64),
+        "search_adapter_ref": ImmutableArtifactRef("postgresql-evidence-search-adapter", "1.0.0", "5" * 64),
+        "embedding_adapter_ref": ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "6" * 64),
+        "runtime_release_bundle_id": uuid4(),
+        "runtime_release_bundle_manifest_hash": "7" * 64,
+        "runtime_execution_manifest_id": uuid4(),
+        "runtime_execution_manifest_hash": "8" * 64,
+        "runtime_guard_decision_ref": "ret-h-aws-synthetic-smoke",
+    }
+
+
+def test_manifest_fails_when_required_provenance_missing() -> None:
+    """1. required provenance 누락 -> manifest 생성 실패 (fail-closed)."""
+    fixture_input = load_ret_h_smoke_synthetic_fixture(DEFAULT_SMOKE_FIXTURE_PATH)
+    stage1, stage2, ids = _make_sample_receipts(fixture_input)
+
+    # Calling with no provenance arguments at all must fail closed
+    with pytest.raises(ValueError, match="lexical_config_ref is required"):
+        build_ret_h_smoke_fixture_manifest(
+            fixture_input=fixture_input,
+            stage1_receipt=stage1,
+            stage2_receipt=stage2,
+            job_id=ids["job_id"],
+            execution_context_id=ids["ctx_id"],
+            prescription_version_id=ids["prescription_id"],
+        )
+
+    # Calling with any one required field missing/None must fail closed
+    base_prov = _valid_pinned_provenance()
+    for key in base_prov:
+        prov_copy = dict(base_prov)
+        prov_copy[key] = None
+        with pytest.raises((ValueError, TypeError), match=key):
+            build_ret_h_smoke_fixture_manifest(
+                fixture_input=fixture_input,
+                stage1_receipt=stage1,
+                stage2_receipt=stage2,
+                job_id=ids["job_id"],
+                execution_context_id=ids["ctx_id"],
+                prescription_version_id=ids["prescription_id"],
+                **prov_copy,
+            )
+
+
+def test_manifest_rejects_placeholder_zero_hash_and_dummy_guard() -> None:
+    """2. placeholder zero hash 및 dummy guard decision ref -> 거부."""
+    fixture_input = load_ret_h_smoke_synthetic_fixture(DEFAULT_SMOKE_FIXTURE_PATH)
+    stage1, stage2, ids = _make_sample_receipts(fixture_input)
+    base_prov = _valid_pinned_provenance()
+
+    # Placeholder "0"*64 in artifact ref sha
+    p1 = dict(base_prov)
+    p1["lexical_config_ref"] = ImmutableArtifactRef("lexical-search-config", "1.0.0", "0" * 64)
+    with pytest.raises(ValueError, match="placeholder zero hash"):
+        build_ret_h_smoke_fixture_manifest(
+            fixture_input=fixture_input,
+            stage1_receipt=stage1,
+            stage2_receipt=stage2,
+            job_id=ids["job_id"],
+            execution_context_id=ids["ctx_id"],
+            prescription_version_id=ids["prescription_id"],
+            **p1,
+        )
+
+    # Placeholder "0"*64 in bundle manifest hash
+    p2 = dict(base_prov)
+    p2["runtime_release_bundle_manifest_hash"] = "0" * 64
+    with pytest.raises(ValueError, match="placeholder zero hash"):
+        build_ret_h_smoke_fixture_manifest(
+            fixture_input=fixture_input,
+            stage1_receipt=stage1,
+            stage2_receipt=stage2,
+            job_id=ids["job_id"],
+            execution_context_id=ids["ctx_id"],
+            prescription_version_id=ids["prescription_id"],
+            **p2,
+        )
+
+    # Placeholder "0"*64 in execution manifest hash
+    p3 = dict(base_prov)
+    p3["runtime_execution_manifest_hash"] = "0" * 64
+    with pytest.raises(ValueError, match="placeholder zero hash"):
+        build_ret_h_smoke_fixture_manifest(
+            fixture_input=fixture_input,
+            stage1_receipt=stage1,
+            stage2_receipt=stage2,
+            job_id=ids["job_id"],
+            execution_context_id=ids["ctx_id"],
+            prescription_version_id=ids["prescription_id"],
+            **p3,
+        )
+
+    # Dummy placeholder guard decision ref "ALLOW"
+    p4 = dict(base_prov)
+    p4["runtime_guard_decision_ref"] = "ALLOW"
+    with pytest.raises(ValueError, match="placeholder 'ALLOW'"):
+        build_ret_h_smoke_fixture_manifest(
+            fixture_input=fixture_input,
+            stage1_receipt=stage1,
+            stage2_receipt=stage2,
+            job_id=ids["job_id"],
+            execution_context_id=ids["ctx_id"],
+            prescription_version_id=ids["prescription_id"],
+            **p4,
+        )
+
+    # Empty guard decision ref
+    p5 = dict(base_prov)
+    p5["runtime_guard_decision_ref"] = ""
+    with pytest.raises(ValueError, match="runtime_guard_decision_ref is required"):
+        build_ret_h_smoke_fixture_manifest(
+            fixture_input=fixture_input,
+            stage1_receipt=stage1,
+            stage2_receipt=stage2,
+            job_id=ids["job_id"],
+            execution_context_id=ids["ctx_id"],
+            prescription_version_id=ids["prescription_id"],
+            **p5,
+        )
+
+
+def test_manifest_with_pinned_refs_round_trips_fixture_loader() -> None:
+    """3. 실제 pinned refs -> #683 fixture loader round-trip PASS."""
+    fixture_input = load_ret_h_smoke_synthetic_fixture(DEFAULT_SMOKE_FIXTURE_PATH)
+    stage1, stage2, ids = _make_sample_receipts(fixture_input)
+    provenance = RetHSmokeRuntimeProvenance(**_valid_pinned_provenance())
 
     manifest = build_ret_h_smoke_fixture_manifest(
         fixture_input=fixture_input,
-        stage1_receipt=stage1_receipt,
-        stage2_receipt=stage2_receipt,
-        job_id=job_id,
-        execution_context_id=ctx_id,
-        prescription_version_id=prescription_id,
+        stage1_receipt=stage1,
+        stage2_receipt=stage2,
+        job_id=ids["job_id"],
+        execution_context_id=ids["ctx_id"],
+        prescription_version_id=ids["prescription_id"],
+        provenance=provenance,
     )
 
-    # 1. JSON serializable
+    # 1. JSON serializable round-trip
     serialized = json.dumps(manifest)
     deserialized = json.loads(serialized)
 
@@ -356,9 +500,71 @@ def test_build_ret_h_smoke_fixture_manifest_and_round_trip() -> None:
 
     # 4. _build_hybrid_retrieve_request from scripts/ret_h_aws_synthetic_smoke.py succeeds
     req = _build_hybrid_retrieve_request(deserialized)
-    assert req.job_id == job_id
-    assert req.execution_context_id == ctx_id
-    assert req.prescription_version_id == prescription_id
-    assert req.search_request.execution_binding.knowledge_index_id == index_id
-    assert req.search_request.execution_binding.allowed_source_snapshot_ids == (snapshot_id,)
-    assert req.search_request.execution_binding.allowed_source_snapshot_member_ids == (member_id,)
+    assert req.job_id == ids["job_id"]
+    assert req.execution_context_id == ids["ctx_id"]
+    assert req.prescription_version_id == ids["prescription_id"]
+    assert req.search_request.execution_binding.knowledge_index_id == ids["index_id"]
+    assert req.search_request.execution_binding.allowed_source_snapshot_ids == (ids["snapshot_id"],)
+    assert req.search_request.execution_binding.allowed_source_snapshot_member_ids == (ids["member_id"],)
+
+
+def test_execution_request_refs_exact_match_manifest() -> None:
+    """4. execution request의 config/adaptor refs와 manifest refs exact-match."""
+    fixture_input = load_ret_h_smoke_synthetic_fixture(DEFAULT_SMOKE_FIXTURE_PATH)
+    stage1, stage2, ids = _make_sample_receipts(fixture_input)
+    prov_kwargs = _valid_pinned_provenance()
+
+    manifest = build_ret_h_smoke_fixture_manifest(
+        fixture_input=fixture_input,
+        stage1_receipt=stage1,
+        stage2_receipt=stage2,
+        job_id=ids["job_id"],
+        execution_context_id=ids["ctx_id"],
+        prescription_version_id=ids["prescription_id"],
+        **prov_kwargs,
+    )
+
+    req = _build_hybrid_retrieve_request(manifest)
+    binding = req.search_request.execution_binding
+    ret_config = binding.retrieval_config
+
+    # Exact matching of all config and adapter references
+    assert ret_config.lexical_config.artifact_ref.artifact_code == manifest["lexical_config_ref"]["artifact_code"]
+    assert ret_config.lexical_config.artifact_ref.version == manifest["lexical_config_ref"]["version"]
+    assert ret_config.lexical_config.artifact_ref.content_sha256 == manifest["lexical_config_ref"]["content_sha256"]
+
+    assert ret_config.dense_config is not None
+    assert ret_config.dense_config.artifact_ref.artifact_code == manifest["dense_config_ref"]["artifact_code"]
+    assert ret_config.dense_config.artifact_ref.version == manifest["dense_config_ref"]["version"]
+    assert ret_config.dense_config.artifact_ref.content_sha256 == manifest["dense_config_ref"]["content_sha256"]
+
+    assert ret_config.artifact_ref.artifact_code == manifest["retrieval_config_ref"]["artifact_code"]
+    assert ret_config.artifact_ref.version == manifest["retrieval_config_ref"]["version"]
+    assert ret_config.artifact_ref.content_sha256 == manifest["retrieval_config_ref"]["content_sha256"]
+
+    assert ret_config.expected_query_embedding_adapter_ref is not None
+    assert (
+        ret_config.expected_query_embedding_adapter_ref.artifact_code
+        == manifest["embedding_adapter_ref"]["artifact_code"]
+    )
+    assert ret_config.expected_query_embedding_adapter_ref.version == manifest["embedding_adapter_ref"]["version"]
+    assert (
+        ret_config.expected_query_embedding_adapter_ref.content_sha256
+        == manifest["embedding_adapter_ref"]["content_sha256"]
+    )
+
+    assert binding.filter_snapshot_ref.artifact_code == manifest["filter_snapshot_ref"]["artifact_code"]
+    assert binding.filter_snapshot_ref.version == manifest["filter_snapshot_ref"]["version"]
+    assert binding.filter_snapshot_ref.content_sha256 == manifest["filter_snapshot_ref"]["content_sha256"]
+
+    assert binding.evidence_index_ref.artifact_code == manifest["evidence_index_ref"]["artifact_code"]
+    assert binding.evidence_index_ref.version == manifest["evidence_index_ref"]["version"]
+    assert binding.evidence_index_ref.content_sha256 == manifest["evidence_index_ref"]["content_sha256"]
+
+    # Runtime execution manifest identity exact matching
+    assert str(req.runtime_release_bundle_id) == manifest["runtime_release_bundle_id"]
+    assert req.runtime_release_bundle_manifest_hash == manifest["runtime_release_bundle_manifest_hash"]
+    assert str(req.runtime_execution_manifest_id) == manifest["runtime_execution_manifest_id"]
+    assert req.runtime_execution_manifest_hash == manifest["runtime_execution_manifest_hash"]
+    assert req.runtime_guard_decision_ref == manifest["runtime_guard_decision_ref"]
+    assert req.source_manifest_hash == manifest["source_manifest_hash"]
