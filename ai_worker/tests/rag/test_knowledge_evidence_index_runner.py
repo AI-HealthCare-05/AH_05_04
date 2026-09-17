@@ -753,13 +753,40 @@ async def test_unsupplied_adapter_artifact_identity_blocks_with_expected_reason(
     assert repo.persist_calls == 0
 
 
-@pytest.mark.parametrize("forbidden_ref", ["0" * 64, "e" * 64, "short_sha", "not-a-hex-string"])
+@pytest.mark.parametrize(
+    "noncanonical_ref",
+    [
+        ImmutableArtifactRef(
+            artifact_code="openai-text-embedding-adapter",
+            version="1.0.0",
+            content_sha256="0" * 64,
+        ),
+        ImmutableArtifactRef(
+            artifact_code="openai-text-embedding-adapter",
+            version="1.0.0",
+            content_sha256="e" * 64,
+        ),
+        ImmutableArtifactRef(
+            artifact_code="openai-text-embedding-adapter",
+            version="9.9.9",
+            content_sha256=OPENAI_TEXT_EMBEDDING_ADAPTER_REF.content_sha256,
+        ),
+        ImmutableArtifactRef(
+            artifact_code="wrong-embedding-adapter",
+            version="1.0.0",
+            content_sha256=OPENAI_TEXT_EMBEDDING_ADAPTER_REF.content_sha256,
+        ),
+    ],
+)
 @pytest.mark.asyncio
-async def test_forbidden_or_invalid_adapter_artifact_ref_fails_closed(forbidden_ref: str) -> None:
+async def test_noncanonical_embedding_adapter_ref_fails_closed(
+    noncanonical_ref: ImmutableArtifactRef,
+) -> None:
     env = _valid_env()
     config = KnowledgeEvidenceIndexRunnerConfig.from_environment(env, require_openai_key=True)
     repo = StubKnowledgeEvidenceIndexRepository()
     chunks = _make_novasc_chunks()
+    port = StubTextEmbeddingPort()
 
     with pytest.raises(KnowledgeEvidenceIndexRunnerError) as exc_info:
         await execute_knowledge_evidence_index_build(
@@ -767,15 +794,16 @@ async def test_forbidden_or_invalid_adapter_artifact_ref_fails_closed(forbidden_
             snapshot_id=NOVASC_SNAPSHOT_ID,
             expected_item_seq=NOVASC_ITEM_SEQ,
             expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
-            expected_embedding_adapter_ref=forbidden_ref,
+            expected_embedding_adapter_ref=noncanonical_ref,
             preflight_chunks_override=chunks,
             repository_override=repo,
-            embedding_port_override=None,
+            embedding_port_override=port,
         )
     assert (
         exc_info.value.reason
         == KnowledgeEvidenceIndexRunnerFailureReason.BLOCKED_BY_EMBEDDING_ADAPTER_ARTIFACT_IDENTITY
     )
+    assert port.call_count == 0
     assert repo.persist_calls == 0
 
 
