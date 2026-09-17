@@ -65,7 +65,6 @@ class OpenAIGuidelineGeneratorAdapter(GuidelineGeneratorPort):
         model: str,
         timeout_seconds: float,
         context: ProviderCallContext,
-        provenance: GuidelineGenerationProvenance | None = None,
         max_output_tokens: int = 2048,
         call_logger: ProviderCallLogger = provider_call_logger,
         observability_disabled: bool = False,
@@ -77,6 +76,9 @@ class OpenAIGuidelineGeneratorAdapter(GuidelineGeneratorPort):
         max_retries = getattr(client, "max_retries", None)
         if type(max_retries) is not int or max_retries != 0:
             raise ValueError("OpenAI client must have max_retries=0")
+        with_options = getattr(client, "with_options", None)
+        if not callable(with_options):
+            raise ValueError("OpenAI client must support with_options for bounded timeout configuration")
 
         self._client = client
         self._model = model.strip()
@@ -84,21 +86,13 @@ class OpenAIGuidelineGeneratorAdapter(GuidelineGeneratorPort):
         self._max_output_tokens = max_output_tokens
 
         # Enforce SDK-level timeout and max_retries=0 on request client
-        if hasattr(client, "with_options"):
-            self._request_client = client.with_options(max_retries=0, timeout=timeout_seconds)
-        else:
-            self._request_client = client
+        self._request_client = client.with_options(
+            max_retries=0,
+            timeout=timeout_seconds,
+        )
 
-        # Bind candidate provenance and prevent drift
-        candidate_prov = build_candidate_provenance(model=self._model)
-        if provenance is not None:
-            if provenance.prompt_ref.content_sha256 != candidate_prov.prompt_ref.content_sha256:
-                raise ValueError("supplied provenance prompt_ref hash does not match adapter prompt instructions")
-            if provenance.model_ref.version != candidate_prov.model_ref.version:
-                raise ValueError("supplied provenance model_ref version does not match injected model")
-            self._provenance = provenance
-        else:
-            self._provenance = candidate_prov
+        # Self-compute candidate provenance bound to runtime execution artifacts
+        self._provenance = build_candidate_provenance(model=self._model)
 
         descriptor = ProviderCallDescriptor(
             provider=Provider.OPENAI,

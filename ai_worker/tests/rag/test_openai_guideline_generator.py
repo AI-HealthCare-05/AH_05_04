@@ -37,7 +37,6 @@ from ai_worker.tasks.rag.guideline_card import (
     GuidelineActionClass,
     GuidelineCardDraft,
     GuidelineGenerationFailure,
-    GuidelineGenerationProvenance,
     GuidelineScope,
     MedicationIdentityRef,
     VersionedGuidelinePolicy,
@@ -50,6 +49,7 @@ from ai_worker.tasks.rag.guideline_generator_prompt import (
     GUIDELINE_GENERATOR_PROMPT_VERSION,
     GuidelineClaimSelection,
     GuidelineStructuredSelection,
+    build_candidate_provenance,
 )
 from provider_contracts.observability import (
     DeploymentEnvironment,
@@ -245,29 +245,34 @@ def test_rejects_client_without_max_retries_attribute() -> None:
         )
 
 
-def test_rejects_provenance_drift() -> None:
-    client = build_mock_client()
-    # Bad prompt hash
-    mismatched_prompt = ImmutableArtifactRef("guideline-prompt", GUIDELINE_GENERATOR_PROMPT_VERSION, "0" * 64)
-    prov = GuidelineGenerationProvenance(
-        prompt_ref=mismatched_prompt,
-        model_ref=ImmutableArtifactRef("guideline-model", "openai:gpt-4o-synthetic", "b" * 64),
-        parser_ref=ImmutableArtifactRef("guideline-parser", "v1", "c" * 64),
-        validator_ref=ImmutableArtifactRef("guideline-validator", "v1", "d" * 64),
-    )
-    with pytest.raises(ValueError, match="prompt_ref hash does not match"):
+def test_rejects_client_without_with_options() -> None:
+    class FakeClientWithoutWithOptions:
+        max_retries = 0
+
+    with pytest.raises(ValueError, match="OpenAI client must support with_options"):
         OpenAIGuidelineGeneratorAdapter(
-            client=client,
+            client=FakeClientWithoutWithOptions(),  # type: ignore[arg-type]
             model="gpt-4o-synthetic",
             timeout_seconds=5.0,
             context=make_context(),
-            provenance=prov,
         )
 
 
-@pytest.mark.asyncio
-async def test_gate_misuse_preconditions_fail_closed_with_zero_provider_calls() -> None:
-    """Verifies that non-SUFFICIENT gates trigger 0 provider calls and return VALIDATION_FAILED."""
+def test_rejects_client_with_non_callable_with_options() -> None:
+    class FakeClientWithNonCallableWithOptions:
+        max_retries = 0
+        with_options = "not-callable"
+
+    with pytest.raises(ValueError, match="OpenAI client must support with_options"):
+        OpenAIGuidelineGeneratorAdapter(
+            client=FakeClientWithNonCallableWithOptions(),  # type: ignore[arg-type]
+            model="gpt-4o-synthetic",
+            timeout_seconds=5.0,
+            context=make_context(),
+        )
+
+
+def test_adapter_computes_exact_runtime_provenance() -> None:
     client = build_mock_client()
     adapter = OpenAIGuidelineGeneratorAdapter(
         client=client,
@@ -275,61 +280,219 @@ async def test_gate_misuse_preconditions_fail_closed_with_zero_provider_calls() 
         timeout_seconds=5.0,
         context=make_context(),
     )
+    expected_prov = build_candidate_provenance(model="gpt-4o-synthetic")
+    assert adapter.provenance == expected_prov
+    assert adapter.provenance.prompt_ref.artifact_code == "guideline-prompt"
+    assert adapter.provenance.prompt_ref.version == GUIDELINE_GENERATOR_PROMPT_VERSION
+    assert adapter.provenance.model_ref.artifact_code == "guideline-model"
+    assert adapter.provenance.model_ref.version == "openai:gpt-4o-synthetic"
+    assert adapter.provenance.parser_ref.artifact_code == "guideline-parser"
+    assert adapter.provenance.validator_ref.artifact_code == "guideline-validator"
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("execution_status", tuple(EvidenceGateExecutionStatus))
+async def test_gate_precondition_execution_status_axis(
+    execution_status: EvidenceGateExecutionStatus,
+) -> None:
+    structured_resp = GuidelineStructuredSelection(
+        claims=[
+            GuidelineClaimSelection(
+                medication_slot="m0",
+                scope=GuidelineScope.FOOD_CAUTION,
+                evidence_slots=["e0"],
+            )
+        ]
+    )
+    client = build_mock_client(response=MockProviderResponse(structured_resp))
+    adapter = OpenAIGuidelineGeneratorAdapter(
+        client=client,
+        model="gpt-4o-synthetic",
+        timeout_seconds=5.0,
+        context=make_context(),
+    )
     base_req = make_valid_request()
-
-    invalid_gate_outcomes = [
-        # Execution status failed
-        EvidenceGateOutcome(
-            execution_status=EvidenceGateExecutionStatus.DEPENDENCY_ERROR,
-            evidence_status=EvidenceStatus.SUFFICIENT,
-            reason=EvidenceGateReason.REQUEST_INVALID,
-            gate_passed_selections=(),
-            trace=base_req.evidence_gate_outcome.trace,
-        ),
-        # Evidence status insufficient
-        EvidenceGateOutcome(
-            execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
-            evidence_status=EvidenceStatus.INSUFFICIENT,
-            reason=EvidenceGateReason.EVIDENCE_INSUFFICIENT,
-            gate_passed_selections=(),
-            trace=base_req.evidence_gate_outcome.trace,
-        ),
-        # Evidence status conflicted
-        EvidenceGateOutcome(
-            execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
-            evidence_status=EvidenceStatus.CONFLICTED,
-            reason=EvidenceGateReason.EVIDENCE_CONFLICTED,
-            gate_passed_selections=(),
-            trace=base_req.evidence_gate_outcome.trace,
-        ),
-        # Evidence status stale
-        EvidenceGateOutcome(
-            execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
-            evidence_status=EvidenceStatus.STALE,
-            reason=EvidenceGateReason.EVIDENCE_STALE,
-            gate_passed_selections=(),
-            trace=base_req.evidence_gate_outcome.trace,
-        ),
-        # Empty selections despite SUFFICIENT
-        EvidenceGateOutcome(
-            execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
-            evidence_status=EvidenceStatus.SUFFICIENT,
-            reason=EvidenceGateReason.EVIDENCE_SUFFICIENT,
-            gate_passed_selections=(),
-            trace=base_req.evidence_gate_outcome.trace,
-        ),
-    ]
-
-    for gate_outcome in invalid_gate_outcomes:
-        req = GuidelineGenerationRequest(
-            medication_identities=base_req.medication_identities,
-            evidence_gate_outcome=gate_outcome,
-            policy=base_req.policy,
-        )
-        result = await adapter.generate(req)
-        assert result is GuidelineGenerationFailure.VALIDATION_FAILED
+    gate_outcome = EvidenceGateOutcome(
+        execution_status=execution_status,
+        evidence_status=EvidenceStatus.SUFFICIENT,
+        reason=EvidenceGateReason.EVIDENCE_SUFFICIENT,
+        gate_passed_selections=base_req.evidence_gate_outcome.gate_passed_selections,
+        trace=base_req.evidence_gate_outcome.trace,
+    )
+    req = GuidelineGenerationRequest(
+        medication_identities=base_req.medication_identities,
+        evidence_gate_outcome=gate_outcome,
+        policy=base_req.policy,
+    )
+    res = await adapter.generate(req)
+    if execution_status is EvidenceGateExecutionStatus.SUCCEEDED:
+        assert isinstance(res, GuidelineCardDraft)
+        assert client.responses.parse.call_count == 1
+    else:
+        assert res is GuidelineGenerationFailure.VALIDATION_FAILED
         assert client.responses.parse.call_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("evidence_status", tuple(EvidenceStatus) + (None,))
+async def test_gate_precondition_evidence_status_axis(
+    evidence_status: EvidenceStatus | None,
+) -> None:
+    structured_resp = GuidelineStructuredSelection(
+        claims=[
+            GuidelineClaimSelection(
+                medication_slot="m0",
+                scope=GuidelineScope.FOOD_CAUTION,
+                evidence_slots=["e0"],
+            )
+        ]
+    )
+    client = build_mock_client(response=MockProviderResponse(structured_resp))
+    adapter = OpenAIGuidelineGeneratorAdapter(
+        client=client,
+        model="gpt-4o-synthetic",
+        timeout_seconds=5.0,
+        context=make_context(),
+    )
+    base_req = make_valid_request()
+    gate_outcome = EvidenceGateOutcome(
+        execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
+        evidence_status=evidence_status,  # type: ignore[arg-type]
+        reason=EvidenceGateReason.EVIDENCE_SUFFICIENT,
+        gate_passed_selections=base_req.evidence_gate_outcome.gate_passed_selections,
+        trace=base_req.evidence_gate_outcome.trace,
+    )
+    req = GuidelineGenerationRequest(
+        medication_identities=base_req.medication_identities,
+        evidence_gate_outcome=gate_outcome,
+        policy=base_req.policy,
+    )
+    res = await adapter.generate(req)
+    if evidence_status is EvidenceStatus.SUFFICIENT:
+        assert isinstance(res, GuidelineCardDraft)
+        assert client.responses.parse.call_count == 1
+    else:
+        assert res is GuidelineGenerationFailure.VALIDATION_FAILED
+        assert client.responses.parse.call_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", tuple(EvidenceGateReason))
+async def test_gate_precondition_reason_axis(
+    reason: EvidenceGateReason,
+) -> None:
+    structured_resp = GuidelineStructuredSelection(
+        claims=[
+            GuidelineClaimSelection(
+                medication_slot="m0",
+                scope=GuidelineScope.FOOD_CAUTION,
+                evidence_slots=["e0"],
+            )
+        ]
+    )
+    client = build_mock_client(response=MockProviderResponse(structured_resp))
+    adapter = OpenAIGuidelineGeneratorAdapter(
+        client=client,
+        model="gpt-4o-synthetic",
+        timeout_seconds=5.0,
+        context=make_context(),
+    )
+    base_req = make_valid_request()
+    gate_outcome = EvidenceGateOutcome(
+        execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
+        evidence_status=EvidenceStatus.SUFFICIENT,
+        reason=reason,
+        gate_passed_selections=base_req.evidence_gate_outcome.gate_passed_selections,
+        trace=base_req.evidence_gate_outcome.trace,
+    )
+    req = GuidelineGenerationRequest(
+        medication_identities=base_req.medication_identities,
+        evidence_gate_outcome=gate_outcome,
+        policy=base_req.policy,
+    )
+    res = await adapter.generate(req)
+    if reason is EvidenceGateReason.EVIDENCE_SUFFICIENT:
+        assert isinstance(res, GuidelineCardDraft)
+        assert client.responses.parse.call_count == 1
+    else:
+        assert res is GuidelineGenerationFailure.VALIDATION_FAILED
+        assert client.responses.parse.call_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "axis,sentinel",
+    [
+        ("execution_status", "UNSUPPORTED_EXECUTION_STATUS"),
+        ("evidence_status", "UNSUPPORTED_EVIDENCE_STATUS"),
+        ("reason", "UNSUPPORTED_REASON"),
+    ],
+)
+async def test_gate_precondition_unsupported_sentinel_values(
+    axis: str,
+    sentinel: Any,
+) -> None:
+    client = build_mock_client()
+    adapter = OpenAIGuidelineGeneratorAdapter(
+        client=client,
+        model="gpt-4o-synthetic",
+        timeout_seconds=5.0,
+        context=make_context(),
+    )
+    base_req = make_valid_request()
+    kwargs: dict[str, Any] = {
+        "execution_status": EvidenceGateExecutionStatus.SUCCEEDED,
+        "evidence_status": EvidenceStatus.SUFFICIENT,
+        "reason": EvidenceGateReason.EVIDENCE_SUFFICIENT,
+        "gate_passed_selections": base_req.evidence_gate_outcome.gate_passed_selections,
+        "trace": base_req.evidence_gate_outcome.trace,
+    }
+    kwargs[axis] = sentinel
+    gate_outcome = EvidenceGateOutcome(**kwargs)
+    req = GuidelineGenerationRequest(
+        medication_identities=base_req.medication_identities,
+        evidence_gate_outcome=gate_outcome,
+        policy=base_req.policy,
+    )
+    res = await adapter.generate(req)
+    assert res is GuidelineGenerationFailure.VALIDATION_FAILED
+    assert client.responses.parse.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_gate_precondition_empty_selections_or_medications_fail_closed() -> None:
+    client = build_mock_client()
+    adapter = OpenAIGuidelineGeneratorAdapter(
+        client=client,
+        model="gpt-4o-synthetic",
+        timeout_seconds=5.0,
+        context=make_context(),
+    )
+    base_req = make_valid_request()
+    # Empty selections
+    gate_outcome_empty_sels = EvidenceGateOutcome(
+        execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
+        evidence_status=EvidenceStatus.SUFFICIENT,
+        reason=EvidenceGateReason.EVIDENCE_SUFFICIENT,
+        gate_passed_selections=(),
+        trace=base_req.evidence_gate_outcome.trace,
+    )
+    req_empty_sels = GuidelineGenerationRequest(
+        medication_identities=base_req.medication_identities,
+        evidence_gate_outcome=gate_outcome_empty_sels,
+        policy=base_req.policy,
+    )
+    assert await adapter.generate(req_empty_sels) is GuidelineGenerationFailure.VALIDATION_FAILED
+    assert client.responses.parse.call_count == 0
+
+    # Empty medications
+    req_empty_meds = GuidelineGenerationRequest(
+        medication_identities=(),
+        evidence_gate_outcome=base_req.evidence_gate_outcome,
+        policy=base_req.policy,
+    )
+    assert await adapter.generate(req_empty_meds) is GuidelineGenerationFailure.VALIDATION_FAILED
+    assert client.responses.parse.call_count == 0
 
 
 @pytest.mark.asyncio

@@ -141,11 +141,17 @@ RAG-15 내부의 draft generation boundary다.
    - 중복 claim은 `(medication_slot, scope.value)` 기준으로 병합되며, canonical_code가 동일하더라도 서로 다른 `MedicationIdentityRef`는 병합하지 않는다.
    - deterministic claim key는 단순화된 `claim:{index:03d}` 형식을 사용한다.
    - Citation은 오직 Gate를 통과한 selection(`gate_passed_selections`)에서만 복원되며, 권위적 provenance(`evidence_key`, `source_snapshot_ref`, `source_version`, `locator`, `content_sha256`)를 strict하게 결속한다.
-   - Provider 호출 시 true dual timeout(`asyncio.timeout` + SDK client timeout)과 `max_retries=0`을 명시적으로 보장한다.
+   - Provider 호출 시 true dual timeout(`asyncio.timeout` + client `with_options(timeout=..., max_retries=0)`)을 엄격하게 적용하며, `with_options`가 없는 client는 fail-closed로 거부한다.
    - Defensive Gate precondition boundary로 Gate 비정상(non-SUFFICIENT, empty selections 등) 시 Provider를 호출하지 않고(0회) 즉시 `VALIDATION_FAILED`로 fail-closed 처리한다.
    - Observability는 `provider_contracts.observability` 및 `provider_runtime.observability` 규격을 준수하여 API key, 환자 정보, 원문 text 누출 없이 구조화된 span/event를 기록한다.
+   - Adapter는 외부 caller가 주입하는 generation provenance를 신뢰/허용하지 않고, 실제 실행 artifact 및 configuration으로부터 candidate provenance(`build_candidate_provenance`)를 직접 구성한다:
+     * Prompt candidate: exact prompt version(`guideline-claim-selector-v1`) + 시스템 지시문 UTF-8 content hash
+     * Model candidate: 요청/설정된 OpenAI 모델 canonical identity(`openai:{normalized_model}`) + content hash (Provider 응답 `model_name`은 observability evidence)
+     * Parser candidate: 실제 파서 모듈 소스 파일(`ai_worker/tasks/rag/guideline_generator_prompt.py`) 바이트 content hash
+     * Validator candidate: 실제 카드 커널 소스 파일(`ai_worker/tasks/rag/guideline_card.py`) 바이트 content hash
+     * 각 candidate의 self/content hash는 무결성 및 identity evidence이며, formal approval이 아니다.
 5. Known Deferred Authorities / 잔여 경계 외 항목:
-   - Prompt ref 및 Model ref의 formal approval 및 runtime provenance handoff는 이번 PR 범위 밖이며, #180 후속으로 연계된다 (`model_ref`는 요청 모델 식별자, Provider 응답 `model_name`은 observability evidence).
+   - Prompt 및 Model의 formal approval 및 runtime provenance handoff는 이번 PR 범위 밖이며, #180 후속으로 연계된다.
    - End-to-end 파이프라인 orchestration(#180)은 이 slice 밖이다.
    - DB/persistence 및 마이그레이션은 이 slice 밖이다.
    - Guide API는 이 slice 밖이다.

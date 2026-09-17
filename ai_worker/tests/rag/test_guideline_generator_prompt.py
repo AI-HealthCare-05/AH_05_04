@@ -1,6 +1,7 @@
 import hashlib
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 from ai_worker.tasks.rag.evidence_gate import (
     EvidenceGateExecutionStatus,
@@ -160,21 +161,54 @@ def test_candidate_provenance_binding() -> None:
     model_name = "gpt-4o-mini-2024-07-18"
     prov = build_candidate_provenance(model=model_name)
     assert type(prov) is GuidelineGenerationProvenance
+
+    # Prompt identity
     assert prov.prompt_ref.artifact_code == "guideline-prompt"
     assert prov.prompt_ref.version == GUIDELINE_GENERATOR_PROMPT_VERSION
     expected_prompt_hash = hashlib.sha256(GUIDELINE_GENERATOR_SYSTEM_INSTRUCTIONS.encode("utf-8")).hexdigest()
     assert prov.prompt_ref.content_sha256 == expected_prompt_hash
 
+    # Model identity
     assert prov.model_ref.artifact_code == "guideline-model"
     assert prov.model_ref.version == f"openai:{model_name}"
     expected_model_hash = hashlib.sha256(f"openai:{model_name}".encode()).hexdigest()
     assert prov.model_ref.content_sha256 == expected_model_hash
 
+    # Different model -> different model_ref
+    prov2 = build_candidate_provenance(model="gpt-4o-2024-08-06")
+    assert prov2.model_ref.version == "openai:gpt-4o-2024-08-06"
+    assert prov2.model_ref.content_sha256 != prov.model_ref.content_sha256
+
+    # Parser source exact hash
+    prompt_module_path = Path(__file__).parent.parent.parent / "tasks" / "rag" / "guideline_generator_prompt.py"
     assert prov.parser_ref.artifact_code == "guideline-parser"
     assert prov.parser_ref.version == "guideline-structured-parser-v1"
+    assert prov.parser_ref.content_sha256 == hashlib.sha256(prompt_module_path.read_bytes()).hexdigest()
 
+    # Validator source exact hash
+    card_module_path = Path(__file__).parent.parent.parent / "tasks" / "rag" / "guideline_card.py"
     assert prov.validator_ref.artifact_code == "guideline-validator"
     assert prov.validator_ref.version == "guideline-card-kernel-v1"
+    assert prov.validator_ref.content_sha256 == hashlib.sha256(card_module_path.read_bytes()).hexdigest()
+
+
+def test_source_content_mutation_property() -> None:
+    import tempfile
+
+    from ai_worker.tasks.rag.guideline_generator_prompt import _source_sha256
+
+    with tempfile.NamedTemporaryFile("wb", delete=False) as f:
+        f.write(b"content-a")
+        f.flush()
+        hash_a = _source_sha256(f.name)
+    with tempfile.NamedTemporaryFile("wb", delete=False) as f:
+        f.write(b"content-b")
+        f.flush()
+        hash_b = _source_sha256(f.name)
+
+    assert hash_a != hash_b
+    assert hash_a == hashlib.sha256(b"content-a").hexdigest()
+    assert hash_b == hashlib.sha256(b"content-b").hexdigest()
 
 
 def test_build_guideline_generation_input_projection_slot_determinism_and_privacy() -> None:

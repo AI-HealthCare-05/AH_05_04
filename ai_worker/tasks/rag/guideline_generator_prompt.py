@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from ai_worker.tasks.rag import guideline_card
 from ai_worker.tasks.rag.evidence_gate import GatePassedKnowledgeEvidenceSelection
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
 from ai_worker.tasks.rag.guideline_card import (
@@ -60,16 +62,22 @@ class GuidelineStructuredSelection(BaseModel):
     claims: list[GuidelineClaimSelection]
 
 
+def _source_sha256(path: str | Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
 def build_candidate_provenance(*, model: str) -> GuidelineGenerationProvenance:
-    """Builds candidate generation provenance deterministically bound to current instructions and model."""
+    """Builds candidate generation provenance deterministically bound to runtime execution artifacts and model."""
     prompt_hash = hashlib.sha256(GUIDELINE_GENERATOR_SYSTEM_INSTRUCTIONS.encode("utf-8")).hexdigest()
-    model_hash = hashlib.sha256(f"openai:{model}".encode()).hexdigest()
-    parser_hash = hashlib.sha256(b"guideline-structured-parser-v1:deterministic-slot-merge").hexdigest()
-    validator_hash = hashlib.sha256(b"guideline-card-kernel-v1:r15").hexdigest()
+    normalized_model = model.strip()
+    model_identity = f"openai:{normalized_model}"
+    model_hash = hashlib.sha256(model_identity.encode("utf-8")).hexdigest()
+    parser_hash = _source_sha256(Path(__file__))
+    validator_hash = _source_sha256(Path(guideline_card.__file__))
 
     return GuidelineGenerationProvenance(
         prompt_ref=ImmutableArtifactRef("guideline-prompt", GUIDELINE_GENERATOR_PROMPT_VERSION, prompt_hash),
-        model_ref=ImmutableArtifactRef("guideline-model", f"openai:{model}", model_hash),
+        model_ref=ImmutableArtifactRef("guideline-model", model_identity, model_hash),
         parser_ref=ImmutableArtifactRef("guideline-parser", "guideline-structured-parser-v1", parser_hash),
         validator_ref=ImmutableArtifactRef("guideline-validator", "guideline-card-kernel-v1", validator_hash),
     )
