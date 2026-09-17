@@ -122,6 +122,7 @@ from app.models.rag_evidence import (
     RagEvidenceStatus,
     RagEvidenceType,
 )
+from app.models.rag_evidence_authority import RagEvidenceAuthority
 from app.models.rag_request_authority import (
     RagRequestGuardAuthority,
     RagRequestMemberDecision,
@@ -299,6 +300,7 @@ __all__ = [
     "RagCitationSupportStatus",
     "RagCitationTargetType",
     "RagEvidence",
+    "RagEvidenceAuthority",
     "RagEvidenceGuideline",
     "RagEvidenceGuidelineType",
     "RagEvidenceKnowledge",

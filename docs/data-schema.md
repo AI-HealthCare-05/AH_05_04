@@ -954,3 +954,44 @@ import하지 않으며 `PD-175-20260910` 경계와 `ALLOWED_AI_WORKER_MODULES`�
 
 정책은 [PD-713](governance/decisions/2026-09-17-request-authority-persistence.md)을 따르며
 Current 승격과 #709 Production Reader 연결은 별도다.
+
+## #712 Assessment·Eligibility Authority 영속 — 구현, Proposed
+
+[계약](contracts/proposed/post-mvp-1/assessment-eligibility-authority-persistence-v1.md), migration
+`712a1b2c3d4e`에서 `rag_evidence_authority`를 추가한다. 발급 단위는 Production Evidence Gate를 통과한
+selected hit 한 건, 즉 `(retrieval_run_id, knowledge_chunk_id)`이며 이 2열에 UNIQUE를 둔다. 같은 2열을
+복합 FK로 `retrieval_hit` PK에 `ON DELETE RESTRICT`로 결속해, hit이 사라진 authority가 남지 않게 한다.
+
+이 표는 그 평가 시점에 실제로 성립한 사실을 남기는 append-only 증거이며 현재 상태를 조회 시점에
+해석해 만들지 않는다. 따라서 `catalog_source_approval`의 Catalog 전용 승인 만료일, `rag_source_snapshot`의
+CURRENT 상태, `retrieval_run`의 receipt hash 계열은 이 표를 대신하지 않는다.
+
+각 행은 네 종류의 artifact identity를 3열씩(`*_artifact_code`/`*_version`/`*_sha256`) 보존한다:
+eligibility receipt, assessment artifact, verifier, validity policy. 각 digest 열은 `~ '^[0-9a-f]{64}$'`
+CHECK를 갖고, assessment 3열에는 UNIQUE와 index를 둬 artifact 단위 exact 조회를 지원한다. digest는
+`rag_runtime/evidence_authority.py`가 RFC 8785 JCS canonical 규칙으로 계산한 semantic projection 값이며
+DB PK·`created_at` 같은 비결정적 값은 projection에 포함하지 않는다. `artifact_code`·`version`은 계약
+상수이므로 caller가 임의 identity를 고를 수 없고, verifier identity는 발급을 수행한 issuer가 직접
+계산한다(caller 전달 verifier ref 신뢰 금지).
+
+유효 구간은 `evaluated_at`, `assessment_valid_from`, `assessment_valid_until` timestamptz 3열로 저장하며
+표 수준 CHECK 두 개로 half-open 의미를 직접 강제한다:
+`assessment_valid_from < assessment_valid_until`와
+`evaluated_at >= assessment_valid_from AND evaluated_at < assessment_valid_until`.
+산출 규칙은 `assessment_valid_until = min(evaluated_at + 24h, *applicable upper bounds)`이고 retry가
+window를 연장하지 않는다. `24h`는 승인된 운영 상한일 뿐 의학적·데이터적 최신성 주장이 아니다.
+
+`source_snapshot_id`·`source_snapshot_member_id`는 `ON DELETE RESTRICT` FK로 결속하고,
+`content_sha256`은 `rag_knowledge_index_member`가 색인 시점에 기록한 값을 정본으로 쓰되
+`knowledge_chunk.content_hash`와 일치할 때만 인정한다. `knowledge_chunk.content_hash`는 nullable이고
+hydration 이후 채워지므로 단독으로는 과거 selection의 불변 binding 정본이 될 수 없다.
+
+쓰기는 보호 테이블 경계에 따라 `backend/app/repositories/rag_evidence_authority_repository.py` 한 곳만
+승인되고, runtime role에는 append-only 권한(`SELECT, INSERT`)만 부여한다. Trigger·RLS·Stored Procedure·
+사용자 정의 DB 함수는 추가하지 않는다. `downgrade()`는 `LOCK TABLE ... IN ACCESS EXCLUSIVE MODE`로 먼저
+잠근 뒤 행이 있으면 `RuntimeError`로 거부한다(#713·#596·#674와 같은 패턴).
+
+조회는 `(retrieval_run_id, knowledge_chunk_id)`와 assessment artifact 3열의 exact equality 두 가지만
+제공하고 latest/CURRENT fallback을 두지 않는다. 정책은
+[PD-722](governance/decisions/2026-09-17-evidence-assessment-validity.md)를 따르며 Current 승격과
+후속 Assessment·Eligibility Authority Reader 연결은 별도다.
