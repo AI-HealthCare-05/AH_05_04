@@ -65,6 +65,12 @@ async def offer(case: ApiCase, barrier_id: str):
     return await case.client.get(f"/api/v1/barrier-responses/{barrier_id}/supports")
 
 
+async def offer_with_subreason(case: ApiCase, barrier_id: str, subreason_code: str):
+    return await case.client.get(
+        f"/api/v1/barrier-responses/{barrier_id}/supports", params={"subreason_code": subreason_code}
+    )
+
+
 @pytest.mark.parametrize(
     "barrier_code,support_code",
     [
@@ -76,7 +82,7 @@ async def offer(case: ApiCase, barrier_id: str):
         ("ACCESS_OR_COST", "ACCESS_SUPPORT"),
     ],
 )
-async def test_single_offer_and_confirmed_plan_snapshot_without_provider(
+async def test_rule_based_offers_and_confirmed_plan_snapshot_without_provider(
     case: ApiCase, monkeypatch: pytest.MonkeyPatch, barrier_code: str, support_code: str
 ) -> None:
     generator = AsyncMock(side_effect=AssertionError("external generator must not be called"))
@@ -89,7 +95,7 @@ async def test_single_offer_and_confirmed_plan_snapshot_without_provider(
     assert offered.headers["cache-control"] == "no-store"
     data = offered.json()["data"]
     assert data["reason_code"] is None
-    assert len(data["supports"]) == 1
+    assert 1 <= len(data["supports"]) <= 2
     support = data["supports"][0]
     assert support["support_code"] == support_code
     assert support["support_copy"]["confirmation_prompt"]
@@ -138,6 +144,51 @@ async def test_declined_returns_zero_without_fabricated_support(case: ApiCase) -
     assert await case.session.scalar(select(func.count()).select_from(SupportActionPlan)) == 0
 
 
+async def test_subreason_questions_are_allowlisted_and_restored_from_plan(case: ApiCase) -> None:
+    barrier_id = await prepare(case, "INSTRUCTIONS_UNCLEAR")
+    response = await offer_with_subreason(case, barrier_id, "TIMING_OR_FOOD_UNCLEAR")
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["subreason_code"] == "TIMING_OR_FOOD_UNCLEAR"
+    support = data["supports"][0]
+    assert [item["question_id"] for item in support["questions"]] == [
+        "INSTRUCTION_TIMING",
+        "INSTRUCTION_SUMMARY",
+    ]
+    body = {
+        **plan_body(barrier_id, support),
+        "subreason_code": "TIMING_OR_FOOD_UNCLEAR",
+        "selected_question_ids": ["INSTRUCTION_TIMING"],
+    }
+    created = await create(case, body)
+    assert created.status_code == 200, created.text
+    plan = created.json()["data"]
+    assert plan["action_config_snapshot"]["parameters"]["subreason_code"] == "TIMING_OR_FOOD_UNCLEAR"
+    assert plan["action_config_snapshot"]["parameters"]["selected_question_ids"] == ["INSTRUCTION_TIMING"]
+    resources = await case.client.get(f"/api/v1/support-action-plans/{plan['support_action_plan_id']}/resources")
+    assert resources.status_code == 200, resources.text
+    assert resources.json()["data"]["selected_questions"] == [
+        {"question_id": "INSTRUCTION_TIMING", "text": "이 약은 언제, 식사와 어떤 관계로 복용해야 하나요?"}
+    ]
+
+
+async def test_rejects_cross_barrier_subreason_and_unoffered_question(case: ApiCase) -> None:
+    barrier_id = await prepare(case, "INSTRUCTIONS_UNCLEAR")
+    assert_error(
+        await offer_with_subreason(case, barrier_id, "LONG_TERM_USE"),
+        422,
+        "VALIDATION_FAILED",
+    )
+    response = await offer_with_subreason(case, barrier_id, "TIMING_OR_FOOD_UNCLEAR")
+    support = response.json()["data"]["supports"][0]
+    body = {
+        **plan_body(barrier_id, support),
+        "subreason_code": "TIMING_OR_FOOD_UNCLEAR",
+        "selected_question_ids": ["INSTRUCTION_AMOUNT"],
+    }
+    assert_error(await create(case, body), 422, "VALIDATION_FAILED")
+
+
 def test_order_is_stable_including_code_tiebreak_and_empty_candidates() -> None:
     config = load_active_handler_config()
     barrier = BarrierResponse(response_status=BarrierResponseStatus.ANSWERED, barrier_code=BarrierCode.FORGOT)
@@ -167,11 +218,12 @@ async def test_client_cannot_overwrite_server_snapshot(case: ApiCase, field: str
     assert_error(await create(case, {**plan_body(barrier_id, support), field: "SYNTHETIC"}), 422, "VALIDATION_FAILED")
 
 
-async def test_second_eligible_support_is_not_offered_and_versions_must_match(case: ApiCase) -> None:
+async def test_second_eligible_support_can_be_selected_and_versions_must_match(case: ApiCase) -> None:
     barrier_id = await prepare(case)
-    support = (await offer(case, barrier_id)).json()["data"]["supports"][0]
+    supports = (await offer(case, barrier_id)).json()["data"]["supports"]
+    assert [item["support_code"] for item in supports] == ["REMINDER_SETUP", "ROUTINE_OR_TRAVEL_PLAN"]
+    support = supports[1]
     body = plan_body(barrier_id, support)
-    assert_error(await create(case, {**body, "support_code": "ROUTINE_OR_TRAVEL_PLAN"}), 409, "SUPPORT_NOT_OFFERED")
     for field in ("rule_version", "copy_version"):
         assert_error(await create(case, {**body, field: "synthetic-old-version"}), 409, "SUPPORT_VERSION_CONFLICT")
     assert (await create(case, body)).status_code == 200
@@ -349,7 +401,7 @@ def test_openapi_contains_only_scoped_routes_and_strict_confirmation() -> None:
         "confirmed",
     }
     assert request["properties"]["confirmed"]["const"] is True
-    assert schema["components"]["schemas"]["SupportOfferData"]["properties"]["supports"]["maxItems"] == 1
+    assert schema["components"]["schemas"]["SupportOfferData"]["properties"]["supports"]["maxItems"] == 2
     assert set(schema["paths"]["/api/v1/support-action-plans/{id}"]) == {"get", "patch"}
     assert set(schema["paths"]["/api/v1/support-action-plans/{id}/followups"]) == {"get", "post"}
 

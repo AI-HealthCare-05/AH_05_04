@@ -22,6 +22,14 @@ const supportNames: Record<api.SupportCode, string> = {
   INSTRUCTION_REVIEW: '복용 방법 확인', PURPOSE_REVIEW: '복용 목적 확인',
   MEDICATION_CONCERN_GUIDANCE: '약에 대한 걱정 확인', ACCESS_SUPPORT: '약 접근·비용 도움 확인',
 }
+const subreasonChoices: Record<api.BarrierCode, [api.SubreasonCode, string][]> = {
+  FORGOT: [['MISSED_ALERT', '알림을 보거나 듣지 못했어요'], ['POSTPONED', '미뤘다가 잊었어요'], ['MEDICATION_CONFUSION', '약이나 복용 회차가 헷갈렸어요']],
+  SCHEDULE_OR_TRAVEL: [['SCHEDULE_CHANGED', '생활 일정이 바뀌었어요'], ['MEDICATION_NOT_WITH_ME', '약을 가지고 나오지 않았어요'], ['PREPARATION_DIFFICULT', '미리 준비하기 어려웠어요']],
+  INSTRUCTIONS_UNCLEAR: [['DOSE_AMOUNT_UNCLEAR', '한 번에 먹을 수량이 헷갈려요'], ['TIMING_OR_FOOD_UNCLEAR', '시간이나 식사 조건이 헷갈려요'], ['MEDICATION_IDENTITY_UNCLEAR', '약을 구분하기 어려워요'], ['LANGUAGE_TOO_COMPLEX', '설명이 길거나 어려워요']],
+  NEED_DOUBT: [['NO_SYMPTOMS', '현재 증상이 없어요'], ['NO_NOTICEABLE_EFFECT', '효과를 체감하지 못해요'], ['VALUES_IMPROVED', '검사 수치가 좋아졌어요'], ['NEED_UNCLEAR', '왜 필요한지 잘 모르겠어요']],
+  MEDICATION_CONCERN: [['LONG_TERM_USE', '장기간 복용이 걱정돼요'], ['DEPENDENCE_OR_TOLERANCE', '의존성이나 내성이 걱정돼요'], ['BODY_HARM', '몸에 해가 될까 걱정돼요'], ['PILL_BURDEN', '복용하는 약이 많아 부담돼요'], ['CONFLICTING_INFORMATION', '인터넷·지인 정보와 안내가 달라요']],
+  ACCESS_OR_COST: [['RUNNING_LOW', '약이 곧 떨어져요'], ['REFILL_MISSED', '재처방 시기를 놓쳤어요'], ['VISIT_DIFFICULT', '병원이나 약국 방문이 어려워요'], ['COST_BURDEN', '비용이 부담돼요']],
+}
 // Only this historical copy predates the explicit packing plan. New copy versions retain it.
 const LEGACY_TRAVEL_COPY = 'track-c-support-copy-ko-2026-09-15.1'
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -39,7 +47,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   const [query] = useSearchParams()
   const date = query.get('date') ?? ''
   const navigate = useNavigate()
-  const [step, setStep] = useState<'loading' | 'safety' | 'barrier' | 'travel' | 'offer' | 'plan' | 'blocked'>('loading')
+  const [step, setStep] = useState<'loading' | 'safety' | 'barrier' | 'subreason' | 'travel' | 'offer' | 'plan' | 'blocked'>('loading')
   const [checkin, setCheckin] = useState<MedicationCheckinResponse['data'] | null>(null)
   const [safety, setSafety] = useState<api.Safety | null>(null)
   const [barrier, setBarrier] = useState<api.Barrier | null>(null)
@@ -51,6 +59,9 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   const [pushState, setPushState] = useState<WebPushState | null>(null)
   const [selected, setSelected] = useState<api.BarrierCode | ''>('')
   const [travelSituation, setTravelSituation] = useState<api.TravelSituation | undefined>()
+  const [subreason, setSubreason] = useState<api.SubreasonCode | undefined>()
+  const [selectedSupport, setSelectedSupport] = useState<api.SupportCode | undefined>()
+  const [selectedQuestions, setSelectedQuestions] = useState<string[]>([])
   const [confirmed, setConfirmed] = useState(false)
   const [terminal, setTerminal] = useState<'COMPLETED' | 'CANCELLED' | null>(null)
   const [busy, setBusy] = useState(false)
@@ -149,25 +160,27 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
     if (!alive.current) return
     if (result.medication_checkin_id !== checkin.checkin_id || result.checkin_revision !== checkin.revision || result.safety_assessment_id !== safety.assessment_id) throw new ApiError(409, '')
     setBarrier(result)
+    if (!code) {
+      await loadOffers(result); return
+    }
     if (code === 'SCHEDULE_OR_TRAVEL') {
       setTravelSituation(undefined); setStep('travel'); return
     }
-    // Replaying this write after a lost GET response retains the same key.
-    await loadOffers(result)
+    setSubreason(undefined); setStep('subreason')
   }
 
-  async function loadOffers(result: api.Barrier, situation?: api.TravelSituation) {
+  async function loadOffers(result: api.Barrier, situation?: api.TravelSituation, selectedSubreason?: api.SubreasonCode) {
     if (!checkin || !safety) return
-    const offered = await service.getOffers(result.barrier_response_id, situation)
+    const offered = await service.getOffers(result.barrier_response_id, situation, selectedSubreason)
     if (!alive.current) return
-    if (offered.barrier_response_id !== result.barrier_response_id || offered.medication_checkin_id !== checkin.checkin_id || offered.checkin_revision !== checkin.revision || offered.safety_assessment_id !== safety.assessment_id || offered.supports.length > 1 || (offered.supports.length === 0 && offered.reason_code !== 'NO_ELIGIBLE_SUPPORT') || (offered.supports.length === 1 && offered.reason_code !== null)) throw new ApiError(409, '')
-    setOffer(offered); setConfirmed(false); setStep('offer')
+    if (offered.barrier_response_id !== result.barrier_response_id || offered.medication_checkin_id !== checkin.checkin_id || offered.checkin_revision !== checkin.revision || offered.safety_assessment_id !== safety.assessment_id || offered.supports.length > 2 || (offered.supports.length === 0 && offered.reason_code !== 'NO_ELIGIBLE_SUPPORT') || (offered.supports.length > 0 && offered.reason_code !== null)) throw new ApiError(409, '')
+    setOffer(offered); setSubreason(selectedSubreason ?? situation); setSelectedSupport(offered.supports[0]?.support_code); setSelectedQuestions([]); setConfirmed(false); setStep('offer')
   }
 
   async function savePlan() {
-    const item = offer?.supports[0]
+    const item = offer?.supports.find(candidate => candidate.support_code === selectedSupport)
     if (!barrier || !item || !confirmed) return
-    const body: api.CreatePlanRequest = { barrier_response_id: barrier.barrier_response_id, support_code: item.support_code, rule_version: item.rule_version, copy_version: item.copy_version, confirmed: true, ...(travelSituation ? { travel_situation: travelSituation } : {}) }
+    const body: api.CreatePlanRequest = { barrier_response_id: barrier.barrier_response_id, support_code: item.support_code, rule_version: item.rule_version, copy_version: item.copy_version, confirmed: true, selected_question_ids: selectedQuestions, ...(subreason ? { subreason_code: subreason } : {}), ...(travelSituation ? { travel_situation: travelSituation } : {}) }
     const result = await service.createPlan(body, key('create-plan', barrier.barrier_response_id, body))
     if (alive.current) navigate(`/dev/track-c/plans/${result.support_action_plan_id}`, { replace: true })
     // Destination always GETs current status; creation replay is only a saved snapshot.
@@ -187,7 +200,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
     if (alive.current) { setPlan(result); setTerminal(null); setConfirmed(false) }
   }
 
-  const item = offer?.supports[0]
+  const item = offer?.supports.find(candidate => candidate.support_code === selectedSupport)
   const needsPushSetup = plan?.support_code === 'REMINDER_SETUP' && resources?.barrier_code === 'FORGOT'
   const instructionPlan = plan?.support_code === 'INSTRUCTION_REVIEW'
   const purposePlan = plan?.support_code === 'PURPOSE_REVIEW'
@@ -204,7 +217,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
       {step === 'safety' && <p className="track-c-eyebrow">복약 안전 확인</p>}
       {step === 'offer' && <p className="track-c-eyebrow">나에게 맞는 도움</p>}
       {step === 'plan' && plan && <p className={`track-c-status track-c-status--${plan.status.toLowerCase()}`} role="status">{plan.status === 'ACTIVE' ? '진행 중' : plan.status === 'COMPLETED' ? '완료됨' : '취소됨'}</p>}
-      <h1 ref={heading} tabIndex={-1}>{step === 'barrier' ? '이번에는 어떤 점이 가장 크게 영향을 주었나요?' : step === 'safety' ? '현재 불편한 증상이 있나요?' : step === 'offer' ? '도움 방법을 확인해 주세요' : step === 'plan' ? '내 실천 계획' : '복약 도움 확인'}</h1>
+      <h1 ref={heading} tabIndex={-1}>{step === 'barrier' ? '이번에는 어떤 점이 가장 크게 영향을 주었나요?' : step === 'subreason' ? '어떤 상황에 더 가까웠나요?' : step === 'safety' ? '현재 불편한 증상이 있나요?' : step === 'offer' ? '도움 방법을 확인해 주세요' : step === 'plan' ? '내 실천 계획' : '복약 도움 확인'}</h1>
       {error && <p role="alert">{error}</p>}
       {retry && <Button disabled={busy} onClick={() => void run(retry)}>같은 요청 다시 시도</Button>}
       {step === 'loading' && <p role="status">기록을 확인하고 있어요.</p>}
@@ -223,21 +236,29 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
         <Button fullWidth disabled={!selected || busy || !!retry} onClick={() => void run(() => submitBarrier(selected || null))}>선택한 어려움으로 도움 찾기</Button>
         <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => void run(() => submitBarrier(null))}>답하지 않고 복약 상태만 저장</Button>
       </>}
+      {step === 'subreason' && barrier?.barrier_code && <>
+        <p>가장 가까운 상황 하나를 골라주세요. 세부 이유를 저장하지 않고 일반 도움을 볼 수도 있어요.</p>
+        <fieldset disabled={busy || !!retry}><legend className="track-c-sr-only">복약이 어려웠던 구체적인 상황</legend>{subreasonChoices[barrier.barrier_code].map(([code, label]) => <label className="track-c-choice" key={code}><input type="radio" name="subreason" value={code} checked={subreason === code} onChange={() => setSubreason(code)} /><span>{label}</span></label>)}</fieldset>
+        <Button fullWidth disabled={!subreason || busy || !!retry} onClick={() => { if (subreason) void run(() => loadOffers(barrier, undefined, subreason)) }}>선택한 상황으로 도움 찾기</Button>
+        <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => void run(() => loadOffers(barrier))}>세부 이유 없이 도움 보기</Button>
+      </>}
       {step === 'travel' && <Card>
         <h2>어떤 상황이었나요?</h2>
         <fieldset disabled={busy || !!retry}>
           <legend>일정 변경·외출 상황</legend>
-          <label className="track-c-choice"><input type="radio" name="travel" checked={travelSituation === 'SCHEDULE_CHANGED'} onChange={() => setTravelSituation('SCHEDULE_CHANGED')} /><span>생활 일정이 바뀌었어요</span></label>
-          <label className="track-c-choice"><input type="radio" name="travel" checked={travelSituation === 'MEDICATION_NOT_WITH_ME'} onChange={() => setTravelSituation('MEDICATION_NOT_WITH_ME')} /><span>약을 가지고 나오지 않았어요</span></label>
+          <label className="track-c-choice"><input type="radio" name="travel" checked={travelSituation === 'SCHEDULE_CHANGED'} onChange={() => { setTravelSituation('SCHEDULE_CHANGED'); setSubreason('SCHEDULE_CHANGED') }} /><span>생활 일정이 바뀌었어요</span></label>
+          <label className="track-c-choice"><input type="radio" name="travel" checked={travelSituation === 'MEDICATION_NOT_WITH_ME'} onChange={() => { setTravelSituation('MEDICATION_NOT_WITH_ME'); setSubreason('MEDICATION_NOT_WITH_ME') }} /><span>약을 가지고 나오지 않았어요</span></label>
+          <label className="track-c-choice"><input type="radio" name="travel" checked={subreason === 'PREPARATION_DIFFICULT'} onChange={() => { setTravelSituation(undefined); setSubreason('PREPARATION_DIFFICULT') }} /><span>외출 준비가 어려웠어요</span></label>
         </fieldset>
-        <Button fullWidth disabled={!travelSituation || busy || !!retry} onClick={() => { if (barrier && travelSituation) void run(() => loadOffers(barrier, travelSituation)) }}>선택한 상황으로 도움 찾기</Button>
+        <Button fullWidth disabled={(!travelSituation && subreason !== 'PREPARATION_DIFFICULT') || busy || !!retry} onClick={() => { if (barrier) void run(() => loadOffers(barrier, travelSituation, subreason ?? travelSituation)) }}>선택한 상황으로 도움 찾기</Button>
         <Button fullWidth variant="secondary" disabled={busy} onClick={() => navigate(back)}>나중에</Button>
       </Card>}
       {step === 'offer' && (item ? <>
-        <Card className="track-c-offer"><h2>{item.support_copy.title}</h2><p>{item.support_copy.body}</p></Card>
+        {offer && offer.supports.length > 1 && <fieldset disabled={busy || !!retry}><legend>도움 방법을 하나 골라주세요</legend>{offer.supports.map(candidate => <label className="track-c-choice" key={candidate.support_code}><input type="radio" name="support" checked={selectedSupport === candidate.support_code} onChange={() => { setSelectedSupport(candidate.support_code); setSelectedQuestions([]); setConfirmed(false) }} /><span>{candidate.support_copy.title}</span></label>)}</fieldset>}
+        <Card className="track-c-offer"><h2>{item.support_copy.title}</h2><p>{item.support_copy.body}</p>{item.questions.length > 0 && <fieldset><legend>상담 때 확인할 질문을 하나 이상 골라주세요</legend>{item.questions.map(question => <label className="track-c-choice" key={question.question_id}><input type="checkbox" disabled={!selectedQuestions.includes(question.question_id) && selectedQuestions.length >= 3} checked={selectedQuestions.includes(question.question_id)} onChange={event => { setSelectedQuestions(current => event.target.checked ? [...current, question.question_id] : current.filter(id => id !== question.question_id)); setConfirmed(false) }} /><span>{question.text}</span></label>)}</fieldset>}</Card>
         <div className="track-c-actions">
           <label className="track-c-choice"><input type="checkbox" disabled={busy || !!retry} checked={confirmed} onChange={e => setConfirmed(e.target.checked)} /><span>{item.support_copy.confirmation_prompt}</span></label>
-          <Button fullWidth disabled={!confirmed || busy || !!retry} onClick={() => void run(savePlan)}>{item.support_copy.primary_label}</Button>
+          <Button fullWidth disabled={!confirmed || (item.questions.length > 0 && selectedQuestions.length === 0) || busy || !!retry} onClick={() => void run(savePlan)}>{item.support_copy.primary_label}</Button>
           <Button fullWidth variant="secondary" disabled={busy} onClick={() => navigate(back)}>{item.support_copy.secondary_label}</Button>
         </div>
       </> : <Card><h2>지금 제안할 수 있는 도움이 없어요</h2><p>복약 기록과 응답은 저장되어 있어요.</p><Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button></Card>)}
@@ -256,6 +277,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
           {instructionPlan && <><p>현재 설정한 일정은 승인된 복용법 설명과 구분해서 확인해 주세요.</p><p><Link to={`/schedule?support_medication=${encodeURIComponent(resources.prescription_version_medication_id)}`} target="_blank" rel="noopener noreferrer">현재 복약 일정 확인 (새 탭)</Link></p></>}
           <p>이 약에 연결된 {instructionPlan ? '복용법' : '복용 목적'} 설명과 근거를 아직 제공할 수 없어요. 필요한 내용은 약사나 의료진에게 확인해 주세요.</p>
         </>}
+        {resources && resources.selected_questions.length > 0 && <Card><h2>상담 때 확인할 질문</h2><ul>{resources.selected_questions.map(question => <li key={question.question_id}>{question.text}</li>)}</ul><p>질문은 자동으로 전송되지 않아요.</p></Card>}
         {concernPlan && plan.status === 'ACTIVE' && <Button variant="secondary" disabled={busy} onClick={() => { setTerminal(null); setConfirmed(false); setStep('blocked') }}>증상이 생겼거나 확실하지 않아요</Button>}
         <p>계획 조회만으로 실행이나 완료가 처리되지 않아요.</p>
         {plan.status === 'ACTIVE' && <div className="track-c-actions">

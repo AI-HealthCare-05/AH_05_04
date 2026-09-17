@@ -16,16 +16,17 @@ const support = {
   support_code: 'REMINDER_SETUP', rule_version: 'rule-v1', copy_version: 'copy-v1', priority: 1, rationale_code: 'FORGOT',
   action_config: { schema_version: 'track-c-handler-config-v1', rationale_code: 'FORGOT', parameters: { destination: 'MEDICATION_SCHEDULE_SETUP', prescription_version_medication_id: 'medication' } },
   support_copy: { title: '서버에서 받은 제안', body: '서버의 승인된 설명', confirmation_prompt: '이 제안을 계획으로 저장할까요?', primary_label: '계획 저장', secondary_label: '나중에' },
+  questions: [],
 }
 const plan = { support_action_plan_id: planId, barrier_response_id: 'barrier', support_code: 'REMINDER_SETUP', rule_version: 'rule-v1', copy_version: 'copy-v1', action_config_snapshot: support.action_config, status: 'ACTIVE', created_at: '2026-09-16T00:00:00Z', completed_at: null, cancelled_at: null }
 function services(overrides: Partial<TrackCServices> = {}): TrackCServices {
   return {
     getFollowup: vi.fn().mockResolvedValue(null), submitFollowup: vi.fn(),
     getPushState: vi.fn().mockResolvedValue('granted'),
-    getPlanResources: vi.fn().mockResolvedValue({ support_action_plan_id: planId, barrier_code: 'SCHEDULE_OR_TRAVEL', occurrence_id: occurrenceId, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: support.support_copy }),
+    getPlanResources: vi.fn().mockResolvedValue({ support_action_plan_id: planId, barrier_code: 'SCHEDULE_OR_TRAVEL', occurrence_id: occurrenceId, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: support.support_copy, subreason_code: null, selected_questions: [] }),
     getDay: vi.fn().mockResolvedValue({ data: { occurrences: [{ occurrence_id: occurrenceId, scheduled_local_date: '2026-09-16', status: 'CLOSED', checkin }] } }),
     createSafety: vi.fn().mockResolvedValue(safety), putBarrier: vi.fn().mockResolvedValue(barrier),
-    getOffers: vi.fn().mockResolvedValue({ ...barrier, supports: [support], reason_code: null }),
+    getOffers: vi.fn().mockResolvedValue({ ...barrier, subreason_code: null, supports: [support], reason_code: null }),
     createPlan: vi.fn().mockResolvedValue(plan), getPlan: vi.fn().mockResolvedValue(plan), patchPlan: vi.fn().mockResolvedValue(plan), ...overrides,
   }
 }
@@ -37,7 +38,7 @@ function show(service: TrackCServices, entry = `/dev/track-c/occurrences/${occur
   </Routes></MemoryRouter></StrictMode>)
 }
 async function enterBarrier() { fireEvent.click(await screen.findByRole('button', { name: '증상은 없어요' })); await screen.findByRole('radio', { name: '깜빡했어요' }) }
-async function enterOffer() { await enterBarrier(); fireEvent.click(screen.getByRole('radio', { name: '깜빡했어요' })); fireEvent.click(screen.getByRole('button', { name: '선택한 어려움으로 도움 찾기' })); await screen.findByText('서버에서 받은 제안') }
+async function enterOffer() { await enterBarrier(); fireEvent.click(screen.getByRole('radio', { name: '깜빡했어요' })); fireEvent.click(screen.getByRole('button', { name: '선택한 어려움으로 도움 찾기' })); fireEvent.click(await screen.findByRole('button', { name: '세부 이유 없이 도움 보기' })); await screen.findByText('서버에서 받은 제안') }
 afterEach(cleanup)
 
 describe('Track C API flow', () => {
@@ -47,8 +48,43 @@ describe('Track C API flow', () => {
     expect((screen.getByRole('button', { name: '계획 저장' }) as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
     await screen.findByText('취소됨')
-    expect(svc.createPlan).toHaveBeenCalledWith({ barrier_response_id: 'barrier', support_code: 'REMINDER_SETUP', rule_version: 'rule-v1', copy_version: 'copy-v1', confirmed: true }, expect.any(String))
+    expect(svc.createPlan).toHaveBeenCalledWith({ barrier_response_id: 'barrier', support_code: 'REMINDER_SETUP', rule_version: 'rule-v1', copy_version: 'copy-v1', confirmed: true, selected_question_ids: [] }, expect.any(String))
     expect(svc.patchPlan).not.toHaveBeenCalled()
+  })
+  it('stores an allowlisted consultation question for the selected subreason', async () => {
+    const instructionBarrier = { ...barrier, barrier_code: 'INSTRUCTIONS_UNCLEAR' }
+    const instructionSupport = {
+      ...support,
+      support_code: 'INSTRUCTION_REVIEW',
+      questions: [{ question_id: 'INSTRUCTION_TIMING', text: '이 약은 언제 복용해야 하나요?' }],
+    }
+    const svc = services({
+      putBarrier: vi.fn().mockResolvedValue(instructionBarrier),
+      getOffers: vi.fn().mockResolvedValue({
+        ...instructionBarrier,
+        subreason_code: 'TIMING_OR_FOOD_UNCLEAR',
+        supports: [instructionSupport],
+        reason_code: null,
+      }),
+    })
+    show(svc); await enterBarrier()
+    fireEvent.click(screen.getByRole('radio', { name: '복용 방법이 헷갈렸어요' }))
+    fireEvent.click(screen.getByRole('button', { name: '선택한 어려움으로 도움 찾기' }))
+    fireEvent.click(await screen.findByRole('radio', { name: '시간이나 식사 조건이 헷갈려요' }))
+    fireEvent.click(screen.getByRole('button', { name: '선택한 상황으로 도움 찾기' }))
+    const question = await screen.findByRole('checkbox', { name: '이 약은 언제 복용해야 하나요?' })
+    fireEvent.click(screen.getByRole('checkbox', { name: '이 제안을 계획으로 저장할까요?' }))
+    expect((screen.getByRole('button', { name: '계획 저장' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(question)
+    fireEvent.click(screen.getByRole('checkbox', { name: '이 제안을 계획으로 저장할까요?' }))
+    fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+    await screen.findByText('진행 중')
+    expect(svc.getOffers).toHaveBeenCalledWith('barrier', undefined, 'TIMING_OR_FOOD_UNCLEAR')
+    expect(svc.createPlan).toHaveBeenCalledWith(expect.objectContaining({
+      support_code: 'INSTRUCTION_REVIEW',
+      subreason_code: 'TIMING_OR_FOOD_UNCLEAR',
+      selected_question_ids: ['INSTRUCTION_TIMING'],
+    }), expect.any(String))
   })
   it.each(['PENDING', 'UNCONFIRMED', 'TAKEN'])('does not start from %s', async status => {
     const svc = services({ getDay: vi.fn().mockResolvedValue({ data: { occurrences: [{ occurrence_id: occurrenceId, scheduled_local_date: '2026-09-16', status: 'CLOSED', checkin: status === 'PENDING' ? null : { ...checkin, status } }] } }) })
@@ -67,7 +103,7 @@ describe('Track C API flow', () => {
     const svc = services(); show(svc); await enterBarrier()
     fireEvent.click(screen.getByRole('radio', { name: '깜빡했어요' })); fireEvent.click(screen.getByRole('radio', { name: '복용 방법이 헷갈렸어요' }))
     expect(screen.getAllByRole('radio', { checked: true })).toHaveLength(1)
-    fireEvent.click(screen.getByRole('button', { name: '선택한 어려움으로 도움 찾기' })); await screen.findByText('서버에서 받은 제안')
+    fireEvent.click(screen.getByRole('button', { name: '선택한 어려움으로 도움 찾기' })); await screen.findByText('어떤 상황에 더 가까웠나요?')
     expect(svc.putBarrier).toHaveBeenCalledWith('checkin', { response_status: 'ANSWERED', barrier_code: 'INSTRUCTIONS_UNCLEAR', checkin_revision: 3, expected_revision: 0 }, expect.any(String))
   })
   it('persists explicit decline and handles no eligible support', async () => {
@@ -107,7 +143,7 @@ describe('Track C API flow', () => {
     expect(screen.queryByText('PRIVATE_RAW_DETAIL')).toBeNull()
     expect(screen.getAllByRole('radio', { checked: true })).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: '같은 요청 다시 시도' }))
-    await screen.findByText('서버에서 받은 제안')
+    fireEvent.click(await screen.findByRole('button', { name: '세부 이유 없이 도움 보기' })); await screen.findByText('서버에서 받은 제안')
     expect(putBarrier.mock.calls[0]).toEqual(putBarrier.mock.calls[1])
   })
   it('does not reuse offers from another Safety assessment', async () => {
@@ -150,7 +186,7 @@ it.each([
   fireEvent.click(screen.getByRole('radio', { name: label }))
   fireEvent.click(screen.getByRole('button', { name: '선택한 상황으로 도움 찾기' }))
   await screen.findByText('서버에서 받은 제안')
-  expect(svc.getOffers).toHaveBeenCalledWith('barrier', situation)
+  expect(svc.getOffers).toHaveBeenCalledWith('barrier', situation, situation)
   expect(svc.createPlan).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
   await screen.findByText('진행 중')
@@ -168,8 +204,8 @@ it('retries the travel offer without writing another Barrier', async () => {
   fireEvent.click(await screen.findByRole('button', { name: '같은 요청 다시 시도' }))
   await screen.findByText('서버에서 받은 제안')
   expect(svc.putBarrier).toHaveBeenCalledTimes(1)
-  expect(svc.getOffers).toHaveBeenNthCalledWith(1, 'barrier', 'MEDICATION_NOT_WITH_ME')
-  expect(svc.getOffers).toHaveBeenNthCalledWith(2, 'barrier', 'MEDICATION_NOT_WITH_ME')
+  expect(svc.getOffers).toHaveBeenNthCalledWith(1, 'barrier', 'MEDICATION_NOT_WITH_ME', 'MEDICATION_NOT_WITH_ME')
+  expect(svc.getOffers).toHaveBeenNthCalledWith(2, 'barrier', 'MEDICATION_NOT_WITH_ME', 'MEDICATION_NOT_WITH_ME')
 })
 
 it.each([activeCopyVersion, 'track-c-support-copy-ko-2099-01-01.1'])('retains packing confirmation for %s', async copy_version => {
@@ -211,7 +247,7 @@ it.each([activeCopyVersion, 'track-c-support-copy-ko-2099-01-01.1'])('checks not
   const getPushState = vi.fn().mockResolvedValueOnce('denied').mockResolvedValueOnce('granted').mockResolvedValueOnce('revoked')
   const svc = services({
     getPlan: vi.fn().mockResolvedValue({ ...plan, copy_version }),
-    getPlanResources: vi.fn().mockResolvedValue({ support_action_plan_id: planId, barrier_code: 'FORGOT', occurrence_id: occurrenceId, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: support.support_copy }),
+    getPlanResources: vi.fn().mockResolvedValue({ support_action_plan_id: planId, barrier_code: 'FORGOT', occurrence_id: occurrenceId, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: support.support_copy, subreason_code: null, selected_questions: [] }),
     getPushState,
   })
   show(svc, `/dev/track-c/plans/${planId}`)
@@ -232,7 +268,7 @@ it.each([activeCopyVersion, 'track-c-support-copy-ko-2099-01-01.1'])('checks not
 
 it.each(['granted', 'unsupported', 'denied', 'subscription_failed', 'revoked', 'unrequested'])('allows explicitly confirmed completion for %s', async state => {
   const svc = services({
-    getPlanResources: vi.fn().mockResolvedValue({ support_action_plan_id: planId, barrier_code: 'FORGOT', occurrence_id: occurrenceId, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: support.support_copy }),
+    getPlanResources: vi.fn().mockResolvedValue({ support_action_plan_id: planId, barrier_code: 'FORGOT', occurrence_id: occurrenceId, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: support.support_copy, subreason_code: null, selected_questions: [] }),
     getPushState: vi.fn().mockResolvedValue(state),
   })
   show(svc, `/dev/track-c/plans/${planId}`)

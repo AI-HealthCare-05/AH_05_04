@@ -70,14 +70,14 @@ async def test_travel_choice_rejected_for_other_barriers(case: ApiCase, barrier_
     assert await case.session.scalar(select(func.count()).select_from(SupportActionPlan)) == 0
 
 
-async def test_cannot_adopt_different_support_or_omit_packing_choice(case: ApiCase) -> None:
+async def test_general_offer_allows_second_support_but_conflicting_travel_is_rejected(case: ApiCase) -> None:
     barrier_id = await prepare(case, "SCHEDULE_OR_TRAVEL")
     support = (await offers(case, barrier_id, "MEDICATION_NOT_WITH_ME")).json()["data"]["supports"][0]
     body = plan_body(barrier_id, support)
-    assert_error(await create(case, body), 409, "SUPPORT_NOT_OFFERED")
     assert_error(await create(case, {**body, "travel_situation": "SCHEDULE_CHANGED"}), 409, "SUPPORT_NOT_OFFERED")
     assert_error(await create(case, {**body, "travel_situation": "invented"}), 422, "VALIDATION_FAILED")
     assert_error(await offers(case, barrier_id, "invented"), 422, "VALIDATION_FAILED")
+    assert (await create(case, body)).status_code == 200
 
 
 async def test_travel_choice_cannot_bypass_ownership_or_stale_safety(case: ApiCase) -> None:

@@ -26,6 +26,7 @@ from app.models.track_c import (
 from app.repositories.track_c_storage_repository import TrackCStorageRepository
 from app.services.track_c_handler_config import (
     HandlerConfigError,
+    load_active_handler_config,
     parse_handler_config,
     restore_action_plan_snapshot,
     save_action_plan_snapshot,
@@ -300,7 +301,7 @@ def test_handler_snapshot_database_round_trip_and_rejection():
     asyncio.run(_run(SAFETY, ids))
     asyncio.run(_run(BARRIER, ids))
     other = asyncio.run(_seed())
-    rules = parse_handler_config(synthetic_rules(), **APPROVALS)
+    rules = load_active_handler_config()
 
     async def verify():
         engine = create_async_engine(config.database_url, poolclass=NullPool)
@@ -335,6 +336,9 @@ def test_handler_snapshot_database_round_trip_and_rejection():
                 assert snapshot["parameters"] == {
                     "destination": "MEDICATION_SCHEDULE_SETUP",
                     "prescription_version_medication_id": ids["version_medication_id"],
+                    "subreason_code": None,
+                    "selected_question_ids": [],
+                    "selected_questions": [],
                 }
                 assert set(snapshot) == {"schema_version", "rationale_code", "parameters"}
                 with pytest.raises(HandlerConfigError, match="plan unavailable"):
