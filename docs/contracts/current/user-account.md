@@ -62,7 +62,7 @@
 
 ## 인증 세션 무효화
 
-이 절은 [`PD-206`](../../governance/decisions/2026-09-02-account-lifecycle-contract.md) 중 현재 구현된 로그아웃·refresh token rotation·비밀번호 재설정·회원탈퇴 요청 접수 범위를 기록합니다. 회원탈퇴의 개인정보·건강정보 삭제·보존 처리는 아직 후속 구현 범위입니다.
+이 절은 [`PD-206`](../../governance/decisions/2026-09-02-account-lifecycle-contract.md) 중 현재 구현된 로그아웃·refresh token rotation·비밀번호 재설정·회원탈퇴 요청 접수와 합성 데모 임시 정책 기준 삭제·보존 처리 범위를 기록합니다. 실제 사용자 대상 운영 삭제·보존 정책, 법정 보존, 백업 파기와 Production 공개 승인은 별도 후속 범위입니다.
 
 - `User.account_status`는 `ACTIVE`, `WITHDRAWAL_REQUESTED`, `WITHDRAWN` 중 하나입니다.
 - `User.token_version`은 access/refresh token 무효화 판정에 사용하는 정수 카운터이며 기본값은 `0`입니다.
@@ -73,7 +73,7 @@
 - `POST /api/v1/auth/account/withdrawal`은 `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true`에서만 현재 인증 사용자 대상으로 열립니다. 기본값 `false`에서는 `503 SERVICE_UNAVAILABLE`(`reason=ACCOUNT_WITHDRAWAL_REQUEST_DISABLED`)로 fail-closed되고 계정 상태·token·deletion request를 변경하지 않습니다. 활성화된 환경에서도 body에 다른 `user_id`를 받지 않습니다. 요청 body는 현재 비밀번호 `password`와 최종 확인 신호 `confirmed=true`만 허용합니다. 비밀번호가 틀리면 `401 UNAUTHORIZED`, `confirmed=false`이면 `422 VALIDATION_FAILED`(`details[].field=confirmed`, `reason=CONFIRMATION_REQUIRED`)를 반환하고 계정 상태·token·deletion request를 변경하지 않습니다.
 - 재인증과 최종 확인이 성공하면 같은 transaction에서 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at`, `token_version + 1`, `account_deletion_request.status=PENDING`을 먼저 저장한 뒤 합성 데모 임시 정책 기준 삭제·보존 처리를 수행합니다. 삭제 대상에는 사용자 개인정보 필드, 처방전 원본 파일(`STORAGE_DIR/object_key`)과 DB row, OCR 결과, 사용자별 약물 식별 결과, Guide/Chat 입력·결과, refresh session, Push token이 포함됩니다.
 - 삭제·보존 처리가 성공한 경우에만 `user.account_status=WITHDRAWN`, `user.withdrawn_at`, `account_deletion_request.status=COMPLETED`, `completed_at`을 기록하고 `{"detail":"회원탈퇴가 완료되었습니다."}`를 반환합니다. 기존 이메일은 재가입 충돌을 막지 않는 익명 이메일로 교체하며, 같은 이메일 신규 가입은 새 계정으로만 허용하고 기존 데이터와 연결하지 않습니다.
-- 삭제·보존 처리 중 원본 파일 삭제나 DB 정리 실패가 발생하면 완료로 전이하지 않습니다. 이 경우 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `token_version + 1` 접근 차단은 유지하고, `account_deletion_request.status=FAILED`, `last_error_code=DEMO_DELETION_FAILED`를 기록하며 `{"detail":"탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."}`를 반환합니다. 이 실패 응답에도 refresh token 쿠키는 삭제합니다.
+- 삭제·보존 처리 중 원본 파일 삭제나 DB 정리 실패가 발생하면 완료로 전이하지 않습니다. 이 경우 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `token_version + 1` 접근 차단은 유지하고, `account_deletion_request.status=FAILED`, `last_error_code=DEMO_DELETION_FAILED`를 기록하며 `{"detail":"탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."}`를 반환합니다. 이 실패 응답에도 refresh token 쿠키는 삭제합니다. 경쟁 요청이나 재요청이 이미 `FAILED`인 요청을 확인한 경우에도 완료 문구로 소비하지 않습니다. 부분 파일 삭제 뒤 재처리할 때 이미 없는 원본 파일은 이미 제거된 것으로 간주하지만, `STORAGE_DIR` 밖 `object_key`나 삭제/DB 정리 실패는 계속 `FAILED`로 남깁니다.
 - 위 삭제·보존 처리는 합성 데이터 기반 데모 임시 정책입니다. 실제 사용자 대상 Production 공개, 법정 보존, 백업 파기와 외부 Privacy 승인 기준은 별도 운영 정책 승인 전까지 current 실행 계약으로 보지 않습니다.
 - 로그아웃 후 기존 access token으로 보호 API에 접근하거나 기존 refresh token으로 토큰 갱신을 시도하면 `401 INVALID_TOKEN`을 반환합니다.
 - 현재 구현은 기기·세션 단위 로그아웃을 구분하지 않습니다. 한 기기에서 로그아웃하면 같은 사용자의 기존 access/refresh token이 함께 무효화됩니다.

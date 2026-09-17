@@ -149,6 +149,86 @@ async def test_account_withdrawal_concurrent_requests_complete_single_deletion_r
     assert deletion_request.status == AccountDeletionRequestStatus.COMPLETED
 
 
+async def test_account_withdrawal_concurrent_cleanup_failure_returns_failed_request_to_lock_loser(
+    monkeypatch,
+) -> None:
+    user = await _create_committed_user(email=f"wd-failed-race-{uuid4().hex[:8]}@example.com")
+    barrier = asyncio.Barrier(2)
+    original_authenticate = AuthService.authenticate
+
+    async def synchronized_authenticate(self, data):
+        authenticated_user = await original_authenticate(self, data)
+        await asyncio.wait_for(barrier.wait(), timeout=10)
+        return authenticated_user
+
+    async def fail_cleanup_after_lock_loser_waits(self, user_id):
+        for _ in range(40):
+            if await _is_blocked_on_query_matching('"user"'):
+                break
+            await asyncio.sleep(0.05)
+        else:
+            raise AssertionError("concurrent withdrawal loser did not wait on the user row lock")
+        raise RuntimeError("synthetic cleanup failure")
+
+    monkeypatch.setattr(AuthService, "authenticate", synchronized_authenticate)
+    monkeypatch.setattr(
+        AccountDeletionRequestRepository,
+        "_delete_user_owned_runtime_data",
+        fail_cleanup_after_lock_loser_waits,
+    )
+
+    async def request_withdrawal() -> AccountDeletionRequestStatus | None:
+        session = AsyncSession(bind=test_engine, expire_on_commit=False)
+        try:
+            service = AuthService(
+                UserRepository(session),
+                PasswordResetRepository(session),
+                RefreshSessionRepository(session),
+                account_deletion_request_repository=AccountDeletionRequestRepository(session),
+            )
+            result = await service.request_account_withdrawal(user=user, password=_TEST_PASSWORD, confirmed=True)
+            await session.commit()
+            return result.status if result is not None else None
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(request_withdrawal(), request_withdrawal()),
+            timeout=15,
+        )
+
+        verification_session = AsyncSession(bind=test_engine, expire_on_commit=False)
+        try:
+            stored_user = await verification_session.get(User, user.id)
+            assert stored_user is not None
+            deletion_request_count = await verification_session.scalar(
+                select(func.count())
+                .select_from(AccountDeletionRequest)
+                .where(AccountDeletionRequest.user_id == user.id)
+            )
+            deletion_request = await verification_session.scalar(
+                select(AccountDeletionRequest).where(AccountDeletionRequest.user_id == user.id)
+            )
+        finally:
+            await verification_session.close()
+    finally:
+        await _delete_user(user.id)
+
+    assert results == [AccountDeletionRequestStatus.FAILED, AccountDeletionRequestStatus.FAILED]
+    assert stored_user.account_status == AccountStatus.WITHDRAWAL_REQUESTED
+    assert stored_user.is_active is False
+    assert stored_user.withdrawn_at is None
+    assert stored_user.token_version == 1
+    assert deletion_request_count == 1
+    assert deletion_request is not None
+    assert deletion_request.status == AccountDeletionRequestStatus.FAILED
+    assert deletion_request.last_error_code == FAILED_DEMO_DELETION_CODE
+
+
 async def test_account_withdrawal_finalization_failure_marks_request_failed_without_withdrawing_user(
     monkeypatch,
 ) -> None:
