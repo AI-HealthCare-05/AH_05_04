@@ -97,7 +97,7 @@ afterEach(() => {
 })
 
 describe('Plan B 복약 리포트', () => {
-  it('loading 후 서버 counts와 두 rate를 계산 없이 그대로 표시한다', async () => {
+  it('loading 후 서버 counts와 복용률을 계산 없이 그대로 표시한다', async () => {
     vi.mocked(getMedicationReport).mockImplementation(() => new Promise(() => undefined))
     const first = renderPage()
     expect(screen.getByText('복약 리포트를 불러오는 중이에요')).toBeTruthy()
@@ -108,12 +108,21 @@ describe('Plan B 복약 리포트', () => {
     expect(await screen.findByText('3회')).toBeTruthy()
     expect(screen.getByText('2회')).toBeTruthy()
     expect(screen.getByText('4회')).toBeTruthy()
-    expect(screen.getByText('12.3%')).toBeTruthy()
-    expect(screen.getByText('45.6%')).toBeTruthy()
-    expect(screen.getByText((_, element) => element?.textContent === '분자 77 / 분모 88')).toBeTruthy()
-    expect(screen.getByText((_, element) => element?.textContent === '분자 55 / 분모 66')).toBeTruthy()
-    expect(screen.getByText('UNCONFIRMED')).toBeTruthy()
-    expect(screen.getByText('NOT_TAKEN')).toBeTruthy()
+    expect(
+      screen.getByText(
+        (_, element) => element?.textContent === '분자 77 / 분모 88회 · 12.3%',
+      ),
+    ).toBeTruthy()
+    expect(screen.getByText('복용 77회 ÷ 확인된 기록 88회')).toBeTruthy()
+    // confirmation_rate 는 REPORT-01 화면에 별도 카드로 노출하지 않는다.
+    expect(screen.queryByText('기록 확인률')).toBeNull()
+    expect(screen.queryByText('45.6%')).toBeNull()
+    // counts 3종은 compact summary 로 계속 표시한다.
+    const countNames = screen
+      .getAllByRole('listitem')
+      .map((item) => item.querySelector('.report-count__name')?.textContent)
+      .filter(Boolean)
+    expect(countNames).toEqual(['복용', '미복용', '미확인'])
   })
 
   it('7일·30일 버튼의 accessible state를 표시하고 전환 시 서버를 다시 조회한다', async () => {
@@ -138,9 +147,10 @@ describe('Plan B 복약 리포트', () => {
       }),
     })
     renderPage()
-    expect((await screen.findAllByText('계산할 기록 없음')).length).toBe(2)
+    expect((await screen.findAllByText('계산할 기록 없음')).length).toBe(1)
     expect(screen.queryByText('0%')).toBeNull()
-    expect(screen.getAllByText((_, element) => element?.textContent === '분자 0 / 분모 0')).toHaveLength(2)
+    expect(screen.getByText('복용 0회 ÷ 확인된 기록 0회')).toBeTruthy()
+    expect(screen.queryByText('0%')).toBeNull()
   })
 
   it('denominator가 0이면 percentage 값과 무관하게 계산할 기록 없음으로 표시한다', async () => {
@@ -151,7 +161,7 @@ describe('Plan B 복약 리포트', () => {
       }),
     })
     renderPage()
-    expect((await screen.findAllByText('계산할 기록 없음')).length).toBe(2)
+    expect((await screen.findAllByText('계산할 기록 없음')).length).toBe(1)
     expect(screen.queryByText('0%')).toBeNull()
   })
 
@@ -172,35 +182,89 @@ describe('Plan B 복약 리포트', () => {
     })
     renderPage()
     expect(await screen.findByText('7일 동안 복약 기록이 없어요')).toBeTruthy()
-    expect(screen.getByText('상태별 횟수')).toBeTruthy()
+    expect(
+      screen.getByRole('heading', { name: '복약 상태 요약' }),
+    ).toBeTruthy()
     expect(screen.getAllByText('0회')).toHaveLength(3)
-    expect(screen.getAllByText('계산할 기록 없음')).toHaveLength(2)
+        expect(screen.getAllByText('계산할 기록 없음')).toHaveLength(1)
+    expect(screen.queryByText('기록 확인률')).toBeNull()
     expect(screen.queryByText('0%')).toBeNull()
   })
 
-  it('추이를 임의 집계하지 않고 서버 미제공 상태를 알린다', async () => {
+  it('계약에 없는 추이를 임의 생성하지 않고 서버 기록만 표시한다', async () => {
     renderPage()
-    expect(await screen.findByText('기본 추이')).toBeTruthy()
-    expect(screen.getByText('서버에서 제공하는 추이 데이터가 없어 표시하지 않았어요.')).toBeTruthy()
-    expect(document.querySelector('canvas')).toBeNull()
-    expect(document.querySelector('svg')).toBeNull()
-    expect(screen.getByText('서버 기록')).toBeTruthy()
+
+    expect(
+     await screen.findByRole('heading', { name: '복약 흐름' }),
+    ).toBeTruthy()
+
+     expect(screen.queryByText('기본 추이')).toBeNull()
+    expect(
+      screen.queryByText(
+        '서버에서 제공하는 추이 데이터가 없어 표시하지 않았어요.',
+      ),
+    ).toBeNull()
+
+     expect(document.querySelector('canvas')).toBeNull()
     expect(screen.getAllByText('복용').length).toBeGreaterThanOrEqual(2)
   })
 
-  it('진료 보기는 같은 응답 수치만 재배치하고 기간을 유지한다', async () => {
-    vi.mocked(getMedicationReport).mockResolvedValue({ data: reportFixture(30) })
-    renderPage('/report/clinic?period=30')
-    expect(await screen.findByRole('heading', { name: '최근 복약 기록 요약' })).toBeTruthy()
-    expect(screen.getByText('12.3%')).toBeTruthy()
-    expect(screen.getByText('45.6%')).toBeTruthy()
-    expect(screen.getByText('3회')).toBeTruthy()
-    expect(getMedicationReport).toHaveBeenCalledWith(30)
-    expect(screen.getByText('최근 30일 기록을 진료 시 보여줄 수 있도록 객관적인 수치만 정리했어요.')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '미확인 기록 보완' })).toBeNull()
+  it('진료 보기는 같은 응답 수치를 Figma 구조로 재배치하고 기간을 유지한다', async () => {
+    vi.mocked(getMedicationReport).mockResolvedValue({
+      data: reportFixture(30),
+    })
 
-    fireEvent.click(screen.getByRole('button', { name: '기본 보기' }))
-    expect(screen.getByTestId('location').textContent).toBe('/report?period=30')
+    renderPage('/report/clinic?period=30')
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '진료 시 보여주기',
+      }),
+    ).toBeTruthy()
+
+    expect(
+      screen.getByText(
+        '사용자가 직접 기록한 내용을 정리한 화면입니다.',
+      ),
+    ).toBeTruthy()
+
+    expect(
+      screen.getByRole('heading', { name: '핵심 요약' }),
+    ).toBeTruthy()
+
+    expect(
+      screen.getByText(/복용률\s*12\.3%/),
+    ).toBeTruthy()
+
+    expect(screen.getByText('미복용 2회')).toBeTruthy()
+    expect(screen.getByText(/최근\s*30일/)).toBeTruthy()
+
+    expect(
+      screen.getByRole('heading', { name: '확인된 기록' }),
+    ).toBeTruthy()
+
+    expect(screen.queryByText('기록 확인률')).toBeNull()
+    expect(screen.queryByText('45.6%')).toBeNull()
+
+    expect(getMedicationReport).toHaveBeenCalledWith(30)
+
+    expect(
+      screen.queryByRole('button', {
+        name: '미확인 기록 보완',
+      }),
+    ).toBeNull()
+
+    expect(
+      screen.queryByRole('navigation', { name: '주요 메뉴' }),
+    ).toBeNull()
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '이전 화면' }),
+    )
+
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/report?period=30',
+    )
   })
 
   it('복약 기록 보완으로 이동하고 돌아와 focus되면 서버 집계를 다시 GET한다', async () => {
