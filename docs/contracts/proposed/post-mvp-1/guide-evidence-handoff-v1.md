@@ -3,7 +3,7 @@
 - **상태**: Proposed / Review pending (pure contract kernel implemented in branch; authority issuance, persistence, runtime integration not implemented)
 - **책임자**: 구현 정현우 (`@ceohwj`), 단일 책임 리뷰어 권가빈 (`@hazelnutflavoured`)
 - **필요 교차 리뷰**: 송은영 (`@phina-io`, #174 Backend/DB/REQUEST Guard), 김지혜 (`@Jye-rookie`, Source/Worker provenance)
-- **상위 근거**: Issue #180, Decision [`PD-180-20260915`](../../../governance/decisions/2026-09-15-guide-evidence-handoff.md), [`PD-362-20260909`](../../../governance/decisions/2026-09-09-source-snapshot-approval-boundary.md), [`PD-315-20260908`](../../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md), [`PD-125-20260831`](../../../governance/decisions/2026-08-31-rag-p0-contract-freeze.md)
+- **상위 근거**: Issue #180, Decision [`PD-180-20260915`](../../../governance/decisions/2026-09-15-guide-evidence-handoff.md), [`PD-362-20260909`](../../../governance/decisions/2026-09-09-source-snapshot-approval-boundary.md), [`PD-315-20260908`](../../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md), [`PD-125-20260831`](../../../governance/decisions/2026-08-31-rag-p0-contract-freeze.md), [`PD-722-20260917`](../../../governance/decisions/2026-09-17-evidence-assessment-validity.md)
 
 ---
 
@@ -181,6 +181,11 @@ class VerifiedGuideEvidenceHandoff:
 7. **Freshness & Datetime Awareness**:
    - 모든 datetime은 timezone-aware UTC여야 함 (`DATETIME_NOT_AWARE`).
    - 유효 기간: `valid_from <= evaluated_at < valid_until` (`ASSESSMENT_NOT_YET_VALID`, `ASSESSMENT_EXPIRED`).
+   - **Assessment Validity Authority**:
+     - Assessment validity window의 정본 권위는 승인된 [`PD-722-20260917`](../../../governance/decisions/2026-09-17-evidence-assessment-validity.md) 결정을 따른다.
+     - `assessment_valid_from = authoritative evaluated_at` (최초 평가 시점 동결, retry 연장 금지).
+     - `assessment_valid_until = min(assessment_valid_from + evidence-assessment-validity v1 ceiling, applicable authoritative upper bounds)` (v1 operational safety ceiling = 24h).
+     - 본 24h ceiling은 재검증 없는 handoff 재사용을 위한 운영 안전 상한일 뿐이며, Source freshness 보장이나 public release 승인을 의미하지 않는다.
 8. **Two-Input 재검증 (`verify_guide_evidence_handoff`)**:
    - `verify_guide_evidence_handoff(request, handoff) -> GuideEvidenceHandoffVerificationOutcome`
    - 위조된 handoff가 자체 일관적인 해시를 재계산하여 통과하는 것을 방지하기 위해, 신뢰된 원본 입력 `request`를 기반으로 재생성된 handoff와 필드 및 다이제스트를 1:1 비교 검증 (`HANDOFF_MISMATCH`, `FORGED_HANDOFF_HASH`).
