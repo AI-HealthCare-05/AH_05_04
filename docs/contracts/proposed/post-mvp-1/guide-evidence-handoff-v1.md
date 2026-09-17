@@ -3,7 +3,7 @@
 - **상태**: Proposed / Review pending (pure contract kernel implemented in branch; authority issuance, persistence, runtime integration not implemented)
 - **책임자**: 구현 정현우 (`@ceohwj`), 단일 책임 리뷰어 권가빈 (`@hazelnutflavoured`)
 - **필요 교차 리뷰**: 송은영 (`@phina-io`, #174 Backend/DB/REQUEST Guard), 김지혜 (`@Jye-rookie`, Source/Worker provenance)
-- **상위 근거**: Issue #180, Decision [`PD-180-20260915`](../../../governance/decisions/2026-09-15-guide-evidence-handoff.md), [`PD-362-20260909`](../../../governance/decisions/2026-09-09-source-snapshot-approval-boundary.md), [`PD-315-20260908`](../../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md), [`PD-125-20260831`](../../../governance/decisions/2026-08-31-rag-p0-contract-freeze.md)
+- **상위 근거**: Issue #180, Decision [`PD-180-20260915`](../../../governance/decisions/2026-09-15-guide-evidence-handoff.md), [`PD-362-20260909`](../../../governance/decisions/2026-09-09-source-snapshot-approval-boundary.md), [`PD-315-20260908`](../../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md), [`PD-125-20260831`](../../../governance/decisions/2026-08-31-rag-p0-contract-freeze.md), [`PD-722-20260917`](../../../governance/decisions/2026-09-17-evidence-assessment-validity.md)
 
 ---
 
