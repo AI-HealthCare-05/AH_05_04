@@ -76,6 +76,14 @@ def _email_verification_required_error() -> ApiError:
     )
 
 
+def _withdrawn_email(user_id: UUID) -> str:
+    return f"wd-{user_id.hex[:20]}@deleted.local"
+
+
+def _withdrawn_password_hash(user_id: UUID) -> str:
+    return hash_password(f"withdrawn:{user_id.hex}:{uuid4().hex}")
+
+
 def _account_withdrawal_confirmation_error() -> ApiError:
     return ApiError(
         status_code=422,
@@ -314,7 +322,16 @@ class AuthService:
         requested_at = datetime.now(config.TIMEZONE)
         changed = await self.user_repo.mark_withdrawal_requested(locked_user.id)
         if changed:
-            await self.account_deletion_request_repo.create_pending(user_id=locked_user.id, requested_at=requested_at)
+            deletion_request = await self.account_deletion_request_repo.create_pending(
+                user_id=locked_user.id,
+                requested_at=requested_at,
+            )
+            await self.account_deletion_request_repo.complete_demo_withdrawal(
+                request_id=deletion_request.id,
+                completed_at=requested_at,
+                anonymized_email=_withdrawn_email(locked_user.id),
+                disabled_password_hash=_withdrawn_password_hash(locked_user.id),
+            )
 
     async def check_email_exists(
         self,

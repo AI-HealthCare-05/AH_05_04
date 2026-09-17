@@ -79,13 +79,15 @@
 | 5 | 계정 이용 종료 처리 | `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at=now()`를 같은 transaction에서 저장한다. |
 | 6 | 세션 무효화 | 같은 transaction에서 `token_version`을 원자적으로 `+1`한다. |
 | 7 | 삭제 요청 기록 생성 | 같은 transaction에서 `account_deletion_request.status=PENDING` row를 생성한다. |
-| 8 | commit 이후 응답 | refresh token cookie를 만료시키고 계정 이용 종료와 탈퇴 요청 접수가 완료되었다는 응답을 반환한다. 이 응답은 개인정보·건강정보의 물리 삭제 완료를 뜻하지 않는다. |
+| 8 | 합성 데모 삭제·보존 처리 | 개인정보·건강정보·사용자별 실행 이력을 제거하고, 보존 receipt에는 요청 ID·상태·요청/시작/완료 시각·실패 코드만 남긴다. |
+| 9 | 최종 상태 전이 | 실제 삭제·보존 처리 성공 후 `user.account_status=WITHDRAWN`, `user.withdrawn_at`, `account_deletion_request.status=COMPLETED`를 기록한다. |
+| 10 | commit 이후 응답 | refresh token cookie를 만료시키고 회원탈퇴 완료 응답을 반환한다. |
 
-위 transaction은 조건부 원자적 전이(`WHERE account_status='ACTIVE'`)로 구현한다. 영향받은 user row가 0이면 이미 탈퇴 요청이 접수되었거나 탈퇴 완료된 계정으로 보고 새 `account_deletion_request`를 만들지 않으며, 사용자에게는 동일한 계정 이용 종료·탈퇴 요청 접수 완료 응답을 반환한다. 재인증 성공 후 아주 좁은 경쟁 구간에서 중복 요청이 들어와도 계정 상태와 삭제 요청 row가 중복 생성되면 안 된다.
+위 transaction은 조건부 원자적 전이(`WHERE account_status='ACTIVE'`)로 구현한다. 영향받은 user row가 0이면 이미 탈퇴 요청이 접수되었거나 탈퇴 완료된 계정으로 보고 새 `account_deletion_request`를 만들지 않으며, 사용자에게는 동일한 회원탈퇴 완료 응답을 반환한다. 재인증 성공 후 아주 좁은 경쟁 구간에서 중복 요청이 들어와도 계정 상태와 삭제 요청 row가 중복 생성되면 안 된다.
 
-개인정보·건강정보 삭제·보존 처리는 사용자에게 별도 상태 조회 API를 제공하지 않고 Backend 내부 처리로 진행한다. 요청 접수 API는 `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false` 기본값으로 닫아 두고, 활성화된 환경에서만 `account_deletion_request.status=PENDING` row를 생성한다. 실제 사용자에게 공개하기 전에는 PM/Privacy가 확정한 삭제·보존 정책에 맞춰 삭제·보존 처리와 최종 계정 상태 전이 후속 범위를 완료해야 한다.
+개인정보·건강정보 삭제·보존 처리는 사용자에게 별도 상태 조회 API를 제공하지 않고 Backend 내부 처리로 진행한다. 합성 데이터 기반 데모에서는 요청 접수 직후 같은 transaction에서 삭제·보존 처리를 완료하고, 성공한 경우에만 `account_deletion_request.status=COMPLETED`와 `user.account_status=WITHDRAWN`을 기록한다. 실제 사용자 대상 Production 공개 전에는 PM/Privacy가 확정한 운영 삭제·보존 정책과 외부 공개 승인 기준을 별도로 충족해야 한다.
 
-`EXT-PRIV-001` 승인 전에는 Production에서 물리 삭제·보존 job을 실행하거나 `account_deletion_request`를 `IN_PROGRESS`/`COMPLETED`로 전이하지 않고, `user.account_status=WITHDRAWN`도 기록하지 않는다. 미승인 상태에서는 비식별 합성 fixture를 사용한 Local/Test 구현·검증만 허용한다. 실제 사용자 대상 탈퇴 기능도 삭제·보존 정책과 `EXT-PRIV-001` 승인 없이 `PENDING` 요청만 쌓는 형태로 공개하지 않는다. 현재 요청 접수 API는 `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false` 기본값으로 닫혀 있으며, 승인 전 Production에서 활성화하지 않는다.
+`EXT-PRIV-001` 승인 전 Production 공개는 금지한다. 다만 합성 데이터 기반 데모 환경에서는 `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true`로 활성화해 실제 삭제·보존 처리와 `COMPLETED/WITHDRAWN` 전이를 검증할 수 있다. 이 데모 임시 정책은 실제 사용자 대상 운영 정책과 구분하며, 이메일·건강정보 원문을 보존 receipt에 남기지 않는다.
 
 삭제·보존 처리 상태는 Track A `AI_JOB` 상태 머신을 재사용하지 않고 Account 전용 `account_deletion_request`가 관리한다. 상태값과 계정 상태 정합성은 [5) account_deletion_request 테이블](#5-account_deletion_request-테이블)을 따른다.
 
@@ -93,15 +95,15 @@
 
 실패 사유는 새 사용자 노출 오류 코드를 늘리지 않고, 필요 시 `TIMEOUT`, `DEPENDENCY_UNAVAILABLE`, `INTERNAL_ERROR` 같은 공통 내부 실패 사유를 재사용한다. 단, 이 값은 사용자 응답이나 화면에 내부 오류 상세로 노출하지 않는다.
 
-사용자-facing 범위는 탈퇴 요청 성공 응답과 완료 화면까지로 제한한다. Frontend는 성공 응답을 받으면 로컬 인증 정보를 제거하고, 완료 화면에 사용자-facing 처리 상태 "삭제 요청 접수됨"을 표시한다. 이 상태는 계정 이용이 종료되고 삭제 요청이 접수되었다는 뜻이며, 개인정보·건강정보의 물리 삭제 또는 법정 보존 처리가 완료됐다는 뜻이 아니다. 완료 화면의 즉시 삭제 정보, 보존 정보·기간·근거, 재가입 제한, 이메일 안내 여부와 보조 문구는 승인된 PM/Privacy 정책을 기준으로 표시한다.
+사용자-facing 범위는 탈퇴 API 성공 응답과 완료 화면까지로 제한한다. 최종 처리 성공 응답은 "회원탈퇴가 완료되었습니다" 상태를 뜻한다. 처리 실패나 보류 상태를 완료로 표시하지 않는다. 완료 안내 이메일은 보내지 않고 앱 내 화면으로 제공한다. 합성 데모 임시 정책에서는 같은 이메일 재가입을 즉시 허용하되 기존 데이터는 복구하거나 새 계정에 연결하지 않는다.
 
-요구사항정의서 REQ-USR-008 AC-04의 "별도 삭제 요청 처리 상태"는 완료 화면의 "삭제 요청 접수됨" 상태로 충족한다. 별도 상태 조회 API나 앱 내부 완료·실패 알림은 제공하지 않는다. 내부 처리의 세부 상태(`PENDING`, `IN_PROGRESS`, `FAILED`, `COMPLETED`)와 실패 사유·재시도 횟수는 운영·감사·재처리용으로만 사용하며 사용자-facing 상태로 노출하지 않는다.
+요구사항정의서 REQ-USR-008 AC-04의 "별도 삭제 요청 처리 상태"는 완료 화면의 "회원탈퇴 완료" 상태로 충족한다. 별도 상태 조회 API나 앱 내부 완료·실패 알림은 제공하지 않는다. 내부 처리의 세부 상태(`PENDING`, `IN_PROGRESS`, `FAILED`, `COMPLETED`)와 실패 사유·재시도 횟수는 운영·감사·재처리용으로만 사용하며 사용자-facing 상태로 노출하지 않는다.
 
 ## 5) account_deletion_request 테이블
 
 `account_deletion_request`는 회원탈퇴 요청 이후 개인정보·건강정보 삭제·보존 처리의 감사 기준 테이블이다. 사용자 로그인 가능 여부는 `user.account_status`가 판단하고, 삭제·보존 처리의 대기·진행·완료·실패 상태와 재처리 근거는 이 테이블이 관리한다.
 
-migration/model 구현 완료(`backend/alembic/versions/206b2c3d4e5f_create_account_deletion_request.py`, `backend/app/models/account_deletion_request.py`) — 아래 5.1~5.4절 기준을 반영했다. 탈퇴 요청 접수 API(4절)는 구현됐고, 삭제·보존 처리(6절 PM/Privacy 정책 확정 이후)는 후속 PR 범위다.
+migration/model 구현 완료(`backend/alembic/versions/206b2c3d4e5f_create_account_deletion_request.py`, `backend/app/models/account_deletion_request.py`) — 아래 5.1~5.4절 기준을 반영했다. 탈퇴 요청 접수 API와 합성 데모 임시 정책 기준 삭제·보존 처리, `COMPLETED/WITHDRAWN` 최종 전이가 구현 범위다. 실제 사용자 대상 운영 정책과 Production 공개 승인은 별도 범위다.
 
 ### 5.1 최소 컬럼
 

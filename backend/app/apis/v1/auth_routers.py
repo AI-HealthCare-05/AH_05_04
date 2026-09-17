@@ -244,7 +244,7 @@ async def request_account_withdrawal(
     _ensure_account_withdrawal_request_enabled()
     await auth_service.request_account_withdrawal(user=user, password=request.password, confirmed=request.confirmed)
     response = Response(
-        content=AccountWithdrawalResponse(detail="계정 이용 종료와 탈퇴 요청 접수가 완료되었습니다.").model_dump(),
+        content=AccountWithdrawalResponse(detail="회원탈퇴가 완료되었습니다.").model_dump(),
         status_code=status.HTTP_200_OK,
     )
     response.delete_cookie(key="refresh_token", domain=config.COOKIE_DOMAIN or None)
