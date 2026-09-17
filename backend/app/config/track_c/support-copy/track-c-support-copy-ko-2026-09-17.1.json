@@ -1,6 +1,6 @@
 {
   "schema_version": "track-c-support-copy-v1",
-  "copy_version": "track-c-support-copy-ko-2026-09-16.1",
+  "copy_version": "track-c-support-copy-ko-2026-09-17.1",
   "locale": "ko-KR",
   "supports": [
     {
@@ -36,7 +36,7 @@
     {
       "support_code": "PURPOSE_REVIEW",
       "title": "복용 목적을 확인해 보세요",
-      "body": "현재 확인된 처방 정보에서 복용 목적을 살펴볼 수 있어요. 정보가 충분하지 않다면 의료진에게 물어볼 질문을 준비해 보세요.",
+      "body": "현재 확인된 처방 정보에서 복용 목적을 살펴보고, 정보가 충분하지 않다면 의료진에게 물어볼 질문을 준비해 보세요. 이 안내는 약의 효과나 치료 필요성을 판단하지 않아요.",
       "confirmation": {
         "prompt": "복용 목적 안내를 확인하시겠어요?",
         "primary_label": "복용 목적 확인하기",
@@ -46,7 +46,7 @@
     {
       "support_code": "MEDICATION_CONCERN_GUIDANCE",
       "title": "약 복용과 관련해 걱정되는 내용을 확인해 보세요",
-      "body": "걱정이 있어도 약을 임의로 중단하거나 용량을 바꾸지 마세요. 확인된 안내를 살펴보고 필요하면 약사나 의료진에게 문의해 주세요.",
+      "body": "걱정이 있어도 약을 임의로 중단하거나 용량을 바꾸지 마세요. 걱정되는 내용을 정리해 약사나 의료진에게 물어볼 질문을 준비해 보세요.",
       "confirmation": {
         "prompt": "안전한 확인 방법을 살펴보시겠어요?",
         "primary_label": "안내 확인하기",

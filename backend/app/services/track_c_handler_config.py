@@ -24,13 +24,18 @@ from app.models.track_c import (
     SupportCode,
 )
 from app.repositories.track_c_storage_repository import TrackCStorageRepository
+from app.services.track_c_personalization import SUBREASONS, question_texts, validate_questions
 
 SCHEMA_VERSION = "track-c-handler-config-v1"
 COPY_SCHEMA_VERSION = "track-c-support-copy-v1"
-ACTIVE_RULE_VERSION = "track-c-support-rule-2026-09-16.1"
-ACTIVE_COPY_VERSION = "track-c-support-copy-ko-2026-09-16.1"
-APPROVED_RULE_VERSIONS = frozenset({"track-c-support-rule-2026-09-15.1", ACTIVE_RULE_VERSION})
-APPROVED_COPY_VERSIONS = frozenset({"track-c-support-copy-ko-2026-09-15.1", ACTIVE_COPY_VERSION})
+ACTIVE_RULE_VERSION = "track-c-support-rule-2026-09-17.1"
+ACTIVE_COPY_VERSION = "track-c-support-copy-ko-2026-09-17.1"
+APPROVED_RULE_VERSIONS = frozenset(
+    {"track-c-support-rule-2026-09-15.1", "track-c-support-rule-2026-09-16.1", ACTIVE_RULE_VERSION}
+)
+APPROVED_COPY_VERSIONS = frozenset(
+    {"track-c-support-copy-ko-2026-09-15.1", "track-c-support-copy-ko-2026-09-16.1", ACTIVE_COPY_VERSION}
+)
 APPROVED_RATIONALE_CODES = frozenset(
     {
         "ROUTINE_REMINDER_SETUP_AVAILABLE",
@@ -57,6 +62,36 @@ _EXPECTED: dict[SupportCode, tuple[tuple[BarrierCode, ...], int]] = {
 
 class HandlerConfigError(ValueError):
     """Invalid or unapproved rules or historical snapshot; never include input data."""
+
+
+def _base_snapshot_parameters(parameters: dict[str, Any], support_code: SupportCode) -> dict[str, Any]:
+    actual = dict(parameters)
+    subreason_code = actual.pop("subreason_code", None)
+    selected_question_ids = actual.pop("selected_question_ids", [])
+    selected_questions = actual.pop("selected_questions", [])
+    if subreason_code is not None and not isinstance(subreason_code, str):
+        raise HandlerConfigError("invalid historical subreason")
+    if not isinstance(selected_question_ids, list) or not all(
+        isinstance(question_id, str) for question_id in selected_question_ids
+    ):
+        raise HandlerConfigError("invalid historical question selection")
+    if not isinstance(selected_questions, list) or any(
+        not isinstance(item, dict)
+        or set(item) != {"question_id", "text"}
+        or not isinstance(item["question_id"], str)
+        or not isinstance(item["text"], str)
+        for item in selected_questions
+    ):
+        raise HandlerConfigError("invalid historical question snapshot")
+    if [item["question_id"] for item in selected_questions] != selected_question_ids:
+        raise HandlerConfigError("historical question snapshot mismatch")
+    try:
+        if subreason_code is not None and not any(subreason_code in values for values in SUBREASONS.values()):
+            raise ValueError("unknown subreason")
+        validate_questions(support_code, subreason_code, selected_question_ids)
+    except ValueError as exc:
+        raise HandlerConfigError("invalid historical personalization") from exc
+    return actual
 
 
 @dataclass(frozen=True)
@@ -112,7 +147,8 @@ class HandlerConfig:
             expected["prescription_version_medication_id"] = str(medication_id)
         elif medication_id is not None:
             raise HandlerConfigError("unexpected medication reference")
-        if parameters != expected:
+        actual = _base_snapshot_parameters(parameters, plan.support_code)
+        if actual != expected:
             raise HandlerConfigError("historical parameters do not match approved rule or parent")
         return deepcopy(snapshot)
 
@@ -362,6 +398,8 @@ async def save_action_plan_snapshot(
     barrier_id: UUID,
     support_code: SupportCode,
     config: HandlerConfig,
+    subreason_code: str | None = None,
+    selected_question_ids: tuple[str, ...] = (),
 ) -> SupportActionPlan:
     """Stage a validated Plan in the caller's transaction.
 
@@ -384,6 +422,11 @@ async def save_action_plan_snapshot(
         support_code,
         medication_id=medication_id if support_code == SupportCode.REMINDER_SETUP else None,
     )
+    snapshot["parameters"]["subreason_code"] = subreason_code
+    snapshot["parameters"]["selected_question_ids"] = list(selected_question_ids)
+    snapshot["parameters"]["selected_questions"] = [
+        {"question_id": question_id, "text": text} for question_id, text in question_texts(selected_question_ids)
+    ]
     plan = SupportActionPlan(
         barrier_response_id=barrier_id,
         support_code=support_code,
