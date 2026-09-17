@@ -203,6 +203,7 @@ function deferred<T>() {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.clearAllMocks()
 })
 
@@ -1048,6 +1049,43 @@ describe('production 복약 기록 handoff', () => {
       { status: 'TAKEN', expectedRevision: 0 },
       'checkin:test-key',
     )
+  })
+
+  it('예정 시각 전에는 기록 버튼을 막고 시각 도달 즉시 활성화한다', async () => {
+    const day = makeDay()
+    day.data.occurrences[0].scheduled_at = new Date(Date.now() + 750).toISOString()
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(day),
+    })
+
+    renderOccurrence(services)
+    await screen.findByRole('heading', { name: '당시 처방의 혈압약' })
+    const taken = screen.getByRole('button', { name: '복용했어요' })
+    const notTaken = screen.getByRole('button', { name: '복용하지 않았어요' })
+    expect((taken as HTMLButtonElement).disabled).toBe(true)
+    expect((notTaken as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText(/부터 복약 기록을 남길 수 있어요/)).toBeTruthy()
+    expect(services.putMedicationCheckin).not.toHaveBeenCalled()
+
+    await waitFor(() => expect((taken as HTMLButtonElement).disabled).toBe(false), { timeout: 2_000 })
+    expect((notTaken as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('예정 시각 전 서버 응답 race는 저장 실패 대신 가능한 시각을 안내한다', async () => {
+    const services = makeServices({
+      putMedicationCheckin: vi.fn().mockRejectedValue(
+        new ApiError(422, 'raw backend detail', 'VALIDATION_FAILED', [
+          { field: 'occurrence_id', reason: 'CHECKIN_BEFORE_SCHEDULED_AT' },
+        ]),
+      ),
+    })
+    renderOccurrence(services)
+    await screen.findByRole('heading', { name: '당시 처방의 혈압약' })
+
+    fireEvent.click(screen.getByRole('button', { name: '복용했어요' }))
+
+    expect(await screen.findByText('09:00부터 복약 기록을 남길 수 있어요.')).toBeTruthy()
+    expect(screen.queryByText('raw backend detail')).toBeNull()
   })
 
   it('Check-in 응답 유실 후 동일 선택을 재시도하면 key·body·revision을 재사용한다', async () => {

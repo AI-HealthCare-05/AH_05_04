@@ -3,6 +3,7 @@ import { ApiError } from '../src/api/client'
 import {
   type MedicationCheckinResponse,
   createCheckinIdempotencyKey,
+  isCheckinBeforeScheduledAtError,
   isCheckinConflictError,
   isCheckinRevisionConflictError,
   isCheckinValidationError,
@@ -220,6 +221,22 @@ describe('Check-in 오류 판별 helper', () => {
     expect(isOccurrenceNotFoundError(error)).toBe(false)
   })
 
+  it('422 예정 시각 전 요청을 일반 validation과 구분한다', async () => {
+    stubFetch({
+      ...makeErrorBody('VALIDATION_FAILED'),
+      details: [{ field: 'occurrence_id', reason: 'CHECKIN_BEFORE_SCHEDULED_AT' }],
+    }, 422)
+
+    const error = await putMedicationCheckin(
+      occurrenceId,
+      { status: 'TAKEN', expectedRevision: 0 },
+      idempotencyKey,
+    ).catch((caught: unknown) => caught)
+
+    expect(isCheckinBeforeScheduledAtError(error)).toBe(true)
+    expect(isCheckinValidationError(error)).toBe(true)
+  })
+
   it('404 occurrence 미존재를 판별한다', async () => {
     stubFetch(makeErrorBody('MEDICATION_OCCURRENCE_NOT_FOUND'), 404)
 
@@ -251,6 +268,7 @@ describe('Check-in 오류 판별 helper', () => {
     for (const value of [null, undefined, new Error('boom'), 409]) {
       expect(isCheckinConflictError(value)).toBe(false)
       expect(isCheckinRevisionConflictError(value)).toBe(false)
+      expect(isCheckinBeforeScheduledAtError(value)).toBe(false)
       expect(isCheckinValidationError(value)).toBe(false)
       expect(isOccurrenceNotFoundError(value)).toBe(false)
     }
