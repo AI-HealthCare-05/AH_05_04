@@ -196,6 +196,7 @@ test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한�
       path === `/api/v1/prescription-version-medications/${ids.prescriptionVersionMedication}/schedule`
     ) {
       scheduleMutations.push(await request.postData() ?? '')
+      scheduleStatus = 'READY'
       return json({ data: {} })
     }
     await route.abort()
@@ -259,19 +260,27 @@ test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한�
     })
   }
 
-  await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/schedule?date=2026-09-16')
-  await page.getByRole('button', { name: '일정 설정하기' }).click()
-  await page.getByLabel('합성 혈압약 복용 시작일').fill('2026-09-16')
-  await page.getByLabel('합성 혈압약 복용 종료일').fill('2026-09-22')
-  await page.getByLabel('합성 혈압약 1번째 복용 시간').fill('08:00')
-  await page.getByLabel('합성 혈압약 2번째 복용 시간').fill('13:00')
-  await page.getByLabel('합성 혈압약 3번째 복용 시간').fill('20:00')
-  const cta = page.getByRole('button', { name: '복약 일정 저장하기' })
-  await cta.focus()
-  await expect(cta).toBeFocused()
-  await page.keyboard.press('Enter')
-  await expect.poll(() => scheduleMutations.length).toBe(1)
+  for (const [index, width] of mobileWidths.entries()) {
+    await test.step(`${width}px 저장 후 최신 일정 즉시 표시`, async () => {
+      scheduleStatus = 'SETUP_REQUIRED'
+      await page.setViewportSize({ width, height: 844 })
+      await page.goto('/schedule?date=2026-09-16')
+      await page.getByRole('button', { name: '일정 설정하기' }).click()
+      await page.getByLabel('합성 혈압약 복용 시작일').fill('2026-09-16')
+      await page.getByLabel('합성 혈압약 복용 종료일').fill('2026-09-22')
+      await page.getByLabel('합성 혈압약 1번째 복용 시간').fill('08:00')
+      await page.getByLabel('합성 혈압약 2번째 복용 시간').fill('13:00')
+      await page.getByLabel('합성 혈압약 3번째 복용 시간').fill('20:00')
+      const cta = page.getByRole('button', { name: '복약 일정 저장하기' })
+      await cta.focus()
+      await expect(cta).toBeFocused()
+      await page.keyboard.press('Enter')
+      await expect.poll(() => scheduleMutations.length).toBe(index + 1)
+      await expect(page.getByRole('heading', { name: '오늘의 복약' })).toBeVisible()
+      await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(3)
+      await expect(page.getByRole('heading', { name: '복용할 날짜와 시간을 확인해 주세요' })).toHaveCount(0)
+    })
+  }
 })
 
 test('320/390/412px에서 Home과 Chat의 Bottom Navigation 안전 영역과 가용 공간을 유지한다', async ({ page }) => {

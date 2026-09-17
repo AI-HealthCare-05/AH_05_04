@@ -897,6 +897,14 @@ created_at index는 만료 삭제, rating·updated_at·id index는 부정 피드
 빈 증상 목록은 기존 foundation 버전을 유지한다. 과거 assessment·snapshot은 소급 변경하지 않는다.
 [Proposed API·버전 계약](contracts/proposed/track-c-safety-barrier-api-193.md)을 참고한다.
 
+## #668 Proposed: Check-in 정정 잠금 권한 보완
+
+[잠금 권한 계약](contracts/proposed/checkin-runtime-lock-v1.md)은 safety_assessment·barrier_response에
+`checkin_lock_marker INTEGER NOT NULL DEFAULT 0 CHECK (checkin_lock_marker = 0)`를 추가한다.
+업무 데이터 변경 없이 PostgreSQL 행 잠금 권한을 분리하기 위한 필드이며 API에는 노출하지 않는다.
+Runtime은 이 두 테이블의 SELECT/marker UPDATE와 support_action_plan의 SELECT/UPDATE(status, cancelled_at)만 받는다.
+Migration·검토 상태는 [PD-668](governance/decisions/2026-09-16-checkin-runtime-lock-668.md)을 따른다.
+
 ## #670 명시적 시간 후보 — 저장 경계
 
 [Local 후보 계약](contracts/proposed/track-b-explicit-schedule-recommendation-v1.md)은 기존 확정

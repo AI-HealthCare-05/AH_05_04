@@ -240,3 +240,7 @@ PR #639의 두 계약은 구현 PR 내 이동이며 #629 병합·최종 책임 �
   승인 Receipt를 구분한다. 새 공용 계약을 정의하거나 RAG 완료를 주장하지 않는다.
 
 - [Track B 명시적 식후 시간 후보 v1 (#670)](proposed/track-b-explicit-schedule-recommendation-v1.md): Local 구현 검토안. 확정 문구의 간격·사용자 식사 종료 시각 계산, 선택 저장 context·서버 재계산. 담당·전문 리뷰와 공개 승인 대기.
+
+### Check-in 정정 Runtime 권한 보완 (#668)
+
+- [잠금 권한 v1 — Proposed](proposed/checkin-runtime-lock-v1.md): Safety·Barrier 잠금 전용 컬럼과 Runtime 최소 권한, 기존 Track B 정정·Track C 무효화 보존. Downgrade는 고정 marker/CHECK만 제거하고 업무 이력을 보존. API/DTO·공개 gate 변경 없음.
