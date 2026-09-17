@@ -86,7 +86,7 @@ beforeEach(() => {
   localStorage.setItem('access_token', 'fixture-token')
   vi.mocked(getCurrentUser).mockResolvedValue(CURRENT_USER)
   vi.mocked(updateCurrentUser).mockResolvedValue(CURRENT_USER)
-  vi.mocked(requestAccountWithdrawal).mockResolvedValue({ detail: '탈퇴 요청 접수 완료' })
+  vi.mocked(requestAccountWithdrawal).mockResolvedValue({ detail: '회원탈퇴가 완료되었습니다.' })
   vi.mocked(getUserConsents).mockResolvedValue({ data: CONSENTS })
   vi.mocked(withdrawUserConsent).mockImplementation(async (purpose, version) => ({
     data: { ...CONSENTS.find((item) => item.purpose === purpose)!, policy_version: version,
@@ -350,7 +350,7 @@ describe('회원탈퇴 요청', () => {
     expect(requestAccountWithdrawal).not.toHaveBeenCalled()
   })
 
-  it('성공 응답 후에만 인증·사용자 세션을 정리하고 접수 완료 상태를 표시한다', async () => {
+  it('성공 응답 후에만 인증·사용자 세션을 정리하고 완료 상태를 표시한다', async () => {
     sessionStorage.setItem('dosey_chat_session:fixture-prescription', 'fixture-session')
     sessionStorage.setItem('dosey_ocr_job_recovery:v1', 'fixture-ocr-recovery')
     localStorage.setItem('dosey_web_push_binding:v1', 'fixture-push-binding')
@@ -368,7 +368,7 @@ describe('회원탈퇴 요청', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: '회원탈퇴 요청' }))
 
-    expect(await screen.findByText('회원탈퇴 요청이 접수되었어요.')).toBeTruthy()
+    expect(await screen.findByText('회원탈퇴가 완료되었습니다.')).toBeTruthy()
     expect(requestAccountWithdrawal).toHaveBeenCalledWith('Password1!', 'fixture-token')
     expect(requestAccountWithdrawal).toHaveBeenCalledTimes(1)
     expect(localStorage.getItem('access_token')).toBeNull()
@@ -405,8 +405,58 @@ describe('회원탈퇴 요청', () => {
     expect(screen.getByRole('button', { name: '요청 중...' })).toHaveProperty('disabled', true)
     expect(screen.getByLabelText('현재 비밀번호')).toHaveProperty('disabled', true)
 
-    pending.resolve({ detail: '탈퇴 요청 접수 완료' })
-    expect(await screen.findByText('회원탈퇴 요청이 접수되었어요.')).toBeTruthy()
+    pending.resolve({ detail: '회원탈퇴가 완료되었습니다.' })
+    expect(await screen.findByText('회원탈퇴가 완료되었습니다.')).toBeTruthy()
+  })
+
+  it('실패 detail 200 응답은 완료 화면으로 소비하지 않는다', async () => {
+    vi.mocked(requestAccountWithdrawal).mockResolvedValue({
+      detail: '탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다.',
+    })
+    sessionStorage.setItem('dosey_chat_session:fixture-prescription', 'fixture-session')
+    sessionStorage.setItem('dosey_ocr_job_recovery:v1', 'fixture-ocr-recovery')
+    localStorage.setItem('dosey_web_push_binding:v1', 'fixture-push-binding')
+    renderProfile()
+    await openWithdrawalForm()
+
+    fireEvent.change(screen.getByLabelText('현재 비밀번호'), {
+      target: { value: 'Password1!' },
+    })
+    fireEvent.click(
+      screen.getByLabelText(
+        '회원탈퇴 요청 후 계정을 더 이상 이용할 수 없음을 확인했습니다.',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '회원탈퇴 요청' }))
+
+    expect(await screen.findByText('회원탈퇴 처리를 완료하지 못했어요.')).toBeTruthy()
+    expect(screen.getByText('관리자 확인이 필요합니다. 완료 화면으로 이동하지 않습니다.')).toBeTruthy()
+    expect(screen.queryByText('회원탈퇴가 완료되었습니다.')).toBeNull()
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(sessionStorage.getItem('dosey_chat_session:fixture-prescription')).toBeNull()
+    expect(sessionStorage.getItem('dosey_ocr_job_recovery:v1')).toBeNull()
+    expect(localStorage.getItem('dosey_web_push_binding:v1')).toBeNull()
+    expect(screen.queryByText(CURRENT_USER.email)).toBeNull()
+  })
+
+  it('알 수 없는 200 detail은 완료 화면으로 소비하지 않는다', async () => {
+    vi.mocked(requestAccountWithdrawal).mockResolvedValue({ detail: 'unknown fixture detail' })
+    renderProfile()
+    await openWithdrawalForm()
+
+    fireEvent.change(screen.getByLabelText('현재 비밀번호'), {
+      target: { value: 'Password1!' },
+    })
+    fireEvent.click(
+      screen.getByLabelText(
+        '회원탈퇴 요청 후 계정을 더 이상 이용할 수 없음을 확인했습니다.',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '회원탈퇴 요청' }))
+
+    expect(await screen.findByText('회원탈퇴 요청을 접수하지 못했어요.')).toBeTruthy()
+    expect(screen.queryByText('회원탈퇴가 완료되었습니다.')).toBeNull()
+    expect(localStorage.getItem('access_token')).toBe('fixture-token')
   })
 
   it('잘못된 비밀번호는 field 오류로 표시하고 인증 상태를 유지한다', async () => {
@@ -429,7 +479,7 @@ describe('회원탈퇴 요청', () => {
     const error = await screen.findByText('비밀번호가 올바르지 않습니다.')
     expect(screen.getByLabelText('현재 비밀번호').getAttribute('aria-describedby')).toBe(error.id)
     expect(localStorage.getItem('access_token')).toBe('fixture-token')
-    expect(screen.queryByText('회원탈퇴 요청이 접수되었어요.')).toBeNull()
+    expect(screen.queryByText('회원탈퇴가 완료되었습니다.')).toBeNull()
   })
 
   it('INVALID_TOKEN 401은 인증 상태와 사용자 정보를 정리하고 로그인으로 이동한다', async () => {
@@ -495,9 +545,9 @@ describe('회원탈퇴 요청', () => {
     fireEvent.click(screen.getByRole('button', { name: '홈' }))
     expect(screen.getByText('홈 화면')).toBeTruthy()
 
-    pending.resolve({ detail: '탈퇴 요청 접수 완료' })
+    pending.resolve({ detail: '회원탈퇴가 완료되었습니다.' })
 
-    expect(await screen.findByText('회원탈퇴 요청이 접수되었어요.')).toBeTruthy()
+    expect(await screen.findByText('회원탈퇴가 완료되었습니다.')).toBeTruthy()
     expect(localStorage.getItem('access_token')).toBeNull()
     expect(screen.queryByText('홈 화면')).toBeNull()
     expect(screen.queryByText(CURRENT_USER.email)).toBeNull()
@@ -527,7 +577,7 @@ describe('회원탈퇴 요청', () => {
     expect(await screen.findByText('회원탈퇴 요청을 현재 처리할 수 없어요.')).toBeTruthy()
     expect((passwordInput as HTMLInputElement).value).toBe('Password1!')
     expect(localStorage.getItem('access_token')).toBe('fixture-token')
-    expect(screen.queryByText('회원탈퇴 요청이 접수되었어요.')).toBeNull()
+    expect(screen.queryByText('회원탈퇴가 완료되었습니다.')).toBeNull()
   })
 
   it.each([
@@ -551,7 +601,7 @@ describe('회원탈퇴 요청', () => {
     expect(await screen.findByText('회원탈퇴 요청을 접수하지 못했어요.')).toBeTruthy()
     expect(localStorage.getItem('access_token')).toBe('fixture-token')
     expect(screen.queryByText('raw server fixture')).toBeNull()
-    expect(screen.queryByText('회원탈퇴 요청이 접수되었어요.')).toBeNull()
+    expect(screen.queryByText('회원탈퇴가 완료되었습니다.')).toBeNull()
   })
 })
 
