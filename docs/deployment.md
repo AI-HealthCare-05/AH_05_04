@@ -69,6 +69,8 @@ CloudFront 기본 hostname 사용은 별도 도메인 구매만 생략하며 AWS
 | Rollback 실행 | 모든 배포 | 실행자·실행 시각, 복구 애플리케이션 버전, Production DB 무-downgrade·forward-fix 처리, 복구 health check와 후속 Issue |
 | Rollback 실행 | Outbox·Worker Production 적용 이후 | Stream PEL·예약 retry drain과 구·신 Consumer 호환 확인 |
 
+API 오류율·latency와 부하테스트 증빙은 [#627 부하테스트 프레임워크](./testing/load-testing-627.md)의 결과 요약 형식을 사용한다. #627의 현재 범위는 실행 구조와 절차 준비이며, 실제 API별 시나리오와 Production 수용량 승인은 별도 후속 검증으로 남긴다.
+
 [Outbox·Stream 계약](./contracts/targets/post-mvp-1/outbox-stream-v1.md)은 **Approved Target**이며 아직 `current` runtime 계약으로 승격되지 않았다. 이 상태는 모든 지원 구성요소가 미구현이라는 뜻은 아니다. Redis Streams Adapter·Event Publisher(#140/PR #213), Worker lease·fencing·commit-before-ACK(#141/PR #217), 공통 Job 접수 transaction(#147/PR #215), DB Outbox 발행과 Worker runtime의 주기 실행(#219, #370/PR #371), 실제 CLOVA OCR Provider 연결·검증(#258/PR #268), Pending reclaim·재시도·quarantine·DLQ와 복구 Scheduler(#142), 운영 Redis 인증·노출 차단(#150/PR #314)은 구현되었다. `scripts/deployment.sh`는 `fastapi`, `ai-worker`, `nginx`를 배포하고 Worker readiness와 종료 설정을 포함한다. 실제 AWS 기동·관제·합성 OCR 증빙은 [AWS Runbook](./runbooks/aws-production-demo.md)에 따라 별도로 확보하며, 코드 조립만으로 Production Worker 동작을 증명하지 않는다. 해당 경로를 Production에 적용하기 전에 계약과 테스트를 동기화하고 아래 관제·호환 조건을 검증한다. 목표 계약은 DLQ publish 실패를 정해진 backoff로 재시도하고 10회 연속 실패부터 매 시도 alert하도록 정의한다. 구 Consumer major 제거 전에는 해당 Outbox·Stream·PEL·예약 retry가 모두 0이고 마지막 처리 후 7일 관찰기간이 지났는지 확인한다. `RETRY_WAIT` 중 Runtime Bundle 변경과 구·신 Consumer 동시 배포 방식은 같은 계약이 가리키는 후속 Product Decision이 확정되기 전까지 Production 적용 차단 조건이다.
 
 ## 배포 절차

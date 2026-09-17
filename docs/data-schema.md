@@ -896,3 +896,11 @@ created_at index는 만료 삭제, rating·updated_at·id index는 부정 피드
 전용 demo 버전을 저장하고 그 쌍은 hash-pinned rule/copy/source artifact 하나에 결속된다.
 빈 증상 목록은 기존 foundation 버전을 유지한다. 과거 assessment·snapshot은 소급 변경하지 않는다.
 [Proposed API·버전 계약](contracts/proposed/track-c-safety-barrier-api-193.md)을 참고한다.
+
+## #670 명시적 시간 후보 — 저장 경계
+
+[Local 후보 계약](contracts/proposed/track-b-explicit-schedule-recommendation-v1.md)은 기존 확정
+PrescriptionVersionMedication을 읽고 임시 식사 종료 시각으로 계산한다. 새 DB 구조·migration은 없다.
+후보와 식사 입력은 별도 저장하지 않으며, 명시적 저장 시 기존 MedicationSchedule·time·occurrence·audit와
+USER_CONFIRMED source를 재사용한다. 선택 context는 기존 HMAC 멱등 fingerprint에 결속하며
+일정 응답·audit에 추가하지 않는다. 기존 생활 시간 window·revision은 이 계산의 입력이 아니다.

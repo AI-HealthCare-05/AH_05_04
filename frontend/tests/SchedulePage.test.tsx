@@ -1174,3 +1174,39 @@ describe('Track C reminder target handoff', () => {
     expect(services.putMedicationSchedule).not.toHaveBeenCalled()
   })
 })
+
+describe('prescription time candidate integration', () => {
+  it('applies without saving, preserves a failed save and passes recomputation context on retry', async () => {
+    const recommendation = vi.fn().mockResolvedValue({ data: {
+      prescription_version_medication_id: medicationId, prescription_version_id: prescriptionVersionId,
+      timing_text: '저녁 식후 30분', rule_version: 'explicit-after-meal-v1', local_times: ['20:00'], reason: 'EXPLICIT_AFTER_MEAL',
+    } })
+    const put = vi.fn().mockRejectedValueOnce(new TypeError('network')).mockResolvedValue({ data: {} })
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({ schedule_status: 'SETUP_REQUIRED', schedule_items: [setupItem()], occurrences: [] })),
+      getScheduleRecommendation: recommendation, putMedicationSchedule: put,
+    })
+    renderSchedule(services)
+    fireEvent.click(await screen.findByRole('button', { name: '일정 설정하기' }))
+    fillScheduleEditor()
+    fireEvent.change(screen.getByLabelText('현재 처방의 혈압약 저녁 식사 종료 시각'), { target: { value: '19:30' } })
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(screen.getByRole('button', { name: '시간 후보 계산' }))
+    fireEvent.click(await screen.findByRole('button', { name: '후보 적용' }))
+    expect((screen.getByLabelText('현재 처방의 혈압약 1번째 복용 시간') as HTMLInputElement).value).toBe('20:00')
+    expect(put).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+    await screen.findByText(/연결을 확인한 뒤 다시 시도해 주세요. 입력한 내용은 그대로 유지돼요./)
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(2))
+    expect(put.mock.calls[0][1]).toMatchObject({ localTimes: ['20:00'], recommendationContext: {
+      meal_end_times: { DINNER: '19:30' }, same_times_every_day: true, rule_version: 'explicit-after-meal-v1',
+    } })
+    expect(put.mock.calls[1]).toEqual(put.mock.calls[0])
+  })
+  it('does not offer candidates to overwrite an existing schedule', async () => {
+    renderSchedule(makeServices())
+    fireEvent.click(await screen.findByRole('button', { name: '복약 일정 설정·수정' }))
+    expect(screen.queryByRole('button', { name: '시간 후보 계산' })).toBeNull()
+  })
+})
