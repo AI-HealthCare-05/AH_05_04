@@ -190,7 +190,7 @@ export default function ProfileConsents({ onSessionExpired }: { onSessionExpired
             {canWithdraw && <Button
               fullWidth
               variant="secondary"
-              disabled={withdrawing !== null}
+              disabled={withdrawing !== null || granting !== null}
               aria-busy={withdrawing === purpose}
               onClick={() => void withdraw(consent!)}
             >{withdrawing === purpose ? `${LABELS[purpose]} 동의 철회 중...` : `${LABELS[purpose]} 동의 철회`}</Button>}
