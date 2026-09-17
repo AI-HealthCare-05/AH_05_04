@@ -419,36 +419,6 @@ function ReportPage() {
         activeNavigation="메뉴"
         onNavigate={navigateMain}
       >
-      {report && !clinic && (
-        <section
-          className="report-correction"
-          aria-labelledby="report-correction-title"
-        >
-          <div>
-            <h2 id="report-correction-title">미확인 기록 보완·정정</h2>
-            <p>
-              기록을 바꾼 뒤 이 화면으로 돌아오면 서버 리포트를 다시 조회해요.
-            </p>
-          </div>
-
-          <div className="report-correction__actions">
-            <button
-              type="button"
-              onClick={() => navigate('/schedule/unconfirmed')}
-            >
-              미확인 기록 보완
-            </button>
-
-            <button
-              type="button"
-              className="report-correction__secondary"
-              onClick={() => navigate('/schedule')}
-            >
-              전체 복약 기록 확인
-            </button>
-          </div>
-        </section>
-      )}
         <main
           className="app-scroll mvp-page__content mvp-report"
           aria-busy={report === null && failure === null}
@@ -566,6 +536,39 @@ function ReportPage() {
               clinic={clinic}
             />
           )}
+
+          {report && !clinic && (
+            <section
+              className="report-correction"
+              aria-labelledby="report-correction-title"
+            >
+              <div>
+                <h2 id="report-correction-title">
+                  미확인 기록 보완·정정
+                </h2>
+              <p>
+                기록을 바꾼 뒤 이 화면으로 돌아오면 서버 리포트를 다시 조회해요.
+              </p>
+            </div>
+
+            <div className="report-correction__actions">
+              <button
+                type="button"
+                onClick={() => navigate('/schedule/unconfirmed')}
+              >
+                미확인 기록 보완
+              </button>
+
+              <button
+                type="button"
+                className="report-correction__secondary"
+                onClick={() => navigate('/schedule')}
+              >
+                전체 복약 기록 확인
+              </button>
+            </div>
+          </section>
+        )}
         </main>
       </MobileShell>
     </div>
