@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.medication_schedules import MedicationCheckin, MedicationOccurrence, MedicationSchedule
 from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
+from app.repositories.prescription_integrity import require_verified_version
 from app.repositories.profile_ownership import owned_by_self
 
 
@@ -13,13 +14,22 @@ class MedicationScheduleQueries:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def medication_owned(self, medication_id: UUID, user_id: UUID) -> PrescriptionVersionMedication | None:
-        return await self.session.scalar(
+    async def medication_owned(
+        self, medication_id: UUID, user_id: UUID, *, active_only: bool = False
+    ) -> PrescriptionVersionMedication | None:
+        statement = (
             select(PrescriptionVersionMedication)
             .join(PrescriptionVersion, PrescriptionVersion.id == PrescriptionVersionMedication.prescription_version_id)
             .join(Prescription, Prescription.id == PrescriptionVersion.prescription_id)
             .where(PrescriptionVersionMedication.id == medication_id, owned_by_self(Prescription.profile_id, user_id))
         )
+        if active_only:
+            # Preview is advisory; only the eventual schedule mutation must serialize with version changes.
+            statement = statement.where(Prescription.active_version_id == PrescriptionVersion.id)
+        medication = await self.session.scalar(statement)
+        if active_only and medication is not None:
+            await require_verified_version(self.session, medication.prescription_version_id)
+        return medication
 
     async def active_items(
         self, user_id: UUID
