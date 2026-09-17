@@ -49,3 +49,38 @@ async def test_update_user_maps_concurrent_email_conflict_to_409() -> None:
     assert error.details[0].field == "email"
     assert error.details[0].reason == "ALREADY_EXISTS"
     assert error.details[0].rejected_value is None
+
+
+async def test_update_user_sends_explicit_null_for_clearable_profile_fields() -> None:
+    repository = AsyncMock(spec=UserRepository)
+    auth_service = AsyncMock(spec=AuthService)
+    user = User(
+        id=uuid4(),
+        email="profile-clear@example.com",
+        hashed_password="synthetic-hashed-password",
+        name="프로필초기화",
+        phone_number="01012345678",
+    )
+    repository.update_instance.return_value = user
+    service = UserManageService(repository=repository, auth_service=auth_service)
+
+    await service.update_user(
+        user=user,
+        data=UserUpdateRequest(
+            name=None,
+            email=None,
+            phone_number=None,
+            birthday=None,
+            gender=None,
+        ),
+    )
+
+    auth_service.check_email_exists.assert_not_awaited()
+    repository.update_instance.assert_awaited_once_with(
+        user=user,
+        data={
+            "phone_number": None,
+            "birthday": None,
+            "gender": None,
+        },
+    )
