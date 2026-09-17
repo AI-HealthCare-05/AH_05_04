@@ -8,6 +8,8 @@ import { clearAuthenticatedSession } from '../features/auth/authSession'
 import {
   getCurrentUser,
   updateCurrentUser,
+  type UpdateCurrentUserRequest,
+  type UserGender,
   type CurrentUser,
 } from '../api/users'
 import { Button, Card, MobileShell } from '../design-system/components'
@@ -19,11 +21,63 @@ import './ProfilePage.css'
 type ProfileForm = {
   name: string
   email: string
+  phone_number: string
+  birthday: string
+  /** '' 는 미선택(null 전송) 을 뜻한다. */
+  gender: '' | UserGender
 }
 
 type FieldErrors = Partial<Record<keyof ProfileForm, string>>
 
-const EMPTY_FORM: ProfileForm = { name: '', email: '' }
+const EMPTY_FORM: ProfileForm = {
+  name: '',
+  email: '',
+  phone_number: '',
+  birthday: '',
+  gender: '',
+}
+
+/** 서버 값 → 폼 값. null 은 빈 문자열(미입력)로 둔다. */
+function formFromUser(user: CurrentUser): ProfileForm {
+  return {
+    name: user.name,
+    email: user.email,
+    phone_number: user.phone_number ?? '',
+    birthday: user.birthday ?? '',
+    gender: user.gender ?? '',
+  }
+}
+
+/**
+ * 바뀐 필드만 담는다.
+ * - 값이 그대로면 키를 넣지 않는다(omitted → 변경 없음).
+ * - 비웠으면 null 을 넣는다(초기화).
+ */
+function buildUpdatePayload(
+  user: CurrentUser,
+  form: ProfileForm,
+): UpdateCurrentUserRequest {
+  const payload: UpdateCurrentUserRequest = {}
+
+  const name = form.name.trim()
+  if (name !== user.name) payload.name = name
+
+  const email = form.email.trim()
+  if (email !== user.email) payload.email = email
+
+  // 서버 값이 undefined 로 들어와도 null 과 같은 "미입력"으로 취급한다.
+  // 입력값을 임의로 가공하지 않는다. 숫자 외 문자는 Backend 422 로 판정한다.
+  const phoneNumber = form.phone_number.trim() || null
+  if (phoneNumber !== (user.phone_number ?? null)) payload.phone_number = phoneNumber
+
+  const birthday = form.birthday.trim() || null
+  if (birthday !== (user.birthday ?? null)) payload.birthday = birthday
+
+  const gender = form.gender || null
+  if (gender !== (user.gender ?? null)) payload.gender = gender
+
+  return payload
+}
 const AUTH_ERROR_CODES = new Set(['UNAUTHORIZED', 'INVALID_TOKEN', 'EXPIRED_TOKEN'])
 const STALE_AUTH_ERROR_CODES = new Set(['INVALID_TOKEN', 'EXPIRED_TOKEN'])
 const ACCOUNT_WITHDRAWAL_COMPLETED_DETAIL = '회원탈퇴가 완료되었습니다.'
@@ -71,6 +125,21 @@ function serverFieldErrors(error: ApiError): FieldErrors {
     if (detail.field === 'name') {
       errors.name = '이름을 확인해 주세요.'
     }
+
+    if (detail.field === 'phone_number') {
+      errors.phone_number =
+        detail.reason === 'ALREADY_EXISTS'
+          ? '이미 등록된 휴대폰 번호예요. 다른 번호를 입력해 주세요.'
+          : '휴대폰 번호는 숫자만 입력해 주세요.'
+    }
+
+    if (detail.field === 'birthday') {
+      errors.birthday = '생년월일을 확인해 주세요.'
+    }
+
+    if (detail.field === 'gender') {
+      errors.gender = '성별을 확인해 주세요.'
+    }
   }
 
   return errors
@@ -106,6 +175,9 @@ function ProfilePage() {
   const [isWithdrawing, setIsWithdrawing] = useState(false)
   const nameInputRef = useRef<HTMLInputElement>(null)
   const emailInputRef = useRef<HTMLInputElement>(null)
+  const phoneInputRef = useRef<HTMLInputElement>(null)
+  const birthdayInputRef = useRef<HTMLInputElement>(null)
+  const genderSelectRef = useRef<HTMLSelectElement>(null)
   const withdrawalPasswordInputRef = useRef<HTMLInputElement>(null)
 
   const clearFeedback = useCallback(() => {
@@ -137,7 +209,7 @@ function ProfilePage() {
     try {
       const response = await getCurrentUser()
       setUser(response)
-      setForm({ name: response.name, email: response.email })
+      setForm(formFromUser(response))
     } catch (error) {
       if (isAuthenticationError(error)) {
         expireSession()
@@ -159,13 +231,18 @@ function ProfilePage() {
     const firstError = Object.keys(fieldErrors)[0] as keyof ProfileForm | undefined
     if (firstError === 'name') nameInputRef.current?.focus()
     if (firstError === 'email') emailInputRef.current?.focus()
+    if (firstError === 'phone_number') phoneInputRef.current?.focus()
+    if (firstError === 'birthday') birthdayInputRef.current?.focus()
+    if (firstError === 'gender') genderSelectRef.current?.focus()
   }, [fieldErrors])
 
   useEffect(() => {
     if (isWithdrawalOpen) withdrawalPasswordInputRef.current?.focus()
   }, [isWithdrawalOpen])
 
-  const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleChange = (
+    event: ChangeEvent<HTMLInputElement | HTMLSelectElement>,
+  ) => {
     const field = event.target.name as keyof ProfileForm
     setForm((current) => ({ ...current, [field]: event.target.value }))
     setFieldErrors((current) => {
@@ -178,14 +255,14 @@ function ProfilePage() {
 
   const startEditing = () => {
     if (!user) return
-    setForm({ name: user.name, email: user.email })
+    setForm(formFromUser(user))
     setFieldErrors({})
     clearFeedback()
     setIsEditing(true)
   }
 
   const cancelEditing = () => {
-    if (user) setForm({ name: user.name, email: user.email })
+    if (user) setForm(formFromUser(user))
     setFieldErrors({})
     setSaveError('')
     setIsEditing(false)
@@ -193,7 +270,7 @@ function ProfilePage() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (isSaving) return
+    if (isSaving || !user) return
 
     const validationErrors = validateForm(form)
     if (Object.keys(validationErrors).length > 0) {
@@ -206,12 +283,11 @@ function ProfilePage() {
     clearFeedback()
 
     try {
-      const response = await updateCurrentUser({
-        name: form.name.trim(),
-        email: form.email.trim(),
-      })
+      // 바뀐 필드만 담는다. 바뀐 값이 없으면 빈 본문이며 Backend 는 기존 값을 그대로 돌려준다.
+      // (기존 name/email 저장 동작과 중복 제출 방지 흐름을 그대로 유지하기 위해 요청을 생략하지 않는다.)
+      const response = await updateCurrentUser(buildUpdatePayload(user, form))
       setUser(response)
-      setForm({ name: response.name, email: response.email })
+      setForm(formFromUser(response))
       setIsEditing(false)
       setSuccessMessage('내 정보가 저장되었습니다.')
     } catch (error) {
@@ -401,7 +477,7 @@ function ProfilePage() {
           {!isLoading && user && (
             <>
               <header className="mvp-profile__intro">
-                <h2 className="mvp-page__title">{isEditing ? '이름·이메일 수정' : '사용자 정보'}</h2>
+                <h2 className="mvp-page__title">{isEditing ? '사용자 정보 수정' : '사용자 정보'}</h2>
               </header>
 
               {successMessage && (
@@ -458,6 +534,89 @@ function ProfilePage() {
                       )}
                     </div>
 
+                    <div className="mvp-form__field">
+                      <label htmlFor="profile-phone-number">휴대폰 번호</label>
+                      <input
+                        ref={phoneInputRef}
+                        id="profile-phone-number"
+                        name="phone_number"
+                        type="tel"
+                        inputMode="numeric"
+                        autoComplete="tel"
+                        value={form.phone_number}
+                        onChange={handleChange}
+                        disabled={isSaving}
+                        aria-invalid={Boolean(fieldErrors.phone_number)}
+                        aria-describedby={
+                          fieldErrors.phone_number
+                            ? 'profile-phone-number-error'
+                            : 'profile-optional-help'
+                        }
+                      />
+                      {fieldErrors.phone_number && (
+                        <p
+                          id="profile-phone-number-error"
+                          className="mvp-profile__field-error"
+                        >
+                          {fieldErrors.phone_number}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="mvp-form__field">
+                      <label htmlFor="profile-birthday">생년월일</label>
+                      <input
+                        ref={birthdayInputRef}
+                        id="profile-birthday"
+                        name="birthday"
+                        type="date"
+                        autoComplete="bday"
+                        value={form.birthday}
+                        onChange={handleChange}
+                        disabled={isSaving}
+                        aria-invalid={Boolean(fieldErrors.birthday)}
+                        aria-describedby={
+                          fieldErrors.birthday
+                            ? 'profile-birthday-error'
+                            : 'profile-optional-help'
+                        }
+                      />
+                      {fieldErrors.birthday && (
+                        <p id="profile-birthday-error" className="mvp-profile__field-error">
+                          {fieldErrors.birthday}
+                        </p>
+                      )}
+                    </div>
+
+                    <p id="profile-optional-help" className="mvp-form__help">
+                      비워 두면 미입력으로 저장돼요.
+                    </p>
+
+                    <div className="mvp-form__field">
+                      <label htmlFor="profile-gender">성별</label>
+                      <select
+                        ref={genderSelectRef}
+                        id="profile-gender"
+                        name="gender"
+                        value={form.gender}
+                        onChange={handleChange}
+                        disabled={isSaving}
+                        aria-invalid={Boolean(fieldErrors.gender)}
+                        aria-describedby={
+                          fieldErrors.gender ? 'profile-gender-error' : 'profile-optional-help'
+                        }
+                      >
+                        <option value="">미선택</option>
+                        <option value="MALE">남성</option>
+                        <option value="FEMALE">여성</option>
+                      </select>
+                      {fieldErrors.gender && (
+                        <p id="profile-gender-error" className="mvp-profile__field-error">
+                          {fieldErrors.gender}
+                        </p>
+                      )}
+                    </div>
+
                     {saveError && (
                       <p className="mvp-form__message" role="alert">
                         {saveError}
@@ -488,18 +647,13 @@ function ProfilePage() {
                         <div>
                           <dt>이름</dt>
                           <dd>{user.name}</dd>
-                          <span>수정 가능</span>
                         </div>
                         <div>
                           <dt>이메일</dt>
                           <dd>{user.email}</dd>
-                          <span>수정 가능</span>
                         </div>
                       </dl>
                     </Card>
-                    <Button fullWidth onClick={startEditing}>
-                      이름·이메일 수정
-                    </Button>
                   </section>
 
                   <section className="mvp-profile__section" aria-labelledby="basic-info-title">
@@ -521,8 +675,11 @@ function ProfilePage() {
                       </dl>
                     </Card>
                     <p className="mvp-profile__readonly-note">
-                      현재 기본 정보는 조회만 가능해요.
+                      휴대폰 번호, 생년월일, 성별은 선택 입력이에요.
                     </p>
+                    <Button fullWidth onClick={startEditing}>
+                      사용자 정보 수정
+                    </Button>
                   </section>
 
                   <ProfileConsents onSessionExpired={expireSession} />

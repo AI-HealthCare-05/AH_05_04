@@ -92,7 +92,7 @@ test('[REQ-USR-010][REQ-USR-019][REQ-USR-020] 보호 화면·프로필 저장·�
 
   await page.goto('/profile')
   await expect(page.getByText('synthetic@example.com')).toBeVisible()
-  await page.getByRole('button', { name: '이름·이메일 수정' }).click()
+  await page.getByRole('button', { name: '사용자 정보 수정' }).click()
   await page.getByLabel('이름').fill('변경 합성 사용자')
   await page.getByRole('button', { name: '저장' }).click()
   await expect(page.getByText('내 정보가 저장되었습니다.')).toBeVisible()
