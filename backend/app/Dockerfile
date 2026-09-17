@@ -31,6 +31,9 @@ COPY ./ai_worker ./ai_worker
 COPY ./backend/alembic ./alembic
 COPY ./backend/alembic.ini ./alembic.ini
 COPY ./scripts/ci/verify_database_head.py ./scripts/ci/verify_database_head.py
+# #178 RET-H synthetic deployment smoke runner. Ships the module only; the image
+# gains no Docker CLI and no daemon socket, and no runtime privilege changes.
+COPY ./scripts/ret_h_aws_synthetic_smoke.py ./scripts/ret_h_aws_synthetic_smoke.py
 
 # STORAGE_DIR 기본값을 이미지 자체에 고정합니다. Config의 Path(__file__) 기반 기본값은
 # 로컬 실행(backend/app/core/config.py 기준 저장소 루트) 기준이라, docker-compose 없이
