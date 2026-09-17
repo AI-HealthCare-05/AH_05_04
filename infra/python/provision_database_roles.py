@@ -28,7 +28,7 @@ RUNTIME_MUTABLE_TABLES = frozenset(
     "rag_runtime_environment rag_release_evaluation_approval".split()
 )
 RUNTIME_APPEND_ONLY_TABLES = frozenset(
-    "prescription_version prescription_version_medication checkin_audit medication_schedule_audit account_deletion_request rag_citation "
+    "prescription_version prescription_version_medication checkin_audit medication_schedule_audit rag_citation "
     "rag_evidence_guideline rag_evidence_rule rag_evidence rag_evidence_knowledge "
     "rag_runtime_environment_transition medication_candidate_search_result "
     "ai_job_intake_context ai_job_execution_context ai_job_execution_identification "
@@ -55,6 +55,18 @@ RUNTIME_AUTH_UPDATE_COLUMNS = {
     "password_reset_token": ("used_at",),
     "email_verification_token": ("verified_at",),
 }
+
+# #748/#206: account withdrawal is inserted once, then Runtime advances only the
+# deletion request lifecycle. Identity and request provenance remain immutable.
+RUNTIME_ACCOUNT_DELETION_REQUEST_UPDATE_COLUMNS = (
+    "status",
+    "started_at",
+    "completed_at",
+    "failed_at",
+    "retry_count",
+    "last_error_code",
+    "updated_at",
+)
 
 
 def validate_distinct_role_names(*names: str | None) -> None:
@@ -110,6 +122,7 @@ async def provision_roles(
         | CATALOG_TABLES
         | set(SOURCE_TABLES)
         | set(RUNTIME_AUTH_UPDATE_COLUMNS)
+        | {"account_deletion_request"}
         | RUNTIME_LIFESTYLE_TABLES
         | RUNTIME_CHECKIN_LOCK_TABLES
         | {"support_action_plan"}
@@ -145,6 +158,9 @@ async def provision_roles(
     # #178/#689: retrieval_run tracks execution lifecycle (RUNNING -> COMPLETED/FAILED),
     # requiring SELECT, INSERT, UPDATE. History deletion is handled via cascade from ai_job; direct DELETE is prohibited.
     await connection.execute(text(f"GRANT SELECT, INSERT, UPDATE ON TABLE public.retrieval_run TO {runtime_sql}"))
+    names = ", ".join(quoted_identifier(column) for column in RUNTIME_ACCOUNT_DELETION_REQUEST_UPDATE_COLUMNS)
+    await connection.execute(text(f"GRANT SELECT, INSERT ON TABLE public.account_deletion_request TO {runtime_sql}"))
+    await connection.execute(text(f"GRANT UPDATE ({names}) ON TABLE public.account_deletion_request TO {runtime_sql}"))
     for table, columns in RUNTIME_AUTH_UPDATE_COLUMNS.items():
         target = f"public.{quoted_identifier(table)}"
         names = ", ".join(quoted_identifier(column) for column in columns)

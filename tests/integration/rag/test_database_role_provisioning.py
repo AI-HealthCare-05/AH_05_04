@@ -32,6 +32,7 @@ from app.repositories.rag_source_catalog_repository import (
 )
 from app.services.rag_runtime import RagRuntimeEnvironmentTransitionService
 from infra.python.provision_database_roles import (
+    RUNTIME_ACCOUNT_DELETION_REQUEST_UPDATE_COLUMNS,
     RUNTIME_APPEND_ONLY_TABLES,
     RUNTIME_AUTH_UPDATE_COLUMNS,
     RUNTIME_CHECKIN_LOCK_TABLES,
@@ -151,10 +152,11 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 | CATALOG_TABLES
                 | set(SOURCE_TABLES)
                 | set(RUNTIME_AUTH_UPDATE_COLUMNS)
-                | {"notification_record", "user_consent"}
+                | {"account_deletion_request", "notification_record", "user_consent"}
             ):
                 await connection.execute(text(f'CREATE TABLE "{table}" (id integer PRIMARY KEY)'))
             await _add_checkin_lock_fixture_columns(connection)
+            await _add_account_deletion_request_fixture_columns(connection)
             await connection.execute(
                 text(
                     "ALTER TABLE rag_source_ingestion_run ADD COLUMN snapshot_id integer, ADD COLUMN run_status text, ADD COLUMN failure_code text, ADD COLUMN failure_message text, ADD COLUMN duration_ms integer, ADD COLUMN finished_at timestamptz, ADD COLUMN attempted_source_version text"
@@ -200,7 +202,9 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             await connection.execute(text("INSERT INTO checkin_audit VALUES (1)"))
             await connection.execute(text("INSERT INTO medication_schedule_audit VALUES (1)"))
             await connection.execute(text("INSERT INTO prescription_version VALUES (1)"))
-            await connection.execute(text("INSERT INTO account_deletion_request VALUES (1)"))
+            await connection.execute(text("INSERT INTO account_deletion_request (id) VALUES (1)"))
+            await connection.execute(text("SELECT * FROM account_deletion_request FOR UPDATE"))
+            await connection.execute(text("UPDATE account_deletion_request SET status='IN_PROGRESS'"))
             await connection.execute(text("INSERT INTO push_subscription VALUES (1)"))
             await connection.execute(text("INSERT INTO push_delivery VALUES (1)"))
             await connection.execute(text("INSERT INTO lifestyle_times VALUES (1)"))
@@ -235,6 +239,9 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             (reader, "TRUNCATE checkin_audit"),
             (reader, "UPDATE prescription_version SET id=2"),
             (reader, "UPDATE account_deletion_request SET id=2"),
+            (reader, "UPDATE account_deletion_request SET user_id=2"),
+            (reader, "UPDATE account_deletion_request SET requested_at=now()"),
+            (reader, "UPDATE account_deletion_request SET created_at=now()"),
             (reader, "DELETE FROM account_deletion_request"),
             (reader, "TRUNCATE account_deletion_request"),
             (reader, "INSERT INTO rag_source_snapshot (id) VALUES (3)"),
@@ -262,6 +269,31 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 "ai_job_intake_context": _APPEND_ONLY_PRIVILEGES,
             },
         )
+        async with admin.connect() as connection:
+            account_deletion_request_columns = (
+                "id",
+                "user_id",
+                "status",
+                "requested_at",
+                "started_at",
+                "completed_at",
+                "failed_at",
+                "retry_count",
+                "last_error_code",
+                "created_at",
+                "updated_at",
+            )
+            observed = {
+                column: await connection.scalar(
+                    text("SELECT has_column_privilege(:role, 'account_deletion_request', :column, 'UPDATE')"),
+                    {"role": runtime, "column": column},
+                )
+                for column in account_deletion_request_columns
+            }
+        assert observed == {
+            column: column in RUNTIME_ACCOUNT_DELETION_REQUEST_UPDATE_COLUMNS
+            for column in account_deletion_request_columns
+        }
         # #731: authority 표가 빠진 schema에서는 provisioning이 fail closed여야 한다.
         async with admin.begin() as connection:
             await connection.execute(text("DROP TABLE rag_request_member_decision"))
@@ -976,6 +1008,22 @@ async def _add_auth_fixture_columns(connection):
     for table, columns in RUNTIME_AUTH_UPDATE_COLUMNS.items():
         for name in columns:
             await connection.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{name}" text'))
+
+
+async def _add_account_deletion_request_fixture_columns(connection):
+    for name in (
+        "user_id",
+        "status",
+        "requested_at",
+        "started_at",
+        "completed_at",
+        "failed_at",
+        "retry_count",
+        "last_error_code",
+        "created_at",
+        "updated_at",
+    ):
+        await connection.execute(text(f"ALTER TABLE account_deletion_request ADD COLUMN {name} text"))
 
 
 async def _exercise_preflight_context_runtime_permissions(reader, producer):
