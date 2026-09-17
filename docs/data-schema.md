@@ -953,7 +953,8 @@ artifact identity 계산과 wire contract는 Backend·AI Worker가 공유하는 
 import하지 않으며 `PD-175-20260910` 경계와 `ALLOWED_AI_WORKER_MODULES`를 변경하지 않는다.
 
 정책은 [PD-713](governance/decisions/2026-09-17-request-authority-persistence.md)을 따르며
-Current 승격과 #709 Production Reader 연결은 별도다.
+Current 승격은 별도다. #709 Production Reader는 이후 연결되었다
+(`ai_worker/adapters/sqlalchemy_guide_evidence_authority.py`).
 
 ## #712 Assessment·Eligibility Authority 영속 — 구현, Proposed
 

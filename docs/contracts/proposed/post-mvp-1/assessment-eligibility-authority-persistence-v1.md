@@ -33,10 +33,24 @@ exact lookup key를 확정하는 것까지가 범위다.
 Assessment·Eligibility Authority Reader (후속 Issue)
 GuideEvidenceHandoffRequest 조립 · VerifiedGuideEvidenceHandoff 생성
 content hydration · KnowledgeChunk text reader
-#709 Production Guide Authority Reader · #180 runtime orchestration
+#180 runtime orchestration
 Guideline Generator · Citation Authorization · Frontend/API
 PUBLIC_TRACK_F 활성화
 ```
+
+### 현재 Track F authority 진행 상태
+
+| 단계 | 상태 |
+| --- | --- |
+| REQUEST Guard / Source / Member Production Reader | DONE (#709, `ai_worker/adapters/sqlalchemy_guide_evidence_authority.py`) |
+| Assessment / Eligibility Authority Persistence | 본 PR (#712) |
+| Assessment / Eligibility Reader | NOT IMPLEMENTED |
+| GuideEvidenceHandoff authoritative assembly | NOT IMPLEMENTED |
+| #180 orchestration | NOT IMPLEMENTED |
+
+#709 Production Reader는 REQUEST 단위 Guard·Source·Member authority를 읽는다. 본 계약이 발급하는
+selected hit 단위 Assessment·Eligibility authority와는 책임 경계가 다르며, 이를 읽는 Reader는 아직
+구현되지 않았다.
 
 ### 이 표가 대체하지 않는 것
 
