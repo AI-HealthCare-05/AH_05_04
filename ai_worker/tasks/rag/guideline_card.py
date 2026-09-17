@@ -350,6 +350,35 @@ class ApprovedGuidelineFallback:
         return cls(ImmutableArtifactRef(artifact_code, version, _canonical_sha256(payload)), code, text)
 
 
+def create_canonical_guideline_policy(
+    *,
+    artifact_code: str,
+    version: str,
+    maximum_claims: int,
+) -> VersionedGuidelinePolicy:
+    return VersionedGuidelinePolicy.create(
+        artifact_code,
+        version,
+        maximum_claims=maximum_claims,
+        uncertainty_text_sha256=hashlib.sha256(_APPROVED_UNCERTAINTY_TEXT.encode("utf-8")).hexdigest(),
+        consultation_text_sha256=hashlib.sha256(_APPROVED_CONSULTATION_TEXT.encode("utf-8")).hexdigest(),
+    )
+
+
+def create_canonical_guideline_fallback(
+    *,
+    artifact_code: str,
+    version: str,
+    code: GuidelineFallbackCode,
+) -> ApprovedGuidelineFallback:
+    return ApprovedGuidelineFallback.create(
+        artifact_code,
+        version,
+        code=code,
+        text=SensitiveText(_APPROVED_FALLBACK_TEXT_BY_CODE[code]),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class GuidelineCitation:
     source_type: GuidelineCitationSourceType

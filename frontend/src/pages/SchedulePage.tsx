@@ -344,6 +344,7 @@ function ScheduleEditor({
   selectedDate,
   services,
   onSaved,
+  onAllSaved,
   onConflict,
   isReloading,
 }: {
@@ -351,8 +352,9 @@ function ScheduleEditor({
   medications: Record<string, Medication>
   selectedDate: string
   services: SchedulePageServices
-  onSaved: () => Promise<void>
-  onConflict: () => Promise<void>
+  onSaved: () => Promise<boolean>
+  onAllSaved: () => void
+  onConflict: () => Promise<boolean>
   isReloading: boolean
 }) {
   const orderedItems = useMemo(
@@ -533,7 +535,9 @@ function ScheduleEditor({
     if (stoppedForConflict) {
       if (shouldRefreshAfterStop) {
         setSummaryMessage('최신 일정과 처방을 다시 불러오는 중이에요. 저장되지 않은 약은 내용을 확인한 뒤 다시 저장해 주세요.')
-        await onConflict()
+        if (!await onConflict()) {
+          setSummaryMessage('최신 일정과 처방을 불러오지 못했어요. 입력한 내용을 유지한 채 다시 시도해 주세요.')
+        }
       } else {
         setSummaryMessage('저장을 중단했어요. 로그인 정보를 확인한 뒤 다시 시도해 주세요.')
       }
@@ -543,10 +547,16 @@ function ScheduleEditor({
           ? '일부 약만 저장됐어요. 실패한 약의 입력값을 확인하고 다시 시도해 주세요.'
           : '일정을 저장하지 못했어요. 입력값을 유지한 채 다시 시도할 수 있어요.',
       )
-      if (shouldReload) await onSaved()
+      if (shouldReload && !await onSaved()) {
+        setSummaryMessage('일부 약만 저장됐지만 최신 일정을 불러오지 못했어요. 입력값을 유지한 채 다시 시도해 주세요.')
+      }
     } else {
       setSummaryMessage('모든 약의 복약 일정이 저장됐어요.')
-      await onSaved()
+      if (await onSaved()) {
+        onAllSaved()
+      } else {
+        setSummaryMessage('모든 약의 일정은 저장됐지만 최신 일정을 불러오지 못했어요. 입력 내용을 유지한 채 다시 불러올 수 있어요.')
+      }
     }
     setIsSaving(false)
   }
@@ -802,11 +812,19 @@ export function SchedulePage({
   const [reloadVersion, setReloadVersion] = useState(0)
   const [isEditingSchedule, setIsEditingSchedule] = useState(false)
   const [editingMedicationId, setEditingMedicationId] = useState<string | null>(null)
+  const editorReloadCompletionRef = useRef<((succeeded: boolean) => void) | null>(null)
 
   const reload = useCallback(async () => {
     setIsLoading(true)
     setReloadVersion((version) => version + 1)
   }, [])
+
+  const reloadEditor = useCallback(() => new Promise<boolean>((resolve) => {
+    editorReloadCompletionRef.current?.(false)
+    editorReloadCompletionRef.current = resolve
+    setIsLoading(true)
+    setReloadVersion((version) => version + 1)
+  }), [])
 
   useEffect(() => {
     if (requestedDate !== selectedDate) {
@@ -824,8 +842,8 @@ export function SchedulePage({
       try {
         const response = await services.getMedicationDay(selectedDate, controller.signal)
         if (!active) return
-        setDay(response.data)
 
+        let latestPrescriptionLoadFailed = false
         const scheduleIdentityPromise = response.data.schedule_items.length === 0
           ? Promise.resolve<Record<string, Medication> | null>({})
           : services.getLatestPrescription(controller.signal)
@@ -834,6 +852,7 @@ export function SchedulePage({
               )
               .catch((error: unknown) => {
                 if (controller.signal.aborted) throw error
+                latestPrescriptionLoadFailed = true
                 return null
               })
         const occurrenceDetailsPromise = Promise.all(
@@ -860,17 +879,30 @@ export function SchedulePage({
           occurrenceDetailsPromise,
         ])
         if (active) {
+          const completeEditorReload = editorReloadCompletionRef.current
+          editorReloadCompletionRef.current = null
+          if (completeEditorReload && latestPrescriptionLoadFailed) {
+            completeEditorReload(false)
+            return
+          }
+          setDay(response.data)
           setScheduleMedications(scheduleIdentity ?? {})
           setIsScheduleIdentityUnavailable(scheduleIdentity === null)
           setMedications(Object.fromEntries(occurrenceEntries))
+          completeEditorReload?.(true)
         }
       } catch (error) {
         if (!controller.signal.aborted && active) {
-          setDay(null)
-          setMedications({})
-          setScheduleMedications({})
-          setIsScheduleIdentityUnavailable(false)
+          const completeEditorReload = editorReloadCompletionRef.current
+          editorReloadCompletionRef.current = null
+          if (!completeEditorReload) {
+            setDay(null)
+            setMedications({})
+            setScheduleMedications({})
+            setIsScheduleIdentityUnavailable(false)
+          }
           setLoadFailure(classifyLoadFailure(error))
+          completeEditorReload?.(false)
         }
       } finally {
         if (active) setIsLoading(false)
@@ -891,6 +923,8 @@ export function SchedulePage({
         .sort((left, right) => left.scheduled_at.localeCompare(right.scheduled_at)),
     [day, selectedDate],
   )
+  const currentOccurrences = occurrences.filter((occurrence) => occurrence.status !== 'CANCELLED')
+  const cancelledOccurrences = occurrences.filter((occurrence) => occurrence.status === 'CANCELLED')
   const state = day ? statusContent(day.schedule_status) : null
 
   const openRelevantEditor = () => {
@@ -941,8 +975,12 @@ export function SchedulePage({
                 medications={scheduleMedications}
                 selectedDate={selectedDate}
                 services={services}
-                onSaved={reload}
-                onConflict={reload}
+                onSaved={reloadEditor}
+                onAllSaved={() => {
+                  setEditingMedicationId(null)
+                  setIsEditingSchedule(false)
+                }}
+                onConflict={reloadEditor}
                 isReloading={isLoading}
               />
               </>
@@ -1042,11 +1080,11 @@ export function SchedulePage({
               <div className="schedule-page__section-heading">
                 <h2 id="occurrence-list-title">오늘의 복약</h2>
               </div>
-              {occurrences.length === 0 ? (
+              {currentOccurrences.length === 0 ? (
                 <Card className="schedule-page__empty">
                   <p>이 날짜에 표시할 복약 일정이 없어요.</p>
                 </Card>
-              ) : occurrences.map((occurrence) => {
+              ) : currentOccurrences.map((occurrence) => {
                 const medication = medications[occurrence.occurrence_id]
                 const route = `/schedule/occurrences/${occurrence.occurrence_id}?date=${encodeURIComponent(occurrence.scheduled_local_date)}`
                 return (
@@ -1078,6 +1116,25 @@ export function SchedulePage({
                   </article>
                 )
               })}
+              {cancelledOccurrences.length > 0 && (
+                <details className="schedule-page__cancelled-history" key={selectedDate}>
+                  <summary>취소된 일정 {cancelledOccurrences.length}건 보기</summary>
+                  <p>일정 변경 등으로 취소된 이력이에요. 현재 복용할 일정이 아니에요.</p>
+                  <ul>
+                    {cancelledOccurrences.map((occurrence) => {
+                      const medication = medications[occurrence.occurrence_id]
+                      return (
+                      <li key={occurrence.occurrence_id}>
+                        <span>{formatKstTime(occurrence.scheduled_at)} · 취소된 일정</span>
+                        <span>{medication
+                          ? medicationDescription(medication)
+                          : '약 정보를 확인할 수 없어요'}</span>
+                      </li>
+                      )
+                    })}
+                  </ul>
+                </details>
+              )}
             </section>
           )}
 

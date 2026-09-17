@@ -80,6 +80,7 @@ class SafetyAssessment(Base):
 
     __tablename__ = "safety_assessment"
     __table_args__ = (
+        CheckConstraint("checkin_lock_marker = 0", name="chk_safety_checkin_lock_marker"),
         UniqueConstraint("medication_checkin_id", "checkin_revision", "revision", name="uq_safety_checkin_revision"),
         UniqueConstraint("id", "medication_checkin_id", "checkin_revision", name="uq_safety_parent_reference"),
         CheckConstraint("checkin_revision > 0 AND revision > 0", name="chk_safety_revisions"),
@@ -94,6 +95,7 @@ class SafetyAssessment(Base):
             name="chk_safety_disposition",
         ),
     )
+    checkin_lock_marker: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     medication_checkin_id: Mapped[UUID] = mapped_column(
         UUIDChar(), ForeignKey("medication_checkin.id", name="fk_safety_checkin", ondelete="RESTRICT"), nullable=False
@@ -118,6 +120,7 @@ class BarrierResponse(Base):
 
     __tablename__ = "barrier_response"
     __table_args__ = (
+        CheckConstraint("checkin_lock_marker = 0", name="chk_barrier_checkin_lock_marker"),
         ForeignKeyConstraint(
             ["safety_assessment_id", "medication_checkin_id", "checkin_revision"],
             ["safety_assessment.id", "safety_assessment.medication_checkin_id", "safety_assessment.checkin_revision"],
@@ -135,6 +138,7 @@ class BarrierResponse(Base):
             name="chk_barrier_code",
         ),
     )
+    checkin_lock_marker: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
     medication_checkin_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     checkin_revision: Mapped[int] = mapped_column(Integer, nullable=False)

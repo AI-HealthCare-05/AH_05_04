@@ -1,8 +1,14 @@
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { deleteFeedback, submitFeedback, type FeedbackRating, type FeedbackTarget } from '../api/feedback'
 import './ResponseFeedback.css'
 
-export function ResponseFeedback({ target }: { target: FeedbackTarget }) {
+export function ResponseFeedback({
+  target,
+  active = true,
+}: {
+  target: FeedbackTarget
+  active?: boolean
+}) {
   const [rating, setRating] = useState<FeedbackRating | null>(null)
   const [comment, setComment] = useState('')
   const [saved, setSaved] = useState<FeedbackRating | null>(null)
@@ -10,36 +16,92 @@ export function ResponseFeedback({ target }: { target: FeedbackTarget }) {
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const lock = useRef(false)
+  const requestIdRef = useRef(0)
   const id = useId()
+  const targetKey = 'guideId' in target
+    ? `guide:${target.guideId}`
+    : `chat:${target.sessionId}:${target.messageId}`
+
+  useEffect(() => {
+    requestIdRef.current += 1
+    lock.current = false
+    setRating(null)
+    setComment('')
+    setSaved(null)
+    setBusy(false)
+    setNotice('')
+    setError('')
+  }, [targetKey])
 
   async function send(remove = false) {
     if (lock.current || (!remove && !rating)) return
+    const requestId = ++requestIdRef.current
+    const requestTarget = target
     lock.current = true
     setBusy(true)
     setNotice('')
     setError('')
     try {
       if (remove) {
-        await deleteFeedback(target)
+        await deleteFeedback(requestTarget)
+        if (requestIdRef.current !== requestId) return
         setSaved(null)
         setRating(null)
         setComment('')
         setNotice('피드백을 삭제했어요.')
       } else if (rating) {
-        const response = await submitFeedback(target, rating, comment)
+        const response = await submitFeedback(requestTarget, rating, comment)
+        if (requestIdRef.current !== requestId) return
         setSaved(response.data.rating)
         setNotice('피드백을 저장했어요. 언제든 평가를 바꿀 수 있어요.')
       }
     } catch {
+      if (requestIdRef.current !== requestId) return
       setError(remove ? '삭제하지 못했어요. 다시 시도해 주세요.' : '저장하지 못했어요. 입력한 내용을 확인하고 다시 시도해 주세요.')
     } finally {
-      lock.current = false
-      setBusy(false)
+      if (requestIdRef.current === requestId) {
+        lock.current = false
+        setBusy(false)
+      }
     }
   }
 
+  const targetData = 'guideId' in target
+    ? { 'data-guide-id': target.guideId }
+    : {
+        'data-session-id': target.sessionId,
+        'data-message-id': target.messageId,
+      }
+
+  if (!active && !busy && !saved && !error) return null
+
+  if (!active && saved) {
+    return (
+      <section
+        className="response-feedback"
+        aria-label="답변 피드백"
+        aria-busy={busy}
+        {...targetData}
+      >
+        <p className="response-feedback__notice">
+          저장된 평가: {saved === 'POSITIVE' ? '도움이 됐어요' : '아쉬워요'}
+        </p>
+        <button type="button" disabled={busy} onClick={() => void send(true)}>
+          {busy ? '처리 중…' : '피드백 삭제'}
+        </button>
+        {notice && <p role="status">{notice}</p>}
+        {error && <p role="alert">{error}</p>}
+      </section>
+    )
+  }
+
   return (
-    <section className="response-feedback" aria-label="답변 피드백" aria-busy={busy}>
+    <section
+      className="response-feedback"
+      aria-label="답변 피드백"
+      aria-busy={busy}
+      {...targetData}
+    >
       <p>도움이 되었나요?</p>
       <div className="response-feedback__ratings">
         {([['POSITIVE', '👍 도움이 됐어요'], ['NEGATIVE', '👎 아쉬워요']] as const).map(([value, label]) => (

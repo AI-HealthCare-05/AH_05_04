@@ -175,7 +175,26 @@ describe('Dosey MVP design pages', () => {
     expect(screen.getByText('회원가입 화면')).toBeTruthy()
   })
 
-  it('회원탈퇴 성공 state에서 접수 완료를 안내한 뒤 기본 시작 화면으로 전환한다', () => {
+  it('회원탈퇴 실패 state에서 완료가 아닌 실패 안내를 표시한다', () => {
+    render(
+      <MemoryRouter
+        initialEntries={[{
+          pathname: '/start',
+          state: { accountWithdrawalFailed: true },
+        }]}
+      >
+        <Routes>
+          <Route path="/start" element={<StartPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole('heading', { name: '회원탈퇴 처리를 완료하지 못했어요.' })).toBeTruthy()
+    expect(screen.getByText('관리자 확인이 필요합니다. 완료 화면으로 이동하지 않습니다.')).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '회원탈퇴가 완료되었습니다.' })).toBeNull()
+  })
+
+  it('회원탈퇴 성공 state에서 완료를 안내한 뒤 기본 시작 화면으로 전환한다', () => {
     render(
       <MemoryRouter
         initialEntries={[{
@@ -189,7 +208,7 @@ describe('Dosey MVP design pages', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByRole('heading', { name: '회원탈퇴 요청이 접수되었어요.' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '회원탈퇴가 완료되었습니다.' })).toBeTruthy()
     expect(screen.getByText(/삭제·보존은 서비스 정책에 따라 처리됩니다/)).toBeTruthy()
     expect(screen.queryByText('모든 정보가 즉시 영구 삭제됩니다')).toBeNull()
 
