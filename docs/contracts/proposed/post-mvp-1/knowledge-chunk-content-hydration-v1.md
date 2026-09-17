@@ -31,7 +31,7 @@
 3. **정본 타입 재사용**: expected/observed provenance는 모두 기존 `ai_worker.tasks.rag.evidence_search.ProductionEvidenceProvenance`다. hydration 전용 provenance DTO를 만들지 않는다.
 4. **Sensitive text 정본**: content는 downstream `GuideEvidenceSelectionRequest`가 이미 사용하는 `ai_worker.tasks.rag.evidence_retrieval.SensitiveText`로 전달한다. Knowledge Index build domain의 `SensitiveEvidenceText`를 downstream 출력 타입으로 전파하지 않는다.
 5. **Silent transform 금지**: normalize, trim, lower-case, fallback, 최신 행 선택을 하지 않는다.
-6. **범위 종료 지점**: 결과는 `HydratedGuideRetrievalSelection[]`에서 멈춘다.
+6. **범위 종료 지점**: 결과는 `HydratedGuideRetrievalSelection[]`에서 멈춘다. 이 산출물을 #712/#746 persisted authority와 결속해 `GuideEvidenceHandoffRequest`를 구성하는 책임은 downstream [`authoritative-guide-evidence-handoff-assembly-v1`](./authoritative-guide-evidence-handoff-assembly-v1.md) (#760)에 있다.
 
 ---
 
