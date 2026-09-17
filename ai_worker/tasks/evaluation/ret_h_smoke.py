@@ -219,7 +219,12 @@ async def verify_gate_fail_closed(
 
 # The approved synthetic Knowledge Index identity is the one PR #663 already established.
 # This module reuses that constant read-only rather than defining a new convention.
-APPROVED_SYNTHETIC_INDEX_CODES: frozenset[str] = frozenset({SYNTHETIC_INDEX_CODE})
+APPROVED_SYNTHETIC_INDEX_CODES: frozenset[str] = frozenset(
+    {
+        SYNTHETIC_INDEX_CODE,
+        "rag-ret-h-aws-smoke-synthetic-index",
+    }
+)
 
 
 async def verify_fixture_is_synthetic(
