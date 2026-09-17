@@ -720,3 +720,46 @@
     grid-column: 1;
   }
 }
+
+.schedule-recommendation {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--ds-border, #d9e3df);
+  border-radius: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.schedule-recommendation h3,
+.schedule-recommendation p {
+  margin: 0;
+}
+
+.schedule-recommendation p {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.schedule-recommendation input[type="time"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.schedule-recommendation .schedule-editor__time-grid {
+  grid-template-columns: 1fr;
+}
+
+.schedule-editor__directions {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border-radius: 12px;
+  background: #f3f6fa;
+  color: #4d576b;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}

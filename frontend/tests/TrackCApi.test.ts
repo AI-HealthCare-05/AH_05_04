@@ -32,3 +32,18 @@ it('transmits the chosen situation on offer GET and confirmed Plan POST', async 
   expect(JSON.parse(calls[1][1].body as string).travel_situation).toBe('MEDICATION_NOT_WITH_ME')
   expect(new Headers(calls[1][1].headers).get('Idempotency-Key')).toBe('packing-attempt')
 })
+
+it('uses followup envelope, exact body and caller-owned key', async () => {
+  const { getFollowup, submitFollowup } = await import('../src/api/trackC')
+  const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ data: null }), { headers: { 'Content-Type': 'application/json' } }))
+  vi.stubGlobal('fetch', fetchMock)
+  expect(await getFollowup('plan')).toBeNull()
+  await submitFollowup('plan', { response: 'NOT_SURE', expected_revision: 2 }, 'followup-attempt-key')
+  const calls = fetchMock.mock.calls as unknown as [string, RequestInit][]
+  expect(new URL(calls[0][0]).pathname).toBe('/api/v1/support-action-plans/plan/followups')
+  expect(calls[0][1].cache).toBe('no-store')
+  expect(new Headers(calls[0][1].headers).has('Idempotency-Key')).toBe(false)
+  expect(calls[1][1].method).toBe('POST')
+  expect(JSON.parse(calls[1][1].body as string)).toEqual({ response: 'NOT_SURE', expected_revision: 2 })
+  expect(new Headers(calls[1][1].headers).get('Idempotency-Key')).toBe('followup-attempt-key')
+})

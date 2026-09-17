@@ -2,6 +2,8 @@ import hashlib
 import hmac
 import json
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 # $는 마지막 \n 앞에서도 매치하므로(예: "...key\n"), 끝을 \Z로 고정해 계약이 요구하는
@@ -40,6 +42,12 @@ def validate_idempotency_key_format(raw_key: str) -> None:
         raise IdempotencyKeyFormatError("IDEMPOTENCY_KEY_INVALID")
 
 
+@dataclass(frozen=True)
+class IdempotencyHmacDigest:
+    key_hmac_version: str
+    key_hmac: str
+
+
 def compute_key_hmac(raw_key: str, *, hmac_key: str) -> str:
     """원문 key는 저장하지 않고, 서버 secret으로 versioned HMAC-SHA-256 처리한 값만 저장합니다."""
     return hmac.new(
@@ -47,6 +55,27 @@ def compute_key_hmac(raw_key: str, *, hmac_key: str) -> str:
         raw_key.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
+
+
+def compute_key_hmac_candidates(
+    raw_key: str,
+    *,
+    active_hmac_key: str,
+    active_key_version: str,
+    retained_hmac_keys: Mapping[str, str] | None = None,
+) -> tuple[IdempotencyHmacDigest, ...]:
+    active = IdempotencyHmacDigest(
+        key_hmac_version=active_key_version,
+        key_hmac=compute_key_hmac(raw_key, hmac_key=active_hmac_key),
+    )
+    retained = tuple(
+        IdempotencyHmacDigest(
+            key_hmac_version=version,
+            key_hmac=compute_key_hmac(raw_key, hmac_key=retained_key),
+        )
+        for version, retained_key in sorted((retained_hmac_keys or {}).items())
+    )
+    return (active, *retained)
 
 
 def compute_request_hash(fingerprint: dict[str, Any]) -> str:

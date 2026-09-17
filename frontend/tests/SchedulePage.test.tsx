@@ -388,6 +388,7 @@ describe('production 복약 일정', () => {
         ...makePrescription().data.medications[0],
         prescription_version_medication_id: secondMedicationId,
         medication_name: '하루 두 번 약',
+        timing_text: '아침·저녁 식후',
         frequency_per_day: 2,
         display_order: 1,
       },
@@ -411,7 +412,32 @@ describe('production 복약 일정', () => {
     fireEvent.click(await screen.findByRole('button', { name: '일정 설정하기' }))
 
     expect(screen.getAllByLabelText(/번째 복용 시간$/)).toHaveLength(6)
+    const secondInput = screen.getByLabelText('하루 두 번 약 1번째 복용 시간')
+    expect(document.getElementById(secondInput.getAttribute('aria-describedby')!)?.textContent).toBe('처방 복용 지시아침·저녁 식후')
+    const firstInput = screen.getByLabelText('현재 처방의 혈압약 1번째 복용 시간')
+    expect(document.getElementById(firstInput.getAttribute('aria-describedby')!)?.textContent).toContain('복용 시점 미확인')
     expect(screen.queryByRole('button', { name: /복용 시간 (추가|삭제)/ })).toBeNull()
+  })
+
+  it.each(['아침·저녁 식후 30분', '아침·점심 식전', '긴 지시 '.repeat(40), null, '   '])('설정·수정 시 복용 지시 %s를 입력과 연결한다', async (timingText) => {
+    const services = makeServices({
+      getLatestPrescription: vi.fn().mockResolvedValue(makePrescription({
+        medications: [{ ...makePrescription().data.medications[0], frequency_per_day: 2, timing_text: timingText }],
+      })),
+    })
+    renderSchedule(services)
+    fireEvent.click(await screen.findByRole('button', { name: '복약 일정 설정·수정' }))
+    for (const input of screen.getAllByLabelText(/번째 복용 시간$/)) {
+      const description = document.getElementById(input.getAttribute('aria-describedby')!)!
+      expect(description.textContent).toBe(`처방 복용 지시${timingText?.trim() || '복용 시점 미확인 · 처방전의 복용 지시를 확인해 주세요.'}`)
+      expect((input as HTMLInputElement).value).toBe('')
+    }
+    fillScheduleEditor('현재 처방의 혈압약', '2026-09-14', '2026-09-20', ['08:30', '18:30'])
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+    await waitFor(() => expect(services.putMedicationSchedule).toHaveBeenCalledWith(medicationId, {
+      startLocalDate: '2026-09-14', endMode: 'DATE', endLocalDate: '2026-09-20',
+      localTimes: ['08:30', '18:30'], expectedRevision: 3,
+    }, expect.any(String)))
   })
 
   it('PARTIAL의 미설정 약도 현재 처방 identity로 표시한다', async () => {
@@ -1146,5 +1172,41 @@ describe('Track C reminder target handoff', () => {
     await screen.findByText(/이 계획에 연결된 약의 일정을 확인할 수 없어요/)
     expect(screen.queryByRole('button', { name: '이 약의 일정 확인·설정' })).toBeNull()
     expect(services.putMedicationSchedule).not.toHaveBeenCalled()
+  })
+})
+
+describe('prescription time candidate integration', () => {
+  it('applies without saving, preserves a failed save and passes recomputation context on retry', async () => {
+    const recommendation = vi.fn().mockResolvedValue({ data: {
+      prescription_version_medication_id: medicationId, prescription_version_id: prescriptionVersionId,
+      timing_text: '저녁 식후 30분', rule_version: 'explicit-after-meal-v1', local_times: ['20:00'], reason: 'EXPLICIT_AFTER_MEAL',
+    } })
+    const put = vi.fn().mockRejectedValueOnce(new TypeError('network')).mockResolvedValue({ data: {} })
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({ schedule_status: 'SETUP_REQUIRED', schedule_items: [setupItem()], occurrences: [] })),
+      getScheduleRecommendation: recommendation, putMedicationSchedule: put,
+    })
+    renderSchedule(services)
+    fireEvent.click(await screen.findByRole('button', { name: '일정 설정하기' }))
+    fillScheduleEditor()
+    fireEvent.change(screen.getByLabelText('현재 처방의 혈압약 저녁 식사 종료 시각'), { target: { value: '19:30' } })
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(screen.getByRole('button', { name: '시간 후보 계산' }))
+    fireEvent.click(await screen.findByRole('button', { name: '후보 적용' }))
+    expect((screen.getByLabelText('현재 처방의 혈압약 1번째 복용 시간') as HTMLInputElement).value).toBe('20:00')
+    expect(put).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+    await screen.findByText(/연결을 확인한 뒤 다시 시도해 주세요. 입력한 내용은 그대로 유지돼요./)
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(2))
+    expect(put.mock.calls[0][1]).toMatchObject({ localTimes: ['20:00'], recommendationContext: {
+      meal_end_times: { DINNER: '19:30' }, same_times_every_day: true, rule_version: 'explicit-after-meal-v1',
+    } })
+    expect(put.mock.calls[1]).toEqual(put.mock.calls[0])
+  })
+  it('does not offer candidates to overwrite an existing schedule', async () => {
+    renderSchedule(makeServices())
+    fireEvent.click(await screen.findByRole('button', { name: '복약 일정 설정·수정' }))
+    expect(screen.queryByRole('button', { name: '시간 후보 계산' })).toBeNull()
   })
 })

@@ -91,6 +91,10 @@ SMTP·외부 AI를 호출하지 않으며 기존 개발/test DB를 사용하지 
 [회원가입 인증 gate 검증](testing/signup-gate-431.md)을 참고합니다.
 이 경로는 별도 opt-in 검증이며 기본 CI에 추가하지 않습니다.
 
+## 부하테스트 프레임워크 (#627)
+
+#627의 1단계는 API별 완성 시나리오가 아니라 부하테스트 실행 구조와 운영 절차를 준비하는 범위입니다. Locust 기반 엔트리포인트, 기본 smoke 경로, 결과 요약 형식과 후속 API 시나리오 추가 순서는 [부하테스트 프레임워크](testing/load-testing-627.md)를 따릅니다. 현재 문서는 Production 수용량 증빙이나 `p95 <= 3s` 달성을 의미하지 않으며, 로그인·OCR·Guide·Chat 등 실제 API별 시나리오는 API 계약 안정화 후 후속 PR에서 추가합니다.
+
 ## 현재 자동 검증 범위
 
 GitHub Actions와 `scripts/ci/run_test.sh`는 다음 경계로 PostgreSQL migration과 기본 Python 테스트를 검증합니다.
@@ -598,3 +602,77 @@ Frontend `TrackCPage.test.tsx`는 상황 선택·명시 채택·실제 준비 �
   실제 API 저장·Barrier 차단·Plan 취소·멱등 replay. Frontend 증상 UI·임상 평가와 구분한다.
 - [공용 RAG 연결 준비 상태](testing/track-c-rag-readiness-196.md): kernel 구현과 실제 Source/Bundle/handoff
   인계를 구분하며, 확인되지 않은 근거를 데모 승인으로 대체하지 않는다.
+
+## #634 MFDS RAG Phase 2A: Knowledge Materialization 검증
+
+현재 구현·검증된 범위는 Source XML parser seam(Task 1)뿐이다. `ai_worker/tests/rag/source_ingestion/test_mfds_label.py`는
+`parse_mfds_label_artifact()` seam, 기존 `inspect_xml()` report 무변경, `ParsedMfdsLabelDocument` repr의 Source 본문 비노출,
+깊게 중첩된 유효 XML 회귀를 검증한다. DB 접근이 차단된 Worker 단위 테스트 환경에서 실행된다.
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+export REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
+source scripts/ci/test_environment.sh
+run_with_worker_test_environment pytest ai_worker/tests/rag/source_ingestion/test_mfds_label.py -q
+```
+
+Worker RAG 회귀 전체는 다음으로 실행한다.
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+export REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
+source scripts/ci/test_environment.sh
+run_with_worker_test_environment pytest ai_worker/tests/rag -q
+```
+
+Task 2a의 순수 renderer/chunker는 `ai_worker/tests/rag/test_mfds_label_chunk_policy.py`가 검증한다.
+계약의 golden vector G1~G8(XML 입력 → 정확한 `chunk_text` → SHA-256)과 NFC·newline 정규화, 정책 fail-closed,
+결정성을 고정한다.
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+export REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
+source scripts/ci/test_environment.sh
+run_with_worker_test_environment pytest ai_worker/tests/rag/test_mfds_label_chunk_policy.py -q
+```
+
+Task 2b~4의 materialization 커널(`ai_worker/tests/rag/test_knowledge_materialization.py`), mock Repository
+(`ai_worker/tests/rag/test_sqlalchemy_knowledge_materialization.py`), 격리 PostgreSQL RAG lane
+(`tests/integration/rag/test_knowledge_materialization_postgresql.py`)는 아직 존재하지 않는 **예정 검증**이다. 착수 승인 후
+추가되며, 그때 아래 명령으로 실행한다. 계획 상세는 [Phase 2A 계획서](designs/ceohwj/MFDS_RAG_Phase2A_Plan.md)를 따른다.
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+export REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
+source scripts/ci/test_environment.sh
+run_with_worker_test_environment pytest \
+  ai_worker/tests/rag/test_knowledge_materialization.py \
+  ai_worker/tests/rag/test_sqlalchemy_knowledge_materialization.py -q
+```
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+export REPOSITORY_ROOT="$(git rev-parse --show-toplevel)" COMPOSE_PROJECT_NAME=ah_05_04
+source scripts/ci/test_environment.sh
+prepare_test_environment
+run_with_integration_test_environment pytest tests/integration/rag/test_knowledge_materialization_postgresql.py -q
+```
+
+격리 PostgreSQL lane에서는 advisory lock 직렬화, 부분 저장 상태 conflict rollback, commit 전 receipt 재구성·비교,
+6대 해시 일치 불변성, IngestionRun terminal status·결속 위변조 차단, section별 exact page binding,
+runtime vs `knowledge_index_builder` role 권한 분리, Index 어댑터 binding 호환성을 검증할 계획이다.
+
+기존 Knowledge Evidence Index와의 cross-flow row lock 순서는 **아직 확정된 계약이 아니다.** `FOR UPDATE OF`
+테이블 목록을 맞추더라도 Index는 `knowledge_chunk_id` 순, materialization은 section 순으로 member를 순회하므로
+실제 row 획득 순서가 같아지지 않는다. 공유 ordering key 또는 상위 serialization 방식은 Task 3 착수 전 책임
+리뷰어가 확정하며, 이 lane의 cross-flow 테스트는 확정된 전략을 검증하는 단계다.
+
+## #670 명시적 시간 후보 검증
+
+`tests/contract/test_schedule_recommendations.py`는 합성 문구의 계산·보수적 거부·OpenAPI·non-local gate를,
+`backend/app/tests/medication_schedules/test_medication_schedule_api.py`는 PostgreSQL 기반
+계산 무저장·소유권·처방 변경·기존 일정 보존·멱등 저장을 검증한다.
+Frontend ScheduleRecommendation/SchedulePage/MedicationSchedulesApi 테스트는 명시적 적용·입력 수정·
+늦은 응답 무효화·저장 실패 재시도·직접 입력 전환을 확인한다.
+[검증 기록](validation/track-b/issue-670-recommendation.md)을 참고한다. Provider 호출·RAG 변경은 없으며
+이 검증은 약학적 적절성이나 Production 승인을 대신하지 않는다.

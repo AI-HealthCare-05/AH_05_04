@@ -53,6 +53,17 @@ export async function logout() {
   })
 }
 
+export async function requestAccountWithdrawal(password: string, accessToken: string) {
+  return apiRequest<{ detail: string }>('/api/v1/auth/account/withdrawal', {
+    method: 'POST',
+    accessToken,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ password, confirmed: true }),
+  })
+}
+
 // Discard the LOCAL-only token so consumers cannot depend on or display it.
 export async function requestEmailVerification(email: string): Promise<void> {
   await apiRequest('/api/v1/auth/email-verification/request', {

@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
+from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
@@ -423,7 +424,9 @@ def test_checkin_lock_marker_downgrade_preserves_history_and_reupgrade():
         }
 
     before = asyncio.run(snapshot())
-    command.downgrade(cfg, "633a1b2c3d4e")
+    lock_revision = ScriptDirectory.from_config(cfg).get_revision("668a1b2c3d4e")
+    assert lock_revision is not None and isinstance(lock_revision.down_revision, str)
+    command.downgrade(cfg, lock_revision.down_revision)
     assert asyncio.run(snapshot()) == before
 
     async def verify_markers(present):

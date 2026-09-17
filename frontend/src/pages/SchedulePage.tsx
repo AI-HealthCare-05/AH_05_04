@@ -11,6 +11,7 @@ import {
   createScheduleIdempotencyKey,
   getMedicationDay,
   getOccurrenceMedication,
+  getScheduleRecommendation,
   isOccurrenceMedicationNotFoundError,
   isPrescriptionMedicationNotFoundError,
   isPrescriptionVersionConflictError,
@@ -21,6 +22,7 @@ import {
   type MedicationOccurrenceMedicationResponse,
   type MedicationScheduleItem,
   type PutMedicationScheduleInput,
+  type RecommendationContext,
 } from '../api/medicationSchedules'
 import {
   createCheckinIdempotencyKey,
@@ -41,6 +43,7 @@ import {
   type Medication,
   type PrescriptionResponse,
 } from '../api/prescriptions'
+import { ScheduleRecommendation } from './ScheduleRecommendation'
 import bellIcon from '../assets/icon-bell-notification.svg'
 import { Button, Card, MobileShell } from '../design-system/components'
 import { clearAuthenticatedSession } from '../features/auth/authSession'
@@ -54,6 +57,7 @@ const UUID_PATTERN =
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
 export type SchedulePageServices = {
+  getScheduleRecommendation?: typeof getScheduleRecommendation
   getMedicationDay: typeof getMedicationDay
   getOccurrenceMedication: typeof getOccurrenceMedication
   getLatestPrescription: typeof getLatestPrescription
@@ -67,6 +71,7 @@ export type SchedulePageServices = {
 const defaultServices: SchedulePageServices = {
   getMedicationDay,
   getOccurrenceMedication,
+  getScheduleRecommendation,
   getLatestPrescription,
   putMedicationSchedule,
   cancelMedicationSchedule,
@@ -285,6 +290,7 @@ type ScheduleDraft = {
   endMode: 'DATE' | 'OPEN_ENDED'
   endDate: string
   times: string[]
+  recommendationContext?: RecommendationContext
 }
 
 type ScheduleSaveState = {
@@ -456,6 +462,7 @@ function ScheduleEditor({
               localTimes: draft.times,
               expectedRevision: item.revision ?? 0,
             }
+      if (draft.recommendationContext) requestPayload.recommendationContext = draft.recommendationContext
       const attempt = resolveLogicalMutationAttempt(
         scheduleMutationAttemptsRef.current[id] ?? null,
         'SCHEDULE_PUT',
@@ -486,7 +493,10 @@ function ScheduleEditor({
       } catch (error) {
         failureCount += 1
         let message = '연결을 확인한 뒤 다시 시도해 주세요. 입력한 내용은 그대로 유지돼요.'
-        if (isScheduleRevisionConflictError(error)) {
+        if (error instanceof ApiError && error.code === 'SCHEDULE_RECOMMENDATION_CONFLICT') {
+          delete scheduleMutationAttemptsRef.current[id]
+          message = '후보의 기준이나 입력 시각이 달라졌어요. 식사 시각을 확인하고 다시 계산하거나 직접 입력으로 전환해 주세요.'
+        } else if (isScheduleRevisionConflictError(error)) {
           delete scheduleMutationAttemptsRef.current[id]
           message = '일정이 다른 곳에서 변경됐어요. 최신 상태를 확인한 뒤 다시 저장해 주세요.'
           stoppedForConflict = true
@@ -557,6 +567,7 @@ function ScheduleEditor({
           const hasValidationError =
             saveState?.status === 'ERROR' && saveState.kind === 'VALIDATION'
           const errorMessageId = `schedule-error-${id}`
+          const directionsId = `schedule-directions-${id}`
           return (
             <Card className="schedule-editor" key={id}>
               <div className="schedule-editor__heading">
@@ -568,6 +579,19 @@ function ScheduleEditor({
                   <span className="schedule-editor__success-badge">저장 완료</span>
                 )}
               </div>
+              {import.meta.env.DEV && item.schedule_id === null && (
+                <ScheduleRecommendation
+                  key={`${id}-${item.revision ?? 0}`}
+                  load={services.getScheduleRecommendation}
+                  medicationId={id} medicationName={medication.medication_name}
+                  timingText={medication.timing_text} disabled={isSaving || isReloading}
+                  onApply={(times, recommendationContext) => changeScheduleInput(id, (current) => ({ ...current, times, recommendationContext }))}
+                  onInvalidate={() => changeScheduleInput(id, (current) => current.recommendationContext
+                    ? { ...current, times: current.times.map(() => ''), recommendationContext: undefined }
+                    : current)}
+                  onManual={() => changeScheduleInput(id, (current) => ({ ...current, recommendationContext: undefined }))}
+                />
+              )}
               <div className="schedule-editor__fields" data-medication-id={id}>
                 <label>
                   <span>시작일</span>
@@ -642,6 +666,10 @@ function ScheduleEditor({
                 )}
                 <div className="schedule-editor__times">
                   <span>복용 시간{frequencyPerDay ? ` · ${frequencyPerDay}개 필요` : ''}</span>
+                  <p className="schedule-editor__directions" id={directionsId}>
+                    <strong>처방 복용 지시</strong>
+                    <span>{medication.timing_text?.trim() || '복용 시점 미확인 · 처방전의 복용 지시를 확인해 주세요.'}</span>
+                  </p>
                   <div className="schedule-editor__time-grid">
                     {draft.times.map((time, index) => (
                       <label className="schedule-editor__time-field" key={index}>
@@ -652,7 +680,7 @@ function ScheduleEditor({
                           value={time}
                           disabled={isSaving || isReloading}
                           aria-invalid={hasValidationError || undefined}
-                          aria-describedby={hasValidationError ? errorMessageId : undefined}
+                          aria-describedby={[directionsId, hasValidationError ? errorMessageId : ''].filter(Boolean).join(' ')}
                           onChange={(event) => changeScheduleInput(id, (current) => {
                             const nextTimes = [...current.times]
                             nextTimes[index] = event.target.value
@@ -906,7 +934,7 @@ export function SchedulePage({
               </header>
               <p className="schedule-editor__notice">
                 <span aria-hidden="true">ⓘ</span>
-                <strong>Dosey는 복용 시간을 추정하거나 추천하지 않아요.<br />정확한 시간을 직접 확인해 주세요.</strong>
+                <strong>{import.meta.env.DEV ? '명확한 처방과 입력한 식사 종료 시각이 있을 때만 후보를 계산해요.' : 'Dosey는 복용 시간을 추정하거나 추천하지 않아요.'}<br />정확한 시간을 직접 확인해 주세요.</strong>
               </p>
               <ScheduleEditor
                 items={editorItems}

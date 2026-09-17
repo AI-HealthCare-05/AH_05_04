@@ -904,3 +904,11 @@ created_at index는 만료 삭제, rating·updated_at·id index는 부정 피드
 업무 데이터 변경 없이 PostgreSQL 행 잠금 권한을 분리하기 위한 필드이며 API에는 노출하지 않는다.
 Runtime은 이 두 테이블의 SELECT/marker UPDATE와 support_action_plan의 SELECT/UPDATE(status, cancelled_at)만 받는다.
 Migration·검토 상태는 [PD-668](governance/decisions/2026-09-16-checkin-runtime-lock-668.md)을 따른다.
+
+## #670 명시적 시간 후보 — 저장 경계
+
+[Local 후보 계약](contracts/proposed/track-b-explicit-schedule-recommendation-v1.md)은 기존 확정
+PrescriptionVersionMedication을 읽고 임시 식사 종료 시각으로 계산한다. 새 DB 구조·migration은 없다.
+후보와 식사 입력은 별도 저장하지 않으며, 명시적 저장 시 기존 MedicationSchedule·time·occurrence·audit와
+USER_CONFIRMED source를 재사용한다. 선택 context는 기존 HMAC 멱등 fingerprint에 결속하며
+일정 응답·audit에 추가하지 않는다. 기존 생활 시간 window·revision은 이 계산의 입력이 아니다.

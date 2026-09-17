@@ -24,7 +24,10 @@ from ai_worker.tasks.rag.claim_citation_validator import (
     ValidatedCitationSelection,
     validate_claim_citations,
 )
-from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
+from ai_worker.tasks.rag.evidence_retrieval import (
+    ImmutableArtifactRef,
+    is_valid_immutable_artifact_ref,
+)
 from ai_worker.tasks.rag.source_member_identity import (
     SourceMemberIdentity,
     SourceMemberKind,
@@ -178,15 +181,6 @@ def _is_sha256(value: object) -> bool:
     return type(value) is str and _SHA256_RE.fullmatch(value) is not None
 
 
-def _artifact_is_valid(value: object) -> bool:
-    return (
-        type(value) is ImmutableArtifactRef
-        and _is_nfc_text(value.artifact_code)
-        and _is_nfc_text(value.version)
-        and _is_sha256(value.content_sha256)
-    )
-
-
 def _artifact_payload(value: ImmutableArtifactRef) -> dict[str, str]:
     return {
         "artifact_code": value.artifact_code,
@@ -224,7 +218,7 @@ def _runtime_binding_is_valid(value: object) -> bool:
 def _origin_matches_runtime(value: object, runtime: RuntimeAuthorizationBinding) -> bool:
     return (
         type(value) is OriginRequestGuardBinding
-        and _artifact_is_valid(value.guard_ref)
+        and is_valid_immutable_artifact_ref(value.guard_ref)
         and value.decision is GuardDecision.PASS
         and value.operation is GuardOperation.REQUEST
         and value.environment is runtime.environment
@@ -420,9 +414,9 @@ def build_citation_authorization_request(
 def _receipt_shape_is_valid(value: object) -> bool:
     return (
         type(value) is CitationAuthorizationReceipt
-        and _artifact_is_valid(value.receipt_ref)
+        and is_valid_immutable_artifact_ref(value.receipt_ref)
         and _is_sha256(value.request_sha256)
-        and _artifact_is_valid(value.origin_guard_ref)
+        and is_valid_immutable_artifact_ref(value.origin_guard_ref)
         and type(value.origin_decision) is GuardDecision
         and type(value.operation) is GuardOperation
         and type(value.environment) is RuntimeEnvironment
@@ -436,8 +430,8 @@ def _receipt_shape_is_valid(value: object) -> bool:
         and all(
             type(item) is CitationAuthorizationSelectionReceipt
             and _selection_is_valid(item.selection)
-            and _artifact_is_valid(item.source_decision_ref)
-            and _artifact_is_valid(item.member_decision_ref)
+            and is_valid_immutable_artifact_ref(item.source_decision_ref)
+            and is_valid_immutable_artifact_ref(item.member_decision_ref)
             and type(item.selected_for_operation) is bool
             and type(item.purpose) is UsePurpose
             and type(item.source_decision) is GuardDecision

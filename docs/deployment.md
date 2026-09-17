@@ -69,6 +69,8 @@ CloudFront 기본 hostname 사용은 별도 도메인 구매만 생략하며 AWS
 | Rollback 실행 | 모든 배포 | 실행자·실행 시각, 복구 애플리케이션 버전, Production DB 무-downgrade·forward-fix 처리, 복구 health check와 후속 Issue |
 | Rollback 실행 | Outbox·Worker Production 적용 이후 | Stream PEL·예약 retry drain과 구·신 Consumer 호환 확인 |
 
+API 오류율·latency와 부하테스트 증빙은 [#627 부하테스트 프레임워크](./testing/load-testing-627.md)의 결과 요약 형식을 사용한다. #627의 현재 범위는 실행 구조와 절차 준비이며, 실제 API별 시나리오와 Production 수용량 승인은 별도 후속 검증으로 남긴다.
+
 [Outbox·Stream 계약](./contracts/targets/post-mvp-1/outbox-stream-v1.md)은 **Approved Target**이며 아직 `current` runtime 계약으로 승격되지 않았다. 이 상태는 모든 지원 구성요소가 미구현이라는 뜻은 아니다. Redis Streams Adapter·Event Publisher(#140/PR #213), Worker lease·fencing·commit-before-ACK(#141/PR #217), 공통 Job 접수 transaction(#147/PR #215), DB Outbox 발행과 Worker runtime의 주기 실행(#219, #370/PR #371), 실제 CLOVA OCR Provider 연결·검증(#258/PR #268), Pending reclaim·재시도·quarantine·DLQ와 복구 Scheduler(#142), 운영 Redis 인증·노출 차단(#150/PR #314)은 구현되었다. `scripts/deployment.sh`는 `fastapi`, `ai-worker`, `nginx`를 배포하고 Worker readiness와 종료 설정을 포함한다. 실제 AWS 기동·관제·합성 OCR 증빙은 [AWS Runbook](./runbooks/aws-production-demo.md)에 따라 별도로 확보하며, 코드 조립만으로 Production Worker 동작을 증명하지 않는다. 해당 경로를 Production에 적용하기 전에 계약과 테스트를 동기화하고 아래 관제·호환 조건을 검증한다. 목표 계약은 DLQ publish 실패를 정해진 backoff로 재시도하고 10회 연속 실패부터 매 시도 alert하도록 정의한다. 구 Consumer major 제거 전에는 해당 Outbox·Stream·PEL·예약 retry가 모두 0이고 마지막 처리 후 7일 관찰기간이 지났는지 확인한다. `RETRY_WAIT` 중 Runtime Bundle 변경과 구·신 Consumer 동시 배포 방식은 같은 계약이 가리키는 후속 Product Decision이 확정되기 전까지 Production 적용 차단 조건이다.
 
 ## 배포 절차
@@ -80,6 +82,18 @@ CloudFront 기본 hostname 사용은 별도 도메인 구매만 생략하며 AWS
 Production Redis는 host port에 공개하지 않고 Docker 내부 network에서만 접근합니다. `infra/docker/docker-compose.prod.yml`의 Redis 서비스에는 `ports`를 두지 않습니다.
 
 Worker, Publisher, Reconciler가 Redis에 접근하는 non-local 환경에서는 `REDIS_PASSWORD`가 실제 secret 값으로 주입되어야 하며, 빈 값 또는 `replace-with-` placeholder는 startup 실패 조건입니다. 실제 Redis password는 저장소, Issue, PR, 로그에 기록하지 않습니다.
+
+## Idempotency HMAC key rotation
+
+`IDEMPOTENCY_HMAC_KEY`는 원문 `Idempotency-Key`를 저장하지 않기 위한 서버 HMAC secret입니다. 운영에서 key를 교체할 때는 같은 원문 key의 재시도가 기존 `idempotency_record`를 찾을 수 있도록 아래 순서를 지킵니다. 실제 secret 값은 저장소, Issue, PR, 로그에 기록하지 않습니다.
+
+1. 현재 active `(IDEMPOTENCY_HMAC_KEY_VERSION, IDEMPOTENCY_HMAC_KEY)`를 기록 가능한 secret inventory에서만 확인합니다.
+2. 새 active key와 새 version을 준비하고, 직전 active key를 `IDEMPOTENCY_HMAC_RETIRED_KEYS`에 `old_version: old_key` 형태로 함께 배포합니다.
+3. 모든 Backend writer가 같은 새 active version을 쓰는지 확인합니다. 서로 다른 active version writer가 동시에 최초 write를 수행하는 혼합 배포는 금지합니다.
+4. `IDEMPOTENCY_RECORD_TTL_DAYS` 이상 지난 뒤, 해당 old version으로 생성된 미만료 record가 없음을 확인하고 retained entry를 제거합니다.
+5. rotation 중 같은 `Idempotency-Key` 재시도가 기존 Job 또는 sync mutation snapshot을 재사용하는지 staging 또는 local 합성 테스트로 확인합니다.
+
+신규 record는 항상 active key/version으로 저장됩니다. Retained key는 조회 전용이며 새 write에 사용하지 않습니다.
 
 ## 동기 AI 배포 기록
 

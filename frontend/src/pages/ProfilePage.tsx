@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../api/client'
+import { requestAccountWithdrawal } from '../api/auth'
 import ProfileConsents from '../features/profile/ProfileConsents'
 import { clearAuthenticatedSession } from '../features/auth/authSession'
 import {
@@ -10,6 +11,7 @@ import {
   type CurrentUser,
 } from '../api/users'
 import { Button, Card, MobileShell } from '../design-system/components'
+import StatusPanel from '../components/StatusPanel'
 import '../design-system/prototype.css'
 import './MvpPages.css'
 import './ProfilePage.css'
@@ -23,6 +25,12 @@ type FieldErrors = Partial<Record<keyof ProfileForm, string>>
 
 const EMPTY_FORM: ProfileForm = { name: '', email: '' }
 const AUTH_ERROR_CODES = new Set(['UNAUTHORIZED', 'INVALID_TOKEN', 'EXPIRED_TOKEN'])
+const STALE_AUTH_ERROR_CODES = new Set(['INVALID_TOKEN', 'EXPIRED_TOKEN'])
+const ACCOUNT_WITHDRAWAL_COMPLETED_DETAIL = '회원탈퇴가 완료되었습니다.'
+const ACCOUNT_WITHDRAWAL_FAILED_DETAIL =
+  '탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다.'
+
+type WithdrawalError = 'unavailable' | 'retryable' | ''
 
 function isAuthenticationError(error: unknown): boolean {
   return (
@@ -89,8 +97,16 @@ function ProfilePage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [isWithdrawalOpen, setIsWithdrawalOpen] = useState(false)
+  const [withdrawalPassword, setWithdrawalPassword] = useState('')
+  const [withdrawalConfirmed, setWithdrawalConfirmed] = useState(false)
+  const [withdrawalPasswordError, setWithdrawalPasswordError] = useState('')
+  const [withdrawalConfirmationError, setWithdrawalConfirmationError] = useState('')
+  const [withdrawalError, setWithdrawalError] = useState<WithdrawalError>('')
+  const [isWithdrawing, setIsWithdrawing] = useState(false)
   const nameInputRef = useRef<HTMLInputElement>(null)
   const emailInputRef = useRef<HTMLInputElement>(null)
+  const withdrawalPasswordInputRef = useRef<HTMLInputElement>(null)
 
   const clearFeedback = useCallback(() => {
     setSaveError('')
@@ -144,6 +160,10 @@ function ProfilePage() {
     if (firstError === 'name') nameInputRef.current?.focus()
     if (firstError === 'email') emailInputRef.current?.focus()
   }, [fieldErrors])
+
+  useEffect(() => {
+    if (isWithdrawalOpen) withdrawalPasswordInputRef.current?.focus()
+  }, [isWithdrawalOpen])
 
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     const field = event.target.name as keyof ProfileForm
@@ -216,6 +236,125 @@ function ProfilePage() {
       }
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  const closeWithdrawal = () => {
+    if (isWithdrawing) return
+    setIsWithdrawalOpen(false)
+    setWithdrawalPassword('')
+    setWithdrawalConfirmed(false)
+    setWithdrawalPasswordError('')
+    setWithdrawalConfirmationError('')
+    setWithdrawalError('')
+  }
+
+  const handleWithdrawalSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (isWithdrawing) return
+
+    let hasValidationError = false
+    if (withdrawalPassword.length < 8) {
+      setWithdrawalPasswordError('현재 비밀번호를 8자 이상 입력해 주세요.')
+      hasValidationError = true
+    }
+    if (!withdrawalConfirmed) {
+      setWithdrawalConfirmationError('회원탈퇴 요청 전 최종 확인이 필요합니다.')
+      hasValidationError = true
+    }
+    if (hasValidationError) return
+
+    const accessToken = localStorage.getItem('access_token')
+    if (!accessToken) {
+      expireSession()
+      return
+    }
+
+    setIsWithdrawing(true)
+    setWithdrawalPasswordError('')
+    setWithdrawalConfirmationError('')
+    setWithdrawalError('')
+
+    try {
+      const withdrawalResponse = await requestAccountWithdrawal(
+        withdrawalPassword,
+        accessToken,
+      )
+      if (withdrawalResponse.detail === ACCOUNT_WITHDRAWAL_FAILED_DETAIL) {
+        clearAuthenticatedSession()
+        setUser(null)
+        setWithdrawalPassword('')
+        setWithdrawalConfirmed(false)
+        setIsWithdrawalOpen(false)
+        navigate('/start', {
+          replace: true,
+          state: { accountWithdrawalFailed: true },
+        })
+        return
+      }
+
+      if (withdrawalResponse.detail !== ACCOUNT_WITHDRAWAL_COMPLETED_DETAIL) {
+        setWithdrawalError('retryable')
+        return
+      }
+
+      clearAuthenticatedSession()
+      setUser(null)
+      setForm(EMPTY_FORM)
+      setFieldErrors({})
+      setLoadError('')
+      setSaveError('')
+      setSuccessMessage('')
+      setWithdrawalPassword('')
+      setWithdrawalConfirmed(false)
+      setIsWithdrawalOpen(false)
+      navigate('/start', {
+        replace: true,
+        state: { accountWithdrawalCompleted: true },
+      })
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        (STALE_AUTH_ERROR_CODES.has(error.code) ||
+          (error.status === 401 && error.code !== 'UNAUTHORIZED'))
+      ) {
+        expireSession()
+        return
+      }
+
+      if (
+        error instanceof ApiError &&
+        error.status === 401 &&
+        error.code === 'UNAUTHORIZED'
+      ) {
+        setWithdrawalPasswordError('비밀번호가 올바르지 않습니다.')
+        withdrawalPasswordInputRef.current?.focus()
+      } else if (
+        error instanceof ApiError &&
+        error.status === 503 &&
+        (error.code === 'SERVICE_UNAVAILABLE' ||
+          error.details.some(
+            (detail) => detail.reason === 'ACCOUNT_WITHDRAWAL_REQUEST_DISABLED',
+          ))
+      ) {
+        setWithdrawalError('unavailable')
+      } else if (
+        error instanceof ApiError &&
+        error.status === 422 &&
+        error.code === 'VALIDATION_FAILED' &&
+        error.details.some(
+          (detail) =>
+            detail.field === 'confirmed' &&
+            detail.reason === 'CONFIRMATION_REQUIRED',
+        )
+      ) {
+        setWithdrawalConfirmed(false)
+        setWithdrawalConfirmationError('회원탈퇴 요청 전 최종 확인이 필요합니다.')
+      } else {
+        setWithdrawalError('retryable')
+      }
+    } finally {
+      setIsWithdrawing(false)
     }
   }
 
@@ -387,6 +526,135 @@ function ProfilePage() {
                   </section>
 
                   <ProfileConsents onSessionExpired={expireSession} />
+
+                  <section className="mvp-profile__section" aria-labelledby="account-management-title">
+                    <h3 id="account-management-title">계정 관리</h3>
+                    {!isWithdrawalOpen ? (
+                      <Button
+                        fullWidth
+                        variant="secondary"
+                        className="mvp-profile__danger-button"
+                        onClick={() => setIsWithdrawalOpen(true)}
+                      >
+                        회원탈퇴
+                      </Button>
+                    ) : (
+                      <Card className="mvp-profile__card mvp-profile__withdrawal-card">
+                        <div className="mvp-profile__withdrawal-intro">
+                          <h4>회원탈퇴 요청</h4>
+                          <ul>
+                            <li>탈퇴 요청 후 현재 계정 이용과 기존 로그인 세션이 종료됩니다.</li>
+                            <li>탈퇴 요청 후에는 다시 로그인할 수 없습니다.</li>
+                            <li>개인정보와 건강정보의 삭제·보존은 서비스 정책에 따라 처리됩니다.</li>
+                          </ul>
+                        </div>
+
+                        <form className="mvp-form" onSubmit={handleWithdrawalSubmit} noValidate>
+                          <div className="mvp-form__field">
+                            <label htmlFor="withdrawal-password">현재 비밀번호</label>
+                            <input
+                              ref={withdrawalPasswordInputRef}
+                              id="withdrawal-password"
+                              name="password"
+                              type="password"
+                              autoComplete="current-password"
+                              minLength={8}
+                              value={withdrawalPassword}
+                              onChange={(event) => {
+                                setWithdrawalPassword(event.target.value)
+                                setWithdrawalPasswordError('')
+                                setWithdrawalError('')
+                              }}
+                              disabled={isWithdrawing}
+                              aria-invalid={Boolean(withdrawalPasswordError)}
+                              aria-describedby={
+                                withdrawalPasswordError ? 'withdrawal-password-error' : undefined
+                              }
+                            />
+                            {withdrawalPasswordError && (
+                              <p
+                                id="withdrawal-password-error"
+                                className="mvp-profile__field-error"
+                                role="alert"
+                              >
+                                {withdrawalPasswordError}
+                              </p>
+                            )}
+                          </div>
+
+                          <label className="mvp-profile__withdrawal-confirmation">
+                            <input
+                              type="checkbox"
+                              checked={withdrawalConfirmed}
+                              onChange={(event) => {
+                                setWithdrawalConfirmed(event.target.checked)
+                                setWithdrawalConfirmationError('')
+                                setWithdrawalError('')
+                              }}
+                              disabled={isWithdrawing}
+                              aria-invalid={Boolean(withdrawalConfirmationError)}
+                              aria-describedby={
+                                withdrawalConfirmationError
+                                  ? 'withdrawal-confirmation-error'
+                                  : undefined
+                              }
+                            />
+                            <span>
+                              회원탈퇴 요청 후 계정을 더 이상 이용할 수 없음을 확인했습니다.
+                            </span>
+                          </label>
+                          {withdrawalConfirmationError && (
+                            <p
+                              id="withdrawal-confirmation-error"
+                              className="mvp-profile__field-error"
+                              role="alert"
+                            >
+                              {withdrawalConfirmationError}
+                            </p>
+                          )}
+
+                          {withdrawalError === 'unavailable' && (
+                            <StatusPanel
+                              variant="unavailable"
+                              title="회원탈퇴 요청을 현재 처리할 수 없어요."
+                              description="잠시 후 다시 시도해 주세요. 계정은 그대로 유지됩니다."
+                            />
+                          )}
+
+                          {withdrawalError === 'retryable' && (
+                            <StatusPanel
+                              variant="error-retryable"
+                              title="회원탈퇴 요청을 접수하지 못했어요."
+                              description="입력한 내용을 확인한 뒤 다시 시도해 주세요. 계정은 그대로 유지됩니다."
+                            />
+                          )}
+
+                          <div className="mvp-profile__actions">
+                            <Button
+                              variant="secondary"
+                              type="button"
+                              onClick={closeWithdrawal}
+                              disabled={isWithdrawing}
+                            >
+                              취소
+                            </Button>
+                            <Button
+                              type="submit"
+                              className="mvp-profile__danger-button"
+                              disabled={
+                                isWithdrawing ||
+                                !withdrawalConfirmed ||
+                                withdrawalPassword.length === 0
+                              }
+                              aria-busy={isWithdrawing}
+                            >
+                              {isWithdrawing ? '요청 중...' : '회원탈퇴 요청'}
+                            </Button>
+                          </div>
+                        </form>
+                      </Card>
+                    )}
+                  </section>
                 </>
               )}
             </>

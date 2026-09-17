@@ -65,6 +65,10 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Retrieval Run 및 Evidence Gate Runtime Core v1 (#178)](./proposed/post-mvp-1/retrieval-run-v1.md): Issue #178 Retrieval Run/Signal/Hit 원자적 persistence, Production Evidence Gate pre/post 검증 및 hybrid_retrieve runtime core 계약. 구현 브랜치 검증 중이며 RET-HR/reranker·actual evaluation·공개 활성화는 포함하지 않음.
 - [Guide Evidence Handoff Contract Kernel v1 (#180 선행 계약)](./proposed/post-mvp-1/guide-evidence-handoff-v1.md): #174 REQUEST Guard의 Source/Member 결정 관측 결과와 #178 Production Retrieval selections 사이의 exact-match 결속, JCS 정규 해시 프로젝션, Two-input 재검증 순수 계약 커널. 순수 계약 커널 구현 브랜치 검토 중; authority 발급·영속화·런타임 통합은 미구현.
 - [Endpoint Member Authority Contract Kernel v1 (#180 선행 계약)](./proposed/post-mvp-1/endpoint-member-authority-v1.md): #180 Endpoint Member 권위 계약 단일화, operation_code nullable 규칙 및 typed precondition, 영속 wire value("ARTIFACT" ↔ "ARTIFACT_MEMBER") 매핑, exact-match verifier 순수 계약 커널. 순수 계약 커널 구현 브랜치 검토 중; authority 발급·영속화·런타임 통합은 미구현.
+- [KnowledgeChunk Content Hydration 계약 v1 (#711)](./proposed/post-mvp-1/knowledge-chunk-content-hydration-v1.md): #697/#703 `AuthenticatedGuideRetrievalSelection`이 가리킨 persisted `knowledge_chunk` 본문을 `knowledge_index_id + knowledge_chunk_id`로 read-only 재조회하고, observed `ProductionEvidenceProvenance` 전체 값 동등성과 UTF-8 SHA-256 content hash를 검증해 `SensitiveText` content를 부착하는 계약. 한 건이라도 실패하면 partial 없이 전체 fail-closed. read-only 계약 커널·SQLAlchemy reader 구현 브랜치 검토 중; assessment/eligibility 권위, `GuideEvidenceHandoffRequest` 연결, #180 런타임 오케스트레이션·Production 공개는 미구현.
+- [Knowledge Materialization 계약 v1 (Phase 2A, #634)](./proposed/post-mvp-1/knowledge-materialization-v1.md): #634 Proposed. 승인된 Source Snapshot Member(MFDS 품목허가 XML: EE·UD·NB 및 선택 NN)로부터 KnowledgeDocument·KnowledgeChunk 구체화 및 트랜잭션 저장 기반 구현 검토 대상. 전용 Builder 최소 권한, RAW_RESPONSE artifact 결속 검증, All-or-Nothing 롤백, Exact Replay, 6대 해시 도메인 보존과 KnowledgeChunkIdentity 인계 완비.
+- [Sync Guide Evidence Authority Assembly Contract v1 (#672 선행 계약)](./proposed/post-mvp-1/sync-guide-evidence-authority-v1.md): #174 REQUEST Guard의 Source/Member 결정 관측 결과와 Reader 사이의 exact-match 결속, phase-ordered fail-fast 검증, RequestSourceMemberBinding 조립 순수 계약 커널. 순수 계약 커널 구현 브랜치 검토 중; DB 영속 Reader 어댑터·런타임 오케스트레이션은 미구현.
+- [Guide Authority × Production Retrieval Composition 계약 v1 (#697)](./proposed/post-mvp-1/guide-retrieval-composition-v1.md): #672 AUTHENTICATED `RequestSourceMemberBinding`과 #178 production `EvidenceGateSuccess.selected_hits`를 Source/Snapshot/Member/Version exact join으로 결합하는 순수 composition 계약. Cardinality는 N chunk hits : 1 member binding이며 duplicate hit은 production stable coordinate 기준, rejection은 fail-fast single typed reason이다. 순수 composition 구현 브랜치 검토 중; Production Reader·assessment 권위·content hydration·Handoff 연결·#180 런타임 오케스트레이션은 미구현.
 
 - [OCR LLM Worker 범위 정정 (#453)](./proposed/ocr-llm-worker-consent-453.md): 기존 이관 범위와 리뷰 시 별도 검토할 항목. 기존 동의 개정안 미채택.
 - [목적별 동의 Gate 계약 제안 (PD-207)](./proposed/consent-gate-207.md): OCR/GUIDE/CHAT/NOTIFICATION 목적별 GRANTED/WITHDRAWN 동의 상태와 row 없음=미동의 기준. #465에서 `user_consent` 저장 기반을 병합했고, #510에서 현재 사용자 목적별 동의 상태 조회·변경 API를 추가했다. #505는 OCR 목적의 Backend 동의 API·접수 Gate, Worker 재검사·차단 저장과 Frontend 소비를 구현했다. GUIDE/CHAT/NOTIFICATION 실행 연결, OCR 최종 정책 문구·버전과 Production 공개 승인은 후속 범위다. 전체 목적별 계약은 Proposed 유지.
@@ -78,7 +82,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Staging Release Validation Ledger 계약](./proposed/operations/release-validation-ledger.md): staging control DB, 상태 전이, crash recovery와 migration 상호 배제
 - [개발환경·비밀정보 주입 경로 점검 운영 계약](./proposed/operations/development-env-secret-injection-check.md): Redis, PostgreSQL, Provider secret 주입 경로와 운영 배포 전 차단 조건
 - [Track A migration·rollback 계획 제안 v1](./proposed/track-a-migration-rollback-v1.md): 문서 상태 Proposed · 구현 상태 Partially implemented — 공통 Job 기반과 OCR–AI Job mapping을 구현했으며 Guide·Chat 연결, Prescription Version, 전체 비동기 전환·backfill·read cutover는 미구현
-- [계정 생명주기 후속 계약 v1 (`PD-206`)](./proposed/account-lifecycle-v1.md): 문서 상태 Proposed · 구현 상태 Partially implemented — 회원탈퇴의 transaction 경계와 후속 구현 기준. 로그아웃·`token_version` 재검증·refresh token rotation·비밀번호 재설정·탈퇴 요청 접수 API는 현재 구현 계약([`user-account.md`](./current/user-account.md))에 반영됨. `account_deletion_request` 저장 기반(5절)과 탈퇴 요청 접수 API(4절)는 구현됐지만 ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false 기본값으로 공개 차단; 삭제·보존 처리는 미구현
+- [계정 생명주기 후속 계약 v1 (`PD-206`)](./proposed/account-lifecycle-v1.md): 문서 상태 Proposed · 구현 상태 Partially implemented — 로그아웃·`token_version` 재검증·refresh token rotation·비밀번호 재설정·탈퇴 요청 접수 API와 합성 데모 임시 정책 기준 삭제·보존 처리 및 `COMPLETED/WITHDRAWN` 전이는 현재 구현 계약([`user-account.md`](./current/user-account.md))에 반영됨. `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false` 기본값으로 공개 차단하며, 실제 사용자 대상 운영 삭제·보존 정책·법정 보존·백업 파기·Production 공개 승인은 미완료
 - [Guide·Chat Session·Message 상태 구현 골격 v1](./proposed/guide-chat-session-message-status-ui-v1.md): Session/Message/Job 결과 상태축, SAFETY-STALE 경계, PROFILE 기반 소유권의 Frontend 구현 골격
 
 Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 구현은 전체 계약 완료나 Current 승격을 의미하지 않으며, 관련 schema·service·CLI·테스트와 남은 전환 단계가 완료되고 상태가 갱신되기 전에는 실행 가능한 전체 계약으로 간주하지 않습니다.
@@ -233,6 +237,8 @@ PR #639의 두 계약은 구현 PR 내 이동이며 #629 병합·최종 책임 �
   합성 계정·시간창 제한과 별도 demo version. [PD-193 revision 3](../governance/decisions/2026-09-16-track-c-internal-demo-193.md).
 - [#196 연결 준비 상태](../testing/track-c-rag-readiness-196.md): 공용 kernel과 실제 handoff·Source·Bundle
   승인 Receipt를 구분한다. 새 공용 계약을 정의하거나 RAG 완료를 주장하지 않는다.
+
+- [Track B 명시적 식후 시간 후보 v1 (#670)](proposed/track-b-explicit-schedule-recommendation-v1.md): Local 구현 검토안. 확정 문구의 간격·사용자 식사 종료 시각 계산, 선택 저장 context·서버 재계산. 담당·전문 리뷰와 공개 승인 대기.
 
 ### Check-in 정정 Runtime 권한 보완 (#668)
 

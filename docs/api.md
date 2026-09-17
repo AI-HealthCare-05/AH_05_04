@@ -205,11 +205,17 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 | Method | Path | 성공 상태 | 동작 |
 | --- | --- | ---: | --- |
 | `GET` | `/api/v1/users/me` | `200 OK` | 로그인 사용자의 정보를 조회합니다. |
-| `PATCH` | `/api/v1/users/me` | `200 OK` | MVP에서 허용된 사용자 정보를 수정합니다. |
+| `PATCH` | `/api/v1/users/me` | `200 OK` | 사용자의 기본 계정·프로필 정보를 수정합니다. |
 
 - 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다.
-- MVP의 `PATCH /api/v1/users/me`는 `name`, `email`만 수정 대상으로 받습니다.
-- `gender`, `birthday`, `phone_number` 수정은 Post-MVP의 가입 후 추가 개인정보·건강정보 입력 기능에서 다룹니다.
+- `PATCH /api/v1/users/me`는 `name`, `email`, `phone_number`, `birthday`, `gender`를 수정 대상으로 받습니다.
+- 생략한 필드는 기존 값을 유지합니다.
+- `phone_number`, `birthday`, `gender`는 `null`로 보내면 미입력 상태로 초기화합니다.
+- `phone_number`는 숫자만 허용합니다. 공백 문자열과 구분자(`-`)가 포함된 값은 `422 VALIDATION_FAILED`입니다.
+- 다른 사용자와 같은 `phone_number`가 DB unique 제약과 충돌하면 `409 CONFLICT`, `details[].field=phone_number`, `reason=ALREADY_EXISTS`를 반환합니다. 별도 휴대폰 번호 중복확인 API는 이번 범위에 포함하지 않습니다.
+- `birthday`는 `YYYY-MM-DD` 날짜 문자열이며 미래 날짜는 `422 VALIDATION_FAILED`입니다.
+- `gender`는 `MALE`, `FEMALE`, `null`만 허용합니다.
+- 휴대폰 번호 SMS 인증·중복 확인, 회원가입 필수 입력, Frontend 입력 UI 연결은 이번 Backend 계약 범위에 포함하지 않습니다.
 
 ## 목적별 동의 상태
 
@@ -230,7 +236,7 @@ OCR 목적은 전용 경로 `/api/v1/users/me/consents/OCR`에서 `GET` / `POST`
 | --- | --- | ---: | --- |
 | `GET` | `/api/v1/auth/token/refresh` | `200 OK` | httponly `refresh_token` 쿠키를 검증하고 새 access token과 **새 refresh token(rotation)**을 발급해 쿠키를 교체합니다. |
 | `POST` | `/api/v1/auth/logout` | `200 OK` | 현재 사용자의 세션 무효화 카운터를 증가시키고 `refresh_token` 쿠키를 삭제합니다. |
-| `POST` | `/api/v1/auth/account/withdrawal` | `200 OK` | `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true`에서만 현재 비밀번호 재인증과 `confirmed=true` 최종 확인 후 계정 이용 종료와 탈퇴 요청을 접수합니다. |
+| `POST` | `/api/v1/auth/account/withdrawal` | `200 OK` | `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true`에서만 현재 비밀번호 재인증과 `confirmed=true` 최종 확인 후 계정 이용 종료와 합성 데모 임시 정책 기준 삭제·보존 처리를 수행합니다. |
 
 - access token과 refresh token에는 발급 시점의 `token_version`이 포함됩니다.
 - 인증된 요청과 토큰 갱신은 DB의 현재 사용자 상태를 다시 확인합니다.
@@ -252,10 +258,11 @@ OCR 목적은 전용 경로 `/api/v1/users/me/consents/OCR`에서 `GET` / `POST`
 
 - `password`는 현재 비밀번호로 재인증합니다. 실패하면 `401 UNAUTHORIZED`를 반환하고 계정 상태, token, `account_deletion_request`를 변경하지 않습니다.
 - `confirmed`는 반드시 `true`여야 합니다. `false`이면 `422 VALIDATION_FAILED`, `details[].field=confirmed`, `reason=CONFIRMATION_REQUIRED`를 반환하고 저장하지 않습니다.
-- 성공하면 같은 transaction에서 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at`, `token_version + 1`, `account_deletion_request.status=PENDING`이 반영됩니다.
-- 응답은 `{"detail":"계정 이용 종료와 탈퇴 요청 접수가 완료되었습니다."}`이며, `refresh_token` 쿠키를 삭제합니다. 이 응답은 물리 삭제 완료가 아니라 계정 이용 종료와 삭제 요청 접수 완료를 뜻합니다.
+- 성공하면 같은 transaction에서 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at`, `token_version + 1`, `account_deletion_request.status=PENDING`을 만든 뒤 합성 데모 임시 정책 기준 삭제·보존 처리를 수행합니다.
+- 삭제·보존 처리가 성공한 경우 원래 이메일·이름·전화번호·생년월일·성별과 처방전 원본, OCR 결과, 사용자별 약물 식별 결과, Guide/Chat 입력·결과, 로그인 세션·Push token을 제거하고, 기존 사용자 row는 재가입 충돌을 막지 않는 익명 `WITHDRAWN` 상태로 남깁니다. `account_deletion_request`는 요청 ID, 상태, 요청/시작/완료 시각, 실패 코드만 보존하며 이메일이나 건강정보 원문을 저장하지 않습니다.
+- 삭제·보존 처리가 성공한 응답은 `{"detail":"회원탈퇴가 완료되었습니다."}`이며, `refresh_token` 쿠키를 삭제합니다. 삭제·보존 처리 실패 시 `account_status=WITHDRAWAL_REQUESTED` 접근 차단과 `account_deletion_request.status=FAILED`, `last_error_code=DEMO_DELETION_FAILED`를 커밋하고 `{"detail":"탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."}`를 반환합니다.
 - 재인증 rate limit/lockout은 현재 로그인과 동일하게 별도 제한이 없으며, 정확한 제한 정책은 Backend/Security 후속 이슈에서 다룹니다.
-- 개인정보·건강정보 삭제·보존 처리, `IN_PROGRESS`/`COMPLETED` 전이, `WITHDRAWN` 기록, 사용자-facing 완료 고지는 PM/Privacy 승인 후속 범위입니다.
+- 이 삭제·보존 기준은 합성 데이터 기반 데모 임시 정책입니다. 실제 사용자 대상 Production 공개와 법정 보존/백업 파기 운영 정책은 PM/Privacy 승인 및 외부 공개 승인 범위와 분리합니다.
 
 ### 회원가입 이메일 인증
 
@@ -884,3 +891,11 @@ ENV=local 외에는 POST/DELETE 모두 404이며 실제 사용자 수집·Produc
 `503 SAFETY_DEMO_UNAVAILABLE`를 반환한다. 이미 성공한 멱등 요청은 최초 snapshot을 재현한다.
 자세한 버전·입력 매핑은 [Proposed 계약](contracts/proposed/track-c-safety-barrier-api-193.md)을 따른다.
 공개 승인·환자용 문구 승인·Frontend 증상 UI 연결을 의미하지 않는다.
+
+## #670 명시적 처방 시간 후보 — Local 구현 검토안
+
+POST `/api/v1/prescription-version-medications/{id}/schedule-recommendation`은 확정 처방 문구와
+입력 식사 종료 시각으로 후보만 계산한다. 기존 일정 PUT의 선택 `recommendation_context`가 있으면
+서버가 저장 시 재계산한다. `409 SCHEDULE_RECOMMENDATION_CONFLICT` 및 전체 DTO는
+[Proposed 계약](contracts/proposed/track-b-explicit-schedule-recommendation-v1.md)을 따른다.
+Backend non-local은 404, Frontend는 DEV 전용이며 공개 승인을 뜻하지 않는다.

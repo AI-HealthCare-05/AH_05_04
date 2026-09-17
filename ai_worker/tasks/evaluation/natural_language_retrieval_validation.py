@@ -36,6 +36,7 @@ _PHASE_B4_BLOCKERS = (
     "WAITING_FOR_HOLDOUT_FREEZE",
 )
 _DECISION_DOCS_PREFIX = "docs/"
+_ACTUAL_EXPERIMENT_INDEX_HREF = "experiments/README.md"
 _VALIDATION_CHECK_CATALOG = {
     "PHASE_A_DEV_FIXTURE": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
@@ -51,20 +52,20 @@ _VALIDATION_CHECK_CATALOG = {
     "PHASE_A_REPORT_PROJECTION": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
         "ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q",
-        "51 passed",
+        "57 passed",
     ),
     "PHASE_A_SCHEMA_EXPORT": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
         "ai_worker/tests/evaluation/test_schema_exports.py "
         "ai_worker/tests/evaluation/test_external_schema_parity.py "
         "ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
-        "94 passed, 7 skipped",
+        "158 passed",
     ),
     "PHASE_B3_PROTECTED_RUNNER_FOUNDATION": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
         "ai_worker/tests/evaluation/test_natural_language_retrieval_protected_runner_foundation.py "
         "ai_worker/tests/evaluation/test_protected_retrieval.py -q",
-        "83 passed",
+        "85 passed",
     ),
     "PHASE_B_DATASET_APPROVAL_PROVENANCE": (
         "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest "
@@ -363,6 +364,27 @@ def render_report(raw_status: bytes) -> bytes:
         if is_b4
         else "Actual retrieval was not run because the actual Adapter is NOT_IMPLEMENTED."
     )
+    baseline_metric_narrative = (
+        "DEV Metric values are DIAGNOSTIC_ONLY observations in the experiment log; "
+        "no baseline Metric is approved and no Metric fields are recorded in the machine status."
+        if is_b4
+        else "No baseline Metric exists, and no Metric fields are recorded in the machine status."
+    )
+    experiment_log_lines = (
+        [
+            "",
+            (
+                "Actual DEV Retrieval experiment evidence: "
+                f"[#273 Actual Retrieval experiment logs]({_ACTUAL_EXPERIMENT_INDEX_HREF})"
+            ),
+            (
+                "Later re-runs are preserved as additional dated logs under "
+                "`docs/validation/rag/issue-273/experiments/` and do not overwrite historical experiments."
+            ),
+        ]
+        if is_b4
+        else []
+    )
     lines = [
         title_line,
         "",
@@ -437,8 +459,9 @@ def render_report(raw_status: bytes) -> bytes:
         "Control-plane services and the actual protected loader/CLI remain NOT_IMPLEMENTED.",
         "Access authorization is not recorded, and HOLDOUT authoring has not started.",
         actual_run_narrative,
-        "No baseline Metric exists, and no Metric fields are recorded in the machine status.",
+        baseline_metric_narrative,
         "DEV cannot produce a Release PASS; Production remains closed.",
+        *experiment_log_lines,
         "",
         "## Blocking Codes",
         "",

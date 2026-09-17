@@ -56,3 +56,14 @@ downgrade 후 컬럼/제약 제거와 재upgrade 후 marker 0·제약 복원을 
 - 새 `test_checkin_lock_marker_downgrade_preserves_history_and_reupgrade` 단독 실행: 1 passed.
 - Ruff check/format, Mypy (774 files), 단일 migration head, DB 로직·보호 테이블 쓰기·test inventory, diff check 통과.
 - 이번 재검증은 migration/RAG 회귀 범위이며 전체 CI/coverage나 운영 적용 증거가 아니다.
+
+## 2026-09-17 develop 충돌 해소 검증
+
+- develop의 Retrieval Runtime 권한과 기존 Check-in 잠금 권한·통합 검증을 모두 보존했다.
+- 미병합 migration `668a1b2c3d4e`의 부모를 develop head `235a1b2c3d4e`로 연결했다.
+  롤백 테스트는 해당 migration의 실제 부모 revision을 읽어 검증한다.
+- 전용 pgvector/PostgreSQL 17 합성 컨테이너에서 Track C migration·역할 provisioning 통합 테스트
+  17개 통과. Check-in 정정·이력 보존·권한 거부와 Retrieval lifecycle 검증을 함께 실행했다.
+- 배포 역할·Python test inventory·migration head 계약 테스트 34개 통과.
+- 전체 Ruff lint/format, mypy, 단일 head, DB 로직·보호 테이블 검사와 diff check 통과.
+- 전체 CI/coverage와 운영 화면 검증은 이번 로컬 실행에 포함하지 않았다. 운영 적용·공개 승인 상태는 변경하지 않는다.

@@ -20,6 +20,10 @@ import { AssistantMessageContent } from './AssistantMessageContent'
 import '../design-system/prototype.css'
 import './ChatPage.css'
 import { ResponseFeedback } from '../components/ResponseFeedback'
+import {
+  getChatGuideErrorPresentation,
+  type ChatGuideErrorPresentation,
+} from './chatGuideErrorPresentation'
 
 export type ChatPageServices = {
   createChatSession: typeof createChatSession
@@ -40,6 +44,12 @@ export type ChatPageProps = {
   services?: ChatPageServices
   previewState?: ChatPreviewState
   navigation?: NavigateFunction
+}
+
+type ChatErrorRecovery = 'INITIALIZE' | 'REFRESH' | 'RESEND' | null
+
+type ChatErrorPresentation = ChatGuideErrorPresentation & {
+  recovery: ChatErrorRecovery
 }
 
 const defaultChatPageServices: ChatPageServices = {
@@ -170,18 +180,14 @@ const sessionRediscoveryRequests = new WeakMap<
   Map<string, ReturnType<typeof getChatSessionForPrescription>>
 >()
 
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof ApiError) {
-    if (error.status === 401) return '로그인 정보를 다시 확인한 뒤 시도해 주세요.'
-    if (error.status === 404) return '대화 정보를 찾지 못했어요. 다시 불러와 주세요.'
-    if (error.status >= 500) return '도지와 연결이 원활하지 않아요. 잠시 후 다시 시도해 주세요.'
-  }
-
-  if (error instanceof TypeError) {
-    return '네트워크 연결을 확인한 뒤 다시 시도해 주세요.'
-  }
-
-  return fallback
+function getErrorPresentation(error: unknown, fallback: string) {
+  return getChatGuideErrorPresentation(error, {
+    unauthorized: '로그인 정보를 다시 확인한 뒤 시도해 주세요.',
+    notFound: '대화 정보를 찾지 못했어요. 다시 불러와 주세요.',
+    server: '도지와 연결이 원활하지 않아요. 잠시 후 다시 시도해 주세요.',
+    network: '네트워크 연결을 확인한 뒤 다시 시도해 주세요.',
+    unknown: fallback,
+  })
 }
 
 function createChatSessionOnce(
@@ -247,6 +253,10 @@ function ChatPage({
   const activePrescriptionRef = useRef(prescriptionId)
   const initializationRequestRef = useRef(0)
   const sendRequestRef = useRef(0)
+  const retryableSendRef = useRef<{
+    content: string
+    optimisticUserMessage: ChatMessageData
+  } | null>(null)
   const initialHistoryMessageIdsRef = useRef<Set<string>>(new Set())
   const hasInitialHistorySnapshotRef = useRef(false)
   const initialHistorySessionIdRef = useRef<string | null>(null)
@@ -259,12 +269,16 @@ function ChatPage({
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessageData[]>([])
   const [draft, setDraft] = useState(previewState?.draft ?? '')
-  const [errorMessage, setErrorMessage] = useState('')
+  const [errorPresentation, setErrorPresentation] =
+    useState<ChatErrorPresentation | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSending, setIsSending] = useState(previewState?.isSending ?? false)
   const [requiresLogin, setRequiresLogin] = useState(false)
 
-  const initializeChat = useCallback(async (preserveCurrentVisit = false) => {
+  const initializeChat = useCallback(async (
+    preserveCurrentVisit = false,
+    allowSessionCreation = true,
+  ) => {
     const requestedRoutePrescriptionId = prescriptionId
     let requestedPrescriptionId = requestedRoutePrescriptionId
     const requestId = ++initializationRequestRef.current
@@ -285,7 +299,8 @@ function ChatPage({
       initialHistorySessionIdRef.current = null
     }
     setDraft(previewState?.draft ?? '')
-    setErrorMessage('')
+    setErrorPresentation(null)
+    retryableSendRef.current = null
     setIsSending(previewState?.isSending ?? false)
     setRequiresLogin(false)
 
@@ -323,7 +338,7 @@ function ChatPage({
             setStatePrescriptionId('')
             setSessionId(null)
             setMessages([])
-            setErrorMessage('')
+            setErrorPresentation(null)
             setIsLoading(false)
             return
           }
@@ -356,6 +371,8 @@ function ChatPage({
         ) {
           throw error
         }
+
+        if (!allowSessionCreation) throw error
 
         sessionResponse = await createChatSessionOnce(
           requestedPrescriptionId,
@@ -406,12 +423,19 @@ function ChatPage({
       }
 
       setSessionId(null)
-      setErrorMessage(
-        getErrorMessage(
-          error,
-          '복약 대화를 시작하는 중 오류가 발생했습니다.',
-        ),
+      const presentation = getErrorPresentation(
+        error,
+        '복약 대화를 시작하는 중 오류가 발생했습니다.',
       )
+      const recovery: ChatErrorRecovery =
+        presentation.action === 'CONSENT_SETTINGS'
+          ? null
+          : error instanceof ApiError &&
+              (error.code === 'PRESCRIPTION_VERSION_STALE' ||
+                error.code === 'CONSENT_POLICY_UNAVAILABLE')
+            ? 'REFRESH'
+            : 'INITIALIZE'
+      setErrorPresentation({ ...presentation, recovery })
     } finally {
       if (isCurrentRequest()) {
         setIsLoading(false)
@@ -442,38 +466,44 @@ function ChatPage({
   const currentSessionId = isCurrentPrescriptionState ? sessionId : null
   const currentMessages = isCurrentPrescriptionState ? messages : []
   const currentDraft = isCurrentPrescriptionState ? draft : ''
-  const currentErrorMessage = isCurrentPrescriptionState ? errorMessage : ''
+  const currentErrorPresentation = isCurrentPrescriptionState
+    ? errorPresentation
+    : null
   const currentIsLoading = isCurrentPrescriptionState ? isLoading : true
   const currentIsSending = isCurrentPrescriptionState ? isSending : false
   const currentRequiresLogin = isCurrentPrescriptionState && requiresLogin
 
-  const handleSend = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const content = currentDraft.trim()
+  const sendChatContent = async (
+    content: string,
+    retryOptimisticMessage?: ChatMessageData,
+  ) => {
     if (!content || !currentSessionId || currentIsSending) return
-
     const requestedPrescriptionId = currentPrescriptionId
     const requestedSessionId = currentSessionId
     const requestId = ++sendRequestRef.current
     const knownMessageIds = new Set(
       currentMessages.map((message) => message.message_id),
     )
-    const optimisticUserMessage: ChatMessageData = {
-      message_id: `${optimisticUserMessageIdPrefix}${requestId}`,
-      role: 'USER',
-      content,
-      generation_status: 'NOT_APPLICABLE',
-      created_at: new Date().toISOString(),
-    }
+    const optimisticUserMessage: ChatMessageData =
+      retryOptimisticMessage ?? {
+        message_id: `${optimisticUserMessageIdPrefix}${requestId}`,
+        role: 'USER',
+        content,
+        generation_status: 'NOT_APPLICABLE',
+        created_at: new Date().toISOString(),
+      }
     const isCurrentRequest = () =>
       sendRequestRef.current === requestId &&
       activePrescriptionRef.current === requestedPrescriptionId
 
     try {
       setIsSending(true)
-      setErrorMessage('')
-      setDraft('')
-      setMessages((current) => [...current, optimisticUserMessage])
+      setErrorPresentation(null)
+      retryableSendRef.current = null
+      if (!retryOptimisticMessage) {
+        setDraft('')
+        setMessages((current) => [...current, optimisticUserMessage])
+      }
       const response = await services.sendChatMessage(requestedSessionId, content)
       if (!isCurrentRequest()) return
       const completedAt = response.data.completed_at ?? response.data.created_at
@@ -529,14 +559,36 @@ function ChatPage({
           }
         }
       }
-      setErrorMessage(
-        getErrorMessage(error, 'AI 답변을 받는 중 오류가 발생했습니다.'),
+      const presentation = getErrorPresentation(
+        error,
+        'AI 답변을 받는 중 오류가 발생했습니다.',
       )
+      const isPolicyUnavailable =
+        error instanceof ApiError &&
+        error.code === 'CONSENT_POLICY_UNAVAILABLE'
+      const recovery: ChatErrorRecovery =
+        presentation.action === 'CONSENT_SETTINGS'
+          ? null
+          : isPolicyUnavailable
+            ? 'RESEND'
+            : error instanceof ApiError &&
+                error.code === 'PRESCRIPTION_VERSION_STALE'
+              ? 'REFRESH'
+              : 'INITIALIZE'
+      if (isPolicyUnavailable) {
+        retryableSendRef.current = { content, optimisticUserMessage }
+      }
+      setErrorPresentation({ ...presentation, recovery })
     } finally {
       if (isCurrentRequest()) {
         setIsSending(false)
       }
     }
+  }
+
+  const handleSend = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    await sendChatContent(currentDraft.trim())
   }
 
   const handleComposerKeyDown = (
@@ -597,7 +649,7 @@ function ChatPage({
 
   if (
     !currentIsLoading &&
-    !currentErrorMessage &&
+    !currentErrorPresentation &&
     (!currentPrescriptionId || !uuidPattern.test(currentPrescriptionId))
   ) {
     return (
@@ -658,7 +710,7 @@ function ChatPage({
               )}
 
               {!currentIsLoading &&
-                !currentErrorMessage &&
+                !currentErrorPresentation &&
                 currentMessages.length === 0 && (
                 <div className="chat-page__state chat-page__empty">
                   <div className="chat-page__greeting">
@@ -722,17 +774,45 @@ function ChatPage({
                 </div>
               )}
 
-              {currentErrorMessage && (
+              {currentErrorPresentation && (
                 <Card className="chat-page__error">
                   <StatusBadge tone="attention">오류</StatusBadge>
-                  <p role="alert">{currentErrorMessage}</p>
+                  <div role="alert">
+                    <h2>{currentErrorPresentation.title}</h2>
+                    {currentErrorPresentation.helper && (
+                      <p>{currentErrorPresentation.helper}</p>
+                    )}
+                  </div>
                   <Button
                     fullWidth
                     variant="secondary"
-                    onClick={() => void initializeChat(true)}
+                    onClick={() => {
+                      if (currentErrorPresentation.action === 'CONSENT_SETTINGS') {
+                        navigate('/profile')
+                        return
+                      }
+                      if (currentErrorPresentation.recovery === 'RESEND') {
+                        const failedSend = retryableSendRef.current
+                        if (failedSend) {
+                          void sendChatContent(
+                            failedSend.content,
+                            failedSend.optimisticUserMessage,
+                          )
+                        }
+                        return
+                      }
+                      void initializeChat(
+                        true,
+                        currentErrorPresentation.recovery !== 'REFRESH',
+                      )
+                    }}
                     disabled={currentIsSending}
                   >
-                    대화 다시 불러오기
+                    {currentErrorPresentation.action === 'CONSENT_SETTINGS'
+                      ? '동의 설정 확인하기'
+                      : currentErrorPresentation.action === 'RETRY'
+                        ? '다시 시도'
+                        : '대화 다시 불러오기'}
                   </Button>
                 </Card>
               )}

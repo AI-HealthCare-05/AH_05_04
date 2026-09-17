@@ -31,11 +31,16 @@ RUNTIME_APPEND_ONLY_TABLES = frozenset(
     "prescription_version prescription_version_medication checkin_audit medication_schedule_audit account_deletion_request rag_citation "
     "rag_evidence_guideline rag_evidence_rule rag_evidence rag_evidence_knowledge "
     "rag_runtime_environment_transition medication_candidate_search_result "
-    "ai_job_intake_context ai_job_execution_context ai_job_execution_identification".split()
+    "ai_job_intake_context ai_job_execution_context ai_job_execution_identification "
+    "retrieval_signal retrieval_hit".split()
 )
 RUNTIME_CHECKIN_LOCK_TABLES = frozenset({"safety_assessment", "barrier_response"})
 
 RUNTIME_LIFESTYLE_TABLES = frozenset({"lifestyle_times"})
+
+# #178/#689: retrieval_run tracks execution lifecycle (RUNNING -> COMPLETED/FAILED),
+# requiring SELECT, INSERT, UPDATE. History deletion is handled via cascade from ai_job; direct DELETE is prohibited.
+RUNTIME_RETRIEVAL_RUN_TABLES = frozenset({"retrieval_run"})
 
 
 # #404: token identity and history are immutable after issuance. Runtime only rotates/consumes.
@@ -102,6 +107,7 @@ async def provision_roles(
         | RUNTIME_LIFESTYLE_TABLES
         | RUNTIME_CHECKIN_LOCK_TABLES
         | {"support_action_plan"}
+        | RUNTIME_RETRIEVAL_RUN_TABLES
         | {"notification_record", "user_consent"}
     )
     if not required.issubset(present):
@@ -130,6 +136,9 @@ async def provision_roles(
     # #207/#621: set_status() only upserts the per-purpose current row (ON CONFLICT DO UPDATE),
     # never deletes it, so Runtime needs SELECT/INSERT/UPDATE and nothing more.
     await connection.execute(text(f"GRANT SELECT, INSERT, UPDATE ON TABLE public.user_consent TO {runtime_sql}"))
+    # #178/#689: retrieval_run tracks execution lifecycle (RUNNING -> COMPLETED/FAILED),
+    # requiring SELECT, INSERT, UPDATE. History deletion is handled via cascade from ai_job; direct DELETE is prohibited.
+    await connection.execute(text(f"GRANT SELECT, INSERT, UPDATE ON TABLE public.retrieval_run TO {runtime_sql}"))
     for table, columns in RUNTIME_AUTH_UPDATE_COLUMNS.items():
         target = f"public.{quoted_identifier(table)}"
         names = ", ".join(quoted_identifier(column) for column in columns)
