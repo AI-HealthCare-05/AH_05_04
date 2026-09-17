@@ -804,7 +804,7 @@ describe('#691 기본정보 선택 입력', () => {
     fireEvent.change(screen.getByLabelText('휴대폰 번호'), { target: { value: '010abc' } })
     fireEvent.click(screen.getByRole('button', { name: '저장' }))
 
-    expect(await screen.findByText('휴대폰 번호는 숫자만 입력해 주세요.')).toBeTruthy()
+    expect(await screen.findByText('휴대폰 번호는 010으로 시작하는 11자리 숫자로 입력해 주세요.')).toBeTruthy()
     expect(screen.queryByText(/digits only/)).toBeNull()
   })
 
