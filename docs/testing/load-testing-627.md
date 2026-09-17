@@ -81,6 +81,22 @@ uvx locust \
 
 This is a baseline/smoke load run. It records p50/p95/max latency and failure count, but it is not a final production `p95 <= 3s` approval. Token refresh and logout are disabled by default because they rotate or invalidate token state; enable `LOAD_TEST_AUTH_INCLUDE_REFRESH=true` or `LOAD_TEST_AUTH_LOGOUT_ON_STOP=true` only for a single-user smoke or independent per-user test accounts.
 
+Optional refresh/logout smoke should use a single Locust user unless each Locust user has an independent account:
+
+```bash
+LOAD_TEST_AUTH_EMAIL="<test-account-email>" \
+LOAD_TEST_AUTH_PASSWORD="<test-account-password>" \
+LOAD_TEST_AUTH_INCLUDE_REFRESH=true \
+uvx locust \
+  -f load_tests/auth_smoke.py \
+  --host http://127.0.0.1:8000 \
+  --headless \
+  -u 1 \
+  -r 1 \
+  -t 30s \
+  --csv docs/validation/load-testing/issue-627-auth-refresh-local
+```
+
 
 ## Result Summary Template
 

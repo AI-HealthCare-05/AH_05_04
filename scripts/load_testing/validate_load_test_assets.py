@@ -27,6 +27,7 @@ REQUIRED_SNIPPETS = {
     "load_tests/README.md": (
         "uvx locust",
         "Auth Baseline Smoke Command",
+        "LOAD_TEST_AUTH_INCLUDE_REFRESH=true",
         "API-specific scenarios",
         "Do not use `/api/v1/health`",
     ),
@@ -34,6 +35,7 @@ REQUIRED_SNIPPETS = {
         "#627",
         "API별 시나리오",
         "Production capacity claim",
+        "LOAD_TEST_AUTH_INCLUDE_REFRESH=true",
     ),
 }
 

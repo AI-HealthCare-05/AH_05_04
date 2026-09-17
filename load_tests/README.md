@@ -63,6 +63,26 @@ Record the commit SHA, target environment, command with secrets redacted, reques
 
 `GET /api/v1/auth/token/refresh` and `POST /api/v1/auth/logout` are intentionally disabled by default. The current token refresh/logout paths rotate or invalidate token state, so repeated calls from multiple Locust users that share one test account can invalidate other users. Enable `LOAD_TEST_AUTH_INCLUDE_REFRESH=true` or `LOAD_TEST_AUTH_LOGOUT_ON_STOP=true` only for a single-user smoke or for an environment with independent test accounts per Locust user.
 
+### Optional Token Refresh / Logout Smoke
+
+Run refresh/logout only as a single-user smoke unless the environment provides independent test accounts per Locust user:
+
+```bash
+LOAD_TEST_AUTH_EMAIL="<test-account-email>" \
+LOAD_TEST_AUTH_PASSWORD="<test-account-password>" \
+LOAD_TEST_AUTH_INCLUDE_REFRESH=true \
+uvx locust \
+  -f load_tests/auth_smoke.py \
+  --host http://127.0.0.1:8000 \
+  --headless \
+  -u 1 \
+  -r 1 \
+  -t 30s \
+  --csv docs/validation/load-testing/issue-627-auth-refresh-local
+```
+
+Use `LOAD_TEST_AUTH_LOGOUT_ON_STOP=true` only when the Locust run should explicitly invalidate the test account session at shutdown.
+
 ## Environment Variables
 
 | Variable | Default | Purpose |

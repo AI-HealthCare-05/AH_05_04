@@ -114,6 +114,9 @@ def test_auth_smoke_imports_with_minimal_locust_stub(monkeypatch) -> None:
     assert module.USER_ME_PATH == "/api/v1/users/me"
     assert module._access_token_from_response({"access_token": "token"}) == "token"
     assert module._access_token_from_response({"access_token": ""}) is None
+    assert module._refresh_token_from_response(types.SimpleNamespace(cookies={"refresh_token": "refresh"})) == "refresh"
+    assert module._refresh_token_from_set_cookie("refresh_token=refresh; HttpOnly") == "refresh"
+    assert module._refresh_token_from_response(types.SimpleNamespace(cookies={}, headers={})) is None
     assert module._include_refresh() is False
     assert module._logout_on_stop() is False
 
