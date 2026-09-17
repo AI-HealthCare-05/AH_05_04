@@ -11,7 +11,9 @@
 
 인증 및 SELF 소유 확인. `ENV=local` 이외에는 `404 NOT_FOUND`. 멱등 키 없이 읽기 계산만 수행한다.
 ID는 확정된 PrescriptionVersionMedication이며 요청 본문에 OCR·처방 문구를 받지 않는다.
-활성 처방 version을 잠그고 확인한다. 새 일정·occurrence·audit·idempotency 행을 만들지 않는다.
+활성 처방 version·SELF 소유권·snapshot 무결성을 행 잠금 없는 SELECT로 확인한다.
+조회 뒤 처방이 바뀔 수 있으므로 실제 저장 시 기존 mutation 잠금 안에서 다시 확인한다.
+새 일정·occurrence·audit·idempotency 행을 만들지 않는다.
 기존 일정이 있는 약도 계산 자체는 가능하지만 추천을 이용한 덮어쓰기는 허용하지 않는다.
 
 요청 (추가 필드 금지):

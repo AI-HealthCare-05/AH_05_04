@@ -719,3 +719,61 @@ async def test_absent_and_null_recommendation_context_preserve_manual_idempotenc
     replay = await case.write({**case.body, "recommendation_context": None})
     assert replay.json() == original.json()
     assert await counts(case) == before
+
+
+async def test_recommendation_does_not_block_a_concurrent_prescription_writer() -> None:
+    from unittest.mock import Mock
+
+    from sqlalchemy import text
+
+    from app.dependencies.services import get_medication_schedule_api_service
+    from app.dtos.schedule_recommendations import RecommendationInput
+    from app.models.prescriptions import Prescription
+    from app.tests.conftest import test_engine
+    from app.tests.repositories.test_medication_schedule_repository_integration import _delete_committed_fixture
+
+    async with AsyncSession(test_engine, expire_on_commit=False) as setup:
+        owner, profile = await _create_user_with_self_profile(setup, label="preview-lock")
+        prescription, medication = await _create_active_version_medication(setup, owner=owner, profile=profile)
+        await setup.commit()
+        cleanup_ids = dict(
+            owner_id=owner.id,
+            profile_id=profile.id,
+            document_id=prescription.document_id,
+            ocr_job_id=prescription.source_ocr_job_id,
+            prescription_id=prescription.id,
+        )
+    try:
+        async with AsyncSession(test_engine) as reader, AsyncSession(test_engine) as writer:
+            service = get_medication_schedule_api_service(reader, Mock())
+            request = RecommendationInput(meal_end_times={}, same_times_every_day=True)
+            preview = await service.recommend(user_id=owner.id, medication_id=medication.id, request=request)
+            assert preview.data.local_times == []
+            # Keep the preview transaction open: the writer must still acquire its row lock immediately.
+            assert (
+                await writer.scalar(
+                    select(Prescription.id).where(Prescription.id == prescription.id).with_for_update(nowait=True)
+                )
+                == prescription.id
+            )
+            # Also check the reverse direction: a write lock must not make a preview wait.
+            await reader.execute(text("SET LOCAL lock_timeout = '250ms'"))
+            again = await service.recommend(user_id=owner.id, medication_id=medication.id, request=request)
+            assert again == preview
+    finally:
+        async with AsyncSession(test_engine) as cleanup:
+            await _delete_committed_fixture(cleanup, **cleanup_ids)
+
+
+async def test_recommendation_retains_confirmed_snapshot_integrity_check(case: Case) -> None:
+    from app.models.prescriptions import PrescriptionVersion, PrescriptionVersionMedication
+
+    inputs = await prepare_recommendation(case)
+    medication = await case.session.get(PrescriptionVersionMedication, case.medication_id)
+    assert medication is not None
+    version = await case.session.get(PrescriptionVersion, medication.prescription_version_id)
+    assert version is not None
+    version.content_hash = "0" * 64
+    await case.session.commit()
+    assert_error(await preview_recommendation(case, inputs), 409, "PRESCRIPTION_VERSION_UNAVAILABLE")
+    assert await counts(case) == [0, 0, 0, 0, 0]

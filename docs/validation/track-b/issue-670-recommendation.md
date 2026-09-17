@@ -61,3 +61,15 @@ API 테스트는 기존 공통 fixture가 literal `test` DB를 초기화하므�
 송은영: API·재계산·멱등 호환·transaction·Local gate. 정현우: 완전 일치 문법만 사용하는 제한과
 근거 부족 거부. 남한솔: 매일 동일 식사 확인·직접 입력 전환·후보 수정 흐름.
 이 문서는 해당 담당자의 승인 증빙이 아니며 #670 전체 완료 또는 Production 개방을 선언하지 않는다.
+
+## 2026-09-17 리뷰 반영 검증 — 후보 계산 잠금
+
+- 책임 리뷰어의 [배타 잠금 지적](https://github.com/AI-HealthCare-05/AH_05_04/pull/677#issuecomment-5707643616)을 반영했다.
+- 수정 전 독립 PostgreSQL 세션의 `SELECT FOR UPDATE NOWAIT`가 `LockNotAvailableError`로 실패함을 재현했다.
+- 수정 후 후보 조회 transaction을 연 채 다른 세션이 즉시 쓰기 잠금을 얻으며, 반대로 쓰기 잠금이 있는
+  동안에도 후보 조회가 완료되는 것을 검증했다. 실제 저장의 잠금은 기존 경로에 유지한다.
+- `is_owned()`는 활성 version을 검사하지 않으므로 그대로 대체하지 않았다. 잠금 없는 조회에
+  활성 version 조건과 snapshot fingerprint 검증을 유지해 과거 처방 및 무결성 위반을 거부한다.
+- 일정 API·Repository·mutation·추천 계약 회귀 **106 passed**. Ruff check/format, Mypy, diff check 통과.
+- 이 리뷰 수정에서는 Frontend·Worker·migration을 변경하지 않았다. 위 전체 실행 결과는 이전 구현
+  커밋의 기록이고, 이번에는 영향 범위의 PostgreSQL 회귀와 정적 검사를 실행했다. 최신 필수 CI는 PR에서 확인한다.

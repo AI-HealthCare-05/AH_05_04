@@ -54,8 +54,8 @@ class MedicationScheduleApiService:
             raise ApiError(
                 status_code=404, code="PRESCRIPTION_MEDICATION_NOT_FOUND", message="처방 약제를 찾을 수 없습니다."
             )
-        ownership = self.mutations.repository.ownership
-        if not await ownership.lock_active_owned(prescription_version_medication_id=medication_id, user_id=user_id):
+        medication = await self.queries.medication_owned(medication_id, user_id, active_only=True)
+        if medication is None:
             raise ApiError(
                 status_code=409, code="PRESCRIPTION_VERSION_CONFLICT", message="현재 처방 버전을 확인해 주세요."
             )

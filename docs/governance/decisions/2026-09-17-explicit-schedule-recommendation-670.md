@@ -42,3 +42,10 @@ DB migration·새 enum·테이블·Trigger·RLS·외부 Source·Provider 호출�
 #670 전체 완료를 선언하지 않는다. 약별 Source 기반 제약·일반적인 `식후` 해석·요일별 추천은 미지원이다.
 담당 및 전문 검토 후 지원 문법·직접 입력 전환·공개 범위를 결정해야 한다. 문서는 `proposed/`에 유지한다.
 [검증 기록](../../validation/track-b/issue-670-recommendation.md)과 테스트를 함께 검토한다.
+
+## 2026-09-17 리뷰 반영 — 후보 조회 잠금 제거
+
+[책임 리뷰어 의견](https://github.com/AI-HealthCare-05/AH_05_04/pull/677#issuecomment-5707643616)에 따라
+후보 계산은 행 잠금 없는 SELECT로 활성 version·SELF 소유권·snapshot 무결성을 확인한다.
+기존 `is_owned()`는 과거 version도 허용하므로 단순 교체하지 않고 조회의 활성 version 조건을 유지한다.
+실제 저장의 `lock_active_owned()`와 revision 검증은 유지하며 API/DTO·오류 의미·공개 범위는 바꾸지 않는다.
