@@ -1,0 +1,18 @@
+{
+  "source_code": "SYNTHETIC_RET_H_SMOKE",
+  "endpoint_code": "SYNTHETIC_RET_H_SMOKE_ENDPOINT",
+  "operation_code": "SYNTHETIC_RET_H_SMOKE_OPERATION",
+  "index_code": "rag-ret-h-aws-smoke-synthetic-index",
+  "index_version": "1.0.0",
+  "query_sentinel": "RET_H_SMOKE_Q_01904bbe99317001",
+  "source_sentinel": "RET_H_SMOKE_S_01904bbe99317002",
+  "synthetic_query": "RET_H_SMOKE_Q_01904bbe99317001 합성 질의 환자 복약 지도 안내 항목 조회",
+  "synthetic_query_sha256": "4d359ca17a00d541b8e4925ae7928163bcbc3bd32bd643b4fc0689caa2bc88d8",
+  "records": [
+    {
+      "evidence_ref_id": "SYNTHETIC-RET-H-SMOKE-EVIDENCE-001",
+      "statement": "RET_H_SMOKE_S_01904bbe99317002 아세트아미노펜 복용 시 간 질환 환자는 의사 또는 약사와 사전에 상의해야 합니다.",
+      "content_sha256": "927f79b70562a7f62ebf4d4eb267124ab91dde15ecdb9f5468a1f8354251d1c7"
+    }
+  ]
+}
