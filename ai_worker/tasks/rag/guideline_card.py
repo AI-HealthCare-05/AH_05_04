@@ -40,6 +40,12 @@ from ai_worker.tasks.rag.evidence_retrieval import (
     StageSignal,
     UntrustedKnowledgeEvidenceSelection,
 )
+from ai_worker.tasks.rag.guide_evidence_handoff import (
+    VerifiedGuideEvidenceHandoff,
+    VerifiedGuideEvidenceSelection,
+    canonical_production_evidence_selection_hash,
+    compute_guide_evidence_handoff_hash,
+)
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CANONICAL_SCORE_RE = re.compile(r"^(?:0|-?[1-9][0-9]*|-?(?:0|[1-9][0-9]*)\.[0-9]*[1-9])$")
@@ -428,13 +434,14 @@ class GuidelineCard:
 @dataclass(frozen=True, slots=True)
 class GuidelineCardRequest:
     medication_identities: tuple[MedicationIdentityRef, ...]
-    evidence_gate_outcome: EvidenceGateOutcome
-    draft: GuidelineCardDraft | None
-    generation_failure: GuidelineGenerationFailure | None
     policy: VersionedGuidelinePolicy
     provenance: GuidelineGenerationProvenance
     approved_fallbacks: tuple[ApprovedGuidelineFallback, ...]
     evaluated_at: datetime
+    evidence_gate_outcome: EvidenceGateOutcome | None = None
+    evidence_handoff: VerifiedGuideEvidenceHandoff | None = None
+    draft: GuidelineCardDraft | None = None
+    generation_failure: GuidelineGenerationFailure | None = None
     approved_evidence_bindings: tuple[ApprovedGuidelineEvidenceBinding, ...] = ()
 
 
@@ -507,20 +514,14 @@ def _finalize_guideline_card_snapshot(
     if request.generation_failure is not None:
         return _generation_failure_outcome(request.generation_failure, context)
 
-    gate_fallback = _evidence_gate_fallback(
-        request.evidence_gate_outcome,
-        request.evaluated_at,
-        context,
-    )
-    if gate_fallback is not None:
-        return gate_fallback
+    passed_by_key, evidence_fallback = _resolve_evidence_selections(request, context)
+    if evidence_fallback is not None:
+        return evidence_fallback
+    assert passed_by_key is not None
+
     if request.draft is None or not _is_valid_draft_shape(request.draft, request.policy):
         return _validation_fallback(context)
 
-    passed_by_key = {
-        item.selection.candidate.provenance.evidence_key: item
-        for item in request.evidence_gate_outcome.gate_passed_selections
-    }
     bindings = _validated_evidence_bindings(request.approved_evidence_bindings, passed_by_key)
     if bindings is None:
         return _validation_fallback(context)
@@ -532,6 +533,43 @@ def _finalize_guideline_card_snapshot(
         GuidelineCardReason.CARD_GENERATED,
         card=_create_card(request, claims, context.verifier_refs),
     )
+
+
+def _resolve_evidence_selections(
+    request: GuidelineCardRequest,
+    context: _VerifiedApprovalContext,
+) -> tuple[
+    dict[str, GatePassedKnowledgeEvidenceSelection | VerifiedGuideEvidenceSelection] | None,
+    GuidelineCardOutcome | None,
+]:
+    if request.evidence_handoff is not None:
+        assert request.evaluated_at is not None
+        fallback = _evidence_handoff_fallback(
+            request.evidence_handoff,
+            request.evaluated_at,
+            context,
+        )
+        if fallback is not None:
+            return None, fallback
+        passed_by_key: dict[str, GatePassedKnowledgeEvidenceSelection | VerifiedGuideEvidenceSelection] = {
+            item.evidence_key: item for item in request.evidence_handoff.selections
+        }
+        return passed_by_key, None
+
+    assert request.evidence_gate_outcome is not None
+    assert request.evaluated_at is not None
+    fallback = _evidence_gate_fallback(
+        request.evidence_gate_outcome,
+        request.evaluated_at,
+        context,
+    )
+    if fallback is not None:
+        return None, fallback
+    gate_passed: dict[str, GatePassedKnowledgeEvidenceSelection | VerifiedGuideEvidenceSelection] = {
+        item.selection.candidate.provenance.evidence_key: item
+        for item in request.evidence_gate_outcome.gate_passed_selections
+    }
+    return gate_passed, None
 
 
 def _detached_request_snapshot(value: object) -> GuidelineCardRequest | None:
@@ -564,7 +602,7 @@ def _verified_fallback_context(
 
 def _bind_claims(
     request: GuidelineCardRequest,
-    passed_by_key: dict[str, GatePassedKnowledgeEvidenceSelection],
+    passed_by_key: dict[str, GatePassedKnowledgeEvidenceSelection | VerifiedGuideEvidenceSelection],
     bindings: dict[tuple[str, MedicationIdentityRef, GuidelineScope], ApprovedGuidelineEvidenceBinding],
     verifier_refs: dict[ImmutableArtifactRef, ImmutableArtifactRef],
 ) -> tuple[GuidelineClaim, ...] | None:
@@ -631,7 +669,7 @@ def _create_card(
 def _bind_citation(
     draft: GuidelineCitationDraft,
     claim: GuidelineClaimDraft,
-    passed_by_key: dict[str, GatePassedKnowledgeEvidenceSelection],
+    passed_by_key: dict[str, GatePassedKnowledgeEvidenceSelection | VerifiedGuideEvidenceSelection],
     bindings: dict[tuple[str, MedicationIdentityRef, GuidelineScope], ApprovedGuidelineEvidenceBinding],
     verifier_refs: dict[ImmutableArtifactRef, ImmutableArtifactRef],
 ) -> GuidelineCitation | None:
@@ -639,11 +677,40 @@ def _bind_citation(
     binding = bindings.get((draft.evidence_key, claim.medication_identity, claim.scope))
     if selected is None or binding is None:
         return None
-    evidence = selected.selection.candidate.provenance
+
     if (
         hashlib.sha256(claim.action_text.reveal().encode()).hexdigest() != binding.action_text_sha256
         or claim.action_class is not binding.action_class
-        or canonical_gate_selection_hash(selected.selection) != binding.selection_projection_sha256
+    ):
+        return None
+
+    if isinstance(selected, VerifiedGuideEvidenceSelection):
+        if (
+            canonical_production_evidence_selection_hash(selected) != binding.selection_projection_sha256
+            or draft.source_snapshot_ref != selected.source_snapshot_ref
+            or draft.source_version != selected.source_version
+            or draft.locator != selected.locator
+            or draft.content_sha256 != selected.content_sha256
+        ):
+            return None
+        return GuidelineCitation(
+            GuidelineCitationSourceType.LIFESTYLE_GUIDELINE,
+            selected.evidence_key,
+            _copy_artifact_ref(selected.source_snapshot_ref),
+            selected.source_version,
+            selected.locator,
+            selected.content_sha256,
+            _copy_artifact_ref(selected.assessment_artifact_ref),
+            _copy_artifact_ref(selected.eligibility_receipt_ref),
+            _copy_artifact_ref(selected.retrieval_receipt_ref),
+            _copy_artifact_ref(selected.verifier_artifact_ref),
+            _copy_artifact_ref(binding.artifact_ref),
+            _copy_artifact_ref(verifier_refs[binding.artifact_ref]),
+        )
+
+    evidence = selected.selection.candidate.provenance
+    if (
+        canonical_gate_selection_hash(selected.selection) != binding.selection_projection_sha256
         or draft.source_snapshot_ref != evidence.source_snapshot_ref
         or draft.source_version != evidence.source_version
         or draft.locator != evidence.locator
@@ -880,6 +947,67 @@ def _evidence_gate_fallback(
     )
 
 
+def _check_selection_freshness_and_content(
+    sel: VerifiedGuideEvidenceSelection,
+    evaluated_at: datetime,
+    context: _VerifiedApprovalContext,
+) -> GuidelineCardOutcome | None:
+    if type(sel) is not VerifiedGuideEvidenceSelection:
+        return _validation_fallback(context)
+    if not _is_utc_datetime(sel.assessment_valid_from) or not _is_utc_datetime(sel.assessment_valid_until):
+        return _validation_fallback(context)
+    if evaluated_at < sel.assessment_valid_from or evaluated_at >= sel.assessment_valid_until:
+        return _fallback_outcome(
+            context,
+            GuidelineCardStatus.NO_RESULT,
+            GuidelineCardReason.EVIDENCE_STALE,
+            GuidelineFallbackCode.NO_APPROVED_EVIDENCE,
+        )
+    try:
+        content = sel.content_text.reveal()
+        if not isinstance(content, str) or hashlib.sha256(content.encode("utf-8")).hexdigest() != sel.content_sha256:
+            return _validation_fallback(context)
+    except Exception:
+        return _validation_fallback(context)
+    return None
+
+
+def _evidence_handoff_fallback(
+    handoff: VerifiedGuideEvidenceHandoff,
+    evaluated_at: datetime,
+    context: _VerifiedApprovalContext,
+) -> GuidelineCardOutcome | None:
+    if type(handoff) is not VerifiedGuideEvidenceHandoff:
+        return _validation_fallback(context)
+    if not _is_utc_datetime(evaluated_at) or not _is_utc_datetime(handoff.evaluated_at):
+        return _validation_fallback(context)
+    if handoff.evaluated_at != evaluated_at:
+        return _validation_fallback(context)
+    if type(handoff.selections) is not tuple or not handoff.selections:
+        return _fallback_outcome(
+            context,
+            GuidelineCardStatus.NO_RESULT,
+            GuidelineCardReason.EVIDENCE_INSUFFICIENT,
+            GuidelineFallbackCode.NO_APPROVED_EVIDENCE,
+        )
+    for sel in handoff.selections:
+        sel_fallback = _check_selection_freshness_and_content(sel, evaluated_at, context)
+        if sel_fallback is not None:
+            return sel_fallback
+    try:
+        expected_handoff_hash = compute_guide_evidence_handoff_hash(
+            retrieval_receipt_ref=handoff.retrieval_receipt_ref,
+            retrieval_selection_manifest_sha256=handoff.retrieval_selection_manifest_sha256,
+            evaluated_at=handoff.evaluated_at,
+            selections=handoff.selections,
+        )
+        if handoff.handoff_sha256 != expected_handoff_hash:
+            return _validation_fallback(context)
+    except Exception:
+        return _validation_fallback(context)
+    return None
+
+
 def _has_empty_gate_selections(gate: EvidenceGateOutcome) -> bool:
     return type(gate.gate_passed_selections) is tuple and not gate.gate_passed_selections
 
@@ -956,10 +1084,18 @@ def _validation_fallback(
 
 
 def _is_valid_request_shell(request: object) -> bool:
+    if type(request) is not GuidelineCardRequest:
+        return False
+    has_gate = request.evidence_gate_outcome is not None
+    has_handoff = request.evidence_handoff is not None
+    if has_gate == has_handoff:
+        return False
+    if has_gate and type(request.evidence_gate_outcome) is not EvidenceGateOutcome:
+        return False
+    if has_handoff and type(request.evidence_handoff) is not VerifiedGuideEvidenceHandoff:
+        return False
     return (
-        type(request) is GuidelineCardRequest
-        and _is_valid_medications(request.medication_identities)
-        and type(request.evidence_gate_outcome) is EvidenceGateOutcome
+        _is_valid_medications(request.medication_identities)
         and (request.draft is None or type(request.draft) is GuidelineCardDraft)
         and (request.generation_failure is None or type(request.generation_failure) is GuidelineGenerationFailure)
         and _is_valid_policy(request.policy)
@@ -1075,7 +1211,7 @@ def _is_valid_fallback(value: object) -> bool:
 
 def _validated_evidence_bindings(
     value: object,
-    passed_by_key: dict[str, GatePassedKnowledgeEvidenceSelection],
+    passed_by_key: dict[str, GatePassedKnowledgeEvidenceSelection | VerifiedGuideEvidenceSelection],
 ) -> dict[tuple[str, MedicationIdentityRef, GuidelineScope], ApprovedGuidelineEvidenceBinding] | None:
     if type(value) is not tuple or not value:
         return None

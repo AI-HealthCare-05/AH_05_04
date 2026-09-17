@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict
 from ai_worker.tasks.rag import guideline_card
 from ai_worker.tasks.rag.evidence_gate import GatePassedKnowledgeEvidenceSelection
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
+from ai_worker.tasks.rag.guide_evidence_handoff import VerifiedGuideEvidenceSelection
 from ai_worker.tasks.rag.guideline_card import (
     GuidelineCardDraft,
     GuidelineCitationDraft,
@@ -83,9 +84,48 @@ def build_candidate_provenance(*, model: str) -> GuidelineGenerationProvenance:
     )
 
 
+type GuidelineEvidenceItem = GatePassedKnowledgeEvidenceSelection | VerifiedGuideEvidenceSelection
+
+
+def _evidence_key(s: GuidelineEvidenceItem) -> str:
+    if isinstance(s, VerifiedGuideEvidenceSelection):
+        return s.evidence_key
+    return s.selection.candidate.provenance.evidence_key
+
+
+def _evidence_source_version(s: GuidelineEvidenceItem) -> str:
+    if isinstance(s, VerifiedGuideEvidenceSelection):
+        return s.source_version
+    return s.selection.candidate.provenance.source_version
+
+
+def _evidence_locator(s: GuidelineEvidenceItem) -> str:
+    if isinstance(s, VerifiedGuideEvidenceSelection):
+        return s.locator
+    return s.selection.candidate.provenance.locator
+
+
+def _evidence_content_sha256(s: GuidelineEvidenceItem) -> str:
+    if isinstance(s, VerifiedGuideEvidenceSelection):
+        return s.content_sha256
+    return s.selection.candidate.provenance.content_sha256
+
+
+def _evidence_source_snapshot_ref(s: GuidelineEvidenceItem) -> ImmutableArtifactRef:
+    if isinstance(s, VerifiedGuideEvidenceSelection):
+        return s.source_snapshot_ref
+    return s.selection.candidate.provenance.source_snapshot_ref
+
+
+def _evidence_content_text(s: GuidelineEvidenceItem) -> str:
+    if isinstance(s, VerifiedGuideEvidenceSelection):
+        return s.content_text.reveal()
+    return s.selection.candidate.content_text.reveal()
+
+
 def build_guideline_generation_input_projection(
     request: GuidelineGenerationRequest,
-) -> tuple[str, dict[str, MedicationIdentityRef], dict[str, GatePassedKnowledgeEvidenceSelection]]:
+) -> tuple[str, dict[str, MedicationIdentityRef], dict[str, GuidelineEvidenceItem]]:
     """Builds minimal JSON payload for Provider and establishes deterministic 1:1 slot mappings.
 
     Patient-specific prescription_version_medication_id is excluded from the payload.
@@ -108,15 +148,22 @@ def build_guideline_generation_input_projection(
             }
         )
 
+    if request.evidence_handoff is not None:
+        raw_selections: tuple[GuidelineEvidenceItem, ...] = request.evidence_handoff.selections
+    elif request.evidence_gate_outcome is not None:
+        raw_selections = request.evidence_gate_outcome.gate_passed_selections
+    else:
+        raw_selections = ()
+
     sorted_selections = sorted(
-        request.evidence_gate_outcome.gate_passed_selections,
+        raw_selections,
         key=lambda s: (
-            s.selection.candidate.provenance.source_version,
-            s.selection.candidate.provenance.locator,
-            s.selection.candidate.provenance.evidence_key,
+            _evidence_source_version(s),
+            _evidence_locator(s),
+            _evidence_key(s),
         ),
     )
-    slot_to_evidence: dict[str, GatePassedKnowledgeEvidenceSelection] = {}
+    slot_to_evidence: dict[str, GuidelineEvidenceItem] = {}
     evidence_payload = []
     for idx, sel in enumerate(sorted_selections):
         slot = f"e{idx}"
@@ -124,7 +171,7 @@ def build_guideline_generation_input_projection(
         evidence_payload.append(
             {
                 "evidence_slot": slot,
-                "content_text": sel.selection.candidate.content_text.reveal(),
+                "content_text": _evidence_content_text(sel),
             }
         )
 
@@ -140,7 +187,7 @@ def _extract_and_validate_claim_groups(
     claims: list[GuidelineClaimSelection],
     *,
     slot_to_medication: dict[str, MedicationIdentityRef],
-    slot_to_evidence: dict[str, GatePassedKnowledgeEvidenceSelection],
+    slot_to_evidence: dict[str, GuidelineEvidenceItem],
     maximum_claims: int,
 ) -> dict[tuple[str, GuidelineScope], set[str]] | None:
     if not claims:
@@ -173,7 +220,7 @@ def parse_guideline_structured_output(
     structured_output: GuidelineStructuredSelection,
     *,
     slot_to_medication: dict[str, MedicationIdentityRef],
-    slot_to_evidence: dict[str, GatePassedKnowledgeEvidenceSelection],
+    slot_to_evidence: dict[str, GuidelineEvidenceItem],
     maximum_claims: int,
 ) -> GuidelineCardDraft | None:
     """Strictly parses and deterministically normalizes structured output from Provider.
@@ -207,26 +254,23 @@ def parse_guideline_structured_output(
         med = slot_to_medication[med_slot]
 
         # Deduplicate selections by authoritative evidence_key and sort canonically
-        unique_selections = {
-            slot_to_evidence[slot].selection.candidate.provenance.evidence_key: slot_to_evidence[slot]
-            for slot in ev_slots
-        }
+        unique_selections = {_evidence_key(slot_to_evidence[slot]): slot_to_evidence[slot] for slot in ev_slots}
         sorted_selections = sorted(
             unique_selections.values(),
             key=lambda s: (
-                s.selection.candidate.provenance.source_version,
-                s.selection.candidate.provenance.locator,
-                s.selection.candidate.provenance.evidence_key,
+                _evidence_source_version(s),
+                _evidence_locator(s),
+                _evidence_key(s),
             ),
         )
 
         citation_drafts = tuple(
             GuidelineCitationDraft(
-                evidence_key=s.selection.candidate.provenance.evidence_key,
-                source_snapshot_ref=s.selection.candidate.provenance.source_snapshot_ref,
-                source_version=s.selection.candidate.provenance.source_version,
-                locator=s.selection.candidate.provenance.locator,
-                content_sha256=s.selection.candidate.provenance.content_sha256,
+                evidence_key=_evidence_key(s),
+                source_snapshot_ref=_evidence_source_snapshot_ref(s),
+                source_version=_evidence_source_version(s),
+                locator=_evidence_locator(s),
+                content_sha256=_evidence_content_sha256(s),
             )
             for s in sorted_selections
         )

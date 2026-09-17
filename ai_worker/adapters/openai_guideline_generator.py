@@ -8,6 +8,7 @@ dual timeout, max_retries=0 enforcement, and standard provider_runtime observabi
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from typing import Any
 
 from openai import (
@@ -23,6 +24,10 @@ from ai_worker.tasks.rag.evidence_gate import (
     EvidenceGateExecutionStatus,
     EvidenceGateReason,
     EvidenceStatus,
+)
+from ai_worker.tasks.rag.guide_evidence_handoff import (
+    VerifiedGuideEvidenceHandoff,
+    VerifiedGuideEvidenceSelection,
 )
 from ai_worker.tasks.rag.guideline_card import (
     GuidelineGenerationFailure,
@@ -112,15 +117,37 @@ class OpenAIGuidelineGeneratorAdapter(GuidelineGeneratorPort):
 
     @staticmethod
     def _is_valid_gate_precondition(request: GuidelineGenerationRequest) -> bool:
-        gate = request.evidence_gate_outcome
-        return (
-            gate.execution_status is EvidenceGateExecutionStatus.SUCCEEDED
-            and gate.evidence_status is EvidenceStatus.SUFFICIENT
-            and gate.reason is EvidenceGateReason.EVIDENCE_SUFFICIENT
-            and bool(gate.gate_passed_selections)
-            and bool(request.medication_identities)
-            and request.policy.maximum_claims >= 1
-        )
+        if not bool(request.medication_identities) or request.policy.maximum_claims < 1:
+            return False
+        has_gate = request.evidence_gate_outcome is not None
+        has_handoff = request.evidence_handoff is not None
+        if has_gate == has_handoff:
+            return False
+        if has_gate:
+            gate = request.evidence_gate_outcome
+            assert gate is not None
+            return (
+                gate.execution_status is EvidenceGateExecutionStatus.SUCCEEDED
+                and gate.evidence_status is EvidenceStatus.SUFFICIENT
+                and gate.reason is EvidenceGateReason.EVIDENCE_SUFFICIENT
+                and bool(gate.gate_passed_selections)
+            )
+        handoff = request.evidence_handoff
+        assert handoff is not None
+        if not isinstance(handoff, VerifiedGuideEvidenceHandoff) or not handoff.selections:
+            return False
+        for s in handoff.selections:
+            if not isinstance(s, VerifiedGuideEvidenceSelection):
+                return False
+            try:
+                text = s.content_text.reveal()
+                if not isinstance(text, str):
+                    return False
+                if hashlib.sha256(text.encode("utf-8")).hexdigest() != s.content_sha256:
+                    return False
+            except Exception:
+                return False
+        return True
 
     async def _invoke_provider_raw(
         self,

@@ -70,8 +70,11 @@ from ai_worker.tasks.rag.source_member_identity import (
 )
 
 __all__ = [
+    "RAG15_PRODUCTION_EVIDENCE_SELECTION_PROJECTION_VERSION",
     "canonical_jcs_bytes",
     "canonical_jcs_sha256",
+    "canonical_production_evidence_selection_hash",
+    "canonical_production_evidence_selection_projection",
 ]
 
 
@@ -209,6 +212,14 @@ class VerifiedGuideEvidenceSelection:
     canonicalization_spec_version: str
     normalization_version: str
 
+    @property
+    def source_snapshot_ref(self) -> ImmutableArtifactRef:
+        return ImmutableArtifactRef(
+            artifact_code="source_snapshot",
+            version=str(self.source_snapshot_id),
+            content_sha256=self.canonical_checksum,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class VerifiedGuideEvidenceHandoff:
@@ -277,6 +288,23 @@ def _selection_projection(s: VerifiedGuideEvidenceSelection) -> dict[str, object
         "source_version": s.source_version,
         "verifier_artifact_ref": _artifact_projection(s.verifier_artifact_ref),
     }
+
+
+RAG15_PRODUCTION_EVIDENCE_SELECTION_PROJECTION_VERSION = "rag15-production-evidence-selection-v1"
+
+
+def canonical_production_evidence_selection_projection(
+    selection: VerifiedGuideEvidenceSelection,
+) -> dict[str, object]:
+    projection = _selection_projection(selection)
+    projection["projection_version"] = RAG15_PRODUCTION_EVIDENCE_SELECTION_PROJECTION_VERSION
+    return projection
+
+
+def canonical_production_evidence_selection_hash(
+    selection: VerifiedGuideEvidenceSelection,
+) -> str:
+    return canonical_jcs_sha256(canonical_production_evidence_selection_projection(selection))
 
 
 def compute_guide_evidence_handoff_hash(
