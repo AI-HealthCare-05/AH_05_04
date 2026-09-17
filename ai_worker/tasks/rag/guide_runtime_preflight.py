@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
+from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, SensitiveText
 from ai_worker.tasks.rag.guideline_approval_pack import (
     Rag15ApprovalDecisionVerifierPort,
     Rag15ApprovalPack,
@@ -99,21 +99,76 @@ def _is_valid_request(request: object) -> bool:
     return True
 
 
+# A pinned artifact_ref does not by itself prove the runtime object still carries the
+# semantics that ref content-addresses. Both helpers below recompute the ref from the
+# object's own runtime fields through the canonical public factory, so a same-ref
+# semantic tamper cannot reach the Generator.
+
+_SELF_INTEGRITY_ERRORS = (AttributeError, TypeError, ValueError)
+
+
+def _policy_self_integrity_valid(policy: VersionedGuidelinePolicy) -> bool:
+    """True when the runtime policy's semantic fields reproduce its own artifact_ref."""
+    if type(policy) is not VersionedGuidelinePolicy:
+        return False
+    if type(policy.artifact_ref) is not ImmutableArtifactRef:
+        return False
+    if type(policy.maximum_claims) is not int:
+        return False
+    if type(policy.uncertainty_text_sha256) is not str or type(policy.consultation_text_sha256) is not str:
+        return False
+
+    try:
+        recomputed = VersionedGuidelinePolicy.create(
+            policy.artifact_ref.artifact_code,
+            policy.artifact_ref.version,
+            maximum_claims=policy.maximum_claims,
+            uncertainty_text_sha256=policy.uncertainty_text_sha256,
+            consultation_text_sha256=policy.consultation_text_sha256,
+        )
+    except _SELF_INTEGRITY_ERRORS:
+        return False
+
+    return recomputed.artifact_ref == policy.artifact_ref
+
+
+def _fallback_self_integrity_valid(fallback: ApprovedGuidelineFallback) -> bool:
+    """True when the runtime fallback's (code, text) payload reproduces its own artifact_ref.
+
+    Canonical approved copy validation stays with ``guideline_card``; this only proves
+    the runtime object was not altered away from the ref the Approval Pack pinned.
+    """
+    if type(fallback) is not ApprovedGuidelineFallback:
+        return False
+    if type(fallback.code) is not GuidelineFallbackCode:
+        return False
+    if type(fallback.artifact_ref) is not ImmutableArtifactRef:
+        return False
+
+    try:
+        recomputed = ApprovedGuidelineFallback.create(
+            fallback.artifact_ref.artifact_code,
+            fallback.artifact_ref.version,
+            code=fallback.code,
+            text=SensitiveText(fallback.text.reveal()),
+        )
+    except _SELF_INTEGRITY_ERRORS:
+        return False
+
+    return recomputed.artifact_ref == fallback.artifact_ref
+
+
 def _canonical_fallback_bindings(
     fallbacks: tuple[ApprovedGuidelineFallback, ...],
 ) -> tuple[tuple[str, ImmutableArtifactRef], ...] | None:
     """Canonicalizes runtime fallbacks to code-sorted (code, ref) pairs; None if unusable.
 
-    Input order carries no meaning. Duplicate codes and unsupported item types are
-    unusable and must be rejected by the caller.
+    Input order carries no meaning. Unsupported types, duplicate codes, and fallbacks
+    that fail self-integrity are unusable and must be rejected by the caller.
     """
     bindings: dict[str, ImmutableArtifactRef] = {}
     for item in fallbacks:
-        if type(item) is not ApprovedGuidelineFallback:
-            return None
-        if type(item.code) is not GuidelineFallbackCode:
-            return None
-        if type(item.artifact_ref) is not ImmutableArtifactRef:
+        if not _fallback_self_integrity_valid(item):
             return None
         if item.code.value in bindings:
             return None
@@ -154,11 +209,13 @@ def preflight_guide_runtime(
     if runtime_provenance != pack.generation_provenance:
         return _blocked(GuideRuntimePreflightReason.GENERATOR_PROVENANCE_MISMATCH)
 
-    # Phase 4 — policy exact-match
+    # Phase 4 — policy self-integrity, then exact-match against the approved pin
+    if not _policy_self_integrity_valid(request.policy):
+        return _blocked(GuideRuntimePreflightReason.POLICY_REF_MISMATCH)
     if request.policy.artifact_ref != pack.policy_ref:
         return _blocked(GuideRuntimePreflightReason.POLICY_REF_MISMATCH)
 
-    # Phase 5 — fallback set exact-match, order-independent
+    # Phase 5 — fallback self-integrity, then set exact-match, order-independent
     runtime_bindings = _canonical_fallback_bindings(request.fallbacks)
     if runtime_bindings is None:
         return _blocked(GuideRuntimePreflightReason.FALLBACK_SET_MISMATCH)

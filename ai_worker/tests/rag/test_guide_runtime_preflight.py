@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
+from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, SensitiveText
 from ai_worker.tasks.rag.guide_runtime_preflight import (
     GuideRuntimePreflightDecision,
     GuideRuntimePreflightOutcome,
@@ -365,6 +365,36 @@ def test_policy_ref_drift_is_blocked() -> None:
     assert generator.generate_calls == 0
 
 
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("maximum_claims", 99),
+        ("uncertainty_text_sha256", "d" * 64),
+        ("consultation_text_sha256", "e" * 64),
+    ],
+)
+def test_policy_semantic_tamper_under_same_ref_is_blocked(field: str, value: object) -> None:
+    """A policy whose runtime semantics no longer reproduce its pinned ref must fail closed."""
+    policy = make_policy()
+    fallbacks = make_fallbacks()
+    pack, verifier = build_approved_pack(policy=policy, fallbacks=fallbacks)
+
+    tampered = replace(policy, **{field: value})
+    # The pinned identity is untouched, so a ref-only comparison would let this through.
+    assert tampered.artifact_ref == policy.artifact_ref
+    assert tampered.artifact_ref == pack.policy_ref
+    generator = make_generator()
+
+    outcome = preflight_guide_runtime(
+        GuideRuntimePreflightRequest(approval_pack=pack, policy=tampered, fallbacks=fallbacks),
+        generator=generator,
+        decision_verifier=verifier,
+    )
+
+    assert_blocked(outcome, GuideRuntimePreflightReason.POLICY_REF_MISMATCH)
+    assert generator.generate_calls == 0
+
+
 # --- Phase 5: fallback set exact-match ----------------------------------------
 
 
@@ -417,6 +447,32 @@ def test_fallback_code_type_mismatch_is_blocked() -> None:
 
     outcome = preflight_guide_runtime(
         GuideRuntimePreflightRequest(approval_pack=pack, policy=policy, fallbacks=broken),
+        generator=generator,
+        decision_verifier=verifier,
+    )
+
+    assert_blocked(outcome, GuideRuntimePreflightReason.FALLBACK_SET_MISMATCH)
+    assert generator.generate_calls == 0
+
+
+def test_fallback_text_tamper_under_same_ref_is_blocked() -> None:
+    """A fallback whose text no longer reproduces its pinned ref must fail closed."""
+    policy = make_policy()
+    fallbacks = make_fallbacks()
+    pack, verifier = build_approved_pack(policy=policy, fallbacks=fallbacks)
+
+    tampered = replace(fallbacks[0], text=SensitiveText("승인되지 않은 대체 안내 문구"))
+    # Same code, same pinned ref: only the semantic payload drifted.
+    assert tampered.code == fallbacks[0].code
+    assert tampered.artifact_ref == fallbacks[0].artifact_ref
+    generator = make_generator()
+
+    outcome = preflight_guide_runtime(
+        GuideRuntimePreflightRequest(
+            approval_pack=pack,
+            policy=policy,
+            fallbacks=(tampered,) + fallbacks[1:],
+        ),
         generator=generator,
         decision_verifier=verifier,
     )

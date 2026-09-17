@@ -100,9 +100,23 @@ PENDING, REJECTED, decision 인증 실패, candidate/pack hash drift는 모두 �
 
 ### 3.3 Phase 4 — Policy binding
 
-policy hash를 재해석하거나 재계산하지 않고 `artifact_ref` 값 동등성만 본다.
+승인된 `artifact_ref`가 같다는 사실만으로는 runtime object가 그 ref가 content-address하는 의미를 그대로 유지한다는 보장이 없다. `VersionedGuidelinePolicy.artifact_ref`는 `maximum_claims`, `uncertainty_text_sha256`, `consultation_text_sha256`을 포함한 canonical payload를 content-address하지만, Generator는 실제로 `policy.maximum_claims` 값을 소비한다. 따라서 `artifact_ref`만 보존한 채 내부 필드를 변조한 객체는 승인된 identity와 실제 runtime behavior가 달라진다.
+
+Policy exact binding은 다음 **두 조건을 모두** 요구한다.
+
+```text
+1. runtime VersionedGuidelinePolicy가 자신의 content-addressed artifact_ref와
+   self-consistent할 것 (public factory로 재계산한 ref가 값 동등할 것)
+2. 그 artifact_ref가 Approval Pack policy_ref와 값 동등할 것
+```
+
+재계산은 public `VersionedGuidelinePolicy.create(...)`만 사용하며, `guideline_card`의 private helper(`_is_valid_policy` 등)를 import하지 않는다. policy hash를 독자적으로 재해석하지 않는다. 둘 중 하나라도 실패하면 새 reason 없이 `POLICY_REF_MISMATCH`로 닫는다.
 
 ### 3.4 Phase 5 — Fallback set binding
+
+Fallback도 동일한 fail-open을 갖는다. `code`와 `artifact_ref`만 비교하면 ref와 code를 유지한 채 `text`만 변조한 runtime fallback을 감지하지 못한다.
+
+따라서 code/ref 집합을 Approval Pack pin과 비교하기 **전에**, 각 runtime fallback의 `(code, text)` semantic payload가 public `ApprovedGuidelineFallback.create(...)`를 통해 자신의 `artifact_ref`를 재생산하는지 확인한다.
 
 비교 기준은 `GuidelineFallbackCode` + `ImmutableArtifactRef` exact equality다. 입력 tuple의 순서는 의미가 없으며 canonical code 순으로 비교한다. 따라서 순서만 뒤집힌 정확한 집합은 READY이고, 다음은 모두 `FALLBACK_SET_MISMATCH`다.
 
@@ -111,8 +125,11 @@ fallback missing
 fallback duplicate
 extra fallback
 same code + different ref
+same code + same ref + different text
 unsupported code/type
 ```
+
+본 self-integrity는 runtime object가 pin된 ref에서 벗어나지 않았음만 증명한다. Korean copy policy, forbidden action scan, approved fallback text lookup, medical copy validation 등 canonical approved copy 검증은 계속 `guideline_card.py`가 소유하며 여기서 재구현하지 않는다.
 
 ---
 
@@ -161,6 +178,17 @@ READY가 뜻하는 것은 정확히 하나다.
 ```text
 Runtime에서 사용할 RAG-15 static candidate/configuration의 승인 및 identity가
 현재 실행 객체와 exact-match한다.
+```
+
+최종 READY는 다음이 모두 성립할 때만 허용된다.
+
+```text
+Approval Pack production_consumable
+        AND Generator provenance exact-match
+        AND Policy self-integrity valid
+        AND Policy ref exact-match
+        AND Fallback self-integrity valid
+        AND Fallback code/ref set exact-match
 ```
 
 READY는 다음 중 **어느 것도** 의미하지 않는다.
