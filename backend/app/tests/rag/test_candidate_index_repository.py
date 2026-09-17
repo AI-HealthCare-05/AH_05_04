@@ -23,18 +23,23 @@ from app.models.rag_candidate_index import (
     RagCandidateIndexStatus,
     RagCandidateIndexVersion,
 )
-from app.models.rag_catalog import RagCatalogSet, RagMedicationSearchEntryType
+from app.models.rag_catalog import RagCatalogSet, RagCatalogSetSource, RagMedicationSearchEntryType
 from app.repositories.rag_candidate_index_repository import (
     CandidateIndexCatalogMismatchError,
     CandidateIndexContentHashConflictError,
     CandidateIndexEmptyMemberSetError,
+    CandidateIndexIntegrityCompromisedError,
     CandidateIndexMemberContentHashMismatchError,
     CandidateIndexMemberCountMismatchError,
     CandidateIndexMemberSetHashMismatchError,
+    CandidateIndexReadyVersionNotFoundError,
+    CandidateIndexSourceBindingMismatchError,
+    CandidateIndexVersionMismatchError,
     CandidateIndexVersionNotBuildableError,
     RagCandidateIndexMemberCreate,
     RagCandidateIndexRepository,
     RagCandidateIndexVersionCreate,
+    VerifiedReadyCandidateIndexSnapshot,
 )
 from app.repositories.rag_source_catalog_repository import (
     RagSourceCatalogRepository,
@@ -810,3 +815,208 @@ def test_repository_exposes_no_public_member_write_path() -> None:
         name for name in dir(RagCandidateIndexRepository) if not name.startswith("_") and "member" in name
     }
     assert member_methods == {"list_members", "get_member_by_key"}
+
+
+async def _attach_catalog_set_source(
+    session: AsyncSession, *, catalog_set: RagCatalogSet, snapshot
+) -> RagCatalogSetSource:
+    source = RagCatalogSetSource(
+        set_id=catalog_set.id,
+        source_snapshot_id=snapshot.id,
+        source_version=snapshot.source_version,
+    )
+    session.add(source)
+    await session.flush()
+    return source
+
+
+async def test_get_verified_ready_index_snapshot_success(db_session: AsyncSession) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    await _attach_catalog_set_source(db_session, catalog_set=catalog_set, snapshot=snapshot)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    members = (_member_create(snapshot=snapshot),)
+    version = _version_create(catalog_set=catalog_set, members=members, index_code=index_code, content_hash=_hash("r1"))
+
+    repository = RagCandidateIndexRepository(db_session)
+    built = await repository.build_index_version(version=version, members=members)
+    activated = await repository.activate_ready_version(built.version.id)
+
+    verified = await repository.get_verified_ready_index_snapshot(index_code=index_code, expected_index_version="v1")
+    assert isinstance(verified, VerifiedReadyCandidateIndexSnapshot)
+    assert verified.version.id == activated.id
+    assert verified.version.status is RagCandidateIndexStatus.READY
+    assert len(verified.members) == 1
+    assert verified.members[0].member_key == members[0].member_key
+    assert len(verified.source_refs) == 1
+    assert verified.source_refs[0].snapshot_id == str(snapshot.id)
+    assert verified.source_refs[0].source_version == snapshot.source_version
+
+
+async def test_get_verified_ready_index_snapshot_rejects_non_ready(db_session: AsyncSession) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    await _attach_catalog_set_source(db_session, catalog_set=catalog_set, snapshot=snapshot)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    members = (_member_create(snapshot=snapshot),)
+    version = _version_create(catalog_set=catalog_set, members=members, index_code=index_code, content_hash=_hash("r2"))
+
+    repository = RagCandidateIndexRepository(db_session)
+    built = await repository.build_index_version(version=version, members=members)
+
+    # 1. BUILDING status
+    with pytest.raises(CandidateIndexReadyVersionNotFoundError):
+        await repository.get_verified_ready_index_snapshot(index_code=index_code, expected_index_version="v1")
+
+    # 2. FAILED status
+    await repository.mark_failed_version(built.version.id)
+    with pytest.raises(CandidateIndexReadyVersionNotFoundError):
+        await repository.get_verified_ready_index_snapshot(index_code=index_code, expected_index_version="v1")
+
+    # 3. Non-existent index_code
+    with pytest.raises(CandidateIndexReadyVersionNotFoundError):
+        await repository.get_verified_ready_index_snapshot(index_code="no-such-code", expected_index_version="v1")
+
+
+async def test_get_verified_ready_index_snapshot_rejects_version_mismatch(db_session: AsyncSession) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    await _attach_catalog_set_source(db_session, catalog_set=catalog_set, snapshot=snapshot)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    members = (_member_create(snapshot=snapshot),)
+    version = _version_create(catalog_set=catalog_set, members=members, index_code=index_code, content_hash=_hash("r3"))
+
+    repository = RagCandidateIndexRepository(db_session)
+    built = await repository.build_index_version(version=version, members=members)
+    await repository.activate_ready_version(built.version.id)
+
+    with pytest.raises(CandidateIndexVersionMismatchError):
+        await repository.get_verified_ready_index_snapshot(index_code=index_code, expected_index_version="v2-different")
+
+
+async def test_get_verified_ready_index_snapshot_rejects_retired_version(db_session: AsyncSession) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    await _attach_catalog_set_source(db_session, catalog_set=catalog_set, snapshot=snapshot)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    repository = RagCandidateIndexRepository(db_session)
+
+    # First version v1 is activated
+    first_members = (_member_create(snapshot=snapshot, member_key="member-1"),)
+    first_version = _version_create(
+        catalog_set=catalog_set,
+        members=first_members,
+        index_code=index_code,
+        content_hash=_hash("r4-1"),
+        index_version="v1",
+    )
+    first = await repository.build_index_version(version=first_version, members=first_members)
+    await repository.activate_ready_version(first.version.id)
+
+    # Second version v2 is activated -> retires v1
+    second_members = (_member_create(snapshot=snapshot, member_key="member-2"),)
+    second_version = _version_create(
+        catalog_set=catalog_set,
+        members=second_members,
+        index_code=index_code,
+        content_hash=_hash("r4-2"),
+        index_version="v2",
+    )
+    second = await repository.build_index_version(version=second_version, members=second_members)
+    await repository.activate_ready_version(second.version.id)
+
+    # Querying with retired version v1 fails closed
+    with pytest.raises(CandidateIndexVersionMismatchError):
+        await repository.get_verified_ready_index_snapshot(index_code=index_code, expected_index_version="v1")
+
+    # Querying with active version v2 succeeds
+    verified = await repository.get_verified_ready_index_snapshot(index_code=index_code, expected_index_version="v2")
+    assert verified.version.id == second.version.id
+
+
+async def test_get_verified_ready_index_snapshot_rejects_tampered_member(db_session: AsyncSession) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    await _attach_catalog_set_source(db_session, catalog_set=catalog_set, snapshot=snapshot)
+    index_code = f"idx-{uuid4().hex[:8]}"
+    members = (_member_create(snapshot=snapshot),)
+    version = _version_create(catalog_set=catalog_set, members=members, index_code=index_code, content_hash=_hash("r5"))
+
+    repository = RagCandidateIndexRepository(db_session)
+    built = await repository.build_index_version(version=version, members=members)
+    await repository.activate_ready_version(built.version.id)
+
+    # Tamper member display_text in DB
+    await db_session.execute(
+        text("UPDATE rag_candidate_index_member SET display_text = 'Tampered' WHERE candidate_index_version_id = :vid"),
+        {"vid": str(built.version.id)},
+    )
+    await db_session.flush()
+
+    with pytest.raises(CandidateIndexIntegrityCompromisedError):
+        await repository.get_verified_ready_index_snapshot(index_code=index_code, expected_index_version="v1")
+
+
+async def test_get_verified_ready_index_snapshot_rejects_source_outside_catalog(db_session: AsyncSession) -> None:
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    # Do NOT attach snapshot to catalog_set_source
+    other_snapshot = await _create_source_snapshot(db_session)
+    await _attach_catalog_set_source(db_session, catalog_set=catalog_set, snapshot=other_snapshot)
+
+    index_code = f"idx-{uuid4().hex[:8]}"
+    members = (_member_create(snapshot=snapshot),)
+    version = _version_create(catalog_set=catalog_set, members=members, index_code=index_code, content_hash=_hash("r6"))
+
+    repository = RagCandidateIndexRepository(db_session)
+    built = await repository.build_index_version(version=version, members=members)
+    await repository.activate_ready_version(built.version.id)
+
+    # Member's snapshot is not in catalog_set_source
+    with pytest.raises(CandidateIndexSourceBindingMismatchError):
+        await repository.get_verified_ready_index_snapshot(index_code=index_code, expected_index_version="v1")
+
+
+async def test_get_verified_ready_index_snapshot_source_refs_deterministic_order(
+    db_session: AsyncSession,
+) -> None:
+    catalog_set = await _create_catalog_set(db_session)
+    s1 = await _create_source_snapshot(db_session)
+    s2 = await _create_source_snapshot(db_session)
+    s3 = await _create_source_snapshot(db_session)
+
+    await _attach_catalog_set_source(db_session, catalog_set=catalog_set, snapshot=s1)
+    await _attach_catalog_set_source(db_session, catalog_set=catalog_set, snapshot=s2)
+    await _attach_catalog_set_source(db_session, catalog_set=catalog_set, snapshot=s3)
+
+    index_code = f"idx-{uuid4().hex[:8]}"
+    members = (
+        _member_create(snapshot=s1, member_key="member-1", entry_ref="entry:1"),
+        _member_create(snapshot=s2, member_key="member-2", entry_ref="entry:2"),
+        _member_create(snapshot=s3, member_key="member-3", entry_ref="entry:3"),
+    )
+    version = _version_create(
+        catalog_set=catalog_set,
+        members=members,
+        index_code=index_code,
+        content_hash=_hash("det-order"),
+    )
+
+    repository = RagCandidateIndexRepository(db_session)
+    built = await repository.build_index_version(version=version, members=members)
+    await repository.activate_ready_version(built.version.id)
+
+    # Call repeatedly and verify exact identity and stable sort
+    v_first = await repository.get_verified_ready_index_snapshot(index_code=index_code, expected_index_version="v1")
+    v_second = await repository.get_verified_ready_index_snapshot(index_code=index_code, expected_index_version="v1")
+    v_third = await repository.get_verified_ready_index_snapshot(index_code=index_code, expected_index_version="v1")
+
+    assert v_first.source_refs == v_second.source_refs == v_third.source_refs
+    expected_order = tuple(
+        sorted(
+            v_first.source_refs,
+            key=lambda ref: (ref.snapshot_id, ref.source_version),
+        )
+    )
+    assert v_first.source_refs == expected_order
+    assert len(v_first.source_refs) == 3

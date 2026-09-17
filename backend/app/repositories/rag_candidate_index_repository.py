@@ -26,7 +26,7 @@ from app.models.rag_candidate_index import (
     RagCandidateIndexStatus,
     RagCandidateIndexVersion,
 )
-from app.models.rag_catalog import RagCatalogSet, RagMedicationSearchEntryType
+from app.models.rag_catalog import RagCatalogSet, RagCatalogSetSource, RagMedicationSearchEntryType
 
 
 def _canonical_json_bytes(value: object) -> bytes:
@@ -174,6 +174,39 @@ class CandidateIndexVersionNotFoundError(CandidateIndexLifecycleError):
 
 class CandidateIndexVersionNotBuildableError(CandidateIndexLifecycleError):
     """BUILDING 상태의 완성된 Candidate Index Version만 READY/FAILED로 전이할 수 있다."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReadyCandidateIndexSourceRef:
+    snapshot_id: str
+    source_version: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedReadyCandidateIndexSnapshot:
+    version: RagCandidateIndexVersion
+    members: tuple[RagCandidateIndexMember, ...]
+    source_refs: tuple[ReadyCandidateIndexSourceRef, ...]
+
+
+class CandidateIndexReadError(RuntimeError):
+    """Candidate Index read or verification failure."""
+
+
+class CandidateIndexReadyVersionNotFoundError(CandidateIndexReadError):
+    """Active READY version for index_code does not exist."""
+
+
+class CandidateIndexVersionMismatchError(CandidateIndexReadError):
+    """Active READY version does not match requested index_version."""
+
+
+class CandidateIndexIntegrityCompromisedError(CandidateIndexReadError):
+    """Persisted member rows do not match manifest/storage integrity."""
+
+
+class CandidateIndexSourceBindingMismatchError(CandidateIndexReadError):
+    """Authoritative catalog set sources are empty or member references source outside catalog."""
 
 
 _VERSION_IDENTITY_FIELDS = (
@@ -395,6 +428,109 @@ class RagCandidateIndexRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_verified_ready_index_snapshot(
+        self,
+        *,
+        index_code: str,
+        expected_index_version: str,
+    ) -> VerifiedReadyCandidateIndexSnapshot:
+        """active READY Candidate Index를 일관되게 읽고, 무결성 및 Source 결속을 재검증한다.
+
+        Read consistency:
+        READY 버전을 FOR SHARE(read lock)로 잠가, 검증 도중 concurrent
+        activate_ready_version()이 이 row를 RETIRED로 전환하거나 변경하는 race를 차단한다.
+        """
+        result = await self.session.execute(
+            select(RagCandidateIndexVersion)
+            .where(
+                RagCandidateIndexVersion.index_code == index_code,
+                RagCandidateIndexVersion.status == RagCandidateIndexStatus.READY,
+            )
+            .with_for_update(read=True)
+        )
+        ready_version = result.scalar_one_or_none()
+        if ready_version is None:
+            raise CandidateIndexReadyVersionNotFoundError(
+                f"index_code '{index_code}'에 대한 active READY Candidate Index가 존재하지 않습니다."
+            )
+        if ready_version.index_version != expected_index_version:
+            raise CandidateIndexVersionMismatchError(
+                f"active READY version '{ready_version.index_version}'이 요청된 version '{expected_index_version}'과 일치하지 않습니다."
+            )
+
+        stmt = (
+            select(RagCatalogSetSource)
+            .where(RagCatalogSetSource.set_id == ready_version.catalog_set_id)
+            .order_by(
+                RagCatalogSetSource.source_snapshot_id.asc(),
+                RagCatalogSetSource.source_version.asc(),
+            )
+        )
+        source_rows = list((await self.session.execute(stmt)).scalars().all())
+        source_rows.sort(key=lambda row: (str(row.source_snapshot_id), str(row.source_version)))
+        if not source_rows:
+            raise CandidateIndexSourceBindingMismatchError(
+                f"catalog_set_id '{ready_version.catalog_set_id}'에 등록된 authoritative Source Snapshot이 없습니다."
+            )
+        source_refs = tuple(
+            ReadyCandidateIndexSourceRef(
+                snapshot_id=str(row.source_snapshot_id),
+                source_version=row.source_version,
+            )
+            for row in source_rows
+        )
+        valid_snapshot_ids = {ref.snapshot_id for ref in source_refs}
+
+        persisted_rows = tuple(await self.list_members(ready_version.id))
+        if len(persisted_rows) != ready_version.member_count:
+            raise CandidateIndexIntegrityCompromisedError(
+                f"Candidate Index member_count={ready_version.member_count}이나 실제 행 수는 {len(persisted_rows)}개입니다."
+            )
+
+        try:
+            self._assert_loaded_persisted_members_match(ready_version, persisted_rows)
+        except (CandidateIndexVersionNotBuildableError, CandidateIndexBuildError) as exc:
+            raise CandidateIndexIntegrityCompromisedError(
+                "Persisted Candidate Index members do not reproduce manifest/storage integrity."
+            ) from exc
+
+        self._assert_member_sources_bound(persisted_rows, valid_snapshot_ids)
+
+        return VerifiedReadyCandidateIndexSnapshot(
+            version=ready_version,
+            members=persisted_rows,
+            source_refs=source_refs,
+        )
+
+    def _assert_member_sources_bound(
+        self,
+        persisted_rows: tuple[RagCandidateIndexMember, ...],
+        valid_snapshot_ids: set[str],
+    ) -> None:
+        for member in persisted_rows:
+            if str(member.product_source_snapshot_id) not in valid_snapshot_ids:
+                raise CandidateIndexSourceBindingMismatchError(
+                    f"member '{member.member_key}'의 product_source_snapshot_id가 Catalog Source Set에 존재하지 않습니다."
+                )
+            if str(member.entry_source_snapshot_id) not in valid_snapshot_ids:
+                raise CandidateIndexSourceBindingMismatchError(
+                    f"member '{member.member_key}'의 entry_source_snapshot_id가 Catalog Source Set에 존재하지 않습니다."
+                )
+            if member.entry_type is RagMedicationSearchEntryType.PRODUCT_NAME:
+                if member.alias_ref is not None or member.alias_source_snapshot_id is not None:
+                    raise CandidateIndexSourceBindingMismatchError(
+                        f"PRODUCT_NAME member '{member.member_key}'는 alias reference를 가질 수 없습니다."
+                    )
+            elif member.entry_type is RagMedicationSearchEntryType.APPROVED_ALIAS:
+                if (
+                    member.alias_ref is None
+                    or member.alias_source_snapshot_id is None
+                    or str(member.alias_source_snapshot_id) not in valid_snapshot_ids
+                ):
+                    raise CandidateIndexSourceBindingMismatchError(
+                        f"APPROVED_ALIAS member '{member.member_key}'의 alias_source_snapshot_id가 Catalog Source Set에 유효하지 않습니다."
+                    )
+
     async def activate_ready_version(self, candidate_index_version_id: UUID) -> RagCandidateIndexVersion:
         """BUILDING Version을 READY로 전환하고 기존 READY는 RETIRED로 회수한다."""
         version = await self._get_version_for_update(candidate_index_version_id)
@@ -451,8 +587,11 @@ class RagCandidateIndexRepository:
         )
         return list(result.scalars().all())
 
-    async def _assert_persisted_members_match(self, version: RagCandidateIndexVersion) -> None:
-        persisted_rows = tuple(await self.list_members(version.id))
+    def _assert_loaded_persisted_members_match(
+        self,
+        version: RagCandidateIndexVersion,
+        persisted_rows: tuple[RagCandidateIndexMember, ...],
+    ) -> tuple[RagCandidateIndexMemberCreate, ...]:
         persisted_members = tuple(_member_create_from_persisted(member) for member in persisted_rows)
         if not persisted_members:
             raise CandidateIndexVersionNotBuildableError(
@@ -470,6 +609,11 @@ class RagCandidateIndexRepository:
             raise CandidateIndexVersionNotBuildableError(
                 "Persisted Candidate Index members do not reproduce manifest metadata before READY promotion."
             ) from exc
+        return persisted_members
+
+    async def _assert_persisted_members_match(self, version: RagCandidateIndexVersion) -> None:
+        persisted_rows = tuple(await self.list_members(version.id))
+        self._assert_loaded_persisted_members_match(version, persisted_rows)
 
     def _assert_persisted_lexical_storage_hashes_match(
         self,
