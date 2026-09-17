@@ -1113,8 +1113,10 @@ async def _exercise_notification_runtime_permissions(reader, producer):
     result = await process_notifications_once(now=NOW, session_factory=factory)
     assert result.created_count == result.delivered_count == 1
     assert (await process_notifications_once(now=NOW, session_factory=factory)).delivered_count == 0
+    async with reader.begin() as connection:
+        await connection.execute(text("DELETE FROM notification_record WHERE false"))
     for engine, statements in (
-        (reader, ("DELETE FROM notification_record", "TRUNCATE notification_record")),
+        (reader, ("TRUNCATE notification_record",)),
         (producer, ("SELECT * FROM notification_record", "INSERT INTO notification_record DEFAULT VALUES")),
     ):
         for statement in statements:
