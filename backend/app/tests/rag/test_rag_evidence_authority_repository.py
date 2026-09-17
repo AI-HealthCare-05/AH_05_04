@@ -16,19 +16,26 @@ member binding을 적재한 뒤 authority를 왕복시킨다.
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import AsyncIterator, Callable, Coroutine
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import update
+import pytest_asyncio
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes
 from app.core import config
+from app.core.db.databases import Base
 from app.models.async_jobs import AiJob, AiJobStatus, AiJobType
 from app.models.knowledge import (
     KnowledgeChunk,
@@ -60,6 +67,8 @@ from app.repositories.rag_source_catalog_repository import (
     RagSourceOperationCreate,
     RagSourceSnapshotCreate,
 )
+from app.tests.conftest import TEST_DATABASE_URL
+from app.tests.db_extensions import EXTENSION_SCHEMA, ensure_trigram_extension, ensure_vector_extension
 from app.tests.fixtures.source_snapshot import seed_snapshot
 from rag_runtime.evidence_authority import (
     EVIDENCE_ASSESSMENT_MAX_VALIDITY_DURATION_SECONDS,
@@ -445,29 +454,45 @@ async def test_persisted_authority_round_trips_without_reconstruction(db_session
     assert by_ref.id == record.id
 
 
-async def test_retry_returns_existing_and_does_not_extend_validity(db_session: AsyncSession) -> None:
-    """같은 입력 재발급은 기존 레코드를 그대로 돌려주고 validity window를 연장하지 않는다."""
+async def test_retry_with_frozen_evaluated_at_returns_existing(db_session: AsyncSession) -> None:
+    """PD-722 §6.2대로 T0를 동결한 재시도는 기존 레코드를 변경 없이 그대로 돌려준다."""
+    selection = await _seed_selection(db_session)
+    repository = RagEvidenceAuthorityRepository(db_session)
+    first = await repository.persist_authority(_make_authority_record(selection))
+
+    second = await repository.persist_authority(_make_authority_record(selection))
+
+    assert second.id == first.id
+    assert second.assessment_valid_from == first.assessment_valid_from
+    assert second.assessment_valid_until == first.assessment_valid_until
+    assert await _authority_row_count(db_session, selection) == 1
+
+
+async def test_retry_recomputed_at_later_clock_cannot_extend_validity(db_session: AsyncSession) -> None:
+    """T0+10분에 window를 다시 계산해 들고 온 재시도는 조용히 받아들이지 않는다.
+
+    `assessment_valid_until`을 `(T0+10분)+24h`로 밀어내는 것은 PD-722 §6.2 위반이다. 이미 저장된
+    authority를 덮어쓰지 않고 fail closed하며, 저장된 window는 `[T0, T0+24h)` 그대로 남아야 한다.
+    """
     selection = await _seed_selection(db_session)
     repository = RagEvidenceAuthorityRepository(db_session)
     first = await repository.persist_authority(_make_authority_record(selection))
 
     retried_at = EVALUATED_AT + timedelta(minutes=10)
-    retry_record = replace(
-        _make_authority_record(selection),
-        evaluated_at=retried_at,
-        assessment_valid_from=retried_at,
-        assessment_valid_until=retried_at + timedelta(seconds=EVIDENCE_ASSESSMENT_MAX_VALIDITY_DURATION_SECONDS),
-    )
-    second = await repository.persist_authority(retry_record)
+    extended = _make_authority_record(selection, evaluated_at=retried_at)
+    assert extended.assessment_valid_until > first.assessment_valid_until
 
-    assert second.id == first.id
-    assert second.assessment_valid_from == first.assessment_valid_from
-    assert second.assessment_valid_until == first.assessment_valid_until
+    with pytest.raises(EvidenceAuthorityConflictError) as error:
+        await repository.persist_authority(extended)
+    assert error.value.code == EvidenceAuthorityErrorCode.AUTHORITY_IDENTITY_CONFLICT
 
-    rows = list(
-        await db_session.scalars(RagEvidenceAuthority.__table__.select().with_only_columns(RagEvidenceAuthority.id))
-    )
-    assert len(rows) == 1
+    stored = await repository.get_authority_by_identity(selection.retrieval_run_id, selection.knowledge_chunk_id)
+    assert stored is not None
+    assert stored.id == first.id
+    assert stored.evaluated_at == EVALUATED_AT
+    assert stored.assessment_valid_from == first.assessment_valid_from
+    assert stored.assessment_valid_until == first.assessment_valid_until
+    assert await _authority_row_count(db_session, selection) == 1
 
 
 async def test_conflicting_details_for_same_identity_fail_closed(db_session: AsyncSession) -> None:
@@ -570,3 +595,165 @@ def test_persisted_authority_artifact_refs_are_well_formed() -> None:
         assert len(ref.content_sha256) == 64
         assert ref.artifact_code.strip()
         assert ref.version.strip()
+
+
+async def _authority_row_count(session: AsyncSession, selection: SeededSelection) -> int:
+    """해당 논리 identity의 실제 행 수. 저장소 전체 count는 다른 테스트와 결합되므로 쓰지 않는다."""
+    rows = await session.scalars(
+        select(RagEvidenceAuthority.id).where(
+            RagEvidenceAuthority.retrieval_run_id == selection.retrieval_run_id,
+            RagEvidenceAuthority.knowledge_chunk_id == selection.knowledge_chunk_id,
+        )
+    )
+    return len(list(rows))
+
+
+async def _run_admin_statement(statement: str) -> None:
+    admin = create_async_engine(TEST_DATABASE_URL, isolation_level="AUTOCOMMIT", poolclass=NullPool)
+    try:
+        async with admin.connect() as connection:
+            await connection.execute(text(statement))
+    finally:
+        await admin.dispose()
+
+
+@pytest_asyncio.fixture
+async def concurrency_engine() -> AsyncIterator[AsyncEngine]:
+    """동시성 테스트 전용 일회용 데이터베이스.
+
+    동시 writer는 각자 실제로 commit해야 UNIQUE 경합이 발생한다. 공용 `test` DB에 commit하면
+    conftest의 savepoint 격리 밖으로 행이 새어 다른 테스트를 깨뜨리므로, 별도 DB를 만들고
+    끝나면 통째로 버린다.
+    """
+    database = f"authority712_concurrency_{uuid4().hex[:12]}"
+    await _run_admin_statement(f'CREATE DATABASE "{database}"')
+    engine = create_async_engine(
+        TEST_DATABASE_URL.set(database=database),
+        poolclass=NullPool,
+        connect_args={"server_settings": {"search_path": f"public,{EXTENSION_SCHEMA}"}},
+    )
+    try:
+        async with engine.begin() as connection:
+            await ensure_trigram_extension(connection, EXTENSION_SCHEMA)
+            await ensure_vector_extension(connection, EXTENSION_SCHEMA)
+            await connection.run_sync(Base.metadata.create_all)
+        yield engine
+    finally:
+        await engine.dispose()
+        await _run_admin_statement(f'DROP DATABASE "{database}" WITH (FORCE)')
+
+
+@asynccontextmanager
+async def _independent_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
+    """두 coroutine이 같은 AsyncSession을 공유하지 않도록 독립 session/transaction을 연다."""
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        yield session
+
+
+def _hold_after_preread(
+    repository: RagEvidenceAuthorityRepository, gate: asyncio.Event
+) -> Callable[[UUID, UUID], Coroutine[Any, Any, PersistedEvidenceAuthority | None]]:
+    """pre-read 직후 gate가 열릴 때까지 멈추도록 감싼다.
+
+    check-then-insert 간극을 재현하기 위한 테스트 전용 seam이다. sleep·advisory lock·trigger를
+    쓰지 않고 두 transaction이 모두 "행 없음"을 본 상태를 결정적으로 만든다.
+    """
+    original = repository.get_authority_by_identity
+
+    async def wrapper(retrieval_run_id: UUID, knowledge_chunk_id: UUID) -> PersistedEvidenceAuthority | None:
+        result = await original(retrieval_run_id, knowledge_chunk_id)
+        await gate.wait()
+        return result
+
+    return wrapper
+
+
+async def _seed_committed_selection(engine: AsyncEngine) -> SeededSelection:
+    async with _independent_session(engine) as session:
+        selection = await _seed_selection(session)
+        await session.commit()
+        return selection
+
+
+async def test_concurrent_identical_creation_persists_single_row(concurrency_engine: AsyncEngine) -> None:
+    """동일 authority를 독립 transaction 둘이 동시에 최초 저장해도 한 행만 남고 둘 다 성공한다.
+
+    check-then-insert 사이에 다른 transaction이 끼어들어도 raw UNIQUE violation이 밖으로 새지
+    않아야 하며, Repository가 선언한 idempotent retry 계약이 이 경합에서도 유지되어야 한다.
+    """
+    selection = await _seed_committed_selection(concurrency_engine)
+    record = _make_authority_record(selection)
+    winner_committed = asyncio.Event()
+
+    async def first_writer() -> PersistedEvidenceAuthority:
+        async with _independent_session(concurrency_engine) as session:
+            persisted = await RagEvidenceAuthorityRepository(session).persist_authority(record)
+            await session.commit()
+            winner_committed.set()
+            return persisted
+
+    async def second_writer() -> PersistedEvidenceAuthority:
+        async with _independent_session(concurrency_engine) as session:
+            repository = RagEvidenceAuthorityRepository(session)
+            # 첫 writer가 commit할 때까지 stale한 "행 없음" 판단을 붙들고 있는다.
+            repository.get_authority_by_identity = _hold_after_preread(  # type: ignore[method-assign,assignment]
+                repository, winner_committed
+            )
+            persisted = await repository.persist_authority(record)
+            await session.commit()
+            return persisted
+
+    first, second = await asyncio.gather(first_writer(), second_writer())
+
+    assert replace(first, created_at=None) == replace(second, created_at=None)
+    assert first.id == second.id
+    assert first.assessment_artifact_ref == record.assessment_artifact_ref
+
+    async with _independent_session(concurrency_engine) as session:
+        assert await _authority_row_count(session, selection) == 1
+
+
+async def test_concurrent_semantic_conflict_fails_closed_without_overwrite(
+    concurrency_engine: AsyncEngine,
+) -> None:
+    """같은 identity에 다른 authority가 동시에 오면 한쪽만 저장되고 다른 쪽은 typed conflict다."""
+    selection = await _seed_committed_selection(concurrency_engine)
+    winner_record = _make_authority_record(selection)
+    loser_record = replace(_make_authority_record(selection), source_snapshot_id=uuid4())
+    winner_committed = asyncio.Event()
+
+    async def winner() -> PersistedEvidenceAuthority:
+        async with _independent_session(concurrency_engine) as session:
+            persisted = await RagEvidenceAuthorityRepository(session).persist_authority(winner_record)
+            await session.commit()
+            winner_committed.set()
+            return persisted
+
+    async def loser() -> BaseException | None:
+        async with _independent_session(concurrency_engine) as session:
+            repository = RagEvidenceAuthorityRepository(session)
+            repository.get_authority_by_identity = _hold_after_preread(  # type: ignore[method-assign,assignment]
+                repository, winner_committed
+            )
+            try:
+                await repository.persist_authority(loser_record)
+            except BaseException as error:  # noqa: BLE001 - 어떤 예외가 새는지 그대로 확인한다.
+                return error
+            finally:
+                await session.rollback()
+            return None
+
+    persisted, error = await asyncio.gather(winner(), loser())
+
+    assert isinstance(error, EvidenceAuthorityConflictError)
+    assert error.code == EvidenceAuthorityErrorCode.AUTHORITY_IDENTITY_CONFLICT
+    assert not isinstance(error, IntegrityError)
+
+    async with _independent_session(concurrency_engine) as session:
+        assert await _authority_row_count(session, selection) == 1
+        survivor = await RagEvidenceAuthorityRepository(session).get_authority_by_identity(
+            selection.retrieval_run_id, selection.knowledge_chunk_id
+        )
+    assert survivor is not None
+    assert survivor.id == persisted.id
+    assert survivor.source_snapshot_id == winner_record.source_snapshot_id
