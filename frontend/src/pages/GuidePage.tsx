@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import type { NavigateFunction } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
+  createGuide,
   getGuide,
   getGuideForPrescription,
   type GuideData,
@@ -21,8 +22,14 @@ import { DoseyMascot } from '../design-system/DoseyMascot'
 import '../design-system/prototype.css'
 import './GuidePage.css'
 import { ResponseFeedback } from '../components/ResponseFeedback'
+import {
+  getChatGuideErrorPresentation,
+  hasChatGuideErrorPresentation,
+  type ChatGuideErrorPresentation,
+} from './chatGuideErrorPresentation'
 
 export type GuidePageServices = {
+  createGuide: typeof createGuide
   getGuide: typeof getGuide
   getGuideForPrescription: typeof getGuideForPrescription
   getLatestPrescription: typeof getLatestPrescription
@@ -35,6 +42,7 @@ export type GuidePageProps = {
 }
 
 const defaultGuidePageServices: GuidePageServices = {
+  createGuide,
   getGuide,
   getGuideForPrescription,
   getLatestPrescription,
@@ -52,22 +60,22 @@ function formatCompletedAt(value: string | null) {
   }).format(date)
 }
 
-function getGuideLoadFailureMessage(error: unknown) {
-  if (error instanceof ApiError) {
-    if (error.status === 401) return '로그인 정보를 다시 확인한 뒤 시도해 주세요.'
-    if (error.status === 404) return '요청한 복약 가이드를 찾을 수 없어요.'
-    if (error.status >= 500) return '서버 응답이 원활하지 않아요. 잠시 후 다시 시도해 주세요.'
-  }
-
-  if (error instanceof TypeError) {
-    return '네트워크 연결을 확인한 뒤 다시 시도해 주세요.'
-  }
-
-  return '복약 가이드를 불러오지 못했어요. 다시 시도해 주세요.'
+function getGuideLoadFailurePresentation(error: unknown) {
+  return getChatGuideErrorPresentation(error, {
+    unauthorized: '로그인 정보를 다시 확인한 뒤 시도해 주세요.',
+    notFound: '요청한 복약 가이드를 찾을 수 없어요.',
+    server: '서버 응답이 원활하지 않아요. 잠시 후 다시 시도해 주세요.',
+    network: '네트워크 연결을 확인한 뒤 다시 시도해 주세요.',
+    unknown: '복약 가이드를 불러오지 못했어요. 다시 시도해 주세요.',
+  })
 }
 
 function isNotFound(error: unknown) {
-  return error instanceof ApiError && error.status === 404
+  return (
+    error instanceof ApiError &&
+    error.status === 404 &&
+    !hasChatGuideErrorPresentation(error)
+  )
 }
 
 type GuideDetail = {
@@ -398,9 +406,14 @@ function GuidePage({
     : previewGuideId ?? undefined
   const [guide, setGuide] = useState<GuideData | null>(null)
   const [message, setMessage] = useState('')
+  const [errorPresentation, setErrorPresentation] =
+    useState<ChatGuideErrorPresentation | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [stateGuideId, setStateGuideId] = useState<string | null>(null)
   const guideRequestIdRef = useRef(0)
+  const retryRequestRef = useRef<number | null>(null)
+  const [isRetrying, setIsRetrying] = useState(false)
+  const [retryError, setRetryError] = useState('')
 
   const loadGuide = useCallback(async () => {
     const requestedGuideId = guideId ?? null
@@ -412,6 +425,7 @@ function GuidePage({
     try {
       setIsLoading(true)
       setMessage('')
+      setErrorPresentation(null)
       setGuide(null)
 
       if (!requestedGuideId) {
@@ -469,7 +483,7 @@ function GuidePage({
         return
       }
       setGuide(null)
-      setMessage(getGuideLoadFailureMessage(error))
+      setErrorPresentation(getGuideLoadFailurePresentation(error))
     } finally {
       if (isCurrentRequest()) {
         setIsLoading(false)
@@ -478,6 +492,9 @@ function GuidePage({
   }, [guideId, navigate, services])
 
   useEffect(() => {
+    retryRequestRef.current = null
+    setIsRetrying(false)
+    setRetryError('')
     void loadGuide()
     return () => {
       guideRequestIdRef.current += 1
@@ -488,7 +505,44 @@ function GuidePage({
   const isCurrentGuideState = stateGuideId === routeGuideId
   const currentGuide = isCurrentGuideState ? guide : null
   const currentMessage = isCurrentGuideState ? message : ''
+  const currentErrorPresentation = isCurrentGuideState
+    ? errorPresentation
+    : null
   const currentIsLoading = isCurrentGuideState ? isLoading : Boolean(guideId)
+
+  const retryGeneration = async () => {
+    if (currentGuide?.generation_status !== 'FAILED' || retryRequestRef.current !== null) return
+
+    const prescriptionId = currentGuide.prescription_id
+    const requestId = ++guideRequestIdRef.current
+    retryRequestRef.current = requestId
+    setIsRetrying(true)
+    setRetryError('')
+    try {
+      const response = await services.createGuide(prescriptionId)
+      if (guideRequestIdRef.current !== requestId) return
+      if (response.data.prescription_id !== prescriptionId) {
+        setRetryError('확인한 처방과 다른 가이드 응답을 받았어요. 다시 확인해 주세요.')
+        return
+      }
+      navigate(`/guides/${response.data.guide_id}`, { replace: true })
+    } catch (error) {
+      if (guideRequestIdRef.current !== requestId) return
+      if (isStaleTokenError(error)) {
+        clearAuthenticatedSession()
+        navigate('/login', { replace: true })
+        return
+      }
+      setRetryError(error instanceof ApiError
+        ? error.message
+        : '복약 가이드를 만드는 중 오류가 발생했습니다. 다시 시도해 주세요.')
+    } finally {
+      if (guideRequestIdRef.current === requestId) {
+        retryRequestRef.current = null
+        setIsRetrying(false)
+      }
+    }
+  }
 
   const completedAt = formatCompletedAt(currentGuide?.completed_at ?? null)
   const hasCompletedContent =
@@ -526,7 +580,7 @@ function GuidePage({
             </p>
           )}
 
-          {!currentIsLoading && !currentMessage && !currentGuide && (
+          {!currentIsLoading && !currentMessage && !currentErrorPresentation && !currentGuide && (
             <div className="guide-page__empty-state">
               <Card className="guide-page__empty">
                 <span className="guide-page__spark" aria-hidden="true" />
@@ -553,21 +607,39 @@ function GuidePage({
             </section>
           )}
 
-          {!currentIsLoading && currentMessage && (
+          {!currentIsLoading && (currentMessage || currentErrorPresentation) && (
             <section className="guide-page__status" role="alert">
               <div className="guide-page__status-visual guide-page__status-visual--failed">
                 <DoseyMascot variant="chat" />
               </div>
-              <h2>가이드를 표시할 수 없어요</h2>
-              <p role="alert">{currentMessage}</p>
-              <Button fullWidth onClick={() => void loadGuide()}>
-                다시 불러오기
+              <h2>
+                {currentErrorPresentation?.title ?? '가이드를 표시할 수 없어요'}
+              </h2>
+              {(currentErrorPresentation?.helper || currentMessage) && (
+                <p>{currentErrorPresentation?.helper ?? currentMessage}</p>
+              )}
+              <Button
+                fullWidth
+                onClick={() => {
+                  if (currentErrorPresentation?.action === 'CONSENT_SETTINGS') {
+                    navigate('/profile')
+                    return
+                  }
+                  void loadGuide()
+                }}
+              >
+                {currentErrorPresentation?.action === 'CONSENT_SETTINGS'
+                  ? '동의 설정 확인하기'
+                  : currentErrorPresentation?.action === 'RETRY'
+                    ? '다시 시도'
+                    : '다시 불러오기'}
               </Button>
             </section>
           )}
 
           {!currentIsLoading &&
             !currentMessage &&
+            !currentErrorPresentation &&
             currentGuide &&
             hasCompletedContent && (
             <>
@@ -619,51 +691,65 @@ function GuidePage({
 
           {!currentIsLoading &&
             !currentMessage &&
+            !currentErrorPresentation &&
             currentGuide &&
             !hasCompletedContent && (
             <section
               className="guide-page__status"
-              role={currentGuide.generation_status === 'FAILED' ? 'alert' : 'status'}
+              role={!isRetrying && currentGuide.generation_status === 'FAILED' ? 'alert' : 'status'}
+              aria-busy={isRetrying}
               aria-live="polite"
             >
               <div
                 className={`guide-page__status-visual ${
-                  currentGuide.generation_status === 'FAILED'
-                    ? 'guide-page__status-visual--failed'
-                    : currentGuide.generation_status === 'GENERATING'
-                      ? 'guide-page__status-visual--generating'
-                      : 'guide-page__status-visual--empty'
+                  isRetrying
+                    ? 'guide-page__status-visual--generating'
+                    : currentGuide.generation_status === 'FAILED'
+                      ? 'guide-page__status-visual--failed'
+                      : currentGuide.generation_status === 'GENERATING'
+                        ? 'guide-page__status-visual--generating'
+                        : 'guide-page__status-visual--empty'
                 }`}
               >
                 <DoseyMascot variant="chat" />
               </div>
               <h2>
-                {currentGuide.generation_status === 'FAILED'
-                  ? '가이드를 만들지 못했어요'
-                  : currentGuide.generation_status === 'COMPLETED'
-                    ? '가이드 내용이 아직 없어요'
-                    : '복약 가이드를 만들고 있어요'}
+                {isRetrying
+                  ? '복약 가이드를 만들고 있어요'
+                  : currentGuide.generation_status === 'FAILED'
+                    ? '가이드를 만들지 못했어요'
+                    : currentGuide.generation_status === 'COMPLETED'
+                      ? '가이드 내용이 아직 없어요'
+                      : '복약 가이드를 만들고 있어요'}
               </h2>
               <p>
-                {currentGuide.generation_status === 'FAILED'
-                  ? '다시 시도해 주세요.'
-                  : currentGuide.generation_status === 'COMPLETED'
-                    ? '생성된 내용을 확인할 수 없어 다시 불러와야 해요.'
-                    : '도지가 복약 가이드를 준비하고 있어요.'}
+                {isRetrying
+                  ? '잠시만 기다려 주세요.'
+                  : currentGuide.generation_status === 'FAILED'
+                    ? '다시 시도해 주세요.'
+                    : currentGuide.generation_status === 'COMPLETED'
+                      ? '생성된 내용을 확인할 수 없어 다시 불러와야 해요.'
+                      : '도지가 복약 가이드를 준비하고 있어요.'}
               </p>
+              {retryError && <p role="alert">{retryError}</p>}
               {currentGuide.generation_status === 'GENERATING' && (
                 <span className="guide-page__generating-label">가이드를 생성하고 있어요...</span>
               )}
               <Button
                 fullWidth
                 variant={currentGuide.generation_status === 'FAILED' ? 'primary' : 'secondary'}
-                onClick={() => void loadGuide()}
+                disabled={isRetrying}
+                onClick={() => void (currentGuide.generation_status === 'FAILED'
+                  ? retryGeneration()
+                  : loadGuide())}
               >
-                {currentGuide.generation_status === 'FAILED'
-                  ? '다시 시도하기'
-                  : currentGuide.generation_status === 'COMPLETED'
-                    ? '다시 불러오기'
-                    : '다시 확인하기'}
+                {isRetrying
+                  ? '가이드를 생성하고 있어요...'
+                  : currentGuide.generation_status === 'FAILED'
+                    ? '다시 시도하기'
+                    : currentGuide.generation_status === 'COMPLETED'
+                      ? '다시 불러오기'
+                      : '다시 확인하기'}
               </Button>
             </section>
           )}
