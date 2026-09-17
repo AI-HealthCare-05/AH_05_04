@@ -118,6 +118,20 @@ boolean은 모두 false여야 한다. Citation source version은 #180 opaque tok
 구현 선행조건 완료로 간주하지 않으며 Runtime, HOLDOUT/SAFETY_REGRESSION, Baseline Freeze, Release 판정과
 공개를 허용하지 않는다.
 
+### Evaluation Schema Set 1.5 후보
+
+#159 DEV metric 입력 및 비교 manifest 후보는 `rag-eval.schema-set@1.5.0`, SHA-256 `155d6636375ed8c2dafbfcc6dd58c928424021329edf1e72f5e255b50d367537`이다. 문서 상태는 `Candidate · Review Required`이며, 책임 Product·Safety·Evaluation 리뷰어 권가빈 (`@hazelnutflavoured`)의 실제 Pull Request review event가 승인 전환에 필요하다.
+
+26개 member는 Schema Set 1.4의 23개 member version과 canonical bytes를 그대로 재사용하고 다음 세 Evaluation artifact를 member `1.0.0`으로 추가한다.
+
+- `rag-eval.answer-human-judgment@1.0.0`
+- `rag-eval.answer-human-judgment-approval@1.0.0`
+- `rag-eval.answer-comparison-set-manifest@1.0.0`
+
+세 artifact는 원문(질문, 답변, claim text, reasoning 등) 대신 stable ID·bounded enum·immutable reference·hash만 저장한다. 세 pair(`ANS-BASE--ANS-RAG`, `ANS-RAG--ANS-FINAL`, `ANS-BASE--ANS-FINAL`)는 고정된 canonical order와 exact allowed delta keys를 강제한다. 기존 Schema Set 1.0.0–1.4.0과 exporter 기본 version은 변경하지 않는다.
+
+이 Candidate는 schema/export/registry 선행조건 구현만 뜻한다. 책임 리뷰 승인 전에는 #159 human metric 및 pair comparison 구현 선행조건 완료로 간주하지 않으며 Runtime, HOLDOUT/SAFETY_REGRESSION, Baseline Freeze, Release 판정과 공개를 허용하지 않는다.
+
 ## 비교 원칙
 
 - Baseline과 Candidate는 같은 Dataset·Partition·Gold·Metric version을 사용한다.

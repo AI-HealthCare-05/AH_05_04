@@ -232,6 +232,44 @@ def test_schema_set_1_4_reuses_every_1_3_member_byte_for_byte() -> None:
         assert canonical_json_bytes(version_1_4[path]) == canonical_json_bytes(document)
 
 
+def test_schema_set_1_5_adds_only_answer_quality_members() -> None:
+    registry_v1_4 = SCHEMA_REGISTRIES["1.4.0"]
+    registry_v1_5 = SCHEMA_REGISTRIES["1.5.0"]
+    entries_v1_4 = {entry.relative_path: entry for entry in registry_v1_4}
+    entries_v1_5 = {entry.relative_path: entry for entry in registry_v1_5}
+    new_members = {
+        "artifacts/rag-eval.answer-human-judgment.schema.json": (
+            "rag-eval.answer-human-judgment",
+            "1.0.0",
+        ),
+        "artifacts/rag-eval.answer-human-judgment-approval.schema.json": (
+            "rag-eval.answer-human-judgment-approval",
+            "1.0.0",
+        ),
+        "artifacts/rag-eval.answer-comparison-set-manifest.schema.json": (
+            "rag-eval.answer-comparison-set-manifest",
+            "1.0.0",
+        ),
+    }
+
+    assert len(registry_v1_5) == len(entries_v1_5) == 26
+    assert len({entry.schema_id for entry in registry_v1_5}) == 26
+    assert set(entries_v1_5) == set(entries_v1_4) | set(new_members)
+    assert {
+        path: (entry.schema_id, entry.member_version) for path, entry in entries_v1_5.items() if path in new_members
+    } == new_members
+    for path in entries_v1_4:
+        assert entries_v1_5[path] == entries_v1_4[path]
+
+
+def test_schema_set_1_5_reuses_every_1_4_member_byte_for_byte() -> None:
+    version_1_4 = schema_documents("1.4.0")
+    version_1_5 = schema_documents("1.5.0")
+
+    for path, document in version_1_4.items():
+        assert canonical_json_bytes(version_1_5[path]) == canonical_json_bytes(document)
+
+
 def test_schema_set_1_4_exports_observation_state_conditions() -> None:
     document = cast(
         dict[str, Any],
@@ -1031,6 +1069,14 @@ def test_committed_schema_set_1_4_matches_fresh_canonical_export_byte_for_byte(t
     assert _files(tmp_path) == _files(committed_root)
 
 
+def test_committed_schema_set_1_5_matches_fresh_canonical_export_byte_for_byte(tmp_path: Path) -> None:
+    write_schema_documents(tmp_path, "1.5.0")
+
+    committed_root = Path("evals/schemas/1.5.0")
+    assert len(_files(tmp_path)) == 26
+    assert _files(tmp_path) == _files(committed_root)
+
+
 @pytest.mark.parametrize(
     ("relative_path", "pattern"),
     [
@@ -1111,3 +1157,27 @@ def test_documented_schema_set_1_4_hash_matches_committed_schema_set(
 
     assert documented is not None
     assert documented.group("hash") == _schema_set_hash(_SnapshotReader(EVALS_ROOT), "1.4.0")
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "pattern"),
+    [
+        (
+            "docs/contracts/targets/post-mvp-1/rag-evaluation-v1.md",
+            r"rag-eval\.schema-set@1\.5\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
+        ),
+        (
+            "evals/README.md",
+            r"rag-eval\.schema-set@1\.5\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
+        ),
+    ],
+)
+def test_documented_schema_set_1_5_hash_matches_committed_schema_set(
+    relative_path: str,
+    pattern: str,
+) -> None:
+    path = REPOSITORY_ROOT / relative_path
+    documented = re.search(pattern, path.read_text(encoding="utf-8")) if path.exists() else None
+
+    assert documented is not None
+    assert documented.group("hash") == _schema_set_hash(_SnapshotReader(EVALS_ROOT), "1.5.0")
