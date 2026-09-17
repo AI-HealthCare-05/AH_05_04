@@ -25,6 +25,10 @@ from uuid import UUID, uuid4, uuid5
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from ai_worker.adapters.openai_text_embedding import (
+    OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
+    OpenAITextEmbeddingAdapter,
+)
 from ai_worker.adapters.sqlalchemy_evaluation_bootstrap_repository import (
     SqlAlchemyEvaluationBootstrapRepository,
 )
@@ -325,7 +329,12 @@ async def _preflight_stage2_source_snapshot(
     return UUID(str(member_row["id"]))
 
 
-async def _compute_stage2_embedding(embedding_port: Any, statement: str) -> tuple[float, ...]:
+async def _compute_stage2_embedding(
+    embedding_port: Any,
+    statement: str,
+    *,
+    expected_embedding_adapter_ref: ImmutableArtifactRef | None = None,
+) -> tuple[float, ...]:
     if hasattr(embedding_port, "embed"):
         emb_res = await embedding_port.embed(
             SensitiveText(statement),
@@ -337,6 +346,14 @@ async def _compute_stage2_embedding(embedding_port: Any, statement: str) -> tupl
             raise EvaluationValidationError(
                 EvaluationErrorCode.INTERNAL_ERROR,
                 safe_path="embedding_computation",
+            )
+        if (
+            expected_embedding_adapter_ref is not None
+            and getattr(emb_res, "adapter_artifact_ref", None) != expected_embedding_adapter_ref
+        ):
+            raise EvaluationValidationError(
+                EvaluationErrorCode.INTERNAL_ERROR,
+                safe_path="embedding_adapter_artifact_identity",
             )
         raw_vec = emb_res.embedding
     elif hasattr(embedding_port, "embed_text"):
@@ -360,11 +377,22 @@ async def bootstrap_ret_h_smoke_stage2_knowledge_index(
     embedding_port: Any,
     fixture: SmokeSyntheticFixtureInput,
     stage1_snapshot_id: UUID,
+    expected_embedding_adapter_ref: ImmutableArtifactRef | None = None,
 ) -> Stage2IndexReceipt:
     """Stage 2: fail-closed preflight, embedding computation, and Knowledge/Index build.
 
     Executed exclusively by KNOWLEDGE_INDEX_BUILDER.
     """
+    if (
+        expected_embedding_adapter_ref is not None
+        and hasattr(embedding_port, "_adapter_artifact_ref")
+        and embedding_port._adapter_artifact_ref != expected_embedding_adapter_ref
+    ):
+        raise EvaluationValidationError(
+            EvaluationErrorCode.INTERNAL_ERROR,
+            safe_path="embedding_adapter_artifact_identity",
+        )
+
     doc_id = uuid5(NAMESPACE_SYNTHETIC_RET_H_SMOKE, f"doc:{fixture.records[0].evidence_ref_id}")
     chunk_id = uuid5(NAMESPACE_SYNTHETIC_RET_H_SMOKE, f"chunk:{fixture.records[0].evidence_ref_id}")
 
@@ -408,7 +436,11 @@ async def bootstrap_ret_h_smoke_stage2_knowledge_index(
 
     # 2. Compute embedding (fail-closed if embedding port fails)
     statement = fixture.records[0].statement
-    vector = await _compute_stage2_embedding(embedding_port, statement)
+    vector = await _compute_stage2_embedding(
+        embedding_port,
+        statement,
+        expected_embedding_adapter_ref=expected_embedding_adapter_ref,
+    )
 
     # 3. Insert KnowledgeDocument and KnowledgeChunk
     async with session_factory() as session, session.begin():
@@ -766,8 +798,9 @@ async def _run_cli_stage1(output_receipt: Path | None = None) -> None:
 
 
 async def _run_cli_stage2(
-    embedding_adapter_sha256: str | None = None,
     output_receipt: Path | None = None,
+    *,
+    expected_embedding_adapter_ref: ImmutableArtifactRef = OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
 ) -> None:
     user = os.environ.get("KNOWLEDGE_INDEX_BUILDER_USER")
     password = os.environ.get("KNOWLEDGE_INDEX_BUILDER_PASSWORD")
@@ -780,9 +813,8 @@ async def _run_cli_stage2(
         logger.error("OPENAI_API_KEY must be set for Stage 2 index builder")
         sys.exit(1)
 
-    emb_sha = (embedding_adapter_sha256 or os.environ.get("EMBEDDING_ADAPTER_SHA256") or "").strip().lower()
-    if not emb_sha or len(emb_sha) != 64 or emb_sha == "0" * 64 or not all(c in "0123456789abcdef" for c in emb_sha):
-        logger.error("A valid 64-character lowercase hex EMBEDDING_ADAPTER_SHA256 must be provided")
+    if expected_embedding_adapter_ref != OPENAI_TEXT_EMBEDDING_ADAPTER_REF:
+        logger.error("Stage 2 requires canonical OPENAI_TEXT_EMBEDDING_ADAPTER_REF")
         sys.exit(1)
 
     url = _build_database_url_for_role(user, password)
@@ -792,12 +824,9 @@ async def _run_cli_stage2(
 
     from openai import AsyncOpenAI
 
-    from ai_worker.adapters.openai_text_embedding import OpenAITextEmbeddingAdapter
-    from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
-
     adapter = OpenAITextEmbeddingAdapter(
         client=AsyncOpenAI(api_key=api_key),
-        adapter_artifact_ref=ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", emb_sha),
+        adapter_artifact_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
     )
 
     stage1_snapshot_id = uuid5(NAMESPACE_SYNTHETIC_RET_H_SMOKE, f"snapshot:{fixture.file_sha256}")
@@ -808,6 +837,7 @@ async def _run_cli_stage2(
             embedding_port=adapter,
             fixture=fixture,
             stage1_snapshot_id=stage1_snapshot_id,
+            expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
         )
         if output_receipt is not None:
             out = Path(output_receipt).resolve()
@@ -879,11 +909,6 @@ def main(argv: list[str] | None = None) -> None:
     stage2_parser = subparsers.add_parser(
         "stage2", help="Run Stage 2 Knowledge Index bootstrap (KNOWLEDGE_INDEX_BUILDER)"
     )
-    stage2_parser.add_argument(
-        "--embedding-adapter-sha256",
-        required=False,
-        help="SHA256 hash of openai-text-embedding-adapter",
-    )
     stage2_parser.add_argument("--output-receipt", type=Path, required=False, help="Save receipt JSON to file")
 
     manifest_parser = subparsers.add_parser(
@@ -904,7 +929,6 @@ def main(argv: list[str] | None = None) -> None:
     elif args.stage == "stage2":
         asyncio.run(
             _run_cli_stage2(
-                embedding_adapter_sha256=getattr(args, "embedding_adapter_sha256", None),
                 output_receipt=getattr(args, "output_receipt", None),
             )
         )
