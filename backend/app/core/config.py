@@ -151,22 +151,21 @@ class Config(BaseSettings):
     SMTP_TIMEOUT_SECONDS: float = 10.0
 
     # idempotency-v1.md: 원문 Idempotency-Key는 저장하지 않고 versioned HMAC만 저장합니다.
-    # 실제 key rotation 절차·물리 secret 관리는 Privacy·보안 승인 후 별도로 확정합니다(문서 "단일 테이블과
-    # 저장 필드" 참고) — 지금은 단일 active version만 지원합니다.
+    # key rotation은 IDEMPOTENCY_HMAC_RETIRED_KEYS에 직전 key를 version과 함께 보존해
+    # TTL 안의 retry가 기존 레코드를 찾을 수 있게 합니다. 물리 secret 관리는 배포 Secret으로만 처리합니다.
     # 기본값은 프로세스마다 값이 달라지면 안 됩니다 — 서버 재시작이나 여러 Backend 인스턴스가 같은
     # Idempotency-Key를 서로 다른 HMAC으로 계산하면 기존 레코드를 찾지 못해 중복 Job·Outbox가 생깁니다.
     # 그래서 uuid4() 같은 프로세스별 난수 대신 안정적인 placeholder 문자열을 쓰고, production 기동은
     # 아래 validator가 이 placeholder·빈 값으로 시작하지 못하게 막습니다.
     #
-    # 운영 주의: 이 키를 교체하면 같은 원문 Idempotency-Key라도 새 digest가 계산되어, 교체 이전
-    # 레코드에 대한 재시도가 중복으로 인식되지 못하고 새 Job·Outbox가 생길 수 있습니다(현재는
-    # active key 하나로만 조회하며 key_hmac_version별 조회는 지원하지 않음). "rotation 주기를
-    # 보존기간보다 길게 제한"하는 것만으로는 안전하지 않습니다 — 교체 직전에 생성된 레코드는
-    # 교체 이후에도 최대 IDEMPOTENCY_RECORD_TTL_DAYS만큼 남아 있어, 그 기간 안에 같은 요청이
-    # 새 키로 재시도되면 기존 레코드를 찾지 못합니다. 그래서 #235(retained key 전체 조회 구현)
-    # 전까지는 이 키를 절대 교체하지 않습니다.
+    # 운영 주의: 이 키를 교체할 때는 직전 key를 IDEMPOTENCY_HMAC_RETIRED_KEYS에
+    # IDEMPOTENCY_RECORD_TTL_DAYS 이상 유지해야 합니다. 새 쓰기는 active key만 사용하고,
+    # 조회는 active+retained 후보 전체로 기존 미만료 레코드를 찾습니다.
     IDEMPOTENCY_HMAC_KEY: str = "not-configured-idempotency-hmac-key"
     IDEMPOTENCY_HMAC_KEY_VERSION: str = "v1"
+    # key_hmac_version -> previous HMAC key. New writes always use the active key;
+    # retained keys only let requests retry records still inside IDEMPOTENCY_RECORD_TTL_DAYS.
+    IDEMPOTENCY_HMAC_RETIRED_KEYS: dict[str, str] = {}
     IDEMPOTENCY_RECORD_TTL_DAYS: int = 7
 
     # idempotency-v1.md: SYNC_MUTATION의 response_body_snapshot은 암호화한 BYTEA로 저장합니다.
@@ -216,6 +215,25 @@ class Config(BaseSettings):
         # 정규화합니다. 앞뒤 공백만 다른 값이 인스턴스마다 주입되면(K8s secret, YAML
         # quoting 차이 등) 검증은 통과해도 실제 digest가 달라져 기존 레코드를 못 찾습니다.
         return value.strip()
+
+    @field_validator("IDEMPOTENCY_HMAC_KEY_VERSION", mode="after")
+    @classmethod
+    def _strip_idempotency_hmac_key_version(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("IDEMPOTENCY_HMAC_RETIRED_KEYS", mode="before")
+    @classmethod
+    def _normalize_idempotency_hmac_retired_keys(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+
+        normalized: dict[str, str] = {}
+        for raw_version, raw_key in value.items():
+            version = str(raw_version).strip()
+            if version in normalized:
+                raise ValueError("IDEMPOTENCY_HMAC_RETIRED_KEYS must not contain duplicate versions after trimming")
+            normalized[version] = str(raw_key).strip()
+        return normalized
 
     # app/services/guide_ai 및 chat_ai 연동용 OpenAI 설정.
     # CI의 test 잡 env에는 OPENAI_API_KEY가 없어서 필수값(DB_*처럼)으로 두면 전체 테스트가 깨집니다.
@@ -344,18 +362,51 @@ class Config(BaseSettings):
 
     @model_validator(mode="after")
     def validate_idempotency_hmac_key_configured(self) -> "Config":
-        if self.ENV is not Env.LOCAL:
-            key = self.IDEMPOTENCY_HMAC_KEY
-            if not key:
-                raise ValueError("IDEMPOTENCY_HMAC_KEY must not be empty outside local environment")
-            if key in _IDEMPOTENCY_HMAC_KEY_PLACEHOLDERS:
-                raise ValueError("IDEMPOTENCY_HMAC_KEY must be set to a real secret outside local environment")
-            if len(key) < _IDEMPOTENCY_HMAC_KEY_MIN_LENGTH:
-                raise ValueError(
-                    f"IDEMPOTENCY_HMAC_KEY must be at least {_IDEMPOTENCY_HMAC_KEY_MIN_LENGTH} "
-                    "characters outside local environment"
-                )
+        self._validate_idempotency_hmac_version(
+            "IDEMPOTENCY_HMAC_KEY_VERSION",
+            self.IDEMPOTENCY_HMAC_KEY_VERSION,
+        )
+        if self.IDEMPOTENCY_HMAC_KEY_VERSION in self.IDEMPOTENCY_HMAC_RETIRED_KEYS:
+            raise ValueError("IDEMPOTENCY_HMAC_KEY_VERSION must not also appear in IDEMPOTENCY_HMAC_RETIRED_KEYS")
+
+        retired_values = tuple(self.IDEMPOTENCY_HMAC_RETIRED_KEYS.values())
+        if self.IDEMPOTENCY_HMAC_KEY in retired_values:
+            raise ValueError("IDEMPOTENCY_HMAC_KEY must not also appear in IDEMPOTENCY_HMAC_RETIRED_KEYS")
+        if len(set(retired_values)) != len(retired_values):
+            raise ValueError("IDEMPOTENCY_HMAC_RETIRED_KEYS must not contain duplicate key values")
+
+        for version, retired_key in self.IDEMPOTENCY_HMAC_RETIRED_KEYS.items():
+            self._validate_idempotency_hmac_version("IDEMPOTENCY_HMAC_RETIRED_KEYS version", version)
+            self._validate_idempotency_hmac_key_value(
+                "IDEMPOTENCY_HMAC_RETIRED_KEYS",
+                retired_key,
+                require_real=self.ENV is not Env.LOCAL,
+            )
+
+        self._validate_idempotency_hmac_key_value(
+            "IDEMPOTENCY_HMAC_KEY",
+            self.IDEMPOTENCY_HMAC_KEY,
+            require_real=self.ENV is not Env.LOCAL,
+        )
         return self
+
+    @staticmethod
+    def _validate_idempotency_hmac_version(field_name: str, value: str) -> None:
+        if not value:
+            raise ValueError(f"{field_name} must not be empty")
+        if len(value) > 20:
+            raise ValueError(f"{field_name} must be at most 20 characters")
+
+    @staticmethod
+    def _validate_idempotency_hmac_key_value(field_name: str, value: str, *, require_real: bool) -> None:
+        if not value:
+            raise ValueError(f"{field_name} must not be empty")
+        if require_real and value in _IDEMPOTENCY_HMAC_KEY_PLACEHOLDERS:
+            raise ValueError(f"{field_name} must be set to a real secret outside local environment")
+        if require_real and len(value) < _IDEMPOTENCY_HMAC_KEY_MIN_LENGTH:
+            raise ValueError(
+                f"{field_name} must be at least {_IDEMPOTENCY_HMAC_KEY_MIN_LENGTH} characters outside local environment"
+            )
 
     @model_validator(mode="after")
     def validate_idempotency_snapshot_encryption_key_configured(self) -> "Config":

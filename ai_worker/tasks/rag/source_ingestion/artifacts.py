@@ -17,6 +17,14 @@ class IngestionArtifactKind(StrEnum):
     REJECTS = "REJECTS"
 
 
+class RawArtifactIntegrityError(ValueError):
+    """원본 Artifact의 바이트 크기 또는 SHA-256 무결성 검증 실패."""
+
+
+class RawArtifactUnavailableError(ValueError):
+    """원본 Artifact 파일 읽기/접근 실패."""
+
+
 @dataclass(frozen=True, slots=True)
 class RawArtifactMetadata:
     artifact_key: str
@@ -185,19 +193,19 @@ def _read_verified_raw_artifact(
                 bytes_read += len(chunk)
 
                 if bytes_read > metadata.byte_size:
-                    raise ValueError("Raw artifact byte size mismatch.")
+                    raise RawArtifactIntegrityError("Raw artifact byte size mismatch.")
 
                 digest.update(chunk)
                 if retain_content:
                     chunks.append(chunk)
     except OSError:
         # 예외 메시지에 파일 경로나 원문을 포함하지 않습니다.
-        raise ValueError("Raw artifact could not be read.") from None
+        raise RawArtifactUnavailableError("Raw artifact could not be read.") from None
 
     if bytes_read != metadata.byte_size:
-        raise ValueError("Raw artifact byte size mismatch.")
+        raise RawArtifactIntegrityError("Raw artifact byte size mismatch.")
 
     if digest.hexdigest() != metadata.raw_checksum:
-        raise ValueError("Raw artifact checksum mismatch.")
+        raise RawArtifactIntegrityError("Raw artifact checksum mismatch.")
 
     return b"".join(chunks)

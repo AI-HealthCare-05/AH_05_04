@@ -3,15 +3,15 @@
   "format_version": "1.0.0",
   "issue": "#315",
   "decision_id": "PD-315-20260908",
-  "decision_status": "RESPONSIBLE_APPROVAL_EVENT_RECORDED_CONDITION_UNRESOLVED",
+  "decision_status": "APPROVED",
   "approval_recorded": true,
   "contract_status": "REPOSITORY_LOCAL_NON_RUNTIME_PROJECTION",
   "contract_status_directory": "docs/contracts/targets/post-mvp-1",
-  "purpose": "DECISION_APPROVAL_PROVENANCE_AND_UNRESOLVED_CONDITION",
-  "purpose_note": "PR #361 최종 HEAD d8ad7407에 결속된 지정 책임 리뷰어의 APPROVED review event를 historical evidence로 기록한다. 그 승인 본문이 명시한 최신 HEAD specialist 확인 조건은 해소되지 않았으므로, 이 파일은 event의 실재를 원 승인 조건의 충족으로 투영하지 않는다. #662에서 저장소 문서 상태를 immutable GitHub evidence와 정합할 때 수집했으며 새 승인 event를 만들지 않는다.",
+  "purpose": "DECISION_APPROVAL_EVIDENCE",
+  "purpose_note": "PR #361 최종 HEAD d8ad7407에 결속된 지정 책임 리뷰어의 APPROVED review event(review 5142835401)와 Issue #680 comment 5706811648을 통한 지정 책임 리뷰어의 명시적 재판정(Path B readjudication)에 의해 승인 조건이 해소되어 Approved로 전이된 근거를 기록한다. 병합 당시 조건 미충족 사실(original_approval_condition.met_at_merge=false) 및 historical DISMISSED specialist reviews는 그대로 보존한다.",
   "collected_in": {
-    "issue": "#662",
-    "note": "승인 상태 및 stale reference 정합 작업. 과거 evidence를 변경하지 않고 저장소 문서 표현만 정합한다."
+    "issue": "#680",
+    "note": "PD-315 승인 조건 해소 및 Runtime 소비 전제 확정 작업. 지정 책임 리뷰어의 Path B 명시적 재판정을 수집해 승인 상태로 정합한다."
   },
   "pull_request": {
     "number": 361,
@@ -65,7 +65,7 @@
     "rule_note": "PR의 최종 승인 책임자는 정확히 1명의 responsible reviewer다. specialist·domain 리뷰 의견은 필요한 evidence로 첨부하며 추가 필수 PR 리뷰어로 지정하지 않는다.",
     "final_approval_owner": "hazelnutflavoured",
     "approved_review_events_on_pull_request": 1,
-    "note": "PR #361 전체 review event 중 state=APPROVED인 것은 review 5142835401 단 1건이며, 그 commit_id가 최종 HEAD와 같다. 다만 그 승인 본문이 명시한 최신 HEAD specialist 확인 조건은 해소되지 않았다 — original_approval_condition 참조."
+    "note": "PR #361 전체 review event 중 state=APPROVED인 것은 review 5142835401 단 1건이며, 그 commit_id가 최종 HEAD와 같다. 승인 본문이 명시한 최신 HEAD specialist 확인 조건은 Issue #680 comment 5706811648의 Path B 명시적 재판정으로 현재 시점에서 해제되었다."
   },
   "head_freshness_check": {
     "approvals_target_head": true,
@@ -203,13 +203,13 @@
     "current_contract": false,
     "production_enabled": false,
     "public": false,
-    "note": "이 Decision은 현재 Approved가 아니다. 조건이 해소되어 Approved로 전이하더라도 Approved Decision은 Implemented·Current Contract·Production Enabled·Public 중 어느 것도 의미하지 않는다."
+    "note": "이 Decision의 승인은 Implemented·Current Contract·Production Enabled·Public 중 어느 것도 의미하지 않는다. PUBLIC_TRACK_F=false를 유지하며 외부 승인 게이트는 별도로 충족되어야 한다."
   },
   "remaining_blockers": [
     {
       "item": "PD_315_ORIGINAL_APPROVAL_CONDITION",
-      "status": "NOT_RESOLVED",
-      "note": "review 5142835401 본문이 요구한 최신 HEAD Source·DB specialist 확인이 없다. current_approval_condition.resolution_paths 참조."
+      "status": "RESOLVED",
+      "note": "PR #361 병합 당시 미충족(met_at_merge=false)이었던 original condition은 Issue #680 comment 5706811648에서 지정 책임 리뷰어(@hazelnutflavoured)의 명시적 재판정(Path B readjudication, 2026-09-17T01:00:49Z)에 의해 현재 시점에서 해제되어 RESOLVED로 정합되었다. 병합 당시 미충족 사실은 그대로 보존된다."
     },
     {
       "item": "ISSUE_174_AUTHENTICATED_ASSEMBLER",
@@ -242,19 +242,32 @@
     "note": "PR #361은 이 조건이 요구한 최신 HEAD specialist 확인 없이 2026-09-08T14:29:16Z에 병합됐다. 이 파일은 그 사실을 철회하거나 사후 서명으로 대체하지 않는다."
   },
   "governance_readjudication": {
-    "status": "NOT_RECORDED",
+    "status": "RECORDED",
     "responsible_reviewer": "hazelnutflavoured",
-    "effective_at": null,
-    "evidence_url": null,
-    "decision": null,
-    "note": "현행 governance(CONTRIBUTING.md, AGENTS.md)는 최종 승인 책임자를 단일 responsible reviewer로 두지만, 그 사실만으로 original_approval_condition이 당시 충족됐다는 결론을 만들 수 없다. 조건 조정에는 지정 책임 리뷰어의 명시적 재판정과 적용 시점 기록이 필요하며, 작성 시점에 해당 기록이 없다."
+    "effective_at": "2026-09-17T01:00:49.000000Z",
+    "evidence_url": "https://github.com/AI-HealthCare-05/AH_05_04/issues/680#issuecomment-5706811648",
+    "comment_id": 5706811648,
+    "comment_node_id": "IC_kwDOT3EWNs8AAAABVCcJAA",
+    "target_commit_sha": "d8ad7407105138873b6c9299303b0f056a223527",
+    "resolution_path": "PATH_B_RESPONSIBLE_REVIEWER_EXPLICIT_READJUDICATION",
+    "decision": "original specialist final-head reconfirmation condition released; current approval condition RESOLVED",
+    "note": "지정 책임 리뷰어(@hazelnutflavoured)가 Issue #680 comment 5706811648을 통해 PR #361 final HEAD d8ad7407에 대한 Source·DB specialist 2인의 historical final-head 재확인 조건을 현재 시점에서 해제하고 current approval condition을 RESOLVED로 명시적 재판정했다. PR #361 병합 당시 미충족 사실(original_approval_condition.met_at_merge=false) 및 기존 DISMISSED specialist review는 그대로 보존하며, #178/#180은 effective_at 시점부터 PD-315을 approved governance premise로 소비할 수 있다."
   },
   "current_approval_condition": {
-    "met": false,
-    "basis": "NONE_RECORDED",
+    "met": true,
+    "basis": "RESPONSIBLE_REVIEWER_EXPLICIT_READJUDICATION",
+    "resolution_path_used": "PATH_B_RESPONSIBLE_REVIEWER_EXPLICIT_READJUDICATION",
+    "readjudication_evidence": {
+      "issue": "#680",
+      "comment_id": 5706811648,
+      "comment_node_id": "IC_kwDOT3EWNs8AAAABVCcJAA",
+      "actor_id": "hazelnutflavoured",
+      "effective_at": "2026-09-17T01:00:49.000000Z",
+      "comment_url": "https://github.com/AI-HealthCare-05/AH_05_04/issues/680#issuecomment-5706811648"
+    },
     "resolution_paths": [
-      "최종 HEAD d8ad7407를 대상으로 한 specialist 확인 근거 기록",
-      "지정 책임 리뷰어가 original_approval_condition을 현행 단일 책임 리뷰 체계에 맞춰 조정한다는 명시적 재판정과 적용 시점 기록"
+      "최종 HEAD d8ad7407를 대상으로 한 specialist 확인 근거 기록 (미사용)",
+      "지정 책임 리뷰어가 original_approval_condition을 현행 단일 책임 리뷰 체계에 맞춰 조정한다는 명시적 재판정과 적용 시점 기록 (Path B 사용 — Issue #680 comment 5706811648)"
     ]
   },
   "open_findings": [
@@ -275,6 +288,24 @@
       "finding": "MUST FIX — 승인 이벤트와 원 승인 조건 충족을 구분해 기록할 것.",
       "status": "APPLIED",
       "applied_note": "이 파일에서 approval_condition_met를 제거하고 original_approval_condition / governance_readjudication / current_approval_condition로 분리했다. Decision 문서의 상태도 '승인 조건 미해소'로 정합했다."
+    },
+    {
+      "evidence_id": "github-issue-680-comment-5706811648",
+      "comment_id": 5706811648,
+      "comment_node_id": "IC_kwDOT3EWNs8AAAABVCcJAA",
+      "comment_url": "https://github.com/AI-HealthCare-05/AH_05_04/issues/680#issuecomment-5706811648",
+      "created_at": "2026-09-17T01:00:49.000000Z",
+      "actor": {
+        "actor_id": "hazelnutflavoured",
+        "namespace": "GITHUB_LOGIN",
+        "role": "RESPONSIBLE_REVIEWER_ISSUE_680"
+      },
+      "issue": 680,
+      "reviewed_head_commit_sha": "d8ad7407105138873b6c9299303b0f056a223527",
+      "verdict": "READJUDICATION_RELEASED",
+      "finding": "Path B 명시적 재판정 — PR #361 final HEAD d8ad7407에 대한 Source·DB specialist 2인의 historical final-head 재확인 조건을 해제하고 current approval condition을 RESOLVED로 판정.",
+      "status": "APPLIED",
+      "applied_note": "governance_readjudication을 RECORDED로 갱신하고 current_approval_condition.met=true로 전이했다. Decision 문서 상태도 Approved로 정합했다."
     }
   ],
   "approval_events_note": "approval_events는 GitHub에 실재하는 책임 리뷰 APPROVED event의 historical evidence다. 이 배열의 존재가 original_approval_condition의 충족을 의미하지 않는다. 조건 충족 여부는 current_approval_condition이 소유한다."

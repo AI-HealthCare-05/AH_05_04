@@ -3,12 +3,12 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-315-20260908` |
-| 상태 | **승인 조건 미해소 (Condition unresolved)** — PR #361 최종 HEAD에서 책임 리뷰 `APPROVED` event는 확보했으나 그 승인 본문이 요구한 specialist 최신 HEAD 확인이 없어 원 승인 조건의 해소가 기록되지 않았다. 「승인 절차 provenance와 미해소 조건」 참조 |
+| 상태 | **Approved (2026-09-17)** — PR #361 최종 HEAD 책임 리뷰 `APPROVED` event(`review 5142835401`) 및 Issue #680 comment 5706811648 지정 책임 리뷰어(`@hazelnutflavoured`) 명시적 재판정(Path B readjudication)에 의해 승인 조건 해소. 「승인 절차 provenance와 조건 해소」 참조 |
 | 제안일 | 2026-09-08 |
 | 제안·구현 | 정현우 (`@ceohwj`) — AI/RAG |
 | 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — Evidence 계약·Safety 경계. 현행 governance상 이 Decision의 최종 승인 책임자 |
 | Specialist evidence | 송은영 (`@phina-io`) — DB·hash domain / 김지혜 (`@Jye-rookie`) — Source provenance. 추가 필수 PR 리뷰어가 아니며 PR #361 timeline에 historical evidence로 보존한다 |
-| 추적 Issue·PR | [#315](https://github.com/AI-HealthCare-05/AH_05_04/issues/315) (CLOSED 2026-09-08) · [PR #361](https://github.com/AI-HealthCare-05/AH_05_04/pull/361) (merge `6dff8887`) · 상태 정합 [#662](https://github.com/AI-HealthCare-05/AH_05_04/issues/662) · [PR #666](https://github.com/AI-HealthCare-05/AH_05_04/pull/666) |
+| 추적 Issue·PR | [#315](https://github.com/AI-HealthCare-05/AH_05_04/issues/315) (CLOSED 2026-09-08) · [PR #361](https://github.com/AI-HealthCare-05/AH_05_04/pull/361) (merge `6dff8887`) · 상태 정합 [#662](https://github.com/AI-HealthCare-05/AH_05_04/issues/662) · [PR #666](https://github.com/AI-HealthCare-05/AH_05_04/pull/666) · 조건 해소 [#680](https://github.com/AI-HealthCare-05/AH_05_04/issues/680) |
 | Evidence | [`docs/validation/rag/issue-315/decision-approval-evidence.json`](../../validation/rag/issue-315/decision-approval-evidence.json) |
 | 상위 결정 | [`PD-125-20260831`](./2026-08-31-rag-p0-contract-freeze.md) |
 
@@ -207,10 +207,11 @@ Evidence Gate·Composer 구현, Evaluation 실행 또는 공개 flag 변경을 �
 유지한다. #166 D-05가 소유하는 Candidate Catalog projection hash와 Runtime medication Catalog manifest hash,
 PR #329/#167 v2 Catalog envelope 계산식은 이 Decision이 변경하지 않는다.
 
-## 승인 절차 provenance와 미해소 조건
+## 승인 절차 provenance와 조건 해소
 
-이 절은 세 가지를 분리해서 기록한다. (1) PR #361에 실재하는 책임 리뷰 `APPROVED` event, (2) 그 승인 본문이
-명시한 조건, (3) 그 조건의 해소 여부. **event의 실재를 조건 충족으로 투영하지 않는다.**
+이 절은 네 가지를 분리해서 기록한다. (1) PR #361에 실재하는 책임 리뷰 `APPROVED` event, (2) 그 승인 본문이
+명시한 조건, (3) 병합 당시 조건 미충족 사실과 specialist review 보존, (4) Issue #680의 Path B 명시적 재판정에 의한 조건 해소.
+**event의 실재를 당시 조건 충족으로 소급 투영하지 않으며, 현재 시점의 재판정 근거에 의해서만 조건이 해소되었다.**
 
 구조화 사본은
 [`docs/validation/rag/issue-315/decision-approval-evidence.json`](../../validation/rag/issue-315/decision-approval-evidence.json)에 있다.
@@ -231,7 +232,7 @@ PR #329/#167 v2 Catalog envelope 계산식은 이 Decision이 변경하지 않�
 
 PR #361 전체에서 state가 `APPROVED`인 review event는 위 1건이며, 그 `commit_id`가 최종 HEAD와 같다. 이
 event의 실재·시각·commit·문서 hash는 GitHub 기록과 일치한다. 이것은 **event가 있었다는 historical
-evidence이며, 아래 조건이 충족됐다는 근거가 아니다.**
+evidence이며, 아래 조건이 당시 충족됐다는 근거가 아니다.**
 
 ### 2. 승인 본문이 명시한 조건 (원문 보존)
 
@@ -242,7 +243,7 @@ review 5142835401 본문 말미는 다음 조건을 명시한다.
 
 즉 책임 리뷰어 본인이 자신의 `APPROVED`를 최신 HEAD specialist 확인의 대체물이 아니라고 적었다.
 
-### 3. 조건 해소 여부 — 미해소
+### 3. 병합 당시 조건 미충족 사실 보존
 
 specialist 검토는 PR #361 timeline에 historical evidence로 보존한다. 두 리뷰어는 중간 commit에서 승인 의사를
 담은 review를 제출했으나, 그 event는 이후 push로 stale dismiss되어 현재 GitHub state가 `DISMISSED`이고 최종
@@ -258,23 +259,25 @@ HEAD `d8ad7407`에 대한 재승인 event는 없다. 이 문서는 해당 review
 세 dismissal 모두 `dismissal_message`가 없고 계기는 작성자의 후속 push다. 철회 의사 표시나 반대 의견 제출은
 기록되어 있지 않다.
 
-따라서 **2026-09-08 merge 시점에 §2의 조건이 충족됐다고 소급 판단하지 않는다.** PR #361은 §2가 요구한 최신
-HEAD specialist 확인 없이 병합됐으며, 이 문서는 그 사실을 철회하거나 사후 서명으로 대체하지 않는다.
+따라서 **2026-09-08 merge 시점에 §2의 조건이 충족됐다고 소급 판단하지 않는다 (`original_approval_condition.met_at_merge = false`).**
+PR #361은 §2가 요구한 최신 HEAD specialist 확인 없이 병합됐으며, 이 문서는 그 사실을 철회하거나 사후 서명으로 대체하지 않는다.
 
-### 4. 조건 해소 경로
+### 4. 조건 해소 — Path B 책임 리뷰어 명시적 재판정
 
 현행 저장소 governance(`CONTRIBUTING.md`, `AGENTS.md`)는 PR의 최종 승인 책임자를 정확히 1명의 responsible
 reviewer로 두고, specialist·domain 리뷰 의견은 필요한 evidence로 첨부하며 추가 필수 PR 리뷰어로 지정하지
-않는다. 그러나 현행 governance의 존재만으로 §2의 조건이 당시 충족됐다는 결론을 만들 수는 없다.
+않는다. 그러나 governance 변경 사실만으로 과거 조건이 자동 해소되지는 않는다.
 
-이 Decision을 `Approved`로 전이하려면 다음 중 하나의 근거가 기록되어야 한다.
+2026-09-17, 지정 책임 리뷰어 권가빈(`@hazelnutflavoured`)은 [Issue #680 comment 5706811648](https://github.com/AI-HealthCare-05/AH_05_04/issues/680#issuecomment-5706811648)을
+통해 다음 사항을 명시적으로 재판정했다:
 
-1. 최종 HEAD `d8ad7407`를 대상으로 한 specialist 확인 근거, 또는
-2. 지정 책임 리뷰어가 §2 조건을 현행 단일 책임 리뷰 체계에 맞춰 조정한다는 **명시적 재판정과 그 적용 시점**.
+1. PR #361 final HEAD `d8ad7407105138873b6c9299303b0f056a223527`에 대한 기존 Source·DB specialist 2인의 historical final HEAD 재확인 조건을 현재 시점에서 해제한다. 해당 재확인 없이 진행하는 것을 승인한다. 이는 governance 변경에 따른 자동 해소가 아니라 명시적 재판정이다.
+2. merge 당시 조건 미충족 사실과 `original_approval_condition.met_at_merge=false`는 그대로 보존하며, 소급 충족으로 처리하지 않는다. 기존 specialist의 `DISMISSED` review 역시 그대로 보존한다.
+3. PD-315의 현재 approval condition은 **`RESOLVED`**로 판정한다.
+4. `effective_at`은 코멘트 작성 시각인 **`2026-09-17T01:00:49Z`**이다.
+5. #178 / #180은 위 시점부터 PD-315을 **승인된 governance 전제(approved governance premise)**로 소비할 수 있다.
 
-작성 시점에 두 근거 모두 기록되어 있지 않다. 이 미해소 조건은 [PR #666](https://github.com/AI-HealthCare-05/AH_05_04/pull/666)의
-책임 리뷰어 blocking finding([comment 5698513038](https://github.com/AI-HealthCare-05/AH_05_04/pull/666#issuecomment-5698513038),
-`2026-09-16T13:45:38Z`)으로 제기됐고, 이 문서는 그 지적에 따라 조건 미해소를 명시적으로 기록한다.
+이에 따라 본 Decision의 승인 조건은 **해소(RESOLVED)**되었으며, Decision 상태는 **`Approved`**로 전이한다.
 
 ## 후속 구현 조건
 

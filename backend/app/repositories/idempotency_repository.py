@@ -1,11 +1,13 @@
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
+from app.core.utils.idempotency import IdempotencyHmacDigest
 from app.models.async_jobs import IdempotencyRecord, IdempotencyRecordType
 from app.repositories.async_job_repository import (
     POSTGRES_UNIQUE_VIOLATION_SQLSTATE,
@@ -43,15 +45,18 @@ class IdempotencyRepository:
         user_id: UUID,
         operation_id: str,
         parent_resource_id: UUID,
-        key_hmac: str,
+        key_hmac_candidates: Sequence[IdempotencyHmacDigest],
     ) -> IdempotencyRecord | None:
+        if not key_hmac_candidates:
+            return None
+        candidate_pairs = [(candidate.key_hmac_version, candidate.key_hmac) for candidate in key_hmac_candidates]
         result = await self.session.execute(
             select(IdempotencyRecord).where(
                 IdempotencyRecord.record_type == IdempotencyRecordType.SYNC_MUTATION,
                 IdempotencyRecord.user_id == user_id,
                 IdempotencyRecord.operation_id == operation_id,
                 IdempotencyRecord.parent_resource_id == parent_resource_id,
-                IdempotencyRecord.key_hmac == key_hmac,
+                tuple_(IdempotencyRecord.key_hmac_version, IdempotencyRecord.key_hmac).in_(candidate_pairs),
             )
         )
         return result.scalars().first()
@@ -76,6 +81,7 @@ class IdempotencyRepository:
         user_id: UUID,
         operation_id: str,
         parent_resource_id: UUID,
+        key_hmac_version: str,
         key_hmac: str,
         request_hash: str,
         response_status: int,
@@ -86,7 +92,7 @@ class IdempotencyRepository:
         record = IdempotencyRecord(
             user_id=user_id,
             operation_id=operation_id,
-            key_hmac_version=config.IDEMPOTENCY_HMAC_KEY_VERSION,
+            key_hmac_version=key_hmac_version,
             key_hmac=key_hmac,
             request_hash=request_hash,
             record_type=IdempotencyRecordType.SYNC_MUTATION,
