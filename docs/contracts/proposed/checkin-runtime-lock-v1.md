@@ -35,6 +35,6 @@ UNCONFIRMED 정정과 최초 기록, API 경로·요청/응답·오류 의미는
 ## Migration·검증
 
 Migration `668a1b2c3d4e`는 `633a1b2c3d4e` 이후 forward 적용한다. 기존 데이터는 삭제/재작성하지 않는다.
-Migration 후 role provisioning, 이후 앱 기동 순서를 따른다. Downgrade는 거부한다.
+Migration 후 role provisioning, 이후 앱 기동 순서를 따른다. Downgrade는 항상 0인 marker와 해당 CHECK만 제거하며 업무 이력은 보존한다. 운영 복구는 reviewed forward-fix를 사용한다.
 [실제 PostgreSQL 검증](../../validation/track-b/issue-668-checkin-runtime-lock.md)을 통해 합성 데이터만으로 확인한다.
 Current 승격은 구현·migration·테스트·지정 리뷰 승인 증빙이 갖춰진 구현 PR에서만 수행한다.

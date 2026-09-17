@@ -236,4 +236,4 @@ PR #639의 두 계약은 구현 PR 내 이동이며 #629 병합·최종 책임 �
 
 ### Check-in 정정 Runtime 권한 보완 (#668)
 
-- [잠금 권한 v1 — Proposed](proposed/checkin-runtime-lock-v1.md): Safety·Barrier 잠금 전용 컬럼과 Runtime 최소 권한, 기존 Track B 정정·Track C 무효화 보존. API/DTO·공개 gate 변경 없음.
+- [잠금 권한 v1 — Proposed](proposed/checkin-runtime-lock-v1.md): Safety·Barrier 잠금 전용 컬럼과 Runtime 최소 권한, 기존 Track B 정정·Track C 무효화 보존. Downgrade는 고정 marker/CHECK만 제거하고 업무 이력을 보존. API/DTO·공개 gate 변경 없음.

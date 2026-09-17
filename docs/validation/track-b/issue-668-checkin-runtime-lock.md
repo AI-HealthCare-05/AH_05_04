@@ -40,3 +40,19 @@ API/DTO/UI 변경은 없으며 의료 AI 변경이 없어 evals는 적용 대상
 책임 리뷰 승인 후 정상 배포 흐름에서 migration → 역할 provisioning → 앱 기동 순서로 적용한다.
 이후 Runtime 잠금/정정과 일정·리포트 일치를 확인한다. downgrade는 사용하지 않으며 문제 시 reviewed forward-fix를 사용한다.
 Track C/F 및 Privacy Production 공개 게이트는 이번 수정으로 해제하지 않는다.
+
+## PR #674 담당 리뷰 반영 (2026-09-17)
+
+[담당 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/674#issuecomment-5706249704)의 무조건 downgrade 차단 지적을 반영했다.
+항상 0인 marker와 해당 CHECK만 역순으로 제거하며 업무 이력은 건드리지 않는다.
+새 회귀는 Safety·Barrier·Plan·Follow-up·Follow-up Audit 합성 이력을 비교하고,
+downgrade 후 컬럼/제약 제거와 재upgrade 후 marker 0·제약 복원을 확인한다.
+
+- 전용 PostgreSQL 17/pgvector에서 `tests/migration`과
+  `tests/integration/rag/test_knowledge_evidence_index_postgresql.py`: 최초 240 passed, 4 skipped, 2 setup errors.
+- setup 오류 2건은 하위 `uv run alembic`이 시스템 Python을 선택해 `asyncpg`를 찾지 못한 환경 문제였다.
+  PATH와 UV_PROJECT_ENVIRONMENT를 검증용 가상환경으로 맞춘 뒤
+  `tests/migration/test_runtime_bundle_canonical_configuration_migration.py` 전체 재실행: 5 passed.
+- 새 `test_checkin_lock_marker_downgrade_preserves_history_and_reupgrade` 단독 실행: 1 passed.
+- Ruff check/format, Mypy (774 files), 단일 migration head, DB 로직·보호 테이블 쓰기·test inventory, diff check 통과.
+- 이번 재검증은 migration/RAG 회귀 범위이며 전체 CI/coverage나 운영 적용 증거가 아니다.

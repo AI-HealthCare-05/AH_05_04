@@ -27,7 +27,7 @@ Plan에는 SELECT와 UPDATE(status, cancelled_at)만 부여한다. INSERT·DELET
 Source Writer 또는 PUBLIC으로 권한을 확장하지 않는다.
 
 기존 행은 marker 0으로 보존하며 새 forward migration을 사용한다. 과거 migration은 수정하지 않는다.
-권한 provisioning은 migration 다음에 수행한다. Downgrade는 명시적으로 거부하고 reviewed forward-fix를 사용한다.
+권한 provisioning은 migration 다음에 수행한다. 담당 리뷰어의 PR #674 지적을 반영해 downgrade는 항상 0인 marker와 해당 CHECK만 제거하고 업무 이력을 보존한다. 운영 복구는 reviewed forward-fix를 사용한다.
 일반 CHECK와 기존 Python Service/Repository만 사용하며 Trigger·RLS·DB 업무 함수는 추가하지 않는다.
 
 ## 범위 및 한계

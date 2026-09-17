@@ -16,4 +16,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError("Check-in history lock isolation cannot be downgraded; use a reviewed forward-fix")
+    for table, prefix in (("barrier_response", "barrier"), ("safety_assessment", "safety")):
+        op.drop_constraint(f"chk_{prefix}_checkin_lock_marker", table, type_="check")
+        op.drop_column(table, "checkin_lock_marker")
