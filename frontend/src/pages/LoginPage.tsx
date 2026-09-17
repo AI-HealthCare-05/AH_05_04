@@ -227,6 +227,9 @@ function LoginPage() {
           <p className="mvp-form__footer mvp-auth__signup-link">
             <Link to="/signup">계정이 없다면 회원가입</Link>
           </p>
+          <p className="mvp-form__footer mvp-auth__forgot-password-link">
+            <Link to="/forgot-password">비밀번호를 잊으셨나요</Link>
+          </p>
 
           <div className="notice attention mvp-auth__notice">
             의료정보는 로그인한 본인만 볼 수 있어요.
