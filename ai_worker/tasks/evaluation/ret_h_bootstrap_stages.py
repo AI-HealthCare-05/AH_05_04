@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -37,7 +38,16 @@ from ai_worker.tasks.evaluation.resources import (
     build_ret_h_smoke_fixture_manifest,
     load_ret_h_smoke_synthetic_fixture,
 )
-from ai_worker.tasks.rag.evidence_retrieval import SensitiveText
+from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, SensitiveText
+from ai_worker.tasks.rag.evidence_search import (
+    EvidenceSearchExecutionBinding,
+    EvidenceSearchRequest,
+    QueryFingerprint,
+    RetrievalExecutionMode,
+    VersionedDenseSearchConfiguration,
+    VersionedEvidenceRetrievalConfiguration,
+    VersionedLexicalSearchConfiguration,
+)
 from ai_worker.tasks.rag.knowledge_evidence_index import (
     DistanceMetric,
     KnowledgeChunkIdentity,
@@ -46,14 +56,10 @@ from ai_worker.tasks.rag.knowledge_evidence_index import (
     SensitiveEvidenceText,
     create_knowledge_index_receipt,
 )
+from ai_worker.tasks.rag.retrieval_runtime import HybridRetrieveRequest
 from ai_worker.tasks.rag.text_embedding import (
     TextEmbeddingFailure,
 )
-from app.release_validation.ret_h_synthetic_smoke import (
-    sentinels_from_fixture,
-    verify_query_sentinel_binding,
-)
-from scripts.ret_h_aws_synthetic_smoke import _build_hybrid_retrieve_request
 
 logger = logging.getLogger(__name__)
 
@@ -573,6 +579,91 @@ async def cleanup_synthetic_runtime_parent(
 # --------------------------------------------------------------------------------------
 
 
+def _verify_manifest_consumer_round_trip(manifest_dict: Mapping[str, Any]) -> None:
+    """Verify fixture manifest format and reconstruct HybridRetrieveRequest (#683 consumer contract)."""
+    query_sentinel = str(manifest_dict.get("query_sentinel") or "").strip()
+    source_sentinel = str(manifest_dict.get("source_sentinel") or "").strip()
+    if not query_sentinel or not source_sentinel or query_sentinel == source_sentinel:
+        raise EvaluationValidationError(
+            EvaluationErrorCode.SCHEMA_INVALID,
+            safe_path="sentinels",
+        )
+
+    synthetic_query = str(manifest_dict.get("synthetic_query") or "")
+    if not synthetic_query.strip():
+        raise EvaluationValidationError(
+            EvaluationErrorCode.SCHEMA_INVALID,
+            safe_path="synthetic_query",
+        )
+
+    approved_query_sha256 = str(manifest_dict.get("synthetic_query_sha256") or "").strip().lower()
+    actual_sha256 = hashlib.sha256(synthetic_query.encode("utf-8")).hexdigest()
+    if actual_sha256 != approved_query_sha256:
+        raise EvaluationValidationError(
+            EvaluationErrorCode.SCHEMA_INVALID,
+            safe_path="synthetic_query_sha256",
+        )
+
+    if query_sentinel not in synthetic_query or source_sentinel in synthetic_query:
+        raise EvaluationValidationError(
+            EvaluationErrorCode.SCHEMA_INVALID,
+            safe_path="query_sentinel_binding",
+        )
+
+    def _ref(key: str) -> ImmutableArtifactRef:
+        raw = manifest_dict[key]
+        return ImmutableArtifactRef(
+            artifact_code=str(raw["artifact_code"]),
+            version=str(raw["version"]),
+            content_sha256=str(raw["content_sha256"]),
+        )
+
+    lexical_config = VersionedLexicalSearchConfiguration(artifact_ref=_ref("lexical_config_ref"))
+    dense_config = VersionedDenseSearchConfiguration(artifact_ref=_ref("dense_config_ref"))
+    retrieval_config = VersionedEvidenceRetrievalConfiguration(
+        artifact_ref=_ref("retrieval_config_ref"),
+        lexical_config=lexical_config,
+        dense_config=dense_config,
+        expected_query_embedding_adapter_ref=_ref("embedding_adapter_ref"),
+        execution_mode=RetrievalExecutionMode.HYBRID_RRF,
+    )
+
+    binding = EvidenceSearchExecutionBinding(
+        filter_snapshot_ref=_ref("filter_snapshot_ref"),
+        evidence_index_ref=_ref("evidence_index_ref"),
+        knowledge_index_id=UUID(str(manifest_dict["knowledge_index_id"])),
+        allowed_source_snapshot_ids=tuple(UUID(str(v)) for v in manifest_dict["allowed_source_snapshot_ids"]),
+        allowed_source_snapshot_member_ids=tuple(
+            UUID(str(v)) for v in manifest_dict["allowed_source_snapshot_member_ids"]
+        ),
+        retrieval_config=retrieval_config,
+    )
+
+    search_request = EvidenceSearchRequest(
+        normalized_query=SensitiveText(synthetic_query),
+        query_fingerprint=QueryFingerprint(
+            algorithm="sha256",
+            key_version="v1",
+            digest=hashlib.sha256(synthetic_query.encode("utf-8")).hexdigest(),
+        ),
+        execution_binding=binding,
+        query_embedding_receipt=None,
+    )
+
+    HybridRetrieveRequest(
+        job_id=UUID(str(manifest_dict["job_id"])),
+        execution_context_id=UUID(str(manifest_dict["execution_context_id"])),
+        prescription_version_id=UUID(str(manifest_dict["prescription_version_id"])),
+        runtime_release_bundle_id=UUID(str(manifest_dict["runtime_release_bundle_id"])),
+        runtime_release_bundle_manifest_hash=str(manifest_dict["runtime_release_bundle_manifest_hash"]),
+        runtime_execution_manifest_id=UUID(str(manifest_dict["runtime_execution_manifest_id"])),
+        runtime_execution_manifest_hash=str(manifest_dict["runtime_execution_manifest_hash"]),
+        runtime_guard_decision_ref=str(manifest_dict["runtime_guard_decision_ref"]),
+        search_request=search_request,
+        source_manifest_hash=str(manifest_dict["source_manifest_hash"]),
+    )
+
+
 def generate_ret_h_smoke_fixture_manifest(
     *,
     stage1_receipt: Stage1SourceReceipt,
@@ -617,26 +708,7 @@ def generate_ret_h_smoke_fixture_manifest(
     serialized = json.dumps(manifest, indent=2)
     deserialized = json.loads(serialized)
 
-    sentinels = sentinels_from_fixture(deserialized)
-    if sentinels is None:
-        raise EvaluationValidationError(
-            EvaluationErrorCode.SCHEMA_INVALID,
-            safe_path="sentinels",
-        )
-
-    binding_check = verify_query_sentinel_binding(
-        synthetic_query=str(deserialized.get("synthetic_query") or ""),
-        sentinels=sentinels,
-        approved_query_sha256=str(deserialized.get("synthetic_query_sha256") or ""),
-    )
-    if not binding_check.passed:
-        raise EvaluationValidationError(
-            EvaluationErrorCode.SCHEMA_INVALID,
-            safe_path="query_sentinel_binding",
-        )
-
-    # Reconstruct HybridRetrieveRequest using #683 request builder
-    _build_hybrid_retrieve_request(deserialized)
+    _verify_manifest_consumer_round_trip(deserialized)
 
     # Atomic write to output path
     out_path = Path(output_manifest_path).resolve()
