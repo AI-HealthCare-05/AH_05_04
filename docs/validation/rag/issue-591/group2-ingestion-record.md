@@ -34,7 +34,7 @@
 
 5개 Snapshot의 verification_status는 PENDING, verified_at/effective_at은 null이다. profile READY는 적재 준비 상태이며 Snapshot CURRENT와 다르다. Consumer acceptance는 5개 모두 PENDING이다.
 
-1그룹 기록 당시에는 consumer acceptance 확인 후 2그룹 적재를 계획했으나, 이후 실행 담당자가 전달한 현우님의 안내에 따라 3그룹 Source 적재까지 진행한 뒤 consumer 확인을 묶어서 요청하는 방향으로 변경했다. 이는 인계 시점 조정이며 consumer acceptance 완료 선언이 아니다. 3그룹 실제 적재는 아직 미실행이고, 이번 2그룹 결과 PR을 먼저 기록·검토한 후 진행한다. 공통 consumer 결함이 확인되면 영향 범위를 확인하고 확대를 중단한다.
+1그룹 기록 당시에는 consumer acceptance 확인 후 2그룹 적재를 계획했으나, 이후 실행 담당자가 전달한 현우님의 안내에 따라 3그룹 Source 적재까지 진행한 뒤 consumer 확인을 묶어서 요청하는 방향으로 변경했다. 이는 인계 시점 조정이며 consumer acceptance 완료 선언이 아니다. 2그룹 기록 당시에는 3그룹 실제 적재가 미실행이었고, 2그룹 결과 PR을 먼저 기록·검토한 후 진행할 계획이었다. 이후 적재·검증 완료 결과는 [3그룹 기록](group3-ingestion-record.md)에 별도로 기록했다. 공통 consumer 결함이 확인되면 영향 범위를 확인하고 확대를 중단한다.
 
 CURRENT 선택, Document/Chunk materialization, embedding·Knowledge Index·RAG·Runtime/Citation 및 서비스 공개는 수행하지 않았다. 가빈·은영님의 노바스크 특정 Snapshot 승인 범위를 이 제품들에 자동 적용하지 않는다. #591 전체 완료나 이슈 종료를 요청하지 않는다.
 
