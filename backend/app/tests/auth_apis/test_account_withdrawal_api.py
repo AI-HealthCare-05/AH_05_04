@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
+from app.apis.v1.auth_routers import _account_withdrawal_response_detail
 from app.core import config
 from app.main import app
 from app.models.account_deletion_request import AccountDeletionRequest, AccountDeletionRequestStatus
@@ -36,6 +37,23 @@ from app.tests.helpers.auth import signup_verified_user
 
 PASSWORD = "Password123!"
 JPEG_SIGNATURE = b"\xff\xd8\xff"
+
+
+@pytest.mark.parametrize(
+    ("request_status", "expected_detail"),
+    [
+        (AccountDeletionRequestStatus.PENDING, "탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."),
+        (AccountDeletionRequestStatus.IN_PROGRESS, "탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."),
+        (AccountDeletionRequestStatus.COMPLETED, "회원탈퇴가 완료되었습니다."),
+        (AccountDeletionRequestStatus.FAILED, "탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."),
+        (None, "탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."),
+    ],
+)
+def test_account_withdrawal_response_detail_maps_all_request_states_fail_closed(
+    request_status: AccountDeletionRequestStatus | None,
+    expected_detail: str,
+) -> None:
+    assert _account_withdrawal_response_detail(request_status) == expected_detail
 
 
 @pytest.fixture
