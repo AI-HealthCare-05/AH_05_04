@@ -28,6 +28,9 @@ from ai_worker.tasks.evaluation.ret_h_bootstrap_stages import (
     Stage1SourceReceipt,
     Stage2IndexReceipt,
     bootstrap_ret_h_smoke_stage2_knowledge_index,
+    generate_ret_h_smoke_fixture_manifest,
+    stage1_receipt_to_dict,
+    stage2_receipt_to_dict,
 )
 from ai_worker.tasks.evaluation.ret_h_smoke import (
     APPROVED_SYNTHETIC_INDEX_CODES,
@@ -38,7 +41,7 @@ from backend.app.release_validation.ret_h_synthetic_smoke import (
     sentinels_from_fixture,
     verify_query_sentinel_binding,
 )
-from scripts.ret_h_aws_synthetic_smoke import _build_hybrid_retrieve_request
+from scripts.ret_h_aws_synthetic_smoke import _build_hybrid_retrieve_request, _load_fixture
 
 
 def test_default_smoke_fixture_file_exists_and_loads() -> None:
@@ -568,3 +571,248 @@ def test_execution_request_refs_exact_match_manifest() -> None:
     assert req.runtime_execution_manifest_hash == manifest["runtime_execution_manifest_hash"]
     assert req.runtime_guard_decision_ref == manifest["runtime_guard_decision_ref"]
     assert req.source_manifest_hash == manifest["source_manifest_hash"]
+
+
+def test_generate_manifest_command_invokes_builder_and_produces_output(tmp_path: Path) -> None:
+    """1. production-facing manifest command가 builder를 실제 호출하고 2. output manifest file이 생성된다."""
+    fixture_input = load_ret_h_smoke_synthetic_fixture(DEFAULT_SMOKE_FIXTURE_PATH)
+    stage1, stage2, ids = _make_sample_receipts(fixture_input)
+    provenance = RetHSmokeRuntimeProvenance(**_valid_pinned_provenance())
+
+    out_file = tmp_path / "smoke_manifest.json"
+    written_path = generate_ret_h_smoke_fixture_manifest(
+        stage1_receipt=stage1,
+        stage2_receipt=stage2,
+        job_id=ids["job_id"],
+        execution_context_id=ids["ctx_id"],
+        prescription_version_id=ids["prescription_id"],
+        provenance=provenance,
+        output_manifest_path=out_file,
+        fixture_input=fixture_input,
+    )
+
+    assert written_path == out_file
+    assert out_file.is_file()
+    data = json.loads(out_file.read_text(encoding="utf-8"))
+    assert data["knowledge_index_id"] == str(ids["index_id"])
+    assert data["allowed_source_snapshot_ids"] == [str(ids["snapshot_id"])]
+    assert data["allowed_source_snapshot_member_ids"] == [str(ids["member_id"])]
+
+
+def test_generate_manifest_command_fails_closed_without_writing_on_missing_provenance(tmp_path: Path) -> None:
+    """3. missing provenance는 file을 생성하지 않고 실패한다."""
+    fixture_input = load_ret_h_smoke_synthetic_fixture(DEFAULT_SMOKE_FIXTURE_PATH)
+    stage1, stage2, ids = _make_sample_receipts(fixture_input)
+    out_file = tmp_path / "should_not_exist.json"
+
+    with pytest.raises((EvaluationValidationError, ValueError)):
+        generate_ret_h_smoke_fixture_manifest(
+            stage1_receipt=stage1,
+            stage2_receipt=stage2,
+            job_id=ids["job_id"],
+            execution_context_id=ids["ctx_id"],
+            prescription_version_id=ids["prescription_id"],
+            provenance=None,  # type: ignore[arg-type]
+            output_manifest_path=out_file,
+            fixture_input=fixture_input,
+        )
+
+    assert not out_file.exists(), "Manifest file must not be created on missing provenance"
+
+
+def test_generate_manifest_command_roundtrips_through_683_fixture_loader(tmp_path: Path) -> None:
+    """4. 생성 파일을 #683 fixture loader가 읽는다."""
+    fixture_input = load_ret_h_smoke_synthetic_fixture(DEFAULT_SMOKE_FIXTURE_PATH)
+    stage1, stage2, ids = _make_sample_receipts(fixture_input)
+    provenance = RetHSmokeRuntimeProvenance(**_valid_pinned_provenance())
+
+    out_file = tmp_path / "smoke_manifest.json"
+    generate_ret_h_smoke_fixture_manifest(
+        stage1_receipt=stage1,
+        stage2_receipt=stage2,
+        job_id=ids["job_id"],
+        execution_context_id=ids["ctx_id"],
+        prescription_version_id=ids["prescription_id"],
+        provenance=provenance,
+        output_manifest_path=out_file,
+        fixture_input=fixture_input,
+    )
+
+    loaded = _load_fixture(out_file)
+    assert loaded is not None
+    assert isinstance(loaded, dict)
+    assert loaded["knowledge_index_id"] == str(ids["index_id"])
+    assert loaded["source_manifest_hash"] == fixture_input.file_sha256
+
+
+def test_generate_manifest_command_passes_683_preflight_and_request_reconstruction(tmp_path: Path) -> None:
+    """5. 생성 manifest로 #683 synthetic preflight/request reconstruction이 통과한다."""
+    fixture_input = load_ret_h_smoke_synthetic_fixture(DEFAULT_SMOKE_FIXTURE_PATH)
+    stage1, stage2, ids = _make_sample_receipts(fixture_input)
+    provenance = RetHSmokeRuntimeProvenance(**_valid_pinned_provenance())
+
+    out_file = tmp_path / "smoke_manifest.json"
+    generate_ret_h_smoke_fixture_manifest(
+        stage1_receipt=stage1,
+        stage2_receipt=stage2,
+        job_id=ids["job_id"],
+        execution_context_id=ids["ctx_id"],
+        prescription_version_id=ids["prescription_id"],
+        provenance=provenance,
+        output_manifest_path=out_file,
+        fixture_input=fixture_input,
+    )
+
+    loaded = _load_fixture(out_file)
+    assert loaded is not None
+
+    # Preflight sentinel extraction and verification
+    sentinels = sentinels_from_fixture(loaded)
+    assert sentinels is not None
+    assert sentinels.query_sentinel == fixture_input.query_sentinel
+    assert sentinels.source_sentinel == fixture_input.source_sentinel
+
+    binding_check = verify_query_sentinel_binding(
+        synthetic_query=loaded["synthetic_query"],
+        sentinels=sentinels,
+        approved_query_sha256=loaded["synthetic_query_sha256"],
+    )
+    assert binding_check.passed
+
+    # Request reconstruction
+    req = _build_hybrid_retrieve_request(loaded)
+    assert req.job_id == ids["job_id"]
+    assert req.execution_context_id == ids["ctx_id"]
+    assert req.prescription_version_id == ids["prescription_id"]
+    assert req.search_request.execution_binding.knowledge_index_id == ids["index_id"]
+
+
+def test_generate_manifest_command_rejects_zero_hash_and_allow_placeholder(tmp_path: Path) -> None:
+    """6. zero hash / ALLOW placeholder는 계속 거부된다."""
+    fixture_input = load_ret_h_smoke_synthetic_fixture(DEFAULT_SMOKE_FIXTURE_PATH)
+    stage1, stage2, ids = _make_sample_receipts(fixture_input)
+    out_file = tmp_path / "placeholder_should_not_exist.json"
+
+    # Zero hash
+    bad_prov_zero = _valid_pinned_provenance()
+    bad_prov_zero["runtime_release_bundle_manifest_hash"] = "0" * 64
+    prov_zero = RetHSmokeRuntimeProvenance(**bad_prov_zero)
+
+    with pytest.raises((EvaluationValidationError, ValueError)):
+        generate_ret_h_smoke_fixture_manifest(
+            stage1_receipt=stage1,
+            stage2_receipt=stage2,
+            job_id=ids["job_id"],
+            execution_context_id=ids["ctx_id"],
+            prescription_version_id=ids["prescription_id"],
+            provenance=prov_zero,
+            output_manifest_path=out_file,
+            fixture_input=fixture_input,
+        )
+    assert not out_file.exists()
+
+    # ALLOW placeholder
+    bad_prov_allow = _valid_pinned_provenance()
+    bad_prov_allow["runtime_guard_decision_ref"] = "ALLOW"
+    prov_allow = RetHSmokeRuntimeProvenance(**bad_prov_allow)
+
+    with pytest.raises((EvaluationValidationError, ValueError)):
+        generate_ret_h_smoke_fixture_manifest(
+            stage1_receipt=stage1,
+            stage2_receipt=stage2,
+            job_id=ids["job_id"],
+            execution_context_id=ids["ctx_id"],
+            prescription_version_id=ids["prescription_id"],
+            provenance=prov_allow,
+            output_manifest_path=out_file,
+            fixture_input=fixture_input,
+        )
+    assert not out_file.exists()
+
+
+def test_generate_manifest_cli_execution(tmp_path: Path) -> None:
+    """CLI subcommand manifest round-trip execution test."""
+    fixture_input = load_ret_h_smoke_synthetic_fixture(DEFAULT_SMOKE_FIXTURE_PATH)
+    stage1, stage2, ids = _make_sample_receipts(fixture_input)
+    prov_dict = _valid_pinned_provenance()
+    # Serialize UUIDs and ImmutableArtifactRefs to dict for JSON
+    prov_json = {
+        "lexical_config_ref": {
+            "artifact_code": prov_dict["lexical_config_ref"].artifact_code,
+            "version": prov_dict["lexical_config_ref"].version,
+            "content_sha256": prov_dict["lexical_config_ref"].content_sha256,
+        },
+        "dense_config_ref": {
+            "artifact_code": prov_dict["dense_config_ref"].artifact_code,
+            "version": prov_dict["dense_config_ref"].version,
+            "content_sha256": prov_dict["dense_config_ref"].content_sha256,
+        },
+        "retrieval_config_ref": {
+            "artifact_code": prov_dict["retrieval_config_ref"].artifact_code,
+            "version": prov_dict["retrieval_config_ref"].version,
+            "content_sha256": prov_dict["retrieval_config_ref"].content_sha256,
+        },
+        "filter_snapshot_ref": {
+            "artifact_code": prov_dict["filter_snapshot_ref"].artifact_code,
+            "version": prov_dict["filter_snapshot_ref"].version,
+            "content_sha256": prov_dict["filter_snapshot_ref"].content_sha256,
+        },
+        "search_adapter_ref": {
+            "artifact_code": prov_dict["search_adapter_ref"].artifact_code,
+            "version": prov_dict["search_adapter_ref"].version,
+            "content_sha256": prov_dict["search_adapter_ref"].content_sha256,
+        },
+        "embedding_adapter_ref": {
+            "artifact_code": prov_dict["embedding_adapter_ref"].artifact_code,
+            "version": prov_dict["embedding_adapter_ref"].version,
+            "content_sha256": prov_dict["embedding_adapter_ref"].content_sha256,
+        },
+        "runtime_release_bundle_id": str(prov_dict["runtime_release_bundle_id"]),
+        "runtime_release_bundle_manifest_hash": prov_dict["runtime_release_bundle_manifest_hash"],
+        "runtime_execution_manifest_id": str(prov_dict["runtime_execution_manifest_id"]),
+        "runtime_execution_manifest_hash": prov_dict["runtime_execution_manifest_hash"],
+        "runtime_guard_decision_ref": prov_dict["runtime_guard_decision_ref"],
+    }
+
+    s1_path = tmp_path / "s1.json"
+    s2_path = tmp_path / "s2.json"
+    prov_path = tmp_path / "prov.json"
+    out_manifest = tmp_path / "cli_manifest.json"
+
+    s1_path.write_text(json.dumps(stage1_receipt_to_dict(stage1)), encoding="utf-8")
+    s2_path.write_text(json.dumps(stage2_receipt_to_dict(stage2)), encoding="utf-8")
+    prov_path.write_text(json.dumps(prov_json), encoding="utf-8")
+
+    import sys
+
+    from ai_worker.tasks.evaluation.ret_h_bootstrap_stages import main
+
+    test_args = [
+        "ret_h_bootstrap_stages",
+        "manifest",
+        "--stage1-receipt",
+        str(s1_path),
+        "--stage2-receipt",
+        str(s2_path),
+        "--job-id",
+        str(ids["job_id"]),
+        "--execution-context-id",
+        str(ids["ctx_id"]),
+        "--prescription-version-id",
+        str(ids["prescription_id"]),
+        "--provenance-file",
+        str(prov_path),
+        "--output-manifest",
+        str(out_manifest),
+    ]
+    orig_argv = sys.argv
+    try:
+        sys.argv = test_args
+        main()
+    finally:
+        sys.argv = orig_argv
+
+    assert out_manifest.is_file()
+    loaded = _load_fixture(out_manifest)
+    assert loaded is not None
+    assert loaded["knowledge_index_id"] == str(ids["index_id"])

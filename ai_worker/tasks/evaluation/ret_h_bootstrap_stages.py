@@ -10,14 +10,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -30,7 +32,9 @@ from ai_worker.adapters.sqlalchemy_knowledge_evidence_index import (
 )
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.resources import (
+    RetHSmokeRuntimeProvenance,
     SmokeSyntheticFixtureInput,
+    build_ret_h_smoke_fixture_manifest,
     load_ret_h_smoke_synthetic_fixture,
 )
 from ai_worker.tasks.rag.evidence_retrieval import SensitiveText
@@ -45,6 +49,11 @@ from ai_worker.tasks.rag.knowledge_evidence_index import (
 from ai_worker.tasks.rag.text_embedding import (
     TextEmbeddingFailure,
 )
+from app.release_validation.ret_h_synthetic_smoke import (
+    sentinels_from_fixture,
+    verify_query_sentinel_binding,
+)
+from scripts.ret_h_aws_synthetic_smoke import _build_hybrid_retrieve_request
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +96,58 @@ class Stage2IndexReceipt:
     chunk_id: UUID
     member_id: UUID
     reused: bool
+
+
+def stage1_receipt_to_dict(receipt: Stage1SourceReceipt) -> dict[str, Any]:
+    return {
+        "source_id": str(receipt.source_id),
+        "endpoint_id": str(receipt.endpoint_id),
+        "operation_id": str(receipt.operation_id),
+        "snapshot_id": str(receipt.snapshot_id),
+        "member_ids": [str(m) for m in receipt.member_ids],
+        "canonical_checksum": receipt.canonical_checksum,
+        "verification_seal_id": str(receipt.verification_seal_id),
+        "reused": receipt.reused,
+    }
+
+
+def stage1_receipt_from_dict(data: Mapping[str, Any]) -> Stage1SourceReceipt:
+    return Stage1SourceReceipt(
+        source_id=UUID(str(data["source_id"])),
+        endpoint_id=UUID(str(data["endpoint_id"])),
+        operation_id=UUID(str(data["operation_id"])),
+        snapshot_id=UUID(str(data["snapshot_id"])),
+        member_ids=tuple(UUID(str(m)) for m in data["member_ids"]),
+        canonical_checksum=str(data["canonical_checksum"]),
+        verification_seal_id=UUID(str(data["verification_seal_id"])),
+        reused=bool(data["reused"]),
+    )
+
+
+def stage2_receipt_to_dict(receipt: Stage2IndexReceipt) -> dict[str, Any]:
+    return {
+        "knowledge_index_id": str(receipt.knowledge_index_id),
+        "index_code": receipt.index_code,
+        "index_version": receipt.index_version,
+        "index_configuration_hash": receipt.index_configuration_hash,
+        "document_id": str(receipt.document_id),
+        "chunk_id": str(receipt.chunk_id),
+        "member_id": str(receipt.member_id),
+        "reused": receipt.reused,
+    }
+
+
+def stage2_receipt_from_dict(data: Mapping[str, Any]) -> Stage2IndexReceipt:
+    return Stage2IndexReceipt(
+        knowledge_index_id=UUID(str(data["knowledge_index_id"])),
+        index_code=str(data["index_code"]),
+        index_version=str(data["index_version"]),
+        index_configuration_hash=str(data["index_configuration_hash"]),
+        document_id=UUID(str(data["document_id"])),
+        chunk_id=UUID(str(data["chunk_id"])),
+        member_id=UUID(str(data["member_id"])),
+        reused=bool(data["reused"]),
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -508,6 +569,91 @@ async def cleanup_synthetic_runtime_parent(
 
 
 # --------------------------------------------------------------------------------------
+# Manifest Generation (Separately Credentialed / No DB Write)
+# --------------------------------------------------------------------------------------
+
+
+def generate_ret_h_smoke_fixture_manifest(
+    *,
+    stage1_receipt: Stage1SourceReceipt,
+    stage2_receipt: Stage2IndexReceipt,
+    job_id: UUID,
+    execution_context_id: UUID,
+    prescription_version_id: UUID,
+    provenance: RetHSmokeRuntimeProvenance,
+    output_manifest_path: Path | str,
+    fixture_input: SmokeSyntheticFixtureInput | None = None,
+) -> Path:
+    """Generate the approved fixture manifest for the #683 RET-H AWS synthetic smoke runner.
+
+    Pipeline:
+        Stage 1 receipt + Stage 2 receipt + IDs + RetHSmokeRuntimeProvenance
+            -> build_ret_h_smoke_fixture_manifest()
+            -> #683 fixture consumer/parser round-trip verification
+            -> Atomic JSON write to output_manifest_path
+
+    Constraints:
+        - Never performs DB writes (Source/Builder/DB_APP).
+        - Rejects placeholder provenance fail-closed.
+        - Fails closed without writing if provenance is missing or invalid.
+    """
+    if provenance is None:
+        raise ValueError("RetHSmokeRuntimeProvenance is required fail-closed")
+
+    if fixture_input is None:
+        fixture_input = load_ret_h_smoke_synthetic_fixture()
+
+    manifest = build_ret_h_smoke_fixture_manifest(
+        fixture_input=fixture_input,
+        stage1_receipt=stage1_receipt,
+        stage2_receipt=stage2_receipt,
+        job_id=job_id,
+        execution_context_id=execution_context_id,
+        prescription_version_id=prescription_version_id,
+        provenance=provenance,
+    )
+
+    # #683 consumer/parser round-trip verification
+    serialized = json.dumps(manifest, indent=2)
+    deserialized = json.loads(serialized)
+
+    sentinels = sentinels_from_fixture(deserialized)
+    if sentinels is None:
+        raise EvaluationValidationError(
+            EvaluationErrorCode.SCHEMA_INVALID,
+            safe_path="sentinels",
+        )
+
+    binding_check = verify_query_sentinel_binding(
+        synthetic_query=str(deserialized.get("synthetic_query") or ""),
+        sentinels=sentinels,
+        approved_query_sha256=str(deserialized.get("synthetic_query_sha256") or ""),
+    )
+    if not binding_check.passed:
+        raise EvaluationValidationError(
+            EvaluationErrorCode.SCHEMA_INVALID,
+            safe_path="query_sentinel_binding",
+        )
+
+    # Reconstruct HybridRetrieveRequest using #683 request builder
+    _build_hybrid_retrieve_request(deserialized)
+
+    # Atomic write to output path
+    out_path = Path(output_manifest_path).resolve()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = out_path.with_name(f".{out_path.name}.tmp.{uuid4().hex}")
+    try:
+        temp_path.write_text(serialized, encoding="utf-8")
+        temp_path.replace(out_path)
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
+
+    return out_path
+
+
+# --------------------------------------------------------------------------------------
 # CLI entrypoints for one-shot containers
 # --------------------------------------------------------------------------------------
 
@@ -519,7 +665,7 @@ def _build_database_url_for_role(role_user: str, role_pass: str) -> str:
     return f"postgresql+asyncpg://{role_user}:{role_pass}@{db_host}:{db_port}/{db_name}"
 
 
-async def _run_cli_stage1() -> None:
+async def _run_cli_stage1(output_receipt: Path | None = None) -> None:
     user = os.environ.get("SOURCE_WRITER_USER")
     password = os.environ.get("SOURCE_WRITER_PASSWORD")
     if not user or not password:
@@ -536,12 +682,21 @@ async def _run_cli_stage1() -> None:
             session_factory=session_factory,
             fixture=fixture,
         )
+        if output_receipt is not None:
+            out = Path(output_receipt).resolve()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            tmp = out.with_name(f".{out.name}.tmp.{uuid4().hex}")
+            tmp.write_text(json.dumps(stage1_receipt_to_dict(receipt), indent=2), encoding="utf-8")
+            tmp.replace(out)
         print(f"Stage 1 completed successfully: snapshot_id={receipt.snapshot_id}, reused={receipt.reused}")
     finally:
         await engine.dispose()
 
 
-async def _run_cli_stage2(embedding_adapter_sha256: str | None = None) -> None:
+async def _run_cli_stage2(
+    embedding_adapter_sha256: str | None = None,
+    output_receipt: Path | None = None,
+) -> None:
     user = os.environ.get("KNOWLEDGE_INDEX_BUILDER_USER")
     password = os.environ.get("KNOWLEDGE_INDEX_BUILDER_PASSWORD")
     if not user or not password:
@@ -582,15 +737,73 @@ async def _run_cli_stage2(embedding_adapter_sha256: str | None = None) -> None:
             fixture=fixture,
             stage1_snapshot_id=stage1_snapshot_id,
         )
+        if output_receipt is not None:
+            out = Path(output_receipt).resolve()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            tmp = out.with_name(f".{out.name}.tmp.{uuid4().hex}")
+            tmp.write_text(json.dumps(stage2_receipt_to_dict(receipt), indent=2), encoding="utf-8")
+            tmp.replace(out)
         print(f"Stage 2 completed successfully: index_id={receipt.knowledge_index_id}, reused={receipt.reused}")
     finally:
         await engine.dispose()
 
 
-def main() -> None:
+def _run_cli_manifest(args: argparse.Namespace) -> None:
+    stage1_receipt_path = Path(args.stage1_receipt)
+    if not stage1_receipt_path.is_file():
+        logger.error(f"Stage 1 receipt file not found: {stage1_receipt_path}")
+        sys.exit(1)
+
+    stage2_receipt_path = Path(args.stage2_receipt)
+    if not stage2_receipt_path.is_file():
+        logger.error(f"Stage 2 receipt file not found: {stage2_receipt_path}")
+        sys.exit(1)
+
+    provenance_file_path = Path(args.provenance_file)
+    if not provenance_file_path.is_file():
+        logger.error(f"Provenance file not found: {provenance_file_path}")
+        sys.exit(1)
+
+    try:
+        s1_data = json.loads(stage1_receipt_path.read_text(encoding="utf-8"))
+        stage1_receipt = stage1_receipt_from_dict(s1_data)
+
+        s2_data = json.loads(stage2_receipt_path.read_text(encoding="utf-8"))
+        stage2_receipt = stage2_receipt_from_dict(s2_data)
+
+        prov_data = json.loads(provenance_file_path.read_text(encoding="utf-8"))
+        provenance = RetHSmokeRuntimeProvenance(**prov_data)
+
+        job_id = UUID(str(args.job_id))
+        execution_context_id = UUID(str(args.execution_context_id))
+        prescription_version_id = UUID(str(args.prescription_version_id))
+
+        fixture = None
+        if getattr(args, "fixture_path", None):
+            fixture = load_ret_h_smoke_synthetic_fixture(Path(args.fixture_path))
+
+        out_path = generate_ret_h_smoke_fixture_manifest(
+            stage1_receipt=stage1_receipt,
+            stage2_receipt=stage2_receipt,
+            job_id=job_id,
+            execution_context_id=execution_context_id,
+            prescription_version_id=prescription_version_id,
+            provenance=provenance,
+            output_manifest_path=Path(args.output_manifest),
+            fixture_input=fixture,
+        )
+        print(f"Fixture manifest successfully generated: {out_path}")
+    except Exception as exc:
+        logger.error(f"Manifest generation failed: {exc}")
+        sys.exit(1)
+
+
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="RET-H AWS synthetic smoke bootstrap stages")
     subparsers = parser.add_subparsers(dest="stage", required=True)
-    subparsers.add_parser("stage1", help="Run Stage 1 Source bootstrap (SOURCE_WRITER)")
+    stage1_parser = subparsers.add_parser("stage1", help="Run Stage 1 Source bootstrap (SOURCE_WRITER)")
+    stage1_parser.add_argument("--output-receipt", type=Path, required=False, help="Save receipt JSON to file")
+
     stage2_parser = subparsers.add_parser(
         "stage2", help="Run Stage 2 Knowledge Index bootstrap (KNOWLEDGE_INDEX_BUILDER)"
     )
@@ -599,12 +812,32 @@ def main() -> None:
         required=False,
         help="SHA256 hash of openai-text-embedding-adapter",
     )
+    stage2_parser.add_argument("--output-receipt", type=Path, required=False, help="Save receipt JSON to file")
 
-    args = parser.parse_args()
+    manifest_parser = subparsers.add_parser(
+        "manifest", help="Generate RET-H synthetic smoke fixture manifest (--output-manifest)"
+    )
+    manifest_parser.add_argument("--stage1-receipt", required=True, type=Path, help="Path to Stage 1 receipt JSON")
+    manifest_parser.add_argument("--stage2-receipt", required=True, type=Path, help="Path to Stage 2 receipt JSON")
+    manifest_parser.add_argument("--job-id", required=True, help="Job UUID")
+    manifest_parser.add_argument("--execution-context-id", required=True, help="Execution context UUID")
+    manifest_parser.add_argument("--prescription-version-id", required=True, help="Prescription version UUID")
+    manifest_parser.add_argument("--provenance-file", required=True, type=Path, help="Path to pinned provenance JSON")
+    manifest_parser.add_argument("--output-manifest", required=True, type=Path, help="Destination manifest path")
+    manifest_parser.add_argument("--fixture-path", required=False, type=Path, help="Custom fixture JSON path")
+
+    args = parser.parse_args(argv)
     if args.stage == "stage1":
-        asyncio.run(_run_cli_stage1())
+        asyncio.run(_run_cli_stage1(output_receipt=getattr(args, "output_receipt", None)))
     elif args.stage == "stage2":
-        asyncio.run(_run_cli_stage2(embedding_adapter_sha256=getattr(args, "embedding_adapter_sha256", None)))
+        asyncio.run(
+            _run_cli_stage2(
+                embedding_adapter_sha256=getattr(args, "embedding_adapter_sha256", None),
+                output_receipt=getattr(args, "output_receipt", None),
+            )
+        )
+    elif args.stage == "manifest":
+        _run_cli_manifest(args)
 
 
 if __name__ == "__main__":
