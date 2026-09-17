@@ -41,6 +41,9 @@ PASS로 기록하지 않는다. 최종 상태는 셋 중 하나다.
 0. fixture가 선언한 sentinel이 실제 제출 query와 색인된 Source에 결속돼 있는지 증명한다 (§7.1).
 0. pinned Index가 승인된 합성 Index인지 DB로 증명한다 (§7.2). 미증명이면 Provider 호출과
    Run 생성 이전에 차단한다.
+0. 자원 관측을 실행 전에 검증·기록한다 — 관측 존재, `memory_usage_bytes > 0`, limit 1 GiB,
+   `OOMKilled=false`. 무효면 interim을 만들지 않고 FAILED다. finalize도 interim의 자원 증빙을
+   다시 확인하므로 privacy만 깨끗하다고 SUCCESS가 되지 않는다.
 1. `PUBLIC_TRACK_F_ENABLED`가 증명 가능하게 `false`인지 확인 (`false`/`False`/`FALSE`/`0` 허용).
    값을 읽을 수 없으면 묵시적 false로 간주하지 않고 차단한다.
 2. 승인된 OpenAI embedding credential 존재 확인. **존재 여부만** 확인하며 값은 로그·artifact·
@@ -54,7 +57,10 @@ PASS로 기록하지 않는다. 최종 상태는 셋 중 하나다.
 7. **독립 read-only session**으로 `retrieval_run`(`COMPLETED`, `RET-H`, receipt hash),
    `retrieval_signal`(lexical 계열 1건 이상 + `DENSE` 1건 이상), `retrieval_hit`(`selected` 1건 이상) 검증.
 8. canonical `compute_receipt_hash` 재계산으로 receipt 검증. 문자열 비교만 하지 않는다.
-9. Evidence Gate negative case 2건 — stale(Source currentness 불일치)과 locator mismatch.
+9. Evidence Gate가 **실제로 선택한** candidate의 `knowledge_chunk_id`를 꺼내 그 chunk 본문이
+   Source sentinel을 갖는지 독립 session으로 확인한다. allowed corpus 어딘가에 marker가 있다는
+   사실은 이 검증을 대신하지 못한다 — marker 없는 다른 chunk가 실제로 선택될 수 있다.
+10. Evidence Gate negative case 2건 — stale(Source currentness 불일치)과 locator mismatch.
    실제 production `post_search` + `evaluate_evidence_gate`를 통과시키며, production row는
    변조하지 않고 후보의 in-memory provenance만 교란한다.
 10. raw query/Source sentinel 비로그 검사.
@@ -124,10 +130,13 @@ JSON
 ### 6.2 container 단계 — 실제 RET-H 실행 (execute)
 
 ```bash
-SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)   # host scan 창의 시작점
+SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)          # host scan 창의 시작점
+ONESHOT="ret-h-smoke-oneshot-$(date -u +%Y%m%d%H%M%S)-$RANDOM"   # run별 고유 이름
 
+# --rm 을 쓰지 않는다. --rm 은 종료 즉시 컨테이너를 지워 로그까지 없애므로
+# 필수 scan 대상인 smoke_one_shot_logs 가 영구히 NOT_EXECUTED 가 된다.
 docker compose --env-file envs/.prod.env -f infra/docker/docker-compose.prod.yml \
-  run --rm --no-deps -T --name ret-h-smoke-oneshot \
+  run --no-deps -T --name "$ONESHOT" \
   -v "$PWD/ret-h-smoke-fixture.json:/smoke/fixture.json:ro" \
   -v "$PWD/observation.json:/smoke/observation.json:ro" \
   -v "$PWD/smoke-out:/smoke/out" \
@@ -137,8 +146,12 @@ docker compose --env-file envs/.prod.env -f infra/docker/docker-compose.prod.yml
     --git-commit-sha "$(git rev-parse HEAD)" \
     --fixture-manifest /smoke/fixture.json \
     --observation-file /smoke/observation.json \
+    --one-shot-container "$ONESHOT" \
     --output-path /smoke/out/interim.json
 ```
+
+컨테이너는 **scan이 끝날 때까지 보존**한다. 정리는 §6.5에서 명시적으로 수행하며 실패를 숨기지
+않는다.
 
 execute 단계는 **절대 SUCCESS를 내지 않는다.** `AWS_SMOKE_NOT_EXECUTED` /
 `BLOCKED_BY_AWAITING_PRIVACY_OBSERVATION`으로 끝나며 `retrieval_run_id`와
@@ -170,7 +183,7 @@ cat > privacy.json <<JSON
   "targets": {
     "ai_worker_logs":      "$(scan docker logs --since "$SINCE" --no-color ai-worker)",
     "fastapi_logs":        "$(scan docker logs --since "$SINCE" --no-color fastapi)",
-    "smoke_one_shot_logs": "$(scan docker logs --no-color ret-h-smoke-oneshot)",
+    "smoke_one_shot_logs": "$(scan docker logs --no-color "$ONESHOT")",
     "redis_stream":        "$(scan docker exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --no-auth-warning XREVRANGE oryak:jobs + - COUNT 500')",
     "redis_dlq":           "$(scan docker exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --no-auth-warning XREVRANGE oryak:jobs:dead-letter + - COUNT 500')",
     "quarantine":          "NOT_APPLICABLE"
@@ -203,6 +216,18 @@ docker compose --env-file envs/.prod.env -f infra/docker/docker-compose.prod.yml
 finalize는 결속을 먼저 확인한다. Run ID 불일치, sentinel digest 불일치, 실행 시작 이후에
 시작된 scan 창, 실행 종료 이전에 찍힌 scan은 모두 `FAILED_BY_PRIVACY_OBSERVATION_UNBOUND`다.
 다른 실행의 깨끗한 scan으로 이번 실행을 통과시킬 수 없다.
+
+### 6.5 cleanup — scan 이후에만
+
+```bash
+docker rm "$ONESHOT" || { echo "one-shot cleanup failed: $ONESHOT" >&2; exit 1; }
+```
+
+정리는 **scan과 finalize가 끝난 뒤**에만 수행한다. 실패를 조용히 넘기지 않는다. 이름이 run별로
+고유하므로 이전 실행이 남긴 컨테이너와 충돌하지 않는다.
+
+`scan_and_cleanup_one_shot()`이 같은 순서(logs → rm)를 코드로 고정하며, 단위 테스트가 argv와
+순서를 검증한다. 새 daemon/socket 권한은 추가하지 않는다.
 
 `backend/app/Dockerfile`이 `scripts/ret_h_aws_synthetic_smoke.py`를 image에 포함한다.
 image에 Docker CLI는 추가하지 않는다.

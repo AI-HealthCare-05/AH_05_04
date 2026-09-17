@@ -36,6 +36,7 @@ from app.release_validation.ret_h_synthetic_smoke import (
     FAILED_BY_RECEIPT_MISMATCH,
     FAILED_BY_RESOURCE_OBSERVATION_UNVERIFIED,
     FAILED_BY_RUN_VERIFICATION,
+    FAILED_BY_SELECTED_SOURCE_SENTINEL_UNBOUND,
     FAILED_BY_SENTINEL_FOUND,
     FAILED_BY_WORKER_MEMORY_LIMIT,
     FAILED_BY_WORKER_OOM_KILLED,
@@ -351,7 +352,9 @@ def _outcome(run_id: str, receipt_hash: str) -> Any:
     outcome.status = MagicMock(name="SUCCEEDED")
     outcome.status.name = "SUCCEEDED"
     outcome.persisted_receipt = MagicMock(run_id=run_id, receipt_hash=receipt_hash)
-    outcome.gate_outcome = MagicMock(selected_hits=(MagicMock(),))
+    hit = MagicMock()
+    hit.provenance.knowledge_chunk_id = "chunk-default"
+    outcome.gate_outcome = MagicMock(selected_hits=(hit,))
     return outcome
 
 
@@ -362,6 +365,9 @@ def _dependencies(**overrides: Any) -> LiveSmokeDependencies:
         return GateNegativeResult(executed=True, fail_closed=True)
 
     async def _check_pass() -> CheckResult:
+        return CheckResult(executed=True, passed=True)
+
+    async def _selected_pass(_selected_chunk_ids: Any) -> CheckResult:
         return CheckResult(executed=True, passed=True)
 
     base: dict[str, Any] = {
@@ -376,6 +382,7 @@ def _dependencies(**overrides: Any) -> LiveSmokeDependencies:
         "receipt_verifier": lambda _receipt: True,
         "source_sentinel_binding_case": _check_pass,
         "fixture_authenticity_case": _check_pass,
+        "selected_source_binding_case": _selected_pass,
         "stale_case": _pass,
         "locator_mismatch_case": _pass,
         "scan_targets": (
@@ -486,6 +493,7 @@ async def test_oom_killed_fails() -> None:
         "receipt_verifier",
         "source_sentinel_binding_case",
         "fixture_authenticity_case",
+        "selected_source_binding_case",
         "stale_case",
         "locator_mismatch_case",
     ],
@@ -911,3 +919,312 @@ def test_zero_memory_usage_from_a_failed_host_conversion_is_rejected() -> None:
     }
     with pytest.raises(ValueError, match="non-positive memory usage"):
         parse_observation_document(payload)
+
+
+# --------------------------------------------------------------------------------------
+# WATCH 1: execute must not require post-execution scan evidence
+# --------------------------------------------------------------------------------------
+
+
+async def test_execute_is_not_blocked_by_absent_post_execution_scan_evidence() -> None:
+    """The execute phase runs before any scan exists, so scan targets cannot gate it."""
+    execution = AsyncMock(return_value=_outcome(RUN_ID, "e" * 64))
+    receipt = await _run(
+        defer_privacy=True,
+        dependencies=_dependencies(scan_targets=(), execution_fn=execution),
+    )
+    assert receipt.blocked_code != BLOCKED_BY_RUNTIME_DEPENDENCY_MISSING
+    assert receipt.status == AWS_SMOKE_NOT_EXECUTED
+    assert receipt.blocked_code == BLOCKED_BY_AWAITING_PRIVACY_OBSERVATION
+    execution.assert_awaited_once()
+    assert receipt.retrieval_run_id == RUN_ID
+
+
+async def test_non_deferred_run_still_requires_scan_targets() -> None:
+    receipt = await _run(dependencies=_dependencies(scan_targets=()))
+    assert receipt.status == AWS_SMOKE_NOT_EXECUTED
+    assert receipt.blocked_code == BLOCKED_BY_RUNTIME_DEPENDENCY_MISSING
+
+
+def test_one_shot_logs_are_read_before_the_container_is_removed() -> None:
+    """--rm would destroy the log before the scan; logs must precede cleanup."""
+    from app.release_validation.ret_h_synthetic_smoke import scan_and_cleanup_one_shot
+
+    calls: list[list[str]] = []
+
+    def runner(args: Any) -> str:
+        calls.append(list(args))
+        return "clean worker output" if args[1] == "logs" else ""
+
+    state, cleanup = scan_and_cleanup_one_shot(
+        container="ret-h-smoke-oneshot-abc123", sentinels=SENTINELS, runner=runner
+    )
+    assert state is ScanState.SCANNED_AND_NOT_FOUND
+    assert cleanup.verified is True
+    assert [c[1] for c in calls] == ["logs", "rm"]
+    assert "ret-h-smoke-oneshot-abc123" in calls[0]
+
+
+def test_one_shot_log_leak_is_detected_and_container_still_removed() -> None:
+    from app.release_validation.ret_h_synthetic_smoke import scan_and_cleanup_one_shot
+
+    calls: list[list[str]] = []
+
+    def runner(args: Any) -> str:
+        calls.append(list(args))
+        return f"submitted {QUERY_SENTINEL}" if args[1] == "logs" else ""
+
+    state, cleanup = scan_and_cleanup_one_shot(container="c1", sentinels=SENTINELS, runner=runner)
+    assert state is ScanState.FOUND
+    assert cleanup.verified is True
+    assert [c[1] for c in calls] == ["logs", "rm"]
+
+
+def test_one_shot_cleanup_failure_is_surfaced_not_swallowed() -> None:
+    from app.release_validation.ret_h_synthetic_smoke import scan_and_cleanup_one_shot
+
+    def runner(args: Any) -> str:
+        if args[1] == "rm":
+            raise RuntimeError("container still in use")
+        return "clean"
+
+    state, cleanup = scan_and_cleanup_one_shot(container="c1", sentinels=SENTINELS, runner=runner)
+    assert state is ScanState.SCANNED_AND_NOT_FOUND
+    assert cleanup.verified is False
+    assert "cleanup" in cleanup.message.lower() or "RuntimeError" in cleanup.message
+
+
+def test_one_shot_container_names_are_run_specific() -> None:
+    from app.release_validation.ret_h_synthetic_smoke import one_shot_container_name
+
+    first = one_shot_container_name()
+    second = one_shot_container_name()
+    assert first != second
+    assert first.startswith("ret-h-smoke-oneshot-")
+
+
+# --------------------------------------------------------------------------------------
+# WATCH 2: resource evidence must exist before the interim artifact
+# --------------------------------------------------------------------------------------
+
+
+async def test_execute_without_resource_observation_fails_instead_of_awaiting_privacy() -> None:
+    receipt = await _run(defer_privacy=True, resource_observation=None)
+    assert receipt.status == STATUS_FAILED
+    assert receipt.blocked_code == FAILED_BY_RESOURCE_OBSERVATION_UNVERIFIED
+
+
+async def test_execute_with_zero_memory_usage_fails() -> None:
+    from app.release_validation.ret_h_synthetic_smoke import ResourceObservation
+
+    receipt = await _run(
+        defer_privacy=True,
+        resource_observation=ResourceObservation(
+            memory_usage_bytes=0, memory_limit_bytes=EXPECTED_WORKER_MEMORY_LIMIT_BYTES, cpu_percent=1.0
+        ),
+    )
+    assert receipt.status == STATUS_FAILED
+    assert receipt.blocked_code == FAILED_BY_RESOURCE_OBSERVATION_UNVERIFIED
+
+
+async def test_execute_with_mismatched_resource_limit_fails() -> None:
+    from app.release_validation.ret_h_synthetic_smoke import ResourceObservation
+
+    receipt = await _run(
+        defer_privacy=True,
+        resource_observation=ResourceObservation(
+            memory_usage_bytes=1024, memory_limit_bytes=2 * 1024**3, cpu_percent=1.0
+        ),
+    )
+    assert receipt.status == STATUS_FAILED
+    assert receipt.blocked_code == FAILED_BY_WORKER_MEMORY_LIMIT
+
+
+async def test_interim_preserves_resource_measurements() -> None:
+    receipt = await _run(defer_privacy=True)
+    assert receipt.resource_observation_verified is True
+    assert receipt.worker_memory_usage_bytes == 300 * 1024**2
+    assert receipt.worker_memory_limit_bytes == EXPECTED_WORKER_MEMORY_LIMIT_BYTES
+    assert receipt.worker_cpu_percent == pytest.approx(4.0)
+    assert receipt.restart_count == 0
+    assert receipt.container_health == "healthy"
+
+    document = receipt.to_artifact()["resources"]
+    assert document["observation_verified"] is True
+    assert document["worker_memory_usage_bytes"] == 300 * 1024**2
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda r: r.update(observation_verified=False),
+        lambda r: r.update(worker_memory_usage_bytes=0),
+        lambda r: r.pop("worker_memory_usage_bytes", None),
+        lambda r: r.update(worker_memory_limit_bytes=2 * 1024**3),
+        lambda r: r.update(oom_killed=True),
+    ],
+)
+async def test_finalize_refuses_an_interim_without_valid_resource_evidence(mutate: Any) -> None:
+    document = await _interim()
+    mutate(document["resources"])
+    final = finalize_smoke_artifact(document, privacy_observation=_observation(), sentinels=SENTINELS)
+    assert final["status"] == STATUS_FAILED
+    assert final["blocked_code"] == FAILED_BY_RESOURCE_OBSERVATION_UNVERIFIED
+
+
+# --------------------------------------------------------------------------------------
+# WATCH 3: the candidates actually selected must carry the Source sentinel
+# --------------------------------------------------------------------------------------
+
+
+def _hit_with_chunk(chunk_id: str) -> Any:
+    hit = MagicMock()
+    hit.provenance.knowledge_chunk_id = chunk_id
+    return hit
+
+
+async def test_selected_chunk_ids_are_passed_to_the_source_binding_check() -> None:
+    seen: dict[str, Any] = {}
+
+    async def _case(selected_chunk_ids: Any) -> CheckResult:
+        seen["ids"] = tuple(selected_chunk_ids)
+        return CheckResult(executed=True, passed=True)
+
+    outcome = _outcome(RUN_ID, "e" * 64)
+    outcome.gate_outcome = MagicMock(selected_hits=(_hit_with_chunk("chunk-a"), _hit_with_chunk("chunk-b")))
+    receipt = await _run(
+        dependencies=_dependencies(execution_fn=AsyncMock(return_value=outcome), selected_source_binding_case=_case)
+    )
+    assert receipt.status == STATUS_SUCCESS
+    assert seen["ids"] == ("chunk-a", "chunk-b")
+    assert receipt.selected_source_binding_verified is True
+
+
+async def test_marker_only_on_an_unselected_chunk_blocks_success() -> None:
+    """Pre-execution binding can pass while the selected Source has no marker."""
+
+    async def _case(_ids: Any) -> CheckResult:
+        return CheckResult(
+            executed=True, passed=False, message="a selected candidate does not carry the declared Source sentinel"
+        )
+
+    receipt = await _run(dependencies=_dependencies(selected_source_binding_case=_case))
+    assert receipt.status == STATUS_FAILED
+    assert receipt.blocked_code == FAILED_BY_SELECTED_SOURCE_SENTINEL_UNBOUND
+    assert receipt.selected_source_binding_verified is False
+
+
+async def test_unexecuted_selected_source_check_is_never_a_pass() -> None:
+    async def _case(_ids: Any) -> CheckResult:
+        return CheckResult(executed=False, passed=False, message="database unreachable")
+
+    receipt = await _run(dependencies=_dependencies(selected_source_binding_case=_case))
+    assert receipt.status == STATUS_FAILED
+    assert receipt.blocked_code == FAILED_BY_SELECTED_SOURCE_SENTINEL_UNBOUND
+
+
+async def test_missing_selected_source_binding_dependency_blocks_execution() -> None:
+    execution = AsyncMock()
+    receipt = await _run(dependencies=_dependencies(selected_source_binding_case=None, execution_fn=execution))
+    assert receipt.status == AWS_SMOKE_NOT_EXECUTED
+    assert receipt.blocked_code == BLOCKED_BY_RUNTIME_DEPENDENCY_MISSING
+    execution.assert_not_awaited()
+
+
+async def test_interim_records_the_selected_source_binding() -> None:
+    receipt = await _run(defer_privacy=True)
+    assert receipt.selected_source_binding_verified is True
+    assert receipt.to_artifact()["fixture"]["selected_source_binding_verified"] is True
+
+
+# --------------------------------------------------------------------------------------
+# End-to-end: fixture -> execute -> selected-hit check -> interim -> host scan -> finalize
+# --------------------------------------------------------------------------------------
+
+
+async def _execute_then_finalize(
+    *,
+    selected_chunk_ids: tuple[str, ...],
+    corpus_with_marker: set[str],
+    one_shot_log: str = "clean one-shot output",
+) -> dict[str, Any]:
+    """Drive the whole composition with a mocked production execution.
+
+    ``corpus_with_marker`` is the set of chunk ids whose Source text carries the Source
+    sentinel, so a marker can be placed on a chunk that is never selected.
+    """
+    outcome = _outcome(RUN_ID, "e" * 64)
+    outcome.gate_outcome = MagicMock(selected_hits=tuple(_hit_with_chunk(c) for c in selected_chunk_ids))
+
+    async def _selected_case(ids: Any) -> CheckResult:
+        missing = [c for c in ids if c not in corpus_with_marker]
+        if missing:
+            return CheckResult(
+                executed=True,
+                passed=False,
+                message="a selected candidate does not carry the declared Source sentinel",
+            )
+        return CheckResult(executed=True, passed=True)
+
+    interim = await _run(
+        defer_privacy=True,
+        dependencies=_dependencies(
+            execution_fn=AsyncMock(return_value=outcome),
+            selected_source_binding_case=_selected_case,
+            scan_targets=(),
+        ),
+    )
+    document = interim.to_artifact()
+    if interim.status != AWS_SMOKE_NOT_EXECUTED:
+        return document
+
+    document["retrieval"]["execution_started_at"] = EXEC_START.isoformat()
+    document["retrieval"]["execution_finished_at"] = EXEC_END.isoformat()
+
+    # Host phase: the one-shot container is still present, so its log can be scanned.
+    from app.release_validation.ret_h_synthetic_smoke import scan_and_cleanup_one_shot
+
+    def runner(args: Any) -> str:
+        return one_shot_log if args[1] == "logs" else ""
+
+    one_shot_state, cleanup = scan_and_cleanup_one_shot(
+        container="ret-h-smoke-oneshot-e2e", sentinels=SENTINELS, runner=runner
+    )
+    assert cleanup.verified is True
+
+    targets = dict(CLEAN_TARGETS)
+    targets["smoke_one_shot_logs"] = one_shot_state
+    return finalize_smoke_artifact(document, privacy_observation=_observation(targets=targets), sentinels=SENTINELS)
+
+
+async def test_end_to_end_succeeds_when_every_selected_candidate_carries_the_marker() -> None:
+    final = await _execute_then_finalize(
+        selected_chunk_ids=("chunk-a", "chunk-b"), corpus_with_marker={"chunk-a", "chunk-b"}
+    )
+    assert final["status"] == STATUS_SUCCESS
+    assert final["fixture"]["selected_source_binding_verified"] is True
+    assert final["privacy"]["targets"]["smoke_one_shot_logs"] == "SCANNED_AND_NOT_FOUND"
+    assert final["resources"]["observation_verified"] is True
+
+
+async def test_end_to_end_blocks_when_the_marker_is_only_on_an_unselected_chunk() -> None:
+    """allowed member A has the marker but is not selected; selected B has none."""
+    final = await _execute_then_finalize(selected_chunk_ids=("chunk-b",), corpus_with_marker={"chunk-a"})
+    assert final["status"] == STATUS_FAILED
+    assert final["blocked_code"] == FAILED_BY_SELECTED_SOURCE_SENTINEL_UNBOUND
+
+
+async def test_end_to_end_blocks_when_one_selected_candidate_lacks_the_marker() -> None:
+    final = await _execute_then_finalize(selected_chunk_ids=("chunk-a", "chunk-b"), corpus_with_marker={"chunk-a"})
+    assert final["status"] == STATUS_FAILED
+    assert final["blocked_code"] == FAILED_BY_SELECTED_SOURCE_SENTINEL_UNBOUND
+
+
+async def test_end_to_end_blocks_when_the_query_leaked_into_the_one_shot_log() -> None:
+    final = await _execute_then_finalize(
+        selected_chunk_ids=("chunk-a",),
+        corpus_with_marker={"chunk-a"},
+        one_shot_log=f"submitting {QUERY_SENTINEL}",
+    )
+    assert final["status"] == STATUS_FAILED
+    assert final["blocked_code"] == FAILED_BY_SENTINEL_FOUND

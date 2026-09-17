@@ -36,6 +36,7 @@ from typing import Any
 
 from app.release_validation.ret_h_synthetic_smoke import (
     FASTAPI_CONTAINER_NAME,
+    ONE_SHOT_CONTAINER_PREFIX,
     STATUS_FAILED,
     WORKER_CONTAINER_NAME,
     CheckResult,
@@ -85,6 +86,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Host-produced deployment observation JSON (see docs/testing/ret-h-aws-synthetic-smoke-178.md).",
     )
     parser.add_argument("--output-path", type=Path, default=None)
+    parser.add_argument(
+        "--one-shot-container",
+        default=ONE_SHOT_CONTAINER_PREFIX,
+        help="Name given to the execute one-shot container, whose log is a required scan target.",
+    )
     parser.add_argument("--redis-stream", default="oryak:jobs")
     parser.add_argument("--redis-dlq-stream", default="oryak:jobs:dead-letter")
     return parser
@@ -104,6 +110,7 @@ def build_live_dependencies(
     redis_stream: str,
     redis_dlq_stream: str,
     sentinels: Any = None,
+    one_shot_container: str = ONE_SHOT_CONTAINER_PREFIX,
 ) -> LiveSmokeDependencies:
     """Assemble real production dependencies, or leave them absent (fail-closed)."""
     scan_targets = (
@@ -111,6 +118,9 @@ def build_live_dependencies(
         ScanTarget("fastapi_logs", build_docker_log_reader(FASTAPI_CONTAINER_NAME)),
         ScanTarget("redis_stream", build_redis_stream_reader(redis_stream)),
         ScanTarget("redis_dlq", build_redis_stream_reader(redis_dlq_stream)),
+        # Scanned on the host after the run, once the one-shot container has exited but
+        # before it is removed; see docs/testing/ret-h-aws-synthetic-smoke-178.md.
+        ScanTarget("smoke_one_shot_logs", build_docker_log_reader(one_shot_container)),
         # This deployment has no separate quarantine storage for retrieval.
         ScanTarget("quarantine", reader=None, applicable=False),
     )
@@ -133,6 +143,7 @@ def build_live_dependencies(
         make_stale_hit,
         verify_fixture_is_synthetic,
         verify_gate_fail_closed,
+        verify_selected_candidates_carry_sentinel,
         verify_source_sentinel_indexed,
     )
 
@@ -189,6 +200,14 @@ def build_live_dependencies(
         )
         return CheckResult(executed=True, passed=bound, message=message)
 
+    async def _selected_source_binding_case(selected_chunk_ids: Any) -> CheckResult:
+        bound, message = await verify_selected_candidates_carry_sentinel(
+            session_factory=verification_session_factory,
+            selected_chunk_ids=tuple(UUID(str(value)) for value in selected_chunk_ids),
+            source_sentinel=sentinels.source_sentinel,
+        )
+        return CheckResult(executed=True, passed=bound, message=message)
+
     async def _fixture_authenticity_case() -> CheckResult:
         genuine, message = await verify_fixture_is_synthetic(
             session_factory=verification_session_factory,
@@ -209,6 +228,7 @@ def build_live_dependencies(
         receipt_verifier=build_receipt_verifier(),
         source_sentinel_binding_case=_source_sentinel_binding_case,
         fixture_authenticity_case=_fixture_authenticity_case,
+        selected_source_binding_case=_selected_source_binding_case,
         stale_case=_negative(make_stale_hit),
         locator_mismatch_case=_negative(make_locator_mismatch_hit),
         scan_targets=scan_targets,
@@ -357,6 +377,7 @@ def main(argv: list[str] | None = None) -> int:
         redis_stream=args.redis_stream,
         redis_dlq_stream=args.redis_dlq_stream,
         sentinels=sentinels,
+        one_shot_container=args.one_shot_container,
     )
 
     receipt = asyncio.run(

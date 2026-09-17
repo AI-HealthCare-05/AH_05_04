@@ -90,6 +90,7 @@ FAILED_BY_SENTINEL_FOUND = "FAILED_BY_SENTINEL_FOUND"
 FAILED_BY_PRIVACY_SCAN_UNVERIFIED = "FAILED_BY_PRIVACY_SCAN_UNVERIFIED"
 FAILED_BY_RESOURCE_OBSERVATION_UNVERIFIED = "FAILED_BY_RESOURCE_OBSERVATION_UNVERIFIED"
 FAILED_BY_PRIVACY_OBSERVATION_UNBOUND = "FAILED_BY_PRIVACY_OBSERVATION_UNBOUND"
+FAILED_BY_SELECTED_SOURCE_SENTINEL_UNBOUND = "FAILED_BY_SELECTED_SOURCE_SENTINEL_UNBOUND"
 
 LEXICAL_SIGNAL_METHODS = frozenset({"EXACT", "TRIGRAM", "FTS", "LEXICAL"})
 DENSE_SIGNAL_METHODS = frozenset({"DENSE"})
@@ -151,6 +152,7 @@ class CheckResult:
 
 
 CheckCallable = Callable[[], Awaitable["CheckResult"]]
+SelectedSourceCheckCallable = Callable[[tuple[Any, ...]], Awaitable["CheckResult"]]
 
 
 async def run_check(case: CheckCallable | None) -> CheckResult:
@@ -429,6 +431,24 @@ class GateNegativeResult:
 GateNegativeCallable = Callable[[], Awaitable[GateNegativeResult]]
 
 
+async def _run_selected_source_check(
+    case: SelectedSourceCheckCallable | None,
+    selected_chunk_ids: tuple[Any, ...],
+) -> CheckResult:
+    """Await the selected-candidate Source check, converting absence into a non-PASS."""
+    if case is None:
+        return CheckResult(executed=False, passed=False, message="verifier not supplied")
+    if not selected_chunk_ids:
+        return CheckResult(executed=True, passed=False, message="no selected candidate to check")
+    try:
+        result = await case(selected_chunk_ids)
+    except Exception as error:  # noqa: BLE001 - never leak Source text
+        return CheckResult(executed=False, passed=False, message=f"verifier error: {type(error).__name__}")
+    if not isinstance(result, CheckResult):
+        return CheckResult(executed=False, passed=False, message="verifier returned an unusable result")
+    return result
+
+
 async def _run_negative_case(case: GateNegativeCallable | None) -> GateNegativeResult:
     if case is None:
         return GateNegativeResult(executed=False, fail_closed=False, message="verifier not supplied")
@@ -649,6 +669,7 @@ class RetHSmokeReceipt:
     execution_finished_at: str | None = None
     sentinel_binding_verified: bool = False
     fixture_authenticity_verified: bool = False
+    selected_source_binding_verified: bool = False
     execution_transaction_verified: bool = False
     verification_transaction_verified: bool = False
     evidence_gate_positive_verified: bool = False
@@ -693,6 +714,7 @@ class RetHSmokeReceipt:
                 "knowledge_index_ref": self.knowledge_index_ref,
                 "sentinel_binding_verified": self.sentinel_binding_verified,
                 "authenticity_verified": self.fixture_authenticity_verified,
+                "selected_source_binding_verified": self.selected_source_binding_verified,
                 "embedding_model": EMBEDDING_MODEL_REF,
                 "embedding_model_version": EMBEDDING_MODEL_VERSION,
                 "embedding_dimension": EMBEDDING_DIMENSION,
@@ -735,6 +757,22 @@ class RetHSmokeReceipt:
             "limitations": list(LIMITATIONS),
             "details": dict(self.details),
         }
+
+
+def _interim_resource_problem(resources: Any) -> str | None:
+    """Return why the interim artifact's resource evidence is unusable, or ``None``."""
+    if not isinstance(resources, Mapping):
+        return "interim artifact does not record a resource observation"
+    if resources.get("observation_verified") is not True:
+        return "interim artifact does not record a verified resource observation"
+    usage = resources.get("worker_memory_usage_bytes")
+    if not isinstance(usage, int) or usage <= 0:
+        return "interim artifact does not record a positive worker memory usage"
+    if resources.get("worker_memory_limit_bytes") != EXPECTED_WORKER_MEMORY_LIMIT_BYTES:
+        return "interim artifact does not record the approved worker memory limit"
+    if resources.get("oom_killed") is not False:
+        return "interim artifact does not record OOMKilled=false"
+    return None
 
 
 def finalize_smoke_artifact(
@@ -782,6 +820,12 @@ def finalize_smoke_artifact(
     )
     if not binding.verified:
         return _fail(FAILED_BY_PRIVACY_OBSERVATION_UNBOUND, binding.message)
+
+    # A clean privacy scan does not make up for missing resource evidence: both must hold
+    # before an interim artifact may be promoted to SUCCESS.
+    resource_problem = _interim_resource_problem(result.get("resources"))
+    if resource_problem is not None:
+        return _fail(FAILED_BY_RESOURCE_OBSERVATION_UNVERIFIED, resource_problem)
 
     privacy["targets"] = {name: str(state) for name, state in privacy_observation.targets.items()}
     verified, code = classify_privacy_scan(privacy_observation.targets)
@@ -846,12 +890,22 @@ class LiveSmokeDependencies:
     # Proves the pinned Knowledge Index / Source Snapshot really is the approved
     # synthetic fixture, not a production Index that a manifest merely names as one.
     fixture_authenticity_case: CheckCallable | None = None
+    # Proves the candidates the Evidence Gate actually selected carry the Source
+    # sentinel. Receives the selected knowledge_chunk_ids.
+    selected_source_binding_case: SelectedSourceCheckCallable | None = None
     stale_case: GateNegativeCallable | None = None
     locator_mismatch_case: GateNegativeCallable | None = None
     scan_targets: tuple[ScanTarget, ...] = ()
     knowledge_index_ref: str | None = None
 
-    def missing(self, *, has_host_scan: bool = False) -> list[str]:
+    def missing(self, *, require_scan_targets: bool = True) -> list[str]:
+        """List absent dependencies.
+
+        Scan targets are deliberately *not* production runtime dependencies. The execute
+        phase runs before any post-execution scan can exist, so requiring them there
+        would block the run on evidence that cannot be produced yet. They are only
+        required when this process performs the scan itself.
+        """
         required = (
             "session_factory",
             "verification_session_factory",
@@ -864,11 +918,12 @@ class LiveSmokeDependencies:
             "receipt_verifier",
             "source_sentinel_binding_case",
             "fixture_authenticity_case",
+            "selected_source_binding_case",
             "stale_case",
             "locator_mismatch_case",
         )
         absent = [name for name in required if getattr(self, name) is None]
-        if not has_host_scan:
+        if require_scan_targets:
             scanned = {target.name for target in self.scan_targets}
             absent.extend(f"scan_target:{name}" for name in REQUIRED_SCAN_TARGETS if name not in scanned)
         return absent
@@ -985,9 +1040,32 @@ async def run_ret_h_smoke(  # noqa: C901, PLR0911, PLR0912, PLR0915
     if worker_facts.oom_killed:
         return _failed(FAILED_BY_WORKER_OOM_KILLED, "ai-worker container reports OOMKilled=true")
 
+    # 4b. Resource observation is host-produced and independent of the retrieval call, so
+    # it is validated and recorded *before* any artifact can be emitted. Deferring it past
+    # the interim return would let a run with no resource evidence reach SUCCESS later.
+    if resource_observation is None:
+        return _failed(FAILED_BY_RESOURCE_OBSERVATION_UNVERIFIED, "ai-worker resource observation was not collected")
+    if resource_observation.memory_usage_bytes <= 0:
+        return _failed(
+            FAILED_BY_RESOURCE_OBSERVATION_UNVERIFIED,
+            "ai-worker resource observation reports a non-positive memory usage",
+        )
+    if resource_observation.memory_limit_bytes != expected_memory_limit_bytes:
+        return _failed(
+            FAILED_BY_WORKER_MEMORY_LIMIT,
+            f"observed memory limit {resource_observation.memory_limit_bytes} != {expected_memory_limit_bytes}",
+        )
+    deployment_fields.update(
+        worker_memory_usage_bytes=resource_observation.memory_usage_bytes,
+        worker_cpu_percent=resource_observation.cpu_percent,
+        resource_observation_verified=True,
+    )
+
     # 5. All production dependencies must be present before anything executes.
     dependencies = dependencies or LiveSmokeDependencies()
-    missing = dependencies.missing(has_host_scan=host_scan_results is not None or privacy_observation is not None)
+    # Scan targets matter only when this process is also the scanner.
+    performs_own_scan = not defer_privacy and privacy_observation is None and host_scan_results is None
+    missing = dependencies.missing(require_scan_targets=performs_own_scan)
     if missing:
         return _blocked(
             mode=mode,
@@ -1076,6 +1154,24 @@ async def run_ret_h_smoke(  # noqa: C901, PLR0911, PLR0912, PLR0915
             "Evidence Gate returned no selected hit for the synthetic positive query",
         )
     deployment_fields["evidence_gate_positive_verified"] = True
+
+    # The pre-execution binding only proves the marker exists somewhere allowed. The
+    # Source whose non-logging this smoke certifies must be the Source this run actually
+    # retrieved, so the candidates the Gate selected are checked by their real chunk ids.
+    selected_chunk_ids = tuple(
+        chunk_id
+        for chunk_id in (
+            getattr(getattr(hit, "provenance", None), "knowledge_chunk_id", None) for hit in positive_selected
+        )
+        if chunk_id is not None
+    )
+    selected_binding = await _run_selected_source_check(dependencies.selected_source_binding_case, selected_chunk_ids)
+    deployment_fields["selected_source_binding_verified"] = selected_binding.verified
+    if not selected_binding.verified:
+        return _failed(
+            FAILED_BY_SELECTED_SOURCE_SENTINEL_UNBOUND,
+            f"Selected candidates are not bound to the Source sentinel: {selected_binding.message}",
+        )
 
     # 7. Independent read-only verification session.
     try:
@@ -1167,15 +1263,6 @@ async def run_ret_h_smoke(  # noqa: C901, PLR0911, PLR0912, PLR0915
     deployment_fields["privacy_scan_verified"] = privacy_ok
     if not privacy_ok:
         return _failed(privacy_code or FAILED_BY_PRIVACY_SCAN_UNVERIFIED, "Privacy sentinel scan did not pass")
-
-    # 11. Resource observation.
-    if resource_observation is None:
-        return _failed(FAILED_BY_RESOURCE_OBSERVATION_UNVERIFIED, "ai-worker resource observation was not collected")
-    deployment_fields.update(
-        worker_memory_usage_bytes=resource_observation.memory_usage_bytes,
-        worker_cpu_percent=resource_observation.cpu_percent,
-        resource_observation_verified=True,
-    )
 
     return RetHSmokeReceipt(
         status=STATUS_SUCCESS,
@@ -1433,6 +1520,52 @@ def build_docker_log_reader(
         return runner(args)
 
     return _read
+
+
+ONE_SHOT_CONTAINER_PREFIX = "ret-h-smoke-oneshot"
+
+
+def one_shot_container_name(token_factory: Callable[[], str] = lambda: secrets.token_hex(4)) -> str:
+    """Return a run-specific one-shot container name.
+
+    A fixed name would collide with a container left behind by an earlier run, so the
+    name carries a per-run suffix.
+    """
+    return f"{ONE_SHOT_CONTAINER_PREFIX}-{token_factory()}"
+
+
+def scan_and_cleanup_one_shot(
+    *,
+    container: str,
+    sentinels: SmokeSentinels,
+    runner: CommandRunner = default_command_runner,
+) -> tuple[ScanState, CheckResult]:
+    """Read the one-shot container's logs, then remove it - in that order.
+
+    The one-shot container that submits the query is itself a place the query can leak,
+    so its log must be scanned. ``docker run --rm`` deletes the container the moment it
+    exits, taking the log with it, which would leave a required scan permanently
+    ``NOT_EXECUTED``. The container is therefore kept until after this scan and removed
+    here. A cleanup failure is reported rather than swallowed.
+    """
+    try:
+        logs = runner(["docker", "logs", "--no-color", container])
+    except Exception as error:  # noqa: BLE001 - never leak scanned content
+        logger.warning("one-shot log read failed: %s", type(error).__name__)
+        state = ScanState.NOT_EXECUTED
+    else:
+        needles = [value for value in sentinels.raw_values() if value]
+        state = ScanState.FOUND if any(n in logs for n in needles) else ScanState.SCANNED_AND_NOT_FOUND
+
+    try:
+        runner(["docker", "rm", container])
+    except Exception as error:  # noqa: BLE001
+        return state, CheckResult(
+            executed=True,
+            passed=False,
+            message=f"one-shot container cleanup failed: {type(error).__name__}",
+        )
+    return state, CheckResult(executed=True, passed=True, message="one-shot container removed")
 
 
 def build_redis_stream_reader(
