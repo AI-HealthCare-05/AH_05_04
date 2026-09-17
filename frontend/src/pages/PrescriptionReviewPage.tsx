@@ -1111,7 +1111,13 @@ function PrescriptionReviewPage({
       const response = await services.confirmPrescription(documentId)
       if (latestReviewRequestKeyRef.current !== confirmationRequestKey) return
       setPrescription(response)
-      void handleCreateGuide(response.data.prescription_id)
+      // NOTIF-CONSENT-01: 가이드 생성을 시작하기 전에 알림 수신 동의를 먼저 확인한다.
+      // 실제 가이드 생성 호출은 동의 화면에서 진행되며, 이 화면으로 돌아왔을 때의
+      // 재시도 UI(아래 handleCreateGuide/guideCreationError)는 그대로 남겨둔다.
+      navigate('/notifications/consent', {
+        replace: true,
+        state: { prescriptionId: response.data.prescription_id },
+      })
     } catch (error) {
       if (latestReviewRequestKeyRef.current !== confirmationRequestKey) return
       applyReviewError(error, '처방 확정 중 오류가 발생했습니다.')

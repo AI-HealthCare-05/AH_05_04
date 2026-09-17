@@ -15,6 +15,7 @@ import {
   MemoryRouter,
   Route,
   Routes,
+  useLocation,
   useNavigate,
   useParams,
 } from 'react-router-dom'
@@ -24,7 +25,7 @@ import type {
 } from '../src/api/prescriptions'
 import { ApiError } from '../src/api/client'
 import { getOcrConsent } from '../src/api/ocrConsent'
-import { createGuide, type GuideResponse } from '../src/api/guides'
+import { createGuide } from '../src/api/guides'
 import PrescriptionReviewPage from '../src/pages/PrescriptionReviewPage'
 
 const prescriptionReviewStyles = readFileSync(
@@ -222,6 +223,10 @@ function renderPage(prefetchedOcrResponse?: OcrJobResponse) {
           path="/prescriptions/upload"
           element={<div>처방전 업로드 화면</div>}
         />
+        <Route
+          path="/notifications/consent"
+          element={<NotificationConsentRouteProbe />}
+        />
       </Routes>
     </MemoryRouter>,
   )
@@ -230,6 +235,13 @@ function renderPage(prefetchedOcrResponse?: OcrJobResponse) {
 function GuideRouteProbe() {
   const { guideId } = useParams()
   return <div>Guide route: {guideId}</div>
+}
+
+function NotificationConsentRouteProbe() {
+  const location = useLocation()
+  const prescriptionId = (location.state as { prescriptionId?: unknown } | null)
+    ?.prescriptionId
+  return <div>알림 동의 화면 prescriptionId={String(prescriptionId)}</div>
 }
 
 function RouteSwitchHarness() {
@@ -320,24 +332,6 @@ function mockPatchConfirmation() {
       }
     },
   )
-}
-
-function makeGuideResponse(
-  guideId = 'guide-1',
-  prescriptionId = 'prescription-1',
-): GuideResponse {
-  return {
-    data: {
-      guide_id: guideId,
-      prescription_id: prescriptionId,
-      generation_status: 'COMPLETED',
-      content: '테스트 가이드',
-      model_name: 'guide-model',
-      prompt_version: 'guide-prompt-v1',
-      requested_at: '2026-08-22T00:00:03Z',
-      completed_at: '2026-08-22T00:00:04Z',
-    },
-  }
 }
 
 beforeEach(() => {
@@ -1506,12 +1500,9 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     ).toBeNull()
   })
 
-  it('처방 확정 성공 후 실제 prescription_id로 Guide를 생성하고 Guide route로 이동한다', async () => {
+  it('NOTIF-CONSENT-01: 처방 확정 성공 후 Guide를 직접 생성하지 않고 알림 동의 화면으로 이동한다', async () => {
     vi.mocked(getOcrJob).mockResolvedValue(
       makeOcrResponse(makeCompleteFields()),
-    )
-    vi.mocked(createGuide).mockResolvedValue(
-      makeGuideResponse('guide-created', 'prescription-1'),
     )
 
     renderPage()
@@ -1522,126 +1513,12 @@ describe('PrescriptionReviewPage confirmation gate', () => {
     await waitFor(() =>
       expect(confirmPrescription).toHaveBeenCalledWith('document-1'),
     )
-    await waitFor(() =>
-      expect(createGuide).toHaveBeenCalledWith('prescription-1'),
-    )
     expect(
-      await screen.findByText('Guide route: guide-created'),
+      await screen.findByText('알림 동의 화면 prescriptionId=prescription-1'),
     ).toBeTruthy()
     expect(confirmPrescription).toHaveBeenCalledTimes(1)
-    expect(createGuide).toHaveBeenCalledTimes(1)
-  })
-
-  it('Guide 생성 중 중복 요청을 막는다', async () => {
-    const guideCreation = createDeferred<GuideResponse>()
-    vi.mocked(getOcrJob).mockResolvedValue(
-      makeOcrResponse(makeCompleteFields()),
-    )
-    vi.mocked(createGuide).mockImplementation(() => guideCreation.promise)
-
-    renderPage()
-
-    fireEvent.click(await screen.findByRole('checkbox'))
-    const confirmButton = await getConfirmationButton()
-    fireEvent.click(confirmButton)
-    fireEvent.click(confirmButton)
-
-    await waitFor(() => expect(createGuide).toHaveBeenCalledTimes(1))
-    expect(confirmPrescription).toHaveBeenCalledTimes(1)
-
-    const creatingButton = await screen.findByRole('button', {
-      name: '가이드 생성 중...',
-    })
-    expect(creatingButton).toHaveProperty('disabled', true)
-    fireEvent.click(creatingButton)
-    expect(createGuide).toHaveBeenCalledTimes(1)
-
-    await act(async () => {
-      guideCreation.resolve(
-        makeGuideResponse('guide-created-once', 'prescription-1'),
-      )
-      await guideCreation.promise
-    })
-
-    expect(
-      await screen.findByText('Guide route: guide-created-once'),
-    ).toBeTruthy()
-  })
-
-  it('Guide 생성 중 화면을 나가면 늦은 성공 응답이 Guide 화면으로 이동시키지 않는다', async () => {
-    const guideCreation = createDeferred<GuideResponse>()
-    vi.mocked(getOcrJob).mockResolvedValue(
-      makeOcrResponse(makeCompleteFields()),
-    )
-    vi.mocked(createGuide).mockImplementation(() => guideCreation.promise)
-
-    renderPage()
-
-    fireEvent.click(await screen.findByRole('checkbox'))
-    fireEvent.click(await getConfirmationButton())
-
-    await waitFor(() => expect(createGuide).toHaveBeenCalledTimes(1))
-    fireEvent.click(screen.getByRole('button', { name: '이전 화면' }))
-    expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
-
-    await act(async () => {
-      guideCreation.resolve(
-        makeGuideResponse('late-guide', 'prescription-1'),
-      )
-      await guideCreation.promise
-    })
-
-    expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
-    expect(screen.queryByText('Guide route: late-guide')).toBeNull()
-  })
-
-  it('Guide 생성 실패 후 확정 처방을 유지하고 같은 prescription_id로 Guide만 재시도한다', async () => {
-    const retryCreation = createDeferred<GuideResponse>()
-    vi.mocked(getOcrJob).mockResolvedValue(
-      makeOcrResponse(makeCompleteFields()),
-    )
-    vi.mocked(createGuide)
-      .mockRejectedValueOnce(new Error('first guide failure'))
-      .mockImplementationOnce(() => retryCreation.promise)
-
-    renderPage()
-
-    fireEvent.click(await screen.findByRole('checkbox'))
-    fireEvent.click(await getConfirmationButton())
-
-    expect(await screen.findByText('처방정보가 확정되었어요')).toBeTruthy()
-    expect(
-      await screen.findByText('복약 가이드를 만드는 중 오류가 발생했습니다.'),
-    ).toBeTruthy()
-    expect(screen.queryByLabelText('처방전 약 이름')).toBeNull()
-    expect(confirmPrescription).toHaveBeenCalledTimes(1)
-    expect(createGuide).toHaveBeenNthCalledWith(1, 'prescription-1')
-
-    const retryButton = screen.getByRole('button', {
-      name: '가이드 생성 다시 시도',
-    })
-    fireEvent.click(retryButton)
-    fireEvent.click(retryButton)
-
-    await waitFor(() => expect(createGuide).toHaveBeenCalledTimes(2))
-    expect(confirmPrescription).toHaveBeenCalledTimes(1)
-    expect(createGuide).toHaveBeenNthCalledWith(2, 'prescription-1')
-    expect(
-      screen.getByRole('button', { name: '가이드 생성 중...' }),
-    ).toHaveProperty('disabled', true)
-
-    await act(async () => {
-      retryCreation.resolve(
-        makeGuideResponse('guide-after-retry', 'prescription-1'),
-      )
-      await retryCreation.promise
-    })
-
-    expect(
-      await screen.findByText('Guide route: guide-after-retry'),
-    ).toBeTruthy()
-    expect(confirmPrescription).toHaveBeenCalledTimes(1)
-    expect(createGuide).toHaveBeenCalledTimes(2)
+    // Guide 생성은 이제 알림 동의 화면(NotificationConsentPage)에서 수행한다.
+    expect(createGuide).not.toHaveBeenCalled()
   })
 
   it('버튼 문구와 실제 처방 확정 동작이 일치한다', async () => {

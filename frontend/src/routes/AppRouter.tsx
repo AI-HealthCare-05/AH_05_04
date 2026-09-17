@@ -18,6 +18,7 @@ import ProfilePage from '../pages/ProfilePage'
 import MenuPage from '../pages/MenuPage'
 import { ScheduleOccurrencePage, SchedulePage } from '../pages/SchedulePage'
 import NotificationsPage from '../pages/NotificationsPage'
+import NotificationConsentPage from '../pages/NotificationConsentPage'
 import UnconfirmedCheckinsPage from '../pages/UnconfirmedCheckinsPage'
 import ReportPage from '../pages/ReportPage'
 import NotificationSettingsPage from '../pages/NotificationSettingsPage'
@@ -156,6 +157,7 @@ export function AppRoutes({
         />
       )}
       <Route path="/prescriptions/review" element={<ProtectedRoute><PrescriptionReviewPage /></ProtectedRoute>} />
+      <Route path="/notifications/consent" element={<ProtectedRoute><NotificationConsentPage /></ProtectedRoute>} />
       <Route path="/guides/:guideId" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
       <Route path="/guides" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
       <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
