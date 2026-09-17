@@ -231,7 +231,9 @@ def request_with_approved_action(text: str) -> GuidelineCardRequest:
 
 def test_valid_card_binds_each_claim_to_medication_and_gate_passed_citation() -> None:
     request = valid_request()
-    selected = request.evidence_gate_outcome.gate_passed_selections[0]
+    assert request.evidence_gate_outcome is not None
+    gate = request.evidence_gate_outcome
+    selected = gate.gate_passed_selections[0]
     outcome = finalize_guideline_card(request)
 
     assert outcome.status is GuidelineCardStatus.GENERATED
@@ -774,12 +776,14 @@ def test_inconsistent_evidence_gate_outcome_is_rejected() -> None:
 
 def test_mutated_gate_passed_content_is_rejected() -> None:
     request = valid_request()
-    selected = request.evidence_gate_outcome.gate_passed_selections[0]
+    assert request.evidence_gate_outcome is not None
+    gate = request.evidence_gate_outcome
+    selected = gate.gate_passed_selections[0]
     candidate = selected.selection.candidate
     changed_candidate = replace(candidate, content_text=SensitiveText("변조된 합성 근거"))
     changed_selection = replace(selected.selection, candidate=changed_candidate)
     changed_gate = replace(
-        request.evidence_gate_outcome,
+        gate,
         gate_passed_selections=(replace(selected, selection=changed_selection),),
     )
 
@@ -792,7 +796,9 @@ def test_mutated_gate_passed_content_is_rejected() -> None:
 def test_replaced_gate_provenance_cannot_reuse_original_assessment() -> None:
     request = valid_request()
     assert request.draft is not None
-    selected = request.evidence_gate_outcome.gate_passed_selections[0]
+    assert request.evidence_gate_outcome is not None
+    gate = request.evidence_gate_outcome
+    selected = gate.gate_passed_selections[0]
     provenance = replace(
         selected.selection.candidate.provenance,
         source_snapshot_ref=artifact("attacker-source", "b" * 64),
@@ -801,7 +807,7 @@ def test_replaced_gate_provenance_cannot_reuse_original_assessment() -> None:
     )
     candidate = replace(selected.selection.candidate, provenance=provenance)
     changed = replace(selected, selection=replace(selected.selection, candidate=candidate))
-    changed_gate = replace(request.evidence_gate_outcome, gate_passed_selections=(changed,))
+    changed_gate = replace(gate, gate_passed_selections=(changed,))
     citation = replace(
         request.draft.claims[0].citations[0],
         source_snapshot_ref=provenance.source_snapshot_ref,
@@ -821,7 +827,9 @@ def test_replaced_gate_provenance_cannot_reuse_original_assessment() -> None:
 
 def test_missing_or_replayed_evidence_gate_trace_is_rejected() -> None:
     request = valid_request()
-    without_trace = replace(request.evidence_gate_outcome, trace=None)
+    assert request.evidence_gate_outcome is not None
+    gate = request.evidence_gate_outcome
+    without_trace = replace(gate, trace=None)
     replayed = replace(request, evaluated_at=datetime(2036, 9, 10, 3, 0, tzinfo=UTC))
 
     for changed in (replace(request, evidence_gate_outcome=without_trace), replayed):
@@ -832,7 +840,9 @@ def test_missing_or_replayed_evidence_gate_trace_is_rejected() -> None:
 
 def test_malformed_gate_selection_is_rejected() -> None:
     request = valid_request()
-    selected = request.evidence_gate_outcome.gate_passed_selections[0]
+    assert request.evidence_gate_outcome is not None
+    gate = request.evidence_gate_outcome
+    selected = gate.gate_passed_selections[0]
     malformed_candidate = replace(selected.selection.candidate, stage_signals=())
     malformed_selection = replace(
         selected.selection,
@@ -840,7 +850,7 @@ def test_malformed_gate_selection_is_rejected() -> None:
         rerank_score=CanonicalScore("not-a-score"),
     )
     malformed_gate = replace(
-        request.evidence_gate_outcome,
+        gate,
         gate_passed_selections=(replace(selected, selection=malformed_selection),),
     )
 
@@ -852,7 +862,9 @@ def test_malformed_gate_selection_is_rejected() -> None:
 
 def test_claim_scope_must_match_approved_medication_evidence_binding() -> None:
     request = valid_request()
-    selected = request.evidence_gate_outcome.gate_passed_selections[0]
+    assert request.evidence_gate_outcome is not None
+    gate = request.evidence_gate_outcome
+    selected = gate.gate_passed_selections[0]
     evidence_key = selected.selection.candidate.provenance.evidence_key
     matching = ApprovedGuidelineEvidenceBinding.create(
         "guideline-evidence-binding",
@@ -946,7 +958,9 @@ def test_finalized_card_snapshots_nested_identity_and_artifact_refs() -> None:
 
     object.__setattr__(request.medication_identities[0], "canonical_code", "TAMPERED")
     object.__setattr__(request.provenance.prompt_ref, "artifact_code", "tampered-prompt")
-    selected = request.evidence_gate_outcome.gate_passed_selections[0]
+    assert request.evidence_gate_outcome is not None
+    gate = request.evidence_gate_outcome
+    selected = gate.gate_passed_selections[0]
     object.__setattr__(
         selected.selection.candidate.provenance.source_snapshot_ref,
         "artifact_code",

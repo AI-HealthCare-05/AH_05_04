@@ -312,12 +312,14 @@ async def test_gate_precondition_execution_status_axis(
         context=make_context(),
     )
     base_req = make_valid_request()
+    assert base_req.evidence_gate_outcome is not None
+    base_gate = base_req.evidence_gate_outcome
     gate_outcome = EvidenceGateOutcome(
         execution_status=execution_status,
         evidence_status=EvidenceStatus.SUFFICIENT,
         reason=EvidenceGateReason.EVIDENCE_SUFFICIENT,
-        gate_passed_selections=base_req.evidence_gate_outcome.gate_passed_selections,
-        trace=base_req.evidence_gate_outcome.trace,
+        gate_passed_selections=base_gate.gate_passed_selections,
+        trace=base_gate.trace,
     )
     req = GuidelineGenerationRequest(
         medication_identities=base_req.medication_identities,
@@ -355,12 +357,14 @@ async def test_gate_precondition_evidence_status_axis(
         context=make_context(),
     )
     base_req = make_valid_request()
+    assert base_req.evidence_gate_outcome is not None
+    base_gate = base_req.evidence_gate_outcome
     gate_outcome = EvidenceGateOutcome(
         execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
         evidence_status=evidence_status,  # type: ignore[arg-type]
         reason=EvidenceGateReason.EVIDENCE_SUFFICIENT,
-        gate_passed_selections=base_req.evidence_gate_outcome.gate_passed_selections,
-        trace=base_req.evidence_gate_outcome.trace,
+        gate_passed_selections=base_gate.gate_passed_selections,
+        trace=base_gate.trace,
     )
     req = GuidelineGenerationRequest(
         medication_identities=base_req.medication_identities,
@@ -398,12 +402,14 @@ async def test_gate_precondition_reason_axis(
         context=make_context(),
     )
     base_req = make_valid_request()
+    assert base_req.evidence_gate_outcome is not None
+    base_gate = base_req.evidence_gate_outcome
     gate_outcome = EvidenceGateOutcome(
         execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
         evidence_status=EvidenceStatus.SUFFICIENT,
         reason=reason,
-        gate_passed_selections=base_req.evidence_gate_outcome.gate_passed_selections,
-        trace=base_req.evidence_gate_outcome.trace,
+        gate_passed_selections=base_gate.gate_passed_selections,
+        trace=base_gate.trace,
     )
     req = GuidelineGenerationRequest(
         medication_identities=base_req.medication_identities,
@@ -440,12 +446,14 @@ async def test_gate_precondition_unsupported_sentinel_values(
         context=make_context(),
     )
     base_req = make_valid_request()
+    assert base_req.evidence_gate_outcome is not None
+    base_gate = base_req.evidence_gate_outcome
     kwargs: dict[str, Any] = {
         "execution_status": EvidenceGateExecutionStatus.SUCCEEDED,
         "evidence_status": EvidenceStatus.SUFFICIENT,
         "reason": EvidenceGateReason.EVIDENCE_SUFFICIENT,
-        "gate_passed_selections": base_req.evidence_gate_outcome.gate_passed_selections,
-        "trace": base_req.evidence_gate_outcome.trace,
+        "gate_passed_selections": base_gate.gate_passed_selections,
+        "trace": base_gate.trace,
     }
     kwargs[axis] = sentinel
     gate_outcome = EvidenceGateOutcome(**kwargs)
@@ -469,13 +477,15 @@ async def test_gate_precondition_empty_selections_or_medications_fail_closed() -
         context=make_context(),
     )
     base_req = make_valid_request()
+    assert base_req.evidence_gate_outcome is not None
+    base_gate = base_req.evidence_gate_outcome
     # Empty selections
     gate_outcome_empty_sels = EvidenceGateOutcome(
         execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
         evidence_status=EvidenceStatus.SUFFICIENT,
         reason=EvidenceGateReason.EVIDENCE_SUFFICIENT,
         gate_passed_selections=(),
-        trace=base_req.evidence_gate_outcome.trace,
+        trace=base_gate.trace,
     )
     req_empty_sels = GuidelineGenerationRequest(
         medication_identities=base_req.medication_identities,
@@ -702,7 +712,9 @@ async def test_privacy_and_logging_no_leakage() -> None:
 
     all_logs = " ".join(capturing_logger.records)
     patient_id = req.medication_identities[0].prescription_version_medication_id
-    evidence_text = req.evidence_gate_outcome.gate_passed_selections[0].selection.candidate.content_text.reveal()
+    assert req.evidence_gate_outcome is not None
+    gate = req.evidence_gate_outcome
+    evidence_text = gate.gate_passed_selections[0].selection.candidate.content_text.reveal()
 
     assert patient_id not in all_logs
     assert evidence_text not in all_logs
