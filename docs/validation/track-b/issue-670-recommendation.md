@@ -1,6 +1,6 @@
 # #670 명시적 시간 후보 — Local 검증
 
-검증일: 2026-09-17. 대상: PR #677 구현 브랜치.
+검증일: 2026-09-17. 대상: PR #677 구현 커밋 `9ac81b1b` (이후 검증 문서 갱신은 실행 코드 변경 없음).
 상태: Local 합성 검증 / 담당·전문 리뷰 대기. 실제 환자·의료문서·외부 Provider를 사용하지 않는다.
 [Decision](../../governance/decisions/2026-09-17-explicit-schedule-recommendation-670.md),
 [Proposed 계약](../../contracts/proposed/track-b-explicit-schedule-recommendation-v1.md)을 함께 검토한다.
@@ -31,10 +31,19 @@
 | Frontend lint / production build | 통과 (기존 500kB chunk 안내 있음) |
 | Python test inventory | 통과 |
 | `git diff --check` | 통과 |
-| 필수 전체 `scripts/ci/run_test.sh` | 격리 PostgreSQL·Redis에서 실행 중 |
+| 전체 runner migration | 241 passed / 4 skipped |
+| 전체 runner Backend·계약·선별 통합 | 2,923 passed / 128 skipped |
+| 전체 runner Redis 통합 | 29 passed |
+| Worker 전체 lane 재검증 | 4,154 passed |
+| Backend + 재실행 Worker coverage 합산 | 92%, coverage report 종료 코드 0 |
 
 초기 전체 Frontend 실행에서 변경하지 않은 OCR STALE 테스트가 1회 실패했으나, 단독 재현과
 전체 재실행에서 통과했다. 첫 실행 결과를 숨기지 않으며 이번 변경의 실패로 판정하지 않는다.
+초기 Worker lane은 테스트용 REDIS_HOST 값을 승인 기본값과 다르게 지정해 1개가 실패했다.
+환경값을 맞춘 단독 검사와 전체 Worker 재실행에서 각각 통과했다. 구현 코드를 바꾸지는 않았다.
+원본 `run_test.sh` 종료 코드는 이 초기 Worker 실패 때문에 1이다. Backend lane은 통과했으며,
+완료된 Backend coverage와 성공한 Worker 재실행 coverage를 별도로 combine·report해 92%를 확인했다.
+건너뛴 migration 4개·Backend lane 128개는 이번 신규 테스트가 아니며, 전체 통과로 표현하지 않는다.
 브라우저 검증은 합성 API mock이고, 실제 DB API 검증과 구분한다.
 의료 AI 모델·RAG·Provider를 변경하지 않아 기존 생성/검색 eval runner는 실행 대상이 아니다.
 안전 관련 거부 사례는 위 계약·API 테스트에서 결정적 산술 계산에 대해 검증한다.
