@@ -12,7 +12,7 @@ from datetime import datetime
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1020,3 +1020,53 @@ async def test_get_verified_ready_index_snapshot_source_refs_deterministic_order
     )
     assert v_first.source_refs == expected_order
     assert len(v_first.source_refs) == 3
+
+
+async def test_get_verified_ready_index_snapshot_refreshes_stale_identity_map_version(
+    db_session: AsyncSession,
+) -> None:
+    """Verifies get_verified_ready_index_snapshot refreshes stale ORM version metadata in session identity map."""
+    snapshot = await _create_source_snapshot(db_session)
+    catalog_set = await _create_catalog_set(db_session)
+    await _attach_catalog_set_source(db_session, catalog_set=catalog_set, snapshot=snapshot)
+
+    index_code = f"idx-{uuid4().hex[:8]}"
+    members = (_member_create(snapshot=snapshot),)
+    version = _version_create(
+        catalog_set=catalog_set,
+        members=members,
+        index_code=index_code,
+        content_hash=_hash("stale-meta"),
+    )
+
+    repository = RagCandidateIndexRepository(db_session)
+    built = await repository.build_index_version(version=version, members=members)
+    await repository.activate_ready_version(built.version.id)
+    await db_session.flush()
+
+    # Pre-fetch version in db_session (Session A) so it resides in Session A identity map
+    cached_version = (
+        await db_session.execute(
+            select(RagCandidateIndexVersion).where(
+                RagCandidateIndexVersion.index_code == index_code,
+                RagCandidateIndexVersion.status == RagCandidateIndexStatus.READY,
+            )
+        )
+    ).scalar_one()
+    original_count = cached_version.member_count
+    assert original_count == 1
+
+    # Update underlying DB row without synchronizing ORM identity map
+    await db_session.execute(
+        update(RagCandidateIndexVersion)
+        .where(RagCandidateIndexVersion.id == built.version.id)
+        .values(member_count=original_count + 10)
+        .execution_options(synchronize_session=False)
+    )
+
+    # Session A calls get_verified_ready_index_snapshot: must refresh and fail integrity check
+    with pytest.raises(CandidateIndexIntegrityCompromisedError):
+        await repository.get_verified_ready_index_snapshot(
+            index_code=index_code,
+            expected_index_version="v1",
+        )

@@ -447,6 +447,7 @@ class RagCandidateIndexRepository:
                 RagCandidateIndexVersion.status == RagCandidateIndexStatus.READY,
             )
             .with_for_update(read=True)
+            .execution_options(populate_existing=True)
         )
         ready_version = result.scalar_one_or_none()
         if ready_version is None:
@@ -465,6 +466,7 @@ class RagCandidateIndexRepository:
                 RagCatalogSetSource.source_snapshot_id.asc(),
                 RagCatalogSetSource.source_version.asc(),
             )
+            .execution_options(populate_existing=True)
         )
         source_rows = list((await self.session.execute(stmt)).scalars().all())
         source_rows.sort(key=lambda row: (str(row.source_snapshot_id), str(row.source_version)))

@@ -168,10 +168,14 @@ class CandidateResolverHydrationAdapter:
 
         products_map: dict[tuple[str, str, str], ProductSnapshot] = {}
         for source_snapshot_id, code_system, canonical_code in distinct_keys:
-            stmt = select(RagMedicationProduct).where(
-                RagMedicationProduct.source_snapshot_id == source_snapshot_id,
-                RagMedicationProduct.code_system == code_system,
-                RagMedicationProduct.canonical_code == canonical_code,
+            stmt = (
+                select(RagMedicationProduct)
+                .where(
+                    RagMedicationProduct.source_snapshot_id == source_snapshot_id,
+                    RagMedicationProduct.code_system == code_system,
+                    RagMedicationProduct.canonical_code == canonical_code,
+                )
+                .execution_options(populate_existing=True)
             )
             results = list((await self._session.execute(stmt)).scalars().all())
             if len(results) != 1:

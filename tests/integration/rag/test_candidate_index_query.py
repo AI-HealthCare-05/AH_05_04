@@ -25,7 +25,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import Table, select, text
+from sqlalchemy import Table, select, text, update
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -49,6 +49,7 @@ from app.models.rag_catalog import (
 )
 from app.models.rag_source import RagSourceSnapshot
 from app.repositories.rag_candidate_index_repository import (
+    CandidateIndexIntegrityCompromisedError,
     RagCandidateIndexMemberCreate,
     RagCandidateIndexRepository,
     RagCandidateIndexVersionCreate,
@@ -1022,3 +1023,145 @@ async def test_product_name_exact_multi_hit_ranks_and_evidence() -> None:
         assert result.outcome is ResolverOutcome.AMBIGUOUS
         assert result.candidate is None
         assert len(result.internal_candidates) == 2
+
+
+async def test_stale_identity_map_product_status_refresh_to_inactive() -> None:
+    """Verifies Session A refreshes stale ACTIVE product from DB after Session B commits INACTIVE."""
+    index_code = f"idx-{uuid4().hex[:8]}"
+    index_version = "v1"
+
+    async with session_factory() as session:
+        await _setup_full_dataset(session, index_code=index_code, index_version=index_version)
+
+    async with session_factory() as session_a:
+        # Pre-load RagMedicationProduct in Session A's identity map while it is ACTIVE
+        stmt = select(RagMedicationProduct).where(
+            RagMedicationProduct.canonical_code == "20000001",
+            RagMedicationProduct.code_system == "MFDS_ITEM_SEQ",
+        )
+        cached_prod = (await session_a.execute(stmt)).scalar_one()
+        assert cached_prod.product_status == "ACTIVE"
+
+        # Separate Session B: commit product_status = INACTIVE
+        async with session_factory() as session_b:
+            update_stmt = (
+                update(RagMedicationProduct)
+                .where(RagMedicationProduct.canonical_code == "20000001")
+                .values(product_status="INACTIVE")
+            )
+            await session_b.execute(update_stmt)
+            await session_b.commit()
+
+        # Session A: hydrate evidence for "타이레놀정500밀리그람"
+        adapter = CandidateResolverHydrationAdapter(
+            session=session_a,
+            index_code=index_code,
+            embedding_port=DeterministicSyntheticCandidateQueryEmbedding(),
+        )
+        req = CandidateSearchRequest(
+            medication_name="타이레놀정500밀리그람",
+            index_version=index_version,
+            retrieval_limit=10,
+        )
+        evidence = await adapter.hydrate_evidence(req)
+
+        # Must reflect the committed INACTIVE status, not Session A's stale ACTIVE cache
+        exact_hits = [h for h in evidence.product_hits if h.stage is CandidateStage.PRODUCT_NAME_EXACT]
+        assert len(exact_hits) == 1
+        assert exact_hits[0].product.status is ProductStatus.INACTIVE
+
+        # Resolver consumption confirms ineligible and NO_CANDIDATE outcome
+        port = PrehydratedCandidateIndexPort(evidence=evidence)
+        resolver = MedicationResolver(
+            index_port=port,
+            attribute_matcher=_SyntheticMatcher(),
+            relevance_evaluator=_SyntheticEvaluator(),
+        )
+        r_input = ResolverInput(
+            medication_name="타이레놀정500밀리그람",
+            strength_text="500mg",
+            index_version=index_version,
+            policy_version="resolver-policy-v1",
+        )
+        res = resolver.resolve(r_input, _synthetic_policy())
+        assert res.outcome is ResolverOutcome.NO_CANDIDATE
+        assert res.eligible_count == 0
+
+
+async def test_stale_identity_map_product_field_mismatch_fails_closed() -> None:
+    """Verifies Session A detects PRODUCT_FIELD_MISMATCH when Session B changes a product field."""
+    index_code = f"idx-{uuid4().hex[:8]}"
+    index_version = "v1"
+
+    async with session_factory() as session:
+        await _setup_full_dataset(session, index_code=index_code, index_version=index_version)
+
+    async with session_factory() as session_a:
+        # Pre-load RagMedicationProduct in Session A's identity map
+        stmt = select(RagMedicationProduct).where(
+            RagMedicationProduct.canonical_code == "20000001",
+            RagMedicationProduct.code_system == "MFDS_ITEM_SEQ",
+        )
+        cached_prod = (await session_a.execute(stmt)).scalar_one()
+        assert cached_prod.product_name == "타이레놀정500밀리그람"
+
+        # Separate Session B: update product_name in DB to a modified synthetic name and commit
+        async with session_factory() as session_b:
+            update_stmt = (
+                update(RagMedicationProduct)
+                .where(RagMedicationProduct.canonical_code == "20000001")
+                .values(product_name="타이레놀정500밀리그람(변경)")
+            )
+            await session_b.execute(update_stmt)
+            await session_b.commit()
+
+        # Session A: hydrate evidence; must detect mismatch between candidate member and DB row
+        adapter = CandidateResolverHydrationAdapter(
+            session=session_a,
+            index_code=index_code,
+            embedding_port=DeterministicSyntheticCandidateQueryEmbedding(),
+        )
+        req = CandidateSearchRequest(
+            medication_name="타이레놀정500밀리그람",
+            index_version=index_version,
+            retrieval_limit=10,
+        )
+        with pytest.raises(CandidateIndexHydrationError) as exc_info:
+            await adapter.hydrate_evidence(req)
+        assert exc_info.value.reason == "PRODUCT_FIELD_MISMATCH"
+
+
+async def test_stale_identity_map_ready_version_metadata_refresh() -> None:
+    """Verifies Session A reads fresh version metadata and detects integrity mismatch after Session B commit."""
+    index_code = f"idx-{uuid4().hex[:8]}"
+    index_version = "v1"
+
+    async with session_factory() as session:
+        await _setup_full_dataset(session, index_code=index_code, index_version=index_version)
+
+    async with session_factory() as session_a:
+        # Pre-load RagCandidateIndexVersion in Session A's identity map
+        stmt = select(RagCandidateIndexVersion).where(
+            RagCandidateIndexVersion.index_code == index_code,
+            RagCandidateIndexVersion.index_version == index_version,
+        )
+        cached_version = (await session_a.execute(stmt)).scalar_one()
+        original_count = cached_version.member_count
+        assert original_count > 0
+
+        # Separate Session B: update member_count in DB to an inconsistent count and commit
+        async with session_factory() as session_b:
+            await session_b.execute(
+                update(RagCandidateIndexVersion)
+                .where(RagCandidateIndexVersion.id == cached_version.id)
+                .values(member_count=original_count + 999)
+            )
+            await session_b.commit()
+
+        # Session A: get_verified_ready_index_snapshot must refresh from DB and fail integrity check
+        repo_a = RagCandidateIndexRepository(session_a)
+        with pytest.raises(CandidateIndexIntegrityCompromisedError):
+            await repo_a.get_verified_ready_index_snapshot(
+                index_code=index_code,
+                expected_index_version=index_version,
+            )
