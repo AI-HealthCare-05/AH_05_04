@@ -842,8 +842,8 @@ export function SchedulePage({
       try {
         const response = await services.getMedicationDay(selectedDate, controller.signal)
         if (!active) return
-        setDay(response.data)
 
+        let latestPrescriptionLoadFailed = false
         const scheduleIdentityPromise = response.data.schedule_items.length === 0
           ? Promise.resolve<Record<string, Medication> | null>({})
           : services.getLatestPrescription(controller.signal)
@@ -852,6 +852,7 @@ export function SchedulePage({
               )
               .catch((error: unknown) => {
                 if (controller.signal.aborted) throw error
+                latestPrescriptionLoadFailed = true
                 return null
               })
         const occurrenceDetailsPromise = Promise.all(
@@ -878,11 +879,16 @@ export function SchedulePage({
           occurrenceDetailsPromise,
         ])
         if (active) {
+          const completeEditorReload = editorReloadCompletionRef.current
+          editorReloadCompletionRef.current = null
+          if (completeEditorReload && latestPrescriptionLoadFailed) {
+            completeEditorReload(false)
+            return
+          }
+          setDay(response.data)
           setScheduleMedications(scheduleIdentity ?? {})
           setIsScheduleIdentityUnavailable(scheduleIdentity === null)
           setMedications(Object.fromEntries(occurrenceEntries))
-          const completeEditorReload = editorReloadCompletionRef.current
-          editorReloadCompletionRef.current = null
           completeEditorReload?.(true)
         }
       } catch (error) {
