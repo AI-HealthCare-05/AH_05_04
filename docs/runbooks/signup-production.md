@@ -1,12 +1,9 @@
 # Production 회원가입 복구
 
-기준: `dac51c29`. 이 PR은 회원가입 build-time 설정 전달 경로를 준비한다.
-작업 대화에서 승인 완료라는 요청자 확인을 받았으나, 이는 재현 가능한 최종 승인 artifact가 아니다.
-[외부 승인 provenance 기준](../release-gates/post-mvp-1-external-approvals.md)에 따라
-승인 대상 commit/문구 version, 승인 범위, 승인자 역할, 승인 시각과 제한 조건을 갖춘 artifact를
-연결하기 전에는 `VITE_SIGNUP_TERMS_APPROVED=false`를 유지한다.
-현재 해당 artifact는 제공되지 않았으며 이 PR은 최종 승인이나 Production 가입 활성화를 선언하지 않는다.
-Track C/F 및 공통 Privacy Production gate도 변경하지 않는다.
+2026-09-17 PM이 현재 약관을 사용하는 회원가입을 **30일 데모 한정** 승인했다.
+[승인 범위·대상·기간·담당자](../governance/decisions/2026-09-17-signup-demo-approval.md)를 따른다.
+이는 기존 #665의 승인 미제공 상태를 데모 범위에서 갱신하며, 최종 외부 법무 승인이나
+Track C/F 및 공통 Privacy Production gate 해제를 의미하지 않는다.
 
 중복확인 버튼은 미구현 상태로 disabled가 고정되어 있었다. 가입 시 기존 API의
 이메일 중복 검증을 사용하며 별도 중복확인 API를 추가하지 않는다.
@@ -14,18 +11,19 @@ Track C/F 및 공통 Privacy Production gate도 변경하지 않는다.
 
 ## 배포
 
-운영 환경파일에는 `VITE_SIGNUP_TERMS_APPROVED=false`를 명시한다.
-배포 스크립트는 환경파일의 선언 누락과 true/false 이외의 값을 외부 작업 전에 거부하며,
-실행 셸에 상속된 true로 누락을 대체하지 않는다. false는 배포할 수 있으나 회원가입은 차단된다.
-Docker 직접 빌드의 기본값도 false다. 위 승인 artifact가 연결되고 정확한 배포 문구와 일치함을
-확인한 뒤에만 운영 환경파일에 true를 명시하여 새 고정 이미지 버전으로 빌드한다.
+데모 기간에는 실제 운영 환경파일과 `envs/example.prod.env`에
+`VITE_SIGNUP_TERMS_APPROVED=true`를 명시한다. 예제 변경만으로 기존 운영 파일은 바뀌지 않는다.
+배포 스크립트는 환경파일의 선언 누락과 true/false 이외의 값을 거부한다.
+Docker 직접 빌드의 기본값은 false를 유지하고 운영 파일의 explicit true를 build arg로 전달한다.
+2026-10-17 00:00 KST에 데모가 종료되므로 그 전에 종료 배포를 준비한다.
+자동 만료는 없으며 종료 시 false 설정으로 재빌드·배포해야 한다.
 
 `VITE_EMAIL_VERIFICATION_ENABLED`는 실제 이메일 발송 준비 상태 및 Backend의
 `SIGNUP_EMAIL_VERIFICATION_REQUIRED`와 맞춘다. 이 변경은 이메일 인증을 자동 활성화하지 않는다.
 Vite 값은 빌드 시 정적 번들에 포함되므로 서버 환경변수 수정이나 컨테이너 재시작만으로는 적용되지 않는다.
 Frontend 이미지를 재빌드하고 해당 이미지로 nginx 서비스를 갱신해야 한다.
 
-## 승인 artifact 확보 후 explicit true 빌드 확인
+## 데모 승인에 따른 explicit true 빌드 확인
 
 - 약관 보기에서 승인 전 초안 표시가 없어야 한다.
 - 필수 동의를 체크하면 가입 버튼이 활성화되어야 한다.
