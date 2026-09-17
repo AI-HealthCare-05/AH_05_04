@@ -175,6 +175,29 @@ describe('Dosey MVP design pages', () => {
     expect(screen.getByText('회원가입 화면')).toBeTruthy()
   })
 
+  it('회원탈퇴 성공 state에서 접수 완료를 안내한 뒤 기본 시작 화면으로 전환한다', () => {
+    render(
+      <MemoryRouter
+        initialEntries={[{
+          pathname: '/start',
+          state: { accountWithdrawalAccepted: true },
+        }]}
+      >
+        <Routes>
+          <Route path="/start" element={<StartPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole('heading', { name: '회원탈퇴 요청이 접수되었어요.' })).toBeTruthy()
+    expect(screen.getByText(/삭제·보존은 서비스 정책에 따라 처리됩니다/)).toBeTruthy()
+    expect(screen.queryByText('모든 정보가 즉시 영구 삭제됩니다')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '시작 화면으로 이동' }))
+
+    expect(screen.getByRole('heading', { name: '처방과 일정을 쉽게 살펴봐요.' })).toBeTruthy()
+  })
+
   it('#395 온보딩은 키보드 포커스를 모달 내부에 가두고 닫힌 뒤 Home CTA로 복귀한다', async () => {
     const { container } = renderHome(CURRENT_USER, true)
 
