@@ -212,6 +212,16 @@ describe('Web Push permission과 구독', () => {
     expect(upsertPushSubscription).not.toHaveBeenCalled()
   })
 
+  it('Push 설정이 준비되지 않았으면 권한 prompt 없이 설정 미완료로 안내한다', async () => {
+    vi.mocked(getPushConfig).mockRejectedValue(new ApiError(503, 'Push 설정 미완료', 'SERVICE_UNAVAILABLE'))
+
+    expect(await enableWebPush()).toBe('config_unavailable')
+    expect(requestPermission).not.toHaveBeenCalled()
+    expect(navigator.serviceWorker.register).not.toHaveBeenCalled()
+    expect(subscribe).not.toHaveBeenCalled()
+    expect(upsertPushSubscription).not.toHaveBeenCalled()
+  })
+
   it('다른 사용자 endpoint conflict는 기존 browser 구독을 버리고 새 endpoint를 등록한다', async () => {
     installBrowserSupport('granted')
     const unsubscribe = vi.fn().mockResolvedValue(true)

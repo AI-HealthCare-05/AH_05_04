@@ -51,6 +51,19 @@ describe('NotificationSettingsPage', () => {
     expect(screen.getByRole('button', { name: '알림 켜기' })).toBeTruthy()
   })
 
+  it('Backend Push 설정이 없으면 구독 실패와 구분한 안내를 표시한다', async () => {
+    vi.mocked(getWebPushState).mockResolvedValue('config_unavailable')
+    render(
+      <MemoryRouter>
+        <NotificationSettingsPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Push 알림 설정이 아직 준비되지 않았어요')).toBeTruthy()
+    expect(screen.getByText(/관리자 설정이 완료되면/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '알림 켜기' })).toBeTruthy()
+  })
+
   it('Android 설정에서 권한을 바꾸고 돌아오면 foreground에서 상태를 다시 확인한다', async () => {
     vi.mocked(getWebPushLaunchContext).mockReturnValue('browser')
     vi.mocked(getWebPushState)
