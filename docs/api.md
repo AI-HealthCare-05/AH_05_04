@@ -745,6 +745,7 @@ v1 앱에 등록한다. PD-417의 승인된 의미와 #438 저장 서비스·#43
 취소를 연결한 작업 브랜치 구현이며, HTTP 구체화의 지정 리뷰어 승인은 별도다.
 
 - GET `/api/v1/medication-occurrences?date=YYYY-MM-DD`: SELF 최신 처방 한 건의 약별 일정 상태와 원래 KST 날짜의 occurrence/현재 Check-in. #628 구현 리뷰안은 latest와 같은 `created_at DESC, id DESC` 선택을 적용하고 과거 occurrence를 보존한다.
+  각 `schedule_items[]`는 nullable `schedule`에 저장된 현재 일정 snapshot(시작일, 종료 방식·종료일, 복용 시각, 상태·revision)을 포함하며, 일정이 없으면 null이다. 수정 화면은 READY snapshot을 그대로 초기값으로 사용한다.
 - PUT `/api/v1/prescription-version-medications/{prescription_version_medication_id}/schedule`: 명시적 설정·재활성화.
 - PATCH 같은 경로: CANCELLED 요청과 반복 취소의 성공 snapshot.
 

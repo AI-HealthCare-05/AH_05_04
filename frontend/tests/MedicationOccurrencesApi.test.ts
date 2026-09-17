@@ -26,6 +26,16 @@ function makeDayResponse(): MedicationDayResponse {
           schedule_id: '66666666-6666-4666-8666-666666666666',
           revision: 1,
           setup_reason: null,
+          schedule: {
+            schedule_id: '66666666-6666-4666-8666-666666666666',
+            prescription_version_medication_id: medicationId,
+            revision: 1,
+            status: 'ACTIVE',
+            start_local_date: '2026-09-10',
+            end_mode: 'OPEN_ENDED',
+            end_local_date: null,
+            local_times: ['09:00'],
+          },
         },
       ],
       occurrences: [
