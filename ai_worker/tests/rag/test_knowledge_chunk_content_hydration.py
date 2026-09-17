@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import replace
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -245,7 +246,7 @@ async def test_missing_persisted_content_rejects_whole_outcome() -> None:
 # 5-16. Every provenance field mismatch closes as PROVENANCE_MISMATCH
 # ---------------------------------------------------------------------------
 
-_PROVENANCE_FIELD_MUTATIONS: tuple[tuple[str, object], ...] = (
+_PROVENANCE_FIELD_MUTATIONS: tuple[tuple[str, Any], ...] = (
     ("knowledge_index_id", UUID("71100000-0000-4000-8000-0000000000ff")),
     ("knowledge_chunk_id", UUID("71100000-0000-4000-8000-0000000000fe")),
     ("index_code", "OTHER_INDEX"),
@@ -265,7 +266,7 @@ _PROVENANCE_FIELD_MUTATIONS: tuple[tuple[str, object], ...] = (
 
 
 @pytest.mark.parametrize(("field", "value"), _PROVENANCE_FIELD_MUTATIONS, ids=lambda v: str(v)[:40])
-async def test_any_provenance_field_mismatch_rejects_fail_closed(field: str, value: object) -> None:
+async def test_any_provenance_field_mismatch_rejects_fail_closed(field: str, value: Any) -> None:
     selection = _make_selection()
     expected = selection.hit.provenance
     observed = replace(expected, **{field: value})
