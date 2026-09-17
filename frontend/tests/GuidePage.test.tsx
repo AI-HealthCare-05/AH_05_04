@@ -80,6 +80,7 @@ function renderPage(
         <Route path="/login" element={<div>로그인 화면</div>} />
         <Route path="/" element={<div>홈 화면</div>} />
         <Route path="/menu" element={<div>메뉴 화면</div>} />
+        <Route path="/profile" element={<div>동의 설정 화면</div>} />
         <Route path="/chat" element={<ChatRouteProbe />} />
         <Route path="/schedule" element={<div>복약 일정 화면</div>} />
       </Routes>
@@ -451,6 +452,83 @@ describe('GuidePage', () => {
     expect(await screen.findByText('확인된 복약 안내')).toBeTruthy()
     expect(screen.getByText(/하루 3회 복용하세요/)).toBeTruthy()
     await waitFor(() => expect(getGuide).toHaveBeenCalledWith('guide-1'))
+  })
+
+  it('미동의·철회 공통 CONSENT_REQUIRED 계약을 안내하고 별도 상태 추론 없이 동의 설정으로 이동한다', async () => {
+    vi.mocked(getGuide).mockRejectedValue(
+      new ApiError(403, '노출하면 안 되는 Backend 메시지', 'CONSENT_REQUIRED'),
+    )
+    renderPage()
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '이 기능을 이용하려면 동의가 필요해요.',
+      }),
+    ).toBeTruthy()
+    expect(
+      screen.getByText('동의 설정을 확인한 뒤 다시 이용해 주세요.'),
+    ).toBeTruthy()
+    expect(screen.queryByText('노출하면 안 되는 Backend 메시지')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '동의 설정 확인하기' }))
+
+    expect(await screen.findByText('동의 설정 화면')).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe('/profile')
+    expect(getGuide).toHaveBeenCalledTimes(1)
+  })
+
+  it('PRESCRIPTION_VERSION_STALE은 동의로 보내지 않고 현재 Guide를 다시 조회한다', async () => {
+    vi.mocked(getGuide)
+      .mockRejectedValueOnce(
+        new ApiError(409, '구버전 처방', 'PRESCRIPTION_VERSION_STALE'),
+      )
+      .mockResolvedValueOnce(
+        completedGuideResponse('guide-1', structuredGuideContent()),
+      )
+    renderPage()
+
+    expect(
+      await screen.findByRole('heading', { name: '처방 정보가 변경되었어요.' }),
+    ).toBeTruthy()
+    expect(
+      screen.getByText('최신 처방 정보를 다시 불러온 뒤 이용해 주세요.'),
+    ).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '동의 설정 확인하기' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 불러오기' }))
+
+    expect(
+      await screen.findByRole('heading', { name: '확인된 약 목록 · 1개' }),
+    ).toBeTruthy()
+    expect(getGuide).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('location').textContent).toBe('/guides/guide-1')
+  })
+
+  it('CONSENT_POLICY_UNAVAILABLE은 현재 Guide 요청만 사용자가 다시 시도한다', async () => {
+    vi.mocked(getGuide)
+      .mockRejectedValueOnce(
+        new ApiError(503, '정책 원문', 'CONSENT_POLICY_UNAVAILABLE'),
+      )
+      .mockResolvedValueOnce(
+        completedGuideResponse('guide-1', structuredGuideContent()),
+      )
+    renderPage()
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '동의 안내를 준비하고 있어요. 잠시 후 다시 시도해 주세요.',
+      }),
+    ).toBeTruthy()
+    expect(getGuide).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: '동의 설정 확인하기' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
+
+    expect(
+      await screen.findByRole('heading', { name: '확인된 약 목록 · 1개' }),
+    ).toBeTruthy()
+    expect(getGuide).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('location').textContent).toBe('/guides/guide-1')
   })
 
   it.each([null, '', '   \n'])('완료된 content가 %p이면 안전한 빈 상태를 표시한다', async (content) => {
