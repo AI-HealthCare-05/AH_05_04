@@ -1228,6 +1228,111 @@ def _add_versioned_authoring_conditions(entry: SchemaRegistryEntry, document: di
     _add_v1_1_case_context_conditions(definitions)
 
 
+def _add_answer_comparison_set_manifest_conditions(document: dict[str, JsonValue]) -> None:
+    definitions = document.get("$defs")
+    if not isinstance(definitions, dict):
+        raise TypeError("manifest schema definitions must be an object")
+    entry_def = definitions.get("AnswerComparisonPairManifestEntry")
+    if not isinstance(entry_def, dict):
+        raise TypeError("AnswerComparisonPairManifestEntry definition must be an object")
+    all_of = entry_def.setdefault("allOf", [])
+    if not isinstance(all_of, list):
+        raise TypeError("AnswerComparisonPairManifestEntry allOf must be a list")
+
+    pair_conditions: list[dict[str, JsonValue]] = [
+        {
+            "if": {
+                "properties": {"pair_id": {"const": "ANS-BASE--ANS-RAG"}},
+                "required": ["pair_id"],
+            },
+            "then": {
+                "properties": {
+                    "allowed_delta_keys": {
+                        "items": {
+                            "enum": [
+                                "RETRIEVAL_PIPELINE",
+                                "SOURCE_INDEX",
+                                "RUNTIME_BUNDLE",
+                                "RETRIEVED_EVIDENCE",
+                            ]
+                        },
+                        "uniqueItems": True,
+                        "minItems": 4,
+                        "maxItems": 4,
+                    }
+                }
+            },
+        },
+        {
+            "if": {
+                "properties": {"pair_id": {"const": "ANS-RAG--ANS-FINAL"}},
+                "required": ["pair_id"],
+            },
+            "then": {
+                "properties": {
+                    "allowed_delta_keys": {
+                        "items": {
+                            "enum": [
+                                "FINAL_VALIDATOR",
+                                "CITATION_GATE",
+                                "SAFETY_GATE",
+                                "RELEASE_GATE",
+                            ]
+                        },
+                        "uniqueItems": True,
+                        "minItems": 4,
+                        "maxItems": 4,
+                    }
+                }
+            },
+        },
+        {
+            "if": {
+                "properties": {"pair_id": {"const": "ANS-BASE--ANS-FINAL"}},
+                "required": ["pair_id"],
+            },
+            "then": {
+                "properties": {
+                    "allowed_delta_keys": {
+                        "items": {
+                            "enum": [
+                                "RETRIEVAL_PIPELINE",
+                                "SOURCE_INDEX",
+                                "RUNTIME_BUNDLE",
+                                "RETRIEVED_EVIDENCE",
+                                "FINAL_VALIDATOR",
+                                "CITATION_GATE",
+                                "SAFETY_GATE",
+                                "RELEASE_GATE",
+                            ]
+                        },
+                        "uniqueItems": True,
+                        "minItems": 8,
+                        "maxItems": 8,
+                    }
+                }
+            },
+        },
+    ]
+    all_of.extend(pair_conditions)
+
+
+def _add_schema_id_specific_conditions(schema_id: str, document: dict[str, JsonValue]) -> None:
+    handlers = {
+        "rag-eval.dataset-manifest": _add_dataset_source_provenance_condition,
+        "rag-eval.evidence-mapping-manifest": _add_evidence_target_condition,
+        "rag-eval.run": _add_run_conditions,
+        "rag-eval.validation-receipt": _add_receipt_outcomes,
+        "rag-eval.metrics": _add_metric_conditions,
+        "rag-eval.gate": _add_gate_member_conditions,
+        "rag-eval.comparison": _add_comparison_outcome_conditions,
+        "rag-eval.answer-comparison-set-manifest": _add_answer_comparison_set_manifest_conditions,
+    }
+    handler = handlers.get(schema_id)
+    if handler is not None:
+        handler(document)
+
+
 def _schema_document(entry: SchemaRegistryEntry) -> dict[str, JsonValue]:
     schema_id = entry.schema_id
     document = _model_schema(entry.source)
@@ -1243,25 +1348,12 @@ def _schema_document(entry: SchemaRegistryEntry) -> dict[str, JsonValue]:
     _add_v1_2_review_provenance_definition_conditions(document)
     _add_authoring_role_conditions(schema_id, document)
     _add_versioned_authoring_conditions(entry, document)
-    if schema_id == "rag-eval.dataset-manifest":
-        _add_dataset_source_provenance_condition(document)
-    if schema_id == "rag-eval.evidence-mapping-manifest":
-        _add_evidence_target_condition(document)
-    if schema_id == "rag-eval.run":
-        _add_run_conditions(document)
+    _add_schema_id_specific_conditions(schema_id, document)
     grounding_condition_adder = _GROUNDING_CONDITION_ADDERS.get(schema_id)
     if grounding_condition_adder is not None:
         grounding_condition_adder(document)
-    if schema_id == "rag-eval.validation-receipt":
-        _add_receipt_outcomes(document)
-    if schema_id == "rag-eval.metrics":
-        _add_metric_conditions(document)
     _add_empty_aggregate_conditions(schema_id, document)
     _add_aggregate_outcome_conditions(schema_id, document)
-    if schema_id == "rag-eval.gate":
-        _add_gate_member_conditions(document)
-    if schema_id == "rag-eval.comparison":
-        _add_comparison_outcome_conditions(document)
     return normalize_schema_document(document)
 
 

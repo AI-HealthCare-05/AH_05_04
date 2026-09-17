@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime
 from typing import Annotated
 from uuid import UUID
@@ -7,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from app.dtos.base import BaseSerializerModel
 from app.models.user_consents import ConsentPurpose, ConsentStatus
 from app.models.users import Gender
+
+DOMESTIC_MOBILE_PHONE_NUMBER_PATTERN = re.compile(r"^010\d{8}$")
 
 
 class UserUpdateRequest(BaseModel):
@@ -29,6 +32,9 @@ class UserUpdateRequest(BaseModel):
 
         if not value.isdigit():
             raise ValueError("phone_number must contain digits only")
+
+        if DOMESTIC_MOBILE_PHONE_NUMBER_PATTERN.fullmatch(value) is None:
+            raise ValueError("phone_number must be an 11-digit domestic mobile number")
 
         return value
 

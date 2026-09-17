@@ -130,7 +130,7 @@ function serverFieldErrors(error: ApiError): FieldErrors {
       errors.phone_number =
         detail.reason === 'ALREADY_EXISTS'
           ? '이미 등록된 휴대폰 번호예요. 다른 번호를 입력해 주세요.'
-          : '휴대폰 번호는 숫자만 입력해 주세요.'
+          : '휴대폰 번호는 010으로 시작하는 11자리 숫자로 입력해 주세요.'
     }
 
     if (detail.field === 'birthday') {
