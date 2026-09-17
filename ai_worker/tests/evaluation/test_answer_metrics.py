@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -5,11 +6,25 @@ from typing import cast
 
 import pytest
 
+from ai_worker.tasks.evaluation.answer_judgment import ValidatedAnswerJudgments, ValidatedCaseJudgment
 from ai_worker.tasks.evaluation.answer_metrics import build_answer_metrics
 from ai_worker.tasks.evaluation.loaders import EvaluationCaseContract, ValidatedDataset, load_dataset
+from ai_worker.tasks.evaluation.schemas.answer_quality_v1 import (
+    AnswerClaimCorrectnessLabel,
+    AnswerClaimJudgment,
+    AnswerRelevanceLabel,
+    AnswerVariantId,
+)
 from ai_worker.tasks.evaluation.schemas.artifacts import CASE_RESULT_ADAPTER, CaseResult, MetricResult, MetricResults
 from ai_worker.tasks.evaluation.schemas.authoring import GoldClaim
-from ai_worker.tasks.evaluation.schemas.common import ExecutionStatus, Partition
+from ai_worker.tasks.evaluation.schemas.common import (
+    ActorNamespace,
+    ActorRef,
+    ActorRole,
+    ExecutionStatus,
+    ImmutableReference,
+    Partition,
+)
 from ai_worker.tasks.evaluation.schemas.policy import ComparisonPolicy, ComparisonScope
 
 EVALS_ROOT = Path(__file__).parents[3] / "evals"
@@ -200,7 +215,11 @@ def metric(metrics: tuple[MetricResult, ...], metric_id: str) -> MetricResult:
     return next(item for item in metrics if item.metric_id == metric_id)
 
 
-def _build_answer_metrics(dataset: ValidatedDataset, results: tuple[CaseResult, ...]) -> MetricResults:
+def _build_answer_metrics(
+    dataset: ValidatedDataset,
+    results: tuple[CaseResult, ...],
+    human_judgments: ValidatedAnswerJudgments | None = None,
+) -> MetricResults:
     return build_answer_metrics(
         dataset,
         results,
@@ -210,6 +229,46 @@ def _build_answer_metrics(dataset: ValidatedDataset, results: tuple[CaseResult, 
             for case in dataset.cases
             if case.task_type.value == "ANSWER_QUALITY" and case.partition is Partition.DEV
         },
+        human_judgments=human_judgments,
+    )
+
+
+def _make_validated_judgments(
+    judgments_by_case: Mapping[str, ValidatedCaseJudgment] | None = None,
+) -> ValidatedAnswerJudgments:
+    if judgments_by_case is None:
+        first, second = completed_answer_results()
+        judgments_by_case = {
+            CASES[0].case_id: ValidatedCaseJudgment(
+                case_id=CASES[0].case_id,
+                input_sha256=CASES[0].input_sha256,
+                answer_sha256=first.answer_sha256 or "",
+                relevance=AnswerRelevanceLabel.RELEVANT,
+                claim_judgments=(AnswerClaimJudgment(claim_id="claim-a", label=AnswerClaimCorrectnessLabel.CORRECT),),
+            ),
+            CASES[1].case_id: ValidatedCaseJudgment(
+                case_id=CASES[1].case_id,
+                input_sha256=CASES[1].input_sha256,
+                answer_sha256=second.answer_sha256 or "",
+                relevance=AnswerRelevanceLabel.RELEVANT,
+                claim_judgments=(AnswerClaimJudgment(claim_id="claim-c", label=AnswerClaimCorrectnessLabel.INCORRECT),),
+            ),
+        }
+    return ValidatedAnswerJudgments(
+        run_id=RUN_ID,
+        answer_variant_id=AnswerVariantId.ANS_RAG,
+        answer_variant_manifest_hash="1" * 64,
+        dataset_manifest_sha256=BASE_DATASET.manifest.manifest_sha256,
+        critical_claim_rubric_ref=ImmutableReference(id="r1", version="1.0.0", hash="2" * 64),
+        approval_evidence_ref=ImmutableReference(id="a1", version="1.0.0", hash="3" * 64),
+        approval_artifact_sha256="4" * 64,
+        approved_by=ActorRef(
+            namespace=ActorNamespace.GITHUB_LOGIN,
+            actor_id="app1",
+            role=ActorRole.PRODUCT_SAFETY_REVIEWER,
+        ),
+        approved_at="2026-09-17T12:00:00.000000Z",
+        judgments_by_case=judgments_by_case,
     )
 
 
@@ -505,3 +564,133 @@ def test_dev_builder_does_not_require_non_dev_answer_results() -> None:
 
     assert result.execution_status.value == "COMPLETED"
     assert result.sample_case_count == 2
+
+
+def test_human_metrics_answer_correctness_and_relevance_completed() -> None:
+    correctness_scope = _scope("ANSWER_CORRECTNESS", "CLAIM")
+    relevance_scope = _scope("RELEVANCE", "CASE")
+    dataset = dataset_with_answer_scopes(correctness_scope, relevance_scope)
+    judgments = _make_validated_judgments()
+
+    metric_results = _build_answer_metrics(dataset, completed_answer_results(), human_judgments=judgments).metrics
+
+    correctness = metric(metric_results, "ANSWER_CORRECTNESS")
+    assert correctness.execution_status.value == "COMPLETED"
+    assert correctness.unit_of_analysis == "CLAIM"
+    assert correctness.numerator == 1
+    assert correctness.denominator == 2
+    assert correctness.metric_value == "0.5"
+    assert correctness.ci_lower is not None
+    assert correctness.ci_upper is not None
+
+    relevance = metric(metric_results, "RELEVANCE")
+    assert relevance.execution_status.value == "COMPLETED"
+    assert relevance.unit_of_analysis == "CASE"
+    assert relevance.numerator == 2
+    assert relevance.denominator == 2
+    assert relevance.metric_value == "1"
+    assert relevance.ci_lower is not None
+    assert relevance.ci_upper is not None
+
+
+def test_scope_local_isolation_between_slices() -> None:
+    cases = (
+        CASES[0].model_copy(update={"slice_ids": ("SLICE_A",)}),
+        CASES[1].model_copy(update={"slice_ids": ("SLICE_B",)}),
+    )
+    scopes = (
+        _scope("ANSWER_CORRECTNESS", "CLAIM").model_copy(update={"slice_id": "SLICE_A"}),
+        _scope("ANSWER_CORRECTNESS", "CLAIM").model_copy(update={"slice_id": "SLICE_B"}),
+        _scope("ANSWER_CORRECTNESS", "CLAIM").model_copy(update={"slice_id": "ALL"}),
+        _scope("COMPLETENESS", "EXPECTED_SECTION").model_copy(update={"slice_id": "SLICE_A"}),
+        _scope("COMPLETENESS", "EXPECTED_SECTION").model_copy(update={"slice_id": "SLICE_B"}),
+        _scope("COMPLETENESS", "EXPECTED_SECTION").model_copy(update={"slice_id": "ALL"}),
+    )
+    dataset = replace(dataset_with_answer_scopes(*scopes), cases=cases)
+
+    base_judgments = _make_validated_judgments()
+    mutated_case_b = replace(
+        base_judgments.judgments_by_case[CASES[1].case_id],
+        answer_sha256="0" * 64,
+    )
+    mutated_judgments = replace(
+        base_judgments,
+        judgments_by_case={
+            CASES[0].case_id: base_judgments.judgments_by_case[CASES[0].case_id],
+            CASES[1].case_id: mutated_case_b,
+        },
+    )
+
+    results = _build_answer_metrics(dataset, completed_answer_results(), human_judgments=mutated_judgments).metrics
+
+    correctness_a = next(m for m in results if m.metric_id == "ANSWER_CORRECTNESS" and m.slice_id == "SLICE_A")
+    correctness_b = next(m for m in results if m.metric_id == "ANSWER_CORRECTNESS" and m.slice_id == "SLICE_B")
+    correctness_all = next(m for m in results if m.metric_id == "ANSWER_CORRECTNESS" and m.slice_id == "ALL")
+    assert correctness_a.execution_status.value == "COMPLETED"
+    assert correctness_b.execution_status.value == "INVALID"
+    assert correctness_all.execution_status.value == "INVALID"
+
+    for slice_id in ("SLICE_A", "SLICE_B", "ALL"):
+        comp = next(m for m in results if m.metric_id == "COMPLETENESS" and m.slice_id == slice_id)
+        assert comp.execution_status.value == "COMPLETED"
+
+
+def test_human_metric_invalid_when_claim_exact_set_mismatches() -> None:
+    dataset = dataset_with_answer_scopes(_scope("ANSWER_CORRECTNESS", "CLAIM"))
+    base_judgments = _make_validated_judgments()
+    mutated_case_a = replace(
+        base_judgments.judgments_by_case[CASES[0].case_id],
+        claim_judgments=(AnswerClaimJudgment(claim_id="wrong-claim-id", label=AnswerClaimCorrectnessLabel.CORRECT),),
+    )
+    mutated_judgments = replace(
+        base_judgments,
+        judgments_by_case={
+            CASES[0].case_id: mutated_case_a,
+            CASES[1].case_id: base_judgments.judgments_by_case[CASES[1].case_id],
+        },
+    )
+
+    result = metric(
+        _build_answer_metrics(dataset, completed_answer_results(), human_judgments=mutated_judgments).metrics,
+        "ANSWER_CORRECTNESS",
+    )
+    assert result.execution_status.value == "INVALID"
+
+
+def test_human_metric_invalid_when_input_sha256_mismatches() -> None:
+    dataset = dataset_with_answer_scopes(_scope("ANSWER_CORRECTNESS", "CLAIM"))
+    base_judgments = _make_validated_judgments()
+    mutated_case_a = replace(
+        base_judgments.judgments_by_case[CASES[0].case_id],
+        input_sha256="0" * 64,
+    )
+    mutated_judgments = replace(
+        base_judgments,
+        judgments_by_case={
+            CASES[0].case_id: mutated_case_a,
+            CASES[1].case_id: base_judgments.judgments_by_case[CASES[1].case_id],
+        },
+    )
+
+    result = metric(
+        _build_answer_metrics(dataset, completed_answer_results(), human_judgments=mutated_judgments).metrics,
+        "ANSWER_CORRECTNESS",
+    )
+    assert result.execution_status.value == "INVALID"
+
+
+def test_human_metric_invalid_when_case_missing_from_judgments() -> None:
+    dataset = dataset_with_answer_scopes(_scope("ANSWER_CORRECTNESS", "CLAIM"))
+    base_judgments = _make_validated_judgments()
+    mutated_judgments = replace(
+        base_judgments,
+        judgments_by_case={
+            CASES[0].case_id: base_judgments.judgments_by_case[CASES[0].case_id],
+        },
+    )
+
+    result = metric(
+        _build_answer_metrics(dataset, completed_answer_results(), human_judgments=mutated_judgments).metrics,
+        "ANSWER_CORRECTNESS",
+    )
+    assert result.execution_status.value == "INVALID"
