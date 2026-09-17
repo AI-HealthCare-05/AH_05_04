@@ -27,10 +27,14 @@ from app.repositories.track_c_storage_repository import TrackCStorageRepository
 
 SCHEMA_VERSION = "track-c-handler-config-v1"
 COPY_SCHEMA_VERSION = "track-c-support-copy-v1"
-ACTIVE_RULE_VERSION = "track-c-support-rule-2026-09-16.1"
-ACTIVE_COPY_VERSION = "track-c-support-copy-ko-2026-09-16.1"
-APPROVED_RULE_VERSIONS = frozenset({"track-c-support-rule-2026-09-15.1", ACTIVE_RULE_VERSION})
-APPROVED_COPY_VERSIONS = frozenset({"track-c-support-copy-ko-2026-09-15.1", ACTIVE_COPY_VERSION})
+ACTIVE_RULE_VERSION = "track-c-support-rule-2026-09-17.1"
+ACTIVE_COPY_VERSION = "track-c-support-copy-ko-2026-09-17.1"
+APPROVED_RULE_VERSIONS = frozenset(
+    {"track-c-support-rule-2026-09-15.1", "track-c-support-rule-2026-09-16.1", ACTIVE_RULE_VERSION}
+)
+APPROVED_COPY_VERSIONS = frozenset(
+    {"track-c-support-copy-ko-2026-09-15.1", "track-c-support-copy-ko-2026-09-16.1", ACTIVE_COPY_VERSION}
+)
 APPROVED_RATIONALE_CODES = frozenset(
     {
         "ROUTINE_REMINDER_SETUP_AVAILABLE",
@@ -57,6 +61,46 @@ _EXPECTED: dict[SupportCode, tuple[tuple[BarrierCode, ...], int]] = {
 
 class HandlerConfigError(ValueError):
     """Invalid or unapproved rules or historical snapshot; never include input data."""
+
+
+def _base_snapshot_parameters(
+    parameters: dict[str, Any],
+) -> tuple[dict[str, Any], str | None, list[str], list[dict[str, str]]]:
+    actual = dict(parameters)
+    subreason_code = actual.pop("subreason_code", None)
+    selected_question_ids = actual.pop("selected_question_ids", [])
+    selected_questions = actual.pop("selected_questions", [])
+    if subreason_code is not None and not isinstance(subreason_code, str):
+        raise HandlerConfigError("invalid historical subreason")
+    if not isinstance(selected_question_ids, list) or not all(
+        isinstance(question_id, str) for question_id in selected_question_ids
+    ):
+        raise HandlerConfigError("invalid historical question selection")
+    if not isinstance(selected_questions, list) or any(
+        not isinstance(item, dict)
+        or set(item) != {"question_id", "text"}
+        or not isinstance(item["question_id"], str)
+        or not isinstance(item["text"], str)
+        for item in selected_questions
+    ):
+        raise HandlerConfigError("invalid historical question snapshot")
+    if [item["question_id"] for item in selected_questions] != selected_question_ids:
+        raise HandlerConfigError("historical question snapshot mismatch")
+    return actual, subreason_code, selected_question_ids, selected_questions
+
+
+def _validate_plan_questions(
+    catalog: "SupportCopyCatalog | None",
+    support_code: SupportCode,
+    subreason_code: str | None,
+    question_ids: list[str],
+    snapshot: list[dict[str, str]],
+) -> None:
+    if not question_ids:
+        return
+    if catalog is None:
+        raise HandlerConfigError("historical question catalog required")
+    catalog.validate_question_snapshot(support_code, subreason_code, question_ids, snapshot)
 
 
 @dataclass(frozen=True)
@@ -91,7 +135,13 @@ class HandlerConfig:
             "parameters": parameters,
         }
 
-    def restore(self, plan: SupportActionPlan, *, medication_id: UUID | None = None) -> dict[str, Any]:
+    def restore(
+        self,
+        plan: SupportActionPlan,
+        *,
+        medication_id: UUID | None = None,
+        copy_catalog: "SupportCopyCatalog | None" = None,
+    ) -> dict[str, Any]:
         if plan.rule_version != self.rule_version or plan.support_code not in self.supports:
             raise HandlerConfigError("historical rule unavailable")
         rule = self.supports[plan.support_code]
@@ -112,8 +162,16 @@ class HandlerConfig:
             expected["prescription_version_medication_id"] = str(medication_id)
         elif medication_id is not None:
             raise HandlerConfigError("unexpected medication reference")
-        if parameters != expected:
+        actual, subreason_code, selected_question_ids, selected_questions = _base_snapshot_parameters(parameters)
+        if actual != expected:
             raise HandlerConfigError("historical parameters do not match approved rule or parent")
+        _validate_plan_questions(
+            copy_catalog,
+            plan.support_code,
+            subreason_code,
+            selected_question_ids,
+            selected_questions,
+        )
         return deepcopy(snapshot)
 
 
@@ -128,10 +186,48 @@ class SupportCopy:
 
 
 @dataclass(frozen=True)
+class SupportQuestionCopy:
+    question_id: str
+    support_code: SupportCode
+    subreason_codes: tuple[str, ...]
+    text: str
+
+
+@dataclass(frozen=True)
 class SupportCopyCatalog:
     copy_version: str
     locale: str
     supports: Mapping[SupportCode, SupportCopy]
+    questions: Mapping[str, SupportQuestionCopy]
+
+    def questions_for(
+        self, support_code: SupportCode, subreason_code: str | None = None
+    ) -> tuple[SupportQuestionCopy, ...]:
+        return tuple(
+            question
+            for question in self.questions.values()
+            if question.support_code == support_code
+            and (subreason_code is None or subreason_code in question.subreason_codes)
+        )
+
+    def validate_question_snapshot(
+        self,
+        support_code: SupportCode,
+        subreason_code: str | None,
+        question_ids: list[str] | tuple[str, ...],
+        snapshot: list[dict[str, str]],
+    ) -> tuple[str, ...]:
+        allowed = {question.question_id: question for question in self.questions_for(support_code, subreason_code)}
+        if (
+            len(question_ids) != len(set(question_ids))
+            or len(question_ids) > 3
+            or any(q not in allowed for q in question_ids)
+        ):
+            raise HandlerConfigError("invalid historical question selection")
+        expected = [{"question_id": question_id, "text": allowed[question_id].text} for question_id in question_ids]
+        if snapshot != expected:
+            raise HandlerConfigError("historical question snapshot does not match copy version")
+        return tuple(question_ids)
 
 
 def _exact_object(value: Any, keys: set[str]) -> dict[str, Any]:
@@ -185,6 +281,36 @@ def _parse_support(
     return SupportRule(code, barriers, priority, copy_version, rationale_code, MappingProxyType(dict(params)))
 
 
+def _parse_support_questions(values: Any) -> Mapping[str, SupportQuestionCopy]:
+    if not isinstance(values, list):
+        raise HandlerConfigError("invalid support questions")
+    questions: dict[str, SupportQuestionCopy] = {}
+    for value in values:
+        item = _exact_object(value, {"question_id", "support_code", "subreason_codes", "text"})
+        question_id = item["question_id"]
+        if not isinstance(question_id, str) or not _VERSION.fullmatch(question_id) or question_id in questions:
+            raise HandlerConfigError("invalid or duplicate support question")
+        try:
+            support_code = SupportCode(item["support_code"])
+        except (ValueError, TypeError) as exc:
+            raise HandlerConfigError("unknown support question code") from exc
+        subreason_codes = item["subreason_codes"]
+        if (
+            not isinstance(subreason_codes, list)
+            or not subreason_codes
+            or not all(isinstance(code, str) and _VERSION.fullmatch(code) for code in subreason_codes)
+            or len(subreason_codes) != len(set(subreason_codes))
+        ):
+            raise HandlerConfigError("invalid support question subreasons")
+        questions[question_id] = SupportQuestionCopy(
+            question_id=question_id,
+            support_code=support_code,
+            subreason_codes=tuple(subreason_codes),
+            text=_display_string(item["text"], maximum=300),
+        )
+    return MappingProxyType(questions)
+
+
 def parse_handler_config(
     data: Any,
     *,
@@ -219,7 +345,12 @@ def parse_support_copy_catalog(
     *,
     approved_copy_versions: frozenset[str],
 ) -> SupportCopyCatalog:
-    root = _exact_object(data, {"schema_version", "copy_version", "locale", "supports"})
+    if not isinstance(data, dict) or set(data) not in (
+        {"schema_version", "copy_version", "locale", "supports"},
+        {"schema_version", "copy_version", "locale", "supports", "questions"},
+    ):
+        raise HandlerConfigError("invalid rule fields")
+    root = data
     if root["schema_version"] != COPY_SCHEMA_VERSION or root["locale"] != "ko-KR":
         raise HandlerConfigError("unsupported copy schema or locale")
     copy_version = _approved_string(root["copy_version"], approved_copy_versions)
@@ -247,7 +378,13 @@ def parse_support_copy_catalog(
             primary_label=_display_string(confirmation["primary_label"], maximum=50),
             secondary_label=_display_string(confirmation["secondary_label"], maximum=50),
         )
-    return SupportCopyCatalog(copy_version, root["locale"], MappingProxyType(supports))
+    questions = _parse_support_questions(root.get("questions", []))
+    return SupportCopyCatalog(
+        copy_version,
+        root["locale"],
+        MappingProxyType(supports),
+        questions,
+    )
 
 
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -327,7 +464,7 @@ def load_active_support_assets() -> tuple[HandlerConfig, SupportCopyCatalog]:
     return config, catalog
 
 
-def load_historical_plan_copy(plan: SupportActionPlan) -> SupportCopy:
+def load_historical_plan_assets(plan: SupportActionPlan) -> tuple[SupportCopy, SupportCopyCatalog]:
     config = load_handler_config(
         _RULES_DIR,
         plan.rule_version,
@@ -338,11 +475,17 @@ def load_historical_plan_copy(plan: SupportActionPlan) -> SupportCopy:
     rule = config.supports.get(plan.support_code)
     if rule is None or rule.copy_version != plan.copy_version:
         raise HandlerConfigError("historical plan copy reference mismatch")
-    return load_support_copy_catalog(
+    catalog = load_support_copy_catalog(
         _COPY_DIR,
         plan.copy_version,
         approved_copy_versions=APPROVED_COPY_VERSIONS,
-    ).supports[plan.support_code]
+    )
+    return catalog.supports[plan.support_code], catalog
+
+
+def load_historical_plan_copy(plan: SupportActionPlan) -> SupportCopy:
+    copy, _ = load_historical_plan_assets(plan)
+    return copy
 
 
 def load_active_handler_config() -> HandlerConfig:
@@ -362,6 +505,9 @@ async def save_action_plan_snapshot(
     barrier_id: UUID,
     support_code: SupportCode,
     config: HandlerConfig,
+    copy_catalog: SupportCopyCatalog | None = None,
+    subreason_code: str | None = None,
+    selected_question_ids: tuple[str, ...] = (),
 ) -> SupportActionPlan:
     """Stage a validated Plan in the caller's transaction.
 
@@ -384,6 +530,19 @@ async def save_action_plan_snapshot(
         support_code,
         medication_id=medication_id if support_code == SupportCode.REMINDER_SETUP else None,
     )
+    snapshot["parameters"]["subreason_code"] = subreason_code
+    snapshot["parameters"]["selected_question_ids"] = list(selected_question_ids)
+    if selected_question_ids and copy_catalog is None:
+        raise HandlerConfigError("question catalog required")
+    selected_questions = (
+        [
+            {"question_id": question_id, "text": copy_catalog.questions[question_id].text}
+            for question_id in selected_question_ids
+        ]
+        if copy_catalog is not None
+        else []
+    )
+    snapshot["parameters"]["selected_questions"] = selected_questions
     plan = SupportActionPlan(
         barrier_response_id=barrier_id,
         support_code=support_code,
@@ -413,4 +572,5 @@ async def restore_action_plan_snapshot(
     if parent is None:
         raise HandlerConfigError("plan parent unavailable")
     medication_id = parent[1] if plan.support_code == SupportCode.REMINDER_SETUP else None
-    return historical_config.restore(plan, medication_id=medication_id)
+    _, copy_catalog = load_historical_plan_assets(plan)
+    return historical_config.restore(plan, medication_id=medication_id, copy_catalog=copy_catalog)

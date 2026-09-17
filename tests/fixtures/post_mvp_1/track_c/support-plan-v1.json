@@ -8,10 +8,11 @@
       "medication_checkin_id": "00000000-0000-4000-8000-000000000002",
       "checkin_revision": 1,
       "safety_assessment_id": "00000000-0000-4000-8000-000000000003",
+      "subreason_code": null,
       "supports": [{
         "support_code": "REMINDER_SETUP",
-        "rule_version": "track-c-support-rule-2026-09-16.1",
-        "copy_version": "track-c-support-copy-ko-2026-09-16.1",
+        "rule_version": "track-c-support-rule-2026-09-17.1",
+        "copy_version": "track-c-support-copy-ko-2026-09-17.1",
         "priority": 10,
         "rationale_code": "ROUTINE_REMINDER_SETUP_AVAILABLE",
         "action_config": {
@@ -19,7 +20,10 @@
           "rationale_code": "ROUTINE_REMINDER_SETUP_AVAILABLE",
           "parameters": {
             "destination": "MEDICATION_SCHEDULE_SETUP",
-            "prescription_version_medication_id": "00000000-0000-4000-8000-000000000004"
+            "prescription_version_medication_id": "00000000-0000-4000-8000-000000000004",
+            "subreason_code": null,
+            "selected_question_ids": [],
+            "selected_questions": []
           }
         },
         "support_copy": {
@@ -28,7 +32,8 @@
           "confirmation_prompt": "복약 일정 설정 화면에서 내용을 확인하시겠어요?",
           "primary_label": "일정 확인하기",
           "secondary_label": "나중에"
-        }
+        },
+        "questions": []
       }],
       "reason_code": null
     }
@@ -39,6 +44,7 @@
       "medication_checkin_id": "00000000-0000-4000-8000-000000000002",
       "checkin_revision": 1,
       "safety_assessment_id": "00000000-0000-4000-8000-000000000003",
+      "subreason_code": null,
       "supports": [],
       "reason_code": "NO_ELIGIBLE_SUPPORT"
     }
@@ -46,23 +52,27 @@
   "create_request": {
     "barrier_response_id": "00000000-0000-4000-8000-000000000001",
     "support_code": "REMINDER_SETUP",
-    "rule_version": "track-c-support-rule-2026-09-16.1",
-    "copy_version": "track-c-support-copy-ko-2026-09-16.1",
-    "confirmed": true
+    "rule_version": "track-c-support-rule-2026-09-17.1",
+    "copy_version": "track-c-support-copy-ko-2026-09-17.1",
+    "confirmed": true,
+    "selected_question_ids": []
   },
   "create_response": {
     "data": {
       "support_action_plan_id": "00000000-0000-4000-8000-000000000006",
       "barrier_response_id": "00000000-0000-4000-8000-000000000001",
       "support_code": "REMINDER_SETUP",
-      "rule_version": "track-c-support-rule-2026-09-16.1",
-      "copy_version": "track-c-support-copy-ko-2026-09-16.1",
+      "rule_version": "track-c-support-rule-2026-09-17.1",
+      "copy_version": "track-c-support-copy-ko-2026-09-17.1",
       "action_config_snapshot": {
         "schema_version": "track-c-handler-config-v1",
         "rationale_code": "ROUTINE_REMINDER_SETUP_AVAILABLE",
         "parameters": {
           "destination": "MEDICATION_SCHEDULE_SETUP",
-          "prescription_version_medication_id": "00000000-0000-4000-8000-000000000004"
+          "prescription_version_medication_id": "00000000-0000-4000-8000-000000000004",
+          "subreason_code": null,
+          "selected_question_ids": [],
+          "selected_questions": []
         }
       },
       "status": "ACTIVE",

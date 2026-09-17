@@ -20,8 +20,8 @@ for (const width of [320, 390, 412]) {
       if (path === '/api/v1/medication-occurrences') data = { occurrences: [{ occurrence_id: occurrence, scheduled_local_date: '2026-09-16', status: 'CLOSED', checkin: { checkin_id: 'checkin', status: 'NOT_TAKEN', revision: 2 } }] }
       else if (path === '/api/v1/safety-assessments') data = safety
       else if (path.endsWith('/barrier-response')) data = barrier
-      else if (path.endsWith('/supports')) data = { ...barrier, reason_code: null, supports: [{ support_code: 'REMINDER_SETUP', rule_version: 'rule1', copy_version: 'copy1', priority: 1, rationale_code: 'FORGOT', action_config: config, support_copy: { title: '복약 일정과 알림을 확인해 볼까요?', body: '현재 저장된 일정을 먼저 확인하고 필요한 경우 직접 변경해 주세요. '.repeat(12), confirmation_prompt: '이 방법을 실천 계획으로 저장할까요?', primary_label: '계획으로 저장', secondary_label: '나중에' } }] }
-      else if (path.endsWith('/resources')) data = { support_action_plan_id: planId, barrier_code: 'FORGOT', occurrence_id: occurrence, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: { title: '복약 일정과 알림 확인', body: '저장 당시 안내', confirmation_prompt: '확인할까요?', primary_label: '확인', secondary_label: '나중에' } }
+      else if (path.endsWith('/supports')) data = { ...barrier, subreason_code: 'MISSED_ALERT', reason_code: null, supports: [{ support_code: 'REMINDER_SETUP', rule_version: 'rule1', copy_version: 'copy1', priority: 1, rationale_code: 'FORGOT', action_config: config, support_copy: { title: '복약 일정과 알림을 확인해 볼까요?', body: '현재 저장된 일정을 먼저 확인하고 필요한 경우 직접 변경해 주세요. '.repeat(12), confirmation_prompt: '이 방법을 실천 계획으로 저장할까요?', primary_label: '계획으로 저장', secondary_label: '나중에' }, questions: [] }] }
+      else if (path.endsWith('/resources')) data = { support_action_plan_id: planId, barrier_code: 'FORGOT', occurrence_id: occurrence, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: { title: '복약 일정과 알림 확인', body: '저장 당시 안내', confirmation_prompt: '확인할까요?', primary_label: '확인', secondary_label: '나중에' }, subreason_code: 'MISSED_ALERT', selected_questions: [] }
       else { if (request.method() === 'PATCH') plan.status = request.postDataJSON().status; data = plan }
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data }) })
     })
@@ -40,6 +40,8 @@ for (const width of [320, 390, 412]) {
     expect(await page.locator('.mobile-app').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
     await page.screenshot({ path: `test-results/track-c-barrier-${width}.png`, fullPage: true })
     await page.getByRole('button', { name: '선택한 어려움으로 도움 찾기' }).click()
+    await page.getByRole('radio', { name: '알림을 보거나 듣지 못했어요' }).check()
+    await page.getByRole('button', { name: '선택한 상황으로 도움 찾기' }).click()
     await expect(page.getByRole('button', { name: '계획으로 저장' })).toBeDisabled()
     expect(await page.locator('main').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
     await page.screenshot({ path: `test-results/track-c-offer-${width}.png`, fullPage: true })
@@ -84,8 +86,8 @@ for (const [situation, label, supportCode] of [
       else if (path.endsWith('/barrier-response')) data = barrier
       else if (path.endsWith('/supports')) {
         expect(url.searchParams.get('travel_situation')).toBe(situation)
-        data = { ...barrier, supports: [{ support_code: supportCode, rule_version: plan.rule_version, copy_version: plan.copy_version, priority: 10, rationale_code: 'SYNTHETIC', action_config: config, support_copy: copy }], reason_code: null }
-      } else if (path.endsWith('/resources')) data = { support_action_plan_id: planId, barrier_code: 'SCHEDULE_OR_TRAVEL', occurrence_id: occurrence, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: copy }
+        data = { ...barrier, subreason_code: situation, supports: [{ support_code: supportCode, rule_version: plan.rule_version, copy_version: plan.copy_version, priority: 10, rationale_code: 'SYNTHETIC', action_config: config, support_copy: copy, questions: [] }], reason_code: null }
+      } else if (path.endsWith('/resources')) data = { support_action_plan_id: planId, barrier_code: 'SCHEDULE_OR_TRAVEL', occurrence_id: occurrence, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: copy, subreason_code: situation, selected_questions: [] }
       else {
         if (request.method() === 'POST') creates.push(request.postDataJSON())
         if (request.method() === 'PATCH') plan.status = request.postDataJSON().status

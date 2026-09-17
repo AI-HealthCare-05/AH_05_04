@@ -40,6 +40,6 @@ def test_frontend_fixture_matches_current_dtos_and_approved_assets() -> None:
     assert item.support_copy.secondary_label == copy.secondary_label
     assert request.confirmed is True
     assert plan.status == "ACTIVE"
-    invalid = {**fixture["single_offer"]["data"], "supports": [item, item]}
+    invalid = {**fixture["single_offer"]["data"], "supports": [item, item, item]}
     with pytest.raises(ValidationError):
         SupportOfferResponse.model_validate({"data": invalid})

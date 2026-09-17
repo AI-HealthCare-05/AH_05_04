@@ -225,6 +225,11 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 - [PD-194-2](../governance/decisions/2026-09-16-track-c-followup-194.md): 완료 계획만 평가, 이후 Check-in 정정에도 과거 평가 허용. 권가빈 구현·김지혜 단일 책임 리뷰.
 - #139 Frontend·Constraint/RAG Handler·외부 공개 및 #194 전체 완료는 별도 범위다.
 
+## Track C 규칙 기반 개인화 지원 (#718)
+
+- [규칙 기반 개인화 지원 — Current, 구현 PR 반영](current/track-c-rule-based-personalization-718.md): 세부 이유, 최대 2개 지원, 고정 상담 질문, Plan snapshot·재조회 계약. RAG·LLM·실시간 웹 조회를 호출하지 않으며 기존 Safety·SELF·현재성·공개 게이트를 유지한다.
+- [PD-718](../governance/decisions/2026-09-17-track-c-rule-based-personalization-718.md): 기존 정적 Rule·Copy 확장과 JSONB snapshot 재사용 결정. Follow-up v2는 별도 migration·계약으로 남긴다.
+
 ## Track C 일정 변경·외출 상황 선택 (#194 후속)
 
 - [상황 선택 — Current, PR #639 반영](current/track-c-travel-situation-194.md): 생활 일정 변경과 약 미지참에 따른 단일 제안, Plan 재검증·멱등성·명시 완료. 권가빈 구현·김지혜 단일 책임 리뷰, Frontend #139 영향 포함.
