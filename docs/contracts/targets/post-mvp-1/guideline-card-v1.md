@@ -159,6 +159,37 @@ RAG-15 내부의 draft generation boundary다.
    - Finalizer는 validation/approval/binding/fallback 책임을 계속 가진다.
    - 본 어댑터 추가만으로 Production Runtime 활성화나 PUBLIC_TRACK_F release를 의미하지 않으며, 문서 상태는 `targets/`를 유지한다.
 
+## RAG-15 Formal Approval Pack 및 #180 Handoff 경계
+
+PR #690에서 `OpenAIGuidelineGeneratorAdapter`가 병합된 후, RAG-15 기술 후보를 #180 오케스트레이터가 소비할 수 있도록 정적 승인 팩으로 봉인하는 계약이다.
+
+```text
+#690 Generator Adapter merged
+          ↓
+RAG-15 Approval Pack boundary (Issue #179)
+          ↓
+#180 Consumer Handoff
+```
+
+1. **2단계 불변 식별자 (Two-Stage Identity)**:
+   - `candidate_ref` (`rag15-guideline-candidate@rag15-guideline-v1`): 기술 구현체(`generation_provenance`: Prompt, Model, Parser, Validator candidate refs), 정책 참조(`policy_ref`: `VersionedGuidelinePolicy`), 전체 `GuidelineFallbackCode` 불변 핀(`fallback_pins`)의 canonical projection SHA-256 해시를 결속한다.
+   - `pack_ref` (`rag15-approval-pack@rag15-guideline-v1`): 위 `candidate_ref`와 5개 필수 영역(`MEDICAL`, `PHARMACY`, `SOURCE`, `PRIVACY`, `SAFETY`)의 승인 증적(`approval_evidence`)의 canonical projection SHA-256 해시를 결속한다.
+   - `source_revision`은 코드 감사 추적 메타데이터이며, `candidate_ref` 및 `pack_ref` 해시 계산에서 제외된다.
+
+2. **승인 상태 및 소비 가능성 (Approval Status & Consumability)**:
+   - 승인 어휘는 런타임 표준 어휘(`PENDING`, `APPROVED`, `REJECTED`)만을 사용한다.
+   - 외부 승인 증적이 없는 초기 상태의 팩은 구조적으로 완전하고 유효(`integrity_verified = true`)하더라도 `approval_status = PENDING`이며, 결코 프로덕션에서 소비될 수 없다(`production_consumable = false`).
+   - 프로덕션 소비 가능(`production_consumable = true`) 판정은 오직 `integrity_verified AND approval_status == APPROVED AND approval_evidence_verified`를 모두 만족할 때만 성립한다.
+   - 각 승인 증적은 반드시 자신이 승인한 `candidate_ref`와 일치해야 하며(`evidence.candidate_ref == pack.candidate_ref`), 다른 후보의 증적 재사용(replay)은 fail-closed로 거부된다.
+
+3. **요청별 동적 결속 분리 (Stateless Pack Boundary)**:
+   - `Rag15ApprovalPack`은 정적 승인 봉인체이며, 환자/요청별 가변 데이터(`MedicationIdentityRef`, `EvidenceGateOutcome`, `ApprovedGuidelineEvidenceBinding`, retrieval/assessment receipt 등)를 포함하지 않는다. 이는 #180 오케스트레이터의 런타임 결속 책임이다.
+
+4. **권위 및 런타임 불변성**:
+   - Runtime Bundle DB 스키마(`guideline_set_manifest_hash` 컬럼 등) 및 Alembic 마이그레이션 변경이 없다.
+   - 본 계약은 `targets/` 상태를 유지하며 `current/`로 승격하지 않는다.
+   - `PUBLIC_TRACK_F` 공개 플래그 및 배포 게이트에 영향을 주지 않는다.
+
 ## RAG-16 소비 경계
 
 RAG-16은 이 outcome을 입력으로 받되 다음을 추정하지 않는다.
