@@ -13,7 +13,10 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from ai_worker.adapters.openai_text_embedding import OpenAITextEmbeddingAdapter
+from ai_worker.adapters.openai_text_embedding import (
+    OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
+    OpenAITextEmbeddingAdapter,
+)
 from ai_worker.tasks.evaluation.actual_retrieval import build_actual_adapter_registry
 from ai_worker.tasks.evaluation.actual_retrieval_index import (
     SYNTHETIC_INDEX_CODE,
@@ -512,7 +515,7 @@ async def test_fake_built_index_rejected_by_actual_openai(database) -> None:
         model_ref = "openai:text-embedding-3-large"
         model_version = "text-embedding-3-large"
         dimension = 1536
-        _adapter_artifact_ref = ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "e" * 64)
+        _adapter_artifact_ref = OPENAI_TEXT_EMBEDDING_ADAPTER_REF
 
     with pytest.raises(EvaluationValidationError) as exc_info:
         await bootstrap_dev_knowledge_index(
@@ -535,7 +538,7 @@ async def test_missing_credential_blocks_actual_execution(database, monkeypatch)
         model_ref = "openai:text-embedding-3-large"
         model_version = "text-embedding-3-large"
         dimension = 1536
-        _adapter_artifact_ref = ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "e" * 64)
+        _adapter_artifact_ref = OPENAI_TEXT_EMBEDDING_ADAPTER_REF
 
         async def embed(self, texts, **kwargs):
             from ai_worker.tasks.rag.evidence_search import SensitiveVector
@@ -924,7 +927,7 @@ async def test_production_openai_adapter_composition_without_network(database) -
 
     prod_adapter = OpenAITextEmbeddingAdapter(
         client=fake_client,
-        adapter_artifact_ref=ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "e" * 64),
+        adapter_artifact_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
     )
 
     # Assert prod_adapter identity matches normative contract

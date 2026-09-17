@@ -331,3 +331,112 @@ def test_dense_and_hybrid_variant_configs_keep_dense_inputs_and_validate(mode: R
 
 def test_placeholder_configuration_is_rejected_before_sealing() -> None:
     assert validate_retrieval_configuration(_placeholder_retrieval_config()) is not None
+
+
+# ---------------------------------------------------------------------------
+# Issue #738: Authoritative query embedding adapter identity & placeholder removal
+# ---------------------------------------------------------------------------
+
+
+def test_actual_retrieval_query_composition_expects_canonical_ref() -> None:
+    from unittest.mock import MagicMock
+
+    from ai_worker.adapters.openai_text_embedding import OPENAI_TEXT_EMBEDDING_ADAPTER_REF
+    from ai_worker.tasks.evaluation.actual_retrieval import build_actual_adapter_registry
+
+    mock_resolved = MagicMock()
+    mock_search_port = MagicMock()
+    mock_eligibility = MagicMock()
+
+    registry = build_actual_adapter_registry(
+        mock_resolved,
+        search_port=mock_search_port,
+        eligibility_verifier=mock_eligibility,
+        text_embedding_port=None,
+    )
+    adapter = registry.resolve("knowledge-evidence-retrieval.actual.v1")
+    assert adapter is not None
+    assert adapter._retrieval_config.expected_query_embedding_adapter_ref == OPENAI_TEXT_EMBEDDING_ADAPTER_REF
+
+
+def test_production_like_fallback_e64_is_not_execution_identity() -> None:
+    from unittest.mock import MagicMock
+
+    from ai_worker.tasks.evaluation.actual_retrieval import build_actual_adapter_registry
+
+    mock_resolved = MagicMock()
+    mock_search_port = MagicMock()
+    mock_eligibility = MagicMock()
+
+    # Pass text_embedding_port without _adapter_artifact_ref attribute
+    plain_port = MagicMock(spec=[])
+    registry = build_actual_adapter_registry(
+        mock_resolved,
+        search_port=mock_search_port,
+        eligibility_verifier=mock_eligibility,
+        text_embedding_port=plain_port,
+    )
+    adapter = registry.resolve("knowledge-evidence-retrieval.actual.v1")
+    assert adapter is not None
+    assert adapter._retrieval_config.expected_query_embedding_adapter_ref is not None
+    assert adapter._retrieval_config.expected_query_embedding_adapter_ref.content_sha256 != "e" * 64
+
+
+@pytest.mark.asyncio
+async def test_mismatched_query_embedding_adapter_ref_fails_closed() -> None:
+    from typing import Any
+
+    from ai_worker.adapters.openai_text_embedding import OPENAI_TEXT_EMBEDDING_ADAPTER_REF
+    from ai_worker.tasks.rag.evidence_search import (
+        SensitiveVector,
+        validate_search_request,
+    )
+    from ai_worker.tasks.rag.text_embedding import TextEmbeddingPort, TextEmbeddingSuccess
+
+    class MismatchedEmbeddingPort(TextEmbeddingPort):
+        async def embed(self, text: Any, **kwargs: Any) -> TextEmbeddingSuccess:
+            return TextEmbeddingSuccess(
+                embedding=SensitiveVector([0.1] * 1536),
+                adapter_artifact_ref=ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "f" * 64),
+            )
+
+    class ValidatingSearchPort(FakeSearchPort):
+        async def search(self, request: EvidenceSearchRequest) -> Any:
+            failure = validate_search_request(request)
+            if failure is not None:
+                return failure
+            return await super().search(request)
+
+    snapshot_id = uuid4()
+    member_id = uuid4()
+    hits = tuple(_make_dummy_hit(i, f"ev-nlr-00{i}", snapshot_id, member_id) for i in range(1, 6))
+
+    lex_cfg = VersionedLexicalSearchConfiguration(
+        artifact_ref=ImmutableArtifactRef("lex_cfg", "1.0", "1" * 64),
+    )
+    dense_cfg = VersionedDenseSearchConfiguration(
+        artifact_ref=ImmutableArtifactRef("dense_cfg", "1.0", "2" * 64),
+    )
+    ret_cfg = VersionedEvidenceRetrievalConfiguration(
+        artifact_ref=ImmutableArtifactRef("ret_cfg", "1.0", "a" * 64),
+        execution_mode=RetrievalExecutionMode.HYBRID_RRF,
+        lexical_config=lex_cfg,
+        dense_config=dense_cfg,
+        expected_query_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
+    )
+    adapter = ActualRetrievalEvaluationAdapter(
+        search_port=ValidatingSearchPort(hits),
+        text_embedding_port=MismatchedEmbeddingPort(),
+        eligibility_verifier=FakeEligibilityVerifier(),
+        filter_snapshot_ref=ImmutableArtifactRef("filter_snapshot", "1.0", "f" * 64),
+        evidence_index_ref=ImmutableArtifactRef("evidence_index", "1.0", "i" * 64),
+        knowledge_index_id=uuid4(),
+        allowed_source_snapshot_ids=(snapshot_id,),
+        allowed_source_snapshot_member_ids=(member_id,),
+        retrieval_config=ret_cfg,
+        adapter_artifact_ref=ImmutableArtifactRef("adapter_ref", "1.0", "d" * 64),
+    )
+    req = _make_adapter_request(variant_id="RET-H")
+    res = await adapter.execute(req)
+    assert res.execution_status == "ERROR"
+    assert "RETRIEVAL_EXECUTION_FAILED" in res.failure_codes
