@@ -81,6 +81,18 @@ Production Redis는 host port에 공개하지 않고 Docker 내부 network에서
 
 Worker, Publisher, Reconciler가 Redis에 접근하는 non-local 환경에서는 `REDIS_PASSWORD`가 실제 secret 값으로 주입되어야 하며, 빈 값 또는 `replace-with-` placeholder는 startup 실패 조건입니다. 실제 Redis password는 저장소, Issue, PR, 로그에 기록하지 않습니다.
 
+## Idempotency HMAC key rotation
+
+`IDEMPOTENCY_HMAC_KEY`는 원문 `Idempotency-Key`를 저장하지 않기 위한 서버 HMAC secret입니다. 운영에서 key를 교체할 때는 같은 원문 key의 재시도가 기존 `idempotency_record`를 찾을 수 있도록 아래 순서를 지킵니다. 실제 secret 값은 저장소, Issue, PR, 로그에 기록하지 않습니다.
+
+1. 현재 active `(IDEMPOTENCY_HMAC_KEY_VERSION, IDEMPOTENCY_HMAC_KEY)`를 기록 가능한 secret inventory에서만 확인합니다.
+2. 새 active key와 새 version을 준비하고, 직전 active key를 `IDEMPOTENCY_HMAC_RETIRED_KEYS`에 `old_version: old_key` 형태로 함께 배포합니다.
+3. 모든 Backend writer가 같은 새 active version을 쓰는지 확인합니다. 서로 다른 active version writer가 동시에 최초 write를 수행하는 혼합 배포는 금지합니다.
+4. `IDEMPOTENCY_RECORD_TTL_DAYS` 이상 지난 뒤, 해당 old version으로 생성된 미만료 record가 없음을 확인하고 retained entry를 제거합니다.
+5. rotation 중 같은 `Idempotency-Key` 재시도가 기존 Job 또는 sync mutation snapshot을 재사용하는지 staging 또는 local 합성 테스트로 확인합니다.
+
+신규 record는 항상 active key/version으로 저장됩니다. Retained key는 조회 전용이며 새 write에 사용하지 않습니다.
+
 ## 동기 AI 배포 기록
 
 OCR·복약 가이드·복약 챗봇은 외부 Provider 호출 중에 요청 단위 DB transaction과 connection을 유지합니다. 같은 채팅 세션의 요청은 row lock에서 추가로 직렬화됩니다. 배포마다 아래 값과 승인 결과를 실제 운영 설정 기준으로 기록합니다.

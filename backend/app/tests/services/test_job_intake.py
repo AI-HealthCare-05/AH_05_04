@@ -9,8 +9,9 @@ import pytest_asyncio
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import config
 from app.core.errors import ApiError
-from app.core.utils.idempotency import IdempotencyKeyFormatError
+from app.core.utils.idempotency import IdempotencyKeyFormatError, compute_key_hmac
 from app.models.async_jobs import AiJob, AiJobType, DomainType, IdempotencyRecord, OutboxEvent, OutboxEventKind
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob, OcrStatus
@@ -27,6 +28,9 @@ from app.services.job_intake import (
     JobIntakeService,
 )
 from app.tests.conftest import test_engine
+
+OLD_HMAC_KEY = "old-production-secret-at-least-32-chars"
+NEW_HMAC_KEY = "new-production-secret-at-least-32-chars"
 
 
 @pytest_asyncio.fixture
@@ -47,6 +51,18 @@ async def db_session() -> AsyncIterator[AsyncSession]:
             await session.close()
             if transaction.is_active:
                 await transaction.rollback()
+
+
+def _set_idempotency_hmac_config(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    key: str,
+    version: str,
+    retained_keys: dict[str, str] | None = None,
+) -> None:
+    monkeypatch.setattr(config, "IDEMPOTENCY_HMAC_KEY", key)
+    monkeypatch.setattr(config, "IDEMPOTENCY_HMAC_KEY_VERSION", version)
+    monkeypatch.setattr(config, "IDEMPOTENCY_HMAC_RETIRED_KEYS", retained_keys or {})
 
 
 async def _create_user(session: AsyncSession, *, email: str) -> User:
@@ -205,6 +221,55 @@ async def test_accept_job_rejects_invalid_prescription_version_assignment(
 
 
 @pytest.mark.asyncio
+async def test_accept_job_replays_record_created_before_hmac_key_rotation(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = await _create_user(db_session, email=f"intake-rotation-{uuid4().hex[:8]}@test.local")
+    document = await _create_document(db_session, user=user)
+    idempotency_key = "test-idempotency-key-rotate-async"
+    fingerprint = {"job_type": "OCR", "document_id": str(document.id)}
+
+    _set_idempotency_hmac_config(monkeypatch, key=OLD_HMAC_KEY, version="v1")
+    service = JobIntakeService(AsyncJobRepository(db_session))
+    created_ocr_jobs, _, create_placeholder = _ocr_placeholder_factory(db_session, document_id=document.id, user=user)
+    first = await service.accept_job(
+        user_id=user.id,
+        job_type=AiJobType.OCR,
+        operation_id="ocr.create_job",
+        idempotency_key=idempotency_key,
+        fingerprint=fingerprint,
+        create_domain_placeholder=create_placeholder,
+        trace_id="a" * 32,
+        prescription_version_id=None,
+    )
+
+    record = await db_session.scalar(select(IdempotencyRecord).where(IdempotencyRecord.job_id == first.job.id))
+    assert record is not None
+    assert record.key_hmac_version == "v1"
+    assert record.key_hmac == compute_key_hmac(idempotency_key, hmac_key=OLD_HMAC_KEY)
+
+    _set_idempotency_hmac_config(monkeypatch, key=NEW_HMAC_KEY, version="v2", retained_keys={"v1": OLD_HMAC_KEY})
+
+    async def unexpected_placeholder(_job_id: UUID) -> NoReturn:
+        raise AssertionError("retained HMAC key replay must not create a new placeholder")
+
+    second = await service.accept_job(
+        user_id=user.id,
+        job_type=AiJobType.OCR,
+        operation_id="ocr.create_job",
+        idempotency_key=idempotency_key,
+        fingerprint=fingerprint,
+        create_domain_placeholder=unexpected_placeholder,
+        trace_id="b" * 32,
+        prescription_version_id=None,
+    )
+
+    assert second.is_duplicate is True
+    assert second.job.id == first.job.id
+    assert len(created_ocr_jobs) == 1
+
+
 async def test_accept_job_same_key_same_fingerprint_returns_existing_job(
     db_session: AsyncSession,
 ) -> None:
