@@ -203,6 +203,7 @@ function deferred<T>() {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.clearAllMocks()
 })
 
@@ -505,6 +506,36 @@ describe('production 복약 일정', () => {
     const firstInput = screen.getByLabelText('현재 처방의 혈압약 1번째 복용 시간')
     expect(document.getElementById(firstInput.getAttribute('aria-describedby')!)?.textContent).toContain('복용 시점 미확인')
     expect(screen.queryByRole('button', { name: /복용 시간 (추가|삭제)/ })).toBeNull()
+  })
+
+  it('오늘 시작 일정에 이미 지난 복용 시간이 있으면 이후 날짜 적용 안내를 표시한다', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-14T10:00:00Z'))
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({
+        schedule_status: 'SETUP_REQUIRED',
+        schedule_items: [setupItem()],
+        occurrences: [],
+      })),
+      getLatestPrescription: vi.fn().mockResolvedValue(makePrescription({
+        medications: [{ ...makePrescription().data.medications[0], frequency_per_day: 2 }],
+      })),
+    })
+    renderSchedule(services)
+
+    fireEvent.click(await screen.findByRole('button', { name: '일정 설정하기' }))
+    fillScheduleEditor('현재 처방의 혈압약', '2026-09-14', '2026-09-20', ['08:30', '21:00'])
+
+    const notice = screen.getByRole('note')
+    expect(notice.textContent).toContain('오늘 이미 지난 복용 시간은 오늘 일정에 표시되지 않아요.')
+    expect(notice.textContent).toContain('이후 날짜에는 설정한 시간대로 표시돼요.')
+    expect(screen.getByLabelText('현재 처방의 혈압약 1번째 복용 시간').getAttribute('aria-describedby'))
+      .toContain(notice.id)
+
+    fireEvent.change(screen.getByLabelText('현재 처방의 혈압약 복용 시작일'), {
+      target: { value: '2026-09-15' },
+    })
+    expect(screen.queryByRole('note')).toBeNull()
   })
 
   it.each(['아침·저녁 식후 30분', '아침·점심 식전', '긴 지시 '.repeat(40), null, '   '])('설정·수정 시 복용 지시 %s를 입력과 연결한다', async (timingText) => {
