@@ -547,3 +547,233 @@ async def test_old_version_replays_but_new_write_conflicts_and_history_stays(cas
     assert data["schedule_items"][0]["prescription_version_medication_id"] == replacement_medication_id
     assert data["occurrences"]
     assert all(o["prescription_version_medication_id"] == str(case.medication_id) for o in data["occurrences"])
+
+
+async def prepare_recommendation(case: Case) -> dict:
+    from app.models.prescriptions import PrescriptionVersion, PrescriptionVersionMedication
+    from app.tests.fixtures.prescription_fingerprint import fingerprint_values
+
+    medication = await case.session.get(PrescriptionVersionMedication, case.medication_id)
+    assert medication is not None
+    medication.timing_text = "저녁 식후 30분"
+    version = await case.session.get(PrescriptionVersion, medication.prescription_version_id)
+    assert version is not None
+    for key, value in fingerprint_values(
+        version.prescribed_date,
+        [
+            {
+                "medication_name": medication.medication_name,
+                "frequency_per_day": 1,
+                "display_order": 1,
+                "timing_text": medication.timing_text,
+            }
+        ],
+    ).items():
+        setattr(version, key, value)
+    await case.session.commit()
+    return {"meal_end_times": {"DINNER": "19:30"}, "same_times_every_day": True}
+
+
+async def preview_recommendation(case: Case, body: dict, medication_id: UUID | None = None) -> Response:
+    return await case.client.post(
+        f"/api/v1/prescription-version-medications/{medication_id or case.medication_id}/schedule-recommendation",
+        json=body,
+    )
+
+
+async def test_recommendation_preview_create_replay_and_existing_schedule_preservation(case: Case) -> None:
+    inputs = await prepare_recommendation(case)
+    preview = await preview_recommendation(case, inputs)
+    assert preview.status_code == 200, preview.text
+    assert preview.headers["cache-control"] == "no-store"
+    assert preview.json()["data"]["local_times"] == ["20:00"]
+    assert await counts(case) == [0, 0, 0, 0, 0]
+    context = {**inputs, "rule_version": preview.json()["data"]["rule_version"]}
+    body = {**case.body, "local_times": ["20:00"], "recommendation_context": context}
+    first = await case.write(body)
+    assert first.status_code == 200, first.text
+    before = await counts(case)
+    replay = await case.write(body)
+    assert replay.json() == first.json()
+    assert await counts(case) == before
+    assert_error(await case.write(body, key="stale-candidate-key"), 409, "SCHEDULE_REVISION_CONFLICT")
+    assert_error(
+        await case.write({**body, "expected_revision": 1}, key="candidate-overwrite"),
+        409,
+        "SCHEDULE_RECOMMENDATION_CONFLICT",
+    )
+    assert await counts(case) == before
+    schedule = await case.session.get(MedicationSchedule, first.json()["data"]["schedule_id"])
+    assert schedule is not None and schedule.revision == 1
+
+
+@pytest.mark.parametrize(
+    "delta",
+    [
+        {"local_times": ["21:00"]},
+        {"rule_version": "old-rule"},
+        {"meal_end_times": {"DINNER": "19:45"}},
+        {"meal_end_times": {"DINNER": "23:50"}},
+    ],
+)
+async def test_recommendation_invalidated_or_edited_candidate_cannot_write(case: Case, delta: dict) -> None:
+    inputs = await prepare_recommendation(case)
+    context = {
+        **inputs,
+        "rule_version": "explicit-after-meal-v1",
+        **{k: v for k, v in delta.items() if k != "local_times"},
+    }
+    body = {**case.body, "local_times": delta.get("local_times", ["20:00"]), "recommendation_context": context}
+    assert_error(await case.write(body), 409, "SCHEDULE_RECOMMENDATION_CONFLICT")
+    assert await counts(case) == [0, 0, 0, 0, 0]
+
+
+async def test_recommendation_ownership_and_obsolete_prescription(case: Case) -> None:
+    from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
+
+    inputs = await prepare_recommendation(case)
+    stranger, profile = await _create_user_with_self_profile(case.session, label="candidate-stranger")
+    _, other_medication = await _create_active_version_medication(case.session, owner=stranger, profile=profile)
+    await case.session.commit()
+    assert_error(
+        await preview_recommendation(case, inputs, other_medication.id), 404, "PRESCRIPTION_MEDICATION_NOT_FOUND"
+    )
+    assert_error(await preview_recommendation(case, inputs, uuid4()), 404, "PRESCRIPTION_MEDICATION_NOT_FOUND")
+    med = await case.session.get(PrescriptionVersionMedication, case.medication_id)
+    assert med is not None
+    prescription = await case.session.scalar(
+        select(Prescription).where(Prescription.active_version_id == med.prescription_version_id)
+    )
+    assert prescription is not None
+    from app.tests.fixtures.prescription_fingerprint import fingerprint_values
+
+    replacement = PrescriptionVersion(
+        **fingerprint_values(
+            prescription.prescribed_date,
+            [{"medication_name": "합성교체약", "frequency_per_day": 1, "display_order": 1}],
+        ),
+        prescription_id=prescription.id,
+        version_number=2,
+        prescribed_date=prescription.prescribed_date,
+        confirmed_at=datetime.now(UTC),
+    )
+    case.session.add(replacement)
+    await case.session.flush()
+    prescription.active_version_id = replacement.id
+    await case.session.commit()
+    assert_error(await preview_recommendation(case, inputs), 409, "PRESCRIPTION_VERSION_CONFLICT")
+    assert_error(
+        await case.write(
+            {
+                **case.body,
+                "local_times": ["20:00"],
+                "recommendation_context": {**inputs, "rule_version": "explicit-after-meal-v1"},
+            }
+        ),
+        409,
+        "PRESCRIPTION_VERSION_CONFLICT",
+    )
+    assert await counts(case) == [0, 0, 0, 0, 0]
+
+
+async def test_recommendation_unreviewed_or_unsupported_input_does_not_guess(case: Case) -> None:
+    preview = await preview_recommendation(case, {"meal_end_times": {"DINNER": "19:30"}, "same_times_every_day": True})
+    assert preview.status_code == 200
+    assert preview.json()["data"]["local_times"] == []
+    assert preview.json()["data"]["reason"] == "UNSUPPORTED_INSTRUCTION"
+    injected = await preview_recommendation(
+        case, {"meal_end_times": {"DINNER": "19:30"}, "same_times_every_day": True, "timing_text": "저녁 식후 30분"}
+    )
+    assert_error(injected, 422, "VALIDATION_FAILED")
+    assert await counts(case) == [0, 0, 0, 0, 0]
+
+
+async def test_recommendation_nonlocal_gate_preserves_manual_schedule(
+    case: Case, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.core import config
+    from app.core.config import Env
+
+    inputs = await prepare_recommendation(case)
+    monkeypatch.setattr(config, "ENV", Env.PRODUCTION)
+    assert_error(await preview_recommendation(case, inputs), 404, "NOT_FOUND")
+    assert_error(
+        await case.write(
+            {
+                **case.body,
+                "local_times": ["20:00"],
+                "recommendation_context": {**inputs, "rule_version": "explicit-after-meal-v1"},
+            }
+        ),
+        404,
+        "NOT_FOUND",
+    )
+    assert await counts(case) == [0, 0, 0, 0, 0]
+    assert (await case.write(case.body)).status_code == 200
+
+
+async def test_absent_and_null_recommendation_context_preserve_manual_idempotency(case: Case) -> None:
+    original = await case.write(case.body)
+    assert original.status_code == 200
+    before = await counts(case)
+    replay = await case.write({**case.body, "recommendation_context": None})
+    assert replay.json() == original.json()
+    assert await counts(case) == before
+
+
+async def test_recommendation_does_not_block_a_concurrent_prescription_writer() -> None:
+    from unittest.mock import Mock
+
+    from sqlalchemy import text
+
+    from app.dependencies.services import get_medication_schedule_api_service
+    from app.dtos.schedule_recommendations import RecommendationInput
+    from app.models.prescriptions import Prescription
+    from app.tests.conftest import test_engine
+    from app.tests.repositories.test_medication_schedule_repository_integration import _delete_committed_fixture
+
+    async with AsyncSession(test_engine, expire_on_commit=False) as setup:
+        owner, profile = await _create_user_with_self_profile(setup, label="preview-lock")
+        prescription, medication = await _create_active_version_medication(setup, owner=owner, profile=profile)
+        await setup.commit()
+        cleanup_ids = dict(
+            owner_id=owner.id,
+            profile_id=profile.id,
+            document_id=prescription.document_id,
+            ocr_job_id=prescription.source_ocr_job_id,
+            prescription_id=prescription.id,
+        )
+    try:
+        async with AsyncSession(test_engine) as reader, AsyncSession(test_engine) as writer:
+            service = get_medication_schedule_api_service(reader, Mock())
+            request = RecommendationInput(meal_end_times={}, same_times_every_day=True)
+            preview = await service.recommend(user_id=owner.id, medication_id=medication.id, request=request)
+            assert preview.data.local_times == []
+            # Keep the preview transaction open: the writer must still acquire its row lock immediately.
+            assert (
+                await writer.scalar(
+                    select(Prescription.id).where(Prescription.id == prescription.id).with_for_update(nowait=True)
+                )
+                == prescription.id
+            )
+            # Also check the reverse direction: a write lock must not make a preview wait.
+            await reader.execute(text("SET LOCAL lock_timeout = '250ms'"))
+            again = await service.recommend(user_id=owner.id, medication_id=medication.id, request=request)
+            assert again == preview
+    finally:
+        async with AsyncSession(test_engine) as cleanup:
+            await _delete_committed_fixture(cleanup, **cleanup_ids)
+
+
+async def test_recommendation_retains_confirmed_snapshot_integrity_check(case: Case) -> None:
+    from app.models.prescriptions import PrescriptionVersion, PrescriptionVersionMedication
+
+    inputs = await prepare_recommendation(case)
+    medication = await case.session.get(PrescriptionVersionMedication, case.medication_id)
+    assert medication is not None
+    version = await case.session.get(PrescriptionVersion, medication.prescription_version_id)
+    assert version is not None
+    version.content_hash = "0" * 64
+    await case.session.commit()
+    assert_error(await preview_recommendation(case, inputs), 409, "PRESCRIPTION_VERSION_UNAVAILABLE")
+    assert await counts(case) == [0, 0, 0, 0, 0]

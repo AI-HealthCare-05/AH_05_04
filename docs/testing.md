@@ -662,3 +662,13 @@ runtime vs `knowledge_index_builder` role 권한 분리, Index 어댑터 binding
 테이블 목록을 맞추더라도 Index는 `knowledge_chunk_id` 순, materialization은 section 순으로 member를 순회하므로
 실제 row 획득 순서가 같아지지 않는다. 공유 ordering key 또는 상위 serialization 방식은 Task 3 착수 전 책임
 리뷰어가 확정하며, 이 lane의 cross-flow 테스트는 확정된 전략을 검증하는 단계다.
+
+## #670 명시적 시간 후보 검증
+
+`tests/contract/test_schedule_recommendations.py`는 합성 문구의 계산·보수적 거부·OpenAPI·non-local gate를,
+`backend/app/tests/medication_schedules/test_medication_schedule_api.py`는 PostgreSQL 기반
+계산 무저장·소유권·처방 변경·기존 일정 보존·멱등 저장을 검증한다.
+Frontend ScheduleRecommendation/SchedulePage/MedicationSchedulesApi 테스트는 명시적 적용·입력 수정·
+늦은 응답 무효화·저장 실패 재시도·직접 입력 전환을 확인한다.
+[검증 기록](validation/track-b/issue-670-recommendation.md)을 참고한다. Provider 호출·RAG 변경은 없으며
+이 검증은 약학적 적절성이나 Production 승인을 대신하지 않는다.

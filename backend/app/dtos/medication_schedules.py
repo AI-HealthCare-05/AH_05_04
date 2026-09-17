@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from app.dtos.medication_checkins import MedicationCheckinData
+from app.dtos.schedule_recommendations import RecommendationContext
 from app.models.medication_schedules import (
     MedicationOccurrenceStatus,
     MedicationScheduleEndMode,
@@ -24,6 +25,7 @@ ItemStatus = Literal["READY", "SETUP_REQUIRED", "INACTIVE"]
 
 class PutMedicationScheduleRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    recommendation_context: RecommendationContext | None = None
     start_local_date: date
     end_mode: MedicationScheduleEndMode
     end_local_date: date | None = None

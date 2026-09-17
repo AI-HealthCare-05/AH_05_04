@@ -83,3 +83,11 @@ PARTIAL은 READY occurrence를 숨기지 않고 INACTIVE도 과거 pending을 �
 실제 환자 fixture·외부 AI/Push 호출은 없다. 대표 예시는
 [합성 Frontend fixture](../../validation/track-b/issue-202-schedule-fixtures.json)와
 [검증 기록](../../validation/track-b/issue-202-schedule-api.md)을 참조한다.
+
+## #670 Local 후보 저장 확장 — 구현 검토안
+
+[명시적 식후 시간 후보 v1](track-b-explicit-schedule-recommendation-v1.md)은 PUT에 선택 nullable
+`recommendation_context`를 추가한다. 없거나 null이면 위 수동 저장 계약과 멱등 지문은 동일하다.
+context가 있으면 Local에서만 재계산·규칙 버전·최종 시각을 검증하고 신규 일정만 생성한다.
+`409 SCHEDULE_RECOMMENDATION_CONFLICT`와 전체 입력은 해당 Proposed 계약을 따른다.
+이는 담당·전문 검토 전 Local 구현이며 기존 문서 승인이나 Production 공개 승인을 승계하지 않는다.
