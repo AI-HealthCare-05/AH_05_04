@@ -25,11 +25,6 @@ const codedPresentations: Record<string, ChatGuideErrorPresentation> = {
     helper: '동의 설정을 확인한 뒤 다시 이용해 주세요.',
     action: 'CONSENT_SETTINGS',
   },
-  CONSENT_WITHDRAWN: {
-    title: '동의가 철회되어 처리를 계속할 수 없어요.',
-    helper: '동의 설정을 확인한 뒤 다시 이용해 주세요.',
-    action: 'CONSENT_SETTINGS',
-  },
   PRESCRIPTION_VERSION_STALE: {
     title: '처방 정보가 변경되었어요.',
     helper: '최신 처방 정보를 다시 불러온 뒤 이용해 주세요.',

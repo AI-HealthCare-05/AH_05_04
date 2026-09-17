@@ -6,7 +6,7 @@ import {
 } from './fixtures/requirementsApi'
 
 const mobileWidths = [320, 390, 412] as const
-const withdrawnTitle = '동의가 철회되어 처리를 계속할 수 없어요.'
+const consentRequiredTitle = '이 기능을 이용하려면 동의가 필요해요.'
 const consentHelper = '동의 설정을 확인한 뒤 다시 이용해 주세요.'
 
 test.beforeEach(async ({ page }) => {
@@ -23,7 +23,7 @@ async function assertMobileErrorLayout(
   contentSelector: string,
 ) {
   const content = page.locator(contentSelector)
-  const heading = page.getByRole('heading', { name: withdrawnTitle })
+  const heading = page.getByRole('heading', { name: consentRequiredTitle })
   const helper = page.getByText(consentHelper)
   const action = page.getByRole('button', { name: '동의 설정 확인하기' })
   const navigation = page.getByRole('navigation', { name: '주요 메뉴' })
@@ -52,10 +52,16 @@ async function assertMobileErrorLayout(
   expect((navigationBox?.y ?? 0) - ((actionBox?.y ?? 0) + (actionBox?.height ?? 0))).toBeGreaterThanOrEqual(0)
 }
 
-test('Chat 동의 철회 alert는 320/390/412px에서 문구·helper·CTA를 안전하게 표시한다', async ({ page }) => {
+test('Chat 미동의·철회 공통 CONSENT_REQUIRED는 별도 상태 추론 없이 안전하게 표시한다', async ({ page }) => {
   await installRequirementsApi(page, {
     existingPrescription: true,
     existingChat: true,
+  })
+  const consentStateRequests: string[] = []
+  page.on('request', (request) => {
+    if (request.url().includes('/users/me/consents')) {
+      consentStateRequests.push(request.url())
+    }
   })
   await page.route(
     `**/api/v1/prescriptions/${ids.prescription}/chat-session`,
@@ -63,45 +69,59 @@ test('Chat 동의 철회 alert는 320/390/412px에서 문구·helper·CTA를 안
       status: 403,
       contentType: 'application/json',
       body: JSON.stringify({
-        code: 'CONSENT_WITHDRAWN',
+        code: 'CONSENT_REQUIRED',
         message: '노출하면 안 되는 Backend 메시지',
         details: [],
-        trace_id: 'synthetic-chat-consent-withdrawn',
+        trace_id: 'synthetic-chat-consent-required',
       }),
     }),
   )
 
   for (const width of mobileWidths) {
     await test.step(`${width}px Chat`, async () => {
+      const consentRequestCount = consentStateRequests.length
       await page.setViewportSize({ width, height: 844 })
       await page.goto(`/chat?prescription_id=${ids.prescription}`)
       await assertMobileErrorLayout(page, '.chat-messages')
       await expect(page.getByText('노출하면 안 되는 Backend 메시지')).toHaveCount(0)
+      expect(consentStateRequests).toHaveLength(consentRequestCount)
+      await page.getByRole('button', { name: '동의 설정 확인하기' }).click()
+      await expect(page).toHaveURL(/\/profile$/)
     })
   }
 })
 
-test('Guide 동의 철회 alert는 320/390/412px에서 문구·helper·CTA를 안전하게 표시한다', async ({ page }) => {
+test('Guide 미동의·철회 공통 CONSENT_REQUIRED는 별도 상태 추론 없이 안전하게 표시한다', async ({ page }) => {
   await installRequirementsApi(page, {
     existingPrescription: true,
+  })
+  const consentStateRequests: string[] = []
+  page.on('request', (request) => {
+    if (request.url().includes('/users/me/consents')) {
+      consentStateRequests.push(request.url())
+    }
   })
   await page.route(`**/api/v1/guides/${ids.guide}`, (route) => route.fulfill({
     status: 403,
     contentType: 'application/json',
     body: JSON.stringify({
-      code: 'CONSENT_WITHDRAWN',
+      code: 'CONSENT_REQUIRED',
       message: '노출하면 안 되는 Backend 메시지',
       details: [],
-      trace_id: 'synthetic-guide-consent-withdrawn',
+      trace_id: 'synthetic-guide-consent-required',
     }),
   }))
 
   for (const width of mobileWidths) {
     await test.step(`${width}px Guide`, async () => {
+      const consentRequestCount = consentStateRequests.length
       await page.setViewportSize({ width, height: 844 })
       await page.goto(`/guides/${ids.guide}`)
       await assertMobileErrorLayout(page, '.guide-page__content')
       await expect(page.getByText('노출하면 안 되는 Backend 메시지')).toHaveCount(0)
+      expect(consentStateRequests).toHaveLength(consentRequestCount)
+      await page.getByRole('button', { name: '동의 설정 확인하기' }).click()
+      await expect(page).toHaveURL(/\/profile$/)
     })
   }
 })

@@ -723,22 +723,17 @@ describe('ChatPage', () => {
     expect(createChatSession).toHaveBeenCalledTimes(1)
   })
 
-  it.each([
-    [
-      'CONSENT_REQUIRED',
-      '이 기능을 이용하려면 동의가 필요해요.',
-    ],
-    [
-      'CONSENT_WITHDRAWN',
-      '동의가 철회되어 처리를 계속할 수 없어요.',
-    ],
-  ])('%s을 구분해 안내하고 동의 설정으로 이동한다', async (code, title) => {
+  it('미동의·철회 공통 CONSENT_REQUIRED 계약을 안내하고 별도 상태 추론 없이 동의 설정으로 이동한다', async () => {
     vi.mocked(getChatSessionForPrescription).mockRejectedValue(
-      new ApiError(403, '노출하면 안 되는 Backend 메시지', code),
+      new ApiError(403, '노출하면 안 되는 Backend 메시지', 'CONSENT_REQUIRED'),
     )
     renderPage()
 
-    expect(await screen.findByRole('heading', { name: title })).toBeTruthy()
+    expect(
+      await screen.findByRole('heading', {
+        name: '이 기능을 이용하려면 동의가 필요해요.',
+      }),
+    ).toBeTruthy()
     expect(
       screen.getByText('동의 설정을 확인한 뒤 다시 이용해 주세요.'),
     ).toBeTruthy()
@@ -747,6 +742,8 @@ describe('ChatPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '동의 설정 확인하기' }))
 
     expect(await screen.findByText('동의 설정 화면')).toBeTruthy()
+    expect(getChatSessionForPrescription).toHaveBeenCalledTimes(1)
+    expect(createChatSession).not.toHaveBeenCalled()
   })
 
   it('PRESCRIPTION_VERSION_STALE은 동의로 보내지 않고 현재 대화를 다시 조회한다', async () => {

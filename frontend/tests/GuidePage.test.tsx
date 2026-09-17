@@ -452,22 +452,17 @@ describe('GuidePage', () => {
     await waitFor(() => expect(getGuide).toHaveBeenCalledWith('guide-1'))
   })
 
-  it.each([
-    [
-      'CONSENT_REQUIRED',
-      '이 기능을 이용하려면 동의가 필요해요.',
-    ],
-    [
-      'CONSENT_WITHDRAWN',
-      '동의가 철회되어 처리를 계속할 수 없어요.',
-    ],
-  ])('%s을 구분해 안내하고 동의 설정으로 이동한다', async (code, title) => {
+  it('미동의·철회 공통 CONSENT_REQUIRED 계약을 안내하고 별도 상태 추론 없이 동의 설정으로 이동한다', async () => {
     vi.mocked(getGuide).mockRejectedValue(
-      new ApiError(403, '노출하면 안 되는 Backend 메시지', code),
+      new ApiError(403, '노출하면 안 되는 Backend 메시지', 'CONSENT_REQUIRED'),
     )
     renderPage()
 
-    expect(await screen.findByRole('heading', { name: title })).toBeTruthy()
+    expect(
+      await screen.findByRole('heading', {
+        name: '이 기능을 이용하려면 동의가 필요해요.',
+      }),
+    ).toBeTruthy()
     expect(
       screen.getByText('동의 설정을 확인한 뒤 다시 이용해 주세요.'),
     ).toBeTruthy()
@@ -477,6 +472,7 @@ describe('GuidePage', () => {
 
     expect(await screen.findByText('동의 설정 화면')).toBeTruthy()
     expect(screen.getByTestId('location').textContent).toBe('/profile')
+    expect(getGuide).toHaveBeenCalledTimes(1)
   })
 
   it('PRESCRIPTION_VERSION_STALE은 동의로 보내지 않고 현재 Guide를 다시 조회한다', async () => {
