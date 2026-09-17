@@ -41,6 +41,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import SourceSnapsh
 
 _ITEM_SEQ_PATTERN = re.compile(r"[0-9]{9}\Z")
 _CHECKSUM_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+_EXPECTED_SOURCE_CODE = "MFDS_PRODUCT_LABEL"
 _ALLOWED_SECTIONS = frozenset({"EE", "UD", "NB"})
 _ISOLATED_PASSWORDS = (
     "DB_PASSWORD",
@@ -216,7 +217,7 @@ def _validate_source_documents(
         raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_NOT_ELIGIBLE)
     if first_doc.canonical_checksum != expected_canonical_checksum:
         raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.ARTIFACT_INTEGRITY_MISMATCH)
-    if first_doc.source_code != "MFDS":
+    if first_doc.source_code != _EXPECTED_SOURCE_CODE:
         raise KnowledgeMaterializationError(KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID)
 
 

@@ -58,19 +58,21 @@ def _make_synthetic_source_doc(
     item_seq: str = _VALID_ITEM_SEQ,
     snapshot_status: str = "CURRENT",
     canonical_checksum: str = _VALID_CHECKSUM,
-    source_code: str = "MFDS",
+    source_code: str = "MFDS_PRODUCT_LABEL",
+    endpoint_code: str = "MFDS_NEDRUG_LABEL_XML",
+    operation_code: str = "COLLECT_NOVASC_200610660_LABEL_XML",
 ) -> MaterializationSourceDocument:
     return MaterializationSourceDocument(
         source_id=uuid4(),
         source_code=source_code,
         source_lifecycle_status="ACTIVE",
         endpoint_id=uuid4(),
-        endpoint_code="PRODUCTS",
+        endpoint_code=endpoint_code,
         endpoint_lifecycle_status="VERIFIED",
         endpoint_runtime_status="ENABLED",
         endpoint_acquisition_status="APPROVED",
         operation_id=uuid4(),
-        operation_code="DEFAULT",
+        operation_code=operation_code,
         operation_runtime_status="ENABLED",
         operation_acquisition_status="APPROVED",
         snapshot_id=snapshot_id,
@@ -129,7 +131,7 @@ def _make_synthetic_receipt(
         )
     return KnowledgeMaterializationReceipt(
         snapshot_id=snapshot_id,
-        source_code="MFDS",
+        source_code="MFDS_PRODUCT_LABEL",
         source_version="external:v1",
         snapshot_canonical_checksum=_VALID_CHECKSUM,
         canonicalization_spec_version="mfds-label-selected-product@1",
@@ -478,6 +480,44 @@ async def test_execute_materialization_rejects_checksum_mismatch(tmp_path: Path)
         assert exc_info.value.reason == KnowledgeMaterializationFailureReason.ARTIFACT_INTEGRITY_MISMATCH
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_source_code", ["MFDS", "OTHER_SOURCE", "MFDS_PRODUCT", ""])
+async def test_execute_materialization_rejects_unexpected_source_identity(tmp_path: Path, bad_source_code: str) -> None:
+    env = _make_valid_env(tmp_path)
+    config = MaterializationRunnerConfig.from_environment(env)
+    snap_id = _VALID_SNAPSHOT_ID
+    mid = uuid4()
+
+    mismatched_doc = _make_synthetic_source_doc(
+        snapshot_id=snap_id,
+        member_id=mid,
+        section="EE",
+        source_code=bad_source_code,
+    )
+
+    with (
+        patch("ai_worker.admin.knowledge_materialization.create_async_engine") as mock_engine,
+        patch(
+            "ai_worker.admin.knowledge_materialization.discover_authoritative_members",
+            new=AsyncMock(return_value=(mid,)),
+        ),
+        patch(
+            "ai_worker.adapters.sqlalchemy_knowledge_materialization.SqlAlchemyKnowledgeMaterializationRepository.fetch_source_documents",
+            new=AsyncMock(return_value=(mismatched_doc,)),
+        ),
+    ):
+        mock_engine.return_value.dispose = AsyncMock()
+
+        with pytest.raises(KnowledgeMaterializationError) as exc_info:
+            await execute_materialization(
+                config=config,
+                snapshot_id=snap_id,
+                expected_item_seq=_VALID_ITEM_SEQ,
+                expected_canonical_checksum=_VALID_CHECKSUM,
+            )
+        assert exc_info.value.reason == KnowledgeMaterializationFailureReason.SOURCE_BINDING_INVALID
+
+
 # =============================================================================
 # 4. Safe Sanitized Summary Projection & Redaction
 # =============================================================================
@@ -524,6 +564,7 @@ def test_build_sanitized_summary_allowlist() -> None:
     assert summary["chunk_count"] == 3
     assert summary["post_commit_audit_passed"] is True
     assert summary["exact_replay_verified"] is True
+    assert summary["source_code"] == "MFDS_PRODUCT_LABEL"
 
     summary_str = json.dumps(summary)
     for forbidden in ("password", "postgresql", "file://", "xml", "<ITEM>", "chunk_text", "artifact_root"):

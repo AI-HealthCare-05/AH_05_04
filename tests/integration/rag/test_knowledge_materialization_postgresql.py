@@ -125,6 +125,8 @@ async def _seed_provenance(
     storage_backend: str = LOCAL_PRIVATE_STORAGE_BACKEND,
     run_snapshot_id: UUID | None = None,
     source_version: str = _SOURCE_VERSION,
+    source_code: str = "MFDS",
+    endpoint_code: str = "PRODUCTS",
     operation_code: str = "LIST",
     raw_xml_bodies: dict[str, bytes] | None = None,
 ) -> tuple[
@@ -146,7 +148,10 @@ async def _seed_provenance(
     raw_manifest_checksum = hashlib.sha256(b"raw_manifest").hexdigest()
 
     async with engine.begin() as connection:
-        existing_source = await connection.execute(text("SELECT id FROM rag_source WHERE source_code = 'MFDS'"))
+        existing_source = await connection.execute(
+            text("SELECT id FROM rag_source WHERE source_code = :source_code"),
+            {"source_code": source_code},
+        )
         src_row = existing_source.mappings().first()
         if src_row is not None:
             src_id = UUID(str(src_row["id"]))
@@ -156,14 +161,14 @@ async def _seed_provenance(
                     "INSERT INTO rag_source "
                     "(id, source_code, display_name, lifecycle_status, max_rejected_records, "
                     "max_rejection_rate, empty_result_policy) "
-                    "VALUES (:id, 'MFDS', 'Synthetic MFDS', 'ACTIVE', 0, 0, 'REJECT')"
+                    "VALUES (:id, :source_code, 'Synthetic MFDS', 'ACTIVE', 0, 0, 'REJECT')"
                 ),
-                {"id": str(src_id)},
+                {"id": str(src_id), "source_code": source_code},
             )
 
         existing_ep = await connection.execute(
-            text("SELECT id FROM rag_source_endpoint WHERE source_id = :source_id AND endpoint_code = 'PRODUCTS'"),
-            {"source_id": str(src_id)},
+            text("SELECT id FROM rag_source_endpoint WHERE source_id = :source_id AND endpoint_code = :endpoint_code"),
+            {"source_id": str(src_id), "endpoint_code": endpoint_code},
         )
         ep_row = existing_ep.mappings().first()
         if ep_row is not None:
@@ -173,9 +178,9 @@ async def _seed_provenance(
                 text(
                     "INSERT INTO rag_source_endpoint "
                     "(id, source_id, endpoint_code, display_name, lifecycle_status, runtime_status, acquisition_status) "
-                    "VALUES (:id, :source_id, 'PRODUCTS', 'Synthetic products', 'VERIFIED', 'ENABLED', 'APPROVED')"
+                    "VALUES (:id, :source_id, :endpoint_code, 'Synthetic products', 'VERIFIED', 'ENABLED', 'APPROVED')"
                 ),
-                {"id": str(ep_id), "source_id": str(src_id)},
+                {"id": str(ep_id), "source_id": str(src_id), "endpoint_code": endpoint_code},
             )
 
         existing_op = await connection.execute(
@@ -308,10 +313,10 @@ async def _seed_provenance(
 
         src_doc = MaterializationSourceDocument(
             source_id=src_id,
-            source_code="MFDS",
+            source_code=source_code,
             source_lifecycle_status="ACTIVE",
             endpoint_id=ep_id,
-            endpoint_code="PRODUCTS",
+            endpoint_code=endpoint_code,
             endpoint_lifecycle_status="VERIFIED",
             endpoint_runtime_status="ENABLED",
             endpoint_acquisition_status="APPROVED",
@@ -1147,7 +1152,13 @@ async def test_admin_runner_execute_materialization_postgresql_integration(datab
         ).encode()
         for section in ("EE", "UD", "NB")
     }
-    req, source_docs, drafts = await _seed_provenance(engine, raw_xml_bodies=raw_xml_bodies)
+    req, source_docs, drafts = await _seed_provenance(
+        engine,
+        source_code="MFDS_PRODUCT_LABEL",
+        endpoint_code="MFDS_NEDRUG_LABEL_XML",
+        operation_code="COLLECT_NOVASC_200610660_LABEL_XML",
+        raw_xml_bodies=raw_xml_bodies,
+    )
     snapshot_id = req.snapshot_id
     item_seq = req.expected_item_seq
     expected_checksum = source_docs[0].canonical_checksum
@@ -1211,6 +1222,7 @@ async def test_admin_runner_execute_materialization_postgresql_integration(datab
 
         assert summary["execution_status"] == "SUCCESS"
         assert summary["outcome"] == "CREATED"
+        assert summary["source_code"] == "MFDS_PRODUCT_LABEL"
         assert summary["document_count"] == 3
         assert summary["chunk_count"] == 3
         assert summary["post_commit_audit_passed"] is True
