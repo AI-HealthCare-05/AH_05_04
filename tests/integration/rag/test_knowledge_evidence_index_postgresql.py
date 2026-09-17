@@ -20,6 +20,19 @@ from ai_worker.adapters.sqlalchemy_knowledge_evidence_index import (
     SqlAlchemyKnowledgeEvidenceIndexRepository,
 )
 from ai_worker.adapters.sqlalchemy_source_snapshot_repository import SqlAlchemySourceSnapshotRepository
+from ai_worker.admin.knowledge_evidence_index import (
+    EXPECTED_DIMENSION,
+    EXPECTED_INDEX_CODE,
+    EXPECTED_INDEX_VERSION,
+    NOVASC_CANONICAL_CHECKSUM,
+    NOVASC_ITEM_SEQ,
+    NOVASC_SNAPSHOT_ID,
+    NOVASC_SOURCE_VERSION,
+    KnowledgeEvidenceIndexRunnerConfig,
+    execute_knowledge_evidence_index_build,
+)
+from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, SensitiveText
+from ai_worker.tasks.rag.evidence_search import SensitiveVector
 from ai_worker.tasks.rag.knowledge_evidence_index import (
     DistanceMetric,
     KnowledgeChunkIdentity,
@@ -37,6 +50,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SourceSnapshotMemberCreate,
     SourceSnapshotMemberKind,
 )
+from ai_worker.tasks.rag.text_embedding import TextEmbeddingPort, TextEmbeddingSuccess
 from app.core import config
 from infra.python.knowledge_index_role_policy import apply_knowledge_index_role_policy
 
@@ -385,3 +399,293 @@ async def test_legacy_knowledge_rows_round_trip_through_foundation_migration(dat
 
     await database.dispose()
     await asyncio.to_thread(command.downgrade, _alembic_config(), "166f30415263")
+
+
+class StubPostgresEmbeddingPort(TextEmbeddingPort):
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    async def embed(
+        self,
+        text: SensitiveText,
+        *,
+        model_ref: str,
+        model_version: str,
+        dimension: int,
+    ) -> TextEmbeddingSuccess:
+        self.call_count += 1
+        values = [float(self.call_count) / 100.0] * dimension
+        return TextEmbeddingSuccess(
+            embedding=SensitiveVector(values),
+            adapter_artifact_ref=ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "1" * 64),
+        )
+
+
+NOVASC_CHUNK_IDS = {
+    "EE": UUID("1f79b0e5-3d7b-488b-89ae-bf67e4314691"),
+    "UD": UUID("a627c04a-8cc9-4b0a-b1f5-89e4fc2f165f"),
+    "NB": UUID("f2ecb1c6-c02b-4486-8b76-da0bfd088d89"),
+}
+
+
+async def _seed_novasc_source_hierarchy(engine) -> None:
+    async with engine.begin() as connection:
+        source_id = uuid4()
+        await connection.execute(
+            text(
+                "INSERT INTO rag_source "
+                "(id, source_code, display_name, lifecycle_status, max_rejected_records, "
+                "max_rejection_rate, empty_result_policy) "
+                "VALUES (:id, 'MFDS_PRODUCT_LABEL', 'MFDS Product Label', 'ACTIVE', 0, 0, 'REJECT')"
+            ),
+            {"id": str(source_id)},
+        )
+
+        endpoint_id = uuid4()
+        await connection.execute(
+            text(
+                "INSERT INTO rag_source_endpoint "
+                "(id, source_id, endpoint_code, display_name, lifecycle_status, runtime_status, acquisition_status) "
+                "VALUES (:id, :source_id, 'MFDS_NEDRUG_LABEL_XML', 'MFDS Nedrug Label XML', 'VERIFIED', 'ENABLED', 'APPROVED')"
+            ),
+            {"id": str(endpoint_id), "source_id": str(source_id)},
+        )
+
+        operation_id = uuid4()
+        await connection.execute(
+            text(
+                "INSERT INTO rag_source_operation "
+                "(id, endpoint_id, operation_code, display_name, runtime_status, acquisition_status) "
+                "VALUES (:id, :endpoint_id, 'COLLECT_NOVASC_200610660_LABEL_XML', 'Novasc Label XML', 'ENABLED', 'APPROVED')"
+            ),
+            {"id": str(operation_id), "endpoint_id": str(endpoint_id)},
+        )
+
+        seal_id = uuid4()
+        await connection.execute(
+            text(
+                "INSERT INTO rag_source_snapshot "
+                "(id, operation_id, source_version, external_version, raw_manifest_checksum, canonical_checksum, "
+                "schema_version, parser_version, normalization_version, canonicalization_spec_version, "
+                "endpoint_receipt_hash, record_count, rejected_record_count, verification_status, collected_at) "
+                "VALUES (:id, :operation_id, :source_version, 'v1', :raw_hash, :canonical_hash, 'schema-v1', "
+                "'parser-v1', 'normalization-v1', 'canonical-v1', :receipt_hash, 3, 0, 'PENDING', :now)"
+            ),
+            {
+                "id": str(NOVASC_SNAPSHOT_ID),
+                "operation_id": str(operation_id),
+                "source_version": NOVASC_SOURCE_VERSION,
+                "raw_hash": "a" * 64,
+                "canonical_hash": NOVASC_CANONICAL_CHECKSUM,
+                "receipt_hash": "c" * 64,
+                "now": _NOW,
+            },
+        )
+
+        await connection.execute(
+            text(
+                "INSERT INTO rag_source_snapshot_verification "
+                "(id, snapshot_id, check_name, verification_result, verified_by, verified_at) "
+                "VALUES (:id, :snapshot_id, 'source-ingestion-integrity', 'PASSED', 'reviewer', :now)"
+            ),
+            {"id": str(seal_id), "snapshot_id": str(NOVASC_SNAPSHOT_ID), "now": _NOW},
+        )
+
+        await connection.execute(
+            text(
+                "UPDATE rag_source_snapshot SET verification_status = 'CURRENT', verification_seal_id = :seal_id, "
+                "verified_at = :now, effective_at = :now WHERE id = :snapshot_id"
+            ),
+            {"seal_id": str(seal_id), "snapshot_id": str(NOVASC_SNAPSHOT_ID), "now": _NOW},
+        )
+
+        run_id = uuid4()
+        await connection.execute(
+            text(
+                "INSERT INTO rag_source_ingestion_run "
+                "(id, operation_id, run_group_key, snapshot_id, run_status, attempt_number, started_at, finished_at) "
+                "VALUES (:id, :operation_id, 'novasc-group', :snapshot_id, 'SUCCEEDED', 1, :now, :now)"
+            ),
+            {
+                "id": str(run_id),
+                "operation_id": str(operation_id),
+                "snapshot_id": str(NOVASC_SNAPSHOT_ID),
+                "now": _NOW,
+            },
+        )
+
+        texts = {
+            "EE": "노바스크정5밀리그램 효능효과: 고혈압, 협심증",
+            "UD": "노바스크정5밀리그램 용법용량: 1일 1회 5mg",
+            "NB": "노바스크정5밀리그램 사용상의주의사항: 과민증 환자 금기",
+        }
+
+        for page_idx, section in enumerate(("EE", "UD", "NB"), start=1):
+            member_id = uuid4()
+            art_id = uuid4()
+            doc_id = uuid4()
+            chunk_id = NOVASC_CHUNK_IDS[section]
+            chunk_text = texts[section]
+            content_hash = hashlib.sha256(chunk_text.encode("utf-8")).hexdigest()
+            xml_bytes = f"<section>{chunk_text}</section>".encode()
+            xml_hash = hashlib.sha256(xml_bytes).hexdigest()
+
+            await connection.execute(
+                text(
+                    "INSERT INTO rag_source_ingestion_artifact "
+                    "(id, ingestion_run_id, storage_backend, page_number, artifact_key, "
+                    "object_key, raw_checksum, byte_size, content_type) "
+                    "VALUES (:id, :run_id, 'LOCAL_PRIVATE', :page_number, :art_key, :obj_key, :checksum, :size, 'application/xml')"
+                ),
+                {
+                    "id": str(art_id),
+                    "run_id": str(run_id),
+                    "page_number": page_idx,
+                    "art_key": f"mfds-label/{NOVASC_ITEM_SEQ}/{section}.xml",
+                    "obj_key": f"obj_{section}",
+                    "checksum": xml_hash,
+                    "size": len(xml_bytes),
+                },
+            )
+
+            await connection.execute(
+                text(
+                    "INSERT INTO rag_source_snapshot_member "
+                    "(id, source_snapshot_id, member_kind, endpoint_id, operation_id, ingestion_artifact_id, "
+                    "locator, content_sha256) "
+                    "VALUES (:id, :snapshot_id, 'ARTIFACT', NULL, NULL, :artifact_id, :locator, :sha)"
+                ),
+                {
+                    "id": str(member_id),
+                    "snapshot_id": str(NOVASC_SNAPSHOT_ID),
+                    "artifact_id": str(art_id),
+                    "locator": f"mfds-label/{NOVASC_ITEM_SEQ}/{section}",
+                    "sha": content_hash,
+                },
+            )
+
+            await connection.execute(
+                text(
+                    "INSERT INTO knowledge_document "
+                    "(id, title, publisher, source_url, document_version, document_status, record_contract_version, "
+                    "source_snapshot_member_id, external_document_id, document_content_hash, "
+                    "canonicalization_spec_version) "
+                    "VALUES (:id, :title, 'MFDS', NULL, NULL, 'ACTIVE', 'KNOWLEDGE_EVIDENCE_V1', "
+                    ":member_id, :ext_doc_id, :content_hash, 'canonical-v1')"
+                ),
+                {
+                    "id": str(doc_id),
+                    "title": f"Novasc {section}",
+                    "member_id": str(member_id),
+                    "ext_doc_id": f"mfds-label:{NOVASC_ITEM_SEQ}:{section}",
+                    "content_hash": content_hash,
+                },
+            )
+
+            await connection.execute(
+                text(
+                    "INSERT INTO knowledge_chunk "
+                    "(id, knowledge_document_id, chunk_index, chunk_text, embedding_model, vector_store_key, "
+                    "content_hash, normalization_version) "
+                    "VALUES (:id, :doc_id, 0, :chunk_text, NULL, NULL, :content_hash, 'mfds-label-knowledge-chunk@1')"
+                ),
+                {
+                    "id": str(chunk_id),
+                    "doc_id": str(doc_id),
+                    "chunk_text": chunk_text,
+                    "content_hash": content_hash,
+                },
+            )
+
+
+async def test_admin_runner_novasc_postgresql_integration(database) -> None:
+    await _seed_novasc_source_hierarchy(database)
+
+    suffix = uuid4().hex[:12]
+    builder = f"idx_bld_{suffix}"
+    runtime = f"idx_rt_{suffix}"
+    password = "synthetic-runner-password"
+
+    async with database.begin() as connection:
+        await connection.execute(text(f"CREATE ROLE \"{builder}\" LOGIN PASSWORD '{password}'"))
+        await connection.execute(text(f"CREATE ROLE \"{runtime}\" LOGIN PASSWORD '{password}'"))
+        await apply_knowledge_index_role_policy(
+            connection,
+            owner=config.DB_USER,
+            runtime=runtime,
+            builder=builder,
+        )
+
+    builder_url = database.url.set(username=builder, password=password)
+    runner_config = KnowledgeEvidenceIndexRunnerConfig(
+        url=builder_url,
+        builder_user=builder,
+        openai_api_key="synthetic-test-key",
+    )
+
+    port = StubPostgresEmbeddingPort()
+
+    try:
+        # 1. Fresh build execution
+        summary = await execute_knowledge_evidence_index_build(
+            config=runner_config,
+            snapshot_id=NOVASC_SNAPSHOT_ID,
+            expected_item_seq=NOVASC_ITEM_SEQ,
+            expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+            expected_source_version=NOVASC_SOURCE_VERSION,
+            verify_replay=True,
+            embedding_port_override=port,
+        )
+
+        assert summary["execution_status"] == "SUCCESS"
+        assert summary["outcome"] == "BUILT"
+        assert summary["index_code"] == EXPECTED_INDEX_CODE
+        assert summary["index_version"] == EXPECTED_INDEX_VERSION
+        assert summary["member_count"] == 3
+        assert summary["embedding_dimension"] == EXPECTED_DIMENSION
+        assert summary["post_persist_readback_passed"] is True
+        assert summary["exact_replay_verified"] is True
+        assert summary["provider_call_count"] == 3
+        assert port.call_count == 3
+
+        async with database.connect() as connection:
+            idx_count = await connection.scalar(text("SELECT count(*) FROM rag_knowledge_index"))
+            member_count = await connection.scalar(text("SELECT count(*) FROM rag_knowledge_index_member"))
+            first_index_id = await connection.scalar(text("SELECT id FROM rag_knowledge_index"))
+            first_member_ids = set(await connection.scalars(text("SELECT id FROM rag_knowledge_index_member")))
+            assert idx_count == 1
+            assert member_count == 3
+
+        # 2. Existing Index reuse (EXACT_REUSE)
+        reuse_summary = await execute_knowledge_evidence_index_build(
+            config=runner_config,
+            snapshot_id=NOVASC_SNAPSHOT_ID,
+            expected_item_seq=NOVASC_ITEM_SEQ,
+            expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+            expected_source_version=NOVASC_SOURCE_VERSION,
+            verify_replay=False,
+            embedding_port_override=port,
+        )
+
+        assert reuse_summary["execution_status"] == "SUCCESS"
+        assert reuse_summary["outcome"] == "EXACT_REUSE"
+        assert reuse_summary["provider_call_count"] == 0
+        # Port should not have been called for EXACT_REUSE
+        assert port.call_count == 3
+
+        async with database.connect() as connection:
+            idx_count = await connection.scalar(text("SELECT count(*) FROM rag_knowledge_index"))
+            member_count = await connection.scalar(text("SELECT count(*) FROM rag_knowledge_index_member"))
+            second_index_id = await connection.scalar(text("SELECT id FROM rag_knowledge_index"))
+            second_member_ids = set(await connection.scalars(text("SELECT id FROM rag_knowledge_index_member")))
+            assert idx_count == 1
+            assert member_count == 3
+            assert second_index_id == first_index_id
+            assert second_member_ids == first_member_ids
+
+    finally:
+        async with database.begin() as connection:
+            await connection.execute(text(f'DROP OWNED BY "{builder}"'))
+            await connection.execute(text(f'DROP OWNED BY "{runtime}"'))
+            await connection.execute(text(f'DROP ROLE IF EXISTS "{builder}"'))
+            await connection.execute(text(f'DROP ROLE IF EXISTS "{runtime}"'))
