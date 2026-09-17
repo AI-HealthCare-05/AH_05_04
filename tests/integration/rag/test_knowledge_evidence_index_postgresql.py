@@ -14,6 +14,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from ai_worker.adapters.openai_text_embedding import OPENAI_TEXT_EMBEDDING_ADAPTER_REF
 from ai_worker.adapters.sqlalchemy_knowledge_evidence_index import (
     _INDEX,
     _INDEX_MEMBER,
@@ -31,7 +32,7 @@ from ai_worker.admin.knowledge_evidence_index import (
     KnowledgeEvidenceIndexRunnerConfig,
     execute_knowledge_evidence_index_build,
 )
-from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, SensitiveText
+from ai_worker.tasks.rag.evidence_retrieval import SensitiveText
 from ai_worker.tasks.rag.evidence_search import SensitiveVector
 from ai_worker.tasks.rag.knowledge_evidence_index import (
     DistanceMetric,
@@ -417,7 +418,7 @@ class StubPostgresEmbeddingPort(TextEmbeddingPort):
         values = [float(self.call_count) / 100.0] * dimension
         return TextEmbeddingSuccess(
             embedding=SensitiveVector(values),
-            adapter_artifact_ref=ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "1" * 64),
+            adapter_artifact_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
         )
 
 
@@ -633,6 +634,7 @@ async def test_admin_runner_novasc_postgresql_integration(database) -> None:
             expected_item_seq=NOVASC_ITEM_SEQ,
             expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
             expected_source_version=NOVASC_SOURCE_VERSION,
+            expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
             verify_replay=True,
             embedding_port_override=port,
         )

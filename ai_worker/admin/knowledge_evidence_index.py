@@ -24,7 +24,10 @@ from sqlalchemy import Integer, String, column, select, table, text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from ai_worker.adapters.openai_text_embedding import OpenAITextEmbeddingAdapter
+from ai_worker.adapters.openai_text_embedding import (
+    OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
+    OpenAITextEmbeddingAdapter,
+)
 from ai_worker.adapters.sqlalchemy_knowledge_evidence_index import (
     SqlAlchemyKnowledgeEvidenceIndexRepository,
 )
@@ -639,7 +642,7 @@ async def execute_knowledge_evidence_index_build(  # noqa: C901
     expected_item_seq: str,
     expected_canonical_checksum: str,
     expected_source_version: str | None = None,
-    expected_embedding_adapter_ref: str | None = None,
+    expected_embedding_adapter_ref: ImmutableArtifactRef | None = None,
     verify_replay: bool = False,
     preflight_chunks_override: tuple[AuthoritativeDiscoveredChunk, ...] | None = None,
     preflight_failure_reason: KnowledgeEvidenceIndexRunnerFailureReason | None = None,
@@ -735,38 +738,24 @@ async def execute_knowledge_evidence_index_build(  # noqa: C901
             )
 
         # Step 3: Fresh Build - Resolve Embedding Port
+        if embedding_port_override is None and not config.openai_api_key:
+            raise KnowledgeEvidenceIndexRunnerError(
+                KnowledgeEvidenceIndexRunnerFailureReason.EMBEDDING_CREDENTIAL_MISSING
+            )
+
+        if expected_embedding_adapter_ref != OPENAI_TEXT_EMBEDDING_ADAPTER_REF:
+            raise KnowledgeEvidenceIndexRunnerError(
+                KnowledgeEvidenceIndexRunnerFailureReason.BLOCKED_BY_EMBEDDING_ADAPTER_ARTIFACT_IDENTITY
+            )
+
         if embedding_port_override is not None:
             port = embedding_port_override
         else:
-            if not config.openai_api_key:
-                raise KnowledgeEvidenceIndexRunnerError(
-                    KnowledgeEvidenceIndexRunnerFailureReason.EMBEDDING_CREDENTIAL_MISSING
-                )
-            if not expected_embedding_adapter_ref:
-                raise KnowledgeEvidenceIndexRunnerError(
-                    KnowledgeEvidenceIndexRunnerFailureReason.BLOCKED_BY_EMBEDDING_ADAPTER_ARTIFACT_IDENTITY
-                )
-
-            ref_clean = expected_embedding_adapter_ref.strip()
-            if (
-                len(ref_clean) != 64
-                or ref_clean == "0" * 64
-                or ref_clean == "e" * 64
-                or not all(c in "0123456789abcdefABCDEF" for c in ref_clean)
-            ):
-                raise KnowledgeEvidenceIndexRunnerError(
-                    KnowledgeEvidenceIndexRunnerFailureReason.BLOCKED_BY_EMBEDDING_ADAPTER_ARTIFACT_IDENTITY
-                )
-
             from openai import AsyncOpenAI
 
             port = OpenAITextEmbeddingAdapter(
                 client=AsyncOpenAI(api_key=config.openai_api_key),
-                adapter_artifact_ref=ImmutableArtifactRef(
-                    "openai-text-embedding-adapter",
-                    "1.0.0",
-                    ref_clean.lower(),
-                ),
+                adapter_artifact_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
             )
 
         # Step 4: Execute Embeddings for all 3 chunks
@@ -779,6 +768,8 @@ async def execute_knowledge_evidence_index_build(  # noqa: C901
                 dimension=EXPECTED_DIMENSION,
             )
             if not isinstance(embed_res, TextEmbeddingSuccess):
+                raise KnowledgeEvidenceIndexRunnerError(KnowledgeEvidenceIndexRunnerFailureReason.EMBEDDING_INVALID)
+            if embed_res.adapter_artifact_ref != expected_embedding_adapter_ref:
                 raise KnowledgeEvidenceIndexRunnerError(KnowledgeEvidenceIndexRunnerFailureReason.EMBEDDING_INVALID)
             vector = embed_res.embedding.reveal()
             if len(vector) != EXPECTED_DIMENSION:
@@ -920,6 +911,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 expected_item_seq=args.expected_item_seq,
                 expected_canonical_checksum=args.expected_canonical_checksum,
                 expected_source_version=args.expected_source_version,
+                expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
                 verify_replay=args.verify_replay,
             )
         )
