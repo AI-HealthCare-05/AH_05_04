@@ -318,7 +318,7 @@ class AuthService:
         if locked_user is None:
             raise _invalid_credentials_error()
         if locked_user.account_status != AccountStatus.ACTIVE or not locked_user.is_active:
-            return None
+            return await self.account_deletion_request_repo.get_latest_for_user_for_update(user_id=locked_user.id)
         if not verify_password(password, locked_user.hashed_password):
             raise _invalid_credentials_error()
 

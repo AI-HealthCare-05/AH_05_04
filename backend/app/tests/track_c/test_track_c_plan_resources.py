@@ -25,7 +25,10 @@ async def test_resources_bind_original_medication_and_versioned_copy_without_wri
 ) -> None:
     barrier_id = await prepare(case, barrier_code)
     support = (await offer(case, barrier_id)).json()["data"]["supports"][0]
-    plan = (await create(case, plan_body(barrier_id, support))).json()["data"]
+    body = plan_body(barrier_id, support)
+    if barrier_code == "SCHEDULE_OR_TRAVEL":
+        body["travel_situation"] = "SCHEDULE_CHANGED"
+    plan = (await create(case, body)).json()["data"]
     count = await case.session.scalar(select(func.count()).select_from(IdempotencyRecord))
     response = await case.client.get(f"/api/v1/support-action-plans/{plan['support_action_plan_id']}/resources")
     assert response.status_code == 200, response.text
