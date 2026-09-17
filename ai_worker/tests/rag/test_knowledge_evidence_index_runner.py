@@ -359,12 +359,12 @@ async def test_preflight_wrong_source_identity_fails_closed_without_provider_cal
 
 
 # --------------------------------------------------------------------------------------
-# 7. Document/member hash mismatch -> preflight fails, provider call = 0
+# 7. Canonical checksum / source binding mismatch -> preflight fails, provider call = 0
 # --------------------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_preflight_document_member_hash_mismatch_fails_closed_without_provider_call() -> None:
+async def test_preflight_canonical_checksum_mismatch_fails_closed_without_provider_call() -> None:
     config = KnowledgeEvidenceIndexRunnerConfig.from_environment(_valid_env())
     port = StubTextEmbeddingPort()
     repo = StubKnowledgeEvidenceIndexRepository()

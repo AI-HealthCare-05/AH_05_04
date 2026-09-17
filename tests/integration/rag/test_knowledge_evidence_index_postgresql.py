@@ -30,6 +30,8 @@ from ai_worker.admin.knowledge_evidence_index import (
     NOVASC_SNAPSHOT_ID,
     NOVASC_SOURCE_VERSION,
     KnowledgeEvidenceIndexRunnerConfig,
+    KnowledgeEvidenceIndexRunnerError,
+    KnowledgeEvidenceIndexRunnerFailureReason,
     execute_knowledge_evidence_index_build,
 )
 from ai_worker.tasks.rag.evidence_retrieval import SensitiveText
@@ -530,6 +532,7 @@ async def _seed_novasc_source_hierarchy(engine) -> None:
             content_hash = hashlib.sha256(chunk_text.encode("utf-8")).hexdigest()
             xml_bytes = f"<section>{chunk_text}</section>".encode()
             xml_hash = hashlib.sha256(xml_bytes).hexdigest()
+            assert xml_hash != content_hash, "Raw/document hash must differ from chunk content_hash"
 
             await connection.execute(
                 text(
@@ -561,7 +564,7 @@ async def _seed_novasc_source_hierarchy(engine) -> None:
                     "snapshot_id": str(NOVASC_SNAPSHOT_ID),
                     "artifact_id": str(art_id),
                     "locator": f"mfds-label/{NOVASC_ITEM_SEQ}/{section}",
-                    "sha": content_hash,
+                    "sha": xml_hash,
                 },
             )
 
@@ -579,7 +582,7 @@ async def _seed_novasc_source_hierarchy(engine) -> None:
                     "title": f"Novasc {section}",
                     "member_id": str(member_id),
                     "ext_doc_id": f"mfds-label:{NOVASC_ITEM_SEQ}:{section}",
-                    "content_hash": content_hash,
+                    "content_hash": xml_hash,
                 },
             )
 
@@ -685,6 +688,136 @@ async def test_admin_runner_novasc_postgresql_integration(database) -> None:
             assert second_index_id == first_index_id
             assert second_member_ids == first_member_ids
 
+    finally:
+        async with database.begin() as connection:
+            await connection.execute(text(f'DROP OWNED BY "{builder}"'))
+            await connection.execute(text(f'DROP OWNED BY "{runtime}"'))
+            await connection.execute(text(f'DROP ROLE IF EXISTS "{builder}"'))
+            await connection.execute(text(f'DROP ROLE IF EXISTS "{runtime}"'))
+
+
+async def test_novasc_runner_document_member_hash_mismatch_fails_closed(database) -> None:
+    await _seed_novasc_source_hierarchy(database)
+
+    async with database.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE knowledge_document "
+                "SET document_content_hash = '0000000000000000000000000000000000000000000000000000000000000000' "
+                "WHERE external_document_id = :ext_id"
+            ),
+            {"ext_id": f"mfds-label:{NOVASC_ITEM_SEQ}:EE"},
+        )
+
+    suffix = uuid4().hex[:12]
+    builder = f"idx_bld_{suffix}"
+    runtime = f"idx_rt_{suffix}"
+    password = "synthetic-runner-password"
+
+    async with database.begin() as connection:
+        await connection.execute(text(f"CREATE ROLE \"{builder}\" LOGIN PASSWORD '{password}'"))
+        await connection.execute(text(f"CREATE ROLE \"{runtime}\" LOGIN PASSWORD '{password}'"))
+        await apply_knowledge_index_role_policy(
+            connection,
+            owner=config.DB_USER,
+            runtime=runtime,
+            builder=builder,
+        )
+
+    builder_url = database.url.set(username=builder, password=password)
+    runner_config = KnowledgeEvidenceIndexRunnerConfig(
+        url=builder_url,
+        builder_user=builder,
+        openai_api_key="synthetic-test-key",
+    )
+    port = StubPostgresEmbeddingPort()
+
+    try:
+        with pytest.raises(KnowledgeEvidenceIndexRunnerError) as exc_info:
+            await execute_knowledge_evidence_index_build(
+                config=runner_config,
+                snapshot_id=NOVASC_SNAPSHOT_ID,
+                expected_item_seq=NOVASC_ITEM_SEQ,
+                expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+                expected_source_version=NOVASC_SOURCE_VERSION,
+                expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
+                verify_replay=False,
+                embedding_port_override=port,
+            )
+
+        assert exc_info.value.reason == KnowledgeEvidenceIndexRunnerFailureReason.SOURCE_BINDING_INVALID
+        assert port.call_count == 0
+
+        async with database.connect() as connection:
+            idx_count = await connection.scalar(text("SELECT count(*) FROM rag_knowledge_index"))
+            member_count = await connection.scalar(text("SELECT count(*) FROM rag_knowledge_index_member"))
+            assert idx_count == 0
+            assert member_count == 0
+    finally:
+        async with database.begin() as connection:
+            await connection.execute(text(f'DROP OWNED BY "{builder}"'))
+            await connection.execute(text(f'DROP OWNED BY "{runtime}"'))
+            await connection.execute(text(f'DROP ROLE IF EXISTS "{builder}"'))
+            await connection.execute(text(f'DROP ROLE IF EXISTS "{runtime}"'))
+
+
+async def test_novasc_runner_chunk_content_hash_mismatch_fails_closed(database) -> None:
+    await _seed_novasc_source_hierarchy(database)
+
+    async with database.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE knowledge_chunk "
+                "SET content_hash = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' "
+                "WHERE id = :chunk_id"
+            ),
+            {"chunk_id": str(NOVASC_CHUNK_IDS["EE"])},
+        )
+
+    suffix = uuid4().hex[:12]
+    builder = f"idx_bld_{suffix}"
+    runtime = f"idx_rt_{suffix}"
+    password = "synthetic-runner-password"
+
+    async with database.begin() as connection:
+        await connection.execute(text(f"CREATE ROLE \"{builder}\" LOGIN PASSWORD '{password}'"))
+        await connection.execute(text(f"CREATE ROLE \"{runtime}\" LOGIN PASSWORD '{password}'"))
+        await apply_knowledge_index_role_policy(
+            connection,
+            owner=config.DB_USER,
+            runtime=runtime,
+            builder=builder,
+        )
+
+    builder_url = database.url.set(username=builder, password=password)
+    runner_config = KnowledgeEvidenceIndexRunnerConfig(
+        url=builder_url,
+        builder_user=builder,
+        openai_api_key="synthetic-test-key",
+    )
+    port = StubPostgresEmbeddingPort()
+
+    try:
+        with pytest.raises(KnowledgeEvidenceIndexRunnerError) as exc_info:
+            await execute_knowledge_evidence_index_build(
+                config=runner_config,
+                snapshot_id=NOVASC_SNAPSHOT_ID,
+                expected_item_seq=NOVASC_ITEM_SEQ,
+                expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+                expected_source_version=NOVASC_SOURCE_VERSION,
+                expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
+                verify_replay=False,
+                embedding_port_override=port,
+            )
+
+        assert exc_info.value.reason == KnowledgeEvidenceIndexRunnerFailureReason.CONTENT_HASH_MISMATCH
+        assert port.call_count == 0
+
+        async with database.connect() as connection:
+            idx_count = await connection.scalar(text("SELECT count(*) FROM rag_knowledge_index"))
+            member_count = await connection.scalar(text("SELECT count(*) FROM rag_knowledge_index_member"))
+            assert idx_count == 0
+            assert member_count == 0
     finally:
         async with database.begin() as connection:
             await connection.execute(text(f'DROP OWNED BY "{builder}"'))

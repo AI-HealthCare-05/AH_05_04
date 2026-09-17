@@ -434,8 +434,6 @@ async def preflight_authoritative_corpus(  # noqa: C901
         computed_hash = hashlib.sha256(chunk_text.encode("utf-8")).hexdigest()
         if computed_hash != row["content_hash"]:
             raise KnowledgeEvidenceIndexRunnerError(KnowledgeEvidenceIndexRunnerFailureReason.CONTENT_HASH_MISMATCH)
-        if computed_hash != row["document_content_hash"]:
-            raise KnowledgeEvidenceIndexRunnerError(KnowledgeEvidenceIndexRunnerFailureReason.SOURCE_BINDING_INVALID)
 
         chunk_id = UUID(str(row["chunk_id"]))
 
