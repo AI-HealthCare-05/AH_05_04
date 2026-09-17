@@ -6,9 +6,9 @@
 **관련 트랙**: Account/Auth
 **근거 Decision**: [Product Decision `PD-206-20260902`](../../governance/decisions/2026-09-02-account-lifecycle-contract.md) — 결정 배경·대안 검토·거부된 설계(jti 폐기 목록, 타임스탬프 비교)의 근거는 이 Decision 문서를 참고한다.
 
-로그아웃, `token_version` 기반 access/refresh token 재검증, refresh token rotation, 비밀번호 재설정, 회원탈퇴 요청 접수 API는 현재 구현 계약인 [회원가입·사용자 정보 계약](../current/user-account.md)에 반영되어 있다. 이 문서는 회원탈퇴의 후속 transaction 경계와 삭제·보존 처리 기준을 관리한다. `account_deletion_request` 저장 기반(5절)과 탈퇴 요청 접수 API(4절)는 구현됐고, 개인정보·건강정보 삭제·보존 처리는 아직 구현되지 않았다.
+로그아웃, `token_version` 기반 access/refresh token 재검증, refresh token rotation, 비밀번호 재설정, 회원탈퇴 요청 접수 API는 현재 구현 계약인 [회원가입·사용자 정보 계약](../current/user-account.md)에 반영되어 있다. 이 문서는 회원탈퇴의 후속 transaction 경계와 삭제·보존 처리 기준을 관리한다. `account_deletion_request` 저장 기반(5절), 탈퇴 요청 접수 API(4절), 합성 데모 임시 정책 기준 삭제·보존 처리와 `COMPLETED/WITHDRAWN` 최종 전이는 구현됐다. 실제 사용자 대상 운영 삭제·보존 정책, 법정 보존, 백업 파기와 Production 공개 승인은 아직 별도 범위다.
 
-이 문서의 `P0`는 구현 릴리즈 순서가 아니라 구현 전에 먼저 고정해야 하는 계약 확정 우선순위를 뜻한다. 요구사항정의서 기준으로 비밀번호 재설정은 Post-MVP-1, 회원탈퇴는 Post-MVP-2 범위이며, 회원탈퇴 삭제·보존 처리까지 완료되기 전에는 전체 계약을 current로 승격하지 않는다.
+이 문서의 `P0`는 구현 릴리즈 순서가 아니라 구현 전에 먼저 고정해야 하는 계약 확정 우선순위를 뜻한다. 요구사항정의서 기준으로 비밀번호 재설정은 Post-MVP-1, 회원탈퇴는 Post-MVP-2 범위다. 합성 데모 임시 정책 기준 구현은 current 계약에 반영하지만, 실제 사용자 대상 운영 정책과 Production 공개 조건까지 승인된 것으로 해석하지 않는다.
 
 ## 1) 계정 상태
 
@@ -157,7 +157,7 @@ migration/model 구현 완료(`backend/alembic/versions/206b2c3d4e5f_create_acco
 
 ### 5.5 내부 운영 상태와 사용자-facing 정보 분리
 
-이 테이블의 상세 상태는 Backend 운영·감사·재처리용 정보이며 사용자-facing API로 제공하지 않는다. 사용자는 탈퇴 요청 성공 시점에 계정 이용 종료와 "삭제 요청 접수됨" 상태를 안내받는다. 이 사용자-facing 상태는 내부 enum을 그대로 노출한 값이 아니며 물리 삭제 완료를 의미하지 않는다.
+이 테이블의 상세 상태는 Backend 운영·감사·재처리용 정보이며 사용자-facing API로 제공하지 않는다. 합성 데모 임시 정책에서는 삭제·보존 처리 성공 시 "회원탈퇴가 완료되었습니다"를 반환하고, 삭제·보존 처리 실패 시 완료로 표시하지 않고 관리자 확인이 필요한 실패 응답을 반환한다. 이 사용자-facing 문구는 내부 enum을 그대로 노출한 값이 아니며, 실제 사용자 대상 운영 정책과 Production 공개 승인을 의미하지 않는다.
 
 운영자는 이 테이블을 통해 아래 항목을 확인할 수 있어야 한다.
 
@@ -178,7 +178,7 @@ migration/model 구현 완료(`backend/alembic/versions/206b2c3d4e5f_create_acco
 | 탈퇴 요청 접수 | 재인증, 최종 확인, `WITHDRAWAL_REQUESTED`, `token_version + 1`, `account_deletion_request.status=PENDING` 생성 | 탈퇴 전 사용자에게 고지할 문구와 법적 안내 |
 | 계정 접근 차단 | 탈퇴 요청 commit 이후 로그인·보호 API 접근 차단 | 탈퇴 후 재가입 제한이 필요한지 여부 |
 | 삭제·보존 처리 | 처리 상태를 `account_deletion_request`에 남기고, `EXT-PRIV-001` 승인 뒤 완료 시 `WITHDRAWN`으로 전환 | 즉시 폐기 대상, 법정 보존 대상, 보존 기간, 삭제 예외 사유 |
-| 사용자 안내 | 탈퇴 성공 응답, Frontend 로컬 인증 정보 제거, 완료 화면의 사용자-facing 상태 `삭제 요청 접수됨`. 내부 상세 상태 조회 API는 제공하지 않음 | 완료 화면의 즉시 삭제 정보, 보존 정보·기간·근거와 보조 문구, 완료 이후 이메일 등 별도 통지 필요 여부 |
+| 사용자 안내 | 탈퇴 API의 완료/실패 응답, Frontend 로컬 인증 정보 제거, 합성 데모 완료 화면의 사용자-facing 상태. 내부 상세 상태 조회 API는 제공하지 않음 | 실제 사용자 대상 완료 화면의 보존 정보·기간·근거와 보조 문구, 완료 이후 이메일 등 별도 통지 필요 여부 |
 | 운영·감사 | 요청·시작·완료·실패 시각, 재시도 횟수, 내부 실패 사유 저장 | 감사 증빙에 필요한 보존 항목과 접근 권한 |
 | 오류·로그 | 사용자 응답과 로그에 민감정보 원문을 남기지 않음 | 개인정보처리방침·이용약관·내부 운영 정책 문구 |
 

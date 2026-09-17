@@ -23,6 +23,7 @@ from app.core.utils.security import (
 )
 from app.core.validators import validate_password
 from app.dtos.auth import LoginRequest, SignUpConsentRequest, SignUpRequest
+from app.models.account_deletion_request import AccountDeletionRequest
 from app.models.email_verification import EmailVerificationPurpose
 from app.models.user_consents import ConsentPurpose, ConsentStatus
 from app.models.users import AccountStatus, User
@@ -304,7 +305,9 @@ class AuthService:
         )
         return tokens
 
-    async def request_account_withdrawal(self, *, user: User, password: str, confirmed: bool) -> None:
+    async def request_account_withdrawal(
+        self, *, user: User, password: str, confirmed: bool
+    ) -> AccountDeletionRequest | None:
         if not confirmed:
             raise _account_withdrawal_confirmation_error()
         if self.account_deletion_request_repo is None:
@@ -315,7 +318,7 @@ class AuthService:
         if locked_user is None:
             raise _invalid_credentials_error()
         if locked_user.account_status != AccountStatus.ACTIVE or not locked_user.is_active:
-            return
+            return None
         if not verify_password(password, locked_user.hashed_password):
             raise _invalid_credentials_error()
 
@@ -326,12 +329,13 @@ class AuthService:
                 user_id=locked_user.id,
                 requested_at=requested_at,
             )
-            await self.account_deletion_request_repo.complete_demo_withdrawal(
+            return await self.account_deletion_request_repo.complete_demo_withdrawal(
                 request_id=deletion_request.id,
                 completed_at=requested_at,
                 anonymized_email=_withdrawn_email(locked_user.id),
                 disabled_password_hash=_withdrawn_password_hash(locked_user.id),
             )
+        return None
 
     async def check_email_exists(
         self,

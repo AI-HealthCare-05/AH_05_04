@@ -1,9 +1,11 @@
 from datetime import datetime
+from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import config
 from app.models.account_deletion_request import AccountDeletionRequest, AccountDeletionRequestStatus
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
 
@@ -44,8 +46,11 @@ class AccountDeletionRequestRepository:
         request.last_error_code = None
         await self.session.flush()
 
+        document_object_keys = await self._list_medical_document_object_keys(request.user_id)
+
         try:
             async with self.session.begin_nested():
+                self._delete_medical_document_objects(document_object_keys)
                 await self._delete_user_owned_runtime_data(request.user_id)
                 await self._anonymize_withdrawn_user(
                     user_id=request.user_id,
@@ -59,7 +64,7 @@ class AccountDeletionRequestRepository:
             request.last_error_code = FAILED_DEMO_DELETION_CODE
             request.retry_count += 1
             await self.session.flush()
-            raise
+            return request
 
         request.status = AccountDeletionRequestStatus.COMPLETED
         request.completed_at = completed_at
@@ -80,6 +85,33 @@ class AccountDeletionRequestRepository:
 
     async def _execute(self, statement: str, **params: object) -> None:
         await self.session.execute(text(statement), params)
+
+    async def _list_medical_document_object_keys(self, user_id: UUID) -> list[str]:
+        result = await self.session.execute(
+            text(
+                """
+                SELECT object_key
+                  FROM medical_document
+                 WHERE uploaded_by = :user_id
+                   AND object_key IS NOT NULL
+                   AND trim(object_key) <> ''
+                """
+            ),
+            {"user_id": str(user_id)},
+        )
+        return [str(row[0]) for row in result.fetchall()]
+
+    def _delete_medical_document_objects(self, object_keys: list[str]) -> None:
+        for object_key in object_keys:
+            object_path = self._medical_document_object_path(object_key)
+            if object_path.exists():
+                object_path.unlink()
+
+    def _medical_document_object_path(self, object_key: str) -> Path:
+        storage_root = Path(config.STORAGE_DIR).resolve()
+        object_path = (storage_root / object_key).resolve()
+        object_path.relative_to(storage_root)
+        return object_path
 
     async def _delete_user_owned_runtime_data(self, user_id: UUID) -> None:
         params = {"user_id": str(user_id)}

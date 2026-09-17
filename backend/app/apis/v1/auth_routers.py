@@ -35,6 +35,7 @@ from app.dtos.auth import (
     SignUpRequest,
     TokenRefreshResponse,
 )
+from app.models.account_deletion_request import AccountDeletionRequestStatus
 from app.models.users import User
 from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.user_repository import UserRepository
@@ -242,9 +243,18 @@ async def request_account_withdrawal(
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> Response:
     _ensure_account_withdrawal_request_enabled()
-    await auth_service.request_account_withdrawal(user=user, password=request.password, confirmed=request.confirmed)
+    deletion_request = await auth_service.request_account_withdrawal(
+        user=user,
+        password=request.password,
+        confirmed=request.confirmed,
+    )
+    detail = (
+        "회원탈퇴가 완료되었습니다."
+        if deletion_request is None or deletion_request.status == AccountDeletionRequestStatus.COMPLETED
+        else "탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."
+    )
     response = Response(
-        content=AccountWithdrawalResponse(detail="회원탈퇴가 완료되었습니다.").model_dump(),
+        content=AccountWithdrawalResponse(detail=detail).model_dump(),
         status_code=status.HTTP_200_OK,
     )
     response.delete_cookie(key="refresh_token", domain=config.COOKIE_DOMAIN or None)
