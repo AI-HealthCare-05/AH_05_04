@@ -135,13 +135,23 @@ RAG-15 내부의 draft generation boundary다.
 1. `GuidelineGeneratorPort`는 RAG-15 내부 generation boundary다.
 2. 입력은 `GuidelineGenerationRequest`(`medication_identities`, `evidence_gate_outcome`, `policy`).
 3. 출력은 정확히 `GuidelineCardDraft | GuidelineGenerationFailure`이다.
-4. 실제 Provider adapter는 아직 구현하지 않는다.
-5. DB/persistence는 이 slice 밖이다.
-6. Guide API는 이 slice 밖이다.
-7. #180 orchestration은 이 slice 밖이다.
-8. RAG-16 연결은 이 slice 밖이다.
-9. Finalizer는 validation/approval/binding/fallback 책임을 계속 가진다.
-10. 이 Protocol 추가만으로 Production Runtime 활성화나 public release를 의미하지 않는다.
+4. #179에서 `GuidelineGeneratorPort`를 구현하는 `OpenAIGuidelineGeneratorAdapter`(`ai_worker.adapters.openai_guideline_generator.OpenAIGuidelineGeneratorAdapter`)를 추가했다:
+   - 환자 식별자(UUID) 및 내부 evidence provenance를 제거하고 불투명 슬롯(`medication_slot`, `evidence_slot`)만을 Provider에 제공하는 최소 투영(`build_guideline_generation_input_projection`)을 사용한다.
+   - Provider 출력은 Structured Output(`GuidelineStructuredSelection`)으로 수신하며, 엄격한 결정론적 파서(`parse_guideline_structured_output`)를 거친다.
+   - 중복 claim은 `(medication_slot, scope.value)` 기준으로 병합되며, canonical_code가 동일하더라도 서로 다른 `MedicationIdentityRef`는 병합하지 않는다.
+   - deterministic claim key는 단순화된 `claim:{index:03d}` 형식을 사용한다.
+   - Citation은 오직 Gate를 통과한 selection(`gate_passed_selections`)에서만 복원되며, 권위적 provenance(`evidence_key`, `source_snapshot_ref`, `source_version`, `locator`, `content_sha256`)를 strict하게 결속한다.
+   - Provider 호출 시 true dual timeout(`asyncio.timeout` + SDK client timeout)과 `max_retries=0`을 명시적으로 보장한다.
+   - Defensive Gate precondition boundary로 Gate 비정상(non-SUFFICIENT, empty selections 등) 시 Provider를 호출하지 않고(0회) 즉시 `VALIDATION_FAILED`로 fail-closed 처리한다.
+   - Observability는 `provider_contracts.observability` 및 `provider_runtime.observability` 규격을 준수하여 API key, 환자 정보, 원문 text 누출 없이 구조화된 span/event를 기록한다.
+5. Known Deferred Authorities / 잔여 경계 외 항목:
+   - Prompt ref 및 Model ref의 formal approval 및 runtime provenance handoff는 이번 PR 범위 밖이며, #180 후속으로 연계된다 (`model_ref`는 요청 모델 식별자, Provider 응답 `model_name`은 observability evidence).
+   - End-to-end 파이프라인 orchestration(#180)은 이 slice 밖이다.
+   - DB/persistence 및 마이그레이션은 이 slice 밖이다.
+   - Guide API는 이 slice 밖이다.
+   - RAG-16 연결(Citation Authorization 최종 wiring)은 이 slice 밖이다.
+   - Finalizer는 validation/approval/binding/fallback 책임을 계속 가진다.
+   - 본 어댑터 추가만으로 Production Runtime 활성화나 PUBLIC_TRACK_F release를 의미하지 않으며, 문서 상태는 `targets/`를 유지한다.
 
 ## RAG-16 소비 경계
 
