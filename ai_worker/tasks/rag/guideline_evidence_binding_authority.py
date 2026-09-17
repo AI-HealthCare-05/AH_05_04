@@ -7,6 +7,12 @@ produced, this module derives the `ApprovedGuidelineEvidenceBinding` tuple the
 finalizer requires and supplies a `GuidelineApprovalVerifierPort` implementation for
 that same request.
 
+`build_request_scoped_guideline_static_approval_verifier()` covers the other half of
+the Generator's return type: a `GuidelineGenerationFailure` has no draft, so there is
+nothing to bind, and that factory supplies a verifier over the #729 READY static pins
+alone so the finalizer can still answer with an approved fallback. No synthetic draft
+is ever constructed to route a failure through the dynamic path.
+
 Scope & Authority Boundaries:
 - #774 production evidence is the only evidence input. The legacy RAG-14
   `evidence_gate` domain (`EvidenceGateOutcome`, `GatePassedKnowledgeEvidenceSelection`,
@@ -92,6 +98,7 @@ __all__ = [
     "RequestScopedGuidelineAuthority",
     "RequestScopedGuidelineAuthorityOutcome",
     "build_request_scoped_guideline_authority",
+    "build_request_scoped_guideline_static_approval_verifier",
     "compute_guideline_approval_verifier_artifact_ref",
     "derive_guideline_evidence_bindings",
 ]
@@ -321,50 +328,36 @@ def derive_guideline_evidence_bindings(
     return GuidelineEvidenceBindingDerivationOutcome(bindings=tuple(bindings), reason=None)
 
 
-class _RequestScopedGuidelineApprovalVerifier:
-    """`GuidelineApprovalVerifierPort` implementation scoped to one Guide request.
+def _static_approved_refs(ready_context: ReadyGuideRuntimeContext) -> set[ImmutableArtifactRef]:
+    """The #729 READY static pins, and nothing else.
 
-    Internal. `build_request_scoped_guideline_authority()` is the only supported
-    construction path, so a caller cannot assemble a verifier around inputs that never
-    passed the #729 READY sequencing boundary. Production callers hold the result only
-    as a `GuidelineApprovalVerifierPort`.
+    `approval_pack_ref` and `candidate_ref` are deliberately absent: they are
+    provenance context, not artifacts a Guideline Card asks this port to approve.
+    """
+    approved: set[ImmutableArtifactRef] = set()
+    if type(ready_context) is not ReadyGuideRuntimeContext:
+        return approved
+    if type(ready_context.policy_ref) is ImmutableArtifactRef:
+        approved.add(ready_context.policy_ref)
+    if type(ready_context.fallback_refs) is tuple:
+        approved.update(ref for ref in ready_context.fallback_refs if type(ref) is ImmutableArtifactRef)
+    return approved
 
-    It issues no approval of its own. Its approval set is built once, from the #729
-    READY static pins plus the dynamic binding refs it recomputes from the
-    authoritative request inputs. A ref outside that set — an unknown artifact, an
-    `approval_pack_ref`, a `candidate_ref`, a tampered binding ref, or a binding that
-    exists only in an issuer's result tuple — fails closed.
+
+class _FrozenApprovalRefVerifier:
+    """Shared `GuidelineApprovalVerifierPort` behaviour over one fixed approval set.
+
+    Internal. The approval set is computed once by a subclass and frozen; `verify()`
+    is a membership test that issues no approval of its own and never widens the set.
+    A ref outside it fails closed.
     """
 
     _approved_refs: frozenset[ImmutableArtifactRef]
 
     __slots__ = ("_approved_refs",)
 
-    def __init__(
-        self,
-        *,
-        ready_context: ReadyGuideRuntimeContext,
-        evidence: ProductionGuidelineEvidenceSet,
-        medication_identities: tuple[MedicationIdentityRef, ...],
-        draft: GuidelineCardDraft,
-    ) -> None:
-        approved: set[ImmutableArtifactRef] = set()
-        if type(ready_context) is ReadyGuideRuntimeContext:
-            # Only the policy and fallback pins #729 already verified. `approval_pack_ref`
-            # and `candidate_ref` are deliberately absent: they are provenance context,
-            # not artifacts a Guideline Card asks this port to approve.
-            if type(ready_context.policy_ref) is ImmutableArtifactRef:
-                approved.add(ready_context.policy_ref)
-            if type(ready_context.fallback_refs) is tuple:
-                approved.update(ref for ref in ready_context.fallback_refs if type(ref) is ImmutableArtifactRef)
-        outcome = derive_guideline_evidence_bindings(
-            evidence=evidence,
-            medication_identities=medication_identities,
-            draft=draft,
-        )
-        if outcome.bindings is not None:
-            approved.update(binding.artifact_ref for binding in outcome.bindings)
-        self._approved_refs = frozenset(approved)
+    def __init__(self, approved_refs: frozenset[ImmutableArtifactRef]) -> None:
+        self._approved_refs = approved_refs
 
     def verify(
         self,
@@ -380,6 +373,67 @@ class _RequestScopedGuidelineApprovalVerifier:
             ),
             verifier_artifact_ref=GUIDELINE_APPROVAL_VERIFIER_REF,
         )
+
+
+class _RequestScopedGuidelineApprovalVerifier(_FrozenApprovalRefVerifier):
+    """`GuidelineApprovalVerifierPort` implementation scoped to one Guide request.
+
+    Internal. `build_request_scoped_guideline_authority()` is the only supported
+    construction path, so a caller cannot assemble a verifier around inputs that never
+    passed the #729 READY sequencing boundary. Production callers hold the result only
+    as a `GuidelineApprovalVerifierPort`.
+
+    It issues no approval of its own. Its approval set is built once, from the #729
+    READY static pins plus the dynamic binding refs it recomputes from the
+    authoritative request inputs. A ref outside that set — an unknown artifact, an
+    `approval_pack_ref`, a `candidate_ref`, a tampered binding ref, or a binding that
+    exists only in an issuer's result tuple — fails closed.
+    """
+
+    __slots__ = ()
+
+    def __init__(
+        self,
+        *,
+        ready_context: ReadyGuideRuntimeContext,
+        evidence: ProductionGuidelineEvidenceSet,
+        medication_identities: tuple[MedicationIdentityRef, ...],
+        draft: GuidelineCardDraft,
+    ) -> None:
+        approved = _static_approved_refs(ready_context)
+        outcome = derive_guideline_evidence_bindings(
+            evidence=evidence,
+            medication_identities=medication_identities,
+            draft=draft,
+        )
+        if outcome.bindings is not None:
+            approved.update(binding.artifact_ref for binding in outcome.bindings)
+        super().__init__(frozenset(approved))
+
+
+class _StaticGuidelineApprovalVerifier(_FrozenApprovalRefVerifier):
+    """`GuidelineApprovalVerifierPort` for a request that produced no `GuidelineCardDraft`.
+
+    Internal. `build_request_scoped_guideline_static_approval_verifier()` is the only
+    supported construction path.
+
+    A `GuidelineGenerationFailure` has no draft, so there is nothing to derive a dynamic
+    binding from and no binding is invented. The finalizer still has to verify the
+    policy ref and the approved fallback refs in order to answer with a fallback, and
+    those are exactly the #729 READY pins. This verifier therefore approves
+    `ReadyGuideRuntimeContext.policy_ref` and `ReadyGuideRuntimeContext.fallback_refs`
+    and nothing else: a dynamic binding ref, `approval_pack_ref`, `candidate_ref` and
+    any unknown artifact all fail closed.
+
+    It creates no new verifier artifact identity. `GUIDELINE_APPROVAL_VERIFIER_REF` is
+    reused because the approval rule is the same one, evaluated on a request whose
+    recomputed dynamic binding set is necessarily empty.
+    """
+
+    __slots__ = ()
+
+    def __init__(self, *, ready_context: ReadyGuideRuntimeContext) -> None:
+        super().__init__(frozenset(_static_approved_refs(ready_context)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -460,3 +514,25 @@ def build_request_scoped_guideline_authority(
         ),
         reason=None,
     )
+
+
+def build_request_scoped_guideline_static_approval_verifier(
+    preflight_outcome: GuideRuntimePreflightOutcome,
+) -> GuidelineApprovalVerifierPort | None:
+    """Build the approval bridge for a request that reached the Generator and got no draft.
+
+    Returns `None` for anything that is not a well-formed #729 READY outcome, so a
+    caller that cannot show the sequencing boundary gets no verifier at all rather
+    than a permissive one. The same root-of-trust limitation as
+    `build_request_scoped_guideline_authority()` applies; see the module docstring.
+
+    The returned port approves only the READY policy and fallback pins. It issues no
+    new static approval, derives no binding, and accepts no draft, evidence or
+    medication input — a `GuidelineGenerationFailure` has none of those, and inventing
+    an empty or synthetic draft to reuse the dynamic path is exactly what this exists
+    to avoid.
+    """
+    ready_context = _ready_context_of(preflight_outcome)
+    if ready_context is None:
+        return None
+    return _StaticGuidelineApprovalVerifier(ready_context=ready_context)
