@@ -8,6 +8,7 @@ Fallback Set. It is not Guide evidence readiness.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
@@ -365,21 +366,23 @@ def test_policy_ref_drift_is_blocked() -> None:
     assert generator.generate_calls == 0
 
 
-@pytest.mark.parametrize(
-    "field,value",
-    [
-        ("maximum_claims", 99),
-        ("uncertainty_text_sha256", "d" * 64),
-        ("consultation_text_sha256", "e" * 64),
-    ],
-)
-def test_policy_semantic_tamper_under_same_ref_is_blocked(field: str, value: object) -> None:
+PolicyTamper = Callable[[VersionedGuidelinePolicy], VersionedGuidelinePolicy]
+
+_POLICY_TAMPERS: dict[str, PolicyTamper] = {
+    "maximum_claims": lambda p: replace(p, maximum_claims=p.maximum_claims + 1),
+    "uncertainty_text_sha256": lambda p: replace(p, uncertainty_text_sha256="d" * 64),
+    "consultation_text_sha256": lambda p: replace(p, consultation_text_sha256="e" * 64),
+}
+
+
+@pytest.mark.parametrize("field", sorted(_POLICY_TAMPERS))
+def test_policy_semantic_tamper_under_same_ref_is_blocked(field: str) -> None:
     """A policy whose runtime semantics no longer reproduce its pinned ref must fail closed."""
     policy = make_policy()
     fallbacks = make_fallbacks()
     pack, verifier = build_approved_pack(policy=policy, fallbacks=fallbacks)
 
-    tampered = replace(policy, **{field: value})
+    tampered = _POLICY_TAMPERS[field](policy)
     # The pinned identity is untouched, so a ref-only comparison would let this through.
     assert tampered.artifact_ref == policy.artifact_ref
     assert tampered.artifact_ref == pack.policy_ref
