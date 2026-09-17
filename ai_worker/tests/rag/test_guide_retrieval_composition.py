@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from uuid import UUID, uuid4
 
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, QueryFingerprint
@@ -171,19 +171,33 @@ def _retrieval(
     )
 
 
-def _pair(**overrides: object) -> tuple[ProductionSearchHit, RequestSourceMemberBinding]:
-    snapshot_id = uuid4()
-    member_id = uuid4()
-    rank = int(overrides.pop("rank", 1))  # type: ignore[call-overload]
-    external_doc_id = str(overrides.pop("external_doc_id", "DOC-1"))
-    hit = _make_hit(
-        rank=rank,
-        snapshot_id=snapshot_id,
-        member_id=member_id,
-        external_doc_id=external_doc_id,
-    )
-    binding = _make_binding(snapshot_id=snapshot_id, member_id=member_id)
-    return hit, binding
+@dataclass(frozen=True)
+class _Member:
+    """A Source Member authority unit plus the chunk hits selected under it."""
+
+    snapshot_id: UUID
+    member_id: UUID
+
+    def binding(self) -> RequestSourceMemberBinding:
+        return _make_binding(snapshot_id=self.snapshot_id, member_id=self.member_id)
+
+    def chunk(self, *, rank: int, external_doc_id: str = "DOC-1", chunk_index: int = 0) -> ProductionSearchHit:
+        return _make_hit(
+            rank=rank,
+            snapshot_id=self.snapshot_id,
+            member_id=self.member_id,
+            external_doc_id=external_doc_id,
+            chunk_index=chunk_index,
+        )
+
+
+def _member() -> _Member:
+    return _Member(snapshot_id=uuid4(), member_id=uuid4())
+
+
+def _pair(*, rank: int = 1, external_doc_id: str = "DOC-1") -> tuple[ProductionSearchHit, RequestSourceMemberBinding]:
+    member = _member()
+    return member.chunk(rank=rank, external_doc_id=external_doc_id), member.binding()
 
 
 # ==============================================================================
@@ -399,6 +413,109 @@ def test_precondition_order_status_before_receipt() -> None:
 
 
 # ==============================================================================
+# N chunk hits : 1 authenticated member binding
+#
+# The authority join key is a Source Member unit while selected_hits is a chunk
+# unit, so several distinct chunks of one Source Member are a normal production
+# result and must not be rejected as a cardinality violation.
+# ==============================================================================
+
+
+def test_two_chunks_of_one_member_share_a_single_binding() -> None:
+    member = _member()
+    binding = member.binding()
+    chunk1 = member.chunk(rank=1, external_doc_id="DOC-1", chunk_index=0)
+    chunk2 = member.chunk(rank=2, external_doc_id="DOC-2", chunk_index=3)
+
+    assert chunk1.provenance.source_snapshot_id == chunk2.provenance.source_snapshot_id
+    assert chunk1.provenance.source_snapshot_member_id == chunk2.provenance.source_snapshot_member_id
+    assert chunk1.provenance.source_code == chunk2.provenance.source_code
+    assert chunk1.provenance.source_version == chunk2.provenance.source_version
+    assert chunk1.provenance.knowledge_chunk_id != chunk2.provenance.knowledge_chunk_id
+
+    outcome = compose_guide_authority_with_production_retrieval(
+        authority_outcome=_authenticated((binding,)),
+        retrieval_outcome=_retrieval(selected_hits=(chunk1, chunk2)),
+    )
+
+    assert outcome.decision == GuideRetrievalCompositionDecision.AUTHENTICATED
+    assert outcome.reasons == ()
+    assert len(outcome.selections) == 2
+    assert tuple(s.hit for s in outcome.selections) == (chunk1, chunk2)
+    assert all(s.binding is binding for s in outcome.selections)
+
+
+def test_top_5_chunks_of_one_member_reuse_one_binding_in_order() -> None:
+    member = _member()
+    binding = member.binding()
+    chunks = tuple(member.chunk(rank=rank, external_doc_id=f"DOC-{rank}", chunk_index=rank) for rank in range(1, 6))
+
+    outcome = compose_guide_authority_with_production_retrieval(
+        authority_outcome=_authenticated((binding,)),
+        retrieval_outcome=_retrieval(selected_hits=chunks),
+    )
+
+    assert outcome.decision == GuideRetrievalCompositionDecision.AUTHENTICATED
+    assert outcome.reasons == ()
+    assert tuple(s.hit for s in outcome.selections) == chunks
+    assert tuple(s.hit.fusion_rank for s in outcome.selections) == (1, 2, 3, 4, 5)
+    assert all(s.binding is binding for s in outcome.selections)
+
+
+def test_mixed_members_reuse_their_own_bindings_and_preserve_order() -> None:
+    member_a = _member()
+    member_b = _member()
+    binding_a = member_a.binding()
+    binding_b = member_b.binding()
+    chunk_a1 = member_a.chunk(rank=1, external_doc_id="DOC-A1", chunk_index=0)
+    chunk_a2 = member_a.chunk(rank=2, external_doc_id="DOC-A2", chunk_index=1)
+    chunk_b1 = member_b.chunk(rank=3, external_doc_id="DOC-B1", chunk_index=0)
+    selected = (chunk_a1, chunk_a2, chunk_b1)
+
+    outcome = compose_guide_authority_with_production_retrieval(
+        authority_outcome=_authenticated((binding_b, binding_a)),
+        retrieval_outcome=_retrieval(selected_hits=selected),
+    )
+
+    assert outcome.decision == GuideRetrievalCompositionDecision.AUTHENTICATED
+    assert outcome.reasons == ()
+    assert tuple(s.hit for s in outcome.selections) == selected
+    assert tuple(s.binding for s in outcome.selections) == (binding_a, binding_a, binding_b)
+
+
+def test_unused_member_binding_is_rejected_even_when_every_hit_joined() -> None:
+    member_a = _member()
+    member_b = _member()
+    chunk_a1 = member_a.chunk(rank=1, external_doc_id="DOC-A1", chunk_index=0)
+    chunk_a2 = member_a.chunk(rank=2, external_doc_id="DOC-A2", chunk_index=1)
+
+    outcome = compose_guide_authority_with_production_retrieval(
+        authority_outcome=_authenticated((member_a.binding(), member_b.binding())),
+        retrieval_outcome=_retrieval(selected_hits=(chunk_a1, chunk_a2)),
+    )
+
+    assert outcome.decision == GuideRetrievalCompositionDecision.REJECTED
+    assert outcome.reasons == (GuideRetrievalCompositionReason.EXTRA_BINDING,)
+    assert outcome.selections == ()
+
+
+def test_multi_chunk_member_with_one_unbound_chunk_is_rejected() -> None:
+    member = _member()
+    unrelated = _member()
+    chunk1 = member.chunk(rank=1, external_doc_id="DOC-1", chunk_index=0)
+    chunk2 = unrelated.chunk(rank=2, external_doc_id="DOC-2", chunk_index=1)
+
+    outcome = compose_guide_authority_with_production_retrieval(
+        authority_outcome=_authenticated((member.binding(),)),
+        retrieval_outcome=_retrieval(selected_hits=(chunk1, chunk2)),
+    )
+
+    assert outcome.decision == GuideRetrievalCompositionDecision.REJECTED
+    assert outcome.reasons == (GuideRetrievalCompositionReason.BINDING_NOT_FOUND,)
+    assert outcome.selections == ()
+
+
+# ==============================================================================
 # 8-9. Missing / extra
 # ==============================================================================
 
@@ -465,25 +582,35 @@ def test_duplicate_binding_join_key_is_rejected() -> None:
     assert outcome.selections == ()
 
 
-def test_duplicate_hit_join_key_is_rejected() -> None:
-    hit, binding = _pair()
-    # Distinct stable coordinate, identical authority join key.
-    duplicate_hit = _make_hit(
-        rank=2,
-        snapshot_id=hit.provenance.source_snapshot_id,
-        member_id=hit.provenance.source_snapshot_member_id,
-        external_doc_id="DOC-2",
-        chunk_index=1,
-    )
+def test_duplicate_stable_coordinate_hit_is_rejected() -> None:
+    member = _member()
+    hit = member.chunk(rank=1, external_doc_id="DOC-1", chunk_index=0)
+    # Same stable coordinate: (source_code, source_version, external_document_id, chunk_index).
+    duplicate_hit = member.chunk(rank=2, external_doc_id="DOC-1", chunk_index=0)
 
     outcome = compose_guide_authority_with_production_retrieval(
-        authority_outcome=_authenticated((binding,)),
+        authority_outcome=_authenticated((member.binding(),)),
         retrieval_outcome=_retrieval(selected_hits=(hit, duplicate_hit)),
     )
 
     assert outcome.decision == GuideRetrievalCompositionDecision.REJECTED
     assert outcome.reasons == (GuideRetrievalCompositionReason.DUPLICATE_HIT,)
     assert outcome.selections == ()
+
+
+def test_duplicate_stable_coordinate_across_distinct_members_is_rejected() -> None:
+    member_a = _member()
+    member_b = _member()
+    hit_a = member_a.chunk(rank=1, external_doc_id="DOC-1", chunk_index=0)
+    hit_b = member_b.chunk(rank=2, external_doc_id="DOC-1", chunk_index=0)
+
+    outcome = compose_guide_authority_with_production_retrieval(
+        authority_outcome=_authenticated((member_a.binding(), member_b.binding())),
+        retrieval_outcome=_retrieval(selected_hits=(hit_a, hit_b)),
+    )
+
+    assert outcome.decision == GuideRetrievalCompositionDecision.REJECTED
+    assert outcome.reasons == (GuideRetrievalCompositionReason.DUPLICATE_HIT,)
 
 
 def test_duplicate_binding_is_not_deduplicated_into_success() -> None:

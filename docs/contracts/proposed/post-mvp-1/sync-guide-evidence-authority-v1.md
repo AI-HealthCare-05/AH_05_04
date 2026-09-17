@@ -34,7 +34,7 @@
    - 실제 PostgreSQL/Redis 등 프로덕션 저장소의 Decision 테이블 스키마 및 영속 위치는 미확정 상태이므로, 본 PR에서는 synthetic test double 및 Protocol 포트만 정의하고 실제 DB 어댑터는 구현하지 않는다.
 6. **상위 결정 PD-315 상태 (Condition RESOLVED)**:
    - PR #361 책임 리뷰의 APPROVED event가 요구한 final HEAD Source·DB specialist 확인 조건은 머지 시점에 해소되지 않았으나, Issue #680 Path B 거버넌스 재판정(PR #693)으로 해소되어 `PD-315-20260908`은 Approved 상태다.
-   - 따라서 #672는 `PD-315-20260908`을 Approved governance premise로 소비한다. 다만 이는 pure authority assembly 계약에 한정되며, Production Reader 구현, #697 Guide Authority × Production Retrieval composition, #180 runtime orchestration, Production/Public 활성화는 각각 별도 조건으로 남는다.
+   - 따라서 #672는 `PD-315-20260908`을 Approved governance premise로 소비한다. 다만 이는 pure authority assembly 계약에 한정되며, Production Reader 구현, [#697 Guide Authority × Production Retrieval composition](./guide-retrieval-composition-v1.md), #180 runtime orchestration, Production/Public 활성화는 각각 별도 조건으로 남는다.
 
 ---
 

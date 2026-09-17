@@ -17,14 +17,23 @@ Scope & Authority Boundaries:
 - Exact Join: bindings and selected hits are joined on exact equality of
   (source_snapshot_id, source_snapshot_member_id, source_code, source_version).
   No normalization, trimming, or case folding is applied.
-- Fail-Closed Atomicity: composition is a bijection. Any missing, extra, or
-  duplicate join key rejects the whole outcome; partial selections are never
-  returned (`selections = ()`).
-- No Inferred Pairing: rejection reasons report only what the exact join proves.
-  A selected hit whose join key has no binding is BINDING_NOT_FOUND and an
-  unconsumed binding is EXTRA_BINDING, even when both occur together. This seam
-  owns no pairing or partial-key matching policy, so it never infers that an
-  unmatched hit and an unconsumed binding were meant to be the same selection.
+- Cardinality (N chunk hits : 1 member binding): the authority join key is a
+  Source Member unit while `selected_hits` is a chunk unit, so several distinct
+  chunks of one Source Member are a legitimate production result. Each selected
+  hit must resolve exactly one authenticated binding, and one binding may be
+  reused by multiple distinct chunk hits. This is not a global bijection.
+- Duplicate Identity: hit duplication is judged on the production Evidence
+  Gate's own stable coordinate (source_code, source_version,
+  external_document_id, chunk_index), reusing upstream semantics rather than
+  defining a new dedupe policy here. Repeated member authority keys across
+  distinct coordinates are not duplicates.
+- Fail-Closed Atomicity: validation is phase-ordered and fail-fast, and a
+  rejection returns a single typed reason with no partial selections
+  (`selections = ()`). A selected hit with no binding for its authority key is
+  BINDING_NOT_FOUND immediately; EXTRA_BINDING is reported only after every hit
+  has joined and some supplied binding was still never used. Failed join keys
+  are deliberately not surfaced on the outcome: this seam is not an operational
+  diagnostic schema.
 - Excluded Material: assessment authenticity, eligibility receipts, and chunk
   content hydration are not part of this seam. Downstream Guide Evidence Handoff
   requires that material and is deliberately not connected here.
@@ -58,6 +67,7 @@ __all__ = [
 ]
 
 GuideRetrievalJoinKey = tuple[UUID, UUID, str, str]
+GuideRetrievalHitIdentity = tuple[str, str, str, int]
 
 
 class GuideRetrievalCompositionDecision(StrEnum):
@@ -117,6 +127,16 @@ def _hit_join_key(hit: ProductionSearchHit) -> GuideRetrievalJoinKey:
     )
 
 
+def _hit_identity(hit: ProductionSearchHit) -> GuideRetrievalHitIdentity:
+    """Return the production Evidence Gate stable coordinate identity of a hit."""
+    return (
+        hit.coordinate.source_code,
+        hit.coordinate.source_version,
+        hit.coordinate.external_document_id,
+        hit.coordinate.chunk_index,
+    )
+
+
 def _verify_retrieval(
     retrieval_outcome: ProductionRetrievalOutcome,
 ) -> tuple[ProductionSearchReceipt | None, GuideRetrievalCompositionReason | None]:
@@ -140,6 +160,7 @@ def _verify_retrieval(
 def _index_bindings(
     bindings: tuple[RequestSourceMemberBinding, ...],
 ) -> tuple[dict[GuideRetrievalJoinKey, RequestSourceMemberBinding] | None, GuideRetrievalCompositionReason | None]:
+    """Index authenticated bindings by authority key, rejecting a repeated member key."""
     indexed: dict[GuideRetrievalJoinKey, RequestSourceMemberBinding] = {}
     for binding in bindings:
         key = _binding_join_key(binding)
@@ -156,11 +177,18 @@ def compose_guide_authority_with_production_retrieval(
 ) -> GuideRetrievalCompositionOutcome:
     """Join AUTHENTICATED authority bindings with production selected hits fail-closed.
 
-    Validation is phase-ordered and fail-fast:
+    Validation is phase-ordered and fail-fast, and a rejection returns exactly one
+    typed reason:
     - Phase 1: Authority precondition (#672 AUTHENTICATED outcome only)
     - Phase 2: Production retrieval precondition (#178 SUCCEEDED outcome, receipt,
       and production Evidence Gate success)
-    - Phase 3: Exact 1:1 join on the four authority coordinate fields
+    - Phase 3: Exact join on the four authority coordinate fields
+
+    Success requires that every selected hit resolves exactly one authenticated
+    member binding, that every supplied binding is used by at least one selected
+    hit, that no authority member key carries more than one binding, and that no
+    two selected hits share a stable coordinate. One binding may legitimately be
+    reused by several distinct chunk hits of the same Source Member.
 
     On success, selections preserve the production `selected_hits` order; this
     module applies no ranking policy of its own.
@@ -187,28 +215,31 @@ def compose_guide_authority_with_production_retrieval(
     selected_hits = gate_outcome.selected_hits
 
     # --------------------------------------------------------------------------
-    # Phase 3: Exact 1:1 Join
+    # Phase 3: Exact Join (N chunk hits : 1 member binding)
     # --------------------------------------------------------------------------
-    unmatched_bindings, duplicate_err = _index_bindings(authority_outcome.bindings)
+    bindings_by_key, duplicate_err = _index_bindings(authority_outcome.bindings)
     if duplicate_err is not None:
         return _rejected(duplicate_err)
-    assert unmatched_bindings is not None
+    assert bindings_by_key is not None
 
     selections: list[AuthenticatedGuideRetrievalSelection] = []
-    seen_hit_keys: set[GuideRetrievalJoinKey] = set()
+    seen_hit_identities: set[GuideRetrievalHitIdentity] = set()
+    used_binding_keys: set[GuideRetrievalJoinKey] = set()
 
     for hit in selected_hits:
-        key = _hit_join_key(hit)
-        if key in seen_hit_keys:
+        identity = _hit_identity(hit)
+        if identity in seen_hit_identities:
             return _rejected(GuideRetrievalCompositionReason.DUPLICATE_HIT)
-        seen_hit_keys.add(key)
+        seen_hit_identities.add(identity)
 
-        binding = unmatched_bindings.pop(key, None)
+        key = _hit_join_key(hit)
+        binding = bindings_by_key.get(key)
         if binding is None:
             return _rejected(GuideRetrievalCompositionReason.BINDING_NOT_FOUND)
+        used_binding_keys.add(key)
         selections.append(AuthenticatedGuideRetrievalSelection(hit=hit, binding=binding))
 
-    if unmatched_bindings:
+    if set(bindings_by_key) - used_binding_keys:
         return _rejected(GuideRetrievalCompositionReason.EXTRA_BINDING)
 
     return GuideRetrievalCompositionOutcome(
