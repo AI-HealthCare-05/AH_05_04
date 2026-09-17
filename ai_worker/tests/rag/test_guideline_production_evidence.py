@@ -203,6 +203,7 @@ PRODUCTION_RAG15_MODULES = (
     "ai_worker/tasks/rag/guideline_generator.py",
     "ai_worker/tasks/rag/guideline_generator_prompt.py",
     "ai_worker/tasks/rag/guideline_card.py",
+    "ai_worker/tasks/rag/guideline_evidence_binding_authority.py",
     "ai_worker/adapters/openai_guideline_generator.py",
 )
 
