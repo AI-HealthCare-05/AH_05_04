@@ -25,12 +25,10 @@ def test_infrastructure_evidence_separates_implementation_from_activation() -> N
     assert evidence["approval_ingestion_status"] == "IMPLEMENTED_IN_REPOSITORY"
     assert evidence["grant_revoke_expire_status"] == "IMPLEMENTED_IN_REPOSITORY"
     assert evidence["production_approval_source_connector_status"] == "NOT_IMPLEMENTED"
-    assert evidence["dataset_lifecycle_freeze_status"] == "NOT_IMPLEMENTED"
-    assert evidence["identity_administration_status"] == "NOT_IMPLEMENTED"
+    assert evidence["dataset_lifecycle_freeze_status"] == "IMPLEMENTED_IN_REPOSITORY"
+    assert evidence["identity_administration_status"] == "IMPLEMENTED_IN_REPOSITORY"
     assert evidence["remaining_repository_scope"] == [
         "PRODUCTION_APPROVAL_SOURCE_CONNECTOR",
-        "DATASET_TRANSITION_AND_FREEZE_SERVICE",
-        "IDENTITY_REGISTRATION_DISABLE_SERVICE",
     ]
     assert evidence["effective_enforcement_status"] == "NOT_IMPLEMENTED"
     assert evidence["access_authorized"] is False
