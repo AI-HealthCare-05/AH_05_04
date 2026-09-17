@@ -242,6 +242,55 @@ describe('production 복약 일정', () => {
     expect(screen.getByText('이 날짜에 표시할 복약 일정이 없어요.')).toBeTruthy()
   })
 
+  it('취소 이력은 접힌 영역으로 분리하고 현재 복약만 카드로 표시한다', async () => {
+    const original = makeDay().data.occurrences[0]
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({ occurrences: [
+        { ...original, occurrence_id: 'cancelled-1', status: 'CANCELLED', scheduled_at: '2026-09-14T09:15:00Z' },
+        { ...original, occurrence_id: 'cancelled-2', status: 'CANCELLED', scheduled_at: '2026-09-14T09:17:00Z' },
+        { ...original, scheduled_at: '2026-09-14T10:00:00Z' },
+      ] })),
+    })
+    renderSchedule(services)
+    const summary = await screen.findByText('취소된 일정 2건 보기')
+    const details = summary.closest('details')!
+    expect(details.open).toBe(false)
+    expect(document.querySelectorAll('.schedule-occurrence-card')).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: '복용 여부 기록하기' })).toHaveLength(1)
+    fireEvent.click(summary)
+    expect(details.open).toBe(true)
+    expect(details.querySelectorAll('li')).toHaveLength(2)
+    expect(details.textContent).toContain('18:15')
+    expect(details.textContent).toContain('18:17')
+    expect(details.querySelector('button')).toBeNull()
+    expect(services.putMedicationCheckin).not.toHaveBeenCalled()
+  })
+
+  it('취소 항목만 있는 날에는 빈 복약 상태와 취소 이력을 표시한다', async () => {
+    renderSchedule(makeServices({ getMedicationDay: vi.fn().mockResolvedValue(makeDay({
+      schedule_status: 'INACTIVE',
+      occurrences: [{ ...makeDay().data.occurrences[0], status: 'CANCELLED' }],
+    })) }))
+    expect(await screen.findByText('이 날짜에 표시할 복약 일정이 없어요.')).toBeTruthy()
+    expect(screen.getByText('취소된 일정 1건 보기').closest('details')!.open).toBe(false)
+    expect(document.querySelectorAll('.schedule-occurrence-card')).toHaveLength(0)
+  })
+
+  it('같은 약의 가까운 비취소 일정과 완료 기록은 합치거나 숨기지 않는다', async () => {
+    const original = makeDay().data.occurrences[0]
+    renderSchedule(makeServices({ getMedicationDay: vi.fn().mockResolvedValue(makeDay({ occurrences: [
+      original,
+      { ...original, occurrence_id: 'second', scheduled_at: '2026-09-14T00:02:00Z' },
+      { ...original, occurrence_id: 'completed', status: 'CLOSED', checkin: {
+        checkin_id: 'checkin', occurrence_id: 'completed', status: 'TAKEN', taken_at: original.scheduled_at, revision: 1, corrected: false,
+      } },
+    ] })) }))
+    await screen.findByRole('button', { name: '복약 기록 수정하기' })
+    expect(document.querySelectorAll('.schedule-occurrence-card')).toHaveLength(3)
+    expect(screen.getAllByRole('button', { name: '복용 여부 기록하기' })).toHaveLength(2)
+    expect(document.querySelector('details')).toBeNull()
+  })
+
   it('일정 설정 진입 시 고정 시각 설정 Source만 표시한다', async () => {
     renderSchedule(makeServices())
     fireEvent.click(await screen.findByRole('button', { name: '복약 일정 설정·수정' }))
