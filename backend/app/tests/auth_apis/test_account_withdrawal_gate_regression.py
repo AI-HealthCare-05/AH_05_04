@@ -11,7 +11,7 @@ from app.main import app
 from app.models.async_jobs import AiJob
 from app.models.chat import ChatMessage
 from app.models.guides import Guide
-from app.models.users import AccountStatus, User
+from app.models.users import User
 from app.tests.helpers.auth import signup_verified_user
 
 PASSWORD = "Password123!"
@@ -42,12 +42,9 @@ async def _count_rows(session: AsyncSession, model: type) -> int:
     return int(await session.scalar(select(func.count()).select_from(model)) or 0)
 
 
-async def _assert_user_is_withdrawal_requested(session: AsyncSession, email: str) -> None:
+async def _assert_original_email_is_removed(session: AsyncSession, email: str) -> None:
     user = await session.scalar(select(User).where(User.email == email))
-    assert user is not None
-    assert user.account_status == AccountStatus.WITHDRAWAL_REQUESTED
-    assert user.is_active is False
-    assert user.token_version == 1
+    assert user is None
 
 
 def _assert_invalid_token(response) -> None:
@@ -55,7 +52,7 @@ def _assert_invalid_token(response) -> None:
     assert response.json()["code"] == "INVALID_TOKEN"
 
 
-async def test_withdrawal_requested_user_cannot_start_ocr_guide_or_chat(
+async def test_withdrawn_user_cannot_start_ocr_guide_or_chat(
     db_session: AsyncSession,
     enable_account_withdrawal_request: None,
 ) -> None:
@@ -65,7 +62,7 @@ async def test_withdrawal_requested_user_cannot_start_ocr_guide_or_chat(
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         access_token, email = await _signup_login_and_request_withdrawal(client)
-        await _assert_user_is_withdrawal_requested(db_session, email)
+        await _assert_original_email_is_removed(db_session, email)
         headers = {"Authorization": f"Bearer {access_token}"}
 
         ocr_response = await client.post(

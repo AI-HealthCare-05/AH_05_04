@@ -230,7 +230,7 @@ OCR 목적은 전용 경로 `/api/v1/users/me/consents/OCR`에서 `GET` / `POST`
 | --- | --- | ---: | --- |
 | `GET` | `/api/v1/auth/token/refresh` | `200 OK` | httponly `refresh_token` 쿠키를 검증하고 새 access token과 **새 refresh token(rotation)**을 발급해 쿠키를 교체합니다. |
 | `POST` | `/api/v1/auth/logout` | `200 OK` | 현재 사용자의 세션 무효화 카운터를 증가시키고 `refresh_token` 쿠키를 삭제합니다. |
-| `POST` | `/api/v1/auth/account/withdrawal` | `200 OK` | `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true`에서만 현재 비밀번호 재인증과 `confirmed=true` 최종 확인 후 계정 이용 종료와 탈퇴 요청을 접수합니다. |
+| `POST` | `/api/v1/auth/account/withdrawal` | `200 OK` | `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true`에서만 현재 비밀번호 재인증과 `confirmed=true` 최종 확인 후 계정 이용 종료와 합성 데모 임시 정책 기준 삭제·보존 처리를 수행합니다. |
 
 - access token과 refresh token에는 발급 시점의 `token_version`이 포함됩니다.
 - 인증된 요청과 토큰 갱신은 DB의 현재 사용자 상태를 다시 확인합니다.
@@ -252,10 +252,11 @@ OCR 목적은 전용 경로 `/api/v1/users/me/consents/OCR`에서 `GET` / `POST`
 
 - `password`는 현재 비밀번호로 재인증합니다. 실패하면 `401 UNAUTHORIZED`를 반환하고 계정 상태, token, `account_deletion_request`를 변경하지 않습니다.
 - `confirmed`는 반드시 `true`여야 합니다. `false`이면 `422 VALIDATION_FAILED`, `details[].field=confirmed`, `reason=CONFIRMATION_REQUIRED`를 반환하고 저장하지 않습니다.
-- 성공하면 같은 transaction에서 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at`, `token_version + 1`, `account_deletion_request.status=PENDING`이 반영됩니다.
-- 응답은 `{"detail":"계정 이용 종료와 탈퇴 요청 접수가 완료되었습니다."}`이며, `refresh_token` 쿠키를 삭제합니다. 이 응답은 물리 삭제 완료가 아니라 계정 이용 종료와 삭제 요청 접수 완료를 뜻합니다.
+- 성공하면 같은 transaction에서 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at`, `token_version + 1`, `account_deletion_request.status=PENDING`을 만든 뒤 합성 데모 임시 정책 기준 삭제·보존 처리를 수행합니다.
+- 삭제·보존 처리가 성공한 경우 원래 이메일·이름·전화번호·생년월일·성별과 처방전 원본, OCR 결과, 사용자별 약물 식별 결과, Guide/Chat 입력·결과, 로그인 세션·Push token을 제거하고, 기존 사용자 row는 재가입 충돌을 막지 않는 익명 `WITHDRAWN` 상태로 남깁니다. `account_deletion_request`는 요청 ID, 상태, 요청/시작/완료 시각, 실패 코드만 보존하며 이메일이나 건강정보 원문을 저장하지 않습니다.
+- 삭제·보존 처리가 성공한 응답은 `{"detail":"회원탈퇴가 완료되었습니다."}`이며, `refresh_token` 쿠키를 삭제합니다. 삭제·보존 처리 실패 시 `account_status=WITHDRAWAL_REQUESTED` 접근 차단과 `account_deletion_request.status=FAILED`, `last_error_code=DEMO_DELETION_FAILED`를 커밋하고 `{"detail":"탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."}`를 반환합니다.
 - 재인증 rate limit/lockout은 현재 로그인과 동일하게 별도 제한이 없으며, 정확한 제한 정책은 Backend/Security 후속 이슈에서 다룹니다.
-- 개인정보·건강정보 삭제·보존 처리, `IN_PROGRESS`/`COMPLETED` 전이, `WITHDRAWN` 기록, 사용자-facing 완료 고지는 PM/Privacy 승인 후속 범위입니다.
+- 이 삭제·보존 기준은 합성 데이터 기반 데모 임시 정책입니다. 실제 사용자 대상 Production 공개와 법정 보존/백업 파기 운영 정책은 PM/Privacy 승인 및 외부 공개 승인 범위와 분리합니다.
 
 ### 회원가입 이메일 인증
 
