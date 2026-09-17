@@ -4,7 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { ApiError } from '../src/api/client'
 import { requestAccountWithdrawal } from '../src/api/auth'
-import { getUserConsents, withdrawUserConsent, CONSENT_PURPOSES, type UserConsent } from '../src/api/userConsents'
+import {
+  getUserConsents,
+  grantUserConsent,
+  withdrawUserConsent,
+  CONSENT_PURPOSES,
+  type UserConsent,
+} from '../src/api/userConsents'
 import {
   getCurrentUser,
   updateCurrentUser,
@@ -22,6 +28,7 @@ vi.mock('../src/api/auth', () => ({
 }))
 vi.mock('../src/api/userConsents', () => ({
   getUserConsents: vi.fn(),
+  grantUserConsent: vi.fn(),
   withdrawUserConsent: vi.fn(),
   CONSENT_PURPOSES: ['OCR', 'GUIDE', 'CHAT', 'NOTIFICATION'],
 }))
@@ -88,6 +95,16 @@ beforeEach(() => {
   vi.mocked(updateCurrentUser).mockResolvedValue(CURRENT_USER)
   vi.mocked(requestAccountWithdrawal).mockResolvedValue({ detail: '회원탈퇴가 완료되었습니다.' })
   vi.mocked(getUserConsents).mockResolvedValue({ data: CONSENTS })
+  vi.mocked(grantUserConsent).mockImplementation(async (purpose, version) => ({
+    data: {
+      ...CONSENTS.find((item) => item.purpose === purpose)!,
+      policy_version: version,
+      status: 'GRANTED',
+      is_granted: true,
+      granted_at: '2026-09-17T00:00:00Z',
+      withdrawn_at: null,
+    },
+  }))
   vi.mocked(withdrawUserConsent).mockImplementation(async (purpose, version) => ({
     data: { ...CONSENTS.find((item) => item.purpose === purpose)!, policy_version: version,
       status: 'WITHDRAWN', is_granted: false, withdrawn_at: '2026-09-15T00:00:00Z' },
@@ -609,6 +626,80 @@ describe('회원탈퇴 요청', () => {
 
 
 describe('목적별 동의 관리', () => {
+  it('미동의 상태에서 현재 정책 버전으로 다시 동의할 수 있다', async () => {
+    vi.mocked(getUserConsents).mockResolvedValue({
+     data: CONSENTS.map((item) =>
+        item.purpose === 'OCR'
+          ? {
+              ...item,
+              status: null,
+              policy_version: null,
+              is_granted: false,
+              granted_at: null,
+            }
+           : item,
+      ),
+    })
+
+    renderProfile()
+
+    const button = await screen.findByRole('button', {
+      name: '처방전 외부 처리 동의하기',
+    })
+
+    fireEvent.click(button)
+
+    expect(
+      await screen.findByText('처방전 외부 처리 동의를 저장했습니다.'),
+    ).toBeTruthy()
+
+    expect(grantUserConsent).toHaveBeenCalledWith(
+      'OCR',
+      'OCR-server-v3',
+    )
+
+    expect(
+      screen.getAllByText('현재 동의한 상태입니다.'),
+    ).toHaveLength(4)
+
+    expect(
+      screen.getByRole('button', {
+        name: '처방전 외부 처리 동의 철회',
+      }),
+    ).toBeTruthy()
+  })
+
+  it('철회 상태에서도 다시 동의할 수 있다', async () => {
+    vi.mocked(getUserConsents).mockResolvedValue({
+      data: CONSENTS.map((item) =>
+        item.purpose === 'GUIDE'
+          ? {
+              ...item,
+              status: 'WITHDRAWN',
+              is_granted: false,
+            }
+          : item,
+      ),
+    })
+
+    renderProfile()
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: '복약 가이드 동의하기',
+      }),
+    )
+
+    expect(grantUserConsent).toHaveBeenCalledWith(
+      'GUIDE',
+      'GUIDE-server-v3',
+    )
+
+    expect(
+      await screen.findByText('복약 가이드 동의를 저장했습니다.'),
+    ).toBeTruthy()
+  })
+
   it.each(CONSENT_PURPOSES)('%s만 서버 버전으로 철회하고 나머지 목적을 유지한다', async (purpose) => {
     renderProfile()
     await screen.findAllByText('현재 동의한 상태입니다.')
