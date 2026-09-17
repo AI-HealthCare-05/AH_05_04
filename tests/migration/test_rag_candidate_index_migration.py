@@ -204,3 +204,67 @@ def test_candidate_index_downgrade_blocks_when_data_exists_and_preserves_schema(
             assert await _candidate_index_version_count(connection) == 1
 
     asyncio.run(run())
+
+
+def test_candidate_index_lock_marker_migration_upgrade_and_downgrade() -> None:
+    migration_780_path = (
+        PROJECT_ROOT / "backend" / "alembic" / "versions" / "780a1b2c3d4e_add_candidate_index_lock_marker.py"
+    )
+    spec = importlib.util.spec_from_file_location("candidate_index_lock_marker_migration", migration_780_path)
+    assert spec is not None and spec.loader is not None
+    migration_780 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration_780)
+
+    def _upgrade_780(connection) -> None:
+        with Operations.context(MigrationContext.configure(connection)):
+            migration_780.upgrade()
+
+    def _downgrade_780(connection) -> None:
+        with Operations.context(MigrationContext.configure(connection)):
+            migration_780.downgrade()
+
+    async def run() -> None:
+        async with _isolated_candidate_index_schema() as connection:
+            # Seed an existing row prior to migration
+            await _seed_candidate_index_version(connection)
+
+            # Upgrade adds candidate_index_lock_marker with default 0 and check constraint
+            await connection.run_sync(_upgrade_780)
+
+            # Check column exists and default value 0 is populated on existing rows
+            result = await connection.execute(
+                text("SELECT candidate_index_lock_marker FROM rag_candidate_index_version")
+            )
+            assert result.scalar_one() == 0
+
+            # Check constraint exists
+            con_result = await connection.execute(
+                text(
+                    """
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE connamespace = current_schema()::regnamespace
+                      AND conrelid = 'rag_candidate_index_version'::regclass
+                    """
+                )
+            )
+            constraints = {str(row[0]) for row in con_result}
+            assert "chk_rag_candidate_index_lock_marker" in constraints
+
+            # Downgrade drops constraint and column
+            await connection.run_sync(_downgrade_780)
+
+            col_result = await connection.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'rag_candidate_index_version'
+                      AND column_name = 'candidate_index_lock_marker'
+                    """
+                )
+            )
+            assert col_result.scalar_one_or_none() is None
+
+    asyncio.run(run())
