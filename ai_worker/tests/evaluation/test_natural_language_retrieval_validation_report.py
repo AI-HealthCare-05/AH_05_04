@@ -130,13 +130,13 @@ def _status_payload() -> dict[str, Any]:
                 "check_id": "PHASE_A_REPORT_PROJECTION",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_validation_report.py -q",
                 "exit_code": 0,
-                "result": "51 passed",
+                "result": "57 passed",
             },
             {
                 "check_id": "PHASE_A_SCHEMA_EXPORT",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_schema_exports.py ai_worker/tests/evaluation/test_external_schema_parity.py ai_worker/tests/evaluation/test_provenance_v1_schemas.py -q",
                 "exit_code": 0,
-                "result": "94 passed, 7 skipped",
+                "result": "158 passed",
             },
             {
                 "check_id": "PHASE_B_DATASET_APPROVAL_PROVENANCE",
@@ -160,7 +160,7 @@ def _status_payload() -> dict[str, Any]:
                 "check_id": "PHASE_B3_PROTECTED_RUNNER_FOUNDATION",
                 "command": "UV_CACHE_DIR=/private/tmp/ah_issue273_uv_cache uv run pytest ai_worker/tests/evaluation/test_natural_language_retrieval_protected_runner_foundation.py ai_worker/tests/evaluation/test_protected_retrieval.py -q",
                 "exit_code": 0,
-                "result": "83 passed",
+                "result": "85 passed",
             },
         ],
         "updated_at": "2026-09-09T00:00:00.000000Z",
@@ -596,12 +596,13 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
 
     assert raw_status == canonical_json_bytes(parse_json_object_bytes(raw_status)) + b"\n"
     assert render_report(raw_status) == REPORT_PATH.read_bytes()
-    assert b"Phase B3 \xc2\xb7 Protected Runner Policy Foundation Implemented" in REPORT_PATH.read_bytes()
+    assert b"Phase B4 \xc2\xb7 DEV Actual Retrieval Evaluation Completed" in REPORT_PATH.read_bytes()
     assert "한국어 자연어 합성 DEV 질문" in REPORT_PATH.read_text()
     assert b"DEV Dataset approval is recorded as APPROVED" in REPORT_PATH.read_bytes()
     assert b"Dataset remains DRAFT and unfrozen" in REPORT_PATH.read_bytes()
-    assert b"Actual retrieval was not run" in REPORT_PATH.read_bytes()
-    assert b"No baseline Metric exists" in REPORT_PATH.read_bytes()
+    assert b"Actual DEV retrieval evaluation was executed and verified." in REPORT_PATH.read_bytes()
+    assert b"](experiments/README.md)" in REPORT_PATH.read_bytes()
+    assert b"2026-09-16-dev-actual-retrieval-ret-l-d-h" not in REPORT_PATH.read_bytes()
     assert b"DEV cannot produce a Release PASS" in REPORT_PATH.read_bytes()
     assert b"Production remains closed" in REPORT_PATH.read_bytes()
     assert b"Access authorization is not recorded" in REPORT_PATH.read_bytes()
@@ -619,10 +620,10 @@ def test_committed_status_is_canonical_and_report_is_exact_projection() -> None:
         b"1 passed",
         b"26 passed",
         b"27 passed",
-        b"83 passed",
-        b"51 passed",
+        b"85 passed",
+        b"57 passed",
         b"132 passed",
-        b"94 passed, 7 skipped",
+        b"158 passed",
     ):
         assert result in raw_status
         assert result in REPORT_PATH.read_bytes()
@@ -662,6 +663,10 @@ def test_phase_b4_status_and_report_projection_success() -> None:
     assert b"Phase B4 \xc2\xb7 DEV Actual Retrieval Evaluation Completed" in report_bytes
     assert b"Actual DEV retrieval evaluation was executed and verified." in report_bytes
     assert f"- Actual Run Artifact: `rag-eval.run@1.0.0` `{'a' * 64}`".encode() in report_bytes
+    assert b"](experiments/README.md)" in report_bytes
+    assert b"DIAGNOSTIC_ONLY observations in the experiment log" in report_bytes
+    assert b".md)" not in report_bytes.split(b"experiments/README.md)")[1]
+    assert b"](experiments/" not in render_report(_status_bytes(_status_payload()))
 
 
 def test_phase_b4_rejects_retaining_rag_14_adapter_blocker() -> None:
@@ -723,3 +728,39 @@ def test_phase_b3_rejects_premature_b4_blockers() -> None:
         parse_status_bytes(_status_bytes(payload))
 
     assert raised.value.code is EvaluationErrorCode.SCHEMA_INVALID
+
+
+def test_experiment_index_is_the_only_experiment_entry_point_in_the_report() -> None:
+    """The renderer links the stable index, never an individual dated log."""
+
+    experiments_dir = REPOSITORY_ROOT / "docs/validation/rag/issue-273/experiments"
+    index_path = experiments_dir / "README.md"
+    assert index_path.is_file()
+
+    report_text = REPORT_PATH.read_text(encoding="utf-8")
+    assert "](experiments/README.md)" in report_text
+
+    dated_logs = sorted(path.name for path in experiments_dir.glob("*.md") if path.name != "README.md")
+    assert dated_logs, "at least one historical experiment log must exist"
+    for name in dated_logs:
+        assert name not in report_text
+
+    index_text = index_path.read_text(encoding="utf-8")
+    assert "DEV EVIDENCE ONLY — NOT RELEASE PASS" in index_text
+    assert "2026-09-16-dev-actual-retrieval-ret-l-d-h.md" in index_text
+    for name in dated_logs:
+        assert (experiments_dir / name).is_file()
+        assert f"]({name})" in index_text
+
+    current_log = experiments_dir / "2026-09-16-dev-actual-retrieval-ret-l-d-h.md"
+    assert current_log.is_file()
+    assert "DEV EVIDENCE ONLY — NOT RELEASE PASS" in current_log.read_text(encoding="utf-8")
+
+
+def test_renderer_module_does_not_hardcode_a_dated_experiment_filename() -> None:
+    source = (REPOSITORY_ROOT / "ai_worker/tasks/evaluation/natural_language_retrieval_validation.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "experiments/README.md" in source
+    assert "2026-09-16-dev-actual-retrieval" not in source
