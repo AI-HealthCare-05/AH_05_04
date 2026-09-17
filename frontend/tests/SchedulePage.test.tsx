@@ -32,6 +32,16 @@ function makeDay(
           schedule_id: '44444444-4444-4444-8444-444444444444',
           revision: 3,
           setup_reason: null,
+          schedule: {
+            schedule_id: '44444444-4444-4444-8444-444444444444',
+            prescription_version_medication_id: medicationId,
+            revision: 3,
+            status: 'ACTIVE',
+            start_local_date: '2026-09-14',
+            end_mode: 'DATE',
+            end_local_date: '2026-09-20',
+            local_times: ['09:00'],
+          },
         },
       ],
       occurrences: [
@@ -170,6 +180,7 @@ function setupItem(
     schedule_id: null,
     revision: null,
     setup_reason: 'MISSING_START_DATE' as const,
+    schedule: null,
     ...overrides,
   }
 }
@@ -508,6 +519,40 @@ describe('production 복약 일정', () => {
     expect(screen.queryByRole('button', { name: /복용 시간 (추가|삭제)/ })).toBeNull()
   })
 
+  it('기존 ACTIVE 일정의 날짜·종료 방식·복용 시간을 수정 폼에 채운다', async () => {
+    const savedSchedule = {
+      ...makeDay().data.schedule_items[0],
+      schedule: {
+        ...makeDay().data.schedule_items[0].schedule!,
+        start_local_date: '2026-09-10',
+        end_mode: 'OPEN_ENDED' as const,
+        end_local_date: null,
+        local_times: ['08:30', '20:30'],
+      },
+    }
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({
+        schedule_items: [savedSchedule],
+      })),
+      getLatestPrescription: vi.fn().mockResolvedValue(makePrescription({
+        medications: [{ ...makePrescription().data.medications[0], frequency_per_day: 2 }],
+      })),
+    })
+    renderSchedule(services)
+
+    fireEvent.click(await screen.findByRole('button', { name: '복약 일정 설정·수정' }))
+
+    expect((screen.getByLabelText('현재 처방의 혈압약 복용 시작일') as HTMLInputElement).value)
+      .toBe('2026-09-10')
+    expect((screen.getByRole('radio', { name: '계속 복용' }) as HTMLInputElement).checked).toBe(true)
+    expect(screen.queryByLabelText('현재 처방의 혈압약 복용 종료일')).toBeNull()
+    expect((screen.getByLabelText('현재 처방의 혈압약 1번째 복용 시간') as HTMLInputElement).value)
+      .toBe('08:30')
+    expect((screen.getByLabelText('현재 처방의 혈압약 2번째 복용 시간') as HTMLInputElement).value)
+      .toBe('20:30')
+    expect(services.putMedicationSchedule).not.toHaveBeenCalled()
+  })
+
   it('오늘 시작 일정에 이미 지난 복용 시간이 있으면 이후 날짜 적용 안내를 표시한다', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-09-14T10:00:00Z'))
@@ -540,16 +585,25 @@ describe('production 복약 일정', () => {
 
   it.each(['아침·저녁 식후 30분', '아침·점심 식전', '긴 지시 '.repeat(40), null, '   '])('설정·수정 시 복용 지시 %s를 입력과 연결한다', async (timingText) => {
     const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({
+        schedule_items: [{
+          ...makeDay().data.schedule_items[0],
+          schedule: {
+            ...makeDay().data.schedule_items[0].schedule!,
+            local_times: ['09:00', '21:00'],
+          },
+        }],
+      })),
       getLatestPrescription: vi.fn().mockResolvedValue(makePrescription({
         medications: [{ ...makePrescription().data.medications[0], frequency_per_day: 2, timing_text: timingText }],
       })),
     })
     renderSchedule(services)
     fireEvent.click(await screen.findByRole('button', { name: '복약 일정 설정·수정' }))
-    for (const input of screen.getAllByLabelText(/번째 복용 시간$/)) {
+    for (const [index, input] of screen.getAllByLabelText(/번째 복용 시간$/).entries()) {
       const description = document.getElementById(input.getAttribute('aria-describedby')!)!
       expect(description.textContent).toBe(`처방 복용 지시${timingText?.trim() || '복용 시점 미확인 · 처방전의 복용 지시를 확인해 주세요.'}`)
-      expect((input as HTMLInputElement).value).toBe('')
+      expect((input as HTMLInputElement).value).toBe(['09:00', '21:00'][index])
     }
     fillScheduleEditor('현재 처방의 혈압약', '2026-09-14', '2026-09-20', ['08:30', '18:30'])
     fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
@@ -669,6 +723,7 @@ describe('production 복약 일정', () => {
       schedule_id: null,
       revision: null,
       setup_reason: 'MISSING_START_DATE' as const,
+      schedule: null,
     }
     const services = makeServices({
       getMedicationDay: vi.fn().mockResolvedValue(makeDay({
