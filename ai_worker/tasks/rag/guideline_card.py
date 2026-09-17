@@ -210,6 +210,35 @@ class GuidelineCardDraft:
     consultation_text: SensitiveText
 
 
+def create_canonical_claim_draft(
+    *,
+    claim_key: str,
+    medication_identity: MedicationIdentityRef,
+    scope: GuidelineScope,
+    citations: tuple[GuidelineCitationDraft, ...],
+) -> GuidelineClaimDraft:
+    action_class = _ACTION_CLASS_BY_SCOPE[scope]
+    action_text = SensitiveText(_ACTION_TEXT_BY_CLASS[action_class])
+    return GuidelineClaimDraft(
+        claim_key=claim_key,
+        medication_identity=medication_identity,
+        scope=scope,
+        action_class=action_class,
+        action_text=action_text,
+        citations=citations,
+    )
+
+
+def create_canonical_card_draft(
+    claims: tuple[GuidelineClaimDraft, ...],
+) -> GuidelineCardDraft:
+    return GuidelineCardDraft(
+        claims=claims,
+        uncertainty_text=SensitiveText(_APPROVED_UNCERTAINTY_TEXT),
+        consultation_text=SensitiveText(_APPROVED_CONSULTATION_TEXT),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class GuidelineGenerationProvenance:
     prompt_ref: ImmutableArtifactRef

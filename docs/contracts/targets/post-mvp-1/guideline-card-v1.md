@@ -135,13 +135,29 @@ RAG-15 내부의 draft generation boundary다.
 1. `GuidelineGeneratorPort`는 RAG-15 내부 generation boundary다.
 2. 입력은 `GuidelineGenerationRequest`(`medication_identities`, `evidence_gate_outcome`, `policy`).
 3. 출력은 정확히 `GuidelineCardDraft | GuidelineGenerationFailure`이다.
-4. 실제 Provider adapter는 아직 구현하지 않는다.
-5. DB/persistence는 이 slice 밖이다.
-6. Guide API는 이 slice 밖이다.
-7. #180 orchestration은 이 slice 밖이다.
-8. RAG-16 연결은 이 slice 밖이다.
-9. Finalizer는 validation/approval/binding/fallback 책임을 계속 가진다.
-10. 이 Protocol 추가만으로 Production Runtime 활성화나 public release를 의미하지 않는다.
+4. #179에서 `GuidelineGeneratorPort`를 구현하는 `OpenAIGuidelineGeneratorAdapter`(`ai_worker.adapters.openai_guideline_generator.OpenAIGuidelineGeneratorAdapter`)를 추가했다:
+   - 환자 식별자(UUID) 및 내부 evidence provenance를 제거하고 불투명 슬롯(`medication_slot`, `evidence_slot`)만을 Provider에 제공하는 최소 투영(`build_guideline_generation_input_projection`)을 사용한다.
+   - Provider 출력은 Structured Output(`GuidelineStructuredSelection`)으로 수신하며, 엄격한 결정론적 파서(`parse_guideline_structured_output`)를 거친다.
+   - 중복 claim은 `(medication_slot, scope.value)` 기준으로 병합되며, canonical_code가 동일하더라도 서로 다른 `MedicationIdentityRef`는 병합하지 않는다.
+   - deterministic claim key는 단순화된 `claim:{index:03d}` 형식을 사용한다.
+   - Citation은 오직 Gate를 통과한 selection(`gate_passed_selections`)에서만 복원되며, 권위적 provenance(`evidence_key`, `source_snapshot_ref`, `source_version`, `locator`, `content_sha256`)를 strict하게 결속한다.
+   - Provider 호출 시 true dual timeout(`asyncio.timeout` + client `with_options(timeout=..., max_retries=0)`)을 엄격하게 적용하며, `with_options`가 없는 client는 fail-closed로 거부한다.
+   - Defensive Gate precondition boundary로 Gate 비정상(non-SUFFICIENT, empty selections 등) 시 Provider를 호출하지 않고(0회) 즉시 `VALIDATION_FAILED`로 fail-closed 처리한다.
+   - Observability는 `provider_contracts.observability` 및 `provider_runtime.observability` 규격을 준수하여 API key, 환자 정보, 원문 text 누출 없이 구조화된 span/event를 기록한다.
+   - Adapter는 외부 caller가 주입하는 generation provenance를 신뢰/허용하지 않고, 실제 실행 artifact 및 configuration으로부터 candidate provenance(`build_candidate_provenance`)를 직접 구성한다:
+     * Prompt candidate: exact prompt version(`guideline-claim-selector-v1`) + 시스템 지시문 UTF-8 content hash
+     * Model candidate: 요청/설정된 OpenAI 모델 canonical identity(`openai:{normalized_model}`) + content hash (Provider 응답 `model_name`은 observability evidence)
+     * Parser candidate: 실제 파서 모듈 소스 파일(`ai_worker/tasks/rag/guideline_generator_prompt.py`) 바이트 content hash
+     * Validator candidate: 실제 카드 커널 소스 파일(`ai_worker/tasks/rag/guideline_card.py`) 바이트 content hash
+     * 각 candidate의 self/content hash는 무결성 및 identity evidence이며, formal approval이 아니다.
+5. Known Deferred Authorities / 잔여 경계 외 항목:
+   - Prompt 및 Model의 formal approval 및 runtime provenance handoff는 이번 PR 범위 밖이며, #180 후속으로 연계된다.
+   - End-to-end 파이프라인 orchestration(#180)은 이 slice 밖이다.
+   - DB/persistence 및 마이그레이션은 이 slice 밖이다.
+   - Guide API는 이 slice 밖이다.
+   - RAG-16 연결(Citation Authorization 최종 wiring)은 이 slice 밖이다.
+   - Finalizer는 validation/approval/binding/fallback 책임을 계속 가진다.
+   - 본 어댑터 추가만으로 Production Runtime 활성화나 PUBLIC_TRACK_F release를 의미하지 않으며, 문서 상태는 `targets/`를 유지한다.
 
 ## RAG-16 소비 경계
 
