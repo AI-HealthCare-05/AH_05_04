@@ -277,7 +277,10 @@ class AnswerComparisonPairManifestEntry(StrictContractModel):
             raise ValueError(f"baseline_variant for {self.pair_id} must be {expected_baseline.value}")
         if self.candidate_variant != expected_candidate:
             raise ValueError(f"candidate_variant for {self.pair_id} must be {expected_candidate.value}")
-        if self.allowed_delta_keys != expected_deltas:
+        actual_deltas = tuple(self.allowed_delta_keys)
+        if len(actual_deltas) != len(set(actual_deltas)):
+            raise ValueError(f"allowed_delta_keys contains duplicate entries for {self.pair_id}")
+        if len(actual_deltas) != len(expected_deltas) or frozenset(actual_deltas) != frozenset(expected_deltas):
             raise ValueError(f"allowed_delta_keys mismatch for {self.pair_id}")
         return self
 

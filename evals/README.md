@@ -171,7 +171,7 @@ Schema Set `1.3.0` 후보 참조는 `rag-eval.schema-set@1.3.0`, SHA-256 `ca1f32
 
 Schema Set `1.4.0` 후보 참조는 `rag-eval.schema-set@1.4.0`, SHA-256 `0f6b69b460af5ea840e009f55b86256942f896be324c7885d709883600799e98`이다. 상태는 `Candidate · Review Required`이며, 책임 리뷰어 김지혜 (`@Jye-rookie`)의 실제 Pull Request review event가 승인 전환에 필요하다. 신규 두 artifact는 Evaluation projection contract만 구현하며 #160·#161 metric kernel, Runtime, HOLDOUT/SAFETY_REGRESSION, Baseline Freeze, Release와 공개는 포함하지 않는다. 기존 Schema Set과 exporter 기본 version은 변경하지 않는다.
 
-Schema Set `1.5.0` 후보 참조는 `rag-eval.schema-set@1.5.0`, SHA-256 `155d6636375ed8c2dafbfcc6dd58c928424021329edf1e72f5e255b50d367537`이다. 상태는 `Candidate · Review Required`이며, 책임 리뷰어 권가빈 (`@hazelnutflavoured`)의 실제 Pull Request review event가 승인 전환에 필요하다. 신규 세 artifact는 #159 DEV metric 입력 및 paired comparison manifest contract만 구현하며 human judgment consumption, ANSWER_CORRECTNESS/RELEVANCE scorer, comparison builder, Runtime, HOLDOUT, Baseline Freeze, Release와 공개는 포함하지 않는다. 기존 Schema Set과 exporter 기본 version은 변경하지 않는다.
+Schema Set `1.5.0` 후보 참조는 `rag-eval.schema-set@1.5.0`, SHA-256 `cf481556cead9f99e4d424481e9ed5aed246899a4c893c45b19a2b7abcb89dc8`이다. 상태는 `Candidate · Review Required`이며, 책임 리뷰어 권가빈 (`@hazelnutflavoured`)의 실제 Pull Request review event가 승인 전환에 필요하다. 신규 세 artifact는 #159 DEV metric 입력 및 paired comparison manifest contract만 구현하며 human judgment consumption, ANSWER_CORRECTNESS/RELEVANCE scorer, comparison builder, Runtime, HOLDOUT, Baseline Freeze, Release와 공개는 포함하지 않는다. 기존 Schema Set과 exporter 기본 version은 변경하지 않는다.
 
 여섯 버전은 다음 명령으로 별도 출력한다. 기본값은 하위 호환을 위해 `1.0.0`이다.
 

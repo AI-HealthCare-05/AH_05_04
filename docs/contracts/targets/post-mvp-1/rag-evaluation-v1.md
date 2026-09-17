@@ -120,7 +120,7 @@ boolean은 모두 false여야 한다. Citation source version은 #180 opaque tok
 
 ### Evaluation Schema Set 1.5 후보
 
-#159 DEV metric 입력 및 비교 manifest 후보는 `rag-eval.schema-set@1.5.0`, SHA-256 `155d6636375ed8c2dafbfcc6dd58c928424021329edf1e72f5e255b50d367537`이다. 문서 상태는 `Candidate · Review Required`이며, 책임 Product·Safety·Evaluation 리뷰어 권가빈 (`@hazelnutflavoured`)의 실제 Pull Request review event가 승인 전환에 필요하다.
+#159 DEV metric 입력 및 비교 manifest 후보는 `rag-eval.schema-set@1.5.0`, SHA-256 `cf481556cead9f99e4d424481e9ed5aed246899a4c893c45b19a2b7abcb89dc8`이다. 문서 상태는 `Candidate · Review Required`이며, 책임 Product·Safety·Evaluation 리뷰어 권가빈 (`@hazelnutflavoured`)의 실제 Pull Request review event가 승인 전환에 필요하다.
 
 26개 member는 Schema Set 1.4의 23개 member version과 canonical bytes를 그대로 재사용하고 다음 세 Evaluation artifact를 member `1.0.0`으로 추가한다.
 

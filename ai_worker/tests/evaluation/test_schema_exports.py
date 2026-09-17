@@ -1167,6 +1167,10 @@ def test_documented_schema_set_1_4_hash_matches_committed_schema_set(
             r"rag-eval\.schema-set@1\.5\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
         ),
         (
+            "docs/governance/decisions/2026-09-17-rag-evaluation-schema-set-1-5-candidate.md",
+            r"Schema Set SHA-256 \| `(?P<hash>[0-9a-f]{64})`",
+        ),
+        (
             "evals/README.md",
             r"rag-eval\.schema-set@1\.5\.0`, SHA-256 `(?P<hash>[0-9a-f]{64})`",
         ),

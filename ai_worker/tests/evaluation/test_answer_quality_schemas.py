@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import jsonschema  # type: ignore[import-untyped]
 import pytest
 from pydantic import ValidationError
 
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
+from ai_worker.tasks.evaluation.schema_exports import schema_documents
 from ai_worker.tasks.evaluation.schemas.answer_quality_v1 import (
     ANS_BASE_TO_ANS_FINAL_DELTA_KEYS,
     ANS_BASE_TO_ANS_RAG_DELTA_KEYS,
@@ -441,13 +443,107 @@ def test_answer_comparison_set_manifest_rejects_wrong_variant_in_pair() -> None:
         AnswerComparisonSetManifest.model_validate(payload)
 
 
-def test_answer_comparison_set_manifest_rejects_wrong_allowed_delta_keys() -> None:
-    payload = _make_valid_manifest_payload()
-    # Add an illegal delta key
-    payload["pairs"][0]["allowed_delta_keys"] = list(ANS_BASE_TO_ANS_RAG_DELTA_KEYS) + ["ILLEGAL_DELTA"]
-    payload["manifest_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))
-    with pytest.raises((ValidationError, ValueError), match="allowed_delta_keys"):
-        AnswerComparisonSetManifest.model_validate(payload)
+def test_answer_comparison_set_manifest_allowed_delta_keys_exact_set_and_permutation_python_model() -> None:
+    pair_specs = [
+        (0, ANS_BASE_TO_ANS_RAG_DELTA_KEYS, "FINAL_VALIDATOR"),
+        (1, ANS_RAG_TO_ANS_FINAL_DELTA_KEYS, "RETRIEVAL_PIPELINE"),
+        (2, ANS_BASE_TO_ANS_FINAL_DELTA_KEYS, "UNKNOWN_DELTA_KEY"),
+    ]
+    for pair_idx, expected_keys, cross_key in pair_specs:
+        # Documented order -> valid
+        payload = _make_valid_manifest_payload()
+        payload["pairs"][pair_idx]["allowed_delta_keys"] = list(expected_keys)
+        payload["manifest_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))
+        assert AnswerComparisonSetManifest.model_validate(payload) is not None
+
+        # Reordered permutation -> valid
+        payload = _make_valid_manifest_payload()
+        payload["pairs"][pair_idx]["allowed_delta_keys"] = list(reversed(expected_keys))
+        payload["manifest_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))
+        assert AnswerComparisonSetManifest.model_validate(payload) is not None
+
+        # Missing key -> invalid
+        payload = _make_valid_manifest_payload()
+        payload["pairs"][pair_idx]["allowed_delta_keys"] = list(expected_keys)[:-1]
+        payload["manifest_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))
+        with pytest.raises((ValidationError, ValueError), match="allowed_delta_keys"):
+            AnswerComparisonSetManifest.model_validate(payload)
+
+        # Duplicate key -> invalid
+        payload = _make_valid_manifest_payload()
+        dup_keys = list(expected_keys)
+        dup_keys[1] = dup_keys[0]
+        payload["pairs"][pair_idx]["allowed_delta_keys"] = dup_keys
+        payload["manifest_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))
+        with pytest.raises((ValidationError, ValueError), match="allowed_delta_keys"):
+            AnswerComparisonSetManifest.model_validate(payload)
+
+        # Extra key -> invalid
+        payload = _make_valid_manifest_payload()
+        payload["pairs"][pair_idx]["allowed_delta_keys"] = list(expected_keys) + ["EXTRA_KEY"]
+        payload["manifest_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))
+        with pytest.raises((ValidationError, ValueError), match="allowed_delta_keys"):
+            AnswerComparisonSetManifest.model_validate(payload)
+
+        # Wrong-pair / cross-pair key -> invalid
+        payload = _make_valid_manifest_payload()
+        wrong_keys = list(expected_keys)
+        wrong_keys[0] = cross_key
+        payload["pairs"][pair_idx]["allowed_delta_keys"] = wrong_keys
+        payload["manifest_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))
+        with pytest.raises((ValidationError, ValueError), match="allowed_delta_keys"):
+            AnswerComparisonSetManifest.model_validate(payload)
+
+
+def test_answer_comparison_set_manifest_allowed_delta_keys_draft202012_portability() -> None:
+    document = schema_documents("1.5.0")["artifacts/rag-eval.answer-comparison-set-manifest.schema.json"]
+    validator = jsonschema.Draft202012Validator(document)
+
+    pair_specs = [
+        (0, ANS_BASE_TO_ANS_RAG_DELTA_KEYS, "FINAL_VALIDATOR"),
+        (1, ANS_RAG_TO_ANS_FINAL_DELTA_KEYS, "RETRIEVAL_PIPELINE"),
+        (2, ANS_BASE_TO_ANS_FINAL_DELTA_KEYS, "UNKNOWN_DELTA_KEY"),
+    ]
+    for pair_idx, expected_keys, cross_key in pair_specs:
+        # Documented order -> valid
+        payload = _make_valid_manifest_payload()
+        payload["pairs"][pair_idx]["allowed_delta_keys"] = list(expected_keys)
+        payload["manifest_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))
+        assert validator.is_valid(payload)
+
+        # Reordered permutation -> valid
+        payload = _make_valid_manifest_payload()
+        payload["pairs"][pair_idx]["allowed_delta_keys"] = list(reversed(expected_keys))
+        payload["manifest_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))
+        assert validator.is_valid(payload)
+
+        # Missing key -> invalid
+        payload = _make_valid_manifest_payload()
+        payload["pairs"][pair_idx]["allowed_delta_keys"] = list(expected_keys)[:-1]
+        payload["manifest_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))
+        assert not validator.is_valid(payload)
+
+        # Duplicate key -> invalid
+        payload = _make_valid_manifest_payload()
+        dup_keys = list(expected_keys)
+        dup_keys[1] = dup_keys[0]
+        payload["pairs"][pair_idx]["allowed_delta_keys"] = dup_keys
+        payload["manifest_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))
+        assert not validator.is_valid(payload)
+
+        # Extra key -> invalid
+        payload = _make_valid_manifest_payload()
+        payload["pairs"][pair_idx]["allowed_delta_keys"] = list(expected_keys) + ["EXTRA_KEY"]
+        payload["manifest_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))
+        assert not validator.is_valid(payload)
+
+        # Cross-pair key -> invalid
+        payload = _make_valid_manifest_payload()
+        wrong_keys = list(expected_keys)
+        wrong_keys[0] = cross_key
+        payload["pairs"][pair_idx]["allowed_delta_keys"] = wrong_keys
+        payload["manifest_sha256"] = canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))
+        assert not validator.is_valid(payload)
 
 
 def test_answer_comparison_set_manifest_rejects_path_traversal_and_absolute_paths() -> None:
