@@ -484,6 +484,8 @@ def test_mixed_members_reuse_their_own_bindings_and_preserve_order() -> None:
 
 
 def test_unused_member_binding_is_rejected_even_when_every_hit_joined() -> None:
+    # bindings {A, B} vs hits {A/chunk-1, A/chunk-2}: every hit joined, but the
+    # binding set is a superset of the member keys the production Gate selected.
     member_a = _member()
     member_b = _member()
     chunk_a1 = member_a.chunk(rank=1, external_doc_id="DOC-A1", chunk_index=0)
@@ -516,7 +518,12 @@ def test_multi_chunk_member_with_one_unbound_chunk_is_rejected() -> None:
 
 
 # ==============================================================================
-# 8-9. Missing / extra
+# 8-9. Missing / extra (caller scope precondition)
+#
+# The caller must supply bindings scoped to exactly the distinct Source Member
+# keys represented by selected_hits. An authority superset is not filtered here:
+# discarding part of an authenticated outcome would be an authority-selection
+# policy this seam does not own, so an unused binding is EXTRA_BINDING instead.
 # ==============================================================================
 
 
@@ -614,6 +621,8 @@ def test_duplicate_stable_coordinate_across_distinct_members_is_rejected() -> No
 
 
 def test_duplicate_binding_is_not_deduplicated_into_success() -> None:
+    # N hits : 1 binding allows chunk-side cardinality only. Authority-side
+    # multiplicity stays ambiguous input and is rejected rather than deduped.
     hit, binding = _pair()
 
     outcome = compose_guide_authority_with_production_retrieval(

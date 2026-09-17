@@ -90,7 +90,63 @@ duplicate stable-coordinate hit 없음
 
 ---
 
-## 6. Duplicate Semantics
+## 6. Caller Scope Precondition
+
+본 절은 composition 경계가 **입력에 요구하는 범위 조건**을 규정한다. 실행 시점(temporal orchestration order)에 대한 규정이 아니다.
+
+### 6.1 불변식
+
+```text
+set(authority binding member keys)
+==
+set(member authority keys represented by selected_hits)
+```
+
+여기서 member authority key는 §4의 4필드다. `selected_hits`에는 동일 member의 여러 chunk가 존재할 수 있으므로 비교는 **set 기준**이다.
+
+| 입력 | 결과 |
+| --- | --- |
+| bindings `{A}` / hits `A/chunk-1`, `A/chunk-2`, `A/chunk-3` | VALID — 3 selections, binding A 재사용 |
+| bindings `{A, B}` / hits `A/chunk-1`, `A/chunk-2` | `EXTRA_BINDING` — B에서 선택된 hit 없음 |
+| bindings `{A}` / hits `A/chunk-1`, `B/chunk-1` | `BINDING_NOT_FOUND` — B의 authority 없음 |
+
+### 6.2 규정
+
+- authority bindings는 `selected_hits`가 나타내는 distinct Source Member 집합과 정확히 동일한 범위여야 한다.
+- 동일 member의 복수 chunk hit는 하나의 binding을 공유할 수 있다.
+- selected hit가 하나도 없는 authority binding이 남으면 `EXTRA_BINDING`이다.
+- composition seam은 authority superset을 자동 filter하지 않는다.
+- composition seam은 temporal orchestration order를 정의하지 않는다.
+- 이 precondition을 만족시키는 책임은 #180 caller/orchestration에 있다.
+
+### 6.3 자동 filtering을 하지 않는 이유
+
+```text
+Filtering an authenticated authority outcome inside #697 would
+introduce a new authority-selection policy owned by this seam.
+#697 intentionally does not own that policy.
+```
+
+인증된 authority outcome의 일부를 composition 내부에서 조용히 버리는 것은 "어떤 authority를 사용할지"를 결정하는 새로운 정책이다. 본 계약은 그 정책을 소유하지 않으므로, 범위가 어긋난 입력은 filter하지 않고 fail-closed로 거부한다.
+
+### 6.4 Orchestration 경계
+
+```text
+#697 does not prescribe temporal orchestration order.
+
+The caller MUST provide an AUTHENTICATED authority outcome
+scoped to exactly the distinct Source Member authority keys
+represented by production selected_hits.
+
+#180 orchestration is responsible for satisfying this scope
+precondition before invoking the composition seam.
+```
+
+retrieval을 먼저 실행해 selected member 범위를 확정한 뒤 authority assembly를 수행하는 방식은 이 scope 조건을 만족시키는 자연스러운 구현일 수 있으나, 본 계약은 `retrieval MUST run before authority assembly`를 normative ordering으로 확정하지 않는다. 실제 실행 순서는 #180이 소유한다.
+
+---
+
+## 7. Duplicate Semantics
 
 ```text
 duplicate binding
@@ -105,9 +161,47 @@ duplicate hit 판정은 upstream production Evidence Gate가 이미 사용하는
 
 duplicate를 deduplicate해서 성공시키지 않고 fail-closed한다.
 
+### 7.1 Authority-side multiplicity를 허용하지 않는 이유
+
+```text
+N hits : 1 binding은 chunk-side cardinality를 허용하는 것이다.
+
+동일 authenticated binding의 duplicate copies를 authority-side
+multiplicity로 허용하는 의미가 아니다.
+```
+
+authority member key별 canonical input은 정확히 1개여야 하며, 중복 binding을 자동 dedupe하지 않는다. #672가 caller selection 순서를 보존하고 duplicate를 허용할 수 있더라도, #697 composition 경계에서는 ambiguous/redundant authority input을 fail-closed로 거부한다. 본 계약은 새로운 deduplication policy를 만들지 않는다.
+
 ---
 
-## 7. Fail-closed Reasons
+## 8. Coordinate ↔ Provenance 책임 경계
+
+`ProductionSearchHit`의 두 좌표계는 본 계약에서 서로 다른 목적으로 소비된다.
+
+| 용도 | 소비 대상 |
+| --- | --- |
+| authority join key | `hit.provenance`의 Source Member coordinates (§4) |
+| duplicate hit identity | `hit.coordinate`의 production stable coordinate (§7) |
+
+```text
+ProductionSearchHit의 coordinate ↔ provenance coherence는
+production search/retrieval upstream 계약의 책임이다.
+
+#697은:
+- authority join에는 provenance의 Source Member coordinates를 소비하고
+- duplicate detection에는 production stable coordinate를 소비한다.
+
+#697은 coordinate ↔ provenance consistency를 새로 재검증하지 않는다.
+
+downstream Guide Evidence Handoff는 Verified Handoff 생성 전에
+해당 exact consistency를 다시 검증한다.
+```
+
+따라서 본 계약은 `COORDINATE_PROVENANCE_MISMATCH` 계열의 새 reason을 추가하지 않으며, 형제 kernel(`guide_evidence_handoff`)이 이미 수행하는 검증을 복제하지 않는다.
+
+---
+
+## 9. Fail-closed Reasons
 
 ```text
 AUTHORITY_NOT_AUTHENTICATED
@@ -121,11 +215,11 @@ DUPLICATE_HIT
 ```
 
 - `BINDING_NOT_FOUND`: selected hit의 member authority key에 대응하는 binding이 없으면 즉시 fail-fast한다.
-- `EXTRA_BINDING`: 모든 selected hit의 join이 끝난 뒤에도 한 번도 사용되지 않은 binding key가 남아 있을 때만 보고한다. 즉 binding은 존재하지만 그 member에서 선택된 production hit가 하나도 없는 경우다.
+- `EXTRA_BINDING`: 모든 selected hit의 join이 끝난 뒤에도 한 번도 사용되지 않은 binding key가 남아 있을 때만 보고한다. 즉 binding은 존재하지만 그 member에서 선택된 production hit가 하나도 없는 경우다. 이는 §6 Caller Scope Precondition 위반이며, 본 계층은 authority superset을 자동 filter하지 않는다.
 
 ---
 
-## 8. Rejection Semantics
+## 10. Rejection Semantics
 
 ```text
 fail-fast
@@ -141,13 +235,13 @@ retrieval_receipt=None on rejection
 
 ---
 
-## 9. Ordering
+## 11. Ordering
 
 성공 결과의 selection 순서는 `EvidenceGateSuccess.selected_hits`의 production 순서를 그대로 보존한다. 별도 sort를 하지 않는다. `fusion_rank` 순서는 production Evidence Gate가 소유하므로 본 계층에서 ranking policy를 재구현하지 않는다.
 
 ---
 
-## 10. Explicit Exclusions
+## 12. Explicit Exclusions
 
 ```text
 Production Reader

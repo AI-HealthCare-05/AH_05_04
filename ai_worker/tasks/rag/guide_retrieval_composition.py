@@ -27,6 +27,18 @@ Scope & Authority Boundaries:
   external_document_id, chunk_index), reusing upstream semantics rather than
   defining a new dedupe policy here. Repeated member authority keys across
   distinct coordinates are not duplicates.
+- Caller Scope Precondition: authority bindings must cover exactly the distinct
+  Source Member keys represented by `selected_hits`. This seam does not filter an
+  authority superset, because discarding part of an authenticated outcome would
+  be a new authority-selection policy that #697 does not own; an unused binding
+  is EXTRA_BINDING instead. This is an input scope condition, not a temporal one:
+  the seam does not prescribe #180 orchestration order, and satisfying the scope
+  is the caller's responsibility.
+- Coordinate/Provenance Split: the authority join consumes `hit.provenance`
+  Source Member coordinates while duplicate detection consumes the production
+  stable coordinate of `hit.coordinate`. Coherence between the two is the
+  upstream production search contract's responsibility and is re-verified
+  downstream by Guide Evidence Handoff, so this seam does not re-check it.
 - Fail-Closed Atomicity: validation is phase-ordered and fail-fast, and a
   rejection returns a single typed reason with no partial selections
   (`selections = ()`). A selected hit with no binding for its authority key is
