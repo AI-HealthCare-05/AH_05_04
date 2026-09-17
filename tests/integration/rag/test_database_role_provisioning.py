@@ -89,6 +89,21 @@ async def _assert_account_withdrawal_cleanup_delete_privileges(connection, runti
         ), table
 
 
+async def _assert_permission_denied(engine, sql: str) -> None:
+    with pytest.raises(DBAPIError) as error:
+        async with engine.begin() as connection:
+            await connection.execute(text(sql))
+    assert error.value.orig.sqlstate == "42501"
+
+
+async def _assert_runtime_delete_policy(reader, table: str) -> None:
+    if table in RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES:
+        async with reader.begin() as connection:
+            await connection.execute(text(f"DELETE FROM {table} WHERE false"))
+        return
+    await _assert_permission_denied(reader, f"DELETE FROM {table} WHERE false")
+
+
 async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions() -> None:
     container = os.environ.get("ISSUE398_TEST_POSTGRES_CONTAINER")
     if not container or not shutil.which("docker"):
@@ -894,13 +909,7 @@ async def _exercise_prescription_candidate_cutover(admin, reader, environment):
         assert len(loaded) == version.medication_count == 1
         assert loaded[0].medication_name == "합성정정약"
     for table in ("prescription_version", "prescription_version_medication", "medication_candidate_search_result"):
-        if table in RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES:
-            async with reader.begin() as connection:
-                await connection.execute(text(f"DELETE FROM {table} WHERE false"))
-        denied_statements = [f"UPDATE {table} SET id=id", f"TRUNCATE {table}"]
-        if table not in RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES:
-            denied_statements.append(f"DELETE FROM {table}")
-        for sql in denied_statements:
+        for sql in (f"UPDATE {table} SET id=id", f"DELETE FROM {table}", f"TRUNCATE {table}"):
             with pytest.raises(DBAPIError) as error:
                 async with reader.begin() as connection:
                     await connection.execute(text(sql))
@@ -1119,17 +1128,13 @@ async def _exercise_notification_runtime_permissions(reader, producer):
     result = await process_notifications_once(now=NOW, session_factory=factory)
     assert result.created_count == result.delivered_count == 1
     assert (await process_notifications_once(now=NOW, session_factory=factory)).delivered_count == 0
-    async with reader.begin() as connection:
-        await connection.execute(text("DELETE FROM notification_record WHERE false"))
+    await _assert_runtime_delete_policy(reader, "notification_record")
     for engine, statements in (
         (reader, ("TRUNCATE notification_record",)),
         (producer, ("SELECT * FROM notification_record", "INSERT INTO notification_record DEFAULT VALUES")),
     ):
         for statement in statements:
-            with pytest.raises(DBAPIError) as error:
-                async with engine.begin() as connection:
-                    await connection.execute(text(statement))
-            assert error.value.orig.sqlstate == "42501"
+            await _assert_permission_denied(engine, statement)
 
 
 async def _exercise_checkin_correction_runtime_permissions(admin, reader, producer, *, with_history):
@@ -1264,19 +1269,14 @@ async def _exercise_checkin_correction_runtime_permissions(admin, reader, produc
             assert error.value.orig.sqlstate == "23514"
 
     for table in sorted(RUNTIME_CHECKIN_LOCK_TABLES | {"support_action_plan"}):
-        if table in RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES:
-            async with reader.begin() as connection:
-                await connection.execute(text(f"DELETE FROM {table} WHERE false"))
+        await _assert_runtime_delete_policy(reader, table)
         for engine, sql in (
             (reader, f"INSERT INTO {table} DEFAULT VALUES"),
             (reader, f"TRUNCATE {table}"),
             (reader, f"UPDATE {table} SET id=id"),
             (producer, f"SELECT * FROM {table}"),
         ):
-            with pytest.raises(DBAPIError) as error:
-                async with engine.begin() as connection:
-                    await connection.execute(text(sql))
-            assert error.value.orig.sqlstate == "42501"
+            await _assert_permission_denied(engine, sql)
     for sql in (
         "UPDATE safety_assessment SET symptom_codes='[]'",
         "UPDATE barrier_response SET revision=revision+1",
@@ -1471,13 +1471,8 @@ async def _exercise_retrieval_run_runtime_permissions(reader, producer, admin) -
     assert error.value.orig.sqlstate == "42501"
 
     # 7: withdrawal cleanup can delete retrieval_run directly; child evidence remains protected.
-    async with reader.begin() as conn:
-        await conn.execute(text("DELETE FROM retrieval_run WHERE false"))
-    for table in ("retrieval_signal", "retrieval_hit"):
-        with pytest.raises(DBAPIError) as error:
-            async with reader.begin() as conn:
-                await conn.execute(text(f"DELETE FROM {table} WHERE false"))
-        assert error.value.orig.sqlstate == "42501"
+    for table in ("retrieval_run", "retrieval_signal", "retrieval_hit"):
+        await _assert_runtime_delete_policy(reader, table)
 
     # 8: TRUNCATE rejected on all 3 tables
     for table in ("retrieval_run", "retrieval_signal", "retrieval_hit"):
