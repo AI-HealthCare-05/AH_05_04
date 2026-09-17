@@ -149,6 +149,50 @@ async def test_account_withdrawal_concurrent_requests_complete_single_deletion_r
     assert deletion_request.status == AccountDeletionRequestStatus.COMPLETED
 
 
+async def test_account_withdrawal_returns_existing_failed_request_after_lock_loser(monkeypatch) -> None:
+    user = await _create_committed_user(email=f"wd-failed-{uuid4().hex[:8]}@example.com")
+    session = AsyncSession(bind=test_engine, expire_on_commit=False)
+
+    async def already_authenticated(self, data):
+        return user
+
+    monkeypatch.setattr(AuthService, "authenticate", already_authenticated)
+
+    try:
+        stored_user = await session.get(User, user.id)
+        assert stored_user is not None
+        stored_user.account_status = AccountStatus.WITHDRAWAL_REQUESTED
+        stored_user.is_active = False
+        stored_user.withdrawal_requested_at = datetime.now()
+        stored_user.token_version += 1
+        request = AccountDeletionRequest(
+            user_id=user.id,
+            status=AccountDeletionRequestStatus.FAILED,
+            requested_at=datetime.now(),
+            failed_at=datetime.now(),
+            last_error_code=FAILED_DEMO_DELETION_CODE,
+            retry_count=1,
+        )
+        session.add(request)
+        await session.commit()
+
+        service = AuthService(
+            UserRepository(session),
+            PasswordResetRepository(session),
+            RefreshSessionRepository(session),
+            account_deletion_request_repository=AccountDeletionRequestRepository(session),
+        )
+        result = await service.request_account_withdrawal(user=user, password=_TEST_PASSWORD, confirmed=True)
+        await session.commit()
+    finally:
+        await session.close()
+        await _delete_user(user.id)
+
+    assert result is not None
+    assert result.id == request.id
+    assert result.status == AccountDeletionRequestStatus.FAILED
+
+
 async def test_account_withdrawal_finalization_failure_marks_request_failed_without_withdrawing_user(
     monkeypatch,
 ) -> None:

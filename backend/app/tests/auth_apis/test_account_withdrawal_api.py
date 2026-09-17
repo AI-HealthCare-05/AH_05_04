@@ -1,7 +1,7 @@
 import re
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -31,9 +31,11 @@ from app.models.rag_candidate import (
     MedicationIdentificationStatus,
 )
 from app.models.users import AccountStatus, User
+from app.repositories.account_deletion_request_repository import AccountDeletionRequestRepository
 from app.tests.helpers.auth import signup_verified_user
 
 PASSWORD = "Password123!"
+JPEG_SIGNATURE = b"\xff\xd8\xff"
 
 
 @pytest.fixture
@@ -53,6 +55,16 @@ async def signup_and_login(client: AsyncClient, *, email: str) -> tuple[str, str
     login_response = await client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD})
     assert login_response.status_code == status.HTTP_200_OK, login_response.text
     return login_response.json()["access_token"], extract_refresh_token(login_response)
+
+
+async def upload_prescription_document(client: AsyncClient, *, access_token: str) -> UUID:
+    response = await client.post(
+        "/api/v1/documents",
+        files={"file": ("withdrawal-upload.jpg", JPEG_SIGNATURE + b"synthetic-upload", "image/jpeg")},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert response.status_code == status.HTTP_201_CREATED, response.text
+    return UUID(response.json()["data"]["document_id"])
 
 
 async def user_by_email(db_session: AsyncSession, email: str) -> User:
@@ -428,7 +440,7 @@ async def test_account_withdrawal_file_cleanup_failure_keeps_access_blocked_and_
         document_id, ocr_job_id, object_key = await seed_user_owned_ocr_data(
             db_session,
             user_id=original_user_id,
-            object_key="private/blocked-prescription",
+            object_key="private/z-blocked-prescription",
         )
         await seed_user_owned_prescription_data(
             db_session,
@@ -463,7 +475,9 @@ async def test_account_withdrawal_file_cleanup_failure_keeps_access_blocked_and_
     assert await user_owned_prescription_row_count(db_session, user_id=original_user_id) == 3
     assert blocked_path.exists()
 
-    request = await db_session.scalar(select(AccountDeletionRequest).where(AccountDeletionRequest.user_id == user.id))
+    request = await db_session.scalar(
+        select(AccountDeletionRequest).where(AccountDeletionRequest.user_id == original_user_id)
+    )
     assert request is not None
     assert request.status == AccountDeletionRequestStatus.FAILED
     assert request.failed_at is not None
@@ -474,6 +488,204 @@ async def test_account_withdrawal_file_cleanup_failure_keeps_access_blocked_and_
     assert user_me_response.json()["code"] == "INVALID_TOKEN"
     assert refresh_response.status_code == status.HTTP_401_UNAUTHORIZED
     assert refresh_response.json()["code"] == "INVALID_TOKEN"
+
+
+async def test_account_withdrawal_removes_file_created_by_upload_api(
+    db_session: AsyncSession, enable_account_withdrawal_request, monkeypatch, tmp_path
+):
+    storage_dir = tmp_path / "medical-documents"
+    storage_dir.mkdir()
+    monkeypatch.setattr(config, "STORAGE_DIR", str(storage_dir))
+    email = f"wd-upload-{uuid4().hex[:8]}@example.com"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token, _ = await signup_and_login(client, email=email)
+        user = await user_by_email(db_session, email)
+        user_id = user.id
+        document_id = await upload_prescription_document(client, access_token=access_token)
+        document = await db_session.get(MedicalDocument, document_id)
+        assert document is not None
+        uploaded_path = storage_dir / document.object_key
+        assert uploaded_path.exists()
+
+        response = await client.post(
+            "/api/v1/auth/account/withdrawal",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"password": PASSWORD, "confirmed": True},
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"detail": "회원탈퇴가 완료되었습니다."}
+    assert not uploaded_path.exists()
+    db_session.expire_all()
+    assert await db_session.get(MedicalDocument, document_id) is None
+    stored_user = await db_session.get(User, user_id)
+    assert stored_user is not None
+    assert stored_user.account_status == AccountStatus.WITHDRAWN
+
+
+async def test_account_withdrawal_db_cleanup_failure_after_file_delete_records_failed(
+    db_session: AsyncSession, enable_account_withdrawal_request, monkeypatch, tmp_path
+):
+    storage_dir = tmp_path / "medical-documents"
+    storage_dir.mkdir()
+    monkeypatch.setattr(config, "STORAGE_DIR", str(storage_dir))
+
+    async def fail_runtime_cleanup(self, user_id):
+        raise RuntimeError("synthetic db cleanup failure")
+
+    monkeypatch.setattr(
+        AccountDeletionRequestRepository,
+        "_delete_user_owned_runtime_data",
+        fail_runtime_cleanup,
+    )
+
+    email = f"wd-db-fail-{uuid4().hex[:8]}@example.com"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token, _ = await signup_and_login(client, email=email)
+        user = await user_by_email(db_session, email)
+        user_id = user.id
+        document_id = await upload_prescription_document(client, access_token=access_token)
+        document = await db_session.get(MedicalDocument, document_id)
+        assert document is not None
+        uploaded_path = storage_dir / document.object_key
+        assert uploaded_path.exists()
+
+        response = await client.post(
+            "/api/v1/auth/account/withdrawal",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"password": PASSWORD, "confirmed": True},
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"detail": "탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."}
+    assert not uploaded_path.exists()
+    assert await db_session.get(MedicalDocument, document_id) is not None
+
+    db_session.expire_all()
+    request = await db_session.scalar(select(AccountDeletionRequest).where(AccountDeletionRequest.user_id == user_id))
+    assert request is not None
+    assert request.status == AccountDeletionRequestStatus.FAILED
+    assert request.last_error_code == "DEMO_DELETION_FAILED"
+    stored_user = await db_session.get(User, user_id)
+    assert stored_user is not None
+    assert stored_user.account_status == AccountStatus.WITHDRAWAL_REQUESTED
+    assert stored_user.withdrawn_at is None
+
+
+async def test_account_withdrawal_retry_treats_missing_previous_file_as_already_removed(
+    db_session: AsyncSession, enable_account_withdrawal_request, monkeypatch, tmp_path
+):
+    storage_dir = tmp_path / "medical-documents"
+    monkeypatch.setattr(config, "STORAGE_DIR", str(storage_dir))
+    email = f"wd-partial-retry-{uuid4().hex[:8]}@example.com"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token, _ = await signup_and_login(client, email=email)
+        user = await user_by_email(db_session, email)
+        user_id = user.id
+        first_document_id, first_ocr_job_id, first_object_key = await seed_user_owned_ocr_data(
+            db_session,
+            user_id=user_id,
+            object_key="private/a-first-prescription.png",
+        )
+        await seed_user_owned_prescription_data(
+            db_session,
+            user_id=user_id,
+            document_id=first_document_id,
+            ocr_job_id=first_ocr_job_id,
+        )
+        second_document_id, second_ocr_job_id, second_object_key = await seed_user_owned_ocr_data(
+            db_session,
+            user_id=user_id,
+            object_key="private/blocked-prescription",
+        )
+        await seed_user_owned_prescription_data(
+            db_session,
+            user_id=user_id,
+            document_id=second_document_id,
+            ocr_job_id=second_ocr_job_id,
+        )
+        first_file = storage_dir / first_object_key
+        first_file.parent.mkdir(parents=True, exist_ok=True)
+        first_file.write_bytes(b"first synthetic prescription")
+        blocked_path = storage_dir / second_object_key
+        blocked_path.mkdir(parents=True)
+
+        response = await client.post(
+            "/api/v1/auth/account/withdrawal",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"password": PASSWORD, "confirmed": True},
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"detail": "탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."}
+    assert not first_file.exists()
+    assert blocked_path.exists()
+
+    db_session.expire_all()
+    request = await db_session.scalar(select(AccountDeletionRequest).where(AccountDeletionRequest.user_id == user_id))
+    assert request is not None
+    assert request.status == AccountDeletionRequestStatus.FAILED
+
+    blocked_path.rmdir()
+    blocked_path.write_bytes(b"second synthetic prescription")
+    completed = await AccountDeletionRequestRepository(db_session).complete_demo_withdrawal(
+        request_id=request.id,
+        completed_at=datetime.now(UTC),
+        anonymized_email=f"wd-{user_id.hex[:20]}@deleted.local",
+        disabled_password_hash="disabled-password-hash",
+    )
+    await db_session.commit()
+
+    assert completed.status == AccountDeletionRequestStatus.COMPLETED
+    assert not first_file.exists()
+    assert not blocked_path.exists()
+    assert await user_owned_ocr_row_count(db_session, user_id=user_id) == 0
+    stored_user = await db_session.get(User, user_id)
+    assert stored_user is not None
+    assert stored_user.account_status == AccountStatus.WITHDRAWN
+
+
+async def test_account_withdrawal_rejects_document_object_key_outside_storage_root(
+    db_session: AsyncSession, enable_account_withdrawal_request, monkeypatch, tmp_path
+):
+    storage_dir = tmp_path / "medical-documents"
+    monkeypatch.setattr(config, "STORAGE_DIR", str(storage_dir))
+    email = f"wd-path-escape-{uuid4().hex[:8]}@example.com"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        access_token, _ = await signup_and_login(client, email=email)
+        user = await user_by_email(db_session, email)
+        user_id = user.id
+        document_id, ocr_job_id, _ = await seed_user_owned_ocr_data(
+            db_session,
+            user_id=user_id,
+            object_key="../outside-prescription.png",
+        )
+        await seed_user_owned_prescription_data(
+            db_session,
+            user_id=user_id,
+            document_id=document_id,
+            ocr_job_id=ocr_job_id,
+        )
+
+        response = await client.post(
+            "/api/v1/auth/account/withdrawal",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"password": PASSWORD, "confirmed": True},
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"detail": "탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."}
+
+    db_session.expire_all()
+    request = await db_session.scalar(select(AccountDeletionRequest).where(AccountDeletionRequest.user_id == user_id))
+    assert request is not None
+    assert request.status == AccountDeletionRequestStatus.FAILED
+    assert request.last_error_code == "DEMO_DELETION_FAILED"
+    stored_user = await db_session.get(User, user_id)
+    assert stored_user is not None
+    assert stored_user.account_status == AccountStatus.WITHDRAWAL_REQUESTED
+    assert stored_user.withdrawn_at is None
+    assert await user_owned_ocr_row_count(db_session, user_id=user_id) == 3
 
 
 async def test_account_withdrawal_rejects_wrong_password_without_side_effect(

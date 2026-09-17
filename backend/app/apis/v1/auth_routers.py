@@ -250,7 +250,7 @@ async def request_account_withdrawal(
     )
     detail = (
         "회원탈퇴가 완료되었습니다."
-        if deletion_request is None or deletion_request.status == AccountDeletionRequestStatus.COMPLETED
+        if deletion_request is not None and deletion_request.status == AccountDeletionRequestStatus.COMPLETED
         else "탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."
     )
     response = Response(
