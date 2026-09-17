@@ -23,6 +23,10 @@ _MAX_RESPONSE_BYTES = 4096
 _DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
+class ArtifactObjectKeyError(ValueError):
+    """Artifact object key가 root를 벗어났거나 writer 쓰기 가능 정책을 위반함."""
+
+
 class LocalPrivateSourceArtifactReader:
     """최종 Artifact mount를 변경하지 않고 checksum 대조 후 읽습니다."""
 
@@ -57,9 +61,9 @@ class LocalPrivateSourceArtifactReader:
     def _resolve_object_key(self, object_key: str) -> Path:
         path = (self._root / object_key).resolve()
         if not path.is_relative_to(self._root):
-            raise ValueError("Source artifact object key is outside reader root.")
+            raise ArtifactObjectKeyError("Source artifact object key is outside reader root.")
         if os.access(path.parent, os.W_OK) or os.access(path, os.W_OK):
-            raise ValueError("Final Source artifact path must be read-only for the writer account.")
+            raise ArtifactObjectKeyError("Final Source artifact path must be read-only for the writer account.")
         return path
 
 
