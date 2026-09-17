@@ -558,11 +558,14 @@ def build_actual_adapter_registry(  # noqa: C901
         if os.environ.get("OPENAI_API_KEY"):
             from openai import AsyncOpenAI
 
-            from ai_worker.adapters.openai_text_embedding import OpenAITextEmbeddingAdapter
+            from ai_worker.adapters.openai_text_embedding import (
+                OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
+                OpenAITextEmbeddingAdapter,
+            )
 
             text_embedding_port = OpenAITextEmbeddingAdapter(
                 client=AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"]),
-                adapter_artifact_ref=ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "e" * 64),
+                adapter_artifact_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
             )
         else:
             text_embedding_port = None
@@ -622,23 +625,20 @@ def build_actual_adapter_registry(  # noqa: C901
         source_snapshot_member_ids = (uuid4(),)
         evidence_index_ref = ImmutableArtifactRef("rag-knowledge-index-dev-v1", "1.0.0", "0" * 64)
 
+    from ai_worker.adapters.openai_text_embedding import OPENAI_TEXT_EMBEDDING_ADAPTER_REF
+
     lexical_config = VersionedLexicalSearchConfiguration(
         artifact_ref=ImmutableArtifactRef("lexical_search_config", "1.0", "a" * 64),
     )
     dense_config = VersionedDenseSearchConfiguration(
         artifact_ref=ImmutableArtifactRef("dense_search_config", "1.0", "b" * 64),
     )
-    expected_adapter_ref = getattr(
-        text_embedding_port,
-        "_adapter_artifact_ref",
-        ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "e" * 64),
-    )
     retrieval_config = VersionedEvidenceRetrievalConfiguration(
         artifact_ref=ImmutableArtifactRef("retrieval_config", "1.0", "c" * 64),
         execution_mode=RetrievalExecutionMode.HYBRID_RRF,
         lexical_config=lexical_config,
         dense_config=dense_config,
-        expected_query_embedding_adapter_ref=expected_adapter_ref,
+        expected_query_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
     )
 
     assert search_port is not None
