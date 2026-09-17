@@ -11,6 +11,7 @@ from sqlalchemy import DateTime, Integer, String, and_, column, exists, insert, 
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_worker.adapters.knowledge_snapshot_advisory_lock import acquire_snapshot_advisory_locks
 from ai_worker.tasks.rag.knowledge_evidence_index import (
     DistanceMetric,
     KnowledgeChunkIdentity,
@@ -147,6 +148,8 @@ class SqlAlchemyKnowledgeEvidenceIndexRepository:
                 text("SELECT pg_advisory_xact_lock(hashtextextended(:version_key, 0))"),
                 {"version_key": f"{request.index_code}:{request.index_version}"},
             )
+            snapshot_ids = {member.identity.source_snapshot_id for member in request.members}
+            await acquire_snapshot_advisory_locks(session, snapshot_ids)
             await self._lock_and_validate_members(session, request)
             existing_id = await session.scalar(
                 select(_INDEX.c.id)
