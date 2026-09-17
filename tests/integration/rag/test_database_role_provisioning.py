@@ -894,7 +894,13 @@ async def _exercise_prescription_candidate_cutover(admin, reader, environment):
         assert len(loaded) == version.medication_count == 1
         assert loaded[0].medication_name == "합성정정약"
     for table in ("prescription_version", "prescription_version_medication", "medication_candidate_search_result"):
-        for sql in (f"UPDATE {table} SET id=id", f"DELETE FROM {table}", f"TRUNCATE {table}"):
+        if table in RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES:
+            async with reader.begin() as connection:
+                await connection.execute(text(f"DELETE FROM {table} WHERE false"))
+        denied_statements = [f"UPDATE {table} SET id=id", f"TRUNCATE {table}"]
+        if table not in RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES:
+            denied_statements.append(f"DELETE FROM {table}")
+        for sql in denied_statements:
             with pytest.raises(DBAPIError) as error:
                 async with reader.begin() as connection:
                     await connection.execute(text(sql))
@@ -1258,9 +1264,11 @@ async def _exercise_checkin_correction_runtime_permissions(admin, reader, produc
             assert error.value.orig.sqlstate == "23514"
 
     for table in sorted(RUNTIME_CHECKIN_LOCK_TABLES | {"support_action_plan"}):
+        if table in RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES:
+            async with reader.begin() as connection:
+                await connection.execute(text(f"DELETE FROM {table} WHERE false"))
         for engine, sql in (
             (reader, f"INSERT INTO {table} DEFAULT VALUES"),
-            (reader, f"DELETE FROM {table}"),
             (reader, f"TRUNCATE {table}"),
             (reader, f"UPDATE {table} SET id=id"),
             (producer, f"SELECT * FROM {table}"),
