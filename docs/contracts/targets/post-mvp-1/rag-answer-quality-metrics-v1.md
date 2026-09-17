@@ -193,6 +193,8 @@ pair별 허용 delta는 다음 exact set으로 제한한다.
 | `ANS-RAG -> ANS-FINAL` | `FINAL_VALIDATOR`, `CITATION_GATE`, `SAFETY_GATE`, `RELEASE_GATE` | 최종 검증·공개 경계 효과 비교. `ANS-FINAL` 입력 draft answer hash는 `ANS-RAG` 출력 hash와 exact-match |
 | `ANS-BASE -> ANS-FINAL` | 위 두 pair 허용 delta의 합집합 | 전체 효과 요약. 개별 단계 귀속 근거로 사용 금지 |
 
+`allowed_delta_keys`의 의미는 pair별 exact set이며 배열의 직렬화 순서는 의미를 갖지 않는다. 후속 deterministic builder는 재현 가능한 출력 순서를 선택할 수 있지만 consumer validation은 순서에 의존하지 않는다.
+
 각 Run의 Git commit과 Answer Variant manifest hash는 기록하되 matched variable로 위장하지 않는다. 허용 목록
 밖의 관찰 delta, mandatory key mismatch 또는 허용 delta의 필수 binding 누락은 `INVALID/null`이다. 세 pair
 중 required pair가 없거나 미완료면 상위 비교·Gate를 `PASS`로 만들 수 없다.
