@@ -23,7 +23,7 @@ Scope & Authority Boundaries:
 - Binding artifact identity is fixed by this contract. The caller cannot choose
   `artifact_code` or `version`, and `ApprovedGuidelineEvidenceBinding.create()`'s own
   self-hash payload is used unchanged.
-- The verifier recomputes. `RequestScopedGuidelineApprovalVerifier` derives its
+- The verifier recomputes. The internal request-scoped verifier derives its
   expected dynamic binding refs from the authoritative request inputs, never from an
   issuer-supplied binding tuple. Issuer and verifier share only the pure canonical
   derivation function below.
@@ -66,6 +66,7 @@ from ai_worker.tasks.rag.guideline_card import (
     GuidelineActionClass,
     GuidelineApprovalVerificationFailure,
     GuidelineApprovalVerificationSuccess,
+    GuidelineApprovalVerifierPort,
     GuidelineCardDraft,
     GuidelineCitationDraft,
     GuidelineClaimDraft,
@@ -88,7 +89,6 @@ __all__ = [
     "GUIDELINE_EVIDENCE_BINDING_DERIVATION_VERSION",
     "GuidelineAuthorityFailureReason",
     "GuidelineEvidenceBindingDerivationOutcome",
-    "RequestScopedGuidelineApprovalVerifier",
     "RequestScopedGuidelineAuthority",
     "RequestScopedGuidelineAuthorityOutcome",
     "build_request_scoped_guideline_authority",
@@ -321,8 +321,13 @@ def derive_guideline_evidence_bindings(
     return GuidelineEvidenceBindingDerivationOutcome(bindings=tuple(bindings), reason=None)
 
 
-class RequestScopedGuidelineApprovalVerifier:
+class _RequestScopedGuidelineApprovalVerifier:
     """`GuidelineApprovalVerifierPort` implementation scoped to one Guide request.
+
+    Internal. `build_request_scoped_guideline_authority()` is the only supported
+    construction path, so a caller cannot assemble a verifier around inputs that never
+    passed the #729 READY sequencing boundary. Production callers hold the result only
+    as a `GuidelineApprovalVerifierPort`.
 
     It issues no approval of its own. Its approval set is built once, from the #729
     READY static pins plus the dynamic binding refs it recomputes from the
@@ -386,7 +391,7 @@ class RequestScopedGuidelineAuthority:
     """
 
     bindings: tuple[ApprovedGuidelineEvidenceBinding, ...]
-    approval_verifier: RequestScopedGuidelineApprovalVerifier
+    approval_verifier: GuidelineApprovalVerifierPort
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,7 +451,7 @@ def build_request_scoped_guideline_authority(
     return RequestScopedGuidelineAuthorityOutcome(
         authority=RequestScopedGuidelineAuthority(
             bindings=derivation.bindings,
-            approval_verifier=RequestScopedGuidelineApprovalVerifier(
+            approval_verifier=_RequestScopedGuidelineApprovalVerifier(
                 ready_context=ready_context,
                 evidence=evidence,
                 medication_identities=medication_identities,

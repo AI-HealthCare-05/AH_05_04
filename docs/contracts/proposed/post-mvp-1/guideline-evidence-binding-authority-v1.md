@@ -216,8 +216,9 @@ class GuidelineApprovalVerifierPort(Protocol):
     ): ...
 ```
 
-`RequestScopedGuidelineApprovalVerifier`는 새 static approval을 발급하지 않는
-bridge다. success를 반환할 수 있는 ref는 정확히 다음 둘뿐이다.
+concrete request-scoped verifier 구현은 **internal**이다. production caller는
+`build_request_scoped_guideline_authority()`를 통해서만 `GuidelineApprovalVerifierPort` 호환 verifier를 얻으며, 직접 생성하는 경로는
+지원하지 않는다. 이 verifier는 새 static approval을 발급하지 않는 bridge다. success를 반환할 수 있는 ref는 정확히 다음 둘뿐이다.
 
 ### 1. Static pin membership
 
@@ -238,7 +239,7 @@ candidate_ref
 verifier는 issuer가 반환한 tuple을 whitelist로 신뢰하지 않는다. 금지 구조:
 
 ```python
-RequestScopedGuidelineApprovalVerifier(
+_RequestScopedGuidelineApprovalVerifier(
     approved_binding_refs=tuple(b.artifact_ref for b in issuer_output)   # 금지
 )
 ```
@@ -338,7 +339,7 @@ build_request_scoped_guideline_authority(
 @dataclass(frozen=True, slots=True)
 class RequestScopedGuidelineAuthority:
     bindings: tuple[ApprovedGuidelineEvidenceBinding, ...]
-    approval_verifier: RequestScopedGuidelineApprovalVerifier
+    approval_verifier: GuidelineApprovalVerifierPort   # concrete 구현은 internal
 ```
 
 `approval_verifier`는 `bindings` field를 읽지 않는다.

@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import replace
 
+import ai_worker.tasks.rag.guideline_evidence_binding_authority as binding_authority
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
 from ai_worker.tasks.rag.guide_runtime_preflight import (
     GuideRuntimePreflightDecision,
@@ -23,6 +24,7 @@ from ai_worker.tasks.rag.guideline_card import (
     ApprovedGuidelineEvidenceBinding,
     GuidelineApprovalVerificationFailure,
     GuidelineApprovalVerificationSuccess,
+    GuidelineApprovalVerifierPort,
     GuidelineCardReason,
     GuidelineCardRequest,
     GuidelineCardStatus,
@@ -320,3 +322,18 @@ def test_ready_inputs_compose_into_a_generated_card_without_io() -> None:
     citation = card_outcome.card.claims[0].citations[0]
     assert citation.guideline_evidence_binding_ref == outcome.authority.bindings[0].artifact_ref
     assert citation.guideline_evidence_binding_verifier_ref == GUIDELINE_APPROVAL_VERIFIER_REF
+
+
+def test_concrete_verifier_is_not_part_of_the_public_api_surface() -> None:
+    """The factory is the only supported construction path for a request-scoped verifier."""
+    assert "RequestScopedGuidelineApprovalVerifier" not in binding_authority.__all__
+    assert not hasattr(binding_authority, "RequestScopedGuidelineApprovalVerifier")
+    assert "build_request_scoped_guideline_authority" in binding_authority.__all__
+
+
+def test_authority_exposes_the_verifier_through_the_existing_port() -> None:
+    _, outcome = authority_for()
+    assert outcome.authority is not None
+    verifier: GuidelineApprovalVerifierPort = outcome.authority.approval_verifier
+
+    assert callable(verifier.verify)
