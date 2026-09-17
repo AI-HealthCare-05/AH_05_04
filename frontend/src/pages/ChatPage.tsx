@@ -472,6 +472,13 @@ function ChatPage({
   const currentIsLoading = isCurrentPrescriptionState ? isLoading : true
   const currentIsSending = isCurrentPrescriptionState ? isSending : false
   const currentRequiresLogin = isCurrentPrescriptionState && requiresLogin
+  const lastCurrentMessage = currentMessages.at(-1)
+  const feedbackMessageId =
+    !currentIsSending &&
+    lastCurrentMessage?.role === 'ASSISTANT' &&
+    lastCurrentMessage.generation_status === 'COMPLETED'
+      ? lastCurrentMessage.message_id
+      : null
 
   const sendChatContent = async (
     content: string,
@@ -758,7 +765,7 @@ function ChatPage({
                     ) : (
                       message.content ?? '답변을 생성하지 못했어요.'
                     )}
-                    {import.meta.env.DEV && currentSessionId && message.role === 'ASSISTANT' && message.generation_status === 'COMPLETED' && (
+                    {import.meta.env.DEV && currentSessionId && message.message_id === feedbackMessageId && (
                       <ResponseFeedback key={message.message_id} target={{ sessionId: currentSessionId, messageId: message.message_id }} />
                     )}
                   </div>

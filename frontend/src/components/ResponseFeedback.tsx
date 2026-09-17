@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { deleteFeedback, submitFeedback, type FeedbackRating, type FeedbackTarget } from '../api/feedback'
 import './ResponseFeedback.css'
 
@@ -10,31 +10,53 @@ export function ResponseFeedback({ target }: { target: FeedbackTarget }) {
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const lock = useRef(false)
+  const requestIdRef = useRef(0)
   const id = useId()
+  const targetKey = 'guideId' in target
+    ? `guide:${target.guideId}`
+    : `chat:${target.sessionId}:${target.messageId}`
+
+  useEffect(() => {
+    requestIdRef.current += 1
+    lock.current = false
+    setRating(null)
+    setComment('')
+    setSaved(null)
+    setBusy(false)
+    setNotice('')
+    setError('')
+  }, [targetKey])
 
   async function send(remove = false) {
     if (lock.current || (!remove && !rating)) return
+    const requestId = ++requestIdRef.current
+    const requestTarget = target
     lock.current = true
     setBusy(true)
     setNotice('')
     setError('')
     try {
       if (remove) {
-        await deleteFeedback(target)
+        await deleteFeedback(requestTarget)
+        if (requestIdRef.current !== requestId) return
         setSaved(null)
         setRating(null)
         setComment('')
         setNotice('피드백을 삭제했어요.')
       } else if (rating) {
-        const response = await submitFeedback(target, rating, comment)
+        const response = await submitFeedback(requestTarget, rating, comment)
+        if (requestIdRef.current !== requestId) return
         setSaved(response.data.rating)
         setNotice('피드백을 저장했어요. 언제든 평가를 바꿀 수 있어요.')
       }
     } catch {
+      if (requestIdRef.current !== requestId) return
       setError(remove ? '삭제하지 못했어요. 다시 시도해 주세요.' : '저장하지 못했어요. 입력한 내용을 확인하고 다시 시도해 주세요.')
     } finally {
-      lock.current = false
-      setBusy(false)
+      if (requestIdRef.current === requestId) {
+        lock.current = false
+        setBusy(false)
+      }
     }
   }
 

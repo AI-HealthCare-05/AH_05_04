@@ -30,6 +30,20 @@ vi.mock('../src/api/prescriptions', () => ({
   getLatestPrescription: vi.fn(),
 }))
 
+vi.mock('../src/components/ResponseFeedback', () => ({
+  ResponseFeedback: ({
+    target,
+  }: {
+    target: { sessionId: string; messageId: string }
+  }) => (
+    <section
+      aria-label="답변 피드백"
+      data-session-id={target.sessionId}
+      data-message-id={target.messageId}
+    />
+  ),
+}))
+
 const prescriptionId = '11111111-1111-4111-8111-111111111111'
 const sessionId = '22222222-2222-4222-8222-222222222222'
 const secondPrescriptionId = '33333333-3333-4333-8333-333333333333'
@@ -199,6 +213,7 @@ describe('ChatPage', () => {
     expect(getChatSessionForPrescription).toHaveBeenCalledWith(prescriptionId)
     expect(createChatSession).toHaveBeenCalledWith(prescriptionId)
     expect(getChatMessages).toHaveBeenCalledWith(sessionId)
+    expect(screen.queryByRole('region', { name: '답변 피드백' })).toBeNull()
     expect(sessionStorage.length).toBe(0)
   })
 
@@ -387,6 +402,120 @@ describe('ChatPage', () => {
     expect(
       screen.getAllByText('확정된 처방을 기준으로 생성한 실제 답변입니다.'),
     ).toHaveLength(1)
+  })
+
+  it('완료된 답변이 여러 개여도 마지막 답변에만 feedback을 표시하고 전송 중에는 숨긴다', async () => {
+    const secondResponse = deferred<Awaited<ReturnType<typeof sendChatMessage>>>()
+    vi.mocked(sendChatMessage)
+      .mockResolvedValueOnce({
+        data: {
+          user_message_id: 'feedback-user-1',
+          assistant_message_id: 'feedback-assistant-1',
+          session_id: sessionId,
+          generation_status: 'COMPLETED',
+          content: '첫 번째 완료 답변',
+          model_name: 'chat-model',
+          prompt_version: 'chat-v1',
+          created_at: '2026-09-17T00:00:01Z',
+          completed_at: '2026-09-17T00:00:02Z',
+        },
+      })
+      .mockReturnValueOnce(secondResponse.promise)
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.change(input, { target: { value: '첫 번째 질문' } })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+
+    expect(await screen.findByText('첫 번째 완료 답변')).toBeTruthy()
+    expect(screen.getAllByRole('region', { name: '답변 피드백' })).toHaveLength(1)
+
+    fireEvent.change(input, { target: { value: '두 번째 질문' } })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+
+    expect(await screen.findByText('답변을 확인하고 있어요')).toBeTruthy()
+    expect(screen.queryByRole('region', { name: '답변 피드백' })).toBeNull()
+
+    await act(async () =>
+      secondResponse.resolve({
+        data: {
+          user_message_id: 'feedback-user-2',
+          assistant_message_id: 'feedback-assistant-2',
+          session_id: sessionId,
+          generation_status: 'COMPLETED',
+          content: '두 번째 완료 답변',
+          model_name: 'chat-model',
+          prompt_version: 'chat-v1',
+          created_at: '2026-09-17T00:01:01Z',
+          completed_at: '2026-09-17T00:01:02Z',
+        },
+      }),
+    )
+
+    const feedback = await screen.findByRole('region', { name: '답변 피드백' })
+    expect(screen.getAllByRole('region', { name: '답변 피드백' })).toHaveLength(1)
+    expect(feedback.getAttribute('data-session-id')).toBe(sessionId)
+    expect(feedback.getAttribute('data-message-id')).toBe(
+      'feedback-assistant-2',
+    )
+    expect(feedback.closest('.chat-message')?.textContent).toContain(
+      '두 번째 완료 답변',
+    )
+  })
+
+  it('마지막 메시지가 USER이거나 FAILED ASSISTANT면 과거 완료 답변으로 feedback target을 대체하지 않는다', async () => {
+    const userOnlyResponse = deferred<Awaited<ReturnType<typeof sendChatMessage>>>()
+    vi.mocked(sendChatMessage)
+      .mockResolvedValueOnce({
+        data: {
+          user_message_id: 'completed-user',
+          assistant_message_id: 'completed-assistant',
+          session_id: sessionId,
+          generation_status: 'COMPLETED',
+          content: '과거 완료 답변',
+          model_name: 'chat-model',
+          prompt_version: 'chat-v1',
+          created_at: '2026-09-17T00:00:01Z',
+          completed_at: '2026-09-17T00:00:02Z',
+        },
+      })
+      .mockReturnValueOnce(userOnlyResponse.promise)
+      .mockResolvedValueOnce({
+        data: {
+          user_message_id: 'failed-user',
+          assistant_message_id: 'failed-assistant',
+          session_id: sessionId,
+          generation_status: 'FAILED',
+          content: null,
+          model_name: 'chat-model',
+          prompt_version: 'chat-v1',
+          created_at: '2026-09-17T00:02:01Z',
+          completed_at: '2026-09-17T00:02:02Z',
+        },
+      })
+    renderPage()
+
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.change(input, { target: { value: '완료될 질문' } })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+    expect(await screen.findByText('과거 완료 답변')).toBeTruthy()
+    expect(screen.getByRole('region', { name: '답변 피드백' })).toBeTruthy()
+
+    fireEvent.change(input, { target: { value: 'USER-only 상태 질문' } })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+    expect(await screen.findByText('USER-only 상태 질문')).toBeTruthy()
+    expect(screen.queryByRole('region', { name: '답변 피드백' })).toBeNull()
+
+    await act(async () =>
+      userOnlyResponse.reject(new ApiError(503, '합성 전송 실패')),
+    )
+    await screen.findByRole('alert')
+
+    fireEvent.change(input, { target: { value: '실패할 질문' } })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+
+    expect(await screen.findByText('답변을 생성하지 못했어요.')).toBeTruthy()
+    expect(screen.queryByRole('region', { name: '답변 피드백' })).toBeNull()
   })
 
   it('ASSISTANT content만 Markdown으로 표시하고 USER content는 원문을 유지한다', async () => {
@@ -804,23 +933,12 @@ describe('ChatPage', () => {
   })
 
   it('CONSENT_POLICY_UNAVAILABLE 메시지 전송은 자동 반복 없이 사용자 클릭 후 같은 요청만 재시도한다', async () => {
+    const retryResponse = deferred<Awaited<ReturnType<typeof sendChatMessage>>>()
     vi.mocked(sendChatMessage)
       .mockRejectedValueOnce(
         new ApiError(503, '정책 원문', 'CONSENT_POLICY_UNAVAILABLE'),
       )
-      .mockResolvedValueOnce({
-        data: {
-          user_message_id: 'policy-retry-user',
-          assistant_message_id: 'policy-retry-assistant',
-          session_id: sessionId,
-          generation_status: 'COMPLETED',
-          content: '정책 복구 후 받은 답변',
-          model_name: 'chat-model',
-          prompt_version: 'chat-v1',
-          created_at: '2026-09-16T00:00:00Z',
-          completed_at: '2026-09-16T00:00:01Z',
-        },
-      })
+      .mockReturnValueOnce(retryResponse.promise)
     renderPage()
 
     const input = await screen.findByLabelText('복약 질문')
@@ -835,10 +953,35 @@ describe('ChatPage', () => {
     expect(sendChatMessage).toHaveBeenCalledTimes(1)
     expect(screen.getAllByText('정책 복구 질문')).toHaveLength(1)
     expect(screen.queryByRole('button', { name: '동의 설정 확인하기' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '답변 피드백' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
 
+    expect(await screen.findByText('답변을 확인하고 있어요')).toBeTruthy()
+    expect(screen.queryByRole('region', { name: '답변 피드백' })).toBeNull()
+
+    await act(async () =>
+      retryResponse.resolve({
+        data: {
+          user_message_id: 'policy-retry-user',
+          assistant_message_id: 'policy-retry-assistant',
+          session_id: sessionId,
+          generation_status: 'COMPLETED',
+          content: '정책 복구 후 받은 답변',
+          model_name: 'chat-model',
+          prompt_version: 'chat-v1',
+          created_at: '2026-09-16T00:00:00Z',
+          completed_at: '2026-09-16T00:00:01Z',
+        },
+      }),
+    )
+
     expect(await screen.findByText('정책 복구 후 받은 답변')).toBeTruthy()
+    const feedback = screen.getByRole('region', { name: '답변 피드백' })
+    expect(feedback.getAttribute('data-session-id')).toBe(sessionId)
+    expect(feedback.getAttribute('data-message-id')).toBe(
+      'policy-retry-assistant',
+    )
     expect(sendChatMessage).toHaveBeenCalledTimes(2)
     expect(sendChatMessage).toHaveBeenNthCalledWith(1, sessionId, '정책 복구 질문')
     expect(sendChatMessage).toHaveBeenNthCalledWith(2, sessionId, '정책 복구 질문')
@@ -1002,6 +1145,15 @@ describe('ChatPage', () => {
 
     expect(await screen.findByText('현재 방문에서 받은 답변')).toBeTruthy()
     expect(screen.getAllByText('현재 방문에서 보낸 질문')).toHaveLength(1)
+    const feedbackBeforeRediscovery = screen.getByRole('region', {
+      name: '답변 피드백',
+    })
+    expect(feedbackBeforeRediscovery.getAttribute('data-session-id')).toBe(
+      sessionId,
+    )
+    expect(feedbackBeforeRediscovery.getAttribute('data-message-id')).toBe(
+      'current-assistant',
+    )
 
     fireEvent.click(screen.getByRole('button', { name: '대화 다시 불러오기' }))
 
@@ -1010,6 +1162,15 @@ describe('ChatPage', () => {
     expect(screen.queryByText('최초 진입 전에 저장된 답변')).toBeNull()
     expect(screen.getAllByText('현재 방문에서 보낸 질문')).toHaveLength(1)
     expect(screen.getAllByText('현재 방문에서 받은 답변')).toHaveLength(1)
+    const feedbackAfterRediscovery = screen.getByRole('region', {
+      name: '답변 피드백',
+    })
+    expect(feedbackAfterRediscovery.getAttribute('data-session-id')).toBe(
+      sessionId,
+    )
+    expect(feedbackAfterRediscovery.getAttribute('data-message-id')).toBe(
+      'current-assistant',
+    )
     expect(getChatSessionForPrescription).toHaveBeenCalledTimes(2)
     expect(createChatSession).not.toHaveBeenCalled()
   })
@@ -1085,6 +1246,7 @@ describe('ChatPage', () => {
     expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
     expect(screen.queryByText('이전 session의 현재 방문 질문')).toBeNull()
     expect(screen.queryByText('교체된 session의 기존 답변')).toBeNull()
+    expect(screen.queryByRole('region', { name: '답변 피드백' })).toBeNull()
     expect(getChatMessages).toHaveBeenLastCalledWith(replacementSessionId)
     expect(createChatSession).not.toHaveBeenCalled()
   })
@@ -1650,18 +1812,58 @@ describe('ChatPage', () => {
         },
       }),
     )
-    vi.mocked(getChatMessages).mockResolvedValue({
-      data: { session_id: sessionId, messages: [] },
-    })
+    vi.mocked(getChatMessages).mockImplementation((requestedSessionId) =>
+      Promise.resolve({
+        data: { session_id: requestedSessionId, messages: [] },
+      }),
+    )
+    vi.mocked(sendChatMessage).mockImplementation((requestedSessionId) =>
+      Promise.resolve({
+        data: {
+          user_message_id: `user-${requestedSessionId}`,
+          assistant_message_id: `assistant-${requestedSessionId}`,
+          session_id: requestedSessionId,
+          generation_status: 'COMPLETED',
+          content: `session ${requestedSessionId} 답변`,
+          model_name: 'chat-model',
+          prompt_version: 'chat-v1',
+          created_at: '2026-09-17T00:00:01Z',
+          completed_at: '2026-09-17T00:00:02Z',
+        },
+      }),
+    )
     renderPage()
 
-    expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
+    const input = await screen.findByLabelText('복약 질문')
+    fireEvent.change(input, { target: { value: '첫 번째 session 질문' } })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+    const firstFeedback = await screen.findByRole('region', {
+      name: '답변 피드백',
+    })
+    expect(firstFeedback.getAttribute('data-session-id')).toBe(sessionId)
+    expect(firstFeedback.getAttribute('data-message-id')).toBe(
+      `assistant-${sessionId}`,
+    )
+
     fireEvent.click(screen.getByText('두 번째 처방으로 이동'))
 
     await waitFor(() =>
       expect(getChatSessionForPrescription).toHaveBeenCalledWith(
         secondPrescriptionId,
       ),
+    )
+    expect(await screen.findByText('무엇을 도와드릴까요?')).toBeTruthy()
+    expect(screen.queryByRole('region', { name: '답변 피드백' })).toBeNull()
+
+    const secondInput = screen.getByLabelText('복약 질문')
+    fireEvent.change(secondInput, { target: { value: '두 번째 session 질문' } })
+    fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
+    const secondFeedback = await screen.findByRole('region', {
+      name: '답변 피드백',
+    })
+    expect(secondFeedback.getAttribute('data-session-id')).toBe(secondSessionId)
+    expect(secondFeedback.getAttribute('data-message-id')).toBe(
+      `assistant-${secondSessionId}`,
     )
     expect(createChatSession).not.toHaveBeenCalled()
     expect(sessionStorage.length).toBe(0)
