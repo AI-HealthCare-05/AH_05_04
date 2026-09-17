@@ -154,7 +154,7 @@ async def test_missing_source_binding_fails_before_any_index_insert() -> None:
     session = _session()
     missing = MagicMock()
     missing.mappings.return_value.one_or_none.return_value = None
-    session.execute.side_effect = [MagicMock(), missing]
+    session.execute.side_effect = [MagicMock(), MagicMock(), missing]
     repository = SqlAlchemyKnowledgeEvidenceIndexRepository(lambda: session)
 
     with pytest.raises(KnowledgeEvidenceIndexValidationError) as exc_info:
@@ -174,7 +174,7 @@ async def test_database_chunk_text_must_match_the_bound_content_hash() -> None:
         "chunk_text": "different synthetic text",
         "member_kind": "ENDPOINT_OPERATION",
     }
-    session.execute.side_effect = [MagicMock(), corrupted]
+    session.execute.side_effect = [MagicMock(), MagicMock(), corrupted]
     repository = SqlAlchemyKnowledgeEvidenceIndexRepository(lambda: session)
 
     with pytest.raises(KnowledgeEvidenceIndexValidationError) as exc_info:

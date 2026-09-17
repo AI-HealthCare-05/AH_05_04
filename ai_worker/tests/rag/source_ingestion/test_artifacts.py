@@ -163,3 +163,50 @@ def test_raw_response_cannot_carry_rejection_metadata() -> None:
             reject_code="ITEM_SEQ_REQUIRED",
             parser_location="page[1].record[3]",
         )
+
+
+def test_typed_artifact_integrity_and_unavailable_errors(tmp_path: Path) -> None:
+    from ai_worker.tasks.rag.source_ingestion.artifacts import (
+        RawArtifactIntegrityError,
+        RawArtifactUnavailableError,
+        read_verified_raw_artifact,
+    )
+
+    # 1. Size mismatch (larger) -> RawArtifactIntegrityError
+    file_path = tmp_path / "oversize.bin"
+    file_path.write_bytes(b"12345")
+    meta_small = replace(_metadata(b"1234"), byte_size=4)
+    with pytest.raises(RawArtifactIntegrityError) as exc_info:
+        read_verified_raw_artifact(file_path=file_path, metadata=meta_small)
+    assert isinstance(exc_info.value, ValueError)
+    assert str(exc_info.value) == "Raw artifact byte size mismatch."
+
+    # 2. Size mismatch (smaller / EOF) -> RawArtifactIntegrityError
+    meta_large = replace(_metadata(b"123456"), byte_size=6)
+    with pytest.raises(RawArtifactIntegrityError) as exc_info:
+        read_verified_raw_artifact(file_path=file_path, metadata=meta_large)
+    assert isinstance(exc_info.value, ValueError)
+    assert str(exc_info.value) == "Raw artifact byte size mismatch."
+
+    # 3. Checksum mismatch -> RawArtifactIntegrityError
+    meta_wrong_checksum = replace(_metadata(b"12345"), raw_checksum="a" * 64)
+    with pytest.raises(RawArtifactIntegrityError) as exc_info:
+        read_verified_raw_artifact(file_path=file_path, metadata=meta_wrong_checksum)
+    assert isinstance(exc_info.value, ValueError)
+    assert str(exc_info.value) == "Raw artifact checksum mismatch."
+
+    # 4. Missing file (OSError) -> RawArtifactUnavailableError
+    missing_file = tmp_path / "missing.bin"
+    with pytest.raises(RawArtifactUnavailableError) as exc_info_unavail:
+        read_verified_raw_artifact(file_path=missing_file, metadata=meta_small)
+    assert isinstance(exc_info_unavail.value, ValueError)
+    assert str(exc_info_unavail.value) == "Raw artifact could not be read."
+    assert exc_info_unavail.value.__cause__ is None
+    assert str(missing_file) not in str(exc_info_unavail.value)
+
+    # 5. Directory path (OSError) -> RawArtifactUnavailableError
+    with pytest.raises(RawArtifactUnavailableError) as exc_info_dir:
+        read_verified_raw_artifact(file_path=tmp_path, metadata=meta_small)
+    assert isinstance(exc_info_dir.value, ValueError)
+    assert str(exc_info_dir.value) == "Raw artifact could not be read."
+    assert exc_info_dir.value.__cause__ is None

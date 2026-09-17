@@ -122,3 +122,38 @@ test('약 카드는 keyboard Enter/Space로 펼치고 접으며 의료 섹션 �
   await page.keyboard.press('Space')
   await expect(toggle).toHaveAttribute('aria-expanded', 'false')
 })
+
+test('실패 가이드 재시도는 POST 후 새 가이드 상세를 표시한다', async ({ page }) => {
+  const newGuideId = '44444444-4444-4444-8444-444444444444'
+  let creationCount = 0
+  await page.route('**/api/v1/guides**', async (route) => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    const creating = request.method() === 'POST'
+    if (creating) {
+      expect(path).toBe('/api/v1/guides')
+      expect(request.postDataJSON()).toEqual({ prescription_id: prescriptionId })
+      creationCount += 1
+    }
+    const completed = creating || path === `/api/v1/guides/${newGuideId}`
+    await route.fulfill({
+      json: { data: {
+        guide_id: completed ? newGuideId : guideId,
+        prescription_id: prescriptionId,
+        prescription_version_id: '55555555-5555-4555-8555-555555555555',
+        generation_status: completed ? 'COMPLETED' : 'FAILED',
+        content: completed ? guideContent : null,
+        model_name: 'synthetic-guide-model',
+        prompt_version: 'synthetic-guide-v1',
+        requested_at: '2026-09-16T00:00:00Z',
+        completed_at: '2026-09-16T00:00:03Z',
+      } },
+    })
+  })
+  await page.goto(`/guides/${guideId}`)
+  await expect(page.getByRole('heading', { name: '가이드를 만들지 못했어요' })).toBeVisible()
+  await page.getByRole('button', { name: '다시 시도하기' }).click()
+  await expect(page).toHaveURL(`/guides/${newGuideId}`)
+  await expect(page.getByRole('button', { name: /합성 처방약/ })).toBeVisible()
+  expect(creationCount).toBe(1)
+})
