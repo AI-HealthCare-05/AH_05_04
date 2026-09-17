@@ -63,19 +63,29 @@ TRAVEL_SUPPORT_CODES: dict[TravelSituation, SupportCode] = {
 }
 
 
+def _is_schedule_or_travel_answer(barrier: BarrierResponse) -> bool:
+    return (
+        barrier.response_status == BarrierResponseStatus.ANSWERED
+        and barrier.barrier_code == BarrierCode.SCHEDULE_OR_TRAVEL
+    )
+
+
 def eligible_supports(
-    config: HandlerConfig, barrier: BarrierResponse, travel_situation: TravelSituation | None = None
+    config: HandlerConfig,
+    barrier: BarrierResponse,
+    travel_situation: TravelSituation | None = None,
+    *,
+    require_travel_situation: bool = False,
 ) -> list[SupportRule]:
     """Filter by explicit travel situation before the stable single-offer ordering."""
-    if travel_situation is not None and (
-        barrier.response_status != BarrierResponseStatus.ANSWERED
-        or barrier.barrier_code != BarrierCode.SCHEDULE_OR_TRAVEL
-    ):
+    if travel_situation is not None and not _is_schedule_or_travel_answer(barrier):
         raise ApiError(
             status_code=422, code="VALIDATION_FAILED", message="일정 변경·외출 사유에서만 상황을 선택해 주세요."
         )
     selected = TRAVEL_SUPPORT_CODES[travel_situation] if travel_situation is not None else None
     if barrier.response_status != BarrierResponseStatus.ANSWERED:
+        return []
+    if require_travel_situation and _is_schedule_or_travel_answer(barrier) and selected is None:
         return []
     return sorted(
         (
@@ -207,7 +217,7 @@ class TrackCSupportService:
             barrier, _ = await self._owned_parent(barrier_id=request.barrier_response_id, user_id=user_id)
             config, _ = await self._load_config()
             await self._lock_current_flow(barrier=barrier, user_id=user_id)
-            offered = eligible_supports(config, barrier, request.travel_situation)
+            offered = eligible_supports(config, barrier, request.travel_situation, require_travel_situation=True)
             if request.rule_version != config.rule_version or (
                 offered and request.copy_version != offered[0].copy_version
             ):

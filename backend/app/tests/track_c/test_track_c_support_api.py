@@ -24,7 +24,11 @@ from app.models.track_c import (
 )
 from app.repositories.track_c_storage_repository import TrackCStorageRepository
 from app.services import track_c_support
-from app.services.track_c_handler_config import HandlerConfigError, load_active_handler_config
+from app.services.track_c_handler_config import (
+    HandlerConfigError,
+    load_active_handler_config,
+    parse_support_copy_catalog,
+)
 from app.services.track_c_support import eligible_supports
 from app.tests.track_c.test_track_c_api import ApiCase, assert_error, safety_body
 from app.tests.track_c.test_track_c_api import case as track_c_case
@@ -96,6 +100,8 @@ async def test_single_offer_and_confirmed_plan_snapshot_without_provider(
     assert await case.session.scalar(select(func.count()).select_from(SupportActionPlan)) == 0
     assert await case.session.scalar(select(func.count()).select_from(IdempotencyRecord)) == 2
     body = plan_body(barrier_id, support)
+    if barrier_code == "SCHEDULE_OR_TRAVEL":
+        body["travel_situation"] = "SCHEDULE_CHANGED"
     response = await create(case, body)
     assert response.status_code == 200, response.text
     plan = response.json()["data"]
@@ -300,6 +306,30 @@ async def test_snapshot_cap_failure_rolls_back_plan_and_can_retry(
     assert await case.session.scalar(select(func.count()).select_from(SupportActionPlan)) == 0
     assert await case.session.scalar(select(func.count()).select_from(IdempotencyRecord)) == 2
     assert (await create(case, body)).status_code == 200
+
+
+def test_support_copy_catalog_rejects_unapproved_question_catalog_fields() -> None:
+    data = {
+        "schema_version": "track-c-support-copy-v1",
+        "copy_version": "track-c-support-copy-ko-2026-09-16.1",
+        "locale": "ko-KR",
+        "supports": [
+            {
+                "support_code": code.value,
+                "title": "합성 지원",
+                "body": "합성 본문",
+                "confirmation": {
+                    "prompt": "합성 확인 질문",
+                    "primary_label": "확인",
+                    "secondary_label": "나중에",
+                },
+                "questions": [f"합성 질문 {index}" for index in range(6)],
+            }
+            for code in SupportCode
+        ],
+    }
+    with pytest.raises(HandlerConfigError):
+        parse_support_copy_catalog(data, approved_copy_versions=frozenset({"track-c-support-copy-ko-2026-09-16.1"}))
 
 
 async def test_broken_config_is_not_empty_offer_and_replay_needs_no_active_config(
