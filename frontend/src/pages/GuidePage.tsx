@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import type { NavigateFunction } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
+  createGuide,
   getGuide,
   getGuideForPrescription,
   type GuideData,
@@ -23,6 +24,7 @@ import './GuidePage.css'
 import { ResponseFeedback } from '../components/ResponseFeedback'
 
 export type GuidePageServices = {
+  createGuide: typeof createGuide
   getGuide: typeof getGuide
   getGuideForPrescription: typeof getGuideForPrescription
   getLatestPrescription: typeof getLatestPrescription
@@ -35,6 +37,7 @@ export type GuidePageProps = {
 }
 
 const defaultGuidePageServices: GuidePageServices = {
+  createGuide,
   getGuide,
   getGuideForPrescription,
   getLatestPrescription,
@@ -401,6 +404,9 @@ function GuidePage({
   const [isLoading, setIsLoading] = useState(true)
   const [stateGuideId, setStateGuideId] = useState<string | null>(null)
   const guideRequestIdRef = useRef(0)
+  const retryRequestRef = useRef<number | null>(null)
+  const [isRetrying, setIsRetrying] = useState(false)
+  const [retryError, setRetryError] = useState('')
 
   const loadGuide = useCallback(async () => {
     const requestedGuideId = guideId ?? null
@@ -478,6 +484,9 @@ function GuidePage({
   }, [guideId, navigate, services])
 
   useEffect(() => {
+    retryRequestRef.current = null
+    setIsRetrying(false)
+    setRetryError('')
     void loadGuide()
     return () => {
       guideRequestIdRef.current += 1
@@ -489,6 +498,40 @@ function GuidePage({
   const currentGuide = isCurrentGuideState ? guide : null
   const currentMessage = isCurrentGuideState ? message : ''
   const currentIsLoading = isCurrentGuideState ? isLoading : Boolean(guideId)
+
+  const retryGeneration = async () => {
+    if (currentGuide?.generation_status !== 'FAILED' || retryRequestRef.current !== null) return
+
+    const prescriptionId = currentGuide.prescription_id
+    const requestId = ++guideRequestIdRef.current
+    retryRequestRef.current = requestId
+    setIsRetrying(true)
+    setRetryError('')
+    try {
+      const response = await services.createGuide(prescriptionId)
+      if (guideRequestIdRef.current !== requestId) return
+      if (response.data.prescription_id !== prescriptionId) {
+        setRetryError('확인한 처방과 다른 가이드 응답을 받았어요. 다시 확인해 주세요.')
+        return
+      }
+      navigate(`/guides/${response.data.guide_id}`, { replace: true })
+    } catch (error) {
+      if (guideRequestIdRef.current !== requestId) return
+      if (isStaleTokenError(error)) {
+        clearAuthenticatedSession()
+        navigate('/login', { replace: true })
+        return
+      }
+      setRetryError(error instanceof ApiError
+        ? error.message
+        : '복약 가이드를 만드는 중 오류가 발생했습니다. 다시 시도해 주세요.')
+    } finally {
+      if (guideRequestIdRef.current === requestId) {
+        retryRequestRef.current = null
+        setIsRetrying(false)
+      }
+    }
+  }
 
   const completedAt = formatCompletedAt(currentGuide?.completed_at ?? null)
   const hasCompletedContent =
@@ -623,47 +666,60 @@ function GuidePage({
             !hasCompletedContent && (
             <section
               className="guide-page__status"
-              role={currentGuide.generation_status === 'FAILED' ? 'alert' : 'status'}
+              role={!isRetrying && currentGuide.generation_status === 'FAILED' ? 'alert' : 'status'}
+              aria-busy={isRetrying}
               aria-live="polite"
             >
               <div
                 className={`guide-page__status-visual ${
-                  currentGuide.generation_status === 'FAILED'
-                    ? 'guide-page__status-visual--failed'
-                    : currentGuide.generation_status === 'GENERATING'
-                      ? 'guide-page__status-visual--generating'
-                      : 'guide-page__status-visual--empty'
+                  isRetrying
+                    ? 'guide-page__status-visual--generating'
+                    : currentGuide.generation_status === 'FAILED'
+                      ? 'guide-page__status-visual--failed'
+                      : currentGuide.generation_status === 'GENERATING'
+                        ? 'guide-page__status-visual--generating'
+                        : 'guide-page__status-visual--empty'
                 }`}
               >
                 <DoseyMascot variant="chat" />
               </div>
               <h2>
-                {currentGuide.generation_status === 'FAILED'
-                  ? '가이드를 만들지 못했어요'
-                  : currentGuide.generation_status === 'COMPLETED'
-                    ? '가이드 내용이 아직 없어요'
-                    : '복약 가이드를 만들고 있어요'}
+                {isRetrying
+                  ? '복약 가이드를 만들고 있어요'
+                  : currentGuide.generation_status === 'FAILED'
+                    ? '가이드를 만들지 못했어요'
+                    : currentGuide.generation_status === 'COMPLETED'
+                      ? '가이드 내용이 아직 없어요'
+                      : '복약 가이드를 만들고 있어요'}
               </h2>
               <p>
-                {currentGuide.generation_status === 'FAILED'
-                  ? '다시 시도해 주세요.'
-                  : currentGuide.generation_status === 'COMPLETED'
-                    ? '생성된 내용을 확인할 수 없어 다시 불러와야 해요.'
-                    : '도지가 복약 가이드를 준비하고 있어요.'}
+                {isRetrying
+                  ? '잠시만 기다려 주세요.'
+                  : currentGuide.generation_status === 'FAILED'
+                    ? '다시 시도해 주세요.'
+                    : currentGuide.generation_status === 'COMPLETED'
+                      ? '생성된 내용을 확인할 수 없어 다시 불러와야 해요.'
+                      : '도지가 복약 가이드를 준비하고 있어요.'}
               </p>
+              {retryError && <p role="alert">{retryError}</p>}
               {currentGuide.generation_status === 'GENERATING' && (
                 <span className="guide-page__generating-label">가이드를 생성하고 있어요...</span>
               )}
               <Button
                 fullWidth
                 variant={currentGuide.generation_status === 'FAILED' ? 'primary' : 'secondary'}
-                onClick={() => void loadGuide()}
+                disabled={isRetrying}
+                onClick={() => void (currentGuide.generation_status === 'FAILED'
+                  ? retryGeneration()
+                  : loadGuide())}
               >
-                {currentGuide.generation_status === 'FAILED'
-                  ? '다시 시도하기'
-                  : currentGuide.generation_status === 'COMPLETED'
-                    ? '다시 불러오기'
-                    : '다시 확인하기'}
+                {isRetrying
+                  ? '가이드를 생성하고 있어요...'
+                  : currentGuide.generation_status === 'FAILED'
+                    ? '다시 시도하기'
+                    : currentGuide.generation_status === 'COMPLETED'
+                      ? '다시 불러오기'
+                      : '다시 확인하기'}
               </Button>
             </section>
           )}
