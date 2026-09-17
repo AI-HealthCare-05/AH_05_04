@@ -24,15 +24,16 @@ The repository does not vendor Locust or commit generated load-test output in th
 
 Included now:
 
-- `load_tests/locustfile.py` with a configurable smoke task.
-- Default smoke target `/api/openapi.json`, matching the deployment runbook's FastAPI HTTP liveness check.
+- `load_tests/locustfile.py` with a configurable framework smoke task.
+- `load_tests/auth_smoke.py` with the #627 1차-1 Auth baseline smoke flow.
+- Default framework smoke target `/api/openapi.json`, matching the deployment runbook's FastAPI HTTP liveness check.
 - `LOAD_TEST_SMOKE_PATH`, `LOAD_TEST_EXPECT_STATUS`, and optional `LOAD_TEST_BEARER_TOKEN` environment variables.
 - `scripts/load_testing/validate_load_test_assets.py` and a regression test to keep the framework files aligned.
 - This runbook and links from the main testing/deployment documentation.
 
 Excluded now:
 
-- Login/signup/OCR/Guide/Chat full scenario implementation.
+- Signup/OCR/Guide/Chat full scenario implementation.
 - Real patient data, real prescription files, or provider payload replay.
 - Production capacity claim, SLO approval, or Privacy/Release gate approval.
 - Dashboard, alerting, autoscaling, or infrastructure changes.
@@ -54,6 +55,32 @@ uvx locust \
 ```
 
 For an approved staging or production-like endpoint, replace `--host` with the public base URL category approved for the run. Do not paste tokens, cookies, or secret-bearing URLs into GitHub, Discord, PR comments, or committed docs.
+
+## Auth Baseline Smoke
+
+`load_tests/auth_smoke.py` is the first API-specific baseline scenario for #627. It runs the minimum reusable authenticated flow:
+
+1. `POST /api/v1/auth/login`
+2. `GET /api/v1/users/me`
+
+Run it with a synthetic test account only:
+
+```bash
+mkdir -p docs/validation/load-testing
+LOAD_TEST_AUTH_EMAIL="<test-account-email>" \
+LOAD_TEST_AUTH_PASSWORD="<test-account-password>" \
+uvx locust \
+  -f load_tests/auth_smoke.py \
+  --host http://127.0.0.1:8000 \
+  --headless \
+  -u 5 \
+  -r 1 \
+  -t 3m \
+  --csv docs/validation/load-testing/issue-627-auth-smoke-local
+```
+
+This is a baseline/smoke load run. It records p50/p95/max latency and failure count, but it is not a final production `p95 <= 3s` approval. Token refresh and logout are disabled by default because they rotate or invalidate token state; enable `LOAD_TEST_AUTH_INCLUDE_REFRESH=true` or `LOAD_TEST_AUTH_LOGOUT_ON_STOP=true` only for a single-user smoke or independent per-user test accounts.
+
 
 ## Result Summary Template
 
@@ -82,12 +109,14 @@ Full CSV output can be attached only if it contains no tokens, cookies, patient 
 
 After API contracts settle, add scenarios in focused follow-up PRs:
 
-1. Auth/profile read and update.
-2. Prescription upload and OCR polling using synthetic files only.
-3. OCR review and prescription confirmation.
-4. Guide generation.
-5. Chat session creation and message send.
-6. Notifications or Web Push only when the target environment has that feature enabled.
+1. User/profile read smoke after the Auth baseline.
+2. Medication schedule read smoke.
+3. Check-in and Track C support smoke.
+4. Prescription upload and OCR polling using synthetic files only.
+5. OCR review and prescription confirmation.
+6. Guide generation.
+7. Chat session creation and message send.
+8. Notifications or Web Push only when the target environment has that feature enabled.
 
 Each scenario should define setup data, authentication method, expected status codes, cleanup expectations, and whether it is local-only or approved for staging/production.
 

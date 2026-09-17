@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 REQUIRED_FILES = (
     "load_tests/locustfile.py",
+    "load_tests/auth_smoke.py",
     "load_tests/README.md",
     "docs/testing/load-testing-627.md",
 )
@@ -16,8 +17,16 @@ REQUIRED_SNIPPETS = {
         "LOAD_TEST_BEARER_TOKEN",
         "framework-smoke",
     ),
+    "load_tests/auth_smoke.py": (
+        'LOGIN_PATH = "/api/v1/auth/login"',
+        'TOKEN_REFRESH_PATH = "/api/v1/auth/token/refresh"',
+        'USER_ME_PATH = "/api/v1/users/me"',
+        "LOAD_TEST_AUTH_PASSWORD",
+        "LOAD_TEST_AUTH_INCLUDE_REFRESH",
+    ),
     "load_tests/README.md": (
         "uvx locust",
+        "Auth Baseline Smoke Command",
         "API-specific scenarios",
         "Do not use `/api/v1/health`",
     ),
