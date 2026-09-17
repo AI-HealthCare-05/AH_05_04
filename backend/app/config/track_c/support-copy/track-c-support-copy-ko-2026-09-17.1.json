@@ -63,5 +63,113 @@
         "secondary_label": "나중에"
       }
     }
+  ],
+  "questions": [
+    {
+      "question_id": "INSTRUCTION_AMOUNT",
+      "support_code": "INSTRUCTION_REVIEW",
+      "subreason_codes": [
+        "DOSE_AMOUNT_UNCLEAR"
+      ],
+      "text": "이 약은 한 번에 몇 개를 복용해야 하나요?"
+    },
+    {
+      "question_id": "INSTRUCTION_TIMING",
+      "support_code": "INSTRUCTION_REVIEW",
+      "subreason_codes": [
+        "TIMING_OR_FOOD_UNCLEAR"
+      ],
+      "text": "이 약은 언제, 식사와 어떤 관계로 복용해야 하나요?"
+    },
+    {
+      "question_id": "INSTRUCTION_IDENTITY",
+      "support_code": "INSTRUCTION_REVIEW",
+      "subreason_codes": [
+        "MEDICATION_IDENTITY_UNCLEAR"
+      ],
+      "text": "이 약을 다른 약과 어떻게 구분하면 되나요?"
+    },
+    {
+      "question_id": "INSTRUCTION_SUMMARY",
+      "support_code": "INSTRUCTION_REVIEW",
+      "subreason_codes": [
+        "DOSE_AMOUNT_UNCLEAR",
+        "TIMING_OR_FOOD_UNCLEAR",
+        "MEDICATION_IDENTITY_UNCLEAR",
+        "LANGUAGE_TOO_COMPLEX"
+      ],
+      "text": "제가 꼭 기억해야 할 복용 방법을 짧게 설명해 주실 수 있나요?"
+    },
+    {
+      "question_id": "PURPOSE_REASON",
+      "support_code": "PURPOSE_REVIEW",
+      "subreason_codes": [
+        "NO_SYMPTOMS",
+        "VALUES_IMPROVED",
+        "NEED_UNCLEAR"
+      ],
+      "text": "이 약을 복용하는 목적은 무엇인가요?"
+    },
+    {
+      "question_id": "PURPOSE_EXPECTATION",
+      "support_code": "PURPOSE_REVIEW",
+      "subreason_codes": [
+        "NO_SYMPTOMS",
+        "NO_NOTICEABLE_EFFECT"
+      ],
+      "text": "어떤 변화를 언제 확인하면 되나요?"
+    },
+    {
+      "question_id": "PURPOSE_REVIEW",
+      "support_code": "PURPOSE_REVIEW",
+      "subreason_codes": [
+        "NO_NOTICEABLE_EFFECT",
+        "VALUES_IMPROVED",
+        "NEED_UNCLEAR"
+      ],
+      "text": "다음 진료에서 확인할 사항은 무엇인가요?"
+    },
+    {
+      "question_id": "CONCERN_DURATION",
+      "support_code": "MEDICATION_CONCERN_GUIDANCE",
+      "subreason_codes": [
+        "LONG_TERM_USE",
+        "DEPENDENCE_OR_TOLERANCE"
+      ],
+      "text": "이 약을 얼마나 오래 복용할 계획인가요?"
+    },
+    {
+      "question_id": "CONCERN_MONITORING",
+      "support_code": "MEDICATION_CONCERN_GUIDANCE",
+      "subreason_codes": [
+        "LONG_TERM_USE",
+        "BODY_HARM"
+      ],
+      "text": "장기 복용 중 확인해야 할 사항이 있나요?"
+    },
+    {
+      "question_id": "CONCERN_DEPENDENCE",
+      "support_code": "MEDICATION_CONCERN_GUIDANCE",
+      "subreason_codes": [
+        "DEPENDENCE_OR_TOLERANCE"
+      ],
+      "text": "이 약의 의존성이나 내성에 대해 확인할 점이 있나요?"
+    },
+    {
+      "question_id": "CONCERN_BURDEN",
+      "support_code": "MEDICATION_CONCERN_GUIDANCE",
+      "subreason_codes": [
+        "PILL_BURDEN"
+      ],
+      "text": "복용하는 약이 많아 부담될 때 함께 검토할 수 있는 점이 있나요?"
+    },
+    {
+      "question_id": "CONCERN_CONFLICT",
+      "support_code": "MEDICATION_CONCERN_GUIDANCE",
+      "subreason_codes": [
+        "CONFLICTING_INFORMATION"
+      ],
+      "text": "제가 본 정보와 처방 안내가 다른데 무엇을 기준으로 확인하면 될까요?"
+    }
   ]
 }

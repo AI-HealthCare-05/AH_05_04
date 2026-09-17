@@ -23,7 +23,9 @@ Track C는 RAG, LLM, 실시간 웹 조회를 호출하지 않는다. 사용자�
 
 새 DB 컬럼이나 migration을 추가하지 않는다. `action_config_snapshot.parameters`에 `subreason_code`와 `selected_question_ids`를 저장한다. 활성 Rule/Copy는 `track-c-support-rule-2026-09-17.1`과 `track-c-support-copy-ko-2026-09-17.1`이다. 2026-09-15.1과 2026-09-16.1 파일·allowlist를 보존해 과거 Plan을 저장 당시 문구로 복원한다.
 
-질문 문구는 코드의 승인 카탈로그에 있고 Plan에는 ID를 저장한다. 재조회는 저장된 ID를 같은 승인 카탈로그로 복원한다. 알 수 없는 ID나 임의 snapshot 필드는 fail-closed 처리한다.
+질문 ID·문구·지원 및 세부 이유 allowlist는 `copy_version`별 JSON 카탈로그에 함께 둔다. Plan에는 ID와 당시 문구 snapshot을 저장하며, 재조회와 과거 Plan 복원은 Plan의 `copy_version` 카탈로그로 ID·문구를 다시 검증한다. 이후 활성 카피가 바뀌어도 과거 Plan은 저장 당시 카탈로그를 사용하며, 알 수 없는 ID·문구 불일치·임의 snapshot 필드는 fail-closed 처리한다.
+
+이번 버전에서 세부 이유가 지원이나 질문을 좁히는 범위는 명시적으로 제한한다. `INSTRUCTIONS_UNCLEAR`, `NEED_DOUBT`, `MEDICATION_CONCERN`은 세부 이유에 따라 상담 질문을 좁힌다. `SCHEDULE_OR_TRAVEL`의 `SCHEDULE_CHANGED`와 `MEDICATION_NOT_WITH_ME`는 각각 일정 확인과 외출 준비 지원 하나로 좁히며, `PREPARATION_DIFFICULT`는 기존 일반 제안을 유지한다. `FORGOT`과 `ACCESS_OR_COST`의 세부 이유는 Plan snapshot과 후속 분석 문맥으로 저장하지만 이번 버전의 지원·질문 결과는 바꾸지 않는다.
 
 ## 호환성과 후속 확인
 

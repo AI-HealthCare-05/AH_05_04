@@ -46,7 +46,7 @@ from app.services.track_c_handler_config import (
     SupportCopyCatalog,
     SupportRule,
     load_active_support_assets,
-    load_historical_plan_copy,
+    load_historical_plan_assets,
     save_action_plan_snapshot,
 )
 from app.services.track_c_personalization import (
@@ -213,7 +213,7 @@ class TrackCSupportService:
                     ),
                     questions=[
                         SupportQuestion(question_id=item[0], text=item[1])
-                        for item in questions_for_support(rule.support_code, subreason_code)
+                        for item in questions_for_support(catalog, rule.support_code, subreason_code)
                     ],
                 )
             )
@@ -237,7 +237,7 @@ class TrackCSupportService:
 
         async def mutate() -> dict[str, Any]:
             barrier, _ = await self._owned_parent(barrier_id=request.barrier_response_id, user_id=user_id)
-            config, _ = await self._load_config()
+            config, catalog = await self._load_config()
             await self._lock_current_flow(barrier=barrier, user_id=user_id)
             offered = eligible_supports(config, barrier, request.travel_situation)
             try:
@@ -266,7 +266,7 @@ class TrackCSupportService:
                     raise ValueError("travel situation and subreason do not match")
                 subreason_code = subreason_code or request.travel_situation
                 selected_question_ids = validate_questions(
-                    request.support_code, subreason_code, request.selected_question_ids
+                    catalog, request.support_code, subreason_code, request.selected_question_ids
                 )
             except ValueError:
                 raise ApiError(
@@ -283,6 +283,7 @@ class TrackCSupportService:
                 barrier_id=barrier.id,
                 support_code=request.support_code,
                 config=config,
+                copy_catalog=catalog,
                 subreason_code=subreason_code,
                 selected_question_ids=selected_question_ids,
             )
@@ -334,7 +335,7 @@ class TrackCSupportService:
             raise self._plan_not_found()
         plan, barrier_code, occurrence_id, occurrence_date, medication_id = row
         try:
-            copy = await to_thread(load_historical_plan_copy, plan)
+            copy, catalog = await to_thread(load_historical_plan_assets, plan)
         except HandlerConfigError:
             raise ApiError(
                 status_code=503, code="SUPPORT_CONFIG_UNAVAILABLE", message="저장된 계획 안내를 불러올 수 없습니다."
@@ -343,11 +344,30 @@ class TrackCSupportService:
         selected_ids = parameters.get("selected_question_ids", []) if isinstance(parameters, dict) else []
         selected_questions = parameters.get("selected_questions", []) if isinstance(parameters, dict) else []
         subreason_code = parameters.get("subreason_code") if isinstance(parameters, dict) else None
-        restored_questions = (
-            [SupportQuestion.model_validate(item) for item in selected_questions]
-            if isinstance(selected_questions, list) and selected_questions
-            else [SupportQuestion(question_id=item[0], text=item[1]) for item in question_texts(selected_ids)]
-        )
+        try:
+            if not isinstance(selected_ids, list) or not all(isinstance(item, str) for item in selected_ids):
+                raise HandlerConfigError("invalid historical question selection")
+            if not isinstance(selected_questions, list) or not (
+                subreason_code is None or isinstance(subreason_code, str)
+            ):
+                raise HandlerConfigError("invalid historical personalization")
+            restored_questions = (
+                [SupportQuestion.model_validate(item) for item in selected_questions]
+                if selected_questions
+                else [
+                    SupportQuestion(question_id=item[0], text=item[1]) for item in question_texts(catalog, selected_ids)
+                ]
+            )
+            catalog.validate_question_snapshot(
+                plan.support_code,
+                subreason_code if isinstance(subreason_code, str) else None,
+                selected_ids,
+                [item.model_dump() for item in restored_questions],
+            )
+        except (HandlerConfigError, TypeError, ValueError):
+            raise ApiError(
+                status_code=503, code="SUPPORT_CONFIG_UNAVAILABLE", message="저장된 계획 안내를 불러올 수 없습니다."
+            ) from None
         return SupportPlanResourcesResponse(
             data=SupportPlanResourcesData(
                 support_action_plan_id=plan.id,
