@@ -26,6 +26,9 @@ type FieldErrors = Partial<Record<keyof ProfileForm, string>>
 const EMPTY_FORM: ProfileForm = { name: '', email: '' }
 const AUTH_ERROR_CODES = new Set(['UNAUTHORIZED', 'INVALID_TOKEN', 'EXPIRED_TOKEN'])
 const STALE_AUTH_ERROR_CODES = new Set(['INVALID_TOKEN', 'EXPIRED_TOKEN'])
+const ACCOUNT_WITHDRAWAL_COMPLETED_DETAIL = '회원탈퇴가 완료되었습니다.'
+const ACCOUNT_WITHDRAWAL_FAILED_DETAIL =
+  '탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다.'
 
 type WithdrawalError = 'unavailable' | 'retryable' | ''
 
@@ -273,7 +276,28 @@ function ProfilePage() {
     setWithdrawalError('')
 
     try {
-      await requestAccountWithdrawal(withdrawalPassword, accessToken)
+      const withdrawalResponse = await requestAccountWithdrawal(
+        withdrawalPassword,
+        accessToken,
+      )
+      if (withdrawalResponse.detail === ACCOUNT_WITHDRAWAL_FAILED_DETAIL) {
+        clearAuthenticatedSession()
+        setUser(null)
+        setWithdrawalPassword('')
+        setWithdrawalConfirmed(false)
+        setIsWithdrawalOpen(false)
+        navigate('/start', {
+          replace: true,
+          state: { accountWithdrawalFailed: true },
+        })
+        return
+      }
+
+      if (withdrawalResponse.detail !== ACCOUNT_WITHDRAWAL_COMPLETED_DETAIL) {
+        setWithdrawalError('retryable')
+        return
+      }
+
       clearAuthenticatedSession()
       setUser(null)
       setForm(EMPTY_FORM)
@@ -286,7 +310,7 @@ function ProfilePage() {
       setIsWithdrawalOpen(false)
       navigate('/start', {
         replace: true,
-        state: { accountWithdrawalAccepted: true },
+        state: { accountWithdrawalCompleted: true },
       })
     } catch (error) {
       if (
