@@ -122,6 +122,11 @@ from app.models.rag_evidence import (
     RagEvidenceStatus,
     RagEvidenceType,
 )
+from app.models.rag_request_authority import (
+    RagRequestGuardAuthority,
+    RagRequestMemberDecision,
+    RagRequestSourceDecision,
+)
 from app.models.rag_retrieval import (
     RetrievalHit,
     RetrievalRun,
@@ -303,6 +308,9 @@ __all__ = [
     "RagEvidenceStatus",
     "RagEvidenceType",
     "RagReleaseEvaluationApproval",
+    "RagRequestGuardAuthority",
+    "RagRequestMemberDecision",
+    "RagRequestSourceDecision",
     "RagRuntimeApprovalStatus",
     "RagRuntimeBundleSource",
     "RagRuntimeBundleStatus",
