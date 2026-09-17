@@ -1,7 +1,7 @@
 # #633 Guide·Chat 피드백 검증 기록
 
 2026-09-16 Local 합성 검증. 구현: 송은영·권가빈, 단일 책임 리뷰: 정현우.
-이 문서는 책임 리뷰 승인·실제 사용자 수집·Production 배포 증거가 아니다. PR #638 병합 이후 제품/운영 기준과 AI/RAG 평가 연결을 분리해 후속 검토한다.
+이 문서는 실제 사용자 수집·Production 배포 증거가 아니다. PR #638 병합 이후 #730에서 제품/운영 기준을 정리했고, PR #740은 AI/RAG 합성 replay evidence를 정렬한다. prompt 전후 비교·사람 검토가 아직 없어 #633 종료 판단으로 사용하지 않는다.
 
 ## 구현과 범위
 
@@ -62,8 +62,8 @@ API 동시성 테스트는 서로 다른 PostgreSQL connection에서 두 최초 
 
 `evals/generation/chat-feedback-gold-v1.json`은 현재 v5 30개 case를 그대로 보존하고
 사용자 정정 후 재질문 실패 유형의 새 합성 case 1개를 추가한 **검토용 31-case 버전**이다.
-provenance 파일은 `SYNTHETIC_DEMO`, `review_status=PENDING`, reviewer/reviewed_at=null을 명시한다.
-실제 사용자 의견에서 추출했거나 정현우가 승인한 것으로 표시하지 않는다.
+provenance 파일은 `SYNTHETIC_DEMO`, `review_status=PENDING_RESPONSIBLE_REVIEW`, `responsible_reviewer=ceohwj`, reviewer/reviewed_at=null을 명시한다.
+실제 사용자 의견에서 추출했거나 이미 정현우가 승인한 것으로 표시하지 않는다.
 
 DB 테스트는 합성 부정 의견을 실제 저장하고 NEGATIVE로 조회한 뒤 해당 case와 연결한다.
 올바른 합성 replay 출력은 통과하고, 의도적으로 잘못된 재질문으로 바꾸면 기존 판정기가 거절한다.
@@ -83,14 +83,14 @@ PYTHONPATH=backend:. uv run --env-file envs/.local.env python -m app.evaluation.
   --output /tmp/feedback-replay.json
 ```
 
-## 이슈 종료 전 남은 증빙
+## PR #740 synthetic evidence 정리와 남은 종료 조건
 
-- 정현우의 신규 합성 Gold 기대·금지 응답 검토와 책임 PR 승인.
-- 검토된 실제 부정 피드백의 내부 연결 기록 또는 합성 데모로 인수한다는 명시적 제품 판정. 이 항목은 PR 1에서 권가빈 확인을 받는다.
-- 승인된 동일 평가셋으로 이전·후보 prompt 비교 실행과 안전·사람 평가. 현재 `NOT_RUN`이며 PR 2에서 정현우 확인을 받는다.
-- 실제 사용자 수집 시 고지·처리 근거·감사 접근 수단·일일 삭제 스케줄·백업 파기 확인.
-
-따라서 현재 PR만으로 #633 전체 완료 조건을 체크하거나 이슈를 자동 종료하지 않는다.
+- PR #730 병합으로 Local 합성 demo를 제품/운영 기준의 검토 가능한 증빙으로 사용할 수 있는 범위가 정리됐다. 실제 사용자 feedback 운영 실적과 Production 공개 승인은 별도 공개 gate다.
+- 신규 합성 Gold case의 기대 응답·금지 응답은 `evals/generation/chat-feedback-gold-v1.json`과 이 replay artifact에 고정되어 있으며, 실제 comment 원문·대화 원문·약명·수치·사용자 상황을 복사하지 않는다.
+- 최신 develop base `57a8d2d3` 위의 PR 작업트리에서 deterministic replay를 재실행했고 기존 `docs/validation/issue-633-feedback-replay.json`과 byte-for-byte 동일함을 확인했다. 결과는 31/31 baseline·history replay 통과, safety violation 0, dataset SHA-256 `748c5f420e05c224a0ecc258e1dead71b553195be2ea1d4aac445dda1bba137e`, prompt version `chat-prompt-v5`, prompt SHA-256 `891415d165720f9fbcc8a44dfc0f9fbf8e271a5371c3a0b34e2e366715bada70`이다.
+- 이 replay는 `run_mode=DETERMINISTIC_REPLAY`, `historical_prompt_reproduction=false`, `provider_evaluation.status=NOT_RUN`인 현재 `chat-prompt-v5` 단일 prompt 판정기 검증이다. 동일 평가셋 prompt 전후 비교, live Provider A/B, 사람 blind review를 실행하지 않았다.
+- #581은 기존 Chat 품질·history 평가 기반이고, #632는 temperature=0과 live 30회 편차 evidence로 응답 변동성을 낮춘 근거다. #633은 그 위에 feedback에서 만든 synthetic Gold case와 replay evidence를 추가했지만, PR #730에서 남긴 개선 전후 evidence 완료 조건은 아직 남아 있다.
+- 정현우 책임 리뷰는 위 synthetic Gold 기대·금지 응답, deterministic replay, 안전 gate 보존, #581/#632와의 연결을 검토한다. 이 PR 승인만으로 #633을 종료하거나 `guide-chat-feedback-v1`을 Current로 승격하지 않는다.
 
 ## PR 책임 리뷰 반영 검증
 

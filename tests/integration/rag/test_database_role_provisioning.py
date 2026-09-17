@@ -45,6 +45,31 @@ from infra.python.source_role_policy import SOURCE_TABLES, WRITER_LOCK_TABLES
 
 ROOT = Path(__file__).resolve().parents[3]
 
+# Runtime append-only 표에 기대하는 권한. 이력은 남기되 고쳐 쓰지 않는다.
+_APPEND_ONLY_PRIVILEGES = {
+    "SELECT": True,
+    "INSERT": True,
+    "UPDATE": False,
+    "DELETE": False,
+    "TRUNCATE": False,
+}
+# #178/#689: retrieval_run만 실행 lifecycle 때문에 UPDATE를 유지한다.
+_RETRIEVAL_RUN_PRIVILEGES = {**_APPEND_ONLY_PRIVILEGES, "UPDATE": True}
+
+
+async def _assert_runtime_table_privileges(admin, runtime: str, expected: dict[str, dict[str, bool]]) -> None:
+    """Runtime role의 실제 PostgreSQL table 권한이 기대한 집합과 정확히 같은지 확인한다."""
+    async with admin.connect() as connection:
+        for table, privileges in expected.items():
+            observed = {
+                privilege: await connection.scalar(
+                    text("SELECT has_table_privilege(:role, :table, :privilege)"),
+                    {"role": runtime, "table": table, "privilege": privilege},
+                )
+                for privilege in privileges
+            }
+            assert observed == privileges, table
+
 
 async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions() -> None:
     container = os.environ.get("ISSUE398_TEST_POSTGRES_CONTAINER")
@@ -223,6 +248,29 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             (reader, f'SET ROLE "{writer}"'),
         ]:
             await denied(engine, sql)
+        # #731: REQUEST authority 증거는 Runtime append-only 정책을 그대로 따른다.
+        # 읽기(#709 Production Reader)와 발행(#713 writer)만 허용하고 이력 변경은 막는다.
+        await _assert_runtime_table_privileges(
+            admin,
+            runtime,
+            {
+                "rag_request_guard_authority": _APPEND_ONLY_PRIVILEGES,
+                "rag_request_source_decision": _APPEND_ONLY_PRIVILEGES,
+                "rag_request_member_decision": _APPEND_ONLY_PRIVILEGES,
+                # 대조군: 기존 lifecycle/append-only 권한이 바뀌지 않았는지 확인한다.
+                "retrieval_run": _RETRIEVAL_RUN_PRIVILEGES,
+                "ai_job_intake_context": _APPEND_ONLY_PRIVILEGES,
+            },
+        )
+        # #731: authority 표가 빠진 schema에서는 provisioning이 fail closed여야 한다.
+        async with admin.begin() as connection:
+            await connection.execute(text("DROP TABLE rag_request_member_decision"))
+        with pytest.raises(ValueError, match="Required application tables"):
+            await run_provisioning(environment)
+        async with admin.begin() as connection:
+            await connection.execute(text(f'SET LOCAL ROLE "{owner}"'))
+            await connection.execute(text("CREATE TABLE rag_request_member_decision (id integer PRIMARY KEY)"))
+        await run_provisioning(environment)
         # A failed policy application must roll back its earlier revokes.
         async with admin.begin() as connection:
             await connection.execute(text("DROP TABLE checkin_audit"))
@@ -908,6 +956,10 @@ async def _grant_historical_test_permissions(admin, environment):
                 "chat_message_feedback",
                 "retrieval_signal",  # #178/#689 added after historical cutover.
                 "retrieval_hit",
+                "rag_request_guard_authority",  # #713 follows the historical Source cutover.
+                "rag_request_source_decision",
+                "rag_request_member_decision",
+                "rag_evidence_authority",  # #712 follows the historical Source cutover.
             }:
                 await connection.execute(text(f'GRANT {privileges} ON "{table}" TO "{runtime}"'))
         for table in set(SOURCE_TABLES) & present:

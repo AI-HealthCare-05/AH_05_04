@@ -32,7 +32,13 @@ RUNTIME_APPEND_ONLY_TABLES = frozenset(
     "rag_evidence_guideline rag_evidence_rule rag_evidence rag_evidence_knowledge "
     "rag_runtime_environment_transition medication_candidate_search_result "
     "ai_job_intake_context ai_job_execution_context ai_job_execution_identification "
-    "retrieval_signal retrieval_hit".split()
+    "retrieval_signal retrieval_hit "
+    # #713/#731: REQUEST 단위 historical authority 증거. #713 writer의 발행과 #709 Production
+    # Reader의 조회만 필요하므로 기존 append-only 권한(SELECT, INSERT)을 그대로 쓴다.
+    "rag_request_guard_authority rag_request_source_decision rag_request_member_decision "
+    # #712: selected hit 단위 Assessment·Eligibility authority. Issuer의 발급과 후속 Reader의
+    # 조회만 필요하고 발급 뒤에는 고쳐 쓰지 않으므로 append-only 권한(SELECT, INSERT)을 그대로 쓴다.
+    "rag_evidence_authority".split()
 )
 RUNTIME_CHECKIN_LOCK_TABLES = frozenset({"safety_assessment", "barrier_response"})
 

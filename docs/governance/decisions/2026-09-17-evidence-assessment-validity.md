@@ -222,9 +222,11 @@ Persistence Constraints:
 * **명확한 상태 구분**:
   ```text
   Policy authority contract:       RESOLVED (Approved by responsible reviewer @phina-io)
-  PR #725 repository integration:  PENDING MERGE (문서 개정 검토 및 머지 대기)
-  #712 implementation:             NOT STARTED / RESUME AFTER MERGE
+  PR #725 repository integration:  MERGED (develop e25b2f79)
+  #712 implementation:             구현·로컬 검증 완료 · 담당 리뷰 대기
   ```
 * **후속 작업 연결**:
   - PR #725가 `develop` 브랜치에 머지되기 전에는 `#712 구현 완료`나 `ASSESSMENT_ELIGIBILITY_AUTHORITY_PERSISTED`를 선언하지 않는다.
   - PR #725 머지 완료 확인 후 Issue #712의 authority persistence 및 issuer 구현을 공식 재개한다.
+  - 재개된 #712 구현 계약은 [Assessment·Eligibility Authority Persistence 계약 v1](../../contracts/proposed/post-mvp-1/assessment-eligibility-authority-persistence-v1.md)이다. 본 결정의 §4 산출 규칙, §6 구간·결정론·불변성, §7 `validity_policy_ref` 규격을 그대로 구현하며 새 정책값을 도입하지 않는다.
+  - `ASSESSMENT_ELIGIBILITY_AUTHORITY_PERSISTED` 선언은 담당 리뷰어 승인 이후이며, 후속 read-only Reader와 `GuideEvidenceHandoffRequest` 조립은 여전히 #712 범위 밖이다.
