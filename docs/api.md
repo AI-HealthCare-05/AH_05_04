@@ -205,11 +205,17 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 | Method | Path | 성공 상태 | 동작 |
 | --- | --- | ---: | --- |
 | `GET` | `/api/v1/users/me` | `200 OK` | 로그인 사용자의 정보를 조회합니다. |
-| `PATCH` | `/api/v1/users/me` | `200 OK` | MVP에서 허용된 사용자 정보를 수정합니다. |
+| `PATCH` | `/api/v1/users/me` | `200 OK` | 사용자의 기본 계정·프로필 정보를 수정합니다. |
 
 - 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다.
-- MVP의 `PATCH /api/v1/users/me`는 `name`, `email`만 수정 대상으로 받습니다.
-- `gender`, `birthday`, `phone_number` 수정은 Post-MVP의 가입 후 추가 개인정보·건강정보 입력 기능에서 다룹니다.
+- `PATCH /api/v1/users/me`는 `name`, `email`, `phone_number`, `birthday`, `gender`를 수정 대상으로 받습니다.
+- 생략한 필드는 기존 값을 유지합니다.
+- `phone_number`, `birthday`, `gender`는 `null`로 보내면 미입력 상태로 초기화합니다.
+- `phone_number`는 숫자만 허용합니다. 공백 문자열과 구분자(`-`)가 포함된 값은 `422 VALIDATION_FAILED`입니다.
+- 다른 사용자와 같은 `phone_number`가 DB unique 제약과 충돌하면 `409 CONFLICT`, `details[].field=phone_number`, `reason=ALREADY_EXISTS`를 반환합니다. 별도 휴대폰 번호 중복확인 API는 이번 범위에 포함하지 않습니다.
+- `birthday`는 `YYYY-MM-DD` 날짜 문자열이며 미래 날짜는 `422 VALIDATION_FAILED`입니다.
+- `gender`는 `MALE`, `FEMALE`, `null`만 허용합니다.
+- 휴대폰 번호 SMS 인증·중복 확인, 회원가입 필수 입력, Frontend 입력 UI 연결은 이번 Backend 계약 범위에 포함하지 않습니다.
 
 ## 목적별 동의 상태
 

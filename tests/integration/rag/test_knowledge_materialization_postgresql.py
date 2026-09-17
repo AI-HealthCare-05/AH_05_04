@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import os
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +30,10 @@ from ai_worker.adapters.sqlalchemy_knowledge_materialization import (
     _DOCUMENT,
     SqlAlchemyKnowledgeMaterializationRepository,
 )
+from ai_worker.admin.knowledge_materialization import (
+    MaterializationRunnerConfig,
+    execute_materialization,
+)
 from ai_worker.tasks.rag.knowledge_evidence_index import (
     DistanceMetric,
     KnowledgeChunkIdentity,
@@ -53,6 +58,7 @@ from ai_worker.tasks.rag.mfds_label_chunk_policy import (
     KnowledgeChunkDraft,
     build_chunk_drafts,
 )
+from ai_worker.tasks.rag.source_ingestion.artifacts import RawArtifactMetadata
 from ai_worker.tasks.rag.source_ingestion.mfds_label import (
     CANONICALIZATION_SPEC_VERSION,
     LOCAL_PRIVATE_STORAGE_BACKEND,
@@ -60,6 +66,7 @@ from ai_worker.tasks.rag.source_ingestion.mfds_label import (
     OBSERVED_CONTENT_TYPE,
     PARSER_VERSION,
     SCHEMA_VERSION,
+    SECTION_TITLES,
     ParsedMfdsLabelDocument,
 )
 from app.core import config
@@ -118,7 +125,10 @@ async def _seed_provenance(
     storage_backend: str = LOCAL_PRIVATE_STORAGE_BACKEND,
     run_snapshot_id: UUID | None = None,
     source_version: str = _SOURCE_VERSION,
+    source_code: str = "MFDS",
+    endpoint_code: str = "PRODUCTS",
     operation_code: str = "LIST",
+    raw_xml_bodies: dict[str, bytes] | None = None,
 ) -> tuple[
     KnowledgeMaterializationRequest,
     tuple[MaterializationSourceDocument, ...],
@@ -138,7 +148,10 @@ async def _seed_provenance(
     raw_manifest_checksum = hashlib.sha256(b"raw_manifest").hexdigest()
 
     async with engine.begin() as connection:
-        existing_source = await connection.execute(text("SELECT id FROM rag_source WHERE source_code = 'MFDS'"))
+        existing_source = await connection.execute(
+            text("SELECT id FROM rag_source WHERE source_code = :source_code"),
+            {"source_code": source_code},
+        )
         src_row = existing_source.mappings().first()
         if src_row is not None:
             src_id = UUID(str(src_row["id"]))
@@ -148,14 +161,14 @@ async def _seed_provenance(
                     "INSERT INTO rag_source "
                     "(id, source_code, display_name, lifecycle_status, max_rejected_records, "
                     "max_rejection_rate, empty_result_policy) "
-                    "VALUES (:id, 'MFDS', 'Synthetic MFDS', 'ACTIVE', 0, 0, 'REJECT')"
+                    "VALUES (:id, :source_code, 'Synthetic MFDS', 'ACTIVE', 0, 0, 'REJECT')"
                 ),
-                {"id": str(src_id)},
+                {"id": str(src_id), "source_code": source_code},
             )
 
         existing_ep = await connection.execute(
-            text("SELECT id FROM rag_source_endpoint WHERE source_id = :source_id AND endpoint_code = 'PRODUCTS'"),
-            {"source_id": str(src_id)},
+            text("SELECT id FROM rag_source_endpoint WHERE source_id = :source_id AND endpoint_code = :endpoint_code"),
+            {"source_id": str(src_id), "endpoint_code": endpoint_code},
         )
         ep_row = existing_ep.mappings().first()
         if ep_row is not None:
@@ -165,9 +178,9 @@ async def _seed_provenance(
                 text(
                     "INSERT INTO rag_source_endpoint "
                     "(id, source_id, endpoint_code, display_name, lifecycle_status, runtime_status, acquisition_status) "
-                    "VALUES (:id, :source_id, 'PRODUCTS', 'Synthetic products', 'VERIFIED', 'ENABLED', 'APPROVED')"
+                    "VALUES (:id, :source_id, :endpoint_code, 'Synthetic products', 'VERIFIED', 'ENABLED', 'APPROVED')"
                 ),
-                {"id": str(ep_id), "source_id": str(src_id)},
+                {"id": str(ep_id), "source_id": str(src_id), "endpoint_code": endpoint_code},
             )
 
         existing_op = await connection.execute(
@@ -250,7 +263,10 @@ async def _seed_provenance(
         member_id = uuid4()
         member_ids.append(member_id)
 
-        xml_body = f"<ITEM><ITEM_SEQ>{_ITEM_SEQ}</ITEM_SEQ><{section}>Synthetic content for {section}</{section}></ITEM>".encode()
+        if raw_xml_bodies and section in raw_xml_bodies:
+            xml_body = raw_xml_bodies[section]
+        else:
+            xml_body = f"<ITEM><ITEM_SEQ>{_ITEM_SEQ}</ITEM_SEQ><{section}>Synthetic content for {section}</{section}></ITEM>".encode()
         sha = hashlib.sha256(xml_body).hexdigest()
         object_key = LocalPrivateSourceArtifactStore.object_key_for_checksum(sha)
         locator = f"mfds-label/{_ITEM_SEQ}/{section}"
@@ -297,10 +313,10 @@ async def _seed_provenance(
 
         src_doc = MaterializationSourceDocument(
             source_id=src_id,
-            source_code="MFDS",
+            source_code=source_code,
             source_lifecycle_status="ACTIVE",
             endpoint_id=ep_id,
-            endpoint_code="PRODUCTS",
+            endpoint_code=endpoint_code,
             endpoint_lifecycle_status="VERIFIED",
             endpoint_runtime_status="ENABLED",
             endpoint_acquisition_status="APPROVED",
@@ -1122,3 +1138,107 @@ async def test_negative_normalization_version_mismatch_fail_closed(database) -> 
         chunk_count = await session.scalar(select(text("count(*)")).select_from(_CHUNK))
         assert doc_count == 0
         assert chunk_count == 0
+
+
+async def test_admin_runner_execute_materialization_postgresql_integration(database, tmp_path) -> None:
+    """Verifies admin runner end-to-end against real PostgreSQL with builder role and local private reader."""
+    engine = database
+    raw_xml_bodies = {
+        section: (
+            f'<DOC type="{section}" title="{SECTION_TITLES[section][0]}">'
+            f'<ARTICLE title="{SECTION_TITLES[section][0]}">'
+            f"<PARAGRAPH>Synthetic content for {section}</PARAGRAPH>"
+            f"</ARTICLE></DOC>"
+        ).encode()
+        for section in ("EE", "UD", "NB")
+    }
+    req, source_docs, drafts = await _seed_provenance(
+        engine,
+        source_code="MFDS_PRODUCT_LABEL",
+        endpoint_code="MFDS_NEDRUG_LABEL_XML",
+        operation_code="COLLECT_NOVASC_200610660_LABEL_XML",
+        raw_xml_bodies=raw_xml_bodies,
+    )
+    snapshot_id = req.snapshot_id
+    item_seq = req.expected_item_seq
+    expected_checksum = source_docs[0].canonical_checksum
+
+    # Store raw artifacts so LocalPrivateSourceArtifactReader can read them
+    artifact_root = tmp_path / "artifacts"
+    store = LocalPrivateSourceArtifactStore(artifact_root)
+    for doc in source_docs:
+        xml_bytes = raw_xml_bodies[doc.section]
+        store_file = tmp_path / f"temp_{doc.section}.xml"
+        store_file.write_bytes(xml_bytes)
+        store.put_verified(
+            page_number=doc.page_number,
+            file_path=store_file,
+            metadata=RawArtifactMetadata(
+                artifact_key=doc.artifact_key,
+                raw_checksum=doc.raw_checksum,
+                byte_size=len(xml_bytes),
+                content_type=doc.content_type,
+            ),
+        )
+
+    # Make artifact_root read-only for LocalPrivateSourceArtifactReader
+    os.chmod(artifact_root, 0o500)
+    for p in artifact_root.rglob("*"):
+        if p.is_dir():
+            os.chmod(p, 0o500)
+        else:
+            os.chmod(p, 0o400)
+
+    # Provision builder role
+    suffix = uuid4().hex[:12]
+    builder = f"mat_bld_{suffix}"
+    runtime = f"mat_rt_{suffix}"
+    password = "synthetic-role-password"
+    async with database.begin() as connection:
+        await connection.execute(text(f"CREATE ROLE \"{builder}\" LOGIN PASSWORD '{password}'"))
+        await connection.execute(text(f"CREATE ROLE \"{runtime}\" LOGIN PASSWORD '{password}'"))
+        await apply_knowledge_index_role_policy(
+            connection,
+            owner=config.DB_USER,
+            runtime=runtime,
+            builder=builder,
+        )
+
+    builder_url = database.url.set(username=builder, password=password)
+    runner_config = MaterializationRunnerConfig(
+        url=builder_url,
+        builder_user=builder,
+        artifact_root=artifact_root,
+    )
+
+    try:
+        summary = await execute_materialization(
+            config=runner_config,
+            snapshot_id=snapshot_id,
+            expected_item_seq=item_seq,
+            expected_canonical_checksum=expected_checksum,
+            verify_replay=True,
+        )
+
+        assert summary["execution_status"] == "SUCCESS"
+        assert summary["outcome"] == "CREATED"
+        assert summary["source_code"] == "MFDS_PRODUCT_LABEL"
+        assert summary["document_count"] == 3
+        assert summary["chunk_count"] == 3
+        assert summary["post_commit_audit_passed"] is True
+        assert summary["exact_replay_verified"] is True
+        assert len(summary["knowledge_document_ids"]) == 3
+        assert len(summary["knowledge_chunk_ids"]) == 3
+    finally:
+        # Restore permissions so pytest cleanup can succeed
+        os.chmod(artifact_root, 0o700)
+        for p in artifact_root.rglob("*"):
+            if p.is_dir():
+                os.chmod(p, 0o700)
+            else:
+                os.chmod(p, 0o600)
+        async with database.begin() as connection:
+            await connection.execute(text(f'DROP OWNED BY "{builder}"'))
+            await connection.execute(text(f'DROP OWNED BY "{runtime}"'))
+            await connection.execute(text(f'DROP ROLE IF EXISTS "{builder}"'))
+            await connection.execute(text(f'DROP ROLE IF EXISTS "{runtime}"'))
