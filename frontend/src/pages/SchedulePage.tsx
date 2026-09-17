@@ -567,6 +567,7 @@ function ScheduleEditor({
           const hasValidationError =
             saveState?.status === 'ERROR' && saveState.kind === 'VALIDATION'
           const errorMessageId = `schedule-error-${id}`
+          const directionsId = `schedule-directions-${id}`
           return (
             <Card className="schedule-editor" key={id}>
               <div className="schedule-editor__heading">
@@ -665,6 +666,10 @@ function ScheduleEditor({
                 )}
                 <div className="schedule-editor__times">
                   <span>복용 시간{frequencyPerDay ? ` · ${frequencyPerDay}개 필요` : ''}</span>
+                  <p className="schedule-editor__directions" id={directionsId}>
+                    <strong>처방 복용 지시</strong>
+                    <span>{medication.timing_text?.trim() || '복용 시점 미확인 · 처방전의 복용 지시를 확인해 주세요.'}</span>
+                  </p>
                   <div className="schedule-editor__time-grid">
                     {draft.times.map((time, index) => (
                       <label className="schedule-editor__time-field" key={index}>
@@ -675,7 +680,7 @@ function ScheduleEditor({
                           value={time}
                           disabled={isSaving || isReloading}
                           aria-invalid={hasValidationError || undefined}
-                          aria-describedby={hasValidationError ? errorMessageId : undefined}
+                          aria-describedby={[directionsId, hasValidationError ? errorMessageId : ''].filter(Boolean).join(' ')}
                           onChange={(event) => changeScheduleInput(id, (current) => {
                             const nextTimes = [...current.times]
                             nextTimes[index] = event.target.value

@@ -2,7 +2,7 @@
 
 ## 목적
 
-회원가입과 내 정보 조회·수정 API에서 MVP 범위의 입력 필드와 개인정보 nullable 상태를 Frontend와 공유하는 기준을 기록합니다.
+회원가입과 내 정보 조회·수정 API에서 허용하는 입력 필드와 개인정보 nullable 상태를 Frontend와 공유하는 기준을 기록합니다.
 
 ## 회원가입
 
@@ -35,8 +35,14 @@
 
 - Endpoint: `GET /api/v1/users/me`, `PATCH /api/v1/users/me`
 - 가입 직후 `gender`, `birthday`, `phone_number`는 `null`일 수 있습니다(`USER` 테이블 nullable).
-- MVP의 `PATCH /api/v1/users/me`는 `name`, `email`만 수정 대상으로 받습니다(`extra="forbid"`).
-- `gender`, `birthday`, `phone_number` 수정은 Post-MVP의 가입 후 추가 개인정보·건강정보 입력 기능에서 다룹니다.
+- `PATCH /api/v1/users/me`는 `name`, `email`, `phone_number`, `birthday`, `gender`만 수정 대상으로 받습니다(`extra="forbid"`).
+- 생략한 필드는 기존 값을 유지합니다.
+- `phone_number`, `birthday`, `gender`는 명시적 `null`로 보내면 미입력 상태로 초기화합니다.
+- `phone_number`는 숫자만 허용합니다. 공백 문자열과 구분자(`-`)가 포함된 값은 `422 VALIDATION_FAILED`입니다.
+- 다른 사용자와 같은 `phone_number`가 DB unique 제약과 충돌하면 `409 CONFLICT`, `details[].field=phone_number`, `reason=ALREADY_EXISTS`를 반환합니다. 별도 휴대폰 번호 중복확인 API는 이번 범위에 포함하지 않습니다.
+- `birthday`는 `YYYY-MM-DD` 날짜 문자열이며 미래 날짜는 `422 VALIDATION_FAILED`입니다.
+- `gender`는 `MALE`, `FEMALE`, `null`만 허용합니다.
+- 휴대폰 번호 SMS 인증·중복 확인, 회원가입 필수 입력, Frontend 입력 UI 연결은 이번 Backend 계약 범위에 포함하지 않습니다.
 
 ## 목적별 동의 상태 API(#207)
 
@@ -64,7 +70,11 @@
 - 모든 인증된 요청은 `get_request_user()`에서 DB의 사용자 상태를 다시 조회합니다.
 - `account_status != ACTIVE`, `is_active=false`, 또는 토큰의 `token_version != user.token_version`이면 `401 INVALID_TOKEN`을 반환합니다.
 - `POST /api/v1/auth/logout`은 현재 사용자의 `token_version`을 DB에서 원자적으로 `+1`하고, 응답에서 `refresh_token` httponly 쿠키를 만료·삭제합니다.
-- `POST /api/v1/auth/account/withdrawal`은 `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true`에서만 현재 인증 사용자 대상으로 열립니다. 기본값 `false`에서는 `503 SERVICE_UNAVAILABLE`(`reason=ACCOUNT_WITHDRAWAL_REQUEST_DISABLED`)로 fail-closed되고 계정 상태·token·deletion request를 변경하지 않습니다. 활성화된 환경에서도 body에 다른 `user_id`를 받지 않습니다. 요청 body는 현재 비밀번호 `password`와 최종 확인 신호 `confirmed=true`만 허용합니다. 비밀번호가 틀리면 `401 UNAUTHORIZED`, `confirmed=false`이면 `422 VALIDATION_FAILED`(`details[].field=confirmed`, `reason=CONFIRMATION_REQUIRED`)를 반환하고 계정 상태·token·deletion request를 변경하지 않습니다. 성공하면 같은 transaction에서 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at`, `token_version + 1`, `account_deletion_request.status=PENDING`을 저장하고 refresh token 쿠키를 삭제합니다. 이 성공 응답은 계정 이용 종료와 탈퇴 요청 접수만 의미하며 물리 삭제 완료를 뜻하지 않습니다.
+- `POST /api/v1/auth/account/withdrawal`은 `ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true`에서만 현재 인증 사용자 대상으로 열립니다. 기본값 `false`에서는 `503 SERVICE_UNAVAILABLE`(`reason=ACCOUNT_WITHDRAWAL_REQUEST_DISABLED`)로 fail-closed되고 계정 상태·token·deletion request를 변경하지 않습니다. 활성화된 환경에서도 body에 다른 `user_id`를 받지 않습니다. 요청 body는 현재 비밀번호 `password`와 최종 확인 신호 `confirmed=true`만 허용합니다. 비밀번호가 틀리면 `401 UNAUTHORIZED`, `confirmed=false`이면 `422 VALIDATION_FAILED`(`details[].field=confirmed`, `reason=CONFIRMATION_REQUIRED`)를 반환하고 계정 상태·token·deletion request를 변경하지 않습니다.
+- 재인증과 최종 확인이 성공하면 같은 transaction에서 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at`, `token_version + 1`, `account_deletion_request.status=PENDING`을 먼저 저장한 뒤 합성 데모 임시 정책 기준 삭제·보존 처리를 수행합니다. 삭제 대상에는 사용자 개인정보 필드, 처방전 원본 파일(`STORAGE_DIR/object_key`)과 DB row, OCR 결과, 사용자별 약물 식별 결과, Guide/Chat 입력·결과, refresh session, Push token이 포함됩니다.
+- 삭제·보존 처리가 성공한 경우에만 `user.account_status=WITHDRAWN`, `user.withdrawn_at`, `account_deletion_request.status=COMPLETED`, `completed_at`을 기록하고 `{"detail":"회원탈퇴가 완료되었습니다."}`를 반환합니다. 기존 이메일은 재가입 충돌을 막지 않는 익명 이메일로 교체하며, 같은 이메일 신규 가입은 새 계정으로만 허용하고 기존 데이터와 연결하지 않습니다.
+- 삭제·보존 처리 중 원본 파일 삭제나 DB 정리 실패가 발생하면 완료로 전이하지 않습니다. 이 경우 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `token_version + 1` 접근 차단은 유지하고, `account_deletion_request.status=FAILED`, `last_error_code=DEMO_DELETION_FAILED`를 기록하며 `{"detail":"탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."}`를 반환합니다. 이 실패 응답에도 refresh token 쿠키는 삭제합니다.
+- 위 삭제·보존 처리는 합성 데이터 기반 데모 임시 정책입니다. 실제 사용자 대상 Production 공개, 법정 보존, 백업 파기와 외부 Privacy 승인 기준은 별도 운영 정책 승인 전까지 current 실행 계약으로 보지 않습니다.
 - 로그아웃 후 기존 access token으로 보호 API에 접근하거나 기존 refresh token으로 토큰 갱신을 시도하면 `401 INVALID_TOKEN`을 반환합니다.
 - 현재 구현은 기기·세션 단위 로그아웃을 구분하지 않습니다. 한 기기에서 로그아웃하면 같은 사용자의 기존 access/refresh token이 함께 무효화됩니다.
 
@@ -128,8 +138,7 @@
 
 ## Post-MVP 이관
 
-- 가입 후 `gender`, `birthday`, `phone_number` 등 추가 개인정보·건강정보 입력 및 저장
-- `PATCH /api/v1/users/me`에서 위 필드를 수정 대상으로 확장
+- Frontend 사용자 정보 화면에서 `gender`, `birthday`, `phone_number` 입력·수정 UI 연결
 - 회원탈퇴 API의 세부 transaction 구현
 - 정교한 rate limit, 이메일 템플릿 디자인 고도화, 회원가입 이메일 인증 강제 gate 활성화
 - Notification 목적별 동의 Gate, OCR 최종 정책 문구·version 승인, Frontend 동의 UI

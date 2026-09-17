@@ -114,3 +114,16 @@ export type PlanResources = {
   support_copy: Support['support_copy']
 }
 export const getPlanResources = async (id: string) => (await apiRequest<{ data: PlanResources }>(`/api/v1/support-action-plans/${encodeURIComponent(id)}/resources`, { cache: 'no-store' })).data
+
+export type FollowupResponse = 'HELPED' | 'NOT_HELPED' | 'NOT_SURE'
+export type Followup = {
+  followup_id: string
+  support_action_plan_id: string
+  response: FollowupResponse
+  revision: number
+  created_at: string
+  updated_at: string
+}
+export type SubmitFollowupRequest = { response: FollowupResponse; expected_revision: number }
+export const getFollowup = async (id: string) => (await apiRequest<{ data: Followup | null }>(`/api/v1/support-action-plans/${encodeURIComponent(id)}/followups`, { cache: 'no-store' })).data
+export const submitFollowup = (id: string, body: SubmitFollowupRequest, key: string) => write<Followup>(`/api/v1/support-action-plans/${encodeURIComponent(id)}/followups`, 'POST', body, key)

@@ -9,6 +9,7 @@ import * as api from '../api/trackC'
 import { clearAuthenticatedSession } from '../features/auth/authSession'
 import { Button, Card, MobileShell } from '../design-system/components'
 import { inspectWebPushState, type WebPushState } from '../features/push/webPush'
+import PlanFollowup from '../components/PlanFollowup'
 import './TrackCPage.css'
 
 const choices: [api.BarrierCode, string][] = [
@@ -43,6 +44,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   const [safety, setSafety] = useState<api.Safety | null>(null)
   const [barrier, setBarrier] = useState<api.Barrier | null>(null)
   const [offer, setOffer] = useState<api.Offer | null>(null)
+  const [showFollowup, setShowFollowup] = useState(false)
   const [plan, setPlan] = useState<api.Plan | null>(null)
   const [resourcesError, setResourcesError] = useState(false)
   const [resources, setResources] = useState<api.PlanResources | null>(null)
@@ -240,6 +242,9 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
         </div>
       </> : <Card><h2>지금 제안할 수 있는 도움이 없어요</h2><p>복약 기록과 응답은 저장되어 있어요.</p><Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button></Card>)}
       {step === 'plan' && plan && <>
+        {plan.status === 'COMPLETED' && (showFollowup
+          ? <PlanFollowup key={plan.support_action_plan_id} planId={plan.support_action_plan_id} service={service} onClose={() => setShowFollowup(false)} />
+          : <Button fullWidth onClick={() => setShowFollowup(true)}>도움 사용 후기</Button>)}
         <Card className="track-c-plan-field"><p>방법</p><h2>{packingPlan ? '다음 외출 전 약 챙기기' : supportNames[plan.support_code]}</h2></Card>
         {resources && <p>{resources.support_copy.body}</p>}
         {resourcesError && <>

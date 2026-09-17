@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { login, logout, signup, type SignupRequest } from '../src/api/auth'
+import {
+  login,
+  logout,
+  requestAccountWithdrawal,
+  signup,
+  type SignupRequest,
+} from '../src/api/auth'
 
 const signupBaseRequest = {
   name: '홍길동',
@@ -155,6 +161,37 @@ describe('logout API', () => {
         method: 'POST',
         headers: expect.objectContaining({
           Authorization: 'Bearer fixture-access-token',
+        }),
+      }),
+    )
+  })
+})
+
+describe('account withdrawal API', () => {
+  it('현재 비밀번호와 confirmed=true만 withdrawal endpoint에 전송한다', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ detail: '탈퇴 요청 접수 완료' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    localStorage.setItem('access_token', 'fixture-access-token')
+
+    await requestAccountWithdrawal('Password1!', 'fixture-access-token')
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/auth/account/withdrawal',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer fixture-access-token',
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({
+          password: 'Password1!',
+          confirmed: true,
         }),
       }),
     )
