@@ -4,24 +4,9 @@ import hashlib
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from ai_worker.tasks.rag.evidence_gate import (
-    EvidenceGateExecutionStatus,
-    EvidenceGateOutcome,
-    EvidenceGateReason,
-    EvidenceGateTrace,
-    EvidenceStatus,
-    GatePassedKnowledgeEvidenceSelection,
-    canonical_gate_selection_hash,
-)
 from ai_worker.tasks.rag.evidence_retrieval import (
-    CanonicalScore,
-    EvidenceSearchStage,
     ImmutableArtifactRef,
-    KnowledgeEvidenceCandidate,
-    KnowledgeEvidenceProvenance,
     SensitiveText,
-    StageSignal,
-    UntrustedKnowledgeEvidenceSelection,
 )
 from ai_worker.tasks.rag.guideline_card import (
     ApprovedGuidelineEvidenceBinding,
@@ -45,7 +30,13 @@ from ai_worker.tasks.rag.guideline_card import (
 from ai_worker.tasks.rag.guideline_card import (
     finalize_guideline_card as _finalize_guideline_card,
 )
-from ai_worker.tests.rag import test_evidence_gate as rag14_fixture
+from ai_worker.tasks.rag.guideline_production_evidence import (
+    ProductionGuidelineEvidence,
+    ProductionGuidelineEvidenceSet,
+    compute_production_guideline_evidence_selection_hash,
+    project_guideline_evidence_from_handoff,
+)
+from ai_worker.tests.rag import test_guideline_production_evidence as handoff_fixture
 
 EVALUATED_AT = datetime(2026, 9, 10, 3, 0, tzinfo=UTC)
 FOOD_AVOIDANCE_TEXT = (
@@ -69,57 +60,49 @@ def finalize_guideline_card(request: GuidelineCardRequest):
     return _finalize_guideline_card(request, approval_verifier=SyntheticApprovalVerifier())
 
 
-def gate_passed_selection(
+def production_selection(
     *,
     evidence_key: str = "knowledge:guideline-1",
     locator: str = "$.items[0].useMethodQesitm",
     source_version: str = "api:" + "1" * 64,
-) -> GatePassedKnowledgeEvidenceSelection:
-    text = FOOD_AVOIDANCE_TEXT
-    provenance = KnowledgeEvidenceProvenance(
+    text: str = FOOD_AVOIDANCE_TEXT,
+) -> ProductionGuidelineEvidence:
+    """A production evidence selection as #774 projects it out of the #760 handoff."""
+    return ProductionGuidelineEvidence(
         evidence_key=evidence_key,
-        knowledge_chunk_ref="chunk-guideline-1",
-        evidence_index_ref=artifact("knowledge-index"),
-        source_snapshot_ref=artifact("source-snapshot"),
+        source_snapshot_id=handoff_fixture.uuid_of("3"),
+        source_snapshot_member_id=handoff_fixture.uuid_of("4"),
+        source_code="MFDS_DUR",
         source_version=source_version,
         locator=locator,
         content_sha256=hashlib.sha256(text.encode()).hexdigest(),
-        canonicalization_spec_version="knowledge-text@1",
-    )
-    selection = UntrustedKnowledgeEvidenceSelection(
-        candidate=KnowledgeEvidenceCandidate(
-            provenance=provenance,
-            content_text=SensitiveText(text),
-            stage_signals=(StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.9")),),
-        ),
-        rerank_rank=1,
-        rerank_score=CanonicalScore("0.9"),
-    )
-    return GatePassedKnowledgeEvidenceSelection(
-        selection=selection,
-        assessment_artifact_ref=artifact("assessment"),
-        eligibility_receipt_ref=artifact("eligibility-receipt"),
+        content_text=SensitiveText(text),
         retrieval_receipt_ref=artifact("retrieval-receipt"),
-        verifier_artifact_ref=artifact("eligibility-verifier"),
+        eligibility_receipt_ref=artifact("eligibility-receipt"),
+        assessment_artifact_ref=artifact("assessment"),
+        verifier_artifact_ref=artifact("assessment-verifier"),
     )
 
 
-def successful_evidence_gate(
-    *selections: GatePassedKnowledgeEvidenceSelection,
-) -> EvidenceGateOutcome:
-    passed = selections or (gate_passed_selection(),)
-    return EvidenceGateOutcome(
-        execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
-        evidence_status=EvidenceStatus.SUFFICIENT,
-        reason=EvidenceGateReason.EVIDENCE_SUFFICIENT,
-        gate_passed_selections=passed,
-        trace=EvidenceGateTrace(
-            policy_ref=artifact("evidence-gate-policy"),
-            retrieval_receipt_ref=passed[0].retrieval_receipt_ref,
-            evaluated_at=EVALUATED_AT,
-            assessment_artifact_refs=tuple(item.assessment_artifact_ref for item in passed),
-            selected_evidence_keys=tuple(item.selection.candidate.provenance.evidence_key for item in passed),
-        ),
+def production_evidence_set(
+    *selections: ProductionGuidelineEvidence,
+) -> ProductionGuidelineEvidenceSet:
+    return ProductionGuidelineEvidenceSet(
+        evaluated_at=EVALUATED_AT,
+        handoff_sha256="e" * 64,
+        selections=selections or (production_selection(),),
+    )
+
+
+def citation_draft_for(evidence: ProductionGuidelineEvidence) -> GuidelineCitationDraft:
+    return GuidelineCitationDraft(
+        evidence_key=evidence.evidence_key,
+        source_snapshot_id=evidence.source_snapshot_id,
+        source_snapshot_member_id=evidence.source_snapshot_member_id,
+        source_code=evidence.source_code,
+        source_version=evidence.source_version,
+        locator=evidence.locator,
+        content_sha256=evidence.content_sha256,
     )
 
 
@@ -144,8 +127,7 @@ def approved_fallbacks() -> tuple[ApprovedGuidelineFallback, ...]:
 
 
 def valid_request() -> GuidelineCardRequest:
-    selected = gate_passed_selection()
-    evidence = selected.selection.candidate.provenance
+    evidence = production_selection()
     identity = medication()
     action_text = FOOD_AVOIDANCE_TEXT
     uncertainty_text = "승인된 근거 범위 밖의 내용은 확인할 수 없습니다."
@@ -157,13 +139,13 @@ def valid_request() -> GuidelineCardRequest:
         scope=GuidelineScope.FOOD_CAUTION,
         action_class=GuidelineActionClass.FOOD_AVOIDANCE,
         evidence_key=evidence.evidence_key,
-        assessment_artifact_ref=selected.assessment_artifact_ref,
-        selection_projection_sha256=canonical_gate_selection_hash(selected.selection),
+        assessment_artifact_ref=evidence.assessment_artifact_ref,
+        selection_projection_sha256=compute_production_guideline_evidence_selection_hash(evidence),
         action_text_sha256=hashlib.sha256(action_text.encode()).hexdigest(),
     )
     return GuidelineCardRequest(
         medication_identities=(identity,),
-        evidence_gate_outcome=successful_evidence_gate(selected),
+        evidence=production_evidence_set(evidence),
         draft=GuidelineCardDraft(
             claims=(
                 GuidelineClaimDraft(
@@ -172,15 +154,7 @@ def valid_request() -> GuidelineCardRequest:
                     scope=GuidelineScope.FOOD_CAUTION,
                     action_class=GuidelineActionClass.FOOD_AVOIDANCE,
                     action_text=SensitiveText(action_text),
-                    citations=(
-                        GuidelineCitationDraft(
-                            evidence_key=evidence.evidence_key,
-                            source_snapshot_ref=evidence.source_snapshot_ref,
-                            source_version=evidence.source_version,
-                            locator=evidence.locator,
-                            content_sha256=evidence.content_sha256,
-                        ),
-                    ),
+                    citations=(citation_draft_for(evidence),),
                 ),
             ),
             uncertainty_text=SensitiveText(uncertainty_text),
@@ -229,9 +203,9 @@ def request_with_approved_action(text: str) -> GuidelineCardRequest:
     )
 
 
-def test_valid_card_binds_each_claim_to_medication_and_gate_passed_citation() -> None:
+def test_valid_card_binds_each_claim_to_medication_and_production_evidence_citation() -> None:
     request = valid_request()
-    selected = request.evidence_gate_outcome.gate_passed_selections[0]
+    selected = request.evidence.selections[0]
     outcome = finalize_guideline_card(request)
 
     assert outcome.status is GuidelineCardStatus.GENERATED
@@ -241,7 +215,10 @@ def test_valid_card_binds_each_claim_to_medication_and_gate_passed_citation() ->
     assert outcome.card is not None
     assert outcome.card.claims[0].medication_identity == medication()
     assert outcome.card.claims[0].citations[0].assessment_artifact_ref == selected.assessment_artifact_ref
-    assert outcome.card.claims[0].citations[0].locator == selected.selection.candidate.provenance.locator
+    assert outcome.card.claims[0].citations[0].locator == selected.locator
+    assert outcome.card.claims[0].citations[0].source_snapshot_id == selected.source_snapshot_id
+    assert outcome.card.claims[0].citations[0].source_snapshot_member_id == selected.source_snapshot_member_id
+    assert outcome.card.claims[0].citations[0].source_code == selected.source_code
     assert outcome.card.claims[0].citations[0].source_type.value == "LIFESTYLE_GUIDELINE"
     assert outcome.card.provenance.prompt_ref == request.provenance.prompt_ref
     assert outcome.card.provenance.model_ref == request.provenance.model_ref
@@ -250,48 +227,33 @@ def test_valid_card_binds_each_claim_to_medication_and_gate_passed_citation() ->
     assert outcome.card.provenance.guideline_policy_ref == request.policy.artifact_ref
 
 
-def test_card_accepts_an_actual_rag14_evidence_gate_success() -> None:
+def test_card_accepts_evidence_projected_from_an_actual_760_handoff() -> None:
+    """The production Card path consumes a real #760 handoff projection, not a Gate outcome."""
     request = valid_request()
     assert request.draft is not None
     action_text = request.draft.claims[0].action_text.reveal()
-    selection = rag14_fixture.selection(text=action_text)
-    receipt = rag14_fixture.retrieval_receipt(selections=(selection,))
-    assessment = rag14_fixture.assessment(selection, gate_retrieval_receipt=receipt)
-    gate = rag14_fixture.evaluate(
-        rag14_fixture.request(
-            (selection,),
-            (assessment,),
-            gate_retrieval_receipt=receipt,
-        )
-    )
-    passed = gate.gate_passed_selections[0]
-    evidence = passed.selection.candidate.provenance
-    citation = GuidelineCitationDraft(
-        evidence_key=evidence.evidence_key,
-        source_snapshot_ref=evidence.source_snapshot_ref,
-        source_version=evidence.source_version,
-        locator=evidence.locator,
-        content_sha256=evidence.content_sha256,
-    )
-    claim = replace(request.draft.claims[0], citations=(citation,))
+    handoff = handoff_fixture.verified_handoff(handoff_fixture.verified_selection(text=action_text))
+    evidence_set = project_guideline_evidence_from_handoff(handoff)
+    evidence = evidence_set.selections[0]
+    claim = replace(request.draft.claims[0], citations=(citation_draft_for(evidence),))
     binding = ApprovedGuidelineEvidenceBinding.create(
         "guideline-evidence-binding",
-        "guideline-evidence-binding@synthetic-rag14",
+        "guideline-evidence-binding@synthetic-760",
         medication_identity=claim.medication_identity,
         scope=claim.scope,
         action_class=claim.action_class,
         evidence_key=evidence.evidence_key,
-        assessment_artifact_ref=passed.assessment_artifact_ref,
-        selection_projection_sha256=canonical_gate_selection_hash(passed.selection),
+        assessment_artifact_ref=evidence.assessment_artifact_ref,
+        selection_projection_sha256=compute_production_guideline_evidence_selection_hash(evidence),
         action_text_sha256=hashlib.sha256(action_text.encode()).hexdigest(),
     )
 
     outcome = finalize_guideline_card(
         replace(
             request,
-            evidence_gate_outcome=gate,
+            evidence=evidence_set,
             draft=replace(request.draft, claims=(claim,)),
-            evaluated_at=rag14_fixture.NOW,
+            evaluated_at=evidence_set.evaluated_at,
             approved_evidence_bindings=(binding,),
         )
     )
@@ -299,84 +261,44 @@ def test_card_accepts_an_actual_rag14_evidence_gate_success() -> None:
     assert outcome.status is GuidelineCardStatus.GENERATED
 
 
-def test_no_approved_evidence_discards_draft_and_returns_approved_fallback() -> None:
+def test_production_request_has_no_evidence_status_input_to_map() -> None:
+    """The retired RAG-14 Gate statuses are not reachable through a production request.
+
+    `EVIDENCE_INSUFFICIENT`, `EVIDENCE_CONFLICTED` and `EVIDENCE_STALE` were Gate
+    outcomes. `ProductionGuidelineEvidenceSet` carries no status field at all, because
+    #760 fails closed before RAG-15 runs: an unusable handoff produces no production
+    evidence for this kernel to interpret. The enum members stay defined, and the
+    approved fallback copy for each remains required, but mapping an upstream handoff
+    rejection onto a public fallback belongs to the #180 runtime, not to this kernel.
+    """
+    fields = set(ProductionGuidelineEvidenceSet.__dataclass_fields__)
+
+    assert "evidence_status" not in fields
+    assert "execution_status" not in fields
+    assert "reason" not in fields
+    assert {
+        GuidelineFallbackCode.NO_APPROVED_EVIDENCE,
+        GuidelineFallbackCode.CONFLICTING_EVIDENCE,
+    } <= {item.code for item in valid_request().approved_fallbacks}
+
+
+def test_structurally_unusable_production_evidence_is_a_validation_failure() -> None:
     request = valid_request()
-    gate = EvidenceGateOutcome(
-        EvidenceGateExecutionStatus.NO_RESULT,
-        EvidenceStatus.INSUFFICIENT,
-        EvidenceGateReason.EVIDENCE_INSUFFICIENT,
-    )
+    evidence = request.evidence.selections[0]
+    duplicate_coordinate = replace(evidence, evidence_key="knowledge:guideline-2")
 
-    outcome = finalize_guideline_card(replace(request, evidence_gate_outcome=gate))
-
-    assert outcome.status is GuidelineCardStatus.NO_RESULT
-    assert outcome.reason is GuidelineCardReason.EVIDENCE_INSUFFICIENT
-    assert outcome.fallback_code is GuidelineFallbackCode.NO_APPROVED_EVIDENCE
-    assert outcome.card is None
-    assert outcome.fallback is not None
-    assert outcome.fallback.code is GuidelineFallbackCode.NO_APPROVED_EVIDENCE
-
-
-def test_conflicting_evidence_returns_conflict_fallback() -> None:
-    request = valid_request()
-    gate = EvidenceGateOutcome(
-        EvidenceGateExecutionStatus.NO_RESULT,
-        EvidenceStatus.CONFLICTED,
-        EvidenceGateReason.EVIDENCE_CONFLICTED,
-    )
-
-    outcome = finalize_guideline_card(replace(request, evidence_gate_outcome=gate))
-
-    assert outcome.status is GuidelineCardStatus.NO_RESULT
-    assert outcome.reason is GuidelineCardReason.EVIDENCE_CONFLICTED
-    assert outcome.fallback_code is GuidelineFallbackCode.CONFLICTING_EVIDENCE
-    assert outcome.card is None
-
-
-def test_stale_source_is_not_execution_context_stale() -> None:
-    request = valid_request()
-    gate = EvidenceGateOutcome(
-        EvidenceGateExecutionStatus.NO_RESULT,
-        EvidenceStatus.STALE,
-        EvidenceGateReason.EVIDENCE_STALE,
-    )
-
-    outcome = finalize_guideline_card(replace(request, evidence_gate_outcome=gate))
-
-    assert outcome.status is GuidelineCardStatus.NO_RESULT
-    assert outcome.reason is GuidelineCardReason.EVIDENCE_STALE
-    assert outcome.fallback_code is GuidelineFallbackCode.NO_APPROVED_EVIDENCE
-
-
-def test_evidence_gate_validation_error_discards_draft() -> None:
-    request = valid_request()
-    gate = EvidenceGateOutcome(
-        EvidenceGateExecutionStatus.VALIDATION_ERROR,
-        None,
-        EvidenceGateReason.REQUEST_INVALID,
-    )
-
-    outcome = finalize_guideline_card(replace(request, evidence_gate_outcome=gate))
-
-    assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
-    assert outcome.reason is GuidelineCardReason.VALIDATION_FAILED
-    assert outcome.fallback_code is GuidelineFallbackCode.VALIDATION_FAILED
-    assert outcome.card is None
-
-
-def test_evidence_gate_dependency_error_uses_dependency_fallback() -> None:
-    request = valid_request()
-    gate = EvidenceGateOutcome(
-        EvidenceGateExecutionStatus.DEPENDENCY_ERROR,
-        None,
-        EvidenceGateReason.ELIGIBILITY_VERIFICATION_ERROR,
-    )
-
-    outcome = finalize_guideline_card(replace(request, evidence_gate_outcome=gate))
-
-    assert outcome.status is GuidelineCardStatus.NO_RESULT
-    assert outcome.reason is GuidelineCardReason.DEPENDENCY_UNAVAILABLE
-    assert outcome.fallback_code is GuidelineFallbackCode.DEPENDENCY_UNAVAILABLE
+    for broken in (
+        replace(request.evidence, selections=()),
+        replace(request.evidence, handoff_sha256="not-a-sha256"),
+        replace(request.evidence, selections=(evidence, evidence)),
+        replace(request.evidence, selections=(evidence, duplicate_coordinate)),
+        replace(request.evidence, evaluated_at=datetime(2036, 9, 10, 3, 0, tzinfo=UTC)),
+    ):
+        outcome = finalize_guideline_card(replace(request, evidence=broken))
+        assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
+        assert outcome.reason is GuidelineCardReason.VALIDATION_FAILED
+        assert outcome.fallback_code is GuidelineFallbackCode.VALIDATION_FAILED
+        assert outcome.card is None
 
 
 def test_generation_failures_have_deterministic_status_and_fallback() -> None:
@@ -757,103 +679,106 @@ def test_tampered_policy_or_generation_provenance_is_rejected() -> None:
         assert outcome.fallback_code is GuidelineFallbackCode.VALIDATION_FAILED
 
 
-def test_inconsistent_evidence_gate_outcome_is_rejected() -> None:
+def test_mutated_production_evidence_content_is_rejected() -> None:
+    """content_text must still hash to content_sha256 at the Card boundary."""
     request = valid_request()
-    inconsistent = EvidenceGateOutcome(
-        EvidenceGateExecutionStatus.DEPENDENCY_ERROR,
-        None,
-        EvidenceGateReason.REQUEST_INVALID,
-    )
+    evidence = request.evidence.selections[0]
+    tampered = replace(evidence, content_text=SensitiveText("변조된 합성 근거"))
 
-    outcome = finalize_guideline_card(replace(request, evidence_gate_outcome=inconsistent))
-
-    assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
-    assert outcome.reason is GuidelineCardReason.VALIDATION_FAILED
-    assert outcome.fallback_code is GuidelineFallbackCode.VALIDATION_FAILED
-
-
-def test_mutated_gate_passed_content_is_rejected() -> None:
-    request = valid_request()
-    selected = request.evidence_gate_outcome.gate_passed_selections[0]
-    candidate = selected.selection.candidate
-    changed_candidate = replace(candidate, content_text=SensitiveText("변조된 합성 근거"))
-    changed_selection = replace(selected.selection, candidate=changed_candidate)
-    changed_gate = replace(
-        request.evidence_gate_outcome,
-        gate_passed_selections=(replace(selected, selection=changed_selection),),
-    )
-
-    outcome = finalize_guideline_card(replace(request, evidence_gate_outcome=changed_gate))
+    outcome = finalize_guideline_card(replace(request, evidence=replace(request.evidence, selections=(tampered,))))
 
     assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
     assert outcome.fallback_code is GuidelineFallbackCode.VALIDATION_FAILED
 
 
-def test_replaced_gate_provenance_cannot_reuse_original_assessment() -> None:
+def test_replaced_production_source_coordinate_cannot_reuse_the_original_binding() -> None:
+    """Swapping the Source coordinate breaks the production selection hash binding."""
     request = valid_request()
     assert request.draft is not None
-    selected = request.evidence_gate_outcome.gate_passed_selections[0]
-    provenance = replace(
-        selected.selection.candidate.provenance,
-        source_snapshot_ref=artifact("attacker-source", "b" * 64),
+    evidence = request.evidence.selections[0]
+    attacker = replace(
+        evidence,
+        source_snapshot_id=handoff_fixture.uuid_of("9"),
+        source_snapshot_member_id=handoff_fixture.uuid_of("9"),
         source_version="api:" + "2" * 64,
         locator="$.attacker.injected",
     )
-    candidate = replace(selected.selection.candidate, provenance=provenance)
-    changed = replace(selected, selection=replace(selected.selection, candidate=candidate))
-    changed_gate = replace(request.evidence_gate_outcome, gate_passed_selections=(changed,))
-    citation = replace(
-        request.draft.claims[0].citations[0],
-        source_snapshot_ref=provenance.source_snapshot_ref,
-        source_version=provenance.source_version,
-        locator=provenance.locator,
-    )
     changed_draft = replace(
         request.draft,
-        claims=(replace(request.draft.claims[0], citations=(citation,)),),
+        claims=(replace(request.draft.claims[0], citations=(citation_draft_for(attacker),)),),
     )
 
-    outcome = finalize_guideline_card(replace(request, evidence_gate_outcome=changed_gate, draft=changed_draft))
+    outcome = finalize_guideline_card(
+        replace(
+            request,
+            evidence=replace(request.evidence, selections=(attacker,)),
+            draft=changed_draft,
+        )
+    )
 
     assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
     assert outcome.card is None
 
 
-def test_missing_or_replayed_evidence_gate_trace_is_rejected() -> None:
+def test_replayed_card_evaluation_against_older_production_evidence_is_rejected() -> None:
     request = valid_request()
-    without_trace = replace(request.evidence_gate_outcome, trace=None)
     replayed = replace(request, evaluated_at=datetime(2036, 9, 10, 3, 0, tzinfo=UTC))
 
-    for changed in (replace(request, evidence_gate_outcome=without_trace), replayed):
-        outcome = finalize_guideline_card(changed)
-        assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
-        assert outcome.fallback_code is GuidelineFallbackCode.VALIDATION_FAILED
-
-
-def test_malformed_gate_selection_is_rejected() -> None:
-    request = valid_request()
-    selected = request.evidence_gate_outcome.gate_passed_selections[0]
-    malformed_candidate = replace(selected.selection.candidate, stage_signals=())
-    malformed_selection = replace(
-        selected.selection,
-        candidate=malformed_candidate,
-        rerank_score=CanonicalScore("not-a-score"),
-    )
-    malformed_gate = replace(
-        request.evidence_gate_outcome,
-        gate_passed_selections=(replace(selected, selection=malformed_selection),),
-    )
-
-    outcome = finalize_guideline_card(replace(request, evidence_gate_outcome=malformed_gate))
+    outcome = finalize_guideline_card(replayed)
 
     assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
     assert outcome.fallback_code is GuidelineFallbackCode.VALIDATION_FAILED
 
 
+def test_malformed_production_evidence_selection_is_rejected() -> None:
+    request = valid_request()
+    evidence = request.evidence.selections[0]
+
+    for malformed in (
+        replace(evidence, evidence_key=""),
+        replace(evidence, source_code=" leading-space"),
+        replace(evidence, content_sha256="not-a-sha256"),
+        replace(evidence, assessment_artifact_ref=replace(evidence.assessment_artifact_ref, content_sha256="bad")),
+    ):
+        outcome = finalize_guideline_card(replace(request, evidence=replace(request.evidence, selections=(malformed,))))
+        assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
+        assert outcome.fallback_code is GuidelineFallbackCode.VALIDATION_FAILED
+
+
+def test_legacy_gate_selection_hash_is_not_accepted_as_a_production_binding() -> None:
+    """A binding carrying the retired RAG-14 hash must not validate in production."""
+    from ai_worker.tasks.rag.evidence_gate import canonical_gate_selection_hash
+    from ai_worker.tests.rag import test_evidence_gate as rag14_fixture
+
+    request = valid_request()
+    assert request.draft is not None
+    evidence = request.evidence.selections[0]
+    legacy_hash = canonical_gate_selection_hash(rag14_fixture.selection(text=FOOD_AVOIDANCE_TEXT))
+    current = request.approved_evidence_bindings[0]
+    legacy_binding = ApprovedGuidelineEvidenceBinding.create(
+        current.artifact_ref.artifact_code,
+        current.artifact_ref.version,
+        medication_identity=current.medication_identity,
+        scope=current.scope,
+        action_class=current.action_class,
+        evidence_key=current.evidence_key,
+        assessment_artifact_ref=current.assessment_artifact_ref,
+        selection_projection_sha256=legacy_hash,
+        action_text_sha256=current.action_text_sha256,
+    )
+
+    assert legacy_hash != compute_production_guideline_evidence_selection_hash(evidence)
+    outcome = finalize_guideline_card(replace(request, approved_evidence_bindings=(legacy_binding,)))
+
+    assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
+    assert outcome.fallback_code is GuidelineFallbackCode.VALIDATION_FAILED
+    assert outcome.card is None
+
+
 def test_claim_scope_must_match_approved_medication_evidence_binding() -> None:
     request = valid_request()
-    selected = request.evidence_gate_outcome.gate_passed_selections[0]
-    evidence_key = selected.selection.candidate.provenance.evidence_key
+    selected = request.evidence.selections[0]
+    evidence_key = selected.evidence_key
     matching = ApprovedGuidelineEvidenceBinding.create(
         "guideline-evidence-binding",
         "guideline-evidence-binding@synthetic-1",
@@ -862,7 +787,7 @@ def test_claim_scope_must_match_approved_medication_evidence_binding() -> None:
         action_class=GuidelineActionClass.FOOD_AVOIDANCE,
         evidence_key=evidence_key,
         assessment_artifact_ref=selected.assessment_artifact_ref,
-        selection_projection_sha256=canonical_gate_selection_hash(selected.selection),
+        selection_projection_sha256=compute_production_guideline_evidence_selection_hash(selected),
         action_text_sha256=hashlib.sha256(
             (request.draft.claims[0].action_text.reveal() if request.draft is not None else "").encode()
         ).hexdigest(),
@@ -875,7 +800,7 @@ def test_claim_scope_must_match_approved_medication_evidence_binding() -> None:
         action_class=GuidelineActionClass.DAILY_ACTIVITY_PRECAUTION,
         evidence_key=evidence_key,
         assessment_artifact_ref=selected.assessment_artifact_ref,
-        selection_projection_sha256=canonical_gate_selection_hash(selected.selection),
+        selection_projection_sha256=compute_production_guideline_evidence_selection_hash(selected),
         action_text_sha256=hashlib.sha256(
             (request.draft.claims[0].action_text.reveal() if request.draft is not None else "").encode()
         ).hexdigest(),
@@ -941,21 +866,17 @@ def test_finalized_card_snapshots_nested_identity_and_artifact_refs() -> None:
     assert outcome.card is not None
     original_identity = outcome.card.claims[0].medication_identity.canonical_code
     original_prompt = outcome.card.provenance.prompt_ref.artifact_code
-    original_snapshot = outcome.card.claims[0].citations[0].source_snapshot_ref.artifact_code
+    original_assessment = outcome.card.claims[0].citations[0].assessment_artifact_ref.artifact_code
     artifact_ref = outcome.card.artifact_ref
 
     object.__setattr__(request.medication_identities[0], "canonical_code", "TAMPERED")
     object.__setattr__(request.provenance.prompt_ref, "artifact_code", "tampered-prompt")
-    selected = request.evidence_gate_outcome.gate_passed_selections[0]
-    object.__setattr__(
-        selected.selection.candidate.provenance.source_snapshot_ref,
-        "artifact_code",
-        "tampered-source",
-    )
+    selected = request.evidence.selections[0]
+    object.__setattr__(selected.assessment_artifact_ref, "artifact_code", "tampered-assessment")
 
     assert outcome.card.claims[0].medication_identity.canonical_code == original_identity
     assert outcome.card.provenance.prompt_ref.artifact_code == original_prompt
-    assert outcome.card.claims[0].citations[0].source_snapshot_ref.artifact_code == original_snapshot
+    assert outcome.card.claims[0].citations[0].assessment_artifact_ref.artifact_code == original_assessment
     assert outcome.card.artifact_ref == artifact_ref
 
 

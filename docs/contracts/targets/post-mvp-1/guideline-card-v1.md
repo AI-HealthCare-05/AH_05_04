@@ -11,10 +11,17 @@
 
 ## 목적과 상태
 
-이 문서는 RAG-14 Evidence Gate 결과와 승인된 Source provenance를 환자 표시 전
+이 문서는 production Guide evidence와 승인된 Source provenance를 환자 표시 전
 `GuidelineCardOutcome`으로 고정하는 RAG-15 typed port 계약이다. 현재 구현 범위는
 `ai_worker.tasks.rag.guideline_card.finalize_guideline_card`의 persistence-free kernel과
 합성 fixture·회귀 테스트다.
+
+**#774 입력 경계 이동**: production 입력은 더 이상 RAG-14 `EvidenceGateOutcome`이
+아니다. #760 `VerifiedGuideEvidenceHandoff`에서 투영된
+`ProductionGuidelineEvidenceSet`이 정본이며, 필드·projection·hash 의미는
+[RAG-15 Production Guideline Evidence Input 계약 v1](../../proposed/post-mvp-1/guideline-production-evidence-input-v1.md)이
+소유한다. `VerifiedGuideEvidenceHandoff → EvidenceGateOutcome` converter는 존재하지
+않는다.
 
 RAG-05 production Source adapter, DB 저장, Backend/OpenAPI DTO, RAG-16 Citation
 Authorization·Release Gate 연결은 이 구현에 포함되지 않는다. 따라서 이 문서와 PR의
@@ -27,19 +34,19 @@ Authorization·Release Gate 연결은 이 구현에 포함되지 않는다. 따�
 | 필드 | 필수성 | 계약 |
 | --- | --- | --- |
 | `medication_identities` | 필수, 1개 이상 | 확정 처방 Version의 약품 식별자만 허용하고 중복을 거부한다. |
-| `evidence_gate_outcome` | 필수 | RAG-14 `EvidenceGateOutcome`. 성공 경로는 같은 요청에서 평가된 `SUCCEEDED/SUFFICIENT` 결과만 허용한다. |
+| `evidence` | 필수 | #760 handoff에서 투영된 `ProductionGuidelineEvidenceSet`. 1개 이상의 selection과 `handoff_sha256`을 가지며, `evaluated_at`은 아래 `evaluated_at`과 exact match해야 한다. Finalizer는 구조만 검증하고 #760이 판정한 Source·assessment·freshness authority는 재평가하지 않는다. legacy `evidence_gate_outcome` field는 제거됐고, legacy/production dual-mode field는 두지 않는다. |
 | `draft` | 조건부 | 생성 성공 경로에서 필수다. `generation_failure`가 있으면 partial draft는 검증·공개하지 않고 버린다. |
 | `generation_failure` | 조건부 | 생성 실패 경로에서 필수다. partial `draft`와 함께 전달돼도 이 실패가 우선한다. |
 | `policy` | 필수 | action template, 최대 Claim 수, 불확실성·상담 문구 hash를 결속한 `VersionedGuidelinePolicy`. |
 | `provenance` | 필수 | prompt·model·parser·validator의 불변 Artifact 참조다. |
 | `approved_fallbacks` | 필수 | `GuidelineFallbackCode` 전체에 대해 코드별 정확히 하나의 승인 Artifact가 있어야 한다. |
-| `evaluated_at` | 필수 | timezone-aware UTC이며 RAG-14 `trace.evaluated_at`과 정확히 같아야 한다. |
-| `approved_evidence_bindings` | 성공 시 필수, 1개 이상 | Gate가 선택한 Evidence와 medication·scope·action·assessment를 결속한다. 실패 fallback 경로에서는 비어 있을 수 있다. |
+| `evaluated_at` | 필수 | timezone-aware UTC이며 `evidence.evaluated_at`과 정확히 같아야 한다. |
+| `approved_evidence_bindings` | 성공 시 필수, 1개 이상 | production evidence selection과 medication·scope·action·assessment를 결속한다. `selection_projection_sha256`은 `compute_production_guideline_evidence_selection_hash()` 값이어야 하며 legacy `canonical_gate_selection_hash()` 값은 거부된다. 실패 fallback 경로에서는 비어 있을 수 있다. |
 
 입력 객체는 호출자가 소유한 mutable graph로 간주한다. Finalizer는 어떤 외부 verifier도
 호출하기 전에 전체 request graph와 verifier 입력을 분리 snapshot하고, 이후 구조 검증·승인·
 Card 및 fallback 출력 모두 request snapshot만 사용한다. 호출 중 원 policy, draft, medication,
-Gate, provenance, binding 또는 fallback graph가 바뀌어도 검증·출력에는 반영하지 않는다.
+evidence, provenance, binding 또는 fallback graph가 바뀌어도 검증·출력에는 반영하지 않는다.
 Request/fallback snapshot 생성·구조 검증 실패는 `VALIDATION_FAILED`, verifier에 전달한 분리
 입력의 변조나 verifier 예외는 `DEPENDENCY_UNAVAILABLE`로 fail-closed한다.
 
@@ -90,9 +97,12 @@ Receipt에 보존하되 RAG-15에서는 `EVIDENCE_INSUFFICIENT`로 닫힌다. �
 - Scope는 `FOOD_CAUTION`, `DAILY_ACTIVITY`만 허용하고 action class와 승인된 고정 action
   template을 exact-match한다.
 - 모든 Claim은 요청의 medication identity 하나에 결속되고 Citation을 1개 이상 가진다.
-- Citation의 `source_snapshot_ref`, `source_version`, `locator`, `content_sha256`은 Gate가
-  선택한 `LIFESTYLE_GUIDELINE` provenance와 exact-match한다.
-- Binding은 Gate selection의 canonical projection hash, assessment Artifact, medication,
+- Citation의 `source_snapshot_id`, `source_snapshot_member_id`, `source_code`,
+  `source_version`, `locator`, `content_sha256`은 production evidence selection의
+  `LIFESTYLE_GUIDELINE` provenance와 exact-match한다. `source_snapshot_ref` artifact
+  참조는 #774에서 production Source 좌표로 교체됐다.
+- Binding은 production selection canonical projection hash
+  (`guideline-production-evidence-selection-v1`), assessment Artifact, medication,
   scope, action class와 action text hash를 결속한다.
 - action text뿐 아니라 `uncertainty_text`와 `consultation_text`에도 진단 확정, 복용 중단,
   용량 증감, 새 처방 지시 등 금지 의료 행동 검증을 동일하게 적용한다. 승인 policy hash가
@@ -109,17 +119,28 @@ Receipt에 보존하되 RAG-15에서는 `EVIDENCE_INSUFFICIENT`로 닫힌다. �
 | 상황 | `status` | `reason` | `fallback_code` | payload |
 | --- | --- | --- | --- | --- |
 | Card 생성·전체 결속 성공 | `GENERATED` | `CARD_GENERATED` | `None` | `card` 필수, `fallback=None` |
-| 근거 부족·eligibility 거부 | `NO_RESULT` | `EVIDENCE_INSUFFICIENT` | `NO_APPROVED_EVIDENCE` | 검증된 fallback |
-| 근거 충돌 | `NO_RESULT` | `EVIDENCE_CONFLICTED` | `CONFLICTING_EVIDENCE` | 검증된 fallback |
-| RAG-14 assessment 유효기간 만료 | `NO_RESULT` | `EVIDENCE_STALE` | `NO_APPROVED_EVIDENCE` | 검증된 fallback |
+| 근거 부족·eligibility 거부 | `NO_RESULT` | `EVIDENCE_INSUFFICIENT` | `NO_APPROVED_EVIDENCE` | 검증된 fallback — **production request로는 도달 불가(아래 참조)** |
+| 근거 충돌 | `NO_RESULT` | `EVIDENCE_CONFLICTED` | `CONFLICTING_EVIDENCE` | 검증된 fallback — **production request로는 도달 불가(아래 참조)** |
+| assessment 유효기간 만료 | `NO_RESULT` | `EVIDENCE_STALE` | `NO_APPROVED_EVIDENCE` | 검증된 fallback — **production request로는 도달 불가(아래 참조)** |
 | Provider timeout | `NO_RESULT` | `PROVIDER_TIMEOUT` | `PROVIDER_TIMEOUT` | 검증된 fallback |
 | dependency 실패 | `NO_RESULT` | `DEPENDENCY_UNAVAILABLE` | `DEPENDENCY_UNAVAILABLE` | 검증된 fallback 또는 승인 context가 없으면 `None` |
-| 요청·Gate·생성·승인 validation 실패 | `VALIDATION_REJECTED` | `VALIDATION_FAILED` | `VALIDATION_FAILED` | 검증된 fallback 또는 승인 context가 없으면 `None` |
+| 요청·evidence 구조·생성·승인 validation 실패 | `VALIDATION_REJECTED` | `VALIDATION_FAILED` | `VALIDATION_FAILED` | 검증된 fallback 또는 승인 context가 없으면 `None` |
 | 처방 Version 불일치 | `STALE` | `PRESCRIPTION_STALE` | `PRESCRIPTION_STALE` | 검증된 fallback |
 | 실행 Context 불일치 | `STALE` | `EXECUTION_CONTEXT_STALE` | `EXECUTION_CONTEXT_STALE` | 검증된 fallback |
 | 지원하지 않는 요청 | `LIMITED` | `UNSUPPORTED_REQUEST` | `UNSUPPORTED_REQUEST` | 검증된 fallback |
 
-RAG-14 assessment 유효기간 만료가 `NO_APPROVED_EVIDENCE`로 사영되는 것은
+`EVIDENCE_INSUFFICIENT` / `EVIDENCE_CONFLICTED` / `EVIDENCE_STALE` 세 행은 RAG-14
+Evidence Gate 상태에서 유도됐다. #774 이후 `ProductionGuidelineEvidenceSet`에는
+status 필드가 없고, 근거가 부족·상충·만료된 경우 #760 handoff build가 REJECTED로
+닫고 #765 orchestration이 STOPPED로 멈추므로 production `GuidelineCardRequest`로는
+이 세 outcome에 도달할 수 없다. enum 멤버와 코드별 승인 fallback copy 요구는 그대로
+유지되며, RAG-14 synthetic 경로에서는 여전히 유효하다. upstream handoff rejection을
+공개 fallback code로 사영하는 책임자·매핑은 **미정(UNRESOLVED)**이며 #180 runtime
+mapping에서 Safety 책임 리뷰와 함께 결정한다. 자세한 내용은
+[RAG-15 Production Guideline Evidence Input 계약 v1](../../proposed/post-mvp-1/guideline-production-evidence-input-v1.md)의
+UNRESOLVED 절을 따른다.
+
+assessment 유효기간 만료가 `NO_APPROVED_EVIDENCE`로 사영되는 것은
 [Safety Result·Citation v2](./safety-result-v2.md)의 승인된 공개 코드 계약을 따른다.
 근거 자체가 부족한 경우와 assessment 갱신이 필요한 경우의 RAG-15 대응은 내부
 `reason=EVIDENCE_INSUFFICIENT|EVIDENCE_STALE`로 구분한다. 이 차이를 공개 문구 enum 확장으로
@@ -133,16 +154,16 @@ Receipt에서 구분한다.
 RAG-15 내부의 draft generation boundary다.
 
 1. `GuidelineGeneratorPort`는 RAG-15 내부 generation boundary다.
-2. 입력은 `GuidelineGenerationRequest`(`medication_identities`, `evidence_gate_outcome`, `policy`).
+2. 입력은 `GuidelineGenerationRequest`(`medication_identities`, `evidence`, `policy`)이며 `evidence`는 `ProductionGuidelineEvidenceSet`이다. legacy `evidence_gate_outcome` field는 제거됐다.
 3. 출력은 정확히 `GuidelineCardDraft | GuidelineGenerationFailure`이다.
 4. #179에서 `GuidelineGeneratorPort`를 구현하는 `OpenAIGuidelineGeneratorAdapter`(`ai_worker.adapters.openai_guideline_generator.OpenAIGuidelineGeneratorAdapter`)를 추가했다:
    - 환자 식별자(UUID) 및 내부 evidence provenance를 제거하고 불투명 슬롯(`medication_slot`, `evidence_slot`)만을 Provider에 제공하는 최소 투영(`build_guideline_generation_input_projection`)을 사용한다.
    - Provider 출력은 Structured Output(`GuidelineStructuredSelection`)으로 수신하며, 엄격한 결정론적 파서(`parse_guideline_structured_output`)를 거친다.
    - 중복 claim은 `(medication_slot, scope.value)` 기준으로 병합되며, canonical_code가 동일하더라도 서로 다른 `MedicationIdentityRef`는 병합하지 않는다.
    - deterministic claim key는 단순화된 `claim:{index:03d}` 형식을 사용한다.
-   - Citation은 오직 Gate를 통과한 selection(`gate_passed_selections`)에서만 복원되며, 권위적 provenance(`evidence_key`, `source_snapshot_ref`, `source_version`, `locator`, `content_sha256`)를 strict하게 결속한다.
+   - Citation은 오직 production evidence selection(`evidence.selections`)에서만 복원되며, 권위적 provenance(`evidence_key`, `source_snapshot_id`, `source_snapshot_member_id`, `source_code`, `source_version`, `locator`, `content_sha256`)를 strict하게 결속한다. legacy `source_snapshot_ref` artifact 참조는 production evidence에 없으므로 합성하지 않는다.
    - Provider 호출 시 true dual timeout(`asyncio.timeout` + client `with_options(timeout=..., max_retries=0)`)을 엄격하게 적용하며, `with_options`가 없는 client는 fail-closed로 거부한다.
-   - Defensive Gate precondition boundary로 Gate 비정상(non-SUFFICIENT, empty selections 등) 시 Provider를 호출하지 않고(0회) 즉시 `VALIDATION_FAILED`로 fail-closed 처리한다.
+   - Defensive production evidence precondition boundary로 evidence 타입 불일치, empty selections, empty medications, `maximum_claims < 1` 시 Provider를 호출하지 않고(0회) 즉시 `VALIDATION_FAILED`로 fail-closed 처리한다.
    - Observability는 `provider_contracts.observability` 및 `provider_runtime.observability` 규격을 준수하여 API key, 환자 정보, 원문 text 누출 없이 구조화된 span/event를 기록한다.
    - Adapter는 외부 caller가 주입하는 generation provenance를 신뢰/허용하지 않고, 실제 실행 artifact 및 configuration으로부터 candidate provenance(`build_candidate_provenance`)를 직접 구성한다:
      * Prompt candidate: exact prompt version(`guideline-claim-selector-v1`) + 시스템 지시문 UTF-8 content hash

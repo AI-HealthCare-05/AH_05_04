@@ -15,6 +15,7 @@ export type WebPushState =
   | 'granted'
   | 'denied'
   | 'revoked'
+  | 'config_unavailable'
   | 'subscription_failed'
 
 export type WebPushLaunchContext = 'ios-browser' | 'standalone' | 'browser'
@@ -78,6 +79,10 @@ function decodeApplicationServerKey(value: string): Uint8Array<ArrayBuffer> {
     bytes[index] = decoded.charCodeAt(index)
   }
   return bytes
+}
+
+function isPushConfigUnavailable(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 503
 }
 
 function subscriptionRequest(subscription: PushSubscription): PushSubscriptionRequest {
@@ -175,15 +180,15 @@ export async function enableWebPush(): Promise<WebPushState> {
   if (!supportsWebPush()) return 'unsupported'
   if (Notification.permission === 'denied') return 'denied'
 
-  const permission = Notification.permission === 'granted'
-    ? 'granted'
-    : await Notification.requestPermission()
-  if (permission !== 'granted') return 'denied'
-
   try {
+    const config = await getPushConfig()
+    const permission = Notification.permission === 'granted'
+      ? 'granted'
+      : await Notification.requestPermission()
+    if (permission !== 'granted') return 'denied'
+
     const registration = await registerDoseyServiceWorker()
     if (!registration) return 'unsupported'
-    const config = await getPushConfig()
     const existing = await registration.pushManager.getSubscription()
     const subscription = existing ?? await registration.pushManager.subscribe({
       userVisibleOnly: true,
@@ -208,8 +213,8 @@ export async function enableWebPush(): Promise<WebPushState> {
     localStorage.setItem(BINDING_STORAGE_KEY, JSON.stringify(binding))
     await postGeneration(binding.generation)
     return 'granted'
-  } catch {
-    return 'subscription_failed'
+  } catch (error) {
+    return isPushConfigUnavailable(error) ? 'config_unavailable' : 'subscription_failed'
   }
 }
 

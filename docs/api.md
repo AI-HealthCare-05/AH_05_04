@@ -211,7 +211,7 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 - `PATCH /api/v1/users/me`는 `name`, `email`, `phone_number`, `birthday`, `gender`를 수정 대상으로 받습니다.
 - 생략한 필드는 기존 값을 유지합니다.
 - `phone_number`, `birthday`, `gender`는 `null`로 보내면 미입력 상태로 초기화합니다.
-- `phone_number`는 숫자만 허용합니다. 공백 문자열과 구분자(`-`)가 포함된 값은 `422 VALIDATION_FAILED`입니다.
+- `phone_number`는 010으로 시작하는 11자리 숫자만 허용합니다. 공백 문자열, 구분자(`-`), 자릿수 부족/초과, 지원하지 않는 prefix는 `422 VALIDATION_FAILED`입니다.
 - 다른 사용자와 같은 `phone_number`가 DB unique 제약과 충돌하면 `409 CONFLICT`, `details[].field=phone_number`, `reason=ALREADY_EXISTS`를 반환합니다. 별도 휴대폰 번호 중복확인 API는 이번 범위에 포함하지 않습니다.
 - `birthday`는 `YYYY-MM-DD` 날짜 문자열이며 미래 날짜는 `422 VALIDATION_FAILED`입니다.
 - `gender`는 `MALE`, `FEMALE`, `null`만 허용합니다.
@@ -745,6 +745,7 @@ v1 앱에 등록한다. PD-417의 승인된 의미와 #438 저장 서비스·#43
 취소를 연결한 작업 브랜치 구현이며, HTTP 구체화의 지정 리뷰어 승인은 별도다.
 
 - GET `/api/v1/medication-occurrences?date=YYYY-MM-DD`: SELF 최신 처방 한 건의 약별 일정 상태와 원래 KST 날짜의 occurrence/현재 Check-in. #628 구현 리뷰안은 latest와 같은 `created_at DESC, id DESC` 선택을 적용하고 과거 occurrence를 보존한다.
+  각 `schedule_items[]`는 nullable `schedule`에 저장된 현재 일정 snapshot(시작일, 종료 방식·종료일, 복용 시각, 상태·revision)을 포함하며, 일정이 없으면 null이다. 수정 화면은 READY snapshot을 그대로 초기값으로 사용한다.
 - PUT `/api/v1/prescription-version-medications/{prescription_version_medication_id}/schedule`: 명시적 설정·재활성화.
 - PATCH 같은 경로: CANCELLED 요청과 반복 취소의 성공 snapshot.
 

@@ -1,6 +1,6 @@
 # Guide Evidence Handoff Contract Kernel v1 (#180 선행 계약)
 
-- **상태**: Proposed / Review pending (pure contract kernel implemented in branch; authority issuance, persistence, runtime integration not implemented)
+- **상태**: Proposed / Review pending (pure contract kernel implemented in branch; authority issuance·persistence는 #712, production 조회는 #709/#746, authoritative assembly는 #760에서 구현됨. #180 runtime orchestration·persistence·E2E는 여전히 미구현)
 - **책임자**: 구현 정현우 (`@ceohwj`), 단일 책임 리뷰어 권가빈 (`@hazelnutflavoured`)
 - **필요 교차 리뷰**: 송은영 (`@phina-io`, #174 Backend/DB/REQUEST Guard), 김지혜 (`@Jye-rookie`, Source/Worker provenance)
 - **상위 근거**: Issue #180, Decision [`PD-180-20260915`](../../../governance/decisions/2026-09-15-guide-evidence-handoff.md), [`PD-362-20260909`](../../../governance/decisions/2026-09-09-source-snapshot-approval-boundary.md), [`PD-315-20260908`](../../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md), [`PD-125-20260831`](../../../governance/decisions/2026-08-31-rag-p0-contract-freeze.md), [`PD-722-20260917`](../../../governance/decisions/2026-09-17-evidence-assessment-validity.md)
@@ -17,7 +17,7 @@
    - 데이터베이스 존재 여부나 발급자의 진위(issuer authenticity)를 증명하거나 외부 인가를 수행하지 않는다.
    - `assessment_artifact_ref`, `eligibility_receipt_ref`, `verifier_artifact_ref`, `request_guard_ref`, `request_source_decision_ref`, `request_member_decision_ref`는 불변 아티팩트 참조 규격에 따른 불투명 관측 출처 참조(opaque observed provenance ref)이자 구조적 결속일 뿐이다.
    - `Verified`는 호출자가 전달한 불투명 관측 결과(opaque caller observations: `request_guard_ref`, `request_source_decision_ref`, `request_member_decision_ref`, `retrieval_receipt`, `eligibility_receipt_ref`, `assessment_artifact_ref`, `verifier_artifact_ref`)의 구조·해시·식별자 일관성(structure, hash, and identity consistency)만을 메모리 상에서 결정론적으로 검증한다는 의미로 엄격히 제한된다.
-   - **#174 Authenticated Assembler 의존성**: #174 authenticated assembler가 Decision ownership, 실제 `PASS` 판정, assessment artifact content의 진위를 검증하기 전에는, #180 runtime이 이 handoff를 독자적 authority로 직접 소비할 수 없다.
+   - **Authoritative Assembly 의존성**: 이 커널 자체는 caller가 전달한 opaque 관측을 재검증할 뿐이므로, 상위 authority 경계가 결속되기 전에는 #180 runtime이 이 handoff를 독자적 authority로 직접 소비할 수 없다. 이 책임은 과거 `#174 authenticated assembler`로 표기되었으나, 현재 실제 담당은 `#709` REQUEST authority Reader → `#697` Authority × Retrieval exact join → `#715` Content Hydration과 `#712`/`#746` Assessment·Eligibility Issuer/Reader를 결속하는 [`authoritative-guide-evidence-handoff-assembly-v1`](./authoritative-guide-evidence-handoff-assembly-v1.md) (#760)이다. 이 정정은 문서 표기에 한정되며 #174 Issue 자체의 의미와 범위를 변경하지 않는다.
 2. **#178 표준 JCS 정렬 및 차단 해소 (`PD-178-20260916`)**:
    - `retrieval-selection-manifest-v2` 및 `ProductionSearchReceipt` (v2.0)가 RFC 8785 JCS 규격(`canonical_json_bytes`)으로 정렬 완료되었다.
    - `BLOCKED_BY_178_CANONICAL_HASH_CONTRACT` 비강제 marker는 코드와 계약에서 완전히 제거되었으며 차단이 해소되었다.
@@ -26,7 +26,7 @@
 3. **#180 Endpoint Member 계약 정렬 및 차단 해소 (`PD-180-EM-20260916`)**:
    - 기존에는 PD-315/PD-362가 Endpoint Member의 `operation_code`를 nullable로 허용하는 반면 Citation validator와 Citation Authorization이 non-null 값을 요구하여, `BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT` 비강제 marker로 차단 사항을 기록했었다.
    - **해소 경위**: `PD-180-EM-20260916` 결정 및 `source-member-identity-v1` 공유 순수 커널 도입을 통해 downstream validator의 nullable `operation_code` 계약 정렬이 완료되었으며, `BLOCKED_BY_180_ENDPOINT_MEMBER_CONTRACT` 비강제 marker는 코드와 계약에서 완전히 제거되고 typed 검증으로 대체되었다.
-   - **Authority Boundary 유지**: 본 계약 정렬은 순수 검증 계층에 국한되며 runtime authority 활성화를 의미하지 않는다. PD-315 거버넌스 승인 조건은 해소(Issue #680 Path B 재판정)되었으나, #174 authenticated assembler 구현, #180에 남아 있는 runtime integration 조건 및 외부 공개 게이트는 별도로 충족되어야 한다.
+   - **Authority Boundary 유지**: 본 계약 정렬은 순수 검증 계층에 국한되며 runtime authority 활성화를 의미하지 않는다. PD-315 거버넌스 승인 조건은 해소(Issue #680 Path B 재판정)되었으나, #180에 남아 있는 runtime integration 조건 및 외부 공개 게이트는 별도로 충족되어야 한다. authoritative assembly seam은 #760에서 구현되었다.
 4. **비식별 및 민감 텍스트 보호 경계 (SensitiveText Boundary)**:
    - 검색된 증거 원문(Content A)은 인메모리 `SensitiveText`로만 캡슐화되어 전달된다.
    - 영구 저장소, 로그, `repr`, 오류 사유(`reasons`), 해시 preimage에 원문 텍스트가 절대 포함되어서는 안 된다 (`<redacted>` 보호).

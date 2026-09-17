@@ -55,7 +55,11 @@ Check-in 이력은 기존 소유권/날짜 기준으로 보존한다. 기존 일
 차단은 유지한다. 담당 리뷰어 승인·병합 전 Current 계약으로 승격하지 않는다.
 
 schedule_items의 각 항목은 `prescription_version_medication_id`, `schedule_item_status`,
-nullable `schedule_id`, nullable `revision`, nullable `setup_reason`이다. reason은 PD-417의
+nullable `schedule_id`, nullable `revision`, nullable `setup_reason`, nullable `schedule`이다.
+`schedule`은 일정이 존재할 때 PUT/PATCH 성공 응답의 `data`와 같은 현재 snapshot
+(`schedule_id`, `prescription_version_medication_id`, `revision`, `status`, `start_local_date`,
+`end_mode`, nullable `end_local_date`, `local_times`)이며, 일정이 없는 약은 null이다. 편집 UI는
+READY 항목의 snapshot만 초기값으로 사용하고 처방일·occurrence에서 값을 추정하지 않는다. reason은 PD-417의
 5값이고 READY/INACTIVE에서는 null이다. 현재 snapshot에 정확한 입력 필드가 없으므로
 일정이 없는 약은 MISSING_START_DATE다. 값을 추정하지 않는다.
 

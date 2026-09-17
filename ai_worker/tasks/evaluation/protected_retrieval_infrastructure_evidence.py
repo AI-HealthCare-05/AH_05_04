@@ -75,8 +75,6 @@ def _validate_exact_records(evidence: dict[str, JsonValue]) -> None:
         ],
         "remaining_repository_scope": [
             "PRODUCTION_APPROVAL_SOURCE_CONNECTOR",
-            "DATASET_TRANSITION_AND_FREEZE_SERVICE",
-            "IDENTITY_REGISTRATION_DISABLE_SERVICE",
         ],
         "activation_blockers": [
             "EXT_PRIV_001",
@@ -130,8 +128,8 @@ def _validate(evidence: dict[str, JsonValue], repository_root: Path | None = Non
         "release_eligible": False,
         "repository_adapter_status": "PARTIALLY_IMPLEMENTED",
         "production_approval_source_connector_status": "NOT_IMPLEMENTED",
-        "dataset_lifecycle_freeze_status": "NOT_IMPLEMENTED",
-        "identity_administration_status": "NOT_IMPLEMENTED",
+        "dataset_lifecycle_freeze_status": "IMPLEMENTED_IN_REPOSITORY",
+        "identity_administration_status": "IMPLEMENTED_IN_REPOSITORY",
     }
     if any(evidence.get(key) != value for key, value in expected_state.items()):
         raise RuntimeError("Issue 368 evidence cannot promote an operational activation state")
@@ -165,7 +163,7 @@ def build_protected_retrieval_infrastructure_evidence(repository_root: Path) -> 
         "approval_ingestion_status": "IMPLEMENTED_IN_REPOSITORY",
         "authorization_control_c1_status": "IMPLEMENTED_IN_REPOSITORY",
         "captured_at": "2026-09-11T00:00:00.000000Z",
-        "dataset_lifecycle_freeze_status": "NOT_IMPLEMENTED",
+        "dataset_lifecycle_freeze_status": "IMPLEMENTED_IN_REPOSITORY",
         "decision": {
             "id": "PD-368-R1",
             "path": "docs/governance/decisions/2026-09-11-protected-retrieval-authorization-control.md",
@@ -179,7 +177,7 @@ def build_protected_retrieval_infrastructure_evidence(repository_root: Path) -> 
         "freeze_recorded": False,
         "grant_revoke_expire_status": "IMPLEMENTED_IN_REPOSITORY",
         "holdout_authored": False,
-        "identity_administration_status": "NOT_IMPLEMENTED",
+        "identity_administration_status": "IMPLEMENTED_IN_REPOSITORY",
         "implementation_files": [
             {"component": component, "path": path, "raw_sha256": _file_sha256(repository_root / path)}
             for component, path in _IMPLEMENTATION_FILES
@@ -189,8 +187,6 @@ def build_protected_retrieval_infrastructure_evidence(repository_root: Path) -> 
         "release_eligible": False,
         "remaining_repository_scope": [
             "PRODUCTION_APPROVAL_SOURCE_CONNECTOR",
-            "DATASET_TRANSITION_AND_FREEZE_SERVICE",
-            "IDENTITY_REGISTRATION_DISABLE_SERVICE",
         ],
         "repository_adapter_status": "PARTIALLY_IMPLEMENTED",
         "verification": [
@@ -237,8 +233,8 @@ def render_protected_retrieval_infrastructure_evidence(evidence: dict[str, JsonV
             "- Authorization control C1: `IMPLEMENTED_IN_REPOSITORY`",
             "- Implemented scope: approval ingestion and grant/revoke/expire transaction·audit services",
             "- Production approval source connector: `NOT_IMPLEMENTED`",
-            "- Dataset lifecycle/FREEZE service: `NOT_IMPLEMENTED`",
-            "- Identity registration/disable service: `NOT_IMPLEMENTED`",
+            "- Dataset lifecycle/FREEZE service: `IMPLEMENTED_IN_REPOSITORY`",
+            "- Identity registration/disable service: `IMPLEMENTED_IN_REPOSITORY`",
             "- Effective enforcement: `NOT_IMPLEMENTED`",
             "- Access authorized: `false`",
             "- HOLDOUT authored: `false`",

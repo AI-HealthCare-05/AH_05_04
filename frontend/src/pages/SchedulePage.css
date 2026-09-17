@@ -522,6 +522,17 @@
   line-height: 20px;
 }
 
+.schedule-editor__elapsed-time-notice {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff7e8;
+  color: #754800;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 20px;
+}
+
 .schedule-editor__message,
 .schedule-editor-form__message,
 .schedule-record__message {

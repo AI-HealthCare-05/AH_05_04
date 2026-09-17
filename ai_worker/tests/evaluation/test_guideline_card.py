@@ -3,13 +3,8 @@ from __future__ import annotations
 import hashlib
 from dataclasses import replace
 
-from ai_worker.tasks.rag.evidence_gate import (
-    EvidenceGateExecutionStatus,
-    EvidenceGateOutcome,
-    EvidenceGateReason,
-    EvidenceStatus,
-)
 from ai_worker.tasks.rag.guideline_card import (
+    GuidelineCardReason,
     GuidelineCardStatus,
     GuidelineFallbackCode,
     SensitiveText,
@@ -89,40 +84,30 @@ def test_guideline_safety_regression_releases_no_forbidden_notice_copy() -> None
         assert outcome.card is None
 
 
-def test_guideline_evidence_failures_are_deterministic_and_discard_draft() -> None:
+def test_guideline_production_evidence_failures_are_deterministic_and_discard_draft() -> None:
+    """Unusable production evidence fails closed identically on repeated evaluation.
+
+    The retired RAG-14 Gate statuses (`EVIDENCE_INSUFFICIENT`, `EVIDENCE_CONFLICTED`,
+    `EVIDENCE_STALE`) are no longer expressible in a production request: #760 fails
+    closed upstream and hands RAG-15 nothing to interpret. What remains verifiable
+    here is that a structurally unusable production evidence set is always discarded
+    deterministically, with the approved fallback copy still verifier-backed.
+    """
     request = valid_request()
+    evidence = request.evidence.selections[0]
     cases = (
-        (
-            EvidenceGateOutcome(
-                EvidenceGateExecutionStatus.NO_RESULT,
-                EvidenceStatus.INSUFFICIENT,
-                EvidenceGateReason.EVIDENCE_INSUFFICIENT,
-            ),
-            GuidelineFallbackCode.NO_APPROVED_EVIDENCE,
-        ),
-        (
-            EvidenceGateOutcome(
-                EvidenceGateExecutionStatus.NO_RESULT,
-                EvidenceStatus.CONFLICTED,
-                EvidenceGateReason.EVIDENCE_CONFLICTED,
-            ),
-            GuidelineFallbackCode.CONFLICTING_EVIDENCE,
-        ),
-        (
-            EvidenceGateOutcome(
-                EvidenceGateExecutionStatus.NO_RESULT,
-                EvidenceStatus.STALE,
-                EvidenceGateReason.EVIDENCE_STALE,
-            ),
-            GuidelineFallbackCode.NO_APPROVED_EVIDENCE,
-        ),
+        replace(request.evidence, selections=()),
+        replace(request.evidence, handoff_sha256="not-a-sha256"),
+        replace(request.evidence, selections=(replace(evidence, content_sha256="0" * 64),)),
     )
 
-    for gate, expected_code in cases:
-        first = finalize_guideline_card(replace(request, evidence_gate_outcome=gate))
-        second = finalize_guideline_card(replace(request, evidence_gate_outcome=gate))
+    for broken in cases:
+        first = finalize_guideline_card(replace(request, evidence=broken))
+        second = finalize_guideline_card(replace(request, evidence=broken))
         assert first.card is None
-        assert first.fallback_code is expected_code
+        assert first.status is GuidelineCardStatus.VALIDATION_REJECTED
+        assert first.reason is GuidelineCardReason.VALIDATION_FAILED
+        assert first.fallback_code is GuidelineFallbackCode.VALIDATION_FAILED
         assert first.status is second.status
         assert first.reason is second.reason
         assert first.fallback_code is second.fallback_code

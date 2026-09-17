@@ -567,11 +567,12 @@ describe('ChatPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
     await screen.findByText('pending A 답변')
 
-    fireEvent.click(screen.getByRole('button', { name: '👎 아쉬워요' }))
-    fireEvent.change(screen.getByLabelText('의견 (선택)'), {
+    const firstFeedbackRegion = await screen.findByRole('region', { name: '답변 피드백' })
+    fireEvent.click(within(firstFeedbackRegion).getByRole('button', { name: '👎 아쉬워요' }))
+    fireEvent.change(await within(firstFeedbackRegion).findByLabelText('의견 (선택)'), {
       target: { value: '이전 target 입력' },
     })
-    fireEvent.click(screen.getByRole('button', { name: '피드백 보내기' }))
+    fireEvent.click(within(firstFeedbackRegion).getByRole('button', { name: '피드백 보내기' }))
 
     fireEvent.change(input, { target: { value: 'pending B 질문' } })
     fireEvent.click(screen.getByRole('button', { name: '질문 전송' }))
