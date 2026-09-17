@@ -16,8 +16,10 @@ from app.dtos.medication_schedules import (
     MedicationScheduleResponse,
     PutMedicationScheduleRequest,
 )
+from app.dtos.schedule_recommendations import RecommendationInput, RecommendationResponse
 from app.models.users import User
 from app.services.medication_schedule_api import MedicationScheduleApiService
+from app.services.schedule_recommendations import require_local_recommendations
 
 medication_schedule_router = APIRouter(tags=["medication-schedules"])
 Service = Annotated[MedicationScheduleApiService, Depends(get_medication_schedule_api_service)]
@@ -103,3 +105,19 @@ async def cancel_medication_schedule(
         idempotency_key=idempotency_key,
     )
     return JSONResponse(content=result.response_body, status_code=result.response_status)
+
+
+@medication_schedule_router.post(
+    "/prescription-version-medications/{prescription_version_medication_id}/schedule-recommendation",
+    response_model=RecommendationResponse,
+    operation_id="medication-schedule.recommend",
+    dependencies=[Depends(require_local_recommendations)],
+    responses=ERRORS,
+)
+async def recommend_medication_schedule(
+    prescription_version_medication_id: UUID,
+    request: RecommendationInput,
+    user: AuthenticatedUser,
+    service: Service,
+) -> RecommendationResponse:
+    return await service.recommend(user_id=user.id, medication_id=prescription_version_medication_id, request=request)

@@ -1,0 +1,331 @@
+{
+  "recorded_on": "2026-09-17",
+  "evidence_source": "User-provided server execution outputs cross-checked with locally preserved collection evidence and issued Receipts; not a fresh independent server execution",
+  "scope": "Group 2 producer ingestion results only",
+  "products": [
+    {
+      "item_seq": "200400463",
+      "official_product_name": "이지엔6애니연질캡슐(이부프로펜)",
+      "operation_code": "COLLECT_MFDS_200400463_LABEL_XML",
+      "snapshot_id": "f605c5ef-de51-4044-9c54-154205b5d560",
+      "collected_at": "2026-09-16T11:42:34.422908+00:00",
+      "canonical_checksum": "c0d0e4e9c4f239fbd1226fdd4a6409ee313e9b3e34bf0ca72268741c246b385f",
+      "source_version": "api:2026-09-16T11:42:34.422908Z:c0d0e4e9c4f239fbd1226fdd4a6409ee313e9b3e34bf0ca72268741c246b385f",
+      "product_manifest_hash": "e44ff9d91e48be21a00e3bca64b97c23d8b3f14482a1bf6bd714a213705a159e",
+      "endpoint_receipt_hash": "5245a4a1bbf92ecad48a3603b061806a7d68d10144cdb550c4b8eb1093fd4736",
+      "policy_approval_ref": "GABIN:591:EXPANSION16:EE_UD_NB:OTC5_NN",
+      "technical_approval_ref": "technical:591:eunyoung:xml-receipts-v1",
+      "implementation_git_sha": "00cf01af86c467b20335e3cd90293747ea5e0ff8",
+      "documents": [
+        {
+          "document_type": "EE",
+          "byte_size": 930,
+          "raw_sha256": "c8cb15b4e6257cc942cd0755fe1d7c350dcbfe76be99ff81f3ca8976be7d3578",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        },
+        {
+          "document_type": "UD",
+          "byte_size": 1286,
+          "raw_sha256": "59d87cbcf88ea9430f388e546f2b30b05c193782db393f68fa6245ac2f47d738",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        },
+        {
+          "document_type": "NB",
+          "byte_size": 28284,
+          "raw_sha256": "fab50157915f7f517081c01255dc50a2496edc4c7800ba3b660f58485d7968ce",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        },
+        {
+          "document_type": "NN",
+          "byte_size": 7755,
+          "raw_sha256": "0ade7514abd47375bc2963bc0063ed22b86468faaf3a0d49be3f12d19ba2825d",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        }
+      ],
+      "first_decision": "CREATED",
+      "repeat_decision": "NO_CHANGE",
+      "same_snapshot": true,
+      "member_count": 4,
+      "post_commit_requery_passed": true,
+      "expected_result_matches": true,
+      "receipt_profile_verify": "XML_RECEIPTS_VERIFIED",
+      "profile_state": "READY",
+      "handoff_metadata": "HANDOFF_METADATA_VERIFIED",
+      "snapshot_verification_status": "PENDING",
+      "verified_at": null,
+      "effective_at": null,
+      "consumer_acceptance": "PENDING",
+      "first_exit_code": 0,
+      "repeat_exit_code": 0,
+      "handoff_exit_code": 0
+    },
+    {
+      "item_seq": "202106092",
+      "official_product_name": "타이레놀정500밀리그람(아세트아미노펜)",
+      "operation_code": "COLLECT_MFDS_202106092_LABEL_XML",
+      "snapshot_id": "058faf73-a364-474e-a485-6383d8ec9076",
+      "collected_at": "2026-09-16T11:42:35.052349+00:00",
+      "canonical_checksum": "60d44d299b8a6041521fe2719d7905062d0fb743550f18b57a3863faa5f87b21",
+      "source_version": "api:2026-09-16T11:42:35.052349Z:60d44d299b8a6041521fe2719d7905062d0fb743550f18b57a3863faa5f87b21",
+      "product_manifest_hash": "485719c851f319056a5401115f772fda7d13c7935aaaa3b2d9e8ad596a0b08c1",
+      "endpoint_receipt_hash": "953a9af565dd81bbd6cb3b04a940d871b2411fde5a3de913115250d1050ce778",
+      "policy_approval_ref": "GABIN:591:EXPANSION16:EE_UD_NB:OTC5_NN",
+      "technical_approval_ref": "technical:591:eunyoung:xml-receipts-v1",
+      "implementation_git_sha": "00cf01af86c467b20335e3cd90293747ea5e0ff8",
+      "documents": [
+        {
+          "document_type": "EE",
+          "byte_size": 571,
+          "raw_sha256": "f005b9b3f7ed9f7e3764300e9078786c56b498f5e54f0766546e7a2f8c03adc3",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        },
+        {
+          "document_type": "UD",
+          "byte_size": 730,
+          "raw_sha256": "e3df07962bf6cbc8f011a26dc2888f69d9d062bd4d9c9eaa949fbab3d4c61030",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        },
+        {
+          "document_type": "NB",
+          "byte_size": 12821,
+          "raw_sha256": "1134996a4ae35a8f27d18ea9d38eabdb1449b7c257120aa9c933ecbf769b32b4",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        },
+        {
+          "document_type": "NN",
+          "byte_size": 4348,
+          "raw_sha256": "438463a410125c18cf02b04d2ce5507d99f446dd84cdccb7ddc318824ae1795d",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        }
+      ],
+      "first_decision": "CREATED",
+      "repeat_decision": "NO_CHANGE",
+      "same_snapshot": true,
+      "member_count": 4,
+      "post_commit_requery_passed": true,
+      "expected_result_matches": true,
+      "receipt_profile_verify": "XML_RECEIPTS_VERIFIED",
+      "profile_state": "READY",
+      "handoff_metadata": "HANDOFF_METADATA_VERIFIED",
+      "snapshot_verification_status": "PENDING",
+      "verified_at": null,
+      "effective_at": null,
+      "consumer_acceptance": "PENDING",
+      "first_exit_code": 0,
+      "repeat_exit_code": 0,
+      "handoff_exit_code": 0
+    },
+    {
+      "item_seq": "198900672",
+      "official_product_name": "판콜에스내복액",
+      "operation_code": "COLLECT_MFDS_198900672_LABEL_XML",
+      "snapshot_id": "7fe7072e-9d14-4707-97a9-3239ccc484de",
+      "collected_at": "2026-09-16T11:42:35.738726+00:00",
+      "canonical_checksum": "f403c8eae9333d5ce2e0fce5ec9593f9e382cfd3ebc8e087491f9ccf06ad1199",
+      "source_version": "api:2026-09-16T11:42:35.738726Z:f403c8eae9333d5ce2e0fce5ec9593f9e382cfd3ebc8e087491f9ccf06ad1199",
+      "product_manifest_hash": "6788423ab76c2b228008f5271ed0c0da24b3291d4e4a700ef2e243b3bb6736f6",
+      "endpoint_receipt_hash": "11a201b1491ec3f43ecca3431dc6de3af5c552d484810ce51c58ab619cd18349",
+      "policy_approval_ref": "GABIN:591:EXPANSION16:EE_UD_NB:OTC5_NN",
+      "technical_approval_ref": "technical:591:eunyoung:xml-receipts-v1",
+      "implementation_git_sha": "00cf01af86c467b20335e3cd90293747ea5e0ff8",
+      "documents": [
+        {
+          "document_type": "EE",
+          "byte_size": 420,
+          "raw_sha256": "3f52ef6596808f5c4e62fa6954f7a8a13077e4806524e4e3b007f5f835460a29",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        },
+        {
+          "document_type": "UD",
+          "byte_size": 293,
+          "raw_sha256": "dfcf9c4b8664351a89dd3e24d5cad33db5837fd5454ac05b9301ce8c1b772638",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        },
+        {
+          "document_type": "NB",
+          "byte_size": 10241,
+          "raw_sha256": "c0f022c484237f8da08ba55e813b47fa677bb19c6b3817d816e3218818ef40e3",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        },
+        {
+          "document_type": "NN",
+          "byte_size": 5521,
+          "raw_sha256": "dea4fb27e961dbdb3b5ac754aa5fdb11a561c7142989d30b033132d6d0d700ae",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        }
+      ],
+      "first_decision": "CREATED",
+      "repeat_decision": "NO_CHANGE",
+      "same_snapshot": true,
+      "member_count": 4,
+      "post_commit_requery_passed": true,
+      "expected_result_matches": true,
+      "receipt_profile_verify": "XML_RECEIPTS_VERIFIED",
+      "profile_state": "READY",
+      "handoff_metadata": "HANDOFF_METADATA_VERIFIED",
+      "snapshot_verification_status": "PENDING",
+      "verified_at": null,
+      "effective_at": null,
+      "consumer_acceptance": "PENDING",
+      "first_exit_code": 0,
+      "repeat_exit_code": 0,
+      "handoff_exit_code": 0
+    },
+    {
+      "item_seq": "199400883",
+      "official_product_name": "겔포스엠현탁액",
+      "operation_code": "COLLECT_MFDS_199400883_LABEL_XML",
+      "snapshot_id": "1ccac7d3-128d-40fe-a9a5-9e0691e2279f",
+      "collected_at": "2026-09-16T11:42:36.295776+00:00",
+      "canonical_checksum": "4dbec04cc8365761c6c1a9fbd4afcc5d5ca766ffeb4f4a8f58aab6357a010713",
+      "source_version": "api:2026-09-16T11:42:36.295776Z:4dbec04cc8365761c6c1a9fbd4afcc5d5ca766ffeb4f4a8f58aab6357a010713",
+      "product_manifest_hash": "12636ece9b7e2be01f26fcc3aca0b4e64b2f7b0187068598b63b03e598bd4b8b",
+      "endpoint_receipt_hash": "c649c74d05c94e584763fa8fa278ca457b72a687aa4cdb156cd8fa6ffc8d0c5c",
+      "policy_approval_ref": "GABIN:591:EXPANSION16:EE_UD_NB:OTC5_NN",
+      "technical_approval_ref": "technical:591:eunyoung:xml-receipts-v1",
+      "implementation_git_sha": "00cf01af86c467b20335e3cd90293747ea5e0ff8",
+      "documents": [
+        {
+          "document_type": "EE",
+          "byte_size": 395,
+          "raw_sha256": "38dea187a7870461d9f95740381104a870c5591c8b98e8855a811e3b19b23c24",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        },
+        {
+          "document_type": "UD",
+          "byte_size": 372,
+          "raw_sha256": "e39925c52c5189fcf298d825edc85d5bf186279481d5640bed5133a7c773f2e0",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        },
+        {
+          "document_type": "NB",
+          "byte_size": 2562,
+          "raw_sha256": "a7b04be77efaa01148771f359be14267b71f417582a393917af1d5300951a878",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        },
+        {
+          "document_type": "NN",
+          "byte_size": 2321,
+          "raw_sha256": "37fd425f1976e74191202980233a54318b260db87ee21bbbb4af3e719c51b416",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "PARTIAL_OFFICIAL",
+          "empty_article_titles": [
+            "이 약을 사용하기 전에 반드시 알아야 할 내용은 무엇입니까?"
+          ]
+        }
+      ],
+      "first_decision": "CREATED",
+      "repeat_decision": "NO_CHANGE",
+      "same_snapshot": true,
+      "member_count": 4,
+      "post_commit_requery_passed": true,
+      "expected_result_matches": true,
+      "receipt_profile_verify": "XML_RECEIPTS_VERIFIED",
+      "profile_state": "READY",
+      "handoff_metadata": "HANDOFF_METADATA_VERIFIED",
+      "snapshot_verification_status": "PENDING",
+      "verified_at": null,
+      "effective_at": null,
+      "consumer_acceptance": "PENDING",
+      "first_exit_code": 0,
+      "repeat_exit_code": 0,
+      "handoff_exit_code": 0
+    },
+    {
+      "item_seq": "200610765",
+      "official_product_name": "지르텍정(세티리진염산염)",
+      "operation_code": "COLLECT_MFDS_200610765_LABEL_XML",
+      "snapshot_id": "2c9b5ac4-49f7-466b-a425-c1f76ef7a31e",
+      "collected_at": "2026-09-16T11:42:37.039246+00:00",
+      "canonical_checksum": "85a6e71414973d73e6cec93c8c6e8399bb13361e0f8602085133a4ea98e2c0f5",
+      "source_version": "api:2026-09-16T11:42:37.039246Z:85a6e71414973d73e6cec93c8c6e8399bb13361e0f8602085133a4ea98e2c0f5",
+      "product_manifest_hash": "c0e3fe799c2125d282025a3a0045d32c1032f13c4354a9f908d076bb49b05ff4",
+      "endpoint_receipt_hash": "c4628f49e0837cd4e2c985af1a683412133a8bb518ebda77a3812b00cd955755",
+      "policy_approval_ref": "GABIN:591:EXPANSION16:EE_UD_NB:OTC5_NN",
+      "technical_approval_ref": "technical:591:eunyoung:xml-receipts-v1",
+      "implementation_git_sha": "00cf01af86c467b20335e3cd90293747ea5e0ff8",
+      "documents": [
+        {
+          "document_type": "EE",
+          "byte_size": 371,
+          "raw_sha256": "48c993d4bae0eeea11f4558efdaffae2261051b57c26b796cf032f3c84d053a8",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        },
+        {
+          "document_type": "UD",
+          "byte_size": 2434,
+          "raw_sha256": "17292a88446bc3563f9b3095fee107b16ea10dab4ec0064d559a448b9f6bec65",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        },
+        {
+          "document_type": "NB",
+          "byte_size": 11641,
+          "raw_sha256": "ee88fef8ed45ee71200f29fb9f2fa058843e77c929027a4daa8dbcd6ebaf1ef1",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "COMPLETE",
+          "empty_article_titles": []
+        },
+        {
+          "document_type": "NN",
+          "byte_size": 4650,
+          "raw_sha256": "f9eced37bbe5ae74df1fa50ced0010f8437c7468afc70f7e3e94fe1944c9d4a0",
+          "content_type": "application/download; UTF-8; charset=UTF-8",
+          "content_status": "PARTIAL_OFFICIAL",
+          "empty_article_titles": [
+            "이 약을 사용하기 전에 반드시 알아야 할 내용은 무엇입니까?"
+          ]
+        }
+      ],
+      "first_decision": "CREATED",
+      "repeat_decision": "NO_CHANGE",
+      "same_snapshot": true,
+      "member_count": 4,
+      "post_commit_requery_passed": true,
+      "expected_result_matches": true,
+      "receipt_profile_verify": "XML_RECEIPTS_VERIFIED",
+      "profile_state": "READY",
+      "handoff_metadata": "HANDOFF_METADATA_VERIFIED",
+      "snapshot_verification_status": "PENDING",
+      "verified_at": null,
+      "effective_at": null,
+      "consumer_acceptance": "PENDING",
+      "first_exit_code": 0,
+      "repeat_exit_code": 0,
+      "handoff_exit_code": 0
+    }
+  ]
+}
