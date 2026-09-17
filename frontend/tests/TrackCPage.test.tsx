@@ -20,6 +20,7 @@ const support = {
 const plan = { support_action_plan_id: planId, barrier_response_id: 'barrier', support_code: 'REMINDER_SETUP', rule_version: 'rule-v1', copy_version: 'copy-v1', action_config_snapshot: support.action_config, status: 'ACTIVE', created_at: '2026-09-16T00:00:00Z', completed_at: null, cancelled_at: null }
 function services(overrides: Partial<TrackCServices> = {}): TrackCServices {
   return {
+    getFollowup: vi.fn().mockResolvedValue(null), submitFollowup: vi.fn(),
     getPushState: vi.fn().mockResolvedValue('granted'),
     getPlanResources: vi.fn().mockResolvedValue({ support_action_plan_id: planId, barrier_code: 'SCHEDULE_OR_TRAVEL', occurrence_id: occurrenceId, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: support.support_copy }),
     getDay: vi.fn().mockResolvedValue({ data: { occurrences: [{ occurrence_id: occurrenceId, scheduled_local_date: '2026-09-16', status: 'CLOSED', checkin }] } }),
@@ -278,4 +279,21 @@ it('preserves historical travel confirmation', async () => {
   show(services({ getPlan: vi.fn().mockResolvedValue({ ...plan, support_code: 'ROUTINE_OR_TRAVEL_PLAN', copy_version: 'track-c-support-copy-ko-2026-09-15.1' }) }), `/dev/track-c/plans/${planId}`)
   fireEvent.click(await screen.findByRole('button', { name: '완료 확인하기' }))
   expect(screen.getByRole('checkbox', { name: '선택한 실천 계획의 실행을 마쳤어요.' })).toBeTruthy()
+})
+
+it.each(['ACTIVE', 'CANCELLED'])('does not show followup entry for %s', async status => {
+  const svc = services({ getPlan: vi.fn().mockResolvedValue({ ...plan, status }) })
+  show(svc, `/dev/track-c/plans/${planId}`)
+  await screen.findByText(status === 'ACTIVE' ? '진행 중' : '취소됨')
+  expect(screen.queryByRole('button', { name: '도움 사용 후기' })).toBeNull()
+  expect(svc.getFollowup).not.toHaveBeenCalled()
+})
+it('opens completed plan feedback even if the historical copy cannot be loaded', async () => {
+  const svc = services({ getPlan: vi.fn().mockResolvedValue({ ...plan, status: 'COMPLETED' }), getPlanResources: vi.fn().mockRejectedValue(new ApiError(503, 'PRIVATE')) })
+  show(svc, `/dev/track-c/plans/${planId}`)
+  fireEvent.click(await screen.findByRole('button', { name: '도움 사용 후기' }))
+  fireEvent.click(await screen.findByRole('button', { name: '나중에' }))
+  expect(screen.getByRole('button', { name: '도움 사용 후기' })).toBeTruthy()
+  expect(svc.submitFollowup).not.toHaveBeenCalled()
+  expect(svc.patchPlan).not.toHaveBeenCalled()
 })
