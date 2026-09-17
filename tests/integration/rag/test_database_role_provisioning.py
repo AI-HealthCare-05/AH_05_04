@@ -257,7 +257,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             (reader, "TRUNCATE checkin_audit"),
             (reader, "UPDATE prescription_version SET id=2"),
             (reader, "UPDATE account_deletion_request SET id=2"),
-            (reader, "UPDATE account_deletion_request SET user_id=2"),
+            (reader, "UPDATE account_deletion_request SET user_id='00000000-0000-0000-0000-000000000002'"),
             (reader, "UPDATE account_deletion_request SET requested_at=now()"),
             (reader, "UPDATE account_deletion_request SET created_at=now()"),
             (reader, "DELETE FROM account_deletion_request"),
