@@ -880,7 +880,7 @@ Plan·Check-in은 변경하지 않는다.
 원래 occurrence·약 항목을 읽는다. [상황 선택](contracts/current/track-c-travel-situation-194.md),
 [자료 조회](contracts/current/track-c-plan-resources-194.md). 새 migration·DB 함수·trigger는 없다.
 
-## #633 피드백 저장 — Local 구현, Proposed
+## #633 피드백 저장 — Local 구현 병합, Proposed
 
 [계약](contracts/proposed/guide-chat-feedback-v1.md), migration `633a1b2c3d4e`에서
 `guide_feedback`, `chat_message_feedback`을 추가한다. 각 row는 UUIDChar id, 대상별 UNIQUE FK
@@ -888,7 +888,7 @@ Plan·Check-in은 변경하지 않는다.
 created_at·updated_at TIMESTAMPTZ를 가진다. 소유권은 부모 SELF chain으로 확인하고 별도 user_id를 복제하지 않는다.
 최초 생성 후 30일 만료이며 수정은 created_at을 보존한다. 만료 후 POST는 이전 row를 제거하고 새 row를 생성한다.
 created_at index는 만료 삭제, rating·updated_at·id index는 부정 피드백 검토를 지원한다.
-정책은 [PD-633](governance/decisions/2026-09-16-guide-chat-feedback-633.md)을 따르며 Current 승격·실사용 승인 전이다.
+정책은 [PD-633](governance/decisions/2026-09-16-guide-chat-feedback-633.md)을 따르며 제품/운영 기준 확인, Current 승격·실사용 승인 전이다.
 
 ### #193 Local 합성 데모 provenance
 

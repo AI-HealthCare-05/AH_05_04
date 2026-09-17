@@ -375,4 +375,4 @@ Guide가 COMPLETED가 아니거나 Chat 메시지가 ASSISTANT·COMPLETED가 아
 `409 / FEEDBACK_TARGET_NOT_READY`를 반환한다. message는 “완료된 AI 응답에만 의견을 남길 수 있습니다.”,
 details는 빈 배열이며 공통 trace_id·no-store를 적용한다. 원문·comment는 포함하지 않는다.
 없는/타인 대상·세션 불일치는 `404 / NOT_FOUND`다. DELETE에는 완료 상태 조건을 적용하지 않는다.
-최종 책임 리뷰·병합 대기이며 Local 외 POST/DELETE는 `404 / NOT_FOUND`로 차단한다.
+PR #638로 Local 구현은 병합됐으며 제품/운영 기준 확인, AI/RAG 평가 연결, 실사용 공개 승인은 별도다. Local 외 POST/DELETE는 `404 / NOT_FOUND`로 차단한다.
