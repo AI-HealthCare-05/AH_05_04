@@ -959,6 +959,7 @@ async def _grant_historical_test_permissions(admin, environment):
                 "rag_request_guard_authority",  # #713 follows the historical Source cutover.
                 "rag_request_source_decision",
                 "rag_request_member_decision",
+                "rag_evidence_authority",  # #712 follows the historical Source cutover.
             }:
                 await connection.execute(text(f'GRANT {privileges} ON "{table}" TO "{runtime}"'))
         for table in set(SOURCE_TABLES) & present:
