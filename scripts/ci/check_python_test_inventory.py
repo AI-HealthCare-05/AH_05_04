@@ -16,6 +16,7 @@ AUTO_COLLECTED_ROOTS = (
     Path("tests/integration/rag"),
     Path("tests/services"),
     Path("ai_worker/tests/core"),
+    Path("ai_worker/tests/adapters"),
     Path("ai_worker/tests/ocr"),
     Path("ai_worker/tests/rag"),
     Path("ai_worker/tests/evaluation"),

@@ -4,10 +4,10 @@
 
 ## 상태
 
-- Repository adapter: `PARTIALLY_IMPLEMENTED`
+- Repository adapter: `IMPLEMENTED_IN_REPOSITORY`
 - Authorization control C1: `IMPLEMENTED_IN_REPOSITORY`
 - Implemented scope: approval ingestion and grant/revoke/expire transaction·audit services
-- Production approval source connector: `NOT_IMPLEMENTED`
+- Production approval source connector: `IMPLEMENTED_IN_REPOSITORY`
 - Dataset lifecycle/FREEZE service: `IMPLEMENTED_IN_REPOSITORY`
 - Identity registration/disable service: `IMPLEMENTED_IN_REPOSITORY`
 - Effective enforcement: `NOT_IMPLEMENTED`
@@ -24,6 +24,7 @@
 - Runtime assembly suite: `24 passed`
 - Protected-off Worker image import: `passed`
 - Protected limited-login verification in CI: `passed`
+- Production approval source connector: `21 passed`
 - 실제 환경 좌표와 보호 데이터는 사용하지 않았습니다.
 
 ## Evidence self hash 입력
@@ -35,14 +36,15 @@
 | --- | --- | --- |
 | `ASYNC_KERNEL_SEAM` | `ai_worker/tasks/evaluation/protected_retrieval.py` | `26d068434d9ec5147a65302aab57958b689855e86e9173659e7489abb1675c38` |
 | `POSTGRESQL_ADAPTER` | `ai_worker/adapters/postgresql_protected_retrieval.py` | `5936abbe9f3a9136760618d082f6dae010b620d647056b075436e19f1a89969b` |
-| `FAIL_CLOSED_CONFIG` | `ai_worker/core/config.py` | `4bb5ec095fae68b9f0fc7de29096b5ad848aef0a4eee06b6a8c849b917e92c81` |
-| `EXPLICIT_RUNTIME_ASSEMBLY` | `ai_worker/core/runtime_assembly.py` | `2b91bcf9983e9a00c9c8f07e48a034dd5a68806859ebe3cc508132d78871c2a4` |
+| `FAIL_CLOSED_CONFIG` | `ai_worker/core/config.py` | `69903aee06f3dbddf8cd07a1dff4bd413cc567a2821a4f225a66509d9030a162` |
+| `EXPLICIT_RUNTIME_ASSEMBLY` | `ai_worker/core/runtime_assembly.py` | `c22fabd9053d86c86d876a28359eb1a9a150a16c908deb06f9457215fa59c2b9` |
 | `PROTECTED_ROLE_POLICY` | `infra/python/protected_retrieval_role_policy.py` | `597bf68229c5830578ddba07aa3652cace08ec3e2474031ef6250cccd91d82a4` |
 | `ISOLATED_MIGRATION_ENV` | `infra/protected_retrieval/env.py` | `4853f8178ea611df177900573e6593c8bdc76db86a039ebd6f299013895fdbf3` |
 | `ISOLATED_MIGRATION` | `infra/protected_retrieval/versions/368000000001_create_protected_retrieval.py` | `20ed57547853a39ae5254d69dd71873e0a26223a705c5231e50dc8aa7416c68d` |
-| `AUTHORIZATION_CONTROL_CONTRACT` | `ai_worker/tasks/evaluation/protected_retrieval_control.py` | `c56d10d3de6228f46cf1a199fd49e81342254001964dbfc14f29ed2ba36042e9` |
-| `POSTGRESQL_CONTROL_ADAPTER` | `ai_worker/adapters/postgresql_protected_retrieval_control.py` | `dcd7eb1f5831cde9692851bf074f62e8adbe3c6f3d9ac6cc591ac2596bb28d04` |
+| `AUTHORIZATION_CONTROL_CONTRACT` | `ai_worker/tasks/evaluation/protected_retrieval_control.py` | `977b28a8eb3846019c2a989877402fff691b63e710a2165a55bced26716d20ac` |
+| `POSTGRESQL_CONTROL_ADAPTER` | `ai_worker/adapters/postgresql_protected_retrieval_control.py` | `de48e14d997b67f02b0852d480cecf912760f46b9017a4f05b720ee3595fe0b4` |
 | `AUTHORIZATION_CONTROL_MIGRATION` | `infra/protected_retrieval/versions/368000000002_add_authorization_control.py` | `56a7275ebc83ebf69f115230e36e40bc13d0731a7c91bed900ff287b2b42c5b8` |
+| `PRODUCTION_APPROVAL_SOURCE_CONNECTOR` | `ai_worker/adapters/github_trusted_approval_source.py` | `247c5523f6c8908d9a1269e88039f25788511e84378a3711855e11d4736dfdf2` |
 
 재생성·검증: `uv run python scripts/verify_protected_runner_evidence.py [--write]`
 
@@ -53,4 +55,4 @@
 - backup·restore·rotation 운영 증빙
 - Track F external gate 충족
 
-Evidence self hash: `c73c6381d4ee62a83f0c3c3873a2bfe0649451620deabd917d6956e1d8c56fe3`
+Evidence self hash: `1763ba6f4481fcb2fd9f16e3a612b9acc0a140040f372883817f83fd50312d18`

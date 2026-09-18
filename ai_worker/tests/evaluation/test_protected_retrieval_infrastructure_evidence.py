@@ -20,16 +20,14 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 def test_infrastructure_evidence_separates_implementation_from_activation() -> None:
     evidence = build_protected_retrieval_infrastructure_evidence(REPOSITORY_ROOT)
 
-    assert evidence["repository_adapter_status"] == "PARTIALLY_IMPLEMENTED"
+    assert evidence["repository_adapter_status"] == "IMPLEMENTED_IN_REPOSITORY"
     assert evidence["authorization_control_c1_status"] == "IMPLEMENTED_IN_REPOSITORY"
     assert evidence["approval_ingestion_status"] == "IMPLEMENTED_IN_REPOSITORY"
     assert evidence["grant_revoke_expire_status"] == "IMPLEMENTED_IN_REPOSITORY"
-    assert evidence["production_approval_source_connector_status"] == "NOT_IMPLEMENTED"
+    assert evidence["production_approval_source_connector_status"] == "IMPLEMENTED_IN_REPOSITORY"
     assert evidence["dataset_lifecycle_freeze_status"] == "IMPLEMENTED_IN_REPOSITORY"
     assert evidence["identity_administration_status"] == "IMPLEMENTED_IN_REPOSITORY"
-    assert evidence["remaining_repository_scope"] == [
-        "PRODUCTION_APPROVAL_SOURCE_CONNECTOR",
-    ]
+    assert evidence["remaining_repository_scope"] == []
     assert evidence["effective_enforcement_status"] == "NOT_IMPLEMENTED"
     assert evidence["access_authorized"] is False
     assert evidence["holdout_authored"] is False
@@ -49,11 +47,13 @@ def test_infrastructure_evidence_separates_implementation_from_activation() -> N
         "AUTHORIZATION_CONTROL_CONTRACT",
         "POSTGRESQL_CONTROL_ADAPTER",
         "AUTHORIZATION_CONTROL_MIGRATION",
+        "PRODUCTION_APPROVAL_SOURCE_CONNECTOR",
     ]
     verification = cast(list[dict[str, JsonValue]], evidence["verification"])
-    assert verification[-2:] == [
+    assert verification[-3:] == [
         {"command_id": "WORKER_IMAGE_PROTECTED_OFF_IMPORT", "result": "PASSED"},
         {"command_id": "PROTECTED_LIMITED_LOGIN_CI", "result": "PASSED"},
+        {"command_id": "PRODUCTION_APPROVAL_SOURCE_CONNECTOR", "result": "21_PASSED"},
     ]
 
 

@@ -190,6 +190,9 @@ def test_protected_engines_use_distinct_short_lived_non_logging_connections(
         PROTECTED_DB_SCHEMA="synthetic_protected",
         PROTECTED_DB_ACCESS_ROLE="synthetic_protected_access",
         PROTECTED_DB_CONTROL_ROLE="synthetic_protected_control",
+        PROTECTED_APPROVAL_REPOSITORY="AI-HealthCare-05/AH_05_04",
+        PROTECTED_APPROVAL_BRANCH="develop",
+        PROTECTED_APPROVAL_GITHUB_TOKEN="synthetic-github-token",
     )
 
     engine = factory(config)
@@ -240,6 +243,9 @@ async def test_control_service_factory_uses_only_control_engine_and_validates(
         PROTECTED_DB_SCHEMA="synthetic_protected",
         PROTECTED_DB_ACCESS_ROLE="synthetic_protected_access",
         PROTECTED_DB_CONTROL_ROLE="synthetic_protected_control",
+        PROTECTED_APPROVAL_REPOSITORY="AI-HealthCare-05/AH_05_04",
+        PROTECTED_APPROVAL_BRANCH="develop",
+        PROTECTED_APPROVAL_GITHUB_TOKEN="synthetic-github-token",
     )
 
     service = cast(
@@ -288,6 +294,9 @@ async def test_control_service_factory_closes_on_validation_failure(
         PROTECTED_DB_SCHEMA="synthetic_protected",
         PROTECTED_DB_ACCESS_ROLE="synthetic_protected_access",
         PROTECTED_DB_CONTROL_ROLE="synthetic_protected_control",
+        PROTECTED_APPROVAL_REPOSITORY="AI-HealthCare-05/AH_05_04",
+        PROTECTED_APPROVAL_BRANCH="develop",
+        PROTECTED_APPROVAL_GITHUB_TOKEN="synthetic-github-token",
     )
 
     with pytest.raises(RuntimeError, match="synthetic validation failure"):
@@ -636,3 +645,32 @@ def test_worker_provider_context_uses_delivery_trace_id() -> None:
     assert context.environment is DeploymentEnvironment.STAGING
     assert context.validation_run_id is None
     assert context.validation_enabled is False
+
+
+def test_create_trusted_approval_source_disabled() -> None:
+    config = _config(PROTECTED_RETRIEVAL_ENABLED=False)
+    with pytest.raises(RuntimeError, match="PROTECTED_RETRIEVAL_DISABLED"):
+        runtime_assembly.create_trusted_approval_source(config)
+
+
+def test_create_trusted_approval_source_enabled() -> None:
+    config = _config(
+        PROTECTED_RETRIEVAL_ENABLED=True,
+        PROTECTED_DB_HOST="protected.test",
+        PROTECTED_DB_NAME="protected_test",
+        PROTECTED_DB_USER="protected_actor",
+        PROTECTED_DB_PASSWORD="synthetic-password",
+        PROTECTED_DB_CONTROL_USER="protected_controller",
+        PROTECTED_DB_CONTROL_PASSWORD="synthetic-control-password",
+        PROTECTED_DB_SCHEMA="synthetic_protected",
+        PROTECTED_DB_ACCESS_ROLE="synthetic_protected_access",
+        PROTECTED_DB_CONTROL_ROLE="synthetic_protected_control",
+        PROTECTED_APPROVAL_REPOSITORY="AI-HealthCare-05/AH_05_04",
+        PROTECTED_APPROVAL_BRANCH="develop",
+        PROTECTED_APPROVAL_GITHUB_TOKEN="synthetic-github-token",
+    )
+    source = runtime_assembly.create_trusted_approval_source(config)
+    assert isinstance(source, runtime_assembly.GitHubTrustedApprovalSource)
+    assert source._repository == "AI-HealthCare-05/AH_05_04"
+    assert source._default_branch == "develop"
+    assert source._token == "synthetic-github-token"
