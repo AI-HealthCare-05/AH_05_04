@@ -5,6 +5,7 @@ from starlette import status
 from app.core import config
 from app.main import app
 from app.tests.helpers.auth import signup_verified_user
+from app.tests.helpers.images import synthetic_jpeg
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 
@@ -51,7 +52,7 @@ async def _upload_document(client: AsyncClient, *, access_token: str) -> str:
         files={
             "file": (
                 "prescription.jpg",
-                JPEG_SIGNATURE + b"fake-jpeg",
+                synthetic_jpeg(),
                 "image/jpeg",
             ),
         },

@@ -818,6 +818,30 @@ async def _exercise_audit_cutover(admin, reader, producer, environment):
     return env_id
 
 
+_NORMALIZED_IMAGE_FIXTURE_COLUMNS = {
+    "normalized_object_key": "varchar(500)",
+    "normalized_width": "integer",
+    "normalized_height": "integer",
+}
+
+
+async def _add_normalized_image_fixture_columns(connection):
+    """#809 컬럼을 고정 revision 스키마에 잠시 보충합니다.
+
+    이 테스트는 `398b2c3d4e5f`에 고정해 그 시점의 권한 전이를 검증하는데, 공용 ORM 헬퍼에는
+    이후 추가된 medical_document 컬럼이 들어 있습니다. 검증 대상 revision을 올리지 않으려고
+    부족한 컬럼만 채우고, 뒤따르는 head 업그레이드가 같은 컬럼을 정상적으로 추가할 수 있도록
+    사용이 끝나면 즉시 되돌립니다.
+    """
+    for name, column_type in _NORMALIZED_IMAGE_FIXTURE_COLUMNS.items():
+        await connection.execute(text(f"ALTER TABLE medical_document ADD COLUMN IF NOT EXISTS {name} {column_type}"))
+
+
+async def _drop_normalized_image_fixture_columns(connection):
+    for name in _NORMALIZED_IMAGE_FIXTURE_COLUMNS:
+        await connection.execute(text(f"ALTER TABLE medical_document DROP COLUMN IF EXISTS {name}"))
+
+
 async def _exercise_prescription_candidate_cutover(admin, reader, environment):
     from app.models.rag_candidate import MedicationCandidateSearchStatus
     from app.repositories.medication_candidate_repository import MedicationCandidateRepository
@@ -827,6 +851,9 @@ async def _exercise_prescription_candidate_cutover(admin, reader, environment):
         _create_active_version_medication,
         _create_user_with_self_profile,
     )
+
+    async with admin.begin() as connection:
+        await _add_normalized_image_fixture_columns(connection)
 
     sessions = async_sessionmaker(admin, expire_on_commit=False)
     async with sessions.begin() as session:
@@ -858,6 +885,10 @@ async def _exercise_prescription_candidate_cutover(admin, reader, environment):
             text("SELECT content_hash FROM prescription_version WHERE id=:id"),
             {"id": str(active_version_id)},
         )
+
+    # 고정 revision 스키마로 되돌립니다. 이후 head 업그레이드가 이 컬럼들을 정식으로 추가합니다.
+    async with admin.begin() as connection:
+        await _drop_normalized_image_fixture_columns(connection)
 
     # Stored graph validation must fail before removing any trigger or column.
     async with admin.begin() as connection:

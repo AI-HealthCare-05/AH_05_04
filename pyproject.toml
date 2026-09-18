@@ -32,6 +32,7 @@ worker = [
 ]
 
 app = [
+    "pillow>=12.1.0",
     "alembic>=1.16.5",
      # PostgreSQL용 비동기 드라이버입니다.
     "asyncpg>=0.30.0",

@@ -30,6 +30,7 @@ from app.services.ocr_engine import OcrDeadline, OcrRecognitionResult, Recognize
 from app.tests.conftest import test_engine
 from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 from app.tests.helpers.auth import signup_verified_user
+from app.tests.helpers.images import synthetic_jpeg
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 
@@ -191,7 +192,7 @@ async def _upload_and_prepare_ocr(client: AsyncClient, *, access_token: str) -> 
     headers = {"Authorization": f"Bearer {access_token}"}
     upload = await client.post(
         "/api/v1/documents",
-        files={"file": ("prescription.jpg", JPEG_SIGNATURE + b"fake-jpeg", "image/jpeg")},
+        files={"file": ("prescription.jpg", synthetic_jpeg(), "image/jpeg")},
         headers=headers,
     )
     assert upload.status_code == status.HTTP_201_CREATED, upload.text

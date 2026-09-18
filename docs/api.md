@@ -920,3 +920,6 @@ POST `/api/v1/prescription-version-medications/{id}/schedule-recommendation`은 
 서버가 저장 시 재계산한다. `409 SCHEDULE_RECOMMENDATION_CONFLICT` 및 전체 DTO는
 [Proposed 계약](contracts/proposed/track-b-explicit-schedule-recommendation-v1.md)을 따른다.
 Backend non-local은 404, Frontend는 DEV 전용이며 공개 승인을 뜻하지 않는다.
+
+
+#809 OCR 정규화 이미지의 API·DB 변경은 [정규화 이미지 계약](contracts/current/ocr-normalized-image.md)을 참조합니다.

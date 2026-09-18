@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -21,7 +22,6 @@ from sqlalchemy.pool import NullPool
 from app.core import config
 from app.core.errors import ApiError
 from app.dtos.prescriptions import CorrectPrescriptionRequest, PrescriptionMedicationCorrectionRequest
-from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.profiles import Profile, ProfileType
 from app.models.users import User
@@ -400,18 +400,26 @@ async def _create_via_repository(*, legacy_schema: bool = False) -> dict[str, st
             )
             session.add(profile)
             await session.flush()
-            document = MedicalDocument(
-                uploaded_by=user.id,
-                profile_id=profile.id,
-                original_file_name="version-write.png",
-                object_key=f"synthetic/{token}/version-write.png",
-                file_mime_type="image/png",
-                file_size_bytes=1,
-            )
-            session.add(document)
-            await session.flush()
             # 이 테스트는 현재 ORM보다 오래된 revision의 DB를 재현합니다.
-            # 당시 스키마에 없는 후속 OCR 컬럼을 INSERT하지 않도록 부모 row만 직접 준비합니다.
+            # 당시 스키마에 없는 후속 컬럼(#809 normalized_*)을 INSERT하지 않도록
+            # medical_document도 ocr_job과 같이 컬럼을 명시한 raw SQL로 준비합니다.
+            document = SimpleNamespace(id=uuid4(), profile_id=profile.id, uploaded_by=user.id)
+            await session.execute(
+                text(
+                    "INSERT INTO medical_document "
+                    "(id, uploaded_by, profile_id, document_type, original_file_name, "
+                    "object_key, file_mime_type, file_size_bytes, upload_status) "
+                    "VALUES (:id, :uploaded_by, :profile_id, 'PRESCRIPTION', :original_file_name, "
+                    ":object_key, 'image/png', 1, 'UPLOADED')"
+                ),
+                {
+                    "id": str(document.id),
+                    "uploaded_by": str(user.id),
+                    "profile_id": str(profile.id),
+                    "original_file_name": "version-write.png",
+                    "object_key": f"synthetic/{token}/version-write.png",
+                },
+            )
             ocr_job = OcrJob(id=uuid4(), document_id=document.id)
             await session.execute(
                 text("INSERT INTO ocr_job (id, document_id, ocr_status) VALUES (:id, :document_id, 'PENDING')"),
@@ -419,8 +427,6 @@ async def _create_via_repository(*, legacy_schema: bool = False) -> dict[str, st
             )
             if legacy_schema:
                 # Hardening migration tests run against the pre-398 schema.
-                from types import SimpleNamespace
-
                 prescription_id, version_id = str(uuid4()), str(uuid4())
                 params = {
                     "id": prescription_id,

@@ -80,6 +80,9 @@ async def repository_schema() -> AsyncIterator[None]:
                 CREATE TABLE medical_document (
                     id VARCHAR(36) PRIMARY KEY,
                     object_key VARCHAR(500) NOT NULL,
+                    normalized_object_key VARCHAR(500),
+                    normalized_width INTEGER,
+                    normalized_height INTEGER,
                     file_mime_type VARCHAR(100) NOT NULL
                 )
                 """

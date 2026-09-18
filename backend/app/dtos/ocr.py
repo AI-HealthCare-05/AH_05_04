@@ -94,7 +94,15 @@ class ExtractedFieldData(BaseModel):
     source_location: SourceLocationData | None = None
 
 
+class OcrSourceImageData(BaseModel):
+    normalized: bool = False
+    width: int | None = None
+    height: int | None = None
+    url: str | None = None
+
+
 class OcrJobData(BaseModel):
+    source_image: OcrSourceImageData = Field(default_factory=OcrSourceImageData)
     job_id: UUID
     document_id: UUID
     ocr_status: OcrJobStatus
