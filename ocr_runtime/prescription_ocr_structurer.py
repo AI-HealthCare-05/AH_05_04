@@ -1243,7 +1243,7 @@ class PrescriptionOcrStructurer:
         self,
         fields: list[RawRecognizedField],
     ) -> SourceLocation | None:
-        """근거 token들을 감싸는 최소 사각형을 원본 이미지 픽셀 기준으로 반환합니다.
+        """근거 token들을 감싸는 최소 사각형을 OCR Provider 입력 이미지의 픽셀 기준으로 반환합니다.
 
         token은 중심점과 크기로 들어오므로 각 변을 중심점에서 절반씩 펼쳐 합집합을 구합니다.
         `width`가 0인 token(좌표를 제공하지 않는 Provider·합성 입력)만 있으면 None입니다.

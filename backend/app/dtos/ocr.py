@@ -71,7 +71,7 @@ class CreateManualMedicationRequest(BaseModel):
 
 
 class SourceLocationData(BaseModel):
-    """추출 근거 위치. 좌표는 원본 이미지 픽셀 기준이며 표시 배율 보정은 소비자 책임이다."""
+    """추출 근거 위치. 좌표는 OCR Provider 입력 이미지의 픽셀 기준이며 표시 배율 보정은 소비자 책임이다."""
 
     page: int = Field(ge=1)
     bbox: tuple[float, float, float, float]

@@ -224,7 +224,7 @@ class ExtractedField(Base):
         default=ConfirmationStatus.UNCONFIRMED,
     )
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # #809 REQ-OCR-014 추출 근거 위치. Provider가 반환한 원본 이미지 픽셀 기준이며 표시 배율
+    # #809 REQ-OCR-014 추출 근거 위치. OCR Provider에 입력된 이미지의 픽셀 기준이며 표시 배율
     # 보정은 소비자 책임입니다. 좌표를 제공하지 않는 경로(수동 입력·빈 검수 필드)는 전부 NULL입니다.
     source_page: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source_bbox_x: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
