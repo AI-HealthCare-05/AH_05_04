@@ -180,6 +180,27 @@ class ExtractedField(Base):
             "confidence_score IS NULL OR (confidence_score >= 0 AND confidence_score <= 1)",
             name="chk_field_confidence",
         ),
+        CheckConstraint(
+            "source_page IS NULL OR source_page >= 1",
+            name="chk_field_source_page",
+        ),
+        CheckConstraint(
+            "("
+            "source_page IS NULL AND source_bbox_x IS NULL AND source_bbox_y IS NULL "
+            "AND source_bbox_width IS NULL AND source_bbox_height IS NULL"
+            ") OR ("
+            "source_page IS NOT NULL AND source_bbox_x IS NOT NULL AND source_bbox_y IS NOT NULL "
+            "AND source_bbox_width IS NOT NULL AND source_bbox_height IS NOT NULL"
+            ")",
+            name="chk_field_source_location_complete",
+        ),
+        CheckConstraint(
+            "(source_bbox_x IS NULL OR source_bbox_x >= 0) "
+            "AND (source_bbox_y IS NULL OR source_bbox_y >= 0) "
+            "AND (source_bbox_width IS NULL OR source_bbox_width > 0) "
+            "AND (source_bbox_height IS NULL OR source_bbox_height > 0)",
+            name="chk_field_source_bbox_range",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -203,6 +224,13 @@ class ExtractedField(Base):
         default=ConfirmationStatus.UNCONFIRMED,
     )
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # #809 REQ-OCR-014 추출 근거 위치. Provider가 반환한 원본 이미지 픽셀 기준이며 표시 배율
+    # 보정은 소비자 책임입니다. 좌표를 제공하지 않는 경로(수동 입력·빈 검수 필드)는 전부 NULL입니다.
+    source_page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_bbox_x: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    source_bbox_y: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    source_bbox_width: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    source_bbox_height: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

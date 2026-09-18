@@ -1579,3 +1579,95 @@ def test_dense_review_layout_preserves_manual_or_explicit_date(inline: bool) -> 
 
 def test_empty_input_keeps_date_review_without_inventing_medication() -> None:
     _assert_empty_date_review(PrescriptionOcrStructurer().structure([]))
+
+
+def _boxed_field(
+    raw_value: str,
+    center_x: float,
+    center_y: float,
+    width: float = 60.0,
+    height: float = 20.0,
+) -> RawRecognizedField:
+    return RawRecognizedField(
+        raw_value=raw_value,
+        confidence_score=0.99,
+        center_x=center_x,
+        center_y=center_y,
+        height=height,
+        width=width,
+    )
+
+
+def _field_of(fields, field_type: str, medication_index: int = 1):
+    return next(
+        field for field in fields if field.field_type == field_type and field.medication_index == medication_index
+    )
+
+
+def _boxed_prescription_rows() -> list[RawRecognizedField]:
+    return [
+        _boxed_field("2026-08-12", 338, 399, width=120),
+        _boxed_field("명칭", 237, 581),
+        _boxed_field("투여량", 413, 581),
+        _boxed_field("투여횟수", 570, 581),
+        _boxed_field("용법", 911, 581),
+        _boxed_field("타이레놀정500mg", 237, 637, width=200),
+        _boxed_field("1정", 413, 637, width=40),
+        _boxed_field("1일 3회", 570, 637, width=80),
+        _boxed_field("3일분", 700, 637, width=70),
+        _boxed_field("식후 30분", 911, 637, width=100),
+    ]
+
+
+def test_structure_attaches_source_location_from_token_boxes() -> None:
+    fields = PrescriptionOcrStructurer().structure(_boxed_prescription_rows())
+
+    name = _field_of(fields, "MEDICATION_NAME")
+    assert name.source_location is not None
+    # 명칭 token은 center_x=237, width=200, center_y=637, height=20이므로 좌상단은 (137, 627)이다.
+    assert name.source_location.page == 1
+    assert name.source_location.x == pytest.approx(137.0)
+    assert name.source_location.y == pytest.approx(627.0)
+    assert name.source_location.width == pytest.approx(200.0)
+    assert name.source_location.height == pytest.approx(20.0)
+
+    date = _field_of(fields, "PRESCRIBED_DATE", medication_index=0)
+    assert date.source_location is not None
+    assert date.source_location.x == pytest.approx(278.0)
+    assert date.source_location.width == pytest.approx(120.0)
+
+    for field_type in ("DOSE_VALUE", "DOSE_UNIT", "FREQUENCY_PER_DAY", "DURATION_DAYS", "TIMING"):
+        located = _field_of(fields, field_type)
+        assert located.source_location is not None, field_type
+        assert located.source_location.width > 0
+        assert located.source_location.height > 0
+
+
+def test_structure_omits_source_location_when_tokens_have_no_width() -> None:
+    raw_fields = [
+        _raw_field("2026-08-12", 338, 399),
+        _raw_field("명칭", 237, 581),
+        _raw_field("투여량", 413, 581),
+        _raw_field("투여횟수", 570, 581),
+        _raw_field("타이레놀정500mg", 237, 637),
+        _raw_field("1정", 413, 637),
+        _raw_field("1일 3회", 570, 637),
+    ]
+
+    fields = PrescriptionOcrStructurer().structure(raw_fields)
+
+    assert all(field.source_location is None for field in fields)
+
+
+def test_structure_unions_boxes_of_multi_token_values() -> None:
+    raw_fields = _boxed_prescription_rows()
+    # 약품명이 두 token으로 쪼개진 경우 두 상자를 감싸는 최소 사각형을 사용한다.
+    raw_fields[5] = _boxed_field("타이레놀", 200, 637, width=80)
+    raw_fields.insert(6, _boxed_field("정500mg", 300, 637, width=80))
+
+    fields = PrescriptionOcrStructurer().structure(raw_fields)
+    name = _field_of(fields, "MEDICATION_NAME")
+
+    assert name.source_location is not None
+    assert name.source_location.x == pytest.approx(160.0)
+    assert name.source_location.width == pytest.approx(180.0)

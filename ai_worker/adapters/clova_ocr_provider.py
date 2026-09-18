@@ -194,6 +194,7 @@ class ClovaOcrProviderAdapter:
                     confidence_score=field.confidence_score,
                     normalized_value=field.normalized_value,
                     normalization_version=field.normalization_version,
+                    source_location=field.source_location,
                 )
             )
 

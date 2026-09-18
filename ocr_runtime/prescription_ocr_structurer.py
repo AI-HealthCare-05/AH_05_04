@@ -5,7 +5,7 @@ from statistics import median
 
 from ocr_runtime.medication_name_normalizer import MedicationNameNormalizer
 from ocr_runtime.review_fields import EMPTY_REVIEW_FIELD_TYPES
-from provider_contracts.ocr import RawRecognizedField, RecognizedField
+from provider_contracts.ocr import RawRecognizedField, RecognizedField, SourceLocation
 
 # CLOVA는 같은 템플릿이라도 날짜 텍스트 박스에 라벨(발행일 등)이나 앞뒤 공백을
 # 함께 인식할 수 있으므로 fullmatch 대신 값 내부에서 날짜 부분만 찾아 추출합니다.
@@ -479,6 +479,7 @@ class PrescriptionOcrStructurer:
                 normalized_value=normalized_date,
                 normalization_version="date-rule-v1",
                 confidence_score=field.confidence_score,
+                source_location=self._source_box([field]),
             )
             (preferred if kind == "preferred" else fallback).append(candidate)
         if preferred:
@@ -1045,6 +1046,7 @@ class PrescriptionOcrStructurer:
                     normalized_value=normalized.normalized_value,
                     normalization_version=normalized.normalization_version,
                     confidence_score=confidence_score,
+                    source_location=self._source_box(name_fields),
                 )
             )
 
@@ -1057,6 +1059,7 @@ class PrescriptionOcrStructurer:
                         field_type="MEDICATION_STRENGTH",
                         raw_value=strength_text,
                         confidence_score=confidence_score,
+                        source_location=self._source_box(name_fields),
                     )
                 )
 
@@ -1071,6 +1074,7 @@ class PrescriptionOcrStructurer:
                     field_type="DOSE_VALUE",
                     raw_value=dose_match.group("value"),
                     confidence_score=self._minimum_confidence(dose_fields),
+                    source_location=self._source_box(dose_fields),
                 )
             )
             result.append(
@@ -1079,6 +1083,7 @@ class PrescriptionOcrStructurer:
                     field_type="DOSE_UNIT",
                     raw_value=dose_match.group("unit"),
                     confidence_score=self._minimum_confidence(dose_fields),
+                    source_location=self._source_box(dose_fields),
                 )
             )
 
@@ -1093,6 +1098,7 @@ class PrescriptionOcrStructurer:
                     field_type="FREQUENCY_PER_DAY",
                     raw_value=frequency_match.group("value"),
                     confidence_score=self._minimum_confidence(frequency_fields),
+                    source_location=self._source_box(frequency_fields),
                 )
             )
 
@@ -1107,6 +1113,7 @@ class PrescriptionOcrStructurer:
                     field_type="DURATION_DAYS",
                     raw_value=duration_match.group("value"),
                     confidence_score=self._minimum_confidence(duration_fields),
+                    source_location=self._source_box(duration_fields),
                 )
             )
         # timing 열의 임의 안내 문구를 TIMING 필드로 저장하지 않습니다.
@@ -1223,6 +1230,7 @@ class PrescriptionOcrStructurer:
             field_type=field_type,
             raw_value=self._join_values(source_fields),
             confidence_score=self._minimum_confidence(source_fields),
+            source_location=self._source_box(source_fields),
         )
 
     def _join_values(
@@ -1230,6 +1238,33 @@ class PrescriptionOcrStructurer:
         fields: list[RawRecognizedField],
     ) -> str:
         return " ".join(field.raw_value for field in fields)
+
+    def _source_box(
+        self,
+        fields: list[RawRecognizedField],
+    ) -> SourceLocation | None:
+        """근거 token들을 감싸는 최소 사각형을 원본 이미지 픽셀 기준으로 반환합니다.
+
+        token은 중심점과 크기로 들어오므로 각 변을 중심점에서 절반씩 펼쳐 합집합을 구합니다.
+        `width`가 0인 token(좌표를 제공하지 않는 Provider·합성 입력)만 있으면 None입니다.
+        """
+        boxed = [field for field in fields if field.width > 0 and field.height > 0]
+
+        if not boxed:
+            return None
+
+        left = min(field.center_x - field.width / 2 for field in boxed)
+        right = max(field.center_x + field.width / 2 for field in boxed)
+        top = min(field.center_y - field.height / 2 for field in boxed)
+        bottom = max(field.center_y + field.height / 2 for field in boxed)
+
+        return SourceLocation(
+            page=1,
+            x=max(left, 0.0),
+            y=max(top, 0.0),
+            width=right - left,
+            height=bottom - top,
+        )
 
     def _minimum_confidence(
         self,
