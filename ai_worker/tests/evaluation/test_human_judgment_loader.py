@@ -194,6 +194,7 @@ def test_valid_artifact_and_approval_accepted(tmp_path: Path) -> None:
     validated = load_answer_human_judgment(
         artifact_file,
         approval_file,
+        evals_root=tmp_path,
         dataset=DATASET,
         expected_run_id=RUN_ID,
         expected_variant_id=VARIANT_ID,
@@ -444,9 +445,119 @@ def test_missing_file_raises_resource_missing(tmp_path: Path) -> None:
         load_answer_human_judgment(
             missing_judgment,
             missing_approval,
+            evals_root=tmp_path,
             dataset=DATASET,
             expected_run_id=RUN_ID,
             expected_variant_id=VARIANT_ID,
             expected_answer_variant_manifest_hash=VARIANT_MANIFEST_HASH,
         )
     assert exc_info.value.code == EvaluationErrorCode.RESOURCE_MISSING
+
+
+def test_load_with_normal_evals_root_directory_hierarchy_succeeds(tmp_path: Path) -> None:
+    evals_root = tmp_path / "evals"
+    judgments_dir = evals_root / "judgments"
+    judgments_dir.mkdir(parents=True)
+
+    artifact_payload = _make_judgment_artifact_payload()
+    approval_payload = _make_approval_payload(artifact_payload["artifact_sha256"])
+
+    artifact_file = judgments_dir / "judgment.json"
+    approval_file = judgments_dir / "approval.json"
+    artifact_file.write_bytes(canonical_json_bytes(artifact_payload))
+    approval_file.write_bytes(canonical_json_bytes(approval_payload))
+
+    resolved = _resolved_evidence()
+    validated = load_answer_human_judgment(
+        artifact_file,
+        approval_file,
+        evals_root=evals_root,
+        dataset=DATASET,
+        expected_run_id=RUN_ID,
+        expected_variant_id=VARIANT_ID,
+        expected_answer_variant_manifest_hash=VARIANT_MANIFEST_HASH,
+        resolved_approval_evidence=resolved,
+    )
+    assert isinstance(validated, ValidatedAnswerJudgments)
+    assert validated.run_id == RUN_ID
+
+
+def test_loader_rejects_parent_escape(tmp_path: Path) -> None:
+    evals_root = tmp_path / "evals"
+    evals_root.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+
+    artifact_payload = _make_judgment_artifact_payload()
+    approval_payload = _make_approval_payload(artifact_payload["artifact_sha256"])
+
+    artifact_file = outside_dir / "judgment.json"
+    approval_file = outside_dir / "approval.json"
+    artifact_file.write_bytes(canonical_json_bytes(artifact_payload))
+    approval_file.write_bytes(canonical_json_bytes(approval_payload))
+
+    escaped_judgment_path = evals_root / "../outside/judgment.json"
+    escaped_approval_path = evals_root / "../outside/approval.json"
+
+    with pytest.raises(EvaluationValidationError) as exc_info:
+        load_answer_human_judgment(
+            escaped_judgment_path,
+            escaped_approval_path,
+            evals_root=evals_root,
+            dataset=DATASET,
+            expected_run_id=RUN_ID,
+            expected_variant_id=VARIANT_ID,
+            expected_answer_variant_manifest_hash=VARIANT_MANIFEST_HASH,
+        )
+    assert exc_info.value.code == EvaluationErrorCode.RESOURCE_PATH_INVALID
+
+
+def test_loader_rejects_child_symlink_escape(tmp_path: Path) -> None:
+    evals_root = tmp_path / "evals"
+    evals_root.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+
+    artifact_payload = _make_judgment_artifact_payload()
+    approval_payload = _make_approval_payload(artifact_payload["artifact_sha256"])
+
+    outside_judgment = outside_dir / "judgment.json"
+    outside_approval = outside_dir / "approval.json"
+    outside_judgment.write_bytes(canonical_json_bytes(artifact_payload))
+    outside_approval.write_bytes(canonical_json_bytes(approval_payload))
+
+    linked_dir = evals_root / "linked"
+    try:
+        linked_dir.symlink_to(outside_dir, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported in environment")
+
+    symlinked_judgment_path = linked_dir / "judgment.json"
+    symlinked_approval_path = linked_dir / "approval.json"
+
+    with pytest.raises(EvaluationValidationError) as exc_info:
+        load_answer_human_judgment(
+            symlinked_judgment_path,
+            symlinked_approval_path,
+            evals_root=evals_root,
+            dataset=DATASET,
+            expected_run_id=RUN_ID,
+            expected_variant_id=VARIANT_ID,
+            expected_answer_variant_manifest_hash=VARIANT_MANIFEST_HASH,
+        )
+    assert exc_info.value.code == EvaluationErrorCode.RESOURCE_PATH_INVALID
+
+
+def test_loader_requires_evals_root_keyword_argument(tmp_path: Path) -> None:
+    artifact_file = tmp_path / "judgment.json"
+    approval_file = tmp_path / "approval.json"
+
+    with pytest.raises(TypeError, match="missing.*required keyword-only argument: 'evals_root'"):
+        load_answer_human_judgment(  # type: ignore[call-arg]
+            artifact_file,
+            approval_file,
+            dataset=DATASET,
+            expected_run_id=RUN_ID,
+            expected_variant_id=VARIANT_ID,
+            expected_answer_variant_manifest_hash=VARIANT_MANIFEST_HASH,
+        )

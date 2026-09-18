@@ -68,11 +68,11 @@ def _scope_fields(scope: ComparisonScope) -> MetricScopeFields:
         "estimator_id": scope.estimator_id,
         "estimator_version": scope.estimator_version,
         "independence_unit": scope.independence_unit,
-        "cluster_dimension": scope.cluster_dimension.value if scope.cluster_dimension is not None else None,
+        "cluster_dimension": None if scope.cluster_dimension is None else scope.cluster_dimension.value,
         "ci_method_id": scope.ci_method_id,
         "ci_method_version": scope.ci_method_version,
-        "ci_level": str(ci_level) if ci_level is not None else None,
-        "ci_sidedness": str(ci_sidedness) if ci_sidedness is not None else None,
+        "ci_level": ci_level if isinstance(ci_level, str) else None,
+        "ci_sidedness": ci_sidedness if isinstance(ci_sidedness, str) else None,
         "threshold": scope.threshold,
     }
 
