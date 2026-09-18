@@ -184,3 +184,67 @@ def test_ocr_worker_smoke_requires_bearer_token_without_exposing_value(monkeypat
         assert "Bearer" not in str(exc)
     else:
         raise AssertionError("missing LOAD_TEST_BEARER_TOKEN should fail")
+
+
+class _RequestEventRecorder:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def fire(self, **kwargs: Any) -> None:
+        self.calls.append(kwargs)
+
+
+def _ocr_smoke_user_with_request_recorder(module: Any) -> tuple[Any, _RequestEventRecorder]:
+    recorder = _RequestEventRecorder()
+    user = module.OcrWorkerSmokeUser()
+    user.environment = types.SimpleNamespace(events=types.SimpleNamespace(request=recorder))
+    return user, recorder
+
+
+def _assert_single_flow_failure(recorder: _RequestEventRecorder, *, reason: str) -> None:
+    assert len(recorder.calls) == 1
+    event = recorder.calls[0]
+    assert event["request_type"] == "FLOW"
+    assert event["name"] == "ocr-smoke:flow-failed"
+    assert event["response_time"] == 0
+    assert event["response_length"] == 0
+    assert event["context"] == {"reason": reason}
+    assert str(event["exception"]) == f"OCR smoke flow failed: {reason}"
+    assert "Bearer" not in str(event["exception"])
+
+
+def test_ocr_worker_smoke_terminal_job_status_records_flow_failure(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    module = _load_load_test_module("issue_627_ocr_worker_terminal_failure", "ocr_worker_smoke.py")
+    user, recorder = _ocr_smoke_user_with_request_recorder(module)
+    user._json_request = lambda *args, **kwargs: {"status": "FAILED"}
+
+    result = user._wait_for_completed_job({"status_url": "/api/v1/jobs/synthetic"}, {})
+
+    assert result is None
+    _assert_single_flow_failure(recorder, reason="terminal-status")
+
+
+def test_ocr_worker_smoke_timeout_records_flow_failure(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    module = _load_load_test_module("issue_627_ocr_worker_timeout_failure", "ocr_worker_smoke.py")
+    user, recorder = _ocr_smoke_user_with_request_recorder(module)
+    times = iter([0.0, 2.0])
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(module, "_max_wait_seconds", lambda: 1.0)
+
+    result = user._wait_for_completed_job({"status_url": "/api/v1/jobs/synthetic"}, {})
+
+    assert result is None
+    _assert_single_flow_failure(recorder, reason="timeout")
+
+
+def test_ocr_worker_smoke_missing_required_fields_records_flow_failure(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    module = _load_load_test_module("issue_627_ocr_worker_missing_fields_failure", "ocr_worker_smoke.py")
+    user, recorder = _ocr_smoke_user_with_request_recorder(module)
+
+    reviewed = user._review_extracted_fields({"fields": []}, module._manifest(), {})
+
+    assert reviewed is False
+    _assert_single_flow_failure(recorder, reason="missing-required-fields")

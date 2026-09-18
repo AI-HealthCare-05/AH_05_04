@@ -22,6 +22,8 @@ DEFAULT_FIXTURE_PATH = "tests/fixtures/release_validation/ai_one_cycle_clova_ope
 DEFAULT_POLL_INTERVAL_SECONDS = 1.0
 DEFAULT_MAX_WAIT_SECONDS = 60.0
 DEFAULT_IDEMPOTENCY_PREFIX = "load-test-ocr"
+FLOW_FAILURE_REQUEST_TYPE = "FLOW"
+FLOW_FAILURE_NAME = "ocr-smoke:flow-failed"
 TERMINAL_FAILURE_STATUSES = {"FAILED", "CANCELLED", "STALE"}
 
 _FIELD_VALUE_KEYS = {
@@ -75,7 +77,8 @@ class OcrWorkerSmokeUser(HttpUser):
             return None
         document_id = upload.get("document_id")
         if not document_id:
-            raise RuntimeError("document upload response did not include document_id")
+            self._record_flow_failure("missing-document-id")
+            return None
         return str(document_id)
 
     def _create_and_wait_for_ocr_job(self, document_id: str, headers: dict[str, str]) -> dict[str, Any] | None:
@@ -111,7 +114,8 @@ class OcrWorkerSmokeUser(HttpUser):
             return None
         prescription_id = prescription.get("prescription_id")
         if not prescription_id:
-            raise RuntimeError("prescription confirmation response did not include prescription_id")
+            self._record_flow_failure("missing-prescription-id")
+            return None
         return str(prescription_id)
 
     def _upload_document(self, fixture_path: Path, headers: dict[str, str]) -> dict[str, Any] | None:
@@ -158,10 +162,12 @@ class OcrWorkerSmokeUser(HttpUser):
             if status == "COMPLETED":
                 return data
             if status in TERMINAL_FAILURE_STATUSES:
-                raise RuntimeError(f"OCR job finished with terminal status {status}")
+                self._record_flow_failure("terminal-status")
+                return None
             time.sleep(_retry_after_seconds(data))
 
-        raise RuntimeError("OCR job did not complete before LOAD_TEST_OCR_MAX_WAIT_SECONDS")
+        self._record_flow_failure("timeout")
+        return None
 
     def _review_extracted_fields(
         self,
@@ -188,7 +194,8 @@ class OcrWorkerSmokeUser(HttpUser):
                 return False
         missing = set(expected_values) - reviewed_identities
         if missing:
-            raise RuntimeError(f"OCR result missed expected synthetic fields: {sorted(missing)}")
+            self._record_flow_failure("missing-required-fields")
+            return False
         return True
 
     def _json_request(
@@ -216,6 +223,9 @@ class OcrWorkerSmokeUser(HttpUser):
                 response.failure("expected JSON object in response data")
                 return None
             return data
+
+    def _record_flow_failure(self, reason: str) -> None:
+        _record_flow_failure(self.environment, reason)
 
 
 @cache
@@ -283,6 +293,17 @@ def _auth_headers() -> dict[str, str]:
     if not token:
         raise RuntimeError("LOAD_TEST_BEARER_TOKEN is required for OCR / Worker smoke")
     return {"Accept": "application/json", "Authorization": f"Bearer {token}"}
+
+
+def _record_flow_failure(environment: Any, reason: str) -> None:
+    environment.events.request.fire(
+        request_type=FLOW_FAILURE_REQUEST_TYPE,
+        name=FLOW_FAILURE_NAME,
+        response_time=0,
+        response_length=0,
+        exception=RuntimeError(f"OCR smoke flow failed: {reason}"),
+        context={"reason": reason},
+    )
 
 
 def _idempotency_prefix() -> str:
