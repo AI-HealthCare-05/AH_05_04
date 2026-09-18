@@ -109,17 +109,15 @@ async def _create_runtime_graph(session: AsyncSession):
             candidate_index_manifest_hash=_hash("3"),
         )
     )
-    environment = await repository.get_environment_by_code("LOCAL")
-    if environment is None:
-        environment = await repository.create_environment(
-            RagRuntimeEnvironmentCreate(
-                environment_code="LOCAL",
-                environment_status=RagRuntimeEnvironmentStatus.ACTIVE,
-                active_bundle_id=bundle.id,
-                active_bundle_manifest_hash=bundle.bundle_manifest_hash,
-                environment_revision=2,
-            )
+    environment = await repository.create_environment(
+        RagRuntimeEnvironmentCreate(
+            environment_code="LOCAL",
+            environment_status=RagRuntimeEnvironmentStatus.ACTIVE,
+            active_bundle_id=bundle.id,
+            active_bundle_manifest_hash=bundle.bundle_manifest_hash,
+            environment_revision=2,
         )
+    )
     return manifest, bundle, environment
 
 
