@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -12,10 +13,10 @@ def test_optional_database_roles_must_be_distinct() -> None:
 
     assert RUNTIME_LIFESTYLE_TABLES == {"lifestyle_times"}
 
-    validate_distinct_role_names("admin", "owner", "runtime", "writer", None, "index-builder")
+    validate_distinct_role_names("admin", "owner", "runtime", "writer", None, "index-builder", "cleanup")
 
     with pytest.raises(ValueError, match="distinct"):
-        validate_distinct_role_names("admin", "owner", "runtime", "writer", None, "writer")
+        validate_distinct_role_names("admin", "owner", "runtime", "writer", None, "writer", "cleanup")
 
 
 def test_credentials_and_admin_process_are_separated() -> None:
@@ -29,12 +30,22 @@ def test_credentials_and_admin_process_are_separated() -> None:
             or "CATALOG_WRITER_PASSWORD" in str(value)
             for value in environment.values()
         )
+    fastapi = services["fastapi"]
+    assert fastapi["environment"]["ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE"] == "${ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE:-}"
+    assert fastapi["environment"]["ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD"] == (
+        "${ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD:-}"
+    )
+    worker = services["ai-worker"]
+    assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE" not in worker["environment"]
+    assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD" not in worker["environment"]
     provisioner = services["provision-db-roles"]
     assert provisioner["profiles"] == ["database-admin"]
     assert provisioner["restart"] == "no"
     assert provisioner["environment"]["DB_ADMIN_PASSWORD"] == "${DB_ADMIN_PASSWORD}"
     assert provisioner["environment"]["CATALOG_WRITER_USER"] == "${CATALOG_WRITER_USER:-}"
     assert provisioner["environment"]["KNOWLEDGE_INDEX_BUILDER_USER"] == "${KNOWLEDGE_INDEX_BUILDER_USER:-}"
+    assert provisioner["environment"]["ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE"] == "${ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE:-}"
+    assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD" not in provisioner["environment"]
     assert "KNOWLEDGE_INDEX_BUILDER_PASSWORD" not in provisioner["environment"]
     assert "CATALOG_WRITER_PASSWORD" not in provisioner["environment"]
     assert not any("SOURCE_WRITER_PASSWORD" in str(value) for value in provisioner["environment"].values())
@@ -57,11 +68,54 @@ def test_credentials_and_admin_process_are_separated() -> None:
     assert not any("KNOWLEDGE_INDEX_BUILDER" in key for key in worker["environment"])
 
 
-def test_account_deletion_request_runtime_role_is_append_only() -> None:
-    from infra.python.provision_database_roles import RUNTIME_APPEND_ONLY_TABLES, RUNTIME_MUTABLE_TABLES
+def test_account_deletion_request_runtime_role_updates_only_lifecycle_columns() -> None:
+    from infra.python.provision_database_roles import (
+        ACCOUNT_WITHDRAWAL_CLEANUP_DELETE_TABLES,
+        ACCOUNT_WITHDRAWAL_CLEANUP_INSERT_TABLES,
+        ACCOUNT_WITHDRAWAL_CLEANUP_UPDATE_COLUMNS,
+        ACCOUNT_WITHDRAWAL_RUNTIME_PROTECTED_DELETE_TABLES,
+        RUNTIME_ACCOUNT_DELETION_REQUEST_UPDATE_COLUMNS,
+        RUNTIME_APPEND_ONLY_TABLES,
+        RUNTIME_MUTABLE_TABLES,
+    )
 
-    assert "account_deletion_request" in RUNTIME_APPEND_ONLY_TABLES
+    assert "account_deletion_request" not in RUNTIME_APPEND_ONLY_TABLES
     assert "account_deletion_request" not in RUNTIME_MUTABLE_TABLES
+    assert set(RUNTIME_ACCOUNT_DELETION_REQUEST_UPDATE_COLUMNS) == {
+        "status",
+        "started_at",
+        "completed_at",
+        "failed_at",
+        "retry_count",
+        "last_error_code",
+        "updated_at",
+    }
+    assert ACCOUNT_WITHDRAWAL_RUNTIME_PROTECTED_DELETE_TABLES == {
+        "action_plan_followup",
+        "action_plan_followup_audit",
+        "barrier_response",
+        "medication_candidate_search_result",
+        "notification_record",
+        "password_reset_token",
+        "refresh_session",
+        "retrieval_run",
+        "safety_assessment",
+        "support_action_plan",
+        "user_consent",
+    }
+    assert ACCOUNT_WITHDRAWAL_RUNTIME_PROTECTED_DELETE_TABLES <= ACCOUNT_WITHDRAWAL_CLEANUP_DELETE_TABLES
+    assert ACCOUNT_WITHDRAWAL_CLEANUP_INSERT_TABLES == {"account_deletion_request"}
+    assert {"account_deletion_request", "ai_job", "profile", "user"} == set(ACCOUNT_WITHDRAWAL_CLEANUP_UPDATE_COLUMNS)
+    assert "account_deletion_request" not in ACCOUNT_WITHDRAWAL_CLEANUP_DELETE_TABLES
+
+    source = (ROOT / "infra/python/provision_database_roles.py").read_text()
+    assert "GRANT SELECT, INSERT ON TABLE public.account_deletion_request" in source
+    assert "GRANT UPDATE ({names}) ON TABLE public.account_deletion_request" in source
+    assert "GRANT SELECT, INSERT, UPDATE ON TABLE public.account_deletion_request" not in source
+    assert re.search(r"GRANT[^\n]*DELETE[^\n]*account_deletion_request", source) is None
+    assert "GRANT TRUNCATE ON TABLE public.account_deletion_request" not in source
+    assert "_grant_account_withdrawal_cleanup_permissions(connection, cleanup_sql)" in source
+    assert "_grant_account_withdrawal_cleanup_permissions(connection, runtime_sql)" not in source
 
 
 def test_retrieval_run_tables_runtime_role_privileges_are_least_privilege() -> None:
