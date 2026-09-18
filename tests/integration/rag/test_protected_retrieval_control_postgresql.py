@@ -3946,3 +3946,143 @@ async def test_concurrent_register_author_and_custodian_dataset_command_dataset_
                     await connection.exec_driver_sql(f'DROP ROLE IF EXISTS "{author_login}"')
     finally:
         await admin_engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_task", ["transition", "grant"])
+async def test_concurrent_grant_and_dataset_transition_deadlock_prevention(
+    protected_database: _ProtectedDatabase,
+    first_task: str,
+) -> None:
+    database = protected_database
+    dataset_uuid = str(uuid4())
+    dataset = _dataset_binding(
+        dataset_id=dataset_uuid,
+        state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+        state_revision=1,
+    )
+    await _insert_dataset(database, dataset)
+    now = datetime.now(UTC)
+    grant = ProtectedAuthorizationGrant(
+        grant_id=str(uuid4()),
+        revision=1,
+        subject=ProtectedPrincipal(
+            actor=ActorIdentity(actor_id="synthetic-author", namespace="SERVICE_IDENTITY"),
+            role=ProtectedPrincipalRole.HOLDOUT_AUTHOR,
+        ),
+        dataset_id=dataset.dataset_id,
+        dataset_version=dataset.dataset_version,
+        manifest_sha256=dataset.manifest_sha256,
+        protected_artifact_sha256=dataset.protected_artifact_sha256,
+        hmac_key_version=dataset.hmac_key_version,
+        actions=(ProtectedAction.READ, ProtectedAction.WRITE),
+        issuer=ProtectedApprovalPrincipal(
+            actor=ActorIdentity(actor_id="synthetic-custodian", namespace="GITHUB_LOGIN"),
+            role=ProtectedApprovalRole.DATASET_CUSTODIAN,
+        ),
+        control_implementation=ControlImplementationBinding(
+            commit_oid="3" * 40,
+            artifact_sha256="4" * 64,
+            participants=(ActorIdentity(actor_id="synthetic-implementer", namespace="GITHUB_LOGIN"),),
+        ),
+        approval_source_event_id=f"grant-approval-{uuid4()}",
+        approval_source_raw_sha256="5" * 64,
+        valid_from=now - timedelta(minutes=20),
+        expires_at=now + timedelta(minutes=10),
+    )
+    evidence = _evidence(
+        grant.approval_source_event_id,
+        grant.approval_source_raw_sha256,
+        grant=grant,
+    )
+    source = _ApprovalSource(evidence)
+    grant_service = _service(database, source)
+    custodian_service = _service(database, _DatasetApprovalSource())
+    admin_engine = create_async_engine(database.url)
+    aux_engine = create_async_engine(database.url)
+    tasks: list[asyncio.Task[object]] = []
+    try:
+        await grant_service.ingest_approval(
+            IngestApprovalCommand(
+                request_id=str(uuid4()),
+                source_event_id=evidence.source_event_id,
+                expected_raw_sha256=evidence.canonical_raw_sha256,
+            )
+        )
+        transition_cmd = _transition_command(
+            dataset,
+            from_state=ProtectedDatasetState.ACCESS_AUTHORIZED,
+            to_state=ProtectedDatasetState.AUTHORING,
+            revision=1,
+            authored_count=0,
+            review_complete=False,
+        )
+        grant_cmd = GrantAuthorizationCommand(
+            request_id=str(uuid4()),
+            grant=grant,
+            expected_dataset_state_revision=dataset.state_revision,
+        )
+
+        async with aux_engine.connect() as aux_conn:
+            aux_trans = await aux_conn.begin()
+            try:
+                aux_pid = await aux_conn.scalar(text("SELECT pg_backend_pid()"))
+                # Pre-lock protected_dataset for this dataset in aux transaction
+                await aux_conn.execute(
+                    text(
+                        f'''SELECT dataset_id FROM "{database.schema}".protected_dataset
+                        WHERE dataset_id = :dataset_id AND dataset_version = :dataset_version FOR UPDATE'''
+                    ),
+                    {"dataset_id": dataset.dataset_id, "dataset_version": dataset.dataset_version},
+                )
+
+                if first_task == "transition":
+                    # Start transition task first
+                    task_trans = asyncio.create_task(custodian_service.transition_dataset(transition_cmd))
+                    tasks.append(task_trans)
+                    trans_pid = await _wait_for_blocked_by(admin_engine, blocking_pid=aux_pid)
+
+                    # Start grant task second
+                    task_grant = asyncio.create_task(grant_service.grant(grant_cmd))
+                    tasks.append(task_grant)
+                    grant_pid = await _wait_for_blocked_by(
+                        admin_engine, blocking_pids=(aux_pid, trans_pid), exclude_pids=(trans_pid,)
+                    )
+                else:
+                    # Start grant task first
+                    task_grant = asyncio.create_task(grant_service.grant(grant_cmd))
+                    tasks.append(task_grant)
+                    grant_pid = await _wait_for_blocked_by(admin_engine, blocking_pid=aux_pid)
+
+                    # Start transition task second
+                    task_trans = asyncio.create_task(custodian_service.transition_dataset(transition_cmd))
+                    tasks.append(task_trans)
+                    trans_pid = await _wait_for_blocked_by(
+                        admin_engine, blocking_pids=(aux_pid, grant_pid), exclude_pids=(grant_pid,)
+                    )
+
+                assert trans_pid != grant_pid
+                assert trans_pid != aux_pid
+                assert grant_pid != aux_pid
+            finally:
+                # Release aux lock so both commands contend in aligned lock order
+                await aux_trans.rollback()
+
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Assert NO deadlock (40P01) occurred
+            for r in results:
+                if isinstance(r, Exception):
+                    assert "40P01" not in str(r)
+                    assert "INTERNAL_ERROR" not in str(r)
+
+            successes = [r for r in results if isinstance(r, ControlCommandResult)]
+            assert len(successes) >= 1
+    finally:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await aux_engine.dispose()
+        await admin_engine.dispose()
+        await grant_service.close()
+        await custodian_service.close()

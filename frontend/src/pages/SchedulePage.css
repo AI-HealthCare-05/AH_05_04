@@ -514,11 +514,32 @@
 
 .schedule-editor__time-field {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.schedule-editor__time-period {
+  color: #4d576b;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
 }
 
 .schedule-editor__times small {
   color: #1f2633;
   font-size: 13px;
+  line-height: 20px;
+}
+
+.schedule-editor__elapsed-time-notice {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff7e8;
+  color: #754800;
+  font-size: 13px;
+  font-weight: 700;
   line-height: 20px;
 }
 

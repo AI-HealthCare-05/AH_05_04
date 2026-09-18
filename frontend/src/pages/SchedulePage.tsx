@@ -26,6 +26,7 @@ import {
 } from '../api/medicationSchedules'
 import {
   createCheckinIdempotencyKey,
+  isCheckinBeforeScheduledAtError,
   isCheckinConflictError,
   isCheckinRevisionConflictError,
   isCheckinValidationError,
@@ -55,6 +56,7 @@ const KST_TIME_ZONE = 'Asia/Seoul'
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+const MAX_TIMEOUT_MS = 2_147_483_647
 
 export type SchedulePageServices = {
   getScheduleRecommendation?: typeof getScheduleRecommendation
@@ -93,6 +95,22 @@ function kstToday(): string {
   }).formatToParts(new Date())
   const value = Object.fromEntries(parts.map((part) => [part.type, part.value]))
   return `${value.year}-${value.month}-${value.day}`
+}
+
+function hasElapsedTimeToday(draft: ScheduleDraft): boolean {
+  if (draft.startDate !== kstToday()) return false
+
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: KST_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date())
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  const currentTime = `${value.hour}:${value.minute}`
+  return draft.times.some(
+    (localTime) => /^([01]\d|2[0-3]):[0-5]\d$/.test(localTime) && localTime <= currentTime,
+  )
 }
 
 function isValidLocalDate(value: string | null): value is string {
@@ -299,7 +317,18 @@ type ScheduleSaveState = {
   kind?: 'VALIDATION' | 'MUTATION'
 }
 
-function initialScheduleDraft(medication: Medication): ScheduleDraft {
+function initialScheduleDraft(
+  medication: Medication,
+  item: MedicationScheduleItem,
+): ScheduleDraft {
+  if (item.schedule_item_status === 'READY' && item.schedule?.status === 'ACTIVE') {
+    return {
+      startDate: item.schedule.start_local_date,
+      endMode: item.schedule.end_mode,
+      endDate: item.schedule.end_local_date ?? '',
+      times: [...item.schedule.local_times],
+    }
+  }
   const frequency =
     Number.isInteger(medication.frequency_per_day) &&
     (medication.frequency_per_day ?? 0) > 0
@@ -368,7 +397,7 @@ function ScheduleEditor({
   const [drafts, setDrafts] = useState<Record<string, ScheduleDraft>>(() =>
     Object.fromEntries(orderedItems.map((item) => {
       const id = item.prescription_version_medication_id
-      return [id, initialScheduleDraft(medications[id])]
+      return [id, initialScheduleDraft(medications[id], item)]
     })),
   )
   const [saveStates, setSaveStates] = useState<Record<string, ScheduleSaveState>>({})
@@ -384,7 +413,7 @@ function ScheduleEditor({
       const next: Record<string, ScheduleDraft> = {}
       for (const item of orderedItems) {
         const id = item.prescription_version_medication_id
-        next[id] = current[id] ?? initialScheduleDraft(medications[id])
+        next[id] = current[id] ?? initialScheduleDraft(medications[id], item)
       }
       return next
     })
@@ -578,6 +607,8 @@ function ScheduleEditor({
             saveState?.status === 'ERROR' && saveState.kind === 'VALIDATION'
           const errorMessageId = `schedule-error-${id}`
           const directionsId = `schedule-directions-${id}`
+          const elapsedTimeNoticeId = `schedule-elapsed-time-notice-${id}`
+          const showElapsedTimeNotice = hasElapsedTimeToday(draft)
           return (
             <Card className="schedule-editor" key={id}>
               <div className="schedule-editor__heading">
@@ -681,16 +712,25 @@ function ScheduleEditor({
                     <span>{medication.timing_text?.trim() || '복용 시점 미확인 · 처방전의 복용 지시를 확인해 주세요.'}</span>
                   </p>
                   <div className="schedule-editor__time-grid">
-                    {draft.times.map((time, index) => (
+                    {draft.times.map((time, index) => {
+                      const periodLabel = timeOfDayLabel(time)
+                      return (
                       <label className="schedule-editor__time-field" key={index}>
                         <span className="sr-only">{medication.medication_name} {index + 1}번째 복용 시간</span>
+                        {periodLabel && (
+                          <span className="schedule-editor__time-period" aria-hidden="true">{periodLabel}</span>
+                        )}
                         <input
                           aria-label={`${medication.medication_name} ${index + 1}번째 복용 시간`}
                           type="time"
                           value={time}
                           disabled={isSaving || isReloading}
                           aria-invalid={hasValidationError || undefined}
-                          aria-describedby={[directionsId, hasValidationError ? errorMessageId : ''].filter(Boolean).join(' ')}
+                          aria-describedby={[
+                            directionsId,
+                            showElapsedTimeNotice ? elapsedTimeNoticeId : '',
+                            hasValidationError ? errorMessageId : '',
+                          ].filter(Boolean).join(' ')}
                           onChange={(event) => changeScheduleInput(id, (current) => {
                             const nextTimes = [...current.times]
                             nextTimes[index] = event.target.value
@@ -699,8 +739,14 @@ function ScheduleEditor({
                           required
                         />
                       </label>
-                    ))}
+                      )
+                    })}
                   </div>
+                  {showElapsedTimeNotice && (
+                    <p className="schedule-editor__elapsed-time-notice" id={elapsedTimeNoticeId} role="note">
+                      오늘 이미 지난 복용 시간은 오늘 일정에 표시되지 않아요. 이후 날짜에는 설정한 시간대로 표시돼요.
+                    </p>
+                  )}
                   {frequencyPerDay !== null && (
                     <small>
                       {frequencyPerDay > 1
@@ -786,9 +832,21 @@ function occurrencePeriodLabel(value: string): string {
     hour12: false,
     timeZone: KST_TIME_ZONE,
   }).format(new Date(value)))
+  return periodLabelForHour(hour)
+}
+
+// 오늘의 복약(occurrencePeriodLabel)과 같은 아침(~10시)/점심(~16시)/저녁 경계를 쓴다.
+// 편집 중인 시간 입력(HH:MM, 로컬 벽시계 값)에는 별도 타임존 변환 없이 시(hour)만 그대로 사용한다.
+function periodLabelForHour(hour: number): string {
   if (hour < 11) return '아침'
   if (hour < 17) return '점심'
   return '저녁'
+}
+
+function timeOfDayLabel(time: string): string | null {
+  const match = /^([01]\d|2[0-3]):[0-5]\d$/.exec(time)
+  if (!match) return null
+  return periodLabelForHour(Number(match[1]))
 }
 
 export function SchedulePage({
@@ -1185,6 +1243,7 @@ export function ScheduleOccurrencePage({
   const [reloadVersion, setReloadVersion] = useState(0)
   const [isSaving, setIsSaving] = useState(false)
   const [mutationMessage, setMutationMessage] = useState('')
+  const [currentTime, setCurrentTime] = useState(() => Date.now())
   const headingRef = useRef<HTMLHeadingElement>(null)
   const checkinAttemptRef = useRef<
     LogicalMutationAttempt<LogicalMutationOperation, unknown> | null
@@ -1250,6 +1309,17 @@ export function ScheduleOccurrencePage({
     }
   }, [date, occurrenceId, reloadVersion, services, validRoute])
 
+  const scheduledAt = occurrence ? Date.parse(occurrence.scheduled_at) : Number.NaN
+  const isBeforeScheduledTime = Number.isFinite(scheduledAt) && currentTime < scheduledAt
+  useEffect(() => {
+    if (!Number.isFinite(scheduledAt) || scheduledAt <= Date.now()) return undefined
+    const timeout = window.setTimeout(
+      () => setCurrentTime(Date.now()),
+      Math.min(scheduledAt - Date.now() + 50, MAX_TIMEOUT_MS),
+    )
+    return () => window.clearTimeout(timeout)
+  }, [currentTime, scheduledAt])
+
   const loadedOccurrenceId = occurrence?.occurrence_id
   const loadedMedicationOccurrenceId = medication?.occurrence_id
   useEffect(() => {
@@ -1260,6 +1330,11 @@ export function ScheduleOccurrencePage({
 
   const submitCheckin = async (status: MedicationCheckinUserStatus) => {
     if (!occurrence || isSaving || occurrence.status === 'CANCELLED') return
+    if (Date.now() < Date.parse(occurrence.scheduled_at)) {
+      setCurrentTime(Date.now())
+      setMutationMessage(`${formatKstTime(occurrence.scheduled_at)}부터 복약 기록을 남길 수 있어요.`)
+      return
+    }
     const requestPayload: PutMedicationCheckinInput = {
       status,
       expectedRevision: occurrence.checkin?.revision ?? 0,
@@ -1290,7 +1365,11 @@ export function ScheduleOccurrencePage({
       })
       setMutationMessage('복약 기록을 저장했어요.')
     } catch (error) {
-      if (isCheckinRevisionConflictError(error)) {
+      if (isCheckinBeforeScheduledAtError(error)) {
+        checkinAttemptRef.current = null
+        setCurrentTime(Date.now())
+        setMutationMessage(`${formatKstTime(occurrence.scheduled_at)}부터 복약 기록을 남길 수 있어요.`)
+      } else if (isCheckinRevisionConflictError(error)) {
         checkinAttemptRef.current = null
         await reload()
         setMutationMessage('기록이 다른 곳에서 변경됐어요. 최신 상태를 확인한 뒤 다시 선택해 주세요.')
@@ -1387,11 +1466,13 @@ export function ScheduleOccurrencePage({
               {occurrence.status !== 'CANCELLED' && (
                 <section className="schedule-record__actions" aria-labelledby="checkin-question">
                   <h2 id="checkin-question">이 약을 복용했나요?</h2>
-                  <p>현재 상태를 확인하고 직접 선택해 주세요.</p>
-                  <Button fullWidth disabled={isSaving} onClick={() => void submitCheckin('TAKEN')}>
+                  <p>{isBeforeScheduledTime
+                    ? `${formatKstTime(occurrence.scheduled_at)}부터 복약 기록을 남길 수 있어요.`
+                    : '현재 상태를 확인하고 직접 선택해 주세요.'}</p>
+                  <Button fullWidth disabled={isSaving || isBeforeScheduledTime} onClick={() => void submitCheckin('TAKEN')}>
                     {isSaving ? '저장 중…' : '복용했어요'}
                   </Button>
-                  <Button fullWidth variant="secondary" disabled={isSaving} onClick={() => void submitCheckin('NOT_TAKEN')}>
+                  <Button fullWidth variant="secondary" disabled={isSaving || isBeforeScheduledTime} onClick={() => void submitCheckin('NOT_TAKEN')}>
                     복용하지 않았어요
                   </Button>
                 </section>

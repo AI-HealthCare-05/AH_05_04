@@ -1757,16 +1757,6 @@ class PostgresqlProtectedAuthorizationControlService:
 
                 executor, denial_reason = await self._lock_dataset_control_executor(control, prepared_executor)
 
-                replay = await control.replay(
-                    request_id=command.request_id,
-                    command_kind=command_kind,
-                    command_sha256=digest,
-                    executor=executor.actor,
-                    lock_head=True,
-                )
-                if replay is not None:
-                    return replay
-
                 if denial_reason is None:
                     existing_row = (
                         await control._execute(
@@ -1781,6 +1771,16 @@ class PostgresqlProtectedAuthorizationControlService:
                     ).one_or_none()
                     if existing_row is not None:
                         denial_reason = ProtectedAuditReason.CONTROL_COMMAND_CONFLICT
+
+                replay = await control.replay(
+                    request_id=command.request_id,
+                    command_kind=command_kind,
+                    command_sha256=digest,
+                    executor=executor.actor,
+                    lock_head=True,
+                )
+                if replay is not None:
+                    return replay
 
                 await control.refresh_clock()
                 entries = await control.verified_entries(lock_head=False)
@@ -1910,6 +1910,11 @@ class PostgresqlProtectedAuthorizationControlService:
                 control = _ControlSession(session, self._schema, clock)
 
                 executor, denial_reason = await self._lock_dataset_control_executor(control, prepared_executor)
+                if denial_reason is None:
+                    denial_reason = _validate_dataset_transition_invariants(command)
+                if denial_reason is None:
+                    denial_reason = await control.check_dataset_transition(command)
+
                 replay = await control.replay(
                     request_id=command.request_id,
                     command_kind=command_kind,
@@ -1919,11 +1924,6 @@ class PostgresqlProtectedAuthorizationControlService:
                 )
                 if replay is not None:
                     return replay
-
-                if denial_reason is None:
-                    denial_reason = _validate_dataset_transition_invariants(command)
-                if denial_reason is None:
-                    denial_reason = await control.check_dataset_transition(command)
 
                 await control.refresh_clock()
                 entries = await control.verified_entries(lock_head=False)
@@ -2127,6 +2127,12 @@ class PostgresqlProtectedAuthorizationControlService:
                 control = _ControlSession(session, self._schema, clock)
 
                 executor, lock_denial = await self._lock_dataset_control_executor(control, prepared_executor)
+                denial_reason = lock_denial
+                if denial_reason is None:
+                    denial_reason = await self._check_freeze_mutation(
+                        control, command, executor, evidence, fetch_denial
+                    )
+
                 replay = await control.replay(
                     request_id=command.request_id,
                     command_kind=command_kind,
@@ -2136,12 +2142,6 @@ class PostgresqlProtectedAuthorizationControlService:
                 )
                 if replay is not None:
                     return replay
-
-                denial_reason = lock_denial
-                if denial_reason is None:
-                    denial_reason = await self._check_freeze_mutation(
-                        control, command, executor, evidence, fetch_denial
-                    )
 
                 await control.refresh_clock()
                 entries = await control.verified_entries(lock_head=False)

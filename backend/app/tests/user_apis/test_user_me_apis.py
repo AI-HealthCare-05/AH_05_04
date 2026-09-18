@@ -250,6 +250,9 @@ class TestUserMeApis:
         [
             {"phone_number": ""},
             {"phone_number": "010-7777-8888"},
+            {"phone_number": "0101234567"},
+            {"phone_number": "010123456789"},
+            {"phone_number": "01112345678"},
             {"birthday": (date.today() + timedelta(days=1)).isoformat()},
             {"gender": "UNKNOWN"},
         ],

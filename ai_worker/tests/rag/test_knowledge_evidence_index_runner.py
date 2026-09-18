@@ -28,6 +28,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from ai_worker.adapters.openai_text_embedding import OPENAI_TEXT_EMBEDDING_ADAPTER_REF
 from ai_worker.admin.knowledge_evidence_index import (
     EXPECTED_DIMENSION,
     EXPECTED_INDEX_CODE,
@@ -127,7 +128,7 @@ class StubTextEmbeddingPort(TextEmbeddingPort):
         self.received_texts: list[str] = []
         self._dimension = dimension
         self._fail_with = fail_with
-        self._artifact_ref = artifact_ref or ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "1" * 64)
+        self._artifact_ref = artifact_ref or OPENAI_TEXT_EMBEDDING_ADAPTER_REF
 
     async def embed(
         self,
@@ -358,12 +359,12 @@ async def test_preflight_wrong_source_identity_fails_closed_without_provider_cal
 
 
 # --------------------------------------------------------------------------------------
-# 7. Document/member hash mismatch -> preflight fails, provider call = 0
+# 7. Canonical checksum / source binding mismatch -> preflight fails, provider call = 0
 # --------------------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_preflight_document_member_hash_mismatch_fails_closed_without_provider_call() -> None:
+async def test_preflight_canonical_checksum_mismatch_fails_closed_without_provider_call() -> None:
     config = KnowledgeEvidenceIndexRunnerConfig.from_environment(_valid_env())
     port = StubTextEmbeddingPort()
     repo = StubKnowledgeEvidenceIndexRepository()
@@ -464,6 +465,7 @@ async def test_embedding_failure_fails_closed_without_index_write() -> None:
             snapshot_id=NOVASC_SNAPSHOT_ID,
             expected_item_seq=NOVASC_ITEM_SEQ,
             expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+            expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
             preflight_chunks_override=chunks,
             repository_override=repo,
             embedding_port_override=port,
@@ -493,6 +495,7 @@ async def test_embedding_dimension_mismatch_fails_closed_without_index_write() -
             snapshot_id=NOVASC_SNAPSHOT_ID,
             expected_item_seq=NOVASC_ITEM_SEQ,
             expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+            expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
             preflight_chunks_override=chunks,
             repository_override=repo,
             embedding_port_override=port,
@@ -518,6 +521,7 @@ async def test_fresh_build_happy_path_embeds_exactly_three_times() -> None:
         snapshot_id=NOVASC_SNAPSHOT_ID,
         expected_item_seq=NOVASC_ITEM_SEQ,
         expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+        expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
         preflight_chunks_override=chunks,
         repository_override=repo,
         embedding_port_override=port,
@@ -550,6 +554,7 @@ async def test_build_request_actual_identity_exact() -> None:
         snapshot_id=NOVASC_SNAPSHOT_ID,
         expected_item_seq=NOVASC_ITEM_SEQ,
         expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+        expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
         preflight_chunks_override=chunks,
         repository_override=repo,
         embedding_port_override=port,
@@ -584,6 +589,7 @@ async def test_summary_does_not_contain_chunk_text_vector_api_key() -> None:
         snapshot_id=NOVASC_SNAPSHOT_ID,
         expected_item_seq=NOVASC_ITEM_SEQ,
         expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+        expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
         preflight_chunks_override=chunks,
         repository_override=repo,
         embedding_port_override=port,
@@ -615,6 +621,7 @@ async def test_exact_replay_uses_same_request_and_does_not_call_embedding_again(
         snapshot_id=NOVASC_SNAPSHOT_ID,
         expected_item_seq=NOVASC_ITEM_SEQ,
         expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+        expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
         preflight_chunks_override=chunks,
         repository_override=repo,
         embedding_port_override=port,
@@ -644,6 +651,7 @@ async def test_existing_exact_index_returns_exact_reuse_without_provider_call_re
         snapshot_id=NOVASC_SNAPSHOT_ID,
         expected_item_seq=NOVASC_ITEM_SEQ,
         expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+        expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
         preflight_chunks_override=chunks,
         repository_override=repo,
         embedding_port_override=port,
@@ -688,6 +696,7 @@ async def test_existing_mismatched_index_fails_closed_with_version_conflict_with
         snapshot_id=NOVASC_SNAPSHOT_ID,
         expected_item_seq=NOVASC_ITEM_SEQ,
         expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+        expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
         preflight_chunks_override=chunks,
         repository_override=repo,
         embedding_port_override=port,
@@ -744,11 +753,129 @@ async def test_unsupplied_adapter_artifact_identity_blocks_with_expected_reason(
     assert repo.persist_calls == 0
 
 
-@pytest.mark.parametrize("forbidden_ref", ["0" * 64, "e" * 64, "short_sha", "not-a-hex-string"])
+@pytest.mark.parametrize(
+    "noncanonical_ref",
+    [
+        ImmutableArtifactRef(
+            artifact_code="openai-text-embedding-adapter",
+            version="1.0.0",
+            content_sha256="0" * 64,
+        ),
+        ImmutableArtifactRef(
+            artifact_code="openai-text-embedding-adapter",
+            version="1.0.0",
+            content_sha256="e" * 64,
+        ),
+        ImmutableArtifactRef(
+            artifact_code="openai-text-embedding-adapter",
+            version="9.9.9",
+            content_sha256=OPENAI_TEXT_EMBEDDING_ADAPTER_REF.content_sha256,
+        ),
+        ImmutableArtifactRef(
+            artifact_code="wrong-embedding-adapter",
+            version="1.0.0",
+            content_sha256=OPENAI_TEXT_EMBEDDING_ADAPTER_REF.content_sha256,
+        ),
+    ],
+)
 @pytest.mark.asyncio
-async def test_forbidden_or_invalid_adapter_artifact_ref_fails_closed(forbidden_ref: str) -> None:
+async def test_noncanonical_embedding_adapter_ref_fails_closed(
+    noncanonical_ref: ImmutableArtifactRef,
+) -> None:
     env = _valid_env()
     config = KnowledgeEvidenceIndexRunnerConfig.from_environment(env, require_openai_key=True)
+    repo = StubKnowledgeEvidenceIndexRepository()
+    chunks = _make_novasc_chunks()
+    port = StubTextEmbeddingPort()
+
+    with pytest.raises(KnowledgeEvidenceIndexRunnerError) as exc_info:
+        await execute_knowledge_evidence_index_build(
+            config=config,
+            snapshot_id=NOVASC_SNAPSHOT_ID,
+            expected_item_seq=NOVASC_ITEM_SEQ,
+            expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+            expected_embedding_adapter_ref=noncanonical_ref,
+            preflight_chunks_override=chunks,
+            repository_override=repo,
+            embedding_port_override=port,
+        )
+    assert (
+        exc_info.value.reason
+        == KnowledgeEvidenceIndexRunnerFailureReason.BLOCKED_BY_EMBEDDING_ADAPTER_ARTIFACT_IDENTITY
+    )
+    assert port.call_count == 0
+    assert repo.persist_calls == 0
+
+
+# --------------------------------------------------------------------------------------
+# 19. Target B/C/D tests for Issue #738
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_corpus_runner_requires_authoritative_immutable_artifact_ref() -> None:
+    from ai_worker.adapters.openai_text_embedding import OPENAI_TEXT_EMBEDDING_ADAPTER_REF
+
+    config = KnowledgeEvidenceIndexRunnerConfig.from_environment(_valid_env())
+    port = StubTextEmbeddingPort(artifact_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF)
+    repo = StubKnowledgeEvidenceIndexRepository()
+    chunks = _make_novasc_chunks()
+
+    # None passed for expected_embedding_adapter_ref -> fail closed
+    with pytest.raises(KnowledgeEvidenceIndexRunnerError) as exc_info:
+        await execute_knowledge_evidence_index_build(
+            config=config,
+            snapshot_id=NOVASC_SNAPSHOT_ID,
+            expected_item_seq=NOVASC_ITEM_SEQ,
+            expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+            expected_embedding_adapter_ref=None,
+            preflight_chunks_override=chunks,
+            repository_override=repo,
+            embedding_port_override=port,
+        )
+    assert (
+        exc_info.value.reason
+        == KnowledgeEvidenceIndexRunnerFailureReason.BLOCKED_BY_EMBEDDING_ADAPTER_ARTIFACT_IDENTITY
+    )
+    assert port.call_count == 0
+    assert repo.persist_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_mismatched_adapter_ref_fails_closed_before_provider_call() -> None:
+    config = KnowledgeEvidenceIndexRunnerConfig.from_environment(_valid_env())
+    port = StubTextEmbeddingPort()
+    repo = StubKnowledgeEvidenceIndexRepository()
+    chunks = _make_novasc_chunks()
+
+    wrong_ref = ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "f" * 64)
+    with pytest.raises(KnowledgeEvidenceIndexRunnerError) as exc_info:
+        await execute_knowledge_evidence_index_build(
+            config=config,
+            snapshot_id=NOVASC_SNAPSHOT_ID,
+            expected_item_seq=NOVASC_ITEM_SEQ,
+            expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+            expected_embedding_adapter_ref=wrong_ref,
+            preflight_chunks_override=chunks,
+            repository_override=repo,
+            embedding_port_override=port,
+        )
+    assert (
+        exc_info.value.reason
+        == KnowledgeEvidenceIndexRunnerFailureReason.BLOCKED_BY_EMBEDDING_ADAPTER_ARTIFACT_IDENTITY
+    )
+    assert port.call_count == 0
+    assert repo.persist_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_embedding_success_with_mismatched_observed_ref_fails_closed_before_persist() -> None:
+    from ai_worker.adapters.openai_text_embedding import OPENAI_TEXT_EMBEDDING_ADAPTER_REF
+
+    config = KnowledgeEvidenceIndexRunnerConfig.from_environment(_valid_env())
+    mismatched_port = StubTextEmbeddingPort(
+        artifact_ref=ImmutableArtifactRef("openai-text-embedding-adapter", "1.0.0", "9" * 64)
+    )
     repo = StubKnowledgeEvidenceIndexRepository()
     chunks = _make_novasc_chunks()
 
@@ -758,13 +885,10 @@ async def test_forbidden_or_invalid_adapter_artifact_ref_fails_closed(forbidden_
             snapshot_id=NOVASC_SNAPSHOT_ID,
             expected_item_seq=NOVASC_ITEM_SEQ,
             expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
-            expected_embedding_adapter_ref=forbidden_ref,
+            expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
             preflight_chunks_override=chunks,
             repository_override=repo,
-            embedding_port_override=None,
+            embedding_port_override=mismatched_port,
         )
-    assert (
-        exc_info.value.reason
-        == KnowledgeEvidenceIndexRunnerFailureReason.BLOCKED_BY_EMBEDDING_ADAPTER_ARTIFACT_IDENTITY
-    )
+    assert exc_info.value.reason == KnowledgeEvidenceIndexRunnerFailureReason.EMBEDDING_INVALID
     assert repo.persist_calls == 0

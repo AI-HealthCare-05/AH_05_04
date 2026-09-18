@@ -6,6 +6,11 @@ from typing import Any
 
 from pydantic import BaseModel, TypeAdapter
 
+from ai_worker.tasks.evaluation.schemas.answer_quality_v1 import (
+    ANSWER_COMPARISON_SET_MANIFEST_ADAPTER,
+    ANSWER_HUMAN_JUDGMENT_ADAPTER,
+    ANSWER_HUMAN_JUDGMENT_APPROVAL_ADAPTER,
+)
 from ai_worker.tasks.evaluation.schemas.artifacts import RESULT_ARTIFACT_MODELS, ValidationReceipt
 from ai_worker.tasks.evaluation.schemas.authoring import (
     EVALUATION_CASE_ADAPTER,
@@ -235,6 +240,25 @@ SCHEMA_REGISTRY_V1_4: tuple[SchemaRegistryEntry, ...] = (
     ),
 )
 
+SCHEMA_REGISTRY_V1_5: tuple[SchemaRegistryEntry, ...] = (
+    *SCHEMA_REGISTRY_V1_4,
+    SchemaRegistryEntry(
+        "artifacts/rag-eval.answer-human-judgment.schema.json",
+        "rag-eval.answer-human-judgment",
+        ANSWER_HUMAN_JUDGMENT_ADAPTER,
+    ),
+    SchemaRegistryEntry(
+        "artifacts/rag-eval.answer-human-judgment-approval.schema.json",
+        "rag-eval.answer-human-judgment-approval",
+        ANSWER_HUMAN_JUDGMENT_APPROVAL_ADAPTER,
+    ),
+    SchemaRegistryEntry(
+        "artifacts/rag-eval.answer-comparison-set-manifest.schema.json",
+        "rag-eval.answer-comparison-set-manifest",
+        ANSWER_COMPARISON_SET_MANIFEST_ADAPTER,
+    ),
+)
+
 SCHEMA_REGISTRIES = MappingProxyType(
     {
         "1.0.0": SCHEMA_REGISTRY,
@@ -242,10 +266,18 @@ SCHEMA_REGISTRIES = MappingProxyType(
         "1.2.0": SCHEMA_REGISTRY_V1_2,
         "1.3.0": SCHEMA_REGISTRY_V1_3,
         "1.4.0": SCHEMA_REGISTRY_V1_4,
+        "1.5.0": SCHEMA_REGISTRY_V1_5,
     }
 )
 
-_SCHEMA_SET_MEMBER_COUNTS = {"1.0.0": 18, "1.1.0": 18, "1.2.0": 18, "1.3.0": 21, "1.4.0": 23}
+_SCHEMA_SET_MEMBER_COUNTS = {
+    "1.0.0": 18,
+    "1.1.0": 18,
+    "1.2.0": 18,
+    "1.3.0": 21,
+    "1.4.0": 23,
+    "1.5.0": 26,
+}
 
 for schema_set_version, registry in SCHEMA_REGISTRIES.items():
     expected_count = _SCHEMA_SET_MEMBER_COUNTS[schema_set_version]

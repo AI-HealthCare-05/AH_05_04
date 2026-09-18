@@ -5,11 +5,16 @@ from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any, TypedDict, cast
 
+from ai_worker.tasks.evaluation.answer_judgment import ValidatedAnswerJudgments, ValidatedCaseJudgment
 from ai_worker.tasks.evaluation.loaders import EvaluationCaseContract, ValidatedDataset
 from ai_worker.tasks.evaluation.metric_support import (
     RatioContribution,
     canonical_ratio,
     percentile_cluster_bootstrap_ratio_ci,
+)
+from ai_worker.tasks.evaluation.schemas.answer_quality_v1 import (
+    AnswerClaimCorrectnessLabel,
+    AnswerRelevanceLabel,
 )
 from ai_worker.tasks.evaluation.schemas.artifacts import CaseResult, MetricResult, MetricResults
 from ai_worker.tasks.evaluation.schemas.common import DecisionStatus, ExecutionStatus, Partition, TaskType
@@ -161,7 +166,7 @@ def _scope_execution_status(
     return None
 
 
-def _contribution(case: EvaluationCaseContract, result: CaseResult, metric_id: str) -> RatioContribution:
+def _structured_contribution(case: EvaluationCaseContract, result: CaseResult, metric_id: str) -> RatioContribution:
     expected = cast(Any, case.expected)
     if metric_id == "REQUIRED_CLAIM_RECALL":
         required = {claim.claim_id for claim in expected.gold_claims if claim.required}
@@ -173,15 +178,34 @@ def _contribution(case: EvaluationCaseContract, result: CaseResult, metric_id: s
     )
 
 
+def _human_contribution(
+    judgment: ValidatedCaseJudgment,
+    metric_id: str,
+) -> RatioContribution:
+    if metric_id == "ANSWER_CORRECTNESS":
+        numerator = sum(1 for item in judgment.claim_judgments if item.label == AnswerClaimCorrectnessLabel.CORRECT)
+        return RatioContribution(numerator, len(judgment.claim_judgments))
+    if metric_id == "RELEVANCE":
+        numerator = 1 if judgment.relevance == AnswerRelevanceLabel.RELEVANT else 0
+        return RatioContribution(numerator, 1)
+    raise AssertionError(f"unexpected human metric: {metric_id}")
+
+
 def _completed_metric(
     scope: ComparisonScope,
     cases: tuple[EvaluationCaseContract, ...],
-    results_by_case: dict[str, CaseResult],
+    results_by_case: Mapping[str, CaseResult],
+    human_judgments: ValidatedAnswerJudgments | None = None,
 ) -> MetricResult:
     grouped: defaultdict[str, list[RatioContribution]] = defaultdict(list)
     contributions: list[RatioContribution] = []
     for case in cases:
-        contribution = _contribution(case, results_by_case[case.case_id], scope.metric_id)
+        if scope.metric_id in _HUMAN_METRICS:
+            assert human_judgments is not None
+            judgment = human_judgments.judgments_by_case[case.case_id]
+            contribution = _human_contribution(judgment, scope.metric_id)
+        else:
+            contribution = _structured_contribution(case, results_by_case[case.case_id], scope.metric_id)
         contributions.append(contribution)
         group_id = case.case_id
         if scope.cluster_dimension is not None:
@@ -226,12 +250,47 @@ def _completed_metric(
     )
 
 
+def _evaluate_scope_metric(
+    scope: ComparisonScope,
+    scoped_cases: tuple[EvaluationCaseContract, ...],
+    results_by_case: Mapping[str, CaseResult],
+    expected_input_sha256_by_case: Mapping[str, str],
+    human_judgments: ValidatedAnswerJudgments | None,
+) -> MetricResult:
+    if scope.metric_id in _HUMAN_METRICS:
+        if human_judgments is None:
+            return _incomplete_metric(scope, ExecutionStatus.NOT_EVALUATED)
+        if not human_judgments.validate_for_scope(
+            scoped_cases,
+            results_by_case,
+            expected_input_sha256_by_case,
+        ):
+            return _incomplete_metric(scope, ExecutionStatus.INVALID)
+        try:
+            return _completed_metric(scope, scoped_cases, results_by_case, human_judgments=human_judgments)
+        except ValueError as exc:
+            if str(exc) != "bootstrap replicate denominator is zero":
+                raise
+            return _incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED)
+
+    if scope.metric_id not in _STRUCTURED_METRICS:
+        return _incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED)
+
+    try:
+        return _completed_metric(scope, scoped_cases, results_by_case)
+    except ValueError as exc:
+        if str(exc) != "bootstrap replicate denominator is zero":
+            raise
+        return _incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED)
+
+
 def build_answer_metrics(
     dataset: ValidatedDataset,
     case_results: tuple[CaseResult, ...],
     *,
     expected_run_id: str,
     expected_input_sha256_by_case: Mapping[str, str],
+    human_judgments: ValidatedAnswerJudgments | None = None,
 ) -> MetricResults:
     """Build approved #159 DEV metrics without reading answer text or protected data."""
 
@@ -247,10 +306,7 @@ def build_answer_metrics(
     results_by_case = {result.case_id: result for result in case_results}
     metrics: list[MetricResult] = []
     for scope in dataset.comparison_policy.scopes:
-        if scope.metric_id not in _METRIC_UNITS:
-            metrics.append(_incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED))
-            continue
-        if not _algorithm_signature_supported(scope):
+        if scope.metric_id not in _METRIC_UNITS or not _algorithm_signature_supported(scope):
             metrics.append(_incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED))
             continue
         if run_integrity_status is not None:
@@ -261,18 +317,15 @@ def build_answer_metrics(
         if scope_execution_status is not None:
             metrics.append(_incomplete_metric(scope, scope_execution_status))
             continue
-        if scope.metric_id in _HUMAN_METRICS:
-            metrics.append(_incomplete_metric(scope, ExecutionStatus.NOT_EVALUATED))
-            continue
-        if scope.metric_id not in _STRUCTURED_METRICS:
-            metrics.append(_incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED))
-            continue
-        try:
-            metrics.append(_completed_metric(scope, scoped_cases, results_by_case))
-        except ValueError as exc:
-            if str(exc) != "bootstrap replicate denominator is zero":
-                raise
-            metrics.append(_incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED))
+        metrics.append(
+            _evaluate_scope_metric(
+                scope,
+                scoped_cases,
+                results_by_case,
+                expected_input_sha256_by_case,
+                human_judgments,
+            )
+        )
     metrics.sort(key=lambda item: item.sort_key)
     return MetricResults(
         schema_id="rag-eval.metrics",

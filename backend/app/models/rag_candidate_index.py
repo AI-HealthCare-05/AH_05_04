@@ -120,6 +120,10 @@ class RagCandidateIndexVersion(Base):
             "embedding_dimension IS NULL OR embedding_dimension BETWEEN 1 AND 2000",
             name="chk_rag_candidate_index_embedding_dimension",
         ),
+        CheckConstraint(
+            "candidate_index_lock_marker = 0",
+            name="chk_rag_candidate_index_lock_marker",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -157,6 +161,11 @@ class RagCandidateIndexVersion(Base):
     member_set_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     configuration_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    candidate_index_lock_marker: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     members: Mapped[list["RagCandidateIndexMember"]] = relationship(back_populates="candidate_index_version")

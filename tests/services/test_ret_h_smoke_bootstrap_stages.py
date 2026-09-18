@@ -816,3 +816,277 @@ def test_generate_manifest_cli_execution(tmp_path: Path) -> None:
     loaded = _load_fixture(out_manifest)
     assert loaded is not None
     assert loaded["knowledge_index_id"] == str(ids["index_id"])
+
+
+def test_stage2_uses_canonical_openai_embedding_adapter_ref() -> None:
+    import inspect
+
+    from ai_worker.adapters.openai_text_embedding import (
+        OPENAI_TEXT_EMBEDDING_ADAPTER_HASH,
+        OPENAI_TEXT_EMBEDDING_ADAPTER_PROJECTION,
+        OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
+        OpenAITextEmbeddingAdapter,
+    )
+    from ai_worker.tasks.evaluation.canonical import canonical_sha256
+    from ai_worker.tasks.evaluation.ret_h_bootstrap_stages import _run_cli_stage2
+
+    expected_hash = "608364dae260bed7d053c6ce4736fd83ab20621e701c29c7b0e6c1fbef10a102"
+    assert canonical_sha256(OPENAI_TEXT_EMBEDDING_ADAPTER_PROJECTION) == expected_hash
+    assert OPENAI_TEXT_EMBEDDING_ADAPTER_HASH == expected_hash
+    assert OPENAI_TEXT_EMBEDDING_ADAPTER_REF == ImmutableArtifactRef(
+        artifact_code="openai-text-embedding-adapter",
+        version="1.0.0",
+        content_sha256=expected_hash,
+    )
+
+    sig = inspect.signature(_run_cli_stage2)
+    param = sig.parameters.get("expected_embedding_adapter_ref")
+    assert param is not None
+    assert param.default == OPENAI_TEXT_EMBEDDING_ADAPTER_REF
+
+    # OpenAITextEmbeddingAdapter constructor requires explicit adapter_artifact_ref
+    adapter_sig = inspect.signature(OpenAITextEmbeddingAdapter.__init__)
+    adapter_param = adapter_sig.parameters.get("adapter_artifact_ref")
+    assert adapter_param is not None
+    assert adapter_param.default is inspect.Parameter.empty
+
+
+def test_stage2_cli_assembly_without_raw_sha_env_or_argument() -> None:
+    from ai_worker.tasks.evaluation.ret_h_bootstrap_stages import main
+
+    # CLI parser for stage2 must NOT have --embedding-adapter-sha256 argument
+    with pytest.raises(SystemExit):
+        main(["stage2", "--embedding-adapter-sha256", "invalid"])
+
+    # Help output must succeed without error
+    with pytest.raises(SystemExit) as exc_info:
+        main(["stage2", "--help"])
+    assert exc_info.value.code == 0
+
+
+def test_corpus_query_and_smoke_stage2_all_use_identical_canonical_ref() -> None:
+    from ai_worker.adapters.openai_text_embedding import OPENAI_TEXT_EMBEDDING_ADAPTER_REF
+    from ai_worker.admin.knowledge_evidence_index import (
+        OPENAI_TEXT_EMBEDDING_ADAPTER_REF as CORPUS_ADAPTER_REF,
+    )
+    from ai_worker.tasks.evaluation.actual_retrieval import (
+        build_actual_adapter_registry,
+    )
+    from ai_worker.tasks.evaluation.ret_h_bootstrap_stages import (
+        OPENAI_TEXT_EMBEDDING_ADAPTER_REF as STAGE2_ADAPTER_REF,
+    )
+
+    # All three must be the exact same canonical reference
+    assert CORPUS_ADAPTER_REF == OPENAI_TEXT_EMBEDDING_ADAPTER_REF
+    assert STAGE2_ADAPTER_REF == OPENAI_TEXT_EMBEDDING_ADAPTER_REF
+
+    assert OPENAI_TEXT_EMBEDDING_ADAPTER_REF.artifact_code == "openai-text-embedding-adapter"
+    assert OPENAI_TEXT_EMBEDDING_ADAPTER_REF.version == "1.0.0"
+    assert (
+        OPENAI_TEXT_EMBEDDING_ADAPTER_REF.content_sha256
+        == "608364dae260bed7d053c6ce4736fd83ab20621e701c29c7b0e6c1fbef10a102"
+    )
+
+    # Actual retrieval registry builds retrieval_config with OPENAI_TEXT_EMBEDDING_ADAPTER_REF
+    from dataclasses import dataclass
+    from pathlib import Path
+
+    @dataclass
+    class _DummyResolved:
+        repository_root: Path = Path(".")
+
+    class _DummySearchPort:
+        pass
+
+    class _DummyVerifier:
+        pass
+
+    reg = build_actual_adapter_registry(
+        _DummyResolved(),
+        search_port=_DummySearchPort(),  # type: ignore[arg-type]
+        eligibility_verifier=_DummyVerifier(),  # type: ignore[arg-type]
+    )
+    adapter = reg.resolve("actual-retrieval.v1")
+    assert adapter is not None
+    assert adapter._retrieval_config.expected_query_embedding_adapter_ref == OPENAI_TEXT_EMBEDDING_ADAPTER_REF
+
+
+def test_manifest_embedding_adapter_ref_matches_canonical_ref_and_query_retrieval(tmp_path: Path) -> None:
+    from ai_worker.adapters.openai_text_embedding import OPENAI_TEXT_EMBEDDING_ADAPTER_REF
+    from ai_worker.tasks.rag.evidence_search import (
+        RetrievalExecutionMode,
+        VersionedDenseSearchConfiguration,
+        VersionedEvidenceRetrievalConfiguration,
+        VersionedLexicalSearchConfiguration,
+    )
+
+    fixture_input = load_ret_h_smoke_synthetic_fixture(DEFAULT_SMOKE_FIXTURE_PATH)
+    stage1, stage2, ids = _make_sample_receipts(fixture_input)
+
+    lexical_config = VersionedLexicalSearchConfiguration(
+        artifact_ref=ImmutableArtifactRef("lexical-search-config", "1.0.0", "1" * 64)
+    )
+    dense_config = VersionedDenseSearchConfiguration(
+        artifact_ref=ImmutableArtifactRef("dense-search-config", "1.0.0", "2" * 64)
+    )
+    ret_config = VersionedEvidenceRetrievalConfiguration(
+        artifact_ref=ImmutableArtifactRef("retrieval-config", "1.0.0", "3" * 64),
+        lexical_config=lexical_config,
+        dense_config=dense_config,
+        expected_query_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
+        execution_mode=RetrievalExecutionMode.HYBRID_RRF,
+    )
+
+    provenance = RetHSmokeRuntimeProvenance.from_retrieval_config(
+        retrieval_config=ret_config,
+        filter_snapshot_ref=ImmutableArtifactRef("filter-snapshot", "1.0.0", "4" * 64),
+        search_adapter_ref=ImmutableArtifactRef("postgresql-evidence-search-adapter", "1.0.0", "5" * 64),
+        runtime_release_bundle_id=uuid4(),
+        runtime_release_bundle_manifest_hash="7" * 64,
+        runtime_execution_manifest_id=uuid4(),
+        runtime_execution_manifest_hash="8" * 64,
+        runtime_guard_decision_ref="ret-h-aws-synthetic-smoke",
+    )
+
+    assert provenance.embedding_adapter_ref == OPENAI_TEXT_EMBEDDING_ADAPTER_REF
+
+    manifest = build_ret_h_smoke_fixture_manifest(
+        fixture_input=fixture_input,
+        stage1_receipt=stage1,
+        stage2_receipt=stage2,
+        job_id=ids["job_id"],
+        execution_context_id=ids["ctx_id"],
+        prescription_version_id=ids["prescription_id"],
+        provenance=provenance,
+    )
+
+    assert manifest["embedding_adapter_ref"]["artifact_code"] == OPENAI_TEXT_EMBEDDING_ADAPTER_REF.artifact_code
+    assert manifest["embedding_adapter_ref"]["version"] == OPENAI_TEXT_EMBEDDING_ADAPTER_REF.version
+    assert manifest["embedding_adapter_ref"]["content_sha256"] == OPENAI_TEXT_EMBEDDING_ADAPTER_REF.content_sha256
+
+
+@pytest.mark.asyncio
+async def test_stage2_mismatched_adapter_ref_fails_closed() -> None:
+    from ai_worker.adapters.openai_text_embedding import OPENAI_TEXT_EMBEDDING_ADAPTER_REF
+    from ai_worker.tasks.evaluation.ret_h_bootstrap_stages import (
+        _compute_stage2_embedding,
+        bootstrap_ret_h_smoke_stage2_knowledge_index,
+    )
+    from ai_worker.tasks.rag.evidence_search import SensitiveVector
+    from ai_worker.tasks.rag.text_embedding import TextEmbeddingPort, TextEmbeddingSuccess
+
+    fixture = load_ret_h_smoke_synthetic_fixture(DEFAULT_SMOKE_FIXTURE_PATH)
+    mismatched_ref = ImmutableArtifactRef("wrong-adapter", "1.0.0", "0" * 64)
+
+    class MismatchedPort(TextEmbeddingPort):
+        def __init__(self) -> None:
+            self._adapter_artifact_ref = mismatched_ref
+
+        async def embed(self, text, **kwargs):  # type: ignore[no-untyped-def]
+            return TextEmbeddingSuccess(
+                embedding=SensitiveVector([0.1] * 1536),
+                adapter_artifact_ref=mismatched_ref,
+            )
+
+    # 1. Direct _compute_stage2_embedding check fails closed on mismatch
+    with pytest.raises(EvaluationValidationError) as exc_info:
+        await _compute_stage2_embedding(
+            MismatchedPort(),
+            "test statement",
+            expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
+        )
+    assert exc_info.value.safe_path == "embedding_adapter_artifact_identity"
+
+    # 2. bootstrap_ret_h_smoke_stage2_knowledge_index pre-check fails closed
+    session_factory = MagicMock()
+    with pytest.raises(EvaluationValidationError) as exc_info2:
+        await bootstrap_ret_h_smoke_stage2_knowledge_index(
+            session_factory=session_factory,
+            embedding_port=MismatchedPort(),
+            fixture=fixture,
+            stage1_snapshot_id=uuid4(),
+            expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
+        )
+    assert exc_info2.value.safe_path == "embedding_adapter_artifact_identity"
+
+
+def test_postgresql_evidence_search_adapter_canonical_candidate_identity_wiring() -> None:
+    from ai_worker.adapters.postgresql_evidence_search import (
+        POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_HASH,
+        POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_PROJECTION,
+        POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF,
+    )
+    from ai_worker.tasks.evaluation.canonical import canonical_sha256
+
+    assert POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.artifact_code == "postgresql-evidence-search-adapter"
+    assert POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.version == "1.0.0"
+    assert (
+        POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.content_sha256
+        == "77945a6a1a72eba682a13a85b895fd289ab7bce5b63498f4727621180fbad073"
+    )
+    assert canonical_sha256(POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_PROJECTION) == POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_HASH
+
+
+def test_scripts_ret_h_aws_synthetic_smoke_rejects_fixture_search_adapter_mismatch() -> None:
+    from unittest.mock import MagicMock, patch
+
+    from scripts.ret_h_aws_synthetic_smoke import build_live_dependencies
+
+    fake_factory = MagicMock()
+    with patch(
+        "ai_worker.tasks.evaluation.ret_h_smoke.build_session_factory",
+        return_value=(MagicMock(), fake_factory),
+    ):
+        with patch("ai_worker.core.get_config"):
+            fixture = {
+                "search_adapter_ref": {
+                    "artifact_code": "postgresql-evidence-search-adapter",
+                    "version": "1.0.0",
+                    "content_sha256": "5" * 64,
+                }
+            }
+            with pytest.raises(ValueError, match="fixture search_adapter_ref mismatch"):
+                build_live_dependencies(
+                    fixture,
+                    environment={},
+                    redis_stream="test",
+                    redis_dlq_stream="test-dlq",
+                    sentinels=["sentinel"],
+                )
+
+
+def test_scripts_ret_h_aws_synthetic_smoke_accepts_canonical_candidate_ref() -> None:
+    from unittest.mock import MagicMock, patch
+
+    from ai_worker.adapters.postgresql_evidence_search import POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF
+    from scripts.ret_h_aws_synthetic_smoke import build_live_dependencies
+
+    fake_factory = MagicMock()
+    with patch(
+        "ai_worker.tasks.evaluation.ret_h_smoke.build_session_factory",
+        return_value=(MagicMock(), fake_factory),
+    ):
+        with patch("ai_worker.core.get_config"):
+            with patch("scripts.ret_h_aws_synthetic_smoke._build_hybrid_retrieve_request"):
+                fixture = {
+                    "search_adapter_ref": {
+                        "artifact_code": POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.artifact_code,
+                        "version": POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.version,
+                        "content_sha256": POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.content_sha256,
+                    },
+                    "embedding_adapter_ref": {
+                        "content_sha256": "6" * 64,
+                    },
+                    "knowledge_index_id": "17810000-0000-4000-8000-000000000000",
+                    "allowed_source_snapshot_ids": ["17810000-0000-4000-8000-000000000001"],
+                    "allowed_source_snapshot_member_ids": ["17810000-0000-4000-8000-000000000002"],
+                    "source_sentinel": "sentinel",
+                }
+                deps = build_live_dependencies(
+                    fixture,
+                    environment={},
+                    redis_stream="test",
+                    redis_dlq_stream="test-dlq",
+                    sentinels=["sentinel"],
+                )
+                assert deps.execution_fn is not None
