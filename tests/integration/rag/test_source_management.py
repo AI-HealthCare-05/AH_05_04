@@ -35,6 +35,7 @@ from app.models.rag_source import (
 from app.models.source_management import SourceManagementAudit, SourceManagementPermission
 from app.models.users import AccountStatus, User
 from app.services.jwt import JwtService
+from infra.python.provision_database_roles import RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES
 from infra.python.source_management_role_policy import apply_management_role_policy, validate_management_connection
 
 
@@ -744,8 +745,11 @@ async def test_404_authentication_works_with_only_runtime_token_permissions(data
             with pytest.raises(ApiError) as reuse:
                 await service(session).reset_password(token=token, new_password="AnotherPass123!")
             assert reuse.value.status_code == 422
+        for table in ("refresh_session", "password_reset_token"):
+            assert table in RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES
+            async with reader.begin() as connection:
+                await connection.execute(text(f"DELETE FROM {table} WHERE false"))
         for limited, sql in (
-            (reader, "DELETE FROM refresh_session WHERE false"),
             (reader, "UPDATE refresh_session SET user_id=user_id"),
             (reader, "UPDATE password_reset_token SET token_hash=token_hash"),
             (reader, "UPDATE password_reset_token SET expires_at=now()"),
