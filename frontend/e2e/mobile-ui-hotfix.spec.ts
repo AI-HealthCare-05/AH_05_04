@@ -55,7 +55,7 @@ test('320/390/412px에서 전체 대상 화면은 가로 overflow와 Bottom Navi
     { name: 'Schedule', path: '/schedule', selector: '.schedule-page .app-scroll', hasNavigation: true },
     { name: 'Report', path: '/report', selector: '.mvp-report-page .app-scroll', hasNavigation: true },
     { name: 'Menu', path: '/menu', selector: '.mvp-menu-page .app-scroll', hasNavigation: true },
-    { name: 'Notification', path: '/notifications', selector: '.mvp-notifications-page .app-scroll', hasNavigation: true },
+    { name: 'Notification', path: '/notifications', selector: '.mvp-notifications-page .app-scroll', hasNavigation: false },
   ] as const
 
   for (const width of mobileWidths) {

@@ -441,6 +441,7 @@
 .schedule-editor__fields,
 .schedule-editor__fields > label,
 .schedule-editor__times {
+  min-width: 0;
   display: grid;
   gap: 9px;
 }
@@ -461,6 +462,8 @@
 .schedule-editor input[type='date'],
 .schedule-editor input[type='time'] {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 52px;
   padding: 0 13px;
   border: 1px solid #cfd6de;
@@ -495,6 +498,9 @@
   border-radius: 14px;
   font-size: 14px;
   font-weight: 700;
+}
+.schedule-editor input[type='radio'] {
+  accent-color: var(--ds-action);
 }
 
 .schedule-editor fieldset label:has(input:checked) {

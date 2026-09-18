@@ -32,7 +32,7 @@
   right: 0;
   bottom: 32px;
   left: 0;
-  color: #0066cc;
+  color: #607d8b;
   font-family: Inter, var(--ds-font);
   font-size: 38px;
   font-weight: 800;
@@ -92,7 +92,7 @@
   height: 20px;
   flex: 0 0 20px;
   border-radius: 7px;
-  background: #e6f1ff;
+  background: #eef3f5;
 }
 
 .ai-job-state__steps strong,

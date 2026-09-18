@@ -526,22 +526,27 @@
 
 .report-correction__actions {
   display: grid;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.report-correction__actions button {
+  width: 100%;
 }
 
 .report-correction button {
   min-height: 46px;
   border: 0;
   border-radius: 13px;
-  background: #176fc1;
+  background: #607d8b;
   color: #fff;
   font-weight: 900;
 }
 
 .report-correction button.report-correction__secondary {
-  border: 1px solid #b7cee8;
+  border: 1px solid #b0bec5;
   background: #fff;
-  color: #175fae;
+  color: #526b78;
 }
 
 .report-correction button:focus-visible {
