@@ -169,7 +169,7 @@ function PrescriptionUploadPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraVideoRef = useRef<HTMLVideoElement>(null)
   const cameraStreamRef = useRef<MediaStream | null>(null)
-
+  const cameraRequestRef = useRef(0)
   const [isCameraOpen, setIsCameraOpen] = useState(false)
   const [cameraError, setCameraError] = useState('')
   const preparationControllerRef = useRef<AbortController | null>(null)
@@ -280,6 +280,7 @@ function PrescriptionUploadPage() {
   useEffect(
     () => () => {
       preparationRequestRef.current += 1
+      cameraRequestRef.current += 1
       preparationControllerRef.current?.abort()
 
       cameraStreamRef.current
@@ -409,6 +410,7 @@ function PrescriptionUploadPage() {
   ) => {
     setFile(selectedFile)
     setUploadSource(source)
+    setCameraError('')
 
     const inactiveInput =
       source === 'camera'
@@ -465,37 +467,53 @@ function PrescriptionUploadPage() {
     clearOcrJobRecovery()
   }
   const stopCamera = () => {
-  cameraStreamRef.current
-    ?.getTracks()
-    .forEach((track) => track.stop())
+    cameraRequestRef.current += 1
 
-  cameraStreamRef.current = null
+    cameraStreamRef.current
+      ?.getTracks()
+      .forEach((track) => track.stop())
 
-  if (cameraVideoRef.current) {
-    cameraVideoRef.current.srcObject = null
+    cameraStreamRef.current = null
+
+    if (cameraVideoRef.current) {
+      cameraVideoRef.current.srcObject = null
+    }
+
+    setIsCameraOpen(false)
+    setCameraError('')
   }
-
-  setIsCameraOpen(false)
-}
 
   const openCamera = async () => {
     selectUploadSource('camera')
+    stopCamera()
     setCameraError('')
 
-    if (!navigator.mediaDevices?.getUserMedia) {
+    const getUserMedia =
+      navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices)
+
+    if (!getUserMedia) {
       cameraInputRef.current?.click()
       return
     }
 
+    const requestId = ++cameraRequestRef.current
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const stream = await getUserMedia({
         video: {
           facingMode: { ideal: 'environment' },
+          width: { ideal: 2560 },
+          height: { ideal: 1920 },
         },
         audio: false,
       })
 
-     cameraStreamRef.current = stream
+      if (cameraRequestRef.current !== requestId) {
+        stream.getTracks().forEach((track) => track.stop())
+        return
+      }
+
+      cameraStreamRef.current = stream
       setIsCameraOpen(true)
 
       requestAnimationFrame(() => {
@@ -504,13 +522,16 @@ function PrescriptionUploadPage() {
         }
       })
     } catch {
+      if (cameraRequestRef.current !== requestId) return
+
       setIsCameraOpen(false)
       setCameraError(
-        '카메라를 사용할 수 없어요. 브라우저의 카메라 권한을 확인해 주세요.',
+        '브라우저 카메라를 사용할 수 없어요. 기본 카메라로 촬영해 주세요.',
       )
+
+      cameraInputRef.current?.click()
     }
   }
-
   const captureCameraPhoto = () => {
     const video = cameraVideoRef.current
 
@@ -949,8 +970,18 @@ function PrescriptionUploadPage() {
               className={`mvp-upload__method ${uploadSource === 'camera' ? 'selected' : ''}`}
               htmlFor={`${inputId}-camera`}
               onClick={(event) => {
-                  event.preventDefault()
-                  void openCamera()
+                const prefersNativeCamera =
+                  typeof window.matchMedia === 'function' &&
+                  window.matchMedia('(pointer: coarse)').matches
+
+                selectUploadSource('camera')
+
+                if (prefersNativeCamera) {
+                  return
+                }
+
+                event.preventDefault()
+                void openCamera()
               }}
             >
               <span className="mvp-upload__method-icon" aria-hidden="true">

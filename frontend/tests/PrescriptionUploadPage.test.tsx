@@ -487,11 +487,13 @@ describe('PrescriptionUploadPage OCR polling', () => {
 
       await waitFor(() =>
         expect(getUserMedia).toHaveBeenCalledWith({
-          video: {
-            facingMode: { ideal: 'environment' },
-          },
-          audio: false,
-        }),
+         video: {
+           facingMode: { ideal: 'environment' },
+           width: { ideal: 2560 },
+           height: { ideal: 1920 },
+         },
+         audio: false,
+      })
       )
 
       expect(
@@ -531,6 +533,10 @@ describe('PrescriptionUploadPage OCR polling', () => {
     const stream = {
       getTracks: () => [{ stop }],
     } as unknown as MediaStream
+    const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(
+      navigator,
+      'mediaDevices',
+    )
 
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
@@ -538,78 +544,271 @@ describe('PrescriptionUploadPage OCR polling', () => {
         getUserMedia: vi.fn().mockResolvedValue(stream),
       },
     })
+    try {
+      const originalCreateElement = document.createElement.bind(document)
 
-    const originalCreateElement = document.createElement.bind(document)
-
-    const toBlob = vi.fn(
-      (
-        callback: BlobCallback,
-      ) => {
-        callback(
-          new Blob(['captured'], {
-            type: 'image/jpeg',
-          }),
-        )
-      },
-    )
-
-    vi.spyOn(document, 'createElement').mockImplementation(
-      ((tagName: string) => {
-        if (tagName === 'canvas') {
-          return {
-            width: 0,
-            height: 0,
-            getContext: () => ({
-              drawImage: vi.fn(),
+      const toBlob = vi.fn(
+        (
+          callback: BlobCallback,
+        ) => {
+          callback(
+            new Blob(['captured'], {
+              type: 'image/jpeg',
             }),
-            toBlob,
-          } as unknown as HTMLCanvasElement
-        }
+          )
+        },
+      )
 
-        return originalCreateElement(tagName)
-      }) as typeof document.createElement,
-    )
+      vi.spyOn(document, 'createElement').mockImplementation(
+        ((tagName: string) => {
+          if (tagName === 'canvas') {
+            return {
+              width: 0,
+              height: 0,
+              getContext: () => ({
+                drawImage: vi.fn(),
+              }),
+              toBlob,
+            } as unknown as HTMLCanvasElement
+          }
 
-    renderPage()
+          return originalCreateElement(tagName)
+        }) as typeof document.createElement,
+      )
 
-    fireEvent.click(
-      screen.getByText('카메라로 촬영하기'),
-    )
+      renderPage()
 
-    const video = await screen.findByLabelText(
-      '처방전 카메라',
-    ).then((region) =>
-      region.querySelector('video') as HTMLVideoElement,
-    )
+      fireEvent.click(
+        screen.getByText('카메라로 촬영하기'),
+      )
 
-    Object.defineProperty(video, 'videoWidth', {
-      configurable: true,
-      value: 1200,
-    })
+      const video = await screen.findByLabelText(
+        '처방전 카메라',
+      ).then((region) =>
+        region.querySelector('video') as HTMLVideoElement,
+      )
 
-    Object.defineProperty(video, 'videoHeight', {
-      configurable: true,
-      value: 1600,
-    })
+      Object.defineProperty(video, 'videoWidth', {
+        configurable: true,
+        value: 1200,
+      })
 
-    fireEvent.click(
-      screen.getByRole('button', { name: '촬영하기' }),
-    )
+      Object.defineProperty(video, 'videoHeight', {
+        configurable: true,
+        value: 1600,
+      })
 
-    await waitFor(() =>
+      fireEvent.click(
+        screen.getByRole('button', { name: '촬영하기' }),
+      )
+
+      await waitFor(() =>
+        expect(
+          screen.getByRole('button', {
+            name: '처방전 읽기',
+          }),
+        ).toBeTruthy(),
+      )
+
       expect(
-        screen.getByRole('button', {
-          name: '처방전 읽기',
-        }),
-      ).toBeTruthy(),
+        screen.getByText(/prescription-\d+\.jpg/),
+      ).toBeTruthy()
+
+      expect(stop).toHaveBeenCalled()
+    } finally {
+      if (mediaDevicesDescriptor) {
+      Object.defineProperty(
+        navigator,
+        'mediaDevices',
+        mediaDevicesDescriptor,
+      )
+    } else {
+      Reflect.deleteProperty(navigator, 'mediaDevices')
+    }
+  }
+  })
+  it('웹 카메라 사용에 실패하면 native capture input으로 fallback한다', async () => {
+    const getUserMedia = vi.fn().mockRejectedValue(
+      new Error('camera unavailable'),
+    )
+    const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(
+      navigator,
+      'mediaDevices',
+    )
+    const inputClick = vi
+      .spyOn(HTMLInputElement.prototype, 'click')
+      .mockImplementation(() => undefined)
+
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    })
+
+    try {
+      renderPage()
+
+      fireEvent.click(
+        screen.getByText('카메라로 촬영하기'),
+      )
+
+      await waitFor(() => {
+        expect(getUserMedia).toHaveBeenCalledTimes(1)
+        expect(inputClick).toHaveBeenCalled()
+      })
+
+      expect(
+        screen.getByRole('alert').textContent,
+      ).toContain('기본 카메라로 촬영해 주세요')
+    } finally {
+      inputClick.mockRestore()
+
+      if (mediaDevicesDescriptor) {
+        Object.defineProperty(
+         navigator,
+          'mediaDevices',
+          mediaDevicesDescriptor,
+        )
+      } else {
+        Reflect.deleteProperty(navigator, 'mediaDevices')
+      }
+    }
+  })
+  it('카메라 preview에서 다시 촬영을 선택하면 이전 stream을 먼저 종료한다', async () => {
+    const firstStop = vi.fn()
+    const secondStop = vi.fn()
+
+    const firstStream = {
+      getTracks: () => [{ stop: firstStop }],
+    } as unknown as MediaStream
+
+    const secondStream = {
+      getTracks: () => [{ stop: secondStop }],
+    } as unknown as MediaStream
+
+    const getUserMedia = vi
+      .fn()
+      .mockResolvedValueOnce(firstStream)
+      .mockResolvedValueOnce(secondStream)
+
+    const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(
+      navigator,
+      'mediaDevices',
     )
 
-    expect(
-      screen.getByText(/prescription-\d+\.jpg/),
-    ).toBeTruthy()
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    })
 
-    expect(stop).toHaveBeenCalled()
+    try {
+      renderPage()
+
+      const cameraChoice = screen.getByText(
+        '카메라로 촬영하기',
+      )
+
+      fireEvent.click(cameraChoice)
+
+      await screen.findByRole('region', {
+        name: '처방전 카메라',
+      })
+
+      fireEvent.click(cameraChoice)
+
+      await waitFor(() => {
+        expect(getUserMedia).toHaveBeenCalledTimes(2)
+        expect(firstStop).toHaveBeenCalledTimes(1)
+      })
+
+      expect(secondStop).not.toHaveBeenCalled()
+    } finally {
+      if (mediaDevicesDescriptor) {
+        Object.defineProperty(
+          navigator,
+          'mediaDevices',
+          mediaDevicesDescriptor,
+        )
+      } else {
+        Reflect.deleteProperty(navigator, 'mediaDevices')
+      }
+    }
   })
+  it('모바일 coarse pointer에서는 getUserMedia 대신 native capture input을 유지한다', () => {
+    const getUserMedia = vi.fn()
+    const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(
+      navigator,
+      'mediaDevices',
+    )
+    const matchMediaDescriptor = Object.getOwnPropertyDescriptor(
+      window,
+      'matchMedia',
+    )
+    const { container } = renderPage()
+
+    const cameraInput = container.querySelector<HTMLInputElement>(
+      'input[capture="environment"]',
+    )
+
+    expect(cameraInput).not.toBeNull()
+
+    const inputClick = vi.fn()
+    cameraInput?.addEventListener('click', inputClick)
+
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    })
+
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: vi.fn().mockReturnValue({
+        matches: true,
+        media: '(pointer: coarse)',
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }),
+    })
+
+    try {
+      const cameraLabel = screen
+        .getByText('카메라로 촬영하기')
+        .closest('label')
+
+      expect(cameraLabel).not.toBeNull()
+
+      fireEvent.click(cameraLabel!)
+
+      expect(getUserMedia).not.toHaveBeenCalled()
+      expect(inputClick).toHaveBeenCalled()
+    } finally {
+      cameraInput?.removeEventListener('click', inputClick)
+
+      if (mediaDevicesDescriptor) {
+        Object.defineProperty(
+          navigator,
+          'mediaDevices',
+          mediaDevicesDescriptor,
+        )
+      } else {
+        Reflect.deleteProperty(navigator, 'mediaDevices')
+      }
+
+      if (matchMediaDescriptor) {
+        Object.defineProperty(
+          window,
+          'matchMedia',
+          matchMediaDescriptor,
+        )
+      } else {
+        Reflect.deleteProperty(window, 'matchMedia')
+      }
+    }
+  })
+
   it('#227 긴 파일명을 기본 2줄로 제한하고 전체 파일명과 확장자를 펼쳐 확인할 수 있다', () => {
     const longFilename =
       'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_FINAL-2026.png'
