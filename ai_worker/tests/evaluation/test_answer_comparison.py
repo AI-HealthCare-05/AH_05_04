@@ -23,10 +23,10 @@ from ai_worker.tasks.evaluation.canonical import (
     JsonValue,
     canonical_json_bytes,
     canonical_sha256,
-    sha256_hex,
 )
 from ai_worker.tasks.evaluation.comparison import LoadedRunBundle
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
+from ai_worker.tasks.evaluation.manifest import semantic_content_hash
 from ai_worker.tasks.evaluation.schemas.answer_quality_v1 import (
     CANONICAL_ANSWER_COMPARISON_PAIRS,
     AnswerComparisonPairId,
@@ -236,10 +236,20 @@ def _make_bundle(
     run = _make_run(variant, run_id=run_id, **run_kwargs_copy)
     cases = _make_cases(run_id, answer_sha256=answer_sha256)
     metrics = _make_metrics(run_id, value=metric_value)
+    suite_results: dict[str, JsonValue] = {
+        "schema_id": "rag-eval.suite-results",
+        "schema_version": "1.0.0",
+        "case_results": [],
+    }
+    cases_bytes = b"".join(canonical_json_bytes(c.model_dump(mode="json")) + b"\n" for c in cases)
     files = {
         "run.json": canonical_json_bytes(run.model_dump(mode="json")),
+        "cases.jsonl": cases_bytes,
         "metrics.json": canonical_json_bytes(metrics.model_dump(mode="json")),
+        "suite-results.json": canonical_json_bytes(suite_results),
+        "failures.jsonl": b"",
     }
+    semantic_hash = semantic_content_hash(files)
     return LoadedRunBundle(
         root=Path(f"/fake/{run_id}"),
         run=run,
@@ -249,7 +259,7 @@ def _make_bundle(
         comparison=None,
         content_manifest=content_manifest,
         files=files,
-        semantic_hash=sha256_hex(canonical_json_bytes({"run_id": run_id, "variant": variant.value})),
+        semantic_hash=semantic_hash,
     )
 
 
@@ -804,37 +814,186 @@ def test_manifest_bundle_tampering_rejection() -> None:
     assert exc_info.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
 
 
-def test_minimum_valid_replicate_ratio_contract() -> None:
-    """Fixed contract test for carryover requirement from #798.
+def test_manifest_bundle_rejects_stale_model_configuration() -> None:
+    rag_answer_sha = "9" * 64
+    ans_base = _make_run_input(
+        AnswerVariantId.ANS_BASE, run_id="11111111-1111-1111-1111-111111111111", metric_value="0.6"
+    )
+    ans_rag = _make_run_input(
+        AnswerVariantId.ANS_RAG,
+        run_id="22222222-2222-2222-2222-222222222222",
+        answer_sha256=rag_answer_sha,
+        metric_value="0.8",
+        delta=replace(_default_delta(), retrieval_pipeline_hash="9" * 64),
+    )
+    final_drafts = (AnswerDraftInputBinding(case_id="case-001", draft_answer_sha256=rag_answer_sha),)
+    ans_final = _make_run_input(
+        AnswerVariantId.ANS_FINAL,
+        run_id="33333333-3333-3333-3333-333333333333",
+        answer_sha256="8" * 64,
+        metric_value="0.9",
+        delta=replace(_default_delta(), retrieval_pipeline_hash="9" * 64, final_validator_hash="8" * 64),
+        draft_answer_bindings=final_drafts,
+    )
+    gold_ref = ImmutableReference(id="gold-qa", version="1.0.0", hash="0" * 64)
+    built = build_answer_comparison_set(
+        ans_base=ans_base,
+        ans_rag=ans_rag,
+        ans_final=ans_final,
+        gold_manifest_ref=gold_ref,
+    )
 
-    Verifies that the canonical synthetic Answer Comparison Policy fixture
-    has ANSWER_CORRECTNESS with minimum_valid_replicate_ratio == "0.9".
-    """
-    canonical_policy_fixture: dict[str, JsonValue] = {
-        "metric_id": "ANSWER_CORRECTNESS",
-        "ci_parameters": {
-            "iterations": 10000,
-            "level": "0.95",
-            "sidedness": "TWO_SIDED",
-            "minimum_valid_replicate_ratio": "0.9",
-        },
-    }
+    tampered_base = _make_run_input(
+        AnswerVariantId.ANS_BASE,
+        run_id="11111111-1111-1111-1111-111111111111",
+        metric_value="0.6",
+        model_config_hash="f" * 64,
+    )
 
-    # Contract check: must exist and be exact "0.9"
-    ci_params_value = canonical_policy_fixture["ci_parameters"]
-    assert isinstance(ci_params_value, dict)
-    ci_params = cast(dict[str, JsonValue], ci_params_value)
-    assert "minimum_valid_replicate_ratio" in ci_params
-    assert ci_params["minimum_valid_replicate_ratio"] == "0.9"
-    assert isinstance(ci_params["minimum_valid_replicate_ratio"], str)
+    new_pair = build_answer_pair_comparison(AnswerComparisonPairId.ANS_BASE_ANS_RAG, tampered_base, ans_rag)
+    assert new_pair.execution_status is ExecutionStatus.INVALID
 
-    # Negative checks:
-    # 1. missing
-    missing_fixture = {"iterations": 10000, "level": "0.95", "sidedness": "TWO_SIDED"}
-    assert "minimum_valid_replicate_ratio" not in missing_fixture
+    with pytest.raises(EvaluationValidationError):
+        validate_answer_comparison_set_bundle(
+            built.manifest_bytes,
+            built.comparison_files,
+            ans_base=tampered_base,
+            ans_rag=ans_rag,
+            ans_final=ans_final,
+            gold_manifest_ref=gold_ref,
+        )
 
-    # 2. "0.90" rejected
-    assert "0.90" != "0.9"
 
-    # 3. float 0.9 rejected
-    assert not isinstance(0.9, str)
+def test_manifest_bundle_rejects_stale_safety_gate_change() -> None:
+    rag_answer_sha = "9" * 64
+    ans_base = _make_run_input(
+        AnswerVariantId.ANS_BASE, run_id="11111111-1111-1111-1111-111111111111", metric_value="0.6"
+    )
+    ans_rag = _make_run_input(
+        AnswerVariantId.ANS_RAG,
+        run_id="22222222-2222-2222-2222-222222222222",
+        answer_sha256=rag_answer_sha,
+        metric_value="0.8",
+        delta=replace(_default_delta(), retrieval_pipeline_hash="9" * 64),
+    )
+    final_drafts = (AnswerDraftInputBinding(case_id="case-001", draft_answer_sha256=rag_answer_sha),)
+    ans_final = _make_run_input(
+        AnswerVariantId.ANS_FINAL,
+        run_id="33333333-3333-3333-3333-333333333333",
+        answer_sha256="8" * 64,
+        metric_value="0.9",
+        delta=replace(_default_delta(), retrieval_pipeline_hash="9" * 64, final_validator_hash="8" * 64),
+        draft_answer_bindings=final_drafts,
+    )
+    gold_ref = ImmutableReference(id="gold-qa", version="1.0.0", hash="0" * 64)
+    built = build_answer_comparison_set(
+        ans_base=ans_base,
+        ans_rag=ans_rag,
+        ans_final=ans_final,
+        gold_manifest_ref=gold_ref,
+    )
+
+    tampered_rag_delta = replace(ans_rag.delta_bindings, safety_gate_hash="f" * 64)
+    tampered_rag = replace(ans_rag, delta_bindings=tampered_rag_delta)
+
+    new_pair = build_answer_pair_comparison(AnswerComparisonPairId.ANS_BASE_ANS_RAG, ans_base, tampered_rag)
+    assert new_pair.execution_status is ExecutionStatus.INVALID
+
+    with pytest.raises(EvaluationValidationError):
+        validate_answer_comparison_set_bundle(
+            built.manifest_bytes,
+            built.comparison_files,
+            ans_base=ans_base,
+            ans_rag=tampered_rag,
+            ans_final=ans_final,
+            gold_manifest_ref=gold_ref,
+        )
+
+
+def test_manifest_bundle_rejects_stale_missing_draft_binding() -> None:
+    rag_answer_sha = "9" * 64
+    ans_base = _make_run_input(
+        AnswerVariantId.ANS_BASE, run_id="11111111-1111-1111-1111-111111111111", metric_value="0.6"
+    )
+    ans_rag = _make_run_input(
+        AnswerVariantId.ANS_RAG,
+        run_id="22222222-2222-2222-2222-222222222222",
+        answer_sha256=rag_answer_sha,
+        metric_value="0.8",
+        delta=replace(_default_delta(), retrieval_pipeline_hash="9" * 64),
+    )
+    final_drafts = (AnswerDraftInputBinding(case_id="case-001", draft_answer_sha256=rag_answer_sha),)
+    ans_final = _make_run_input(
+        AnswerVariantId.ANS_FINAL,
+        run_id="33333333-3333-3333-3333-333333333333",
+        answer_sha256="8" * 64,
+        metric_value="0.9",
+        delta=replace(_default_delta(), retrieval_pipeline_hash="9" * 64, final_validator_hash="8" * 64),
+        draft_answer_bindings=final_drafts,
+    )
+    gold_ref = ImmutableReference(id="gold-qa", version="1.0.0", hash="0" * 64)
+    built = build_answer_comparison_set(
+        ans_base=ans_base,
+        ans_rag=ans_rag,
+        ans_final=ans_final,
+        gold_manifest_ref=gold_ref,
+    )
+
+    tampered_final = replace(ans_final, draft_answer_bindings=())
+
+    new_pair = build_answer_pair_comparison(AnswerComparisonPairId.ANS_RAG_ANS_FINAL, ans_rag, tampered_final)
+    assert new_pair.execution_status is ExecutionStatus.INVALID
+
+    with pytest.raises(EvaluationValidationError):
+        validate_answer_comparison_set_bundle(
+            built.manifest_bytes,
+            built.comparison_files,
+            ans_base=ans_base,
+            ans_rag=ans_rag,
+            ans_final=tampered_final,
+            gold_manifest_ref=gold_ref,
+        )
+
+
+def test_manifest_bundle_rejects_semantic_hash_mismatch() -> None:
+    rag_answer_sha = "9" * 64
+    ans_base = _make_run_input(
+        AnswerVariantId.ANS_BASE, run_id="11111111-1111-1111-1111-111111111111", metric_value="0.6"
+    )
+    ans_rag = _make_run_input(
+        AnswerVariantId.ANS_RAG,
+        run_id="22222222-2222-2222-2222-222222222222",
+        answer_sha256=rag_answer_sha,
+        metric_value="0.8",
+        delta=replace(_default_delta(), retrieval_pipeline_hash="9" * 64),
+    )
+    final_drafts = (AnswerDraftInputBinding(case_id="case-001", draft_answer_sha256=rag_answer_sha),)
+    ans_final = _make_run_input(
+        AnswerVariantId.ANS_FINAL,
+        run_id="33333333-3333-3333-3333-333333333333",
+        answer_sha256="8" * 64,
+        metric_value="0.9",
+        delta=replace(_default_delta(), retrieval_pipeline_hash="9" * 64, final_validator_hash="8" * 64),
+        draft_answer_bindings=final_drafts,
+    )
+    gold_ref = ImmutableReference(id="gold-qa", version="1.0.0", hash="0" * 64)
+    built = build_answer_comparison_set(
+        ans_base=ans_base,
+        ans_rag=ans_rag,
+        ans_final=ans_final,
+        gold_manifest_ref=gold_ref,
+    )
+
+    tampered_bundle = replace(ans_base.bundle, semantic_hash="f" * 64)
+    tampered_base = replace(ans_base, bundle=tampered_bundle)
+
+    with pytest.raises(EvaluationValidationError) as exc_info:
+        validate_answer_comparison_set_bundle(
+            built.manifest_bytes,
+            built.comparison_files,
+            ans_base=tampered_base,
+            ans_rag=ans_rag,
+            ans_final=ans_final,
+            gold_manifest_ref=gold_ref,
+        )
+    assert exc_info.value.code is EvaluationErrorCode.HASH_MISMATCH

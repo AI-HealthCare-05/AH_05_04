@@ -15,6 +15,7 @@ from ai_worker.tasks.evaluation.canonical import (
 from ai_worker.tasks.evaluation.comparison import LoadedRunBundle, build_scope_comparisons
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import parse_json_object_bytes
+from ai_worker.tasks.evaluation.manifest import semantic_content_hash
 from ai_worker.tasks.evaluation.schemas.answer_quality_v1 import (
     ANS_BASE_TO_ANS_FINAL_DELTA_KEYS,
     ANS_BASE_TO_ANS_RAG_DELTA_KEYS,
@@ -610,6 +611,28 @@ def _validate_single_pair_entry(
         or manifest_experiment_id != comp.experiment_id
         or manifest_experiment_id != b_run.experiment_id
     ):
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+
+    try:
+        baseline_actual_semantic_hash = semantic_content_hash(b_input.bundle.files)
+        candidate_actual_semantic_hash = semantic_content_hash(c_input.bundle.files)
+    except (KeyError, ValueError, EvaluationValidationError):
+        raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH) from None
+
+    if (
+        baseline_actual_semantic_hash != b_input.bundle.semantic_hash
+        or baseline_actual_semantic_hash != comp.baseline_run_hash
+        or candidate_actual_semantic_hash != c_input.bundle.semantic_hash
+        or candidate_actual_semantic_hash != comp.candidate_run_hash
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
+
+    expected = build_answer_pair_comparison(
+        pair_entry.pair_id,
+        b_input,
+        c_input,
+    )
+    if comp != expected:
         raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
 
 
