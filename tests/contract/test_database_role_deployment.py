@@ -150,6 +150,47 @@ def test_retrieval_run_tables_runtime_role_privileges_are_least_privilege() -> N
     assert "GRANT UPDATE ON TABLE public.retrieval_hit" not in source
 
 
+def test_track_c_runtime_role_privileges_are_least_privilege() -> None:
+    from infra.python.provision_database_roles import (
+        RUNTIME_APPEND_ONLY_TABLES,
+        RUNTIME_CHECKIN_LOCK_TABLES,
+        RUNTIME_MUTABLE_TABLES,
+        RUNTIME_TRACK_C_APPEND_TABLES,
+        RUNTIME_TRACK_C_FOLLOWUP_TABLES,
+        RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS,
+    )
+
+    # Track C는 revision 단위 append 뒤 고쳐 쓰지 않으므로 mutable/append-only 목록과 겹치지 않는다.
+    assert RUNTIME_TRACK_C_APPEND_TABLES == {
+        "safety_assessment",
+        "barrier_response",
+        "support_action_plan",
+    }
+    assert not (RUNTIME_TRACK_C_APPEND_TABLES & RUNTIME_MUTABLE_TABLES)
+    assert not (RUNTIME_TRACK_C_APPEND_TABLES & RUNTIME_APPEND_ONLY_TABLES)
+
+    # #668 row lock 경계는 유지된다.
+    assert RUNTIME_CHECKIN_LOCK_TABLES == {"safety_assessment", "barrier_response"}
+    assert RUNTIME_CHECKIN_LOCK_TABLES < RUNTIME_TRACK_C_APPEND_TABLES
+
+    assert RUNTIME_TRACK_C_FOLLOWUP_TABLES == {"action_plan_followup", "action_plan_followup_audit"}
+    assert not (RUNTIME_TRACK_C_FOLLOWUP_TABLES & RUNTIME_MUTABLE_TABLES)
+    assert not (RUNTIME_TRACK_C_FOLLOWUP_TABLES & RUNTIME_APPEND_ONLY_TABLES)
+    assert RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS == ("response", "revision", "updated_at")
+
+    source = (ROOT / "infra/python/provision_database_roles.py").read_text()
+    assert "GRANT INSERT ON TABLE public.{quoted_identifier(table)} TO {runtime_sql}" in source
+    assert "GRANT SELECT, INSERT ON TABLE public.{quoted_identifier(table)} TO {runtime_sql}" in source
+    assert "GRANT UPDATE ({columns}) ON TABLE public.action_plan_followup TO {runtime_sql}" in source
+
+    # Runtime은 Track C 이력을 지우거나 전체 컬럼을 덮어쓰지 않는다. 삭제는 #748 cleanup 역할의 책임이다.
+    for table in sorted(RUNTIME_TRACK_C_APPEND_TABLES | RUNTIME_TRACK_C_FOLLOWUP_TABLES):
+        assert f"GRANT DELETE ON TABLE public.{table}" not in source
+        assert f"GRANT TRUNCATE ON TABLE public.{table}" not in source
+        assert f"GRANT UPDATE ON TABLE public.{table}" not in source
+    assert "GRANT UPDATE ON TABLE public.action_plan_followup_audit" not in source
+
+
 def test_knowledge_index_role_policy_is_explicit_and_least_privilege() -> None:
     from infra.python.knowledge_index_role_policy import (
         KNOWLEDGE_INDEX_LOCK_COLUMNS,
