@@ -1,10 +1,11 @@
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import PurePath
+from pathlib import Path, PurePath
 from uuid import UUID
 
 from fastapi import UploadFile, status
+from starlette.concurrency import run_in_threadpool
 
 from app.core import config
 from app.core.errors import ApiError, ErrorDetail
@@ -12,6 +13,7 @@ from app.dtos.medical_documents import MedicalDocumentType
 from app.models.medical_documents import MedicalDocument
 from app.models.users import User
 from app.repositories.medical_document_repository import MedicalDocumentRepository
+from app.services.document_image_normalizer import normalize_document_image
 
 MAX_DOCUMENT_SIZE_BYTES = 30 * 1024 * 1024
 UPLOAD_READ_CHUNK_SIZE_BYTES = 1024 * 1024
@@ -84,6 +86,11 @@ class MedicalDocumentService:
         content = await self._read_upload_content(file=file)
         extension = self._validate_file(file=file, content=content)
 
+        normalized = (
+            await run_in_threadpool(normalize_document_image, content, file.content_type)
+            if file.content_type in {"image/jpeg", "image/png"}
+            else None
+        )
         document = await self._repo.create(
             user=user,
             original_file_name=file.filename or "prescription",
@@ -92,8 +99,25 @@ class MedicalDocumentService:
             file_size_bytes=len(content),
         )
 
-        object_key = self._save_to_storage(document_id=document.id, extension=extension, content=content)
-        await self._repo.update_object_key(document, object_key)
+        paths = [Path(config.STORAGE_DIR) / f"{document.id}{extension}"]
+        if normalized is not None:
+            paths.append(Path(config.STORAGE_DIR) / f"{document.id}.normalized.png")
+        self._repo.track_uploaded_files(paths)
+        try:
+            object_key = self._save_to_storage(document_id=document.id, extension=extension, content=content)
+            if normalized is not None:
+                document.normalized_object_key = self._save_to_storage(
+                    document_id=document.id,
+                    extension=".normalized.png",
+                    content=normalized.content,
+                )
+                document.normalized_width = normalized.width
+                document.normalized_height = normalized.height
+            await self._repo.update_object_key(document, object_key)
+        except BaseException:
+            for path in paths:
+                path.unlink(missing_ok=True)
+            raise
 
         return PrescriptionDocumentUploadResult(
             document_id=document.id,
@@ -121,10 +145,21 @@ class MedicalDocumentService:
             media_type=document.file_mime_type,
         )
 
+    async def get_normalized_document_file(self, *, user: User, document_id: UUID) -> MedicalDocumentFileResult:
+        document = await self.get_owned_document(document_id=document_id, user=user)
+        key = document.normalized_object_key
+        if not key or not document.normalized_width or not document.normalized_height:
+            raise ApiError(status_code=404, code="MEDICAL_DOCUMENT_NOT_FOUND", message="의료문서를 찾을 수 없습니다.")
+        root = Path(config.STORAGE_DIR).resolve()
+        path = (root / key).resolve()
+        if not path.is_relative_to(root) or not path.is_file():
+            raise ApiError(status_code=404, code="MEDICAL_DOCUMENT_NOT_FOUND", message="의료문서를 찾을 수 없습니다.")
+        return MedicalDocumentFileResult(str(path), f"medical-document-{document.id}.png", "image/png")
+
     def _save_to_storage(self, *, document_id: UUID, extension: str, content: bytes) -> str:
         os.makedirs(config.STORAGE_DIR, exist_ok=True)
         object_key = f"{document_id}{extension}"
-        with open(os.path.join(config.STORAGE_DIR, object_key), "wb") as f:
+        with open(os.path.join(config.STORAGE_DIR, object_key), "xb") as f:
             f.write(content)
         return object_key
 

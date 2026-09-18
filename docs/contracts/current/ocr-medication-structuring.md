@@ -192,6 +192,22 @@ CLOVA Template OCR 전용 변환기는 아직 구현되지 않았습니다.
 Template OCR 적용과 기존 `RecognizedField` 계약으로의 변환은
 후속 구현 Issue 및 PR에서 처리합니다.
 
+## 추출 근거 위치
+
+각 `RecognizedField`는 그 값의 근거가 된 OCR token들을 감싸는 최소 외접 사각형을
+`source_location`으로 함께 보존한다(#809, REQ-OCR-014).
+
+- 좌표계는 OCR Provider에 입력된 이미지의 픽셀 기준이다. `x`·`y`는 사각형의 좌상단
+  모서리이며, 화면 표시 배율 보정은 소비자 책임이다.
+- 규칙 기반 경로는 각 필드가 실제로 사용한 근거 token 목록(`name_fields`, `dose_fields` 등)의
+  상자 합집합을 사용한다. 값이 여러 token으로 쪼개진 경우 전부를 감싸는 사각형을 만든다.
+- token이 좌표를 제공하지 않으면(`width` 또는 `height`가 0) `source_location`은 `null`이다.
+  빈 검수 필드와 사용자 수동 입력 필드도 `null`이다.
+- `page`는 현재 인식 응답의 첫 페이지만 사용하므로 항상 `1`이다. 다중 페이지 인식은 후속 범위다.
+- 근거 위치는 원본 대조를 돕는 UI·provenance 정보다. 좌표가 있다는 이유로 OCR 값의 정확성을
+  자동 승인하거나 확정값 판단에 사용하지 않는다.
+- #809 정규화 이미지 계약에 따라 신규 JPEG/PNG는 EXIF 정규화본을 OCR 입력과 검수 표시의 공통 기준으로 사용한다. 정규화본이 없는 기존 문서는 강조 대상에서 제외한다. 자세한 응답/파일 계약은 [정규화 이미지](ocr-normalized-image.md)를 따른다.
+
 ## medication_index
 
 - `0`은 처방일자처럼 특정 약품에 속하지 않는 문서 공통 필드다.

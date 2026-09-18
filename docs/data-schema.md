@@ -253,6 +253,11 @@ OCR 결과 소유권은 `ai_job_id`만으로 판단하지 않고 기존 `ocr_job
 | `confirmed_value` | `VARCHAR(1000)` | Yes | 사용자가 확인하거나 수정한 최종 기준값 |
 | `normalization_version` | `VARCHAR(30)` | Yes | 적용한 정규화 규칙 버전 |
 | `field_type` | `VARCHAR(30)` | No | OCR 필드 종류. `MEDICATION_STRENGTH`를 포함 |
+| `source_page` | `INTEGER` | Yes | 추출 근거가 있는 원본 페이지 번호. 1부터 시작 |
+| `source_bbox_x` | `NUMERIC(10,2)` | Yes | 근거 영역 좌상단 x |
+| `source_bbox_y` | `NUMERIC(10,2)` | Yes | 근거 영역 좌상단 y |
+| `source_bbox_width` | `NUMERIC(10,2)` | Yes | 근거 영역 폭 |
+| `source_bbox_height` | `NUMERIC(10,2)` | Yes | 근거 영역 높이 |
 
 - `MEDICATION_NAME`에는 약품명 표기 정규화를 적용하며 `normalization_version`은 `rule-v1`입니다.
 - LLM 경로의 `PRESCRIBED_DATE`에는 `YYYY-MM-DD` 정규화를 적용하며 `normalization_version`은 `date-rule-v1`입니다.
@@ -265,6 +270,18 @@ OCR 결과 소유권은 `ai_job_id`만으로 판단하지 않고 기존 `ocr_job
 - `MEDICATION_STRENGTH`는 제품 함량을 표현하며 `DOSE_VALUE`·`DOSE_UNIT`과 구분합니다.
 - 제품 함량은 `100mg`, `5mg/100mg`, `1mg/mL`, `500mg/5mL`과 같은 문자열을 보존합니다.
 - 확인되지 않은 제품 함량은 최종 처방에 저장하지 않습니다.
+
+### 추출 근거 위치 (`source_*`)
+
+Revision `159a1b2c3d4e`가 추가한 다섯 열은 그 값이 추출된 원본 문서 영역을 기록합니다(#809, REQ-OCR-014).
+
+- 좌표계는 **OCR Provider에 입력된 이미지의 픽셀 기준**입니다. `source_bbox_x`·`source_bbox_y`는 사각형의 좌상단 모서리이며, 화면 표시 배율 보정은 소비자 책임입니다.
+- `chk_field_source_location_complete`가 다섯 열이 모두 `null`이거나 모두 채워진 상태만 허용합니다. 부분 좌표는 저장되지 않으며, 검수 조회 응답의 `source_location`도 같은 조건에서만 값을 내려보냅니다.
+- `chk_field_source_page`는 `source_page >= 1`을, `chk_field_source_bbox_range`는 `x`·`y`의 음수 금지와 `width`·`height`의 양수를 강제합니다.
+- 좌표를 제공하지 않는 경로(사용자 수동 입력, 빈 검수 필드, 좌표 없는 Provider 응답)는 다섯 열이 모두 `null`로 남습니다.
+- 현재 OCR 엔진은 인식 응답의 첫 페이지만 사용하므로 `source_page`는 항상 `1`입니다. 다중 페이지 인식은 후속 범위입니다.
+- 이 좌표는 원본 대조를 돕는 UI·provenance 정보이며, 좌표가 있다는 이유로 OCR 값의 정확성을 자동 승인하거나 확정값 판단에 사용하지 않습니다.
+- #809 결정에 따라 업로드 시점 EXIF 정규화본이 도입되면 좌표계 기준 이미지가 그 정규화본으로 바뀝니다. 그 시점부터 검수 화면이 표시하는 이미지와 응답의 문서 픽셀 크기도 같은 정규화본을 기준으로 하며, 정규화본이 없는 기존 문서는 좌표 기반 강조 대상에서 제외합니다.
 
 ## 확정 처방 약물
 
@@ -996,3 +1013,6 @@ hydration 이후 채워지므로 단독으로는 과거 selection의 불변 bind
 제공하고 latest/CURRENT fallback을 두지 않는다. 정책은
 [PD-722](governance/decisions/2026-09-17-evidence-assessment-validity.md)를 따르며 Current 승격과
 후속 Assessment·Eligibility Authority Reader 연결은 별도다.
+
+
+#809 OCR 정규화 이미지의 API·DB 변경은 [정규화 이미지 계약](contracts/current/ocr-normalized-image.md)을 참조합니다.

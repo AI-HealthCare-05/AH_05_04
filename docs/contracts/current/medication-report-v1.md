@@ -83,6 +83,12 @@ OpenAPI operationId: `medication-reports.get`.
 각 record는 기존 날짜별 occurrence DTO와 같은 `occurrence_id`,
 `prescription_version_id`, `prescription_version_medication_id`, `scheduled_local_date`,
 `scheduled_at`, `confirmation_deadline_at`, `status`, nullable `checkin`을 사용한다.
+여기에 사용자 표시용 snapshot 필드 `medication_name`, nullable `strength_text`와
+서버 산정 `time_slot`을 포함한다. `time_slot`은 `scheduled_at`을 Asia/Seoul로 변환한
+시각 기준으로 `BREAKFAST`(05:00 이상 11:00 미만), `LUNCH`(11:00 이상 15:00 미만),
+`DINNER`(15:00 이상 21:00 미만), `BEDTIME`(21:00 이상 또는 05:00 미만) 중 하나다.
+Frontend는 records를 표시할 때 내부 ID를 사용자 표시명으로 쓰거나 `scheduled_at`으로
+아침·점심·저녁 슬롯을 다시 계산하지 않는다.
 record의 `updated_at`은 occurrence와 현재 Check-in의 updated_at 중 최신 시각이다.
 `checkin`은 기존 `checkin_id`, `occurrence_id`, `status`, nullable `taken_at`,
 `revision`, `corrected`에 현재 Check-in의 `updated_at`을 더한 리포트 전용 DTO다.
@@ -96,7 +102,7 @@ records와 counts·두 비율을 만든다. 별도 집계 SELECT와 records 조�
 ## 확장 및 병렬 작업 경계
 
 Barrier·증상·Support는 이번 DTO에서 생략한다. 미구현을 빈 배열이나 0건으로 표현하지 않는다.
-약명·용량 등 과거 약 snapshot 표시 계약은 #474를 소비하는 후속 연결이며 중복 구현하지 않는다.
+Report records의 약명·제품 함량 표시는 원래 `PrescriptionVersionMedication` snapshot을 사용한다.
 #469 Push의 구독·전송·계정 전환 API/DB/Worker는 수정하지 않는다.
 기존 B1/B3 상태 전이, deadline, Schedule/Check-in 쓰기, Notification 처리도 변경하지 않는다.
 

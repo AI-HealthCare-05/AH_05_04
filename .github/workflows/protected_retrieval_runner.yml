@@ -1,0 +1,157 @@
+name: protected_retrieval_runner.yml
+
+# #811 Protected Retrieval operational runner & provisioning workflow.
+# Triggered strictly via manual workflow_dispatch under the protected-retrieval GitHub Environment.
+# Direct push, pull_request, schedule, and workflow_run triggers are forbidden.
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Protected operation to execute (preflight | provision)"
+        required: true
+        default: "preflight"
+        type: choice
+        options:
+          - preflight
+          - provision
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    name: "Protected Retrieval Database Role Provisioning"
+    if: ${{ github.event.inputs.operation == 'provision' }}
+    runs-on: ubuntu-latest
+    environment: protected-retrieval
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Execute remote database provisioning
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+          DB_ADMIN_USER: ${{ secrets.DB_ADMIN_USER }}
+          DB_ADMIN_PASSWORD: ${{ secrets.DB_ADMIN_PASSWORD }}
+          PROTECTED_DB_SCHEMA: ${{ secrets.PROTECTED_DB_SCHEMA }}
+          PROTECTED_DB_OWNER_ROLE: ${{ secrets.PROTECTED_DB_OWNER_ROLE }}
+          PROTECTED_DB_ACCESS_ROLE: ${{ secrets.PROTECTED_DB_ACCESS_ROLE }}
+          PROTECTED_DB_CONTROL_ROLE: ${{ secrets.PROTECTED_DB_CONTROL_ROLE }}
+          PROTECTED_DB_USER: ${{ secrets.PROTECTED_DB_USER }}
+          PROTECTED_DB_PASSWORD: ${{ secrets.PROTECTED_DB_PASSWORD }}
+          PROTECTED_DB_CONTROL_USER: ${{ secrets.PROTECTED_DB_CONTROL_USER }}
+          PROTECTED_DB_CONTROL_PASSWORD: ${{ secrets.PROTECTED_DB_CONTROL_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$EC2_HOST" ] || [ -z "$EC2_SSH_KEY" ] || [ -z "$EC2_SSH_KNOWN_HOSTS" ]; then
+            echo "::error::EC2_HOST, EC2_SSH_KEY, or EC2_SSH_KNOWN_HOSTS secret missing. Remote execution cannot proceed."
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "$EC2_SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          echo "$EC2_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+          SSH_CMD="ssh -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=10 ${EC2_USER:-ubuntu}@${EC2_HOST}"
+          REMOTE_ENV="/tmp/protected_prov_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}.env"
+
+          cleanup() {
+            $SSH_CMD "rm -f $REMOTE_ENV" || true
+            rm -f ~/.ssh/id_rsa ~/.ssh/known_hosts
+          }
+          trap cleanup EXIT
+
+          $SSH_CMD "umask 077 && cat > $REMOTE_ENV" <<EOF
+          DB_ADMIN_USER=${DB_ADMIN_USER}
+          DB_ADMIN_PASSWORD=${DB_ADMIN_PASSWORD}
+          PROTECTED_DB_SCHEMA=${PROTECTED_DB_SCHEMA}
+          PROTECTED_DB_OWNER_ROLE=${PROTECTED_DB_OWNER_ROLE}
+          PROTECTED_DB_ACCESS_ROLE=${PROTECTED_DB_ACCESS_ROLE}
+          PROTECTED_DB_CONTROL_ROLE=${PROTECTED_DB_CONTROL_ROLE}
+          PROTECTED_DB_USER=${PROTECTED_DB_USER}
+          PROTECTED_DB_PASSWORD=${PROTECTED_DB_PASSWORD}
+          PROTECTED_DB_CONTROL_USER=${PROTECTED_DB_CONTROL_USER}
+          PROTECTED_DB_CONTROL_PASSWORD=${PROTECTED_DB_CONTROL_PASSWORD}
+          EOF
+
+          $SSH_CMD "docker compose -f /home/${EC2_USER:-ubuntu}/app/infra/docker/docker-compose.prod.yml \
+            --env-file /home/${EC2_USER:-ubuntu}/app/.prod.env \
+            --env-file $REMOTE_ENV \
+            --profile protected-retrieval-admin \
+            run --rm --no-deps protected-retrieval-provision"
+
+  preflight:
+    name: "Protected Retrieval Runtime Preflight"
+    if: ${{ github.event.inputs.operation == 'preflight' }}
+    runs-on: ubuntu-latest
+    environment: protected-retrieval
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Execute remote preflight check
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+          PROTECTED_DB_SCHEMA: ${{ secrets.PROTECTED_DB_SCHEMA }}
+          PROTECTED_DB_ACCESS_ROLE: ${{ secrets.PROTECTED_DB_ACCESS_ROLE }}
+          PROTECTED_DB_CONTROL_ROLE: ${{ secrets.PROTECTED_DB_CONTROL_ROLE }}
+          PROTECTED_DB_USER: ${{ secrets.PROTECTED_DB_USER }}
+          PROTECTED_DB_PASSWORD: ${{ secrets.PROTECTED_DB_PASSWORD }}
+          PROTECTED_DB_CONTROL_USER: ${{ secrets.PROTECTED_DB_CONTROL_USER }}
+          PROTECTED_DB_CONTROL_PASSWORD: ${{ secrets.PROTECTED_DB_CONTROL_PASSWORD }}
+          PROTECTED_APPROVAL_REPOSITORY: ${{ secrets.PROTECTED_APPROVAL_REPOSITORY }}
+          PROTECTED_APPROVAL_BRANCH: ${{ secrets.PROTECTED_APPROVAL_BRANCH }}
+          PROTECTED_APPROVAL_GITHUB_TOKEN: ${{ secrets.PROTECTED_APPROVAL_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$EC2_HOST" ] || [ -z "$EC2_SSH_KEY" ] || [ -z "$EC2_SSH_KNOWN_HOSTS" ]; then
+            echo "::error::EC2_HOST, EC2_SSH_KEY, or EC2_SSH_KNOWN_HOSTS secret missing. Remote execution cannot proceed."
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "$EC2_SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          echo "$EC2_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+          SSH_CMD="ssh -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=10 ${EC2_USER:-ubuntu}@${EC2_HOST}"
+          REMOTE_ENV="/tmp/protected_preflight_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}.env"
+
+          cleanup() {
+            $SSH_CMD "rm -f $REMOTE_ENV" || true
+            rm -f ~/.ssh/id_rsa ~/.ssh/known_hosts
+          }
+          trap cleanup EXIT
+
+          $SSH_CMD "umask 077 && cat > $REMOTE_ENV" <<EOF
+          PROTECTED_RETRIEVAL_ENABLED=true
+          PROTECTED_DB_SCHEMA=${PROTECTED_DB_SCHEMA}
+          PROTECTED_DB_ACCESS_ROLE=${PROTECTED_DB_ACCESS_ROLE}
+          PROTECTED_DB_CONTROL_ROLE=${PROTECTED_DB_CONTROL_ROLE}
+          PROTECTED_DB_USER=${PROTECTED_DB_USER}
+          PROTECTED_DB_PASSWORD=${PROTECTED_DB_PASSWORD}
+          PROTECTED_DB_CONTROL_USER=${PROTECTED_DB_CONTROL_USER}
+          PROTECTED_DB_CONTROL_PASSWORD=${PROTECTED_DB_CONTROL_PASSWORD}
+          PROTECTED_APPROVAL_REPOSITORY=${PROTECTED_APPROVAL_REPOSITORY}
+          PROTECTED_APPROVAL_BRANCH=${PROTECTED_APPROVAL_BRANCH}
+          PROTECTED_APPROVAL_GITHUB_TOKEN=${PROTECTED_APPROVAL_GITHUB_TOKEN}
+          EOF
+
+          $SSH_CMD "docker compose -f /home/${EC2_USER:-ubuntu}/app/infra/docker/docker-compose.prod.yml \
+            --env-file /home/${EC2_USER:-ubuntu}/app/.prod.env \
+            --env-file $REMOTE_ENV \
+            --profile protected-runner \
+            run --rm --no-deps protected-retrieval-runner"

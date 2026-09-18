@@ -34,6 +34,7 @@ from app.models.rag_candidate import (
 from app.models.users import AccountStatus, User
 from app.repositories.account_deletion_request_repository import AccountDeletionRequestRepository
 from app.tests.helpers.auth import signup_verified_user
+from app.tests.helpers.images import synthetic_jpeg
 
 PASSWORD = "Password123!"
 JPEG_SIGNATURE = b"\xff\xd8\xff"
@@ -78,7 +79,7 @@ async def signup_and_login(client: AsyncClient, *, email: str) -> tuple[str, str
 async def upload_prescription_document(client: AsyncClient, *, access_token: str) -> UUID:
     response = await client.post(
         "/api/v1/documents",
-        files={"file": ("withdrawal-upload.jpg", JPEG_SIGNATURE + b"synthetic-upload", "image/jpeg")},
+        files={"file": ("withdrawal-upload.jpg", synthetic_jpeg(), "image/jpeg")},
         headers={"Authorization": f"Bearer {access_token}"},
     )
     assert response.status_code == status.HTTP_201_CREATED, response.text
@@ -524,6 +525,8 @@ async def test_account_withdrawal_removes_file_created_by_upload_api(
         assert document is not None
         uploaded_path = storage_dir / document.object_key
         assert uploaded_path.exists()
+        normalized_path = storage_dir / document.normalized_object_key
+        assert normalized_path.exists()
 
         response = await client.post(
             "/api/v1/auth/account/withdrawal",
@@ -534,6 +537,7 @@ async def test_account_withdrawal_removes_file_created_by_upload_api(
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {"detail": "회원탈퇴가 완료되었습니다."}
     assert not uploaded_path.exists()
+    assert not normalized_path.exists()
     db_session.expire_all()
     assert await db_session.get(MedicalDocument, document_id) is None
     stored_user = await db_session.get(User, user_id)
@@ -567,6 +571,8 @@ async def test_account_withdrawal_db_cleanup_failure_after_file_delete_records_f
         assert document is not None
         uploaded_path = storage_dir / document.object_key
         assert uploaded_path.exists()
+        normalized_path = storage_dir / document.normalized_object_key
+        assert normalized_path.exists()
 
         response = await client.post(
             "/api/v1/auth/account/withdrawal",
@@ -577,6 +583,7 @@ async def test_account_withdrawal_db_cleanup_failure_after_file_delete_records_f
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {"detail": "탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."}
     assert not uploaded_path.exists()
+    assert not normalized_path.exists()
     assert await db_session.get(MedicalDocument, document_id) is not None
 
     db_session.expire_all()

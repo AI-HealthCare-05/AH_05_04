@@ -21,11 +21,17 @@ class MedicationReportRate(BaseModel):
     percentage: float | None = Field(ge=0, le=100)
 
 
+MedicationReportTimeSlot = Literal["BREAKFAST", "LUNCH", "DINNER", "BEDTIME"]
+
+
 class MedicationReportCheckin(MedicationCheckinData):
     updated_at: AwareDatetime
 
 
 class MedicationReportRecord(MedicationOccurrenceData):
+    medication_name: str
+    strength_text: str | None
+    time_slot: MedicationReportTimeSlot
     checkin: MedicationReportCheckin | None
     updated_at: AwareDatetime
 

@@ -210,6 +210,40 @@ pair별 허용 delta는 다음 exact set으로 제한한다.
 밖의 관찰 delta, mandatory key mismatch 또는 허용 delta의 필수 binding 누락은 `INVALID/null`이다. 세 pair
 중 required pair가 없거나 미완료면 상위 비교·Gate를 `PASS`로 만들 수 없다.
 
+### 8.1 Product Decision 5725554244 (Option 2: Controlled Variable Binding Seam)
+
+Post-MVP-1 Product·Safety·Evaluation 승인자 권가빈 (`@hazelnutflavoured`)의 승인 결정([#159 comment 5725554244](https://github.com/AI-HealthCare-05/AH_05_04/issues/159#issuecomment-5725554244))에 따라 PR C의 Answer comparison 입력 바인딩 경계를 다음과 같이 확정한다.
+
+1. **Option 2 Pure Typed Seam**: 14개 controlled variable 전체를 typed seam으로 표현한다.
+2. **Run-derived 7 controls**: 현재 `RagEvaluationRun`에서 canonical source가 명확한 7개 key는 builder/seam 내부에서 직접 바인딩하며 caller가 override하지 못한다:
+   - `CASE_SET` = `run.partition_manifest_hash`
+   - `DATASET` = `run.dataset_manifest_sha256`
+   - `PARTITION` = `canonical_sha256([partition.value for partition in run.evaluated_partitions])`
+   - `GOLD` = `canonical_sha256({"resource_set_hash": run.resource_set_hash, "evidence_mapping_manifest_sha256": run.evidence_mapping_manifest_sha256})`
+   - `RUBRIC` = `run.critical_claim_rubric_ref.hash`
+   - `METRIC_POLICY` = `run.comparison_policy_ref.hash`
+   - `MODEL_CONFIGURATION` = `run.model_config_hash`
+3. **Supplemental 7 controls**: 현재 canonical extraction recipe가 없는 7개 key(`INPUT_CONTEXT`, `PROMPT_STRUCTURE`, `PARSER`, `SEED`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`)는 caller-supplied arbitrary mapping으로 받지 않고 명시적 typed supplemental input(`AnswerComparisonSupplementalControls`)으로 받는다.
+4. **Delta-axis authority extraction**: 8개 delta axis(`RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RUNTIME_BUNDLE`, `RETRIEVED_EVIDENCE`, `FINAL_VALIDATOR`, `CITATION_GATE`, `SAFETY_GATE`, `RELEASE_GATE`)는 typed input(`AnswerComparisonDeltaBindings`)으로 수신하며, 실제 authoritative extraction recipe 및 runtime wiring은 후속 PR에서 확정한다.
+5. **Policy Contract Test**: `ANSWER_CORRECTNESS` scope의 `minimum_valid_replicate_ratio = "0.9"` 존재를 contract test로 고정한다.
+6. **Schema Set 1.5 불변**: 위 결정은 Schema Set 1.5(`cf481556cead9f99e4d424481e9ed5aed246899a4c893c45b19a2b7abcb89dc8`)를 변경하지 않는다.
+
+### 8.2 PR C Deterministic Implementation Convention
+
+다음 세부 사항은 Product 승인 사항이 아닌 PR C의 결정적 구현 규약(Deterministic Implementation Convention)이다:
+
+1. **`comparison_sha256`**:
+   - `ComparisonResult` 전체 payload의 canonical JSON 직렬화 바이트(`canonical_json_bytes(comparison.model_dump(mode="json"))`)의 SHA-256 hex 값이다.
+2. **`comparison_semantic_hash`**:
+   - Run 실행 시마다 변하는 고유 식별자(`run_id`, `baseline_run_id`, `candidate_run_id`) 3개 필드를 제외하고, 비교 의미를 구성하는 나머지 필드(`schema_id`, `schema_version`, `experiment_id`, `baseline_run_hash`, `candidate_run_hash`, `controlled_variable_checks`, `scope_comparisons`, `execution_status`, `decision_status`)를 포함하는 canonical payload의 SHA-256 hex 값이다.
+3. **내부 Typed 구조**:
+   - Supplemental controls, delta bindings, draft answer bindings, 14개 resolved controls, Run input은 typed dataclass로 표현하며 `dict[str, str]` arbitrary mapping을 금지한다.
+4. **INVALID 상태 표현 규칙**:
+   - Authority binding 누락(`None`): `controlled_variable_checks = ()`, `scope_comparisons = ()`, `execution_status = INVALID`, `decision_status = null`
+   - 14개 control mismatch: 14개 checks를 구성하고 불일치 항목의 `matched = false` 기록, `scope_comparisons`는 계산 가능하면 유지, `execution_status = INVALID`, `decision_status = null`
+   - Non-allowed delta mismatch 또는 Case/Draft mismatch: Schema 변경 없이 invariant(`not scope_comparisons`)를 만족하도록 `scope_comparisons = ()`를 설정해 `execution_status = INVALID`, `decision_status = null` 표현
+   - Malformed typed input(예: non-hex SHA, 잘못된 길이 등): artifact를 생성하지 않고 `EvaluationValidationError`로 fail-close
+
 ## 9. Rubric fail-fast
 
 Dataset Loader의 Critical Claim Rubric self-hash와 Dataset/Case reference exact-match 검증을 정본으로

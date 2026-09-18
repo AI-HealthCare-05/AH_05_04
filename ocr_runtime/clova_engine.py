@@ -364,6 +364,7 @@ class ClovaOcrEngine:
                 center_x = sum(x_values) / len(x_values)
                 center_y = sum(y_values) / len(y_values)
                 height = max(y_values) - min(y_values)
+                width = max(x_values) - min(x_values)
             except (
                 KeyError,
                 TypeError,
@@ -379,6 +380,7 @@ class ClovaOcrEngine:
                     center_x=center_x,
                     center_y=center_y,
                     height=height,
+                    width=width,
                 )
             )
 

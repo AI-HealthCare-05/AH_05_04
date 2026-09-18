@@ -4,10 +4,10 @@
 
 ## 상태
 
-- Repository adapter: `PARTIALLY_IMPLEMENTED`
+- Repository adapter: `IMPLEMENTED_IN_REPOSITORY`
 - Authorization control C1: `IMPLEMENTED_IN_REPOSITORY`
 - Implemented scope: approval ingestion and grant/revoke/expire transaction·audit services
-- Production approval source connector: `NOT_IMPLEMENTED`
+- Production approval source connector: `IMPLEMENTED_IN_REPOSITORY`
 - Dataset lifecycle/FREEZE service: `IMPLEMENTED_IN_REPOSITORY`
 - Identity registration/disable service: `IMPLEMENTED_IN_REPOSITORY`
 - Effective enforcement: `NOT_IMPLEMENTED`
@@ -24,6 +24,7 @@
 - Runtime assembly suite: `24 passed`
 - Protected-off Worker image import: `passed`
 - Protected limited-login verification in CI: `passed`
+- Production approval source connector: `21 passed`
 - 실제 환경 좌표와 보호 데이터는 사용하지 않았습니다.
 
 ## Evidence self hash 입력
@@ -43,6 +44,7 @@
 | `AUTHORIZATION_CONTROL_CONTRACT` | `ai_worker/tasks/evaluation/protected_retrieval_control.py` | `977b28a8eb3846019c2a989877402fff691b63e710a2165a55bced26716d20ac` |
 | `POSTGRESQL_CONTROL_ADAPTER` | `ai_worker/adapters/postgresql_protected_retrieval_control.py` | `de48e14d997b67f02b0852d480cecf912760f46b9017a4f05b720ee3595fe0b4` |
 | `AUTHORIZATION_CONTROL_MIGRATION` | `infra/protected_retrieval/versions/368000000002_add_authorization_control.py` | `56a7275ebc83ebf69f115230e36e40bc13d0731a7c91bed900ff287b2b42c5b8` |
+| `PRODUCTION_APPROVAL_SOURCE_CONNECTOR` | `ai_worker/adapters/github_trusted_approval_source.py` | `247c5523f6c8908d9a1269e88039f25788511e84378a3711855e11d4736dfdf2` |
 
 재생성·검증: `uv run python scripts/verify_protected_runner_evidence.py [--write]`
 
@@ -53,4 +55,4 @@
 - backup·restore·rotation 운영 증빙
 - Track F external gate 충족
 
-Evidence self hash: `626fe228c12c227771e56cbb63c5a17d5c197f13d7ae282e45fdaa64892faaf8`
+Evidence self hash: `1763ba6f4481fcb2fd9f16e3a612b9acc0a140040f372883817f83fd50312d18`

@@ -233,6 +233,11 @@ async def test_recognize_calls_clova_and_parses_v2_response(
     assert result.raw_fields[2].center_y == 45.0
     assert result.raw_fields[0].raw_value == "처방전"
     assert result.raw_fields[0].confidence_score == 0.99
+    # #809 REQ-OCR-014: boundingPoly에서 폭도 함께 계산해 근거 위치 상자를 만들 수 있어야 한다.
+    assert result.raw_fields[0].width == 50.0
+    assert result.raw_fields[0].height == 10.0
+    assert result.raw_fields[2].width == 90.0
+    assert result.raw_fields[2].height == 10.0
     assert result.raw_fields[2].raw_value == "2026-08-12"
     assert result.raw_fields[2].confidence_score == 0.97
     assert result.raw_fields[0].height == 10.0

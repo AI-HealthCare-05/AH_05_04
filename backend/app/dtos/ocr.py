@@ -70,6 +70,13 @@ class CreateManualMedicationRequest(BaseModel):
         return stripped
 
 
+class SourceLocationData(BaseModel):
+    """추출 근거 위치. 좌표는 OCR Provider 입력 이미지의 픽셀 기준이며 표시 배율 보정은 소비자 책임이다."""
+
+    page: int = Field(ge=1)
+    bbox: tuple[float, float, float, float]
+
+
 class ExtractedFieldData(BaseModel):
     field_id: UUID
     field_type: str
@@ -84,9 +91,18 @@ class ExtractedFieldData(BaseModel):
     )
     confirmation_status: str
     normalization_version: str | None = None
+    source_location: SourceLocationData | None = None
+
+
+class OcrSourceImageData(BaseModel):
+    normalized: bool = False
+    width: int | None = None
+    height: int | None = None
+    url: str | None = None
 
 
 class OcrJobData(BaseModel):
+    source_image: OcrSourceImageData = Field(default_factory=OcrSourceImageData)
     job_id: UUID
     document_id: UUID
     ocr_status: OcrJobStatus

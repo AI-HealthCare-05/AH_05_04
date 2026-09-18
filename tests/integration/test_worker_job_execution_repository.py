@@ -262,6 +262,9 @@ async def repository_schema() -> AsyncIterator[None]:
                     uploaded_by VARCHAR(36) DEFAULT 'synthetic-owner',
                     profile_id VARCHAR(36) DEFAULT 'synthetic-profile',
                     object_key VARCHAR(500) NOT NULL,
+                    normalized_object_key VARCHAR(500),
+                    normalized_width INTEGER,
+                    normalized_height INTEGER,
                     file_mime_type VARCHAR(100) NOT NULL
                 )
                 """
@@ -302,7 +305,12 @@ async def repository_schema() -> AsyncIterator[None]:
                     normalization_version VARCHAR(30),
                     confirmed_value VARCHAR(1000),
                     confirmation_status VARCHAR(20) NOT NULL,
-                    confirmed_at TIMESTAMPTZ
+                    confirmed_at TIMESTAMPTZ,
+                    source_page INTEGER,
+                    source_bbox_x NUMERIC(10, 2),
+                    source_bbox_y NUMERIC(10, 2),
+                    source_bbox_width NUMERIC(10, 2),
+                    source_bbox_height NUMERIC(10, 2)
                 )
                 """
             )

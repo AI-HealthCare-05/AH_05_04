@@ -1,6 +1,7 @@
+from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import event, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +21,24 @@ class DocumentLockTimeoutError(Exception):
 class MedicalDocumentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    def track_uploaded_files(self, paths: list[Path]) -> None:
+        """Remove newly created files if the owning DB transaction rolls back/closes."""
+        session = self.session.sync_session
+        committed = False
+
+        def after_commit(session):
+            nonlocal committed
+            if not session.in_nested_transaction():
+                committed = True
+
+        def after_transaction_end(session, transaction):
+            if transaction.parent is None and not committed:
+                for path in paths:
+                    path.unlink(missing_ok=True)
+
+        event.listen(session, "after_commit", after_commit)
+        event.listen(session, "after_transaction_end", after_transaction_end)
 
     async def create(
         self,

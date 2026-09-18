@@ -95,6 +95,8 @@ class Config(BaseSettings):
     DB_USER: str
     DB_PASSWORD: str
     DB_NAME: str
+    ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE: str = ""
+    ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD: str = ""
     DB_CONNECT_TIMEOUT: int = 5
     DB_CONNECTION_POOL_MAXSIZE: int = 10
     SQLALCHEMY_ECHO: bool = False
@@ -437,14 +439,13 @@ class Config(BaseSettings):
             raise ValueError("IDEMPOTENCY_RECORD_TTL_DAYS must be a positive number of days")
         return self
 
-    @property
-    def database_url(self) -> str:
+    def _database_url_for(self, *, username: str, password: str) -> str:
         # URL.create()를 사용하면 비밀번호에 @, /, % 같은 문자가 있어도
         # 연결 문자열이 깨지지 않습니다.
         url = URL.create(
             drivername="postgresql+asyncpg",
-            username=self.DB_USER,
-            password=self.DB_PASSWORD,
+            username=username,
+            password=password,
             host=self.DB_HOST,
             port=self.DB_PORT,
             database=self.DB_NAME,
@@ -452,6 +453,19 @@ class Config(BaseSettings):
 
         # Alembic은 문자열 URL을 사용하므로 실제 연결 문자열로 렌더링합니다.
         return url.render_as_string(hide_password=False)
+
+    @property
+    def database_url(self) -> str:
+        return self._database_url_for(username=self.DB_USER, password=self.DB_PASSWORD)
+
+    @property
+    def account_withdrawal_cleanup_database_url(self) -> str:
+        if not self.ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE or not self.ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD:
+            raise ValueError("Account withdrawal cleanup DB credentials are not configured")
+        return self._database_url_for(
+            username=self.ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE,
+            password=self.ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD,
+        )
 
     @model_validator(mode="after")
     def validate_ocr_timeout_budget(self) -> "Config":

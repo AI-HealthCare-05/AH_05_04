@@ -11,8 +11,22 @@ from app.dtos.medication_reports import (
     MedicationReportRate,
     MedicationReportRecord,
     MedicationReportResponse,
+    MedicationReportTimeSlot,
 )
 from app.repositories.medication_report_repository import MedicationReportRepository
+
+SEOUL = ZoneInfo("Asia/Seoul")
+
+
+def _report_time_slot(scheduled_at: datetime) -> MedicationReportTimeSlot:
+    hour = scheduled_at.astimezone(SEOUL).hour
+    if 5 <= hour < 11:
+        return "BREAKFAST"
+    if 11 <= hour < 15:
+        return "LUNCH"
+    if 15 <= hour < 21:
+        return "DINNER"
+    return "BEDTIME"
 
 
 def _rate(numerator: int, denominator: int) -> MedicationReportRate:
@@ -32,7 +46,7 @@ class MedicationReportService:
         self, *, user_id: UUID, period_days: int, end_date: date | None = None, now: datetime | None = None
     ) -> MedicationReportResponse:
         as_of = now if now is not None else datetime.now(UTC)
-        today = as_of.astimezone(ZoneInfo("Asia/Seoul")).date()
+        today = as_of.astimezone(SEOUL).date()
         end_date = end_date if end_date is not None else today
         if period_days not in (7, 30) or end_date > today or end_date.toordinal() < period_days:
             raise ApiError(status_code=422, code="VALIDATION_FAILED", message="조회 기간을 확인해 주세요.")
@@ -51,6 +65,9 @@ class MedicationReportService:
                     scheduled_at=occurrence.scheduled_at,
                     confirmation_deadline_at=occurrence.confirmation_deadline_at,
                     status=occurrence.status,
+                    medication_name=medication.medication_name,
+                    strength_text=medication.strength_text,
+                    time_slot=_report_time_slot(occurrence.scheduled_at),
                     updated_at=max(occurrence.updated_at, checkin.updated_at) if checkin else occurrence.updated_at,
                     checkin=MedicationReportCheckin(
                         checkin_id=checkin.id,

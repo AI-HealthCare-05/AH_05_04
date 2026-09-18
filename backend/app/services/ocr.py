@@ -11,9 +11,12 @@ from app.dtos.ocr import (
     OcrJobData,
     OcrJobResponse,
     OcrJobStatus,
+    OcrSourceImageData,
+    SourceLocationData,
 )
 from app.dtos.prescriptions import UpdateExtractedFieldRequest
 from app.models.async_jobs import AiJobType, DomainType
+from app.models.medical_documents import MedicalDocument
 from app.models.ocr import ConfirmationStatus, ExtractedField, FieldType, OcrJob, OcrStatus
 from app.models.users import User
 from app.repositories.medical_document_repository import (
@@ -66,6 +69,23 @@ def _pending_active_cutoff() -> datetime:
     return datetime.now(UTC) - timedelta(seconds=config.OCR_PENDING_ACTIVE_WINDOW_SECONDS)
 
 
+def _to_source_location(field: ExtractedField) -> SourceLocationData | None:
+    """좌표 5개 열이 모두 채워진 필드만 근거 위치로 투영한다(DB CHECK와 같은 조건)."""
+    page = field.source_page
+    x = field.source_bbox_x
+    y = field.source_bbox_y
+    width = field.source_bbox_width
+    height = field.source_bbox_height
+
+    if page is None or x is None or y is None or width is None or height is None:
+        return None
+
+    return SourceLocationData(
+        page=page,
+        bbox=(float(x), float(y), float(width), float(height)),
+    )
+
+
 def _to_field_data(
     field: ExtractedField,
 ) -> ExtractedFieldData:
@@ -79,11 +99,24 @@ def _to_field_data(
         confidence_score=(float(field.confidence_score) if field.confidence_score is not None else None),
         confirmation_status=str(field.confirmation_status),
         normalization_version=(field.normalization_version),
+        source_location=_to_source_location(field),
     )
 
 
-def _to_job_data(job: OcrJob, fields: list[ExtractedField]) -> OcrJobData:
+def _to_job_data(job: OcrJob, fields: list[ExtractedField], document: MedicalDocument | None = None) -> OcrJobData:
+    document = document if document is not None else job.document
+    available = bool(document.normalized_object_key and document.normalized_width and document.normalized_height)
+    data = [_to_field_data(field) for field in fields]
+    if not available:
+        for field in data:
+            field.source_location = None
     return OcrJobData(
+        source_image=OcrSourceImageData(
+            normalized=available,
+            width=document.normalized_width if available else None,
+            height=document.normalized_height if available else None,
+            url=f"/api/v1/documents/{job.document_id}/normalized-file" if available else None,
+        ),
         job_id=job.id,
         document_id=job.document_id,
         ocr_status=OcrJobStatus(job.ocr_status),
@@ -95,7 +128,7 @@ def _to_job_data(job: OcrJob, fields: list[ExtractedField]) -> OcrJobData:
         llm_processing=job.llm_processing,
         created_at=job.created_at,
         completed_at=job.completed_at,
-        fields=[_to_field_data(field) for field in fields],
+        fields=data,
     )
 
 
@@ -238,8 +271,8 @@ class OcrService:
         try:
             await self._require_ocr_consent(user)
             result = await self._engine.recognize(
-                object_key=document.object_key,
-                file_mime_type=document.file_mime_type,
+                object_key=document.normalized_object_key or document.object_key,
+                file_mime_type="image/png" if document.normalized_object_key else document.file_mime_type,
                 deadline=deadline,
             )
         except OcrDeadlineExceededError:
@@ -344,6 +377,11 @@ class OcrService:
                     "raw_value": field.raw_value,
                     "normalized_value": (field.normalized_value),
                     "normalization_version": (field.normalization_version),
+                    "source_page": field.source_location.page if field.source_location else None,
+                    "source_bbox_x": field.source_location.x if field.source_location else None,
+                    "source_bbox_y": field.source_location.y if field.source_location else None,
+                    "source_bbox_width": field.source_location.width if field.source_location else None,
+                    "source_bbox_height": field.source_location.height if field.source_location else None,
                     "confidence_score": (field.confidence_score),
                 }
                 for field in result.fields
@@ -360,7 +398,7 @@ class OcrService:
         )
 
         saved_fields = await self._ocr_repo.get_fields_for_job(ocr_job_id=job.id)
-        return _to_job_data(job, saved_fields)
+        return _to_job_data(job, saved_fields, document)
 
     async def get_ocr_job_result(self, *, user: User, job_id: UUID) -> OcrJobData:
         job = await self._ocr_repo.get_job_owned(job_id=job_id, user_id=user.id)
@@ -516,7 +554,7 @@ class OcrService:
         ]
         await self._ocr_repo.add_fields(manual_fields)
         saved_fields = await self._ocr_repo.get_fields_for_job(ocr_job_id=job.id)
-        return OcrJobResponse(data=_to_job_data(job, saved_fields)).model_dump(mode="json")
+        return OcrJobResponse(data=_to_job_data(job, saved_fields, document)).model_dump(mode="json")
 
     async def update_extracted_field(
         self,

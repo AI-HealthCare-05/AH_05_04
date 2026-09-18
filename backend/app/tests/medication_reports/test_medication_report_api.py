@@ -19,7 +19,7 @@ from app.models.prescriptions import Prescription, PrescriptionVersion, Prescrip
 from app.repositories.medication_checkin_repository import MedicationCheckinRepository
 from app.repositories.medication_report_repository import MedicationReportRepository
 from app.services.medication_checkins import MedicationCheckinDeadlineScheduler
-from app.services.medication_reports import MedicationReportService, _rate
+from app.services.medication_reports import MedicationReportService, _rate, _report_time_slot
 from app.tests.fixtures.prescription_fingerprint import fingerprint_values
 from app.tests.medication_checkins.test_medication_checkin_api import assert_error
 from app.tests.repositories.test_medication_checkin_repository_integration import _create_occurrence
@@ -101,6 +101,8 @@ async def test_period_bounds_current_records_rates_and_self_ownership(case, peri
         (r.scheduled_at, r.occurrence_id) for r in data.records
     )
     assert data.records[0].scheduled_at.date() == start - timedelta(days=1)
+    assert {r.medication_name for r in data.records} == {"합성테스트약"}
+    assert {r.time_slot for r in data.records} == {"BEDTIME"}
     assert response.headers["cache-control"] == "no-store" and response.headers["x-trace-id"]
 
 
@@ -155,6 +157,7 @@ async def test_old_version_survives_replacement_and_cancelled_schedule(case):
     occurrence = await seed(case, END, "TAKEN")
     schedule = await case.session.get(MedicationSchedule, occurrence.medication_schedule_id)
     old_medication = await case.session.get(PrescriptionVersionMedication, schedule.prescription_version_medication_id)
+    old_medication.strength_text = "100mg"
     old_version = await case.session.get(PrescriptionVersion, old_medication.prescription_version_id)
     prescription = await case.session.get(Prescription, old_version.prescription_id)
     replacement = PrescriptionVersion(
@@ -183,6 +186,8 @@ async def test_old_version_survives_replacement_and_cancelled_schedule(case):
     assert data["counts"]["taken_count"] == 1
     assert data["records"][0]["prescription_version_id"] == str(old_version.id)
     assert data["records"][0]["prescription_version_medication_id"] == str(old_medication.id)
+    assert data["records"][0]["medication_name"] == "합성테스트약"
+    assert data["records"][0]["strength_text"] == "100mg"
 
 
 @pytest.mark.parametrize(
@@ -224,6 +229,23 @@ async def test_kst_default_date_and_underflow_before_query():
     repository.list_owned.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("instant", "expected"),
+    [
+        (datetime(2026, 9, 12, 19, 59, tzinfo=UTC), "BEDTIME"),
+        (datetime(2026, 9, 12, 20, 0, tzinfo=UTC), "BREAKFAST"),
+        (datetime(2026, 9, 13, 1, 59, tzinfo=UTC), "BREAKFAST"),
+        (datetime(2026, 9, 13, 2, 0, tzinfo=UTC), "LUNCH"),
+        (datetime(2026, 9, 13, 5, 59, tzinfo=UTC), "LUNCH"),
+        (datetime(2026, 9, 13, 6, 0, tzinfo=UTC), "DINNER"),
+        (datetime(2026, 9, 13, 11, 59, tzinfo=UTC), "DINNER"),
+        (datetime(2026, 9, 13, 12, 0, tzinfo=UTC), "BEDTIME"),
+    ],
+)
+def test_report_time_slot_uses_kst_boundaries(instant: datetime, expected: str):
+    assert _report_time_slot(instant) == expected
+
+
 def test_half_up_and_frontend_contract():
     assert _rate(1, 16).percentage == 6.3
     schema = fastapi_app.openapi()
@@ -235,6 +257,10 @@ def test_half_up_and_frontend_contract():
         assert operation["responses"][str(status)]["content"]["application/json"]["schema"]["$ref"].endswith(
             "/ErrorResponse"
         )
+    record = schema["components"]["schemas"]["MedicationReportRecord"]
+    for field in ("medication_name", "strength_text", "time_slot"):
+        assert field in record["required"]
+    assert record["properties"]["time_slot"]["enum"] == ["BREAKFAST", "LUNCH", "DINNER", "BEDTIME"]
     checkin = schema["components"]["schemas"]["MedicationReportCheckin"]
     assert "updated_at" in checkin["required"]
     fixtures = json.loads(

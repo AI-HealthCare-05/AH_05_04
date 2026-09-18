@@ -422,7 +422,7 @@ def _decimal(value: Decimal) -> str:
     return "0" if rendered in {"", "-0"} else rendered
 
 
-def _scope_comparisons(baseline: MetricResults, candidate: MetricResults) -> tuple[ScopeComparison, ...]:
+def build_scope_comparisons(baseline: MetricResults, candidate: MetricResults) -> tuple[ScopeComparison, ...]:
     baseline_metrics = {
         (item.metric_id, item.metric_version, item.partition.value, item.slice_id): item for item in baseline.metrics
     }
@@ -494,7 +494,7 @@ def build_retrieval_comparison(
         )
         for key in controlled_variable_keys
     )
-    scopes = _scope_comparisons(baseline.metrics, material.metrics)
+    scopes = build_scope_comparisons(baseline.metrics, material.metrics)
     baseline_completed = baseline.run.execution_status is ExecutionStatus.COMPLETED
     candidate_status = (
         material.run.execution_status

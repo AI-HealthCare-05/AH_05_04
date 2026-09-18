@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID
@@ -6,17 +7,28 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
+from app.core.config import Env
 from app.models.account_deletion_request import AccountDeletionRequest, AccountDeletionRequestStatus
+from app.models.users import AccountStatus
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
+from app.repositories.user_repository import UserRepository
 
 FAILED_DEMO_DELETION_CODE = "DEMO_DELETION_FAILED"
 WITHDRAWN_PROFILE_NAME = "withdrawn"
 CANDIDATE_CLEANUP_MARKER = "__candidate_cleanup__"
 
 
+CleanupSessionFactory = Callable[[], AsyncSession]
+
+
+class AccountWithdrawalCredentialsChangedError(Exception):
+    pass
+
+
 class AccountDeletionRequestRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, *, cleanup_session_factory: CleanupSessionFactory | None = None) -> None:
         self.session = session
+        self._cleanup_session_factory = cleanup_session_factory
 
     async def create_pending(self, *, user_id: UUID, requested_at: datetime) -> AccountDeletionRequest:
         request = AccountDeletionRequest(
@@ -37,6 +49,67 @@ class AccountDeletionRequestRepository:
             .execution_options(populate_existing=True)
         )
         return result.scalars().first()
+
+    async def request_demo_withdrawal(
+        self,
+        *,
+        user_id: UUID,
+        expected_password_hash: str,
+        requested_at: datetime,
+        anonymized_email: str,
+        disabled_password_hash: str,
+    ) -> AccountDeletionRequest | None:
+        if self._cleanup_session_factory is None:
+            if config.ENV is not Env.LOCAL and config.ACCOUNT_WITHDRAWAL_REQUEST_ENABLED:
+                raise RuntimeError("Account withdrawal cleanup DB credentials are not configured.")
+            return await self._request_demo_withdrawal_in_current_transaction(
+                user_id=user_id,
+                expected_password_hash=expected_password_hash,
+                requested_at=requested_at,
+                anonymized_email=anonymized_email,
+                disabled_password_hash=disabled_password_hash,
+            )
+
+        async with self._cleanup_session_factory() as cleanup_session:
+            async with cleanup_session.begin():
+                cleanup_repository = AccountDeletionRequestRepository(cleanup_session)
+                return await cleanup_repository._request_demo_withdrawal_in_current_transaction(
+                    user_id=user_id,
+                    expected_password_hash=expected_password_hash,
+                    requested_at=requested_at,
+                    anonymized_email=anonymized_email,
+                    disabled_password_hash=disabled_password_hash,
+                )
+
+    async def _request_demo_withdrawal_in_current_transaction(
+        self,
+        *,
+        user_id: UUID,
+        expected_password_hash: str,
+        requested_at: datetime,
+        anonymized_email: str,
+        disabled_password_hash: str,
+    ) -> AccountDeletionRequest | None:
+        user_repository = UserRepository(self.session)
+        locked_user = await user_repository.get_user_for_update(user_id)
+        if locked_user is None:
+            raise AccountWithdrawalCredentialsChangedError
+        if locked_user.account_status != AccountStatus.ACTIVE or not locked_user.is_active:
+            return await self.get_latest_for_user_for_update(user_id=user_id)
+        if locked_user.hashed_password != expected_password_hash:
+            raise AccountWithdrawalCredentialsChangedError
+
+        locked_user.account_status = AccountStatus.WITHDRAWAL_REQUESTED
+        locked_user.is_active = False
+        locked_user.withdrawal_requested_at = requested_at
+        locked_user.token_version += 1
+        request = await self.create_pending(user_id=user_id, requested_at=requested_at)
+        return await self.complete_demo_withdrawal(
+            request_id=request.id,
+            completed_at=requested_at,
+            anonymized_email=anonymized_email,
+            disabled_password_hash=disabled_password_hash,
+        )
 
     async def complete_demo_withdrawal(
         self,
@@ -94,18 +167,22 @@ class AccountDeletionRequestRepository:
         return request
 
     async def _execute(self, statement: str, **params: object) -> None:
-        await self.session.execute(text(statement), params)
+        await self._execute_with_session(self.session, statement, **params)
+
+    async def _execute_with_session(self, session: AsyncSession, statement: str, **params: object) -> None:
+        await session.execute(text(statement), params)
 
     async def _list_medical_document_object_keys(self, user_id: UUID) -> list[str]:
         result = await self.session.execute(
             text(
                 """
-                SELECT object_key
-                  FROM medical_document
-                 WHERE uploaded_by = :user_id
-                   AND object_key IS NOT NULL
-                   AND trim(object_key) <> ''
-                 ORDER BY object_key, id
+                SELECT object_key FROM medical_document
+                 WHERE uploaded_by = :user_id AND object_key IS NOT NULL AND trim(object_key) <> ''
+                UNION
+                SELECT normalized_object_key FROM medical_document
+                 WHERE uploaded_by = :user_id AND normalized_object_key IS NOT NULL
+                   AND trim(normalized_object_key) <> ''
+                 ORDER BY object_key
                 """
             ),
             {"user_id": str(user_id)},
@@ -125,12 +202,15 @@ class AccountDeletionRequestRepository:
         return object_path
 
     async def _delete_user_owned_runtime_data(self, user_id: UUID) -> None:
+        await self._delete_user_owned_runtime_data_with_session(self.session, user_id)
+
+    async def _delete_user_owned_runtime_data_with_session(self, session: AsyncSession, user_id: UUID) -> None:
         params = {"user_id": str(user_id)}
         for statement in USER_DATA_DELETE_STATEMENTS:
             if statement == CANDIDATE_CLEANUP_MARKER:
-                await MedicationCandidateRepository(self.session).delete_for_account_withdrawal(user_id=user_id)
+                await MedicationCandidateRepository(session).delete_for_account_withdrawal(user_id=user_id)
                 continue
-            await self._execute(statement, **params)
+            await self._execute_with_session(session, statement, **params)
 
     async def _anonymize_withdrawn_user(
         self,
