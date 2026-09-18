@@ -87,6 +87,7 @@ run_worker_test_lane() {
     pytest -n 2 --dist=loadfile --max-worker-restart=0 --cov --cov-report= \
     -o "cache_dir=$cache_dir" \
     ai_worker/tests/core \
+    ai_worker/tests/adapters \
     ai_worker/tests/ocr \
     ai_worker/tests/rag \
     ai_worker/tests/evaluation; then

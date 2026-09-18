@@ -30,10 +30,13 @@ from ai_worker.tasks.evaluation.protected_retrieval import (
     authorization_grant_approval_sha256,
 )
 from ai_worker.tasks.evaluation.protected_retrieval_control import (
+    C1ApprovalArtifact,
     ControlCommandKind,
     ControlCommandResult,
     DisableIdentityCommand,
     ExpireAuthorizationCommand,
+    FreezeApprovalArtifact,
+    FreezeApprovalLocator,
     FreezeApprovalSourceEvidence,
     FreezeDatasetCommand,
     GrantAuthorizationCommand,
@@ -42,7 +45,10 @@ from ai_worker.tasks.evaluation.protected_retrieval_control import (
     RegisterIdentityCommand,
     RevokeAuthorizationCommand,
     TransitionDatasetCommand,
+    c1_approval_artifact_path,
+    compute_approval_canonical_raw_sha256,
     control_command_sha256,
+    freeze_approval_artifact_path,
     verify_authorization_approval,
     verify_freeze_approval,
 )
@@ -53,6 +59,7 @@ GRANT_ID = "123e4567-e89b-42d3-a456-426614174001"
 DATASET_ID = "123e4567-e89b-42d3-a456-426614174003"
 SHA_A = "a" * 64
 SHA_B = "b" * 64
+SHA_C = "c" * 64
 
 
 def _principal(
@@ -970,3 +977,275 @@ def test_transition_and_freeze_dataset_command_shapes() -> None:
         expected_raw_sha256=SHA_B,
     )
     assert freeze_cmd.expected_state_revision == 3
+
+
+def test_freeze_approval_locator_validation() -> None:
+    locator = FreezeApprovalLocator(
+        source_event_id=REQUEST_ID,
+        pull_number=123,
+        review_id=456,
+    )
+    assert locator.source_event_id == REQUEST_ID
+    assert locator.pull_number == 123
+    assert locator.review_id == 456
+
+    with pytest.raises(ValidationError):
+        FreezeApprovalLocator(
+            source_event_id="not-a-uuid",
+            pull_number=123,
+            review_id=456,
+        )
+
+    with pytest.raises(ValidationError):
+        FreezeApprovalLocator(
+            source_event_id=REQUEST_ID,
+            pull_number=0,
+            review_id=456,
+        )
+
+    with pytest.raises(ValidationError):
+        FreezeApprovalLocator(
+            source_event_id=REQUEST_ID,
+            pull_number=123,
+            review_id=-1,
+        )
+
+    with pytest.raises(ValidationError):
+        FreezeApprovalLocator(
+            source_event_id=REQUEST_ID,
+            pull_number=123,
+            review_id=456,
+            repository="owner/repo",  # type: ignore[call-arg]
+        )
+
+
+def test_c1_approval_artifact_validation() -> None:
+    artifact = C1ApprovalArtifact(
+        source_event_id="github:org/repo:pull:123:review:456",
+        authorization_action=AuthorizationAuditAction.GRANT,
+        approved_grant_payload_sha256=SHA_A,
+        issuer_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+        target_commit_oid="a" * 40,
+        target_artifact_sha256=SHA_B,
+        implementation_participants=(
+            ActorIdentity(namespace="GITHUB_LOGIN", actor_id="alice"),
+            ActorIdentity(namespace="GITHUB_LOGIN", actor_id="bob"),
+        ),
+    )
+    assert artifact.format_id == "c1.authorization-approval-artifact"
+    assert artifact.format_version == "1.0.0"
+
+    with pytest.raises(ValidationError):
+        C1ApprovalArtifact(
+            source_event_id="github:org/repo:pull:123:review:456",
+            authorization_action=AuthorizationAuditAction.GRANT,
+            approved_grant_payload_sha256=SHA_A,
+            issuer_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+            target_commit_oid="invalid-oid",
+            target_artifact_sha256=SHA_B,
+            implementation_participants=(ActorIdentity(namespace="GITHUB_LOGIN", actor_id="alice"),),
+        )
+
+    with pytest.raises(ValidationError):
+        C1ApprovalArtifact(
+            source_event_id="github:org/repo:pull:123:review:456",
+            authorization_action=AuthorizationAuditAction.GRANT,
+            approved_grant_payload_sha256=SHA_A,
+            issuer_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+            target_commit_oid="a" * 40,
+            target_artifact_sha256=SHA_B,
+            implementation_participants=(
+                ActorIdentity(namespace="GITHUB_LOGIN", actor_id="alice"),
+                ActorIdentity(namespace="GITHUB_LOGIN", actor_id="alice"),
+            ),
+        )
+
+    with pytest.raises(ValidationError):
+        C1ApprovalArtifact(
+            source_event_id="github:org/repo:pull:123:review:456",
+            authorization_action=AuthorizationAuditAction.GRANT,
+            approved_grant_payload_sha256=SHA_A,
+            issuer_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+            target_commit_oid="a" * 40,
+            target_artifact_sha256=SHA_B,
+            implementation_participants=(ActorIdentity(namespace="GITHUB_LOGIN", actor_id="alice"),),
+            unexpected_field="disallowed",  # type: ignore[call-arg]
+        )
+
+
+def test_freeze_approval_artifact_validation() -> None:
+    artifact = FreezeApprovalArtifact(
+        source_event_id=REQUEST_ID,
+        dataset_id=DATASET_ID,
+        dataset_version="1.0.0",
+        manifest_sha256=SHA_A,
+        protected_artifact_sha256=SHA_B,
+        authored_count=40,
+        review_complete=True,
+        leakage_axis_intersections=(0, 0, 0, 0),
+        issuer_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+        target_commit_oid="b" * 40,
+        target_artifact_sha256=SHA_C,
+        implementation_participants=(ActorIdentity(namespace="GITHUB_LOGIN", actor_id="developer1"),),
+    )
+    assert artifact.format_id == "freeze.dataset-approval-artifact"
+    assert artifact.authored_count == 40
+    assert artifact.review_complete is True
+
+    with pytest.raises(ValidationError):
+        FreezeApprovalArtifact(
+            source_event_id=REQUEST_ID,
+            dataset_id=DATASET_ID,
+            dataset_version="1.0.0",
+            manifest_sha256=SHA_A,
+            protected_artifact_sha256=SHA_B,
+            authored_count=39,  # type: ignore[arg-type]
+            review_complete=True,
+            leakage_axis_intersections=(0, 0, 0, 0),
+            issuer_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+            target_commit_oid="b" * 40,
+            target_artifact_sha256=SHA_C,
+            implementation_participants=(ActorIdentity(namespace="GITHUB_LOGIN", actor_id="developer1"),),
+        )
+
+    with pytest.raises(ValidationError):
+        FreezeApprovalArtifact(
+            source_event_id=REQUEST_ID,
+            dataset_id=DATASET_ID,
+            dataset_version="1.0.0",
+            manifest_sha256=SHA_A,
+            protected_artifact_sha256=SHA_B,
+            authored_count=40,
+            review_complete=False,  # type: ignore[arg-type]
+            leakage_axis_intersections=(0, 0, 0, 0),
+            issuer_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+            target_commit_oid="b" * 40,
+            target_artifact_sha256=SHA_C,
+            implementation_participants=(ActorIdentity(namespace="GITHUB_LOGIN", actor_id="developer1"),),
+        )
+
+    with pytest.raises(ValidationError):
+        FreezeApprovalArtifact(
+            source_event_id=REQUEST_ID,
+            dataset_id=DATASET_ID,
+            dataset_version="1.0.0",
+            manifest_sha256=SHA_A,
+            protected_artifact_sha256=SHA_B,
+            authored_count=40,
+            review_complete=True,
+            leakage_axis_intersections=(1, 0, 0, 0),  # type: ignore[arg-type]
+            issuer_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+            target_commit_oid="b" * 40,
+            target_artifact_sha256=SHA_C,
+            implementation_participants=(ActorIdentity(namespace="GITHUB_LOGIN", actor_id="developer1"),),
+        )
+
+    with pytest.raises(ValidationError):
+        FreezeApprovalArtifact(
+            source_event_id="not-a-uuid",
+            dataset_id=DATASET_ID,
+            dataset_version="1.0.0",
+            manifest_sha256=SHA_A,
+            protected_artifact_sha256=SHA_B,
+            authored_count=40,
+            review_complete=True,
+            leakage_axis_intersections=(0, 0, 0, 0),
+            issuer_role=ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER,
+            target_commit_oid="b" * 40,
+            target_artifact_sha256=SHA_C,
+            implementation_participants=(ActorIdentity(namespace="GITHUB_LOGIN", actor_id="developer1"),),
+        )
+
+
+def test_compute_approval_canonical_raw_sha256_properties() -> None:
+    dt = datetime(2026, 9, 18, 12, 0, 0, tzinfo=UTC)
+    hash1 = compute_approval_canonical_raw_sha256(
+        review_id=100,
+        state="APPROVED",
+        submitted_at=dt,
+        commit_id="a" * 40,
+        reviewer_actor_id="reviewer1",
+        repository="AI-HealthCare-05/AH_05_04",
+        pull_number=772,
+        approval_artifact_sha256=SHA_A,
+    )
+    assert len(hash1) == 64
+
+    # Identical with string format
+    hash2 = compute_approval_canonical_raw_sha256(
+        review_id=100,
+        state="APPROVED",
+        submitted_at="2026-09-18T12:00:00Z",
+        commit_id="a" * 40,
+        reviewer_actor_id="reviewer1",
+        repository="AI-HealthCare-05/AH_05_04",
+        pull_number=772,
+        approval_artifact_sha256=SHA_A,
+    )
+    assert hash1 == hash2
+
+    # Changing any canonical projection field changes the hash
+    hash_diff_commit = compute_approval_canonical_raw_sha256(
+        review_id=100,
+        state="APPROVED",
+        submitted_at=dt,
+        commit_id="b" * 40,
+        reviewer_actor_id="reviewer1",
+        repository="AI-HealthCare-05/AH_05_04",
+        pull_number=772,
+        approval_artifact_sha256=SHA_A,
+    )
+    assert hash_diff_commit != hash1
+
+    hash_diff_artifact = compute_approval_canonical_raw_sha256(
+        review_id=100,
+        state="APPROVED",
+        submitted_at=dt,
+        commit_id="a" * 40,
+        reviewer_actor_id="reviewer1",
+        repository="AI-HealthCare-05/AH_05_04",
+        pull_number=772,
+        approval_artifact_sha256=SHA_B,
+    )
+    assert hash_diff_artifact != hash1
+
+    hash_diff_repo = compute_approval_canonical_raw_sha256(
+        review_id=100,
+        state="APPROVED",
+        submitted_at=dt,
+        commit_id="a" * 40,
+        reviewer_actor_id="reviewer1",
+        repository="other/repo",
+        pull_number=772,
+        approval_artifact_sha256=SHA_A,
+    )
+    assert hash_diff_repo != hash1
+
+
+def test_exact_artifact_paths() -> None:
+    assert c1_approval_artifact_path(772, 9999) == "docs/validation/protected_retrieval/c1/pull_772_review_9999.json"
+    assert freeze_approval_artifact_path(REQUEST_ID) == f"docs/validation/protected_retrieval/freeze/{REQUEST_ID}.json"
+
+
+def test_freeze_command_idempotency_regression_with_locators() -> None:
+    freeze_cmd = FreezeDatasetCommand(
+        request_id=REQUEST_ID,
+        dataset_id=DATASET_ID,
+        dataset_version="1.0.0",
+        expected_state_revision=3,
+        approval_source_event_id=REQUEST_ID,
+        expected_raw_sha256=SHA_B,
+    )
+    # Ensure locator is NOT part of FreezeDatasetCommand
+    assert not hasattr(freeze_cmd, "locator")
+    assert "locator" not in freeze_cmd.model_dump(mode="json")
+
+    # Command hash is strictly independent of any ephemeral locator
+    loc_a = FreezeApprovalLocator(source_event_id=REQUEST_ID, pull_number=1, review_id=100)
+    loc_b = FreezeApprovalLocator(source_event_id=REQUEST_ID, pull_number=2, review_id=200)
+    assert loc_a != loc_b
+
+    hash_cmd = control_command_sha256(ControlCommandKind.FREEZE_DATASET, freeze_cmd)
+    assert len(hash_cmd) == 64
+    # Repeated calculation produces identical hash
+    assert control_command_sha256(ControlCommandKind.FREEZE_DATASET, freeze_cmd) == hash_cmd

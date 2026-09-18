@@ -23,6 +23,7 @@ from sqlalchemy.pool import NullPool
 
 from ai_worker.adapters.clova_ocr_provider import ClovaOcrProviderAdapter
 from ai_worker.adapters.factory import create_redis_client, create_stream_adapter
+from ai_worker.adapters.github_trusted_approval_source import GitHubTrustedApprovalSource
 from ai_worker.adapters.openai_ocr_structurer import WorkerLlmPrescriptionStructurer
 from ai_worker.adapters.postgresql_protected_retrieval import (
     PostgresqlProtectedRetrievalService,
@@ -259,6 +260,23 @@ async def create_protected_authorization_control_service(
         await service.close()
         raise
     return service
+
+
+def create_trusted_approval_source(config: Config) -> TrustedApprovalSource:
+    """Build the production fail-closed trusted approval source."""
+    if not config.PROTECTED_RETRIEVAL_ENABLED:
+        raise RuntimeError("PROTECTED_RETRIEVAL_DISABLED")
+    if (
+        config.PROTECTED_APPROVAL_REPOSITORY is None
+        or config.PROTECTED_APPROVAL_BRANCH is None
+        or config.PROTECTED_APPROVAL_GITHUB_TOKEN is None
+    ):
+        raise RuntimeError("PROTECTED_APPROVAL_CONFIG_INVALID")
+    return GitHubTrustedApprovalSource(
+        repository=config.PROTECTED_APPROVAL_REPOSITORY,
+        default_branch=config.PROTECTED_APPROVAL_BRANCH,
+        token=config.PROTECTED_APPROVAL_GITHUB_TOKEN,
+    )
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

@@ -444,6 +444,7 @@ jobs:
           uv run pytest \
             -n 2 --dist=loadfile --max-worker-restart=0 --cov --cov-report= \
             ai_worker/tests/core \
+            ai_worker/tests/adapters \
             ai_worker/tests/ocr \
             ai_worker/tests/rag \
             ai_worker/tests/evaluation
