@@ -483,6 +483,57 @@ services:
     networks:
       - ws
 
+  # #811: Protected Retrieval DB provisioning one-shot service
+  protected-retrieval-provision:
+    profiles: ["protected-retrieval-admin"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "infra.python.provision_protected_retrieval", "--provision"]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME}
+      DB_ADMIN_USER: ${DB_ADMIN_USER}
+      DB_ADMIN_PASSWORD: ${DB_ADMIN_PASSWORD}
+      DB_MIGRATION_USER: ${DB_MIGRATION_USER}
+      DB_APP_USER: ${DB_APP_USER}
+      SOURCE_WRITER_USER: ${SOURCE_WRITER_USER}
+      PROTECTED_DB_SCHEMA: ${PROTECTED_DB_SCHEMA:-}
+      PROTECTED_DB_OWNER_ROLE: ${PROTECTED_DB_OWNER_ROLE:-}
+      PROTECTED_DB_ACCESS_ROLE: ${PROTECTED_DB_ACCESS_ROLE:-}
+      PROTECTED_DB_CONTROL_ROLE: ${PROTECTED_DB_CONTROL_ROLE:-}
+      PROTECTED_DB_USER: ${PROTECTED_DB_USER:-}
+      PROTECTED_DB_PASSWORD: ${PROTECTED_DB_PASSWORD:-}
+      PROTECTED_DB_CONTROL_USER: ${PROTECTED_DB_CONTROL_USER:-}
+      PROTECTED_DB_CONTROL_PASSWORD: ${PROTECTED_DB_CONTROL_PASSWORD:-}
+    networks:
+      - ws
+
+  # #811: Protected Retrieval Runner & Preflight one-shot service
+  protected-retrieval-runner:
+    profiles: ["protected-runner"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "ai_worker.admin.protected_retrieval_preflight"]
+    environment:
+      PROTECTED_RETRIEVAL_ENABLED: "true"
+      PROTECTED_DB_HOST: postgres
+      PROTECTED_DB_PORT: "5432"
+      PROTECTED_DB_NAME: ${DB_NAME}
+      PROTECTED_DB_SCHEMA: ${PROTECTED_DB_SCHEMA:-}
+      PROTECTED_DB_ACCESS_ROLE: ${PROTECTED_DB_ACCESS_ROLE:-}
+      PROTECTED_DB_CONTROL_ROLE: ${PROTECTED_DB_CONTROL_ROLE:-}
+      PROTECTED_DB_USER: ${PROTECTED_DB_USER:-}
+      PROTECTED_DB_PASSWORD: ${PROTECTED_DB_PASSWORD:-}
+      PROTECTED_DB_CONTROL_USER: ${PROTECTED_DB_CONTROL_USER:-}
+      PROTECTED_DB_CONTROL_PASSWORD: ${PROTECTED_DB_CONTROL_PASSWORD:-}
+      PROTECTED_APPROVAL_REPOSITORY: ${PROTECTED_APPROVAL_REPOSITORY:-}
+      PROTECTED_APPROVAL_BRANCH: ${PROTECTED_APPROVAL_BRANCH:-}
+      PROTECTED_APPROVAL_GITHUB_TOKEN: ${PROTECTED_APPROVAL_GITHUB_TOKEN:-}
+      DB_APP_USER: ${DB_APP_USER:-}
+    networks:
+      - ws
+
 volumes:
   # PostgreSQL 운영 데이터를 컨테이너 재생성 후에도 유지합니다.
   postgres_data:

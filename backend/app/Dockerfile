@@ -24,6 +24,8 @@ COPY ./ocr_runtime ./ocr_runtime
 COPY ./provider_runtime ./provider_runtime
 COPY ./rag_runtime ./rag_runtime
 COPY ./infra/python ./infra/python
+# #811 Protected Retrieval Alembic migration tree for isolated one-shot provisioning.
+COPY ./infra/protected_retrieval ./infra/protected_retrieval
 # #175 내부 Bundle build port는 ai_worker의 순수 RAG kernel을 import합니다.
 # (app/repositories/rag_runtime_repository.py, app/services/rag_runtime_bundle_build.py)
 # 해당 import 체인은 stdlib만 사용하므로 'app' 의존성 그룹으로 충분하고, 추가 패키지는 없습니다.
