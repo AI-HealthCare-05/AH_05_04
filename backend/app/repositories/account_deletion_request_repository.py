@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
 from app.core.config import Env
+from app.core.logger import default_logger
 from app.models.account_deletion_request import AccountDeletionRequest, AccountDeletionRequestStatus
 from app.models.users import AccountStatus
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
@@ -131,17 +132,26 @@ class AccountDeletionRequestRepository:
 
         document_object_keys = await self._list_medical_document_object_keys(request.user_id)
 
+        cleanup_step = "medical_document_object_delete"
         try:
             async with self.session.begin_nested():
                 self._delete_medical_document_objects(document_object_keys)
+                cleanup_step = "user_owned_runtime_data_delete"
                 await self._delete_user_owned_runtime_data(request.user_id)
+                cleanup_step = "withdrawn_user_anonymize"
                 await self._anonymize_withdrawn_user(
                     user_id=request.user_id,
                     anonymized_email=anonymized_email,
                     disabled_password_hash=disabled_password_hash,
                     withdrawn_at=completed_at,
                 )
-        except Exception:
+        except Exception as exc:
+            default_logger.error(
+                "account_withdrawal_cleanup status=failed cleanup_step=%s failure_code=%s exception_type=%s",
+                cleanup_step,
+                FAILED_DEMO_DELETION_CODE,
+                type(exc).__name__,
+            )
             request.status = AccountDeletionRequestStatus.FAILED
             request.failed_at = completed_at
             request.last_error_code = FAILED_DEMO_DELETION_CODE

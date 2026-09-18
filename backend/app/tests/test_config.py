@@ -12,6 +12,7 @@ BASE_CONFIG = {
     "DB_PASSWORD": "test_password",
     "DB_NAME": "test_database",
     "CHAT_HISTORY_CONTEXT_ENABLED": False,
+    "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED": False,
 }
 
 # IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY용 placeholder가 아닌 실제 형식의(Fernet 32byte
@@ -100,6 +101,52 @@ def test_config_parses_ocr_structure_llm_enabled(
     )
 
     assert config.OCR_STRUCTURE_LLM_ENABLED is expected
+
+
+def test_account_withdrawal_enabled_requires_cleanup_credentials_outside_local() -> None:
+    config = Config.model_validate(
+        {
+            **BASE_CONFIG,
+            "ENV": "production",
+            "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
+            "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": REAL_SNAPSHOT_ENCRYPTION_KEY,
+            "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED": True,
+            "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE": "account_cleanup",
+            "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD": "cleanup-password",
+        }
+    )
+
+    assert config.ACCOUNT_WITHDRAWAL_REQUEST_ENABLED is True
+    assert config.ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE == "account_cleanup"
+
+
+@pytest.mark.parametrize(
+    "cleanup_credentials",
+    [
+        {
+            "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE": "account_cleanup",
+            "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD": "",
+        },
+        {
+            "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE": "",
+            "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD": "",
+        },
+    ],
+)
+def test_account_withdrawal_enabled_rejects_missing_cleanup_credentials_outside_local(
+    cleanup_credentials: dict[str, str],
+) -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": "production",
+                "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": REAL_SNAPSHOT_ENCRYPTION_KEY,
+                "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED": True,
+                **cleanup_credentials,
+            }
+        )
 
 
 def test_chat_history_context_is_disabled_by_default() -> None:
