@@ -37,7 +37,7 @@
 
 ## Design principles
 
-- Server response is the display contract: render `counts`, `adherence_rate`, `confirmation_rate`, dates, and `records` without deriving a competing source of truth.
+- Server response is the display contract: render `counts`, `adherence_rate`, `confirmation_rate`, dates, and `records` without deriving a competing source of truth. Report `records` use Backend-provided `medication_name`, nullable `strength_text`, and `time_slot`; do not display internal IDs as user-facing labels or recalculate meal slots from `scheduled_at`.
 - Keep `TAKEN` (`복용`), `NOT_TAKEN` (`미복용`), and `UNCONFIRMED` (`미확인`) distinct in labels, numbers, structure, and assistive text. Never merge `UNCONFIRMED` into `NOT_TAKEN` or label both as `미이행`.
 - The two rate meanings remain visible through their Backend-provided numerator and denominator: `adherence_rate` is confirmed-record adherence; `confirmation_rate` is record confirmation.
 - Reuse one fetched response across the standard Report and clinic presentation. A route change or layout change must not create a second aggregation path.
@@ -58,7 +58,7 @@
 - New/changed components: 7/30-day period selector; labeled status-count group; reusable rate card; Report layout; clinic layout that receives the same response; objective records presentation when needed.
 - Variants and states: 7-day, 30-day, loading, populated, no records, zero denominator, retryable request error, authentication failure, non-exposure/not-found, network/5xx unavailable, and clinic view.
 - Token/component ownership: Product components and tokens remain under the existing design system. Report-specific composition may live with the Report page; clinic view must reuse its data-display components rather than fork them.
-- Data boundary: The API provides `period_days`, `start_date`, `end_date`, `timezone`, `as_of`, `counts` (`taken_count`, `not_taken_count`, `unconfirmed_count`, `pending_count`, `cancelled_count`), `overdue_pending_count`, `adherence_rate`, `confirmation_rate`, and `records`. The required primary UI counts are `TAKEN`, `NOT_TAKEN`, and `UNCONFIRMED`; do not promote auxiliary fields into a new metric without a separate approved design.
+- Data boundary: The API provides `period_days`, `start_date`, `end_date`, `timezone`, `as_of`, `counts` (`taken_count`, `not_taken_count`, `unconfirmed_count`, `pending_count`, `cancelled_count`), `overdue_pending_count`, `adherence_rate`, `confirmation_rate`, and `records`. Each record includes user-facing medication snapshot fields and a Backend-provided `time_slot`. The required primary UI counts are `TAKEN`, `NOT_TAKEN`, and `UNCONFIRMED`; do not promote auxiliary fields into a new metric without a separate approved design.
 
 ## Accessibility
 

@@ -7,6 +7,7 @@ import type { MedicationOccurrenceStatus } from './medicationOccurrences'
 // - backend/app/dtos/medication_reports.py
 
 export type MedicationReportPeriod = 7 | 30
+export type MedicationReportTimeSlot = 'BREAKFAST' | 'LUNCH' | 'DINNER' | 'BEDTIME'
 
 export type MedicationReportCounts = {
   taken_count: number
@@ -30,6 +31,9 @@ export type MedicationReportRecord = {
   scheduled_at: string
   confirmation_deadline_at: string
   status: MedicationOccurrenceStatus
+  medication_name: string
+  strength_text: string | null
+  time_slot: MedicationReportTimeSlot
   updated_at: string
   checkin: {
     checkin_id: string
