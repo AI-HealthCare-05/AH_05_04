@@ -1191,7 +1191,34 @@
   display: grid;
   gap: 10px;
 }
+.mvp-upload__camera {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
 
+.mvp-upload__camera-preview {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: 16px;
+  background: #111;
+}
+
+.mvp-upload__camera-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mvp-upload__camera-actions .ds-button {
+  width: 100%;
+  min-width: 0;
+}
 .mvp-upload__contract {
   width: 1px;
   height: 1px;
