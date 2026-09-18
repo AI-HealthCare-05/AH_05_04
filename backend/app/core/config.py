@@ -283,6 +283,20 @@ class Config(BaseSettings):
     # 명시적으로 활성화하지 않은 환경에서는 요청 접수 전 503으로 fail-closed됩니다.
     ACCOUNT_WITHDRAWAL_REQUEST_ENABLED: bool = False
 
+    @model_validator(mode="after")
+    def validate_account_withdrawal_cleanup_credentials(self) -> "Config":
+        if self.ENV is Env.LOCAL or not self.ACCOUNT_WITHDRAWAL_REQUEST_ENABLED:
+            return self
+        if (
+            not self.ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE.strip()
+            or not self.ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD.strip()
+        ):
+            raise ValueError(
+                "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE and ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD "
+                "are required when account withdrawal is enabled outside local"
+            )
+        return self
+
     CLOVA_OCR_INVOKE_URL: str = ""
     CLOVA_OCR_SECRET: str = ""
     CLOVA_OCR_TIMEOUT_SECONDS: float = 20.0
