@@ -86,15 +86,19 @@ async def _verify_login_role_attributes(
     escaped_password = password.replace("'", "''")
 
     row = (
-        await connection.execute(
-            text(
-                "SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, "
-                "rolcreaterole, rolreplication, rolbypassrls, rolinherit "
-                "FROM pg_roles WHERE rolname = :name"
-            ),
-            {"name": role_name},
+        (
+            await connection.execute(
+                text(
+                    "SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, "
+                    "rolcreaterole, rolreplication, rolbypassrls, rolinherit "
+                    "FROM pg_roles WHERE rolname = :name"
+                ),
+                {"name": role_name},
+            )
         )
-    ).mappings().first()
+        .mappings()
+        .first()
+    )
 
     if row is None:
         await connection.exec_driver_sql(
@@ -184,12 +188,10 @@ async def verify_protected_connections(
 ) -> None:
     """Validate that limited logins can connect and satisfy exact policy boundaries."""
     data_url = (
-        f"postgresql+asyncpg://{quote_plus(data_login)}:{quote_plus(data_password)}"
-        f"@{db_host}:{db_port}/{db_name}"
+        f"postgresql+asyncpg://{quote_plus(data_login)}:{quote_plus(data_password)}@{db_host}:{db_port}/{db_name}"
     )
     control_url = (
-        f"postgresql+asyncpg://{quote_plus(control_login)}:{quote_plus(control_password)}"
-        f"@{db_host}:{db_port}/{db_name}"
+        f"postgresql+asyncpg://{quote_plus(control_login)}:{quote_plus(control_password)}@{db_host}:{db_port}/{db_name}"
     )
 
     data_engine = create_async_engine(data_url)
@@ -239,9 +241,7 @@ async def async_main(args: argparse.Namespace) -> int:
     db_name = os.getenv("DB_NAME", "").strip()
 
     schema = validate_safe_identifier(os.getenv("PROTECTED_DB_SCHEMA", "").strip(), "PROTECTED_DB_SCHEMA")
-    owner_role = validate_safe_identifier(
-        os.getenv("PROTECTED_DB_OWNER_ROLE", "").strip(), "PROTECTED_DB_OWNER_ROLE"
-    )
+    owner_role = validate_safe_identifier(os.getenv("PROTECTED_DB_OWNER_ROLE", "").strip(), "PROTECTED_DB_OWNER_ROLE")
     access_role = validate_safe_identifier(
         os.getenv("PROTECTED_DB_ACCESS_ROLE", "").strip(), "PROTECTED_DB_ACCESS_ROLE"
     )
@@ -283,8 +283,7 @@ async def async_main(args: argparse.Namespace) -> int:
             return 1
 
         admin_url = (
-            f"postgresql+asyncpg://{quote_plus(admin_user)}:{quote_plus(admin_password)}"
-            f"@{db_host}:{db_port}/{db_name}"
+            f"postgresql+asyncpg://{quote_plus(admin_user)}:{quote_plus(admin_password)}@{db_host}:{db_port}/{db_name}"
         )
         alembic_ini = Path(__file__).resolve().parents[1] / "protected_retrieval" / "alembic.ini"
 

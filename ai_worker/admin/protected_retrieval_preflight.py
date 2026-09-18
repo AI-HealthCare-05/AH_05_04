@@ -110,13 +110,9 @@ async def check_database_connections(
     control_user = e.get("PROTECTED_DB_CONTROL_USER", "").strip()
     control_password = e.get("PROTECTED_DB_CONTROL_PASSWORD", "").strip()
 
-    data_url = (
-        f"postgresql+asyncpg://{quote_plus(data_user)}:{quote_plus(data_password)}"
-        f"@{db_host}:{db_port}/{db_name}"
-    )
+    data_url = f"postgresql+asyncpg://{quote_plus(data_user)}:{quote_plus(data_password)}@{db_host}:{db_port}/{db_name}"
     control_url = (
-        f"postgresql+asyncpg://{quote_plus(control_user)}:{quote_plus(control_password)}"
-        f"@{db_host}:{db_port}/{db_name}"
+        f"postgresql+asyncpg://{quote_plus(control_user)}:{quote_plus(control_password)}@{db_host}:{db_port}/{db_name}"
     )
 
     data_status = "FAIL"
