@@ -28,8 +28,8 @@ done
 
 # 이미지 버전 등 운영 배포 설정을 읽습니다.
 # 실제 secret이 포함된 .prod.env는 저장소에 커밋하지 않습니다.
-unset VITE_SIGNUP_TERMS_APPROVED
 unset VITE_PUBLIC_TRACK_C
+unset VITE_SIGNUP_TERMS_APPROVED
 set -a
 source "$PROD_ENV_FILE"
 set +a
