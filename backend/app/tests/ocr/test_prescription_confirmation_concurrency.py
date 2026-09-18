@@ -1,4 +1,3 @@
-
 """처방 확정과 extracted-field PATCH의 동시 요청 직렬화를 검증합니다.
 
 기본 isolate_database fixture는 모든 요청을 단일 connection과 savepoint에 묶기 때문에
