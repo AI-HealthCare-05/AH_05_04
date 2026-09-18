@@ -47,6 +47,9 @@ from infra.python.provision_database_roles import (
     RUNTIME_LIFESTYLE_TABLES,
     RUNTIME_MUTABLE_TABLES,
     RUNTIME_RETRIEVAL_RUN_TABLES,
+    RUNTIME_TRACK_C_APPEND_TABLES,
+    RUNTIME_TRACK_C_FOLLOWUP_TABLES,
+    RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS,
     run_provisioning,
 )
 from infra.python.source_management_role_policy import CATALOG_TABLES
@@ -113,6 +116,31 @@ async def _assert_account_withdrawal_cleanup_delete_privileges(connection, role:
                 text("SELECT has_column_privilege(:role, :table, :column, 'UPDATE')"),
                 {"role": role, "table": table, "column": column},
             ), (table, column)
+
+
+async def _exercise_track_c_runtime_writes(connection) -> None:
+    """#820: Track C 새 revision INSERT. GRANT INSERT가 빠지면 여기서 42501로 걸린다."""
+    for table in sorted(RUNTIME_TRACK_C_APPEND_TABLES | RUNTIME_TRACK_C_FOLLOWUP_TABLES):
+        await connection.execute(text(f"INSERT INTO {quoted_identifier(table)} (id) VALUES (1)"))
+    # follow-up 현재 응답 갱신은 부여한 세 컬럼으로만 가능하다.
+    await connection.execute(text("UPDATE action_plan_followup SET response='HELPED', revision=2, updated_at=now()"))
+
+
+async def _assert_track_c_runtime_column_privileges(connection, runtime: str) -> None:
+    """#820: follow-up은 갱신 대상 컬럼만 UPDATE 가능하고 audit은 어떤 컬럼도 열리지 않는다."""
+    followup_columns = ("id", *RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS)
+    observed = {
+        column: await connection.scalar(
+            text("SELECT has_column_privilege(:role, 'action_plan_followup', :column, 'UPDATE')"),
+            {"role": runtime, "column": column},
+        )
+        for column in followup_columns
+    }
+    assert observed == {column: column in RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS for column in followup_columns}
+    assert not await connection.scalar(
+        text("SELECT has_column_privilege(:role, 'action_plan_followup_audit', 'id', 'UPDATE')"),
+        {"role": runtime},
+    )
 
 
 async def _assert_runtime_cannot_delete_withdrawal_cleanup_tables(connection, runtime: str) -> None:
@@ -220,6 +248,8 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 | RUNTIME_APPEND_ONLY_TABLES
                 | RUNTIME_LIFESTYLE_TABLES
                 | RUNTIME_CHECKIN_LOCK_TABLES
+                | RUNTIME_TRACK_C_APPEND_TABLES
+                | RUNTIME_TRACK_C_FOLLOWUP_TABLES
                 | {"support_action_plan"}
                 | RUNTIME_RETRIEVAL_RUN_TABLES
                 | CATALOG_WRITE_TABLES
@@ -232,6 +262,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             ):
                 await connection.execute(text(f'CREATE TABLE "{table}" (id integer PRIMARY KEY)'))
             await _add_checkin_lock_fixture_columns(connection)
+            await _add_track_c_followup_fixture_columns(connection)
             await _add_account_deletion_request_fixture_columns(connection)
             await _add_account_withdrawal_cleanup_fixture_columns(connection)
             await connection.execute(
@@ -295,6 +326,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             await connection.execute(text("UPDATE push_subscription SET id=2"))
             await connection.execute(text("UPDATE lifestyle_times SET id=2"))
             await connection.execute(text("DELETE FROM push_delivery"))
+            await _exercise_track_c_runtime_writes(connection)
         async with producer.begin() as connection:
             await connection.execute(text("INSERT INTO rag_source_snapshot (id) VALUES (1)"))
             await connection.execute(text("UPDATE rag_source_snapshot SET verified_at=now()"))
@@ -343,6 +375,28 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             (producer, "INSERT INTO future_after_provision VALUES (1)"),
             (reader, "SELECT nextval('future_after_provision_id_seq')"),
             (reader, "SELECT setval('user_sequence_id_seq', 100)"),
+            # #820: Track C 이력 삭제·전체 컬럼 UPDATE는 Runtime에 열리지 않는다.
+            (reader, "DELETE FROM safety_assessment"),
+            (reader, "TRUNCATE safety_assessment"),
+            (reader, "UPDATE safety_assessment SET id=2"),
+            (producer, "INSERT INTO safety_assessment (id) VALUES (2)"),
+            (reader, "DELETE FROM barrier_response"),
+            (reader, "TRUNCATE barrier_response"),
+            (reader, "UPDATE barrier_response SET id=2"),
+            (producer, "INSERT INTO barrier_response (id) VALUES (2)"),
+            (reader, "DELETE FROM support_action_plan"),
+            (reader, "TRUNCATE support_action_plan"),
+            (reader, "UPDATE support_action_plan SET id=2"),
+            (producer, "INSERT INTO support_action_plan (id) VALUES (2)"),
+            (reader, "DELETE FROM action_plan_followup"),
+            (reader, "TRUNCATE action_plan_followup"),
+            (reader, "UPDATE action_plan_followup SET id=2"),
+            (producer, "INSERT INTO action_plan_followup (id) VALUES (2)"),
+            (reader, "DELETE FROM action_plan_followup_audit"),
+            (reader, "TRUNCATE action_plan_followup_audit"),
+            (reader, "UPDATE action_plan_followup_audit SET id=2"),
+            (producer, "INSERT INTO action_plan_followup_audit (id) VALUES (2)"),
+            (reader, "UPDATE action_plan_followup_audit SET to_revision=2"),
             (reader, f'SET ROLE "{writer}"'),
         ]:
             await denied(engine, sql)
@@ -358,6 +412,11 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 # #780: Candidate Index tables are runtime read-only
                 "rag_candidate_index_version": _READ_ONLY_PRIVILEGES,
                 "rag_candidate_index_member": _READ_ONLY_PRIVILEGES,
+                # #820: Track C 쓰기 경로는 INSERT만 열고 UPDATE/DELETE/TRUNCATE는 테이블 단위로 닫혀 있다.
+                **{
+                    table: _APPEND_ONLY_PRIVILEGES
+                    for table in sorted(RUNTIME_TRACK_C_APPEND_TABLES | RUNTIME_TRACK_C_FOLLOWUP_TABLES)
+                },
                 # 대조군: 기존 lifecycle/append-only 권한이 바뀌지 않았는지 확인한다.
                 "retrieval_run": _RETRIEVAL_RUN_PRIVILEGES,
                 "ai_job_intake_context": _APPEND_ONLY_PRIVILEGES,
@@ -397,6 +456,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 column: column in RUNTIME_ACCOUNT_DELETION_REQUEST_UPDATE_COLUMNS
                 for column in account_deletion_request_columns
             }
+            await _assert_track_c_runtime_column_privileges(connection, runtime)
             await _assert_runtime_cannot_delete_withdrawal_cleanup_tables(connection, runtime)
             await _assert_account_withdrawal_cleanup_delete_privileges(connection, cleanup)
         # #731: authority 표가 빠진 schema에서는 provisioning이 fail closed여야 한다.
@@ -1359,8 +1419,8 @@ async def _exercise_checkin_correction_runtime_permissions(admin, reader, produc
 
     for table in sorted(RUNTIME_CHECKIN_LOCK_TABLES | {"support_action_plan"}):
         await _assert_runtime_delete_policy(reader, table)
+        # #820: 새 revision INSERT는 허용된다. 이력 변경·삭제만 막혀 있어야 한다.
         for engine, sql in (
-            (reader, f"INSERT INTO {table} DEFAULT VALUES"),
             (reader, f"TRUNCATE {table}"),
             (reader, f"UPDATE {table} SET id=id"),
             (producer, f"SELECT * FROM {table}"),
@@ -1388,6 +1448,26 @@ async def _add_checkin_lock_fixture_columns(connection):
     await connection.execute(
         text("ALTER TABLE support_action_plan ADD COLUMN status text, ADD COLUMN cancelled_at timestamptz")
     )
+
+
+# #820: follow-up 컬럼 단위 GRANT가 참조하는 컬럼. 운영 스키마와 같은 이름으로 합성 fixture에도 만든다.
+_TRACK_C_FOLLOWUP_FIXTURE_COLUMN_TYPES = {
+    "response": "text",
+    "revision": "integer",
+    "updated_at": "timestamptz",
+}
+
+
+async def _add_track_c_followup_fixture_columns(connection):
+    """#820: 컬럼 단위 GRANT 대상 컬럼이 합성 fixture에 없으면 provisioning이 깨진다."""
+    assert set(RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS) == set(_TRACK_C_FOLLOWUP_FIXTURE_COLUMN_TYPES), (
+        "GRANT 대상 컬럼이 바뀌면 fixture 컬럼도 함께 갱신해야 한다"
+    )
+    columns = ", ".join(
+        f"ADD COLUMN {quoted_identifier(column)} {_TRACK_C_FOLLOWUP_FIXTURE_COLUMN_TYPES[column]}"
+        for column in RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS
+    )
+    await connection.execute(text(f"ALTER TABLE action_plan_followup {columns}"))
 
 
 async def _exercise_retrieval_run_runtime_permissions(reader, producer, admin) -> None:

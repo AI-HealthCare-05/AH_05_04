@@ -151,6 +151,13 @@ def test_retrieval_run_tables_runtime_role_privileges_are_least_privilege() -> N
 
 
 def test_track_c_runtime_role_privileges_are_least_privilege() -> None:
+    """Track C 권한 상수 집합만 고정한다.
+
+    실제 GRANT가 나가는지, Runtime이 정말 INSERT할 수 있고 삭제·전체 컬럼 UPDATE가
+    막히는지는 실 PostgreSQL을 쓰는 통합 테스트가 검증한다.
+    tests/integration/rag/test_database_role_provisioning.py::
+    test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions
+    """
     from infra.python.provision_database_roles import (
         RUNTIME_APPEND_ONLY_TABLES,
         RUNTIME_CHECKIN_LOCK_TABLES,
@@ -177,18 +184,6 @@ def test_track_c_runtime_role_privileges_are_least_privilege() -> None:
     assert not (RUNTIME_TRACK_C_FOLLOWUP_TABLES & RUNTIME_MUTABLE_TABLES)
     assert not (RUNTIME_TRACK_C_FOLLOWUP_TABLES & RUNTIME_APPEND_ONLY_TABLES)
     assert RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS == ("response", "revision", "updated_at")
-
-    source = (ROOT / "infra/python/provision_database_roles.py").read_text()
-    assert "GRANT INSERT ON TABLE public.{quoted_identifier(table)} TO {runtime_sql}" in source
-    assert "GRANT SELECT, INSERT ON TABLE public.{quoted_identifier(table)} TO {runtime_sql}" in source
-    assert "GRANT UPDATE ({columns}) ON TABLE public.action_plan_followup TO {runtime_sql}" in source
-
-    # Runtime은 Track C 이력을 지우거나 전체 컬럼을 덮어쓰지 않는다. 삭제는 #748 cleanup 역할의 책임이다.
-    for table in sorted(RUNTIME_TRACK_C_APPEND_TABLES | RUNTIME_TRACK_C_FOLLOWUP_TABLES):
-        assert f"GRANT DELETE ON TABLE public.{table}" not in source
-        assert f"GRANT TRUNCATE ON TABLE public.{table}" not in source
-        assert f"GRANT UPDATE ON TABLE public.{table}" not in source
-    assert "GRANT UPDATE ON TABLE public.action_plan_followup_audit" not in source
 
 
 def test_knowledge_index_role_policy_is_explicit_and_least_privilege() -> None:
