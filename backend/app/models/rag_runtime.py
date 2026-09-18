@@ -22,6 +22,7 @@ from sqlalchemy.sql import func, text
 from app.core.db.databases import Base
 from app.core.db.types import UUIDChar
 from app.models.rag_evaluation import EvaluationDecisionStatus
+from rag_runtime.runtime_environment import RuntimeEnvironmentCode
 
 
 def _enum_values(enum_cls: type[StrEnum]) -> list[str]:
@@ -125,6 +126,10 @@ class RagRuntimeReleaseBundle(Base):
             name="chk_rag_runtime_bundle_knowledge_index_hash_length",
         ),
         CheckConstraint("length(trim(environment_code)) > 0", name="chk_rag_runtime_bundle_environment_code_nonblank"),
+        CheckConstraint(
+            f"environment_code IN ({_sql_in_list(RuntimeEnvironmentCode)})",
+            name="chk_rag_runtime_bundle_environment_code",
+        ),
         CheckConstraint("length(trim(catalog_version)) > 0", name="chk_rag_runtime_bundle_catalog_version_nonblank"),
         CheckConstraint("length(catalog_manifest_hash) = 64", name="chk_rag_runtime_bundle_catalog_manifest_hash"),
         # An artifact member is identified by ref AND version together; neither alone is an
@@ -256,6 +261,10 @@ class RagRuntimeEnvironment(Base):
             ondelete="RESTRICT",
         ),
         CheckConstraint("length(trim(environment_code)) > 0", name="chk_rag_runtime_environment_code_nonblank"),
+        CheckConstraint(
+            f"environment_code IN ({_sql_in_list(RuntimeEnvironmentCode)})",
+            name="chk_rag_runtime_environment_code",
+        ),
         CheckConstraint(
             f"environment_status IN ({_sql_in_list(RagRuntimeEnvironmentStatus)})",
             name="chk_rag_runtime_environment_status",

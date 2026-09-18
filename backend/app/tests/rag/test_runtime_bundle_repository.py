@@ -59,7 +59,7 @@ from app.services.rag_runtime_bundle_build import (
     verify_persisted_bundle_manifest_hash,
 )
 
-_ENVIRONMENT = "local"
+_ENVIRONMENT = "LOCAL"
 _CATALOG_VERSION = "catalog-1.0.0"
 
 
@@ -291,7 +291,7 @@ async def test_rows_differing_from_the_judged_configuration_are_refused(db_sessi
     outcome = evaluate_runtime_bundle_build(request)
     assert outcome.bundle_manifest_hash is not None and outcome.manifest_hash is not None
 
-    tampered = replace(_bundle_create(request, outcome.bundle_manifest_hash), environment_code="production")
+    tampered = replace(_bundle_create(request, outcome.bundle_manifest_hash), environment_code="PRODUCTION")
 
     with pytest.raises(RagRuntimeBundleNotBuildableError):
         await RagRuntimeRepository(db_session).build_runtime_bundle(

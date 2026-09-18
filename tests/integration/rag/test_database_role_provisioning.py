@@ -726,7 +726,7 @@ async def _exercise_audit_cutover(admin, reader, producer, environment):
         await connection.execute(
             text(
                 "INSERT INTO rag_runtime_environment (id,environment_code,environment_status) "
-                "VALUES (:id,'synthetic-audit','ACTIVE')"
+                "VALUES (:id,'TEST','ACTIVE')"
             ),
             {"id": env_id},
         )
@@ -827,7 +827,7 @@ async def _exercise_audit_cutover(admin, reader, producer, environment):
                 "INSERT INTO rag_runtime_environment (id,environment_code,environment_status) "
                 "VALUES (:id,:code,'ACTIVE')"
             ),
-            {"id": str(concurrent_env_id), "code": f"synthetic-concurrent-{concurrent_env_id.hex[:8]}"},
+            {"id": str(concurrent_env_id), "code": "CLOSED_DEMO"},
         )
 
     async def suspend_concurrently(actor: str):

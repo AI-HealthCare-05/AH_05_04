@@ -31,7 +31,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotVerificationStatus,
 )
 
-_ENVIRONMENT = "local"
+_ENVIRONMENT = "LOCAL"
 _CATALOG_VERSION = "catalog-1.0.0"
 
 
@@ -232,15 +232,42 @@ def test_environment_code_is_part_of_content_identity() -> None:
     request = _request()
     other_environment = replace(
         request,
-        environment_code="test",
-        source_members=tuple(replace(member, observed_environment="test") for member in request.source_members),
-        artifact_members=tuple(replace(member, observed_environment="test") for member in request.artifact_members),
+        environment_code="TEST",
+        source_members=tuple(replace(member, observed_environment="TEST") for member in request.source_members),
+        artifact_members=tuple(replace(member, observed_environment="TEST") for member in request.artifact_members),
     )
 
     assert (
         evaluate_runtime_bundle_build(other_environment).bundle_manifest_hash
         != evaluate_runtime_bundle_build(request).bundle_manifest_hash
     )
+
+
+def test_bundle_manifest_hash_invariants_across_environments() -> None:
+    base_request = _request()
+    request_test = replace(
+        base_request,
+        environment_code="TEST",
+        source_members=tuple(replace(member, observed_environment="TEST") for member in base_request.source_members),
+        artifact_members=tuple(
+            replace(member, observed_environment="TEST") for member in base_request.artifact_members
+        ),
+    )
+    request_local = replace(
+        base_request,
+        environment_code="LOCAL",
+        source_members=tuple(replace(member, observed_environment="LOCAL") for member in base_request.source_members),
+        artifact_members=tuple(
+            replace(member, observed_environment="LOCAL") for member in base_request.artifact_members
+        ),
+    )
+
+    hash_test_1 = evaluate_runtime_bundle_build(request_test).bundle_manifest_hash
+    hash_test_2 = evaluate_runtime_bundle_build(request_test).bundle_manifest_hash
+    hash_local = evaluate_runtime_bundle_build(request_local).bundle_manifest_hash
+
+    assert hash_test_1 == hash_test_2
+    assert hash_test_1 != hash_local
 
 
 def test_observation_fields_do_not_change_the_bundle_hash() -> None:
@@ -289,7 +316,7 @@ def test_unapproved_expired_revoked_stale_and_mismatched_members_are_blocked() -
         ({"approval_expired": True}, RuntimeBundleRejectionReason.MEMBER_APPROVAL_EXPIRED),
         ({"revocation_unresolved": True}, RuntimeBundleRejectionReason.MEMBER_REVOCATION_UNRESOLVED),
         ({"scope_allowed": False}, RuntimeBundleRejectionReason.MEMBER_SCOPE_NOT_ALLOWED),
-        ({"observed_environment": "production"}, RuntimeBundleRejectionReason.MEMBER_ENVIRONMENT_MISMATCH),
+        ({"observed_environment": "PRODUCTION"}, RuntimeBundleRejectionReason.MEMBER_ENVIRONMENT_MISMATCH),
     )
     for overrides, expected in cases:
         outcome = evaluate_runtime_bundle_build(
@@ -388,7 +415,7 @@ def test_optional_member_is_gated_exactly_like_a_required_one() -> None:
 def test_artifact_members_are_gated_on_their_own_axes() -> None:
     """Artifact members are not source snapshots, so #362's policy does not cover them."""
     cases = (
-        ({"observed_environment": "production"}, RuntimeBundleRejectionReason.MEMBER_ENVIRONMENT_MISMATCH),
+        ({"observed_environment": "PRODUCTION"}, RuntimeBundleRejectionReason.MEMBER_ENVIRONMENT_MISMATCH),
         ({"approval_effective": False}, RuntimeBundleRejectionReason.MEMBER_APPROVAL_NOT_EFFECTIVE),
         ({"approval_expired": True}, RuntimeBundleRejectionReason.MEMBER_APPROVAL_EXPIRED),
         ({"revocation_unresolved": True}, RuntimeBundleRejectionReason.MEMBER_REVOCATION_UNRESOLVED),
