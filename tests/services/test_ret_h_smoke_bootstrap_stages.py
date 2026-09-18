@@ -1008,3 +1008,85 @@ async def test_stage2_mismatched_adapter_ref_fails_closed() -> None:
             expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
         )
     assert exc_info2.value.safe_path == "embedding_adapter_artifact_identity"
+
+
+def test_postgresql_evidence_search_adapter_canonical_candidate_identity_wiring() -> None:
+    from ai_worker.adapters.postgresql_evidence_search import (
+        POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_HASH,
+        POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_PROJECTION,
+        POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF,
+    )
+    from ai_worker.tasks.evaluation.canonical import canonical_sha256
+
+    assert POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.artifact_code == "postgresql-evidence-search-adapter"
+    assert POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.version == "1.0.0"
+    assert (
+        POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.content_sha256
+        == "77945a6a1a72eba682a13a85b895fd289ab7bce5b63498f4727621180fbad073"
+    )
+    assert canonical_sha256(POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_PROJECTION) == POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_HASH
+
+
+def test_scripts_ret_h_aws_synthetic_smoke_rejects_fixture_search_adapter_mismatch() -> None:
+    from unittest.mock import MagicMock, patch
+
+    from scripts.ret_h_aws_synthetic_smoke import build_live_dependencies
+
+    fake_factory = MagicMock()
+    with patch(
+        "ai_worker.tasks.evaluation.ret_h_smoke.build_session_factory",
+        return_value=(MagicMock(), fake_factory),
+    ):
+        with patch("ai_worker.core.get_config"):
+            fixture = {
+                "search_adapter_ref": {
+                    "artifact_code": "postgresql-evidence-search-adapter",
+                    "version": "1.0.0",
+                    "content_sha256": "5" * 64,
+                }
+            }
+            with pytest.raises(ValueError, match="fixture search_adapter_ref mismatch"):
+                build_live_dependencies(
+                    fixture,
+                    environment={},
+                    redis_stream="test",
+                    redis_dlq_stream="test-dlq",
+                    sentinels=["sentinel"],
+                )
+
+
+def test_scripts_ret_h_aws_synthetic_smoke_accepts_canonical_candidate_ref() -> None:
+    from unittest.mock import MagicMock, patch
+
+    from ai_worker.adapters.postgresql_evidence_search import POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF
+    from scripts.ret_h_aws_synthetic_smoke import build_live_dependencies
+
+    fake_factory = MagicMock()
+    with patch(
+        "ai_worker.tasks.evaluation.ret_h_smoke.build_session_factory",
+        return_value=(MagicMock(), fake_factory),
+    ):
+        with patch("ai_worker.core.get_config"):
+            with patch("scripts.ret_h_aws_synthetic_smoke._build_hybrid_retrieve_request"):
+                fixture = {
+                    "search_adapter_ref": {
+                        "artifact_code": POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.artifact_code,
+                        "version": POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.version,
+                        "content_sha256": POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.content_sha256,
+                    },
+                    "embedding_adapter_ref": {
+                        "content_sha256": "6" * 64,
+                    },
+                    "knowledge_index_id": "17810000-0000-4000-8000-000000000000",
+                    "allowed_source_snapshot_ids": ["17810000-0000-4000-8000-000000000001"],
+                    "allowed_source_snapshot_member_ids": ["17810000-0000-4000-8000-000000000002"],
+                    "source_sentinel": "sentinel",
+                }
+                deps = build_live_dependencies(
+                    fixture,
+                    environment={},
+                    redis_stream="test",
+                    redis_dlq_stream="test-dlq",
+                    sentinels=["sentinel"],
+                )
+                assert deps.execution_fn is not None

@@ -716,9 +716,14 @@ function ScheduleEditor({
                     <span>{medication.timing_text?.trim() || '복용 시점 미확인 · 처방전의 복용 지시를 확인해 주세요.'}</span>
                   </p>
                   <div className="schedule-editor__time-grid">
-                    {draft.times.map((time, index) => (
+                    {draft.times.map((time, index) => {
+                      const periodLabel = timeOfDayLabel(time)
+                      return (
                       <label className="schedule-editor__time-field" key={index}>
                         <span className="sr-only">{medication.medication_name} {index + 1}번째 복용 시간</span>
+                        {periodLabel && (
+                          <span className="schedule-editor__time-period" aria-hidden="true">{periodLabel}</span>
+                        )}
                         <input
                           aria-label={`${medication.medication_name} ${index + 1}번째 복용 시간`}
                           type="time"
@@ -738,7 +743,8 @@ function ScheduleEditor({
                           required
                         />
                       </label>
-                    ))}
+                      )
+                    })}
                   </div>
                   {showElapsedTimeNotice && (
                     <p className="schedule-editor__elapsed-time-notice" id={elapsedTimeNoticeId} role="note">
@@ -830,9 +836,21 @@ function occurrencePeriodLabel(value: string): string {
     hour12: false,
     timeZone: KST_TIME_ZONE,
   }).format(new Date(value)))
+  return periodLabelForHour(hour)
+}
+
+// 오늘의 복약(occurrencePeriodLabel)과 같은 아침(~10시)/점심(~16시)/저녁 경계를 쓴다.
+// 편집 중인 시간 입력(HH:MM, 로컬 벽시계 값)에는 별도 타임존 변환 없이 시(hour)만 그대로 사용한다.
+function periodLabelForHour(hour: number): string {
   if (hour < 11) return '아침'
   if (hour < 17) return '점심'
   return '저녁'
+}
+
+function timeOfDayLabel(time: string): string | null {
+  const match = /^([01]\d|2[0-3]):[0-5]\d$/.exec(time)
+  if (!match) return null
+  return periodLabelForHour(Number(match[1]))
 }
 
 export function SchedulePage({

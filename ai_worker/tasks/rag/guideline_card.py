@@ -1,11 +1,26 @@
-"""Synthetic-first, persistence-free Guideline Card finalization kernel.
+"""Persistence-free Guideline Card finalization kernel.
 
-The kernel consumes only medication identities pinned by its caller and Evidence
-Gate selections that already passed RAG-14.  It owns neither source approval nor
-public release. Self-hashes provide integrity only; every approved policy,
-fallback, and evidence binding must also pass a caller-supplied authoritative
-approval verifier. Production approval adapters, persistence, Citation
-Authorization, and the final Release Gate remain downstream responsibilities.
+The kernel consumes only medication identities pinned by its caller and the
+production evidence projected from the #760 authoritative Guide evidence handoff
+(`guideline_production_evidence.ProductionGuidelineEvidenceSet`). It owns neither
+source approval nor public release. Self-hashes provide integrity only; every
+approved policy, fallback, and evidence binding must also pass a caller-supplied
+authoritative approval verifier. Production approval adapters, persistence,
+Citation Authorization, and the final Release Gate remain downstream
+responsibilities.
+
+Evidence authority boundary (#774):
+- The legacy RAG-14 `evidence_gate` domain (`EvidenceGateOutcome`,
+  `GatePassedKnowledgeEvidenceSelection`, `canonical_gate_selection_hash()`) is not a
+  production input and is not reconstructed here. There is no
+  handoff-to-EvidenceGateOutcome converter.
+- The kernel does not re-judge the Source, member, assessment, content or freshness
+  authority that #760 already verified. It validates only the structural shape of the
+  production evidence it was handed, and binds drafts and approved bindings to it.
+- `ApprovedGuidelineEvidenceBinding.selection_projection_sha256` means the production
+  canonical projection SHA-256 from
+  `compute_production_guideline_evidence_selection_hash()`. A legacy
+  `canonical_gate_selection_hash()` value is not accepted.
 """
 
 from __future__ import annotations
@@ -17,32 +32,21 @@ import unicodedata
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Protocol, Self
+from uuid import UUID
 
-from ai_worker.tasks.rag.evidence_gate import (
-    EvidenceGateExecutionStatus,
-    EvidenceGateOutcome,
-    EvidenceGateReason,
-    EvidenceGateTrace,
-    EvidenceStatus,
-    GatePassedKnowledgeEvidenceSelection,
-    canonical_gate_selection_hash,
-)
 from ai_worker.tasks.rag.evidence_retrieval import (
-    CanonicalScore,
-    EvidenceSearchStage,
     ImmutableArtifactRef,
-    KnowledgeEvidenceCandidate,
-    KnowledgeEvidenceProvenance,
     SensitiveText,
-    StageSignal,
-    UntrustedKnowledgeEvidenceSelection,
+)
+from ai_worker.tasks.rag.guideline_production_evidence import (
+    ProductionGuidelineEvidence,
+    ProductionGuidelineEvidenceSet,
+    compute_production_guideline_evidence_selection_hash,
 )
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-_CANONICAL_SCORE_RE = re.compile(r"^(?:0|-?[1-9][0-9]*|-?(?:0|[1-9][0-9]*)\.[0-9]*[1-9])$")
 _CANONICAL_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 _HANGUL_RE = re.compile(r"[가-힣]")
 _ASCII_ALPHA_RE = re.compile(r"[A-Za-z]")
@@ -186,8 +190,18 @@ class MedicationIdentityRef:
 
 @dataclass(frozen=True, slots=True)
 class GuidelineCitationDraft:
+    """Draft citation restored from production evidence only.
+
+    Source identity is the production Source coordinate verified by #760
+    (`source_snapshot_id`, `source_snapshot_member_id`, `source_code`) rather than a
+    legacy `source_snapshot_ref` artifact reference, which production evidence does
+    not carry and which this kernel must not forge.
+    """
+
     evidence_key: str
-    source_snapshot_ref: ImmutableArtifactRef
+    source_snapshot_id: UUID
+    source_snapshot_member_id: UUID
+    source_code: str
     source_version: str
     locator: str
     content_sha256: str
@@ -383,7 +397,9 @@ def create_canonical_guideline_fallback(
 class GuidelineCitation:
     source_type: GuidelineCitationSourceType
     evidence_key: str
-    source_snapshot_ref: ImmutableArtifactRef
+    source_snapshot_id: UUID
+    source_snapshot_member_id: UUID
+    source_code: str
     source_version: str
     locator: str
     content_sha256: str
@@ -428,7 +444,7 @@ class GuidelineCard:
 @dataclass(frozen=True, slots=True)
 class GuidelineCardRequest:
     medication_identities: tuple[MedicationIdentityRef, ...]
-    evidence_gate_outcome: EvidenceGateOutcome
+    evidence: ProductionGuidelineEvidenceSet
     draft: GuidelineCardDraft | None
     generation_failure: GuidelineGenerationFailure | None
     policy: VersionedGuidelinePolicy
@@ -466,7 +482,7 @@ def finalize_guideline_card(
     *,
     approval_verifier: GuidelineApprovalVerifierPort,
 ) -> GuidelineCardOutcome:
-    """Validate and bind a draft to pinned medication and gate-passed evidence."""
+    """Validate and bind a draft to pinned medication and production evidence."""
     request_snapshot = _detached_request_snapshot(request)
     if request_snapshot is None:
         return _unverified_approval_outcome(dependency_error=False)
@@ -507,24 +523,16 @@ def _finalize_guideline_card_snapshot(
     if request.generation_failure is not None:
         return _generation_failure_outcome(request.generation_failure, context)
 
-    gate_fallback = _evidence_gate_fallback(
-        request.evidence_gate_outcome,
-        request.evaluated_at,
-        context,
-    )
-    if gate_fallback is not None:
-        return gate_fallback
+    if not _is_bindable_production_evidence(request.evidence, request.evaluated_at):
+        return _validation_fallback(context)
     if request.draft is None or not _is_valid_draft_shape(request.draft, request.policy):
         return _validation_fallback(context)
 
-    passed_by_key = {
-        item.selection.candidate.provenance.evidence_key: item
-        for item in request.evidence_gate_outcome.gate_passed_selections
-    }
-    bindings = _validated_evidence_bindings(request.approved_evidence_bindings, passed_by_key)
+    evidence_by_key = {item.evidence_key: item for item in request.evidence.selections}
+    bindings = _validated_evidence_bindings(request.approved_evidence_bindings, evidence_by_key)
     if bindings is None:
         return _validation_fallback(context)
-    claims = _bind_claims(request, passed_by_key, bindings, context.verifier_refs)
+    claims = _bind_claims(request, evidence_by_key, bindings, context.verifier_refs)
     if claims is None:
         return _validation_fallback(context)
     return GuidelineCardOutcome(
@@ -564,7 +572,7 @@ def _verified_fallback_context(
 
 def _bind_claims(
     request: GuidelineCardRequest,
-    passed_by_key: dict[str, GatePassedKnowledgeEvidenceSelection],
+    evidence_by_key: dict[str, ProductionGuidelineEvidence],
     bindings: dict[tuple[str, MedicationIdentityRef, GuidelineScope], ApprovedGuidelineEvidenceBinding],
     verifier_refs: dict[ImmutableArtifactRef, ImmutableArtifactRef],
 ) -> tuple[GuidelineClaim, ...] | None:
@@ -575,7 +583,8 @@ def _bind_claims(
         if draft_claim.medication_identity not in medication_identities:
             return None
         citations = tuple(
-            _bind_citation(item, draft_claim, passed_by_key, bindings, verifier_refs) for item in draft_claim.citations
+            _bind_citation(item, draft_claim, evidence_by_key, bindings, verifier_refs)
+            for item in draft_claim.citations
         )
         if any(item is None for item in citations):
             return None
@@ -631,20 +640,21 @@ def _create_card(
 def _bind_citation(
     draft: GuidelineCitationDraft,
     claim: GuidelineClaimDraft,
-    passed_by_key: dict[str, GatePassedKnowledgeEvidenceSelection],
+    evidence_by_key: dict[str, ProductionGuidelineEvidence],
     bindings: dict[tuple[str, MedicationIdentityRef, GuidelineScope], ApprovedGuidelineEvidenceBinding],
     verifier_refs: dict[ImmutableArtifactRef, ImmutableArtifactRef],
 ) -> GuidelineCitation | None:
-    selected = passed_by_key.get(draft.evidence_key)
+    evidence = evidence_by_key.get(draft.evidence_key)
     binding = bindings.get((draft.evidence_key, claim.medication_identity, claim.scope))
-    if selected is None or binding is None:
+    if evidence is None or binding is None:
         return None
-    evidence = selected.selection.candidate.provenance
     if (
         hashlib.sha256(claim.action_text.reveal().encode()).hexdigest() != binding.action_text_sha256
         or claim.action_class is not binding.action_class
-        or canonical_gate_selection_hash(selected.selection) != binding.selection_projection_sha256
-        or draft.source_snapshot_ref != evidence.source_snapshot_ref
+        or compute_production_guideline_evidence_selection_hash(evidence) != binding.selection_projection_sha256
+        or draft.source_snapshot_id != evidence.source_snapshot_id
+        or draft.source_snapshot_member_id != evidence.source_snapshot_member_id
+        or draft.source_code != evidence.source_code
         or draft.source_version != evidence.source_version
         or draft.locator != evidence.locator
         or draft.content_sha256 != evidence.content_sha256
@@ -653,235 +663,87 @@ def _bind_citation(
     return GuidelineCitation(
         GuidelineCitationSourceType.LIFESTYLE_GUIDELINE,
         evidence.evidence_key,
-        _copy_artifact_ref(evidence.source_snapshot_ref),
+        evidence.source_snapshot_id,
+        evidence.source_snapshot_member_id,
+        evidence.source_code,
         evidence.source_version,
         evidence.locator,
         evidence.content_sha256,
-        _copy_artifact_ref(selected.assessment_artifact_ref),
-        _copy_artifact_ref(selected.eligibility_receipt_ref),
-        _copy_artifact_ref(selected.retrieval_receipt_ref),
-        _copy_artifact_ref(selected.verifier_artifact_ref),
+        _copy_artifact_ref(evidence.assessment_artifact_ref),
+        _copy_artifact_ref(evidence.eligibility_receipt_ref),
+        _copy_artifact_ref(evidence.retrieval_receipt_ref),
+        _copy_artifact_ref(evidence.verifier_artifact_ref),
         _copy_artifact_ref(binding.artifact_ref),
         _copy_artifact_ref(verifier_refs[binding.artifact_ref]),
     )
 
 
-def _is_sufficient_gate_outcome(value: EvidenceGateOutcome, evaluated_at: datetime) -> bool:
-    return (
-        type(value) is EvidenceGateOutcome
-        and value.execution_status is EvidenceGateExecutionStatus.SUCCEEDED
-        and value.evidence_status is EvidenceStatus.SUFFICIENT
-        and value.reason is EvidenceGateReason.EVIDENCE_SUFFICIENT
-        and _has_valid_gate_passed_selections(value.gate_passed_selections)
-        and _trace_matches_gate_success(value, evaluated_at)
-    )
-
-
-def _trace_matches_gate_success(value: EvidenceGateOutcome, evaluated_at: datetime) -> bool:
-    trace = value.trace
-    if (
-        type(trace) is not EvidenceGateTrace
-        or trace.evaluated_at != evaluated_at
-        or not _is_utc_datetime(trace.evaluated_at)
-        or not _is_valid_artifact_ref(trace.policy_ref)
-        or not _is_valid_artifact_ref(trace.retrieval_receipt_ref)
-        or type(trace.assessment_artifact_refs) is not tuple
-        or not all(_is_valid_artifact_ref(item) for item in trace.assessment_artifact_refs)
-        or type(trace.selected_evidence_keys) is not tuple
-        or not all(_bounded_nfc(item, 300) for item in trace.selected_evidence_keys)
-        or type(trace.stale_evidence_keys) is not tuple
-        or type(trace.conflicting_coverage_keys) is not tuple
-        or type(trace.insufficient_coverage_keys) is not tuple
-        or not all(
-            _bounded_nfc(item, 300)
-            for items in (
-                trace.stale_evidence_keys,
-                trace.conflicting_coverage_keys,
-                trace.insufficient_coverage_keys,
-            )
-            for item in items
-        )
-        or trace.stale_evidence_keys
-        or trace.conflicting_coverage_keys
-        or trace.insufficient_coverage_keys
-    ):
-        return False
-    passed = value.gate_passed_selections
-    expected_assessments = tuple(
-        sorted(
-            (item.assessment_artifact_ref for item in passed),
-            key=lambda item: (item.artifact_code.encode(), item.version.encode(), item.content_sha256),
-        )
-    )
-    expected_keys = tuple(item.selection.candidate.provenance.evidence_key for item in passed)
-    return (
-        trace.assessment_artifact_refs == expected_assessments
-        and trace.selected_evidence_keys == expected_keys
-        and all(item.retrieval_receipt_ref == trace.retrieval_receipt_ref for item in passed)
-    )
-
-
-def _has_valid_gate_passed_selections(value: object) -> bool:
-    if type(value) is not tuple or not value:
-        return False
-    evidence_keys: set[str] = set()
-    rerank_ranks: set[int] = set()
-    evidence_index_refs: set[ImmutableArtifactRef] = set()
-    stage_ranks: dict[EvidenceSearchStage, set[int]] = {}
-    for item in value:
-        if type(item) is not GatePassedKnowledgeEvidenceSelection:
-            return False
-        selection = item.selection
-        if (
-            type(selection) is not UntrustedKnowledgeEvidenceSelection
-            or type(selection.candidate) is not KnowledgeEvidenceCandidate
-            or type(selection.candidate.provenance) is not KnowledgeEvidenceProvenance
-            or type(selection.candidate.content_text) is not SensitiveText
-            or type(selection.candidate.stage_signals) is not tuple
-            or not selection.candidate.stage_signals
-            or type(selection.rerank_rank) is not int
-            or selection.rerank_rank <= 0
-            or selection.rerank_rank in rerank_ranks
-            or not _is_valid_score(selection.rerank_score)
-            or not all(
-                _is_valid_artifact_ref(artifact_ref)
-                for artifact_ref in (
-                    item.assessment_artifact_ref,
-                    item.eligibility_receipt_ref,
-                    item.retrieval_receipt_ref,
-                    item.verifier_artifact_ref,
-                )
-            )
-        ):
-            return False
-        evidence = selection.candidate.provenance
-        content = selection.candidate.content_text.reveal()
-        if (
-            not _bounded_nfc(evidence.evidence_key, 300)
-            or evidence.evidence_key in evidence_keys
-            or not _bounded_nfc(evidence.knowledge_chunk_ref, 300)
-            or not _is_valid_artifact_ref(evidence.evidence_index_ref)
-            or not _is_valid_artifact_ref(evidence.source_snapshot_ref)
-            or not _bounded_nfc(evidence.source_version, 200)
-            or not _bounded_nfc(evidence.locator, 500)
-            or not _bounded_nfc(evidence.canonicalization_spec_version, 100)
-            or not _is_sha256(evidence.content_sha256)
-            or not _bounded_nfc(content, 10_000)
-            or hashlib.sha256(content.encode()).hexdigest() != evidence.content_sha256
-        ):
-            return False
-        observed_stages: set[EvidenceSearchStage] = set()
-        for signal in selection.candidate.stage_signals:
-            if (
-                type(signal) is not StageSignal
-                or type(signal.stage) is not EvidenceSearchStage
-                or signal.stage in observed_stages
-                or type(signal.rank) is not int
-                or signal.rank <= 0
-                or not _is_valid_score(signal.score)
-                or not _score_in_stage_range(signal.stage, Decimal(signal.score.value))
-                or signal.rank in stage_ranks.setdefault(signal.stage, set())
-            ):
-                return False
-            observed_stages.add(signal.stage)
-            stage_ranks[signal.stage].add(signal.rank)
-        if tuple(signal.stage for signal in selection.candidate.stage_signals) != tuple(
-            stage for stage in EvidenceSearchStage if stage in observed_stages
-        ):
-            return False
-        evidence_keys.add(evidence.evidence_key)
-        rerank_ranks.add(selection.rerank_rank)
-        evidence_index_refs.add(evidence.evidence_index_ref)
-    return rerank_ranks == set(range(1, len(value) + 1)) and len(evidence_index_refs) == 1
-
-
-def _evidence_gate_fallback(
-    gate: EvidenceGateOutcome,
+def _is_bindable_production_evidence(
+    evidence: ProductionGuidelineEvidenceSet,
     evaluated_at: datetime,
-    context: _VerifiedApprovalContext,
-) -> GuidelineCardOutcome | None:
-    if _is_sufficient_gate_outcome(gate, evaluated_at):
-        return None
+) -> bool:
+    """Validate the structural shape of the production evidence handed to this kernel.
+
+    This is a shape check, not an authority re-judgment. #760 already verified the
+    Source, member, assessment, content and freshness authority of every selection and
+    fails closed before RAG-15 runs, so the kernel must not re-derive
+    `assessment_valid_from`/`assessment_valid_until` freshness or re-verify
+    `handoff_sha256`. What it does enforce is that the evidence is a non-empty set of
+    well-formed, non-duplicated selections whose content matches its own
+    `content_sha256`, and that this Card evaluation is the same request evaluation the
+    evidence was projected from (`evaluated_at` exact match).
+
+    Legacy `EvidenceGateOutcome` status mapping is deliberately absent: the
+    insufficient, conflicted and stale evidence outcomes were RAG-14 Gate states, and
+    in the production path an unusable handoff never reaches this kernel at all.
+    """
     if (
-        type(gate) is EvidenceGateOutcome
-        and gate.execution_status is EvidenceGateExecutionStatus.NO_RESULT
-        and gate.evidence_status is EvidenceStatus.INSUFFICIENT
-        and gate.reason in {EvidenceGateReason.EVIDENCE_INSUFFICIENT, EvidenceGateReason.EVIDENCE_INELIGIBLE}
-        and _has_empty_gate_selections(gate)
+        type(evidence) is not ProductionGuidelineEvidenceSet
+        or not _is_utc_datetime(evidence.evaluated_at)
+        or evidence.evaluated_at != evaluated_at
+        or not _is_sha256(evidence.handoff_sha256)
+        or type(evidence.selections) is not tuple
+        or not evidence.selections
     ):
-        return _fallback_outcome(
-            context,
-            GuidelineCardStatus.NO_RESULT,
-            GuidelineCardReason.EVIDENCE_INSUFFICIENT,
-            GuidelineFallbackCode.NO_APPROVED_EVIDENCE,
-        )
-    if (
-        type(gate) is EvidenceGateOutcome
-        and gate.execution_status is EvidenceGateExecutionStatus.NO_RESULT
-        and gate.evidence_status is EvidenceStatus.CONFLICTED
-        and gate.reason is EvidenceGateReason.EVIDENCE_CONFLICTED
-        and _has_empty_gate_selections(gate)
-    ):
-        return _fallback_outcome(
-            context,
-            GuidelineCardStatus.NO_RESULT,
-            GuidelineCardReason.EVIDENCE_CONFLICTED,
-            GuidelineFallbackCode.CONFLICTING_EVIDENCE,
-        )
-    if (
-        type(gate) is EvidenceGateOutcome
-        and gate.execution_status is EvidenceGateExecutionStatus.NO_RESULT
-        and gate.evidence_status is EvidenceStatus.STALE
-        and gate.reason is EvidenceGateReason.EVIDENCE_STALE
-        and _has_empty_gate_selections(gate)
-    ):
-        return _fallback_outcome(
-            context,
-            GuidelineCardStatus.NO_RESULT,
-            GuidelineCardReason.EVIDENCE_STALE,
-            GuidelineFallbackCode.NO_APPROVED_EVIDENCE,
-        )
-    if (
-        type(gate) is EvidenceGateOutcome
-        and gate.execution_status is EvidenceGateExecutionStatus.VALIDATION_ERROR
-        and gate.evidence_status is None
-        and gate.reason is EvidenceGateReason.REQUEST_INVALID
-        and _has_empty_gate_selections(gate)
-    ):
-        return _fallback_outcome(
-            context,
-            GuidelineCardStatus.VALIDATION_REJECTED,
-            GuidelineCardReason.VALIDATION_FAILED,
-            GuidelineFallbackCode.VALIDATION_FAILED,
-        )
-    if (
-        type(gate) is EvidenceGateOutcome
-        and gate.execution_status is EvidenceGateExecutionStatus.DEPENDENCY_ERROR
-        and gate.evidence_status is None
-        and gate.reason
-        in {
-            EvidenceGateReason.ELIGIBILITY_VERIFICATION_ERROR,
-            EvidenceGateReason.ELIGIBILITY_RECEIPT_MISMATCH,
-            EvidenceGateReason.RETRIEVAL_RECEIPT_MISMATCH,
-        }
-        and _has_empty_gate_selections(gate)
-    ):
-        return _fallback_outcome(
-            context,
-            GuidelineCardStatus.NO_RESULT,
-            GuidelineCardReason.DEPENDENCY_UNAVAILABLE,
-            GuidelineFallbackCode.DEPENDENCY_UNAVAILABLE,
-        )
-    return _fallback_outcome(
-        context,
-        GuidelineCardStatus.VALIDATION_REJECTED,
-        GuidelineCardReason.VALIDATION_FAILED,
-        GuidelineFallbackCode.VALIDATION_FAILED,
-    )
+        return False
+
+    evidence_keys: set[str] = set()
+    source_coordinates: set[tuple[str, str, str]] = set()
+    for item in evidence.selections:
+        if not _is_valid_production_evidence_selection(item):
+            return False
+        coordinate = (str(item.source_snapshot_member_id), item.source_version, item.locator)
+        if item.evidence_key in evidence_keys or coordinate in source_coordinates:
+            return False
+        evidence_keys.add(item.evidence_key)
+        source_coordinates.add(coordinate)
+    return True
 
 
-def _has_empty_gate_selections(gate: EvidenceGateOutcome) -> bool:
-    return type(gate.gate_passed_selections) is tuple and not gate.gate_passed_selections
+def _is_valid_production_evidence_selection(value: object) -> bool:
+    if (
+        type(value) is not ProductionGuidelineEvidence
+        or not _bounded_nfc(value.evidence_key, 300)
+        or type(value.source_snapshot_id) is not UUID
+        or type(value.source_snapshot_member_id) is not UUID
+        or not _bounded_nfc(value.source_code, 100)
+        or not _bounded_nfc(value.source_version, 200)
+        or not _bounded_nfc(value.locator, 500)
+        or not _is_sha256(value.content_sha256)
+        or type(value.content_text) is not SensitiveText
+        or not all(
+            _is_valid_artifact_ref(artifact_ref)
+            for artifact_ref in (
+                value.retrieval_receipt_ref,
+                value.eligibility_receipt_ref,
+                value.assessment_artifact_ref,
+                value.verifier_artifact_ref,
+            )
+        )
+    ):
+        return False
+    content = value.content_text.reveal()
+    return _bounded_nfc(content, 10_000) and hashlib.sha256(content.encode()).hexdigest() == value.content_sha256
 
 
 def _generation_failure_outcome(
@@ -959,7 +821,7 @@ def _is_valid_request_shell(request: object) -> bool:
     return (
         type(request) is GuidelineCardRequest
         and _is_valid_medications(request.medication_identities)
-        and type(request.evidence_gate_outcome) is EvidenceGateOutcome
+        and type(request.evidence) is ProductionGuidelineEvidenceSet
         and (request.draft is None or type(request.draft) is GuidelineCardDraft)
         and (request.generation_failure is None or type(request.generation_failure) is GuidelineGenerationFailure)
         and _is_valid_policy(request.policy)
@@ -1075,7 +937,7 @@ def _is_valid_fallback(value: object) -> bool:
 
 def _validated_evidence_bindings(
     value: object,
-    passed_by_key: dict[str, GatePassedKnowledgeEvidenceSelection],
+    evidence_by_key: dict[str, ProductionGuidelineEvidence],
 ) -> dict[tuple[str, MedicationIdentityRef, GuidelineScope], ApprovedGuidelineEvidenceBinding] | None:
     if type(value) is not tuple or not value:
         return None
@@ -1083,8 +945,8 @@ def _validated_evidence_bindings(
     for item in value:
         if not _is_valid_evidence_binding(item):
             return None
-        passed = passed_by_key.get(item.evidence_key)
-        if passed is None or passed.assessment_artifact_ref != item.assessment_artifact_ref:
+        evidence = evidence_by_key.get(item.evidence_key)
+        if evidence is None or evidence.assessment_artifact_ref != item.assessment_artifact_ref:
             return None
         key = (item.evidence_key, item.medication_identity, item.scope)
         if key in validated:
@@ -1164,7 +1026,9 @@ def _is_valid_draft_shape(draft: GuidelineCardDraft, policy: VersionedGuidelineP
                 type(citation) is not GuidelineCitationDraft
                 or not _bounded_nfc(citation.evidence_key, 300)
                 or citation.evidence_key in evidence_keys
-                or not _is_valid_artifact_ref(citation.source_snapshot_ref)
+                or type(citation.source_snapshot_id) is not UUID
+                or type(citation.source_snapshot_member_id) is not UUID
+                or not _bounded_nfc(citation.source_code, 100)
                 or not _bounded_nfc(citation.source_version, 200)
                 or not _bounded_nfc(citation.locator, 500)
                 or not _is_sha256(citation.content_sha256)
@@ -1262,25 +1126,6 @@ def _unverified_approval_outcome(*, dependency_error: bool) -> GuidelineCardOutc
     )
 
 
-def _is_valid_score(value: object) -> bool:
-    if (
-        type(value) is not CanonicalScore
-        or type(value.value) is not str
-        or _CANONICAL_SCORE_RE.fullmatch(value.value) is None
-    ):
-        return False
-    try:
-        return Decimal(value.value).is_finite()
-    except InvalidOperation:
-        return False
-
-
-def _score_in_stage_range(stage: EvidenceSearchStage, score: Decimal) -> bool:
-    if stage is EvidenceSearchStage.LEXICAL:
-        return Decimal(0) <= score <= Decimal(1)
-    return Decimal(-1) <= score <= Decimal(1)
-
-
 def _claim_payload(claim: GuidelineClaim) -> dict[str, object]:
     return {
         "action_class": claim.action_class.value,
@@ -1298,7 +1143,9 @@ def _claim_payload(claim: GuidelineClaim) -> dict[str, object]:
                 "evidence_key": item.evidence_key,
                 "locator": item.locator,
                 "retrieval_receipt_ref": _artifact_payload(item.retrieval_receipt_ref),
-                "source_snapshot_ref": _artifact_payload(item.source_snapshot_ref),
+                "source_code": item.source_code,
+                "source_snapshot_id": str(item.source_snapshot_id),
+                "source_snapshot_member_id": str(item.source_snapshot_member_id),
                 "source_version": item.source_version,
                 "verifier_artifact_ref": _artifact_payload(item.verifier_artifact_ref),
             }

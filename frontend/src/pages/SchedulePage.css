@@ -514,6 +514,16 @@
 
 .schedule-editor__time-field {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.schedule-editor__time-period {
+  color: #4d576b;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
 }
 
 .schedule-editor__times small {

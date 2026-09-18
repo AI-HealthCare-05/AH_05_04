@@ -1,9 +1,11 @@
 import asyncio
 import hashlib
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID
 
 import pytest
 from openai import (
@@ -15,23 +17,9 @@ from openai import (
 )
 
 from ai_worker.adapters.openai_guideline_generator import OpenAIGuidelineGeneratorAdapter
-from ai_worker.tasks.rag.evidence_gate import (
-    EvidenceGateExecutionStatus,
-    EvidenceGateOutcome,
-    EvidenceGateReason,
-    EvidenceGateTrace,
-    EvidenceStatus,
-    GatePassedKnowledgeEvidenceSelection,
-)
 from ai_worker.tasks.rag.evidence_retrieval import (
-    CanonicalScore,
-    EvidenceSearchStage,
     ImmutableArtifactRef,
-    KnowledgeEvidenceCandidate,
-    KnowledgeEvidenceProvenance,
     SensitiveText,
-    StageSignal,
-    UntrustedKnowledgeEvidenceSelection,
 )
 from ai_worker.tasks.rag.guideline_card import (
     GuidelineActionClass,
@@ -50,6 +38,10 @@ from ai_worker.tasks.rag.guideline_generator_prompt import (
     GuidelineClaimSelection,
     GuidelineStructuredSelection,
     build_candidate_provenance,
+)
+from ai_worker.tasks.rag.guideline_production_evidence import (
+    ProductionGuidelineEvidence,
+    ProductionGuidelineEvidenceSet,
 )
 from provider_contracts.observability import (
     DeploymentEnvironment,
@@ -79,36 +71,24 @@ def make_medication(
     )
 
 
-def make_gate_passed_selection(
+def make_production_selection(
     *,
     evidence_key: str = "knowledge:guideline-1",
     content_text: str = FOOD_AVOIDANCE_TEXT,
-) -> GatePassedKnowledgeEvidenceSelection:
-    provenance = KnowledgeEvidenceProvenance(
+) -> ProductionGuidelineEvidence:
+    return ProductionGuidelineEvidence(
         evidence_key=evidence_key,
-        knowledge_chunk_ref=f"chunk-{evidence_key}",
-        evidence_index_ref=artifact("knowledge-index"),
-        source_snapshot_ref=artifact("source-snapshot"),
+        source_snapshot_id=UUID("33333333-3333-4333-8333-333333333333"),
+        source_snapshot_member_id=UUID("44444444-4444-4444-8444-444444444444"),
+        source_code="MFDS_DUR",
         source_version="api:ver-1",
         locator="$.items[0]",
         content_sha256=hashlib.sha256(content_text.encode()).hexdigest(),
-        canonicalization_spec_version="knowledge-text@1",
-    )
-    selection = UntrustedKnowledgeEvidenceSelection(
-        candidate=KnowledgeEvidenceCandidate(
-            provenance=provenance,
-            content_text=SensitiveText(content_text),
-            stage_signals=(StageSignal(EvidenceSearchStage.LEXICAL, 1, CanonicalScore("0.9")),),
-        ),
-        rerank_rank=1,
-        rerank_score=CanonicalScore("0.9"),
-    )
-    return GatePassedKnowledgeEvidenceSelection(
-        selection=selection,
-        assessment_artifact_ref=artifact("assessment"),
-        eligibility_receipt_ref=artifact("eligibility-receipt"),
+        content_text=SensitiveText(content_text),
         retrieval_receipt_ref=artifact("retrieval-receipt"),
-        verifier_artifact_ref=artifact("eligibility-verifier"),
+        eligibility_receipt_ref=artifact("eligibility-receipt"),
+        assessment_artifact_ref=artifact("assessment"),
+        verifier_artifact_ref=artifact("assessment-verifier"),
     )
 
 
@@ -124,25 +104,21 @@ def make_policy(*, maximum_claims: int = 4) -> VersionedGuidelinePolicy:
     )
 
 
+def make_evidence_set(
+    *selections: ProductionGuidelineEvidence,
+) -> ProductionGuidelineEvidenceSet:
+    return ProductionGuidelineEvidenceSet(
+        evaluated_at=EVALUATED_AT,
+        handoff_sha256="e" * 64,
+        selections=selections or (make_production_selection(),),
+    )
+
+
 def make_valid_request() -> GuidelineGenerationRequest:
     med = make_medication()
-    sel = make_gate_passed_selection()
-    gate_outcome = EvidenceGateOutcome(
-        execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
-        evidence_status=EvidenceStatus.SUFFICIENT,
-        reason=EvidenceGateReason.EVIDENCE_SUFFICIENT,
-        gate_passed_selections=(sel,),
-        trace=EvidenceGateTrace(
-            policy_ref=artifact("evidence-gate-policy"),
-            retrieval_receipt_ref=sel.retrieval_receipt_ref,
-            evaluated_at=EVALUATED_AT,
-            assessment_artifact_refs=(sel.assessment_artifact_ref,),
-            selected_evidence_keys=(sel.selection.candidate.provenance.evidence_key,),
-        ),
-    )
     return GuidelineGenerationRequest(
         medication_identities=(med,),
-        evidence_gate_outcome=gate_outcome,
+        evidence=make_evidence_set(),
         policy=make_policy(),
     )
 
@@ -291,10 +267,8 @@ def test_adapter_computes_exact_runtime_provenance() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("execution_status", tuple(EvidenceGateExecutionStatus))
-async def test_gate_precondition_execution_status_axis(
-    execution_status: EvidenceGateExecutionStatus,
-) -> None:
+async def test_production_evidence_precondition_accepts_a_projected_handoff() -> None:
+    """A valid production evidence set reaches the Provider exactly once."""
     structured_resp = GuidelineStructuredSelection(
         claims=[
             GuidelineClaimSelection(
@@ -311,127 +285,24 @@ async def test_gate_precondition_execution_status_axis(
         timeout_seconds=5.0,
         context=make_context(),
     )
-    base_req = make_valid_request()
-    gate_outcome = EvidenceGateOutcome(
-        execution_status=execution_status,
-        evidence_status=EvidenceStatus.SUFFICIENT,
-        reason=EvidenceGateReason.EVIDENCE_SUFFICIENT,
-        gate_passed_selections=base_req.evidence_gate_outcome.gate_passed_selections,
-        trace=base_req.evidence_gate_outcome.trace,
-    )
-    req = GuidelineGenerationRequest(
-        medication_identities=base_req.medication_identities,
-        evidence_gate_outcome=gate_outcome,
-        policy=base_req.policy,
-    )
-    res = await adapter.generate(req)
-    if execution_status is EvidenceGateExecutionStatus.SUCCEEDED:
-        assert isinstance(res, GuidelineCardDraft)
-        assert client.responses.parse.call_count == 1
-    else:
-        assert res is GuidelineGenerationFailure.VALIDATION_FAILED
-        assert client.responses.parse.call_count == 0
 
+    res = await adapter.generate(make_valid_request())
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("evidence_status", tuple(EvidenceStatus) + (None,))
-async def test_gate_precondition_evidence_status_axis(
-    evidence_status: EvidenceStatus | None,
-) -> None:
-    structured_resp = GuidelineStructuredSelection(
-        claims=[
-            GuidelineClaimSelection(
-                medication_slot="m0",
-                scope=GuidelineScope.FOOD_CAUTION,
-                evidence_slots=["e0"],
-            )
-        ]
-    )
-    client = build_mock_client(response=MockProviderResponse(structured_resp))
-    adapter = OpenAIGuidelineGeneratorAdapter(
-        client=client,
-        model="gpt-4o-synthetic",
-        timeout_seconds=5.0,
-        context=make_context(),
-    )
-    base_req = make_valid_request()
-    gate_outcome = EvidenceGateOutcome(
-        execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
-        evidence_status=evidence_status,  # type: ignore[arg-type]
-        reason=EvidenceGateReason.EVIDENCE_SUFFICIENT,
-        gate_passed_selections=base_req.evidence_gate_outcome.gate_passed_selections,
-        trace=base_req.evidence_gate_outcome.trace,
-    )
-    req = GuidelineGenerationRequest(
-        medication_identities=base_req.medication_identities,
-        evidence_gate_outcome=gate_outcome,
-        policy=base_req.policy,
-    )
-    res = await adapter.generate(req)
-    if evidence_status is EvidenceStatus.SUFFICIENT:
-        assert isinstance(res, GuidelineCardDraft)
-        assert client.responses.parse.call_count == 1
-    else:
-        assert res is GuidelineGenerationFailure.VALIDATION_FAILED
-        assert client.responses.parse.call_count == 0
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("reason", tuple(EvidenceGateReason))
-async def test_gate_precondition_reason_axis(
-    reason: EvidenceGateReason,
-) -> None:
-    structured_resp = GuidelineStructuredSelection(
-        claims=[
-            GuidelineClaimSelection(
-                medication_slot="m0",
-                scope=GuidelineScope.FOOD_CAUTION,
-                evidence_slots=["e0"],
-            )
-        ]
-    )
-    client = build_mock_client(response=MockProviderResponse(structured_resp))
-    adapter = OpenAIGuidelineGeneratorAdapter(
-        client=client,
-        model="gpt-4o-synthetic",
-        timeout_seconds=5.0,
-        context=make_context(),
-    )
-    base_req = make_valid_request()
-    gate_outcome = EvidenceGateOutcome(
-        execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
-        evidence_status=EvidenceStatus.SUFFICIENT,
-        reason=reason,
-        gate_passed_selections=base_req.evidence_gate_outcome.gate_passed_selections,
-        trace=base_req.evidence_gate_outcome.trace,
-    )
-    req = GuidelineGenerationRequest(
-        medication_identities=base_req.medication_identities,
-        evidence_gate_outcome=gate_outcome,
-        policy=base_req.policy,
-    )
-    res = await adapter.generate(req)
-    if reason is EvidenceGateReason.EVIDENCE_SUFFICIENT:
-        assert isinstance(res, GuidelineCardDraft)
-        assert client.responses.parse.call_count == 1
-    else:
-        assert res is GuidelineGenerationFailure.VALIDATION_FAILED
-        assert client.responses.parse.call_count == 0
+    assert isinstance(res, GuidelineCardDraft)
+    assert client.responses.parse.call_count == 1
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "axis,sentinel",
+    "evidence",
     [
-        ("execution_status", "UNSUPPORTED_EXECUTION_STATUS"),
-        ("evidence_status", "UNSUPPORTED_EVIDENCE_STATUS"),
-        ("reason", "UNSUPPORTED_REASON"),
+        pytest.param(None, id="missing-evidence"),
+        pytest.param("NOT_AN_EVIDENCE_SET", id="foreign-type"),
+        pytest.param(object(), id="opaque-object"),
     ],
 )
-async def test_gate_precondition_unsupported_sentinel_values(
-    axis: str,
-    sentinel: Any,
-) -> None:
+async def test_production_evidence_precondition_rejects_foreign_evidence(evidence: Any) -> None:
+    """The adapter never calls the Provider unless it was handed production evidence."""
     client = build_mock_client()
     adapter = OpenAIGuidelineGeneratorAdapter(
         client=client,
@@ -440,27 +311,18 @@ async def test_gate_precondition_unsupported_sentinel_values(
         context=make_context(),
     )
     base_req = make_valid_request()
-    kwargs: dict[str, Any] = {
-        "execution_status": EvidenceGateExecutionStatus.SUCCEEDED,
-        "evidence_status": EvidenceStatus.SUFFICIENT,
-        "reason": EvidenceGateReason.EVIDENCE_SUFFICIENT,
-        "gate_passed_selections": base_req.evidence_gate_outcome.gate_passed_selections,
-        "trace": base_req.evidence_gate_outcome.trace,
-    }
-    kwargs[axis] = sentinel
-    gate_outcome = EvidenceGateOutcome(**kwargs)
     req = GuidelineGenerationRequest(
         medication_identities=base_req.medication_identities,
-        evidence_gate_outcome=gate_outcome,
+        evidence=evidence,  # type: ignore[arg-type]
         policy=base_req.policy,
     )
-    res = await adapter.generate(req)
-    assert res is GuidelineGenerationFailure.VALIDATION_FAILED
+
+    assert await adapter.generate(req) is GuidelineGenerationFailure.VALIDATION_FAILED
     assert client.responses.parse.call_count == 0
 
 
 @pytest.mark.asyncio
-async def test_gate_precondition_empty_selections_or_medications_fail_closed() -> None:
+async def test_production_evidence_precondition_empty_selections_or_medications_fail_closed() -> None:
     client = build_mock_client()
     adapter = OpenAIGuidelineGeneratorAdapter(
         client=client,
@@ -469,29 +331,29 @@ async def test_gate_precondition_empty_selections_or_medications_fail_closed() -
         context=make_context(),
     )
     base_req = make_valid_request()
-    # Empty selections
-    gate_outcome_empty_sels = EvidenceGateOutcome(
-        execution_status=EvidenceGateExecutionStatus.SUCCEEDED,
-        evidence_status=EvidenceStatus.SUFFICIENT,
-        reason=EvidenceGateReason.EVIDENCE_SUFFICIENT,
-        gate_passed_selections=(),
-        trace=base_req.evidence_gate_outcome.trace,
-    )
+
     req_empty_sels = GuidelineGenerationRequest(
         medication_identities=base_req.medication_identities,
-        evidence_gate_outcome=gate_outcome_empty_sels,
+        evidence=replace(base_req.evidence, selections=()),
         policy=base_req.policy,
     )
     assert await adapter.generate(req_empty_sels) is GuidelineGenerationFailure.VALIDATION_FAILED
     assert client.responses.parse.call_count == 0
 
-    # Empty medications
     req_empty_meds = GuidelineGenerationRequest(
         medication_identities=(),
-        evidence_gate_outcome=base_req.evidence_gate_outcome,
+        evidence=base_req.evidence,
         policy=base_req.policy,
     )
     assert await adapter.generate(req_empty_meds) is GuidelineGenerationFailure.VALIDATION_FAILED
+    assert client.responses.parse.call_count == 0
+
+    req_zero_claims = GuidelineGenerationRequest(
+        medication_identities=base_req.medication_identities,
+        evidence=base_req.evidence,
+        policy=replace(base_req.policy, maximum_claims=0),
+    )
+    assert await adapter.generate(req_zero_claims) is GuidelineGenerationFailure.VALIDATION_FAILED
     assert client.responses.parse.call_count == 0
 
 
@@ -702,7 +564,7 @@ async def test_privacy_and_logging_no_leakage() -> None:
 
     all_logs = " ".join(capturing_logger.records)
     patient_id = req.medication_identities[0].prescription_version_medication_id
-    evidence_text = req.evidence_gate_outcome.gate_passed_selections[0].selection.candidate.content_text.reveal()
+    evidence_text = req.evidence.selections[0].content_text.reveal()
 
     assert patient_id not in all_logs
     assert evidence_text not in all_logs

@@ -35,6 +35,10 @@ const STATE_COPY: Record<WebPushState, { title: string; detail: string }> = {
     title: '이전에 사용하던 알림 연결이 해제되었어요',
     detail: '브라우저 권한과 구독을 확인한 뒤 알림을 다시 켜 주세요.',
   },
+  config_unavailable: {
+    title: 'Push 알림 설정이 아직 준비되지 않았어요',
+    detail: '관리자 설정이 완료되면 다시 시도해 주세요. 앱 안의 알림 목록은 계속 사용할 수 있어요.',
+  },
   subscription_failed: {
     title: '알림 연결을 완료하지 못했어요',
     detail: '네트워크와 브라우저 설정을 확인한 뒤 다시 시도해 주세요.',

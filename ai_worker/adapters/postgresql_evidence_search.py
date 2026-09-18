@@ -6,6 +6,7 @@ import hashlib
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from pgvector.sqlalchemy import VECTOR
@@ -23,6 +24,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_worker.tasks.evaluation.canonical import canonical_sha256
 from ai_worker.tasks.rag.evidence_rank_fusion import (
     CandidateStageSignal,
     EvidenceFusionError,
@@ -51,6 +53,29 @@ from ai_worker.tasks.rag.evidence_search import (
 )
 
 logger = logging.getLogger(__name__)
+
+POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_ARTIFACT_CODE = "postgresql-evidence-search-adapter"
+POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_VERSION = "1.0.0"
+POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_PROJECTION_VERSION = "postgresql-evidence-search-adapter@1"
+
+POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_PROJECTION: dict[str, Any] = {
+    "projection_version": POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_PROJECTION_VERSION,
+    "artifact_code": POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_ARTIFACT_CODE,
+    "artifact_version": POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_VERSION,
+    "database_engine": "postgresql",
+    "contract": "knowledge-evidence-search-rrf-v1",
+    "subsearches": ["dense", "exact", "fts", "trigram"],
+    "fusion_algorithm": "rrf-rank-fusion@1",
+    "runtime_module": "ai_worker.adapters.postgresql_evidence_search",
+}
+
+POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_HASH: str = canonical_sha256(POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_PROJECTION)
+
+POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF: ImmutableArtifactRef = ImmutableArtifactRef(
+    artifact_code=POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_ARTIFACT_CODE,
+    version=POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_VERSION,
+    content_sha256=POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_HASH,
+)
 
 SessionFactory = Callable[[], AsyncSession]
 

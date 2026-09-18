@@ -281,7 +281,7 @@ it.each([activeCopyVersion, 'track-c-support-copy-ko-2099-01-01.1'])('checks not
 })
 
 
-it.each(['granted', 'unsupported', 'denied', 'subscription_failed', 'revoked', 'unrequested'])('allows explicitly confirmed completion for %s', async state => {
+it.each(['granted', 'unsupported', 'denied', 'config_unavailable', 'subscription_failed', 'revoked', 'unrequested'])('allows explicitly confirmed completion for %s', async state => {
   const svc = services({
     getPlanResources: vi.fn().mockResolvedValue({ support_action_plan_id: planId, barrier_code: 'FORGOT', occurrence_id: occurrenceId, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: support.support_copy, subreason_code: null, selected_questions: [] }),
     getPushState: vi.fn().mockResolvedValue(state),

@@ -223,6 +223,13 @@ export async function installRequirementsApi(
       state.logoutCount += 1
       return json(route, { detail: '로그아웃되었습니다.' })
     }
+    if (key === 'GET /api/v1/push/config') {
+      return json(route, {
+        data: {
+          public_key: 'BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        },
+      })
+    }
     if (key === 'GET /api/v1/users/me') {
       return json(route, {
         id: ids.user,

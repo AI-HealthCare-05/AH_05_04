@@ -103,6 +103,34 @@ def _load_fixture(path: Path | None) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _verify_fixture_search_adapter_ref(fixture: dict[str, Any]) -> None:
+    from ai_worker.adapters.postgresql_evidence_search import POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF
+    from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
+
+    raw_search_ref = fixture.get("search_adapter_ref")
+    if isinstance(raw_search_ref, ImmutableArtifactRef):
+        f_search_code = raw_search_ref.artifact_code
+        f_search_ver = raw_search_ref.version
+        f_search_sha = raw_search_ref.content_sha256
+    elif isinstance(raw_search_ref, dict):
+        f_search_code = str(raw_search_ref.get("artifact_code") or "")
+        f_search_ver = str(raw_search_ref.get("version") or "")
+        f_search_sha = str(raw_search_ref.get("content_sha256") or "")
+    else:
+        raise ValueError(f"fixture search_adapter_ref is missing or invalid: {raw_search_ref!r}")
+
+    if (
+        f_search_code != POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.artifact_code
+        or f_search_ver != POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.version
+        or f_search_sha != POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.content_sha256
+    ):
+        raise ValueError(
+            f"fixture search_adapter_ref mismatch: expected {POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.artifact_code}@"
+            f"{POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.version}:{POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.content_sha256}, "
+            f"got {f_search_code}@{f_search_ver}:{f_search_sha}"
+        )
+
+
 def build_live_dependencies(
     fixture: dict[str, Any] | None,
     *,
@@ -130,6 +158,7 @@ def build_live_dependencies(
 
     from uuid import UUID
 
+    from ai_worker.adapters.postgresql_evidence_search import POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF
     from ai_worker.core import get_config
     from ai_worker.tasks.evaluation.ret_h_smoke import (
         build_eligibility_verifier,
@@ -147,12 +176,15 @@ def build_live_dependencies(
         verify_source_sentinel_indexed,
     )
 
+    _verify_fixture_search_adapter_ref(fixture)
+
     worker_config = get_config()
     _, session_factory = build_session_factory(worker_config.database_url)
     _, verification_session_factory = build_session_factory(worker_config.database_url)
 
     search_port = build_search_port(
-        session_factory, content_sha256=str(fixture["search_adapter_ref"]["content_sha256"])
+        session_factory,
+        content_sha256=POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.content_sha256,
     )
     eligibility_verifier = build_eligibility_verifier(session_factory)
     run_store = build_run_store(session_factory)
