@@ -285,7 +285,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
           {needsPushSetup && <>
             <p><Link to="/settings/notifications" target="_blank" rel="noopener noreferrer">이 기기 알림 설정 (새 탭)</Link></p>
             <Button variant="secondary" disabled={busy || !!retry} onClick={() => void run(async () => { const state = await service.getPushState(); if (alive.current) { setPushState(state); setConfirmed(false) } })}>알림 설정 상태 확인</Button>
-            <p role="status">{pushState === 'granted' ? '이 브라우저에 저장된 알림 권한과 구독을 확인했어요. 실제 도착 여부는 기기와 네트워크 상태에 따라 달라질 수 있어요.' : pushState === 'denied' ? '기기·브라우저 설정에서 알림 허용이 필요해요.' : pushState === 'unsupported' ? '이 환경에서는 알림 설정을 완료할 수 없어요. 알림 설정 화면에서 지원 환경을 확인해 주세요.' : pushState === 'subscription_failed' ? '알림 연결을 확인하지 못했어요. 설정 화면에서 다시 시도해 주세요.' : '알림 설정 화면에서 권한과 수신 등록을 확인한 뒤 설정 상태를 확인해 주세요.'}</p>
+            <p role="status">{pushState === 'granted' ? '이 브라우저에 저장된 알림 권한과 구독을 확인했어요. 실제 도착 여부는 기기와 네트워크 상태에 따라 달라질 수 있어요.' : pushState === 'denied' ? '기기·브라우저 설정에서 알림 허용이 필요해요.' : pushState === 'unsupported' ? '이 환경에서는 알림 설정을 완료할 수 없어요. 알림 설정 화면에서 지원 환경을 확인해 주세요.' : pushState === 'config_unavailable' ? 'Push 알림 서버 설정이 아직 준비되지 않았어요. 설정 완료 후 다시 확인해 주세요.' : pushState === 'subscription_failed' ? '알림 연결을 확인하지 못했어요. 설정 화면에서 다시 시도해 주세요.' : '알림 설정 화면에서 권한과 수신 등록을 확인한 뒤 설정 상태를 확인해 주세요.'}</p>
           </>}
           {needsPushSetup && pushState !== null && pushState !== 'granted' && <p>알림 설정 없이 복약 일정만 확인한 뒤 계획을 완료할 수 있어요. 알림 설정 완료로 기록하지 않아요.</p>}
           {!terminal ? <>

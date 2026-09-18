@@ -41,7 +41,7 @@
 | `ISOLATED_MIGRATION_ENV` | `infra/protected_retrieval/env.py` | `4853f8178ea611df177900573e6593c8bdc76db86a039ebd6f299013895fdbf3` |
 | `ISOLATED_MIGRATION` | `infra/protected_retrieval/versions/368000000001_create_protected_retrieval.py` | `20ed57547853a39ae5254d69dd71873e0a26223a705c5231e50dc8aa7416c68d` |
 | `AUTHORIZATION_CONTROL_CONTRACT` | `ai_worker/tasks/evaluation/protected_retrieval_control.py` | `c56d10d3de6228f46cf1a199fd49e81342254001964dbfc14f29ed2ba36042e9` |
-| `POSTGRESQL_CONTROL_ADAPTER` | `ai_worker/adapters/postgresql_protected_retrieval_control.py` | `1ea6db8887efc3822686e4562dc8310ae7ac8b73e1a8149862ee6c859386c615` |
+| `POSTGRESQL_CONTROL_ADAPTER` | `ai_worker/adapters/postgresql_protected_retrieval_control.py` | `dcd7eb1f5831cde9692851bf074f62e8adbe3c6f3d9ac6cc591ac2596bb28d04` |
 | `AUTHORIZATION_CONTROL_MIGRATION` | `infra/protected_retrieval/versions/368000000002_add_authorization_control.py` | `56a7275ebc83ebf69f115230e36e40bc13d0731a7c91bed900ff287b2b42c5b8` |
 
 재생성·검증: `uv run python scripts/verify_protected_runner_evidence.py [--write]`
@@ -53,4 +53,4 @@
 - backup·restore·rotation 운영 증빙
 - Track F external gate 충족
 
-Evidence self hash: `69cc8d85e1a63dc8627f8c4c8df01b3e385f72c040fabd80af20eec0813a28e3`
+Evidence self hash: `c73c6381d4ee62a83f0c3c3873a2bfe0649451620deabd917d6956e1d8c56fe3`

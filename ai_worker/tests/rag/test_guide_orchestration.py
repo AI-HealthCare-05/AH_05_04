@@ -43,6 +43,9 @@ from ai_worker.tasks.rag.guide_runtime_preflight import (
     GuideRuntimePreflightRequest,
 )
 from ai_worker.tasks.rag.guideline_approval_pack import build_rag15_pending_approval_pack
+from ai_worker.tasks.rag.guideline_card import MedicationIdentityRef
+from ai_worker.tasks.rag.guideline_generator import GuidelineGenerationRequest
+from ai_worker.tasks.rag.guideline_production_evidence import project_guideline_evidence_from_handoff
 
 # #760/#729가 이미 확정한 production chain fixture를 그대로 재사용한다. 같은 합성
 # 체인을 여기서 다시 만들면 두 벌의 fixture가 서로 어긋날 수 있다.
@@ -326,6 +329,47 @@ def test_ready_inputs_carry_the_exact_verified_handoff() -> None:
     assert outcome.ready_inputs is not None
     assert outcome.ready_inputs.evidence_handoff is build_outcome.handoff
     assert len(outcome.ready_inputs.evidence_handoff.selections) == len(handoff_request.hydrated_selections)
+
+
+def test_ready_inputs_compose_a_production_guideline_generation_request() -> None:
+    """#774 connection boundary: READY_FOR_GENERATION output composes the RAG-15 request.
+
+    This is the completion point of the RAG-15 Production Evidence Input Contract: the
+    two upstream objects this seam hands over are enough to build a
+    `GuidelineGenerationRequest` deterministically, with no legacy `EvidenceGateOutcome`
+    anywhere. Actually invoking the Generator is still out of scope for this module —
+    that wiring is #180 follow-up work, and nothing here calls `generator.generate`.
+    """
+    preflight_request, verifier = _approved_preflight()
+    generator = make_generator()
+    request = GuideOrchestrationRequest(
+        preflight_request=preflight_request,
+        handoff_request=_valid_request(),
+    )
+
+    outcome = _run(request, generator=generator, decision_verifier=verifier)
+
+    assert outcome.decision is GuideOrchestrationDecision.READY_FOR_GENERATION
+    assert outcome.ready_inputs is not None
+    evidence = project_guideline_evidence_from_handoff(outcome.ready_inputs.evidence_handoff)
+    generation_request = GuidelineGenerationRequest(
+        medication_identities=(
+            MedicationIdentityRef(
+                prescription_version_medication_id="11111111-1111-4111-8111-111111111111",
+                code_system="MFDS_ITEM_SEQ",
+                canonical_code="SYNTHETIC-ITEM-001",
+            ),
+        ),
+        evidence=evidence,
+        policy=preflight_request.policy,
+    )
+
+    assert generation_request.evidence.selections
+    assert len(generation_request.evidence.selections) == len(outcome.ready_inputs.evidence_handoff.selections)
+    assert generation_request.evidence.evaluated_at == outcome.ready_inputs.evidence_handoff.evaluated_at
+    assert generation_request.evidence.handoff_sha256 == outcome.ready_inputs.evidence_handoff.handoff_sha256
+    assert not hasattr(generation_request, "evidence_gate_outcome")
+    assert generator.generate_calls == 0
 
 
 # ==============================================================================
