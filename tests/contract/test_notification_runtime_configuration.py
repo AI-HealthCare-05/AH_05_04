@@ -5,9 +5,10 @@ import yaml
 
 def test_notification_service_is_opt_in_and_reuses_backend_image_without_provider_or_worker_access():
     compose = yaml.safe_load(Path("infra/docker/docker-compose.prod.yml").read_text())
+    fastapi = compose["services"]["fastapi"]
     service = compose["services"]["notification-scheduler"]
     assert service["profiles"] == ["notifications"]
-    assert service["image"] == compose["services"]["fastapi"]["image"]
+    assert service["image"] == fastapi["image"]
     assert service["entrypoint"] == ["/app/.venv/bin/python", "-m", "app.commands.schedule_notifications"]
     assert service["init"] is True and service["stop_grace_period"] == "15s"
     assert service["restart"] == "unless-stopped"
@@ -23,10 +24,30 @@ def test_notification_service_is_opt_in_and_reuses_backend_image_without_provide
         "DB_PASSWORD",
         "DB_CONNECTION_POOL_MAXSIZE",
         "SQLALCHEMY_ECHO",
+        "WEB_PUSH_ENABLED",
+        "WEB_PUSH_PRODUCTION_ENABLED",
+        "WEB_PUSH_ALLOWED_HOSTS",
+        "WEB_PUSH_VAPID_PRIVATE_KEY",
+        "WEB_PUSH_VAPID_PUBLIC_KEY",
+        "WEB_PUSH_VAPID_SUBJECT",
+        "WEB_PUSH_ENCRYPTION_KEYS",
+        "WEB_PUSH_ACTIVE_KEY_ID",
+        "WEB_PUSH_ENDPOINT_HMAC_KEY",
     }
     assert service["environment"]["DB_USER"] == "${DB_APP_USER}"
     assert service["environment"]["DB_PASSWORD"] == "${DB_APP_PASSWORD}"
     assert service["environment"]["SQLALCHEMY_ECHO"] == "false"
+    web_push_keys = {key for key in service["environment"] if key.startswith("WEB_PUSH_")}
+    assert web_push_keys
+    assert {key: service["environment"][key] for key in web_push_keys} == {
+        key: fastapi["environment"][key] for key in web_push_keys
+    }
+    assert not {
+        "OPENAI_API_KEY",
+        "CLOVA_OCR_SECRET",
+        "SMTP_PASSWORD",
+        "REDIS_PASSWORD",
+    } & set(service["environment"])
     assert "ports" not in service and "volumes" not in service
     assert service["depends_on"]["migrate"]["condition"] == "service_completed_successfully"
     assert service["logging"]["options"] == {"max-size": "10m", "max-file": "3"}
