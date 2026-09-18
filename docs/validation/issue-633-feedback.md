@@ -91,7 +91,7 @@ PYTHONPATH=backend:. uv run --env-file envs/.local.env python -m app.evaluation.
 - 이 replay는 `run_mode=DETERMINISTIC_REPLAY`, `historical_prompt_reproduction=false`, `provider_evaluation.status=NOT_RUN`인 현재 `chat-prompt-v5` 단일 prompt 판정기 검증이다. 동일 평가셋 prompt 전후 비교, live Provider A/B, 사람 blind review를 실행하지 않았다.
 - #633 후속 evidence는 이 31-case를 Chat prompt 개선용 동일 평가셋으로 사용한다. Track F RAG 전후 비교용 Gold와는 목적을 분리하며, #633에서 RAG Gold를 새로 만들거나 합치지 않는다.
 - 후속 evidence PR은 feedback 반영 전 prompt와 현재 prompt를 동일 조건으로 비교하고 baseline/candidate 결과를 각각 생성한다. deterministic replay만으로는 prompt 전후 비교 evidence가 아니다.
-- 후속 prompt comparison 입력은 `evals/generation/chat-feedback-gold-prompt-comparison-v1.json`에 고정했다. 이 config는 `chat-feedback-gold-v1` dataset, `chat-prompt-v4` baseline snapshot, `chat-prompt-v5` current snapshot, `gpt-4o`, `max_output_tokens=800`, `timeout_seconds=20`, `temperature=null`, `store=false`를 고정하며 `execution_status=NOT_RUN`이다.
+- 후속 prompt comparison 입력은 `evals/generation/chat-feedback-gold-prompt-comparison-v1.json`에 고정했다. 이 config는 `chat-feedback-gold-v1` dataset, `chat-prompt-v4` baseline snapshot, #624/#581에서 도입된 `chat-prompt-v5` current snapshot, `gpt-4o`, `max_output_tokens=800`, `timeout_seconds=20`, `temperature=0`, `store=false`를 고정하며 `execution_status=NOT_RUN`이다.
 - #632는 temperature=0과 direct Guide/Chat Provider 경로의 live safety/variance evidence로 응답 변동성을 낮춘 근거다. RAG 전후 성능 evidence로 표현하지 않는다.
 - 정현우 책임 리뷰는 dataset/prompt version·hash, 통제 실행 조건, case별 기계 판정 결과 또는 failure list, safety regression 결과, 전체 비교 요약 artifact를 기준으로 승인 코멘트를 남긴다. 이 PR 승인만으로 #633을 완료하거나 `guide-chat-feedback-v1`을 Current로 승격하지 않는다.
 

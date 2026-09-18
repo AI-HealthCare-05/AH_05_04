@@ -12,7 +12,7 @@
   "controlled_settings": {
     "max_output_tokens": 800,
     "timeout_seconds": 20,
-    "temperature": null,
+    "temperature": 0,
     "store": false
   },
   "review_paths": [
@@ -39,7 +39,7 @@
     {
       "variant_id": "chat-prompt-v5-gpt-4o-current",
       "prompt_version": "chat-prompt-v5",
-      "source_commit": "55a2542285f49042bab7704db81433fa3d70af94",
+      "source_commit": "4a9a9bfab089e10a82bf2ca3b1364fd0e7f53d60",
       "prompt_path": "evals/generation/prompts/chat-prompt-v5.txt",
       "prompt_sha256": "bd0713e282d841ccf8d65fae3ff3b79e17ed60172bc9144283eff4f9fb27069d",
       "model": "gpt-4o"

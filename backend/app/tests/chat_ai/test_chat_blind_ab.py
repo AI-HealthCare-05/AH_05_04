@@ -65,6 +65,7 @@ def test_canonical_blind_ab_config_pins_synthetic_dataset_and_prompt_snapshots()
         "chat-prompt-v4",
     )
     assert {variant.model for variant in experiment.variants} == {"gpt-4o"}
+    assert experiment.temperature == 0
     assert all(
         hashlib.sha256((variant.prompt + "\n").encode()).hexdigest() == variant.prompt_sha256
         for variant in experiment.variants
@@ -96,6 +97,17 @@ def test_feedback_gold_prompt_comparison_config_pins_v4_v5_snapshots() -> None:
         "chat-prompt-v5-gpt-4o-current",
     )
     assert {variant.model for variant in experiment.variants} == {"gpt-4o"}
+    assert experiment.temperature == 0
+    assert raw_config["controlled_settings"] == {
+        "max_output_tokens": 800,
+        "timeout_seconds": 20,
+        "temperature": 0,
+        "store": False,
+    }
+    assert tuple(variant.source_commit for variant in experiment.variants) == (
+        "94e5fa8daad6d06fc44808eefced1b07c2b784e0",
+        "4a9a9bfab089e10a82bf2ca3b1364fd0e7f53d60",
+    )
     assert all(
         hashlib.sha256((variant.prompt + "\n").encode()).hexdigest() == variant.prompt_sha256
         for variant in experiment.variants
@@ -175,6 +187,12 @@ async def test_blind_ab_run_creates_balanced_packet_separate_assignment_and_usag
 
     assert assignment["review_packet_sha256"] == hashlib.sha256(artifact_json_bytes(review_packet)).hexdigest()
     assert assignment["review_item_count"] == 54
+    assert assignment["controlled_settings"] == {
+        "max_output_tokens": 800,
+        "timeout_seconds": 20.0,
+        "temperature": experiment.temperature,
+        "store": False,
+    }
     assert assignment["decision"] == {
         "status": "PENDING_BLIND_HUMAN_REVIEW",
         "selected_variant_id": None,
