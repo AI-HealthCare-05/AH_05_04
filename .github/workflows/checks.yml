@@ -444,6 +444,7 @@ jobs:
           uv run pytest \
             -n 2 --dist=loadfile --max-worker-restart=0 --cov --cov-report= \
             ai_worker/tests/core \
+            ai_worker/tests/adapters \
             ai_worker/tests/ocr \
             ai_worker/tests/rag \
             ai_worker/tests/evaluation
@@ -571,6 +572,11 @@ jobs:
 
       - name: Run Frontend tests
         run: pnpm test
+
+      # PUBLIC_TRACK_C는 Production 공개 게이트이므로 route 미등록 단위 테스트만으로는
+      # 부족하다. 실제 build 산출물에서 Track C chunk 부재를 확인한다.
+      - name: Verify PUBLIC_TRACK_C build gate
+        run: pnpm run verify:track-c-gate
 
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium

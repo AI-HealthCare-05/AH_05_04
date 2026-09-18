@@ -73,6 +73,36 @@ Baseline Freeze, HOLDOUT 결과 관찰, Runtime 통합과 #159 Close를 차단�
 PR #475의 final HEAD는 위 commit이고 승인 뒤 추가 commit 없이 `2026-09-13T11:27:21Z`에 병합되었다.
 required check `test`·`lint`·`frontend`와 그 하위 test lane은 모두 성공했다.
 
+## 2026-09-18 후속 결정: ANSWER_CORRECTNESS Zero-Claim Bootstrap 의미와 의도적 CI Divergence
+
+Issue #159 구현 중 발견된 zero-claim Case 및 zero-denominator bootstrap replicate 처리와 관련하여, Product·Safety·Evaluation 승인자 권가빈 (`@hazelnutflavoured`)의 결정([#159 comment 5723932925](https://github.com/AI-HealthCare-05/AH_05_04/issues/159#issuecomment-5723932925), [#159 comment 5724008612](https://github.com/AI-HealthCare-05/AH_05_04/issues/159#issuecomment-5724008612), 회신 [#159 comment 5724038459](https://github.com/AI-HealthCare-05/AH_05_04/issues/159#issuecomment-5724038459))에 따라 다음 후속 계약을 확정한다.
+
+### 1. 확정 의미
+
+1. `ANSWER_CORRECTNESS`는 CLAIM 단위 `MICRO_RATIO` 정의를 유지한다.
+2. zero-claim Case는 분자 0, 분모 0의 `RatioContribution(0, 0)`으로 유지하며, `0/1` 등 Case-level penalty로 치환하지 않는다. 필수 claim 누락은 `REQUIRED_CLAIM_RECALL`에서 단독 측정한다.
+3. CI sampling frame에는 zero-denominator cluster도 포함한다. cluster를 사전 제외하지 않는다.
+4. bootstrap replicate의 denominator 합이 0인 replicate만 제외(skip)하고, 나머지 valid replicate들로 percentile CI를 산출한다.
+5. scope 전체 denominator가 0이면 `COMPLETED / INCONCLUSIVE / ZERO_DENOMINATOR`로 판정한다.
+6. valid replicate 비율이 `ComparisonScope.ci_parameters`의 `minimum_valid_replicate_ratio`(초기값 `"0.9"`) 미만이면 `COMPLETED / INCONCLUSIVE`로 판정하고 reason code는 `MINIMUM_VALID_BOOTSTRAP_REPLICATE_RATIO_NOT_MET`를 기록한다. 단, 계산된 `metric_value` 및 유효 replicate가 있을 때의 CI bounds는 보존한다.
+7. valid / excluded replicate count와 ratio는 machine `MetricResult`나 Schema Set 1.5에 추가하지 않고 non-schema diagnostic / `report.md` projection 계층에만 기록한다. diagnostic projection capability는 구현되나 실제 Run report emission은 authoritative human-judgment runtime wiring 완료 시점까지 유예된다. 이 값은 Release Gate나 자동화 판정의 입력이 아니다.
+
+### 2. 의도적 CI Divergence
+
+지표별 CI sampling frame 및 zero-denominator 처리 규칙은 다음과 같이 분기하며, 이는 기존 지표 의미 보존을 위한 **의도적 divergence(Intentional Divergence)**이다:
+
+- `ANSWER_CORRECTNESS`: zero-denominator cluster를 sampling frame에 유지하고 replicate 단위로 denominator 0을 제외한다.
+- `GROUNDING` / `SAFETY`: 기존처럼 helper 호출 전 zero-denominator cluster를 `active_grouped`에서 제외하는 방식을 유지한다. 이번 변경으로 production 코드를 수정하지 않는다.
+- `Retrieval`: 해당 ratio bootstrap helper 경로를 사용하지 않는다.
+
+이 차이로 인한 정렬 여부는 향후 별도 후속 이슈에서 다루며, 이번 DEV kernel 범위에서 임의로 단일화하지 않는다.
+
+### 3. 후속 결정 Evidence
+
+| 결정자 | 상태 | 근거 | 일시 (UTC) |
+| --- | --- | --- | --- |
+| 권가빈 (`@hazelnutflavoured`) | `APPROVED` | [Issue #159 comment `5723932925`](https://github.com/AI-HealthCare-05/AH_05_04/issues/159#issuecomment-5723932925) · [comment `5724008612`](https://github.com/AI-HealthCare-05/AH_05_04/issues/159#issuecomment-5724008612) | `2026-09-18T02:07:41Z` |
+
 ## 공개 경계
 
 이 후보의 승인이나 DEV 구현은 `PUBLIC_TRACK_F`를 해제하지 않는다. Answer Quality 통과만으로도 공개할

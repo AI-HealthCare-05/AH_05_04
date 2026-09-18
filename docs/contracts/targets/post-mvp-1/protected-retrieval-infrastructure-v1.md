@@ -2,7 +2,7 @@
 
 > 상태: Approved Target · Partially implemented
 >
-> 근거 Decision: `PD-368-20260909`; authorization control decision `PD-368-R1` (PR #463 완료); C2 command 및 권한 확장 candidate `PD-368-R2`
+> 근거 Decision: `PD-368-20260909`; authorization control decision `PD-368-R1` (PR #463 완료); C2 command 및 권한 확장 candidate `PD-368-R2`; production approval source locator 및 commit authority binding candidate `PD-368-R3`
 
 이 계약은 protected retrieval의 PostgreSQL data-plane 실행 경계와 control-plane 구현 범위를
 분리한다. 현재 실행 가능한 공개 계약이나 실제 protected 환경 활성화 승인이 아니다.
@@ -54,13 +54,31 @@ Command/결과/audit 필드, 승인자 분리, lock order는
 - 최소 권한 확장: `protected_identity` INSERT 및 `enabled` UPDATE, `protected_dataset` INSERT 및 lifecycle 컬럼 UPDATE
 - 음성 테스트 보존: identity/dataset 불변 식별자·해시 UPDATE 거부 단언 및 data-plane envelope/capability/OPERATION 감사 격리 단언 유지
 
+## 계약 확정된 Production TrustedApprovalSource 어댑터 경계 (`PD-368-R3`)
+
+[`PD-368-R3`](../../../governance/decisions/2026-09-18-protected-retrieval-production-approval-source.md)은
+Issue #772에 따라 GitHub exact review/event를 production approval authority로 연결하는 `TrustedApprovalSource`
+어댑터 경계를 다음과 같이 고정한다:
+
+- Authority: GitHub exact PR `APPROVED` review event (`snapshot-at-ingest`, 사후 취소는 `RevokeAuthorizationCommand`로만 처리)
+- C1 Canonical Source: `github:<owner>/<repo>:pull:<pull_number>:review:<review_id>`
+- Config Authority: `PROTECTED_APPROVAL_REPOSITORY` (`<owner>/<repo>`) 및 `PROTECTED_APPROVAL_BRANCH` (fork PR 거부, base repo 일치 강제)
+- FREEZE Locator 격리: `FreezeApprovalLocator(source_event_id, pull_number, review_id)`는 ephemeral lookup hint이며 `FreezeDatasetCommand`, command SHA-256, 감사 로그, 영속 저장소에 포함되지 않음
+- FREEZE Commit Authority: `review.commit_id` exact tree에서 artifact를 읽고 `evidence.target_commit_oid == review.commit_id` 강제. `review.commit_id`가 `PROTECTED_APPROVAL_BRANCH`의 조상임을 GitHub compare API로 검증
+- Exact Artifact Path: C1은 `docs/validation/protected_retrieval/c1/pull_{pull_number}_review_{review_id}.json`, FREEZE는 `docs/validation/protected_retrieval/freeze/{source_event_id}.json`. Commit tree 스캔/검색 금지
+- Hash 분리: `approval_artifact_sha256`(blob bytes SHA-256)과 `target_artifact_sha256`(승인 대상 구현/데이터셋 바인딩 hash)
+- `canonical_raw_sha256`: immutable projection의 RFC 8785 canonical JSON bytes SHA-256 (review body 제외)
+- Error Mapping: 정상 credential/repo에서만 absent 404를 `ApprovalSourceNotFoundError`로 분류, 나머지 401/403/429/timeout/5xx/접근 불가 404는 dependency failure(`ProtectedSecurityError("INTERNAL_ERROR")`)로 fail-closed
+- Runtime/Config: `PROTECTED_RETRIEVAL_ENABLED=true` 시 필수 설정 강제, synthetic/fake fallback 금지
+
 ## 구현 완료 및 남은 범위
 
 - C2-a Identity control-plane Application Service 구현: #512(#522) 병합으로 구현 완료
 - C2-b Dataset lifecycle 및 FREEZE Application Service 구현: #513 구현 완료 (Freeze receipt는 성공한 `DATASET_FROZEN` CONTROL 감사 이벤트 식별자를 참조)
-- production trusted approval source connector와 protected 환경 provisioning (`EXT-PRIV-001`): 미구현 / unprovisioned
+- production trusted approval source connector (`PD-368-R3`, Issue #772): 어댑터 구현 및 검증
+- protected 환경 provisioning (`EXT-PRIV-001`): unprovisioned (외부 gate)
 
-위 production connector 및 protected 환경 provisioning은 외부 gate로 남는다. Issue #368은 Open이며 이 계약은 `current/`로 승격하지 않고 `targets/` 상태를 유지한다.
+위 production connector 구현 후에도 protected 환경 provisioning은 외부 gate로 남는다. Issue #368은 Open이며 이 계약은 `current/`로 승격하지 않고 `targets/` 상태를 유지한다.
 
 ## 활성화 상태
 

@@ -27,7 +27,7 @@ for (const width of [320, 390, 412]) {
       }
       await route.fulfill({ json: { data } })
     })
-    await page.goto(`/dev/track-c/plans/${planId}`)
+    await page.goto(`/track-c/plans/${planId}`)
     await page.getByRole('button', { name: '도움 사용 후기' }).click()
     await expect(page.getByRole('heading', { name: '선택한 방법이 도움이 되었나요?' })).toBeFocused()
     await expect(page.getByRole('button', { name: '후기 저장', exact: true })).toBeDisabled()

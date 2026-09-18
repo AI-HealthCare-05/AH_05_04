@@ -30,7 +30,13 @@ const DesignPrototypePage = import.meta.env.DEV
   ? lazy(() => import('../pages/DesignPrototypePage'))
   : null
 
-const TrackCPage = import.meta.env.DEV
+// PUBLIC_TRACK_C 공개 게이트. docs/release-gates/post-mvp-1-external-approvals.md의
+// EXT-MED-001 · EXT-MED-002 · EXT-PRIV-002 · EXT-SAFETY-001 승인 전에는 false를 유지한다.
+// 표현식을 그대로 두어야 Vite가 build 시점에 상수로 접어 production 번들에서
+// route · page chunk · 진입 문구를 제거한다. 공유 상수로 빼지 않는다.
+const TRACK_C_PUBLIC = import.meta.env.VITE_PUBLIC_TRACK_C === 'true' || import.meta.env.DEV
+
+const TrackCPage = TRACK_C_PUBLIC
   ? lazy(() => import('../pages/TrackCPage'))
   : null
 
@@ -124,9 +130,11 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
 export function AppRoutes({
   enableDevPreview = import.meta.env.DEV,
   enableDesignPrototype = import.meta.env.DEV,
+  enableTrackC = TRACK_C_PUBLIC,
 }: {
   enableDevPreview?: boolean
   enableDesignPrototype?: boolean
+  enableTrackC?: boolean
 } = {}) {
   return (
     <Routes>
@@ -159,9 +167,9 @@ export function AppRoutes({
       <Route path="/guides/:guideId" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
       <Route path="/guides" element={<ProtectedRoute><GuidePage /></ProtectedRoute>} />
       <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
-      {TrackCPage && <>
-        <Route path="/dev/track-c/occurrences/:occurrenceId" element={<ProtectedRoute><Suspense fallback={<div role="status">불러오는 중입니다.</div>}><TrackCPage /></Suspense></ProtectedRoute>} />
-        <Route path="/dev/track-c/plans/:planId" element={<ProtectedRoute><Suspense fallback={<div role="status">불러오는 중입니다.</div>}><TrackCPage /></Suspense></ProtectedRoute>} />
+      {enableTrackC && TrackCPage && <>
+        <Route path="/track-c/occurrences/:occurrenceId" element={<ProtectedRoute><Suspense fallback={<div role="status">불러오는 중입니다.</div>}><TrackCPage /></Suspense></ProtectedRoute>} />
+        <Route path="/track-c/plans/:planId" element={<ProtectedRoute><Suspense fallback={<div role="status">불러오는 중입니다.</div>}><TrackCPage /></Suspense></ProtectedRoute>} />
       </>}
       <Route path="/schedule" element={<ProtectedRoute><SchedulePage /></ProtectedRoute>} />
       <Route

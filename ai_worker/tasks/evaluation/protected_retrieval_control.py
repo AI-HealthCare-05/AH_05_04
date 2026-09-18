@@ -225,6 +225,113 @@ class FreezeApprovalSourceEvidence(StrictContractModel):
         return value
 
 
+class FreezeApprovalLocator(StrictContractModel):
+    source_event_id: str
+    pull_number: int = Field(gt=0)
+    review_id: int = Field(gt=0)
+
+    @field_validator("source_event_id")
+    @classmethod
+    def require_source_uuid_v4(cls, value: str) -> str:
+        return _require_uuid_v4(value)
+
+
+class C1ApprovalArtifact(StrictContractModel):
+    format_id: Literal["c1.authorization-approval-artifact"] = "c1.authorization-approval-artifact"
+    format_version: Literal["1.0.0"] = "1.0.0"
+    source_event_id: str = Field(min_length=1, max_length=160)
+    authorization_action: AuthorizationAuditAction
+    approved_grant_payload_sha256: Sha256Hex
+    issuer_role: ProtectedApprovalRole
+    target_commit_oid: str = Field(pattern=r"^[0-9a-f]{40}$")
+    target_artifact_sha256: Sha256Hex
+    implementation_participants: tuple[ActorIdentity, ...] = Field(min_length=1)
+
+    @field_validator("implementation_participants")
+    @classmethod
+    def require_unique_participants(cls, value: tuple[ActorIdentity, ...]) -> tuple[ActorIdentity, ...]:
+        identities = {(item.namespace, item.actor_id) for item in value}
+        if len(identities) != len(value):
+            raise ValueError("implementation participants must be unique")
+        return value
+
+
+class FreezeApprovalArtifact(StrictContractModel):
+    format_id: Literal["freeze.dataset-approval-artifact"] = "freeze.dataset-approval-artifact"
+    format_version: Literal["1.0.0"] = "1.0.0"
+    source_event_id: str
+    action: Literal[ProtectedAction.FREEZE] = ProtectedAction.FREEZE
+    dataset_id: str
+    dataset_version: str = Field(pattern=r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$")
+    manifest_sha256: Sha256Hex
+    protected_artifact_sha256: Sha256Hex
+    authored_count: Literal[40] = 40
+    review_complete: Literal[True] = True
+    leakage_axis_intersections: tuple[Literal[0], Literal[0], Literal[0], Literal[0]] = (0, 0, 0, 0)
+    issuer_role: Literal[ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER] = ProtectedApprovalRole.PRODUCT_SAFETY_REVIEWER
+    target_commit_oid: str = Field(pattern=r"^[0-9a-f]{40}$")
+    target_artifact_sha256: Sha256Hex
+    implementation_participants: tuple[ActorIdentity, ...] = Field(min_length=1)
+
+    @field_validator("source_event_id", "dataset_id")
+    @classmethod
+    def require_uuid_v4_event_and_dataset(cls, value: str) -> str:
+        return _require_uuid_v4(value)
+
+    @field_validator("implementation_participants")
+    @classmethod
+    def require_unique_participants(cls, value: tuple[ActorIdentity, ...]) -> tuple[ActorIdentity, ...]:
+        identities = {(item.namespace, item.actor_id) for item in value}
+        if len(identities) != len(value):
+            raise ValueError("implementation participants must be unique")
+        return value
+
+
+C1_ARTIFACT_PATH_TEMPLATE = "docs/validation/protected_retrieval/c1/pull_{pull_number}_review_{review_id}.json"
+FREEZE_ARTIFACT_PATH_TEMPLATE = "docs/validation/protected_retrieval/freeze/{source_event_id}.json"
+
+
+def c1_approval_artifact_path(pull_number: int, review_id: int) -> str:
+    return C1_ARTIFACT_PATH_TEMPLATE.format(pull_number=pull_number, review_id=review_id)
+
+
+def freeze_approval_artifact_path(source_event_id: str) -> str:
+    return FREEZE_ARTIFACT_PATH_TEMPLATE.format(source_event_id=source_event_id)
+
+
+def compute_approval_canonical_raw_sha256(
+    *,
+    review_id: int,
+    state: str,
+    submitted_at: datetime | str,
+    commit_id: str,
+    reviewer_actor_id: str,
+    repository: str,
+    pull_number: int,
+    approval_artifact_sha256: str,
+) -> str:
+    if isinstance(submitted_at, datetime):
+        if submitted_at.tzinfo is None or submitted_at.utcoffset() != timedelta(0):
+            raise ValueError("submitted_at must be in UTC")
+        submitted_at_str = submitted_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    else:
+        submitted_at_str = str(submitted_at)
+    projection: JsonValue = {
+        "approval_artifact_sha256": approval_artifact_sha256,
+        "commit_id": commit_id,
+        "pull_number": pull_number,
+        "repository": repository,
+        "review_id": review_id,
+        "reviewer": {
+            "actor_id": reviewer_actor_id,
+            "namespace": "GITHUB_LOGIN",
+        },
+        "state": state,
+        "submitted_at": submitted_at_str,
+    }
+    return sha256(canonical_json_bytes(projection)).hexdigest()
+
+
 ControlCommand = (
     IngestApprovalCommand
     | GrantAuthorizationCommand
@@ -309,7 +416,11 @@ class ControlCommandResult(StrictContractModel):
 
 class TrustedApprovalSource(Protocol):
     async def fetch(self, source_event_id: str) -> ApprovalSourceEvidence: ...
-    async def fetch_freeze(self, source_event_id: str) -> FreezeApprovalSourceEvidence: ...
+    async def fetch_freeze(
+        self,
+        source_event_id: str,
+        locator: FreezeApprovalLocator | None = None,
+    ) -> FreezeApprovalSourceEvidence: ...
 
 
 class ApprovalSourceNotFoundError(Exception):
@@ -405,11 +516,14 @@ def verify_freeze_approval(
 
 __all__ = [
     "ApprovalSourceNotFoundError",
+    "C1ApprovalArtifact",
     "ControlCommand",
     "ControlCommandKind",
     "ControlCommandResult",
     "DisableIdentityCommand",
     "ExpireAuthorizationCommand",
+    "FreezeApprovalArtifact",
+    "FreezeApprovalLocator",
     "FreezeApprovalSourceEvidence",
     "FreezeDatasetCommand",
     "GrantAuthorizationCommand",
@@ -419,7 +533,10 @@ __all__ = [
     "RevokeAuthorizationCommand",
     "TransitionDatasetCommand",
     "TrustedApprovalSource",
+    "c1_approval_artifact_path",
+    "compute_approval_canonical_raw_sha256",
     "control_command_sha256",
+    "freeze_approval_artifact_path",
     "verify_authorization_approval",
     "verify_freeze_approval",
 ]

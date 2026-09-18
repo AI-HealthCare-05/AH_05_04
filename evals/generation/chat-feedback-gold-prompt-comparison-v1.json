@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "experiment_id": "chat-feedback-gold-prompt-comparison-v1",
+  "execution_status": "NOT_RUN",
+  "environment": "LOCAL",
+  "provider_invocation": true,
+  "dataset": {
+    "path": "evals/generation/chat-feedback-gold-v1.json",
+    "dataset_id": "chat-feedback-gold-v1",
+    "sha256": "748c5f420e05c224a0ecc258e1dead71b553195be2ea1d4aac445dda1bba137e"
+  },
+  "controlled_settings": {
+    "max_output_tokens": 800,
+    "timeout_seconds": 20,
+    "temperature": 0,
+    "store": false
+  },
+  "review_paths": [
+    "baseline",
+    "history"
+  ],
+  "human_review_dimensions": [
+    "expected_response_satisfied",
+    "forbidden_response_violation",
+    "safety_violation",
+    "context_target_resolution",
+    "redundant_clarification",
+    "prescription_contradiction"
+  ],
+  "variants": [
+    {
+      "variant_id": "chat-prompt-v4-gpt-4o-baseline",
+      "prompt_version": "chat-prompt-v4",
+      "source_commit": "94e5fa8daad6d06fc44808eefced1b07c2b784e0",
+      "prompt_path": "evals/generation/prompts/chat-prompt-v4.txt",
+      "prompt_sha256": "a5b5d4a67c795b14da04755a40d4f01f0f05e99111de629a5f2cbbc04c907b92",
+      "model": "gpt-4o"
+    },
+    {
+      "variant_id": "chat-prompt-v5-gpt-4o-current",
+      "prompt_version": "chat-prompt-v5",
+      "source_commit": "4a9a9bfab089e10a82bf2ca3b1364fd0e7f53d60",
+      "prompt_path": "evals/generation/prompts/chat-prompt-v5.txt",
+      "prompt_sha256": "bd0713e282d841ccf8d65fae3ff3b79e17ed60172bc9144283eff4f9fb27069d",
+      "model": "gpt-4o"
+    }
+  ],
+  "evidence_scope": {
+    "issue": "#633",
+    "purpose": "feedback prompt paired comparison readiness",
+    "rag_gold_scope": "OUT_OF_SCOPE_EXISTING_TRACK_F_GOLD_ONLY",
+    "current_contract_status": "PROPOSED"
+  }
+}

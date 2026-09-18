@@ -312,11 +312,13 @@ def test_run_test_script_excludes_backend_from_ai_worker_unit_test_pythonpath() 
         "-o",
         "cache_dir=$cache_dir",
         "ai_worker/tests/core",
+        "ai_worker/tests/adapters",
         "ai_worker/tests/ocr",
         "ai_worker/tests/rag",
         "ai_worker/tests/evaluation",
     ]
     assert "ai_worker/tests/core" in worker_lane_body
+    assert "ai_worker/tests/adapters" in worker_lane_body
     assert "ai_worker/tests/ocr" in worker_lane_body
     assert "ai_worker/tests/rag" in worker_lane_body
     assert "ai_worker/tests/evaluation" in worker_lane_body

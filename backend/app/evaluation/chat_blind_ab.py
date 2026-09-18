@@ -36,6 +36,7 @@ class BlindABExperiment:
     human_review_dimensions: tuple[str, ...]
     max_output_tokens: int
     timeout_seconds: float
+    temperature: int | float
     variants: tuple[BlindABVariant, BlindABVariant]
 
 
@@ -126,8 +127,9 @@ def _load_variant(raw_variant: object) -> BlindABVariant:
     return variant
 
 
-def _controlled_settings(settings: dict[str, Any], dataset: dict[str, Any]) -> tuple[int, float]:
-    if settings.get("store") is not False or settings.get("temperature") is not None:
+def _controlled_settings(settings: dict[str, Any], dataset: dict[str, Any]) -> tuple[int, float, int | float]:
+    temperature = settings.get("temperature")
+    if settings.get("store") is not False or temperature not in (None, 0):
         raise ValueError("Blind A/B provider storage and temperature controls changed")
     max_output_tokens = settings.get("max_output_tokens")
     timeout_seconds = settings.get("timeout_seconds")
@@ -141,8 +143,8 @@ def _controlled_settings(settings: dict[str, Any], dataset: dict[str, Any]) -> t
         or model_settings.get("timeout_seconds") != timeout_seconds
         or model_settings.get("temperature") is not None
     ):
-        raise ValueError("Blind A/B controlled settings must match the canonical dataset")
-    return max_output_tokens, float(timeout_seconds)
+        raise ValueError("Blind A/B controlled settings must match the canonical replay dataset")
+    return max_output_tokens, float(timeout_seconds), 0
 
 
 def load_blind_ab_experiment(config_path: Path) -> tuple[BlindABExperiment, dict[str, Any]]:
@@ -174,7 +176,7 @@ def load_blind_ab_experiment(config_path: Path) -> tuple[BlindABExperiment, dict
     if "blind_seed" in raw_config:
         raise ValueError("Blind A/B seed must not be public")
 
-    max_output_tokens, timeout_seconds = _controlled_settings(settings, dataset)
+    max_output_tokens, timeout_seconds, temperature = _controlled_settings(settings, dataset)
 
     return (
         BlindABExperiment(
@@ -186,6 +188,7 @@ def load_blind_ab_experiment(config_path: Path) -> tuple[BlindABExperiment, dict
             human_review_dimensions=dimensions,
             max_output_tokens=max_output_tokens,
             timeout_seconds=timeout_seconds,
+            temperature=temperature,
             variants=(variants[0], variants[1]),
         ),
         dataset,
@@ -348,6 +351,12 @@ async def run_blind_ab_evaluation(
         "dataset": {
             "dataset_id": experiment.dataset_id,
             "sha256": experiment.dataset_sha256,
+        },
+        "controlled_settings": {
+            "max_output_tokens": experiment.max_output_tokens,
+            "timeout_seconds": experiment.timeout_seconds,
+            "temperature": experiment.temperature,
+            "store": False,
         },
         "review_packet_sha256": review_packet_sha256,
         "review_item_count": len(review_items),

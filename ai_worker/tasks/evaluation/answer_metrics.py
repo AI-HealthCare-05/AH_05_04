@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, TypedDict, cast
 
@@ -11,13 +12,20 @@ from ai_worker.tasks.evaluation.metric_support import (
     RatioContribution,
     canonical_ratio,
     percentile_cluster_bootstrap_ratio_ci,
+    percentile_cluster_bootstrap_ratio_ci_with_diagnostics,
 )
 from ai_worker.tasks.evaluation.schemas.answer_quality_v1 import (
     AnswerClaimCorrectnessLabel,
     AnswerRelevanceLabel,
 )
 from ai_worker.tasks.evaluation.schemas.artifacts import CaseResult, MetricResult, MetricResults
-from ai_worker.tasks.evaluation.schemas.common import DecisionStatus, ExecutionStatus, Partition, TaskType
+from ai_worker.tasks.evaluation.schemas.common import (
+    DecisionStatus,
+    ExecutionStatus,
+    Partition,
+    TaskType,
+    _validate_decimal,
+)
 from ai_worker.tasks.evaluation.schemas.policy import ComparisonScope
 
 _STRUCTURED_METRICS = frozenset({"COMPLETENESS", "REQUIRED_CLAIM_RECALL"})
@@ -28,6 +36,26 @@ _METRIC_UNITS = {
     "RELEVANCE": "CASE",
     "REQUIRED_CLAIM_RECALL": "REQUIRED_CLAIM",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerBootstrapDiagnostic:
+    metric_id: str
+    partition: Partition
+    slice_id: str
+    total_replicates: int
+    valid_replicates: int
+    excluded_replicates: int
+    valid_replicate_ratio: str
+    minimum_valid_replicate_ratio: str
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerMetricBuildResult:
+    metrics: MetricResults
+    bootstrap_diagnostics: tuple[AnswerBootstrapDiagnostic, ...]
+
+
 _INPUT_STATUS_PRIORITY = {
     ExecutionStatus.INVALID: 0,
     ExecutionStatus.ERROR: 1,
@@ -68,11 +96,11 @@ def _scope_fields(scope: ComparisonScope) -> MetricScopeFields:
         "estimator_id": scope.estimator_id,
         "estimator_version": scope.estimator_version,
         "independence_unit": scope.independence_unit,
-        "cluster_dimension": scope.cluster_dimension.value if scope.cluster_dimension is not None else None,
+        "cluster_dimension": None if scope.cluster_dimension is None else scope.cluster_dimension.value,
         "ci_method_id": scope.ci_method_id,
         "ci_method_version": scope.ci_method_version,
-        "ci_level": str(ci_level) if ci_level is not None else None,
-        "ci_sidedness": str(ci_sidedness) if ci_sidedness is not None else None,
+        "ci_level": ci_level if isinstance(ci_level, str) else None,
+        "ci_sidedness": ci_sidedness if isinstance(ci_sidedness, str) else None,
         "threshold": scope.threshold,
     }
 
@@ -97,10 +125,21 @@ def _matches_scope(case: EvaluationCaseContract, scope: ComparisonScope) -> bool
     return case.partition is scope.partition and (scope.slice_id == "ALL" or scope.slice_id in case.slice_ids)
 
 
+def _is_valid_minimum_replicate_ratio(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        canonical = _validate_decimal(value)
+        parsed = Decimal(canonical)
+        return Decimal(0) < parsed <= Decimal(1)
+    except (ValueError, ArithmeticError):
+        return False
+
+
 def _algorithm_signature_supported(scope: ComparisonScope) -> bool:
     parameters = dict(scope.ci_parameters)
     iterations = parameters.get("iterations")
-    return (
+    base_supported = (
         scope.metric_id in _METRIC_UNITS
         and scope.metric_version == "1.0.0"
         and scope.partition is Partition.DEV
@@ -112,7 +151,6 @@ def _algorithm_signature_supported(scope: ComparisonScope) -> bool:
         and scope.cluster_dimension is not None
         and scope.ci_method_id == "PERCENTILE_CLUSTER_BOOTSTRAP"
         and scope.ci_method_version == "1.0.0"
-        and set(parameters) == {"iterations", "level", "sidedness"}
         and type(iterations) is int
         and iterations > 0
         and parameters.get("level") == "0.95"
@@ -121,6 +159,15 @@ def _algorithm_signature_supported(scope: ComparisonScope) -> bool:
         and scope.decision_basis == "DIAGNOSTIC_ONLY"
         and scope.threshold == "0"
     )
+    if not base_supported:
+        return False
+
+    if scope.metric_id == "ANSWER_CORRECTNESS":
+        if set(parameters) != {"iterations", "level", "sidedness", "minimum_valid_replicate_ratio"}:
+            return False
+        return _is_valid_minimum_replicate_ratio(parameters.get("minimum_valid_replicate_ratio"))
+
+    return set(parameters) == {"iterations", "level", "sidedness"}
 
 
 def _run_integrity_status(
@@ -191,12 +238,60 @@ def _human_contribution(
     raise AssertionError(f"unexpected human metric: {metric_id}")
 
 
+def _answer_correctness_bootstrap(
+    scope: ComparisonScope,
+    grouped: Mapping[str, list[RatioContribution]],
+    numerator: int,
+    denominator: int,
+    initial_reason_code: str | None,
+) -> tuple[str | None, str | None, str | None, str | None, AnswerBootstrapDiagnostic]:
+    parameters = dict(scope.ci_parameters)
+    iterations = cast(int, parameters["iterations"])
+    min_valid_ratio = cast(str, parameters["minimum_valid_replicate_ratio"])
+    if denominator == 0:
+        diagnostic = AnswerBootstrapDiagnostic(
+            metric_id=scope.metric_id,
+            partition=scope.partition,
+            slice_id=scope.slice_id,
+            total_replicates=iterations,
+            valid_replicates=0,
+            excluded_replicates=iterations,
+            valid_replicate_ratio="0",
+            minimum_valid_replicate_ratio=min_valid_ratio,
+        )
+        return None, None, None, initial_reason_code, diagnostic
+
+    metric_value = canonical_ratio(numerator, denominator)
+    diag = percentile_cluster_bootstrap_ratio_ci_with_diagnostics(
+        {group_id: tuple(values) for group_id, values in grouped.items()},
+        seed=cast(int, scope.seed),
+        iterations=iterations,
+        level=Decimal(cast(str, parameters["level"])),
+    )
+    diagnostic = AnswerBootstrapDiagnostic(
+        metric_id=scope.metric_id,
+        partition=scope.partition,
+        slice_id=scope.slice_id,
+        total_replicates=diag.total_replicates,
+        valid_replicates=diag.valid_replicates,
+        excluded_replicates=diag.excluded_replicates,
+        valid_replicate_ratio=diag.valid_replicate_ratio,
+        minimum_valid_replicate_ratio=min_valid_ratio,
+    )
+    reason_code = initial_reason_code
+    if reason_code is None and (
+        Decimal(diag.valid_replicates) / Decimal(diag.total_replicates) < Decimal(min_valid_ratio)
+    ):
+        reason_code = "MINIMUM_VALID_BOOTSTRAP_REPLICATE_RATIO_NOT_MET"
+    return metric_value, diag.ci_lower, diag.ci_upper, reason_code, diagnostic
+
+
 def _completed_metric(
     scope: ComparisonScope,
     cases: tuple[EvaluationCaseContract, ...],
     results_by_case: Mapping[str, CaseResult],
     human_judgments: ValidatedAnswerJudgments | None = None,
-) -> MetricResult:
+) -> tuple[MetricResult, AnswerBootstrapDiagnostic | None]:
     grouped: defaultdict[str, list[RatioContribution]] = defaultdict(list)
     contributions: list[RatioContribution] = []
     for case in cases:
@@ -226,7 +321,13 @@ def _completed_metric(
     ci_lower: str | None = None
     ci_upper: str | None = None
     metric_value: str | None = None
-    if denominator > 0:
+    diagnostic: AnswerBootstrapDiagnostic | None = None
+
+    if scope.metric_id == "ANSWER_CORRECTNESS":
+        metric_value, ci_lower, ci_upper, reason_code, diagnostic = _answer_correctness_bootstrap(
+            scope, grouped, numerator, denominator, reason_code
+        )
+    elif denominator > 0:
         parameters = dict(scope.ci_parameters)
         metric_value = canonical_ratio(numerator, denominator)
         ci_lower, ci_upper = percentile_cluster_bootstrap_ratio_ci(
@@ -235,7 +336,8 @@ def _completed_metric(
             iterations=cast(int, parameters["iterations"]),
             level=Decimal(cast(str, parameters["level"])),
         )
-    return MetricResult(
+
+    metric_result = MetricResult(
         **_scope_fields(scope),
         execution_status=ExecutionStatus.COMPLETED,
         decision_status=DecisionStatus.INCONCLUSIVE if reason_code else DecisionStatus.NOT_APPLICABLE,
@@ -248,6 +350,7 @@ def _completed_metric(
         ci_upper=ci_upper,
         reason_code=reason_code,
     )
+    return metric_result, diagnostic
 
 
 def _evaluate_scope_metric(
@@ -256,43 +359,43 @@ def _evaluate_scope_metric(
     results_by_case: Mapping[str, CaseResult],
     expected_input_sha256_by_case: Mapping[str, str],
     human_judgments: ValidatedAnswerJudgments | None,
-) -> MetricResult:
+) -> tuple[MetricResult, AnswerBootstrapDiagnostic | None]:
     if scope.metric_id in _HUMAN_METRICS:
         if human_judgments is None:
-            return _incomplete_metric(scope, ExecutionStatus.NOT_EVALUATED)
+            return _incomplete_metric(scope, ExecutionStatus.NOT_EVALUATED), None
         if not human_judgments.validate_for_scope(
             scoped_cases,
             results_by_case,
             expected_input_sha256_by_case,
         ):
-            return _incomplete_metric(scope, ExecutionStatus.INVALID)
+            return _incomplete_metric(scope, ExecutionStatus.INVALID), None
         try:
             return _completed_metric(scope, scoped_cases, results_by_case, human_judgments=human_judgments)
         except ValueError as exc:
             if str(exc) != "bootstrap replicate denominator is zero":
                 raise
-            return _incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED)
+            return _incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED), None
 
     if scope.metric_id not in _STRUCTURED_METRICS:
-        return _incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED)
+        return _incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED), None
 
     try:
         return _completed_metric(scope, scoped_cases, results_by_case)
     except ValueError as exc:
         if str(exc) != "bootstrap replicate denominator is zero":
             raise
-        return _incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED)
+        return _incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED), None
 
 
-def build_answer_metrics(
+def build_answer_metrics_with_diagnostics(
     dataset: ValidatedDataset,
     case_results: tuple[CaseResult, ...],
     *,
     expected_run_id: str,
     expected_input_sha256_by_case: Mapping[str, str],
     human_judgments: ValidatedAnswerJudgments | None = None,
-) -> MetricResults:
-    """Build approved #159 DEV metrics without reading answer text or protected data."""
+) -> AnswerMetricBuildResult:
+    """Build approved #159 DEV metrics with non-schema bootstrap diagnostics."""
 
     answer_cases = tuple(
         case for case in dataset.cases if case.task_type is TaskType.ANSWER_QUALITY and case.partition is Partition.DEV
@@ -305,6 +408,7 @@ def build_answer_metrics(
     )
     results_by_case = {result.case_id: result for result in case_results}
     metrics: list[MetricResult] = []
+    diagnostics: list[AnswerBootstrapDiagnostic] = []
     for scope in dataset.comparison_policy.scopes:
         if scope.metric_id not in _METRIC_UNITS or not _algorithm_signature_supported(scope):
             metrics.append(_incomplete_metric(scope, ExecutionStatus.NOT_IMPLEMENTED))
@@ -317,19 +421,43 @@ def build_answer_metrics(
         if scope_execution_status is not None:
             metrics.append(_incomplete_metric(scope, scope_execution_status))
             continue
-        metrics.append(
-            _evaluate_scope_metric(
-                scope,
-                scoped_cases,
-                results_by_case,
-                expected_input_sha256_by_case,
-                human_judgments,
-            )
+        metric_res, diag = _evaluate_scope_metric(
+            scope,
+            scoped_cases,
+            results_by_case,
+            expected_input_sha256_by_case,
+            human_judgments,
         )
+        metrics.append(metric_res)
+        if diag is not None:
+            diagnostics.append(diag)
+
     metrics.sort(key=lambda item: item.sort_key)
-    return MetricResults(
-        schema_id="rag-eval.metrics",
-        schema_version="1.0.0",
-        run_id=expected_run_id,
-        metrics=tuple(metrics),
+    diagnostics.sort(key=lambda item: (item.partition.value, item.slice_id, item.metric_id))
+    return AnswerMetricBuildResult(
+        metrics=MetricResults(
+            schema_id="rag-eval.metrics",
+            schema_version="1.0.0",
+            run_id=expected_run_id,
+            metrics=tuple(metrics),
+        ),
+        bootstrap_diagnostics=tuple(diagnostics),
     )
+
+
+def build_answer_metrics(
+    dataset: ValidatedDataset,
+    case_results: tuple[CaseResult, ...],
+    *,
+    expected_run_id: str,
+    expected_input_sha256_by_case: Mapping[str, str],
+    human_judgments: ValidatedAnswerJudgments | None = None,
+) -> MetricResults:
+    """Build approved #159 DEV metrics without reading answer text or protected data."""
+    return build_answer_metrics_with_diagnostics(
+        dataset,
+        case_results,
+        expected_run_id=expected_run_id,
+        expected_input_sha256_by_case=expected_input_sha256_by_case,
+        human_judgments=human_judgments,
+    ).metrics

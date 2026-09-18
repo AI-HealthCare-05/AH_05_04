@@ -124,6 +124,9 @@ class Config(BaseSettings):
     PROTECTED_DB_SCHEMA: SecretStr | None = None
     PROTECTED_DB_ACCESS_ROLE: str | None = None
     PROTECTED_DB_CONTROL_ROLE: str | None = None
+    PROTECTED_APPROVAL_REPOSITORY: str | None = None
+    PROTECTED_APPROVAL_BRANCH: str | None = None
+    PROTECTED_APPROVAL_GITHUB_TOKEN: SecretStr | None = None
 
     # Source ingestion은 #166 runtime 연결 전까지 기본 비활성입니다. S3 credential은
     # 여기 저장하지 않고 AWS SDK의 실행 역할·Web Identity·환경 주입 chain을 사용합니다.
@@ -331,6 +334,11 @@ class Config(BaseSettings):
             raise ValueError("protected data and control database identities must be distinct")
         if protected_identity == worker_identity or control_identity == worker_identity:
             raise ValueError("protected retrieval requires a separate database identity")
+
+        repo = values["PROTECTED_APPROVAL_REPOSITORY"]
+        if "/" not in repo or len(repo.split("/")) != 2 or not repo.split("/")[0] or not repo.split("/")[1]:
+            raise ValueError("PROTECTED_APPROVAL_REPOSITORY must be in '<owner>/<repo>' format")
+
         return self
 
     def _required_protected_values(self) -> dict[str, str]:
@@ -342,8 +350,15 @@ class Config(BaseSettings):
             "PROTECTED_DB_CONTROL_USER",
             "PROTECTED_DB_ACCESS_ROLE",
             "PROTECTED_DB_CONTROL_ROLE",
+            "PROTECTED_APPROVAL_REPOSITORY",
+            "PROTECTED_APPROVAL_BRANCH",
         )
-        secret_fields = ("PROTECTED_DB_PASSWORD", "PROTECTED_DB_CONTROL_PASSWORD", "PROTECTED_DB_SCHEMA")
+        secret_fields = (
+            "PROTECTED_DB_PASSWORD",
+            "PROTECTED_DB_CONTROL_PASSWORD",
+            "PROTECTED_DB_SCHEMA",
+            "PROTECTED_APPROVAL_GITHUB_TOKEN",
+        )
         for field_name in plain_fields:
             configured = getattr(self, field_name)
             if configured is None or not configured.strip():
