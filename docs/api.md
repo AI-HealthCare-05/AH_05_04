@@ -809,7 +809,8 @@ Notification의 앱 내부 게시·읽음 API 의미는 유지한다.
 종료일을 포함한 7/30일을 원래 `scheduled_local_date`로 조회하며 현재·과거 처방 version을 포함한다.
 
 성공은 `200 {data: ...}`다. 상태별 횟수, 두 비율의 분자·분모·백분율, 원래 날짜별
-occurrence와 현재 Check-in·정정 여부·갱신 시각을 반환한다. 복용률은
+occurrence와 현재 Check-in·정정 여부·갱신 시각, 사용자 표시용 `medication_name`,
+nullable `strength_text`, 서버 산정 `time_slot`을 반환한다. 복용률은
 `TAKEN/(TAKEN+NOT_TAKEN)`, 기록 확인률은
 `(TAKEN+NOT_TAKEN)/(TAKEN+NOT_TAKEN+UNCONFIRMED)`다.
 백분율은 소수 첫째 자리 ROUND_HALF_UP이며 분모 0은 null이다.
@@ -818,7 +819,11 @@ PENDING·CANCELLED는 두 비율에서 제외한다. 조회에서 Check-in을 �
 
 미인증은 기존 401, 잘못된 기간·미래 종료일·날짜 계산 underflow는 `422 VALIDATION_FAILED`다.
 빈 SELF 조회는 `200`과 빈 records·0 count·null 비율이다. 공통 오류·no-store를 유지한다.
-리포트 전용 DTO를 추가했으며 기존 일정·Check-in 응답, DB schema와 쓰기 경계는 바꾸지 않는다.
+`time_slot`은 `scheduled_at`을 Asia/Seoul 기준으로 변환해 `BREAKFAST`(05:00-10:59),
+`LUNCH`(11:00-14:59), `DINNER`(15:00-20:59), `BEDTIME`(21:00-04:59) 중 하나로
+Backend가 산정한다. Frontend는 내부 ID를 표시명으로 노출하거나 `scheduled_at`으로
+아침·점심·저녁 슬롯을 자체 재분류하지 않는다. 리포트 전용 DTO를 추가했으며 기존
+일정·Check-in 응답, DB schema와 쓰기 경계는 바꾸지 않는다.
 
 정본은 [리포트 v1 Current 계약](contracts/current/medication-report-v1.md),
 검증과 Frontend fixture는 [#419 검증 기록](validation/track-b/issue-419-medication-report.md)을 따른다.
