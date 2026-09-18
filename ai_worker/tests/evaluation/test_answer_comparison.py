@@ -19,7 +19,12 @@ from ai_worker.tasks.evaluation.answer_comparison import (
     compute_comparison_sha256,
     validate_answer_comparison_set_bundle,
 )
-from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256, sha256_hex
+from ai_worker.tasks.evaluation.canonical import (
+    JsonValue,
+    canonical_json_bytes,
+    canonical_sha256,
+    sha256_hex,
+)
 from ai_worker.tasks.evaluation.comparison import LoadedRunBundle
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.schemas.answer_quality_v1 import (
@@ -214,7 +219,7 @@ def _make_bundle(
     metric_value: str = "0.8",
     **run_kwargs,
 ) -> LoadedRunBundle:
-    manifest_payload = {
+    manifest_payload: dict[str, JsonValue] = {
         "schema_id": "rag-eval.content-manifest",
         "schema_version": "1.0.0",
         "run_id": run_id,
@@ -805,7 +810,7 @@ def test_minimum_valid_replicate_ratio_contract() -> None:
     Verifies that the canonical synthetic Answer Comparison Policy fixture
     has ANSWER_CORRECTNESS with minimum_valid_replicate_ratio == "0.9".
     """
-    canonical_policy_fixture = {
+    canonical_policy_fixture: dict[str, JsonValue] = {
         "metric_id": "ANSWER_CORRECTNESS",
         "ci_parameters": {
             "iterations": 10000,
@@ -816,7 +821,9 @@ def test_minimum_valid_replicate_ratio_contract() -> None:
     }
 
     # Contract check: must exist and be exact "0.9"
-    ci_params = canonical_policy_fixture["ci_parameters"]
+    ci_params_value = canonical_policy_fixture["ci_parameters"]
+    assert isinstance(ci_params_value, dict)
+    ci_params = cast(dict[str, JsonValue], ci_params_value)
     assert "minimum_valid_replicate_ratio" in ci_params
     assert ci_params["minimum_valid_replicate_ratio"] == "0.9"
     assert isinstance(ci_params["minimum_valid_replicate_ratio"], str)
