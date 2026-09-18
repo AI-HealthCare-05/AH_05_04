@@ -45,6 +45,12 @@ from app.services.jwt import JwtService
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _account_withdrawal_response_detail(status: AccountDeletionRequestStatus | None) -> str:
+    if status == AccountDeletionRequestStatus.COMPLETED:
+        return "회원탈퇴가 완료되었습니다."
+    return "탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."
+
+
 def _ensure_account_withdrawal_request_enabled() -> None:
     if not config.ACCOUNT_WITHDRAWAL_REQUEST_ENABLED:
         raise ApiError(
@@ -248,10 +254,8 @@ async def request_account_withdrawal(
         password=request.password,
         confirmed=request.confirmed,
     )
-    detail = (
-        "회원탈퇴가 완료되었습니다."
-        if deletion_request is None or deletion_request.status == AccountDeletionRequestStatus.COMPLETED
-        else "탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."
+    detail = _account_withdrawal_response_detail(
+        deletion_request.status if deletion_request is not None else None,
     )
     response = Response(
         content=AccountWithdrawalResponse(detail=detail).model_dump(),

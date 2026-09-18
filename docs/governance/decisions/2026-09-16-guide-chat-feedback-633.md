@@ -1,10 +1,10 @@
 # PD-633 — Guide·Chat 피드백 수집과 합성 평가셋 연결
 
-- 상태: **구현 반영 / 최종 책임 리뷰 승인·병합 대기**. 작업 대화에서 아래 운영안을 채택했다. 책임 리뷰·병합·실사용 공개 승인은 별도다.
+- 상태: **구현·제품/운영 기준 병합 완료 / AI-RAG synthetic evidence 정리 중**. PR #638로 Local feedback 저장·API·UI·합성 검증 기반은 develop에 반영됐고, PR #730으로 제품·운영 기준을 정리했다. prompt 전후 비교·사람 검토, Current 승격, 실사용 공개와 Production Privacy gate는 별도다.
 - 근거: [Issue #633](https://github.com/AI-HealthCare-05/AH_05_04/issues/633),
   [선행 #581](https://github.com/AI-HealthCare-05/AH_05_04/issues/581).
 - 구현: 송은영 (`@phina-io`) — DB·API·Security, 권가빈 (`@hazelnutflavoured`) — UX·Privacy·Gold·평가.
-- 단일 책임 리뷰어: 정현우 (`@ceohwj`) — Backend·Frontend 소비 계약, AI/RAG·의료 안전·개선 증빙.
+- 단일 책임 리뷰어: 정현우 (`@ceohwj`) — AI/RAG·의료 안전·개선 증빙. 제품/운영 기준은 권가빈(`@hazelnutflavoured`) 확인을 먼저 받는다.
 - 전문 의견: 남한솔 — Frontend 연결, 송은영 — 접근·보존·삭제 통제, 권가빈 — 고지·이용 목적.
   추가 필수 PR 리뷰어로 지정하지 않는다. 아래 전달 의견은 Frontend·Backend 설계 확인이며
   Privacy 운영 정책 승인이나 책임 리뷰어의 최종 승인을 대신하지 않는다.
@@ -23,9 +23,7 @@
   DB trigger/RLS 미사용 설계에 동의했다. 계정 삭제 시 실제 삭제 검증을 유지한다.
   `UserConsentRepository.set_status()`의 upsert와 PR #602 부모 row lock을 구현 참고로 제안했다.
   재사용 시 동일 값 재전송의 시각 보존·소유권 검증을 별도로 확인한다.
-- PD-633은 현재 로컬 `feat/633-guide-chat-feedback` 브랜치의 파일이다.
-  develop에서 아직 조회되지 않는 것이 맞다. 구현 PR에 Decision·계약·index를 함께 포함할 예정이며,
-  게시·병합 후 이 임시 위치 설명을 실제 PR 근거로 갱신한다.
+- PR #638 병합으로 Decision·계약 후보·index·API 문서·검증 기록이 develop에 게시됐다. 이 문서는 병합된 Local 구현 기준을 설명하되, current 승격·실사용 공개·#633 종료 승인을 대신하지 않는다.
 
 ## 구현 착수 기준선 (4a9a9bfa)
 
@@ -35,7 +33,7 @@ Guide는 `profile_id`, ChatMessage는 `session.profile_id`로 SELF 소유권을 
 
 #581의 canonical 합성 평가셋은 `chat-v4-conversation-quality-eval-v1`이며 27개 case를 가진다.
 기존 `baseline/history`는 같은 prompt의 history 유무 비교다. 프롬프트 개선 전후 비교가 아니다.
-별도 blind A/B 설정은 v3/v4 prompt를 고정하지만 실행 상태는 `NOT_RUN`이다.
+별도 blind A/B 설정은 v3/v4 prompt를 고정하는 운영 검증 경로이며, 이번 #633 종료 판단은 Local 합성 replay와 책임 리뷰 범위에 한정한다.
 #581 Issue의 Gold 기대·금지 응답 책임 리뷰 승인도 미완료로 표시돼 있다.
 
 ## 제안하는 최소 범위
@@ -51,7 +49,7 @@ Guide는 `profile_id`, ChatMessage는 `session.profile_id`로 SELF 소유권을 
 세부 구현 계약은 [피드백 계약 v1](../../contracts/proposed/guide-chat-feedback-v1.md),
 검토·평가 연결은 [운영 절차 초안](../../operations/guide-chat-feedback-633.md)을 따른다.
 
-## 구현 전 확인할 결정
+## 구현 후 남은 확인 결정
 
 - 송은영·남한솔의 설계 동의는 위에 기록했다. 사용자가 아래 운영안을 채택했다. 이를 권가빈·송은영의 실사용 처리 근거 승인으로 확대하지 않는다.
 - 권가빈·송은영: 자유 의견 수집 고지·이용 목적·보존 기간·삭제와 검토자 접근 수단은 무엇인가.
@@ -59,9 +57,9 @@ Guide는 `profile_id`, ChatMessage는 `session.profile_id`로 SELF 소유권을 
 - 정현우: 신규 Gold 기대·금지 응답 승인과 기존 안전 gate 보존을 포함한 단일 책임 리뷰 범위를 확인한다.
 
 위 Privacy 사항을 확인하기 전에는 자유 의견을 실제 사용자로부터 수집하지 않는다.
-보존 기간·운영자 권한·동의 목적 enum을 임의로 확정하지 않는다. 확인 결과와 증빙 링크를 이 Decision에
-기록한 뒤 같은 구현 PR에서 migration·DTO/OpenAPI·문서·테스트를 정렬한다.
-승인·병합·검증 전에는 Current로 승격하지 않으며 Privacy Production·Track C/F 공개 gate는 유지한다.
+보존 기간·운영자 권한·동의 목적 enum을 임의로 확정하지 않는다. 제품/운영 기준 확인 결과와 증빙 링크는
+PR #730에 기록했다. AI/RAG 기대·금지 응답, deterministic replay, 안전 gate 보존 및 #581/#632 연결은 PR 2에서 정현우 책임 리뷰를 받는다.
+PR #740은 합성 Gold와 deterministic replay evidence를 정리하지만 prompt 전후 비교·사람 검토를 실행하지 않았으므로 `guide-chat-feedback-v1` Current 승격과 #633 종료를 수행하지 않는다. Privacy Production·Track C/F 공개 gate는 유지한다.
 
 ## 운영안 채택과 구현 delta — 2026-09-16 작업 대화
 
@@ -96,4 +94,4 @@ Source writer에는 접근을 허용하지 않고 runtime TRUNCATE·DDL 권한�
 [정현우 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/638#pullrequestreview-5218797819)에 따라
 Service 직접 commit을 제거하고 요청 성공 시 get_db_session에서만 최종 commit한다.
 부모 잠금은 최종 commit까지 유지하고 응답 조립 실패도 저장·삭제 전체를 rollback한다.
-공통 오류 정본에 FEEDBACK_TARGET_NOT_READY를 등록한다. 최종 승인·병합·실사용 공개는 별도다.
+공통 오류 정본에 FEEDBACK_TARGET_NOT_READY를 등록했고 PR #638은 병합됐다. PR #730은 제품·운영 기준을 정리했다. PR 2의 AI/RAG 책임 리뷰 승인·병합 시 #633 종료 조건을 충족하며, 실사용 공개는 별도다.

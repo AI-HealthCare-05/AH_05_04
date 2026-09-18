@@ -55,6 +55,7 @@ export type MedicationScheduleItem = {
   schedule_id: string | null
   revision: number | null
   setup_reason: MedicationScheduleSetupReason | null
+  schedule: MedicationScheduleData | null
 }
 
 export type MedicationOccurrenceData = {

@@ -33,7 +33,7 @@
 | `ACTIVE` | `WITHDRAWAL_REQUESTED` | 비밀번호 재입력 재인증과 최종 확인 성공 | `is_active=false`, `withdrawal_requested_at=now()`, `token_version + 1`, `account_deletion_request.status=PENDING` 생성 |
 | `WITHDRAWAL_REQUESTED` | `WITHDRAWN` | PM/Privacy 정책에 맞춘 삭제·보존 처리 완료 및 `EXT-PRIV-001` 승인 게이트 충족 | `withdrawn_at=now()`, `account_deletion_request.status=COMPLETED` |
 
-`WITHDRAWAL_REQUESTED` 또는 `WITHDRAWN`에서 `ACTIVE`로 되돌리는 전이는 이 계약에 없다. 실패나 rollback이 발생하면 성공 상태처럼 보이는 부분 전이를 남기지 않고, 이미 커밋된 탈퇴 요청의 삭제·보존 처리 실패는 `account_deletion_request.status=FAILED`로 남겨 운영 재시도 또는 확인 대상으로 관리한다.
+`WITHDRAWAL_REQUESTED` 또는 `WITHDRAWN`에서 `ACTIVE`로 되돌리는 전이는 이 계약에 없다. 실패나 rollback이 발생하면 성공 상태처럼 보이는 부분 전이를 남기지 않고, 이미 커밋된 탈퇴 요청의 삭제·보존 처리 실패는 `account_deletion_request.status=FAILED`로 남겨 운영 재시도 또는 확인 대상으로 관리한다. 경쟁 요청이나 재요청은 기존 `FAILED` 요청을 완료로 응답하지 않는다. 부분 파일 삭제 뒤 재처리할 때 이미 없는 원본 파일은 이미 제거된 것으로 보고 계속 진행할 수 있지만, 저장소 루트 밖 경로나 후속 삭제·DB 정리 실패는 완료로 전이하지 않는다.
 
 ## 2) 세션 무효화 — `token_version`
 
@@ -83,7 +83,7 @@
 | 9 | 최종 상태 전이 | 실제 삭제·보존 처리 성공 후 `user.account_status=WITHDRAWN`, `user.withdrawn_at`, `account_deletion_request.status=COMPLETED`를 기록한다. |
 | 10 | commit 이후 응답 | refresh token cookie를 만료시키고 회원탈퇴 완료 응답을 반환한다. |
 
-위 transaction은 조건부 원자적 전이(`WHERE account_status='ACTIVE'`)로 구현한다. 영향받은 user row가 0이면 이미 탈퇴 요청이 접수되었거나 탈퇴 완료된 계정으로 보고 새 `account_deletion_request`를 만들지 않으며, 사용자에게는 동일한 회원탈퇴 완료 응답을 반환한다. 재인증 성공 후 아주 좁은 경쟁 구간에서 중복 요청이 들어와도 계정 상태와 삭제 요청 row가 중복 생성되면 안 된다.
+위 transaction은 조건부 원자적 전이(`WHERE account_status='ACTIVE'`)로 구현한다. 영향받은 user row가 0이면 이미 탈퇴 요청이 접수되었거나 탈퇴 완료된 계정으로 보고 새 `account_deletion_request`를 만들지 않는다. 이 경우 사용자 응답은 기존 삭제 요청의 최종 상태를 따른다. 기존 요청이 `COMPLETED`이면 완료 응답을 반환하고, `FAILED`이면 완료 응답으로 바꾸지 않는다. 재인증 성공 후 아주 좁은 경쟁 구간에서 중복 요청이 들어와도 계정 상태와 삭제 요청 row가 중복 생성되면 안 된다.
 
 개인정보·건강정보 삭제·보존 처리는 사용자에게 별도 상태 조회 API를 제공하지 않고 Backend 내부 처리로 진행한다. 합성 데이터 기반 데모에서는 요청 접수 직후 같은 transaction에서 삭제·보존 처리를 완료하고, 성공한 경우에만 `account_deletion_request.status=COMPLETED`와 `user.account_status=WITHDRAWN`을 기록한다. 실제 사용자 대상 Production 공개 전에는 PM/Privacy가 확정한 운영 삭제·보존 정책과 외부 공개 승인 기준을 별도로 충족해야 한다.
 

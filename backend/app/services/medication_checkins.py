@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
@@ -68,6 +68,15 @@ def _result(checkin: MedicationCheckin) -> MedicationCheckinResult:
     )
 
 
+def _checkin_not_yet_available() -> ApiError:
+    return ApiError(
+        status_code=422,
+        code="VALIDATION_FAILED",
+        message="예정 시각 이후에 복약 기록을 남길 수 있습니다.",
+        details=[ErrorDetail(field="occurrence_id", reason="CHECKIN_BEFORE_SCHEDULED_AT")],
+    )
+
+
 def _validate_user_input(
     *,
     status: MedicationCheckinStatus,
@@ -106,9 +115,11 @@ class MedicationCheckinService:
         repository: MedicationCheckinRepository,
         *,
         revision_invalidation: CheckinRevisionInvalidationPort,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._repository = repository
         self._revision_invalidation = revision_invalidation
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     async def put_owned(
         self,
@@ -135,6 +146,12 @@ class MedicationCheckinService:
                 message="취소된 복약 일정에는 기록을 남길 수 없습니다.",
             )
 
+        now_utc = as_utc_instant(self._clock(), field="now")
+        scheduled_at_utc = as_utc_instant(occurrence.scheduled_at, field="scheduled_at")
+        if now_utc < scheduled_at_utc:
+            raise _checkin_not_yet_available()
+        changed_at_utc = as_utc_instant(changed_at or now_utc, field="changed_at")
+
         current = await self._repository.get_current_for_update(occurrence_id=occurrence.id)
         if current is None:
             if expected_revision != 0:
@@ -152,20 +169,19 @@ class MedicationCheckinService:
         if expected_revision != current.revision:
             raise self._revision_conflict()
 
-        now_utc = as_utc_instant(changed_at or datetime.now(UTC), field="changed_at")
         invalidated_revision = current.revision if current.status == MedicationCheckinStatus.NOT_TAKEN else None
         await self._repository.correct(
             checkin=current,
             status=status,
             taken_at=taken_at_utc,
             changed_by=user_id,
-            changed_at=now_utc,
+            changed_at=changed_at_utc,
         )
         if invalidated_revision is not None:
             await self._revision_invalidation.invalidate_for_checkin_revision(
                 checkin_id=current.id,
                 invalidated_revision=invalidated_revision,
-                invalidated_at=now_utc,
+                invalidated_at=changed_at_utc,
             )
         return _result(current)
 

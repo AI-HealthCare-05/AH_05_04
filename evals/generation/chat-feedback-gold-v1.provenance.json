@@ -1,20 +1,32 @@
 {
-  "schema_version": 1,
-  "evidence_kind": "SYNTHETIC_DEMO",
-  "review_status": "PENDING",
-  "reviewer": null,
-  "reviewed_at": null,
-  "source_dataset": "chat-v5-short-followup-eval-v1.json",
-  "source_sha256": "1145331095cea079817c7b35ce1c2d98fc2d9ec93dc155f7b27f1af0c8463fa7",
+  "case_id": "issue-633-synthetic-correction-feedback",
   "dataset": "chat-feedback-gold-v1.json",
   "dataset_sha256": "748c5f420e05c224a0ecc258e1dead71b553195be2ea1d4aac445dda1bba137e",
-  "case_id": "issue-633-synthetic-correction-feedback",
-  "failure_type": "REDUNDANT_CLARIFICATION_AFTER_CORRECTION",
-  "synthetic_feedback": {
-    "rating": "NEGATIVE",
-    "comment": "합성 검증: 약을 정정했는데 같은 정보를 다시 물어요."
+  "deterministic_replay": {
+    "artifact": "docs/validation/issue-633-feedback-replay.json",
+    "baseline_pass_count": 31,
+    "case_count": 31,
+    "dataset_sha256": "748c5f420e05c224a0ecc258e1dead71b553195be2ea1d4aac445dda1bba137e",
+    "history_pass_count": 31,
+    "prompt_sha256": "891415d165720f9fbcc8a44dfc0f9fbf8e271a5371c3a0b34e2e366715bada70",
+    "prompt_version": "chat-prompt-v5",
+    "safety_violation_count": 0
   },
-  "provider_invocation": false,
+  "evidence_kind": "SYNTHETIC_DEMO",
+  "failure_type": "REDUNDANT_CLARIFICATION_AFTER_CORRECTION",
+  "note": "Not evidence of original user feedback, prompt A/B comparison, human review, or Production rollout approval. PR #730 defines product/operations boundaries; PR #740 records synthetic Local deterministic replay evidence only.",
+  "product_operations_basis": "PR #730",
   "prompt_comparison_status": "NOT_RUN",
-  "note": "원본 사용자 피드백 또는 책임 리뷰 승인 증거가 아니다. v5 기존 30개 case와 안전 gate를 보존한 31-case 검토용 합성 버전."
+  "provider_invocation": false,
+  "responsible_reviewer": "ceohwj",
+  "review_status": "PENDING_RESPONSIBLE_REVIEW",
+  "reviewed_at": null,
+  "reviewer": null,
+  "schema_version": 1,
+  "source_dataset": "chat-v5-short-followup-eval-v1.json",
+  "source_sha256": "1145331095cea079817c7b35ce1c2d98fc2d9ec93dc155f7b27f1af0c8463fa7",
+  "synthetic_feedback": {
+    "comment": "합성 검증: 약을 정정했는데 같은 정보를 다시 물어요.",
+    "rating": "NEGATIVE"
+  }
 }

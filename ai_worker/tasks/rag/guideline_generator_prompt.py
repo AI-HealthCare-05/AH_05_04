@@ -15,7 +15,6 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from ai_worker.tasks.rag import guideline_card
-from ai_worker.tasks.rag.evidence_gate import GatePassedKnowledgeEvidenceSelection
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
 from ai_worker.tasks.rag.guideline_card import (
     GuidelineCardDraft,
@@ -28,6 +27,7 @@ from ai_worker.tasks.rag.guideline_card import (
     create_canonical_claim_draft,
 )
 from ai_worker.tasks.rag.guideline_generator import GuidelineGenerationRequest
+from ai_worker.tasks.rag.guideline_production_evidence import ProductionGuidelineEvidence
 
 GUIDELINE_GENERATOR_PROMPT_VERSION = "guideline-claim-selector-v1"
 
@@ -62,6 +62,11 @@ class GuidelineStructuredSelection(BaseModel):
     claims: list[GuidelineClaimSelection]
 
 
+def _canonical_evidence_order(selection: ProductionGuidelineEvidence) -> tuple[str, str, str]:
+    """RAG-15 canonical production evidence order, shared by projection and restoration."""
+    return (selection.source_version, selection.locator, selection.evidence_key)
+
+
 def _source_sha256(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -85,11 +90,12 @@ def build_candidate_provenance(*, model: str) -> GuidelineGenerationProvenance:
 
 def build_guideline_generation_input_projection(
     request: GuidelineGenerationRequest,
-) -> tuple[str, dict[str, MedicationIdentityRef], dict[str, GatePassedKnowledgeEvidenceSelection]]:
+) -> tuple[str, dict[str, MedicationIdentityRef], dict[str, ProductionGuidelineEvidence]]:
     """Builds minimal JSON payload for Provider and establishes deterministic 1:1 slot mappings.
 
     Patient-specific prescription_version_medication_id is excluded from the payload.
-    Internal evidence locators, hashes, snapshots, and receipt refs are excluded.
+    Production evidence identity, locators, hashes, source snapshots, assessment and
+    receipt refs are all excluded: the Provider sees only opaque slots and content_text.
     """
     sorted_meds = sorted(
         request.medication_identities,
@@ -108,15 +114,8 @@ def build_guideline_generation_input_projection(
             }
         )
 
-    sorted_selections = sorted(
-        request.evidence_gate_outcome.gate_passed_selections,
-        key=lambda s: (
-            s.selection.candidate.provenance.source_version,
-            s.selection.candidate.provenance.locator,
-            s.selection.candidate.provenance.evidence_key,
-        ),
-    )
-    slot_to_evidence: dict[str, GatePassedKnowledgeEvidenceSelection] = {}
+    sorted_selections = sorted(request.evidence.selections, key=_canonical_evidence_order)
+    slot_to_evidence: dict[str, ProductionGuidelineEvidence] = {}
     evidence_payload = []
     for idx, sel in enumerate(sorted_selections):
         slot = f"e{idx}"
@@ -124,7 +123,7 @@ def build_guideline_generation_input_projection(
         evidence_payload.append(
             {
                 "evidence_slot": slot,
-                "content_text": sel.selection.candidate.content_text.reveal(),
+                "content_text": sel.content_text.reveal(),
             }
         )
 
@@ -140,7 +139,7 @@ def _extract_and_validate_claim_groups(
     claims: list[GuidelineClaimSelection],
     *,
     slot_to_medication: dict[str, MedicationIdentityRef],
-    slot_to_evidence: dict[str, GatePassedKnowledgeEvidenceSelection],
+    slot_to_evidence: dict[str, ProductionGuidelineEvidence],
     maximum_claims: int,
 ) -> dict[tuple[str, GuidelineScope], set[str]] | None:
     if not claims:
@@ -173,7 +172,7 @@ def parse_guideline_structured_output(
     structured_output: GuidelineStructuredSelection,
     *,
     slot_to_medication: dict[str, MedicationIdentityRef],
-    slot_to_evidence: dict[str, GatePassedKnowledgeEvidenceSelection],
+    slot_to_evidence: dict[str, ProductionGuidelineEvidence],
     maximum_claims: int,
 ) -> GuidelineCardDraft | None:
     """Strictly parses and deterministically normalizes structured output from Provider.
@@ -207,26 +206,18 @@ def parse_guideline_structured_output(
         med = slot_to_medication[med_slot]
 
         # Deduplicate selections by authoritative evidence_key and sort canonically
-        unique_selections = {
-            slot_to_evidence[slot].selection.candidate.provenance.evidence_key: slot_to_evidence[slot]
-            for slot in ev_slots
-        }
-        sorted_selections = sorted(
-            unique_selections.values(),
-            key=lambda s: (
-                s.selection.candidate.provenance.source_version,
-                s.selection.candidate.provenance.locator,
-                s.selection.candidate.provenance.evidence_key,
-            ),
-        )
+        unique_selections = {slot_to_evidence[slot].evidence_key: slot_to_evidence[slot] for slot in ev_slots}
+        sorted_selections = sorted(unique_selections.values(), key=_canonical_evidence_order)
 
         citation_drafts = tuple(
             GuidelineCitationDraft(
-                evidence_key=s.selection.candidate.provenance.evidence_key,
-                source_snapshot_ref=s.selection.candidate.provenance.source_snapshot_ref,
-                source_version=s.selection.candidate.provenance.source_version,
-                locator=s.selection.candidate.provenance.locator,
-                content_sha256=s.selection.candidate.provenance.content_sha256,
+                evidence_key=s.evidence_key,
+                source_snapshot_id=s.source_snapshot_id,
+                source_snapshot_member_id=s.source_snapshot_member_id,
+                source_code=s.source_code,
+                source_version=s.source_version,
+                locator=s.locator,
+                content_sha256=s.content_sha256,
             )
             for s in sorted_selections
         )

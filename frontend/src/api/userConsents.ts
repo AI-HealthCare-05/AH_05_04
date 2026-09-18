@@ -18,6 +18,14 @@ export function getUserConsents(signal?: AbortSignal) {
   return apiRequest<{ data: UserConsent[] }>('/api/v1/users/me/consents', { signal })
 }
 
+export function grantUserConsent(purpose: ConsentPurpose, policyVersion: string) {
+  return apiRequest<{ data: UserConsent }>(`/api/v1/users/me/consents/${purpose}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'GRANTED', policy_version: policyVersion }),
+  })
+}
+
 export function withdrawUserConsent(purpose: ConsentPurpose, policyVersion: string) {
   return apiRequest<{ data: UserConsent }>(`/api/v1/users/me/consents/${purpose}`, {
     method: 'PUT',

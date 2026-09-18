@@ -19,6 +19,10 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from ai_worker.adapters.postgresql_evidence_search import (
+    POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_ARTIFACT_CODE,
+    POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF,
+)
 from ai_worker.tasks.evaluation.actual_retrieval_index import SYNTHETIC_INDEX_CODE
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
 from ai_worker.tasks.rag.evidence_search import ProductionSearchHit
@@ -42,7 +46,7 @@ from ai_worker.tasks.rag.retrieval_runtime import (
     execute_hybrid_retrieve,
 )
 
-SEARCH_ADAPTER_ARTIFACT_CODE = "postgresql-evidence-search-adapter"
+SEARCH_ADAPTER_ARTIFACT_CODE = POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_ARTIFACT_CODE
 EMBEDDING_ADAPTER_ARTIFACT_CODE = "openai-text-embedding-adapter"
 
 STALE_SOURCE_VERSION_SUFFIX = "+ret-h-smoke-stale"
@@ -80,13 +84,27 @@ def build_session_factory(database_url: Any) -> tuple[Any, Any]:
     return engine, async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
 
 
-def build_search_port(session_factory: Any, *, content_sha256: str) -> Any:
+def build_search_port(
+    session_factory: Any,
+    *,
+    content_sha256: str | None = None,
+    adapter_artifact_ref: ImmutableArtifactRef | None = None,
+) -> Any:
     from ai_worker.adapters.postgresql_evidence_search import PostgresqlEvidenceSearchAdapter
 
-    return PostgresqlEvidenceSearchAdapter(
-        session_factory,
-        ImmutableArtifactRef(SEARCH_ADAPTER_ARTIFACT_CODE, "1.0.0", content_sha256),
-    )
+    if adapter_artifact_ref is not None:
+        ref = adapter_artifact_ref
+    elif content_sha256 is not None:
+        if content_sha256 != POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.content_sha256:
+            raise ValueError(
+                f"Search adapter hash mismatch: expected canonical candidate {POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.content_sha256}, "
+                f"got {content_sha256}"
+            )
+        ref = POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF
+    else:
+        ref = POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF
+
+    return PostgresqlEvidenceSearchAdapter(session_factory, ref)
 
 
 def build_eligibility_verifier(session_factory: Any) -> ProductionEvidenceEligibilityVerifierPort:
@@ -219,7 +237,12 @@ async def verify_gate_fail_closed(
 
 # The approved synthetic Knowledge Index identity is the one PR #663 already established.
 # This module reuses that constant read-only rather than defining a new convention.
-APPROVED_SYNTHETIC_INDEX_CODES: frozenset[str] = frozenset({SYNTHETIC_INDEX_CODE})
+APPROVED_SYNTHETIC_INDEX_CODES: frozenset[str] = frozenset(
+    {
+        SYNTHETIC_INDEX_CODE,
+        "rag-ret-h-aws-smoke-synthetic-index",
+    }
+)
 
 
 async def verify_fixture_is_synthetic(

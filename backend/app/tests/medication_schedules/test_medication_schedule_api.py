@@ -81,6 +81,16 @@ async def case(db_session: AsyncSession) -> AsyncIterator[Case]:
         fastapi_app.dependency_overrides.pop(get_request_user, None)
 
 
+async def mark_occurrences_due(case: Case, occurrence_ids: list[str]) -> None:
+    due_at = datetime.now(UTC) - timedelta(minutes=1)
+    for occurrence_id in occurrence_ids:
+        occurrence = await case.session.get(MedicationOccurrence, UUID(occurrence_id))
+        assert occurrence is not None
+        occurrence.scheduled_at = due_at
+        occurrence.confirmation_deadline_at = due_at + timedelta(hours=4)
+    await case.session.commit()
+
+
 async def counts(case: Case) -> list[int | None]:
     return [
         await case.session.scalar(select(func.count()).select_from(model))
@@ -99,6 +109,7 @@ async def test_create_update_cancel_reactivate_and_replay(case: Case) -> None:
     assert before.status_code == 200
     assert before.json()["data"]["schedule_status"] == "SETUP_REQUIRED"
     assert before.json()["data"]["schedule_items"][0]["setup_reason"] == "MISSING_START_DATE"
+    assert before.json()["data"]["schedule_items"][0]["schedule"] is None
     first = await case.write(case.body)
     assert first.status_code == 200, first.text
     assert MedicationScheduleResponse.model_validate(first.json()).data.revision == 1
@@ -120,6 +131,10 @@ async def test_create_update_cancel_reactivate_and_replay(case: Case) -> None:
     inactive = await case.read()
     assert inactive.json()["data"]["schedule_status"] == "INACTIVE"
     assert inactive.json()["data"]["schedule_items"][0]["setup_reason"] is None
+    assert inactive.json()["data"]["schedule_items"][0]["schedule"] == {
+        **cancelled.json()["data"],
+        "local_times": ["09:00"],
+    }
     reactivated = await case.write({**case.body, "expected_revision": 3}, key="schedule-reactivate-key")
     assert reactivated.status_code == 200, reactivated.text
     assert reactivated.json()["data"]["schedule_id"] == schedule_id
@@ -129,6 +144,8 @@ async def test_create_update_cancel_reactivate_and_replay(case: Case) -> None:
     parsed = MedicationDayResponse.model_validate(day.json()).data
     assert parsed.schedule_status == "READY"
     assert parsed.schedule_items[0].setup_reason is None
+    assert parsed.schedule_items[0].schedule is not None
+    assert parsed.schedule_items[0].schedule.model_dump(mode="json") == reactivated.json()["data"]
     assert any(o.status == "PENDING" and o.scheduled_local_date == case.day for o in parsed.occurrences)
     assert day.headers["cache-control"] == "no-store"
     assert day.headers["x-trace-id"]
@@ -276,6 +293,8 @@ def test_openapi_schedule_contract() -> None:
     assert "reason_code" not in put["properties"]
     query = schema["paths"]["/api/v1/medication-occurrences"]["get"]
     assert next(p for p in query["parameters"] if p["name"] == "date")["required"]
+    item = schema["components"]["schemas"]["MedicationScheduleItem"]
+    assert "schedule" in item["required"]
 
 
 async def expand_prescription_medications(case: Case, medication_id: UUID, count: int) -> list[UUID]:
@@ -364,6 +383,7 @@ async def test_latest_prescription_only_preserves_older_occurrences(case: Case, 
     assert {o["prescription_version_medication_id"] for o in day["occurrences"]} == set(
         map(str, [old_medication_id, *latest_ids])
     )
+    await mark_occurrences_due(case, [o["occurrence_id"] for o in day["occurrences"]])
     for occurrence in day["occurrences"]:
         response = await case.client.get(f"/api/v1/medication-occurrences/{occurrence['occurrence_id']}/medication")
         assert response.status_code == 200, response.text
@@ -388,6 +408,7 @@ async def test_partial_keeps_ready_occurrences_and_current_checkin(case: Case) -
     assert day["schedule_status"] == "PARTIAL"
     assert len(day["schedule_items"]) == 2
     occurrence = next(o for o in day["occurrences"] if o["status"] == "PENDING")
+    await mark_occurrences_due(case, [occurrence["occurrence_id"]])
     response = await case.client.put(
         f"/api/v1/medication-occurrences/{occurrence['occurrence_id']}/check-in",
         json={"status": "TAKEN", "expected_revision": 0},

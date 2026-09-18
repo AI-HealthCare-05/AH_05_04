@@ -1,7 +1,7 @@
 # Guide·Chat 피드백 v1 — #633
 
-상태: **Proposed / Local 구현 반영·최종 책임 리뷰 승인 대기**. [PD-633](../../governance/decisions/2026-09-16-guide-chat-feedback-633.md)의
-로컬 구현 계약이며 책임 리뷰·병합 전이다. 책임 리뷰어는 정현우이며 영향 영역은 Backend·Frontend·Privacy·AI 평가다.
+상태: **Proposed / Local 구현·제품/운영 기준 병합 완료·AI-RAG synthetic evidence 정리 중**. [PD-633](../../governance/decisions/2026-09-16-guide-chat-feedback-633.md)의
+로컬 구현 계약이며 PR #638로 저장·API·Local UI·합성 검증 기반이 develop에 반영됐다. PR #730은 가빈님 검토 범위(피드백 수집 UX, 부정 피드백 검토 기준, 비식별 Gold 후보 변환 기준, 실사용 전 운영 조건)를 고정했다. PR #740은 합성 Gold 기대·금지 응답, deterministic replay, 안전 gate 보존 근거를 정리하지만 prompt 전후 비교·사람 검토 evidence를 대체하지 않는다. Current 승격, #633 종료, 실사용 처리 승인과 Production 공개는 별도다.
 
 ## HTTP 계약
 
@@ -61,13 +61,24 @@ Service는 flush까지만 수행하며 최종 commit은 요청 성공 시 `get_d
 
 ## UI·데이터 처리
 
-완료된 결과에만 “도움이 되었나요?”와 두 rating 버튼을 표시한다. rating 선택 뒤 선택 의견 입력을 연다.
-“개인정보나 처방전 원문 등 민감한 정보는 입력하지 마세요.”라는 안내를 함께 표시한다.
+Guide UI는 완료된 Guide 결과에만 “도움이 되었나요?”와 두 rating 버튼을 표시한다.
+Chat UI의 신규 feedback 제출 UI는 #702/#717 합의에 따라 **현재 세션의 마지막 COMPLETED ASSISTANT 메시지**에만 표시한다. 새 응답이 완료되면 이전 완료 응답의 신규 제출 UI를 제거하고, 응답 생성 중·실패·미완료 상태에서는 과거 완료 응답으로 fallback하지 않는다.
+Backend API는 기존 계약대로 historical COMPLETED ASSISTANT target 제출을 계속 허용한다. 이미 저장된 feedback의 수정·삭제, 실패 후 재시도, 전송 중 시작 당시 `message_id` 귀속 lifecycle은 보존한다. API latest-only 강제나 새 error contract는 이번 범위가 아니다.
+rating 선택 뒤 선택 의견 입력을 열고, “개인정보나 처방전 원문 등 민감한 정보는 입력하지 마세요.”라는 안내를 함께 표시한다.
 저장 성공 후에만 접수·선택 상태를 표시하고 평가 변경을 허용한다.
 실패 시 입력한 rating/comment를 화면에 유지해 재시도할 수 있게 한다.
 전송 중 중복 클릭을 막고 키보드 접근·접근성 이름을 제공한다.
 의견은 로그·분석 도구·localStorage·Provider payload·저장소 artifact에 남기지 않는다.
 사용자가 안내를 무시할 수 있으므로 자유 의견을 합성 또는 비민감 데이터라고 취급하지 않는다.
+
+## 제품/운영 확인 기준
+
+가빈님 검토 범위는 다음 네 가지다. 이 확인은 실제 사용자 수집 또는 Production 공개 승인이 아니다.
+
+1. 완료된 Guide와 Chat의 현재 세션 마지막 COMPLETED ASSISTANT에만 신규 피드백 UI를 노출하고, GET 없이 제출 직후 선택 상태만 표시하는 최소 UX가 제품 기준에 맞는지 확인한다. Backend API의 historical COMPLETED ASSISTANT 허용은 유지한다.
+2. `NEGATIVE` feedback은 검토 대상으로만 분류하고, 사용자 의견 자체를 의료 정답·안전 위반·Gold 정답으로 확정하지 않는다. 검토자는 실패 유형, 처리 판단, 검토 시각만 제한 기록에 남긴다.
+3. Gold 후보는 실제 comment·대화·약명·수치·상황을 복사하지 않고, 실패 유형을 바탕으로 새 합성 입력과 기대·금지 응답 초안을 작성한다. 원문 masking, 원문 hash 공개, 외부 LLM 요약·변환은 비식별화로 인정하지 않는다.
+4. 실사용 전에는 고지·처리 근거, 검토자 접근 감사, 30일 삭제 스케줄, 백업 파기 기준이 별도 승인돼야 한다. Local 합성 검증과 실사용 운영 실적은 분리해 보고한다.
 
 ## 구현 PR 검증 조건
 

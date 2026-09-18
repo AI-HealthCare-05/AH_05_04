@@ -28,6 +28,16 @@ class AccountDeletionRequestRepository:
         await self.session.flush()
         return request
 
+    async def get_latest_for_user_for_update(self, *, user_id: UUID) -> AccountDeletionRequest | None:
+        result = await self.session.execute(
+            select(AccountDeletionRequest)
+            .where(AccountDeletionRequest.user_id == user_id)
+            .order_by(AccountDeletionRequest.created_at.desc(), AccountDeletionRequest.id.desc())
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return result.scalars().first()
+
     async def complete_demo_withdrawal(
         self,
         *,
@@ -95,6 +105,7 @@ class AccountDeletionRequestRepository:
                  WHERE uploaded_by = :user_id
                    AND object_key IS NOT NULL
                    AND trim(object_key) <> ''
+                 ORDER BY object_key, id
                 """
             ),
             {"user_id": str(user_id)},

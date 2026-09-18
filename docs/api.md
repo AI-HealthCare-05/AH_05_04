@@ -211,7 +211,7 @@ OCR·Guide 재접속 복구 GET(`GET /api/v1/documents/{document_id}/ocr-jobs`, 
 - `PATCH /api/v1/users/me`는 `name`, `email`, `phone_number`, `birthday`, `gender`를 수정 대상으로 받습니다.
 - 생략한 필드는 기존 값을 유지합니다.
 - `phone_number`, `birthday`, `gender`는 `null`로 보내면 미입력 상태로 초기화합니다.
-- `phone_number`는 숫자만 허용합니다. 공백 문자열과 구분자(`-`)가 포함된 값은 `422 VALIDATION_FAILED`입니다.
+- `phone_number`는 010으로 시작하는 11자리 숫자만 허용합니다. 공백 문자열, 구분자(`-`), 자릿수 부족/초과, 지원하지 않는 prefix는 `422 VALIDATION_FAILED`입니다.
 - 다른 사용자와 같은 `phone_number`가 DB unique 제약과 충돌하면 `409 CONFLICT`, `details[].field=phone_number`, `reason=ALREADY_EXISTS`를 반환합니다. 별도 휴대폰 번호 중복확인 API는 이번 범위에 포함하지 않습니다.
 - `birthday`는 `YYYY-MM-DD` 날짜 문자열이며 미래 날짜는 `422 VALIDATION_FAILED`입니다.
 - `gender`는 `MALE`, `FEMALE`, `null`만 허용합니다.
@@ -260,7 +260,7 @@ OCR 목적은 전용 경로 `/api/v1/users/me/consents/OCR`에서 `GET` / `POST`
 - `confirmed`는 반드시 `true`여야 합니다. `false`이면 `422 VALIDATION_FAILED`, `details[].field=confirmed`, `reason=CONFIRMATION_REQUIRED`를 반환하고 저장하지 않습니다.
 - 성공하면 같은 transaction에서 `account_status=WITHDRAWAL_REQUESTED`, `is_active=false`, `withdrawal_requested_at`, `token_version + 1`, `account_deletion_request.status=PENDING`을 만든 뒤 합성 데모 임시 정책 기준 삭제·보존 처리를 수행합니다.
 - 삭제·보존 처리가 성공한 경우 원래 이메일·이름·전화번호·생년월일·성별과 처방전 원본, OCR 결과, 사용자별 약물 식별 결과, Guide/Chat 입력·결과, 로그인 세션·Push token을 제거하고, 기존 사용자 row는 재가입 충돌을 막지 않는 익명 `WITHDRAWN` 상태로 남깁니다. `account_deletion_request`는 요청 ID, 상태, 요청/시작/완료 시각, 실패 코드만 보존하며 이메일이나 건강정보 원문을 저장하지 않습니다.
-- 삭제·보존 처리가 성공한 응답은 `{"detail":"회원탈퇴가 완료되었습니다."}`이며, `refresh_token` 쿠키를 삭제합니다. 삭제·보존 처리 실패 시 `account_status=WITHDRAWAL_REQUESTED` 접근 차단과 `account_deletion_request.status=FAILED`, `last_error_code=DEMO_DELETION_FAILED`를 커밋하고 `{"detail":"탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."}`를 반환합니다.
+- 삭제·보존 처리가 성공한 응답은 `{"detail":"회원탈퇴가 완료되었습니다."}`이며, `refresh_token` 쿠키를 삭제합니다. 삭제·보존 처리 실패 시 `account_status=WITHDRAWAL_REQUESTED` 접근 차단과 `account_deletion_request.status=FAILED`, `last_error_code=DEMO_DELETION_FAILED`를 커밋하고 `{"detail":"탈퇴 요청 처리에 실패했습니다. 관리자 확인이 필요합니다."}`를 반환합니다. 경쟁 요청이나 재요청이 이미 `FAILED` 요청을 확인한 경우에도 완료 응답으로 바꾸지 않습니다. 부분 파일 삭제 뒤 재처리할 때 이미 없는 원본 파일은 이미 제거된 것으로 간주하고, `STORAGE_DIR` 밖 `object_key`나 삭제/DB 정리 실패는 완료로 전이하지 않습니다.
 - 재인증 rate limit/lockout은 현재 로그인과 동일하게 별도 제한이 없으며, 정확한 제한 정책은 Backend/Security 후속 이슈에서 다룹니다.
 - 이 삭제·보존 기준은 합성 데이터 기반 데모 임시 정책입니다. 실제 사용자 대상 Production 공개와 법정 보존/백업 파기 운영 정책은 PM/Privacy 승인 및 외부 공개 승인 범위와 분리합니다.
 
@@ -361,6 +361,9 @@ Track B·C 쓰기 API는 [멱등성 계약](./contracts/targets/post-mvp-1/idemp
 정정은 현재 revision과 새 키를 사용한다. 같은 키·같은 지문은 최초 응답을 재현한다.
 `reason_code`는 거부한다. 사용자 `UNCONFIRMED` 제출은
 `422 CHECKIN_STATUS_NOT_USER_SETTABLE`, 다른 입력 오류는 `422 VALIDATION_FAILED`다.
+서버 현재시각이 occurrence의 `scheduled_at`보다 이르면 기록을 저장하지 않고
+`422 VALIDATION_FAILED`와 `details.reason=CHECKIN_BEFORE_SCHEDULED_AT`를 반환한다.
+정확히 `scheduled_at`에 도달한 순간부터는 다른 조건을 충족하는 경우 기록할 수 있다.
 없는 ID와 타 사용자 ID는 동일한 `404 MEDICATION_OCCURRENCE_NOT_FOUND`로 숨긴다.
 `409 CHECKIN_REVISION_CONFLICT`, `OCCURRENCE_CANCELLED`, `IDEMPOTENCY_KEY_CONFLICT`와
 snapshot cap 오류 `503 IDEMPOTENCY_RESPONSE_TOO_LARGE`는 공통 오류 형식을 사용한다.
@@ -742,6 +745,7 @@ v1 앱에 등록한다. PD-417의 승인된 의미와 #438 저장 서비스·#43
 취소를 연결한 작업 브랜치 구현이며, HTTP 구체화의 지정 리뷰어 승인은 별도다.
 
 - GET `/api/v1/medication-occurrences?date=YYYY-MM-DD`: SELF 최신 처방 한 건의 약별 일정 상태와 원래 KST 날짜의 occurrence/현재 Check-in. #628 구현 리뷰안은 latest와 같은 `created_at DESC, id DESC` 선택을 적용하고 과거 occurrence를 보존한다.
+  각 `schedule_items[]`는 nullable `schedule`에 저장된 현재 일정 snapshot(시작일, 종료 방식·종료일, 복용 시각, 상태·revision)을 포함하며, 일정이 없으면 null이다. 수정 화면은 READY snapshot을 그대로 초기값으로 사용한다.
 - PUT `/api/v1/prescription-version-medications/{prescription_version_medication_id}/schedule`: 명시적 설정·재활성화.
 - PATCH 같은 경로: CANCELLED 요청과 반복 취소의 성공 snapshot.
 
@@ -870,7 +874,7 @@ MEDICATION_NOT_WITH_ME다. 일정 변경·외출에만 허용하고 각각 일�
 [계획별 자료 계약](contracts/current/track-c-plan-resources-194.md)은 PR #639에서 Current로 정렬하며, 최종 리뷰·병합 대기다.
 약별 Citation 또는 임상 Safety 정책의 구현 완료가 아니다.
 
-## #633 Guide·Chat 피드백 — Local 구현, 책임 리뷰 대기
+## #633 Guide·Chat 피드백 — Local 구현 병합, Proposed 계약 정렬
 
 [계약](contracts/proposed/guide-chat-feedback-v1.md)과 [PD-633](governance/decisions/2026-09-16-guide-chat-feedback-633.md)을 따른다.
 `POST /api/v1/guides/{guide_id}/feedback`,

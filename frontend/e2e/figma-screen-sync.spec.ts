@@ -93,7 +93,7 @@ for (const width of [320, 390, 412]) {
     await page.reload()
     await expect(page.getByText('synthetic.long.account.name.for.mobile@example.com')).toBeVisible()
     await expectContentFits(page)
-    await page.getByRole('button', { name: '이름·이메일 수정' }).click()
+    await page.getByRole('button', { name: '사용자 정보 수정' }).click()
     await expect(page.getByLabel('이름')).toBeVisible()
     await page.setViewportSize({ width, height: 480 })
     await expectContentFits(page)

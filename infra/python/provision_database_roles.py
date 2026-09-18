@@ -9,9 +9,12 @@ from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
-from infra.python.catalog_role_policy import apply_catalog_role_policy
-from infra.python.knowledge_index_role_policy import apply_knowledge_index_role_policy
-from infra.python.source_management_role_policy import CATALOG_TABLES, apply_management_role_policy
+from infra.python.catalog_role_policy import CATALOG_WRITE_TABLES, apply_catalog_role_policy
+from infra.python.knowledge_index_role_policy import (
+    KNOWLEDGE_INDEX_RUNTIME_READ_TABLES,
+    apply_knowledge_index_role_policy,
+)
+from infra.python.source_management_role_policy import apply_management_role_policy
 from infra.python.source_role_policy import SOURCE_TABLES, apply_source_role_policy, quoted_identifier
 
 # Explicit compatibility permissions for domains whose Writer cutover is still pending.
@@ -32,7 +35,13 @@ RUNTIME_APPEND_ONLY_TABLES = frozenset(
     "rag_evidence_guideline rag_evidence_rule rag_evidence rag_evidence_knowledge "
     "rag_runtime_environment_transition medication_candidate_search_result "
     "ai_job_intake_context ai_job_execution_context ai_job_execution_identification "
-    "retrieval_signal retrieval_hit".split()
+    "retrieval_signal retrieval_hit "
+    # #713/#731: REQUEST 단위 historical authority 증거. #713 writer의 발행과 #709 Production
+    # Reader의 조회만 필요하므로 기존 append-only 권한(SELECT, INSERT)을 그대로 쓴다.
+    "rag_request_guard_authority rag_request_source_decision rag_request_member_decision "
+    # #712: selected hit 단위 Assessment·Eligibility authority. Issuer의 발급과 후속 Reader의
+    # 조회만 필요하고 발급 뒤에는 고쳐 쓰지 않으므로 append-only 권한(SELECT, INSERT)을 그대로 쓴다.
+    "rag_evidence_authority".split()
 )
 RUNTIME_CHECKIN_LOCK_TABLES = frozenset({"safety_assessment", "barrier_response"})
 
@@ -41,6 +50,11 @@ RUNTIME_LIFESTYLE_TABLES = frozenset({"lifestyle_times"})
 # #178/#689: retrieval_run tracks execution lifecycle (RUNNING -> COMPLETED/FAILED),
 # requiring SELECT, INSERT, UPDATE. History deletion is handled via cascade from ai_job; direct DELETE is prohibited.
 RUNTIME_RETRIEVAL_RUN_TABLES = frozenset({"retrieval_run"})
+
+# #780: Candidate Index read authority for runtime search/hydration.
+# Runtime requires SELECT on version and member, plus UPDATE on candidate_index_lock_marker for SELECT ... FOR SHARE.
+# INSERT/DELETE/TRUNCATE and business column UPDATE are strictly prohibited.
+CANDIDATE_INDEX_RUNTIME_READ_TABLES = frozenset({"rag_candidate_index_version", "rag_candidate_index_member"})
 
 
 # #404: token identity and history are immutable after issuance. Runtime only rotates/consumes.
@@ -101,7 +115,9 @@ async def provision_roles(
     required = (
         RUNTIME_MUTABLE_TABLES
         | RUNTIME_APPEND_ONLY_TABLES
-        | CATALOG_TABLES
+        | CATALOG_WRITE_TABLES
+        | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
+        | CANDIDATE_INDEX_RUNTIME_READ_TABLES
         | set(SOURCE_TABLES)
         | set(RUNTIME_AUTH_UPDATE_COLUMNS)
         | RUNTIME_LIFESTYLE_TABLES
@@ -114,7 +130,11 @@ async def provision_roles(
         raise ValueError("Required application tables are missing; apply migrations before provisioning")
     for tables, privileges in (
         (RUNTIME_MUTABLE_TABLES, "SELECT, INSERT, UPDATE, DELETE"),
-        (RUNTIME_APPEND_ONLY_TABLES | CATALOG_TABLES, "SELECT, INSERT"),
+        (RUNTIME_APPEND_ONLY_TABLES, "SELECT, INSERT"),
+        (
+            CATALOG_WRITE_TABLES | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES | CANDIDATE_INDEX_RUNTIME_READ_TABLES,
+            "SELECT",
+        ),
     ):
         for table in sorted(tables):
             await connection.execute(
@@ -125,6 +145,10 @@ async def provision_roles(
         target = f"public.{quoted_identifier(table)}"
         await connection.execute(text(f"GRANT SELECT ON TABLE {target} TO {runtime_sql}"))
         await connection.execute(text(f"GRANT UPDATE (checkin_lock_marker) ON TABLE {target} TO {runtime_sql}"))
+    # #780: Candidate Index Version row lock without payload mutation.
+    await connection.execute(
+        text(f"GRANT UPDATE (candidate_index_lock_marker) ON TABLE public.rag_candidate_index_version TO {runtime_sql}")
+    )
     await connection.execute(text(f"GRANT SELECT ON TABLE public.support_action_plan TO {runtime_sql}"))
     await connection.execute(
         text(f"GRANT UPDATE (status, cancelled_at) ON TABLE public.support_action_plan TO {runtime_sql}")
