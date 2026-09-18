@@ -24,6 +24,16 @@ class RatioContribution:
             raise ValueError("ratio counts are invalid")
 
 
+@dataclass(frozen=True, slots=True)
+class BootstrapRatioCiDiagnostics:
+    ci_lower: str | None
+    ci_upper: str | None
+    total_replicates: int
+    valid_replicates: int
+    excluded_replicates: int
+    valid_replicate_ratio: str
+
+
 def _canonical_decimal(value: Decimal) -> str:
     quantized = value.quantize(_SIX_PLACES, rounding=ROUND_HALF_EVEN)
     if quantized == 0:
@@ -51,23 +61,27 @@ def _percentile_bounds(estimates: list[Decimal], level: Decimal) -> tuple[str, s
     return _canonical_decimal(estimates[lower_index]), _canonical_decimal(estimates[upper_index])
 
 
-def percentile_cluster_bootstrap_ratio_ci(
+def _cluster_bootstrap_ratio_replicates(
     group_contributions: Mapping[str, tuple[RatioContribution, ...]],
     *,
     seed: int,
     iterations: int,
-    level: Decimal,
-) -> tuple[str, str]:
+    allow_zero_denominator_replicates: bool,
+) -> tuple[list[Decimal], int, int]:
     if iterations <= 0:
         raise ValueError("bootstrap iterations must be positive")
     if not group_contributions or any(not values for values in group_contributions.values()):
         raise ValueError("bootstrap groups must contain contributions")
-    if any(sum(item.denominator for item in values) == 0 for values in group_contributions.values()):
+    if not allow_zero_denominator_replicates and any(
+        sum(item.denominator for item in values) == 0 for values in group_contributions.values()
+    ):
         raise ValueError("bootstrap replicate denominator is zero")
 
     group_ids = tuple(sorted(group_contributions, key=lambda value: value.encode("utf-16-be")))
     rng = random.Random(seed)
     estimates: list[Decimal] = []
+    valid_replicates = 0
+    excluded_replicates = 0
     for _ in range(iterations):
         sampled_group_ids = tuple(group_ids[rng.randrange(len(group_ids))] for _ in group_ids)
         sampled = tuple(
@@ -76,6 +90,55 @@ def percentile_cluster_bootstrap_ratio_ci(
         numerator = sum(item.numerator for item in sampled)
         denominator = sum(item.denominator for item in sampled)
         if denominator == 0:
-            raise ValueError("bootstrap replicate denominator is zero")
+            if not allow_zero_denominator_replicates:
+                raise ValueError("bootstrap replicate denominator is zero")
+            excluded_replicates += 1
+            continue
+        valid_replicates += 1
         estimates.append(Decimal(numerator) / Decimal(denominator))
+    return estimates, valid_replicates, excluded_replicates
+
+
+def percentile_cluster_bootstrap_ratio_ci(
+    group_contributions: Mapping[str, tuple[RatioContribution, ...]],
+    *,
+    seed: int,
+    iterations: int,
+    level: Decimal,
+) -> tuple[str, str]:
+    estimates, _, _ = _cluster_bootstrap_ratio_replicates(
+        group_contributions,
+        seed=seed,
+        iterations=iterations,
+        allow_zero_denominator_replicates=False,
+    )
     return _percentile_bounds(estimates, level)
+
+
+def percentile_cluster_bootstrap_ratio_ci_with_diagnostics(
+    group_contributions: Mapping[str, tuple[RatioContribution, ...]],
+    *,
+    seed: int,
+    iterations: int,
+    level: Decimal,
+) -> BootstrapRatioCiDiagnostics:
+    estimates, valid_replicates, excluded_replicates = _cluster_bootstrap_ratio_replicates(
+        group_contributions,
+        seed=seed,
+        iterations=iterations,
+        allow_zero_denominator_replicates=True,
+    )
+    total_replicates = iterations
+    valid_ratio = _canonical_decimal(Decimal(valid_replicates) / Decimal(total_replicates))
+    if valid_replicates > 0:
+        ci_lower, ci_upper = _percentile_bounds(estimates, level)
+    else:
+        ci_lower, ci_upper = None, None
+    return BootstrapRatioCiDiagnostics(
+        ci_lower=ci_lower,
+        ci_upper=ci_upper,
+        total_replicates=total_replicates,
+        valid_replicates=valid_replicates,
+        excluded_replicates=excluded_replicates,
+        valid_replicate_ratio=valid_ratio,
+    )

@@ -28,6 +28,8 @@ export default defineConfig({
       VITE_API_BASE_URL: 'http://127.0.0.1:4173',
       VITE_EMAIL_VERIFICATION_ENABLED: 'false',
       VITE_SIGNUP_TERMS_APPROVED: 'true',
+      // track-c-*.spec.ts가 Track C route를 사용하므로 명시적으로 켠다.
+      VITE_PUBLIC_TRACK_C: 'true',
     },
   },
   projects: [

@@ -21,7 +21,12 @@ from app.services.chat_ai.client import OpenAIResponsesClient
 
 _REPOSITORY_ROOT = Path(__file__).parents[3]
 _DEFAULT_CONFIG_PATH = _REPOSITORY_ROOT / "evals" / "generation" / "chat-conversation-quality-blind-ab-v1.json"
-_CANONICAL_CONFIG_SHA256 = "bc61b2511945288b5b46d35c2cdfa63bc38601c3965fee2a4ce31da0468f2205"
+_ALLOWED_CONFIG_SHA256_BY_PATH = {
+    _DEFAULT_CONFIG_PATH.resolve(): "bc61b2511945288b5b46d35c2cdfa63bc38601c3965fee2a4ce31da0468f2205",
+    (_REPOSITORY_ROOT / "evals" / "generation" / "chat-feedback-gold-prompt-comparison-v1.json").resolve(): (
+        "0bbb04090bb5d33aa458a45bae19943c6027bb01f9adb39ad0bdca22a2a6c864"
+    ),
+}
 _API_KEY_PLACEHOLDERS = frozenset(
     {
         "",
@@ -64,10 +69,9 @@ def validate_blind_ab_environment(environment: Mapping[str, str]) -> None:
 
 
 def _validate_canonical_config(config_path: Path) -> None:
-    if (
-        config_path.resolve() != _DEFAULT_CONFIG_PATH.resolve()
-        or normalized_sha256(config_path.read_bytes()) != _CANONICAL_CONFIG_SHA256
-    ):
+    resolved_path = config_path.resolve()
+    allowed_hash = _ALLOWED_CONFIG_SHA256_BY_PATH.get(resolved_path)
+    if allowed_hash is None or normalized_sha256(config_path.read_bytes()) != allowed_hash:
         raise LiveEvaluationConfigurationError("Chat blind A/B experiment config is not allowed")
 
 

@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from ai_worker.tasks.evaluation.answer_metrics import AnswerBootstrapDiagnostic
 from ai_worker.tasks.evaluation.comparison import build_retrieval_comparison, load_published_run_bundle
 from ai_worker.tasks.evaluation.manifest import (
     build_artifact_draft,
@@ -13,6 +14,7 @@ from ai_worker.tasks.evaluation.manifest import (
 )
 from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
 from ai_worker.tasks.evaluation.reporter import render_report
+from ai_worker.tasks.evaluation.schemas.common import Partition
 from ai_worker.tests.evaluation.test_result_manifest import (
     RUN_ID_A,
     RUN_ID_B,
@@ -196,3 +198,65 @@ def test_non_replay_retrieval_report_does_not_claim_synthetic_replay_source() ->
     assert "Data Source: `ADAPTER_EXECUTION_DEV`" in report
     assert "Production Integration: `NOT_ASSESSED_BY_DEV_REPORT`" in report
     assert "SYNTHETIC_REPLAY_DEV" not in report
+
+
+def test_report_with_answer_bootstrap_diagnostics_renders_diagnostics_table() -> None:
+    draft = build_artifact_draft(_material(run_id=RUN_ID, started_at=TIME_B, complete=True))
+    diagnostics = (
+        AnswerBootstrapDiagnostic(
+            metric_id="ANSWER_CORRECTNESS",
+            partition=Partition.DEV,
+            slice_id="ALL",
+            total_replicates=10000,
+            valid_replicates=9500,
+            excluded_replicates=500,
+            valid_replicate_ratio="0.95",
+            minimum_valid_replicate_ratio="0.9",
+        ),
+    )
+
+    report = render_report(
+        draft.report_data,
+        draft.metrics,
+        draft.suite_results,
+        draft.failures,
+        content_artifact_entries(machine_artifact_files(draft)),
+        answer_bootstrap_diagnostics=diagnostics,
+    ).decode("utf-8")
+
+    assert "## Answer Correctness Bootstrap Diagnostics" in report
+    assert "| DEV | ALL | 10000 | 9500 | 500 | 0.95 | 0.9 |" in report
+    assert report.index("## Answer Correctness Bootstrap Diagnostics") < report.index("## Machine Artifacts")
+    validate_privacy_boundary({"report": report})
+
+
+def test_report_without_answer_bootstrap_diagnostics_omits_diagnostics_section() -> None:
+    draft = build_artifact_draft(_material(run_id=RUN_ID, started_at=TIME_B, complete=True))
+    report_default = render_report(
+        draft.report_data,
+        draft.metrics,
+        draft.suite_results,
+        draft.failures,
+        content_artifact_entries(machine_artifact_files(draft)),
+    )
+    report_explicit_empty = render_report(
+        draft.report_data,
+        draft.metrics,
+        draft.suite_results,
+        draft.failures,
+        content_artifact_entries(machine_artifact_files(draft)),
+        answer_bootstrap_diagnostics=(),
+    )
+
+    assert report_default == report_explicit_empty
+    assert "## Answer Correctness Bootstrap Diagnostics" not in report_default.decode("utf-8")
+
+
+def test_metrics_json_never_contains_bootstrap_diagnostics() -> None:
+    draft = build_artifact_draft(_material(run_id=RUN_ID, started_at=TIME_B, complete=True))
+    dumped = draft.metrics.model_dump(mode="json")
+    for metric_entry in dumped.get("metrics", []):
+        assert "valid_replicates" not in metric_entry
+        assert "excluded_replicates" not in metric_entry
+        assert "valid_replicate_ratio" not in metric_entry
+        assert "minimum_valid_replicate_ratio" not in metric_entry
