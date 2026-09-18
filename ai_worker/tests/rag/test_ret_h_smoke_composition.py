@@ -218,3 +218,30 @@ async def test_no_candidate_is_never_a_fail_closed_pass() -> None:
 @pytest.mark.parametrize("environment", [{}, {"OPENAI_API_KEY": ""}, {"OPENAI_API_KEY": "   "}])
 def test_missing_credential_never_falls_back_to_a_fake_embedding(environment: dict[str, str]) -> None:
     assert build_text_embedding_port(content_sha256="0" * 64, environment=environment) is None
+
+
+def test_build_search_port_uses_canonical_candidate_ref() -> None:
+    from unittest.mock import MagicMock
+
+    from ai_worker.adapters.postgresql_evidence_search import POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF
+    from ai_worker.tasks.evaluation.ret_h_smoke import build_search_port
+
+    fake_factory = MagicMock()
+    port1 = build_search_port(fake_factory)
+    assert port1._adapter_artifact_ref == POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF
+
+    port2 = build_search_port(fake_factory, content_sha256=POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF.content_sha256)
+    assert port2._adapter_artifact_ref == POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF
+
+
+def test_build_search_port_rejects_arbitrary_hash_fail_closed() -> None:
+    from unittest.mock import MagicMock
+
+    from ai_worker.tasks.evaluation.ret_h_smoke import build_search_port
+
+    fake_factory = MagicMock()
+    with pytest.raises(ValueError, match="Search adapter hash mismatch"):
+        build_search_port(fake_factory, content_sha256="a" * 64)
+
+    with pytest.raises(ValueError, match="Search adapter hash mismatch"):
+        build_search_port(fake_factory, content_sha256="5" * 64)
