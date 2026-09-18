@@ -59,6 +59,7 @@ faiss_index/
 evals/results/
 evals/results.*
 evals/validation-results/
+docs/validation/*.private.json
 knowledge/cache/
 knowledge/documents/
 knowledge/indexes/

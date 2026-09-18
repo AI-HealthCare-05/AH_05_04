@@ -1,6 +1,6 @@
 # PD-633 — Guide·Chat 피드백 수집과 합성 평가셋 연결
 
-- 상태: **구현·제품/운영 기준 병합 완료 / AI-RAG synthetic evidence 정리 완료 / prompt 비교 기준 확인 완료**. PR #638로 Local feedback 저장·API·UI·합성 검증 기반은 develop에 반영됐고, PR #730으로 제품·운영 기준을 정리했다. PR #740으로 synthetic Gold deterministic replay와 Chat feedback target authority를 정렬했다. 후속 evidence PR은 31-case paired prompt comparison과 safety regression 결과를 남긴다. 실사용 공개와 Production Privacy gate는 별도다.
+- 상태: **구현·제품/운영 기준 병합 완료 / AI-RAG synthetic evidence 정리 완료 / prompt comparison 실행 완료·책임 리뷰 대기**. PR #638로 Local feedback 저장·API·UI·합성 검증 기반은 develop에 반영됐고, PR #730으로 제품·운영 기준을 정리했다. PR #740으로 synthetic Gold deterministic replay와 Chat feedback target authority를 정렬했다. 최종 evidence PR은 31-case paired prompt comparison과 safety regression 결과를 남겼으며, mixed result에 대한 정현우 책임 리뷰 승인을 기다린다. 실사용 공개와 Production Privacy gate는 별도다.
 - 근거: [Issue #633](https://github.com/AI-HealthCare-05/AH_05_04/issues/633).
 - 구현: 송은영 (`@phina-io`) — DB·API·Security, 권가빈 (`@hazelnutflavoured`) — UX·Privacy·Gold·평가.
 - 단일 책임 리뷰어: 정현우 (`@ceohwj`) — AI/RAG·의료 안전·개선 증빙. 제품/운영 기준은 권가빈(`@hazelnutflavoured`) 확인을 먼저 받는다.
@@ -92,11 +92,11 @@ Source writer에는 접근을 허용하지 않고 runtime TRUNCATE·DDL 권한�
 [정현우 리뷰](https://github.com/AI-HealthCare-05/AH_05_04/pull/638#pullrequestreview-5218797819)에 따라
 Service 직접 commit을 제거하고 요청 성공 시 get_db_session에서만 최종 commit한다.
 부모 잠금은 최종 commit까지 유지하고 응답 조립 실패도 저장·삭제 전체를 rollback한다.
-공통 오류 정본에 FEEDBACK_TARGET_NOT_READY를 등록했고 PR #638은 병합됐다. PR #730은 제품·운영 기준을 정리했다. PR #740은 합성 replay evidence와 target authority를 정리했지만 deterministic replay만으로 #633 완료 조건을 충족하지 않는다. 후속 evidence PR은 책임 리뷰어가 확인한 paired prompt comparison 기준, safety regression 결과, 사람 검토 연결 기록을 포함해야 하며 실사용 공개는 별도다.
+공통 오류 정본에 FEEDBACK_TARGET_NOT_READY를 등록했고 PR #638은 병합됐다. PR #730은 제품·운영 기준을 정리했다. PR #740은 합성 replay evidence와 target authority를 정리했지만 deterministic replay만으로 #633 완료 조건을 충족하지 않는다. 최종 evidence PR은 책임 리뷰어가 확인한 paired prompt comparison 기준, safety regression 결과, 사람 검토 연결 기록을 포함한다. mixed result의 최종 수용 여부와 실사용 공개는 별도다.
 
 ## #633 최종 검증 기준
 
-정현우 책임 리뷰어 확인에 따라 후속 evidence PR은 다음 기준을 따른다.
+정현우 책임 리뷰어 확인에 따라 최종 evidence PR은 다음 기준을 따른다.
 
 - 평가셋: `evals/generation/chat-feedback-gold-v1.json`의 synthetic Gold 31-case를 #633 동일 비교 평가셋으로 사용한다. 실제 사용자 feedback 원문은 사용하지 않고, 기존 Track F RAG Gold와 목적을 분리해 기록한다.
 - Prompt 비교: 같은 31-case에서 feedback 반영 전 prompt와 현재 prompt를 동일 조건으로 비교한다. Dataset, model, temperature, max tokens, timeout, medication/history fixture를 고정하고 prompt version/hash만 달라지는 paired comparison으로 기록한다.
@@ -107,4 +107,4 @@ Service 직접 commit을 제거하고 요청 성공 시 get_db_session에서만 
 - 사람 검토: 31개 전체 수동 PASS/FAIL 재작성은 필수로 보지 않는다. dataset version/hash, baseline/candidate prompt version/hash, 통제 실행 조건, case별 기계 판정 결과 또는 failure list, safety regression 결과, 전체 비교 요약을 artifact로 남기고 정현우 책임 리뷰 승인 코멘트로 연결한다.
 - Current 승격: `guide-chat-feedback-v1`은 실사용 feedback 공개·운영 승인이 남아 있으므로 Proposed 유지가 맞다. Current 승격은 #633 Close 필수 조건이 아니며, 운영 공개 승인 시 별도 승격한다.
 
-이번 문서 정리에서 후속 evidence 실행 입력을 `evals/generation/chat-feedback-gold-prompt-comparison-v1.json`으로 고정한다. 이 config는 `chat-feedback-gold-v1` dataset과 `chat-prompt-v4`/`chat-prompt-v5` prompt snapshot을 사용하며 `execution_status=NOT_RUN`이다. 후속 PR은 이 config를 실제 Local opt-in Provider 실행으로 채우고, unblind summary와 책임 리뷰 승인 기록을 연결한다.
+이번 evidence 실행 입력을 `evals/generation/chat-feedback-gold-prompt-comparison-v1.json`으로 고정한다. 이 config는 `chat-feedback-gold-v1` dataset과 `chat-prompt-v4`/`chat-prompt-v5` prompt snapshot을 사용하며 `execution_status=NOT_RUN`이다. 최종 PR은 이 config를 실제 Local opt-in Provider 실행으로 채우고, machine comparison summary와 책임 리뷰 승인 기록을 연결한다.

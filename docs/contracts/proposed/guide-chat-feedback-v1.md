@@ -1,7 +1,7 @@
 # Guide·Chat 피드백 v1 — #633
 
-상태: **Proposed / Local 구현·제품/운영 기준 병합 완료·AI-RAG synthetic evidence 정리 중**. [PD-633](../../governance/decisions/2026-09-16-guide-chat-feedback-633.md)의
-로컬 구현 계약이며 PR #638로 저장·API·Local UI·합성 검증 기반이 develop에 반영됐다. PR #730은 가빈님 검토 범위(피드백 수집 UX, 부정 피드백 검토 기준, 비식별 Gold 후보 변환 기준, 실사용 전 운영 조건)를 고정했다. PR #740은 합성 Gold 기대·금지 응답, deterministic replay, 안전 gate 보존 근거를 정리하지만 prompt 전후 비교·사람 검토 evidence를 대체하지 않는다. Current 승격, #633 종료, 실사용 처리 승인과 Production 공개는 별도다.
+상태: **Proposed / Local 구현·제품/운영 기준 병합 완료·AI-RAG synthetic evidence 정리 완료·prompt comparison 실행 완료·책임 리뷰 대기**. [PD-633](../../governance/decisions/2026-09-16-guide-chat-feedback-633.md)의
+로컬 구현 계약이며 PR #638로 저장·API·Local UI·합성 검증 기반이 develop에 반영됐다. PR #730은 가빈님 검토 범위(피드백 수집 UX, 부정 피드백 검토 기준, 비식별 Gold 후보 변환 기준, 실사용 전 운영 조건)를 고정했다. PR #740은 합성 Gold 기대·금지 응답, deterministic replay, 안전 gate 보존 근거를 정리했다. 2026-09-18 Local opt-in prompt comparison은 mixed improvement로 실행됐으며 책임 리뷰어 최종 승인 대기다. Current 승격, 실사용 처리 승인과 Production 공개는 별도다.
 
 ## HTTP 계약
 
