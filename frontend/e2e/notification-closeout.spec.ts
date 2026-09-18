@@ -170,7 +170,7 @@ test('[Notification closeout][#551] leaving a pending handoff blocks late naviga
   await api.waitForOccurrenceDayRequest()
   expect(api.readPatchCount).toBe(1)
 
-  await page.getByRole('button', { name: '홈' }).click()
+  await page.getByRole('button', { name: '이전 화면' }).click()
   await expect(page).toHaveURL(/\/$/)
   api.releaseOccurrenceDay()
   await api.waitForOccurrenceDayRelease()
