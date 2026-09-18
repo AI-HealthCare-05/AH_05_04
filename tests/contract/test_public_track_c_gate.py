@@ -32,9 +32,7 @@ def test_running_shell_value_cannot_substitute_for_the_environment_file() -> Non
     script = (ROOT / "scripts/deployment.sh").read_text()
     assert "unset VITE_PUBLIC_TRACK_C\n" in script
     assert script.index("unset VITE_PUBLIC_TRACK_C") < script.index('source "$PROD_ENV_FILE"')
-    assert script.index("\nvalidate_public_track_c_configuration\n") < script.index(
-        "for required_command in docker"
-    )
+    assert script.index("\nvalidate_public_track_c_configuration\n") < script.index("for required_command in docker")
 
 
 @pytest.mark.parametrize("value", [None, "", "false", "true", "TRUE", "1", "yes"])
