@@ -12,6 +12,7 @@ from ai_worker.core.results import HandlerSuccess
 from ai_worker.core.retry import FailureCode
 from ai_worker.schemas.messages import DomainType, JobType, WorkerMessage
 from ai_worker.tasks.ocr.consent import OcrConsentGate
+from provider_contracts.ocr import SourceLocation
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +33,7 @@ class OcrRecognizedField:
     confidence_score: float | None
     normalized_value: str | None
     normalization_version: str | None
+    source_location: SourceLocation | None = None
 
 
 @dataclass(frozen=True, slots=True)

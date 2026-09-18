@@ -103,6 +103,38 @@ Issue #159 구현 중 발견된 zero-claim Case 및 zero-denominator bootstrap r
 | --- | --- | --- | --- |
 | 권가빈 (`@hazelnutflavoured`) | `APPROVED` | [Issue #159 comment `5723932925`](https://github.com/AI-HealthCare-05/AH_05_04/issues/159#issuecomment-5723932925) · [comment `5724008612`](https://github.com/AI-HealthCare-05/AH_05_04/issues/159#issuecomment-5724008612) | `2026-09-18T02:07:41Z` |
 
+## 2026-09-18 후속 결정: Answer 3-Pair Comparison Controlled Variable Binding Seam (Option 2)
+
+Issue #159 PR C(Answer 3-pair comparison) 착수 시점의 controlled variable source 결속 및 authority extraction 경계에 대해, Product·Safety·Evaluation 책임 리뷰어 권가빈 (`@hazelnutflavoured`)의 승인 결정([#159 comment 5725554244](https://github.com/AI-HealthCare-05/AH_05_04/issues/159#issuecomment-5725554244))에 따라 다음 후속 계약을 확정한다.
+
+### 1. Product-approved 결정 사항
+
+1. **Option 2 Pure Typed Seam 채택**: 14개 controlled variable 전체를 typed seam으로 표현한다.
+2. **Run-derived 7 controls 결속**: 현재 `RagEvaluationRun`에서 canonical source가 명확한 7개 key(`CASE_SET`, `DATASET`, `PARTITION`, `GOLD`, `RUBRIC`, `METRIC_POLICY`, `MODEL_CONFIGURATION`)는 seam 내부에서 바로 derive/바인딩하며 caller가 override하지 못한다.
+3. **Supplemental 7 controls typed input**: 현재 authority extraction recipe가 없는 7개 key(`INPUT_CONTEXT`, `PROMPT_STRUCTURE`, `PARSER`, `SEED`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`)는 caller-supplied arbitrary mapping으로 받지 않고 명시적 typed supplemental input으로 받는다.
+4. **Delta authority extraction 후속 분리**: 8개 delta-axis key의 authoritative extraction recipe는 후속 PR(RagEvaluationRun 필드 확장 또는 별도 binding manifest)에서 확정하며, PR C에서는 typed input으로만 수신한다.
+5. **Contract Test 고정**: #798 리뷰 이월 사항대로 `ANSWER_CORRECTNESS` scope의 `minimum_valid_replicate_ratio = "0.9"` 존재를 contract test로 고정한다.
+6. **Schema Set 1.5 불변**: Schema Set 1.5(`cf481556cead9f99e4d424481e9ed5aed246899a4c893c45b19a2b7abcb89dc8`)는 변경하지 않는다.
+
+### 2. Product 승인 Evidence
+
+| 결정자 | 상태 | 근거 | 일시 (UTC) |
+| --- | --- | --- | --- |
+| 권가빈 (`@hazelnutflavoured`) | `APPROVED` | [Issue #159 comment `5725554244`](https://github.com/AI-HealthCare-05/AH_05_04/issues/159#issuecomment-5725554244) | `2026-09-18T05:20:21Z` |
+
+### 3. PR C Deterministic Implementation Convention (구현 규약)
+
+다음 세부 사항은 Product 승인 내용이 아니라 PR C의 결정적 구현 규약으로 분리하여 관리한다:
+
+- **`comparison_sha256`**: full comparison payload의 canonical JSON 직렬화 바이트 SHA-256 hex.
+- **`comparison_semantic_hash`**: `run_id`, `baseline_run_id`, `candidate_run_id` 3개 필드를 제외하고 나머지 비교 의미 필드를 canonical hashing.
+- **내부 Dataclass 구조**: `AnswerComparisonSupplementalControls`, `AnswerComparisonDeltaBindings`, `AnswerComparisonRunInput` 등 명시적 internal dataclass 사용 (`dict` 임의 매핑 금지).
+- **INVALID 상태 표현**:
+  - authority binding 누락(None): `controlled_variable_checks = ()`, `scope_comparisons = ()`, `execution_status = INVALID`, `decision_status = null`
+  - 14개 control mismatch: 14개 checks 유지(`matched = false`), `scope_comparisons` 계산 가능 시 유지, `execution_status = INVALID`, `decision_status = null`
+  - non-allowed delta / case / draft mismatch: Schema 변경 없이 invariant 유지를 위해 `scope_comparisons = ()`로 `INVALID/null` 표현
+  - malformed typed input: `EvaluationValidationError`로 fail-close.
+
 ## 공개 경계
 
 이 후보의 승인이나 DEV 구현은 `PUBLIC_TRACK_F`를 해제하지 않는다. Answer Quality 통과만으로도 공개할

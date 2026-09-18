@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from pydantic import ValidationError
 
 from ai_worker.tasks.evaluation.answer_judgment import ValidatedAnswerJudgments, ValidatedCaseJudgment
 from ai_worker.tasks.evaluation.answer_metrics import (
@@ -1022,3 +1023,64 @@ def test_answer_metrics_requires_authoritative_bindings() -> None:
 
     with pytest.raises(TypeError):
         build_answer_metrics_with_diagnostics(dataset, results)  # type: ignore[call-arg]
+
+
+def test_answer_correctness_policy_pins_minimum_valid_replicate_ratio() -> None:
+    dataset = dataset_with_answer_scopes()
+
+    scope = next(scope for scope in dataset.comparison_policy.scopes if scope.metric_id == "ANSWER_CORRECTNESS")
+
+    parameters = dict(scope.ci_parameters)
+
+    assert parameters["minimum_valid_replicate_ratio"] == "0.9"
+    assert isinstance(parameters["minimum_valid_replicate_ratio"], str)
+
+
+def test_answer_correctness_policy_rejects_missing_replicate_ratio() -> None:
+    dataset = dataset_with_answer_scopes()
+    scope = next(scope for scope in dataset.comparison_policy.scopes if scope.metric_id == "ANSWER_CORRECTNESS")
+    payload = scope.model_dump(mode="json")
+    parameters = dict(payload["ci_parameters"])
+    parameters.pop("minimum_valid_replicate_ratio")
+    payload["ci_parameters"] = parameters
+
+    invalid_scope = ComparisonScope.model_validate(payload)
+    invalid_dataset = dataset_with_answer_scopes(invalid_scope)
+    results = _build_answer_metrics(
+        invalid_dataset,
+        completed_answer_results(),
+        human_judgments=_make_validated_judgments(),
+    )
+    res = metric(results, "ANSWER_CORRECTNESS")
+    assert res.execution_status.value == "NOT_IMPLEMENTED"
+
+
+def test_answer_correctness_policy_rejects_noncanonical_replicate_ratio() -> None:
+    dataset = dataset_with_answer_scopes()
+    scope = next(scope for scope in dataset.comparison_policy.scopes if scope.metric_id == "ANSWER_CORRECTNESS")
+    payload = scope.model_dump(mode="json")
+    parameters = dict(payload["ci_parameters"])
+    parameters["minimum_valid_replicate_ratio"] = "0.90"
+    payload["ci_parameters"] = parameters
+
+    invalid_scope = ComparisonScope.model_validate(payload)
+    invalid_dataset = dataset_with_answer_scopes(invalid_scope)
+    results = _build_answer_metrics(
+        invalid_dataset,
+        completed_answer_results(),
+        human_judgments=_make_validated_judgments(),
+    )
+    res = metric(results, "ANSWER_CORRECTNESS")
+    assert res.execution_status.value == "NOT_IMPLEMENTED"
+
+
+def test_answer_correctness_policy_rejects_float_replicate_ratio() -> None:
+    dataset = dataset_with_answer_scopes()
+    scope = next(scope for scope in dataset.comparison_policy.scopes if scope.metric_id == "ANSWER_CORRECTNESS")
+    payload = scope.model_dump(mode="json")
+    parameters = dict(payload["ci_parameters"])
+    parameters["minimum_valid_replicate_ratio"] = 0.9
+    payload["ci_parameters"] = parameters
+
+    with pytest.raises(ValidationError):
+        ComparisonScope.model_validate(payload)
