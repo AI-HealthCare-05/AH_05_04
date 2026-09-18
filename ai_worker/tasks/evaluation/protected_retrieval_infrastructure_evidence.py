@@ -24,6 +24,10 @@ _IMPLEMENTATION_FILES = (
         "AUTHORIZATION_CONTROL_MIGRATION",
         "infra/protected_retrieval/versions/368000000002_add_authorization_control.py",
     ),
+    (
+        "PRODUCTION_APPROVAL_SOURCE_CONNECTOR",
+        "ai_worker/adapters/github_trusted_approval_source.py",
+    ),
 )
 
 _TOP_LEVEL_FIELDS = frozenset(
@@ -72,13 +76,11 @@ def _validate_exact_records(evidence: dict[str, JsonValue]) -> None:
             {"command_id": "RUNTIME_ASSEMBLY", "result": "24_PASSED"},
             {"command_id": "WORKER_IMAGE_PROTECTED_OFF_IMPORT", "result": "PASSED"},
             {"command_id": "PROTECTED_LIMITED_LOGIN_CI", "result": "PASSED"},
+            {"command_id": "PRODUCTION_APPROVAL_SOURCE_CONNECTOR", "result": "21_PASSED"},
         ],
-        "remaining_repository_scope": [
-            "PRODUCTION_APPROVAL_SOURCE_CONNECTOR",
-        ],
+        "remaining_repository_scope": [],
         "activation_blockers": [
             "EXT_PRIV_001",
-            "PRODUCTION_APPROVAL_SOURCE_CONNECTOR",
             "REAL_ENVIRONMENT_PROVISIONING",
             "INDEPENDENT_BACKEND_SECURITY_VERIFICATION",
             "BACKUP_RESTORE_AND_ROTATION_EVIDENCE",
@@ -126,8 +128,8 @@ def _validate(evidence: dict[str, JsonValue], repository_root: Path | None = Non
         "grant_revoke_expire_status": "IMPLEMENTED_IN_REPOSITORY",
         "holdout_authored": False,
         "release_eligible": False,
-        "repository_adapter_status": "PARTIALLY_IMPLEMENTED",
-        "production_approval_source_connector_status": "NOT_IMPLEMENTED",
+        "repository_adapter_status": "IMPLEMENTED_IN_REPOSITORY",
+        "production_approval_source_connector_status": "IMPLEMENTED_IN_REPOSITORY",
         "dataset_lifecycle_freeze_status": "IMPLEMENTED_IN_REPOSITORY",
         "identity_administration_status": "IMPLEMENTED_IN_REPOSITORY",
     }
@@ -153,7 +155,6 @@ def build_protected_retrieval_infrastructure_evidence(repository_root: Path) -> 
         "access_authorized": False,
         "activation_blockers": [
             "EXT_PRIV_001",
-            "PRODUCTION_APPROVAL_SOURCE_CONNECTOR",
             "REAL_ENVIRONMENT_PROVISIONING",
             "INDEPENDENT_BACKEND_SECURITY_VERIFICATION",
             "BACKUP_RESTORE_AND_ROTATION_EVIDENCE",
@@ -183,12 +184,10 @@ def build_protected_retrieval_infrastructure_evidence(repository_root: Path) -> 
             for component, path in _IMPLEMENTATION_FILES
         ],
         "issue": "#368",
-        "production_approval_source_connector_status": "NOT_IMPLEMENTED",
+        "production_approval_source_connector_status": "IMPLEMENTED_IN_REPOSITORY",
         "release_eligible": False,
-        "remaining_repository_scope": [
-            "PRODUCTION_APPROVAL_SOURCE_CONNECTOR",
-        ],
-        "repository_adapter_status": "PARTIALLY_IMPLEMENTED",
+        "remaining_repository_scope": [],
+        "repository_adapter_status": "IMPLEMENTED_IN_REPOSITORY",
         "verification": [
             {
                 "command_id": "AUTHORIZATION_CONTROL_RELATED",
@@ -205,6 +204,10 @@ def build_protected_retrieval_infrastructure_evidence(repository_root: Path) -> 
             {
                 "command_id": "PROTECTED_LIMITED_LOGIN_CI",
                 "result": "PASSED",
+            },
+            {
+                "command_id": "PRODUCTION_APPROVAL_SOURCE_CONNECTOR",
+                "result": "21_PASSED",
             },
         ],
     }
@@ -229,10 +232,10 @@ def render_protected_retrieval_infrastructure_evidence(evidence: dict[str, JsonV
             "",
             "## 상태",
             "",
-            "- Repository adapter: `PARTIALLY_IMPLEMENTED`",
+            "- Repository adapter: `IMPLEMENTED_IN_REPOSITORY`",
             "- Authorization control C1: `IMPLEMENTED_IN_REPOSITORY`",
             "- Implemented scope: approval ingestion and grant/revoke/expire transaction·audit services",
-            "- Production approval source connector: `NOT_IMPLEMENTED`",
+            "- Production approval source connector: `IMPLEMENTED_IN_REPOSITORY`",
             "- Dataset lifecycle/FREEZE service: `IMPLEMENTED_IN_REPOSITORY`",
             "- Identity registration/disable service: `IMPLEMENTED_IN_REPOSITORY`",
             "- Effective enforcement: `NOT_IMPLEMENTED`",
@@ -249,6 +252,7 @@ def render_protected_retrieval_infrastructure_evidence(evidence: dict[str, JsonV
             "- Runtime assembly suite: `24 passed`",
             "- Protected-off Worker image import: `passed`",
             "- Protected limited-login verification in CI: `passed`",
+            "- Production approval source connector: `21 passed`",
             "- 실제 환경 좌표와 보호 데이터는 사용하지 않았습니다.",
             "",
             "## Evidence self hash 입력",
