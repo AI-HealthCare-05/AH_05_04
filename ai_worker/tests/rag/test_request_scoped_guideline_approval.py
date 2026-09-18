@@ -37,6 +37,7 @@ from ai_worker.tasks.rag.guideline_evidence_binding_authority import (
     GUIDELINE_APPROVAL_VERIFIER_REF,
     GuidelineAuthorityFailureReason,
     build_request_scoped_guideline_authority,
+    build_request_scoped_guideline_static_approval_verifier,
 )
 from ai_worker.tests.rag.test_guide_runtime_preflight import build_approved_pack, make_generator
 from ai_worker.tests.rag.test_guideline_approval_pack import make_fallbacks, make_policy
@@ -337,3 +338,93 @@ def test_authority_exposes_the_verifier_through_the_existing_port() -> None:
     verifier: GuidelineApprovalVerifierPort = outcome.authority.approval_verifier
 
     assert callable(verifier.verify)
+
+
+# --- #787 static approval bridge for a request with no draft --------------------
+
+
+def static_verifier(preflight: GuideRuntimePreflightOutcome | None = None):
+    verifier = build_request_scoped_guideline_static_approval_verifier(
+        preflight if preflight is not None else ready_outcome()
+    )
+    assert verifier is not None
+    return verifier
+
+
+def test_static_verifier_approves_the_729_policy_pin() -> None:
+    preflight = ready_outcome()
+    assert preflight.ready_context is not None
+
+    assert_verified(static_verifier(preflight), preflight.ready_context.policy_ref)
+
+
+def test_static_verifier_approves_every_729_fallback_pin() -> None:
+    preflight = ready_outcome()
+    assert preflight.ready_context is not None
+    verifier = static_verifier(preflight)
+
+    assert preflight.ready_context.fallback_refs
+    for ref in preflight.ready_context.fallback_refs:
+        assert_verified(verifier, ref)
+
+
+def test_static_verifier_rejects_a_dynamic_binding_ref() -> None:
+    """A generation failure has no draft, so no dynamic binding may verify."""
+    preflight = ready_outcome()
+    _, outcome = authority_for(preflight)
+    assert outcome.authority is not None
+
+    assert_rejected(static_verifier(preflight), outcome.authority.bindings[0].artifact_ref)
+
+
+def test_static_verifier_rejects_the_approval_pack_and_candidate_refs() -> None:
+    preflight = ready_outcome()
+    assert preflight.ready_context is not None
+    verifier = static_verifier(preflight)
+
+    assert_rejected(verifier, preflight.ready_context.approval_pack_ref)
+    assert_rejected(verifier, preflight.ready_context.candidate_ref)
+
+
+def test_static_verifier_rejects_an_unknown_artifact_ref() -> None:
+    assert_rejected(
+        static_verifier(),
+        ImmutableArtifactRef("unknown-artifact", "unknown-artifact@v1", "f" * 64),
+    )
+
+
+def test_static_verifier_reuses_the_existing_verifier_identity() -> None:
+    """#787 introduces no second verifier artifact identity."""
+    preflight = ready_outcome()
+    assert preflight.ready_context is not None
+    response = static_verifier(preflight).verify(preflight.ready_context.policy_ref)
+
+    assert type(response) is GuidelineApprovalVerificationSuccess
+    assert response.verifier_artifact_ref == GUIDELINE_APPROVAL_VERIFIER_REF
+
+
+def test_static_verifier_is_not_built_for_a_non_ready_preflight() -> None:
+    blocked = GuideRuntimePreflightOutcome(
+        decision=GuideRuntimePreflightDecision.BLOCKED,
+        reason=GuideRuntimePreflightReason.POLICY_REF_MISMATCH,
+        ready_context=None,
+    )
+
+    assert build_request_scoped_guideline_static_approval_verifier(blocked) is None
+    assert (
+        build_request_scoped_guideline_static_approval_verifier(
+            GuideRuntimePreflightOutcome(
+                decision=GuideRuntimePreflightDecision.READY,
+                reason=None,
+                ready_context=None,
+            )
+        )
+        is None
+    )
+    assert build_request_scoped_guideline_static_approval_verifier(object()) is None  # type: ignore[arg-type]
+
+
+def test_static_concrete_verifier_is_not_part_of_the_public_api_surface() -> None:
+    assert "StaticGuidelineApprovalVerifier" not in binding_authority.__all__
+    assert not hasattr(binding_authority, "StaticGuidelineApprovalVerifier")
+    assert "build_request_scoped_guideline_static_approval_verifier" in binding_authority.__all__
