@@ -53,6 +53,10 @@ import './MvpPages.css'
 import './SchedulePage.css'
 
 const KST_TIME_ZONE = 'Asia/Seoul'
+// PUBLIC_TRACK_C 공개 게이트. AppRouter.tsx와 같은 표현식을 유지해야 Vite가 build 시점에
+// 상수로 접어 production 번들에서 Track C 진입 버튼을 제거하고 support_medication 진입 동작을
+// 비활성화한다. 제거 범위는 docs/deployment.md의 서술을 따른다.
+const TRACK_C_PUBLIC = import.meta.env.VITE_PUBLIC_TRACK_C === 'true' || import.meta.env.DEV
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
@@ -856,8 +860,11 @@ export function SchedulePage({
 }) {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  // gate가 닫히면 TRACK_C_PUBLIC이 build 시점에 false로 접혀 아래 binding이 사라진다. 조회 결과는
+  // 어디에도 쓰이지 않고 query parameter 이름만 번들에 inert하게 남는다. 제거 범위는
+  // docs/deployment.md와 frontend/scripts/verify-track-c-gate.mjs의 서술을 따른다.
   const requestedSupportMedicationId = searchParams.get('support_medication')
-  const supportMedicationId = import.meta.env.DEV && requestedSupportMedicationId && UUID_PATTERN.test(requestedSupportMedicationId)
+  const supportMedicationId = TRACK_C_PUBLIC && requestedSupportMedicationId && UUID_PATTERN.test(requestedSupportMedicationId)
     ? requestedSupportMedicationId : null
   const requestedDate = searchParams.get('date')
   const selectedDate = isValidLocalDate(requestedDate) ? requestedDate : kstToday()
@@ -1458,8 +1465,8 @@ export function ScheduleOccurrencePage({
                 </p>
               )}
 
-              {import.meta.env.DEV && occurrence.status !== 'CANCELLED' && occurrence.checkin?.status === 'NOT_TAKEN' && (
-                <Button fullWidth disabled={isSaving} onClick={() => navigate(`/dev/track-c/occurrences/${occurrence.occurrence_id}?date=${encodeURIComponent(date ?? '')}`)}>
+              {TRACK_C_PUBLIC && occurrence.status !== 'CANCELLED' && occurrence.checkin?.status === 'NOT_TAKEN' && (
+                <Button fullWidth disabled={isSaving} onClick={() => navigate(`/track-c/occurrences/${occurrence.occurrence_id}?date=${encodeURIComponent(date ?? '')}`)}>
                   이유와 도움 찾기
                 </Button>
               )}
