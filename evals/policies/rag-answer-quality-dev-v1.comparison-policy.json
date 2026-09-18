@@ -1,0 +1,133 @@
+{
+  "approved_at": "2026-09-18T09:50:50.000000Z",
+  "approved_by": {
+    "actor_id": "rag-eval-draft-validator",
+    "namespace": "SYSTEM",
+    "role": "SYSTEM_VALIDATOR"
+  },
+  "comparison_policy_hash": "e333b12f58d760ab7f4c189a965c8bfcd2d07b4be1fd86fb4c8c05468e0dfa53",
+  "comparison_policy_id": "rag-answer-quality-dev-comparison",
+  "comparison_policy_version": "1.0.0",
+  "controlled_variable_keys": [
+    "CASE_SET",
+    "DATASET",
+    "GOLD",
+    "INPUT_CONTEXT",
+    "METRIC_POLICY",
+    "MODEL_CONFIGURATION",
+    "PARSER",
+    "PARTITION",
+    "PROMPT_STRUCTURE",
+    "RUBRIC",
+    "SAMPLING_PARAMETERS",
+    "SEED",
+    "TIMEOUT",
+    "TOKEN_LIMIT"
+  ],
+  "proposed_by": {
+    "actor_id": "ceohwj",
+    "namespace": "GITHUB_LOGIN",
+    "role": "EVALUATION_IMPLEMENTER"
+  },
+  "schema_id": "rag-eval.comparison-policy",
+  "schema_version": "1.0.0",
+  "scopes": [
+    {
+      "ci_method_id": "PERCENTILE_CLUSTER_BOOTSTRAP",
+      "ci_method_version": "1.0.0",
+      "ci_parameters": {
+        "iterations": 10000,
+        "level": "0.95",
+        "minimum_valid_replicate_ratio": "0.9",
+        "sidedness": "TWO_SIDED"
+      },
+      "cluster_dimension": "question_template",
+      "decision_basis": "DIAGNOSTIC_ONLY",
+      "estimator_id": "MICRO_RATIO",
+      "estimator_version": "1.0.0",
+      "independence_unit": "question_template",
+      "metric_id": "ANSWER_CORRECTNESS",
+      "metric_version": "1.0.0",
+      "minimum_case_count": 5,
+      "minimum_independent_group_count": 5,
+      "partition": "DEV",
+      "required": false,
+      "seed": 159,
+      "slice_id": "ALL",
+      "threshold": "0",
+      "unit_of_analysis": "CLAIM"
+    },
+    {
+      "ci_method_id": "PERCENTILE_CLUSTER_BOOTSTRAP",
+      "ci_method_version": "1.0.0",
+      "ci_parameters": {
+        "iterations": 10000,
+        "level": "0.95",
+        "sidedness": "TWO_SIDED"
+      },
+      "cluster_dimension": "question_template",
+      "decision_basis": "DIAGNOSTIC_ONLY",
+      "estimator_id": "MICRO_RATIO",
+      "estimator_version": "1.0.0",
+      "independence_unit": "question_template",
+      "metric_id": "COMPLETENESS",
+      "metric_version": "1.0.0",
+      "minimum_case_count": 5,
+      "minimum_independent_group_count": 5,
+      "partition": "DEV",
+      "required": false,
+      "seed": 159,
+      "slice_id": "ALL",
+      "threshold": "0",
+      "unit_of_analysis": "EXPECTED_SECTION"
+    },
+    {
+      "ci_method_id": "PERCENTILE_CLUSTER_BOOTSTRAP",
+      "ci_method_version": "1.0.0",
+      "ci_parameters": {
+        "iterations": 10000,
+        "level": "0.95",
+        "sidedness": "TWO_SIDED"
+      },
+      "cluster_dimension": "question_template",
+      "decision_basis": "DIAGNOSTIC_ONLY",
+      "estimator_id": "MICRO_RATIO",
+      "estimator_version": "1.0.0",
+      "independence_unit": "question_template",
+      "metric_id": "RELEVANCE",
+      "metric_version": "1.0.0",
+      "minimum_case_count": 5,
+      "minimum_independent_group_count": 5,
+      "partition": "DEV",
+      "required": false,
+      "seed": 159,
+      "slice_id": "ALL",
+      "threshold": "0",
+      "unit_of_analysis": "CASE"
+    },
+    {
+      "ci_method_id": "PERCENTILE_CLUSTER_BOOTSTRAP",
+      "ci_method_version": "1.0.0",
+      "ci_parameters": {
+        "iterations": 10000,
+        "level": "0.95",
+        "sidedness": "TWO_SIDED"
+      },
+      "cluster_dimension": "question_template",
+      "decision_basis": "DIAGNOSTIC_ONLY",
+      "estimator_id": "MICRO_RATIO",
+      "estimator_version": "1.0.0",
+      "independence_unit": "question_template",
+      "metric_id": "REQUIRED_CLAIM_RECALL",
+      "metric_version": "1.0.0",
+      "minimum_case_count": 5,
+      "minimum_independent_group_count": 5,
+      "partition": "DEV",
+      "required": false,
+      "seed": 159,
+      "slice_id": "ALL",
+      "threshold": "0",
+      "unit_of_analysis": "REQUIRED_CLAIM"
+    }
+  ]
+}
