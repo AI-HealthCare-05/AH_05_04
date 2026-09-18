@@ -301,6 +301,9 @@ def test_non_retrieval_artifact_draft_keeps_placeholder_metrics() -> None:
 
 
 def _answer_scope(metric_id: str, unit_of_analysis: str) -> ComparisonScope:
+    ci_parameters: dict[str, object] = {"iterations": 100, "level": "0.95", "sidedness": "TWO_SIDED"}
+    if metric_id == "ANSWER_CORRECTNESS":
+        ci_parameters["minimum_valid_replicate_ratio"] = "0.9"
     return ComparisonScope.model_validate(
         {
             "metric_id": metric_id,
@@ -319,7 +322,7 @@ def _answer_scope(metric_id: str, unit_of_analysis: str) -> ComparisonScope:
             "decision_basis": "DIAGNOSTIC_ONLY",
             "ci_method_id": "PERCENTILE_CLUSTER_BOOTSTRAP",
             "ci_method_version": "1.0.0",
-            "ci_parameters": {"iterations": 100, "level": "0.95", "sidedness": "TWO_SIDED"},
+            "ci_parameters": ci_parameters,
             "seed": 159,
         }
     )

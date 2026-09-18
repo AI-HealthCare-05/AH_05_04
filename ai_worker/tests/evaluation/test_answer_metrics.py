@@ -2,12 +2,17 @@ from collections.abc import Mapping
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
 from ai_worker.tasks.evaluation.answer_judgment import ValidatedAnswerJudgments, ValidatedCaseJudgment
-from ai_worker.tasks.evaluation.answer_metrics import build_answer_metrics
+from ai_worker.tasks.evaluation.answer_metrics import (
+    AnswerBootstrapDiagnostic,
+    AnswerMetricBuildResult,
+    build_answer_metrics,
+    build_answer_metrics_with_diagnostics,
+)
 from ai_worker.tasks.evaluation.loaders import EvaluationCaseContract, ValidatedDataset, load_dataset
 from ai_worker.tasks.evaluation.schemas.answer_quality_v1 import (
     AnswerClaimCorrectnessLabel,
@@ -36,6 +41,9 @@ RUN_ID = "15900000-0000-4000-8000-000000000001"
 
 
 def _scope(metric_id: str, unit_of_analysis: str) -> ComparisonScope:
+    ci_parameters: dict[str, object] = {"iterations": 200, "level": "0.95", "sidedness": "TWO_SIDED"}
+    if metric_id == "ANSWER_CORRECTNESS":
+        ci_parameters["minimum_valid_replicate_ratio"] = "0.9"
     return ComparisonScope.model_validate(
         {
             "metric_id": metric_id,
@@ -54,7 +62,7 @@ def _scope(metric_id: str, unit_of_analysis: str) -> ComparisonScope:
             "decision_basis": "DIAGNOSTIC_ONLY",
             "ci_method_id": "PERCENTILE_CLUSTER_BOOTSTRAP",
             "ci_method_version": "1.0.0",
-            "ci_parameters": {"iterations": 200, "level": "0.95", "sidedness": "TWO_SIDED"},
+            "ci_parameters": ci_parameters,
             "seed": 159,
         }
     )
@@ -211,8 +219,9 @@ def mutated_results(mutation: str) -> tuple[CaseResult, ...]:
     raise AssertionError(f"unknown mutation: {mutation}")
 
 
-def metric(metrics: tuple[MetricResult, ...], metric_id: str) -> MetricResult:
-    return next(item for item in metrics if item.metric_id == metric_id)
+def metric(metrics: tuple[MetricResult, ...] | MetricResults, metric_id: str) -> MetricResult:
+    items = metrics.metrics if isinstance(metrics, MetricResults) else metrics
+    return next(item for item in items if item.metric_id == metric_id)
 
 
 def _build_answer_metrics(
@@ -694,3 +703,240 @@ def test_human_metric_invalid_when_case_missing_from_judgments() -> None:
         "ANSWER_CORRECTNESS",
     )
     assert result.execution_status.value == "INVALID"
+
+
+def test_answer_correctness_handles_mixed_zero_claim_cases() -> None:
+    dataset = dataset_with_answer_scopes(_scope("ANSWER_CORRECTNESS", "CLAIM"))
+    first = _case_result(CASES[0], actual_claim_ids=("claim-a",), actual_sections=("section-a",))
+    second = _case_result(CASES[1], actual_claim_ids=(), actual_sections=("section-c", "section-d"))
+    results = (first, second)
+    judgments = _make_validated_judgments(
+        {
+            CASES[0].case_id: ValidatedCaseJudgment(
+                case_id=CASES[0].case_id,
+                input_sha256=CASES[0].input_sha256,
+                answer_sha256=first.answer_sha256 or "",
+                relevance=AnswerRelevanceLabel.RELEVANT,
+                claim_judgments=(AnswerClaimJudgment(claim_id="claim-a", label=AnswerClaimCorrectnessLabel.CORRECT),),
+            ),
+            CASES[1].case_id: ValidatedCaseJudgment(
+                case_id=CASES[1].case_id,
+                input_sha256=CASES[1].input_sha256,
+                answer_sha256=second.answer_sha256 or "",
+                relevance=AnswerRelevanceLabel.RELEVANT,
+                claim_judgments=(),
+            ),
+        }
+    )
+
+    build_result = build_answer_metrics_with_diagnostics(
+        dataset,
+        results,
+        human_judgments=judgments,
+    )
+    res = metric(build_result.metrics, "ANSWER_CORRECTNESS")
+
+    assert res.execution_status.value == "COMPLETED"
+    assert res.numerator == 1
+    assert res.denominator == 1
+    assert res.metric_value == "1"
+    assert res.ci_lower is not None
+    assert res.ci_upper is not None
+
+    assert len(build_result.bootstrap_diagnostics) == 1
+    diag = build_result.bootstrap_diagnostics[0]
+    assert diag.metric_id == "ANSWER_CORRECTNESS"
+    assert diag.total_replicates == 200
+    assert diag.valid_replicates > 0
+    assert diag.excluded_replicates > 0
+    assert diag.valid_replicates + diag.excluded_replicates == diag.total_replicates
+    assert diag.minimum_valid_replicate_ratio == "0.9"
+
+
+def test_answer_correctness_all_zero_claims_inconclusive() -> None:
+    dataset = dataset_with_answer_scopes(_scope("ANSWER_CORRECTNESS", "CLAIM"))
+    first = _case_result(CASES[0], actual_claim_ids=(), actual_sections=("section-a",))
+    second = _case_result(CASES[1], actual_claim_ids=(), actual_sections=("section-c", "section-d"))
+    results = (first, second)
+    judgments = _make_validated_judgments(
+        {
+            CASES[0].case_id: ValidatedCaseJudgment(
+                case_id=CASES[0].case_id,
+                input_sha256=CASES[0].input_sha256,
+                answer_sha256=first.answer_sha256 or "",
+                relevance=AnswerRelevanceLabel.RELEVANT,
+                claim_judgments=(),
+            ),
+            CASES[1].case_id: ValidatedCaseJudgment(
+                case_id=CASES[1].case_id,
+                input_sha256=CASES[1].input_sha256,
+                answer_sha256=second.answer_sha256 or "",
+                relevance=AnswerRelevanceLabel.RELEVANT,
+                claim_judgments=(),
+            ),
+        }
+    )
+
+    build_result = build_answer_metrics_with_diagnostics(
+        dataset,
+        results,
+        human_judgments=judgments,
+    )
+    res = metric(build_result.metrics, "ANSWER_CORRECTNESS")
+
+    assert res.execution_status.value == "COMPLETED"
+    assert res.decision_status is not None
+    assert res.decision_status.value == "INCONCLUSIVE"
+    assert res.reason_code == "ZERO_DENOMINATOR"
+    assert res.numerator == 0
+    assert res.denominator == 0
+    assert res.metric_value is None
+    assert res.ci_lower is None
+    assert res.ci_upper is None
+
+    assert len(build_result.bootstrap_diagnostics) == 1
+    diag = build_result.bootstrap_diagnostics[0]
+    assert diag.total_replicates == 200
+    assert diag.valid_replicates == 0
+    assert diag.excluded_replicates == 200
+    assert diag.valid_replicate_ratio == "0"
+
+
+def test_answer_correctness_valid_replicate_ratio_below_minimum() -> None:
+    cases = (
+        _answer_case(
+            case_id="answer-a",
+            input_sha256="1" * 64,
+            group_id="group-1",
+            required_claim_ids=("claim-a",),
+            expected_sections=(),
+        ),
+        _answer_case(
+            case_id="answer-b",
+            input_sha256="2" * 64,
+            group_id="group-2",
+            required_claim_ids=(),
+            expected_sections=(),
+        ),
+        _answer_case(
+            case_id="answer-c",
+            input_sha256="3" * 64,
+            group_id="group-3",
+            required_claim_ids=(),
+            expected_sections=(),
+        ),
+        _answer_case(
+            case_id="answer-d",
+            input_sha256="4" * 64,
+            group_id="group-4",
+            required_claim_ids=(),
+            expected_sections=(),
+        ),
+        _answer_case(
+            case_id="answer-e",
+            input_sha256="5" * 64,
+            group_id="group-5",
+            required_claim_ids=(),
+            expected_sections=(),
+        ),
+    )
+    dataset = replace(dataset_with_answer_scopes(_scope("ANSWER_CORRECTNESS", "CLAIM")), cases=cases)
+    results = tuple(
+        _case_result(
+            c,
+            actual_claim_ids=("claim-a",) if i == 0 else (),
+            actual_sections=(),
+        )
+        for i, c in enumerate(cases)
+    )
+
+    judgments_by_case = {
+        cases[0].case_id: ValidatedCaseJudgment(
+            case_id=cases[0].case_id,
+            input_sha256=cases[0].input_sha256,
+            answer_sha256=results[0].answer_sha256 or "",
+            relevance=AnswerRelevanceLabel.RELEVANT,
+            claim_judgments=(AnswerClaimJudgment(claim_id="claim-a", label=AnswerClaimCorrectnessLabel.CORRECT),),
+        ),
+    }
+    for c, r in zip(cases[1:], results[1:], strict=True):
+        judgments_by_case[c.case_id] = ValidatedCaseJudgment(
+            case_id=c.case_id,
+            input_sha256=c.input_sha256,
+            answer_sha256=r.answer_sha256 or "",
+            relevance=AnswerRelevanceLabel.RELEVANT,
+            claim_judgments=(),
+        )
+    judgments = _make_validated_judgments(judgments_by_case)
+
+    build_result = build_answer_metrics_with_diagnostics(
+        dataset,
+        results,
+        human_judgments=judgments,
+    )
+    res = metric(build_result.metrics, "ANSWER_CORRECTNESS")
+
+    assert res.execution_status.value == "COMPLETED"
+    assert res.decision_status is not None
+    assert res.decision_status.value == "INCONCLUSIVE"
+    assert res.reason_code == "MINIMUM_VALID_BOOTSTRAP_REPLICATE_RATIO_NOT_MET"
+    assert res.metric_value == "1"
+    assert res.ci_lower is not None
+    assert res.ci_upper is not None
+
+    diag = build_result.bootstrap_diagnostics[0]
+    assert diag.valid_replicates < 180
+    assert Decimal(diag.valid_replicate_ratio) < Decimal("0.9")
+
+
+@pytest.mark.parametrize(
+    "invalid_ratio",
+    ["0", "-0.1", "1.1", "0.90", "1.0", "abc", 0.9, "NaN", "Infinity"],
+)
+def test_answer_correctness_algorithm_signature_rejects_invalid_ratio(invalid_ratio: object) -> None:
+    scope = _scope("ANSWER_CORRECTNESS", "CLAIM")
+    params = dict(scope.ci_parameters or {})
+    params["minimum_valid_replicate_ratio"] = cast(Any, invalid_ratio)
+    invalid_scope = scope.model_copy(update={"ci_parameters": params})
+
+    base_dataset = dataset_with_answer_scopes()
+    policy = base_dataset.comparison_policy.model_copy(update={"scopes": (invalid_scope,)})
+    dataset = replace(base_dataset, comparison_policy=policy)
+    results = build_answer_metrics(dataset, completed_answer_results(), human_judgments=_make_validated_judgments())
+    res = metric(results, "ANSWER_CORRECTNESS")
+    assert res.execution_status.value == "NOT_IMPLEMENTED"
+
+
+def test_answer_correctness_algorithm_signature_rejects_missing_ratio() -> None:
+    scope = _scope("ANSWER_CORRECTNESS", "CLAIM")
+    params = dict(scope.ci_parameters or {})
+    params.pop("minimum_valid_replicate_ratio", None)
+    invalid_scope = scope.model_copy(update={"ci_parameters": params})
+
+    dataset = dataset_with_answer_scopes(invalid_scope)
+    results = build_answer_metrics(dataset, completed_answer_results(), human_judgments=_make_validated_judgments())
+    res = metric(results, "ANSWER_CORRECTNESS")
+    assert res.execution_status.value == "NOT_IMPLEMENTED"
+
+
+def test_relevance_algorithm_signature_rejects_extra_replicate_ratio() -> None:
+    scope = _scope("RELEVANCE", "CASE")
+    params = dict(scope.ci_parameters or {})
+    params["minimum_valid_replicate_ratio"] = "0.9"
+    invalid_scope = scope.model_copy(update={"ci_parameters": params})
+
+    dataset = dataset_with_answer_scopes(invalid_scope)
+    results = build_answer_metrics(dataset, completed_answer_results(), human_judgments=_make_validated_judgments())
+    res = metric(results, "RELEVANCE")
+    assert res.execution_status.value == "NOT_IMPLEMENTED"
+
+
+def test_build_answer_metrics_compatibility_wrapper() -> None:
+    dataset = dataset_with_answer_scopes(_scope("ANSWER_CORRECTNESS", "CLAIM"))
+    judgments = _make_validated_judgments()
+    detailed = build_answer_metrics_with_diagnostics(dataset, completed_answer_results(), human_judgments=judgments)
+    wrapped = build_answer_metrics(dataset, completed_answer_results(), human_judgments=judgments)
+
+    assert isinstance(detailed, AnswerMetricBuildResult)
+    assert wrapped == detailed.metrics
+    assert all(isinstance(diag, AnswerBootstrapDiagnostic) for diag in detailed.bootstrap_diagnostics)

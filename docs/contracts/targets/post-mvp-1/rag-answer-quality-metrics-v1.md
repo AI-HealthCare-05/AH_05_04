@@ -146,9 +146,19 @@ group이다. 승인된 leakage-axis group을 복원추출하고, 선택된 group
 반복 포함한다. 정렬은 기존 Evaluation canonical ordering을 사용하고 동일 seed·입력·iteration에서 같은
 percentile bounds를 생성해야 한다.
 
-분모가 0인 원표본은 CI를 만들지 않는다. bootstrap replicate에서 분모 0이 생길 수 있는 Policy는 지원하지
-않고 algorithm signature mismatch로 `NOT_IMPLEMENTED/null` 처리한다. 구현이 cluster 축이나 seed를 임의로
-선택하지 않는다.
+분모가 0인 원표본은 CI를 만들지 않는다. 구현이 cluster 축이나 seed를 임의로 선택하지 않는다.
+
+`ANSWER_CORRECTNESS`의 zero-claim / zero-denominator bootstrap 의미는 다음과 같다:
+
+- zero-claim Case는 `RatioContribution(0, 0)`으로 유지하며, `0/1` 등 Case-level penalty로 변환하지 않는다. 필수 claim 누락은 `REQUIRED_CLAIM_RECALL`이 단독 소유한다.
+- zero-denominator cluster도 CI sampling frame에 그대로 포함한다.
+- bootstrap replicate의 합산 denominator가 0인 replicate만 제외(skip)하고, 나머지 valid replicate들로 percentile CI를 계산한다.
+- scope 전체 point denominator가 0이면 `COMPLETED / INCONCLUSIVE / ZERO_DENOMINATOR`를 반환하며, `metric_value`와 CI는 `null`이다.
+- valid replicate 비율이 `ComparisonPolicy.ci_parameters`의 `minimum_valid_replicate_ratio` 미만이면 `COMPLETED / INCONCLUSIVE`로 판정하고 reason code는 `MINIMUM_VALID_BOOTSTRAP_REPLICATE_RATIO_NOT_MET`를 사용한다. 단, 계산된 `metric_value`와 valid replicate가 존재할 때의 CI bounds는 유지한다.
+- 이 CI sampling frame divergence(`ANSWER_CORRECTNESS`는 frame 유지·replicate 제외 vs `GROUNDING`/`SAFETY`는 positive-denominator cluster 사전 제외)는 기존 지표 의미 보존을 위한 의도적 결정이다.
+- total/valid/excluded replicate 수와 valid ratio는 machine `MetricResult`나 Schema Set 1.5에 추가하지 않고, non-schema `report.md` diagnostic projection으로만 제공된다. diagnostic projection capability는 구현되나 실제 Run report emission은 authoritative human-judgment runtime wiring 완료 시점까지 유예된다. 이 진단값은 Release Gate나 자동화 판정의 입력이 아니다.
+
+`RELEVANCE`, `REQUIRED_CLAIM_RECALL`, `COMPLETENESS` 등 다른 Answer 지표는 기존 3개 CI parameter(`iterations`, `level`, `sidedness`) 계약을 유지하며, bootstrap replicate에서 분모 0이 발생하는 Policy는 지원하지 않고 `NOT_IMPLEMENTED`로 처리한다.
 
 ## 8. 세 Variant pair comparison
 
