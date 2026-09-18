@@ -65,8 +65,8 @@ _READ_ONLY_PRIVILEGES = {
     "DELETE": False,
     "TRUNCATE": False,
 }
-# #178/#689: retrieval_run lifecycle needs UPDATE; #748 withdrawal cleanup needs DELETE.
-_RETRIEVAL_RUN_PRIVILEGES = {**_APPEND_ONLY_PRIVILEGES, "UPDATE": True, "DELETE": True}
+# #178/#689: retrieval_run lifecycle needs UPDATE; #748 cleanup DELETE is isolated to a dedicated role.
+_RETRIEVAL_RUN_PRIVILEGES = {**_APPEND_ONLY_PRIVILEGES, "UPDATE": True}
 
 
 async def _assert_runtime_table_privileges(admin, runtime: str, expected: dict[str, dict[str, bool]]) -> None:
@@ -83,13 +83,25 @@ async def _assert_runtime_table_privileges(admin, runtime: str, expected: dict[s
             assert observed == privileges, table
 
 
-async def _assert_account_withdrawal_cleanup_delete_privileges(connection, runtime: str) -> None:
+async def _assert_account_withdrawal_cleanup_delete_privileges(connection, role: str) -> None:
     for table in sorted(RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES):
         assert await connection.scalar(
             text("SELECT has_table_privilege(:role, :table, 'SELECT')"),
-            {"role": runtime, "table": table},
+            {"role": role, "table": table},
         ), table
         assert await connection.scalar(
+            text("SELECT has_table_privilege(:role, :table, 'DELETE')"),
+            {"role": role, "table": table},
+        ), table
+        assert not await connection.scalar(
+            text("SELECT has_table_privilege(:role, :table, 'TRUNCATE')"),
+            {"role": role, "table": table},
+        ), table
+
+
+async def _assert_runtime_cannot_delete_withdrawal_cleanup_tables(connection, runtime: str) -> None:
+    for table in sorted(RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES):
+        assert not await connection.scalar(
             text("SELECT has_table_privilege(:role, :table, 'DELETE')"),
             {"role": runtime, "table": table},
         ), table
@@ -107,10 +119,6 @@ async def _assert_permission_denied(engine, sql: str) -> None:
 
 
 async def _assert_runtime_delete_policy(reader, table: str) -> None:
-    if table in RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES:
-        async with reader.begin() as connection:
-            await connection.execute(text(f"DELETE FROM {table} WHERE false"))
-        return
     await _assert_permission_denied(reader, f"DELETE FROM {table} WHERE false")
 
 
@@ -120,7 +128,9 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
         pytest.skip("Requires an explicitly selected disposable PostgreSQL container")
     suffix = uuid4().hex[:12]
     database = f"provision398_{suffix}"
-    owner, runtime, writer = (f"provision398_{part}_{suffix}" for part in ("owner", "runtime", "writer"))
+    owner, runtime, writer, cleanup = (
+        f"provision398_{part}_{suffix}" for part in ("owner", "runtime", "writer", "cleanup")
+    )
     password = "synthetic-provision398-only"
     url = URL.create(
         "postgresql+asyncpg",
@@ -134,6 +144,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
     admin = create_async_engine(url.set(database=database))
     reader = create_async_engine(url.set(database=database, username=runtime, password=password))
     producer = create_async_engine(url.set(database=database, username=writer, password=password))
+    cleanup_reader = create_async_engine(url.set(database=database, username=cleanup, password=password))
     environment = {
         "DB_HOST": config.DB_HOST,
         "DB_PORT": str(config.DB_EXPOSE_PORT),
@@ -146,6 +157,8 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
         "DB_APP_PASSWORD": password,
         "SOURCE_WRITER_USER": writer,
         "SOURCE_WRITER_PASSWORD": password,
+        "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE": cleanup,
+        "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD": password,
     }
 
     def bootstrap(*, overrides=None, expected_success=True) -> None:
@@ -158,6 +171,8 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             "DB_APP_PASSWORD",
             "SOURCE_WRITER_USER",
             "SOURCE_WRITER_PASSWORD",
+            "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE",
+            "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD",
         ):
             args.extend(["-e", name])
         args.extend([container, "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", config.DB_USER, "-d", database])
@@ -365,7 +380,8 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 column: column in RUNTIME_ACCOUNT_DELETION_REQUEST_UPDATE_COLUMNS
                 for column in account_deletion_request_columns
             }
-            await _assert_account_withdrawal_cleanup_delete_privileges(connection, runtime)
+            await _assert_runtime_cannot_delete_withdrawal_cleanup_tables(connection, runtime)
+            await _assert_account_withdrawal_cleanup_delete_privileges(connection, cleanup)
         # #731: authority 표가 빠진 schema에서는 provisioning이 fail closed여야 한다.
         async with admin.begin() as connection:
             await connection.execute(text("DROP TABLE rag_request_member_decision"))
@@ -403,10 +419,11 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
     finally:
         await reader.dispose()
         await producer.dispose()
+        await cleanup_reader.dispose()
         await admin.dispose()
         async with cluster.connect() as connection:
             await connection.execute(text(f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)'))
-            for role in (writer, runtime, owner):
+            for role in (cleanup, writer, runtime, owner):
                 await connection.execute(text(f'DROP ROLE IF EXISTS "{role}"'))
         await cluster.dispose()
 

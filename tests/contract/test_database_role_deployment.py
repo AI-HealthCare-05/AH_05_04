@@ -13,10 +13,10 @@ def test_optional_database_roles_must_be_distinct() -> None:
 
     assert RUNTIME_LIFESTYLE_TABLES == {"lifestyle_times"}
 
-    validate_distinct_role_names("admin", "owner", "runtime", "writer", None, "index-builder")
+    validate_distinct_role_names("admin", "owner", "runtime", "writer", None, "index-builder", "cleanup")
 
     with pytest.raises(ValueError, match="distinct"):
-        validate_distinct_role_names("admin", "owner", "runtime", "writer", None, "writer")
+        validate_distinct_role_names("admin", "owner", "runtime", "writer", None, "writer", "cleanup")
 
 
 def test_credentials_and_admin_process_are_separated() -> None:
@@ -36,6 +36,8 @@ def test_credentials_and_admin_process_are_separated() -> None:
     assert provisioner["environment"]["DB_ADMIN_PASSWORD"] == "${DB_ADMIN_PASSWORD}"
     assert provisioner["environment"]["CATALOG_WRITER_USER"] == "${CATALOG_WRITER_USER:-}"
     assert provisioner["environment"]["KNOWLEDGE_INDEX_BUILDER_USER"] == "${KNOWLEDGE_INDEX_BUILDER_USER:-}"
+    assert provisioner["environment"]["ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE"] == "${ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE:-}"
+    assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD" not in provisioner["environment"]
     assert "KNOWLEDGE_INDEX_BUILDER_PASSWORD" not in provisioner["environment"]
     assert "CATALOG_WRITER_PASSWORD" not in provisioner["environment"]
     assert not any("SOURCE_WRITER_PASSWORD" in str(value) for value in provisioner["environment"].values())
@@ -98,6 +100,8 @@ def test_account_deletion_request_runtime_role_updates_only_lifecycle_columns() 
     assert "GRANT SELECT, INSERT, UPDATE ON TABLE public.account_deletion_request" not in source
     assert re.search(r"GRANT[^\n]*DELETE[^\n]*account_deletion_request", source) is None
     assert "GRANT TRUNCATE ON TABLE public.account_deletion_request" not in source
+    assert "_grant_account_withdrawal_cleanup_permissions(connection, cleanup_sql)" in source
+    assert "_grant_account_withdrawal_cleanup_permissions(connection, runtime_sql)" not in source
 
 
 def test_retrieval_run_tables_runtime_role_privileges_are_least_privilege() -> None:

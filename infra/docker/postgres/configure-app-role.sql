@@ -7,6 +7,8 @@
 \getenv writer_password SOURCE_WRITER_PASSWORD
 \getenv index_builder_user KNOWLEDGE_INDEX_BUILDER_USER
 \getenv index_builder_password KNOWLEDGE_INDEX_BUILDER_PASSWORD
+\getenv account_withdrawal_cleanup_user ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE
+\getenv account_withdrawal_cleanup_password ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD
 \if :{?index_builder_user}
 \else
   \set index_builder_user ''
@@ -14,6 +16,14 @@
 \if :{?index_builder_password}
 \else
   \set index_builder_password ''
+\endif
+\if :{?account_withdrawal_cleanup_user}
+\else
+  \set account_withdrawal_cleanup_user ''
+\endif
+\if :{?account_withdrawal_cleanup_password}
+\else
+  \set account_withdrawal_cleanup_password ''
 \endif
 
 -- Alembic은 제한된 Migration 역할로 실행되므로 trusted 여부와 무관하게 필요한
@@ -34,15 +44,18 @@ WHERE extname = 'vector'
 SELECT
   count(DISTINCT name) FILTER (WHERE length(name)>0)
     = 4 + CASE WHEN length(:'index_builder_user')>0 THEN 1 ELSE 0 END
-  AND bool_and(length(name)>0) FILTER (WHERE name <> :'index_builder_user')
+        + CASE WHEN length(:'account_withdrawal_cleanup_user')>0 THEN 1 ELSE 0 END
+  AND bool_and(length(name)>0)
+    FILTER (WHERE name NOT IN (:'index_builder_user', :'account_withdrawal_cleanup_user'))
   AND (length(:'index_builder_user')=0) = (length(:'index_builder_password')=0)
+  AND (length(:'account_withdrawal_cleanup_user')=0) = (length(:'account_withdrawal_cleanup_password')=0)
   AS roles_valid
 FROM (VALUES (current_user), (:'migration_user'), (:'app_user'), (:'writer_user'),
-             (:'index_builder_user')) AS roles(name)
+             (:'index_builder_user'), (:'account_withdrawal_cleanup_user')) AS roles(name)
 \gset
 \if :roles_valid
 \else
-  \echo 'Admin, Migration, Runtime, Writer and optional Index Builder roles must be distinct'
+  \echo 'Admin, Migration, Runtime, Writer and optional Index Builder/Cleanup roles must be distinct'
   -- SQL 오류로 ON_ERROR_STOP을 발동합니다 (psql 17의 \quit는 종료 코드를 받지 않음).
   SELECT 1 / 0;
 \endif
@@ -53,28 +66,33 @@ BEGIN;
 SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', name, password)
 FROM (VALUES (:'migration_user', :'migration_password'),
              (:'app_user', :'app_password'), (:'writer_user', :'writer_password'),
-             (:'index_builder_user', :'index_builder_password')) AS roles(name, password)
+             (:'index_builder_user', :'index_builder_password'),
+             (:'account_withdrawal_cleanup_user', :'account_withdrawal_cleanup_password')) AS roles(name, password)
 WHERE length(name)>0 AND NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=name)
 \gexec
 SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', name, password)
 FROM (VALUES (:'migration_user', :'migration_password'),
              (:'app_user', :'app_password'), (:'writer_user', :'writer_password'),
-             (:'index_builder_user', :'index_builder_password')) AS roles(name, password)
+             (:'index_builder_user', :'index_builder_password'),
+             (:'account_withdrawal_cleanup_user', :'account_withdrawal_cleanup_password')) AS roles(name, password)
 WHERE length(name)>0
 \gexec
 SELECT format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), name)
-FROM (VALUES (:'migration_user'), (:'app_user'), (:'writer_user'), (:'index_builder_user')) AS roles(name)
+FROM (VALUES (:'migration_user'), (:'app_user'), (:'writer_user'), (:'index_builder_user'),
+             (:'account_withdrawal_cleanup_user')) AS roles(name)
 WHERE length(name)>0
 \gexec
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 SELECT format('GRANT USAGE, CREATE ON SCHEMA public TO %I', :'migration_user')
 \gexec
 SELECT format('REVOKE CREATE ON SCHEMA public FROM %I', name)
-FROM (VALUES (:'app_user'), (:'writer_user'), (:'index_builder_user')) AS roles(name)
+FROM (VALUES (:'app_user'), (:'writer_user'), (:'index_builder_user'),
+             (:'account_withdrawal_cleanup_user')) AS roles(name)
 WHERE length(name)>0
 \gexec
 SELECT format('GRANT USAGE ON SCHEMA public TO %I', name)
-FROM (VALUES (:'app_user'), (:'writer_user'), (:'index_builder_user')) AS roles(name)
+FROM (VALUES (:'app_user'), (:'writer_user'), (:'index_builder_user'),
+             (:'account_withdrawal_cleanup_user')) AS roles(name)
 WHERE length(name)>0
 \gexec
 
@@ -86,9 +104,10 @@ FROM (VALUES (''), ('IN SCHEMA public')) AS scopes(scope)
 CROSS JOIN (VALUES ('TABLES'), ('SEQUENCES')) AS objects(object_type)
 \gexec
 SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I %s REVOKE ALL ON %s FROM %I',
-              :'migration_user', scope, object_type, :'index_builder_user')
+              :'migration_user', scope, object_type, name)
 FROM (VALUES (''), ('IN SCHEMA public')) AS scopes(scope)
 CROSS JOIN (VALUES ('TABLES'), ('SEQUENCES')) AS objects(object_type)
-WHERE length(:'index_builder_user')>0
+CROSS JOIN (VALUES (:'index_builder_user'), (:'account_withdrawal_cleanup_user')) AS roles(name)
+WHERE length(name)>0
 \gexec
 COMMIT;

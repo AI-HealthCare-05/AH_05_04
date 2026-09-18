@@ -740,13 +740,12 @@ async def test_404_authentication_works_with_only_runtime_token_permissions(data
             auth = service(session)
             user = await auth.authenticate(LoginRequest(email=email, password="UpdatedPass123!"))
             await auth.login(user, password="UpdatedPass123!")
-        async with reader.begin() as connection:
-            await connection.execute(text("DELETE FROM refresh_session WHERE false"))
         async with sessions.begin() as session:
             with pytest.raises(ApiError) as reuse:
                 await service(session).reset_password(token=token, new_password="AnotherPass123!")
             assert reuse.value.status_code == 422
         for limited, sql in (
+            (reader, "DELETE FROM refresh_session WHERE false"),
             (reader, "UPDATE refresh_session SET user_id=user_id"),
             (reader, "UPDATE password_reset_token SET token_hash=token_hash"),
             (reader, "UPDATE password_reset_token SET expires_at=now()"),

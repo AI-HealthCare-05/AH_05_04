@@ -103,6 +103,15 @@ def validate_distinct_role_names(*names: str | None) -> None:
         raise ValueError("Database roles must be distinct")
 
 
+def _configured_role_names(*names: str | None) -> list[str]:
+    return [name for name in names if name]
+
+
+def _revoke_recipients(runtime_sql: str, writer_sql: str, cleanup_sql: str | None) -> str:
+    recipients = ["PUBLIC", runtime_sql, writer_sql, *([cleanup_sql] if cleanup_sql else [])]
+    return ", ".join(recipients)
+
+
 async def provision_roles(
     connection: AsyncConnection,
     *,
@@ -112,13 +121,23 @@ async def provision_roles(
     management: str | None = None,
     catalog_writer: str | None = None,
     knowledge_index_builder: str | None = None,
+    account_withdrawal_cleanup: str | None = None,
 ) -> None:
     """Caller must use a single admin transaction; failure must roll it back."""
-    validate_distinct_role_names(owner, runtime, writer, management, catalog_writer, knowledge_index_builder)
+    validate_distinct_role_names(
+        owner,
+        runtime,
+        writer,
+        management,
+        catalog_writer,
+        knowledge_index_builder,
+        account_withdrawal_cleanup,
+    )
     owner_sql, runtime_sql, writer_sql = (quoted_identifier(value) for value in (owner, runtime, writer))
+    cleanup_sql = quoted_identifier(account_withdrawal_cleanup) if account_withdrawal_cleanup else None
     # Validates real role boundaries and rejects the legacy transition function before granting anything.
     await apply_source_role_policy(connection, schema="public", owner=owner, runtime=runtime, writer=writer)
-    recipients = f"PUBLIC, {runtime_sql}, {writer_sql}"
+    recipients = _revoke_recipients(runtime_sql, writer_sql, cleanup_sql)
     await connection.execute(text(f"REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {recipients}"))
     await connection.execute(text(f"REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM {recipients}"))
     statements = await connection.scalars(
@@ -130,9 +149,9 @@ async def provision_roles(
             "JOIN pg_namespace n ON n.oid=c.relnamespace "
             "CROSS JOIN LATERAL aclexplode(a.attacl) acl LEFT JOIN pg_roles r ON r.oid=acl.grantee "
             "WHERE n.nspname='public' AND a.attnum>0 AND NOT a.attisdropped "
-            "AND (acl.grantee=0 OR r.rolname IN (:runtime, :writer))"
+            "AND (acl.grantee=0 OR r.rolname = ANY(:roles))"
         ),
-        {"runtime": runtime, "writer": writer},
+        {"roles": _configured_role_names(runtime, writer, account_withdrawal_cleanup)},
     )
     for statement in statements:
         await connection.execute(text(statement))
@@ -204,7 +223,7 @@ async def provision_roles(
         update_columns = ", ".join(quoted_identifier(column) for column in columns)
         await connection.execute(text(f"GRANT SELECT, INSERT ON TABLE {target} TO {runtime_sql}"))
         await connection.execute(text(f"GRANT UPDATE ({update_columns}) ON TABLE {target} TO {runtime_sql}"))
-    await _grant_account_withdrawal_cleanup_permissions(connection, runtime_sql)
+    await _grant_account_withdrawal_cleanup_permissions(connection, cleanup_sql)
     # Only sequences owned by explicitly supported Runtime columns are available.
     sequences = await connection.scalars(
         text(
@@ -215,11 +234,7 @@ async def provision_roles(
             "WHERE n.nspname='public' AND s.relkind='S' AND d.deptype IN ('a','i') "
             "AND t.relname=ANY(:tables) AND t.relnamespace=n.oid"
         ),
-        {
-            "tables": sorted(
-                RUNTIME_MUTABLE_TABLES | RUNTIME_APPEND_ONLY_TABLES | RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES
-            )
-        },
+        {"tables": sorted(RUNTIME_MUTABLE_TABLES | RUNTIME_APPEND_ONLY_TABLES)},
     )
     for sequence in sequences:
         await connection.execute(text(f"GRANT USAGE, SELECT ON SEQUENCE {sequence} TO {runtime_sql}"))
@@ -268,10 +283,15 @@ async def _apply_optional_role_policies(
         )
 
 
-async def _grant_account_withdrawal_cleanup_permissions(connection: AsyncConnection, runtime_sql: str) -> None:
+async def _grant_account_withdrawal_cleanup_permissions(
+    connection: AsyncConnection,
+    cleanup_sql: str | None,
+) -> None:
+    if cleanup_sql is None:
+        return
     for table in sorted(RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES):
         await connection.execute(
-            text(f"GRANT SELECT, DELETE ON TABLE public.{quoted_identifier(table)} TO {runtime_sql}")
+            text(f"GRANT SELECT, DELETE ON TABLE public.{quoted_identifier(table)} TO {cleanup_sql}")
         )
 
 
@@ -296,6 +316,7 @@ async def run_provisioning(environment: Mapping[str, str]) -> None:
         environment.get("SOURCE_MANAGEMENT_USER") or None,
         environment.get("CATALOG_WRITER_USER") or None,
         environment.get("KNOWLEDGE_INDEX_BUILDER_USER") or None,
+        environment.get("ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE") or None,
     )
     engine = create_async_engine(
         URL.create(
@@ -318,6 +339,7 @@ async def run_provisioning(environment: Mapping[str, str]) -> None:
                 management=environment.get("SOURCE_MANAGEMENT_USER") or None,
                 catalog_writer=environment.get("CATALOG_WRITER_USER") or None,
                 knowledge_index_builder=environment.get("KNOWLEDGE_INDEX_BUILDER_USER") or None,
+                account_withdrawal_cleanup=environment.get("ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE") or None,
             )
     finally:
         await engine.dispose()
