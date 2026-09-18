@@ -26,8 +26,11 @@ from app.dtos.auth import LoginRequest, SignUpConsentRequest, SignUpRequest
 from app.models.account_deletion_request import AccountDeletionRequest
 from app.models.email_verification import EmailVerificationPurpose
 from app.models.user_consents import ConsentPurpose, ConsentStatus
-from app.models.users import AccountStatus, User
-from app.repositories.account_deletion_request_repository import AccountDeletionRequestRepository
+from app.models.users import User
+from app.repositories.account_deletion_request_repository import (
+    AccountDeletionRequestRepository,
+    AccountWithdrawalCredentialsChangedError,
+)
 from app.repositories.email_verification_repository import EmailVerificationRepository
 from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.refresh_session_repository import RefreshSessionRepository
@@ -313,29 +316,18 @@ class AuthService:
         if self.account_deletion_request_repo is None:
             raise RuntimeError("AccountDeletionRequestRepository is required to request account withdrawal.")
 
-        await self.authenticate(LoginRequest(email=user.email, password=password))
-        locked_user = await self.user_repo.get_user_for_update(user.id)
-        if locked_user is None:
-            raise _invalid_credentials_error()
-        if locked_user.account_status != AccountStatus.ACTIVE or not locked_user.is_active:
-            return await self.account_deletion_request_repo.get_latest_for_user_for_update(user_id=locked_user.id)
-        if not verify_password(password, locked_user.hashed_password):
-            raise _invalid_credentials_error()
-
+        authenticated_user = await self.authenticate(LoginRequest(email=user.email, password=password))
         requested_at = datetime.now(config.TIMEZONE)
-        changed = await self.user_repo.mark_withdrawal_requested(locked_user.id)
-        if changed:
-            deletion_request = await self.account_deletion_request_repo.create_pending(
-                user_id=locked_user.id,
+        try:
+            return await self.account_deletion_request_repo.request_demo_withdrawal(
+                user_id=authenticated_user.id,
+                expected_password_hash=authenticated_user.hashed_password,
                 requested_at=requested_at,
+                anonymized_email=_withdrawn_email(authenticated_user.id),
+                disabled_password_hash=_withdrawn_password_hash(authenticated_user.id),
             )
-            return await self.account_deletion_request_repo.complete_demo_withdrawal(
-                request_id=deletion_request.id,
-                completed_at=requested_at,
-                anonymized_email=_withdrawn_email(locked_user.id),
-                disabled_password_hash=_withdrawn_password_hash(locked_user.id),
-            )
-        return None
+        except AccountWithdrawalCredentialsChangedError as exc:
+            raise _invalid_credentials_error() from exc
 
     async def check_email_exists(
         self,

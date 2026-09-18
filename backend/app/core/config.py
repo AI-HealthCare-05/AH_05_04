@@ -95,6 +95,8 @@ class Config(BaseSettings):
     DB_USER: str
     DB_PASSWORD: str
     DB_NAME: str
+    ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE: str = ""
+    ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD: str = ""
     DB_CONNECT_TIMEOUT: int = 5
     DB_CONNECTION_POOL_MAXSIZE: int = 10
     SQLALCHEMY_ECHO: bool = False
@@ -455,6 +457,15 @@ class Config(BaseSettings):
     @property
     def database_url(self) -> str:
         return self._database_url_for(username=self.DB_USER, password=self.DB_PASSWORD)
+
+    @property
+    def account_withdrawal_cleanup_database_url(self) -> str:
+        if not self.ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE or not self.ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD:
+            raise ValueError("Account withdrawal cleanup DB credentials are not configured")
+        return self._database_url_for(
+            username=self.ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE,
+            password=self.ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD,
+        )
 
     @model_validator(mode="after")
     def validate_ocr_timeout_budget(self) -> "Config":

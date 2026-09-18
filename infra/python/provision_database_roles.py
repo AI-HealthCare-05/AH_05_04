@@ -48,7 +48,7 @@ RUNTIME_CHECKIN_LOCK_TABLES = frozenset({"safety_assessment", "barrier_response"
 RUNTIME_LIFESTYLE_TABLES = frozenset({"lifestyle_times"})
 
 # #178/#689: retrieval_run tracks execution lifecycle (RUNNING -> COMPLETED/FAILED),
-# requiring SELECT, INSERT, UPDATE. #748 withdrawal finalization adds DELETE below.
+# requiring SELECT, INSERT, UPDATE. #748 withdrawal cleanup grants DELETE separately.
 RUNTIME_RETRIEVAL_RUN_TABLES = frozenset({"retrieval_run"})
 
 # #780: Candidate Index read authority for runtime search/hydration.
@@ -56,10 +56,52 @@ RUNTIME_RETRIEVAL_RUN_TABLES = frozenset({"retrieval_run"})
 # INSERT/DELETE/TRUNCATE and business column UPDATE are strictly prohibited.
 CANDIDATE_INDEX_RUNTIME_READ_TABLES = frozenset({"rag_candidate_index_version", "rag_candidate_index_member"})
 
-# #748/#206: demo withdrawal finalization runs in the Runtime transaction.
-# These lifecycle/history tables normally prohibit Runtime DELETE, but account
-# withdrawal must remove rows atomically before the user is anonymized.
-RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES = frozenset(
+# #748/#206: demo withdrawal deletes user-owned runtime data from otherwise
+# restricted lifecycle/history tables. Grant only SELECT for scoped predicates
+# and DELETE for cleanup; keep INSERT/UPDATE policy in each domain section.
+ACCOUNT_WITHDRAWAL_CLEANUP_DELETE_TABLES = frozenset(
+    {
+        "action_plan_followup",
+        "action_plan_followup_audit",
+        "ai_job",
+        "ai_job_attempt",
+        "barrier_response",
+        "chat_citation",
+        "chat_message",
+        "chat_message_feedback",
+        "chat_session",
+        "dlq_outbox_event",
+        "extracted_field",
+        "guide",
+        "guide_citation",
+        "guide_feedback",
+        "idempotency_record",
+        "medical_document",
+        "medication",
+        "medication_candidate_search",
+        "medication_candidate_search_result",
+        "medication_checkin",
+        "medication_identification",
+        "medication_occurrence",
+        "medication_schedule",
+        "medication_schedule_time",
+        "message_quarantine",
+        "notification_record",
+        "ocr_job",
+        "outbox_event",
+        "password_reset_token",
+        "prescription",
+        "push_delivery",
+        "push_subscription",
+        "refresh_session",
+        "retrieval_run",
+        "safety_assessment",
+        "support_action_plan",
+        "user_consent",
+    }
+)
+
+ACCOUNT_WITHDRAWAL_RUNTIME_PROTECTED_DELETE_TABLES = frozenset(
     {
         "action_plan_followup",
         "action_plan_followup_audit",
@@ -74,6 +116,46 @@ RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES = frozenset(
         "user_consent",
     }
 )
+
+ACCOUNT_WITHDRAWAL_CLEANUP_READ_TABLES = ACCOUNT_WITHDRAWAL_CLEANUP_DELETE_TABLES | frozenset(
+    {
+        "account_deletion_request",
+        "prescription_version",
+        "prescription_version_medication",
+        "profile",
+        "user",
+    }
+)
+
+ACCOUNT_WITHDRAWAL_CLEANUP_INSERT_TABLES = frozenset({"account_deletion_request"})
+
+ACCOUNT_WITHDRAWAL_CLEANUP_UPDATE_COLUMNS = {
+    "account_deletion_request": (
+        "status",
+        "started_at",
+        "completed_at",
+        "failed_at",
+        "retry_count",
+        "last_error_code",
+        "updated_at",
+    ),
+    "ai_job": ("expected_event_id", "last_consumed_event_id"),
+    "profile": ("display_name", "updated_at"),
+    "user": (
+        "email",
+        "hashed_password",
+        "name",
+        "phone_number",
+        "gender",
+        "birthday",
+        "is_active",
+        "account_status",
+        "withdrawal_requested_at",
+        "withdrawn_at",
+        "token_version",
+        "updated_at",
+    ),
+}
 
 
 # #404: token identity and history are immutable after issuance. Runtime only rotates/consumes.
@@ -107,8 +189,9 @@ def _configured_role_names(*names: str | None) -> list[str]:
     return [name for name in names if name]
 
 
-def _revoke_recipients(runtime_sql: str, writer_sql: str) -> str:
-    return ", ".join(("PUBLIC", runtime_sql, writer_sql))
+def _revoke_recipients(runtime_sql: str, writer_sql: str, cleanup_sql: str | None) -> str:
+    recipients = ["PUBLIC", runtime_sql, writer_sql, *([cleanup_sql] if cleanup_sql else [])]
+    return ", ".join(recipients)
 
 
 async def provision_roles(
@@ -120,6 +203,7 @@ async def provision_roles(
     management: str | None = None,
     catalog_writer: str | None = None,
     knowledge_index_builder: str | None = None,
+    account_withdrawal_cleanup: str | None = None,
 ) -> None:
     """Caller must use a single admin transaction; failure must roll it back."""
     validate_distinct_role_names(
@@ -129,11 +213,13 @@ async def provision_roles(
         management,
         catalog_writer,
         knowledge_index_builder,
+        account_withdrawal_cleanup,
     )
     owner_sql, runtime_sql, writer_sql = (quoted_identifier(value) for value in (owner, runtime, writer))
+    cleanup_sql = quoted_identifier(account_withdrawal_cleanup) if account_withdrawal_cleanup else None
     # Validates real role boundaries and rejects the legacy transition function before granting anything.
     await apply_source_role_policy(connection, schema="public", owner=owner, runtime=runtime, writer=writer)
-    recipients = _revoke_recipients(runtime_sql, writer_sql)
+    recipients = _revoke_recipients(runtime_sql, writer_sql, cleanup_sql)
     await connection.execute(text(f"REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {recipients}"))
     await connection.execute(text(f"REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM {recipients}"))
     statements = await connection.scalars(
@@ -147,7 +233,7 @@ async def provision_roles(
             "WHERE n.nspname='public' AND a.attnum>0 AND NOT a.attisdropped "
             "AND (acl.grantee=0 OR r.rolname = ANY(:roles))"
         ),
-        {"roles": _configured_role_names(runtime, writer)},
+        {"roles": _configured_role_names(runtime, writer, account_withdrawal_cleanup)},
     )
     for statement in statements:
         await connection.execute(text(statement))
@@ -167,7 +253,7 @@ async def provision_roles(
         | set(SOURCE_TABLES)
         | set(RUNTIME_AUTH_UPDATE_COLUMNS)
         | {"account_deletion_request"}
-        | RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES
+        | ACCOUNT_WITHDRAWAL_CLEANUP_DELETE_TABLES
         | RUNTIME_LIFESTYLE_TABLES
         | RUNTIME_CHECKIN_LOCK_TABLES
         | {"support_action_plan"}
@@ -209,7 +295,7 @@ async def provision_roles(
     # never deletes it, so Runtime needs SELECT/INSERT/UPDATE and nothing more.
     await connection.execute(text(f"GRANT SELECT, INSERT, UPDATE ON TABLE public.user_consent TO {runtime_sql}"))
     # #178/#689: retrieval_run tracks execution lifecycle (RUNNING -> COMPLETED/FAILED),
-    # requiring SELECT, INSERT, UPDATE. #748 withdrawal finalization adds DELETE below.
+    # requiring SELECT, INSERT, UPDATE. #748 withdrawal cleanup grants DELETE separately.
     await connection.execute(text(f"GRANT SELECT, INSERT, UPDATE ON TABLE public.retrieval_run TO {runtime_sql}"))
     names = ", ".join(quoted_identifier(column) for column in RUNTIME_ACCOUNT_DELETION_REQUEST_UPDATE_COLUMNS)
     await connection.execute(text(f"GRANT SELECT, INSERT ON TABLE public.account_deletion_request TO {runtime_sql}"))
@@ -219,7 +305,7 @@ async def provision_roles(
         update_columns = ", ".join(quoted_identifier(column) for column in columns)
         await connection.execute(text(f"GRANT SELECT, INSERT ON TABLE {target} TO {runtime_sql}"))
         await connection.execute(text(f"GRANT UPDATE ({update_columns}) ON TABLE {target} TO {runtime_sql}"))
-    await _grant_runtime_account_withdrawal_permissions(connection, runtime_sql)
+    await _grant_account_withdrawal_cleanup_permissions(connection, cleanup_sql)
     # Only sequences owned by explicitly supported Runtime columns are available.
     sequences = await connection.scalars(
         text(
@@ -251,16 +337,6 @@ async def provision_roles(
     )
 
 
-async def _grant_runtime_account_withdrawal_permissions(
-    connection: AsyncConnection,
-    runtime_sql: str,
-) -> None:
-    for table in sorted(RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES):
-        await connection.execute(
-            text(f"GRANT SELECT, DELETE ON TABLE public.{quoted_identifier(table)} TO {runtime_sql}")
-        )
-
-
 async def _apply_optional_role_policies(
     connection: AsyncConnection,
     *,
@@ -289,6 +365,27 @@ async def _apply_optional_role_policies(
         )
 
 
+async def _grant_account_withdrawal_cleanup_permissions(
+    connection: AsyncConnection,
+    cleanup_sql: str | None,
+) -> None:
+    if cleanup_sql is None:
+        return
+    for table in sorted(ACCOUNT_WITHDRAWAL_CLEANUP_READ_TABLES - ACCOUNT_WITHDRAWAL_CLEANUP_DELETE_TABLES):
+        await connection.execute(text(f"GRANT SELECT ON TABLE public.{quoted_identifier(table)} TO {cleanup_sql}"))
+    for table in sorted(ACCOUNT_WITHDRAWAL_CLEANUP_DELETE_TABLES):
+        await connection.execute(
+            text(f"GRANT SELECT, DELETE ON TABLE public.{quoted_identifier(table)} TO {cleanup_sql}")
+        )
+    for table in sorted(ACCOUNT_WITHDRAWAL_CLEANUP_INSERT_TABLES):
+        await connection.execute(text(f"GRANT INSERT ON TABLE public.{quoted_identifier(table)} TO {cleanup_sql}"))
+    for table, names in ACCOUNT_WITHDRAWAL_CLEANUP_UPDATE_COLUMNS.items():
+        columns = ", ".join(quoted_identifier(name) for name in names)
+        await connection.execute(
+            text(f"GRANT UPDATE ({columns}) ON TABLE public.{quoted_identifier(table)} TO {cleanup_sql}")
+        )
+
+
 async def run_provisioning(environment: Mapping[str, str]) -> None:
     names = (
         "DB_HOST",
@@ -310,6 +407,7 @@ async def run_provisioning(environment: Mapping[str, str]) -> None:
         environment.get("SOURCE_MANAGEMENT_USER") or None,
         environment.get("CATALOG_WRITER_USER") or None,
         environment.get("KNOWLEDGE_INDEX_BUILDER_USER") or None,
+        environment.get("ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE") or None,
     )
     engine = create_async_engine(
         URL.create(
@@ -332,6 +430,7 @@ async def run_provisioning(environment: Mapping[str, str]) -> None:
                 management=environment.get("SOURCE_MANAGEMENT_USER") or None,
                 catalog_writer=environment.get("CATALOG_WRITER_USER") or None,
                 knowledge_index_builder=environment.get("KNOWLEDGE_INDEX_BUILDER_USER") or None,
+                account_withdrawal_cleanup=environment.get("ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE") or None,
             )
     finally:
         await engine.dispose()
