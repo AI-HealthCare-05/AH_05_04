@@ -31,7 +31,7 @@ from app.repositories.rag_source_catalog_repository import (
     RagSourceOperationCreate,
 )
 from app.services.rag_runtime import RagRuntimeEnvironmentTransitionService
-from infra.python.catalog_role_policy import CATALOG_WRITE_TABLES
+from infra.python.catalog_role_policy import CATALOG_APPROVAL_READ_TABLES, CATALOG_WRITE_TABLES
 from infra.python.knowledge_index_role_policy import KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
 from infra.python.provision_database_roles import (
     ACCOUNT_WITHDRAWAL_CLEANUP_DELETE_TABLES,
@@ -256,6 +256,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 | {"support_action_plan"}
                 | RUNTIME_RETRIEVAL_RUN_TABLES
                 | CATALOG_WRITE_TABLES
+                | CATALOG_APPROVAL_READ_TABLES
                 | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
                 | CANDIDATE_INDEX_RUNTIME_READ_TABLES
                 | set(SOURCE_TABLES)
@@ -2194,5 +2195,282 @@ async def test_runtime_candidate_index_read_acl_parity_and_lock_marker(database)
         await reader.dispose()
         async with admin.begin() as connection:
             for role in (runtime, writer, unrelated):
+                await connection.execute(text(f'DROP OWNED BY "{role}"'))
+                await connection.execute(text(f'DROP ROLE IF EXISTS "{role}"'))
+
+
+async def test_candidate_index_builder_least_privilege_and_execution_boundary(database) -> None:
+    """Issue #800: Verify least-privilege boundary, approval access, single-transaction lifecycle, and #780 invariance."""
+    from ai_worker.admin.catalog_writer import validate_catalog_writer
+    from app.commands.candidate_index_builder import validate_candidate_index_builder
+    from app.models.rag_candidate_index import (
+        RagCandidateIndexBuildMode,
+        RagCandidateIndexEntityType,
+        RagCandidateIndexStatus,
+    )
+    from app.models.rag_catalog import (
+        RagCatalogSet,
+        RagCatalogSetSource,
+        RagMedicationSearchEntryType,
+    )
+    from app.repositories.rag_candidate_index_repository import (
+        RagCandidateIndexMemberCreate,
+        RagCandidateIndexRepository,
+        RagCandidateIndexVersionCreate,
+        _recomputed_lexical_member_content_hash,
+        _sha256,
+    )
+    from app.repositories.rag_source_catalog_repository import (
+        RagSourceCatalogRepository,
+        RagSourceCreate,
+        RagSourceEndpointCreate,
+        RagSourceOperationCreate,
+        RagSourceSnapshotCreate,
+    )
+    from infra.python.catalog_role_policy import CATALOG_APPROVAL_READ_TABLES
+    from infra.python.provision_database_roles import provision_roles
+
+    admin = database
+    suffix = uuid4().hex[:12]
+    runtime, writer, cat_writer, cand_builder, unrelated = (
+        f"bnd_{part}_{suffix}" for part in ("runtime", "writer", "catw", "candb", "unrel")
+    )
+    password = f"synthetic-{suffix}-only"
+
+    cat_engine = create_async_engine(admin.url.set(username=cat_writer, password=password))
+    builder_engine = create_async_engine(admin.url.set(username=cand_builder, password=password))
+    reader_engine = create_async_engine(admin.url.set(username=runtime, password=password))
+
+    try:
+        # 1. Provision roles with Catalog Writer and Candidate Builder
+        async with admin.begin() as connection:
+            for role in (runtime, writer, cat_writer, cand_builder, unrelated):
+                await connection.execute(text(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"))
+            await provision_roles(
+                connection,
+                owner=config.DB_USER,
+                runtime=runtime,
+                writer=writer,
+                catalog_writer=cat_writer,
+                candidate_index_builder=cand_builder,
+            )
+
+        # 2. Validate Catalog Writer connection and approval read grants
+        async with cat_engine.connect() as conn:
+            await validate_catalog_writer(conn)
+            for table in sorted(CATALOG_APPROVAL_READ_TABLES):
+                count = await conn.scalar(text(f"SELECT count(*) FROM public.{table}"))
+                assert count == 0
+
+        # Catalog Writer cannot insert into approval tables
+        with pytest.raises(DBAPIError) as error:
+            async with cat_engine.begin() as conn:
+                await conn.execute(
+                    text("INSERT INTO public.catalog_source_approval (id) VALUES ('00000000-0000-0000-0000-000000000001'::uuid)")
+                )
+        assert error.value.orig.sqlstate == "42501"
+
+        # 3. Validate Candidate Index Builder connection least-privilege boundary
+        async with builder_engine.connect() as conn:
+            await validate_candidate_index_builder(conn, expected_user=cand_builder)
+
+        # 4. Table and Column Privilege enforcement for Candidate Builder
+        async with builder_engine.begin() as conn:
+            # SELECT on candidate tables and catalog tables succeeds
+            assert await conn.scalar(text("SELECT count(*) FROM rag_candidate_index_version")) == 0
+            assert await conn.scalar(text("SELECT count(*) FROM rag_candidate_index_member")) == 0
+            assert await conn.scalar(text("SELECT count(*) FROM rag_catalog_set")) == 0
+
+        # UPDATE candidate_index_lock_marker is PROHIBITED for Candidate Builder (reserved for Runtime Reader #780)
+        with pytest.raises(DBAPIError) as error:
+            async with builder_engine.begin() as conn:
+                await conn.execute(
+                    text("UPDATE rag_candidate_index_version SET candidate_index_lock_marker = 0 WHERE false")
+                )
+        assert error.value.orig.sqlstate == "42501"
+
+        # Direct UPDATE on provenance columns is PROHIBITED for Candidate Builder
+        for col, val in (
+            ("content_hash", "'hack'"),
+            ("configuration_hash", "'hack'"),
+            ("member_count", "123"),
+            ("index_code", "'hack'"),
+            ("index_version", "'hack'"),
+        ):
+            with pytest.raises(DBAPIError) as error:
+                async with builder_engine.begin() as conn:
+                    await conn.execute(
+                        text(f"UPDATE rag_candidate_index_version SET {col} = {val} WHERE false")
+                    )
+            assert error.value.orig.sqlstate == "42501"
+
+        # DELETE and TRUNCATE are PROHIBITED for Candidate Builder
+        for stmt in (
+            "DELETE FROM rag_candidate_index_version",
+            "TRUNCATE rag_candidate_index_version",
+            "DELETE FROM rag_candidate_index_member",
+            "TRUNCATE rag_candidate_index_member",
+            "CREATE TABLE hack (id int)",
+        ):
+            with pytest.raises(DBAPIError) as error:
+                async with builder_engine.begin() as conn:
+                    await conn.execute(text(stmt))
+            assert error.value.orig.sqlstate == "42501"
+
+        # 5. Candidate Builder execution: single-transaction build, promotion, and readback
+        index_code = f"IDX_{suffix}"
+        index_version = "v1"
+
+        # Seed authoritative Catalog Set and Source Snapshot
+        async with async_sessionmaker(admin, expire_on_commit=False)() as session:
+            repo = RagSourceCatalogRepository(session)
+            source = await repo.create_source(
+                RagSourceCreate(source_code=f"SRC_{suffix}", display_name="Src", owner_name="Owner")
+            )
+            endpoint = await repo.create_endpoint(
+                RagSourceEndpointCreate(source_id=source.id, endpoint_code="EP", display_name="EP")
+            )
+            op = await repo.create_operation(
+                RagSourceOperationCreate(endpoint_id=endpoint.id, operation_code="OP", display_name="OP")
+            )
+            snapshot = await repo.create_snapshot(
+                RagSourceSnapshotCreate(
+                    operation_id=op.id,
+                    source_version="v1",
+                    raw_manifest_checksum="a" * 64,
+                    canonical_checksum="b" * 64,
+                    schema_version="schema-v1",
+                    parser_version="parser-v1",
+                    normalization_version="norm-v1",
+                    canonicalization_spec_version="canon-v1",
+                    record_count=1,
+                    rejected_record_count=0,
+                    collected_at=datetime.now(UTC),
+                )
+            )
+            cat_set = RagCatalogSet(
+                catalog_version="cat-v1",
+                schema_version="schema-v1",
+                normalization_version="norm-v1",
+                manifest_spec_version=f"spec-{suffix}",
+                envelope_hash="e" * 64,
+                manifest_json=b"{}",
+            )
+            session.add(cat_set)
+            await session.flush()
+
+            cat_source = RagCatalogSetSource(
+                set_id=cat_set.id,
+                source_snapshot_id=snapshot.id,
+                source_version=snapshot.source_version,
+            )
+            session.add(cat_source)
+            await session.commit()
+
+        member_payload = RagCandidateIndexMemberCreate(
+            entry_type=RagMedicationSearchEntryType.PRODUCT_NAME,
+            identity_entity_type=RagCandidateIndexEntityType.PRODUCT,
+            identity_code_system="MFDS",
+            identity_canonical_code=f"CANON_{suffix}",
+            product_ref=f"prod:{suffix}",
+            entry_ref=f"entry:{suffix}",
+            display_text="Test Med",
+            normalized_text="test med",
+            product_name="Test Med",
+            product_source_snapshot_id=snapshot.id,
+            entry_source_snapshot_id=snapshot.id,
+            catalog_version=cat_set.catalog_version,
+            catalog_manifest_hash=cat_set.envelope_hash,
+            normalization_version=cat_set.normalization_version,
+            member_key=f"MK_{suffix}",
+            member_content_hash="",
+        )
+        computed_hash = _recomputed_lexical_member_content_hash(member_payload)
+        import dataclasses
+        member_payload = dataclasses.replace(member_payload, member_content_hash=computed_hash)
+        member_set_hash = _sha256(
+            [{"member_key": member_payload.member_key, "member_content_hash": computed_hash}]
+        )
+        content_hash = _sha256({"member_set_hash": member_set_hash, "version": "v1"})
+
+        version_payload = RagCandidateIndexVersionCreate(
+            index_code=index_code,
+            index_version=index_version,
+            build_mode=RagCandidateIndexBuildMode.LEXICAL_ONLY,
+            catalog_set_id=cat_set.id,
+            catalog_version=cat_set.catalog_version,
+            catalog_manifest_hash=cat_set.envelope_hash,
+            schema_version=cat_set.schema_version,
+            normalization_version=cat_set.normalization_version,
+            lexical_config_version="lex-v1",
+            search_order_version="order-v1",
+            candidate_limit=10,
+            display_limit=5,
+            member_count=1,
+            product_identity_count=1,
+            product_name_count=1,
+            approved_alias_count=0,
+            vector_count=0,
+            member_set_hash=member_set_hash,
+            configuration_hash="f" * 64,
+            content_hash=content_hash,
+        )
+
+        # Candidate Builder creates version + member and activates version in single transaction
+        builder_session_maker = async_sessionmaker(builder_engine, expire_on_commit=False)
+        async with builder_session_maker() as session:
+            async with session.begin():
+                builder_repo = RagCandidateIndexRepository(session)
+                built = await builder_repo.build_index_version(
+                    version=version_payload,
+                    members=(member_payload,),
+                )
+                assert built.version.status is RagCandidateIndexStatus.BUILDING
+                # Promotion to READY succeeds under Candidate Builder UPDATE(status) privilege
+                activated = await builder_repo.activate_ready_version(built.version.id)
+                assert activated.status is RagCandidateIndexStatus.READY
+
+        # Post-commit verification succeeds under Candidate Builder SELECT privilege
+        async with builder_session_maker() as session:
+            builder_repo = RagCandidateIndexRepository(session)
+            verified = await builder_repo.get_verified_ready_index_snapshot(
+                index_code=index_code,
+                expected_index_version=index_version,
+            )
+            assert verified.version.status is RagCandidateIndexStatus.READY
+            assert len(verified.members) == 1
+
+        # 6. Runtime #780 Invariance: Verify Runtime Reader permissions remain strictly intact
+        async with reader_engine.begin() as conn:
+            # Runtime SELECT on version and member succeeds
+            assert await conn.scalar(text("SELECT count(*) FROM rag_candidate_index_version")) == 1
+            assert await conn.scalar(text("SELECT count(*) FROM rag_candidate_index_member")) == 1
+            # Runtime UPDATE on candidate_index_lock_marker succeeds
+            await conn.execute(
+                text("UPDATE rag_candidate_index_version SET candidate_index_lock_marker = 0 WHERE false")
+            )
+
+        # Runtime UPDATE(status) is PROHIBITED
+        with pytest.raises(DBAPIError) as error:
+            async with reader_engine.begin() as conn:
+                await conn.execute(text("UPDATE rag_candidate_index_version SET status = 'BUILDING'"))
+        assert error.value.orig.sqlstate == "42501"
+
+        # Runtime INSERT/DELETE is PROHIBITED
+        for stmt in (
+            "INSERT INTO rag_candidate_index_version (index_code) VALUES ('fail')",
+            "DELETE FROM rag_candidate_index_version",
+        ):
+            with pytest.raises(DBAPIError) as error:
+                async with reader_engine.begin() as conn:
+                    await conn.execute(text(stmt))
+            assert error.value.orig.sqlstate == "42501"
+
+    finally:
+        await cat_engine.dispose()
+        await builder_engine.dispose()
+        await reader_engine.dispose()
+        async with admin.begin() as connection:
+            for role in (runtime, writer, cat_writer, cand_builder, unrelated):
                 await connection.execute(text(f'DROP OWNED BY "{role}"'))
                 await connection.execute(text(f'DROP ROLE IF EXISTS "{role}"'))

@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
+from infra.python.candidate_index_role_policy import apply_candidate_index_role_policy
 from infra.python.catalog_role_policy import CATALOG_WRITE_TABLES, apply_catalog_role_policy
 from infra.python.knowledge_index_role_policy import (
     KNOWLEDGE_INDEX_RUNTIME_READ_TABLES,
@@ -217,6 +218,7 @@ async def provision_roles(
     catalog_writer: str | None = None,
     knowledge_index_builder: str | None = None,
     account_withdrawal_cleanup: str | None = None,
+    candidate_index_builder: str | None = None,
 ) -> None:
     """Caller must use a single admin transaction; failure must roll it back."""
     validate_distinct_role_names(
@@ -227,6 +229,7 @@ async def provision_roles(
         catalog_writer,
         knowledge_index_builder,
         account_withdrawal_cleanup,
+        candidate_index_builder,
     )
     owner_sql, runtime_sql, writer_sql = (quoted_identifier(value) for value in (owner, runtime, writer))
     cleanup_sql = quoted_identifier(account_withdrawal_cleanup) if account_withdrawal_cleanup else None
@@ -350,6 +353,7 @@ async def provision_roles(
         management=management,
         catalog_writer=catalog_writer,
         knowledge_index_builder=knowledge_index_builder,
+        candidate_index_builder=candidate_index_builder,
     )
 
 
@@ -362,6 +366,7 @@ async def _apply_optional_role_policies(
     management: str | None,
     catalog_writer: str | None,
     knowledge_index_builder: str | None,
+    candidate_index_builder: str | None = None,
 ) -> None:
     if catalog_writer:
         await apply_catalog_role_policy(
@@ -369,6 +374,16 @@ async def _apply_optional_role_policies(
             owner=owner,
             runtime=runtime,
             writer=catalog_writer,
+            source_writer=source_writer,
+            management=management,
+        )
+    if candidate_index_builder:
+        await apply_candidate_index_role_policy(
+            connection,
+            owner=owner,
+            runtime=runtime,
+            builder=candidate_index_builder,
+            catalog_writer=catalog_writer,
             source_writer=source_writer,
             management=management,
         )
@@ -438,6 +453,7 @@ async def run_provisioning(environment: Mapping[str, str]) -> None:
         environment.get("CATALOG_WRITER_USER") or None,
         environment.get("KNOWLEDGE_INDEX_BUILDER_USER") or None,
         environment.get("ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE") or None,
+        environment.get("CANDIDATE_INDEX_BUILDER_USER") or None,
     )
     engine = create_async_engine(
         URL.create(
@@ -461,6 +477,7 @@ async def run_provisioning(environment: Mapping[str, str]) -> None:
                 catalog_writer=environment.get("CATALOG_WRITER_USER") or None,
                 knowledge_index_builder=environment.get("KNOWLEDGE_INDEX_BUILDER_USER") or None,
                 account_withdrawal_cleanup=environment.get("ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE") or None,
+                candidate_index_builder=environment.get("CANDIDATE_INDEX_BUILDER_USER") or None,
             )
     finally:
         await engine.dispose()

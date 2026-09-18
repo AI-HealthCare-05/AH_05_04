@@ -1,5 +1,7 @@
-"""Isolated Catalog Writer composition; caller supplies the existing v2 build and verifier."""
-
+import argparse
+import json
+import os
+import sys
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 
@@ -21,6 +23,8 @@ def writer_url(environment: Mapping[str, str]) -> URL:
             "DB_MIGRATION_PASSWORD",
             "SOURCE_WRITER_PASSWORD",
             "SOURCE_MANAGEMENT_PASSWORD",
+            "KNOWLEDGE_INDEX_BUILDER_PASSWORD",
+            "CANDIDATE_INDEX_BUILDER_PASSWORD",
         )
     ):
         raise ValueError("Catalog Writer requires an isolated credential environment")
@@ -97,3 +101,38 @@ async def catalog_writer_repository(environment: Mapping[str, str]) -> AsyncIter
         yield SqlAlchemyCatalogBuildRepository(async_sessionmaker(engine, expire_on_commit=False))
     finally:
         await engine.dispose()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Build and persist Medication Catalog with dedicated Catalog Writer credentials"
+    )
+    parser.add_argument(
+        "--source-snapshot-id",
+        type=str,
+        default=None,
+        help="Authoritative Product Source snapshot ID",
+    )
+    _ = parser.parse_args(argv)
+
+    try:
+        writer_url(os.environ)
+    except Exception as exc:
+        print(json.dumps({"execution_status": "FAILED", "error": str(exc)}), file=sys.stderr)
+        return 1
+
+    # In Phase A, actual MFDS_PRODUCT_APPROVAL Source materialization is running in a parallel lane.
+    # Without authoritative source snapshot input, fail closed immediately.
+    print(
+        json.dumps(
+            {
+                "execution_status": "BLOCKED",
+                "blocker_reason": "BLOCKED_BY_PRODUCT_SOURCE_AUTHORITY",
+            }
+        )
+    )
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
