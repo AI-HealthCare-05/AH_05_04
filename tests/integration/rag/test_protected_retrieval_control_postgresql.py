@@ -58,6 +58,7 @@ from ai_worker.tasks.evaluation.protected_retrieval_control import (
     ControlCommandResult,
     DisableIdentityCommand,
     ExpireAuthorizationCommand,
+    FreezeApprovalLocator,
     FreezeApprovalSourceEvidence,
     FreezeDatasetCommand,
     GrantAuthorizationCommand,
@@ -81,8 +82,12 @@ class _ApprovalSource:
         self.calls.append(source_event_id)
         return self.evidence
 
-    async def fetch_freeze(self, source_event_id: str) -> FreezeApprovalSourceEvidence:
-        del source_event_id
+    async def fetch_freeze(
+        self,
+        source_event_id: str,
+        locator: FreezeApprovalLocator | None = None,
+    ) -> FreezeApprovalSourceEvidence:
+        del source_event_id, locator
         raise ApprovalSourceNotFoundError
 
 
@@ -91,8 +96,12 @@ class _FailingApprovalSource:
         del source_event_id
         raise RuntimeError("synthetic connector detail that must not escape")
 
-    async def fetch_freeze(self, source_event_id: str) -> FreezeApprovalSourceEvidence:
-        del source_event_id
+    async def fetch_freeze(
+        self,
+        source_event_id: str,
+        locator: FreezeApprovalLocator | None = None,
+    ) -> FreezeApprovalSourceEvidence:
+        del source_event_id, locator
         raise ApprovalSourceNotFoundError
 
 
@@ -104,7 +113,12 @@ class _MissingApprovalSource:
         self.calls.append(source_event_id)
         raise ApprovalSourceNotFoundError
 
-    async def fetch_freeze(self, source_event_id: str) -> FreezeApprovalSourceEvidence:
+    async def fetch_freeze(
+        self,
+        source_event_id: str,
+        locator: FreezeApprovalLocator | None = None,
+    ) -> FreezeApprovalSourceEvidence:
+        del locator
         self.calls.append(source_event_id)
         raise ApprovalSourceNotFoundError
 
@@ -113,13 +127,19 @@ class _DatasetApprovalSource:
     def __init__(self, freeze_evidence: FreezeApprovalSourceEvidence | None = None) -> None:
         self.freeze_evidence = freeze_evidence
         self.freeze_calls: list[str] = []
+        self.freeze_locators: list[FreezeApprovalLocator | None] = []
 
     async def fetch(self, source_event_id: str) -> ApprovalSourceEvidence:
         del source_event_id
         raise ApprovalSourceNotFoundError
 
-    async def fetch_freeze(self, source_event_id: str) -> FreezeApprovalSourceEvidence:
+    async def fetch_freeze(
+        self,
+        source_event_id: str,
+        locator: FreezeApprovalLocator | None = None,
+    ) -> FreezeApprovalSourceEvidence:
         self.freeze_calls.append(source_event_id)
+        self.freeze_locators.append(locator)
         if self.freeze_evidence is None:
             raise ApprovalSourceNotFoundError
         return self.freeze_evidence

@@ -116,7 +116,7 @@ Proposed 계약은 문서별 구현 상태를 별도로 표시합니다. 부분 
 - [RAG Safety·Rule-first Metric 계약 v1 (#161)](./targets/post-mvp-1/rag-safety-rule-first-metrics-v1.md): PR #541 책임 리뷰 승인으로 확정된 Approved Target. Safety routing·Rule·Scope·invocation·fallback Metric, NOT_INVOKED reversal, #160 same-Case signal과 critical failure exact union.
 - [Safety Result·Citation 계약 v2](./targets/post-mvp-1/safety-result-v2.md): Track F에서 v1의 Safety Result·Citation·STALE·Release Gate 목표를 대체하는 후속 Target
 - [Safety Result 복합 STALE 우선순위 계약 v1 (`PD-173`)](./targets/post-mvp-1/safety-result-compound-stale-priority-v1.md): 처방 버전·식별 스냅샷·런타임 번들 복합 STALE 동시 발생 시 단일 공개 fallback_code 사영 우선순위(`PRESCRIPTION_STALE` > `IDENTIFICATION_STALE` > `RUNTIME_RELEASE_STALE`)와 내부 `stale_reason` 분리 — Approved Target · Not implemented: 판정 kernel은 병합되었으나 런타임 호출부 없음
-- [Protected Retrieval Infrastructure 계약 v1 (`PD-368`, `PD-368-R1`, `PD-368-R2`)](./targets/post-mvp-1/protected-retrieval-infrastructure-v1.md): data-plane 부분 구현, authorization control C1 구현 완료(PR #463), C2 command 및 최소 권한 확장 계약 확정(`PD-368-R2`)
+- [Protected Retrieval Infrastructure 계약 v1 (`PD-368`, `PD-368-R1`, `PD-368-R2`, `PD-368-R3`)](./targets/post-mvp-1/protected-retrieval-infrastructure-v1.md): data-plane 부분 구현, authorization control C1 구현 완료(PR #463), C2 command 및 최소 권한 확장 계약 확정(`PD-368-R2`), production approval source connector locator 및 commit authority binding 확정(`PD-368-R3`)
 
 계약 파일의 존재나 문서 승인은 Worker·API·schema 구현 완료 또는 공개 승인을 의미하지 않습니다.
 

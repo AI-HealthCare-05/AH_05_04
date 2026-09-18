@@ -43,6 +43,7 @@ from ai_worker.tasks.evaluation.protected_retrieval_control import (
     ControlCommandResult,
     DisableIdentityCommand,
     ExpireAuthorizationCommand,
+    FreezeApprovalLocator,
     FreezeApprovalSourceEvidence,
     FreezeDatasetCommand,
     GrantAuthorizationCommand,
@@ -1033,9 +1034,13 @@ class PostgresqlProtectedAuthorizationControlService:
     async def _fetch_freeze_approval(
         self,
         command: FreezeDatasetCommand,
+        locator: FreezeApprovalLocator | None = None,
     ) -> tuple[FreezeApprovalSourceEvidence | None, ProtectedAuditReason | None]:
         try:
-            evidence = await self._approval_source.fetch_freeze(command.approval_source_event_id)
+            evidence = await self._approval_source.fetch_freeze(
+                command.approval_source_event_id,
+                locator=locator,
+            )
         except ApprovalSourceNotFoundError:
             return None, ProtectedAuditReason.APPROVAL_NOT_VERIFIED
         except Exception:
@@ -2096,7 +2101,12 @@ class PostgresqlProtectedAuthorizationControlService:
             return _policy_denial_reason(err)
         return None
 
-    async def freeze_dataset(self, command: FreezeDatasetCommand) -> ControlCommandResult:
+    async def freeze_dataset(
+        self,
+        command: FreezeDatasetCommand,
+        *,
+        locator: FreezeApprovalLocator | None = None,
+    ) -> ControlCommandResult:
         command_kind = ControlCommandKind.FREEZE_DATASET
         digest = control_command_sha256(command_kind, command)
         async with self._sessions() as preparation:
@@ -2115,7 +2125,7 @@ class PostgresqlProtectedAuthorizationControlService:
         if replay is not None:
             return replay
 
-        evidence, fetch_denial = await self._fetch_freeze_approval(command)
+        evidence, fetch_denial = await self._fetch_freeze_approval(command, locator=locator)
 
         target_id = f"{command.dataset_id}:{command.dataset_version}"
         denial: ProtectedSecurityError | None = None
