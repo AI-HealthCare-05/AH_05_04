@@ -51,6 +51,17 @@ def test_production_ocr_consent_policy_version_reaches_backend_and_worker() -> N
     assert "OCR_CONSENT_POLICY_VERSION=\n" in _read(PROJECT_ROOT / "envs/example.prod.env")
 
 
+def test_production_account_withdrawal_gate_reaches_backend() -> None:
+    compose = yaml.safe_load(_read(PRODUCTION_COMPOSE_PATH))
+    fastapi_environment = compose["services"]["fastapi"]["environment"]
+    env_example = _read(PROJECT_ROOT / "envs/example.prod.env")
+
+    assert fastapi_environment["ACCOUNT_WITHDRAWAL_REQUEST_ENABLED"] == ("${ACCOUNT_WITHDRAWAL_REQUEST_ENABLED:-false}")
+    assert "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false" in env_example
+    assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE=\n" in env_example
+    assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD=\n" in env_example
+
+
 def test_frontend_production_image_requires_api_origin_and_contains_built_spa() -> None:
     dockerfile = _read(PROJECT_ROOT / "frontend/Dockerfile.prod")
 
