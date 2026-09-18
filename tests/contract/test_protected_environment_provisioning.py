@@ -38,6 +38,8 @@ def test_workflow_trigger_and_environment_boundary() -> None:
         assert "token" not in input_name.lower(), f"Secrets cannot be inputs: {input_name}"
         assert "password" not in input_name.lower(), f"Secrets cannot be inputs: {input_name}"
         assert "secret" not in input_name.lower(), f"Secrets cannot be inputs: {input_name}"
+        assert "key" not in input_name.lower(), f"Keys cannot be inputs: {input_name}"
+        assert "known_hosts" not in input_name.lower(), f"Host keys cannot be inputs: {input_name}"
 
     # 3. Environment: protected-retrieval on all jobs
     jobs = data.get("jobs", {})
@@ -48,11 +50,59 @@ def test_workflow_trigger_and_environment_boundary() -> None:
     assert jobs["preflight"].get("environment") == "protected-retrieval"
 
 
+def test_workflow_ssh_host_identity_verification() -> None:
+    wf_path = REPO_ROOT / ".github/workflows/protected_retrieval_runner.yml"
+    assert wf_path.is_file(), "protected_retrieval_runner.yml must exist"
+
+    content = wf_path.read_text(encoding="utf-8")
+    data = yaml.safe_load(content)
+
+    # 1. StrictHostKeyChecking=no must NOT exist in the workflow
+    assert "StrictHostKeyChecking=no" not in content, (
+        "StrictHostKeyChecking=no must not exist in protected_retrieval_runner.yml"
+    )
+
+    # 2. StrictHostKeyChecking=yes must be present
+    assert "StrictHostKeyChecking=yes" in content, (
+        "StrictHostKeyChecking=yes must be present in protected_retrieval_runner.yml"
+    )
+
+    # 3. Pinned known_hosts secret path exists and is used
+    assert "secrets.EC2_SSH_KNOWN_HOSTS" in content, "Workflow must reference secrets.EC2_SSH_KNOWN_HOSTS"
+    assert "~/.ssh/known_hosts" in content, "Workflow must write pinned host keys to ~/.ssh/known_hosts"
+
+    # 4. UserKnownHostsFile is explicitly used
+    assert "UserKnownHostsFile=" in content, "UserKnownHostsFile must be explicitly configured in SSH command"
+
+    # 5. Host key is NOT accepted via workflow_dispatch inputs
+    triggers = data.get("on") or data.get(True)
+    inputs = triggers.get("workflow_dispatch", {}).get("inputs", {})
+    for input_name in inputs:
+        assert "host_key" not in input_name.lower(), f"Host key cannot be workflow input: {input_name}"
+        assert "known_hosts" not in input_name.lower(), f"Known hosts cannot be workflow input: {input_name}"
+
+    # Verify both provision and preflight jobs configure EC2_SSH_KNOWN_HOSTS
+    jobs = data.get("jobs", {})
+    for job_name in ("provision", "preflight"):
+        job = jobs.get(job_name, {})
+        steps = job.get("steps", [])
+        env_vars: dict[str, str] = {}
+        for step in steps:
+            env_vars.update(step.get("env", {}))
+        assert "EC2_SSH_KNOWN_HOSTS" in env_vars, f"{job_name} job must inject EC2_SSH_KNOWN_HOSTS secret"
+        assert env_vars["EC2_SSH_KNOWN_HOSTS"] == "${{ secrets.EC2_SSH_KNOWN_HOSTS }}", (
+            f"{job_name} job must reference secrets.EC2_SSH_KNOWN_HOSTS"
+        )
+
+
 def test_checks_yml_has_no_protected_secret_references() -> None:
     checks_path = REPO_ROOT / ".github/workflows/checks.yml"
     assert checks_path.is_file()
     content = checks_path.read_text(encoding="utf-8")
     assert "secrets.PROTECTED_" not in content, "checks.yml must not reference any PROTECTED_* secrets"
+    assert "EC2_SSH_KNOWN_HOSTS" not in content, "checks.yml must not reference EC2_SSH_KNOWN_HOSTS"
+    assert "EC2_SSH_KEY" not in content, "checks.yml must not reference EC2_SSH_KEY"
+    assert "secrets.EC2_" not in content, "checks.yml must not reference any EC2_* secrets"
 
 
 def test_compose_profiles_and_security_boundaries() -> None:

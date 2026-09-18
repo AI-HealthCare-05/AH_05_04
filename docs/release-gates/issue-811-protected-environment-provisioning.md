@@ -56,7 +56,7 @@ Repository PR 병합 후 실제 환경 프로비저닝을 위해 다음 6개 조
 - **담당자**: 승인된 운영 관리자
 - **작업 내용**:
   - `protected-retrieval` Environment Secrets에 다음 항목을 비공개 등록:
-    - 원격 접속: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`
+    - 원격 접속: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`, `EC2_SSH_KNOWN_HOSTS`
     - 프로비저닝 전용: `DB_ADMIN_USER`, `DB_ADMIN_PASSWORD`
     - 보호 DB 스키마/역할: `PROTECTED_DB_SCHEMA`, `PROTECTED_DB_OWNER_ROLE`, `PROTECTED_DB_ACCESS_ROLE`, `PROTECTED_DB_CONTROL_ROLE`
     - 보호 로그인: `PROTECTED_DB_USER`, `PROTECTED_DB_PASSWORD`, `PROTECTED_DB_CONTROL_USER`, `PROTECTED_DB_CONTROL_PASSWORD`
@@ -105,3 +105,4 @@ Repository PR 병합 후 실제 환경 프로비저닝을 위해 다음 6개 조
    - 포트 매핑 없음(`ports` 부재) 및 내부 Docker 네트워크 `ws` 사용 확인.
 3. `.github/workflows/protected_retrieval_runner.yml`의 비민감성 및 원격 실행 제어 검증:
    - ephemeral env 파일의 umask 077 및 실행 즉시 rm 삭제(trap cleanup) 보장.
+   - `EC2_SSH_KNOWN_HOSTS` 기반 host key pinning 및 `StrictHostKeyChecking=yes` 강제.
