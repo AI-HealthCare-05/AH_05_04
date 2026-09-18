@@ -634,13 +634,16 @@ def test_guide_projection_only_issues_supported_claim_assertions(guide_outcome_f
 # that `validate_claim_citations()` already owns, and duplicating those checks in this
 # adapter would give the same rule two owners that can drift apart.
 #
-# Both fixtures below rewrite the Card's claims directly rather than going through the
-# Generator: the #179 finalizer's own draft-shape check rejects a non-NFC or duplicate
-# `claim_key`, so no such draft can ever become a GENERATED Card. Handing the Card to
-# this module directly is the only way to reach the downstream owner, which is exactly
-# what these tests are for. The rewritten Card's `artifact_ref` no longer matches its
-# claims, which is immaterial here — verifying the Card self-hash is the finalizer's
-# job, not this module's.
+# These are defense-in-depth boundary tests, not production-reachable scenarios. On the
+# normal #179 -> #787 chain the finalizer's own draft-shape check rejects a non-NFC or
+# duplicate `claim_key` first (`_bounded_nfc(claim.claim_key, 100)` and the
+# `claim_key in claim_keys` guard in `guideline_card._is_valid_draft_shape()`), so no
+# such draft can ever become a GENERATED Card. Both fixtures therefore rewrite the
+# Card's claims directly: injecting a malformed Card is the only way to show that #794
+# neither duplicates the upstream check nor silently repairs the input, and that the
+# generic owner downstream still fails closed. The rewritten Card's `artifact_ref` no
+# longer matches its claims, which is immaterial here — verifying the Card self-hash is
+# the finalizer's job, not this module's.
 # ==============================================================================
 
 

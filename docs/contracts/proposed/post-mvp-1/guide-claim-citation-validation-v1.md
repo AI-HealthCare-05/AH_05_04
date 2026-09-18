@@ -277,8 +277,18 @@ support assessment와 receipt tuple은 candidate set의 total deterministic func
 NFC가 아닌 `claim_key`, 빈 `claim_key`, duplicate `claim_key` 등 generic
 Claim/Citation identity 위반은 기존 `validate_claim_citations()`가 계속 소유하며,
 이 adapter는 그 검증을 복제하지 않고 `GuidelineClaim.claim_key`를 그대로 projection
-한다. 같은 규칙에 소유자가 둘이 되면 서로 어긋날 수 있기 때문이다. 이 경우 실행은
-projection과 support receipt 생성까지 정상 진행한 뒤:
+한다. 같은 규칙에 소유자가 둘이 되면 서로 어긋날 수 있기 때문이다.
+
+정상 #179 → #787 production chain에서는 #179 finalizer가 non-NFC 및
+duplicate `claim_key`를 먼저 거부하므로 이 입력은 GENERATED Card로 도달하지 않는다.
+(`guideline_card._is_valid_draft_shape()`의 `_bounded_nfc(claim.claim_key, 100)` 및
+`claim.claim_key in claim_keys` 검사)
+
+아래 경로는 #794의 downstream ownership과 defense-in-depth 동작을 고정하기 위해
+직접 구성된 비정상 Card를 입력했을 때의 경계다. #794는 upstream 검증을 복제하지
+않고 generic candidate identity 검증을 기존 `validate_claim_citations()`에 위임한다.
+
+이 경우 실행은 projection과 support receipt 생성까지 정상 진행한 뒤:
 
 ```text
 decision      = STOPPED
