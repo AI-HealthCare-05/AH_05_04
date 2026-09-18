@@ -491,7 +491,11 @@ OCR 작업 응답에는 OCR 엔진과 LLM 구조화 실행 정보를 포함합�
         "confirmed_value": null,
         "confidence_score": 0.99,
         "confirmation_status": "UNCONFIRMED",
-        "normalization_version": "rule-v1"
+        "normalization_version": "rule-v1",
+        "source_location": {
+          "page": 1,
+          "bbox": [137.0, 627.0, 200.0, 20.0]
+        }
       },
       {
         "field_id": "44444444-4444-4444-8444-444444444444",
@@ -502,7 +506,8 @@ OCR 작업 응답에는 OCR 엔진과 LLM 구조화 실행 정보를 포함합�
         "confirmed_value": null,
         "confidence_score": 0.99,
         "confirmation_status": "UNCONFIRMED",
-        "normalization_version": null
+        "normalization_version": null,
+        "source_location": null
       }
     ]
   }
@@ -526,6 +531,18 @@ OCR 작업 응답에는 OCR 엔진과 LLM 구조화 실행 정보를 포함합�
 - OCR 프롬프트 버전은 필드의 `normalization_version`이 아니라 OCR 작업의 `prompt_version`에 기록합니다.
 - `confirmed_value`는 사용자가 확인하거나 수정한 최종 기준값이며 최종 처방에는 이 값만 사용합니다.
 - `normalized_value`는 자동 처방 확정이나 의약품 동일성 판단에 사용하지 않습니다.
+- `source_location`은 그 값이 추출된 원본 문서 영역입니다. `page`는 1부터 시작하고 `bbox`는
+  `[x, y, width, height]` 순서이며, `x`·`y`는 사각형의 좌상단 모서리입니다.
+- `source_location`의 좌표계는 **OCR Provider에 입력된 이미지의 픽셀 기준**입니다. 화면 표시 배율
+  보정은 소비자 책임이며, 표시 크기와 입력 이미지 크기의 비율을 곱해 사용합니다.
+- `source_location`은 전체가 `null`이거나 다섯 값(`page`와 `bbox` 4개)이 모두 채워진 상태 중
+  하나입니다. 일부만 채워진 좌표는 저장·응답 어느 쪽에서도 나타나지 않습니다.
+- 좌표를 제공하지 않는 필드(수동 입력, 빈 검수 필드, 좌표 없는 Provider 응답)는 `null`입니다.
+  `null`인 필드에서는 원본 위치 강조를 제공하지 않습니다.
+- 현재 엔진은 인식 응답의 첫 페이지만 사용하므로 `page`는 항상 `1`입니다.
+- #809 결정에 따라 업로드 시점 EXIF 정규화본이 도입되면 좌표계 기준 이미지가 그 정규화본으로
+  바뀝니다. 그 시점부터 검수 화면이 표시하는 이미지도 같은 정규화본이어야 하며, 정규화본이 없는
+  기존 문서는 좌표 기반 강조를 제공하지 않습니다.
 
 OCR 작업 응답의 `data`에는 실패 상태를 화면에서 안내할 수 있도록 `error_code`와 `error_message`를 함께 포함합니다.
 외부 OCR 제공자의 원본 오류 메시지나 민감한 내부 예외 메시지는 그대로 노출하지 않고 Backend가 정의한 안전한 문구만 반환합니다.

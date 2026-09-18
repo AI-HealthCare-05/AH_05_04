@@ -11,6 +11,7 @@ from app.dtos.ocr import (
     OcrJobData,
     OcrJobResponse,
     OcrJobStatus,
+    SourceLocationData,
 )
 from app.dtos.prescriptions import UpdateExtractedFieldRequest
 from app.models.async_jobs import AiJobType, DomainType
@@ -66,6 +67,23 @@ def _pending_active_cutoff() -> datetime:
     return datetime.now(UTC) - timedelta(seconds=config.OCR_PENDING_ACTIVE_WINDOW_SECONDS)
 
 
+def _to_source_location(field: ExtractedField) -> SourceLocationData | None:
+    """좌표 5개 열이 모두 채워진 필드만 근거 위치로 투영한다(DB CHECK와 같은 조건)."""
+    page = field.source_page
+    x = field.source_bbox_x
+    y = field.source_bbox_y
+    width = field.source_bbox_width
+    height = field.source_bbox_height
+
+    if page is None or x is None or y is None or width is None or height is None:
+        return None
+
+    return SourceLocationData(
+        page=page,
+        bbox=(float(x), float(y), float(width), float(height)),
+    )
+
+
 def _to_field_data(
     field: ExtractedField,
 ) -> ExtractedFieldData:
@@ -79,6 +97,7 @@ def _to_field_data(
         confidence_score=(float(field.confidence_score) if field.confidence_score is not None else None),
         confirmation_status=str(field.confirmation_status),
         normalization_version=(field.normalization_version),
+        source_location=_to_source_location(field),
     )
 
 

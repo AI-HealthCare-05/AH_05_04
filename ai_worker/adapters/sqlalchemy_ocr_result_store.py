@@ -48,6 +48,11 @@ _EXTRACTED_FIELD = table(
     column("confirmed_value", String(1000)),
     column("confirmation_status", String(20)),
     column("confirmed_at", DateTime(timezone=True)),
+    column("source_page", Integer),
+    column("source_bbox_x", Numeric(10, 2)),
+    column("source_bbox_y", Numeric(10, 2)),
+    column("source_bbox_width", Numeric(10, 2)),
+    column("source_bbox_height", Numeric(10, 2)),
 )
 
 
@@ -83,6 +88,11 @@ def _placeholder_field_row(*, ocr_job_id: str, medication_index: int, field_type
         "confirmed_value": None,
         "confirmation_status": "UNCONFIRMED",
         "confirmed_at": None,
+        "source_page": None,
+        "source_bbox_x": None,
+        "source_bbox_y": None,
+        "source_bbox_width": None,
+        "source_bbox_height": None,
     }
 
 
@@ -207,6 +217,11 @@ class SqlAlchemyOcrResultStore:
                     "confirmed_value": None,
                     "confirmation_status": "UNCONFIRMED",
                     "confirmed_at": None,
+                    "source_page": (field.source_location.page if field.source_location is not None else None),
+                    "source_bbox_x": (field.source_location.x if field.source_location is not None else None),
+                    "source_bbox_y": (field.source_location.y if field.source_location is not None else None),
+                    "source_bbox_width": (field.source_location.width if field.source_location is not None else None),
+                    "source_bbox_height": (field.source_location.height if field.source_location is not None else None),
                 }
                 for field in result.fields
             ],

@@ -12,6 +12,24 @@ class RawRecognizedField:
     center_x: float
     center_y: float
     height: float = 20.0
+    width: float = 0.0
+
+
+@dataclass(frozen=True)
+class SourceLocation:
+    """추출 값의 근거가 된 원본 문서 영역입니다.
+
+    좌표계는 OCR Provider에 입력된 이미지의 픽셀 기준이며, 표시 배율 보정은 소비자 책임입니다.
+    #809 결정에 따라 EXIF 정규화가 도입되면 그 정규화본이 입력 이미지이자 좌표계 정본이 되고,
+    검수 화면이 표시하는 이미지도 같은 정규화본이어야 합니다.
+    `page`는 현재 단일 페이지 인식만 지원하므로 항상 1입니다.
+    """
+
+    page: int
+    x: float
+    y: float
+    width: float
+    height: float
 
 
 @dataclass(frozen=True)
@@ -22,6 +40,7 @@ class RecognizedField:
     confidence_score: float | None
     normalized_value: str | None = None
     normalization_version: str | None = None
+    source_location: SourceLocation | None = None
 
 
 @dataclass(frozen=True)
