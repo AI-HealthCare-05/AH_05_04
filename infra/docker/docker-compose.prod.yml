@@ -507,7 +507,7 @@ services:
     profiles: ["candidate-index-admin"]
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
     restart: "no"
-    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "app.commands.candidate_index_builder"]
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "scripts.candidate_index_builder"]
     environment:
       CANDIDATE_INDEX_BUILDER_HOST: postgres
       CANDIDATE_INDEX_BUILDER_PORT: "5432"

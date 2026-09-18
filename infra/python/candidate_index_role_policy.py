@@ -100,7 +100,9 @@ async def apply_candidate_index_role_policy(
 
     # Candidate Index write tables
     await connection.execute(text(f"GRANT SELECT, INSERT ON TABLE public.rag_candidate_index_version TO {builder_sql}"))
-    await connection.execute(text(f"GRANT UPDATE (status) ON TABLE public.rag_candidate_index_version TO {builder_sql}"))
+    await connection.execute(
+        text(f"GRANT UPDATE (status) ON TABLE public.rag_candidate_index_version TO {builder_sql}")
+    )
     await connection.execute(text(f"GRANT SELECT, INSERT ON TABLE public.rag_candidate_index_member TO {builder_sql}"))
 
     # Catalog & Source & Approval read tables

@@ -2202,7 +2202,6 @@ async def test_runtime_candidate_index_read_acl_parity_and_lock_marker(database)
 async def test_candidate_index_builder_least_privilege_and_execution_boundary(database) -> None:
     """Issue #800: Verify least-privilege boundary, approval access, single-transaction lifecycle, and #780 invariance."""
     from ai_worker.admin.catalog_writer import validate_catalog_writer
-    from app.commands.candidate_index_builder import validate_candidate_index_builder
     from app.models.rag_candidate_index import (
         RagCandidateIndexBuildMode,
         RagCandidateIndexEntityType,
@@ -2229,6 +2228,7 @@ async def test_candidate_index_builder_least_privilege_and_execution_boundary(da
     )
     from infra.python.catalog_role_policy import CATALOG_APPROVAL_READ_TABLES
     from infra.python.provision_database_roles import provision_roles
+    from scripts.candidate_index_builder import validate_candidate_index_builder
 
     admin = database
     suffix = uuid4().hex[:12]
@@ -2266,7 +2266,9 @@ async def test_candidate_index_builder_least_privilege_and_execution_boundary(da
         with pytest.raises(DBAPIError) as error:
             async with cat_engine.begin() as conn:
                 await conn.execute(
-                    text("INSERT INTO public.catalog_source_approval (id) VALUES ('00000000-0000-0000-0000-000000000001'::uuid)")
+                    text(
+                        "INSERT INTO public.catalog_source_approval (id) VALUES ('00000000-0000-0000-0000-000000000001'::uuid)"
+                    )
                 )
         assert error.value.orig.sqlstate == "42501"
 
@@ -2299,9 +2301,7 @@ async def test_candidate_index_builder_least_privilege_and_execution_boundary(da
         ):
             with pytest.raises(DBAPIError) as error:
                 async with builder_engine.begin() as conn:
-                    await conn.execute(
-                        text(f"UPDATE rag_candidate_index_version SET {col} = {val} WHERE false")
-                    )
+                    await conn.execute(text(f"UPDATE rag_candidate_index_version SET {col} = {val} WHERE false"))
             assert error.value.orig.sqlstate == "42501"
 
         # DELETE and TRUNCATE are PROHIBITED for Candidate Builder
@@ -2387,10 +2387,9 @@ async def test_candidate_index_builder_least_privilege_and_execution_boundary(da
         )
         computed_hash = _recomputed_lexical_member_content_hash(member_payload)
         import dataclasses
+
         member_payload = dataclasses.replace(member_payload, member_content_hash=computed_hash)
-        member_set_hash = _sha256(
-            [{"member_key": member_payload.member_key, "member_content_hash": computed_hash}]
-        )
+        member_set_hash = _sha256([{"member_key": member_payload.member_key, "member_content_hash": computed_hash}])
         content_hash = _sha256({"member_set_hash": member_set_hash, "version": "v1"})
 
         version_payload = RagCandidateIndexVersionCreate(

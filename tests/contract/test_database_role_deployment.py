@@ -96,7 +96,6 @@ def test_credentials_and_admin_process_are_separated() -> None:
     assert not any("KNOWLEDGE_INDEX_BUILDER" in key for key in worker["environment"])
 
 
-
 def test_account_deletion_request_runtime_role_updates_only_lifecycle_columns() -> None:
     from infra.python.provision_database_roles import (
         ACCOUNT_WITHDRAWAL_CLEANUP_DELETE_TABLES,
@@ -302,7 +301,9 @@ def test_catalog_role_policy_includes_approval_tables() -> None:
 
 def test_deployment_stops_writers_and_provisions_before_starting_api() -> None:
     script = (ROOT / "scripts/deployment.sh").read_text()
-    stop = script.index("docker compose --profile source-admin --profile catalog-admin --profile candidate-index-admin stop")
+    stop = script.index(
+        "docker compose --profile source-admin --profile catalog-admin --profile candidate-index-admin stop"
+    )
     bootstrap = script.index("-f /docker-entrypoint-initdb.d/configure-app-role.sql")
     migration = script.index('migration_exit_code="$(docker wait migrate)"')
     verification = script.index(

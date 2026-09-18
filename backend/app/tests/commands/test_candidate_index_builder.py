@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.commands import candidate_index_builder as command
+from scripts import candidate_index_builder as command
 
 
 @pytest.mark.parametrize(

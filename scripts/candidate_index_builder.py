@@ -1,10 +1,13 @@
-"""Isolated Candidate Index Builder management command.
+#!/usr/bin/env python3
+"""Isolated Candidate Index Builder orchestration script.
 
 Executes under dedicated CANDIDATE_INDEX_BUILDER credentials with least privilege.
-Connects with restricted privileges, enforces session boundaries, verifies catalog
-approval, executes build + READY promotion in a single transaction, and performs
-post-commit integrity verification in a separate session.
+Runs inside the app image as a one-shot operator command; joins Backend repository
+and service models with ai_worker catalog approval verification and export support
+without widening the backend production package import boundary.
 """
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -70,9 +73,7 @@ def builder_url(environment: Mapping[str, str]) -> URL:
     )
 
 
-async def validate_candidate_index_builder(
-    connection: AsyncConnection, *, expected_user: str | None = None
-) -> None:
+async def validate_candidate_index_builder(connection: AsyncConnection, *, expected_user: str | None = None) -> None:
     """Validate that the active connection conforms to the least-privilege Candidate Builder policy."""
     safe = await connection.scalar(
         text(
@@ -134,9 +135,7 @@ async def validate_candidate_index_builder(
             {"col": col},
         )
         if has_col_update:
-            raise ValueError(
-                f"Candidate Index Builder must not have UPDATE privilege on prohibited column '{col}'"
-            )
+            raise ValueError(f"Candidate Index Builder must not have UPDATE privilege on prohibited column '{col}'")
 
 
 @asynccontextmanager
@@ -207,9 +206,7 @@ async def execute_candidate_index_builder_command(
                 activated = await repo.activate_ready_version(version.id)
                 version = activated
             elif version.status in (RagCandidateIndexStatus.RETIRED, RagCandidateIndexStatus.FAILED):
-                raise ValueError(
-                    f"Existing version {version.id} has non-promotable terminal status {version.status}"
-                )
+                raise ValueError(f"Existing version {version.id} has non-promotable terminal status {version.status}")
 
     # 4. Post-commit integrity readback in a fresh session
     async with session_factory() as verify_session:
