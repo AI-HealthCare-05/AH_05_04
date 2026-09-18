@@ -19,6 +19,9 @@ import { join } from 'node:path'
 // 반환값을 받는 binding 자체가 상수 접기로 사라져 조회 결과는 어디에도 쓰이지 않으므로,
 // 남는 것은 동작하지 않는 이름뿐이다. 이름을 지우려면 SchedulePage의 무관한 코드까지
 // 재구성해야 해서 검증 대상에서 뺐다.
+//
+// 이 제외는 docs/deployment.md의 제거 범위 서술과 같은 기준이다. 둘 중 하나만 바꾸면
+// 문서가 검증보다 넓게 보장하게 되므로 함께 고친다.
 const MARKERS = [
   'track-c',
   'barrier-responses',

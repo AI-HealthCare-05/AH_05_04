@@ -56,7 +56,9 @@ non-NORMAL을 반환했거나 403/404/409로 멈춘 경우에는 제공하지 �
 Frontend build-time flag `VITE_PUBLIC_TRACK_C`로 route·lazy import·진입 버튼과
 `/schedule`의 `support_medication` 처리를 제한한다. 기본값은 `false`이며, vite dev 서버에서는
 값과 무관하게 켜진다. `false`인 production 번들에서 Track C route, page chunk, 진입 문구가
-제거되는 것을 확인했다. flag가 생겼다는 것이 공개 승인이나 운영 활성화 완료를 의미하지
+제거되는 것을 `pnpm run verify:track-c-gate`로 확인했다. `support_medication`은 진입 동작과 조회
+결과 사용만 제거되고 query parameter 이름은 inert하게 남는다. 제거 범위를 문서가 검증보다 넓게
+보장하지 않도록 두 서술을 같은 기준으로 유지한다. flag가 생겼다는 것이 공개 승인이나 운영 활성화 완료를 의미하지
 않는다. [외부 승인 게이트](../release-gates/post-mvp-1-external-approvals.md)는 유지하며,
 `EXT-MED-001` · `EXT-MED-002` · `EXT-PRIV-002` · `EXT-SAFETY-001` 승인과 해당 version 회귀
 결과 없이 `true`로 두지 않는다.
