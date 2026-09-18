@@ -1,4 +1,3 @@
-from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID
@@ -7,7 +6,6 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
-from app.core.config import Env
 from app.models.account_deletion_request import AccountDeletionRequest, AccountDeletionRequestStatus
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
 
@@ -16,13 +14,9 @@ WITHDRAWN_PROFILE_NAME = "withdrawn"
 CANDIDATE_CLEANUP_MARKER = "__candidate_cleanup__"
 
 
-CleanupSessionFactory = Callable[[], AsyncSession]
-
-
 class AccountDeletionRequestRepository:
-    def __init__(self, session: AsyncSession, *, cleanup_session_factory: CleanupSessionFactory | None = None) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self.session = session
-        self._cleanup_session_factory = cleanup_session_factory
 
     async def create_pending(self, *, user_id: UUID, requested_at: datetime) -> AccountDeletionRequest:
         request = AccountDeletionRequest(
@@ -100,10 +94,7 @@ class AccountDeletionRequestRepository:
         return request
 
     async def _execute(self, statement: str, **params: object) -> None:
-        await self._execute_with_session(self.session, statement, **params)
-
-    async def _execute_with_session(self, session: AsyncSession, statement: str, **params: object) -> None:
-        await session.execute(text(statement), params)
+        await self.session.execute(text(statement), params)
 
     async def _list_medical_document_object_keys(self, user_id: UUID) -> list[str]:
         result = await self.session.execute(
@@ -134,23 +125,12 @@ class AccountDeletionRequestRepository:
         return object_path
 
     async def _delete_user_owned_runtime_data(self, user_id: UUID) -> None:
-        if self._cleanup_session_factory is None:
-            if config.ENV is not Env.LOCAL and config.ACCOUNT_WITHDRAWAL_REQUEST_ENABLED:
-                raise RuntimeError("Account withdrawal cleanup DB credentials are not configured.")
-            await self._delete_user_owned_runtime_data_with_session(self.session, user_id)
-            return
-
-        async with self._cleanup_session_factory() as cleanup_session:
-            async with cleanup_session.begin():
-                await self._delete_user_owned_runtime_data_with_session(cleanup_session, user_id)
-
-    async def _delete_user_owned_runtime_data_with_session(self, session: AsyncSession, user_id: UUID) -> None:
         params = {"user_id": str(user_id)}
         for statement in USER_DATA_DELETE_STATEMENTS:
             if statement == CANDIDATE_CLEANUP_MARKER:
-                await MedicationCandidateRepository(session).delete_for_account_withdrawal(user_id=user_id)
+                await MedicationCandidateRepository(self.session).delete_for_account_withdrawal(user_id=user_id)
                 continue
-            await self._execute_with_session(session, statement, **params)
+            await self._execute(statement, **params)
 
     async def _anonymize_withdrawn_user(
         self,

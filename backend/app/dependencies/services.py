@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
 from app.core.config import Env
-from app.core.db.databases import AccountWithdrawalCleanupSessionFactory, get_db_session
+from app.core.db.databases import get_db_session
 from app.core.provider_observability import (
     Provider,
     ProviderCallContext,
@@ -150,10 +150,7 @@ def get_account_deletion_request_repository(
         Depends(get_db_session),
     ],
 ) -> AccountDeletionRequestRepository:
-    return AccountDeletionRequestRepository(
-        session,
-        cleanup_session_factory=AccountWithdrawalCleanupSessionFactory,
-    )
+    return AccountDeletionRequestRepository(session)
 
 
 def get_medical_document_repository(

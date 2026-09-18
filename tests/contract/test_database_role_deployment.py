@@ -30,22 +30,12 @@ def test_credentials_and_admin_process_are_separated() -> None:
             or "CATALOG_WRITER_PASSWORD" in str(value)
             for value in environment.values()
         )
-    fastapi = services["fastapi"]
-    assert fastapi["environment"]["ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE"] == "${ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE:-}"
-    assert fastapi["environment"]["ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD"] == (
-        "${ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD:-}"
-    )
-    worker = services["ai-worker"]
-    assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE" not in worker["environment"]
-    assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD" not in worker["environment"]
     provisioner = services["provision-db-roles"]
     assert provisioner["profiles"] == ["database-admin"]
     assert provisioner["restart"] == "no"
     assert provisioner["environment"]["DB_ADMIN_PASSWORD"] == "${DB_ADMIN_PASSWORD}"
     assert provisioner["environment"]["CATALOG_WRITER_USER"] == "${CATALOG_WRITER_USER:-}"
     assert provisioner["environment"]["KNOWLEDGE_INDEX_BUILDER_USER"] == "${KNOWLEDGE_INDEX_BUILDER_USER:-}"
-    assert provisioner["environment"]["ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE"] == "${ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE:-}"
-    assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD" not in provisioner["environment"]
     assert "KNOWLEDGE_INDEX_BUILDER_PASSWORD" not in provisioner["environment"]
     assert "CATALOG_WRITER_PASSWORD" not in provisioner["environment"]
     assert not any("SOURCE_WRITER_PASSWORD" in str(value) for value in provisioner["environment"].values())
@@ -87,11 +77,10 @@ def test_account_deletion_request_runtime_role_updates_only_lifecycle_columns() 
         "last_error_code",
         "updated_at",
     }
-    assert {
+    assert RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES == {
         "action_plan_followup",
         "action_plan_followup_audit",
         "barrier_response",
-        "medication_candidate_search",
         "medication_candidate_search_result",
         "notification_record",
         "password_reset_token",
@@ -100,7 +89,7 @@ def test_account_deletion_request_runtime_role_updates_only_lifecycle_columns() 
         "safety_assessment",
         "support_action_plan",
         "user_consent",
-    } <= RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES
+    }
     assert "account_deletion_request" not in RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES
 
     source = (ROOT / "infra/python/provision_database_roles.py").read_text()
@@ -109,8 +98,8 @@ def test_account_deletion_request_runtime_role_updates_only_lifecycle_columns() 
     assert "GRANT SELECT, INSERT, UPDATE ON TABLE public.account_deletion_request" not in source
     assert re.search(r"GRANT[^\n]*DELETE[^\n]*account_deletion_request", source) is None
     assert "GRANT TRUNCATE ON TABLE public.account_deletion_request" not in source
-    assert "_grant_account_withdrawal_cleanup_permissions(connection, cleanup_sql)" in source
-    assert "_grant_account_withdrawal_cleanup_permissions(connection, runtime_sql)" not in source
+    assert "RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES" in source
+    assert "GRANT SELECT, DELETE ON TABLE public.{quoted_identifier(table)} TO {runtime_sql}" in source
 
 
 def test_retrieval_run_tables_runtime_role_privileges_are_least_privilege() -> None:
@@ -120,7 +109,8 @@ def test_retrieval_run_tables_runtime_role_privileges_are_least_privilege() -> N
         RUNTIME_RETRIEVAL_RUN_TABLES,
     )
 
-    # #689: retrieval_run lifecycle requires SELECT, INSERT, UPDATE; direct DELETE is prohibited.
+    # #689: retrieval_run lifecycle requires SELECT, INSERT, UPDATE.
+    # #748: account withdrawal adds scoped Runtime DELETE for user finalization.
     assert RUNTIME_RETRIEVAL_RUN_TABLES == {"retrieval_run"}
     assert "retrieval_run" not in RUNTIME_MUTABLE_TABLES
     assert "retrieval_run" not in RUNTIME_APPEND_ONLY_TABLES
@@ -137,7 +127,6 @@ def test_retrieval_run_tables_runtime_role_privileges_are_least_privilege() -> N
 
     source = (ROOT / "infra/python/provision_database_roles.py").read_text()
     assert "GRANT SELECT, INSERT, UPDATE ON TABLE public.retrieval_run" in source
-    assert "GRANT DELETE ON TABLE public.retrieval_run" not in source
     assert "GRANT TRUNCATE ON TABLE public.retrieval_run" not in source
     assert "GRANT DELETE ON TABLE public.retrieval_signal" not in source
     assert "GRANT UPDATE ON TABLE public.retrieval_signal" not in source
