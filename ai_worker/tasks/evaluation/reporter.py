@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from ai_worker.tasks.evaluation.answer_metrics import AnswerBootstrapDiagnostic
 from ai_worker.tasks.evaluation.manifest import ReportData
 from ai_worker.tasks.evaluation.schemas.artifacts import (
     ComparisonResult,
@@ -115,6 +116,33 @@ def _retrieval_sections(
     return lines
 
 
+def _answer_bootstrap_sections(
+    diagnostics: Sequence[AnswerBootstrapDiagnostic],
+) -> list[str]:
+    lines = [
+        "",
+        "## Answer Correctness Bootstrap Diagnostics",
+        "",
+        "| Partition | Slice | Total | Valid | Excluded | Valid Ratio | Minimum Valid Ratio |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    sorted_diagnostics = sorted(
+        diagnostics,
+        key=lambda item: (
+            item.partition.value.encode("utf-16-be"),
+            item.slice_id.encode("utf-16-be"),
+            item.metric_id.encode("utf-16-be"),
+        ),
+    )
+    for diag in sorted_diagnostics:
+        lines.append(
+            f"| {diag.partition.value} | {diag.slice_id} | {diag.total_replicates} | "
+            f"{diag.valid_replicates} | {diag.excluded_replicates} | {diag.valid_replicate_ratio} | "
+            f"{diag.minimum_valid_replicate_ratio} |"
+        )
+    return lines
+
+
 def render_report(
     report_data: ReportData,
     metrics: MetricResults,
@@ -125,6 +153,7 @@ def render_report(
     *,
     baseline_variant_id: str | None = None,
     baseline_metrics: MetricResults | None = None,
+    answer_bootstrap_diagnostics: Sequence[AnswerBootstrapDiagnostic] = (),
 ) -> bytes:
     if comparison is not None and (not baseline_variant_id or baseline_metrics is None or not baseline_metrics.metrics):
         raise ValueError("comparison requires complete baseline report context")
@@ -190,6 +219,8 @@ def render_report(
         )
     if report_data.experiment_type.value == "KNOWLEDGE_RETRIEVAL":
         lines.extend(_retrieval_sections(report_data, metrics, comparison, baseline_variant_id, baseline_metrics))
+    if answer_bootstrap_diagnostics:
+        lines.extend(_answer_bootstrap_sections(answer_bootstrap_diagnostics))
     lines.extend(["", "## Machine Artifacts", ""])
     lines.extend(f"- `{entry.relative_path}` `{entry.sha256}`" for entry in entries)
     return ("\n".join(lines) + "\n").encode("utf-8")
