@@ -75,8 +75,8 @@ class ValidatedAnswerJudgments:
         return True
 
 
-def _read_artifact_bytes(path: Path, evals_root: Path | None = None) -> bytes:
-    resolved_root = Path(os.path.abspath(evals_root)) if evals_root is not None else Path(os.path.abspath(path.parent))
+def _read_artifact_bytes(path: Path, evals_root: Path) -> bytes:
+    resolved_root = Path(os.path.abspath(evals_root))
     safe_path = safe_path_under_root(resolved_root, Path(os.path.abspath(path)))
     try:
         return safe_path.read_bytes()
@@ -207,12 +207,12 @@ def load_answer_human_judgment(
     judgment_path: Path | str,
     approval_path: Path | str,
     *,
+    evals_root: Path,
     dataset: ValidatedDataset,
     expected_run_id: str,
     expected_variant_id: AnswerVariantId | str,
     expected_answer_variant_manifest_hash: str,
     resolved_approval_evidence: ResolvedJudgmentApprovalEvidence | None = None,
-    evals_root: Path | None = None,
     judgment_bytes: bytes | None = None,
     approval_bytes: bytes | None = None,
 ) -> ValidatedAnswerJudgments:
