@@ -141,6 +141,61 @@ def test_auth_smoke_requires_explicit_test_credentials(monkeypatch) -> None:
         raise AssertionError("missing auth smoke credential should fail")
 
 
+def test_schedule_smoke_imports_with_minimal_locust_stub(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    monkeypatch.setenv("LOAD_TEST_SCHEDULE_DATE", "2026-09-18")
+    monkeypatch.setenv("LOAD_TEST_SCHEDULE_DETAIL_LIMIT", "2")
+
+    module = _load_load_test_module("issue_743_schedule_smoke", "schedule_smoke.py")
+
+    assert module.LOGIN_PATH == "/api/v1/auth/login"
+    assert module.MEDICATION_OCCURRENCES_PATH == "/api/v1/medication-occurrences"
+    assert module._configured_schedule_date() == "2026-09-18"
+    assert module._configured_detail_limit() == 2
+    assert module._access_token_from_response({"access_token": "token"}) == "token"
+    assert module._occurrence_id({"occurrence_id": "occurrence-1"}) == "occurrence-1"
+    assert module._auth_headers("token") == {
+        "Authorization": "Bearer token",
+        "Accept": "application/json",
+    }
+
+
+def test_schedule_smoke_rejects_invalid_configuration(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    monkeypatch.setenv("LOAD_TEST_SCHEDULE_DATE", "2026/09/18")
+    monkeypatch.setenv("LOAD_TEST_SCHEDULE_DETAIL_LIMIT", "21")
+
+    module = _load_load_test_module("issue_743_schedule_smoke_invalid", "schedule_smoke.py")
+
+    try:
+        module._configured_schedule_date()
+    except RuntimeError as exc:
+        assert "YYYY-MM-DD" in str(exc)
+    else:
+        raise AssertionError("invalid schedule date should fail")
+
+    try:
+        module._configured_detail_limit()
+    except RuntimeError as exc:
+        assert "between 0 and 20" in str(exc)
+    else:
+        raise AssertionError("invalid detail limit should fail")
+
+
+def test_schedule_smoke_requires_explicit_test_credentials(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    monkeypatch.delenv("LOAD_TEST_AUTH_EMAIL", raising=False)
+
+    module = _load_load_test_module("issue_743_schedule_smoke_missing_env", "schedule_smoke.py")
+
+    try:
+        module._required_env("LOAD_TEST_AUTH_EMAIL")
+    except RuntimeError as exc:
+        assert "LOAD_TEST_AUTH_EMAIL" in str(exc)
+    else:
+        raise AssertionError("missing schedule smoke credential should fail")
+
+
 def test_ocr_worker_smoke_imports_with_minimal_locust_stub(monkeypatch) -> None:
     _install_locust_stub(monkeypatch)
 

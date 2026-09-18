@@ -8,6 +8,7 @@ REQUIRED_FILES = (
     "load_tests/locustfile.py",
     "load_tests/auth_smoke.py",
     "load_tests/ocr_worker_smoke.py",
+    "load_tests/schedule_smoke.py",
     "load_tests/README.md",
     "docs/testing/load-testing-627.md",
 )
@@ -31,10 +32,21 @@ REQUIRED_SNIPPETS = {
         "LOAD_TEST_OCR_MAX_WAIT_SECONDS",
         "ai-one-cycle-clova-openai-v1.json",
     ),
+    "load_tests/schedule_smoke.py": (
+        'LOGIN_PATH = "/api/v1/auth/login"',
+        'MEDICATION_OCCURRENCES_PATH = "/api/v1/medication-occurrences"',
+        "LOAD_TEST_SCHEDULE_DATE",
+        "LOAD_TEST_SCHEDULE_DETAIL_LIMIT",
+        "schedule-smoke:occurrence-medication",
+    ),
     "load_tests/README.md": (
         "uvx locust",
         "Auth Baseline Smoke Command",
         "LOAD_TEST_AUTH_INCLUDE_REFRESH=true",
+        "Medication schedule read smoke",
+        "LOAD_TEST_SCHEDULE_DATE",
+        "Medication Schedule Read Smoke Command",
+        "LOAD_TEST_SCHEDULE_DATE",
         "API-specific scenarios",
         "OCR / Worker Smoke Command",
         "Do not use `/api/v1/health`",
@@ -45,6 +57,8 @@ REQUIRED_SNIPPETS = {
         "OCR / Worker Minimum Smoke",
         "Production capacity claim",
         "LOAD_TEST_AUTH_INCLUDE_REFRESH=true",
+        "Medication schedule read smoke",
+        "LOAD_TEST_SCHEDULE_DATE",
     ),
 }
 
