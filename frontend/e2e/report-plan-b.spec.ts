@@ -83,7 +83,7 @@ test('[REPORT-420] 7일·30일과 진료 보기가 같은 서버 집계를 표�
   await page.goto('/report')
 
   await expect(page.getByText('85.7%')).toBeVisible()
-  await expect(page.getByText('93.3%')).toHaveCount(0)
+  await expect(page.getByText('93.3%')).toBeVisible()
   await expect(page.getByText('12회', { exact: true })).toBeVisible()
   await expect(page.getByText('2회', { exact: true })).toBeVisible()
   await expect(page.getByText('1회', { exact: true })).toBeVisible()
@@ -101,7 +101,7 @@ test('[REPORT-420] 7일·30일과 진료 보기가 같은 서버 집계를 표�
   await page.getByRole('button', { name: '진료 시 보여주기' }).click()
   await expect(page).toHaveURL(/\/report\/clinic\?period=30/)
   await expect(page.getByText('85.7%')).toBeVisible()
-  await expect(page.getByText('93.3%')).toHaveCount(0)
+  await expect(page.getByText('93.3%')).toBeVisible()
   await expect(page.getByRole('button', { name: '미확인 기록 보완' })).toHaveCount(0)
   expect(api.reportRequests).toBeGreaterThanOrEqual(2)
 })

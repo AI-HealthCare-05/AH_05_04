@@ -115,8 +115,15 @@ describe('Plan B 복약 리포트', () => {
     ).toBeTruthy()
     expect(screen.getByText('복용 77회 ÷ 확인된 기록 88회')).toBeTruthy()
     // confirmation_rate 는 REPORT-01 화면에 별도 카드로 노출하지 않는다.
-    expect(screen.queryByText('기록 확인률')).toBeNull()
-    expect(screen.queryByText('45.6%')).toBeNull()
+    expect(
+      screen.getByText('기록 확인률', { exact: false }),
+    ).toBeTruthy()
+
+    expect(
+      screen.getByText('45.6%', { exact: false }),
+    ).toBeTruthy()
+
+    expect(screen.queryByText('오늘 남은 일정')).toBeNull()
     // counts 3종은 compact summary 로 계속 표시한다.
     const countNames = screen
       .getAllByRole('listitem')
@@ -147,7 +154,7 @@ describe('Plan B 복약 리포트', () => {
       }),
     })
     renderPage()
-    expect((await screen.findAllByText('계산할 기록 없음')).length).toBe(1)
+    expect((await screen.findAllByText('계산할 기록 없음')).length).toBe(2)
     expect(screen.queryByText('0%')).toBeNull()
     expect(screen.getByText('복용 0회 ÷ 확인된 기록 0회')).toBeTruthy()
     expect(screen.queryByText('0%')).toBeNull()
@@ -161,7 +168,7 @@ describe('Plan B 복약 리포트', () => {
       }),
     })
     renderPage()
-    expect((await screen.findAllByText('계산할 기록 없음')).length).toBe(1)
+    expect((await screen.findAllByText('계산할 기록 없음')).length).toBe(2)
     expect(screen.queryByText('0%')).toBeNull()
   })
 
@@ -186,9 +193,10 @@ describe('Plan B 복약 리포트', () => {
       screen.getByRole('heading', { name: '복약 상태 요약' }),
     ).toBeTruthy()
     expect(screen.getAllByText('0회')).toHaveLength(3)
-        expect(screen.getAllByText('계산할 기록 없음')).toHaveLength(1)
-    expect(screen.queryByText('기록 확인률')).toBeNull()
-    expect(screen.queryByText('0%')).toBeNull()
+    expect(screen.getByText('기록 확인률')).toBeTruthy()
+    expect(screen.getAllByText('계산할 기록 없음')).toHaveLength(2)
+    expect(screen.queryByText('오늘 남은 일정')).toBeNull()
+
   })
 
   it('계약에 없는 추이를 임의 생성하지 않고 서버 기록만 표시한다', async () => {
@@ -243,8 +251,15 @@ describe('Plan B 복약 리포트', () => {
       screen.getByRole('heading', { name: '확인된 기록' }),
     ).toBeTruthy()
 
-    expect(screen.queryByText('기록 확인률')).toBeNull()
-    expect(screen.queryByText('45.6%')).toBeNull()
+    expect(
+      screen.getByText('기록 확인률', { exact: false }),
+    ).toBeTruthy()
+
+    expect(
+      screen.getByText('45.6%', { exact: false }),
+    ).toBeTruthy()
+
+    expect(screen.queryByText('오늘 남은 일정')).toBeNull()
 
     expect(getMedicationReport).toHaveBeenCalledWith(30)
 

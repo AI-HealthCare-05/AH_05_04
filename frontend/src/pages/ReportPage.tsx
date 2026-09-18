@@ -104,7 +104,44 @@ function AdherenceRateCard({ rate }: { rate: MedicationReportRate }) {
     </article>
   )
 }
+function ConfirmationRateCard({
+  rate,
+}: {
+  rate: MedicationReportRate
+}) {
+  const hasDenominator =
+    rate.denominator > 0 && rate.percentage !== null
 
+  return (
+    <article
+      className="report-rate-card"
+      aria-label="기록 확인률"
+    >
+      <h3>기록 확인률</h3>
+
+      {hasDenominator ? (
+        <strong className="report-rate-card__value">
+          <span className="sr-only">분자 </span>
+          {rate.numerator}
+          <span aria-hidden="true"> / </span>
+          <span className="sr-only">분모 </span>
+          {rate.denominator}회
+          <span aria-hidden="true"> · </span>
+          {rate.percentage}%
+        </strong>
+      ) : (
+        <strong className="report-rate-card__empty">
+          계산할 기록 없음
+        </strong>
+      )}
+
+      <p className="report-rate-card__basis">
+        확인된 기록 {rate.numerator}회 ÷ 확인 대상 기록{' '}
+        {rate.denominator}회
+      </p>
+    </article>
+  )
+}
 function ReportSummary({
   report,
   clinic,
@@ -116,6 +153,10 @@ function ReportSummary({
   const hasAdherenceRate =
     report.adherence_rate.denominator > 0 &&
     report.adherence_rate.percentage !== null
+
+  const hasConfirmationRate =
+    report.confirmation_rate.denominator > 0 &&
+    report.confirmation_rate.percentage !== null
 
   return (
     <>
@@ -149,7 +190,17 @@ function ReportSummary({
               복용률 계산할 기록 없음
             </strong>
           )}
-
+          {hasConfirmationRate ? (
+            <strong className="report-clinic-summary__rate">
+              기록 확인률 {report.confirmation_rate.percentage}% (
+              {report.confirmation_rate.numerator} /{' '}
+              {report.confirmation_rate.denominator}회)
+            </strong>
+          ) : (
+            <strong className="report-clinic-summary__empty">
+              기록 확인률 계산할 기록 없음
+            </strong>
+          )}
           <p className="report-clinic-summary__sub">
             미복용 {counts.not_taken_count}회
           </p>
@@ -163,6 +214,7 @@ function ReportSummary({
 
           <div className="report-rates">
             <AdherenceRateCard rate={report.adherence_rate} />
+            <ConfirmationRateCard rate={report.confirmation_rate} />
           </div>
         </section>
       )}
@@ -292,23 +344,6 @@ function ReportSummary({
               {counts.unconfirmed_count}회
             </b>
           </li>
-
-          {clinic && (
-            <li className="report-count report-count--pending">
-              <span
-                className="report-count__icon"
-                aria-hidden="true"
-              >
-                ○
-              </span>
-              <span className="report-count__name">
-                오늘 남은 일정
-              </span>
-              <b className="report-count__value">
-                {counts.pending_count}회
-              </b>
-            </li>
-          )}
         </ul>
       </section>
     </>

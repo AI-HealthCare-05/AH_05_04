@@ -431,7 +431,7 @@
 }
 
 .report-counts--clinic {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0;
   padding: 18px;
   border: 1px solid #dfe6ee;
