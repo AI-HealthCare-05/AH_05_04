@@ -273,6 +273,35 @@ GuideClaimCitationStage    : CARD_NOT_ELIGIBLE | CARD_PROJECTION | CLAIM_CITATIO
 support assessment와 receipt tuple은 candidate set의 total deterministic function이라
 독립적으로 실패할 수 없다.
 
+**이것은 이후 Claim/Citation validator가 실패하지 않는다는 뜻이 아니다.**
+NFC가 아닌 `claim_key`, 빈 `claim_key`, duplicate `claim_key` 등 generic
+Claim/Citation identity 위반은 기존 `validate_claim_citations()`가 계속 소유하며,
+이 adapter는 그 검증을 복제하지 않고 `GuidelineClaim.claim_key`를 그대로 projection
+한다. 같은 규칙에 소유자가 둘이 되면 서로 어긋날 수 있기 때문이다. 이 경우 실행은
+projection과 support receipt 생성까지 정상 진행한 뒤:
+
+```text
+decision      = STOPPED
+stopped_stage = CLAIM_CITATION_VALIDATION
+candidate_set / support_receipts / validation_outcome = 보존
+validated_selection = None
+```
+
+으로 fail closed한다. claim key를 normalize하거나 duplicate claim을
+`CARD_PROJECTION`에서 조용히 제거·수정하지 않는다. 회귀 테스트:
+`test_non_nfc_claim_key_is_rejected_by_the_existing_validator_not_by_projection`,
+`test_duplicate_claim_key_is_rejected_by_the_existing_validator_without_silent_dedup`.
+
+#794 Guide projection은 이미 검증된 Guideline Card, Guideline Evidence Binding,
+binding verifier, upstream authoritative handoff를 support authority로 사용하므로
+`ClaimSupportStatus.SUPPORTED`만 발급한다. 따라서 generic `claim_citation_validator`의
+`MEDICAL_CLAIM_NOT_SUPPORTED` / `CLAIM_NOT_SUPPORTED` 같은 unsupported
+support-status branch는 현재 Guide adapter를 통해서는 구조적으로 도달하지 않는다.
+이는 해당 branch를 제거한다는 뜻이 아니다 — 다른 candidate producer가 같은 generic
+kernel을 소비할 수 있으므로 kernel capability는 그대로 유지한다. #794는 새로운 NLI나
+semantic support 판정을 수행하지 않는다. 회귀 테스트:
+`test_guide_projection_only_issues_supported_claim_assertions`.
+
 Outcome은 `guide_outcome`, `candidate_set`, `support_receipts`,
 `validation_outcome`, `validated_selection`, `stopped_stage`를 보존한다.
 `PASS | LIMITED | REJECTED | STALE` 같은 공개 runtime 상태는 만들지 않는다.

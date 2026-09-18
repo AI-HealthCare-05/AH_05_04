@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import unicodedata
 from dataclasses import replace
 
 import pytest
@@ -22,6 +23,7 @@ from ai_worker.tasks.rag import guide_claim_citation_validation
 from ai_worker.tasks.rag.claim_citation_validator import (
     CandidateValidationDecision,
     CandidateValidationExecutionStatus,
+    CandidateValidationReason,
     CitationSourceType,
     ClaimKind,
     ClaimSupportStatus,
@@ -589,8 +591,119 @@ def test_a_foreign_request_is_rejected_rather_than_silently_projected() -> None:
         run_guide_claim_citation_validation(object())  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    "guide_outcome_factory",
+    [single_citation_outcome, multi_citation_outcome, two_claim_outcome],
+)
+def test_guide_projection_only_issues_supported_claim_assertions(guide_outcome_factory) -> None:
+    """The Guide adapter's support status is structurally fixed at SUPPORTED.
+
+    Support here is not a semantic entailment judgement. It rests on artifacts that
+    were already verified upstream — the Guideline Card, its Guideline Evidence
+    Binding, that binding's verifier and the #760 authoritative handoff provenance —
+    and this module performs no NLI or classification of its own.
+
+    The enum membership is asserted deliberately: the generic kernel supports four
+    statuses, and pinning that list here documents that #794 produces exactly one of
+    them. The other three, and therefore the kernel's MEDICAL_CLAIM_NOT_SUPPORTED and
+    CLAIM_NOT_SUPPORTED branches, are unreachable through this adapter. That is a
+    reachability statement about #794, not a reason to remove the branches: other
+    candidate producers consume the same kernel.
+    """
+    assert set(ClaimSupportStatus) == {
+        ClaimSupportStatus.SUPPORTED,
+        ClaimSupportStatus.PARTIALLY_SUPPORTED,
+        ClaimSupportStatus.CONTRADICTED,
+        ClaimSupportStatus.NOT_SUPPORTED,
+    }
+
+    outcome = run(guide_outcome_factory())
+
+    assert outcome.candidate_set is not None
+    assert outcome.support_receipts is not None
+    projected_statuses = {claim.support_assertion.support_status for claim in outcome.candidate_set.claims}
+    assert projected_statuses == {ClaimSupportStatus.SUPPORTED}
+    assert {receipt.support_status for receipt in outcome.support_receipts} == {ClaimSupportStatus.SUPPORTED}
+
+
 # ==============================================================================
-# F. Source-level guards
+# F. Generic claim identity stays the existing validator's job
+#
+# `_project_candidate_set()` copies `GuidelineClaim.claim_key` through untouched. NFC
+# form, blankness and uniqueness of a claim key are generic candidate-set properties
+# that `validate_claim_citations()` already owns, and duplicating those checks in this
+# adapter would give the same rule two owners that can drift apart.
+#
+# Both fixtures below rewrite the Card's claims directly rather than going through the
+# Generator: the #179 finalizer's own draft-shape check rejects a non-NFC or duplicate
+# `claim_key`, so no such draft can ever become a GENERATED Card. Handing the Card to
+# this module directly is the only way to reach the downstream owner, which is exactly
+# what these tests are for. The rewritten Card's `artifact_ref` no longer matches its
+# claims, which is immaterial here — verifying the Card self-hash is the finalizer's
+# job, not this module's.
+# ==============================================================================
+
+
+def _with_card_claims(guide_outcome: GuideGenerationCardOutcome, claims) -> GuideGenerationCardOutcome:
+    assert guide_outcome.card_outcome is not None
+    card = guide_outcome.card_outcome.card
+    assert card is not None
+    return replace(
+        guide_outcome,
+        card_outcome=replace(guide_outcome.card_outcome, card=replace(card, claims=claims)),
+    )
+
+
+def test_non_nfc_claim_key_is_rejected_by_the_existing_validator_not_by_projection() -> None:
+    guide_outcome = single_citation_outcome()
+    claim = card_of(guide_outcome).claims[0]
+    decomposed = unicodedata.normalize("NFD", "복약-클레임-1")
+    assert not unicodedata.is_normalized("NFC", decomposed)
+    rewritten = _with_card_claims(guide_outcome, (replace(claim, claim_key=decomposed),))
+
+    outcome = run(rewritten)
+
+    # Projection ran and is preserved: the key was carried through, not normalized.
+    assert outcome.candidate_set is not None
+    assert outcome.candidate_set.claims[0].claim_key == decomposed
+    assert outcome.support_receipts is not None
+    assert len(outcome.support_receipts) == 1
+
+    assert outcome.decision is GuideClaimCitationDecision.STOPPED
+    assert outcome.stopped_stage is GuideClaimCitationStage.CLAIM_CITATION_VALIDATION
+    assert outcome.validation_outcome is not None
+    assert outcome.validation_outcome.execution_status is CandidateValidationExecutionStatus.VALIDATION_ERROR
+    assert outcome.validation_outcome.decision is CandidateValidationDecision.REJECTED
+    assert CandidateValidationReason.REQUEST_INVALID in outcome.validation_outcome.reasons
+    assert outcome.validated_selection is None
+
+
+def test_duplicate_claim_key_is_rejected_by_the_existing_validator_without_silent_dedup() -> None:
+    guide_outcome = two_claim_outcome()
+    first, second = card_of(guide_outcome).claims
+    assert first.claim_key != second.claim_key
+    rewritten = _with_card_claims(guide_outcome, (first, replace(second, claim_key=first.claim_key)))
+
+    outcome = run(rewritten)
+
+    # Both claims survive projection. Neither is dropped, merged or renamed.
+    assert outcome.candidate_set is not None
+    assert [claim.claim_key for claim in outcome.candidate_set.claims] == [first.claim_key, first.claim_key]
+    assert len(outcome.candidate_set.citations) == 2
+    assert outcome.support_receipts is not None
+    assert len(outcome.support_receipts) == 2
+
+    assert outcome.decision is GuideClaimCitationDecision.STOPPED
+    assert outcome.stopped_stage is GuideClaimCitationStage.CLAIM_CITATION_VALIDATION
+    assert outcome.validation_outcome is not None
+    assert outcome.validation_outcome.execution_status is CandidateValidationExecutionStatus.VALIDATION_ERROR
+    assert outcome.validation_outcome.decision is CandidateValidationDecision.REJECTED
+    assert CandidateValidationReason.CLAIM_IDENTITY_INVALID in outcome.validation_outcome.reasons
+    assert outcome.validated_selection is None
+
+
+# ==============================================================================
+# G. Source-level guards
 # ==============================================================================
 
 _MODULE_PATH = pathlib.Path(guide_claim_citation_validation.__file__)
