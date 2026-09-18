@@ -118,7 +118,12 @@ async def repository_schema() -> AsyncIterator[None]:
                     normalization_version VARCHAR(30),
                     confirmed_value VARCHAR(1000),
                     confirmation_status VARCHAR(20) NOT NULL,
-                    confirmed_at TIMESTAMPTZ
+                    confirmed_at TIMESTAMPTZ,
+                    source_page INTEGER,
+                    source_bbox_x NUMERIC(10, 2),
+                    source_bbox_y NUMERIC(10, 2),
+                    source_bbox_width NUMERIC(10, 2),
+                    source_bbox_height NUMERIC(10, 2)
                 )
                 """
             )
