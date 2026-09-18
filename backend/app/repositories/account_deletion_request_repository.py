@@ -176,12 +176,13 @@ class AccountDeletionRequestRepository:
         result = await self.session.execute(
             text(
                 """
-                SELECT object_key
-                  FROM medical_document
-                 WHERE uploaded_by = :user_id
-                   AND object_key IS NOT NULL
-                   AND trim(object_key) <> ''
-                 ORDER BY object_key, id
+                SELECT object_key FROM medical_document
+                 WHERE uploaded_by = :user_id AND object_key IS NOT NULL AND trim(object_key) <> ''
+                UNION
+                SELECT normalized_object_key FROM medical_document
+                 WHERE uploaded_by = :user_id AND normalized_object_key IS NOT NULL
+                   AND trim(normalized_object_key) <> ''
+                 ORDER BY object_key
                 """
             ),
             {"user_id": str(user_id)},

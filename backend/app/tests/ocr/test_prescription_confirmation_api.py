@@ -16,6 +16,7 @@ from app.models.ocr import ExtractedField, FieldType, OcrJob, OcrStatus
 from app.repositories.async_job_repository import AsyncJobRepository
 from app.services.ocr_engine import RecognizedField
 from app.tests.helpers.auth import signup_verified_user
+from app.tests.helpers.images import synthetic_jpeg
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 
@@ -123,7 +124,7 @@ async def _upload_and_prepare_ocr(
     headers = {"Authorization": f"Bearer {access_token}"}
     upload_response = await client.post(
         "/api/v1/documents",
-        files={"file": ("prescription.jpg", JPEG_SIGNATURE + b"fake-jpeg", "image/jpeg")},
+        files={"file": ("prescription.jpg", synthetic_jpeg(), "image/jpeg")},
         headers=headers,
     )
     assert upload_response.status_code == status.HTTP_201_CREATED

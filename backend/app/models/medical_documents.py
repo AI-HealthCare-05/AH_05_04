@@ -3,7 +3,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, Enum, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, Enum, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -39,6 +39,14 @@ class MedicalDocument(Base):
             name="chk_document_failed_error",
         ),
         CheckConstraint("file_size_bytes > 0", name="chk_document_file_size"),
+        CheckConstraint(
+            "(normalized_object_key IS NULL AND normalized_width IS NULL AND normalized_height IS NULL) OR "
+            "(normalized_object_key IS NOT NULL AND length(trim(normalized_object_key)) > 0 "
+            "AND normalized_width IS NOT NULL AND normalized_width > 0 "
+            "AND normalized_height IS NOT NULL AND normalized_height > 0 "
+            "AND file_mime_type IN ('image/jpeg', 'image/png'))",
+            name="chk_document_normalized_image",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -51,6 +59,9 @@ class MedicalDocument(Base):
     )
     original_file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     object_key: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    normalized_object_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    normalized_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    normalized_height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     file_mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     upload_status: Mapped[UploadStatus] = mapped_column(

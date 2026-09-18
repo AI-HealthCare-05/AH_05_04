@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import String, column, select, table
+from sqlalchemy import String, case, column, func, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_worker.tasks.ocr.handler import OcrDomainInput
@@ -18,6 +18,7 @@ _MEDICAL_DOCUMENT = table(
     "medical_document",
     column("id", String(36)),
     column("object_key", String(500)),
+    column("normalized_object_key", String(500)),
     column("file_mime_type", String(100)),
 )
 
@@ -41,8 +42,13 @@ class SqlAlchemyOcrInputRepository:
 
         statement = (
             select(
-                _MEDICAL_DOCUMENT.c.object_key,
-                _MEDICAL_DOCUMENT.c.file_mime_type,
+                func.coalesce(_MEDICAL_DOCUMENT.c.normalized_object_key, _MEDICAL_DOCUMENT.c.object_key).label(
+                    "object_key"
+                ),
+                case(
+                    (_MEDICAL_DOCUMENT.c.normalized_object_key.is_not(None), "image/png"),
+                    else_=_MEDICAL_DOCUMENT.c.file_mime_type,
+                ).label("file_mime_type"),
             )
             .select_from(
                 _OCR_JOB.join(

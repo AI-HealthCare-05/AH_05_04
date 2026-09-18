@@ -109,6 +109,9 @@ async def test_execute_ocr_converts_engine_error_and_marks_job_failed(
         SimpleNamespace(
             id=document_id,
             object_key="prescription.png",
+            normalized_object_key=None,
+            normalized_width=None,
+            normalized_height=None,
             file_mime_type="image/png",
         ),
     )
@@ -268,7 +271,14 @@ async def test_execute_ocr_validation_failure_does_not_expose_recognized_content
     user = cast(User, SimpleNamespace(id=uuid4()))
     document = cast(
         MedicalDocument,
-        SimpleNamespace(id=document_id, object_key="prescription.png", file_mime_type="image/png"),
+        SimpleNamespace(
+            id=document_id,
+            object_key="prescription.png",
+            normalized_object_key=None,
+            normalized_width=None,
+            normalized_height=None,
+            file_mime_type="image/png",
+        ),
     )
     job = cast(OcrJob, SimpleNamespace(id=uuid4()))
     document_repository_mock = AsyncMock(spec=MedicalDocumentRepository)
@@ -319,7 +329,9 @@ async def test_get_ocr_job_result_exposes_safe_error_message() -> None:
         SimpleNamespace(
             id=job_id,
             document_id=document_id,
-            document=SimpleNamespace(user_id=user_id),
+            document=SimpleNamespace(
+                user_id=user_id, normalized_object_key=None, normalized_width=None, normalized_height=None
+            ),
             ocr_status=OcrStatus.FAILED,
             error_code="OCR_PROVIDER_TIMEOUT",
             error_message=safe_error_message,

@@ -145,3 +145,13 @@ async def get_prescription_document_file(
         filename=result.filename,
         media_type=result.media_type,
     )
+
+
+@medical_document_router.get("/{document_id}/normalized-file", response_class=FileResponse)
+async def get_normalized_document_file(
+    document_id: UUID,
+    user: Annotated[User, Depends(get_request_user)],
+    medical_document_service: Annotated[MedicalDocumentService, Depends(get_medical_document_service)],
+) -> FileResponse:
+    result = await medical_document_service.get_normalized_document_file(user=user, document_id=document_id)
+    return FileResponse(path=result.file_path, filename=result.filename, media_type=result.media_type)

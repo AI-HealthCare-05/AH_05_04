@@ -1013,3 +1013,6 @@ hydration 이후 채워지므로 단독으로는 과거 selection의 불변 bind
 제공하고 latest/CURRENT fallback을 두지 않는다. 정책은
 [PD-722](governance/decisions/2026-09-17-evidence-assessment-validity.md)를 따르며 Current 승격과
 후속 Assessment·Eligibility Authority Reader 연결은 별도다.
+
+
+#809 OCR 정규화 이미지의 API·DB 변경은 [정규화 이미지 계약](contracts/current/ocr-normalized-image.md)을 참조합니다.
