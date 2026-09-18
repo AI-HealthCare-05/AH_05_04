@@ -242,6 +242,24 @@ def _build_answer_metrics(
     )
 
 
+def _build_answer_metrics_with_diagnostics(
+    dataset: ValidatedDataset,
+    results: tuple[CaseResult, ...],
+    human_judgments: ValidatedAnswerJudgments | None = None,
+) -> AnswerMetricBuildResult:
+    return build_answer_metrics_with_diagnostics(
+        dataset,
+        results,
+        expected_run_id=RUN_ID,
+        expected_input_sha256_by_case={
+            case.case_id: case.input_sha256
+            for case in dataset.cases
+            if case.task_type.value == "ANSWER_QUALITY" and case.partition is Partition.DEV
+        },
+        human_judgments=human_judgments,
+    )
+
+
 def _make_validated_judgments(
     judgments_by_case: Mapping[str, ValidatedCaseJudgment] | None = None,
 ) -> ValidatedAnswerJudgments:
@@ -729,7 +747,7 @@ def test_answer_correctness_handles_mixed_zero_claim_cases() -> None:
         }
     )
 
-    build_result = build_answer_metrics_with_diagnostics(
+    build_result = _build_answer_metrics_with_diagnostics(
         dataset,
         results,
         human_judgments=judgments,
@@ -777,7 +795,7 @@ def test_answer_correctness_all_zero_claims_inconclusive() -> None:
         }
     )
 
-    build_result = build_answer_metrics_with_diagnostics(
+    build_result = _build_answer_metrics_with_diagnostics(
         dataset,
         results,
         human_judgments=judgments,
@@ -869,7 +887,7 @@ def test_answer_correctness_valid_replicate_ratio_below_minimum() -> None:
         )
     judgments = _make_validated_judgments(judgments_by_case)
 
-    build_result = build_answer_metrics_with_diagnostics(
+    build_result = _build_answer_metrics_with_diagnostics(
         dataset,
         results,
         human_judgments=judgments,
@@ -902,7 +920,7 @@ def test_answer_correctness_algorithm_signature_rejects_invalid_ratio(invalid_ra
     base_dataset = dataset_with_answer_scopes()
     policy = base_dataset.comparison_policy.model_copy(update={"scopes": (invalid_scope,)})
     dataset = replace(base_dataset, comparison_policy=policy)
-    results = build_answer_metrics(dataset, completed_answer_results(), human_judgments=_make_validated_judgments())
+    results = _build_answer_metrics(dataset, completed_answer_results(), human_judgments=_make_validated_judgments())
     res = metric(results, "ANSWER_CORRECTNESS")
     assert res.execution_status.value == "NOT_IMPLEMENTED"
 
@@ -914,7 +932,7 @@ def test_answer_correctness_algorithm_signature_rejects_missing_ratio() -> None:
     invalid_scope = scope.model_copy(update={"ci_parameters": params})
 
     dataset = dataset_with_answer_scopes(invalid_scope)
-    results = build_answer_metrics(dataset, completed_answer_results(), human_judgments=_make_validated_judgments())
+    results = _build_answer_metrics(dataset, completed_answer_results(), human_judgments=_make_validated_judgments())
     res = metric(results, "ANSWER_CORRECTNESS")
     assert res.execution_status.value == "NOT_IMPLEMENTED"
 
@@ -926,7 +944,7 @@ def test_relevance_algorithm_signature_rejects_extra_replicate_ratio() -> None:
     invalid_scope = scope.model_copy(update={"ci_parameters": params})
 
     dataset = dataset_with_answer_scopes(invalid_scope)
-    results = build_answer_metrics(dataset, completed_answer_results(), human_judgments=_make_validated_judgments())
+    results = _build_answer_metrics(dataset, completed_answer_results(), human_judgments=_make_validated_judgments())
     res = metric(results, "RELEVANCE")
     assert res.execution_status.value == "NOT_IMPLEMENTED"
 
@@ -934,9 +952,73 @@ def test_relevance_algorithm_signature_rejects_extra_replicate_ratio() -> None:
 def test_build_answer_metrics_compatibility_wrapper() -> None:
     dataset = dataset_with_answer_scopes(_scope("ANSWER_CORRECTNESS", "CLAIM"))
     judgments = _make_validated_judgments()
-    detailed = build_answer_metrics_with_diagnostics(dataset, completed_answer_results(), human_judgments=judgments)
-    wrapped = build_answer_metrics(dataset, completed_answer_results(), human_judgments=judgments)
+    expected_inputs = {
+        case.case_id: case.input_sha256
+        for case in dataset.cases
+        if case.task_type.value == "ANSWER_QUALITY" and case.partition is Partition.DEV
+    }
+    detailed = build_answer_metrics_with_diagnostics(
+        dataset,
+        completed_answer_results(),
+        expected_run_id=RUN_ID,
+        expected_input_sha256_by_case=expected_inputs,
+        human_judgments=judgments,
+    )
+    wrapped = build_answer_metrics(
+        dataset,
+        completed_answer_results(),
+        expected_run_id=RUN_ID,
+        expected_input_sha256_by_case=expected_inputs,
+        human_judgments=judgments,
+    )
 
     assert isinstance(detailed, AnswerMetricBuildResult)
     assert wrapped == detailed.metrics
     assert all(isinstance(diag, AnswerBootstrapDiagnostic) for diag in detailed.bootstrap_diagnostics)
+
+
+def test_answer_metrics_rejects_foreign_run_id_even_if_internally_consistent() -> None:
+    dataset = dataset_with_answer_scopes()
+    foreign_run_id = "15900000-0000-4000-8000-000000000099"
+    results = tuple(r.model_copy(update={"run_id": foreign_run_id}) for r in completed_answer_results())
+    expected_inputs = {
+        case.case_id: case.input_sha256
+        for case in dataset.cases
+        if case.task_type.value == "ANSWER_QUALITY" and case.partition is Partition.DEV
+    }
+
+    metrics = build_answer_metrics(
+        dataset,
+        results,
+        expected_run_id=RUN_ID,
+        expected_input_sha256_by_case=expected_inputs,
+    )
+    assert {result.execution_status.value for result in metrics.metrics} == {"INVALID"}
+
+
+def test_answer_metrics_rejects_mismatched_expected_input_sha256() -> None:
+    dataset = dataset_with_answer_scopes()
+    expected_inputs = {
+        case.case_id: "wrong_sha_value"
+        for case in dataset.cases
+        if case.task_type.value == "ANSWER_QUALITY" and case.partition is Partition.DEV
+    }
+
+    metrics = build_answer_metrics(
+        dataset,
+        completed_answer_results(),
+        expected_run_id=RUN_ID,
+        expected_input_sha256_by_case=expected_inputs,
+    )
+    assert {result.execution_status.value for result in metrics.metrics} == {"INVALID"}
+
+
+def test_answer_metrics_requires_authoritative_bindings() -> None:
+    dataset = dataset_with_answer_scopes()
+    results = completed_answer_results()
+
+    with pytest.raises(TypeError):
+        build_answer_metrics(dataset, results)  # type: ignore[call-arg]
+
+    with pytest.raises(TypeError):
+        build_answer_metrics_with_diagnostics(dataset, results)  # type: ignore[call-arg]

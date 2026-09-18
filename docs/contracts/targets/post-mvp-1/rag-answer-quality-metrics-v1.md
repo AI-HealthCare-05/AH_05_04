@@ -153,6 +153,7 @@ percentile bounds를 생성해야 한다.
 - zero-claim Case는 `RatioContribution(0, 0)`으로 유지하며, `0/1` 등 Case-level penalty로 변환하지 않는다. 필수 claim 누락은 `REQUIRED_CLAIM_RECALL`이 단독 소유한다.
 - zero-denominator cluster도 CI sampling frame에 그대로 포함한다.
 - bootstrap replicate의 합산 denominator가 0인 replicate만 제외(skip)하고, 나머지 valid replicate들로 percentile CI를 계산한다.
+- zero-denominator replicate를 제외한 percentile CI는 "bootstrap 표본에서 하나 이상의 Actual claim이 포함된 조건"에 대한 conditional interval이며, unconditional CLAIM micro-ratio point estimate와 엄밀히 동일한 estimand로 해석하지 않는다. `minimum_valid_replicate_ratio`는 이 조건부 CI가 원 sampling frame에서 지나치게 작은 subset에 의존하는 것을 제한하는 DEV diagnostic safeguard다.
 - scope 전체 point denominator가 0이면 `COMPLETED / INCONCLUSIVE / ZERO_DENOMINATOR`를 반환하며, `metric_value`와 CI는 `null`이다.
 - valid replicate 비율이 `ComparisonPolicy.ci_parameters`의 `minimum_valid_replicate_ratio` 미만이면 `COMPLETED / INCONCLUSIVE`로 판정하고 reason code는 `MINIMUM_VALID_BOOTSTRAP_REPLICATE_RATIO_NOT_MET`를 사용한다. 단, 계산된 `metric_value`와 valid replicate가 존재할 때의 CI bounds는 유지한다.
 - 이 CI sampling frame divergence(`ANSWER_CORRECTNESS`는 frame 유지·replicate 제외 vs `GROUNDING`/`SAFETY`는 positive-denominator cluster 사전 제외)는 기존 지표 의미 보존을 위한 의도적 결정이다.

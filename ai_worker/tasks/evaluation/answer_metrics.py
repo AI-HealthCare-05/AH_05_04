@@ -391,8 +391,8 @@ def build_answer_metrics_with_diagnostics(
     dataset: ValidatedDataset,
     case_results: tuple[CaseResult, ...],
     *,
-    expected_run_id: str | None = None,
-    expected_input_sha256_by_case: Mapping[str, str] | None = None,
+    expected_run_id: str,
+    expected_input_sha256_by_case: Mapping[str, str],
     human_judgments: ValidatedAnswerJudgments | None = None,
 ) -> AnswerMetricBuildResult:
     """Build approved #159 DEV metrics with non-schema bootstrap diagnostics."""
@@ -400,19 +400,11 @@ def build_answer_metrics_with_diagnostics(
     answer_cases = tuple(
         case for case in dataset.cases if case.task_type is TaskType.ANSWER_QUALITY and case.partition is Partition.DEV
     )
-    resolved_run_id = (
-        expected_run_id if expected_run_id is not None else (case_results[0].run_id if case_results else "")
-    )
-    resolved_input_sha256 = (
-        expected_input_sha256_by_case
-        if expected_input_sha256_by_case is not None
-        else {case.case_id: case.input_sha256 for case in answer_cases}
-    )
     run_integrity_status = _run_integrity_status(
         answer_cases,
         case_results,
-        resolved_run_id,
-        resolved_input_sha256,
+        expected_run_id,
+        expected_input_sha256_by_case,
     )
     results_by_case = {result.case_id: result for result in case_results}
     metrics: list[MetricResult] = []
@@ -433,7 +425,7 @@ def build_answer_metrics_with_diagnostics(
             scope,
             scoped_cases,
             results_by_case,
-            resolved_input_sha256,
+            expected_input_sha256_by_case,
             human_judgments,
         )
         metrics.append(metric_res)
@@ -446,7 +438,7 @@ def build_answer_metrics_with_diagnostics(
         metrics=MetricResults(
             schema_id="rag-eval.metrics",
             schema_version="1.0.0",
-            run_id=resolved_run_id,
+            run_id=expected_run_id,
             metrics=tuple(metrics),
         ),
         bootstrap_diagnostics=tuple(diagnostics),
@@ -457,8 +449,8 @@ def build_answer_metrics(
     dataset: ValidatedDataset,
     case_results: tuple[CaseResult, ...],
     *,
-    expected_run_id: str | None = None,
-    expected_input_sha256_by_case: Mapping[str, str] | None = None,
+    expected_run_id: str,
+    expected_input_sha256_by_case: Mapping[str, str],
     human_judgments: ValidatedAnswerJudgments | None = None,
 ) -> MetricResults:
     """Build approved #159 DEV metrics without reading answer text or protected data."""
