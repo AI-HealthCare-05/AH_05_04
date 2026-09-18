@@ -53,6 +53,9 @@ RUNTIME_TRACK_C_APPEND_TABLES = frozenset({"safety_assessment", "barrier_respons
 # Follow-up은 현재 응답 1건을 갱신하고 정정 이력을 audit에 append합니다.
 # 갱신 대상 컬럼만 열어 상태·소유권 컬럼의 직접 변경을 막습니다.
 RUNTIME_TRACK_C_FOLLOWUP_TABLES = frozenset({"action_plan_followup", "action_plan_followup_audit"})
+# 정정 이력 audit을 읽는 런타임 코드는 없습니다(INSERT 한 곳뿐이고 PK는 애플리케이션 기본값).
+# 삭제·조회는 #748 cleanup 역할이 담당하므로 Runtime에는 SELECT를 주지 않습니다.
+RUNTIME_TRACK_C_FOLLOWUP_INSERT_ONLY_TABLES = frozenset({"action_plan_followup_audit"})
 RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS = ("response", "revision", "updated_at")
 
 RUNTIME_LIFESTYLE_TABLES = frozenset({"lifestyle_times"})
@@ -385,8 +388,9 @@ async def _grant_track_c_runtime_permissions(connection: AsyncConnection, runtim
     # Follow-up 현재 응답 upsert와 정정 이력 append. 갱신 컬럼만 명시적으로 엽니다.
     columns = ", ".join(quoted_identifier(column) for column in RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS)
     for table in sorted(RUNTIME_TRACK_C_FOLLOWUP_TABLES):
+        privileges = "INSERT" if table in RUNTIME_TRACK_C_FOLLOWUP_INSERT_ONLY_TABLES else "SELECT, INSERT"
         await connection.execute(
-            text(f"GRANT SELECT, INSERT ON TABLE public.{quoted_identifier(table)} TO {runtime_sql}")
+            text(f"GRANT {privileges} ON TABLE public.{quoted_identifier(table)} TO {runtime_sql}")
         )
     await connection.execute(text(f"GRANT UPDATE ({columns}) ON TABLE public.action_plan_followup TO {runtime_sql}"))
 

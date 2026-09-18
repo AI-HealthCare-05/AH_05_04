@@ -48,6 +48,7 @@ from infra.python.provision_database_roles import (
     RUNTIME_MUTABLE_TABLES,
     RUNTIME_RETRIEVAL_RUN_TABLES,
     RUNTIME_TRACK_C_APPEND_TABLES,
+    RUNTIME_TRACK_C_FOLLOWUP_INSERT_ONLY_TABLES,
     RUNTIME_TRACK_C_FOLLOWUP_TABLES,
     RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS,
     run_provisioning,
@@ -74,6 +75,8 @@ _READ_ONLY_PRIVILEGES = {
 }
 # #178/#689: retrieval_run lifecycle needs UPDATE; #748 cleanup DELETE is isolated to a dedicated role.
 _RETRIEVAL_RUN_PRIVILEGES = {**_APPEND_ONLY_PRIVILEGES, "UPDATE": True}
+# #820: 정정 이력 audit은 런타임이 읽지 않는다. INSERT만 열린다.
+_INSERT_ONLY_PRIVILEGES = {**_APPEND_ONLY_PRIVILEGES, "SELECT": False}
 
 
 async def _assert_runtime_table_privileges(admin, runtime: str, expected: dict[str, dict[str, bool]]) -> None:
@@ -396,7 +399,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             (reader, "TRUNCATE action_plan_followup_audit"),
             (reader, "UPDATE action_plan_followup_audit SET id=2"),
             (producer, "INSERT INTO action_plan_followup_audit (id) VALUES (2)"),
-            (reader, "UPDATE action_plan_followup_audit SET to_revision=2"),
+            (reader, "SELECT * FROM action_plan_followup_audit"),
             (reader, f'SET ROLE "{writer}"'),
         ]:
             await denied(engine, sql)
@@ -413,8 +416,13 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 "rag_candidate_index_version": _READ_ONLY_PRIVILEGES,
                 "rag_candidate_index_member": _READ_ONLY_PRIVILEGES,
                 # #820: Track C 쓰기 경로는 INSERT만 열고 UPDATE/DELETE/TRUNCATE는 테이블 단위로 닫혀 있다.
+                # 정정 이력 audit은 읽는 코드가 없어 SELECT도 주지 않는다.
                 **{
-                    table: _APPEND_ONLY_PRIVILEGES
+                    table: (
+                        _INSERT_ONLY_PRIVILEGES
+                        if table in RUNTIME_TRACK_C_FOLLOWUP_INSERT_ONLY_TABLES
+                        else _APPEND_ONLY_PRIVILEGES
+                    )
                     for table in sorted(RUNTIME_TRACK_C_APPEND_TABLES | RUNTIME_TRACK_C_FOLLOWUP_TABLES)
                 },
                 # 대조군: 기존 lifecycle/append-only 권한이 바뀌지 않았는지 확인한다.
@@ -1416,6 +1424,7 @@ async def _exercise_checkin_correction_runtime_permissions(admin, reader, produc
                 async with reader.begin() as connection:
                     await connection.execute(text(f"UPDATE {table} SET checkin_lock_marker=1"))
             assert error.value.orig.sqlstate == "23514"
+        await _exercise_track_c_followup_correction(reader, plan_id=UUID(completed_id), user_id=owner_id)
 
     for table in sorted(RUNTIME_CHECKIN_LOCK_TABLES | {"support_action_plan"}):
         await _assert_runtime_delete_policy(reader, table)
@@ -1436,6 +1445,30 @@ async def _exercise_checkin_correction_runtime_permissions(admin, reader, produc
             async with reader.begin() as connection:
                 await connection.execute(text(sql))
         assert error.value.orig.sqlstate == "42501"
+
+
+async def _exercise_track_c_followup_correction(reader, *, plan_id, user_id) -> None:
+    """#820: Follow-up 최초 응답과 정정이 Runtime 권한만으로 끝까지 돌아야 한다.
+
+    정정은 audit INSERT와 response/revision/updated_at UPDATE를 함께 낸다.
+    audit에 SELECT를 주지 않아도 append가 되는지 여기서 확인한다.
+    """
+    from app.models.track_c import ActionPlanFollowupResponse
+    from app.repositories.track_c_storage_repository import TrackCStorageRepository
+
+    for revision, response in ((1, ActionPlanFollowupResponse.HELPED), (2, ActionPlanFollowupResponse.NOT_SURE)):
+        async with async_sessionmaker(reader, expire_on_commit=False)() as session:
+            repository = TrackCStorageRepository(session)
+            saved = await repository.save_plan_followup(
+                plan_id=plan_id,
+                current=await repository.get_plan_followup_for_update(plan_id=plan_id),
+                response=response,
+                user_id=user_id,
+                changed_at=datetime(2026, 9, 16, 6, tzinfo=UTC),
+            )
+            await session.commit()
+            assert saved.revision == revision
+            assert saved.response == response
 
 
 async def _add_checkin_lock_fixture_columns(connection):

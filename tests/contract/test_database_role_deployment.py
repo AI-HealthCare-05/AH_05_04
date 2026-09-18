@@ -163,6 +163,7 @@ def test_track_c_runtime_role_privileges_are_least_privilege() -> None:
         RUNTIME_CHECKIN_LOCK_TABLES,
         RUNTIME_MUTABLE_TABLES,
         RUNTIME_TRACK_C_APPEND_TABLES,
+        RUNTIME_TRACK_C_FOLLOWUP_INSERT_ONLY_TABLES,
         RUNTIME_TRACK_C_FOLLOWUP_TABLES,
         RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS,
     )
@@ -184,6 +185,9 @@ def test_track_c_runtime_role_privileges_are_least_privilege() -> None:
     assert not (RUNTIME_TRACK_C_FOLLOWUP_TABLES & RUNTIME_MUTABLE_TABLES)
     assert not (RUNTIME_TRACK_C_FOLLOWUP_TABLES & RUNTIME_APPEND_ONLY_TABLES)
     assert RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS == ("response", "revision", "updated_at")
+    # 정정 이력 audit은 append 전용이다. 읽기는 #748 cleanup 역할에만 있다.
+    assert RUNTIME_TRACK_C_FOLLOWUP_INSERT_ONLY_TABLES == {"action_plan_followup_audit"}
+    assert RUNTIME_TRACK_C_FOLLOWUP_INSERT_ONLY_TABLES < RUNTIME_TRACK_C_FOLLOWUP_TABLES
 
 
 def test_knowledge_index_role_policy_is_explicit_and_least_privilege() -> None:
