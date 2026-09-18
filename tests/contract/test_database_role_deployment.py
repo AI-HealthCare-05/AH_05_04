@@ -150,6 +150,46 @@ def test_retrieval_run_tables_runtime_role_privileges_are_least_privilege() -> N
     assert "GRANT UPDATE ON TABLE public.retrieval_hit" not in source
 
 
+def test_track_c_runtime_role_privileges_are_least_privilege() -> None:
+    """Track C 권한 상수 집합만 고정한다.
+
+    실제 GRANT가 나가는지, Runtime이 정말 INSERT할 수 있고 삭제·전체 컬럼 UPDATE가
+    막히는지는 실 PostgreSQL을 쓰는 통합 테스트가 검증한다.
+    tests/integration/rag/test_database_role_provisioning.py::
+    test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions
+    """
+    from infra.python.provision_database_roles import (
+        RUNTIME_APPEND_ONLY_TABLES,
+        RUNTIME_CHECKIN_LOCK_TABLES,
+        RUNTIME_MUTABLE_TABLES,
+        RUNTIME_TRACK_C_APPEND_TABLES,
+        RUNTIME_TRACK_C_FOLLOWUP_INSERT_ONLY_TABLES,
+        RUNTIME_TRACK_C_FOLLOWUP_TABLES,
+        RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS,
+    )
+
+    # Track C는 revision 단위 append 뒤 고쳐 쓰지 않으므로 mutable/append-only 목록과 겹치지 않는다.
+    assert RUNTIME_TRACK_C_APPEND_TABLES == {
+        "safety_assessment",
+        "barrier_response",
+        "support_action_plan",
+    }
+    assert not (RUNTIME_TRACK_C_APPEND_TABLES & RUNTIME_MUTABLE_TABLES)
+    assert not (RUNTIME_TRACK_C_APPEND_TABLES & RUNTIME_APPEND_ONLY_TABLES)
+
+    # #668 row lock 경계는 유지된다.
+    assert RUNTIME_CHECKIN_LOCK_TABLES == {"safety_assessment", "barrier_response"}
+    assert RUNTIME_CHECKIN_LOCK_TABLES < RUNTIME_TRACK_C_APPEND_TABLES
+
+    assert RUNTIME_TRACK_C_FOLLOWUP_TABLES == {"action_plan_followup", "action_plan_followup_audit"}
+    assert not (RUNTIME_TRACK_C_FOLLOWUP_TABLES & RUNTIME_MUTABLE_TABLES)
+    assert not (RUNTIME_TRACK_C_FOLLOWUP_TABLES & RUNTIME_APPEND_ONLY_TABLES)
+    assert RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS == ("response", "revision", "updated_at")
+    # 정정 이력 audit은 append 전용이다. 읽기는 #748 cleanup 역할에만 있다.
+    assert RUNTIME_TRACK_C_FOLLOWUP_INSERT_ONLY_TABLES == {"action_plan_followup_audit"}
+    assert RUNTIME_TRACK_C_FOLLOWUP_INSERT_ONLY_TABLES < RUNTIME_TRACK_C_FOLLOWUP_TABLES
+
+
 def test_knowledge_index_role_policy_is_explicit_and_least_privilege() -> None:
     from infra.python.knowledge_index_role_policy import (
         KNOWLEDGE_INDEX_LOCK_COLUMNS,

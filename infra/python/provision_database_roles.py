@@ -45,6 +45,19 @@ RUNTIME_APPEND_ONLY_TABLES = frozenset(
 )
 RUNTIME_CHECKIN_LOCK_TABLES = frozenset({"safety_assessment", "barrier_response"})
 
+# Track C 안전 확인·장벽 응답·실천 계획은 revision 단위 append 뒤 고쳐 쓰지 않습니다.
+# checkin_lock_marker 컬럼 UPDATE는 #668의 row lock 용도이므로 유지하고 INSERT만 더합니다.
+# 삭제는 #748 탈퇴 cleanup 역할의 책임이므로 Runtime에 DELETE/TRUNCATE를 주지 않습니다.
+RUNTIME_TRACK_C_APPEND_TABLES = frozenset({"safety_assessment", "barrier_response", "support_action_plan"})
+
+# Follow-up은 현재 응답 1건을 갱신하고 정정 이력을 audit에 append합니다.
+# 갱신 대상 컬럼만 열어 상태·소유권 컬럼의 직접 변경을 막습니다.
+RUNTIME_TRACK_C_FOLLOWUP_TABLES = frozenset({"action_plan_followup", "action_plan_followup_audit"})
+# 정정 이력 audit을 읽는 런타임 코드는 없습니다(INSERT 한 곳뿐이고 PK는 애플리케이션 기본값).
+# 삭제·조회는 #748 cleanup 역할이 담당하므로 Runtime에는 SELECT를 주지 않습니다.
+RUNTIME_TRACK_C_FOLLOWUP_INSERT_ONLY_TABLES = frozenset({"action_plan_followup_audit"})
+RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS = ("response", "revision", "updated_at")
+
 RUNTIME_LIFESTYLE_TABLES = frozenset({"lifestyle_times"})
 
 # #178/#689: retrieval_run tracks execution lifecycle (RUNNING -> COMPLETED/FAILED),
@@ -256,6 +269,8 @@ async def provision_roles(
         | ACCOUNT_WITHDRAWAL_CLEANUP_DELETE_TABLES
         | RUNTIME_LIFESTYLE_TABLES
         | RUNTIME_CHECKIN_LOCK_TABLES
+        | RUNTIME_TRACK_C_APPEND_TABLES
+        | RUNTIME_TRACK_C_FOLLOWUP_TABLES
         | {"support_action_plan"}
         | RUNTIME_RETRIEVAL_RUN_TABLES
         | {"notification_record", "user_consent"}
@@ -279,6 +294,7 @@ async def provision_roles(
         target = f"public.{quoted_identifier(table)}"
         await connection.execute(text(f"GRANT SELECT ON TABLE {target} TO {runtime_sql}"))
         await connection.execute(text(f"GRANT UPDATE (checkin_lock_marker) ON TABLE {target} TO {runtime_sql}"))
+    await _grant_track_c_runtime_permissions(connection, runtime_sql)
     # #780: Candidate Index Version row lock without payload mutation.
     await connection.execute(
         text(f"GRANT UPDATE (candidate_index_lock_marker) ON TABLE public.rag_candidate_index_version TO {runtime_sql}")
@@ -363,6 +379,20 @@ async def _apply_optional_role_policies(
             runtime=runtime,
             builder=knowledge_index_builder,
         )
+
+
+async def _grant_track_c_runtime_permissions(connection: AsyncConnection, runtime_sql: str) -> None:
+    """Track C 쓰기 경로. #668 lock marker 권한과 별개로 새 revision row 생성이 필요합니다."""
+    for table in sorted(RUNTIME_TRACK_C_APPEND_TABLES):
+        await connection.execute(text(f"GRANT INSERT ON TABLE public.{quoted_identifier(table)} TO {runtime_sql}"))
+    # Follow-up 현재 응답 upsert와 정정 이력 append. 갱신 컬럼만 명시적으로 엽니다.
+    columns = ", ".join(quoted_identifier(column) for column in RUNTIME_TRACK_C_FOLLOWUP_UPDATE_COLUMNS)
+    for table in sorted(RUNTIME_TRACK_C_FOLLOWUP_TABLES):
+        privileges = "INSERT" if table in RUNTIME_TRACK_C_FOLLOWUP_INSERT_ONLY_TABLES else "SELECT, INSERT"
+        await connection.execute(
+            text(f"GRANT {privileges} ON TABLE public.{quoted_identifier(table)} TO {runtime_sql}")
+        )
+    await connection.execute(text(f"GRANT UPDATE ({columns}) ON TABLE public.action_plan_followup TO {runtime_sql}"))
 
 
 async def _grant_account_withdrawal_cleanup_permissions(
