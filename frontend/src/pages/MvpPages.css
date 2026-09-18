@@ -1555,8 +1555,8 @@
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: #eef2ff;
-  color: #4f46e5;
+  background: #eef3f5;
+  color: #607d8b;
 }
 
 .mvp-onboarding-sheet__icon svg {
@@ -1589,7 +1589,7 @@
 .mvp-onboarding-sheet__primary {
   min-height: 56px;
   border-radius: 14px;
-  background: #3b82f6;
+  background: #607d8b;
   color: #fff;
   font-size: 16px;
   font-weight: 700;
@@ -1606,6 +1606,6 @@
 
 .mvp-onboarding-sheet__primary:focus-visible,
 .mvp-onboarding-sheet__secondary:focus-visible {
-  outline: 3px solid rgba(59, 130, 246, 0.35);
+  outline: 3px solid rgba(96, 125, 139, 0.35);
   outline-offset: 2px;
 }

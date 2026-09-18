@@ -167,6 +167,11 @@ function PrescriptionUploadPage() {
   const preparationRequestRef = useRef(0)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const cameraVideoRef = useRef<HTMLVideoElement>(null)
+  const cameraStreamRef = useRef<MediaStream | null>(null)
+
+  const [isCameraOpen, setIsCameraOpen] = useState(false)
+  const [cameraError, setCameraError] = useState('')
   const preparationControllerRef = useRef<AbortController | null>(null)
   const intakeIntentRef = useRef<OcrIntakeIntent | null>(null)
   const hasClearedEntryRecoveryRef = useRef(false)
@@ -276,6 +281,16 @@ function PrescriptionUploadPage() {
     () => () => {
       preparationRequestRef.current += 1
       preparationControllerRef.current?.abort()
+
+      cameraStreamRef.current
+        ?.getTracks()
+        .forEach((track) => track.stop())
+
+      cameraStreamRef.current = null
+
+      if (cameraVideoRef.current) {
+        cameraVideoRef.current.srcObject = null
+      }
     },
     [],
   )
@@ -388,17 +403,20 @@ function PrescriptionUploadPage() {
     navigate('/login', { replace: true })
   }, [navigate])
 
-  const handleFileChange = (
+  const applySelectedFile = (
     source: UploadSource,
-    event: React.ChangeEvent<HTMLInputElement>,
+    selectedFile: File,
   ) => {
-    const selectedFile = event.target.files?.[0] ?? null
-    if (!selectedFile) return
-
     setFile(selectedFile)
     setUploadSource(source)
-    const inactiveInput = source === 'camera' ? fileInputRef.current : cameraInputRef.current
+
+    const inactiveInput =
+      source === 'camera'
+        ? fileInputRef.current
+        : cameraInputRef.current
+
     if (inactiveInput) inactiveInput.value = ''
+
     setIsFilenameExpanded(false)
     setPollingTarget(null)
     setCompletionError(null)
@@ -406,14 +424,24 @@ function PrescriptionUploadPage() {
     setConsentGate(null)
     setStaleOcrReason(null)
     setHasUploadFailed(false)
+
     clearOcrJobRecovery()
-    intakeIntentRef.current = selectedFile
-      ? {
-          file: selectedFile,
-          documentId: null,
-          idempotencyKey: createOcrIdempotencyKey(),
-        }
-      : null
+
+    intakeIntentRef.current = {
+      file: selectedFile,
+      documentId: null,
+      idempotencyKey: createOcrIdempotencyKey(),
+    }
+  }
+
+  const handleFileChange = (
+    source: UploadSource,
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const selectedFile = event.target.files?.[0] ?? null
+    if (!selectedFile) return
+
+    applySelectedFile(source, selectedFile)
   }
 
   const selectUploadSource = (source: UploadSource) => {
@@ -435,6 +463,102 @@ function PrescriptionUploadPage() {
     setHasUploadFailed(false)
     intakeIntentRef.current = null
     clearOcrJobRecovery()
+  }
+  const stopCamera = () => {
+  cameraStreamRef.current
+    ?.getTracks()
+    .forEach((track) => track.stop())
+
+  cameraStreamRef.current = null
+
+  if (cameraVideoRef.current) {
+    cameraVideoRef.current.srcObject = null
+  }
+
+  setIsCameraOpen(false)
+}
+
+  const openCamera = async () => {
+    selectUploadSource('camera')
+    setCameraError('')
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      cameraInputRef.current?.click()
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+        },
+        audio: false,
+      })
+
+     cameraStreamRef.current = stream
+      setIsCameraOpen(true)
+
+      requestAnimationFrame(() => {
+        if (cameraVideoRef.current) {
+          cameraVideoRef.current.srcObject = stream
+        }
+      })
+    } catch {
+      setIsCameraOpen(false)
+      setCameraError(
+        '카메라를 사용할 수 없어요. 브라우저의 카메라 권한을 확인해 주세요.',
+      )
+    }
+  }
+
+  const captureCameraPhoto = () => {
+    const video = cameraVideoRef.current
+
+    if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
+      setCameraError(
+        '카메라 화면을 준비하는 중이에요. 잠시 후 다시 촬영해 주세요.',
+      )
+      return
+    }
+
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+
+    const context = canvas.getContext('2d')
+
+    if (!context) {
+      setCameraError('촬영한 이미지를 준비하지 못했어요.')
+      return
+    }
+
+    context.drawImage(
+      video,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    )
+
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          setCameraError('촬영한 이미지를 준비하지 못했어요.')
+          return
+        }
+
+        const capturedFile = new File(
+          [blob],
+          `prescription-${Date.now()}.jpg`,
+          { type: 'image/jpeg' },
+        )
+
+        applySelectedFile('camera', capturedFile)
+        stopCamera()
+      },
+      'image/jpeg',
+      0.92,
+    )
   }
 
   const handleUpload = async () => {
@@ -824,7 +948,10 @@ function PrescriptionUploadPage() {
             <label
               className={`mvp-upload__method ${uploadSource === 'camera' ? 'selected' : ''}`}
               htmlFor={`${inputId}-camera`}
-              onClick={() => selectUploadSource('camera')}
+              onClick={(event) => {
+                  event.preventDefault()
+                  void openCamera()
+              }}
             >
               <span className="mvp-upload__method-icon" aria-hidden="true">
                 <UploadMethodIcon source="camera" />
@@ -860,7 +987,43 @@ function PrescriptionUploadPage() {
               <span className="mvp-upload__radio" aria-hidden="true" />
             </label>
           </div>
+          {isCameraOpen && (
+            <section
+              className="mvp-upload__camera"
+              aria-label="처방전 카메라"
+            >
+              <video
+                ref={cameraVideoRef}
+                className="mvp-upload__camera-preview"
+                autoPlay
+                playsInline
+                muted
+              />
 
+              <div className="mvp-upload__camera-actions">
+                 <Button
+                   type="button"
+                   onClick={captureCameraPhoto}
+                 >
+                   촬영하기
+                 </Button>
+
+                 <Button
+                   type="button"
+                   variant="secondary"
+                   onClick={stopCamera}
+                 >
+                    취소
+                 </Button>
+              </div>
+            </section>
+          )}
+
+          {cameraError && (
+            <p className="mvp-form__message" role="alert">
+              {cameraError}
+            </p>
+          )}
           <p id={contractId} className="mvp-upload__contract">
             지원 파일: JPG · JPEG · PNG · PDF / 최대 30MB
           </p>

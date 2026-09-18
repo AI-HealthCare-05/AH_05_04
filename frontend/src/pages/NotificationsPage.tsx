@@ -337,6 +337,7 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
       <MobileShell
         title="Dosey 도지"
         onBack={() => navigate('/')}
+        hideNavigation
         onNavigate={(item) => {
           if (item === '홈') navigate('/')
           if (item === '일정') navigate('/schedule')

@@ -461,7 +461,155 @@ describe('PrescriptionUploadPage OCR polling', () => {
     expect(screen.getByText('카메라로 촬영하기').closest('label')?.classList.contains('selected')).toBe(true)
     expect(screen.queryByRole('button', { name: '처방전 읽기' })).toBeNull()
   })
+  it('웹에서 카메라 촬영을 선택하면 실제 카메라 preview를 열고 취소 시 stream을 종료한다', async () => {
+    const stop = vi.fn()
+    const stream = {
+      getTracks: () => [{ stop }],
+    } as unknown as MediaStream
 
+    const getUserMedia = vi.fn().mockResolvedValue(stream)
+    const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(
+      navigator,
+      'mediaDevices',
+    )
+
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    })
+
+     try {
+      renderPage()
+
+      fireEvent.click(
+        screen.getByText('카메라로 촬영하기'),
+      )
+
+      await waitFor(() =>
+        expect(getUserMedia).toHaveBeenCalledWith({
+          video: {
+            facingMode: { ideal: 'environment' },
+          },
+          audio: false,
+        }),
+      )
+
+      expect(
+        await screen.findByRole('region', {
+          name: '처방전 카메라',
+        }),
+      ).toBeTruthy()
+
+      expect(
+        screen.getByRole('button', { name: '촬영하기' }),
+      ).toBeTruthy()
+
+      fireEvent.click(
+        screen.getByRole('button', { name: '취소' }),
+      )
+
+      expect(stop).toHaveBeenCalled()
+      expect(
+        screen.queryByRole('region', {
+          name: '처방전 카메라',
+        }),
+      ).toBeNull()
+    } finally {
+      if (mediaDevicesDescriptor) {
+        Object.defineProperty(
+          navigator,
+          'mediaDevices',
+          mediaDevicesDescriptor,
+        )
+      } else {
+        Reflect.deleteProperty(navigator, 'mediaDevices')
+      }
+    }
+  })
+  it('카메라 촬영 결과를 처방전 이미지 File로 연결한다', async () => {
+    const stop = vi.fn()
+    const stream = {
+      getTracks: () => [{ stop }],
+    } as unknown as MediaStream
+
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue(stream),
+      },
+    })
+
+    const originalCreateElement = document.createElement.bind(document)
+
+    const toBlob = vi.fn(
+      (
+        callback: BlobCallback,
+      ) => {
+        callback(
+          new Blob(['captured'], {
+            type: 'image/jpeg',
+          }),
+        )
+      },
+    )
+
+    vi.spyOn(document, 'createElement').mockImplementation(
+      ((tagName: string) => {
+        if (tagName === 'canvas') {
+          return {
+            width: 0,
+            height: 0,
+            getContext: () => ({
+              drawImage: vi.fn(),
+            }),
+            toBlob,
+          } as unknown as HTMLCanvasElement
+        }
+
+        return originalCreateElement(tagName)
+      }) as typeof document.createElement,
+    )
+
+    renderPage()
+
+    fireEvent.click(
+      screen.getByText('카메라로 촬영하기'),
+    )
+
+    const video = await screen.findByLabelText(
+      '처방전 카메라',
+    ).then((region) =>
+      region.querySelector('video') as HTMLVideoElement,
+    )
+
+    Object.defineProperty(video, 'videoWidth', {
+      configurable: true,
+      value: 1200,
+    })
+
+    Object.defineProperty(video, 'videoHeight', {
+      configurable: true,
+      value: 1600,
+    })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '촬영하기' }),
+    )
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', {
+          name: '처방전 읽기',
+        }),
+      ).toBeTruthy(),
+    )
+
+    expect(
+      screen.getByText(/prescription-\d+\.jpg/),
+    ).toBeTruthy()
+
+    expect(stop).toHaveBeenCalled()
+  })
   it('#227 긴 파일명을 기본 2줄로 제한하고 전체 파일명과 확장자를 펼쳐 확인할 수 있다', () => {
     const longFilename =
       'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_FINAL-2026.png'
