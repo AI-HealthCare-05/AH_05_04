@@ -118,7 +118,7 @@ test('[REPORT-420] 320·390·412px에서 수치와 컨트롤이 가로로 넘치
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
 
     await page.goto('/report/clinic')
-    await expect(page.getByRole('heading', { name: '최근 복약 기록 요약' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '핵심 요약' }),).toBeVisible()
     await expect(page.getByText('85.7%')).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
   }
