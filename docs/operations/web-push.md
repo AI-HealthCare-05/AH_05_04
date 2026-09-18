@@ -13,6 +13,7 @@ Push가 활성화되면 회당 최대 45초가 추가될 수 있으며 정시 �
 ## Local 합성 검증 설정
 
 아래 값은 Backend와 notification scheduler 프로세스에 동일하게 주입한다.
+Production Docker Compose는 env 파일 전체가 아니라 `environment:` allowlist에 명시한 값만 컨테이너에 전달하므로, `infra/docker/docker-compose.prod.yml`의 FastAPI와 notification-scheduler 양쪽에 같은 `WEB_PUSH_*` 키가 있어야 한다.
 실제 secret, endpoint, 브라우저 키를 문서·로그·명령행 인자로 남기지 않는다.
 
 | 환경변수 | 형식/운영 경계 |

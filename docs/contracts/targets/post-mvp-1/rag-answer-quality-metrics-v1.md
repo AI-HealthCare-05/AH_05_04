@@ -146,9 +146,20 @@ group이다. 승인된 leakage-axis group을 복원추출하고, 선택된 group
 반복 포함한다. 정렬은 기존 Evaluation canonical ordering을 사용하고 동일 seed·입력·iteration에서 같은
 percentile bounds를 생성해야 한다.
 
-분모가 0인 원표본은 CI를 만들지 않는다. bootstrap replicate에서 분모 0이 생길 수 있는 Policy는 지원하지
-않고 algorithm signature mismatch로 `NOT_IMPLEMENTED/null` 처리한다. 구현이 cluster 축이나 seed를 임의로
-선택하지 않는다.
+분모가 0인 원표본은 CI를 만들지 않는다. 구현이 cluster 축이나 seed를 임의로 선택하지 않는다.
+
+`ANSWER_CORRECTNESS`의 zero-claim / zero-denominator bootstrap 의미는 다음과 같다:
+
+- zero-claim Case는 `RatioContribution(0, 0)`으로 유지하며, `0/1` 등 Case-level penalty로 변환하지 않는다. 필수 claim 누락은 `REQUIRED_CLAIM_RECALL`이 단독 소유한다.
+- zero-denominator cluster도 CI sampling frame에 그대로 포함한다.
+- bootstrap replicate의 합산 denominator가 0인 replicate만 제외(skip)하고, 나머지 valid replicate들로 percentile CI를 계산한다.
+- zero-denominator replicate를 제외한 percentile CI는 "bootstrap 표본에서 하나 이상의 Actual claim이 포함된 조건"에 대한 conditional interval이며, unconditional CLAIM micro-ratio point estimate와 엄밀히 동일한 estimand로 해석하지 않는다. `minimum_valid_replicate_ratio`는 이 조건부 CI가 원 sampling frame에서 지나치게 작은 subset에 의존하는 것을 제한하는 DEV diagnostic safeguard다.
+- scope 전체 point denominator가 0이면 `COMPLETED / INCONCLUSIVE / ZERO_DENOMINATOR`를 반환하며, `metric_value`와 CI는 `null`이다.
+- valid replicate 비율이 `ComparisonPolicy.ci_parameters`의 `minimum_valid_replicate_ratio` 미만이면 `COMPLETED / INCONCLUSIVE`로 판정하고 reason code는 `MINIMUM_VALID_BOOTSTRAP_REPLICATE_RATIO_NOT_MET`를 사용한다. 단, 계산된 `metric_value`와 valid replicate가 존재할 때의 CI bounds는 유지한다.
+- 이 CI sampling frame divergence(`ANSWER_CORRECTNESS`는 frame 유지·replicate 제외 vs `GROUNDING`/`SAFETY`는 positive-denominator cluster 사전 제외)는 기존 지표 의미 보존을 위한 의도적 결정이다.
+- total/valid/excluded replicate 수와 valid ratio는 machine `MetricResult`나 Schema Set 1.5에 추가하지 않고, non-schema `report.md` diagnostic projection으로만 제공된다. diagnostic projection capability는 구현되나 실제 Run report emission은 authoritative human-judgment runtime wiring 완료 시점까지 유예된다. 이 진단값은 Release Gate나 자동화 판정의 입력이 아니다.
+
+`RELEVANCE`, `REQUIRED_CLAIM_RECALL`, `COMPLETENESS` 등 다른 Answer 지표는 기존 3개 CI parameter(`iterations`, `level`, `sidedness`) 계약을 유지하며, bootstrap replicate에서 분모 0이 발생하는 Policy는 지원하지 않고 `NOT_IMPLEMENTED`로 처리한다.
 
 ## 8. 세 Variant pair comparison
 
@@ -192,6 +203,8 @@ pair별 허용 delta는 다음 exact set으로 제한한다.
 | `ANS-BASE -> ANS-RAG` | `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RUNTIME_BUNDLE`, `RETRIEVED_EVIDENCE` | RAG 도입 효과 비교 |
 | `ANS-RAG -> ANS-FINAL` | `FINAL_VALIDATOR`, `CITATION_GATE`, `SAFETY_GATE`, `RELEASE_GATE` | 최종 검증·공개 경계 효과 비교. `ANS-FINAL` 입력 draft answer hash는 `ANS-RAG` 출력 hash와 exact-match |
 | `ANS-BASE -> ANS-FINAL` | 위 두 pair 허용 delta의 합집합 | 전체 효과 요약. 개별 단계 귀속 근거로 사용 금지 |
+
+`allowed_delta_keys`의 의미는 pair별 exact set이며 배열의 직렬화 순서는 의미를 갖지 않는다. 후속 deterministic builder는 재현 가능한 출력 순서를 선택할 수 있지만 consumer validation은 순서에 의존하지 않는다.
 
 각 Run의 Git commit과 Answer Variant manifest hash는 기록하되 matched variable로 위장하지 않는다. 허용 목록
 밖의 관찰 delta, mandatory key mismatch 또는 허용 delta의 필수 binding 누락은 `INVALID/null`이다. 세 pair

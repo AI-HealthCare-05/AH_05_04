@@ -171,12 +171,14 @@ Schema Set `1.3.0` 후보 참조는 `rag-eval.schema-set@1.3.0`, SHA-256 `ca1f32
 
 Schema Set `1.4.0` 후보 참조는 `rag-eval.schema-set@1.4.0`, SHA-256 `0f6b69b460af5ea840e009f55b86256942f896be324c7885d709883600799e98`이다. 상태는 `Candidate · Review Required`이며, 책임 리뷰어 김지혜 (`@Jye-rookie`)의 실제 Pull Request review event가 승인 전환에 필요하다. 신규 두 artifact는 Evaluation projection contract만 구현하며 #160·#161 metric kernel, Runtime, HOLDOUT/SAFETY_REGRESSION, Baseline Freeze, Release와 공개는 포함하지 않는다. 기존 Schema Set과 exporter 기본 version은 변경하지 않는다.
 
-다섯 버전은 다음 명령으로 별도 출력한다. 기본값은 하위 호환을 위해 `1.0.0`이다.
+Schema Set `1.5.0` 후보 참조는 `rag-eval.schema-set@1.5.0`, SHA-256 `cf481556cead9f99e4d424481e9ed5aed246899a4c893c45b19a2b7abcb89dc8`이다. 상태는 `Candidate · Review Required`이며, 책임 리뷰어 권가빈 (`@hazelnutflavoured`)의 실제 Pull Request review event가 승인 전환에 필요하다. 신규 세 artifact는 #159 DEV metric 입력 및 paired comparison manifest contract만 구현하며 human judgment consumption, ANSWER_CORRECTNESS/RELEVANCE scorer, comparison builder, Runtime, HOLDOUT, Baseline Freeze, Release와 공개는 포함하지 않는다. 기존 Schema Set과 exporter 기본 version은 변경하지 않는다.
+
+여섯 버전은 다음 명령으로 별도 출력한다. 기본값은 하위 호환을 위해 `1.0.0`이다.
 
 ```bash
 uv run python -m ai_worker.tasks.evaluation.schema_exports \
-  --output /tmp/rag-eval-schemas-1.4.0 \
-  --schema-set-version 1.4.0
+  --output /tmp/rag-eval-schemas-1.5.0 \
+  --schema-set-version 1.5.0
 ```
 
 ## RAG HOLDOUT·SAFETY_REGRESSION Dataset Freeze
@@ -298,6 +300,8 @@ review packet과 judgment template에는 assignment 내용의 SHA-256 commitment
 canonical `quality_expectations`의 dimension 선호는 history item에만 적용합니다. baseline은 전체 응답 선호만 판단하고 `dimension_preferences`는 빈 객체로 제출합니다. history item은 해당 case에 선언된 dimension을 정확히 모두 제출해야 합니다.
 
 `generation/chat-conversation-quality-blind-ab-v1.json`은 #581의 `chat-prompt-v3` 대 `chat-prompt-v4` 비교를 위한 Local 전용 실행 설정입니다. 두 arm은 같은 canonical 27-case dataset, `gpt-4o`, timeout과 출력 token 상한을 사용하고 prompt snapshot만 다릅니다. `generation/prompts/chat-prompt-v3.txt`와 `generation/prompts/chat-prompt-v4.txt`는 각 prompt 문자열의 불변 snapshot이며 config가 dataset·prompt SHA-256을 모두 고정합니다. 이 PR은 runner와 실행 설정만 준비하며 실제 Provider 실행 상태는 `NOT_RUN`입니다.
+
+`generation/chat-feedback-gold-prompt-comparison-v1.json`은 #633 후속 evidence용 Local 전용 실행 설정입니다. 두 arm은 같은 `chat-feedback-gold-v1` 31-case synthetic dataset, `gpt-4o`, timeout과 출력 token 상한을 사용하고 prompt snapshot만 다릅니다. baseline은 `generation/prompts/chat-prompt-v4.txt`, current는 #624/#581 feedback으로 runtime에 들어간 `generation/prompts/chat-prompt-v5.txt`이며 config가 dataset·prompt SHA-256·source commit·`temperature=0` controlled setting을 모두 고정합니다. 이 config는 Chat prompt 개선 evidence용이며 기존 Track F RAG 전후 Gold와 합치지 않습니다. 실제 Provider 실행 상태는 `NOT_RUN`입니다.
 
 Live 실행은 arm당 113개, 총 226개의 Provider 응답을 생성합니다. 자동 결과에는 case·품질 축·blocking safety gate, baseline/history/max-history p95 latency, Provider가 반환한 input/output/total token 사용량을 기록합니다. 승인된 버전 고정 요금표가 없으므로 비용은 `NOT_CALCULATED`이며 token 사용량을 비용으로 오인하지 않습니다.
 

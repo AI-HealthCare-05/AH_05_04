@@ -382,6 +382,45 @@ def test_production_like_fallback_e64_is_not_execution_identity() -> None:
     assert adapter._retrieval_config.expected_query_embedding_adapter_ref.content_sha256 != "e" * 64
 
 
+def test_actual_retrieval_search_composition_uses_canonical_ref_and_no_placeholder() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from uuid import uuid4
+
+    from ai_worker.adapters.postgresql_evidence_search import POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF
+    from ai_worker.tasks.evaluation.actual_retrieval import build_actual_adapter_registry
+    from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
+
+    mock_resolved = MagicMock()
+    mock_engine = MagicMock(spec=[])
+    mock_eligibility = MagicMock()
+
+    summary_mock = MagicMock(
+        knowledge_index_id=uuid4(),
+        source_snapshot_id=uuid4(),
+        source_snapshot_member_ids=(uuid4(),),
+        evidence_index_ref=ImmutableArtifactRef("idx", "1.0", "0" * 64),
+    )
+
+    with patch(
+        "ai_worker.tasks.evaluation.actual_retrieval_index.bootstrap_dev_knowledge_index",
+        new=AsyncMock(return_value=summary_mock),
+    ):
+        with patch("sqlalchemy.ext.asyncio.async_sessionmaker", return_value=MagicMock()):
+            registry = build_actual_adapter_registry(
+                mock_resolved,
+                engine=mock_engine,
+                search_port=None,
+                eligibility_verifier=mock_eligibility,
+                text_embedding_port=None,
+            )
+            adapter = registry.resolve("knowledge-evidence-retrieval.actual.v1")
+            assert adapter is not None
+            search_port = adapter._search_port
+            assert hasattr(search_port, "_adapter_artifact_ref")
+            assert search_port._adapter_artifact_ref == POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF
+            assert search_port._adapter_artifact_ref.content_sha256 != "a" * 64
+
+
 @pytest.mark.asyncio
 async def test_mismatched_query_embedding_adapter_ref_fails_closed() -> None:
     from typing import Any

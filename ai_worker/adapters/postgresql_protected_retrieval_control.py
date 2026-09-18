@@ -43,6 +43,7 @@ from ai_worker.tasks.evaluation.protected_retrieval_control import (
     ControlCommandResult,
     DisableIdentityCommand,
     ExpireAuthorizationCommand,
+    FreezeApprovalLocator,
     FreezeApprovalSourceEvidence,
     FreezeDatasetCommand,
     GrantAuthorizationCommand,
@@ -1033,9 +1034,13 @@ class PostgresqlProtectedAuthorizationControlService:
     async def _fetch_freeze_approval(
         self,
         command: FreezeDatasetCommand,
+        locator: FreezeApprovalLocator | None = None,
     ) -> tuple[FreezeApprovalSourceEvidence | None, ProtectedAuditReason | None]:
         try:
-            evidence = await self._approval_source.fetch_freeze(command.approval_source_event_id)
+            evidence = await self._approval_source.fetch_freeze(
+                command.approval_source_event_id,
+                locator=locator,
+            )
         except ApprovalSourceNotFoundError:
             return None, ProtectedAuditReason.APPROVAL_NOT_VERIFIED
         except Exception:
@@ -1757,16 +1762,6 @@ class PostgresqlProtectedAuthorizationControlService:
 
                 executor, denial_reason = await self._lock_dataset_control_executor(control, prepared_executor)
 
-                replay = await control.replay(
-                    request_id=command.request_id,
-                    command_kind=command_kind,
-                    command_sha256=digest,
-                    executor=executor.actor,
-                    lock_head=True,
-                )
-                if replay is not None:
-                    return replay
-
                 if denial_reason is None:
                     existing_row = (
                         await control._execute(
@@ -1781,6 +1776,16 @@ class PostgresqlProtectedAuthorizationControlService:
                     ).one_or_none()
                     if existing_row is not None:
                         denial_reason = ProtectedAuditReason.CONTROL_COMMAND_CONFLICT
+
+                replay = await control.replay(
+                    request_id=command.request_id,
+                    command_kind=command_kind,
+                    command_sha256=digest,
+                    executor=executor.actor,
+                    lock_head=True,
+                )
+                if replay is not None:
+                    return replay
 
                 await control.refresh_clock()
                 entries = await control.verified_entries(lock_head=False)
@@ -1910,6 +1915,11 @@ class PostgresqlProtectedAuthorizationControlService:
                 control = _ControlSession(session, self._schema, clock)
 
                 executor, denial_reason = await self._lock_dataset_control_executor(control, prepared_executor)
+                if denial_reason is None:
+                    denial_reason = _validate_dataset_transition_invariants(command)
+                if denial_reason is None:
+                    denial_reason = await control.check_dataset_transition(command)
+
                 replay = await control.replay(
                     request_id=command.request_id,
                     command_kind=command_kind,
@@ -1919,11 +1929,6 @@ class PostgresqlProtectedAuthorizationControlService:
                 )
                 if replay is not None:
                     return replay
-
-                if denial_reason is None:
-                    denial_reason = _validate_dataset_transition_invariants(command)
-                if denial_reason is None:
-                    denial_reason = await control.check_dataset_transition(command)
 
                 await control.refresh_clock()
                 entries = await control.verified_entries(lock_head=False)
@@ -2096,7 +2101,12 @@ class PostgresqlProtectedAuthorizationControlService:
             return _policy_denial_reason(err)
         return None
 
-    async def freeze_dataset(self, command: FreezeDatasetCommand) -> ControlCommandResult:
+    async def freeze_dataset(
+        self,
+        command: FreezeDatasetCommand,
+        *,
+        locator: FreezeApprovalLocator | None = None,
+    ) -> ControlCommandResult:
         command_kind = ControlCommandKind.FREEZE_DATASET
         digest = control_command_sha256(command_kind, command)
         async with self._sessions() as preparation:
@@ -2115,7 +2125,7 @@ class PostgresqlProtectedAuthorizationControlService:
         if replay is not None:
             return replay
 
-        evidence, fetch_denial = await self._fetch_freeze_approval(command)
+        evidence, fetch_denial = await self._fetch_freeze_approval(command, locator=locator)
 
         target_id = f"{command.dataset_id}:{command.dataset_version}"
         denial: ProtectedSecurityError | None = None
@@ -2127,6 +2137,12 @@ class PostgresqlProtectedAuthorizationControlService:
                 control = _ControlSession(session, self._schema, clock)
 
                 executor, lock_denial = await self._lock_dataset_control_executor(control, prepared_executor)
+                denial_reason = lock_denial
+                if denial_reason is None:
+                    denial_reason = await self._check_freeze_mutation(
+                        control, command, executor, evidence, fetch_denial
+                    )
+
                 replay = await control.replay(
                     request_id=command.request_id,
                     command_kind=command_kind,
@@ -2136,12 +2152,6 @@ class PostgresqlProtectedAuthorizationControlService:
                 )
                 if replay is not None:
                     return replay
-
-                denial_reason = lock_denial
-                if denial_reason is None:
-                    denial_reason = await self._check_freeze_mutation(
-                        control, command, executor, evidence, fetch_denial
-                    )
 
                 await control.refresh_clock()
                 entries = await control.verified_entries(lock_head=False)

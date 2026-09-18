@@ -25,7 +25,7 @@ for (const width of [320, 390, 412]) {
       else { if (request.method() === 'PATCH') plan.status = request.postDataJSON().status; data = plan }
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data }) })
     })
-    await page.goto(`/dev/track-c/occurrences/${occurrence}?date=2026-09-16`)
+    await page.goto(`/track-c/occurrences/${occurrence}?date=2026-09-16`)
     await expect(page.getByRole('heading', { name: '현재 불편한 증상이 있나요?' })).toBeVisible()
     await expect(page.getByRole('navigation', { name: '주요 메뉴' })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Dosey 도지' })).toBeVisible()
@@ -95,7 +95,7 @@ for (const [situation, label, supportCode] of [
       }
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data }) })
     })
-    await page.goto(`/dev/track-c/occurrences/${occurrence}?date=2026-09-16`)
+    await page.goto(`/track-c/occurrences/${occurrence}?date=2026-09-16`)
     await page.getByRole('button', { name: '증상은 없어요' }).click()
     await page.getByRole('radio', { name: '일정이나 외출 때문에 어려웠어요' }).check()
     await page.getByRole('button', { name: '선택한 어려움으로 도움 찾기' }).click()

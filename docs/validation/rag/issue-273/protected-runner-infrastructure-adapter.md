@@ -35,13 +35,13 @@
 | --- | --- | --- |
 | `ASYNC_KERNEL_SEAM` | `ai_worker/tasks/evaluation/protected_retrieval.py` | `26d068434d9ec5147a65302aab57958b689855e86e9173659e7489abb1675c38` |
 | `POSTGRESQL_ADAPTER` | `ai_worker/adapters/postgresql_protected_retrieval.py` | `5936abbe9f3a9136760618d082f6dae010b620d647056b075436e19f1a89969b` |
-| `FAIL_CLOSED_CONFIG` | `ai_worker/core/config.py` | `4bb5ec095fae68b9f0fc7de29096b5ad848aef0a4eee06b6a8c849b917e92c81` |
-| `EXPLICIT_RUNTIME_ASSEMBLY` | `ai_worker/core/runtime_assembly.py` | `2b91bcf9983e9a00c9c8f07e48a034dd5a68806859ebe3cc508132d78871c2a4` |
+| `FAIL_CLOSED_CONFIG` | `ai_worker/core/config.py` | `69903aee06f3dbddf8cd07a1dff4bd413cc567a2821a4f225a66509d9030a162` |
+| `EXPLICIT_RUNTIME_ASSEMBLY` | `ai_worker/core/runtime_assembly.py` | `c22fabd9053d86c86d876a28359eb1a9a150a16c908deb06f9457215fa59c2b9` |
 | `PROTECTED_ROLE_POLICY` | `infra/python/protected_retrieval_role_policy.py` | `597bf68229c5830578ddba07aa3652cace08ec3e2474031ef6250cccd91d82a4` |
 | `ISOLATED_MIGRATION_ENV` | `infra/protected_retrieval/env.py` | `4853f8178ea611df177900573e6593c8bdc76db86a039ebd6f299013895fdbf3` |
 | `ISOLATED_MIGRATION` | `infra/protected_retrieval/versions/368000000001_create_protected_retrieval.py` | `20ed57547853a39ae5254d69dd71873e0a26223a705c5231e50dc8aa7416c68d` |
-| `AUTHORIZATION_CONTROL_CONTRACT` | `ai_worker/tasks/evaluation/protected_retrieval_control.py` | `c56d10d3de6228f46cf1a199fd49e81342254001964dbfc14f29ed2ba36042e9` |
-| `POSTGRESQL_CONTROL_ADAPTER` | `ai_worker/adapters/postgresql_protected_retrieval_control.py` | `1ea6db8887efc3822686e4562dc8310ae7ac8b73e1a8149862ee6c859386c615` |
+| `AUTHORIZATION_CONTROL_CONTRACT` | `ai_worker/tasks/evaluation/protected_retrieval_control.py` | `977b28a8eb3846019c2a989877402fff691b63e710a2165a55bced26716d20ac` |
+| `POSTGRESQL_CONTROL_ADAPTER` | `ai_worker/adapters/postgresql_protected_retrieval_control.py` | `de48e14d997b67f02b0852d480cecf912760f46b9017a4f05b720ee3595fe0b4` |
 | `AUTHORIZATION_CONTROL_MIGRATION` | `infra/protected_retrieval/versions/368000000002_add_authorization_control.py` | `56a7275ebc83ebf69f115230e36e40bc13d0731a7c91bed900ff287b2b42c5b8` |
 
 재생성·검증: `uv run python scripts/verify_protected_runner_evidence.py [--write]`
@@ -53,4 +53,4 @@
 - backup·restore·rotation 운영 증빙
 - Track F external gate 충족
 
-Evidence self hash: `69cc8d85e1a63dc8627f8c4c8df01b3e385f72c040fabd80af20eec0813a28e3`
+Evidence self hash: `626fe228c12c227771e56cbb63c5a17d5c197f13d7ae282e45fdaa64892faaf8`

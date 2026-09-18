@@ -64,6 +64,9 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   const [selectedQuestions, setSelectedQuestions] = useState<string[]>([])
   const [confirmed, setConfirmed] = useState(false)
   const [terminal, setTerminal] = useState<'COMPLETED' | 'CANCELLED' | null>(null)
+  // 사용자가 스스로 증상을 신고해 멈춘 경우에만 값이 들어간다. 서버 판단(non-ROUTINE ·
+  // non-NORMAL)이나 403/404/409로 멈춘 경우에는 null이라 되돌아가는 버튼이 나오지 않는다.
+  const [reconsiderFrom, setReconsiderFrom] = useState<'safety' | 'plan' | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [retry, setRetry] = useState<(() => Promise<void>) | null>(null)
@@ -84,6 +87,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
     } else if (cause instanceof ApiError && [403, 404, 409].includes(cause.status)) {
       setStep('blocked')
       setRetry(null)
+      setReconsiderFrom(null)
       setError(cause.status === 409
         ? '기록이나 계획 상태가 변경되었어요. 이전 응답으로 계속 진행할 수 없어요. 복약 기록으로 돌아가 현재 상태를 확인해 주세요.'
         : '이 기록을 사용할 수 없어요. 일정에서 기록을 다시 확인해 주세요.')
@@ -148,7 +152,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
     const result = await service.createSafety(body, key('safety', checkin.checkin_id, body))
     if (!alive.current) return
     if (result.medication_checkin_id !== checkin.checkin_id || result.checkin_revision !== checkin.revision || result.response_level !== 'ROUTINE' || result.safety_disposition !== 'NORMAL') {
-      setStep('blocked'); return
+      setReconsiderFrom(null); setStep('blocked'); return
     }
     setSafety(result); setStep('barrier')
   }
@@ -182,7 +186,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
     if (!barrier || !item || !confirmed) return
     const body: api.CreatePlanRequest = { barrier_response_id: barrier.barrier_response_id, support_code: item.support_code, rule_version: item.rule_version, copy_version: item.copy_version, confirmed: true, selected_question_ids: selectedQuestions, ...(subreason ? { subreason_code: subreason } : {}), ...(travelSituation ? { travel_situation: travelSituation } : {}) }
     const result = await service.createPlan(body, key('create-plan', barrier.barrier_response_id, body))
-    if (alive.current) navigate(`/dev/track-c/plans/${result.support_action_plan_id}`, { replace: true })
+    if (alive.current) navigate(`/track-c/plans/${result.support_action_plan_id}`, { replace: true })
     // Destination always GETs current status; creation replay is only a saved snapshot.
   }
 
@@ -224,12 +228,12 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
       {step === 'safety' && <>
         <p className="track-c-description">복용하지 못한 이유를 확인하기 전에 현재 몸 상태를 먼저 확인할게요.</p>
         <div className="track-c-safety-actions">
-          <Button fullWidth variant="secondary" disabled={busy} onClick={() => { setRetry(null); setStep('blocked') }}>증상이 있어요</Button>
+          <Button fullWidth variant="secondary" disabled={busy} onClick={() => { setRetry(null); setReconsiderFrom('safety'); setStep('blocked') }}>증상이 있어요</Button>
           <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => void run(submitSafety)}>증상은 없어요</Button>
         </div>
         <p className="track-c-help">확실하지 않다면 증상이 있어요를 선택해 주세요.</p>
       </>}
-      {step === 'blocked' && <Card><h2>현재 도움을 계속 진행할 수 없어요</h2><p>복약 기록은 그대로 유지돼요.</p><Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button>{planId && <Button fullWidth variant="secondary" onClick={() => { window.location.reload() }}>계획 상태 다시 조회</Button>}</Card>}
+      {step === 'blocked' && <Card><h2>현재 도움을 계속 진행할 수 없어요</h2><p>복약 기록은 그대로 유지돼요.</p><Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button>{reconsiderFrom && <Button fullWidth variant="secondary" disabled={busy} onClick={() => { setError(''); setStep(reconsiderFrom); setReconsiderFrom(null) }}>{reconsiderFrom === 'safety' ? '증상 선택 다시 하기' : '내 실천 계획으로 돌아가기'}</Button>}{planId && <Button fullWidth variant="secondary" onClick={() => { window.location.reload() }}>계획 상태 다시 조회</Button>}</Card>}
       {step === 'barrier' && <>
         <p>하나만 골라주세요. 답하지 않아도 복약 상태는 그대로 저장돼요.</p>
         <fieldset disabled={busy || !!retry}><legend className="track-c-sr-only">이번 복용의 어려움</legend>{choices.map(([code, label]) => <label className="track-c-choice" key={code}><input type="radio" name="barrier" value={code} checked={selected === code} onChange={() => setSelected(code)} /><span>{label}</span></label>)}</fieldset>
@@ -278,14 +282,14 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
           <p>이 약에 연결된 {instructionPlan ? '복용법' : '복용 목적'} 설명과 근거를 아직 제공할 수 없어요. 필요한 내용은 약사나 의료진에게 확인해 주세요.</p>
         </>}
         {resources && resources.selected_questions.length > 0 && <Card><h2>상담 때 확인할 질문</h2><ul>{resources.selected_questions.map(question => <li key={question.question_id}>{question.text}</li>)}</ul><p>질문은 자동으로 전송되지 않아요.</p></Card>}
-        {concernPlan && plan.status === 'ACTIVE' && <Button variant="secondary" disabled={busy} onClick={() => { setTerminal(null); setConfirmed(false); setStep('blocked') }}>증상이 생겼거나 확실하지 않아요</Button>}
+        {concernPlan && plan.status === 'ACTIVE' && <Button variant="secondary" disabled={busy} onClick={() => { setTerminal(null); setConfirmed(false); setReconsiderFrom('plan'); setStep('blocked') }}>증상이 생겼거나 확실하지 않아요</Button>}
         <p>계획 조회만으로 실행이나 완료가 처리되지 않아요.</p>
         {plan.status === 'ACTIVE' && <div className="track-c-actions">
           {resources && plan.support_code === 'REMINDER_SETUP' && <p><Link to={`/schedule?support_medication=${encodeURIComponent(reminderTarget ?? '')}`} target="_blank" rel="noopener noreferrer">일정 확인·설정 (새 탭)</Link></p>}
           {needsPushSetup && <>
             <p><Link to="/settings/notifications" target="_blank" rel="noopener noreferrer">이 기기 알림 설정 (새 탭)</Link></p>
             <Button variant="secondary" disabled={busy || !!retry} onClick={() => void run(async () => { const state = await service.getPushState(); if (alive.current) { setPushState(state); setConfirmed(false) } })}>알림 설정 상태 확인</Button>
-            <p role="status">{pushState === 'granted' ? '이 브라우저에 저장된 알림 권한과 구독을 확인했어요. 실제 도착 여부는 기기와 네트워크 상태에 따라 달라질 수 있어요.' : pushState === 'denied' ? '기기·브라우저 설정에서 알림 허용이 필요해요.' : pushState === 'unsupported' ? '이 환경에서는 알림 설정을 완료할 수 없어요. 알림 설정 화면에서 지원 환경을 확인해 주세요.' : pushState === 'subscription_failed' ? '알림 연결을 확인하지 못했어요. 설정 화면에서 다시 시도해 주세요.' : '알림 설정 화면에서 권한과 수신 등록을 확인한 뒤 설정 상태를 확인해 주세요.'}</p>
+            <p role="status">{pushState === 'granted' ? '이 브라우저에 저장된 알림 권한과 구독을 확인했어요. 실제 도착 여부는 기기와 네트워크 상태에 따라 달라질 수 있어요.' : pushState === 'denied' ? '기기·브라우저 설정에서 알림 허용이 필요해요.' : pushState === 'unsupported' ? '이 환경에서는 알림 설정을 완료할 수 없어요. 알림 설정 화면에서 지원 환경을 확인해 주세요.' : pushState === 'config_unavailable' ? 'Push 알림 서버 설정이 아직 준비되지 않았어요. 설정 완료 후 다시 확인해 주세요.' : pushState === 'subscription_failed' ? '알림 연결을 확인하지 못했어요. 설정 화면에서 다시 시도해 주세요.' : '알림 설정 화면에서 권한과 수신 등록을 확인한 뒤 설정 상태를 확인해 주세요.'}</p>
           </>}
           {needsPushSetup && pushState !== null && pushState !== 'granted' && <p>알림 설정 없이 복약 일정만 확인한 뒤 계획을 완료할 수 있어요. 알림 설정 완료로 기록하지 않아요.</p>}
           {!terminal ? <>

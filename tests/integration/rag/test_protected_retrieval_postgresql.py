@@ -362,6 +362,9 @@ def _protected_config(database: _ProtectedDatabase) -> Config:
         PROTECTED_DB_SCHEMA=database.schema,
         PROTECTED_DB_ACCESS_ROLE=database.access,
         PROTECTED_DB_CONTROL_ROLE=database.control,
+        PROTECTED_APPROVAL_REPOSITORY="AI-HealthCare-05/AH_05_04",
+        PROTECTED_APPROVAL_BRANCH="develop",
+        PROTECTED_APPROVAL_GITHUB_TOKEN="synthetic-github-token",
     )  # type: ignore[call-arg]
 
 

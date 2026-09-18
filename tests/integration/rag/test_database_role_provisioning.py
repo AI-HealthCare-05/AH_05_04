@@ -31,7 +31,10 @@ from app.repositories.rag_source_catalog_repository import (
     RagSourceOperationCreate,
 )
 from app.services.rag_runtime import RagRuntimeEnvironmentTransitionService
+from infra.python.catalog_role_policy import CATALOG_WRITE_TABLES
+from infra.python.knowledge_index_role_policy import KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
 from infra.python.provision_database_roles import (
+    CANDIDATE_INDEX_RUNTIME_READ_TABLES,
     RUNTIME_APPEND_ONLY_TABLES,
     RUNTIME_AUTH_UPDATE_COLUMNS,
     RUNTIME_CHECKIN_LOCK_TABLES,
@@ -49,6 +52,13 @@ ROOT = Path(__file__).resolve().parents[3]
 _APPEND_ONLY_PRIVILEGES = {
     "SELECT": True,
     "INSERT": True,
+    "UPDATE": False,
+    "DELETE": False,
+    "TRUNCATE": False,
+}
+_READ_ONLY_PRIVILEGES = {
+    "SELECT": True,
+    "INSERT": False,
     "UPDATE": False,
     "DELETE": False,
     "TRUNCATE": False,
@@ -148,7 +158,9 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 | RUNTIME_CHECKIN_LOCK_TABLES
                 | {"support_action_plan"}
                 | RUNTIME_RETRIEVAL_RUN_TABLES
-                | CATALOG_TABLES
+                | CATALOG_WRITE_TABLES
+                | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
+                | CANDIDATE_INDEX_RUNTIME_READ_TABLES
                 | set(SOURCE_TABLES)
                 | set(RUNTIME_AUTH_UPDATE_COLUMNS)
                 | {"notification_record", "user_consent"}
@@ -171,6 +183,13 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                         f"ALTER TABLE {table} ADD COLUMN knowledge_index_lock_marker integer NOT NULL DEFAULT 0 CHECK (knowledge_index_lock_marker=0)"
                     )
                 )
+            await connection.execute(
+                text(
+                    "ALTER TABLE rag_candidate_index_version "
+                    "ADD COLUMN candidate_index_lock_marker integer NOT NULL DEFAULT 0 "
+                    "CHECK (candidate_index_lock_marker=0)"
+                )
+            )
             await _add_auth_fixture_columns(connection)
             await connection.execute(text("CREATE TABLE future_table (id serial PRIMARY KEY)"))
             await connection.execute(text('ALTER TABLE "user" ADD COLUMN sequence_id serial'))
@@ -240,6 +259,13 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             (reader, "INSERT INTO rag_source_snapshot (id) VALUES (3)"),
             (producer, "DELETE FROM rag_source_snapshot"),
             (producer, 'INSERT INTO "user" (id) VALUES (3)'),
+            (reader, "INSERT INTO rag_candidate_index_version VALUES (1)"),
+            (reader, "DELETE FROM rag_candidate_index_version"),
+            (reader, "TRUNCATE rag_candidate_index_version"),
+            (reader, "INSERT INTO rag_candidate_index_member VALUES (1)"),
+            (reader, "UPDATE rag_candidate_index_member SET id=2"),
+            (reader, "DELETE FROM rag_candidate_index_member"),
+            (reader, "TRUNCATE rag_candidate_index_member"),
             (reader, "INSERT INTO future_table VALUES (1)"),
             (reader, "INSERT INTO future_after_provision VALUES (1)"),
             (producer, "INSERT INTO future_after_provision VALUES (1)"),
@@ -257,11 +283,24 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 "rag_request_guard_authority": _APPEND_ONLY_PRIVILEGES,
                 "rag_request_source_decision": _APPEND_ONLY_PRIVILEGES,
                 "rag_request_member_decision": _APPEND_ONLY_PRIVILEGES,
+                # #780: Candidate Index tables are runtime read-only
+                "rag_candidate_index_version": _READ_ONLY_PRIVILEGES,
+                "rag_candidate_index_member": _READ_ONLY_PRIVILEGES,
                 # 대조군: 기존 lifecycle/append-only 권한이 바뀌지 않았는지 확인한다.
                 "retrieval_run": _RETRIEVAL_RUN_PRIVILEGES,
                 "ai_job_intake_context": _APPEND_ONLY_PRIVILEGES,
             },
         )
+        async with admin.connect() as connection:
+            assert (
+                await connection.scalar(
+                    text(
+                        "SELECT has_column_privilege(:role, 'rag_candidate_index_version', 'candidate_index_lock_marker', 'UPDATE')"
+                    ),
+                    {"role": runtime},
+                )
+                is True
+            )
         # #731: authority 표가 빠진 schema에서는 provisioning이 fail closed여야 한다.
         async with admin.begin() as connection:
             await connection.execute(text("DROP TABLE rag_request_member_decision"))
@@ -1521,5 +1560,370 @@ async def test_retrieval_run_provisioned_runtime_role_lifecycle(database) -> Non
         await producer.dispose()
         async with admin.begin() as connection:
             for role in (runtime, writer):
+                await connection.execute(text(f'DROP OWNED BY "{role}"'))
+                await connection.execute(text(f'DROP ROLE IF EXISTS "{role}"'))
+
+
+async def test_runtime_catalog_and_knowledge_read_acl_parity_without_optional_roles(database) -> None:
+    """#779: Verify Runtime Catalog & Knowledge read ACL parity when optional roles are omitted."""
+    from infra.python.catalog_role_policy import CATALOG_WRITE_TABLES
+    from infra.python.knowledge_index_role_policy import KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
+    from infra.python.provision_database_roles import provision_roles
+
+    admin = database
+    suffix = uuid4().hex[:12]
+    runtime, writer, unrelated = (f"parity_{part}_{suffix}" for part in ("runtime", "writer", "unrelated"))
+    password = f"synthetic-{suffix}-only"
+    reader = create_async_engine(admin.url.set(username=runtime, password=password))
+
+    expected_runtime = {
+        table: {
+            "SELECT": True,
+            "INSERT": False,
+            "UPDATE": False,
+            "DELETE": False,
+            "TRUNCATE": False,
+            "REFERENCES": False,
+            "TRIGGER": False,
+        }
+        for table in (CATALOG_WRITE_TABLES | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES)
+    }
+    expected_none = {
+        table: {
+            "SELECT": False,
+            "INSERT": False,
+            "UPDATE": False,
+            "DELETE": False,
+            "TRUNCATE": False,
+            "REFERENCES": False,
+            "TRIGGER": False,
+        }
+        for table in (CATALOG_WRITE_TABLES | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES)
+    }
+
+    try:
+        async with admin.begin() as connection:
+            for role in (runtime, writer, unrelated):
+                await connection.execute(text(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"))
+            await provision_roles(
+                connection,
+                owner=config.DB_USER,
+                runtime=runtime,
+                writer=writer,
+                catalog_writer=None,
+                knowledge_index_builder=None,
+            )
+
+        # 1: Runtime has SELECT only across all Catalog & Knowledge tables
+        await _assert_runtime_table_privileges(admin, runtime, expected_runtime)
+
+        # 2: PUBLIC has no privileges across Catalog & Knowledge tables
+        await _assert_runtime_table_privileges(admin, "public", expected_none)
+
+        # 3: Unrelated role has no privileges across Catalog & Knowledge tables
+        await _assert_runtime_table_privileges(admin, unrelated, expected_none)
+
+        # 4: Runtime read queries succeed, write/modification queries fail with 42501
+        async with reader.begin() as conn:
+            assert await conn.scalar(text("SELECT count(*) FROM rag_catalog_set")) == 0
+            assert await conn.scalar(text("SELECT count(*) FROM rag_knowledge_index")) == 0
+
+        for stmt in (
+            "INSERT INTO rag_catalog_set (catalog_version) VALUES ('v1')",
+            "UPDATE rag_catalog_set SET catalog_version = 'v2'",
+            "DELETE FROM rag_catalog_set",
+            "TRUNCATE rag_catalog_set",
+            "INSERT INTO rag_knowledge_index (index_code) VALUES ('IDX')",
+            "UPDATE rag_knowledge_index SET index_code = 'IDX2'",
+            "DELETE FROM rag_knowledge_index",
+            "TRUNCATE rag_knowledge_index",
+        ):
+            with pytest.raises(DBAPIError) as error:
+                async with reader.begin() as conn:
+                    await conn.execute(text(stmt))
+            assert error.value.orig.sqlstate == "42501"
+
+    finally:
+        await reader.dispose()
+        async with admin.begin() as connection:
+            for role in (runtime, writer, unrelated):
+                await connection.execute(text(f'DROP OWNED BY "{role}"'))
+                await connection.execute(text(f'DROP ROLE IF EXISTS "{role}"'))
+
+
+async def test_runtime_candidate_index_read_acl_parity_and_lock_marker(database) -> None:
+    """#780: Verify Runtime Candidate Index read ACL parity, lock marker column, and FOR SHARE execution."""
+    from app.models.rag_candidate_index import (
+        RagCandidateIndexBuildMode,
+        RagCandidateIndexEntityType,
+        RagCandidateIndexMember,
+        RagCandidateIndexStatus,
+        RagCandidateIndexVersion,
+    )
+    from app.models.rag_catalog import (
+        RagCatalogSet,
+        RagCatalogSetSource,
+        RagMedicationSearchEntryType,
+    )
+    from app.repositories.rag_candidate_index_repository import (
+        RagCandidateIndexMemberCreate,
+        RagCandidateIndexRepository,
+        _recomputed_lexical_member_content_hash,
+        _sha256,
+    )
+    from app.repositories.rag_source_catalog_repository import (
+        RagSourceCatalogRepository,
+        RagSourceCreate,
+        RagSourceEndpointCreate,
+        RagSourceOperationCreate,
+        RagSourceSnapshotCreate,
+    )
+    from infra.python.provision_database_roles import provision_roles
+
+    admin = database
+    suffix = uuid4().hex[:12]
+    runtime, writer, unrelated = (f"candi_{part}_{suffix}" for part in ("runtime", "writer", "unrelated"))
+    password = f"synthetic-{suffix}-only"
+    reader = create_async_engine(admin.url.set(username=runtime, password=password))
+
+    candidate_tables = {
+        "rag_candidate_index_version",
+        "rag_candidate_index_member",
+    }
+    expected_runtime = {
+        table: {
+            "SELECT": True,
+            "INSERT": False,
+            "UPDATE": False,
+            "DELETE": False,
+            "TRUNCATE": False,
+            "REFERENCES": False,
+            "TRIGGER": False,
+        }
+        for table in candidate_tables
+    }
+    expected_none = {
+        table: {
+            "SELECT": False,
+            "INSERT": False,
+            "UPDATE": False,
+            "DELETE": False,
+            "TRUNCATE": False,
+            "REFERENCES": False,
+            "TRIGGER": False,
+        }
+        for table in candidate_tables
+    }
+
+    try:
+        async with admin.begin() as connection:
+            for role in (runtime, writer, unrelated):
+                await connection.execute(text(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"))
+            await provision_roles(
+                connection,
+                owner=config.DB_USER,
+                runtime=runtime,
+                writer=writer,
+                catalog_writer=None,
+                knowledge_index_builder=None,
+            )
+
+        # 1: Table privileges: Runtime has SELECT only across Candidate Index tables
+        await _assert_runtime_table_privileges(admin, runtime, expected_runtime)
+
+        # 2: Table privileges: PUBLIC and unrelated roles have NO privileges
+        await _assert_runtime_table_privileges(admin, "public", expected_none)
+        await _assert_runtime_table_privileges(admin, unrelated, expected_none)
+
+        # 3: Column privileges: candidate_index_lock_marker UPDATE only
+        async with admin.connect() as connection:
+            has_marker_update = await connection.scalar(
+                text(
+                    "SELECT has_column_privilege(:role, 'rag_candidate_index_version', 'candidate_index_lock_marker', 'UPDATE')"
+                ),
+                {"role": runtime},
+            )
+            assert has_marker_update is True
+            for col in ("index_code", "index_version", "status", "content_hash", "catalog_version"):
+                col_update = await connection.scalar(
+                    text("SELECT has_column_privilege(:role, 'rag_candidate_index_version', :col, 'UPDATE')"),
+                    {"role": runtime, "col": col},
+                )
+                assert col_update is False
+
+        # 4: Direct SQL execution privileges on rag_candidate_index_version
+        async with reader.begin() as conn:
+            assert await conn.scalar(text("SELECT count(*) FROM rag_candidate_index_version")) == 0
+            assert await conn.scalar(text("SELECT count(*) FROM rag_candidate_index_member")) == 0
+
+        # Runtime UPDATE marker = 0 succeeds (permission granted)
+        async with reader.begin() as conn:
+            await conn.execute(
+                text("UPDATE rag_candidate_index_version SET candidate_index_lock_marker = 0 WHERE false")
+            )
+
+        for stmt in (
+            "INSERT INTO rag_candidate_index_version (index_code) VALUES ('fail')",
+            "UPDATE rag_candidate_index_version SET status = 'READY'",
+            "UPDATE rag_candidate_index_version SET content_hash = 'fail'",
+            "DELETE FROM rag_candidate_index_version",
+            "TRUNCATE rag_candidate_index_version",
+            "INSERT INTO rag_candidate_index_member (member_key) VALUES ('fail')",
+            "UPDATE rag_candidate_index_member SET display_text = 'fail'",
+            "DELETE FROM rag_candidate_index_member",
+            "TRUNCATE rag_candidate_index_member",
+        ):
+            with pytest.raises(DBAPIError) as error:
+                async with reader.begin() as conn:
+                    await conn.execute(text(stmt))
+            assert error.value.orig.sqlstate == "42501"
+
+        # 5: Seed valid READY candidate index and verify get_verified_ready_index_snapshot under runtime role
+        index_code = f"IDX_{suffix}"
+        index_version = "v1"
+        async with async_sessionmaker(admin, expire_on_commit=False)() as session:
+            repo = RagSourceCatalogRepository(session)
+            source = await repo.create_source(
+                RagSourceCreate(source_code=f"SRC_{suffix}", display_name="Src", owner_name="Owner")
+            )
+            endpoint = await repo.create_endpoint(
+                RagSourceEndpointCreate(source_id=source.id, endpoint_code="EP", display_name="EP")
+            )
+            op = await repo.create_operation(
+                RagSourceOperationCreate(endpoint_id=endpoint.id, operation_code="OP", display_name="OP")
+            )
+            snapshot = await repo.create_snapshot(
+                RagSourceSnapshotCreate(
+                    operation_id=op.id,
+                    source_version="v1",
+                    raw_manifest_checksum="a" * 64,
+                    canonical_checksum="b" * 64,
+                    schema_version="schema-v1",
+                    parser_version="parser-v1",
+                    normalization_version="norm-v1",
+                    canonicalization_spec_version="canon-v1",
+                    record_count=1,
+                    rejected_record_count=0,
+                    collected_at=datetime.now(UTC),
+                )
+            )
+            cat_set = RagCatalogSet(
+                catalog_version="cat-v1",
+                schema_version="schema-v1",
+                normalization_version="norm-v1",
+                manifest_spec_version=f"spec-{suffix}",
+                envelope_hash="c" * 64,
+                manifest_json=b"{}",
+            )
+            session.add(cat_set)
+            await session.flush()
+
+            cat_source = RagCatalogSetSource(
+                set_id=cat_set.id,
+                source_snapshot_id=snapshot.id,
+                source_version=snapshot.source_version,
+            )
+            session.add(cat_source)
+            await session.flush()
+
+            member_payload = RagCandidateIndexMemberCreate(
+                entry_type=RagMedicationSearchEntryType.PRODUCT_NAME,
+                identity_entity_type=RagCandidateIndexEntityType.PRODUCT,
+                identity_code_system="MFDS",
+                identity_canonical_code=f"CANON_{suffix}",
+                product_ref=f"prod:{suffix}",
+                entry_ref=f"entry:{suffix}",
+                display_text="Test Med",
+                normalized_text="test med",
+                product_name="Test Med",
+                product_source_snapshot_id=snapshot.id,
+                entry_source_snapshot_id=snapshot.id,
+                catalog_version=cat_set.catalog_version,
+                catalog_manifest_hash=cat_set.envelope_hash,
+                normalization_version=cat_set.normalization_version,
+                member_key=f"MK_{suffix}",
+                member_content_hash="",
+            )
+            member_content_hash = _recomputed_lexical_member_content_hash(member_payload)
+            member_set_hash = _sha256(
+                [{"member_key": member_payload.member_key, "member_content_hash": member_content_hash}]
+            )
+            content_hash = _sha256({"member_set_hash": member_set_hash, "version": "v1"})
+
+            version_row = RagCandidateIndexVersion(
+                index_code=index_code,
+                index_version=index_version,
+                status=RagCandidateIndexStatus.READY,
+                build_mode=RagCandidateIndexBuildMode.LEXICAL_ONLY,
+                catalog_set_id=cat_set.id,
+                catalog_version=cat_set.catalog_version,
+                catalog_manifest_hash=cat_set.envelope_hash,
+                schema_version=cat_set.schema_version,
+                normalization_version=cat_set.normalization_version,
+                lexical_config_version="lex-v1",
+                search_order_version="order-v1",
+                candidate_limit=10,
+                display_limit=5,
+                member_count=1,
+                product_identity_count=1,
+                product_name_count=1,
+                approved_alias_count=0,
+                vector_count=0,
+                member_set_hash=member_set_hash,
+                configuration_hash="d" * 64,
+                content_hash=content_hash,
+            )
+            session.add(version_row)
+            await session.flush()
+
+            member_row = RagCandidateIndexMember(
+                candidate_index_version_id=version_row.id,
+                entry_type=RagMedicationSearchEntryType.PRODUCT_NAME,
+                identity_entity_type=RagCandidateIndexEntityType.PRODUCT,
+                identity_code_system="MFDS",
+                identity_canonical_code=f"CANON_{suffix}",
+                product_ref=f"prod:{suffix}",
+                entry_ref=f"entry:{suffix}",
+                display_text="Test Med",
+                normalized_text="test med",
+                product_name="Test Med",
+                product_source_snapshot_id=snapshot.id,
+                entry_source_snapshot_id=snapshot.id,
+                catalog_version=cat_set.catalog_version,
+                catalog_manifest_hash=cat_set.envelope_hash,
+                normalization_version=cat_set.normalization_version,
+                member_key=f"MK_{suffix}",
+                member_content_hash=member_content_hash,
+                lexical_storage_hash=member_content_hash,
+            )
+            session.add(member_row)
+            await session.commit()
+
+        # Execute get_verified_ready_index_snapshot with reader session (runtime role)
+        # Verifies that SELECT ... FOR SHARE succeeds under Runtime privileges.
+        async with async_sessionmaker(reader, expire_on_commit=False)() as session:
+            runtime_repo = RagCandidateIndexRepository(session)
+            verified = await runtime_repo.get_verified_ready_index_snapshot(
+                index_code=index_code,
+                expected_index_version=index_version,
+            )
+            assert verified.version.index_code == index_code
+            assert len(verified.members) == 1
+
+        # Check constraint test on marker: updating to non-zero must fail with check_violation
+        with pytest.raises(DBAPIError) as error:
+            async with reader.begin() as conn:
+                await conn.execute(
+                    text(
+                        "UPDATE rag_candidate_index_version SET candidate_index_lock_marker = 1 WHERE index_code = :code"
+                    ),
+                    {"code": index_code},
+                )
+        assert error.value.orig.sqlstate == "23514"
+
+    finally:
+        await reader.dispose()
+        async with admin.begin() as connection:
+            for role in (runtime, writer, unrelated):
                 await connection.execute(text(f'DROP OWNED BY "{role}"'))
                 await connection.execute(text(f'DROP ROLE IF EXISTS "{role}"'))
