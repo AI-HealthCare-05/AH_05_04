@@ -1,3 +1,4 @@
+import json
 from collections.abc import Mapping
 from dataclasses import replace
 from decimal import Decimal
@@ -7,14 +8,17 @@ from typing import Any, cast
 import pytest
 from pydantic import ValidationError
 
+from ai_worker.tasks.evaluation.answer_comparison import ORDERED_ANSWER_CONTROLLED_VARIABLE_KEYS
 from ai_worker.tasks.evaluation.answer_judgment import ValidatedAnswerJudgments, ValidatedCaseJudgment
 from ai_worker.tasks.evaluation.answer_metrics import (
     AnswerBootstrapDiagnostic,
     AnswerMetricBuildResult,
+    _algorithm_signature_supported,
     build_answer_metrics,
     build_answer_metrics_with_diagnostics,
 )
-from ai_worker.tasks.evaluation.loaders import EvaluationCaseContract, ValidatedDataset, load_dataset
+from ai_worker.tasks.evaluation.canonical import canonical_sha256
+from ai_worker.tasks.evaluation.loaders import EvaluationCaseContract, ValidatedDataset, load_dataset, load_json_object
 from ai_worker.tasks.evaluation.schemas.answer_quality_v1 import (
     AnswerClaimCorrectnessLabel,
     AnswerClaimJudgment,
@@ -1084,3 +1088,104 @@ def test_answer_correctness_policy_rejects_float_replicate_ratio() -> None:
 
     with pytest.raises(ValidationError):
         ComparisonScope.model_validate(payload)
+
+
+def test_answer_quality_dev_comparison_policy_artifact_contract() -> None:
+    policy_path = EVALS_ROOT / "policies/rag-answer-quality-dev-v1.comparison-policy.json"
+    raw_payload = json.loads(policy_path.read_bytes())
+
+    # 1. Parse validation via canonical loader
+    policy = load_json_object(policy_path, ComparisonPolicy)
+
+    # 2. Schema identification
+    assert policy.schema_id == "rag-eval.comparison-policy"
+    assert policy.schema_version == "1.0.0"
+    assert policy.comparison_policy_id == "rag-answer-quality-dev-comparison"
+    assert policy.comparison_policy_version == "1.0.0"
+
+    # 3. Exact 4 metrics
+    assert {scope.metric_id for scope in policy.scopes} == {
+        "ANSWER_CORRECTNESS",
+        "COMPLETENESS",
+        "RELEVANCE",
+        "REQUIRED_CLAIM_RECALL",
+    }
+
+    # 4. Approved #159 semantics
+    assert all(scope.partition is Partition.DEV for scope in policy.scopes)
+    assert all(scope.required is False for scope in policy.scopes)
+    assert all(scope.decision_basis == "DIAGNOSTIC_ONLY" for scope in policy.scopes)
+    assert all(scope.threshold == "0" for scope in policy.scopes)
+    assert all(scope.estimator_id == "MICRO_RATIO" and scope.estimator_version == "1.0.0" for scope in policy.scopes)
+    assert all(
+        scope.ci_method_id == "PERCENTILE_CLUSTER_BOOTSTRAP" and scope.ci_method_version == "1.0.0"
+        for scope in policy.scopes
+    )
+    assert all(
+        dict(scope.ci_parameters)["level"] == "0.95" and dict(scope.ci_parameters)["sidedness"] == "TWO_SIDED"
+        for scope in policy.scopes
+    )
+
+    # Exact unit of analysis mapping
+    expected_units = {
+        "ANSWER_CORRECTNESS": "CLAIM",
+        "COMPLETENESS": "EXPECTED_SECTION",
+        "RELEVANCE": "CASE",
+        "REQUIRED_CLAIM_RECALL": "REQUIRED_CLAIM",
+    }
+    assert {scope.metric_id: scope.unit_of_analysis for scope in policy.scopes} == expected_units
+
+    # 5. ANSWER_CORRECTNESS minimum_valid_replicate_ratio is exact "0.9" string and absent in other 3 metrics
+    correctness_scope = next(scope for scope in policy.scopes if scope.metric_id == "ANSWER_CORRECTNESS")
+    correctness_params = dict(correctness_scope.ci_parameters)
+    assert correctness_params["minimum_valid_replicate_ratio"] == "0.9"
+    assert isinstance(correctness_params["minimum_valid_replicate_ratio"], str)
+
+    for other_scope in policy.scopes:
+        if other_scope.metric_id != "ANSWER_CORRECTNESS":
+            assert "minimum_valid_replicate_ratio" not in dict(other_scope.ci_parameters)
+
+    # 6. Controlled variables: exact membership with #808 canonical source, unique, sorted in policy
+    assert set(policy.controlled_variable_keys) == set(ORDERED_ANSWER_CONTROLLED_VARIABLE_KEYS)
+    assert len(policy.controlled_variable_keys) == 14
+    assert len(set(policy.controlled_variable_keys)) == 14
+    assert list(policy.controlled_variable_keys) == sorted(policy.controlled_variable_keys)
+
+    # 7. Candidate fields: validate non-zero/valid types and 4-scope uniformity (without duplicate hardcoded numbers)
+    for scope in policy.scopes:
+        ci_params = dict(scope.ci_parameters)
+        assert isinstance(ci_params["iterations"], int) and ci_params["iterations"] > 0
+        assert isinstance(scope.minimum_case_count, int) and scope.minimum_case_count > 0
+        assert isinstance(scope.minimum_independent_group_count, int) and scope.minimum_independent_group_count > 0
+        assert scope.seed is not None and isinstance(scope.seed, int)
+        assert scope.cluster_dimension is not None
+        assert bool(scope.independence_unit)
+        assert bool(scope.slice_id)
+
+    assert len({dict(scope.ci_parameters)["iterations"] for scope in policy.scopes}) == 1
+    assert len({scope.minimum_case_count for scope in policy.scopes}) == 1
+    assert len({scope.minimum_independent_group_count for scope in policy.scopes}) == 1
+    assert len({scope.seed for scope in policy.scopes}) == 1
+    assert len({scope.cluster_dimension for scope in policy.scopes}) == 1
+    assert len({scope.independence_unit for scope in policy.scopes}) == 1
+    assert len({scope.slice_id for scope in policy.scopes}) == 1
+
+    # 8. Self-hash exact match
+    computed_hash = canonical_sha256(
+        raw_payload,
+        excluded_top_level_keys=frozenset({"comparison_policy_hash"}),
+    )
+    assert policy.comparison_policy_hash == computed_hash
+    assert raw_payload["comparison_policy_hash"] == computed_hash
+
+    # 9. Algorithm signature & metric build compatibility (never NOT_IMPLEMENTED)
+    assert all(_algorithm_signature_supported(scope) for scope in policy.scopes)
+    eval_dataset = dataset_with_answer_scopes(*policy.scopes)
+    results = _build_answer_metrics(
+        eval_dataset,
+        completed_answer_results(),
+        human_judgments=_make_validated_judgments(),
+    )
+    assert len(results.metrics) == 4
+    for item in results.metrics:
+        assert item.execution_status.value != "NOT_IMPLEMENTED"
