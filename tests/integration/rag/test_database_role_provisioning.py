@@ -37,6 +37,8 @@ from infra.python.provision_database_roles import (
     CANDIDATE_INDEX_RUNTIME_READ_TABLES,
     RUNTIME_ACCOUNT_DELETION_REQUEST_UPDATE_COLUMNS,
     RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES,
+    RUNTIME_ACCOUNT_WITHDRAWAL_READ_TABLES,
+    RUNTIME_ACCOUNT_WITHDRAWAL_UPDATE_COLUMNS,
     RUNTIME_APPEND_ONLY_TABLES,
     RUNTIME_AUTH_UPDATE_COLUMNS,
     RUNTIME_CHECKIN_LOCK_TABLES,
@@ -84,19 +86,26 @@ async def _assert_runtime_table_privileges(admin, runtime: str, expected: dict[s
 
 
 async def _assert_account_withdrawal_cleanup_delete_privileges(connection, role: str) -> None:
-    for table in sorted(RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES):
+    for table in sorted(RUNTIME_ACCOUNT_WITHDRAWAL_READ_TABLES):
         assert await connection.scalar(
             text("SELECT has_table_privilege(:role, :table, 'SELECT')"),
-            {"role": role, "table": table},
-        ), table
-        assert await connection.scalar(
-            text("SELECT has_table_privilege(:role, :table, 'DELETE')"),
             {"role": role, "table": table},
         ), table
         assert not await connection.scalar(
             text("SELECT has_table_privilege(:role, :table, 'TRUNCATE')"),
             {"role": role, "table": table},
         ), table
+    for table in sorted(RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES):
+        assert await connection.scalar(
+            text("SELECT has_table_privilege(:role, :table, 'DELETE')"),
+            {"role": role, "table": table},
+        ), table
+    for table, columns in RUNTIME_ACCOUNT_WITHDRAWAL_UPDATE_COLUMNS.items():
+        for column in columns:
+            assert await connection.scalar(
+                text("SELECT has_column_privilege(:role, :table, :column, 'UPDATE')"),
+                {"role": role, "table": table, "column": column},
+            ), (table, column)
 
 
 async def _assert_runtime_cannot_delete_withdrawal_cleanup_tables(connection, runtime: str) -> None:
@@ -211,7 +220,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 | CANDIDATE_INDEX_RUNTIME_READ_TABLES
                 | set(SOURCE_TABLES)
                 | set(RUNTIME_AUTH_UPDATE_COLUMNS)
-                | RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES
+                | RUNTIME_ACCOUNT_WITHDRAWAL_READ_TABLES
                 | {"account_deletion_request", "notification_record", "user_consent"}
             ):
                 await connection.execute(text(f'CREATE TABLE "{table}" (id integer PRIMARY KEY)'))
@@ -1102,7 +1111,7 @@ async def _add_auth_fixture_columns(connection):
 async def _add_account_deletion_request_fixture_columns(connection):
     columns = {
         "user_id": "uuid",
-        "status": ("varchar(32) CHECK (status IN ('REQUESTED', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED'))"),
+        "status": ("varchar(32) CHECK (status IN ('PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED'))"),
         "requested_at": "timestamptz",
         "started_at": "timestamptz",
         "completed_at": "timestamptz",

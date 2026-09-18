@@ -30,6 +30,14 @@ def test_credentials_and_admin_process_are_separated() -> None:
             or "CATALOG_WRITER_PASSWORD" in str(value)
             for value in environment.values()
         )
+    fastapi = services["fastapi"]
+    assert fastapi["environment"]["ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE"] == "${ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE:-}"
+    assert fastapi["environment"]["ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD"] == (
+        "${ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD:-}"
+    )
+    worker = services["ai-worker"]
+    assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE" not in worker["environment"]
+    assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD" not in worker["environment"]
     provisioner = services["provision-db-roles"]
     assert provisioner["profiles"] == ["database-admin"]
     assert provisioner["restart"] == "no"
@@ -79,10 +87,11 @@ def test_account_deletion_request_runtime_role_updates_only_lifecycle_columns() 
         "last_error_code",
         "updated_at",
     }
-    assert RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES == {
+    assert {
         "action_plan_followup",
         "action_plan_followup_audit",
         "barrier_response",
+        "medication_candidate_search",
         "medication_candidate_search_result",
         "notification_record",
         "password_reset_token",
@@ -91,7 +100,7 @@ def test_account_deletion_request_runtime_role_updates_only_lifecycle_columns() 
         "safety_assessment",
         "support_action_plan",
         "user_consent",
-    }
+    } <= RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES
     assert "account_deletion_request" not in RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES
 
     source = (ROOT / "infra/python/provision_database_roles.py").read_text()

@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 from datetime import datetime, timedelta
+from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, select, text
@@ -21,6 +22,7 @@ from app.models.refresh_session import RefreshSession
 from app.models.users import AccountStatus, User
 from app.repositories.account_deletion_request_repository import (
     FAILED_DEMO_DELETION_CODE,
+    USER_DATA_DELETE_STATEMENTS,
     AccountDeletionRequestRepository,
 )
 from app.repositories.password_reset_repository import PasswordResetRepository
@@ -271,6 +273,58 @@ async def test_account_withdrawal_finalization_failure_marks_request_failed_with
     assert stored_request.status == AccountDeletionRequestStatus.FAILED
     assert stored_request.last_error_code == FAILED_DEMO_DELETION_CODE
     assert stored_request.failed_at is not None
+
+
+class _FakeCleanupTransaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+
+class _FakeCleanupSession:
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+        self.closed = False
+        self.began = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        self.closed = True
+        return False
+
+    def begin(self) -> _FakeCleanupTransaction:
+        self.began = True
+        return _FakeCleanupTransaction()
+
+    async def execute(self, statement, params=None):
+        self.statements.append(str(statement))
+
+
+class _RuntimeSessionThatMustNotDelete:
+    async def execute(self, statement, params=None):
+        raise AssertionError("runtime session must not execute account withdrawal cleanup DELETE statements")
+
+
+async def test_account_withdrawal_cleanup_uses_injected_cleanup_session() -> None:
+    cleanup_session = _FakeCleanupSession()
+    repository = AccountDeletionRequestRepository(
+        cast(AsyncSession, _RuntimeSessionThatMustNotDelete()),
+        cleanup_session_factory=lambda: cast(AsyncSession, cleanup_session),
+    )
+
+    await repository._delete_user_owned_runtime_data(uuid4())
+
+    joined = "\n".join(cleanup_session.statements)
+    assert cleanup_session.began is True
+    assert cleanup_session.closed is True
+    assert len(cleanup_session.statements) == len(USER_DATA_DELETE_STATEMENTS) + 1
+    assert "DELETE FROM refresh_session" in joined
+    assert "DELETE FROM medication_candidate_search_result" in joined
+    assert "DELETE FROM medication_candidate_search" in joined
 
 
 async def test_login_waits_for_concurrent_logout_and_issues_latest_token_version() -> None:

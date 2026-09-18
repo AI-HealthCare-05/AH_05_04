@@ -63,10 +63,36 @@ RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES = frozenset(
     {
         "action_plan_followup",
         "action_plan_followup_audit",
+        "ai_job",
+        "ai_job_attempt",
         "barrier_response",
+        "chat_citation",
+        "chat_message",
+        "chat_message_feedback",
+        "chat_session",
+        "dlq_outbox_event",
+        "extracted_field",
+        "guide",
+        "guide_citation",
+        "guide_feedback",
+        "idempotency_record",
+        "medical_document",
+        "medication",
+        "medication_candidate_search",
         "medication_candidate_search_result",
+        "medication_checkin",
+        "medication_identification",
+        "medication_occurrence",
+        "medication_schedule",
+        "medication_schedule_time",
+        "message_quarantine",
         "notification_record",
+        "ocr_job",
+        "outbox_event",
         "password_reset_token",
+        "prescription",
+        "push_delivery",
+        "push_subscription",
         "refresh_session",
         "retrieval_run",
         "safety_assessment",
@@ -74,6 +100,18 @@ RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES = frozenset(
         "user_consent",
     }
 )
+
+RUNTIME_ACCOUNT_WITHDRAWAL_READ_TABLES = RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES | frozenset(
+    {
+        "prescription_version",
+        "prescription_version_medication",
+        "profile",
+    }
+)
+
+RUNTIME_ACCOUNT_WITHDRAWAL_UPDATE_COLUMNS = {
+    "ai_job": ("expected_event_id", "last_consumed_event_id"),
+}
 
 
 # #404: token identity and history are immutable after issuance. Runtime only rotates/consumes.
@@ -289,9 +327,16 @@ async def _grant_account_withdrawal_cleanup_permissions(
 ) -> None:
     if cleanup_sql is None:
         return
+    for table in sorted(RUNTIME_ACCOUNT_WITHDRAWAL_READ_TABLES - RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES):
+        await connection.execute(text(f"GRANT SELECT ON TABLE public.{quoted_identifier(table)} TO {cleanup_sql}"))
     for table in sorted(RUNTIME_ACCOUNT_WITHDRAWAL_DELETE_TABLES):
         await connection.execute(
             text(f"GRANT SELECT, DELETE ON TABLE public.{quoted_identifier(table)} TO {cleanup_sql}")
+        )
+    for table, names in RUNTIME_ACCOUNT_WITHDRAWAL_UPDATE_COLUMNS.items():
+        columns = ", ".join(quoted_identifier(name) for name in names)
+        await connection.execute(
+            text(f"GRANT UPDATE ({columns}) ON TABLE public.{quoted_identifier(table)} TO {cleanup_sql}")
         )
 
 
