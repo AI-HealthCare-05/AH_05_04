@@ -59,6 +59,24 @@ def test_catalog_build_writes_are_limited_to_explicit_adapter(tmp_path: Path) ->
     ]
 
 
+def test_request_guard_runtime_binding_writes_are_limited_to_its_repository(tmp_path: Path) -> None:
+    source = (
+        "from app.models.rag_request_guard_runtime_binding import RagRequestGuardRuntimeBinding\n"
+        "row = RagRequestGuardRuntimeBinding(request_guard_decision_id='synthetic')\n"
+    )
+    approved = tmp_path / "backend/app/repositories/rag_request_guard_runtime_binding_repository.py"
+    approved.parent.mkdir(parents=True)
+    approved.write_text(source)
+    bypass = tmp_path / "backend/app/services/request_guard_bypass.py"
+    bypass.parent.mkdir(parents=True)
+    bypass.write_text(source)
+
+    assert violations(tmp_path, [str(approved.relative_to(tmp_path))]) == []
+    assert violations(tmp_path, [str(bypass.relative_to(tmp_path))]) == [
+        "backend/app/services/request_guard_bypass.py:2: unapproved write to rag_request_guard_runtime_binding"
+    ]
+
+
 def test_repository_tree_has_no_unapproved_protected_writes() -> None:
     root = Path(__file__).resolve().parents[2]
     paths = [str(path.relative_to(root)) for path in root.rglob("*.py")]

@@ -128,6 +128,7 @@ from app.models.rag_request_authority import (
     RagRequestMemberDecision,
     RagRequestSourceDecision,
 )
+from app.models.rag_request_guard_runtime_binding import RagRequestGuardRuntimeBinding
 from app.models.rag_retrieval import (
     RetrievalHit,
     RetrievalRun,
@@ -311,6 +312,7 @@ __all__ = [
     "RagEvidenceType",
     "RagReleaseEvaluationApproval",
     "RagRequestGuardAuthority",
+    "RagRequestGuardRuntimeBinding",
     "RagRequestMemberDecision",
     "RagRequestSourceDecision",
     "RagRuntimeApprovalStatus",
