@@ -23,6 +23,17 @@ def test_optional_database_roles_must_be_distinct() -> None:
         )
 
 
+def test_runtime_bundle_citation_pin_is_append_only_for_runtime_role() -> None:
+    from infra.python.provision_database_roles import (
+        RUNTIME_APPEND_ONLY_TABLES,
+        RUNTIME_MUTABLE_TABLES,
+    )
+
+    table = "rag_runtime_bundle_citation_approval"
+    assert table in RUNTIME_APPEND_ONLY_TABLES
+    assert table not in RUNTIME_MUTABLE_TABLES
+
+
 def test_credentials_and_admin_process_are_separated() -> None:
     services = yaml.safe_load((ROOT / "infra/docker/docker-compose.prod.yml").read_text())["services"]
     for name in ("fastapi", "ai-worker", "migrate", "verify-db-head"):

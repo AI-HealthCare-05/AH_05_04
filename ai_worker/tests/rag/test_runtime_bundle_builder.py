@@ -3,6 +3,8 @@
 from dataclasses import MISSING, replace
 from uuid import uuid4
 
+import pytest
+
 from ai_worker.tasks.rag.catalog.types import CatalogFreshnessStatus, CatalogVerificationStatus
 from ai_worker.tasks.rag.runtime_bundle_builder import (
     RUNTIME_BUNDLE_MANIFEST_PROJECTION_VERSION,
@@ -14,6 +16,7 @@ from ai_worker.tasks.rag.runtime_bundle_builder import (
     RuntimeBundleBuildExecutionStatus,
     RuntimeBundleBuildRequest,
     RuntimeBundleCanonicalConfiguration,
+    RuntimeBundleCitationApprovalPinIdentity,
     RuntimeBundleDeferredCheck,
     RuntimeBundleMemberPurpose,
     RuntimeBundleReadinessBlocker,
@@ -30,6 +33,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotUseFailureCode,
     SnapshotVerificationStatus,
 )
+from rag_runtime.source_use_approval import SourceUsePurpose
 
 _ENVIRONMENT = "LOCAL"
 _CATALOG_VERSION = "catalog-1.0.0"
@@ -153,6 +157,19 @@ def _request(
     return replace(request, **overrides)  # type: ignore[arg-type]
 
 
+def _citation_pin(**overrides: object) -> RuntimeBundleCitationApprovalPinIdentity:
+    pin = RuntimeBundleCitationApprovalPinIdentity(
+        source_snapshot_id=str(uuid4()),
+        source_use_approval_id=str(uuid4()),
+        source_code="MFDS_PATIENT_CITATION",
+        source_version="api:2026-09-10:0001",
+        approval_version="citation-approval-v1",
+        environment=_ENVIRONMENT,
+        purpose=SourceUsePurpose.PATIENT_CITATION,
+    )
+    return replace(pin, **overrides)  # type: ignore[arg-type]
+
+
 def test_minimum_member_set_is_buildable_and_never_ready() -> None:
     outcome = evaluate_runtime_bundle_build(_request())
 
@@ -183,6 +200,80 @@ def test_same_components_in_any_order_produce_the_same_hashes() -> None:
 
     assert first.manifest_hash == second.manifest_hash
     assert first.bundle_manifest_hash == second.bundle_manifest_hash
+
+
+def test_citation_approval_pin_order_does_not_change_bundle_hash() -> None:
+    first_pin = _citation_pin()
+    second_pin = _citation_pin()
+    request = _request(citation_approval_pins=(first_pin, second_pin))
+    reordered = replace(request, citation_approval_pins=(second_pin, first_pin))
+
+    assert evaluate_runtime_bundle_build(request).bundle_manifest_hash == (
+        evaluate_runtime_bundle_build(reordered).bundle_manifest_hash
+    )
+
+
+def test_duplicate_identical_citation_pin_is_canonicalized_once() -> None:
+    pin = _citation_pin()
+    outcome = evaluate_runtime_bundle_build(_request(citation_approval_pins=(pin, pin)))
+
+    assert outcome.decision is RuntimeBundleBuildDecision.BUILDABLE
+    assert outcome.configuration is not None
+    assert outcome.configuration.citation_approval_pins == (pin,)
+
+
+def test_conflicting_citation_pins_for_same_snapshot_are_rejected() -> None:
+    pin = _citation_pin()
+    conflict = replace(pin, source_use_approval_id=str(uuid4()), approval_version="citation-approval-v2")
+    outcome = evaluate_runtime_bundle_build(_request(citation_approval_pins=(pin, conflict)))
+
+    assert outcome.decision is RuntimeBundleBuildDecision.REJECTED
+    assert RuntimeBundleValidationCode.CITATION_APPROVAL_PIN_INVALID in outcome.validation_codes
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("approval_version", "citation-approval-v2"),
+        ("source_use_approval_id", "00000000-0000-4000-8000-000000000001"),
+        ("source_snapshot_id", "00000000-0000-4000-8000-000000000002"),
+    ),
+)
+def test_citation_approval_pin_identity_changes_bundle_hash(field: str, value: str) -> None:
+    pin = _citation_pin()
+    baseline = evaluate_runtime_bundle_build(_request(citation_approval_pins=(pin,))).bundle_manifest_hash
+    if field == "approval_version":
+        changed_pin = replace(pin, approval_version=value)
+    elif field == "source_use_approval_id":
+        changed_pin = replace(pin, source_use_approval_id=value)
+    else:
+        changed_pin = replace(pin, source_snapshot_id=value)
+    changed = evaluate_runtime_bundle_build(_request(citation_approval_pins=(changed_pin,))).bundle_manifest_hash
+
+    assert changed != baseline
+
+
+def test_adding_or_removing_citation_pin_changes_bundle_hash() -> None:
+    without_pin = evaluate_runtime_bundle_build(_request()).bundle_manifest_hash
+    with_pin = evaluate_runtime_bundle_build(_request(citation_approval_pins=(_citation_pin(),))).bundle_manifest_hash
+
+    assert with_pin != without_pin
+
+
+def test_citation_approval_pin_environment_must_match_bundle() -> None:
+    outcome = evaluate_runtime_bundle_build(_request(citation_approval_pins=(_citation_pin(environment="TEST"),)))
+
+    assert outcome.decision is RuntimeBundleBuildDecision.REJECTED
+    assert RuntimeBundleValidationCode.CITATION_APPROVAL_PIN_INVALID in outcome.validation_codes
+
+
+def test_citation_approval_pin_purpose_must_be_patient_citation() -> None:
+    outcome = evaluate_runtime_bundle_build(
+        _request(citation_approval_pins=(_citation_pin(purpose=SourceUsePurpose.RETRIEVAL),))
+    )
+
+    assert outcome.decision is RuntimeBundleBuildDecision.REJECTED
+    assert RuntimeBundleValidationCode.CITATION_APPROVAL_PIN_INVALID in outcome.validation_codes
 
 
 def test_bundle_hash_is_stable_across_repeated_evaluation() -> None:
@@ -716,6 +807,7 @@ def test_configuration_hash_depends_only_on_the_persisted_configuration() -> Non
         # Reversed on purpose: order must not matter.
         source_members=tuple(reversed(outcome.configuration.source_members)),
         artifact_members=outcome.configuration.artifact_members,
+        citation_approval_pins=outcome.configuration.citation_approval_pins,
     )
 
     assert canonical_runtime_bundle_manifest_hash(rebuilt) == outcome.bundle_manifest_hash

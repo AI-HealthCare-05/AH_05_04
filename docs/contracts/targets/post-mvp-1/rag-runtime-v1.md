@@ -256,7 +256,13 @@ Guide Job 접수 Transaction은 Full Execution Context 전체를 고정한다. C
 
 `bundle_manifest_hash`는 저장된 행만으로 **재계산·검증 가능해야** 한다. 그렇지 않으면 위 「활성화·Rollback·Resume Guard」의 「포인터 교체 직전 Bundle Manifest 재검증」을 수행할 수 없다.
 
-- 해시 입력은 canonical 구성 하나이며, 그 전체가 영속화된다: 환경, Execution Manifest hash, Medication Catalog `version`·`manifest_hash`, 전체 Source member(`source_version`·`canonical_checksum`·`approval_version`·`scope_policy_hash`·`freshness_policy_hash`·`required`·`selected_for_operation`), 전체 Artifact member(`kind`·`ref`·`version`·`manifest_hash`).
+#853부터 `rag-runtime-bundle-manifest-v2`는 전용
+`rag_runtime_bundle_citation_approval` row set도 canonical input에 포함한다. 각 pin은 exact
+#807 `PATIENT_CITATION` approval identity를 저장하며 `(bundle_id, source_snapshot_id)`당 하나만
+허용한다. 기존 `rag_runtime_bundle_source.approval_version`과 `RagRuntimeSourcePurpose` 의미는
+변경하지 않는다. 저장된 pin 전량을 제외한 hash 재계산은 유효한 검증이 아니다.
+
+- 해시 입력은 canonical 구성 하나이며, 그 전체가 영속화된다: 환경, Execution Manifest hash, Medication Catalog `version`·`manifest_hash`, 전체 Source member(`source_version`·`canonical_checksum`·`approval_version`·`scope_policy_hash`·`freshness_policy_hash`·`required`·`selected_for_operation`), 전체 Artifact member(`kind`·`ref`·`version`·`manifest_hash`), 전체 Citation approval pin(`source_snapshot_id`·`source_use_approval_id`·`source_code`·`source_version`·`approval_version`·`environment`·`purpose`).
 - 해시에 값을 추가하려면 같은 변경에서 저장 컬럼도 추가한다. 해시 입력과 저장 컬럼의 불일치는 계약 위반이다.
 - member 목록은 canonical JSON 바이트 기준 정렬로 순서 독립이다.
 - Bundle 이름(`bundle_key`·`bundle_version`)·`created_by`·`governance_revision_ref`는 내용 identity가 아니므로 제외한다. 따라서 `uq_rag_runtime_bundle_manifest_hash`는 「내용당 한 행」을 뜻하며, 동일 Manifest 평가의 재사용 근거가 된다.

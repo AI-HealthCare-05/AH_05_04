@@ -8,8 +8,8 @@ rows and compared with the stored value.
 
 from collections.abc import AsyncIterator
 from dataclasses import replace
-from datetime import UTC, datetime
-from uuid import uuid4
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -19,6 +19,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 import app.models  # noqa: F401
+from ai_worker.adapters.sqlalchemy_runtime_bundle_citation_approval import (
+    SqlAlchemyRuntimeBundleCitationApprovalReader,
+)
 from ai_worker.tasks.rag.catalog.types import CatalogFreshnessStatus, CatalogVerificationStatus
 from ai_worker.tasks.rag.runtime_bundle_builder import (
     MedicationCatalogBinding,
@@ -26,6 +29,7 @@ from ai_worker.tasks.rag.runtime_bundle_builder import (
     RuntimeBundleArtifactMemberInput,
     RuntimeBundleBuildDecision,
     RuntimeBundleBuildRequest,
+    RuntimeBundleCitationApprovalPinIdentity,
     RuntimeBundleMemberPurpose,
     RuntimeBundleRejectionReason,
     RuntimeBundleSourceMemberInput,
@@ -36,6 +40,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import SnapshotVeri
 from app.core import config
 from app.core.db.databases import Base
 from app.models.rag_runtime import (
+    RagRuntimeBundleCitationApproval,
     RagRuntimeBundleSource,
     RagRuntimeBundleStatus,
     RagRuntimeEnvironment,
@@ -45,7 +50,10 @@ from app.models.rag_runtime import (
     RagRuntimeReleaseBundle,
     RagRuntimeSourcePurpose,
 )
+from app.models.rag_source import RagSource, RagSourceEndpoint, RagSourceOperation, RagSourceSnapshot
+from app.models.users import User
 from app.repositories.rag_runtime_repository import (
+    RagRuntimeBundleCitationApprovalMismatchError,
     RagRuntimeBundleSourceVersionMismatchError,
     RagRuntimeEnvironmentCreate,
     RagRuntimeRepository,
@@ -57,11 +65,17 @@ from app.repositories.rag_source_catalog_repository import (
     RagSourceOperationCreate,
     RagSourceSnapshotCreate,
 )
+from app.repositories.rag_source_use_approval_repository import (
+    RagSourceUseApprovalRepository,
+    SourceUseApprovalCreate,
+)
 from app.services.rag_runtime_bundle_build import (
     execute_runtime_bundle_build,
     load_persisted_bundle_configuration,
     verify_persisted_bundle_manifest_hash,
 )
+from rag_runtime.runtime_environment import RuntimeEnvironmentCode
+from rag_runtime.source_use_approval import SourceUsePurpose
 
 pytestmark = pytest.mark.asyncio
 
@@ -90,6 +104,7 @@ _ROOT_TABLES = (
     "rag_runtime_execution_manifest",
     "rag_runtime_release_bundle",
     "rag_runtime_bundle_source",
+    "rag_runtime_bundle_citation_approval",
     "rag_runtime_environment",
     "rag_runtime_environment_transition",
     "rag_release_evaluation_approval",
@@ -155,6 +170,7 @@ async def clean_runtime_tables() -> AsyncIterator[None]:
                 # Every table referencing these is listed explicitly, so no CASCADE is needed.
                 "TRUNCATE TABLE "
                 f"{TEST_SCHEMA}.rag_runtime_bundle_source, "
+                f"{TEST_SCHEMA}.rag_runtime_bundle_citation_approval, "
                 f"{TEST_SCHEMA}.rag_runtime_environment_transition, "
                 f"{TEST_SCHEMA}.rag_runtime_environment, "
                 f"{TEST_SCHEMA}.rag_release_evaluation_approval, "
@@ -276,6 +292,45 @@ async def _seed_environment() -> None:
         )
 
 
+async def _seed_citation_approval(snapshot: RagSourceSnapshot) -> RuntimeBundleCitationApprovalPinIdentity:
+    async with session_factory.begin() as session:
+        source_code = await session.scalar(
+            select(RagSource.source_code)
+            .select_from(RagSourceSnapshot)
+            .join(RagSourceOperation, RagSourceSnapshot.operation_id == RagSourceOperation.id)
+            .join(RagSourceEndpoint, RagSourceOperation.endpoint_id == RagSourceEndpoint.id)
+            .join(RagSource, RagSourceEndpoint.source_id == RagSource.id)
+            .where(RagSourceSnapshot.id == snapshot.id)
+        )
+        assert source_code is not None
+        actor = User(email=f"853-{uuid4().hex[:12]}@example.com", hashed_password="x" * 60, name="Approver")
+        session.add(actor)
+        await session.flush()
+        observed = await RagSourceUseApprovalRepository(session).create_approval(
+            SourceUseApprovalCreate(
+                source_snapshot_id=snapshot.id,
+                source_code=source_code,
+                source_version=snapshot.source_version,
+                environment=RuntimeEnvironmentCode.LOCAL,
+                purpose=SourceUsePurpose.PATIENT_CITATION,
+                approval_version="citation-approval-v1",
+                valid_from=_NOW,
+                expires_at=_NOW + timedelta(days=1),
+                actor_id=actor.id,
+                evidence_ref="evidence://853/patient-citation",
+            )
+        )
+    return RuntimeBundleCitationApprovalPinIdentity(
+        source_snapshot_id=str(observed.identity.source_snapshot_id),
+        source_use_approval_id=str(observed.id),
+        source_code=observed.identity.source_code,
+        source_version=observed.identity.source_version,
+        approval_version=observed.identity.approval_version,
+        environment=observed.identity.environment.value,
+        purpose=observed.identity.purpose,
+    )
+
+
 async def test_port_persists_a_building_bundle_with_the_full_canonical_configuration() -> None:
     catalog = await _seed_source_snapshot("CATALOG")
     knowledge = await _seed_source_snapshot("KNOWLEDGE")
@@ -315,6 +370,86 @@ async def test_stored_bundle_manifest_hash_recomputes_from_storage() -> None:
         assert configuration is not None
         assert canonical_runtime_bundle_manifest_hash(configuration) == built_hash
         assert await verify_persisted_bundle_manifest_hash(session, bundle_id) is True
+
+
+async def test_patient_citation_pin_persists_atomically_and_recomputes_from_storage() -> None:
+    catalog = await _seed_source_snapshot("PIN_CATALOG")
+    knowledge = await _seed_source_snapshot("PIN_KNOWLEDGE")
+    pin = await _seed_citation_approval(knowledge)
+
+    async with session_factory.begin() as session:
+        execution = await execute_runtime_bundle_build(
+            session,
+            _request(catalog, knowledge, citation_approval_pins=(pin,)),
+        )
+
+    assert execution.persisted is not None
+    assert len(execution.persisted.citation_approval_pins) == 1
+    assert execution.persisted.citation_approval_pins[0].source_use_approval_id == UUID(pin.source_use_approval_id)
+    async with session_factory() as session:
+        configuration = await load_persisted_bundle_configuration(session, execution.persisted.bundle.id)
+        assert configuration is not None
+        assert configuration.citation_approval_pins == (pin,)
+        assert await verify_persisted_bundle_manifest_hash(session, execution.persisted.bundle.id) is True
+
+    reader = SqlAlchemyRuntimeBundleCitationApprovalReader(session_factory)
+    observed = await reader.read_exact(
+        bundle_id=execution.persisted.bundle.id,
+        bundle_manifest_hash=execution.persisted.bundle.bundle_manifest_hash,
+    )
+    assert observed == (pin,)
+    assert (
+        await reader.read_exact(
+            bundle_id=execution.persisted.bundle.id,
+            bundle_manifest_hash="f" * 64,
+        )
+        == ()
+    )
+
+
+async def test_retrieval_approval_cannot_be_pinned_as_patient_citation() -> None:
+    catalog = await _seed_source_snapshot("RETRIEVAL_CATALOG")
+    knowledge = await _seed_source_snapshot("RETRIEVAL_KNOWLEDGE")
+    pin = await _seed_citation_approval(knowledge)
+    forged = replace(pin, purpose=SourceUsePurpose.RETRIEVAL)
+
+    async with session_factory.begin() as session:
+        execution = await execute_runtime_bundle_build(
+            session,
+            _request(catalog, knowledge, citation_approval_pins=(forged,)),
+        )
+        assert execution.stored is False
+
+    assert await _count(RagRuntimeReleaseBundle) == 0
+    assert await _count(RagRuntimeBundleCitationApproval) == 0
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("source_snapshot_id", "source_use_approval_id", "source_code", "source_version", "approval_version"),
+)
+async def test_patient_citation_pin_must_exact_match_persisted_807_row(mutation: str) -> None:
+    catalog = await _seed_source_snapshot(f"MISMATCH_CATALOG_{mutation}")
+    knowledge = await _seed_source_snapshot(f"MISMATCH_KNOWLEDGE_{mutation}")
+    pin = await _seed_citation_approval(knowledge)
+    values: dict[str, object] = {
+        "source_snapshot_id": str(catalog.id),
+        "source_use_approval_id": str(uuid4()),
+        "source_code": "FORGED_SOURCE",
+        "source_version": "forged-version",
+        "approval_version": "forged-approval",
+    }
+    forged = replace(pin, **{mutation: values[mutation]})
+
+    with pytest.raises(RagRuntimeBundleCitationApprovalMismatchError):
+        async with session_factory.begin() as session:
+            await execute_runtime_bundle_build(
+                session,
+                _request(catalog, knowledge, citation_approval_pins=(forged,)),
+            )
+
+    assert await _count(RagRuntimeReleaseBundle) == 0
+    assert await _count(RagRuntimeBundleCitationApproval) == 0
 
 
 async def test_two_configurations_differing_only_in_artifact_version_do_not_collide_in_storage() -> None:
