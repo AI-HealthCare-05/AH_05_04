@@ -501,6 +501,53 @@ def test_worker_preflight_blocks_before_registry_and_ssh(tmp_path, key, value, e
     assert "Docker login" not in result.stdout
 
 
+def test_worker_preflight_allows_chat_history_context_enabled(tmp_path):
+    settings = {
+        "ENV": "production",
+        "REDIS_PASSWORD": "synthetic-redis",
+        "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": VALID_SNAPSHOT_ENCRYPTION_KEY,
+        "DB_ADMIN_USER": "admin",
+        "DB_ADMIN_PASSWORD": "synthetic-admin",
+        "DB_MIGRATION_USER": "migration",
+        "DB_MIGRATION_PASSWORD": "synthetic-migration",
+        "DB_APP_USER": "app",
+        "DB_APP_PASSWORD": "synthetic-app",
+        "SOURCE_WRITER_USER": "writer",
+        "SOURCE_WRITER_PASSWORD": "synthetic-writer",
+        "DOCKER_USER": "synthetic",
+        "DOCKER_REPOSITORY": "demo",
+        "APP_VERSION": "test123",
+        "FRONTEND_VERSION": "test123",
+        "AI_WORKER_VERSION": "test123",
+        "TLS_TERMINATION": "cloudfront",
+        "PRODUCTION_DOMAIN": "synthetic.cloudfront.net",
+        "PRODUCTION_PUBLIC_ORIGIN": "https://synthetic.cloudfront.net",
+        "COOKIE_DOMAIN": "synthetic.cloudfront.net",
+        "CORS_ALLOWED_ORIGINS": "https://synthetic.cloudfront.net",
+        "CLOUDFRONT_ORIGIN_VERIFY_SECRET": "synthetic-origin-secret-for-tests-only",
+        "CLOVA_OCR_INVOKE_URL": "https://clova.test/ocr",
+        "CLOVA_OCR_SECRET": "synthetic-clova-secret",
+        "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED": "false",
+        "PUBLIC_TRACK_F_ENABLED": "false",
+        "OCR_STRUCTURE_LLM_ENABLED": "false",
+        "PROTECTED_RETRIEVAL_ENABLED": "false",
+        "CHAT_HISTORY_CONTEXT_ENABLED": "true",
+        "VITE_SIGNUP_TERMS_APPROVED": "false",
+        "VITE_PUBLIC_TRACK_C": "false",
+    }
+    env_file = tmp_path / "prod.env"
+    env_file.write_text("\n".join(f'{k}="{v}"' for k, v in settings.items()))
+    result = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env={"PATH": "/usr/bin:/bin", "PROD_ENV_FILE": str(env_file)},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert "CHAT_HISTORY_CONTEXT_ENABLED" not in result.stdout
+
+
 @pytest.mark.parametrize("worker_health_exit", [0, 42])
 def test_remote_deployment_waits_for_worker_and_propagates_readiness_failure(tmp_path, worker_health_exit):
     script = SCRIPT_PATH.read_text()

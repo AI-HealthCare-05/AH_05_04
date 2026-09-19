@@ -268,7 +268,7 @@ if [[ ! "$CLOVA_OCR_INVOKE_URL" =~ ^https://[^[:space:]]+$ ]]; then
 fi
 
 # 합성 OCR 데모는 기존 공개·외부 LLM 승인 범위를 확장하지 않습니다.
-for variable_name in PUBLIC_TRACK_F_ENABLED OCR_STRUCTURE_LLM_ENABLED CHAT_HISTORY_CONTEXT_ENABLED PROTECTED_RETRIEVAL_ENABLED; do
+for variable_name in PUBLIC_TRACK_F_ENABLED OCR_STRUCTURE_LLM_ENABLED PROTECTED_RETRIEVAL_ENABLED; do
   case "${!variable_name:-false}" in
     false | False | FALSE | 0) ;;
     *)

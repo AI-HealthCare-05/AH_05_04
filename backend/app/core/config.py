@@ -328,9 +328,7 @@ class Config(BaseSettings):
     OCR_PENDING_ACTIVE_WINDOW_SECONDS: float = 300.0
 
     @model_validator(mode="after")
-    def validate_chat_history_environment(self) -> "Config":
-        if self.CHAT_HISTORY_CONTEXT_ENABLED and self.ENV is not Env.LOCAL:
-            raise ValueError("CHAT_HISTORY_CONTEXT_ENABLED is allowed only in local environment")
+    def validate_release_validation_environment(self) -> "Config":
         if self.RELEASE_VALIDATION_ALLOWED and self.ENV is not Env.LOCAL:
             raise ValueError("RELEASE_VALIDATION_ALLOWED is allowed only in local environment")
         return self
