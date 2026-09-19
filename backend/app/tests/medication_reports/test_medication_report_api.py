@@ -315,8 +315,14 @@ async def answer_barrier(case, occurrence, barrier_code: str | None, subreason_c
 
 
 async def clinic_data(case, *, view: str | None = "CLINIC"):
-    query = f"?period_days=7&view={view}" if view else "?period_days=7"
-    response = await case.client.get(f"{URL}{query}")
+    params: dict[str, object] = {
+        "period_days": 7,
+        "end_date": END.isoformat(),
+    }
+    if view is not None:
+        params["view"] = view
+
+    response = await case.client.get(URL, params=params)
     assert response.status_code == 200
     return response.json()["data"]
 
