@@ -601,6 +601,9 @@ function PrescriptionReviewPage({
   const [fields, setFields] = useState<ExtractedField[]>([])
   const [draftValues, setDraftValues] = useState<Record<string, string>>({})
   const [documentUrl, setDocumentUrl] = useState<string | null>(null)
+  // viewer blob URL은 effect 밖(디코드 실패 fallback)에서도 교체되므로 ref로 추적한다.
+  const originalObjectUrlRef = useRef<string | null>(null)
+  const normalizedObjectUrlRef = useRef<string | null>(null)
 
   // #809 정규화 이미지 overlay 상태. viewer 실패는 검수를 막지 않는다.
   const [sourceImage, setSourceImage] =
@@ -647,6 +650,56 @@ function PrescriptionReviewPage({
   const clearSourceSelection = useCallback(() => {
     setActiveSourceFieldId(null)
   }, [])
+
+  /**
+   * #809 정규화 viewer를 내리고 blob URL을 해제한다.
+   * fetch 실패와 decode 실패 양쪽에서 같은 정리를 쓴다.
+   */
+  const clearNormalizedSource = useCallback(() => {
+    if (normalizedObjectUrlRef.current) {
+      URL.revokeObjectURL(normalizedObjectUrlRef.current)
+      normalizedObjectUrlRef.current = null
+    }
+    setSourceImage(null)
+    setSourceImageUrl(null)
+    setIsSourceImageLoaded(false)
+    setActiveSourceFieldId(null)
+  }, [])
+
+  /**
+   * 정규화 이미지를 쓸 수 없을 때 기존 original /file iframe viewer로 되돌린다.
+   * legacy/PDF 경로, 정규화 fetch 실패, 정규화 decode 실패가 모두 이 경로를 쓴다.
+   * original 로딩까지 실패하면 preview 없이 검수만 계속한다.
+   */
+  const loadOriginalDocumentFallback = useCallback(
+    async (targetDocumentId: string) => {
+      const requestKey = reviewRequestKey
+      const isLatest = () => latestReviewRequestKeyRef.current === requestKey
+
+      try {
+        const documentBlob =
+          await services.getPrescriptionDocumentFile(targetDocumentId)
+        if (!isLatest()) return
+
+        const nextObjectUrl = URL.createObjectURL(documentBlob)
+        if (!isLatest()) {
+          URL.revokeObjectURL(nextObjectUrl)
+          return
+        }
+
+        if (originalObjectUrlRef.current) {
+          URL.revokeObjectURL(originalObjectUrlRef.current)
+        }
+        originalObjectUrlRef.current = nextObjectUrl
+        setDocumentUrl(nextObjectUrl)
+      } catch {
+        // fail-closed: 원본 미리보기 없이도 검수는 계속 가능하다.
+        if (!isLatest()) return
+        setDocumentUrl(null)
+      }
+    },
+    [reviewRequestKey, services],
+  )
 
   const resetSourceZoom = useCallback(() => {
     activeSourcePointersRef.current.clear()
@@ -986,8 +1039,6 @@ function PrescriptionReviewPage({
 
   useEffect(() => {
     let isDisposed = false
-    let objectUrl: string | null = null
-    let normalizedObjectUrl: string | null = null
     const isLatestRequest = () =>
       !isDisposed &&
       latestReviewRequestKeyRef.current === reviewRequestKey
@@ -1141,36 +1192,21 @@ function PrescriptionReviewPage({
               URL.revokeObjectURL(nextNormalizedUrl)
               return
             }
-            normalizedObjectUrl = nextNormalizedUrl
+            normalizedObjectUrlRef.current = nextNormalizedUrl
             setSourceImage(validatedSourceImage)
             setSourceImageUrl(nextNormalizedUrl)
           } catch {
-            // fail-closed: 강조 없이 계속 검수한다.
+            // 정규화 fetch 실패: 강조 없이 기존 original viewer로 fallback한다.
             if (!isLatestRequest()) return
             setSourceImage(null)
             setSourceImageUrl(null)
+            await loadOriginalDocumentFallback(resolvedDocumentId)
           }
           return
         }
 
         // legacy/PDF: 기존 원본 iframe preview를 유지하고 강조는 제공하지 않는다.
-        try {
-          const documentBlob =
-            await services.getPrescriptionDocumentFile(resolvedDocumentId)
-          if (!isLatestRequest()) return
-
-          const nextObjectUrl = URL.createObjectURL(documentBlob)
-          if (!isLatestRequest()) {
-            URL.revokeObjectURL(nextObjectUrl)
-            return
-          }
-          objectUrl = nextObjectUrl
-          setDocumentUrl(nextObjectUrl)
-        } catch {
-          // fail-closed: 원본 미리보기 없이 검수는 계속 가능하다.
-          if (!isLatestRequest()) return
-          setDocumentUrl(null)
-        }
+        await loadOriginalDocumentFallback(resolvedDocumentId)
       } catch (error) {
         if (!isLatestRequest()) return
         applyReviewError(
@@ -1187,13 +1223,20 @@ function PrescriptionReviewPage({
     return () => {
       isDisposed = true
       guideCreationRequestRef.current = null
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-      if (normalizedObjectUrl) URL.revokeObjectURL(normalizedObjectUrl)
+      if (originalObjectUrlRef.current) {
+        URL.revokeObjectURL(originalObjectUrlRef.current)
+        originalObjectUrlRef.current = null
+      }
+      if (normalizedObjectUrlRef.current) {
+        URL.revokeObjectURL(normalizedObjectUrlRef.current)
+        normalizedObjectUrlRef.current = null
+      }
     }
   }, [
     applyReviewError,
     documentId,
     jobId,
+    loadOriginalDocumentFallback,
     prefetchedOcrResponse,
     previewState?.manualAddMode,
     previewState?.unreviewedMedicationIndexes,
@@ -1836,9 +1879,11 @@ function PrescriptionReviewPage({
                     title="원본 처방전"
                     onLoad={() => setIsSourceImageLoaded(true)}
                     onError={() => {
-                      // fail-closed: 이미지 로딩 실패 시 강조하지 않는다.
-                      setIsSourceImageLoaded(false)
-                      setActiveSourceFieldId(null)
+                      // 정규화 decode 실패: 강조를 끄고 original viewer로 전환한다.
+                      clearNormalizedSource()
+                      if (documentId) {
+                        void loadOriginalDocumentFallback(documentId)
+                      }
                     }}
                   />
                   {activeSourceBox ? (

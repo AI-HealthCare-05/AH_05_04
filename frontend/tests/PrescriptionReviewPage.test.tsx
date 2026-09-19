@@ -2935,3 +2935,130 @@ describe('PrescriptionReviewPage #809 pinch zoom', () => {
     expect(screen.queryByTestId('prescription-source-canvas')).toBeNull()
   })
 })
+
+describe('PrescriptionReviewPage #809 normalized viewer fallback', () => {
+  const normalizedSourceImage = {
+    normalized: true,
+    width: 1000,
+    height: 2000,
+    url: '/api/v1/documents/document-1/normalized-file',
+  }
+
+  function makeNormalizedResponse() {
+    const fields = makeCompleteFields().map((field) =>
+      field.field_id === 'PRESCRIBED_DATE-0'
+        ? {
+            ...field,
+            source_location: {
+              page: 1,
+              bbox: [100, 200, 300, 100] as [number, number, number, number],
+            },
+          }
+        : field,
+    )
+    const base = makeOcrResponse(fields)
+    return { ...base, data: { ...base.data, source_image: normalizedSourceImage } }
+  }
+
+  it('정규화 fetch 실패 시 original /file viewer로 fallback한다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeNormalizedResponse())
+    vi.mocked(getPrescriptionNormalizedImage).mockRejectedValue(
+      new ApiError(404, '정규화본 없음', 'MEDICAL_DOCUMENT_NOT_FOUND'),
+    )
+    renderPage()
+
+    const viewer = await screen.findByTitle('원본 처방전')
+
+    expect(viewer.tagName).toBe('IFRAME')
+    expect(getPrescriptionDocumentFile).toHaveBeenCalledWith('document-1')
+    expect(screen.queryByTestId('prescription-source-canvas')).toBeNull()
+  })
+
+  it('정규화 fetch 실패 fallback 화면에는 highlight가 없다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeNormalizedResponse())
+    vi.mocked(getPrescriptionNormalizedImage).mockRejectedValue(
+      new ApiError(500, 'boom', 'INTERNAL'),
+    )
+    renderPage()
+
+    await screen.findByTitle('원본 처방전')
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    fireEvent.focus(screen.getByLabelText('처방일'))
+
+    expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+  })
+
+  it('정규화 decode 실패 시 original /file viewer로 전환한다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeNormalizedResponse())
+    renderPage()
+
+    const image = await screen.findByTitle('원본 처방전')
+    expect(image.tagName).toBe('IMG')
+    // 정상 fetch 단계에서는 original을 부르지 않는다.
+    expect(getPrescriptionDocumentFile).not.toHaveBeenCalled()
+
+    fireEvent.error(image)
+
+    await waitFor(() => {
+      expect(getPrescriptionDocumentFile).toHaveBeenCalledWith('document-1')
+    })
+
+    const viewer = await screen.findByTitle('원본 처방전')
+    expect(viewer.tagName).toBe('IFRAME')
+    expect(screen.queryByTestId('prescription-source-canvas')).toBeNull()
+  })
+
+  it('정규화 decode 실패 fallback 화면에도 highlight가 없다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeNormalizedResponse())
+    renderPage()
+
+    const image = await screen.findByTitle('원본 처방전')
+    fireEvent.load(image)
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    fireEvent.focus(screen.getByLabelText('처방일'))
+    await screen.findByTestId('prescription-source-highlight')
+
+    fireEvent.error(image)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+    })
+    fireEvent.focus(screen.getByLabelText('처방일'))
+    expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+  })
+
+  it('original fallback까지 실패해도 검수 화면은 유지된다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeNormalizedResponse())
+    vi.mocked(getPrescriptionNormalizedImage).mockRejectedValue(
+      new ApiError(404, '정규화본 없음', 'MEDICAL_DOCUMENT_NOT_FOUND'),
+    )
+    vi.mocked(getPrescriptionDocumentFile).mockRejectedValue(
+      new ApiError(404, '원본 없음', 'MEDICAL_DOCUMENT_NOT_FOUND'),
+    )
+    renderPage()
+
+    // preview는 비활성이지만 검수는 계속 가능하다.
+    expect(
+      await screen.findByRole('button', { name: '수정' }),
+    ).toBeTruthy()
+    expect(screen.queryByText('처방전 정보를 찾을 수 없어요')).toBeNull()
+    expect(screen.queryByTitle('원본 처방전')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    expect(screen.getByLabelText('처방일')).toBeTruthy()
+  })
+
+  it('정규화가 정상이면 original /file을 호출하지 않는다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeNormalizedResponse())
+    renderPage()
+
+    const image = await screen.findByTitle('원본 처방전')
+    fireEvent.load(image)
+
+    expect(image.tagName).toBe('IMG')
+    expect(getPrescriptionDocumentFile).not.toHaveBeenCalled()
+    expect(getPrescriptionNormalizedImage).toHaveBeenCalledWith(
+      '/api/v1/documents/document-1/normalized-file',
+    )
+  })
+})

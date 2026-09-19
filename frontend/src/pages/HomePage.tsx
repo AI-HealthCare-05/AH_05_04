@@ -498,7 +498,7 @@ function HomePage({
             className="mvp-home__doji-hint"
             aria-label="도지 기능 안내"
           >
-            처방약 이외에 다른 약을 복용해도 괜찮은지 물어볼 수 있어요!
+            복약 가이드에서 궁금한 내용을 도지에게 물어보세요!
           </div>
         )}
 
