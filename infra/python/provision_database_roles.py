@@ -40,6 +40,8 @@ RUNTIME_APPEND_ONLY_TABLES = frozenset(
     # #713/#731: REQUEST 단위 historical authority 증거. #713 writer의 발행과 #709 Production
     # Reader의 조회만 필요하므로 기존 append-only 권한(SELECT, INSERT)을 그대로 쓴다.
     "rag_request_guard_authority rag_request_source_decision rag_request_member_decision "
+    # #806: evaluator-issued per-request REQUEST runtime binding authority.
+    "rag_request_guard_runtime_binding "
     # #712: selected hit 단위 Assessment·Eligibility authority. Issuer의 발급과 후속 Reader의
     # 조회만 필요하고 발급 뒤에는 고쳐 쓰지 않으므로 append-only 권한(SELECT, INSERT)을 그대로 쓴다.
     "rag_evidence_authority".split()
