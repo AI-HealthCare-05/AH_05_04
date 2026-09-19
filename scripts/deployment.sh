@@ -28,12 +28,12 @@ done
 
 # 이미지 버전 등 운영 배포 설정을 읽습니다.
 # 실제 secret이 포함된 .prod.env는 저장소에 커밋하지 않습니다.
-unset VITE_PUBLIC_TRACK_C
-unset VITE_SIGNUP_TERMS_APPROVED
 # 원격에는 .prod.env 원문만 복사되므로, 실행 셸에 상속된 cleanup 자격 증명이
 # 파일의 선언 누락을 가리지 않도록 source 전에 비운다.
 unset ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE
 unset ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD
+unset VITE_PUBLIC_TRACK_C
+unset VITE_SIGNUP_TERMS_APPROVED
 set -a
 source "$PROD_ENV_FILE"
 set +a

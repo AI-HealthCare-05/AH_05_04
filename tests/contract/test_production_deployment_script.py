@@ -665,4 +665,3 @@ def test_deployment_script_rejects_cleanup_credentials_inherited_from_parent_she
     assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE" in completed.stdout
     assert "docker" not in completed.stdout.lower()
     assert "inherited-cleanup-secret" not in completed.stdout + completed.stderr
-
