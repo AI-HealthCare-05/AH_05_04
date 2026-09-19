@@ -76,7 +76,12 @@ def test_deployment_deploys_checkin_deadline_scheduler_and_verifies_it_is_runnin
     assert "exit 1" in tail[: tail.index("docker image prune -f")]
 
 
-def _run_remote_deployment(tmp_path: Path, *, running_after_deploy: str) -> subprocess.CompletedProcess[str]:
+def _run_remote_deployment(
+    tmp_path: Path,
+    *,
+    running_after_deploy: str,
+    deploy_services: str = "fastapi ai-worker nginx checkin-deadline-scheduler",
+) -> subprocess.CompletedProcess[str]:
     """배포 스크립트의 원격 구간만 떼어 docker stub으로 실행한다."""
     remote = SCRIPT_PATH.read_text().split("bash -s\" <<'EOF'\n", 1)[1].split("\nEOF\n", 1)[0]
     bin_dir = tmp_path / "bin"
@@ -109,7 +114,7 @@ def _run_remote_deployment(tmp_path: Path, *, running_after_deploy: str) -> subp
         env={
             "HOME": str(tmp_path),
             "PATH": f"{bin_dir}:/usr/bin:/bin",
-            "DEPLOY_SERVICES": "fastapi ai-worker nginx checkin-deadline-scheduler",
+            "DEPLOY_SERVICES": deploy_services,
             "COMMAND_LOG": str(tmp_path / "commands.log"),
             "RUNNING_AFTER_DEPLOY": running_after_deploy,
         },
@@ -133,3 +138,16 @@ def test_deployment_fails_when_checkin_deadline_scheduler_is_not_running(
     assert result.returncode == 1
     assert "checkin-deadline-scheduler is not running after deployment." in result.stdout
     assert "image prune" not in (tmp_path / "commands.log").read_text()
+
+
+def test_deployment_skips_the_check_when_the_scheduler_was_not_deployed(tmp_path: Path) -> None:
+    """배포하지 않은 서비스는 확인 대상이 아니다. 기존 배포 경로 동작을 바꾸지 않는다."""
+    result = _run_remote_deployment(
+        tmp_path,
+        running_after_deploy="",
+        deploy_services="fastapi ai-worker nginx",
+    )
+
+    assert result.returncode == 0, result.stdout
+    assert "is not running after deployment." not in result.stdout
+    assert "image prune" in (tmp_path / "commands.log").read_text()

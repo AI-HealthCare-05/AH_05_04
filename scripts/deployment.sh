@@ -808,17 +808,28 @@ docker compose up \
   "${deploy_services[@]}"
 
 # #839: 기한 처리 런타임이 멈춘 채 배포가 끝나면 사용자에게 보이는 Check-in 상태가
-# 계속 어긋나므로, 배포 경로에서 기동 여부를 확인하고 실패하면 배포를 중단합니다.
-if ! running_services_after_deploy="$(docker compose ps --services --status running)"; then
-  echo "Could not confirm service running state after deployment."
-  docker compose ps -a checkin-deadline-scheduler || true
-  exit 1
-fi
+# 계속 어긋나므로, 배포한 경우 기동 여부를 확인하고 실패하면 배포를 중단합니다.
+# 배포 대상에 없으면 확인할 대상도 없으므로 건너뜁니다. DEPLOY_SERVICES 포함 여부는
+# tests/contract/test_checkin_deadline_runtime_configuration.py가 고정합니다.
+checkin_deadline_scheduler_deployed=false
+for deploy_service in "${deploy_services[@]}"; do
+  if [ "$deploy_service" = "checkin-deadline-scheduler" ]; then
+    checkin_deadline_scheduler_deployed=true
+  fi
+done
 
-if ! printf '%s\n' "$running_services_after_deploy" | grep -qx 'checkin-deadline-scheduler'; then
-  echo "checkin-deadline-scheduler is not running after deployment."
-  docker compose ps -a checkin-deadline-scheduler
-  exit 1
+if [ "$checkin_deadline_scheduler_deployed" = true ]; then
+  if ! running_services_after_deploy="$(docker compose ps --services --status running)"; then
+    echo "Could not confirm service running state after deployment."
+    docker compose ps -a checkin-deadline-scheduler || true
+    exit 1
+  fi
+
+  if ! printf '%s\n' "$running_services_after_deploy" | grep -qx 'checkin-deadline-scheduler'; then
+    echo "checkin-deadline-scheduler is not running after deployment."
+    docker compose ps -a checkin-deadline-scheduler
+    exit 1
+  fi
 fi
 
 # 사용 중인 rollback image는 남기고 dangling image만 정리합니다.
