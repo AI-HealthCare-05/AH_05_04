@@ -98,6 +98,49 @@ AnswerRelevanceLabelValue = Annotated[
 
 PartitionValue = Annotated[Partition, BeforeValidator(lambda value: _enum_from_wire(Partition, value))]
 
+
+class AnswerRuntimeBindingSupplementalControls(StrictContractModel):
+    input_context_hash: Sha256Hex
+    prompt_structure_hash: Sha256Hex
+    parser_hash: Sha256Hex
+    seed_hash: Sha256Hex
+    sampling_parameters_hash: Sha256Hex
+    token_limit_hash: Sha256Hex
+    timeout_hash: Sha256Hex
+
+
+class AnswerRuntimeBindingDeltaBindings(StrictContractModel):
+    retrieval_pipeline_hash: Sha256Hex | None
+    source_index_hash: Sha256Hex | None
+    runtime_bundle_hash: Sha256Hex | None
+    retrieved_evidence_hash: Sha256Hex | None
+    final_validator_hash: Sha256Hex | None
+    citation_gate_hash: Sha256Hex | None
+    safety_gate_hash: Sha256Hex | None
+    release_gate_hash: Sha256Hex | None
+
+
+class AnswerRuntimeAuthorityBindingManifest(StrictContractModel):
+    schema_id: Literal["rag-eval.answer-runtime-binding-manifest"] = "rag-eval.answer-runtime-binding-manifest"
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    experiment_id: StableId
+    run_id: CanonicalUuid
+    variant_id: AnswerVariantIdValue
+    supplemental_controls: AnswerRuntimeBindingSupplementalControls
+    delta_bindings: AnswerRuntimeBindingDeltaBindings
+    manifest_sha256: Sha256Hex
+
+    @model_validator(mode="after")
+    def validate_manifest_hash(self) -> AnswerRuntimeAuthorityBindingManifest:
+        payload = self.model_dump(mode="json")
+        if self.manifest_sha256 != canonical_sha256(
+            payload,
+            excluded_top_level_keys=frozenset({"manifest_sha256"}),
+        ):
+            raise ValueError("manifest_sha256 mismatch")
+        return self
+
+
 ANS_BASE_TO_ANS_RAG_DELTA_KEYS: tuple[str, ...] = (
     "RETRIEVAL_PIPELINE",
     "RETRIEVED_EVIDENCE",
@@ -323,6 +366,9 @@ ANSWER_HUMAN_JUDGMENT_APPROVAL_ADAPTER: TypeAdapter[AnswerHumanJudgmentApproval]
 ANSWER_COMPARISON_SET_MANIFEST_ADAPTER: TypeAdapter[AnswerComparisonSetManifest] = TypeAdapter(
     AnswerComparisonSetManifest
 )
+ANSWER_RUNTIME_AUTHORITY_BINDING_MANIFEST_ADAPTER: TypeAdapter[AnswerRuntimeAuthorityBindingManifest] = TypeAdapter(
+    AnswerRuntimeAuthorityBindingManifest
+)
 
 
 def _parse_hashed_model[T: BaseModel](raw_bytes: bytes, model: type[T], hash_field: str) -> T:
@@ -361,3 +407,7 @@ def parse_answer_human_judgment_approval_bytes(raw_bytes: bytes) -> AnswerHumanJ
 
 def parse_answer_comparison_set_manifest_bytes(raw_bytes: bytes) -> AnswerComparisonSetManifest:
     return _parse_hashed_model(raw_bytes, AnswerComparisonSetManifest, "manifest_sha256")
+
+
+def parse_answer_runtime_binding_manifest_bytes(raw_bytes: bytes) -> AnswerRuntimeAuthorityBindingManifest:
+    return _parse_hashed_model(raw_bytes, AnswerRuntimeAuthorityBindingManifest, "manifest_sha256")
