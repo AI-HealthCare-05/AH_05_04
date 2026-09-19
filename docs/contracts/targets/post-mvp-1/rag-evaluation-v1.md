@@ -214,6 +214,25 @@ OCR·Resolver 품질 비교와 Candidate 검색 알고리즘별 성능은 RAG �
 
 평가 결과는 로컬 또는 CI artifact로 보존하고 저장소에는 합성 Dataset·Schema·Runner와 비민감 요약만 commit한다. 실제 환자 질문·답변, 의료 원문 전체, Judge reasoning 전문, Provider body와 credential은 결과 artifact·로그에 저장하지 않는다.
 
+### Protected Release Gate Authority Acceptance
+
+보호된 Release Gate의 실제 평가 입력으로 소비되는 Evaluation Policy, Evaluation Profile, required Suite Definition 및 Comparison Policy는 단순 스키마·해시·참조 정합성을 넘어 팀 승인 정본(Release-authoritative acceptance)을 만족해야 한다.
+
+- **Evaluation Policy / Evaluation Profile / required Suite Definition**:
+  - `review_provenance.team_gold_status == APPROVED`
+  - `review_provenance.approved_by` 및 `approved_at` 명시적 존재
+  - protected Release authority 승인자 역할: `approved_by.role == PRODUCT_SAFETY_REVIEWER`
+  - human authority 보장: `approved_by.namespace != SYSTEM`
+  - `DRAFT` 또는 `REVIEWED` 상태는 `EVAL_REVIEW_PROVENANCE_INVALID`로 fail-closed 거부
+- **Comparison Policy**:
+  - 명시적 `approved_by` 및 `approved_at` 필수
+  - 승인자 역할: `approved_by.role == PRODUCT_SAFETY_REVIEWER`
+  - `approved_by.namespace != SYSTEM`
+  - 제안자와 승인자 분리 (`proposed_by.identity != approved_by.identity`)
+
+Schema-valid, hash-valid, reference-valid 단독으로는 Release authority가 성립하지 않는다.
+또한 팀 내부 Release 승인(`Team Release approval`)은 외부 의료·약학 승인(`external medical/pharmacy approval`)과 구별되며, 외부 승인은 별도 Required Receipt 및 Public Gate 요건으로 유지된다.
+
 ## 후보 Bundle 평가 Guard
 
 보호된 Local Runner는 Run 시작 시 `EVALUATION_CANDIDATE` Guard로 정확한 `BUILDING` Bundle ID·Manifest Hash의 전체 Source·Snapshot·승인·Freshness·Scope Policy·Revocation 무결성을 검사한다. 환경 Active Pointer나 환자 공개 경로를 사용하지 않는다.

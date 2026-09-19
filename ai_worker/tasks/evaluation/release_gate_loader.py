@@ -10,17 +10,17 @@ from ai_worker.tasks.evaluation.comparison import load_published_run_bundle
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_json_object
 from ai_worker.tasks.evaluation.release_gate import (
-    ControlSettingEvidence,
     GateEvidence,
     MetricEvidence,
-    PairedCaseEvidence,
     ReceiptEvidence,
     ReleaseGatePolicy,
     SuiteEvidence,
-    paired_case_manifest_hash,
 )
+from ai_worker.tasks.evaluation.release_policy import validate_release_review_provenance
 from ai_worker.tasks.evaluation.schemas.artifacts import (
+    CandidateGuardDecision,
     RagEvaluationRun,
+    RuntimeEnvironment,
     SuiteResults,
 )
 from ai_worker.tasks.evaluation.schemas.authoring import DatasetManifest
@@ -28,6 +28,8 @@ from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import DatasetManifestV11
 from ai_worker.tasks.evaluation.schemas.authoring_v1_2 import DatasetManifestV12
 from ai_worker.tasks.evaluation.schemas.authoring_v1_3 import DatasetManifestV13
 from ai_worker.tasks.evaluation.schemas.common import (
+    DecisionStatus,
+    ExecutionStatus,
     ExperimentType,
     ImmutableReference,
     JsonValue,
@@ -40,7 +42,7 @@ type AnyDatasetManifest = DatasetManifest | DatasetManifestV11 | DatasetManifest
 
 
 def load_suite_definition(path: Path) -> SuiteDefinition | SuiteDefinitionV12:
-    """Load a versioned suite definition and verify its self-hash."""
+    """Load a versioned suite definition, verify its self-hash, and validate release review provenance."""
 
     if not path.is_file():
         raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_MISSING)
@@ -62,6 +64,9 @@ def load_suite_definition(path: Path) -> SuiteDefinition | SuiteDefinitionV12:
     expected_hash = canonical_sha256(payload, excluded_top_level_keys=frozenset({"suite_hash"}))
     if definition.suite_hash != expected_hash:
         raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
+
+    validate_release_review_provenance(definition.review_provenance)
+
     return definition
 
 
@@ -178,47 +183,39 @@ def load_receipt_evidence(path: Path) -> ReceiptEvidence:
     raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
 
 
-def load_paired_case_evidence(path: Path) -> PairedCaseEvidence:
-    """Load paired case comparison evidence from an explicit JSON artifact."""
+def _validate_release_candidate_run(run: RagEvaluationRun) -> None:
+    """Validate that run meets all minimum acceptance criteria to be a protected Release Candidate."""
 
-    if not path.is_file():
-        raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_MISSING)
+    if run.execution_status is not ExecutionStatus.COMPLETED and run.execution_status != "COMPLETED":
+        raise EvaluationValidationError(EvaluationErrorCode.BASELINE_ARTIFACT_INVALID)
 
-    raw_bytes = path.read_bytes()
-    try:
-        data = json.loads(raw_bytes.decode("utf-8"))
-    except Exception:
-        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID) from None
+    if run.decision_status is not DecisionStatus.PASS and run.decision_status != "PASS":
+        raise EvaluationValidationError(EvaluationErrorCode.BASELINE_ARTIFACT_INVALID)
 
-    if not isinstance(data, dict):
-        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
+    if tuple(run.blocking_execution_statuses) != ():
+        raise EvaluationValidationError(EvaluationErrorCode.BASELINE_ARTIFACT_INVALID)
 
-    try:
-        control_settings = tuple(
-            ControlSettingEvidence(
-                variable_key=item["variable_key"],
-                baseline_hash=item["baseline_hash"],
-                candidate_hash=item["candidate_hash"],
-                final_hash=item["final_hash"],
-            )
-            for item in data.get("control_settings", [])
-        )
-        paired_delta_refs = tuple(ImmutableReference.model_validate(ref) for ref in data.get("paired_delta_refs", []))
-        evidence = PairedCaseEvidence(
-            receipt_id=data["receipt_id"],
-            receipt_hash=data["receipt_hash"],
-            baseline_case_ids=tuple(data.get("baseline_case_ids", [])),
-            candidate_case_ids=tuple(data.get("candidate_case_ids", [])),
-            final_case_ids=tuple(data.get("final_case_ids", [])),
-            control_settings=control_settings,
-            paired_delta_refs=paired_delta_refs,
-        )
-    except KeyError:
-        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID) from None
+    if not run.runtime_eligible:
+        raise EvaluationValidationError(EvaluationErrorCode.BASELINE_ARTIFACT_INVALID)
 
-    if paired_case_manifest_hash(evidence) != evidence.receipt_hash:
-        raise EvaluationValidationError(EvaluationErrorCode.HASH_MISMATCH)
-    return evidence
+    if run.experiment_type is not ExperimentType.END_TO_END_RAG and run.experiment_type != "END_TO_END_RAG":
+        raise EvaluationValidationError(EvaluationErrorCode.BASELINE_ARTIFACT_INVALID)
+
+    if run.environment is not RuntimeEnvironment.LOCAL and run.environment != "LOCAL":
+        raise EvaluationValidationError(EvaluationErrorCode.BASELINE_ARTIFACT_INVALID)
+
+    guard_fields = (
+        run.candidate_bundle_id,
+        run.candidate_bundle_manifest_hash,
+        run.candidate_guard_decision_id,
+        run.candidate_guard_decision,
+        run.required_case_guard_coverage_manifest_hash,
+    )
+    if any(f is None or f == "" for f in guard_fields):
+        raise EvaluationValidationError(EvaluationErrorCode.BASELINE_ARTIFACT_INVALID)
+
+    if run.candidate_guard_decision is not CandidateGuardDecision.PASS and run.candidate_guard_decision != "PASS":
+        raise EvaluationValidationError(EvaluationErrorCode.BASELINE_ARTIFACT_INVALID)
 
 
 def _locate_suite_definition(
@@ -307,7 +304,6 @@ def load_gate_evidence(
     policy: ReleaseGatePolicy,
     suite_paths: Sequence[Path] | None = None,
     receipt_paths: Sequence[Path] | None = None,
-    paired_case_evidence_path: Path | None = None,
     dataset_manifest_path: Path | None = None,
 ) -> GateEvidence:
     """Load actual published evaluation artifacts and assemble GateEvidence."""
@@ -316,6 +312,8 @@ def load_gate_evidence(
     run = bundle.run
     if run.run_id != run_id:
         raise EvaluationValidationError(EvaluationErrorCode.BASELINE_ARTIFACT_INVALID)
+
+    _validate_release_candidate_run(run)
 
     _validate_run_policy_bindings(run, policy)
     _validate_run_dataset_and_partitions(run, dataset_manifest_path)
@@ -347,10 +345,6 @@ def load_gate_evidence(
 
     receipt_evidences = tuple(load_receipt_evidence(p) for p in (receipt_paths or ()))
 
-    paired_case: PairedCaseEvidence | None = None
-    if paired_case_evidence_path is not None:
-        paired_case = load_paired_case_evidence(paired_case_evidence_path)
-
     return GateEvidence(
         run_id=run_id,
         required_scope_manifest_hash=policy.required_scope_manifest_hash,
@@ -359,5 +353,5 @@ def load_gate_evidence(
         metrics=metric_evidences,
         suites=suite_evidences,
         receipts=receipt_evidences,
-        paired_case_evidence=paired_case,
+        paired_case_evidence=None,
     )

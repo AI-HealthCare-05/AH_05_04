@@ -9,7 +9,14 @@ from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_sha256
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import load_json_object
 from ai_worker.tasks.evaluation.release_gate import MetricRequirement, ReleaseGatePolicy
-from ai_worker.tasks.evaluation.schemas.common import ImmutableReference
+from ai_worker.tasks.evaluation.schemas.common import (
+    ActorNamespace,
+    ActorRole,
+    ImmutableReference,
+    ReviewProvenance,
+    TeamGoldStatus,
+)
+from ai_worker.tasks.evaluation.schemas.common_v1_2 import ReviewProvenanceV12
 from ai_worker.tasks.evaluation.schemas.policy import ComparisonPolicy, EvaluationPolicy, EvaluationProfile
 from ai_worker.tasks.evaluation.schemas.policy_v1_2 import EvaluationPolicyV12, EvaluationProfileV12
 
@@ -129,4 +136,79 @@ def load_release_policy(
         required_case_ids=required_case_ids,
         controlled_variable_keys=comparison.controlled_variable_keys,
         required_scope_manifest_hash=policy.member_manifest_hash,
+    )
+
+
+def validate_release_review_provenance(
+    provenance: ReviewProvenance | ReviewProvenanceV12,
+) -> None:
+    """Validate that review provenance satisfies protected Release authority acceptance."""
+
+    if (
+        provenance.team_gold_status is not TeamGoldStatus.APPROVED
+        and provenance.team_gold_status != "APPROVED"
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
+
+    if provenance.approved_by is None or provenance.approved_at is None:
+        raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
+
+    if (
+        provenance.approved_by.role != "PRODUCT_SAFETY_REVIEWER"
+        and provenance.approved_by.role is not ActorRole.PRODUCT_SAFETY_REVIEWER
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
+
+    if (
+        provenance.approved_by.namespace == "SYSTEM"
+        or provenance.approved_by.namespace is ActorNamespace.SYSTEM
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
+
+
+def validate_comparison_policy_approval(
+    policy: ComparisonPolicy,
+) -> None:
+    """Validate that comparison policy approval satisfies protected Release authority acceptance."""
+
+    if policy.approved_by is None or policy.approved_at is None:
+        raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
+
+    if (
+        policy.approved_by.role != "PRODUCT_SAFETY_REVIEWER"
+        and policy.approved_by.role is not ActorRole.PRODUCT_SAFETY_REVIEWER
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
+
+    if (
+        policy.approved_by.namespace == "SYSTEM"
+        or policy.approved_by.namespace is ActorNamespace.SYSTEM
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
+
+
+def load_approved_release_policy(
+    evaluation_policy_path: Path,
+    evaluation_profile_path: Path,
+    comparison_policy_path: Path,
+    *,
+    paired_comparison_receipt_id: str | None = None,
+    required_case_ids: tuple[str, ...] = (),
+) -> ReleaseGatePolicy:
+    """Load and exact-bind approved Evaluation policy graph for protected release gating."""
+
+    policy = _load_versioned(evaluation_policy_path, (EvaluationPolicy, EvaluationPolicyV12))
+    profile = _load_versioned(evaluation_profile_path, (EvaluationProfile, EvaluationProfileV12))
+    comparison = load_json_object(comparison_policy_path, ComparisonPolicy)
+
+    validate_release_review_provenance(policy.review_provenance)
+    validate_release_review_provenance(profile.review_provenance)
+    validate_comparison_policy_approval(comparison)
+
+    return load_release_policy(
+        evaluation_policy_path,
+        evaluation_profile_path,
+        comparison_policy_path,
+        paired_comparison_receipt_id=paired_comparison_receipt_id,
+        required_case_ids=required_case_ids,
     )

@@ -51,7 +51,7 @@ from ai_worker.tasks.evaluation.release_gate_loader import (
     load_dataset_manifest,
     load_gate_evidence,
 )
-from ai_worker.tasks.evaluation.release_policy import load_release_policy
+from ai_worker.tasks.evaluation.release_policy import load_approved_release_policy
 from ai_worker.tasks.evaluation.reporter import render_report
 from ai_worker.tasks.evaluation.retrieval_replay import build_adapter_registry
 from ai_worker.tasks.evaluation.runner import AdapterRegistry, execute_dev_cases
@@ -125,7 +125,6 @@ def _parser() -> argparse.ArgumentParser:
     gate.add_argument("--suite", action="append", default=[])
     gate.add_argument("--receipt", action="append", default=[])
     gate.add_argument("--paired-comparison-receipt-id")
-    gate.add_argument("--paired-case-evidence")
     gate.add_argument("--output-dir")
     return parser
 
@@ -980,7 +979,7 @@ def _run_gate(arguments: argparse.Namespace, *, allowed_result_root: Path | None
         profile_path = Path(arguments.profile)
         required_case_ids = _resolve_required_case_ids(arguments.dataset_manifest, profile_path)
 
-        policy = load_release_policy(
+        policy = load_approved_release_policy(
             Path(arguments.policy),
             profile_path,
             Path(arguments.comparison_policy),
@@ -992,7 +991,6 @@ def _run_gate(arguments: argparse.Namespace, *, allowed_result_root: Path | None
 
         suite_paths = [Path(p) for p in arguments.suite] if arguments.suite else None
         receipt_paths = [Path(p) for p in arguments.receipt] if arguments.receipt else None
-        paired_case_path = Path(arguments.paired_case_evidence) if arguments.paired_case_evidence else None
 
         evidence = load_gate_evidence(
             result_root=run_root,
@@ -1000,7 +998,6 @@ def _run_gate(arguments: argparse.Namespace, *, allowed_result_root: Path | None
             policy=policy,
             suite_paths=suite_paths,
             receipt_paths=receipt_paths,
-            paired_case_evidence_path=paired_case_path,
             dataset_manifest_path=dataset_manifest_path,
         )
 
