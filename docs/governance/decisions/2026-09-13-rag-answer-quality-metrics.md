@@ -225,15 +225,29 @@ PR #828 / Issue #806 병합(`5c99a538`) 완료를 반영하여 authority 상태�
 | Approval Text | `PD-159-20260913 Phase B / PR #833 final HEAD ef8a78c8 APPROVED` |
 | Approval Date | 2026-09-19 |
 
-- `RequestGuardRuntimeBindingObservation`(`environment`, `bundle_id`, `bundle_manifest_hash`) 소스가 `develop`에 도입됨에 따라 `RUNTIME_BUNDLE`은 더 이상 #806 자체로 차단되지 않는다.
-- 본 Phase B 계약 승인으로 10 Canonical Recipes(7 supplemental + 3 delta)의 projection 및 hash recipe가 확정되었다.
-- **계층 분리 원칙 (Orthogonal Axes)**:
-  $$\text{Authority Recipe Status} \neq \text{Authoritative Runtime Carrier Status} \neq \text{Pair Execution Readiness}$$
-  - *READY here means recipe-ready for implementation under the approved canonical source/projection/hash contract. It does not assert runtime-carrier readiness or pair executability.*
-- 승인 후 전체 authority 상태 분류:
-  - **`READY`**: 10개 (`INPUT_CONTEXT`, `PROMPT_STRUCTURE`, `PARSER`, `SEED`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`, `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RUNTIME_BUNDLE`)
-  - **`SOURCE_EXISTS_RECIPE_UNRESOLVED`**: 1개 (`RETRIEVED_EVIDENCE` — `ProductionGuidelineEvidenceSet`과 evaluation case 간 authoritative carrier 및 Run-level aggregation recipe 미확정)
-  - **`BLOCKED_BY_UPSTREAM_AUTHORITY`**: 4개 (`FINAL_VALIDATOR`, `CITATION_GATE`, `SAFETY_GATE`, `RELEASE_GATE`)
+- `RequestGuardRuntimeBindingObservation`(`environment`, `bundle_id`, `bundle_manifest_hash`) 소스가 `develop`에 도입됨에 따라 `RUNTIME_BUNDLE`은 더 이상 #806 자체로 차단되지 않으며, Phase B에서 canonical projection 및 hash recipe가 승인 완료되었다.
+- 본 Phase B 계약 승인으로 10 Canonical Recipes(7 supplemental + 3 delta)의 projection 및 hash recipe가 승인/확정(`DEFINED / APPROVED`)되었다.
+- **Phase A 이력 분류 대체 (Superseded)**: Phase A 당시의 잠정 분류(`SOURCE_EXISTS_RECIPE_UNRESOLVED` 11개)는 본 Phase B 승인 분류로 공식 대체(superseded)된다.
+- **상태 어휘 확장 (Status Vocabulary)**:
+  - 기존 3개 상태(`READY`, `SOURCE_EXISTS_RECIPE_UNRESOLVED`, `BLOCKED_BY_UPSTREAM_AUTHORITY`)만으로는 "레시피는 승인되었으나 바인딩 구현/materialization이 아직 완료되지 않은 상태"를 모순 없이 표현할 수 없으므로, **`RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING`** 어휘를 공식 추가한다.
+  - **정의**: Canonical projection/hash recipe는 Phase B에서 승인되었으나, 그 recipe를 실제 `ANS-BASE` / `ANS-RAG` / `ANS-FINAL` execution authority에서 추출·검증·materialize하여 Answer Runtime Binding Manifest에 기록하는 production/DEV binding implementation은 아직 완료되지 않은 상태.
+  - **엄격한 구별**:
+    $$\text{RECIPE\_APPROVED\_BINDING\_IMPLEMENTATION\_PENDING} \neq \text{RECIPE\_UNRESOLVED}$$
+    $$\text{RECIPE\_APPROVED\_BINDING\_IMPLEMENTATION\_PENDING} \neq \text{READY}$$
+    $$\text{RECIPE\_APPROVED\_BINDING\_IMPLEMENTATION\_PENDING} \neq \text{BLOCKED\_BY\_UPSTREAM\_AUTHORITY}$$
+  - **계층 분리 원칙**:
+    $$\text{Authority Recipe Status} \neq \text{Authoritative Runtime Carrier Status} \neq \text{Pair Execution Readiness}$$
+    $$\text{Recipe Approved} \neq \text{Binding Implemented} \neq \text{Carrier Ready} \neq \text{Pair Executable}$$
+    (예: `INPUT_CONTEXT`는 Run bundle source가 존재하지만, authoritative manifest construction + 3-Variant materialization + typed seam projection wiring이 미구현 상태이므로 본 상태에 속함)
+- **Phase B 승인 후 전체 authority 상태 재분류 (Exact 15 Bindings)**:
+  - **`READY`**: **0개** (실제 pair execution ready 항목 없음)
+  - **`RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING`**: **10개**
+    - Supplemental 7: `INPUT_CONTEXT`, `PROMPT_STRUCTURE`, `PARSER`, `SEED`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`
+    - Delta 3: `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RUNTIME_BUNDLE`
+  - **`SOURCE_EXISTS_RECIPE_UNRESOLVED`**: **1개**
+    - `RETRIEVED_EVIDENCE` (`ProductionGuidelineEvidenceSet`과 evaluation case 간 authoritative carrier 및 Run-level aggregation recipe 미확정)
+  - **`BLOCKED_BY_UPSTREAM_AUTHORITY`**: **4개**
+    - `FINAL_VALIDATOR` (#180), `CITATION_GATE` (#807/#799/#180), `SAFETY_GATE` (#180), `RELEASE_GATE` (#180)
 - 실질 산출물: **10 Canonical Recipes + 1 Explicitly Unresolved Binding (`RETRIEVED_EVIDENCE`) + Separate Binding Manifest Contract** (Approved Target)
 
 ### 2. 10 Canonical Recipes 규격, Carrier 상태 분리 및 1 Explicitly Unresolved Binding
@@ -241,18 +255,18 @@ PR #828 / Issue #806 병합(`5c99a538`) 완료를 반영하여 authority 상태�
 #### 2.1 7 Supplemental Controls의 Runtime Carrier 상태 분리
 Authority binding 체계는 다음 세 계층을 엄격히 분리한다:
 $$\text{Authority Recipe Status} \neq \text{Authoritative Runtime Carrier Status} \neq \text{Pair Execution Readiness}$$
-$$\text{Canonical Recipe Defined (READY)} \neq \text{Authoritative Runtime Carrier Ready} \neq \text{Pair Executable}$$
+$$\text{Recipe Approved} \neq \text{Binding Implemented} \neq \text{Carrier Ready} \neq \text{Pair Executable}$$
 $$\text{source object exists} \neq \text{ANS-BASE / ANS-RAG / ANS-FINAL 실행에서 그 값을 authoritative하게 materialize할 carrier가 이미 존재함}$$
 
-| Supplemental Key | Recipe Status | Current Source Object | Variant Execution Carrier Status | 판정 및 세부 사유 |
-| :--- | :--- | :--- | :--- | :--- |
-| `INPUT_CONTEXT` | **READY** | `LoadedRunBundle.cases` (`CaseResult.case_id`, `CaseResult.input_sha256`) | `RUN_BUNDLE` (Run 완성 시 실재; 3-Variant actual run 미실행) | 실제 완료된 Run bundle이 존재할 때 carrier 계약은 실재함. 단, `ANS-BASE`/`ANS-RAG`/`ANS-FINAL` 3-Variant actual execution materialization은 미실행 (`NOT YET EXECUTED`). |
-| `SEED` | **READY** | `DevExecutionRequest.seed` (`SafeInteger`) | `UNRESOLVED` (미구현) | `RagEvaluationRun`에는 seed 자체가 저장되지 않음. Persisted Run에서 seed 재구성 불가. Manifest carrier 별도 구현 전까지 `NOT YET IMPLEMENTED` / `UNRESOLVED`. |
-| `PROMPT_STRUCTURE` | **READY** | `GuidelineGenerationProvenance.prompt_ref` (`ImmutableArtifactRef`) | `UNRESOLVED` (미구현) | RAG Generator provenance 소스는 실재하나, `ANS-BASE`/`ANS-RAG`/`ANS-FINAL` 각 Variant의 actual execution carrier 미구현. `ANS-BASE`가 Generator를 호출한다고 가정할 수 없으며, mandatory controlled variable이므로 임의 `NOT_APPLIED` 불가 (3-Variant exact-match 필수). 실제 baseline 실행 모델 확정 전까지 carrier `UNRESOLVED`. |
-| `PARSER` | **READY** | `GuidelineGenerationProvenance.parser_ref` (`ImmutableArtifactRef`) | `UNRESOLVED` (미구현) | `PROMPT_STRUCTURE`와 동일 원칙. 3 Variant 전체에서 동일 parser identity를 authoritative하게 공급하는 execution carrier 미구현. |
-| `SAMPLING_PARAMETERS` | **READY** | `OpenAIGuidelineGeneratorAdapter` 실제 호출 파라미터 (`temperature=0`) | `UNRESOLVED` (미구현) | RAG runtime actual invocation 소스는 실재하나, 3-Variant 공통 carrier로 미구현. |
-| `TOKEN_LIMIT` | **READY** | `DevVariant.parameters["token_limit"]` + Adapter `_max_output_tokens` | `UNRESOLVED` (미구현) | `DevVariant.parameters`는 Variant config일 뿐 actual 3-run runtime carrier가 아님. config ↔ runtime exact-binding rule 승인됨 (PR #833), 3-variant carrier 미구현. |
-| `TIMEOUT` | **READY** | `DevVariant.parameters["timeout"]` + Adapter `_timeout_seconds` | `UNRESOLVED` (미구현) | `TOKEN_LIMIT`와 동일. config ↔ runtime exact-binding rule 승인됨 (PR #833), 3-variant carrier 미구현. |
+| Supplemental Key | Canonical Recipe | Phase B State | Current Source Object | Variant Execution Carrier Status | 판정 및 세부 사유 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `INPUT_CONTEXT` | **DEFINED / APPROVED** | `RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING` | `LoadedRunBundle.cases` (`CaseResult.case_id`, `CaseResult.input_sha256`) | `RUN_BUNDLE` (Run 완성 시 실재; 3-Variant actual run 미실행) | 실제 완료된 Run bundle이 존재할 때 carrier 계약은 실재함. 단, `ANS-BASE`/`ANS-RAG`/`ANS-FINAL` 3-Variant actual execution materialization은 미실행 (`NOT YET EXECUTED`). |
+| `SEED` | **DEFINED / APPROVED** | `RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING` | `DevExecutionRequest.seed` (`SafeInteger`) | `UNRESOLVED` (미구현) | `RagEvaluationRun`에는 seed 자체가 저장되지 않음. Persisted Run에서 seed 재구성 불가. Manifest carrier 별도 구현 전까지 `NOT YET IMPLEMENTED` / `UNRESOLVED`. |
+| `PROMPT_STRUCTURE` | **DEFINED / APPROVED** | `RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING` | `GuidelineGenerationProvenance.prompt_ref` (`ImmutableArtifactRef`) | `UNRESOLVED` (미구현) | RAG Generator provenance 소스는 실재하나, `ANS-BASE`/`ANS-RAG`/`ANS-FINAL` 각 Variant의 actual execution carrier 미구현. `ANS-BASE`가 Generator를 호출한다고 가정할 수 없으며, mandatory controlled variable이므로 임의 `NOT_APPLIED` 불가 (3-Variant exact-match 필수). 실제 baseline 실행 모델 확정 전까지 carrier `UNRESOLVED`. |
+| `PARSER` | **DEFINED / APPROVED** | `RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING` | `GuidelineGenerationProvenance.parser_ref` (`ImmutableArtifactRef`) | `UNRESOLVED` (미구현) | `PROMPT_STRUCTURE`와 동일 원칙. 3 Variant 전체에서 동일 parser identity를 authoritative하게 공급하는 execution carrier 미구현. |
+| `SAMPLING_PARAMETERS` | **DEFINED / APPROVED** | `RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING` | `OpenAIGuidelineGeneratorAdapter` 실제 호출 파라미터 (`temperature=0`) | `UNRESOLVED` (미구현) | RAG runtime actual invocation 소스는 실재하나, 3-Variant 공통 carrier로 미구현. |
+| `TOKEN_LIMIT` | **DEFINED / APPROVED** | `RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING` | `DevVariant.parameters["token_limit"]` + Adapter `_max_output_tokens` | `UNRESOLVED` (미구현) | `DevVariant.parameters`는 Variant config일 뿐 actual 3-run runtime carrier가 아님. config ↔ runtime exact-binding rule 승인됨 (PR #833), 3-variant carrier 미구현. |
+| `TIMEOUT` | **DEFINED / APPROVED** | `RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING` | `DevVariant.parameters["timeout"]` + Adapter `_timeout_seconds` | `UNRESOLVED` (미구현) | `TOKEN_LIMIT`와 동일. config ↔ runtime exact-binding rule 승인됨 (PR #833), 3-variant carrier 미구현. |
 
 #### 2.2 10 Canonical Recipes 규격 및 1 Explicitly Unresolved Binding (Full Specification)
 
@@ -321,12 +335,10 @@ $$\text{source object exists} \neq \text{ANS-BASE / ANS-RAG / ANS-FINAL 실행�
 ### 6. 승인 완료 및 구현 착수 Gate (Approval Completed & Implementation Gate)
 
 1. **승인 완료**: 책임 리뷰어 권가빈(`@hazelnutflavoured`)의 승인 코멘트 `5740823309`에 따라 Phase B 계약(10 Canonical Recipes + 1 Explicitly Unresolved Binding 및 Binding Manifest Contract) 승인이 완료되었다 (`APPROVED`).
-2. **구현 착수 허용**: Phase B contract approval 완료 및 10개 Recipe의 READY 상태 정합에 따라, 구현 담당자가 더 이상 recipe 사용 여부를 재판단하지 않고 다음 항목의 Python 구현을 착수할 수 있다:
-   - approved manifest DTO/schema (`rag-eval.answer-runtime-binding-manifest@1.0.0`)
-   - approved 10 canonical recipe helpers
-   - manifest validation (`CanonicalUuid`, 64-hex hash pattern, self-hash integrity)
-   - approved #808 typed seam projection (`AnswerComparisonSupplementalControls`, `AnswerComparisonDeltaBindings`)
-   - fail-closed handling for unresolved bindings (`RETRIEVED_EVIDENCE=null`, upstream finalization blocked deltas=`null`)
+2. **구현 착수 허용**: Phase B contract approval 완료 및 상태 정합에 따라 다음 항목의 Python 구현을 착수할 수 있다:
+   - **`RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING` 10개**: Phase B 승인 완료. Manifest DTO/schema(`rag-eval.answer-runtime-binding-manifest@1.0.0`), 10 canonical recipe helpers, authoritative extractor/binding validation(`CanonicalUuid`, 64-hex hash pattern, self-hash integrity), #808 typed seam projection(`AnswerComparisonSupplementalControls`, `AnswerComparisonDeltaBindings`) 및 fail-closed 구현 착수 허용.
+   - **`SOURCE_EXISTS_RECIPE_UNRESOLVED` 1개 (`RETRIEVED_EVIDENCE`)**: Canonical source/projection/hash recipe 승인 전 구현 금지 (`null` 유지).
+   - **`BLOCKED_BY_UPSTREAM_AUTHORITY` 4개 (`FINAL_VALIDATOR`, `CITATION_GATE`, `SAFETY_GATE`, `RELEASE_GATE`)**: 각 upstream canonical authority 완료 전 actual binding 구현 금지 (`null` 유지).
 3. **구현 금지 항목 유지**: 단 carrier unresolved 항목으로 인해 actual 3-variant runtime execution은 불가하며, 다음은 여전히 엄격히 금지된다:
    - `RETRIEVED_EVIDENCE` fake carrier
    - `ANS-BASE` synthetic supplemental authority

@@ -248,15 +248,23 @@ Post-MVP-1 Product·Safety·Evaluation 승인자 권가빈 (`@hazelnutflavoured`
 
 15 Authority Bindings의 저장 및 결속은 Schema Set 1.5 불변을 위해 독립 Manifest 계약인 [`rag-eval.answer-runtime-binding-manifest@1.0.0`](./answer-runtime-binding-manifest-v1.md)으로 승인되었다 (`SEPARATE_BINDING_MANIFEST_PREFERRED` 확정).
 
-1. **상태 재정렬**:
-   - **계층 분리 원칙 (Orthogonal Axes)**:
+1. **상태 재정렬 (Phase B 승인 반영)**:
+   - **상태 어휘 확장 및 계층 분리 원칙**:
      $$\text{Authority Recipe Status} \neq \text{Authoritative Runtime Carrier Status} \neq \text{Pair Execution Readiness}$$
-     - *READY here means recipe-ready for implementation under the approved canonical source/projection/hash contract. It does not assert runtime-carrier readiness or pair executability.*
-   - **`READY`**: 10개 (`INPUT_CONTEXT`, `PROMPT_STRUCTURE`, `PARSER`, `SEED`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`, `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RUNTIME_BUNDLE`)
-   - **`SOURCE_EXISTS_RECIPE_UNRESOLVED`**: 1개 (`RETRIEVED_EVIDENCE` — `ProductionGuidelineEvidenceSet`과 evaluation case 간 authoritative carrier 및 Run-level aggregation recipe 미확정)
-   - **`BLOCKED_BY_UPSTREAM_AUTHORITY`**: 4개 (`FINAL_VALIDATOR` [#180], `CITATION_GATE` [#807/#799/#180], `SAFETY_GATE` [#180], `RELEASE_GATE` [#180])
+     $$\text{Recipe Approved} \neq \text{Binding Implemented} \neq \text{Carrier Ready} \neq \text{Pair Executable}$$
+     Canonical projection 및 hash recipe 승인 완료 상태와, 이를 실제 Variant 실행 authority에서 추출·검증·구체화(materialize)하는 구현 상태를 엄격히 분리하여 **`RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING`** 어휘로 관리한다.
+   - **`READY`**: **0개** (실제 pair execution ready 상태인 항목 없음)
+   - **`RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING`**: **10개**
+     - Supplemental 7개: `INPUT_CONTEXT`, `PROMPT_STRUCTURE`, `PARSER`, `SEED`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`
+     - Delta 3개: `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RUNTIME_BUNDLE`
+   - **`SOURCE_EXISTS_RECIPE_UNRESOLVED`**: **1개**
+     - `RETRIEVED_EVIDENCE` (`ProductionGuidelineEvidenceSet`과 evaluation case 간 authoritative carrier 및 Run-level aggregation recipe 미확정)
+   - **`BLOCKED_BY_UPSTREAM_AUTHORITY`**: **4개**
+     - `FINAL_VALIDATOR` [#180], `CITATION_GATE` [#807/#799/#180], `SAFETY_GATE` [#180], `RELEASE_GATE` [#180]
    - 실질 승인 산출물: **10 Canonical Recipes + 1 Explicitly Unresolved Binding (`RETRIEVED_EVIDENCE`) + Separate Binding Manifest Contract**
-2. **`RUNTIME_BUNDLE` 재정렬**: PR #828 / Issue #806 병합(`5c99a538`)으로 `RequestGuardRuntimeBindingObservation`(`environment`, `bundle_id`, `bundle_manifest_hash`) 소스가 실재하고, PR #833에서 canonical projection 및 hash recipe 승인이 완료됨에 따라 **Authority Recipe Status: `READY`**로 정합화한다. Carrier는 RequestGuard runtime binding / AI worker seam에 위치한다.
+2. **`RUNTIME_BUNDLE` 상태**:
+   - `RequestGuardRuntimeBindingObservation`(`environment`, `bundle_id`, `bundle_manifest_hash`) 소스가 PR #828 / Issue #806으로 실재하며, canonical projection 및 hash recipe는 PR #833에서 승인 완료되었다.
+   - 현재 상태는 **`RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING`**이며, "recipe 승인 대기"가 아니다. 남은 작업은 approved recipe를 Manifest/extractor/runtime binding으로 materialize하는 구현이다. Carrier는 RequestGuard runtime binding / AI worker seam에 위치한다.
 3. **`NOT_APPLIED` Typed State 및 Variant별 바인딩**:
    - 비적용 축은 임의의 fake sentinel(`"none"`, `"LOCAL"`) 대신 명시적 canonical typed state(`{"axis": "...", "binding_state": "NOT_APPLIED", "projection_version": "..."}`) 및 결정론적 해시로 표현한다.
    - `ANS-BASE`: 4개 retrieval axes = `NOT_APPLIED`, 4개 finalization axes = `NOT_APPLIED`.
@@ -275,7 +283,7 @@ Post-MVP-1 Product·Safety·Evaluation 승인자 권가빈 (`@hazelnutflavoured`
    - Manifest의 `supplemental_controls` 7개 필드는 `AnswerComparisonSupplementalControls`에 1:1 매핑된다.
    - `delta_bindings` 8개 필드는 `AnswerComparisonDeltaBindings`에 1:1 매핑된다 (`RETRIEVED_EVIDENCE` 및 `ANS-FINAL`의 미해결 차단 항목은 `None` 매핑).
    - #808 비교 커널은 투영된 7개 supplemental hash의 non-None 여부 및 exact-match만 검증하므로, 향후 구현될 Authoritative Manifest Extractor가 각 Variant의 authoritative source에서 값을 추출하고 임의 caller 주입을 차단한 후 검증된 해시만을 #808 seam으로 투영할 책임을 갖는다.
-7. **구현 착수 Gate**: PR #833에서 책임 리뷰어 권가빈(`@hazelnutflavoured`)의 Phase B 계약 승인(comment `5740823309`)이 완료되어, approved manifest DTO/schema, 10 canonical recipe helpers, manifest validation, #808 typed seam projection 및 fail-closed handling의 Python 구현 착수가 허용된다. 단, fake carrier/synthetic authority, 상류 finalization authority, 실제 3-variant 실행, HOLDOUT, Baseline Freeze, `PUBLIC_TRACK_F`는 여전히 엄격히 금지된다.
+7. **구현 착수 Gate**: PR #833에서 책임 리뷰어 권가빈(`@hazelnutflavoured`)의 Phase B 계약 승인(comment `5740823309`)이 완료되어, `RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING` 10개 항목에 대해 approved manifest DTO/schema, 10 canonical recipe helpers, authoritative extractor/binding validation, #808 typed seam projection 및 fail-closed handling의 Python 구현 착수가 허용된다. `RETRIEVED_EVIDENCE`(recipe unresolved) 및 상류 4개 차단 항목은 canonical authority 승인 전 구현이 금지된다. 또한 fake carrier/synthetic authority, 상류 finalization authority, 실제 3-variant 실행, HOLDOUT, Baseline Freeze, `PUBLIC_TRACK_F`는 여전히 엄격히 금지된다.
 
 ## 9. Rubric fail-fast
 
