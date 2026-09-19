@@ -97,7 +97,7 @@ async def _seed_authorities(
                 id=USER_ID,
                 email=f"request-binding-806-{uuid4().hex[:8]}@example.com",
                 hashed_password="synthetic-hash",
-                name="synthetic-request-binding",
+                name="request-binding-806",
             )
         )
         await session.flush()
