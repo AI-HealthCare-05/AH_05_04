@@ -189,11 +189,11 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
 
 - [D-04 MFDS 상세 수집·Snapshot 생산](./proposed/post-mvp-1/mfds-detail-acquisition-166.md): 전체 범위 전용 수집·원문 보존·빈 행 차단·상세 Receipt 검증과 기존 Source lifecycle 연결. 구현 PR 리뷰 대상이며 실제 API 수집·승인은 별도.
 
-### #166 실제 승인 저장소 후속 제안
+### #166 실제 승인 저장소 구현 계약
 
-- [승인·철회·감사 저장소 구체안](proposed/post-mvp-1/catalog-approval-storage-166.md):
-  Proposed. 기존 관리 감사와 승인 receipt 저장을 구분하고, 승인 대상·포트·transaction·최소 권한·이행 및 검증 범위를 제안한다.
-  실제 연결·DB 변경·신규 승인 획득은 미완료이며 기존 D-03/D-05 합의의 승인 범위에 포함하지 않는다.
+- [승인·철회·감사 저장소 계약](current/catalog-approval-storage-166.md):
+  Current / Implemented. 실제 ORM·migration·운영 명령·최소권한 role과 save/load exact revalidation 계약이다.
+  Actual approval issuance·Catalog materialization·Production 공개 승인은 별도이며 미실행 상태다.
 
 ## Track C C1 저장 기반 (#192)
 

@@ -9,11 +9,11 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
+from ai_worker.adapters.catalog_approval_advisory_lock import acquire_catalog_approval_advisory_locks
 from ai_worker.adapters.local_private_source_artifact_finalizer import LocalPrivateSourceArtifactReader
 from ai_worker.adapters.sqlalchemy_catalog_approval_verifier import (
-    CATALOG_SOURCE_USE_PURPOSE,
     SqlAlchemyCatalogApprovalVerifier,
 )
 from ai_worker.adapters.sqlalchemy_catalog_write_support import (
@@ -41,8 +41,6 @@ from ai_worker.tasks.rag.catalog.types import CandidateCatalogSourceRef, Catalog
 from app.models import (
     CatalogApprovalAudit,
     CatalogApprovalPermission,
-    CatalogBuildApproval,
-    CatalogBuildApprovalSource,
     CatalogSourceApproval,
     RagCatalogSet,
     RagSource,
@@ -92,6 +90,30 @@ async def _create_user(factory, *, name: str = "합성 승인자") -> User:
         session.add(user)
         await session.flush()
         return user
+
+
+async def _wait_for_advisory_lock_conflict(factory) -> None:
+    for _ in range(50):
+        async with factory() as session:
+            statuses = (
+                await session.execute(
+                    text(
+                        "SELECT granted FROM pg_locks "
+                        "WHERE locktype = 'advisory' "
+                        "AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+                    )
+                )
+            ).scalars()
+            observed = set(statuses)
+            if observed == {False, True}:
+                return
+        await asyncio.sleep(0.02)
+    raise AssertionError("Timed out waiting for the approval advisory-lock conflict")
+
+
+async def _wait_until_expired(expires_at: datetime) -> None:
+    while datetime.now(UTC) < expires_at:
+        await asyncio.sleep(0.01)
 
 
 async def _seed_product_source_fixture(
@@ -813,58 +835,10 @@ async def test_grant_permission_replay_and_status(database):
 async def test_race_case_a_revoke_serializes_before_save_revalidation_fails(database, monkeypatch):
     _, factory = database
     operator = await _create_user(factory)
-    now = datetime.now(UTC)
 
     members, artifacts, _ = approved_build()
     binding = approval_binding_from_manifest(artifacts.manifest_json)
     b_id = UUID(binding.build_approval_id)
-    checksum = binding.export_checksum
-
-    # Seed initial valid approval in DB matching exactly the manifest binding
-    async with factory.begin() as session:
-        session.add(
-            CatalogBuildApproval(
-                id=b_id,
-                catalog_version=binding.catalog_version,
-                export_checksum=checksum,
-                schema_version=artifacts.catalog.schema_version,
-                manifest_spec_version="catalog-manifest-envelope-v2",
-                approved_export_bytes=artifacts.catalog_jsonl,
-                is_complete=True,
-                actor_id=operator.id,
-                evidence_ref="synthetic://race-a",
-                valid_from=now - timedelta(days=1),
-                expires_at=now + timedelta(days=1),
-                issued_revision=1,
-            )
-        )
-        for ref, src_id_str in zip(binding.source_refs, binding.source_approval_ids, strict=False):
-            s_id = UUID(src_id_str)
-            session.add(
-                CatalogSourceApproval(
-                    id=s_id,
-                    source_snapshot_id=UUID(ref.snapshot_id),
-                    source_version=ref.source_version,
-                    purpose=CATALOG_SOURCE_USE_PURPOSE,
-                    actor_id=operator.id,
-                    evidence_ref="synthetic://race-a-src",
-                    valid_from=now - timedelta(days=1),
-                    expires_at=now + timedelta(days=1),
-                    issued_revision=1,
-                )
-            )
-        await session.flush()
-        for ref, src_id_str in zip(binding.source_refs, binding.source_approval_ids, strict=False):
-            s_id = UUID(src_id_str)
-            session.add(
-                CatalogBuildApprovalSource(
-                    id=uuid4(),
-                    build_approval_id=b_id,
-                    source_approval_id=s_id,
-                    source_snapshot_id=UUID(ref.snapshot_id),
-                    source_version=ref.source_version,
-                )
-            )
 
     # Enable operator permission
     async with factory() as session, session.begin():
@@ -959,58 +933,10 @@ async def test_race_case_a_revoke_serializes_before_save_revalidation_fails(data
 async def test_race_case_b_save_serializes_before_revoke_subsequent_load_fails(database, monkeypatch):
     _, factory = database
     operator = await _create_user(factory)
-    now = datetime.now(UTC)
 
     members, artifacts, _ = approved_build()
     binding = approval_binding_from_manifest(artifacts.manifest_json)
     b_id = UUID(binding.build_approval_id)
-    checksum = binding.export_checksum
-
-    # Seed initial valid approval in DB matching exactly the manifest binding
-    async with factory.begin() as session:
-        session.add(
-            CatalogBuildApproval(
-                id=b_id,
-                catalog_version=binding.catalog_version,
-                export_checksum=checksum,
-                schema_version=artifacts.catalog.schema_version,
-                manifest_spec_version="catalog-manifest-envelope-v2",
-                approved_export_bytes=artifacts.catalog_jsonl,
-                is_complete=True,
-                actor_id=operator.id,
-                evidence_ref="synthetic://race-b",
-                valid_from=now - timedelta(days=1),
-                expires_at=now + timedelta(days=1),
-                issued_revision=1,
-            )
-        )
-        for ref, src_id_str in zip(binding.source_refs, binding.source_approval_ids, strict=False):
-            s_id = UUID(src_id_str)
-            session.add(
-                CatalogSourceApproval(
-                    id=s_id,
-                    source_snapshot_id=UUID(ref.snapshot_id),
-                    source_version=ref.source_version,
-                    purpose=CATALOG_SOURCE_USE_PURPOSE,
-                    actor_id=operator.id,
-                    evidence_ref="synthetic://race-b-src",
-                    valid_from=now - timedelta(days=1),
-                    expires_at=now + timedelta(days=1),
-                    issued_revision=1,
-                )
-            )
-        await session.flush()
-        for ref, src_id_str in zip(binding.source_refs, binding.source_approval_ids, strict=False):
-            s_id = UUID(src_id_str)
-            session.add(
-                CatalogBuildApprovalSource(
-                    id=uuid4(),
-                    build_approval_id=b_id,
-                    source_approval_id=s_id,
-                    source_snapshot_id=UUID(ref.snapshot_id),
-                    source_version=ref.source_version,
-                )
-            )
 
     # Enable operator permission
     async with factory() as session, session.begin():
@@ -1100,3 +1026,73 @@ async def test_race_case_b_save_serializes_before_revoke_subsequent_load_fails(d
     # 7. Subsequent load_build fails because approval is now revoked!
     with pytest.raises(CatalogDatabaseBindingError):
         await repo.load_build(set_id, approval_verifier=None)
+
+
+@pytest.mark.parametrize("operation", ["save", "load"])
+async def test_expiry_after_advisory_lock_wait_fails_closed(database, monkeypatch, operation):
+    """Exact approval time is evaluated after a real PostgreSQL lock wait, for save and load."""
+    _, factory = database
+    members, artifacts, _ = approved_build()
+    binding = approval_binding_from_manifest(artifacts.manifest_json)
+    repository = SqlAlchemyCatalogBuildRepository(factory)
+
+    set_id = None
+    if operation == "load":
+        await repository.save_build(members=members, artifacts=artifacts)
+        async with factory() as session:
+            set_id = await session.scalar(select(RagCatalogSet.id))
+        assert set_id is not None
+
+    expires_at = datetime.now(UTC) + timedelta(seconds=2)
+    async with factory.begin() as session:
+        await session.execute(
+            text("UPDATE catalog_build_approval SET expires_at=:expires_at WHERE id=:approval_id"),
+            {"expires_at": expires_at, "approval_id": binding.build_approval_id},
+        )
+        await session.execute(
+            text("UPDATE catalog_source_approval SET expires_at=:expires_at WHERE id = ANY(:approval_ids)"),
+            {"expires_at": expires_at, "approval_ids": list(binding.source_approval_ids)},
+        )
+
+    lock_acquired = asyncio.Event()
+    release_lock = asyncio.Event()
+    verification_attempted = asyncio.Event()
+
+    async def _hold_approval_locks():
+        async with factory() as session, session.begin():
+            await acquire_catalog_approval_advisory_locks(session, binding.approval_ids)
+            lock_acquired.set()
+            await asyncio.wait_for(release_lock.wait(), timeout=5.0)
+
+    import ai_worker.adapters.sqlalchemy_catalog_approval_verifier as verifier_mod
+
+    original_verifier_locks = verifier_mod.acquire_catalog_approval_advisory_locks
+
+    async def _observe_verifier_wait(session, approval_ids):
+        verification_attempted.set()
+        return await original_verifier_locks(session, approval_ids)
+
+    monkeypatch.setattr(verifier_mod, "acquire_catalog_approval_advisory_locks", _observe_verifier_wait)
+
+    holder_task = asyncio.create_task(_hold_approval_locks())
+    await asyncio.wait_for(lock_acquired.wait(), timeout=5.0)
+    assert datetime.now(UTC) < expires_at
+    if operation == "save":
+        operation_task = asyncio.create_task(repository.save_build(members=members, artifacts=artifacts))
+    else:
+        operation_task = asyncio.create_task(repository.load_build(set_id, approval_verifier=None))
+
+    try:
+        await asyncio.wait_for(verification_attempted.wait(), timeout=5.0)
+        await asyncio.wait_for(_wait_for_advisory_lock_conflict(factory), timeout=2.0)
+        await asyncio.wait_for(_wait_until_expired(expires_at), timeout=3.0)
+    finally:
+        release_lock.set()
+
+    await asyncio.wait_for(holder_task, timeout=5.0)
+    with pytest.raises(CatalogDatabaseBindingError):
+        await asyncio.wait_for(operation_task, timeout=5.0)
+
+    if operation == "save":
+        async with factory() as session:
+            assert await session.scalar(select(func.count()).select_from(RagCatalogSet)) == 0

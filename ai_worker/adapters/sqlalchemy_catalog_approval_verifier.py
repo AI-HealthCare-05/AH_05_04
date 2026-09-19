@@ -191,7 +191,6 @@ async def verify_exact_catalog_approval(
     session: AsyncSession,
     *,
     binding: CatalogApprovalBinding,
-    checked_at: datetime,
     expected_purpose: str = CATALOG_SOURCE_USE_PURPOSE,
     lock: bool = True,
 ) -> bool:
@@ -209,6 +208,9 @@ async def verify_exact_catalog_approval(
             await acquire_catalog_approval_advisory_locks(session, binding.approval_ids)
     except CatalogApprovalLockKeyError:
         return False
+
+    # 잠금 대기 중 만료될 수 있으므로 caller나 transaction 시작 시각을 사용하지 않습니다.
+    checked_at = datetime.now(UTC)
 
     build = (
         await session.execute(

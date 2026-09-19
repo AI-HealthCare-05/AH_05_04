@@ -3,7 +3,6 @@
 import dataclasses
 import json
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid4
 
@@ -947,8 +946,6 @@ class SqlAlchemyCatalogBuildRepository:
         approved = await verify_exact_catalog_approval(
             session,
             binding=binding,
-            # 사용 확정 직전 실제 시각으로 만료를 판정합니다. transaction 시작 시각을 쓰지 않습니다.
-            checked_at=datetime.now(UTC),
         )
         if not approved:
             raise CatalogDatabaseBindingError()

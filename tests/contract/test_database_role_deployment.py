@@ -346,10 +346,13 @@ def test_catalog_approval_role_policy_is_explicit_and_least_privilege() -> None:
         APPROVAL_AUDIT_TABLE,
         APPROVAL_INSERT_TABLES,
         APPROVAL_PAYLOAD_TABLES,
+        APPROVAL_PERMISSION_INSERT_COLUMNS,
         APPROVAL_PERMISSION_TABLE,
+        APPROVAL_PERMISSION_UPDATE_COLUMNS,
         APPROVAL_READ_TABLES,
         APPROVAL_REVOKE_COLUMNS,
         APPROVAL_SOURCE_READ_TABLES,
+        APPROVAL_STATE_INSERT_TABLES,
         APPROVAL_USER_COLUMNS,
         REVOCABLE_TABLES,
     )
@@ -366,6 +369,9 @@ def test_catalog_approval_role_policy_is_explicit_and_least_privilege() -> None:
         "catalog_build_approval_source",
     }
     assert APPROVAL_INSERT_TABLES == APPROVAL_PAYLOAD_TABLES | {APPROVAL_AUDIT_TABLE}
+    assert APPROVAL_STATE_INSERT_TABLES == {APPROVAL_PERMISSION_TABLE}
+    assert APPROVAL_PERMISSION_INSERT_COLUMNS == ("user_id", "enabled", "evidence_ref", "revision", "updated_at")
+    assert APPROVAL_PERMISSION_UPDATE_COLUMNS == ("enabled", "evidence_ref", "revision", "updated_at")
     assert REVOCABLE_TABLES == {"catalog_source_approval", "catalog_build_approval"}
     assert APPROVAL_REVOKE_COLUMNS == ("revoked_at", "revoked_by", "revoked_reason")
     assert APPROVAL_USER_COLUMNS == ("id", "is_active", "account_status")
@@ -378,10 +384,12 @@ def test_catalog_approval_role_policy_is_explicit_and_least_privilege() -> None:
 
     # Approval role must never write to catalog business tables
     assert not (APPROVAL_INSERT_TABLES & CATALOG_WRITE_TABLES)
+    assert not (APPROVAL_STATE_INSERT_TABLES & CATALOG_WRITE_TABLES)
     assert not (REVOCABLE_TABLES & CATALOG_WRITE_TABLES)
 
     source = (ROOT / "infra/python/catalog_approval_role_policy.py").read_text()
     assert "GRANT INSERT ON TABLE public." in source
+    assert "GRANT INSERT ({permission_insert_columns}) ON TABLE public.{permission_sql}" in source
     assert "GRANT UPDATE (" in source
     assert "GRANT DELETE" not in source
     assert "GRANT TRUNCATE" not in source

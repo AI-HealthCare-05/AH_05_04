@@ -36,6 +36,7 @@ from ai_worker.tasks.rag.catalog.export import CATALOG_MANIFEST_SPEC_VERSION, cr
 from ai_worker.tasks.rag.catalog.mfds_product_source import ProductSourceBindingError, read_product_input
 from ai_worker.tasks.rag.catalog.types import CandidateCatalogSourceRef
 from ai_worker.tasks.rag.catalog.validate import validate_catalog_members
+from infra.python.catalog_approval_role_policy import validate_catalog_approval_connection
 
 #: 승인 command가 절대 함께 실행되어서는 안 되는 다른 책임의 credential.
 FORBIDDEN_CREDENTIAL_KEYS = (
@@ -177,18 +178,10 @@ async def validate_approval_connection(connection: AsyncConnection) -> None:
     )
     if safe is not True:
         raise CatalogApprovalCommandError("BLOCKED_BY_APPROVAL_ROLE_BOUNDARY")
-    forbidden = await connection.scalar(
-        text(
-            "SELECT has_table_privilege(current_user,'catalog_approval_audit','UPDATE,DELETE,TRUNCATE') "
-            "OR has_table_privilege(current_user,'catalog_source_approval','DELETE,TRUNCATE') "
-            "OR has_table_privilege(current_user,'catalog_build_approval','DELETE,TRUNCATE') "
-            "OR has_table_privilege(current_user,'catalog_build_approval_source','DELETE,TRUNCATE') "
-            "OR has_table_privilege(current_user,'rag_catalog_set','INSERT,UPDATE,DELETE') "
-            "OR has_table_privilege(current_user,'rag_medication_product','INSERT,UPDATE,DELETE')"
-        )
-    )
-    if forbidden is not False:
-        raise CatalogApprovalCommandError("BLOCKED_BY_APPROVAL_ROLE_BOUNDARY")
+    try:
+        await validate_catalog_approval_connection(connection)
+    except ValueError:
+        raise CatalogApprovalCommandError("BLOCKED_BY_APPROVAL_ROLE_BOUNDARY") from None
 
 
 def fingerprint(payload: Mapping[str, object]) -> str:
@@ -236,7 +229,13 @@ async def _replayed_event(
     return str(row[0])
 
 
-async def _append_audit(session: AsyncSession, *, event_kind: str, request_fingerprint: str, **fields: object) -> UUID:
+async def _append_audit(
+    session: AsyncSession,
+    *,
+    event_kind: str,
+    request_fingerprint: str,
+    **fields: object,
+) -> UUID:
     audit_id = uuid4()
     await session.execute(
         _AUDIT.insert().values(

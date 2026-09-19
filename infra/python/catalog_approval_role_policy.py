@@ -21,6 +21,11 @@ APPROVAL_PAYLOAD_TABLES = frozenset(
     }
 )
 APPROVAL_INSERT_TABLES = APPROVAL_PAYLOAD_TABLES | {APPROVAL_AUDIT_TABLE}
+#: Permission current state는 payload/audit append set과 분리해 bootstrap INSERT 범위를 명시합니다.
+APPROVAL_STATE_INSERT_TABLES = frozenset({APPROVAL_PERMISSION_TABLE})
+#: 권한 현재 상태의 최초 bootstrap에 필요한 정확한 INSERT/UPDATE 컬럼입니다.
+APPROVAL_PERMISSION_INSERT_COLUMNS = ("user_id", "enabled", "evidence_ref", "revision", "updated_at")
+APPROVAL_PERMISSION_UPDATE_COLUMNS = ("enabled", "evidence_ref", "revision", "updated_at")
 #: 철회는 이 세 컬럼만 바꿉니다. 기간·대상·승인 payload는 발급 후 불변입니다.
 APPROVAL_REVOKE_COLUMNS = ("revoked_at", "revoked_by", "revoked_reason")
 REVOCABLE_TABLES = frozenset({"catalog_source_approval", "catalog_build_approval"})
@@ -76,10 +81,13 @@ async def apply_catalog_approval_role_policy(
         )
     # 권한 현재 상태는 이 role이 직접 관리합니다. audit이 이력을 보존합니다.
     permission_sql = quoted_identifier(APPROVAL_PERMISSION_TABLE)
+    permission_insert_columns = ", ".join(quoted_identifier(name) for name in APPROVAL_PERMISSION_INSERT_COLUMNS)
+    permission_update_columns = ", ".join(quoted_identifier(name) for name in APPROVAL_PERMISSION_UPDATE_COLUMNS)
     await connection.execute(
-        text(
-            f"GRANT UPDATE (enabled, evidence_ref, revision, updated_at) ON TABLE public.{permission_sql} TO {role_sql}"
-        )
+        text(f"GRANT INSERT ({permission_insert_columns}) ON TABLE public.{permission_sql} TO {role_sql}")
+    )
+    await connection.execute(
+        text(f"GRANT UPDATE ({permission_update_columns}) ON TABLE public.{permission_sql} TO {role_sql}")
     )
     user_columns = ", ".join(quoted_identifier(name) for name in APPROVAL_USER_COLUMNS)
     await connection.execute(text(f'GRANT SELECT ({user_columns}) ON public."user" TO {role_sql}'))
@@ -89,11 +97,16 @@ async def validate_catalog_approval_connection(connection: AsyncConnection) -> N
     """실행 시점에 role이 승인 범위를 넘지 않는지 확인합니다. 통과 실패는 fail-closed입니다."""
     forbidden = await connection.scalar(
         text(
-            "SELECT has_table_privilege(current_user,'catalog_approval_audit','UPDATE,DELETE,TRUNCATE') "
-            "OR has_table_privilege(current_user,'catalog_source_approval','DELETE,TRUNCATE') "
-            "OR has_table_privilege(current_user,'catalog_build_approval','DELETE,TRUNCATE') "
-            "OR has_table_privilege(current_user,'catalog_build_approval_source','DELETE,TRUNCATE,UPDATE') "
-            "OR has_table_privilege(current_user,'catalog_approval_permission','DELETE,TRUNCATE') "
+            "SELECT has_table_privilege(current_user,'catalog_approval_audit',"
+            "'UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') "
+            "OR has_table_privilege(current_user,'catalog_source_approval',"
+            "'UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') "
+            "OR has_table_privilege(current_user,'catalog_build_approval',"
+            "'UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') "
+            "OR has_table_privilege(current_user,'catalog_build_approval_source',"
+            "'UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') "
+            "OR has_table_privilege(current_user,'catalog_approval_permission',"
+            "'UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') "
             "OR has_column_privilege(current_user,'user','hashed_password','SELECT') "
             "OR has_schema_privilege(current_user,'public','CREATE')"
         )
@@ -101,14 +114,33 @@ async def validate_catalog_approval_connection(connection: AsyncConnection) -> N
     required = await connection.scalar(
         text(
             "SELECT has_table_privilege(current_user,'catalog_approval_audit','SELECT,INSERT') "
+            "AND has_table_privilege(current_user,'catalog_approval_permission','SELECT') "
+            "AND has_column_privilege(current_user,'catalog_approval_permission','user_id','INSERT') "
+            "AND has_column_privilege(current_user,'catalog_approval_permission','enabled','INSERT') "
+            "AND has_column_privilege(current_user,'catalog_approval_permission','evidence_ref','INSERT') "
+            "AND has_column_privilege(current_user,'catalog_approval_permission','revision','INSERT') "
+            "AND has_column_privilege(current_user,'catalog_approval_permission','updated_at','INSERT') "
             "AND has_table_privilege(current_user,'catalog_source_approval','SELECT,INSERT') "
             "AND has_table_privilege(current_user,'catalog_build_approval','SELECT,INSERT') "
+            "AND has_table_privilege(current_user,'catalog_build_approval_source','SELECT,INSERT') "
+            "AND has_column_privilege(current_user,'catalog_approval_permission','enabled','UPDATE') "
+            "AND has_column_privilege(current_user,'catalog_approval_permission','evidence_ref','UPDATE') "
+            "AND has_column_privilege(current_user,'catalog_approval_permission','revision','UPDATE') "
+            "AND has_column_privilege(current_user,'catalog_approval_permission','updated_at','UPDATE') "
             "AND has_column_privilege(current_user,'catalog_source_approval','revoked_at','UPDATE') "
-            "AND has_column_privilege(current_user,'catalog_build_approval','revoked_at','UPDATE')"
+            "AND has_column_privilege(current_user,'catalog_source_approval','revoked_by','UPDATE') "
+            "AND has_column_privilege(current_user,'catalog_source_approval','revoked_reason','UPDATE') "
+            "AND has_column_privilege(current_user,'catalog_build_approval','revoked_at','UPDATE') "
+            "AND has_column_privilege(current_user,'catalog_build_approval','revoked_by','UPDATE') "
+            "AND has_column_privilege(current_user,'catalog_build_approval','revoked_reason','UPDATE')"
         )
     )
     if forbidden is not False or required is not True:
         raise ValueError("Catalog approval role policy is missing or grants forbidden permissions")
+    if await connection.scalar(
+        text("SELECT has_column_privilege(current_user,'catalog_approval_permission','user_id','UPDATE')")
+    ):
+        raise ValueError("Catalog approval role policy grants immutable permission identity updates")
     # 승인 role이 Catalog 업무 표를 쓰면 승인과 적재의 분리가 깨집니다.
     business = await connection.scalars(text("SELECT tablename FROM pg_tables WHERE schemaname='public'"))
     for table in business:
