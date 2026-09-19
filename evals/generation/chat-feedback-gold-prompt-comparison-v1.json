@@ -37,10 +37,10 @@
       "model": "gpt-4o"
     },
     {
-      "variant_id": "chat-prompt-v5-gpt-4o-current",
-      "prompt_version": "chat-prompt-v5",
-      "source_commit": "4a9a9bfab089e10a82bf2ca3b1364fd0e7f53d60",
-      "prompt_path": "evals/generation/prompts/chat-prompt-v5.txt",
+      "variant_id": "chat-prompt-v6-gpt-4o-current",
+      "prompt_version": "chat-prompt-v6",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "prompt_path": "evals/generation/prompts/chat-prompt-v6.txt",
       "prompt_sha256": "d9484cded3f4b49a9885450586080b692dc36a7bbb784395e8b74387c01bc521",
       "model": "gpt-4o"
     }

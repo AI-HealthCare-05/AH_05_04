@@ -73,7 +73,7 @@ def test_canonical_blind_ab_config_pins_synthetic_dataset_and_prompt_snapshots()
     assert experiment.variants[1].prompt == experiment.variants[1].prompt_path.read_text().rstrip("\n")
 
 
-def test_feedback_gold_prompt_comparison_config_pins_v4_v5_snapshots() -> None:
+def test_feedback_gold_prompt_comparison_config_pins_v4_v6_snapshots() -> None:
     experiment, dataset = load_blind_ab_experiment(_FEEDBACK_CONFIG_PATH)
     raw_config = json.loads(_FEEDBACK_CONFIG_PATH.read_text(encoding="utf-8"))
 
@@ -90,11 +90,11 @@ def test_feedback_gold_prompt_comparison_config_pins_v4_v5_snapshots() -> None:
     }
     assert tuple(variant.prompt_version for variant in experiment.variants) == (
         "chat-prompt-v4",
-        "chat-prompt-v5",
+        "chat-prompt-v6",
     )
     assert tuple(variant.variant_id for variant in experiment.variants) == (
         "chat-prompt-v4-gpt-4o-baseline",
-        "chat-prompt-v5-gpt-4o-current",
+        "chat-prompt-v6-gpt-4o-current",
     )
     assert {variant.model for variant in experiment.variants} == {"gpt-4o"}
     assert experiment.temperature == 0
@@ -106,12 +106,22 @@ def test_feedback_gold_prompt_comparison_config_pins_v4_v5_snapshots() -> None:
     }
     assert tuple(variant.source_commit for variant in experiment.variants) == (
         "94e5fa8daad6d06fc44808eefced1b07c2b784e0",
-        "4a9a9bfab089e10a82bf2ca3b1364fd0e7f53d60",
+        "0000000000000000000000000000000000000000",
     )
     assert all(
         hashlib.sha256((variant.prompt + "\n").encode()).hexdigest() == variant.prompt_sha256
         for variant in experiment.variants
     )
+
+
+
+def test_runtime_chat_prompt_matches_current_feedback_snapshot() -> None:
+    from app.services.chat_ai.prompt import CHAT_SYSTEM_INSTRUCTIONS, PROMPT_VERSION
+
+    snapshot_path = _REPOSITORY_ROOT / "evals" / "generation" / "prompts" / "chat-prompt-v6.txt"
+
+    assert PROMPT_VERSION == "chat-prompt-v6"
+    assert CHAT_SYSTEM_INSTRUCTIONS == snapshot_path.read_text(encoding="utf-8").rstrip("\n")
 
 
 def test_blind_ab_config_rejects_prompt_hash_drift(tmp_path: Path) -> None:
