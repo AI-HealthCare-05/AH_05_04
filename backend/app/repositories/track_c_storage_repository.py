@@ -192,6 +192,7 @@ class TrackCStorageRepository:
         revision: int,
         response_status: BarrierResponseStatus,
         barrier_code: BarrierCode | None,
+        subreason_code: str | None = None,
     ) -> BarrierResponse:
         response = BarrierResponse(
             medication_checkin_id=checkin_id,
@@ -200,6 +201,7 @@ class TrackCStorageRepository:
             revision=revision,
             response_status=response_status,
             barrier_code=barrier_code,
+            subreason_code=subreason_code,
         )
         self.session.add(response)
         await self.session.flush()

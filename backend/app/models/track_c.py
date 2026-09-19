@@ -137,6 +137,10 @@ class BarrierResponse(Base):
             "barrier_code IN ('FORGOT', 'SCHEDULE_OR_TRAVEL', 'INSTRUCTIONS_UNCLEAR', 'NEED_DOUBT', 'MEDICATION_CONCERN', 'ACCESS_OR_COST')",
             name="chk_barrier_code",
         ),
+        CheckConstraint(
+            "subreason_code IS NULL OR barrier_code IS NOT NULL",
+            name="chk_barrier_subreason_requires_code",
+        ),
     )
     checkin_lock_marker: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
@@ -150,6 +154,9 @@ class BarrierResponse(Base):
     barrier_code: Mapped[BarrierCode | None] = mapped_column(
         Enum(BarrierCode, native_enum=False, length=30), nullable=True
     )
+    # Free-form column, not an enum: the approved subreason vocabulary lives in
+    # track_c_personalization.SUBREASONS and is validated before every write.
+    subreason_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 

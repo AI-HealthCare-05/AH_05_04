@@ -5,6 +5,9 @@ from zoneinfo import ZoneInfo
 
 from app.core.errors import ApiError
 from app.dtos.medication_reports import (
+    ClinicBarrierEntry,
+    ClinicConsultationQuestion,
+    ClinicSections,
     MedicationReportCheckin,
     MedicationReportCounts,
     MedicationReportData,
@@ -12,6 +15,7 @@ from app.dtos.medication_reports import (
     MedicationReportRecord,
     MedicationReportResponse,
     MedicationReportTimeSlot,
+    MedicationReportView,
 )
 from app.repositories.medication_report_repository import MedicationReportRepository
 
@@ -38,12 +42,35 @@ def _rate(numerator: int, denominator: int) -> MedicationReportRate:
     return MedicationReportRate(numerator=numerator, denominator=denominator, percentage=percentage)
 
 
+def _snapshot_questions(snapshot: object) -> list[tuple[str, str]]:
+    # The snapshot is an unapproved handler-specific shape, so every level is checked.
+    if not isinstance(snapshot, dict):
+        return []
+    parameters = snapshot.get("parameters")
+    if not isinstance(parameters, dict):
+        return []
+    selected = parameters.get("selected_questions")
+    if not isinstance(selected, list):
+        return []
+    return [
+        (item["question_id"], item["text"])
+        for item in selected
+        if isinstance(item, dict) and isinstance(item.get("question_id"), str) and isinstance(item.get("text"), str)
+    ]
+
+
 class MedicationReportService:
     def __init__(self, repository: MedicationReportRepository) -> None:
         self.repository = repository
 
     async def report(
-        self, *, user_id: UUID, period_days: int, end_date: date | None = None, now: datetime | None = None
+        self,
+        *,
+        user_id: UUID,
+        period_days: int,
+        end_date: date | None = None,
+        now: datetime | None = None,
+        view: MedicationReportView | None = None,
     ) -> MedicationReportResponse:
         as_of = now if now is not None else datetime.now(UTC)
         today = as_of.astimezone(SEOUL).date()
@@ -95,6 +122,11 @@ class MedicationReportService:
                 counts.pending_count += 1
                 overdue_pending_count += occurrence.confirmation_deadline_at <= as_of
         confirmed = counts.taken_count + counts.not_taken_count
+        clinic = (
+            await self._clinic_sections(user_id=user_id, start_date=start_date, end_date=end_date)
+            if view == "CLINIC"
+            else None
+        )
         return MedicationReportResponse(
             data=MedicationReportData(
                 period_days=7 if period_days == 7 else 30,
@@ -106,5 +138,41 @@ class MedicationReportService:
                 adherence_rate=_rate(counts.taken_count, confirmed),
                 confirmation_rate=_rate(confirmed, confirmed + counts.unconfirmed_count),
                 records=records,
+                clinic=clinic,
             )
+        )
+
+    async def _clinic_sections(self, *, user_id: UUID, start_date: date, end_date: date) -> ClinicSections:
+        rows = await self.repository.list_clinic_context(user_id=user_id, start_date=start_date, end_date=end_date)
+        barriers: list[ClinicBarrierEntry] = []
+        questions: dict[str, ClinicConsultationQuestion] = {}
+        for occurrence_id, local_date, medication_name, barrier_code, subreason_code, support_code, snapshot in rows:
+            barriers.append(
+                ClinicBarrierEntry(
+                    occurrence_id=occurrence_id,
+                    scheduled_local_date=local_date,
+                    medication_name=medication_name,
+                    barrier_code=barrier_code,
+                    subreason_code=subreason_code,
+                )
+            )
+            if support_code is None:
+                continue
+            for question_id, text in _snapshot_questions(snapshot):
+                current = questions.get(question_id)
+                if current is not None and current.last_selected_date >= local_date:
+                    continue
+                questions[question_id] = ClinicConsultationQuestion(
+                    question_id=question_id,
+                    text=text,
+                    support_code=support_code,
+                    medication_name=medication_name,
+                    last_selected_date=local_date,
+                )
+        return ClinicSections(
+            barriers=barriers,
+            # Most recently chosen first: that is the order a clinician reads them in.
+            consultation_questions=sorted(
+                questions.values(), key=lambda item: (item.last_selected_date, item.question_id), reverse=True
+            ),
         )

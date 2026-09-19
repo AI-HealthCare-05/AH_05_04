@@ -276,6 +276,125 @@
   font-weight: 800;
 }
 
+.report-clinic-barriers,
+.report-clinic-questions {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid #d5dde5;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.report-clinic-barriers h2,
+.report-clinic-questions h2 {
+  margin: 0;
+  color: #607d8b;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 800;
+}
+
+.report-clinic-barriers p,
+.report-clinic-questions p {
+  margin: 0;
+}
+
+.report-clinic-barriers ul,
+.report-clinic-questions ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.report-clinic-barriers__tally {
+  grid-auto-flow: row;
+}
+
+.report-clinic-barriers__tally li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: #f4f7f8;
+}
+
+.report-clinic-barriers__tally strong {
+  color: #17191c;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.report-clinic-barriers__tally b {
+  color: #648293;
+  font-size: 16px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.report-clinic-barriers__detail li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  padding-top: 8px;
+  border-top: 1px solid #eef1f4;
+}
+
+.report-clinic-barriers__detail time {
+  color: #607d8b;
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.report-clinic-barriers__detail span:first-of-type {
+  color: #17191c;
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.report-clinic-barriers__detail span:last-of-type {
+  grid-column: 1 / -1;
+  color: #526074;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.report-clinic-questions li {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f4f7f8;
+}
+
+.report-clinic-questions li p {
+  color: #17191c;
+  font-size: 14px;
+  line-height: 1.55;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.report-clinic-questions li small {
+  color: #607d8b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.report-clinic-questions__note {
+  color: #526074;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .report-clinic-period {
   display: grid;
   gap: 8px;
@@ -562,6 +681,8 @@
   .report-clinic-note,
   .report-clinic-period,
   .report-rate-card,
+  .report-clinic-barriers,
+  .report-clinic-questions,
   .report-clinic-summary {
     padding: 15px;
   }

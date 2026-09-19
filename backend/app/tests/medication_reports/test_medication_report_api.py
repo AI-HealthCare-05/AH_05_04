@@ -16,6 +16,7 @@ from app.dtos.medication_reports import MedicationReportResponse
 from app.main import app, fastapi_app
 from app.models.medication_schedules import MedicationCheckin, MedicationSchedule
 from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
+from app.models.track_c import BarrierResponse, SafetyAssessment
 from app.repositories.medication_checkin_repository import MedicationCheckinRepository
 from app.repositories.medication_report_repository import MedicationReportRepository
 from app.services.medication_checkins import MedicationCheckinDeadlineScheduler
@@ -274,3 +275,88 @@ def test_half_up_and_frontend_contract():
             counts.taken_count + counts.not_taken_count,
             counts.taken_count + counts.not_taken_count + counts.unconfirmed_count,
         )
+
+
+async def answer_barrier(case, occurrence, barrier_code: str | None, subreason_code: str | None, revision: int):
+    """Append one Barrier revision for the occurrence's Check-in, as the flow does."""
+    checkin = await case.session.scalar(
+        select(MedicationCheckin).where(MedicationCheckin.occurrence_id == occurrence.id)
+    )
+    assert checkin is not None
+    safety = await case.session.scalar(
+        select(SafetyAssessment).where(SafetyAssessment.medication_checkin_id == checkin.id)
+    )
+    if safety is None:
+        safety = SafetyAssessment(
+            medication_checkin_id=checkin.id,
+            checkin_revision=checkin.revision,
+            revision=1,
+            symptom_codes=[],
+            response_level="ROUTINE",
+            safety_disposition="NORMAL",
+            message_code="SYNTHETIC",
+            copy_version="synthetic-v1",
+            source_version="synthetic-v1",
+        )
+        case.session.add(safety)
+        await case.session.flush()
+    response = BarrierResponse(
+        medication_checkin_id=checkin.id,
+        checkin_revision=checkin.revision,
+        safety_assessment_id=safety.id,
+        revision=revision,
+        response_status="ANSWERED" if barrier_code else "DECLINED",
+        barrier_code=barrier_code,
+        subreason_code=subreason_code,
+    )
+    case.session.add(response)
+    await case.session.flush()
+    return response
+
+
+async def clinic_data(case, *, view: str | None = "CLINIC"):
+    query = f"?period_days=7&view={view}" if view else "?period_days=7"
+    response = await case.client.get(f"{URL}{query}")
+    assert response.status_code == 200
+    return response.json()["data"]
+
+
+async def test_clinic_view_returns_current_barrier_and_default_view_does_not(case):
+    occurrence = await seed(case, END, "NOT_TAKEN")
+    await answer_barrier(case, occurrence, "FORGOT", "MISSED_ALERT", 1)
+
+    clinic = (await clinic_data(case))["clinic"]
+    assert [(item["barrier_code"], item["subreason_code"]) for item in clinic["barriers"]] == [
+        ("FORGOT", "MISSED_ALERT")
+    ]
+    assert clinic["consultation_questions"] == []
+
+    # The reason is clinic-only: the default report must not carry it at all.
+    assert (await clinic_data(case, view=None))["clinic"] is None
+
+
+async def test_declined_correction_removes_the_replaced_reason_from_the_clinic_view(case):
+    """A newer DECLINED revision withdraws the reason; the clinic view must follow.
+
+    Ranking has to run over every revision. If the answered filter were applied first,
+    the DECLINED correction would be dropped and the ANSWERED revision it replaced
+    would win, showing a clinician a reason the user already withdrew.
+    """
+    occurrence = await seed(case, END, "NOT_TAKEN")
+    await answer_barrier(case, occurrence, "FORGOT", "MISSED_ALERT", 1)
+    assert len((await clinic_data(case))["clinic"]["barriers"]) == 1
+
+    await answer_barrier(case, occurrence, None, None, 2)
+
+    assert (await clinic_data(case))["clinic"]["barriers"] == []
+
+
+async def test_clinic_view_follows_a_reason_corrected_to_another_reason(case):
+    occurrence = await seed(case, END, "NOT_TAKEN")
+    await answer_barrier(case, occurrence, "FORGOT", "MISSED_ALERT", 1)
+    await answer_barrier(case, occurrence, "MEDICATION_CONCERN", "LONG_TERM_USE", 2)
+
+    clinic = (await clinic_data(case))["clinic"]
+    assert [(item["barrier_code"], item["subreason_code"]) for item in clinic["barriers"]] == [
+        ("MEDICATION_CONCERN", "LONG_TERM_USE")
+    ]

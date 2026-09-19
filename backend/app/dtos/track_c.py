@@ -58,6 +58,7 @@ class PutBarrierResponseRequest(BaseModel):
 
     response_status: Literal["ANSWERED", "DECLINED"]
     barrier_code: BarrierCode | None = None
+    subreason_code: str | None = Field(default=None, min_length=1, max_length=100)
     checkin_revision: int = Field(gt=0, strict=True)
     expected_revision: int = Field(ge=0, strict=True)
 
@@ -67,6 +68,8 @@ class PutBarrierResponseRequest(BaseModel):
             raise ValueError("barrier_code is required for ANSWERED")
         if self.response_status == "DECLINED" and self.barrier_code is not None:
             raise ValueError("barrier_code must be null for DECLINED")
+        if self.barrier_code is None and self.subreason_code is not None:
+            raise ValueError("subreason_code requires barrier_code")
         return self
 
 
@@ -77,6 +80,7 @@ class BarrierResponseData(BaseModel):
     safety_assessment_id: UUID
     response_status: BarrierResponseStatus
     barrier_code: BarrierCode | None
+    subreason_code: str | None = None
     revision: int
 
 
