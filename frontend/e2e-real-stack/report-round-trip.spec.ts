@@ -31,9 +31,9 @@ async function expectReportMatchesServer(page: Page, report: ReportData) {
   await expect(page.locator('.report-count--not-taken b')).toHaveText(`${report.counts.not_taken_count}회`)
   await expect(page.locator('.report-count--unconfirmed b')).toHaveText(`${report.counts.unconfirmed_count}회`)
 
+  // 기록 확인률은 응답 계약에는 남지만 화면에는 노출하지 않는다.
   for (const [label, rate] of [
     ['확인된 기록 중 복용률', report.adherence_rate],
-    ['기록 확인률', report.confirmation_rate],
   ] as const) {
     const card = page.getByLabel(label)
     await expect(card).toContainText(
@@ -43,6 +43,8 @@ async function expectReportMatchesServer(page: Page, report: ReportData) {
     )
     await expect(card).toContainText(`분자 ${rate.numerator} / 분모 ${rate.denominator}`)
   }
+
+  await expect(page.getByLabel('기록 확인률')).toHaveCount(0)
 }
 
 test('[REAL-STACK][Report #420] explicit correction refreshes the real Backend aggregate after returning', async ({ page }) => {
