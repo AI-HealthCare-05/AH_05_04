@@ -93,6 +93,7 @@ class TrackCApiService:
                 checkin_revision=request.checkin_revision,
                 response_status=BarrierResponseStatus(request.response_status),
                 barrier_code=request.barrier_code,
+                subreason_code=request.subreason_code,
                 expected_revision=request.expected_revision,
             )
             return BarrierResponseEnvelope(
@@ -103,6 +104,7 @@ class TrackCApiService:
                     safety_assessment_id=result.safety_assessment_id,
                     response_status=result.response_status,
                     barrier_code=result.barrier_code,
+                    subreason_code=result.subreason_code,
                     revision=result.revision,
                 )
             ).model_dump(mode="json")

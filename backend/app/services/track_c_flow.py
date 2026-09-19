@@ -23,6 +23,7 @@ from app.models.track_c import (
     SafetyResponseLevel,
 )
 from app.repositories.track_c_storage_repository import TrackCStorageRepository
+from app.services.track_c_personalization import validate_subreason
 
 
 @dataclass(frozen=True)
@@ -122,8 +123,23 @@ class TrackCFlowService:
         checkin_revision: int,
         response_status: BarrierResponseStatus,
         barrier_code: BarrierCode | None,
+        subreason_code: str | None,
         expected_revision: int,
     ) -> BarrierResponse:
+        # The approved subreason vocabulary is barrier-specific; reject mismatches
+        # before any lock so a bad payload never consumes a revision.
+        if barrier_code is None:
+            subreason_code = None
+        else:
+            try:
+                subreason_code = validate_subreason(barrier_code, subreason_code)
+            except ValueError:
+                raise ApiError(
+                    status_code=422,
+                    code="VALIDATION_FAILED",
+                    message="선택한 세부 이유를 확인해 주세요.",
+                    details=[ErrorDetail(field="subreason_code", reason="SUBREASON_DOES_NOT_MATCH_BARRIER")],
+                ) from None
         checkin = await self._repository.lock_checkin_owned(checkin_id=checkin_id, user_id=user_id)
         if checkin is None:
             raise self._not_found()
@@ -159,6 +175,7 @@ class TrackCFlowService:
             revision=current_revision + 1,
             response_status=response_status,
             barrier_code=barrier_code,
+            subreason_code=subreason_code,
         )
 
     @staticmethod

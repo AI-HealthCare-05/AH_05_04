@@ -10,26 +10,18 @@ import { clearAuthenticatedSession } from '../features/auth/authSession'
 import { Button, Card, MobileShell } from '../design-system/components'
 import { inspectWebPushState, type WebPushState } from '../features/push/webPush'
 import PlanFollowup from '../components/PlanFollowup'
+import { BARRIER_LABELS, BARRIER_ORDER, BARRIER_SUBREASONS, SUBREASON_LABELS } from '../features/trackC/labels'
 import './TrackCPage.css'
 
-const choices: [api.BarrierCode, string][] = [
-  ['FORGOT', '깜빡했어요'], ['SCHEDULE_OR_TRAVEL', '일정이나 외출 때문에 어려웠어요'],
-  ['INSTRUCTIONS_UNCLEAR', '복용 방법이 헷갈렸어요'], ['NEED_DOUBT', '약이 꼭 필요한지 모르겠어요'],
-  ['MEDICATION_CONCERN', '약에 대한 걱정이 있었어요'], ['ACCESS_OR_COST', '약이 없거나 구하기 어려웠어요'],
-]
+const choices: [api.BarrierCode, string][] = BARRIER_ORDER.map(code => [code, BARRIER_LABELS[code]])
 const supportNames: Record<api.SupportCode, string> = {
   REMINDER_SETUP: '복약 일정과 알림 확인', ROUTINE_OR_TRAVEL_PLAN: '일상·이동 중 복약 계획 확인',
   INSTRUCTION_REVIEW: '복용 방법 확인', PURPOSE_REVIEW: '복용 목적 확인',
   MEDICATION_CONCERN_GUIDANCE: '약에 대한 걱정 확인', ACCESS_SUPPORT: '약 접근·비용 도움 확인',
 }
-const subreasonChoices: Record<api.BarrierCode, [api.SubreasonCode, string][]> = {
-  FORGOT: [['MISSED_ALERT', '알림을 보거나 듣지 못했어요'], ['POSTPONED', '미뤘다가 잊었어요'], ['MEDICATION_CONFUSION', '약이나 복용 회차가 헷갈렸어요']],
-  SCHEDULE_OR_TRAVEL: [['SCHEDULE_CHANGED', '생활 일정이 바뀌었어요'], ['MEDICATION_NOT_WITH_ME', '약을 가지고 나오지 않았어요'], ['PREPARATION_DIFFICULT', '미리 준비하기 어려웠어요']],
-  INSTRUCTIONS_UNCLEAR: [['DOSE_AMOUNT_UNCLEAR', '한 번에 먹을 수량이 헷갈려요'], ['TIMING_OR_FOOD_UNCLEAR', '시간이나 식사 조건이 헷갈려요'], ['MEDICATION_IDENTITY_UNCLEAR', '약을 구분하기 어려워요'], ['LANGUAGE_TOO_COMPLEX', '설명이 길거나 어려워요']],
-  NEED_DOUBT: [['NO_SYMPTOMS', '현재 증상이 없어요'], ['NO_NOTICEABLE_EFFECT', '효과를 체감하지 못해요'], ['VALUES_IMPROVED', '검사 수치가 좋아졌어요'], ['NEED_UNCLEAR', '왜 필요한지 잘 모르겠어요']],
-  MEDICATION_CONCERN: [['LONG_TERM_USE', '장기간 복용이 걱정돼요'], ['DEPENDENCE_OR_TOLERANCE', '의존성이나 내성이 걱정돼요'], ['BODY_HARM', '몸에 해가 될까 걱정돼요'], ['PILL_BURDEN', '복용하는 약이 많아 부담돼요'], ['CONFLICTING_INFORMATION', '인터넷·지인 정보와 안내가 달라요']],
-  ACCESS_OR_COST: [['RUNNING_LOW', '약이 곧 떨어져요'], ['REFILL_MISSED', '재처방 시기를 놓쳤어요'], ['VISIT_DIFFICULT', '병원이나 약국 방문이 어려워요'], ['COST_BURDEN', '비용이 부담돼요']],
-}
+const subreasonChoices = Object.fromEntries(
+  BARRIER_ORDER.map(code => [code, BARRIER_SUBREASONS[code].map(sub => [sub, SUBREASON_LABELS[sub]])]),
+) as Record<api.BarrierCode, [api.SubreasonCode, string][]>
 // Only this historical copy predates the explicit packing plan. New copy versions retain it.
 const LEGACY_TRAVEL_COPY = 'track-c-support-copy-ko-2026-09-15.1'
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -70,6 +62,9 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [retry, setRetry] = useState<(() => Promise<void>) | null>(null)
+  // A retried step re-runs its original closure, so the stale `barrier` in that
+  // closure must not decide whether the subreason still needs writing.
+  const barrierWritten = useRef<api.Barrier | null>(null)
   const lock = useRef(false)
   const alive = useRef(true)
   const heading = useRef<HTMLHeadingElement>(null)
@@ -163,6 +158,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
     const result = await service.putBarrier(checkin.checkin_id, body, key('barrier', checkin.checkin_id, body))
     if (!alive.current) return
     if (result.medication_checkin_id !== checkin.checkin_id || result.checkin_revision !== checkin.revision || result.safety_assessment_id !== safety.assessment_id) throw new ApiError(409, '')
+    barrierWritten.current = result
     setBarrier(result)
     if (!code) {
       await loadOffers(result); return
@@ -171,6 +167,25 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
       setTravelSituation(undefined); setStep('travel'); return
     }
     setSubreason(undefined); setStep('subreason')
+  }
+
+  // The barrier answer is stored the moment it is chosen so a drop-out still leaves a
+  // record. Choosing a subreason appends the next barrier revision instead of mutating
+  // that row, and the plan is then linked to the answer that carries the subreason.
+  async function submitSubreason(code: api.SubreasonCode | undefined, situation?: api.TravelSituation) {
+    const current = barrierWritten.current ?? barrier
+    if (!checkin || !safety || !current) return
+    if (!code || !current.barrier_code || current.subreason_code === code) {
+      await loadOffers(current, situation, code)
+      return
+    }
+    const body: api.BarrierRequest = { response_status: 'ANSWERED', barrier_code: current.barrier_code, subreason_code: code, checkin_revision: checkin.revision, expected_revision: current.revision }
+    const result = await service.putBarrier(checkin.checkin_id, body, key('barrier-subreason', checkin.checkin_id, body))
+    if (!alive.current) return
+    if (result.medication_checkin_id !== checkin.checkin_id || result.checkin_revision !== checkin.revision || result.safety_assessment_id !== safety.assessment_id || result.subreason_code !== code) throw new ApiError(409, '')
+    barrierWritten.current = result
+    setBarrier(result)
+    await loadOffers(result, situation, code)
   }
 
   async function loadOffers(result: api.Barrier, situation?: api.TravelSituation, selectedSubreason?: api.SubreasonCode) {
@@ -243,8 +258,8 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
       {step === 'subreason' && barrier?.barrier_code && <>
         <p>가장 가까운 상황 하나를 골라주세요. 세부 이유를 저장하지 않고 일반 도움을 볼 수도 있어요.</p>
         <fieldset disabled={busy || !!retry}><legend className="track-c-sr-only">복약이 어려웠던 구체적인 상황</legend>{subreasonChoices[barrier.barrier_code].map(([code, label]) => <label className="track-c-choice" key={code}><input type="radio" name="subreason" value={code} checked={subreason === code} onChange={() => setSubreason(code)} /><span>{label}</span></label>)}</fieldset>
-        <Button fullWidth disabled={!subreason || busy || !!retry} onClick={() => { if (subreason) void run(() => loadOffers(barrier, undefined, subreason)) }}>선택한 상황으로 도움 찾기</Button>
-        <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => void run(() => loadOffers(barrier))}>세부 이유 없이 도움 보기</Button>
+        <Button fullWidth disabled={!subreason || busy || !!retry} onClick={() => { if (subreason) void run(() => submitSubreason(subreason)) }}>선택한 상황으로 도움 찾기</Button>
+        <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => void run(() => submitSubreason(undefined))}>세부 이유 없이 도움 보기</Button>
       </>}
       {step === 'travel' && <Card>
         <h2>어떤 상황이었나요?</h2>
@@ -254,7 +269,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
           <label className="track-c-choice"><input type="radio" name="travel" checked={travelSituation === 'MEDICATION_NOT_WITH_ME'} onChange={() => { setTravelSituation('MEDICATION_NOT_WITH_ME'); setSubreason('MEDICATION_NOT_WITH_ME') }} /><span>약을 가지고 나오지 않았어요</span></label>
           <label className="track-c-choice"><input type="radio" name="travel" checked={subreason === 'PREPARATION_DIFFICULT'} onChange={() => { setTravelSituation(undefined); setSubreason('PREPARATION_DIFFICULT') }} /><span>외출 준비가 어려웠어요</span></label>
         </fieldset>
-        <Button fullWidth disabled={(!travelSituation && subreason !== 'PREPARATION_DIFFICULT') || busy || !!retry} onClick={() => { if (barrier) void run(() => loadOffers(barrier, travelSituation, subreason ?? travelSituation)) }}>선택한 상황으로 도움 찾기</Button>
+        <Button fullWidth disabled={(!travelSituation && subreason !== 'PREPARATION_DIFFICULT') || busy || !!retry} onClick={() => { if (barrier) void run(() => submitSubreason(subreason ?? travelSituation, travelSituation)) }}>선택한 상황으로 도움 찾기</Button>
         <Button fullWidth variant="secondary" disabled={busy} onClick={() => navigate(back)}>나중에</Button>
       </Card>}
       {step === 'offer' && (item ? <>
