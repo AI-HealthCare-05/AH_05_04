@@ -41,7 +41,7 @@
       "prompt_version": "chat-prompt-v5",
       "source_commit": "4a9a9bfab089e10a82bf2ca3b1364fd0e7f53d60",
       "prompt_path": "evals/generation/prompts/chat-prompt-v5.txt",
-      "prompt_sha256": "bd0713e282d841ccf8d65fae3ff3b79e17ed60172bc9144283eff4f9fb27069d",
+      "prompt_sha256": "d9484cded3f4b49a9885450586080b692dc36a7bbb784395e8b74387c01bc521",
       "model": "gpt-4o"
     }
   ],
