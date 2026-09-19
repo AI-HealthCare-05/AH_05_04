@@ -1,6 +1,6 @@
 # Load Test Framework (#627)
 
-This directory contains the first load-test framework skeleton for #627. It is intentionally limited to configurable smoke and baseline scenarios so API-specific coverage can grow after the API surface stabilizes.
+This directory contains the first load-test framework skeleton for #627. It is intentionally limited to configurable smoke and baseline scenarios so API-specific scenarios can grow after the API surface stabilizes.
 
 ## Scope
 
