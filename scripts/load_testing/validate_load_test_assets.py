@@ -45,8 +45,8 @@ REQUIRED_SNIPPETS = {
         "LOAD_TEST_AUTH_INCLUDE_REFRESH=true",
         "Medication schedule read smoke",
         "LOAD_TEST_SCHEDULE_DATE",
+        "LOAD_TEST_SCHEDULE_DETAIL_LIMIT=0",
         "Medication Schedule Read Smoke Command",
-        "LOAD_TEST_SCHEDULE_DATE",
         "API-specific scenarios",
         "OCR / Worker Smoke Command",
         "Do not use `/api/v1/health`",
@@ -59,6 +59,7 @@ REQUIRED_SNIPPETS = {
         "LOAD_TEST_AUTH_INCLUDE_REFRESH=true",
         "Medication schedule read smoke",
         "LOAD_TEST_SCHEDULE_DATE",
+        "LOAD_TEST_SCHEDULE_DETAIL_LIMIT=0",
     ),
 }
 

@@ -1,4 +1,4 @@
-﻿# Load Test Framework (#627)
+# Load Test Framework (#627)
 
 This directory contains the first load-test framework skeleton for #627. It is intentionally limited to configurable smoke and baseline scenarios so API-specific scenarios can grow after the API surface stabilizes.
 
@@ -111,6 +111,12 @@ uvx locust \
 ```
 
 Use only synthetic accounts with existing schedule fixture data. This scenario is read-only and does not create, update, cancel, or check in schedules.
+
+Schedule-specific reproducibility notes:
+
+- If `LOAD_TEST_SCHEDULE_DATE` is omitted, the scenario uses today's local date in `Asia/Seoul`; set it explicitly for evidence runs so repeated runs target the same fixture date.
+- `LOAD_TEST_SCHEDULE_DETAIL_LIMIT=0` means list-only execution: the occurrence list is fetched, and medication detail requests are intentionally skipped.
+- If the occurrence list is empty, the scenario records only the list request and skips detail requests; this is a valid empty-fixture smoke result, not a detail endpoint measurement.
 
 ## OCR / Worker Readiness Preflight
 

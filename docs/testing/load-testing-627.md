@@ -1,4 +1,4 @@
-﻿# Load Testing Framework (#627)
+# Load Testing Framework (#627)
 
 ## Status
 
@@ -127,6 +127,12 @@ uvx locust \
 ```
 
 This scenario is read-only. It does not create schedules, edit schedule times, cancel occurrences, or submit check-ins. Treat it as baseline/smoke evidence, not as a production capacity claim.
+
+Schedule-specific reproducibility notes:
+
+- If `LOAD_TEST_SCHEDULE_DATE` is omitted, the scenario uses today's local date in `Asia/Seoul`; set it explicitly for evidence runs so repeated runs target the same fixture date.
+- `LOAD_TEST_SCHEDULE_DETAIL_LIMIT=0` means list-only execution: the occurrence list is fetched, and medication detail requests are intentionally skipped.
+- If the occurrence list is empty, the scenario records only the list request and skips detail requests; this is a valid empty-fixture smoke result, not a detail endpoint measurement.
 
 ## OCR / Worker Readiness Preflight
 
