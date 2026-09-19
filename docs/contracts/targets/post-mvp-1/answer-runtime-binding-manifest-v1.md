@@ -1,10 +1,26 @@
 # Answer Runtime Authority Binding Manifest 계약 v1 (#159)
 
-> **상태**: Proposed · Review Required (`PD-159-20260913` Phase B Proposal - Revised)  
-> **책임 작성자**: 정현우 (AI/RAG Implementation Owner)  
-> **책임 리뷰어**: 권가빈 (`@hazelnutflavoured`, PM / Track F Acceptance)  
-> **상류 권위**: RFC 8785 (JCS Canonical JSON), PR #808 (`AnswerComparisonRunInput` Seam), PR #828 / #806 (`RequestGuardRuntimeBindingObservation`)  
-> **연결 이슈**: #159 (Answer Quality Metrics & Comparison), #808 (Pure Typed Comparison Seam), #828 / #806 (Request Guard Runtime Binding), #180 (Track F Runtime Orchestration), #807 (PATIENT_CITATION Source Authority), #799 (Citation Authorization)
+| 항목 | 값 |
+| --- | --- |
+| 상태 | Approved Target |
+| 구현 | Not implemented — Phase B DEV contract approved; DTO/schema, recipe helpers, validation 착수 허용 |
+| Decision | [`PD-159-20260913`](../../../governance/decisions/2026-09-13-rag-answer-quality-metrics.md) |
+| 추적 Issue | [#159](https://github.com/AI-HealthCare-05/AH_05_04/issues/159) |
+| 구현 담당 | 정현우 (`@ceohwj`, AI/RAG Implementation Owner) |
+| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`, PM / Track F Acceptance) — `APPROVED` |
+| 승인 Evidence | [PR #833 comment `5740823309`](https://github.com/AI-HealthCare-05/AH_05_04/pull/833#issuecomment-5740823309) · Final HEAD `ef8a78c8f6ad1c037d203d1b376d899e0dbffbcd` · Merge commit `5128cfdee8d9791a76fe6331cea2314420184cc9` |
+| 상류 권위 | RFC 8785 (JCS Canonical JSON), PR #808 (`AnswerComparisonRunInput` Seam), PR #828 / #806 (`RequestGuardRuntimeBindingObservation`) |
+| 연결 이슈 | #159, #808, #828 / #806, #180, #807, #799 |
+
+> [!NOTE]
+> **승인 범위**:
+> 이번 승인은 **Phase B DEV contract implementation approval**이다.
+> 다음을 의미하지 않는다:
+> - Runtime integration approved
+> - HOLDOUT approved
+> - Baseline Freeze approved
+> - Release PASS approved
+> - PUBLIC_TRACK_F approved
 
 ---
 
@@ -320,8 +336,36 @@ $$\text{Authoritative Carrier / Extractor Validation} \longrightarrow 7\text{ Su
 
 ## 8. 승인 및 전환 요건
 
-1. 본 계약 문서는 책임 리뷰어 권가빈(`@hazelnutflavoured`)의 승인 전까지 `Proposed` 상태를 유지한다.
-2. 책임 리뷰어의 승인 완료 후:
-   - 본 계약은 `targets/post-mvp-1/answer-runtime-binding-manifest-v1.md`로 이동한다.
-   - Pydantic DTO, Manifest Extractor, Validator 구현 및 단위/회귀 테스트를 착수한다.
-3. 상류 4개 차단 이슈(#180, #807, #799)가 완료되어 정본 영수증이 도입될 때까지 프로덕션 release gate 통과 및 `PUBLIC_TRACK_F` 해제는 엄격히 금지된다.
+### 1) 승인 Evidence
+- **Responsible Reviewer**: 권가빈 (`@hazelnutflavoured`, PM / Track F Acceptance)
+- **Status**: `APPROVED`
+- **PR**: #833
+- **Reviewed/Approved Final HEAD**: `ef8a78c8f6ad1c037d203d1b376d899e0dbffbcd`
+- **Merge Commit**: `5128cfdee8d9791a76fe6331cea2314420184cc9`
+- **Approval Comment**: [`5740823309`](https://github.com/AI-HealthCare-05/AH_05_04/pull/833#issuecomment-5740823309) ("PD-159-20260913 Phase B / PR #833 final HEAD ef8a78c8 APPROVED")
+- **Approval Date**: 2026-09-19
+
+### 2) 구현 착수 Gate (Implementation Gate)
+Phase B contract approval completed.
+
+Python implementation may now begin for:
+- approved manifest DTO/schema (`rag-eval.answer-runtime-binding-manifest@1.0.0`)
+- approved 10 canonical recipe helpers
+- manifest validation (`CanonicalUuid`, 64-hex hash pattern, self-hash integrity)
+- approved #808 typed seam projection (`AnswerComparisonSupplementalControls`, `AnswerComparisonDeltaBindings`)
+- fail-closed handling for unresolved bindings (`RETRIEVED_EVIDENCE=null`, upstream finalization blocked deltas=`null`)
+
+단 다음은 여전히 구현하지 않는다:
+- `RETRIEVED_EVIDENCE` fake carrier
+- `ANS-BASE` synthetic supplemental authority
+- `FINAL_VALIDATOR`
+- `CITATION_GATE`
+- `SAFETY_GATE`
+- `RELEASE_GATE`
+- actual 3-variant execution
+- HOLDOUT
+- Baseline Freeze
+- `PUBLIC_TRACK_F`
+
+### 3) 상류 릴리스 차단
+상류 4개 차단 이슈(#180, #807, #799)가 완료되어 정본 영수증이 도입될 때까지 프로덕션 release gate 통과 및 `PUBLIC_TRACK_F` 해제는 엄격히 금지된다.

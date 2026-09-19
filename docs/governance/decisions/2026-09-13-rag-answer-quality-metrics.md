@@ -202,18 +202,32 @@ Phase A 전수 대조 결과, authority binding의 저장 아키텍처는 다음
 
 ---
 
-## 2026-09-19 후속 결정: Answer Comparison Runtime Authority Binding Phase B Proposal (10 Canonical Recipes + 1 Explicitly Unresolved Binding & Binding Manifest Contract Proposal - Revised)
+## 2026-09-19 후속 결정: Answer Comparison Runtime Authority Binding Phase B (10 Canonical Recipes + 1 Explicitly Unresolved Binding & Binding Manifest Contract) — Approved
 
-### 1. 상태 재정렬 요약 (Rebaseline)
+### 1. 상태 재정렬 요약 (Rebaseline) 및 승인 Evidence
 
-PR #828 / Issue #806 병합(`5c99a538`) 완료를 반영하여 authority 상태를 재정렬한다 (최신 `develop` `01ab426d` 기준 점검 완료, #159 관련 authority 변경 없음):
+PR #828 / Issue #806 병합(`5c99a538`) 완료를 반영하여 authority 상태를 재정렬하고, PR #833에서 책임 리뷰어 권가빈(`@hazelnutflavoured`)의 Phase B 계약 승인이 완료되었다.
+
+#### Phase B 승인 Evidence
+
+| 항목 | 값 |
+| --- | --- |
+| Responsible Reviewer | 권가빈 (`@hazelnutflavoured`, PM / Track F Acceptance) |
+| Status | `APPROVED` (Phase B DEV contract implementation approval) |
+| PR | #833 |
+| Reviewed/Approved Final HEAD | `ef8a78c8f6ad1c037d203d1b376d899e0dbffbcd` |
+| Merge Commit | `5128cfdee8d9791a76fe6331cea2314420184cc9` |
+| Approval Comment | [`5740823309`](https://github.com/AI-HealthCare-05/AH_05_04/pull/833#issuecomment-5740823309) |
+| Approval Text | `PD-159-20260913 Phase B / PR #833 final HEAD ef8a78c8 APPROVED` |
+| Approval Date | 2026-09-19 |
+
 - `RequestGuardRuntimeBindingObservation`(`environment`, `bundle_id`, `bundle_manifest_hash`) 소스가 `develop`에 도입됨에 따라 `RUNTIME_BUNDLE`은 더 이상 #806 자체로 차단되지 않는다.
-- 단, #159 Answer Comparison 목적의 canonical projection 및 hash recipe는 아직 미동결 상태이므로 `RUNTIME_BUNDLE`의 정확한 상태는 `SOURCE_EXISTS_RECIPE_UNRESOLVED`이다.
-- 재정렬 결과 (승인 전 전체 authority 상태 분류):
-  - **`READY`**: 0개
+- 본 Phase B 계약 승인으로 10 Canonical Recipes(7 supplemental + 3 delta)의 projection 및 hash recipe가 확정되었다.
+- 승인 후 전체 authority 상태 분류:
+  - **`READY`**: 0개 (authoritative runtime carrier 실재 및 3-variant execution 완료 전까지 pair 실행 불가)
   - **`SOURCE_EXISTS_RECIPE_UNRESOLVED`**: 11개 (`INPUT_CONTEXT`, `PROMPT_STRUCTURE`, `PARSER`, `SEED`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`, `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RETRIEVED_EVIDENCE`, `RUNTIME_BUNDLE`)
   - **`BLOCKED_BY_UPSTREAM_AUTHORITY`**: 4개 (`FINAL_VALIDATOR`, `CITATION_GATE`, `SAFETY_GATE`, `RELEASE_GATE`)
-- 본 Phase B 제안 실질 산출물: **10 Canonical Recipes + 1 Explicitly Unresolved Binding (`RETRIEVED_EVIDENCE`) + Separate Binding Manifest Contract**
+- 실질 산출물: **10 Canonical Recipes + 1 Explicitly Unresolved Binding (`RETRIEVED_EVIDENCE`) + Separate Binding Manifest Contract** (Approved Target)
 
 ### 2. 10 Canonical Recipes 규격, Carrier 상태 분리 및 1 Explicitly Unresolved Binding
 
@@ -274,7 +288,7 @@ $$\text{source object exists} \neq \text{ANS-BASE / ANS-RAG / ANS-FINAL 실행�
 
 - **Schema ID**: `rag-eval.answer-runtime-binding-manifest`
 - **Schema Version**: `1.0.0`
-- **계약 문서**: [`docs/contracts/proposed/post-mvp-1/answer-runtime-binding-manifest-v1.md`](../contracts/proposed/post-mvp-1/answer-runtime-binding-manifest-v1.md)
+- **계약 문서**: [`docs/contracts/targets/post-mvp-1/answer-runtime-binding-manifest-v1.md`](../../contracts/targets/post-mvp-1/answer-runtime-binding-manifest-v1.md)
 - **Self-Hash 계산**: `canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))`
 - **Run-Scoped 무결성 특성**:
   - `manifest_sha256`은 특정 Evaluation Run에 결속된 run-scoped artifact integrity hash이다.
@@ -296,11 +310,26 @@ $$\text{source object exists} \neq \text{ANS-BASE / ANS-RAG / ANS-FINAL 실행�
   - 향후 구현될 Authoritative Manifest Extractor가 각 Variant의 authoritative source에서 값을 추출하고 임의 caller 주입을 차단한 후 검증된 해시만을 #808 seam으로 투영할 책임을 갖는다.
   $$\text{Authoritative Carrier / Extractor Validation} \longrightarrow 7\text{ Supplemental Hashes} \longrightarrow \text{\#808 Exact-Match}$$
 
-### 6. 승인 게이트 (Reviewer Approval Gate)
+### 6. 승인 완료 및 구현 착수 Gate (Approval Completed & Implementation Gate)
 
-1. 본 Phase B 제안(10 Canonical Recipes + 1 Explicitly Unresolved Binding 및 Binding Manifest Contract Proposal)은 책임 리뷰어 권가빈(`@hazelnutflavoured`)의 명시적 승인을 전제로 한다.
-2. 책임 리뷰어의 승인 증빙이 Issue #159 또는 PR 리뷰로 등록되기 전에는 Python 구현(`ai_worker/...`)을 착수하지 않는다.
-3. 승인 완료 시 동일 작업 흐름에서 즉시 Pydantic DTO, Manifest Extractor, Validator 및 단위/회귀 테스트 구현으로 진행한다.
+1. **승인 완료**: 책임 리뷰어 권가빈(`@hazelnutflavoured`)의 승인 코멘트 `5740823309`에 따라 Phase B 계약(10 Canonical Recipes + 1 Explicitly Unresolved Binding 및 Binding Manifest Contract) 승인이 완료되었다 (`APPROVED`).
+2. **구현 착수 허용**: Phase B contract approval 완료에 따라 다음 항목의 Python 구현을 착수할 수 있다:
+   - approved manifest DTO/schema (`rag-eval.answer-runtime-binding-manifest@1.0.0`)
+   - approved 10 canonical recipe helpers
+   - manifest validation (`CanonicalUuid`, 64-hex hash pattern, self-hash integrity)
+   - approved #808 typed seam projection (`AnswerComparisonSupplementalControls`, `AnswerComparisonDeltaBindings`)
+   - fail-closed handling for unresolved bindings (`RETRIEVED_EVIDENCE=null`, upstream finalization blocked deltas=`null`)
+3. **구현 금지 항목 유지**: 단 다음은 여전히 구현하지 않는다:
+   - `RETRIEVED_EVIDENCE` fake carrier
+   - `ANS-BASE` synthetic supplemental authority
+   - `FINAL_VALIDATOR`
+   - `CITATION_GATE`
+   - `SAFETY_GATE`
+   - `RELEASE_GATE`
+   - actual 3-variant execution
+   - HOLDOUT
+   - Baseline Freeze
+   - `PUBLIC_TRACK_F`
 
 ## 공개 경계
 

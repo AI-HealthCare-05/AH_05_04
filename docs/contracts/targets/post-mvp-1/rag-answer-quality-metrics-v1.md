@@ -244,9 +244,9 @@ Post-MVP-1 Product·Safety·Evaluation 승인자 권가빈 (`@hazelnutflavoured`
    - Non-allowed delta mismatch 또는 Case/Draft mismatch: Schema 변경 없이 invariant(`not scope_comparisons`)를 만족하도록 `scope_comparisons = ()`를 설정해 `execution_status = INVALID`, `decision_status = null` 표현
    - Malformed typed input(예: non-hex SHA, 잘못된 길이 등): artifact를 생성하지 않고 `EvaluationValidationError`로 fail-close
 
-### 8.3 Answer Runtime Authority Binding Manifest Contract Proposal (Issue #159 Phase B - Revised)
+### 8.3 Answer Runtime Authority Binding Manifest Contract (Issue #159 Phase B - Approved)
 
-15 Authority Bindings의 저장 및 결속은 Schema Set 1.5 불변을 위해 독립 Manifest 계약인 [`rag-eval.answer-runtime-binding-manifest@1.0.0`](../../proposed/post-mvp-1/answer-runtime-binding-manifest-v1.md)으로 제안된다 (`SEPARATE_BINDING_MANIFEST_PREFERRED` 확정).
+15 Authority Bindings의 저장 및 결속은 Schema Set 1.5 불변을 위해 독립 Manifest 계약인 [`rag-eval.answer-runtime-binding-manifest@1.0.0`](./answer-runtime-binding-manifest-v1.md)으로 승인되었다 (`SEPARATE_BINDING_MANIFEST_PREFERRED` 확정).
 
 1. **상태 재정렬**:
    - `READY`: 0개
@@ -272,7 +272,7 @@ Post-MVP-1 Product·Safety·Evaluation 승인자 권가빈 (`@hazelnutflavoured`
    - Manifest의 `supplemental_controls` 7개 필드는 `AnswerComparisonSupplementalControls`에 1:1 매핑된다.
    - `delta_bindings` 8개 필드는 `AnswerComparisonDeltaBindings`에 1:1 매핑된다 (`RETRIEVED_EVIDENCE` 및 `ANS-FINAL`의 미해결 차단 항목은 `None` 매핑).
    - #808 비교 커널은 투영된 7개 supplemental hash의 non-None 여부 및 exact-match만 검증하므로, 향후 구현될 Authoritative Manifest Extractor가 각 Variant의 authoritative source에서 값을 추출하고 임의 caller 주입을 차단한 후 검증된 해시만을 #808 seam으로 투영할 책임을 갖는다.
-7. **구현 착수 조건**: 본 제안 문서 및 10 Canonical Recipes + 1 Unresolved Binding에 대해 책임 리뷰어 권가빈(`@hazelnutflavoured`)의 승인 증빙이 확인되기 전에는 Python 구현(`ai_worker/...`)을 진행하지 않는다.
+7. **구현 착수 Gate**: PR #833에서 책임 리뷰어 권가빈(`@hazelnutflavoured`)의 Phase B 계약 승인(comment `5740823309`)이 완료되어, approved manifest DTO/schema, 10 canonical recipe helpers, manifest validation, #808 typed seam projection 및 fail-closed handling의 Python 구현 착수가 허용된다. 단, fake carrier/synthetic authority, 상류 finalization authority, 실제 3-variant 실행, HOLDOUT, Baseline Freeze, `PUBLIC_TRACK_F`는 여전히 엄격히 금지된다.
 
 ## 9. Rubric fail-fast
 
