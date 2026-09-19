@@ -1,15 +1,23 @@
 import argparse
+import asyncio
 import json
 import os
 import sys
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncConnection, async_sessionmaker, create_async_engine
 
+from ai_worker.adapters.local_private_source_artifact_finalizer import LocalPrivateSourceArtifactReader
+from ai_worker.adapters.sqlalchemy_catalog_approval_verifier import SqlAlchemyCatalogApprovalVerifier
 from ai_worker.adapters.sqlalchemy_catalog_write_support import SqlAlchemyCatalogBuildRepository
+from ai_worker.adapters.sqlalchemy_source_snapshot_repository import SqlAlchemySourceSnapshotRepository
+from ai_worker.tasks.rag.catalog.mfds_product_source import ProductSourceBindingError, read_product_input
+from ai_worker.tasks.rag.catalog.service import CatalogBuildRequest, build_catalog_candidate
+from ai_worker.tasks.rag.catalog.types import CandidateCatalogSourceRef, CatalogVerificationStatus
 from infra.python.catalog_role_policy import CATALOG_LOCK_COLUMNS, CATALOG_READ_TABLES, CATALOG_WRITE_TABLES
 
 
@@ -103,6 +111,56 @@ async def catalog_writer_repository(environment: Mapping[str, str]) -> AsyncIter
         await engine.dispose()
 
 
+async def _execute_catalog_build(
+    *,
+    environment: Mapping[str, str],
+    source_snapshot_id: str,
+    ingestion_run_id: str,
+    item_seq: str,
+    catalog_version: str,
+) -> dict[str, object]:
+    root_value = environment.get("CATALOG_SOURCE_ARTIFACT_READER_ROOT", "").strip()
+    if not root_value:
+        raise ProductSourceBindingError("BLOCKED_BY_PRODUCT_ARTIFACT")
+    try:
+        reader = LocalPrivateSourceArtifactReader(Path(root_value))
+    except (OSError, ValueError):
+        raise ProductSourceBindingError("BLOCKED_BY_PRODUCT_ARTIFACT") from None
+
+    engine = create_async_engine(writer_url(environment), hide_parameters=True)
+    try:
+        async with engine.connect() as connection:
+            await validate_catalog_writer(connection)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with sessions() as source_session:
+            product, receipt = await read_product_input(
+                repository=SqlAlchemySourceSnapshotRepository(source_session),
+                artifact_reader=reader,
+                source_snapshot_id=source_snapshot_id,
+                ingestion_run_id=ingestion_run_id,
+                item_seq=item_seq,
+            )
+        request = CatalogBuildRequest(
+            catalog_version=catalog_version,
+            source_refs=(CandidateCatalogSourceRef(str(receipt.source_snapshot_id), receipt.source_version),),
+            products=(product,),
+            ingredients=(),
+            components=(),
+            aliases=(),
+        )
+        repository = SqlAlchemyCatalogBuildRepository(sessions)
+        result = await build_catalog_candidate(
+            request=request,
+            repository=repository,
+            approval_verifier=SqlAlchemyCatalogApprovalVerifier(sessions),
+        )
+        if result.export is None or result.export.catalog.verification_status is not CatalogVerificationStatus.APPROVED:
+            return {"execution_status": "BLOCKED", "blocker_reason": "CATALOG_NOT_APPROVED"}
+        return {"execution_status": result.decision.value}
+    finally:
+        await engine.dispose()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Build and persist Medication Catalog with dedicated Catalog Writer credentials"
@@ -113,7 +171,10 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Authoritative Product Source snapshot ID",
     )
-    _ = parser.parse_args(argv)
+    parser.add_argument("--ingestion-run-id", type=str, default=None)
+    parser.add_argument("--item-seq", type=str, default=None)
+    parser.add_argument("--catalog-version", type=str, default=None)
+    args = parser.parse_args(argv)
 
     try:
         writer_url(os.environ)
@@ -121,17 +182,27 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"execution_status": "FAILED", "error": str(exc)}), file=sys.stderr)
         return 1
 
-    # In Phase A, actual MFDS_PRODUCT_APPROVAL Source materialization is running in a parallel lane.
-    # Without authoritative source snapshot input, fail closed immediately.
-    print(
-        json.dumps(
-            {
-                "execution_status": "BLOCKED",
-                "blocker_reason": "BLOCKED_BY_PRODUCT_SOURCE_AUTHORITY",
-            }
+    if not all((args.source_snapshot_id, args.ingestion_run_id, args.item_seq, args.catalog_version)):
+        print(json.dumps({"execution_status": "BLOCKED", "blocker_reason": "BLOCKED_BY_PRODUCT_SOURCE_AUTHORITY"}))
+        return 1
+    try:
+        result = asyncio.run(
+            _execute_catalog_build(
+                environment=os.environ,
+                source_snapshot_id=args.source_snapshot_id,
+                ingestion_run_id=args.ingestion_run_id,
+                item_seq=args.item_seq,
+                catalog_version=args.catalog_version,
+            )
         )
-    )
-    return 1
+    except ProductSourceBindingError as exc:
+        print(json.dumps({"execution_status": "BLOCKED", "blocker_reason": exc.code}))
+        return 1
+    except Exception:
+        print(json.dumps({"execution_status": "FAILED", "error": "Catalog Writer execution failed"}), file=sys.stderr)
+        return 1
+    print(json.dumps(result))
+    return 0 if result["execution_status"] == "ACTIVATION_CANDIDATE" else 1
 
 
 if __name__ == "__main__":

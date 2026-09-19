@@ -318,7 +318,9 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
                         _SOURCE.c.id.label("source_id"),
                         _SOURCE.c.source_code,
                         _ENDPOINT.c.id.label("endpoint_id"),
+                        _ENDPOINT.c.endpoint_code,
                         _SNAPSHOT.c.operation_id,
+                        _OPERATION.c.operation_code,
                         _SNAPSHOT.c.id.label("source_snapshot_id"),
                         _SNAPSHOT.c.source_version,
                         _SNAPSHOT.c.external_version,
@@ -485,6 +487,10 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
                 if key not in {"operation_id", "snapshot_id"}
             },
         )
+
+    async def get_ingestion_run_receipt(self, *, ingestion_run_id: UUID) -> SnapshotAttemptReceipt | None:
+        """Return one explicitly selected ingestion run without choosing a latest run."""
+        return await self.get_attempt_receipt(ingestion_run_id=ingestion_run_id)
 
     async def get_latest_snapshot(self, *, operation_id: UUID) -> SnapshotReference | None:
         statement = (
