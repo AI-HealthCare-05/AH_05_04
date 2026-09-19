@@ -212,8 +212,7 @@ def approved_build(*, changed=False, repeated=False):
     return members, artifacts, verifier
 
 
-@pytest_asyncio.fixture
-async def database(monkeypatch):
+async def _database_resource(monkeypatch):
     name = "catalog166_roundtrip_" + uuid4().hex
     original = config.database_url
     cluster = create_async_engine(original, isolation_level="AUTOCOMMIT", hide_parameters=True)
@@ -256,6 +255,24 @@ async def database(monkeypatch):
                         verification_status="PENDING",
                     )
                 )
+        yield engine, factory
+    finally:
+        await engine.dispose()
+        async with cluster.connect() as connection:
+            await connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+        await cluster.dispose()
+
+
+@pytest_asyncio.fixture
+async def unseeded_database(monkeypatch):
+    async for resource in _database_resource(monkeypatch):
+        yield resource
+
+
+@pytest_asyncio.fixture
+async def database(monkeypatch):
+    async for resource in _database_resource(monkeypatch):
+        _, factory = resource
         await seed_catalog_approvals(
             factory,
             [
@@ -264,12 +281,7 @@ async def database(monkeypatch):
                 approved_build(repeated=True)[1],
             ],
         )
-        yield engine, factory
-    finally:
-        await engine.dispose()
-        async with cluster.connect() as connection:
-            await connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
-        await cluster.dispose()
+        yield resource
 
 
 async def saved(factory):

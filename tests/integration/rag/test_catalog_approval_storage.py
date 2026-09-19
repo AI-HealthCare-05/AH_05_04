@@ -25,7 +25,7 @@ from tests.integration.rag.test_catalog_storage_roundtrip import (
     ALIAS_SNAPSHOT,
     PRODUCT_SNAPSHOT,
 )
-from tests.integration.rag.test_catalog_storage_roundtrip import database as _database
+from tests.integration.rag.test_catalog_storage_roundtrip import unseeded_database as _database
 
 database = _database
 

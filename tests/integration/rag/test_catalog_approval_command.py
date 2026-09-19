@@ -58,7 +58,7 @@ from app.models.rag_source import (
     RagVerificationResultStatus,
 )
 from tests.integration.rag.test_catalog_storage_roundtrip import approved_build, seed_catalog_approvals
-from tests.integration.rag.test_catalog_storage_roundtrip import database as _database
+from tests.integration.rag.test_catalog_storage_roundtrip import unseeded_database as _database
 
 database = _database
 
