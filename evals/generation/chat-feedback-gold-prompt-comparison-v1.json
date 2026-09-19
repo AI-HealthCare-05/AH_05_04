@@ -39,7 +39,7 @@
     {
       "variant_id": "chat-prompt-v6-gpt-4o-current",
       "prompt_version": "chat-prompt-v6",
-      "source_commit": "0000000000000000000000000000000000000000",
+      "source_commit": "d3055c360ed657b3649142e43750b969d4b0a5e9",
       "prompt_path": "evals/generation/prompts/chat-prompt-v6.txt",
       "prompt_sha256": "d9484cded3f4b49a9885450586080b692dc36a7bbb784395e8b74387c01bc521",
       "model": "gpt-4o"
