@@ -19,6 +19,9 @@ SOURCE_TABLES = (
     "rag_source_ingestion_artifact",
     "rag_source_snapshot_verification",
 )
+# #807: Source Use Approval is Source governance history, but remains separate from
+# the tables exposed to Knowledge Index Builder through SOURCE_TABLES.
+SOURCE_USE_APPROVAL_TABLES = ("rag_source_use_approval",)
 # 승인 이력·원본은 append-only입니다. 관리용 수정/삭제는 별도 권한 경로로 연결합니다.
 WRITER_UPDATE_TABLES = {"rag_source_operation"}
 WRITER_LOCK_TABLES = ("rag_source", "rag_source_endpoint", "rag_source_ingestion_artifact")
@@ -54,7 +57,7 @@ async def apply_source_role_policy(
         text("SELECT tablename FROM pg_tables WHERE schemaname=:schema"), {"schema": schema}
     )
     present = set(tables.scalars())
-    if not set(SOURCE_TABLES).issubset(present):
+    if not (set(SOURCE_TABLES) | set(SOURCE_USE_APPROVAL_TABLES)).issubset(present):
         raise ValueError("Apply Source migrations before provisioning Writer privileges")
     await _validate_lock_markers(connection, schema=schema)
     await connection.execute(text(f"REVOKE CREATE ON SCHEMA {schema_sql} FROM PUBLIC"))
@@ -73,7 +76,7 @@ async def apply_source_role_policy(
     await connection.execute(
         text(f"ALTER DEFAULT PRIVILEGES FOR ROLE {owner_sql} IN SCHEMA {schema_sql} REVOKE ALL ON TABLES FROM PUBLIC")
     )
-    for table in SOURCE_TABLES:
+    for table in SOURCE_TABLES + SOURCE_USE_APPROVAL_TABLES:
         target = f"{schema_sql}.{quoted_identifier(table)}"
         await connection.execute(text(f"REVOKE ALL ON TABLE {target} FROM PUBLIC, {runtime_sql}, {writer_sql}"))
         await connection.execute(text(f"GRANT SELECT ON TABLE {target} TO {runtime_sql}, {writer_sql}"))
@@ -96,6 +99,10 @@ async def apply_source_role_policy(
             )
         if table in WRITER_UPDATE_TABLES:
             await connection.execute(text(f"GRANT UPDATE ON TABLE {target} TO {writer_sql}"))
+    approval_target = f"{schema_sql}.{quoted_identifier(SOURCE_USE_APPROVAL_TABLES[0])}"
+    await connection.execute(
+        text(f"GRANT UPDATE (revoked_at, revoked_by, revoked_reason) ON TABLE {approval_target} TO {writer_sql}")
+    )
 
 
 async def _validate_role_boundary(connection: AsyncConnection, *, schema: str, runtime: str, writer: str) -> None:
@@ -167,7 +174,12 @@ async def _revoke_column_grants(connection: AsyncConnection, *, schema: str, run
             "AND (r.rolname=:writer OR "
             "(c.relname=ANY(:tables) AND (acl.grantee=0 OR r.rolname=:runtime)))"
         ),
-        {"schema": schema, "runtime": runtime, "writer": writer, "tables": list(SOURCE_TABLES)},
+        {
+            "schema": schema,
+            "runtime": runtime,
+            "writer": writer,
+            "tables": list(SOURCE_TABLES + SOURCE_USE_APPROVAL_TABLES),
+        },
     )
     for statement in statements:
         await connection.execute(text(statement))

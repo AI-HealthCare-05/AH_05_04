@@ -9,7 +9,11 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core import config
-from infra.python.source_role_policy import SOURCE_TABLES, WRITER_LOCK_TABLES, apply_source_role_policy
+from infra.python.source_role_policy import (
+    SOURCE_TABLES,
+    WRITER_LOCK_TABLES,
+    apply_source_role_policy,
+)
 
 
 @pytest.mark.asyncio
@@ -35,6 +39,15 @@ async def test_separate_credentials_and_future_tables_are_fail_closed() -> None:
                 await connection.execute(text(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"))
             for table in SOURCE_TABLES:
                 await connection.execute(text(f'CREATE TABLE "{schema}"."{table}" (id integer PRIMARY KEY)'))
+            await connection.execute(
+                text(
+                    f'CREATE TABLE "{schema}".rag_source_use_approval ('
+                    "id integer PRIMARY KEY, source_snapshot_id integer, source_code text, source_version text, "
+                    "environment text, purpose text, approval_version text, valid_from timestamptz, "
+                    "expires_at timestamptz, revoked_at timestamptz, revoked_by integer, revoked_reason text, "
+                    "actor_id integer, evidence_ref text)"
+                )
+            )
             await connection.execute(
                 text(f'ALTER DEFAULT PRIVILEGES IN SCHEMA "{schema}" GRANT ALL ON TABLES TO "{runtime}", "{writer}"')
             )
@@ -101,6 +114,11 @@ async def test_separate_credentials_and_future_tables_are_fail_closed() -> None:
             await connection.execute(text(f'CREATE TABLE "{schema}".future_table (id integer)'))
         async with producer.begin() as connection:
             await connection.execute(text(f'INSERT INTO "{schema}".rag_source_snapshot (id) VALUES (1)'))
+            await connection.execute(text(f'INSERT INTO "{schema}".rag_source_use_approval (id) VALUES (1)'))
+            await connection.execute(
+                text(f'UPDATE "{schema}".rag_source_use_approval SET revoked_reason=:reason WHERE id=1'),
+                {"reason": "policy change"},
+            )
             await connection.execute(text(f'UPDATE "{schema}".rag_source_snapshot SET verified_at=now() WHERE id=1'))
             await connection.execute(text(f'INSERT INTO "{schema}".rag_source_snapshot_verification VALUES (1)'))
             await connection.execute(text(f'INSERT INTO "{schema}".rag_source_ingestion_run (id) VALUES (1)'))
@@ -110,8 +128,18 @@ async def test_separate_credentials_and_future_tables_are_fail_closed() -> None:
         await _assert_writer_lock_boundaries(producer, schema)
         async with reader.connect() as connection:
             assert await connection.scalar(text(f'SELECT id FROM "{schema}".rag_source_snapshot')) == 1
+            assert await connection.scalar(text(f'SELECT id FROM "{schema}".rag_source_use_approval')) == 1
         denied = [
             (producer, f'UPDATE "{schema}".rag_source_ingestion_run SET attempted_source_version=NULL'),
+            (reader, f'INSERT INTO "{schema}".rag_source_use_approval (id) VALUES (2)'),
+            (reader, f'UPDATE "{schema}".rag_source_use_approval SET id=2'),
+            (reader, f'UPDATE "{schema}".rag_source_use_approval SET revoked_reason=NULL'),
+            (reader, f'DELETE FROM "{schema}".rag_source_use_approval'),
+            (producer, f'UPDATE "{schema}".rag_source_use_approval SET id=2'),
+            (producer, f"UPDATE \"{schema}\".rag_source_use_approval SET source_code='CHANGED'"),
+            (producer, f"UPDATE \"{schema}\".rag_source_use_approval SET approval_version='approval-2'"),
+            (producer, f'UPDATE "{schema}".rag_source_use_approval SET valid_from=now()'),
+            (producer, f'DELETE FROM "{schema}".rag_source_use_approval'),
             (reader, f'UPDATE "{schema}".rag_source_ingestion_run SET run_status=NULL'),
             (reader, f'INSERT INTO "{schema}".rag_source_snapshot (id) VALUES (3)'),
             (reader, f'UPDATE "{schema}".rag_source_snapshot SET id=3'),

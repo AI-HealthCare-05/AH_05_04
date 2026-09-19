@@ -16,7 +16,12 @@ from infra.python.knowledge_index_role_policy import (
     apply_knowledge_index_role_policy,
 )
 from infra.python.source_management_role_policy import apply_management_role_policy
-from infra.python.source_role_policy import SOURCE_TABLES, apply_source_role_policy, quoted_identifier
+from infra.python.source_role_policy import (
+    SOURCE_TABLES,
+    SOURCE_USE_APPROVAL_TABLES,
+    apply_source_role_policy,
+    quoted_identifier,
+)
 
 # Explicit compatibility permissions for domains whose Writer cutover is still pending.
 # New tables receive no access until their policy is reviewed and added here.
@@ -269,6 +274,7 @@ async def provision_roles(
         | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
         | CANDIDATE_INDEX_RUNTIME_READ_TABLES
         | set(SOURCE_TABLES)
+        | set(SOURCE_USE_APPROVAL_TABLES)
         | set(RUNTIME_AUTH_UPDATE_COLUMNS)
         | {"account_deletion_request"}
         | ACCOUNT_WITHDRAWAL_CLEANUP_DELETE_TABLES
