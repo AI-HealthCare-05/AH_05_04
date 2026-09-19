@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from ai_worker.adapters.sqlalchemy_catalog_approval_verifier import (
@@ -13,7 +13,14 @@ from ai_worker.adapters.sqlalchemy_catalog_approval_verifier import (
     SqlAlchemyCatalogApprovalVerifier,
 )
 from ai_worker.tasks.rag.catalog.types import CandidateCatalogSourceRef, CatalogVerificationStatus
-from app.models import CatalogBuildApproval, CatalogBuildApprovalSource, CatalogSourceApproval, User
+from app.models import (
+    CatalogApprovalAudit,
+    CatalogApprovalPermission,
+    CatalogBuildApproval,
+    CatalogBuildApprovalSource,
+    CatalogSourceApproval,
+    User,
+)
 from tests.integration.rag.test_catalog_storage_roundtrip import (
     ALIAS_SNAPSHOT,
     PRODUCT_SNAPSHOT,
@@ -42,6 +49,41 @@ async def _actor(factory) -> UUID:
         session.add(actor)
         await session.flush()
         return actor.id
+
+
+async def test_permission_and_audit_migration_columns_match_orm_contract(database):
+    engine, _ = database
+    expected_permission = {"user_id", "enabled", "evidence_ref", "revision", "updated_at"}
+    expected_audit = {
+        "id",
+        "request_id",
+        "event_kind",
+        "actor_id",
+        "subject_user_id",
+        "source_approval_id",
+        "build_approval_id",
+        "source_snapshot_id",
+        "source_version",
+        "purpose",
+        "catalog_version",
+        "export_checksum",
+        "evidence_ref",
+        "request_fingerprint",
+        "created_at",
+    }
+
+    async with engine.connect() as connection:
+        database_columns = await connection.run_sync(
+            lambda sync_connection: {
+                table: {column["name"] for column in inspect(sync_connection).get_columns(table)}
+                for table in ("catalog_approval_permission", "catalog_approval_audit")
+            }
+        )
+
+    assert database_columns["catalog_approval_permission"] == expected_permission
+    assert set(CatalogApprovalPermission.__table__.columns.keys()) == expected_permission
+    assert database_columns["catalog_approval_audit"] == expected_audit
+    assert set(CatalogApprovalAudit.__table__.columns.keys()) == expected_audit
 
 
 async def issue(

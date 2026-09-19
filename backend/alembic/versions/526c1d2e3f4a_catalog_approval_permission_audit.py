@@ -56,6 +56,7 @@ def upgrade() -> None:
         sa.Column("purpose", sa.String(60), nullable=True),
         sa.Column("catalog_version", sa.String(100), nullable=True),
         sa.Column("export_checksum", sa.String(64), nullable=True),
+        sa.Column("evidence_ref", sa.String(500), nullable=False),
         sa.Column("request_fingerprint", sa.String(64), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.PrimaryKeyConstraint("id", name="pk_catalog_approval_audit"),

@@ -2605,7 +2605,7 @@ async def test_catalog_approval_role_least_privilege_and_boundary(database) -> N
             audit = (
                 await connection.execute(
                     text(
-                        "SELECT event_kind, actor_id, subject_user_id, request_id, request_fingerprint "
+                        "SELECT event_kind, actor_id, subject_user_id, request_id, evidence_ref, request_fingerprint "
                         "FROM catalog_approval_audit"
                     )
                 )
@@ -2615,6 +2615,7 @@ async def test_catalog_approval_role_least_privilege_and_boundary(database) -> N
                 str(actor_id),
                 str(actor_id),
                 str(request_id),
+                evidence_ref,
                 expected_fingerprint,
             )
 
@@ -2646,6 +2647,26 @@ async def test_catalog_approval_role_least_privilege_and_boundary(database) -> N
             # Approval role can SELECT allowed user columns
             user_row = await conn.execute(text('SELECT id, is_active, account_status FROM public."user" LIMIT 1'))
             assert user_row is not None
+
+        revoke_request = ApprovalRequest(
+            actor_id=actor_id,
+            request_id=uuid4(),
+            evidence_ref="synthetic://catalog-approval-bootstrap-revoke",
+        )
+        async with approval_sessions.begin() as session:
+            updated = await set_permission(session, request=revoke_request, user_id=actor_id, enabled=False)
+        assert updated["status"] == "APPLIED"
+        assert updated["revision"] == 2
+        async with admin.connect() as connection:
+            assert (
+                await connection.execute(
+                    text(
+                        "SELECT enabled, evidence_ref, revision FROM catalog_approval_permission WHERE user_id=:user_id"
+                    ),
+                    {"user_id": str(actor_id)},
+                )
+            ).one() == (False, revoke_request.evidence_ref, 2)
+            assert await connection.scalar(text("SELECT count(*) FROM catalog_approval_audit")) == 2
 
         # Approval role CANNOT SELECT user sensitive columns (e.g. hashed_password)
         with pytest.raises(DBAPIError) as error:

@@ -240,5 +240,6 @@ class CatalogApprovalAudit(Base):
     purpose: Mapped[str | None] = mapped_column(String(60), nullable=True)
     catalog_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     export_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    evidence_ref: Mapped[str] = mapped_column(String(500), nullable=False)
     request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

@@ -57,7 +57,7 @@ from app.models.rag_source import (
     RagSourceIngestionArtifactKind,
     RagVerificationResultStatus,
 )
-from tests.integration.rag.test_catalog_storage_roundtrip import approved_build
+from tests.integration.rag.test_catalog_storage_roundtrip import approved_build, seed_catalog_approvals
 from tests.integration.rag.test_catalog_storage_roundtrip import database as _database
 
 database = _database
@@ -837,6 +837,7 @@ async def test_race_case_a_revoke_serializes_before_save_revalidation_fails(data
     operator = await _create_user(factory)
 
     members, artifacts, _ = approved_build()
+    await seed_catalog_approvals(factory, [artifacts])
     binding = approval_binding_from_manifest(artifacts.manifest_json)
     b_id = UUID(binding.build_approval_id)
 
@@ -935,6 +936,7 @@ async def test_race_case_b_save_serializes_before_revoke_subsequent_load_fails(d
     operator = await _create_user(factory)
 
     members, artifacts, _ = approved_build()
+    await seed_catalog_approvals(factory, [artifacts])
     binding = approval_binding_from_manifest(artifacts.manifest_json)
     b_id = UUID(binding.build_approval_id)
 
@@ -1035,6 +1037,7 @@ async def test_expiry_after_advisory_lock_wait_fails_closed(database, monkeypatc
     members, artifacts, _ = approved_build()
     binding = approval_binding_from_manifest(artifacts.manifest_json)
     repository = SqlAlchemyCatalogBuildRepository(factory)
+    await seed_catalog_approvals(factory, [artifacts])
 
     set_id = None
     if operation == "load":

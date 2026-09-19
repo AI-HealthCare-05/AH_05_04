@@ -83,6 +83,7 @@ _AUDIT = table(
     column("purpose", String(60)),
     column("catalog_version", String(100)),
     column("export_checksum", String(64)),
+    column("evidence_ref", String(500)),
     column("request_fingerprint", String(64)),
 )
 _SOURCE_APPROVAL = table(
@@ -233,6 +234,7 @@ async def _append_audit(
     session: AsyncSession,
     *,
     event_kind: str,
+    evidence_ref: str,
     request_fingerprint: str,
     **fields: object,
 ) -> UUID:
@@ -241,6 +243,7 @@ async def _append_audit(
         _AUDIT.insert().values(
             id=str(audit_id),
             event_kind=event_kind,
+            evidence_ref=evidence_ref,
             request_fingerprint=request_fingerprint,
             **fields,
         )
@@ -303,6 +306,7 @@ async def set_permission(
     audit_id = await _append_audit(
         session,
         event_kind=event_kind,
+        evidence_ref=request.evidence_ref,
         request_fingerprint=request_fingerprint,
         request_id=str(request.request_id),
         actor_id=str(request.actor_id),
@@ -527,6 +531,7 @@ async def issue_product_catalog(
     await _append_audit(
         session,
         event_kind=AUDIT_ISSUE_SOURCE,
+        evidence_ref=request.evidence_ref,
         request_fingerprint=request_fingerprint,
         request_id=str(request.request_id),
         actor_id=str(request.actor_id),
@@ -538,6 +543,7 @@ async def issue_product_catalog(
     catalog_audit_id = await _append_audit(
         session,
         event_kind=AUDIT_ISSUE_CATALOG,
+        evidence_ref=request.evidence_ref,
         request_fingerprint=request_fingerprint,
         request_id=str(request.request_id),
         actor_id=str(request.actor_id),
@@ -617,7 +623,13 @@ async def revoke_approval(
         fields["purpose"] = CATALOG_SOURCE_USE_PURPOSE
     else:
         fields["build_approval_id"] = str(approval_id)
-    audit_id = await _append_audit(session, event_kind=event_kind, request_fingerprint=request_fingerprint, **fields)
+    audit_id = await _append_audit(
+        session,
+        event_kind=event_kind,
+        evidence_ref=request.evidence_ref,
+        request_fingerprint=request_fingerprint,
+        **fields,
+    )
     return {"status": "APPLIED", "event_kind": event_kind, "audit_id": str(audit_id)}
 
 

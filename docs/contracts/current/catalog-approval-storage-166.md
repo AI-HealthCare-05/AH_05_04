@@ -110,6 +110,7 @@ Build approval과 전체 Source approval 집합을 결속한다.
 - `purpose`
 - `catalog_version`
 - `export_checksum`
+- `evidence_ref`
 - `request_fingerprint`
 - `created_at`
 
@@ -117,9 +118,9 @@ Build approval과 전체 Source approval 집합을 결속한다.
 
 증빙 위치는 다음과 같다.
 
-- permission grant/revoke: current state의 `catalog_approval_permission.evidence_ref`; audit의 immutable request identity, fingerprint, actor, subject, event
+- permission grant/revoke: current state의 `catalog_approval_permission.evidence_ref`; audit의 immutable request identity, fingerprint, actor, subject, event와 `evidence_ref`
 - Source/Catalog approval: `catalog_source_approval.evidence_ref`, `catalog_build_approval.evidence_ref`
-- audit: event identity, target coordinates, request fingerprint
+- audit: event identity, target coordinates, evidence reference, request fingerprint
 
 ## 4. Exact binding과 transaction 순서
 
@@ -140,8 +141,9 @@ Build approval과 전체 Source approval 집합을 결속한다.
 - `SqlAlchemyCatalogApprovalVerifier.verify()`는 승인 없음, 만료, 철회, purpose 불일치 또는 target 불일치에 `None`을 반환한다.
 - 승인 조회 ambiguity는 `CatalogApprovalAmbiguityError`다.
 - 저장소/조회 실패는 sanitized `CatalogApprovalStorageError`다.
+- `verify_exact_catalog_approval()`은 exact binding 또는 current-state 불일치에 `False`를 반환한다.
 - save/load exact revalidation의 invalid, revoked, expired 또는 exact-binding 실패는 `CatalogDatabaseBindingError`로 fail-closed한다.
-- 운영 명령의 실패는 sanitized `CatalogApprovalCommandError(code)`다.
+- 운영 명령의 domain blocker는 sanitized `CatalogApprovalCommandError("BLOCKED_BY_*")`다.
 
 별도 `CatalogApprovalRevokedError`나 `CatalogApprovalExpiredError`는 이 구현 계약에 존재하지 않는다.
 

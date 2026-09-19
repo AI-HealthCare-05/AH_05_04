@@ -51,6 +51,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Track B Notification 계약 v1 (#203)](./current/track-b-notifications-v1.md): 알림 저장·목록·읽음·재알림, 원본 `occurrence_local_date`, 멱등성과 Check-in 분리 경계
 - [Track B occurrence 원래 약 표시 조회 v1 (#202)](./current/track-b-occurrence-medication-v1.md): occurrence의 불변 version medication 조회, SELF 404와 current medication fallback 금지
 - [Track C ActionPlan 조회·완료·취소 v1 (#617)](./current/track-c-plan-lifecycle-617.md): PR #618의 단건 GET·단일 종료 PATCH·멱등성·SELF 계약. 권가빈 구현·김지혜 승인 후 PR #618 병합(`a542bcc2`), 외부 공개 게이트 별도.
+- [Catalog 승인·철회·감사 저장소 계약 (#166/#526)](./current/catalog-approval-storage-166.md): permission current-state, append-only evidence audit, 전용 최소권한 role, save/load exact revalidation의 Current 구현 계약. Actual approval issuance·Catalog materialization·Production 공개는 별도이며 미실행.
 - 공통 오류: `code`, `message`, `details`, `trace_id`
 
 ## Proposed 계약
@@ -188,12 +189,6 @@ RAG Source·Runtime·Evaluation·Medication Candidate·Safety/Citation v2는 외
   기존 v2를 보존하고 관찰 자료는 medication-catalog-v3로 구분. 계약 정본은 위 Catalog DB 연결안.
 
 - [D-04 MFDS 상세 수집·Snapshot 생산](./proposed/post-mvp-1/mfds-detail-acquisition-166.md): 전체 범위 전용 수집·원문 보존·빈 행 차단·상세 Receipt 검증과 기존 Source lifecycle 연결. 구현 PR 리뷰 대상이며 실제 API 수집·승인은 별도.
-
-### #166 실제 승인 저장소 구현 계약
-
-- [승인·철회·감사 저장소 계약](current/catalog-approval-storage-166.md):
-  Current / Implemented. 실제 ORM·migration·운영 명령·최소권한 role과 save/load exact revalidation 계약이다.
-  Actual approval issuance·Catalog materialization·Production 공개 승인은 별도이며 미실행 상태다.
 
 ## Track C C1 저장 기반 (#192)
 
