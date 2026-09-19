@@ -114,7 +114,6 @@ def test_feedback_gold_prompt_comparison_config_pins_v4_v6_snapshots() -> None:
     )
 
 
-
 def test_runtime_chat_prompt_matches_current_feedback_snapshot() -> None:
     from app.services.chat_ai.prompt import CHAT_SYSTEM_INSTRUCTIONS, PROMPT_VERSION
 
