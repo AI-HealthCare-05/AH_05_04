@@ -37,6 +37,7 @@ from app.repositories.rag_runtime_repository import (
     RagRuntimeExecutionManifestCreate,
     RagRuntimeReleaseBundleCreate,
     RagRuntimeRepository,
+    RuntimeEnvironmentCodeInvalidError,
     RuntimeEnvironmentTransitionConflictError,
     RuntimeEnvironmentTransitionInvalidError,
 )
@@ -776,12 +777,33 @@ async def test_environment_code_rejects_silent_normalization_and_unsupported_cod
     db_session: AsyncSession,
 ) -> None:
     repository = RagRuntimeRepository(db_session)
+    manifest = await repository.create_execution_manifest(
+        RagRuntimeExecutionManifestCreate(
+            manifest_key=f"exec-env-test-{uuid4().hex[:8]}",
+            manifest_version="1.0.0",
+            manifest_hash="a" * 64,
+            schema_version="runtime-manifest-v1",
+            git_commit_sha="abcdef1",
+            guard_policy_ref="guard-policy:test",
+        )
+    )
     for invalid_code in ("local", "test", "production", "closed_demo", "STAGING", "DEV", " LOCAL ", ""):
-        with pytest.raises(IntegrityError):
+        with pytest.raises(RuntimeEnvironmentCodeInvalidError):
             await repository.create_environment(
                 RagRuntimeEnvironmentCreate(
                     environment_code=invalid_code,
                     environment_status=RagRuntimeEnvironmentStatus.SUSPENDED,
                 )
             )
-        await db_session.rollback()
+        with pytest.raises(RuntimeEnvironmentCodeInvalidError):
+            await repository.create_release_bundle(
+                RagRuntimeReleaseBundleCreate(
+                    bundle_key=f"bundle-invalid-{uuid4().hex[:8]}",
+                    bundle_version="1.0.0",
+                    execution_manifest_id=manifest.id,
+                    bundle_manifest_hash="b" * 64,
+                    environment_code=invalid_code,
+                    catalog_version="catalog-1.0.0",
+                    catalog_manifest_hash="c" * 64,
+                )
+            )

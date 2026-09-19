@@ -511,6 +511,10 @@ def test_structural_failures_end_as_typed_validation_errors() -> None:
             ),
             RuntimeBundleValidationCode.DUPLICATE_ARTIFACT_MEMBER,
         ),
+        (
+            _request(environment_code="local"),
+            RuntimeBundleValidationCode.ENVIRONMENT_CODE_NOT_CANONICAL,
+        ),
     )
     for request, expected in cases:
         outcome = evaluate_runtime_bundle_build(request)
@@ -519,6 +523,39 @@ def test_structural_failures_end_as_typed_validation_errors() -> None:
         assert outcome.decision is RuntimeBundleBuildDecision.REJECTED, expected
         assert expected in outcome.validation_codes, expected
         assert outcome.bundle_manifest_hash is None, expected
+
+
+def test_non_canonical_environment_code_is_rejected() -> None:
+    invalid_codes = (
+        "local",
+        "test",
+        "production",
+        "closed_demo",
+        "STAGING",
+        "DEV",
+        "UNKNOWN",
+        " LOCAL ",
+        "TEST ",
+        "",
+    )
+    for invalid in invalid_codes:
+        request = _request(environment_code=invalid)
+        outcome = evaluate_runtime_bundle_build(request)
+        assert outcome.execution_status is RuntimeBundleBuildExecutionStatus.VALIDATION_ERROR, invalid
+        assert outcome.decision is RuntimeBundleBuildDecision.REJECTED, invalid
+        assert RuntimeBundleValidationCode.ENVIRONMENT_CODE_NOT_CANONICAL in outcome.validation_codes, invalid
+
+    for canonical in ("LOCAL", "TEST", "CLOSED_DEMO", "PRODUCTION"):
+        base = _request()
+        request = replace(
+            base,
+            environment_code=canonical,
+            source_members=tuple(replace(m, observed_environment=canonical) for m in base.source_members),
+            artifact_members=tuple(replace(m, observed_environment=canonical) for m in base.artifact_members),
+        )
+        outcome = evaluate_runtime_bundle_build(request)
+        assert outcome.execution_status is RuntimeBundleBuildExecutionStatus.EVALUATED, canonical
+        assert outcome.decision is RuntimeBundleBuildDecision.BUILDABLE, canonical
 
 
 def test_duplicate_source_member_is_rejected() -> None:

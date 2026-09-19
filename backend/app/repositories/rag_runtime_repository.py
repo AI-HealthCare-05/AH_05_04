@@ -37,6 +37,7 @@ from app.models.rag_runtime import (
     RagRuntimeSourcePurpose,
 )
 from app.models.rag_source import RagSourceSnapshot
+from rag_runtime.runtime_environment import RuntimeEnvironmentCode
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,6 +363,17 @@ class RuntimeEnvironmentTransitionInvalidError(ValueError):
     pass
 
 
+class RuntimeEnvironmentCodeInvalidError(ValueError):
+    """Runtime Environment code is outside the canonical PD-799 vocabulary."""
+
+
+def _require_runtime_environment_code(value: str) -> None:
+    try:
+        RuntimeEnvironmentCode(value)
+    except ValueError as exc:
+        raise RuntimeEnvironmentCodeInvalidError(f"Unsupported runtime environment code: {value!r}") from exc
+
+
 @dataclass(frozen=True, slots=True)
 class RagReleaseEvaluationApprovalCreate:
     bundle_id: UUID
@@ -472,6 +484,7 @@ class RagRuntimeRepository:
         return result.scalar_one_or_none()
 
     async def create_release_bundle(self, payload: RagRuntimeReleaseBundleCreate) -> RagRuntimeReleaseBundle:
+        _require_runtime_environment_code(payload.environment_code)
         bundle = RagRuntimeReleaseBundle(**asdict(payload))
         self.session.add(bundle)
         await self.session.flush()
@@ -608,6 +621,7 @@ class RagRuntimeRepository:
         )
 
     async def create_environment(self, payload: RagRuntimeEnvironmentCreate) -> RagRuntimeEnvironment:
+        _require_runtime_environment_code(payload.environment_code)
         environment = RagRuntimeEnvironment(**asdict(payload))
         self.session.add(environment)
         await self.session.flush()

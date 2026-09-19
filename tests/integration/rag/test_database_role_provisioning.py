@@ -820,6 +820,7 @@ async def _exercise_audit_cutover(admin, reader, producer, environment):
 
     # Both writers pass the same optimistic preconditions. The environment row
     # lock serializes them, so the loser observes revision 2 and fails closed.
+    # Canonical Runtime Environment는 DB당 최대 4개이므로 shared disposable DB fixture는 canonical code를 명시적으로 분리한다.
     concurrent_env_id = uuid4()
     async with admin.begin() as connection:
         await connection.execute(

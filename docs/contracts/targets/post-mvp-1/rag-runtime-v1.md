@@ -61,6 +61,7 @@
   - `CLOSED_DEMO`
   - `PRODUCTION`
 - 공백 trim, 대소문자 변환(normalization), alias, fallback, default 치환을 허용하지 않는다.
+- Runtime Environment producer 경계는 shared `RuntimeEnvironmentCode`로 exact canonical membership을 Python에서 fail closed 검증하고, PostgreSQL CHECK는 persistence defense-in-depth로 동일 어휘를 재검증한다. 자동 normalization/alias/fallback은 어느 계층에서도 수행하지 않는다.
 - `rag_runtime_environment.environment_code`와 `rag_runtime_release_bundle.environment_code`에 PostgreSQL CHECK 제약조건(`chk_rag_runtime_environment_code`, `chk_rag_runtime_bundle_environment_code`)으로 영속화된다.
 
 ## 입력과 접수 Preflight
