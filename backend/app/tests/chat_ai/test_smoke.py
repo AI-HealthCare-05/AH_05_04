@@ -44,4 +44,4 @@ async def test_gpt_4o_synthetic_chat_smoke() -> None:
     assert result.content
     assert result.model_name.startswith("gpt-4o")
     assert "mini" not in result.model_name
-    assert result.prompt_version == "chat-prompt-v5"
+    assert result.prompt_version == "chat-prompt-v6"
