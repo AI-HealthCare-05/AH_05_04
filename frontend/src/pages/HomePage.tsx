@@ -152,12 +152,67 @@ function HomePage({
   const [reportState, setReportState] = useState<HomeReportState>('idle')
   const [report, setReport] = useState<MedicationReportData | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
+  const [showDojiHint, setShowDojiHint] = useState(false)
+  const dojiHintTimerRef = useRef<number | null>(null)
 
   const onboardingDialogRef = useRef<HTMLElement>(null)
   const pageRef = useRef<HTMLDivElement>(null)
   const homePrescriptionButtonRef = useRef<HTMLButtonElement>(null)
   const wasOnboardingOpenRef = useRef(false)
+  useEffect(() => {
+    const scheduleDojiHint = () => {
+      if (dojiHintTimerRef.current !== null) {
+        window.clearTimeout(dojiHintTimerRef.current)
+      }
 
+      setShowDojiHint(false)
+
+      dojiHintTimerRef.current = window.setTimeout(() => {
+        setShowDojiHint(true)
+        dojiHintTimerRef.current = null
+      }, 1500)
+    }
+
+    const activityEvents = [
+      'pointerdown',
+      'pointermove',
+      'keydown',
+      'wheel',
+      'touchstart',
+    ] as const
+
+    activityEvents.forEach((eventName) => {
+      window.addEventListener(eventName, scheduleDojiHint, {
+        passive: true,
+      })
+    })
+
+    const scrollContainer =
+      pageRef.current?.querySelector<HTMLElement>('.app-scroll')
+
+    scrollContainer?.addEventListener(
+      'scroll',
+      scheduleDojiHint,
+      { passive: true },
+    )
+
+    scheduleDojiHint()
+
+    return () => {
+      if (dojiHintTimerRef.current !== null) {
+        window.clearTimeout(dojiHintTimerRef.current)
+      }
+
+      activityEvents.forEach((eventName) => {
+        window.removeEventListener(eventName, scheduleDojiHint)
+      })
+
+      scrollContainer?.removeEventListener(
+        'scroll',
+        scheduleDojiHint,
+      )
+    }
+  }, [])
   const handleOnboardingKeyDown = (
     event: KeyboardEvent<HTMLElement>,
   ) => {
@@ -343,28 +398,38 @@ function HomePage({
           )}
 
           {prescriptionState === 'empty' && (
-            <section className="mvp-home__card-stack is-empty" aria-label="Home 주요 기능">
+            <section
+              className="mvp-home__card-stack is-empty"
+              aria-label="Home 주요 기능"
+            >
               <button
                 ref={homePrescriptionButtonRef}
                 className="mvp-home__hub-card mvp-home__hub-card--prescription"
                 type="button"
                 aria-label="처방약 복용 안내 · 내 처방전 등록하기"
-                onClick={() => navigate('/prescriptions/upload', {
-                  state: { intent: 'new-prescription' },
-                })}
+                onClick={() =>
+                  navigate('/prescriptions/upload', {
+                    state: { intent: 'new-prescription' },
+                  })
+                }
               >
                 <span className="mvp-home__hub-icon">
                   <HomeShortcutIcon type="prescription" />
                 </span>
                 <span className="mvp-home__hub-copy">
                   <strong>내 처방전 등록하기</strong>
-                  <small>처방전을 등록하고<br />복약 가이드를 확인해보세요.</small>
+                  <small>
+                    처방전을 등록하고
+                    <br />
+                    복약 가이드를 확인해보세요.
+                  </small>
                 </span>
-                <span className="mvp-home__hub-arrow" aria-hidden="true">›</span>
+                <span className="mvp-home__hub-arrow" aria-hidden="true">
+                  ›
+                </span>
               </button>
             </section>
           )}
-
           {prescriptionState === 'active' && (
             <section
               className="mvp-home__active-stack"
@@ -376,55 +441,67 @@ function HomePage({
                 onOpenReport={() => navigate('/report')}
               />
 
-              <button
-                className="mvp-home__hub-card mvp-home__hub-card--report"
-                type="button"
-                onClick={() => navigate('/report')}
-              >
-                <span className="mvp-home__hub-icon">
-                   <HomeShortcutIcon type="report" />
-                </span>
-                <span className="mvp-home__hub-copy">
-                   <strong>복약 리포트 보기</strong>
-                   <small>
-                     7일/30일 복약 현황을
-                     <br />
-                     한눈에 확인해보세요.
-                   </small>
-                </span>
-                <span className="mvp-home__hub-arrow" aria-hidden="true">
-                  ›
-                </span>
-              </button>
-
-              <button
-                className="mvp-home__hub-card mvp-home__hub-card--prescription"
-                type="button"
-                aria-label="새 처방전 등록하기"
-                onClick={() =>
-                  navigate('/prescriptions/upload', {
-                    state: { intent: 'new-prescription' },
-                  })
-                }
-              >
-                <span className="mvp-home__hub-icon">
-                  <HomeShortcutIcon type="prescription" />
-                </span>
-                <span className="mvp-home__hub-copy">
-                  <strong>새 처방전 등록하기</strong>
-                  <small>
-                    새 처방전을 등록하고
+              <div className="mvp-home__action-stack">
+                <button
+                  className="mvp-home__hub-card mvp-home__hub-card--report"
+                  type="button"
+                  onClick={() => navigate('/report')}
+                >
+                  <span className="mvp-home__hub-icon">
+                    <HomeShortcutIcon type="report" />
+                  </span>
+                  <span className="mvp-home__hub-copy">
+                    <strong>복약 리포트 보기</strong>
+                    <small>
+                    7일/30일 복약 현황을
                     <br />
-                    복약 가이드를 업데이트해보세요.
-                  </small>
-                </span>
-                <span className="mvp-home__hub-arrow" aria-hidden="true">
-                  ›
-                </span>
-              </button>
+                    한눈에 확인해보세요.
+                    </small>
+                  </span>
+                  <span className="mvp-home__hub-arrow" aria-hidden="true">
+                    ›
+                  </span>
+                </button>
+
+                <button
+                  className="mvp-home__hub-card mvp-home__hub-card--new-prescription"
+                  type="button"
+                  aria-label="새 처방전 등록하기"
+                  onClick={() =>
+                    navigate('/prescriptions/upload', {
+                      state: { intent: 'new-prescription' },
+                    })
+                  }
+                >
+                  <span className="mvp-home__hub-icon">
+                    <HomeShortcutIcon type="prescription" />
+                  </span>
+                  <span className="mvp-home__hub-copy">
+                    <strong>새 처방전 등록하기</strong>
+                    <small>
+                      새 처방전을 등록하고
+                      <br />
+                      최신 복약 가이드를 확인해보세요.
+                    </small>
+                  </span>
+                  <span className="mvp-home__hub-arrow" aria-hidden="true">
+                    ›
+                  </span>
+                </button>
+              </div>
             </section>
           )}
         </main>
+
+        {showDojiHint && (
+          <div
+            className="mvp-home__doji-hint"
+            aria-label="도지 기능 안내"
+          >
+            처방약 이외에 다른 약을 복용해도 괜찮은지 물어볼 수 있어요!
+          </div>
+        )}
+
       </MobileShell>
       {isOnboardingOpen && (
         <div

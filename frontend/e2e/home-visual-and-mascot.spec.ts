@@ -69,14 +69,26 @@ test('390px 처방 HOME은 승인 시안의 카드 간격과 마스코트 drag �
     width: 350,
     height: 128,
   })
-
+  await expectBox(page.locator('.mvp-home__hub-card--new-prescription'), {
+    x: 20,
+    y: 768,
+    width: 350,
+    height: 128,
+  })
   const nav = page.getByRole('navigation', { name: '주요 메뉴' })
-  const reportCard = page.locator('.mvp-home__hub-card--report')
+  const newPrescriptionCard = page.locator(
+    '.mvp-home__hub-card--new-prescription',
+  )
   const navBox = await nav.boundingBox()
-  const reportBox = await reportCard.boundingBox()
+  const newPrescriptionBox = await newPrescriptionCard.boundingBox()
+
   expect(navBox).not.toBeNull()
-  expect(reportBox).not.toBeNull()
-  expect((navBox?.y ?? 0) - ((reportBox?.y ?? 0) + (reportBox?.height ?? 0))).toBeGreaterThanOrEqual(0)
+  expect(newPrescriptionBox).not.toBeNull()
+  expect(
+    (navBox?.y ?? 0) -
+      ((newPrescriptionBox?.y ?? 0) +
+        (newPrescriptionBox?.height ?? 0)),
+  ).toBeGreaterThanOrEqual(0)
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0)
 
   await page.evaluate(() => {
@@ -118,16 +130,25 @@ test('390x844 처방 HOME은 스크롤 끝에서도 마지막 카드와 Bottom N
   await page.goto('/')
 
   const content = page.locator('.app-scroll')
-  const reportCard = page.locator('.mvp-home__hub-card--report')
+  const lastCard = page.locator(
+    '.mvp-home__hub-card--new-prescription',
+ )
   const nav = page.getByRole('navigation', { name: '주요 메뉴' })
-  await expect(reportCard).toBeVisible()
-  await content.evaluate((element) => element.scrollTo(0, element.scrollHeight))
 
-  const reportBox = await reportCard.boundingBox()
+  await expect(lastCard).toBeVisible()
+  await content.evaluate((element) =>
+    element.scrollTo(0, element.scrollHeight),
+  )
+
+  const lastCardBox = await lastCard.boundingBox()
   const navBox = await nav.boundingBox()
-  expect(reportBox).not.toBeNull()
+
+  expect(lastCardBox).not.toBeNull()
   expect(navBox).not.toBeNull()
-  expect((navBox?.y ?? 0) - ((reportBox?.y ?? 0) + (reportBox?.height ?? 0))).toBeGreaterThanOrEqual(0)
+  expect(
+    (navBox?.y ?? 0) -
+      ((lastCardBox?.y ?? 0) + (lastCardBox?.height ?? 0)),
+  ).toBeGreaterThanOrEqual(0)
 })
 
 test('360px 미처방 HOME은 등록 카드 아이콘과 문구가 겹치지 않는다', async ({ page }) => {
@@ -141,4 +162,29 @@ test('360px 미처방 HOME은 등록 카드 아이콘과 문구가 겹치지 않
   expect(copyBox).not.toBeNull()
   expect((copyBox?.x ?? 0) - ((iconBox?.x ?? 0) + (iconBox?.width ?? 0))).toBeGreaterThanOrEqual(0)
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0)
+})
+test('HOME 도지 안내는 1.5초 idle 후 표시되고 사용자 활동 시 숨는다', async ({
+  page,
+}) => {
+  await installRequirementsApi(page, {
+    existingPrescription: true,
+  })
+  await page.goto('/')
+
+  const hint = page.getByLabel('도지 기능 안내')
+
+  await expect(hint).toBeHidden()
+
+  await page.waitForTimeout(1600)
+  await expect(hint).toBeVisible()
+  await expect(hint).toContainText(
+    '처방약 이외에 다른 약을 복용해도 괜찮은지 물어볼 수 있어요!',
+  )
+
+  await page.mouse.move(40, 40)
+
+  await expect(hint).toBeHidden()
+
+  await page.waitForTimeout(1600)
+  await expect(hint).toBeVisible()
 })
