@@ -144,10 +144,7 @@ def validate_release_review_provenance(
 ) -> None:
     """Validate that review provenance satisfies protected Release authority acceptance."""
 
-    if (
-        provenance.team_gold_status is not TeamGoldStatus.APPROVED
-        and provenance.team_gold_status != "APPROVED"
-    ):
+    if provenance.team_gold_status is not TeamGoldStatus.APPROVED and provenance.team_gold_status != "APPROVED":
         raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
 
     if provenance.approved_by is None or provenance.approved_at is None:
@@ -159,10 +156,7 @@ def validate_release_review_provenance(
     ):
         raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
 
-    if (
-        provenance.approved_by.namespace == "SYSTEM"
-        or provenance.approved_by.namespace is ActorNamespace.SYSTEM
-    ):
+    if provenance.approved_by.namespace == "SYSTEM" or provenance.approved_by.namespace is ActorNamespace.SYSTEM:
         raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
 
 
@@ -180,10 +174,7 @@ def validate_comparison_policy_approval(
     ):
         raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
 
-    if (
-        policy.approved_by.namespace == "SYSTEM"
-        or policy.approved_by.namespace is ActorNamespace.SYSTEM
-    ):
+    if policy.approved_by.namespace == "SYSTEM" or policy.approved_by.namespace is ActorNamespace.SYSTEM:
         raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
 
 

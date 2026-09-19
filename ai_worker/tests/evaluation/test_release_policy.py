@@ -98,9 +98,7 @@ def _make_provenance(
     has_approval: bool = True,
 ) -> ReviewProvenance:
     approver = (
-        ActorRef(namespace=approver_namespace, actor_id="approver-user", role=approver_role)
-        if has_approval
-        else None
+        ActorRef(namespace=approver_namespace, actor_id="approver-user", role=approver_role) if has_approval else None
     )
     return ReviewProvenance(
         authored_by=ActorRef(
@@ -139,8 +137,12 @@ def test_validate_release_review_provenance_rejects_draft_and_reviewed() -> None
 
 def test_validate_release_review_provenance_rejects_missing_approval() -> None:
     prov = ReviewProvenance.model_construct(
-        authored_by=ActorRef(namespace=ActorNamespace.GITHUB_LOGIN, actor_id="a", role=ActorRole.EVALUATION_IMPLEMENTER),
-        reviewed_by=ActorRef(namespace=ActorNamespace.GITHUB_LOGIN, actor_id="r", role=ActorRole.PRODUCT_SAFETY_REVIEWER),
+        authored_by=ActorRef(
+            namespace=ActorNamespace.GITHUB_LOGIN, actor_id="a", role=ActorRole.EVALUATION_IMPLEMENTER
+        ),
+        reviewed_by=ActorRef(
+            namespace=ActorNamespace.GITHUB_LOGIN, actor_id="r", role=ActorRole.PRODUCT_SAFETY_REVIEWER
+        ),
         approved_by=None,
         authored_at="2026-09-10T00:00:00.000000Z",
         reviewed_at="2026-09-11T00:00:00.000000Z",
@@ -167,9 +169,15 @@ def test_validate_release_review_provenance_rejects_non_product_safety_reviewer(
 
 def test_validate_release_review_provenance_rejects_system_namespace() -> None:
     prov = ReviewProvenance.model_construct(
-        authored_by=ActorRef(namespace=ActorNamespace.GITHUB_LOGIN, actor_id="a", role=ActorRole.EVALUATION_IMPLEMENTER),
-        reviewed_by=ActorRef(namespace=ActorNamespace.GITHUB_LOGIN, actor_id="r", role=ActorRole.PRODUCT_SAFETY_REVIEWER),
-        approved_by=ActorRef.model_construct(namespace=ActorNamespace.SYSTEM, actor_id="s", role=ActorRole.PRODUCT_SAFETY_REVIEWER),
+        authored_by=ActorRef(
+            namespace=ActorNamespace.GITHUB_LOGIN, actor_id="a", role=ActorRole.EVALUATION_IMPLEMENTER
+        ),
+        reviewed_by=ActorRef(
+            namespace=ActorNamespace.GITHUB_LOGIN, actor_id="r", role=ActorRole.PRODUCT_SAFETY_REVIEWER
+        ),
+        approved_by=ActorRef.model_construct(
+            namespace=ActorNamespace.SYSTEM, actor_id="s", role=ActorRole.PRODUCT_SAFETY_REVIEWER
+        ),
         authored_at="2026-09-10T00:00:00.000000Z",
         reviewed_at="2026-09-11T00:00:00.000000Z",
         approved_at="2026-09-12T00:00:00.000000Z",

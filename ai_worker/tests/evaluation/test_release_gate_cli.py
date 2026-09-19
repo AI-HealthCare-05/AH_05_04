@@ -60,36 +60,38 @@ def _setup_approved_cli_fixture(
 
     run_dir = tmp_path / run_id
     run_data = json.loads((run_dir / "run.json").read_bytes())
-    run_data.update({
-        "experiment_type": "END_TO_END_RAG",
-        "task_types": ["END_TO_END_RAG"],
-        "runtime_eligible": True,
-        "environment": "LOCAL",
-        "execution_status": "COMPLETED",
-        "decision_status": "PASS",
-        "blocking_execution_statuses": [],
-        "completed_at": "2026-09-16T14:47:00.000000Z",
-        "candidate_bundle_id": "candidate-bundle-001",
-        "candidate_bundle_manifest_hash": "a" * 64,
-        "candidate_guard_decision_id": "guard-decision-001",
-        "candidate_guard_decision": "PASS",
-        "required_case_guard_coverage_manifest_hash": "b" * 64,
-        "evaluation_policy_ref": {
-            "id": pol["evaluation_policy_id"],
-            "version": pol["evaluation_policy_version"],
-            "hash": pol["evaluation_policy_hash"],
-        },
-        "evaluation_profile_ref": {
-            "id": prof["evaluation_profile_id"],
-            "version": prof["evaluation_profile_version"],
-            "hash": prof["evaluation_profile_hash"],
-        },
-        "comparison_policy_ref": {
-            "id": comp["comparison_policy_id"],
-            "version": comp["comparison_policy_version"],
-            "hash": comp["comparison_policy_hash"],
-        },
-    })
+    run_data.update(
+        {
+            "experiment_type": "END_TO_END_RAG",
+            "task_types": ["END_TO_END_RAG"],
+            "runtime_eligible": True,
+            "environment": "LOCAL",
+            "execution_status": "COMPLETED",
+            "decision_status": "PASS",
+            "blocking_execution_statuses": [],
+            "completed_at": "2026-09-16T14:47:00.000000Z",
+            "candidate_bundle_id": "candidate-bundle-001",
+            "candidate_bundle_manifest_hash": "a" * 64,
+            "candidate_guard_decision_id": "guard-decision-001",
+            "candidate_guard_decision": "PASS",
+            "required_case_guard_coverage_manifest_hash": "b" * 64,
+            "evaluation_policy_ref": {
+                "id": pol["evaluation_policy_id"],
+                "version": pol["evaluation_policy_version"],
+                "hash": pol["evaluation_policy_hash"],
+            },
+            "evaluation_profile_ref": {
+                "id": prof["evaluation_profile_id"],
+                "version": prof["evaluation_profile_version"],
+                "hash": prof["evaluation_profile_hash"],
+            },
+            "comparison_policy_ref": {
+                "id": comp["comparison_policy_id"],
+                "version": comp["comparison_policy_version"],
+                "hash": comp["comparison_policy_hash"],
+            },
+        }
+    )
 
     file_names = ("cases.jsonl", "metrics.json", "suite-results.json", "failures.jsonl", "report.md")
     files = {name: (run_dir / name).read_bytes() for name in file_names}

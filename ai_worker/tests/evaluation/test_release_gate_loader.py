@@ -66,7 +66,9 @@ def _setup_approved_policy_graph(target_dir: Path) -> tuple[Path, Path, Path, Pa
     comp = json.loads(Path("evals/policies/rag-retrieval-dev-v1.comparison-policy.json").read_bytes())
     comp["approved_by"] = {"actor_id": "safety-lead", "namespace": "GITHUB_LOGIN", "role": "PRODUCT_SAFETY_REVIEWER"}
     comp["approved_at"] = "2026-09-12T00:00:00.000000Z"
-    comp["comparison_policy_hash"] = canonical_sha256(comp, excluded_top_level_keys=frozenset({"comparison_policy_hash"}))
+    comp["comparison_policy_hash"] = canonical_sha256(
+        comp, excluded_top_level_keys=frozenset({"comparison_policy_hash"})
+    )
     comp_path = target_dir / "comparison.json"
     comp_path.write_bytes(canonical_json_bytes(comp))
 
@@ -81,7 +83,9 @@ def _setup_approved_policy_graph(target_dir: Path) -> tuple[Path, Path, Path, Pa
     prof = json.loads(Path("evals/profiles/rag-retrieval-dev-v1.profile.json").read_bytes())
     prof["review_provenance"] = prov
     prof["required_suite_refs"][0]["hash"] = suite["suite_hash"]
-    prof["evaluation_profile_hash"] = canonical_sha256(prof, excluded_top_level_keys=frozenset({"evaluation_profile_hash"}))
+    prof["evaluation_profile_hash"] = canonical_sha256(
+        prof, excluded_top_level_keys=frozenset({"evaluation_profile_hash"})
+    )
     prof_path = target_dir / "profile.json"
     prof_path.write_bytes(canonical_json_bytes(prof))
 
@@ -91,16 +95,18 @@ def _setup_approved_policy_graph(target_dir: Path) -> tuple[Path, Path, Path, Pa
     pol["evaluation_profile_ref"]["reference"]["hash"] = prof["evaluation_profile_hash"]
     pol["comparison_policy_ref"]["reference"]["hash"] = comp["comparison_policy_hash"]
     pol["required_suite_refs"][0]["reference"]["hash"] = suite["suite_hash"]
-    pol["member_manifest_hash"] = canonical_sha256({
-        "members": [
-            pol["evaluation_profile_ref"],
-            pol["comparison_policy_ref"],
-            *pol["required_partition_refs"],
-            *pol["required_gate_refs"],
-            pol["required_suite_refs"][0],
-            pol["artifact_schema_set_ref"],
-        ]
-    })
+    pol["member_manifest_hash"] = canonical_sha256(
+        {
+            "members": [
+                pol["evaluation_profile_ref"],
+                pol["comparison_policy_ref"],
+                *pol["required_partition_refs"],
+                *pol["required_gate_refs"],
+                pol["required_suite_refs"][0],
+                pol["artifact_schema_set_ref"],
+            ]
+        }
+    )
     pol["evaluation_policy_hash"] = canonical_sha256(pol, excluded_top_level_keys=frozenset({"evaluation_policy_hash"}))
     pol_path = target_dir / "policy.json"
     pol_path.write_bytes(canonical_json_bytes(pol))
@@ -126,34 +132,36 @@ def _setup_approved_candidate_fixture(tmp_path: Path) -> tuple[str, ReleaseGateP
 
     run_dir = tmp_path / run_id
     run_data = json.loads((run_dir / "run.json").read_bytes())
-    run_data.update({
-        "experiment_type": "END_TO_END_RAG",
-        "runtime_eligible": True,
-        "environment": "LOCAL",
-        "execution_status": "COMPLETED",
-        "decision_status": "PASS",
-        "blocking_execution_statuses": [],
-        "candidate_bundle_id": "candidate-bundle-001",
-        "candidate_bundle_manifest_hash": "a" * 64,
-        "candidate_guard_decision_id": "guard-decision-001",
-        "candidate_guard_decision": "PASS",
-        "required_case_guard_coverage_manifest_hash": "b" * 64,
-        "evaluation_policy_ref": {
-            "id": pol["evaluation_policy_id"],
-            "version": pol["evaluation_policy_version"],
-            "hash": pol["evaluation_policy_hash"],
-        },
-        "evaluation_profile_ref": {
-            "id": prof["evaluation_profile_id"],
-            "version": prof["evaluation_profile_version"],
-            "hash": prof["evaluation_profile_hash"],
-        },
-        "comparison_policy_ref": {
-            "id": comp["comparison_policy_id"],
-            "version": comp["comparison_policy_version"],
-            "hash": comp["comparison_policy_hash"],
-        },
-    })
+    run_data.update(
+        {
+            "experiment_type": "END_TO_END_RAG",
+            "runtime_eligible": True,
+            "environment": "LOCAL",
+            "execution_status": "COMPLETED",
+            "decision_status": "PASS",
+            "blocking_execution_statuses": [],
+            "candidate_bundle_id": "candidate-bundle-001",
+            "candidate_bundle_manifest_hash": "a" * 64,
+            "candidate_guard_decision_id": "guard-decision-001",
+            "candidate_guard_decision": "PASS",
+            "required_case_guard_coverage_manifest_hash": "b" * 64,
+            "evaluation_policy_ref": {
+                "id": pol["evaluation_policy_id"],
+                "version": pol["evaluation_policy_version"],
+                "hash": pol["evaluation_policy_hash"],
+            },
+            "evaluation_profile_ref": {
+                "id": prof["evaluation_profile_id"],
+                "version": prof["evaluation_profile_version"],
+                "hash": prof["evaluation_profile_hash"],
+            },
+            "comparison_policy_ref": {
+                "id": comp["comparison_policy_id"],
+                "version": comp["comparison_policy_version"],
+                "hash": comp["comparison_policy_hash"],
+            },
+        }
+    )
 
     file_names = ("cases.jsonl", "metrics.json", "suite-results.json", "failures.jsonl", "report.md")
     files = {name: (run_dir / name).read_bytes() for name in file_names}
@@ -184,22 +192,24 @@ def _setup_retrieval_run(tmp_path: Path) -> tuple[str, Path, Path, Path]:
 
 def _make_candidate_run(**overrides: Any) -> RagEvaluationRun:
     base = json.loads(Path("evals/results/0602452b-8fd8-41e2-87b8-48609a3242ce/run.json").read_bytes())
-    base.update({
-        "experiment_type": "END_TO_END_RAG",
-        "task_types": ["END_TO_END_RAG"],
-        "runtime_eligible": True,
-        "environment": "LOCAL",
-        "execution_status": "COMPLETED",
-        "decision_status": "PASS",
-        "blocking_execution_statuses": [],
-        "completed_at": "2026-09-16T14:47:00.000000Z",
-        "result_content_manifest_hash": "f" * 64,
-        "candidate_bundle_id": "candidate-bundle-001",
-        "candidate_bundle_manifest_hash": "a" * 64,
-        "candidate_guard_decision_id": "guard-decision-001",
-        "candidate_guard_decision": "PASS",
-        "required_case_guard_coverage_manifest_hash": "b" * 64,
-    })
+    base.update(
+        {
+            "experiment_type": "END_TO_END_RAG",
+            "task_types": ["END_TO_END_RAG"],
+            "runtime_eligible": True,
+            "environment": "LOCAL",
+            "execution_status": "COMPLETED",
+            "decision_status": "PASS",
+            "blocking_execution_statuses": [],
+            "completed_at": "2026-09-16T14:47:00.000000Z",
+            "result_content_manifest_hash": "f" * 64,
+            "candidate_bundle_id": "candidate-bundle-001",
+            "candidate_bundle_manifest_hash": "a" * 64,
+            "candidate_guard_decision_id": "guard-decision-001",
+            "candidate_guard_decision": "PASS",
+            "required_case_guard_coverage_manifest_hash": "b" * 64,
+        }
+    )
     base.update(overrides)
     return RagEvaluationRun.model_construct(**base)
 
@@ -210,7 +220,12 @@ def test_validate_release_candidate_run_accepted() -> None:
 
 
 def test_validate_release_candidate_run_rejects_non_completed_execution() -> None:
-    for status in (ExecutionStatus.ERROR, ExecutionStatus.INVALID, ExecutionStatus.NOT_EVALUATED, ExecutionStatus.NOT_IMPLEMENTED):
+    for status in (
+        ExecutionStatus.ERROR,
+        ExecutionStatus.INVALID,
+        ExecutionStatus.NOT_EVALUATED,
+        ExecutionStatus.NOT_IMPLEMENTED,
+    ):
         run = _make_candidate_run(execution_status=status.value)
         with pytest.raises(EvaluationValidationError) as exc:
             _validate_release_candidate_run(run)
@@ -326,7 +341,9 @@ def test_load_gate_evidence_rejects_non_candidate_retrieval_run(tmp_path: Path) 
     )
     assert exit_code == 0
     _pol, _prof, _comp, suite_path = _setup_approved_policy_graph(tmp_path / "policies")
-    policy = load_approved_release_policy(tmp_path / "policies/policy.json", tmp_path / "policies/profile.json", tmp_path / "policies/comparison.json")
+    policy = load_approved_release_policy(
+        tmp_path / "policies/policy.json", tmp_path / "policies/profile.json", tmp_path / "policies/comparison.json"
+    )
 
     with pytest.raises(EvaluationValidationError) as exc:
         load_gate_evidence(
