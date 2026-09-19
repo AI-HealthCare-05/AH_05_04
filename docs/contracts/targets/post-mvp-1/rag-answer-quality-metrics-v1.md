@@ -249,11 +249,14 @@ Post-MVP-1 Product·Safety·Evaluation 승인자 권가빈 (`@hazelnutflavoured`
 15 Authority Bindings의 저장 및 결속은 Schema Set 1.5 불변을 위해 독립 Manifest 계약인 [`rag-eval.answer-runtime-binding-manifest@1.0.0`](./answer-runtime-binding-manifest-v1.md)으로 승인되었다 (`SEPARATE_BINDING_MANIFEST_PREFERRED` 확정).
 
 1. **상태 재정렬**:
-   - `READY`: 0개
-   - `SOURCE_EXISTS_RECIPE_UNRESOLVED`: 11개 (`INPUT_CONTEXT`, `PROMPT_STRUCTURE`, `PARSER`, `SEED`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`, `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RETRIEVED_EVIDENCE`, `RUNTIME_BUNDLE`)
-   - `BLOCKED_BY_UPSTREAM_AUTHORITY`: 4개 (`FINAL_VALIDATOR` [#180], `CITATION_GATE` [#807/#799/#180], `SAFETY_GATE` [#180], `RELEASE_GATE` [#180])
-   - 실질 제안 산출물: **10 Canonical Recipes + 1 Explicitly Unresolved Binding (`RETRIEVED_EVIDENCE`) + Separate Binding Manifest Contract**
-2. **`RUNTIME_BUNDLE` 재정렬**: PR #828 / Issue #806 병합(`5c99a538`)으로 `RequestGuardRuntimeBindingObservation`이 실재하여 상류 차단은 해제되었으나, #159 canonical projection 및 hash recipe 승인 대기 상태로 `SOURCE_EXISTS_RECIPE_UNRESOLVED`로 관리한다. (최신 `develop` `01ab426d` 기준 점검 완료, #159 authority 영향 없음).
+   - **계층 분리 원칙 (Orthogonal Axes)**:
+     $$\text{Authority Recipe Status} \neq \text{Authoritative Runtime Carrier Status} \neq \text{Pair Execution Readiness}$$
+     - *READY here means recipe-ready for implementation under the approved canonical source/projection/hash contract. It does not assert runtime-carrier readiness or pair executability.*
+   - **`READY`**: 10개 (`INPUT_CONTEXT`, `PROMPT_STRUCTURE`, `PARSER`, `SEED`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`, `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RUNTIME_BUNDLE`)
+   - **`SOURCE_EXISTS_RECIPE_UNRESOLVED`**: 1개 (`RETRIEVED_EVIDENCE` — `ProductionGuidelineEvidenceSet`과 evaluation case 간 authoritative carrier 및 Run-level aggregation recipe 미확정)
+   - **`BLOCKED_BY_UPSTREAM_AUTHORITY`**: 4개 (`FINAL_VALIDATOR` [#180], `CITATION_GATE` [#807/#799/#180], `SAFETY_GATE` [#180], `RELEASE_GATE` [#180])
+   - 실질 승인 산출물: **10 Canonical Recipes + 1 Explicitly Unresolved Binding (`RETRIEVED_EVIDENCE`) + Separate Binding Manifest Contract**
+2. **`RUNTIME_BUNDLE` 재정렬**: PR #828 / Issue #806 병합(`5c99a538`)으로 `RequestGuardRuntimeBindingObservation`(`environment`, `bundle_id`, `bundle_manifest_hash`) 소스가 실재하고, PR #833에서 canonical projection 및 hash recipe 승인이 완료됨에 따라 **Authority Recipe Status: `READY`**로 정합화한다. Carrier는 RequestGuard runtime binding / AI worker seam에 위치한다.
 3. **`NOT_APPLIED` Typed State 및 Variant별 바인딩**:
    - 비적용 축은 임의의 fake sentinel(`"none"`, `"LOCAL"`) 대신 명시적 canonical typed state(`{"axis": "...", "binding_state": "NOT_APPLIED", "projection_version": "..."}`) 및 결정론적 해시로 표현한다.
    - `ANS-BASE`: 4개 retrieval axes = `NOT_APPLIED`, 4개 finalization axes = `NOT_APPLIED`.
