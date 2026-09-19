@@ -82,7 +82,7 @@ test_engine = create_async_engine(
 )
 session_factory = async_sessionmaker(test_engine, expire_on_commit=False, autoflush=False)
 
-_ENVIRONMENT = "local"
+_ENVIRONMENT = "LOCAL"
 _CATALOG_VERSION = "catalog-1.0.0"
 _NOW = datetime(2026, 9, 10, 3, 0, tzinfo=UTC)
 

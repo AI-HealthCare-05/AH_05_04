@@ -39,6 +39,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     SnapshotVerificationStatus,
     evaluate_snapshot_use_eligibility,
 )
+from rag_runtime.runtime_environment import RuntimeEnvironmentCode
 
 RUNTIME_BUNDLE_MANIFEST_PROJECTION_VERSION = "rag-runtime-bundle-manifest-v1"
 
@@ -158,6 +159,7 @@ class RuntimeBundleValidationCode(StrEnum):
     ARTIFACT_CATALOG_BINDING_REQUIRED = "ARTIFACT_CATALOG_BINDING_REQUIRED"
     ARTIFACT_CATALOG_BINDING_FORBIDDEN = "ARTIFACT_CATALOG_BINDING_FORBIDDEN"
     CATALOG_SOURCE_REF_REQUIRED = "CATALOG_SOURCE_REF_REQUIRED"
+    ENVIRONMENT_CODE_NOT_CANONICAL = "ENVIRONMENT_CODE_NOT_CANONICAL"
 
 
 class RuntimeBundleReadinessBlocker(StrEnum):
@@ -659,6 +661,10 @@ def _validate_request(request: RuntimeBundleBuildRequest) -> tuple[RuntimeBundle
         return (RuntimeBundleValidationCode.REQUEST_SHAPE_INVALID,)
 
     codes: set[RuntimeBundleValidationCode] = set()
+    try:
+        RuntimeEnvironmentCode(request.environment_code)
+    except ValueError:
+        codes.add(RuntimeBundleValidationCode.ENVIRONMENT_CODE_NOT_CANONICAL)
     codes.update(
         _text_codes(
             required=(request.bundle_key, request.bundle_version, request.environment_code),

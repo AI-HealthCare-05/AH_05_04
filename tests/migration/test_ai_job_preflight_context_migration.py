@@ -118,7 +118,7 @@ async def _has_column(connection: AsyncConnection, table_name: str, column_name:
     return bool(result.scalar_one())
 
 
-async def _seed_preflight_context_graph() -> dict[str, str]:
+async def _seed_preflight_context_graph(environment_code: str = "LOCAL") -> dict[str, str]:
     ids = {
         key: str(uuid4())
         for key in (
@@ -330,7 +330,7 @@ async def _seed_preflight_context_graph() -> dict[str, str]:
                         **ids,
                         "bundle_key": f"preflight-bundle-{suffix}",
                         "bundle_hash": bundle_hash,
-                        "environment_code": f"preflight-{suffix}",
+                        "environment_code": environment_code,
                         "catalog_manifest_hash": "a" * 64,
                     },
                 )
@@ -364,7 +364,7 @@ async def _seed_preflight_context_graph() -> dict[str, str]:
                     )
                     """
                 ),
-                {**ids, "environment_code": f"preflight-{suffix}", "bundle_hash": bundle_hash},
+                {**ids, "environment_code": environment_code, "bundle_hash": bundle_hash},
             )
             await connection.execute(
                 text(
@@ -719,7 +719,7 @@ def test_execution_context_rejects_cross_job_intake_context() -> None:
     cfg = create_alembic_config()
     command.upgrade(cfg, "head")
     left_ids = asyncio.run(_seed_preflight_context_graph())
-    right_ids = asyncio.run(_seed_preflight_context_graph())
+    right_ids = asyncio.run(_seed_preflight_context_graph(environment_code="TEST"))
 
     try:
         with pytest.raises(IntegrityError):

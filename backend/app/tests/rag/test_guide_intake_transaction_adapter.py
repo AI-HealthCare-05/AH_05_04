@@ -174,7 +174,10 @@ async def _create_matched_prescription(
     return prescription
 
 
-async def _create_runtime_context(session: AsyncSession) -> GuideRuntimeContextSnapshot:
+async def _create_runtime_context(
+    session: AsyncSession,
+    environment_code: str = "LOCAL",
+) -> GuideRuntimeContextSnapshot:
     repository = RagRuntimeRepository(session)
     suffix = uuid4().hex[:8]
     manifest = await repository.create_execution_manifest(
@@ -194,7 +197,7 @@ async def _create_runtime_context(session: AsyncSession) -> GuideRuntimeContextS
             bundle_status=RagRuntimeBundleStatus.READY,
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=suffix.ljust(64, "2"),
-            environment_code="local",
+            environment_code=environment_code,
             catalog_version="catalog-1.0.0",
             catalog_manifest_hash=suffix.ljust(64, "9"),
             candidate_index_manifest_hash=suffix.ljust(64, "3"),
@@ -202,7 +205,7 @@ async def _create_runtime_context(session: AsyncSession) -> GuideRuntimeContextS
     )
     environment = await repository.create_environment(
         RagRuntimeEnvironmentCreate(
-            environment_code=f"guide-env-{suffix}",
+            environment_code=environment_code,
             environment_status=RagRuntimeEnvironmentStatus.ACTIVE,
             active_bundle_id=bundle.id,
             active_bundle_manifest_hash=bundle.bundle_manifest_hash,
@@ -298,7 +301,7 @@ async def test_accept_guide_job_reuses_same_idempotency_key_without_duplicate_ro
         runtime_context=runtime_context,
     )
 
-    changed_runtime_context = await _create_runtime_context(db_session)
+    changed_runtime_context = await _create_runtime_context(db_session, environment_code="TEST")
 
     second = await _adapter(db_session).accept_guide_job(
         user=user,

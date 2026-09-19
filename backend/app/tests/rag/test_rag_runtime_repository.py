@@ -37,6 +37,7 @@ from app.repositories.rag_runtime_repository import (
     RagRuntimeExecutionManifestCreate,
     RagRuntimeReleaseBundleCreate,
     RagRuntimeRepository,
+    RuntimeEnvironmentCodeInvalidError,
     RuntimeEnvironmentTransitionConflictError,
     RuntimeEnvironmentTransitionInvalidError,
 )
@@ -181,7 +182,7 @@ async def test_runtime_bundle_repository_can_save_minimum_graph(db_session: Asyn
             bundle_status=RagRuntimeBundleStatus.READY,
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=_hash("3"),
-            environment_code="local",
+            environment_code="LOCAL",
             catalog_version="catalog-1.0.0",
             catalog_manifest_hash=_hash("9"),
             candidate_index_ref="candidate-index:pending-fk",
@@ -206,7 +207,7 @@ async def test_runtime_bundle_repository_can_save_minimum_graph(db_session: Asyn
     await db_session.flush()
     environment = await repository.create_environment(
         RagRuntimeEnvironmentCreate(
-            environment_code="local",
+            environment_code="LOCAL",
             environment_status=RagRuntimeEnvironmentStatus.SUSPENDED,
             active_bundle_id=bundle.id,
             active_bundle_manifest_hash=bundle.bundle_manifest_hash,
@@ -235,7 +236,7 @@ async def test_runtime_bundle_repository_can_save_minimum_graph(db_session: Asyn
     )
     assert await repository.get_release_bundle_by_manifest_hash(_hash("3")) == bundle
     assert await repository.list_bundle_sources(bundle.id) == [bundle_source]
-    assert await repository.get_environment_by_code("local") == environment
+    assert await repository.get_environment_by_code("LOCAL") == environment
     assert await repository.list_bundle_evaluation_approvals(bundle.id) == [approval]
 
 
@@ -256,7 +257,7 @@ async def test_environment_active_bundle_hash_must_match_bundle(db_session: Asyn
             bundle_version="1.0.0",
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=_hash("6"),
-            environment_code="local",
+            environment_code="LOCAL",
             catalog_version="catalog-1.0.0",
             catalog_manifest_hash=_hash("9"),
         )
@@ -265,7 +266,7 @@ async def test_environment_active_bundle_hash_must_match_bundle(db_session: Asyn
     with pytest.raises(IntegrityError):
         await repository.create_environment(
             RagRuntimeEnvironmentCreate(
-                environment_code=f"local-{uuid4().hex[:8]}",
+                environment_code="LOCAL",
                 active_bundle_id=bundle.id,
                 active_bundle_manifest_hash=_hash("7"),
             )
@@ -290,7 +291,7 @@ async def test_approved_evaluation_requires_passed_eval_run(db_session: AsyncSes
             bundle_version="1.0.0",
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=_hash("9"),
-            environment_code="local",
+            environment_code="LOCAL",
             catalog_version="catalog-1.0.0",
             catalog_manifest_hash=_hash("9"),
         )
@@ -329,7 +330,7 @@ async def test_evaluation_approval_bundle_hash_must_match_bundle(db_session: Asy
             bundle_version="1.0.0",
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=_hash("d"),
-            environment_code="local",
+            environment_code="LOCAL",
             catalog_version="catalog-1.0.0",
             catalog_manifest_hash=_hash("9"),
         )
@@ -352,7 +353,7 @@ async def test_evaluation_approval_bundle_hash_must_match_bundle(db_session: Asy
 
 async def test_environment_code_allows_only_one_row_per_environment(db_session: AsyncSession) -> None:
     repository = RagRuntimeRepository(db_session)
-    environment_code = f"local-{uuid4().hex[:8]}"
+    environment_code = "LOCAL"
     await repository.create_environment(
         RagRuntimeEnvironmentCreate(
             environment_code=environment_code,
@@ -388,14 +389,14 @@ async def test_environment_transition_preserves_activation_history(db_session: A
             bundle_manifest_hash=_hash("b"),
             bundle_status=RagRuntimeBundleStatus.READY,
             governance_revision_ref="governance:test-a",
-            environment_code="local",
+            environment_code="LOCAL",
             catalog_version="catalog-1.0.0",
             catalog_manifest_hash=_hash("9"),
         )
     )
     environment = await repository.create_environment(
         RagRuntimeEnvironmentCreate(
-            environment_code=f"local-{uuid4().hex[:8]}",
+            environment_code="LOCAL",
             environment_status=RagRuntimeEnvironmentStatus.SUSPENDED,
             governance_revision_ref="governance:test-a",
         )
@@ -467,7 +468,7 @@ async def test_environment_transition_preserves_activation_history(db_session: A
             bundle_manifest_hash=_hash("c"),
             bundle_status=RagRuntimeBundleStatus.READY,
             governance_revision_ref="governance:test-b",
-            environment_code="local",
+            environment_code="LOCAL",
             catalog_version="catalog-1.0.0",
             catalog_manifest_hash=_hash("9"),
         )
@@ -554,7 +555,7 @@ async def test_environment_transition_stale_revision_is_fail_closed(db_session: 
     repository = RagRuntimeRepository(db_session)
     environment = await repository.create_environment(
         RagRuntimeEnvironmentCreate(
-            environment_code=f"local-{uuid4().hex[:8]}",
+            environment_code="LOCAL",
             environment_status=RagRuntimeEnvironmentStatus.ACTIVE,
         )
     )
@@ -581,7 +582,7 @@ async def test_environment_and_transition_roll_back_together_after_flush_failure
     repository = RagRuntimeRepository(db_session)
     environment = await repository.create_environment(
         RagRuntimeEnvironmentCreate(
-            environment_code=f"local-{uuid4().hex[:8]}",
+            environment_code="LOCAL",
             environment_status=RagRuntimeEnvironmentStatus.ACTIVE,
         )
     )
@@ -620,7 +621,7 @@ async def test_environment_transition_requires_guard_and_authenticated_actor(db_
     repository = RagRuntimeRepository(db_session)
     environment = await repository.create_environment(
         RagRuntimeEnvironmentCreate(
-            environment_code=f"local-{uuid4().hex[:8]}",
+            environment_code="LOCAL",
             environment_status=RagRuntimeEnvironmentStatus.ACTIVE,
         )
     )
@@ -659,15 +660,13 @@ async def _freshness_resources(session):
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=uuid4().hex * 2,
             bundle_status=RagRuntimeBundleStatus.READY,
-            environment_code="local",
+            environment_code="LOCAL",
             catalog_version="catalog-1.0.0",
             catalog_manifest_hash=_hash("9"),
         )
     )
     environment = await repository.create_environment(
-        RagRuntimeEnvironmentCreate(
-            environment_code=f"fresh-{uuid4().hex}", environment_status=RagRuntimeEnvironmentStatus.SUSPENDED
-        )
+        RagRuntimeEnvironmentCreate(environment_code="LOCAL", environment_status=RagRuntimeEnvironmentStatus.SUSPENDED)
     )
     command = RagRuntimeEnvironmentTransitionCreate(
         environment_id=environment.id,
@@ -691,42 +690,54 @@ async def test_transition_refreshes_preloaded_objects_after_another_transaction(
     from sqlalchemy import select
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
-    from app.models.rag_runtime import RagRuntimeEnvironment, RagRuntimeReleaseBundle
+    from app.models.rag_runtime import RagRuntimeEnvironment, RagRuntimeExecutionManifest, RagRuntimeReleaseBundle
     from app.tests.conftest import test_engine
 
     sessions = async_sessionmaker(test_engine, expire_on_commit=False)
     async with sessions.begin() as setup:
         environment, bundle, command = await _freshness_resources(setup)
-    async with sessions.begin() as stale:
-        old_environment = await stale.get(RagRuntimeEnvironment, environment.id)
-        old_bundle = await stale.get(RagRuntimeReleaseBundle, bundle.id)
-        async with sessions.begin() as concurrent:
-            if changed == "bundle":
-                row = await concurrent.get(RagRuntimeReleaseBundle, bundle.id)
-                row.bundle_status = RagRuntimeBundleStatus.FAILED
-            else:
-                row = await concurrent.get(RagRuntimeEnvironment, environment.id)
-                row.environment_revision += 1
-        assert old_bundle.bundle_status is RagRuntimeBundleStatus.READY
-        assert old_environment.environment_revision == 1
-        error = (
-            RuntimeEnvironmentTransitionInvalidError
-            if changed == "bundle"
-            else RuntimeEnvironmentTransitionConflictError
-        )
-        with pytest.raises(error):
-            await RagRuntimeEnvironmentTransitionService(RagRuntimeRepository(stale)).transition(command)
-    async with sessions() as check:
-        final = await check.get(RagRuntimeEnvironment, environment.id)
-        assert final.environment_status is RagRuntimeEnvironmentStatus.SUSPENDED
-        assert final.active_bundle_id is None
-        assert not list(
-            await check.scalars(
-                select(RagRuntimeEnvironmentTransition).where(
-                    RagRuntimeEnvironmentTransition.environment_id == environment.id
+    try:
+        async with sessions.begin() as stale:
+            old_environment = await stale.get(RagRuntimeEnvironment, environment.id)
+            old_bundle = await stale.get(RagRuntimeReleaseBundle, bundle.id)
+            async with sessions.begin() as concurrent:
+                if changed == "bundle":
+                    row = await concurrent.get(RagRuntimeReleaseBundle, bundle.id)
+                    row.bundle_status = RagRuntimeBundleStatus.FAILED
+                else:
+                    row = await concurrent.get(RagRuntimeEnvironment, environment.id)
+                    row.environment_revision += 1
+            assert old_bundle.bundle_status is RagRuntimeBundleStatus.READY
+            assert old_environment.environment_revision == 1
+            error = (
+                RuntimeEnvironmentTransitionInvalidError
+                if changed == "bundle"
+                else RuntimeEnvironmentTransitionConflictError
+            )
+            with pytest.raises(error):
+                await RagRuntimeEnvironmentTransitionService(RagRuntimeRepository(stale)).transition(command)
+        async with sessions() as check:
+            final = await check.get(RagRuntimeEnvironment, environment.id)
+            assert final.environment_status is RagRuntimeEnvironmentStatus.SUSPENDED
+            assert final.active_bundle_id is None
+            assert not list(
+                await check.scalars(
+                    select(RagRuntimeEnvironmentTransition).where(
+                        RagRuntimeEnvironmentTransition.environment_id == environment.id
+                    )
                 )
             )
-        )
+    finally:
+        async with sessions.begin() as cleanup:
+            env_row = await cleanup.get(RagRuntimeEnvironment, environment.id)
+            if env_row:
+                await cleanup.delete(env_row)
+            bundle_row = await cleanup.get(RagRuntimeReleaseBundle, bundle.id)
+            if bundle_row:
+                await cleanup.delete(bundle_row)
+            manifest_row = await cleanup.get(RagRuntimeExecutionManifest, bundle.execution_manifest_id)
+            if manifest_row:
+                await cleanup.delete(manifest_row)
 
 
 @pytest.mark.parametrize("kind", [*RagRuntimeEnvironmentTransitionKind, "UNSUPPORTED_FUTURE_TRANSITION"])
@@ -760,3 +771,39 @@ async def test_transition_branches_cover_every_supported_kind_and_reject_unknown
             else RagRuntimeEnvironmentStatus.ACTIVE
         )
         assert status is expected
+
+
+async def test_environment_code_rejects_silent_normalization_and_unsupported_codes(
+    db_session: AsyncSession,
+) -> None:
+    repository = RagRuntimeRepository(db_session)
+    manifest = await repository.create_execution_manifest(
+        RagRuntimeExecutionManifestCreate(
+            manifest_key=f"exec-env-test-{uuid4().hex[:8]}",
+            manifest_version="1.0.0",
+            manifest_hash="a" * 64,
+            schema_version="runtime-manifest-v1",
+            git_commit_sha="abcdef1",
+            guard_policy_ref="guard-policy:test",
+        )
+    )
+    for invalid_code in ("local", "test", "production", "closed_demo", "STAGING", "DEV", " LOCAL ", ""):
+        with pytest.raises(RuntimeEnvironmentCodeInvalidError):
+            await repository.create_environment(
+                RagRuntimeEnvironmentCreate(
+                    environment_code=invalid_code,
+                    environment_status=RagRuntimeEnvironmentStatus.SUSPENDED,
+                )
+            )
+        with pytest.raises(RuntimeEnvironmentCodeInvalidError):
+            await repository.create_release_bundle(
+                RagRuntimeReleaseBundleCreate(
+                    bundle_key=f"bundle-invalid-{uuid4().hex[:8]}",
+                    bundle_version="1.0.0",
+                    execution_manifest_id=manifest.id,
+                    bundle_manifest_hash="b" * 64,
+                    environment_code=invalid_code,
+                    catalog_version="catalog-1.0.0",
+                    catalog_manifest_hash="c" * 64,
+                )
+            )

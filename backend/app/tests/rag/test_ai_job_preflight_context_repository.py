@@ -103,7 +103,7 @@ async def _create_runtime_graph(session: AsyncSession):
             bundle_status=RagRuntimeBundleStatus.READY,
             execution_manifest_id=manifest.id,
             bundle_manifest_hash=_hash("2"),
-            environment_code="local",
+            environment_code="LOCAL",
             catalog_version="catalog-1.0.0",
             catalog_manifest_hash=_hash("9"),
             candidate_index_manifest_hash=_hash("3"),
@@ -111,7 +111,7 @@ async def _create_runtime_graph(session: AsyncSession):
     )
     environment = await repository.create_environment(
         RagRuntimeEnvironmentCreate(
-            environment_code=f"preflight-{suffix}",
+            environment_code="LOCAL",
             environment_status=RagRuntimeEnvironmentStatus.ACTIVE,
             active_bundle_id=bundle.id,
             active_bundle_manifest_hash=bundle.bundle_manifest_hash,

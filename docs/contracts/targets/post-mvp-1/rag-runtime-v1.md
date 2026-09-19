@@ -7,8 +7,8 @@
 | 외부 정본 | Manifest `post-mvp-rag-evaluation-contract@2026-08-29.11`; 저장소 투영 상태는 `Approved Target · Not implemented` |
 | Normative Source | `post-mvp-patient-rule-first-curated-evidence-rag-v1.7.md@1.50` · SHA-256 `e83415326dd08cda61353d7cd8bf4e6d591bb99f51a8a3daa498421d8772535a` |
 | Physical Target | `rag-detailed-db-schema-v1.md@1.47` · SHA-256 `f88ec11aaa6671184f2d0f5076219bf2ad51525b9e6a136ec5389afd2af82aea` |
-| 후속 결정 | [`PD-315-20260908`](../../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md) · Approved (Path B 재판정 2026-09-17) · [`PD-175-20260910`](../../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md) · Approved (2026-09-10) |
-| Last verified | 2026-09-10 |
+| 후속 결정 | [`PD-315-20260908`](../../../governance/decisions/2026-09-08-production-evidence-retrieval-contract-divergence.md) · Approved (Path B 재판정 2026-09-17) · [`PD-175-20260910`](../../../governance/decisions/2026-09-10-runtime-bundle-canonical-configuration-persistence.md) · Approved (2026-09-10) · [`PD-799-20260918`](../../../governance/decisions/2026-09-18-citation-authorization-production-authority-boundary.md) · Approved (2026-09-18) |
+| Last verified | 2026-09-18 |
 
 ## 목적과 적용 범위
 
@@ -52,6 +52,17 @@
 - Local PostgreSQL·pgvector·Redis·Worker를 사용하고 환경별 다중 Active Bundle 운영은 이번 구현 범위에서 제외한다.
 - Local Runtime의 Active Bundle은 최대 하나다. 향후 서버 환경 추가 시 새 배포·보안·Runtime Bundle Decision을 먼저 승인한다.
 - 결정적 Unit·Contract Test는 CI에서 실행할 수 있지만 CI를 Development·Staging Runtime으로 간주하지 않는다.
+
+### Canonical Runtime Environment 어휘 (PD-799-20260918, Issue #810)
+
+- Runtime Environment canonical vocabulary는 다음 4개 값으로 제한되며, exact case-sensitive 문자열로 취급한다.
+  - `LOCAL`
+  - `TEST`
+  - `CLOSED_DEMO`
+  - `PRODUCTION`
+- 공백 trim, 대소문자 변환(normalization), alias, fallback, default 치환을 허용하지 않는다.
+- Runtime Environment producer 경계는 shared `RuntimeEnvironmentCode`로 exact canonical membership을 Python에서 fail closed 검증하고, PostgreSQL CHECK는 persistence defense-in-depth로 동일 어휘를 재검증한다. 자동 normalization/alias/fallback은 어느 계층에서도 수행하지 않는다.
+- `rag_runtime_environment.environment_code`와 `rag_runtime_release_bundle.environment_code`에 PostgreSQL CHECK 제약조건(`chk_rag_runtime_environment_code`, `chk_rag_runtime_bundle_environment_code`)으로 영속화된다.
 
 ## 입력과 접수 Preflight
 
