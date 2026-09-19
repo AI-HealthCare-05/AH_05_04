@@ -256,25 +256,20 @@ async def database(monkeypatch):
                         verification_status="PENDING",
                     )
                 )
+        await seed_catalog_approvals(
+            factory,
+            [
+                approved_build()[1],
+                approved_build(changed=True)[1],
+                approved_build(repeated=True)[1],
+            ],
+        )
         yield engine, factory
     finally:
         await engine.dispose()
         async with cluster.connect() as connection:
             await connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
         await cluster.dispose()
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def _seed_approvals_for_roundtrip(database):
-    _, factory = database
-    await seed_catalog_approvals(
-        factory,
-        [
-            approved_build()[1],
-            approved_build(changed=True)[1],
-            approved_build(repeated=True)[1],
-        ],
-    )
 
 
 async def saved(factory):
