@@ -1508,6 +1508,10 @@
   gap: 14px;
 }
 
+.mvp-home__action-stack .mvp-home__hub-card {
+  padding-block: 16px;
+}
+
 .mvp-home__hub-card--new-prescription {
   min-height: 128px;
   border: 1px solid #cfd8dc;
