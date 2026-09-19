@@ -106,7 +106,7 @@ def test_feedback_gold_prompt_comparison_config_pins_v4_v6_snapshots() -> None:
     }
     assert tuple(variant.source_commit for variant in experiment.variants) == (
         "94e5fa8daad6d06fc44808eefced1b07c2b784e0",
-        "d3055c360ed657b3649142e43750b969d4b0a5e9",
+        "4226a060f35897c88928d3dbe7835ff87f5d5578",
     )
     assert all(
         hashlib.sha256((variant.prompt + "\n").encode()).hexdigest() == variant.prompt_sha256
