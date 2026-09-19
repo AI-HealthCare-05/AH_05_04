@@ -69,7 +69,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-      # 신규·기존 DB 모두 같은 권한 설정 SQL을 실행할 수 있도록 mount합니다.
+      # 권한 설정 SQL을 mount합니다. 단 /docker-entrypoint-initdb.d/는 데이터 디렉터리가
+      # 비어 있는 최초 기동에서만 실행된다. postgres_data 볼륨에 DB가 이미 있으면
+      # 재시작해도 실행되지 않으므로, 기존 DB에 역할·권한을 반영할 때는 수동 실행해야 한다.
+      #   docker compose exec postgres sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" \
+      #     -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/configure-app-role.sql'
       - ./postgres/configure-app-role.sql:/docker-entrypoint-initdb.d/configure-app-role.sql:ro
     healthcheck:
       test:

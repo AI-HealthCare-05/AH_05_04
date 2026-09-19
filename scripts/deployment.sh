@@ -19,7 +19,7 @@ fi
 # 이 파일 원문만 서버로 복사하므로(하단 scp 참고) 로컬 검증과 실제 전송 설정이
 # 어긋나 필수 값이 없는 채로 배포될 수 있다(#321 리뷰). source 전에 파일 자체가
 # 필수 값을 직접 선언하는지 먼저 확인한다.
-for required_key in REDIS_PASSWORD ENV IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY; do
+for required_key in REDIS_PASSWORD ENV IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY ACCOUNT_WITHDRAWAL_REQUEST_ENABLED; do
   if ! grep -Eq "^${required_key}=" "$PROD_ENV_FILE"; then
     echo "$PROD_ENV_FILE에 $required_key가 선언되어 있지 않습니다."
     exit 1
@@ -72,6 +72,23 @@ for variable_name in "${required_db_variables[@]}"; do
     exit 1
   fi
 done
+
+# ---------- 회원탈퇴 gate 검증 ----------
+# Compose는 ACCOUNT_WITHDRAWAL_REQUEST_ENABLED를 ${...:-false}로 치환하므로, .prod.env에
+# 선언 자체가 없으면 조용히 false가 주입되어 탈퇴 API가 503(fail-closed)으로 돌아간다.
+# 선언 여부는 위 required_key 검사에서 막고, 여기서는 true로 열 때 필요한 cleanup 자격 증명을
+# 확인한다. Backend Config도 같은 조건을 validator로 막지만(#825), 그 실패는 image push와
+# 원격 compose 반영이 끝난 뒤 컨테이너 기동 시점에 드러나므로 외부 작업 전에 먼저 차단한다.
+case "$(printf '%s' "${ACCOUNT_WITHDRAWAL_REQUEST_ENABLED:-}" | tr '[:upper:]' '[:lower:]')" in
+  true | 1 | yes | on)
+    for variable_name in ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD; do
+      if [ -z "${!variable_name:-}" ]; then
+        echo "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true인데 $variable_name이 비어 있습니다."
+        exit 1
+      fi
+    done
+    ;;
+esac
 
 # ---------- Redis 인증 검증 ----------
 # PUBLIC_TRACK_F_ENABLED/Track A Worker 모두 non-local(STAGING/PRODUCTION) 환경에서
