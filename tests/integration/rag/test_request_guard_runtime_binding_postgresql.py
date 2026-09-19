@@ -92,43 +92,50 @@ async def _seed_authorities(
         decision_stage=RequestAuthorityDecisionStage.REQUEST,
     )
     async with sessions() as session:
-        session.add_all(
-            [
-                User(
-                    id=USER_ID,
-                    email=f"request-binding-806-{uuid4().hex[:8]}@example.com",
-                    hashed_password="synthetic-hash",
-                    name="synthetic-request-binding",
-                ),
-                RagRuntimeExecutionManifest(
-                    id=MANIFEST_ID,
-                    manifest_key="synthetic-request-binding",
-                    manifest_version="1",
-                    manifest_hash="a" * 64,
-                    schema_version="1",
-                    git_commit_sha="8060000",
-                ),
-                RagRuntimeReleaseBundle(
-                    id=BUNDLE_ID,
-                    bundle_key="synthetic-request-binding",
-                    bundle_version="1",
-                    bundle_status=RagRuntimeBundleStatus.BUILDING,
-                    execution_manifest_id=MANIFEST_ID,
-                    bundle_manifest_hash="b" * 64,
-                    environment_code=RuntimeEnvironmentCode.PRODUCTION.value,
-                    catalog_version="catalog-1",
-                    catalog_manifest_hash="c" * 64,
-                ),
-                RagRequestGuardAuthority(
-                    id=uuid4(),
-                    artifact_code=legacy_ref.artifact_code,
-                    artifact_version=legacy_ref.version,
-                    artifact_content_sha256=legacy_ref.content_sha256,
-                    user_id=USER_ID,
-                    request_operation_code=OPERATION,
-                    decision_stage=RequestAuthorityDecisionStage.REQUEST.value,
-                ),
-            ]
+        session.add(
+            User(
+                id=USER_ID,
+                email=f"request-binding-806-{uuid4().hex[:8]}@example.com",
+                hashed_password="synthetic-hash",
+                name="synthetic-request-binding",
+            )
+        )
+        await session.flush()
+        session.add(
+            RagRuntimeExecutionManifest(
+                id=MANIFEST_ID,
+                manifest_key="synthetic-request-binding",
+                manifest_version="1",
+                manifest_hash="a" * 64,
+                schema_version="1",
+                git_commit_sha="8060000",
+            )
+        )
+        await session.flush()
+        session.add(
+            RagRuntimeReleaseBundle(
+                id=BUNDLE_ID,
+                bundle_key="synthetic-request-binding",
+                bundle_version="1",
+                bundle_status=RagRuntimeBundleStatus.BUILDING,
+                execution_manifest_id=MANIFEST_ID,
+                bundle_manifest_hash="b" * 64,
+                environment_code=RuntimeEnvironmentCode.PRODUCTION.value,
+                catalog_version="catalog-1",
+                catalog_manifest_hash="c" * 64,
+            )
+        )
+        await session.flush()
+        session.add(
+            RagRequestGuardAuthority(
+                id=uuid4(),
+                artifact_code=legacy_ref.artifact_code,
+                artifact_version=legacy_ref.version,
+                artifact_content_sha256=legacy_ref.content_sha256,
+                user_id=USER_ID,
+                request_operation_code=OPERATION,
+                decision_stage=RequestAuthorityDecisionStage.REQUEST.value,
+            )
         )
         await session.commit()
     return sessions, legacy_ref

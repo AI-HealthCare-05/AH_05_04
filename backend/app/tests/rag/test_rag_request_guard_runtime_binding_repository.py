@@ -77,7 +77,13 @@ async def _seed_authorities(db_session: AsyncSession) -> tuple[User, RequestAuth
         request_operation_code=OPERATION,
         decision_stage=RequestAuthorityDecisionStage.REQUEST.value,
     )
-    db_session.add_all([user, manifest, bundle, legacy])
+    db_session.add(user)
+    await db_session.flush()
+    db_session.add(manifest)
+    await db_session.flush()
+    db_session.add(bundle)
+    await db_session.flush()
+    db_session.add(legacy)
     await db_session.flush()
     return user, legacy_ref
 
