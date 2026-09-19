@@ -69,7 +69,16 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-      # 신규·기존 DB 모두 같은 권한 설정 SQL을 실행할 수 있도록 mount합니다.
+      # 권한 설정 SQL을 mount합니다. entrypoint 자동 실행은 데이터 디렉터리가 비어 있는
+      # 최초 기동에서만 일어나므로, postgres_data 볼륨에 DB가 이미 있으면 재시작해도
+      # 실행되지 않습니다. 다만 표준 배포 경로인 scripts/deployment.sh가 기존 DB에도
+      # 매 배포마다 이 SQL을 직접 실행하고(bootstrap) 이어서 provision-db-roles로
+      # table 권한까지 적용하므로(provisioning), 별도 수동 작업은 필요하지 않습니다.
+      # break-glass로 수동 복구할 때는 이 SQL만으로 table 권한이 반영되지 않으므로
+      # provisioning 단계까지 실행해야 합니다.
+      #   docker compose exec postgres sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" \
+      #     -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/configure-app-role.sql'
+      #   docker compose --profile database-admin run --rm --no-deps provision-db-roles
       - ./postgres/configure-app-role.sql:/docker-entrypoint-initdb.d/configure-app-role.sql:ro
     healthcheck:
       test:
