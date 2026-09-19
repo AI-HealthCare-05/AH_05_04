@@ -16,7 +16,7 @@ from ai_worker.adapters.sqlalchemy_catalog_approval_verifier import SqlAlchemyCa
 from ai_worker.adapters.sqlalchemy_catalog_write_support import SqlAlchemyCatalogBuildRepository
 from ai_worker.adapters.sqlalchemy_source_snapshot_repository import SqlAlchemySourceSnapshotRepository
 from ai_worker.tasks.rag.catalog.mfds_product_source import ProductSourceBindingError, read_product_input
-from ai_worker.tasks.rag.catalog.service import CatalogBuildRequest, build_catalog_candidate
+from ai_worker.tasks.rag.catalog.service import CatalogBuildRequest, CatalogBuildResult, build_catalog_candidate
 from ai_worker.tasks.rag.catalog.types import CandidateCatalogSourceRef, CatalogVerificationStatus
 from infra.python.catalog_role_policy import CATALOG_LOCK_COLUMNS, CATALOG_READ_TABLES, CATALOG_WRITE_TABLES
 
@@ -111,6 +111,18 @@ async def catalog_writer_repository(environment: Mapping[str, str]) -> AsyncIter
         await engine.dispose()
 
 
+def summarize_catalog_execution(result: CatalogBuildResult) -> dict[str, object]:
+    """Report the approval verifier's own outcome without reinterpreting it.
+
+    An absent or non-APPROVED export is the canonical fail-closed result of the
+    existing approval gate, not a Catalog Writer defect.
+    """
+    export = result.export
+    if export is None or export.catalog.verification_status is not CatalogVerificationStatus.APPROVED:
+        return {"execution_status": "BLOCKED", "blocker_reason": "CATALOG_NOT_APPROVED"}
+    return {"execution_status": result.decision.value}
+
+
 async def _execute_catalog_build(
     *,
     environment: Mapping[str, str],
@@ -154,9 +166,7 @@ async def _execute_catalog_build(
             repository=repository,
             approval_verifier=SqlAlchemyCatalogApprovalVerifier(sessions),
         )
-        if result.export is None or result.export.catalog.verification_status is not CatalogVerificationStatus.APPROVED:
-            return {"execution_status": "BLOCKED", "blocker_reason": "CATALOG_NOT_APPROVED"}
-        return {"execution_status": result.decision.value}
+        return summarize_catalog_execution(result)
     finally:
         await engine.dispose()
 

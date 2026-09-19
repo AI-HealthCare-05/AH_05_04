@@ -39,7 +39,7 @@ class ProductSourceBindingError(ValueError):
 class ProductSourceRepository(Protocol):
     async def get_snapshot_receipt(self, *, snapshot_id: UUID) -> SnapshotProvenanceReceipt | None: ...
 
-    async def get_ingestion_run_receipt(self, *, ingestion_run_id: UUID) -> SnapshotAttemptReceipt | None: ...
+    async def get_attempt_receipt(self, *, ingestion_run_id: UUID) -> SnapshotAttemptReceipt | None: ...
 
     async def get_ingestion_artifact_receipts(
         self, *, ingestion_run_id: UUID
@@ -95,17 +95,14 @@ def _validate_snapshot(receipt: SnapshotProvenanceReceipt, snapshot_id: UUID) ->
         raise ProductSourceBindingError("BLOCKED_BY_PRODUCT_SOURCE_AUTHORITY") from None
 
 
-def _validate_run(run: SnapshotAttemptReceipt, snapshot_id: UUID, run_id: UUID) -> None:
+def _validate_run(run: SnapshotAttemptReceipt, snapshot: SnapshotProvenanceReceipt, snapshot_id: UUID) -> None:
     if (
         run.snapshot_id != snapshot_id
         or run.run_status != "SUCCEEDED"
         or run.failure_code is not None
         or run.operation_id is None
+        or run.operation_id != snapshot.operation_id
     ):
-        raise ProductSourceBindingError("BLOCKED_BY_PRODUCT_INGESTION_RUN")
-    # The explicit id is checked by the repository lookup; retain the value in this guard for callers
-    # that provide a repository double with a mismatched receipt.
-    if run_id is None:
         raise ProductSourceBindingError("BLOCKED_BY_PRODUCT_INGESTION_RUN")
 
 
@@ -161,10 +158,10 @@ async def read_product_input(
     if snapshot.endpoint_id is None or snapshot.operation_id is None:
         raise ProductSourceBindingError("BLOCKED_BY_PRODUCT_SOURCE_AUTHORITY")
 
-    run = await repository.get_ingestion_run_receipt(ingestion_run_id=run_uuid)
+    run = await repository.get_attempt_receipt(ingestion_run_id=run_uuid)
     if run is None:
         raise ProductSourceBindingError("BLOCKED_BY_PRODUCT_INGESTION_RUN")
-    _validate_run(run, snapshot_uuid, run_uuid)
+    _validate_run(run, snapshot, snapshot_uuid)
 
     matches = await _read_matching_records(
         repository=repository, artifact_reader=artifact_reader, run_uuid=run_uuid, item_seq=item_seq

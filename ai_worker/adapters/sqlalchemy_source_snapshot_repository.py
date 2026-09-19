@@ -488,10 +488,6 @@ class SqlAlchemySourceSnapshotRepository(SnapshotLifecycleRepository):
             },
         )
 
-    async def get_ingestion_run_receipt(self, *, ingestion_run_id: UUID) -> SnapshotAttemptReceipt | None:
-        """Return one explicitly selected ingestion run without choosing a latest run."""
-        return await self.get_attempt_receipt(ingestion_run_id=ingestion_run_id)
-
     async def get_latest_snapshot(self, *, operation_id: UUID) -> SnapshotReference | None:
         statement = (
             select(

@@ -17,6 +17,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import SnapshotVeri
 
 SNAPSHOT_ID = UUID("00000000-0000-4000-8000-000000000001")
 RUN_ID = UUID("00000000-0000-4000-8000-000000000002")
+OPERATION_ID = UUID("00000000-0000-4000-8000-000000000003")
 
 
 def _page(records: list[dict[str, object]]) -> bytes:
@@ -37,7 +38,7 @@ class FakeRepository:
     async def get_snapshot_receipt(self, *, snapshot_id):
         return self.snapshot
 
-    async def get_ingestion_run_receipt(self, *, ingestion_run_id):
+    async def get_attempt_receipt(self, *, ingestion_run_id):
         return self.run
 
     async def get_ingestion_artifact_receipts(self, *, ingestion_run_id):
@@ -68,16 +69,17 @@ def _snapshot(**overrides):
         rejected_record_count=0,
     )
     values.update(overrides)
+    provenance = values.pop("validate_provenance", lambda: None)
+    values.setdefault("operation_id", OPERATION_ID)
     return SimpleNamespace(
         **values,
         endpoint_id=uuid4(),
-        operation_id=uuid4(),
-        validate_provenance=lambda: None,
+        validate_provenance=provenance,
     )
 
 
 def _run(**overrides):
-    values = dict(snapshot_id=SNAPSHOT_ID, run_status="SUCCEEDED", failure_code=None, operation_id=uuid4())
+    values = dict(snapshot_id=SNAPSHOT_ID, run_status="SUCCEEDED", failure_code=None, operation_id=OPERATION_ID)
     values.update(overrides)
     return SimpleNamespace(**values)
 
@@ -213,3 +215,146 @@ async def test_status_mapping_ignores_non_authoritative_product_fields(record):
         item_seq="P-001",
     )
     assert product.product_status is CandidateRecordStatus.ACTIVE
+
+
+def _raise_provenance() -> None:
+    raise ValueError("provenance mismatch")
+
+
+@pytest.mark.asyncio
+async def test_unknown_snapshot_fails_closed_before_artifact_read():
+    content = _page([{"ITEM_SEQ": "P-001", "ITEM_NAME": "제품"}])
+    reader = FakeReader(content)
+    with pytest.raises(ProductSourceBindingError, match="BLOCKED_BY_PRODUCT_SOURCE_AUTHORITY"):
+        await read_product_input(
+            repository=FakeRepository(snapshot=None, run=_run(), artifacts=(_artifact(content),)),
+            artifact_reader=reader,
+            source_snapshot_id=str(SNAPSHOT_ID),
+            ingestion_run_id=str(RUN_ID),
+            item_seq="P-001",
+        )
+    assert reader.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_invalid_provenance_fails_closed_before_artifact_read():
+    content = _page([{"ITEM_SEQ": "P-001", "ITEM_NAME": "제품"}])
+    reader = FakeReader(content)
+    with pytest.raises(ProductSourceBindingError, match="BLOCKED_BY_PRODUCT_SOURCE_AUTHORITY"):
+        await read_product_input(
+            repository=FakeRepository(
+                snapshot=_snapshot(validate_provenance=_raise_provenance),
+                run=_run(),
+                artifacts=(_artifact(content),),
+            ),
+            artifact_reader=reader,
+            source_snapshot_id=str(SNAPSHOT_ID),
+            ingestion_run_id=str(RUN_ID),
+            item_seq="P-001",
+        )
+    assert reader.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_unknown_ingestion_run_fails_closed_before_artifact_read():
+    content = _page([{"ITEM_SEQ": "P-001", "ITEM_NAME": "제품"}])
+    reader = FakeReader(content)
+    with pytest.raises(ProductSourceBindingError, match="BLOCKED_BY_PRODUCT_INGESTION_RUN"):
+        await read_product_input(
+            repository=FakeRepository(snapshot=_snapshot(), run=None, artifacts=(_artifact(content),)),
+            artifact_reader=reader,
+            source_snapshot_id=str(SNAPSHOT_ID),
+            ingestion_run_id=str(RUN_ID),
+            item_seq="P-001",
+        )
+    assert reader.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_run_bound_to_another_operation_fails_closed():
+    """A SUCCEEDED run on the right snapshot but a different operation is not authoritative."""
+    content = _page([{"ITEM_SEQ": "P-001", "ITEM_NAME": "제품"}])
+    reader = FakeReader(content)
+    with pytest.raises(ProductSourceBindingError, match="BLOCKED_BY_PRODUCT_INGESTION_RUN"):
+        await read_product_input(
+            repository=FakeRepository(
+                snapshot=_snapshot(), run=_run(operation_id=uuid4()), artifacts=(_artifact(content),)
+            ),
+            artifact_reader=reader,
+            source_snapshot_id=str(SNAPSHOT_ID),
+            ingestion_run_id=str(RUN_ID),
+            item_seq="P-001",
+        )
+    assert reader.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_run_without_artifacts_fails_closed():
+    with pytest.raises(ProductSourceBindingError, match="BLOCKED_BY_PRODUCT_ARTIFACT"):
+        await read_product_input(
+            repository=FakeRepository(snapshot=_snapshot(), run=_run(), artifacts=()),
+            artifact_reader=FakeReader(b""),
+            source_snapshot_id=str(SNAPSHOT_ID),
+            ingestion_run_id=str(RUN_ID),
+            item_seq="P-001",
+        )
+
+
+class _CorruptReader:
+    calls = 0
+
+    def read_verified(self, *, object_key, metadata):
+        type(self).calls += 1
+        raise ValueError("checksum mismatch")
+
+
+@pytest.mark.asyncio
+async def test_artifact_corruption_fails_closed():
+    content = _page([{"ITEM_SEQ": "P-001", "ITEM_NAME": "제품"}])
+    with pytest.raises(ProductSourceBindingError, match="BLOCKED_BY_PRODUCT_ARTIFACT"):
+        await read_product_input(
+            repository=FakeRepository(snapshot=_snapshot(), run=_run(), artifacts=(_artifact(content),)),
+            artifact_reader=_CorruptReader(),
+            source_snapshot_id=str(SNAPSHOT_ID),
+            ingestion_run_id=str(RUN_ID),
+            item_seq="P-001",
+        )
+
+
+@pytest.mark.asyncio
+async def test_decoder_failure_fails_closed():
+    content = _page([{"ITEM_SEQ": "P-001", "ITEM_NAME": "제품"}])
+    with pytest.raises(ProductSourceBindingError, match="BLOCKED_BY_PRODUCT_ARTIFACT"):
+        await read_product_input(
+            repository=FakeRepository(snapshot=_snapshot(), run=_run(), artifacts=(_artifact(content),)),
+            artifact_reader=FakeReader(b"{ this is not valid MFDS json"),
+            source_snapshot_id=str(SNAPSHOT_ID),
+            ingestion_run_id=str(RUN_ID),
+            item_seq="P-001",
+        )
+
+
+@pytest.mark.asyncio
+async def test_malformed_identifiers_fail_closed():
+    content = _page([{"ITEM_SEQ": "P-001", "ITEM_NAME": "제품"}])
+    with pytest.raises(ProductSourceBindingError, match="BLOCKED_BY_PRODUCT_SOURCE_AUTHORITY"):
+        await read_product_input(
+            repository=FakeRepository(snapshot=_snapshot(), run=_run(), artifacts=(_artifact(content),)),
+            artifact_reader=FakeReader(content),
+            source_snapshot_id="not-a-uuid",
+            ingestion_run_id=str(RUN_ID),
+            item_seq="P-001",
+        )
+
+
+@pytest.mark.asyncio
+async def test_blank_item_seq_fails_closed():
+    content = _page([{"ITEM_SEQ": "P-001", "ITEM_NAME": "제품"}])
+    with pytest.raises(ProductSourceBindingError, match="BLOCKED_BY_PRODUCT_RECORD_MAPPING"):
+        await read_product_input(
+            repository=FakeRepository(snapshot=_snapshot(), run=_run(), artifacts=(_artifact(content),)),
+            artifact_reader=FakeReader(content),
+            source_snapshot_id=str(SNAPSHOT_ID),
+            ingestion_run_id=str(RUN_ID),
+            item_seq="   ",
+        )
