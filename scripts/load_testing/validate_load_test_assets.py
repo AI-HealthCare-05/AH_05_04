@@ -9,6 +9,7 @@ REQUIRED_FILES = (
     "load_tests/auth_smoke.py",
     "load_tests/ocr_worker_smoke.py",
     "load_tests/schedule_smoke.py",
+    "load_tests/track_c_support_smoke.py",
     "load_tests/README.md",
     "docs/testing/load-testing-627.md",
 )
@@ -39,6 +40,12 @@ REQUIRED_SNIPPETS = {
         "LOAD_TEST_SCHEDULE_DETAIL_LIMIT",
         "schedule-smoke:occurrence-medication",
     ),
+    "load_tests/track_c_support_smoke.py": (
+        "TrackCSupportSmokeUser",
+        "LOAD_TEST_TRACK_C_BARRIER_RESPONSE_ID",
+        "track-c-support-smoke:support-offers",
+        "track-c-support-smoke:flow-failed",
+    ),
     "load_tests/README.md": (
         "uvx locust",
         "Auth Baseline Smoke Command",
@@ -47,6 +54,8 @@ REQUIRED_SNIPPETS = {
         "LOAD_TEST_SCHEDULE_DATE",
         "LOAD_TEST_SCHEDULE_DETAIL_LIMIT=0",
         "Medication Schedule Read Smoke Command",
+        "Track C Support Read Smoke Command",
+        "LOAD_TEST_TRACK_C_BARRIER_RESPONSE_ID",
         "API-specific scenarios",
         "OCR / Worker Smoke Command",
         "Do not use `/api/v1/health`",
@@ -60,6 +69,8 @@ REQUIRED_SNIPPETS = {
         "Medication schedule read smoke",
         "LOAD_TEST_SCHEDULE_DATE",
         "LOAD_TEST_SCHEDULE_DETAIL_LIMIT=0",
+        "Track C support read smoke",
+        "LOAD_TEST_TRACK_C_BARRIER_RESPONSE_ID",
     ),
 }
 
