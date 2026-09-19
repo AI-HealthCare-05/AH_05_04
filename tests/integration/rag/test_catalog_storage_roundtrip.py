@@ -38,7 +38,7 @@ from ai_worker.tasks.rag.catalog import (
     create_catalog_export,
 )
 from ai_worker.tasks.rag.catalog.approval import CatalogApprovalVerifier
-from ai_worker.tasks.rag.catalog.export import CATALOG_MANIFEST_SPEC_VERSION
+from ai_worker.tasks.rag.catalog.export import CATALOG_MANIFEST_SPEC_VERSION, CATALOG_SCHEMA_VERSION
 from ai_worker.tasks.rag.catalog.restore import CatalogStorageRestoreError
 from ai_worker.tests.rag.catalog.test_export import _alias, _product
 from ai_worker.tests.rag.catalog.test_hash_contract_v2 import candidate
@@ -126,6 +126,85 @@ async def seed_catalog_approvals(factory, artifacts_by_revision) -> None:
                         source_version=ref.source_version,
                     )
                 )
+
+
+async def seed_catalog_approval_receipt(
+    factory,
+    *,
+    catalog_version: str,
+    export_checksum: str,
+    source_refs: tuple[CandidateCatalogSourceRef, ...],
+    issued_revision: int = 100,
+) -> CatalogApprovalReceipt:
+    """동적으로 생성된 export가 저장 경계에서 재검증할 정확한 승인 row를 만듭니다."""
+    now = datetime.now(UTC)
+    build_id = build_approval_id(export_checksum)
+    async with factory.begin() as session:
+        actor = User(
+            email=f"dynamic-approver-{uuid4().hex[:8]}@example.test",
+            hashed_password="synthetic-only",
+            name="동적 합성 승인자",
+        )
+        session.add(actor)
+        await session.flush()
+        session.add(
+            CatalogBuildApprovalRow(
+                id=build_id,
+                catalog_version=catalog_version,
+                export_checksum=export_checksum,
+                schema_version=CATALOG_SCHEMA_VERSION,
+                manifest_spec_version=CATALOG_MANIFEST_SPEC_VERSION,
+                approved_export_bytes=export_checksum.encode(),
+                is_complete=True,
+                actor_id=actor.id,
+                evidence_ref="synthetic://dynamic-build-approval",
+                valid_from=now - timedelta(days=1),
+                expires_at=now + timedelta(days=1),
+                issued_revision=issued_revision,
+            )
+        )
+        await session.flush()
+        source_receipts = []
+        for ref in source_refs:
+            source_id = source_approval_id(export_checksum, ref.snapshot_id)
+            session.add(
+                CatalogSourceApprovalRow(
+                    id=source_id,
+                    source_snapshot_id=UUID(ref.snapshot_id),
+                    source_version=ref.source_version,
+                    purpose=CATALOG_SOURCE_USE_PURPOSE,
+                    actor_id=actor.id,
+                    evidence_ref="synthetic://dynamic-source-approval",
+                    valid_from=now - timedelta(days=1),
+                    expires_at=now + timedelta(days=1),
+                    issued_revision=issued_revision,
+                )
+            )
+            await session.flush()
+            session.add(
+                CatalogBuildApprovalSourceRow(
+                    build_approval_id=build_id,
+                    source_approval_id=source_id,
+                    source_snapshot_id=UUID(ref.snapshot_id),
+                    source_version=ref.source_version,
+                )
+            )
+            source_receipts.append(
+                CatalogSourceApproval(
+                    ref,
+                    str(source_id),
+                    CatalogVerificationStatus.APPROVED,
+                    CatalogFreshnessStatus.CURRENT,
+                )
+            )
+    return CatalogApprovalReceipt(
+        str(build_id),
+        catalog_version,
+        export_checksum,
+        CatalogVerificationStatus.APPROVED,
+        True,
+        tuple(source_receipts),
+    )
 
 
 def approved_build(*, changed=False, repeated=False):
