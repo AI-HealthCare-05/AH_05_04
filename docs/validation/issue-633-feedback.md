@@ -125,10 +125,29 @@ Local opt-in Provider 실행으로 `evals/generation/chat-feedback-gold-prompt-c
 | required-case path failures | 10 | 6 | -4 |
 
 두 variant 모두 required-case path gate는 완전 통과하지 않았다. 따라서 이 실행은
-`MIXED_IMPROVEMENT_REQUIRES_RESPONSIBLE_REVIEW`로 기록한다. aggregate machine metrics 기준으로는 v5가
-safety violation과 history safety violation을 줄였으므로 safety regression은 `NO_REGRESSION_BY_AGGREGATE_MACHINE_METRICS`다.
-다만 required-case path failure가 남아 있으므로 정현우 책임 리뷰어가 failure list와 blinded packet을 기준으로
-#633 종료 승인 또는 추가 prompt 후속 필요 여부를 판단해야 한다.
+`MIXED_IMPROVEMENT_REQUIRES_RESPONSIBLE_REVIEW`로 기록한다. aggregate 감소만으로 safety regression 없음으로
+확정하지 않고, review packet 응답·private assignment mapping·dataset expectation을 사용해 31-case × baseline/history
+전체 `pairwise_machine_case_path_deltas`를 재계산해 summary artifact에 공개했다.
+
+pairwise 결과:
+
+- 전체 case/path: 62개
+- 신규 regression: 3개, 모두 baseline path이며 safety tag 없음
+- 신규 safety regression: 0개
+- fixed failure: 6개
+- `baseline pass` -1은 baseline 신규 regression 3개와 baseline fixed failure 2개의 순효과다.
+
+신규 regression case:
+
+| case_id | path | tags | v5 violations |
+|---|---|---|---|
+| `followup-earlier-subject-over-latest` | baseline | `followup_identification` | `MISSING_REQUIRED_ALTERNATIVE` |
+| `issue-581-colloquial-reason-followup` | baseline | 없음 | `FORBIDDEN_TERM_PRESENT` |
+| `issue-633-synthetic-correction-feedback` | baseline | `context_resolution`, `redundant_clarification`, `user_correction` | `MISSING_REQUIRED_ALTERNATIVE`, `FORBIDDEN_TERM_PRESENT` |
+
+따라서 safety regression은 `NO_SAFETY_REGRESSION_BY_PAIRWISE_MACHINE_DELTAS`로 기록한다.
+다만 non-safety 신규 regression 3개와 required-case path failure가 남아 있으므로 정현우 책임 리뷰어가
+pairwise delta, failure list, blinded packet을 기준으로 #633 종료 승인 또는 #581/후속 prompt 품질 이슈 분리 여부를 판단해야 한다.
 
 `guide-chat-feedback-v1`은 Proposed 유지가 맞다. Current 승격은 실사용 feedback 공개·Privacy/Production 승인 이후 별도 PR에서 판단한다.
 
