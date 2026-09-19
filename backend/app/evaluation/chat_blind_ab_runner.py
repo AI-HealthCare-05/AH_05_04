@@ -24,7 +24,7 @@ _DEFAULT_CONFIG_PATH = _REPOSITORY_ROOT / "evals" / "generation" / "chat-convers
 _ALLOWED_CONFIG_SHA256_BY_PATH = {
     _DEFAULT_CONFIG_PATH.resolve(): "bc61b2511945288b5b46d35c2cdfa63bc38601c3965fee2a4ce31da0468f2205",
     (_REPOSITORY_ROOT / "evals" / "generation" / "chat-feedback-gold-prompt-comparison-v1.json").resolve(): (
-        "1bc9cd8901d31d588215383408d9e696ff092381c72c8debafa799728fd8962a"
+        "43629dcc39c1a3d5056daf4330fd404996b80f282057b9e1ed1d0906a4264d42"
     ),
 }
 _API_KEY_PLACEHOLDERS = frozenset(
