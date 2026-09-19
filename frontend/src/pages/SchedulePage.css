@@ -532,6 +532,10 @@
   line-height: 18px;
 }
 
+.schedule-editor__time-period--preferred {
+  color: var(--ds-action);
+}
+
 .schedule-editor__times small {
   color: #1f2633;
   font-size: 13px;

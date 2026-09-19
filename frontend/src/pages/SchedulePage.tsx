@@ -315,10 +315,31 @@ type ScheduleDraft = {
   recommendationContext?: RecommendationContext
 }
 
+type TimePeriod = 'MORNING' | 'AFTERNOON'
+
 type ScheduleSaveState = {
   status: 'IDLE' | 'SAVING' | 'SUCCESS' | 'ERROR'
   message: string
   kind?: 'VALIDATION' | 'MUTATION'
+}
+
+function preferredTimePeriods(
+  timingText: string | null,
+  frequencyPerDay: number | null,
+): TimePeriod[] {
+  if (frequencyPerDay === null || frequencyPerDay <= 0) return []
+  const normalized = timingText?.replace(/\s+/g, '') ?? ''
+  if (!normalized) return []
+
+  const periods: TimePeriod[] = Array.from(
+    normalized.matchAll(/아침|점심|저녁/g),
+    (match) => match[0] === '아침' ? 'MORNING' : 'AFTERNOON',
+  )
+  return periods.length === frequencyPerDay ? periods : []
+}
+
+function preferredTimePeriodLabel(period: TimePeriod): string {
+  return period === 'MORNING' ? '오전부터 선택' : '오후부터 선택'
 }
 
 function initialScheduleDraft(
@@ -613,6 +634,10 @@ function ScheduleEditor({
           const directionsId = `schedule-directions-${id}`
           const elapsedTimeNoticeId = `schedule-elapsed-time-notice-${id}`
           const showElapsedTimeNotice = hasElapsedTimeToday(draft)
+          const preferredPeriods = preferredTimePeriods(
+            medication.timing_text,
+            frequencyPerDay,
+          )
           return (
             <Card className="schedule-editor" key={id}>
               <div className="schedule-editor__heading">
@@ -718,11 +743,17 @@ function ScheduleEditor({
                   <div className="schedule-editor__time-grid">
                     {draft.times.map((time, index) => {
                       const periodLabel = timeOfDayLabel(time)
+                      const preferredPeriod = !time ? preferredPeriods[index] : undefined
                       return (
                       <label className="schedule-editor__time-field" key={index}>
                         <span className="sr-only">{medication.medication_name} {index + 1}번째 복용 시간</span>
                         {periodLabel && (
                           <span className="schedule-editor__time-period" aria-hidden="true">{periodLabel}</span>
+                        )}
+                        {preferredPeriod && (
+                          <span className="schedule-editor__time-period schedule-editor__time-period--preferred">
+                            {preferredTimePeriodLabel(preferredPeriod)}
+                          </span>
                         )}
                         <input
                           aria-label={`${medication.medication_name} ${index + 1}번째 복용 시간`}

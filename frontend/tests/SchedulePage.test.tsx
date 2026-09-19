@@ -586,6 +586,60 @@ describe('production 복약 일정', () => {
     expect(screen.queryByRole('button', { name: /복용 시간 (추가|삭제)/ })).toBeNull()
   })
 
+  it('명확한 복용 지시는 빈 시간 입력의 오전·오후 선택 보조만 표시한다', async () => {
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({
+        schedule_status: 'SETUP_REQUIRED',
+        schedule_items: [setupItem(secondMedicationId)],
+        occurrences: [],
+      })),
+      getLatestPrescription: vi.fn().mockResolvedValue(makePrescription({
+        medications: [{
+          ...makePrescription().data.medications[0],
+          prescription_version_medication_id: secondMedicationId,
+          medication_name: '순서 확인 약',
+          frequency_per_day: 2,
+          timing_text: '저녁 · 아침 식후',
+        }],
+      })),
+    })
+    renderSchedule(services)
+
+    fireEvent.click(await screen.findByRole('button', { name: '일정 설정하기' }))
+
+    expect(screen.getAllByText(/부터 선택$/).map((element) => element.textContent)).toEqual([
+      '오후부터 선택',
+      '오전부터 선택',
+    ])
+    expect((screen.getByLabelText('순서 확인 약 1번째 복용 시간') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('순서 확인 약 2번째 복용 시간') as HTMLInputElement).value).toBe('')
+  })
+
+  it.each(['식후', '하루 2회 식후', '필요시', null, '   '])('불명확한 복용 지시 %s는 오전·오후 선택 보조를 표시하지 않는다', async (timingText) => {
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(makeDay({
+        schedule_status: 'SETUP_REQUIRED',
+        schedule_items: [setupItem(secondMedicationId)],
+        occurrences: [],
+      })),
+      getLatestPrescription: vi.fn().mockResolvedValue(makePrescription({
+        medications: [{
+          ...makePrescription().data.medications[0],
+          prescription_version_medication_id: secondMedicationId,
+          medication_name: '직접 확인 약',
+          frequency_per_day: 2,
+          timing_text: timingText,
+        }],
+      })),
+    })
+    renderSchedule(services)
+
+    fireEvent.click(await screen.findByRole('button', { name: '일정 설정하기' }))
+
+    expect(screen.queryByText('오전부터 선택')).toBeNull()
+    expect(screen.queryByText('오후부터 선택')).toBeNull()
+  })
+
   it('기존 ACTIVE 일정의 날짜·종료 방식·복용 시간을 수정 폼에 채운다', async () => {
     const savedSchedule = {
       ...makeDay().data.schedule_items[0],
