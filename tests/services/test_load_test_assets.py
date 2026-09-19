@@ -82,7 +82,7 @@ def test_load_test_runbook_is_linked_from_testing_and_deployment_docs() -> None:
 def test_locustfile_imports_with_minimal_locust_stub(monkeypatch) -> None:
     _install_locust_stub(monkeypatch)
 
-    module = _load_locustfile("issue_627_locustfile")
+    module = _load_load_test_module("issue_627_locustfile", "locustfile.py")
 
     assert module.DEFAULT_SMOKE_PATH == "/api/openapi.json"
     assert module._configured_smoke_path() == "/api/openapi.json"
@@ -94,7 +94,7 @@ def test_locustfile_rejects_relative_smoke_path_with_minimal_locust_stub(monkeyp
     _install_locust_stub(monkeypatch)
     monkeypatch.setenv("LOAD_TEST_SMOKE_PATH", "api/openapi.json")
 
-    module = _load_locustfile("issue_627_locustfile_invalid")
+    module = _load_load_test_module("issue_627_locustfile_invalid", "locustfile.py")
 
     try:
         module._configured_smoke_path()
@@ -139,3 +139,112 @@ def test_auth_smoke_requires_explicit_test_credentials(monkeypatch) -> None:
         assert "LOAD_TEST_AUTH_EMAIL" in str(exc)
     else:
         raise AssertionError("missing auth smoke credential should fail")
+
+
+def test_ocr_worker_smoke_imports_with_minimal_locust_stub(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+
+    module = _load_load_test_module("issue_627_ocr_worker_smoke", "ocr_worker_smoke.py")
+
+    assert module.DEFAULT_MANIFEST_PATH == "backend/app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json"
+    assert module.DEFAULT_FIXTURE_PATH == "tests/fixtures/release_validation/ai_one_cycle_clova_openai_v1.png"
+    assert module._idempotency_prefix() == "load-test-ocr"
+
+
+def test_ocr_worker_smoke_validates_synthetic_fixture_hash(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    module = _load_load_test_module("issue_627_ocr_worker_hash", "ocr_worker_smoke.py")
+
+    manifest = module._manifest()
+
+    module._validate_fixture_hash(module._fixture_path(manifest), manifest)
+
+
+def test_ocr_worker_smoke_maps_manifest_to_confirmed_field_values(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    module = _load_load_test_module("issue_627_ocr_worker_fields", "ocr_worker_smoke.py")
+
+    values = module._expected_confirmed_values(module._manifest())
+
+    assert values[(0, "PRESCRIBED_DATE")] == "2026-08-21"
+    assert values[(1, "MEDICATION_NAME")] == "합성의약품에이정"
+    assert values[(1, "FREQUENCY_PER_DAY")] == "2"
+    assert values[(1, "TIMING")] == "아침 저녁 식후"
+
+
+def test_ocr_worker_smoke_requires_bearer_token_without_exposing_value(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    monkeypatch.delenv("LOAD_TEST_BEARER_TOKEN", raising=False)
+    module = _load_load_test_module("issue_627_ocr_worker_token", "ocr_worker_smoke.py")
+
+    try:
+        module._auth_headers()
+    except RuntimeError as exc:
+        assert "LOAD_TEST_BEARER_TOKEN is required" in str(exc)
+        assert "Bearer" not in str(exc)
+    else:
+        raise AssertionError("missing LOAD_TEST_BEARER_TOKEN should fail")
+
+
+class _RequestEventRecorder:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def fire(self, **kwargs: Any) -> None:
+        self.calls.append(kwargs)
+
+
+def _ocr_smoke_user_with_request_recorder(module: Any) -> tuple[Any, _RequestEventRecorder]:
+    recorder = _RequestEventRecorder()
+    user = module.OcrWorkerSmokeUser()
+    user.environment = types.SimpleNamespace(events=types.SimpleNamespace(request=recorder))
+    return user, recorder
+
+
+def _assert_single_flow_failure(recorder: _RequestEventRecorder, *, reason: str) -> None:
+    assert len(recorder.calls) == 1
+    event = recorder.calls[0]
+    assert event["request_type"] == "FLOW"
+    assert event["name"] == "ocr-smoke:flow-failed"
+    assert event["response_time"] == 0
+    assert event["response_length"] == 0
+    assert event["context"] == {"reason": reason}
+    assert str(event["exception"]) == f"OCR smoke flow failed: {reason}"
+    assert "Bearer" not in str(event["exception"])
+
+
+def test_ocr_worker_smoke_terminal_job_status_records_flow_failure(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    module = _load_load_test_module("issue_627_ocr_worker_terminal_failure", "ocr_worker_smoke.py")
+    user, recorder = _ocr_smoke_user_with_request_recorder(module)
+    user._json_request = lambda *args, **kwargs: {"status": "FAILED"}
+
+    result = user._wait_for_completed_job({"status_url": "/api/v1/jobs/synthetic"}, {})
+
+    assert result is None
+    _assert_single_flow_failure(recorder, reason="terminal-status")
+
+
+def test_ocr_worker_smoke_timeout_records_flow_failure(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    module = _load_load_test_module("issue_627_ocr_worker_timeout_failure", "ocr_worker_smoke.py")
+    user, recorder = _ocr_smoke_user_with_request_recorder(module)
+    times = iter([0.0, 2.0])
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(module, "_max_wait_seconds", lambda: 1.0)
+
+    result = user._wait_for_completed_job({"status_url": "/api/v1/jobs/synthetic"}, {})
+
+    assert result is None
+    _assert_single_flow_failure(recorder, reason="timeout")
+
+
+def test_ocr_worker_smoke_missing_required_fields_records_flow_failure(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    module = _load_load_test_module("issue_627_ocr_worker_missing_fields_failure", "ocr_worker_smoke.py")
+    user, recorder = _ocr_smoke_user_with_request_recorder(module)
+
+    reviewed = user._review_extracted_fields({"fields": []}, module._manifest(), {})
+
+    assert reviewed is False
+    _assert_single_flow_failure(recorder, reason="missing-required-fields")

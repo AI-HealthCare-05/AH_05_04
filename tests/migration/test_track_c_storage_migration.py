@@ -102,6 +102,9 @@ VALUES (:barrier_id, :checkin_id, 1, :safety_id, 1, 'ANSWERED', 'FORGOT')"""
 PLAN = """INSERT INTO support_action_plan
 (id, barrier_response_id, support_code, rule_version, copy_version, action_config_snapshot, status)
 VALUES (:plan_id, :barrier_id, 'REMINDER_SETUP', 'synthetic-v1', 'synthetic-v1', '{}'::jsonb, 'ACTIVE')"""
+BARRIER_SUBREASON_WITHOUT_CODE = """INSERT INTO barrier_response
+(id, medication_checkin_id, checkin_revision, safety_assessment_id, revision, response_status, barrier_code, subreason_code)
+VALUES (:barrier_id, :checkin_id, 1, :safety_id, 1, 'DECLINED', NULL, 'MISSED_ALERT')"""
 FOLLOWUP = """INSERT INTO action_plan_followup (id, support_action_plan_id, response, revision)
 VALUES (:followup_id, :plan_id, 'HELPED', 1)"""
 
@@ -206,6 +209,7 @@ def test_barrier_parent_revision_and_declined_shape():
         (BARRIER.replace("'ANSWERED'", "'DECLINED'"), "chk_barrier_response"),
         (BARRIER.replace("'FORGOT'", "'UNKNOWN'"), "chk_barrier_code"),
         (BARRIER.replace(":checkin_id, 1,", ":checkin_id, 2,"), "fk_barrier_safety_reference"),
+        (BARRIER_SUBREASON_WITHOUT_CODE, "chk_barrier_subreason_requires_code"),
     ]:
         with pytest.raises(DBAPIError, match=constraint):
             asyncio.run(_run(statement, ids))
@@ -419,11 +423,13 @@ def test_checkin_lock_marker_downgrade_preserves_history_and_reupgrade():
     command.upgrade(cfg, "head")
     asyncio.run(_seed_all())
 
+    # Downgrading past the lock-marker revision also reverts every later migration,
+    # so any column added after it is absent while downgraded. Compare without them.
+    reverted = "'{checkin_lock_marker,subreason_code}'::text[]"
+
     async def snapshot():
         return {
-            table.name: await _run(
-                f"SELECT jsonb_agg(to_jsonb(t) - 'checkin_lock_marker' ORDER BY id) FROM {table.name} t"
-            )
+            table.name: await _run(f"SELECT jsonb_agg(to_jsonb(t) - {reverted} ORDER BY id) FROM {table.name} t")
             for table in TABLES
         }
 

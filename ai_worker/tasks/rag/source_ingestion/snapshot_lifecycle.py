@@ -218,6 +218,8 @@ class SnapshotProvenanceReceipt:
     verification_status: SnapshotVerificationStatus
     rejected_record_count: int
     publication_verification_id: UUID | None
+    endpoint_code: str = ""
+    operation_code: str = ""
 
     def validate_provenance(self) -> None:
         validate_source_version(

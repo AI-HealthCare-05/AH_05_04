@@ -3,13 +3,20 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { ApiError } from '../api/client'
 import {
   getMedicationReport,
+  type ClinicBarrierEntry,
   type MedicationReportData,
   type MedicationReportPeriod,
   type MedicationReportRate,
 } from '../api/medicationReports'
+import type { BarrierCode } from '../api/trackC'
 import StatusPanel from '../components/StatusPanel'
 import { MobileShell } from '../design-system/components'
 import { clearAuthenticatedSession } from '../features/auth/authSession'
+import {
+  BARRIER_ORDER,
+  BARRIER_SHORT_LABELS,
+  SUBREASON_LABELS,
+} from '../features/trackC/labels'
 import '../design-system/prototype.css'
 import './MvpPages.css'
 import './ReportPage.css'
@@ -142,6 +149,22 @@ function ConfirmationRateCard({
     </article>
   )
 }
+function countBarriers(
+  entries: ClinicBarrierEntry[],
+): { barrier_code: BarrierCode; count: number }[] {
+  const tally = new Map<BarrierCode, number>()
+
+  for (const entry of entries) {
+    tally.set(entry.barrier_code, (tally.get(entry.barrier_code) ?? 0) + 1)
+  }
+
+  // Fixed check-in order, so the same reason sits in the same place every visit.
+  return BARRIER_ORDER.filter((code) => tally.has(code)).map((code) => ({
+    barrier_code: code,
+    count: tally.get(code) ?? 0,
+  }))
+}
+
 function ReportSummary({
   report,
   clinic,
@@ -237,6 +260,79 @@ function ReportSummary({
           </div>
         </section>
       )}
+
+      {clinic && report.clinic && (
+        <section
+          className="report-clinic-barriers"
+          aria-labelledby="report-clinic-barriers-title"
+        >
+          <h2 id="report-clinic-barriers-title">미복용 사유</h2>
+
+          {report.clinic.barriers.length > 0 ? (
+            <>
+              <ul className="report-clinic-barriers__tally">
+                {countBarriers(report.clinic.barriers).map((entry) => (
+                  <li key={entry.barrier_code}>
+                    <strong>
+                      {BARRIER_SHORT_LABELS[entry.barrier_code]}
+                    </strong>
+                    <b>{entry.count}회</b>
+                  </li>
+                ))}
+              </ul>
+
+              <ul className="report-clinic-barriers__detail">
+                {report.clinic.barriers.map((entry) => (
+                  <li key={entry.occurrence_id}>
+                    <time dateTime={entry.scheduled_local_date}>
+                      {entry.scheduled_local_date}
+                    </time>
+
+                    <span>{entry.medication_name}</span>
+
+                    <span>
+                      {entry.subreason_code
+                        ? SUBREASON_LABELS[entry.subreason_code]
+                        : BARRIER_SHORT_LABELS[entry.barrier_code]}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p>기간 내 기록된 미복용 사유가 없습니다.</p>
+          )}
+        </section>
+      )}
+
+      {clinic &&
+        report.clinic &&
+        report.clinic.consultation_questions.length > 0 && (
+          <section
+            className="report-clinic-questions"
+            aria-labelledby="report-clinic-questions-title"
+          >
+            <h2 id="report-clinic-questions-title">
+              진료 때 확인하고 싶은 질문
+            </h2>
+
+            <ul>
+              {report.clinic.consultation_questions.map((question) => (
+                <li key={question.question_id}>
+                  <p>{question.text}</p>
+                  <small>
+                    {question.medication_name} ·{' '}
+                    {question.last_selected_date}
+                  </small>
+                </li>
+              ))}
+            </ul>
+
+            <p className="report-clinic-questions__note">
+              사용자가 안내 목록에서 직접 고른 질문입니다.
+            </p>
+          </section>
+        )}
 
       {report.records.length > 0 ? (
         <section
@@ -374,7 +470,11 @@ function ReportPage() {
     setFailure(null)
 
     try {
-      const response = await getMedicationReport(period)
+      const response = await getMedicationReport(
+        period,
+        undefined,
+        clinic ? 'CLINIC' : undefined,
+      )
 
       if (requestSequence.current === sequence) {
         setReport(response.data)
@@ -384,7 +484,7 @@ function ReportPage() {
         setFailure(getLoadFailure(error))
       }
     }
-  }, [period])
+  }, [period, clinic])
 
   useEffect(() => {
     void loadReport()

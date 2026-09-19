@@ -21,7 +21,7 @@ PR #834는 Production 설정 검증에서 `CHAT_HISTORY_CONTEXT_ENABLED=true`를
 4. **동일 세션 격리 (Same-session context only)**: 현재 활성 `chat_session.id`와 일치하는 세션의 이전 완료 대화(`USER/NOT_APPLICABLE`과 `ASSISTANT/COMPLETED`)만 추출한다.
 5. **교차 세션 혼입 금지 (Cross-session exclusion)**: 다른 세션의 대화는 동일 사용자의 것이라도 context 배열에 절대 포함되지 않는다.
 6. **기존 문맥 알고리즘 보존**: 최신 30쌍 검사, 12,000자 예산 한도, 최대 3쌍 선택, 오래된 순 정렬(`question` 및 `answer`만 전달)의 기존 DTO 및 selection semantics는 그대로 유지한다.
-7. **기존 구현 불변**: 프롬프트(`chat-prompt-v5`), ChatService 흐름, RAG 파이프라인, DB 스키마/마이그레이션, Protected Retrieval은 변경하지 않는다.
+7. **기존 구현 불변**: 프롬프트(`chat-prompt-v6`), ChatService 흐름, RAG 파이프라인, DB 스키마/마이그레이션, Protected Retrieval은 변경하지 않는다.
 
 ## 안전성 및 데이터 삭제 (Safety & Deletion)
 

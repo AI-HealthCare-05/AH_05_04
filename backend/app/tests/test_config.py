@@ -174,26 +174,43 @@ def test_ocr_structure_model_remains_gpt_4o_mini_by_default() -> None:
 
 
 @pytest.mark.parametrize(
-    ("env", "enabled"),
+    ("env", "enabled", "should_succeed"),
     [
-        ("local", False),
-        ("local", True),
-        ("production", False),
-        ("production", True),
+        ("local", False, True),
+        ("local", True, True),
+        ("staging", False, True),
+        ("staging", True, False),
+        ("production", False, True),
+        ("production", True, True),
     ],
 )
-def test_chat_history_context_configuration_matrix(env: str, enabled: bool) -> None:
+def test_chat_history_context_environment_matrix(env: str, enabled: bool, should_succeed: bool) -> None:
     config_dict = {
         **BASE_CONFIG,
         "ENV": env,
         "CHAT_HISTORY_CONTEXT_ENABLED": enabled,
     }
-    if env == "production":
+    if env != "local":
         config_dict["IDEMPOTENCY_HMAC_KEY"] = "a-real-idempotency-hmac-secret-value"
         config_dict["IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY"] = REAL_SNAPSHOT_ENCRYPTION_KEY
 
-    config = Config.model_validate(config_dict)
-    assert config.CHAT_HISTORY_CONTEXT_ENABLED is enabled
+    if should_succeed:
+        config = Config.model_validate(config_dict)
+        assert config.CHAT_HISTORY_CONTEXT_ENABLED is enabled
+    else:
+        with pytest.raises(ValidationError):
+            Config.model_validate(config_dict)
+
+
+def test_chat_history_context_rejects_unsupported_environment() -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": "unsupported",
+                "CHAT_HISTORY_CONTEXT_ENABLED": True,
+            }
+        )
 
 
 def test_chat_history_context_production_regression_with_required_config() -> None:

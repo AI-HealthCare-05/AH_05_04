@@ -29,6 +29,7 @@ export type Barrier = {
   safety_assessment_id: string
   response_status: 'ANSWERED' | 'DECLINED'
   barrier_code: BarrierCode | null
+  subreason_code: SubreasonCode | null
   revision: number
 }
 export type ActionConfig = {
@@ -88,6 +89,7 @@ export type SafetyRequest = {
 export type BarrierRequest = {
   response_status: 'ANSWERED' | 'DECLINED'
   barrier_code: BarrierCode | null
+  subreason_code?: SubreasonCode
   checkin_revision: number
   expected_revision: number
 }
