@@ -122,7 +122,7 @@ def test_production_scripts_use_env_domain_and_do_not_mutate_source_nginx_config
     unsafe_secret_sed = "s/__CLOUDFRONT_ORIGIN_VERIFY_SECRET__/${CLOUDFRONT_ORIGIN_VERIFY_SECRET}"
     assert unsafe_secret_sed not in deployment_script
     assert '"VITE_API_BASE_URL=$PRODUCTION_PUBLIC_ORIGIN"' in deployment_script
-    assert 'DEPLOY_SERVICES=("fastapi" "ai-worker" "nginx")' in deployment_script
+    assert 'DEPLOY_SERVICES=("fastapi" "ai-worker" "nginx" "checkin-deadline-scheduler")' in deployment_script
     assert 'if [ "$APP_VERSION" = "latest" ]' in deployment_script
     assert "--wait" in deployment_script
     assert (

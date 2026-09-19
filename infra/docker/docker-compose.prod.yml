@@ -309,10 +309,10 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # #839: check-in deadline runtime. Enabled separately from notifications so a
-  # deployment without app notifications still closes overdue occurrences.
+  # #839: check-in deadline runtime. Not opt-in: without it, occurrences whose
+  # confirmation deadline passed stay PENDING and the report keeps showing 예정.
+  # Deployed and verified by scripts/deployment.sh like the other core services.
   checkin-deadline-scheduler:
-    profiles: ["checkin-deadlines"]
     image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
     init: true
     entrypoint: ["/app/.venv/bin/python", "-m", "app.commands.schedule_checkin_deadlines"]

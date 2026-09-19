@@ -18,14 +18,17 @@ Check-in 상태 의미와 deadline 계산의 정본은
 
 ## 실행 방식과 범위
 
-같은 Backend 이미지의 `checkin-deadline-scheduler` 서비스를 `checkin-deadlines`
-profile로 명시적으로 시작한다. 설정은 `infra/docker/docker-compose.prod.yml`, 실행 코드는
-`app.commands.schedule_checkin_deadlines` 및 `app.commands.generate_unconfirmed_checkins`다.
-일반 배포 스크립트는 이 서비스를 자동 시작하지 않는다. 알림 게시, occurrence 생성,
+같은 Backend 이미지의 `checkin-deadline-scheduler` 서비스로 실행한다. 설정은
+`infra/docker/docker-compose.prod.yml`, 실행 코드는 `app.commands.schedule_checkin_deadlines`
+및 `app.commands.generate_unconfirmed_checkins`다. 알림 게시, occurrence 생성,
 Worker·Redis·외부 Provider 호출을 추가하지 않는다.
 
-profile을 `notifications`와 분리한 이유는 알림을 켜지 않은 배포에서도 기한 처리가 필요하기
-때문이다. 두 서비스는 서로의 시작 여부에 의존하지 않는다.
+이 서비스에는 opt-in profile을 두지 않는다. 기한 처리는 알림처럼 켜고 끄는 기능이 아니라
+Check-in 상태 정합성에 필요한 core runtime이고, 멈춰 있으면 사용자 화면에 과거 기록이 계속
+`예정`으로 남기 때문이다. `scripts/deployment.sh`는 이 서비스를 `DEPLOY_SERVICES`에 포함해
+다른 핵심 서비스와 함께 기동하고, 배포 직후 running 상태를 확인해 실패 시 배포를 중단한다.
+알림 스케줄러는 기존대로 `notifications` profile opt-in이며, 두 서비스는 서로의 시작 여부에
+의존하지 않는다.
 
 | 항목 | 설정·근거 |
 | --- | --- |
@@ -46,12 +49,12 @@ profile을 `notifications`와 분리한 이유는 알림을 켜지 않은 배포
 
 ## 최초 도입 시 backlog 소진
 
-서비스를 시작하면 기존 backlog도 주기마다 500건씩 자동으로 소진한다. 즉시 소진이 필요하면
-승인된 이미지로 단발 명령을 `processed_count=0`이 나올 때까지 반복 실행한다.
+배포로 서비스가 기동하면 기존 backlog도 주기마다 500건씩 자동으로 소진한다. 즉시 소진이
+필요하면 승인된 이미지로 단발 명령을 `processed_count=0`이 나올 때까지 반복 실행한다.
 
 ```bash
 cd ~/project
-docker compose --profile checkin-deadlines run --rm --no-deps \
+docker compose run --rm --no-deps \
   --entrypoint /app/.venv/bin/python checkin-deadline-scheduler \
   -m app.commands.generate_unconfirmed_checkins
 ```
@@ -62,21 +65,24 @@ audit에 남고 현재 결과만 바뀐다.
 
 ## 적용과 중지
 
+정상 경로는 `scripts/deployment.sh` 실행이며, 아래는 장애 조사·수동 개입용이다.
+
 ```bash
 cd ~/project
-# 승인된 APP_VERSION 이미지와 migration head 확인 후 서비스만 시작
-docker compose --profile checkin-deadlines up -d --no-deps checkin-deadline-scheduler
+# 상태와 최근 결과 확인
 docker compose ps -a checkin-deadline-scheduler
 docker compose logs --since 10m --timestamps checkin-deadline-scheduler
 
 # DB migration, 이미지 업데이트, 장애 조사 전 먼저 중지
 docker compose stop checkin-deadline-scheduler
 # 재개 또는 승인된 새 APP_VERSION 적용 후 재생성
-docker compose --profile checkin-deadlines up -d --no-deps --force-recreate checkin-deadline-scheduler
+docker compose up -d --no-deps --force-recreate checkin-deadline-scheduler
 ```
 
-`scripts/deployment.sh`는 migration 전에 이 서비스를 중지하고, 중지되지 않으면 배포를
-차단한다. 스크립트 밖에서 migration을 수행할 때도 위 stop을 먼저 수행한다.
+`scripts/deployment.sh`는 migration 전에 이 서비스를 중지하고 중지되지 않으면 배포를
+차단하며, 서비스 기동 후에는 running 상태를 확인해 실패 시 배포를 중단한다. 스크립트 밖에서
+migration을 수행할 때도 위 stop을 먼저 수행한다. 수동으로 stop한 서비스는 자동 재개하지
+않으므로, 조사 후 위 명령이나 다음 배포로 반드시 다시 기동한다.
 
 ## 장애 감지·대응
 

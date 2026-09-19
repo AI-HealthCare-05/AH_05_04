@@ -431,7 +431,7 @@ build_and_push \
   "ai_worker/Dockerfile" \
   "."
 
-DEPLOY_SERVICES=("fastapi" "ai-worker" "nginx")
+DEPLOY_SERVICES=("fastapi" "ai-worker" "nginx" "checkin-deadline-scheduler")
 
 echo "${COLOR_GREEN}선택한 이미지의 build와 push가 완료되었습니다.${COLOR_NC}"
 echo "${COLOR_BLUE}배포 대상 서비스: ${DEPLOY_SERVICES[*]}${COLOR_NC}"
@@ -668,7 +668,7 @@ echo "Stopping application services before schema migration"
 # Schema migration 전에 기존 애플리케이션을 먼저 멈춰 구버전 코드가 변경 중인
 # DB schema를 읽거나 쓰는 상황을 방지합니다.
 docker compose --profile notifications stop -t 15 notification-scheduler
-docker compose --profile checkin-deadlines stop -t 15 checkin-deadline-scheduler
+docker compose stop -t 15 checkin-deadline-scheduler
 
 docker compose --profile source-admin --profile catalog-admin --profile candidate-index-admin stop \
   -t 90 \
@@ -806,6 +806,20 @@ docker compose up \
   --pull always \
   --wait \
   "${deploy_services[@]}"
+
+# #839: 기한 처리 런타임이 멈춘 채 배포가 끝나면 사용자에게 보이는 Check-in 상태가
+# 계속 어긋나므로, 배포 경로에서 기동 여부를 확인하고 실패하면 배포를 중단합니다.
+if ! running_services_after_deploy="$(docker compose ps --services --status running)"; then
+  echo "Could not confirm service running state after deployment."
+  docker compose ps -a checkin-deadline-scheduler || true
+  exit 1
+fi
+
+if ! printf '%s\n' "$running_services_after_deploy" | grep -qx 'checkin-deadline-scheduler'; then
+  echo "checkin-deadline-scheduler is not running after deployment."
+  docker compose ps -a checkin-deadline-scheduler
+  exit 1
+fi
 
 # 사용 중인 rollback image는 남기고 dangling image만 정리합니다.
 docker image prune -f
