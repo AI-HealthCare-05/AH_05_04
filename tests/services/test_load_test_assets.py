@@ -196,6 +196,140 @@ def test_schedule_smoke_requires_explicit_test_credentials(monkeypatch) -> None:
         raise AssertionError("missing schedule smoke credential should fail")
 
 
+def test_track_c_support_smoke_imports_with_minimal_locust_stub(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    monkeypatch.setenv("LOAD_TEST_TRACK_C_BARRIER_RESPONSE_ID", "barrier-response-1")
+    monkeypatch.setenv("LOAD_TEST_TRACK_C_TRAVEL_SITUATION", "SCHEDULE_CHANGED")
+    monkeypatch.setenv("LOAD_TEST_TRACK_C_SUBREASON_CODE", "TIMING OR FOOD")
+
+    module = _load_load_test_module("issue_743_track_c_support_smoke", "track_c_support_smoke.py")
+
+    assert module.LOGIN_PATH == "/api/v1/auth/login"
+    assert module.TRACK_C_BARRIER_RESPONSE_ID_ENV == "LOAD_TEST_TRACK_C_BARRIER_RESPONSE_ID"
+    assert module._support_offers_path("barrier-response-1") == (
+        "/api/v1/barrier-responses/barrier-response-1/supports"
+        "?travel_situation=SCHEDULE_CHANGED&subreason_code=TIMING+OR+FOOD"
+    )
+    assert module._auth_headers("token") == {
+        "Authorization": "Bearer token",
+        "Accept": "application/json",
+    }
+
+
+def test_track_c_support_smoke_rejects_invalid_travel_situation(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    monkeypatch.setenv("LOAD_TEST_TRACK_C_TRAVEL_SITUATION", "UNSUPPORTED")
+
+    module = _load_load_test_module("issue_743_track_c_support_smoke_invalid", "track_c_support_smoke.py")
+
+    try:
+        module._support_offer_query()
+    except RuntimeError as exc:
+        assert "LOAD_TEST_TRACK_C_TRAVEL_SITUATION" in str(exc)
+        assert "UNSUPPORTED" not in str(exc)
+    else:
+        raise AssertionError("invalid Track C travel situation should fail")
+
+
+def test_track_c_support_smoke_requires_fixture_barrier_response_id(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    monkeypatch.delenv("LOAD_TEST_TRACK_C_BARRIER_RESPONSE_ID", raising=False)
+
+    module = _load_load_test_module("issue_743_track_c_support_smoke_missing_env", "track_c_support_smoke.py")
+
+    try:
+        module._required_env("LOAD_TEST_TRACK_C_BARRIER_RESPONSE_ID")
+    except RuntimeError as exc:
+        assert "LOAD_TEST_TRACK_C_BARRIER_RESPONSE_ID" in str(exc)
+    else:
+        raise AssertionError("missing Track C barrier response id should fail")
+
+
+def test_track_c_support_smoke_missing_token_records_flow_failure(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    module = _load_load_test_module("issue_743_track_c_support_smoke_missing_token", "track_c_support_smoke.py")
+    recorder = _RequestEventRecorder()
+    user = module.TrackCSupportSmokeUser()
+    user.environment = types.SimpleNamespace(events=types.SimpleNamespace(request=recorder))
+    user.access_token = None
+
+    user.read_track_c_supports()
+
+    assert len(recorder.calls) == 1
+    event = recorder.calls[0]
+    assert event["request_type"] == "FLOW"
+    assert event["name"] == "track-c-support-smoke:flow-failed"
+    assert event["context"] == {"reason": "missing-access-token"}
+    assert "Track C support smoke flow failed: missing-access-token" == str(event["exception"])
+
+
+class _TrackCInvalidJsonResponse:
+    status_code = 200
+
+    def __init__(self) -> None:
+        self.failures: list[str] = []
+
+    def json(self) -> object:
+        raise ValueError("not json")
+
+    def failure(self, message: str) -> None:
+        self.failures.append(message)
+
+
+class _TrackCPostContext:
+    def __init__(self, response: _TrackCInvalidJsonResponse) -> None:
+        self.response = response
+
+    def __enter__(self) -> _TrackCInvalidJsonResponse:
+        return self.response
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+        return False
+
+
+class _TrackCLoginClient:
+    def __init__(self, response: _TrackCInvalidJsonResponse) -> None:
+        self.response = response
+
+    def post(self, *args: object, **kwargs: object) -> _TrackCPostContext:
+        return _TrackCPostContext(self.response)
+
+
+def test_track_c_support_smoke_login_invalid_json_records_request_failure(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    monkeypatch.setenv("LOAD_TEST_AUTH_EMAIL", "track-c-load@example.com")
+    monkeypatch.setenv("LOAD_TEST_AUTH_PASSWORD", "synthetic-password")
+    module = _load_load_test_module("issue_743_track_c_support_smoke_login_invalid_json", "track_c_support_smoke.py")
+    response = _TrackCInvalidJsonResponse()
+
+    token = module._login(_TrackCLoginClient(response))
+
+    assert token is None
+    assert response.failures == ["response body is not valid JSON"]
+
+
+def test_track_c_support_smoke_data_invalid_json_records_request_failure(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    module = _load_load_test_module("issue_743_track_c_support_smoke_data_invalid_json", "track_c_support_smoke.py")
+    response = _TrackCInvalidJsonResponse()
+
+    data = module._data_object_from_response(response)
+
+    assert data is None
+    assert response.failures == ["response body is not valid JSON"]
+
+
+def test_track_c_support_smoke_followup_invalid_json_records_request_failure(monkeypatch) -> None:
+    _install_locust_stub(monkeypatch)
+    module = _load_load_test_module("issue_743_track_c_support_smoke_followup_invalid_json", "track_c_support_smoke.py")
+    response = _TrackCInvalidJsonResponse()
+
+    data = module._followup_from_response(response)
+
+    assert data is None
+    assert response.failures == ["response body is not valid JSON"]
+
+
 def test_ocr_worker_smoke_imports_with_minimal_locust_stub(monkeypatch) -> None:
     _install_locust_stub(monkeypatch)
 

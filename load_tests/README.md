@@ -112,6 +112,39 @@ uvx locust \
 
 Use only synthetic accounts with existing schedule fixture data. This scenario is read-only and does not create, update, cancel, or check in schedules.
 
+## Track C Support Read Smoke Command
+
+`load_tests/track_c_support_smoke.py` is the #743 1차-4 Track C support read smoke scenario. It exercises a read-only authenticated support flow:
+
+1. `POST /api/v1/auth/login`
+2. `GET /api/v1/barrier-responses/{barrier_response_id}/supports`
+3. Optional `GET /api/v1/support-action-plans/{support_action_plan_id}`
+4. Optional `GET /api/v1/support-action-plans/{support_action_plan_id}/resources`
+5. Optional `GET /api/v1/support-action-plans/{support_action_plan_id}/followups`
+
+```bash
+mkdir -p docs/validation/load-testing
+LOAD_TEST_AUTH_EMAIL="<test-account-email>" \
+LOAD_TEST_AUTH_PASSWORD="<test-account-password>" \
+LOAD_TEST_TRACK_C_BARRIER_RESPONSE_ID="<synthetic-barrier-response-id>" \
+uvx locust \
+  -f load_tests/track_c_support_smoke.py \
+  --host http://127.0.0.1:8000 \
+  --headless \
+  -u 5 \
+  -r 1 \
+  -t 3m \
+  --csv docs/validation/load-testing/issue-743-track-c-support-smoke-local
+```
+
+Use only synthetic accounts with existing Track C barrier fixture data. This scenario is read-only and does not create safety assessments, barrier responses, support action plans, or followups.
+
+Track C support-specific reproducibility notes:
+
+- `LOAD_TEST_TRACK_C_BARRIER_RESPONSE_ID` is required and must belong to the synthetic test account.
+- `LOAD_TEST_TRACK_C_TRAVEL_SITUATION` and `LOAD_TEST_TRACK_C_SUBREASON_CODE` can be set to pin the support filter used by the target fixture.
+- `LOAD_TEST_TRACK_C_SUPPORT_PLAN_ID` is optional. When omitted, the scenario measures support-offer reads only; when set, it also reads the plan, resources, and followup state.
+
 Schedule-specific reproducibility notes:
 
 - If `LOAD_TEST_SCHEDULE_DATE` is omitted, the scenario uses today's local date in `Asia/Seoul`; set it explicitly for evidence runs so repeated runs target the same fixture date.
@@ -189,6 +222,10 @@ Do not commit the bearer token or generated CSV files. Commit only a redacted su
 | `LOAD_TEST_AUTH_LOGOUT_ON_STOP` | `false` | Optional logout call on Locust user shutdown. Use carefully with shared accounts. |
 | `LOAD_TEST_SCHEDULE_DATE` | today in Asia/Seoul | Local date used by `schedule_smoke.py`; set explicitly for evidence runs. |
 | `LOAD_TEST_SCHEDULE_DETAIL_LIMIT` | `3` | Maximum occurrence medication detail requests per task. |
+| `LOAD_TEST_TRACK_C_BARRIER_RESPONSE_ID` | empty | Required by `track_c_support_smoke.py`; synthetic barrier response fixture id. |
+| `LOAD_TEST_TRACK_C_SUPPORT_PLAN_ID` | empty | Optional action plan fixture id for plan/resources/followup read checks. |
+| `LOAD_TEST_TRACK_C_TRAVEL_SITUATION` | empty | Optional support-offer filter; allowed values are `SCHEDULE_CHANGED` and `MEDICATION_NOT_WITH_ME`. |
+| `LOAD_TEST_TRACK_C_SUBREASON_CODE` | empty | Optional support-offer subreason filter for the target fixture. |
 | `LOAD_TEST_OCR_MANIFEST_PATH` | `backend/app/release_validation/scenarios/ai-one-cycle-clova-openai-v1.json` | Synthetic OCR scenario manifest |
 | `LOAD_TEST_OCR_FIXTURE_PATH` | manifest `fixture_path` | Synthetic prescription image fixture |
 | `LOAD_TEST_OCR_POLL_INTERVAL_SECONDS` | `1.0` | Fallback Job polling interval when `retry_after_seconds` is absent |
@@ -216,7 +253,7 @@ After API paths stabilize, add scenarios in small groups rather than one broad P
 
 1. user/profile read smoke after this Auth baseline
 2. medication schedule read smoke: initial smoke is `load_tests/schedule_smoke.py`
-3. check-in and Track C support smoke
+3. check-in and Track C support smoke: initial support read smoke is `load_tests/track_c_support_smoke.py`
 4. prescription upload/OCR polling: initial smoke is `load_tests/ocr_worker_smoke.py`
 5. OCR review and prescription confirmation: initial smoke is `load_tests/ocr_worker_smoke.py`
 6. Guide generation

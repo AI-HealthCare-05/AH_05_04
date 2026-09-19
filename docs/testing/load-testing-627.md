@@ -28,8 +28,9 @@ Included now:
 - `load_tests/auth_smoke.py` with the #627 1차-1 Auth baseline smoke flow.
 - `load_tests/ocr_worker_smoke.py` with the #627 1차-2 OCR / Worker minimum smoke flow.
 - `load_tests/schedule_smoke.py` with the #743 medication schedule read smoke flow.
+- `load_tests/track_c_support_smoke.py` with the #743 Track C support read smoke flow.
 - Default framework smoke target `/api/openapi.json`, matching the deployment runbook's FastAPI HTTP liveness check.
-- `LOAD_TEST_SMOKE_PATH`, `LOAD_TEST_EXPECT_STATUS`, Auth/OCR smoke variables, and optional `LOAD_TEST_BEARER_TOKEN` environment variables.
+- `LOAD_TEST_SMOKE_PATH`, `LOAD_TEST_EXPECT_STATUS`, Auth/OCR smoke variables, Track C support variables, and optional `LOAD_TEST_BEARER_TOKEN` environment variables.
 - `scripts/load_testing/validate_load_test_assets.py` and a regression test to keep the framework files aligned.
 - This runbook and links from the main testing/deployment documentation.
 
@@ -128,6 +129,39 @@ uvx locust \
 
 This scenario is read-only. It does not create schedules, edit schedule times, cancel occurrences, or submit check-ins. Treat it as baseline/smoke evidence, not as a production capacity claim.
 
+## Track C Support Read Smoke
+
+`load_tests/track_c_support_smoke.py` is the #743 1차-4 read-only Track C support scenario. It covers:
+
+1. `POST /api/v1/auth/login`
+2. `GET /api/v1/barrier-responses/{barrier_response_id}/supports`
+3. Optional action plan, resources, and followup reads when `LOAD_TEST_TRACK_C_SUPPORT_PLAN_ID` is set.
+
+Run it only with a synthetic account that already has Track C barrier fixture data:
+
+```bash
+mkdir -p docs/validation/load-testing
+LOAD_TEST_AUTH_EMAIL="<test-account-email>" \
+LOAD_TEST_AUTH_PASSWORD="<test-account-password>" \
+LOAD_TEST_TRACK_C_BARRIER_RESPONSE_ID="<synthetic-barrier-response-id>" \
+uvx locust \
+  -f load_tests/track_c_support_smoke.py \
+  --host http://127.0.0.1:8000 \
+  --headless \
+  -u 5 \
+  -r 1 \
+  -t 3m \
+  --csv docs/validation/load-testing/issue-743-track-c-support-smoke-local
+```
+
+This scenario is read-only. It does not create safety assessments, barrier responses, support action plans, or followups. Treat it as baseline/smoke evidence, not as a production capacity claim.
+
+Track C support-specific reproducibility notes:
+
+- `LOAD_TEST_TRACK_C_BARRIER_RESPONSE_ID` is required and must belong to the synthetic test account.
+- `LOAD_TEST_TRACK_C_TRAVEL_SITUATION` and `LOAD_TEST_TRACK_C_SUBREASON_CODE` can be set to pin support-offer filtering for the fixture.
+- `LOAD_TEST_TRACK_C_SUPPORT_PLAN_ID` is optional and enables plan/resources/followup reads.
+
 Schedule-specific reproducibility notes:
 
 - If `LOAD_TEST_SCHEDULE_DATE` is omitted, the scenario uses today's local date in `Asia/Seoul`; set it explicitly for evidence runs so repeated runs target the same fixture date.
@@ -221,7 +255,7 @@ After API contracts settle, add scenarios in focused follow-up PRs:
 
 1. User/profile read smoke after the Auth baseline.
 2. Medication schedule read smoke. Initial scenario: `load_tests/schedule_smoke.py`.
-3. Check-in and Track C support smoke.
+3. Check-in and Track C support smoke. Initial support read smoke: `load_tests/track_c_support_smoke.py`.
 4. Prescription upload and OCR polling using synthetic files only. Initial scenario: `load_tests/ocr_worker_smoke.py`.
 5. OCR review and prescription confirmation. Initial scenario: `load_tests/ocr_worker_smoke.py`.
 6. Guide generation.
