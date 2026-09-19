@@ -413,6 +413,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 "rag_request_guard_authority": _APPEND_ONLY_PRIVILEGES,
                 "rag_request_source_decision": _APPEND_ONLY_PRIVILEGES,
                 "rag_request_member_decision": _APPEND_ONLY_PRIVILEGES,
+                "rag_request_guard_runtime_binding": _APPEND_ONLY_PRIVILEGES,
                 # #780: Candidate Index tables are runtime read-only
                 "rag_candidate_index_version": _READ_ONLY_PRIVILEGES,
                 "rag_candidate_index_member": _READ_ONLY_PRIVILEGES,
@@ -1198,6 +1199,7 @@ async def _grant_historical_test_permissions(admin, environment):
                 "rag_request_guard_authority",  # #713 follows the historical Source cutover.
                 "rag_request_source_decision",
                 "rag_request_member_decision",
+                "rag_request_guard_runtime_binding",  # #806 follows the historical Source cutover.
                 "rag_evidence_authority",  # #712 follows the historical Source cutover.
             }:
                 await connection.execute(text(f'GRANT {privileges} ON "{table}" TO "{runtime}"'))

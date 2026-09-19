@@ -2,7 +2,8 @@
 
 - **Decision ID**: `PD-800-20260919`
 - **Date**: 2026-09-19
-- **Status**: Proposed · Review pending
+- **Status**: Accepted
+- **Approval Date**: 2026-09-19
 - **Implementation Owner**: 정현우 (AI/RAG implementation owner)
 - **Responsible Reviewers**: @phina-io (송은영 — Backend / Security technical controls), @hazelnutflavoured (권가빈 — PM / Acceptance)
 - **Precedent Decisions**:
@@ -83,4 +84,23 @@ Future widenings of `CATALOG_READ_TABLES` will not widen Candidate Index Builder
 - Strict import isolation is preserved for the web application runtime.
 - The Candidate Index Builder is executable as a one-shot container under the `candidate-index-admin` profile.
 - All boundaries are guarded by automated contract tests (`test_backend_ai_worker_import_boundary.py`, `test_database_role_deployment.py`).
-- Merge Gate: Requires approval from @phina-io (송은영) and @hazelnutflavoured (권가빈).
+- Approval Gate: SATISFIED — @phina-io (송은영) Backend / Security approval and @hazelnutflavoured (권가빈) PM / Acceptance approval recorded on 2026-09-19. See [§5 Approval Evidence](#5-approval-evidence).
+
+---
+
+## 5. Approval Evidence
+
+Both responsible reviewers recorded explicit approval of this Decision. The pull request merge event itself is **not** treated as approval evidence; only the two reviewer approvals below are.
+
+| Reviewer | Role | State | Submitted | Evidence | Target |
+| --- | --- | --- | --- | --- | --- |
+| `@phina-io` | Backend / Security technical controls | `APPROVED` | `2026-09-19T02:09:54Z` | [PR #824 review](https://github.com/AI-HealthCare-05/AH_05_04/pull/824#pullrequestreview-5254127846) `PRR_kwDOT3EWNs8AAAABOSug5g` | `f896ab81becb227b837f58f2c33b886b927910a9` |
+| `@hazelnutflavoured` | PM / Acceptance | `APPROVED` | `2026-09-19T03:56:21Z` | [PR #824 comment](https://github.com/AI-HealthCare-05/AH_05_04/pull/824#issuecomment-5739178810) `5739178810` | post-merge PD-800 approval; merge `e8ed7d7b1427d4fadfcbe2fc372fb6b87a6f5e38` |
+
+### 5.1 Post-Merge Governance Chronology
+
+PR #824 carried the Phase A implementation together with the Backend / Security approval from `@phina-io`, and was merged through the merge queue as `e8ed7d7b1427d4fadfcbe2fc372fb6b87a6f5e38` before the PM / Acceptance review concluded.
+
+The explicit PD-800 approval from the PM / Acceptance responsible reviewer `@hazelnutflavoured` was recorded after that merge, on 2026-09-19.
+
+Accordingly, this status transition from `Proposed · Review pending` to `Accepted` is a **post-merge governance closeout**, not an implementation change. No boundary defined in §2 is altered, broadened, or re-designed by the transition.
