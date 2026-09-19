@@ -33,6 +33,7 @@ _REQUEST_GUARD_RUNTIME_BINDING_WRITERS = frozenset(
     {"backend/app/repositories/rag_request_guard_runtime_binding_repository.py"}
 )
 _EVIDENCE_AUTHORITY_WRITERS = frozenset({"backend/app/repositories/rag_evidence_authority_repository.py"})
+_SOURCE_USE_APPROVAL_WRITERS = frozenset({"backend/app/repositories/rag_source_use_approval_repository.py"})
 
 APPROVED_WRITERS: dict[str, frozenset[str]] = {
     "source_management_permission": frozenset({"backend/app/admin/source_management_permissions.py"}),
@@ -79,6 +80,8 @@ APPROVED_WRITERS: dict[str, frozenset[str]] = {
     "rag_evidence_rule": frozenset({"backend/app/repositories/rag_evidence_citation_repository.py"}),
     "rag_evidence_guideline": frozenset({"backend/app/repositories/rag_evidence_citation_repository.py"}),
     "rag_citation": frozenset({"backend/app/repositories/rag_evidence_citation_repository.py"}),
+    # #807 Source Use Approval은 별도 authority 이력이며, 발행/철회 경계를 한 저장소로 제한한다.
+    "rag_source_use_approval": _SOURCE_USE_APPROVAL_WRITERS,
 }
 
 MODEL_TABLES = {
@@ -121,6 +124,7 @@ MODEL_TABLES = {
     "RagEvidenceRule": "rag_evidence_rule",
     "RagEvidenceGuideline": "rag_evidence_guideline",
     "RagCitation": "rag_citation",
+    "RagSourceUseApproval": "rag_source_use_approval",
 }
 
 _RAW_DML = re.compile(
@@ -128,6 +132,30 @@ _RAW_DML = re.compile(
     r"(?:public\.)?(?P<table>" + "|".join(sorted(APPROVED_WRITERS, key=len, reverse=True)) + r")\b",
     re.IGNORECASE,
 )
+
+_DML_CALL_NAMES = frozenset({"insert", "update", "delete"})
+
+
+def _dml_call_aliases(tree: ast.AST) -> dict[str, str]:
+    aliases = {name: name for name in _DML_CALL_NAMES}
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+
+        if node.module not in {
+            "sqlalchemy",
+            "sqlalchemy.dialects.postgresql",
+        }:
+            continue
+
+        for imported in node.names:
+            if imported.name not in _DML_CALL_NAMES:
+                continue
+
+            aliases[imported.asname or imported.name] = imported.name
+
+    return aliases
 
 
 def _call_name(node: ast.AST) -> str | None:
@@ -161,13 +189,14 @@ def _table_bindings(tree: ast.AST) -> dict[str, str]:
 
 def protected_writes(path: Path, source: str) -> set[tuple[str, int]]:
     tree = ast.parse(source, filename=str(path))
+    dml_call_aliases = _dml_call_aliases(tree)
     table_bindings = _table_bindings(tree)
     writes: set[tuple[str, int]] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             call_name = _call_name(node.func)
             table = MODEL_TABLES.get(call_name or "")
-            if call_name in {"insert", "update", "delete"} and node.args:
+            if call_name in dml_call_aliases and node.args:
                 argument = node.args[0]
                 argument_name = _call_name(argument)
                 table = MODEL_TABLES.get(argument_name or "") or table_bindings.get(argument_name or "")
