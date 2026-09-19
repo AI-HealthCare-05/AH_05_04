@@ -158,10 +158,10 @@ Issue #159 PR C(Answer 3-pair comparison) 착수 시점의 controlled variable s
 | `TIMEOUT` | `DevVariant.parameters["timeout"]` / Generator provider client config | #159 / #180 | Variant config / Generator client 초기화 시점 | 미확정 (`{"timeout_ms": int}`) | 미확정 | Config dict에 존재, 실제 런타임 provider timeout 결속 미확정 | `SOURCE_EXISTS_RECIPE_UNRESOLVED` | #159 / #180 timeout authority 및 projection recipe 합의 |
 | `RETRIEVAL_PIPELINE` | `VersionedEvidenceRetrievalConfiguration` / `ActualRetrievalModelConfig` | #159 / #178 / #180 | Retrieval config 생성 및 seal 시점 | 미확정 (`MODEL_CONFIGURATION` 제외 pipeline config, `ANS-BASE` 표현) | 미확정 | `retrieval_config` content hash 존재, baseline 표현 및 추출 seam 미확정 | `SOURCE_EXISTS_RECIPE_UNRESOLVED` | #159 / #180 retrieval pipeline projection 및 `ANS-BASE` non-retrieval 표현 확정 |
 | `SOURCE_INDEX` | `ActualRetrievalModelConfig.knowledge_index_ref` / `RagRuntimeReleaseBundle.knowledge_index_manifest_hash` | #159 / #800 | Knowledge index 빌드 및 Bundle 활성화 시점 | 미확정 (`knowledge_index_ref.hash` 직접 사용 vs canonical projection; `ANS-BASE` 표현) | 미확정 | `knowledge_index_ref` 존재, `ANS-BASE` 바인딩 및 exact recipe 미확정 | `SOURCE_EXISTS_RECIPE_UNRESOLVED` | #159 `source_index_hash` baseline/candidate exact recipe 규정 |
-| `RUNTIME_BUNDLE` | `rag_runtime_release_bundle` (`id`, `bundle_manifest_hash`, `environment_code`) + Issue #806 per-request Runtime Binding authority | Issue #810 (환경 영속화 완료 via PR #822) / Issue #806 (per-request Runtime Binding authority) | Bundle 빌드/릴리스 및 per-request 런타임 바인딩 시점 | 후보 (Candidate): `(bundle_id, bundle_manifest_hash)` + canonical `environment_code` | 상류 차단 (PR #822 완료, Issue #806 per-request 바인딩 및 #159 hash recipe 미확정) | PR #822 병합으로 canonical Runtime Environment vocabulary/persistence는 완료. Issue #806의 per-request Runtime Binding authority는 아직 OPEN. | `BLOCKED_BY_UPSTREAM_AUTHORITY` | Issue #806 (OPEN) + #159 canonical RUNTIME_BUNDLE projection/hash recipe 미확정 |
+| `RUNTIME_BUNDLE` | `rag_runtime_release_bundle` (`id`, `bundle_manifest_hash`, `environment_code`) + `RequestGuardRuntimeBindingObservation` (#806) | Issue #810 / Issue #806 (PR #828 병합 완료) | Bundle 빌드/릴리스 및 per-request 런타임 바인딩 시점 | 후보 (Candidate): `(bundle_id, bundle_manifest_hash, environment)` 최소 프로젝션 | 미확정 (#806 소스는 실재하나 #159 canonical projection 및 hash recipe 미승인) | PR #828 병합으로 `RequestGuardRuntimeBindingObservation` 실재. 단, #159 비교 레시피 미확정. | `SOURCE_EXISTS_RECIPE_UNRESOLVED` | #159 Decision에서 canonical RUNTIME_BUNDLE projection/hash recipe 승인 필요 |
 | `RETRIEVED_EVIDENCE` | `CaseResult.selected_evidence_ids` / `VerifiedGuideEvidenceHandoff` / `ProductionGuidelineEvidenceSet` | #159 / #180 (#760) | Evidence handoff 조립 및 projection 시점 | 미확정 (raw retrieval hits vs post-gate selected evidence; Run-level 집계) | 미확정 | Case 단위 evidence ID 존재, canonical stage 및 Run 집계 recipe 미확정 | `SOURCE_EXISTS_RECIPE_UNRESOLVED` | #159 canonical evidence stage (selected vs retrieved) 및 Run 집계 확정 |
 | `FINAL_VALIDATOR` | 후보 소스: `GuidelineGenerationProvenance.validator_ref`, Claim-Citation validation/finalization authority | #180 | Guideline card 완료 및 Claim-Citation 검증 시점 | 상류 차단 (`validator_ref`는 실재하나 `ANS-RAG -> ANS-FINAL`의 `FINAL_VALIDATOR` 정본 동일시 계약 부재) | 상류 차단 | `validator_ref` 및 순수 검증 로직 존재하나 정본 validator immutable identity 미확정 | `BLOCKED_BY_UPSTREAM_AUTHORITY` | #180에서 ANS-RAG → ANS-FINAL 경계의 FINAL_VALIDATOR 의미와 immutable identity 확정 필요 |
-| `CITATION_GATE` | `CitationAuthorizationReceipt` | Issue #799 / Issue #806 / Issue #807 (Issue #180) | Citation authorization receipt 발급 시점 | 상류 차단 (production receipt 발급은 Issue #806 REQUEST Guard Decision 및 Issue #807 PATIENT_CITATION Approval 전제) | 상류 차단 | 순수 검증 함수 존재, production receipt authority 및 영속화 미구현 | `BLOCKED_BY_UPSTREAM_AUTHORITY` | Issue #799 (OPEN), Issue #806 (OPEN), Issue #807 (OPEN) |
+| `CITATION_GATE` | `CitationAuthorizationReceipt` | Issue #799 / Issue #806 / Issue #807 (Issue #180) | Citation authorization receipt 발급 시점 | 상류 차단 (production receipt 발급은 Issue #806 REQUEST Guard Decision 및 Issue #807 PATIENT_CITATION Approval 전제) | 상류 차단 | 순수 검증 함수 존재, production receipt authority 및 영속화 미구현 | `BLOCKED_BY_UPSTREAM_AUTHORITY` | Issue #799 (OPEN), Issue #806 (PR #828 완료), Issue #807 (OPEN) |
 | `SAFETY_GATE` | 목표/후보: #180 Runtime Safety Gate decision / receipt (canonical immutable runtime Safety Gate authority not implemented; Evaluation Safety metric 재사용 금지) | #180 | 런타임 safety disposition 및 release 평가 시점 | 상류 차단 (`ANS-RAG -> ANS-FINAL` 경계 실행 Safety Gate 식별 immutable authority 미확정) | 상류 차단 | Safety 정책/risk level 존재, production safety gate receipt authority 미확정 | `BLOCKED_BY_UPSTREAM_AUTHORITY` | #180 runtime Safety Gate authority identity / receipt 확정 |
 | `RELEASE_GATE` | 목표/후보: #180 Runtime Release Gate decision / receipt (canonical immutable runtime Release Gate authority not implemented; `ai_worker/tasks/evaluation/release_gate.py` 평가 릴리스 게이트와 도메인 엄격 분리) | #180 | 최종 런타임 릴리스 게이트 평가 시점 | 상류 차단 (`PASS / LIMITED / REJECTED / STALE` publication decision exact-bind immutable authority 미확정) | 상류 차단 | Release decision enum 존재, production release gate authority receipt 미구현 | `BLOCKED_BY_UPSTREAM_AUTHORITY` | #180 final runtime release authority / receipt 확정 |
 
@@ -169,13 +169,13 @@ Issue #159 PR C(Answer 3-pair comparison) 착수 시점의 controlled variable s
 
 - **`READY` (0개)**:
   - 현재 승인된 정본 계약 기준으로 4대 조건(source 존재, owner 명확, projection 승인 완료, recipe 승인 완료)을 충족하는 항목 없음. Phase A에서 제안된 candidate recipe는 reviewer 승인 전까지 `SOURCE_EXISTS_RECIPE_UNRESOLVED`로 유지함.
-- **`SOURCE_EXISTS_RECIPE_UNRESOLVED` (10개)**:
-  - `INPUT_CONTEXT`, `PROMPT_STRUCTURE`, `PARSER`, `SEED`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`, `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RETRIEVED_EVIDENCE`:
+- **`SOURCE_EXISTS_RECIPE_UNRESOLVED` (11개)**:
+  - `INPUT_CONTEXT`, `PROMPT_STRUCTURE`, `PARSER`, `SEED`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`, `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RETRIEVED_EVIDENCE`, `RUNTIME_BUNDLE`:
   - 소스 객체 또는 파라미터가 존재하나, 변형 간 canonical projection, 화이트리스트, 비검색 baseline(`ANS-BASE`) 표현, 또는 Decision 승인 절차가 미완료되어 평가 코드가 임의 추정 구현을 방지해야 하는 항목.
-- **`BLOCKED_BY_UPSTREAM_AUTHORITY` (5개)**:
-  - `RUNTIME_BUNDLE` (PR #822 / Issue #810 prerequisite 완료, Issue #806 per-request Runtime Binding 차단)
+  - PR #828 / Issue #806 병합(`5c99a538`)으로 `RequestGuardRuntimeBindingObservation`이 도입되어 `RUNTIME_BUNDLE`이 상류 차단에서 이 분류로 이동함.
+- **`BLOCKED_BY_UPSTREAM_AUTHORITY` (4개)**:
   - `FINAL_VALIDATOR` (#180 차단)
-  - `CITATION_GATE` (Issue #799, Issue #806, Issue #807 차단)
+  - `CITATION_GATE` (Issue #799, Issue #807 차단)
   - `SAFETY_GATE` (#180 차단)
   - `RELEASE_GATE` (#180 차단)
   - 상류 도메인의 정본 계약 및 프로덕션 authority receipt가 완성되지 않았으므로, 평가 계층에서 가상 authority를 합성하지 않고 명시적으로 차단 상태를 유지함.
@@ -197,9 +197,72 @@ Phase A 전수 대조 결과, authority binding의 저장 아키텍처는 다음
 ### 5. Phase B 착수 조건
 
 1. `READY` 항목 (0개): 현재 즉각 구현 대상 없음.
-2. `SOURCE_EXISTS_RECIPE_UNRESOLVED` 항목 (10개): `SEED`를 포함하여 candidate recipe 및 변형 간 projection에 대한 #159 Decision 책임 리뷰어 승인 완료 시 구현 착수.
-3. `BLOCKED_BY_UPSTREAM_AUTHORITY` 항목 (5개): PR #822 / Issue #810의 canonical Runtime Environment persistence prerequisite는 완료되었다. 현재 남은 upstream authority는 Issue #806, Issue #807, Issue #799, Issue #180이다. 각 항목은 자신의 canonical authority와 immutable identity가 완료되기 전 평가 바인딩을 구현하지 않는다.
-4. `RUNTIME_BUNDLE` Phase B 착수 조건: PR #822 / Issue #810 prerequisite 완료만으로 `RUNTIME_BUNDLE`을 `READY`로 승격하지 않는다. Issue #806의 per-request Runtime Binding Authority와 #159 canonical projection/hash recipe가 모두 확정된 이후 extractor 구현 여부를 다시 판단한다.
+2. `SOURCE_EXISTS_RECIPE_UNRESOLVED` 항목 (11개): `SEED` 및 `RUNTIME_BUNDLE`을 포함하여 candidate recipe 및 변형 간 projection에 대한 #159 Decision 책임 리뷰어 승인 완료 시 구현 착수.
+3. `BLOCKED_BY_UPSTREAM_AUTHORITY` 항목 (4개): Issue #806은 PR #828로 완료되어 `RUNTIME_BUNDLE` 소스가 확보되었다. 남은 upstream authority는 Issue #807, Issue #799, Issue #180이다. 각 항목은 자신의 canonical authority와 immutable identity가 완료되기 전 평가 바인딩을 구현하지 않는다.
+
+---
+
+## 2026-09-19 후속 결정: Answer Comparison Runtime Authority Binding Phase B Proposal (11 Canonical Recipes & Binding Manifest Contract Proposal - Revised)
+
+### 1. 상태 재정렬 요약 (Rebaseline)
+
+PR #828 / Issue #806 병합(`5c99a538`) 완료를 반영하여 authority 상태를 재정렬한다:
+- `RequestGuardRuntimeBindingObservation`(`environment`, `bundle_id`, `bundle_manifest_hash`) 소스가 `develop`에 도입됨에 따라 `RUNTIME_BUNDLE`은 더 이상 #806 자체로 차단되지 않는다.
+- 단, #159 Answer Comparison 목적의 canonical projection 및 hash recipe는 아직 미동결 상태이므로 `RUNTIME_BUNDLE`의 정확한 상태는 `SOURCE_EXISTS_RECIPE_UNRESOLVED`이다.
+- 재정렬 결과:
+  - **`READY`**: 0개
+  - **`SOURCE_EXISTS_RECIPE_UNRESOLVED`**: 11개 (`INPUT_CONTEXT`, `PROMPT_STRUCTURE`, `PARSER`, `SEED`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`, `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RETRIEVED_EVIDENCE`, `RUNTIME_BUNDLE`)
+  - **`BLOCKED_BY_UPSTREAM_AUTHORITY`**: 4개 (`FINAL_VALIDATOR`, `CITATION_GATE`, `SAFETY_GATE`, `RELEASE_GATE`)
+
+### 2. 11 Canonical Recipes 최종 제안 (Full Specification)
+
+| Key | Binding Field | Canonical Source Object | Owner Issue | Canonical Projection 규격 | Hash Preimage / Hashing Rule | Variant Semantics (ANS-BASE 포함) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `INPUT_CONTEXT` | `supplemental_controls.input_context_hash` | `LoadedRunBundle.cases` (`CaseResult.case_id`, `CaseResult.input_sha256`) | #159 | `{"cases": [{"case_id": c.case_id, "input_sha256": c.input_sha256} for c in cases], "projection_version": "answer-input-context-v1"}` (UTF-16 BE `case_id` 순 정렬, 원문 질문·환자 텍스트 일절 비포함) | `canonical_sha256(projection)` | Controlled variable (`ANS-BASE`, `ANS-RAG`, `ANS-FINAL` 3개 변형 전수 exact-match 필수) |
+| `PROMPT_STRUCTURE` | `supplemental_controls.prompt_structure_hash` | `GuidelineGenerationProvenance.prompt_ref` (`ImmutableArtifactRef`) | #159 | 불변 아티팩트 참조 자체 사용 (`artifact_code="guideline-prompt"`, `version=...`, `content_sha256=...`) | `prompt_ref.content_sha256` (기존 불변 아티팩트 SHA-256 직접 재사용) | Controlled variable (프롬프트 템플릿 지침/구조 불변 결속) |
+| `PARSER` | `supplemental_controls.parser_hash` | `GuidelineGenerationProvenance.parser_ref` (`ImmutableArtifactRef`) | #159 | 불변 아티팩트 참조 자체 사용 (`artifact_code="guideline-parser"`, `version=...`, `content_sha256=...`) | `parser_ref.content_sha256` (기존 불변 아티팩트 SHA-256 직접 재사용) | Controlled variable (structured parser 정본 불변 결속) |
+| `SEED` | `supplemental_controls.seed_hash` | `DevExecutionRequest.seed` (`SafeInteger`) | #159 | `{"projection_version": "answer-seed-v1", "seed": request.seed}` | `canonical_sha256(projection)` | Controlled variable (재현 가능한 난수 시드 불변 결속) |
+| `SAMPLING_PARAMETERS` | `supplemental_controls.sampling_parameters_hash` | `OpenAIGuidelineGeneratorAdapter` 실제 호출 파라미터 (`temperature=0`) | #159 | `{"projection_version": "answer-sampling-parameters-v1", "temperature": "0"}` (실제 invocation에 전달되지 않는 `top_p`, `frequency_penalty`, `presence_penalty` 제외) | `canonical_sha256(projection)` (정규 10진 문자열 인코딩) | Controlled variable (실제 runtime invocation 결속 샘플링 파라미터 불변 결속) |
+| `TOKEN_LIMIT` | `supplemental_controls.token_limit_hash` | `DevVariant.parameters["token_limit"]` exact-bound to `OpenAIGuidelineGeneratorAdapter._max_output_tokens` | #159 | `{"max_output_tokens": int(max_output_tokens), "projection_version": "answer-token-limit-v1"}` | `canonical_sha256(projection)` | Controlled variable (정수 토큰 상한 불변 결속) |
+| `TIMEOUT` | `supplemental_controls.timeout_hash` | `DevVariant.parameters["timeout"]` exact-bound to `OpenAIGuidelineGeneratorAdapter._timeout_seconds` | #159 | `{"projection_version": "answer-timeout-v1", "timeout_seconds": str(Decimal(str(timeout_seconds)))}` (손실성 정수 ms round 제거, canonical decimal seconds 인코딩) | `canonical_sha256(projection)` | Controlled variable (실제 Provider client timeout 불변 결속) |
+| `RETRIEVAL_PIPELINE` | `delta_bindings.retrieval_pipeline_hash` | `VersionedEvidenceRetrievalConfiguration.artifact_ref` (`ImmutableArtifactRef`) | #159 | • `ANS-RAG`/`ANS-FINAL`: 불변 아티팩트 참조 사용 (`selection_limit`은 별도 `EvidenceRetrievalKernelRequest` 소스이므로 configuration projection에서 배제)<br>• `ANS-BASE`: `{"axis": "RETRIEVAL_PIPELINE", "binding_state": "NOT_APPLIED", "projection_version": "answer-authority-binding-v1"}` | • `ANS-RAG`/`ANS-FINAL`: `retrieval_config.artifact_ref.content_sha256` 직접 재사용 (`compute_canonical_hash()` 결속값)<br>• `ANS-BASE`: `canonical_sha256(NOT_APPLIED_projection)` | Allowed delta (`ANS-BASE` vs `ANS-RAG`); Controlled match (`ANS-RAG` vs `ANS-FINAL`) |
+| `SOURCE_INDEX` | `delta_bindings.source_index_hash` | `ActualRetrievalModelConfig.knowledge_index_ref` (`ImmutableReference`) / `RagRuntimeReleaseBundle.knowledge_index_manifest_hash` | #159 | • `ANS-RAG`/`ANS-FINAL`: 불변 참조 자체 사용<br>• `ANS-BASE`: `{"axis": "SOURCE_INDEX", "binding_state": "NOT_APPLIED", "projection_version": "answer-authority-binding-v1"}` | • `ANS-RAG`/`ANS-FINAL`: `knowledge_index_ref.hash` 직접 재사용<br>• `ANS-BASE`: `canonical_sha256(NOT_APPLIED_projection)` | Allowed delta (`ANS-BASE` vs `ANS-RAG`); Controlled match (`ANS-RAG` vs `ANS-FINAL`) |
+| `RUNTIME_BUNDLE` | `delta_bindings.runtime_bundle_hash` | `RequestGuardRuntimeBindingObservation` (`environment`, `bundle_id`, `bundle_manifest_hash` via PR #828 / #806) | #159 / #806 | • `ANS-RAG`/`ANS-FINAL`: `{"bundle_id": str(obs.bundle_id), "bundle_manifest_hash": obs.bundle_manifest_hash, "environment": obs.environment.value, "projection_version": "answer-runtime-bundle-binding-v1"}` (decision_id, user_id, scope 등 요청별 가변 메타데이터 배제)<br>• `ANS-BASE`: `{"axis": "RUNTIME_BUNDLE", "binding_state": "NOT_APPLIED", "projection_version": "answer-authority-binding-v1"}` | • `ANS-RAG`/`ANS-FINAL`: `canonical_sha256(projection)`<br>• `ANS-BASE`: `canonical_sha256(NOT_APPLIED_projection)` | Allowed delta (`ANS-BASE` vs `ANS-RAG`); Controlled match (`ANS-RAG` vs `ANS-FINAL`) |
+| `RETRIEVED_EVIDENCE` | `delta_bindings.retrieved_evidence_hash` | `ProductionGuidelineEvidenceSet` vs `CaseResult.selected_evidence_ids` | #159 / #180 (#760) | • `ANS-RAG`/`ANS-FINAL`: **미확정 (Recipe Unresolved 유지)**. 이유: `ProductionGuidelineEvidenceSet`에 `case_id`가 없고, `CaseResult.selected_evidence_ids`는 문자열 ID 튜플만 보유하여 증거 정본 content hash를 온전히 증명하지 못함. 향후 carrier 확정 필요.<br>• `ANS-BASE`: `{"axis": "RETRIEVED_EVIDENCE", "binding_state": "NOT_APPLIED", "projection_version": "answer-authority-binding-v1"}` | • `ANS-RAG`/`ANS-FINAL`: Carrier 및 Stage 확정 전까지 미생성<br>• `ANS-BASE`: `canonical_sha256(NOT_APPLIED_projection)` | Allowed delta (`ANS-BASE` vs `ANS-RAG`); Controlled match (`ANS-RAG` vs `ANS-FINAL`) |
+
+### 3. `NOT_APPLIED` Typed State 및 Variant별 Delta Semantics
+
+1. **`NOT_APPLIED` Typed State**:
+   - 비적용 축은 임의의 fake 값(`"none"`, `"LOCAL"`)을 쓰지 않고 명시적인 Canonical Typed State로 프로젝션한다:
+     `{"axis": "<AXIS_KEY>", "binding_state": "NOT_APPLIED", "projection_version": "answer-authority-binding-v1"}`
+   - `NOT_APPLIED`는 `missing`, `blocked`, `null fallback`, `synthetic authority`와 구별되는 명시적 variant semantics이다.
+2. **Variant별 Delta 바인딩**:
+   - **`ANS-BASE`**: 4개 retrieval axes = `NOT_APPLIED`, 4개 finalization axes = `NOT_APPLIED`.
+   - **`ANS-RAG`**: 4개 retrieval axes = 실제 정본 바인딩, 4개 finalization axes = `NOT_APPLIED`.
+   - **`ANS-FINAL`**: 4개 retrieval axes = 실제 정본 바인딩 (`ANS-RAG`와 일치), 4개 finalization axes = 실제 정본 바인딩 (미완료 시 `null` / Blocked).
+3. **Pairwise Readiness 및 Fail-Closed 보장**:
+   - **`ANS-BASE -> ANS-RAG`**: 두 Variant 모두 4개 finalization 축에 동일한 canonical `NOT_APPLIED` 해시를 가지므로 `_check_delta_bindings()`에서 8개 필드가 모두 non-None이고 non-allowed deltas가 정확히 일치(`b_val == c_val`)한다. 따라서 **상류 finalization authority(#180, #807, #799) 미완료 상태에서도 `ANS-BASE -> ANS-RAG` 비교는 차단 없이 정상 실행(Ready) 가능**하다.
+   - **`ANS-RAG -> ANS-FINAL` 및 `ANS-BASE -> ANS-FINAL`**: `ANS-FINAL`의 finalization 축이 상류 blocker로 인해 `None` (`null`) 상태이므로, `_check_delta_bindings()`에서 `delta_binding_missing = True`가 발동되어 `execution_status = INVALID`, `decision_status = None`으로 자동 fail-closed 처리된다.
+
+### 4. Separate Binding Manifest 계약 규격
+
+- **Schema ID**: `rag-eval.answer-runtime-binding-manifest`
+- **Schema Version**: `1.0.0`
+- **계약 문서**: [`docs/contracts/proposed/post-mvp-1/answer-runtime-binding-manifest-v1.md`](../contracts/proposed/post-mvp-1/answer-runtime-binding-manifest-v1.md)
+- **Self-Hash 계산**: `canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))`
+- **결정론적 특성**: 임의 생성 UUID(`manifest_id`), 벽시계 타임스탬프(`created_at`), 외부 GitHub 이슈 메타데이터(`blocker_issue`)를 manifest wire 및 해시 프리이미지에서 완전히 배제하여 동일한 authority 입력에 대해 항상 100% 동일한 content hash를 생성한다.
+- **기존 Artifact 구별**: 3개 pair comparison artifact를 묶는 `answer-comparison-set-manifest`와 본 `answer-runtime-binding-manifest`는 별개의 독립 manifest로 관리된다.
+
+### 5. PR #808 Typed Seam 결속
+
+- 본 Manifest의 `supplemental_controls` 7개 필드는 `AnswerComparisonSupplementalControls`에 1:1 매핑된다.
+- `delta_bindings` 8개 필드는 `AnswerComparisonDeltaBindings`에 1:1 매핑된다 (`ANS-FINAL`의 미해결 차단 항목은 `None` 매핑).
+
+### 6. 승인 게이트 (Reviewer Approval Gate)
+
+1. 본 Phase B 제안(11 Canonical Recipes 및 Binding Manifest Contract Proposal)은 책임 리뷰어 권가빈(`@hazelnutflavoured`)의 명시적 승인을 전제로 한다.
+2. 책임 리뷰어의 승인 증빙이 Issue #159 또는 PR 리뷰로 등록되기 전에는 Python 구현(`ai_worker/...`)을 착수하지 않는다.
+3. 승인 완료 시 동일 작업 흐름에서 즉시 Pydantic DTO, Manifest Extractor, Validator 및 단위/회귀 테스트 구현으로 진행한다.
 
 ## 공개 경계
 

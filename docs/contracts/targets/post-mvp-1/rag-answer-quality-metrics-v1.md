@@ -244,6 +244,29 @@ Post-MVP-1 Product·Safety·Evaluation 승인자 권가빈 (`@hazelnutflavoured`
    - Non-allowed delta mismatch 또는 Case/Draft mismatch: Schema 변경 없이 invariant(`not scope_comparisons`)를 만족하도록 `scope_comparisons = ()`를 설정해 `execution_status = INVALID`, `decision_status = null` 표현
    - Malformed typed input(예: non-hex SHA, 잘못된 길이 등): artifact를 생성하지 않고 `EvaluationValidationError`로 fail-close
 
+### 8.3 Answer Runtime Authority Binding Manifest Contract Proposal (Issue #159 Phase B - Revised)
+
+15 Authority Bindings의 저장 및 결속은 Schema Set 1.5 불변을 위해 독립 Manifest 계약인 [`rag-eval.answer-runtime-binding-manifest@1.0.0`](../../proposed/post-mvp-1/answer-runtime-binding-manifest-v1.md)으로 제안된다 (`SEPARATE_BINDING_MANIFEST_PREFERRED` 확정).
+
+1. **상태 재정렬**:
+   - `READY`: 0개
+   - `SOURCE_EXISTS_RECIPE_UNRESOLVED`: 11개 (`INPUT_CONTEXT`, `PROMPT_STRUCTURE`, `PARSER`, `SEED`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`, `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RETRIEVED_EVIDENCE`, `RUNTIME_BUNDLE`)
+   - `BLOCKED_BY_UPSTREAM_AUTHORITY`: 4개 (`FINAL_VALIDATOR` [#180], `CITATION_GATE` [#807/#799/#180], `SAFETY_GATE` [#180], `RELEASE_GATE` [#180])
+2. **`RUNTIME_BUNDLE` 재정렬**: PR #828 / Issue #806 병합(`5c99a538`)으로 `RequestGuardRuntimeBindingObservation`이 실재하여 상류 차단은 해제되었으나, #159 canonical projection 및 hash recipe 승인 대기 상태로 `SOURCE_EXISTS_RECIPE_UNRESOLVED`로 관리한다.
+3. **`NOT_APPLIED` Typed State 및 Variant별 바인딩**:
+   - 비적용 축은 임의의 fake sentinel(`"none"`, `"LOCAL"`) 대신 명시적 canonical typed state(`{"axis": "...", "binding_state": "NOT_APPLIED", "projection_version": "..."}`) 및 결정론적 해시로 표현한다.
+   - `ANS-BASE`: 4개 retrieval axes = `NOT_APPLIED`, 4개 finalization axes = `NOT_APPLIED`.
+   - `ANS-RAG`: 4개 retrieval axes = 실제 정본 바인딩, 4개 finalization axes = `NOT_APPLIED`.
+   - `ANS-FINAL`: 4개 retrieval axes = 실제 정본 바인딩 (`ANS-RAG`와 일치), 4개 finalization axes = 실제 정본 바인딩 (상류 미완료 시 `null` / Blocked).
+4. **Pairwise Readiness 및 Fail-Closed 보장**:
+   - **`ANS-BASE -> ANS-RAG`**: 두 Variant 모두 4개 finalization 축에 동일한 `NOT_APPLIED` 해시를 가지므로 8개 delta 필드가 non-None이며 non-allowed deltas가 일치하여, 상류 finalization 미완료 상태에서도 정상 비교 실행(Ready) 가능하다.
+   - **`ANS-RAG -> ANS-FINAL` 및 `ANS-BASE -> ANS-FINAL`**: `ANS-FINAL`의 finalization 축이 상류 차단으로 `None` (`null`) 상태이므로, #808 비교 커널에서 자동으로 `delta_binding_missing = True`가 발동되어 `execution_status = INVALID`, `decision_status = null`로 자동 fail-closed 처리된다.
+5. **결정론적 Self-Hash**: Manifest 자체는 임의 UUID, 벽시계 타임스탬프, 외부 GitHub 워크플로 이슈 메타데이터를 배제하여 동일한 authority 입력에 대해 항상 100% 동일한 content hash를 생성한다.
+6. **Seam 결속**:
+   - Manifest의 `supplemental_controls` 7개 필드는 `AnswerComparisonSupplementalControls`에 1:1 매핑된다.
+   - `delta_bindings` 8개 필드는 `AnswerComparisonDeltaBindings`에 1:1 매핑된다.
+7. **구현 착수 조건**: 본 제안 문서 및 11 Canonical Recipes에 대해 책임 리뷰어 권가빈(`@hazelnutflavoured`)의 승인 증빙이 확인되기 전에는 Python 구현(`ai_worker/...`)을 진행하지 않는다.
+
 ## 9. Rubric fail-fast
 
 Dataset Loader의 Critical Claim Rubric self-hash와 Dataset/Case reference exact-match 검증을 정본으로
