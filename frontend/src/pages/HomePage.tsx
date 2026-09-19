@@ -366,25 +366,61 @@ function HomePage({
           )}
 
           {prescriptionState === 'active' && (
-            <section className="mvp-home__active-stack" aria-label="Home 처방 등록 완료">
+            <section
+              className="mvp-home__active-stack"
+              aria-label="Home 처방 등록 완료"
+            >
               <HomeAdherenceCard
                 report={report}
                 state={reportState}
                 onOpenReport={() => navigate('/report')}
               />
+
               <button
                 className="mvp-home__hub-card mvp-home__hub-card--report"
                 type="button"
                 onClick={() => navigate('/report')}
               >
                 <span className="mvp-home__hub-icon">
-                  <HomeShortcutIcon type="report" />
+                   <HomeShortcutIcon type="report" />
                 </span>
                 <span className="mvp-home__hub-copy">
-                  <strong>복약 리포트 보기</strong>
-                  <small>7일/30일 복약 현황을<br />한눈에 확인해보세요.</small>
+                   <strong>복약 리포트 보기</strong>
+                   <small>
+                     7일/30일 복약 현황을
+                     <br />
+                     한눈에 확인해보세요.
+                   </small>
                 </span>
-                <span className="mvp-home__hub-arrow" aria-hidden="true">›</span>
+                <span className="mvp-home__hub-arrow" aria-hidden="true">
+                  ›
+                </span>
+              </button>
+
+              <button
+                className="mvp-home__hub-card mvp-home__hub-card--prescription"
+                type="button"
+                aria-label="새 처방전 등록하기"
+                onClick={() =>
+                  navigate('/prescriptions/upload', {
+                    state: { intent: 'new-prescription' },
+                  })
+                }
+              >
+                <span className="mvp-home__hub-icon">
+                  <HomeShortcutIcon type="prescription" />
+                </span>
+                <span className="mvp-home__hub-copy">
+                  <strong>새 처방전 등록하기</strong>
+                  <small>
+                    새 처방전을 등록하고
+                    <br />
+                    복약 가이드를 업데이트해보세요.
+                  </small>
+                </span>
+                <span className="mvp-home__hub-arrow" aria-hidden="true">
+                  ›
+                </span>
               </button>
             </section>
           )}
