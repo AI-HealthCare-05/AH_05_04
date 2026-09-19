@@ -1,10 +1,15 @@
 from datetime import date
 from typing import Literal
+from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, Field
 
 from app.dtos.medication_checkins import MedicationCheckinData
 from app.dtos.medication_schedules import MedicationOccurrenceData
+from app.models.track_c import BarrierCode, SupportCode
+
+# The clinic view is the only surface approved to show why a dose was missed.
+MedicationReportView = Literal["CLINIC"]
 
 
 class MedicationReportCounts(BaseModel):
@@ -36,6 +41,29 @@ class MedicationReportRecord(MedicationOccurrenceData):
     updated_at: AwareDatetime
 
 
+class ClinicBarrierEntry(BaseModel):
+    occurrence_id: UUID
+    scheduled_local_date: date
+    medication_name: str
+    barrier_code: BarrierCode
+    subreason_code: str | None = None
+
+
+class ClinicConsultationQuestion(BaseModel):
+    question_id: str
+    text: str
+    support_code: SupportCode
+    medication_name: str
+    last_selected_date: date
+
+
+class ClinicSections(BaseModel):
+    """Only populated for view=CLINIC; absent everywhere else by construction."""
+
+    barriers: list[ClinicBarrierEntry]
+    consultation_questions: list[ClinicConsultationQuestion]
+
+
 class MedicationReportData(BaseModel):
     period_days: Literal[7, 30]
     start_date: date
@@ -47,6 +75,7 @@ class MedicationReportData(BaseModel):
     adherence_rate: MedicationReportRate
     confirmation_rate: MedicationReportRate
     records: list[MedicationReportRecord]
+    clinic: ClinicSections | None = None
 
 
 class MedicationReportResponse(BaseModel):

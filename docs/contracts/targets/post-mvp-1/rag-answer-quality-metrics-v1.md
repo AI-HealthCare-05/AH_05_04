@@ -244,6 +244,36 @@ Post-MVP-1 Product·Safety·Evaluation 승인자 권가빈 (`@hazelnutflavoured`
    - Non-allowed delta mismatch 또는 Case/Draft mismatch: Schema 변경 없이 invariant(`not scope_comparisons`)를 만족하도록 `scope_comparisons = ()`를 설정해 `execution_status = INVALID`, `decision_status = null` 표현
    - Malformed typed input(예: non-hex SHA, 잘못된 길이 등): artifact를 생성하지 않고 `EvaluationValidationError`로 fail-close
 
+### 8.3 Answer Runtime Authority Binding Manifest Contract Proposal (Issue #159 Phase B - Revised)
+
+15 Authority Bindings의 저장 및 결속은 Schema Set 1.5 불변을 위해 독립 Manifest 계약인 [`rag-eval.answer-runtime-binding-manifest@1.0.0`](../../proposed/post-mvp-1/answer-runtime-binding-manifest-v1.md)으로 제안된다 (`SEPARATE_BINDING_MANIFEST_PREFERRED` 확정).
+
+1. **상태 재정렬**:
+   - `READY`: 0개
+   - `SOURCE_EXISTS_RECIPE_UNRESOLVED`: 11개 (`INPUT_CONTEXT`, `PROMPT_STRUCTURE`, `PARSER`, `SEED`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`, `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RETRIEVED_EVIDENCE`, `RUNTIME_BUNDLE`)
+   - `BLOCKED_BY_UPSTREAM_AUTHORITY`: 4개 (`FINAL_VALIDATOR` [#180], `CITATION_GATE` [#807/#799/#180], `SAFETY_GATE` [#180], `RELEASE_GATE` [#180])
+   - 실질 제안 산출물: **10 Canonical Recipes + 1 Explicitly Unresolved Binding (`RETRIEVED_EVIDENCE`) + Separate Binding Manifest Contract**
+2. **`RUNTIME_BUNDLE` 재정렬**: PR #828 / Issue #806 병합(`5c99a538`)으로 `RequestGuardRuntimeBindingObservation`이 실재하여 상류 차단은 해제되었으나, #159 canonical projection 및 hash recipe 승인 대기 상태로 `SOURCE_EXISTS_RECIPE_UNRESOLVED`로 관리한다. (최신 `develop` `01ab426d` 기준 점검 완료, #159 authority 영향 없음).
+3. **`NOT_APPLIED` Typed State 및 Variant별 바인딩**:
+   - 비적용 축은 임의의 fake sentinel(`"none"`, `"LOCAL"`) 대신 명시적 canonical typed state(`{"axis": "...", "binding_state": "NOT_APPLIED", "projection_version": "..."}`) 및 결정론적 해시로 표현한다.
+   - `ANS-BASE`: 4개 retrieval axes = `NOT_APPLIED`, 4개 finalization axes = `NOT_APPLIED`.
+   - `ANS-RAG`: 3개 retrieval axes = 실제 정본 바인딩, 1개 retrieval axis (`RETRIEVED_EVIDENCE`) = `null`, 4개 finalization axes = `NOT_APPLIED`.
+   - `ANS-FINAL`: 3개 retrieval axes = 실제 정본 바인딩 (`ANS-RAG`와 일치), 1개 retrieval axis (`RETRIEVED_EVIDENCE`) = `null`, 4개 finalization axes = 실제 정본 바인딩 (상류 미완료 시 `null` / Blocked).
+4. **Pairwise Readiness 및 Fail-Closed 보장**:
+   - **`ANS-BASE -> ANS-RAG`**: `NOT_APPLIED` semantics 도입으로 4개 finalization authority 부재(#180, #807, #799)가 본 비교를 가로막는 구조적 종속 문제는 완전히 해결되었다 (두 Variant 모두 동일한 `NOT_APPLIED` 해시를 가지므로 non-allowed deltas가 일치). 그러나 **`ANS-RAG`의 `RETRIEVED_EVIDENCE` authoritative binding이 아직 `null`(`None`) 상태이며 7개 Supplemental Controls의 3-variant runtime carrier/extractor가 미구현 상태이므로, 현재 #808 `_check_delta_bindings()` 커널 실행 시 `delta_binding_missing = True`가 발동되어 `NOT READY` (fail-closed / `INVALID`, `decision_status = null`) 상태**로 처리된다. 실제 실행을 위해서는 7개 supplemental controls의 authoritative carrier 구체화 및 exact-match, `RETRIEVED_EVIDENCE` carrier 해결이 선행되어야 한다.
+   - **`ANS-RAG -> ANS-FINAL` 및 `ANS-BASE -> ANS-FINAL`**: 7개 Supplemental Controls carrier 미구현, `RETRIEVED_EVIDENCE` 미해결(`null`), 그리고 `ANS-FINAL`의 4개 finalization 축 상류 차단(`None` / `null`)으로 인해 `delta_binding_missing = True`가 발동되어 `NOT READY` (fail-closed / `INVALID`, `decision_status = null`) 상태로 자동 차단된다.
+5. **Run-Scoped Self-Hash 및 Cross-Run Equality 책임 분리**:
+   - `manifest_sha256`은 특정 Evaluation Run에 결속된 run-scoped artifact integrity hash로 정의된다.
+   - `schema_id`, `schema_version`, `experiment_id`, `run_id`, `variant_id`, `supplemental_controls`, `delta_bindings`를 preimage로 하여 동일 run-scoped manifest payload 재계산 시 deterministic integrity hash를 생성한다.
+   - `run_id`는 manifest artifact가 특정 evaluation run의 authority bindings를 증명하므로 self-hash preimage에 유지되며, `same authority configuration + different run_id -> different manifest_sha256`은 정상 동작이다.
+   - Cross-run semantic equality 비교는 개별 바인딩 해시(`input_context_hash`, `prompt_structure_hash`, ...)로 수행되며, `manifest_sha256`을 cross-run 비교용으로 쓰지 않는다.
+   - `run_id` 스키마는 Evaluation 공통 `CanonicalUuid` 계약(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)과 정렬한다.
+6. **Seam 결속 및 Extractor 책임 분리**:
+   - Manifest의 `supplemental_controls` 7개 필드는 `AnswerComparisonSupplementalControls`에 1:1 매핑된다.
+   - `delta_bindings` 8개 필드는 `AnswerComparisonDeltaBindings`에 1:1 매핑된다 (`RETRIEVED_EVIDENCE` 및 `ANS-FINAL`의 미해결 차단 항목은 `None` 매핑).
+   - #808 비교 커널은 투영된 7개 supplemental hash의 non-None 여부 및 exact-match만 검증하므로, 향후 구현될 Authoritative Manifest Extractor가 각 Variant의 authoritative source에서 값을 추출하고 임의 caller 주입을 차단한 후 검증된 해시만을 #808 seam으로 투영할 책임을 갖는다.
+7. **구현 착수 조건**: 본 제안 문서 및 10 Canonical Recipes + 1 Unresolved Binding에 대해 책임 리뷰어 권가빈(`@hazelnutflavoured`)의 승인 증빙이 확인되기 전에는 Python 구현(`ai_worker/...`)을 진행하지 않는다.
+
 ## 9. Rubric fail-fast
 
 Dataset Loader의 Critical Claim Rubric self-hash와 Dataset/Case reference exact-match 검증을 정본으로

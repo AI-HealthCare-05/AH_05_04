@@ -11,7 +11,7 @@ const occurrenceId = '11111111-1111-4111-8111-111111111111'
 const planId = '22222222-2222-4222-8222-222222222222'
 const checkin = { checkin_id: 'checkin', occurrence_id: occurrenceId, status: 'NOT_TAKEN', revision: 3, taken_at: null, corrected: false }
 const safety = { assessment_id: 'safety', medication_checkin_id: 'checkin', checkin_revision: 3, response_level: 'ROUTINE', safety_disposition: 'NORMAL', revision: 1 }
-const barrier = { ...safety, barrier_response_id: 'barrier', safety_assessment_id: 'safety', response_status: 'ANSWERED', barrier_code: 'FORGOT' }
+const barrier = { ...safety, barrier_response_id: 'barrier', safety_assessment_id: 'safety', response_status: 'ANSWERED', barrier_code: 'FORGOT', subreason_code: null }
 const support = {
   support_code: 'REMINDER_SETUP', rule_version: 'rule-v1', copy_version: 'copy-v1', priority: 1, rationale_code: 'FORGOT',
   action_config: { schema_version: 'track-c-handler-config-v1', rationale_code: 'FORGOT', parameters: { destination: 'MEDICATION_SCHEDULE_SETUP', prescription_version_medication_id: 'medication' } },
@@ -59,7 +59,10 @@ describe('Track C API flow', () => {
       questions: [{ question_id: 'INSTRUCTION_TIMING', text: '이 약은 언제 복용해야 하나요?' }],
     }
     const svc = services({
-      putBarrier: vi.fn().mockResolvedValue(instructionBarrier),
+      putBarrier: vi
+        .fn()
+        .mockResolvedValueOnce(instructionBarrier)
+        .mockResolvedValue({ ...instructionBarrier, subreason_code: 'TIMING_OR_FOOD_UNCLEAR', revision: 2 }),
       getOffers: vi.fn().mockResolvedValue({
         ...instructionBarrier,
         subreason_code: 'TIMING_OR_FOOD_UNCLEAR',
@@ -191,7 +194,8 @@ it.each([
   ['약을 가지고 나오지 않았어요', 'MEDICATION_NOT_WITH_ME', 'ROUTINE_OR_TRAVEL_PLAN'],
 ])('routes %s through server offers and explicit adoption', async (label, situation, code) => {
   const travelBarrier = { ...barrier, barrier_code: 'SCHEDULE_OR_TRAVEL' }
-  const svc = services({ putBarrier: vi.fn().mockResolvedValue(travelBarrier), getOffers: vi.fn().mockResolvedValue({ ...travelBarrier, supports: [{ ...support, support_code: code }], reason_code: null }) })
+  const answered = { ...travelBarrier, subreason_code: situation, revision: 2 }
+  const svc = services({ putBarrier: vi.fn().mockResolvedValueOnce(travelBarrier).mockResolvedValue(answered), getOffers: vi.fn().mockResolvedValue({ ...travelBarrier, supports: [{ ...support, support_code: code }], reason_code: null }) })
   show(svc); await enterBarrier()
   fireEvent.click(screen.getByRole('radio', { name: '일정이나 외출 때문에 어려웠어요' }))
   fireEvent.click(screen.getByRole('button', { name: '선택한 어려움으로 도움 찾기' }))
@@ -201,6 +205,7 @@ it.each([
   fireEvent.click(screen.getByRole('radio', { name: label }))
   fireEvent.click(screen.getByRole('button', { name: '선택한 상황으로 도움 찾기' }))
   await screen.findByText('서버에서 받은 제안')
+  expect(svc.putBarrier).toHaveBeenNthCalledWith(2, 'checkin', { response_status: 'ANSWERED', barrier_code: 'SCHEDULE_OR_TRAVEL', subreason_code: situation, checkin_revision: 3, expected_revision: 1 }, expect.any(String))
   expect(svc.getOffers).toHaveBeenCalledWith('barrier', situation, situation)
   expect(svc.createPlan).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
@@ -210,7 +215,9 @@ it.each([
 })
 
 it('retries the travel offer without writing another Barrier', async () => {
-  const svc = services({ getOffers: vi.fn().mockRejectedValueOnce(new TypeError('offline')).mockResolvedValue({ ...barrier, supports: [support], reason_code: null }) })
+  const travelBarrier = { ...barrier, barrier_code: 'SCHEDULE_OR_TRAVEL' }
+  const answered = { ...travelBarrier, subreason_code: 'MEDICATION_NOT_WITH_ME', revision: 2 }
+  const svc = services({ putBarrier: vi.fn().mockResolvedValueOnce(travelBarrier).mockResolvedValue(answered), getOffers: vi.fn().mockRejectedValueOnce(new TypeError('offline')).mockResolvedValue({ ...barrier, supports: [support], reason_code: null }) })
   show(svc); await enterBarrier()
   fireEvent.click(screen.getByRole('radio', { name: '일정이나 외출 때문에 어려웠어요' }))
   fireEvent.click(screen.getByRole('button', { name: '선택한 어려움으로 도움 찾기' }))
@@ -218,7 +225,8 @@ it('retries the travel offer without writing another Barrier', async () => {
   fireEvent.click(screen.getByRole('button', { name: '선택한 상황으로 도움 찾기' }))
   fireEvent.click(await screen.findByRole('button', { name: '같은 요청 다시 시도' }))
   await screen.findByText('서버에서 받은 제안')
-  expect(svc.putBarrier).toHaveBeenCalledTimes(1)
+  // Two writes total: the barrier answer, then the subreason. The retry adds neither.
+  expect(svc.putBarrier).toHaveBeenCalledTimes(2)
   expect(svc.getOffers).toHaveBeenNthCalledWith(1, 'barrier', 'MEDICATION_NOT_WITH_ME', 'MEDICATION_NOT_WITH_ME')
   expect(svc.getOffers).toHaveBeenNthCalledWith(2, 'barrier', 'MEDICATION_NOT_WITH_ME', 'MEDICATION_NOT_WITH_ME')
 })

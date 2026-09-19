@@ -56,8 +56,44 @@ function reportFixture(
         },
       },
     ],
+    clinic: null,
     ...overrides,
   }
+}
+
+const clinicFixture = {
+  barriers: [
+    {
+      occurrence_id: '11111111-1111-4111-8111-111111111111',
+      scheduled_local_date: '2026-09-15',
+      medication_name: '메트포르민',
+      barrier_code: 'FORGOT' as const,
+      subreason_code: 'MISSED_ALERT' as const,
+    },
+    {
+      occurrence_id: '44444444-4444-4444-8444-444444444444',
+      scheduled_local_date: '2026-09-14',
+      medication_name: '아토르바스타틴',
+      barrier_code: 'FORGOT' as const,
+      subreason_code: null,
+    },
+    {
+      occurrence_id: '55555555-5555-4555-8555-555555555555',
+      scheduled_local_date: '2026-09-13',
+      medication_name: '메트포르민',
+      barrier_code: 'MEDICATION_CONCERN' as const,
+      subreason_code: 'LONG_TERM_USE' as const,
+    },
+  ],
+  consultation_questions: [
+    {
+      question_id: 'CONCERN_LONG_TERM',
+      text: '장기간 복용해도 괜찮은가요?',
+      support_code: 'MEDICATION_CONCERN_GUIDANCE' as const,
+      medication_name: '메트포르민',
+      last_selected_date: '2026-09-13',
+    },
+  ],
 }
 
 function LocationProbe() {
@@ -141,7 +177,7 @@ describe('Plan B 복약 리포트', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '30일' }))
 
-    await waitFor(() => expect(getMedicationReport).toHaveBeenLastCalledWith(30))
+    await waitFor(() => expect(getMedicationReport).toHaveBeenLastCalledWith(30, undefined, undefined))
     expect(screen.getByRole('button', { name: '30일' }).getAttribute('aria-pressed')).toBe('true')
     expect(screen.getByTestId('location').textContent).toBe('/report?period=30')
   })
@@ -217,6 +253,55 @@ describe('Plan B 복약 리포트', () => {
     expect(screen.getAllByText('복용').length).toBeGreaterThanOrEqual(2)
   })
 
+  it('진료 보기에서만 미복용 사유와 상담 질문을 보여준다', async () => {
+    vi.mocked(getMedicationReport).mockResolvedValue({
+      data: reportFixture(7, { clinic: clinicFixture }),
+    })
+
+    renderPage('/report/clinic?period=7')
+
+    expect(
+      await screen.findByRole('heading', { name: '미복용 사유' }),
+    ).toBeTruthy()
+
+    // Tallied in check-in order, not in the order the entries arrived.
+    const tally = document.querySelectorAll(
+      '.report-clinic-barriers__tally li',
+    )
+    expect(tally.length).toBe(2)
+    expect(tally[0].textContent).toContain('깜빡함')
+    expect(tally[0].textContent).toContain('2회')
+    expect(tally[1].textContent).toContain('약에 대한 걱정')
+
+    const detail = document.querySelectorAll(
+      '.report-clinic-barriers__detail li',
+    )
+    expect(detail.length).toBe(3)
+    expect(detail[0].textContent).toContain('알림을 보거나 듣지 못했어요')
+    // No subreason falls back to the barrier's own short label.
+    expect(detail[1].textContent).toContain('깜빡함')
+    expect(detail[1].textContent).toContain('아토르바스타틴')
+
+    expect(
+      screen.getByRole('heading', { name: '진료 때 확인하고 싶은 질문' }),
+    ).toBeTruthy()
+    expect(screen.getByText('장기간 복용해도 괜찮은가요?')).toBeTruthy()
+
+    expect(getMedicationReport).toHaveBeenCalledWith(7, undefined, 'CLINIC')
+  })
+
+  it('기본 리포트는 미복용 사유나 상담 질문을 요청하지도 보여주지도 않는다', async () => {
+    renderPage('/report?period=7')
+
+    await screen.findByRole('heading', { name: '복약 리포트' })
+
+    expect(getMedicationReport).toHaveBeenCalledWith(7, undefined, undefined)
+    expect(screen.queryByRole('heading', { name: '미복용 사유' })).toBeNull()
+    expect(
+      screen.queryByRole('heading', { name: '진료 때 확인하고 싶은 질문' }),
+    ).toBeNull()
+  })
+
   it('진료 보기는 같은 응답 수치를 Figma 구조로 재배치하고 기간을 유지한다', async () => {
     vi.mocked(getMedicationReport).mockResolvedValue({
       data: reportFixture(30),
@@ -261,7 +346,7 @@ describe('Plan B 복약 리포트', () => {
 
     expect(screen.queryByText('오늘 남은 일정')).toBeNull()
 
-    expect(getMedicationReport).toHaveBeenCalledWith(30)
+    expect(getMedicationReport).toHaveBeenCalledWith(30, undefined, 'CLINIC')
 
     expect(
       screen.queryByRole('button', {
@@ -361,7 +446,7 @@ describe('Plan B 복약 리포트', () => {
     renderPage()
     fireEvent.click(await screen.findByRole('button', { name: '다시 시도' }))
     expect(await screen.findByText('3회')).toBeTruthy()
-    expect(getMedicationReport).toHaveBeenNthCalledWith(2, 7)
+    expect(getMedicationReport).toHaveBeenNthCalledWith(2, 7, undefined, undefined)
   })
 
   it('401은 세션을 정리하고 로그인 route로 복구한다', async () => {

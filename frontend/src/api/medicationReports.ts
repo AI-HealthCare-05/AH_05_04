@@ -1,6 +1,7 @@
 import { apiRequest } from './client'
 import type { MedicationCheckinStatus } from './medicationCheckins'
 import type { MedicationOccurrenceStatus } from './medicationOccurrences'
+import type { BarrierCode, SubreasonCode, SupportCode } from './trackC'
 
 // Contract sources:
 // - backend/app/apis/v1/medication_report_routers.py
@@ -46,6 +47,31 @@ export type MedicationReportRecord = {
   } | null
 }
 
+// Missed-dose reasons and consultation questions are returned only for the clinic
+// view; the default report never carries them.
+export type MedicationReportView = 'CLINIC'
+
+export type ClinicBarrierEntry = {
+  occurrence_id: string
+  scheduled_local_date: string
+  medication_name: string
+  barrier_code: BarrierCode
+  subreason_code: SubreasonCode | null
+}
+
+export type ClinicConsultationQuestion = {
+  question_id: string
+  text: string
+  support_code: SupportCode
+  medication_name: string
+  last_selected_date: string
+}
+
+export type ClinicSections = {
+  barriers: ClinicBarrierEntry[]
+  consultation_questions: ClinicConsultationQuestion[]
+}
+
 export type MedicationReportData = {
   period_days: MedicationReportPeriod
   start_date: string
@@ -57,6 +83,7 @@ export type MedicationReportData = {
   adherence_rate: MedicationReportRate
   confirmation_rate: MedicationReportRate
   records: MedicationReportRecord[]
+  clinic: ClinicSections | null
 }
 
 export type MedicationReportResponse = {
@@ -66,9 +93,12 @@ export type MedicationReportResponse = {
 export async function getMedicationReport(
   periodDays: MedicationReportPeriod,
   signal?: AbortSignal,
+  view?: MedicationReportView,
 ): Promise<MedicationReportResponse> {
+  const viewQuery = view ? `&view=${view}` : ''
+
   return apiRequest<MedicationReportResponse>(
-    `/api/v1/medication-reports?period_days=${periodDays}`,
+    `/api/v1/medication-reports?period_days=${periodDays}${viewQuery}`,
     { signal },
   )
 }
