@@ -431,7 +431,9 @@ build_and_push \
   "ai_worker/Dockerfile" \
   "."
 
-DEPLOY_SERVICES=("fastapi" "ai-worker" "nginx")
+# notification-scheduler는 migration 전에 stop되므로(아래 "Stopping application
+# services before schema migration") 배포 대상에 포함해 반드시 다시 기동합니다.
+DEPLOY_SERVICES=("fastapi" "ai-worker" "nginx" "notification-scheduler")
 
 echo "${COLOR_GREEN}선택한 이미지의 build와 push가 완료되었습니다.${COLOR_NC}"
 echo "${COLOR_BLUE}배포 대상 서비스: ${DEPLOY_SERVICES[*]}${COLOR_NC}"
@@ -800,7 +802,7 @@ echo "Deploying services: ${deploy_services[*]}"
 
 # --no-deps를 사용하지 않습니다.
 # PostgreSQL health와 migration 성공 조건을 Compose가 다시 확인합니다.
-docker compose up \
+docker compose --profile notifications up \
   -d \
   --pull always \
   --wait \
