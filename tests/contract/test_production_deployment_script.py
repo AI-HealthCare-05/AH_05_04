@@ -630,3 +630,39 @@ def test_deployment_script_requires_cleanup_credentials_when_withdrawal_enabled(
     assert message in completed.stdout
     assert "docker" not in completed.stdout.lower()
     assert "synthetic-cleanup-secret" not in completed.stdout + completed.stderr
+
+
+def test_deployment_script_rejects_cleanup_credentials_inherited_from_parent_shell(tmp_path: Path) -> None:
+    """source는 파일에 없는 변수를 초기화하지 않는다. 실행 셸에 cleanup role/password가
+    export돼 있으면 .prod.env에 선언이 없어도 셸 값 검사를 통과해버리는데, 원격에는
+    파일 원문만 복사되므로(하단 ssh) FastAPI 기동 시 Config validator(#825)에서 다시
+    실패한다. 이 PR이 막으려는 silent configuration drift가 그대로 남으므로,
+    파일의 직접 선언 여부도 외부 작업 전에 검사해야 한다."""
+    env_file = tmp_path / "prod.env"
+    # cleanup role/password는 의도적으로 파일에 선언하지 않는다.
+    env_file.write_text(
+        "\n".join(_withdrawal_env_lines() + ["ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true", ""]),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PROD_ENV_FILE": str(env_file),
+            # 부모 셸에만 존재하는 값. 파일 선언을 대신할 수 없다.
+            "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE": "inherited_cleanup_role",
+            "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD": "inherited-cleanup-secret",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode != 0
+    assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE" in completed.stdout
+    assert "docker" not in completed.stdout.lower()
+    assert "inherited-cleanup-secret" not in completed.stdout + completed.stderr
+

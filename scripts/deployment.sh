@@ -30,6 +30,10 @@ done
 # 실제 secret이 포함된 .prod.env는 저장소에 커밋하지 않습니다.
 unset VITE_PUBLIC_TRACK_C
 unset VITE_SIGNUP_TERMS_APPROVED
+# 원격에는 .prod.env 원문만 복사되므로, 실행 셸에 상속된 cleanup 자격 증명이
+# 파일의 선언 누락을 가리지 않도록 source 전에 비운다.
+unset ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE
+unset ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD
 set -a
 source "$PROD_ENV_FILE"
 set +a
@@ -77,11 +81,16 @@ done
 # Compose는 ACCOUNT_WITHDRAWAL_REQUEST_ENABLED를 ${...:-false}로 치환하므로, .prod.env에
 # 선언 자체가 없으면 조용히 false가 주입되어 탈퇴 API가 503(fail-closed)으로 돌아간다.
 # 선언 여부는 위 required_key 검사에서 막고, 여기서는 true로 열 때 필요한 cleanup 자격 증명을
-# 확인한다. Backend Config도 같은 조건을 validator로 막지만(#825), 그 실패는 image push와
-# 원격 compose 반영이 끝난 뒤 컨테이너 기동 시점에 드러나므로 외부 작업 전에 먼저 차단한다.
+# 확인한다. 원격에는 .prod.env 원문만 복사되므로(하단 ssh 참고) 파일의 직접 선언 여부를
+# 셸 값과 함께 검사한다. Backend Config도 같은 조건을 validator로 막지만(#825), 그 실패는
+# image push와 원격 compose 반영이 끝난 뒤 컨테이너 기동 시점에 드러나므로 먼저 차단한다.
 case "$(printf '%s' "${ACCOUNT_WITHDRAWAL_REQUEST_ENABLED:-}" | tr '[:upper:]' '[:lower:]')" in
   true | 1 | yes | on)
     for variable_name in ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD; do
+      if ! grep -Eq "^${variable_name}=" "$PROD_ENV_FILE"; then
+        echo "$PROD_ENV_FILE에 $variable_name이 선언되어 있지 않습니다."
+        exit 1
+      fi
       if [ -z "${!variable_name:-}" ]; then
         echo "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true인데 $variable_name이 비어 있습니다."
         exit 1
