@@ -310,6 +310,41 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # #839: check-in deadline runtime. Not opt-in: without it, occurrences whose
+  # confirmation deadline passed stay PENDING and the report keeps showing 예정.
+  # Deployed and verified by scripts/deployment.sh like the other core services.
+  checkin-deadline-scheduler:
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    init: true
+    entrypoint: ["/app/.venv/bin/python", "-m", "app.commands.schedule_checkin_deadlines"]
+    restart: unless-stopped
+    stop_grace_period: 15s
+    environment:
+      ENV: ${ENV}
+      # Required by shared Config validation; no Provider/admin/migration credentials.
+      SECRET_KEY: ${SECRET_KEY}
+      IDEMPOTENCY_HMAC_KEY: ${IDEMPOTENCY_HMAC_KEY}
+      IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY: ${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_APP_USER}
+      DB_PASSWORD: ${DB_APP_PASSWORD}
+      DB_CONNECTION_POOL_MAXSIZE: "2"
+      SQLALCHEMY_ECHO: "false"
+    networks:
+      - ws
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # 5. OCR Consumer + Outbox Publisher + Recovery Scheduler
   ai-worker:
     container_name: ai-worker

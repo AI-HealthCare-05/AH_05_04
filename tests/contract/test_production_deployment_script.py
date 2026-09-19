@@ -567,8 +567,12 @@ def test_remote_deployment_waits_for_worker_and_propagates_readiness_failure(tmp
         '    printf "%s\\t0\\n" "$name"\n'
         "  done\n"
         "fi\n"
-        'if [[ "$*" == "compose up -d --pull always --wait fastapi ai-worker nginx" ]]; then\n'
+        'if [[ "$*" == "compose up -d --pull always --wait fastapi ai-worker nginx checkin-deadline-scheduler" ]]; then\n'
         '  exit "$WORKER_HEALTH_EXIT"\n'
+        "fi\n"
+        # 배포 전 guard는 실행 중 서비스가 없어야 통과하고, 배포 후 검증은 기동을 확인한다(#839).
+        'if [[ "$*" == "compose ps --services --status running" ]]; then\n'
+        '  if grep -q -- "--wait fastapi" "$COMMAND_LOG"; then printf "%s\\n" "$RUNNING_AFTER_DEPLOY"; fi\n'
         "fi\n"
         "exit 0\n"
     )
@@ -584,9 +588,10 @@ def test_remote_deployment_waits_for_worker_and_propagates_readiness_failure(tmp
         env={
             "HOME": str(tmp_path),
             "PATH": f"{bin_dir}:/usr/bin:/bin",
-            "DEPLOY_SERVICES": "fastapi ai-worker nginx",
+            "DEPLOY_SERVICES": "fastapi ai-worker nginx checkin-deadline-scheduler",
             "COMMAND_LOG": str(log),
             "WORKER_HEALTH_EXIT": str(worker_health_exit),
+            "RUNNING_AFTER_DEPLOY": "checkin-deadline-scheduler",
         },
     )
     assert log.exists(), result.stderr
@@ -594,6 +599,7 @@ def test_remote_deployment_waits_for_worker_and_propagates_readiness_failure(tmp
     assert result.returncode == worker_health_exit
     assert commands.index("stop -t 90 fastapi ai-worker") < commands.index("--force-recreate migrate")
     assert commands.index("--entrypoint python fastapi") < commands.index("--wait fastapi ai-worker nginx")
+    assert "checkin-deadline-scheduler" in commands.split("--wait fastapi ai-worker nginx", 1)[1]
     assert ("image prune" in commands) is (worker_health_exit == 0)
 
 
