@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 상태 | Approved Target |
-| 구현 | Not implemented — Phase B DEV contract approved; DTO/schema, recipe helpers, validation 착수 허용 |
+| 구현 | Partially implemented — DTO/schema, 10 canonical recipe helpers, manifest/run validation, #808 typed seam projection |
 | Decision | [`PD-159-20260913`](../../../governance/decisions/2026-09-13-rag-answer-quality-metrics.md) |
 | 추적 Issue | [#159](https://github.com/AI-HealthCare-05/AH_05_04/issues/159) |
 | 구현 담당 | 정현우 (`@ceohwj`, AI/RAG Implementation Owner) |
@@ -21,6 +21,9 @@
 > - Baseline Freeze approved
 > - Release PASS approved
 > - PUBLIC_TRACK_F approved
+
+구현 이후에도 authoritative 3-variant carrier materialization, `RETRIEVED_EVIDENCE`, 4개 finalization
+authority, actual pair execution은 미구현 상태이며 위 승인 범위를 확장하지 않는다.
 
 ---
 
