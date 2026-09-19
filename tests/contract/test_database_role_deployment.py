@@ -13,10 +13,14 @@ def test_optional_database_roles_must_be_distinct() -> None:
 
     assert RUNTIME_LIFESTYLE_TABLES == {"lifestyle_times"}
 
-    validate_distinct_role_names("admin", "owner", "runtime", "writer", None, "index-builder", "cleanup")
+    validate_distinct_role_names(
+        "admin", "owner", "runtime", "writer", None, "catalog", "index-builder", "cleanup", "candidate-builder"
+    )
 
     with pytest.raises(ValueError, match="distinct"):
-        validate_distinct_role_names("admin", "owner", "runtime", "writer", None, "writer", "cleanup")
+        validate_distinct_role_names(
+            "admin", "owner", "runtime", "writer", None, "catalog", "index-builder", "cleanup", "writer"
+        )
 
 
 def test_credentials_and_admin_process_are_separated() -> None:
@@ -28,6 +32,7 @@ def test_credentials_and_admin_process_are_separated() -> None:
             "DB_ADMIN_PASSWORD" in str(value)
             or "SOURCE_WRITER_PASSWORD" in str(value)
             or "CATALOG_WRITER_PASSWORD" in str(value)
+            or "CANDIDATE_INDEX_BUILDER_PASSWORD" in str(value)
             for value in environment.values()
         )
     fastapi = services["fastapi"]
@@ -45,9 +50,11 @@ def test_credentials_and_admin_process_are_separated() -> None:
     assert provisioner["environment"]["CATALOG_WRITER_USER"] == "${CATALOG_WRITER_USER:-}"
     assert provisioner["environment"]["KNOWLEDGE_INDEX_BUILDER_USER"] == "${KNOWLEDGE_INDEX_BUILDER_USER:-}"
     assert provisioner["environment"]["ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE"] == "${ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE:-}"
+    assert provisioner["environment"]["CANDIDATE_INDEX_BUILDER_USER"] == "${CANDIDATE_INDEX_BUILDER_USER:-}"
     assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD" not in provisioner["environment"]
     assert "KNOWLEDGE_INDEX_BUILDER_PASSWORD" not in provisioner["environment"]
     assert "CATALOG_WRITER_PASSWORD" not in provisioner["environment"]
+    assert "CANDIDATE_INDEX_BUILDER_PASSWORD" not in provisioner["environment"]
     assert not any("SOURCE_WRITER_PASSWORD" in str(value) for value in provisioner["environment"].values())
     verifier = services["verify-db-head"]
     assert verifier["profiles"] == ["database-maintenance"]
@@ -60,9 +67,32 @@ def test_credentials_and_admin_process_are_separated() -> None:
     assert not any(
         "DB_ADMIN_PASSWORD" in str(value) or "DB_APP_PASSWORD" in str(value) for value in writer["environment"].values()
     )
+
+    catalog_writer = services["catalog-writer"]
+    assert catalog_writer["profiles"] == ["catalog-admin"]
+    assert catalog_writer["restart"] == "no"
+    assert catalog_writer["environment"]["CATALOG_WRITER_PASSWORD"] == "${CATALOG_WRITER_PASSWORD:-}"
+    assert not any(
+        "DB_ADMIN_PASSWORD" in str(value) or "DB_APP_PASSWORD" in str(value)
+        for value in catalog_writer["environment"].values()
+    )
+
+    candidate_builder = services["candidate-index-builder"]
+    assert candidate_builder["profiles"] == ["candidate-index-admin"]
+    assert candidate_builder["restart"] == "no"
+    assert candidate_builder["environment"]["CANDIDATE_INDEX_BUILDER_PASSWORD"] == (
+        "${CANDIDATE_INDEX_BUILDER_PASSWORD:-}"
+    )
+    assert not any(
+        "DB_ADMIN_PASSWORD" in str(value) or "DB_APP_PASSWORD" in str(value)
+        for value in candidate_builder["environment"].values()
+    )
+
     dockerfile = (ROOT / "backend/app/Dockerfile").read_text()
     assert "COPY ./infra/python ./infra/python" in dockerfile
     assert "COPY ./scripts/ci/verify_database_head.py ./scripts/ci/verify_database_head.py" in dockerfile
+    assert "COPY ./scripts/__init__.py ./scripts/__init__.py" in dockerfile
+    assert "COPY ./scripts/candidate_index_builder.py ./scripts/candidate_index_builder.py" in dockerfile
 
     worker = services["ai-worker"]
     assert not any("KNOWLEDGE_INDEX_BUILDER" in key for key in worker["environment"])
@@ -225,9 +255,88 @@ def test_knowledge_index_role_policy_is_explicit_and_least_privilege() -> None:
     assert "GRANT TRUNCATE" not in source
 
 
+def test_candidate_index_role_policy_is_explicit_and_least_privilege() -> None:
+    from infra.python.candidate_index_role_policy import (
+        CANDIDATE_INDEX_CATALOG_READ_TABLES,
+        CANDIDATE_INDEX_UPDATE_COLUMNS,
+        CANDIDATE_INDEX_WRITE_TABLES,
+    )
+    from infra.python.catalog_role_policy import CATALOG_READ_TABLES
+
+    assert CANDIDATE_INDEX_WRITE_TABLES == {
+        "rag_candidate_index_version",
+        "rag_candidate_index_member",
+    }
+    expected_read_tables = {
+        # Catalog persistence tables
+        "rag_entity_identity",
+        "rag_medication_product",
+        "rag_medication_ingredient",
+        "rag_medication_alias",
+        "rag_medication_product_component",
+        "rag_medication_search_entry",
+        "rag_catalog_set",
+        "rag_catalog_set_source",
+        "rag_catalog_set_member",
+        "rag_catalog_set_hash",
+        # Source provenance tables
+        "rag_source",
+        "rag_source_endpoint",
+        "rag_source_operation",
+        "rag_source_snapshot",
+        "rag_source_snapshot_verification",
+        # Catalog approval tables
+        "catalog_source_approval",
+        "catalog_build_approval",
+        "catalog_build_approval_source",
+    }
+    assert CANDIDATE_INDEX_CATALOG_READ_TABLES == expected_read_tables
+    assert CANDIDATE_INDEX_UPDATE_COLUMNS == {
+        "rag_candidate_index_version": ("status",),
+    }
+
+    source = (ROOT / "infra/python/candidate_index_role_policy.py").read_text()
+    assert not re.search(r"\b(?<!INDEX_)CATALOG_READ_TABLES\b", source), (
+        "candidate_index_role_policy.py must not reference CATALOG_READ_TABLES to prevent unintended privilege widening"
+    )
+    # Ensure Candidate Builder scope is independent from future Catalog read scope expansions
+    hypothetical_widened_catalog = CATALOG_READ_TABLES | {"rag_catalog_publication_audit"}
+    assert CANDIDATE_INDEX_CATALOG_READ_TABLES != hypothetical_widened_catalog
+    assert "rag_catalog_publication_audit" not in CANDIDATE_INDEX_CATALOG_READ_TABLES
+
+    assert "GRANT SELECT, INSERT ON TABLE public.rag_candidate_index_version" in source
+    assert "GRANT UPDATE (status) ON TABLE public.rag_candidate_index_version" in source
+    assert "GRANT SELECT, INSERT ON TABLE public.rag_candidate_index_member" in source
+    assert "GRANT UPDATE (candidate_index_lock_marker)" not in source
+    assert "candidate_index_lock_marker" not in [line for line in source.splitlines() if "GRANT" in line]
+    assert "GRANT DELETE" not in source
+    assert "GRANT TRUNCATE" not in source
+
+
+def test_catalog_role_policy_includes_approval_tables() -> None:
+    from infra.python.catalog_role_policy import (
+        CATALOG_APPROVAL_READ_TABLES,
+        CATALOG_READ_TABLES,
+        CATALOG_WRITE_TABLES,
+    )
+
+    assert CATALOG_APPROVAL_READ_TABLES == {
+        "catalog_source_approval",
+        "catalog_build_approval",
+        "catalog_build_approval_source",
+    }
+    assert CATALOG_APPROVAL_READ_TABLES <= CATALOG_READ_TABLES
+    assert not (CATALOG_APPROVAL_READ_TABLES & CATALOG_WRITE_TABLES)
+
+    source = (ROOT / "infra/python/catalog_role_policy.py").read_text()
+    assert "CATALOG_APPROVAL_READ_TABLES" in source
+
+
 def test_deployment_stops_writers_and_provisions_before_starting_api() -> None:
     script = (ROOT / "scripts/deployment.sh").read_text()
-    stop = script.index("docker compose --profile source-admin stop")
+    stop = script.index(
+        "docker compose --profile source-admin --profile catalog-admin --profile candidate-index-admin stop"
+    )
     bootstrap = script.index("-f /docker-entrypoint-initdb.d/configure-app-role.sql")
     migration = script.index('migration_exit_code="$(docker wait migrate)"')
     verification = script.index(

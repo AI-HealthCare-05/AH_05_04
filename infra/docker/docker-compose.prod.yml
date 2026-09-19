@@ -60,6 +60,10 @@ services:
       KNOWLEDGE_INDEX_BUILDER_PASSWORD: ${KNOWLEDGE_INDEX_BUILDER_PASSWORD:-}
       ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE: ${ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE:-}
       ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD: ${ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD:-}
+      CATALOG_WRITER_USER: ${CATALOG_WRITER_USER:-}
+      CATALOG_WRITER_PASSWORD: ${CATALOG_WRITER_PASSWORD:-}
+      CANDIDATE_INDEX_BUILDER_USER: ${CANDIDATE_INDEX_BUILDER_USER:-}
+      CANDIDATE_INDEX_BUILDER_PASSWORD: ${CANDIDATE_INDEX_BUILDER_PASSWORD:-}
     networks:
       - ws
     volumes:
@@ -149,6 +153,7 @@ services:
       CATALOG_WRITER_USER: ${CATALOG_WRITER_USER:-}
       KNOWLEDGE_INDEX_BUILDER_USER: ${KNOWLEDGE_INDEX_BUILDER_USER:-}
       ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE: ${ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE:-}
+      CANDIDATE_INDEX_BUILDER_USER: ${CANDIDATE_INDEX_BUILDER_USER:-}
     networks:
       - ws
 
@@ -481,6 +486,34 @@ services:
       SOURCE_WRITER_USER: ${SOURCE_WRITER_USER:-}
       SOURCE_WRITER_PASSWORD: ${SOURCE_WRITER_PASSWORD:-}
       SOURCE_WRITER_ACTOR: ${SOURCE_WRITER_ACTOR:-}
+    networks:
+      - ws
+
+  catalog-writer:
+    profiles: ["catalog-admin"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "ai_worker.admin.catalog_writer"]
+    environment:
+      CATALOG_WRITER_HOST: postgres
+      CATALOG_WRITER_PORT: "5432"
+      CATALOG_WRITER_NAME: ${DB_NAME}
+      CATALOG_WRITER_USER: ${CATALOG_WRITER_USER:-}
+      CATALOG_WRITER_PASSWORD: ${CATALOG_WRITER_PASSWORD:-}
+    networks:
+      - ws
+
+  candidate-index-builder:
+    profiles: ["candidate-index-admin"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "scripts.candidate_index_builder"]
+    environment:
+      CANDIDATE_INDEX_BUILDER_HOST: postgres
+      CANDIDATE_INDEX_BUILDER_PORT: "5432"
+      CANDIDATE_INDEX_BUILDER_NAME: ${DB_NAME}
+      CANDIDATE_INDEX_BUILDER_USER: ${CANDIDATE_INDEX_BUILDER_USER:-}
+      CANDIDATE_INDEX_BUILDER_PASSWORD: ${CANDIDATE_INDEX_BUILDER_PASSWORD:-}
     networks:
       - ws
 

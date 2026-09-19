@@ -643,11 +643,13 @@ echo "Stopping application services before schema migration"
 # DB schema를 읽거나 쓰는 상황을 방지합니다.
 docker compose --profile notifications stop -t 15 notification-scheduler
 
-docker compose --profile source-admin stop \
+docker compose --profile source-admin --profile catalog-admin --profile candidate-index-admin stop \
   -t 90 \
   fastapi \
   ai-worker \
-  source-writer
+  source-writer \
+  catalog-writer \
+  candidate-index-builder
 
 if ! running_application_services="$(docker compose ps --services --status running)"; then
   echo "Could not confirm application service stop state."
@@ -655,7 +657,7 @@ if ! running_application_services="$(docker compose ps --services --status runni
   exit 1
 fi
 
-if printf '%s\n' "$running_application_services" | grep -Eq '^(fastapi|ai-worker|source-writer|notification-scheduler)$'; then
+if printf '%s\n' "$running_application_services" | grep -Eq '^(fastapi|ai-worker|source-writer|catalog-writer|candidate-index-builder|notification-scheduler)$'; then
   echo "Application services are still running after stop request."
   docker compose ps fastapi ai-worker
   exit 1

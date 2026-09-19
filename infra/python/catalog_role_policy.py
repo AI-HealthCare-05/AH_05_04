@@ -18,7 +18,14 @@ CATALOG_LOCK_COLUMNS = {
 CATALOG_SOURCE_TABLES = frozenset(
     "rag_source rag_source_endpoint rag_source_operation rag_source_snapshot rag_source_snapshot_verification".split()
 )
-CATALOG_READ_TABLES = CATALOG_WRITE_TABLES | CATALOG_SOURCE_TABLES
+CATALOG_APPROVAL_READ_TABLES = frozenset(
+    {
+        "catalog_source_approval",
+        "catalog_build_approval",
+        "catalog_build_approval_source",
+    }
+)
+CATALOG_READ_TABLES = CATALOG_WRITE_TABLES | CATALOG_SOURCE_TABLES | CATALOG_APPROVAL_READ_TABLES
 
 
 async def apply_catalog_role_policy(
@@ -75,7 +82,7 @@ async def apply_catalog_role_policy(
         await connection.execute(text(f"REVOKE ALL ({names}) ON TABLE {target} FROM PUBLIC, {runtime_sql}"))
         await connection.execute(text(f"GRANT SELECT ON TABLE {target} TO {runtime_sql}"))
         await connection.execute(text(f"GRANT SELECT, INSERT ON TABLE {target} TO {writer_sql}"))
-    for table in sorted(CATALOG_SOURCE_TABLES):
+    for table in sorted(CATALOG_SOURCE_TABLES | CATALOG_APPROVAL_READ_TABLES):
         await connection.execute(text(f"GRANT SELECT ON TABLE public.{quoted_identifier(table)} TO {writer_sql}"))
     for table, column in CATALOG_LOCK_COLUMNS.items():
         await connection.execute(
