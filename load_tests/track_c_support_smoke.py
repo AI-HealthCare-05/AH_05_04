@@ -95,7 +95,10 @@ def _login(client: Any) -> str | None:
         if response.status_code != 200:
             response.failure(f"expected 200, got {response.status_code}")
             return None
-        token = _access_token_from_response(response.json())
+        payload = _json_from_response(response)
+        if payload is None:
+            return None
+        token = _access_token_from_response(payload)
         if token is None:
             response.failure("response did not include access_token")
             return None
@@ -158,7 +161,9 @@ def _followup_from_response(response: Any) -> dict[str, Any] | None:
     if response.status_code != 200:
         response.failure(f"expected 200, got {response.status_code}")
         return None
-    payload = response.json()
+    payload = _json_from_response(response)
+    if payload is None:
+        return None
     if not isinstance(payload, dict):
         response.failure("response body is not an object")
         return None
@@ -173,7 +178,9 @@ def _data_object_from_response(response: Any) -> dict[str, Any] | None:
     if response.status_code != 200:
         response.failure(f"expected 200, got {response.status_code}")
         return None
-    payload = response.json()
+    payload = _json_from_response(response)
+    if payload is None:
+        return None
     if not isinstance(payload, dict):
         response.failure("response body is not an object")
         return None
@@ -182,6 +189,14 @@ def _data_object_from_response(response: Any) -> dict[str, Any] | None:
         response.failure("response data is not an object")
         return None
     return data
+
+
+def _json_from_response(response: Any) -> Any | None:
+    try:
+        return response.json()
+    except ValueError:
+        response.failure("response body is not valid JSON")
+        return None
 
 
 def _access_token_from_response(payload: Any) -> str | None:
