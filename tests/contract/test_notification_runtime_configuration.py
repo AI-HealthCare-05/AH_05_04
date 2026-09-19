@@ -59,7 +59,7 @@ def test_deployment_stops_notification_scheduler_before_migration_and_does_not_a
     migration = script.index('migration_exit_code="$(docker wait migrate)"')
     assert stop < migration
     assert (
-        "^(fastapi|ai-worker|source-writer|catalog-writer|candidate-index-builder|notification-scheduler)$"
-        in script[stop:migration]
+        "^(fastapi|ai-worker|source-writer|catalog-writer|candidate-index-builder"
+        "|notification-scheduler|checkin-deadline-scheduler)$" in script[stop:migration]
     )
     assert "--profile notifications up" not in script

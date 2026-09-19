@@ -173,28 +173,59 @@ def test_ocr_structure_model_remains_gpt_4o_mini_by_default() -> None:
     assert Config.model_fields["OCR_STRUCTURE_MODEL"].default == "gpt-4o-mini"
 
 
-def test_chat_history_context_can_be_enabled_in_local_environment() -> None:
-    config = Config.model_validate(
-        {
-            **BASE_CONFIG,
-            "ENV": "local",
-            "CHAT_HISTORY_CONTEXT_ENABLED": True,
-        }
-    )
+@pytest.mark.parametrize(
+    ("env", "enabled", "should_succeed"),
+    [
+        ("local", False, True),
+        ("local", True, True),
+        ("staging", False, True),
+        ("staging", True, False),
+        ("production", False, True),
+        ("production", True, True),
+    ],
+)
+def test_chat_history_context_environment_matrix(env: str, enabled: bool, should_succeed: bool) -> None:
+    config_dict = {
+        **BASE_CONFIG,
+        "ENV": env,
+        "CHAT_HISTORY_CONTEXT_ENABLED": enabled,
+    }
+    if env != "local":
+        config_dict["IDEMPOTENCY_HMAC_KEY"] = "a-real-idempotency-hmac-secret-value"
+        config_dict["IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY"] = REAL_SNAPSHOT_ENCRYPTION_KEY
 
-    assert config.CHAT_HISTORY_CONTEXT_ENABLED is True
+    if should_succeed:
+        config = Config.model_validate(config_dict)
+        assert config.CHAT_HISTORY_CONTEXT_ENABLED is enabled
+    else:
+        with pytest.raises(ValidationError):
+            Config.model_validate(config_dict)
 
 
-@pytest.mark.parametrize("environment", ["staging", "production"])
-def test_chat_history_context_cannot_be_enabled_outside_local(environment: str) -> None:
+def test_chat_history_context_rejects_unsupported_environment() -> None:
     with pytest.raises(ValidationError):
         Config.model_validate(
             {
                 **BASE_CONFIG,
-                "ENV": environment,
+                "ENV": "unsupported",
                 "CHAT_HISTORY_CONTEXT_ENABLED": True,
             }
         )
+
+
+def test_chat_history_context_production_regression_with_required_config() -> None:
+    config = Config.model_validate(
+        {
+            **BASE_CONFIG,
+            "ENV": "production",
+            "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
+            "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": REAL_SNAPSHOT_ENCRYPTION_KEY,
+            "CHAT_HISTORY_CONTEXT_ENABLED": True,
+            "OPENAI_MODEL": "gpt-4o",
+        }
+    )
+    assert config.CHAT_HISTORY_CONTEXT_ENABLED is True
+    assert config.OPENAI_MODEL == "gpt-4o"
 
 
 def test_release_validation_is_disabled_by_default() -> None:

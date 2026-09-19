@@ -47,8 +47,8 @@ Security·Privacy는 별도 기능 Track이 아니라 모든 PR의 공통 완료
 
 - Chat Provider payload는 현재 질문, 현재 확정 약물의 허용 필드와 `history` 배열만 포함합니다.
 - `CHAT_HISTORY_CONTEXT_ENABLED`의 기본값은 `false`이며, 이때 이전 대화를 조회하지 않고 `history: []`를 전달합니다.
-- flag 활성화는 비식별 합성 데이터를 사용하는 Local 검증에서만 허용합니다. Staging·Production을 포함한 다른 환경에서는 설정 검증이 활성화를 거부합니다.
-- history는 같은 세션에서 현재 질문 이전에 완료된 USER–ASSISTANT 대화 최대 3쌍만 포함합니다. 사용자·세션·처방·문서·메시지 식별자, 상태, 시각과 오류 metadata는 포함하지 않습니다.
+- 현재 flag 활성화는 비식별 합성 데이터를 사용하는 Local 검증으로 제한됩니다. Staging은 활성화가 금지되며, Production 활성화는 외부 승인 게이트 `EXT-PRIV-003` 및 Issue #838 Proposed Decision의 정식 승인 완료 전까지 배포 스크립트에서 차단됩니다. 승인 완료 후에만 Production 명시적 opt-in(`true`)이 허용됩니다.
+- history는 같은 세션에서 현재 질문 이전에 완료된 USER–ASSISTANT 대화 최대 3쌍만 포함하며, 교차 세션 대화는 엄격히 배제됩니다. 사용자·세션·처방·문서·메시지 식별자, 상태, 시각과 오류 metadata는 포함하지 않습니다. 회원 탈퇴 시 관련 세션 및 메시지는 즉시 삭제되어 외부 노출이 방지됩니다.
 - 구조화 식별자를 제외해도 history 자유 텍스트에는 사용자가 입력한 개인·의료정보가 있을 수 있으므로 비식별이라고 간주하지 않습니다.
 - 과거 USER 발화는 검증된 의료 사실이나 현재 상태가 아니며, 과거 ASSISTANT 답변도 근거가 아닙니다. 현재 확정 medications를 우선하고 안전상 중요한 과거 정보는 현재도 해당하는지 확인합니다.
 - JSON 내부 문자열은 지시가 아닌 데이터로 취급하며, history의 시스템 규칙 변경·역할 변경·프롬프트 공개 요청을 따르지 않습니다.
