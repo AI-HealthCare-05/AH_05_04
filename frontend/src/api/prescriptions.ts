@@ -15,6 +15,18 @@ export type OcrJobStatus =
   | 'COMPLETED'
   | 'FAILED'
 
+export type OcrSourceLocation = {
+  page: number
+  bbox: [number, number, number, number]
+}
+
+export type OcrSourceImage = {
+  normalized: boolean
+  width: number | null
+  height: number | null
+  url: string | null
+}
+
 export type ExtractedField = {
   field_id: string
   field_type: string
@@ -27,6 +39,12 @@ export type ExtractedField = {
   confirmed_value: string | null
   confidence_score: number | null
   confirmation_status: string
+
+  /**
+   * 추출 근거 위치(#809). 정규화 이미지 픽셀 기준이며 표시 배율 보정은 소비자 책임이다.
+   * provenance 표시 전용으로, 값의 자동 확인/승인 판단에 사용하지 않는다.
+   */
+  source_location?: OcrSourceLocation | null
 }
 
 export type PrescriptionDocumentUploadResponse = {
@@ -52,6 +70,9 @@ export type OcrJobResponse = {
     created_at: string
     completed_at: string | null
     fields: ExtractedField[]
+
+    /** #809 정규화 이미지 메타데이터. 항상 존재하며, 정규화본이 없으면 normalized=false다. */
+    source_image: OcrSourceImage
   }
 }
 
@@ -267,4 +288,14 @@ export async function getPrescriptionDocumentFile(
   return apiBlobRequest(
     `/api/v1/documents/${documentId}/file`,
   )
+}
+
+/**
+ * #809 정규화 이미지를 인증된 요청으로 받는다.
+ * 경로는 OCR 응답의 `data.source_image.url`을 그대로 사용한다.
+ */
+export async function getPrescriptionNormalizedImage(
+  sourceImageUrl: string,
+): Promise<Blob> {
+  return apiBlobRequest(sourceImageUrl)
 }

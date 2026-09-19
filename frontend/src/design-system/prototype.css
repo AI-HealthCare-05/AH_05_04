@@ -1138,11 +1138,22 @@
   .device-frame {
     width: 100%;
     max-width: none;
-    height: 100dvh;
-    min-height: 100dvh;
+    /*
+     * Android Chrome은 keyboard close 후 100dvh를 바로 복원하지 않는다.
+     * JS가 동기화한 실제 viewport 높이를 우선 사용하고, 미지원 환경에서는
+     * 기존 100dvh로 폴백한다.
+     */
+    height: var(--app-viewport-height, 100dvh);
+    min-height: var(--app-viewport-height, 100dvh);
     border: 0;
     border-radius: 0;
     box-shadow: none;
+  }
+
+  /* 실제 앱 shell도 같은 기준 높이를 사용한다(프로토타입 전용 아님). */
+  .mobile-app {
+    height: var(--app-viewport-height, 100dvh);
+    min-height: var(--app-viewport-height, 100dvh);
   }
 }
 
