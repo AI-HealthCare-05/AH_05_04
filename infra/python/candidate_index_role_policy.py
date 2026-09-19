@@ -3,7 +3,6 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from infra.python.catalog_role_policy import CATALOG_READ_TABLES
 from infra.python.source_role_policy import _validate_role_boundary, quoted_identifier
 
 CANDIDATE_INDEX_WRITE_TABLES = frozenset(
@@ -12,7 +11,36 @@ CANDIDATE_INDEX_WRITE_TABLES = frozenset(
         "rag_candidate_index_member",
     }
 )
-CANDIDATE_INDEX_CATALOG_READ_TABLES = CATALOG_READ_TABLES
+# Candidate Builder's independent least-privilege read scope.
+# Traced strictly from SqlAlchemyCatalogBuildRepository.load_build(),
+# SqlAlchemySourceSnapshotRepository.get_snapshot_receipt(), and
+# SqlAlchemyCatalogApprovalVerifier.verify().
+# Future additions to Catalog read tables will not widen Candidate Builder grants.
+CANDIDATE_INDEX_CATALOG_READ_TABLES = frozenset(
+    {
+        # Catalog persistence tables
+        "rag_entity_identity",
+        "rag_medication_product",
+        "rag_medication_ingredient",
+        "rag_medication_alias",
+        "rag_medication_product_component",
+        "rag_medication_search_entry",
+        "rag_catalog_set",
+        "rag_catalog_set_source",
+        "rag_catalog_set_member",
+        "rag_catalog_set_hash",
+        # Source provenance tables
+        "rag_source",
+        "rag_source_endpoint",
+        "rag_source_operation",
+        "rag_source_snapshot",
+        "rag_source_snapshot_verification",
+        # Catalog approval tables
+        "catalog_source_approval",
+        "catalog_build_approval",
+        "catalog_build_approval_source",
+    }
+)
 CANDIDATE_INDEX_UPDATE_COLUMNS = {
     "rag_candidate_index_version": ("status",),
 }
@@ -52,7 +80,7 @@ async def apply_candidate_index_role_policy(
     Grants:
       - rag_candidate_index_version: SELECT, INSERT, UPDATE(status)
       - rag_candidate_index_member: SELECT, INSERT
-      - CATALOG_READ_TABLES: SELECT only
+      - CANDIDATE_INDEX_CATALOG_READ_TABLES: SELECT only
     Prohibits:
       - Candidate Builder: UPDATE(candidate_index_lock_marker), DELETE, TRUNCATE,
         UPDATE on provenance/business columns, schema CREATE.

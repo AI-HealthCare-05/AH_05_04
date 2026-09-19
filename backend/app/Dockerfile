@@ -37,6 +37,7 @@ COPY ./scripts/ci/verify_database_head.py ./scripts/ci/verify_database_head.py
 # gains no Docker CLI and no daemon socket, and no runtime privilege changes.
 COPY ./scripts/ret_h_aws_synthetic_smoke.py ./scripts/ret_h_aws_synthetic_smoke.py
 # #800 Candidate Index Builder one-shot orchestration script.
+COPY ./scripts/__init__.py ./scripts/__init__.py
 COPY ./scripts/candidate_index_builder.py ./scripts/candidate_index_builder.py
 
 # STORAGE_DIR 기본값을 이미지 자체에 고정합니다. Config의 Path(__file__) 기반 기본값은

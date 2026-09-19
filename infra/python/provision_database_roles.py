@@ -366,7 +366,7 @@ async def _apply_optional_role_policies(
     management: str | None,
     catalog_writer: str | None,
     knowledge_index_builder: str | None,
-    candidate_index_builder: str | None = None,
+    candidate_index_builder: str | None,
 ) -> None:
     if catalog_writer:
         await apply_catalog_role_policy(

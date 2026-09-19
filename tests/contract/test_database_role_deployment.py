@@ -91,6 +91,8 @@ def test_credentials_and_admin_process_are_separated() -> None:
     dockerfile = (ROOT / "backend/app/Dockerfile").read_text()
     assert "COPY ./infra/python ./infra/python" in dockerfile
     assert "COPY ./scripts/ci/verify_database_head.py ./scripts/ci/verify_database_head.py" in dockerfile
+    assert "COPY ./scripts/__init__.py ./scripts/__init__.py" in dockerfile
+    assert "COPY ./scripts/candidate_index_builder.py ./scripts/candidate_index_builder.py" in dockerfile
 
     worker = services["ai-worker"]
     assert not any("KNOWLEDGE_INDEX_BUILDER" in key for key in worker["environment"])
@@ -265,12 +267,43 @@ def test_candidate_index_role_policy_is_explicit_and_least_privilege() -> None:
         "rag_candidate_index_version",
         "rag_candidate_index_member",
     }
-    assert CANDIDATE_INDEX_CATALOG_READ_TABLES == CATALOG_READ_TABLES
+    expected_read_tables = {
+        # Catalog persistence tables
+        "rag_entity_identity",
+        "rag_medication_product",
+        "rag_medication_ingredient",
+        "rag_medication_alias",
+        "rag_medication_product_component",
+        "rag_medication_search_entry",
+        "rag_catalog_set",
+        "rag_catalog_set_source",
+        "rag_catalog_set_member",
+        "rag_catalog_set_hash",
+        # Source provenance tables
+        "rag_source",
+        "rag_source_endpoint",
+        "rag_source_operation",
+        "rag_source_snapshot",
+        "rag_source_snapshot_verification",
+        # Catalog approval tables
+        "catalog_source_approval",
+        "catalog_build_approval",
+        "catalog_build_approval_source",
+    }
+    assert CANDIDATE_INDEX_CATALOG_READ_TABLES == expected_read_tables
     assert CANDIDATE_INDEX_UPDATE_COLUMNS == {
         "rag_candidate_index_version": ("status",),
     }
 
     source = (ROOT / "infra/python/candidate_index_role_policy.py").read_text()
+    assert not re.search(r"\b(?<!INDEX_)CATALOG_READ_TABLES\b", source), (
+        "candidate_index_role_policy.py must not reference CATALOG_READ_TABLES to prevent unintended privilege widening"
+    )
+    # Ensure Candidate Builder scope is independent from future Catalog read scope expansions
+    hypothetical_widened_catalog = CATALOG_READ_TABLES | {"rag_catalog_publication_audit"}
+    assert CANDIDATE_INDEX_CATALOG_READ_TABLES != hypothetical_widened_catalog
+    assert "rag_catalog_publication_audit" not in CANDIDATE_INDEX_CATALOG_READ_TABLES
+
     assert "GRANT SELECT, INSERT ON TABLE public.rag_candidate_index_version" in source
     assert "GRANT UPDATE (status) ON TABLE public.rag_candidate_index_version" in source
     assert "GRANT SELECT, INSERT ON TABLE public.rag_candidate_index_member" in source

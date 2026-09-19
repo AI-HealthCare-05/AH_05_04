@@ -15,6 +15,7 @@ import os
 import sys
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -29,13 +30,16 @@ from ai_worker.tasks.rag.candidate_index import (
     CandidateIndexBuildConfig,
     CandidateIndexBuildFailure,
 )
-from app.models.rag_candidate_index import RagCandidateIndexStatus
-from app.repositories.rag_candidate_index_repository import RagCandidateIndexRepository
-from app.services.rag_candidate_index_build import execute_candidate_index_build
 from infra.python.candidate_index_role_policy import (
     CANDIDATE_INDEX_CATALOG_READ_TABLES,
     CANDIDATE_INDEX_WRITE_TABLES,
 )
+
+_CURRENT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _CURRENT_DIR.parent
+_BACKEND_DIR = _REPO_ROOT / "backend"
+if _BACKEND_DIR.is_dir() and str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
 
 
 def builder_url(environment: Mapping[str, str]) -> URL:
@@ -179,6 +183,10 @@ async def execute_candidate_index_builder_command(
         }
 
     # 3. Single-transaction build + promotion
+    from app.models.rag_candidate_index import RagCandidateIndexStatus
+    from app.repositories.rag_candidate_index_repository import RagCandidateIndexRepository
+    from app.services.rag_candidate_index_build import execute_candidate_index_build
+
     async with session_factory() as session:
         async with session.begin():
             execution = await execute_candidate_index_build(
