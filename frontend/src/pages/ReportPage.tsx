@@ -344,6 +344,14 @@ function ReportSummary({
             <span>날짜별 복약 기록</span>
           </div>
 
+          {report.overdue_pending_count > 0 && (
+            <p className="report-records__overdue" role="status">
+              확인 기한이 지난 기록 {report.overdue_pending_count}건이 아직
+              미확인으로 정리되지 않았어요. 아래 목록에서는 예정으로 보일 수
+              있어요.
+            </p>
+          )}
+
           <ul className="report-records">
             {report.records.map((record) => {
               const status = record.checkin?.status ?? record.status

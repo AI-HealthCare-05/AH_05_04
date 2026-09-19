@@ -1,3 +1,6 @@
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -62,6 +65,66 @@ def test_production_account_withdrawal_gate_reaches_backend() -> None:
     assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD=\n" in env_example
 
 
+def test_production_chat_history_context_gate_reaches_backend() -> None:
+    compose = yaml.safe_load(_read(PRODUCTION_COMPOSE_PATH))
+    services = compose["services"]
+    fastapi_environment = services["fastapi"]["environment"]
+    env_example = _read(PROJECT_ROOT / "envs/example.prod.env")
+
+    assert fastapi_environment["CHAT_HISTORY_CONTEXT_ENABLED"] == ("${CHAT_HISTORY_CONTEXT_ENABLED:-false}")
+    assert "CHAT_HISTORY_CONTEXT_ENABLED=false\n" in env_example
+    # AI Worker, Redis, Postgres 등 다른 서비스에는 wiring되지 않음을 검증
+    for service_name in ("ai-worker", "postgres", "redis", "migrate"):
+        if service_name in services:
+            service_env = services[service_name].get("environment", {})
+            assert "CHAT_HISTORY_CONTEXT_ENABLED" not in service_env
+
+
+def test_production_chat_history_context_compose_resolution() -> None:
+    if shutil.which("docker") is None:
+        pytest.skip("docker CLI가 설치되어 있지 않아 compose config resolution을 건너뜁니다.")
+
+    # 1. Default resolution with example.prod.env -> false
+    result_default = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(PRODUCTION_COMPOSE_PATH),
+            "--env-file",
+            str(PROJECT_ROOT / "envs/example.prod.env"),
+            "config",
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    resolved_default = yaml.safe_load(result_default.stdout)
+    assert resolved_default["services"]["fastapi"]["environment"]["CHAT_HISTORY_CONTEXT_ENABLED"] == "false"
+
+    # 2. Override resolution with CHAT_HISTORY_CONTEXT_ENABLED=true -> true
+    env_override = {**os.environ, "CHAT_HISTORY_CONTEXT_ENABLED": "true"}
+    result_override = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(PRODUCTION_COMPOSE_PATH),
+            "--env-file",
+            str(PROJECT_ROOT / "envs/example.prod.env"),
+            "config",
+        ],
+        cwd=PROJECT_ROOT,
+        env=env_override,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    resolved_override = yaml.safe_load(result_override.stdout)
+    assert resolved_override["services"]["fastapi"]["environment"]["CHAT_HISTORY_CONTEXT_ENABLED"] == "true"
+
+
 def test_frontend_production_image_requires_api_origin_and_contains_built_spa() -> None:
     dockerfile = _read(PROJECT_ROOT / "frontend/Dockerfile.prod")
 
@@ -122,7 +185,7 @@ def test_production_scripts_use_env_domain_and_do_not_mutate_source_nginx_config
     unsafe_secret_sed = "s/__CLOUDFRONT_ORIGIN_VERIFY_SECRET__/${CLOUDFRONT_ORIGIN_VERIFY_SECRET}"
     assert unsafe_secret_sed not in deployment_script
     assert '"VITE_API_BASE_URL=$PRODUCTION_PUBLIC_ORIGIN"' in deployment_script
-    assert 'DEPLOY_SERVICES=("fastapi" "ai-worker" "nginx")' in deployment_script
+    assert 'DEPLOY_SERVICES=("fastapi" "ai-worker" "nginx" "checkin-deadline-scheduler")' in deployment_script
     assert 'if [ "$APP_VERSION" = "latest" ]' in deployment_script
     assert "--wait" in deployment_script
     assert (

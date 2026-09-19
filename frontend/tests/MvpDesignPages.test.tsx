@@ -322,7 +322,9 @@ describe('Dosey MVP design pages', () => {
     expect(screen.getByRole('progressbar', { name: '이번 주 복약 달성도 86%' })).toBeTruthy()
     expect(container.querySelector('.mvp-home__adherence-progress .dosey-mascot')).toBeTruthy()
     expect(screen.queryByText('집계 준비 중')).toBeNull()
-    expect(screen.queryByRole('button', { name: /내 처방전 등록하기/ })).toBeNull()
+    expect(
+      screen.getByRole('button', { name: '새 처방전 등록하기' }),
+    ).toBeTruthy()
     expect(screen.queryByRole('button', { name: /도지에게 질문하기/ })).toBeNull()
   })
 
@@ -332,6 +334,23 @@ describe('Dosey MVP design pages', () => {
     fireEvent.click(screen.getByRole('button', { name: /내 처방전 등록하기/ }))
     expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
     expect(screen.getByTestId('upload-intent').textContent).toBe('new-prescription')
+  })
+
+  it('처방 완료 HOME에서도 새 처방전 등록 CTA를 새 처방 등록 intent로 연결한다', async () => {
+    renderHome(CURRENT_USER, false, ACTIVE_HOME_SERVICES)
+
+    await screen.findByText('오늘도 건강한 하루 되세요')
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '새 처방전 등록하기',
+      }),
+    )
+
+    expect(screen.getByText('처방전 업로드 화면')).toBeTruthy()
+    expect(screen.getByTestId('upload-intent').textContent).toBe(
+      'new-prescription',
+    )
   })
 
   it('HOME 처방 조회의 404 외 오류는 빈 처방으로 위장하지 않는다', async () => {

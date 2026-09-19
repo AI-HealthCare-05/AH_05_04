@@ -501,6 +501,54 @@ def test_worker_preflight_blocks_before_registry_and_ssh(tmp_path, key, value, e
     assert "Docker login" not in result.stdout
 
 
+def test_worker_preflight_blocks_chat_history_context_enabled_pending_approval(tmp_path):
+    settings = {
+        "ENV": "production",
+        "REDIS_PASSWORD": "synthetic-redis",
+        "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": VALID_SNAPSHOT_ENCRYPTION_KEY,
+        "DB_ADMIN_USER": "admin",
+        "DB_ADMIN_PASSWORD": "synthetic-admin",
+        "DB_MIGRATION_USER": "migration",
+        "DB_MIGRATION_PASSWORD": "synthetic-migration",
+        "DB_APP_USER": "app",
+        "DB_APP_PASSWORD": "synthetic-app",
+        "SOURCE_WRITER_USER": "writer",
+        "SOURCE_WRITER_PASSWORD": "synthetic-writer",
+        "DOCKER_USER": "synthetic",
+        "DOCKER_REPOSITORY": "demo",
+        "APP_VERSION": "test123",
+        "FRONTEND_VERSION": "test123",
+        "AI_WORKER_VERSION": "test123",
+        "TLS_TERMINATION": "cloudfront",
+        "PRODUCTION_DOMAIN": "synthetic.cloudfront.net",
+        "PRODUCTION_PUBLIC_ORIGIN": "https://synthetic.cloudfront.net",
+        "COOKIE_DOMAIN": "synthetic.cloudfront.net",
+        "CORS_ALLOWED_ORIGINS": "https://synthetic.cloudfront.net",
+        "CLOUDFRONT_ORIGIN_VERIFY_SECRET": "synthetic-origin-secret-for-tests-only",
+        "CLOVA_OCR_INVOKE_URL": "https://clova.test/ocr",
+        "CLOVA_OCR_SECRET": "synthetic-clova-secret",
+        "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED": "false",
+        "PUBLIC_TRACK_F_ENABLED": "false",
+        "OCR_STRUCTURE_LLM_ENABLED": "false",
+        "PROTECTED_RETRIEVAL_ENABLED": "false",
+        "CHAT_HISTORY_CONTEXT_ENABLED": "true",
+        "VITE_SIGNUP_TERMS_APPROVED": "false",
+        "VITE_PUBLIC_TRACK_C": "false",
+    }
+    env_file = tmp_path / "prod.env"
+    env_file.write_text("\n".join(f'{k}="{v}"' for k, v in settings.items()))
+    result = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env={"PATH": "/usr/bin:/bin", "PROD_ENV_FILE": str(env_file)},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode != 0
+    assert "CHAT_HISTORY_CONTEXT_ENABLED=false" in result.stdout
+
+
 @pytest.mark.parametrize("worker_health_exit", [0, 42])
 def test_remote_deployment_waits_for_worker_and_propagates_readiness_failure(tmp_path, worker_health_exit):
     script = SCRIPT_PATH.read_text()
@@ -519,8 +567,12 @@ def test_remote_deployment_waits_for_worker_and_propagates_readiness_failure(tmp
         '    printf "%s\\t0\\n" "$name"\n'
         "  done\n"
         "fi\n"
-        'if [[ "$*" == "compose up -d --pull always --wait fastapi ai-worker nginx" ]]; then\n'
+        'if [[ "$*" == "compose up -d --pull always --wait fastapi ai-worker nginx checkin-deadline-scheduler" ]]; then\n'
         '  exit "$WORKER_HEALTH_EXIT"\n'
+        "fi\n"
+        # 배포 전 guard는 실행 중 서비스가 없어야 통과하고, 배포 후 검증은 기동을 확인한다(#839).
+        'if [[ "$*" == "compose ps --services --status running" ]]; then\n'
+        '  if grep -q -- "--wait fastapi" "$COMMAND_LOG"; then printf "%s\\n" "$RUNNING_AFTER_DEPLOY"; fi\n'
         "fi\n"
         "exit 0\n"
     )
@@ -536,9 +588,10 @@ def test_remote_deployment_waits_for_worker_and_propagates_readiness_failure(tmp
         env={
             "HOME": str(tmp_path),
             "PATH": f"{bin_dir}:/usr/bin:/bin",
-            "DEPLOY_SERVICES": "fastapi ai-worker nginx",
+            "DEPLOY_SERVICES": "fastapi ai-worker nginx checkin-deadline-scheduler",
             "COMMAND_LOG": str(log),
             "WORKER_HEALTH_EXIT": str(worker_health_exit),
+            "RUNNING_AFTER_DEPLOY": "checkin-deadline-scheduler",
         },
     )
     assert log.exists(), result.stderr
@@ -546,6 +599,7 @@ def test_remote_deployment_waits_for_worker_and_propagates_readiness_failure(tmp
     assert result.returncode == worker_health_exit
     assert commands.index("stop -t 90 fastapi ai-worker") < commands.index("--force-recreate migrate")
     assert commands.index("--entrypoint python fastapi") < commands.index("--wait fastapi ai-worker nginx")
+    assert "checkin-deadline-scheduler" in commands.split("--wait fastapi ai-worker nginx", 1)[1]
     assert ("image prune" in commands) is (worker_health_exit == 0)
 
 

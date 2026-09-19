@@ -731,8 +731,10 @@ Scheduler는 동일한 occurrence unique 제약에 `ON CONFLICT DO NOTHING`을 �
 
 deadline 처리는 `confirmation_deadline_at <= now`, `PENDING`, 결과 없음인 occurrence를 최대 500개씩
 `FOR UPDATE SKIP LOCKED`로 나눠 처리한다. 운영 scheduler는 one-shot command
-`uv run --no-sync python -m app.commands.generate_unconfirmed_checkins`를 deadline 처리 주기에 맞춰 반복 호출해야
-하며 각 실행은 독립 transaction에서 성공 시 commit, 실패 시 rollback한다. 소유 사용자별 미확인 backlog와
+`uv run --no-sync python -m app.commands.generate_unconfirmed_checkins`이며, 이를 60초 주기로 반복 호출하는 런타임은
+`app.commands.schedule_checkin_deadlines`와 `checkin-deadline-scheduler` 서비스이며, 일반 배포 경로에서 기동·검증한다(#839).
+각 실행은 독립 transaction에서 성공 시 commit, 실패 시 rollback한다. 이 런타임을 시작하지 않으면 기한이 지난
+occurrence가 `PENDING`으로 남아 리포트에 `예정`으로 표시되며, 리포트는 이를 `overdue_pending_count`로만 노출한다. 소유 사용자별 미확인 backlog와
 Audit 조회 Repository 경계는 B4 API가 사용한다. API DTO·OpenAPI·동기 Idempotency-Key snapshot 연결은 B4,
 Notification은 B5 범위다.
 
