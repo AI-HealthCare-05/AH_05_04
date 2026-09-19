@@ -306,6 +306,22 @@ describe('Plan B 복약 리포트', () => {
     ).toBeTruthy()
     expect(screen.getByText('장기간 복용해도 괜찮은가요?')).toBeTruthy()
 
+    // 진료 보기의 전체 섹션 순서를 한 번에 고정한다.
+    // 확인된 기록은 핵심 요약 바로 아래, 미복용 사유·진료 질문·복약 흐름은 그 뒤에 온다.
+    expect(
+      screen
+        .getAllByRole('heading', { level: 2 })
+        .map((heading) => heading.textContent?.trim()),
+    ).toEqual([
+      '사용자가 직접 기록한 내용을 정리한 화면입니다.',
+      '핵심 요약',
+      '확인된 기록',
+      '조회 기간',
+      '미복용 사유',
+      '진료 때 확인하고 싶은 질문',
+      '복약 흐름',
+    ])
+
     expect(getMedicationReport).toHaveBeenCalledWith(7, undefined, 'CLINIC')
   })
 
@@ -365,7 +381,8 @@ describe('Plan B 복약 리포트', () => {
 
     expect(screen.queryByText('오늘 남은 일정')).toBeNull()
 
-    // 확인된 기록은 핵심 요약 바로 아래, 복약 흐름보다 위에 온다.
+    // clinic 상세가 없는 응답의 순서만 확인한다.
+    // 미복용 사유·진료 질문까지 포함한 전체 순서는 clinicFixture 테스트가 고정한다.
     const clinicHeadings = screen
       .getAllByRole('heading', { level: 2 })
       .map((heading) => heading.textContent?.trim())
