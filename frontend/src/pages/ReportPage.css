@@ -417,6 +417,17 @@
   line-height: 1.4;
 }
 
+.report-records__overdue {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #f0d9a8;
+  border-radius: 12px;
+  background: #fdf6e7;
+  color: #6b5320;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .report-records {
   display: grid;
   gap: 0;

@@ -1,7 +1,8 @@
-"""기한이 지난 occurrence를 UNCONFIRMED Check-in으로 닫는 one-shot command."""
+"""기한이 지난 occurrence를 UNCONFIRMED Check-in으로 닫는 bounded one-shot command."""
 
 import asyncio
 from datetime import UTC, datetime
+from time import monotonic
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -28,27 +29,41 @@ async def generate_unconfirmed_checkins_once(
     return result
 
 
-async def run() -> UnconfirmedGenerationResult:
-    result = await generate_unconfirmed_checkins_once()
-    default_logger.info(
-        "due medication occurrences closed as unconfirmed",
-        extra={
-            "processed_count": result.processed_count,
-            "duplicate_count": result.duplicate_count,
-        },
-    )
-    return result
+BATCH_TIMEOUT_SECONDS = 45
 
 
-async def _run_and_close() -> None:
+async def run() -> bool:
+    """Return success without exposing exception text, SQL or occurrence identifiers."""
+    started = monotonic()
     try:
-        await run()
+        async with asyncio.timeout(BATCH_TIMEOUT_SECONDS):
+            result = await generate_unconfirmed_checkins_once()
+        default_logger.info(
+            "checkin_deadline_batch status=success completed_at=%s duration_seconds=%.3f "
+            "processed_count=%d duplicate_count=%d",
+            datetime.now(UTC).isoformat(),
+            monotonic() - started,
+            result.processed_count,
+            result.duplicate_count,
+        )
+        return True
+    except Exception as exc:
+        # The batch transaction is rolled back, so counts are deliberately omitted
+        # on failure; the next invocation re-selects the same due occurrences.
+        reason = "timeout" if isinstance(exc, TimeoutError) else "batch_error"
+        default_logger.error(
+            "checkin_deadline_batch status=failed completed_at=%s duration_seconds=%.3f reason=%s",
+            datetime.now(UTC).isoformat(),
+            monotonic() - started,
+            reason,
+        )
+        return False
     finally:
         await close_database()
 
 
 def main() -> None:
-    asyncio.run(_run_and_close())
+    raise SystemExit(0 if asyncio.run(run()) else 1)
 
 
 if __name__ == "__main__":

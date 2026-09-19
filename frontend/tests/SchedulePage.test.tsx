@@ -232,7 +232,74 @@ describe('production 복약 일정', () => {
       `/schedule/occurrences/${occurrenceId}?date=2026-09-14`,
     )
   })
+  it('최신 처방 B와 다른 기존 처방 A occurrence는 A의 원본 약 정보로 표시한다', async () => {
+    const oldOccurrenceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    const oldMedicationId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    const oldVersionId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+    const latestMedicationId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+    const latestVersionId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
 
+    const latestScheduleItem = {
+      ...makeDay().data.schedule_items[0],
+      prescription_version_medication_id: latestMedicationId,
+      schedule: {
+        ...makeDay().data.schedule_items[0].schedule!,
+        prescription_version_medication_id: latestMedicationId,
+      },
+    }
+
+    const oldOccurrence = {
+      ...makeDay().data.occurrences[0],
+      occurrence_id: oldOccurrenceId,
+      prescription_version_id: oldVersionId,
+      prescription_version_medication_id: oldMedicationId,
+    }
+
+    const services = makeServices({
+      getMedicationDay: vi.fn().mockResolvedValue(
+        makeDay({
+          schedule_items: [latestScheduleItem],
+          occurrences: [oldOccurrence],
+        }),
+      ),
+      getLatestPrescription: vi.fn().mockResolvedValue(
+        makePrescription({
+          prescription_version_id: latestVersionId,
+          medications: [
+            {
+              ...makePrescription().data.medications[0],
+              prescription_version_medication_id: latestMedicationId,
+              medication_name: '최신 처방 B 약',
+            },
+          ],
+        }),
+      ),
+      getOccurrenceMedication: vi.fn().mockResolvedValue(
+        makeMedication({
+          occurrence_id: oldOccurrenceId,
+          prescription_version_id: oldVersionId,
+          prescription_version_medication_id: oldMedicationId,
+          medication_name: '기존 처방 A 약',
+          strength_text: '10mg',
+        }),
+      ),
+    })
+
+    renderSchedule(services)
+
+    expect(
+      await screen.findByText('기존 처방 A 약 · 10mg · 1정'),
+    ).toBeTruthy()
+
+    expect(
+      screen.queryByText('최신 처방 B 약 · 5mg · 1정'),
+    ).toBeNull()
+
+    expect(services.getOccurrenceMedication).toHaveBeenCalledWith(
+      oldOccurrenceId,
+      expect.any(AbortSignal),
+    )
+  })
   it('READY 기본 화면을 오늘의 복약 Source 위계로 표시한다', async () => {
     renderSchedule(makeServices())
 

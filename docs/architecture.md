@@ -31,7 +31,7 @@ Backend는 SQLAlchemy asyncio와 `asyncpg`를 사용합니다. OpenAI 클라이�
 6. 챗봇 메시지 API는 USER 메시지를 저장하고 OpenAI 단일 응답을 생성한 뒤 ASSISTANT 메시지를 저장하고 `201 Created`로 응답합니다. 같은 세션의 요청은 DB row lock으로 직렬화합니다.
 7. OCR 실행 실패는 Worker의 재시도·최종 실패 정책과 Job 상태 조회로 전달됩니다. 동기 가이드·챗봇의 timeout·제공자 장애·응답 처리 실패는 정해진 API 오류로 반환합니다.
 
-현재 AI 입력에는 기능 수행에 필요한 최소 데이터만 전달합니다. 처방전 이미지, OCR 원문·미검수 값과 사용자·세션 식별자는 가이드·챗봇 AI 경계를 넘지 않습니다. 챗봇의 이전 대화는 기본적으로 조회하지 않고 `history: []`를 전달하며, 비식별 합성 Local에서 `CHAT_HISTORY_CONTEXT_ENABLED=true`일 때만 현재 질문 이전의 완료 대화를 최대 3쌍 전달합니다.
+현재 AI 입력에는 기능 수행에 필요한 최소 데이터만 전달합니다. 처방전 이미지, OCR 원문·미검수 값과 사용자·세션 식별자는 가이드·챗봇 AI 경계를 넘지 않습니다. 챗봇의 이전 대화는 기본적으로 조회하지 않고 `history: []`를 전달하며, 현재는 비식별 합성 Local에서 `CHAT_HISTORY_CONTEXT_ENABLED=true`일 때만 현재 질문 이전의 동일 세션 완료 대화를 최대 3쌍 전달합니다 (Production 명시적 opt-in은 Issue #838 / `EXT-PRIV-003` 거버넌스 승인 대기 중이며 교차 세션 대화는 엄격히 배제).
 
 ## 구현 수준 구분
 

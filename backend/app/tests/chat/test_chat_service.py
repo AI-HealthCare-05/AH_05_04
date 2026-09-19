@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -78,6 +78,7 @@ class RecordingChatRepository:
         events: list[str],
         *,
         recent_pairs: list[tuple[SimpleNamespace, SimpleNamespace]] | None = None,
+        session_pairs: dict[object, list[tuple[SimpleNamespace, SimpleNamespace]]] | None = None,
         commit_error: Exception | None = None,
         current_version_at_completion: bool = True,
     ) -> None:
@@ -85,6 +86,7 @@ class RecordingChatRepository:
         self.events = events
         self.commit_error = commit_error
         self.recent_pairs = recent_pairs or []
+        self.session_pairs = session_pairs
         self.messages: list[SimpleNamespace] = []
         self.created_snapshots: list[tuple[int, object, object, object]] = []
         self.state_transitions: list[tuple[int, ChatGenerationStatus]] = []
@@ -93,6 +95,8 @@ class RecordingChatRepository:
 
     async def get_session_owned_for_update(self, *, session_id: object, user_id: object) -> object | None:
         self.events.append("chat.lock_owned")
+        if isinstance(self.owned_session, dict):
+            return self.owned_session.get(session_id)
         return self.owned_session
 
     async def next_seq(self, *, session: object) -> int:
@@ -109,6 +113,9 @@ class RecordingChatRepository:
         self.events.append("chat.list_recent_completed_pairs")
         assert before_message_seq == 7
         assert candidate_limit == 30
+        if self.session_pairs is not None:
+            session_id = getattr(session, "id", session)
+            return self.session_pairs.get(session_id, [])[:candidate_limit]
         return self.recent_pairs[:candidate_limit]
 
     async def create_message(self, **kwargs: object) -> SimpleNamespace:
@@ -454,6 +461,100 @@ async def test_history_context_delivers_two_completed_pairs_oldest_first() -> No
         ("약은 어디에 보관하나요?", "직사광선을 피해 실온 보관하세요."),
     ]
     assert "합성의약품 알파" in history[0].question
+
+
+async def test_history_context_includes_same_session_history() -> None:
+    session_pair = _history_pair(1, "세션 A 첫 질문", "세션 A 첫 답변")
+    engine = RecordingEngine(
+        result=ChatReplyOutput(content="안전한 합성 답변", model_name="model-id", prompt_version="chat-prompt-v2")
+    )
+    service, _, _, chat_session = _service_fixture(
+        engine=engine,
+        history_context_enabled=True,
+        recent_pairs=[session_pair],
+    )
+
+    await service.send_message(
+        user=SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
+        session_id=chat_session.id,
+        request=SendChatMessageRequest(content="세션 A 후속 질문"),
+    )
+
+    assert [(item.question, item.answer) for item in engine.inputs[0].history] == [("세션 A 첫 질문", "세션 A 첫 답변")]
+
+
+async def test_history_context_excludes_other_session_history() -> None:
+    session_a_id = uuid4()
+    session_b_id = uuid4()
+    user_id = uuid4()
+
+    def _create_mock_session(sid: UUID) -> SimpleNamespace:
+        p_version_id = uuid4()
+        session = SimpleNamespace(
+            id=sid,
+            prescription_id=uuid4(),
+            prescription_version_id=p_version_id,
+            session_status=ChatSessionStatus.ACTIVE,
+            last_message_at=datetime(2026, 8, 19, tzinfo=UTC),
+        )
+        session.prescription = SimpleNamespace(active_version_id=p_version_id)
+        return session
+
+    session_a = _create_mock_session(session_a_id)
+    session_b = _create_mock_session(session_b_id)
+
+    session_a_pairs = [_history_pair(1, "세션 A 첫 질문", "세션 A 첫 답변")]
+    session_b_pairs: list[tuple[SimpleNamespace, SimpleNamespace]] = []
+
+    events: list[str] = []
+    chat_repo = RecordingChatRepository(
+        {session_a_id: session_a, session_b_id: session_b},
+        events,
+        session_pairs={session_a_id: session_a_pairs, session_b_id: session_b_pairs},
+    )
+    medications = [
+        SimpleNamespace(
+            medication_name="합성약",
+            strength_text="10mg",
+            dose_value=Decimal("1"),
+            dose_unit="정",
+            frequency_per_day=1,
+            timing_text="식후",
+            duration_days=3,
+        )
+    ]
+    prescription_repo = RecordingPrescriptionRepository(medications, events)
+    consent_gate = RecordingConsentGate(events)
+    engine = RecordingEngine(
+        result=ChatReplyOutput(content="안전한 합성 답변", model_name="model-id", prompt_version="chat-prompt-v2")
+    )
+    engine.events = events
+
+    service = ChatService(
+        prescription_repo,  # type: ignore[arg-type]
+        chat_repo,  # type: ignore[arg-type]
+        engine,
+        consent_gate,  # type: ignore[arg-type]
+        history_context_enabled=True,
+    )
+
+    user = SimpleNamespace(id=user_id)
+
+    # 1. Session B sends request: Session A's history must NOT be present (history is empty)
+    await service.send_message(
+        user=user,  # type: ignore[arg-type]
+        session_id=session_b_id,
+        request=SendChatMessageRequest(content="세션 B 첫 질문"),
+    )
+    assert engine.inputs[0].history == []
+
+    # 2. Session A sends request: Session A's history must be present
+    await service.send_message(
+        user=user,  # type: ignore[arg-type]
+        session_id=session_a_id,
+        request=SendChatMessageRequest(content="세션 A 후속 질문"),
+    )
+    assert [(item.question, item.answer) for item in engine.inputs[1].history] == [("세션 A 첫 질문", "세션 A 첫 답변")]
 
 
 @pytest.mark.parametrize(

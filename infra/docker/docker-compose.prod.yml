@@ -231,6 +231,7 @@ services:
       OCR_STRUCTURE_TIMEOUT_SECONDS: ${OCR_STRUCTURE_TIMEOUT_SECONDS:-30}
       # RAG-11 UI·RAG-12 Preflight·E2E·외부 승인 전에는 false를 유지합니다.
       PUBLIC_TRACK_F_ENABLED: ${PUBLIC_TRACK_F_ENABLED:-false}
+      CHAT_HISTORY_CONTEXT_ENABLED: ${CHAT_HISTORY_CONTEXT_ENABLED:-false}
 
       # 업로드 파일이 영속 volume 아래에 저장되도록 고정합니다.
       STORAGE_DIR: ${STORAGE_DIR:-/app/media/medical_documents}
@@ -296,6 +297,41 @@ services:
       WEB_PUSH_ENCRYPTION_KEYS: ${WEB_PUSH_ENCRYPTION_KEYS:-{}}
       WEB_PUSH_ACTIVE_KEY_ID: ${WEB_PUSH_ACTIVE_KEY_ID:-}
       WEB_PUSH_ENDPOINT_HMAC_KEY: ${WEB_PUSH_ENDPOINT_HMAC_KEY:-}
+    networks:
+      - ws
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # #839: check-in deadline runtime. Not opt-in: without it, occurrences whose
+  # confirmation deadline passed stay PENDING and the report keeps showing 예정.
+  # Deployed and verified by scripts/deployment.sh like the other core services.
+  checkin-deadline-scheduler:
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    init: true
+    entrypoint: ["/app/.venv/bin/python", "-m", "app.commands.schedule_checkin_deadlines"]
+    restart: unless-stopped
+    stop_grace_period: 15s
+    environment:
+      ENV: ${ENV}
+      # Required by shared Config validation; no Provider/admin/migration credentials.
+      SECRET_KEY: ${SECRET_KEY}
+      IDEMPOTENCY_HMAC_KEY: ${IDEMPOTENCY_HMAC_KEY}
+      IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY: ${IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_APP_USER}
+      DB_PASSWORD: ${DB_APP_PASSWORD}
+      DB_CONNECTION_POOL_MAXSIZE: "2"
+      SQLALCHEMY_ECHO: "false"
     networks:
       - ws
     depends_on:
