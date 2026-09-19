@@ -3,6 +3,7 @@
 import dataclasses
 import json
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid4
 
@@ -12,8 +13,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 from sqlalchemy.sql.selectable import TableClause
 
+from ai_worker.adapters.sqlalchemy_catalog_approval_verifier import verify_exact_catalog_approval
 from ai_worker.adapters.sqlalchemy_source_snapshot_repository import SqlAlchemySourceSnapshotRepository
-from ai_worker.tasks.rag.catalog.approval import CatalogApprovalVerifier
+from ai_worker.tasks.rag.catalog.approval import (
+    CatalogApprovalBindingError,
+    CatalogApprovalVerifier,
+    approval_binding_from_manifest,
+)
 from ai_worker.tasks.rag.catalog.build import CatalogMembers
 from ai_worker.tasks.rag.catalog.export import CatalogExportArtifacts
 from ai_worker.tasks.rag.catalog.restore import restore_catalog_export_bytes, restore_current_catalog_storage
@@ -864,6 +870,15 @@ class SqlAlchemyCatalogWriteSupport:
             raise CatalogDatabaseBindingError()
 
 
+def _claims_approval(manifest_json: bytes) -> bool:
+    """manifest가 승인 receipt를 주장하는지 봅니다. 파싱 실패는 주장 없음이 아니라 결속 오류입니다."""
+    try:
+        manifest = json.loads(manifest_json)
+        return manifest["approval_receipt"] is not None
+    except (ValueError, KeyError, TypeError):
+        raise CatalogDatabaseBindingError() from None
+
+
 class SqlAlchemyCatalogBuildRepository:
     """현재 v2 Catalog Set 전체 transaction을 소유하는 PostgreSQL adapter입니다."""
 
@@ -877,6 +892,9 @@ class SqlAlchemyCatalogBuildRepository:
                 if isinstance(session.bind, AsyncConnection) and session.bind.in_transaction():
                     raise CatalogDatabaseBindingError()
                 async with session.begin():
+                    # 승인 검증과 Catalog 저장을 같은 transaction에 둡니다. verifier 통과 이후
+                    # 저장 직전에 철회가 commit되는 경로를 advisory lock으로 막습니다.
+                    await self._require_current_approval(session, plan)
                     staged = await SqlAlchemyCatalogWriteSupport(session).stage_compatible_members(plan)
                     if staged.set_id is None:
                         raise CatalogDatabaseBindingError()
@@ -890,9 +908,50 @@ class SqlAlchemyCatalogBuildRepository:
     async def load_build(
         self, set_id: UUID, *, approval_verifier: CatalogApprovalVerifier | None
     ) -> CatalogExportArtifacts:
-        """전체 v2 artifacts를 Candidate에 인계합니다. 저장 당시 승인만으로 소비를 허용하지 않습니다."""
-        plan = await self._read_plan(set_id)
-        return await restore_current_catalog_storage(plan, approval_verifier=approval_verifier)
+        """전체 v2 artifacts를 Candidate에 인계합니다. 저장 당시 승인만으로 소비를 허용하지 않습니다.
+
+        읽기 transaction 안에서 저장된 manifest가 지목한 승인 ID를 같은 순서로 잠그고 다시
+        검증합니다. 이 경계는 Catalog 승인 소비까지이며 Candidate READY나 Runtime 활성화를
+        의미하지 않습니다.
+        """
+        try:
+            async with self._session_factory() as session:
+                if isinstance(session.bind, AsyncConnection) and session.bind.in_transaction():
+                    raise CatalogDatabaseBindingError()
+                async with session.begin():
+                    # advisory lock은 READ ONLY transaction에서도 잡히므로 읽기 전용을 유지합니다.
+                    await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+                    plan = await SqlAlchemyCatalogWriteSupport(session, read_only=True).read_set(set_id)
+                    await self._require_current_approval(session, plan)
+                    # lock을 쥔 채로 복원까지 마칩니다. 반환 후 철회되더라도 이 결과는 승인된
+                    # 시점의 exact bytes이며, 다음 소비는 다시 이 경계를 통과해야 합니다.
+                    return await restore_current_catalog_storage(plan, approval_verifier=approval_verifier)
+        except SQLAlchemyError:
+            raise CatalogDatabaseBindingError() from None
+
+    async def _require_current_approval(self, session: AsyncSession, plan: CatalogStoragePlan) -> None:
+        """manifest가 지목한 정확한 승인을 같은 transaction에서 잠그고 재검증합니다.
+
+        승인을 주장하지 않는 manifest(NOT_APPROVED)는 여기서 판정하지 않습니다. 그 산출물은
+        소비 경계의 기존 gate가 거부하므로, 이 helper는 "승인되었다고 주장하는 저장/소비가
+        지금도 실제로 승인되어 있는가"만 책임집니다.
+        """
+        if not _claims_approval(plan.manifest_json):
+            return
+        try:
+            binding = approval_binding_from_manifest(plan.manifest_json)
+        except CatalogApprovalBindingError:
+            raise CatalogDatabaseBindingError() from None
+        if binding.catalog_version != plan.catalog_version:
+            raise CatalogDatabaseBindingError()
+        approved = await verify_exact_catalog_approval(
+            session,
+            binding=binding,
+            # 사용 확정 직전 실제 시각으로 만료를 판정합니다. transaction 시작 시각을 쓰지 않습니다.
+            checked_at=datetime.now(UTC),
+        )
+        if not approved:
+            raise CatalogDatabaseBindingError()
 
     async def _read_plan(self, set_id: UUID) -> CatalogStoragePlan:
         try:

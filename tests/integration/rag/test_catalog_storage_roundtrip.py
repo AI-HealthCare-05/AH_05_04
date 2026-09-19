@@ -5,10 +5,10 @@ import hashlib
 import json
 import unicodedata
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 import pytest
 import pytest_asyncio
@@ -18,6 +18,7 @@ from sqlalchemy import event, func, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from ai_worker.adapters.sqlalchemy_catalog_approval_verifier import CATALOG_SOURCE_USE_PURPOSE
 from ai_worker.adapters.sqlalchemy_catalog_write_support import (
     CatalogDatabaseBindingError,
     SqlAlchemyCatalogBuildRepository,
@@ -37,17 +38,94 @@ from ai_worker.tasks.rag.catalog import (
     create_catalog_export,
 )
 from ai_worker.tasks.rag.catalog.approval import CatalogApprovalVerifier
+from ai_worker.tasks.rag.catalog.export import CATALOG_MANIFEST_SPEC_VERSION
 from ai_worker.tasks.rag.catalog.restore import CatalogStorageRestoreError
 from ai_worker.tests.rag.catalog.test_export import _alias, _product
 from ai_worker.tests.rag.catalog.test_hash_contract_v2 import candidate
 from app.core import config
+from app.models.catalog_approval import CatalogBuildApproval as CatalogBuildApprovalRow
+from app.models.catalog_approval import CatalogBuildApprovalSource as CatalogBuildApprovalSourceRow
+from app.models.catalog_approval import CatalogSourceApproval as CatalogSourceApprovalRow
 from app.models.rag_catalog import RagCatalogSet
 from app.models.rag_source import RagSource, RagSourceEndpoint, RagSourceOperation, RagSourceSnapshot
+from app.models.users import User
 
 ROOT = Path(__file__).resolve().parents[3]
 GOLDEN = ROOT / "tests/fixtures/rag/catalog/db-receipt-v2"
 PRODUCT_SNAPSHOT = "00000000-0000-4000-8000-000000000001"
 ALIAS_SNAPSHOT = "00000000-0000-4000-8000-000000000002"
+
+
+APPROVAL_NAMESPACE = UUID("526c1d2e-3f4a-4000-8000-000000000000")
+
+
+def build_approval_id(export_checksum: str) -> UUID:
+    return uuid5(APPROVAL_NAMESPACE, f"build:{export_checksum}")
+
+
+def source_approval_id(export_checksum: str, snapshot_id: str) -> UUID:
+    return uuid5(APPROVAL_NAMESPACE, f"source:{export_checksum}:{snapshot_id}")
+
+
+async def seed_catalog_approvals(factory, artifacts_by_revision) -> None:
+    """#526 Phase 2: 저장·소비 경계가 다시 확인할 실제 승인 row를 심습니다.
+
+    합성 receipt만으로는 더 이상 저장되지 않습니다. 승인 ID·checksum·Source 집합·목적이
+    저장소의 사실과 정확히 같아야 하며, 이 helper가 그 사실을 만들어 줍니다.
+    """
+    now = datetime.now(UTC)
+    async with factory.begin() as session:
+        actor = User(
+            email=f"roundtrip-approver-{uuid4().hex[:8]}@example.test",
+            hashed_password="synthetic-only",
+            name="합성 승인자",
+        )
+        session.add(actor)
+        await session.flush()
+        for revision, artifacts in enumerate(artifacts_by_revision, start=1):
+            checksum = artifacts.export_checksum
+            build_id = build_approval_id(checksum)
+            session.add(
+                CatalogBuildApprovalRow(
+                    id=build_id,
+                    catalog_version=artifacts.catalog.catalog_version,
+                    export_checksum=checksum,
+                    schema_version=artifacts.catalog.schema_version,
+                    manifest_spec_version=CATALOG_MANIFEST_SPEC_VERSION,
+                    approved_export_bytes=artifacts.catalog_jsonl,
+                    is_complete=True,
+                    actor_id=actor.id,
+                    evidence_ref="synthetic://roundtrip-approval",
+                    valid_from=now - timedelta(days=1),
+                    expires_at=now + timedelta(days=1),
+                    issued_revision=revision,
+                )
+            )
+            await session.flush()
+            for ref in artifacts.catalog.source_refs:
+                source_id = source_approval_id(checksum, ref.snapshot_id)
+                session.add(
+                    CatalogSourceApprovalRow(
+                        id=source_id,
+                        source_snapshot_id=UUID(ref.snapshot_id),
+                        source_version=ref.source_version,
+                        purpose=CATALOG_SOURCE_USE_PURPOSE,
+                        actor_id=actor.id,
+                        evidence_ref="synthetic://roundtrip-source",
+                        valid_from=now - timedelta(days=1),
+                        expires_at=now + timedelta(days=1),
+                        issued_revision=revision,
+                    )
+                )
+                await session.flush()
+                session.add(
+                    CatalogBuildApprovalSourceRow(
+                        build_approval_id=build_id,
+                        source_approval_id=source_id,
+                        source_snapshot_id=UUID(ref.snapshot_id),
+                        source_version=ref.source_version,
+                    )
+                )
 
 
 def approved_build(*, changed=False, repeated=False):
@@ -108,17 +186,22 @@ def approved_build(*, changed=False, repeated=False):
         )
     members = build_catalog_members(products=products, ingredients=ingredients, components=components, aliases=aliases)
     initial = create_catalog_export(catalog_version="synthetic-db-v2", source_refs=refs, members=members)
+    # #526 Phase 2: 저장·소비가 승인 ID를 실제 저장소에서 다시 확인하므로 receipt ID는
+    # fixture가 같은 값으로 승인 row를 심을 수 있도록 checksum에서 결정적으로 도출합니다.
     receipt = CatalogApprovalReceipt(
-        "synthetic-db-approval",
+        str(build_approval_id(initial.export_checksum)),
         "synthetic-db-v2",
         initial.export_checksum,
         CatalogVerificationStatus.APPROVED,
         True,
         tuple(
             CatalogSourceApproval(
-                ref, f"synthetic-source-{i}", CatalogVerificationStatus.APPROVED, CatalogFreshnessStatus.CURRENT
+                ref,
+                str(source_approval_id(initial.export_checksum, ref.snapshot_id)),
+                CatalogVerificationStatus.APPROVED,
+                CatalogFreshnessStatus.CURRENT,
             )
-            for i, ref in enumerate(refs)
+            for ref in refs
         ),
     )
     artifacts = create_catalog_export(
@@ -179,6 +262,19 @@ async def database(monkeypatch):
         async with cluster.connect() as connection:
             await connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
         await cluster.dispose()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _seed_approvals_for_roundtrip(database):
+    _, factory = database
+    await seed_catalog_approvals(
+        factory,
+        [
+            approved_build()[1],
+            approved_build(changed=True)[1],
+            approved_build(repeated=True)[1],
+        ],
+    )
 
 
 async def saved(factory):
@@ -528,19 +624,108 @@ async def test_mfds_loader_preserves_groups_sources_and_candidate_handoff(databa
     inspection = inspect_mfds_component_rows(tuple(rows))
     verifier = AsyncMock(spec=CatalogApprovalVerifier)
 
-    def approve(*, catalog_version, export_checksum, source_refs):
+    async def approve(*, catalog_version, export_checksum, source_refs):
+        build_id = build_approval_id(export_checksum)
+        now = datetime.now(UTC)
+        source_approvals = []
+        async with factory.begin() as session:
+            actor = (await session.execute(select(User).limit(1))).scalar_one_or_none()
+            if actor is None:
+                actor = User(
+                    email=f"mfds-approver-{uuid4().hex[:8]}@example.test",
+                    hashed_password="synthetic-only",
+                    name="합성 승인자",
+                )
+                session.add(actor)
+                await session.flush()
+            existing = await session.get(CatalogBuildApprovalRow, build_id)
+            if existing is None:
+                session.add(
+                    CatalogBuildApprovalRow(
+                        id=build_id,
+                        catalog_version=catalog_version,
+                        export_checksum=export_checksum,
+                        schema_version="medication-catalog-v3",
+                        manifest_spec_version=CATALOG_MANIFEST_SPEC_VERSION,
+                        approved_export_bytes=b"synthetic-mfds-bytes",
+                        is_complete=True,
+                        actor_id=actor.id,
+                        evidence_ref="synthetic://mfds-approval",
+                        valid_from=now - timedelta(days=1),
+                        expires_at=now + timedelta(days=1),
+                        issued_revision=1,
+                    )
+                )
+                await session.flush()
+            for ref in source_refs:
+                link_existing = (
+                    await session.execute(
+                        select(CatalogBuildApprovalSourceRow).where(
+                            CatalogBuildApprovalSourceRow.build_approval_id == build_id,
+                            CatalogBuildApprovalSourceRow.source_snapshot_id == UUID(ref.snapshot_id),
+                        )
+                    )
+                ).scalar_one_or_none()
+                if link_existing is not None:
+                    source_id = link_existing.source_approval_id
+                else:
+                    source_id = source_approval_id(export_checksum, ref.snapshot_id)
+                    src_existing = await session.get(CatalogSourceApprovalRow, source_id)
+                    if src_existing is None:
+                        src_active = (
+                            (
+                                await session.execute(
+                                    select(CatalogSourceApprovalRow).where(
+                                        CatalogSourceApprovalRow.source_snapshot_id == UUID(ref.snapshot_id),
+                                        CatalogSourceApprovalRow.purpose == CATALOG_SOURCE_USE_PURPOSE,
+                                        CatalogSourceApprovalRow.revoked_at.is_(None),
+                                    )
+                                )
+                            )
+                            .scalars()
+                            .first()
+                        )
+                        if src_active is not None:
+                            source_id = src_active.id
+                        else:
+                            session.add(
+                                CatalogSourceApprovalRow(
+                                    id=source_id,
+                                    source_snapshot_id=UUID(ref.snapshot_id),
+                                    source_version=ref.source_version,
+                                    purpose=CATALOG_SOURCE_USE_PURPOSE,
+                                    actor_id=actor.id,
+                                    evidence_ref="synthetic://mfds-source",
+                                    valid_from=now - timedelta(days=1),
+                                    expires_at=now + timedelta(days=1),
+                                    issued_revision=1,
+                                )
+                            )
+                            await session.flush()
+                    session.add(
+                        CatalogBuildApprovalSourceRow(
+                            id=uuid4(),
+                            build_approval_id=build_id,
+                            source_approval_id=source_id,
+                            source_snapshot_id=UUID(ref.snapshot_id),
+                            source_version=ref.source_version,
+                        )
+                    )
+                source_approvals.append(
+                    CatalogSourceApproval(
+                        ref,
+                        str(source_id),
+                        CatalogVerificationStatus.APPROVED,
+                        CatalogFreshnessStatus.CURRENT,
+                    )
+                )
         return CatalogApprovalReceipt(
-            "synthetic-mfds-approval",
+            str(build_id),
             catalog_version,
             export_checksum,
             CatalogVerificationStatus.APPROVED,
             True,
-            tuple(
-                CatalogSourceApproval(
-                    ref, "synthetic-source", CatalogVerificationStatus.APPROVED, CatalogFreshnessStatus.CURRENT
-                )
-                for ref in source_refs
-            ),
+            tuple(source_approvals),
         )
 
     verifier.verify.side_effect = approve

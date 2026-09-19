@@ -5,8 +5,10 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from ai_worker.adapters.sqlalchemy_catalog_approval_verifier import (
+    CATALOG_SOURCE_USE_PURPOSE,
     CatalogApprovalAmbiguityError,
     SqlAlchemyCatalogApprovalVerifier,
 )
@@ -52,6 +54,7 @@ async def issue(
     valid_from: datetime | None = None,
     expires_at: datetime | None = None,
     revision: int = 1,
+    purpose: str = CATALOG_SOURCE_USE_PURPOSE,
 ) -> UUID:
     """검증 대상 승인을 저장합니다. 운영 발급 명령은 이번 범위 밖입니다."""
     now = datetime.now(UTC)
@@ -74,14 +77,15 @@ async def issue(
             )
         )
         await session.flush()
-        for index, ref in enumerate(refs):
+        for _index, ref in enumerate(refs):
             source_id = uuid4()
             session.add(
                 CatalogSourceApproval(
                     id=source_id,
                     source_snapshot_id=UUID(ref.snapshot_id),
                     source_version=ref.source_version,
-                    purpose=f"CATALOG_BUILD_{revision}_{index}",
+                    # #526 Phase 2: Catalog Source 사용 목적은 PRODUCT_IDENTIFICATION으로 확정.
+                    purpose=purpose,
                     actor_id=actor_id,
                     evidence_ref="synthetic://source-evidence",
                     valid_from=valid_from or now - timedelta(days=1),
@@ -242,3 +246,47 @@ async def test_two_live_approvals_for_one_export_are_not_silently_picked(databas
         await SqlAlchemyCatalogApprovalVerifier(factory).verify(
             catalog_version=CATALOG_VERSION, export_checksum=EXPORT_CHECKSUM, source_refs=REFS
         )
+
+
+@pytest.mark.parametrize("purpose", ["CATALOG_BUILD", "SAFETY_REVIEW", "product_identification"])
+async def test_source_approval_issued_for_another_purpose_is_not_a_catalog_approval(database, purpose):
+    """#526 Phase 2: 다른 목적·공백 목적의 Source 승인은 Catalog 사용 승인으로 인정하지 않습니다."""
+    _, factory = database
+    actor_id = await _actor(factory)
+    await issue(factory, actor_id=actor_id, purpose=purpose)
+
+    assert (
+        await SqlAlchemyCatalogApprovalVerifier(factory).verify(
+            catalog_version=CATALOG_VERSION, export_checksum=EXPORT_CHECKSUM, source_refs=REFS
+        )
+        is None
+    )
+
+
+async def test_exact_purpose_is_required_on_every_bound_source(database):
+    """일부 Source만 올바른 목적이면 전체를 거부합니다. 부분 승인으로 통과시키지 않습니다."""
+    _, factory = database
+    actor_id = await _actor(factory)
+    build_id = await issue(factory, actor_id=actor_id)
+    async with factory.begin() as session:
+        await session.execute(
+            text("UPDATE catalog_source_approval SET purpose = 'SAFETY_REVIEW' WHERE source_snapshot_id = :snapshot"),
+            {"snapshot": ALIAS_SNAPSHOT},
+        )
+
+    assert (
+        await SqlAlchemyCatalogApprovalVerifier(factory).verify(
+            catalog_version=CATALOG_VERSION, export_checksum=EXPORT_CHECKSUM, source_refs=REFS
+        )
+        is None
+    )
+    assert build_id is not None
+
+
+async def test_blank_purpose_cannot_even_be_stored(database):
+    """공백 목적은 verifier 이전에 Phase 1 저장 제약이 막습니다. 저장 자체가 불가능합니다."""
+    _, factory = database
+    actor_id = await _actor(factory)
+
+    with pytest.raises(IntegrityError):
+        await issue(factory, actor_id=actor_id, purpose="   ")

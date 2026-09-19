@@ -14,7 +14,12 @@ from sqlalchemy import Boolean, DateTime, String, column, select, table
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ai_worker.adapters.catalog_approval_advisory_lock import (
+    CatalogApprovalLockKeyError,
+    acquire_catalog_approval_advisory_locks,
+)
 from ai_worker.tasks.rag.catalog.approval import (
+    CatalogApprovalBinding,
     CatalogApprovalReceipt,
     CatalogSourceApproval,
 )
@@ -46,10 +51,15 @@ _SOURCE_APPROVAL = table(
     column("id", String(36)),
     column("source_snapshot_id", String(36)),
     column("source_version", String(200)),
+    column("purpose", String(60)),
     column("valid_from", DateTime(timezone=True)),
     column("expires_at", DateTime(timezone=True)),
     column("revoked_at", DateTime(timezone=True)),
 )
+
+#: 이 Catalog 도메인의 Source 사용 목적은 #526에서 PRODUCT_IDENTIFICATION으로 확정되었습니다.
+#: 다른 목적으로 발급된 승인은 Catalog 사용 승인으로 인정하지 않습니다.
+CATALOG_SOURCE_USE_PURPOSE = "PRODUCT_IDENTIFICATION"
 
 
 class CatalogApprovalStorageError(RuntimeError):
@@ -139,6 +149,7 @@ class SqlAlchemyCatalogApprovalVerifier:
                 _SOURCE_APPROVAL.c.revoked_at,
                 _SOURCE_APPROVAL.c.valid_from,
                 _SOURCE_APPROVAL.c.expires_at,
+                _SOURCE_APPROVAL.c.purpose,
             )
             .select_from(
                 _BUILD_APPROVAL_SOURCE.join(
@@ -157,7 +168,10 @@ class SqlAlchemyCatalogApprovalVerifier:
             return None
 
         approvals: list[CatalogSourceApproval] = []
-        for snapshot_id, source_version, source_approval_id, revoked_at, valid_from, expires_at in linked:
+        for snapshot_id, source_version, source_approval_id, revoked_at, valid_from, expires_at, purpose in linked:
+            # 다른 목적·NULL·공백 목적으로 발급된 승인은 Catalog 사용 승인이 아닙니다.
+            if purpose is None or purpose.strip() != CATALOG_SOURCE_USE_PURPOSE:
+                return None
             if revoked_at is not None or not (_aware(valid_from) <= checked_at < _aware(expires_at)):
                 return None
             approvals.append(
@@ -173,13 +187,93 @@ class SqlAlchemyCatalogApprovalVerifier:
         return tuple(approvals)
 
 
+async def verify_exact_catalog_approval(
+    session: AsyncSession,
+    *,
+    binding: CatalogApprovalBinding,
+    checked_at: datetime,
+    expected_purpose: str = CATALOG_SOURCE_USE_PURPOSE,
+    lock: bool = True,
+) -> bool:
+    """호출한 session·transaction 안에서 정확히 그 승인 ID들이 지금도 유효한지 확인합니다.
+
+    "가장 최근 유효 승인"을 고르지 않습니다. manifest가 지목한 build/Source 승인 ID가 아니면
+    통과시키지 않으므로, 재승인이 생겨도 저장된 manifest의 근거가 바뀌지 않습니다.
+
+    `lock=True`면 승인 advisory lock을 정해진 순서로 먼저 잡습니다. 이 lock은 호출자의
+    transaction이 끝날 때까지 유지되므로, 검증과 저장/소비 사이에 철회가 끼어들 수 없습니다.
+    Catalog Writer에는 승인 UPDATE 권한이 없어 row lock 대신 이 방식을 씁니다.
+    """
+    try:
+        if lock:
+            await acquire_catalog_approval_advisory_locks(session, binding.approval_ids)
+    except CatalogApprovalLockKeyError:
+        return False
+
+    build = (
+        await session.execute(
+            select(_BUILD_APPROVAL.c.is_complete, _BUILD_APPROVAL.c.valid_from, _BUILD_APPROVAL.c.expires_at).where(
+                _BUILD_APPROVAL.c.id == binding.build_approval_id,
+                _BUILD_APPROVAL.c.catalog_version == binding.catalog_version,
+                _BUILD_APPROVAL.c.export_checksum == binding.export_checksum,
+                _BUILD_APPROVAL.c.revoked_at.is_(None),
+            )
+        )
+    ).all()
+    if len(build) != 1:
+        return False
+    is_complete, valid_from, expires_at = build[0]
+    if is_complete is not True or not (_aware(valid_from) <= checked_at < _aware(expires_at)):
+        return False
+
+    linked = (
+        await session.execute(
+            select(
+                _BUILD_APPROVAL_SOURCE.c.source_approval_id,
+                _BUILD_APPROVAL_SOURCE.c.source_snapshot_id,
+                _BUILD_APPROVAL_SOURCE.c.source_version,
+                _SOURCE_APPROVAL.c.purpose,
+                _SOURCE_APPROVAL.c.revoked_at,
+                _SOURCE_APPROVAL.c.valid_from,
+                _SOURCE_APPROVAL.c.expires_at,
+            )
+            .select_from(
+                _BUILD_APPROVAL_SOURCE.join(
+                    _SOURCE_APPROVAL,
+                    _BUILD_APPROVAL_SOURCE.c.source_approval_id == _SOURCE_APPROVAL.c.id,
+                )
+            )
+            .where(_BUILD_APPROVAL_SOURCE.c.build_approval_id == binding.build_approval_id)
+        )
+    ).all()
+
+    expected_ids = set(binding.source_approval_ids)
+    expected_refs = {(ref.snapshot_id, ref.source_version) for ref in binding.source_refs}
+    observed_ids = {str(row[0]) for row in linked}
+    observed_refs = {(str(row[1]), row[2]) for row in linked}
+    # link 집합이 정확히 같아야 합니다. 누락도 초과도 승인 범위의 변경입니다.
+    if len(linked) != len(expected_ids) or observed_ids != expected_ids or observed_refs != expected_refs:
+        return False
+
+    for _, _, _, purpose, revoked_at, source_valid_from, source_expires_at in linked:
+        if purpose is None or purpose.strip() != expected_purpose:
+            return False
+        if revoked_at is not None:
+            return False
+        if not (_aware(source_valid_from) <= checked_at < _aware(source_expires_at)):
+            return False
+    return True
+
+
 def _aware(value: datetime) -> datetime:
     """저장 드라이버가 naive datetime을 돌려줘도 UTC 기준으로 비교합니다."""
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 __all__ = [
+    "CATALOG_SOURCE_USE_PURPOSE",
     "CatalogApprovalAmbiguityError",
     "CatalogApprovalStorageError",
     "SqlAlchemyCatalogApprovalVerifier",
+    "verify_exact_catalog_approval",
 ]

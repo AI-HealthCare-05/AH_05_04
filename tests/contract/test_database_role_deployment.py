@@ -14,12 +14,21 @@ def test_optional_database_roles_must_be_distinct() -> None:
     assert RUNTIME_LIFESTYLE_TABLES == {"lifestyle_times"}
 
     validate_distinct_role_names(
-        "admin", "owner", "runtime", "writer", None, "catalog", "index-builder", "cleanup", "candidate-builder"
+        "admin",
+        "owner",
+        "runtime",
+        "writer",
+        None,
+        "catalog",
+        "index-builder",
+        "cleanup",
+        "candidate-builder",
+        "approval",
     )
 
     with pytest.raises(ValueError, match="distinct"):
         validate_distinct_role_names(
-            "admin", "owner", "runtime", "writer", None, "catalog", "index-builder", "cleanup", "writer"
+            "admin", "owner", "runtime", "writer", None, "catalog", "index-builder", "cleanup", "writer", "approval"
         )
 
 
@@ -330,6 +339,52 @@ def test_catalog_role_policy_includes_approval_tables() -> None:
 
     source = (ROOT / "infra/python/catalog_role_policy.py").read_text()
     assert "CATALOG_APPROVAL_READ_TABLES" in source
+
+
+def test_catalog_approval_role_policy_is_explicit_and_least_privilege() -> None:
+    from infra.python.catalog_approval_role_policy import (
+        APPROVAL_AUDIT_TABLE,
+        APPROVAL_INSERT_TABLES,
+        APPROVAL_PAYLOAD_TABLES,
+        APPROVAL_PERMISSION_TABLE,
+        APPROVAL_READ_TABLES,
+        APPROVAL_REVOKE_COLUMNS,
+        APPROVAL_SOURCE_READ_TABLES,
+        APPROVAL_USER_COLUMNS,
+        REVOCABLE_TABLES,
+    )
+    from infra.python.catalog_role_policy import (
+        CATALOG_APPROVAL_READ_TABLES,
+        CATALOG_WRITE_TABLES,
+    )
+
+    assert APPROVAL_AUDIT_TABLE == "catalog_approval_audit"
+    assert APPROVAL_PERMISSION_TABLE == "catalog_approval_permission"
+    assert APPROVAL_PAYLOAD_TABLES == {
+        "catalog_source_approval",
+        "catalog_build_approval",
+        "catalog_build_approval_source",
+    }
+    assert APPROVAL_INSERT_TABLES == APPROVAL_PAYLOAD_TABLES | {APPROVAL_AUDIT_TABLE}
+    assert REVOCABLE_TABLES == {"catalog_source_approval", "catalog_build_approval"}
+    assert APPROVAL_REVOKE_COLUMNS == ("revoked_at", "revoked_by", "revoked_reason")
+    assert APPROVAL_USER_COLUMNS == ("id", "is_active", "account_status")
+    assert APPROVAL_READ_TABLES == APPROVAL_PAYLOAD_TABLES | {APPROVAL_AUDIT_TABLE, APPROVAL_PERMISSION_TABLE}
+    assert CATALOG_APPROVAL_READ_TABLES == APPROVAL_PAYLOAD_TABLES
+    assert "rag_source_snapshot" in APPROVAL_SOURCE_READ_TABLES
+
+    # Catalog Writer must never write to approval tables
+    assert not (CATALOG_WRITE_TABLES & APPROVAL_READ_TABLES)
+
+    # Approval role must never write to catalog business tables
+    assert not (APPROVAL_INSERT_TABLES & CATALOG_WRITE_TABLES)
+    assert not (REVOCABLE_TABLES & CATALOG_WRITE_TABLES)
+
+    source = (ROOT / "infra/python/catalog_approval_role_policy.py").read_text()
+    assert "GRANT INSERT ON TABLE public." in source
+    assert "GRANT UPDATE (" in source
+    assert "GRANT DELETE" not in source
+    assert "GRANT TRUNCATE" not in source
 
 
 def test_deployment_stops_writers_and_provisions_before_starting_api() -> None:
