@@ -174,6 +174,7 @@ from app.models.rag_source import (
     RagSourceUsageStatus,
     RagVerificationResultStatus,
 )
+from app.models.rag_source_use_approval import RagSourceUseApproval
 from app.models.refresh_session import RefreshSession
 from app.models.track_c import (
     ActionPlanFollowup,
@@ -325,6 +326,7 @@ __all__ = [
     "RagRuntimeExecutionManifest",
     "RagRuntimeReleaseBundle",
     "RagRuntimeSourcePurpose",
+    "RagSourceUseApproval",
     "RagSnapshotVerificationStatus",
     "RagSource",
     "RagSourceApprovalStatus",

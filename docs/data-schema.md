@@ -40,6 +40,7 @@ UUID는 PostgreSQL native `UUID` 타입으로 변경하지 않고 기존 데이�
 | 비동기 실행 | `ai_job`, `outbox_event`, `idempotency_record` | `JobIntakeService`(#147)의 Job 접수 transaction과 DB Outbox 선점·`WorkerMessage` 조립·Redis 발행·fencing 완료(#219)가 repository·service 계층에 연결됨. 실제 OCR·Guide·Chat API DTO·응답 경로는 아직 미연결(#148) |
 | 비동기 실행(schema-only) | `ai_job_attempt`, `message_quarantine`, `dlq_outbox_event` | Schema-only Post-MVP 골격, 현재 repository·service·API 경로에서 미사용 |
 | RAG Source·Catalog | `rag_source`, `rag_source_endpoint`, `rag_source_operation`, `rag_source_snapshot`, `rag_source_snapshot_member`, `rag_source_ingestion_run`, `rag_source_ingestion_artifact`, `rag_source_snapshot_verification`, `rag_entity_identity`, `rag_medication_product`, `rag_medication_ingredient`, `rag_medication_alias`, `rag_medication_product_component`, `rag_medication_search_entry`, `rag_catalog_set`, `rag_catalog_set_source`, `rag_catalog_set_member`, `rag_catalog_set_hash` | #164·#165 기반과 #166 안정 Identity·Catalog 구성원·불변 v2 Set/manifest, #178 선행 Snapshot member 저장 기반. D-02 실행 provenance와 Runtime 활성화는 후속 범위 |
+| RAG Source Use Approval | `rag_source_use_approval` | #807 Source Snapshot별 canonical environment·Source Use Purpose·explicit `approval_version`에 대한 historical approval facts. `PATIENT_CITATION`은 Catalog 승인·Bundle membership·Snapshot CURRENT·Citation Member Decision과 별도이며 migration `807a1b2c3d4e`로 저장 기반을 추가한다. |
 | RAG Candidate Index | `rag_candidate_index_version`, `rag_candidate_index_member` | #168(RAG-07B) RAG-07A(#167) build 결과의 영속·멱등 build transaction. #583은 `BUILDING → READY/FAILED`와 기존 READY `RETIRED` 전이를 repository transaction으로 추가 |
 
 본인 단일 `SELF` profile과 `profile_id` 기반 소유권 전환은 #117 구현 PR에서 도입했습니다. 보호자·멀티 프로필·위임 권한은 후속 범위이며, 현재 구현은 사용자 1명당 `SELF` profile 1개만 허용합니다. 복약 일정·occurrence와 Check-in 저장·정정 경계는 아래 분할 구현 상태를 따르며, B4 공개 API와 Track C 상세 구현은 아직 목표 계약이다.
@@ -999,6 +1000,32 @@ Citation kernel의 `RuntimeAuthorizationBinding`과 `OriginRequestGuardBinding`�
 Guide runtime, Citation Source/Member Decision, Receipt, orchestration, Release Gate 또는 `PUBLIC_TRACK_F`
 활성화를 의미하지 않는다. PostgreSQL integration·migration·CI·required reviewer 증빙 후 Current 승격을
 별도로 판단한다.
+
+## #807 PATIENT_CITATION Source Use Approval — 구현 초안, Proposed
+
+[계약](contracts/proposed/post-mvp-1/source-use-approval-807.md), migration
+`807a1b2c3d4e`에서 `rag_source_use_approval`을 추가한다. 이 표는 Catalog 전용
+`catalog_source_approval`을 확장하지 않고 Source Use Approval을 별도 historical authority로
+보존한다.
+
+정확한 lookup identity는 `source_snapshot_id`, `source_code`, `source_version`, canonical
+`environment`, `purpose`, explicit `approval_version`의 6개 값이다. writer는
+`Snapshot → Operation → Endpoint → Source`를 exact read해 caller의 Source 좌표를 검증한 뒤
+저장한다. uniqueness는 `(source_snapshot_id, environment, purpose, approval_version)`이며 같은
+semantic payload 재시도만 idempotent하고 변경 payload는 conflict로 거부한다.
+
+`environment`는 `LOCAL | TEST | CLOSED_DEMO | PRODUCTION`, `purpose`는
+`PRODUCT_IDENTIFICATION | SAFETY_ROUTING | RULE_DERIVATION | RETRIEVAL | PATIENT_CITATION`의
+대소문자 구분 어휘다. usability는 명시적 evaluation time에
+`valid_from <= evaluation_time < expires_at AND revoked_at IS NULL`만 평가하며 Snapshot
+CURRENT/freshness를 추론하지 않는다. 철회는 `revoked_at`, `revoked_by`, `revoked_reason`의
+one-way transition이고 동일 payload retry만 허용한다.
+
+AI Worker는 Backend ORM을 import하지 않는 SQLAlchemy Core read-only adapter로 6개 identity를
+exact-match 조회한다. latest/current/newest selector는 없으며, `RETRIEVAL` approval이
+`PATIENT_CITATION` approval을 대신하지 않는다. Source Writer는 SELECT/INSERT와 세 revocation
+column UPDATE만 갖고 Runtime/AI Worker는 SELECT만 갖는다. DB_APP_USER write set, Member Decision,
+CitationAuthorizationReceipt, Guide/Release/Public Track F는 이 저장소의 범위가 아니다.
 
 ## #712 Assessment·Eligibility Authority 영속 — 구현, Proposed
 

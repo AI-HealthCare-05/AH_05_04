@@ -77,6 +77,24 @@ def test_request_guard_runtime_binding_writes_are_limited_to_its_repository(tmp_
     ]
 
 
+def test_source_use_approval_writes_are_limited_to_explicit_repository(tmp_path: Path) -> None:
+    repository = tmp_path / "backend/app/repositories/rag_source_use_approval_repository.py"
+    repository.parent.mkdir(parents=True)
+    repository.write_text(
+        "from sqlalchemy.dialects.postgresql import insert as pg_insert\n"
+        "from app.models.rag_source_use_approval import RagSourceUseApproval\n"
+        "statement = pg_insert(RagSourceUseApproval).values(approval_version='v1')\n"
+    )
+    bypass = tmp_path / "backend/app/services/source_use_approval_bypass.py"
+    bypass.parent.mkdir(parents=True)
+    bypass.write_text(repository.read_text())
+
+    assert violations(tmp_path, [str(repository.relative_to(tmp_path))]) == []
+    assert violations(tmp_path, [str(bypass.relative_to(tmp_path))]) == [
+        "backend/app/services/source_use_approval_bypass.py:3: unapproved write to rag_source_use_approval"
+    ]
+
+
 def test_repository_tree_has_no_unapproved_protected_writes() -> None:
     root = Path(__file__).resolve().parents[2]
     paths = [str(path.relative_to(root)) for path in root.rglob("*.py")]

@@ -54,7 +54,12 @@ from infra.python.provision_database_roles import (
     run_provisioning,
 )
 from infra.python.source_management_role_policy import CATALOG_TABLES
-from infra.python.source_role_policy import SOURCE_TABLES, WRITER_LOCK_TABLES, quoted_identifier
+from infra.python.source_role_policy import (
+    SOURCE_TABLES,
+    SOURCE_USE_APPROVAL_TABLES,
+    WRITER_LOCK_TABLES,
+    quoted_identifier,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -169,6 +174,18 @@ async def _assert_runtime_delete_policy(reader, table: str) -> None:
     await _assert_permission_denied(reader, f"DELETE FROM {table} WHERE false")
 
 
+async def _create_role_fixture_table(connection, table: str) -> None:
+    if table == "rag_source_use_approval":
+        await connection.execute(
+            text(
+                'CREATE TABLE "rag_source_use_approval" ('
+                "id integer PRIMARY KEY, revoked_at timestamptz, revoked_by integer, revoked_reason text)"
+            )
+        )
+        return
+    await connection.execute(text(f'CREATE TABLE "{table}" (id integer PRIMARY KEY)'))
+
+
 async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions() -> None:
     container = os.environ.get("ISSUE398_TEST_POSTGRES_CONTAINER")
     if not container or not shutil.which("docker"):
@@ -260,11 +277,12 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
                 | CANDIDATE_INDEX_RUNTIME_READ_TABLES
                 | set(SOURCE_TABLES)
+                | set(SOURCE_USE_APPROVAL_TABLES)
                 | set(RUNTIME_AUTH_UPDATE_COLUMNS)
                 | ACCOUNT_WITHDRAWAL_CLEANUP_READ_TABLES
                 | {"account_deletion_request", "notification_record", "user_consent"}
             ):
-                await connection.execute(text(f'CREATE TABLE "{table}" (id integer PRIMARY KEY)'))
+                await _create_role_fixture_table(connection, table)
             await _add_checkin_lock_fixture_columns(connection)
             await _add_track_c_followup_fixture_columns(connection)
             await _add_account_deletion_request_fixture_columns(connection)
@@ -333,6 +351,8 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             await _exercise_track_c_runtime_writes(connection)
         async with producer.begin() as connection:
             await connection.execute(text("INSERT INTO rag_source_snapshot (id) VALUES (1)"))
+            await connection.execute(text("INSERT INTO rag_source_use_approval (id) VALUES (1)"))
+            await connection.execute(text("UPDATE rag_source_use_approval SET revoked_reason='policy change'"))
             await connection.execute(text("UPDATE rag_source_snapshot SET verified_at=now()"))
             await connection.execute(text("INSERT INTO rag_source_snapshot_verification VALUES (1)"))
         async with admin.begin() as connection:
@@ -366,6 +386,12 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
             (reader, "TRUNCATE account_deletion_request"),
             (reader, "INSERT INTO rag_source_snapshot (id) VALUES (3)"),
             (producer, "DELETE FROM rag_source_snapshot"),
+            (reader, "INSERT INTO rag_source_use_approval (id) VALUES (2)"),
+            (reader, "UPDATE rag_source_use_approval SET id=2"),
+            (reader, "UPDATE rag_source_use_approval SET revoked_reason=NULL"),
+            (reader, "DELETE FROM rag_source_use_approval"),
+            (producer, "UPDATE rag_source_use_approval SET id=2"),
+            (producer, "DELETE FROM rag_source_use_approval"),
             (producer, 'INSERT INTO "user" (id) VALUES (3)'),
             (reader, "INSERT INTO rag_candidate_index_version VALUES (1)"),
             (reader, "DELETE FROM rag_candidate_index_version"),
@@ -414,6 +440,7 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 "rag_request_source_decision": _APPEND_ONLY_PRIVILEGES,
                 "rag_request_member_decision": _APPEND_ONLY_PRIVILEGES,
                 "rag_request_guard_runtime_binding": _APPEND_ONLY_PRIVILEGES,
+                "rag_source_use_approval": _READ_ONLY_PRIVILEGES,
                 # #780: Candidate Index tables are runtime read-only
                 "rag_candidate_index_version": _READ_ONLY_PRIVILEGES,
                 "rag_candidate_index_member": _READ_ONLY_PRIVILEGES,
