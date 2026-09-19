@@ -132,6 +132,25 @@ describe('Plan B 복약 리포트', () => {
     expect(countNames).toEqual(['복용', '미복용', '미확인'])
   })
 
+  it('overdue_pending_count가 있으면 예정 표시가 지연 때문일 수 있음을 알린다', async () => {
+    const { container } = renderPage()
+
+    expect(await screen.findByText('3회')).toBeTruthy()
+    const notice = container.querySelector('.report-records__overdue')
+    expect(notice?.textContent).toContain('확인 기한이 지난 기록 1건')
+    expect(notice?.textContent).toContain('예정으로 보일 수 있어요')
+  })
+
+  it('overdue_pending_count가 0이면 지연 안내를 표시하지 않는다', async () => {
+    vi.mocked(getMedicationReport).mockResolvedValue({
+      data: reportFixture(7, { overdue_pending_count: 0 }),
+    })
+    const { container } = renderPage()
+
+    expect(await screen.findByText('3회')).toBeTruthy()
+    expect(container.querySelector('.report-records__overdue')).toBeNull()
+  })
+
   it('7일·30일 버튼의 accessible state를 표시하고 전환 시 서버를 다시 조회한다', async () => {
     vi.mocked(getMedicationReport).mockImplementation(async (period) => ({ data: reportFixture(period) }))
     renderPage()
