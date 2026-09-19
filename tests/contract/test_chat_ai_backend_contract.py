@@ -1,5 +1,6 @@
 import json
 from decimal import Decimal
+from pathlib import Path
 from uuid import uuid4
 
 from app.services.chat_ai import ChatHistoryPair, ChatMedicationInput, ChatReplyInput
@@ -72,7 +73,7 @@ async def test_backend_dto_crosses_adapter_with_empty_history_and_without_identi
     assert str(prescription_id) not in provider.input_json
     assert result.content == "합성 계약 답변"
     assert result.model_name == "provider-model-2026-08"
-    assert result.prompt_version == "chat-prompt-v5"
+    assert result.prompt_version == "chat-prompt-v6"
 
 
 async def test_backend_history_crosses_adapter_as_ordered_data_without_structured_metadata() -> None:
@@ -108,4 +109,30 @@ async def test_backend_history_crosses_adapter_as_ordered_data_without_structure
     ]
     assert str(prescription_id) not in provider.input_json
     assert {"session_id", "message_seq", "generation_status"}.isdisjoint(payload)
-    assert result.prompt_version == "chat-prompt-v5"
+    assert result.prompt_version == "chat-prompt-v6"
+
+
+def test_current_chat_contract_documents_pin_runtime_prompt_v6() -> None:
+    repository_root = Path(__file__).parents[2]
+    documents = {
+        "current_contract": (
+            repository_root / "docs/contracts/current/medication-chat-ai-backend.md",
+            "현재 runtime 정본인 `chat-prompt-v6`",
+        ),
+        "ai_pipeline": (
+            repository_root / "docs/ai-pipeline.md",
+            "현재 runtime의 단일 `chat-prompt-v6`",
+        ),
+        "eval_readme": (
+            repository_root / "evals/README.md",
+            "현재 runtime prompt는 #581 안전·품질 회귀 보강 버전 `chat-prompt-v6`",
+        ),
+        "testing": (
+            repository_root / "docs/testing.md",
+            "현재 runtime은 `chat-prompt-v6`",
+        ),
+    }
+
+    for document_name, (document_path, expected_identity) in documents.items():
+        document = document_path.read_text(encoding="utf-8")
+        assert expected_identity in document, document_name

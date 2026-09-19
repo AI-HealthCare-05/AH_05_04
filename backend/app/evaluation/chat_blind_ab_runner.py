@@ -26,6 +26,9 @@ _ALLOWED_CONFIG_SHA256_BY_PATH = {
     (_REPOSITORY_ROOT / "evals" / "generation" / "chat-feedback-gold-prompt-comparison-v1.json").resolve(): (
         "0bbb04090bb5d33aa458a45bae19943c6027bb01f9adb39ad0bdca22a2a6c864"
     ),
+    (_REPOSITORY_ROOT / "evals" / "generation" / "chat-prompt-v4-v6-comparison-v1.json").resolve(): (
+        "254d1083ccb4ca6b67f3d2ad08011f9f5f6b476001ce1fcc9b237a7547d1581d"
+    ),
 }
 _API_KEY_PLACEHOLDERS = frozenset(
     {
