@@ -27,6 +27,7 @@ Included now:
 - `load_tests/locustfile.py` with a configurable framework smoke task.
 - `load_tests/auth_smoke.py` with the #627 1차-1 Auth baseline smoke flow.
 - `load_tests/ocr_worker_smoke.py` with the #627 1차-2 OCR / Worker minimum smoke flow.
+- `load_tests/schedule_smoke.py` with the #743 medication schedule read smoke flow.
 - Default framework smoke target `/api/openapi.json`, matching the deployment runbook's FastAPI HTTP liveness check.
 - `LOAD_TEST_SMOKE_PATH`, `LOAD_TEST_EXPECT_STATUS`, Auth/OCR smoke variables, and optional `LOAD_TEST_BEARER_TOKEN` environment variables.
 - `scripts/load_testing/validate_load_test_assets.py` and a regression test to keep the framework files aligned.
@@ -35,6 +36,7 @@ Included now:
 Excluded now:
 
 - Login/signup/Guide/Chat full scenario implementation.
+- Schedule create/update/cancel/check-in load scenarios.
 - OCR Provider capacity approval or final `p95 <= 3s` claim.
 - Real patient data, real prescription files, or provider payload replay.
 - Production capacity claim, SLO approval, or Privacy/Release gate approval.
@@ -98,6 +100,39 @@ uvx locust \
   -t 30s \
   --csv docs/validation/load-testing/issue-627-auth-refresh-local
 ```
+
+## Medication Schedule Read Smoke
+
+`load_tests/schedule_smoke.py` is the #743 1차-3 read-only schedule scenario. It uses the same synthetic-account principle as the other smoke scenarios and covers:
+
+1. `POST /api/v1/auth/login`
+2. `GET /api/v1/medication-occurrences?date=YYYY-MM-DD`
+3. `GET /api/v1/medication-occurrences/{occurrence_id}/medication` for a bounded subset
+
+Run it only with a synthetic account that already has medication schedule fixture data:
+
+```bash
+mkdir -p docs/validation/load-testing
+LOAD_TEST_AUTH_EMAIL="<test-account-email>" \
+LOAD_TEST_AUTH_PASSWORD="<test-account-password>" \
+LOAD_TEST_SCHEDULE_DATE="2026-09-18" \
+uvx locust \
+  -f load_tests/schedule_smoke.py \
+  --host http://127.0.0.1:8000 \
+  --headless \
+  -u 5 \
+  -r 1 \
+  -t 3m \
+  --csv docs/validation/load-testing/issue-743-schedule-smoke-local
+```
+
+This scenario is read-only. It does not create schedules, edit schedule times, cancel occurrences, or submit check-ins. Treat it as baseline/smoke evidence, not as a production capacity claim.
+
+Schedule-specific reproducibility notes:
+
+- If `LOAD_TEST_SCHEDULE_DATE` is omitted, the scenario uses today's local date in `Asia/Seoul`; set it explicitly for evidence runs so repeated runs target the same fixture date.
+- `LOAD_TEST_SCHEDULE_DETAIL_LIMIT=0` means list-only execution: the occurrence list is fetched, and medication detail requests are intentionally skipped.
+- If the occurrence list is empty, the scenario records only the list request and skips detail requests; this is a valid empty-fixture smoke result, not a detail endpoint measurement.
 
 ## OCR / Worker Readiness Preflight
 
@@ -185,7 +220,7 @@ Full CSV output can be attached only if it contains no tokens, cookies, patient 
 After API contracts settle, add scenarios in focused follow-up PRs:
 
 1. User/profile read smoke after the Auth baseline.
-2. Medication schedule read smoke.
+2. Medication schedule read smoke. Initial scenario: `load_tests/schedule_smoke.py`.
 3. Check-in and Track C support smoke.
 4. Prescription upload and OCR polling using synthetic files only. Initial scenario: `load_tests/ocr_worker_smoke.py`.
 5. OCR review and prescription confirmation. Initial scenario: `load_tests/ocr_worker_smoke.py`.
@@ -212,3 +247,4 @@ uv run pytest tests/services/test_load_test_assets.py -q
 ```
 
 A real Locust run requires the target service to be running and may use `uvx locust`. The framework PR does not require committing generated CSV files.
+
