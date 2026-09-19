@@ -40,3 +40,9 @@
 .track-c-page .bottom-nav { position: relative; inset: auto; flex-shrink: 0; }
 .track-c-page .bottom-nav button[aria-current='page'] { color: var(--ds-action); }
 .track-c-page .track-c-safety-actions .ds-button { min-height: 64px; border-color: var(--ds-line); font-size: 18px; }
+
+.track-c-preparing-tag {
+  font-style: normal;
+  font-weight: 700;
+  color: #607d8b;
+}
