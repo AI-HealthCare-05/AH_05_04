@@ -973,6 +973,31 @@ import하지 않으며 `PD-175-20260910` 경계와 `ALLOWED_AI_WORKER_MODULES`�
 Current 승격은 별도다. #709 Production Reader는 이후 연결되었다
 (`ai_worker/adapters/sqlalchemy_guide_evidence_authority.py`).
 
+## #806 Per-request REQUEST Guard Runtime Binding — 구현 초안, Proposed
+
+[계약](contracts/proposed/post-mvp-1/request-guard-runtime-binding-v1.md), migration
+`806a1b2c3d4e`에서 `rag_request_guard_runtime_binding`을 추가한다. 이 표는 기존 #713의
+`rag_request_guard_authority` 의미를 변경하지 않고, authoritative evaluator가 발행한
+`request_guard_decision_id`별 실제 REQUEST 관측치와 runtime binding facts를 append-only로 보존한다.
+
+행은 실제 `PASS` 또는 `FAIL`, user·operation·`REQUEST`, #810의 exact `RuntimeEnvironmentCode`,
+`(bundle_id, bundle_manifest_hash)` 복합 identity, non-empty canonical `request_scope_codes`와
+`scope_manifest_hash`, 기존 #713 Guard artifact identity를 함께 저장한다. `request_guard_decision_id`는
+downstream repository/reader가 생성하지 않으며, 동일 user·operation의 반복 REQUEST를 구별하는 evaluator-issued
+UUID다. Scope의 NFC·unique·UTF-8 byte sort·hash 재계산은 shared pure contract와 writer가 검증한다.
+
+Runtime Bundle과 기존 #713 Guard는 artifact identity 복합 FK와 `ON DELETE RESTRICT`로 결속한다. 조회는
+`(artifact_code, artifact_version, artifact_content_sha256)` exact equality만 허용하고 latest/CURRENT/newest
+fallback을 두지 않는다. writer는 caller transaction을 소유하지 않으며, 동일 immutable content 재시도는
+idempotent, 동일 request ID의 다른 content는 conflict로 거부한다. Trigger·RLS·Stored Procedure·사용자 정의
+DB 함수는 사용하지 않는다.
+
+AI Worker는 Backend ORM을 직접 import하지 않고 read-only adapter를 통해 persisted observation에서 기존
+Citation kernel의 `RuntimeAuthorizationBinding`과 `OriginRequestGuardBinding`을 구성한다. 이 표와 seam은
+Guide runtime, Citation Source/Member Decision, Receipt, orchestration, Release Gate 또는 `PUBLIC_TRACK_F`
+활성화를 의미하지 않는다. PostgreSQL integration·migration·CI·required reviewer 증빙 후 Current 승격을
+별도로 판단한다.
+
 ## #712 Assessment·Eligibility Authority 영속 — 구현, Proposed
 
 [계약](contracts/proposed/post-mvp-1/assessment-eligibility-authority-persistence-v1.md), migration

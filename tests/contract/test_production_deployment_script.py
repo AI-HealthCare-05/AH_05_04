@@ -26,6 +26,7 @@ def test_deployment_script_rejects_missing_redis_password_before_external_action
                 "SOURCE_WRITER_USER=dummy_writer",
                 "SOURCE_WRITER_PASSWORD=dummy-writer-password",
                 # REDIS_PASSWORD는 의도적으로 생략한다.
+                "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false",
                 "",
             ]
         ),
@@ -67,6 +68,7 @@ def test_deployment_script_rejects_placeholder_redis_password_before_external_ac
                 "ENV=production",
                 f"IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY={VALID_SNAPSHOT_ENCRYPTION_KEY}",
                 "REDIS_PASSWORD=replace-with-production-redis-password",
+                "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false",
                 "",
             ]
         ),
@@ -107,6 +109,7 @@ def test_deployment_script_rejects_quoted_placeholder_redis_password(tmp_path: P
                 "ENV=production",
                 f"IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY={VALID_SNAPSHOT_ENCRYPTION_KEY}",
                 'REDIS_PASSWORD="replace-with-production-redis-password"',
+                "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false",
                 "",
             ]
         ),
@@ -148,6 +151,7 @@ def test_deployment_script_rejects_env_file_missing_redis_password_even_when_inh
                 "ENV=production",
                 f"IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY={VALID_SNAPSHOT_ENCRYPTION_KEY}",
                 # REDIS_PASSWORD는 파일에서 의도적으로 생략하고, 실행 셸에만 상속시킨다.
+                "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false",
                 "",
             ]
         ),
@@ -192,6 +196,7 @@ def test_deployment_script_rejects_env_file_missing_env_key_even_when_inherited(
                 "SOURCE_WRITER_PASSWORD=dummy-writer-password",
                 "REDIS_PASSWORD=dummy-redis-password",
                 # ENV는 파일에서 의도적으로 생략하고, 실행 셸에만 상속시킨다.
+                "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false",
                 "",
             ]
         ),
@@ -237,6 +242,7 @@ def test_deployment_script_rejects_non_production_env_before_external_actions(tm
                 "REDIS_PASSWORD=dummy-redis-password",
                 "ENV=local",
                 f"IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY={VALID_SNAPSHOT_ENCRYPTION_KEY}",
+                "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false",
                 "",
             ]
         ),
@@ -276,6 +282,7 @@ def test_deployment_script_passes_redis_check_when_password_present(tmp_path: Pa
                 "REDIS_PASSWORD=dummy-redis-password",
                 "ENV=production",
                 f"IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY={VALID_SNAPSHOT_ENCRYPTION_KEY}",
+                "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false",
                 "",
             ]
         ),
@@ -305,6 +312,7 @@ def test_deployment_script_rejects_missing_snapshot_key_even_when_inherited(tmp_
                 "ENV=production",
                 "REDIS_PASSWORD=dummy-redis-password",
                 # active key는 파일에서 생략하고 실행 셸에만 상속시킨다.
+                "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false",
                 "",
             ]
         ),
@@ -340,6 +348,7 @@ def test_deployment_script_rejects_empty_snapshot_key_before_external_actions(tm
                 "ENV=production",
                 "REDIS_PASSWORD=dummy-redis-password",
                 "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY=",
+                "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false",
                 "",
             ]
         ),
@@ -370,6 +379,7 @@ def test_deployment_script_rejects_snapshot_key_placeholder_before_external_acti
                 "ENV=production",
                 "REDIS_PASSWORD=dummy-redis-password",
                 "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY=MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+                "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false",
                 "",
             ]
         ),
@@ -417,6 +427,7 @@ def test_writer_credentials_are_validated_before_external_actions(tmp_path, writ
                 "DB_APP_PASSWORD=synthetic-app-secret",
                 f'SOURCE_WRITER_USER="{writer_name}"',
                 f'SOURCE_WRITER_PASSWORD="{writer_password}"',
+                "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false",
                 "",
             ]
         )
@@ -471,6 +482,7 @@ def test_worker_preflight_blocks_before_registry_and_ssh(tmp_path, key, value, e
         "CLOUDFRONT_ORIGIN_VERIFY_SECRET": "synthetic-origin-secret-for-tests-only",
         "CLOVA_OCR_INVOKE_URL": "https://clova.test/ocr",
         "CLOVA_OCR_SECRET": "synthetic-clova-secret",
+        "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED": "false",
     }
     settings[key] = value
     env_file = tmp_path / "prod.env"
@@ -535,3 +547,121 @@ def test_remote_deployment_waits_for_worker_and_propagates_readiness_failure(tmp
     assert commands.index("stop -t 90 fastapi ai-worker") < commands.index("--force-recreate migrate")
     assert commands.index("--entrypoint python fastapi") < commands.index("--wait fastapi ai-worker nginx")
     assert ("image prune" in commands) is (worker_health_exit == 0)
+
+
+def _withdrawal_env_lines() -> list[str]:
+    """회원탈퇴 gate 검증까지 도달하는 데 필요한 최소 운영 설정."""
+    return [
+        "ENV=production",
+        "REDIS_PASSWORD=synthetic-redis-secret",
+        f"IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY={VALID_SNAPSHOT_ENCRYPTION_KEY}",
+        "DB_ADMIN_USER=dummy_admin",
+        "DB_ADMIN_PASSWORD=synthetic-admin-secret",
+        "DB_MIGRATION_USER=dummy_owner",
+        "DB_MIGRATION_PASSWORD=synthetic-owner-secret",
+        "DB_APP_USER=dummy_app",
+        "DB_APP_PASSWORD=synthetic-app-secret",
+        "SOURCE_WRITER_USER=dummy_writer",
+        "SOURCE_WRITER_PASSWORD=synthetic-writer-secret",
+    ]
+
+
+def test_deployment_script_rejects_env_file_missing_account_withdrawal_gate(tmp_path: Path) -> None:
+    """Compose는 ACCOUNT_WITHDRAWAL_REQUEST_ENABLED를 ${...:-false}로 치환한다(#825).
+    .prod.env에 선언 자체가 없으면 배포는 성공하지만 컨테이너에는 false가 주입되어
+    회원탈퇴 API가 503으로 fail-closed된다. 배포가 조용히 통과하지 않도록
+    선언 여부를 외부 작업 전에 차단해야 한다."""
+    env_file = tmp_path / "prod.env"
+    # ACCOUNT_WITHDRAWAL_REQUEST_ENABLED는 의도적으로 생략한다.
+    env_file.write_text("\n".join(_withdrawal_env_lines() + [""]), encoding="utf-8")
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env={"PATH": "/usr/bin:/bin", "PROD_ENV_FILE": str(env_file)},
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode != 0
+    assert "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED" in completed.stdout
+    assert "docker" not in completed.stdout.lower()
+
+
+@pytest.mark.parametrize(
+    ("cleanup_role", "cleanup_password", "message"),
+    [
+        ("", "synthetic-cleanup-secret", "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE"),
+        ("dummy_cleanup", "", "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD"),
+    ],
+)
+def test_deployment_script_requires_cleanup_credentials_when_withdrawal_enabled(
+    tmp_path: Path, cleanup_role: str, cleanup_password: str, message: str
+) -> None:
+    """Backend Config도 같은 조건을 validator로 막지만(#825), 그 실패는 image push와 원격
+    compose 반영이 끝난 뒤 컨테이너 기동 시점에 드러난다. 외부 작업 전에 먼저 차단한다."""
+    env_file = tmp_path / "prod.env"
+    env_file.write_text(
+        "\n".join(
+            _withdrawal_env_lines()
+            + [
+                "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true",
+                f'ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE="{cleanup_role}"',
+                f'ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD="{cleanup_password}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env={"PATH": "/usr/bin:/bin", "PROD_ENV_FILE": str(env_file)},
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode != 0
+    assert message in completed.stdout
+    assert "docker" not in completed.stdout.lower()
+    assert "synthetic-cleanup-secret" not in completed.stdout + completed.stderr
+
+
+def test_deployment_script_rejects_cleanup_credentials_inherited_from_parent_shell(tmp_path: Path) -> None:
+    """source는 파일에 없는 변수를 초기화하지 않는다. 실행 셸에 cleanup role/password가
+    export돼 있으면 .prod.env에 선언이 없어도 셸 값 검사를 통과해버리는데, 원격에는
+    파일 원문만 복사되므로(하단 ssh) FastAPI 기동 시 Config validator(#825)에서 다시
+    실패한다. 이 PR이 막으려는 silent configuration drift가 그대로 남으므로,
+    파일의 직접 선언 여부도 외부 작업 전에 검사해야 한다."""
+    env_file = tmp_path / "prod.env"
+    # cleanup role/password는 의도적으로 파일에 선언하지 않는다.
+    env_file.write_text(
+        "\n".join(_withdrawal_env_lines() + ["ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=true", ""]),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PROD_ENV_FILE": str(env_file),
+            # 부모 셸에만 존재하는 값. 파일 선언을 대신할 수 없다.
+            "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE": "inherited_cleanup_role",
+            "ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD": "inherited-cleanup-secret",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode != 0
+    assert "ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE" in completed.stdout
+    assert "docker" not in completed.stdout.lower()
+    assert "inherited-cleanup-secret" not in completed.stdout + completed.stderr
