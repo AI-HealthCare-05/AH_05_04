@@ -10,7 +10,7 @@
 
 ## 1. 목적과 배경
 
-본 문서는 Issue #159 Answer 3-Pair Comparison(`ANS-BASE--ANS-RAG`, `ANS-RAG--ANS-FINAL`, `ANS-BASE--ANS-FINAL`) 실행 시 요구되는 15개 Authority Binding(7개 Supplemental Controlled Variables + 8개 Allowed Delta Axes) 중, 현재 `develop` 정본에 실재하는 11개 Authority를 표준화된 Canonical Projection 및 Hash Recipe로 결속하는 **Answer Runtime Authority Binding Manifest**의 계약을 정의한다.
+본 문서는 Issue #159 Answer 3-Pair Comparison(`ANS-BASE--ANS-RAG`, `ANS-RAG--ANS-FINAL`, `ANS-BASE--ANS-FINAL`) 실행 시 요구되는 15개 Authority Binding(7개 Supplemental Controlled Variables + 8개 Allowed Delta Axes) 중, 10개 실재 Authority의 표준화된 Canonical Projection 및 Hash Recipe, 1개 명시적 미해결 바인딩(`RETRIEVED_EVIDENCE`), 그리고 상류 차단 4개 항목을 관리하는 **Answer Runtime Authority Binding Manifest**의 계약을 정의한다.
 
 ### 핵심 설계 원칙
 1. **Schema Set 1.5 불변 원칙**: 기존 `RagEvaluationRun` (Schema Set 1.5) 스키마를 임의 확장하거나 수정하지 않는다 (`SEPARATE_BINDING_MANIFEST_PREFERRED`).
@@ -135,11 +135,16 @@ Variant에서 특정 처리 단계가 실행되지 않은 경우(예: `ANS-BASE`
 
 ### 1) Variant별 바인딩 상태
 
-| Variant | 4개 Retrieval Axes (`RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RUNTIME_BUNDLE`, `RETRIEVED_EVIDENCE`) | 4개 Finalization Axes (`FINAL_VALIDATOR`, `CITATION_GATE`, `SAFETY_GATE`, `RELEASE_GATE`) |
-| :--- | :--- | :--- |
-| **`ANS-BASE`** | Canonical `NOT_APPLIED` 해시 4개 바인딩 | Canonical `NOT_APPLIED` 해시 4개 바인딩 |
-| **`ANS-RAG`** | 실제 런타임 정본 Authoritative 해시 4개 바인딩 | Canonical `NOT_APPLIED` 해시 4개 바인딩 |
-| **`ANS-FINAL`** | 실제 런타임 정본 Authoritative 해시 4개 바인딩 (`ANS-RAG`와 일치) | 상류 정본(#180, #807, #799) 미완료 시 `null` (Blocked); 완료 시 정본 해시 바인딩 |
+| 축 구분 | Delta Axis Key | `ANS-BASE` | `ANS-RAG` | `ANS-FINAL` |
+| :--- | :--- | :--- | :--- | :--- |
+| **Retrieval Axes** | `RETRIEVAL_PIPELINE` | `NOT_APPLIED` 해시 | 실제 정본 해시 ($H_{ret}$) | 실제 정본 해시 ($H_{ret}$) |
+| | `SOURCE_INDEX` | `NOT_APPLIED` 해시 | 실제 정본 해시 ($H_{idx}$) | 실제 정본 해시 ($H_{idx}$) |
+| | `RUNTIME_BUNDLE` | `NOT_APPLIED` 해시 | 실제 정본 해시 ($H_{bnd}$) | 실제 정본 해시 ($H_{bnd}$) |
+| | `RETRIEVED_EVIDENCE` | `NOT_APPLIED` 해시 | `null` (Carrier/Recipe 미확정) | `null` (Carrier/Recipe 미확정) |
+| **Finalization Axes** | `FINAL_VALIDATOR` | `NOT_APPLIED` 해시 | `NOT_APPLIED` 해시 | `null` (상류 #180 차단) |
+| | `CITATION_GATE` | `NOT_APPLIED` 해시 | `NOT_APPLIED` 해시 | `null` (상류 #807/#799/#180 차단) |
+| | `SAFETY_GATE` | `NOT_APPLIED` 해시 | `NOT_APPLIED` 해시 | `null` (상류 #180 차단) |
+| | `RELEASE_GATE` | `NOT_APPLIED` 해시 | `NOT_APPLIED` 해시 | `null` (상류 #180 차단) |
 
 ### 2) 비교 쌍별 Readiness 및 Fail-Closed 작동 원리
 
@@ -148,26 +153,27 @@ Variant에서 특정 처리 단계가 실행되지 않은 경우(예: `ANS-BASE`
 1. **`ANS-BASE -> ANS-RAG` (RAG 도입 효과 비교)**:
    - **Allowed Deltas**: `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RUNTIME_BUNDLE`, `RETRIEVED_EVIDENCE`
    - **Non-Allowed Deltas**: `FINAL_VALIDATOR`, `CITATION_GATE`, `SAFETY_GATE`, `RELEASE_GATE`
-   - **판정**:
-     - Baseline(`ANS-BASE`)과 Candidate(`ANS-RAG`) 모두 4개 finalization 축에 동일한 canonical `NOT_APPLIED` 해시를 보유함.
-     - 8개 delta 필드 전수가 `None`이 아니므로 `delta_binding_missing = False`.
-     - Non-allowed deltas에서 baseline과 candidate 해시가 정확히 일치(`b_val == c_val`)하므로 `unauthorized_delta_changed = False`.
-     - **결과**: 상류 finalization authority(#180, #807, #799)가 아직 완성되지 않았더라도, **`ANS-BASE -> ANS-RAG` 비교는 불필요한 차단 없이 정상 실행(Ready) 가능**하다.
+   - **구조적 분리 성과**: `NOT_APPLIED` semantics 도입으로 인해 `FINAL_VALIDATOR`, `CITATION_GATE`, `SAFETY_GATE`, `RELEASE_GATE` 4개 finalization authority의 부재(#180, #807, #799)가 `ANS-BASE -> ANS-RAG` 비교를 막는 구조적 종속 문제는 완전히 해결되었다 (두 Variant 모두 4개 finalization 축에 동일한 `NOT_APPLIED` 해시를 가지므로 non-allowed deltas가 일치함).
+   - **현재 실행 판정**: **`NOT READY` (실행 시 fail-closed / INVALID)**.
+     - **차단 사유**: `ANS-RAG`의 `RETRIEVED_EVIDENCE` authoritative binding이 아직 `null`(`None`) 상태임 (evaluation case와 실제 generator 소비 `ProductionGuidelineEvidenceSet`을 authoritative하게 결속하는 carrier 미확정).
+     - **커널 동작**: `_check_delta_bindings()`에서 `getattr(candidate.delta_bindings, "retrieved_evidence_hash") is None`이 감지되어 `delta_binding_missing = True`가 발동하며, `execution_status = INVALID`, `decision_status = None`으로 안전하게 차단된다.
+     - **핵심 의미**: 본 쌍은 상류 #180/#807/#799 finalization 이슈 때문에 막히는 것이 아니며, 향후 단 1개의 `RETRIEVED_EVIDENCE` carrier/recipe만 해결되면 상류 완료를 기다리지 않고 즉시 실행 가능한 구조다.
 
 2. **`ANS-RAG -> ANS-FINAL` (최종 게이트/공개 효과 비교)**:
    - **Allowed Deltas**: `FINAL_VALIDATOR`, `CITATION_GATE`, `SAFETY_GATE`, `RELEASE_GATE`
    - **Non-Allowed Deltas**: `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RUNTIME_BUNDLE`, `RETRIEVED_EVIDENCE`
-   - **판정**:
-     - `ANS-FINAL`의 finalization 축은 상류 이슈(#180, #807, #799) 미완료로 인해 `None` (`null`) 상태임.
-     - `_check_delta_bindings()`에서 `getattr(candidate.delta_bindings, attr) is None` 감지.
-     - **결과**: `delta_binding_missing = True`가 발동하여 `execution_status = INVALID`, `decision_status = None`으로 자동 fail-closed 처리된다.
+   - **현재 실행 판정**: **`NOT READY` / FAIL-CLOSED**
+     - **차단 사유**: `RETRIEVED_EVIDENCE` 미해결(`null`) + `ANS-FINAL`의 4개 finalization authorities 상류 미완료(`null`).
+     - **커널 동작**: `_check_delta_bindings()`에서 `getattr(baseline.delta_bindings, "retrieved_evidence_hash") is None` 및 `getattr(candidate.delta_bindings, final_attr) is None` 감지로 `delta_binding_missing = True`가 발동하여 `execution_status = INVALID`, `decision_status = None`으로 자동 차단된다.
 
 3. **`ANS-BASE -> ANS-FINAL` (전체 효과 요약 비교)**:
-   - `ANS-FINAL`의 finalization 축 누락으로 인해 `ANS-RAG -> ANS-FINAL`과 동일하게 자동 fail-closed 처리된다.
+   - **현재 실행 판정**: **`NOT READY` / FAIL-CLOSED**
+     - **차단 사유**: `RETRIEVED_EVIDENCE` 미해결(`null`) + `ANS-FINAL`의 4개 finalization authorities 상류 미완료(`null`).
+     - **커널 동작**: `delta_binding_missing = True` 발동으로 `execution_status = INVALID`, `decision_status = None`으로 자동 차단된다.
 
 ---
 
-## 5. 11 Canonical Recipes 최종 규격
+## 5. 10 Canonical Recipes 규격 및 1 Explicitly Unresolved Binding
 
 | Key | Binding Field | Canonical Source Object | Owner Issue | Canonical Projection 규격 | Hash Preimage / Hashing Rule | Variant Semantics (ANS-BASE 포함) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -181,7 +187,7 @@ Variant에서 특정 처리 단계가 실행되지 않은 경우(예: `ANS-BASE`
 | `RETRIEVAL_PIPELINE` | `delta_bindings.retrieval_pipeline_hash` | `VersionedEvidenceRetrievalConfiguration.artifact_ref` (`ImmutableArtifactRef`) | #159 | • `ANS-RAG`/`ANS-FINAL`: 불변 아티팩트 참조 사용 (`selection_limit`은 별도 `EvidenceRetrievalKernelRequest` 소스이므로 configuration projection에서 배제)<br>• `ANS-BASE`: `{"axis": "RETRIEVAL_PIPELINE", "binding_state": "NOT_APPLIED", "projection_version": "answer-authority-binding-v1"}` | • `ANS-RAG`/`ANS-FINAL`: `retrieval_config.artifact_ref.content_sha256` 직접 재사용 (`compute_canonical_hash()` 결속값)<br>• `ANS-BASE`: `canonical_sha256(NOT_APPLIED_projection)` | Allowed delta (`ANS-BASE` vs `ANS-RAG`); Controlled match (`ANS-RAG` vs `ANS-FINAL`) |
 | `SOURCE_INDEX` | `delta_bindings.source_index_hash` | `ActualRetrievalModelConfig.knowledge_index_ref` (`ImmutableReference`) / `RagRuntimeReleaseBundle.knowledge_index_manifest_hash` | #159 | • `ANS-RAG`/`ANS-FINAL`: 불변 참조 자체 사용<br>• `ANS-BASE`: `{"axis": "SOURCE_INDEX", "binding_state": "NOT_APPLIED", "projection_version": "answer-authority-binding-v1"}` | • `ANS-RAG`/`ANS-FINAL`: `knowledge_index_ref.hash` 직접 재사용<br>• `ANS-BASE`: `canonical_sha256(NOT_APPLIED_projection)` | Allowed delta (`ANS-BASE` vs `ANS-RAG`); Controlled match (`ANS-RAG` vs `ANS-FINAL`) |
 | `RUNTIME_BUNDLE` | `delta_bindings.runtime_bundle_hash` | `RequestGuardRuntimeBindingObservation` (`environment`, `bundle_id`, `bundle_manifest_hash` via PR #828 / #806) | #159 / #806 | • `ANS-RAG`/`ANS-FINAL`: `{"bundle_id": str(obs.bundle_id), "bundle_manifest_hash": obs.bundle_manifest_hash, "environment": obs.environment.value, "projection_version": "answer-runtime-bundle-binding-v1"}` (decision_id, user_id, scope 등 요청별 가변 메타데이터 배제)<br>• `ANS-BASE`: `{"axis": "RUNTIME_BUNDLE", "binding_state": "NOT_APPLIED", "projection_version": "answer-authority-binding-v1"}` | • `ANS-RAG`/`ANS-FINAL`: `canonical_sha256(projection)`<br>• `ANS-BASE`: `canonical_sha256(NOT_APPLIED_projection)` | Allowed delta (`ANS-BASE` vs `ANS-RAG`); Controlled match (`ANS-RAG` vs `ANS-FINAL`) |
-| `RETRIEVED_EVIDENCE` | `delta_bindings.retrieved_evidence_hash` | `ProductionGuidelineEvidenceSet` vs `CaseResult.selected_evidence_ids` | #159 / #180 (#760) | • `ANS-RAG`/`ANS-FINAL`: **미확정 (Recipe Unresolved 유지)**. 이유: `ProductionGuidelineEvidenceSet`에 `case_id`가 없고, `CaseResult.selected_evidence_ids`는 문자열 ID 튜플만 보유하여 증거 정본 content hash를 온전히 증명하지 못함. 향후 carrier 확정 필요.<br>• `ANS-BASE`: `{"axis": "RETRIEVED_EVIDENCE", "binding_state": "NOT_APPLIED", "projection_version": "answer-authority-binding-v1"}` | • `ANS-RAG`/`ANS-FINAL`: Carrier 및 Stage 확정 전까지 미생성<br>• `ANS-BASE`: `canonical_sha256(NOT_APPLIED_projection)` | Allowed delta (`ANS-BASE` vs `ANS-RAG`); Controlled match (`ANS-RAG` vs `ANS-FINAL`) |
+| `RETRIEVED_EVIDENCE` | `delta_bindings.retrieved_evidence_hash` | `ProductionGuidelineEvidenceSet` vs `CaseResult.selected_evidence_ids` | #159 / #180 (#760) | **Unresolved Binding (Recipe Unresolved)**<br>• `ANS-RAG`/`ANS-FINAL`: 미확정 (이유: `ProductionGuidelineEvidenceSet`에 `case_id`가 없고 `CaseResult.selected_evidence_ids`는 단순 ID 튜플만 보유하여 실제 generator 소비 evidence content hash를 온전히 증명하지 못함. 향후 authoritative carrier 확정 필요)<br>• `ANS-BASE`: `{"axis": "RETRIEVED_EVIDENCE", "binding_state": "NOT_APPLIED", "projection_version": "answer-authority-binding-v1"}` | • `ANS-RAG`/`ANS-FINAL`: Carrier 및 Stage 확정 전까지 `null` 유지<br>• `ANS-BASE`: `canonical_sha256(NOT_APPLIED_projection)` | Allowed delta (`ANS-BASE` vs `ANS-RAG`); Controlled match (`ANS-RAG` vs `ANS-FINAL`) |
 
 ---
 

@@ -252,20 +252,21 @@ Post-MVP-1 Product·Safety·Evaluation 승인자 권가빈 (`@hazelnutflavoured`
    - `READY`: 0개
    - `SOURCE_EXISTS_RECIPE_UNRESOLVED`: 11개 (`INPUT_CONTEXT`, `PROMPT_STRUCTURE`, `PARSER`, `SEED`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`, `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RETRIEVED_EVIDENCE`, `RUNTIME_BUNDLE`)
    - `BLOCKED_BY_UPSTREAM_AUTHORITY`: 4개 (`FINAL_VALIDATOR` [#180], `CITATION_GATE` [#807/#799/#180], `SAFETY_GATE` [#180], `RELEASE_GATE` [#180])
-2. **`RUNTIME_BUNDLE` 재정렬**: PR #828 / Issue #806 병합(`5c99a538`)으로 `RequestGuardRuntimeBindingObservation`이 실재하여 상류 차단은 해제되었으나, #159 canonical projection 및 hash recipe 승인 대기 상태로 `SOURCE_EXISTS_RECIPE_UNRESOLVED`로 관리한다.
+   - 실질 제안 산출물: **10 Canonical Recipes + 1 Explicitly Unresolved Binding (`RETRIEVED_EVIDENCE`) + Separate Binding Manifest Contract**
+2. **`RUNTIME_BUNDLE` 재정렬**: PR #828 / Issue #806 병합(`5c99a538`)으로 `RequestGuardRuntimeBindingObservation`이 실재하여 상류 차단은 해제되었으나, #159 canonical projection 및 hash recipe 승인 대기 상태로 `SOURCE_EXISTS_RECIPE_UNRESOLVED`로 관리한다. (최신 `develop` `01ab426d` 기준 점검 완료, #159 authority 영향 없음).
 3. **`NOT_APPLIED` Typed State 및 Variant별 바인딩**:
    - 비적용 축은 임의의 fake sentinel(`"none"`, `"LOCAL"`) 대신 명시적 canonical typed state(`{"axis": "...", "binding_state": "NOT_APPLIED", "projection_version": "..."}`) 및 결정론적 해시로 표현한다.
    - `ANS-BASE`: 4개 retrieval axes = `NOT_APPLIED`, 4개 finalization axes = `NOT_APPLIED`.
-   - `ANS-RAG`: 4개 retrieval axes = 실제 정본 바인딩, 4개 finalization axes = `NOT_APPLIED`.
-   - `ANS-FINAL`: 4개 retrieval axes = 실제 정본 바인딩 (`ANS-RAG`와 일치), 4개 finalization axes = 실제 정본 바인딩 (상류 미완료 시 `null` / Blocked).
+   - `ANS-RAG`: 3개 retrieval axes = 실제 정본 바인딩, 1개 retrieval axis (`RETRIEVED_EVIDENCE`) = `null`, 4개 finalization axes = `NOT_APPLIED`.
+   - `ANS-FINAL`: 3개 retrieval axes = 실제 정본 바인딩 (`ANS-RAG`와 일치), 1개 retrieval axis (`RETRIEVED_EVIDENCE`) = `null`, 4개 finalization axes = 실제 정본 바인딩 (상류 미완료 시 `null` / Blocked).
 4. **Pairwise Readiness 및 Fail-Closed 보장**:
-   - **`ANS-BASE -> ANS-RAG`**: 두 Variant 모두 4개 finalization 축에 동일한 `NOT_APPLIED` 해시를 가지므로 8개 delta 필드가 non-None이며 non-allowed deltas가 일치하여, 상류 finalization 미완료 상태에서도 정상 비교 실행(Ready) 가능하다.
-   - **`ANS-RAG -> ANS-FINAL` 및 `ANS-BASE -> ANS-FINAL`**: `ANS-FINAL`의 finalization 축이 상류 차단으로 `None` (`null`) 상태이므로, #808 비교 커널에서 자동으로 `delta_binding_missing = True`가 발동되어 `execution_status = INVALID`, `decision_status = null`로 자동 fail-closed 처리된다.
+   - **`ANS-BASE -> ANS-RAG`**: `NOT_APPLIED` semantics 도입으로 4개 finalization authority 부재(#180, #807, #799)가 본 비교를 가로막는 구조적 종속 문제는 완전히 해결되었다 (두 Variant 모두 동일한 `NOT_APPLIED` 해시를 가지므로 non-allowed deltas가 일치). 그러나 **`ANS-RAG`의 `RETRIEVED_EVIDENCE` authoritative binding이 아직 `null`(`None`) 상태이므로, 현재 #808 `_check_delta_bindings()` 커널 실행 시 `delta_binding_missing = True`가 발동되어 `NOT READY` (fail-closed / `INVALID`, `decision_status = null`) 상태**로 처리된다. 향후 `RETRIEVED_EVIDENCE` carrier 1개만 해결되면 상류 finalization 완료 없이도 즉시 실행 가능한 구조다.
+   - **`ANS-RAG -> ANS-FINAL` 및 `ANS-BASE -> ANS-FINAL`**: `RETRIEVED_EVIDENCE` 미해결(`null`) 및 `ANS-FINAL`의 4개 finalization 축 상류 차단(`None` / `null`)으로 인해 `delta_binding_missing = True`가 발동되어 `NOT READY` (fail-closed / `INVALID`, `decision_status = null`) 상태로 자동 차단된다.
 5. **결정론적 Self-Hash**: Manifest 자체는 임의 UUID, 벽시계 타임스탬프, 외부 GitHub 워크플로 이슈 메타데이터를 배제하여 동일한 authority 입력에 대해 항상 100% 동일한 content hash를 생성한다.
 6. **Seam 결속**:
    - Manifest의 `supplemental_controls` 7개 필드는 `AnswerComparisonSupplementalControls`에 1:1 매핑된다.
-   - `delta_bindings` 8개 필드는 `AnswerComparisonDeltaBindings`에 1:1 매핑된다.
-7. **구현 착수 조건**: 본 제안 문서 및 11 Canonical Recipes에 대해 책임 리뷰어 권가빈(`@hazelnutflavoured`)의 승인 증빙이 확인되기 전에는 Python 구현(`ai_worker/...`)을 진행하지 않는다.
+   - `delta_bindings` 8개 필드는 `AnswerComparisonDeltaBindings`에 1:1 매핑된다 (`RETRIEVED_EVIDENCE` 및 `ANS-FINAL`의 미해결 차단 항목은 `None` 매핑).
+7. **구현 착수 조건**: 본 제안 문서 및 10 Canonical Recipes + 1 Unresolved Binding에 대해 책임 리뷰어 권가빈(`@hazelnutflavoured`)의 승인 증빙이 확인되기 전에는 Python 구현(`ai_worker/...`)을 진행하지 않는다.
 
 ## 9. Rubric fail-fast
 
