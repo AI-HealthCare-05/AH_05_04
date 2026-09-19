@@ -32,15 +32,25 @@ export const BARRIER_SHORT_LABELS: Record<BarrierCode, string> = {
   ACCESS_OR_COST: '약 확보 어려움',
 }
 
+// Barriers whose support is not built yet. The answer is still recorded and reaches
+// the clinic report; only the support offer is replaced with a "준비 중" notice.
+export const SUPPORT_PREPARING: BarrierCode[] = ['ACCESS_OR_COST']
+
+// Selectable subreasons. RETIRED_SUBREASONS are deliberately absent here but keep
+// their labels below, because rows answered before the change still render.
+export const RETIRED_SUBREASONS: SubreasonCode[] = ['MEDICATION_CONFUSION', 'PREPARATION_DIFFICULT']
+
 export const BARRIER_SUBREASONS: Record<BarrierCode, SubreasonCode[]> = {
-  FORGOT: ['MISSED_ALERT', 'POSTPONED', 'MEDICATION_CONFUSION'],
-  SCHEDULE_OR_TRAVEL: ['SCHEDULE_CHANGED', 'MEDICATION_NOT_WITH_ME', 'PREPARATION_DIFFICULT'],
+  FORGOT: ['MISSED_ALERT', 'POSTPONED'],
+  SCHEDULE_OR_TRAVEL: ['SCHEDULE_CHANGED', 'MEDICATION_NOT_WITH_ME'],
   INSTRUCTIONS_UNCLEAR: ['DOSE_AMOUNT_UNCLEAR', 'TIMING_OR_FOOD_UNCLEAR', 'MEDICATION_IDENTITY_UNCLEAR', 'LANGUAGE_TOO_COMPLEX'],
   NEED_DOUBT: ['NO_SYMPTOMS', 'NO_NOTICEABLE_EFFECT', 'VALUES_IMPROVED', 'NEED_UNCLEAR'],
   MEDICATION_CONCERN: ['LONG_TERM_USE', 'DEPENDENCE_OR_TOLERANCE', 'BODY_HARM', 'PILL_BURDEN', 'CONFLICTING_INFORMATION'],
   ACCESS_OR_COST: ['RUNNING_LOW', 'REFILL_MISSED', 'VISIT_DIFFICULT', 'COST_BURDEN'],
 }
 
+// Display map, not a selection list: it still covers RETIRED_SUBREASONS so the
+// clinic report can label answers stored before they were retired.
 export const SUBREASON_LABELS: Record<SubreasonCode, string> = {
   MISSED_ALERT: '알림을 보거나 듣지 못했어요',
   POSTPONED: '미뤘다가 잊었어요',

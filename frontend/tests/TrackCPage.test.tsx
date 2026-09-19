@@ -214,6 +214,32 @@ it.each([
   expect(svc.patchPlan).not.toHaveBeenCalled()
 })
 
+it('준비 중인 어려움은 답을 저장하고 도움 제안 대신 안내를 보여준다', async () => {
+  const accessBarrier = { ...barrier, barrier_code: 'ACCESS_OR_COST' }
+  const answered = { ...accessBarrier, subreason_code: 'RUNNING_LOW', revision: 2 }
+  const svc = services({ putBarrier: vi.fn().mockResolvedValueOnce(accessBarrier).mockResolvedValue(answered) })
+  show(svc); await enterBarrier()
+  expect(screen.getByRole('radio', { name: /약이 없거나 구하기 어려웠어요/ }).closest('label')?.textContent).toContain('준비중')
+  fireEvent.click(screen.getByRole('radio', { name: /약이 없거나 구하기 어려웠어요/ }))
+  fireEvent.click(screen.getByRole('button', { name: '선택한 어려움으로 도움 찾기' }))
+  fireEvent.click(await screen.findByRole('radio', { name: '약이 곧 떨어져요' }))
+  fireEvent.click(screen.getByRole('button', { name: '선택한 상황으로 도움 찾기' }))
+  await screen.findByRole('heading', { name: '선택한 내용은 저장했어요' })
+  // The answer is still written, so the clinic report keeps it; only the offer is skipped.
+  expect(svc.putBarrier).toHaveBeenCalledTimes(2)
+  expect(svc.getOffers).not.toHaveBeenCalled()
+  expect(svc.createPlan).not.toHaveBeenCalled()
+})
+
+it('선택 목록에서 제외한 세부 이유는 더 이상 노출되지 않는다', async () => {
+  const svc = services()
+  show(svc); await enterBarrier()
+  fireEvent.click(screen.getByRole('radio', { name: '깜빡했어요' }))
+  fireEvent.click(screen.getByRole('button', { name: '선택한 어려움으로 도움 찾기' }))
+  await screen.findByRole('radio', { name: '알림을 보거나 듣지 못했어요' })
+  expect(screen.queryByRole('radio', { name: '약이나 복용 회차가 헷갈렸어요' })).toBeNull()
+})
+
 it('retries the travel offer without writing another Barrier', async () => {
   const travelBarrier = { ...barrier, barrier_code: 'SCHEDULE_OR_TRAVEL' }
   const answered = { ...travelBarrier, subreason_code: 'MEDICATION_NOT_WITH_ME', revision: 2 }
