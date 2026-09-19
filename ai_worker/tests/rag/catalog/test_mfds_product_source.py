@@ -18,6 +18,7 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import SnapshotVeri
 SNAPSHOT_ID = UUID("00000000-0000-4000-8000-000000000001")
 RUN_ID = UUID("00000000-0000-4000-8000-000000000002")
 OPERATION_ID = UUID("00000000-0000-4000-8000-000000000003")
+ENDPOINT_ID = UUID("00000000-0000-4000-8000-000000000004")
 
 
 def _page(records: list[dict[str, object]]) -> bytes:
@@ -71,9 +72,9 @@ def _snapshot(**overrides):
     values.update(overrides)
     provenance = values.pop("validate_provenance", lambda: None)
     values.setdefault("operation_id", OPERATION_ID)
+    values.setdefault("endpoint_id", ENDPOINT_ID)
     return SimpleNamespace(
         **values,
-        endpoint_id=uuid4(),
         validate_provenance=provenance,
     )
 
@@ -146,23 +147,37 @@ async def test_snapshot_binding_fails_before_artifact_read(changes):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "changes",
-    [{"snapshot_id": uuid4()}, {"run_status": "FAILED"}, {"failure_code": "SCHEMA_DRIFT"}],
+    [
+        {"snapshot_id": uuid4()},
+        {"operation_id": uuid4()},
+        {"run_status": "FAILED"},
+        {"failure_code": "SCHEMA_DRIFT"},
+    ],
 )
 async def test_ingestion_run_binding_fails_closed(changes):
     content = _page([{"ITEM_SEQ": "P-001", "ITEM_NAME": "제품"}])
+    reader = FakeReader(content)
     with pytest.raises(ProductSourceBindingError, match="BLOCKED_BY_PRODUCT_INGESTION_RUN"):
         await read_product_input(
             repository=FakeRepository(snapshot=_snapshot(), run=_run(**changes), artifacts=(_artifact(content),)),
-            artifact_reader=FakeReader(content),
+            artifact_reader=reader,
             source_snapshot_id=str(SNAPSHOT_ID),
             ingestion_run_id=str(RUN_ID),
             item_seq="P-001",
         )
+    assert reader.calls == 0
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "records", [[], [{"ITEM_SEQ": "P-002", "ITEM_NAME": "다른"}, {"ITEM_SEQ": "P-002", "ITEM_NAME": "중복"}]]
+    "records",
+    [
+        [],
+        [
+            {"ITEM_SEQ": "P-001", "ITEM_NAME": "중복 1"},
+            {"ITEM_SEQ": "P-001", "ITEM_NAME": "중복 2"},
+        ],
+    ],
 )
 async def test_item_seq_must_match_exactly_once(records):
     content = _page(records)

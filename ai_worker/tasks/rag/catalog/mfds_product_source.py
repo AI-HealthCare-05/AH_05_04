@@ -95,13 +95,16 @@ def _validate_snapshot(receipt: SnapshotProvenanceReceipt, snapshot_id: UUID) ->
         raise ProductSourceBindingError("BLOCKED_BY_PRODUCT_SOURCE_AUTHORITY") from None
 
 
-def _validate_run(run: SnapshotAttemptReceipt, snapshot: SnapshotProvenanceReceipt, snapshot_id: UUID) -> None:
+def _validate_run(
+    run: SnapshotAttemptReceipt,
+    snapshot_id: UUID,
+    expected_operation_id: UUID,
+) -> None:
     if (
         run.snapshot_id != snapshot_id
+        or run.operation_id != expected_operation_id
         or run.run_status != "SUCCEEDED"
         or run.failure_code is not None
-        or run.operation_id is None
-        or run.operation_id != snapshot.operation_id
     ):
         raise ProductSourceBindingError("BLOCKED_BY_PRODUCT_INGESTION_RUN")
 
@@ -161,7 +164,11 @@ async def read_product_input(
     run = await repository.get_attempt_receipt(ingestion_run_id=run_uuid)
     if run is None:
         raise ProductSourceBindingError("BLOCKED_BY_PRODUCT_INGESTION_RUN")
-    _validate_run(run, snapshot, snapshot_uuid)
+    _validate_run(
+        run,
+        snapshot_uuid,
+        snapshot.operation_id,
+    )
 
     matches = await _read_matching_records(
         repository=repository, artifact_reader=artifact_reader, run_uuid=run_uuid, item_seq=item_seq
