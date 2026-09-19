@@ -44,23 +44,24 @@ class MedicationReportRepository:
         barrier_response is append-only, so only the newest revision of each Check-in
         is the user's current answer; older revisions are corrections and must not
         reach a clinician.
+
+        Ranking therefore runs over every revision, answered or not, and the answered
+        filter is applied to the winner afterwards. Filtering first would drop a newer
+        DECLINED correction and promote the ANSWERED revision it replaced, showing a
+        clinician a reason the user has already withdrawn.
         """
-        latest = (
-            select(
-                BarrierResponse.id.label("barrier_id"),
-                BarrierResponse.medication_checkin_id.label("checkin_id"),
-                BarrierResponse.barrier_code.label("barrier_code"),
-                BarrierResponse.subreason_code.label("subreason_code"),
-                func.row_number()
-                .over(
-                    partition_by=BarrierResponse.medication_checkin_id,
-                    order_by=(BarrierResponse.checkin_revision.desc(), BarrierResponse.revision.desc()),
-                )
-                .label("rank"),
+        latest = select(
+            BarrierResponse.id.label("barrier_id"),
+            BarrierResponse.medication_checkin_id.label("checkin_id"),
+            BarrierResponse.barrier_code.label("barrier_code"),
+            BarrierResponse.subreason_code.label("subreason_code"),
+            func.row_number()
+            .over(
+                partition_by=BarrierResponse.medication_checkin_id,
+                order_by=(BarrierResponse.checkin_revision.desc(), BarrierResponse.revision.desc()),
             )
-            .where(BarrierResponse.barrier_code.is_not(None))
-            .subquery()
-        )
+            .label("rank"),
+        ).subquery()
         rows = await self.session.execute(
             select(
                 MedicationOccurrence.id,
@@ -90,6 +91,9 @@ class MedicationReportRepository:
             .where(
                 owned_by_self(Prescription.profile_id, user_id),
                 MedicationOccurrence.scheduled_local_date.between(start_date, end_date),
+                # chk_barrier_response ties a non-null barrier_code to ANSWERED, so this
+                # keeps exactly the Check-ins whose current answer names a reason.
+                latest.c.barrier_code.is_not(None),
             )
             .order_by(MedicationOccurrence.scheduled_at, MedicationOccurrence.id)
         )
