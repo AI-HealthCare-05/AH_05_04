@@ -10,7 +10,7 @@
 
 ## Backend 입력 계약
 
-`ChatService`는 필수 `prescription_version_id`로 세션 생성 당시 불변 Version Medication을 `display_order` 오름차순으로 조회하고 `ChatReplyInput`을 만든다. 요청 처리와 결과 저장 직전에는 이 ID가 현재 `active_version_id`인지 검증한다. `CHAT_HISTORY_CONTEXT_ENABLED=true`인 Local 합성 데이터 검증에서는 현재 질문 이전의 같은 세션 완료 대화도 함께 구성한다.
+`ChatService`는 필수 `prescription_version_id`로 세션 생성 당시 불변 Version Medication을 `display_order` 오름차순으로 조회하고 `ChatReplyInput`을 만든다. 요청 처리와 결과 저장 직전에는 이 ID가 현재 `active_version_id`인지 검증한다. `CHAT_HISTORY_CONTEXT_ENABLED=true`인 환경(현재는 Local 합성 데이터 검증으로 제한되며, Production explicit opt-in은 Issue #838 거버넌스 승인 대기 중)에서는 현재 질문 이전의 같은 세션 완료 대화도 함께 구성한다.
 
 | 필드 | 타입 | 규칙 |
 | --- | --- | --- |
@@ -56,7 +56,7 @@ Provider에는 다음 정보만 전달할 수 있다.
 
 예시의 모든 값은 합성 데이터여야 하며 실제 환자정보를 사용하지 않는다.
 
-`CHAT_HISTORY_CONTEXT_ENABLED`의 기본값은 `false`이며 Staging·Production에서는 활성화할 수 없다. 프롬프트는 flag와 관계없이 `chat-prompt-v5` 하나만 사용하고 Provider payload에 `history` 배열을 항상 포함한다. `false`이면 history를 조회하지 않고 빈 배열을 전달하며, Local에서 `true`이면 허용된 최근 완료 대화를 배열에 채운다. question, history, medications 내부 문자열은 모두 지시가 아닌 JSON 데이터로 취급한다.
+`CHAT_HISTORY_CONTEXT_ENABLED`의 기본값은 `false`이며 현재 Staging·Production에서는 활성화가 금지된다(외부 전송 승인 게이트 `EXT-PRIV-003` 및 Issue #838 Proposed Decision 검토 중). 승인 완료 전까지는 `false`를 유지하여 history를 조회하지 않고 빈 배열(`history: []`)을 전달하며, Local에서 `true`이면 허용된 최근 완료 대화를 배열에 채운다. 프롬프트는 flag와 관계없이 `chat-prompt-v5` 하나만 사용하고 Provider payload에 `history` 배열을 항상 포함한다. question, history, medications 내부 문자열은 모두 지시가 아닌 JSON 데이터로 취급한다. 승인 완료 후 Production explicit opt-in이 허용되더라도 동일 세션 격리와 `false` 롤백(FastAPI 재생성) 절차가 유지된다.
 
 history의 USER 발화는 과거 사용자 진술일 뿐 검증된 의료 사실이나 현재 상태가 아니다. 현재 질문이 지속 여부를 확인하지 않은 과거 증상·진단·알레르기·복용 여부를 현재 사실로 단정하지 않는다. 과거 ASSISTANT 답변도 의료 근거가 아니며, 현재 확정 `medications`가 우선한다. 답변 안전성에 중요한 과거 정보라면 현재도 해당하는지 짧게 확인한다.
 

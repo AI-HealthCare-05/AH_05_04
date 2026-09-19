@@ -501,7 +501,7 @@ def test_worker_preflight_blocks_before_registry_and_ssh(tmp_path, key, value, e
     assert "Docker login" not in result.stdout
 
 
-def test_worker_preflight_allows_chat_history_context_enabled(tmp_path):
+def test_worker_preflight_blocks_chat_history_context_enabled_pending_approval(tmp_path):
     settings = {
         "ENV": "production",
         "REDIS_PASSWORD": "synthetic-redis",
@@ -545,7 +545,8 @@ def test_worker_preflight_allows_chat_history_context_enabled(tmp_path):
         text=True,
         timeout=10,
     )
-    assert "CHAT_HISTORY_CONTEXT_ENABLED" not in result.stdout
+    assert result.returncode != 0
+    assert "CHAT_HISTORY_CONTEXT_ENABLED=false" in result.stdout
 
 
 @pytest.mark.parametrize("worker_health_exit", [0, 42])

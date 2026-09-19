@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -70,9 +71,7 @@ def test_production_chat_history_context_gate_reaches_backend() -> None:
     fastapi_environment = services["fastapi"]["environment"]
     env_example = _read(PROJECT_ROOT / "envs/example.prod.env")
 
-    assert fastapi_environment["CHAT_HISTORY_CONTEXT_ENABLED"] == (
-        "${CHAT_HISTORY_CONTEXT_ENABLED:-false}"
-    )
+    assert fastapi_environment["CHAT_HISTORY_CONTEXT_ENABLED"] == ("${CHAT_HISTORY_CONTEXT_ENABLED:-false}")
     assert "CHAT_HISTORY_CONTEXT_ENABLED=false\n" in env_example
     # AI Worker, Redis, Postgres 등 다른 서비스에는 wiring되지 않음을 검증
     for service_name in ("ai-worker", "postgres", "redis", "migrate"):
@@ -82,6 +81,9 @@ def test_production_chat_history_context_gate_reaches_backend() -> None:
 
 
 def test_production_chat_history_context_compose_resolution() -> None:
+    if shutil.which("docker") is None:
+        pytest.skip("docker CLI가 설치되어 있지 않아 compose config resolution을 건너뜁니다.")
+
     # 1. Default resolution with example.prod.env -> false
     result_default = subprocess.run(
         [
@@ -99,10 +101,7 @@ def test_production_chat_history_context_compose_resolution() -> None:
         check=True,
     )
     resolved_default = yaml.safe_load(result_default.stdout)
-    assert (
-        resolved_default["services"]["fastapi"]["environment"]["CHAT_HISTORY_CONTEXT_ENABLED"]
-        == "false"
-    )
+    assert resolved_default["services"]["fastapi"]["environment"]["CHAT_HISTORY_CONTEXT_ENABLED"] == "false"
 
     # 2. Override resolution with CHAT_HISTORY_CONTEXT_ENABLED=true -> true
     env_override = {**os.environ, "CHAT_HISTORY_CONTEXT_ENABLED": "true"}
@@ -123,10 +122,7 @@ def test_production_chat_history_context_compose_resolution() -> None:
         check=True,
     )
     resolved_override = yaml.safe_load(result_override.stdout)
-    assert (
-        resolved_override["services"]["fastapi"]["environment"]["CHAT_HISTORY_CONTEXT_ENABLED"]
-        == "true"
-    )
+    assert resolved_override["services"]["fastapi"]["environment"]["CHAT_HISTORY_CONTEXT_ENABLED"] == "true"
 
 
 def test_frontend_production_image_requires_api_origin_and_contains_built_spa() -> None:

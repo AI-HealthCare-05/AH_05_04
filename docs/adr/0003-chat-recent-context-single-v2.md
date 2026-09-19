@@ -17,7 +17,7 @@ Issue #112의 초기 완료 조건은 feature flag가 꺼지면 `chat-prompt-v1`
 - Provider payload에는 `history` 배열을 항상 포함한다.
 - `CHAT_HISTORY_CONTEXT_ENABLED`는 과거 대화의 조회·전송만 제어한다. 기본값은 `false`다.
 - `false`이면 history를 조회하지 않고 빈 배열을 전달한다.
-- `true`는 비식별 합성 데이터를 사용하는 Local 환경에서만 허용한다. 다른 환경에서 활성화하면 설정 검증 단계에서 거부한다.
+- `true`는 비식별 합성 데이터를 사용하는 Local 환경에서만 허용한다(Production 명시적 opt-in은 Issue #838 Proposed Decision에서 검토 중이며 승인 전까지 배포 게이트에서 차단). 다른 미승인 환경에서 활성화하면 거부한다.
 - 활성화 시 같은 세션에서 현재 질문 이전의 완료된 USER–ASSISTANT 대화를 최신순으로 검사해 최대 3쌍을 고르고, Provider에는 오래된 순서로 전달한다.
 - 현재 확정 `medications`가 history와 충돌하면 `medications`를 우선한다.
 - 과거 USER 발화는 검증된 의료 사실이나 현재 상태가 아니며, 과거 ASSISTANT 답변도 의료 근거가 아니다. 현재 질문에서 지속 여부가 확인되지 않은 정보가 답변 안전성에 중요하면 현재도 해당하는지 짧게 확인한다.
@@ -44,7 +44,7 @@ flag를 즉시 끌 때 기존 prompt version까지 되돌릴 수 있지만, 동�
 - flag OFF에서도 저장되는 `prompt_version`은 기존 `chat-prompt-v1`이 아니라 `chat-prompt-v2`다.
 - flag OFF Provider payload에는 `history: []`가 추가되지만 기존 Backend Chat API DTO와 오류 의미는 변하지 않는다.
 - 단일 프롬프트와 출력 검증 경로로 Local 및 운영 설정 간 안전 규칙이 일치한다.
-- 실제 사용자 history 전송은 아직 승인되지 않았다. Staging·Production에서는 flag를 `false`로 유지한다.
+- 실제 사용자 history 전송은 아직 승인되지 않았다(게이트 `EXT-PRIV-003` Pending). Staging 및 승인 전 Production에서는 flag를 `false`로 유지하며, 승인 완료 후에만 명시적 opt-in이 허용된다.
 - 후속 Issue #129에서 버전된 합성 replay와 결정론적 Local application-path latency·PII sentinel 검증을 수행했다. 실제 Provider 검증은 `NOT_RUN`이고 결과는 Production 공개 근거가 아니다.
 
 ## 보안·개인정보 영향

@@ -133,7 +133,7 @@ OCR·복약 가이드·복약 챗봇은 외부 Provider 호출 중에 요청 단
 | 수용량 판정 | `전체 in-flight AI <= pool + overflow - 비AI 예비 connection`: ____                                              |
 | 가이드 OpenAI 실호출 | `RUN_OPENAI_SMOKE=1` 실행 환경·일시·결과: ____                                                                   |
 | 챗봇 OpenAI 실호출 | `RUN_OPENAI_CHAT_SMOKE=1` 실행 환경·일시·결과: ____                                                              |
-| 챗봇 최근 대화 활성화 | 실제 `CHAT_HISTORY_CONTEXT_ENABLED`: ____ (기본값 `false`, Staging·Production은 반드시 `false`) |
+| 챗봇 최근 대화 활성화 | 실제 `CHAT_HISTORY_CONTEXT_ENABLED`: ____ (기본값 `false`, Staging은 반드시 `false`, Production은 외부 승인 전 반드시 `false` 유지; Issue #838 Proposed Decision 검토 중) |
 | OCR 구조화 LLM 활성화 `E` | 실제 `OCR_STRUCTURE_LLM_ENABLED`: ____ (`false`=0, `true`=1) |
 | OCR 구조화 timeout `S` | 실제 `OCR_STRUCTURE_TIMEOUT_SECONDS`: ____초 (코드 기본값: 30초) |
 
@@ -184,7 +184,7 @@ Chat은 동일 세션 최대 동시 전송 `N`이 코드로 강제된 이후
 - DB pool size, overflow, pool wait timeout·queue 정책과 허용 가능한 connection 대기시간을 실제 배포 설정으로 기록합니다. 저장소는 `DB_CONNECTION_POOL_MAXSIZE`만 명시적으로 설정하므로 overflow와 wait 정책은 배포 런타임의 실제 값을 확인합니다.
 - AI 외부 호출 동안 DB transaction과 connection을 유지하는 현재 설계를 해당 수용량에서 운영할 것인지 명시적으로 승인합니다.
 - 가이드와 챗봇의 synthetic live smoke를 실제 배포 모델과 timeout으로 실행하고 결과를 기록합니다. 기본 CI에서 skip된 결과를 실호출 성공으로 간주하지 않습니다.
-- Staging·Production의 `CHAT_HISTORY_CONTEXT_ENABLED=false`를 확인합니다. 현재 설정 검증은 Local 이외 환경의 활성화를 거부하며, 실제 사용자 history 전송 승인이 완료될 때까지 `history: []`만 허용합니다.
+- Staging 및 승인 전 Production의 `CHAT_HISTORY_CONTEXT_ENABLED=false`를 확인합니다. 배포 스크립트(`scripts/deployment.sh`)는 외부 LLM 전송 승인(`EXT-PRIV-003` / Issue #838) 전까지 `CHAT_HISTORY_CONTEXT_ENABLED=true` 배포를 차단하며, `history: []`만 허용합니다. 향후 정식 승인 후 Production 명시적 opt-in 시에는 FastAPI 컨테이너에만 전달되며, 롤백 시 `false` 재설정 및 FastAPI 컨테이너 재생성이 요구됩니다.
 
 수용량이 부족하거나 비AI 요청의 connection 대기가 허용 범위를 넘으면 배포하지 않습니다. 세션 잠금을 조용히 약화하는 대신 admission/rate limiting 또는 비동기 worker 설계를 먼저 도입합니다.
 
@@ -229,7 +229,7 @@ Guide·Chat의 `OPENAI_MODEL`은 `gpt-4o`로 고정되어 있으며 다른 값�
 | --- | --- | --- | --- |
 | CLOVA OCR | 처방전 파일과 OCR 요청 metadata: ____ | ____ | ____ |
 | OpenAI 가이드 | 0-based `source_index`와 파생 `guidance_intent`(`FOLLOW_CONFIRMED_TIMING` 또는 `FOLLOW_CONFIRMED_SCHEDULE`)만 전송. 약명·제품 함량·용량·단위·횟수·시점·기간·식별자는 전송 금지 | `store=False` 포함 실제 저장·학습·보존 정책 확인: ____ | ____ |
-| OpenAI 챗봇 | 현재 질문과 확정 약물 필드. 최근 완료 대화 최대 3쌍은 별도 승인 후에만 허용하며 현재 Staging·Production에서는 `history: []`: ____ | `store=False` 포함 실제 정책 확인: ____ | ____ |
+| OpenAI 챗봇 | 현재 질문과 확정 약물 필드. 최근 완료 대화 최대 3쌍은 별도 승인(`EXT-PRIV-003` / Issue #838) 후에만 허용하며 현재 Staging 및 승인 전 Production에서는 `history: []`: ____ | `store=False` 포함 실제 정책 확인: ____ | ____ |
 
 가이드 `guidance_intent`는 확정 처방의 `timing_text` 존재 여부에서 파생된 의료 metadata이므로 단순 locator가 아니라 외부 전송 승인 대상으로 검토합니다. 승인 범위를 넘는 식별자, 원본 처방값, 최근 대화, OCR 원문·미검수 값이나 내부 오류 metadata가 외부 payload에 포함되면 배포하지 않습니다. [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)의 버전된 합성 replay와 결정론적 Local application-path latency·PII sentinel 검증은 실제 Provider 검증이나 외부 전송 승인이 아니며, 별도 외부 전송·Production 승인을 자동으로 해제하지 않습니다.
 
