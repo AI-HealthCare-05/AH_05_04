@@ -5,7 +5,6 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from decimal import Decimal
-from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -41,6 +40,7 @@ from ai_worker.tasks.evaluation.schemas.answer_quality_v1 import (
     parse_answer_runtime_binding_manifest_bytes,
 )
 from ai_worker.tasks.evaluation.schemas.artifacts import ExecutionStatus
+from ai_worker.tasks.evaluation.schemas.common import ExperimentType, ImmutableReference
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
 from ai_worker.tasks.rag.evidence_search import (
     RetrievalExecutionMode,
@@ -51,6 +51,8 @@ from ai_worker.tasks.rag.evidence_search import (
 from ai_worker.tasks.rag.guideline_card import GuidelineGenerationProvenance
 from ai_worker.tests.evaluation.test_answer_comparison import (
     _default_delta,
+    _make_bundle,
+    _make_cases,
     _make_run,
     _make_run_input,
 )
@@ -135,7 +137,7 @@ def _execution_request(seed: int) -> DevExecutionRequest:
         config_id="answer-dev",
         config_version="1.0.0",
         experiment_id="exp-answer-dev-1",
-        experiment_type="ANSWER_GROUNDING_SAFETY",
+        experiment_type=ExperimentType.ANSWER_GROUNDING_SAFETY,
         variant_id="ANS-RAG",
         evaluated_partitions=("DEV",),
         environment="LOCAL",
@@ -173,10 +175,10 @@ def _retrieval_model_config(index_hash: str = "b" * 64) -> ActualRetrievalModelC
     return ActualRetrievalModelConfig(
         adapter_id="actual-retrieval.v1",
         provider_invocation=False,
-        source_snapshot_ref={"id": "source", "version": "1.0.0", "hash": "1" * 64},
-        knowledge_index_ref={"id": "index", "version": "1.0.0", "hash": index_hash},
-        embedding_model_ref={"id": "embedding", "version": "1.0.0", "hash": "2" * 64},
-        parser_ref={"id": "parser", "version": "1.0.0", "hash": "3" * 64},
+        source_snapshot_ref=ImmutableReference(id="source", version="1.0.0", hash="1" * 64),
+        knowledge_index_ref=ImmutableReference(id="index", version="1.0.0", hash=index_hash),
+        embedding_model_ref=ImmutableReference(id="embedding", version="1.0.0", hash="2" * 64),
+        parser_ref=ImmutableReference(id="parser", version="1.0.0", hash="3" * 64),
         filter_snapshot_hash="4" * 64,
     )
 
@@ -309,8 +311,22 @@ def test_not_applied_hash_is_axis_scoped_and_rejects_unknown_axis() -> None:
 
 
 def test_input_context_hash_is_order_independent_and_uses_only_case_binding() -> None:
-    case_a = SimpleNamespace(case_id="case-a", input_sha256="a" * 64, answer_sha256="1" * 64)
-    case_b = SimpleNamespace(case_id="case-b", input_sha256="b" * 64, answer_sha256="2" * 64)
+    base_bundle = _make_bundle(
+        AnswerVariantId.ANS_RAG,
+        run_id="11111111-1111-4111-8111-111111111111",
+    )
+    case_a = _make_cases(
+        base_bundle.run.run_id,
+        case_id="case-a",
+        input_sha256="a" * 64,
+    )[0]
+    case_b = _make_cases(
+        base_bundle.run.run_id,
+        case_id="case-b",
+        input_sha256="b" * 64,
+    )[0]
+    bundle_ab = replace(base_bundle, cases=(case_a, case_b))
+    bundle_ba = replace(base_bundle, cases=(case_b, case_a))
     expected = canonical_sha256(
         {
             "cases": [
@@ -321,17 +337,37 @@ def test_input_context_hash_is_order_independent_and_uses_only_case_binding() ->
         }
     )
 
-    assert compute_input_context_binding_hash(SimpleNamespace(cases=(case_b, case_a))) == expected
-    assert compute_input_context_binding_hash(SimpleNamespace(cases=(case_a, case_b))) == expected
+    assert compute_input_context_binding_hash(bundle_ba) == expected
+    assert compute_input_context_binding_hash(bundle_ab) == expected
     assert (
         compute_input_context_binding_hash(
-            SimpleNamespace(cases=(SimpleNamespace(case_id="case-c", input_sha256="a" * 64), case_b))
+            replace(
+                base_bundle,
+                cases=(
+                    _make_cases(
+                        base_bundle.run.run_id,
+                        case_id="case-c",
+                        input_sha256="a" * 64,
+                    )[0],
+                    case_b,
+                ),
+            )
         )
         != expected
     )
     assert (
         compute_input_context_binding_hash(
-            SimpleNamespace(cases=(SimpleNamespace(case_id="case-a", input_sha256="c" * 64), case_b))
+            replace(
+                base_bundle,
+                cases=(
+                    _make_cases(
+                        base_bundle.run.run_id,
+                        case_id="case-a",
+                        input_sha256="c" * 64,
+                    )[0],
+                    case_b,
+                ),
+            )
         )
         != expected
     )
