@@ -150,14 +150,14 @@ describe('Plan B 복약 리포트', () => {
       ),
     ).toBeTruthy()
     expect(screen.getByText('복용 77회 ÷ 확인된 기록 88회')).toBeTruthy()
-    // confirmation_rate 는 REPORT-01 화면에 별도 카드로 노출하지 않는다.
+    // confirmation_rate 는 응답에 남아 있어도 REPORT-01 화면에 노출하지 않는다.
     expect(
-      screen.getByText('기록 확인률', { exact: false }),
-    ).toBeTruthy()
+      screen.queryByText('기록 확인률', { exact: false }),
+    ).toBeNull()
 
     expect(
-      screen.getByText('45.6%', { exact: false }),
-    ).toBeTruthy()
+      screen.queryByText('45.6%', { exact: false }),
+    ).toBeNull()
 
     expect(screen.queryByText('오늘 남은 일정')).toBeNull()
     // counts 3종은 compact summary 로 계속 표시한다.
@@ -209,7 +209,7 @@ describe('Plan B 복약 리포트', () => {
       }),
     })
     renderPage()
-    expect((await screen.findAllByText('계산할 기록 없음')).length).toBe(2)
+    expect((await screen.findAllByText('계산할 기록 없음')).length).toBe(1)
     expect(screen.queryByText('0%')).toBeNull()
     expect(screen.getByText('복용 0회 ÷ 확인된 기록 0회')).toBeTruthy()
     expect(screen.queryByText('0%')).toBeNull()
@@ -223,7 +223,7 @@ describe('Plan B 복약 리포트', () => {
       }),
     })
     renderPage()
-    expect((await screen.findAllByText('계산할 기록 없음')).length).toBe(2)
+    expect((await screen.findAllByText('계산할 기록 없음')).length).toBe(1)
     expect(screen.queryByText('0%')).toBeNull()
   })
 
@@ -248,8 +248,8 @@ describe('Plan B 복약 리포트', () => {
       screen.getByRole('heading', { name: '복약 상태 요약' }),
     ).toBeTruthy()
     expect(screen.getAllByText('0회')).toHaveLength(3)
-    expect(screen.getByText('기록 확인률')).toBeTruthy()
-    expect(screen.getAllByText('계산할 기록 없음')).toHaveLength(2)
+    expect(screen.queryByText('기록 확인률')).toBeNull()
+    expect(screen.getAllByText('계산할 기록 없음')).toHaveLength(1)
     expect(screen.queryByText('오늘 남은 일정')).toBeNull()
 
   })
@@ -306,6 +306,22 @@ describe('Plan B 복약 리포트', () => {
     ).toBeTruthy()
     expect(screen.getByText('장기간 복용해도 괜찮은가요?')).toBeTruthy()
 
+    // 진료 보기의 전체 섹션 순서를 한 번에 고정한다.
+    // 확인된 기록은 핵심 요약 바로 아래, 미복용 사유·진료 질문·복약 흐름은 그 뒤에 온다.
+    expect(
+      screen
+        .getAllByRole('heading', { level: 2 })
+        .map((heading) => heading.textContent?.trim()),
+    ).toEqual([
+      '사용자가 직접 기록한 내용을 정리한 화면입니다.',
+      '핵심 요약',
+      '확인된 기록',
+      '조회 기간',
+      '미복용 사유',
+      '진료 때 확인하고 싶은 질문',
+      '복약 흐름',
+    ])
+
     expect(getMedicationReport).toHaveBeenCalledWith(7, undefined, 'CLINIC')
   })
 
@@ -356,14 +372,27 @@ describe('Plan B 복약 리포트', () => {
     ).toBeTruthy()
 
     expect(
-      screen.getByText('기록 확인률', { exact: false }),
-    ).toBeTruthy()
+      screen.queryByText('기록 확인률', { exact: false }),
+    ).toBeNull()
 
     expect(
-      screen.getByText('45.6%', { exact: false }),
-    ).toBeTruthy()
+      screen.queryByText('45.6%', { exact: false }),
+    ).toBeNull()
 
     expect(screen.queryByText('오늘 남은 일정')).toBeNull()
+
+    // clinic 상세가 없는 응답의 순서만 확인한다.
+    // 미복용 사유·진료 질문까지 포함한 전체 순서는 clinicFixture 테스트가 고정한다.
+    const clinicHeadings = screen
+      .getAllByRole('heading', { level: 2 })
+      .map((heading) => heading.textContent?.trim())
+    expect(clinicHeadings).toEqual([
+      '사용자가 직접 기록한 내용을 정리한 화면입니다.',
+      '핵심 요약',
+      '확인된 기록',
+      '조회 기간',
+      '복약 흐름',
+    ])
 
     expect(getMedicationReport).toHaveBeenCalledWith(30, undefined, 'CLINIC')
 
