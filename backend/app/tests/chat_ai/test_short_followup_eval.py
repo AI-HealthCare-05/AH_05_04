@@ -65,14 +65,14 @@ def test_context_success_does_not_hide_unsupported_reassurance() -> None:
     assert not evaluated.quality_dimensions["safety"].passed
 
 
-def test_v5_preserves_fixed_safety_rules_and_adds_followup_instructions() -> None:
-    previous = (_ROOT / "evals/generation/prompts/chat-prompt-v4.txt").read_text()
-
-    def safety_section(prompt: str) -> str:
-        return prompt.split("[최우선 고정 안전 응답]")[1].split("[질문 범위와 처방약–일반의약품 비교]")[0]
-
-    assert PROMPT_VERSION == "chat-prompt-v5"
-    assert safety_section(CHAT_SYSTEM_INSTRUCTIONS) == safety_section(previous)
+def test_v6_preserves_fixed_safety_rules_and_adds_followup_instructions() -> None:
+    assert PROMPT_VERSION == "chat-prompt-v6"
+    assert "다음 문장만 답하고 종료하세요: 약을 이미 중복 복용하셨군요." in CHAT_SYSTEM_INSTRUCTIONS
+    assert (
+        "다음 문장만 답하고 종료하세요: 두 배로 복용하지 말고 의료진이나 약사에게 확인해 주세요."
+        in CHAT_SYSTEM_INSTRUCTIONS
+    )
+    assert "고정 안전 응답을 출력할 때는 지정된 문장 내용만 출력하세요" in CHAT_SYSTEM_INSTRUCTIONS
     assert '"파라시타몰은?"' in CHAT_SYSTEM_INSTRUCTIONS
     assert '"왱?"' in CHAT_SYSTEM_INSTRUCTIONS
     assert "현재 입력에는 검증된 상호작용 근거가 제공되지 않으므로" in CHAT_SYSTEM_INSTRUCTIONS

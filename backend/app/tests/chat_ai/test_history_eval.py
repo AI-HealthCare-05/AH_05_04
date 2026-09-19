@@ -305,7 +305,7 @@ def test_replay_evaluation_reports_comparison_metrics_without_raw_text_or_sentin
     assert report["run_mode"] == "DETERMINISTIC_REPLAY"
     assert report["prompt_provenance"] == {
         "execution_semantics": "CURRENT_RUNTIME_PROMPT",
-        "runtime_prompt_version": "chat-prompt-v5",
+        "runtime_prompt_version": "chat-prompt-v6",
         "historical_prompt_reproduction": False,
     }
     assert report["provider_evaluation"] == {
@@ -342,7 +342,7 @@ async def test_deterministic_runner_uses_chat_generator_and_reports_payload_late
     report = await run_deterministic_evaluation(dataset, clock=lambda: next(ticks))
     payload = report.to_dict()
 
-    assert payload["prompt_version"] == "chat-prompt-v5"
+    assert payload["prompt_version"] == "chat-prompt-v6"
     assert payload["model_settings"] == dataset["model_settings"]
     observations = payload["observations"]
     assert isinstance(observations, dict)

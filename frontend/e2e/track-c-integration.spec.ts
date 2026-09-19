@@ -2,6 +2,13 @@ import { expect, test } from '@playwright/test'
 import { installRequirementsApi, syntheticToken } from './fixtures/requirementsApi'
 const occurrence = '11111111-1111-4111-8111-111111111111'
 const planId = '22222222-2222-4222-8222-222222222222'
+
+// Choosing a subreason appends the next Barrier revision, so the stub echoes it back
+// exactly as the server does. A missing echo is treated as a stale flow by the client.
+function withSubreason<T extends { revision: number }>(barrier: T, method: string, body: { subreason_code?: string } | null) {
+  const sent = method === 'PUT' ? body?.subreason_code ?? null : null
+  return sent ? { ...barrier, subreason_code: sent, revision: barrier.revision + 1 } : barrier
+}
 for (const width of [320, 390, 412]) {
   test(`Track C explicit plan lifecycle at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 })
@@ -19,7 +26,7 @@ for (const width of [320, 390, 412]) {
       let data: unknown
       if (path === '/api/v1/medication-occurrences') data = { occurrences: [{ occurrence_id: occurrence, scheduled_local_date: '2026-09-16', status: 'CLOSED', checkin: { checkin_id: 'checkin', status: 'NOT_TAKEN', revision: 2 } }] }
       else if (path === '/api/v1/safety-assessments') data = safety
-      else if (path.endsWith('/barrier-response')) data = barrier
+      else if (path.endsWith('/barrier-response')) data = withSubreason(barrier, request.method(), request.method() === 'GET' ? null : request.postDataJSON())
       else if (path.endsWith('/supports')) data = { ...barrier, subreason_code: 'MISSED_ALERT', reason_code: null, supports: [{ support_code: 'REMINDER_SETUP', rule_version: 'rule1', copy_version: 'copy1', priority: 1, rationale_code: 'FORGOT', action_config: config, support_copy: { title: '복약 일정과 알림을 확인해 볼까요?', body: '현재 저장된 일정을 먼저 확인하고 필요한 경우 직접 변경해 주세요. '.repeat(12), confirmation_prompt: '이 방법을 실천 계획으로 저장할까요?', primary_label: '계획으로 저장', secondary_label: '나중에' }, questions: [] }] }
       else if (path.endsWith('/resources')) data = { support_action_plan_id: planId, barrier_code: 'FORGOT', occurrence_id: occurrence, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: { title: '복약 일정과 알림 확인', body: '저장 당시 안내', confirmation_prompt: '확인할까요?', primary_label: '확인', secondary_label: '나중에' }, subreason_code: 'MISSED_ALERT', selected_questions: [] }
       else { if (request.method() === 'PATCH') plan.status = request.postDataJSON().status; data = plan }
@@ -55,9 +62,12 @@ for (const width of [320, 390, 412]) {
     await page.getByRole('checkbox', { name: '이 계획을 취소할게요.' }).check()
     await page.getByRole('button', { name: '취소로 저장' }).click()
     await expect(page.getByText('취소됨', { exact: true })).toBeVisible()
-    expect(writes).toHaveLength(4); expect(writes.every(w => Boolean(w.key))).toBe(true)
+    expect(writes).toHaveLength(5); expect(writes.every(w => Boolean(w.key))).toBe(true)
     expect(writes[0].body).toEqual({ medication_checkin_id: 'checkin', checkin_revision: 2, symptom_codes: [], expected_revision: 0 })
     expect(writes[1].body.barrier_code).toBe('FORGOT')
+    expect(writes[1].body.subreason_code).toBeUndefined()
+    expect(writes[2].body).toMatchObject({ barrier_code: 'FORGOT', subreason_code: 'MISSED_ALERT', expected_revision: 1 })
+    expect(writes[1].key).not.toBe(writes[2].key)
     expect(await page.locator('.mobile-app').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
     await page.screenshot({ path: `test-results/track-c-${width}.png`, fullPage: true })
   })
@@ -83,7 +93,7 @@ for (const [situation, label, supportCode] of [
       let data: unknown
       if (path === '/api/v1/medication-occurrences') data = { occurrences: [{ occurrence_id: occurrence, scheduled_local_date: '2026-09-16', status: 'CLOSED', checkin: { checkin_id: 'checkin', status: 'NOT_TAKEN', revision: 2 } }] }
       else if (path.endsWith('/safety-assessments')) data = safety
-      else if (path.endsWith('/barrier-response')) data = barrier
+      else if (path.endsWith('/barrier-response')) data = withSubreason(barrier, request.method(), request.method() === 'GET' ? null : request.postDataJSON())
       else if (path.endsWith('/supports')) {
         expect(url.searchParams.get('travel_situation')).toBe(situation)
         data = { ...barrier, subreason_code: situation, supports: [{ support_code: supportCode, rule_version: plan.rule_version, copy_version: plan.copy_version, priority: 10, rationale_code: 'SYNTHETIC', action_config: config, support_copy: copy, questions: [] }], reason_code: null }

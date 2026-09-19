@@ -120,7 +120,7 @@ def test_chat_history_and_generated_answer_preserve_user_quotes() -> None:
     result = ChatGenerationResult(
         content="“아침” 또는 “저녁”처럼 입력된 인용은 보존합니다.",
         model_name="gpt-4o",
-        prompt_version="chat-prompt-v5",
+        prompt_version="chat-prompt-v6",
     )
 
     assert history.answer == '"식후"와 "공복"은 다릅니다.'

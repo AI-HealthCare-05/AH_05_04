@@ -175,6 +175,8 @@ class TrackCSupportService:
         if barrier.barrier_code is None:
             subreason_code = None
         else:
+            # The persisted answer wins when the caller does not restate it.
+            subreason_code = subreason_code or barrier.subreason_code
             try:
                 subreason_code = validate_subreason(barrier.barrier_code, subreason_code)
             except ValueError:
@@ -261,7 +263,9 @@ class TrackCSupportService:
                     status_code=409, code="SUPPORT_NOT_OFFERED", message="현재 제안된 지원만 선택할 수 있습니다."
                 )
             try:
-                subreason_code = validate_subreason(barrier.barrier_code, request.subreason_code)
+                subreason_code = validate_subreason(
+                    barrier.barrier_code, request.subreason_code or barrier.subreason_code
+                )
                 if request.travel_situation is not None and subreason_code not in (None, request.travel_situation):
                     raise ValueError("travel situation and subreason do not match")
                 subreason_code = subreason_code or request.travel_situation

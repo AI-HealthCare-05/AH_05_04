@@ -282,7 +282,7 @@ PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
 
 ### Chat prompt blind A/B
 
-현재 runtime prompt는 #581 짧은 후속 질문 보강 버전 `chat-prompt-v5`입니다. 기존 v3/v4 blind config와 snapshot은 해당 두 버전을 재현하는 자료이며 v5 평가 결과가 아닙니다. `chat-v5-short-followup-eval-v1.json`은 기존 v4 27-case를 그대로 보존하고 비교 대상 교체, 구어체 이유 질문, 첫 병용 답변의 근거 없는 안전 단정 사례를 추가한 30-case 합성 평가셋입니다. 기대 문구는 리뷰 대상이며 실제 모델 출력이 아닙니다.
+현재 runtime prompt는 #581 안전·품질 회귀 보강 버전 `chat-prompt-v6`입니다. `chat-prompt-v5`와 기존 v3/v4 snapshot은 각 과거 실행을 재현하는 historical 자료이며 현재 runtime prompt가 아닙니다. `chat-v5-short-followup-eval-v1.json`은 기존 v4 27-case를 그대로 보존하고 비교 대상 교체, 구어체 이유 질문, 첫 병용 답변의 근거 없는 안전 단정 사례를 추가한 30-case 합성 평가셋입니다. 기대 문구는 리뷰 대상이며 실제 모델 출력이 아닙니다.
 
 ```bash
 PYTHONPATH=backend:. uv run python -m app.evaluation.chat_history_runner \
@@ -301,7 +301,9 @@ canonical `quality_expectations`의 dimension 선호는 history item에만 적�
 
 `generation/chat-conversation-quality-blind-ab-v1.json`은 #581의 `chat-prompt-v3` 대 `chat-prompt-v4` 비교를 위한 Local 전용 실행 설정입니다. 두 arm은 같은 canonical 27-case dataset, `gpt-4o`, timeout과 출력 token 상한을 사용하고 prompt snapshot만 다릅니다. `generation/prompts/chat-prompt-v3.txt`와 `generation/prompts/chat-prompt-v4.txt`는 각 prompt 문자열의 불변 snapshot이며 config가 dataset·prompt SHA-256을 모두 고정합니다. 이 PR은 runner와 실행 설정만 준비하며 실제 Provider 실행 상태는 `NOT_RUN`입니다.
 
-`generation/chat-feedback-gold-prompt-comparison-v1.json`은 #633 후속 evidence용 Local 전용 실행 설정입니다. 두 arm은 같은 `chat-feedback-gold-v1` 31-case synthetic dataset, `gpt-4o`, timeout과 출력 token 상한을 사용하고 prompt snapshot만 다릅니다. baseline은 `generation/prompts/chat-prompt-v4.txt`, current는 #624/#581 feedback으로 runtime에 들어간 `generation/prompts/chat-prompt-v5.txt`이며 config가 dataset·prompt SHA-256·source commit·`temperature=0` controlled setting을 모두 고정합니다. 이 config는 Chat prompt 개선 evidence용이며 기존 Track F RAG 전후 Gold와 합치지 않습니다. 실제 Provider 실행 상태는 `NOT_RUN`입니다.
+`generation/chat-feedback-gold-prompt-comparison-v1.json`은 #633 후속 evidence용 Local 전용 실행 설정입니다. 두 arm은 같은 `chat-feedback-gold-v1` 31-case synthetic dataset, `gpt-4o`, timeout과 출력 token 상한을 사용하고 prompt snapshot만 다릅니다. baseline은 `generation/prompts/chat-prompt-v4.txt`, current는 #624/#581 feedback으로 당시 runtime에 들어간 `generation/prompts/chat-prompt-v5.txt`이며 config가 dataset·prompt SHA-256·source commit·`temperature=0` controlled setting을 모두 고정합니다. 이 config는 종료된 #633의 historical evidence 입력이며 기존 Track F RAG 전후 Gold와 합치지 않습니다. 실제 Provider 실행 상태는 `NOT_RUN`입니다.
+
+`generation/chat-prompt-v4-v6-comparison-v1.json`은 #581의 v6 runtime 회귀 검증용 Local 전용 실행 설정입니다. 같은 31-case synthetic dataset과 controlled setting에서 `chat-prompt-v4` baseline과 현재 runtime `chat-prompt-v6`를 비교하며, #633의 v4/v5 config와 experiment identity를 공유하지 않습니다. `docs/validation/issue-581-chat-prompt-v6-provider-regression-summary.json`은 이 config를 사용한 실행 HEAD, config·dataset·prompt hash, Provider model identity와 case/path pairwise delta를 기록합니다. 원시 Provider 응답은 저장소에 포함하지 않습니다.
 
 Live 실행은 arm당 113개, 총 226개의 Provider 응답을 생성합니다. 자동 결과에는 case·품질 축·blocking safety gate, baseline/history/max-history p95 latency, Provider가 반환한 input/output/total token 사용량을 기록합니다. 승인된 버전 고정 요금표가 없으므로 비용은 `NOT_CALCULATED`이며 token 사용량을 비용으로 오인하지 않습니다.
 
