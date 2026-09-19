@@ -26,14 +26,16 @@ Included now:
 
 - `load_tests/locustfile.py` with a configurable framework smoke task.
 - `load_tests/auth_smoke.py` with the #627 1차-1 Auth baseline smoke flow.
+- `load_tests/ocr_worker_smoke.py` with the #627 1차-2 OCR / Worker minimum smoke flow.
 - Default framework smoke target `/api/openapi.json`, matching the deployment runbook's FastAPI HTTP liveness check.
-- `LOAD_TEST_SMOKE_PATH`, `LOAD_TEST_EXPECT_STATUS`, and optional `LOAD_TEST_BEARER_TOKEN` environment variables.
+- `LOAD_TEST_SMOKE_PATH`, `LOAD_TEST_EXPECT_STATUS`, Auth/OCR smoke variables, and optional `LOAD_TEST_BEARER_TOKEN` environment variables.
 - `scripts/load_testing/validate_load_test_assets.py` and a regression test to keep the framework files aligned.
 - This runbook and links from the main testing/deployment documentation.
 
 Excluded now:
 
-- Signup/OCR/Guide/Chat full scenario implementation.
+- Login/signup/Guide/Chat full scenario implementation.
+- OCR Provider capacity approval or final `p95 <= 3s` claim.
 - Real patient data, real prescription files, or provider payload replay.
 - Production capacity claim, SLO approval, or Privacy/Release gate approval.
 - Dashboard, alerting, autoscaling, or infrastructure changes.
@@ -97,6 +99,63 @@ uvx locust \
   --csv docs/validation/load-testing/issue-627-auth-refresh-local
 ```
 
+## OCR / Worker Readiness Preflight
+
+For OCR / Worker smoke, prefer the isolated real-stack E2E compose file before recording baseline evidence. It uses a clean tmpfs database and separate port `18000`, so stale local development volumes do not hide Worker or Alembic readiness problems.
+
+```bash
+docker compose --env-file envs/.local.env \
+  -f docker-compose.real-stack-e2e.yml \
+  up -d postgres redis migrate fastapi ai-worker
+
+curl http://127.0.0.1:18000/api/openapi.json
+```
+
+First run a short 1-user preflight to confirm that Redis, Worker, OCR consent setup, storage, and synthetic authentication are all connected. Use the 5-user / 3-minute run only after this preflight succeeds.
+
+```bash
+LOAD_TEST_BEARER_TOKEN=<redacted> \
+LOAD_TEST_OCR_MAX_WAIT_SECONDS=90 \
+uvx locust \
+  -f load_tests/ocr_worker_smoke.py \
+  --host http://127.0.0.1:18000 \
+  --headless \
+  -u 1 \
+  -r 1 \
+  -t 30s \
+  --csv /tmp/issue-627-ocr-worker-smoke-preflight
+```
+
+If the default local compose stack fails before Worker startup because an old development DB volume has an Alembic revision without matching tables, do not treat that as an OCR smoke failure. Rebuild/recreate the local DB deliberately, or use this isolated real-stack preflight for #627 evidence.
+
+## OCR / Worker Minimum Smoke
+
+`load_tests/ocr_worker_smoke.py` is the first API-specific scenario for #627. It uses only the approved synthetic release-validation fixture and follows the current Backend contract:
+
+1. Upload synthetic prescription document.
+2. Create OCR Job with `Idempotency-Key`.
+3. Poll common Job status until `COMPLETED`.
+4. Read OCR domain result.
+5. Review extracted fields with manifest values.
+6. Confirm prescription.
+7. Re-read the confirmed prescription.
+
+Run it only after Backend, PostgreSQL, Redis, storage, Outbox Publisher/OCR Worker, required consent/profile setup, and a synthetic access token are ready. Record whether the run used a real OCR Provider or an approved test double.
+
+```bash
+mkdir -p docs/validation/load-testing
+LOAD_TEST_BEARER_TOKEN=<redacted> \
+uvx locust \
+  -f load_tests/ocr_worker_smoke.py \
+  --host http://127.0.0.1:8000 \
+  --headless \
+  -u 5 \
+  -r 1 \
+  -t 3m \
+  --csv docs/validation/load-testing/issue-627-ocr-worker-smoke-local
+```
+
+This is baseline/smoke evidence. It confirms that the OCR / Worker flow can complete repeatedly under a low load and records p50/p95/max latency. It is not a Production capacity claim, not a final `p95 <= 3s` assertion, and not Privacy/Release approval for real prescription traffic.
 
 ## Result Summary Template
 
@@ -128,8 +187,8 @@ After API contracts settle, add scenarios in focused follow-up PRs:
 1. User/profile read smoke after the Auth baseline.
 2. Medication schedule read smoke.
 3. Check-in and Track C support smoke.
-4. Prescription upload and OCR polling using synthetic files only.
-5. OCR review and prescription confirmation.
+4. Prescription upload and OCR polling using synthetic files only. Initial scenario: `load_tests/ocr_worker_smoke.py`.
+5. OCR review and prescription confirmation. Initial scenario: `load_tests/ocr_worker_smoke.py`.
 6. Guide generation.
 7. Chat session creation and message send.
 8. Notifications or Web Push only when the target environment has that feature enabled.

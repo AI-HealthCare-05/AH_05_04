@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 REQUIRED_FILES = (
     "load_tests/locustfile.py",
     "load_tests/auth_smoke.py",
+    "load_tests/ocr_worker_smoke.py",
     "load_tests/README.md",
     "docs/testing/load-testing-627.md",
 )
@@ -24,16 +25,24 @@ REQUIRED_SNIPPETS = {
         "LOAD_TEST_AUTH_PASSWORD",
         "LOAD_TEST_AUTH_INCLUDE_REFRESH",
     ),
+    "load_tests/ocr_worker_smoke.py": (
+        "OcrWorkerSmokeUser",
+        "ocr-smoke:create-ocr-job",
+        "LOAD_TEST_OCR_MAX_WAIT_SECONDS",
+        "ai-one-cycle-clova-openai-v1.json",
+    ),
     "load_tests/README.md": (
         "uvx locust",
         "Auth Baseline Smoke Command",
         "LOAD_TEST_AUTH_INCLUDE_REFRESH=true",
         "API-specific scenarios",
+        "OCR / Worker Smoke Command",
         "Do not use `/api/v1/health`",
     ),
     "docs/testing/load-testing-627.md": (
         "#627",
         "API별 시나리오",
+        "OCR / Worker Minimum Smoke",
         "Production capacity claim",
         "LOAD_TEST_AUTH_INCLUDE_REFRESH=true",
     ),
