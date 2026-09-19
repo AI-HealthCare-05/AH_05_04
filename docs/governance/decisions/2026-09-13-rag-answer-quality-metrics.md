@@ -215,7 +215,24 @@ PR #828 / Issue #806 병합(`5c99a538`) 완료를 반영하여 authority 상태�
   - **`BLOCKED_BY_UPSTREAM_AUTHORITY`**: 4개 (`FINAL_VALIDATOR`, `CITATION_GATE`, `SAFETY_GATE`, `RELEASE_GATE`)
 - 본 Phase B 제안 실질 산출물: **10 Canonical Recipes + 1 Explicitly Unresolved Binding (`RETRIEVED_EVIDENCE`) + Separate Binding Manifest Contract**
 
-### 2. 10 Canonical Recipes 규격 및 1 Explicitly Unresolved Binding (Full Specification)
+### 2. 10 Canonical Recipes 규격, Carrier 상태 분리 및 1 Explicitly Unresolved Binding
+
+#### 2.1 7 Supplemental Controls의 Runtime Carrier 상태 분리
+Authority binding 체계는 다음 세 계층을 엄격히 분리한다:
+$$\text{Canonical Recipe Defined} \neq \text{Authoritative Runtime Carrier Ready} \neq \text{Pair Executable}$$
+$$\text{source object exists} \neq \text{ANS-BASE / ANS-RAG / ANS-FINAL 실행에서 그 값을 authoritative하게 materialize할 carrier가 이미 존재함}$$
+
+| Supplemental Key | Canonical Recipe | Current Source Object | Variant Execution Carrier Status | 판정 및 세부 사유 |
+| :--- | :--- | :--- | :--- | :--- |
+| `INPUT_CONTEXT` | **DEFINED** | `LoadedRunBundle.cases` (`CaseResult.case_id`, `CaseResult.input_sha256`) | `RUN_BUNDLE` (Run 완성 시 실재; 3-Variant actual run 미실행) | 실제 완료된 Run bundle이 존재할 때 carrier 계약은 실재함. 단, `ANS-BASE`/`ANS-RAG`/`ANS-FINAL` 3-Variant actual execution materialization은 미실행 (`NOT YET EXECUTED`). |
+| `SEED` | **DEFINED** | `DevExecutionRequest.seed` (`SafeInteger`) | `UNRESOLVED` (미구현) | `RagEvaluationRun`에는 seed 자체가 저장되지 않음. Persisted Run에서 seed 재구성 불가. Manifest carrier 별도 구현 전까지 `NOT YET IMPLEMENTED` / `UNRESOLVED`. |
+| `PROMPT_STRUCTURE` | **DEFINED** | `GuidelineGenerationProvenance.prompt_ref` (`ImmutableArtifactRef`) | `UNRESOLVED` (미구현) | RAG Generator provenance 소스는 실재하나, `ANS-BASE`/`ANS-RAG`/`ANS-FINAL` 각 Variant의 actual execution carrier 미구현. `ANS-BASE`가 Generator를 호출한다고 가정할 수 없으며, mandatory controlled variable이므로 임의 `NOT_APPLIED` 불가 (3-Variant exact-match 필수). 실제 baseline 실행 모델 확정 전까지 carrier `UNRESOLVED`. |
+| `PARSER` | **DEFINED** | `GuidelineGenerationProvenance.parser_ref` (`ImmutableArtifactRef`) | `UNRESOLVED` (미구현) | `PROMPT_STRUCTURE`와 동일 원칙. 3 Variant 전체에서 동일 parser identity를 authoritative하게 공급하는 execution carrier 미구현. |
+| `SAMPLING_PARAMETERS` | **DEFINED** | `OpenAIGuidelineGeneratorAdapter` 실제 호출 파라미터 (`temperature=0`) | `UNRESOLVED` (미구현) | RAG runtime actual invocation 소스는 실재하나, 3-Variant 공통 carrier로 미구현. |
+| `TOKEN_LIMIT` | **DEFINED** | `DevVariant.parameters["token_limit"]` + Adapter `_max_output_tokens` | `UNRESOLVED` (미구현) | `DevVariant.parameters`는 Variant config일 뿐 actual 3-run runtime carrier가 아님. config ↔ runtime exact-binding rule 제안됨 (`PROPOSED`), 3-variant carrier 미구현. |
+| `TIMEOUT` | **DEFINED** | `DevVariant.parameters["timeout"]` + Adapter `_timeout_seconds` | `UNRESOLVED` (미구현) | `TOKEN_LIMIT`와 동일. config ↔ runtime exact-binding rule 제안됨 (`PROPOSED`), 3-variant carrier 미구현. |
+
+#### 2.2 10 Canonical Recipes 규격 및 1 Explicitly Unresolved Binding (Full Specification)
 
 | Key | Binding Field | Canonical Source Object | Owner Issue | Canonical Projection 규격 | Hash Preimage / Hashing Rule | Variant Semantics (ANS-BASE 포함) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -242,8 +259,16 @@ PR #828 / Issue #806 병합(`5c99a538`) 완료를 반영하여 authority 상태�
    - **`ANS-RAG`**: 3개 retrieval axes = 실제 정본 바인딩, 1개 retrieval axis (`RETRIEVED_EVIDENCE`) = `null`, 4개 finalization axes = `NOT_APPLIED`.
    - **`ANS-FINAL`**: 3개 retrieval axes = 실제 정본 바인딩 (`ANS-RAG`와 일치), 1개 retrieval axis (`RETRIEVED_EVIDENCE`) = `null`, 4개 finalization axes = 실제 정본 바인딩 (상류 미완료 시 `null` / Blocked).
 3. **Pairwise Readiness 및 Fail-Closed 보장**:
-   - **`ANS-BASE -> ANS-RAG`**: `NOT_APPLIED` semantics 도입으로 4개 finalization authority의 부재(#180, #807, #799)가 본 비교를 가로막는 구조적 종속 문제는 완전히 해결되었다 (두 Variant 모두 동일한 `NOT_APPLIED` 해시를 가지므로 non-allowed deltas가 일치). 그러나 **`ANS-RAG`의 `RETRIEVED_EVIDENCE` authoritative binding이 아직 `null`(`None`) 상태이므로, 현재 #808 `_check_delta_bindings()` 커널 실행 시 `delta_binding_missing = True`가 발동되어 `NOT READY` (fail-closed / `INVALID`, `decision_status = None`) 상태**로 처리된다. 향후 `RETRIEVED_EVIDENCE` carrier 1개만 해결되면 상류 finalization 완료 없이도 즉시 실행 가능한 구조다.
-   - **`ANS-RAG -> ANS-FINAL` 및 `ANS-BASE -> ANS-FINAL`**: `RETRIEVED_EVIDENCE` 미해결(`null`) 및 `ANS-FINAL`의 4개 finalization 축 상류 차단(`None` / `null`)으로 인해 `delta_binding_missing = True`가 발동되어 `NOT READY` (fail-closed / `INVALID`, `decision_status = None`) 상태로 자동 차단된다.
+   - **`ANS-BASE -> ANS-RAG`**: `NOT_APPLIED` semantics 도입으로 4개 finalization authority의 부재(#180, #807, #799)가 본 비교를 가로막는 구조적 종속 문제는 완전히 해결되었다 (두 Variant 모두 동일한 `NOT_APPLIED` 해시를 가지므로 non-allowed deltas가 일치). 그러나 **`ANS-RAG`의 `RETRIEVED_EVIDENCE` authoritative binding이 아직 `null`(`None`) 상태이며 7개 Supplemental Controls의 runtime carrier/extractor가 미구현 상태이므로, 현재 #808 `_check_delta_bindings()` 커널 실행 시 `delta_binding_missing = True`가 발동되어 `NOT READY` (fail-closed / `INVALID`, `decision_status = None`) 상태**로 처리된다.
+     - **실제 Pair 실행 전제 조건 (Prerequisites)**:
+       - A: 7개 Supplemental Controls가 `ANS-BASE`와 `ANS-RAG` 양쪽에서 authoritative carrier로 materialize될 것
+       - B: 두 Variant에서 7개 supplemental bindings가 모두 non-None일 것
+       - C: 7개 mandatory supplemental hashes가 exact-match할 것
+       - D: `RETRIEVED_EVIDENCE` authoritative carrier/recipe가 해결되어 non-None으로 제공될 것
+       - E: 나머지 3개 retrieval delta 축의 authoritative binding이 확보될 것
+       - F: 4개 finalization 축은 두 Variant 모두 canonical `NOT_APPLIED`로 exact-match할 것
+     - **핵심 원칙**: `NOT_APPLIED` semantics 해결로 #180/#807/#799 finalization authority가 선행조건이 되는 구조적 문제는 제거되었으나, Pair execution은 `RETRIEVED_EVIDENCE`뿐 아니라 7개 Supplemental Controls의 authoritative runtime carrier가 모두 확보된 후에만 가능하다.
+   - **`ANS-RAG -> ANS-FINAL` 및 `ANS-BASE -> ANS-FINAL`**: 7개 Supplemental Controls carrier 미구현, `RETRIEVED_EVIDENCE` 미해결(`null`), 그리고 `ANS-FINAL`의 4개 finalization 축 상류 차단(`None` / `null`)으로 인해 `delta_binding_missing = True`가 발동되어 `NOT READY` (fail-closed / `INVALID`, `decision_status = None`) 상태로 자동 차단된다.
 
 ### 4. Separate Binding Manifest 계약 규격
 
@@ -251,13 +276,25 @@ PR #828 / Issue #806 병합(`5c99a538`) 완료를 반영하여 authority 상태�
 - **Schema Version**: `1.0.0`
 - **계약 문서**: [`docs/contracts/proposed/post-mvp-1/answer-runtime-binding-manifest-v1.md`](../contracts/proposed/post-mvp-1/answer-runtime-binding-manifest-v1.md)
 - **Self-Hash 계산**: `canonical_sha256(payload, excluded_top_level_keys=frozenset({"manifest_sha256"}))`
-- **결정론적 특성**: 임의 생성 UUID(`manifest_id`), 벽시계 타임스탬프(`created_at`), 외부 GitHub 이슈 메타데이터(`blocker_issue`)를 manifest wire 및 해시 프리이미지에서 완전히 배제하여 동일한 authority 입력에 대해 항상 100% 동일한 content hash를 생성한다.
+- **Run-Scoped 무결성 특성**:
+  - `manifest_sha256`은 특정 Evaluation Run에 결속된 run-scoped artifact integrity hash이다.
+  - Preimage에는 `schema_id`, `schema_version`, `experiment_id`, `run_id`, `variant_id`, `supplemental_controls`, `delta_bindings`가 모두 포함된다.
+  - 동일한 run-scoped manifest payload 재계산 시 deterministic artifact integrity hash를 생성한다.
+  - `run_id`는 manifest artifact가 특정 evaluation run의 authority bindings를 증명하므로 self-hash preimage에 유지되며, `same authority configuration + different run_id -> different manifest_sha256`은 정상적인 기대 동작이다.
+  - Cross-run semantic equality 판정은 개별 바인딩 해시(`input_context_hash`, `prompt_structure_hash`, ...)로 수행되며, `manifest_sha256`을 cross-run 비교용으로 쓰지 않는다.
+  - 임의 생성 UUID(`manifest_id`), 벽시계 타임스탬프(`created_at`), 외부 GitHub 이슈 메타데이터(`blocker_issue`)는 manifest wire 및 해시 프리이미지에서 완전히 배제된다.
+  - `run_id`는 Evaluation 공통 `CanonicalUuid` 계약(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)과 정렬한다.
 - **기존 Artifact 구별**: 3개 pair comparison artifact를 묶는 `answer-comparison-set-manifest`와 본 `answer-runtime-binding-manifest`는 별개의 독립 manifest로 관리된다.
 
-### 5. PR #808 Typed Seam 결속
+### 5. PR #808 Typed Seam 결속 및 Extractor 책임 분리
 
-- 본 Manifest의 `supplemental_controls` 7개 필드는 `AnswerComparisonSupplementalControls`에 1:1 매핑된다.
-- `delta_bindings` 8개 필드는 `AnswerComparisonDeltaBindings`에 1:1 매핑된다 (`RETRIEVED_EVIDENCE` 및 `ANS-FINAL`의 미해결 차단 항목은 `None` 매핑).
+- **Seam 투영**:
+  - 본 Manifest의 `supplemental_controls` 7개 필드는 `AnswerComparisonSupplementalControls`에 1:1 매핑된다.
+  - `delta_bindings` 8개 필드는 `AnswerComparisonDeltaBindings`에 1:1 매핑된다 (`RETRIEVED_EVIDENCE` 및 `ANS-FINAL`의 미해결 차단 항목은 `None` 매핑).
+- **Authoritative Extractor의 책임 분리**:
+  - #808 비교 커널은 투영된 7개 supplemental hash가 non-None인지와 exact-match하는지만 검증하며, upstream carrier의 진위성을 보장하지 않는다.
+  - 향후 구현될 Authoritative Manifest Extractor가 각 Variant의 authoritative source에서 값을 추출하고 임의 caller 주입을 차단한 후 검증된 해시만을 #808 seam으로 투영할 책임을 갖는다.
+  $$\text{Authoritative Carrier / Extractor Validation} \longrightarrow 7\text{ Supplemental Hashes} \longrightarrow \text{\#808 Exact-Match}$$
 
 ### 6. 승인 게이트 (Reviewer Approval Gate)
 
