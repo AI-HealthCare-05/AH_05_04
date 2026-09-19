@@ -1,6 +1,6 @@
 # #633 피드백 검토 → 합성 Gold → 회귀 평가 절차 초안
 
-상태: **운영안 채택 / Local 구현·제품/운영 기준 병합 완료 / AI-RAG 책임 리뷰 중**. 실제 사용자 수집·Production 공개 증거는 별도다.
+상태: **운영안 채택 / Local 구현·제품/운영 기준 병합 완료 / prompt comparison 실행 완료·책임 리뷰 대기**. 실제 사용자 수집·Production 공개 증거는 별도다.
 [PD-633](../governance/decisions/2026-09-16-guide-chat-feedback-633.md)과
 [피드백 계약 후보](../contracts/proposed/guide-chat-feedback-v1.md)를 함께 검토한다. PR #638은 저장·API·Local UI·합성 검증 기반을 병합했지만 #633 전체 종료를 의미하지 않는다.
 
@@ -14,7 +14,7 @@
 - 자유 의견은 민감정보가 포함될 수 있으므로 원문을 GitHub, Discord, 일반 로그, Provider payload, 평가 artifact에 복사하지 않는다.
 - #633 완료 판단은 “피드백 저장 구조와 개선 활용 절차가 존재한다”는 평가 기준 3-4 대응에 한정한다. 실제 운영 공개, 실제 사용자 피드백 실적, 반복 prompt 개선 완료는 Production 공개 gate에서 별도로 판단한다.
 
-PR #730 병합으로 제품/운영 기준은 정리됐다. PR #740은 합성 Gold 기대·금지 응답, deterministic replay, 안전 gate 보존 기준을 정리한다. 다만 PR #730에서 남긴 동일 평가셋 prompt 전후 비교와 안전·사람 검토는 아직 실행하지 않았으므로 #633 완료 증빙으로 대체하지 않는다.
+PR #730 병합으로 제품/운영 기준은 정리됐다. PR #740은 합성 Gold 기대·금지 응답, deterministic replay, 안전 gate 보존 기준을 정리했다. 2026-09-18 동일 31-case prompt comparison을 Local opt-in Provider 실행으로 완료했으며, 결과는 mixed improvement라 정현우 책임 리뷰어의 최종 승인 판단을 기다린다.
 
 ## 부정 피드백 검토
 
@@ -95,8 +95,8 @@ Provider 호출 여부·latency·token, safety gate, blind review와 unblind 결
 - review packet: `docs/validation/issue-633-feedback-prompt-comparison-review-packet.json`
 - private assignment artifact: 공개 저장소에 커밋하지 않고 승인된 제한 접근 위치에 보관
 - judgment template: `docs/validation/issue-633-feedback-prompt-comparison-judgment-template.json`
-- unblind summary: `docs/validation/issue-633-feedback-prompt-comparison.json`
-- human review summary: `docs/validation/issue-633-feedback-prompt-comparison.md`
+- machine comparison summary: `docs/validation/issue-633-feedback-prompt-comparison.json`
+- human review summary: 정현우 책임 리뷰어의 PR/Issue 승인 코멘트
 
 ## #633 완료 증빙
 
@@ -105,10 +105,10 @@ Provider 호출 여부·latency·token, safety gate, blind review와 unblind 결
 | 저장·API·UI | migration·실제 DB/API·브라우저 테스트 | Local 구현·통과, 실사용 승인 별도 |
 | 검토 | 승인된 접근·정책과 부정 피드백 처리 기록 | PR #730에서 Local 합성 demo 기준의 제품·운영 처리 기준 정리; 실제 사용자 검토 기록은 Production 공개 전 별도 |
 | 합성 Gold 편입 | 내부 연결 기록, 합성 case·버전·hash·책임 리뷰 | 31-case 합성 demo와 provenance 고정; PR 2에서 현우 책임 리뷰 대상 |
-| 개선 활용 | 동일 평가셋의 prompt 전후 결과와 안전·사람 검토 | NOT_RUN. PR #740은 deterministic replay 31/31·safety violation 0만 재확인하며 prompt 전후 비교·사람 검토 evidence가 아니다. |
+| 개선 활용 | 동일 평가셋의 prompt 전후 결과와 안전·사람 검토 | RUN. `issue-633-feedback-prompt-comparison.json`에 v4/v5 Provider 실행 결과와 failure list를 기록했다. 결과는 mixed improvement이며 책임 리뷰어 승인 대기다. |
 
 기존 Chat 품질 평가와 비교 설정만으로 #633의 신규 피드백 수집·개선 루프를 완료 처리하지 않는다.
-#638의 31-case 합성 demo는 저장된 NEGATIVE feedback을 비식별 합성 Gold 후보로 연결하고, replay artifact로 기대·금지 응답과 안전 gate 보존을 검증한다. 일반 Chat 대화 품질 개선 이슈는 별도로 유지하며, #633은 feedback 수집·합성 Gold 연결·검증 기준 정렬에 한정한다. 실제 운영 실적은 Production 공개 gate에서 별도로 다루지만, prompt 전후 비교·안전/사람 검토가 완료되기 전에는 #633 전체 완료로 보지 않는다.
+#638의 31-case 합성 demo는 저장된 NEGATIVE feedback을 비식별 합성 Gold 후보로 연결하고, replay artifact로 기대·금지 응답과 안전 gate 보존을 검증한다. 일반 Chat 대화 품질 개선 이슈는 별도로 유지하며, #633은 feedback 수집·합성 Gold 연결·검증 기준 정렬에 한정한다. 실제 운영 실적은 Production 공개 gate에서 별도로 다루지만, prompt comparison은 실행됐고, #633 전체 완료 여부는 책임 리뷰어가 mixed result와 safety regression 요약을 승인한 뒤 판단한다.
 
 ## 채택한 보존·실행 안내
 

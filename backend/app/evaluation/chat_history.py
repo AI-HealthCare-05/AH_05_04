@@ -610,5 +610,5 @@ async def run_live_evaluation(
             run_mode="LIVE_PROVIDER",
             provider_evaluation={"status": "RUN", "response_count": response_count},
         )
-    except Exception:
-        raise EvaluationExecutionError("Chat history evaluation failed") from None
+    except Exception as error:
+        raise EvaluationExecutionError("Chat history evaluation failed: " + type(error).__name__) from None

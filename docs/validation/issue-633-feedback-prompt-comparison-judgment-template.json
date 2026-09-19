@@ -1,0 +1,394 @@
+{
+  "assignment_commitment_sha256": "f1ca85f919f21a64455a4d7258900d9b6693caa42265d7c2a94d85e663d88db0",
+  "experiment_id": "chat-feedback-gold-prompt-comparison-v1",
+  "items": [
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-001",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {
+        "context_resolution": null,
+        "medication_consistency": null,
+        "naturalness": null,
+        "redundant_clarification": null,
+        "user_correction": null
+      },
+      "item_id": "AB-002",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-003",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {
+        "colloquial_language": null,
+        "context_resolution": null,
+        "naturalness": null,
+        "redundant_clarification": null,
+        "safety": null
+      },
+      "item_id": "AB-004",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-005",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-006",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-007",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-008",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {
+        "context_resolution": null,
+        "medication_consistency": null,
+        "naturalness": null,
+        "redundant_clarification": null,
+        "safety": null
+      },
+      "item_id": "AB-009",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-010",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-011",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-012",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {
+        "context_resolution": null,
+        "medication_consistency": null,
+        "naturalness": null,
+        "redundant_clarification": null
+      },
+      "item_id": "AB-013",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-014",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-015",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-016",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-017",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-018",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-019",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-020",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-021",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-022",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {
+        "context_resolution": null,
+        "medication_consistency": null,
+        "naturalness": null,
+        "redundant_clarification": null
+      },
+      "item_id": "AB-023",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-024",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-025",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-026",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {
+        "safety": null
+      },
+      "item_id": "AB-027",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-028",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-029",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-030",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-031",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-032",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {
+        "colloquial_language": null,
+        "naturalness": null,
+        "safety": null
+      },
+      "item_id": "AB-033",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {
+        "context_resolution": null,
+        "medication_consistency": null,
+        "naturalness": null,
+        "redundant_clarification": null,
+        "topic_continuity": null
+      },
+      "item_id": "AB-034",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-035",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-036",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {
+        "context_resolution": null,
+        "naturalness": null,
+        "redundant_clarification": null,
+        "safety": null
+      },
+      "item_id": "AB-037",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-038",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-039",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {
+        "context_resolution": null,
+        "medication_consistency": null,
+        "naturalness": null,
+        "redundant_clarification": null,
+        "user_correction": null
+      },
+      "item_id": "AB-040",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-041",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-042",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-043",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-044",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-045",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-046",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-047",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-048",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {
+        "naturalness": null,
+        "safety": null
+      },
+      "item_id": "AB-049",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-050",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {
+        "context_resolution": null,
+        "medication_consistency": null,
+        "naturalness": null,
+        "redundant_clarification": null
+      },
+      "item_id": "AB-051",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-052",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-053",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-054",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-055",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-056",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-057",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-058",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {},
+      "item_id": "AB-059",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {
+        "colloquial_language": null,
+        "naturalness": null,
+        "safety": null
+      },
+      "item_id": "AB-060",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {
+        "context_resolution": null,
+        "medication_consistency": null,
+        "naturalness": null,
+        "redundant_clarification": null,
+        "safety": null
+      },
+      "item_id": "AB-061",
+      "preference": null
+    },
+    {
+      "dimension_preferences": {
+        "context_resolution": null,
+        "medication_consistency": null,
+        "naturalness": null,
+        "redundant_clarification": null,
+        "user_correction": null
+      },
+      "item_id": "AB-062",
+      "preference": null
+    }
+  ],
+  "review_packet_sha256": "d46467638556142072aa56cf0e88bc6625261deb109c60c934d5428782933e45",
+  "reviewer": null,
+  "schema_version": 1
+}

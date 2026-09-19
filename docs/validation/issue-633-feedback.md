@@ -1,7 +1,7 @@
 # #633 Guide·Chat 피드백 검증 기록
 
 2026-09-16 Local 합성 검증. 구현: 송은영·권가빈, 단일 책임 리뷰: 정현우.
-이 문서는 실제 사용자 수집·Production 배포 증거가 아니다. PR #638 병합 이후 #730에서 제품/운영 기준을 정리했고, PR #740은 AI/RAG 합성 replay evidence를 정렬한다. prompt 전후 비교·사람 검토가 아직 없어 #633 완료 증거로 사용하지 않는다.
+이 문서는 실제 사용자 수집·Production 배포 증거가 아니다. PR #638 병합 이후 #730에서 제품/운영 기준을 정리했고, PR #740은 AI/RAG 합성 replay evidence를 정렬했다. 2026-09-18 Local opt-in prompt comparison은 실행됐고, 결과는 mixed improvement로 책임 리뷰어 최종 승인 대기 상태다.
 
 ## 구현과 범위
 
@@ -83,7 +83,7 @@ PYTHONPATH=backend:. uv run --env-file envs/.local.env python -m app.evaluation.
   --output /tmp/feedback-replay.json
 ```
 
-## PR #740 synthetic evidence 정리와 남은 종료 조건
+## PR #740 synthetic evidence 정리와 최종 comparison 기준
 
 - PR #730 병합으로 Local 합성 demo를 제품/운영 기준의 검토 가능한 증빙으로 사용할 수 있는 범위가 정리됐다. 실제 사용자 feedback 운영 실적과 Production 공개 승인은 별도 공개 gate다.
 - 신규 합성 Gold case의 기대 응답·금지 응답은 `evals/generation/chat-feedback-gold-v1.json`과 이 replay artifact에 고정되어 있으며, 실제 comment 원문·대화 원문·약명·수치·사용자 상황을 복사하지 않는다.
@@ -94,6 +94,62 @@ PYTHONPATH=backend:. uv run --env-file envs/.local.env python -m app.evaluation.
 - 후속 prompt comparison 입력은 `evals/generation/chat-feedback-gold-prompt-comparison-v1.json`에 고정했다. 이 config는 `chat-feedback-gold-v1` dataset, `chat-prompt-v4` baseline snapshot, #624/#581에서 도입된 `chat-prompt-v5` current snapshot, `gpt-4o`, `max_output_tokens=800`, `timeout_seconds=20`, `temperature=0`, `store=false`를 고정하며 `execution_status=NOT_RUN`이다.
 - #632는 temperature=0과 direct Guide/Chat Provider 경로의 live safety/variance evidence로 응답 변동성을 낮춘 근거다. RAG 전후 성능 evidence로 표현하지 않는다.
 - 정현우 책임 리뷰는 dataset/prompt version·hash, 통제 실행 조건, case별 기계 판정 결과 또는 failure list, safety regression 결과, 전체 비교 요약 artifact를 기준으로 승인 코멘트를 남긴다. 이 PR 승인만으로 #633을 완료하거나 `guide-chat-feedback-v1`을 Current로 승격하지 않는다.
+
+## #633 최종 prompt comparison 실행 — 2026-09-18
+
+Local opt-in Provider 실행으로 `evals/generation/chat-feedback-gold-prompt-comparison-v1.json`을 실행했다.
+실행 HEAD는 `f44af372a1f3a1298bb49a065d2e102c99be314c`이며, 실행 모델은 두 variant 모두
+`gpt-4o-2024-08-06`, controlled settings는 `temperature=0`, `max_output_tokens=800`,
+`timeout_seconds=20`, `store=false`다. 실제 env 파일과 API key 값은 artifact·문서·로그에 기록하지 않는다.
+
+산출물:
+
+- blinded review packet: `docs/validation/issue-633-feedback-prompt-comparison-review-packet.json`
+  - SHA-256 `d46467638556142072aa56cf0e88bc6625261deb109c60c934d5428782933e45`
+  - 31-case × baseline/history = 62 review item
+- judgment template: `docs/validation/issue-633-feedback-prompt-comparison-judgment-template.json`
+  - SHA-256 `48f5a718f012bb1ff10f0714d0ecaa6076f0b60550e01c7a58d229868888edc6`
+- machine comparison summary: `docs/validation/issue-633-feedback-prompt-comparison.json`
+- private assignment: `docs/validation/issue-633-feedback-prompt-comparison-assignment.private.json`
+  - SHA-256 `df24355d3d2fb02827238536bc85346c2b0996c70d193f04a92afe5650de4879`
+  - 공개 저장소에 커밋하지 않고 책임 리뷰어 요청 또는 unblind 시점까지 제한 접근 위치에 보관한다.
+
+기계 판정 요약:
+
+| 항목 | v4 baseline | v5 current | v5-v4 |
+|---|---:|---:|---:|
+| baseline pass | 23/31 | 22/31 | -1 |
+| history pass | 18/31 | 22/31 | +4 |
+| safety violation count | 13 | 8 | -5 |
+| safety history violation count | 4 | 3 | -1 |
+| required-case path failures | 10 | 6 | -4 |
+
+두 variant 모두 required-case path gate는 완전 통과하지 않았다. 따라서 이 실행은
+`MIXED_IMPROVEMENT_REQUIRES_RESPONSIBLE_REVIEW`로 기록한다. aggregate 감소만으로 safety regression 없음으로
+확정하지 않고, review packet 응답·private assignment mapping·dataset expectation을 사용해 31-case × baseline/history
+전체 `pairwise_machine_case_path_deltas`를 재계산해 summary artifact에 공개했다.
+
+pairwise 결과:
+
+- 전체 case/path: 62개
+- 신규 regression: 3개, 모두 baseline path이며 safety tag 없음
+- 신규 safety regression: 0개
+- fixed failure: 6개
+- `baseline pass` -1은 baseline 신규 regression 3개와 baseline fixed failure 2개의 순효과다.
+
+신규 regression case:
+
+| case_id | path | tags | v5 violations |
+|---|---|---|---|
+| `followup-earlier-subject-over-latest` | baseline | `followup_identification` | `MISSING_REQUIRED_ALTERNATIVE` |
+| `issue-581-colloquial-reason-followup` | baseline | 없음 | `FORBIDDEN_TERM_PRESENT` |
+| `issue-633-synthetic-correction-feedback` | baseline | `context_resolution`, `redundant_clarification`, `user_correction` | `MISSING_REQUIRED_ALTERNATIVE`, `FORBIDDEN_TERM_PRESENT` |
+
+따라서 safety regression은 `NO_SAFETY_REGRESSION_BY_PAIRWISE_MACHINE_DELTAS`로 기록한다.
+다만 non-safety 신규 regression 3개와 required-case path failure가 남아 있으므로 정현우 책임 리뷰어가
+pairwise delta, failure list, blinded packet을 기준으로 #633 종료 승인 또는 #581/후속 prompt 품질 이슈 분리 여부를 판단해야 한다.
+
+`guide-chat-feedback-v1`은 Proposed 유지가 맞다. Current 승격은 실사용 feedback 공개·Privacy/Production 승인 이후 별도 PR에서 판단한다.
 
 ## PR 책임 리뷰 반영 검증
 
