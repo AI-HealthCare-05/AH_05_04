@@ -10,10 +10,11 @@ import { clearAuthenticatedSession } from '../features/auth/authSession'
 import { Button, Card, MobileShell } from '../design-system/components'
 import { inspectWebPushState, type WebPushState } from '../features/push/webPush'
 import PlanFollowup from '../components/PlanFollowup'
-import { BARRIER_LABELS, BARRIER_ORDER, BARRIER_SUBREASONS, SUBREASON_LABELS } from '../features/trackC/labels'
+import { BARRIER_LABELS, BARRIER_ORDER, BARRIER_SUBREASONS, SUBREASON_LABELS, SUPPORT_PREPARING } from '../features/trackC/labels'
 import './TrackCPage.css'
 
 const choices: [api.BarrierCode, string][] = BARRIER_ORDER.map(code => [code, BARRIER_LABELS[code]])
+const preparing = (code: api.BarrierCode | null | undefined) => !!code && SUPPORT_PREPARING.includes(code)
 const supportNames: Record<api.SupportCode, string> = {
   REMINDER_SETUP: '복약 일정과 알림 확인', ROUTINE_OR_TRAVEL_PLAN: '일상·이동 중 복약 계획 확인',
   INSTRUCTION_REVIEW: '복용 방법 확인', PURPOSE_REVIEW: '복용 목적 확인',
@@ -39,7 +40,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   const [query] = useSearchParams()
   const date = query.get('date') ?? ''
   const navigate = useNavigate()
-  const [step, setStep] = useState<'loading' | 'safety' | 'barrier' | 'subreason' | 'travel' | 'offer' | 'plan' | 'blocked'>('loading')
+  const [step, setStep] = useState<'loading' | 'safety' | 'barrier' | 'subreason' | 'travel' | 'offer' | 'preparing' | 'plan' | 'blocked'>('loading')
   const [checkin, setCheckin] = useState<MedicationCheckinResponse['data'] | null>(null)
   const [safety, setSafety] = useState<api.Safety | null>(null)
   const [barrier, setBarrier] = useState<api.Barrier | null>(null)
@@ -176,6 +177,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
     const current = barrierWritten.current ?? barrier
     if (!checkin || !safety || !current) return
     if (!code || !current.barrier_code || current.subreason_code === code) {
+      if (preparing(current.barrier_code)) { setStep('preparing'); return }
       await loadOffers(current, situation, code)
       return
     }
@@ -185,6 +187,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
     if (result.medication_checkin_id !== checkin.checkin_id || result.checkin_revision !== checkin.revision || result.safety_assessment_id !== safety.assessment_id || result.subreason_code !== code) throw new ApiError(409, '')
     barrierWritten.current = result
     setBarrier(result)
+    if (preparing(result.barrier_code)) { setStep('preparing'); return }
     await loadOffers(result, situation, code)
   }
 
@@ -236,7 +239,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
       {step === 'safety' && <p className="track-c-eyebrow">복약 안전 확인</p>}
       {step === 'offer' && <p className="track-c-eyebrow">나에게 맞는 도움</p>}
       {step === 'plan' && plan && <p className={`track-c-status track-c-status--${plan.status.toLowerCase()}`} role="status">{plan.status === 'ACTIVE' ? '진행 중' : plan.status === 'COMPLETED' ? '완료됨' : '취소됨'}</p>}
-      <h1 ref={heading} tabIndex={-1}>{step === 'barrier' ? '이번에는 어떤 점이 가장 크게 영향을 주었나요?' : step === 'subreason' ? '어떤 상황에 더 가까웠나요?' : step === 'safety' ? '현재 불편한 증상이 있나요?' : step === 'offer' ? '도움 방법을 확인해 주세요' : step === 'plan' ? '내 실천 계획' : '복약 도움 확인'}</h1>
+      <h1 ref={heading} tabIndex={-1}>{step === 'barrier' ? '이번에는 어떤 점이 가장 크게 영향을 주었나요?' : step === 'subreason' ? '어떤 상황에 더 가까웠나요?' : step === 'safety' ? '현재 불편한 증상이 있나요?' : step === 'offer' ? '도움 방법을 확인해 주세요' : step === 'preparing' ? '도움을 준비하고 있어요' : step === 'plan' ? '내 실천 계획' : '복약 도움 확인'}</h1>
       {error && <p role="alert">{error}</p>}
       {retry && <Button disabled={busy} onClick={() => void run(retry)}>같은 요청 다시 시도</Button>}
       {step === 'loading' && <p role="status">기록을 확인하고 있어요.</p>}
@@ -251,7 +254,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
       {step === 'blocked' && <Card><h2>현재 도움을 계속 진행할 수 없어요</h2><p>복약 기록은 그대로 유지돼요.</p><Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button>{reconsiderFrom && <Button fullWidth variant="secondary" disabled={busy} onClick={() => { setError(''); setStep(reconsiderFrom); setReconsiderFrom(null) }}>{reconsiderFrom === 'safety' ? '증상 선택 다시 하기' : '내 실천 계획으로 돌아가기'}</Button>}{planId && <Button fullWidth variant="secondary" onClick={() => { window.location.reload() }}>계획 상태 다시 조회</Button>}</Card>}
       {step === 'barrier' && <>
         <p>하나만 골라주세요. 답하지 않아도 복약 상태는 그대로 저장돼요.</p>
-        <fieldset disabled={busy || !!retry}><legend className="track-c-sr-only">이번 복용의 어려움</legend>{choices.map(([code, label]) => <label className="track-c-choice" key={code}><input type="radio" name="barrier" value={code} checked={selected === code} onChange={() => setSelected(code)} /><span>{label}</span></label>)}</fieldset>
+        <fieldset disabled={busy || !!retry}><legend className="track-c-sr-only">이번 복용의 어려움</legend>{choices.map(([code, label]) => <label className="track-c-choice" key={code}><input type="radio" name="barrier" value={code} checked={selected === code} onChange={() => setSelected(code)} /><span>{label}{preparing(code) && <em className="track-c-preparing-tag"> (준비중)</em>}</span></label>)}</fieldset>
         <Button fullWidth disabled={!selected || busy || !!retry} onClick={() => void run(() => submitBarrier(selected || null))}>선택한 어려움으로 도움 찾기</Button>
         <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => void run(() => submitBarrier(null))}>답하지 않고 복약 상태만 저장</Button>
       </>}
@@ -267,9 +270,8 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
           <legend>일정 변경·외출 상황</legend>
           <label className="track-c-choice"><input type="radio" name="travel" checked={travelSituation === 'SCHEDULE_CHANGED'} onChange={() => { setTravelSituation('SCHEDULE_CHANGED'); setSubreason('SCHEDULE_CHANGED') }} /><span>생활 일정이 바뀌었어요</span></label>
           <label className="track-c-choice"><input type="radio" name="travel" checked={travelSituation === 'MEDICATION_NOT_WITH_ME'} onChange={() => { setTravelSituation('MEDICATION_NOT_WITH_ME'); setSubreason('MEDICATION_NOT_WITH_ME') }} /><span>약을 가지고 나오지 않았어요</span></label>
-          <label className="track-c-choice"><input type="radio" name="travel" checked={subreason === 'PREPARATION_DIFFICULT'} onChange={() => { setTravelSituation(undefined); setSubreason('PREPARATION_DIFFICULT') }} /><span>외출 준비가 어려웠어요</span></label>
         </fieldset>
-        <Button fullWidth disabled={(!travelSituation && subreason !== 'PREPARATION_DIFFICULT') || busy || !!retry} onClick={() => { if (barrier) void run(() => submitSubreason(subreason ?? travelSituation, travelSituation)) }}>선택한 상황으로 도움 찾기</Button>
+        <Button fullWidth disabled={!travelSituation || busy || !!retry} onClick={() => { if (barrier) void run(() => submitSubreason(subreason ?? travelSituation, travelSituation)) }}>선택한 상황으로 도움 찾기</Button>
         <Button fullWidth variant="secondary" disabled={busy} onClick={() => navigate(back)}>나중에</Button>
       </Card>}
       {step === 'offer' && (item ? <>
@@ -281,6 +283,11 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
           <Button fullWidth variant="secondary" disabled={busy} onClick={() => navigate(back)}>{item.support_copy.secondary_label}</Button>
         </div>
       </> : <Card><h2>지금 제안할 수 있는 도움이 없어요</h2><p>복약 기록과 응답은 저장되어 있어요.</p><Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button></Card>)}
+      {step === 'preparing' && <Card>
+        <h2>선택한 내용은 저장했어요</h2>
+        <p>이 어려움에 대한 도움은 아직 준비하고 있어요. 답해 주신 내용은 복약 기록에 남고, 진료 시 보여주기 화면에서 확인할 수 있어요.</p>
+        <Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button>
+      </Card>}
       {step === 'plan' && plan && <>
         {plan.status === 'COMPLETED' && (showFollowup
           ? <PlanFollowup key={plan.support_action_plan_id} planId={plan.support_action_plan_id} service={service} onClose={() => setShowFollowup(false)} />
