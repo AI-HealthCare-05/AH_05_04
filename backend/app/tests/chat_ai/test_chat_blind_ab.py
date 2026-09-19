@@ -23,6 +23,7 @@ from app.services.chat_ai.schemas import ProviderChatResponse
 _REPOSITORY_ROOT = Path(__file__).parents[4]
 _CONFIG_PATH = _REPOSITORY_ROOT / "evals" / "generation" / "chat-conversation-quality-blind-ab-v1.json"
 _FEEDBACK_CONFIG_PATH = _REPOSITORY_ROOT / "evals" / "generation" / "chat-feedback-gold-prompt-comparison-v1.json"
+_V6_REGRESSION_CONFIG_PATH = _REPOSITORY_ROOT / "evals" / "generation" / "chat-prompt-v4-v6-comparison-v1.json"
 
 
 class ScriptedUsageProvider:
@@ -73,7 +74,7 @@ def test_canonical_blind_ab_config_pins_synthetic_dataset_and_prompt_snapshots()
     assert experiment.variants[1].prompt == experiment.variants[1].prompt_path.read_text().rstrip("\n")
 
 
-def test_feedback_gold_prompt_comparison_config_pins_v4_v6_snapshots() -> None:
+def test_feedback_gold_prompt_comparison_config_preserves_v4_v5_snapshots() -> None:
     experiment, dataset = load_blind_ab_experiment(_FEEDBACK_CONFIG_PATH)
     raw_config = json.loads(_FEEDBACK_CONFIG_PATH.read_text(encoding="utf-8"))
 
@@ -90,11 +91,11 @@ def test_feedback_gold_prompt_comparison_config_pins_v4_v6_snapshots() -> None:
     }
     assert tuple(variant.prompt_version for variant in experiment.variants) == (
         "chat-prompt-v4",
-        "chat-prompt-v6",
+        "chat-prompt-v5",
     )
     assert tuple(variant.variant_id for variant in experiment.variants) == (
         "chat-prompt-v4-gpt-4o-baseline",
-        "chat-prompt-v6-gpt-4o-current",
+        "chat-prompt-v5-gpt-4o-current",
     )
     assert {variant.model for variant in experiment.variants} == {"gpt-4o"}
     assert experiment.temperature == 0
@@ -104,6 +105,39 @@ def test_feedback_gold_prompt_comparison_config_pins_v4_v6_snapshots() -> None:
         "temperature": 0,
         "store": False,
     }
+    assert tuple(variant.source_commit for variant in experiment.variants) == (
+        "94e5fa8daad6d06fc44808eefced1b07c2b784e0",
+        "4a9a9bfab089e10a82bf2ca3b1364fd0e7f53d60",
+    )
+    assert all(
+        hashlib.sha256((variant.prompt + "\n").encode()).hexdigest() == variant.prompt_sha256
+        for variant in experiment.variants
+    )
+
+
+def test_issue_581_v6_regression_config_pins_v4_v6_snapshots() -> None:
+    experiment, dataset = load_blind_ab_experiment(_V6_REGRESSION_CONFIG_PATH)
+    raw_config = json.loads(_V6_REGRESSION_CONFIG_PATH.read_text(encoding="utf-8"))
+
+    assert experiment.experiment_id == "chat-prompt-v4-v6-comparison-v1"
+    assert experiment.dataset_id == "chat-feedback-gold-v1"
+    assert dataset["data_classification"] == "SYNTHETIC"
+    assert len(dataset["cases"]) == 31
+    assert raw_config["execution_status"] == "NOT_RUN"
+    assert raw_config["evidence_scope"] == {
+        "issue": "#581",
+        "purpose": "chat prompt v6 provider regression evidence",
+        "rag_gold_scope": "OUT_OF_SCOPE_EXISTING_TRACK_F_GOLD_ONLY",
+        "current_contract_status": "CURRENT_RUNTIME_PROMPT",
+    }
+    assert tuple(variant.prompt_version for variant in experiment.variants) == (
+        "chat-prompt-v4",
+        "chat-prompt-v6",
+    )
+    assert tuple(variant.variant_id for variant in experiment.variants) == (
+        "chat-prompt-v4-gpt-4o-baseline",
+        "chat-prompt-v6-gpt-4o-current",
+    )
     assert tuple(variant.source_commit for variant in experiment.variants) == (
         "94e5fa8daad6d06fc44808eefced1b07c2b784e0",
         "4226a060f35897c88928d3dbe7835ff87f5d5578",
@@ -136,6 +170,7 @@ def test_blind_ab_config_rejects_prompt_hash_drift(tmp_path: Path) -> None:
 def test_live_runner_accepts_only_the_canonical_config_path(tmp_path: Path) -> None:
     _validate_canonical_config(_CONFIG_PATH)
     _validate_canonical_config(_FEEDBACK_CONFIG_PATH)
+    _validate_canonical_config(_V6_REGRESSION_CONFIG_PATH)
     copied_config = tmp_path / _CONFIG_PATH.name
     copied_config.write_bytes(_CONFIG_PATH.read_bytes())
 

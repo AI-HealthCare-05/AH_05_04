@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "experiment_id": "chat-feedback-gold-prompt-comparison-v1",
+  "experiment_id": "chat-prompt-v4-v6-comparison-v1",
   "execution_status": "NOT_RUN",
   "environment": "LOCAL",
   "provider_invocation": true,
@@ -37,18 +37,18 @@
       "model": "gpt-4o"
     },
     {
-      "variant_id": "chat-prompt-v5-gpt-4o-current",
-      "prompt_version": "chat-prompt-v5",
-      "source_commit": "4a9a9bfab089e10a82bf2ca3b1364fd0e7f53d60",
-      "prompt_path": "evals/generation/prompts/chat-prompt-v5.txt",
-      "prompt_sha256": "bd0713e282d841ccf8d65fae3ff3b79e17ed60172bc9144283eff4f9fb27069d",
+      "variant_id": "chat-prompt-v6-gpt-4o-current",
+      "prompt_version": "chat-prompt-v6",
+      "source_commit": "4226a060f35897c88928d3dbe7835ff87f5d5578",
+      "prompt_path": "evals/generation/prompts/chat-prompt-v6.txt",
+      "prompt_sha256": "36968097fe38627b8a952bc70e93c6d4e5d97d9f22c16af262cdf3cc92960e41",
       "model": "gpt-4o"
     }
   ],
   "evidence_scope": {
-    "issue": "#633",
-    "purpose": "feedback prompt paired comparison readiness",
+    "issue": "#581",
+    "purpose": "chat prompt v6 provider regression evidence",
     "rag_gold_scope": "OUT_OF_SCOPE_EXISTING_TRACK_F_GOLD_ONLY",
-    "current_contract_status": "PROPOSED"
+    "current_contract_status": "CURRENT_RUNTIME_PROMPT"
   }
 }
