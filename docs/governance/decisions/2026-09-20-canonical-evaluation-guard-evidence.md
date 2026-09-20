@@ -3,12 +3,12 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-162-20260920` |
-| 상태 | Proposed · Review Required · Issue #162 |
+| 상태 | Proposed · Freeze Choices Resolved · Review Required · Issue #162 |
 | 제안·구현 | 정현우 (`@ceohwj`) — AI/RAG |
 | 단일 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — PM / Product Acceptance / Evaluation & Safety |
 | 교차 리뷰 (FYI) | 송은영 (`@phina-io`) — Backend·Data·Security / DB schema · migration · Repository 쓰기 경계<br>김지혜 (`@Jye-rookie`) — Source·Snapshot·Catalog 경계 / Worker |
 | 추적 Issue | [#162](https://github.com/AI-HealthCare-05/AH_05_04/issues/162) |
-| 조사 기준 | `origin/develop` @ `dd400ce4635a4b6697b3f1a7215a8b1b4f12ba8e` (PR #849 merge commit `f02f8f06`) |
+| 조사 기준 | `origin/develop` @ `b3a92f32f0cfd6420d55de0ccf0b3c86216feb74` (PR #849 merge commit `f02f8f06`) |
 | 상위·관련 결정 | [`PD-125-20260831`](./2026-08-31-rag-p0-contract-freeze.md), [`PD-216-20260902`](./2026-09-02-rag-evaluation-schema-set-1-1-freeze.md), [`PD-241-20260903`](./2026-09-03-rag-evaluation-schema-set-1-2-freeze.md), [`PD-799-20260918`](./2026-09-18-citation-authorization-production-authority-boundary.md), [`PD-833-20260919`](./2026-09-13-rag-answer-quality-metrics.md) |
 | 관련 Issue / PR | #162, #163 (PR #849), #806 (PR #828), #853 (PR #857) |
 
@@ -66,32 +66,36 @@ Phase A1 완료 시점의 상태는 `#162_GUARD_CONTRACT_PROPOSED`이며, `relea
 
 ### 3.1 Run-level Authority Binding 좌표
 Run 수준 `EVALUATION_CANDIDATE / PASS` Evidence는 최소 다음 불변 좌표에 exact-bind되어야 한다:
-- `evaluation_run_id`: 평가 실행 식별자
+- `evaluation_run_id`: 평가 실행 식별자 (`CanonicalUuid`)
 - `candidate_bundle_id`: 대상 런타임 번들 식별자 (physical UUID의 canonical lowercase string)
-- `candidate_bundle_manifest_hash`: 런타임 번들 매니페스트 SHA-256
-- `dataset_code`: 대상 Dataset 코드
-- `dataset_version`: 대상 Dataset 시맨틱 버전
-- `dataset_manifest_sha256`: FROZEN Dataset 매니페스트 SHA-256
-- `required_partitions`: 평가 대상 필수 파티션 튜플
+- `candidate_bundle_manifest_hash`: 런타임 번들 매니페스트 SHA-256 (`Sha256Hex`)
+- `dataset_code`: 대상 Dataset 코드 (`StableId`)
+- `dataset_version`: 대상 Dataset 시맨틱 버전 (`SemanticVersion`)
+- `dataset_manifest_sha256`: FROZEN Dataset 매니페스트 SHA-256 (`Sha256Hex`)
+- `required_partitions`: 평가 대상 필수 파티션 튜플 (`tuple[Partition, ...]`)
 - `required_case_set_hash`: 필수 케이스 집합의 canonical hash (`evaluation-required-case-set-v1`)
 - `environment`: `RuntimeEnvironment.LOCAL` 고정
-- 최종 승인(Phase A2) 시 추가 필수 바인딩:
-  - `candidate_guard_ref`: canonical Candidate Guard reference
-  - `runtime_execution_manifest_id` 및 hash (Q4 확정 결과 반영)
-  - `revision` 및 `safety_epoch` (Q4 확정 결과 반영)
+- `candidate_guard_decision_id`: Candidate Guard 결정 식별자 (`CanonicalUuid`, per-run UUID string)
+- `candidate_guard_decision`: `"PASS"` 고정
+- `candidate_guard_ref`: canonical Candidate Guard reference (`GenericImmutableArtifactRef`: `artifact_code="evaluation_candidate_guard"`, `version="1.0"`, `content_sha256="<sha256>"`)
+- `runtime_execution_manifest_id`: 대상 번들에 결속된 실행 매니페스트 ID (`RagRuntimeReleaseBundle.execution_manifest_id`, `CanonicalUuid`)
+- `runtime_execution_manifest_hash`: 실행 매니페스트 해시 (`RagRuntimeExecutionManifest.manifest_hash`, `Sha256Hex`)
+- `governance_revision_ref`: 대상 번들에 결속된 거버넌스 리비전 식별자 (`RagRuntimeReleaseBundle.governance_revision_ref`, non-empty string)
+- `safety_epoch`: 대상 실행 환경의 안전성 에포크 (`RagRuntimeEnvironment.safety_epoch >= 1`, positive integer)
+- *주의*: `environment_revision`은 가변 환경 상태 전이 카운터이므로 불변 권위 좌표 및 해시 레시피에서 명시적으로 제외한다.
 
 ### 3.2 Case-level Authority Binding 좌표
 각 Required Case에 대한 `EVALUATION_REQUEST / PASS` Evidence는 정확히 1건씩 존재해야 하며, 다음 좌표에 exact-bind되어야 한다:
-- `case_id`: Dataset에 정의된 필수 케이스 ID
-- `evaluation_run_id`: 부모 Run과 동일한 평가 실행 ID
-- `candidate_bundle_id`: 부모 Run과 동일한 번들 ID
-- `candidate_bundle_manifest_hash`: 부모 Run과 동일한 번들 매니페스트 해시
-- `request_guard_decision_id`: 케이스 단위 Guard 결정 ID
+- `case_id`: Dataset에 정의된 필수 케이스 ID (`StableId`)
+- `evaluation_run_id`: 부모 Run과 동일한 평가 실행 ID (`CanonicalUuid`)
+- `candidate_bundle_id`: 부모 Run과 동일한 번들 ID (`CanonicalUuidString`)
+- `candidate_bundle_manifest_hash`: 부모 Run과 동일한 번들 매니페스트 해시 (`Sha256Hex`)
+- `case_guard_decision_id`: 케이스 단위 Guard 결정 ID (`CanonicalUuid`, per-case UUID string)
 - `decision`: `"PASS"` 고정
-- `request_operation_code`: 승인된 canonical 오퍼레이션 코드 (`EVALUATION_REQUEST`)
+- `request_operation_code`: 승인된 canonical 오퍼레이션 코드 (`EVALUATION_REQUEST` 단일 대문자 고정)
 - `request_scope_codes`: UTF-8 byte sorted unique non-blank 튜플
-- `scope_manifest_hash`: `canonical_scope_manifest_hash(request_scope_codes)`와 exact 일치
-- `case_guard_ref`: canonical Case Guard reference
+- `scope_manifest_hash`: `canonical_scope_manifest_hash(request_scope_codes)`와 exact 일치 (`Sha256Hex`)
+- `case_guard_ref`: canonical Case Guard reference (`GenericImmutableArtifactRef`: `artifact_code="evaluation_request_guard"`, `version="1.0"`, `content_sha256="<sha256>"`)
 
 ### 3.3 Required Case Set Canonical Hash Recipe
 단순 케이스 ID 목록 해시가 아닌 Dataset authority와 결속된 사영 레시피를 동결한다:
@@ -111,37 +115,42 @@ Run 수준 `EVALUATION_CANDIDATE / PASS` Evidence는 최소 다음 불변 좌표
 ### 3.4 Guard Coverage Hash Recipe
 Required Case Coverage는 단순 개수(count) 일치 검사가 아니며, 다음 preimage를 결속한다:
 
-```text
+```json
 {
   "projection_version": "evaluation-guard-coverage-v1",
   "evaluation_run_id": "<canonical_uuid>",
   "candidate_bundle_id": "<canonical_lowercase_uuid>",
   "candidate_bundle_manifest_hash": "<sha256_hex>",
+  "candidate_guard_decision_id": "<canonical_uuid>",
   "candidate_guard_ref": {
-    "artifact_code": "<code_or_id>",
-    "version": "<version>",
+    "artifact_code": "evaluation_candidate_guard",
+    "version": "1.0",
     "content_sha256": "<sha256_hex>"
   },
+  "dataset_manifest_sha256": "<sha256_hex>",
   "required_case_set_hash": "<evaluation-required-case-set-v1_sha256>",
-  "runtime_execution_manifest_id": "<id_pending_q4>",
-  "runtime_execution_manifest_hash": "<hash_pending_q4>",
-  "environment_revision": "<revision_pending_q4>",
-  "governance_revision_ref": "<ref_pending_q4>",
-  "safety_epoch": "<epoch_pending_q4>",
+  "runtime_execution_manifest_id": "<canonical_uuid>",
+  "runtime_execution_manifest_hash": "<sha256_hex>",
+  "governance_revision_ref": "<governance_revision_string>",
+  "safety_epoch": 1,
   "case_guard_bindings": [
     {
       "case_id": "case-001",
-      "case_guard_ref": { ... },
-      "scope_manifest_hash": "<sha256_hex>"
-    },
-    ...
+      "case_guard_decision_id": "<canonical_uuid>",
+      "case_guard_ref": {
+        "artifact_code": "evaluation_request_guard",
+        "version": "1.0",
+        "content_sha256": "<sha256_hex>"
+      },
+      "scope_manifest_hash": "<canonical_scope_manifest_hash>"
+    }
   ]
 }
 ```
 - `guard_coverage_manifest_hash = canonical_sha256(preimage)`
-- **해시 레시피 상태 구분**:
-  - `evaluation-guard-coverage-v1`은 아직 **final canonical recipe로 동결된 상태가 아니며**, 본 Phase A1에서는 Envelope structure 및 필수 의미축만을 **Proposed Candidate**로 제안한다.
-  - Execution Manifest / Revision / Governance Revision / Safety Epoch의 exact physical source는 **Q4 판정 전까지 미확정(Pending Q4)** 상태로 유지되며, Q4 승인 완료 후에만 final hash recipe로 최종 동결한다.
+- **해시 레시피 정본 동결**:
+  - `evaluation-guard-coverage-v1`의 모든 권위 좌표와 Envelope 구조가 확정되었다.
+  - Q4 판정에 따라 `runtime_execution_manifest_id/hash`, `governance_revision_ref`, `safety_epoch`가 정본 좌표로 바인딩되었으며, `environment_revision`은 가변 동시성 필드로서 해시 preimage에서 영구 제외되었다.
 - **불변 속성**:
   - 동일 케이스 집합이라도 번들이 다르면 다른 해시가 생성된다.
   - 케이스 바인딩 순서가 뒤바뀌거나 케이스가 누락되면 다른 해시가 생성되거나 검증에서 거부된다.
@@ -165,10 +174,9 @@ Required Case 검증은 반드시 exact-set이어야 한다:
 - 본 Phase A1에서는 `RagEvaluationRun` 스키마를 변경하지 않으며, canonical lowercase UUID 문자열(`str(runtime_bundle_uuid)`)을 wire 포맷으로 동결한다.
 - 향후 A2 검증기는 `str(runtime_bundle_uuid) == run.candidate_bundle_id`를 exact-match하고 non-canonical 포맷은 fail-closed 처리한다.
 
-### 3.7 Candidate Guard Decision ID 물리 타입 유보
-- 현재 `RagEvaluationRun.candidate_guard_decision_id`는 `StableId`이다.
-- canonical producer가 확정되지 않은 상태에서 이를 `CanonicalUuid`로 섣불리 좁히지 않는다.
-- 본 결정에서는 `Candidate Guard identity physical type: PENDING PRODUCER FREEZE`로 유보하고 producer 확정 후 타입을 narrowing한다.
+### 3.7 Candidate Guard Decision ID 물리 타입 확정
+- `RagEvaluationRun.candidate_guard_decision_id`의 wire 포맷은 `CanonicalUuid` 문자열로 확정한다.
+- Evaluator는 run-scoped의 고유/결정론적 `UUID`를 발행하여 감사 추적성(audit traceability)을 보장하며, 비정규 UUID 문자열은 검증기에서 fail-closed 처리한다.
 
 ### 3.8 #806 Ref의 Generic Immutable Identity 보존
 - `#806`의 `RequestGuardRuntimeBindingRef`는 `(artifact_code, version, content_sha256)` 3요소 형태다.
@@ -184,39 +192,66 @@ Required Case 검증은 반드시 exact-set이어야 한다:
 
 ---
 
-## 4. 미해결 핵심 결정 사항 (4 Unresolved Authority Questions)
+## 4. 동결된 핵심 결정 사항 (Frozen Authority Decisions: Q1~Q4 Resolved)
 
-다음 4개 항목은 단일 책임 리뷰어(`@hazelnutflavoured`) 및 교차 리뷰어의 명시적 승인을 거쳐 확정해야 하므로 Phase A1에서 임의로 결정하지 않는다:
+본 결정에서는 `origin/develop` 감사 및 도메인 책임 원칙에 기반하여 4개 핵심 권위 결정을 다음과 같이 확정·동결한다:
 
-### Q1. EVALUATION_CANDIDATE Canonical Producer
-- **질문**: 어떤 evaluator/service가 `EVALUATION_CANDIDATE / PASS` 권위를 공식 발행하는가?
-- **현황**: 현재 `ai_worker/tasks/rag/source_governance.py`는 `EVALUATION_CANDIDATE` 오퍼레이션에 대해 `OPERATION_CONTEXT_NOT_MODELED`로 거부한다.
-- **선택지**:
-  - **방안 1**: 기존 Source Governance evaluator를 확장하여 Candidate Evaluation에 필요한 컨텍스트(Building bundle manifest, snapshot completeness, approval closure)를 모델링하고 발행 권위를 부여.
-  - **방안 2**: Evaluation 전용의 독립 Guard Evaluator 모듈을 신설하여 번들 무결성 및 거버넌스 승인 상태를 직접 검증하고 발행.
-- **판정 기준**: Source 거버넌스 쓰기 책임(@phina-io / @Jye-rookie)과 Evaluation 실행 책임(@ceohwj) 사이의 권한 경계 분리 수준.
+### Q1. EVALUATION_CANDIDATE Canonical Producer 확정
+- **결정**: Protected Local Evaluation Runner 소유의 `EvaluationCandidateGuardEvaluator`(`ai_worker/tasks/evaluation/`)가 공식 권위 발행자(authority producer)를 담당한다 (Phase A2 구현).
+- **근거 및 원칙**:
+  - `ai_worker/tasks/rag/source_governance.py`는 Source/Worker 도메인에 속하며, 현재 `EVALUATION_CANDIDATE` 오퍼레이션에 대해 `SyntheticGovernanceReason.OPERATION_CONTEXT_NOT_MODELED`로 엄격히 fail-closed 차단하고 있다.
+  - `source_governance.py`를 Evaluation 런타임 검증용으로 억지 확장하는 것은 도메인 쓰기 경계를 오염시키므로, 기존 `source_governance.py`는 변경 없이 차단 상태를 유지한다.
+  - Evaluation 도메인의 전용 Evaluator는 이미 영속화된 권위(BUILDING 상태의 `RagRuntimeReleaseBundle`, 번들 매니페스트, `RagRuntimeExecutionManifest`, 번들에 핀된 `governance_revision_ref`, 환경의 `safety_epoch`, FROZEN Dataset 권위)를 exact-read 및 재검증한 후 Evaluation-specific `EVALUATION_CANDIDATE / PASS` 권위를 공식 발행한다.
+- **권위 식별자**:
+  - `candidate_guard_decision_id`: `CanonicalUuid`
+  - `candidate_guard_ref`: `GenericImmutableArtifactRef(artifact_code="evaluation_candidate_guard", version="1.0", content_sha256="...")`
+  - Projection: `evaluation-candidate-guard-v1`
+- **기각된 대안**:
+  - *대안 1 (기존 source_governance.py 확장)*: Source Worker와 Evaluation Runner 간 결합도를 증가시키고 라이브 질의 경로에 사이드이펙트 위험이 있어 기각.
+  - *대안 2 (synthetic PASS 임의 생성)*: 실제 권위 검증 없는 조기 통과는 의료 안전성 원칙을 위반하므로 기각.
 
-### Q2. EVALUATION_REQUEST Authority Source
-- **질문**: Case 수준의 `EVALUATION_REQUEST` Guard 권위는 어디서 획득하는가?
-- **선택지**:
-  - **방안 A**: 기존 #806 `RequestGuardRuntimeBindingObservation`의 물리 레코드를 재사용하되, #162 Evaluation binding metadata(`evaluation_run_id`, `case_id`)와 composition하여 검증.
-  - **방안 B**: #806과 분리된 별도의 `EvaluationRequestGuardObservation` 발행자 및 저장소를 구축.
-  - **방안 C**: 공통 하위 Guard authority를 도입하고, `REQUEST`와 `EVALUATION_REQUEST`가 각자의 projection을 생성하도록 분리.
-- **판정 기준**: 불필요한 테이블 증설 방지(DB 최소화) vs 런타임 환자 요청과 평가 요청 간의 데이터 평면 격리.
+### Q2. EVALUATION_REQUEST Authority Source 확정
+- **결정**: Evaluation 도메인 전용 `EvaluationRequestGuardEvaluator`가 케이스 단위 Guard 권위를 독립 발행하며, 그 결과는 Run Result Bundle의 독립 평가 아티팩트로 저장된다. 라이브 DB 테이블(`request_guard_runtime_binding`)에는 일체 쓰거나 조회하지 않는다.
+- **근거 및 원칙**:
+  - #806의 `request_guard_runtime_binding` 테이블 및 권위는 라이브 사용자 질의 시점(`decision_stage = REQUEST`)의 per-request 권위이다.
+  - #806 레코드에는 `evaluation_run_id`, Dataset manifest, Case ID, Candidate 번들에 대한 exact-set 바인딩이 전혀 존재하지 않으므로, #806 레코드를 #162 권위로 자동 승격하거나 라이브 DB를 평가 권위 원천으로 삼을 수 없다.
+  - #806에서는 오직 **순수 시맨틱**(UTF-8 바이트 정렬 스코프 코드, `canonical_scope_manifest_hash`, `(artifact_code, version, content_sha256)` 불변 참조 구조, fail-closed 검증 패턴, no latest/current fallback)만을 엄격히 재사용한다.
+- **권위 식별자**:
+  - `case_guard_decision_id`: `CanonicalUuid` (라이브 요청과 명확히 구분하기 위해 `request_guard_decision_id`에서 리네임)
+  - `case_guard_ref`: `GenericImmutableArtifactRef(artifact_code="evaluation_request_guard", version="1.0", content_sha256="...")`
+  - Projection: `evaluation-request-guard-v1`
+  - 허용 오퍼레이션 코드: `EVALUATION_REQUEST` 단일 정규 대문자 고정
+- **기각된 대안**:
+  - *대안 A (#806 DB 테이블에 평가 레코드 직접 쓰기)*: 비임상 테스트 실행 데이터가 운영 DB를 오염시키고 신규 DB 마이그레이션이 필요하므로 기각.
+  - *대안 B (#806 기존 라이브 레코드 승격)*: 평가 컨텍스트 및 exact-set 결속 부재로 인한 보안/안전성 위반으로 기각.
 
-### Q3. Schema Set Membership
-- **질문**: `rag-eval.evaluation-guard-evidence@1.0.0` artifact를 기존 Evaluation Schema Set에 포함할 것인가?
-- **선택지**:
-  - **방안 1 (권장 기본안)**: Standalone versioned authority artifact로 유지. 기존 Schema Set 1.0~1.5(`schema_registry.py`, `schema_exports.py`)를 일체 수정하지 않고 독립 검증.
-  - **방안 2**: 정식 Schema Set member로 편입하기 위해 신규 `Schema Set 1.6` (총 27개 멤버) 거버넌스 결정을 추진하고, registry 및 schema export 동기화.
-- **판정 기준**: 기존 불변 Schema Set 역사 보존 및 PR 변경 반경 최소화.
+### Q3. Schema Set Membership 확정
+- **결정**: `rag-eval.evaluation-guard-evidence@1.0.0`은 **독립 버전화 권위 아티팩트(Standalone Versioned Authority Artifact)**로 유지한다.
+- **근거 및 원칙**:
+  - 기존 Evaluation Schema Set 1.0~1.5(`ai_worker/tasks/evaluation/schema_registry.py`, `schema_exports.py`)는 이미 동결된 불변 계약이다.
+  - 신규 아티팩트를 위해 `Schema Set 1.6`을 선언하거나 레지스트리를 수정하지 않는다.
+  - `guard_evidence.py`의 순수 검증기(`validate_evaluation_guard_evidence`)를 통해 독립적으로 검증을 수행함으로써 불필요한 스키마 레지스트리 변경 및 PR 영향 범위를 최소화한다.
+- **기각된 대안**:
+  - *대안 2 (Schema Set 1.6 선언 및 레지스트리 수정)*: 기존 동결 계약의 불필요한 개정과 export 재생성이 요구되므로 기각.
 
-### Q4. Revision / Epoch Exact Physical Source
-- **질문**: #162 본문이 요구하는 `Execution Manifest`, `Revision`, `Governance Revision`, `Safety Epoch`의 exact physical source는 무엇인가?
-- **후보 소스**:
-  - `RagRuntimeReleaseBundle.execution_manifest_id` vs `RagRuntimeExecutionManifest.manifest_hash`
-  - `RagRuntimeEnvironment.environment_revision` vs `RagRuntimeEnvironment.governance_revision_ref` vs `RagRuntimeEnvironment.safety_epoch`
-- **확정 필요 사항**: #162의 "Revision"이 환경 리비전(`environment_revision`)인지 거버넌스 리비전(`governance_revision_ref`)인지, 혹은 둘 다 필수인지 확정.
+### Q4. BUILDING Candidate Runtime Coordinates 확정
+- **결정**: Candidate 번들의 정본 불변 런타임 좌표는 다음 4개 축으로 확정하며, `environment_revision`은 권위 좌표에서 영구 제외한다.
+- **확정 좌표**:
+  1. **Execution Manifest**:
+     - `RagRuntimeReleaseBundle.execution_manifest_id: CanonicalUuid`
+     - `RagRuntimeExecutionManifest.manifest_hash: Sha256Hex`
+     - Evidence 좌표명: `runtime_execution_manifest_id`, `runtime_execution_manifest_hash`
+  2. **Governance Revision**:
+     - `RagRuntimeReleaseBundle.governance_revision_ref: str` (번들 빌드 시점에 핀된 거버넌스 리비전 식별자, `bundle.governance_revision_ref == env.governance_revision_ref` exact match 검증 필수, `None` 불가)
+     - Evidence 좌표명: `governance_revision_ref`
+  3. **Safety Epoch**:
+     - `RagRuntimeEnvironment.safety_epoch: int` (`>= 1`, 번들 발행 시점의 환경 안전성 에포크를 캡처하여 모든 Case Guard와 exact-bind)
+     - Evidence 좌표명: `safety_epoch`
+  4. **`environment_revision` 영구 제외**:
+     - `RagRuntimeEnvironment.environment_revision`은 활성 번들 포인터 전이 및 환경 상태 변경 시 증가하는 가변 동시성 제어 카운터일 뿐, Candidate 번들이나 실행 매니페스트 자체의 불변 빌드 좌표가 아니다.
+     - 따라서 권위 식별자 및 `evaluation-guard-coverage-v1` 해시 preimage에서 완전히 제외한다. (Phase A2 실행 시 로컬 읽기 낙관적 동시성 펜스로만 활용 가능)
+- **Active 번들 포인터 엄격 금지**:
+  - 평가 대상은 `BUILDING` 상태의 후보 번들이므로, `RagRuntimeEnvironment.active_bundle_id` 및 `active_bundle_manifest_hash`를 평가 대상으로 참조하는 것은 엄격히 금지된다.
 
 ---
 
@@ -232,7 +267,7 @@ Required Case 검증은 반드시 exact-set이어야 한다:
 
 ## 6. 결론 및 다음 단계
 
-본 Phase A1 결정과 Proposed Contract(`docs/contracts/proposed/post-mvp-1/evaluation-guard-evidence-v1.md`)가 단일 책임 리뷰어의 승인을 획득하면:
-1. Q1~Q4에 대한 최종 확정안이 반영된다.
+본 Phase A1 결정과 Proposed Contract(`docs/contracts/proposed/post-mvp-1/evaluation-guard-evidence-v1.md`)에서 Q1~Q4 권위 결정이 완전히 동결되었으므로:
+1. 단일 책임 리뷰어(`@hazelnutflavoured`)의 승인 후,
 2. `feat/162-evaluation-guard-authority` 브랜치에서 Phase A2(actual Guard producer, evidence bridge, exact-set validator, synthetic/negative tests)를 구현한다.
 3. 그 전까지 저장소의 Protected Release Gate는 안전하게 fail-closed 상태를 유지한다.
