@@ -11,7 +11,7 @@
 ## 판정 규칙
 
 - `EXACT_CALLABLE`은 하나의 기존 callable이 node 전체 의미를 소유할 때만 사용한다.
-- `THIN_ADAPTER_NEEDED`는 의미가 이미 완전하지만 graph carrier만 다른 경우다. 이 audit에는 해당 항목이 없다.
+- `THIN_ADAPTER_NEEDED`는 의미가 이미 완전하지만 graph carrier만 다른 경우다.
 - `MISSING_SEMANTIC_CALLABLE`은 가까운 구현이 있어도 canonical node의 일부가 분리되어 있지 않은 경우다.
 - `EXTERNAL_SYNC_BACKEND_BOUNDARY`는 현 Sync Backend service/persistence가 소유하며 AI Worker가 직접 ORM·repository·session을 도입할 수 없는 경계다.
 - `actual_symbol`의 `—`는 현재 해당 의미의 callable이 없음을 뜻한다. `nearest:`는 이름이 비슷하지만 exact mapping이 아닌 조사 대상이다.
@@ -153,14 +153,14 @@ Retrieval binding re-audited at `origin/develop` `08f9b8427e109c0853d45ae94fd704
 | field | value |
 | --- | --- |
 | contract_semantics | conflict-gated medication guidance를 사용해 personalized Guide/Card를 compose하고 canonical generation outcome을 낸다. |
-| actual_symbol | `nearest: ai_worker.tasks.rag.guide_generation_card_orchestration:orchestrate_guide_generation_card` |
-| input_type | canonical conflict-gated guide composition input is absent |
-| output_type | canonical composition-only outcome is absent |
+| actual_symbol | `ai_worker.tasks.rag.guide_personalized_composition:compose_personalized_guide` |
+| input_type | `GuidelineGenerationRequest`, `GuidelineGeneratorPort` |
+| output_type | `GuidelineGenerationResult` (`GuidelineCardDraft \| GuidelineGenerationFailure`) |
 | side_effect | EXTERNAL_PROVIDER |
 | authority_owner | AI/RAG Guide generation |
-| status | `MISSING_SEMANTIC_CALLABLE` |
-| reason | Existing orchestration also runs preflight, evidence handoff, production projection, dynamic binding, and Card finalization. Reusing it for this node would re-execute multiple canonical phases. |
-| required_next_action | Define a composition-only callable only if the prior canonical node carriers are actually implemented. |
+| status | `THIN_ADAPTER_NEEDED` |
+| reason | #787의 direct provider invocation을 composition-only callable로 최소 추출했다. #787 전체는 preflight, evidence projection, dynamic binding, Card finalization을 함께 수행하므로 여전히 canonical compose node가 아니다. |
+| required_next_action | Future graph state가 approved `GuidelineGenerationRequest`를 소유할 때만 이 callable을 재사용한다. selection/safety/conflict carrier와 policy는 별도 blocker로 유지한다. |
 
 ### `claim_citation_validator`
 
@@ -206,6 +206,6 @@ Retrieval binding re-audited at `origin/develop` `08f9b8427e109c0853d45ae94fd704
 
 ## Readiness decision
 
-The canonical node set is fixed at the 13 entries above. There are no adapter implementations in this slice because no item truthfully qualifies as `THIN_ADAPTER_NEEDED`.
+The canonical node set is fixed at the 13 entries above. `compose_personalized_guide` alone truthfully qualifies as `THIN_ADAPTER_NEEDED`; it does not create the missing upstream selection, safety-filter, or conflict semantics.
 
-`StateGraph`, `langgraph` dependency, `uv.lock`, fake/no-op/pass-through nodes, Worker/Outbox/ACK changes, Backend DTO/OpenAPI changes, and direct AI Worker persistence are therefore out of scope. The minimum handoffs are: Backend sync read/projection seams for the four external nodes; approved AI/RAG semantic callables for bundle freshness, product safety overlay, retrieval, selection, safety filter, conflict gate, and composition.
+`StateGraph`, `langgraph` dependency, `uv.lock`, fake/no-op/pass-through nodes, Worker/Outbox/ACK changes, Backend DTO/OpenAPI changes, and direct AI Worker persistence are therefore out of scope. The minimum handoffs are: Backend sync read/projection seams for the four external nodes; approved AI/RAG semantic callables for bundle freshness, product safety overlay, retrieval, selection, safety filter, and conflict gate.
