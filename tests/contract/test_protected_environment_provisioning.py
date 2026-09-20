@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
+import asyncio
+import threading
 from pathlib import Path
 
 import pytest
@@ -11,6 +14,7 @@ from ai_worker.admin.protected_retrieval_preflight import (
     check_github_approval_access,
     validate_config_boundary,
 )
+from infra.python import provision_protected_retrieval
 from infra.python.provision_protected_retrieval import (
     validate_distinct_roles,
     validate_safe_identifier,
@@ -217,6 +221,47 @@ def test_provisioning_role_distinctness() -> None:
     # Identifiers must be safe
     with pytest.raises(ValueError, match="must be a safe PostgreSQL identifier"):
         validate_safe_identifier("bad;role", "ROLE")
+
+
+async def test_protected_migrations_run_outside_the_running_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class MigrationReachedError(RuntimeError):
+        pass
+
+    event_loop_thread = threading.get_ident()
+    migration_threads: list[int] = []
+
+    def migration_probe(**_: object) -> None:
+        migration_threads.append(threading.get_ident())
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        raise MigrationReachedError
+
+    environment = {
+        "DB_HOST": "postgres",
+        "DB_PORT": "5432",
+        "DB_NAME": "protected_test",
+        "DB_ADMIN_USER": "admin_user",
+        "DB_ADMIN_PASSWORD": "admin_password",
+        "PROTECTED_DB_SCHEMA": "protected_eval",
+        "PROTECTED_DB_OWNER_ROLE": "protected_owner",
+        "PROTECTED_DB_ACCESS_ROLE": "protected_access",
+        "PROTECTED_DB_CONTROL_ROLE": "protected_control",
+        "PROTECTED_DB_USER": "protected_data_login",
+        "PROTECTED_DB_PASSWORD": "data_password",
+        "PROTECTED_DB_CONTROL_USER": "protected_control_login",
+        "PROTECTED_DB_CONTROL_PASSWORD": "control_password",
+    }
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(provision_protected_retrieval, "run_protected_migrations", migration_probe)
+
+    with pytest.raises(MigrationReachedError):
+        await provision_protected_retrieval.async_main(argparse.Namespace(provision=True, verify_only=False))
+
+    assert migration_threads
+    assert migration_threads[0] != event_loop_thread
 
 
 def test_preflight_config_boundary_validation() -> None:
