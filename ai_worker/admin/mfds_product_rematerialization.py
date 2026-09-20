@@ -236,7 +236,9 @@ class _ArtifactReader(Protocol):
 class ExistingProductRawArtifactStore:
     """RawArtifactStore adapter that returns the already-existing content-addressed object."""
 
-    def __init__(self, *, artifact_root: Path, reader: _ArtifactReader, artifacts: tuple[ManifestArtifact, ...]) -> None:
+    def __init__(
+        self, *, artifact_root: Path, reader: _ArtifactReader, artifacts: tuple[ManifestArtifact, ...]
+    ) -> None:
         self._root = artifact_root
         self._reader = reader
         self._by_page = {artifact.page_number: artifact for artifact in artifacts}
@@ -344,9 +346,7 @@ def load_product_artifact_manifest(path: Path) -> ProductArtifactManifest:
                 or entry["content_type"] not in _CONTRACT.allowed_content_types
             ):
                 raise ValueError("artifact binding")
-            metadata = RawArtifactMetadata(
-                entry["artifact_key"], checksum, entry["byte_size"], entry["content_type"]
-            )
+            metadata = RawArtifactMetadata(entry["artifact_key"], checksum, entry["byte_size"], entry["content_type"])
             artifacts.append(ManifestArtifact(page, expected_key, metadata))
         if [item.page_number for item in artifacts] != list(range(1, len(artifacts) + 1)):
             raise ValueError("page sequence")
@@ -376,7 +376,10 @@ def prepare_product_rematerialization(
     manifest = load_product_artifact_manifest(manifest_path)
     try:
         receipt = load_product_receipt(receipt_path=receipt_path, repository_root=repository_root)
-        if receipt.receipt_hash != manifest.endpoint_receipt_hash or receipt.validated_record_count != manifest.record_count:
+        if (
+            receipt.receipt_hash != manifest.endpoint_receipt_hash
+            or receipt.validated_record_count != manifest.record_count
+        ):
             raise ValueError("receipt parity")
         acquisition, records = _reconstruct_acquisition(manifest, artifact_root=artifact_root, reader=reader)
         if product_canonical_checksum(records) != manifest.canonical_checksum:
@@ -450,7 +453,9 @@ def _reconstruct_acquisition(
     )
 
 
-def _row_matches(row: Mapping[Any, Any], expected: Mapping[str, object], *, parent: tuple[str, UUID] | None = None) -> bool:
+def _row_matches(
+    row: Mapping[Any, Any], expected: Mapping[str, object], *, parent: tuple[str, UUID] | None = None
+) -> bool:
     if parent is not None and str(row[parent[0]]) != str(parent[1]):
         return False
     return all(row[key] == value for key, value in expected.items())
@@ -531,27 +536,31 @@ async def _verify_committed(
     manifest: ProductArtifactManifest,
 ) -> None:
     row = (
-        await session.execute(
-            select(
-                _SOURCE.c.source_code,
-                _ENDPOINT.c.endpoint_code,
-                _OPERATION.c.operation_code,
-                _SNAPSHOT.c.source_version,
-                _SNAPSHOT.c.raw_manifest_checksum,
-                _SNAPSHOT.c.canonical_checksum,
-                _SNAPSHOT.c.endpoint_receipt_hash,
-                _SNAPSHOT.c.record_count,
-                _SNAPSHOT.c.rejected_record_count,
-                _SNAPSHOT.c.verification_status,
+        (
+            await session.execute(
+                select(
+                    _SOURCE.c.source_code,
+                    _ENDPOINT.c.endpoint_code,
+                    _OPERATION.c.operation_code,
+                    _SNAPSHOT.c.source_version,
+                    _SNAPSHOT.c.raw_manifest_checksum,
+                    _SNAPSHOT.c.canonical_checksum,
+                    _SNAPSHOT.c.endpoint_receipt_hash,
+                    _SNAPSHOT.c.record_count,
+                    _SNAPSHOT.c.rejected_record_count,
+                    _SNAPSHOT.c.verification_status,
+                )
+                .select_from(
+                    _SNAPSHOT.join(_OPERATION, _SNAPSHOT.c.operation_id == _OPERATION.c.id)
+                    .join(_ENDPOINT, _OPERATION.c.endpoint_id == _ENDPOINT.c.id)
+                    .join(_SOURCE, _ENDPOINT.c.source_id == _SOURCE.c.id)
+                )
+                .where(_SNAPSHOT.c.id == str(persistence.snapshot_id))
             )
-            .select_from(
-                _SNAPSHOT.join(_OPERATION, _SNAPSHOT.c.operation_id == _OPERATION.c.id)
-                .join(_ENDPOINT, _OPERATION.c.endpoint_id == _ENDPOINT.c.id)
-                .join(_SOURCE, _ENDPOINT.c.source_id == _SOURCE.c.id)
-            )
-            .where(_SNAPSHOT.c.id == str(persistence.snapshot_id))
         )
-    ).mappings().one_or_none()
+        .mappings()
+        .one_or_none()
+    )
     expected = {
         "source_code": PRODUCT_IDENTITY.source_code,
         "endpoint_code": PRODUCT_IDENTITY.endpoint_code,
@@ -566,25 +575,25 @@ async def _verify_committed(
     if row is None or not all(row[key] == value for key, value in expected.items()):
         raise ProductRematerializationBlockedError(BLOCKED_BY_PRODUCT_ARTIFACT)
     allowed_statuses = (
-        {"PENDING"}
-        if persistence.decision is SnapshotIngestionDecision.CREATED
-        else {"PENDING", "CURRENT"}
+        {"PENDING"} if persistence.decision is SnapshotIngestionDecision.CREATED else {"PENDING", "CURRENT"}
     )
     if row["verification_status"] not in allowed_statuses:
         raise ProductRematerializationBlockedError(BLOCKED_BY_PRODUCT_ARTIFACT)
     run = (
-        await session.execute(
-            select(
-                _RUN.c.operation_id,
-                _RUN.c.snapshot_id,
-                _RUN.c.run_status,
-                _RUN.c.failure_code,
-            ).where(_RUN.c.id == str(persistence.ingestion_run_id))
+        (
+            await session.execute(
+                select(
+                    _RUN.c.operation_id,
+                    _RUN.c.snapshot_id,
+                    _RUN.c.run_status,
+                    _RUN.c.failure_code,
+                ).where(_RUN.c.id == str(persistence.ingestion_run_id))
+            )
         )
-    ).mappings().one_or_none()
-    expected_run_status = (
-        "SUCCEEDED" if persistence.decision is SnapshotIngestionDecision.CREATED else "NO_CHANGE"
+        .mappings()
+        .one_or_none()
     )
+    expected_run_status = "SUCCEEDED" if persistence.decision is SnapshotIngestionDecision.CREATED else "NO_CHANGE"
     if (
         run is None
         or str(run["operation_id"]) != str(persistence.operation_id)
@@ -599,8 +608,7 @@ async def _verify_committed(
         .limit(1)
     )
     artifact_count = await session.scalar(
-        select(func.count(_ARTIFACT.c.id))
-        .where(
+        select(func.count(_ARTIFACT.c.id)).where(
             _ARTIFACT.c.ingestion_run_id == str(persistence.ingestion_run_id),
             _ARTIFACT.c.artifact_kind == IngestionArtifactKind.RAW_RESPONSE,
         )

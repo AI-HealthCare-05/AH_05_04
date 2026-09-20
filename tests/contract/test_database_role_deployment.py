@@ -116,8 +116,7 @@ def test_credentials_and_admin_process_are_separated() -> None:
 
     worker_dockerfile = (ROOT / "ai_worker/Dockerfile").read_text()
     assert (
-        "COPY ./infra/python/catalog_approval_role_policy.py "
-        "./infra/python/catalog_approval_role_policy.py"
+        "COPY ./infra/python/catalog_approval_role_policy.py ./infra/python/catalog_approval_role_policy.py"
     ) in worker_dockerfile
 
     worker = services["ai-worker"]

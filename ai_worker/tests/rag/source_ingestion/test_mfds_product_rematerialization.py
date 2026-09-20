@@ -74,7 +74,9 @@ def _receipt(tmp_path: Path, count: int) -> Path:
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(content))
-        fixtures.append({"scenario": scenario, "path": relative, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+        fixtures.append(
+            {"scenario": scenario, "path": relative, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+        )
     payload["fixture_evidence"] = fixtures
     payload["receipt_hash"] = calculate_endpoint_receipt_hash(payload)
     path = tmp_path / "receipt.json"
@@ -347,8 +349,20 @@ async def test_hierarchy_exact_match_is_reused_without_insert():
     session = AsyncMock()
     session.execute.side_effect = [
         _Result(row={"id": "00000000-0000-4000-8000-000000000001", **SOURCE_VALUES}),
-        _Result(row={"id": "00000000-0000-4000-8000-000000000002", "source_id": "00000000-0000-4000-8000-000000000001", **ENDPOINT_VALUES}),
-        _Result(row={"id": "00000000-0000-4000-8000-000000000003", "endpoint_id": "00000000-0000-4000-8000-000000000002", **OPERATION_VALUES}),
+        _Result(
+            row={
+                "id": "00000000-0000-4000-8000-000000000002",
+                "source_id": "00000000-0000-4000-8000-000000000001",
+                **ENDPOINT_VALUES,
+            }
+        ),
+        _Result(
+            row={
+                "id": "00000000-0000-4000-8000-000000000003",
+                "endpoint_id": "00000000-0000-4000-8000-000000000002",
+                **OPERATION_VALUES,
+            }
+        ),
     ]
 
     hierarchy = await ensure_product_source_hierarchy(session)

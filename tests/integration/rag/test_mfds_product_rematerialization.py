@@ -78,7 +78,7 @@ async def database(tmp_path: Path) -> AsyncIterator[_Database]:
             await ensure_vector_extension(connection, "test_extensions")
             await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
             for role in (runtime, writer):
-                await connection.execute(text(f'CREATE ROLE "{role}" LOGIN PASSWORD \'{password}\''))
+                await connection.execute(text(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"))
         async with schema_engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
         async with admin.begin() as connection:
