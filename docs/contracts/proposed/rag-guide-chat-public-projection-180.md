@@ -18,10 +18,10 @@
 
 Backend Guide·Chat API는 #807의 raw Source Use Approval을 직접 소비하지 않는다.
 
-현재 정렬된 소비 순서는 다음과 같다.
+아래는 현재 develop의 실행 순서가 아니라 #180 Phase B 이후 목표로 정렬할 target/pending sequence다. #857이 merge되기 전에는 2번 Runtime Bundle approval pin을 current/develop authority로 보지 않는다.
 
 1. #807 `PATIENT_CITATION` Source Use Approval
-2. Runtime Bundle approval pin
+2. Runtime Bundle approval pin (#857 pending/unmerged prerequisite)
 3. Citation Source/Member Decision 및 Receipt
 4. #180 orchestration final Authorized/Release result
 5. Backend Guide·Chat public response projection
@@ -32,8 +32,8 @@ Backend Guide·Chat API는 #807의 raw Source Use Approval을 직접 소비하�
 
 - #485는 Citation Authorization/Finalizer/Claim-Citation Validator의 pure 계층을 추가했지만 Graph, DB persistence, public DTO projection은 구현하지 않았다.
 - #765는 Guide orchestration의 preflight → authoritative evidence handoff core를 연결했지만 Generator, Citation Authorization, Release Gate, fallback mapping, persistence, public API projection은 구현하지 않았다.
-- #857은 #807 Source Use Approval을 Runtime Bundle에 pinning하는 authority seam이며, request-time Citation Authorization, Source/Member public projection, Release Gate를 대체하지 않는다.
-- 따라서 이 문서의 Backend 경계는 위 선행 작업을 재판정하지 않고 #180 final Authorized/Release result를 소비하는 위치만 고정한다.
+- #857은 현재 OPEN / unmerged 상태인 pending prerequisite이다. #857이 merge된 뒤에만 #807 Source Use Approval을 Runtime Bundle에 pinning하는 develop authority로 승격된다. request-time Citation Authorization, Source/Member public projection, Release Gate를 대체하지 않는다.
+- 따라서 이 문서의 Backend 경계는 위 선행 작업을 current로 과장하거나 재판정하지 않고, #180 final Authorized/Release result를 소비할 projection 위치만 고정한다.
 
 ## 3. 현재 Guide Sync 201 흐름
 
@@ -157,17 +157,19 @@ Backend Guide·Chat API는 #807의 raw Source Use Approval을 직접 소비하�
 
 Chat은 send response와 rediscovery/list response의 public shape가 다르다. #180 결과를 Chat public response에 포함하려면 send response만 확장할지, list rediscovery 응답도 함께 확장할지 contract Freeze 때 결정해야 한다.
 
-## 5. #180 final result consumer seam
+## 5. 현재 Sync 201 projection candidate seam
 
 Router에 RAG logic을 직접 넣지 않는다.
 
-Guide의 소비 지점:
+이 절은 현재 Sync `201 Created` API에서 public response를 만드는 현행 projection 위치를 정리한다. #180의 최종 async execution consumer authority 또는 `JOB_EXECUTE` runtime seam을 여기로 고정한다는 뜻이 아니다. Final async consumer seam은 #180 orchestration과 `202 Accepted` contract가 Freeze된 뒤 별도로 확정한다.
+
+Guide의 현행 projection candidate seam:
 
 - `GuideService.create_guide()` 내부에서 현재 `GuideGenerator.generate()` 결과를 받는 경계
 - 저장 경계는 `GuideRepository.mark_completed()`
 - public projection 경계는 `_to_guide_data()`
 
-Chat의 소비 지점:
+Chat의 현행 projection candidate seam:
 
 - `ChatService.send_message()` 내부에서 현재 `self._engine.reply(chat_input)` 결과를 받는 경계
 - 저장 경계는 `ChatRepository.mark_completed()`
