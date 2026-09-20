@@ -29,6 +29,7 @@ const support = {
   questions: [],
 }
 const plan = { support_action_plan_id: planId, barrier_response_id: 'barrier', support_code: 'REMINDER_SETUP', rule_version: 'rule-v1', copy_version: 'copy-v1', action_config_snapshot: support.action_config, status: 'ACTIVE', created_at: '2026-09-16T00:00:00Z', completed_at: null, cancelled_at: null }
+const planListItem = { support_action_plan_id: planId, support_code: 'REMINDER_SETUP', status: 'ACTIVE', created_at: '2026-09-16T00:00:00Z', completed_at: null, cancelled_at: null }
 function services(overrides: Partial<TrackCServices> = {}): TrackCServices {
   return {
     getFollowup: vi.fn().mockResolvedValue(null), submitFollowup: vi.fn(),
@@ -37,12 +38,13 @@ function services(overrides: Partial<TrackCServices> = {}): TrackCServices {
     getDay: vi.fn().mockResolvedValue({ data: { occurrences: [{ occurrence_id: occurrenceId, scheduled_local_date: '2026-09-16', status: 'CLOSED', checkin }] } }),
     createSafety: vi.fn().mockResolvedValue(safety), putBarrier: vi.fn().mockResolvedValue(barrier),
     getOffers: vi.fn().mockResolvedValue({ ...barrier, subreason_code: null, supports: [support], reason_code: null }),
-    createPlan: vi.fn().mockResolvedValue(plan), getPlan: vi.fn().mockResolvedValue(plan), patchPlan: vi.fn().mockResolvedValue(plan), ...overrides,
+    createPlan: vi.fn().mockResolvedValue(plan), listPlans: vi.fn().mockResolvedValue([planListItem]), getPlan: vi.fn().mockResolvedValue(plan), patchPlan: vi.fn().mockResolvedValue(plan), ...overrides,
   }
 }
 function show(service: TrackCServices, entry = `/track-c/occurrences/${occurrenceId}?date=2026-09-16`) {
   return render(<StrictMode><MemoryRouter initialEntries={[entry]}><Routes>
     <Route path="/track-c/occurrences/:occurrenceId" element={<TrackCPage service={service} />} />
+    <Route path="/track-c/plans" element={<TrackCPage service={service} />} />
     <Route path="/track-c/plans/:planId" element={<TrackCPage service={service} />} />
     <Route path="/login" element={<p>로그인 화면</p>} />
   </Routes></MemoryRouter></StrictMode>)
@@ -52,14 +54,31 @@ async function enterOffer() { await enterBarrier(); fireEvent.click(screen.getBy
 afterEach(cleanup)
 
 describe('Track C API flow', () => {
-  it('requires adoption and GETs current status after creation replay', async () => {
-    const svc = services({ getPlan: vi.fn().mockResolvedValue({ ...plan, status: 'CANCELLED' }) }); show(svc); await enterOffer()
+  it('requires adoption and moves to the saved plan list after creation replay', async () => {
+    const svc = services(); show(svc); await enterOffer()
     expect(svc.createPlan).not.toHaveBeenCalled()
     expect((screen.getByRole('button', { name: '계획 저장' }) as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
-    await screen.findByText('취소됨')
+    await screen.findByRole('heading', { name: '실천 계획 목록' })
+    expect(screen.getByRole('button', { name: /복약 일정과 알림 확인/ })).toBeTruthy()
     expect(svc.createPlan).toHaveBeenCalledWith({ barrier_response_id: 'barrier', support_code: 'REMINDER_SETUP', rule_version: 'rule-v1', copy_version: 'copy-v1', confirmed: true, selected_question_ids: [] }, expect.any(String))
+    expect(svc.listPlans).toHaveBeenCalled()
     expect(svc.patchPlan).not.toHaveBeenCalled()
+  })
+  it('renders saved plans and opens the existing detail route', async () => {
+    const svc = services()
+    show(svc, '/track-c/plans')
+    await screen.findByRole('heading', { name: '실천 계획 목록' })
+    fireEvent.click(screen.getByRole('button', { name: /복약 일정과 알림 확인/ }))
+    await screen.findByRole('heading', { name: '내 실천 계획' })
+    expect(svc.listPlans).toHaveBeenCalled()
+    expect(svc.getPlan).toHaveBeenCalledWith(planId)
+  })
+  it('shows an empty state without loading plan details', async () => {
+    const svc = services({ listPlans: vi.fn().mockResolvedValue([]) })
+    show(svc, '/track-c/plans')
+    await screen.findByText('저장된 실천 계획이 없어요')
+    expect(svc.getPlan).not.toHaveBeenCalled()
   })
   it('stores an allowlisted consultation question for the selected subreason', async () => {
     const instructionBarrier = { ...barrier, barrier_code: 'INSTRUCTIONS_UNCLEAR' }

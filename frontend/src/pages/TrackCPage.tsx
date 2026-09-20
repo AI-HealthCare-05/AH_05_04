@@ -20,6 +20,13 @@ const supportNames: Record<api.SupportCode, string> = {
   INSTRUCTION_REVIEW: '복용 방법 확인', PURPOSE_REVIEW: '복용 목적 확인',
   MEDICATION_CONCERN_GUIDANCE: '약에 대한 걱정 확인', ACCESS_SUPPORT: '약 접근·비용 도움 확인',
 }
+const planStatusLabels: Record<api.Plan['status'], string> = { ACTIVE: '진행 중', COMPLETED: '완료됨', CANCELLED: '취소됨' }
+function formatPlanDate(value: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
+}
 const subreasonChoices = Object.fromEntries(
   BARRIER_ORDER.map(code => [code, BARRIER_SUBREASONS[code].map(sub => [sub, SUBREASON_LABELS[sub]])]),
 ) as Record<api.BarrierCode, [api.SubreasonCode, string][]>
@@ -74,13 +81,15 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   const [query] = useSearchParams()
   const date = query.get('date') ?? ''
   const navigate = useNavigate()
-  const [step, setStep] = useState<'loading' | 'safety' | 'barrier' | 'subreason' | 'travel' | 'offer' | 'preparing' | 'plan' | 'blocked'>('loading')
+  const isPlanListRoute = !occurrenceId && !planId
+  const [step, setStep] = useState<'loading' | 'list' | 'safety' | 'barrier' | 'subreason' | 'travel' | 'offer' | 'preparing' | 'plan' | 'blocked'>('loading')
   const [checkin, setCheckin] = useState<MedicationCheckinResponse['data'] | null>(null)
   const [safety, setSafety] = useState<api.Safety | null>(null)
   const [barrier, setBarrier] = useState<api.Barrier | null>(null)
   const [offer, setOffer] = useState<api.Offer | null>(null)
   const [showFollowup, setShowFollowup] = useState(false)
   const [plan, setPlan] = useState<api.Plan | null>(null)
+  const [plans, setPlans] = useState<api.PlanListItem[]>([])
   const [resourcesError, setResourcesError] = useState(false)
   const [resources, setResources] = useState<api.PlanResources | null>(null)
   const [pushState, setPushState] = useState<WebPushState | null>(null)
@@ -106,8 +115,8 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   const alive = useRef(true)
   const heading = useRef<HTMLHeadingElement>(null)
   const attempt = useRef<LogicalMutationAttempt<string, unknown> | null>(null)
-  const back = occurrenceId && uuid.test(occurrenceId)
-    ? `/schedule/occurrences/${occurrenceId}?date=${encodeURIComponent(date)}` : '/schedule'
+  const back = isPlanListRoute ? '/menu' : occurrenceId && uuid.test(occurrenceId)
+    ? `/schedule/occurrences/${occurrenceId}?date=${encodeURIComponent(date)}` : '/track-c/plans'
 
   useEffect(() => { heading.current?.focus() }, [step])
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
@@ -162,7 +171,10 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
 
   useEffect(() => {
     async function load() {
-      if (planId) {
+      if (isPlanListRoute) {
+        const result = await service.listPlans()
+        if (alive.current) { setPlans(result); setStep('list') }
+      } else if (planId) {
         if (!uuid.test(planId)) throw new ApiError(404, '')
         const result = await service.getPlan(planId)
         await loadResources(result)
@@ -176,7 +188,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
       }
     }
     void run(load)
-  }, [service, occurrenceId, planId, date, run, loadResources])
+  }, [service, occurrenceId, planId, date, isPlanListRoute, run, loadResources])
 
   async function submitSafety() {
     if (!checkin) return
@@ -239,9 +251,9 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
     const item = offer?.supports.find(candidate => candidate.support_code === selectedSupport)
     if (!barrier || !item || !confirmed) return
     const body: api.CreatePlanRequest = { barrier_response_id: barrier.barrier_response_id, support_code: item.support_code, rule_version: item.rule_version, copy_version: item.copy_version, confirmed: true, selected_question_ids: selectedQuestions, ...(subreason ? { subreason_code: subreason } : {}), ...(travelSituation ? { travel_situation: travelSituation } : {}) }
-    const result = await service.createPlan(body, key('create-plan', barrier.barrier_response_id, body))
-    if (alive.current) navigate(`/track-c/plans/${result.support_action_plan_id}`, { replace: true })
-    // Destination always GETs current status; creation replay is only a saved snapshot.
+    await service.createPlan(body, key('create-plan', barrier.barrier_response_id, body))
+    if (alive.current) navigate('/track-c/plans', { replace: true })
+    // Destination always GETs the saved plan list; creation replay is only a saved snapshot.
   }
 
   async function changePlan() {
@@ -269,18 +281,32 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   const reminderTarget = plan?.support_code === 'REMINDER_SETUP' &&
     'prescription_version_medication_id' in plan.action_config_snapshot.parameters
     ? plan.action_config_snapshot.parameters.prescription_version_medication_id : null
-  return <div className="mvp-page track-c-page"><MobileShell activeNavigation="일정" onBack={() => navigate(back)} onNavigate={item => {
+  return <div className="mvp-page track-c-page"><MobileShell activeNavigation={isPlanListRoute ? '메뉴' : '일정'} onBack={() => navigate(back)} onNavigate={item => {
     const destinations = { 홈: '/', 일정: '/schedule', 도지: '/chat', 가이드: '/guides', 메뉴: '/menu' }
     navigate(destinations[item])
   }}>
     <main className={`app-scroll track-c-content track-c-content--${step}`} aria-busy={busy}>
       {step === 'safety' && <p className="track-c-eyebrow">복약 안전 확인</p>}
       {step === 'offer' && <p className="track-c-eyebrow">나에게 맞는 도움</p>}
-      {step === 'plan' && plan && <p className={`track-c-status track-c-status--${plan.status.toLowerCase()}`} role="status">{plan.status === 'ACTIVE' ? '진행 중' : plan.status === 'COMPLETED' ? '완료됨' : '취소됨'}</p>}
-      <h1 ref={heading} tabIndex={-1}>{step === 'barrier' ? '이번에는 어떤 점이 가장 크게 영향을 주었나요?' : step === 'subreason' ? '어떤 상황에 더 가까웠나요?' : step === 'safety' ? '현재 불편한 증상이 있나요?' : step === 'offer' ? '도움 방법을 확인해 주세요' : step === 'preparing' ? '도움을 준비하고 있어요' : step === 'plan' ? '내 실천 계획' : '복약 도움 확인'}</h1>
+      {step === 'list' && <p className="track-c-eyebrow">저장한 도움</p>}
+      {step === 'plan' && plan && <p className={`track-c-status track-c-status--${plan.status.toLowerCase()}`} role="status">{planStatusLabels[plan.status]}</p>}
+      <h1 ref={heading} tabIndex={-1}>{step === 'barrier' ? '이번에는 어떤 점이 가장 크게 영향을 주었나요?' : step === 'subreason' ? '어떤 상황에 더 가까웠나요?' : step === 'safety' ? '현재 불편한 증상이 있나요?' : step === 'offer' ? '도움 방법을 확인해 주세요' : step === 'preparing' ? '도움을 준비하고 있어요' : step === 'plan' ? '내 실천 계획' : step === 'list' ? '실천 계획 목록' : '복약 도움 확인'}</h1>
       {error && <p role="alert">{error}</p>}
       {retry && <Button disabled={busy} onClick={() => void run(retry)}>같은 요청 다시 시도</Button>}
       {step === 'loading' && <p role="status">기록을 확인하고 있어요.</p>}
+      {step === 'list' && <>
+        {plans.length === 0 ? <Card className="track-c-empty">
+          <h2>저장된 실천 계획이 없어요</h2>
+          <p>복약 기록에서 도움을 저장하면 이곳에서 다시 확인할 수 있어요.</p>
+          <Button fullWidth onClick={() => navigate('/schedule')}>복약 기록 보러 가기</Button>
+        </Card> : <div className="track-c-plan-list">
+          {plans.map(item => <button className="track-c-plan-item" type="button" key={item.support_action_plan_id} onClick={() => navigate(`/track-c/plans/${item.support_action_plan_id}`)}>
+            <span className={`track-c-status track-c-status--${item.status.toLowerCase()}`}>{planStatusLabels[item.status]}</span>
+            <strong>{supportNames[item.support_code]}</strong>
+            <span>{formatPlanDate(item.completed_at ?? item.cancelled_at ?? item.created_at)}</span>
+          </button>)}
+        </div>}
+      </>}
       {step === 'safety' && <>
         <p className="track-c-description">복용하지 못한 이유를 확인하기 전에 현재 몸 상태를 먼저 확인할게요.</p>
         <div className="track-c-safety-actions">
@@ -351,6 +377,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
         {resources && resources.selected_questions.length > 0 && <Card><h2>상담 때 확인할 질문</h2><ul>{resources.selected_questions.map(question => <li key={question.question_id}>{question.text}</li>)}</ul><p>질문은 자동으로 전송되지 않아요.</p></Card>}
         {concernPlan && plan.status === 'ACTIVE' && <Button variant="secondary" disabled={busy} onClick={() => { setTerminal(null); setConfirmed(false); setBlockedReason('PLAN_SYMPTOM'); setReconsiderFrom('plan'); setStep('blocked') }}>증상이 생겼거나 확실하지 않아요</Button>}
         <p>계획 조회만으로 실행이나 완료가 처리되지 않아요.</p>
+        <Button fullWidth variant="secondary" onClick={() => navigate('/track-c/plans')}>실천 계획 목록 보기</Button>
         {plan.status === 'ACTIVE' && <div className="track-c-actions">
           {resources && plan.support_code === 'REMINDER_SETUP' && <p><Link to={`/schedule?support_medication=${encodeURIComponent(reminderTarget ?? '')}`} target="_blank" rel="noopener noreferrer">일정 확인·설정 (새 탭)</Link></p>}
           {needsPushSetup && <>
