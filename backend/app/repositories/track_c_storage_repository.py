@@ -321,6 +321,16 @@ class TrackCStorageRepository:
             .execution_options(populate_existing=True)
         )
 
+    async def list_action_plans_owned(self, *, user_id: UUID) -> list[SupportActionPlan]:
+        rows = await self.session.scalars(
+            select(SupportActionPlan)
+            .join(BarrierResponse, BarrierResponse.id == SupportActionPlan.barrier_response_id)
+            .where(BarrierResponse.medication_checkin_id.in_(self._owned_checkins(user_id)))
+            .order_by(SupportActionPlan.created_at.desc(), SupportActionPlan.id.desc())
+            .execution_options(populate_existing=True)
+        )
+        return list(rows)
+
     async def get_followup_owned(self, *, followup_id: UUID, user_id: UUID) -> ActionPlanFollowup | None:
         return await self.session.scalar(
             select(ActionPlanFollowup)

@@ -15,6 +15,8 @@ from app.dtos.track_c_support import (
     PatchSupportActionPlanRequest,
     SubmitActionPlanFollowupRequest,
     SupportActionPlanData,
+    SupportActionPlanListItem,
+    SupportActionPlanListResponse,
     SupportActionPlanResponse,
     SupportCopyData,
     SupportOfferData,
@@ -58,6 +60,7 @@ from app.services.track_c_personalization import (
 
 SUPPORT_OFFER_GET_OPERATION_ID = "barrier-response.supports"
 SUPPORT_ACTION_PLAN_POST_OPERATION_ID = "support-action-plan.create"
+SUPPORT_ACTION_PLAN_LIST_OPERATION_ID = "support-action-plan.list"
 SUPPORT_ACTION_PLAN_GET_OPERATION_ID = "support-action-plan.get"
 SUPPORT_ACTION_PLAN_PATCH_OPERATION_ID = "support-action-plan.patch"
 ACTION_PLAN_FOLLOWUP_POST_OPERATION_ID = "support-action-plan.followup.submit"
@@ -304,21 +307,23 @@ class TrackCSupportService:
         )
 
     @staticmethod
-    def _plan_response(plan: SupportActionPlan) -> SupportActionPlanResponse:
-        return SupportActionPlanResponse(
-            data=SupportActionPlanData(
-                support_action_plan_id=plan.id,
-                barrier_response_id=plan.barrier_response_id,
-                support_code=plan.support_code,
-                rule_version=plan.rule_version,
-                copy_version=plan.copy_version,
-                action_config_snapshot=ActionConfigSnapshot.model_validate(plan.action_config_snapshot),
-                status=plan.status,
-                created_at=plan.created_at,
-                completed_at=plan.completed_at,
-                cancelled_at=plan.cancelled_at,
-            )
+    def _plan_data(plan: SupportActionPlan) -> SupportActionPlanData:
+        return SupportActionPlanData(
+            support_action_plan_id=plan.id,
+            barrier_response_id=plan.barrier_response_id,
+            support_code=plan.support_code,
+            rule_version=plan.rule_version,
+            copy_version=plan.copy_version,
+            action_config_snapshot=ActionConfigSnapshot.model_validate(plan.action_config_snapshot),
+            status=plan.status,
+            created_at=plan.created_at,
+            completed_at=plan.completed_at,
+            cancelled_at=plan.cancelled_at,
         )
+
+    @classmethod
+    def _plan_response(cls, plan: SupportActionPlan) -> SupportActionPlanResponse:
+        return SupportActionPlanResponse(data=cls._plan_data(plan))
 
     @staticmethod
     def _plan_not_found() -> ApiError:
@@ -329,6 +334,21 @@ class TrackCSupportService:
         if plan is None:
             raise self._plan_not_found()
         return plan
+
+    @staticmethod
+    def _plan_list_item(plan: SupportActionPlan) -> SupportActionPlanListItem:
+        return SupportActionPlanListItem(
+            support_action_plan_id=plan.id,
+            support_code=plan.support_code,
+            status=plan.status,
+            created_at=plan.created_at,
+            completed_at=plan.completed_at,
+            cancelled_at=plan.cancelled_at,
+        )
+
+    async def list_plans(self, *, user_id: UUID) -> SupportActionPlanListResponse:
+        plans = await self._repository.list_action_plans_owned(user_id=user_id)
+        return SupportActionPlanListResponse(data=[self._plan_list_item(plan) for plan in plans])
 
     async def get_plan(self, *, user_id: UUID, plan_id: UUID) -> SupportActionPlanResponse:
         return self._plan_response(await self._owned_plan(user_id=user_id, plan_id=plan_id))

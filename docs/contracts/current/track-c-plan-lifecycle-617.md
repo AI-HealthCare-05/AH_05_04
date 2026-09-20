@@ -21,6 +21,10 @@ COMPLETED 또는 CANCELLED로 단 한 번만 전환한다. 종료 상태 수정�
 ABA(종료 후 ACTIVE 복귀)가 없으므로 새 revision column 없이 잠금 후 ACTIVE 검사가 동시 수정 충돌을 검출한다.
 기존 생성 응답과 암호화된 과거 멱등 snapshot은 변경하지 않는다. DB migration은 없다.
 
+## 관련 목록 조회 계약
+
+저장된 ActionPlan을 앱 재진입 후 다시 찾는 목록 조회는 [Track C ActionPlan 목록 조회 v1 — #867](track-c-plan-list-867.md)이 소유한다. 이 #617 계약은 단건 조회와 완료·취소 PATCH 의미를 유지한다.
+
 ## GET /api/v1/support-action-plans/{id}
 
 - operationId: `support-action-plan.get`.
