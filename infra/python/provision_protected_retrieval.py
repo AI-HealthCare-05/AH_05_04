@@ -17,10 +17,11 @@ from urllib.parse import quote_plus
 
 from alembic import command
 from alembic.config import Config as AlembicConfig
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from infra.python.protected_retrieval_role_policy import (
+    PROTECTED_BACKUP_RELATIONS,
     apply_protected_backup_role_policy,
     apply_protected_retrieval_role_policy,
     quoted_identifier,
@@ -125,35 +126,39 @@ async def _verify_login_role_attributes(
         )
 
 
-async def provision_protected_database_roles(
+async def _validate_existing_backup_login_before_password_mutation(
+    connection: AsyncConnection,
     *,
-    admin_connection: AsyncConnection,
-    schema: str,
-    owner_role: str,
-    access_role: str,
-    control_role: str,
-    data_login: str,
-    data_password: str,
-    control_login: str,
-    control_password: str,
     backup_login: str,
-    backup_password: str,
+    schema: str,
 ) -> None:
-    """Create operational logins and configure exact column-level role policies."""
-    # 1. Verify existence of NOLOGIN roles created by migration bootstrap
-    for nologin_role in (owner_role, access_role, control_role):
-        exists = await admin_connection.scalar(
-            text("SELECT 1 FROM pg_roles WHERE rolname = :role AND NOT rolcanlogin"),
-            {"role": nologin_role},
+    row = (
+        (
+            await connection.execute(
+                text(
+                    "SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, "
+                    "rolcreaterole, rolreplication, rolbypassrls, rolinherit "
+                    "FROM pg_roles WHERE rolname = :name"
+                ),
+                {"name": backup_login},
+            )
         )
-        if not exists:
-            raise ValueError(f"Bootstrap NOLOGIN role {nologin_role} does not exist or has login enabled")
+        .mappings()
+        .first()
+    )
+    if row is None:
+        return
+    if (
+        not row["rolcanlogin"]
+        or row["rolsuper"]
+        or row["rolcreatedb"]
+        or row["rolcreaterole"]
+        or row["rolreplication"]
+        or row["rolbypassrls"]
+    ):
+        raise ValueError(f"Existing role {backup_login} has unsafe or superuser privileges")
 
-    # 2. Provision operational logins
-    await _verify_login_role_attributes(admin_connection, data_login, data_password)
-    await _verify_login_role_attributes(admin_connection, control_login, control_password)
-    await _verify_login_role_attributes(admin_connection, backup_login, backup_password)
-    backup_unsafe = await admin_connection.scalar(
+    backup_unsafe = await connection.scalar(
         text(
             "SELECT EXISTS ("
             "SELECT 1 FROM pg_auth_members membership "
@@ -172,7 +177,106 @@ async def provision_protected_database_roles(
     if backup_unsafe:
         raise ValueError("Protected backup login must have no memberships or ownership")
 
-    # 3. Clean and assign strictly isolated memberships
+    privilege_query = text(
+        "SELECT EXISTS ("
+        "SELECT 1 FROM pg_class class "
+        "JOIN pg_namespace namespace ON namespace.oid = class.relnamespace "
+        "WHERE namespace.nspname NOT IN ('pg_catalog', 'information_schema') "
+        "AND namespace.nspname NOT LIKE 'pg_toast%' "
+        "AND class.relkind IN ('r', 'p', 'v', 'm', 'f') "
+        "AND ((namespace.nspname <> :schema AND ("
+        "has_table_privilege(:backup_login, class.oid, 'SELECT') "
+        "OR has_table_privilege(:backup_login, class.oid, 'INSERT') "
+        "OR has_table_privilege(:backup_login, class.oid, 'UPDATE') "
+        "OR has_table_privilege(:backup_login, class.oid, 'DELETE') "
+        "OR has_table_privilege(:backup_login, class.oid, 'TRUNCATE') "
+        "OR has_table_privilege(:backup_login, class.oid, 'TRIGGER') "
+        "OR has_table_privilege(:backup_login, class.oid, 'REFERENCES'))) "
+        "OR (namespace.nspname = :schema AND ("
+        "(class.relname NOT IN :protected_relations "
+        "AND has_table_privilege(:backup_login, class.oid, 'SELECT')) "
+        "OR has_table_privilege(:backup_login, class.oid, 'INSERT') "
+        "OR has_table_privilege(:backup_login, class.oid, 'UPDATE') "
+        "OR has_table_privilege(:backup_login, class.oid, 'DELETE') "
+        "OR has_table_privilege(:backup_login, class.oid, 'TRUNCATE') "
+        "OR has_table_privilege(:backup_login, class.oid, 'TRIGGER') "
+        "OR has_table_privilege(:backup_login, class.oid, 'REFERENCES'))))"
+        ") OR EXISTS ("
+        "SELECT 1 FROM pg_class class "
+        "JOIN pg_namespace namespace ON namespace.oid = class.relnamespace "
+        "WHERE namespace.nspname NOT IN ('pg_catalog', 'information_schema') "
+        "AND namespace.nspname NOT LIKE 'pg_toast%' "
+        "AND class.relkind = 'S' "
+        "AND (has_sequence_privilege(:backup_login, class.oid, 'SELECT') "
+        "OR has_sequence_privilege(:backup_login, class.oid, 'UPDATE') "
+        "OR has_sequence_privilege(:backup_login, class.oid, 'USAGE'))"
+        ") OR EXISTS ("
+        "SELECT 1 FROM pg_namespace namespace "
+        "WHERE namespace.nspname NOT IN ('pg_catalog', 'information_schema') "
+        "AND namespace.nspname NOT LIKE 'pg_toast%' "
+        "AND has_schema_privilege(:backup_login, namespace.oid, 'CREATE')"
+        ")"
+    ).bindparams(bindparam("protected_relations", expanding=True))
+    outside_scope_access = await connection.scalar(
+        privilege_query,
+        {
+            "backup_login": backup_login,
+            "schema": schema,
+            "protected_relations": tuple(PROTECTED_BACKUP_RELATIONS),
+        },
+    )
+    if outside_scope_access:
+        raise ValueError("Protected backup login has privileges outside the exact scope")
+
+
+async def provision_protected_database_roles(
+    *,
+    admin_connection: AsyncConnection,
+    admin_login: str,
+    schema: str,
+    owner_role: str,
+    access_role: str,
+    control_role: str,
+    data_login: str,
+    data_password: str,
+    control_login: str,
+    control_password: str,
+    backup_login: str,
+    backup_password: str,
+) -> None:
+    """Create operational logins and configure exact column-level role policies."""
+    validate_distinct_roles(
+        owner_role,
+        access_role,
+        control_role,
+        data_login,
+        control_login,
+        backup_login,
+        admin_login,
+    )
+
+    # 1. Verify existence of NOLOGIN roles created by migration bootstrap
+    for nologin_role in (owner_role, access_role, control_role):
+        exists = await admin_connection.scalar(
+            text("SELECT 1 FROM pg_roles WHERE rolname = :role AND NOT rolcanlogin"),
+            {"role": nologin_role},
+        )
+        if not exists:
+            raise ValueError(f"Bootstrap NOLOGIN role {nologin_role} does not exist or has login enabled")
+
+    # 2. Validate an existing backup login before any credential mutation.
+    await _validate_existing_backup_login_before_password_mutation(
+        admin_connection,
+        backup_login=backup_login,
+        schema=schema,
+    )
+
+    # 3. Provision operational logins
+    await _verify_login_role_attributes(admin_connection, data_login, data_password)
+    await _verify_login_role_attributes(admin_connection, control_login, control_password)
+    await _verify_login_role_attributes(admin_connection, backup_login, backup_password)
+
+    # 4. Clean and assign strictly isolated memberships
     quoted_access = quoted_identifier(access_role)
     quoted_control = quoted_identifier(control_role)
     quoted_data_login = quoted_identifier(data_login)
@@ -186,7 +290,7 @@ async def provision_protected_database_roles(
     await admin_connection.exec_driver_sql(f"GRANT {quoted_access} TO {quoted_data_login}")
     await admin_connection.exec_driver_sql(f"GRANT {quoted_control} TO {quoted_control_login}")
 
-    # 4. Apply explicit column-level least-privilege role policy
+    # 5. Apply explicit column-level least-privilege role policy
     await apply_protected_retrieval_role_policy(
         admin_connection,
         schema=schema,
@@ -356,6 +460,7 @@ async def async_main(args: argparse.Namespace) -> int:
             async with admin_engine.begin() as conn:
                 await provision_protected_database_roles(
                     admin_connection=conn,
+                    admin_login=admin_user,
                     schema=schema,
                     owner_role=owner_role,
                     access_role=access_role,
