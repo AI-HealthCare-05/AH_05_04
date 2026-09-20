@@ -14,6 +14,7 @@ import {
   isOccurrenceMedicationUnavailableError,
   resolveNotificationOccurrenceMedication,
 } from '../api/medicationOccurrences'
+import notificationBellIcon from '../assets/icon-bell-notification.svg'
 import { MobileShell } from '../design-system/components'
 import { clearAuthenticatedSession } from '../features/auth/authSession'
 import '../design-system/prototype.css'
@@ -337,7 +338,7 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
       <MobileShell
         title="Dosey 도지"
         onBack={() => navigate('/')}
-        hideNavigation
+        activeNavigation="홈"
         onNavigate={(item) => {
           if (item === '홈') navigate('/')
           if (item === '일정') navigate('/schedule')
@@ -378,7 +379,16 @@ function NotificationsPage({ onHandoffReady }: NotificationsPageProps) {
           )}
 
           {notifications?.length === 0 && (
-            <section className="mvp-notifications__state" role="status">
+            <section
+              className="mvp-notifications__state mvp-notifications__state--empty"
+              role="status"
+            >
+              <img
+                className="mvp-notifications__empty-icon"
+                src={notificationBellIcon}
+                alt=""
+                aria-hidden="true"
+              />
               <h3>새로운 알림이 없어요</h3>
               <p>복약 알림이 도착하면 이곳에서 확인할 수 있어요.</p>
             </section>
