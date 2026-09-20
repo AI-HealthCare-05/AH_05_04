@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Target audit artifact · #180 |
-| 기준 commit | `origin/develop` `b42c97bcbbd0bf1ab2b7aae26c5a073e5ac80612` |
+| 기준 commit | `origin/develop` `6e24b2b092edf149410f4766d8c3a9d22e427518` |
 | 정본 graph | `rag-runtime-v1.md` Guide Graph |
 | 범위 | canonical node와 실제 production callable의 의미 단위 대조 |
 | 결론 | `THIN_LANGGRAPH_BLOCKED_BY_CANONICAL_CALLABLE_GAPS` |
@@ -93,15 +93,15 @@
 | --- | --- |
 | contract_semantics | Guide의 pinned medication context로 authoritative retrieval/Evidence selection과 P0 request/source/evidence conflict authority를 실행한다. |
 | actual_symbol | `nearest: ai_worker.tasks.rag.guide_retrieval_outcome_binding:project_hybrid_retrieval_for_guide_composition`; B3 lookup: `SqlAlchemyGuideEvidenceAuthorityReader.lookup_request_decision_refs` |
-| input_type | pinned Sync runtime request carrier, production query fingerprint/binding verifier, and terminal replay aggregate are absent; exact REQUEST decision lookup is available |
+| input_type | pinned Sync runtime request carrier and production query fingerprint/binding verifier are absent; exact REQUEST decision lookup and terminal replay aggregate are available |
 | output_type | canonical Guide retrieval outcome is absent |
 | side_effect | READ/WRITE |
 | authority_owner | AI/RAG retrieval runtime |
 | status | `MISSING_SEMANTIC_CALLABLE` |
-| reason | Production `execute_hybrid_retrieve`, the B3 exact historical REQUEST decision lookup, and the B4 projection exist, but canonical Guide binding remains blocked by `GUIDE_RUNTIME_REQUEST_CARRIER_MISSING`, `GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING`, and `GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_UNAVAILABLE`. The terminal replay result has no original search receipt or selected-hit provenance. |
-| required_next_action | Do not add a production callable until B1, B2 fingerprint authority, and B5 are resolved; then compose the approved B3/B4 seams without duplicating retrieval execution or persistence. |
+| reason | Production `execute_hybrid_retrieve`, the B3 exact historical REQUEST decision lookup, the B4 projection, and B5 exact terminal replay readback exist, but canonical Guide binding remains blocked by `GUIDE_RUNTIME_REQUEST_CARRIER_MISSING` and `GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING`. |
+| required_next_action | Do not add a production callable until B1 and B2 fingerprint authority are resolved; then compose the approved B3/B4 seams and B5 replay payload without duplicating retrieval execution or persistence. |
 
-Retrieval binding re-audited at `origin/develop` `08f9b8427e109c0853d45ae94fd704fbba834575`.
+Retrieval binding re-audited at `origin/develop` `dde2f3db90e589ad1958f00ecd6512303fc57baa`.
 
 ### `compose_personalized_guide`
 

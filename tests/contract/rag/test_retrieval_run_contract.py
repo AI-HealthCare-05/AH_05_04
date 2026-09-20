@@ -52,6 +52,8 @@ def test_retrieval_run_table_contract() -> None:
     assert col_dict["diagnostic_code"].nullable
     assert col_dict["error_code"].nullable
     assert col_dict["search_receipt_hash"].nullable
+    assert col_dict["terminal_replay_payload"].nullable
+    assert col_dict["terminal_replay_payload_hash"].nullable
     assert col_dict["receipt_hash"].nullable
     assert not col_dict["started_at"].nullable
     assert col_dict["completed_at"].nullable
@@ -81,6 +83,8 @@ def test_retrieval_run_table_contract() -> None:
     assert "chk_retrieval_run_retrieval_configuration_hash" in chks
     assert "chk_retrieval_run_query_embedding_sha256" in chks
     assert "chk_retrieval_run_search_receipt_hash" in chks
+    assert "chk_retrieval_run_terminal_replay_payload_hash" in chks
+    assert "chk_retrieval_run_terminal_replay_payload_pair" in chks
     assert "chk_retrieval_run_receipt_hash" in chks
 
 
