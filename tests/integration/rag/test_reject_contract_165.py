@@ -580,17 +580,14 @@ async def test_successful_source_run_reaches_catalog_and_candidate(database, tmp
     from ai_worker.tasks.rag.catalog import (
         CandidateCatalogSourceRef,
         CandidateRecordStatus,
-        CatalogApprovalReceipt,
-        CatalogFreshnessStatus,
         CatalogProductInput,
-        CatalogSourceApproval,
-        CatalogVerificationStatus,
         build_catalog_members,
         create_catalog_export,
     )
     from ai_worker.tasks.rag.catalog.approval import CatalogApprovalVerifier
     from ai_worker.tests.rag.catalog.test_hash_contract_v2 import candidate
     from app.models.rag_catalog import RagCatalogSet
+    from tests.integration.rag.test_catalog_storage_roundtrip import seed_catalog_approval_receipt
 
     factory, _ = database
     record = {"ITEM_SEQ": "SYNTH_A", "ITEM_NAME": "합성 수집 제품"}
@@ -620,17 +617,11 @@ async def test_successful_source_run_reaches_catalog_and_candidate(database, tmp
         aliases=(),
     )
     initial = create_catalog_export(catalog_version="synthetic-source-handoff", source_refs=(ref,), members=members)
-    approval = CatalogApprovalReceipt(
-        "synthetic-only-approval",
-        "synthetic-source-handoff",
-        initial.export_checksum,
-        CatalogVerificationStatus.APPROVED,
-        True,
-        (
-            CatalogSourceApproval(
-                ref, "synthetic-source-approval", CatalogVerificationStatus.APPROVED, CatalogFreshnessStatus.CURRENT
-            ),
-        ),
+    approval = await seed_catalog_approval_receipt(
+        factory,
+        catalog_version="synthetic-source-handoff",
+        export_checksum=initial.export_checksum,
+        source_refs=(ref,),
     )
     artifacts = create_catalog_export(
         catalog_version="synthetic-source-handoff", source_refs=(ref,), members=members, approval_receipt=approval
