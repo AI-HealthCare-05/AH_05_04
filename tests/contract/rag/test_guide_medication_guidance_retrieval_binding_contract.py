@@ -8,7 +8,7 @@ READINESS_PATH = Path("docs/contracts/targets/post-mvp-1/guide-langgraph-callabl
 
 BINDING_STATES = {
     "GUIDE_RUNTIME_REQUEST_CARRIER_MISSING",
-    "GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING",
+    "GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_READY",
     "GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_READY",
     "GUIDE_RETRIEVAL_OUTCOME_BINDING_READY",
     "GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_READY",
@@ -85,7 +85,7 @@ def test_readiness_keeps_retrieval_missing_and_other_nodes_stable() -> None:
     assert _entry_status("retrieve_medication_guidance") == "MISSING_SEMANTIC_CALLABLE"
     assert "execute_hybrid_retrieve" in retrieval_entry
     assert "GUIDE_RUNTIME_REQUEST_CARRIER_MISSING" in retrieval_entry
-    assert "GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING" in retrieval_entry
+    assert "B2 production fingerprint/binding provider" in retrieval_entry
     assert "B5 exact terminal replay readback exist" in retrieval_entry
     assert "GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_UNAVAILABLE" not in retrieval_entry
     for node_id, expected_status in CANONICAL_STATUS_BY_OTHER_NODE.items():

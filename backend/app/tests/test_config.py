@@ -82,6 +82,32 @@ def test_ocr_structure_llm_is_disabled_by_default() -> None:
     assert field_info.default is False
 
 
+def test_guide_query_hmac_config_uses_the_frozen_initial_version_and_secret_carrier() -> None:
+    config = Config.model_validate(
+        {
+            **BASE_CONFIG,
+            "GUIDE_QUERY_HMAC_KEY": "synthetic-guide-query-hmac-key",
+        }
+    )
+
+    assert config.GUIDE_QUERY_HMAC_KEY_VERSION == "guide-query-hmac-key@1"
+    assert config.GUIDE_QUERY_HMAC_KEY is not None
+    assert config.GUIDE_QUERY_HMAC_KEY.get_secret_value() == "synthetic-guide-query-hmac-key"
+    assert "synthetic-guide-query-hmac-key" not in repr(config.GUIDE_QUERY_HMAC_KEY)
+
+
+@pytest.mark.parametrize("version", ("", "guide-query-hmac-key@0", "guide-query-hmac-key@01", "query-hmac@1"))
+def test_guide_query_hmac_config_rejects_noncanonical_key_versions(version: str) -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "GUIDE_QUERY_HMAC_KEY": "synthetic-guide-query-hmac-key",
+                "GUIDE_QUERY_HMAC_KEY_VERSION": version,
+            }
+        )
+
+
 @pytest.mark.parametrize(
     ("configured_value", "expected"),
     [

@@ -5,21 +5,20 @@ QUERY_AUTHORITY_PATH = Path("docs/contracts/targets/post-mvp-1/guide-medication-
 BINDING_PATH = Path("docs/contracts/targets/post-mvp-1/guide-medication-guidance-retrieval-binding-v1.md")
 
 
-def test_fingerprint_authority_contract_freezes_the_narrow_production_gap() -> None:
+def test_fingerprint_authority_contract_freezes_the_production_implementation_boundary() -> None:
     text = AUTHORITY_PATH.read_text(encoding="utf-8")
 
     required_anchors = (
-        "#180 B2-2",
-        "PD-315-20260908",
-        "Approved (2026-09-17)",
-        "versioned HMAC preimage",
-        "GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING",
-        "exact production algorithm identifier",
-        "key_version naming authority",
-        "secret/key owner or storage authority",
-        "approved Worker runtime key-injection dependency",
+        "#180 B2",
+        "GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_READY",
+        "HMAC-SHA-256",
+        "query-hmac@1",
+        "guide-query-hmac-key@<positive-integer>",
+        "backend/app/core/config.py",
+        "backend/app/dependencies/services.py",
+        "GuideQueryHmacKeyDependency",
         "QueryBindingVerifierPort",
-        "verifier artifact identity",
+        "guide-query-binding-verifier@1.0.0",
         "HMAC key hardcode",
         "fallback key",
         "raw query",
@@ -32,27 +31,25 @@ def test_fingerprint_authority_contract_freezes_the_narrow_production_gap() -> N
         assert anchor in text
 
 
-def test_fingerprint_authority_contract_does_not_promote_synthetic_or_unrelated_key_policy() -> None:
+def test_fingerprint_authority_contract_keeps_secrets_and_unrelated_key_policy_out_of_scope() -> None:
     text = AUTHORITY_PATH.read_text(encoding="utf-8")
 
     required_anchors = (
-        "MUST NOT promote `sha256` / `v1` synthetic fixtures",
         "MUST NOT reuse the Backend idempotency HMAC key",
         "caller MUST NOT select algorithm, key_version, secret, or hash function",
-        "No production Python implementation is added",
         "THIN_LANGGRAPH_BLOCKED_BY_CANONICAL_CALLABLE_GAPS",
-        "MISSING_SEMANTIC_CALLABLE",
+        "Chat orchestration",
     )
     for anchor in required_anchors:
         assert anchor in text
 
 
-def test_b2_documents_the_exact_blocker_without_changing_other_binding_states() -> None:
+def test_b2_documents_ready_without_changing_other_binding_states() -> None:
     query_text = QUERY_AUTHORITY_PATH.read_text(encoding="utf-8")
     binding_text = BINDING_PATH.read_text(encoding="utf-8")
 
-    assert "GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING" in query_text
-    assert "GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING" in binding_text
+    assert "GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_READY" in query_text
+    assert "GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_READY" in binding_text
     assert "GUIDE_RETRIEVAL_OUTCOME_BINDING_READY" in binding_text
     assert "GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_READY" in binding_text
     assert "GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_READY" in binding_text
