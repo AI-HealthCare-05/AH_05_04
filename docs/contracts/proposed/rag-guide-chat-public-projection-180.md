@@ -270,7 +270,36 @@ ownership, current version, consent 실패 시 Provider/LLM/RAG 호출은 없어
 
 후속 contract Freeze 시 위 값이 public DTO에 노출되는 값인지, 내부 persistence만 필요한 값인지, 저장하지 않고 즉시 projection만 할 값인지 구분해야 한다.
 
-## 10. target test locations
+## 10. Backend projection helper boundary
+
+#893 `GuideRuntimeReleaseResult`가 merge된 뒤 Backend에는 `project_guide_runtime_release()` helper를 둔다.
+이 helper는 Sync `201 Created` public DTO를 확장하지 않고, #180 public schema Freeze 전까지 service/application 계층에서 사용할 내부 projection candidate만 만든다.
+단, Backend는 `GuideRuntimeReleaseResult` 또는 다른 `ai_worker` object를 직접 받지 않는다. #180 canonical adapter가 만든 versioned internal carrier만 소비한다.
+
+helper가 하는 일:
+
+- carrier의 `PASS` 결과를 정상 answer candidate로 분류한다.
+- `LIMITED`, `REJECTED`, `STALE` 결과를 verified fallback candidate 또는 fail-closed no-public-content로 분류한다.
+- canonical card citation identity와 authorized citation identity가 정확히 같은 경우에만 citation candidate를 만든다.
+- answer composition도 carrier의 `answer_text`만 사용하며 `card_outcome.card`를 Backend에서 별도 접근하지 않는다.
+- fallback text는 canonical carrier의 verified fallback text만 사용한다.
+- 기존 `GuideCitation` 테이블로 저장 가능한 범위와 불가능한 범위를 `persistence_gaps`로 분리한다.
+
+helper가 하지 않는 일:
+
+- `GuideResponse` DTO/OpenAPI 확장
+- `GuideService.create_guide()`의 runtime callable wiring
+- `GuideRepository.mark_completed()` 저장 계약 변경
+- `GuideCitation` 또는 새 runtime release persistence migration
+- public `PASS | LIMITED | REJECTED | STALE` enum 확정
+- source URL/title/excerpt/locator public 규칙 확정
+- 내부 execution/evidence/reason/authorization receipt/score/rank/confidence/raw source 노출
+
+현재 `GuideCitation`은 `knowledge_chunk_id`, `claim_text`, `cited_text` 중심의 legacy citation table이다.
+#893 runtime citation은 `source_snapshot_id`, `source_snapshot_member_id`, `source_code`, `source_version`, `locator`, `content_sha256` 좌표를 가진다.
+따라서 현 상태에서는 runtime citation을 기존 `GuideCitation`에 손실 없이 저장할 수 없으며, Guide GET 재조회에서 동일 Citation/Fallback 의미를 복원하려면 별도 persistence 계약 또는 migration이 필요하다.
+
+## 11. target test locations
 
 Phase B에서 contract가 확정되면 다음 위치에 테스트를 추가한다.
 
@@ -312,7 +341,7 @@ Chat concurrency/stale regression:
 - unauthorized citation
 - unauthorized/malformed citation이 public response와 persisted public projection에 남지 않는 경우
 
-## 11. 완료 기준
+## 12. 완료 기준
 
 이 Phase A 문서가 완료됐다는 것은 다음을 의미한다.
 
