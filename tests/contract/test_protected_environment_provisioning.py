@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -386,6 +387,71 @@ def test_backup_restore_rotation_workflow_and_compose_contract() -> None:
     for name in ordinary:
         assert all("/protected-backups" not in str(v) for v in services[name].get("volumes", []))
         assert all(not key.startswith("PROTECTED_BACKUP_") for key in services[name].get("environment", {}))
+
+
+def test_protected_operations_cannot_mutate_general_runtime_services() -> None:
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github/workflows/protected_retrieval_runner.yml").read_text(encoding="utf-8")
+    )
+    protected_jobs = {
+        "provision": "protected-retrieval-provision",
+        "backup": "protected-retrieval-backup",
+        "restore-verify": "protected-retrieval-restore",
+        "rotate-db": "protected-retrieval-rotate-db",
+    }
+    general_services = (
+        "fastapi",
+        "ai-worker",
+        "nginx",
+        "postgres",
+        "checkin-deadline-scheduler",
+    )
+
+    for job_name, protected_service in protected_jobs.items():
+        run_script = workflow["jobs"][job_name]["steps"][1]["run"]
+        normalized = " ".join(run_script.replace("\\\n", " ").split())
+
+        assert "scripts/deployment.sh" not in run_script
+        assert not re.search(r"docker compose\b[^\n]*(?:down|restart|stop)\b", normalized)
+        for service in general_services:
+            assert not re.search(
+                rf"docker compose\b[^\n]*\b(?:up|run)\b[^\n]*\b{re.escape(service)}\b",
+                normalized,
+            )
+
+        assert f"run --rm --no-deps {protected_service}" in normalized
+
+    restore_script = workflow["jobs"]["restore-verify"]["steps"][1]["run"]
+    assert "up -d --wait protected-retrieval-restore-db" in " ".join(restore_script.split())
+
+
+def test_protected_operations_pin_exact_sha_without_mutating_shared_versions() -> None:
+    workflow_path = REPO_ROOT / ".github/workflows/protected_retrieval_runner.yml"
+    content = workflow_path.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(content)
+    protected_jobs = {
+        "provision": "protected-retrieval-provision",
+        "backup": "protected-retrieval-backup",
+        "restore-verify": "protected-retrieval-restore",
+        "rotate-db": "protected-retrieval-rotate-db",
+    }
+
+    assert "AI_WORKER_VERSION" not in content
+    assert ":latest" not in content
+    assert not re.search(r"(?:sed|perl|python)[^\n]*APP_VERSION[^\n]*project/\.env", content)
+    assert not re.search(r"project/\.env\s*(?:>|>>)", content)
+
+    for job_name, protected_service in protected_jobs.items():
+        execute_step = workflow["jobs"][job_name]["steps"][1]
+        run_script = execute_step["run"]
+        normalized = " ".join(run_script.replace("\\\n", " ").split())
+
+        assert execute_step["env"]["PROTECTED_APP_VERSION"] == "${{ github.sha }}"
+        assert f"pull --policy always {protected_service}" in normalized
+        assert normalized.index(f"pull --policy always {protected_service}") < normalized.index(
+            f"run --rm --no-deps {protected_service}"
+        )
+        assert normalized.count("APP_VERSION=${PROTECTED_APP_VERSION} docker compose") >= 2
 
 
 def test_provisioning_script_prohibits_direct_data_mutation() -> None:
