@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 상태 | Approved Target |
-| 구현 | Partially implemented — DTO/schema, 10 canonical recipe helpers, manifest/run validation, #808 typed seam projection |
+| 구현 | Partially implemented — DTO/schema, 10 canonical recipe helpers, manifest self-hash/run/variant delta state validation, #808 typed seam projection and fail-closed tests |
 | Decision | [`PD-159-20260913`](../../../governance/decisions/2026-09-13-rag-answer-quality-metrics.md) |
 | 추적 Issue | [#159](https://github.com/AI-HealthCare-05/AH_05_04/issues/159) |
 | 구현 담당 | 정현우 (`@ceohwj`, AI/RAG Implementation Owner) |
@@ -355,17 +355,19 @@ $$\text{Authoritative Carrier / Extractor Validation} \longrightarrow 7\text{ Su
 - **Approval Comment**: [`5740823309`](https://github.com/AI-HealthCare-05/AH_05_04/pull/833#issuecomment-5740823309) ("PD-159-20260913 Phase B / PR #833 final HEAD ef8a78c8 APPROVED")
 - **Approval Date**: 2026-09-19
 
-### 2) 구현 착수 Gate (Implementation Gate)
-Phase B contract approval completed.
+### 2) Phase B Python 부분 구현 현황
+Phase B contract approval에 따라 다음 범위의 Python 구현과 회귀 검증을 완료했다.
 
-`RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING` 10개 항목에 대해 Python implementation may now begin for:
 - approved manifest DTO/schema (`rag-eval.answer-runtime-binding-manifest@1.0.0`)
 - approved 10 canonical recipe helpers
-- authoritative extractor/binding validation (`CanonicalUuid`, 64-hex hash pattern, self-hash integrity)
+- manifest self-hash, run identity, variant delta state validation
 - approved #808 typed seam projection (`AnswerComparisonSupplementalControls`, `AnswerComparisonDeltaBindings`)
-- fail-closed handling for unresolved bindings (`RETRIEVED_EVIDENCE=null`, upstream finalization blocked deltas=`null`)
+- unresolved binding의 fail-closed 회귀 검증 (`RETRIEVED_EVIDENCE=null`, upstream finalization blocked deltas=`null`)
+
+이는 pure helper/parser 수준의 부분 구현이며, `RECIPE_APPROVED_BINDING_IMPLEMENTATION_PENDING` 10개 항목의 authoritative runtime carrier materialization 완료를 의미하지 않는다.
 
 단 다음은 여전히 구현하지 않는다:
+- 7개 supplemental authoritative runtime carrier/extractor
 - `RETRIEVED_EVIDENCE` fake carrier
 - `ANS-BASE` synthetic supplemental authority
 - `FINAL_VALIDATOR`

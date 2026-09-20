@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from decimal import Decimal
+from typing import cast
 from uuid import UUID
 
 import pytest
@@ -72,6 +73,53 @@ _DEFAULT_REQUEST_GUARD_DECISION_ID = UUID("11111111-1111-4111-8111-111111111111"
 _DEFAULT_USER_ID = UUID("22222222-2222-4222-8222-222222222222")
 
 
+def _not_applied_hash(axis: str) -> str:
+    return canonical_sha256(
+        {
+            "axis": axis,
+            "binding_state": "NOT_APPLIED",
+            "projection_version": "answer-authority-binding-v1",
+        }
+    )
+
+
+def _valid_delta_bindings(variant_id: str) -> dict[str, JsonValue]:
+    if variant_id == AnswerVariantId.ANS_BASE:
+        return {
+            "retrieval_pipeline_hash": _not_applied_hash("RETRIEVAL_PIPELINE"),
+            "source_index_hash": _not_applied_hash("SOURCE_INDEX"),
+            "runtime_bundle_hash": _not_applied_hash("RUNTIME_BUNDLE"),
+            "retrieved_evidence_hash": _not_applied_hash("RETRIEVED_EVIDENCE"),
+            "final_validator_hash": _not_applied_hash("FINAL_VALIDATOR"),
+            "citation_gate_hash": _not_applied_hash("CITATION_GATE"),
+            "safety_gate_hash": _not_applied_hash("SAFETY_GATE"),
+            "release_gate_hash": _not_applied_hash("RELEASE_GATE"),
+        }
+    if variant_id == AnswerVariantId.ANS_RAG:
+        return {
+            "retrieval_pipeline_hash": "8" * 64,
+            "source_index_hash": "9" * 64,
+            "runtime_bundle_hash": "a" * 64,
+            "retrieved_evidence_hash": None,
+            "final_validator_hash": _not_applied_hash("FINAL_VALIDATOR"),
+            "citation_gate_hash": _not_applied_hash("CITATION_GATE"),
+            "safety_gate_hash": _not_applied_hash("SAFETY_GATE"),
+            "release_gate_hash": _not_applied_hash("RELEASE_GATE"),
+        }
+    if variant_id == AnswerVariantId.ANS_FINAL:
+        return {
+            "retrieval_pipeline_hash": "8" * 64,
+            "source_index_hash": "9" * 64,
+            "runtime_bundle_hash": "a" * 64,
+            "retrieved_evidence_hash": None,
+            "final_validator_hash": None,
+            "citation_gate_hash": None,
+            "safety_gate_hash": None,
+            "release_gate_hash": None,
+        }
+    raise AssertionError(f"unsupported test variant: {variant_id}")
+
+
 def _manifest_payload(
     *,
     run_id: str = "11111111-1111-4111-8111-111111111111",
@@ -93,16 +141,7 @@ def _manifest_payload(
             "token_limit_hash": "6" * 64,
             "timeout_hash": "7" * 64,
         },
-        "delta_bindings": {
-            "retrieval_pipeline_hash": "8" * 64,
-            "source_index_hash": "9" * 64,
-            "runtime_bundle_hash": "a" * 64,
-            "retrieved_evidence_hash": None,
-            "final_validator_hash": None,
-            "citation_gate_hash": None,
-            "safety_gate_hash": None,
-            "release_gate_hash": None,
-        },
+        "delta_bindings": _valid_delta_bindings(variant_id),
         "manifest_sha256": "0" * 64,
     }
     payload["manifest_sha256"] = canonical_sha256(
@@ -212,12 +251,51 @@ def _observation(
     )
 
 
-def test_manifest_parser_accepts_valid_manifest_and_nullable_deltas() -> None:
-    manifest = _parse(_manifest_payload())
+@pytest.mark.parametrize("variant_id", tuple(AnswerVariantId))
+def test_manifest_parser_accepts_exact_variant_delta_state_contract(variant_id: AnswerVariantId) -> None:
+    manifest = _parse(_manifest_payload(variant_id=variant_id))
 
-    assert manifest.variant_id is AnswerVariantId.ANS_RAG
-    assert manifest.delta_bindings.retrieved_evidence_hash is None
-    assert manifest.delta_bindings.release_gate_hash is None
+    assert manifest.variant_id is variant_id
+
+
+@pytest.mark.parametrize(
+    ("variant_id", "field", "invalid_value"),
+    (
+        (AnswerVariantId.ANS_BASE, "retrieval_pipeline_hash", None),
+        (AnswerVariantId.ANS_BASE, "source_index_hash", "f" * 64),
+        (AnswerVariantId.ANS_BASE, "runtime_bundle_hash", _not_applied_hash("SOURCE_INDEX")),
+        (AnswerVariantId.ANS_BASE, "final_validator_hash", None),
+        (AnswerVariantId.ANS_RAG, "retrieval_pipeline_hash", None),
+        (AnswerVariantId.ANS_RAG, "retrieval_pipeline_hash", _not_applied_hash("RETRIEVAL_PIPELINE")),
+        (AnswerVariantId.ANS_RAG, "source_index_hash", None),
+        (AnswerVariantId.ANS_RAG, "source_index_hash", _not_applied_hash("SOURCE_INDEX")),
+        (AnswerVariantId.ANS_RAG, "runtime_bundle_hash", None),
+        (AnswerVariantId.ANS_RAG, "runtime_bundle_hash", _not_applied_hash("RUNTIME_BUNDLE")),
+        (AnswerVariantId.ANS_RAG, "retrieved_evidence_hash", "b" * 64),
+        (AnswerVariantId.ANS_RAG, "final_validator_hash", None),
+        (AnswerVariantId.ANS_RAG, "citation_gate_hash", "c" * 64),
+        (AnswerVariantId.ANS_FINAL, "retrieval_pipeline_hash", None),
+        (AnswerVariantId.ANS_FINAL, "source_index_hash", _not_applied_hash("SOURCE_INDEX")),
+        (AnswerVariantId.ANS_FINAL, "retrieved_evidence_hash", "d" * 64),
+        (AnswerVariantId.ANS_FINAL, "final_validator_hash", _not_applied_hash("FINAL_VALIDATOR")),
+        (AnswerVariantId.ANS_FINAL, "release_gate_hash", "e" * 64),
+    ),
+)
+def test_manifest_parser_rejects_semantically_invalid_variant_delta_states(
+    variant_id: AnswerVariantId,
+    field: str,
+    invalid_value: JsonValue,
+) -> None:
+    payload = _manifest_payload(variant_id=variant_id)
+    delta = payload["delta_bindings"]
+    assert isinstance(delta, dict)
+    delta[field] = invalid_value
+    _rehash(payload)
+
+    with pytest.raises(EvaluationValidationError) as exc_info:
+        _parse(payload)
+
+    assert exc_info.value.code is EvaluationErrorCode.SCHEMA_INVALID
 
 
 @pytest.mark.parametrize(
@@ -437,6 +515,73 @@ def test_retrieval_pipeline_and_source_index_reuse_authoritative_hashes() -> Non
     )
 
 
+@pytest.mark.parametrize("variant_id", (AnswerVariantId.ANS_RAG, AnswerVariantId.ANS_FINAL))
+def test_retrieval_and_runtime_recipes_accept_each_applied_variant(
+    variant_id: AnswerVariantId,
+) -> None:
+    retrieval_config = _retrieval_config()
+    model_config = _retrieval_model_config()
+    observation = _observation()
+
+    assert (
+        compute_retrieval_pipeline_binding_hash(variant_id, retrieval_config)
+        == retrieval_config.artifact_ref.content_sha256
+    )
+    assert compute_source_index_binding_hash(variant_id, model_config) == model_config.knowledge_index_ref.hash
+    assert compute_runtime_bundle_binding_hash(variant_id, observation) == canonical_sha256(
+        {
+            "bundle_id": str(observation.bundle_id),
+            "bundle_manifest_hash": observation.bundle_manifest_hash,
+            "environment": observation.environment.value,
+            "projection_version": "answer-runtime-bundle-binding-v1",
+        }
+    )
+
+
+def test_retrieval_and_runtime_recipes_reject_sources_for_base() -> None:
+    with pytest.raises(EvaluationValidationError) as retrieval_exc:
+        compute_retrieval_pipeline_binding_hash(AnswerVariantId.ANS_BASE, _retrieval_config())
+    with pytest.raises(EvaluationValidationError) as source_exc:
+        compute_source_index_binding_hash(AnswerVariantId.ANS_BASE, _retrieval_model_config())
+    with pytest.raises(EvaluationValidationError) as runtime_exc:
+        compute_runtime_bundle_binding_hash(AnswerVariantId.ANS_BASE, _observation())
+
+    assert retrieval_exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+    assert source_exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+    assert runtime_exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+@pytest.mark.parametrize("variant_id", (AnswerVariantId.ANS_RAG, AnswerVariantId.ANS_FINAL))
+def test_retrieval_and_runtime_recipes_require_sources_for_applied_variants(
+    variant_id: AnswerVariantId,
+) -> None:
+    with pytest.raises(EvaluationValidationError) as retrieval_exc:
+        compute_retrieval_pipeline_binding_hash(variant_id)
+    with pytest.raises(EvaluationValidationError) as source_exc:
+        compute_source_index_binding_hash(variant_id)
+    with pytest.raises(EvaluationValidationError) as runtime_exc:
+        compute_runtime_bundle_binding_hash(variant_id)
+
+    assert retrieval_exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+    assert source_exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+    assert runtime_exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+def test_retrieval_and_runtime_recipes_reject_unsupported_variant() -> None:
+    unsupported = cast(AnswerVariantId, "ANS-FUTURE")
+
+    with pytest.raises(EvaluationValidationError) as retrieval_exc:
+        compute_retrieval_pipeline_binding_hash(unsupported, _retrieval_config())
+    with pytest.raises(EvaluationValidationError) as source_exc:
+        compute_source_index_binding_hash(unsupported, _retrieval_model_config())
+    with pytest.raises(EvaluationValidationError) as runtime_exc:
+        compute_runtime_bundle_binding_hash(unsupported, _observation())
+
+    assert retrieval_exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+    assert source_exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+    assert runtime_exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
 def test_retrieval_pipeline_rejects_invalid_configuration_hash() -> None:
     config = replace(
         _retrieval_config(),
@@ -507,6 +652,23 @@ def test_manifest_projects_exactly_to_808_typed_seam_and_preserves_none() -> Non
         source_index_hash="9" * 64,
         runtime_bundle_hash="a" * 64,
         retrieved_evidence_hash=None,
+        final_validator_hash=_not_applied_hash("FINAL_VALIDATOR"),
+        citation_gate_hash=_not_applied_hash("CITATION_GATE"),
+        safety_gate_hash=_not_applied_hash("SAFETY_GATE"),
+        release_gate_hash=_not_applied_hash("RELEASE_GATE"),
+    )
+
+
+def test_final_manifest_projects_nullable_unimplemented_axes_to_808_typed_seam() -> None:
+    manifest = _parse(_manifest_payload(variant_id=AnswerVariantId.ANS_FINAL))
+
+    _, delta = project_answer_runtime_binding_manifest(manifest)
+
+    assert delta == AnswerComparisonDeltaBindings(
+        retrieval_pipeline_hash="8" * 64,
+        source_index_hash="9" * 64,
+        runtime_bundle_hash="a" * 64,
+        retrieved_evidence_hash=None,
         final_validator_hash=None,
         citation_gate_hash=None,
         safety_gate_hash=None,
@@ -523,9 +685,12 @@ def test_manifest_projects_exactly_to_808_typed_seam_and_preserves_none() -> Non
     ],
 )
 def test_run_binding_rejects_wrong_identity(manifest_field: str, manifest_value: str) -> None:
-    payload = _manifest_payload()
-    payload[manifest_field] = manifest_value
-    _rehash(payload)
+    if manifest_field == "variant_id":
+        payload = _manifest_payload(variant_id=manifest_value)
+    else:
+        payload = _manifest_payload()
+        payload[manifest_field] = manifest_value
+        _rehash(payload)
     manifest = _parse(payload)
     run = _make_run(
         AnswerVariantId.ANS_RAG,

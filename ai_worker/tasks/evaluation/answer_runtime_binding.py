@@ -15,6 +15,7 @@ from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationVal
 from ai_worker.tasks.evaluation.schemas.answer_quality_v1 import (
     AnswerRuntimeAuthorityBindingManifest,
     AnswerVariantId,
+    answer_runtime_not_applied_binding_hash,
 )
 from ai_worker.tasks.evaluation.schemas.artifacts import RagEvaluationRun
 from ai_worker.tasks.evaluation.schemas.common import MAX_SAFE_INTEGER
@@ -22,19 +23,6 @@ from ai_worker.tasks.rag.evidence_retrieval import is_valid_immutable_artifact_r
 from ai_worker.tasks.rag.evidence_search import VersionedEvidenceRetrievalConfiguration
 from ai_worker.tasks.rag.guideline_card import GuidelineGenerationProvenance
 from rag_runtime.request_guard_runtime_binding import RequestGuardRuntimeBindingObservation
-
-_DELTA_AXES = frozenset(
-    {
-        "RETRIEVAL_PIPELINE",
-        "SOURCE_INDEX",
-        "RUNTIME_BUNDLE",
-        "RETRIEVED_EVIDENCE",
-        "FINAL_VALIDATOR",
-        "CITATION_GATE",
-        "SAFETY_GATE",
-        "RELEASE_GATE",
-    }
-)
 
 
 def _invalid() -> EvaluationValidationError:
@@ -49,15 +37,10 @@ def compute_answer_runtime_binding_manifest_sha256(payload: Mapping[str, JsonVal
 
 
 def compute_not_applied_binding_hash(axis: str) -> str:
-    if axis not in _DELTA_AXES:
-        raise _invalid()
-    return canonical_sha256(
-        {
-            "axis": axis,
-            "binding_state": "NOT_APPLIED",
-            "projection_version": "answer-authority-binding-v1",
-        }
-    )
+    try:
+        return answer_runtime_not_applied_binding_hash(axis)
+    except ValueError:
+        raise _invalid() from None
 
 
 def compute_input_context_binding_hash(bundle: LoadedRunBundle) -> str:
@@ -143,9 +126,21 @@ def compute_retrieval_pipeline_binding_hash(
         if retrieval_config is not None:
             raise _invalid()
         return compute_not_applied_binding_hash("RETRIEVAL_PIPELINE")
-    if type(retrieval_config) is not VersionedEvidenceRetrievalConfiguration or not retrieval_config.is_hash_valid():
-        raise _invalid()
-    return retrieval_config.artifact_ref.content_sha256
+    if variant_id is AnswerVariantId.ANS_RAG:
+        if (
+            type(retrieval_config) is not VersionedEvidenceRetrievalConfiguration
+            or not retrieval_config.is_hash_valid()
+        ):
+            raise _invalid()
+        return retrieval_config.artifact_ref.content_sha256
+    if variant_id is AnswerVariantId.ANS_FINAL:
+        if (
+            type(retrieval_config) is not VersionedEvidenceRetrievalConfiguration
+            or not retrieval_config.is_hash_valid()
+        ):
+            raise _invalid()
+        return retrieval_config.artifact_ref.content_sha256
+    raise _invalid()
 
 
 def compute_source_index_binding_hash(
@@ -158,9 +153,15 @@ def compute_source_index_binding_hash(
         if model_config is not None:
             raise _invalid()
         return compute_not_applied_binding_hash("SOURCE_INDEX")
-    if type(model_config) is not ActualRetrievalModelConfig:
-        raise _invalid()
-    return model_config.knowledge_index_ref.hash
+    if variant_id is AnswerVariantId.ANS_RAG:
+        if type(model_config) is not ActualRetrievalModelConfig:
+            raise _invalid()
+        return model_config.knowledge_index_ref.hash
+    if variant_id is AnswerVariantId.ANS_FINAL:
+        if type(model_config) is not ActualRetrievalModelConfig:
+            raise _invalid()
+        return model_config.knowledge_index_ref.hash
+    raise _invalid()
 
 
 def compute_runtime_bundle_binding_hash(
@@ -173,16 +174,29 @@ def compute_runtime_bundle_binding_hash(
         if observation is not None:
             raise _invalid()
         return compute_not_applied_binding_hash("RUNTIME_BUNDLE")
-    if type(observation) is not RequestGuardRuntimeBindingObservation:
-        raise _invalid()
-    return canonical_sha256(
-        {
-            "bundle_id": str(observation.bundle_id),
-            "bundle_manifest_hash": observation.bundle_manifest_hash,
-            "environment": observation.environment.value,
-            "projection_version": "answer-runtime-bundle-binding-v1",
-        }
-    )
+    if variant_id is AnswerVariantId.ANS_RAG:
+        if type(observation) is not RequestGuardRuntimeBindingObservation:
+            raise _invalid()
+        return canonical_sha256(
+            {
+                "bundle_id": str(observation.bundle_id),
+                "bundle_manifest_hash": observation.bundle_manifest_hash,
+                "environment": observation.environment.value,
+                "projection_version": "answer-runtime-bundle-binding-v1",
+            }
+        )
+    if variant_id is AnswerVariantId.ANS_FINAL:
+        if type(observation) is not RequestGuardRuntimeBindingObservation:
+            raise _invalid()
+        return canonical_sha256(
+            {
+                "bundle_id": str(observation.bundle_id),
+                "bundle_manifest_hash": observation.bundle_manifest_hash,
+                "environment": observation.environment.value,
+                "projection_version": "answer-runtime-bundle-binding-v1",
+            }
+        )
+    raise _invalid()
 
 
 def validate_answer_runtime_binding_manifest_for_run(
