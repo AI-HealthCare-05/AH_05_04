@@ -88,6 +88,14 @@ from app.services.track_c_revision_invalidation import TrackCCheckinRevisionInva
 from app.services.track_c_support import TrackCSupportService
 from app.services.user_consents import ConsentGateService, OcrConsentService
 from app.services.users import UserConsentService, UserManageService
+from rag_runtime.closed_demo_chat_query_binding import (
+    ApprovedClosedDemoChatQueryHmacKey,
+    ClosedDemoChatQueryBindingDependencyError,
+    ClosedDemoChatQueryFingerprintProducer,
+    ClosedDemoChatQueryVerifier,
+    build_closed_demo_chat_query_fingerprint_producer,
+    build_closed_demo_chat_query_verifier,
+)
 from rag_runtime.guide_query_binding import (
     ApprovedGuideQueryHmacKey,
     GuideQueryFingerprintDependencyError,
@@ -517,6 +525,57 @@ def get_guide_query_binding_verifier(
     return build_production_query_binding_verifier(key_dependency)
 
 
+@dataclass(frozen=True, slots=True)
+class ClosedDemoChatQueryHmacKeyDependency:
+    """Composition-root carrier for the CLOSED_DEMO Chat HMAC authority only."""
+
+    key_version: str
+    _key: ApprovedClosedDemoChatQueryHmacKey | None
+
+    def active_key_version(self) -> str:
+        return self.key_version
+
+    def key_for_version(self, key_version: str) -> ApprovedClosedDemoChatQueryHmacKey | None:
+        if key_version != self.key_version:
+            return None
+        if self._key is None:
+            raise ClosedDemoChatQueryBindingDependencyError()
+        return self._key
+
+
+def get_closed_demo_chat_query_hmac_key_dependency() -> ClosedDemoChatQueryHmacKeyDependency:
+    """Translate Config into the independent CLOSED_DEMO Chat key authority."""
+
+    secret = config.CHAT_CLOSED_DEMO_QUERY_HMAC_KEY
+    key: ApprovedClosedDemoChatQueryHmacKey | None = None
+    if secret is not None:
+        try:
+            material = secret.get_secret_value()
+            if material.strip():
+                key = ApprovedClosedDemoChatQueryHmacKey(material.encode())
+        except Exception:
+            key = None
+    return ClosedDemoChatQueryHmacKeyDependency(config.CHAT_CLOSED_DEMO_QUERY_HMAC_KEY_VERSION, key)
+
+
+def get_closed_demo_chat_query_fingerprint_producer(
+    key_dependency: Annotated[
+        ClosedDemoChatQueryHmacKeyDependency,
+        Depends(get_closed_demo_chat_query_hmac_key_dependency),
+    ],
+) -> ClosedDemoChatQueryFingerprintProducer:
+    return build_closed_demo_chat_query_fingerprint_producer(key_dependency)
+
+
+def get_closed_demo_chat_query_binding_verifier(
+    key_dependency: Annotated[
+        ClosedDemoChatQueryHmacKeyDependency,
+        Depends(get_closed_demo_chat_query_hmac_key_dependency),
+    ],
+) -> ClosedDemoChatQueryVerifier:
+    return build_closed_demo_chat_query_verifier(key_dependency)
+
+
 def get_guide_generator(
     client: Annotated[
         AsyncOpenAI,
@@ -574,12 +633,12 @@ def get_closed_demo_retrieval_service(
         Depends(get_openai_client),
     ],
     fingerprint_producer: Annotated[
-        GuideQueryFingerprintProducer,
-        Depends(get_guide_query_fingerprint_producer),
+        ClosedDemoChatQueryFingerprintProducer,
+        Depends(get_closed_demo_chat_query_fingerprint_producer),
     ],
     binding_verifier: Annotated[
-        ProductionQueryBindingVerifier,
-        Depends(get_guide_query_binding_verifier),
+        ClosedDemoChatQueryVerifier,
+        Depends(get_closed_demo_chat_query_binding_verifier),
     ],
 ) -> ClosedDemoRetrievalService | None:
     """Keep Sync Chat on its existing path unless the explicit CLOSED_DEMO gate is on."""

@@ -21,7 +21,7 @@ from ai_worker.tasks.rag.closed_demo_retrieval_binding import (
     ClosedDemoRetrievalBinding,
     load_closed_demo_retrieval_binding,
 )
-from ai_worker.tasks.rag.evidence_retrieval import SensitiveText
+from ai_worker.tasks.rag.evidence_retrieval import QueryFingerprint, SensitiveText
 from ai_worker.tasks.rag.evidence_search import EvidenceSearchRequest, ProductionSearchHit
 from ai_worker.tasks.rag.production_evidence_gate import EvidenceGateSuccess
 from ai_worker.tasks.rag.retrieval_runtime import (
@@ -29,11 +29,11 @@ from ai_worker.tasks.rag.retrieval_runtime import (
     RetrievalExecutionStatus,
     execute_production_retrieval,
 )
-from rag_runtime.guide_query_binding import (
-    GuideQueryFingerprintDependencyError,
-    GuideQueryFingerprintProducer,
-    ProductionQueryBindingVerifier,
-    QueryBindingVerificationSuccess,
+from rag_runtime.closed_demo_chat_query_binding import (
+    ClosedDemoChatQueryBindingDependencyError,
+    ClosedDemoChatQueryFingerprintProducer,
+    ClosedDemoChatQueryVerificationSuccess,
+    ClosedDemoChatQueryVerifier,
 )
 
 _SOURCE591_DATABASE = "source591_staging"
@@ -108,9 +108,14 @@ class ClosedDemoRetrievalService:
         *,
         dependencies: ClosedDemoRetrievalDependencies,
         text_embedding_adapter: OpenAITextEmbeddingAdapter,
-        fingerprint_producer: GuideQueryFingerprintProducer,
-        binding_verifier: ProductionQueryBindingVerifier,
+        fingerprint_producer: ClosedDemoChatQueryFingerprintProducer,
+        binding_verifier: ClosedDemoChatQueryVerifier,
     ) -> None:
+        if (
+            type(fingerprint_producer) is not ClosedDemoChatQueryFingerprintProducer
+            or type(binding_verifier) is not ClosedDemoChatQueryVerifier
+        ):
+            raise ClosedDemoRetrievalConfigurationError("CLOSED_DEMO Chat query authority is required")
         self._dependencies = dependencies
         self._text_embedding_adapter = text_embedding_adapter
         self._fingerprint_producer = fingerprint_producer
@@ -119,20 +124,26 @@ class ClosedDemoRetrievalService:
 
     async def retrieve(self, question: str) -> tuple[ClosedDemoEvidence, ...]:
         """Retrieve all-or-nothing evidence for an already validated Chat question."""
+        # ``SensitiveText`` and ``QueryFingerprint`` are neutral shared value
+        # types.  The authority below is exclusively CLOSED_DEMO Chat policy.
         query = SensitiveText(question)
         try:
             fingerprint = self._fingerprint_producer.produce(query)
-        except GuideQueryFingerprintDependencyError as exc:
+        except ClosedDemoChatQueryBindingDependencyError as exc:
             raise ClosedDemoRetrievalExecutionError("query fingerprint unavailable") from exc
         verification = self._binding_verifier.verify(query, fingerprint)
-        if type(verification) is not QueryBindingVerificationSuccess:
+        if type(verification) is not ClosedDemoChatQueryVerificationSuccess:
             raise ClosedDemoRetrievalExecutionError("query fingerprint verification failed")
 
         outcome = await execute_production_retrieval(
             ProductionRetrievalRequest(
                 search_request=EvidenceSearchRequest(
                     normalized_query=query,
-                    query_fingerprint=fingerprint,
+                    query_fingerprint=QueryFingerprint(
+                        algorithm=fingerprint.algorithm,
+                        key_version=fingerprint.key_version,
+                        digest=fingerprint.digest,
+                    ),
                     execution_binding=self._dependencies.binding.execution_binding,
                     query_embedding_receipt=None,
                 )
@@ -221,8 +232,8 @@ def build_closed_demo_retrieval_service(
     *,
     database_config: ClosedDemoRetrievalDatabaseConfig,
     openai_client: Any,
-    fingerprint_producer: GuideQueryFingerprintProducer,
-    binding_verifier: ProductionQueryBindingVerifier,
+    fingerprint_producer: ClosedDemoChatQueryFingerprintProducer,
+    binding_verifier: ClosedDemoChatQueryVerifier,
 ) -> ClosedDemoRetrievalService:
     """Build the sealed read-only retrieval composition without opening a session."""
     dependencies = build_closed_demo_retrieval_dependencies(database_config)

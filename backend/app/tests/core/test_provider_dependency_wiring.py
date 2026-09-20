@@ -14,6 +14,10 @@ from app.services.chat_ai import ChatEngine, ChatProvider
 from app.services.guide_ai import GuideGenerator, GuideProvider
 from app.services.ocr_ai import OcrStructureProvider, OcrStructurer
 from app.services.ocr_engine import OcrEngine
+from rag_runtime.closed_demo_chat_query_binding import (
+    ClosedDemoChatQueryVerificationSuccess,
+    ClosedDemoChatQueryVerifier,
+)
 from rag_runtime.guide_query_binding import (
     GuideQueryFingerprintDependencyError,
     ProductionQueryBindingVerifier,
@@ -94,6 +98,30 @@ def test_guide_query_hmac_dependency_rejects_blank_secret_without_echoing_it(
         services.get_guide_query_fingerprint_producer(dependency).produce(SensitiveText("합성 복약 정보"))
 
     assert secret not in str(raised.value)
+
+
+def test_closed_demo_chat_query_hmac_dependencies_use_the_separate_chat_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "synthetic-closed-demo-chat-query-hmac-key"
+    monkeypatch.setattr(services.config, "CHAT_CLOSED_DEMO_QUERY_HMAC_KEY", SecretStr(secret))
+    monkeypatch.setattr(
+        services.config,
+        "CHAT_CLOSED_DEMO_QUERY_HMAC_KEY_VERSION",
+        "closed-demo-chat-query-hmac-key@1",
+    )
+
+    dependency = services.get_closed_demo_chat_query_hmac_key_dependency()
+    producer = services.get_closed_demo_chat_query_fingerprint_producer(dependency)
+    verifier = services.get_closed_demo_chat_query_binding_verifier(dependency)
+    fingerprint = producer.produce(SensitiveText("복약 후 졸릴 수 있나요?"))
+
+    result = verifier.verify(SensitiveText("복약 후 졸릴 수 있나요?"), fingerprint)
+
+    assert isinstance(result, ClosedDemoChatQueryVerificationSuccess)
+    assert isinstance(verifier, ClosedDemoChatQueryVerifier)
+    assert fingerprint.key_version == "closed-demo-chat-query-hmac-key@1"
+    assert secret not in repr(dependency)
 
 
 def test_ocr_dependencies_inject_distinct_clova_and_openai_descriptors(monkeypatch: pytest.MonkeyPatch) -> None:
