@@ -261,7 +261,6 @@ async def _seed_database(
             candidate_index_manifest_hash="4" * 64,
             rule_set_ref="rule-ref-1",
             rule_set_version="1.0.0",
-            rule_set_manifest_hash=None,
             governance_revision_ref=GOVERNANCE_REV,
         )
         session.add(bundle)

@@ -338,6 +338,86 @@ async def test_read_candidate_start_minimal_building_bundle() -> None:
 
 
 @pytest.mark.asyncio
+async def test_read_candidate_start_rejects_bundle_without_required_candidate_index() -> None:
+    # Reviewer MUST FIX: Candidate Index is strictly required for BUILDING bundles.
+    # Even if bundle_manifest_hash is computed matching raw state without CANDIDATE_INDEX,
+    # the reader must reject it fail-closed.
+    config_without_candidate = RuntimeBundleCanonicalConfiguration(
+        environment_code="LOCAL",
+        execution_manifest_hash=MANIFEST_HASH,
+        catalog_version="1.0.0",
+        catalog_manifest_hash="5" * 64,
+        source_members=(SOURCE_MEMBER,),
+        artifact_members=(
+            RuntimeBundleArtifactMemberIdentity(
+                artifact_kind=RuntimeBundleArtifactKind.RULE_SET,
+                artifact_ref="rule-ref-1",
+                artifact_version="1.0.0",
+                manifest_hash=None,
+            ),
+        ),
+        citation_approval_pins=(CITATION_PIN,),
+    )
+    hash_without_candidate = canonical_runtime_bundle_manifest_hash(config_without_candidate)
+    row = _base_bundle_row(
+        bundle_manifest_hash=hash_without_candidate,
+        candidate_index_ref=None,
+        candidate_index_version=None,
+        candidate_index_manifest_hash=None,
+    )
+    reader = _create_mock_reader(
+        main_row=row,
+        source_rows=[_base_source_row()],
+        pin_rows=[_base_pin_row()],
+    )
+    with pytest.raises(
+        EvaluationGuardAuthorityReadError,
+        match="required Candidate Index authority is missing or invalid",
+    ):
+        await reader.read_candidate_start(
+            bundle_id=BUNDLE_ID,
+            bundle_manifest_hash=hash_without_candidate,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "corrupted_field, corrupted_value",
+    [
+        ("candidate_index_ref", None),
+        ("candidate_index_ref", ""),
+        ("candidate_index_ref", "   "),
+        ("candidate_index_ref", " idx-ref-1 "),
+        ("candidate_index_version", None),
+        ("candidate_index_version", ""),
+        ("candidate_index_version", "   "),
+        ("candidate_index_version", " 1.0.0 "),
+        ("candidate_index_manifest_hash", None),
+        ("candidate_index_manifest_hash", "f" * 63),
+        ("candidate_index_manifest_hash", "g" * 64),
+    ],
+)
+async def test_read_candidate_start_rejects_invalid_candidate_index_fields(
+    corrupted_field: str,
+    corrupted_value: Any,
+) -> None:
+    row = _base_bundle_row(**{corrupted_field: corrupted_value})
+    reader = _create_mock_reader(
+        main_row=row,
+        source_rows=[_base_source_row()],
+        pin_rows=[_base_pin_row()],
+    )
+    with pytest.raises(
+        EvaluationGuardAuthorityReadError,
+        match="required Candidate Index authority is missing or invalid",
+    ):
+        await reader.read_candidate_start(
+            bundle_id=BUNDLE_ID,
+            bundle_manifest_hash=BUNDLE_HASH,
+        )
+
+
+@pytest.mark.asyncio
 async def test_read_candidate_start_optional_artifacts_three_kinds() -> None:
     # Case B: CANDIDATE_INDEX, KNOWLEDGE_INDEX, and RULE_SET present
     three_artifact_members = (

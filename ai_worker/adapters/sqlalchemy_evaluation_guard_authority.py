@@ -370,6 +370,14 @@ def _recompute_and_verify_execution_manifest_hash(row: Any) -> tuple[UUID, str]:
     return UUID(str(row["execution_manifest_id"])), recomputed_manifest_hash
 
 
+def _is_sha256_hex(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(ch in "0123456789abcdef" for ch in value)
+
+
+def _is_valid_candidate_field(value: object) -> bool:
+    return isinstance(value, str) and len(value) > 0 and value.strip() == value and bool(value.strip())
+
+
 def _recompute_and_verify_bundle_manifest_hash(
     *,
     row: Any,
@@ -379,6 +387,17 @@ def _recompute_and_verify_bundle_manifest_hash(
     manifest_hash: str,
     expected_bundle_hash: str,
 ) -> None:
+    candidate_ref = row["candidate_index_ref"]
+    candidate_version = row["candidate_index_version"]
+    candidate_hash = row["candidate_index_manifest_hash"]
+
+    if (
+        not _is_valid_candidate_field(candidate_ref)
+        or not _is_valid_candidate_field(candidate_version)
+        or not _is_sha256_hex(candidate_hash)
+    ):
+        raise EvaluationGuardAuthorityReadError("required Candidate Index authority is missing or invalid")
+
     artifact_members: list[RuntimeBundleArtifactMemberIdentity] = []
     for prefix, kind in _ARTIFACT_COLUMN_PREFIX.items():
         ref = row[f"{prefix}_ref"]
