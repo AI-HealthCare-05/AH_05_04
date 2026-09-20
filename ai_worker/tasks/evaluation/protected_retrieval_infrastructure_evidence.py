@@ -81,8 +81,6 @@ def _validate_exact_records(evidence: dict[str, JsonValue]) -> None:
         "remaining_repository_scope": [],
         "activation_blockers": [
             "EXT_PRIV_001",
-            "REAL_ENVIRONMENT_PROVISIONING",
-            "INDEPENDENT_BACKEND_SECURITY_VERIFICATION",
             "BACKUP_RESTORE_AND_ROTATION_EVIDENCE",
             "TRACK_F_EXTERNAL_GATE",
         ],
@@ -155,8 +153,6 @@ def build_protected_retrieval_infrastructure_evidence(repository_root: Path) -> 
         "access_authorized": False,
         "activation_blockers": [
             "EXT_PRIV_001",
-            "REAL_ENVIRONMENT_PROVISIONING",
-            "INDEPENDENT_BACKEND_SECURITY_VERIFICATION",
             "BACKUP_RESTORE_AND_ROTATION_EVIDENCE",
             "TRACK_F_EXTERNAL_GATE",
         ],

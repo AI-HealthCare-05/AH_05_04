@@ -28,6 +28,11 @@ def test_infrastructure_evidence_separates_implementation_from_activation() -> N
     assert evidence["dataset_lifecycle_freeze_status"] == "IMPLEMENTED_IN_REPOSITORY"
     assert evidence["identity_administration_status"] == "IMPLEMENTED_IN_REPOSITORY"
     assert evidence["remaining_repository_scope"] == []
+    assert evidence["activation_blockers"] == [
+        "EXT_PRIV_001",
+        "BACKUP_RESTORE_AND_ROTATION_EVIDENCE",
+        "TRACK_F_EXTERNAL_GATE",
+    ]
     assert evidence["effective_enforcement_status"] == "NOT_IMPLEMENTED"
     assert evidence["access_authorized"] is False
     assert evidence["holdout_authored"] is False
