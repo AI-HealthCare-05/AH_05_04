@@ -346,7 +346,9 @@ async def test_read_candidate_start_fails_when_bundle_manifest_hash_corrupted(da
     sessions, _, _ = await _seed_database(database, tamper_bundle_hash=True)
     reader = SqlAlchemyEvaluationGuardAuthorityReader(sessions)
 
-    with pytest.raises(EvaluationGuardAuthorityReadError, match="cryptographic manifest recomputation mismatch"):
+    with pytest.raises(
+        EvaluationGuardAuthorityReadError, match="Runtime Bundle rows do not match stored bundle_manifest_hash"
+    ):
         await reader.read_candidate_start(
             bundle_id=BUNDLE_ID,
             bundle_manifest_hash="9" * 64,
