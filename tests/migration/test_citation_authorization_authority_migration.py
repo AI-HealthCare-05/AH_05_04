@@ -88,6 +88,36 @@ async def _state() -> tuple[str, tuple[bool, ...], int]:
 
 async def _seed_receipt() -> None:
     async with _connection() as connection, connection.begin():
+        manifest_id = str(uuid4())
+        bundle_id = str(uuid4())
+        bundle_manifest_hash = "d" * 64
+        await connection.execute(
+            text(
+                """
+                INSERT INTO rag_runtime_execution_manifest (
+                    id, manifest_key, manifest_version, manifest_hash, schema_version, git_commit_sha
+                ) VALUES (:id, :key, '1', :hash, '1', '8690000')
+                """
+            ),
+            {"id": manifest_id, "key": f"869-{bundle_id}", "hash": "1" * 64},
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO rag_runtime_release_bundle (
+                    id, bundle_key, bundle_version, bundle_status, execution_manifest_id,
+                    bundle_manifest_hash, environment_code, catalog_version, catalog_manifest_hash
+                ) VALUES (:id, :key, '1', 'BUILDING', :manifest, :hash, 'TEST', '1', :catalog_hash)
+                """
+            ),
+            {
+                "id": bundle_id,
+                "key": f"869-{bundle_id}",
+                "manifest": manifest_id,
+                "hash": bundle_manifest_hash,
+                "catalog_hash": "2" * 64,
+            },
+        )
         await connection.execute(
             text(
                 """
@@ -107,11 +137,11 @@ async def _seed_receipt() -> None:
             ),
             {
                 "id": str(uuid4()),
-                "bundle": str(uuid4()),
+                "bundle": bundle_id,
                 "a": "a" * 64,
                 "b": "b" * 64,
                 "c": "c" * 64,
-                "d": "d" * 64,
+                "d": bundle_manifest_hash,
                 "e": "e" * 64,
                 "f": "f" * 64,
                 "g": "0" * 64,
@@ -123,6 +153,29 @@ def test_revision_parent_is_actual_develop_head() -> None:
     migration = _load_migration()
     assert migration.revision == "869a1b2c3d4e"
     assert migration.down_revision == "853a1b2c3d4e"
+
+
+def test_receipt_has_release_bundle_composite_foreign_key(isolated_database: None) -> None:
+    migration = _load_migration()
+    command.upgrade(_alembic_config(), migration.revision)
+
+    async def constraint_definition() -> str | None:
+        async with _connection() as connection:
+            return await connection.scalar(
+                text(
+                    """
+                    SELECT pg_get_constraintdef(oid)
+                    FROM pg_constraint
+                    WHERE conrelid = 'rag_citation_authorization_receipt'::regclass
+                      AND conname = 'fk_rag_cit_auth_receipt_bundle'
+                    """
+                )
+            )
+
+    assert asyncio.run(constraint_definition()) == (
+        "FOREIGN KEY (bundle_id, bundle_manifest_hash) "
+        "REFERENCES rag_runtime_release_bundle(id, bundle_manifest_hash) ON DELETE RESTRICT"
+    )
 
 
 def test_populated_downgrade_preserves_all_tables_row_and_revision(isolated_database: None) -> None:

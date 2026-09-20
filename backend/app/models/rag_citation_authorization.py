@@ -161,6 +161,12 @@ class RagCitationAuthorizationReceipt(Base):
         UniqueConstraint(
             "artifact_code", "artifact_version", "artifact_content_sha256", name="uq_rag_citation_auth_receipt_artifact"
         ),
+        ForeignKeyConstraint(
+            ["bundle_id", "bundle_manifest_hash"],
+            ["rag_runtime_release_bundle.id", "rag_runtime_release_bundle.bundle_manifest_hash"],
+            name="fk_rag_cit_auth_receipt_bundle",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint("artifact_code = 'citation_authorization_receipt'", name="chk_rag_citation_auth_receipt_code"),
         CheckConstraint("origin_decision = 'PASS'", name="chk_rag_citation_auth_receipt_origin"),
         CheckConstraint("operation = 'CITATION_AUTHORIZATION'", name="chk_rag_citation_auth_receipt_operation"),

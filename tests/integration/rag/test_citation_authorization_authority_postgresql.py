@@ -339,6 +339,44 @@ async def test_complete_aggregate_roundtrip_and_historical_replay(database: Asyn
         assert outcome.receipt == aggregate.receipt
 
 
+@pytest.mark.parametrize("invalid_bundle", ("missing", "manifest_mismatch"))
+async def test_receipt_insert_rejects_invalid_release_bundle_binding(
+    database: AsyncEngine, invalid_bundle: str
+) -> None:
+    aggregate = await _aggregate()
+    receipt = aggregate.receipt
+    sessions = async_sessionmaker(database, expire_on_commit=False)
+    async with sessions() as session:
+        await _seed_dependencies(session)
+        bundle_id = str(uuid4() if invalid_bundle == "missing" else receipt.bundle_id)
+        bundle_manifest_hash = "f" * 64
+
+        with pytest.raises(DBAPIError) as error:
+            await session.execute(
+                insert(RagCitationAuthorizationReceipt).values(
+                    id=str(uuid4()),
+                    artifact_code=receipt.receipt_ref.artifact_code,
+                    artifact_version=receipt.receipt_ref.version,
+                    artifact_content_sha256=receipt.receipt_ref.content_sha256,
+                    request_sha256=receipt.request_sha256,
+                    origin_guard_artifact_code=receipt.origin_guard_ref.artifact_code,
+                    origin_guard_artifact_version=receipt.origin_guard_ref.version,
+                    origin_guard_content_sha256=receipt.origin_guard_ref.content_sha256,
+                    origin_decision=receipt.origin_decision.value,
+                    operation=receipt.operation.value,
+                    environment=receipt.environment.value,
+                    bundle_id=bundle_id,
+                    bundle_manifest_hash=bundle_manifest_hash,
+                    request_scope_codes=list(receipt.request_scope_codes),
+                    scope_manifest_hash=receipt.scope_manifest_hash,
+                    validated_selection_sha256=receipt.validated_selection_sha256,
+                    selection_manifest_sha256=receipt.selection_manifest_sha256,
+                )
+            )
+        assert error.value.orig.sqlstate == "23503", repr(error.value.orig)
+        await session.rollback()
+
+
 async def _rehash_persisted_aggregate(session: AsyncSession, request_sha256: str) -> None:
     receipt_row = (
         (

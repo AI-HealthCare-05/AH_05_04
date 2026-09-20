@@ -167,6 +167,12 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "artifact_code", "artifact_version", "artifact_content_sha256", name="uq_rag_citation_auth_receipt_artifact"
         ),
+        sa.ForeignKeyConstraint(
+            ["bundle_id", "bundle_manifest_hash"],
+            ["rag_runtime_release_bundle.id", "rag_runtime_release_bundle.bundle_manifest_hash"],
+            name="fk_rag_cit_auth_receipt_bundle",
+            ondelete="RESTRICT",
+        ),
         sa.CheckConstraint(
             "artifact_code = 'citation_authorization_receipt'", name="chk_rag_citation_auth_receipt_code"
         ),

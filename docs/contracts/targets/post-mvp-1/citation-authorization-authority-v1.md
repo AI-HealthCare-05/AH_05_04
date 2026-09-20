@@ -35,8 +35,9 @@ The append-only aggregate consists of:
 `request_sha256` is unique on Receipt. Selection order is unique within Receipt. Composite
 FK/UNIQUE bindings couple Member Decision to the exact Source Decision `(id, request_sha256,
 artifact_content_sha256)` and each Receipt Selection to the exact Receipt, Source Decision, and
-Member Decision request/ref coordinates. The SQLAlchemy Core store uses the caller-owned transaction
-and never commits.
+Member Decision request/ref coordinates. Receipt's `(bundle_id, bundle_manifest_hash)` is a composite
+FK to the exact Runtime Release Bundle identity. The SQLAlchemy Core store uses the caller-owned
+transaction and never commits.
 
 ## Exact read and idempotency
 
