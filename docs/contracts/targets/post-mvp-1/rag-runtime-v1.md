@@ -159,18 +159,22 @@ START
 → load_pinned_runtime_release_bundle
 → load_verified_medication_identifications
 → validate_bundle_and_source_freshness
-→ product_safety_overlay_gate_if_bundle_capability_enabled
 → retrieve_medication_guidance
-→ select_medication_guidelines
-→ medication_guideline_safety_filter
-→ conflict_gate
 → compose_personalized_guide
+→ medication_guideline_safety_filter
 → claim_citation_validator
 → release_gate
 → persist_guide
 ```
 
 Guide의 Citation Finalizer도 `claim_citation_validator`와 `release_gate` 사이의 Application Service 경계에서 Full `REQUEST`를 Origin으로 `CITATION_AUTHORIZATION` Guard를 원자적으로 생성·검증한다. 이는 별도 LangGraph Node가 아니다.
+
+`product_safety_overlay_gate_if_bundle_capability_enabled`는 modeled capability와 승인된 overlay
+authority가 없으므로 Current MVP topology에서 retire한다. `select_medication_guidelines`와
+`conflict_gate`는 각각 authoritative retrieval/Evidence selection 및 P0 request/source/evidence
+authority에 merge하며 독립 Node나 pass-through wrapper를 만들지 않는다. #774는 projection-only
+boundary로 남고 selection으로 이름을 바꾸지 않는다. Advanced semantic/NLI conflict detection은
+Post-MVP-1 범위 밖이다.
 
 위 두 코드 블록은 외부 정본의 LangGraph Node ID와 조건부 Edge를 추가·삭제 없이 그대로 사용한다. Guard·Transaction은 명시한 Application Service·Finalizer 경계에서 수행하며 Graph Node나 Edge로 표현하지 않는다. `scope`, `rule`, `retrieval`, `rerank`, `composer`, `citation_authorization_guard`같은 설명용 단축어를 새 Node ID로 구현·이슈·평가 Artifact에 사용하지 않는다. Chat과 Guide의 접수 경계는 다르지만 Full Execution Context가 생성된 이후의 fail-closed Rule·Evidence·Citation·Release 경계는 공유한다. `release_gate`는 최종 환자 공개 판정이며 `safety_triage`와 같은 단계가 아니다.
 
