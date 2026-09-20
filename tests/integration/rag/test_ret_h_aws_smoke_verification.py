@@ -38,6 +38,7 @@ from ai_worker.tasks.rag.retrieval_run import (
     PersistedHitInput,
     PersistedSignalInput,
 )
+from ai_worker.tests.rag.retrieval_run_test_support import make_terminal_replay_payload
 from app.core import config  # type: ignore[attr-defined]
 from app.release_validation.ret_h_synthetic_smoke import run_verification_transaction
 
@@ -189,16 +190,31 @@ async def _persist_run(
     factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
     store = SqlAlchemyRetrievalRunStore(factory)
 
-    begun = await store.begin_run(_begin_request(job_id, ctx_id, index_id, variant=variant))
+    begin_request = _begin_request(job_id, ctx_id, index_id, variant=variant)
+    begun = await store.begin_run(begin_request)
     assert isinstance(begun, BeginRetrievalRunSuccess)
+    signals = _signals(chunk_id, methods) if status == "COMPLETED" else ()
+    hits = _hits(chunk_id, selected=selected) if status == "COMPLETED" else ()
+    terminal_payload = None
+    search_receipt_hash = None
+    diagnostic_code = None
+    if status == "COMPLETED":
+        terminal_payload, search_receipt_hash, diagnostic_code = make_terminal_replay_payload(
+            begin_request,
+            index_id=index_id,
+            signals=signals,
+            hits=hits,
+        )
 
     finalized = await store.finalize_run(
         FinalizeRetrievalRunRequest(
             run_id=begun.run_id,
             status=status,
-            search_receipt_hash="8" * 64,
-            signals=_signals(chunk_id, methods),
-            hits=_hits(chunk_id, selected=selected),
+            diagnostic_code=diagnostic_code,
+            search_receipt_hash=search_receipt_hash,
+            signals=signals,
+            hits=hits,
+            terminal_replay_payload=terminal_payload,
         )
     )
     assert isinstance(finalized, FinalizeRetrievalRunSuccess), finalized

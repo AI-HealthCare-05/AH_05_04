@@ -99,6 +99,14 @@ class RetrievalRun(Base):
             name="chk_retrieval_run_search_receipt_hash",
         ),
         CheckConstraint(
+            "terminal_replay_payload_hash IS NULL OR terminal_replay_payload_hash ~ '^[0-9a-f]{64}$'",
+            name="chk_retrieval_run_terminal_replay_payload_hash",
+        ),
+        CheckConstraint(
+            "(terminal_replay_payload IS NULL) = (terminal_replay_payload_hash IS NULL)",
+            name="chk_retrieval_run_terminal_replay_payload_pair",
+        ),
+        CheckConstraint(
             "receipt_hash IS NULL OR receipt_hash ~ '^[0-9a-f]{64}$'",
             name="chk_retrieval_run_receipt_hash",
         ),
@@ -141,6 +149,8 @@ class RetrievalRun(Base):
     diagnostic_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     search_receipt_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    terminal_replay_payload: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    terminal_replay_payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     receipt_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

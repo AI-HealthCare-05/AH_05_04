@@ -130,6 +130,57 @@ def compute_hit_manifest_hash(hits: Sequence[PersistedHitInput]) -> str:
     return sha256_canonical_json(payload)
 
 
+TERMINAL_REPLAY_PAYLOAD_PROJECTION_VERSION = "retrieval-terminal-replay-payload-v1"
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedTerminalReplayPayload:
+    """Versioned, immutable input required to replay a completed retrieval run."""
+
+    search_receipt: dict[str, Any]
+    ordered_selected_hits: tuple[dict[str, Any], ...]
+    gate_status: str
+    gate_reason: str
+    gate_message: str = ""
+    projection_version: str = TERMINAL_REPLAY_PAYLOAD_PROJECTION_VERSION
+
+    def to_projection(self) -> dict[str, Any]:
+        return {
+            "gate_message": self.gate_message,
+            "gate_reason": self.gate_reason,
+            "gate_status": self.gate_status,
+            "ordered_selected_hits": list(self.ordered_selected_hits),
+            "projection_version": self.projection_version,
+            "search_receipt": self.search_receipt,
+        }
+
+    @classmethod
+    def from_projection(cls, value: object) -> PersistedTerminalReplayPayload:
+        if type(value) is not dict:
+            raise ValueError("Terminal replay payload must be an object")
+        value = cast(dict[str, object], value)
+        hits = value.get("ordered_selected_hits")
+        receipt = value.get("search_receipt")
+        if value.get("projection_version") != TERMINAL_REPLAY_PAYLOAD_PROJECTION_VERSION:
+            raise ValueError("Unsupported terminal replay payload projection version")
+        if (
+            type(receipt) is not dict
+            or type(hits) is not list
+            or not all(type(hit) is dict for hit in hits)
+            or type(value.get("gate_status")) is not str
+            or type(value.get("gate_reason")) is not str
+            or type(value.get("gate_message")) is not str
+        ):
+            raise ValueError("Invalid terminal replay payload shape")
+        return cls(
+            search_receipt=cast(dict[str, Any], receipt),
+            ordered_selected_hits=cast(tuple[dict[str, Any], ...], tuple(hits)),
+            gate_status=cast(str, value["gate_status"]),
+            gate_reason=cast(str, value["gate_reason"]),
+            gate_message=cast(str, value["gate_message"]),
+        )
+
+
 def compute_receipt_hash(
     *,
     run_id: UUID,
@@ -146,6 +197,7 @@ def compute_receipt_hash(
     selected_count: int,
     signal_manifest_hash: str,
     hit_manifest_hash: str,
+    terminal_replay_payload_hash: str | None = None,
 ) -> str:
     envelope = {
         "hit_manifest_hash": hit_manifest_hash,
@@ -163,6 +215,8 @@ def compute_receipt_hash(
         "total_signals": total_signals,
         "variant": variant,
     }
+    if terminal_replay_payload_hash is not None:
+        envelope["terminal_replay_payload_hash"] = terminal_replay_payload_hash
     return sha256_canonical_json(envelope)
 
 
@@ -185,6 +239,7 @@ class PersistedRetrievalRunReceipt:
     search_receipt_hash: str | None = None
     diagnostic_code: str | None = None
     error_code: str | None = None
+    terminal_replay_payload_hash: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +251,7 @@ class FinalizeRetrievalRunRequest:
     search_receipt_hash: str | None = None
     signals: tuple[PersistedSignalInput, ...] = ()
     hits: tuple[PersistedHitInput, ...] = ()
+    terminal_replay_payload: PersistedTerminalReplayPayload | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +259,7 @@ class BeginRetrievalRunSuccess:
     run_id: UUID
     is_resumed: bool
     existing_receipt: PersistedRetrievalRunReceipt | None = None
+    existing_terminal_replay_payload: PersistedTerminalReplayPayload | None = None
 
 
 @dataclass(frozen=True, slots=True)
