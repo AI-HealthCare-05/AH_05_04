@@ -435,7 +435,7 @@ AI 생성 오류는 [공통 오류 응답 형식](#공통-오류-응답-형식)�
 
 ### AI 데이터 경계
 
-AI에는 현재 요청의 질문, 해당 세션에 연결된 확정 처방의 약물 정보와 `history` 배열만 전달합니다. `CHAT_HISTORY_CONTEXT_ENABLED`의 기본값은 `false`이며, 비활성화 상태이거나 Staging·승인 전 Production 환경이면 이전 대화를 조회하지 않고 빈 배열(`history: []`)을 전달합니다. 현재 flag 활성화는 비식별 합성 Local 검증으로 제한되며, Production explicit opt-in은 Issue #838 및 `EXT-PRIV-003` 거버넌스 승인 대기 상태입니다. 승인 후 활성화 시에도 동일 세션의 현재 질문 이전 완료 대화만 최대 3쌍 전달하며, 다른 세션의 대화는 엄격히 격리됩니다. 사용자·세션·처방·메시지 식별자, 처방전 이미지, OCR 원문과 미검수 데이터는 AI 경계를 넘지 않습니다.
+AI에는 현재 요청의 질문, 해당 세션에 연결된 확정 처방의 약물 정보와 `history` 배열만 전달합니다. `CHAT_HISTORY_CONTEXT_ENABLED`의 기본값은 `false`이며, 비활성화 상태이면 이전 대화를 조회하지 않고 빈 배열(`history: []`)을 전달합니다. Local은 `true`와 `false`를 허용하고 Staging은 `true`를 거부합니다. Issue #838 Accepted Decision과 `EXT-PRIV-003` 승인에 따라 Production에서는 기본값 `false`를 유지하면서 명시적으로 opt-in한 경우에만 `true`를 허용합니다. 활성화 시에도 동일 세션의 현재 질문 이전 완료 대화만 최대 3쌍 전달하며, 다른 세션의 대화는 엄격히 격리됩니다. 사용자·세션·처방·메시지 식별자, 처방전 이미지, OCR 원문과 미검수 데이터는 AI 경계를 넘지 않습니다.
 
 ### 동시 전송과 대기시간
 

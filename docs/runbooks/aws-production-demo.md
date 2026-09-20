@@ -173,8 +173,9 @@ EC2 public DNS의 `/`, `/assets/*`, `/api/*`에 `X-Origin-Verify` 없이 직접 
 ### Worker 기동·관제 및 합성 OCR smoke
 
 - CLOVA endpoint/secret은 필수이며 배포 전에 누락·placeholder와 HTTPS 여부를 검증합니다.
-  `PUBLIC_TRACK_F_ENABLED`, `OCR_STRUCTURE_LLM_ENABLED`, `CHAT_HISTORY_CONTEXT_ENABLED`,
-  `PROTECTED_RETRIEVAL_ENABLED`는 false를 유지합니다. Provider secret은 출력하지 않습니다.
+  `PUBLIC_TRACK_F_ENABLED`, `OCR_STRUCTURE_LLM_ENABLED`, `PROTECTED_RETRIEVAL_ENABLED`는 false를 유지합니다.
+  `CHAT_HISTORY_CONTEXT_ENABLED`는 기본값 `false`를 유지하며, Issue #838과 `EXT-PRIV-003` 승인 범위에서만
+  Production explicit opt-in으로 `true`를 허용합니다. Provider secret은 출력하지 않습니다.
 - Worker에는 Runtime DB 자격 증명과 인증된 Redis만 전달하며 공유 media volume은 읽기 전용입니다.
   업로드 전 빈 volume에서도 기동할 수 있도록 migration 후 API image로 STORAGE_DIR을 생성합니다.
 - Docker readiness는 DB `SELECT 1`, Redis PING·Consumer Group 존재, 업로드 디렉터리 읽기 권한을

@@ -454,6 +454,7 @@ def test_writer_credentials_are_validated_before_external_actions(tmp_path, writ
         ("CLOVA_OCR_INVOKE_URL", "http://clova.test/ocr", "HTTPS"),
         ("PUBLIC_TRACK_F_ENABLED", "True", "PUBLIC_TRACK_F_ENABLED=false"),
         ("OCR_STRUCTURE_LLM_ENABLED", "true", "OCR_STRUCTURE_LLM_ENABLED=false"),
+        ("PROTECTED_RETRIEVAL_ENABLED", "true", "PROTECTED_RETRIEVAL_ENABLED=false"),
     ],
 )
 def test_worker_preflight_blocks_before_registry_and_ssh(tmp_path, key, value, expected):
@@ -501,7 +502,7 @@ def test_worker_preflight_blocks_before_registry_and_ssh(tmp_path, key, value, e
     assert "Docker login" not in result.stdout
 
 
-def test_worker_preflight_blocks_chat_history_context_enabled_pending_approval(tmp_path):
+def test_worker_preflight_allows_chat_history_context_enabled_after_approval(tmp_path):
     settings = {
         "ENV": "production",
         "REDIS_PASSWORD": "synthetic-redis",
@@ -546,7 +547,9 @@ def test_worker_preflight_blocks_chat_history_context_enabled_pending_approval(t
         timeout=10,
     )
     assert result.returncode != 0
-    assert "CHAT_HISTORY_CONTEXT_ENABLED=false" in result.stdout
+    assert "CHAT_HISTORY_CONTEXT_ENABLED=false" not in result.stdout
+    assert "필수 명령을 찾을 수 없습니다: docker" in result.stdout
+    assert "Docker login" not in result.stdout
 
 
 @pytest.mark.parametrize("worker_health_exit", [0, 42])
