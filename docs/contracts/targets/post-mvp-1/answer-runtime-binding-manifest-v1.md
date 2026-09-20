@@ -565,7 +565,7 @@ F. **Storage Architecture 및 Publication Coordinate 철회/미확정 안내**:
 | `TIMEOUT` | Supplemental | `DevVariant.parameters["timeout"]` bound to `_timeout_seconds` | **`CASE_LEVEL_ACTUAL`** | Variant config 설정값과 실제 `asyncio.timeout` / client timeout 호출 인자의 일치를 Case 단위 관측치로 증명. |
 | `RETRIEVAL_PIPELINE` | Delta | `VersionedEvidenceRetrievalConfiguration.artifact_ref` (적용) / `NOT_APPLIED` (ANS-BASE) | **`ADAPTER_LEVEL_ACTUAL`** | 실제 평가 어댑터(`ActualRetrievalEvaluationAdapter._retrieval_config`)가 정본 객체를 보유하므로 `compute_retrieval_pipeline_binding_hash()`에 직접 전달 가능. `ANS-BASE`는 `NOT_APPLIED`. |
 | `SOURCE_INDEX` | Delta | `ActualRetrievalModelConfig.knowledge_index_ref` (적용) / `NOT_APPLIED` (ANS-BASE) | **`ADAPTER_LEVEL_ACTUAL`** | 어댑터 및 `retrieval_variant.model_config_payload`에서 검증된 `ActualRetrievalModelConfig`가 보유하므로 `compute_source_index_binding_hash()`에 직접 전달 가능 (`model_config_hash` 역산 금지). `ANS-BASE`는 `NOT_APPLIED`. |
-| `RUNTIME_BUNDLE` | Delta | `RequestGuardRuntimeBindingObservation` (#806) 또는 #162 Evaluation Guard Evidence (적용) / `NOT_APPLIED` (ANS-BASE) | **`UPSTREAM_AUTHORITY`** | 상류 런타임 번들 릴리스 및 거버넌스 권위. `ANS-BASE`는 `NOT_APPLIED` 확정. `ANS-RAG`/`ANS-FINAL`은 상류 권위 동결 시까지 `PENDING_162_AUTHORITY_FREEZE`. |
+| `RUNTIME_BUNDLE` | Delta | `RequestGuardRuntimeBindingObservation` (#806) 또는 #162 Evaluation Guard Evidence (적용) / `NOT_APPLIED` (ANS-BASE) | **`UPSTREAM_AUTHORITY`** | 상류 런타임 번들 릴리스 및 거버넌스 권위. `ANS-BASE`는 `NOT_APPLIED` 확정. `ANS-RAG`/`ANS-FINAL`은 상류 권위 동결 및 정본 소스 어댑터 정합 시까지 `PENDING_162_AUTHORITY_FREEZE + SOURCE_BINDING_ADAPTER_REQUIRED` (LOCAL 평가 경로 한정 후보). |
 
 ---
 
@@ -582,7 +582,7 @@ class ProviderInvocationObservation:
     variant_id: str
     temperature: str  # Canonical decimal string: "0"
     max_output_tokens: int
-    timeout_seconds: Decimal  # Canonical decimal seconds string
+    timeout_seconds: Decimal  # In-memory canonical Decimal; compute_timeout_binding_hash()가 canonical decimal string으로 해시 사영
 ```
 
 #### 3.2 Controlled-Variable 집계 불변식 (Case Aggregation Invariant)
@@ -644,28 +644,42 @@ finalize_artifacts(draft, ...)
 
 | 후보 | 개념 | 평가 및 기각 사유 | 판정 |
 | :--- | :--- | :--- | :--- |
-| **Option A** | **#808 Answer Comparison Set과 동일한 Run Bundle 외부 Experiment-level companion artifact** | • Schema Set 1.5 100% 불변<br>• `ContentArtifactPath` 및 `publisher.py` 화이트리스트 무수정<br>• `(experiment_id, run_id, variant_id)` exact-binding 및 self-hash 보존<br>• #808 comparison builder가 실험 수준에서 3개 변형 매니페스트를 직접 로드 가능 | **선택 (Selected)** |
+| **Option A** | **#808 Answer Comparison Set과 동일한 Run Bundle 외부 Experiment-level companion artifact** | • Schema Set 1.5 100% 불변<br>• `ContentArtifactPath` 및 `publisher.py` 화이트리스트 무수정<br>• `(experiment_id, run_id, variant_id)` exact-binding 및 self-hash 보존<br>• 기승인된 비교 세트 루트(`evals/results/<experiment_id>/answer-comparisons/`) 재사용 가능 | **패턴 선택 (Selected Pattern)**<br>(상세 하위 경로는 `PROPOSED / REVIEW REQUIRED`) |
 | **Option B** | #162 독립 버전화 권위 아티팩트 패턴 (`ImmutableArtifactRef` 기반 로더) | 외부 상류 권위 '입력'에 적합한 패턴으로, 개별 평가 Run의 실행 결과 '산출물'로서 실험-변형 라이프사이클에 직접 묶이는 바인딩 매니페스트의 성격과 불일치 | 기각 (Rejected) |
 | **Option C** | 기존 Run Bundle 디렉토리 확장 (`run.json`과 동일 경로에 파일 추가) | `ContentArtifactPath` (Schema Set 1.5) 파괴, `publisher.py` 번들 화이트리스트(`_REQUIRED_BUNDLE_FILENAMES`, `_OPTIONAL_BUNDLE_FILENAMES`) 위반으로 게시 거절, 전체 번들 마이그레이션 churn 발생 | 기각 (Rejected) |
 | **Option D** | `RagEvaluationRun` 스키마 확장 (`run.json`에 직접 15개 필드 추가) | `rag-eval.run@1.0.0` 파괴, Schema Set 1.5 해시 변경, 모든 다운스트림 스키마 무효화 유발 | 기각 (Rejected) |
 
-#### 5.2 확정 저장 구조 (Option A)
-Answer Runtime Binding Manifest는 Run 번들 내부가 아닌, #808 comparison set과 동일한 **실험 수준 companion 아티팩트**로 격리 보관한다:
+#### 5.2 저장 경로 및 발행/검증 경계 정합
+
+##### A. 기승인된 Experiment 루트 재사용 및 제안 하위 경로 (Proposed / Review Required)
+Answer Runtime Binding Manifest는 신규 top-level 디렉토리를 신설하지 않고, PR #475 / `rag-answer-quality-metrics-v1.md`에서 이미 승인된 Experiment 루트(`evals/results/<experiment_id>/answer-comparisons/`)의 companion 아티팩트로 위치시키는 안을 제안한다:
 
 ```text
-experiments/<experiment_id>/
-  ├── binding-manifests/
-  │     ├── ANS-BASE.json   <── AnswerRuntimeAuthorityBindingManifest (ANS-BASE)
-  │     ├── ANS-RAG.json    <── AnswerRuntimeAuthorityBindingManifest (ANS-RAG)
-  │     └── ANS-FINAL.json  <── AnswerRuntimeAuthorityBindingManifest (ANS-FINAL)
-  ├── comparison-set-manifest.json
+evals/results/<experiment_id>/answer-comparisons/
+  ├── binding-manifests/               <── [PROPOSED / REVIEW REQUIRED]
+  │     ├── ans-base.json              <── AnswerRuntimeAuthorityBindingManifest (ANS-BASE)
+  │     ├── ans-rag.json               <── AnswerRuntimeAuthorityBindingManifest (ANS-RAG)
+  │     └── ans-final.json             <── AnswerRuntimeAuthorityBindingManifest (ANS-FINAL)
+  ├── comparison-set-manifest.json     <── 기승인 #808 manifest
   ├── ans-base--ans-rag/comparison.json
   ├── ans-rag--ans-final/comparison.json
   └── ans-base--ans-final/comparison.json
 ```
 
-- **소비 정합성**: #808 `build_answer_comparison_set()`는 이미 실험 단위에서 `AnswerComparisonRunInput` 3개를 수신하므로, 각 변형의 companion binding manifest를 읽어 `project_answer_runtime_binding_manifest()`로 직접 투영하는 구조가 완전히 성립한다.
-- **Stale/Orphan 검출**: `manifest.run_id == bundle.run.run_id` 및 `manifest_sha256` self-hash 불일치 시 비교 단계 진입 전 즉시 거부된다.
+- **경로 확정 조건**: `binding-manifests/` 하위 경로는 확정(Frozen)이 아닌 제안(Proposed)이며, 단일 책임 리뷰어(`@phina-io`)의 명시적 검토 및 승인을 거쳐야 정본 경로로 동결된다.
+
+##### B. #808 실제 구현 경계 명시
+- 현재 `ai_worker/tasks/evaluation/answer_comparison.py`의 `build_answer_comparison_set()`는 `comparison-set-manifest.json` 바이트 및 3개 pair 상대 경로 바이트를 생성하는 순수 빌더일 뿐, 파일시스템 상의 experiment 디렉토리 publisher/writer를 포함하지 않는다.
+- 빌더의 입력인 `AnswerComparisonRunInput`은 `supplemental_controls`와 `delta_bindings`를 이미 조립된 상태로 수신하므로, "#808 비교 빌더가 바인딩 매니페스트를 파일시스템에서 직접 발견/로드한다"고 기술하지 않는다. 매니페스트 역직렬화 및 Seam 투영(`project_answer_runtime_binding_manifest`)은 비교 세트 조립 이전의 별도 runner/loader 책임이다.
+
+##### C. Publisher 영향 및 미구현 경계 구분
+- **Run Bundle Publisher 영향**: `0` (`ai_worker/tasks/evaluation/publisher.py` 및 번들 화이트리스트 변경 없음).
+- **Experiment-level Artifact Writer**: `NOT IMPLEMENTED` (실험 수준 multi-file publisher/writer는 현재 정본 코드로 부재하며 후속 implementation slice의 과제임).
+- 즉, "기존 `publisher.py` 수정이 없다"는 사실이 "실험 아티팩트 발행기가 이미 구현되어 있다"는 것을 의미하지 않는다.
+
+##### D. Stale / Orphan 검출 경계
+- `manifest.run_id == bundle.run.run_id` 및 `manifest_sha256` self-hash 불일치 시 소비 단계에서 즉시 거부(`fail-closed`)하는 검증 primitive는 완비되어 있다.
+- 단, 파일시스템 수준의 orphan cleanup, 디렉토리 인덱싱, 원자적 multi-file 발행은 별도의 미구현 파일시스템 계층 문제이며, 본 Manifest 계약이 이를 자동 해결한다고 과장하지 않는다.
 
 ---
 
@@ -675,21 +689,35 @@ experiments/<experiment_id>/
 - 최신 상태: **`OPEN / Review Required`** (`f02838298e2f605dbb23a38928644301747be5c8`, `mergedAt: null`).
 - 아직 병합되지 않았으므로 current authority로 취급할 수 없으며, 본 의존성은 **`PROVISIONAL_DEPENDENCY_ON_162_PHASE_A1`**로 유지한다.
 
-#### 6.2 Canonical Projection 정합성 판정
-#162 `evaluation-guard-coverage-v1` authority가 동결·병합된 경우, 해당 권위가 보존하는 `candidate_bundle_id`(canonical lowercase UUID string), `candidate_bundle_manifest_hash`(SHA-256 hex) 및 대상 Run의 `environment`(`"LOCAL"` 또는 `"CI"`)를 #159의 입력으로 소비할 수 있는지 검토했다:
+#### 6.2 Projection 필드 및 정본 소스 타입 호환성 분리 판정
 
-- 기존 #159 Canonical Recipe:
-  ```json
-  {
-    "bundle_id": str(bundle_id),
-    "bundle_manifest_hash": bundle_manifest_hash,
-    "environment": environment,
-    "projection_version": "answer-runtime-bundle-binding-v1"
-  }
+##### A. Projection-Field 호환성: YES, Conditional (LOCAL 평가 경로 한정)
+- #162 `evaluation-guard-coverage-v1` authority가 보존하는 `candidate_bundle_id`(canonical lowercase UUID string), `candidate_bundle_manifest_hash`(SHA-256 hex) 및 `environment`는 #159 `answer-runtime-bundle-binding-v1` projection의 의미축(`bundle_id`, `bundle_manifest_hash`, `environment`)과 대응 가능하다.
+- **환경(environment) 범위 제한**: PR #868 제안 계약에서 `evaluation-guard-coverage-v1`의 환경은 `Literal["LOCAL"]` 한정이다. `RagEvaluationRun` 자체는 `LOCAL | CI`를 허용하지만, #162 Evaluation Guard Evidence는 현재 `LOCAL only`다. 따라서 **#162 기반 RUNTIME_BUNDLE 캐리어 후보는 LOCAL 평가 경로에만 한정**되며, CI 경로까지 자동 호환된다고 주장하지 않는다.
+
+##### B. Canonical Source Type 호환성: NO
+- 현재 #159 실제 구현:
+  ```python
+  def compute_runtime_bundle_binding_hash(
+      variant_id: AnswerVariantId,
+      observation: RequestGuardRuntimeBindingObservation | None = None,
+  ) -> str:
   ```
-- **판정: A. 기존 hash domain 및 시맨틱 100% 유지 (Choice A)**.
-  #162 Evaluation authority를 carrier로 소비하더라도 해시 프리이미지 필드(`bundle_id`, `bundle_manifest_hash`, `environment`, `projection_version`)와 타입, 정규 직렬화 결과가 완전히 동일하다. 따라서 **#159 canonical source contract amendment는 불필요하다**.
-- **구현 게이트**: PR #868이 OPEN인 상태에서는 RUNTIME_BUNDLE의 실제 바인딩 구현을 엄격히 금지하며, 상태는 **`PENDING_162_AUTHORITY_FREEZE`**로 유지한다.
+  `ANS-RAG` / `ANS-FINAL`에서 `type(observation) is RequestGuardRuntimeBindingObservation`을 엄격히 요구한다.
+- 기존 #159 소스 타입(`RequestGuardRuntimeBindingObservation`)과 #162 소스 타입(`rag-eval.evaluation-guard-evidence`)은 상이한 authority type 및 domain이다. 따라서 #162 객체를 기존 함수에 직접 전달할 수 없다.
+
+##### C. Contract Amendment 판정
+- **Hash Preimage Amendment**: **`NO`**
+  기존 정규 사영 레시피 및 해시 도메인(`{"bundle_id": ..., "bundle_manifest_hash": ..., "environment": ..., "projection_version": "answer-runtime-bundle-binding-v1"}`)은 그대로 유지된다.
+- **Canonical Source Contract Amendment**: **`YES / REQUIRED AFTER #868 FREEZE`**
+  #868 동결 후, 기존 `RequestGuardRuntimeBindingObservation` 외에 승인된 Evaluation Guard Evidence에서 해당 값을 추출하여 바인딩하는 typed projection seam의 추가가 필수적이다.
+
+##### D. Synthetic Conversion 엄격 금지 (No Synthetic Wrapper)
+- #162 Evidence로부터 가짜 `RequestGuardRuntimeBindingObservation`을 날조(fabrication)하여 생성하는 것을 엄격히 금지한다. #162 evidence에는 #806 observation이 보유하는 `user_id`, `request_operation_code`, `request_scope_codes`, `legacy_request_authority_ref` 등의 실제 의미가 부재하므로 synthetic wrapper 도입은 안전성을 훼손한다.
+
+##### E. 향후 구현 방향 및 상태
+- PR #868 승인/병합 이후 별도 implementation slice에서 순수 프로젝션 헬퍼(예: `compute_runtime_bundle_binding_hash_from_evaluation_guard(...)` 등) 또는 typed projection adapter 구조를 검토한다 (함수명/API는 본 문서 PR에서 확정하지 않음).
+- **RUNTIME_BUNDLE 상태**: **`PENDING_162_AUTHORITY_FREEZE + SOURCE_BINDING_ADAPTER_REQUIRED`**
 
 ---
 
@@ -732,7 +760,7 @@ Materializer API는 `prompt_hash: str`, `parser_hash: str`, `runtime_bundle_hash
 
 #### 8.2 STILL BLOCKED (6개)
 상류 이슈 및 권위 미완료로 구현이 차단된 항목:
-1. `RUNTIME_BUNDLE`: `PENDING_162_AUTHORITY_FREEZE` (PR #868 미병합 차단)
+1. `RUNTIME_BUNDLE`: `PENDING_162_AUTHORITY_FREEZE + SOURCE_BINDING_ADAPTER_REQUIRED` (PR #868 미병합 및 정본 소스 어댑터 추가 필요)
 2. `RETRIEVED_EVIDENCE`: `SOURCE_EXISTS_RECIPE_UNRESOLVED` (Issue #180 / #760 차단)
 3. `FINAL_VALIDATOR`: `BLOCKED_BY_UPSTREAM_AUTHORITY` (Issue #180 차단)
 4. `CITATION_GATE`: `BLOCKED_BY_UPSTREAM_AUTHORITY` (Issue #799 / #807 / #180 차단)
