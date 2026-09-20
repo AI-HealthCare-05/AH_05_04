@@ -169,13 +169,14 @@ def _nullable_exact(column_, value: str | None):
 
 def _source_coordinate_statement(
     coordinate: GuideRequestAuthorityLookupCoordinate,
-    request_guard_ref: RequestAuthorityArtifactRef,
+    request_guard_ref: ImmutableArtifactRef | RequestAuthorityArtifactRef,
 ):
+    shared_request_guard_ref = _shared_ref(request_guard_ref)
     return (
         select(*_SOURCE_DECISION.c)
         .select_from(_SOURCE_DECISION)
         .where(
-            _guard_ref_where(_SOURCE_DECISION, request_guard_ref),
+            _guard_ref_where(_SOURCE_DECISION, shared_request_guard_ref),
             _SOURCE_DECISION.c.user_id == str(coordinate.user_id),
             _SOURCE_DECISION.c.request_operation_code == coordinate.request_operation_code,
             _SOURCE_DECISION.c.decision_stage == coordinate.decision_stage.value,
@@ -188,15 +189,16 @@ def _source_coordinate_statement(
 
 def _member_coordinate_statement(
     coordinate: GuideRequestAuthorityLookupCoordinate,
-    request_guard_ref: RequestAuthorityArtifactRef,
+    request_guard_ref: ImmutableArtifactRef | RequestAuthorityArtifactRef,
 ):
+    shared_request_guard_ref = _shared_ref(request_guard_ref)
     identity = shared_member_identity(coordinate.member_identity)
     persisted_kind = persisted_member_kind_value(coordinate.member_identity.member_kind)
     return (
         select(*_MEMBER_DECISION.c)
         .select_from(_MEMBER_DECISION)
         .where(
-            _guard_ref_where(_MEMBER_DECISION, request_guard_ref),
+            _guard_ref_where(_MEMBER_DECISION, shared_request_guard_ref),
             _MEMBER_DECISION.c.user_id == str(coordinate.user_id),
             _MEMBER_DECISION.c.request_operation_code == coordinate.request_operation_code,
             _MEMBER_DECISION.c.decision_stage == coordinate.decision_stage.value,
