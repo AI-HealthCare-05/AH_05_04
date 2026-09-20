@@ -337,7 +337,8 @@
 .checkin--summary .checkin__groups-hint {
   position: absolute;
   top: 4px;
-  left: 136px;
+  left: auto;
+  right: 0;
   margin: 0;
   color: #6b7c93;
   font-size: 14px;
@@ -352,8 +353,8 @@
   grid-template-columns: repeat(3, 102px);
   justify-content: space-between;
   gap: 0;
-  width: calc(100% - 3px);
-  max-width: 347px;
+  width: 100%;
+  max-width: 350px;
   height: 220px;
   margin: 10px 0 0;
   padding: 0;
