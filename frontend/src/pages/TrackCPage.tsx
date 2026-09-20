@@ -82,7 +82,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   const date = query.get('date') ?? ''
   const navigate = useNavigate()
   const isPlanListRoute = !occurrenceId && !planId
-  const [step, setStep] = useState<'loading' | 'list' | 'safety' | 'barrier' | 'subreason' | 'travel' | 'offer' | 'preparing' | 'plan' | 'blocked'>('loading')
+  const [step, setStep] = useState<'loading' | 'list' | 'safety' | 'barrier' | 'subreason' | 'travel' | 'offer' | 'configure' | 'confirm' | 'planReview' | 'preparing' | 'plan' | 'blocked'>('loading')
   const [checkin, setCheckin] = useState<MedicationCheckinResponse['data'] | null>(null)
   const [safety, setSafety] = useState<api.Safety | null>(null)
   const [barrier, setBarrier] = useState<api.Barrier | null>(null)
@@ -290,7 +290,19 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
       {step === 'offer' && <p className="track-c-eyebrow">나에게 맞는 도움</p>}
       {step === 'list' && <p className="track-c-eyebrow">저장한 도움</p>}
       {step === 'plan' && plan && <p className={`track-c-status track-c-status--${plan.status.toLowerCase()}`} role="status">{planStatusLabels[plan.status]}</p>}
-      <h1 ref={heading} tabIndex={-1}>{step === 'barrier' ? '이번에는 어떤 점이 가장 크게 영향을 주었나요?' : step === 'subreason' ? '어떤 상황에 더 가까웠나요?' : step === 'safety' ? '현재 불편한 증상이 있나요?' : step === 'offer' ? '도움 방법을 확인해 주세요' : step === 'preparing' ? '도움을 준비하고 있어요' : step === 'plan' ? '내 실천 계획' : step === 'list' ? '실천 계획 목록' : '복약 도움 확인'}</h1>
+      <h1 ref={heading} tabIndex={-1}>{
+        step === 'barrier' ? '이번에는 어떤 점이 가장 크게 영향을 주었나요?'
+          : step === 'subreason' ? '어떤 상황에 더 가까웠나요?'
+          : step === 'safety' ? '현재 불편한 증상이 있나요?'
+          : step === 'offer' ? '도움 방법을 확인해 주세요'
+          : step === 'configure' ? '도움 내용을 설정해 주세요'
+          : step === 'confirm' ? '선택한 내용을 확인해 주세요'
+          : step === 'planReview' ? '실천 계획을 확인해 주세요'
+          : step === 'preparing' ? '도움을 준비하고 있어요'
+          : step === 'plan' ? '내 실천 계획'
+          : step === 'list' ? '실천 계획 목록'
+          : '복약 도움 확인'
+      }</h1>
       {error && <p role="alert">{error}</p>}
       {retry && <Button disabled={busy} onClick={() => void run(retry)}>같은 요청 다시 시도</Button>}
       {step === 'loading' && <p role="status">기록을 확인하고 있어요.</p>}
@@ -346,14 +358,157 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
         <Button fullWidth variant="secondary" disabled={busy} onClick={() => navigate(back)}>나중에</Button>
       </Card>}
       {step === 'offer' && (item ? <>
-        {offer && offer.supports.length > 1 && <fieldset disabled={busy || !!retry}><legend>도움 방법을 하나 골라주세요</legend>{offer.supports.map(candidate => <label className="track-c-choice" key={candidate.support_code}><input type="radio" name="support" checked={selectedSupport === candidate.support_code} onChange={() => { setSelectedSupport(candidate.support_code); setSelectedQuestions([]); setConfirmed(false) }} /><span>{candidate.support_copy.title}</span></label>)}</fieldset>}
-        <Card className="track-c-offer"><h2>{item.support_copy.title}</h2><p>{item.support_copy.body}</p>{item.questions.length > 0 && <fieldset><legend>상담 때 확인할 질문을 하나 이상 골라주세요</legend>{item.questions.map(question => <label className="track-c-choice" key={question.question_id}><input type="checkbox" disabled={!selectedQuestions.includes(question.question_id) && selectedQuestions.length >= 3} checked={selectedQuestions.includes(question.question_id)} onChange={event => { setSelectedQuestions(current => event.target.checked ? [...current, question.question_id] : current.filter(id => id !== question.question_id)); setConfirmed(false) }} /><span>{question.text}</span></label>)}</fieldset>}</Card>
+        {offer && offer.supports.length > 1 && <fieldset disabled={busy || !!retry}>
+          <legend>도움 방법을 하나 골라주세요</legend>
+          {offer.supports.map(candidate => <label className="track-c-choice" key={candidate.support_code}>
+            <input
+              type="radio"
+              name="support"
+              checked={selectedSupport === candidate.support_code}
+              onChange={() => {
+                setSelectedSupport(candidate.support_code)
+                setSelectedQuestions([])
+                setConfirmed(false)
+              }}
+            />
+            <span>{candidate.support_copy.title}</span>
+          </label>)}
+        </fieldset>}
+        <Card className="track-c-offer">
+          <h2>{item.support_copy.title}</h2>
+          <p>{item.support_copy.body}</p>
+        </Card>
         <div className="track-c-actions">
-          <label className="track-c-choice"><input type="checkbox" disabled={busy || !!retry} checked={confirmed} onChange={e => setConfirmed(e.target.checked)} /><span>{item.support_copy.confirmation_prompt}</span></label>
-          <Button fullWidth disabled={!confirmed || (item.questions.length > 0 && selectedQuestions.length === 0) || busy || !!retry} onClick={() => void run(savePlan)}>{item.support_copy.primary_label}</Button>
-          <Button fullWidth variant="secondary" disabled={busy} onClick={() => navigate(back)}>{item.support_copy.secondary_label}</Button>
+          <Button
+            fullWidth
+            disabled={busy || !!retry}
+            onClick={() => {
+              setConfirmed(false)
+              setStep('configure')
+            }}
+          >
+            이 도움 확인하기
+          </Button>
+          <Button fullWidth variant="secondary" disabled={busy} onClick={() => navigate(back)}>
+            {item.support_copy.secondary_label}
+          </Button>
         </div>
-      </> : <Card><h2>지금 제안할 수 있는 도움이 없어요</h2><p>복약 기록과 응답은 저장되어 있어요.</p><Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button></Card>)}
+      </> : <Card>
+        <h2>지금 제안할 수 있는 도움이 없어요</h2>
+        <p>복약 기록과 응답은 저장되어 있어요.</p>
+        <Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button>
+      </Card>)}
+
+      {step === 'configure' && item && <>
+        <Card className="track-c-offer">
+          <h2>{item.support_copy.title}</h2>
+          <p>{item.support_copy.body}</p>
+          {item.questions.length > 0 && <fieldset>
+            <legend>상담 때 확인할 질문을 하나 이상 골라주세요</legend>
+            {item.questions.map(question => <label className="track-c-choice" key={question.question_id}>
+              <input
+                type="checkbox"
+                disabled={!selectedQuestions.includes(question.question_id) && selectedQuestions.length >= 3}
+                checked={selectedQuestions.includes(question.question_id)}
+                onChange={event => {
+                  setSelectedQuestions(current =>
+                    event.target.checked
+                      ? [...current, question.question_id]
+                      : current.filter(id => id !== question.question_id),
+                  )
+                  setConfirmed(false)
+                }}
+              />
+              <span>{question.text}</span>
+            </label>)}
+          </fieldset>}
+        </Card>
+        <div className="track-c-actions">
+          <Button
+            fullWidth
+            disabled={busy || !!retry || (item.questions.length > 0 && selectedQuestions.length === 0)}
+            onClick={() => setStep('confirm')}
+          >
+            선택 내용 확인하기
+          </Button>
+          <Button fullWidth variant="secondary" disabled={busy} onClick={() => setStep('offer')}>
+            이전으로
+          </Button>
+        </div>
+      </>}
+
+      {step === 'confirm' && item && <>
+        <Card className="track-c-offer">
+          <h2>{item.support_copy.title}</h2>
+          <p>{item.support_copy.body}</p>
+          {selectedQuestions.length > 0 && <ul>
+            {item.questions
+              .filter(question => selectedQuestions.includes(question.question_id))
+              .map(question => <li key={question.question_id}>{question.text}</li>)}
+          </ul>}
+          <p>{item.support_copy.confirmation_prompt}</p>
+        </Card>
+        <div className="track-c-actions">
+          <Button
+            fullWidth
+            disabled={busy || !!retry}
+            onClick={() => {
+              setConfirmed(true)
+              setStep('planReview')
+            }}
+          >
+            이대로 사용하기
+          </Button>
+          <Button
+            fullWidth
+            variant="secondary"
+            disabled={busy || !!retry}
+            onClick={() => {
+              setConfirmed(false)
+              setStep('configure')
+            }}
+          >
+            내용 수정하기
+          </Button>
+        </div>
+      </>}
+
+      {step === 'planReview' && item && <>
+        <Card className="track-c-plan-field">
+          <p>실천 계획</p>
+          <h2>{item.support_copy.title}</h2>
+          <p>{item.support_copy.body}</p>
+        </Card>
+        {selectedQuestions.length > 0 && <Card>
+          <h2>상담 때 확인할 질문</h2>
+          <ul>
+            {item.questions
+              .filter(question => selectedQuestions.includes(question.question_id))
+              .map(question => <li key={question.question_id}>{question.text}</li>)}
+          </ul>
+        </Card>}
+        <div className="track-c-actions">
+          <Button
+            fullWidth
+            disabled={!confirmed || busy || !!retry}
+            onClick={() => void run(savePlan)}
+          >
+            이 계획을 저장하고 시작하기
+          </Button>
+          <Button
+            fullWidth
+            variant="secondary"
+            disabled={busy || !!retry}
+            onClick={() => {
+              setConfirmed(false)
+              setStep('confirm')
+            }}
+          >
+            내용 다시 확인하기
+          </Button>
+        </div>
+      </>}
+
       {step === 'preparing' && <Card>
         <h2>선택한 내용은 저장했어요</h2>
         <p>이 어려움에 대한 도움은 아직 준비하고 있어요. 답해 주신 내용은 복약 기록에 남고, 진료 시 보여주기 화면에서 확인할 수 있어요.</p>

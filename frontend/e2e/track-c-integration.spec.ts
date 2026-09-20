@@ -50,10 +50,22 @@ for (const width of [320, 390, 412]) {
     await page.getByRole('button', { name: '선택한 어려움으로 도움 찾기' }).click()
     await page.getByRole('radio', { name: '알림을 보거나 듣지 못했어요' }).check()
     await page.getByRole('button', { name: '선택한 상황으로 도움 찾기' }).click()
-    await expect(page.getByRole('button', { name: '계획으로 저장' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '이 도움 확인하기' })).toBeVisible()
+    expect(writes.filter(w => w.path.endsWith('support-action-plans'))).toHaveLength(0)
     expect(await page.locator('main').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
     await page.screenshot({ path: `test-results/track-c-offer-${width}.png`, fullPage: true })
-    await page.getByRole('checkbox').check(); await page.getByRole('button', { name: '계획으로 저장' }).click()
+
+    await page.getByRole('button', { name: '이 도움 확인하기' }).click()
+    await expect(page.getByRole('heading', { name: '도움 내용을 설정해 주세요' })).toBeVisible()
+
+    await page.getByRole('button', { name: '선택 내용 확인하기' }).click()
+    await expect(page.getByRole('heading', { name: '선택한 내용을 확인해 주세요' })).toBeVisible()
+
+    await page.getByRole('button', { name: '이대로 사용하기' }).click()
+    await expect(page.getByRole('heading', { name: '실천 계획을 확인해 주세요' })).toBeVisible()
+    expect(writes.filter(w => w.path.endsWith('support-action-plans'))).toHaveLength(0)
+
+    await page.getByRole('button', { name: '이 계획을 저장하고 시작하기' }).click()
     await expect(page.getByRole('heading', { name: '실천 계획 목록' })).toBeVisible()
     await page.getByRole('button', { name: /복약 일정과 알림 확인/ }).click()
     await expect(page.getByText('진행 중', { exact: true })).toBeVisible()
@@ -117,8 +129,20 @@ for (const [situation, label, supportCode] of [
     await page.getByRole('radio', { name: label }).check()
     await page.screenshot({ path: `test-results/travel-${situation}.png`, fullPage: true })
     await page.getByRole('button', { name: '선택한 상황으로 도움 찾기' }).click()
+    await expect(page.getByRole('button', { name: '이 도움 확인하기' })).toBeVisible()
     expect(creates).toHaveLength(0)
-    await page.getByRole('checkbox').check(); await page.getByRole('button', { name: '계획 만들기' }).click()
+
+    await page.getByRole('button', { name: '이 도움 확인하기' }).click()
+    await expect(page.getByRole('heading', { name: '도움 내용을 설정해 주세요' })).toBeVisible()
+
+    await page.getByRole('button', { name: '선택 내용 확인하기' }).click()
+    await expect(page.getByRole('heading', { name: '선택한 내용을 확인해 주세요' })).toBeVisible()
+
+    await page.getByRole('button', { name: '이대로 사용하기' }).click()
+    await expect(page.getByRole('heading', { name: '실천 계획을 확인해 주세요' })).toBeVisible()
+    expect(creates).toHaveLength(0)
+
+    await page.getByRole('button', { name: '이 계획을 저장하고 시작하기' }).click()
     await expect(page.getByRole('heading', { name: '실천 계획 목록' })).toBeVisible()
     await page.getByRole('button', { name: supportCode === 'REMINDER_SETUP' ? /복약 일정과 알림 확인/ : /일상·이동 중 복약 계획 확인/ }).click()
     await expect(page.getByText('진행 중', { exact: true })).toBeVisible()

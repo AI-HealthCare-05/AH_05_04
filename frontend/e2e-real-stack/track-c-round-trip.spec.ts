@@ -18,6 +18,16 @@ test('[REAL-STACK][Track C #139] create, reload, complete and cancel plans throu
   expect(occurrences).toHaveLength(2)
   await page.addInitScript(value => localStorage.setItem('access_token', value), token)
 
+  let planCreateCount = 0
+  page.on('request', request => {
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname === '/api/v1/support-action-plans'
+    ) {
+      planCreateCount += 1
+    }
+  })
+
   for (const index of [0, 1, 2]) {
     const occurrence = occurrences[index % occurrences.length]
     const freshDay = await request.get(`${api}/api/v1/medication-occurrences?date=${date}`, { headers })
@@ -37,15 +47,46 @@ test('[REAL-STACK][Track C #139] create, reload, complete and cancel plans throu
     if (index !== 2) {
       await page.getByRole('radio', { name: index === 0 ? '생활 일정이 바뀌었어요' : '약을 가지고 나오지 않았어요' }).check()
       await page.getByRole('button', { name: '선택한 상황으로 도움 찾기' }).click()
+    } else {
+      await page.getByRole('radio', { name: '알림을 보거나 듣지 못했어요' }).check()
+      await page.getByRole('button', { name: '선택한 상황으로 도움 찾기' }).click()
     }
-    await page.getByRole('checkbox').check()
-    const creation = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/support-action-plans'))
-    await page.locator('.track-c-actions button').first().click()
+
+    await expect(page.getByRole('button', { name: '이 도움 확인하기' })).toBeVisible()
+    await page.getByRole('button', { name: '이 도움 확인하기' }).click()
+
+    await expect(page.getByRole('heading', { name: '도움 내용을 설정해 주세요' })).toBeVisible()
+    await page.getByRole('button', { name: '선택 내용 확인하기' }).click()
+
+    await expect(page.getByRole('heading', { name: '선택한 내용을 확인해 주세요' })).toBeVisible()
+    await page.getByRole('button', { name: '이대로 사용하기' }).click()
+
+    await expect(page.getByRole('heading', { name: '실천 계획을 확인해 주세요' })).toBeVisible()
+
+    expect(planCreateCount).toBe(index)
+
+    const creation = page.waitForResponse(
+      response =>
+        response.request().method() === 'POST' &&
+        response.url().endsWith('/support-action-plans'),
+    )
+    await page.getByRole('button', { name: '이 계획을 저장하고 시작하기' }).click()
     const createdResponse = await creation
     expect(createdResponse.status()).toBe(200)
+    expect(planCreateCount).toBe(index + 1)
     const created = (await createdResponse.json()).data
     await expect(page.getByRole('heading', { name: '실천 계획 목록' })).toBeVisible()
-    await page.getByRole('button', { name: index === 1 ? /일상·이동 중 복약 계획 확인/ : /복약 일정과 알림 확인/ }).click()
+    const activePlanButton = page
+      .locator('.track-c-plan-item')
+      .filter({ hasText: '진행 중' })
+      .filter({
+        hasText: index === 1
+          ? '일상·이동 중 복약 계획 확인'
+          : '복약 일정과 알림 확인',
+      })
+      .first()
+
+    await activePlanButton.click()
     await expect(page.getByText('진행 중', { exact: true })).toBeVisible()
     await page.reload()
     await expect(page.getByText('진행 중', { exact: true })).toBeVisible()

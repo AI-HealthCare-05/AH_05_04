@@ -51,6 +51,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 - [Track B Notification 계약 v1 (#203)](./current/track-b-notifications-v1.md): 알림 저장·목록·읽음·재알림, 원본 `occurrence_local_date`, 멱등성과 Check-in 분리 경계
 - [Track B occurrence 원래 약 표시 조회 v1 (#202)](./current/track-b-occurrence-medication-v1.md): occurrence의 불변 version medication 조회, SELF 404와 current medication fallback 금지
 - [Track C ActionPlan 조회·완료·취소 v1 (#617)](./current/track-c-plan-lifecycle-617.md): PR #618의 단건 GET·단일 종료 PATCH·멱등성·SELF 계약. 권가빈 구현·김지혜 승인 후 PR #618 병합(`a542bcc2`), 외부 공개 게이트 별도.
+- [Track C Frontend C-03~C-06 사용자 확인 흐름 (#908)](./current/track-c-frontend-confirmation-908.md): Support·질문 수정·재선택 후 재확인, 최종 확인 전 Plan POST 금지와 C-06 최종 CTA 저장 경계. Backend API/DTO 변경 없음.
 - [Track C ActionPlan 목록 조회 v1 (#867)](./current/track-c-plan-list-867.md): `GET /api/v1/support-action-plans`의 SELF 소유 목록·최신순 정렬·얇은 목록 DTO 계약. Frontend 목록 화면·메뉴 진입점은 후속 범위.
 - [Catalog 승인·철회·감사 저장소 계약 (#166/#526)](./current/catalog-approval-storage-166.md): permission current-state, append-only evidence audit, 전용 최소권한 role, save/load exact revalidation의 Current 구현 계약. Actual approval issuance·Catalog materialization·Production 공개는 별도이며 미실행.
 - 공통 오류: `code`, `message`, `details`, `trace_id`
