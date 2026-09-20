@@ -5,14 +5,8 @@ import inspect
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from ai_worker.tasks.evaluation.answer_runtime_binding import (
-    AnswerRuntimeBindingMaterializationInput,
-    AnswerRuntimeSupplementalCarrierSnapshot,
-    MaterializedAnswerRuntimeSupplementalBindings,
-    materialize_answer_runtime_supplemental_bindings,
-)
 from ai_worker.tasks.evaluation.canonical import JsonValue, sha256_hex
 from ai_worker.tasks.evaluation.config import ResolvedDevExecution
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
@@ -31,6 +25,12 @@ from ai_worker.tasks.evaluation.schemas.common import (
     ExperimentType,
     TaskType,
 )
+
+if TYPE_CHECKING:
+    from ai_worker.tasks.evaluation.answer_runtime_binding import (
+        AnswerRuntimeSupplementalCarrierSnapshot,
+        MaterializedAnswerRuntimeSupplementalBindings,
+    )
 
 TASK_TYPES_BY_EXPERIMENT = {
     ExperimentType.KNOWLEDGE_RETRIEVAL: (TaskType.RETRIEVAL,),
@@ -378,6 +378,10 @@ def _capture_answer_runtime_supplemental_carrier(
     experiment_type: ExperimentType,
     execution_status: ExecutionStatus,
 ) -> AnswerRuntimeSupplementalCarrierSnapshot | None:
+    from ai_worker.tasks.evaluation.answer_runtime_binding import (
+        AnswerRuntimeSupplementalCarrierSnapshot,
+    )
+
     if experiment_type not in (
         ExperimentType.ANSWER_GROUNDING_SAFETY,
         ExperimentType.END_TO_END_RAG,
@@ -571,6 +575,11 @@ def materialize_answer_runtime_supplemental_from_outcome(
     run_id: str,
     outcome: RunOutcome,
 ) -> MaterializedAnswerRuntimeSupplementalBindings:
+    from ai_worker.tasks.evaluation.answer_runtime_binding import (
+        AnswerRuntimeBindingMaterializationInput,
+        materialize_answer_runtime_supplemental_bindings,
+    )
+
     if type(outcome) is not RunOutcome or outcome.execution_status is not ExecutionStatus.COMPLETED:
         raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
     if bool(outcome.blocking_execution_statuses):
