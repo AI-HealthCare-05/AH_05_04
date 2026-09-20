@@ -68,6 +68,7 @@ from ai_worker.tasks.rag.guide_orchestration import (
     GuideOrchestrationRequest,
     orchestrate_guide_preflight_handoff,
 )
+from ai_worker.tasks.rag.guide_personalized_composition import compose_personalized_guide
 from ai_worker.tasks.rag.guide_runtime_preflight import RuntimeGuidelineGeneratorPort
 from ai_worker.tasks.rag.guideline_approval_pack import Rag15ApprovalDecisionVerifierPort
 from ai_worker.tasks.rag.guideline_card import (
@@ -205,12 +206,13 @@ async def orchestrate_guide_generation_card(
 
     # Phase 3 — Generator, exactly once
     preflight_request = request.upstream_request.preflight_request
-    generation_result = await generator.generate(
+    generation_result = await compose_personalized_guide(
         GuidelineGenerationRequest(
             medication_identities=request.medication_identities,
             evidence=production_evidence,
             policy=preflight_request.policy,
-        )
+        ),
+        generator=generator,
     )
 
     # Phase 4 — approval authority for whatever the Generator actually returned

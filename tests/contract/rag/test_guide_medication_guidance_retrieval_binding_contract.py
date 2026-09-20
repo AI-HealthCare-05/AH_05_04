@@ -31,7 +31,7 @@ CANONICAL_STATUS_BY_OTHER_NODE = {
     "select_medication_guidelines": "MISSING_SEMANTIC_CALLABLE",
     "medication_guideline_safety_filter": "MISSING_SEMANTIC_CALLABLE",
     "conflict_gate": "MISSING_SEMANTIC_CALLABLE",
-    "compose_personalized_guide": "MISSING_SEMANTIC_CALLABLE",
+    "compose_personalized_guide": "THIN_ADAPTER_NEEDED",
     "claim_citation_validator": "EXACT_CALLABLE",
     "release_gate": "EXACT_CALLABLE",
     "persist_guide": "EXTERNAL_SYNC_BACKEND_BOUNDARY",
