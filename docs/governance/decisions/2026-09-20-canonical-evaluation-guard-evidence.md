@@ -3,15 +3,15 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-162-20260920` |
-| 상태 | Approved · Phase A1 Contract Freeze Accepted — PR #868 |
+| 상태 | Phase A1 Approved (PR #868) · Phase A2 Merged (PR #883) · Phase A3 Candidate Source Governance Authority Freeze Proposed · Authority Resolution Required |
 | 제안·구현 | 정현우 (`@ceohwj`) — AI/RAG |
-| 단일 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — PM / Product Acceptance / Evaluation & Safety (APPROVED 2026-09-20T04:11:20Z) |
-| 승인 근거 | PR #868 책임 리뷰 `APPROVED` (`@hazelnutflavoured`) · Merge commit `896ef7c5` |
+| 단일 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — PM / Product Acceptance / Evaluation & Safety (Phase A1 APPROVED 2026-09-20T04:11:20Z / Phase A3 Authority Resolution Required) |
+| 승인 근거 | Phase A1: PR #868 책임 리뷰 `APPROVED` (`@hazelnutflavoured`) · Merge commit `896ef7c5`<br>Phase A2: PR #883 머지 (`a19ec7e7`)<br>Phase A3: Proposed · Authority Resolution Required (#162) |
 | 교차 리뷰 (FYI) | 송은영 (`@phina-io`) — Backend·Data·Security / DB schema · migration · Repository 쓰기 경계<br>김지혜 (`@Jye-rookie`) — Source·Snapshot·Catalog 경계 / Worker |
 | 추적 Issue | [#162](https://github.com/AI-HealthCare-05/AH_05_04/issues/162) |
 | 조사 기준 | `origin/develop` @ `b3a92f32f0cfd6420d55de0ccf0b3c86216feb74` (PR #849 merge commit `f02f8f06`) |
 | 상위·관련 결정 | [`PD-125-20260831`](./2026-08-31-rag-p0-contract-freeze.md), [`PD-216-20260902`](./2026-09-02-rag-evaluation-schema-set-1-1-freeze.md), [`PD-241-20260903`](./2026-09-03-rag-evaluation-schema-set-1-2-freeze.md), [`PD-799-20260918`](./2026-09-18-citation-authorization-production-authority-boundary.md), [`PD-833-20260919`](./2026-09-13-rag-answer-quality-metrics.md) |
-| 관련 Issue / PR | #162, #163 (PR #849), #806 (PR #828), #853 (PR #857), PR #868 |
+| 관련 Issue / PR | #162, #163 (PR #849), #806 (PR #828), #853 (PR #857), PR #868, PR #883 |
 
 ---
 
@@ -45,19 +45,23 @@ PR #849 병합으로 `#163` Protected Release Gate CLI 및 Loader(`ai_worker/tas
 
 ## 2. 작업 단계 구분 (Phased Roadmap)
 
-본 작업은 재작업과 안전성 누수를 방지하기 위해 다음 4단계로 분리하여 진행한다:
+본 작업은 재작업과 안전성 누수를 방지하기 위해 다음 단계로 분리하여 진행한다:
 
 ```text
-[지금] Phase A1: Contract Freeze / Authority Coordinate 확정 (Proposed Contract + Decision 문서)
-        ↓ 책임 리뷰어(@hazelnutflavoured) 승인
-Phase A2: Canonical Guard Producer + Evidence Bridge 구현 (feat/162-evaluation-guard-authority)
+Phase A1: Contract Freeze / Authority Coordinate 확정 (Approved · PR #868)
+        ↓
+Phase A2: Canonical Guard Evidence Core (Merged · PR #883)
+        ↓
+[지금] Phase A3: Candidate Source Governance Authority Freeze (Proposed · Authority Resolution Required)
+        ↓ 책임 리뷰어(@hazelnutflavoured), Source authority(@Jye-rookie), Runtime/DB cross-check(@phina-io) 확인
+Phase A4: Candidate Source Governance Bridge 구현
         ↓
 Phase B: Paired Evaluation Artifact 구현 (ANS-BASE / ANS-RAG / ANS-FINAL 대조 및 95% CI)
         ↓
 #163 Follow-up: Actual Release Gate integration (release_gate_loader.py 차단 해제 및 연결)
 ```
 
-Phase A1 완료 시점의 상태는 `#162_GUARD_CONTRACT_PROPOSED`이며, `release_gate_loader.py`는 여전히 fail-closed(`ACTUAL_RELEASE_GATE_AUTHORIZATION_BLOCKED`) 상태를 유지한다.
+Phase A3 제안 시점의 상태는 `CANDIDATE_SOURCE_AUTHORITY_BLOCKED`이며, `release_gate_loader.py`는 여전히 fail-closed(`ACTUAL_RELEASE_GATE_AUTHORIZATION_BLOCKED`) 상태를 유지한다.
 
 ---
 
@@ -528,9 +532,215 @@ Required Case Coverage는 단순 개수(count) 일치 검사가 아니며, 다�
 
 ---
 
-## 7. 결론 및 다음 단계
+## 7. Phase A1·A2 완료 현황 및 전환
 
-본 Phase A1 결정과 Proposed Contract(`docs/contracts/proposed/post-mvp-1/evaluation-guard-evidence-v1.md`)에서 Guard ref 정본 사영, 해시 레시피, `case_guard_bindings` canonical ordering, Safety Epoch 시작 스냅샷 및 Concurrency Fence 의미가 완전히 동결되었으므로:
-1. 단일 책임 리뷰어(`@hazelnutflavoured`)의 승인 후,
-2. `feat/162-evaluation-guard-authority` 브랜치에서 Phase A2(actual Guard producer, evidence bridge, exact-set validator, synthetic/negative tests)를 구현한다.
-3. 그 전까지 저장소의 Protected Release Gate는 안전하게 fail-closed 상태를 유지한다.
+1. **Phase A1 (Contract Freeze)**: PR #868에서 단일 책임 리뷰어(`@hazelnutflavoured`) 승인 및 머지 완료. Guard ref 정본 사영, 해시 레시피, `case_guard_bindings` canonical ordering, Safety Epoch 시작 스냅샷 및 Concurrency Fence 규격 동결.
+2. **Phase A2 (Guard Evidence Core)**: PR #883에서 Candidate Guard evidence core, 해시/envelope 재계산 검증기, `SqlAlchemyEvaluationGuardAuthorityReader` 및 PostgreSQL 통합 테스트 구현 완료 및 머지(`a19ec7e7`).
+3. **Phase A3 전환**: Candidate 번들 런타임 소스 구성원의 Source Governance 판정을 위한 3개 핵심 시맨틱 권위가 미확정 상태이므로, 코드 구현에 앞서 본 문서 Section 8에서 정본 의미를 동결 제안(Proposed · Authority Resolution Required)한다.
+
+---
+
+## 8. Candidate Source Governance 권위 동결 (Phase A3 Proposed · Authority Resolution Required)
+
+PR #883 병합으로 Candidate Guard의 암호학적/구조적 Evidence Core(`evaluation-candidate-guard-v1`, `evaluation-request-guard-v1`, `evaluation-guard-coverage-v1`, Concurrency Fence, `SqlAlchemyEvaluationGuardAuthorityReader`)는 준비 완료되었다. 그러나 Candidate 번들의 런타임 소스 구성원에 대한 실제 Source Governance 판정(`EvaluationCandidateGuardEvaluator.evaluate_candidate_start`)은 아래 3개 시맨틱 권위가 미확정 상태이므로, fail-closed 원칙에 따라 `CANDIDATE_SOURCE_AUTHORITY_BLOCKED` 상태를 유지하고 있다.
+
+본 절은 코드를 추가 작성하기 전에 도메인 소유자 간 합의를 통해 3개 권위의 정본 의미를 동결(Proposed Freeze)하기 위한 규격이다. 본 단계에서는 새 Source Governance 엔진 신설, 새 DB 테이블/마이그레이션 생성, 임의 매핑이나 synthetic fallback을 일체 배제한다.
+
+### 8.1 재사용 확정된 기존 권위 (Unchanged Resolved Authorities — 재논의 제외)
+다음 권위 축은 이미 기존 정본 모델 및 PR #883 어댑터에 의해 완전히 지지되므로 본 동결에서 재논의하지 않고 그대로 재사용한다:
+
+1. **Runtime 번들 구조적 무결성**:
+   - Source: `ai_worker/adapters/sqlalchemy_evaluation_guard_authority.py` (`SqlAlchemyEvaluationGuardAuthorityReader.read_candidate_start`)
+   - Recomputation: `canonical_runtime_bundle_manifest_hash` 재계산 일치, Candidate Index 필수 바인딩, Environment 3-축 펜스
+2. **Source 생명주기**:
+   - Source: `backend/app/models/rag_source.py` (`RagSource.lifecycle_status`)
+   - 기준: `RagSource.lifecycle_status == RagSourceLifecycleStatus.ACTIVE`
+3. **Endpoint 적격성**:
+   - Source: `backend/app/models/rag_source.py` (`RagSourceEndpoint`)
+   - 기준: `lifecycle_status == RagSourceEndpointLifecycleStatus.VERIFIED`, `runtime_status == RagSourceUsageStatus.ENABLED`, `acquisition_status == RagSourceApprovalStatus.APPROVED`
+4. **Operation 적격성**:
+   - Source: `backend/app/models/rag_source.py` (`RagSourceOperation`)
+   - 기준: `runtime_status == RagSourceUsageStatus.ENABLED`, `acquisition_status == RagSourceApprovalStatus.APPROVED`
+5. **Snapshot 최신 검증 상태**:
+   - Source: `backend/app/models/rag_source.py` (`RagSourceSnapshot.verification_status`)
+   - 기준: `verification_status == RagSnapshotVerificationStatus.CURRENT`
+6. **Snapshot Provenance 영수증 무결성**:
+   - Source: `ai_worker/adapters/sqlalchemy_source_snapshot_repository.py` (`SqlAlchemySourceSnapshotRepository.get_snapshot_receipt`) 및 `ai_worker/tasks/rag/source_ingestion/snapshot_lifecycle.py` (`SnapshotProvenanceReceipt.validate_provenance()`)
+   - 기준: 번들 핀(`source_snapshot_id`, `source_version`, `canonical_checksum`)과의 exact match 및 영수증 provenance 검증 통과
+7. **Snapshot 발행 승인 (Publication Approval)**:
+   - Source: `SqlAlchemySourceSnapshotRepository.get_snapshot_receipt`
+   - 기준: `SnapshotProvenanceReceipt.publication_verification_id is not None` (`rag_source_snapshot_verification`의 `check_name == "SNAPSHOT_PUBLICATION_APPROVAL"`, `verification_result == "PASSED"`, `verified_by` nonblank)
+8. **Snapshot 적격성 커널**:
+   - Source: `ai_worker/tasks/rag/source_ingestion/snapshot_lifecycle.py` (`evaluate_snapshot_use_eligibility`)
+   - 기준: `decision == SnapshotUseDecision.USABLE`
+9. **Source Use Approval 유효성 및 철회 여부**:
+   - Source: `ai_worker/adapters/sqlalchemy_source_use_approval.py` (`SqlAlchemySourceUseApprovalReader.read_usable_exact`) 및 `rag_runtime/source_use_approval.py`
+   - 기준: `valid_from <= evaluation_time < expires_at`, `revoked_at is None`, exact 6-field equality lookup
+
+---
+
+### 8.2 Q1. Purpose Mapping Authority (Proposed · Resolution Required)
+
+#### 1) 문제 정의 및 현재 어휘 차이
+런타임 번들 소스 멤버 테이블(`rag_runtime_bundle_source`)은 `RuntimeBundleMemberPurpose` enum 6종을 핀한다:
+- `CATALOG`
+- `KNOWLEDGE`
+- `CANDIDATE_INDEX_INPUT`
+- `RULE`
+- `GUIDELINE`
+- `SAFETY_POLICY`
+
+반면, 소스 사용 승인 테이블(`rag_source_use_approval`) 및 exact reader(`SqlAlchemySourceUseApprovalReader.read_usable_exact`)는 `SourceUsePurpose` enum 5종을 엄격히 요구한다:
+- `PRODUCT_IDENTIFICATION`
+- `SAFETY_ROUTING`
+- `RULE_DERIVATION`
+- `RETRIEVAL`
+- `PATIENT_CITATION`
+
+현재 저장소의 어떠한 계약, 결정, 코드에도 두 enum 간의 정본 매핑이 정의되어 있지 않다 (`CANDIDATE_SOURCE_PURPOSE_MAPPING_BLOCKED`).
+
+#### 2) 엄격 금지 원칙
+- 엔지니어링 임의 매핑(예: `CATALOG -> PRODUCT_IDENTIFICATION`, `KNOWLEDGE -> RETRIEVAL`, `RULE -> RULE_DERIVATION` 등)을 추정하여 코드에 하드코딩하거나 딕셔너리로 작성하는 것은 엄격히 금지된다.
+- 암묵적 기본값(default/fallback) 매핑을 제공하는 것은 금지된다.
+
+#### 3) 동결 요구 사항 (Authority Resolution Confirmation)
+도메인 소유자(@hazelnutflavoured, @Jye-rookie, @phina-io)는 다음 표의 각 행에 대해 정확한 매핑을 확정해야 한다:
+
+| Bundle Member Purpose | Required SourceUsePurpose | Cardinality (1:1 / 1:N) | 상태 |
+| --- | --- | --- | --- |
+| `CATALOG` | ? | ? | Proposed · Resolution Required |
+| `KNOWLEDGE` | ? | ? | Proposed · Resolution Required |
+| `CANDIDATE_INDEX_INPUT` | ? | ? | Proposed · Resolution Required |
+| `RULE` | ? | ? | Proposed · Resolution Required |
+| `GUIDELINE` | ? | ? | Proposed · Resolution Required |
+| `SAFETY_POLICY` | ? | ? | Proposed · Resolution Required |
+
+각 행의 값은 다음 세 가지 중 하나로만 확정될 수 있다:
+1. exact `SourceUsePurpose` (예: `RETRIEVAL`)
+2. `NOT_APPLICABLE` (해당 번들 멤버 목적은 Source Use Approval 대상이 아님)
+3. `BLOCKED_BY_UNMODELED_PURPOSE` (현재 `SourceUsePurpose` enum에 대응 목적이 없어 거버넌스 승인 불가)
+
+#### 4) Cardinality 동결 요구
+- 번들 멤버 1개당 단 1개의 Source Use Approval 목적이 필요한지(1:1), 아니면 복수의 `SourceUsePurpose` 승인이 모두 존재해야 유효한지(1:N)를 확정해야 한다.
+
+---
+
+### 8.3 Q2. Freshness Authority (Proposed · Resolution Required)
+
+#### 1) 문제 정의
+`rag_runtime_bundle_source.freshness_policy_hash`는 번들 생성 시점에 고정된 SHA-256 해시로서, 정책의 불변 식별자(identity)만 보존한다. 현재 develop에는 `(snapshot, freshness_policy_hash, evaluation_time)`을 입력받아 `freshness_eligible: bool`을 산출하는 production evaluator가 부재하다 (`CANDIDATE_SOURCE_FRESHNESS_AUTHORITY_BLOCKED`).
+
+#### 2) 엄격 금지된 바로가기 (Prohibited Shortcuts)
+- `verification_status == CURRENT` 판정을 Freshness 통과로 간주하는 것: **엄격 금지**. `PD-362-20260909` 라인 135-136에 명시된 바와 같이, `CURRENT`는 파이프라인 수집 시점의 최신성 검증일 뿐이며, 특정 Freshness Policy와 평가 시점 기준의 만료 여부 판정이 아니다.
+- `freshness_policy_hash exists` -> `freshness PASS`: **엄격 금지**. 정책 해시의 존재는 정책 내용의 충족을 뜻하지 않는다.
+- `Bundle build 당시 freshness PASS` -> `Evaluation 시점 PASS`: **엄격 금지**. 번들 빌드 시점과 실제 Release Candidate 평가 실행 시점 사이에는 시간 차가 존재하므로, Evaluation Candidate는 반드시 **평가 실행 시점(`evaluation_time`) 기준 current-state 재검증**이어야 한다.
+
+#### 3) 동결 요구 사항 (Authority Resolution Confirmation)
+도메인 소유자는 다음 4개 요소를 확정해야 한다:
+1. **Freshness Policy identity source**: 정책 식별자의 정본 원천 (어디서 policy를 식별하는가?)
+2. **Freshness Policy content source**: 정책 내용(최대 허용 경과 시간/TTL/deadlines)의 정본 원천 (기존 불변 아티팩트 exact read vs 승인된 계약 내 고정 pure evaluator)
+3. **Evaluation input**: `(snapshot, freshness_policy_hash, evaluation_time)`
+4. **Evaluation output**: `freshness_eligible: bool` (기존 `evaluate_snapshot_use_eligibility`의 입력 시맨틱과 일치)
+
+#### 4) 최소 설계 원칙 (No New DB Priority)
+- 새 정책 레지스트리 DB 테이블이나 마이그레이션을 섣불리 신설하지 않는다.
+- 우선 순위:
+  A. 기존 불변 정책 아티팩트가 존재하는가? -> exact read 적용
+  B. 기존 승인 계약에 정책 내용이 고정되어 있는가? -> pure evaluator 추가
+  C. 둘 다 부재한 경우 -> 권위 미확정 상태로 두어 `CANDIDATE_SOURCE_FRESHNESS_AUTHORITY_BLOCKED` 유지
+
+---
+
+### 8.4 Q3. Scope Authority (Proposed · Resolution Required)
+
+#### 1) 문제 정의
+`rag_runtime_bundle_source.scope_policy_hash` 역시 정책의 불변 식별자(SHA-256)만 보존한다. 현재 develop에는 `(scope_policy_hash, EVALUATION_CANDIDATE, member_context)`를 입력받아 `scope_allowed: bool`을 산출하는 production evaluator가 부재하다 (`CANDIDATE_SOURCE_SCOPE_AUTHORITY_BLOCKED`).
+
+#### 2) #806 혼동 금지 (Domain Boundary)
+- PR #828(#806)의 `request_scope_codes` 및 `canonical_scope_manifest_hash`는 라이브 쿼리 요청 수준(`decision_stage = REQUEST`)의 per-request scope이다.
+- 번들 소스 멤버의 `scope_policy_hash`는 런타임 소스 구성원의 이용 허용 범위를 규정하는 정책이므로, 두 개념을 혼동하거나 #806의 스코프 코드를 Evaluation Candidate 스코프로 자동 매핑하는 것은 엄격히 금지된다.
+
+#### 3) 동결 요구 사항 (Authority Resolution Confirmation)
+도메인 소유자는 다음 요소를 확정해야 한다:
+1. **Scope Policy identity source**: 스코프 정책 식별자의 정본 원천
+2. **Scope Policy content source**: 스코프 정책 내용의 정본 원천
+3. **Evaluation Candidate scope input**: 평가 후보 연산자(`EVALUATION_CANDIDATE`) 컨텍스트 입력
+4. **Evaluation output**: `ALLOWED | BLOCKED`의 정본 판정 규격
+
+---
+
+### 8.5 Candidate Source Governance 최종 판정 방정식 (Final Governance Equation)
+
+위 3개 권위가 확정된 후, Phase A4 Bridge가 구현할 `Candidate Source Governance PASS`의 수학적/논리적 최종 방정식은 다음과 같이 동결된다:
+
+```text
+Candidate Source Governance PASS
+⟺
+ALL pinned Bundle source members (rag_runtime_bundle_source) satisfy:
+
+  1. Bundle Pin Exact-Match:
+     (source_snapshot_id, source_version, canonical_checksum) exact match with rag_source_snapshot
+  2. Source ACTIVE:
+     rag_source.lifecycle_status == ACTIVE
+  3. Endpoint VERIFIED / ENABLED / APPROVED:
+     rag_source_endpoint.lifecycle_status == VERIFIED
+     ∧ rag_source_endpoint.runtime_status == ENABLED
+     ∧ rag_source_endpoint.acquisition_status == APPROVED
+  4. Operation ENABLED / APPROVED:
+     rag_source_operation.runtime_status == ENABLED
+     ∧ rag_source_operation.acquisition_status == APPROVED
+  5. Snapshot CURRENT:
+     rag_source_snapshot.verification_status == CURRENT
+  6. Snapshot Provenance Valid:
+     SnapshotProvenanceReceipt.validate_provenance() == PASS
+  7. Publication Approval Valid:
+     publication_verification_id is not None
+  8. Freshness Policy PASS:
+     approved freshness evaluator(snapshot, freshness_policy_hash, evaluation_time) == TRUE
+  9. Scope Policy PASS:
+     approved scope evaluator(scope_policy_hash, EVALUATION_CANDIDATE, member) == ALLOWED
+ 10. Usable Source Use Approval Exact Match:
+     SqlAlchemySourceUseApprovalReader.read_usable_exact(
+         identity=SourceUseApprovalIdentity(
+             source_snapshot_id=pin.source_snapshot_id,
+             source_code=source.source_code,
+             source_version=pin.source_version,
+             environment=RuntimeEnvironmentCode.LOCAL,
+             purpose=approved_purpose_mapping(pin.source_purpose),
+             approval_version=pin.approval_version,
+         ),
+         evaluation_time=evaluation_time,
+     ) is not None
+     (valid_from <= evaluation_time < expires_at, revoked_at is None)
+
+AND Exact Member Coverage:
+  번들에 핀된 소스 멤버 집합과 검증 대상 소스 멤버 집합 간 누락(missing) 또는 초과(extra)가 전혀 없어야 함.
+```
+
+---
+
+### 8.6 Fail-Closed 결측 권위 시맨틱 (Fail-Closed Semantics)
+
+다음 조건 중 **단 하나라도 발생하면** `EVALUATION_CANDIDATE / PASS`는 절대 발행되지 않으며 즉시 거부(Fail-closed)된다:
+- 권위 정본 부재 (missing authority)
+- 목적 매핑 모호 또는 미정의 (ambiguous / unmodeled purpose mapping)
+- 정책 원천 부재 (missing freshness / scope policy)
+- 정책 만료 또는 위반 (stale freshness / blocked scope)
+- 소스 사용 승인 만료 (expired approval)
+- 소스 사용 승인 철회 (revoked approval)
+- 목적 불일치 (wrong purpose)
+- 환경 불일치 (wrong environment: `LOCAL` 외)
+- 최신 스냅샷 아님 (`verification_status != CURRENT`)
+- 소스/엔드포인트/오퍼레이션 비활성 또는 미승인 상태
+
+결과:
+- `candidate_guard_decision = null`
+- `candidate_guard_ref = null`
+- Release Gate loader 차단 지속 (`ACTUAL_RELEASE_GATE_AUTHORIZATION_BLOCKED`)
+- 어떠한 synthetic/default PASS도 허용되지 않음
+
+---
+
+### 8.7 Phase A4 구현 진입 조건 (Entry Criteria for Implementation)
+- 본 제안(Phase A3)에 대해 단일 책임 리뷰어(@hazelnutflavoured), Source 권위(@Jye-rookie), Runtime/DB 교차검증(@phina-io)의 공식 승인이 완료될 때까지 **Python 구현 코드 작성을 엄격히 금지**한다.
+- 3개 권위(Q1, Q2, Q3)가 모두 확정된 후에만 `CANDIDATE_SOURCE_AUTHORITY_FREEZE_READY` 상태로 전이하고 Phase A4 어댑터 구현을 진행한다.
