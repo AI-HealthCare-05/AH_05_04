@@ -1,5 +1,6 @@
 import math
 import os
+import re
 import uuid
 import zoneinfo
 from dataclasses import field
@@ -7,7 +8,7 @@ from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 from cryptography.fernet import Fernet
-from pydantic import field_validator, model_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
 
@@ -26,6 +27,7 @@ _IDEMPOTENCY_HMAC_KEY_PLACEHOLDERS = frozenset(
 
 # example 파일들의 placeholder 명명 규칙("-at-least-32-characters")과 맞춘 최소 길이입니다.
 _IDEMPOTENCY_HMAC_KEY_MIN_LENGTH = 32
+_GUIDE_QUERY_HMAC_KEY_VERSION_RE = re.compile(r"^guide-query-hmac-key@[1-9][0-9]*$")
 
 # SYNC_MUTATION response_body_snapshot 암호화 키(Fernet, 32byte urlsafe-base64)의 local
 # 기본값입니다. 전부 0바이트로 만든 값이라 눈에 띄게 가짜지만 Fernet이 요구하는 형식은
@@ -170,6 +172,12 @@ class Config(BaseSettings):
     IDEMPOTENCY_HMAC_RETIRED_KEYS: dict[str, str] = {}
     IDEMPOTENCY_RECORD_TTL_DAYS: int = 7
 
+    # #180 B2 query fingerprints have one active deployment-owned HMAC authority.
+    # SecretStr prevents accidental repr/log exposure; consumers receive only the
+    # typed dependency constructed in app.dependencies.services.
+    GUIDE_QUERY_HMAC_KEY: SecretStr | None = None
+    GUIDE_QUERY_HMAC_KEY_VERSION: str = "guide-query-hmac-key@1"
+
     # idempotency-v1.md: SYNC_MUTATION의 response_body_snapshot은 암호화한 BYTEA로 저장합니다.
     # 알고리즘·키 관리 방식은 #311 담당 리뷰어의 암호화 envelope 검토 대상이라, 아래 값은
     # "일단 동작하는 기본값"(Fernet)입니다 — 검토 결과에 따라 값을 교체하면 되도록 별도 필드로
@@ -222,6 +230,14 @@ class Config(BaseSettings):
     @classmethod
     def _strip_idempotency_hmac_key_version(cls, value: str) -> str:
         return value.strip()
+
+    @field_validator("GUIDE_QUERY_HMAC_KEY_VERSION", mode="after")
+    @classmethod
+    def _validate_guide_query_hmac_key_version(cls, value: str) -> str:
+        normalized = value.strip()
+        if _GUIDE_QUERY_HMAC_KEY_VERSION_RE.fullmatch(normalized) is None:
+            raise ValueError("GUIDE_QUERY_HMAC_KEY_VERSION must use guide-query-hmac-key@<positive-integer>")
+        return normalized
 
     @field_validator("IDEMPOTENCY_HMAC_RETIRED_KEYS", mode="before")
     @classmethod
