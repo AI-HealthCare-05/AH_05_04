@@ -200,3 +200,80 @@
     padding-inline: 14px;
   }
 }
+
+.mvp-notification-settings__push-status {
+  display: grid;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid #d5dfed;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.mvp-notification-settings__push-status h4,
+.mvp-notification-settings__push-status p {
+  margin: 0;
+}
+
+.mvp-notification-settings__push-status h4 {
+  color: #1f2633;
+  font-size: 17px;
+  line-height: 24px;
+}
+
+.mvp-notification-settings__push-status p {
+  color: #526074;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.mvp-notification-settings__push-primary,
+.mvp-notification-settings__push-secondary,
+.mvp-notification-settings__push-fallback {
+  width: 100%;
+  min-height: 52px;
+  border-radius: 14px;
+  font: inherit;
+  font-weight: 700;
+}
+
+.mvp-notification-settings__push-primary {
+  border: 0;
+  background: #5d7a88;
+  color: #fff;
+}
+
+.mvp-notification-settings__push-secondary {
+  border: 1px solid #c7d2e2;
+  background: #fff;
+  color: #334155;
+}
+
+.mvp-notification-settings__push-fallback {
+  border: 1px solid #d8dee8;
+  background: #fff;
+  color: #526b78;
+}
+
+.mvp-notification-settings__push-primary:disabled,
+.mvp-notification-settings__push-secondary:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.mvp-notification-settings__push-primary:focus-visible,
+.mvp-notification-settings__push-secondary:focus-visible,
+.mvp-notification-settings__push-fallback:focus-visible {
+  outline: 3px solid rgb(93 122 136 / 35%);
+  outline-offset: 2px;
+}
+
+.mvp-notification-settings__push-notice {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: #eceff1;
+  color: #526074;
+  font-size: 14px;
+  line-height: 22px;
+}

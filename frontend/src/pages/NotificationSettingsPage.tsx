@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
@@ -9,11 +9,51 @@ import {
   type MedicationScheduleItem,
 } from '../api/medicationSchedules'
 import { MobileShell } from '../design-system/components'
+import {
+  disableWebPush,
+  enableWebPush,
+  getWebPushLaunchContext,
+  getWebPushState,
+  hasStoredWebPushBinding,
+  type WebPushLaunchContext,
+  type WebPushState,
+} from '../features/push/webPush'
 import '../design-system/prototype.css'
 import './MvpPages.css'
 import './NotificationSettingsPage.css'
 
 const KST_TIME_ZONE = 'Asia/Seoul'
+
+const PUSH_STATE_COPY: Record<WebPushState, { title: string; detail: string }> = {
+  unsupported: {
+    title: '이 브라우저에서는 Push 알림을 사용할 수 없어요',
+    detail: '앱 안의 알림 목록과 복약 기록은 계속 사용할 수 있어요.',
+  },
+  unrequested: {
+    title: 'Push 알림을 사용하지 않고 있어요',
+    detail: '아래 버튼을 직접 누를 때만 브라우저가 알림 권한을 요청해요.',
+  },
+  granted: {
+    title: 'Push 알림이 켜져 있어요',
+    detail: '잠금 화면에는 약명이나 용량 없이 일반 문구만 표시해요.',
+  },
+  denied: {
+    title: '브라우저에서 알림이 차단되어 있어요',
+    detail: '반복해서 권한을 요청하지 않아요. 브라우저 설정에서 권한을 변경할 수 있어요.',
+  },
+  revoked: {
+    title: '이전에 사용하던 알림 연결이 해제되었어요',
+    detail: '브라우저 권한과 구독을 확인한 뒤 알림을 다시 켜 주세요.',
+  },
+  config_unavailable: {
+    title: 'Push 알림 설정이 아직 준비되지 않았어요',
+    detail: '관리자 설정이 완료되면 다시 시도해 주세요. 앱 안의 알림 목록은 계속 사용할 수 있어요.',
+  },
+  subscription_failed: {
+    title: '알림 연결을 완료하지 못했어요',
+    detail: '네트워크와 브라우저 설정을 확인한 뒤 다시 시도해 주세요.',
+  },
+}
 
 function kstToday(): string {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -59,6 +99,13 @@ function NotificationSettingsPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [reloadVersion, setReloadVersion] = useState(0)
 
+  const [launchContext] = useState<WebPushLaunchContext>(
+    () => getWebPushLaunchContext(),
+  )
+  const [pushState, setPushState] = useState<WebPushState | null>(null)
+  const [isPushUpdating, setIsPushUpdating] = useState(false)
+  const needsIOSInstall = launchContext === 'ios-browser'
+
   useEffect(() => {
     const controller = new AbortController()
 
@@ -97,6 +144,86 @@ function NotificationSettingsPage() {
 
     return () => controller.abort()
   }, [reloadVersion])
+
+  const refreshPushState = useCallback(() => {
+    if (needsIOSInstall) return
+    void getWebPushState().then(setPushState)
+  }, [needsIOSInstall])
+
+  useEffect(() => {
+    refreshPushState()
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshPushState()
+      }
+    }
+
+    window.addEventListener('focus', refreshPushState)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.removeEventListener('focus', refreshPushState)
+      document.removeEventListener(
+        'visibilitychange',
+        handleVisibilityChange,
+      )
+    }
+  }, [refreshPushState])
+
+  const handleEnablePush = async () => {
+    if (isPushUpdating) return
+
+    setIsPushUpdating(true)
+    setPushState(await enableWebPush())
+    setIsPushUpdating(false)
+  }
+
+  const handleDisablePush = async () => {
+    if (isPushUpdating) return
+
+    setIsPushUpdating(true)
+
+    try {
+      await disableWebPush()
+      setPushState('unrequested')
+    } catch {
+      setPushState('subscription_failed')
+    } finally {
+      setIsPushUpdating(false)
+    }
+  }
+
+  const handlePushRecovery = () => {
+    if (
+      typeof Notification !== 'undefined' &&
+      Notification.permission === 'granted'
+    ) {
+      void handleEnablePush()
+      return
+    }
+
+    void handleDisablePush()
+  }
+
+  const pushCopy = needsIOSInstall
+    ? {
+        title: '홈 화면에 추가해 주세요',
+        detail:
+          'Safari의 공유 버튼을 누른 뒤 ‘홈 화면에 추가’를 선택하세요. 설치한 Dosey 도지를 홈 화면에서 열면 알림을 켤 수 있어요.',
+      }
+    : pushState
+      ? PUSH_STATE_COPY[pushState]
+      : null
+
+  const hasPendingBindingCleanup =
+    pushState === 'subscription_failed' &&
+    hasStoredWebPushBinding()
+
+  const canEnablePush =
+    pushState !== null &&
+    !['unsupported', 'denied', 'granted'].includes(pushState) &&
+    !hasPendingBindingCleanup
 
 
   return (
@@ -211,6 +338,64 @@ function NotificationSettingsPage() {
 
           <p className="mvp-notification-settings__boundary">
             현재는 확정된 복약 일정만 보여드려요.
+          </p>
+
+          <h3 className="mvp-notification-settings__section-title">
+            기기 Push 알림
+          </h3>
+
+          <section
+            className="mvp-notification-settings__push-status"
+            aria-live="polite"
+            aria-busy={!needsIOSInstall && pushState === null}
+          >
+            <h4>
+              {pushCopy?.title ?? '알림 상태를 확인하고 있어요'}
+            </h4>
+            <p>{pushCopy?.detail ?? '잠시만 기다려 주세요.'}</p>
+          </section>
+
+          {!needsIOSInstall && (
+            pushState === 'granted' || hasPendingBindingCleanup ? (
+              <button
+                type="button"
+                className="mvp-notification-settings__push-secondary"
+                disabled={isPushUpdating}
+                onClick={
+                  hasPendingBindingCleanup
+                    ? handlePushRecovery
+                    : () => void handleDisablePush()
+                }
+              >
+                {isPushUpdating
+                  ? '알림 연결 확인 중...'
+                  : hasPendingBindingCleanup
+                    ? '연결 다시 시도'
+                    : '알림 끄기'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="mvp-notification-settings__push-primary"
+                disabled={!canEnablePush || isPushUpdating}
+                onClick={() => void handleEnablePush()}
+              >
+                {isPushUpdating ? '알림 연결 중...' : '알림 켜기'}
+              </button>
+            )
+          )}
+
+          <button
+            type="button"
+            className="mvp-notification-settings__push-fallback"
+            onClick={() => navigate('/notifications')}
+          >
+            앱 안의 알림 목록 보기
+          </button>
+
+          <p className="mvp-notification-settings__push-notice">
+            Push 수신이나 알림 클릭만으로 읽음 또는 복약 완료 상태가
+            바뀌지 않아요.
           </p>
         </main>
       </MobileShell>
