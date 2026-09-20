@@ -72,32 +72,148 @@ Run 수준 `EVALUATION_CANDIDATE / PASS` Evidence는 최소 다음 불변 좌표
 - `dataset_code`: 대상 Dataset 코드 (`StableId`)
 - `dataset_version`: 대상 Dataset 시맨틱 버전 (`SemanticVersion`)
 - `dataset_manifest_sha256`: FROZEN Dataset 매니페스트 SHA-256 (`Sha256Hex`)
-- `required_partitions`: 평가 대상 필수 파티션 튜플 (`tuple[Partition, ...]`)
+- `required_partitions`: 평가 대상 필수 파티션 튜플 (`tuple[Partition, ...]`, UTF-16 BE ascending canonical sorted)
 - `required_case_set_hash`: 필수 케이스 집합의 canonical hash (`evaluation-required-case-set-v1`)
 - `environment`: `RuntimeEnvironment.LOCAL` 고정
+- `environment_revision_fence`: 평가 실행 시작 시점의 환경 리비전 동시성 펜스 (`RagRuntimeEnvironment.environment_revision >= 1`, positive integer)
+- `governance_revision_ref`: 대상 번들에 결속된 거버넌스 리비전 식별자 (`RagRuntimeReleaseBundle.governance_revision_ref`, non-empty string, 환경과 exact match)
+- `safety_epoch`: 평가 실행 시작 시점 환경 스냅샷의 안전성 에포크 (`RagRuntimeEnvironment.safety_epoch >= 1`, positive integer)
 - `candidate_guard_decision_id`: Candidate Guard 결정 식별자 (`CanonicalUuid`, per-run UUID string)
 - `candidate_guard_decision`: `"PASS"` 고정
-- `candidate_guard_ref`: canonical Candidate Guard reference (`GenericImmutableArtifactRef`: `artifact_code="evaluation_candidate_guard"`, `version="1.0"`, `content_sha256="<sha256>"`)
+- `candidate_guard_ref`: canonical Candidate Guard reference (`GenericImmutableArtifactRef`: `artifact_code="evaluation_candidate_guard"`, `version="1.0"`, `content_sha256="<candidate_guard_content_sha256>"`)
 - `runtime_execution_manifest_id`: 대상 번들에 결속된 실행 매니페스트 ID (`RagRuntimeReleaseBundle.execution_manifest_id`, `CanonicalUuid`)
 - `runtime_execution_manifest_hash`: 실행 매니페스트 해시 (`RagRuntimeExecutionManifest.manifest_hash`, `Sha256Hex`)
-- `governance_revision_ref`: 대상 번들에 결속된 거버넌스 리비전 식별자 (`RagRuntimeReleaseBundle.governance_revision_ref`, non-empty string)
-- `safety_epoch`: 대상 실행 환경의 안전성 에포크 (`RagRuntimeEnvironment.safety_epoch >= 1`, positive integer)
-- *주의*: `environment_revision`은 가변 환경 상태 전이 카운터이므로 불변 권위 좌표 및 해시 레시피에서 명시적으로 제외한다.
+
+*권위 원천 및 동시성 펜스 원칙*:
+- `safety_epoch`는 런타임 번들의 역사적 빌드 시점 provenance가 아니다. Evaluation Candidate Guard 시작 시점에 `bundle.environment_code`로 exact lookup한 `RagRuntimeEnvironment.safety_epoch`를 시간적 안전성 권위 스냅샷(Evaluation-start temporal safety authority snapshot)으로 관찰한다.
+- `environment_revision`은 번들 시맨틱 식별자가 아니며, 평가 실행 중 환경 상태 변경을 방지하기 위한 동시성 펜스(`environment_revision_fence`)로 기록한다.
 
 ### 3.2 Case-level Authority Binding 좌표
 각 Required Case에 대한 `EVALUATION_REQUEST / PASS` Evidence는 정확히 1건씩 존재해야 하며, 다음 좌표에 exact-bind되어야 한다:
 - `case_id`: Dataset에 정의된 필수 케이스 ID (`StableId`)
 - `evaluation_run_id`: 부모 Run과 동일한 평가 실행 ID (`CanonicalUuid`)
+- `candidate_guard_ref`: 부모 Candidate Guard의 정본 불변 참조 (`GenericImmutableArtifactRef`: `artifact_code="evaluation_candidate_guard"`, `version="1.0"`, `content_sha256="<candidate_guard_content_sha256>"`)
 - `candidate_bundle_id`: 부모 Run과 동일한 번들 ID (`CanonicalUuidString`)
 - `candidate_bundle_manifest_hash`: 부모 Run과 동일한 번들 매니페스트 해시 (`Sha256Hex`)
+- `runtime_execution_manifest_id`: 부모 Run과 동일한 실행 매니페스트 ID (`CanonicalUuid`)
+- `runtime_execution_manifest_hash`: 부모 Run과 동일한 실행 매니페스트 해시 (`Sha256Hex`)
+- `required_case_set_hash`: 부모 Run과 동일한 필수 케이스 집합 해시 (`Sha256Hex`)
+- `environment`: `RuntimeEnvironment.LOCAL` 고정
+- `environment_revision_fence`: 부모 Candidate Guard에 기록된 시작 펜스와 exact-match (`positive integer`)
+- `governance_revision_ref`: 부모 Candidate Guard에 기록된 거버넌스 리비전과 exact-match (`str`)
+- `safety_epoch`: 부모 Candidate Guard에 기록된 안전성 에포크 스냅샷과 exact-match (`positive integer`)
 - `case_guard_decision_id`: 케이스 단위 Guard 결정 ID (`CanonicalUuid`, per-case UUID string)
 - `decision`: `"PASS"` 고정
 - `request_operation_code`: 승인된 canonical 오퍼레이션 코드 (`EVALUATION_REQUEST` 단일 대문자 고정)
 - `request_scope_codes`: UTF-8 byte sorted unique non-blank 튜플
 - `scope_manifest_hash`: `canonical_scope_manifest_hash(request_scope_codes)`와 exact 일치 (`Sha256Hex`)
-- `case_guard_ref`: canonical Case Guard reference (`GenericImmutableArtifactRef`: `artifact_code="evaluation_request_guard"`, `version="1.0"`, `content_sha256="<sha256>"`)
+- `case_guard_ref`: canonical Case Guard reference (`GenericImmutableArtifactRef`: `artifact_code="evaluation_request_guard"`, `version="1.0"`, `content_sha256="<case_guard_content_sha256>"`)
 
-### 3.3 Required Case Set Canonical Hash Recipe
+*단일 스냅샷 재사용 원칙*:
+- 모든 Case Guard는 부모 Candidate Guard의 시작 스냅샷(`environment_revision_fence`, `governance_revision_ref`, `safety_epoch`)을 그대로 재사용하여 exact-bind한다.
+- 케이스 실행 중 환경을 개별 재조회하여 서로 다른 epoch를 기록하는 것은 엄격히 금지된다 (`Candidate epoch == Case1 epoch == ... == CaseN epoch` 필수).
+
+### 3.3 Candidate Guard 정본 사영 및 해시 레시피 (`evaluation-candidate-guard-v1`)
+Candidate Guard의 불변 식별자(`candidate_guard_ref.content_sha256`)는 다음 정본 사영을 직렬화하여 산출한다:
+
+```json
+{
+  "projection_version": "evaluation-candidate-guard-v1",
+  "candidate_guard_decision_id": "<canonical_uuid>",
+  "operation": "EVALUATION_CANDIDATE",
+  "decision": "PASS",
+
+  "evaluation_run_id": "<canonical_uuid>",
+
+  "environment": "LOCAL",
+  "environment_revision_fence": 1,
+  "governance_revision_ref": "<nonblank_nfc_ref>",
+  "safety_epoch": 1,
+
+  "candidate_bundle_id": "<canonical_lowercase_uuid>",
+  "candidate_bundle_manifest_hash": "<sha256>",
+
+  "runtime_execution_manifest_id": "<canonical_uuid>",
+  "runtime_execution_manifest_hash": "<sha256>",
+
+  "dataset_code": "<stable_id>",
+  "dataset_version": "<semantic_version>",
+  "dataset_manifest_sha256": "<sha256>",
+
+  "required_partitions": [
+    "HOLDOUT",
+    "SAFETY_REGRESSION"
+  ],
+
+  "required_case_set_hash": "<sha256>"
+}
+```
+- **직렬화 및 해시**: 저장소 정본 `canonical_sha256()` 함수를 단일 source로 사용한다.
+  `candidate_guard_content_sha256 = canonical_sha256(candidate_guard_projection)`
+- **불변 참조 (`candidate_guard_ref`)**:
+  ```json
+  {
+    "artifact_code": "evaluation_candidate_guard",
+    "version": "1.0",
+    "content_sha256": "<candidate_guard_content_sha256>"
+  }
+  ```
+- **검증기 규칙**: 검증기는 artifact에 기록된 `candidate_guard_ref.content_sha256` 문자열을 신뢰하지 않으며, 필드에서 사영을 재구성한 뒤 `canonical_sha256()`을 재계산하여 exact match를 검증한다. 불일치 시 즉시 fail-closed한다.
+- **파티션 정렬**: `required_partitions`는 enum wire 문자열을 **UTF-16 BE** 오름차순으로 정렬한다. 중복 파티션은 즉시 거부한다.
+
+### 3.4 Case Guard 정본 사영 및 해시 레시피 (`evaluation-request-guard-v1`)
+각 Case Guard의 불변 식별자(`case_guard_ref.content_sha256`)는 다음 정본 사영을 직렬화하여 산출한다:
+
+```json
+{
+  "projection_version": "evaluation-request-guard-v1",
+  "case_guard_decision_id": "<canonical_uuid>",
+  "operation": "EVALUATION_REQUEST",
+  "decision": "PASS",
+
+  "evaluation_run_id": "<canonical_uuid>",
+  "case_id": "<stable_case_id>",
+
+  "candidate_guard_ref": {
+    "artifact_code": "evaluation_candidate_guard",
+    "version": "1.0",
+    "content_sha256": "<candidate_guard_content_sha256>"
+  },
+
+  "environment": "LOCAL",
+  "environment_revision_fence": 1,
+  "governance_revision_ref": "<nonblank_nfc_ref>",
+  "safety_epoch": 1,
+
+  "candidate_bundle_id": "<canonical_lowercase_uuid>",
+  "candidate_bundle_manifest_hash": "<sha256>",
+
+  "runtime_execution_manifest_id": "<canonical_uuid>",
+  "runtime_execution_manifest_hash": "<sha256>",
+
+  "required_case_set_hash": "<sha256>",
+
+  "request_scope_codes": [
+    "<canonical_scope_code>"
+  ],
+
+  "scope_manifest_hash": "<sha256>"
+}
+```
+- **Candidate Ref 직접 결속**: Case Guard 사영 내에 부모의 `candidate_guard_ref`를 직접 포함함으로써, 다른 Candidate Guard에서 발행된 Case Guard가 동일 Run 커버리지에 혼입되는 것을 원천 차단한다.
+- **스코프 규칙**: #806 순수 시맨틱에 따라 `request_scope_codes`는 non-empty, unique, NFC, UTF-8 byte sorted여야 하며, `scope_manifest_hash == canonical_scope_manifest_hash(request_scope_codes)`를 필수 검증한다.
+- **직렬화 및 해시**: `case_guard_content_sha256 = canonical_sha256(case_guard_projection)`
+- **불변 참조 (`case_guard_ref`)**:
+  ```json
+  {
+    "artifact_code": "evaluation_request_guard",
+    "version": "1.0",
+    "content_sha256": "<case_guard_content_sha256>"
+  }
+  ```
+- **검증기 규칙**: 검증기는 사영을 재구성하여 ref의 `content_sha256`을 재계산 검증한다.
+
+### 3.5 Required Case Set Canonical Hash Recipe
 단순 케이스 ID 목록 해시가 아닌 Dataset authority와 결속된 사영 레시피를 동결한다:
 
 ```json
@@ -108,11 +224,11 @@ Run 수준 `EVALUATION_CANDIDATE / PASS` Evidence는 최소 다음 불변 좌표
   "case_ids": ["case-001", "case-002", "..."]
 }
 ```
-- `case_ids`는 저장소의 canonical ordering 기준인 **UTF-16 BE** 바이트 순서로 정렬한다.
+- `case_ids`는 저장소의 canonical ordering 기준인 **UTF-16 BE** 바이트 순서(`sorted(case_ids, key=lambda s: s.encode("utf-16-be"))`)로 정렬한다.
 - 해시 계산 전에 중복 케이스 ID가 발견되면 즉시 거부(`CASE_DUPLICATE`)한다.
 - `required_case_set_hash = canonical_sha256(projection)`
 
-### 3.4 Guard Coverage Hash Recipe
+### 3.6 Guard Coverage Hash Recipe (`evaluation-guard-coverage-v1`)
 Required Case Coverage는 단순 개수(count) 일치 검사가 아니며, 다음 preimage를 결속한다:
 
 ```json
@@ -121,18 +237,19 @@ Required Case Coverage는 단순 개수(count) 일치 검사가 아니며, 다�
   "evaluation_run_id": "<canonical_uuid>",
   "candidate_bundle_id": "<canonical_lowercase_uuid>",
   "candidate_bundle_manifest_hash": "<sha256_hex>",
-  "candidate_guard_decision_id": "<canonical_uuid>",
+  "runtime_execution_manifest_id": "<canonical_uuid>",
+  "runtime_execution_manifest_hash": "<sha256_hex>",
+  "environment": "LOCAL",
+  "environment_revision_fence": 1,
+  "governance_revision_ref": "<nonblank_nfc_ref>",
+  "safety_epoch": 1,
   "candidate_guard_ref": {
     "artifact_code": "evaluation_candidate_guard",
     "version": "1.0",
-    "content_sha256": "<sha256_hex>"
+    "content_sha256": "<recomputed_sha256>"
   },
   "dataset_manifest_sha256": "<sha256_hex>",
   "required_case_set_hash": "<evaluation-required-case-set-v1_sha256>",
-  "runtime_execution_manifest_id": "<canonical_uuid>",
-  "runtime_execution_manifest_hash": "<sha256_hex>",
-  "governance_revision_ref": "<governance_revision_string>",
-  "safety_epoch": 1,
   "case_guard_bindings": [
     {
       "case_id": "case-001",
@@ -140,7 +257,7 @@ Required Case Coverage는 단순 개수(count) 일치 검사가 아니며, 다�
       "case_guard_ref": {
         "artifact_code": "evaluation_request_guard",
         "version": "1.0",
-        "content_sha256": "<sha256_hex>"
+        "content_sha256": "<recomputed_sha256>"
       },
       "scope_manifest_hash": "<canonical_scope_manifest_hash>"
     }
@@ -150,43 +267,91 @@ Required Case Coverage는 단순 개수(count) 일치 검사가 아니며, 다�
 - `guard_coverage_manifest_hash = canonical_sha256(preimage)`
 - **해시 레시피 정본 동결**:
   - `evaluation-guard-coverage-v1`의 모든 권위 좌표와 Envelope 구조가 확정되었다.
-  - Q4 판정에 따라 `runtime_execution_manifest_id/hash`, `governance_revision_ref`, `safety_epoch`가 정본 좌표로 바인딩되었으며, `environment_revision`은 가변 동시성 필드로서 해시 preimage에서 영구 제외되었다.
+  - Candidate Guard ref와 Case Guard ref는 self-asserted 값이 아니라 검증기가 사영에서 독립 재계산한 `content_sha256`만을 사용한다.
+  - `environment_revision_fence`는 동시성 펜스로서 바인딩된다.
 - **불변 속성**:
   - 동일 케이스 집합이라도 번들이 다르면 다른 해시가 생성된다.
   - 케이스 바인딩 순서가 뒤바뀌거나 케이스가 누락되면 다른 해시가 생성되거나 검증에서 거부된다.
 
-### 3.5 Exact-Set Coverage Semantics
-Required Case 검증은 반드시 exact-set이어야 한다:
-- `missing case` → reject (`BASELINE_ARTIFACT_INVALID`)
-- `duplicate case` → reject (`CASE_DUPLICATE`)
-- `extra case` (Dataset에 없는 케이스) → reject (`BASELINE_ARTIFACT_INVALID`)
-- `wrong run_id` → reject (`HASH_MISMATCH`)
-- `wrong bundle_id` 또는 `wrong bundle_manifest_hash` → reject (`HASH_MISMATCH`)
-- `wrong execution manifest` / `wrong revision` / `wrong epoch` → reject (`HASH_MISMATCH`)
-- `wrong scope hash` → reject (`HASH_MISMATCH`)
-- `wrong Guard ref` → reject (`HASH_MISMATCH`)
-- `non-PASS decision` → reject (`BASELINE_ARTIFACT_INVALID`)
-- 단순 count 일치만으로 성공 처리하는 것은 엄격히 금지된다.
+### 3.7 커버리지 계산 순서 및 Run Finalization Fence
+커버리지 계산과 검증은 다음 13단계 고정 순서로 진행되어야 하며, 자의적 ref를 주입할 수 없다:
+1. FROZEN Dataset validation (`validate_release_dataset_authority`)
+2. required case set 계산 (`derive_required_case_ids`)
+3. `required_case_set_hash` 계산 (`compute_required_case_set_hash`)
+4. Environment start snapshot 확보 (`environment_code`, `environment_revision`, `governance_revision_ref`, `safety_epoch`)
+5. Candidate Guard projection 구성 (`evaluation-candidate-guard-v1`)
+6. `candidate_guard_ref` 재계산 (`canonical_sha256`)
+7. 모든 Case Guard projection 검증 (`evaluation-request-guard-v1`)
+8. 모든 `case_guard_ref` 재계산 (`canonical_sha256`)
+9. duplicate / missing / extra exact-set 검증
+10. `case_guard_bindings` UTF-16 BE `case_id` 순 canonicalization
+11. coverage projection 구성 (`evaluation-guard-coverage-v1`)
+12. `canonical_sha256(preimage)` 계산
+13. `guard_coverage_manifest_hash` 생성
 
-### 3.6 Runtime Bundle ID Wire Rule
+*Run Finalization Concurrency Fence 순서*:
+- Evaluation 실행 시:
+  ```text
+  Candidate start environment snapshot
+          ↓
+  Candidate Guard 발행
+          ↓
+  모든 Case Guard 실행 및 바인딩
+          ↓
+  Environment exact re-read (bundle.environment_code)
+          ↓
+  revision == fence AND governance == gov AND epoch == epoch ?
+          ↓
+  YES → coverage finalization 허용 (COMPLETED/PASS 후보)
+  NO  → Run authority INVALID, decision_status = null, 권위 사용 금지
+  ```
+- coverage hash finalization은 반드시 end-fence 검증이 PASS된 이후에만 허용된다. 실행 도중 환경이 변경되었을 경우 valid coverage receipt를 발행하는 것은 엄격히 금지된다.
+
+### 3.8 Exact-Set Coverage Semantics 및 case_guard_bindings 정본 정렬 규칙
+`case_guard_bindings`의 검증은 단순 count 일치가 아닌 **exact-set** 일치여야 하며, 정렬 규칙을 강제한다:
+- **Canonical Ordering 동결**:
+  모든 Case Guard 검증 후, 중복 `case_id`를 선거부(`CASE_DUPLICATE`)하고 다음 순서로 정렬한다:
+  ```python
+  sorted(
+      case_guard_bindings,
+      key=lambda binding: binding.case_id.encode("utf-16-be"),
+  )
+  ```
+  Canonical key는 `case_id` 단 하나이며, exact-set에서 unique하므로 보조 키는 불필요하다.
+- **Wire Artifact Order 강제**:
+  저장되는 wire artifact의 `case_guard_bindings` 튜플 순서는 반드시 canonical sorted order와 동일해야 한다 (`actual tuple order == canonical sorted order`). 순서 반전이나 임의 순서는 non-canonical artifact로 판정되어 즉시 fail-closed(`BASELINE_ARTIFACT_INVALID`) 처리된다.
+- **위반 조건별 실패 규격**:
+  - `missing case` → reject (`BASELINE_ARTIFACT_INVALID`)
+  - `duplicate case` → reject (`CASE_DUPLICATE`)
+  - `extra case` (Dataset에 없는 케이스) → reject (`BASELINE_ARTIFACT_INVALID`)
+  - `wrong run_id` → reject (`HASH_MISMATCH`)
+  - `wrong bundle_id` 또는 `wrong bundle_manifest_hash` → reject (`HASH_MISMATCH`)
+  - `wrong execution manifest` / `wrong revision` / `wrong epoch` → reject (`HASH_MISMATCH`)
+  - `wrong scope hash` → reject (`HASH_MISMATCH`)
+  - `wrong Guard ref` → reject (`HASH_MISMATCH`)
+  - `non-canonical wire order` → reject (`BASELINE_ARTIFACT_INVALID`)
+  - `non-PASS decision` → reject (`BASELINE_ARTIFACT_INVALID`)
+  - 단순 count 일치만으로 성공 처리하는 것은 엄격히 금지된다.
+
+### 3.9 Runtime Bundle ID Wire Rule
 - Runtime의 물리 번들 ID는 PostgreSQL DB의 `UUID`이다.
 - 반면 `RagEvaluationRun.candidate_bundle_id`는 현재 스키마상 `StableId`이다.
 - 본 Phase A1에서는 `RagEvaluationRun` 스키마를 변경하지 않으며, canonical lowercase UUID 문자열(`str(runtime_bundle_uuid)`)을 wire 포맷으로 동결한다.
 - 향후 A2 검증기는 `str(runtime_bundle_uuid) == run.candidate_bundle_id`를 exact-match하고 non-canonical 포맷은 fail-closed 처리한다.
 
-### 3.7 Candidate Guard Decision ID 물리 타입 확정
+### 3.10 Candidate Guard Decision ID 물리 타입 확정
 - `RagEvaluationRun.candidate_guard_decision_id`의 wire 포맷은 `CanonicalUuid` 문자열로 확정한다.
 - Evaluator는 run-scoped의 고유/결정론적 `UUID`를 발행하여 감사 추적성(audit traceability)을 보장하며, 비정규 UUID 문자열은 검증기에서 fail-closed 처리한다.
 
-### 3.8 #806 Ref의 Generic Immutable Identity 보존
+### 3.11 #806 Ref의 Generic Immutable Identity 보존
 - `#806`의 `RequestGuardRuntimeBindingRef`는 `(artifact_code, version, content_sha256)` 3요소 형태다.
 - Evaluation의 `ImmutableReference`는 `(id, version, hash)` 형태다.
-- 단순 필드명 변경으로 권위를 왜곡하지 않으며, Phase A1 계약에서는 generic immutable artifact identity로 `(artifact_code, version, content_sha256)`를 우선 기술한다.
+- 단순 필드명 변경으로 권위를 왜곡하지 않으며, Phase A1 계약에서는 generic immutable artifact identity로 `(artifact_code, version, content_sha256)`를 기술한다.
 
-### 3.9 Privacy Boundary
+### 3.12 Privacy Boundary
 - 원문 환자 질문(query text), 답변(answer text), 환자 식별자(patient ID), Provider 원문 응답 payload, 시스템 자격증명(credential)은 Evaluation Guard Evidence artifact, 로그, 오류 메시지에 절대 포함하지 않는다.
 
-### 3.10 #163 Consumer Boundary
+### 3.13 #163 Consumer Boundary
 - `release_gate_loader.py`의 `_require_canonical_release_guard_authority()`는 본 PR에서 수정하지 않는다.
 - Phase A2(Guard evidence 구현)와 Phase B(Paired comparison 구현)가 완료된 후, 별도 `#163` 후속 PR에서 loader를 실제 연결한다.
 
@@ -234,9 +399,16 @@ Required Case 검증은 반드시 exact-set이어야 한다:
 - **기각된 대안**:
   - *대안 2 (Schema Set 1.6 선언 및 레지스트리 수정)*: 기존 동결 계약의 불필요한 개정과 export 재생성이 요구되므로 기각.
 
-### Q4. BUILDING Candidate Runtime Coordinates 확정
-- **결정**: Candidate 번들의 정본 불변 런타임 좌표는 다음 4개 축으로 확정하며, `environment_revision`은 권위 좌표에서 영구 제외한다.
-- **확정 좌표**:
+### Q4. BUILDING Candidate Runtime Coordinates 및 Safety Epoch / Concurrency Fence 확정
+- **결정**: Candidate 번들의 정본 불변 런타임 좌표는 다음 축으로 확정하며, `safety_epoch`의 의미를 바로잡고 `environment_revision_fence`를 동시성 펜스로 동결한다.
+- **핵심 원칙**:
+  - **Safety Epoch는 Runtime Bundle build provenance가 아니다.**
+  - `RagRuntimeReleaseBundle`에는 `safety_epoch` 컬럼이나 `environment` FK가 없으며, Runtime Bundle 빌드 경로는 Environment row를 읽어 epoch를 핀하지 않는다. 따라서 과거 BUILDING 번들의 "발행 시점 epoch"를 복원하는 것은 물리적으로 불가능하며, 이를 위해 DB 마이그레이션이나 백필을 추가하지 않는다.
+  - 대신, `EVALUATION_CANDIDATE` Guard 평가 시작 시점에 `bundle.environment_code`로 exact lookup한 `RagRuntimeEnvironment` row에서 `environment_revision`, `governance_revision_ref`, `safety_epoch`를 하나의 **evaluation-start snapshot**으로 관찰한다.
+  - `environment_revision`은 번들 시맨틱 식별자가 아니라 **Evaluation execution concurrency fence**(`environment_revision_fence`, positive integer)로 동작한다.
+  - 모든 Required Case 실행과 Run finalization 동안 동일 snapshot의 `environment_revision_fence`, `governance_revision_ref`, `safety_epoch`가 유지되어야 한다 (`Candidate epoch == Case1 epoch == ... == CaseN epoch` 필수).
+  - Run finalization 직전 Environment를 exact re-read하여 `end.environment_revision == candidate.environment_revision_fence`, `end.governance_revision_ref == candidate.governance_revision_ref`, `end.safety_epoch == candidate.safety_epoch` 중 하나라도 달라졌으면 해당 Evaluation authority는 즉시 **INVALID** 처리된다 (decision_status = null, coverage authority 사용 금지).
+- **확정 좌표 세부**:
   1. **Execution Manifest**:
      - `RagRuntimeReleaseBundle.execution_manifest_id: CanonicalUuid`
      - `RagRuntimeExecutionManifest.manifest_hash: Sha256Hex`
@@ -244,18 +416,108 @@ Required Case 검증은 반드시 exact-set이어야 한다:
   2. **Governance Revision**:
      - `RagRuntimeReleaseBundle.governance_revision_ref: str` (번들 빌드 시점에 핀된 거버넌스 리비전 식별자, `bundle.governance_revision_ref == env.governance_revision_ref` exact match 검증 필수, `None` 불가)
      - Evidence 좌표명: `governance_revision_ref`
-  3. **Safety Epoch**:
-     - `RagRuntimeEnvironment.safety_epoch: int` (`>= 1`, 번들 발행 시점의 환경 안전성 에포크를 캡처하여 모든 Case Guard와 exact-bind)
+  3. **Safety Epoch (Evaluation Start Snapshot)**:
+     - `RagRuntimeEnvironment.safety_epoch: int >= 1` (Candidate Guard 시작 시점에 관찰된 시간적 안전성 권위 스냅샷, 전 Case exact 동일값 바인딩)
      - Evidence 좌표명: `safety_epoch`
-  4. **`environment_revision` 영구 제외**:
-     - `RagRuntimeEnvironment.environment_revision`은 활성 번들 포인터 전이 및 환경 상태 변경 시 증가하는 가변 동시성 제어 카운터일 뿐, Candidate 번들이나 실행 매니페스트 자체의 불변 빌드 좌표가 아니다.
-     - 따라서 권위 식별자 및 `evaluation-guard-coverage-v1` 해시 preimage에서 완전히 제외한다. (Phase A2 실행 시 로컬 읽기 낙관적 동시성 펜스로만 활용 가능)
+  4. **Environment Concurrency Fence**:
+     - `RagRuntimeEnvironment.environment_revision: int >= 1` (평가 시작 시점의 동시성 펜스)
+     - Evidence 좌표명: `environment_revision_fence`
+  5. **기존 번들 및 마이그레이션 불필요**:
+     - 기존 BUILDING 번들은 평가 시작 시점의 Environment 스냅샷을 새로 관찰하며, 과거 빌드 시점 epoch를 날조(fabricate)하지 않는다. DB 컬럼 추가나 forward migration, silent recompute는 일체 없다.
 - **Active 번들 포인터 엄격 금지**:
   - 평가 대상은 `BUILDING` 상태의 후보 번들이므로, `RagRuntimeEnvironment.active_bundle_id` 및 `active_bundle_manifest_hash`를 평가 대상으로 참조하는 것은 엄격히 금지된다.
 
 ---
 
-## 5. Phase A1 완료 검증
+## 5. Phase A2 공유 파라미터 테스트 계획 (Shared Parameter Test Plan)
+
+리뷰어 요청에 따라 Phase A2 구현 시 필수로 만족해야 하는 테스트 매트릭스를 계약에 기록한다 (실제 구현은 Phase A2에서 진행):
+
+### 5.1 Candidate Projection 필드 변조 매트릭스 (Field Mutation Matrix)
+다음 17개 필드를 각 1개씩 단독 변조(one-at-a-time mutation)하여 재계산된 `content_sha256`이 변경되거나 검증기에서 거부됨을 확인:
+- `candidate_guard_decision_id`
+- `operation`
+- `decision`
+- `evaluation_run_id`
+- `environment`
+- `environment_revision_fence`
+- `governance_revision_ref`
+- `safety_epoch`
+- `candidate_bundle_id`
+- `candidate_bundle_manifest_hash`
+- `runtime_execution_manifest_id`
+- `runtime_execution_manifest_hash`
+- `dataset_code`
+- `dataset_version`
+- `dataset_manifest_sha256`
+- `required_partitions`
+- `required_case_set_hash`
+
+### 5.2 Case Projection 필드 변조 매트릭스 (Field Mutation Matrix)
+다음 17개 필드를 각 1개씩 단독 변조하여 재계산된 `content_sha256` 불일치 또는 검증 거부를 확인:
+- `case_guard_decision_id`
+- `operation`
+- `decision`
+- `evaluation_run_id`
+- `case_id`
+- `candidate_guard_ref`
+- `environment`
+- `environment_revision_fence`
+- `governance_revision_ref`
+- `safety_epoch`
+- `candidate_bundle_id`
+- `candidate_bundle_manifest_hash`
+- `runtime_execution_manifest_id`
+- `runtime_execution_manifest_hash`
+- `required_case_set_hash`
+- `request_scope_codes`
+- `scope_manifest_hash`
+
+### 5.3 필수 네거티브 테스트 (Mandatory Negative Tests)
+- Candidate `operation != "EVALUATION_CANDIDATE"` → reject
+- Candidate `decision != "PASS"` → reject
+- Case `operation != "EVALUATION_REQUEST"` → reject
+- Case `decision != "PASS"` → reject
+- Lowercase / mixed-case operation alias (예: `"evaluation_request"`) → reject
+- 변조된(tampered) `candidate_guard_ref` → reject
+- 변조된(tampered) `case_guard_ref` → reject
+- `request_scope_codes`가 변경되었으나 과거 `scope_manifest_hash` 유지 → reject
+- Case에 부모 Run과 다른 Candidate Guard ref가 바인딩됨 → reject
+
+### 5.4 Case-set 테스트 매트릭스 (Case-set Test Matrix)
+- 필수 케이스 1개 누락 (missing case) → reject (`BASELINE_ARTIFACT_INVALID`)
+- 동일 케이스 중복 바인딩 (duplicate case) → reject (`CASE_DUPLICATE`)
+- Dataset에 없는 초과 케이스 (extra case) → reject (`BASELINE_ARTIFACT_INVALID`)
+- 케이스 수는 일치하나 잘못된 케이스 ID 포함 → reject
+- `case_guard_bindings` 순서 반전 (reversed wire ordering) → non-canonical artifact로 reject
+- 단 1개 케이스의 Guard ref 변경 → coverage hash mismatch
+- 단 1개 케이스의 decision ID 변경 → coverage hash mismatch
+
+### 5.5 Canonical Ordering 테스트 (Canonical Ordering Tests)
+- Canonical 정렬(`case_id.encode("utf-16-be")`)된 바인딩 → 정상 수락
+- 역순 또는 임의 순서의 wire 바인딩 → reject
+- 임의 입력 순서로부터 빌더 실행 시 항상 canonical order로 출력 생성
+- UTF-16 BE 경계 문자열 fixture 검증으로 일관된 결정론적 정렬 보장 (새 JCS 라이브러리 도입 금지, 저장소 정본 재사용)
+
+### 5.6 Safety Epoch 시간적 상태 전이 테스트 (Temporal Transition Tests)
+- **정상 완료 (Stable)**:
+  - 시작 snapshot: `revision_fence=10, governance="GOV-A", epoch=4`
+  - 전 Case 바인딩: `10 / "GOV-A" / 4`
+  - 종료 re-read: `10 / "GOV-A" / 4`
+  - 판정: coverage finalization 정상 허용
+- **Epoch 변경 발생 (Epoch Change)**:
+  - 종료 re-read: `revision=11, governance="GOV-A", epoch=5`
+  - 판정: reject (INVALID)
+- **Governance 변경 발생 (Governance Change)**:
+  - 종료 re-read: `revision=11, governance="GOV-B", epoch=4`
+  - 판정: reject (INVALID)
+- **무관한 환경 리비전 증가 발생 (Unrelated Revision Change)**:
+  - 종료 re-read: `revision=11, governance="GOV-A", epoch=4`
+  - 판정: reject (동시성 펜스 위반에 따른 보수적 거부)
+
+---
+
+## 6. Phase A1 완료 검증
 
 본 PR은 문서 전용(docs-only) 변경이므로 불필요한 전체 구현 테스트를 실행하지 않으며 다음 검증을 수행한다:
 1. `git diff --check`: 포맷 및 공백 무결성 확인
@@ -265,9 +527,9 @@ Required Case 검증은 반드시 exact-set이어야 한다:
 
 ---
 
-## 6. 결론 및 다음 단계
+## 7. 결론 및 다음 단계
 
-본 Phase A1 결정과 Proposed Contract(`docs/contracts/proposed/post-mvp-1/evaluation-guard-evidence-v1.md`)에서 Q1~Q4 권위 결정이 완전히 동결되었으므로:
+본 Phase A1 결정과 Proposed Contract(`docs/contracts/proposed/post-mvp-1/evaluation-guard-evidence-v1.md`)에서 Guard ref 정본 사영, 해시 레시피, `case_guard_bindings` canonical ordering, Safety Epoch 시작 스냅샷 및 Concurrency Fence 의미가 완전히 동결되었으므로:
 1. 단일 책임 리뷰어(`@hazelnutflavoured`)의 승인 후,
 2. `feat/162-evaluation-guard-authority` 브랜치에서 Phase A2(actual Guard producer, evidence bridge, exact-set validator, synthetic/negative tests)를 구현한다.
 3. 그 전까지 저장소의 Protected Release Gate는 안전하게 fail-closed 상태를 유지한다.
