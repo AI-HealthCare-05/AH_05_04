@@ -18,6 +18,7 @@ from ai_worker.tasks.rag.guide_runtime_release import (
     GuideRuntimeExecutionStatus,
     GuideRuntimeReleaseDecision,
     GuideRuntimeReleaseResult,
+    _is_valid_release_result,
 )
 from ai_worker.tasks.rag.guideline_card import (
     GuidelineCardReason,
@@ -63,7 +64,7 @@ _SHARED_DECISION_MAP = {
 def project_guide_runtime_release(result: object) -> GuideRuntimeReleaseProjectionOutcome:
     """Return the sole shared projection of one #893 release result, fail closed."""
 
-    if type(result) is not GuideRuntimeReleaseResult:
+    if type(result) is not GuideRuntimeReleaseResult or not _is_valid_release_result(result):
         return _unavailable()
     try:
         if result.release_decision is GuideRuntimeReleaseDecision.PASS:

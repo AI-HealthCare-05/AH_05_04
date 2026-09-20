@@ -286,6 +286,21 @@ def test_wrong_input_and_corrupt_fallback_shape_return_unavailable() -> None:
     assert isinstance(project_guide_runtime_release(result), GuideRuntimeReleaseProjectionUnavailable)
 
 
+def test_corrupt_release_decision_is_not_reinterpreted_as_a_different_fallback() -> None:
+    result = _fallback_result(
+        code=GuidelineFallbackCode.NO_APPROVED_EVIDENCE,
+        status=GuidelineCardStatus.NO_RESULT,
+        reason=GuidelineCardReason.EVIDENCE_INSUFFICIENT,
+        decision=GuideRuntimeReleaseDecision.REJECTED,
+        execution=GuideRuntimeExecutionStatus.NO_RESULT,
+        evidence=GuideRuntimeEvidenceStatus.INSUFFICIENT,
+        is_current=True,
+    )
+    object.__setattr__(result, "release_decision", GuideRuntimeReleaseDecision.LIMITED)
+
+    assert isinstance(project_guide_runtime_release(result), GuideRuntimeReleaseProjectionUnavailable)
+
+
 def test_missing_shared_fallback_mapping_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     result = _fallback_result(
         code=GuidelineFallbackCode.NO_APPROVED_EVIDENCE,
