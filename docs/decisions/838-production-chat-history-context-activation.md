@@ -1,11 +1,21 @@
 # #838 Production Chat History Context Activation
 
-- 상태: Proposed / Pending Approval
+- 상태: Accepted
+- 승인 완료일: 2026-09-20 (KST)
 - 관련 Issue: #838
 - 관련 PR: #834
 - 구현 담당자: 정현우 (@ceohwj)
 - 단일 담당 리뷰어: 송은영 (@phina-io, Track F Chat data boundary 소유자)
 - 개인정보 정책 검토: 권가빈 (@hazelnutflavoured)
+
+## 승인 Evidence
+
+- Privacy: @hazelnutflavoured, comment `5743158534`, 2026-09-19T15:39:59Z
+  https://github.com/AI-HealthCare-05/AH_05_04/issues/838#issuecomment-5743158534
+- AI/RAG: @ceohwj, comment `5743370061`, 2026-09-19T16:11:10Z
+  https://github.com/AI-HealthCare-05/AH_05_04/issues/838#issuecomment-5743370061
+- Track F Chat data boundary: @phina-io, comment `5746235826`, 2026-09-19T23:54:37Z
+  https://github.com/AI-HealthCare-05/AH_05_04/issues/838#issuecomment-5746235826
 
 ## 배경 및 맥락
 
@@ -13,7 +23,7 @@
 
 PR #834는 Production 설정 검증에서 `CHAT_HISTORY_CONTEXT_ENABLED=true`를 허용하고, Compose를 통해 FastAPI 컨테이너에 환경 변수를 주입할 수 있는 런타임 readiness를 구현했다. 그러나 실제 사용자의 이전 대화가 외부 LLM(OpenAI) 입력으로 전송되는 것은 Track F Chat data-boundary 및 개인정보 처리 범위의 중요한 변경이므로, 정식 승인 evidence 없이 배포 게이트를 즉시 해제할 수 없다.
 
-## 제안 결정 사항 (Proposed Semantics)
+## 결정 사항
 
 1. **기본값 Fail-closed**: `CHAT_HISTORY_CONTEXT_ENABLED`의 기본값은 `false`다.
 2. **명시적 Opt-in**: 자동 활성화는 금지되며, 정식 승인 완료 후 Production 환경 변수에서 명시적으로 `true`로 설정할 때만 활성화된다.
@@ -31,25 +41,25 @@ PR #834는 Production 설정 검증에서 `CHAT_HISTORY_CONTEXT_ENABLED=true`를
 
 ## 현재 발행/배포 조건 (Current Publication Condition)
 
-- 현재 승인 상태는 **PENDING**이다.
-- 송은영(Track F Chat data boundary 소유자)의 정식 승인 evidence가 등록되기 전까지 실제 Production 활성화는 차단된다.
-- `scripts/deployment.sh`의 forced-false gate에서 `CHAT_HISTORY_CONTEXT_ENABLED`를 유지하여, 승인 전 `true` 배포 시도를 사전 차단한다.
+- 필요한 Privacy, AI/RAG 및 Track F Chat data boundary 승인 evidence가 모두 등록되었다.
+- Production은 기본값 `false`를 유지하며, 명시적으로 `true`를 설정한 경우에만 history context를 활성화할 수 있다.
+- 이 결정은 Production 활성화를 자동 수행하지 않는다. 실제 활성화는 별도 배포 승인과 activation smoke를 거쳐야 한다.
 
 ## 활성화 승인 요건 (Activation Requirements)
 
 실제 Production 활성화를 위해서는 다음 요건이 충족되어야 한다:
-1. Track F Chat data boundary 소유자(송은영)의 명시적 승인
-2. Privacy 정책 담당자(권가빈)의 외부 전송 범위 검토 및 게이트(`EXT-PRIV-003`) 승인
-3. 자동화된 Same-session inclusion 및 Cross-session exclusion 회귀 테스트 통과
-4. 활성화 배포 후 런타임 환경 변수(`true`) 및 FastAPI 컨테이너 health check 확인
+1. Track F Chat data boundary 소유자(송은영)의 명시적 승인 — 완료
+2. Privacy 정책 담당자(권가빈)의 외부 전송 범위 검토 및 게이트(`EXT-PRIV-003`) 승인 — 완료
+3. 자동화된 Same-session inclusion 및 Cross-session exclusion 회귀 테스트 통과 — 완료
+4. 활성화 배포 후 런타임 환경 변수(`true`) 및 FastAPI 컨테이너 health check 확인 — 실제 활성화 시 수행
 
 ---
 
-## Phase B 전환 Delta (승인 후 실행 항목)
+## Phase B Publication Delta
 
-@phina-io 및 Privacy 승인 evidence가 확보되면 아래 작업을 단일 전환 PR/커밋으로 수행한다:
-1. 본 Decision 상태를 `Accepted`로 전환
-2. `docs/release-gates/post-mvp-1-external-approvals.md`의 `EXT-PRIV-003` 상태를 `Approved`로 전환 및 승인 링크 기록
-3. 정본 계약(`docs/contracts/current/medication-chat-ai-backend.md` 등)의 서술을 "승인 완료에 따른 Production 명시적 opt-in 허용"으로 전환
-4. `scripts/deployment.sh`의 forced-false gate 목록에서 `CHAT_HISTORY_CONTEXT_ENABLED` 제거
-5. deployment contract test의 기대값을 "배포 허용"으로 전환
+승인 evidence에 따라 다음 publication contract를 적용한다:
+1. 본 Decision은 `Accepted`다.
+2. `EXT-PRIV-003`은 `Approved`다.
+3. 정본 계약은 Production 명시적 opt-in을 허용한다.
+4. `scripts/deployment.sh`의 forced-false gate는 Chat History를 제외하되 다른 공개 gate를 유지한다.
+5. deployment contract test는 Chat History flag 자체가 배포를 차단하지 않음을 검증한다.

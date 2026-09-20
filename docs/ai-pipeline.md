@@ -36,7 +36,7 @@
 - 구현: `backend/app/services/chat_ai/`, `backend/app/services/chat.py`
 - 입력: 현재 사용자 질문, 세션에 연결된 확정 약물 목록과 `history` 배열
 - 처리: USER 메시지 저장 → OpenAI 단일 응답 생성 → ASSISTANT 메시지 저장을 같은 요청에서 완료
-- 문맥 제한: `CHAT_HISTORY_CONTEXT_ENABLED=false`이면 history를 조회하지 않고 빈 배열을 전달한다. 기본값은 `false`이며, Staging에서는 비활성화(Config validation 거부)된다. 현재 활성화는 비식별 합성 Local 검증으로 제한된다. Production 명시적 opt-in은 Issue #838 및 `EXT-PRIV-003` 거버넌스 승인 대기 중이며, 활성화 시에도 같은 세션의 현재 질문 이전 완료 대화만 최대 3쌍 전달하고(교차 세션 배제), 사용자·세션 식별자, 처방전 이미지와 OCR 원문·미검수 값은 전달하지 않는다.
+- 문맥 제한: `CHAT_HISTORY_CONTEXT_ENABLED=false`이면 history를 조회하지 않고 빈 배열을 전달한다. 기본값은 `false`이며, Local에서는 `true`와 `false`를 허용하고 Staging에서는 `true`를 Config validation에서 거부한다. Issue #838 Accepted Decision과 `EXT-PRIV-003` 승인에 따라 Production은 명시적 opt-in으로만 `true`를 허용한다. 활성화 시에도 같은 세션의 현재 질문 이전 완료 대화만 최대 3쌍 전달하고(교차 세션 배제), 사용자·세션 식별자, 처방전 이미지와 OCR 원문·미검수 값은 전달하지 않는다.
 - 안전 제한: 현재 runtime의 단일 `chat-prompt-v6`는 과거 USER 진술과 ASSISTANT 답변을 검증된 현재 사실로 취급하지 않고 현재 확정 medications를 우선한다. 추측·임의 복용 변경·확인하지 않은 인용 생성을 금지하고, 안전상 중요한 과거 정보는 현재도 해당하는지 확인하며 명시된 현재 응급·고위험 상황에서는 도움 안내를 우선한다. 생략된 약물 대상을 하나로 특정할 수 없으면 medications의 복수 약물을 나열하지 않고 약명·제품명·성분을 재확인한다. 가장 최근의 명시적 USER 정정과 직전 ASSISTANT의 미해결 확인 질문을 이어받고, 이미 입력에 있는 정보는 다시 묻지 않는다. `chat-prompt-v5`는 historical snapshot이며 현재 runtime에서 선택되지 않는다.
 
 이 안전 제한은 현재 프롬프트와 단위·계약 테스트의 범위입니다. [Issue #129](https://github.com/AI-HealthCare-05/AH_05_04/issues/129)은 `chat-v2-history-eval-v1` 결정론적 replay, 최대 입력의 Local application-path latency와 PII sentinel 비복제를 검증했습니다. [Issue #306](https://github.com/AI-HealthCare-05/AH_05_04/issues/306)은 동결된 `chat-v3-history-eval-v1`에 대상 불명확·현재 응급 우선 사례와 30회 live 분류 집계를 추가했습니다. [2026-09-09 live 실행](validation/issue-306-chat-live-evaluation.md)은 당시 v3 기준 대상 불명확 재확인 30/30, 세 응급 case의 baseline/history 6/6과 PII 비복제를 통과했습니다. Issue #581의 `chat-v4-conversation-quality-eval-v1`은 v3 16 case와 원 재현 흐름·별도 과량 복용을 포함한 신규 11 case, 총 27 case의 현재 canonical 합성 평가셋입니다. 새 사례는 8개 품질 축별 expectation을 독립 채점하며, 이미 발생한 중복 복용과 과량 복용의 baseline/history 4개 경로를 live blocking gate에 포함합니다. 결정론적 replay는 실제 Provider 품질이나 Production 승인 근거가 아닙니다.
@@ -47,7 +47,7 @@
 | --- | --- | --- | --- |
 | 비동기 OCR | MVP 구현 | FastAPI 접수 → Outbox → Redis Stream → Worker CLOVA OCR·규칙 구조화 → 결과 조회 | 현재 Job·오류 처리·검수 흐름 유지 |
 | Backend 동기 가이드 | MVP 구현 | FastAPI → OpenAI | 내부 staging 검증. Production은 근거·검증 원칙 또는 코드로 강제되는 제한 모드와 재현 가능한 안전 기준 구현 후 전환 |
-| Backend 동기 챗봇 | MVP 구현 | FastAPI → OpenAI. history는 기본 빈 배열이며 현재는 Local 합성 검증에서만 최대 3쌍 (Production opt-in은 Issue #838 / EXT-PRIV-003 승인 대기) | 실제 대화 history 전송 승인(EXT-PRIV-003), 질문 admission·동시성·DB 수용량과 근거·검증 안전 조건 구현 후 전환 |
+| Backend 동기 챗봇 | MVP 구현 | FastAPI → OpenAI. history는 기본 빈 배열이며 Local 또는 승인된 Production explicit opt-in에서만 최대 3쌍 | 실제 Production 활성화 전 질문 admission·동시성·DB 수용량과 근거·검증 안전 조건 충족 필요 |
 | AI Worker | OCR 실행 구현 | Consumer·CLOVA Provider·Outbox Publisher·복구 Scheduler 연결 | Production health check·운영 관제·배포 조립·실제 환경 smoke 완료 필요 |
 | Track E 비-RAG LLM 확장 | Approved v4 target — Partially implemented | feature flag 기반 LLM 구조화·grounding과 flag 비활성화 시 규칙 기반 경로 사용은 Current; LLM 실패 시 규칙 기반 자동 fallback은 없고 Worker 이관과 v4 provenance는 미연결 | 최소 allowlist, versioned schema·prompt·validator, raw/rule/draft/corrected/confirmed provenance와 실패 복구 구현 |
 | MFDS 공식 Identity | Approved v4 target — Not implemented | 연결되지 않음 | Source Snapshot·Catalog, Candidate Resolver, Single Candidate Gate, 사용자 확인·거절, append-only Identification과 Preflight 구현 |
