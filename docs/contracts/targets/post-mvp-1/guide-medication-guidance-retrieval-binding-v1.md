@@ -2,10 +2,10 @@
 
 | Item | Value |
 | --- | --- |
-| Status | Blocker freeze · #180 · not implemented |
-| Re-audited base | `origin/develop` `948a21dd861807c7b6fa5118bb9af36d6b35f6a2` |
+| Status | B2 partial authority freeze + B4 pure binding implementation · #180 |
+| Re-audited base | `origin/develop` `61bbb579ff195e06a0d28bed7ac8d062410d1ea4` |
 | Canonical node | `retrieve_medication_guidance` in `rag-runtime-v1.md` Guide Graph |
-| Result | `GUIDE_MEDICATION_GUIDANCE_RETRIEVAL_BLOCKERS_FROZEN` |
+| Result | `THIN_LANGGRAPH_BLOCKED_BY_CANONICAL_CALLABLE_GAPS` |
 
 ## 1. Purpose
 
@@ -85,15 +85,16 @@ does not change #697 to accommodate a broader authority set.
 | filter snapshot ref | `EvidenceSearchExecutionBinding` | Pinned runtime/bundle configuration | No Guide retrieval carrier | No | Sync request carrier | Backend Sync runtime boundary | Include its immutable reference |
 | source manifest hash | `HybridRetrieveRequest` | Pinned source/runtime configuration | No Guide retrieval carrier | No | Sync request carrier | Backend Sync runtime boundary | Include the exact stored hash |
 | medication identity/context | Guide query projection | Backend execution identification persistence | Backend membership read; no worker-facing projection | No | Guide medication carrier | Backend Sync runtime boundary | Project verified, pinned medication context |
-| `normalized_query` | `EvidenceSearchRequest` | No approved deterministic producer | None | No | Query construction rule | AI/RAG | Freeze exact medication-query projection |
-| `query_fingerprint` | `EvidenceSearchRequest` | No approved deterministic producer | None | No | Query construction rule | AI/RAG | Freeze fingerprint algorithm and key/version |
+| `normalized_query` | `EvidenceSearchRequest` | #180 B2 pinned snapshot projection | B1 carrier still absent | Text policy frozen | Fingerprint and B1 carrier | AI/RAG / Backend Sync | Do not implement before production fingerprint authority exists |
+| `query_fingerprint` | `EvidenceSearchRequest` | No approved production producer | None | No | Fingerprint algorithm/key/verifier | AI/RAG | Keep B2 partial and fail closed |
 | selected `source_snapshot_id` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `ProductionSearchHit.provenance`; no replay aggregate | First execution only | Replay readback | #178 retrieval persistence/readback | Restore selected-hit provenance in order |
 | selected `source_snapshot_member_id` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `ProductionSearchHit.provenance`; no replay aggregate | First execution only | Replay readback | #178 retrieval persistence/readback | Restore selected-hit provenance in order |
 | `source_code` / `source_version` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `ProductionSearchHit.provenance`; no replay aggregate | First execution only | Replay readback | #178 retrieval persistence/readback | Restore selected-hit provenance in order |
-| `member_identity` | #672 authority selection | No selected-hit producer | None | No | REQUEST authority lookup coordinate | REQUEST authority / Backend persistence | Freeze selected member to identity lookup |
-| `request_source_decision_ref` | #672 authority selection | REQUEST authority persistence | Exact-ref reader only; no selected-member lookup coordinate | No | REQUEST authority lookup coordinate | REQUEST authority / Backend persistence | Freeze exact immutable ref lookup |
-| `request_member_decision_ref` | #672 authority selection | REQUEST authority persistence | Exact-ref reader only; no selected-member lookup coordinate | No | REQUEST authority lookup coordinate | REQUEST authority / Backend persistence | Freeze exact immutable ref lookup |
-| `ProductionSearchReceipt` | #697 and #760 | First execution #178 retrieval | `HybridRetrieveOutcome.search_receipt`; no approved downstream binding or replay result | First execution only | Outcome binding and replay | AI/RAG; #178 retrieval persistence/readback | Approve binding and readback |
+| `member_identity` | #672 authority selection | Pinned first-run selection or B5 replay coordinate | `GuideRequestAuthorityLookupCoordinate` | Lookup ready when supplied | Selected-hit producer/B5 replay | REQUEST authority / Backend persistence | Pass the complete pinned identity unchanged |
+| expected Source/Member Decision outcomes | #713 canonical Decision identities | Pinned first-run selection or B5 replay coordinate | `GuideRequestAuthorityLookupCoordinate` | Lookup ready when supplied | Selected-hit producer/B5 replay | REQUEST authority / Backend persistence | Pass both expected outcomes explicitly; Guide retrieval requires `PASS` / `PASS` |
+| `request_source_decision_ref` | #672 authority selection | REQUEST authority persistence | `lookup_request_decision_refs()` exact historical read | Yes when exact chain exists | None in B3 | REQUEST authority / Backend persistence | Consume the persisted ref without derivation |
+| `request_member_decision_ref` | #672 authority selection | REQUEST authority persistence | `lookup_request_decision_refs()` exact historical read | Yes when exact chain exists | None in B3 | REQUEST authority / Backend persistence | Consume the persisted ref without derivation |
+| `ProductionSearchReceipt` | #697 and #760 | First execution #178 retrieval | #180 B4 approved narrow projection from `HybridRetrieveOutcome.search_receipt` | First execution only | Replay readback | AI/RAG; #178 retrieval persistence/readback | B5 must restore it for replay |
 | `PersistedRetrievalRunReceipt` | #760 | #178 retrieval-run persistence | `HybridRetrieveOutcome.persisted_receipt` | Yes | None by itself | #178 retrieval persistence/readback | Preserve with the future aggregate |
 | ordered selected hits / provenance | #697, #711, #760 | First execution `EvidenceGateSuccess.selected_hits` | In-memory result only; no terminal aggregate readback | First execution only | Terminal replay payload | #178 retrieval persistence/readback | Restore full immutable ordered selection |
 
@@ -115,42 +116,44 @@ Minimum follow-up: provide one canonical read projection from pinned execution
 context, bundle, and identification; the Guide retrieval seam must consume that
 carrier rather than caller-supplied raw values.
 
-### B2 — `GUIDE_RETRIEVAL_QUERY_AUTHORITY_MISSING`
+### B2 — `GUIDE_RETRIEVAL_QUERY_TEXT_AUTHORITY_READY_BUT_FINGERPRINT_BLOCKED`
 
-There is no approved deterministic rule from pinned medication context to
-`SensitiveText normalized_query` and `QueryFingerprint`. `EvidenceSearchRequest`
-requires those inputs but does not own their Guide medication meaning.
+The exact pinned snapshot to `SensitiveText normalized_query` rule is frozen
+in `guide-medication-retrieval-query-authority-v1.md`. It remains unusable for
+production because no B1 carrier, production fingerprint authority, or
+`QueryBindingVerifierPort` implementation exists.
 
 Owner: AI/RAG.
 
-Minimum follow-up: freeze the input medication carrier, selected fields, query
-projection version, NFC and whitespace policy, fingerprint algorithm and
-key/version, multi-medication ordering, missing-medication behavior, and
-sensitive-text handling.
+Minimum follow-up: provide the B1 carrier and approve/implement the production
+fingerprint algorithm, key/version, and query-binding verifier.
 
-### B3 — `GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_COORDINATE_MISSING`
+### B3 — `GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_READY`
 
-`assemble_sync_guide_evidence_authority()` requires selected Source/Member
-coordinates, `member_identity`, and exact immutable
-`request_source_decision_ref` and `request_member_decision_ref`. A selected hit
-can carry Source/Member coordinates, but no canonical lookup coordinate binds
-those values to the immutable REQUEST decision references.
+`GuideRequestAuthorityLookupCoordinate` binds the original request guard,
+owner, operation, REQUEST stage, selected Source/Snapshot/Member coordinates,
+complete member identity, and the independently expected Source and Member
+Decision outcomes. The Guide retrieval path supplies `PASS` for both. The
+read-only `lookup_request_decision_refs()` adapter resolves that exact historical chain
+to the persisted immutable `request_source_decision_ref` and
+`request_member_decision_ref` in one repeatable-read transaction.
 
 Owner: REQUEST authority / Backend persistence boundary.
 
-Minimum follow-up: freeze and provide the exact selected Source/Member
-coordinate to immutable request Source/Member Decision reference lookup.
+No B3 lookup follow-up is required. The caller must still receive the selected
+coordinate from the first-run result or B5 replay payload; this lookup does not
+reconstruct a missing selection.
 
-### B4 — `GUIDE_RETRIEVAL_OUTCOME_BINDING_UNRESOLVED`
+### B4 — `GUIDE_RETRIEVAL_OUTCOME_BINDING_READY`
 
-`execute_hybrid_retrieve()` returns `HybridRetrieveOutcome`; #697 accepts
-`ProductionRetrievalOutcome`. Similar field names do not approve a projection.
+The approved `project_hybrid_retrieval_for_guide_composition()` preserves the
+first-run status, exact search receipt, and exact production gate outcome for
+#697 while setting `search_success=None`. Missing `search_receipt` blocks
+terminal replay; B5 remains unresolved.
 
 Owner: AI/RAG retrieval and Guide composition boundary.
 
-Minimum follow-up: separately approve either direct #697 consumption of
-`HybridRetrieveOutcome` or a lossless projection contract that owns no new
-policy, ranking, or retrieval semantics.
+No B4 follow-up is required. This does not provide the B5 historical payload.
 
 ### B5 — `GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_UNAVAILABLE`
 
@@ -174,7 +177,7 @@ canonical projection.
   LLM query generation, or reuse of free-text user input.
 - MUST NOT infer the latest or current Source/Member Decision.
 - MUST NOT derive immutable Decision references from Source/Member coordinates.
-- MUST NOT construct an arbitrary `HybridRetrieveOutcome` → `ProductionRetrievalOutcome` projection.
+- MUST NOT construct an unapproved `HybridRetrieveOutcome` → `ProductionRetrievalOutcome` projection.
 - MUST NOT load a bundle-authority superset and silently filter unused bindings.
 - MUST NOT re-search on terminal replay.
 - MUST NOT recompute a search receipt, reconstruct selection from current source
@@ -196,9 +199,9 @@ Production `retrieve_medication_guidance` implementation may start only when all
 of the following are true:
 
 - [ ] A canonical Sync runtime request carrier exists.
-- [ ] A deterministic Guide medication query/fingerprint rule is approved.
-- [ ] Exact selected Source/Member to immutable REQUEST Decision reference lookup exists.
-- [ ] A `HybridRetrieveOutcome` downstream binding contract is approved.
+- [ ] A production Guide medication fingerprint and binding verifier exists.
+- [x] Exact selected Source/Member to immutable REQUEST Decision reference lookup exists.
+- [x] A `HybridRetrieveOutcome` downstream binding contract is approved.
 - [ ] Terminal replay restores the complete canonical retrieval result without re-search.
 
 Partial satisfaction does not permit a READY or callable-status promotion.

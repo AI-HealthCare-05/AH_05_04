@@ -6,16 +6,17 @@ from pathlib import Path
 BINDING_PATH = Path("docs/contracts/targets/post-mvp-1/guide-medication-guidance-retrieval-binding-v1.md")
 READINESS_PATH = Path("docs/contracts/targets/post-mvp-1/guide-langgraph-callable-readiness-v1.md")
 
-BLOCKER_CODES = {
+BLOCKER_STATES = {
     "GUIDE_RUNTIME_REQUEST_CARRIER_MISSING",
-    "GUIDE_RETRIEVAL_QUERY_AUTHORITY_MISSING",
-    "GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_COORDINATE_MISSING",
-    "GUIDE_RETRIEVAL_OUTCOME_BINDING_UNRESOLVED",
+    "GUIDE_RETRIEVAL_QUERY_TEXT_AUTHORITY_READY_BUT_FINGERPRINT_BLOCKED",
+    "GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_READY",
+    "GUIDE_RETRIEVAL_OUTCOME_BINDING_READY",
     "GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_UNAVAILABLE",
 }
 
 AVAILABLE_COMPONENTS = {
     "execute_hybrid_retrieve",
+    "lookup_request_decision_refs",
     "compose_guide_authority_with_production_retrieval",
     "hydrate_guide_retrieval_content",
     "assemble_authoritative_guide_evidence_handoff",
@@ -59,7 +60,7 @@ def test_binding_freeze_documents_exact_blockers_and_existing_kernels() -> None:
     text = BINDING_PATH.read_text(encoding="utf-8")
 
     documented_codes = set(re.findall(r"^### B[1-5] — `([A-Z_]+)`$", text, flags=re.MULTILINE))
-    assert documented_codes == BLOCKER_CODES
+    assert documented_codes == BLOCKER_STATES
     assert all(component in text for component in AVAILABLE_COMPONENTS)
     assert "retrieval engine is missing" not in text.lower()
     assert "hybrid retrieval is not implemented" not in text.lower()
@@ -73,7 +74,7 @@ def test_binding_freeze_forbids_speculative_recovery_paths() -> None:
         "MUST NOT treat `selected_hits=()` as a successful selection",
         "MUST NOT infer the latest or current Source/Member Decision",
         "MUST NOT accept caller-asserted raw runtime facts",
-        "MUST NOT construct an arbitrary `HybridRetrieveOutcome` → `ProductionRetrievalOutcome` projection",
+        "MUST NOT construct an unapproved `HybridRetrieveOutcome` → `ProductionRetrievalOutcome` projection",
         "#577 Worker handoff is not a prerequisite",
         "LangGraph implementation is out of scope.",
     )
@@ -87,6 +88,7 @@ def test_readiness_keeps_retrieval_missing_and_other_nodes_stable() -> None:
     assert _entry_status("retrieve_medication_guidance") == "MISSING_SEMANTIC_CALLABLE"
     assert "execute_hybrid_retrieve" in retrieval_entry
     assert "GUIDE_RUNTIME_REQUEST_CARRIER_MISSING" in retrieval_entry
+    assert "GUIDE_RETRIEVAL_QUERY_TEXT_AUTHORITY_READY_BUT_FINGERPRINT_BLOCKED" in retrieval_entry
     assert "GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_UNAVAILABLE" in retrieval_entry
     for node_id, expected_status in CANONICAL_STATUS_BY_OTHER_NODE.items():
         assert _entry_status(node_id) == expected_status
