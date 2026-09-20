@@ -287,8 +287,9 @@ async def async_main(args: argparse.Namespace) -> int:
         )
         alembic_ini = Path(__file__).resolve().parents[1] / "protected_retrieval" / "alembic.ini"
 
-        # 1. Migrations (sync, outside loop)
-        run_protected_migrations(
+        # 1. Run synchronous Alembic migrations in a worker thread outside this event loop.
+        await asyncio.to_thread(
+            run_protected_migrations,
             admin_url=admin_url,
             schema=schema,
             owner_role=owner_role,
