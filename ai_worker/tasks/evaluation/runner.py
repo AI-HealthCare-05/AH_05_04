@@ -7,11 +7,18 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
+from ai_worker.tasks.evaluation.answer_runtime_binding import (
+    AnswerRuntimeBindingMaterializationInput,
+    AnswerRuntimeSupplementalCarrierSnapshot,
+    MaterializedAnswerRuntimeSupplementalBindings,
+    materialize_answer_runtime_supplemental_bindings,
+)
 from ai_worker.tasks.evaluation.canonical import JsonValue, sha256_hex
 from ai_worker.tasks.evaluation.config import ResolvedDevExecution
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.loaders import EvaluationCaseContract, ValidatedDataset
 from ai_worker.tasks.evaluation.manifest import CaseInputBinding, case_input_sha256
+from ai_worker.tasks.evaluation.schemas.answer_quality_v1 import AnswerVariantId
 from ai_worker.tasks.evaluation.schemas.artifacts import (
     CASE_RESULT_ADAPTER,
     CaseResult,
@@ -62,6 +69,12 @@ class AsyncEvaluationAdapter(Protocol):
     async def execute(self, request: AdapterRequest) -> CaseResult: ...
 
 
+class AnswerRuntimeSupplementalCarrierProvider(Protocol):
+    def snapshot_answer_runtime_supplemental_carrier(
+        self,
+    ) -> AnswerRuntimeSupplementalCarrierSnapshot: ...
+
+
 class AdapterRegistry(Protocol):
     def resolve(self, adapter_id: str) -> EvaluationAdapter | AsyncEvaluationAdapter | None: ...
 
@@ -88,6 +101,7 @@ class RunOutcome:
     blocking_execution_statuses: tuple[ExecutionStatus, ...]
     selected_case_ids: tuple[str, ...]
     task_types: tuple[TaskType, ...]
+    answer_runtime_supplemental_carrier: AnswerRuntimeSupplementalCarrierSnapshot | None = None
 
 
 def aggregate_statuses(
@@ -358,6 +372,44 @@ def _retrieval_failure_records(
     return tuple(failures)
 
 
+def _capture_answer_runtime_supplemental_carrier(
+    adapter: Any,
+    *,
+    experiment_type: ExperimentType,
+    execution_status: ExecutionStatus,
+) -> AnswerRuntimeSupplementalCarrierSnapshot | None:
+    if experiment_type not in (
+        ExperimentType.ANSWER_GROUNDING_SAFETY,
+        ExperimentType.END_TO_END_RAG,
+    ):
+        return None
+    if execution_status is not ExecutionStatus.COMPLETED:
+        return None
+    if adapter is None:
+        return None
+
+    carrier_getter = getattr(adapter, "snapshot_answer_runtime_supplemental_carrier", None)
+    if carrier_getter is None:
+        return None
+    if not callable(carrier_getter):
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+
+    try:
+        snapshot = carrier_getter()
+    except EvaluationValidationError:
+        raise
+    except Exception as exc:
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID) from exc
+
+    if snapshot is None:
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+
+    if type(snapshot) is not AnswerRuntimeSupplementalCarrierSnapshot:
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+
+    return snapshot
+
+
 async def execute_dev_cases_async(
     dataset: ValidatedDataset,
     resolved: ResolvedDevExecution,
@@ -399,6 +451,11 @@ async def execute_dev_cases_async(
     else:
         case_results = tuple([await _execute_once_async(request, adapter) for request in requests])
     status, decision, blockers = aggregate_statuses([result.execution_status for result in case_results])
+    carrier = _capture_answer_runtime_supplemental_carrier(
+        adapter,
+        experiment_type=resolved.request.experiment_type,
+        execution_status=status,
+    )
     failure_records = _retrieval_failure_records(
         dataset,
         case_results,
@@ -412,6 +469,7 @@ async def execute_dev_cases_async(
         blocking_execution_statuses=blockers,
         selected_case_ids=tuple(result.case_id for result in case_results),
         task_types=task_types,
+        answer_runtime_supplemental_carrier=carrier,
     )
 
 
@@ -485,6 +543,11 @@ def execute_dev_cases(
     else:
         case_results = tuple(_execute_once(request, cast(EvaluationAdapter | None, adapter)) for request in requests)
     status, decision, blockers = aggregate_statuses([result.execution_status for result in case_results])
+    carrier = _capture_answer_runtime_supplemental_carrier(
+        adapter,
+        experiment_type=resolved.request.experiment_type,
+        execution_status=status,
+    )
     failure_records = _retrieval_failure_records(
         dataset,
         case_results,
@@ -498,4 +561,50 @@ def execute_dev_cases(
         blocking_execution_statuses=blockers,
         selected_case_ids=tuple(result.case_id for result in case_results),
         task_types=task_types,
+        answer_runtime_supplemental_carrier=carrier,
     )
+
+
+def materialize_answer_runtime_supplemental_from_outcome(
+    *,
+    resolved: ResolvedDevExecution,
+    run_id: str,
+    outcome: RunOutcome,
+) -> MaterializedAnswerRuntimeSupplementalBindings:
+    if type(outcome) is not RunOutcome or outcome.execution_status is not ExecutionStatus.COMPLETED:
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+    if bool(outcome.blocking_execution_statuses):
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+    if outcome.answer_runtime_supplemental_carrier is None:
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+    if not isinstance(resolved, ResolvedDevExecution):
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+    if resolved.request.experiment_type not in (
+        ExperimentType.ANSWER_GROUNDING_SAFETY,
+        ExperimentType.END_TO_END_RAG,
+    ):
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+
+    try:
+        variant_id = AnswerVariantId(resolved.request.variant_id)
+    except (ValueError, TypeError):
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID) from None
+
+    if not outcome.selected_case_ids or len(outcome.selected_case_ids) != len(set(outcome.selected_case_ids)):
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+
+    if tuple(case.case_id for case in outcome.case_results) != outcome.selected_case_ids:
+        raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
+
+    carrier = outcome.answer_runtime_supplemental_carrier
+    input_data = AnswerRuntimeBindingMaterializationInput(
+        experiment_id=resolved.request.experiment_id,
+        run_id=run_id,
+        variant_id=variant_id,
+        execution_request=resolved.request,
+        guideline_provenance=carrier.guideline_provenance,
+        provider_observations=carrier.provider_observations,
+        required_case_ids=outcome.selected_case_ids,
+        cases=outcome.case_results,
+    )
+    return materialize_answer_runtime_supplemental_bindings(input_data)
