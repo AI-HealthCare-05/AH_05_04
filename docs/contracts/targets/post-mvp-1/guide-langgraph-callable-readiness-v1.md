@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Target audit artifact · #180 |
-| 기준 commit | `origin/develop` `08f9b8427e109c0853d45ae94fd704fbba834575` |
+| 기준 commit | `origin/develop` `b42c97bcbbd0bf1ab2b7aae26c5a073e5ac80612` |
 | 정본 graph | `rag-runtime-v1.md` Guide Graph |
 | 범위 | canonical node와 실제 production callable의 의미 단위 대조 |
 | 결론 | `THIN_LANGGRAPH_BLOCKED_BY_CANONICAL_CALLABLE_GAPS` |
@@ -17,6 +17,16 @@
 - `actual_symbol`의 `—`는 현재 해당 의미의 callable이 없음을 뜻한다. `nearest:`는 이름이 비슷하지만 exact mapping이 아닌 조사 대상이다.
 
 `claim_citation_validator` 뒤의 Citation Authorization Guard·issuer·finalization은 Application Service Citation Finalizer boundary다. 별도 graph node가 아니며, 이 matrix는 `citation_authorization_guard`를 추가하지 않는다.
+
+## Topology decisions
+
+| topology item | decision | owner | canonical effect |
+| --- | --- | --- | --- |
+| `validate_bundle_and_source_freshness` | `RETAIN_STANDALONE` | AI/RAG runtime policy with Backend source state input | independent fail-closed validation node remains required |
+| `product_safety_overlay_gate_if_bundle_capability_enabled` | `RETIRE_FROM_CURRENT_MVP_TOPOLOGY` | AI/RAG product-safety policy | no modeled capability or approved overlay authority exists; no node or pass-through wrapper is retained |
+| `select_medication_guidelines` | `MERGE_INTO_EXISTING_BOUNDARY` | authoritative retrieval / Evidence selection | selection belongs to the retrieval/evidence boundary; #774 remains projection-only and is not relabeled |
+| `medication_guideline_safety_filter` | `RETAIN_STANDALONE_BUT_REPOSITION_AFTER_COMPOSITION` | AI/RAG medication safety policy | post-composition Card exclusion/limitation node; it must not generate new medical guidance |
+| `conflict_gate` | `MERGE_INTO_EXISTING_BOUNDARY` | P0 request/source/evidence authority | P0 conflict authority stays in the existing boundary; advanced semantic/NLI detection remains out of scope |
 
 ## Canonical callable matrix
 
@@ -73,28 +83,15 @@
 | side_effect | PURE |
 | authority_owner | AI/RAG runtime policy with Backend source state input |
 | status | `MISSING_SEMANTIC_CALLABLE` |
-| reason | `preflight_guide_runtime` validates a RAG-15 approval pack and generator provenance, not the pinned runtime bundle and source freshness required by this node. |
-| required_next_action | Define and implement the exact pinned bundle/source freshness kernel only after its input carrier and ownership are approved. |
-
-### `product_safety_overlay_gate_if_bundle_capability_enabled`
-
-| field | value |
-| --- | --- |
-| contract_semantics | bundle capability가 enable일 때 승인된 product safety overlay authority를 적용하고 fail-closed outcome을 낸다. |
-| actual_symbol | `—` |
-| input_type | capability flag and approved overlay authority carrier are absent |
-| output_type | canonical node outcome is absent |
-| side_effect | PURE |
-| authority_owner | AI/RAG product-safety policy |
-| status | `MISSING_SEMANTIC_CALLABLE` |
-| reason | No approved capability authority or production callable exists. Disabled-path pass-through would be a fake node. |
-| required_next_action | Product-safety owner must approve capability authority, input/output contract, and failure semantics before implementation. |
+| alignment_decision | `RETAIN_STANDALONE` |
+| reason | `preflight_guide_runtime` validates a RAG-15 approval pack and generator provenance, not the pinned runtime bundle and source freshness required by this node. `runtime_bundle_builder` is build-time only: it accepts externally decided `freshness_eligible` and `scope_allowed`; `evaluate_snapshot_use_eligibility()` merely combines those inputs and cannot derive either from `freshness_policy_hash` or `scope_policy_hash`. The exact SourceUsePurpose mapping, policy content/evaluators, and a Worker-readable pinned runtime source-state carrier are absent. |
+| required_next_action | `FRESHNESS_RUNTIME_EVALUATOR_MISSING`: approve the exact pinned-member policy identities/content, freshness and scope evaluators, SourceUsePurpose mapping, and Backend-to-Worker carrier; then implement one pure validation kernel that reads no current/latest replacement Source. |
 
 ### `retrieve_medication_guidance`
 
 | field | value |
 | --- | --- |
-| contract_semantics | Guide의 pinned medication context와 authority-bound query/evidence selection으로 medication guidance retrieval을 실행한다. |
+| contract_semantics | Guide의 pinned medication context로 authoritative retrieval/Evidence selection과 P0 request/source/evidence conflict authority를 실행한다. |
 | actual_symbol | `nearest: ai_worker.tasks.rag.guide_retrieval_outcome_binding:project_hybrid_retrieval_for_guide_composition`; B3 lookup: `SqlAlchemyGuideEvidenceAuthorityReader.lookup_request_decision_refs` |
 | input_type | pinned Sync runtime request carrier, production query fingerprint/binding verifier, and terminal replay aggregate are absent; exact REQUEST decision lookup is available |
 | output_type | canonical Guide retrieval outcome is absent |
@@ -106,53 +103,11 @@
 
 Retrieval binding re-audited at `origin/develop` `08f9b8427e109c0853d45ae94fd704fbba834575`.
 
-### `select_medication_guidelines`
-
-| field | value |
-| --- | --- |
-| contract_semantics | retrieved medication guidance에서 Guide generation에 사용할 guideline set을 canonical safety/authority criteria로 선택한다. |
-| actual_symbol | `nearest: ai_worker.tasks.rag.guideline_production_evidence:project_guideline_evidence_from_handoff` |
-| input_type | canonical retrieved guidance selection carrier is absent |
-| output_type | canonical selected guideline set is absent |
-| side_effect | PURE |
-| authority_owner | AI/RAG guideline selection policy |
-| status | `MISSING_SEMANTIC_CALLABLE` |
-| reason | Existing projection consumes an already verified handoff; it neither selects guidelines from retrieval nor owns this node's selection policy. |
-| required_next_action | Approve and implement the separated guideline-selection semantic callable. |
-
-### `medication_guideline_safety_filter`
-
-| field | value |
-| --- | --- |
-| contract_semantics | selected medication guidelines를 medication-specific safety policy로 filter/reject한다. |
-| actual_symbol | `—` |
-| input_type | canonical selected-guideline carrier is absent |
-| output_type | canonical safety-filter outcome is absent |
-| side_effect | PURE |
-| authority_owner | AI/RAG medication safety policy |
-| status | `MISSING_SEMANTIC_CALLABLE` |
-| reason | Existing Card finalization validates a completed generation result; it is not a standalone pre-composition medication guideline filter. |
-| required_next_action | Approve filter authority and exact input/output before implementing a callable. |
-
-### `conflict_gate`
-
-| field | value |
-| --- | --- |
-| contract_semantics | safety-filtered guideline/evidence set의 unresolved conflict를 fail-closed로 gate한다. |
-| actual_symbol | `—` |
-| input_type | canonical filtered guideline/evidence carrier is absent |
-| output_type | canonical conflict-gate outcome is absent |
-| side_effect | PURE |
-| authority_owner | AI/RAG evidence conflict policy |
-| status | `MISSING_SEMANTIC_CALLABLE` |
-| reason | Existing fallback projections may represent an already-determined conflict but do not perform this distinct canonical gate. |
-| required_next_action | Approve conflict criteria and carrier, then implement the smallest dedicated callable. |
-
 ### `compose_personalized_guide`
 
 | field | value |
 | --- | --- |
-| contract_semantics | conflict-gated medication guidance를 사용해 personalized Guide/Card를 compose하고 canonical generation outcome을 낸다. |
+| contract_semantics | retrieval/evidence-authority-bound medication guidance를 사용해 personalized Guide/Card를 compose하고 canonical generation outcome을 낸다. |
 | actual_symbol | `ai_worker.tasks.rag.guide_personalized_composition:compose_personalized_guide` |
 | input_type | `GuidelineGenerationRequest`, `GuidelineGeneratorPort` |
 | output_type | `GuidelineGenerationResult` (`GuidelineCardDraft \| GuidelineGenerationFailure`) |
@@ -160,7 +115,22 @@ Retrieval binding re-audited at `origin/develop` `08f9b8427e109c0853d45ae94fd704
 | authority_owner | AI/RAG Guide generation |
 | status | `THIN_ADAPTER_NEEDED` |
 | reason | #787의 direct provider invocation을 composition-only callable로 최소 추출했다. #787 전체는 preflight, evidence projection, dynamic binding, Card finalization을 함께 수행하므로 여전히 canonical compose node가 아니다. |
-| required_next_action | Future graph state가 approved `GuidelineGenerationRequest`를 소유할 때만 이 callable을 재사용한다. selection/safety/conflict carrier와 policy는 별도 blocker로 유지한다. |
+| required_next_action | Future graph state가 approved `GuidelineGenerationRequest`를 소유할 때만 이 callable을 재사용한다. The retained safety filter runs after this callable. |
+
+### `medication_guideline_safety_filter`
+
+| field | value |
+| --- | --- |
+| contract_semantics | generated Guideline Card content에 approved minimal Patient Context를 적용해 제외·제한하고 fail closed한다. 새 의료 guidance를 생성하거나 selection을 재판정하지 않는다. |
+| actual_symbol | `—` |
+| input_type | `GuidelineCardDraft` plus an approved typed minimal Patient Context carrier are required; the carrier is absent |
+| output_type | canonical post-composition Card exclusion/limitation outcome is absent |
+| side_effect | PURE |
+| authority_owner | AI/RAG medication safety policy |
+| status | `MISSING_SEMANTIC_CALLABLE` |
+| alignment_decision | `RETAIN_STANDALONE_BUT_REPOSITION_AFTER_COMPOSITION` |
+| reason | Patient Context is only an exclusion/caution safety filter for an approved Card, never a Guideline selection input. The existing Guide carrier exposes `patient_context_digest` only; `patient_context_digest` is only a SHA-256 identity and cannot supply confirmed condition, exact allergy target, or pregnancy state. `_is_valid_draft_shape()` is Card shape validation, not this filter. |
+| required_next_action | `PATIENT_CONTEXT_TYPED_CARRIER_MISSING`: Backend Sync must supply the pinned, approved minimal Patient Context snapshot and schema version to the Guide runtime seam; then implement this pure callable after `compose_personalized_guide`. |
 
 ### `claim_citation_validator`
 
@@ -206,6 +176,6 @@ Retrieval binding re-audited at `origin/develop` `08f9b8427e109c0853d45ae94fd704
 
 ## Readiness decision
 
-The canonical node set is fixed at the 13 entries above. `compose_personalized_guide` alone truthfully qualifies as `THIN_ADAPTER_NEEDED`; it does not create the missing upstream selection, safety-filter, or conflict semantics.
+The canonical node set is fixed at the 10 entries above. `compose_personalized_guide` alone truthfully qualifies as `THIN_ADAPTER_NEEDED`. The product-safety overlay is retired, while selection and P0 conflict authority are merged into the retrieval/evidence boundary without creating wrapper nodes.
 
-`StateGraph`, `langgraph` dependency, `uv.lock`, fake/no-op/pass-through nodes, Worker/Outbox/ACK changes, Backend DTO/OpenAPI changes, and direct AI Worker persistence are therefore out of scope. The minimum handoffs are: Backend sync read/projection seams for the four external nodes; approved AI/RAG semantic callables for bundle freshness, product safety overlay, retrieval, selection, safety filter, and conflict gate.
+`StateGraph`, `langgraph` dependency, `uv.lock`, fake/no-op/pass-through nodes, Worker/Outbox/ACK changes, Backend DTO/OpenAPI changes, and direct AI Worker persistence are therefore out of scope. LangGraph cannot be implemented until the retained freshness node, merged retrieval boundary, and repositioned safety callable have their exact required carriers and semantics. The minimum handoffs are Backend sync read/projection seams for freshness, retrieval, and the typed minimal Patient Context carrier.
