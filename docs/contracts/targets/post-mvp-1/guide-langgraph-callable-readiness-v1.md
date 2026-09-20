@@ -3,7 +3,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 문서 상태 | Approved Target audit artifact · #180 |
-| 기준 commit | `origin/develop` `6e24b2b092edf149410f4766d8c3a9d22e427518` |
+| 기준 commit | `origin/develop` `e03ae267` + B1 branch implementation |
 | 정본 graph | `rag-runtime-v1.md` Guide Graph |
 | 범위 | canonical node와 실제 production callable의 의미 단위 대조 |
 | 결론 | `THIN_LANGGRAPH_BLOCKED_BY_CANONICAL_CALLABLE_GAPS` |
@@ -93,15 +93,15 @@
 | --- | --- |
 | contract_semantics | Guide의 pinned medication context로 authoritative retrieval/Evidence selection과 P0 request/source/evidence conflict authority를 실행한다. |
 | actual_symbol | `nearest: ai_worker.tasks.rag.guide_retrieval_outcome_binding:project_hybrid_retrieval_for_guide_composition`; B3 lookup: `SqlAlchemyGuideEvidenceAuthorityReader.lookup_request_decision_refs` |
-| input_type | pinned Sync runtime request carrier is absent; the B2 production query fingerprint/binding provider, exact REQUEST decision lookup, and terminal replay aggregate are available |
+| input_type | verified B1 Sync runtime request carrier, B2 production query fingerprint/binding provider, exact REQUEST decision lookup, and terminal replay aggregate are available |
 | output_type | canonical Guide retrieval outcome is absent |
 | side_effect | READ/WRITE |
 | authority_owner | AI/RAG retrieval runtime |
 | status | `MISSING_SEMANTIC_CALLABLE` |
-| reason | Production `execute_hybrid_retrieve`, the B2 production fingerprint/binding provider, the B3 exact historical REQUEST decision lookup, the B4 projection, and B5 exact terminal replay readback exist, but canonical Guide binding remains blocked by `GUIDE_RUNTIME_REQUEST_CARRIER_MISSING`. |
-| required_next_action | Do not add a production callable until B1 is resolved; then compose the approved B2/B3/B4 seams and B5 replay payload without duplicating retrieval execution or persistence. |
+| reason | Production `execute_hybrid_retrieve` and the verified B1/B2/B3/B4/B5 seams exist, but no single callable yet composes them into the canonical Guide retrieval outcome. |
+| required_next_action | Compose the verified B1/B2/B3/B4/B5 seams without duplicating retrieval execution, persistence, query authority, or replay semantics. |
 
-Retrieval binding re-audited at `origin/develop` `dde2f3db90e589ad1958f00ecd6512303fc57baa`.
+Retrieval binding re-audited at `origin/develop` `e03ae267` plus the B1 branch implementation.
 
 ### `compose_personalized_guide`
 

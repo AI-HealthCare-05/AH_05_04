@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -8,6 +8,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_worker.tasks.rag.catalog.types import CatalogFreshnessStatus, CatalogVerificationStatus
+from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
+from ai_worker.tasks.rag.evidence_search import (
+    RetrievalExecutionMode,
+    VersionedDenseSearchConfiguration,
+    VersionedEvidenceRetrievalConfiguration,
+    VersionedLexicalSearchConfiguration,
+    project_versioned_evidence_retrieval_configuration,
+)
 from ai_worker.tasks.rag.runtime_bundle_builder import (
     MedicationCatalogBinding,
     RuntimeBundleArtifactKind,
@@ -22,6 +30,15 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import SnapshotVeri
 from app.models.async_jobs import AiJob, AiJobStatus, AiJobType
 from app.models.chat import ChatMessage, ChatRole, ChatSession
 from app.models.guides import Guide
+from app.models.knowledge import (
+    KnowledgeChunk,
+    KnowledgeDocument,
+    KnowledgeDocumentContractVersion,
+    KnowledgeDocumentStatus,
+    RagKnowledgeDistanceMetric,
+    RagKnowledgeIndex,
+    RagKnowledgeIndexMember,
+)
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Prescription, PrescriptionVersionMedication
@@ -35,6 +52,7 @@ from app.models.rag_candidate import (
     MedicationIdentificationStatus,
 )
 from app.models.rag_runtime import (
+    GuideRetrievalBindingManifest,
     RagRuntimeBundleCitationApproval,
     RagRuntimeBundleSource,
     RagRuntimeBundleStatus,
@@ -43,8 +61,17 @@ from app.models.rag_runtime import (
     RagRuntimeExecutionManifest,
     RagRuntimeReleaseBundle,
 )
-from app.models.rag_source import RagSource, RagSourceSnapshot
+from app.models.rag_source import (
+    RagSource,
+    RagSourceOperation,
+    RagSourceSnapshot,
+    RagSourceSnapshotMember,
+    RagSourceSnapshotMemberKind,
+)
 from app.models.users import Gender, User
+from app.repositories.async_job_repository import AsyncJobRepository
+from app.repositories.guide_repository import GuideRepository
+from app.repositories.medication_candidate_repository import MedicationCandidateRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.repositories.rag_runtime_repository import (
     AiJobExecutionContextCreate,
@@ -66,14 +93,56 @@ from app.repositories.rag_source_use_approval_repository import (
     RagSourceUseApprovalRepository,
     SourceUseApprovalCreate,
 )
+from app.services.guide_intake import GuideJobIntakeTransactionAdapter, GuideRuntimeContextSnapshot
+from app.services.guide_retrieval_binding import (
+    GuideRetrievalBindingBuildError,
+    GuideRetrievalBindingBuildRequest,
+    create_guide_retrieval_binding_manifest,
+)
 from app.services.guide_runtime_request import load_verified_guide_runtime_request_carrier
+from app.services.job_intake import JobIntakeService
+from app.services.medication_identification import MedicationIdentificationService
+from app.services.rag_preflight import RagPreflightService
 from app.services.rag_runtime_bundle_build import execute_runtime_bundle_build
+from rag_runtime.guide_retrieval_binding import GuideRetrievalMemberBinding
 from rag_runtime.runtime_environment import RuntimeEnvironmentCode
 from rag_runtime.source_use_approval import SourceUsePurpose
 
 
 def _hash(char: str) -> str:
     return char * 64
+
+
+def _artifact_ref(code: str, version: str, content_sha256: str) -> ImmutableArtifactRef:
+    return ImmutableArtifactRef(artifact_code=code, version=version, content_sha256=content_sha256)
+
+
+def _retrieval_configuration_projection():
+    lexical = VersionedLexicalSearchConfiguration(artifact_ref=_artifact_ref("lexical-config", "1.0.0", "0" * 64))
+    lexical = replace(
+        lexical,
+        artifact_ref=replace(lexical.artifact_ref, content_sha256=lexical.compute_canonical_hash()),
+    )
+    dense = VersionedDenseSearchConfiguration(artifact_ref=_artifact_ref("dense-config", "1.0.0", "0" * 64))
+    dense = replace(
+        dense,
+        artifact_ref=replace(dense.artifact_ref, content_sha256=dense.compute_canonical_hash()),
+    )
+    configuration = VersionedEvidenceRetrievalConfiguration(
+        artifact_ref=_artifact_ref("guide-retrieval-config", "1.0.0", "0" * 64),
+        lexical_config=lexical,
+        dense_config=dense,
+        expected_query_embedding_adapter_ref=_artifact_ref("embedding-adapter", "1.0.0", _hash("8")),
+        execution_mode=RetrievalExecutionMode.HYBRID_RRF,
+    )
+    configuration = replace(
+        configuration,
+        artifact_ref=replace(
+            configuration.artifact_ref,
+            content_sha256=configuration.compute_canonical_hash(),
+        ),
+    )
+    return project_versioned_evidence_retrieval_configuration(configuration)
 
 
 async def _create_user(session: AsyncSession) -> tuple[User, Profile]:
@@ -203,6 +272,79 @@ async def _create_runtime_source_snapshot(
     return source, snapshot
 
 
+async def _create_knowledge_index_binding(
+    session: AsyncSession,
+    *,
+    source: RagSource,
+    snapshot: RagSourceSnapshot,
+) -> tuple[RagKnowledgeIndex, GuideRetrievalMemberBinding]:
+    operation = await session.get(RagSourceOperation, snapshot.operation_id)
+    assert operation is not None
+    snapshot_member = RagSourceSnapshotMember(
+        source_snapshot_id=snapshot.id,
+        member_kind=RagSourceSnapshotMemberKind.ENDPOINT_OPERATION,
+        endpoint_id=operation.endpoint_id,
+        operation_id=operation.id,
+        locator=f"guide/{uuid4().hex}",
+        content_sha256=_hash("f"),
+    )
+    session.add(snapshot_member)
+    document = KnowledgeDocument(
+        title="Synthetic Guide Evidence",
+        publisher="MFDS",
+        source_url=f"https://example.invalid/{uuid4().hex}",
+        document_version="1.0.0",
+        record_contract_version=KnowledgeDocumentContractVersion.LEGACY_V1,
+        document_status=KnowledgeDocumentStatus.ACTIVE,
+    )
+    session.add(document)
+    await session.flush()
+    chunk = KnowledgeChunk(
+        knowledge_document_id=document.id,
+        chunk_index=0,
+        chunk_text="합성 복약 근거",
+        content_hash=_hash("f"),
+        normalization_version="normalization-v1",
+    )
+    session.add(chunk)
+    index = RagKnowledgeIndex(
+        index_code=f"GUIDE_INDEX_{uuid4().hex[:8]}",
+        index_version="1.0.0",
+        corpus_manifest_hash=_hash("a"),
+        embedding_manifest_hash=_hash("b"),
+        index_configuration_hash=_hash("c"),
+        embedding_model_ref="synthetic-embedding",
+        embedding_model_version="1.0.0",
+        embedding_dimension=4,
+        distance_metric=RagKnowledgeDistanceMetric.COSINE,
+        member_count=1,
+    )
+    session.add(index)
+    await session.flush()
+    session.add(
+        RagKnowledgeIndexMember(
+            knowledge_index_id=index.id,
+            knowledge_chunk_id=chunk.id,
+            source_snapshot_id=snapshot.id,
+            source_snapshot_member_id=snapshot_member.id,
+            source_code=source.source_code,
+            source_version=snapshot.source_version,
+            canonical_checksum=snapshot.canonical_checksum,
+            external_document_id=f"guide-{uuid4().hex[:8]}",
+            chunk_index=0,
+            content_hash=_hash("f"),
+            embedding=[0.1, 0.2, 0.3, 0.4],
+            embedding_sha256=_hash("d"),
+            member_order=1,
+        )
+    )
+    await session.flush()
+    return index, GuideRetrievalMemberBinding(
+        source_snapshot_id=snapshot.id,
+        source_snapshot_member_id=snapshot_member.id,
+    )
+
+
 def _runtime_source_member(
     snapshot: RagSourceSnapshot,
     purpose: RuntimeBundleMemberPurpose,
@@ -237,9 +379,16 @@ async def _create_canonical_runtime_graph(
     RagRuntimeEnvironment,
     tuple[RagRuntimeBundleSource, ...],
     RagRuntimeBundleCitationApproval,
+    RagKnowledgeIndex,
+    GuideRetrievalMemberBinding,
 ]:
     _, catalog_snapshot = await _create_runtime_source_snapshot(session, "CATALOG")
     knowledge_source, knowledge_snapshot = await _create_runtime_source_snapshot(session, "KNOWLEDGE")
+    knowledge_index, member_binding = await _create_knowledge_index_binding(
+        session,
+        source=knowledge_source,
+        snapshot=knowledge_snapshot,
+    )
     approval = await RagSourceUseApprovalRepository(session).create_approval(
         SourceUseApprovalCreate(
             source_snapshot_id=knowledge_snapshot.id,
@@ -300,6 +449,16 @@ async def _create_canonical_runtime_graph(
                 catalog_version="catalog-1.0.0",
                 catalog_manifest_hash=_hash("9"),
             ),
+            RuntimeBundleArtifactMemberInput(
+                artifact_kind=RuntimeBundleArtifactKind.KNOWLEDGE_INDEX,
+                artifact_ref=knowledge_index.index_code,
+                artifact_version=knowledge_index.index_version,
+                observed_environment="LOCAL",
+                approval_effective=True,
+                approval_expired=False,
+                revocation_unresolved=False,
+                manifest_hash=knowledge_index.index_configuration_hash,
+            ),
         ),
         citation_approval_pins=(pin,),
         created_by="backend-test",
@@ -322,6 +481,8 @@ async def _create_canonical_runtime_graph(
         environment,
         persisted.bundle_sources,
         persisted.citation_approval_pins[0],
+        knowledge_index,
+        member_binding,
     )
 
 
@@ -436,6 +597,7 @@ class _GuideCarrierFixture:
     environment: RagRuntimeEnvironment
     bundle_sources: tuple[RagRuntimeBundleSource, ...]
     citation_pin: RagRuntimeBundleCitationApproval
+    retrieval_binding_manifest: GuideRetrievalBindingManifest
 
 
 async def _create_guide_carrier_fixture(session: AsyncSession) -> _GuideCarrierFixture:
@@ -449,9 +611,24 @@ async def _create_guide_carrier_fixture(session: AsyncSession) -> _GuideCarrierF
     assert medication is not None
     guide = await _create_guide_domain(session, profile=profile, prescription=prescription)
     identification = await _create_identification(session, medication=medication)
-    manifest, bundle, environment, bundle_sources, citation_pin = await _create_canonical_runtime_graph(
+    (
+        manifest,
+        bundle,
+        environment,
+        bundle_sources,
+        citation_pin,
+        knowledge_index,
+        member_binding,
+    ) = await _create_canonical_runtime_graph(session, actor=user)
+    retrieval_binding_manifest = await create_guide_retrieval_binding_manifest(
         session,
-        actor=user,
+        GuideRetrievalBindingBuildRequest(
+            runtime_release_bundle_id=bundle.id,
+            runtime_execution_manifest_id=manifest.id,
+            knowledge_index_id=knowledge_index.id,
+            member_bindings=(member_binding,),
+            retrieval_configuration=_retrieval_configuration_projection(),
+        ),
     )
     job = AiJob(
         user_id=user.id,
@@ -476,6 +653,8 @@ async def _create_guide_carrier_fixture(session: AsyncSession) -> _GuideCarrierF
             runtime_execution_manifest_id=manifest.id,
             runtime_execution_manifest_hash=manifest.manifest_hash,
             runtime_guard_decision_ref="guard:guide-runtime-pass",
+            guide_retrieval_binding_manifest_id=retrieval_binding_manifest.id,
+            guide_retrieval_binding_manifest_hash=retrieval_binding_manifest.manifest_hash,
             patient_context_digest=_hash("6"),
             source_scope_manifest_hash=_hash("7"),
         )
@@ -495,7 +674,68 @@ async def _create_guide_carrier_fixture(session: AsyncSession) -> _GuideCarrierF
         environment=environment,
         bundle_sources=bundle_sources,
         citation_pin=citation_pin,
+        retrieval_binding_manifest=retrieval_binding_manifest,
     )
+
+
+async def test_guide_job_intake_pins_binding_for_verified_request_carrier(db_session: AsyncSession) -> None:
+    user, profile = await _create_user(db_session)
+    prescription = await _create_prescription(db_session, user=user, profile=profile)
+    medication = await db_session.scalar(
+        select(PrescriptionVersionMedication).where(
+            PrescriptionVersionMedication.prescription_version_id == prescription.active_version_id
+        )
+    )
+    assert medication is not None
+    await _create_identification(db_session, medication=medication)
+    manifest, bundle, environment, _, _, knowledge_index, member_binding = await _create_canonical_runtime_graph(
+        db_session,
+        actor=user,
+    )
+    retrieval_binding = await create_guide_retrieval_binding_manifest(
+        db_session,
+        GuideRetrievalBindingBuildRequest(
+            runtime_release_bundle_id=bundle.id,
+            runtime_execution_manifest_id=manifest.id,
+            knowledge_index_id=knowledge_index.id,
+            member_bindings=(member_binding,),
+            retrieval_configuration=_retrieval_configuration_projection(),
+        ),
+    )
+    adapter = GuideJobIntakeTransactionAdapter(
+        guide_repository=GuideRepository(db_session),
+        preflight_service=RagPreflightService(
+            MedicationIdentificationService(MedicationCandidateRepository(db_session))
+        ),
+        runtime_repository=RagRuntimeRepository(db_session),
+        job_intake_service=JobIntakeService(AsyncJobRepository(db_session)),
+    )
+    intake = await adapter.accept_guide_job(
+        user=user,
+        prescription_id=prescription.id,
+        idempotency_key=f"guide-carrier-{uuid4().hex}",
+        trace_id="f" * 32,
+        runtime_context=GuideRuntimeContextSnapshot(
+            runtime_environment_id=environment.id,
+            runtime_environment_revision=environment.environment_revision,
+            runtime_release_bundle_id=bundle.id,
+            runtime_release_bundle_manifest_hash=bundle.bundle_manifest_hash,
+            runtime_execution_manifest_id=manifest.id,
+            runtime_execution_manifest_hash=manifest.manifest_hash,
+            guide_retrieval_binding_manifest_id=retrieval_binding.id,
+            guide_retrieval_binding_manifest_hash=retrieval_binding.manifest_hash,
+            runtime_guard_decision_ref="guard:guide-runtime-pass",
+            patient_context_digest=_hash("6"),
+            source_scope_manifest_hash=_hash("7"),
+        ),
+    )
+
+    carrier = await load_verified_guide_runtime_request_carrier(db_session, intake.job.id)
+
+    assert carrier is not None
+    assert carrier.job_id == intake.job.id
+    assert carrier.guide_id == intake.guide.id
+    assert carrier.retrieval_binding.manifest_hash == retrieval_binding.manifest_hash
 
 
 async def persist_and_verify_chat_context(db_session: AsyncSession) -> None:
@@ -586,6 +826,9 @@ async def test_verified_guide_runtime_request_carrier_reads_exact_pinned_runtime
     assert carrier.runtime_execution_manifest_id == fixture.manifest.id
     assert carrier.runtime_execution_manifest_hash == fixture.manifest.manifest_hash
     assert carrier.runtime_environment_revision == 2
+    assert carrier.retrieval_binding.knowledge_index_id == fixture.retrieval_binding_manifest.knowledge_index_id
+    assert carrier.retrieval_binding.manifest_hash == fixture.retrieval_binding_manifest.manifest_hash
+    assert carrier.retrieval_binding.member_bindings
     assert {source.source_snapshot_id for source in carrier.bundle_sources} == {
         source.source_snapshot_id for source in fixture.bundle_sources
     }
@@ -619,6 +862,92 @@ async def test_verified_guide_runtime_request_carrier_rejects_citation_approval_
     await db_session.flush()
 
     assert await load_verified_guide_runtime_request_carrier(db_session, fixture.job.id) is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("retrieval_configuration_hash", _hash("f")),
+        ("filter_snapshot_hash", _hash("e")),
+        ("source_manifest_hash", _hash("d")),
+        ("manifest_version", "unknown-manifest-version"),
+    ],
+)
+async def test_verified_guide_runtime_request_carrier_rejects_retrieval_binding_drift(
+    db_session: AsyncSession,
+    field: str,
+    value: str,
+) -> None:
+    fixture = await _create_guide_carrier_fixture(db_session)
+    setattr(fixture.retrieval_binding_manifest, field, value)
+    await db_session.flush()
+
+    assert await load_verified_guide_runtime_request_carrier(db_session, fixture.job.id) is None
+
+
+async def test_verified_guide_runtime_request_carrier_rejects_nested_configuration_drift(
+    db_session: AsyncSession,
+) -> None:
+    fixture = await _create_guide_carrier_fixture(db_session)
+    configuration = dict(fixture.retrieval_binding_manifest.retrieval_configuration_json)
+    lexical_config = configuration["lexical_config"]
+    assert isinstance(lexical_config, dict)
+    lexical = dict(lexical_config)
+    lexical["trigram_threshold"] = "0.4"
+    configuration["lexical_config"] = lexical
+    fixture.retrieval_binding_manifest.retrieval_configuration_json = configuration
+    await db_session.flush()
+
+    assert await load_verified_guide_runtime_request_carrier(db_session, fixture.job.id) is None
+
+
+async def test_verified_guide_runtime_request_carrier_rejects_member_binding_drift(
+    db_session: AsyncSession,
+) -> None:
+    fixture = await _create_guide_carrier_fixture(db_session)
+    bindings = [dict(item) for item in fixture.retrieval_binding_manifest.member_bindings_json]
+    bindings[0]["source_snapshot_member_id"] = str(uuid4())
+    fixture.retrieval_binding_manifest.member_bindings_json = bindings
+    await db_session.flush()
+
+    assert await load_verified_guide_runtime_request_carrier(db_session, fixture.job.id) is None
+
+
+async def test_verified_guide_runtime_request_carrier_requires_binding_pin(
+    db_session: AsyncSession,
+) -> None:
+    fixture = await _create_guide_carrier_fixture(db_session)
+    context = await RagRuntimeRepository(db_session).get_execution_context_by_job(fixture.job.id)
+    assert context is not None
+    context.guide_retrieval_binding_manifest_id = None
+    context.guide_retrieval_binding_manifest_hash = None
+    await db_session.flush()
+
+    assert await load_verified_guide_runtime_request_carrier(db_session, fixture.job.id) is None
+
+
+async def test_guide_retrieval_binding_finalize_rejects_unpinned_member(
+    db_session: AsyncSession,
+) -> None:
+    fixture = await _create_guide_carrier_fixture(db_session)
+    valid_binding = fixture.retrieval_binding_manifest.member_bindings_json[0]
+
+    with pytest.raises(GuideRetrievalBindingBuildError, match="member scope"):
+        await create_guide_retrieval_binding_manifest(
+            db_session,
+            GuideRetrievalBindingBuildRequest(
+                runtime_release_bundle_id=fixture.bundle.id,
+                runtime_execution_manifest_id=fixture.manifest.id,
+                knowledge_index_id=fixture.retrieval_binding_manifest.knowledge_index_id,
+                member_bindings=(
+                    GuideRetrievalMemberBinding(
+                        source_snapshot_id=UUID(valid_binding["source_snapshot_id"]),
+                        source_snapshot_member_id=uuid4(),
+                    ),
+                ),
+                retrieval_configuration=_retrieval_configuration_projection(),
+            ),
+        )
 
 
 async def test_verified_guide_runtime_request_carrier_ignores_chat_execution_context(

@@ -2,17 +2,16 @@
 
 | Item | Value |
 | --- | --- |
-| Status | B2 production authority + B4 pure binding + B5 terminal replay ready · #180 |
-| Re-audited base | `origin/develop` `61bbb579ff195e06a0d28bed7ac8d062410d1ea4` |
+| Status | B1/B2/B3/B4/B5 authority seams ready · #180 |
+| Re-audited base | `origin/develop` `e03ae267` + B1 branch implementation |
 | Canonical node | `retrieve_medication_guidance` in `rag-runtime-v1.md` Guide Graph |
 | Result | `THIN_LANGGRAPH_BLOCKED_BY_CANONICAL_CALLABLE_GAPS` |
 
 ## 1. Purpose
 
 This document freezes the exact prerequisites that prevent a production
-`retrieve_medication_guidance` callable. Production retrieval exists; the
-incomplete boundary is the Guide-specific authoritative binding from pinned
-Sync inputs to the existing retrieval and downstream Guide kernels.
+`retrieve_medication_guidance` callable. Production retrieval and the B1-B5
+authority seams exist; final callable composition remains incomplete.
 
 This is a target blocker artifact. It neither implements the canonical node nor
 promotes any behavior to the current runtime contract.
@@ -34,7 +33,7 @@ The currently available chain is:
 ```text
 execute_hybrid_retrieve()
         ↓
-[Guide binding blockers]
+[B1 verified request binding + B2 query authority]
         ↓
 compose_guide_authority_with_production_retrieval()
         ↓
@@ -43,8 +42,8 @@ hydrate_guide_retrieval_content()
 assemble_authoritative_guide_evidence_handoff()
 ```
 
-The downstream kernels are available. The intermediate authoritative binding is
-not.
+The downstream kernels and B1/B2 authoritative inputs are available. The final
+composition is not.
 
 ## 3. Required canonical-node semantics
 
@@ -70,23 +69,23 @@ does not change #697 to accommodate a broader authority set.
 
 | Input / fact | Required by | Current authoritative producer | Current carrier / lookup | Available? | Missing authority | Owner | Minimum follow-up |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `job_id` | `HybridRetrieveRequest` | Backend Sync pinned job/execution persistence | Backend-owned execution-context read | No Guide carrier | Single Sync retrieval carrier | Backend Sync runtime boundary | Project it with the other pinned coordinates |
-| `execution_context_id` | `HybridRetrieveRequest` | Backend Sync execution-context persistence | Backend-owned execution-context read | No Guide carrier | Single Sync retrieval carrier | Backend Sync runtime boundary | Project it with the other pinned coordinates |
-| `prescription_version_id` | `HybridRetrieveRequest` | Backend Sync execution-context persistence | Backend-owned execution-context read | No Guide carrier | Single Sync retrieval carrier | Backend Sync runtime boundary | Project it with the other pinned coordinates |
-| `runtime_release_bundle_id` | `HybridRetrieveRequest` | Backend persisted runtime bundle | Backend bundle configuration read | No Guide carrier | Single Sync retrieval carrier | Backend Sync runtime boundary | Project exact pinned bundle identity |
-| `runtime_release_bundle_manifest_hash` | `HybridRetrieveRequest` | Backend persisted runtime bundle | Backend bundle configuration read | No Guide carrier | Single Sync retrieval carrier | Backend Sync runtime boundary | Project exact pinned bundle manifest hash |
-| `runtime_execution_manifest_id` | `HybridRetrieveRequest` | Backend runtime execution persistence | No Guide retrieval carrier | No | Single Sync retrieval carrier | Backend Sync runtime boundary | Project exact pinned execution manifest identity |
-| `runtime_execution_manifest_hash` | `HybridRetrieveRequest` | Backend runtime execution persistence | No Guide retrieval carrier | No | Single Sync retrieval carrier | Backend Sync runtime boundary | Project exact pinned execution manifest hash |
-| `runtime_guard_decision_ref` | `HybridRetrieveRequest` | Pinned execution context | Backend-owned execution-context read | No Guide carrier | Single Sync retrieval carrier | Backend Sync runtime boundary | Project the stored exact reference unchanged |
-| `knowledge_index_id` | `EvidenceSearchExecutionBinding` | Pinned runtime/bundle configuration | No Guide retrieval carrier | No | Sync request carrier | Backend Sync runtime boundary | Include it in the canonical projection |
-| `allowed_source_snapshot_ids` | `EvidenceSearchExecutionBinding` | Pinned source scope | No Guide retrieval carrier | No | Sync request carrier | Backend Sync runtime boundary | Include the exact stored scope |
-| `allowed_source_snapshot_member_ids` | `EvidenceSearchExecutionBinding` | Pinned source scope | No Guide retrieval carrier | No | Sync request carrier | Backend Sync runtime boundary | Include the exact stored member scope |
-| retrieval configuration | `EvidenceSearchExecutionBinding` | Pinned runtime/bundle configuration | No Guide retrieval carrier | No | Sync request carrier | Backend Sync runtime boundary | Include the exact versioned configuration |
-| filter snapshot ref | `EvidenceSearchExecutionBinding` | Pinned runtime/bundle configuration | No Guide retrieval carrier | No | Sync request carrier | Backend Sync runtime boundary | Include its immutable reference |
-| source manifest hash | `HybridRetrieveRequest` | Pinned source/runtime configuration | No Guide retrieval carrier | No | Sync request carrier | Backend Sync runtime boundary | Include the exact stored hash |
-| medication identity/context | Guide query projection | Backend execution identification persistence | Backend membership read; no worker-facing projection | No | Guide medication carrier | Backend Sync runtime boundary | Project verified, pinned medication context |
-| `normalized_query` | `EvidenceSearchRequest` | #180 B2 pinned snapshot projection | B1 carrier still absent | Text policy frozen | B1 carrier | AI/RAG / Backend Sync | Inject the approved B2 producer only at the retrieval application boundary |
-| `query_fingerprint` | `EvidenceSearchRequest` | B2 typed HMAC producer | Backend composition-root FastAPI dependency | Yes | B1 carrier | AI/RAG | Use the matching B2 verifier; do not expose the secret |
+| `job_id` | `HybridRetrieveRequest` | Backend Sync pinned job/execution persistence | `GuideRuntimeRequestCarrier` exact read (#902) | Yes | None | Backend Sync runtime boundary | Consume unchanged |
+| `execution_context_id` | `HybridRetrieveRequest` | Backend Sync execution-context persistence | `GuideRuntimeRequestCarrier` exact read (#902) | Yes | None | Backend Sync runtime boundary | Consume unchanged |
+| `prescription_version_id` | `HybridRetrieveRequest` | Backend Sync execution-context persistence | `GuideRuntimeRequestCarrier` exact read (#902) | Yes | None | Backend Sync runtime boundary | Consume unchanged |
+| `runtime_release_bundle_id` | `HybridRetrieveRequest` | Backend persisted runtime bundle | `GuideRuntimeRequestCarrier` after canonical bundle verification (#902) | Yes | None | Backend Sync runtime boundary | Consume unchanged |
+| `runtime_release_bundle_manifest_hash` | `HybridRetrieveRequest` | Backend persisted runtime bundle | `GuideRuntimeRequestCarrier` after canonical bundle verification (#902) | Yes | None | Backend Sync runtime boundary | Consume unchanged |
+| `runtime_execution_manifest_id` | `HybridRetrieveRequest` | Backend runtime execution persistence | `GuideRuntimeRequestCarrier` exact read (#902) | Yes | None | Backend Sync runtime boundary | Consume unchanged |
+| `runtime_execution_manifest_hash` | `HybridRetrieveRequest` | Backend runtime execution persistence | `GuideRuntimeRequestCarrier` exact read (#902) | Yes | None | Backend Sync runtime boundary | Consume unchanged |
+| `runtime_guard_decision_ref` | `HybridRetrieveRequest` | Pinned execution context | `GuideRuntimeRequestCarrier` exact read (#902) | Yes | None | Backend Sync runtime boundary | Consume unchanged |
+| `knowledge_index_id` | `EvidenceSearchExecutionBinding` | Frozen `rag_knowledge_index` identity | `GuideRuntimeRequestCarrier.retrieval_binding.knowledge_index_id` | Yes | None | Backend Sync runtime boundary | Consume the exact persisted UUID binding |
+| `allowed_source_snapshot_ids` | `EvidenceSearchExecutionBinding` | Pinned bundle source scope | `GuideRuntimeRequestCarrier.bundle_sources` (#902) | Yes | None | Backend Sync runtime boundary | Consume selected pinned snapshot IDs unchanged |
+| `allowed_source_snapshot_member_ids` | `EvidenceSearchExecutionBinding` | Frozen knowledge-index member scope | `GuideRuntimeRequestCarrier.retrieval_binding.member_bindings` | Yes | None | Backend Sync runtime boundary | Consume exact persisted snapshot/member pairs; do not enumerate current members |
+| retrieval configuration | `EvidenceSearchExecutionBinding` | Approved `VersionedEvidenceRetrievalConfiguration` supplied at Freeze | `GuideRuntimeRequestCarrier.retrieval_binding.retrieval_configuration` after nested canonical hash verification | Yes | None | Backend Sync runtime boundary | Restore the typed configuration from the verified projection |
+| filter snapshot ref | `EvidenceSearchExecutionBinding` | Canonical projection of exact index and member scope at Freeze | `GuideRuntimeRequestCarrier.retrieval_binding.filter_snapshot_ref` | Yes | None | Backend Sync runtime boundary | Consume the immutable ref unchanged |
+| source manifest hash | `HybridRetrieveRequest` | Canonical projection of pinned Runtime Bundle Source rows | `GuideRuntimeRequestCarrier.retrieval_binding.source_manifest_hash` | Yes | None | Backend Sync runtime boundary | Consume the dedicated hash unchanged; it remains distinct from `source_scope_manifest_hash` |
+| medication identity/context | Guide query projection | Backend execution identification persistence | `GuideRuntimeRequestCarrier.identifications` (#902) | Yes | None | Backend Sync runtime boundary | Consume verified pinned identifications unchanged |
+| `normalized_query` | `EvidenceSearchRequest` | #180 B2 pinned snapshot projection | B2 typed producer at the Backend composition root | Yes | None | AI/RAG / Backend Sync | Inject only at the retrieval application boundary |
+| `query_fingerprint` | `EvidenceSearchRequest` | B2 typed HMAC producer | Backend composition-root provider plus matching verifier | Yes | None | AI/RAG | Consume the typed result; never expose key material |
 | selected `source_snapshot_id` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `PersistedTerminalReplayPayload.ordered_selected_hits[].provenance` | Yes, exact historical readback | None in B5 | #178 retrieval persistence/readback | Consume the restored coordinate unchanged |
 | selected `source_snapshot_member_id` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `PersistedTerminalReplayPayload.ordered_selected_hits[].provenance` | Yes, exact historical readback | None in B5 | #178 retrieval persistence/readback | Consume the restored coordinate unchanged |
 | `source_code` / `source_version` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `PersistedTerminalReplayPayload.ordered_selected_hits[].provenance` | Yes, exact historical readback | None in B5 | #178 retrieval persistence/readback | Consume the restored coordinate unchanged |
@@ -100,21 +99,47 @@ does not change #697 to accommodate a broader authority set.
 
 ## 5. Blockers
 
-### B1 — `GUIDE_RUNTIME_REQUEST_CARRIER_MISSING`
+### B1 — `GUIDE_RUNTIME_REQUEST_CARRIER_READY`
 
-`HybridRetrieveRequest` requires the pinned runtime coordinates listed above,
-including `search_request` and, when required, `filter_snapshot` and
-`source_manifest_hash`. A canonical Sync application carrier/port that provides
-them authority-preservingly to the Guide retrieval seam does not exist.
+#902's verified exact-read foundation now includes one immutable, versioned
+`GuideRetrievalBindingManifest` pinned by `AiJobExecutionContext`. The manifest
+binds the exact Runtime Release Bundle and Runtime Execution Manifest to:
 
-The missing item is a pinned Guide runtime request carrier, not a Worker
-callable. #577 Worker handoff is not a prerequisite.
+- `rag_knowledge_index.id` and the index code/version/configuration-hash identity;
+- UUID-byte-sorted Source Snapshot/Member pairs from that exact knowledge index;
+- the complete approved `VersionedEvidenceRetrievalConfiguration` projection;
+- a canonical filter snapshot ref derived at Freeze from the exact index/member scope;
+- a dedicated source manifest hash derived from pinned Runtime Bundle Source rows.
+
+Creation verifies the persisted Runtime Bundle canonical manifest before
+accepting the Freeze, requires each supplied member pair to exist in the pinned
+knowledge index and selected bundle snapshot scope, and never enumerates members
+to infer the requested scope. Readback repeats those checks, validates nested
+retrieval configuration hashes, recomputes filter/source/manifest hashes, and
+fails closed on any mismatch. Legacy Guide execution contexts without a binding
+pin remain unreadable through this carrier.
+
+The implementation is split deliberately:
+
+```text
+Runtime Release Bundle
+        ↓ exact bundle/manifest verification
+Runtime Execution Manifest
+        ↓ exact immutable references
+Guide Retrieval Binding Manifest
+        ↓ verified exact-read
+GuideRuntimeRequestCarrier.retrieval_binding
+```
+
+This resolves the five audited B1 authority gaps without using a completed
+retrieval run as first-run authority, reusing `source_scope_manifest_hash`, or
+deriving current/latest Source state. The shared projection is an internal
+Backend/runtime carrier only; it does not add a public API or DTO.
 
 Owner: Backend Sync runtime boundary.
 
-Minimum follow-up: provide one canonical read projection from pinned execution
-context, bundle, and identification; the Guide retrieval seam must consume that
-carrier rather than caller-supplied raw values.
+No B1 persistence/readback follow-up is required. Final callable composition
+remains separate work. #577 Worker handoff is not a prerequisite for B1 readback.
 
 ### B2 — `GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_READY`
 
@@ -127,7 +152,8 @@ raw key material.
 
 Owner: AI/RAG.
 
-No B2 follow-up is required. B1 remains the required carrier boundary.
+No B2 authority follow-up is required. The final callable must consume the typed
+producer and matching verifier without receiving raw key material.
 
 ### B3 — `GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_READY`
 
@@ -171,8 +197,8 @@ recompute ranking/RRF.
 
 Owner: #178 retrieval persistence/readback boundary.
 
-No B5 persistence/readback follow-up is required. This does not resolve B1 or
-assemble the final `retrieve_medication_guidance` callable.
+No B5 persistence/readback follow-up is required. This does not assemble the
+final `retrieve_medication_guidance` callable.
 
 ## 6. Forbidden workarounds
 
@@ -202,18 +228,20 @@ to construct the missing request, query, authority, or replay information.
 Production `retrieve_medication_guidance` implementation may start only when all
 of the following are true:
 
-- [ ] A canonical Sync runtime request carrier exists.
+- [x] A verified Sync runtime request carrier foundation exists (#902).
+- [x] The five B1 exact retrieval authorities are frozen, persisted, integrity-bound, and exact-readable.
 - [x] A production Guide medication fingerprint and binding verifier exists.
 - [x] Exact selected Source/Member to immutable REQUEST Decision reference lookup exists.
 - [x] A `HybridRetrieveOutcome` downstream binding contract is approved.
 - [x] Terminal replay restores the complete canonical retrieval result without re-search.
 
-Partial satisfaction does not permit a READY or callable-status promotion.
+The five authority seams are READY. Final callable assembly remains owned by the
+AI/RAG runtime work and is not implemented by this Backend persistence slice.
 
 ## 9. Non-scope
 
-The B5 follow-up adds only nullable `retrieval_run` payload/hash persistence and
-exact terminal readback. It adds no new search, RRF or Evidence Gate semantics,
-Backend DTO/API, Frontend change, LangGraph graph/state, Guide downstream
-mapping, guideline selection, safety filter, conflict gate, Guide composition,
-or `PUBLIC_TRACK_F` change.
+The B1/B5 follow-ups add only internal immutable persistence and exact readback.
+They add no new search, RRF or Evidence Gate semantics, Backend public DTO/API,
+Frontend change, LangGraph graph/state, Guide downstream mapping, guideline
+selection, safety filter, conflict gate, Guide composition, or `PUBLIC_TRACK_F`
+change.

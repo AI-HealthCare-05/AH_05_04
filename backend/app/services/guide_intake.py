@@ -28,6 +28,8 @@ class GuideRuntimeContextSnapshot:
     runtime_release_bundle_manifest_hash: str
     runtime_execution_manifest_id: UUID
     runtime_execution_manifest_hash: str
+    guide_retrieval_binding_manifest_id: UUID
+    guide_retrieval_binding_manifest_hash: str
     runtime_guard_decision_ref: str
     patient_context_digest: str | None = None
     source_scope_manifest_hash: str | None = None
@@ -38,6 +40,10 @@ class GuideJobIntakeResult:
     job: AiJob
     guide: Guide
     is_duplicate: bool
+
+
+class GuideRuntimeContextBindingError(RuntimeError):
+    """The supplied frozen retrieval binding does not match the runtime snapshot."""
 
 
 class GuideJobIntakeTransactionAdapter:
@@ -137,6 +143,7 @@ class GuideJobIntakeTransactionAdapter:
         expected_prescription_version_id: UUID,
         runtime_context: GuideRuntimeContextSnapshot,
     ) -> DomainReference:
+        await self._require_frozen_retrieval_binding(runtime_context)
         preflight = await self._preflight_service.ensure_all_active_medications_matched(
             prescription_id=prescription.id,
             user_id=user.id,
@@ -157,6 +164,8 @@ class GuideJobIntakeTransactionAdapter:
                 runtime_release_bundle_manifest_hash=runtime_context.runtime_release_bundle_manifest_hash,
                 runtime_execution_manifest_id=runtime_context.runtime_execution_manifest_id,
                 runtime_execution_manifest_hash=runtime_context.runtime_execution_manifest_hash,
+                guide_retrieval_binding_manifest_id=runtime_context.guide_retrieval_binding_manifest_id,
+                guide_retrieval_binding_manifest_hash=runtime_context.guide_retrieval_binding_manifest_hash,
                 runtime_guard_decision_ref=runtime_context.runtime_guard_decision_ref,
                 patient_context_digest=runtime_context.patient_context_digest,
                 source_scope_manifest_hash=runtime_context.source_scope_manifest_hash,
@@ -171,6 +180,25 @@ class GuideJobIntakeTransactionAdapter:
                 )
             )
         return DomainReference(domain_type=DomainType.GUIDE, domain_id=guide.id)
+
+    async def _require_frozen_retrieval_binding(self, runtime_context: GuideRuntimeContextSnapshot) -> None:
+        binding = await self._runtime_repository.get_guide_retrieval_binding_manifest_by_id(
+            runtime_context.guide_retrieval_binding_manifest_id
+        )
+        if binding is None or (
+            binding.manifest_hash,
+            binding.runtime_release_bundle_id,
+            binding.runtime_release_bundle_manifest_hash,
+            binding.runtime_execution_manifest_id,
+            binding.runtime_execution_manifest_hash,
+        ) != (
+            runtime_context.guide_retrieval_binding_manifest_hash,
+            runtime_context.runtime_release_bundle_id,
+            runtime_context.runtime_release_bundle_manifest_hash,
+            runtime_context.runtime_execution_manifest_id,
+            runtime_context.runtime_execution_manifest_hash,
+        ):
+            raise GuideRuntimeContextBindingError("frozen Guide retrieval binding does not match runtime context")
 
     @staticmethod
     def _request_fingerprint(
