@@ -90,6 +90,12 @@ from app.models.rag_catalog import (
     RagMedicationSearchEntry,
     RagMedicationSearchEntryType,
 )
+from app.models.rag_citation_authorization import (
+    RagCitationAuthorizationMemberDecision,
+    RagCitationAuthorizationReceipt,
+    RagCitationAuthorizationReceiptSelection,
+    RagCitationAuthorizationSourceDecision,
+)
 from app.models.rag_evaluation import (
     EvalCase,
     EvalCaseResult,
@@ -303,6 +309,10 @@ __all__ = [
     "RagMedicationSearchEntry",
     "RagMedicationSearchEntryType",
     "RagCitation",
+    "RagCitationAuthorizationMemberDecision",
+    "RagCitationAuthorizationReceipt",
+    "RagCitationAuthorizationReceiptSelection",
+    "RagCitationAuthorizationSourceDecision",
     "RagCitationAuthorizationStatus",
     "RagCitationClaimKind",
     "RagCitationReleaseStatus",

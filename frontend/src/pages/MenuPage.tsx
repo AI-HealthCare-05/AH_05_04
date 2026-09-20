@@ -24,6 +24,8 @@ const ICONS = {
   chevron: chevronIcon,
 } as const
 
+const TRACK_C_PUBLIC = import.meta.env.VITE_PUBLIC_TRACK_C === 'true' || import.meta.env.DEV
+
 type MenuRowProps = {
   icon: keyof typeof ICONS
   label: string
@@ -102,6 +104,7 @@ function MenuPage() {
             <h3 id="menu-medication-title">복약 관리</h3>
             <div className="mvp-menu__card">
               <MenuRow icon="clipboard" label="복약 일정" onClick={() => navigate('/schedule')} />
+              {TRACK_C_PUBLIC && <MenuRow icon="clipboard" label="실천 계획" detail="저장한 도움" onClick={() => navigate('/track-c/plans')} />}
               <MenuRow icon="report" label="복약 리포트" detail="7일 · 30일" onClick={() => navigate('/report')} />
             </div>
           </section>

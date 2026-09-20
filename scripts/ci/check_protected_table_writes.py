@@ -35,6 +35,9 @@ _REQUEST_GUARD_RUNTIME_BINDING_WRITERS = frozenset(
 _EVIDENCE_AUTHORITY_WRITERS = frozenset({"backend/app/repositories/rag_evidence_authority_repository.py"})
 _SOURCE_USE_APPROVAL_WRITERS = frozenset({"backend/app/repositories/rag_source_use_approval_repository.py"})
 _RUNTIME_BUNDLE_CITATION_APPROVAL_WRITERS = frozenset({"backend/app/repositories/rag_runtime_repository.py"})
+_CITATION_AUTHORIZATION_AUTHORITY_WRITERS = frozenset(
+    {"ai_worker/adapters/sqlalchemy_citation_authorization_authority.py"}
+)
 
 APPROVED_WRITERS: dict[str, frozenset[str]] = {
     "source_management_permission": frozenset({"backend/app/admin/source_management_permissions.py"}),
@@ -84,6 +87,10 @@ APPROVED_WRITERS: dict[str, frozenset[str]] = {
     # #807 Source Use Approval은 별도 authority 이력이며, 발행/철회 경계를 한 저장소로 제한한다.
     "rag_source_use_approval": _SOURCE_USE_APPROVAL_WRITERS,
     "rag_runtime_bundle_citation_approval": _RUNTIME_BUNDLE_CITATION_APPROVAL_WRITERS,
+    "rag_citation_authorization_source_decision": _CITATION_AUTHORIZATION_AUTHORITY_WRITERS,
+    "rag_citation_authorization_member_decision": _CITATION_AUTHORIZATION_AUTHORITY_WRITERS,
+    "rag_citation_authorization_receipt": _CITATION_AUTHORIZATION_AUTHORITY_WRITERS,
+    "rag_citation_authorization_receipt_selection": _CITATION_AUTHORIZATION_AUTHORITY_WRITERS,
 }
 
 MODEL_TABLES = {
@@ -128,6 +135,10 @@ MODEL_TABLES = {
     "RagCitation": "rag_citation",
     "RagSourceUseApproval": "rag_source_use_approval",
     "RagRuntimeBundleCitationApproval": "rag_runtime_bundle_citation_approval",
+    "RagCitationAuthorizationSourceDecision": "rag_citation_authorization_source_decision",
+    "RagCitationAuthorizationMemberDecision": "rag_citation_authorization_member_decision",
+    "RagCitationAuthorizationReceipt": "rag_citation_authorization_receipt",
+    "RagCitationAuthorizationReceiptSelection": "rag_citation_authorization_receipt_selection",
 }
 
 _RAW_DML = re.compile(
@@ -175,7 +186,7 @@ def _table_bindings(tree: ast.AST) -> dict[str, str]:
         if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
         value = node.value
-        if not isinstance(value, ast.Call) or _call_name(value.func) != "Table" or not value.args:
+        if not isinstance(value, ast.Call) or _call_name(value.func) not in {"Table", "table"} or not value.args:
             continue
         first = value.args[0]
         if not isinstance(first, ast.Constant) or not isinstance(first.value, str):

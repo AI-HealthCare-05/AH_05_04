@@ -440,6 +440,11 @@ async def test_bootstrap_then_provision_and_redeploy_do_not_reopen_permissions()
                 "rag_request_source_decision": _APPEND_ONLY_PRIVILEGES,
                 "rag_request_member_decision": _APPEND_ONLY_PRIVILEGES,
                 "rag_request_guard_runtime_binding": _APPEND_ONLY_PRIVILEGES,
+                # #869: Citation Authorization authority is readable/append-only at current head.
+                "rag_citation_authorization_source_decision": _APPEND_ONLY_PRIVILEGES,
+                "rag_citation_authorization_member_decision": _APPEND_ONLY_PRIVILEGES,
+                "rag_citation_authorization_receipt": _APPEND_ONLY_PRIVILEGES,
+                "rag_citation_authorization_receipt_selection": _APPEND_ONLY_PRIVILEGES,
                 "rag_source_use_approval": _READ_ONLY_PRIVILEGES,
                 # #780: Candidate Index tables are runtime read-only
                 "rag_candidate_index_version": _READ_ONLY_PRIVILEGES,
@@ -1211,7 +1216,7 @@ async def _grant_historical_test_permissions(admin, environment):
             (RUNTIME_MUTABLE_TABLES, "SELECT, INSERT, UPDATE, DELETE"),
             (RUNTIME_APPEND_ONLY_TABLES | CATALOG_TABLES, "SELECT, INSERT"),
         ):
-            for table in tables - {
+            for table in (tables & present) - {
                 "ai_job_intake_context",
                 "ai_job_execution_context",
                 "ai_job_execution_identification",
@@ -1859,6 +1864,35 @@ async def test_retrieval_run_provisioned_runtime_role_lifecycle(database) -> Non
     finally:
         await reader.dispose()
         await producer.dispose()
+        async with admin.begin() as connection:
+            for role in (runtime, writer):
+                await connection.execute(text(f'DROP OWNED BY "{role}"'))
+                await connection.execute(text(f'DROP ROLE IF EXISTS "{role}"'))
+
+
+async def test_citation_authorization_current_head_append_only_acl(database) -> None:
+    from infra.python.provision_database_roles import provision_roles
+
+    admin = database
+    suffix = uuid4().hex[:12]
+    runtime, writer = (f"citacl_{part}_{suffix}" for part in ("runtime", "writer"))
+    password = f"synthetic-{suffix}-only"
+    try:
+        async with admin.begin() as connection:
+            for role in (runtime, writer):
+                await connection.execute(text(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"))
+            await provision_roles(connection, owner=config.DB_USER, runtime=runtime, writer=writer)
+        await _assert_runtime_table_privileges(
+            admin,
+            runtime,
+            {
+                "rag_citation_authorization_source_decision": _APPEND_ONLY_PRIVILEGES,
+                "rag_citation_authorization_member_decision": _APPEND_ONLY_PRIVILEGES,
+                "rag_citation_authorization_receipt": _APPEND_ONLY_PRIVILEGES,
+                "rag_citation_authorization_receipt_selection": _APPEND_ONLY_PRIVILEGES,
+            },
+        )
+    finally:
         async with admin.begin() as connection:
             for role in (runtime, writer):
                 await connection.execute(text(f'DROP OWNED BY "{role}"'))
