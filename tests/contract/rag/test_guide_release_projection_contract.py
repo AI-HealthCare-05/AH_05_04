@@ -9,6 +9,7 @@ from rag_runtime.guide_release_projection import (
     GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
     GuideRuntimeApprovedAnswer,
     GuideRuntimeApprovedFallback,
+    GuideRuntimeCitationSourceType,
     GuideRuntimeFallbackCode,
     GuideRuntimeReleaseDecision,
     GuideRuntimeReleaseProjectionCarrier,
@@ -81,8 +82,10 @@ def test_shared_carrier_uses_fixed_vocabulary_and_uuid_coordinates() -> None:
         "UNSUPPORTED_REQUEST",
     }
     citation_types = {field.name: field.type for field in fields(GuideRuntimeVerifiedCitation)}
+    assert citation_types["source_type"] is GuideRuntimeCitationSourceType
     assert citation_types["source_snapshot_id"] is UUID
     assert citation_types["source_snapshot_member_id"] is UUID
+    assert tuple(GuideRuntimeCitationSourceType) == (GuideRuntimeCitationSourceType.LIFESTYLE_GUIDELINE,)
 
 
 def test_shared_module_has_no_worker_or_backend_import() -> None:

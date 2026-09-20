@@ -83,7 +83,11 @@ def _card(*, target_ref: str = "c" * 64) -> GuidelineCard:
     )
 
 
-def _authorized_selection(*, target_ref: str = "c" * 64) -> AuthorizedCitationSelection:
+def _authorized_selection(
+    *,
+    target_ref: str = "c" * 64,
+    include_second_citation: bool = False,
+) -> AuthorizedCitationSelection:
     snapshot_id = UUID("11111111-1111-1111-1111-111111111111")
     member_id = UUID("22222222-2222-2222-2222-222222222222")
     evidence_ref = LifestyleGuidelineEvidenceRef(
@@ -104,18 +108,37 @@ def _authorized_selection(*, target_ref: str = "c" * 64) -> AuthorizedCitationSe
             request_member_decision_ref=_artifact("member-decision", "d" * 64),
         ),
     )
+    citations: tuple[CitationCandidate, ...] = (
+        CitationCandidate(
+            citation_key="claim-food:evidence-food",
+            claim_key="claim-food",
+            source_type=CitationSourceType.LIFESTYLE_GUIDELINE,
+            evidence_ref=evidence_ref,
+            display_order=2 if include_second_citation else 1,
+        ),
+    )
+    if include_second_citation:
+        second_evidence_ref = LifestyleGuidelineEvidenceRef(
+            guideline_evidence_ref=f"{snapshot_id}/{member_id}/evidence-water",
+            guideline_artifact_ref=_artifact("binding", "a" * 64),
+            source_version="2026-09-20",
+            locator="section-2",
+            content_sha256="d" * 64,
+            execution_provenance=evidence_ref.execution_provenance,
+        )
+        citations += (
+            CitationCandidate(
+                citation_key="claim-water:evidence-water",
+                claim_key="claim-water",
+                source_type=CitationSourceType.LIFESTYLE_GUIDELINE,
+                evidence_ref=second_evidence_ref,
+                display_order=1,
+            ),
+        )
     candidate_set = ClaimCitationCandidateSet(
         target=ClaimTargetRef("GUIDE_CARD", target_ref),
         claims=(),
-        citations=(
-            CitationCandidate(
-                citation_key="claim-food:evidence-food",
-                claim_key="claim-food",
-                source_type=CitationSourceType.LIFESTYLE_GUIDELINE,
-                evidence_ref=evidence_ref,
-                display_order=1,
-            ),
-        ),
+        citations=citations,
         generation_provenance=GenerationProvenance(
             prompt_ref=_artifact("prompt", "e" * 64),
             model_ref=_artifact("model", "f" * 64),
@@ -129,7 +152,11 @@ def _authorized_selection(*, target_ref: str = "c" * 64) -> AuthorizedCitationSe
     )
 
 
-def _pass_result(*, selection_target_ref: str = "c" * 64) -> GuideRuntimeReleaseResult:
+def _pass_result(
+    *,
+    selection_target_ref: str = "c" * 64,
+    include_second_citation: bool = False,
+) -> GuideRuntimeReleaseResult:
     card = _card()
     return GuideRuntimeReleaseResult(
         execution_status=GuideRuntimeExecutionStatus.SUCCEEDED,
@@ -137,7 +164,10 @@ def _pass_result(*, selection_target_ref: str = "c" * 64) -> GuideRuntimeRelease
         release_decision=GuideRuntimeReleaseDecision.PASS,
         is_current=True,
         fallback_code=None,
-        authorized_selection=_authorized_selection(target_ref=selection_target_ref),
+        authorized_selection=_authorized_selection(
+            target_ref=selection_target_ref,
+            include_second_citation=include_second_citation,
+        ),
         card_outcome=GuidelineCardOutcome(
             status=GuidelineCardStatus.GENERATED,
             reason=GuidelineCardReason.CARD_GENERATED,
@@ -174,7 +204,7 @@ def _fallback_result(
 
 
 def test_valid_pass_projects_lossless_card_text_and_authorized_citation_order() -> None:
-    projection = project_guide_runtime_release(_pass_result())
+    projection = project_guide_runtime_release(_pass_result(include_second_citation=True))
 
     assert isinstance(projection, GuideRuntimeReleaseProjectionCarrier)
     assert projection.contract_version == GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION
@@ -184,7 +214,8 @@ def test_valid_pass_projects_lossless_card_text_and_authorized_citation_order() 
     assert projection.answer.uncertainty_text == "승인된 근거 범위 밖의 내용은 확인할 수 없습니다."
     assert projection.answer.consultation_text == "불편하거나 궁금한 점은 의사 또는 약사와 상담하세요."
     assert projection.fallback is None
-    assert len(projection.citations) == 1
+    assert tuple(citation.evidence_key for citation in projection.citations) == ("evidence-food", "evidence-water")
+    assert tuple(citation.display_order for citation in projection.citations) == (2, 1)
     citation = projection.citations[0]
     assert citation.card_target_ref == "c" * 64
     assert citation.claim_key == "claim-food"
@@ -195,11 +226,27 @@ def test_valid_pass_projects_lossless_card_text_and_authorized_citation_order() 
     assert citation.source_version == "2026-09-20"
     assert citation.locator == "section-1"
     assert citation.content_sha256 == "b" * 64
-    assert citation.display_order == 1
+    assert citation.display_order == 2
 
 
 def test_card_target_anchor_mismatch_returns_content_free_unavailable() -> None:
     projection = project_guide_runtime_release(_pass_result(selection_target_ref="f" * 64))
+
+    assert isinstance(projection, GuideRuntimeReleaseProjectionUnavailable)
+    assert asdict(projection) == {"contract_version": GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION}
+
+
+@pytest.mark.parametrize("corruption", ("source_type", "citations"))
+def test_corrupt_nested_citation_state_returns_content_free_unavailable(corruption: str) -> None:
+    result = _pass_result()
+    assert result.authorized_selection is not None
+    candidate_set = result.authorized_selection.validated_selection.candidate_set
+    if corruption == "source_type":
+        object.__setattr__(candidate_set.citations[0], "source_type", object())
+    else:
+        object.__setattr__(candidate_set, "citations", list(candidate_set.citations))
+
+    projection = project_guide_runtime_release(result)
 
     assert isinstance(projection, GuideRuntimeReleaseProjectionUnavailable)
     assert asdict(projection) == {"contract_version": GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION}

@@ -12,7 +12,13 @@ from __future__ import annotations
 from uuid import UUID
 
 from ai_worker.tasks.rag.citation_finalizer import AuthorizedCitationSelection
-from ai_worker.tasks.rag.claim_citation_validator import CitationCandidate, LifestyleGuidelineEvidenceRef
+from ai_worker.tasks.rag.claim_citation_validator import (
+    CitationCandidate,
+    CitationSourceType,
+    ClaimCitationCandidateSet,
+    LifestyleGuidelineEvidenceRef,
+    ValidatedCitationSelection,
+)
 from ai_worker.tasks.rag.guide_runtime_release import (
     GuideRuntimeEvidenceStatus,
     GuideRuntimeExecutionStatus,
@@ -30,6 +36,7 @@ from rag_runtime.guide_release_projection import (
     GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
     GuideRuntimeApprovedAnswer,
     GuideRuntimeApprovedFallback,
+    GuideRuntimeCitationSourceType,
     GuideRuntimeFallbackCode,
     GuideRuntimeReleaseProjectionCarrier,
     GuideRuntimeReleaseProjectionOutcome,
@@ -93,7 +100,12 @@ def _project_pass(result: GuideRuntimeReleaseResult) -> GuideRuntimeReleaseProje
     card = result.card_outcome.card
     selection = result.authorized_selection.validated_selection
     candidate_set = selection.candidate_set
-    if card.artifact_ref.content_sha256 != candidate_set.target.target_ref:
+    if (
+        type(selection) is not ValidatedCitationSelection
+        or type(candidate_set) is not ClaimCitationCandidateSet
+        or type(candidate_set.citations) is not tuple
+        or card.artifact_ref.content_sha256 != candidate_set.target.target_ref
+    ):
         return _unavailable()
 
     answer = GuideRuntimeApprovedAnswer(
@@ -118,6 +130,8 @@ def _project_pass(result: GuideRuntimeReleaseResult) -> GuideRuntimeReleaseProje
 def _project_citation(candidate: CitationCandidate, *, card_target_ref: str) -> GuideRuntimeVerifiedCitation:
     """Losslessly expose fields from an already validated candidate citation."""
 
+    if type(candidate) is not CitationCandidate or candidate.source_type is not CitationSourceType.LIFESTYLE_GUIDELINE:
+        raise ValueError("Guide release projection requires a validated lifestyle citation")
     evidence_ref = candidate.evidence_ref
     if type(evidence_ref) is not LifestyleGuidelineEvidenceRef:
         raise ValueError("Guide release projection requires lifestyle guideline evidence")
@@ -126,7 +140,7 @@ def _project_citation(candidate: CitationCandidate, *, card_target_ref: str) -> 
         card_target_ref=card_target_ref,
         claim_key=candidate.claim_key,
         evidence_key=evidence_key,
-        source_type=candidate.source_type.value,
+        source_type=GuideRuntimeCitationSourceType.LIFESTYLE_GUIDELINE,
         source_snapshot_id=UUID(snapshot_id),
         source_snapshot_member_id=UUID(member_id),
         source_code=evidence_ref.execution_provenance.source_code,

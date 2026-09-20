@@ -14,6 +14,7 @@ __all__ = [
     "GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION",
     "GuideRuntimeApprovedAnswer",
     "GuideRuntimeApprovedFallback",
+    "GuideRuntimeCitationSourceType",
     "GuideRuntimeFallbackCode",
     "GuideRuntimeReleaseDecision",
     "GuideRuntimeReleaseProjectionCarrier",
@@ -41,6 +42,10 @@ class GuideRuntimeFallbackCode(StrEnum):
     PRESCRIPTION_STALE = "PRESCRIPTION_STALE"
     EXECUTION_CONTEXT_STALE = "EXECUTION_CONTEXT_STALE"
     UNSUPPORTED_REQUEST = "UNSUPPORTED_REQUEST"
+
+
+class GuideRuntimeCitationSourceType(StrEnum):
+    LIFESTYLE_GUIDELINE = "LIFESTYLE_GUIDELINE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +86,7 @@ class GuideRuntimeVerifiedCitation:
     card_target_ref: str
     claim_key: str
     evidence_key: str
-    source_type: str
+    source_type: GuideRuntimeCitationSourceType
     source_snapshot_id: UUID
     source_snapshot_member_id: UUID
     source_code: str
@@ -98,7 +103,6 @@ class GuideRuntimeVerifiedCitation:
                     self.card_target_ref,
                     self.claim_key,
                     self.evidence_key,
-                    self.source_type,
                     self.source_code,
                     self.source_version,
                     self.locator,
@@ -107,6 +111,7 @@ class GuideRuntimeVerifiedCitation:
             )
             or type(self.source_snapshot_id) is not UUID
             or type(self.source_snapshot_member_id) is not UUID
+            or type(self.source_type) is not GuideRuntimeCitationSourceType
             or type(self.display_order) is not int
             or self.display_order < 1
         ):
