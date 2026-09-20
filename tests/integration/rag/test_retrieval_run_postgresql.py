@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -37,8 +38,8 @@ from ai_worker.tasks.rag.retrieval_run import (
     FinalizeRetrievalRunSuccess,
     PersistedHitInput,
     PersistedSignalInput,
-    PersistedTerminalReplayPayload,
 )
+from ai_worker.tests.rag.retrieval_run_test_support import make_terminal_replay_payload
 from app.core import config  # type: ignore[attr-defined]
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -198,23 +199,17 @@ async def test_begin_and_finalize_lifecycle_postgresql(database) -> None:
         lexical_rank=1,
         dense_rank=1,
     )
-    replay_payload = PersistedTerminalReplayPayload(
-        search_receipt={
-            "artifact_ref": {
-                "artifact_code": "production_search_receipt",
-                "version": "2.0",
-                "content_sha256": "c" * 64,
-            },
-            "projection": {"projection_version": "production-search-receipt-v2"},
-        },
-        ordered_selected_hits=({"fusion_rank": 1, "knowledge_chunk_id": str(chunk_id)},),
-        gate_status="SUCCEEDED",
-        gate_reason="ELIGIBLE",
+    replay_payload, search_receipt_hash, _ = make_terminal_replay_payload(
+        req,
+        index_id=index_id,
+        signals=(sig,),
+        hits=(hit,),
     )
     fin_req = FinalizeRetrievalRunRequest(
         run_id=run_id,
         status="COMPLETED",
-        search_receipt_hash="c" * 64,
+        diagnostic_code=EvidenceGateReason.ELIGIBLE.value,
+        search_receipt_hash=search_receipt_hash,
         signals=(sig,),
         hits=(hit,),
         terminal_replay_payload=replay_payload,
@@ -306,20 +301,25 @@ async def test_corrupt_receipt_hash_fails_closed(database) -> None:
     assert isinstance(begin_res, BeginRetrievalRunSuccess)
     run_id = begin_res.run_id
 
+    hit = PersistedHitInput(
+        knowledge_chunk_id=chunk_id,
+        rrf_rank=1,
+        rrf_score=Decimal("0.01"),
+        rrf_score_numerator="1",
+        rrf_score_denominator="61",
+        final_rank=1,
+        selected=True,
+    )
+    replay_payload, search_receipt_hash, _ = make_terminal_replay_payload(
+        req, index_id=index_id, signals=(), hits=(hit,)
+    )
     fin_req = FinalizeRetrievalRunRequest(
         run_id=run_id,
         status="COMPLETED",
-        hits=(
-            PersistedHitInput(
-                knowledge_chunk_id=chunk_id,
-                rrf_rank=1,
-                rrf_score=Decimal("0.01"),
-                rrf_score_numerator="1",
-                rrf_score_denominator="61",
-                final_rank=1,
-                selected=True,
-            ),
-        ),
+        diagnostic_code=EvidenceGateReason.ELIGIBLE.value,
+        search_receipt_hash=search_receipt_hash,
+        hits=(hit,),
+        terminal_replay_payload=replay_payload,
     )
     await store.finalize_run(fin_req)
 
@@ -361,6 +361,92 @@ async def test_postgresql_evidence_eligibility_verifier(database) -> None:
     post_empty = await verifier.post_search(PostSearchEligibilityRequest(knowledge_index_id=index_id), ())
     assert isinstance(post_empty, PostSearchEligibilitySuccess)
     assert len(post_empty.eligible_chunk_ids) == 0
+
+
+async def test_completed_finalize_without_payload_keeps_run_running(database) -> None:
+    engine = database
+    job_id, ctx_id, index_id, chunk_id, _ = await _seed_test_prerequisites(engine)
+    store = SqlAlchemyRetrievalRunStore(async_sessionmaker(engine, expire_on_commit=False, autoflush=False))
+    request = _create_begin_request(job_id, ctx_id, index_id)
+    begun = await store.begin_run(request)
+    assert isinstance(begun, BeginRetrievalRunSuccess)
+
+    result = await store.finalize_run(
+        FinalizeRetrievalRunRequest(
+            run_id=begun.run_id,
+            status="COMPLETED",
+            search_receipt_hash="a" * 64,
+            hits=(
+                PersistedHitInput(
+                    knowledge_chunk_id=chunk_id,
+                    rrf_rank=1,
+                    rrf_score=Decimal("0.01"),
+                    rrf_score_numerator="1",
+                    rrf_score_denominator="61",
+                    final_rank=1,
+                    selected=True,
+                ),
+            ),
+        )
+    )
+
+    assert isinstance(result, FinalizeRetrievalRunFailure)
+    assert result.reason == FinalizeRetrievalRunFailureReason.VALIDATION_ERROR
+    async with engine.connect() as conn:
+        status = await conn.scalar(text("SELECT status FROM retrieval_run WHERE id = :id"), {"id": str(begun.run_id)})
+        hit_count = await conn.scalar(
+            text("SELECT count(*) FROM retrieval_hit WHERE retrieval_run_id = :id"),
+            {"id": str(begun.run_id)},
+        )
+    assert status == "RUNNING"
+    assert hit_count == 0
+
+
+async def test_finalize_rejects_payload_from_different_hit_set(database) -> None:
+    engine = database
+    job_id, ctx_id, index_id, chunk_id, _ = await _seed_test_prerequisites(engine)
+    store = SqlAlchemyRetrievalRunStore(async_sessionmaker(engine, expire_on_commit=False, autoflush=False))
+    request = _create_begin_request(job_id, ctx_id, index_id)
+    begun = await store.begin_run(request)
+    assert isinstance(begun, BeginRetrievalRunSuccess)
+    original_hit = PersistedHitInput(
+        knowledge_chunk_id=chunk_id,
+        rrf_rank=1,
+        rrf_score=Decimal("0.01"),
+        rrf_score_numerator="1",
+        rrf_score_denominator="61",
+        final_rank=1,
+        selected=True,
+    )
+    payload, search_receipt_hash, _ = make_terminal_replay_payload(
+        request,
+        index_id=index_id,
+        signals=(),
+        hits=(original_hit,),
+    )
+    mismatched_hit = replace(original_hit, rrf_rank=2, final_rank=2)
+
+    result = await store.finalize_run(
+        FinalizeRetrievalRunRequest(
+            run_id=begun.run_id,
+            status="COMPLETED",
+            diagnostic_code=EvidenceGateReason.ELIGIBLE.value,
+            search_receipt_hash=search_receipt_hash,
+            hits=(mismatched_hit,),
+            terminal_replay_payload=payload,
+        )
+    )
+
+    assert isinstance(result, FinalizeRetrievalRunFailure)
+    assert result.reason == FinalizeRetrievalRunFailureReason.VALIDATION_ERROR
+    async with engine.connect() as conn:
+        status = await conn.scalar(text("SELECT status FROM retrieval_run WHERE id = :id"), {"id": str(begun.run_id)})
+        hit_count = await conn.scalar(
+            text("SELECT count(*) FROM retrieval_hit WHERE retrieval_run_id = :id"),
+            {"id": str(begun.run_id)},
+        )
+    assert status == "RUNNING"
+    assert hit_count == 0
 
 
 async def test_begin_run_concurrent_initial_creation_race(database) -> None:

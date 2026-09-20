@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -24,6 +25,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_worker.tasks.rag.production_evidence_gate import EvidenceGateSuccess
 from ai_worker.tasks.rag.retrieval_run import (
     BeginRetrievalRunFailure,
     BeginRetrievalRunFailureReason,
@@ -44,6 +46,10 @@ from ai_worker.tasks.rag.retrieval_run import (
     compute_receipt_hash,
     compute_signal_manifest_hash,
     sha256_canonical_json,
+)
+from ai_worker.tasks.rag.retrieval_runtime import (
+    RetrievalExecutionStatus,
+    restore_terminal_replay_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -111,6 +117,86 @@ _RETRIEVAL_HIT = table(
     column("final_rank", Integer),
     column("selected", Boolean),
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedTerminalReplayPayload:
+    projection: dict[str, Any] | None
+    payload_hash: str | None
+
+
+def _validation_failure(message: str) -> FinalizeRetrievalRunFailure:
+    return FinalizeRetrievalRunFailure(
+        reason=FinalizeRetrievalRunFailureReason.VALIDATION_ERROR,
+        message=message,
+    )
+
+
+def _terminal_replay_bindings_match(
+    request: FinalizeRetrievalRunRequest,
+    run_row: Any,
+    *,
+    search_receipt: Any,
+    gate_outcome: Any,
+    signal_manifest_hash: str,
+    hit_manifest_hash: str,
+) -> bool:
+    selected_hits = gate_outcome.selected_hits if isinstance(gate_outcome, EvidenceGateSuccess) else ()
+    payload_selected = tuple((hit.provenance.knowledge_chunk_id, hit.fusion_rank) for hit in selected_hits)
+    persisted_selected = tuple(
+        (hit.knowledge_chunk_id, hit.final_rank)
+        for hit in sorted(request.hits, key=lambda item: item.final_rank)
+        if hit.selected
+    )
+    return (
+        search_receipt.retrieval_execution_status == RetrievalExecutionStatus.SUCCEEDED
+        and request.search_receipt_hash == search_receipt.artifact_ref.content_sha256
+        and request.diagnostic_code == gate_outcome.reason.value == search_receipt.diagnostic_code
+        and search_receipt.variant == run_row["variant"]
+        and search_receipt.query_fingerprint.digest == run_row["query_digest"]
+        and search_receipt.retrieval_config_ref.content_sha256 == run_row["retrieval_configuration_hash"]
+        and search_receipt.signal_manifest_sha256 == signal_manifest_hash
+        and search_receipt.hit_manifest_sha256 == hit_manifest_hash
+        and payload_selected == persisted_selected
+    )
+
+
+def _prepare_terminal_replay_payload(
+    request: FinalizeRetrievalRunRequest,
+    run_row: Any,
+    *,
+    signal_manifest_hash: str,
+    hit_manifest_hash: str,
+) -> _PreparedTerminalReplayPayload | FinalizeRetrievalRunFailure:
+    if request.status == "FAILED":
+        if request.terminal_replay_payload is not None or request.search_receipt_hash is not None:
+            return _validation_failure("FAILED run cannot persist a terminal replay payload")
+        return _PreparedTerminalReplayPayload(projection=None, payload_hash=None)
+    if request.status != "COMPLETED":
+        return _validation_failure("Retrieval run terminal status must be COMPLETED or FAILED")
+    if request.terminal_replay_payload is None or request.search_receipt_hash is None:
+        return _validation_failure("COMPLETED run requires search receipt and terminal replay payload")
+
+    try:
+        search_receipt, gate_outcome = restore_terminal_replay_payload(request.terminal_replay_payload)
+    except (ArithmeticError, KeyError, TypeError, ValueError):
+        return _validation_failure("Invalid terminal replay payload")
+
+    if not _terminal_replay_bindings_match(
+        request,
+        run_row,
+        search_receipt=search_receipt,
+        gate_outcome=gate_outcome,
+        signal_manifest_hash=signal_manifest_hash,
+        hit_manifest_hash=hit_manifest_hash,
+    ):
+        return _validation_failure("Terminal replay payload does not match persisted retrieval result")
+
+    projection = request.terminal_replay_payload.to_projection()
+    return _PreparedTerminalReplayPayload(
+        projection=projection,
+        payload_hash=sha256_canonical_json(projection),
+    )
 
 
 class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
@@ -271,12 +357,16 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
                     signal_manifest_hash = compute_signal_manifest_hash(request.signals)
                     hit_manifest_hash = compute_hit_manifest_hash(request.hits)
                     selected_count = sum(1 for h in request.hits if h.selected)
-                    terminal_replay_projection = (
-                        request.terminal_replay_payload.to_projection() if request.terminal_replay_payload else None
+                    prepared_payload = _prepare_terminal_replay_payload(
+                        request,
+                        run_row,
+                        signal_manifest_hash=signal_manifest_hash,
+                        hit_manifest_hash=hit_manifest_hash,
                     )
-                    terminal_replay_hash = (
-                        sha256_canonical_json(terminal_replay_projection) if terminal_replay_projection else None
-                    )
+                    if isinstance(prepared_payload, FinalizeRetrievalRunFailure):
+                        return prepared_payload
+                    terminal_replay_projection = prepared_payload.projection
+                    terminal_replay_hash = prepared_payload.payload_hash
 
                     receipt_hash = compute_receipt_hash(
                         run_id=request.run_id,
@@ -459,18 +549,38 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
 
         terminal_replay_projection = run_row["terminal_replay_payload"]
         terminal_replay_hash = run_row["terminal_replay_payload_hash"]
+        replay_payload: PersistedTerminalReplayPayload | None = None
         if (terminal_replay_projection is None) != (terminal_replay_hash is None):
             logger.error("Corrupt retrieval run %s: incomplete terminal replay payload", run_id)
             return None
         if terminal_replay_projection is not None:
             try:
-                PersistedTerminalReplayPayload.from_projection(terminal_replay_projection)
+                replay_payload = PersistedTerminalReplayPayload.from_projection(terminal_replay_projection)
             except ValueError:
                 logger.error("Corrupt retrieval run %s: invalid terminal replay payload", run_id)
                 return None
             expected_terminal_replay_hash = sha256_canonical_json(terminal_replay_projection)
             if expected_terminal_replay_hash != terminal_replay_hash:
                 logger.error("Corrupt retrieval run %s: terminal replay payload hash mismatch", run_id)
+                return None
+            validation_request = FinalizeRetrievalRunRequest(
+                run_id=run_id,
+                status=run_row["status"],
+                diagnostic_code=run_row["diagnostic_code"],
+                error_code=run_row["error_code"],
+                search_receipt_hash=run_row["search_receipt_hash"],
+                signals=tuple(signals),
+                hits=tuple(hits),
+                terminal_replay_payload=replay_payload,
+            )
+            prepared = _prepare_terminal_replay_payload(
+                validation_request,
+                run_row,
+                signal_manifest_hash=signal_manifest_hash,
+                hit_manifest_hash=hit_manifest_hash,
+            )
+            if isinstance(prepared, FinalizeRetrievalRunFailure):
+                logger.error("Corrupt retrieval run %s: terminal replay cross-binding mismatch", run_id)
                 return None
 
         expected_hash = compute_receipt_hash(

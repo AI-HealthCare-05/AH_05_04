@@ -156,24 +156,28 @@ class PersistedTerminalReplayPayload:
 
     @classmethod
     def from_projection(cls, value: object) -> PersistedTerminalReplayPayload:
-        if not isinstance(value, dict):
+        if type(value) is not dict:
             raise ValueError("Terminal replay payload must be an object")
+        value = cast(dict[str, object], value)
         hits = value.get("ordered_selected_hits")
         receipt = value.get("search_receipt")
         if value.get("projection_version") != TERMINAL_REPLAY_PAYLOAD_PROJECTION_VERSION:
             raise ValueError("Unsupported terminal replay payload projection version")
         if (
-            not isinstance(receipt, dict)
-            or not isinstance(hits, list)
-            or not all(isinstance(hit, dict) for hit in hits)
+            type(receipt) is not dict
+            or type(hits) is not list
+            or not all(type(hit) is dict for hit in hits)
+            or type(value.get("gate_status")) is not str
+            or type(value.get("gate_reason")) is not str
+            or type(value.get("gate_message")) is not str
         ):
             raise ValueError("Invalid terminal replay payload shape")
         return cls(
-            search_receipt=receipt,
-            ordered_selected_hits=tuple(hits),
-            gate_status=str(value.get("gate_status", "")),
-            gate_reason=str(value.get("gate_reason", "")),
-            gate_message=str(value.get("gate_message", "")),
+            search_receipt=cast(dict[str, Any], receipt),
+            ordered_selected_hits=cast(tuple[dict[str, Any], ...], tuple(hits)),
+            gate_status=cast(str, value["gate_status"]),
+            gate_reason=cast(str, value["gate_reason"]),
+            gate_message=cast(str, value["gate_message"]),
         )
 
 

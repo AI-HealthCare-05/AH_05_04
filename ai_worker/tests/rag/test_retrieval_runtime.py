@@ -516,6 +516,72 @@ def test_terminal_replay_fails_closed_when_payload_does_not_match_persisted_rece
     assert outcome.gate_outcome.reason == EvidenceGateReason.INVALID_BINDING
 
 
+@pytest.mark.parametrize("malformed_field", ["exact_hit", "gate_reason", "fusion_rank"])
+def test_terminal_replay_fails_closed_for_malformed_nested_types(malformed_field: str) -> None:
+    search_request = _make_dummy_search_request(RetrievalExecutionMode.LEXICAL_ONLY)
+    selected_hit = _make_dummy_hit(1, uuid4())
+    search_receipt = compute_production_search_receipt(
+        variant="RET-L",
+        status=RetrievalExecutionStatus.SUCCEEDED,
+        diagnostic_code=EvidenceGateReason.ELIGIBLE.value,
+        query_fingerprint=search_request.query_fingerprint,
+        filter_snapshot_ref=search_request.execution_binding.filter_snapshot_ref,
+        evidence_index_ref=search_request.execution_binding.evidence_index_ref,
+        retrieval_config_ref=search_request.execution_binding.retrieval_config.artifact_ref,
+        adapter_artifact_ref=ImmutableArtifactRef("adapter", "1.0", "8" * 64),
+        query_embedding_sha256=None,
+        signal_manifest_sha256="9" * 64,
+        hit_manifest_sha256="a" * 64,
+        selection_manifest_sha256=compute_selection_manifest_hash((selected_hit,)),
+    )
+    valid_payload = _make_terminal_replay_payload(
+        search_receipt,
+        EvidenceGateSuccess(selected_hits=(selected_hit,)),
+    )
+    projection = valid_payload.to_projection()
+    if malformed_field == "gate_reason":
+        projection["gate_reason"] = 1
+        with pytest.raises(ValueError, match="Invalid terminal replay payload shape"):
+            PersistedTerminalReplayPayload.from_projection(projection)
+        return
+
+    hit_projection = projection["ordered_selected_hits"][0]
+    hit_projection[malformed_field] = "false" if malformed_field == "exact_hit" else "1"
+    malformed_payload = PersistedTerminalReplayPayload.from_projection(projection)
+    persisted_receipt = PersistedRetrievalRunReceipt(
+        run_id=uuid4(),
+        job_id=uuid4(),
+        node_id=HYBRID_RETRIEVE_NODE_ID,
+        variant=search_receipt.variant,
+        status="COMPLETED",
+        query_digest=search_receipt.query_fingerprint.digest,
+        retrieval_configuration_hash=search_receipt.retrieval_config_ref.content_sha256,
+        source_manifest_hash="f" * 64,
+        receipt_hash="0" * 64,
+        total_signals=0,
+        total_hits=1,
+        selected_count=1,
+        signal_manifest_hash="s" * 64,
+        hit_manifest_hash="h" * 64,
+        search_receipt_hash=search_receipt.artifact_ref.content_sha256,
+        diagnostic_code=EvidenceGateReason.ELIGIBLE.value,
+    )
+
+    outcome = _terminal_replay_outcome(
+        BeginRetrievalRunSuccess(
+            run_id=persisted_receipt.run_id,
+            is_resumed=True,
+            existing_receipt=persisted_receipt,
+            existing_terminal_replay_payload=malformed_payload,
+        )
+    )
+
+    assert outcome.status == RetrievalExecutionStatus.DEPENDENCY_ERROR
+    assert outcome.persisted_receipt is None
+    assert outcome.search_receipt is None
+    assert outcome.gate_outcome.reason == EvidenceGateReason.INVALID_BINDING
+
+
 @pytest.mark.asyncio
 async def test_execute_production_retrieval_pre_search_failure() -> None:
     search_port = RecordingSearchPort(hits=())

@@ -311,78 +311,147 @@ def _make_terminal_replay_payload(
     )
 
 
-def _artifact_ref_from_projection(value: object) -> ImmutableArtifactRef:
-    item = cast(dict[str, Any], value)
-    return ImmutableArtifactRef(str(item["artifact_code"]), str(item["version"]), str(item["content_sha256"]))
+def _strict_object(value: object, field: str) -> dict[str, Any]:
+    if type(value) is not dict:
+        raise ValueError(f"{field} must be an object")
+    return cast(dict[str, Any], value)
 
 
-def _restore_search_receipt(value: dict[str, Any]) -> ProductionSearchReceipt:
-    expected_ref = _artifact_ref_from_projection(value["artifact_ref"])
-    projection = cast(dict[str, Any], value["projection"])
-    fingerprint = cast(dict[str, Any], projection["query_fingerprint"])
+def _strict_string(value: object, field: str) -> str:
+    if type(value) is not str:
+        raise ValueError(f"{field} must be a string")
+    return cast(str, value)
+
+
+def _strict_optional_string(value: object, field: str) -> str | None:
+    return None if value is None else _strict_string(value, field)
+
+
+def _strict_integer(value: object, field: str) -> int:
+    if type(value) is not int:
+        raise ValueError(f"{field} must be an integer")
+    return cast(int, value)
+
+
+def _strict_optional_integer(value: object, field: str) -> int | None:
+    return None if value is None else _strict_integer(value, field)
+
+
+def _strict_boolean(value: object, field: str) -> bool:
+    if type(value) is not bool:
+        raise ValueError(f"{field} must be a boolean")
+    return cast(bool, value)
+
+
+def _strict_uuid(value: object, field: str) -> UUID:
+    raw = _strict_string(value, field)
+    parsed = UUID(raw)
+    if str(parsed) != raw:
+        raise ValueError(f"{field} must be a canonical UUID")
+    return parsed
+
+
+def _artifact_ref_from_projection(value: object, field: str) -> ImmutableArtifactRef:
+    item = _strict_object(value, field)
+    return ImmutableArtifactRef(
+        _strict_string(item.get("artifact_code"), f"{field}.artifact_code"),
+        _strict_string(item.get("version"), f"{field}.version"),
+        _strict_string(item.get("content_sha256"), f"{field}.content_sha256"),
+    )
+
+
+def _restore_search_receipt(value: object) -> ProductionSearchReceipt:
+    envelope = _strict_object(value, "search_receipt")
+    expected_ref = _artifact_ref_from_projection(envelope.get("artifact_ref"), "search_receipt.artifact_ref")
+    projection = _strict_object(envelope.get("projection"), "search_receipt.projection")
+    fingerprint = _strict_object(projection.get("query_fingerprint"), "query_fingerprint")
     receipt = compute_production_search_receipt(
-        variant=str(projection["variant"]),
-        status=RetrievalExecutionStatus(str(projection["status"])),
-        diagnostic_code=str(projection["diagnostic_code"]),
+        variant=_strict_string(projection.get("variant"), "variant"),
+        status=RetrievalExecutionStatus(_strict_string(projection.get("status"), "status")),
+        diagnostic_code=_strict_string(projection.get("diagnostic_code"), "diagnostic_code"),
         query_fingerprint=QueryFingerprint(
-            str(fingerprint["algorithm"]), str(fingerprint["key_version"]), str(fingerprint["digest"])
+            _strict_string(fingerprint.get("algorithm"), "query_fingerprint.algorithm"),
+            _strict_string(fingerprint.get("key_version"), "query_fingerprint.key_version"),
+            _strict_string(fingerprint.get("digest"), "query_fingerprint.digest"),
         ),
-        filter_snapshot_ref=_artifact_ref_from_projection(projection["filter_snapshot_ref"]),
-        evidence_index_ref=_artifact_ref_from_projection(projection["evidence_index_ref"]),
-        retrieval_config_ref=_artifact_ref_from_projection(projection["retrieval_config_ref"]),
-        adapter_artifact_ref=_artifact_ref_from_projection(projection["adapter_artifact_ref"]),
-        query_embedding_sha256=cast(str | None, projection["query_embedding_sha256"]),
-        signal_manifest_sha256=str(projection["signal_manifest_sha256"]),
-        hit_manifest_sha256=str(projection["hit_manifest_sha256"]),
-        selection_manifest_sha256=str(projection["selection_manifest_sha256"]),
+        filter_snapshot_ref=_artifact_ref_from_projection(projection.get("filter_snapshot_ref"), "filter_snapshot_ref"),
+        evidence_index_ref=_artifact_ref_from_projection(projection.get("evidence_index_ref"), "evidence_index_ref"),
+        retrieval_config_ref=_artifact_ref_from_projection(
+            projection.get("retrieval_config_ref"), "retrieval_config_ref"
+        ),
+        adapter_artifact_ref=_artifact_ref_from_projection(
+            projection.get("adapter_artifact_ref"), "adapter_artifact_ref"
+        ),
+        query_embedding_sha256=_strict_optional_string(
+            projection.get("query_embedding_sha256"), "query_embedding_sha256"
+        ),
+        signal_manifest_sha256=_strict_string(projection.get("signal_manifest_sha256"), "signal_manifest_sha256"),
+        hit_manifest_sha256=_strict_string(projection.get("hit_manifest_sha256"), "hit_manifest_sha256"),
+        selection_manifest_sha256=_strict_string(
+            projection.get("selection_manifest_sha256"), "selection_manifest_sha256"
+        ),
     )
     if receipt.artifact_ref != expected_ref:
         raise ValueError("Production search receipt artifact identity mismatch")
     return receipt
 
 
-def _restore_selected_hit(value: dict[str, Any]) -> ProductionSearchHit:
-    provenance = cast(dict[str, Any], value["provenance"])
-    coordinate = cast(dict[str, Any], value["coordinate"])
-    fraction = cast(dict[str, Any], value["fraction_receipt"])
+def _restore_selected_hit(value: object) -> ProductionSearchHit:
+    item = _strict_object(value, "selected_hit")
+    provenance = _strict_object(item.get("provenance"), "selected_hit.provenance")
+    coordinate = _strict_object(item.get("coordinate"), "selected_hit.coordinate")
+    fraction = _strict_object(item.get("fraction_receipt"), "selected_hit.fraction_receipt")
     return ProductionSearchHit(
         provenance=ProductionEvidenceProvenance(
-            knowledge_index_id=UUID(str(provenance["knowledge_index_id"])),
-            index_code=str(provenance["index_code"]),
-            index_version=str(provenance["index_version"]),
-            index_configuration_hash=str(provenance["index_configuration_hash"]),
-            knowledge_chunk_id=UUID(str(provenance["knowledge_chunk_id"])),
-            source_snapshot_id=UUID(str(provenance["source_snapshot_id"])),
-            source_snapshot_member_id=UUID(str(provenance["source_snapshot_member_id"])),
-            source_code=str(provenance["source_code"]),
-            source_version=str(provenance["source_version"]),
-            canonical_checksum=str(provenance["canonical_checksum"]),
-            external_document_id=str(provenance["external_document_id"]),
-            chunk_index=int(provenance["chunk_index"]),
-            locator=str(provenance["locator"]),
-            content_hash=str(provenance["content_hash"]),
-            canonicalization_spec_version=str(provenance["canonicalization_spec_version"]),
-            normalization_version=str(provenance["normalization_version"]),
+            knowledge_index_id=_strict_uuid(provenance.get("knowledge_index_id"), "knowledge_index_id"),
+            index_code=_strict_string(provenance.get("index_code"), "index_code"),
+            index_version=_strict_string(provenance.get("index_version"), "index_version"),
+            index_configuration_hash=_strict_string(
+                provenance.get("index_configuration_hash"), "index_configuration_hash"
+            ),
+            knowledge_chunk_id=_strict_uuid(provenance.get("knowledge_chunk_id"), "knowledge_chunk_id"),
+            source_snapshot_id=_strict_uuid(provenance.get("source_snapshot_id"), "source_snapshot_id"),
+            source_snapshot_member_id=_strict_uuid(
+                provenance.get("source_snapshot_member_id"), "source_snapshot_member_id"
+            ),
+            source_code=_strict_string(provenance.get("source_code"), "source_code"),
+            source_version=_strict_string(provenance.get("source_version"), "source_version"),
+            canonical_checksum=_strict_string(provenance.get("canonical_checksum"), "canonical_checksum"),
+            external_document_id=_strict_string(provenance.get("external_document_id"), "external_document_id"),
+            chunk_index=_strict_integer(provenance.get("chunk_index"), "chunk_index"),
+            locator=_strict_string(provenance.get("locator"), "locator"),
+            content_hash=_strict_string(provenance.get("content_hash"), "content_hash"),
+            canonicalization_spec_version=_strict_string(
+                provenance.get("canonicalization_spec_version"), "canonicalization_spec_version"
+            ),
+            normalization_version=_strict_string(provenance.get("normalization_version"), "normalization_version"),
         ),
         coordinate=StableCoordinate(
-            source_code=str(coordinate["source_code"]),
-            source_version=str(coordinate["source_version"]),
-            external_document_id=str(coordinate["external_document_id"]),
-            chunk_index=int(coordinate["chunk_index"]),
+            source_code=_strict_string(coordinate.get("source_code"), "coordinate.source_code"),
+            source_version=_strict_string(coordinate.get("source_version"), "coordinate.source_version"),
+            external_document_id=_strict_string(
+                coordinate.get("external_document_id"), "coordinate.external_document_id"
+            ),
+            chunk_index=_strict_integer(coordinate.get("chunk_index"), "coordinate.chunk_index"),
         ),
-        exact_hit=bool(value["exact_hit"]),
-        observed_trigram_score=cast(str | None, value["observed_trigram_score"]),
-        observed_fts_score=cast(str | None, value["observed_fts_score"]),
-        observed_dense_score=cast(str | None, value["observed_dense_score"]),
-        lexical_rank=cast(int | None, value["lexical_rank"]),
-        dense_rank=cast(int | None, value["dense_rank"]),
-        fusion_rank=int(value["fusion_rank"]),
-        fraction_receipt=FractionReceipt(str(fraction["numerator"]), str(fraction["denominator"])),
-        is_eligible_for_future_reranker=bool(value["is_eligible_for_future_reranker"]),
+        exact_hit=_strict_boolean(item.get("exact_hit"), "exact_hit"),
+        observed_trigram_score=_strict_optional_string(item.get("observed_trigram_score"), "observed_trigram_score"),
+        observed_fts_score=_strict_optional_string(item.get("observed_fts_score"), "observed_fts_score"),
+        observed_dense_score=_strict_optional_string(item.get("observed_dense_score"), "observed_dense_score"),
+        lexical_rank=_strict_optional_integer(item.get("lexical_rank"), "lexical_rank"),
+        dense_rank=_strict_optional_integer(item.get("dense_rank"), "dense_rank"),
+        fusion_rank=_strict_integer(item.get("fusion_rank"), "fusion_rank"),
+        fraction_receipt=FractionReceipt(
+            _strict_string(fraction.get("numerator"), "fraction_receipt.numerator"),
+            _strict_string(fraction.get("denominator"), "fraction_receipt.denominator"),
+        ),
+        is_eligible_for_future_reranker=_strict_boolean(
+            item.get("is_eligible_for_future_reranker"), "is_eligible_for_future_reranker"
+        ),
     )
 
 
-def _restore_terminal_replay_payload(
+def restore_terminal_replay_payload(
     payload: PersistedTerminalReplayPayload,
 ) -> tuple[ProductionSearchReceipt, EvidenceGateOutcome]:
     receipt = _restore_search_receipt(payload.search_receipt)
@@ -391,8 +460,9 @@ def _restore_terminal_replay_payload(
         raise ValueError("Terminal replay selected hits are not ordered")
     if compute_selection_manifest_hash(selected_hits) != receipt.selection_manifest_sha256:
         raise ValueError("Terminal replay selection manifest mismatch")
-    status = EvidenceGateStatus(payload.gate_status)
-    reason = EvidenceGateReason(payload.gate_reason)
+    status = EvidenceGateStatus(_strict_string(payload.gate_status, "gate_status"))
+    reason = EvidenceGateReason(_strict_string(payload.gate_reason, "gate_reason"))
+    _strict_string(payload.gate_message, "gate_message")
     if status == EvidenceGateStatus.SUCCEEDED and reason == EvidenceGateReason.ELIGIBLE:
         return receipt, EvidenceGateSuccess(selected_hits=selected_hits)
     if status == EvidenceGateStatus.NO_RESULT and reason == EvidenceGateReason.INSUFFICIENT and not selected_hits:
@@ -416,7 +486,7 @@ def _terminal_replay_outcome(begin_result: BeginRetrievalRunSuccess) -> HybridRe
             message=message,
         )
     try:
-        search_receipt, gate_outcome = _restore_terminal_replay_payload(payload)
+        search_receipt, gate_outcome = restore_terminal_replay_payload(payload)
         persisted_receipt = begin_result.existing_receipt
         if persisted_receipt is None or (
             persisted_receipt.search_receipt_hash != search_receipt.artifact_ref.content_sha256

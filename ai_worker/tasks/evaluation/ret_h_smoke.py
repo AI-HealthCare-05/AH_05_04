@@ -173,6 +173,7 @@ def verify_persisted_receipt(receipt: PersistedRetrievalRunReceipt) -> bool:
         selected_count=receipt.selected_count,
         signal_manifest_hash=receipt.signal_manifest_hash,
         hit_manifest_hash=receipt.hit_manifest_hash,
+        terminal_replay_payload_hash=receipt.terminal_replay_payload_hash,
     )
     return recomputed == receipt.receipt_hash
 
