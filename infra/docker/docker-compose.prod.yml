@@ -619,6 +619,8 @@ services:
       PROTECTED_DB_PASSWORD: ${PROTECTED_DB_PASSWORD:-}
       PROTECTED_DB_CONTROL_USER: ${PROTECTED_DB_CONTROL_USER:-}
       PROTECTED_DB_CONTROL_PASSWORD: ${PROTECTED_DB_CONTROL_PASSWORD:-}
+      PROTECTED_DB_BACKUP_USER: ${PROTECTED_DB_BACKUP_USER:-}
+      PROTECTED_DB_BACKUP_PASSWORD: ${PROTECTED_DB_BACKUP_PASSWORD:-}
     networks:
       - ws
 
@@ -644,6 +646,104 @@ services:
       PROTECTED_APPROVAL_BRANCH: ${PROTECTED_APPROVAL_BRANCH:-}
       PROTECTED_APPROVAL_GITHUB_TOKEN: ${PROTECTED_APPROVAL_GITHUB_TOKEN:-}
       DB_APP_USER: ${DB_APP_USER:-}
+    networks:
+      - ws
+
+  # #889: exact-scope encrypted backup one-shot. The protected host mount is not shared.
+  protected-retrieval-backup:
+    profiles: ["protected-backup"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "infra.python.protected_retrieval_backup_ops"]
+    environment:
+      PROTECTED_DB_HOST: postgres
+      PROTECTED_DB_PORT: "5432"
+      PROTECTED_DB_NAME: ${DB_NAME}
+      PROTECTED_DB_SCHEMA: ${PROTECTED_DB_SCHEMA:-}
+      PROTECTED_DB_BACKUP_USER: ${PROTECTED_DB_BACKUP_USER:-}
+      PROTECTED_DB_BACKUP_PASSWORD: ${PROTECTED_DB_BACKUP_PASSWORD:-}
+      PROTECTED_BACKUP_HOST_ROOT: /protected-backups
+      PROTECTED_BACKUP_ENCRYPTION_KEY: ${PROTECTED_BACKUP_ENCRYPTION_KEY:-}
+      PROTECTED_BACKUP_ENCRYPTION_KEY_VERSION: ${PROTECTED_BACKUP_ENCRYPTION_KEY_VERSION:-}
+      PROTECTED_BACKUP_ACL_POLICY_ID: ${PROTECTED_BACKUP_ACL_POLICY_ID:-}
+    volumes:
+      - type: bind
+        source: ${PROTECTED_BACKUP_HOST_ROOT}
+        target: /protected-backups
+        bind:
+          create_host_path: false
+    networks:
+      - ws
+
+  # #889: disposable isolated PostgreSQL target; no port and no persistent volume.
+  protected-retrieval-restore-db:
+    profiles: ["protected-restore"]
+    image: pgvector/pgvector:0.8.6-pg17-bookworm
+    restart: "no"
+    environment:
+      POSTGRES_DB: ${PROTECTED_RESTORE_DB_NAME}
+      POSTGRES_USER: ${PROTECTED_RESTORE_DB_USER}
+      POSTGRES_PASSWORD: ${PROTECTED_RESTORE_DB_PASSWORD}
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      - ws
+
+  # #889: verifier can reach only the fixed disposable alias and reads encrypted artifacts.
+  protected-retrieval-restore:
+    profiles: ["protected-restore"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "infra.python.protected_retrieval_backup_ops"]
+    environment:
+      PROTECTED_DB_SCHEMA: ${PROTECTED_DB_SCHEMA:-}
+      PROTECTED_BACKUP_HOST_ROOT: /protected-backups
+      PROTECTED_BACKUP_ENCRYPTION_KEY: ${PROTECTED_BACKUP_ENCRYPTION_KEY:-}
+      PROTECTED_BACKUP_ENCRYPTION_KEY_VERSION: ${PROTECTED_BACKUP_ENCRYPTION_KEY_VERSION:-}
+      PROTECTED_RESTORE_DB_HOST: protected-retrieval-restore-db
+      PROTECTED_RESTORE_DB_PORT: "5432"
+      PROTECTED_RESTORE_DB_NAME: ${PROTECTED_RESTORE_DB_NAME}
+      PROTECTED_RESTORE_DB_USER: ${PROTECTED_RESTORE_DB_USER}
+      PROTECTED_RESTORE_DB_PASSWORD: ${PROTECTED_RESTORE_DB_PASSWORD}
+    volumes:
+      - type: bind
+        source: ${PROTECTED_BACKUP_HOST_ROOT}
+        target: /protected-backups
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      protected-retrieval-restore-db:
+        condition: service_healthy
+    networks:
+      - ws
+
+  # #889: admin exists only for the explicit DATA/CONTROL credential rotation one-shot.
+  protected-retrieval-rotate-db:
+    profiles: ["protected-rotation"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:app-${APP_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "infra.python.protected_retrieval_backup_ops", "rotate-db"]
+    environment:
+      PROTECTED_DB_HOST: postgres
+      PROTECTED_DB_PORT: "5432"
+      PROTECTED_DB_NAME: ${DB_NAME}
+      PROTECTED_DB_SCHEMA: ${PROTECTED_DB_SCHEMA:-}
+      PROTECTED_DB_ACCESS_ROLE: ${PROTECTED_DB_ACCESS_ROLE:-}
+      PROTECTED_DB_CONTROL_ROLE: ${PROTECTED_DB_CONTROL_ROLE:-}
+      PROTECTED_DB_USER: ${PROTECTED_DB_USER:-}
+      PROTECTED_DB_PASSWORD: ${PROTECTED_DB_PASSWORD:-}
+      PROTECTED_DB_PASSWORD_NEXT: ${PROTECTED_DB_PASSWORD_NEXT:-}
+      PROTECTED_DB_CONTROL_USER: ${PROTECTED_DB_CONTROL_USER:-}
+      PROTECTED_DB_CONTROL_PASSWORD: ${PROTECTED_DB_CONTROL_PASSWORD:-}
+      PROTECTED_DB_CONTROL_PASSWORD_NEXT: ${PROTECTED_DB_CONTROL_PASSWORD_NEXT:-}
+      DB_ADMIN_USER: ${DB_ADMIN_USER:-}
+      DB_ADMIN_PASSWORD: ${DB_ADMIN_PASSWORD:-}
     networks:
       - ws
 

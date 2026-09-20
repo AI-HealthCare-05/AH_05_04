@@ -217,6 +217,74 @@ def test_backend_dockerfile_packages_protected_migrations() -> None:
     assert dockerfile_path.is_file()
     content = dockerfile_path.read_text(encoding="utf-8")
     assert "COPY ./infra/protected_retrieval ./infra/protected_retrieval" in content
+    assert "postgresql-client" in content
+
+
+def test_backup_restore_rotation_workflow_and_compose_contract() -> None:
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github/workflows/protected_retrieval_runner.yml").read_text(encoding="utf-8")
+    )
+    triggers = workflow.get("on") or workflow.get(True)
+    inputs = triggers["workflow_dispatch"]["inputs"]
+    assert set(inputs["operation"]["options"]) == {
+        "provision",
+        "preflight",
+        "backup",
+        "restore-verify",
+        "rotate-db",
+    }
+    assert "backup_id" in inputs
+    assert inputs["backup_id"]["required"] is False
+    assert all(term not in name.lower() for name in inputs for term in ("password", "secret", "key", "host", "path"))
+    for job in workflow["jobs"].values():
+        assert job.get("environment") == "protected-retrieval"
+
+    compose = yaml.safe_load((REPO_ROOT / "infra/docker/docker-compose.prod.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    for name in (
+        "protected-retrieval-backup",
+        "protected-retrieval-restore",
+        "protected-retrieval-restore-db",
+        "protected-retrieval-rotate-db",
+    ):
+        service = services[name]
+        assert service.get("profiles")
+        assert str(service.get("restart")).lower() in {"no", "false"}
+        assert not service.get("ports")
+        assert not service.get("privileged", False)
+        assert service.get("networks") == ["ws"]
+        assert all("docker.sock" not in str(volume) for volume in service.get("volumes", []))
+
+    restore_db = services["protected-retrieval-restore-db"]
+    assert restore_db.get("tmpfs") == ["/var/lib/postgresql/data"]
+    assert not restore_db.get("volumes")
+
+    backup_mount = services["protected-retrieval-backup"]["volumes"]
+    restore_mount = services["protected-retrieval-restore"]["volumes"]
+    assert backup_mount == [
+        {
+            "type": "bind",
+            "source": "${PROTECTED_BACKUP_HOST_ROOT}",
+            "target": "/protected-backups",
+            "bind": {"create_host_path": False},
+        }
+    ]
+    assert restore_mount == [
+        {
+            "type": "bind",
+            "source": "${PROTECTED_BACKUP_HOST_ROOT}",
+            "target": "/protected-backups",
+            "read_only": True,
+            "bind": {"create_host_path": False},
+        }
+    ]
+    workflow_content = (REPO_ROOT / ".github/workflows/protected_retrieval_runner.yml").read_text(encoding="utf-8")
+    assert workflow_content.count('test ! -L \\"\\$ROOT\\"') == 2
+    assert workflow_content.count("stat -c '%a'") == 2
+    ordinary = ("fastapi", "ai-worker", "migrate", "nginx", "source-management", "source-writer")
+    for name in ordinary:
+        assert all("/protected-backups" not in str(v) for v in services[name].get("volumes", []))
+        assert all(not key.startswith("PROTECTED_BACKUP_") for key in services[name].get("environment", {}))
 
 
 def test_provisioning_script_prohibits_direct_data_mutation() -> None:
@@ -239,6 +307,30 @@ def test_provisioning_role_distinctness() -> None:
     # Identifiers must be safe
     with pytest.raises(ValueError, match="must be a safe PostgreSQL identifier"):
         validate_safe_identifier("bad;role", "ROLE")
+
+
+def test_provisioning_cli_redacts_database_exceptions(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    raw_secret = "synthetic-secret-must-not-escape"
+    monkeypatch.setattr(
+        provision_protected_retrieval,
+        "parse_args",
+        lambda: argparse.Namespace(provision=True, verify_only=False),
+    )
+
+    def fail_without_leaking(coroutine: object) -> int:
+        coroutine.close()  # type: ignore[attr-defined]
+        raise RuntimeError(raw_secret)
+
+    monkeypatch.setattr(provision_protected_retrieval.asyncio, "run", fail_without_leaking)
+    with pytest.raises(SystemExit) as exit_info:
+        provision_protected_retrieval.main()
+    captured = capsys.readouterr()
+    assert exit_info.value.code == 1
+    assert captured.out == ""
+    assert captured.err == "PROTECTED_DATABASE_PROVISIONING_FAILED\n"
+    assert raw_secret not in captured.err
 
 
 async def test_protected_migrations_run_outside_the_running_event_loop(
@@ -270,6 +362,8 @@ async def test_protected_migrations_run_outside_the_running_event_loop(
         "PROTECTED_DB_PASSWORD": "data_password",
         "PROTECTED_DB_CONTROL_USER": "protected_control_login",
         "PROTECTED_DB_CONTROL_PASSWORD": "control_password",
+        "PROTECTED_DB_BACKUP_USER": "protected_backup_login",
+        "PROTECTED_DB_BACKUP_PASSWORD": "backup_password",
     }
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
