@@ -46,3 +46,8 @@
   font-weight: 700;
   color: #607d8b;
 }
+
+/* 중단 화면. 안전상 의도된 중단(stopped)과 기록·상태 오류(error)를 색으로도 구분한다. */
+.track-c-blocked { gap: 10px; }
+.track-c-blocked--stopped { border-color: var(--ds-action); background: var(--ds-muted); }
+.track-c-blocked-help { color: var(--ds-action); font-weight: 600; }

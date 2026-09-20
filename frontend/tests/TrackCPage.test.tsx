@@ -6,6 +6,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import TrackCPage, { type TrackCServices } from '../src/pages/TrackCPage'
 import { ApiError } from '../src/api/client'
 
+// 중단 화면 문구는 원인별로 다르다. src/pages/TrackCPage.tsx 의 BLOCKED_COPY 와 짝을 이룬다.
+const BLOCKED = {
+  SELF_SYMPTOM: '증상이 있을 때는 도움 찾기를 멈춰요',
+  PLAN_SYMPTOM: '증상이 있을 때는 계획 진행을 멈춰요',
+  SAFETY_BLOCKED: '지금은 도움을 이어서 안내할 수 없어요',
+  RECORD_UNAVAILABLE: '이 기록을 사용할 수 없어요',
+  STALE_STATE: '기록이나 계획 상태가 변경되었어요',
+} as const
+const blockedByStatus = (status: number) => (status === 409 ? BLOCKED.STALE_STATE : BLOCKED.RECORD_UNAVAILABLE)
+
 const activeCopyVersion = supportFixture.single_offer.data.supports[0].copy_version
 const occurrenceId = '11111111-1111-4111-8111-111111111111'
 const planId = '22222222-2222-4222-8222-222222222222'
@@ -91,20 +101,28 @@ describe('Track C API flow', () => {
   })
   it.each(['PENDING', 'UNCONFIRMED', 'TAKEN'])('does not start from %s', async status => {
     const svc = services({ getDay: vi.fn().mockResolvedValue({ data: { occurrences: [{ occurrence_id: occurrenceId, scheduled_local_date: '2026-09-16', status: 'CLOSED', checkin: status === 'PENDING' ? null : { ...checkin, status } }] } }) })
-    show(svc); await screen.findByText('현재 도움을 계속 진행할 수 없어요'); expect(svc.createSafety).not.toHaveBeenCalled()
+    show(svc); await screen.findByText(BLOCKED.STALE_STATE); expect(svc.createSafety).not.toHaveBeenCalled()
   })
   it.each(['URGENT', 'EMERGENCY', 'UNKNOWN'])('blocks %s before Barrier', async response_level => {
     const svc = services({ createSafety: vi.fn().mockResolvedValue({ ...safety, response_level }) }); show(svc)
     fireEvent.click(await screen.findByRole('button', { name: '증상은 없어요' }))
-    await screen.findByText('현재 도움을 계속 진행할 수 없어요'); expect(svc.putBarrier).not.toHaveBeenCalled(); expect(svc.getOffers).not.toHaveBeenCalled()
+    await screen.findByText(BLOCKED.SAFETY_BLOCKED); expect(svc.putBarrier).not.toHaveBeenCalled(); expect(svc.getOffers).not.toHaveBeenCalled()
   })
   it('does not invent symptom codes', async () => {
     const svc = services(); show(svc); fireEvent.click(await screen.findByRole('button', { name: '증상이 있어요' }))
-    await screen.findByText('현재 도움을 계속 진행할 수 없어요'); expect(svc.createSafety).not.toHaveBeenCalled()
+    await screen.findByText(BLOCKED.SELF_SYMPTOM); expect(svc.createSafety).not.toHaveBeenCalled()
+  })
+  it('스스로 신고한 증상 중단은 오류 문구가 아니라 다음 행동 안내를 보여준다', async () => {
+    show(services()); fireEvent.click(await screen.findByRole('button', { name: '증상이 있어요' }))
+    await screen.findByText(BLOCKED.SELF_SYMPTOM)
+    expect(screen.getByText('증상이 심하거나 갑자기 생겼다면 약사나 의료진에게 먼저 확인해 주세요.')).toBeTruthy()
+    expect(screen.queryByText(BLOCKED.STALE_STATE)).toBeNull()
+    expect(screen.queryByText(BLOCKED.RECORD_UNAVAILABLE)).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
   it('스스로 신고한 증상은 중단 화면에서 다시 선택할 수 있다', async () => {
     const svc = services(); show(svc); fireEvent.click(await screen.findByRole('button', { name: '증상이 있어요' }))
-    await screen.findByText('현재 도움을 계속 진행할 수 없어요')
+    await screen.findByText(BLOCKED.SELF_SYMPTOM)
     fireEvent.click(screen.getByRole('button', { name: '증상 선택 다시 하기' }))
     await screen.findByRole('heading', { name: '현재 불편한 증상이 있나요?' })
     expect(svc.createSafety).not.toHaveBeenCalled()
@@ -114,7 +132,7 @@ describe('Track C API flow', () => {
   it.each(['URGENT', 'EMERGENCY', 'UNKNOWN'])('서버가 %s로 막은 경우에는 다시 선택 버튼을 주지 않는다', async response_level => {
     const svc = services({ createSafety: vi.fn().mockResolvedValue({ ...safety, response_level }) }); show(svc)
     fireEvent.click(await screen.findByRole('button', { name: '증상은 없어요' }))
-    await screen.findByText('현재 도움을 계속 진행할 수 없어요')
+    await screen.findByText(BLOCKED.SAFETY_BLOCKED)
     expect(screen.queryByRole('button', { name: '증상 선택 다시 하기' })).toBeNull()
   })
   it('submits one barrier with the fetched revision', async () => {
@@ -138,7 +156,7 @@ describe('Track C API flow', () => {
   })
   it.each([403, 404, 409])('halts on %s without raw details', async status => {
     const svc = services({ putBarrier: vi.fn().mockRejectedValue(new ApiError(status, 'PRIVATE_RAW_DETAIL')) }); show(svc); await enterBarrier()
-    fireEvent.click(screen.getByRole('button', { name: '답하지 않고 복약 상태만 저장' })); await screen.findByText('현재 도움을 계속 진행할 수 없어요')
+    fireEvent.click(screen.getByRole('button', { name: '답하지 않고 복약 상태만 저장' })); await screen.findByText(blockedByStatus(status))
     expect(screen.queryByText('PRIVATE_RAW_DETAIL')).toBeNull(); expect(svc.getOffers).not.toHaveBeenCalled()
   })
   it('clears expired authentication', async () => {
@@ -167,7 +185,7 @@ describe('Track C API flow', () => {
   it('does not reuse offers from another Safety assessment', async () => {
     const svc = services({ getOffers: vi.fn().mockResolvedValue({ ...barrier, safety_assessment_id: 'other', supports: [support], reason_code: null }) })
     show(svc); await enterBarrier(); fireEvent.click(screen.getByRole('button', { name: '답하지 않고 복약 상태만 저장' }))
-    await screen.findByText('현재 도움을 계속 진행할 수 없어요')
+    await screen.findByText(BLOCKED.STALE_STATE)
     expect(svc.createPlan).not.toHaveBeenCalled()
   })
   it('suppresses rapid double writes', async () => {
@@ -183,7 +201,7 @@ describe('Track C API flow', () => {
     show(svc, `/track-c/plans/${planId}`)
     fireEvent.click(await screen.findByRole('button', { name: '완료 확인하기' }))
     fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button', { name: '완료로 저장' }))
-    await screen.findByText('현재 도움을 계속 진행할 수 없어요')
+    await screen.findByText(BLOCKED.STALE_STATE)
     expect(screen.queryByText('완료됨')).toBeNull()
   })
 
@@ -286,7 +304,7 @@ it('halts general concern guidance when symptoms arise without marking the plan 
   const svc = services({ getPlan: vi.fn().mockResolvedValue({ ...plan, support_code: 'MEDICATION_CONCERN_GUIDANCE' }) })
   show(svc, `/track-c/plans/${planId}`)
   fireEvent.click(await screen.findByRole('button', { name: '증상이 생겼거나 확실하지 않아요' }))
-  await screen.findByText('현재 도움을 계속 진행할 수 없어요')
+  await screen.findByText(BLOCKED.PLAN_SYMPTOM)
   expect(screen.queryByRole('button', { name: '완료 확인하기' })).toBeNull()
   expect(svc.patchPlan).not.toHaveBeenCalled()
   expect(svc.createSafety).not.toHaveBeenCalled()
@@ -356,7 +374,7 @@ it('restores completion after retrying only the resources read', async () => {
 
 it.each([401, 403, 404, 409])('blocks resources error %s', async status => {
   show(services({ getPlanResources: vi.fn().mockRejectedValue(new ApiError(status, 'PRIVATE')) }), `/track-c/plans/${planId}`)
-  await screen.findByText(status === 401 ? '로그인 화면' : '현재 도움을 계속 진행할 수 없어요')
+  await screen.findByText(status === 401 ? '로그인 화면' : blockedByStatus(status))
   expect(screen.queryByRole('button', { name: '계획 취소하기' })).toBeNull()
 })
 
