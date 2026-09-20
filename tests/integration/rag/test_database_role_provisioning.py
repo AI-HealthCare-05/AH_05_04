@@ -2756,3 +2756,119 @@ async def test_catalog_approval_role_least_privilege_and_boundary(database) -> N
             for role in (runtime, writer, cat_writer, appr_role, unrelated):
                 await connection.execute(text(f'DROP OWNED BY "{role}"'))
                 await connection.execute(text(f'DROP ROLE IF EXISTS "{role}"'))
+
+
+async def test_catalog_approval_bootstrap_login_provisions_and_validates(database) -> None:
+    """#862: Production bootstrap SQL creates the login consumed by existing provisioning."""
+    from ai_worker.admin.catalog_approval import validate_approval_connection
+    from infra.python.catalog_approval_role_policy import (
+        APPROVAL_PERMISSION_INSERT_COLUMNS,
+        APPROVAL_PERMISSION_UPDATE_COLUMNS,
+        validate_catalog_approval_connection,
+    )
+    from infra.python.provision_database_roles import provision_roles
+
+    container = os.environ.get("ISSUE398_TEST_POSTGRES_CONTAINER")
+    if not container or not shutil.which("docker"):
+        pytest.skip("Requires an explicitly selected disposable PostgreSQL container")
+
+    admin = database
+    suffix = uuid4().hex[:12]
+    owner, runtime, writer, approval = (
+        f"boot862_{part}_{suffix}" for part in ("owner", "runtime", "writer", "approval")
+    )
+    password = f"synthetic-{suffix}-only"
+    environment = {
+        "DB_MIGRATION_USER": owner,
+        "DB_MIGRATION_PASSWORD": password,
+        "DB_APP_USER": runtime,
+        "DB_APP_PASSWORD": password,
+        "SOURCE_WRITER_USER": writer,
+        "SOURCE_WRITER_PASSWORD": password,
+        "CATALOG_APPROVAL_USER": approval,
+        "CATALOG_APPROVAL_PASSWORD": password,
+    }
+    args = ["docker", "exec", "-i"]
+    for name in environment:
+        args.extend(["-e", name])
+    args.extend(
+        [
+            container,
+            "psql",
+            "-X",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-U",
+            config.DB_USER,
+            "-d",
+            str(admin.url.database),
+        ]
+    )
+    approval_engine = create_async_engine(admin.url.set(username=approval, password=password), hide_parameters=True)
+
+    def bootstrap(*, overrides: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            args,
+            input=(ROOT / "infra/docker/postgres/configure-app-role.sql").read_text(),
+            text=True,
+            capture_output=True,
+            env={**os.environ, **environment, **(overrides or {})},
+            timeout=30,
+        )
+
+    try:
+        assert bootstrap(overrides={"CATALOG_APPROVAL_PASSWORD": ""}).returncode != 0
+        assert bootstrap(overrides={"CATALOG_APPROVAL_USER": writer}).returncode != 0
+        bootstrapped = bootstrap()
+        assert bootstrapped.returncode == 0, "Synthetic Catalog Approval bootstrap failed"
+
+        async with admin.begin() as connection:
+            attributes = (
+                await connection.execute(
+                    text(
+                        "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolbypassrls "
+                        "FROM pg_roles WHERE rolname=:role"
+                    ),
+                    {"role": approval},
+                )
+            ).one()
+            assert attributes == (True, False, False, False, False)
+            await provision_roles(
+                connection,
+                owner=owner,
+                runtime=runtime,
+                writer=writer,
+                catalog_approval=approval,
+            )
+
+        async with approval_engine.connect() as connection:
+            await validate_approval_connection(connection)
+            await validate_catalog_approval_connection(connection)
+            for column in APPROVAL_PERMISSION_INSERT_COLUMNS:
+                assert await connection.scalar(
+                    text("SELECT has_column_privilege(current_user, 'catalog_approval_permission', :column, 'INSERT')"),
+                    {"column": column},
+                )
+            for column in APPROVAL_PERMISSION_UPDATE_COLUMNS:
+                assert await connection.scalar(
+                    text("SELECT has_column_privilege(current_user, 'catalog_approval_permission', :column, 'UPDATE')"),
+                    {"column": column},
+                )
+            assert await connection.scalar(
+                text("SELECT has_table_privilege(current_user, 'catalog_approval_audit', 'INSERT')")
+            )
+
+        await _assert_statements_forbidden(
+            approval_engine,
+            (
+                "UPDATE public.catalog_approval_audit SET event_kind=event_kind WHERE false",
+                "DELETE FROM public.catalog_source_approval WHERE false",
+                "INSERT INTO public.rag_medication_product DEFAULT VALUES",
+            ),
+        )
+    finally:
+        await approval_engine.dispose()
+        async with admin.begin() as connection:
+            for role in (approval, writer, runtime, owner):
+                await connection.execute(text(f'DROP OWNED BY "{role}"'))
+                await connection.execute(text(f'DROP ROLE IF EXISTS "{role}"'))

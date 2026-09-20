@@ -620,6 +620,79 @@ def _withdrawal_env_lines() -> list[str]:
     ]
 
 
+@pytest.mark.parametrize(
+    ("approval_user", "approval_password", "artifact_root", "message"),
+    [
+        ("approval", "", "/synthetic/artifacts", "함께 설정하거나 함께 비워야"),
+        ("", "synthetic-approval-secret", "/synthetic/artifacts", "함께 설정하거나 함께 비워야"),
+        ("approval", "synthetic-approval-secret", "", "CATALOG_SOURCE_ARTIFACT_HOST_ROOT"),
+        ("approval", "synthetic-approval-secret", "relative/artifacts", "절대 경로"),
+        ("dummy_app", "synthetic-approval-secret", "/synthetic/artifacts", "다른 이름"),
+    ],
+)
+def test_catalog_approval_preflight_rejects_invalid_configuration_before_external_actions(
+    tmp_path: Path,
+    approval_user: str,
+    approval_password: str,
+    artifact_root: str,
+    message: str,
+) -> None:
+    env_file = tmp_path / "prod.env"
+    env_file.write_text(
+        "\n".join(
+            _withdrawal_env_lines()
+            + [
+                "ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false",
+                f'CATALOG_APPROVAL_USER="{approval_user}"',
+                f'CATALOG_APPROVAL_PASSWORD="{approval_password}"',
+                f'CATALOG_SOURCE_ARTIFACT_HOST_ROOT="{artifact_root}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env={"PATH": "/usr/bin:/bin", "PROD_ENV_FILE": str(env_file)},
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode != 0
+    assert message in completed.stdout
+    assert "docker" not in completed.stdout.lower()
+    assert "synthetic-approval-secret" not in completed.stdout + completed.stderr
+
+
+def test_catalog_approval_preflight_ignores_inherited_credentials(tmp_path: Path) -> None:
+    env_file = tmp_path / "prod.env"
+    env_file.write_text(
+        "\n".join(_withdrawal_env_lines() + ["ACCOUNT_WITHDRAWAL_REQUEST_ENABLED=false", ""]),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=PROJECT_ROOT,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PROD_ENV_FILE": str(env_file),
+            "CATALOG_APPROVAL_USER": "inherited_approval",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode != 0
+    assert "CATALOG_APPROVAL" not in completed.stdout
+
+
 def test_deployment_script_rejects_env_file_missing_account_withdrawal_gate(tmp_path: Path) -> None:
     """Compose는 ACCOUNT_WITHDRAWAL_REQUEST_ENABLED를 ${...:-false}로 치환한다(#825).
     .prod.env에 선언 자체가 없으면 배포는 성공하지만 컨테이너에는 false가 주입되어
