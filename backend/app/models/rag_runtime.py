@@ -313,6 +313,77 @@ class RagRuntimeBundleCitationApproval(Base):
     bundle: Mapped[RagRuntimeReleaseBundle] = relationship(back_populates="citation_approval_pins")
 
 
+class GuideRetrievalBindingManifest(Base):
+    __tablename__ = "guide_retrieval_binding_manifest"
+    __table_args__ = (
+        UniqueConstraint("manifest_hash", name="uq_guide_retrieval_binding_manifest_hash"),
+        UniqueConstraint("id", "manifest_hash", name="uq_guide_retrieval_binding_manifest_id_hash"),
+        ForeignKeyConstraint(
+            ["runtime_release_bundle_id", "runtime_release_bundle_manifest_hash"],
+            ["rag_runtime_release_bundle.id", "rag_runtime_release_bundle.bundle_manifest_hash"],
+            name="fk_guide_retrieval_binding_bundle_manifest",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["runtime_execution_manifest_id", "runtime_execution_manifest_hash"],
+            ["rag_runtime_execution_manifest.id", "rag_runtime_execution_manifest.manifest_hash"],
+            name="fk_guide_retrieval_binding_execution_manifest",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("length(manifest_hash) = 64", name="chk_guide_retrieval_binding_manifest_hash"),
+        CheckConstraint(
+            "length(runtime_release_bundle_manifest_hash) = 64",
+            name="chk_guide_retrieval_binding_bundle_hash",
+        ),
+        CheckConstraint(
+            "length(runtime_execution_manifest_hash) = 64",
+            name="chk_guide_retrieval_binding_execution_hash",
+        ),
+        CheckConstraint(
+            "length(evidence_index_configuration_hash) = 64",
+            name="chk_guide_retrieval_binding_index_hash",
+        ),
+        CheckConstraint(
+            "length(retrieval_configuration_hash) = 64",
+            name="chk_guide_retrieval_binding_config_hash",
+        ),
+        CheckConstraint(
+            "length(filter_snapshot_hash) = 64",
+            name="chk_guide_retrieval_binding_filter_hash",
+        ),
+        CheckConstraint(
+            "length(source_manifest_hash) = 64",
+            name="chk_guide_retrieval_binding_source_hash",
+        ),
+        CheckConstraint(
+            "length(trim(manifest_version)) > 0",
+            name="chk_guide_retrieval_binding_version_nonblank",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    manifest_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    runtime_release_bundle_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    runtime_release_bundle_manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    runtime_execution_manifest_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    runtime_execution_manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    knowledge_index_id: Mapped[UUID] = mapped_column(
+        UUIDChar(), ForeignKey("rag_knowledge_index.id", ondelete="RESTRICT"), nullable=False
+    )
+    evidence_index_code: Mapped[str] = mapped_column(String(120), nullable=False)
+    evidence_index_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    evidence_index_configuration_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    member_bindings_json: Mapped[list[dict[str, str]]] = mapped_column(JSON, nullable=False)
+    retrieval_configuration_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    retrieval_configuration_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    filter_snapshot_code: Mapped[str] = mapped_column(String(120), nullable=False)
+    filter_snapshot_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    filter_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class RagRuntimeEnvironment(Base):
     __tablename__ = "rag_runtime_environment"
     __table_args__ = (
@@ -649,6 +720,12 @@ class AiJobExecutionContext(Base):
             name="fk_ai_job_execution_context_execution_manifest_hash",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["guide_retrieval_binding_manifest_id", "guide_retrieval_binding_manifest_hash"],
+            ["guide_retrieval_binding_manifest.id", "guide_retrieval_binding_manifest.manifest_hash"],
+            name="fk_ai_job_execution_context_guide_retrieval_binding",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "(guide_id IS NOT NULL AND chat_message_id IS NULL) OR (guide_id IS NULL AND chat_message_id IS NOT NULL)",
             name="chk_ai_job_execution_context_one_domain",
@@ -656,6 +733,14 @@ class AiJobExecutionContext(Base):
         CheckConstraint(
             "intake_context_id IS NULL OR chat_message_id IS NOT NULL",
             name="chk_ai_job_execution_context_intake_chat_only",
+        ),
+        CheckConstraint(
+            "(guide_retrieval_binding_manifest_id IS NULL) = (guide_retrieval_binding_manifest_hash IS NULL)",
+            name="chk_ai_job_execution_context_guide_retrieval_binding_pair",
+        ),
+        CheckConstraint(
+            "guide_retrieval_binding_manifest_id IS NULL OR guide_id IS NOT NULL",
+            name="chk_ai_job_execution_context_guide_retrieval_binding_domain",
         ),
         CheckConstraint("runtime_environment_revision >= 1", name="chk_ai_job_execution_context_revision_positive"),
         CheckConstraint(
@@ -733,6 +818,8 @@ class AiJobExecutionContext(Base):
     )
     runtime_execution_manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     runtime_guard_decision_ref: Mapped[str] = mapped_column(String(255), nullable=False)
+    guide_retrieval_binding_manifest_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    guide_retrieval_binding_manifest_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     patient_context_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_scope_manifest_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     context_schema_version: Mapped[str] = mapped_column(

@@ -25,6 +25,7 @@ from app.models.rag_runtime import (
     AiJobExecutionContext,
     AiJobExecutionIdentification,
     AiJobIntakeContext,
+    GuideRetrievalBindingManifest,
     RagReleaseEvaluationApproval,
     RagRuntimeApprovalStatus,
     RagRuntimeBundleCitationApproval,
@@ -77,6 +78,8 @@ class AiJobExecutionContextCreate:
     chat_message_id: UUID | None = None
     patient_context_digest: str | None = None
     source_scope_manifest_hash: str | None = None
+    guide_retrieval_binding_manifest_id: UUID | None = None
+    guide_retrieval_binding_manifest_hash: str | None = None
     context_schema_version: str = "ai-job-execution-context@1"
 
 
@@ -85,6 +88,27 @@ class AiJobExecutionIdentificationCreate:
     execution_context_id: UUID
     medication_identification_id: UUID
     prescription_version_medication_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class GuideRetrievalBindingManifestCreate:
+    manifest_version: str
+    manifest_hash: str
+    runtime_release_bundle_id: UUID
+    runtime_release_bundle_manifest_hash: str
+    runtime_execution_manifest_id: UUID
+    runtime_execution_manifest_hash: str
+    knowledge_index_id: UUID
+    evidence_index_code: str
+    evidence_index_version: str
+    evidence_index_configuration_hash: str
+    member_bindings_json: list[dict[str, str]]
+    retrieval_configuration_json: dict[str, object]
+    retrieval_configuration_hash: str
+    filter_snapshot_code: str
+    filter_snapshot_version: str
+    filter_snapshot_hash: str
+    source_manifest_hash: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -502,6 +526,23 @@ class RagRuntimeRepository:
             .order_by(AiJobExecutionIdentification.created_at, AiJobExecutionIdentification.id)
         )
         return list(result.scalars().all())
+
+    async def create_guide_retrieval_binding_manifest(
+        self,
+        payload: GuideRetrievalBindingManifestCreate,
+    ) -> GuideRetrievalBindingManifest:
+        manifest = GuideRetrievalBindingManifest(**asdict(payload))
+        self.session.add(manifest)
+        await self.session.flush()
+        return manifest
+
+    async def get_guide_retrieval_binding_manifest_by_id(
+        self,
+        manifest_id: UUID,
+    ) -> GuideRetrievalBindingManifest | None:
+        return await self.session.scalar(
+            select(GuideRetrievalBindingManifest).where(GuideRetrievalBindingManifest.id == manifest_id)
+        )
 
     async def create_execution_manifest(
         self,

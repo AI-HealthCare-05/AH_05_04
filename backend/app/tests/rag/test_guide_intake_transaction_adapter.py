@@ -4,7 +4,6 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
@@ -12,6 +11,7 @@ from app.core.errors import ApiError
 from app.core.utils.idempotency import compute_request_hash
 from app.models.async_jobs import AiJob, AiJobStatus, AiJobType, DomainType, IdempotencyRecord, OutboxEvent
 from app.models.guides import Guide, GuideGenerationStatus
+from app.models.knowledge import RagKnowledgeDistanceMetric, RagKnowledgeIndex
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Prescription, PrescriptionVersionMedication
@@ -27,6 +27,7 @@ from app.models.rag_candidate import (
 from app.models.rag_runtime import (
     AiJobExecutionContext,
     AiJobExecutionIdentification,
+    GuideRetrievalBindingManifest,
     RagRuntimeBundleStatus,
     RagRuntimeEnvironmentStatus,
 )
@@ -45,6 +46,7 @@ from app.services.guide_intake import (
     GUIDE_JOB_INTAKE_METHOD,
     GUIDE_JOB_INTAKE_ROUTE_TEMPLATE,
     GuideJobIntakeTransactionAdapter,
+    GuideRuntimeContextBindingError,
     GuideRuntimeContextSnapshot,
 )
 from app.services.job_intake import IdempotencyKeyConflictError, JobIntakeService
@@ -212,6 +214,42 @@ async def _create_runtime_context(
             environment_revision=2,
         )
     )
+    knowledge_index = RagKnowledgeIndex(
+        index_code=f"guide-intake-index-{suffix}",
+        index_version="1.0.0",
+        corpus_manifest_hash=_hash("a"),
+        embedding_manifest_hash=_hash("b"),
+        index_configuration_hash=_hash("c"),
+        embedding_model_ref="synthetic-embedding",
+        embedding_model_version="1.0.0",
+        embedding_dimension=3,
+        distance_metric=RagKnowledgeDistanceMetric.COSINE,
+        member_count=0,
+        knowledge_index_lock_marker=0,
+    )
+    session.add(knowledge_index)
+    await session.flush()
+    retrieval_binding = GuideRetrievalBindingManifest(
+        manifest_version="guide-retrieval-binding@1",
+        manifest_hash=suffix.ljust(64, "d"),
+        runtime_release_bundle_id=bundle.id,
+        runtime_release_bundle_manifest_hash=bundle.bundle_manifest_hash,
+        runtime_execution_manifest_id=manifest.id,
+        runtime_execution_manifest_hash=manifest.manifest_hash,
+        knowledge_index_id=knowledge_index.id,
+        evidence_index_code=knowledge_index.index_code,
+        evidence_index_version=knowledge_index.index_version,
+        evidence_index_configuration_hash=knowledge_index.index_configuration_hash,
+        member_bindings_json=[],
+        retrieval_configuration_json={},
+        retrieval_configuration_hash=_hash("e"),
+        filter_snapshot_code="guide-intake-filter",
+        filter_snapshot_version="1.0.0",
+        filter_snapshot_hash=_hash("f"),
+        source_manifest_hash=_hash("0"),
+    )
+    session.add(retrieval_binding)
+    await session.flush()
     return GuideRuntimeContextSnapshot(
         runtime_environment_id=environment.id,
         runtime_environment_revision=environment.environment_revision,
@@ -219,6 +257,8 @@ async def _create_runtime_context(
         runtime_release_bundle_manifest_hash=bundle.bundle_manifest_hash,
         runtime_execution_manifest_id=manifest.id,
         runtime_execution_manifest_hash=manifest.manifest_hash,
+        guide_retrieval_binding_manifest_id=retrieval_binding.id,
+        guide_retrieval_binding_manifest_hash=retrieval_binding.manifest_hash,
         runtime_guard_decision_ref="guard:guide-full-request",
         patient_context_digest=suffix.ljust(64, "5"),
         source_scope_manifest_hash=suffix.ljust(64, "6"),
@@ -276,6 +316,8 @@ async def test_accept_guide_job_creates_job_guide_context_identifications_and_ou
     assert context.prescription_version_id == prescription.active_version_id
     assert context.runtime_release_bundle_id == runtime_context.runtime_release_bundle_id
     assert context.runtime_execution_manifest_hash == runtime_context.runtime_execution_manifest_hash
+    assert context.guide_retrieval_binding_manifest_id == runtime_context.guide_retrieval_binding_manifest_id
+    assert context.guide_retrieval_binding_manifest_hash == runtime_context.guide_retrieval_binding_manifest_hash
     assert context.runtime_guard_decision_ref == "guard:guide-full-request"
 
     pinned = await db_session.execute(
@@ -438,7 +480,7 @@ async def test_accept_guide_job_rolls_back_when_runtime_snapshot_mismatches(
     runtime_context = await _create_runtime_context(db_session)
     mismatched_context = replace(runtime_context, runtime_release_bundle_manifest_hash="8" * 64)
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(GuideRuntimeContextBindingError):
         await _adapter(db_session).accept_guide_job(
             user=user,
             prescription_id=prescription.id,
