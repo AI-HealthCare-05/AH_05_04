@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from ai_worker.adapters.catalog_approval_advisory_lock import acquire_catalog_approval_advisory_locks
 from ai_worker.adapters.local_private_source_artifact_finalizer import LocalPrivateSourceArtifactReader
@@ -20,6 +21,7 @@ from ai_worker.adapters.sqlalchemy_catalog_write_support import (
     CatalogDatabaseBindingError,
     SqlAlchemyCatalogBuildRepository,
 )
+from ai_worker.adapters.sqlalchemy_source_snapshot_repository import SqlAlchemySourceSnapshotRepository
 from ai_worker.admin.catalog_approval import (
     AUDIT_GRANT_PERMISSION,
     AUDIT_ISSUE_CATALOG,
@@ -35,8 +37,11 @@ from ai_worker.admin.catalog_approval import (
     revoke_approval,
     set_permission,
 )
+from ai_worker.admin.catalog_writer import _execute_catalog_build, validate_catalog_writer
 from ai_worker.tasks.rag.catalog.approval import approval_binding_from_manifest
-from ai_worker.tasks.rag.catalog.mfds_product_source import ProductSourceBindingError
+from ai_worker.tasks.rag.catalog.build import CatalogProductInput, build_catalog_members
+from ai_worker.tasks.rag.catalog.export import create_catalog_export
+from ai_worker.tasks.rag.catalog.mfds_product_source import ProductSourceBindingError, read_product_input
 from ai_worker.tasks.rag.catalog.types import CandidateCatalogSourceRef, CatalogVerificationStatus
 from app.models import (
     CatalogApprovalAudit,
@@ -57,7 +62,11 @@ from app.models.rag_source import (
     RagSourceIngestionArtifactKind,
     RagVerificationResultStatus,
 )
-from tests.integration.rag.test_catalog_storage_roundtrip import approved_build, seed_catalog_approvals
+from tests.integration.rag.test_catalog_storage_roundtrip import (
+    approved_build,
+    seed_catalog_approval_receipt,
+    seed_catalog_approvals,
+)
 from tests.integration.rag.test_catalog_storage_roundtrip import unseeded_database as _database
 
 database = _database
@@ -275,6 +284,119 @@ async def _seed_product_source_fixture(
 
     reader = LocalPrivateSourceArtifactReader(resolved_root)
     return snap_id, run_id, reader
+
+
+async def test_catalog_writer_reconciled_policy_reads_product_source_and_revalidates_approval(database, tmp_path):
+    """The restricted Catalog Writer must execute its real Product Source read and save boundary.
+
+    This deliberately uses the Writer login after the canonical policy helper;
+    using the migration/admin login here would hide the production ACL defect.
+    """
+    from app.core import config
+    from infra.python.catalog_role_policy import apply_catalog_role_policy
+
+    engine, factory = database
+    snapshot_id, ingestion_run_id, artifact_reader = await _seed_product_source_fixture(factory, tmp_path)
+    source_ref = CandidateCatalogSourceRef(str(snapshot_id), "external:20260920")
+    template_product = CatalogProductInput(
+        source_snapshot_id=str(snapshot_id),
+        source_record_key="ITEM_SEQ:200000001",
+        code_system="MFDS_ITEM_SEQ",
+        canonical_code="200000001",
+        product_name="합성 타이레놀정500밀리그람",
+        manufacturer_name="(주)한국얀센",
+    )
+    draft = create_catalog_export(
+        catalog_version="catalog-writer-acl-v1",
+        source_refs=(source_ref,),
+        members=build_catalog_members(products=(template_product,)),
+    )
+    await seed_catalog_approval_receipt(
+        factory,
+        catalog_version="catalog-writer-acl-v1",
+        export_checksum=draft.export_checksum,
+        source_refs=(source_ref,),
+    )
+
+    suffix = uuid4().hex[:12]
+    runtime, source_writer, catalog_writer = (
+        f"catalog_acl_{part}_{suffix}" for part in ("runtime", "source", "writer")
+    )
+    password = "synthetic-catalog-acl-only"
+    writer_engine = create_async_engine(
+        engine.url.set(username=catalog_writer, password=password), hide_parameters=True
+    )
+    writer_factory = async_sessionmaker(writer_engine, expire_on_commit=False)
+    environment = {
+        "CATALOG_WRITER_HOST": engine.url.host or "127.0.0.1",
+        "CATALOG_WRITER_PORT": str(engine.url.port),
+        "CATALOG_WRITER_NAME": engine.url.database,
+        "CATALOG_WRITER_USER": catalog_writer,
+        "CATALOG_WRITER_PASSWORD": password,
+        "CATALOG_SOURCE_ARTIFACT_READER_ROOT": str(tmp_path.resolve()),
+    }
+    try:
+        async with engine.begin() as connection:
+            for role in (runtime, source_writer, catalog_writer):
+                await connection.execute(text(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"))
+            await apply_catalog_role_policy(
+                connection,
+                owner=config.DB_USER,
+                runtime=runtime,
+                writer=catalog_writer,
+                source_writer=source_writer,
+            )
+
+        async with writer_engine.connect() as connection:
+            await validate_catalog_writer(connection)
+
+        # Each Product Source receipt query executes through the restricted role.
+        async with writer_factory() as session:
+            source_repository = SqlAlchemySourceSnapshotRepository(session)
+            snapshot = await source_repository.get_snapshot_receipt(snapshot_id=snapshot_id)
+            attempt = await source_repository.get_attempt_receipt(ingestion_run_id=ingestion_run_id)
+            artifacts = await source_repository.get_ingestion_artifact_receipts(ingestion_run_id=ingestion_run_id)
+            product, receipt = await read_product_input(
+                repository=source_repository,
+                artifact_reader=artifact_reader,
+                source_snapshot_id=str(snapshot_id),
+                ingestion_run_id=str(ingestion_run_id),
+                item_seq="200000001",
+            )
+        assert snapshot is not None
+        assert attempt is not None
+        assert len(artifacts) == 1
+        assert receipt.source_snapshot_id == snapshot_id
+        assert product.canonical_code == "200000001"
+
+        # The approval verifier and the full Writer path both use the same
+        # restricted credentials. The latter revalidates approval under its
+        # persistence transaction before acquiring existing lock markers.
+        verifier = SqlAlchemyCatalogApprovalVerifier(writer_factory)
+        approval = await verifier.verify(
+            catalog_version="catalog-writer-acl-v1",
+            export_checksum=draft.export_checksum,
+            source_refs=(source_ref,),
+        )
+        assert approval is not None
+        assert approval.verification_status is CatalogVerificationStatus.APPROVED
+        result = await _execute_catalog_build(
+            environment=environment,
+            source_snapshot_id=str(snapshot_id),
+            ingestion_run_id=str(ingestion_run_id),
+            item_seq="200000001",
+            catalog_version="catalog-writer-acl-v1",
+        )
+        assert result == {"execution_status": "ACTIVATION_CANDIDATE"}
+        async with factory() as session:
+            assert await session.scalar(select(func.count()).select_from(RagCatalogSet)) == 1
+    finally:
+        await writer_engine.dispose()
+        async with engine.begin() as connection:
+            for role in (runtime, source_writer, catalog_writer):
+                if await connection.scalar(text("SELECT 1 FROM pg_roles WHERE rolname=:role"), {"role": role}):
+                    await connection.execute(text(f'DROP OWNED BY "{role}"'))
+                    await connection.execute(text(f'DROP ROLE "{role}"'))
 
 
 # 1. Permission missing/disabled fail
