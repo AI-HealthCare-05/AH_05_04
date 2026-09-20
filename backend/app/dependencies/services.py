@@ -44,7 +44,12 @@ from app.services.auth import AuthService
 from app.services.chat import ChatService
 from app.services.chat_ai import ChatEngine
 from app.services.chat_ai import OpenAIResponsesClient as ChatOpenAIResponsesClient
-from app.services.chat_ai.prompt import PROMPT_VERSION as CHAT_PROMPT_VERSION
+from app.services.chat_ai.prompt import (
+    CLOSED_DEMO_EVIDENCE_PROMPT_VERSION,
+)
+from app.services.chat_ai.prompt import (
+    PROMPT_VERSION as CHAT_PROMPT_VERSION,
+)
 from app.services.chat_generator_engine import ChatGeneratorEngine
 from app.services.clova_ocr_engine import ClovaOcrEngine
 from app.services.email_delivery import EmailSender, NoopEmailSender, SmtpEmailSender, SmtpEmailSenderConfig
@@ -607,18 +612,26 @@ def get_chat_engine(
     closed_demo_retriever: Annotated[
         ClosedDemoRetrievalService | None,
         Depends(get_closed_demo_retrieval_service),
-    ],
+    ] = None,
 ) -> ChatEngine:
-    return ChatGeneratorEngine(
-        provider=ChatOpenAIResponsesClient(
-            client,
-            **_provider_observability_kwargs(
-                context,
-                provider=Provider.OPENAI,
-                operation=ProviderOperation.CHAT_GENERATION,
-                prompt_version=CHAT_PROMPT_VERSION,
-            ),
+    prompt_version = CLOSED_DEMO_EVIDENCE_PROMPT_VERSION if closed_demo_retriever is not None else CHAT_PROMPT_VERSION
+    provider = ChatOpenAIResponsesClient(
+        client,
+        **_provider_observability_kwargs(
+            context,
+            provider=Provider.OPENAI,
+            operation=ProviderOperation.CHAT_GENERATION,
+            prompt_version=prompt_version,
         ),
+    )
+    if closed_demo_retriever is None:
+        return ChatGeneratorEngine(
+            provider=provider,
+            model=config.OPENAI_MODEL,
+            timeout_seconds=config.OPENAI_TIMEOUT_SECONDS,
+        )
+    return ChatGeneratorEngine(
+        provider=provider,
         model=config.OPENAI_MODEL,
         timeout_seconds=config.OPENAI_TIMEOUT_SECONDS,
         closed_demo_retriever=closed_demo_retriever,

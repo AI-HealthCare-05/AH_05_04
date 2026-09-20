@@ -6,6 +6,7 @@ import pytest
 from openai import AsyncOpenAI
 from pydantic import SecretStr
 
+from app.core.closed_demo_retrieval import ClosedDemoRetrievalService
 from app.core.config import Env
 from app.core.provider_observability import ProviderCallContext
 from app.dependencies import services
@@ -159,3 +160,29 @@ def test_guide_and_chat_dependencies_inject_operation_descriptors(monkeypatch: p
     assert captured["chat_provider"]["context"] is context
     assert captured["chat_provider"]["descriptor"].operation == "CHAT_GENERATION"
     assert captured["chat_provider"]["descriptor"].prompt_version == "chat-prompt-v6"
+
+
+def test_closed_demo_chat_dependency_records_the_v7_prompt_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    context = _context()
+    client = cast(AsyncOpenAI, object())
+    retriever = cast(ClosedDemoRetrievalService, object())
+    provider = cast(ChatProvider, object())
+    engine = cast(ChatEngine, object())
+    captured: dict[str, Any] = {}
+
+    def construct_chat_provider(received_client: AsyncOpenAI, **kwargs: Any) -> ChatProvider:
+        captured["client"] = received_client
+        captured["descriptor"] = kwargs["descriptor"]
+        return provider
+
+    def construct_chat_engine(**kwargs: Any) -> ChatEngine:
+        captured["retriever"] = kwargs["closed_demo_retriever"]
+        return engine
+
+    monkeypatch.setattr(services, "ChatOpenAIResponsesClient", construct_chat_provider)
+    monkeypatch.setattr(services, "ChatGeneratorEngine", construct_chat_engine)
+
+    assert services.get_chat_engine(client, context, retriever) is engine
+    assert captured["client"] is client
+    assert captured["retriever"] is retriever
+    assert captured["descriptor"].prompt_version == "chat-prompt-v7-closed-demo-evidence"
