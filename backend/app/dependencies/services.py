@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Annotated, TypedDict
 
 from fastapi import Depends, Request
@@ -77,6 +78,14 @@ from app.services.track_c_revision_invalidation import TrackCCheckinRevisionInva
 from app.services.track_c_support import TrackCSupportService
 from app.services.user_consents import ConsentGateService, OcrConsentService
 from app.services.users import UserConsentService, UserManageService
+from rag_runtime.guide_query_binding import (
+    ApprovedGuideQueryHmacKey,
+    GuideQueryFingerprintDependencyError,
+    GuideQueryFingerprintProducer,
+    ProductionQueryBindingVerifier,
+    build_guide_query_fingerprint_producer,
+    build_production_query_binding_verifier,
+)
 
 
 def get_ocr_consent_service(
@@ -445,6 +454,57 @@ def get_guide_repository(
     ],
 ) -> GuideRepository:
     return GuideRepository(session)
+
+
+@dataclass(frozen=True, slots=True)
+class GuideQueryHmacKeyDependency:
+    """Composition-root carrier for the active Guide query HMAC key only."""
+
+    key_version: str
+    _key: ApprovedGuideQueryHmacKey | None
+
+    def active_key_version(self) -> str:
+        return self.key_version
+
+    def key_for_version(self, key_version: str) -> ApprovedGuideQueryHmacKey | None:
+        if key_version != self.key_version:
+            return None
+        if self._key is None:
+            raise GuideQueryFingerprintDependencyError()
+        return self._key
+
+
+def get_guide_query_hmac_key_dependency() -> GuideQueryHmacKeyDependency:
+    """Translate Backend Config to the B2 typed key authority without a fallback."""
+
+    secret = config.GUIDE_QUERY_HMAC_KEY
+    key: ApprovedGuideQueryHmacKey | None = None
+    if secret is not None:
+        try:
+            material = secret.get_secret_value()
+            if material.strip():
+                key = ApprovedGuideQueryHmacKey(material.encode())
+        except Exception:
+            key = None
+    return GuideQueryHmacKeyDependency(config.GUIDE_QUERY_HMAC_KEY_VERSION, key)
+
+
+def get_guide_query_fingerprint_producer(
+    key_dependency: Annotated[
+        GuideQueryHmacKeyDependency,
+        Depends(get_guide_query_hmac_key_dependency),
+    ],
+) -> GuideQueryFingerprintProducer:
+    return build_guide_query_fingerprint_producer(key_dependency)
+
+
+def get_guide_query_binding_verifier(
+    key_dependency: Annotated[
+        GuideQueryHmacKeyDependency,
+        Depends(get_guide_query_hmac_key_dependency),
+    ],
+) -> ProductionQueryBindingVerifier:
+    return build_production_query_binding_verifier(key_dependency)
 
 
 def get_guide_generator(

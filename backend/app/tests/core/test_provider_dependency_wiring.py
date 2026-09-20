@@ -4,6 +4,7 @@ from uuid import UUID
 
 import pytest
 from openai import AsyncOpenAI
+from pydantic import SecretStr
 
 from app.core.config import Env
 from app.core.provider_observability import ProviderCallContext
@@ -12,6 +13,15 @@ from app.services.chat_ai import ChatEngine, ChatProvider
 from app.services.guide_ai import GuideGenerator, GuideProvider
 from app.services.ocr_ai import OcrStructureProvider, OcrStructurer
 from app.services.ocr_engine import OcrEngine
+from rag_runtime.guide_query_binding import (
+    GuideQueryFingerprintDependencyError,
+    ProductionQueryBindingVerifier,
+    QueryBindingFailureReason,
+    QueryBindingVerificationFailure,
+    QueryBindingVerificationSuccess,
+    QueryFingerprint,
+    SensitiveText,
+)
 
 
 def _context() -> ProviderCallContext:
@@ -38,6 +48,51 @@ def test_provider_dependency_wiring_rejects_missing_context() -> None:
             operation=services.ProviderOperation.CHAT_GENERATION,
             prompt_version="chat-prompt-v2",
         )
+
+
+def test_guide_query_hmac_dependencies_assemble_the_same_typed_key_authority(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(services.config, "GUIDE_QUERY_HMAC_KEY", SecretStr("synthetic-guide-query-hmac-key"))
+    monkeypatch.setattr(services.config, "GUIDE_QUERY_HMAC_KEY_VERSION", "guide-query-hmac-key@1")
+
+    key_dependency = services.get_guide_query_hmac_key_dependency()
+    producer = services.get_guide_query_fingerprint_producer(key_dependency)
+    verifier = services.get_guide_query_binding_verifier(key_dependency)
+    fingerprint = producer.produce(SensitiveText("합성 복약 정보"))
+
+    result = verifier.verify(SensitiveText("합성 복약 정보"), fingerprint)
+
+    assert isinstance(result, QueryBindingVerificationSuccess)
+    assert result.query_fingerprint == fingerprint
+    assert isinstance(verifier, ProductionQueryBindingVerifier)
+    assert "synthetic-guide-query-hmac-key" not in repr(key_dependency)
+
+
+def test_guide_query_hmac_dependency_maps_missing_secret_to_verifier_dependency_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(services.config, "GUIDE_QUERY_HMAC_KEY", None)
+
+    dependency = services.get_guide_query_hmac_key_dependency()
+    result = services.get_guide_query_binding_verifier(dependency).verify(
+        SensitiveText("합성 복약 정보"),
+        QueryFingerprint("HMAC-SHA-256", "guide-query-hmac-key@1", "0" * 64),
+    )
+
+    assert result == QueryBindingVerificationFailure(QueryBindingFailureReason.DEPENDENCY_ERROR)
+
+
+def test_guide_query_hmac_dependency_rejects_blank_secret_without_echoing_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "   "
+    monkeypatch.setattr(services.config, "GUIDE_QUERY_HMAC_KEY", SecretStr(secret))
+
+    dependency = services.get_guide_query_hmac_key_dependency()
+
+    with pytest.raises(GuideQueryFingerprintDependencyError) as raised:
+        services.get_guide_query_fingerprint_producer(dependency).produce(SensitiveText("합성 복약 정보"))
+
+    assert secret not in str(raised.value)
 
 
 def test_ocr_dependencies_inject_distinct_clova_and_openai_descriptors(monkeypatch: pytest.MonkeyPatch) -> None:

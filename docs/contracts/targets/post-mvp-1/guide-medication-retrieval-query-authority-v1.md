@@ -2,10 +2,10 @@
 
 | Item | Value |
 | --- | --- |
-| Status | Approved Target · query-text authority frozen · fingerprint authority blocker frozen |
+| Status | Approved Target · query-text and B2 fingerprint authority frozen |
 | Version | `guide-medication-retrieval-query-v1` |
 | Issue | #180 B2 |
-| Result | `GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING` |
+| Result | `GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_READY` |
 
 ## 1. Purpose and boundary
 
@@ -69,27 +69,25 @@ MUST NOT append “복약 안내”, “복용법”, “주의사항”, “생
 The Worker MUST NOT read the current product catalog for this projection.
 The projection MUST NOT append an intent suffix.
 
-## 4. Fingerprint and binding are distinct blocked authorities
+## 4. Fingerprint and binding authority
 
-The text projection does not establish fingerprint computation authority
-(exact algorithm, key_version, secret owner/injection, and digest format) or
-query-binding verification authority. The B2-2 audit is frozen in
-`guide-retrieval-query-fingerprint-authority-v1.md`:
-`PD-315-20260908` approves only a generic versioned HMAC preimage, not an exact
-production algorithm identifier. `QueryBindingVerifierPort` remains a protocol.
-No production implementation is present.
+The B2 authority is implemented in
+`guide-retrieval-query-fingerprint-authority-v1.md`: `HMAC-SHA-256`, exact
+`query-hmac@1` UTF-8 preimage bytes, 64-character lowercase hexadecimal digest,
+and `guide-query-hmac-key@<positive-integer>` (initially
+`guide-query-hmac-key@1`). `GuideQueryFingerprintProducer` and the existing
+`QueryBindingVerifierPort` result boundary consume the same typed Backend
+composition-root provider; the raw key is not part of this query projection.
 
-Repository uses of `sha256` / `v1` are synthetic/evaluation fixtures, and
-`HMAC-SHA-256` / `query-hmac@1` is design-only material. Production MUST NOT promote `sha256` / `v1` synthetic fixtures.
-It MUST NOT promote either as Guide fingerprint policy. Until all approved computation and
-verifier authority exists, no B2 Python query module is implemented.
+Repository uses of `sha256` / `v1` remain synthetic/evaluation fixtures and
+MUST NOT become an alternate Guide fingerprint policy.
 
 ## 5. Current state and non-scope
 
-The query-text portion is frozen, but the B1 Sync carrier has not been
-implemented and the fingerprint/binding authority remains absent. The exact B2
-state is `GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING`,
-not a production-ready query capability.
+The query-text portion and B2 fingerprint/binding authority are frozen, but the
+B1 Sync carrier has not been implemented. The exact B2 state is
+`GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_READY`; this does not itself make
+the retrieval callable ready.
 
 Excluded: Backend DTO/API or ORM access, database migration, current/latest
 lookup, query heuristics, retrieval/RRF/Evidence Gate changes, LangGraph, B3
