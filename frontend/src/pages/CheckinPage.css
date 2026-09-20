@@ -1,0 +1,1079 @@
+/* CHECKIN-01 (Figma 1482:77 · PB-01~05) 구조용 스타일.
+   pixel-perfect 조정은 이후 수동 QA에서 진행한다. */
+.checkin-page {
+  --ds-action: #607d8b;
+  --ds-action-pressed: #526b78;
+  --ds-line: #dee5f0;
+}
+
+.checkin {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-bottom: calc(24px + var(--ds-safe-bottom, 0px));
+}
+
+
+
+.checkin__intro {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.checkin__intro h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 32px;
+  letter-spacing: -.03em;
+  overflow-wrap: break-word;
+  word-break: keep-all;
+}
+
+.checkin__intro h1:focus-visible {
+  outline: 3px solid var(--ds-focus, #2f6f9f);
+  outline-offset: 2px;
+}
+
+.checkin__intro p {
+  margin: 0;
+  color: #55687a;
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.checkin__state,
+.checkin__guide,
+.checkin__error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checkin__state h2 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 24px;
+}
+
+.checkin__error {
+  border-color: #e0a36d;
+  background: #fff7f0;
+}
+
+.checkin__groups,
+.checkin__medications,
+.checkin__complete {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.checkin__groups h2,
+.checkin__medications h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 24px;
+}
+
+.checkin__groups-hint {
+  margin: 0;
+  color: #78909c;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+/* PB-01 시간 그룹 카드 */
+.checkin-group-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.checkin-group-card {
+  width: 100%;
+  min-height: 132px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px 12px;
+  border: 1px solid var(--ds-line);
+  border-radius: 16px;
+  background: #fff;
+  color: var(--ds-text, #252931);
+  font: inherit;
+  text-align: left;
+}
+
+.checkin-group-card__ordinal {
+  color: #78909c;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.checkin-group-card__time {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 24px;
+}
+
+.checkin-group-card__count {
+  margin-top: auto;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.checkin-group-card__state {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.checkin-group-card[data-state='COMPLETE'] .checkin-group-card__state {
+  color: #1d9b55;
+}
+
+.checkin-group-card[data-state='ATTENTION'] .checkin-group-card__state {
+  color: #b54e0c;
+}
+
+.checkin-group-card[data-state='UPCOMING'] .checkin-group-card__state {
+  color: #78909c;
+}
+
+/* 링크 행 */
+.checkin__link-row {
+  width: 100%;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--ds-line);
+  border-radius: 16px;
+  background: #fff;
+  color: var(--ds-text, #252931);
+  font: inherit;
+  text-align: left;
+}
+
+.checkin__link-row--stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.checkin__link-title {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.checkin__link-body {
+  color: #78909c;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+/* PB-02/03 약 카드 */
+.checkin-medication-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid var(--ds-line);
+  border-radius: 18px;
+  background: #fff;
+}
+
+.checkin-medication-card h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 24px;
+  overflow-wrap: anywhere;
+}
+
+.checkin-medication-card p {
+  margin: 0;
+  color: #78909c;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.checkin-medication-card__choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.checkin-choice {
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 16px;
+  border: 1px solid var(--ds-line);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--ds-text, #252931);
+  font: inherit;
+  text-align: left;
+}
+
+.checkin-choice[aria-pressed='true'] {
+  border-color: var(--ds-action);
+  background: #eef3f7;
+  color: var(--ds-action);
+  font-weight: 700;
+}
+
+.checkin-choice:disabled {
+  background: #f4f6fa;
+  color: #9aa5b4;
+  cursor: not-allowed;
+}
+
+.checkin-medication-card__saved {
+  color: #1d9b55;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.checkin__readonly-note {
+  margin: 0;
+  color: #8a97a8;
+  font-size: 14px;
+  line-height: 20px;
+  word-break: keep-all;
+}
+
+
+/* PB-05 완료 */
+.checkin__complete-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checkin__complete-time {
+  color: #78909c;
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.checkin__complete-card strong {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 32px;
+}
+
+/* Bottom Navigation(88px)과 돌출된 도지 영역이 CHECKIN CTA를 덮지 않도록
+   실제 scroll content 하단 공간을 확보한다. */
+.checkin-page .app-scroll {
+  padding-bottom: calc(128px + var(--ds-safe-bottom, 0px));
+  scroll-padding-bottom: calc(128px + var(--ds-safe-bottom, 0px));
+}
+
+.checkin__submit {
+  scroll-margin-bottom: calc(24px + var(--ds-safe-bottom, 0px));
+}
+
+/* ------------------------------------------------------------------
+ * CHECKIN-PB-01 · Figma 2096:2 visual sync
+ * Header / Bottom Navigation은 공통 Shell 유지
+ * ------------------------------------------------------------------ */
+
+.checkin--summary {
+  gap: 0;
+  padding-top: 24px;
+}
+
+/* Figma y=96 title / y=132 date */
+.checkin--summary .checkin__intro {
+  gap: 1px;
+}
+
+.checkin--summary .checkin__intro h1 {
+  margin: 0;
+  color: #1f2937;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 35.1px;
+  letter-spacing: 0;
+}
+
+.checkin--summary .checkin__intro p {
+  margin: 0;
+  color: #6b7c93;
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 24px;
+}
+
+/* Figma section start y=180 */
+.checkin--summary .checkin__groups {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 24px;
+}
+
+.checkin--summary .checkin__groups h2 {
+  margin: 0;
+  color: #1f2937;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 24px;
+  white-space: nowrap;
+}
+
+.checkin--summary .checkin__groups-hint {
+  position: absolute;
+  top: 4px;
+  left: auto;
+  right: 0;
+  margin: 0;
+  color: #6b7c93;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+/* Figma cards: x=20 / 144 / 268, width=102, gap=22, y=214 */
+.checkin--summary .checkin-group-list {
+  display: grid;
+  grid-template-columns: repeat(3, 102px);
+  justify-content: space-between;
+  gap: 0;
+  width: 100%;
+  max-width: 350px;
+  height: 220px;
+  margin: 10px 0 0;
+  padding: 0;
+}
+
+.checkin--summary .checkin-group-card {
+  position: relative;
+  display: block;
+  width: 102px;
+  min-width: 102px;
+  height: 220px;
+  min-height: 220px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 18px;
+  color: #1f2937;
+  text-align: center;
+}
+
+/* COMPLETE · Figma #F0FCF6 */
+.checkin--summary .checkin-group-card[data-state='COMPLETE'] {
+  border: 0;
+  background: #f0fcf6;
+}
+
+/* ATTENTION · Figma #ECEFF1 + #607D8B 2px */
+.checkin--summary .checkin-group-card[data-state='ATTENTION'] {
+  border: 2px solid #607d8b;
+  background: #eceff1;
+}
+
+/* UPCOMING · Figma #F9FBFE */
+.checkin--summary .checkin-group-card[data-state='UPCOMING'] {
+  border: 1px solid #d7e0ea;
+  background: #f9fbfe;
+}
+
+.checkin--summary .checkin-group-card__ordinal {
+  position: absolute;
+  top: 16px;
+  left: 8px;
+  width: 86px;
+  color: #1f2937;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 24px;
+  text-align: center;
+}
+
+.checkin--summary .checkin-group-card__time {
+  position: absolute;
+  top: 42px;
+  left: 8px;
+  width: 86px;
+  color: #6b7c93;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 24px;
+  text-align: center;
+}
+
+.checkin--summary
+  .checkin-group-card[data-state='ATTENTION']
+  .checkin-group-card__time {
+  color: #607d8b;
+}
+
+/* Figma capsule icon container: 62 × 62 at y=290 */
+.checkin--summary .checkin-group-card__medication-icon {
+  position: absolute;
+  top: 76px;
+  left: 20px;
+  width: 62px;
+  height: 62px;
+  border: 1px solid #d7e0ea;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.checkin--summary
+  .checkin-group-card[data-state='ATTENTION']
+  .checkin-group-card__medication-icon {
+  border-color: #eaf3ff;
+}
+
+/* COMPLETE check */
+.checkin--summary .checkin-group-card__check {
+  position: absolute;
+  top: 145px;
+  left: 38px;
+  width: 26px;
+  height: 24px;
+  color: #19a66a;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 24px;
+  text-align: center;
+}
+
+.checkin--summary .checkin-group-card__count {
+  position: absolute;
+  top: 166px;
+  left: 8px;
+  width: 86px;
+  margin: 0;
+  color: #667085;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 24px;
+  text-align: center;
+}
+
+.checkin--summary .checkin-group-card__state {
+  position: absolute;
+  top: 192px;
+  left: 8px;
+  width: 86px;
+  color: #6b7c93;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 22px;
+  text-align: center;
+}
+
+.checkin--summary
+  .checkin-group-card[data-state='ATTENTION']
+  .checkin-group-card__count,
+.checkin--summary
+  .checkin-group-card[data-state='ATTENTION']
+  .checkin-group-card__state {
+  color: #171a21;
+}
+
+.checkin--summary
+  .checkin-group-card[data-state='COMPLETE']
+  .checkin-group-card__state {
+  color: #667085;
+}
+
+/* Figma 전체 일정 보기: y=456, 350 × 72 */
+.checkin--summary
+  .checkin__link-row:not(.checkin__link-row--stacked) {
+  width: 100%;
+  min-height: 72px;
+  height: 72px;
+  margin-top: 22px;
+  padding: 0 18px;
+  border: 1px solid #d7e0ea;
+  border-radius: 14px;
+  background: #fff;
+  color: #1f2937;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+/* Figma 복약 리포트: y=546, 350 × 112 */
+.checkin--summary .checkin__link-row--stacked {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 112px;
+  height: 112px;
+  margin-top: 18px;
+  padding: 0;
+  border: 1px solid #d7e0ea;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.checkin--summary .checkin__link-title {
+  position: absolute;
+  top: 16px;
+  left: 17px;
+  color: #1f2937;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.checkin--summary .checkin__link-body {
+  position: absolute;
+  top: 46px;
+  left: 17px;
+  color: #1f2937;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 27px;
+}
+
+.checkin--summary .checkin__link-meta {
+  position: absolute;
+  top: 76px;
+  left: 17px;
+  color: #6b7c93;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 24px;
+}
+
+/* CHECKIN current source · Figma sub-screen header */
+.checkin-page .app-topbar {
+  min-height: 72px;
+  height: 72px;
+  padding: 0 18px;
+  gap: 12px;
+}
+
+.checkin-page .app-topbar--with-back {
+  padding-left: 18px;
+}
+
+.checkin-page .app-topbar--with-back .icon-button {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  margin-right: -2px;
+  border-radius: 0;
+}
+
+.checkin-page .dosey-mascot--header {
+  width: 44px;
+  height: 42.84px;
+}
+
+.checkin-page .dosey-mascot--header img {
+  width: 321.432px;
+  height: 262.379px;
+  left: -69.474px;
+  top: -198.695px;
+}
+
+.checkin-page .app-topbar h1 {
+  margin: 0;
+  color: #151a23;
+  font-size: 25px;
+  font-weight: 700;
+  line-height: normal;
+}
+
+/* ------------------------------------------------------------------
+ * CHECKIN current source · Bottom Navigation
+ * Figma 2096:12
+ * ------------------------------------------------------------------ */
+
+.checkin-page .bottom-nav {
+  padding-top: 0;
+  border-top-color: #cfd8dc;
+  background: #fff;
+  box-shadow: 0 -4px 14px rgb(0 0 0 / 6%);
+}
+
+.checkin-page .bottom-nav button {
+  min-height: 64px;
+  justify-content: flex-start;
+  gap: 0;
+  padding: 7px 0 0;
+  color: #78909c;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.checkin-page .bottom-nav__icon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+}
+
+.checkin-page .bottom-nav button > span:last-child {
+  margin-top: 11px;
+  line-height: 20px;
+}
+
+.checkin-page .bottom-nav button[aria-current='page'] {
+  color: #607d8b;
+  font-weight: 700;
+}
+
+/* Figma center Doji: ellipse 34×34 at y=3 */
+.checkin-page .bottom-nav button[aria-label='도지'] {
+  padding-top: 3px;
+}
+
+.checkin-page .bottom-nav button[aria-label='도지'] > span:last-child {
+  margin-top: 3px;
+  font-weight: 600;
+}
+
+.checkin-page .bottom-nav__doji {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  margin: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 3px 12px rgb(23 26 33 / 10%);
+}
+
+.checkin-page .bottom-nav__doji .dosey-mascot--nav {
+  transform: scale(0.58);
+  transform-origin: center;
+}
+
+.checkin-page .bottom-nav__doji,
+.checkin-page .bottom-nav__doji * {
+  pointer-events: none;
+}
+
+/* CHECKIN PB-01 · narrow mobile adaptation
+   390px Figma source는 그대로 유지하고 320px에서만 overflow를 방지한다. */
+@media (max-width: 374px) {
+  .checkin--summary .checkin__groups-hint {
+    position: static;
+    margin-top: 4px;
+    white-space: normal;
+  }
+
+  .checkin--summary .checkin-group-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+    margin-top: 10px;
+  }
+
+  .checkin--summary .checkin-group-card {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .checkin--summary .checkin-group-card__ordinal,
+  .checkin--summary .checkin-group-card__time,
+  .checkin--summary .checkin-group-card__count,
+  .checkin--summary .checkin-group-card__state {
+    left: 50%;
+    width: calc(100% - 8px);
+    transform: translateX(-50%);
+  }
+
+  .checkin--summary .checkin-group-card__medication-icon {
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  .checkin--summary .checkin-group-card__check {
+    left: 50%;
+    transform: translateX(-50%);
+  }
+}
+
+.checkin--summary .checkin-group-card__medication-icon {
+  display: grid;
+  place-items: center;
+}
+
+.checkin--summary .checkin-group-card__medication-icon img {
+  display: block;
+  width: 32px;
+  height: 32px;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------
+ * CHECKIN-PB-02 / PB-03 · Figma 2096:93 / 2096:229
+ * ------------------------------------------------------------------ */
+
+.checkin--detail {
+  gap: 0;
+  padding-top: 24px;
+}
+
+/* title y=96 / subtitle y=140 */
+.checkin--detail .checkin__intro {
+  gap: 4px;
+}
+
+.checkin--detail .checkin__intro h1 {
+  margin: 0;
+  color: #1f2937;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 40px;
+  letter-spacing: 0;
+}
+
+.checkin--detail .checkin__intro p {
+  margin: 0;
+  color: #6b7c93;
+  font-size: 15px;
+  line-height: 24px;
+}
+
+/* 안내 카드 y=182 · 350×76 */
+.checkin--detail .checkin__guide {
+  min-height: 76px;
+  height: 76px;
+  gap: 2px;
+  margin-top: 18px;
+  padding: 14px 18px;
+  border: 0;
+  border-radius: 16px;
+  background: #fff9e8;
+}
+
+.checkin--detail .checkin__guide strong {
+  color: #1f2937;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.checkin--detail .checkin__guide span {
+  color: #6b7c93;
+  font-size: 14px;
+  line-height: 24px;
+}
+
+/* section heading y=286 */
+.checkin--detail .checkin__medications {
+  gap: 14px;
+  margin-top: 24px;
+}
+
+.checkin--detail .checkin__medications h2 {
+  margin: 0 0 8px;
+  color: #1f2937;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+/* 약 카드 350×164 */
+.checkin--detail .checkin-medication-card {
+  min-height: 164px;
+  height: 164px;
+  gap: 0;
+  padding: 18px;
+  border: 1px solid #d7e0ea;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.checkin--detail .checkin-medication-card__summary {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  column-gap: 14px;
+  align-items: start;
+  min-height: 58px;
+}
+
+.checkin--detail .checkin-medication-card__icon {
+  width: 36px;
+  height: 36px;
+}
+
+.checkin--detail .checkin-medication-card__icon img {
+  display: block;
+  width: 36px;
+  height: 36px;
+}
+
+.checkin--detail .checkin-medication-card__copy {
+  min-width: 0;
+}
+
+.checkin--detail .checkin-medication-card h3 {
+  margin: 0;
+  color: #1f2937;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 24px;
+}
+
+.checkin--detail .checkin-medication-card p {
+  margin: 4px 0 0;
+  color: #6b7c93;
+  font-size: 14px;
+  line-height: 24px;
+}
+
+/* choices */
+.checkin--detail .checkin-medication-card__choices {
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.checkin--detail .checkin-choice {
+  position: relative;
+  width: 100%;
+  padding: 0 38px 0 16px;
+  border: 1px solid #d7e0ea;
+  border-radius: 10px;
+  background: #fff;
+  color: #1e2932;
+  text-align: center;
+}
+
+.checkin--detail .checkin-choice:first-child {
+  min-height: 36px;
+  height: 36px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.checkin--detail .checkin-choice:last-child {
+  min-height: 28px;
+  height: 28px;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 24px;
+}
+
+.checkin--detail .checkin-choice[aria-pressed='true'] {
+  border-color: #607d8b;
+  background: #eceff1;
+}
+
+.checkin--detail .checkin-choice[aria-pressed='true']::after {
+  content: '✓';
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  color: #607d8b;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* 저장 안내 card y=682 · 350×72 */
+
+
+
+/* Figma bottom helper y≈968 */
+.checkin--detail .checkin__bottom-helper {
+  margin: auto 0 16px;
+  color: #67798a;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20.3px;
+  text-align: center;
+}
+
+/* CTA y≈1008 · 350×56 */
+.checkin--detail .checkin__submit {
+  width: 100%;
+  min-height: 56px;
+  height: 56px;
+  margin-bottom: 28px;
+  border-radius: 14px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.checkin--detail .checkin__submit:disabled {
+  background: #d8dee8;
+  color: #fff;
+  opacity: 1;
+}
+
+/* CHECKIN-PB-02/03 · 복용 여부 선택 버튼 동일 크기 */
+.checkin--detail .checkin-choice:first-child,
+.checkin--detail .checkin-choice:last-child {
+  min-height: 36px;
+  height: 36px;
+  font-size: 15px;
+  line-height: 24px;
+}
+
+/* CHECKIN 제목은 화면 전환 후 접근성 안내를 위해 programmatic focus를 유지하되,
+   비대화형 heading 자체에는 focus ring을 표시하지 않는다. */
+.checkin-page .checkin__intro h1:focus,
+.checkin-page .checkin__intro h1:focus-visible {
+  outline: none;
+}
+
+/* CHECKIN PB-02/03 · 동일 높이 선택 버튼에 맞춰 약 카드 여유 확보 */
+.checkin--detail .checkin-medication-card {
+  min-height: 180px;
+  height: 180px;
+}
+
+.checkin--detail .checkin-medication-card__choices {
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* CHECKIN-PB-04 · save error */
+.checkin--detail .checkin__error {
+  border: 1px solid #da5c49;
+  border-radius: 14px;
+  background: transparent;
+}
+
+.checkin--detail .checkin__error strong,
+.checkin--detail .checkin__error p {
+  color: #ac3223;
+}
+
+.checkin--detail .checkin__error p {
+  white-space: pre-line;
+}
+
+/* ------------------------------------------------------------------
+ * CHECKIN-PB-05 · 저장 완료 feedback
+ * Figma 2096:166
+ * ------------------------------------------------------------------ */
+
+.checkin-page .checkin-success-overlay {
+  position: absolute;
+  z-index: 20;
+  top: 72px;
+  right: 0;
+  bottom: calc(88px + var(--ds-safe-bottom, 0px));
+  left: 0;
+  background: rgb(25 35 51 / 46%);
+}
+
+.checkin-page .checkin-success-dialog {
+  position: absolute;
+  top: 238px;
+  left: 50%;
+  width: min(310px, calc(100% - 80px));
+  height: 360px;
+  transform: translateX(-50%);
+  border-radius: 24px;
+  background: #f0fcf6;
+}
+
+.checkin-success-dialog__check {
+  position: absolute;
+  top: 38px;
+  left: 50%;
+  width: 76px;
+  height: 76px;
+  display: grid;
+  place-items: center;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: #fff;
+  color: #19a66a;
+  font-size: 46px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.checkin-success-dialog h2 {
+  position: absolute;
+  top: 188px;
+  left: 30px;
+  width: 250px;
+  margin: 0;
+  color: #414a59;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.checkin-success-dialog__confirm {
+  position: absolute;
+  top: 290px;
+  left: 30px;
+  width: 250px;
+  min-height: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: #607d8b;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+/* PB-05 underlying completion layout */
+.checkin--detail .checkin__complete {
+  gap: 0;
+}
+
+.checkin--detail .checkin__complete-card {
+  min-height: 160px;
+  height: 160px;
+  margin-top: 24px;
+  padding: 18px;
+  border: 1px solid #d7e0ea;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.checkin--detail .checkin__complete-time {
+  color: #6b7c93;
+  font-size: 18px;
+  line-height: 24px;
+}
+
+.checkin--detail .checkin__complete-card strong {
+  margin-top: 8px;
+  color: #19a66a;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 34px;
+}
+
+.checkin--detail .checkin__complete-card > span:last-child {
+  margin-top: 4px;
+  color: #6b7c93;
+  font-size: 15px;
+  line-height: 28px;
+}
+
+.checkin--detail
+  .checkin__complete
+  > .checkin__link-row {
+  min-height: 72px;
+  height: 72px;
+  margin-top: 20px;
+  padding: 0 18px;
+  border-color: #d7e0ea;
+  border-radius: 14px;
+  font-size: 17px;
+  font-weight: 600;
+}
