@@ -16,7 +16,7 @@ import ChatPage from '../pages/ChatPage'
 import StartPage from '../pages/StartPage'
 import ProfilePage from '../pages/ProfilePage'
 import MenuPage from '../pages/MenuPage'
-import { SchedulePage } from '../pages/SchedulePage'
+import { ScheduleOccurrencePage, SchedulePage } from '../pages/SchedulePage'
 import { MedicationRecordPage } from '../pages/MedicationRecordPage'
 import { CheckinDetailPage, CheckinSummaryPage } from '../pages/CheckinPage'
 import NotificationsPage from '../pages/NotificationsPage'
@@ -182,9 +182,10 @@ export function AppRoutes({
       />
       <Route
         path="/schedule/occurrences/:occurrenceId"
-        element={<ProtectedRoute><CheckinDetailPage /></ProtectedRoute>}
+        element={<ProtectedRoute><ScheduleOccurrencePage /></ProtectedRoute>}
       />
       <Route path="/schedule/checkin" element={<ProtectedRoute><CheckinSummaryPage /></ProtectedRoute>} />
+      <Route path="/schedule/checkin/:occurrenceId" element={<ProtectedRoute><CheckinDetailPage /></ProtectedRoute>} />
       <Route path="/records" element={<ProtectedRoute><MedicationRecordPage /></ProtectedRoute>} />
       <Route path="/menu" element={<ProtectedRoute><MenuPage /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />

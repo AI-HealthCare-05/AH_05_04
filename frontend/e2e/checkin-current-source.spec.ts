@@ -39,6 +39,7 @@ async function installCheckinApi(page: import('@playwright/test').Page) {
     const url = new URL(request.url())
     const path = url.pathname
 
+
     if (request.method() === 'GET' && path === '/api/v1/users/me') {
       return json(route, {
         id: ids.user,
@@ -139,9 +140,9 @@ async function installCheckinApi(page: import('@playwright/test').Page) {
       })
     }
 
-    if (request.method() === 'GET') {
-      return json(route, { detail: 'synthetic visual state' }, 404)
-    }
+   if (request.method() === 'GET') {
+     throw new Error(`UNEXPECTED GET: ${path}${url.search}`)
+   }
 
     await route.abort()
   })
@@ -161,7 +162,7 @@ test.beforeEach(async ({ page }) => {
 
 test('CHECKIN-01 · 같은 시간 약 2개를 모두 선택해야 기록하기가 활성화된다', async ({ page }) => {
   await installCheckinApi(page)
-  await page.goto(`/schedule/occurrences/${OCC_A}?date=${DATE}`)
+  await page.goto(`/schedule/checkin/${OCC_A}?date=${DATE}`)
 
   await expect(
     page.getByRole('heading', { name: '13:00 약을 확인해 주세요' }),
@@ -182,7 +183,7 @@ test('CHECKIN-01 · 같은 시간 약 2개를 모두 선택해야 기록하기�
 
 test('CHECKIN-01 · 혼합 선택을 occurrence별로 저장하고 완료를 표시한다', async ({ page }) => {
   const state = await installCheckinApi(page)
-  await page.goto(`/schedule/occurrences/${OCC_A}?date=${DATE}`)
+  await page.goto(`/schedule/checkin/${OCC_A}?date=${DATE}`)
 
   await page.getByRole('button', { name: '복용했어요' }).first().click()
   await page.getByRole('button', { name: '복용하지 않았어요' }).nth(1).click()
@@ -212,7 +213,7 @@ test('CHECKIN-01 · 저장 실패 시 선택을 유지하고 다시 시도할 �
   const state = await installCheckinApi(page)
   state.failPuts = true
 
-  await page.goto(`/schedule/occurrences/${OCC_A}?date=${DATE}`)
+  await page.goto(`/schedule/checkin/${OCC_A}?date=${DATE}`)
   await page.getByRole('button', { name: '복용했어요' }).first().click()
   await page.getByRole('button', { name: '복용했어요' }).nth(1).click()
   await page.getByRole('button', { name: '기록하기' }).click()
@@ -402,7 +403,7 @@ test('CHECKIN-01 · PB-02 Figma visual QA 390x1180', async ({ page }) => {
   await installCheckinApi(page)
 
   await page.setViewportSize({ width: 390, height: 1180 })
-  await page.goto(`/schedule/occurrences/${OCC_A}?date=${DATE}`)
+  await page.goto(`/schedule/checkin/${OCC_A}?date=${DATE}`)
 
   await expect(
     page.getByRole('heading', { name: '13:00 약을 확인해 주세요' }),
@@ -422,7 +423,7 @@ test('CHECKIN-01 · PB-03 Figma visual QA 390x1180', async ({ page }) => {
   await installCheckinApi(page)
 
   await page.setViewportSize({ width: 390, height: 1180 })
-  await page.goto(`/schedule/occurrences/${OCC_A}?date=${DATE}`)
+  await page.goto(`/schedule/checkin/${OCC_A}?date=${DATE}`)
 
   await page.getByRole('button', { name: '복용했어요' }).first().click()
   await page
@@ -444,7 +445,7 @@ test('CHECKIN-01 · PB-04 Figma visual QA 390x1180', async ({ page }) => {
   const state = await installCheckinApi(page)
 
   await page.setViewportSize({ width: 390, height: 1180 })
-  await page.goto(`/schedule/occurrences/${OCC_A}?date=${DATE}`)
+  await page.goto(`/schedule/checkin/${OCC_A}?date=${DATE}`)
 
   await page.getByRole('button', { name: '복용했어요' }).first().click()
   await page.getByRole('button', { name: '복용했어요' }).nth(1).click()
@@ -466,7 +467,7 @@ test('CHECKIN-01 · PB-05 Figma visual QA 390x1180', async ({ page }) => {
   await installCheckinApi(page)
 
   await page.setViewportSize({ width: 390, height: 1180 })
-  await page.goto(`/schedule/occurrences/${OCC_A}?date=${DATE}`)
+  await page.goto(`/schedule/checkin/${OCC_A}?date=${DATE}`)
 
   await page.getByRole('button', { name: '복용했어요' }).first().click()
   await page

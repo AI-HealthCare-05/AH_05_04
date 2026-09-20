@@ -276,7 +276,7 @@ export function CheckinSummaryPage({
                             data-state={progress.state}
                             onClick={() =>
                               navigate(
-                                `/schedule/occurrences/${target.occurrence_id}?date=${encodeURIComponent(date)}`,
+                                `/schedule/checkin/${target.occurrence_id}?date=${encodeURIComponent(date)}`,
                               )
                             }
                           >
@@ -396,6 +396,7 @@ export function CheckinDetailPage({
   const attemptsRef = useRef<
     Record<string, LogicalMutationAttempt<'CHECKIN_PUT', PutMedicationCheckinInput>>
   >({})
+  const conflictSavedCheckinsRef = useRef<Record<string, MedicationCheckinSnapshot>>({})
   const now = useNow()
 
   const backRoute = isValidLocalDate(date)
@@ -470,7 +471,16 @@ export function CheckinDetailPage({
             }),
           ),
         )
-        setSavedCheckins({})
+        const preservedSuccesses: Record<string, MedicationCheckinSnapshot> =
+          Object.fromEntries(
+            matched.occurrences.flatMap((occurrence) => {
+              const saved =
+                conflictSavedCheckinsRef.current[occurrence.occurrence_id]
+              return saved ? [[occurrence.occurrence_id, saved]] : []
+            }),
+          )
+        setSavedCheckins(preservedSuccesses)
+        conflictSavedCheckinsRef.current = {}
         setIsComplete(false)
         setShowSuccessFeedback(false)
         setSaveFailure(null)
@@ -606,6 +616,8 @@ export function CheckinDetailPage({
     if (failure) {
       setSaveFailure(failure)
       if (failure === 'CONFLICT') {
+        // 이미 성공한 occurrence는 reload 뒤에도 다시 PUT하지 않는다.
+        conflictSavedCheckinsRef.current = succeeded
         // 최신 상태를 다시 조회한다. 이전 선택을 자동 재제출하지 않는다.
         attemptsRef.current = {}
         setSaveMessage(

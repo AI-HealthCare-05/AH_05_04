@@ -153,10 +153,10 @@ function renderDetail(
   occurrenceId = OCC_A,
 ) {
   return render(
-    <MemoryRouter initialEntries={[`/schedule/occurrences/${occurrenceId}?date=${DATE}`]}>
+    <MemoryRouter initialEntries={[`/schedule/checkin/${occurrenceId}?date=${DATE}`]}>
       <Routes>
         <Route
-          path="/schedule/occurrences/:occurrenceId"
+          path="/schedule/checkin/:occurrenceId"
           element={<><CheckinDetailPage services={services} /><LocationProbe /></>}
         />
         <Route path="/schedule" element={<><div>일정 화면</div><LocationProbe /></>} />
@@ -175,7 +175,7 @@ function renderSummary(services: CheckinPageServices) {
           element={<><CheckinSummaryPage services={services} /><LocationProbe /></>}
         />
         <Route
-          path="/schedule/occurrences/:occurrenceId"
+          path="/schedule/checkin/:occurrenceId"
           element={<><div>상세 화면</div><LocationProbe /></>}
         />
         <Route path="/schedule" element={<><div>일정 화면</div><LocationProbe /></>} />
@@ -512,6 +512,63 @@ describe('CHECKIN-01 PB-04 저장 실패와 재시도', () => {
     // 자동 재제출 없음
     expect(services.putMedicationCheckin).toHaveBeenCalledTimes(1)
     expect(screen.queryByText(/기록 완료/)).toBeNull()
+  })
+
+  it('부분 성공 뒤 conflict reload에서도 성공 occurrence를 다시 PUT하지 않는다', async () => {
+    const refreshedDay = makeDay(
+      defaultOccurrences().map((occurrence) => {
+        if (occurrence.occurrence_id === OCC_A) {
+          return {
+            ...occurrence,
+            checkin: makeCheckinResponse(OCC_A, 'TAKEN', 1).data as MedicationCheckinSnapshot,
+          }
+        }
+        if (occurrence.occurrence_id === OCC_B) {
+          return {
+            ...occurrence,
+            checkin: makeCheckinResponse(OCC_B, 'NOT_TAKEN', 7).data as MedicationCheckinSnapshot,
+          }
+        }
+        return occurrence
+      }),
+    )
+
+    const getMedicationDay = vi
+      .fn()
+      .mockResolvedValueOnce(makeDay(defaultOccurrences()))
+      .mockResolvedValueOnce(refreshedDay)
+
+    const putMedicationCheckin = vi
+      .fn()
+      .mockResolvedValueOnce(makeCheckinResponse(OCC_A, 'TAKEN', 1))
+      .mockRejectedValueOnce(
+        new ApiError(409, 'conflict', 'CHECKIN_REVISION_CONFLICT'),
+      )
+      .mockImplementationOnce(
+        async (id: string, input: { status: 'TAKEN' | 'NOT_TAKEN' }) =>
+          makeCheckinResponse(id, input.status, 8),
+      )
+
+    renderDetail(makeServices({ getMedicationDay, putMedicationCheckin }))
+    await selectBoth()
+    fireEvent.click(screen.getByRole('button', { name: '기록하기' }))
+
+    await waitFor(() => expect(getMedicationDay).toHaveBeenCalledTimes(2))
+    expect(putMedicationCheckin).toHaveBeenCalledTimes(2)
+
+    fireEvent.click(screen.getAllByRole('button', { name: '복용했어요' })[1])
+    fireEvent.click(screen.getByRole('button', { name: '기록하기' }))
+
+    await waitFor(() => expect(putMedicationCheckin).toHaveBeenCalledTimes(3))
+    expect(
+      putMedicationCheckin.mock.calls.filter(([id]) => id === OCC_A),
+    ).toHaveLength(1)
+    expect(putMedicationCheckin).toHaveBeenNthCalledWith(
+      3,
+      OCC_B,
+      expect.objectContaining({ status: 'TAKEN', expectedRevision: 7 }),
+      expect.any(String),
+    )
   })
 
   it('기술 오류 코드를 노출하지 않는다', async () => {
