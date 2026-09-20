@@ -191,7 +191,7 @@ async def _seed_pin() -> None:
 def test_revision_parent_is_actual_develop_head() -> None:
     migration = _load_migration()
     assert migration.revision == "853a1b2c3d4e"
-    assert migration.down_revision == "807a1b2c3d4e"
+    assert migration.down_revision == "526c1d2e3f4a"
 
 
 def test_populated_downgrade_is_rejected_without_losing_table_row_or_revision(isolated_database: None) -> None:

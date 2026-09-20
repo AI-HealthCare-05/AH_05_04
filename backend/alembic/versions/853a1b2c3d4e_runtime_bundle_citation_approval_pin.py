@@ -1,14 +1,14 @@
 """Pin exact PATIENT_CITATION approvals into canonical Runtime Bundles (#853).
 
 Revision ID: 853a1b2c3d4e
-Revises: 807a1b2c3d4e
+Revises: 526c1d2e3f4a
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "853a1b2c3d4e"
-down_revision = "807a1b2c3d4e"
+down_revision = "526c1d2e3f4a"
 branch_labels = None
 depends_on = None
 
