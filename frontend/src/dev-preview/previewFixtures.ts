@@ -186,6 +186,13 @@ function ocrResponse(
       created_at: now,
       completed_at: scenario === 'review-in-progress' ? null : now,
       fields,
+      // 합성 preview에는 정규화본이 없다.
+      source_image: {
+        normalized: false,
+        width: null,
+        height: null,
+        url: null,
+      },
     },
   }
 }
@@ -285,6 +292,14 @@ export function createPrescriptionReviewPreview(scenario: ReviewScenario): {
     },
     getPrescriptionDocumentFile: async () =>
       new Blob(['SYNTHETIC PREVIEW DOCUMENT'], { type: 'text/plain' }),
+    // 합성 preview에는 정규화 이미지가 없으므로 강조 없이 fail-closed 한다.
+    getPrescriptionNormalizedImage: async () => {
+      throw new ApiError(
+        404,
+        '합성 preview에는 정규화 이미지가 없습니다.',
+        'MEDICAL_DOCUMENT_NOT_FOUND',
+      )
+    },
     updateExtractedField: async (fieldId, confirmedValue) => {
       const current = fields.find((candidate) => candidate.field_id === fieldId)
       if (!current) {

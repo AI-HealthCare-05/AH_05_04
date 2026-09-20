@@ -2,13 +2,15 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Approved Target |
-| 구현 | Partially implemented — DTO/schema, 10 canonical recipe helpers, manifest self-hash/run/variant delta state validation, #808 typed seam projection and fail-closed tests |
+| 상태 | Approved Target (Phase B) · Proposed / Review Required (Phase C-1) |
+| 구현 | Partially implemented — DTO/schema, 10 canonical recipe helpers, manifest self-hash/run/variant delta state validation, #808 typed seam projection and fail-closed tests; Phase C-1 carrier audit & materialization coordinate review (code change: none) |
 | Decision | [`PD-159-20260913`](../../../governance/decisions/2026-09-13-rag-answer-quality-metrics.md) |
 | 추적 Issue | [#159](https://github.com/AI-HealthCare-05/AH_05_04/issues/159) |
 | 구현 담당 | 정현우 (`@ceohwj`, AI/RAG Implementation Owner) |
-| 책임 리뷰 | 권가빈 (`@hazelnutflavoured`, PM / Track F Acceptance) — `APPROVED` |
-| 승인 Evidence | [PR #833 comment `5740823309`](https://github.com/AI-HealthCare-05/AH_05_04/pull/833#issuecomment-5740823309) · Final HEAD `ef8a78c8f6ad1c037d203d1b376d899e0dbffbcd` · Merge commit `5128cfdee8d9791a76fe6331cea2314420184cc9` |
+| 책임 리뷰 | 송은영 (`@phina-io`, Backend / Data & Security) — `Review Required` |
+| 수용 증거 (Acceptance) | 권가빈 (`@hazelnutflavoured`, PM / Track F Acceptance) |
+| 전문 증거 (Evaluation/Worker) | 김지혜 (`@Jye-rookie`, Worker / Track A·C·E) |
+| 이전 Phase B 승인 | [PR #833 comment `5740823309`](https://github.com/AI-HealthCare-05/AH_05_04/pull/833#issuecomment-5740823309) · Final HEAD `ef8a78c8f6ad1c037d203d1b376d899e0dbffbcd` · Merge commit `5128cfdee8d9791a76fe6331cea2314420184cc9` |
 | 상류 권위 | RFC 8785 (JCS Canonical JSON), PR #808 (`AnswerComparisonRunInput` Seam), PR #828 / #806 (`RequestGuardRuntimeBindingObservation`) |
 | 연결 이슈 | #159, #808, #828 / #806, #180, #807, #799 |
 
@@ -381,3 +383,144 @@ Phase B contract approval에 따라 다음 범위의 Python 구현과 회귀 검
 
 ### 3) 상류 릴리스 차단
 상류 4개 차단 이슈(#180, #807, #799)가 완료되어 정본 영수증이 도입될 때까지 프로덕션 release gate 통과 및 `PUBLIC_TRACK_F` 해제는 엄격히 금지된다.
+
+---
+
+## 9. Phase C-1 Answer Runtime Authority Carrier 및 Materialization Coordinate 검토 (Proposed / Review Required)
+
+### 1) 목적 및 감사 원칙
+본 절은 PR #851(Phase B)에서 승인·구현된 10개 Canonical Recipe 및 Manifest 검증/사영 커널을 바탕으로, `ANS-BASE` / `ANS-RAG` / `ANS-FINAL` 실제 3-variant 실행 시 각 recipe의 입력 source object가 어떤 authoritative coordinate로 결속되는지 최신 `develop`(`8f29710547c8a405736d4a50dcac41bc10a90ed3`)을 전수 감사하여 그 경계를 제안(Proposed / Review Required)한다. 책임 리뷰어(`@phina-io`)의 정식 승인 전까지 본 절의 설계는 Frozen 또는 Approved로 확정되지 않는다.
+
+- **핵심 분리 원칙**:
+  $$\text{Source Object Exists} \neq \text{Run-bound Authoritative Carrier Exists}$$
+  $$\text{Carrier Exists} \neq \text{Run Lookup Coordinate Exists}$$
+  $$\text{Recipe Implemented} \neq \text{Manifest Materializable}$$
+- **Production Extractor 구현 판정 조건**:
+  Recipe Implemented AND Authoritative Source Exists AND Run-bound Carrier Exists AND Exact Lookup Coordinate Exists AND Exact Validation Possible AND Materialization Lifecycle Point Defined (6개 조건 전수 충족 시에만 구현 허용; 1개라도 미충족 시 추정 구현 엄격 금지).
+
+### 2) 15 Authority Bindings 전수 감사 매트릭스 (15-Binding Audit Table)
+
+| Binding | Canonical Source | Recipe Implemented | Production Source Exists | Run-bound Carrier Exists | Exact Lookup Coordinate | Exact Validation | Materialization Point | Current Status | Owner / Blocker |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `INPUT_CONTEXT` | `LoadedRunBundle.cases` (`case_id`, `input_sha256`) | YES (`compute_input_context_binding_hash`) | YES | YES (`LoadedRunBundle`) | YES (`run_id`, `experiment_id`, `variant_id`) | YES (`_validate_loaded_bundle` run ↔ case binding 일치 검증) | `ALL_CASES_COMPLETED_PRE_SEAL` (Proposed) | Recipe: `IMPLEMENTED`<br>Carrier: `AVAILABLE`<br>Materialization: `READY` | #159 (정현우) · 기구현 완료, 중복 래퍼 생성 금지 |
+| `SEED` | `DevExecutionRequest.seed` (`SafeInteger`) | YES (`compute_seed_binding_hash`) | YES (`DevExecutionRequest.seed`) | EXECUTION_ONLY (`ResolvedDevExecution.request.seed`) | NO / MISSING (Persisted `RagEvaluationRun`에 seed 필드 부재) | NO (Persisted run 기준 검증 불가) | Execution Request Resolution 시점 (In-Memory Only) | Recipe: `IMPLEMENTED`<br>Carrier: `EXECUTION_ONLY`<br>Materialization: `NOT_READY` | #159 (정현우) |
+| `PROMPT_STRUCTURE` | `GuidelineGenerationProvenance.prompt_ref` (`ImmutableArtifactRef`) | YES (`compute_prompt_structure_binding_hash`) | YES (Guideline card/generator candidate provenance) | NO / UNRESOLVED (Case/Run 결속 carrier 부재, `ANS-BASE` 공급 모델 미확정) | NO / MISSING (`RagEvaluationRun.prompt_version`은 단순 식별 문자열) | NO (Run 단위 prompt ref 정합 검증 부재) | Case Guideline Generation 시점 (Run 집계 계약 미정) | Recipe: `IMPLEMENTED`<br>Carrier: `UNRESOLVED`<br>Materialization: `NOT_READY` | #159 (정현우) / #180 |
+| `PARSER` | `GuidelineGenerationProvenance.parser_ref` (`ImmutableArtifactRef`) | YES (`compute_parser_binding_hash`) | YES (Guideline structured parser provenance) | NO / UNRESOLVED (`PROMPT_STRUCTURE`와 동일) | NO / MISSING (`RagEvaluationRun`에 parser ref 부재) | NO (Run 단위 parser ref 정합 검증 부재) | Case Guideline Generation 시점 (Run 집계 계약 미정) | Recipe: `IMPLEMENTED`<br>Carrier: `UNRESOLVED`<br>Materialization: `NOT_READY` | #159 (정현우) / #180 |
+| `SAMPLING_PARAMETERS` | `OpenAIGuidelineGeneratorAdapter` actual invocation (`temperature=0`) | YES (`compute_sampling_parameters_binding_hash`) | YES (Adapter `_invoke_provider_raw` 하드코딩) | NO / UNRESOLVED (코드 상수 != exact run actual invocation carrier; 관측 캐리어 부재) | NO / MISSING (`RagEvaluationRun` / `CaseResult`에 invocation 파라미터 부재) | NO (실제 호출 관측 검증 부재) | Actual Provider Invocation 시점 (평가 러너 결속 부재) | Recipe: `IMPLEMENTED`<br>Carrier: `UNRESOLVED`<br>Materialization: `NOT_READY` | #159 (정현우) |
+| `TOKEN_LIMIT` | `DevVariant.parameters["token_limit"]` exact-bound to `_max_output_tokens` | YES (`compute_token_limit_binding_hash`) | YES (Variant config + Adapter internal attribute) | NO / UNRESOLVED (Config ↔ actual invocation ↔ run 3자 결속 carrier 부재) | NO / MISSING (`RagEvaluationRun`에 token_limit 필드 부재) | NO (런타임 호출 제약 결속 검증 부재) | Variant Config Resolution 시점 (In-Memory Only) | Recipe: `IMPLEMENTED`<br>Carrier: `UNRESOLVED`<br>Materialization: `NOT_READY` | #159 (정현우) |
+| `TIMEOUT` | `DevVariant.parameters["timeout"]` exact-bound to `_timeout_seconds` | YES (`compute_timeout_binding_hash`) | YES (Variant config + Adapter internal attribute) | NO / UNRESOLVED (`TOKEN_LIMIT`와 동일) | NO / MISSING (`RagEvaluationRun`에 timeout 필드 부재) | NO (런타임 클라이언트 timeout 결속 검증 부재) | Variant Config Resolution 시점 (In-Memory Only) | Recipe: `IMPLEMENTED`<br>Carrier: `UNRESOLVED`<br>Materialization: `NOT_READY` | #159 (정현우) |
+| `RETRIEVAL_PIPELINE` | `VersionedEvidenceRetrievalConfiguration.artifact_ref` (`ImmutableArtifactRef`) | YES (`compute_retrieval_pipeline_binding_hash`) | YES (`VersionedEvidenceRetrievalConfiguration`) | • `ANS-BASE`: YES (`NOT_APPLIED`)<br>• `ANS-RAG`/`ANS-FINAL`: NO / LOOKUP_COORDINATE_MISSING | • `ANS-BASE`: YES (Variant ID)<br>• `ANS-RAG`/`ANS-FINAL`: NO (`retrieval_variant_manifest_hash` != config hash) | • `ANS-BASE`: YES<br>• `ANS-RAG`/`ANS-FINAL`: NO | Retrieval Pipeline Build / Seal 시점 | Recipe: `IMPLEMENTED`<br>Carrier: `LOOKUP_COORDINATE_MISSING` (적용 변형)<br>Materialization: `NOT_READY` | #159 (정현우) |
+| `SOURCE_INDEX` | `ActualRetrievalModelConfig.knowledge_index_ref` (`ImmutableReference`) | YES (`compute_source_index_binding_hash`) | YES (`ActualRetrievalModelConfig`) | • `ANS-BASE`: YES (`NOT_APPLIED`)<br>• `ANS-RAG`/`ANS-FINAL`: NO / LOOKUP_COORDINATE_MISSING | • `ANS-BASE`: YES (Variant ID)<br>• `ANS-RAG`/`ANS-FINAL`: NO (`model_config_hash` != index hash) | • `ANS-BASE`: YES<br>• `ANS-RAG`/`ANS-FINAL`: NO | Retrieval Model Config Resolution 시점 | Recipe: `IMPLEMENTED`<br>Carrier: `LOOKUP_COORDINATE_MISSING` (적용 변형)<br>Materialization: `NOT_READY` | #159 (정현우) |
+| `RUNTIME_BUNDLE` | `RequestGuardRuntimeBindingObservation` (`environment`, `bundle_id`, `bundle_manifest_hash`) | YES (`compute_runtime_bundle_binding_hash`) | YES (#806 Reader/Table/Observation 실재) | • `ANS-BASE`: YES (`NOT_APPLIED`)<br>• `ANS-RAG`/`ANS-FINAL`: NO / LOOKUP_COORDINATE_MISSING | • `ANS-BASE`: YES (Variant ID)<br>• `ANS-RAG`/`ANS-FINAL`: NO (`RagEvaluationRun`에 #806 ref 부재) | • `ANS-BASE`: YES<br>• `ANS-RAG`/`ANS-FINAL`: NO | Per-Request Guard Evaluation 시점 (평가 브리지 부재) | Recipe: `IMPLEMENTED`<br>Carrier: `LOOKUP_COORDINATE_MISSING` (적용 변형)<br>Materialization: `NOT_READY` | #159 (정현우) / #806 / #162 |
+| `RETRIEVED_EVIDENCE` | `ProductionGuidelineEvidenceSet` vs `CaseResult.selected_evidence_ids` | NO (`SOURCE_EXISTS_RECIPE_UNRESOLVED`) | PARTIAL (객체 실재하나 generator 소비 evidence exact hash 미확정) | NO / UNRESOLVED | NO / MISSING | NO | Undefined | Recipe: `UNRESOLVED`<br>Carrier: `UNRESOLVED`<br>Materialization: `NOT_READY` | #159 (정현우) / #180 (#760) |
+| `FINAL_VALIDATOR` | `GuidelineGenerationProvenance.validator_ref` / Final Validator receipt | NO (`BLOCKED_BY_UPSTREAM_AUTHORITY`) | NO (Production receipt 부재) | NO / BLOCKED_BY_UPSTREAM | NO / MISSING | NO | Undefined | Recipe: `BLOCKED_BY_UPSTREAM`<br>Carrier: `BLOCKED_BY_UPSTREAM`<br>Materialization: `NOT_READY` | Issue #180 (OPEN) |
+| `CITATION_GATE` | `CitationAuthorizationReceipt` | NO (`BLOCKED_BY_UPSTREAM_AUTHORITY`) | NO (순수 dataclass만 존재, production receipt authority 부재) | NO / BLOCKED_BY_UPSTREAM | NO / MISSING | NO | Undefined | Recipe: `BLOCKED_BY_UPSTREAM`<br>Carrier: `BLOCKED_BY_UPSTREAM`<br>Materialization: `NOT_READY` | Issue #799 (OPEN) / Issue #807 / Issue #180 |
+| `SAFETY_GATE` | Runtime Safety Gate decision / receipt | NO (`BLOCKED_BY_UPSTREAM_AUTHORITY`) | NO (Runtime safety gate receipt 부재; 평가 Safety metric 재사용 금지) | NO / BLOCKED_BY_UPSTREAM | NO / MISSING | NO | Undefined | Recipe: `BLOCKED_BY_UPSTREAM`<br>Carrier: `BLOCKED_BY_UPSTREAM`<br>Materialization: `NOT_READY` | Issue #180 (OPEN) |
+| `RELEASE_GATE` | Runtime Release Gate decision / receipt | NO (`BLOCKED_BY_UPSTREAM_AUTHORITY`) | NO (Runtime release gate receipt 부재; `release_gate.py` 평가 게이트 재사용 금지) | NO / BLOCKED_BY_UPSTREAM | NO / MISSING | NO | Undefined | Recipe: `BLOCKED_BY_UPSTREAM`<br>Carrier: `BLOCKED_BY_UPSTREAM`<br>Materialization: `NOT_READY` | Issue #180 (OPEN) |
+
+### 3) 상태 어휘 (Status Vocabulary) 정의
+1. **Recipe Status**:
+   - `IMPLEMENTED`: 정규 사영 및 SHA-256 해시 계산 헬퍼가 구현 완료됨 (10개).
+   - `UNRESOLVED`: 정본 입력 소스 또는 사영 레시피가 확정되지 않음 (`RETRIEVED_EVIDENCE` 1개).
+   - `BLOCKED_BY_UPSTREAM`: 상류 런타임 권위 미완료로 레시피 구현이 차단됨 (4개 finalization axes).
+2. **Carrier Status**:
+   - `AVAILABLE`: 해당 Run에 결속된 정본 캐리어가 실재함 (`INPUT_CONTEXT`, 비적용 `NOT_APPLIED` 축).
+   - `EXECUTION_ONLY`: 실행 시점 인메모리 컨텍스트에는 존재하나, 영속화된 Run 아티팩트에서 복원 불가 (`SEED`).
+   - `LOOKUP_COORDINATE_MISSING`: 소스 객체와 리더는 실재하나, `RagEvaluationRun`에 해당 캐리어를 정확히 조회/결속할 불변 참조 좌표가 부재함 (`RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RUNTIME_BUNDLE`).
+   - `UNRESOLVED`: 케이스별 관측치 및 변형 간 공통 캐리어 구조가 미확정됨 (`PROMPT_STRUCTURE`, `PARSER`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`, `RETRIEVED_EVIDENCE`).
+   - `BLOCKED_BY_UPSTREAM`: 상류 프로덕션 권위 미발급으로 캐리어 부재 (4개 finalization axes).
+3. **Materialization Status**:
+   - `READY`: 6대 판정 조건 전수 충족 (`INPUT_CONTEXT` 1개).
+   - `NOT_READY`: 판정 조건 중 1개 이상 미충족 (14개 항목).
+
+### 4) Materialization Coordinate 제안 (Proposed / Review Required)
+A. **Manifest 생성 시점 (Lifecycle Point — Proposed)**:
+   - 제안 시점: **`ALL_CASES_COMPLETED_PRE_SEAL` (Proposed / Review Required)**
+   - 모든 필수 Case 실행이 완료되고, 케이스별 실제 관측치 수집 및 Controlled-Variable 불변성 검증이 통과한 직후, `RagEvaluationRun` 봉인(`result_content_manifest_hash` 계산) 직전에 `AnswerRuntimeAuthorityBindingManifest` 생성을 제안한다.
+   - 단, 본 생성 시점은 `@phina-io` 승인 전까지 확정(Frozen/Approved)이 아닌 제안(Proposed) 상태다. 실행 전 생성(Pre-execution)은 실제 호출 관측이 불가능하므로 금지한다.
+B. **각 Source Object 출처**:
+   - `INPUT_CONTEXT`: `LoadedRunBundle.cases` (`case_id`, `input_sha256`)
+   - `SEED`: `ResolvedDevExecution.request.seed`
+   - `PROMPT_STRUCTURE`: 케이스 실행 관측 `GuidelineGenerationProvenance.prompt_ref`
+   - `PARSER`: 케이스 실행 관측 `GuidelineGenerationProvenance.parser_ref`
+   - `SAMPLING_PARAMETERS`: Provider 클라이언트 호출 관측 (`temperature=0`)
+   - `TOKEN_LIMIT`: `ResolvedDevExecution.request.answer_variant.parameters["token_limit"]` exact-bound to `_max_output_tokens`
+   - `TIMEOUT`: `ResolvedDevExecution.request.answer_variant.parameters["timeout"]` exact-bound to `_timeout_seconds`
+   - `RETRIEVAL_PIPELINE`: `ANS-BASE`는 `NOT_APPLIED`, `ANS-RAG`/`ANS-FINAL`은 `VersionedEvidenceRetrievalConfiguration.artifact_ref`
+   - `SOURCE_INDEX`: `ANS-BASE`는 `NOT_APPLIED`, `ANS-RAG`/`ANS-FINAL`은 `ActualRetrievalModelConfig.knowledge_index_ref`
+   - `RUNTIME_BUNDLE`: `ANS-BASE`는 `NOT_APPLIED`, `ANS-RAG`/`ANS-FINAL`은 `RequestGuardRuntimeBindingObservation` (브리지 확정 시)
+   - `RETRIEVED_EVIDENCE`: `null` 유지 (Unresolved)
+   - `FINAL_VALIDATOR`, `CITATION_GATE`, `SAFETY_GATE`, `RELEASE_GATE`: `ANS-BASE`/`ANS-RAG`는 `NOT_APPLIED`, `ANS-FINAL`은 `null` 유지 (Blocked)
+C. **결속 Run Identity**:
+   - `(experiment_id, run_id, variant_id)`의 3-tuple에 exact-bind한다.
+   - `validate_answer_runtime_binding_manifest_for_run()`을 통과해야 하며, `manifest_sha256` self-hash 프리이미지에 `run_id`가 필수 포함된다.
+D. **Case-level Value의 Run-level Controlled Binding 증명 (Case Aggregation Rule — Proposed)**:
+   - **Controlled-Variable Invariant (Proposed / Review Required)**:
+     $$\forall c \in \text{CompletedRequiredCases}, \quad \text{value}(c) == \text{value}_0$$
+   - 모든 필수 Case에서 관측된 controlled value가 단일 동일 값이어야 한다 (`len({value(c)}) == 1`).
+   - 단 하나의 Case라도 드리프트/불일치 발생 시 즉시 `fail-closed` (`EvaluationValidationError(STATE_COMBINATION_INVALID)`).
+   - 필수 Case 중 관측치 누락 발생 시 즉시 `fail-closed`.
+   - **계약 공백(Contract Gap) 명시**: 현재 `develop`에는 위 집계 및 드리프트 검증 커널이 정본 코드로 부재하므로 계약 공백으로 기록하며, `@phina-io` 승인 전까지 단일 케이스 값을 전체 Run 값으로 임의 과승격하지 않는다.
+E. **Missing/Mismatch 다단계 Fail-Closed 경계**:
+   - Stage 1 (Preflight): Variant config 파라미터 유효성 검증 실패 시 실행 전 차단.
+   - Stage 2 (Post-Case Assembly): Case aggregation 불일치/누락 시 manifest 생성 거부 및 Run `INVALID`.
+   - Stage 3 (Manifest Self-Validation): Manifest 내부 DTO 유효성 검사 및 `manifest_sha256` 불일치 시 거부.
+   - Stage 4 (Seam Ingestion): Run ↔ Manifest 식별자 불일치 시 Seam 투영 전 거부.
+   - Stage 5 (Comparison Kernel): #808 비교 시 supplemental mismatch 또는 non-allowed delta 위반 시 `execution_status = INVALID`, `decision_status = None`으로 차단.
+F. **Storage Architecture 및 Publication Coordinate 철회/미확정 안내**:
+   - **기존 직접 발행 확정 철회**: `<run_dir>/answer_runtime_binding_manifest.json` 직접 발행 안은 철회한다.
+   - **철회 근거**: 현재 `ContentArtifactPath`(`Literal["cases.jsonl", "metrics.json", "suite-results.json", "comparison.json", "gate.json", "failures.jsonl", "report.md"]`) 및 `publisher.py`의 번들 화이트리스트(`_REQUIRED_BUNDLE_FILENAMES`, `_OPTIONAL_BUNDLE_FILENAMES`)에 해당 파일명이 존재하지 않으므로, 승인 없이 번들 내 파일명을 직접 확정하는 것은 불가능하다.
+   - **현재 상태**:
+     - `MATERIALIZATION_TIMING_PROPOSED`
+     - `STORAGE_COORDINATE_UNRESOLVED`
+   - **엄격 금지 사항**:
+     - `ContentArtifactPath` 무승인 확장 금지
+     - `publisher` 화이트리스트 무승인 수정 금지
+     - Schema Set 변경 금지
+     - `RagEvaluationRun` 필드 추가 금지
+     - 임시 sidecar 경로 확정 금지
+
+### 5) Storage Architecture 비교
+
+| 평가 기준 | Option A: Execution-Time Manifest Materialization | Option B: RagEvaluationRun Field Expansion | Option C: Separate Execution Binding Carrier |
+| :--- | :--- | :--- | :--- |
+| **개념** | Runner가 실행 완료 시점에 직접 `AnswerRuntimeAuthorityBindingManifest`를 생성·보관 | `RagEvaluationRun`에 15개 필드 또는 carrier ref 필드 7~15개를 직접 추가 | 별도의 중간 아티팩트(`answer_carrier_observation.json`)를 두고 Manifest를 2차 생성 |
+| **Schema Set 1.5 영향** | **완전 불변** (Schema Set 1.5 해시 변경 없음, `SEPARATE_BINDING_MANIFEST_PREFERRED` 원칙 준수) | **Schema Set 파괴적 변경** (`rag-eval.run` v1.0.0 breaking change, Schema Set 1.5 hash invalidation, 모든 downstream 마이그레이션 필요) | **새 스키마 추가 필요** (중간 캐리어 스키마 승인 및 관리 부담 추가) |
+| **Backward Compatibility** | **완전 유지** (기존 Retrieval 및 Grounding/Safety run 영향 0) | **하위 호환성 파괴** (기존 생성된 모든 run artifact와 fixture 파괴) | **유지** (별도 파일이므로 기존 파일 불변) |
+| **Actual Authority Fidelity** | **우수** (실행 컨텍스트와 case-level 관측치를 직접 검증하여 run-scoped manifest로 즉시 봉인) | **낮음/왜곡** (Run artifact에 단순 문자열/해시를 적는 것은 미검증 주장에 불과, 실제 carrier authority 보증 불가) | **우수** (원시 관측치를 보존하나 2단계 변환 오버헤드) |
+| **Duplication** | **최소** (중간 중복 아티팩트 없이 단일 Manifest로 직행) | **중복 발생** (Run에도 필드가 있고 Manifest에도 필드가 있어 이중 관리) | **중복 심각** (Carrier 파일과 Manifest 파일 간 동일 데이터 이중 보관) |
+| **Runtime Coupling** | **낮음** (Evaluation runner의 output 단계에서 결속, 런타임 엔티티와 평가 스키마 분리) | **심각** (상류 런타임 도메인의 변경이 Evaluation 핵심 엔티티에 직접 전파) | **보통** |
+| **결론 및 상태** | **권장 제안 (Proposed)**: Schema Set 1.5 불변을 유지하는 가장 단순한 경로이나, publication storage coordinate는 `STORAGE_COORDINATE_UNRESOLVED`로 유지. | **기각 (Option B)**: Schema Set 1.5 불변 원칙 위반, 거대한 연쇄 churn 유발. | **보류 (Option C)**: 중간 캐리어가 반드시 필요한 수명 주기 격차(lifetime gap)가 증명되지 않음. |
+
+### 6) 상류 권위 및 인접 이슈 정합 (Reconciliation)
+1. **#806 Request Guard Runtime Binding 정합 및 Lookup Coordinate 공백 명시**:
+   - `SqlAlchemyRequestGuardRuntimeBindingReader.read_exact()`는 `RequestGuardRuntimeBindingRef(artifact_code, version, content_sha256)`를 필수로 요구한다.
+   - `RagEvaluationRun`에는 `RequestGuardRuntimeBindingRef` 필드가 존재하지 않는다.
+   - `RagEvaluationRun`의 런타임 필드(`candidate_bundle_id`, `candidate_guard_decision_id` 등)는 `runtime_eligible=True` + `END_TO_END_RAG` + `LOCAL` 전용 필드이므로, 일반 Answer Quality(`ANSWER_GROUNDING_SAFETY`) 실행에서 재사용할 수 없다.
+   - `candidate_guard_decision_id`는 UUID일 뿐 `RequestGuardRuntimeBindingRef`가 아니며, bundle_id/hash만으로 ref를 역산하는 것은 엄격히 금지된다.
+   - 따라서 현 상태는 **`RUNTIME_BUNDLE_SOURCE_EXISTS BUT EVALUATION_RUN_LOOKUP_COORDINATE_MISSING`**이다.
+2. **#807 Source Use Approval 및 #853 Citation Pin 정합**:
+   - #807은 `PATIENT_CITATION` Source Use Approval 정본 권위이고, #853은 런타임 번들 매니페스트 v2에 이를 핀하는 권위다.
+   - `SourceUseApproval != Citation Authorization != CITATION_GATE binding`이다.
+   - #807 reader가 존재한다고 하여 #159 Manifest 15축 스키마에 `SourceUseApproval`을 임의 추가하지 않는다 (15축 불변 유지).
+   - #807 및 #853은 향후 #799 Citation Authorization 발급의 상류 전제 조건으로만 격리·관리된다.
+3. **#799 및 #180 Blocker 상태 유지**:
+   - Issue #799는 현재 OPEN 상태이며, 순수 `CitationAuthorizationReceipt` dataclass 외에 production receipt 권위가 없다 (`CITATION_GATE` 상류 차단 지속).
+   - Issue #180은 현재 OPEN 상태이며, `FINAL_VALIDATOR`, `SAFETY_GATE`, `RELEASE_GATE` 상류 권위가 미구현이다.
+   - 특히 `ai_worker/tasks/evaluation/release_gate.py` 평가 릴리스 게이트를 런타임 Release Gate authority로 혼용·재사용하는 것은 엄격히 금지된다.
+4. **#860 Guide·Chat Backend Public Projection Seam 정합 (develop `8f297105`)**:
+   - 최신 develop(`8f297105`)에서 PR #860을 통해 Guide·Chat Backend public projection seam이 추가되었으나, 이는 #180 final Authorized/Release result의 향후 소비 경계만 정의한다.
+   - #860은 Answer Runtime authority carrier, Citation Authorization production receipt, `FINAL_VALIDATOR` authority, `CITATION_GATE` authority, `SAFETY_GATE` authority, `RELEASE_GATE` authority를 일체 제공하지 않는다.
+   - 따라서 Phase C-1 15-binding audit 결과와 `IMPLEMENTABLE NOW = NONE` 판정에는 변화가 없다.
+
+### 7) 구현 판정, Stop Condition 및 후속 관리
+- **판정 결과**:
+  - 15개 Binding 중 6대 조건을 전수 충족하는 항목은 `INPUT_CONTEXT` 1개뿐이다.
+  - `INPUT_CONTEXT`는 이미 `compute_input_context_binding_hash(bundle: LoadedRunBundle)`로 구현 완료되어 추가 구현이 불필요하다 (중복 래퍼 클래스 생성 금지).
+  - 나머지 14개 Binding은 Lookup Coordinate 부재, Case 집계 계약 부재, 상류 이슈 차단으로 인해 구현 판정 조건을 충족하지 못한다.
+- **Stop Condition 충족에 따른 결론**:
+  - **`CODE CHANGE = NONE`**
+  - 확인되지 않은 authority나 조기 extractor 래퍼를 날조(fabrication)하여 작성하지 않고 정상 fail-closed 상태로 유지한다.
+- **후속 Issue 관리 원칙**:
+  1. **Case-level Provenance Aggregation**: 새 Issue를 생성하지 않고 **#159 Phase C-2**의 작업 범위로 계속 유지한다.
+  2. **Evaluation Run ↔ #806 Bridge**: 새 Issue를 자동 생성하지 않으며, **#162**에 discovery comment로 연결하고 도메인 간 별도 ownership 분리가 필요하다는 합의가 생길 때만 Issue 생성을 검토한다.

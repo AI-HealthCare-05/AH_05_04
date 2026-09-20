@@ -36,6 +36,7 @@ import {
   createManualMedication,
   getOcrJob,
   getPrescriptionDocumentFile,
+  getPrescriptionNormalizedImage,
   updateExtractedField,
 } from '../src/api/prescriptions'
 
@@ -48,6 +49,7 @@ vi.mock('../src/api/prescriptions', async (importOriginal) => {
     createManualMedication: vi.fn(),
     getOcrJob: vi.fn(),
     getPrescriptionDocumentFile: vi.fn(),
+    getPrescriptionNormalizedImage: vi.fn(),
     updateExtractedField: vi.fn(),
   }
 })
@@ -192,6 +194,12 @@ function makeOcrResponse(
       created_at: '2026-08-22T00:00:00Z',
       completed_at: '2026-08-22T00:00:01Z',
       fields,
+      source_image: {
+        normalized: false,
+        width: null,
+        height: null,
+        url: null,
+      },
     },
   }
 }
@@ -357,6 +365,9 @@ beforeEach(() => {
   vi.mocked(getPrescriptionDocumentFile).mockResolvedValue(
     new Blob(['prescription']),
   )
+  vi.mocked(getPrescriptionNormalizedImage).mockResolvedValue(
+    new Blob(['normalized-prescription']),
+  )
   vi.mocked(confirmPrescription).mockResolvedValue({
     data: {
       prescription_id: 'prescription-1',
@@ -377,12 +388,79 @@ afterEach(() => {
 })
 
 describe('PrescriptionReviewPage confirmation gate', () => {
-  it('LLM 전송 최소화로 생략됐을 때만 OCR 검수 안내를 표시한다', async () => {
+  it('LLM 전송 최소화 상태여도 AI 구조화 notice를 노출하지 않는다', async () => {
     const response = makeOcrResponse(makeCompleteFields())
     response.data.llm_processing = 'SKIPPED_MINIMIZATION'
     renderPage(response)
-    expect(await screen.findByText('AI 구조화를 생략했어요')).toBeTruthy()
-    expect(screen.getByText(/외부 LLM에 보내지 않았습니다/)).toBeTruthy()
+
+    // 계약은 유지하되 사용자 UI에서는 제거됐다.
+    expect(
+      await screen.findByText('도지는 처방 내용을 바꾸지 않아요.'),
+    ).toBeTruthy()
+    expect(screen.queryByText('AI 구조화를 생략했어요')).toBeNull()
+    expect(screen.queryByText(/외부 LLM에 보내지 않았습니다/)).toBeNull()
+  })
+
+  it('상단 안내는 Figma 최종 문구 2문장만 표시한다', async () => {
+    renderPage(makeOcrResponse(makeCompleteFields()))
+
+    expect(
+      await screen.findByText('도지는 처방 내용을 바꾸지 않아요.'),
+    ).toBeTruthy()
+    expect(
+      screen.getByText(
+        '원본 처방전과 인식된 내용을 직접 비교해 주세요.',
+      ),
+    ).toBeTruthy()
+
+    const notices = document.querySelectorAll(
+      '.prescription-review__notice',
+    )
+    expect(notices).toHaveLength(1)
+
+    // 최종 문구는 2문장뿐이며 세 번째 상태 안내는 제거됐다.
+    const notice = notices[0] as HTMLElement
+    expect(notice.children).toHaveLength(2)
+    expect(
+      notice.querySelector('.prescription-review__state-guidance'),
+    ).toBeNull()
+    expect(
+      screen.queryByText(/각 항목의 검토 완료를 눌러 주세요/),
+    ).toBeNull()
+    expect(
+      screen.queryByText(/수정 중인 정보는 검토 완료가 해제돼요/),
+    ).toBeNull()
+  })
+
+  it('상단 안내는 Figma 기준 연한 회청색 계열이다', () => {
+    const scopedRule = prescriptionReviewStyles.match(
+      /\.prescription-review__content \.prescription-review__notice \{[^}]*\}/,
+    )?.[0]
+
+    expect(scopedRule).toContain('background: #f4f7fa')
+    expect(scopedRule).toContain('border-color: #d3dde6')
+    // 노란색 계열이 남아 있으면 안 된다.
+    expect(scopedRule).not.toContain('#fff9e8')
+    expect(scopedRule).not.toContain('#f0d77a')
+
+    // 크기/줄바꿈 규격은 유지한다.
+    expect(scopedRule).toContain('min-height: 84px')
+    expect(scopedRule).toContain('padding: 16px')
+    expect(scopedRule).toContain('word-break: keep-all')
+
+    const strongRule = prescriptionReviewStyles.match(
+      /\.prescription-review__content \.prescription-review__notice strong \{[^}]*\}/,
+    )?.[0]
+    const spanRule = prescriptionReviewStyles.match(
+      /\.prescription-review__content \.prescription-review__notice span \{[^}]*\}/,
+    )?.[0]
+
+    expect(strongRule).toContain('color: #2b3a47')
+    expect(spanRule).toContain('color: #55687a')
+
+    // error notice는 기존 경고 톤을 유지한다.
+    expect(prescriptionReviewStyles).toContain('#fff7f0')
+    expect(prescriptionReviewStyles).toContain('#e0a36d')
   })
 
   it('철회 후에는 prefetched OCR 결과도 검수 화면에 표시하지 않는다', async () => {
@@ -1915,5 +1993,1072 @@ describe('PrescriptionReviewPage manual medication add', () => {
 
     expect(await screen.findByText(title)).toBeTruthy()
     expect(screen.queryByRole('button', { name: '약물 추가' })).toBeNull()
+  })
+})
+
+describe('PrescriptionReviewPage #809 source highlight', () => {
+  const normalizedSourceImage = {
+    normalized: true,
+    width: 1200,
+    height: 1600,
+    url: '/api/v1/documents/document-1/normalized-file',
+  }
+
+  function withSourceImage(
+    response: OcrJobResponse,
+    sourceImage: OcrJobResponse['data']['source_image'],
+  ): OcrJobResponse {
+    return { ...response, data: { ...response.data, source_image: sourceImage } }
+  }
+
+  function withSourceLocation(
+    fields: ExtractedField[],
+    fieldId: string,
+    sourceLocation: ExtractedField['source_location'],
+  ) {
+    return fields.map((field) =>
+      field.field_id === fieldId ? { ...field, source_location: sourceLocation } : field,
+    )
+  }
+
+  function makeHighlightableResponse(
+    sourceLocation: ExtractedField['source_location'] = {
+      page: 1,
+      bbox: [120, 320, 240, 40],
+    },
+  ) {
+    const fields = withSourceLocation(
+      makeCompleteFields(),
+      'PRESCRIBED_DATE-0',
+      sourceLocation,
+    )
+
+    return withSourceImage(makeOcrResponse(fields), normalizedSourceImage)
+  }
+
+  async function openViewerAndLoadImage() {
+    const image = (await screen.findByTitle('원본 처방전')) as HTMLImageElement
+    fireEvent.load(image)
+    // 처방일 input은 수정 모드에서만 렌더된다.
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    return image
+  }
+
+  it('normalized 응답이면 iframe 대신 img viewer를 사용하고 정규화 URL을 인증 fetch한다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeHighlightableResponse())
+    renderPage()
+
+    const image = await screen.findByTitle('원본 처방전')
+
+    expect(image.tagName).toBe('IMG')
+    expect(image.getAttribute('src')).toBe('blob:prescription')
+    expect(getPrescriptionNormalizedImage).toHaveBeenCalledWith(
+      '/api/v1/documents/document-1/normalized-file',
+    )
+    // 원본 /file 위에는 정규화 좌표를 겹치지 않는다.
+    expect(getPrescriptionDocumentFile).not.toHaveBeenCalled()
+  })
+
+  it('유효한 source_location 필드를 선택하면 표시 비율로 변환된 bbox를 강조한다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeHighlightableResponse())
+    renderPage()
+    await openViewerAndLoadImage()
+
+    expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+
+    fireEvent.focus(screen.getByLabelText('처방일'))
+
+    const highlight = await screen.findByTestId('prescription-source-highlight')
+
+    // 1200x1600 기준 [120, 320, 240, 40] -> 10% / 20% / 20% / 2.5%
+    expect(highlight.style.left).toBe('10%')
+    expect(highlight.style.top).toBe('20%')
+    expect(highlight.style.width).toBe('20%')
+    expect(highlight.style.height).toBe('2.5%')
+  })
+
+  it('필드 클릭으로도 viewer를 열고 강조한다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeHighlightableResponse())
+    renderPage()
+    await openViewerAndLoadImage()
+
+    fireEvent.click(screen.getByLabelText('처방일'))
+
+    expect(
+      await screen.findByTestId('prescription-source-highlight'),
+    ).toBeTruthy()
+  })
+
+  it('이미지 로딩 성공 전에는 강조하지 않는다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeHighlightableResponse())
+    renderPage()
+
+    await screen.findByTitle('원본 처방전')
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    fireEvent.focus(screen.getByLabelText('처방일'))
+
+    expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+  })
+
+  it('이미지 로딩에 실패하면 강조를 해제한다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeHighlightableResponse())
+    renderPage()
+    const image = await openViewerAndLoadImage()
+
+    fireEvent.focus(screen.getByLabelText('처방일'))
+    expect(
+      await screen.findByTestId('prescription-source-highlight'),
+    ).toBeTruthy()
+
+    fireEvent.error(image)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+    })
+    // fail-closed여도 검수는 계속 가능하다.
+    expect(screen.getByLabelText('처방일')).toBeTruthy()
+  })
+
+  it.each([
+    ['source_location이 null', null],
+    ['page가 1이 아님', { page: 2, bbox: [120, 320, 240, 40] }],
+    ['bbox 폭이 0', { page: 1, bbox: [120, 320, 0, 40] }],
+    ['bbox 값이 음수', { page: 1, bbox: [-10, 320, 240, 40] }],
+    ['bbox가 이미지 밖으로 넘침', { page: 1, bbox: [1100, 320, 240, 40] }],
+    ['bbox 세로가 이미지 밖으로 넘침', { page: 1, bbox: [120, 1500, 240, 400] }],
+    ['bbox 값이 유한하지 않음', { page: 1, bbox: [120, 320, Number.NaN, 40] }],
+    ['bbox 길이가 부족함', { page: 1, bbox: [120, 320, 240] }],
+  ])('%s이면 강조하지 않고 검수는 계속 가능하다', async (_label, sourceLocation) => {
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeHighlightableResponse(
+        sourceLocation as ExtractedField['source_location'],
+      ),
+    )
+    renderPage()
+    await openViewerAndLoadImage()
+
+    fireEvent.focus(screen.getByLabelText('처방일'))
+
+    expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+    expect(screen.getByLabelText('처방일')).toBeTruthy()
+  })
+
+  it.each([
+    ['normalized=false', { normalized: false, width: null, height: null, url: null }],
+    ['width가 0', { normalized: true, width: 0, height: 1600, url: '/normalized' }],
+    ['height가 null', { normalized: true, width: 1200, height: null, url: '/normalized' }],
+    ['url이 없음', { normalized: true, width: 1200, height: 1600, url: null }],
+  ])(
+    '%s이면 기존 원본 iframe preview로 fallback하고 강조하지 않는다',
+    async (_label, sourceImage) => {
+      const fields = withSourceLocation(
+        makeCompleteFields(),
+        'PRESCRIBED_DATE-0',
+        { page: 1, bbox: [120, 320, 240, 40] },
+      )
+      vi.mocked(getOcrJob).mockResolvedValue(
+        withSourceImage(
+          makeOcrResponse(fields),
+          sourceImage as OcrJobResponse['data']['source_image'],
+        ),
+      )
+      renderPage()
+
+      const viewer = await screen.findByTitle('원본 처방전')
+
+      expect(viewer.tagName).toBe('IFRAME')
+      expect(getPrescriptionDocumentFile).toHaveBeenCalledWith('document-1')
+      expect(getPrescriptionNormalizedImage).not.toHaveBeenCalled()
+
+      fireEvent.click(screen.getByRole('button', { name: '수정' }))
+      fireEvent.focus(screen.getByLabelText('처방일'))
+      expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+    },
+  )
+
+  it('source_image가 없는 legacy 응답도 기존 iframe preview를 유지한다', async () => {
+    // 계약상 source_image는 항상 존재하지만 런타임 방어를 확인한다.
+    const legacyResponse = makeOcrResponse(makeCompleteFields())
+    delete (legacyResponse.data as { source_image?: unknown }).source_image
+    vi.mocked(getOcrJob).mockResolvedValue(legacyResponse)
+    renderPage()
+
+    const viewer = await screen.findByTitle('원본 처방전')
+
+    expect(viewer.tagName).toBe('IFRAME')
+    expect(getPrescriptionNormalizedImage).not.toHaveBeenCalled()
+  })
+
+  it('정규화 이미지 fetch 실패는 검수와 확정을 막지 않는다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeHighlightableResponse())
+    vi.mocked(getPrescriptionNormalizedImage).mockRejectedValue(
+      new ApiError(404, '정규화본 없음', 'MEDICAL_DOCUMENT_NOT_FOUND'),
+    )
+    renderPage()
+
+    // 검수 UI는 정상 동작하고 차단 상태로 전환되지 않는다.
+    expect(
+      await screen.findByRole('button', { name: '수정' }),
+    ).toBeTruthy()
+    expect(screen.queryByText('처방전 정보를 찾을 수 없어요')).toBeNull()
+    expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+
+    // 편집 진입도 계속 가능하다.
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    expect(screen.getByLabelText('처방일')).toBeTruthy()
+  })
+
+  it('원본 파일 fetch 실패도 검수를 차단하지 않는다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeOcrResponse(makeCompleteFields()),
+    )
+    vi.mocked(getPrescriptionDocumentFile).mockRejectedValue(
+      new ApiError(404, '원본 없음', 'MEDICAL_DOCUMENT_NOT_FOUND'),
+    )
+    renderPage()
+
+    expect(
+      await screen.findByRole('button', { name: '수정' }),
+    ).toBeTruthy()
+    expect(screen.queryByText('처방전 정보를 찾을 수 없어요')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    expect(screen.getByLabelText('처방일')).toBeTruthy()
+  })
+
+  it('언마운트 시 정규화 이미지 object URL을 해제한다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeHighlightableResponse())
+    const view = renderPage()
+
+    await screen.findByTitle('원본 처방전')
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
+
+    view.unmount()
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:prescription')
+  })
+
+  it('source_location이 있어도 필드를 자동으로 확인 처리하지 않는다', async () => {
+    const fields = withSourceLocation(
+      makeCompleteFields(),
+      'PRESCRIBED_DATE-0',
+      { page: 1, bbox: [120, 320, 240, 40] },
+    ).map((field) =>
+      field.field_id === 'PRESCRIBED_DATE-0'
+        ? { ...field, confirmed_value: null, confirmation_status: 'UNCONFIRMED' }
+        : field,
+    )
+    vi.mocked(getOcrJob).mockResolvedValue(
+      withSourceImage(makeOcrResponse(fields), normalizedSourceImage),
+    )
+    renderPage()
+    await openViewerAndLoadImage()
+
+    fireEvent.focus(screen.getByLabelText('처방일'))
+    await screen.findByTestId('prescription-source-highlight')
+
+    // 강조만으로 확정 버튼이 열리지 않는다.
+    expect(updateExtractedField).not.toHaveBeenCalled()
+    const confirmButton = screen.getByRole('button', {
+      name: '처방전 확정 및 가이드 만들기',
+    })
+    expect((confirmButton as HTMLButtonElement).disabled).toBe(true)
+  })
+})
+
+describe('PrescriptionReviewPage #809 contract & selection change', () => {
+  const normalizedSourceImage = {
+    normalized: true,
+    width: 1000,
+    height: 2000,
+    url: '/api/v1/documents/document-1/normalized-file',
+  }
+
+  it('source_image는 항상 존재하는 required 계약이다', async () => {
+    const response = makeOcrResponse(makeCompleteFields())
+
+    expect(response.data).toHaveProperty('source_image')
+    expect(response.data.source_image).toMatchObject({
+      normalized: expect.any(Boolean),
+    })
+
+    vi.mocked(getOcrJob).mockResolvedValue(response)
+    renderPage()
+
+    // 계약을 그대로 흘려도 검수 화면이 정상 동작한다.
+    expect(await screen.findByTitle('원본 처방전')).toBeTruthy()
+  })
+
+  it('선택한 field가 바뀌면 overlay bbox도 즉시 바뀐다', async () => {
+    const fields = makeCompleteFields().map((field) => {
+      if (field.field_id === 'PRESCRIBED_DATE-0') {
+        return {
+          ...field,
+          source_location: { page: 1, bbox: [100, 200, 300, 100] as [number, number, number, number] },
+        }
+      }
+      if (field.field_id === 'MEDICATION_NAME-1') {
+        return {
+          ...field,
+          source_location: { page: 1, bbox: [500, 1000, 200, 200] as [number, number, number, number] },
+        }
+      }
+      return field
+    })
+
+    vi.mocked(getOcrJob).mockResolvedValue({
+      ...makeOcrResponse(fields),
+      data: { ...makeOcrResponse(fields).data, source_image: normalizedSourceImage },
+    })
+    renderPage()
+
+    const image = await screen.findByTitle('원본 처방전')
+    fireEvent.load(image)
+
+    // 처방일 선택
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    fireEvent.focus(screen.getByLabelText('처방일'))
+
+    let highlight = await screen.findByTestId('prescription-source-highlight')
+    // 1000x2000 기준 [100,200,300,100] -> 10% / 10% / 30% / 5%
+    expect(highlight.style.left).toBe('10%')
+    expect(highlight.style.top).toBe('10%')
+    expect(highlight.style.width).toBe('30%')
+    expect(highlight.style.height).toBe('5%')
+
+    // 약물이름으로 선택 변경
+    fireEvent.click(screen.getByRole('button', { name: '수정하기' }))
+    fireEvent.focus(screen.getByLabelText('약물이름'))
+
+    await waitFor(() => {
+      highlight = screen.getByTestId('prescription-source-highlight')
+      // [500,1000,200,200] -> 50% / 50% / 20% / 10%
+      expect(highlight.style.left).toBe('50%')
+    })
+    expect(highlight.style.top).toBe('50%')
+    expect(highlight.style.width).toBe('20%')
+    expect(highlight.style.height).toBe('10%')
+  })
+})
+
+describe('PrescriptionReviewPage #809 overlay containing block & inner scroll', () => {
+  const tallSourceImage = {
+    normalized: true,
+    width: 1000,
+    height: 2000,
+    url: '/api/v1/documents/document-1/normalized-file',
+  }
+
+  function makeTallResponse() {
+    const fields = makeCompleteFields().map((field) => {
+      if (field.field_id === 'PRESCRIBED_DATE-0') {
+        return {
+          ...field,
+          source_location: {
+            page: 1,
+            bbox: [100, 200, 300, 100] as [number, number, number, number],
+          },
+        }
+      }
+      if (field.field_id === 'MEDICATION_NAME-1') {
+        return {
+          ...field,
+          source_location: {
+            page: 1,
+            bbox: [500, 1000, 200, 200] as [number, number, number, number],
+          },
+        }
+      }
+      return field
+    })
+
+    const base = makeOcrResponse(fields)
+    return { ...base, data: { ...base.data, source_image: tallSourceImage } }
+  }
+
+  function stubGeometry() {
+    const viewer = screen.getByTestId('prescription-source-canvas')
+      .parentElement as HTMLDivElement
+    const canvas = screen.getByTestId(
+      'prescription-source-canvas',
+    ) as HTMLDivElement
+
+    // 이미지가 viewer보다 긴 상황: 표시 높이 2000px, viewer 높이 420px
+    Object.defineProperties(canvas, {
+      clientHeight: { configurable: true, value: 2000 },
+      clientWidth: { configurable: true, value: 390 },
+      scrollHeight: { configurable: true, value: 2000 },
+      scrollWidth: { configurable: true, value: 390 },
+    })
+    Object.defineProperties(viewer, {
+      clientHeight: { configurable: true, value: 420 },
+      clientWidth: { configurable: true, value: 390 },
+    })
+
+    const scrollTo = vi.fn()
+    viewer.scrollTo = scrollTo as unknown as HTMLDivElement['scrollTo']
+
+    return { viewer, canvas, scrollTo }
+  }
+
+  beforeEach(() => {
+    // rAF 콜백을 동기 실행해 레이아웃 후 스크롤 계산을 검증한다.
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
+      cb(0)
+      return 0
+    })
+  })
+
+  it('overlay containing block은 viewer가 아니라 source-canvas다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeTallResponse())
+    renderPage()
+
+    const image = await screen.findByTitle('원본 처방전')
+    fireEvent.load(image)
+    stubGeometry()
+
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    fireEvent.focus(screen.getByLabelText('처방일'))
+
+    const canvas = screen.getByTestId('prescription-source-canvas')
+    const highlight = await screen.findByTestId('prescription-source-highlight')
+
+    // highlight와 img는 canvas의 자식이어야 한다.
+    expect(highlight.parentElement).toBe(canvas)
+    expect(image.parentElement).toBe(canvas)
+
+    // canvas가 position:relative를 갖고, scroll 컨테이너는 갖지 않는다.
+    const canvasRule = prescriptionReviewStyles.match(
+      /\.prescription-review__source-canvas\s*\{[^}]*\}/,
+    )?.[0]
+    const viewerRule = prescriptionReviewStyles.match(
+      /\.prescription-review__source-viewer\s*\{[^}]*\}/,
+    )?.[0]
+
+    expect(canvasRule).toContain('position: relative')
+    expect(viewerRule).toContain('overflow: auto')
+    expect(viewerRule).not.toContain('position: relative')
+  })
+
+  it('이미지가 viewer보다 길면 선택한 bbox 위치로 viewer 내부를 scroll한다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeTallResponse())
+    renderPage()
+
+    const image = await screen.findByTitle('원본 처방전')
+    fireEvent.load(image)
+    const { scrollTo } = stubGeometry()
+
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    fireEvent.focus(screen.getByLabelText('처방일'))
+
+    // boxTop=200, boxHeight=100 -> 중앙정렬 200+50-210 = 40
+    expect(scrollTo).toHaveBeenCalledWith(
+      expect.objectContaining({ top: 40 }),
+    )
+  })
+
+  it('선택 field가 바뀌면 내부 scroll 위치도 새 bbox에 맞게 바뀐다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeTallResponse())
+    renderPage()
+
+    const image = await screen.findByTitle('원본 처방전')
+    fireEvent.load(image)
+    const { scrollTo } = stubGeometry()
+
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    fireEvent.focus(screen.getByLabelText('처방일'))
+    expect(scrollTo).toHaveBeenLastCalledWith(
+      expect.objectContaining({ top: 40 }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '수정하기' }))
+    fireEvent.focus(screen.getByLabelText('약물이름'))
+
+    // boxTop=1000, boxHeight=200 -> 1000+100-210 = 890
+    await waitFor(() => {
+      expect(scrollTo).toHaveBeenLastCalledWith(
+        expect.objectContaining({ top: 890 }),
+      )
+    })
+  })
+
+  it('scroll 위치는 스크롤 가능 범위를 벗어나지 않는다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeTallResponse())
+    renderPage()
+
+    const image = await screen.findByTitle('원본 처방전')
+    fireEvent.load(image)
+    const { scrollTo } = stubGeometry()
+
+    fireEvent.click(screen.getByRole('button', { name: '수정하기' }))
+    fireEvent.focus(screen.getByLabelText('약물이름'))
+
+    const call = scrollTo.mock.calls.at(-1)?.[0] as { top: number }
+    // maxScrollTop = 2000 - 420 = 1580
+    expect(call.top).toBeGreaterThanOrEqual(0)
+    expect(call.top).toBeLessThanOrEqual(1580)
+  })
+})
+
+describe('PrescriptionReviewPage #809 highlight lifetime', () => {
+  const lifetimeSourceImage = {
+    normalized: true,
+    width: 1000,
+    height: 2000,
+    url: '/api/v1/documents/document-1/normalized-file',
+  }
+
+  function makeLifetimeResponse() {
+    const fields = makeCompleteFields().map((field) => {
+      if (field.field_id === 'PRESCRIBED_DATE-0') {
+        return {
+          ...field,
+          source_location: {
+            page: 1,
+            bbox: [100, 200, 300, 100] as [number, number, number, number],
+          },
+        }
+      }
+      if (field.field_id === 'MEDICATION_NAME-1') {
+        return {
+          ...field,
+          source_location: {
+            page: 1,
+            bbox: [500, 1000, 200, 200] as [number, number, number, number],
+          },
+        }
+      }
+      return field
+    })
+
+    const base = makeOcrResponse(fields)
+    return { ...base, data: { ...base.data, source_image: lifetimeSourceImage } }
+  }
+
+  async function setupLoadedViewer() {
+    vi.mocked(getOcrJob).mockResolvedValue(makeLifetimeResponse())
+    renderPage()
+    const image = await screen.findByTitle('원본 처방전')
+    fireEvent.load(image)
+    return image
+  }
+
+  it('field focus 시 highlight를 표시한다', async () => {
+    await setupLoadedViewer()
+
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    fireEvent.focus(screen.getByLabelText('처방일'))
+
+    expect(
+      await screen.findByTestId('prescription-source-highlight'),
+    ).toBeTruthy()
+  })
+
+  it('field blur 시 highlight를 제거한다', async () => {
+    await setupLoadedViewer()
+
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    const input = screen.getByLabelText('처방일')
+    fireEvent.focus(input)
+    await screen.findByTestId('prescription-source-highlight')
+
+    fireEvent.blur(input)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+    })
+  })
+
+  it('field A blur 후 field B focus 시 새 bbox로 교체된다', async () => {
+    await setupLoadedViewer()
+
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    const dateInput = screen.getByLabelText('처방일')
+    fireEvent.focus(dateInput)
+
+    let highlight = await screen.findByTestId('prescription-source-highlight')
+    expect(highlight.style.top).toBe('10%')
+
+    fireEvent.blur(dateInput)
+    fireEvent.click(screen.getByRole('button', { name: '수정하기' }))
+    fireEvent.focus(screen.getByLabelText('약물이름'))
+
+    await waitFor(() => {
+      highlight = screen.getByTestId('prescription-source-highlight')
+      expect(highlight.style.top).toBe('50%')
+    })
+  })
+
+  it('수정 취소 시 highlight를 제거한다', async () => {
+    await setupLoadedViewer()
+
+    fireEvent.click(screen.getByRole('button', { name: '수정하기' }))
+    fireEvent.focus(screen.getByLabelText('약물이름'))
+    await screen.findByTestId('prescription-source-highlight')
+
+    fireEvent.click(screen.getByRole('button', { name: '취소' }))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+    })
+  })
+
+  it('수정완료 시 highlight를 제거한다', async () => {
+    await setupLoadedViewer()
+
+    fireEvent.click(screen.getByRole('button', { name: '수정하기' }))
+    const input = screen.getByLabelText('약물이름')
+    fireEvent.focus(input)
+    await screen.findByTestId('prescription-source-highlight')
+
+    fireEvent.click(screen.getByRole('button', { name: '수정완료' }))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+    })
+  })
+
+  it('처방일 수정모드 종료 시 highlight를 제거한다', async () => {
+    await setupLoadedViewer()
+
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    fireEvent.focus(screen.getByLabelText('처방일'))
+    await screen.findByTestId('prescription-source-highlight')
+
+    fireEvent.click(screen.getByRole('button', { name: '수정완료' }))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+    })
+  })
+
+  it('highlight 스타일은 원문 가독성을 해치지 않는 밝은 노랑 계열이다', () => {
+    const rule = prescriptionReviewStyles.match(
+      /\.prescription-review__source-highlight\s*\{[^}]*\}/,
+    )?.[0]
+
+    expect(rule).toContain('#f2c94c')
+    expect(rule).toContain('rgba(255, 230, 120, 0.2)')
+    expect(rule).toContain('pointer-events: none')
+    expect(rule).not.toContain('box-shadow')
+  })
+})
+
+describe('PrescriptionReviewPage #809 pinch zoom', () => {
+  const zoomSourceImage = {
+    normalized: true,
+    width: 1000,
+    height: 2000,
+    url: '/api/v1/documents/document-1/normalized-file',
+  }
+
+  function makeZoomResponse() {
+    const fields = makeCompleteFields().map((field) =>
+      field.field_id === 'PRESCRIBED_DATE-0'
+        ? {
+            ...field,
+            source_location: {
+              page: 1,
+              bbox: [100, 200, 300, 100] as [number, number, number, number],
+            },
+          }
+        : field,
+    )
+    const base = makeOcrResponse(fields)
+    return { ...base, data: { ...base.data, source_image: zoomSourceImage } }
+  }
+
+  async function setupZoomViewer() {
+    vi.mocked(getOcrJob).mockResolvedValue(makeZoomResponse())
+    renderPage()
+    const image = await screen.findByTitle('원본 처방전')
+    fireEvent.load(image)
+
+    const viewer = screen.getByTestId('prescription-source-viewer')
+    const canvas = screen.getByTestId('prescription-source-canvas')
+
+    Object.defineProperties(viewer, {
+      clientWidth: { configurable: true, value: 390 },
+      clientHeight: { configurable: true, value: 420 },
+    })
+    Object.defineProperties(canvas, {
+      clientWidth: { configurable: true, value: 390 },
+      clientHeight: { configurable: true, value: 780 },
+    })
+
+    return { viewer, canvas, image }
+  }
+
+  function pinch(
+    viewer: HTMLElement,
+    fromDistance: number,
+    toDistance: number,
+  ) {
+    fireEvent.pointerDown(viewer, { pointerId: 1, clientX: 0, clientY: 0 })
+    fireEvent.pointerDown(viewer, {
+      pointerId: 2,
+      clientX: fromDistance,
+      clientY: 0,
+    })
+    fireEvent.pointerMove(viewer, {
+      pointerId: 2,
+      clientX: toDistance,
+      clientY: 0,
+    })
+  }
+
+  function releasePinch(viewer: HTMLElement) {
+    fireEvent.pointerUp(viewer, { pointerId: 2 })
+    fireEvent.pointerUp(viewer, { pointerId: 1 })
+  }
+
+  function getScale(canvas: HTMLElement) {
+    const match = canvas.style.transform.match(/scale\(([\d.]+)\)/)
+    return match ? Number(match[1]) : null
+  }
+
+  function getPan(canvas: HTMLElement) {
+    const match = canvas.style.transform.match(
+      /translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/,
+    )
+    return match ? { x: Number(match[1]), y: Number(match[2]) } : null
+  }
+
+  it('초기 scale은 1이고 pan은 원점이다', async () => {
+    const { canvas } = await setupZoomViewer()
+
+    expect(getScale(canvas)).toBe(1)
+    expect(getPan(canvas)).toEqual({ x: 0, y: 0 })
+  })
+
+  it('pinch gesture로 scale이 증가한다', async () => {
+    const { viewer, canvas } = await setupZoomViewer()
+
+    pinch(viewer, 100, 200)
+
+    await waitFor(() => expect(getScale(canvas)).toBe(2))
+  })
+
+  it('scale은 최대 3으로 clamp된다', async () => {
+    const { viewer, canvas } = await setupZoomViewer()
+
+    pinch(viewer, 100, 1000)
+
+    await waitFor(() => expect(getScale(canvas)).toBe(3))
+  })
+
+  it('scale은 최소 1로 clamp된다', async () => {
+    const { viewer, canvas } = await setupZoomViewer()
+
+    pinch(viewer, 400, 10)
+
+    await waitFor(() => expect(getScale(canvas)).toBe(1))
+  })
+
+  it('scale > 1에서 한 손가락 drag로 pan이 변경된다', async () => {
+    const { viewer, canvas } = await setupZoomViewer()
+
+    pinch(viewer, 100, 200)
+    await waitFor(() => expect(getScale(canvas)).toBe(2))
+    releasePinch(viewer)
+
+    fireEvent.pointerDown(viewer, { pointerId: 3, clientX: 200, clientY: 300 })
+    fireEvent.pointerMove(viewer, { pointerId: 3, clientX: 150, clientY: 200 })
+
+    await waitFor(() => {
+      const pan = getPan(canvas)
+      expect(pan?.x).toBe(-50)
+      expect(pan?.y).toBe(-100)
+    })
+  })
+
+  it('pan은 확대된 canvas 범위를 벗어나지 않게 clamp된다', async () => {
+    const { viewer, canvas } = await setupZoomViewer()
+
+    pinch(viewer, 100, 200)
+    await waitFor(() => expect(getScale(canvas)).toBe(2))
+    releasePinch(viewer)
+
+    // 양의 방향으로 크게 끌어도 0을 넘지 않는다.
+    fireEvent.pointerDown(viewer, { pointerId: 4, clientX: 0, clientY: 0 })
+    fireEvent.pointerMove(viewer, { pointerId: 4, clientX: 900, clientY: 900 })
+
+    await waitFor(() => expect(getPan(canvas)).toEqual({ x: 0, y: 0 }))
+
+    // 음의 방향 한계: viewer(390x420) - scaled(780x1560)
+    fireEvent.pointerMove(viewer, { pointerId: 4, clientX: -5000, clientY: -5000 })
+
+    await waitFor(() => {
+      const pan = getPan(canvas)
+      expect(pan?.x).toBe(390 - 780)
+      expect(pan?.y).toBe(420 - 1560)
+    })
+  })
+
+  it('scale이 1로 돌아오면 pan이 초기화된다', async () => {
+    const { viewer, canvas } = await setupZoomViewer()
+
+    pinch(viewer, 100, 200)
+    await waitFor(() => expect(getScale(canvas)).toBe(2))
+    releasePinch(viewer)
+
+    fireEvent.pointerDown(viewer, { pointerId: 5, clientX: 200, clientY: 300 })
+    fireEvent.pointerMove(viewer, { pointerId: 5, clientX: 100, clientY: 100 })
+    fireEvent.pointerUp(viewer, { pointerId: 5 })
+    await waitFor(() => expect(getPan(canvas)).not.toEqual({ x: 0, y: 0 }))
+
+    // 다시 축소해 scale 1로 되돌린다.
+    pinch(viewer, 400, 10)
+    await waitFor(() => expect(getScale(canvas)).toBe(1))
+    releasePinch(viewer)
+
+    await waitFor(() => expect(getPan(canvas)).toEqual({ x: 0, y: 0 }))
+  })
+
+  it('details를 닫으면 zoom 상태가 초기화된다', async () => {
+    const { viewer, canvas } = await setupZoomViewer()
+
+    pinch(viewer, 100, 300)
+    await waitFor(() => expect(getScale(canvas)).toBe(3))
+    releasePinch(viewer)
+
+    // summary 클릭으로 details를 닫는다.
+    const details = viewer.closest('details') as HTMLDetailsElement
+    const summary = details.querySelector('summary') as HTMLElement
+    fireEvent.click(summary)
+    if (details.open) {
+      details.open = false
+      details.dispatchEvent(new Event('toggle', { bubbles: true }))
+    }
+
+    await waitFor(() => {
+      const target = screen.getByTestId('prescription-source-canvas')
+      expect(getScale(target)).toBe(1)
+      expect(getPan(target)).toEqual({ x: 0, y: 0 })
+    })
+  })
+
+  it('확대 상태에서도 highlight는 source-canvas 내부에 유지된다', async () => {
+    const { viewer, canvas } = await setupZoomViewer()
+
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    fireEvent.focus(screen.getByLabelText('처방일'))
+    const highlight = await screen.findByTestId('prescription-source-highlight')
+    expect(highlight.parentElement).toBe(canvas)
+
+    pinch(viewer, 100, 200)
+    await waitFor(() => expect(getScale(canvas)).toBe(2))
+
+    // 좌표는 source image 기준 비율을 그대로 유지한다.
+    expect(highlight.parentElement).toBe(canvas)
+    expect(highlight.style.top).toBe('10%')
+    expect(highlight.style.left).toBe('10%')
+  })
+
+  it('touch-action은 항상 none으로 고정되어 최초 pinch부터 viewer가 소유한다', async () => {
+    const { viewer, canvas } = await setupZoomViewer()
+
+    // gesture 시작 시점에 값이 정해지므로 도중 전환에 의존하지 않는다.
+    expect(viewer.getAttribute('style') ?? '').not.toMatch(/touch-action/)
+
+    const rule = prescriptionReviewStyles.match(
+      /\.prescription-review__source-viewer\s*\{[^}]*\}/,
+    )?.[0]
+    expect(rule).toContain('touch-action: none')
+    expect(rule).not.toContain('touch-action: pan-y')
+    expect(rule).toContain('overscroll-behavior: contain')
+
+    // scale=1에서 곧바로 두 손가락 pinch를 시작해도 viewer가 확대된다.
+    pinch(viewer, 100, 200)
+    await waitFor(() => expect(getScale(canvas)).toBe(2))
+    expect(viewer.getAttribute('style') ?? '').not.toMatch(/touch-action/)
+  })
+
+  it('scale=1에서 한 손가락 세로 drag는 viewer scrollTop으로 처리된다', async () => {
+    const { viewer, canvas } = await setupZoomViewer()
+
+    viewer.scrollTop = 100
+    expect(getScale(canvas)).toBe(1)
+
+    fireEvent.pointerDown(viewer, { pointerId: 9, clientX: 50, clientY: 300 })
+    fireEvent.pointerMove(viewer, { pointerId: 9, clientX: 50, clientY: 240 })
+
+    // 위로 60px 끌면 60px 더 스크롤된다.
+    expect(viewer.scrollTop).toBe(160)
+
+    // transform pan은 scale=1이므로 움직이지 않는다.
+    expect(getPan(canvas)).toEqual({ x: 0, y: 0 })
+
+    fireEvent.pointerUp(viewer, { pointerId: 9 })
+  })
+
+  it('pointercancel이 와도 pointer 상태를 정리하고 이후 gesture가 동작한다', async () => {
+    const { viewer, canvas } = await setupZoomViewer()
+
+    fireEvent.pointerDown(viewer, { pointerId: 11, clientX: 0, clientY: 0 })
+    fireEvent.pointerDown(viewer, { pointerId: 12, clientX: 100, clientY: 0 })
+    fireEvent.pointerCancel(viewer, { pointerId: 12 })
+    fireEvent.pointerCancel(viewer, { pointerId: 11 })
+
+    // 정리 후 새 pinch가 정상 동작한다.
+    pinch(viewer, 100, 200)
+    await waitFor(() => expect(getScale(canvas)).toBe(2))
+  })
+
+  it('pinch 종료 후 한 손가락 pan이 정상 동작한다', async () => {
+    const { viewer, canvas } = await setupZoomViewer()
+
+    pinch(viewer, 100, 200)
+    await waitFor(() => expect(getScale(canvas)).toBe(2))
+    releasePinch(viewer)
+
+    fireEvent.pointerDown(viewer, { pointerId: 13, clientX: 300, clientY: 400 })
+    fireEvent.pointerMove(viewer, { pointerId: 13, clientX: 260, clientY: 340 })
+
+    await waitFor(() => {
+      const pan = getPan(canvas)
+      expect(pan?.x).toBe(-40)
+      expect(pan?.y).toBe(-60)
+    })
+  })
+
+  it('legacy/PDF fallback viewer에는 zoom handler가 없다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(
+      makeOcrResponse(makeCompleteFields()),
+    )
+    renderPage()
+
+    const viewer = await screen.findByTitle('원본 처방전')
+
+    expect(viewer.tagName).toBe('IFRAME')
+    expect(screen.queryByTestId('prescription-source-viewer')).toBeNull()
+    expect(screen.queryByTestId('prescription-source-canvas')).toBeNull()
+  })
+})
+
+describe('PrescriptionReviewPage #809 normalized viewer fallback', () => {
+  const normalizedSourceImage = {
+    normalized: true,
+    width: 1000,
+    height: 2000,
+    url: '/api/v1/documents/document-1/normalized-file',
+  }
+
+  function makeNormalizedResponse() {
+    const fields = makeCompleteFields().map((field) =>
+      field.field_id === 'PRESCRIBED_DATE-0'
+        ? {
+            ...field,
+            source_location: {
+              page: 1,
+              bbox: [100, 200, 300, 100] as [number, number, number, number],
+            },
+          }
+        : field,
+    )
+    const base = makeOcrResponse(fields)
+    return { ...base, data: { ...base.data, source_image: normalizedSourceImage } }
+  }
+
+  it('정규화 fetch 실패 시 original /file viewer로 fallback한다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeNormalizedResponse())
+    vi.mocked(getPrescriptionNormalizedImage).mockRejectedValue(
+      new ApiError(404, '정규화본 없음', 'MEDICAL_DOCUMENT_NOT_FOUND'),
+    )
+    renderPage()
+
+    const viewer = await screen.findByTitle('원본 처방전')
+
+    expect(viewer.tagName).toBe('IFRAME')
+    expect(getPrescriptionDocumentFile).toHaveBeenCalledWith('document-1')
+    expect(screen.queryByTestId('prescription-source-canvas')).toBeNull()
+  })
+
+  it('정규화 fetch 실패 fallback 화면에는 highlight가 없다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeNormalizedResponse())
+    vi.mocked(getPrescriptionNormalizedImage).mockRejectedValue(
+      new ApiError(500, 'boom', 'INTERNAL'),
+    )
+    renderPage()
+
+    await screen.findByTitle('원본 처방전')
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    fireEvent.focus(screen.getByLabelText('처방일'))
+
+    expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+  })
+
+  it('정규화 decode 실패 시 original /file viewer로 전환한다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeNormalizedResponse())
+    renderPage()
+
+    const image = await screen.findByTitle('원본 처방전')
+    expect(image.tagName).toBe('IMG')
+    // 정상 fetch 단계에서는 original을 부르지 않는다.
+    expect(getPrescriptionDocumentFile).not.toHaveBeenCalled()
+
+    fireEvent.error(image)
+
+    await waitFor(() => {
+      expect(getPrescriptionDocumentFile).toHaveBeenCalledWith('document-1')
+    })
+
+    const viewer = await screen.findByTitle('원본 처방전')
+    expect(viewer.tagName).toBe('IFRAME')
+    expect(screen.queryByTestId('prescription-source-canvas')).toBeNull()
+  })
+
+  it('정규화 decode 실패 fallback 화면에도 highlight가 없다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeNormalizedResponse())
+    renderPage()
+
+    const image = await screen.findByTitle('원본 처방전')
+    fireEvent.load(image)
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    fireEvent.focus(screen.getByLabelText('처방일'))
+    await screen.findByTestId('prescription-source-highlight')
+
+    fireEvent.error(image)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+    })
+    fireEvent.focus(screen.getByLabelText('처방일'))
+    expect(screen.queryByTestId('prescription-source-highlight')).toBeNull()
+  })
+
+  it('original fallback까지 실패해도 검수 화면은 유지된다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeNormalizedResponse())
+    vi.mocked(getPrescriptionNormalizedImage).mockRejectedValue(
+      new ApiError(404, '정규화본 없음', 'MEDICAL_DOCUMENT_NOT_FOUND'),
+    )
+    vi.mocked(getPrescriptionDocumentFile).mockRejectedValue(
+      new ApiError(404, '원본 없음', 'MEDICAL_DOCUMENT_NOT_FOUND'),
+    )
+    renderPage()
+
+    // preview는 비활성이지만 검수는 계속 가능하다.
+    expect(
+      await screen.findByRole('button', { name: '수정' }),
+    ).toBeTruthy()
+    expect(screen.queryByText('처방전 정보를 찾을 수 없어요')).toBeNull()
+    expect(screen.queryByTitle('원본 처방전')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '수정' }))
+    expect(screen.getByLabelText('처방일')).toBeTruthy()
+  })
+
+  it('정규화가 정상이면 original /file을 호출하지 않는다', async () => {
+    vi.mocked(getOcrJob).mockResolvedValue(makeNormalizedResponse())
+    renderPage()
+
+    const image = await screen.findByTitle('원본 처방전')
+    fireEvent.load(image)
+
+    expect(image.tagName).toBe('IMG')
+    expect(getPrescriptionDocumentFile).not.toHaveBeenCalled()
+    expect(getPrescriptionNormalizedImage).toHaveBeenCalledWith(
+      '/api/v1/documents/document-1/normalized-file',
+    )
   })
 })

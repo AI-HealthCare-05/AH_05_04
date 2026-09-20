@@ -178,7 +178,7 @@ test('HOME 도지 안내는 1.5초 idle 후 표시되고 사용자 활동 시 �
   await page.waitForTimeout(1600)
   await expect(hint).toBeVisible()
   await expect(hint).toContainText(
-    '복약 가이드에서 궁금한 내용을 도지에게 물어보세요!',
+    '처방약 이외에 다른 약을 복용해도 괜찮은지 물어볼 수 있어요!',
   )
 
   await page.mouse.move(40, 40)

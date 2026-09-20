@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { NavigateFunction } from 'react-router-dom'
 import { ApiError } from '../api/client'
@@ -8,10 +9,13 @@ import {
   createManualMedication,
   getOcrJob,
   getPrescriptionDocumentFile,
+  getPrescriptionNormalizedImage,
   updateExtractedField,
   type ExtractedField,
   type CreateManualMedicationRequest,
   type OcrJobResponse,
+  type OcrSourceImage,
+  type OcrSourceLocation,
   type PrescriptionResponse,
 } from '../api/prescriptions'
 import {
@@ -29,6 +33,7 @@ export type PrescriptionReviewServices = {
   getOcrConsent: typeof getOcrConsent
   getOcrJob: typeof getOcrJob
   getPrescriptionDocumentFile: typeof getPrescriptionDocumentFile
+  getPrescriptionNormalizedImage: typeof getPrescriptionNormalizedImage
   updateExtractedField: typeof updateExtractedField
   confirmPrescription: typeof confirmPrescription
   createManualMedication: typeof createManualMedication
@@ -53,6 +58,7 @@ const defaultPrescriptionReviewServices: PrescriptionReviewServices = {
   getOcrConsent,
   getOcrJob,
   getPrescriptionDocumentFile,
+  getPrescriptionNormalizedImage,
   updateExtractedField,
   confirmPrescription,
   createManualMedication,
@@ -281,11 +287,106 @@ function isRequiredOcrPlaceholder(field: ExtractedField) {
   )
 }
 
+const SOURCE_MIN_SCALE = 1
+const SOURCE_MAX_SCALE = 3
+
+/**
+ * #809 pinch pan 범위 제한. 확대된 canvas가 viewer 밖으로 완전히
+ * 빠져나가지 않도록 [viewer - scaled, 0] 구간으로 자른다.
+ */
+function clampSourcePan(
+  panX: number,
+  panY: number,
+  scale: number,
+  viewer: HTMLElement | null,
+  canvas: HTMLElement | null,
+) {
+  if (!viewer || !canvas) return { x: 0, y: 0 }
+  if (scale <= SOURCE_MIN_SCALE) return { x: 0, y: 0 }
+
+  const viewerWidth = viewer.clientWidth
+  const viewerHeight = viewer.clientHeight
+  const scaledWidth = canvas.clientWidth * scale
+  const scaledHeight = canvas.clientHeight * scale
+
+  const minX = Math.min(0, viewerWidth - scaledWidth)
+  const minY = Math.min(0, viewerHeight - scaledHeight)
+
+  return {
+    x: Math.min(0, Math.max(panX, minX)),
+    y: Math.min(0, Math.max(panY, minY)),
+  }
+}
+
+function getPointerDistance(points: { x: number; y: number }[]) {
+  const [a, b] = points
+  return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
 function isUnrecoverableMedicationNameField(field: ExtractedField) {
   return (
     field.field_type === 'MEDICATION_NAME' &&
     isUnconfirmedEmptyOcrField(field)
   )
+}
+
+/**
+ * #809 강조 표시용 정규화 이미지 메타데이터 검증.
+ * normalized=true이고 양수 크기와 URL이 모두 있을 때만 통과한다(fail-closed).
+ */
+type ValidatedSourceImage = {
+  width: number
+  height: number
+  url: string
+}
+
+function getValidatedSourceImage(
+  sourceImage: OcrSourceImage | null | undefined,
+): ValidatedSourceImage | null {
+  if (!sourceImage || sourceImage.normalized !== true) return null
+
+  const { width, height, url } = sourceImage
+
+  if (typeof url !== 'string' || url.trim() === '') return null
+  if (typeof width !== 'number' || !Number.isFinite(width) || width <= 0) {
+    return null
+  }
+  if (typeof height !== 'number' || !Number.isFinite(height) || height <= 0) {
+    return null
+  }
+
+  return { width, height, url }
+}
+
+/**
+ * #809 근거 좌표 검증. 계약상 page는 항상 1이며 좌표는 정규화 이미지 픽셀 기준이다.
+ * 다른 페이지·비정상 값·이미지 바깥 좌표는 강조하지 않는다(fail-closed).
+ * 이 값은 provenance 표시 전용이며 자동 확인/승인 판단에 사용하지 않는다.
+ */
+function getValidatedSourceBox(
+  sourceLocation: OcrSourceLocation | null | undefined,
+  sourceImage: ValidatedSourceImage,
+): { x: number; y: number; width: number; height: number } | null {
+  if (!sourceLocation) return null
+  if (sourceLocation.page !== 1) return null
+  if (!Array.isArray(sourceLocation.bbox) || sourceLocation.bbox.length !== 4) {
+    return null
+  }
+
+  const [x, y, width, height] = sourceLocation.bbox
+
+  if (![x, y, width, height].every((value) =>
+    typeof value === 'number' && Number.isFinite(value),
+  )) {
+    return null
+  }
+
+  if (width <= 0 || height <= 0) return null
+  if (x < 0 || y < 0) return null
+  if (x + width > sourceImage.width) return null
+  if (y + height > sourceImage.height) return null
+
+  return { x, y, width, height }
 }
 
 function isFieldConfirmed(
@@ -500,10 +601,249 @@ function PrescriptionReviewPage({
   const [fields, setFields] = useState<ExtractedField[]>([])
   const [draftValues, setDraftValues] = useState<Record<string, string>>({})
   const [documentUrl, setDocumentUrl] = useState<string | null>(null)
+  // viewer blob URL은 effect 밖(디코드 실패 fallback)에서도 교체되므로 ref로 추적한다.
+  const originalObjectUrlRef = useRef<string | null>(null)
+  const normalizedObjectUrlRef = useRef<string | null>(null)
+
+  // #809 정규화 이미지 overlay 상태. viewer 실패는 검수를 막지 않는다.
+  const [sourceImage, setSourceImage] =
+    useState<ValidatedSourceImage | null>(null)
+  const [sourceImageUrl, setSourceImageUrl] = useState<string | null>(null)
+  const [isSourceImageLoaded, setIsSourceImageLoaded] = useState(false)
+  const [activeSourceFieldId, setActiveSourceFieldId] =
+    useState<string | null>(null)
+  const [isSourceViewerOpen, setIsSourceViewerOpen] = useState(false)
+  const sourceViewerRef = useRef<HTMLDivElement | null>(null)
+  const sourceCanvasRef = useRef<HTMLDivElement | null>(null)
+
+  // #809 pinch zoom: viewer 내부에서만 확대/이동한다.
+  const [sourceScale, setSourceScale] = useState(SOURCE_MIN_SCALE)
+  const [sourcePan, setSourcePan] = useState({ x: 0, y: 0 })
+  const activeSourcePointersRef = useRef(
+    new Map<number, { x: number; y: number }>(),
+  )
+  const sourcePinchRef = useRef<{
+    distance: number
+    scale: number
+    panX: number
+    panY: number
+  } | null>(null)
+  const sourcePanStartRef = useRef<{
+    x: number
+    y: number
+    panX: number
+    panY: number
+  } | null>(null)
+  // scale=1에서는 touch-action:none 때문에 브라우저 스크롤이 없으므로
+  // viewer.scrollTop/Left를 직접 움직인다.
+  const sourceScrollStartRef = useRef<{
+    x: number
+    y: number
+    scrollTop: number
+    scrollLeft: number
+  } | null>(null)
+
+  /**
+   * #809 highlight lifetime: 선택이 끝나면 명시적으로 null로 되돌린다.
+   * blur, 수정 취소, 수정완료, 수정모드 종료에서 모두 호출한다.
+   */
+  const clearSourceSelection = useCallback(() => {
+    setActiveSourceFieldId(null)
+  }, [])
+
+  /**
+   * #809 정규화 viewer를 내리고 blob URL을 해제한다.
+   * fetch 실패와 decode 실패 양쪽에서 같은 정리를 쓴다.
+   */
+  const clearNormalizedSource = useCallback(() => {
+    if (normalizedObjectUrlRef.current) {
+      URL.revokeObjectURL(normalizedObjectUrlRef.current)
+      normalizedObjectUrlRef.current = null
+    }
+    setSourceImage(null)
+    setSourceImageUrl(null)
+    setIsSourceImageLoaded(false)
+    setActiveSourceFieldId(null)
+  }, [])
+
+  /**
+   * 정규화 이미지를 쓸 수 없을 때 기존 original /file iframe viewer로 되돌린다.
+   * legacy/PDF 경로, 정규화 fetch 실패, 정규화 decode 실패가 모두 이 경로를 쓴다.
+   * original 로딩까지 실패하면 preview 없이 검수만 계속한다.
+   */
+  const loadOriginalDocumentFallback = useCallback(
+    async (targetDocumentId: string) => {
+      const requestKey = reviewRequestKey
+      const isLatest = () => latestReviewRequestKeyRef.current === requestKey
+
+      try {
+        const documentBlob =
+          await services.getPrescriptionDocumentFile(targetDocumentId)
+        if (!isLatest()) return
+
+        const nextObjectUrl = URL.createObjectURL(documentBlob)
+        if (!isLatest()) {
+          URL.revokeObjectURL(nextObjectUrl)
+          return
+        }
+
+        if (originalObjectUrlRef.current) {
+          URL.revokeObjectURL(originalObjectUrlRef.current)
+        }
+        originalObjectUrlRef.current = nextObjectUrl
+        setDocumentUrl(nextObjectUrl)
+      } catch {
+        // fail-closed: 원본 미리보기 없이도 검수는 계속 가능하다.
+        if (!isLatest()) return
+        setDocumentUrl(null)
+      }
+    },
+    [reviewRequestKey, services],
+  )
+
+  const resetSourceZoom = useCallback(() => {
+    activeSourcePointersRef.current.clear()
+    sourcePinchRef.current = null
+    sourcePanStartRef.current = null
+    sourceScrollStartRef.current = null
+    setSourceScale(SOURCE_MIN_SCALE)
+    setSourcePan({ x: 0, y: 0 })
+  }, [])
+
+  // details를 닫거나 정규화 이미지가 바뀌면 zoom 상태를 초기화한다.
+  useEffect(() => {
+    if (!isSourceViewerOpen) resetSourceZoom()
+  }, [isSourceViewerOpen, resetSourceZoom])
+
+  useEffect(() => {
+    resetSourceZoom()
+  }, [sourceImageUrl, resetSourceZoom])
+
+  const handleSourcePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const pointers = activeSourcePointersRef.current
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+
+      if (typeof event.currentTarget.setPointerCapture === 'function') {
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId)
+        } catch {
+          // capture 미지원이어도 gesture는 계속 동작한다.
+        }
+      }
+
+      if (pointers.size === 2) {
+        sourcePanStartRef.current = null
+        sourceScrollStartRef.current = null
+        sourcePinchRef.current = {
+          distance: getPointerDistance([...pointers.values()]),
+          scale: sourceScale,
+          panX: sourcePan.x,
+          panY: sourcePan.y,
+        }
+        return
+      }
+
+      if (pointers.size === 1) {
+        if (sourceScale > SOURCE_MIN_SCALE) {
+          sourceScrollStartRef.current = null
+          sourcePanStartRef.current = {
+            x: event.clientX,
+            y: event.clientY,
+            panX: sourcePan.x,
+            panY: sourcePan.y,
+          }
+          return
+        }
+
+        // scale=1: touch-action:none이므로 세로 스크롤을 직접 재현한다.
+        const viewer = sourceViewerRef.current
+        sourcePanStartRef.current = null
+        sourceScrollStartRef.current = viewer
+          ? {
+              x: event.clientX,
+              y: event.clientY,
+              scrollTop: viewer.scrollTop,
+              scrollLeft: viewer.scrollLeft,
+            }
+          : null
+      }
+    },
+    [sourcePan.x, sourcePan.y, sourceScale],
+  )
+
+  const handleSourcePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const pointers = activeSourcePointersRef.current
+      if (!pointers.has(event.pointerId)) return
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+
+      const viewer = sourceViewerRef.current
+      const canvas = sourceCanvasRef.current
+      const pinch = sourcePinchRef.current
+
+      if (pointers.size >= 2 && pinch && pinch.distance > 0) {
+        const distance = getPointerDistance([...pointers.values()].slice(0, 2))
+        const nextScale = Math.min(
+          SOURCE_MAX_SCALE,
+          Math.max(SOURCE_MIN_SCALE, (pinch.scale * distance) / pinch.distance),
+        )
+
+        setSourceScale(nextScale)
+        setSourcePan(
+          nextScale <= SOURCE_MIN_SCALE
+            ? { x: 0, y: 0 }
+            : clampSourcePan(pinch.panX, pinch.panY, nextScale, viewer, canvas),
+        )
+        return
+      }
+
+      const panStart = sourcePanStartRef.current
+      if (pointers.size === 1 && panStart && sourceScale > SOURCE_MIN_SCALE) {
+        setSourcePan(
+          clampSourcePan(
+            panStart.panX + (event.clientX - panStart.x),
+            panStart.panY + (event.clientY - panStart.y),
+            sourceScale,
+            viewer,
+            canvas,
+          ),
+        )
+        return
+      }
+
+      // scale=1: 브라우저 대신 viewer scroll을 직접 이동시킨다.
+      const scrollStart = sourceScrollStartRef.current
+      if (pointers.size === 1 && scrollStart && viewer) {
+        viewer.scrollTop = scrollStart.scrollTop - (event.clientY - scrollStart.y)
+        viewer.scrollLeft =
+          scrollStart.scrollLeft - (event.clientX - scrollStart.x)
+      }
+    },
+    [sourceScale],
+  )
+
+  const handleSourcePointerEnd = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const pointers = activeSourcePointersRef.current
+      pointers.delete(event.pointerId)
+
+      if (pointers.size < 2) sourcePinchRef.current = null
+      if (pointers.size === 0) {
+        sourcePanStartRef.current = null
+        sourceScrollStartRef.current = null
+        // scale이 1로 돌아왔다면 pan도 원점으로 되돌린다.
+        if (sourceScale <= SOURCE_MIN_SCALE) setSourcePan({ x: 0, y: 0 })
+      }
+    },
+    [sourceScale],
+  )
   const [prescription, setPrescription] =
     useState<PrescriptionResponse | null>(null)
   const [message, setMessage] = useState<ReviewMessage | null>(null)
-  const [llmProcessing, setLlmProcessing] = useState<OcrJobResponse['data']['llm_processing']>(null)
+  // llm_processing은 계약/데이터로 계속 보존한다.
+  // Figma 최신 기준에서 사용자 노출 notice만 제거했다.
+  const [, setLlmProcessing] = useState<OcrJobResponse['data']['llm_processing']>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [blockingState, setBlockingState] =
     useState<ReviewBlockingState | null>(null)
@@ -699,7 +1039,6 @@ function PrescriptionReviewPage({
 
   useEffect(() => {
     let isDisposed = false
-    let objectUrl: string | null = null
     const isLatestRequest = () =>
       !isDisposed &&
       latestReviewRequestKeyRef.current === reviewRequestKey
@@ -707,6 +1046,11 @@ function PrescriptionReviewPage({
     setFields([])
     setDraftValues({})
     setDocumentUrl(null)
+    setSourceImage(null)
+    setSourceImageUrl(null)
+    setIsSourceImageLoaded(false)
+    setActiveSourceFieldId(null)
+    setIsSourceViewerOpen(false)
     setPrescription(null)
     setMessage(null)
     setFieldErrors({})
@@ -798,9 +1142,6 @@ function PrescriptionReviewPage({
           return
         }
 
-        const documentBlob = await services.getPrescriptionDocumentFile(resolvedDocumentId)
-        if (!isLatestRequest()) return
-
         const nextFields = ocrResponse.data.fields
         const placeholderSections = new Set<ReviewSectionKey>(
           nextFields
@@ -830,13 +1171,42 @@ function PrescriptionReviewPage({
         setEditingSections(placeholderSections)
         setRevokedReviewSections(revokedReviewSections)
 
-        const nextObjectUrl = URL.createObjectURL(documentBlob)
-        if (!isLatestRequest()) {
-          URL.revokeObjectURL(nextObjectUrl)
+        // #809: viewer 로딩 실패는 검수/확정을 막지 않는다. 검수 상태를 먼저
+        // 확정한 뒤 별도 경로에서 이미지를 받는다.
+        const validatedSourceImage = getValidatedSourceImage(
+          ocrResponse.data.source_image,
+        )
+
+        if (validatedSourceImage) {
+          // 정규화본이 있으면 정규화 이미지만 overlay 대상으로 사용한다.
+          // 원본 /file 위에는 절대 bbox를 겹치지 않는다.
+          try {
+            const normalizedBlob =
+              await services.getPrescriptionNormalizedImage(
+                validatedSourceImage.url,
+              )
+            if (!isLatestRequest()) return
+
+            const nextNormalizedUrl = URL.createObjectURL(normalizedBlob)
+            if (!isLatestRequest()) {
+              URL.revokeObjectURL(nextNormalizedUrl)
+              return
+            }
+            normalizedObjectUrlRef.current = nextNormalizedUrl
+            setSourceImage(validatedSourceImage)
+            setSourceImageUrl(nextNormalizedUrl)
+          } catch {
+            // 정규화 fetch 실패: 강조 없이 기존 original viewer로 fallback한다.
+            if (!isLatestRequest()) return
+            setSourceImage(null)
+            setSourceImageUrl(null)
+            await loadOriginalDocumentFallback(resolvedDocumentId)
+          }
           return
         }
-        objectUrl = nextObjectUrl
-        setDocumentUrl(nextObjectUrl)
+
+        // legacy/PDF: 기존 원본 iframe preview를 유지하고 강조는 제공하지 않는다.
+        await loadOriginalDocumentFallback(resolvedDocumentId)
       } catch (error) {
         if (!isLatestRequest()) return
         applyReviewError(
@@ -853,12 +1223,20 @@ function PrescriptionReviewPage({
     return () => {
       isDisposed = true
       guideCreationRequestRef.current = null
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
+      if (originalObjectUrlRef.current) {
+        URL.revokeObjectURL(originalObjectUrlRef.current)
+        originalObjectUrlRef.current = null
+      }
+      if (normalizedObjectUrlRef.current) {
+        URL.revokeObjectURL(normalizedObjectUrlRef.current)
+        normalizedObjectUrlRef.current = null
+      }
     }
   }, [
     applyReviewError,
     documentId,
     jobId,
+    loadOriginalDocumentFallback,
     prefetchedOcrResponse,
     previewState?.manualAddMode,
     previewState?.unreviewedMedicationIndexes,
@@ -898,6 +1276,7 @@ function PrescriptionReviewPage({
       return next
     })
     setUserConfirmed(false)
+    clearSourceSelection()
   }
 
   const isSectionReviewed = (
@@ -990,6 +1369,7 @@ function PrescriptionReviewPage({
         return next
       })
       setUserConfirmed(false)
+      clearSourceSelection()
       return
     }
 
@@ -1034,6 +1414,7 @@ function PrescriptionReviewPage({
         return next
       })
       setUserConfirmed(false)
+      clearSourceSelection()
     } catch (error) {
       if (latestReviewRequestKeyRef.current !== saveRequestKey) return
       applyReviewError(error, '검토 정보를 저장하는 중 오류가 발생했습니다.')
@@ -1248,6 +1629,81 @@ function PrescriptionReviewPage({
     }
   }
 
+  // #809: 강조 가능한 필드만 모아 둔다. 이미지 로딩 성공 전에는 강조하지 않는다.
+  const highlightableSourceBoxes = useMemo(() => {
+    if (!sourceImage || !sourceImageUrl || !isSourceImageLoaded) {
+      return new Map<string, { x: number; y: number; width: number; height: number }>()
+    }
+
+    const entries = fields.flatMap((field) => {
+      const box = getValidatedSourceBox(field.source_location, sourceImage)
+      return box ? ([[field.field_id, box]] as const) : []
+    })
+
+    return new Map(entries)
+  }, [fields, isSourceImageLoaded, sourceImage, sourceImageUrl])
+
+  const activeSourceBox =
+    activeSourceFieldId === null
+      ? null
+      : highlightableSourceBoxes.get(activeSourceFieldId) ?? null
+
+  const handleSourceFieldSelect = useCallback(
+    (fieldId: string) => {
+      const box = highlightableSourceBoxes.get(fieldId)
+      if (!box || !sourceImage) return
+
+      setActiveSourceFieldId(fieldId)
+      setIsSourceViewerOpen(true)
+
+      const prefersReducedMotion =
+        typeof window !== 'undefined' &&
+        typeof window.matchMedia === 'function' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      const behavior: ScrollBehavior = prefersReducedMotion ? 'auto' : 'smooth'
+
+      // 1) viewer 자체를 페이지 viewport에 노출한다.
+      if (typeof sourceViewerRef.current?.scrollIntoView === 'function') {
+        sourceViewerRef.current.scrollIntoView({ behavior, block: 'nearest' })
+      }
+
+      // 2) viewer 내부 scroll을 선택된 bbox 위치로 옮긴다.
+      //    details가 방금 열린 경우 레이아웃 확정 후 계산해야 한다.
+      requestAnimationFrame(() => {
+        const viewer = sourceViewerRef.current
+        const canvas = sourceCanvasRef.current
+        if (!viewer || !canvas) return
+
+        // 실제 렌더된 이미지 영역(canvas) 기준으로 표시 좌표를 환산한다.
+        const displayedHeight = canvas.clientHeight || canvas.offsetHeight || 0
+        const displayedWidth = canvas.clientWidth || canvas.offsetWidth || 0
+        if (displayedHeight <= 0) return
+
+        const boxTop = (box.y / sourceImage.height) * displayedHeight
+        const boxHeight = (box.height / sourceImage.height) * displayedHeight
+        const boxLeft = (box.x / sourceImage.width) * displayedWidth
+        const boxWidth = (box.width / sourceImage.width) * displayedWidth
+
+        // bbox가 viewer 중앙에 오도록 하되 스크롤 가능 범위로 자른다.
+        const maxScrollTop = Math.max(0, canvas.scrollHeight - viewer.clientHeight)
+        const desiredTop = boxTop + boxHeight / 2 - viewer.clientHeight / 2
+        const top = Math.min(Math.max(desiredTop, 0), maxScrollTop)
+
+        const maxScrollLeft = Math.max(0, canvas.scrollWidth - viewer.clientWidth)
+        const desiredLeft = boxLeft + boxWidth / 2 - viewer.clientWidth / 2
+        const left = Math.min(Math.max(desiredLeft, 0), maxScrollLeft)
+
+        if (typeof viewer.scrollTo === 'function') {
+          viewer.scrollTo({ top, left, behavior })
+        } else {
+          viewer.scrollTop = top
+          viewer.scrollLeft = left
+        }
+      })
+    },
+    [highlightableSourceBoxes, sourceImage],
+  )
+
   const renderEditField = (field: ExtractedField) => {
     const draftValue = draftValues[field.field_id] ?? ''
     const isSaving = savingFieldIds.has(field.field_id)
@@ -1291,12 +1747,18 @@ function PrescriptionReviewPage({
                 : '선택 입력'
             }
             aria-invalid={Boolean(fieldError)}
+            data-has-source-location={
+              highlightableSourceBoxes.has(field.field_id) ? 'true' : undefined
+            }
             disabled={
               isSaving ||
               isAddingMedication ||
               isConfirming ||
               Boolean(prescription)
             }
+            onFocus={() => handleSourceFieldSelect(field.field_id)}
+            onClick={() => handleSourceFieldSelect(field.field_id)}
+            onBlur={clearSourceSelection}
             onChange={(event) => {
               setDraftValues((current) => ({
                 ...current,
@@ -1337,14 +1799,6 @@ function PrescriptionReviewPage({
   const medicationProgress = medicationGroups.length > 0
     ? Math.round((reviewedMedicationCount / medicationGroups.length) * 100)
     : 0
-  const allMedicationGroupsReviewed =
-    medicationGroups.length > 0 &&
-    reviewedMedicationCount === medicationGroups.length
-  const reviewStatusMessage = editingSections.size > 0
-    ? '수정 중인 정보는 검토 완료가 해제돼요. 입력값 저장 후 다시 검토 완료해 주세요.'
-    : prescriptionDateReviewed && allMedicationGroupsReviewed
-      ? '처방일과 모든 약의 검토를 완료했어요. 원본 처방전과 직접 대조한 뒤 아래 항목을 체크해 주세요.'
-      : '처방일과 약별 정보를 확인하거나 수정한 뒤 각 항목의 검토 완료를 눌러 주세요.'
   const renderBadge = (
     state: 'reviewed' | 'editing' | 'required' | 'unreviewed',
   ) => {
@@ -1382,7 +1836,73 @@ function PrescriptionReviewPage({
       <section className="prescription-review__prescription-card">
         <div className="prescription-review__prescription-heading">
           <h2>처방 정보</h2>
-          {documentUrl ? (
+          {sourceImageUrl && sourceImage ? (
+            <details
+              className="prescription-review__source"
+              open={isSourceViewerOpen}
+              onToggle={(event) => {
+                setIsSourceViewerOpen(event.currentTarget.open)
+              }}
+            >
+              <summary
+                onClick={(event) => {
+                  // open을 state로 제어하므로 기본 토글 대신 state를 바꾼다.
+                  event.preventDefault()
+                  setIsSourceViewerOpen((current) => !current)
+                }}
+              >
+                원본 처방전 보기
+              </summary>
+              <div
+                className="prescription-review__source-viewer"
+                ref={sourceViewerRef}
+                data-testid="prescription-source-viewer"
+                data-scale={sourceScale}
+                onPointerDown={handleSourcePointerDown}
+                onPointerMove={handleSourcePointerMove}
+                onPointerUp={handleSourcePointerEnd}
+                onPointerCancel={handleSourcePointerEnd}
+              >
+                <div
+                  className="prescription-review__source-canvas"
+                  data-testid="prescription-source-canvas"
+                  ref={sourceCanvasRef}
+                  style={{
+                    transform: `translate(${sourcePan.x}px, ${sourcePan.y}px) scale(${sourceScale})`,
+                    transformOrigin: '0 0',
+                  }}
+                >
+                  <img
+                    className="prescription-review__source-image"
+                    src={sourceImageUrl}
+                    alt="원본 처방전"
+                    title="원본 처방전"
+                    onLoad={() => setIsSourceImageLoaded(true)}
+                    onError={() => {
+                      // 정규화 decode 실패: 강조를 끄고 original viewer로 전환한다.
+                      clearNormalizedSource()
+                      if (documentId) {
+                        void loadOriginalDocumentFallback(documentId)
+                      }
+                    }}
+                  />
+                  {activeSourceBox ? (
+                    <span
+                      className="prescription-review__source-highlight"
+                      data-testid="prescription-source-highlight"
+                      aria-hidden="true"
+                      style={{
+                        left: `${(activeSourceBox.x / sourceImage.width) * 100}%`,
+                        top: `${(activeSourceBox.y / sourceImage.height) * 100}%`,
+                        width: `${(activeSourceBox.width / sourceImage.width) * 100}%`,
+                        height: `${(activeSourceBox.height / sourceImage.height) * 100}%`,
+                      }}
+                    />
+                  ) : null}
+                </div>
+              </div>
+            </details>
+          ) : documentUrl ? (
             <details className="prescription-review__source">
               <summary>원본 처방전 보기</summary>
               <iframe src={documentUrl} title="원본 처방전" />
@@ -1820,17 +2340,7 @@ function PrescriptionReviewPage({
           <div className="prescription-review__notice">
             <strong>도지는 처방 내용을 바꾸지 않아요.</strong>
             <span>원본 처방전과 인식된 내용을 직접 비교해 주세요.</span>
-            <small className="prescription-review__state-guidance" role="status">
-              {reviewStatusMessage}
-            </small>
           </div>
-
-          {llmProcessing === 'SKIPPED_MINIMIZATION' && (
-            <div className="prescription-review__notice" role="status">
-              <strong>AI 구조화를 생략했어요</strong>
-              <span>안전하게 전송할 약품 정보를 구분하지 못해 외부 LLM에 보내지 않았습니다. OCR 결과를 원본 처방전과 비교해 확인해 주세요.</span>
-            </div>
-          )}
 
           {hasStructurallyMissingRequiredFields && (
             <div className="prescription-review__error" role="alert">

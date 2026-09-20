@@ -351,6 +351,72 @@ $$\text{source object exists} \neq \text{ANS-BASE / ANS-RAG / ANS-FINAL 실행�
    - Baseline Freeze
    - `PUBLIC_TRACK_F`
 
+## 2026-09-20 후속 결정: Answer Runtime Authority Carrier / Materialization Coordinate (Phase C-1 Audit) — Proposed / Review Required
+
+### 1. 목적 및 원칙 (Purpose & Principles)
+- **책임자 및 검토 체계**:
+  - 구현 책임자: 정현우 (`@junghyunwoo`)
+  - 책임 리뷰어: 송은영 (`@phina-io`) — **Review Required** (승인 전 Frozen/Approved 사용 불가)
+  - 인수 근거 제공: 권가빈 (`@hazelnutflavoured`)
+  - 평가/Worker 전문 근거 제공: 김지혜 (`@Jye-rookie`)
+- **감사 및 설계 원칙**:
+  1. PR #851(Phase B)에서 구현된 10개 Canonical Recipe 및 Manifest 검증/사영 커널을 그대로 재사용한다.
+  2. Source Object 실재와 Run-bound Authoritative Carrier를 엄격히 분리한다.
+  3. Authoritative Source Exists, Run-bound Carrier Exists, Exact Lookup Coordinate Exists, Exact Validation Possible, Materialization Lifecycle Point Defined의 6대 조건이 모두 충족될 때만 Extractor 구현을 허용한다.
+  4. 확인되지 않은 authority는 임시 구현하지 않으며, fail-closed를 유지한다.
+
+### 2. 15 Authority Bindings 전수 감사 및 구현 판정 결과 (Audit Findings)
+- **감사 기준**: 최신 `develop` (`8f29710547c8a405736d4a50dcac41bc10a90ed3`)
+- **전수 판정 요약**:
+  - **`IMPLEMENTABLE NOW = NONE` (0개)**:
+    - 6대 조건을 모두 충족하는 유일한 축은 `INPUT_CONTEXT`이나, 이는 이미 PR #851에서 `compute_input_context_binding_hash(bundle: LoadedRunBundle)`로 구현 완료되었으므로 불필요한 신규 래퍼 클래스를 생성하지 않는다 (`IMPLEMENTED` 재사용).
+    - 나머지 14개 Binding은 Lookup Coordinate 부재, Case 집계 계약 미정, 또는 상류 런타임 이슈 차단으로 인해 구현 판정 조건을 미충족한다.
+  - **`CODE CHANGE = NONE`**:
+    - 불필요한 코드 변경 및 날조(fabrication) 방지를 위해 프로덕션/테스트 코드 변경 없이 문서 정합만 수행한다.
+
+### 3. Materialization Coordinate 제안 (Proposed / Review Required)
+- **Lifecycle Point**:
+  - **`ALL_CASES_COMPLETED_PRE_SEAL` (Proposed / Review Required)**
+  - 모든 필수 Case 실행 완료 및 Controlled-Variable 불변성 검증 통과 후, `RagEvaluationRun` 봉인(`result_content_manifest_hash` 계산) 직전에 `AnswerRuntimeAuthorityBindingManifest` 생성을 제안한다.
+  - 책임 리뷰어(`@phina-io`)의 정식 승인 전까지는 확정(Frozen/Approved)이 아닌 제안(Proposed) 상태로 유지한다.
+- **Case Aggregation Rule (Proposed / Review Required)**:
+  - Controlled-Variable Invariant: 모든 필수 Case에서 관측된 controlled value가 단일 동일 값이어야 한다 ($\forall c \in \text{CompletedRequiredCases}, \, \text{value}(c) == \text{value}_0$).
+  - 케이스별 값 불일치(Drift) 또는 누락 발생 시 즉시 `fail-closed` (`EvaluationValidationError(STATE_COMBINATION_INVALID)`).
+  - 현재 `develop`에 해당 집계/검증 커널이 부재하므로 계약 공백(Contract Gap)으로 기록하며, 단일 케이스 값을 전체 Run 값으로 임의 과승격하지 않는다.
+- **Storage Architecture 및 Publication Coordinate (철회 및 미확정 명시)**:
+  - 기존의 `<run_dir>/answer_runtime_binding_manifest.json` 직접 발행 안은 **철회**한다.
+  - 현재 `ContentArtifactPath` (Schema Set 1.5) 및 `publisher.py`의 번들 화이트리스트에 해당 파일명이 존재하지 않으므로, 승인 없이 번들 내 파일명을 확정할 수 없다.
+  - 상태: **`MATERIALIZATION_TIMING_PROPOSED`** 및 **`STORAGE_COORDINATE_UNRESOLVED`**.
+  - **엄격 금지 사항**:
+    - `ContentArtifactPath` 무승인 확장 금지
+    - `publisher.py` 번들 화이트리스트 무승인 수정 금지
+    - Schema Set 변경 금지
+    - `RagEvaluationRun` 스키마 필드 추가 금지 (Option B 기각 유지)
+    - 임의 sidecar 경로 확정 금지
+
+### 4. 상류 권위 및 인접 이슈 정합 (Reconciliation)
+1. **#806 Request Guard Runtime Binding**:
+   - `SqlAlchemyRequestGuardRuntimeBindingReader.read_exact()`는 `RequestGuardRuntimeBindingRef(artifact_code, version, content_sha256)`를 필수로 요구하나, `RagEvaluationRun`에는 해당 ref 필드가 부재하다.
+   - `RagEvaluationRun`의 런타임 필드는 `runtime_eligible=True` + `END_TO_END_RAG` + `LOCAL` 전용이므로 Answer Quality에서 재사용 불가하며, `candidate_guard_decision_id`는 UUID일 뿐 ref가 아니다.
+   - 따라서 현 상태는 **`RUNTIME_BUNDLE_SOURCE_EXISTS BUT EVALUATION_RUN_LOOKUP_COORDINATE_MISSING`**으로 유지한다.
+2. **#807 / #853 Citation Approval Pin**:
+   - #807은 `PATIENT_CITATION` Source Use Approval 정본 권위이고 #853은 런타임 번들 매니페스트 v2 핀 권위이다.
+   - `SourceUseApproval != Citation Authorization != CITATION_GATE binding`이므로, #807/#853을 #159 CITATION_GATE로 승격하지 않고 15축 스키마를 불변으로 유지한다.
+3. **#799 및 #180 Blocker 유지**:
+   - Issue #799(Citation Authorization) 및 Issue #180(Final Validator, Safety Gate, Release Gate)은 계속 OPEN 및 상류 차단 상태를 유지한다.
+   - `release_gate.py` 평가 게이트를 런타임 Release Gate authority로 혼용·재사용하는 것을 엄격히 금지한다.
+4. **#860 Guide·Chat Backend Public Projection Seam (develop `8f297105`)**:
+   - Guide·Chat Backend public projection seam이 추가되었으나, 이는 #180 final Authorized/Release result의 향후 소비 경계만 정의한다.
+   - Answer Runtime authority carrier, Citation Authorization production receipt, `FINAL_VALIDATOR` authority, `CITATION_GATE` authority, `SAFETY_GATE` authority, `RELEASE_GATE` authority를 일체 제공하지 않는다.
+   - 따라서 Phase C-1 15-binding audit 결과와 `IMPLEMENTABLE NOW = NONE` 판정에는 변화가 없다.
+
+### 5. 후속 이슈 관리 및 작업 상태 (Next Steps)
+- **후속 이슈 분리 원칙**:
+  - Case-level Provenance Aggregation: 새 이슈를 생성하지 않고 **#159 Phase C-2**의 작업 범위로 유지한다.
+  - Evaluation Run ↔ #806 Bridge: 새 이슈를 생성하지 않고 **#162**에 discovery comment로 연결한다.
+- **작업 상태**:
+  - Issue #159는 본 Phase C-1 PR 이후에도 계속 **OPEN** 상태로 유지된다.
+
 ## 공개 경계
 
 이 후보의 승인이나 DEV 구현은 `PUBLIC_TRACK_F`를 해제하지 않는다. Answer Quality 통과만으로도 공개할

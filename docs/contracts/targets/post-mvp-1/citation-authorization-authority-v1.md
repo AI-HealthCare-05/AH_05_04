@@ -2,8 +2,8 @@
 
 Status: Target — local implementation evidence in progress; CI and responsible reviewer approval pending.
 
-Owner: `@ceohwj`  
-Responsible reviewer: `@hazelnutflavoured`  
+Owner: `@ceohwj`
+Responsible reviewer: `@hazelnutflavoured`
 Specialist FYI: `@Jye-rookie`
 
 ## Authority flow

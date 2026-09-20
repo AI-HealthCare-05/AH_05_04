@@ -157,6 +157,13 @@
   line-height: 1.65;
 }
 
+/* Figma 최신 기준: 안내 notice는 노랑이 아니라 연한 회청색이다. */
+.prescription-review__notice {
+  border-color: #d3dde6;
+  background: #f4f7fa;
+  color: #2b3a47;
+}
+
 .prescription-review__error {
   display: grid;
   gap: 2px;
@@ -310,6 +317,55 @@
   border: 1px solid var(--ds-line);
   border-radius: 12px;
   background: #fff;
+}
+
+/* #809 정규화 이미지 viewer. scroll 컨테이너는 containing block이 아니다. */
+.prescription-review__source-viewer {
+  display: block;
+  width: calc(100% - 24px);
+  max-height: 360px;
+  margin: 0 12px 12px;
+  border: 1px solid var(--ds-line);
+  border-radius: 12px;
+  overflow: auto;
+  background: #fff;
+  line-height: 0;
+  /*
+   * gesture ownership: touch-action은 gesture 시작 시점에 결정되므로
+   * 도중에 값을 바꿀 수 없다. 최초 두 손가락부터 viewer가 pinch를 소유하도록
+   * 항상 none으로 고정하고, scale=1의 세로 이동은 JS가 scrollTop으로 재현한다.
+   */
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+
+/*
+ * overlay 좌표의 기준면. 실제 렌더된 이미지 전체 영역과 크기가 같아야
+ * percentage top/height가 scroll viewport가 아닌 이미지 기준으로 계산된다.
+ */
+.prescription-review__source-canvas {
+  position: relative;
+  display: block;
+  width: 100%;
+  line-height: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.prescription-review__source-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+}
+
+.prescription-review__source-highlight {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid #f2c94c;
+  border-radius: 5px;
+  background: rgba(255, 230, 120, 0.2);
+  pointer-events: none;
 }
 
 .prescription-review-page .prescription-review__card {
@@ -725,31 +781,29 @@
 }
 
 .prescription-review__content .prescription-review__notice {
-  min-height: 72px;
+  min-height: 84px;
   display: grid;
   align-content: center;
-  gap: 3px;
+  gap: 4px;
   box-sizing: border-box;
-  padding: 14px 16px;
-  border-color: #f0d77a;
-  background: #fff9e8;
+  padding: 16px 16px;
+  border-color: #d3dde6;
+  background: #f4f7fa;
   font-size: 11px;
-  line-height: 1.35;
+  line-height: 1.45;
+  /* 340px에서도 잘리지 않도록 줄바꿈을 허용한다. */
+  overflow-wrap: break-word;
+  word-break: keep-all;
 }
 
 .prescription-review__content .prescription-review__notice strong {
-  color: #171a21;
+  color: #2b3a47;
   font-size: 12px;
 }
 
 .prescription-review__content .prescription-review__notice span {
-  color: #475167;
+  color: #55687a;
   font-weight: 500;
-}
-
-.prescription-review__content .prescription-review__notice .prescription-review__state-guidance {
-  color: var(--gray-600);
-  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -824,6 +878,15 @@
 .prescription-review__content .prescription-review__source iframe {
   width: 100%;
   height: 420px;
+  display: block;
+  margin: 8px 0 0;
+  border: 1px solid #d8dee8;
+  border-radius: 12px;
+}
+
+.prescription-review__content .prescription-review__source-viewer {
+  width: 100%;
+  max-height: 420px;
   display: block;
   margin: 8px 0 0;
   border: 1px solid #d8dee8;
