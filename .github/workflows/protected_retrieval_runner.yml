@@ -7,13 +7,35 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: "Protected operation to execute (preflight | provision)"
+        description: "Protected operation to execute"
         required: true
         default: "preflight"
         type: choice
         options:
           - preflight
           - provision
+          - backup
+          - restore-verify
+          - rotate-db
+      backup_id:
+        description: "Logical backup identifier; required only for restore-verify"
+        required: false
+        type: string
+      backup_reason:
+        description: "Backup reason; required only for backup"
+        required: false
+        default: "EVIDENCE_REHEARSAL"
+        type: choice
+        options:
+          - DAILY
+          - FREEZE
+          - VERSION_CHANGE
+          - EVIDENCE_REHEARSAL
+      scope_ref:
+        description: "Non-sensitive logical scope/version reference; required only for backup"
+        required: false
+        default: "contract-freeze-v4"
+        type: string
 
 permissions:
   contents: read
@@ -45,6 +67,8 @@ jobs:
           PROTECTED_DB_PASSWORD: ${{ secrets.PROTECTED_DB_PASSWORD }}
           PROTECTED_DB_CONTROL_USER: ${{ secrets.PROTECTED_DB_CONTROL_USER }}
           PROTECTED_DB_CONTROL_PASSWORD: ${{ secrets.PROTECTED_DB_CONTROL_PASSWORD }}
+          PROTECTED_DB_BACKUP_USER: ${{ secrets.PROTECTED_DB_BACKUP_USER }}
+          PROTECTED_DB_BACKUP_PASSWORD: ${{ secrets.PROTECTED_DB_BACKUP_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -90,6 +114,8 @@ jobs:
           PROTECTED_DB_PASSWORD=${PROTECTED_DB_PASSWORD}
           PROTECTED_DB_CONTROL_USER=${PROTECTED_DB_CONTROL_USER}
           PROTECTED_DB_CONTROL_PASSWORD=${PROTECTED_DB_CONTROL_PASSWORD}
+          PROTECTED_DB_BACKUP_USER=${PROTECTED_DB_BACKUP_USER}
+          PROTECTED_DB_BACKUP_PASSWORD=${PROTECTED_DB_BACKUP_PASSWORD}
           EOF
 
           $SSH_CMD "docker compose -f /home/${EC2_USER:-ubuntu}/project/docker-compose.yml \
@@ -176,3 +202,166 @@ jobs:
             --env-file $REMOTE_ENV \
             --profile protected-runner \
             run --rm --no-deps protected-retrieval-runner"
+
+  backup:
+    name: "Protected Retrieval Encrypted Backup"
+    if: ${{ github.event.inputs.operation == 'backup' }}
+    runs-on: ubuntu-latest
+    environment: protected-retrieval
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Execute remote encrypted backup
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+          PROTECTED_DB_SCHEMA: ${{ secrets.PROTECTED_DB_SCHEMA }}
+          PROTECTED_DB_BACKUP_USER: ${{ secrets.PROTECTED_DB_BACKUP_USER }}
+          PROTECTED_DB_BACKUP_PASSWORD: ${{ secrets.PROTECTED_DB_BACKUP_PASSWORD }}
+          PROTECTED_BACKUP_HOST_ROOT: ${{ secrets.PROTECTED_BACKUP_HOST_ROOT }}
+          PROTECTED_BACKUP_ENCRYPTION_KEY: ${{ secrets.PROTECTED_BACKUP_ENCRYPTION_KEY }}
+          PROTECTED_BACKUP_ENCRYPTION_KEY_VERSION: ${{ secrets.PROTECTED_BACKUP_ENCRYPTION_KEY_VERSION }}
+          PROTECTED_BACKUP_ACL_POLICY_ID: ${{ secrets.PROTECTED_BACKUP_ACL_POLICY_ID }}
+          BACKUP_REASON: ${{ github.event.inputs.backup_reason }}
+          SCOPE_REF: ${{ github.event.inputs.scope_ref }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/id_rsa
+          printf '%s\n' "$EC2_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_rsa ~/.ssh/known_hosts
+          SSH_CMD="ssh -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=10 ${EC2_USER:-ubuntu}@${EC2_HOST}"
+          REMOTE_ENV="/tmp/protected_backup_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}.env"
+          cleanup() { $SSH_CMD "rm -f $REMOTE_ENV" || true; rm -f ~/.ssh/id_rsa ~/.ssh/known_hosts; }
+          trap cleanup EXIT
+          RUNNER_PUBLIC_IPV4="$(curl -fsS https://api.ipify.org)"
+          [[ "$RUNNER_PUBLIC_IPV4" =~ ^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$ ]]
+          echo "::notice::RUNNER_PUBLIC_IPV4=${RUNNER_PUBLIC_IPV4}"
+          echo "::notice::SG_TEMP_CIDR=${RUNNER_PUBLIC_IPV4}/32"
+          echo "::notice::Operation 종료 후 임시 TCP/22 /32 rule을 즉시 제거"
+          sleep 300
+          [[ "$SCOPE_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$ ]]
+          $SSH_CMD "umask 077 && cat > $REMOTE_ENV" <<EOF
+          PROTECTED_DB_SCHEMA=${PROTECTED_DB_SCHEMA}
+          PROTECTED_DB_BACKUP_USER=${PROTECTED_DB_BACKUP_USER}
+          PROTECTED_DB_BACKUP_PASSWORD=${PROTECTED_DB_BACKUP_PASSWORD}
+          PROTECTED_BACKUP_HOST_ROOT=${PROTECTED_BACKUP_HOST_ROOT}
+          PROTECTED_BACKUP_ENCRYPTION_KEY=${PROTECTED_BACKUP_ENCRYPTION_KEY}
+          PROTECTED_BACKUP_ENCRYPTION_KEY_VERSION=${PROTECTED_BACKUP_ENCRYPTION_KEY_VERSION}
+          PROTECTED_BACKUP_ACL_POLICY_ID=${PROTECTED_BACKUP_ACL_POLICY_ID}
+          EOF
+          $SSH_CMD "ROOT=\$(sed -n 's/^PROTECTED_BACKUP_HOST_ROOT=//p' $REMOTE_ENV); test -n \"\$ROOT\" && test -d \"\$ROOT\" && test ! -L \"\$ROOT\" && [ \"\$(stat -c '%a' -- \"\$ROOT\" 2>/dev/null)\" = 700 ]"
+          $SSH_CMD "docker compose -f /home/${EC2_USER:-ubuntu}/project/docker-compose.yml --env-file /home/${EC2_USER:-ubuntu}/project/.env --env-file $REMOTE_ENV --profile protected-backup run --rm --no-deps protected-retrieval-backup backup --reason '$BACKUP_REASON' --scope-ref '$SCOPE_REF'"
+
+  restore-verify:
+    name: "Protected Retrieval Isolated Restore Verification"
+    if: ${{ github.event.inputs.operation == 'restore-verify' }}
+    runs-on: ubuntu-latest
+    environment: protected-retrieval
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Execute remote isolated restore
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+          PROTECTED_DB_SCHEMA: ${{ secrets.PROTECTED_DB_SCHEMA }}
+          PROTECTED_BACKUP_HOST_ROOT: ${{ secrets.PROTECTED_BACKUP_HOST_ROOT }}
+          PROTECTED_BACKUP_ENCRYPTION_KEY: ${{ secrets.PROTECTED_BACKUP_ENCRYPTION_KEY }}
+          PROTECTED_BACKUP_ENCRYPTION_KEY_VERSION: ${{ secrets.PROTECTED_BACKUP_ENCRYPTION_KEY_VERSION }}
+          BACKUP_ID: ${{ github.event.inputs.backup_id }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$BACKUP_ID" =~ ^prb-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}$ ]]
+          RESTORE_PASSWORD="$(openssl rand -base64 48 | tr -d '\n')"
+          echo "::add-mask::$RESTORE_PASSWORD"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/id_rsa
+          printf '%s\n' "$EC2_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_rsa ~/.ssh/known_hosts
+          SSH_CMD="ssh -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=10 ${EC2_USER:-ubuntu}@${EC2_HOST}"
+          REMOTE_ENV="/tmp/protected_restore_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}.env"
+          RECEIPT_FILE="/tmp/protected_restore_receipt_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}.json"
+          cleanup() { $SSH_CMD "cd /home/${EC2_USER:-ubuntu}/project && docker compose -f docker-compose.yml --env-file .env --env-file $REMOTE_ENV --profile protected-restore rm -sf protected-retrieval-restore-db; rm -f $REMOTE_ENV $RECEIPT_FILE" || true; rm -f ~/.ssh/id_rsa ~/.ssh/known_hosts; }
+          trap cleanup EXIT
+          RUNNER_PUBLIC_IPV4="$(curl -fsS https://api.ipify.org)"
+          [[ "$RUNNER_PUBLIC_IPV4" =~ ^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$ ]]
+          echo "::notice::RUNNER_PUBLIC_IPV4=${RUNNER_PUBLIC_IPV4}"
+          echo "::notice::SG_TEMP_CIDR=${RUNNER_PUBLIC_IPV4}/32"
+          echo "::notice::Operation 종료 후 임시 TCP/22 /32 rule을 즉시 제거"
+          sleep 300
+          $SSH_CMD "umask 077 && cat > $REMOTE_ENV" <<EOF
+          PROTECTED_DB_SCHEMA=${PROTECTED_DB_SCHEMA}
+          PROTECTED_BACKUP_HOST_ROOT=${PROTECTED_BACKUP_HOST_ROOT}
+          PROTECTED_BACKUP_ENCRYPTION_KEY=${PROTECTED_BACKUP_ENCRYPTION_KEY}
+          PROTECTED_BACKUP_ENCRYPTION_KEY_VERSION=${PROTECTED_BACKUP_ENCRYPTION_KEY_VERSION}
+          PROTECTED_RESTORE_DB_NAME=protected_restore
+          PROTECTED_RESTORE_DB_USER=protected_restore
+          PROTECTED_RESTORE_DB_PASSWORD=${RESTORE_PASSWORD}
+          EOF
+          $SSH_CMD "ROOT=\$(sed -n 's/^PROTECTED_BACKUP_HOST_ROOT=//p' $REMOTE_ENV); test -n \"\$ROOT\" && test -d \"\$ROOT\" && test ! -L \"\$ROOT\" && [ \"\$(stat -c '%a' -- \"\$ROOT\" 2>/dev/null)\" = 700 ]"
+          $SSH_CMD "cd /home/${EC2_USER:-ubuntu}/project && docker compose -f docker-compose.yml --env-file .env --env-file $REMOTE_ENV --profile protected-restore up -d --wait protected-retrieval-restore-db && docker compose -f docker-compose.yml --env-file .env --env-file $REMOTE_ENV --profile protected-restore run --rm --no-deps protected-retrieval-restore restore-verify --backup-id '$BACKUP_ID' > $RECEIPT_FILE && docker compose -f docker-compose.yml --env-file .env --env-file $REMOTE_ENV --profile protected-restore rm -sf protected-retrieval-restore-db && cat $RECEIPT_FILE && rm -f $RECEIPT_FILE"
+
+  rotate-db:
+    name: "Protected Retrieval DB Credential Rotation"
+    if: ${{ github.event.inputs.operation == 'rotate-db' }}
+    runs-on: ubuntu-latest
+    environment: protected-retrieval
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Execute remote credential rotation
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+          DB_ADMIN_USER: ${{ secrets.DB_ADMIN_USER }}
+          DB_ADMIN_PASSWORD: ${{ secrets.DB_ADMIN_PASSWORD }}
+          PROTECTED_DB_SCHEMA: ${{ secrets.PROTECTED_DB_SCHEMA }}
+          PROTECTED_DB_ACCESS_ROLE: ${{ secrets.PROTECTED_DB_ACCESS_ROLE }}
+          PROTECTED_DB_CONTROL_ROLE: ${{ secrets.PROTECTED_DB_CONTROL_ROLE }}
+          PROTECTED_DB_USER: ${{ secrets.PROTECTED_DB_USER }}
+          PROTECTED_DB_PASSWORD: ${{ secrets.PROTECTED_DB_PASSWORD }}
+          PROTECTED_DB_PASSWORD_NEXT: ${{ secrets.PROTECTED_DB_PASSWORD_NEXT }}
+          PROTECTED_DB_CONTROL_USER: ${{ secrets.PROTECTED_DB_CONTROL_USER }}
+          PROTECTED_DB_CONTROL_PASSWORD: ${{ secrets.PROTECTED_DB_CONTROL_PASSWORD }}
+          PROTECTED_DB_CONTROL_PASSWORD_NEXT: ${{ secrets.PROTECTED_DB_CONTROL_PASSWORD_NEXT }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/id_rsa
+          printf '%s\n' "$EC2_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_rsa ~/.ssh/known_hosts
+          SSH_CMD="ssh -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=10 ${EC2_USER:-ubuntu}@${EC2_HOST}"
+          REMOTE_ENV="/tmp/protected_rotate_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}.env"
+          cleanup() { $SSH_CMD "rm -f $REMOTE_ENV" || true; rm -f ~/.ssh/id_rsa ~/.ssh/known_hosts; }
+          trap cleanup EXIT
+          RUNNER_PUBLIC_IPV4="$(curl -fsS https://api.ipify.org)"
+          [[ "$RUNNER_PUBLIC_IPV4" =~ ^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$ ]]
+          echo "::notice::RUNNER_PUBLIC_IPV4=${RUNNER_PUBLIC_IPV4}"
+          echo "::notice::SG_TEMP_CIDR=${RUNNER_PUBLIC_IPV4}/32"
+          echo "::notice::Operation 종료 후 임시 TCP/22 /32 rule을 즉시 제거"
+          sleep 300
+          $SSH_CMD "umask 077 && cat > $REMOTE_ENV" <<EOF
+          DB_ADMIN_USER=${DB_ADMIN_USER}
+          DB_ADMIN_PASSWORD=${DB_ADMIN_PASSWORD}
+          PROTECTED_DB_SCHEMA=${PROTECTED_DB_SCHEMA}
+          PROTECTED_DB_ACCESS_ROLE=${PROTECTED_DB_ACCESS_ROLE}
+          PROTECTED_DB_CONTROL_ROLE=${PROTECTED_DB_CONTROL_ROLE}
+          PROTECTED_DB_USER=${PROTECTED_DB_USER}
+          PROTECTED_DB_PASSWORD=${PROTECTED_DB_PASSWORD}
+          PROTECTED_DB_PASSWORD_NEXT=${PROTECTED_DB_PASSWORD_NEXT}
+          PROTECTED_DB_CONTROL_USER=${PROTECTED_DB_CONTROL_USER}
+          PROTECTED_DB_CONTROL_PASSWORD=${PROTECTED_DB_CONTROL_PASSWORD}
+          PROTECTED_DB_CONTROL_PASSWORD_NEXT=${PROTECTED_DB_CONTROL_PASSWORD_NEXT}
+          EOF
+          $SSH_CMD "docker compose -f /home/${EC2_USER:-ubuntu}/project/docker-compose.yml --env-file /home/${EC2_USER:-ubuntu}/project/.env --env-file $REMOTE_ENV --profile protected-rotation run --rm --no-deps protected-retrieval-rotate-db"
+          echo "::notice::PASS 후 canonical secrets promotion은 runbook 절차로 별도 수행하십시오."
