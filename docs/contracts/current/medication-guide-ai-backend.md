@@ -5,11 +5,11 @@
 | 항목 | 내용 |
 | --- | --- |
 | 상태 | Implemented |
-| 관련 Issue | #11, #48, #110 |
+| 관련 Issue | #11, #48, #110, #180 |
 | 검토 CODEOWNER | `@hazelnutflavoured`, `@phina-io`, `@ceohwj` |
 | 구현 | `backend/app/services/guide_ai/`, `backend/app/services/guides.py` |
 
-이 문서는 동기 One Cycle 복약 가이드 생성에서 Backend와 Guide AI 모듈이 공유하는 Python 경계를 기록한다. HTTP 요청·응답, DB 모델과 GUIDE 상태 전이는 기존 Backend 계약을 따르며 이 문서가 새 필드나 상태를 추가하지 않는다.
+이 문서는 동기 One Cycle 복약 가이드 생성에서 Backend와 Guide AI 모듈이 공유하는 Python 경계를 기록한다. 기존 Guide Generator 경계와 함께 canonical Guide runtime release projection의 저장·공개 규칙을 정의한다. 실제 canonical runtime callable 연결은 아직 포함하지 않는다.
 
 ## 책임 경계
 
@@ -78,6 +78,23 @@ OpenAI adapter는 비스트리밍 `responses.parse`, `text_format=GeneratedGuide
 `guidance`는 intent별 `APPROVED_GUIDANCE_BY_INTENT`, `general_notice`는 `APPROVED_GENERAL_NOTICES`에 NFC 정규화와 앞뒤 공백 제거 후 정확히 포함되어야 한다. index 중복·누락·범위 밖 값, intent 변경·불일치, 승인 집합 밖 문장과 기존 숫자·의료 주장·처방 변경·마크업 위반은 전체 결과를 차단한다.
 
 Backend는 성공 결과의 세 필드를 GUIDE 완료 저장에 사용하며, 저장한 `content`와 성공 API 응답의 `content`를 동일하게 유지한다.
+
+### Canonical runtime release projection
+
+공유 경계 `rag_runtime.guide_release_projection`에서 받은 canonical carrier는 Backend에서 Citation authorization을 다시 판정하지 않고 그대로 저장한다. PASS의 approved answer는 `claim_action_texts`, `uncertainty_text`, `consultation_text` 순서로 빈 줄 하나를 사이에 둔 단일 deterministic renderer를 거쳐 기존 `content`에 저장한다. 구조화 answer는 public v1에 노출하지 않는다.
+
+현재 `GuideResponse.data`는 기존 필드에 다음 필드를 추가한다.
+
+- `release_decision`: `PASS | LIMITED | REJECTED | STALE | null`
+- `release_is_current`: `boolean | null`
+- `fallback_code`, `fallback_text`: approved fallback 또는 `null`
+- `citations`: `source_type`, `source_code`, `source_version`, `locator`, `display_order`만 포함한 배열
+
+Citation의 `card_target_ref`, `claim_key`, `evidence_key`, Source Snapshot/Member ID와 `content_sha256`는 persistence·integrity 검증용이며 public 응답에 포함하지 않는다. `title`, URL, excerpt, score, rank, confidence와 raw source도 만들거나 공개하지 않는다. Citation은 `display_order` 오름차순으로 POST 최초 응답과 GET 재조회에서 동일하게 복원한다.
+
+기존 Guide row는 release authority가 없으므로 임의로 PASS로 backfill하지 않는다. 해당 row는 release 필드가 `null`, `citations=[]`인 채 기존 `content`를 유지한다.
+
+canonical runtime STALE은 prescription currentness 검사를 통과한 terminal release 결과다. 이 경우 POST는 기존 `201`, GET은 `200`을 유지하며 `release_decision=STALE`, `release_is_current=false`, `content=null`, approved fallback, `citations=[]`를 반환한다. 반면 runtime release 결과 생성 전후의 active prescription version mismatch는 기존 `409 PRESCRIPTION_VERSION_CONFLICT`를 유지한다.
 
 ## 오류 계약
 
