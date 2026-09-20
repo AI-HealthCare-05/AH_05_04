@@ -44,6 +44,22 @@ def test_production_fastapi_receives_idempotency_snapshot_encryption_key_ring() 
     )
 
 
+def test_production_fastapi_receives_guide_query_hmac_authority() -> None:
+    compose = yaml.safe_load(_read(PRODUCTION_COMPOSE_PATH))
+    environment = compose["services"]["fastapi"]["environment"]
+
+    assert environment["GUIDE_QUERY_HMAC_KEY"] == "${GUIDE_QUERY_HMAC_KEY}"
+    assert environment["GUIDE_QUERY_HMAC_KEY_VERSION"] == "${GUIDE_QUERY_HMAC_KEY_VERSION:-guide-query-hmac-key@1}"
+
+    for example_path in ("envs/example.local.env", "envs/example.prod.env"):
+        example = _read(PROJECT_ROOT / example_path)
+        assert "GUIDE_QUERY_HMAC_KEY=" in example
+        assert "GUIDE_QUERY_HMAC_KEY_VERSION=guide-query-hmac-key@1" in example
+
+    production_example = _read(PROJECT_ROOT / "envs/example.prod.env")
+    assert "실제 값은 배포 Secret에서 주입" in production_example
+
+
 def test_production_ocr_consent_policy_version_reaches_backend_and_worker() -> None:
     compose = yaml.safe_load(_read(PRODUCTION_COMPOSE_PATH))
     services = compose["services"]
