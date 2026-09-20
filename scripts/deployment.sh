@@ -663,6 +663,21 @@ docker compose up \
   postgres \
   redis
 
+# #434: notification-scheduler는 notifications profile의 opt-in 서비스다.
+# 일반 배포가 이를 자동 활성화해서도 안 되고, migration 때문에 멈춘 뒤 그대로
+# 방치해서도 안 되므로, 정지 전에 현재 기동 상태를 기록해 배포 성공 후 복원한다.
+if ! services_running_before_deploy="$(docker compose ps --services --status running)"; then
+  echo "Could not confirm service running state before deployment."
+  exit 1
+fi
+
+notification_scheduler_was_running=false
+if printf '%s\n' "$services_running_before_deploy" | grep -qx 'notification-scheduler'; then
+  notification_scheduler_was_running=true
+fi
+
+echo "notification-scheduler running before deployment: $notification_scheduler_was_running"
+
 echo "Stopping application services before schema migration"
 
 # Schema migration 전에 기존 애플리케이션을 먼저 멈춰 구버전 코드가 변경 중인
@@ -830,6 +845,37 @@ if [ "$checkin_deadline_scheduler_deployed" = true ]; then
     docker compose ps -a checkin-deadline-scheduler
     exit 1
   fi
+fi
+
+# #434: 배포 전에 running이던 경우에만 원래 상태로 되돌린다. 정지 상태였다면 그대로 둔다.
+# "일반 배포가 알림을 자동 활성화하지 않는다"는 운영 계약(docs/deployment.md)을 지키면서,
+# migration 때문에 멈춘 서비스가 방치되는 경우만 막는다. Production 최초 활성화는
+# 여전히 #230 승인 후 운영자가 별도로 수행한다.
+if [ "$notification_scheduler_was_running" = true ]; then
+  echo "Restoring notification-scheduler to its pre-deployment running state"
+
+  # 이 시점에는 migration·DB head·역할 권한 검증이 모두 끝났다. 단순 상태 복구이므로
+  # 운영 Runbook의 수동 재생성과 동일하게 --no-deps로 의존성 해석을 다시 열지 않는다.
+  docker compose --profile notifications up \
+    -d \
+    --no-deps \
+    --pull always \
+    --wait \
+    notification-scheduler
+
+  if ! running_services_after_restore="$(docker compose ps --services --status running)"; then
+    echo "Could not confirm notification-scheduler running state after deployment."
+    docker compose ps -a notification-scheduler || true
+    exit 1
+  fi
+
+  if ! printf '%s\n' "$running_services_after_restore" | grep -qx 'notification-scheduler'; then
+    echo "notification-scheduler was running before deployment but is stopped now."
+    docker compose ps -a notification-scheduler
+    exit 1
+  fi
+else
+  echo "notification-scheduler stays stopped; it was not running before deployment."
 fi
 
 # 사용 중인 rollback image는 남기고 dangling image만 정리합니다.
