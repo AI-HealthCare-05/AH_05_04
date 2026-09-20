@@ -175,7 +175,7 @@ describe('Dosey MVP design pages', () => {
     expect(screen.getByText('회원가입 화면')).toBeTruthy()
   })
 
-  it('회원탈퇴 실패 state에서 완료가 아닌 실패 안내를 표시한다', () => {
+  it('회원탈퇴 실패 state에서도 실제 계정 상태와 일치하는 안내를 표시한다', () => {
     render(
       <MemoryRouter
         initialEntries={[{
@@ -189,8 +189,21 @@ describe('Dosey MVP design pages', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByRole('heading', { name: '회원탈퇴 처리를 완료하지 못했어요.' })).toBeTruthy()
-    expect(screen.getByText('관리자 확인이 필요합니다. 완료 화면으로 이동하지 않습니다.')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '회원탈퇴가 처리되었습니다.' })).toBeTruthy()
+    expect(
+      screen.getByText(/계정 이용이 종료되었습니다\./),
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: '시작 화면으로 이동' })).toBeTruthy()
+
+    // 재로그인이 불가능한 상태이므로 모순된 옛 문구는 노출하지 않는다.
+    expect(
+      screen.queryByText('회원탈퇴 처리를 완료하지 못했어요.'),
+    ).toBeNull()
+    expect(
+      screen.queryByText('관리자 확인이 필요합니다. 완료 화면으로 이동하지 않습니다.'),
+    ).toBeNull()
+
+    // 성공 분기와는 여전히 다른 제목을 쓴다(실패를 COMPLETED로 재해석하지 않음).
     expect(screen.queryByRole('heading', { name: '회원탈퇴가 완료되었습니다.' })).toBeNull()
   })
 

@@ -67,7 +67,7 @@ def test_deployment_stops_notification_scheduler_before_migration_and_does_not_a
     # 기동 상태는 정지하기 전에 기록해야 배포 전 상태를 알 수 있다.
     assert record < stop < migration
     assert (
-        "^(fastapi|ai-worker|source-writer|catalog-writer|candidate-index-builder"
+        "^(fastapi|ai-worker|source-writer|catalog-writer|catalog-approval|candidate-index-builder"
         "|notification-scheduler|checkin-deadline-scheduler)$" in script[stop:migration]
     )
 

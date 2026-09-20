@@ -32,6 +32,9 @@ done
 # 파일의 선언 누락을 가리지 않도록 source 전에 비운다.
 unset ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE
 unset ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD
+unset CATALOG_APPROVAL_USER
+unset CATALOG_APPROVAL_PASSWORD
+unset CATALOG_SOURCE_ARTIFACT_HOST_ROOT
 unset VITE_PUBLIC_TRACK_C
 unset VITE_SIGNUP_TERMS_APPROVED
 set -a
@@ -161,6 +164,56 @@ if [ "$SOURCE_WRITER_USER" = "$DB_ADMIN_USER" ] ||
   [ "$SOURCE_WRITER_USER" = "$DB_APP_USER" ]; then
   echo "SOURCE_WRITER_USER는 Admin, Migration, Runtime과 다른 이름이어야 합니다."
   exit 1
+fi
+
+# ---------- Catalog Approval optional one-shot 검증 ----------
+# 실행 셸의 상속값이 .prod.env 누락을 가리지 않게 위에서 비운 뒤 pair semantics를 검증한다.
+if [ -n "${CATALOG_APPROVAL_USER:-}" ] || [ -n "${CATALOG_APPROVAL_PASSWORD:-}" ]; then
+  if [ -z "${CATALOG_APPROVAL_USER:-}" ] || [ -z "${CATALOG_APPROVAL_PASSWORD:-}" ]; then
+    echo "CATALOG_APPROVAL_USER와 CATALOG_APPROVAL_PASSWORD는 함께 설정하거나 함께 비워야 합니다."
+    exit 1
+  fi
+  for variable_name in CATALOG_APPROVAL_USER CATALOG_APPROVAL_PASSWORD; do
+    case "${!variable_name}" in
+      replace-with* | replace_with*)
+        echo "Catalog Approval 환경변수의 placeholder를 교체해야 합니다: $variable_name"
+        exit 1
+        ;;
+    esac
+  done
+fi
+
+if [ -n "${CATALOG_SOURCE_ARTIFACT_HOST_ROOT:-}" ]; then
+  case "$CATALOG_SOURCE_ARTIFACT_HOST_ROOT" in
+    /*) ;;
+    *)
+      echo "CATALOG_SOURCE_ARTIFACT_HOST_ROOT는 절대 경로여야 합니다."
+      exit 1
+      ;;
+  esac
+  case "$CATALOG_SOURCE_ARTIFACT_HOST_ROOT" in
+    *replace-with* | *replace_with*)
+      echo "CATALOG_SOURCE_ARTIFACT_HOST_ROOT의 placeholder를 교체해야 합니다."
+      exit 1
+      ;;
+  esac
+fi
+
+if { [ -n "${CATALOG_APPROVAL_USER:-}" ] || [ -n "${CATALOG_WRITER_USER:-}" ]; } &&
+  [ -z "${CATALOG_SOURCE_ARTIFACT_HOST_ROOT:-}" ]; then
+  echo "Catalog Approval/Writer one-shot에는 CATALOG_SOURCE_ARTIFACT_HOST_ROOT가 필요합니다."
+  exit 1
+fi
+
+if [ -n "${CATALOG_APPROVAL_USER:-}" ]; then
+  for role_variable in DB_ADMIN_USER DB_MIGRATION_USER DB_APP_USER SOURCE_WRITER_USER SOURCE_MANAGEMENT_USER \
+    CATALOG_WRITER_USER KNOWLEDGE_INDEX_BUILDER_USER ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE \
+    CANDIDATE_INDEX_BUILDER_USER; do
+    if [ -n "${!role_variable:-}" ] && [ "$CATALOG_APPROVAL_USER" = "${!role_variable}" ]; then
+      echo "CATALOG_APPROVAL_USER는 기존 DB 책임 role과 다른 이름이어야 합니다."
+      exit 1
+    fi
+  done
 fi
 
 # ---------- 기간 한정 Production 데모 설정 검증 ----------
@@ -685,12 +738,13 @@ echo "Stopping application services before schema migration"
 docker compose --profile notifications stop -t 15 notification-scheduler
 docker compose stop -t 15 checkin-deadline-scheduler
 
-docker compose --profile source-admin --profile catalog-admin --profile candidate-index-admin stop \
+docker compose --profile source-admin --profile catalog-admin --profile candidate-index-admin --profile catalog-approval-admin stop \
   -t 90 \
   fastapi \
   ai-worker \
   source-writer \
   catalog-writer \
+  catalog-approval \
   candidate-index-builder
 
 if ! running_application_services="$(docker compose ps --services --status running)"; then
@@ -699,7 +753,7 @@ if ! running_application_services="$(docker compose ps --services --status runni
   exit 1
 fi
 
-if printf '%s\n' "$running_application_services" | grep -Eq '^(fastapi|ai-worker|source-writer|catalog-writer|candidate-index-builder|notification-scheduler|checkin-deadline-scheduler)$'; then
+if printf '%s\n' "$running_application_services" | grep -Eq '^(fastapi|ai-worker|source-writer|catalog-writer|catalog-approval|candidate-index-builder|notification-scheduler|checkin-deadline-scheduler)$'; then
   echo "Application services are still running after stop request."
   docker compose ps fastapi ai-worker
   exit 1

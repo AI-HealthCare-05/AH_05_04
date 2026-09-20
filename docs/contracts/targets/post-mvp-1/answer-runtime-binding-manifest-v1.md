@@ -2,8 +2,8 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Approved Target (Phase B) · Proposed / Review Required (Phase C-1) |
-| 구현 | Partially implemented — DTO/schema, 10 canonical recipe helpers, manifest self-hash/run/variant delta state validation, #808 typed seam projection and fail-closed tests; Phase C-1 carrier audit & materialization coordinate review (code change: none) |
+| 상태 | Approved Target (Phase B) · Proposed / Review Required (Phase C-1 / Phase C-2) |
+| 구현 | Partially implemented (Phase B DTO/helpers/validation/seam) · Phase C-1/C-2 Materialization & Aggregation Contract (Proposed / Review Required; code change: none) |
 | Decision | [`PD-159-20260913`](../../../governance/decisions/2026-09-13-rag-answer-quality-metrics.md) |
 | 추적 Issue | [#159](https://github.com/AI-HealthCare-05/AH_05_04/issues/159) |
 | 구현 담당 | 정현우 (`@ceohwj`, AI/RAG Implementation Owner) |
@@ -524,3 +524,255 @@ F. **Storage Architecture 및 Publication Coordinate 철회/미확정 안내**:
 - **후속 Issue 관리 원칙**:
   1. **Case-level Provenance Aggregation**: 새 Issue를 생성하지 않고 **#159 Phase C-2**의 작업 범위로 계속 유지한다.
   2. **Evaluation Run ↔ #806 Bridge**: 새 Issue를 자동 생성하지 않으며, **#162**에 discovery comment로 연결하고 도메인 간 별도 ownership 분리가 필요하다는 합의가 생길 때만 Issue 생성을 검토한다.
+
+---
+
+## 10. Phase C-2 Answer Runtime Provenance Aggregation & Materialization Contract (Proposed / Review Required)
+
+### 1) 목적 및 감사 원칙
+본 절은 PR #870(Phase C-1)에서 동결된 15-Binding 감사 사실과 PR #851(Phase B)에서 승인된 10개 Canonical Recipe 헬퍼를 바탕으로, `INPUT_CONTEXT`를 제외한 9개 미확정 바인딩(`SEED`, `PROMPT_STRUCTURE`, `PARSER`, `SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`, `RETRIEVAL_PIPELINE`, `SOURCE_INDEX`, `RUNTIME_BUNDLE`)에 대해 **Authoritative Source $\longrightarrow$ Execution-Time Typed Carrier $\longrightarrow$ Run Binding $\longrightarrow$ Existing #851 Hash Recipe $\longrightarrow$ AnswerRuntimeAuthorityBindingManifest**로 연결되는 정본 Materialization 계약을 확정한다.
+
+#### 재조사 배제 및 불변 전제 (Phase C-1 Frozen Baseline)
+- 15 Authority Bindings 전체 목록 및 `INPUT_CONTEXT` 구현 완료 사실을 재조사하지 않는다.
+- Source Object Exists $\neq$ Run-bound Carrier Exists $\neq$ Run Lookup Coordinate Exists 원칙을 엄격히 유지한다.
+- `RagEvaluationRun` 스키마 무승인 확장 금지, Schema Set 1.5 불변 유지, `ContentArtifactPath` 및 `publisher.py` 화이트리스트 무승인 확장 금지 원칙을 고수한다.
+- `candidate_guard_decision_id`를 통한 #806 ref 역산 금지, #807/#853 $\neq$ `CITATION_GATE`, #799/#180 upstream blocker 유지를 확정 사실로 준용한다.
+- `RETRIEVED_EVIDENCE`는 unresolved 상태를 유지하며, 4개 게이트/검증자(`FINAL_VALIDATOR`, `CITATION_GATE`, `SAFETY_GATE`, `RELEASE_GATE`) 추정 구현을 일체 배제한다.
+- 비범위: actual 3-variant execution wiring, HOLDOUT, Baseline Freeze, Release PASS, `PUBLIC_TRACK_F`, #799/#180/#162 Guard evaluator 구현.
+
+---
+
+### 2) D1 — 9개 Binding 정본 권위 카디널리티 (Authority Cardinality)
+
+9개 바인딩 전체를 무차별적으로 Case 단위 provenance로 복제하지 않으며, 각 바인딩의 실제 authority cardinality를 다음 4대 분류 중 정확히 하나로 확정한다.
+
+| 분류 (Cardinality) | 의미 및 검증 경계 | 최적화 규칙 |
+| :--- | :--- | :--- |
+| **`RUN_LEVEL_CONFIG`** | Run 요청 시점에 불변 확정되어 실행 전체에 걸쳐 인메모리에 보존되는 정본 설정 | Case별 복제 일체 배제, Run 경계에서 1회 검증 |
+| **`ADAPTER_LEVEL_ACTUAL`** | 실행 어댑터 인스턴스에 고정 결속된 정본 아티팩트 참조 및 구성 객체 | Case별 중복 페이로드 배제, Adapter 인스턴스 검증 + 전수 Case 어댑터 실행 커버리지 확인 |
+| **`CASE_LEVEL_ACTUAL`** | Case 실행 시 실제 Provider 클라이언트 호출 인자로 전달되는 런타임 제약 값 | 실제 호출 관측치(Observation Companion) 수집 필수, Controlled-Variable Invariant 검증 |
+| **`UPSTREAM_AUTHORITY`** | 외부 런타임 릴리스/거버넌스 도메인에서 발행되는 불변 권위 영수증 | 외부 정본 영수증 exact-bind 검증, 상류 동결 전까지 구현 차단 |
+
+#### 9개 바인딩 전수 카디널리티 분류 표
+
+| Binding Key | 축 구분 | Canonical Source Object | Authority Cardinality | 상세 판정 근거 및 최적화 규칙 |
+| :--- | :--- | :--- | :--- | :--- |
+| `SEED` | Supplemental | `ResolvedDevExecution.request.seed` (`SafeInteger`) | **`RUN_LEVEL_CONFIG`** | `ResolvedDevExecution`은 실행 동안 인메모리에 상주하므로 persisted Run 필드 없이도 authoritative하게 공급 가능. Run 전체에 단일 적용되므로 Case별 복제 불필요. 임의의 caller 주입 int/해시 금지. |
+| `PROMPT_STRUCTURE` | Supplemental | `GuidelineGenerationProvenance.prompt_ref` (`ImmutableArtifactRef`) | **`ADAPTER_LEVEL_ACTUAL`** | `OpenAIGuidelineGeneratorAdapter.provenance`에 인스턴스 불변 결속. Case별 거대 DTO 복제 없이 어댑터 인스턴스 검증 및 Case 실행 커버리지로 증명. |
+| `PARSER` | Supplemental | `GuidelineGenerationProvenance.parser_ref` (`ImmutableArtifactRef`) | **`ADAPTER_LEVEL_ACTUAL`** | `PROMPT_STRUCTURE`와 동일하게 `OpenAIGuidelineGeneratorAdapter.provenance`에 결속. 어댑터 인스턴스 검증 및 Case 실행 커버리지로 증명. |
+| `SAMPLING_PARAMETERS` | Supplemental | `_invoke_provider_raw()` 실제 호출 인자 (`temperature=0`) | **`CASE_LEVEL_ACTUAL`** | 설정 존재($\neq$ 실제 호출 관측)와 실제 invocation fact를 구분. 실제 Provider API 호출에 전달된 `temperature="0"` 사실을 증명하기 위해 Case 단위 관측치 수집 필요. |
+| `TOKEN_LIMIT` | Supplemental | `DevVariant.parameters["token_limit"]` bound to `_max_output_tokens` | **`CASE_LEVEL_ACTUAL`** | Variant config 설정값과 실제 `responses.parse(max_output_tokens=...)` 호출 인자의 일치를 Case 단위 관측치로 증명. |
+| `TIMEOUT` | Supplemental | `DevVariant.parameters["timeout"]` bound to `_timeout_seconds` | **`CASE_LEVEL_ACTUAL`** | Variant config 설정값과 실제 `asyncio.timeout` / client timeout 호출 인자의 일치를 Case 단위 관측치로 증명. |
+| `RETRIEVAL_PIPELINE` | Delta | `VersionedEvidenceRetrievalConfiguration.artifact_ref` (적용) / `NOT_APPLIED` (ANS-BASE) | **`ADAPTER_LEVEL_ACTUAL`** | 실제 평가 어댑터(`ActualRetrievalEvaluationAdapter._retrieval_config`)가 정본 객체를 보유하므로 `compute_retrieval_pipeline_binding_hash()`에 직접 전달 가능. `ANS-BASE`는 `NOT_APPLIED`. |
+| `SOURCE_INDEX` | Delta | `ActualRetrievalModelConfig.knowledge_index_ref` (적용) / `NOT_APPLIED` (ANS-BASE) | **`ADAPTER_LEVEL_ACTUAL`** | 어댑터 및 `retrieval_variant.model_config_payload`에서 검증된 `ActualRetrievalModelConfig`가 보유하므로 `compute_source_index_binding_hash()`에 직접 전달 가능 (`model_config_hash` 역산 금지). `ANS-BASE`는 `NOT_APPLIED`. |
+| `RUNTIME_BUNDLE` | Delta | `RequestGuardRuntimeBindingObservation` (#806) 또는 #162 Evaluation Guard Evidence (적용) / `NOT_APPLIED` (ANS-BASE) | **`UPSTREAM_AUTHORITY`** | 상류 런타임 번들 릴리스 및 거버넌스 권위. `ANS-BASE`는 `NOT_APPLIED` 확정. `ANS-RAG`/`ANS-FINAL`은 상류 권위 동결 및 정본 소스 어댑터 정합 시까지 `PENDING_162_AUTHORITY_FREEZE + SOURCE_BINDING_ADAPTER_REQUIRED` (LOCAL 평가 경로 한정 후보). |
+
+---
+
+### 3) D2 — 실행 관측 채널 및 케이스 집계 불변식 계약 (Observation & Aggregation)
+
+#### 3.1 내부 실행 관측 채널 (Execution Observation Channel)
+`CaseResult` 스키마(Schema Set 1.5)를 무승인 확장하지 않고, Runner 소유의 경량 관측 컴패니언(Companion) 채널을 확정한다.
+
+```python
+@dataclass(frozen=True, slots=True)
+class ProviderInvocationObservation:
+    case_id: str
+    run_id: str
+    variant_id: str
+    temperature: str  # Canonical decimal string: "0"
+    max_output_tokens: int
+    timeout_seconds: Decimal  # In-memory canonical Decimal; compute_timeout_binding_hash()가 canonical decimal string으로 해시 사영
+```
+
+#### 3.2 Controlled-Variable 집계 불변식 (Case Aggregation Invariant)
+`CASE_LEVEL_ACTUAL`로 분류된 바인딩(`SAMPLING_PARAMETERS`, `TOKEN_LIMIT`, `TIMEOUT`)에 대해 전수 완료된 필수 케이스 집합에서의 단일 불변성을 강제한다:
+
+$$\forall c \in \text{CompletedRequiredCases}, \quad \text{value}(c) == \text{value}_0$$
+
+- `len({obs.temperature for obs in observations}) == 1`
+- `len({obs.max_output_tokens for obs in observations}) == 1`
+- `len({obs.timeout_seconds for obs in observations}) == 1`
+
+#### 3.3 Fail-Closed 엄격 검증 규칙 및 오류 매핑
+기존 에러 분류 체계(`EvaluationValidationError`, `EvaluationErrorCode.STATE_COMBINATION_INVALID`)를 재사용하며 불필요한 신규 코드를 추가하지 않는다.
+
+1. **Exact Case Coverage**: 관측된 `case_id` 집합은 `run_outcome.selected_case_ids`와 완벽히 일치해야 한다 (`set(obs.case_id for obs in observations) == set(run_outcome.selected_case_ids)`).
+2. **Missing Observation**: 필수 케이스 중 단 1개라도 관측치가 누락된 경우 즉시 `fail-closed` (`EvaluationValidationError(STATE_COMBINATION_INVALID)`).
+3. **Duplicate Observation**: 동일 `case_id`에 대해 중복 관측치가 보고된 경우 즉시 `fail-closed` (`EvaluationValidationError(STATE_COMBINATION_INVALID)`).
+4. **Identity Mismatch**: 관측치의 `run_id` 또는 `variant_id`가 대상 Run의 식별자와 불일치하는 경우 즉시 `fail-closed` (`EvaluationValidationError(STATE_COMBINATION_INVALID)`).
+5. **Controlled Value Drift**: 케이스 간 관측된 파라미터 값에 단 1건이라도 드리프트가 발생한 경우 즉시 `fail-closed` (`EvaluationValidationError(STATE_COMBINATION_INVALID)`).
+6. **Config-to-Invocation Drift**: 관측된 `max_output_tokens` 또는 `timeout_seconds`가 요청 `DevVariant.parameters`와 불일치하는 경우 즉시 `fail-closed` (`EvaluationValidationError(STATE_COMBINATION_INVALID)`).
+
+---
+
+### 4) D3 — Manifest 생성 수명 주기 시점 (Materialization Lifecycle Timing)
+
+#### 4.1 후보 확정: `ALL_CASES_COMPLETED_PRE_SEAL`
+바인딩 매니페스트의 정본 생성 시점을 **`ALL_CASES_COMPLETED_PRE_SEAL`**로 공식 동결한다.
+
+#### 4.2 실행 코드 경로 정합 (Code Path Trace)
+```text
+execute_dev_cases*
+      │
+      ▼
+  RunOutcome  ─── [조건: execution_status == COMPLETED and blocking_execution_statuses == ()]
+      │
+      ▼
+[AnswerRuntimeBindingMaterializationInput 조립]
+      │
+      ├── Case Aggregation Invariant 검증 (Missing/Duplicate/Drift fail-closed)
+      ├── 기존 #851 Recipe Helper 호출 (순수 typed source -> canonical hash)
+      └── AnswerRuntimeAuthorityBindingManifest 생성 및 self-hash 검증
+      │
+      ▼
+finalize_artifacts(draft, ...)
+      │
+      ├── result-content-manifest.json 조립
+      └── run.json 봉인 (completed_at 및 result_content_manifest_hash 갱신)
+```
+
+#### 4.3 판정 검증
+- **모든 정본 소스의 실재성**: `RunOutcome` 직후 시점에는 `ResolvedDevExecution`(seed, config), `RunOutcome`(완료된 케이스, input_sha256), 어댑터 인스턴스(`GuidelineGenerationProvenance`, `VersionedEvidenceRetrievalConfiguration`, `ActualRetrievalModelConfig`), 및 관측치 튜플이 모두 인메모리에 완전히 존재함이 증명되었다.
+- **실패 및 부분 실행 차단 (No Partial Manifest)**: `run_outcome.execution_status != COMPLETED`이거나 실패/차단 케이스가 존재하는 경우, 바인딩 매니페스트 생성을 일체 시도하지 않고 즉시 거부한다.
+
+---
+
+### 5) D4 — 저장 및 발행 좌표 (Storage / Publication Coordinate)
+
+#### 5.1 저장 후보 비교 및 기각 근거
+
+| 후보 | 개념 | 평가 및 기각 사유 | 판정 |
+| :--- | :--- | :--- | :--- |
+| **Option A** | **#808 Answer Comparison Set과 동일한 Run Bundle 외부 Experiment-level companion artifact** | • Schema Set 1.5 100% 불변<br>• `ContentArtifactPath` 및 `publisher.py` 화이트리스트 무수정<br>• `(experiment_id, run_id, variant_id)` exact-binding 및 self-hash 보존<br>• 기승인된 비교 세트 루트(`evals/results/<experiment_id>/answer-comparisons/`) 재사용 가능 | **패턴 선택 (Selected Pattern)**<br>(상세 하위 경로는 `PROPOSED / REVIEW REQUIRED`) |
+| **Option B** | #162 독립 버전화 권위 아티팩트 패턴 (`ImmutableArtifactRef` 기반 로더) | 외부 상류 권위 '입력'에 적합한 패턴으로, 개별 평가 Run의 실행 결과 '산출물'로서 실험-변형 라이프사이클에 직접 묶이는 바인딩 매니페스트의 성격과 불일치 | 기각 (Rejected) |
+| **Option C** | 기존 Run Bundle 디렉토리 확장 (`run.json`과 동일 경로에 파일 추가) | `ContentArtifactPath` (Schema Set 1.5) 파괴, `publisher.py` 번들 화이트리스트(`_REQUIRED_BUNDLE_FILENAMES`, `_OPTIONAL_BUNDLE_FILENAMES`) 위반으로 게시 거절, 전체 번들 마이그레이션 churn 발생 | 기각 (Rejected) |
+| **Option D** | `RagEvaluationRun` 스키마 확장 (`run.json`에 직접 15개 필드 추가) | `rag-eval.run@1.0.0` 파괴, Schema Set 1.5 해시 변경, 모든 다운스트림 스키마 무효화 유발 | 기각 (Rejected) |
+
+#### 5.2 저장 경로 및 발행/검증 경계 정합
+
+##### A. 기승인된 Experiment 루트 재사용 및 제안 하위 경로 (Proposed / Review Required)
+Answer Runtime Binding Manifest는 신규 top-level 디렉토리를 신설하지 않고, PR #475 / `rag-answer-quality-metrics-v1.md`에서 이미 승인된 Experiment 루트(`evals/results/<experiment_id>/answer-comparisons/`)의 companion 아티팩트로 위치시키는 안을 제안한다:
+
+```text
+evals/results/<experiment_id>/answer-comparisons/
+  ├── binding-manifests/               <── [PROPOSED / REVIEW REQUIRED]
+  │     ├── ans-base.json              <── AnswerRuntimeAuthorityBindingManifest (ANS-BASE)
+  │     ├── ans-rag.json               <── AnswerRuntimeAuthorityBindingManifest (ANS-RAG)
+  │     └── ans-final.json             <── AnswerRuntimeAuthorityBindingManifest (ANS-FINAL)
+  ├── comparison-set-manifest.json     <── 기승인 #808 manifest
+  ├── ans-base--ans-rag/comparison.json
+  ├── ans-rag--ans-final/comparison.json
+  └── ans-base--ans-final/comparison.json
+```
+
+- **경로 확정 조건**: `binding-manifests/` 하위 경로는 확정(Frozen)이 아닌 제안(Proposed)이며, 단일 책임 리뷰어(`@phina-io`)의 명시적 검토 및 승인을 거쳐야 정본 경로로 동결된다.
+
+##### B. #808 실제 구현 경계 명시
+- 현재 `ai_worker/tasks/evaluation/answer_comparison.py`의 `build_answer_comparison_set()`는 `comparison-set-manifest.json` 바이트 및 3개 pair 상대 경로 바이트를 생성하는 순수 빌더일 뿐, 파일시스템 상의 experiment 디렉토리 publisher/writer를 포함하지 않는다.
+- 빌더의 입력인 `AnswerComparisonRunInput`은 `supplemental_controls`와 `delta_bindings`를 이미 조립된 상태로 수신하므로, "#808 비교 빌더가 바인딩 매니페스트를 파일시스템에서 직접 발견/로드한다"고 기술하지 않는다. 매니페스트 역직렬화 및 Seam 투영(`project_answer_runtime_binding_manifest`)은 비교 세트 조립 이전의 별도 runner/loader 책임이다.
+
+##### C. Publisher 영향 및 미구현 경계 구분
+- **Run Bundle Publisher 영향**: `0` (`ai_worker/tasks/evaluation/publisher.py` 및 번들 화이트리스트 변경 없음).
+- **Experiment-level Artifact Writer**: `NOT IMPLEMENTED` (실험 수준 multi-file publisher/writer는 현재 정본 코드로 부재하며 후속 implementation slice의 과제임).
+- 즉, "기존 `publisher.py` 수정이 없다"는 사실이 "실험 아티팩트 발행기가 이미 구현되어 있다"는 것을 의미하지 않는다.
+
+##### D. Stale / Orphan 검출 경계
+- `manifest.run_id == bundle.run.run_id` 및 `manifest_sha256` self-hash 불일치 시 소비 단계에서 즉시 거부(`fail-closed`)하는 검증 primitive는 완비되어 있다.
+- 단, 파일시스템 수준의 orphan cleanup, 디렉토리 인덱싱, 원자적 multi-file 발행은 별도의 미구현 파일시스템 계층 문제이며, 본 Manifest 계약이 이를 자동 해결한다고 과장하지 않는다.
+
+---
+
+### 6) D5 — #162 Evaluation Guard Evidence와 #159 RUNTIME_BUNDLE 캐리어 관계
+
+#### 6.1 PR #868 상태 확인
+- 최신 상태: **`OPEN / Review Required`** (`f02838298e2f605dbb23a38928644301747be5c8`, `mergedAt: null`).
+- 아직 병합되지 않았으므로 current authority로 취급할 수 없으며, 본 의존성은 **`PROVISIONAL_DEPENDENCY_ON_162_PHASE_A1`**로 유지한다.
+
+#### 6.2 Projection 필드 및 정본 소스 타입 호환성 분리 판정
+
+##### A. Projection-Field 호환성: YES, Conditional (LOCAL 평가 경로 한정)
+- #162 `evaluation-guard-coverage-v1` authority가 보존하는 `candidate_bundle_id`(canonical lowercase UUID string), `candidate_bundle_manifest_hash`(SHA-256 hex) 및 `environment`는 #159 `answer-runtime-bundle-binding-v1` projection의 의미축(`bundle_id`, `bundle_manifest_hash`, `environment`)과 대응 가능하다.
+- **환경(environment) 범위 제한**: PR #868 제안 계약에서 `evaluation-guard-coverage-v1`의 환경은 `Literal["LOCAL"]` 한정이다. `RagEvaluationRun` 자체는 `LOCAL | CI`를 허용하지만, #162 Evaluation Guard Evidence는 현재 `LOCAL only`다. 따라서 **#162 기반 RUNTIME_BUNDLE 캐리어 후보는 LOCAL 평가 경로에만 한정**되며, CI 경로까지 자동 호환된다고 주장하지 않는다.
+
+##### B. Canonical Source Type 호환성: NO
+- 현재 #159 실제 구현:
+  ```python
+  def compute_runtime_bundle_binding_hash(
+      variant_id: AnswerVariantId,
+      observation: RequestGuardRuntimeBindingObservation | None = None,
+  ) -> str:
+  ```
+  `ANS-RAG` / `ANS-FINAL`에서 `type(observation) is RequestGuardRuntimeBindingObservation`을 엄격히 요구한다.
+- 기존 #159 소스 타입(`RequestGuardRuntimeBindingObservation`)과 #162 소스 타입(`rag-eval.evaluation-guard-evidence`)은 상이한 authority type 및 domain이다. 따라서 #162 객체를 기존 함수에 직접 전달할 수 없다.
+
+##### C. Contract Amendment 판정
+- **Hash Preimage Amendment**: **`NO`**
+  기존 정규 사영 레시피 및 해시 도메인(`{"bundle_id": ..., "bundle_manifest_hash": ..., "environment": ..., "projection_version": "answer-runtime-bundle-binding-v1"}`)은 그대로 유지된다.
+- **Canonical Source Contract Amendment**: **`YES / REQUIRED AFTER #868 FREEZE`**
+  #868 동결 후, 기존 `RequestGuardRuntimeBindingObservation` 외에 승인된 Evaluation Guard Evidence에서 해당 값을 추출하여 바인딩하는 typed projection seam의 추가가 필수적이다.
+
+##### D. Synthetic Conversion 엄격 금지 (No Synthetic Wrapper)
+- #162 Evidence로부터 가짜 `RequestGuardRuntimeBindingObservation`을 날조(fabrication)하여 생성하는 것을 엄격히 금지한다. #162 evidence에는 #806 observation이 보유하는 `user_id`, `request_operation_code`, `request_scope_codes`, `legacy_request_authority_ref` 등의 실제 의미가 부재하므로 synthetic wrapper 도입은 안전성을 훼손한다.
+
+##### E. 향후 구현 방향 및 상태
+- PR #868 승인/병합 이후 별도 implementation slice에서 순수 프로젝션 헬퍼(예: `compute_runtime_bundle_binding_hash_from_evaluation_guard(...)` 등) 또는 typed projection adapter 구조를 검토한다 (함수명/API는 본 문서 PR에서 확정하지 않음).
+- **RUNTIME_BUNDLE 상태**: **`PENDING_162_AUTHORITY_FREEZE + SOURCE_BINDING_ADAPTER_REQUIRED`**
+
+---
+
+### 7) 내부 Materialization Input Seam 설계
+
+새로운 영속화 스키마를 만들지 않고, 런타임 러너와 바인딩 매니페스트 생성기 사이의 순수 typed 내부 진입 seam을 확정한다.
+
+```python
+@dataclass(frozen=True, slots=True)
+class AnswerRuntimeBindingMaterializationInput:
+    experiment_id: str
+    run_id: str
+    variant_id: AnswerVariantId
+    execution_request: DevExecutionRequest
+    guideline_provenance: GuidelineGenerationProvenance | None
+    provider_observations: tuple[ProviderInvocationObservation, ...]
+    retrieval_config: VersionedEvidenceRetrievalConfiguration | None
+    retrieval_model_config: ActualRetrievalModelConfig | None
+    run_bundle: LoadedRunBundle
+    guard_evidence: Any | None = None  # Provisional for #162 freeze
+```
+
+#### Arbitrary Hash 주입 엄격 차단 (No Raw Hash Injection Rule)
+Materializer API는 `prompt_hash: str`, `parser_hash: str`, `runtime_bundle_hash: str` 등 임의의 해시 문자열을 인자로 수신하는 것을 엄격히 금지한다. 오직 검증된 authoritative typed source object만을 수신하여, 내부에서 기승인된 #851 recipe helper만을 호출해 해시를 생성해야 한다.
+
+---
+
+### 8) 승인 후 구현 가능 여부 분류 (Implementation Readiness)
+
+#### 8.1 IMPLEMENTABLE AFTER APPROVAL (8개)
+본 Phase C-2 계약 승인 후 즉시 internal materializer helper 및 observation collector 구현이 가능한 항목:
+1. `SEED`: `ResolvedDevExecution.request.seed` $\longrightarrow$ `compute_seed_binding_hash()`
+2. `PROMPT_STRUCTURE`: `GuidelineGenerationProvenance.prompt_ref` $\longrightarrow$ `compute_prompt_structure_binding_hash()`
+3. `PARSER`: `GuidelineGenerationProvenance.parser_ref` $\longrightarrow$ `compute_parser_binding_hash()`
+4. `SAMPLING_PARAMETERS`: Provider 관측치 $\longrightarrow$ `compute_sampling_parameters_binding_hash()`
+5. `TOKEN_LIMIT`: Provider 관측치 $\longrightarrow$ `compute_token_limit_binding_hash()`
+6. `TIMEOUT`: Provider 관측치 $\longrightarrow$ `compute_timeout_binding_hash()`
+7. `RETRIEVAL_PIPELINE`: 어댑터 `VersionedEvidenceRetrievalConfiguration` / `NOT_APPLIED` $\longrightarrow$ `compute_retrieval_pipeline_binding_hash()`
+8. `SOURCE_INDEX`: 어댑터/요청 `ActualRetrievalModelConfig` / `NOT_APPLIED` $\longrightarrow$ `compute_source_index_binding_hash()`
+
+#### 8.2 STILL BLOCKED (6개)
+상류 이슈 및 권위 미완료로 구현이 차단된 항목:
+1. `RUNTIME_BUNDLE`: `PENDING_162_AUTHORITY_FREEZE + SOURCE_BINDING_ADAPTER_REQUIRED` (PR #868 미병합 및 정본 소스 어댑터 추가 필요)
+2. `RETRIEVED_EVIDENCE`: `SOURCE_EXISTS_RECIPE_UNRESOLVED` (Issue #180 / #760 차단)
+3. `FINAL_VALIDATOR`: `BLOCKED_BY_UPSTREAM_AUTHORITY` (Issue #180 차단)
+4. `CITATION_GATE`: `BLOCKED_BY_UPSTREAM_AUTHORITY` (Issue #799 / #807 / #180 차단)
+5. `SAFETY_GATE`: `BLOCKED_BY_UPSTREAM_AUTHORITY` (Issue #180 차단)
+6. `RELEASE_GATE`: `BLOCKED_BY_UPSTREAM_AUTHORITY` (Issue #180 차단)
+
+---
+
+### 9) 책임 체계 및 검토 요건
+
+- **구현 책임자 (Implementation Owner)**: 정현우 (`@ceohwj`, AI/RAG)
+- **책임 리뷰어 (Single Responsible Reviewer)**: 송은영 (`@phina-io`, Backend / Data & Security) — `Review Required`
+  - 본 C-2 계약은 Backend/Data 권위 경계, Storage/Publication 좌표 및 상류 런타임 영수증 결속을 다루므로 단일 책임 리뷰어를 `@phina-io`로 유지한다.
+- **전문 증거 (Specialist Evidence — Evaluation/Worker)**: 김지혜 (`@Jye-rookie`, Worker / Track A·C·E)
+- **수용 증거 (Acceptance Evidence — Product/Track F)**: 권가빈 (`@hazelnutflavoured`, PM / Track F Acceptance)

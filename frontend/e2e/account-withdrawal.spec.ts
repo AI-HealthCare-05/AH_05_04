@@ -177,8 +177,9 @@ test('회원탈퇴 실패 detail 200은 완료 화면으로 소비하지 않는�
   }).check()
   await page.getByRole('button', { name: '회원탈퇴 요청' }).click()
 
-  await expect(page.getByText('회원탈퇴 처리를 완료하지 못했어요.')).toBeVisible()
-  await expect(page.getByText('관리자 확인이 필요합니다. 완료 화면으로 이동하지 않습니다.')).toBeVisible()
+  await expect(page.getByText('회원탈퇴가 처리되었습니다.')).toBeVisible()
+  await expect(page.getByText(/계정 이용이 종료되었습니다\./)).toBeVisible()
+  // 실패 detail을 성공 COMPLETED 화면으로 재해석하지 않는다.
   await expect(page.getByText('회원탈퇴가 완료되었습니다.')).toHaveCount(0)
   await expect(page.getByText('withdrawal@example.com')).toHaveCount(0)
   expect(await page.evaluate(() => localStorage.getItem('access_token'))).toBeNull()
