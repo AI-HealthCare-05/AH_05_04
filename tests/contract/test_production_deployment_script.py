@@ -538,18 +538,28 @@ def test_worker_preflight_allows_chat_history_context_enabled_after_approval(tmp
     }
     env_file = tmp_path / "prod.env"
     env_file.write_text("\n".join(f'{k}="{v}"' for k, v in settings.items()))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for command in ("ssh", "scp"):
+        executable = bin_dir / command
+        executable.write_text("#!/bin/bash\nexit 0\n")
+        executable.chmod(0o700)
+    docker = bin_dir / "docker"
+    docker.write_text('#!/bin/bash\necho "FAKE_DOCKER_REACHED" >&2\nexit 97\n')
+    docker.chmod(0o700)
     result = subprocess.run(
         ["bash", str(SCRIPT_PATH)],
         cwd=PROJECT_ROOT,
-        env={"PATH": "/usr/bin:/bin", "PROD_ENV_FILE": str(env_file)},
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin", "PROD_ENV_FILE": str(env_file)},
+        input="synthetic-test-pat\n",
         capture_output=True,
         text=True,
         timeout=10,
     )
     assert result.returncode != 0
-    assert "CHAT_HISTORY_CONTEXT_ENABLED=false" not in result.stdout
-    assert "필수 명령을 찾을 수 없습니다: docker" in result.stdout
-    assert "Docker login" not in result.stdout
+    output = result.stdout + result.stderr
+    assert "CHAT_HISTORY_CONTEXT_ENABLED=false" not in output
+    assert "FAKE_DOCKER_REACHED" in output
 
 
 @pytest.mark.parametrize("worker_health_exit", [0, 42])
