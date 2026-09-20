@@ -55,4 +55,4 @@ def test_b2_documents_the_exact_blocker_without_changing_other_binding_states() 
     assert "GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING" in binding_text
     assert "GUIDE_RETRIEVAL_OUTCOME_BINDING_READY" in binding_text
     assert "GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_READY" in binding_text
-    assert "GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_UNAVAILABLE" in binding_text
+    assert "GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_READY" in binding_text

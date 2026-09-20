@@ -1575,6 +1575,7 @@ async def _exercise_retrieval_run_runtime_permissions(reader, producer, admin) -
     from decimal import Decimal
 
     from ai_worker.adapters.sqlalchemy_retrieval_run import SqlAlchemyRetrievalRunStore
+    from ai_worker.tasks.rag.production_evidence_gate import EvidenceGateReason
     from ai_worker.tasks.rag.retrieval_run import (
         BeginRetrievalRunRequest,
         BeginRetrievalRunSuccess,
@@ -1583,6 +1584,7 @@ async def _exercise_retrieval_run_runtime_permissions(reader, producer, admin) -
         PersistedHitInput,
         PersistedSignalInput,
     )
+    from ai_worker.tests.rag.retrieval_run_test_support import make_terminal_replay_payload
 
     user_id = uuid4()
     job_id = uuid4()
@@ -1687,12 +1689,20 @@ async def _exercise_retrieval_run_runtime_permissions(reader, producer, admin) -
         lexical_rank=1,
         dense_rank=1,
     )
+    replay_payload, search_receipt_hash, _ = make_terminal_replay_payload(
+        begin_req,
+        index_id=index_id,
+        signals=(sig,),
+        hits=(hit,),
+    )
     fin_req = FinalizeRetrievalRunRequest(
         run_id=run_id,
         status="COMPLETED",
-        search_receipt_hash="8" * 64,
+        diagnostic_code=EvidenceGateReason.ELIGIBLE.value,
+        search_receipt_hash=search_receipt_hash,
         signals=(sig,),
         hits=(hit,),
+        terminal_replay_payload=replay_payload,
     )
     fin_outcome = await store.finalize_run(fin_req)
     assert isinstance(fin_outcome, FinalizeRetrievalRunSuccess)

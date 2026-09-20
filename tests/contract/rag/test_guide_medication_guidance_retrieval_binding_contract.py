@@ -6,12 +6,12 @@ from pathlib import Path
 BINDING_PATH = Path("docs/contracts/targets/post-mvp-1/guide-medication-guidance-retrieval-binding-v1.md")
 READINESS_PATH = Path("docs/contracts/targets/post-mvp-1/guide-langgraph-callable-readiness-v1.md")
 
-BLOCKER_STATES = {
+BINDING_STATES = {
     "GUIDE_RUNTIME_REQUEST_CARRIER_MISSING",
     "GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING",
     "GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_READY",
     "GUIDE_RETRIEVAL_OUTCOME_BINDING_READY",
-    "GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_UNAVAILABLE",
+    "GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_READY",
 }
 
 AVAILABLE_COMPONENTS = {
@@ -60,7 +60,7 @@ def test_binding_freeze_documents_exact_blockers_and_existing_kernels() -> None:
     text = BINDING_PATH.read_text(encoding="utf-8")
 
     documented_codes = set(re.findall(r"^### B[1-5] — `([A-Z_]+)`$", text, flags=re.MULTILINE))
-    assert documented_codes == BLOCKER_STATES
+    assert documented_codes == BINDING_STATES
     assert all(component in text for component in AVAILABLE_COMPONENTS)
     assert "retrieval engine is missing" not in text.lower()
     assert "hybrid retrieval is not implemented" not in text.lower()
@@ -89,6 +89,7 @@ def test_readiness_keeps_retrieval_missing_and_other_nodes_stable() -> None:
     assert "execute_hybrid_retrieve" in retrieval_entry
     assert "GUIDE_RUNTIME_REQUEST_CARRIER_MISSING" in retrieval_entry
     assert "GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING" in retrieval_entry
-    assert "GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_UNAVAILABLE" in retrieval_entry
+    assert "B5 exact terminal replay readback exist" in retrieval_entry
+    assert "GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_UNAVAILABLE" not in retrieval_entry
     for node_id, expected_status in CANONICAL_STATUS_BY_OTHER_NODE.items():
         assert _entry_status(node_id) == expected_status

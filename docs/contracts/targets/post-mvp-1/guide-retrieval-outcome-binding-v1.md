@@ -53,15 +53,16 @@ successful #697 composition remains unchanged.
 
 ## 4. Terminal replay fails closed
 
-The existing replay shape is `SUCCEEDED` with an existing
-`persisted_receipt`, `search_receipt=None`, and
-`EvidenceGateSuccess(selected_hits=())`. It is incomplete historical
-observation, not a successful Guide projection. The binding returns
-`SEARCH_RECEIPT_REQUIRED`; it MUST NOT reconstruct a receipt, treat an empty
-selection as valid, or re-search.
+A legacy or incomplete replay row without a verified terminal payload is not a
+successful Guide projection. B5 now restores the original typed
+`search_receipt` and gate outcome only after payload, receipt, artifact, and
+selection-manifest verification. Missing or invalid B5 payloads fail before
+this projection. If an incomplete outcome nevertheless reaches this binding,
+it returns `SEARCH_RECEIPT_REQUIRED`; it MUST NOT reconstruct a receipt, treat
+an empty selection as valid, or re-search.
 
-B5 owns historical payload recovery. This contract does not add a readback
-repository, retrieval-hit SQL, database migration, or persistence change.
+B5 owns historical payload recovery. This B4 contract itself does not define
+the readback repository, migration, or persistence semantics.
 
 ## 5. Prohibitions and state
 
