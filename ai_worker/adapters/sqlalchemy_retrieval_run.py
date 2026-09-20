@@ -153,7 +153,11 @@ def _terminal_replay_bindings_match(
         and request.search_receipt_hash == search_receipt.artifact_ref.content_sha256
         and request.diagnostic_code == gate_outcome.reason.value == search_receipt.diagnostic_code
         and search_receipt.variant == run_row["variant"]
+        and search_receipt.query_fingerprint.algorithm == run_row["query_digest_algorithm"]
+        and search_receipt.query_fingerprint.key_version == run_row["query_digest_key_version"]
         and search_receipt.query_fingerprint.digest == run_row["query_digest"]
+        and search_receipt.filter_snapshot_ref.content_sha256 == run_row["filter_snapshot_hash"]
+        and search_receipt.query_embedding_sha256 == run_row["query_embedding_sha256"]
         and search_receipt.retrieval_config_ref.content_sha256 == run_row["retrieval_configuration_hash"]
         and search_receipt.signal_manifest_sha256 == signal_manifest_hash
         and search_receipt.hit_manifest_sha256 == hit_manifest_hash
@@ -210,7 +214,10 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
         run_row: Any,
     ) -> BeginRetrievalRunOutcome:
         matches = (
-            run_row["query_digest"] == request.query_digest
+            run_row["query_digest_algorithm"] == request.query_digest_algorithm
+            and run_row["query_digest_key_version"] == request.query_digest_key_version
+            and run_row["query_digest"] == request.query_digest
+            and run_row["query_embedding_sha256"] == request.query_embedding_sha256
             and run_row["retrieval_configuration_hash"] == request.retrieval_configuration_hash
             and run_row["knowledge_index_id"] == str(request.knowledge_index_id)
             and run_row["variant"] == request.variant

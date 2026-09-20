@@ -236,6 +236,11 @@ async def test_begin_and_finalize_lifecycle_postgresql(database) -> None:
     assert isinstance(conflict_outcome, BeginRetrievalRunFailure)
     assert conflict_outcome.reason == BeginRetrievalRunFailureReason.CONFLICT
 
+    same_digest_different_key_version = replace(req, query_digest_key_version="v2")
+    fingerprint_conflict = await store.begin_run(same_digest_different_key_version)
+    assert isinstance(fingerprint_conflict, BeginRetrievalRunFailure)
+    assert fingerprint_conflict.reason == BeginRetrievalRunFailureReason.CONFLICT
+
     async with engine.begin() as conn:
         await conn.execute(
             text(
@@ -447,6 +452,104 @@ async def test_finalize_rejects_payload_from_different_hit_set(database) -> None
         )
     assert status == "RUNNING"
     assert hit_count == 0
+
+
+@pytest.mark.parametrize("mismatched_axis", ["filter_snapshot", "query_embedding"])
+async def test_finalize_rejects_payload_with_different_execution_identity(database, mismatched_axis: str) -> None:
+    engine = database
+    job_id, ctx_id, index_id, chunk_id, _ = await _seed_test_prerequisites(engine)
+    store = SqlAlchemyRetrievalRunStore(async_sessionmaker(engine, expire_on_commit=False, autoflush=False))
+    request = _create_begin_request(job_id, ctx_id, index_id)
+    begun = await store.begin_run(request)
+    assert isinstance(begun, BeginRetrievalRunSuccess)
+    hit = PersistedHitInput(
+        knowledge_chunk_id=chunk_id,
+        rrf_rank=1,
+        rrf_score=Decimal("0.01"),
+        rrf_score_numerator="1",
+        rrf_score_denominator="61",
+        final_rank=1,
+        selected=True,
+    )
+    if mismatched_axis == "filter_snapshot":
+        payload_request = replace(request, filter_snapshot_hash="8" * 64)
+    else:
+        payload_request = replace(request, query_embedding_sha256="9" * 64)
+    payload, search_receipt_hash, _ = make_terminal_replay_payload(
+        payload_request,
+        index_id=index_id,
+        signals=(),
+        hits=(hit,),
+    )
+
+    result = await store.finalize_run(
+        FinalizeRetrievalRunRequest(
+            run_id=begun.run_id,
+            status="COMPLETED",
+            diagnostic_code=EvidenceGateReason.ELIGIBLE.value,
+            search_receipt_hash=search_receipt_hash,
+            hits=(hit,),
+            terminal_replay_payload=payload,
+        )
+    )
+
+    assert isinstance(result, FinalizeRetrievalRunFailure)
+    assert result.reason == FinalizeRetrievalRunFailureReason.VALIDATION_ERROR
+    async with engine.connect() as conn:
+        status = await conn.scalar(
+            text("SELECT status FROM retrieval_run WHERE id = :id"),
+            {"id": str(begun.run_id)},
+        )
+        hit_count = await conn.scalar(
+            text("SELECT count(*) FROM retrieval_hit WHERE retrieval_run_id = :id"),
+            {"id": str(begun.run_id)},
+        )
+    assert status == "RUNNING"
+    assert hit_count == 0
+
+
+@pytest.mark.parametrize("persisted_axis", ["filter_snapshot_hash", "query_embedding_sha256"])
+async def test_readback_rejects_persisted_execution_identity_drift(database, persisted_axis: str) -> None:
+    engine = database
+    job_id, ctx_id, index_id, chunk_id, _ = await _seed_test_prerequisites(engine)
+    store = SqlAlchemyRetrievalRunStore(async_sessionmaker(engine, expire_on_commit=False, autoflush=False))
+    request = _create_begin_request(job_id, ctx_id, index_id)
+    begun = await store.begin_run(request)
+    assert isinstance(begun, BeginRetrievalRunSuccess)
+    hit = PersistedHitInput(
+        knowledge_chunk_id=chunk_id,
+        rrf_rank=1,
+        rrf_score=Decimal("0.01"),
+        rrf_score_numerator="1",
+        rrf_score_denominator="61",
+        final_rank=1,
+        selected=True,
+    )
+    payload, search_receipt_hash, _ = make_terminal_replay_payload(
+        request,
+        index_id=index_id,
+        signals=(),
+        hits=(hit,),
+    )
+    finalized = await store.finalize_run(
+        FinalizeRetrievalRunRequest(
+            run_id=begun.run_id,
+            status="COMPLETED",
+            diagnostic_code=EvidenceGateReason.ELIGIBLE.value,
+            search_receipt_hash=search_receipt_hash,
+            hits=(hit,),
+            terminal_replay_payload=payload,
+        )
+    )
+    assert isinstance(finalized, FinalizeRetrievalRunSuccess)
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(f"UPDATE retrieval_run SET {persisted_axis} = :value WHERE id = :id"),
+            {"value": "f" * 64, "id": str(begun.run_id)},
+        )
+
+    assert await store.get_run_receipt(begun.run_id) is None
 
 
 async def test_begin_run_concurrent_initial_creation_race(database) -> None:
