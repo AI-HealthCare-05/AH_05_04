@@ -16,7 +16,8 @@ CATALOG_LOCK_COLUMNS = {
     "rag_medication_alias": "catalog_lock_marker",
 }
 CATALOG_SOURCE_TABLES = frozenset(
-    "rag_source rag_source_endpoint rag_source_operation rag_source_snapshot rag_source_snapshot_verification".split()
+    "rag_source rag_source_endpoint rag_source_operation rag_source_snapshot rag_source_snapshot_verification "
+    "rag_source_ingestion_run rag_source_ingestion_artifact".split()
 )
 CATALOG_APPROVAL_READ_TABLES = frozenset(
     {

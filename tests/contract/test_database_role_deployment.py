@@ -440,20 +440,66 @@ def test_candidate_index_role_policy_is_explicit_and_least_privilege() -> None:
     assert "GRANT TRUNCATE" not in source
 
 
-def test_catalog_role_policy_includes_approval_tables() -> None:
+def test_catalog_writer_policy_matches_actual_execution_relation_contract() -> None:
     from infra.python.catalog_role_policy import (
         CATALOG_APPROVAL_READ_TABLES,
+        CATALOG_LOCK_COLUMNS,
         CATALOG_READ_TABLES,
+        CATALOG_SOURCE_TABLES,
         CATALOG_WRITE_TABLES,
     )
+
+    # Statically traced from Catalog Writer's complete production path:
+    # read_product_input -> SqlAlchemySourceSnapshotRepository,
+    # SqlAlchemyCatalogApprovalVerifier -> SqlAlchemyCatalogBuildRepository.
+    # This is intentionally a call-graph contract rather than a policy-derived
+    # assertion, so a newly accessed relation fails closed in review and CI.
+    actual_select_only = {
+        "rag_source",
+        "rag_source_endpoint",
+        "rag_source_operation",
+        "rag_source_snapshot",
+        "rag_source_snapshot_verification",
+        "rag_source_ingestion_run",
+        "rag_source_ingestion_artifact",
+        "catalog_source_approval",
+        "catalog_build_approval",
+        "catalog_build_approval_source",
+    }
+    actual_select_insert = {
+        "rag_entity_identity",
+        "rag_medication_product",
+        "rag_medication_ingredient",
+        "rag_medication_alias",
+        "rag_medication_product_component",
+        "rag_medication_search_entry",
+        "rag_catalog_set",
+        "rag_catalog_set_source",
+        "rag_catalog_set_member",
+        "rag_catalog_set_hash",
+    }
+    actual_lock_marker_updates = {
+        "rag_source_snapshot": "management_lock_marker",
+        "rag_medication_product": "catalog_lock_marker",
+        "rag_medication_alias": "catalog_lock_marker",
+    }
 
     assert CATALOG_APPROVAL_READ_TABLES == {
         "catalog_source_approval",
         "catalog_build_approval",
         "catalog_build_approval_source",
     }
-    assert CATALOG_APPROVAL_READ_TABLES <= CATALOG_READ_TABLES
-    assert not (CATALOG_APPROVAL_READ_TABLES & CATALOG_WRITE_TABLES)
+    assert CATALOG_SOURCE_TABLES == actual_select_only - CATALOG_APPROVAL_READ_TABLES
+    assert CATALOG_WRITE_TABLES == actual_select_insert
+    assert CATALOG_READ_TABLES == actual_select_only | actual_select_insert
+    assert CATALOG_LOCK_COLUMNS == actual_lock_marker_updates
+
+    # Ingestion provenance is a read-only Product Source dependency. It must
+    # not become a Catalog write or lock target merely to satisfy row locking.
+    ingestion_tables = {"rag_source_ingestion_run", "rag_source_ingestion_artifact"}
+    assert ingestion_tables <= CATALOG_SOURCE_TABLES
+    assert not (ingestion_tables & CATALOG_WRITE_TABLES)
+    assert not (ingestion_tables & set(CATALOG_LOCK_COLUMNS))
 
     source = (ROOT / "infra/python/catalog_role_policy.py").read_text()
     assert "CATALOG_APPROVAL_READ_TABLES" in source
