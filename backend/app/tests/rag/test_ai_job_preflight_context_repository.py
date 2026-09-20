@@ -1,4 +1,5 @@
-from datetime import UTC, date, datetime
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -6,6 +7,18 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_worker.tasks.rag.catalog.types import CatalogFreshnessStatus, CatalogVerificationStatus
+from ai_worker.tasks.rag.runtime_bundle_builder import (
+    MedicationCatalogBinding,
+    RuntimeBundleArtifactKind,
+    RuntimeBundleArtifactMemberInput,
+    RuntimeBundleBuildRequest,
+    RuntimeBundleCitationApprovalPinIdentity,
+    RuntimeBundleMemberPurpose,
+    RuntimeBundleSourceMemberInput,
+    RuntimeExecutionManifestInput,
+)
+from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import SnapshotVerificationStatus
 from app.models.async_jobs import AiJob, AiJobStatus, AiJobType
 from app.models.chat import ChatMessage, ChatRole, ChatSession
 from app.models.guides import Guide
@@ -22,12 +35,15 @@ from app.models.rag_candidate import (
     MedicationIdentificationStatus,
 )
 from app.models.rag_runtime import (
+    RagRuntimeBundleCitationApproval,
     RagRuntimeBundleSource,
     RagRuntimeBundleStatus,
+    RagRuntimeEnvironment,
     RagRuntimeEnvironmentStatus,
-    RagRuntimeSourcePurpose,
+    RagRuntimeExecutionManifest,
+    RagRuntimeReleaseBundle,
 )
-from app.models.rag_source import RagSourceSnapshot
+from app.models.rag_source import RagSource, RagSourceSnapshot
 from app.models.users import Gender, User
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.repositories.rag_runtime_repository import (
@@ -46,6 +62,14 @@ from app.repositories.rag_source_catalog_repository import (
     RagSourceOperationCreate,
     RagSourceSnapshotCreate,
 )
+from app.repositories.rag_source_use_approval_repository import (
+    RagSourceUseApprovalRepository,
+    SourceUseApprovalCreate,
+)
+from app.services.guide_runtime_request import load_verified_guide_runtime_request_carrier
+from app.services.rag_runtime_bundle_build import execute_runtime_bundle_build
+from rag_runtime.runtime_environment import RuntimeEnvironmentCode
+from rag_runtime.source_use_approval import SourceUsePurpose
 
 
 def _hash(char: str) -> str:
@@ -134,13 +158,16 @@ async def _create_runtime_graph(session: AsyncSession):
     return manifest, bundle, environment
 
 
-async def _create_source_snapshot(session: AsyncSession) -> RagSourceSnapshot:
+async def _create_runtime_source_snapshot(
+    session: AsyncSession,
+    label: str,
+) -> tuple[RagSource, RagSourceSnapshot]:
     suffix = uuid4().hex[:10]
     repository = RagSourceCatalogRepository(session)
     source = await repository.create_source(
         RagSourceCreate(
-            source_code=f"MFDS_PREFLIGHT_{suffix}",
-            display_name="MFDS Preflight Source",
+            source_code=f"MFDS_CARRIER_{label}_{suffix}",
+            display_name=f"MFDS Carrier {label}",
             owner_name="MFDS",
         )
     )
@@ -158,7 +185,7 @@ async def _create_source_snapshot(session: AsyncSession) -> RagSourceSnapshot:
             display_name="List Products",
         )
     )
-    return await repository.create_snapshot(
+    snapshot = await repository.create_snapshot(
         RagSourceSnapshotCreate(
             operation_id=operation.id,
             source_version=f"api:2026-09-20:{suffix}",
@@ -173,45 +200,129 @@ async def _create_source_snapshot(session: AsyncSession) -> RagSourceSnapshot:
             collected_at=datetime.now(UTC),
         )
     )
+    return source, snapshot
 
 
-async def _attach_bundle_source(
-    session: AsyncSession,
-    *,
-    bundle_id: UUID,
+def _runtime_source_member(
     snapshot: RagSourceSnapshot,
-) -> RagRuntimeBundleSource:
-    source_member = RagRuntimeBundleSource(
-        bundle_id=bundle_id,
-        source_snapshot_id=snapshot.id,
-        source_purpose=RagRuntimeSourcePurpose.KNOWLEDGE,
+    purpose: RuntimeBundleMemberPurpose,
+) -> RuntimeBundleSourceMemberInput:
+    return RuntimeBundleSourceMemberInput(
+        source_snapshot_id=str(snapshot.id),
+        source_purpose=purpose,
         source_version=snapshot.source_version,
         canonical_checksum=snapshot.canonical_checksum,
         approval_version="approval-v1",
         scope_policy_hash=_hash("c"),
         freshness_policy_hash=_hash("d"),
-        required=True,
-        selected_for_operation=True,
+        observed_environment="LOCAL",
+        verification_status=SnapshotVerificationStatus.CURRENT,
+        rejected_record_count=0,
+        publication_approval_passed=True,
+        freshness_eligible=True,
+        provenance_valid=True,
+        approval_expired=False,
+        revocation_unresolved=False,
+        scope_allowed=True,
     )
-    session.add(source_member)
-    await session.flush()
-    return source_member
 
 
-async def _create_guide_domain(
+async def _create_canonical_runtime_graph(
     session: AsyncSession,
     *,
-    profile: Profile,
-    prescription: Prescription,
-) -> Guide:
-    guide = Guide(
-        prescription_id=prescription.id,
-        prescription_version_id=prescription.active_version_id,
-        profile_id=profile.id,
+    actor: User,
+) -> tuple[
+    RagRuntimeExecutionManifest,
+    RagRuntimeReleaseBundle,
+    RagRuntimeEnvironment,
+    tuple[RagRuntimeBundleSource, ...],
+    RagRuntimeBundleCitationApproval,
+]:
+    _, catalog_snapshot = await _create_runtime_source_snapshot(session, "CATALOG")
+    knowledge_source, knowledge_snapshot = await _create_runtime_source_snapshot(session, "KNOWLEDGE")
+    approval = await RagSourceUseApprovalRepository(session).create_approval(
+        SourceUseApprovalCreate(
+            source_snapshot_id=knowledge_snapshot.id,
+            source_code=knowledge_source.source_code,
+            source_version=knowledge_snapshot.source_version,
+            environment=RuntimeEnvironmentCode.LOCAL,
+            purpose=SourceUsePurpose.PATIENT_CITATION,
+            approval_version="citation-approval-v1",
+            valid_from=datetime.now(UTC),
+            expires_at=datetime.now(UTC) + timedelta(days=1),
+            actor_id=actor.id,
+            evidence_ref="evidence://synthetic/guide-carrier",
+        )
     )
-    session.add(guide)
-    await session.flush()
-    return guide
+    pin = RuntimeBundleCitationApprovalPinIdentity(
+        source_snapshot_id=str(approval.identity.source_snapshot_id),
+        source_use_approval_id=str(approval.id),
+        source_code=approval.identity.source_code,
+        source_version=approval.identity.source_version,
+        approval_version=approval.identity.approval_version,
+        environment=approval.identity.environment.value,
+        purpose=approval.identity.purpose,
+    )
+    suffix = uuid4().hex[:8]
+    request = RuntimeBundleBuildRequest(
+        bundle_key=f"guide-carrier-{suffix}",
+        bundle_version="1.0.0",
+        environment_code="LOCAL",
+        execution_manifest=RuntimeExecutionManifestInput(
+            manifest_key=f"guide-carrier-manifest-{suffix}",
+            manifest_version="1.0.0",
+            schema_version="runtime-manifest-v1",
+            git_commit_sha="abcdef1",
+            worker_artifact_ref="worker:synthetic:guide-carrier",
+        ),
+        catalog=MedicationCatalogBinding(
+            catalog_version="catalog-1.0.0",
+            catalog_manifest_hash=_hash("9"),
+            verification_status=CatalogVerificationStatus.APPROVED,
+            freshness_status=CatalogFreshnessStatus.CURRENT,
+            is_complete=True,
+            source_snapshot_ids=(str(catalog_snapshot.id),),
+        ),
+        source_members=(
+            _runtime_source_member(catalog_snapshot, RuntimeBundleMemberPurpose.CATALOG),
+            _runtime_source_member(knowledge_snapshot, RuntimeBundleMemberPurpose.KNOWLEDGE),
+        ),
+        artifact_members=(
+            RuntimeBundleArtifactMemberInput(
+                artifact_kind=RuntimeBundleArtifactKind.CANDIDATE_INDEX,
+                artifact_ref="candidate-index:synthetic",
+                artifact_version="1.0.0",
+                observed_environment="LOCAL",
+                approval_effective=True,
+                approval_expired=False,
+                revocation_unresolved=False,
+                manifest_hash=_hash("e"),
+                catalog_version="catalog-1.0.0",
+                catalog_manifest_hash=_hash("9"),
+            ),
+        ),
+        citation_approval_pins=(pin,),
+        created_by="backend-test",
+    )
+    execution = await execute_runtime_bundle_build(session, request)
+    assert execution.persisted is not None
+    persisted = execution.persisted
+    environment = await RagRuntimeRepository(session).create_environment(
+        RagRuntimeEnvironmentCreate(
+            environment_code="LOCAL",
+            environment_status=RagRuntimeEnvironmentStatus.ACTIVE,
+            active_bundle_id=persisted.bundle.id,
+            active_bundle_manifest_hash=persisted.bundle.bundle_manifest_hash,
+            environment_revision=2,
+        )
+    )
+    return (
+        persisted.execution_manifest,
+        persisted.bundle,
+        environment,
+        persisted.bundle_sources,
+        persisted.citation_approval_pins[0],
+    )
 
 
 async def _create_identification(
@@ -300,6 +411,93 @@ async def _create_chat_domain(
     return message
 
 
+async def _create_guide_domain(
+    session: AsyncSession,
+    *,
+    profile: Profile,
+    prescription: Prescription,
+) -> Guide:
+    guide = Guide(
+        prescription_id=prescription.id,
+        prescription_version_id=prescription.active_version_id,
+        profile_id=profile.id,
+    )
+    session.add(guide)
+    await session.flush()
+    return guide
+
+
+@dataclass(frozen=True, slots=True)
+class _GuideCarrierFixture:
+    job: AiJob
+    execution_context_id: UUID
+    bundle: RagRuntimeReleaseBundle
+    manifest: RagRuntimeExecutionManifest
+    environment: RagRuntimeEnvironment
+    bundle_sources: tuple[RagRuntimeBundleSource, ...]
+    citation_pin: RagRuntimeBundleCitationApproval
+
+
+async def _create_guide_carrier_fixture(session: AsyncSession) -> _GuideCarrierFixture:
+    user, profile = await _create_user(session)
+    prescription = await _create_prescription(session, user=user, profile=profile)
+    medication = await session.scalar(
+        select(PrescriptionVersionMedication).where(
+            PrescriptionVersionMedication.prescription_version_id == prescription.active_version_id
+        )
+    )
+    assert medication is not None
+    guide = await _create_guide_domain(session, profile=profile, prescription=prescription)
+    identification = await _create_identification(session, medication=medication)
+    manifest, bundle, environment, bundle_sources, citation_pin = await _create_canonical_runtime_graph(
+        session,
+        actor=user,
+    )
+    job = AiJob(
+        user_id=user.id,
+        job_type=AiJobType.GUIDE,
+        status=AiJobStatus.PENDING,
+        prescription_version_id=prescription.active_version_id,
+        max_attempts=3,
+        available_at=datetime.now(UTC),
+    )
+    session.add(job)
+    await session.flush()
+    repository = RagRuntimeRepository(session)
+    execution_context = await repository.create_execution_context(
+        AiJobExecutionContextCreate(
+            ai_job_id=job.id,
+            guide_id=guide.id,
+            prescription_version_id=prescription.active_version_id,
+            runtime_environment_id=environment.id,
+            runtime_environment_revision=environment.environment_revision,
+            runtime_release_bundle_id=bundle.id,
+            runtime_release_bundle_manifest_hash=bundle.bundle_manifest_hash,
+            runtime_execution_manifest_id=manifest.id,
+            runtime_execution_manifest_hash=manifest.manifest_hash,
+            runtime_guard_decision_ref="guard:guide-runtime-pass",
+            patient_context_digest=_hash("6"),
+            source_scope_manifest_hash=_hash("7"),
+        )
+    )
+    await repository.create_execution_identification(
+        AiJobExecutionIdentificationCreate(
+            execution_context_id=execution_context.id,
+            medication_identification_id=identification.id,
+            prescription_version_medication_id=medication.id,
+        )
+    )
+    return _GuideCarrierFixture(
+        job=job,
+        execution_context_id=execution_context.id,
+        bundle=bundle,
+        manifest=manifest,
+        environment=environment,
+        bundle_sources=bundle_sources,
+        citation_pin=citation_pin,
+    )
+
+
 async def persist_and_verify_chat_context(db_session: AsyncSession) -> None:
     user, profile = await _create_user(db_session)
     prescription = await _create_prescription(db_session, user=user, profile=profile)
@@ -370,89 +568,60 @@ async def persist_and_verify_chat_context(db_session: AsyncSession) -> None:
     assert await repository.list_execution_identifications(execution.id) == [pinned]
 
 
-async def test_guide_runtime_request_carrier_reads_exact_pinned_runtime_scope(
+async def test_verified_guide_runtime_request_carrier_reads_exact_pinned_runtime_scope(
     db_session: AsyncSession,
 ) -> None:
-    user, profile = await _create_user(db_session)
-    prescription = await _create_prescription(db_session, user=user, profile=profile)
-    medication = await db_session.scalar(
-        select(PrescriptionVersionMedication).where(
-            PrescriptionVersionMedication.prescription_version_id == prescription.active_version_id
-        )
-    )
-    assert medication is not None
-    guide = await _create_guide_domain(db_session, profile=profile, prescription=prescription)
-    identification = await _create_identification(db_session, medication=medication)
-    manifest, bundle, environment = await _create_runtime_graph(db_session)
-    snapshot = await _create_source_snapshot(db_session)
-    source_member = await _attach_bundle_source(db_session, bundle_id=bundle.id, snapshot=snapshot)
-    job = AiJob(
-        user_id=user.id,
-        job_type=AiJobType.GUIDE,
-        status=AiJobStatus.PENDING,
-        prescription_version_id=prescription.active_version_id,
-        max_attempts=3,
-        available_at=datetime.now(UTC),
-    )
-    db_session.add(job)
+    fixture = await _create_guide_carrier_fixture(db_session)
+    fixture.environment.active_bundle_id = None
+    fixture.environment.active_bundle_manifest_hash = None
+    fixture.environment.environment_revision += 1
     await db_session.flush()
 
-    repository = RagRuntimeRepository(db_session)
-    execution = await repository.create_execution_context(
-        AiJobExecutionContextCreate(
-            ai_job_id=job.id,
-            guide_id=guide.id,
-            prescription_version_id=prescription.active_version_id,
-            runtime_environment_id=environment.id,
-            runtime_environment_revision=environment.environment_revision,
-            runtime_release_bundle_id=bundle.id,
-            runtime_release_bundle_manifest_hash=bundle.bundle_manifest_hash,
-            runtime_execution_manifest_id=manifest.id,
-            runtime_execution_manifest_hash=manifest.manifest_hash,
-            runtime_guard_decision_ref="guard:guide-runtime-pass",
-            patient_context_digest=_hash("6"),
-            source_scope_manifest_hash=_hash("7"),
-        )
-    )
-    pinned = await repository.create_execution_identification(
-        AiJobExecutionIdentificationCreate(
-            execution_context_id=execution.id,
-            medication_identification_id=identification.id,
-            prescription_version_medication_id=medication.id,
-        )
-    )
-
-    environment.active_bundle_id = None
-    environment.active_bundle_manifest_hash = None
-    environment.environment_revision += 1
-    await db_session.flush()
-
-    carrier = await repository.get_guide_runtime_request_carrier_by_job(job.id)
+    carrier = await load_verified_guide_runtime_request_carrier(db_session, fixture.job.id)
 
     assert carrier is not None
-    assert carrier.job_id == job.id
-    assert carrier.guide_id == guide.id
-    assert carrier.execution_context_id == execution.id
-    assert carrier.prescription_version_id == prescription.active_version_id
-    assert carrier.runtime_environment_id == environment.id
+    assert carrier.execution_context_id == fixture.execution_context_id
+    assert carrier.runtime_release_bundle_id == fixture.bundle.id
+    assert carrier.runtime_release_bundle_manifest_hash == fixture.bundle.bundle_manifest_hash
+    assert carrier.runtime_execution_manifest_id == fixture.manifest.id
+    assert carrier.runtime_execution_manifest_hash == fixture.manifest.manifest_hash
     assert carrier.runtime_environment_revision == 2
-    assert carrier.runtime_release_bundle_id == bundle.id
-    assert carrier.runtime_release_bundle_manifest_hash == bundle.bundle_manifest_hash
-    assert carrier.runtime_execution_manifest_id == manifest.id
-    assert carrier.runtime_execution_manifest_hash == manifest.manifest_hash
-    assert carrier.runtime_guard_decision_ref == "guard:guide-runtime-pass"
-    assert carrier.candidate_index_manifest_hash == _hash("3")
-    assert carrier.identifications[0].medication_identification_id == pinned.medication_identification_id
-    assert carrier.identifications[0].prescription_version_medication_id == medication.id
-    assert carrier.bundle_sources[0].source_snapshot_id == source_member.source_snapshot_id
-    assert carrier.bundle_sources[0].source_purpose is RagRuntimeSourcePurpose.KNOWLEDGE
-    assert carrier.bundle_sources[0].source_version == snapshot.source_version
-    assert carrier.bundle_sources[0].canonical_checksum == snapshot.canonical_checksum
-    assert carrier.bundle_sources[0].scope_policy_hash == _hash("c")
-    assert carrier.bundle_sources[0].selected_for_operation is True
+    assert {source.source_snapshot_id for source in carrier.bundle_sources} == {
+        source.source_snapshot_id for source in fixture.bundle_sources
+    }
 
 
-async def test_guide_runtime_request_carrier_ignores_non_guide_execution_context(
+async def test_verified_guide_runtime_request_carrier_rejects_bundle_source_drift(
+    db_session: AsyncSession,
+) -> None:
+    fixture = await _create_guide_carrier_fixture(db_session)
+    fixture.bundle_sources[0].approval_version = "tampered-approval"
+    await db_session.flush()
+
+    assert await load_verified_guide_runtime_request_carrier(db_session, fixture.job.id) is None
+
+
+async def test_verified_guide_runtime_request_carrier_rejects_execution_manifest_drift(
+    db_session: AsyncSession,
+) -> None:
+    fixture = await _create_guide_carrier_fixture(db_session)
+    fixture.manifest.model_ref = "tampered:model"
+    await db_session.flush()
+
+    assert await load_verified_guide_runtime_request_carrier(db_session, fixture.job.id) is None
+
+
+async def test_verified_guide_runtime_request_carrier_rejects_citation_approval_pin_drift(
+    db_session: AsyncSession,
+) -> None:
+    fixture = await _create_guide_carrier_fixture(db_session)
+    fixture.citation_pin.approval_version = "tampered-approval"
+    await db_session.flush()
+
+    assert await load_verified_guide_runtime_request_carrier(db_session, fixture.job.id) is None
+
+
+async def test_verified_guide_runtime_request_carrier_ignores_chat_execution_context(
     db_session: AsyncSession,
 ) -> None:
     user, profile = await _create_user(db_session)
@@ -469,8 +638,7 @@ async def test_guide_runtime_request_carrier_ignores_non_guide_execution_context
     )
     db_session.add(chat_job)
     await db_session.flush()
-    repository = RagRuntimeRepository(db_session)
-    await repository.create_execution_context(
+    await RagRuntimeRepository(db_session).create_execution_context(
         AiJobExecutionContextCreate(
             ai_job_id=chat_job.id,
             chat_message_id=chat_message.id,
@@ -485,7 +653,7 @@ async def test_guide_runtime_request_carrier_ignores_non_guide_execution_context
         )
     )
 
-    assert await repository.get_guide_runtime_request_carrier_by_job(chat_job.id) is None
+    assert await load_verified_guide_runtime_request_carrier(db_session, chat_job.id) is None
 
 
 async def test_repository_persists_chat_intake_and_execution_context(db_session: AsyncSession) -> None:
