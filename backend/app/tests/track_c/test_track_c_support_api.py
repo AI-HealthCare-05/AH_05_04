@@ -388,7 +388,11 @@ def test_openapi_contains_only_scoped_routes_and_strict_confirmation() -> None:
     path = schema["paths"]["/api/v1/barrier-responses/{id}/supports"]["get"]
     assert path["operationId"] == "barrier-response.supports"
     assert not any(p["name"] == "Idempotency-Key" for p in path["parameters"])
-    path = schema["paths"]["/api/v1/support-action-plans"]["post"]
+    routes = schema["paths"]["/api/v1/support-action-plans"]
+    path = routes["get"]
+    assert path["operationId"] == "support-action-plan.list"
+    assert not any(p["name"] == "Idempotency-Key" for p in path.get("parameters", []))
+    path = routes["post"]
     assert path["operationId"] == "support-action-plan.create"
     assert any(p["name"] == "Idempotency-Key" and p["required"] for p in path["parameters"])
     request = schema["components"]["schemas"]["CreateSupportActionPlanRequest"]
@@ -402,6 +406,7 @@ def test_openapi_contains_only_scoped_routes_and_strict_confirmation() -> None:
     }
     assert request["properties"]["confirmed"]["const"] is True
     assert schema["components"]["schemas"]["SupportOfferData"]["properties"]["supports"]["maxItems"] == 2
+    assert set(schema["paths"]["/api/v1/support-action-plans"]) == {"get", "post"}
     assert set(schema["paths"]["/api/v1/support-action-plans/{id}"]) == {"get", "patch"}
     assert set(schema["paths"]["/api/v1/support-action-plans/{id}/followups"]) == {"get", "post"}
 

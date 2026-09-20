@@ -117,6 +117,19 @@ class SupportActionPlanResponse(BaseModel):
     data: SupportActionPlanData
 
 
+class SupportActionPlanListItem(BaseModel):
+    support_action_plan_id: UUID
+    support_code: SupportCode
+    status: SupportActionPlanStatus
+    created_at: datetime
+    completed_at: datetime | None
+    cancelled_at: datetime | None
+
+
+class SupportActionPlanListResponse(BaseModel):
+    data: list[SupportActionPlanListItem]
+
+
 class PatchSupportActionPlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

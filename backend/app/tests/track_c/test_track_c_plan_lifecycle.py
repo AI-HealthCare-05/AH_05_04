@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -89,6 +90,56 @@ async def test_request_rejects_missing_fields_reactivation_and_injected_fields(c
         f"/api/v1/support-action-plans/{plan_id}", json=body, headers={"Idempotency-Key": "invalid-lifecycle-key"}
     )
     assert_error(result, 422, "VALIDATION_FAILED")
+
+
+async def test_list_plans_returns_owned_history_latest_first_without_writes(case: ApiCase) -> None:
+    first = await active_plan(case)
+    first_id = first["support_action_plan_id"]
+    assert (await patch(case, first_id, "COMPLETED", key="list-first-complete-key")).status_code == 200
+    second = (
+        await create(
+            case,
+            {
+                "barrier_response_id": first["barrier_response_id"],
+                "support_code": first["support_code"],
+                "rule_version": first["rule_version"],
+                "copy_version": first["copy_version"],
+                "confirmed": True,
+            },
+            key="list-second-plan-key",
+        )
+    ).json()["data"]
+    first_row = await case.session.get(SupportActionPlan, UUID(first_id))
+    second_row = await case.session.get(SupportActionPlan, UUID(second["support_action_plan_id"]))
+    assert first_row is not None and second_row is not None
+    first_row.created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    second_row.created_at = datetime(2026, 1, 2, tzinfo=UTC)
+    await case.session.commit()
+    idempotency_count = await case.session.scalar(select(func.count()).select_from(IdempotencyRecord))
+
+    response = await case.client.get("/api/v1/support-action-plans")
+
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+    data = response.json()["data"]
+    assert [item["support_action_plan_id"] for item in data] == [
+        second["support_action_plan_id"],
+        first_id,
+    ]
+    assert [item["status"] for item in data] == ["ACTIVE", "COMPLETED"]
+    assert all("action_config_snapshot" not in item for item in data)
+    assert all("barrier_response_id" not in item for item in data)
+    assert await case.session.scalar(select(func.count()).select_from(IdempotencyRecord)) == idempotency_count
+
+
+async def test_list_plans_hides_foreign_history(case: ApiCase) -> None:
+    await active_plan(case)
+    fastapi_app.dependency_overrides[get_request_user] = lambda: SimpleNamespace(id=uuid4())
+
+    response = await case.client.get("/api/v1/support-action-plans")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"data": []}
 
 
 async def test_unknown_and_foreign_plan_share_404_even_for_replay(case: ApiCase) -> None:
