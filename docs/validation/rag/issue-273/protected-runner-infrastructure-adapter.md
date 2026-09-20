@@ -38,7 +38,7 @@
 | `POSTGRESQL_ADAPTER` | `ai_worker/adapters/postgresql_protected_retrieval.py` | `5936abbe9f3a9136760618d082f6dae010b620d647056b075436e19f1a89969b` |
 | `FAIL_CLOSED_CONFIG` | `ai_worker/core/config.py` | `69903aee06f3dbddf8cd07a1dff4bd413cc567a2821a4f225a66509d9030a162` |
 | `EXPLICIT_RUNTIME_ASSEMBLY` | `ai_worker/core/runtime_assembly.py` | `c22fabd9053d86c86d876a28359eb1a9a150a16c908deb06f9457215fa59c2b9` |
-| `PROTECTED_ROLE_POLICY` | `infra/python/protected_retrieval_role_policy.py` | `597bf68229c5830578ddba07aa3652cace08ec3e2474031ef6250cccd91d82a4` |
+| `PROTECTED_ROLE_POLICY` | `infra/python/protected_retrieval_role_policy.py` | `1df8f8b239d4150dd10e0a7b8137b8b633c88bb3a1f3fa83bc3654976d5748c2` |
 | `ISOLATED_MIGRATION_ENV` | `infra/protected_retrieval/env.py` | `4853f8178ea611df177900573e6593c8bdc76db86a039ebd6f299013895fdbf3` |
 | `ISOLATED_MIGRATION` | `infra/protected_retrieval/versions/368000000001_create_protected_retrieval.py` | `20ed57547853a39ae5254d69dd71873e0a26223a705c5231e50dc8aa7416c68d` |
 | `AUTHORIZATION_CONTROL_CONTRACT` | `ai_worker/tasks/evaluation/protected_retrieval_control.py` | `977b28a8eb3846019c2a989877402fff691b63e710a2165a55bced26716d20ac` |
@@ -55,4 +55,4 @@
 - backup·restore·rotation 운영 증빙
 - Track F external gate 충족
 
-Evidence self hash: `434d59e5a7871cbb6cc66f78df8493bca8e584473f2ae053c0b7dedc59d44756`
+Evidence self hash: `8591fecd19269b8599c60b3f9b4c0f6990f715f855f717a658484fc97fe75cb0`
