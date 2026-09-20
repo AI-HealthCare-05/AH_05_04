@@ -56,6 +56,7 @@ Frontend, Backend, OCR과 RAG·LLM이 공유하는 의미와 상태를 관리합
 
 ## Proposed 계약
 
+- [#180 RAG 결과 연동 전 Guide·Chat Backend public projection 경계](./proposed/rag-guide-chat-public-projection-180.md): 현재 Sync `201 Created` Guide·Chat API가 #180 최종 Authorized/Release 결과를 소비할 Service·DTO projection seam과 blocked contract fields를 정리한 Phase A 문서. #180 orchestration·Citation DTO·202 전환·DB migration은 포함하지 않음.
 - [Guide·Chat 피드백 v1 (#633)](./proposed/guide-chat-feedback-v1.md): 완료 결과별 rating·선택 의견 저장 API, SELF 소유권·재제출·합성 Gold 연결 계약. Proposed / Local 구현·제품/운영 기준·AI/RAG synthetic evidence 정리 완료; prompt 전후 비교·사람 검토·실사용 처리 승인과 Production 공개는 별도.
 - [Web Push v1 (#469/#651)](./proposed/web-push-v1.md): Backend Web Push 등록·전송·Production gate 계약. Proposed 상태이며 `WEB_PUSH_PRODUCTION_ENABLED` OFF 반영은 API/scheduler 전 인스턴스 재시작 완료 후 기준으로 해석한다. 실기기 수신 검증은 #471 범위.
 - [Track B 생활 시간 입력 v1 (#422 / #556)](./proposed/track-b-lifestyle-times-v1.md): 식사·반복 행동·복용 곤란 시간의 SELF별 요일 저장·조회 구현 후보. #556 책임 리뷰 전 Proposed; 추천·약별 조건 판정은 별도.
