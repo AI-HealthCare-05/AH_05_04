@@ -23,6 +23,40 @@ const supportNames: Record<api.SupportCode, string> = {
 const subreasonChoices = Object.fromEntries(
   BARRIER_ORDER.map(code => [code, BARRIER_SUBREASONS[code].map(sub => [sub, SUBREASON_LABELS[sub]])]),
 ) as Record<api.BarrierCode, [api.SubreasonCode, string][]>
+// 중단 화면은 원인이 서로 다른 네 경로가 함께 쓴다. 안전상 의도된 중단과 시스템 오류가
+// 같은 문구로 보이지 않도록 원인별 문구를 여기서 한 곳에 모아 둔다.
+// tone: 'stopped' = 의도된 안전 중단, 'error' = 기록·상태 문제.
+type BlockedReason = 'SELF_SYMPTOM' | 'PLAN_SYMPTOM' | 'SAFETY_BLOCKED' | 'RECORD_UNAVAILABLE' | 'STALE_STATE'
+const BLOCKED_COPY: Record<BlockedReason, { tone: 'stopped' | 'error'; heading: string; body: string; help?: string }> = {
+  SELF_SYMPTOM: {
+    tone: 'stopped',
+    heading: '증상이 있을 때는 도움 찾기를 멈춰요',
+    body: '지금은 복용하지 못한 이유를 묻는 대신 증상을 먼저 확인하는 것이 안전해요. 복약 기록은 그대로 유지돼요.',
+    help: '증상이 심하거나 갑자기 생겼다면 약사나 의료진에게 먼저 확인해 주세요.',
+  },
+  PLAN_SYMPTOM: {
+    tone: 'stopped',
+    heading: '증상이 있을 때는 계획 진행을 멈춰요',
+    body: '증상이 있거나 확실하지 않은 상태에서는 계획을 이어서 안내하지 않아요. 계획과 복약 기록은 그대로 유지돼요.',
+    help: '증상이 심하거나 갑자기 생겼다면 약사나 의료진에게 먼저 확인해 주세요.',
+  },
+  SAFETY_BLOCKED: {
+    tone: 'stopped',
+    heading: '지금은 도움을 이어서 안내할 수 없어요',
+    body: '안전 확인 결과에 따라 이번에는 도움 안내를 진행하지 않아요. 복약 기록은 그대로 유지돼요.',
+    help: '상태가 걱정된다면 약사나 의료진에게 확인해 주세요.',
+  },
+  RECORD_UNAVAILABLE: {
+    tone: 'error',
+    heading: '이 기록을 사용할 수 없어요',
+    body: '일정에서 기록을 다시 확인해 주세요. 복약 기록은 그대로 유지돼요.',
+  },
+  STALE_STATE: {
+    tone: 'error',
+    heading: '기록이나 계획 상태가 변경되었어요',
+    body: '이전 응답으로 계속 진행할 수 없어요. 복약 기록으로 돌아가 현재 상태를 확인해 주세요.',
+  },
+}
 // Only this historical copy predates the explicit packing plan. New copy versions retain it.
 const LEGACY_TRAVEL_COPY = 'track-c-support-copy-ko-2026-09-15.1'
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -60,6 +94,8 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   // 사용자가 스스로 증상을 신고해 멈춘 경우에만 값이 들어간다. 서버 판단(non-ROUTINE ·
   // non-NORMAL)이나 403/404/409로 멈춘 경우에는 null이라 되돌아가는 버튼이 나오지 않는다.
   const [reconsiderFrom, setReconsiderFrom] = useState<'safety' | 'plan' | null>(null)
+  // 중단 화면의 원인. 'blocked' 로 넘어가는 모든 경로가 함께 설정한다.
+  const [blockedReason, setBlockedReason] = useState<BlockedReason | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [retry, setRetry] = useState<(() => Promise<void>) | null>(null)
@@ -84,9 +120,9 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
       setStep('blocked')
       setRetry(null)
       setReconsiderFrom(null)
-      setError(cause.status === 409
-        ? '기록이나 계획 상태가 변경되었어요. 이전 응답으로 계속 진행할 수 없어요. 복약 기록으로 돌아가 현재 상태를 확인해 주세요.'
-        : '이 기록을 사용할 수 없어요. 일정에서 기록을 다시 확인해 주세요.')
+      // 중단 카드가 같은 내용을 이미 알리므로 상단 error 문구와 중복시키지 않는다.
+      setBlockedReason(cause.status === 409 ? 'STALE_STATE' : 'RECORD_UNAVAILABLE')
+      setError('')
     } else {
       setError(cause instanceof ApiError && cause.status === 422
         ? '입력 내용을 확인해 주세요. 저장이 확인되지 않았어요.'
@@ -148,7 +184,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
     const result = await service.createSafety(body, key('safety', checkin.checkin_id, body))
     if (!alive.current) return
     if (result.medication_checkin_id !== checkin.checkin_id || result.checkin_revision !== checkin.revision || result.response_level !== 'ROUTINE' || result.safety_disposition !== 'NORMAL') {
-      setReconsiderFrom(null); setStep('blocked'); return
+      setReconsiderFrom(null); setBlockedReason('SAFETY_BLOCKED'); setStep('blocked'); return
     }
     setSafety(result); setStep('barrier')
   }
@@ -223,6 +259,8 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
   }
 
   const item = offer?.supports.find(candidate => candidate.support_code === selectedSupport)
+  // 원인이 지정되지 않은 경로가 생기더라도 빈 카드 대신 가장 보수적인 문구를 보여준다.
+  const blocked = BLOCKED_COPY[blockedReason ?? 'SAFETY_BLOCKED']
   const needsPushSetup = plan?.support_code === 'REMINDER_SETUP' && resources?.barrier_code === 'FORGOT'
   const instructionPlan = plan?.support_code === 'INSTRUCTION_REVIEW'
   const purposePlan = plan?.support_code === 'PURPOSE_REVIEW'
@@ -246,12 +284,19 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
       {step === 'safety' && <>
         <p className="track-c-description">복용하지 못한 이유를 확인하기 전에 현재 몸 상태를 먼저 확인할게요.</p>
         <div className="track-c-safety-actions">
-          <Button fullWidth variant="secondary" disabled={busy} onClick={() => { setRetry(null); setReconsiderFrom('safety'); setStep('blocked') }}>증상이 있어요</Button>
+          <Button fullWidth variant="secondary" disabled={busy} onClick={() => { setRetry(null); setBlockedReason('SELF_SYMPTOM'); setReconsiderFrom('safety'); setStep('blocked') }}>증상이 있어요</Button>
           <Button fullWidth variant="secondary" disabled={busy || !!retry} onClick={() => void run(submitSafety)}>증상은 없어요</Button>
         </div>
         <p className="track-c-help">확실하지 않다면 증상이 있어요를 선택해 주세요.</p>
       </>}
-      {step === 'blocked' && <Card><h2>현재 도움을 계속 진행할 수 없어요</h2><p>복약 기록은 그대로 유지돼요.</p><Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button>{reconsiderFrom && <Button fullWidth variant="secondary" disabled={busy} onClick={() => { setError(''); setStep(reconsiderFrom); setReconsiderFrom(null) }}>{reconsiderFrom === 'safety' ? '증상 선택 다시 하기' : '내 실천 계획으로 돌아가기'}</Button>}{planId && <Button fullWidth variant="secondary" onClick={() => { window.location.reload() }}>계획 상태 다시 조회</Button>}</Card>}
+      {step === 'blocked' && <Card className={`track-c-blocked track-c-blocked--${blocked.tone}`}>
+        <h2>{blocked.heading}</h2>
+        <p role={blocked.tone === 'error' ? 'alert' : 'status'}>{blocked.body}</p>
+        {blocked.help && <p className="track-c-blocked-help">{blocked.help}</p>}
+        <Button fullWidth onClick={() => navigate(back)}>복약 기록으로 돌아가기</Button>
+        {reconsiderFrom && <Button fullWidth variant="secondary" disabled={busy} onClick={() => { setError(''); setBlockedReason(null); setStep(reconsiderFrom); setReconsiderFrom(null) }}>{reconsiderFrom === 'safety' ? '증상 선택 다시 하기' : '내 실천 계획으로 돌아가기'}</Button>}
+        {planId && <Button fullWidth variant="secondary" onClick={() => { window.location.reload() }}>계획 상태 다시 조회</Button>}
+      </Card>}
       {step === 'barrier' && <>
         <p>하나만 골라주세요. 답하지 않아도 복약 상태는 그대로 저장돼요.</p>
         <fieldset disabled={busy || !!retry}><legend className="track-c-sr-only">이번 복용의 어려움</legend>{choices.map(([code, label]) => <label className="track-c-choice" key={code}><input type="radio" name="barrier" value={code} checked={selected === code} onChange={() => setSelected(code)} /><span>{label}{preparing(code) && <em className="track-c-preparing-tag"> (준비중)</em>}</span></label>)}</fieldset>
@@ -304,7 +349,7 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
           <p>이 약에 연결된 {instructionPlan ? '복용법' : '복용 목적'} 설명과 근거를 아직 제공할 수 없어요. 필요한 내용은 약사나 의료진에게 확인해 주세요.</p>
         </>}
         {resources && resources.selected_questions.length > 0 && <Card><h2>상담 때 확인할 질문</h2><ul>{resources.selected_questions.map(question => <li key={question.question_id}>{question.text}</li>)}</ul><p>질문은 자동으로 전송되지 않아요.</p></Card>}
-        {concernPlan && plan.status === 'ACTIVE' && <Button variant="secondary" disabled={busy} onClick={() => { setTerminal(null); setConfirmed(false); setReconsiderFrom('plan'); setStep('blocked') }}>증상이 생겼거나 확실하지 않아요</Button>}
+        {concernPlan && plan.status === 'ACTIVE' && <Button variant="secondary" disabled={busy} onClick={() => { setTerminal(null); setConfirmed(false); setBlockedReason('PLAN_SYMPTOM'); setReconsiderFrom('plan'); setStep('blocked') }}>증상이 생겼거나 확실하지 않아요</Button>}
         <p>계획 조회만으로 실행이나 완료가 처리되지 않아요.</p>
         {plan.status === 'ACTIVE' && <div className="track-c-actions">
           {resources && plan.support_code === 'REMINDER_SETUP' && <p><Link to={`/schedule?support_medication=${encodeURIComponent(reminderTarget ?? '')}`} target="_blank" rel="noopener noreferrer">일정 확인·설정 (새 탭)</Link></p>}
