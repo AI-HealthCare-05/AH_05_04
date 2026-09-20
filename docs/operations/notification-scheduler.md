@@ -11,7 +11,10 @@
 같은 이미지의 `notification-scheduler` 서비스를 `notifications` profile로 명시적으로
 시작한다. 설정은 `infra/docker/docker-compose.prod.yml`, 실행 코드는
 `app.commands.schedule_notifications` 및 `app.commands.process_notifications`다.
-일반 배포 스크립트는 이 서비스를 자동 시작하지 않는다. Worker·Redis·외부 Provider 호출이나
+일반 배포 스크립트는 이 서비스를 새로 활성화하지 않는다. 최초 활성화는 아래 승인 절차에
+따라 운영자가 수동으로 수행한다. 다만 배포 직전에 이미 running이던 인스턴스는
+`scripts/deployment.sh`가 migration을 위해 중지한 뒤 배포 성공 후 `--no-deps`로 되돌린다.
+자세한 상태 전이는 아래 "배포와의 상호작용"을 따른다. Worker·Redis·외부 Provider 호출이나
 알림 이외의 occurrence 생성·UNCONFIRMED 스케줄링을 추가하지 않는다.
 
 | 항목 | 설정·근거 |
@@ -68,8 +71,7 @@ docker compose --profile notifications run --rm --no-deps \
 docker compose --profile notifications up -d --no-deps --force-recreate notification-scheduler
 ```
 
-`restart`만으로는 변경된 이미지/환경을 적용하지 않는다. 기존 `scripts/deployment.sh`는
-알림 서비스를 migration 전에 중지하고 실행 중이면 배포를 차단한다. 스크립트 밖에서
+`restart`만으로는 변경된 이미지/환경을 적용하지 않는다. 스크립트 밖에서
 migration을 수행할 때도 위 stop을 먼저 수행하고, DB head·권한·API 확인 후 재생성한다. 이전 버전으로 복구할 때도 schema 호환 여부를 담당
 리뷰어와 확인한다. `notification_record` 삭제, attempt 초기화, DELIVERED→PENDING 변경,
 deadline 연장으로 재발송하지 않는다. 이력은 그대로 두고 같은 명령을 재실행한다.
@@ -78,6 +80,30 @@ deadline 연장으로 재발송하지 않는다. 이력은 그대로 두고 같�
 rollback되고 다음 실행이 재검증하여 게시 또는 취소한다. 게시 커밋 직후 로그가 유실돼도
 재실행은 이미 DELIVERED인 row를 재게시하지 않는다. 여러 프로세스가 겹쳐도 기존
 occurrence 잠금·SKIP LOCKED·unique constraint를 사용한다. 운영에서는 한 서비스로 유지한다.
+
+## 배포와의 상호작용
+
+`scripts/deployment.sh`는 알림 서비스를 migration 전에 중지하고, 중지되지 않으면 배포를
+차단한다. 배포는 알림의 활성/비활성 **상태를 바꾸지 않는다.** [배포 절차](../deployment.md)의
+Track B 절과 같은 상태 전이를 따른다.
+
+| 배포 시작 시점 | 배포 후 | 근거 |
+| --- | --- | --- |
+| stopped | stopped | 일반 배포는 opt-in 알림을 활성화하지 않는다. 최초 활성화는 위 "적용 전 확인"의 수동 절차와 #230 승인을 따른다 |
+| running | running | migration 때문에 중지한 것이므로 배포 성공 후 되돌린다 |
+| running, 복원 후에도 정지 | 배포 실패 | 스크립트가 exit 1로 중단한다. 알림이 멈춘 채 배포가 성공으로 끝나지 않는다 |
+
+스크립트는 정지 직전에 `docker compose ps --services --status running`으로 상태를 기록하고,
+그 기록이 running일 때만 복원한다. 복원 명령은 위 수동 재생성과 동일하게 `--no-deps`를
+사용한다. 배포는 이 시점에 migration·DB head·역할 권한 검증을 이미 마쳤으므로, 상태 복구
+과정에서 의존성 해석을 다시 열지 않는다.
+
+장애 대응 시 두 경우를 구분한다. **한 번도 활성화하지 않은 환경**은 배포가 알림을 켜주지
+않으므로 위 수동 절차가 필요하다. **원래 running이던 환경**에서 알림이 멈춰 있다면 배포
+복원이 실패했거나 배포 이후 별도로 중지된 것이다. 배포 로그의
+`notification-scheduler running before deployment:` 줄과 그 뒤 복원 결과를 먼저 확인한다.
+운영자가 의도적으로 stop한 서비스를 배포가 자동으로 재개하지는 않는다. 배포 시작 시점에
+running이었는지만 본다.
 
 ## 장애 감지·대응
 
