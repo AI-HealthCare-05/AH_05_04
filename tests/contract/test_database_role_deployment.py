@@ -121,6 +121,12 @@ def test_credentials_and_admin_process_are_separated() -> None:
 def test_catalog_approval_production_surface_is_isolated_and_read_only() -> None:
     services = yaml.safe_load((ROOT / "infra/docker/docker-compose.prod.yml").read_text())["services"]
     env_example = (ROOT / "envs/example.prod.env").read_text()
+    dockerfile = (ROOT / "ai_worker/Dockerfile").read_text()
+
+    assert (
+        "COPY ./infra/python/catalog_approval_role_policy.py "
+        "./infra/python/catalog_approval_role_policy.py" in dockerfile
+    )
 
     for declaration in (
         "CATALOG_APPROVAL_USER=",
