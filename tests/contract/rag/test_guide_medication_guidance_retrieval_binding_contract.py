@@ -9,13 +9,14 @@ READINESS_PATH = Path("docs/contracts/targets/post-mvp-1/guide-langgraph-callabl
 BLOCKER_STATES = {
     "GUIDE_RUNTIME_REQUEST_CARRIER_MISSING",
     "GUIDE_RETRIEVAL_QUERY_TEXT_AUTHORITY_READY_BUT_FINGERPRINT_BLOCKED",
-    "GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_COORDINATE_MISSING",
+    "GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_READY",
     "GUIDE_RETRIEVAL_OUTCOME_BINDING_READY",
     "GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_UNAVAILABLE",
 }
 
 AVAILABLE_COMPONENTS = {
     "execute_hybrid_retrieve",
+    "lookup_request_decision_refs",
     "compose_guide_authority_with_production_retrieval",
     "hydrate_guide_retrieval_content",
     "assemble_authoritative_guide_evidence_handoff",

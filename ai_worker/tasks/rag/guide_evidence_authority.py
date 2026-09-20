@@ -50,6 +50,9 @@ __all__ = [
     "AuthoritativeSourceDecisionObservation",
     "GuideEvidenceAuthorityReaderError",
     "GuideEvidenceAuthorityReaderPort",
+    "GuideRequestAuthorityDecisionRefs",
+    "GuideRequestAuthorityLookupCoordinate",
+    "GuideRequestAuthorityLookupPort",
     "SyncGuideEvidenceAuthorityDecision",
     "SyncGuideEvidenceAuthorityOutcome",
     "SyncGuideEvidenceAuthorityReason",
@@ -140,6 +143,37 @@ class GuideEvidenceAuthorityReaderPort(Protocol):
         *,
         request_member_decision_ref: ImmutableArtifactRef,
     ) -> AuthoritativeMemberDecisionObservation | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class GuideRequestAuthorityLookupCoordinate:
+    """Pinned request and selected-member facts used for an exact historical lookup."""
+
+    request_guard_ref: ImmutableArtifactRef
+    user_id: UUID
+    request_operation_code: str
+    decision_stage: RequestDecisionStage
+    source_snapshot_id: UUID
+    source_snapshot_member_id: UUID
+    source_code: str
+    source_version: str
+    expected_source_decision_outcome: ObservedDecisionOutcome
+    expected_member_decision_outcome: ObservedDecisionOutcome
+    member_identity: SourceMemberIdentity
+
+
+@dataclass(frozen=True, slots=True)
+class GuideRequestAuthorityDecisionRefs:
+    request_source_decision_ref: ImmutableArtifactRef
+    request_member_decision_ref: ImmutableArtifactRef
+
+
+class GuideRequestAuthorityLookupPort(Protocol):
+    async def lookup_request_decision_refs(
+        self,
+        *,
+        coordinate: GuideRequestAuthorityLookupCoordinate,
+    ) -> GuideRequestAuthorityDecisionRefs | None: ...
 
 
 @dataclass(frozen=True, slots=True)
