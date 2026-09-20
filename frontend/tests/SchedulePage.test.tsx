@@ -1512,3 +1512,37 @@ describe('prescription time candidate integration', () => {
     expect(screen.queryByRole('button', { name: '시간 후보 계산' })).toBeNull()
   })
 })
+
+describe('Schedule editor 시간 입력 interaction', () => {
+  it('진입 직후 날짜/시간 input이 enabled 상태다', async () => {
+    renderSchedule(makeServices())
+    fireEvent.click(await screen.findByRole('button', { name: '복약 일정 설정·수정' }))
+
+    const startDate = screen.getByLabelText('현재 처방의 혈압약 복용 시작일') as HTMLInputElement
+    const timeInput = screen.getByLabelText('현재 처방의 혈압약 1번째 복용 시간') as HTMLInputElement
+
+    expect(startDate.disabled).toBe(false)
+    expect(timeInput.disabled).toBe(false)
+    expect(timeInput.type).toBe('time')
+    expect(timeInput.hasAttribute('readonly')).toBe(false)
+  })
+
+  it('사용자가 HH:MM 값을 바꾸고 저장 payload에 반영된다', async () => {
+    const services = makeServices()
+    renderSchedule(services)
+    fireEvent.click(await screen.findByRole('button', { name: '복약 일정 설정·수정' }))
+
+    const timeInput = screen.getByLabelText('현재 처방의 혈압약 1번째 복용 시간') as HTMLInputElement
+    fireEvent.change(timeInput, { target: { value: '21:30' } })
+    expect(timeInput.value).toBe('21:30')
+
+    fireEvent.click(screen.getByRole('button', { name: '복약 일정 저장하기' }))
+
+    await waitFor(() => expect(services.putMedicationSchedule).toHaveBeenCalled())
+    expect(services.putMedicationSchedule).toHaveBeenCalledWith(
+      medicationId,
+      expect.objectContaining({ localTimes: ['21:30'] }),
+      expect.any(String),
+    )
+  })
+})
