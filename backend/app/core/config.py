@@ -316,6 +316,17 @@ class Config(BaseSettings):
     # 않은 환경에서는 GET/confirm/reject가 503으로 fail-closed됩니다.
     PUBLIC_TRACK_F_ENABLED: bool = False
 
+    @model_validator(mode="after")
+    def validate_closed_demo_chat_rag_scope(self) -> "Config":
+        """Keep the closed-demo composition out of shared and public runtime."""
+        if not self.CHAT_CLOSED_DEMO_RAG_ENABLED:
+            return self
+        if self.ENV is not Env.LOCAL:
+            raise ValueError("CHAT_CLOSED_DEMO_RAG_ENABLED is allowed only in local environment")
+        if self.PUBLIC_TRACK_F_ENABLED:
+            raise ValueError("CHAT_CLOSED_DEMO_RAG_ENABLED requires PUBLIC_TRACK_F_ENABLED=false")
+        return self
+
     # EXT-PRIV-001 삭제·보존 정책 승인 전 실제 사용자에게 회원탈퇴 요청 접수 API를 공개하지 않습니다.
     # 명시적으로 활성화하지 않은 환경에서는 요청 접수 전 503으로 fail-closed됩니다.
     ACCOUNT_WITHDRAWAL_REQUEST_ENABLED: bool = False

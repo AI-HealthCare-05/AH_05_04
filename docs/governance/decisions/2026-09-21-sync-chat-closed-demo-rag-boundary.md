@@ -31,7 +31,9 @@ production 파일의 동일 import는 허용하지 않는다.
 
 ## CLOSED_DEMO authority와 data-plane
 
-- `CHAT_CLOSED_DEMO_RAG_ENABLED=false`가 기본값이며 `PUBLIC_TRACK_F=false`를 유지한다.
+- `CHAT_CLOSED_DEMO_RAG_ENABLED=false`가 기본값이다. `true`는 명시적 local demo
+  environment에서만 허용되며 staging/production Config 기동은 fail closed로 거부한다.
+  `PUBLIC_TRACK_F_ENABLED=true`인 instance도 거부한다.
 - query authority는 Guide B2와 별개인
   `closed-demo-chat-query-binding-verifier@1.0.0`이다. direct validated
   `ChatGenerationInput.question`만 HMAC preimage

@@ -10,8 +10,10 @@
 
 이 문서는 [`medication-chat-ai-backend.md`](../../current/medication-chat-ai-backend.md)의
 current `chat-prompt-v6`/`question`/`history`/`medications` 계약을 변경하지 않는다. 다음
-delta는 `CHAT_CLOSED_DEMO_RAG_ENABLED=true`이고 sealed CLOSED_DEMO retrieval이 complete
-evidence를 반환한 내부 demo call 하나에만 적용한다. `PUBLIC_TRACK_F`는 계속 false다.
+delta는 `ENV=local`에서 명시적으로 `CHAT_CLOSED_DEMO_RAG_ENABLED=true`이고 sealed
+CLOSED_DEMO retrieval이 complete evidence를 반환한 내부 demo call 하나에만 적용한다.
+staging/production Config 기동과 `PUBLIC_TRACK_F_ENABLED=true` instance는 fail closed로
+거부한다.
 
 HTTP request/response DTO, ChatSession/ChatMessage persistence, application DB, existing HTTP
 201, history, prescription stale 및 consent semantics는 변경하지 않는다.
