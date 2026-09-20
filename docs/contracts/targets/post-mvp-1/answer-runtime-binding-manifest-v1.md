@@ -389,7 +389,7 @@ Phase B contract approval에 따라 다음 범위의 Python 구현과 회귀 검
 ## 9. Phase C-1 Answer Runtime Authority Carrier 및 Materialization Coordinate 검토 (Proposed / Review Required)
 
 ### 1) 목적 및 감사 원칙
-본 절은 PR #851(Phase B)에서 승인·구현된 10개 Canonical Recipe 및 Manifest 검증/사영 커널을 바탕으로, `ANS-BASE` / `ANS-RAG` / `ANS-FINAL` 실제 3-variant 실행 시 각 recipe의 입력 source object가 어떤 authoritative coordinate로 결속되는지 최신 `develop`(`dd400ce4635a4b6697b3f1a7215a8b1b4f12ba8e`)을 전수 감사하여 그 경계를 제안(Proposed / Review Required)한다. 책임 리뷰어(`@Jye-rookie`)의 정식 승인 전까지 본 절의 설계는 Frozen 또는 Approved로 확정되지 않는다.
+본 절은 PR #851(Phase B)에서 승인·구현된 10개 Canonical Recipe 및 Manifest 검증/사영 커널을 바탕으로, `ANS-BASE` / `ANS-RAG` / `ANS-FINAL` 실제 3-variant 실행 시 각 recipe의 입력 source object가 어떤 authoritative coordinate로 결속되는지 최신 `develop`(`8f29710547c8a405736d4a50dcac41bc10a90ed3`)을 전수 감사하여 그 경계를 제안(Proposed / Review Required)한다. 책임 리뷰어(`@Jye-rookie`)의 정식 승인 전까지 본 절의 설계는 Frozen 또는 Approved로 확정되지 않는다.
 
 - **핵심 분리 원칙**:
   $$\text{Source Object Exists} \neq \text{Run-bound Authoritative Carrier Exists}$$
@@ -508,6 +508,10 @@ F. **Storage Architecture 및 Publication Coordinate 철회/미확정 안내**:
    - Issue #799는 현재 OPEN 상태이며, 순수 `CitationAuthorizationReceipt` dataclass 외에 production receipt 권위가 없다 (`CITATION_GATE` 상류 차단 지속).
    - Issue #180은 현재 OPEN 상태이며, `FINAL_VALIDATOR`, `SAFETY_GATE`, `RELEASE_GATE` 상류 권위가 미구현이다.
    - 특히 `ai_worker/tasks/evaluation/release_gate.py` 평가 릴리스 게이트를 런타임 Release Gate authority로 혼용·재사용하는 것은 엄격히 금지된다.
+4. **#860 Guide·Chat Backend Public Projection Seam 정합 (develop `8f297105`)**:
+   - 최신 develop(`8f297105`)에서 PR #860을 통해 Guide·Chat Backend public projection seam이 추가되었으나, 이는 #180 final Authorized/Release result의 향후 소비 경계만 정의한다.
+   - #860은 Answer Runtime authority carrier, Citation Authorization production receipt, `FINAL_VALIDATOR` authority, `CITATION_GATE` authority, `SAFETY_GATE` authority, `RELEASE_GATE` authority를 일체 제공하지 않는다.
+   - 따라서 Phase C-1 15-binding audit 결과와 `IMPLEMENTABLE NOW = NONE` 판정에는 변화가 없다.
 
 ### 7) 구현 판정, Stop Condition 및 후속 관리
 - **판정 결과**:

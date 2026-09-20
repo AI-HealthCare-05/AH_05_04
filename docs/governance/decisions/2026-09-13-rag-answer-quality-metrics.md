@@ -366,7 +366,7 @@ $$\text{source object exists} \neq \text{ANS-BASE / ANS-RAG / ANS-FINAL 실행�
   4. 확인되지 않은 authority는 임시 구현하지 않으며, fail-closed를 유지한다.
 
 ### 2. 15 Authority Bindings 전수 감사 및 구현 판정 결과 (Audit Findings)
-- **감사 기준**: 최신 `develop` (`dd400ce4635a4b6697b3f1a7215a8b1b4f12ba8e`)
+- **감사 기준**: 최신 `develop` (`8f29710547c8a405736d4a50dcac41bc10a90ed3`)
 - **전수 판정 요약**:
   - **`IMPLEMENTABLE NOW = NONE` (0개)**:
     - 6대 조건을 모두 충족하는 유일한 축은 `INPUT_CONTEXT`이나, 이는 이미 PR #851에서 `compute_input_context_binding_hash(bundle: LoadedRunBundle)`로 구현 완료되었으므로 불필요한 신규 래퍼 클래스를 생성하지 않는다 (`IMPLEMENTED` 재사용).
@@ -405,6 +405,10 @@ $$\text{source object exists} \neq \text{ANS-BASE / ANS-RAG / ANS-FINAL 실행�
 3. **#799 및 #180 Blocker 유지**:
    - Issue #799(Citation Authorization) 및 Issue #180(Final Validator, Safety Gate, Release Gate)은 계속 OPEN 및 상류 차단 상태를 유지한다.
    - `release_gate.py` 평가 게이트를 런타임 Release Gate authority로 혼용·재사용하는 것을 엄격히 금지한다.
+4. **#860 Guide·Chat Backend Public Projection Seam (develop `8f297105`)**:
+   - Guide·Chat Backend public projection seam이 추가되었으나, 이는 #180 final Authorized/Release result의 향후 소비 경계만 정의한다.
+   - Answer Runtime authority carrier, Citation Authorization production receipt, `FINAL_VALIDATOR` authority, `CITATION_GATE` authority, `SAFETY_GATE` authority, `RELEASE_GATE` authority를 일체 제공하지 않는다.
+   - 따라서 Phase C-1 15-binding audit 결과와 `IMPLEMENTABLE NOW = NONE` 판정에는 변화가 없다.
 
 ### 5. 후속 이슈 관리 및 작업 상태 (Next Steps)
 - **후속 이슈 분리 원칙**:
