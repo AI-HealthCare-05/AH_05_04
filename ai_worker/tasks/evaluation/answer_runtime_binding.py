@@ -422,6 +422,21 @@ def validate_and_aggregate_provider_observations(
 
 
 @dataclass(frozen=True, slots=True)
+class AnswerRuntimeSupplementalCarrierSnapshot:
+    guideline_provenance: GuidelineGenerationProvenance
+    provider_observations: tuple[ProviderInvocationObservation, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.guideline_provenance) is not GuidelineGenerationProvenance:
+            raise _invalid()
+        if type(self.provider_observations) is not tuple:
+            raise _invalid()
+        for item in self.provider_observations:
+            if type(item) is not ProviderInvocationObservation:
+                raise _invalid()
+
+
+@dataclass(frozen=True, slots=True)
 class AnswerRuntimeBindingMaterializationInput:
     experiment_id: str
     run_id: str

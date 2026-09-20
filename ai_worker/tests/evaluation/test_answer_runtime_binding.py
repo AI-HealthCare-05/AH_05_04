@@ -20,6 +20,7 @@ from ai_worker.tasks.evaluation.answer_comparison import (
 from ai_worker.tasks.evaluation.answer_runtime_binding import (
     AggregatedProviderInvocation,
     AnswerRuntimeBindingMaterializationInput,
+    AnswerRuntimeSupplementalCarrierSnapshot,
     MaterializedAnswerRuntimeSupplementalBindings,
     ProviderInvocationObservation,
     compute_answer_runtime_binding_manifest_sha256,
@@ -1403,4 +1404,46 @@ def test_materialize_answer_runtime_supplemental_bindings_rejections() -> None:
     bad_prov_input = replace(base_input, guideline_provenance=bad_prov)
     with pytest.raises(EvaluationValidationError) as exc:
         materialize_answer_runtime_supplemental_bindings(bad_prov_input)
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+def test_answer_runtime_supplemental_carrier_snapshot_valid() -> None:
+    prov = _provenance()
+    obs = _observations_for_cases("11111111-1111-4111-8111-111111111111", ("case-1",))[0]
+    snapshot = AnswerRuntimeSupplementalCarrierSnapshot(
+        guideline_provenance=prov,
+        provider_observations=(obs,),
+    )
+    assert snapshot.guideline_provenance == prov
+    assert snapshot.provider_observations == (obs,)
+
+
+def test_answer_runtime_supplemental_carrier_snapshot_rejects_invalid_provenance() -> None:
+    obs = _observations_for_cases("11111111-1111-4111-8111-111111111111", ("case-1",))[0]
+    with pytest.raises(EvaluationValidationError) as exc:
+        AnswerRuntimeSupplementalCarrierSnapshot(
+            guideline_provenance=cast(GuidelineGenerationProvenance, {"not": "provenance"}),
+            provider_observations=(obs,),
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+def test_answer_runtime_supplemental_carrier_snapshot_rejects_non_tuple_observations() -> None:
+    prov = _provenance()
+    obs = _observations_for_cases("11111111-1111-4111-8111-111111111111", ("case-1",))[0]
+    with pytest.raises(EvaluationValidationError) as exc:
+        AnswerRuntimeSupplementalCarrierSnapshot(
+            guideline_provenance=prov,
+            provider_observations=[obs],  # type: ignore[arg-type]
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+def test_answer_runtime_supplemental_carrier_snapshot_rejects_non_observation_elements() -> None:
+    prov = _provenance()
+    with pytest.raises(EvaluationValidationError) as exc:
+        AnswerRuntimeSupplementalCarrierSnapshot(
+            guideline_provenance=prov,
+            provider_observations=(cast(ProviderInvocationObservation, "not-an-observation"),),
+        )
     assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
