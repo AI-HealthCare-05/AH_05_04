@@ -1,0 +1,234 @@
+/* RECORD-01 · 날짜별 복약 기록 (Figma 1395:22) */
+.medication-record-page {
+  --ds-action: #607d8b;
+  --ds-action-pressed: #526b78;
+  --ds-line: #dee5f0;
+}
+
+.medication-record {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-bottom: 24px;
+}
+
+.medication-record__notification {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.medication-record__notification img {
+  width: 24px;
+  height: 24px;
+}
+
+.medication-record__intro {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.medication-record__intro h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 34px;
+  letter-spacing: -.03em;
+}
+
+/* 고정 7일 주간 선택기 · 이전/다음 주 컨트롤 없음 */
+.medication-record-week {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.medication-record-week__selected {
+  margin: 0;
+  padding-inline: 4px;
+  color: #4d576b;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.medication-record-week__days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.medication-record-week__day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 76px;
+  padding: 8px 0;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  color: #4d576b;
+  font: inherit;
+}
+
+.medication-record-week__weekday {
+  font-size: 13px;
+  line-height: 16px;
+}
+
+.medication-record-week__date {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 22px;
+}
+
+.medication-record-week__today {
+  color: var(--ds-action);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 12px;
+}
+
+.medication-record-week__day[aria-pressed='true'] {
+  border-color: var(--ds-action);
+  background: #eef3f7;
+  color: var(--ds-action);
+}
+
+.medication-record-week__day:disabled {
+  color: #c2cad6;
+  cursor: not-allowed;
+}
+
+.medication-record-week__day:disabled .medication-record-week__today {
+  color: inherit;
+}
+
+.medication-record__list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.medication-record__list h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 27px;
+}
+
+.medication-record__state,
+.medication-record__empty {
+  color: var(--ds-text-muted);
+}
+
+.medication-record__state h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+  line-height: 24px;
+}
+
+/* Record card · occurrence 단위 실제 데이터 */
+.medication-record-card {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  grid-template-areas:
+    'body chevron'
+    'action action';
+  align-items: center;
+  gap: 0 12px;
+  padding: 22px 18px;
+  border: 1px solid var(--ds-line);
+  border-radius: 18px;
+  background: #fff;
+  color: var(--ds-text);
+  text-align: left;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 5%);
+}
+
+.medication-record-card__body {
+  grid-area: body;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.medication-record-card__time {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 24px;
+  letter-spacing: -.02em;
+}
+
+.medication-record-card__medication {
+  overflow-wrap: anywhere;
+  color: #78909c;
+  font-size: 15px;
+  line-height: 19px;
+}
+
+.medication-record-card__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ds-action);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.medication-record-card__state::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+.medication-record-card__state--taken {
+  color: #1d9b55;
+}
+
+.medication-record-card__readonly-note {
+  color: #8a97a8;
+  font-size: 13px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+
+/* Figma: 기록 가능한 카드에만 chevron 노출(read-only는 hidden) */
+.medication-record-card__chevron {
+  grid-area: chevron;
+  justify-self: end;
+  width: 24px;
+  height: 24px;
+  border-right: 2px solid #b6c2d2;
+  border-bottom: 2px solid #b6c2d2;
+  border-radius: 2px;
+  transform: rotate(-45deg) scale(.5);
+}
+
+.medication-record-card--readonly {
+  background: #f7f9fc;
+  box-shadow: none;
+}
+
+.medication-record-card__action {
+  grid-area: action;
+  min-height: 52px;
+  margin-top: 14px;
+  border-radius: 14px;
+  font-size: 16px;
+}

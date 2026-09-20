@@ -84,6 +84,8 @@ test('320/390/412px에서 전체 대상 화면은 가로 overflow와 Bottom Navi
 })
 
 test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한다', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-09-16T05:00:00Z')) // KST 14:00
+
   const occurrenceIds = [
     '77777777-7777-4777-8777-777777777771',
     '77777777-7777-4777-8777-777777777772',
@@ -91,6 +93,11 @@ test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한�
   ]
   let scheduleStatus: 'READY' | 'PARTIAL' | 'SETUP_REQUIRED' | 'INACTIVE' | 'NO_ACTIVE_PRESCRIPTION' = 'READY'
   const scheduleMutations: string[] = []
+  let occurrenceScheduledAt = [
+    '2026-09-15T23:00:00Z',
+    '2026-09-16T04:00:00Z',
+    '2026-09-16T11:00:00Z',
+  ]
   const stateCopy = {
     PARTIAL: '일부 약의 시간이 비어 있어요',
     SETUP_REQUIRED: '일정 설정이 필요해요',
@@ -140,11 +147,7 @@ test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한�
                 prescription_version_id: ids.prescriptionVersion,
                 prescription_version_medication_id: ids.prescriptionVersionMedication,
                 scheduled_local_date: '2026-09-16',
-                scheduled_at: [
-                  '2026-09-15T23:00:00Z',
-                  '2026-09-16T04:00:00Z',
-                  '2026-09-16T11:00:00Z',
-                ][index],
+                scheduled_at: occurrenceScheduledAt[index],
                 confirmation_deadline_at: '2026-09-16T18:00:00Z',
                 status: 'PENDING',
                 checkin: null,
@@ -195,7 +198,25 @@ test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한�
       request.method() === 'PUT' &&
       path === `/api/v1/prescription-version-medications/${ids.prescriptionVersionMedication}/schedule`
     ) {
-      scheduleMutations.push(await request.postData() ?? '')
+      const mutation = await request.postData() ?? ''
+      scheduleMutations.push(mutation)
+
+      const payload = JSON.parse(mutation) as {
+        local_times?: string[]
+      }
+
+      if (
+        Array.isArray(payload.local_times) &&
+        payload.local_times.length === occurrenceIds.length
+      ) {
+        occurrenceScheduledAt = payload.local_times.map((localTime) => {
+          const [hour = '00', minute = '00'] = localTime.split(':')
+          return new Date(
+            `2026-09-16T${hour}:${minute}:00+09:00`,
+          ).toISOString()
+        })
+      }
+
       scheduleStatus = 'READY'
       return json({ data: {} })
     }
@@ -206,7 +227,8 @@ test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한�
     await page.setViewportSize({ width, height: 844 })
     await page.goto('/schedule?date=2026-09-16')
     await expect(page.getByRole('heading', { name: '오늘의 복약' })).toBeVisible()
-    await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(3)
+    await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(2)
+    await expect(page.getByText('복용 예정')).toHaveCount(1)
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0)
     const content = page.locator('.schedule-page .app-scroll')
     expect(await content.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0)
@@ -227,7 +249,8 @@ test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한�
     await expect(page.getByRole('heading', { name: stateCopy[status] })).toBeVisible()
     if (status === 'PARTIAL' || status === 'INACTIVE') {
       await expect(page.getByRole('heading', { name: '오늘의 복약' })).toBeVisible()
-      await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(3)
+      await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(2)
+      await expect(page.getByText('복용 예정')).toHaveCount(1)
     } else {
       await expect(page.getByRole('heading', { name: '오늘의 복약' })).toHaveCount(0)
     }
@@ -268,16 +291,20 @@ test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한�
       await page.getByRole('button', { name: '일정 설정하기' }).click()
       await page.getByLabel('합성 혈압약 복용 시작일').fill('2026-09-16')
       await page.getByLabel('합성 혈압약 복용 종료일').fill('2026-09-22')
-      await page.getByLabel('합성 혈압약 1번째 복용 시간').fill('08:00')
-      await page.getByLabel('합성 혈압약 2번째 복용 시간').fill('13:00')
-      await page.getByLabel('합성 혈압약 3번째 복용 시간').fill('20:00')
+      await page.getByLabel('합성 혈압약 1번째 복용 시간').fill('08:02')
+      await page.getByLabel('합성 혈압약 2번째 복용 시간').fill('13:03')
+      await page.getByLabel('합성 혈압약 3번째 복용 시간').fill('23:03')
       const cta = page.getByRole('button', { name: '복약 일정 저장하기' })
       await cta.focus()
       await expect(cta).toBeFocused()
       await page.keyboard.press('Enter')
       await expect.poll(() => scheduleMutations.length).toBe(index + 1)
       await expect(page.getByRole('heading', { name: '오늘의 복약' })).toBeVisible()
-      await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(3)
+      await expect(page.getByText('08:02', { exact: true })).toBeVisible()
+      await expect(page.getByText('13:03', { exact: true })).toBeVisible()
+      await expect(page.getByText('23:03', { exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(2)
+      await expect(page.getByText('복용 예정')).toHaveCount(1)
       await expect(page.getByRole('heading', { name: '복용할 날짜와 시간을 확인해 주세요' })).toHaveCount(0)
     })
   }
