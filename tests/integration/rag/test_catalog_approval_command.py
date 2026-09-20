@@ -314,7 +314,7 @@ async def test_catalog_writer_reconciled_policy_reads_product_source_and_revalid
     draft = create_catalog_export(
         catalog_version="catalog-writer-acl-v1",
         source_refs=(source_ref,),
-        members=build_catalog_members(products=(template_product,)),
+        members=build_catalog_members(products=(template_product,), components=(), aliases=()),
     )
     await seed_catalog_approval_receipt(
         factory,
