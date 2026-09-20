@@ -29,6 +29,7 @@ for (const width of [320, 390, 412]) {
       else if (path.endsWith('/barrier-response')) data = withSubreason(barrier, request.method(), request.method() === 'GET' ? null : request.postDataJSON())
       else if (path.endsWith('/supports')) data = { ...barrier, subreason_code: 'MISSED_ALERT', reason_code: null, supports: [{ support_code: 'REMINDER_SETUP', rule_version: 'rule1', copy_version: 'copy1', priority: 1, rationale_code: 'FORGOT', action_config: config, support_copy: { title: '복약 일정과 알림을 확인해 볼까요?', body: '현재 저장된 일정을 먼저 확인하고 필요한 경우 직접 변경해 주세요. '.repeat(12), confirmation_prompt: '이 방법을 실천 계획으로 저장할까요?', primary_label: '계획으로 저장', secondary_label: '나중에' }, questions: [] }] }
       else if (path.endsWith('/resources')) data = { support_action_plan_id: planId, barrier_code: 'FORGOT', occurrence_id: occurrence, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: { title: '복약 일정과 알림 확인', body: '저장 당시 안내', confirmation_prompt: '확인할까요?', primary_label: '확인', secondary_label: '나중에' }, subreason_code: 'MISSED_ALERT', selected_questions: [] }
+      else if (path === '/api/v1/support-action-plans' && request.method() === 'GET') data = [{ support_action_plan_id: plan.support_action_plan_id, support_code: plan.support_code, status: plan.status, created_at: plan.created_at, completed_at: plan.completed_at, cancelled_at: plan.cancelled_at }]
       else { if (request.method() === 'PATCH') plan.status = request.postDataJSON().status; data = plan }
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data }) })
     })
@@ -53,6 +54,8 @@ for (const width of [320, 390, 412]) {
     expect(await page.locator('main').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
     await page.screenshot({ path: `test-results/track-c-offer-${width}.png`, fullPage: true })
     await page.getByRole('checkbox').check(); await page.getByRole('button', { name: '계획으로 저장' }).click()
+    await expect(page.getByRole('heading', { name: '실천 계획 목록' })).toBeVisible()
+    await page.getByRole('button', { name: /복약 일정과 알림 확인/ }).click()
     await expect(page.getByText('진행 중', { exact: true })).toBeVisible()
     await page.screenshot({ path: `test-results/track-c-plan-${width}.png`, fullPage: true })
     await page.reload(); await expect(page.getByText('진행 중', { exact: true })).toBeVisible()
@@ -98,6 +101,7 @@ for (const [situation, label, supportCode] of [
         expect(url.searchParams.get('travel_situation')).toBe(situation)
         data = { ...barrier, subreason_code: situation, supports: [{ support_code: supportCode, rule_version: plan.rule_version, copy_version: plan.copy_version, priority: 10, rationale_code: 'SYNTHETIC', action_config: config, support_copy: copy, questions: [] }], reason_code: null }
       } else if (path.endsWith('/resources')) data = { support_action_plan_id: planId, barrier_code: 'SCHEDULE_OR_TRAVEL', occurrence_id: occurrence, occurrence_local_date: '2026-09-16', prescription_version_medication_id: 'medication', support_copy: copy, subreason_code: situation, selected_questions: [] }
+      else if (path === '/api/v1/support-action-plans' && request.method() === 'GET') data = [{ support_action_plan_id: plan.support_action_plan_id, support_code: plan.support_code, status: plan.status, created_at: plan.created_at, completed_at: plan.completed_at, cancelled_at: plan.cancelled_at }]
       else {
         if (request.method() === 'POST') creates.push(request.postDataJSON())
         if (request.method() === 'PATCH') plan.status = request.postDataJSON().status
@@ -115,6 +119,8 @@ for (const [situation, label, supportCode] of [
     await page.getByRole('button', { name: '선택한 상황으로 도움 찾기' }).click()
     expect(creates).toHaveLength(0)
     await page.getByRole('checkbox').check(); await page.getByRole('button', { name: '계획 만들기' }).click()
+    await expect(page.getByRole('heading', { name: '실천 계획 목록' })).toBeVisible()
+    await page.getByRole('button', { name: supportCode === 'REMINDER_SETUP' ? /복약 일정과 알림 확인/ : /일상·이동 중 복약 계획 확인/ }).click()
     await expect(page.getByText('진행 중', { exact: true })).toBeVisible()
     expect(creates).toHaveLength(1); expect(creates[0].travel_situation).toBe(situation)
     await page.reload(); await expect(page.getByText('진행 중', { exact: true })).toBeVisible()
