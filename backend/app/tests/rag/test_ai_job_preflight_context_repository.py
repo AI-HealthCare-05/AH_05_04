@@ -69,6 +69,9 @@ from app.models.rag_source import (
     RagSourceSnapshotMemberKind,
 )
 from app.models.users import Gender, User
+from app.repositories.async_job_repository import AsyncJobRepository
+from app.repositories.guide_repository import GuideRepository
+from app.repositories.medication_candidate_repository import MedicationCandidateRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.repositories.rag_runtime_repository import (
     AiJobExecutionContextCreate,
@@ -90,12 +93,16 @@ from app.repositories.rag_source_use_approval_repository import (
     RagSourceUseApprovalRepository,
     SourceUseApprovalCreate,
 )
+from app.services.guide_intake import GuideJobIntakeTransactionAdapter, GuideRuntimeContextSnapshot
 from app.services.guide_retrieval_binding import (
     GuideRetrievalBindingBuildError,
     GuideRetrievalBindingBuildRequest,
     create_guide_retrieval_binding_manifest,
 )
 from app.services.guide_runtime_request import load_verified_guide_runtime_request_carrier
+from app.services.job_intake import JobIntakeService
+from app.services.medication_identification import MedicationIdentificationService
+from app.services.rag_preflight import RagPreflightService
 from app.services.rag_runtime_bundle_build import execute_runtime_bundle_build
 from rag_runtime.guide_retrieval_binding import GuideRetrievalMemberBinding
 from rag_runtime.runtime_environment import RuntimeEnvironmentCode
@@ -671,6 +678,66 @@ async def _create_guide_carrier_fixture(session: AsyncSession) -> _GuideCarrierF
     )
 
 
+async def test_guide_job_intake_pins_binding_for_verified_request_carrier(db_session: AsyncSession) -> None:
+    user, profile = await _create_user(db_session)
+    prescription = await _create_prescription(db_session, user=user, profile=profile)
+    medication = await db_session.scalar(
+        select(PrescriptionVersionMedication).where(
+            PrescriptionVersionMedication.prescription_version_id == prescription.active_version_id
+        )
+    )
+    assert medication is not None
+    await _create_identification(db_session, medication=medication)
+    manifest, bundle, environment, _, _, knowledge_index, member_binding = await _create_canonical_runtime_graph(
+        db_session,
+        actor=user,
+    )
+    retrieval_binding = await create_guide_retrieval_binding_manifest(
+        db_session,
+        GuideRetrievalBindingBuildRequest(
+            runtime_release_bundle_id=bundle.id,
+            runtime_execution_manifest_id=manifest.id,
+            knowledge_index_id=knowledge_index.id,
+            member_bindings=(member_binding,),
+            retrieval_configuration=_retrieval_configuration_projection(),
+        ),
+    )
+    adapter = GuideJobIntakeTransactionAdapter(
+        guide_repository=GuideRepository(db_session),
+        preflight_service=RagPreflightService(
+            MedicationIdentificationService(MedicationCandidateRepository(db_session))
+        ),
+        runtime_repository=RagRuntimeRepository(db_session),
+        job_intake_service=JobIntakeService(AsyncJobRepository(db_session)),
+    )
+    intake = await adapter.accept_guide_job(
+        user=user,
+        prescription_id=prescription.id,
+        idempotency_key=f"guide-carrier-{uuid4().hex}",
+        trace_id="f" * 32,
+        runtime_context=GuideRuntimeContextSnapshot(
+            runtime_environment_id=environment.id,
+            runtime_environment_revision=environment.environment_revision,
+            runtime_release_bundle_id=bundle.id,
+            runtime_release_bundle_manifest_hash=bundle.bundle_manifest_hash,
+            runtime_execution_manifest_id=manifest.id,
+            runtime_execution_manifest_hash=manifest.manifest_hash,
+            guide_retrieval_binding_manifest_id=retrieval_binding.id,
+            guide_retrieval_binding_manifest_hash=retrieval_binding.manifest_hash,
+            runtime_guard_decision_ref="guard:guide-runtime-pass",
+            patient_context_digest=_hash("6"),
+            source_scope_manifest_hash=_hash("7"),
+        ),
+    )
+
+    carrier = await load_verified_guide_runtime_request_carrier(db_session, intake.job.id)
+
+    assert carrier is not None
+    assert carrier.job_id == intake.job.id
+    assert carrier.guide_id == intake.guide.id
+    assert carrier.retrieval_binding.manifest_hash == retrieval_binding.manifest_hash
+
+
 async def persist_and_verify_chat_context(db_session: AsyncSession) -> None:
     user, profile = await _create_user(db_session)
     prescription = await _create_prescription(db_session, user=user, profile=profile)
@@ -823,7 +890,9 @@ async def test_verified_guide_runtime_request_carrier_rejects_nested_configurati
 ) -> None:
     fixture = await _create_guide_carrier_fixture(db_session)
     configuration = dict(fixture.retrieval_binding_manifest.retrieval_configuration_json)
-    lexical = dict(configuration["lexical_config"])
+    lexical_config = configuration["lexical_config"]
+    assert isinstance(lexical_config, dict)
+    lexical = dict(lexical_config)
     lexical["trigram_threshold"] = "0.4"
     configuration["lexical_config"] = lexical
     fixture.retrieval_binding_manifest.retrieval_configuration_json = configuration

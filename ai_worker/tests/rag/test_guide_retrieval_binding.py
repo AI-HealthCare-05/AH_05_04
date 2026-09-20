@@ -98,8 +98,10 @@ def test_retrieval_configuration_projection_reuses_canonical_hash() -> None:
     configuration = _retrieval_configuration()
     projection = project_versioned_evidence_retrieval_configuration(configuration)
 
+    artifact_ref = projection["artifact_ref"]
+    assert isinstance(artifact_ref, dict)
     assert validate_retrieval_configuration_projection(projection) == configuration.compute_canonical_hash()
-    assert projection["artifact_ref"]["content_sha256"] == configuration.compute_canonical_hash()  # type: ignore[index]
+    assert artifact_ref["content_sha256"] == configuration.compute_canonical_hash()
 
 
 def test_retrieval_configuration_projection_rejects_nested_hash_drift() -> None:
@@ -147,9 +149,17 @@ def test_member_binding_parser_rejects_coercion_and_noncanonical_order(value: ob
 def test_projected_configuration_hash_uses_existing_canonical_json() -> None:
     configuration = _retrieval_configuration()
     projection = project_versioned_evidence_retrieval_configuration(configuration)
+    dense_config = projection["dense_config"]
+    lexical_config = projection["lexical_config"]
+    assert isinstance(dense_config, dict)
+    assert isinstance(lexical_config, dict)
+    dense_artifact_ref = dense_config["artifact_ref"]
+    lexical_artifact_ref = lexical_config["artifact_ref"]
+    assert isinstance(dense_artifact_ref, dict)
+    assert isinstance(lexical_artifact_ref, dict)
     canonical_projection = {
         "algorithm_id": projection["algorithm_id"],
-        "dense_config_hash": projection["dense_config"]["artifact_ref"]["content_sha256"],  # type: ignore[index]
+        "dense_config_hash": dense_artifact_ref["content_sha256"],
         "dense_limit": projection["dense_limit"],
         "exact_limit": projection["exact_limit"],
         "execution_mode": projection["execution_mode"],
@@ -157,7 +167,7 @@ def test_projected_configuration_hash_uses_existing_canonical_json() -> None:
         "fts_limit": projection["fts_limit"],
         "future_reranker_input_limit": projection["future_reranker_input_limit"],
         "hybrid_limit": projection["hybrid_limit"],
-        "lexical_config_hash": projection["lexical_config"]["artifact_ref"]["content_sha256"],  # type: ignore[index]
+        "lexical_config_hash": lexical_artifact_ref["content_sha256"],
         "lexical_limit": projection["lexical_limit"],
         "observed_score_projection": projection["observed_score_projection"],
         "observed_score_quantum": projection["observed_score_quantum"],
