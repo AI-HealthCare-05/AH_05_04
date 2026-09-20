@@ -20,6 +20,7 @@ from app.dtos.track_c_support import (
     CreateSupportActionPlanRequest,
     PatchSupportActionPlanRequest,
     SubmitActionPlanFollowupRequest,
+    SupportActionPlanListResponse,
     SupportActionPlanResponse,
     SupportOfferResponse,
     SupportPlanResourcesResponse,
@@ -35,6 +36,7 @@ from app.services.track_c_support import (
     ACTION_PLAN_FOLLOWUP_GET_OPERATION_ID,
     ACTION_PLAN_FOLLOWUP_POST_OPERATION_ID,
     SUPPORT_ACTION_PLAN_GET_OPERATION_ID,
+    SUPPORT_ACTION_PLAN_LIST_OPERATION_ID,
     SUPPORT_ACTION_PLAN_PATCH_OPERATION_ID,
     SUPPORT_ACTION_PLAN_POST_OPERATION_ID,
     SUPPORT_OFFER_GET_OPERATION_ID,
@@ -110,6 +112,22 @@ async def create_support_action_plan(
     assert idempotency_key is not None
     result = await service.create_plan(user_id=user.id, request=request, idempotency_key=idempotency_key)
     return JSONResponse(content=result.response_body, status_code=result.response_status)
+
+
+@track_c_router.get(
+    "/support-action-plans",
+    response_model=SupportActionPlanListResponse,
+    operation_id=SUPPORT_ACTION_PLAN_LIST_OPERATION_ID,
+    responses={
+        401: {"model": ErrorResponse, "description": "인증 필요"},
+        422: {"model": ErrorResponse, "description": "VALIDATION_FAILED"},
+    },
+)
+async def list_support_action_plans(
+    user: Annotated[User, Depends(get_request_user)],
+    service: Annotated[TrackCSupportService, Depends(get_track_c_support_service)],
+) -> SupportActionPlanListResponse:
+    return await service.list_plans(user_id=user.id)
 
 
 _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
