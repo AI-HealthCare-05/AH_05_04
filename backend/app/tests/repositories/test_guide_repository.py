@@ -12,12 +12,31 @@ from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.profiles import Profile, ProfileType
+from app.models.rag_source import (
+    RagSource,
+    RagSourceEndpoint,
+    RagSourceOperation,
+    RagSourceSnapshot,
+    RagSourceSnapshotMember,
+    RagSourceSnapshotMemberKind,
+)
 from app.models.users import Gender, User
 from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.guide_repository import GuideRepository
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.services.guides import _to_guide_data
 from app.tests.conftest import test_engine
 from app.tests.fixtures.prescription_fingerprint import fingerprint_values
+from rag_runtime.guide_release_projection import (
+    GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
+    GuideRuntimeApprovedAnswer,
+    GuideRuntimeApprovedFallback,
+    GuideRuntimeCitationSourceType,
+    GuideRuntimeFallbackCode,
+    GuideRuntimeReleaseDecision,
+    GuideRuntimeReleaseProjectionCarrier,
+    GuideRuntimeVerifiedCitation,
+)
 
 
 @pytest_asyncio.fixture
@@ -112,6 +131,86 @@ async def _create_confirmed_prescription(session: AsyncSession, *, user: User) -
     return prescription
 
 
+async def _create_source_snapshot_members(
+    session: AsyncSession,
+) -> tuple[RagSourceSnapshot, tuple[RagSourceSnapshotMember, RagSourceSnapshotMember]]:
+    suffix = uuid4().hex[:10]
+    source = RagSource(source_code=f"guide-test-{suffix}", display_name="Guide 테스트 출처")
+    session.add(source)
+    await session.flush()
+    endpoint = RagSourceEndpoint(
+        source_id=source.id,
+        endpoint_code=f"endpoint-{suffix}",
+        display_name="Guide 테스트 endpoint",
+    )
+    session.add(endpoint)
+    await session.flush()
+    operation = RagSourceOperation(
+        endpoint_id=endpoint.id,
+        operation_code=f"operation-{suffix}",
+        display_name="Guide 테스트 operation",
+    )
+    session.add(operation)
+    await session.flush()
+    snapshot = RagSourceSnapshot(
+        operation_id=operation.id,
+        source_version="2026-09-21",
+        raw_manifest_checksum="a" * 64,
+        canonical_checksum="b" * 64,
+        schema_version="test-v1",
+        parser_version="test-v1",
+        normalization_version="test-v1",
+        canonicalization_spec_version="test-v1",
+        record_count=2,
+        rejected_record_count=0,
+        collected_at=datetime.now(UTC),
+    )
+    session.add(snapshot)
+    await session.flush()
+    members = (
+        RagSourceSnapshotMember(
+            source_snapshot_id=snapshot.id,
+            member_kind=RagSourceSnapshotMemberKind.ENDPOINT_OPERATION,
+            endpoint_id=endpoint.id,
+            operation_id=operation.id,
+            locator="guide-test:1",
+            content_sha256="1" * 64,
+        ),
+        RagSourceSnapshotMember(
+            source_snapshot_id=snapshot.id,
+            member_kind=RagSourceSnapshotMemberKind.ENDPOINT_OPERATION,
+            endpoint_id=endpoint.id,
+            operation_id=operation.id,
+            locator="guide-test:2",
+            content_sha256="2" * 64,
+        ),
+    )
+    session.add_all(members)
+    await session.flush()
+    return snapshot, members
+
+
+def _verified_citation(
+    *,
+    snapshot: RagSourceSnapshot,
+    member: RagSourceSnapshotMember,
+    display_order: int,
+) -> GuideRuntimeVerifiedCitation:
+    return GuideRuntimeVerifiedCitation(
+        card_target_ref=f"card-{display_order}",
+        claim_key=f"claim-{display_order}",
+        evidence_key=f"evidence-{display_order}",
+        source_type=GuideRuntimeCitationSourceType.LIFESTYLE_GUIDELINE,
+        source_snapshot_id=snapshot.id,
+        source_snapshot_member_id=member.id,
+        source_code="MFDS_GUIDE",
+        source_version=snapshot.source_version,
+        locator=member.locator,
+        content_sha256=member.content_sha256,
+        display_order=display_order,
+    )
+
+
 async def test_get_prescription_owned_rejects_other_users_prescription(db_session: AsyncSession) -> None:
     owner = await _create_user(db_session, email="owner@example.com")
     intruder = await _create_user(db_session, email="intruder@example.com")
@@ -193,6 +292,122 @@ async def test_get_by_ai_job_id_returns_none_when_unset(db_session: AsyncSession
     found = await GuideRepository(db_session).get_by_ai_job_id(ai_job_id=uuid4())
 
     assert found is None
+
+
+async def test_mark_completed_legacy_guide_keeps_empty_citations_loaded(
+    db_session: AsyncSession,
+) -> None:
+    owner = await _create_user(db_session, email=f"g-legacy-{uuid4().hex[:8]}@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    repository = GuideRepository(db_session)
+    guide = await repository.create(prescription=prescription)
+
+    await repository.mark_completed(
+        guide,
+        content="합성 가이드",
+        model_name="synthetic-model",
+        prompt_version="synthetic-prompt",
+        completed_at=datetime.now(UTC),
+    )
+
+    assert guide.citations == []
+    assert _to_guide_data(guide).citations == []
+
+
+async def test_mark_release_completed_round_trips_pass_projection_and_ordered_citations(
+    db_session: AsyncSession,
+) -> None:
+    owner = await _create_user(db_session, email=f"g-pass-{uuid4().hex[:8]}@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    snapshot, members = await _create_source_snapshot_members(db_session)
+    guide = await GuideRepository(db_session).create(prescription=prescription)
+    projection = GuideRuntimeReleaseProjectionCarrier(
+        contract_version=GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
+        release_decision=GuideRuntimeReleaseDecision.PASS,
+        is_current=True,
+        answer=GuideRuntimeApprovedAnswer(
+            claim_action_texts=("첫 번째 행동", "두 번째 행동"),
+            uncertainty_text="개인 상태에 따라 다를 수 있습니다.",
+            consultation_text="의료진과 상의하세요.",
+        ),
+        fallback=None,
+        citations=(
+            _verified_citation(snapshot=snapshot, member=members[1], display_order=2),
+            _verified_citation(snapshot=snapshot, member=members[0], display_order=1),
+        ),
+    )
+
+    completed = await GuideRepository(db_session).mark_release_completed(
+        guide,
+        projection=projection,
+        model_name="synthetic-model",
+        prompt_version="synthetic-prompt",
+        completed_at=datetime.now(UTC),
+    )
+    assert [citation.display_order for citation in completed.citations] == [1, 2]
+    post_projection = _to_guide_data(completed)
+    guide_id = guide.id
+    owner_id = owner.id
+    member_ids = [members[0].id, members[1].id]
+    db_session.expire_all()
+
+    reloaded = await GuideRepository(db_session).get_owned(guide_id=guide_id, user_id=owner_id)
+
+    assert reloaded is not None
+    assert reloaded.release_projection_version == GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION
+    assert reloaded.release_decision == GuideRuntimeReleaseDecision.PASS.value
+    assert reloaded.release_is_current is True
+    assert reloaded.content == (
+        "첫 번째 행동\n\n두 번째 행동\n\n개인 상태에 따라 다를 수 있습니다.\n\n의료진과 상의하세요."
+    )
+    assert reloaded.answer_claim_action_texts == ["첫 번째 행동", "두 번째 행동"]
+    assert reloaded.answer_uncertainty_text == "개인 상태에 따라 다를 수 있습니다."
+    assert reloaded.answer_consultation_text == "의료진과 상의하세요."
+    assert reloaded.fallback_code is None
+    assert [citation.display_order for citation in reloaded.citations] == [1, 2]
+    assert [citation.source_snapshot_member_id for citation in reloaded.citations] == member_ids
+    assert _to_guide_data(reloaded) == post_projection
+
+
+async def test_mark_release_completed_round_trips_stale_fallback_without_content(
+    db_session: AsyncSession,
+) -> None:
+    owner = await _create_user(db_session, email=f"g-stale-{uuid4().hex[:8]}@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    guide = await GuideRepository(db_session).create(prescription=prescription)
+    projection = GuideRuntimeReleaseProjectionCarrier(
+        contract_version=GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
+        release_decision=GuideRuntimeReleaseDecision.STALE,
+        is_current=False,
+        answer=None,
+        fallback=GuideRuntimeApprovedFallback(
+            code=GuideRuntimeFallbackCode.PRESCRIPTION_STALE,
+            text="처방 정보가 변경되어 다시 확인이 필요합니다.",
+        ),
+        citations=(),
+    )
+
+    await GuideRepository(db_session).mark_release_completed(
+        guide,
+        projection=projection,
+        model_name="synthetic-model",
+        prompt_version="synthetic-prompt",
+        completed_at=datetime.now(UTC),
+    )
+    guide_id = guide.id
+    owner_id = owner.id
+    db_session.expire_all()
+
+    reloaded = await GuideRepository(db_session).get_owned(guide_id=guide_id, user_id=owner_id)
+
+    assert reloaded is not None
+    assert reloaded.release_decision == GuideRuntimeReleaseDecision.STALE.value
+    assert reloaded.release_is_current is False
+    assert reloaded.content is None
+    assert reloaded.answer_claim_action_texts is None
+    assert reloaded.fallback_code == GuideRuntimeFallbackCode.PRESCRIPTION_STALE.value
+    assert reloaded.fallback_text == "처방 정보가 변경되어 다시 확인이 필요합니다."
+    assert reloaded.citations == []
 
 
 async def test_mark_failed_persists_after_writer_session_closes_and_new_session_reloads() -> None:

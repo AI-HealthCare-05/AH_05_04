@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
+from app.dtos.guides import GuideData
 from app.models.medical_documents import MedicalDocument
 from app.models.ocr import OcrJob
 from app.models.prescriptions import Medication, Prescription, PrescriptionVersion, PrescriptionVersionMedication
@@ -18,10 +19,17 @@ from app.repositories.guide_repository import GuideRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.guide_ai.client import ProviderGuideResponse
 from app.services.guide_ai.generator import GuideGenerator
-from app.services.guides import GuideService
+from app.services.guides import GuideService, _to_guide_data
 from app.services.user_consents import ConsentGateService
 from app.tests.conftest import test_engine
 from app.tests.fixtures.prescription_fingerprint import fingerprint_values
+from rag_runtime.guide_release_projection import (
+    GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
+    GuideRuntimeApprovedFallback,
+    GuideRuntimeFallbackCode,
+    GuideRuntimeReleaseDecision,
+    GuideRuntimeReleaseProjectionCarrier,
+)
 
 
 @pytest_asyncio.fixture
@@ -61,6 +69,33 @@ class _UnusedGuideProvider:
 def _service(session: AsyncSession) -> GuideService:
     generator = GuideGenerator(provider=_UnusedGuideProvider(), model="test-model", timeout_seconds=1.0)
     return GuideService(GuideRepository(session), generator, AsyncMock(spec=ConsentGateService))
+
+
+def test_guide_public_schema_exposes_only_frozen_release_and_citation_fields() -> None:
+    schema = GuideData.model_json_schema()
+    properties = schema["properties"]
+
+    assert {
+        "release_decision",
+        "release_is_current",
+        "fallback_code",
+        "fallback_text",
+        "citations",
+    } <= properties.keys()
+    serialized_schema = str(schema)
+    for internal_field in (
+        "card_target_ref",
+        "claim_key",
+        "evidence_key",
+        "source_snapshot_id",
+        "source_snapshot_member_id",
+        "content_sha256",
+        "score",
+        "rank",
+        "confidence",
+        "raw_source",
+    ):
+        assert internal_field not in serialized_schema
 
 
 async def _create_user(session: AsyncSession, *, email: str) -> User:
@@ -153,6 +188,61 @@ async def test_get_latest_guide_for_prescription_returns_completed_guide(db_sess
     assert result.guide_id == guide.id
     assert result.prescription_id == prescription.id
     assert result.content == "복약 가이드 본문"
+    assert result.release_decision is None
+    assert result.release_is_current is None
+    assert result.fallback_code is None
+    assert result.fallback_text is None
+    assert result.citations == []
+
+
+async def test_runtime_stale_release_is_restored_without_prescription_conflict(
+    db_session: AsyncSession,
+) -> None:
+    service = _service(db_session)
+    owner = await _create_user(db_session, email="guide-runtime-stale@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    guide = await GuideRepository(db_session).create(prescription=prescription)
+    projection = GuideRuntimeReleaseProjectionCarrier(
+        contract_version=GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
+        release_decision=GuideRuntimeReleaseDecision.STALE,
+        is_current=False,
+        answer=None,
+        fallback=GuideRuntimeApprovedFallback(
+            code=GuideRuntimeFallbackCode.PRESCRIPTION_STALE,
+            text="처방 정보가 변경되어 다시 확인이 필요합니다.",
+        ),
+        citations=(),
+    )
+    await GuideRepository(db_session).mark_release_completed(
+        guide,
+        projection=projection,
+        model_name="runtime-model",
+        prompt_version="runtime-prompt",
+        completed_at=datetime.now(UTC),
+    )
+    post_result = _to_guide_data(guide)
+    await PrescriptionRepository(db_session).create_version(
+        prescription=prescription,
+        prescribed_date=date.today(),
+        confirmed_at=datetime.now(UTC),
+        medications=[{"medication_name": "새 버전 합성약", "display_order": 1}],
+    )
+
+    detail = await service.get_guide_detail(user=owner, guide_id=guide.id)
+    latest = await service.get_latest_guide_for_prescription(
+        user=owner,
+        prescription_id=prescription.id,
+    )
+
+    assert detail.guide_id == guide.id
+    assert detail == post_result
+    assert latest == detail
+    assert detail.release_decision is GuideRuntimeReleaseDecision.STALE
+    assert detail.release_is_current is False
+    assert detail.content is None
+    assert detail.fallback_code is GuideRuntimeFallbackCode.PRESCRIPTION_STALE
+    assert detail.fallback_text == "처방 정보가 변경되어 다시 확인이 필요합니다."
+    assert detail.citations == []
 
 
 async def test_get_latest_guide_for_prescription_raises_not_found_when_no_guide_exists(

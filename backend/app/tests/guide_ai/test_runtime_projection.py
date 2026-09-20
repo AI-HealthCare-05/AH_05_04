@@ -44,8 +44,7 @@ def test_pass_result_preserves_approved_answer_and_ordered_verified_citations() 
     assert tuple(citation.display_order for citation in projection.citations) == (1, 2)
     assert projection.citations[0] == _citation(display_order=1, evidence_key="evidence-food")
     assert projection.citations[1] == _citation(display_order=2, evidence_key="evidence-routine")
-    assert GuideRuntimePersistenceGap.RELEASE_STATUS_NOT_PERSISTED in projection.persistence_gaps
-    assert GuideRuntimePersistenceGap.LEGACY_CITATION_TABLE_INCOMPATIBLE in projection.persistence_gaps
+    assert projection.persistence_gaps == ()
 
 
 @pytest.mark.parametrize(
@@ -73,10 +72,7 @@ def test_non_pass_result_preserves_only_approved_fallback(
     assert projection.fallback.code is GuideRuntimeFallbackCode.NO_APPROVED_EVIDENCE
     assert projection.fallback.text == "현재는 승인된 안내를 제공할 수 없습니다. 의사 또는 약사와 상담하세요."
     assert projection.citations == ()
-    assert projection.persistence_gaps == (
-        GuideRuntimePersistenceGap.RELEASE_STATUS_NOT_PERSISTED,
-        GuideRuntimePersistenceGap.FALLBACK_NOT_PERSISTED,
-    )
+    assert projection.persistence_gaps == ()
 
 
 def test_unavailable_result_fails_closed_without_public_content() -> None:
