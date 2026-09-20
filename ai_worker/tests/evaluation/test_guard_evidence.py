@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 import pytest
@@ -157,7 +157,7 @@ def _test_candidate_guard_fixture(
     candidate_bundle_manifest_hash: str = "c" * 64,
     runtime_execution_manifest_id: UUID | str = "22222222-2222-4222-8222-222222222222",
     runtime_execution_manifest_hash: str = "d" * 64,
-    environment: str = "LOCAL",
+    environment: Literal["LOCAL"] = "LOCAL",
     environment_revision_fence: int = 10,
     governance_revision_ref: str = "GOV-REV-20260920",
     safety_epoch: int = 4,
@@ -479,17 +479,29 @@ def test_finalization_and_independent_validation_pipeline(
 
 
 CANDIDATE_MUTATIONS = [
-    ("candidate_guard_decision_id", str(uuid4())),
+    (
+        "candidate_guard_decision_id",
+        "55555555-5555-4555-8555-555555555555",
+    ),
     ("operation", "OTHER_OP"),
     ("decision", "FAIL"),
-    ("evaluation_run_id", str(uuid4())),
+    (
+        "evaluation_run_id",
+        "66666666-6666-4666-8666-666666666666",
+    ),
     ("environment", "TEST"),
     ("environment_revision_fence", 99),
     ("governance_revision_ref", "MUTATED_GOV"),
     ("safety_epoch", 99),
-    ("candidate_bundle_id", str(uuid4())),
+    (
+        "candidate_bundle_id",
+        "77777777-7777-4777-8777-777777777777",
+    ),
     ("candidate_bundle_manifest_hash", "9" * 64),
-    ("runtime_execution_manifest_id", str(uuid4())),
+    (
+        "runtime_execution_manifest_id",
+        "88888888-8888-4888-8888-888888888888",
+    ),
     ("runtime_execution_manifest_hash", "8" * 64),
     ("dataset_code", "mutated-dataset"),
     ("dataset_version", "9.9.9"),
@@ -526,10 +538,16 @@ def test_candidate_field_mutation_matrix(
 
 
 CASE_MUTATIONS = [
-    ("case_guard_decision_id", str(uuid4())),
+    (
+        "case_guard_decision_id",
+        "99999999-9999-4999-8999-999999999999",
+    ),
     ("operation", "OTHER_OP"),
     ("decision", "FAIL"),
-    ("evaluation_run_id", str(uuid4())),
+    (
+        "evaluation_run_id",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    ),
     ("case_id", "mutated-case-id"),
     (
         "candidate_guard_ref",
@@ -543,9 +561,15 @@ CASE_MUTATIONS = [
     ("environment_revision_fence", 99),
     ("governance_revision_ref", "MUTATED_GOV"),
     ("safety_epoch", 99),
-    ("candidate_bundle_id", str(uuid4())),
+    (
+        "candidate_bundle_id",
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    ),
     ("candidate_bundle_manifest_hash", "9" * 64),
-    ("runtime_execution_manifest_id", str(uuid4())),
+    (
+        "runtime_execution_manifest_id",
+        "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    ),
     ("runtime_execution_manifest_hash", "8" * 64),
     ("required_case_set_hash", "7" * 64),
     ("request_scope_codes", ("GUIDE",)),
