@@ -2,9 +2,9 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Approved Contract Freeze · Phase A2 implementation in progress — PR #868 |
+| 상태 | Approved Contract Freeze (Phase A1 PR #868 / Phase A2 Core PR #883) · Phase A3 Candidate Source Governance Authority Freeze Proposed · Authority Resolution Required |
 | 추적 Issue | [#162](https://github.com/AI-HealthCare-05/AH_05_04/issues/162) |
-| 선행·관련 | [`PD-162-20260920`](../../../governance/decisions/2026-09-20-canonical-evaluation-guard-evidence.md), PR #849 ([#163](../../targets/post-mvp-1/rag-evaluation-v1.md)), [#806](./request-guard-runtime-binding-v1.md) |
+| 선행·관련 | [`PD-162-20260920`](../../../governance/decisions/2026-09-20-canonical-evaluation-guard-evidence.md), PR #849 ([#163](../../targets/post-mvp-1/rag-evaluation-v1.md)), [#806](./request-guard-runtime-binding-v1.md), PR #883 |
 | 구현 owner | `@ceohwj` (정현우) — AI/RAG |
 | required reviewer | `@hazelnutflavoured` (권가빈) — PM / Product Acceptance / Evaluation & Safety |
 
@@ -475,3 +475,52 @@ canonical Guard evidence 검증을 통과한 후, 대상 `RagEvaluationRun`과�
 - **무관한 환경 리비전 증가 발생 (Unrelated Revision Change)**:
   - 종료 re-read: `revision=11, governance="GOV-A", epoch=4`
   - 판정: reject (동시성 펜스 위반에 따른 보수적 거부)
+
+---
+
+## 9. Candidate Source Governance 권위 전제조건 (Phase A3 Proposed · Authority Resolution Required)
+
+PR #883에서 Candidate Guard 와이어 스키마(`evaluation-candidate-guard-v1`, `evaluation-request-guard-v1`, `evaluation-guard-coverage-v1`)와 순수 검증 로직이 동결되었으나, Candidate 번들의 소스 구성원에 대한 Source Governance 판정(`EvaluationCandidateGuardEvaluator.evaluate_candidate_start`)을 통과하기 위해서는 다음 3개 시맨틱 권위가 사전에 확정되어야 한다.
+
+본 절은 Guard wire schema 자체를 일체 변경하지 않으며, Wire schema 외부의 Source Governance 평가 전제조건과 결측 권위 시맨틱을 규정한다.
+
+### 9.1 재사용 고정 권위 (Prerequisites from Existing Authority)
+Candidate Source Governance는 다음 기존 정본 권위를 그대로 재사용하며 본 동결에서 재논의하지 않는다:
+- **Runtime 번들 구조적 무결성**: #883 `SqlAlchemyEvaluationGuardAuthorityReader`
+- **Source 활성 상태**: `RagSource.lifecycle_status == ACTIVE`
+- **Endpoint 적격성**: `RagSourceEndpoint`의 `lifecycle_status == VERIFIED`, `runtime_status == ENABLED`, `acquisition_status == APPROVED`
+- **Operation 적격성**: `RagSourceOperation`의 `runtime_status == ENABLED`, `acquisition_status == APPROVED`
+- **Snapshot 최신 검증 상태**: `RagSourceSnapshot.verification_status == CURRENT`
+- **Snapshot Provenance 무결성**: `SnapshotProvenanceReceipt.validate_provenance()` PASS
+- **Snapshot 발행 승인**: `publication_verification_id is not None` (`rag_source_snapshot_verification`)
+- **Snapshot 적격성 커널**: `evaluate_snapshot_use_eligibility` PASS
+- **Source Use Approval 유효성**: `SqlAlchemySourceUseApprovalReader.read_usable_exact()` PASS (`valid_from <= evaluation_time < expires_at`, `revoked_at is None`)
+
+### 9.2 Purpose Mapping Authority (Q1 Proposed · Resolution Required)
+- `rag_runtime_bundle_source`의 `source_purpose` (`RuntimeBundleMemberPurpose` 6종: `CATALOG`, `KNOWLEDGE`, `CANDIDATE_INDEX_INPUT`, `RULE`, `GUIDELINE`, `SAFETY_POLICY`)을 `SqlAlchemySourceUseApprovalReader`의 `SourceUsePurpose` 5종(`PRODUCT_IDENTIFICATION`, `SAFETY_ROUTING`, `RULE_DERIVATION`, `RETRIEVAL`, `PATIENT_CITATION`)으로 변환하는 정본 매핑은 도메인 소유자(@hazelnutflavoured, @Jye-rookie, @phina-io)의 승인으로만 확정된다.
+- 임의 추정 매핑, 엔지니어링 임시 매핑, 암묵적 fallback 매핑은 엄격히 금지된다.
+- 매핑 미확정 시 `CANDIDATE_SOURCE_PURPOSE_MAPPING_BLOCKED` 상태를 유지하며 `EVALUATION_CANDIDATE / PASS`는 발행되지 않는다.
+- 번들 멤버 1개당 소스 사용 승인 목적의 요구 차원(단일 1:1 vs 복수 1:N) 역시 도메인 승인으로 동결된다.
+
+### 9.3 Freshness Authority (Q2 Proposed · Resolution Required)
+- `rag_runtime_bundle_source.freshness_policy_hash`는 정책 식별자(SHA-256)만 보존한다.
+- `verification_status == CURRENT` 판정을 Freshness 통과로 간주하는 것, 정책 해시의 존재만으로 통과시키는 것, 번들 빌드 시점의 Freshness 판정을 재사용하는 것은 모두 엄격히 금지된다.
+- Candidate 평가는 반드시 평가 시점(`evaluation_time`) 기준의 current-state 재검증이어야 하며, 승인된 정책 원천 및 평가기를 통해서만 `freshness_eligible: bool`을 판정한다.
+- 평가기 미확정 시 `CANDIDATE_SOURCE_FRESHNESS_AUTHORITY_BLOCKED` 상태를 유지하며 `EVALUATION_CANDIDATE / PASS`는 발행되지 않는다.
+
+### 9.4 Scope Authority (Q3 Proposed · Resolution Required)
+- `rag_runtime_bundle_source.scope_policy_hash`는 스코프 정책 식별자만 보존한다.
+- #806의 per-request `request_scope_codes`를 Evaluation Candidate 스코프로 자동 매핑하는 것은 엄격히 금지된다.
+- 승인된 스코프 정책 원천과 `(scope_policy_hash, EVALUATION_CANDIDATE, member) -> scope_allowed: bool` 평가기를 통해서만 스코프 적격성을 판정한다.
+- 평가기 미확정 시 `CANDIDATE_SOURCE_SCOPE_AUTHORITY_BLOCKED` 상태를 유지하며 `EVALUATION_CANDIDATE / PASS`는 발행되지 않는다.
+
+### 9.5 Candidate Source Governance 판정 방정식 및 전수 결속
+`Candidate Source Governance PASS`는 번들에 핀된 모든 소스 멤버가 10개 조건(핀 일치, Source ACTIVE, Endpoint 적격, Operation 적격, Snapshot CURRENT, Provenance 유효, 발행 승인 유효, Freshness 적격, Scope 허용, Source Use Approval 유효)을 전수(exact-set) 만족하고, 멤버 누락이나 초과가 없을 때만 성립한다.
+
+### 9.6 Fail-Closed 결측 권위 시맨틱 (Fail-Closed Semantics)
+- 권위 부재, 매핑 모호, 정책 부재, 정책 만료/위반, 승인 만료/철회, 환경 불일치 등 단 하나의 결함이라도 발생하면 Evaluator는 `EVALUATION_CANDIDATE / PASS`를 발행하지 않는다.
+- 이 경우 `candidate_guard_decision = null`, `candidate_guard_ref = null`로 유지되며, `#163` Release Gate loader는 영구 차단(`ACTUAL_RELEASE_GATE_AUTHORIZATION_BLOCKED`)된다.
+
+### 9.7 Guard Wire Schema 불변 원칙
+- 본 권위 동결(Phase A3)은 Wire Schema(`evaluation-candidate-guard-v1`, `evaluation-request-guard-v1`, `evaluation-guard-coverage-v1`)의 필드, 타입, 사영 순서, 해시 레시피를 일체 변경하지 않는다.
+- 스키마 확장은 불필요하며, 기존에 확정된 순수 사영 및 Envelope 구조를 완전히 보존한다.
