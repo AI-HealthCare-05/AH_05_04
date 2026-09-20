@@ -5,12 +5,6 @@ from fastapi import Depends, Request
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai_worker.tasks.rag.production_query_binding import (
-    ApprovedGuideQueryHmacKey,
-    GuideQueryFingerprintDependencyError,
-    GuideQueryFingerprintProducer,
-    ProductionQueryBindingVerifier,
-)
 from app.core import config
 from app.core.config import Env
 from app.core.db.databases import AccountWithdrawalCleanupSessionFactory, get_db_session
@@ -84,6 +78,14 @@ from app.services.track_c_revision_invalidation import TrackCCheckinRevisionInva
 from app.services.track_c_support import TrackCSupportService
 from app.services.user_consents import ConsentGateService, OcrConsentService
 from app.services.users import UserConsentService, UserManageService
+from rag_runtime.guide_query_binding import (
+    ApprovedGuideQueryHmacKey,
+    GuideQueryFingerprintDependencyError,
+    GuideQueryFingerprintProducer,
+    ProductionQueryBindingVerifier,
+    build_guide_query_fingerprint_producer,
+    build_production_query_binding_verifier,
+)
 
 
 def get_ocr_consent_service(
@@ -493,7 +495,7 @@ def get_guide_query_fingerprint_producer(
         Depends(get_guide_query_hmac_key_dependency),
     ],
 ) -> GuideQueryFingerprintProducer:
-    return GuideQueryFingerprintProducer(key_dependency)
+    return build_guide_query_fingerprint_producer(key_dependency)
 
 
 def get_guide_query_binding_verifier(
@@ -502,7 +504,7 @@ def get_guide_query_binding_verifier(
         Depends(get_guide_query_hmac_key_dependency),
     ],
 ) -> ProductionQueryBindingVerifier:
-    return ProductionQueryBindingVerifier(key_dependency)
+    return build_production_query_binding_verifier(key_dependency)
 
 
 def get_guide_generator(

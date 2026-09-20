@@ -6,16 +6,6 @@ import pytest
 from openai import AsyncOpenAI
 from pydantic import SecretStr
 
-from ai_worker.tasks.rag.evidence_retrieval import (
-    QueryBindingFailureReason,
-    QueryBindingVerificationFailure,
-    QueryFingerprint,
-    SensitiveText,
-)
-from ai_worker.tasks.rag.production_query_binding import (
-    GuideQueryFingerprintDependencyError,
-    ProductionQueryBindingVerifier,
-)
 from app.core.config import Env
 from app.core.provider_observability import ProviderCallContext
 from app.dependencies import services
@@ -23,6 +13,15 @@ from app.services.chat_ai import ChatEngine, ChatProvider
 from app.services.guide_ai import GuideGenerator, GuideProvider
 from app.services.ocr_ai import OcrStructureProvider, OcrStructurer
 from app.services.ocr_engine import OcrEngine
+from rag_runtime.guide_query_binding import (
+    GuideQueryFingerprintDependencyError,
+    ProductionQueryBindingVerifier,
+    QueryBindingFailureReason,
+    QueryBindingVerificationFailure,
+    QueryBindingVerificationSuccess,
+    QueryFingerprint,
+    SensitiveText,
+)
 
 
 def _context() -> ProviderCallContext:
@@ -60,7 +59,10 @@ def test_guide_query_hmac_dependencies_assemble_the_same_typed_key_authority(mon
     verifier = services.get_guide_query_binding_verifier(key_dependency)
     fingerprint = producer.produce(SensitiveText("합성 복약 정보"))
 
-    assert verifier.verify(SensitiveText("합성 복약 정보"), fingerprint).query_fingerprint == fingerprint
+    result = verifier.verify(SensitiveText("합성 복약 정보"), fingerprint)
+
+    assert isinstance(result, QueryBindingVerificationSuccess)
+    assert result.query_fingerprint == fingerprint
     assert isinstance(verifier, ProductionQueryBindingVerifier)
     assert "synthetic-guide-query-hmac-key" not in repr(key_dependency)
 

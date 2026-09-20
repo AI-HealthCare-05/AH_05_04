@@ -18,6 +18,16 @@ from ai_worker.tasks.rag.production_query_binding import (
     compute_query_binding_verifier_artifact_ref,
     query_binding_verifier_policy_projection,
 )
+from rag_runtime.guide_query_binding import (
+    GuideQueryFingerprintProducer as SharedGuideQueryFingerprintProducer,
+)
+from rag_runtime.guide_query_binding import (
+    ProductionQueryBindingVerifier as SharedProductionQueryBindingVerifier,
+)
+from rag_runtime.guide_query_binding import (
+    build_guide_query_fingerprint_producer,
+    build_production_query_binding_verifier,
+)
 
 
 class RetainedKeys:
@@ -38,6 +48,16 @@ class UnavailableKeys:
 
     def key_for_version(self, key_version: str) -> ApprovedGuideQueryHmacKey | None:
         raise RuntimeError("key dependency unavailable")
+
+
+def test_worker_module_reexports_the_shared_query_binding_contract() -> None:
+    assert GuideQueryFingerprintProducer is SharedGuideQueryFingerprintProducer
+    assert ProductionQueryBindingVerifier is SharedProductionQueryBindingVerifier
+
+
+def test_shared_factories_accept_only_the_typed_key_provider(keys: RetainedKeys) -> None:
+    assert isinstance(build_guide_query_fingerprint_producer(keys), GuideQueryFingerprintProducer)
+    assert isinstance(build_production_query_binding_verifier(keys), ProductionQueryBindingVerifier)
 
 
 @pytest.fixture

@@ -11,7 +11,7 @@
 The exact validated `SensitiveText` from
 `guide-medication-retrieval-query-authority-v1.md` is fingerprinted without
 normalization, trimming, case folding, or suffixing. The implementation is
-`ai_worker.tasks.rag.production_query_binding` and consumes only the typed
+`rag_runtime.guide_query_binding` and consumes only the typed
 `GuideQueryHmacKeyProvider`; it has no configuration or environment access.
 
 The Backend composition root owns configuration and performs the sole secret
