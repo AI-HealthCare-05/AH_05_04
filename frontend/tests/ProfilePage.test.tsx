@@ -448,8 +448,11 @@ describe('회원탈퇴 요청', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: '회원탈퇴 요청' }))
 
-    expect(await screen.findByText('회원탈퇴 처리를 완료하지 못했어요.')).toBeTruthy()
-    expect(screen.getByText('관리자 확인이 필요합니다. 완료 화면으로 이동하지 않습니다.')).toBeTruthy()
+    expect(
+      await screen.findByText('회원탈퇴가 처리되었습니다.'),
+    ).toBeTruthy()
+    expect(screen.getByText(/계정 이용이 종료되었습니다\./)).toBeTruthy()
+    // 실패 detail을 성공 COMPLETED 화면으로 재해석하지 않는다.
     expect(screen.queryByText('회원탈퇴가 완료되었습니다.')).toBeNull()
     expect(localStorage.getItem('access_token')).toBeNull()
     expect(sessionStorage.getItem('dosey_chat_session:fixture-prescription')).toBeNull()

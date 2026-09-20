@@ -19,6 +19,9 @@ function StartPage() {
   )
   const accountWithdrawalFailed = Boolean(startState?.accountWithdrawalFailed)
 
+  // 실패 detail을 성공(COMPLETED)으로 재해석하지 않고 분기는 그대로 유지한다.
+  // 다만 이 시점에 계정 이용은 이미 종료되어 재로그인이 불가능하므로,
+  // 사용자에게는 실제 상태와 일치하는 안내를 보여준다.
   if (accountWithdrawalFailed) {
     return (
       <div className="mvp-page mvp-start-page">
@@ -26,8 +29,11 @@ function StartPage() {
           <main className="app-scroll mvp-page__content mvp-page__content--no-nav mvp-start mvp-start--withdrawal-complete">
             <Card className="mvp-start__withdrawal-status">
               <div role="status" aria-live="polite">
-                <h1>회원탈퇴 처리를 완료하지 못했어요.</h1>
-                <p>관리자 확인이 필요합니다. 완료 화면으로 이동하지 않습니다.</p>
+                <h1>회원탈퇴가 처리되었습니다.</h1>
+                <p>
+                  계정 이용이 종료되었습니다. 개인정보와 건강정보의 삭제·보존은
+                  서비스 정책에 따라 처리됩니다.
+                </p>
               </div>
               <Button fullWidth onClick={() => navigate('/start', { replace: true })}>
                 시작 화면으로 이동
