@@ -2,7 +2,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Proposed / Freeze Choices Resolved · 담당 리뷰 대기 |
+| 상태 | Approved Contract Freeze · Phase A2 implementation in progress — PR #868 |
 | 추적 Issue | [#162](https://github.com/AI-HealthCare-05/AH_05_04/issues/162) |
 | 선행·관련 | [`PD-162-20260920`](../../../governance/decisions/2026-09-20-canonical-evaluation-guard-evidence.md), PR #849 ([#163](../../targets/post-mvp-1/rag-evaluation-v1.md)), [#806](./request-guard-runtime-binding-v1.md) |
 | 구현 owner | `@ceohwj` (정현우) — AI/RAG |
