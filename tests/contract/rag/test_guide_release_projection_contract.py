@@ -17,6 +17,7 @@ from rag_runtime.guide_release_projection import (
 )
 
 MODULE_PATH = Path("rag_runtime/guide_release_projection.py")
+ADAPTER_PATH = Path("ai_worker/tasks/rag/guide_release_projection.py")
 
 
 def _imported_modules() -> set[str]:
@@ -118,3 +119,30 @@ def test_shared_carrier_omits_internal_runtime_and_authority_fields() -> None:
         "provider_response",
     }
     assert field_names.isdisjoint(forbidden)
+
+
+def test_target_contract_records_shared_carrier_and_non_scope() -> None:
+    text = Path("docs/contracts/targets/post-mvp-1/guide-runtime-release-v1.md").read_text(encoding="utf-8")
+
+    assert "GuideRuntimeReleaseProjectionUnavailable" in text
+    assert "rag_runtime.guide_release_projection" in text
+    assert "project_guide_runtime_release" in text
+    assert "재구현하거나 재검증하지 않는다" in text
+    assert "Backend public DTO" in text
+    assert "GuideRuntimeCanonicalCitationIdentity" in text
+
+
+def test_adapter_does_not_reimplement_existing_binding_kernels() -> None:
+    tree = ast.parse(ADAPTER_PATH.read_text(encoding="utf-8"), filename=str(ADAPTER_PATH))
+    imported_modules = {
+        node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module is not None
+    }
+    called_names = {
+        node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+
+    assert "ai_worker.tasks.rag.guide_claim_citation_validation" not in imported_modules
+    assert "ai_worker.tasks.rag.citation_authorization" not in imported_modules
+    assert "run_guide_claim_citation_validation" not in called_names
+    assert "validate_claim_citations" not in called_names
+    assert "finalize_citations" not in called_names
