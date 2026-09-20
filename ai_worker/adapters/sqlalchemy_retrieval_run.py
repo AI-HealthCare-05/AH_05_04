@@ -16,6 +16,7 @@ from sqlalchemy import (
     column,
     func,
     insert,
+    null,
     select,
     table,
     update,
@@ -37,10 +38,12 @@ from ai_worker.tasks.rag.retrieval_run import (
     PersistedHitInput,
     PersistedRetrievalRunReceipt,
     PersistedSignalInput,
+    PersistedTerminalReplayPayload,
     RetrievalRunStorePort,
     compute_hit_manifest_hash,
     compute_receipt_hash,
     compute_signal_manifest_hash,
+    sha256_canonical_json,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,6 +80,8 @@ _RETRIEVAL_RUN = table(
     column("diagnostic_code", String(80)),
     column("error_code", String(80)),
     column("search_receipt_hash", String(64)),
+    column("terminal_replay_payload", JSON),
+    column("terminal_replay_payload_hash", String(64)),
     column("receipt_hash", String(64)),
     column("started_at", DateTime(timezone=True)),
     column("completed_at", DateTime(timezone=True)),
@@ -141,10 +146,22 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
                     reason=BeginRetrievalRunFailureReason.DEPENDENCY_ERROR,
                     message="Corrupt stored retrieval run receipt",
                 )
+            try:
+                replay_payload = (
+                    PersistedTerminalReplayPayload.from_projection(run_row["terminal_replay_payload"])
+                    if run_row["terminal_replay_payload"] is not None
+                    else None
+                )
+            except ValueError:
+                return BeginRetrievalRunFailure(
+                    reason=BeginRetrievalRunFailureReason.DEPENDENCY_ERROR,
+                    message="Corrupt stored terminal replay payload",
+                )
             return BeginRetrievalRunSuccess(
                 run_id=run_id,
                 is_resumed=True,
                 existing_receipt=receipt,
+                existing_terminal_replay_payload=replay_payload,
             )
         return BeginRetrievalRunSuccess(run_id=run_id, is_resumed=True)
 
@@ -254,6 +271,12 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
                     signal_manifest_hash = compute_signal_manifest_hash(request.signals)
                     hit_manifest_hash = compute_hit_manifest_hash(request.hits)
                     selected_count = sum(1 for h in request.hits if h.selected)
+                    terminal_replay_projection = (
+                        request.terminal_replay_payload.to_projection() if request.terminal_replay_payload else None
+                    )
+                    terminal_replay_hash = (
+                        sha256_canonical_json(terminal_replay_projection) if terminal_replay_projection else None
+                    )
 
                     receipt_hash = compute_receipt_hash(
                         run_id=request.run_id,
@@ -270,6 +293,7 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
                         selected_count=selected_count,
                         signal_manifest_hash=signal_manifest_hash,
                         hit_manifest_hash=hit_manifest_hash,
+                        terminal_replay_payload_hash=terminal_replay_hash,
                     )
 
                     if run_row["status"] != "RUNNING":
@@ -292,6 +316,7 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
                                 search_receipt_hash=request.search_receipt_hash,
                                 diagnostic_code=request.diagnostic_code,
                                 error_code=request.error_code,
+                                terminal_replay_payload_hash=terminal_replay_hash,
                             )
                             return FinalizeRetrievalRunSuccess(receipt=receipt)
                         return FinalizeRetrievalRunFailure(
@@ -343,6 +368,10 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
                             diagnostic_code=request.diagnostic_code,
                             error_code=request.error_code,
                             search_receipt_hash=request.search_receipt_hash,
+                            terminal_replay_payload=(
+                                terminal_replay_projection if terminal_replay_projection is not None else null()
+                            ),
+                            terminal_replay_payload_hash=terminal_replay_hash,
                             receipt_hash=receipt_hash,
                             completed_at=func.now(),
                         )
@@ -367,6 +396,7 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
                         search_receipt_hash=request.search_receipt_hash,
                         diagnostic_code=request.diagnostic_code,
                         error_code=request.error_code,
+                        terminal_replay_payload_hash=terminal_replay_hash,
                     )
                     return FinalizeRetrievalRunSuccess(receipt=receipt)
         except Exception as e:
@@ -427,6 +457,22 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
         hit_manifest_hash = compute_hit_manifest_hash(hits)
         selected_count = sum(1 for h in hits if h.selected)
 
+        terminal_replay_projection = run_row["terminal_replay_payload"]
+        terminal_replay_hash = run_row["terminal_replay_payload_hash"]
+        if (terminal_replay_projection is None) != (terminal_replay_hash is None):
+            logger.error("Corrupt retrieval run %s: incomplete terminal replay payload", run_id)
+            return None
+        if terminal_replay_projection is not None:
+            try:
+                PersistedTerminalReplayPayload.from_projection(terminal_replay_projection)
+            except ValueError:
+                logger.error("Corrupt retrieval run %s: invalid terminal replay payload", run_id)
+                return None
+            expected_terminal_replay_hash = sha256_canonical_json(terminal_replay_projection)
+            if expected_terminal_replay_hash != terminal_replay_hash:
+                logger.error("Corrupt retrieval run %s: terminal replay payload hash mismatch", run_id)
+                return None
+
         expected_hash = compute_receipt_hash(
             run_id=run_id,
             job_id=UUID(run_row["job_id"]),
@@ -442,6 +488,7 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
             selected_count=selected_count,
             signal_manifest_hash=signal_manifest_hash,
             hit_manifest_hash=hit_manifest_hash,
+            terminal_replay_payload_hash=terminal_replay_hash,
         )
 
         # Integrity verification: fail closed if corrupt
@@ -472,4 +519,5 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
             search_receipt_hash=run_row["search_receipt_hash"],
             diagnostic_code=run_row["diagnostic_code"],
             error_code=run_row["error_code"],
+            terminal_replay_payload_hash=terminal_replay_hash,
         )

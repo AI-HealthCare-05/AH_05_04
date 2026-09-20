@@ -37,6 +37,7 @@ from ai_worker.tasks.rag.retrieval_run import (
     FinalizeRetrievalRunSuccess,
     PersistedHitInput,
     PersistedSignalInput,
+    PersistedTerminalReplayPayload,
 )
 from app.core import config  # type: ignore[attr-defined]
 
@@ -197,12 +198,26 @@ async def test_begin_and_finalize_lifecycle_postgresql(database) -> None:
         lexical_rank=1,
         dense_rank=1,
     )
+    replay_payload = PersistedTerminalReplayPayload(
+        search_receipt={
+            "artifact_ref": {
+                "artifact_code": "production_search_receipt",
+                "version": "2.0",
+                "content_sha256": "c" * 64,
+            },
+            "projection": {"projection_version": "production-search-receipt-v2"},
+        },
+        ordered_selected_hits=({"fusion_rank": 1, "knowledge_chunk_id": str(chunk_id)},),
+        gate_status="SUCCEEDED",
+        gate_reason="ELIGIBLE",
+    )
     fin_req = FinalizeRetrievalRunRequest(
         run_id=run_id,
         status="COMPLETED",
         search_receipt_hash="c" * 64,
         signals=(sig,),
         hits=(hit,),
+        terminal_replay_payload=replay_payload,
     )
     fin_res = await store.finalize_run(fin_req)
     assert isinstance(fin_res, FinalizeRetrievalRunSuccess)
@@ -217,12 +232,27 @@ async def test_begin_and_finalize_lifecycle_postgresql(database) -> None:
     assert outcome3.is_resumed is True
     assert outcome3.existing_receipt is not None
     assert outcome3.existing_receipt.receipt_hash == fin_res.receipt.receipt_hash
+    assert outcome3.existing_terminal_replay_payload == replay_payload
+    assert outcome3.existing_receipt.terminal_replay_payload_hash is not None
 
     # 5. terminal + different identity -> conflict
     req_differing = _create_begin_request(job_id, ctx_id, index_id, query_digest="9" * 64)
     conflict_outcome = await store.begin_run(req_differing)
     assert isinstance(conflict_outcome, BeginRetrievalRunFailure)
     assert conflict_outcome.reason == BeginRetrievalRunFailureReason.CONFLICT
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "UPDATE retrieval_run SET terminal_replay_payload = "
+                '(terminal_replay_payload::jsonb || \'{"gate_reason":"INSUFFICIENT"}\'::jsonb)::json '
+                "WHERE id = :run_id"
+            ),
+            {"run_id": str(run_id)},
+        )
+    tampered = await store.begin_run(req)
+    assert isinstance(tampered, BeginRetrievalRunFailure)
+    assert tampered.reason == BeginRetrievalRunFailureReason.DEPENDENCY_ERROR
 
 
 async def test_finalize_rollback_on_failure_preserves_running(database) -> None:

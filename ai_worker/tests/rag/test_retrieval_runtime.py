@@ -52,6 +52,7 @@ from ai_worker.tasks.rag.retrieval_run import (
     PersistedHitInput,
     PersistedRetrievalRunReceipt,
     PersistedSignalInput,
+    PersistedTerminalReplayPayload,
     compute_hit_manifest_hash,
     compute_receipt_hash,
     compute_signal_manifest_hash,
@@ -67,6 +68,8 @@ from ai_worker.tasks.rag.retrieval_runtime import (
     HybridRetrieveRequest,
     ProductionRetrievalRequest,
     RetrievalExecutionStatus,
+    _make_terminal_replay_payload,
+    _terminal_replay_outcome,
     compute_production_search_receipt,
     compute_selection_manifest_hash,
     execute_hybrid_retrieve,
@@ -153,16 +156,26 @@ def _make_dummy_hit(rank: int, chunk_id: UUID) -> ProductionSearchHit:
 
 
 class RecordingRunStore:
-    def __init__(self, resumed_receipt: PersistedRetrievalRunReceipt | None = None) -> None:
+    def __init__(
+        self,
+        resumed_receipt: PersistedRetrievalRunReceipt | None = None,
+        resumed_payload: PersistedTerminalReplayPayload | None = None,
+    ) -> None:
         self.calls: list[str] = []
         self.resumed_receipt = resumed_receipt
         self.run_id = uuid4()
+        self.resumed_payload = resumed_payload
         self.last_finalize_req: FinalizeRetrievalRunRequest | None = None
 
     async def begin_run(self, request: BeginRetrievalRunRequest) -> BeginRetrievalRunOutcome:
         self.calls.append("begin_run")
         if self.resumed_receipt is not None:
-            return BeginRetrievalRunSuccess(run_id=self.run_id, is_resumed=True, existing_receipt=self.resumed_receipt)
+            return BeginRetrievalRunSuccess(
+                run_id=self.run_id,
+                is_resumed=True,
+                existing_receipt=self.resumed_receipt,
+                existing_terminal_replay_payload=self.resumed_payload,
+            )
         return BeginRetrievalRunSuccess(run_id=self.run_id, is_resumed=False)
 
     async def finalize_run(self, request: FinalizeRetrievalRunRequest) -> FinalizeRetrievalRunOutcome:
@@ -367,6 +380,8 @@ async def test_execute_hybrid_retrieve_full_lifecycle_persisted() -> None:
     assert run_store.last_finalize_req is not None
     assert run_store.last_finalize_req.status == "COMPLETED"
 
+    assert run_store.last_finalize_req.terminal_replay_payload is not None
+
 
 @pytest.mark.asyncio
 async def test_execute_hybrid_retrieve_fast_path_resumed() -> None:
@@ -386,10 +401,35 @@ async def test_execute_hybrid_retrieve_fast_path_resumed() -> None:
         signal_manifest_hash="s" * 64,
         hit_manifest_hash="h" * 64,
     )
-    search_port = RecordingSearchPort(hits=())
-    run_store = RecordingRunStore(resumed_receipt=existing_receipt)
-    verifier = RecordingVerifier()
     sr = _make_dummy_search_request(RetrievalExecutionMode.LEXICAL_ONLY)
+    selected_hit = _make_dummy_hit(1, uuid4())
+    search_receipt = compute_production_search_receipt(
+        variant="RET-L",
+        status=RetrievalExecutionStatus.SUCCEEDED,
+        diagnostic_code=EvidenceGateReason.ELIGIBLE.value,
+        query_fingerprint=sr.query_fingerprint,
+        filter_snapshot_ref=sr.execution_binding.filter_snapshot_ref,
+        evidence_index_ref=sr.execution_binding.evidence_index_ref,
+        retrieval_config_ref=sr.execution_binding.retrieval_config.artifact_ref,
+        adapter_artifact_ref=ImmutableArtifactRef("adapter", "1.0", "8" * 64),
+        query_embedding_sha256=None,
+        signal_manifest_sha256="9" * 64,
+        hit_manifest_sha256="a" * 64,
+        selection_manifest_sha256=compute_selection_manifest_hash((selected_hit,)),
+    )
+    replay_payload = _make_terminal_replay_payload(
+        search_receipt,
+        EvidenceGateSuccess(selected_hits=(selected_hit,)),
+    )
+    existing_receipt = replace(
+        existing_receipt,
+        search_receipt_hash=search_receipt.artifact_ref.content_sha256,
+        diagnostic_code=EvidenceGateReason.ELIGIBLE.value,
+        selected_count=1,
+    )
+    search_port = RecordingSearchPort(hits=())
+    run_store = RecordingRunStore(resumed_receipt=existing_receipt, resumed_payload=replay_payload)
+    verifier = RecordingVerifier()
 
     req = HybridRetrieveRequest(
         job_id=uuid4(),
@@ -413,8 +453,67 @@ async def test_execute_hybrid_retrieve_fast_path_resumed() -> None:
 
     assert outcome.status == RetrievalExecutionStatus.SUCCEEDED
     assert outcome.persisted_receipt == existing_receipt
+    assert outcome.search_receipt == search_receipt
+    assert isinstance(outcome.gate_outcome, EvidenceGateSuccess)
+    assert outcome.gate_outcome.selected_hits == (selected_hit,)
     assert run_store.calls == ["begin_run"]
     assert search_port.calls == []
+    assert verifier.calls == []
+
+
+def test_terminal_replay_fails_closed_when_payload_does_not_match_persisted_receipt() -> None:
+    search_request = _make_dummy_search_request(RetrievalExecutionMode.LEXICAL_ONLY)
+    selected_hit = _make_dummy_hit(1, uuid4())
+    search_receipt = compute_production_search_receipt(
+        variant="RET-L",
+        status=RetrievalExecutionStatus.SUCCEEDED,
+        diagnostic_code=EvidenceGateReason.ELIGIBLE.value,
+        query_fingerprint=search_request.query_fingerprint,
+        filter_snapshot_ref=search_request.execution_binding.filter_snapshot_ref,
+        evidence_index_ref=search_request.execution_binding.evidence_index_ref,
+        retrieval_config_ref=search_request.execution_binding.retrieval_config.artifact_ref,
+        adapter_artifact_ref=ImmutableArtifactRef("adapter", "1.0", "8" * 64),
+        query_embedding_sha256=None,
+        signal_manifest_sha256="9" * 64,
+        hit_manifest_sha256="a" * 64,
+        selection_manifest_sha256=compute_selection_manifest_hash((selected_hit,)),
+    )
+    replay_payload = _make_terminal_replay_payload(
+        search_receipt,
+        EvidenceGateSuccess(selected_hits=(selected_hit,)),
+    )
+    mismatched_receipt = PersistedRetrievalRunReceipt(
+        run_id=uuid4(),
+        job_id=uuid4(),
+        node_id=HYBRID_RETRIEVE_NODE_ID,
+        variant=search_receipt.variant,
+        status="COMPLETED",
+        query_digest=search_receipt.query_fingerprint.digest,
+        retrieval_configuration_hash=search_receipt.retrieval_config_ref.content_sha256,
+        source_manifest_hash="f" * 64,
+        receipt_hash="0" * 64,
+        total_signals=0,
+        total_hits=1,
+        selected_count=1,
+        signal_manifest_hash="s" * 64,
+        hit_manifest_hash="h" * 64,
+        search_receipt_hash="f" * 64,
+        diagnostic_code=EvidenceGateReason.ELIGIBLE.value,
+    )
+
+    outcome = _terminal_replay_outcome(
+        BeginRetrievalRunSuccess(
+            run_id=mismatched_receipt.run_id,
+            is_resumed=True,
+            existing_receipt=mismatched_receipt,
+            existing_terminal_replay_payload=replay_payload,
+        )
+    )
+
+    assert outcome.status == RetrievalExecutionStatus.DEPENDENCY_ERROR
+    assert outcome.persisted_receipt is None
+    assert outcome.search_receipt is None
+    assert outcome.gate_outcome.reason == EvidenceGateReason.INVALID_BINDING
 
 
 @pytest.mark.asyncio
