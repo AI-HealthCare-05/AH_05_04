@@ -1033,7 +1033,23 @@ AI Worker는 Backend ORM을 import하지 않는 SQLAlchemy Core read-only adapte
 exact-match 조회한다. latest/current/newest selector는 없으며, `RETRIEVAL` approval이
 `PATIENT_CITATION` approval을 대신하지 않는다. Source Writer는 SELECT/INSERT와 세 revocation
 column UPDATE만 갖고 Runtime/AI Worker는 SELECT만 갖는다. DB_APP_USER write set, Member Decision,
-CitationAuthorizationReceipt, Guide/Release/Public Track F는 이 저장소의 범위가 아니다.
+Guide/Release/Public Track F는 이 저장소의 범위가 아니다.
+
+## #869 Citation Authorization historical authority — Target
+
+Migration `869a1b2c3d4e` adds four append-only tables. Source Decision preserves the exact #806
+request, #853/#807 approval identity, explicit evaluation time, and observed Source/Snapshot state.
+Member Decision references Source Decision and preserves the exact selected member identity plus
+observed Endpoint/Operation or Artifact binding state. Receipt is unique by `request_sha256`; Receipt
+Selection preserves the pure request manifest order. Receipt's `(bundle_id, bundle_manifest_hash)`
+composite FK pins the exact `rag_runtime_release_bundle` row. Additional composite FK/UNIQUE
+constraints bind every Selection to the same request and exact Receipt/Source/Member content hashes,
+while exact-read also fail-closes on request, ref, outcome, or copied selection-field disagreement.
+
+The Worker SQLAlchemy Core store owns INSERT/exact SELECT only and never commits. Runtime ACL is
+`SELECT, INSERT`; `UPDATE`, `DELETE`, and `TRUNCATE` remain denied. Any historical row blocks
+destructive downgrade. This schema does not add current/latest selectors or alter the pure Citation,
+#806, #807, or #853 contracts.
 
 ## #712 Assessment·Eligibility Authority 영속 — 구현, Proposed
 

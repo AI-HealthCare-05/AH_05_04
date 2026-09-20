@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   provision:
@@ -121,7 +122,7 @@ jobs:
           PROTECTED_DB_CONTROL_PASSWORD: ${{ secrets.PROTECTED_DB_CONTROL_PASSWORD }}
           PROTECTED_APPROVAL_REPOSITORY: ${{ secrets.PROTECTED_APPROVAL_REPOSITORY }}
           PROTECTED_APPROVAL_BRANCH: ${{ secrets.PROTECTED_APPROVAL_BRANCH }}
-          PROTECTED_APPROVAL_GITHUB_TOKEN: ${{ secrets.PROTECTED_APPROVAL_GITHUB_TOKEN }}
+          PROTECTED_APPROVAL_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
