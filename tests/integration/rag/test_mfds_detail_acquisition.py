@@ -38,11 +38,8 @@ from app.repositories.rag_source_catalog_repository import (
 )
 from tests.integration.rag.test_catalog_storage_roundtrip import (
     PRODUCT_SNAPSHOT,  # noqa: F401 -- reusable disposable migrated database fixture
-    CatalogApprovalReceipt,
-    CatalogFreshnessStatus,
-    CatalogSourceApproval,
-    CatalogVerificationStatus,
     _product,
+    seed_catalog_approval_receipt,
 )
 from tests.integration.rag.test_catalog_storage_roundtrip import database as _database
 
@@ -118,19 +115,12 @@ async def test_real_snapshot_receipt_reaches_catalog_and_candidate(database, tmp
         assert await session.scalar(select(func.count()).select_from(RagSourceIngestionArtifact)) == 1
     verifier = AsyncMock()
 
-    def approve(*, catalog_version, export_checksum, source_refs):
-        return CatalogApprovalReceipt(
-            "synthetic-detail-approval",
-            catalog_version,
-            export_checksum,
-            CatalogVerificationStatus.APPROVED,
-            True,
-            tuple(
-                CatalogSourceApproval(
-                    ref, "synthetic-source", CatalogVerificationStatus.APPROVED, CatalogFreshnessStatus.CURRENT
-                )
-                for ref in source_refs
-            ),
+    async def approve(*, catalog_version, export_checksum, source_refs):
+        return await seed_catalog_approval_receipt(
+            factory,
+            catalog_version=catalog_version,
+            export_checksum=export_checksum,
+            source_refs=source_refs,
         )
 
     verifier.verify.side_effect = approve

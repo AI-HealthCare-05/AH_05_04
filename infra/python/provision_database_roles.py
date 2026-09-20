@@ -10,7 +10,12 @@ from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from infra.python.candidate_index_role_policy import apply_candidate_index_role_policy
-from infra.python.catalog_role_policy import CATALOG_WRITE_TABLES, apply_catalog_role_policy
+from infra.python.catalog_approval_role_policy import apply_catalog_approval_role_policy
+from infra.python.catalog_role_policy import (
+    CATALOG_APPROVAL_READ_TABLES,
+    CATALOG_WRITE_TABLES,
+    apply_catalog_role_policy,
+)
 from infra.python.knowledge_index_role_policy import (
     KNOWLEDGE_INDEX_RUNTIME_READ_TABLES,
     apply_knowledge_index_role_policy,
@@ -226,6 +231,7 @@ async def provision_roles(
     knowledge_index_builder: str | None = None,
     account_withdrawal_cleanup: str | None = None,
     candidate_index_builder: str | None = None,
+    catalog_approval: str | None = None,
 ) -> None:
     """Caller must use a single admin transaction; failure must roll it back."""
     validate_distinct_role_names(
@@ -237,6 +243,7 @@ async def provision_roles(
         knowledge_index_builder,
         account_withdrawal_cleanup,
         candidate_index_builder,
+        catalog_approval,
     )
     owner_sql, runtime_sql, writer_sql = (quoted_identifier(value) for value in (owner, runtime, writer))
     cleanup_sql = quoted_identifier(account_withdrawal_cleanup) if account_withdrawal_cleanup else None
@@ -271,6 +278,7 @@ async def provision_roles(
         RUNTIME_MUTABLE_TABLES
         | RUNTIME_APPEND_ONLY_TABLES
         | CATALOG_WRITE_TABLES
+        | CATALOG_APPROVAL_READ_TABLES
         | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
         | CANDIDATE_INDEX_RUNTIME_READ_TABLES
         | set(SOURCE_TABLES)
@@ -292,7 +300,10 @@ async def provision_roles(
         (RUNTIME_MUTABLE_TABLES, "SELECT, INSERT, UPDATE, DELETE"),
         (RUNTIME_APPEND_ONLY_TABLES, "SELECT, INSERT"),
         (
-            CATALOG_WRITE_TABLES | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES | CANDIDATE_INDEX_RUNTIME_READ_TABLES,
+            CATALOG_WRITE_TABLES
+            | CATALOG_APPROVAL_READ_TABLES
+            | KNOWLEDGE_INDEX_RUNTIME_READ_TABLES
+            | CANDIDATE_INDEX_RUNTIME_READ_TABLES,
             "SELECT",
         ),
     ):
@@ -362,6 +373,7 @@ async def provision_roles(
         catalog_writer=catalog_writer,
         knowledge_index_builder=knowledge_index_builder,
         candidate_index_builder=candidate_index_builder,
+        catalog_approval=catalog_approval,
     )
 
 
@@ -375,6 +387,7 @@ async def _apply_optional_role_policies(
     catalog_writer: str | None,
     knowledge_index_builder: str | None,
     candidate_index_builder: str | None,
+    catalog_approval: str | None = None,
 ) -> None:
     if catalog_writer:
         await apply_catalog_role_policy(
@@ -401,6 +414,15 @@ async def _apply_optional_role_policies(
             owner=owner,
             runtime=runtime,
             builder=knowledge_index_builder,
+        )
+    # #526 Phase 2: 승인 발급·철회 전용 role. Catalog Writer 권한은 바꾸지 않는다.
+    if catalog_approval:
+        await apply_catalog_approval_role_policy(
+            connection,
+            owner=owner,
+            runtime=runtime,
+            approval=catalog_approval,
+            catalog_writer=catalog_writer,
         )
 
 
@@ -462,6 +484,7 @@ async def run_provisioning(environment: Mapping[str, str]) -> None:
         environment.get("KNOWLEDGE_INDEX_BUILDER_USER") or None,
         environment.get("ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE") or None,
         environment.get("CANDIDATE_INDEX_BUILDER_USER") or None,
+        environment.get("CATALOG_APPROVAL_USER") or None,
     )
     engine = create_async_engine(
         URL.create(
@@ -486,6 +509,7 @@ async def run_provisioning(environment: Mapping[str, str]) -> None:
                 knowledge_index_builder=environment.get("KNOWLEDGE_INDEX_BUILDER_USER") or None,
                 account_withdrawal_cleanup=environment.get("ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE") or None,
                 candidate_index_builder=environment.get("CANDIDATE_INDEX_BUILDER_USER") or None,
+                catalog_approval=environment.get("CATALOG_APPROVAL_USER") or None,
             )
     finally:
         await engine.dispose()

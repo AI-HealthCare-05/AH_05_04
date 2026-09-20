@@ -2504,3 +2504,256 @@ async def test_candidate_index_builder_least_privilege_and_execution_boundary(da
             for role in (runtime, writer, cat_writer, cand_builder, unrelated):
                 await connection.execute(text(f'DROP OWNED BY "{role}"'))
                 await connection.execute(text(f'DROP ROLE IF EXISTS "{role}"'))
+
+
+async def _assert_column_privileges(connection, *, table: str, columns: tuple[str, ...], privilege: str) -> None:
+    for column in columns:
+        assert await connection.scalar(
+            text("SELECT has_column_privilege(current_user, :table, :column, :privilege)"),
+            {"table": table, "column": column, "privilege": privilege},
+        )
+
+
+async def _assert_statements_forbidden(engine, statements: tuple[str, ...]) -> None:
+    for statement in statements:
+        with pytest.raises(DBAPIError) as error:
+            async with engine.begin() as connection:
+                await connection.execute(text(statement))
+        assert error.value.orig.sqlstate == "42501"
+
+
+async def test_catalog_approval_role_least_privilege_and_boundary(database) -> None:
+    """#526 Phase 2: Verify Catalog approval role least-privilege boundary and writer separation."""
+    from ai_worker.admin.catalog_approval import ApprovalRequest, fingerprint, set_permission
+    from ai_worker.admin.catalog_writer import validate_catalog_writer
+    from infra.python.catalog_approval_role_policy import (
+        APPROVAL_INSERT_TABLES,
+        APPROVAL_READ_TABLES,
+        APPROVAL_SOURCE_READ_TABLES,
+        APPROVAL_STATE_INSERT_TABLES,
+        REVOCABLE_TABLES,
+        validate_catalog_approval_connection,
+    )
+    from infra.python.catalog_role_policy import CATALOG_APPROVAL_READ_TABLES
+    from infra.python.provision_database_roles import provision_roles
+
+    admin = database
+    suffix = uuid4().hex[:12]
+    runtime, writer, cat_writer, appr_role, unrelated = (
+        f"bnd_{part}_{suffix}" for part in ("runtime", "writer", "catw", "appr", "unrel")
+    )
+    password = f"synthetic-{suffix}-only"
+
+    cat_engine = create_async_engine(admin.url.set(username=cat_writer, password=password))
+    appr_engine = create_async_engine(admin.url.set(username=appr_role, password=password))
+    reader_engine = create_async_engine(admin.url.set(username=runtime, password=password))
+
+    try:
+        # 1. Provision roles with Catalog Writer and Catalog Approval
+        async with admin.begin() as connection:
+            for role in (runtime, writer, cat_writer, appr_role, unrelated):
+                await connection.execute(text(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"))
+            await provision_roles(
+                connection,
+                owner=config.DB_USER,
+                runtime=runtime,
+                writer=writer,
+                catalog_writer=cat_writer,
+                catalog_approval=appr_role,
+            )
+
+        # Empty permission state must be bootstrap-capable through the dedicated approval DB principal.
+        actor_id = uuid4()
+        request_id = uuid4()
+        evidence_ref = "synthetic://catalog-approval-bootstrap"
+        async with admin.begin() as connection:
+            assert await connection.scalar(text("SELECT count(*) FROM catalog_approval_permission")) == 0
+            await connection.execute(
+                text(
+                    'INSERT INTO "user" (id, email, hashed_password, name, is_active, is_admin) '
+                    "VALUES (:id, :email, 'synthetic-hash', '합성 승인자', true, false)"
+                ),
+                {"id": str(actor_id), "email": f"appr-{uuid4().hex[:8]}@example.test"},
+            )
+
+        request = ApprovalRequest(actor_id=actor_id, request_id=request_id, evidence_ref=evidence_ref)
+        approval_sessions = async_sessionmaker(appr_engine, expire_on_commit=False)
+        async with approval_sessions.begin() as session:
+            result = await set_permission(session, request=request, user_id=actor_id, enabled=True)
+        assert result["status"] == "APPLIED"
+
+        expected_fingerprint = fingerprint(
+            {
+                "actor_id": str(actor_id),
+                "request_id": str(request_id),
+                "evidence_ref": evidence_ref,
+                "user_id": str(actor_id),
+                "enabled": True,
+                "event_kind": "GRANT_PERMISSION",
+            }
+        )
+        async with admin.connect() as connection:
+            permission = (
+                await connection.execute(
+                    text(
+                        "SELECT user_id, enabled, evidence_ref, revision "
+                        "FROM catalog_approval_permission WHERE user_id=:user_id"
+                    ),
+                    {"user_id": str(actor_id)},
+                )
+            ).one()
+            assert permission == (str(actor_id), True, evidence_ref, 1)
+            audit = (
+                await connection.execute(
+                    text(
+                        "SELECT event_kind, actor_id, subject_user_id, request_id, evidence_ref, request_fingerprint "
+                        "FROM catalog_approval_audit"
+                    )
+                )
+            ).one()
+            assert audit == (
+                "GRANT_PERMISSION",
+                str(actor_id),
+                str(actor_id),
+                str(request_id),
+                evidence_ref,
+                expected_fingerprint,
+            )
+
+        # 2. Validate Approval role connection
+        async with appr_engine.connect() as conn:
+            await validate_catalog_approval_connection(conn)
+
+            await _assert_column_privileges(
+                conn,
+                table="catalog_approval_permission",
+                columns=("user_id", "enabled", "evidence_ref", "revision", "updated_at"),
+                privilege="INSERT",
+            )
+            await _assert_column_privileges(
+                conn,
+                table="catalog_approval_permission",
+                columns=("enabled", "evidence_ref", "revision", "updated_at"),
+                privilege="UPDATE",
+            )
+            assert not await conn.scalar(
+                text("SELECT has_column_privilege(current_user, 'catalog_approval_permission', 'user_id', 'UPDATE')")
+            )
+
+            # Approval role can SELECT approval and source tables
+            for table in sorted(APPROVAL_READ_TABLES | APPROVAL_SOURCE_READ_TABLES):
+                count = await conn.scalar(text(f"SELECT count(*) FROM public.{table}"))
+                assert count >= 0
+
+            # Approval role can SELECT allowed user columns
+            user_row = await conn.execute(text('SELECT id, is_active, account_status FROM public."user" LIMIT 1'))
+            assert user_row is not None
+
+        revoke_request = ApprovalRequest(
+            actor_id=actor_id,
+            request_id=uuid4(),
+            evidence_ref="synthetic://catalog-approval-bootstrap-revoke",
+        )
+        async with approval_sessions.begin() as session:
+            updated = await set_permission(session, request=revoke_request, user_id=actor_id, enabled=False)
+        assert updated["status"] == "APPLIED"
+        assert updated["revision"] == 2
+        async with admin.connect() as connection:
+            assert (
+                await connection.execute(
+                    text(
+                        "SELECT enabled, evidence_ref, revision FROM catalog_approval_permission WHERE user_id=:user_id"
+                    ),
+                    {"user_id": str(actor_id)},
+                )
+            ).one() == (False, revoke_request.evidence_ref, 2)
+            assert await connection.scalar(text("SELECT count(*) FROM catalog_approval_audit")) == 2
+
+        # Approval role CANNOT SELECT user sensitive columns (e.g. hashed_password)
+        with pytest.raises(DBAPIError) as error:
+            async with appr_engine.connect() as conn:
+                await conn.execute(text('SELECT hashed_password FROM public."user" LIMIT 1'))
+        assert error.value.orig.sqlstate == "42501"
+
+        # Approval role can UPDATE revocable columns
+        async with appr_engine.begin() as conn:
+            for table in sorted(REVOCABLE_TABLES):
+                await conn.execute(
+                    text(f"UPDATE public.{table} SET revoked_at = NOW(), revoked_reason = 'test' WHERE false")
+                )
+
+        # Approval role CANNOT UPDATE non-revocable columns on approval tables
+        with pytest.raises(DBAPIError) as error:
+            async with appr_engine.begin() as conn:
+                await conn.execute(
+                    text("UPDATE public.catalog_build_approval SET catalog_version = 'forbidden' WHERE false")
+                )
+        assert error.value.orig.sqlstate == "42501"
+
+        # Approval role CANNOT DELETE/TRUNCATE approval state or append-only audit.
+        forbidden_state_changes = tuple(
+            operation
+            for table in sorted(APPROVAL_INSERT_TABLES | APPROVAL_STATE_INSERT_TABLES)
+            for operation in (f"DELETE FROM public.{table} WHERE false", f"TRUNCATE public.{table}")
+        )
+        await _assert_statements_forbidden(
+            appr_engine,
+            forbidden_state_changes
+            + (
+                "UPDATE public.catalog_approval_audit SET event_kind = event_kind WHERE false",
+                "UPDATE public.catalog_approval_permission SET user_id = user_id WHERE false",
+                "CREATE TABLE public.catalog_approval_forbidden (id integer)",
+            ),
+        )
+
+        # Approval role CANNOT write to Catalog business tables
+        for stmt in (
+            "INSERT INTO public.rag_medication_product (id) VALUES ('00000000-0000-0000-0000-000000000001'::uuid)",
+            "UPDATE public.rag_medication_product SET product_name = 'fail' WHERE false",
+            "DELETE FROM public.rag_medication_product WHERE false",
+        ):
+            with pytest.raises(DBAPIError) as error:
+                async with appr_engine.begin() as conn:
+                    await conn.execute(text(stmt))
+            assert error.value.orig.sqlstate == "42501"
+
+        # 3. Validate Catalog Writer: can read approval tables, CANNOT write to approval tables
+        async with cat_engine.connect() as conn:
+            await validate_catalog_writer(conn)
+            for table in sorted(CATALOG_APPROVAL_READ_TABLES):
+                count = await conn.scalar(text(f"SELECT count(*) FROM public.{table}"))
+                assert count >= 0
+
+        # Catalog Writer CANNOT insert, update, or delete on approval tables
+        for table in sorted(APPROVAL_INSERT_TABLES | APPROVAL_STATE_INSERT_TABLES):
+            with pytest.raises(DBAPIError) as error:
+                async with cat_engine.begin() as conn:
+                    await conn.execute(text(f"INSERT INTO public.{table} DEFAULT VALUES"))
+            assert error.value.orig.sqlstate == "42501"
+
+        with pytest.raises(DBAPIError) as error:
+            async with cat_engine.begin() as conn:
+                await conn.execute(
+                    text("UPDATE public.catalog_build_approval SET catalog_version = 'forbidden' WHERE false")
+                )
+        assert error.value.orig.sqlstate == "42501"
+
+        with pytest.raises(DBAPIError) as error:
+            async with cat_engine.begin() as conn:
+                await conn.execute(text("DELETE FROM public.catalog_build_approval WHERE false"))
+        assert error.value.orig.sqlstate == "42501"
+
+        # 4. Validate Runtime: can read approval tables (Phase 2 requirement for load_build verification)
+        async with reader_engine.connect() as conn:
+            for table in sorted(CATALOG_APPROVAL_READ_TABLES):
+                count = await conn.scalar(text(f"SELECT count(*) FROM public.{table}"))
+                assert count >= 0
+
+    finally:
+        await cat_engine.dispose()
+        await appr_engine.dispose()
+        await reader_engine.dispose()
+        async with admin.begin() as connection:
+            for role in (runtime, writer, cat_writer, appr_role, unrelated):
+                await connection.execute(text(f'DROP OWNED BY "{role}"'))
+                await connection.execute(text(f'DROP ROLE IF EXISTS "{role}"'))
