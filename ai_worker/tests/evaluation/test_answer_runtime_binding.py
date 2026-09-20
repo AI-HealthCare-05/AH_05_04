@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import replace
 from decimal import Decimal
@@ -17,8 +18,13 @@ from ai_worker.tasks.evaluation.answer_comparison import (
     build_answer_pair_comparison,
 )
 from ai_worker.tasks.evaluation.answer_runtime_binding import (
+    AggregatedProviderInvocation,
+    AnswerRuntimeBindingMaterializationInput,
+    MaterializedAnswerRuntimeSupplementalBindings,
+    ProviderInvocationObservation,
     compute_answer_runtime_binding_manifest_sha256,
     compute_input_context_binding_hash,
+    compute_input_context_binding_hash_from_cases,
     compute_not_applied_binding_hash,
     compute_parser_binding_hash,
     compute_prompt_structure_binding_hash,
@@ -29,11 +35,17 @@ from ai_worker.tasks.evaluation.answer_runtime_binding import (
     compute_source_index_binding_hash,
     compute_timeout_binding_hash,
     compute_token_limit_binding_hash,
+    materialize_answer_runtime_supplemental_bindings,
     project_answer_runtime_binding_manifest,
+    validate_and_aggregate_provider_observations,
     validate_answer_runtime_binding_manifest_for_run,
 )
 from ai_worker.tasks.evaluation.canonical import JsonValue, canonical_json_bytes, canonical_sha256
-from ai_worker.tasks.evaluation.config import ActualRetrievalModelConfig, DevExecutionRequest
+from ai_worker.tasks.evaluation.config import (
+    ActualRetrievalModelConfig,
+    DevExecutionRequest,
+    DevVariant,
+)
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.schemas.answer_quality_v1 import (
     AnswerRuntimeAuthorityBindingManifest,
@@ -171,13 +183,36 @@ def _provenance() -> GuidelineGenerationProvenance:
     )
 
 
-def _execution_request(seed: int) -> DevExecutionRequest:
+def _answer_variant(
+    variant_id: str = "ANS-RAG",
+    *,
+    token_limit: int = 2048,
+    timeout: int | float | Decimal = 30,
+) -> DevVariant:
+    return DevVariant(
+        variant_id=variant_id,
+        variant_version="1.0.0",
+        kind="ANSWER",
+        model_config={"model": "gpt-4o"},
+        prompt_version="1.0.0",
+        parameters={"token_limit": token_limit, "timeout": cast(JsonValue, timeout)},
+    )
+
+
+def _execution_request(
+    seed: int,
+    *,
+    answer_variant: DevVariant | None = None,
+    variant_id: str = "ANS-RAG",
+    experiment_type: ExperimentType = ExperimentType.ANSWER_GROUNDING_SAFETY,
+    experiment_id: str = "exp-answer-dev-1",
+) -> DevExecutionRequest:
     return DevExecutionRequest(
         config_id="answer-dev",
         config_version="1.0.0",
-        experiment_id="exp-answer-dev-1",
-        experiment_type=ExperimentType.ANSWER_GROUNDING_SAFETY,
-        variant_id="ANS-RAG",
+        experiment_id=experiment_id,
+        experiment_type=experiment_type,
+        variant_id=variant_id,
         evaluated_partitions=("DEV",),
         environment="LOCAL",
         dataset_manifest_path="evals/dataset.json",
@@ -187,7 +222,7 @@ def _execution_request(seed: int) -> DevExecutionRequest:
         suite_path="evals/suite.json",
         upstream_contract_manifest_hash="a" * 64,
         retrieval_variant=None,
-        answer_variant=None,
+        answer_variant=answer_variant,
         seed=seed,
         retry_policy="NO_AUTOMATIC_RETRY",
         max_attempts=1,
@@ -766,3 +801,606 @@ def test_binding_payload_contains_no_raw_or_request_specific_content() -> None:
     )
 
     assert all(value not in serialized for value in forbidden)
+
+
+def test_input_context_from_cases_matches_loaded_bundle() -> None:
+    run_id = "11111111-1111-4111-8111-111111111111"
+    base_bundle = _make_bundle(AnswerVariantId.ANS_RAG, run_id=run_id)
+    case_1 = _make_cases(run_id, case_id="case-01", input_sha256="1" * 64)[0]
+    case_2 = _make_cases(run_id, case_id="case-02", input_sha256="2" * 64)[0]
+    case_3 = _make_cases(run_id, case_id="case-03", input_sha256="3" * 64)[0]
+
+    bundle = replace(base_bundle, cases=(case_1, case_2, case_3))
+    bundle_hash = compute_input_context_binding_hash(bundle)
+    from_cases_hash = compute_input_context_binding_hash_from_cases((case_1, case_2, case_3))
+    assert from_cases_hash == bundle_hash
+
+    shuffled_hash = compute_input_context_binding_hash_from_cases((case_3, case_1, case_2))
+    assert shuffled_hash == bundle_hash
+
+
+def test_provider_invocation_observation_validation() -> None:
+    run_id = "11111111-1111-4111-8111-111111111111"
+    valid = ProviderInvocationObservation(
+        case_id="case-1",
+        run_id=run_id,
+        variant_id="ANS-RAG",
+        temperature="0",
+        max_output_tokens=2048,
+        timeout_seconds=Decimal("30"),
+    )
+    assert valid.case_id == "case-1"
+    assert valid.temperature == "0"
+    assert valid.max_output_tokens == 2048
+    assert valid.timeout_seconds == Decimal("30")
+
+    # Blank case ID
+    for blank_id in ("", "   "):
+        with pytest.raises(EvaluationValidationError) as exc:
+            ProviderInvocationObservation(
+                case_id=blank_id,
+                run_id=run_id,
+                variant_id="ANS-RAG",
+                temperature="0",
+                max_output_tokens=2048,
+                timeout_seconds=Decimal("30"),
+            )
+        assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Non-canonical UUID run_id
+    for bad_run_id in ("not-a-uuid", "11111111-1111-4111-8111-11111111111G", "A1111111-1111-4111-8111-111111111111"):
+        with pytest.raises(EvaluationValidationError) as exc:
+            ProviderInvocationObservation(
+                case_id="case-1",
+                run_id=bad_run_id,
+                variant_id="ANS-RAG",
+                temperature="0",
+                max_output_tokens=2048,
+                timeout_seconds=Decimal("30"),
+            )
+        assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Invalid variant_id
+    with pytest.raises(EvaluationValidationError) as exc:
+        ProviderInvocationObservation(
+            case_id="case-1",
+            run_id=run_id,
+            variant_id="ANS-UNKNOWN",
+            temperature="0",
+            max_output_tokens=2048,
+            timeout_seconds=Decimal("30"),
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Temperature != "0" or non-str
+    for bad_temp in ("0.0", "1", 0, Decimal("0"), None):
+        with pytest.raises(EvaluationValidationError) as exc:
+            ProviderInvocationObservation(
+                case_id="case-1",
+                run_id=run_id,
+                variant_id="ANS-RAG",
+                temperature=bad_temp,  # type: ignore[arg-type]
+                max_output_tokens=2048,
+                timeout_seconds=Decimal("30"),
+            )
+        assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # max_output_tokens invalid (bool, 0, negative, > MAX_SAFE_INTEGER, non-int)
+    for bad_tokens in (True, False, 0, -1, 2**53, "2048", 2048.0):
+        with pytest.raises(EvaluationValidationError) as exc:
+            ProviderInvocationObservation(
+                case_id="case-1",
+                run_id=run_id,
+                variant_id="ANS-RAG",
+                temperature="0",
+                max_output_tokens=bad_tokens,  # type: ignore[arg-type]
+                timeout_seconds=Decimal("30"),
+            )
+        assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # timeout_seconds invalid (non-Decimal: int, float, str, or non-finite/non-positive Decimal)
+    for bad_timeout in (
+        30,
+        30.0,
+        "30",
+        Decimal("nan"),
+        Decimal("inf"),
+        Decimal("-inf"),
+        Decimal("0"),
+        Decimal("-1"),
+    ):
+        with pytest.raises(EvaluationValidationError) as exc:
+            ProviderInvocationObservation(
+                case_id="case-1",
+                run_id=run_id,
+                variant_id="ANS-RAG",
+                temperature="0",
+                max_output_tokens=2048,
+                timeout_seconds=bad_timeout,  # type: ignore[arg-type]
+            )
+        assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+def _observations_for_cases(
+    run_id: str,
+    case_ids: Sequence[str],
+    *,
+    variant_id: str = "ANS-RAG",
+    temperature: str = "0",
+    max_output_tokens: int = 2048,
+    timeout_seconds: Decimal = Decimal("30"),
+) -> tuple[ProviderInvocationObservation, ...]:
+    return tuple(
+        ProviderInvocationObservation(
+            case_id=cid,
+            run_id=run_id,
+            variant_id=variant_id,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            timeout_seconds=timeout_seconds,
+        )
+        for cid in case_ids
+    )
+
+
+def test_validate_and_aggregate_provider_observations_success() -> None:
+    run_id = "11111111-1111-4111-8111-111111111111"
+    cases = ("case-1", "case-2", "case-3")
+    observations = _observations_for_cases(run_id, cases)
+    req = _execution_request(7, answer_variant=_answer_variant("ANS-RAG", token_limit=2048, timeout=30))
+
+    aggregated = validate_and_aggregate_provider_observations(
+        run_id=run_id,
+        variant_id=AnswerVariantId.ANS_RAG,
+        required_case_ids=cases,
+        observations=observations,
+        execution_request=req,
+    )
+
+    assert isinstance(aggregated, AggregatedProviderInvocation)
+    assert aggregated.temperature == "0"
+    assert aggregated.max_output_tokens == 2048
+    assert aggregated.timeout_seconds == Decimal("30")
+
+
+def test_validate_and_aggregate_provider_observations_rejections() -> None:
+    run_id = "11111111-1111-4111-8111-111111111111"
+    cases = ("case-1", "case-2")
+    req = _execution_request(7, answer_variant=_answer_variant("ANS-RAG", token_limit=2048, timeout=30))
+    obs = _observations_for_cases(run_id, cases)
+
+    # Non-canonical run_id
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id="bad-run-id",
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=obs,
+            execution_request=req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Invalid variant_id type
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id="ANS-RAG",  # type: ignore[arg-type]
+            required_case_ids=cases,
+            observations=obs,
+            execution_request=req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Empty required_case_ids
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=(),
+            observations=obs,
+            execution_request=req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Duplicate in required_case_ids
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=("case-1", "case-1"),
+            observations=obs,
+            execution_request=req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Blank ID in required_case_ids
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=("case-1", ""),
+            observations=obs,
+            execution_request=req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Wrong execution_request type
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=obs,
+            execution_request=None,  # type: ignore[arg-type]
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Wrong experiment_type
+    bad_exp_req = _execution_request(
+        7,
+        experiment_type=ExperimentType.KNOWLEDGE_RETRIEVAL,
+        answer_variant=_answer_variant("ANS-RAG"),
+    )
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=obs,
+            execution_request=bad_exp_req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Variant mismatch
+    bad_var_req = _execution_request(
+        7,
+        variant_id="ANS-BASE",
+        answer_variant=_answer_variant("ANS-BASE"),
+    )
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=obs,
+            execution_request=bad_var_req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Missing answer_variant
+    no_ans_req = _execution_request(7, answer_variant=None)
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=obs,
+            execution_request=no_ans_req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Wrong kind in answer_variant
+    ret_variant = DevVariant(
+        variant_id="ANS-RAG",
+        variant_version="1.0.0",
+        kind="RETRIEVAL",
+        model_config={"model": "gpt-4o"},
+        prompt_version="1.0.0",
+        parameters={"token_limit": 2048, "timeout": 30},
+    )
+    bad_kind_req = _execution_request(7, answer_variant=ret_variant)
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=obs,
+            execution_request=bad_kind_req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Missing parameter in answer_variant
+    no_token_variant = DevVariant(
+        variant_id="ANS-RAG",
+        variant_version="1.0.0",
+        kind="ANSWER",
+        model_config={"model": "gpt-4o"},
+        prompt_version="1.0.0",
+        parameters={"timeout": 30},
+    )
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=obs,
+            execution_request=_execution_request(7, answer_variant=no_token_variant),
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Bool in token_limit
+    bool_token_variant = DevVariant(
+        variant_id="ANS-RAG",
+        variant_version="1.0.0",
+        kind="ANSWER",
+        model_config={"model": "gpt-4o"},
+        prompt_version="1.0.0",
+        parameters={"token_limit": True, "timeout": 30},
+    )
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=obs,
+            execution_request=_execution_request(7, answer_variant=bool_token_variant),
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # str in timeout (strictly forbidden)
+    str_timeout_variant = DevVariant(
+        variant_id="ANS-RAG",
+        variant_version="1.0.0",
+        kind="ANSWER",
+        model_config={"model": "gpt-4o"},
+        prompt_version="1.0.0",
+        parameters={"token_limit": 2048, "timeout": "30"},
+    )
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=obs,
+            execution_request=_execution_request(7, answer_variant=str_timeout_variant),
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Empty observations
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=(),
+            execution_request=req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Missing case in observations
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=_observations_for_cases(run_id, ("case-1",)),
+            execution_request=req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Duplicate case in observations
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=_observations_for_cases(run_id, ("case-1", "case-1")),
+            execution_request=req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Extra case in observations
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=_observations_for_cases(run_id, ("case-1", "case-2", "case-3")),
+            execution_request=req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Wrong run_id in observation
+    obs_wrong_run = (
+        obs[0],
+        replace(obs[1], run_id="22222222-2222-4222-8222-222222222222"),
+    )
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=obs_wrong_run,
+            execution_request=req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Wrong variant_id in observation
+    obs_wrong_variant = (
+        obs[0],
+        replace(obs[1], variant_id="ANS-BASE"),
+    )
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=obs_wrong_variant,
+            execution_request=req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Token limit drift
+    obs_token_drift = (
+        obs[0],
+        replace(obs[1], max_output_tokens=1024),
+    )
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=obs_token_drift,
+            execution_request=req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Timeout drift
+    obs_timeout_drift = (
+        obs[0],
+        replace(obs[1], timeout_seconds=Decimal("15")),
+    )
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=obs_timeout_drift,
+            execution_request=req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Config mismatch: token limit
+    mismatched_token_req = _execution_request(
+        7, answer_variant=_answer_variant("ANS-RAG", token_limit=4096, timeout=30)
+    )
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=obs,
+            execution_request=mismatched_token_req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Config mismatch: timeout
+    mismatched_timeout_req = _execution_request(
+        7, answer_variant=_answer_variant("ANS-RAG", token_limit=2048, timeout=60)
+    )
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_and_aggregate_provider_observations(
+            run_id=run_id,
+            variant_id=AnswerVariantId.ANS_RAG,
+            required_case_ids=cases,
+            observations=obs,
+            execution_request=mismatched_timeout_req,
+        )
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+
+def test_materialize_answer_runtime_supplemental_bindings_success() -> None:
+    run_id = "11111111-1111-4111-8111-111111111111"
+    req = _execution_request(7, answer_variant=_answer_variant("ANS-RAG", token_limit=2048, timeout=30))
+    prov = _provenance()
+    cases = (
+        _make_cases(run_id, case_id="case-1", input_sha256="1" * 64)[0],
+        _make_cases(run_id, case_id="case-2", input_sha256="2" * 64)[0],
+    )
+    obs = _observations_for_cases(run_id, ("case-1", "case-2"))
+
+    input_data = AnswerRuntimeBindingMaterializationInput(
+        experiment_id=req.experiment_id,
+        run_id=run_id,
+        variant_id=AnswerVariantId.ANS_RAG,
+        execution_request=req,
+        guideline_provenance=prov,
+        provider_observations=obs,
+        required_case_ids=("case-1", "case-2"),
+        cases=cases,
+    )
+
+    result = materialize_answer_runtime_supplemental_bindings(input_data)
+    assert isinstance(result, MaterializedAnswerRuntimeSupplementalBindings)
+
+    assert result.input_context_hash == compute_input_context_binding_hash_from_cases(cases)
+    assert result.seed_hash == compute_seed_binding_hash(req)
+    assert result.prompt_structure_hash == compute_prompt_structure_binding_hash(prov)
+    assert result.parser_hash == compute_parser_binding_hash(prov)
+    assert result.sampling_parameters_hash == compute_sampling_parameters_binding_hash()
+    assert result.token_limit_hash == compute_token_limit_binding_hash(2048)
+    assert result.timeout_hash == compute_timeout_binding_hash(Decimal("30"))
+
+
+def test_materialize_answer_runtime_supplemental_bindings_rejections() -> None:
+    run_id = "11111111-1111-4111-8111-111111111111"
+    req = _execution_request(7, answer_variant=_answer_variant("ANS-RAG", token_limit=2048, timeout=30))
+    prov = _provenance()
+    cases = (
+        _make_cases(run_id, case_id="case-1", input_sha256="1" * 64)[0],
+        _make_cases(run_id, case_id="case-2", input_sha256="2" * 64)[0],
+    )
+    obs = _observations_for_cases(run_id, ("case-1", "case-2"))
+
+    base_input = AnswerRuntimeBindingMaterializationInput(
+        experiment_id=req.experiment_id,
+        run_id=run_id,
+        variant_id=AnswerVariantId.ANS_RAG,
+        execution_request=req,
+        guideline_provenance=prov,
+        provider_observations=obs,
+        required_case_ids=("case-1", "case-2"),
+        cases=cases,
+    )
+
+    # Wrong input type
+    with pytest.raises(EvaluationValidationError) as exc:
+        materialize_answer_runtime_supplemental_bindings("bad-input")  # type: ignore[arg-type]
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Wrong variant_id type
+    bad_var_input = replace(base_input, variant_id="ANS-RAG")  # type: ignore[arg-type]
+    with pytest.raises(EvaluationValidationError) as exc:
+        materialize_answer_runtime_supplemental_bindings(bad_var_input)
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Wrong experiment_id
+    bad_exp_input = replace(base_input, experiment_id="different-experiment")
+    with pytest.raises(EvaluationValidationError) as exc:
+        materialize_answer_runtime_supplemental_bindings(bad_exp_input)
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Non-canonical run_id
+    bad_run_input = replace(base_input, run_id="invalid-uuid")
+    with pytest.raises(EvaluationValidationError) as exc:
+        materialize_answer_runtime_supplemental_bindings(bad_run_input)
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Empty cases
+    empty_cases_input = replace(base_input, cases=())
+    with pytest.raises(EvaluationValidationError) as exc:
+        materialize_answer_runtime_supplemental_bindings(empty_cases_input)
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Case set mismatch (missing case-2)
+    missing_case_input = replace(base_input, cases=(cases[0],))
+    with pytest.raises(EvaluationValidationError) as exc:
+        materialize_answer_runtime_supplemental_bindings(missing_case_input)
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Duplicate case
+    dup_case_input = replace(base_input, cases=(cases[0], cases[0]))
+    with pytest.raises(EvaluationValidationError) as exc:
+        materialize_answer_runtime_supplemental_bindings(dup_case_input)
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Case with different run_id
+    different_run_case = _make_cases("22222222-2222-4222-8222-222222222222", case_id="case-2")[0]
+    bad_run_case_input = replace(base_input, cases=(cases[0], different_run_case))
+    with pytest.raises(EvaluationValidationError) as exc:
+        materialize_answer_runtime_supplemental_bindings(bad_run_case_input)
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Case with non-COMPLETED execution_status
+    error_case = cases[1].model_copy(update={"execution_status": ExecutionStatus.ERROR})
+    failed_case_input = replace(base_input, cases=(cases[0], error_case))
+    with pytest.raises(EvaluationValidationError) as exc:
+        materialize_answer_runtime_supplemental_bindings(failed_case_input)
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
+
+    # Invalid guideline provenance
+    bad_prov = replace(prov, prompt_ref=ImmutableArtifactRef("wrong-prompt", "1.0.0", "1" * 64))
+    bad_prov_input = replace(base_input, guideline_provenance=bad_prov)
+    with pytest.raises(EvaluationValidationError) as exc:
+        materialize_answer_runtime_supplemental_bindings(bad_prov_input)
+    assert exc.value.code is EvaluationErrorCode.STATE_COMBINATION_INVALID
