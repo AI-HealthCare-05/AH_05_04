@@ -96,13 +96,15 @@
 | --- | --- |
 | contract_semantics | Guide의 pinned medication context와 authority-bound query/evidence selection으로 medication guidance retrieval을 실행한다. |
 | actual_symbol | `nearest: ai_worker.tasks.rag.retrieval_runtime:execute_hybrid_retrieve` |
-| input_type | canonical Guide query construction and authority-bound retrieval request are absent |
+| input_type | canonical Guide query construction, pinned Sync runtime request carrier, exact REQUEST decision lookup coordinates, approved Hybrid outcome binding, and terminal replay aggregate are absent |
 | output_type | canonical Guide retrieval outcome is absent |
 | side_effect | READ/WRITE |
 | authority_owner | AI/RAG retrieval runtime |
 | status | `MISSING_SEMANTIC_CALLABLE` |
-| reason | `execute_hybrid_retrieve` owns generic search plus retrieval-run persistence and requires a prebuilt `HybridRetrieveRequest`; it does not construct or own the Guide node's pinned medication query and selection semantics. |
-| required_next_action | Define the Guide-specific retrieval request/selection seam without duplicating existing retrieval execution or persistence. |
+| reason | Production `execute_hybrid_retrieve` exists, but canonical Guide binding remains blocked by `GUIDE_RUNTIME_REQUEST_CARRIER_MISSING`, `GUIDE_RETRIEVAL_QUERY_AUTHORITY_MISSING`, `GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_COORDINATE_MISSING`, `GUIDE_RETRIEVAL_OUTCOME_BINDING_UNRESOLVED`, and `GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_UNAVAILABLE`. The terminal replay result has no original search receipt or selected-hit provenance. |
+| required_next_action | Do not add a production callable until the five blocker contracts are resolved; then define the Guide-specific request/selection seam without duplicating retrieval execution or persistence. |
+
+Retrieval binding re-audited at `origin/develop` `948a21dd861807c7b6fa5118bb9af36d6b35f6a2`.
 
 ### `select_medication_guidelines`
 
