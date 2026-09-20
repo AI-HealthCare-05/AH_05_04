@@ -1133,6 +1133,19 @@ export function SchedulePage({
             </p>
           )}
 
+          {!isLoading && day && occurrences.length > 0 && (
+            <button
+              className="schedule-page__settings-action"
+              type="button"
+              onClick={() =>
+                navigate(`/schedule/checkin?date=${encodeURIComponent(selectedDate)}`)
+              }
+            >
+              <span>복약 체크 보기</span>
+              <span aria-hidden="true">›</span>
+            </button>
+          )}
+
           {!isLoading && day && (day.schedule_status === 'READY' || occurrences.length > 0) && (
             <section className="schedule-page__occurrences" aria-labelledby="occurrence-list-title">
               <div className="schedule-page__section-heading">

@@ -181,6 +181,7 @@ def _check_persisted_retrieval_receipt(
         selected_count=persisted.selected_count,
         signal_manifest_hash=persisted.signal_manifest_hash,
         hit_manifest_hash=persisted.hit_manifest_hash,
+        terminal_replay_payload_hash=persisted.terminal_replay_payload_hash,
     )
     if recomputed != persisted.receipt_hash:
         return AuthoritativeGuideEvidenceAssemblyReason.RETRIEVAL_RUN_RECEIPT_MISMATCH

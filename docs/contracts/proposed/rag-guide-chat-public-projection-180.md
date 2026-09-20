@@ -270,7 +270,43 @@ ownership, current version, consent 실패 시 Provider/LLM/RAG 호출은 없어
 
 후속 contract Freeze 시 위 값이 public DTO에 노출되는 값인지, 내부 persistence만 필요한 값인지, 저장하지 않고 즉시 projection만 할 값인지 구분해야 한다.
 
-## 10. target test locations
+## 10. Backend projection helper boundary
+
+#906이 제공하는 `rag_runtime.guide_release_projection.GuideRuntimeReleaseProjectionOutcome`을 소비하는
+Backend `project_guide_runtime_release()` helper를 둔다.
+이 helper는 Sync `201 Created` public DTO를 확장하지 않고, #180 public schema Freeze 전까지 service/application 계층에서 사용할 내부 projection candidate만 만든다.
+Backend는 `GuideRuntimeReleaseResult` 또는 다른 `ai_worker` object를 직접 받지 않으며, Worker 내부 구조를
+`getattr()` 등으로 해석하지 않는다. #180 canonical adapter가 만든 shared carrier 또는 typed unavailable만 소비한다.
+
+helper가 하는 일:
+
+- `PASS`의 `GuideRuntimeApprovedAnswer`와 ordered `GuideRuntimeVerifiedCitation`을 손실 없이 내부 후보로 보존한다.
+- `LIMITED`, `REJECTED`, `STALE`의 `GuideRuntimeApprovedFallback` code/text만 내부 후보로 보존한다.
+- `GuideRuntimeReleaseProjectionUnavailable`은 answer, fallback, citation이 없는 fail-closed 후보로 변환한다.
+- 기존 `GuideCitation` 테이블이 runtime citation 좌표를 손실 없이 저장할 수 없다는 gap을 분리한다.
+
+helper가 하지 않는 일:
+
+- Card, `AuthorizedCitationSelection`, receipt 또는 Worker 내부 object 해석
+- citation authorization·exact binding 재판정, identity key 축약·재구성, citation deduplicate·reorder
+- approved answer 재조합 또는 fallback code/text 정규화
+- `GuideResponse` DTO/OpenAPI 확장
+- `GuideService.create_guide()`의 runtime callable wiring
+- `GuideRepository.mark_completed()` 저장 계약 변경
+- `GuideCitation` 또는 새 runtime release persistence migration
+- public `PASS | LIMITED | REJECTED | STALE` enum 확정
+- source URL/title/excerpt/locator public 규칙 확정
+- 내부 execution/evidence/reason/authorization receipt/score/rank/confidence/raw source 노출
+
+answer와 citation은 하나의 shared PASS carrier에서만 오며, Backend가 answer를 얻기 위해 Card를 별도로 읽는 경로를
+두지 않는다. citation의 Card/authorization 결속은 canonical Worker adapter 이전 단계에서 완료되며 Backend helper는
+그 결정을 반복하지 않는다.
+
+현재 `GuideCitation`은 `knowledge_chunk_id`, `claim_text`, `cited_text` 중심의 legacy citation table이다.
+#893 runtime citation은 `source_snapshot_id`, `source_snapshot_member_id`, `source_code`, `source_version`, `locator`, `content_sha256` 좌표를 가진다.
+따라서 현 상태에서는 runtime citation을 기존 `GuideCitation`에 손실 없이 저장할 수 없으며, Guide GET 재조회에서 동일 Citation/Fallback 의미를 복원하려면 별도 persistence 계약 또는 migration이 필요하다.
+
+## 11. target test locations
 
 Phase B에서 contract가 확정되면 다음 위치에 테스트를 추가한다.
 
@@ -312,7 +348,7 @@ Chat concurrency/stale regression:
 - unauthorized citation
 - unauthorized/malformed citation이 public response와 persisted public projection에 남지 않는 경우
 
-## 11. 완료 기준
+## 12. 완료 기준
 
 이 Phase A 문서가 완료됐다는 것은 다음을 의미한다.
 

@@ -86,17 +86,17 @@ does not change #697 to accommodate a broader authority set.
 | source manifest hash | `HybridRetrieveRequest` | Pinned source/runtime configuration | No Guide retrieval carrier | No | Sync request carrier | Backend Sync runtime boundary | Include the exact stored hash |
 | medication identity/context | Guide query projection | Backend execution identification persistence | Backend membership read; no worker-facing projection | No | Guide medication carrier | Backend Sync runtime boundary | Project verified, pinned medication context |
 | `normalized_query` | `EvidenceSearchRequest` | #180 B2 pinned snapshot projection | B1 carrier still absent | Text policy frozen | Fingerprint and B1 carrier | AI/RAG / Backend Sync | Do not implement before production fingerprint authority exists |
-| `query_fingerprint` | `EvidenceSearchRequest` | No approved production producer | None | No | Fingerprint algorithm/key/verifier | AI/RAG | Keep B2 partial and fail closed |
-| selected `source_snapshot_id` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `ProductionSearchHit.provenance`; no replay aggregate | First execution only | Replay readback | #178 retrieval persistence/readback | Restore selected-hit provenance in order |
-| selected `source_snapshot_member_id` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `ProductionSearchHit.provenance`; no replay aggregate | First execution only | Replay readback | #178 retrieval persistence/readback | Restore selected-hit provenance in order |
-| `source_code` / `source_version` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `ProductionSearchHit.provenance`; no replay aggregate | First execution only | Replay readback | #178 retrieval persistence/readback | Restore selected-hit provenance in order |
+| `query_fingerprint` | `EvidenceSearchRequest` | No approved production producer | None | No | Exact algorithm/key/version/secret/verifier authority | AI/RAG | Keep B2 fail closed at its audited algorithm-authority blocker |
+| selected `source_snapshot_id` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `PersistedTerminalReplayPayload.ordered_selected_hits[].provenance` | Yes, exact historical readback | None in B5 | #178 retrieval persistence/readback | Consume the restored coordinate unchanged |
+| selected `source_snapshot_member_id` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `PersistedTerminalReplayPayload.ordered_selected_hits[].provenance` | Yes, exact historical readback | None in B5 | #178 retrieval persistence/readback | Consume the restored coordinate unchanged |
+| `source_code` / `source_version` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `PersistedTerminalReplayPayload.ordered_selected_hits[].provenance` | Yes, exact historical readback | None in B5 | #178 retrieval persistence/readback | Consume the restored coordinate unchanged |
 | `member_identity` | #672 authority selection | Pinned first-run selection or B5 replay coordinate | `GuideRequestAuthorityLookupCoordinate` | Lookup ready when supplied | Selected-hit producer/B5 replay | REQUEST authority / Backend persistence | Pass the complete pinned identity unchanged |
 | expected Source/Member Decision outcomes | #713 canonical Decision identities | Pinned first-run selection or B5 replay coordinate | `GuideRequestAuthorityLookupCoordinate` | Lookup ready when supplied | Selected-hit producer/B5 replay | REQUEST authority / Backend persistence | Pass both expected outcomes explicitly; Guide retrieval requires `PASS` / `PASS` |
 | `request_source_decision_ref` | #672 authority selection | REQUEST authority persistence | `lookup_request_decision_refs()` exact historical read | Yes when exact chain exists | None in B3 | REQUEST authority / Backend persistence | Consume the persisted ref without derivation |
 | `request_member_decision_ref` | #672 authority selection | REQUEST authority persistence | `lookup_request_decision_refs()` exact historical read | Yes when exact chain exists | None in B3 | REQUEST authority / Backend persistence | Consume the persisted ref without derivation |
-| `ProductionSearchReceipt` | #697 and #760 | First execution #178 retrieval | #180 B4 approved narrow projection from `HybridRetrieveOutcome.search_receipt` | First execution only | Replay readback | AI/RAG; #178 retrieval persistence/readback | B5 must restore it for replay |
+| `ProductionSearchReceipt` | #697 and #760 | First execution #178 retrieval | `PersistedTerminalReplayPayload.search_receipt` exact readback; #180 B4 projection consumes the restored typed receipt | Yes | None in B5 | AI/RAG; #178 retrieval persistence/readback | Preserve the canonical artifact identity and receipt projection |
 | `PersistedRetrievalRunReceipt` | #760 | #178 retrieval-run persistence | `HybridRetrieveOutcome.persisted_receipt` | Yes | None by itself | #178 retrieval persistence/readback | Preserve with the future aggregate |
-| ordered selected hits / provenance | #697, #711, #760 | First execution `EvidenceGateSuccess.selected_hits` | In-memory result only; no terminal aggregate readback | First execution only | Terminal replay payload | #178 retrieval persistence/readback | Restore full immutable ordered selection |
+| ordered selected hits / provenance | #697, #711, #760 | First execution `EvidenceGateSuccess.selected_hits` | `PersistedTerminalReplayPayload.ordered_selected_hits` with canonical payload/hash verification | Yes | None in B5 | #178 retrieval persistence/readback | Consume without re-search, re-ranking, or current Source reconstruction |
 
 ## 5. Blockers
 
@@ -116,17 +116,21 @@ Minimum follow-up: provide one canonical read projection from pinned execution
 context, bundle, and identification; the Guide retrieval seam must consume that
 carrier rather than caller-supplied raw values.
 
-### B2 — `GUIDE_RETRIEVAL_QUERY_TEXT_AUTHORITY_READY_BUT_FINGERPRINT_BLOCKED`
+### B2 — `GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING`
 
 The exact pinned snapshot to `SensitiveText normalized_query` rule is frozen
-in `guide-medication-retrieval-query-authority-v1.md`. It remains unusable for
-production because no B1 carrier, production fingerprint authority, or
-`QueryBindingVerifierPort` implementation exists.
+in `guide-medication-retrieval-query-authority-v1.md`. The B2-2 audit in
+`guide-retrieval-query-fingerprint-authority-v1.md` found no exact approved
+production algorithm identifier. Key/version/secret ownership, Worker key
+injection, production `QueryBindingVerifierPort`, and verifier artifact
+identity are also absent. The generic approved HMAC direction and design-only
+examples are insufficient.
 
 Owner: AI/RAG.
 
-Minimum follow-up: provide the B1 carrier and approve/implement the production
-fingerprint algorithm, key/version, and query-binding verifier.
+Minimum follow-up: provide the B1 carrier and approve/implement the exact
+production algorithm, key/version, secret owner/injection, verifier artifact
+identity, and query-binding verifier.
 
 ### B3 — `GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_READY`
 
@@ -148,27 +152,30 @@ reconstruct a missing selection.
 
 The approved `project_hybrid_retrieval_for_guide_composition()` preserves the
 first-run status, exact search receipt, and exact production gate outcome for
-#697 while setting `search_success=None`. Missing `search_receipt` blocks
-terminal replay; B5 remains unresolved.
+#697 while setting `search_success=None`. B5 now restores the exact typed
+`search_receipt` and gate outcome before this projection is consumed.
 
 Owner: AI/RAG retrieval and Guide composition boundary.
 
-No B4 follow-up is required. This does not provide the B5 historical payload.
+No B4 follow-up is required. B5 owns the historical payload readback.
 
-### B5 — `GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_UNAVAILABLE`
+### B5 — `GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_READY`
 
-On terminal replay, `execute_hybrid_retrieve()` returns the existing persisted
-receipt but `search_receipt=None` and `EvidenceGateSuccess(selected_hits=())`.
-The downstream Guide kernels require the original `ProductionSearchReceipt` and
-ordered selected-hit provenance/coordinates. There is no canonical terminal
-aggregate readback that restores them.
+`PersistedTerminalReplayPayload` stores the original canonical
+`ProductionSearchReceipt` projection, ordered selected `ProductionSearchHit`
+values with immutable Source/Snapshot/Member provenance and coordinates, and
+the terminal Evidence Gate status/reason. `SqlAlchemyRetrievalRunStore`
+persists that payload and its canonical hash in the same transaction as the
+run receipt. Terminal replay verifies the payload hash, the receipt hash, the
+search-receipt artifact identity, and the selection manifest before restoring
+the typed receipt and gate outcome. Missing or invalid payloads fail closed;
+the replay path does not call search, reconstruct from current Source state, or
+recompute ranking/RRF.
 
 Owner: #178 retrieval persistence/readback boundary.
 
-Minimum follow-up: provide an immutable terminal aggregate read model containing
-the persisted run receipt, original production search receipt, and ordered
-selected `ProductionSearchHit` provenance/coordinates, or an equivalent
-canonical projection.
+No B5 persistence/readback follow-up is required. This does not resolve B1,
+B2, or assemble the final `retrieve_medication_guidance` callable.
 
 ## 6. Forbidden workarounds
 
@@ -202,13 +209,14 @@ of the following are true:
 - [ ] A production Guide medication fingerprint and binding verifier exists.
 - [x] Exact selected Source/Member to immutable REQUEST Decision reference lookup exists.
 - [x] A `HybridRetrieveOutcome` downstream binding contract is approved.
-- [ ] Terminal replay restores the complete canonical retrieval result without re-search.
+- [x] Terminal replay restores the complete canonical retrieval result without re-search.
 
 Partial satisfaction does not permit a READY or callable-status promotion.
 
 ## 9. Non-scope
 
-This freeze adds no production retrieval implementation, RRF or Evidence Gate
-change, migration, database repository, SQL, Backend DTO/API, Frontend change,
-Worker path, LangGraph graph/state, guideline selection, safety filter, conflict
-gate, Guide composition, or `PUBLIC_TRACK_F` change.
+The B5 follow-up adds only nullable `retrieval_run` payload/hash persistence and
+exact terminal readback. It adds no new search, RRF or Evidence Gate semantics,
+Backend DTO/API, Frontend change, LangGraph graph/state, Guide downstream
+mapping, guideline selection, safety filter, conflict gate, Guide composition,
+or `PUBLIC_TRACK_F` change.

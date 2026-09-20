@@ -26,7 +26,7 @@ def test_query_authority_contract_freezes_only_pinned_snapshot_text_projection()
 def test_query_authority_contract_keeps_fingerprint_and_sync_carrier_fail_closed() -> None:
     text = CONTRACT_PATH.read_text(encoding="utf-8")
 
-    assert "GUIDE_RETRIEVAL_QUERY_TEXT_AUTHORITY_READY_BUT_FINGERPRINT_BLOCKED" in text
+    assert "GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING" in text
     assert "QueryBindingVerifierPort" in text
     assert "No production implementation is present" in text
     assert "B1 Sync carrier" in text

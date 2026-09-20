@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -16,6 +17,7 @@ from sqlalchemy import (
     column,
     func,
     insert,
+    null,
     select,
     table,
     update,
@@ -23,6 +25,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_worker.tasks.rag.production_evidence_gate import EvidenceGateSuccess
 from ai_worker.tasks.rag.retrieval_run import (
     BeginRetrievalRunFailure,
     BeginRetrievalRunFailureReason,
@@ -37,10 +40,16 @@ from ai_worker.tasks.rag.retrieval_run import (
     PersistedHitInput,
     PersistedRetrievalRunReceipt,
     PersistedSignalInput,
+    PersistedTerminalReplayPayload,
     RetrievalRunStorePort,
     compute_hit_manifest_hash,
     compute_receipt_hash,
     compute_signal_manifest_hash,
+    sha256_canonical_json,
+)
+from ai_worker.tasks.rag.retrieval_runtime import (
+    RetrievalExecutionStatus,
+    restore_terminal_replay_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,6 +86,8 @@ _RETRIEVAL_RUN = table(
     column("diagnostic_code", String(80)),
     column("error_code", String(80)),
     column("search_receipt_hash", String(64)),
+    column("terminal_replay_payload", JSON),
+    column("terminal_replay_payload_hash", String(64)),
     column("receipt_hash", String(64)),
     column("started_at", DateTime(timezone=True)),
     column("completed_at", DateTime(timezone=True)),
@@ -108,6 +119,90 @@ _RETRIEVAL_HIT = table(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedTerminalReplayPayload:
+    projection: dict[str, Any] | None
+    payload_hash: str | None
+
+
+def _validation_failure(message: str) -> FinalizeRetrievalRunFailure:
+    return FinalizeRetrievalRunFailure(
+        reason=FinalizeRetrievalRunFailureReason.VALIDATION_ERROR,
+        message=message,
+    )
+
+
+def _terminal_replay_bindings_match(
+    request: FinalizeRetrievalRunRequest,
+    run_row: Any,
+    *,
+    search_receipt: Any,
+    gate_outcome: Any,
+    signal_manifest_hash: str,
+    hit_manifest_hash: str,
+) -> bool:
+    selected_hits = gate_outcome.selected_hits if isinstance(gate_outcome, EvidenceGateSuccess) else ()
+    payload_selected = tuple((hit.provenance.knowledge_chunk_id, hit.fusion_rank) for hit in selected_hits)
+    persisted_selected = tuple(
+        (hit.knowledge_chunk_id, hit.final_rank)
+        for hit in sorted(request.hits, key=lambda item: item.final_rank)
+        if hit.selected
+    )
+    return (
+        search_receipt.retrieval_execution_status == RetrievalExecutionStatus.SUCCEEDED
+        and request.search_receipt_hash == search_receipt.artifact_ref.content_sha256
+        and request.diagnostic_code == gate_outcome.reason.value == search_receipt.diagnostic_code
+        and search_receipt.variant == run_row["variant"]
+        and search_receipt.query_fingerprint.algorithm == run_row["query_digest_algorithm"]
+        and search_receipt.query_fingerprint.key_version == run_row["query_digest_key_version"]
+        and search_receipt.query_fingerprint.digest == run_row["query_digest"]
+        and search_receipt.filter_snapshot_ref.content_sha256 == run_row["filter_snapshot_hash"]
+        and search_receipt.query_embedding_sha256 == run_row["query_embedding_sha256"]
+        and search_receipt.retrieval_config_ref.content_sha256 == run_row["retrieval_configuration_hash"]
+        and search_receipt.signal_manifest_sha256 == signal_manifest_hash
+        and search_receipt.hit_manifest_sha256 == hit_manifest_hash
+        and payload_selected == persisted_selected
+    )
+
+
+def _prepare_terminal_replay_payload(
+    request: FinalizeRetrievalRunRequest,
+    run_row: Any,
+    *,
+    signal_manifest_hash: str,
+    hit_manifest_hash: str,
+) -> _PreparedTerminalReplayPayload | FinalizeRetrievalRunFailure:
+    if request.status == "FAILED":
+        if request.terminal_replay_payload is not None or request.search_receipt_hash is not None:
+            return _validation_failure("FAILED run cannot persist a terminal replay payload")
+        return _PreparedTerminalReplayPayload(projection=None, payload_hash=None)
+    if request.status != "COMPLETED":
+        return _validation_failure("Retrieval run terminal status must be COMPLETED or FAILED")
+    if request.terminal_replay_payload is None or request.search_receipt_hash is None:
+        return _validation_failure("COMPLETED run requires search receipt and terminal replay payload")
+
+    try:
+        search_receipt, gate_outcome = restore_terminal_replay_payload(request.terminal_replay_payload)
+    except (ArithmeticError, KeyError, TypeError, ValueError):
+        return _validation_failure("Invalid terminal replay payload")
+
+    if not _terminal_replay_bindings_match(
+        request,
+        run_row,
+        search_receipt=search_receipt,
+        gate_outcome=gate_outcome,
+        signal_manifest_hash=signal_manifest_hash,
+        hit_manifest_hash=hit_manifest_hash,
+    ):
+        return _validation_failure("Terminal replay payload does not match persisted retrieval result")
+
+    projection = request.terminal_replay_payload.to_projection()
+    return _PreparedTerminalReplayPayload(
+        projection=projection,
+        payload_hash=sha256_canonical_json(projection),
+    )
+
+
 class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
     def __init__(self, session_factory: SessionFactory) -> None:
         self._session_factory = session_factory
@@ -119,7 +214,10 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
         run_row: Any,
     ) -> BeginRetrievalRunOutcome:
         matches = (
-            run_row["query_digest"] == request.query_digest
+            run_row["query_digest_algorithm"] == request.query_digest_algorithm
+            and run_row["query_digest_key_version"] == request.query_digest_key_version
+            and run_row["query_digest"] == request.query_digest
+            and run_row["query_embedding_sha256"] == request.query_embedding_sha256
             and run_row["retrieval_configuration_hash"] == request.retrieval_configuration_hash
             and run_row["knowledge_index_id"] == str(request.knowledge_index_id)
             and run_row["variant"] == request.variant
@@ -141,10 +239,22 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
                     reason=BeginRetrievalRunFailureReason.DEPENDENCY_ERROR,
                     message="Corrupt stored retrieval run receipt",
                 )
+            try:
+                replay_payload = (
+                    PersistedTerminalReplayPayload.from_projection(run_row["terminal_replay_payload"])
+                    if run_row["terminal_replay_payload"] is not None
+                    else None
+                )
+            except ValueError:
+                return BeginRetrievalRunFailure(
+                    reason=BeginRetrievalRunFailureReason.DEPENDENCY_ERROR,
+                    message="Corrupt stored terminal replay payload",
+                )
             return BeginRetrievalRunSuccess(
                 run_id=run_id,
                 is_resumed=True,
                 existing_receipt=receipt,
+                existing_terminal_replay_payload=replay_payload,
             )
         return BeginRetrievalRunSuccess(run_id=run_id, is_resumed=True)
 
@@ -254,6 +364,16 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
                     signal_manifest_hash = compute_signal_manifest_hash(request.signals)
                     hit_manifest_hash = compute_hit_manifest_hash(request.hits)
                     selected_count = sum(1 for h in request.hits if h.selected)
+                    prepared_payload = _prepare_terminal_replay_payload(
+                        request,
+                        run_row,
+                        signal_manifest_hash=signal_manifest_hash,
+                        hit_manifest_hash=hit_manifest_hash,
+                    )
+                    if isinstance(prepared_payload, FinalizeRetrievalRunFailure):
+                        return prepared_payload
+                    terminal_replay_projection = prepared_payload.projection
+                    terminal_replay_hash = prepared_payload.payload_hash
 
                     receipt_hash = compute_receipt_hash(
                         run_id=request.run_id,
@@ -270,6 +390,7 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
                         selected_count=selected_count,
                         signal_manifest_hash=signal_manifest_hash,
                         hit_manifest_hash=hit_manifest_hash,
+                        terminal_replay_payload_hash=terminal_replay_hash,
                     )
 
                     if run_row["status"] != "RUNNING":
@@ -292,6 +413,7 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
                                 search_receipt_hash=request.search_receipt_hash,
                                 diagnostic_code=request.diagnostic_code,
                                 error_code=request.error_code,
+                                terminal_replay_payload_hash=terminal_replay_hash,
                             )
                             return FinalizeRetrievalRunSuccess(receipt=receipt)
                         return FinalizeRetrievalRunFailure(
@@ -343,6 +465,10 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
                             diagnostic_code=request.diagnostic_code,
                             error_code=request.error_code,
                             search_receipt_hash=request.search_receipt_hash,
+                            terminal_replay_payload=(
+                                terminal_replay_projection if terminal_replay_projection is not None else null()
+                            ),
+                            terminal_replay_payload_hash=terminal_replay_hash,
                             receipt_hash=receipt_hash,
                             completed_at=func.now(),
                         )
@@ -367,6 +493,7 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
                         search_receipt_hash=request.search_receipt_hash,
                         diagnostic_code=request.diagnostic_code,
                         error_code=request.error_code,
+                        terminal_replay_payload_hash=terminal_replay_hash,
                     )
                     return FinalizeRetrievalRunSuccess(receipt=receipt)
         except Exception as e:
@@ -427,6 +554,42 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
         hit_manifest_hash = compute_hit_manifest_hash(hits)
         selected_count = sum(1 for h in hits if h.selected)
 
+        terminal_replay_projection = run_row["terminal_replay_payload"]
+        terminal_replay_hash = run_row["terminal_replay_payload_hash"]
+        replay_payload: PersistedTerminalReplayPayload | None = None
+        if (terminal_replay_projection is None) != (terminal_replay_hash is None):
+            logger.error("Corrupt retrieval run %s: incomplete terminal replay payload", run_id)
+            return None
+        if terminal_replay_projection is not None:
+            try:
+                replay_payload = PersistedTerminalReplayPayload.from_projection(terminal_replay_projection)
+            except ValueError:
+                logger.error("Corrupt retrieval run %s: invalid terminal replay payload", run_id)
+                return None
+            expected_terminal_replay_hash = sha256_canonical_json(terminal_replay_projection)
+            if expected_terminal_replay_hash != terminal_replay_hash:
+                logger.error("Corrupt retrieval run %s: terminal replay payload hash mismatch", run_id)
+                return None
+            validation_request = FinalizeRetrievalRunRequest(
+                run_id=run_id,
+                status=run_row["status"],
+                diagnostic_code=run_row["diagnostic_code"],
+                error_code=run_row["error_code"],
+                search_receipt_hash=run_row["search_receipt_hash"],
+                signals=tuple(signals),
+                hits=tuple(hits),
+                terminal_replay_payload=replay_payload,
+            )
+            prepared = _prepare_terminal_replay_payload(
+                validation_request,
+                run_row,
+                signal_manifest_hash=signal_manifest_hash,
+                hit_manifest_hash=hit_manifest_hash,
+            )
+            if isinstance(prepared, FinalizeRetrievalRunFailure):
+                logger.error("Corrupt retrieval run %s: terminal replay cross-binding mismatch", run_id)
+                return None
+
         expected_hash = compute_receipt_hash(
             run_id=run_id,
             job_id=UUID(run_row["job_id"]),
@@ -442,6 +605,7 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
             selected_count=selected_count,
             signal_manifest_hash=signal_manifest_hash,
             hit_manifest_hash=hit_manifest_hash,
+            terminal_replay_payload_hash=terminal_replay_hash,
         )
 
         # Integrity verification: fail closed if corrupt
@@ -472,4 +636,5 @@ class SqlAlchemyRetrievalRunStore(RetrievalRunStorePort):
             search_receipt_hash=run_row["search_receipt_hash"],
             diagnostic_code=run_row["diagnostic_code"],
             error_code=run_row["error_code"],
+            terminal_replay_payload_hash=terminal_replay_hash,
         )
