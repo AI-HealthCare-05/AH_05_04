@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { logout } from '../api/auth'
 import personIcon from '../assets/menu-person.svg'
 import clipboardIcon from '../assets/menu-clipboard.svg'
+import recordIcon from '../assets/nav-calendar.svg'
 import reportIcon from '../assets/menu-report.svg'
 import bellIcon from '../assets/menu-bell.svg'
 import logoutIcon from '../assets/menu-logout.svg'
@@ -18,6 +19,8 @@ import './MenuPage.css'
 const ICONS = {
   person: personIcon,
   clipboard: clipboardIcon,
+  // Figma RECORD/MENU에 전용 menu-row asset이 없어 기존 DS 달력 아이콘을 사용한다.
+  record: recordIcon,
   report: reportIcon,
   bell: bellIcon,
   logout: logoutIcon,
@@ -104,6 +107,7 @@ function MenuPage() {
             <h3 id="menu-medication-title">복약 관리</h3>
             <div className="mvp-menu__card">
               <MenuRow icon="clipboard" label="복약 일정" onClick={() => navigate('/schedule')} />
+              <MenuRow icon="record" label="복약 기록" detail="날짜별" onClick={() => navigate('/records')} />
               {TRACK_C_PUBLIC && <MenuRow icon="clipboard" label="실천 계획" detail="저장한 도움" onClick={() => navigate('/track-c/plans')} />}
               <MenuRow icon="report" label="복약 리포트" detail="7일 · 30일" onClick={() => navigate('/report')} />
             </div>
