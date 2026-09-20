@@ -11,6 +11,7 @@ from ai_worker.tasks.rag.runtime_bundle_builder import (
     RuntimeBundleBuildDecision,
     RuntimeBundleBuildOutcome,
     RuntimeBundleCanonicalConfiguration,
+    RuntimeBundleCitationApprovalPinIdentity,
     RuntimeBundleMemberPurpose,
     RuntimeBundleSourceMemberIdentity,
     RuntimeExecutionManifestInput,
@@ -26,6 +27,7 @@ from app.models.rag_runtime import (
     AiJobIntakeContext,
     RagReleaseEvaluationApproval,
     RagRuntimeApprovalStatus,
+    RagRuntimeBundleCitationApproval,
     RagRuntimeBundleSource,
     RagRuntimeBundleStatus,
     RagRuntimeEnvironment,
@@ -37,7 +39,9 @@ from app.models.rag_runtime import (
     RagRuntimeSourcePurpose,
 )
 from app.models.rag_source import RagSourceSnapshot
+from app.models.rag_source_use_approval import RagSourceUseApproval
 from rag_runtime.runtime_environment import RuntimeEnvironmentCode
+from rag_runtime.source_use_approval import SourceUsePurpose
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +150,19 @@ class RagRuntimeBundleSourceCreate:
     selected_for_operation: bool = True
 
 
+@dataclass(frozen=True, slots=True)
+class RagRuntimeBundleCitationApprovalCreate:
+    bundle_id: UUID
+    bundle_manifest_hash: str
+    source_snapshot_id: UUID
+    source_use_approval_id: UUID
+    source_code: str
+    source_version: str
+    approval_version: str
+    environment: str
+    purpose: str
+
+
 _ARTIFACT_KIND_BY_COLUMN_PREFIX = {
     "candidate_index": RuntimeBundleArtifactKind.CANDIDATE_INDEX,
     "knowledge_index": RuntimeBundleArtifactKind.KNOWLEDGE_INDEX,
@@ -166,6 +183,10 @@ class RagRuntimeBundleNotBuildableError(RagRuntimeBundleBuildError):
 
 class RagRuntimeBundleSourceVersionMismatchError(RagRuntimeBundleBuildError):
     """A member claims a ``source_version`` its snapshot does not have."""
+
+
+class RagRuntimeBundleCitationApprovalMismatchError(RagRuntimeBundleBuildError):
+    """A citation pin does not exact-match its persisted #807 authority row."""
 
 
 MANIFEST_IDENTITY_FIELDS = (
@@ -203,6 +224,7 @@ def _assert_rows_match_outcome(
     manifest: RagRuntimeExecutionManifestCreate,
     bundle: RagRuntimeReleaseBundleCreate,
     bundle_sources: tuple[RagRuntimeBundleSourceCreate, ...],
+    citation_approval_pins: tuple[RagRuntimeBundleCitationApprovalCreate, ...],
 ) -> None:
     """Refuse any write the kernel did not authorise, or that differs from what it judged.
 
@@ -235,7 +257,12 @@ def _assert_rows_match_outcome(
         raise RagRuntimeBundleNotBuildableError("bundle_manifest_hash가 판정 결과와 다릅니다.")
 
     recomputed = canonical_runtime_bundle_manifest_hash(
-        _configuration_from_rows(bundle, bundle_sources, execution_manifest_hash=manifest.manifest_hash)
+        _configuration_from_rows(
+            bundle,
+            bundle_sources,
+            citation_approval_pins,
+            execution_manifest_hash=manifest.manifest_hash,
+        )
     )
     if recomputed != outcome.bundle_manifest_hash:
         raise RagRuntimeBundleNotBuildableError(
@@ -247,6 +274,7 @@ def _assert_rows_match_outcome(
 def _configuration_from_rows(
     bundle: RagRuntimeReleaseBundleCreate,
     bundle_sources: tuple[RagRuntimeBundleSourceCreate, ...],
+    citation_approval_pins: tuple[RagRuntimeBundleCitationApprovalCreate, ...],
     *,
     execution_manifest_hash: str,
 ) -> RuntimeBundleCanonicalConfiguration:
@@ -291,6 +319,18 @@ def _configuration_from_rows(
             for member in bundle_sources
         ),
         artifact_members=tuple(artifact_members),
+        citation_approval_pins=tuple(
+            RuntimeBundleCitationApprovalPinIdentity(
+                source_snapshot_id=str(pin.source_snapshot_id),
+                source_use_approval_id=str(pin.source_use_approval_id),
+                source_code=pin.source_code,
+                source_version=pin.source_version,
+                approval_version=pin.approval_version,
+                environment=pin.environment,
+                purpose=SourceUsePurpose(pin.purpose),
+            )
+            for pin in citation_approval_pins
+        ),
     )
 
 
@@ -325,6 +365,7 @@ class RagRuntimeBundleBuildResult:
     execution_manifest: RagRuntimeExecutionManifest
     bundle: RagRuntimeReleaseBundle
     bundle_sources: tuple[RagRuntimeBundleSource, ...]
+    citation_approval_pins: tuple[RagRuntimeBundleCitationApproval, ...]
     execution_manifest_reused: bool
 
 
@@ -557,6 +598,64 @@ class RagRuntimeRepository:
         )
         return list(result.scalars().all())
 
+    async def list_bundle_citation_approval_pins(self, bundle_id: UUID) -> list[RagRuntimeBundleCitationApproval]:
+        result = await self.session.execute(
+            select(RagRuntimeBundleCitationApproval)
+            .where(RagRuntimeBundleCitationApproval.bundle_id == bundle_id)
+            .order_by(
+                RagRuntimeBundleCitationApproval.source_snapshot_id,
+                RagRuntimeBundleCitationApproval.source_use_approval_id,
+            )
+        )
+        return list(result.scalars().all())
+
+    async def _assert_citation_approval_pins(
+        self,
+        pins: tuple[RagRuntimeBundleCitationApprovalCreate, ...],
+        bundle_sources: tuple[RagRuntimeBundleSourceCreate, ...],
+    ) -> None:
+        bundled_snapshot_ids = {source.source_snapshot_id for source in bundle_sources}
+        for pin in pins:
+            if pin.source_snapshot_id not in bundled_snapshot_ids:
+                raise RagRuntimeBundleCitationApprovalMismatchError(
+                    "citation approval pin source snapshot이 Runtime Bundle source member가 아닙니다"
+                )
+            approval = await self.session.scalar(
+                select(RagSourceUseApproval).where(RagSourceUseApproval.id == pin.source_use_approval_id)
+            )
+            actual = (
+                None
+                if approval is None
+                else (
+                    approval.source_snapshot_id,
+                    approval.source_code,
+                    approval.source_version,
+                    approval.approval_version,
+                    approval.environment,
+                    approval.purpose,
+                )
+            )
+            expected = (
+                pin.source_snapshot_id,
+                pin.source_code,
+                pin.source_version,
+                pin.approval_version,
+                pin.environment,
+                SourceUsePurpose.PATIENT_CITATION.value,
+            )
+            if pin.purpose != SourceUsePurpose.PATIENT_CITATION.value or actual != expected:
+                raise RagRuntimeBundleCitationApprovalMismatchError(
+                    "citation approval pin이 persisted #807 PATIENT_CITATION approval과 exact-match하지 않습니다"
+                )
+
+    async def _create_bundle_citation_approval(
+        self, payload: RagRuntimeBundleCitationApprovalCreate
+    ) -> RagRuntimeBundleCitationApproval:
+        row = RagRuntimeBundleCitationApproval(**asdict(payload))
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
     async def build_runtime_bundle(
         self,
         *,
@@ -564,6 +663,7 @@ class RagRuntimeRepository:
         manifest: RagRuntimeExecutionManifestCreate,
         bundle: RagRuntimeReleaseBundleCreate,
         bundle_sources: tuple[RagRuntimeBundleSourceCreate, ...],
+        citation_approval_pins: tuple[RagRuntimeBundleCitationApprovalCreate, ...] = (),
     ) -> RagRuntimeBundleBuildResult:
         """Persist one ``BUILDING`` bundle with its full member set (RAG-12A, Issue #175).
 
@@ -587,8 +687,15 @@ class RagRuntimeRepository:
                 describes a different execution axis, so reusing it would bind the bundle to a
                 manifest the caller did not pin.
         """
-        _assert_rows_match_outcome(outcome, bundle=bundle, manifest=manifest, bundle_sources=bundle_sources)
+        _assert_rows_match_outcome(
+            outcome,
+            bundle=bundle,
+            manifest=manifest,
+            bundle_sources=bundle_sources,
+            citation_approval_pins=citation_approval_pins,
+        )
         await self._assert_member_versions_exist(bundle_sources)
+        await self._assert_citation_approval_pins(citation_approval_pins, bundle_sources)
         if not bundle_sources:
             raise RagRuntimeBundleBuildError(
                 "member 없는 Bundle은 저장할 수 없습니다. bundle_manifest_hash가 빈 member set을 "
@@ -613,10 +720,19 @@ class RagRuntimeRepository:
                 for member in bundle_sources
             ]
         )
+        created_pins = tuple(
+            [
+                await self._create_bundle_citation_approval(
+                    replace(pin, bundle_id=created_bundle.id, bundle_manifest_hash=created_bundle.bundle_manifest_hash)
+                )
+                for pin in citation_approval_pins
+            ]
+        )
         return RagRuntimeBundleBuildResult(
             execution_manifest=execution_manifest,
             bundle=created_bundle,
             bundle_sources=created_sources,
+            citation_approval_pins=created_pins,
             execution_manifest_reused=existing_manifest is not None,
         )
 

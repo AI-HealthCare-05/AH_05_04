@@ -12,11 +12,13 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    Integer,
     LargeBinary,
     String,
     Text,
@@ -153,4 +155,91 @@ class CatalogBuildApprovalSource(Base):
     source_approval_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     source_snapshot_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     source_version: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+#: Phase 2에서 승인된 audit event 전체 목록. 새 종류를 늘리지 않는다.
+CATALOG_APPROVAL_AUDIT_EVENT_KINDS = (
+    "GRANT_PERMISSION",
+    "ISSUE_SOURCE",
+    "ISSUE_CATALOG",
+    "REVOKE_PERMISSION",
+    "REVOKE_SOURCE",
+    "REVOKE_CATALOG",
+)
+_AUDIT_EVENT_KIND_LIST = ", ".join(f"'{kind}'" for kind in CATALOG_APPROVAL_AUDIT_EVENT_KINDS)
+
+
+class CatalogApprovalPermission(Base):
+    """승인 발급·철회를 수행할 수 있는 현재 운영자 권한 상태.
+
+    현재 상태만 보관하고 이력은 `catalog_approval_audit`이 보존한다. Catalog Writer는 이 표에
+    접근하지 않으며, 변경은 승인 전용 one-shot command만 수행한다.
+    """
+
+    __tablename__ = "catalog_approval_permission"
+    __table_args__ = (
+        CheckConstraint("length(trim(evidence_ref)) > 0", name="chk_catalog_approval_permission_evidence_nonblank"),
+        CheckConstraint("revision >= 0", name="chk_catalog_approval_permission_revision"),
+    )
+
+    user_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("user.id", ondelete="RESTRICT"), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    evidence_ref: Mapped[str] = mapped_column(String(500), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class CatalogApprovalAudit(Base):
+    """승인 권한 부여·발급·철회의 append-only 증빙.
+
+    발급 후 UPDATE/DELETE하지 않는다. secret·credential·private artifact 경로·provider 원문은
+    담지 않고 식별자와 이미 공개된 검증 값만 남긴다. 하나의 issue command가 같은 request_id로
+    ISSUE_SOURCE와 ISSUE_CATALOG 두 event를 남기므로 event_kind까지 포함해 유일성을 잡는다.
+    """
+
+    __tablename__ = "catalog_approval_audit"
+    __table_args__ = (
+        UniqueConstraint("actor_id", "request_id", "event_kind", name="uq_catalog_approval_audit_request"),
+        Index("idx_catalog_approval_audit_request", "request_id"),
+        Index("idx_catalog_approval_audit_actor", "actor_id"),
+        CheckConstraint(f"event_kind IN ({_AUDIT_EVENT_KIND_LIST})", name="chk_catalog_approval_audit_event_kind"),
+        CheckConstraint("request_fingerprint ~ '^[0-9a-f]{64}$'", name="chk_catalog_approval_audit_fingerprint"),
+        CheckConstraint(
+            "export_checksum IS NULL OR export_checksum ~ '^[0-9a-f]{64}$'",
+            name="chk_catalog_approval_audit_export_checksum",
+        ),
+        CheckConstraint(
+            "purpose IS NULL OR length(trim(purpose)) > 0", name="chk_catalog_approval_audit_purpose_nonblank"
+        ),
+        ForeignKeyConstraint(
+            ["source_approval_id"],
+            ["catalog_source_approval.id"],
+            name="fk_catalog_approval_audit_source_approval",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["build_approval_id"],
+            ["catalog_build_approval.id"],
+            name="fk_catalog_approval_audit_build_approval",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    request_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    event_kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor_id: Mapped[UUID] = mapped_column(UUIDChar(), ForeignKey("user.id", ondelete="RESTRICT"), nullable=False)
+    subject_user_id: Mapped[UUID | None] = mapped_column(
+        UUIDChar(), ForeignKey("user.id", ondelete="RESTRICT"), nullable=True
+    )
+    source_approval_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    build_approval_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    source_snapshot_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
+    source_version: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    purpose: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    catalog_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    export_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    evidence_ref: Mapped[str] = mapped_column(String(500), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

@@ -16,6 +16,9 @@ from app.models.async_jobs import (
     OutboxEventStatus,
 )
 from app.models.catalog_approval import (
+    CATALOG_APPROVAL_AUDIT_EVENT_KINDS,
+    CatalogApprovalAudit,
+    CatalogApprovalPermission,
     CatalogBuildApproval,
     CatalogBuildApprovalSource,
     CatalogSourceApproval,
@@ -143,6 +146,7 @@ from app.models.rag_runtime import (
     AiJobIntakeContext,
     RagReleaseEvaluationApproval,
     RagRuntimeApprovalStatus,
+    RagRuntimeBundleCitationApproval,
     RagRuntimeBundleSource,
     RagRuntimeBundleStatus,
     RagRuntimeEnvironment,
@@ -189,6 +193,9 @@ from app.models.users import AccountStatus, Gender, User
 __all__ = [
     "ChatMessageFeedback",
     "GuideFeedback",
+    "CATALOG_APPROVAL_AUDIT_EVENT_KINDS",
+    "CatalogApprovalAudit",
+    "CatalogApprovalPermission",
     "CatalogBuildApproval",
     "CatalogBuildApprovalSource",
     "CatalogSourceApproval",
@@ -317,6 +324,7 @@ __all__ = [
     "RagRequestMemberDecision",
     "RagRequestSourceDecision",
     "RagRuntimeApprovalStatus",
+    "RagRuntimeBundleCitationApproval",
     "RagRuntimeBundleSource",
     "RagRuntimeBundleStatus",
     "RagRuntimeEnvironment",

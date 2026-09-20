@@ -467,8 +467,8 @@ Export 검증·복원·DB read-back·Candidate는 개별 관찰 출처와 품목
 
 검증: [D-04 Loader 검사 기록](../../../testing/mfds-loader-handoff-166.md).
 
-## 실제 승인·철회·감사 저장소 후속 구체안
+## 실제 승인·철회·감사 저장소 구현 계약
 
-[별도 Proposed 연결안](catalog-approval-storage-166.md)에 기존 #398 관리 권한/감사와의 차이,
-Set 생성 전 승인 대상, 저장 당시 receipt 검증, 동일 transaction 경합 제어, 실패 감사·최소 권한·이행을 정리했다.
-현재 verifier 포트의 실제 저장소 연결 완료나 이 구체안에 대한 담당자 승인을 의미하지 않는다.
+[Current 구현 계약](../../current/catalog-approval-storage-166.md)에 기존 #398 관리 권한/감사와의 차이,
+Set 생성 전 승인 대상, 저장·조회 당시 exact receipt 검증, 동일 transaction 경합 제어와 최소 권한을 정리했다.
+Actual approval issuance·Catalog materialization·Production 공개 승인은 별도이며 미실행 상태다.

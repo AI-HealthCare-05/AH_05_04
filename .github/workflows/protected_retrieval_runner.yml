@@ -81,8 +81,8 @@ jobs:
           PROTECTED_DB_CONTROL_PASSWORD=${PROTECTED_DB_CONTROL_PASSWORD}
           EOF
 
-          $SSH_CMD "docker compose -f /home/${EC2_USER:-ubuntu}/app/infra/docker/docker-compose.prod.yml \
-            --env-file /home/${EC2_USER:-ubuntu}/app/.prod.env \
+          $SSH_CMD "docker compose -f /home/${EC2_USER:-ubuntu}/project/docker-compose.yml \
+            --env-file /home/${EC2_USER:-ubuntu}/project/.env \
             --env-file $REMOTE_ENV \
             --profile protected-retrieval-admin \
             run --rm --no-deps protected-retrieval-provision"
@@ -150,8 +150,8 @@ jobs:
           PROTECTED_APPROVAL_GITHUB_TOKEN=${PROTECTED_APPROVAL_GITHUB_TOKEN}
           EOF
 
-          $SSH_CMD "docker compose -f /home/${EC2_USER:-ubuntu}/app/infra/docker/docker-compose.prod.yml \
-            --env-file /home/${EC2_USER:-ubuntu}/app/.prod.env \
+          $SSH_CMD "docker compose -f /home/${EC2_USER:-ubuntu}/project/docker-compose.yml \
+            --env-file /home/${EC2_USER:-ubuntu}/project/.env \
             --env-file $REMOTE_ENV \
             --profile protected-runner \
             run --rm --no-deps protected-retrieval-runner"

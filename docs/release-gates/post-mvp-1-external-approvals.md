@@ -2,7 +2,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Active Approved v4 target gate — 모두 Pending |
+| 상태 | Active Approved v4 target gate — `EXT-PRIV-003` Approved, 나머지 Pending |
 | 구현과 공개 | 분리 추적 |
 | 원본 동기화 | 2026-08-27 · SHA-256 `466d52a7d52751490a8dde705d9d504163dc83df21fe94b228ad98182f1cc8ce` |
 
@@ -17,12 +17,12 @@
 | `EXT-SOURCE-002` | F(OTC) | 준비된 OTC/RAG corpus license·임상 범위·attribution·lifecycle | Pending | local/dev/closed demo retrieval만 허용 |
 | `EXT-PRIV-001` | A·B·C·E·F | 보존·암호화·삭제·legal hold·키 관리, Provider 최소 allowlist와 동의·철회 차단 | Pending | production 보존 job, 미승인 Provider 전송과 공개 차단 |
 | `EXT-PRIV-002` | C·F | 실제형 fixture 비식별·재식별 위험·사용 범위 | Pending | synthetic fixture만 허용 |
-| `EXT-PRIV-003` | F(Chat) | 실제 사용자 Chat history의 외부 LLM 전달을 허용하는 Production data-boundary / privacy publication approval | Pending | Production `CHAT_HISTORY_CONTEXT_ENABLED=false` 유지; history disabled 및 deployment preflight 차단 |
+| `EXT-PRIV-003` | F(Chat) | 실제 사용자 Chat history의 외부 LLM 전달을 허용하는 Production data-boundary / privacy publication approval | Approved | 기본값 `false`; Staging 활성화 금지; Production explicit opt-in만 허용; rollback은 `false` + FastAPI recreate |
 | `EXT-SAFETY-001` | C 및 F(OTC 포함) | 위험 회귀 suite와 공개 차단 기준 | Pending | `PUBLIC_TRACK_C=false`, `PUBLIC_TRACK_F=false` 유지 |
 
 ## Flag 해제 조건
 
-- Chat history 외부 전송(`EXT-PRIV-003`): Issue #838 거버넌스에 따라 Privacy 정책(권가빈), Track F Chat data boundary 기술 통제(송은영), AI/RAG 소유자(정현우)의 명시적 승인과 same-session/cross-session 격리 검증이 필요하다. 승인 완료 전까지는 Production 활성화 및 배포가 차단된다. (참조: `docs/decisions/838-production-chat-history-context-activation.md`)
+- Chat history 외부 전송(`EXT-PRIV-003`): Issue #838에 Privacy 정책 승인([comment 5743158534](https://github.com/AI-HealthCare-05/AH_05_04/issues/838#issuecomment-5743158534)), AI/RAG 승인([comment 5743370061](https://github.com/AI-HealthCare-05/AH_05_04/issues/838#issuecomment-5743370061)), Track F Chat data boundary 최종 승인([comment 5746235826](https://github.com/AI-HealthCare-05/AH_05_04/issues/838#issuecomment-5746235826))과 same-session/cross-session 격리 검증이 기록되어 있다. Production은 기본값 `false`를 유지하며 명시적 opt-in만 허용한다. 실제 활성화는 별도 배포 승인과 smoke evidence가 필요하다. (참조: `docs/decisions/838-production-chat-history-context-activation.md`)
 
 - `PUBLIC_TRACK_C`: `EXT-MED-001`, `EXT-MED-002`, `EXT-PRIV-002`, `EXT-SAFETY-001` 승인과 해당 version 회귀 결과. Frontend build-time flag `VITE_PUBLIC_TRACK_C`로 구현되어 있으며 기본값은 `false`다. flag 해제는 위 승인 없이 수행하지 않고, 해제 시 Frontend 이미지 재build가 필요하다. 구현 위치와 검사 절차는 [배포 문서](../deployment.md)를 따른다.
 - OTC Chat은 별도 `PUBLIC_TRACK_D`를 두지 않고 `PUBLIC_TRACK_F`를 공유한다. OTC 범위에는 `EXT-PHARM-001`, `EXT-SOURCE-002`, `EXT-PRIV-002`, `EXT-SAFETY-001` 승인과 실제형 질문 fixture 검증이 필요하다.

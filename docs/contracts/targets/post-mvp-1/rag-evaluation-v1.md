@@ -214,6 +214,26 @@ OCR·Resolver 품질 비교와 Candidate 검색 알고리즘별 성능은 RAG �
 
 평가 결과는 로컬 또는 CI artifact로 보존하고 저장소에는 합성 Dataset·Schema·Runner와 비민감 요약만 commit한다. 실제 환자 질문·답변, 의료 원문 전체, Judge reasoning 전문, Provider body와 credential은 결과 artifact·로그에 저장하지 않는다.
 
+### Protected Release Gate Authority Acceptance
+
+보호된 Release Gate의 실제 평가 입력으로 소비되는 Evaluation Policy, Evaluation Profile, required Suite Definition, Comparison Policy 및 required Case Dataset은 단순 스키마·해시·참조 정합성을 넘어 팀 승인 정본(Release-authoritative acceptance)을 만족해야 한다.
+
+- **Evaluation Policy / Evaluation Profile / required Suite Definition**:
+  - `review_provenance.team_gold_status == APPROVED`
+  - `DRAFT` 또는 `REVIEWED` 상태는 `EVAL_REVIEW_PROVENANCE_INVALID`로 fail-closed 거부
+- **Comparison Policy**:
+  - 기존 schema 승인 요건(`approved_by`, `approved_at`, 제안자와 승인자 분리 `proposed_by.identity != approved_by.identity`) 충족 필수
+- **Required Case Dataset Authority**:
+  - 기존 Freeze 계약(`PD-216-20260902`, `PD-241-20260903`)의 `status == FROZEN` 정본을 만족해야 함
+  - `load_dataset()`를 통한 완전한 Gold Closure(`Case`, `Evidence Mapping`, `Critical Claim Rubric` 모두 `APPROVED`) 및 `DATASET_CUSTODIAN` 승인 provenance 검증 통과 필수
+  - `DRAFT`, `RETIRED` 또는 raw manifest 단독 결과는 required Case authority로 인정되지 않음
+- **Guard Evidence Boundary (#162 차단)**:
+  - 현재 `#162` canonical Run/Case Guard evidence artifact가 아직 정의되지 않았으므로, `RagEvaluationRun`에 embedded된 Guard IDs/hashes만으로 protected Release authority를 성립시키지 않는다.
+  - `#162` exact-binding contract가 제공되기 전 actual protected Release Gate execution은 fail-closed(`STATE_COMBINATION_INVALID`, exit code 2)로 보호된다.
+
+Schema-valid, hash-valid, reference-valid 단독으로는 Release authority가 성립하지 않는다.
+또한 팀 내부 Release 승인(`Team Release approval`)은 외부 의료·약학 승인(`external medical/pharmacy approval`)과 구별되며, 외부 승인은 별도 Required Receipt 및 Public Gate 요건으로 유지된다.
+
 ## 후보 Bundle 평가 Guard
 
 보호된 Local Runner는 Run 시작 시 `EVALUATION_CANDIDATE` Guard로 정확한 `BUILDING` Bundle ID·Manifest Hash의 전체 Source·Snapshot·승인·Freshness·Scope Policy·Revocation 무결성을 검사한다. 환경 Active Pointer나 환자 공개 경로를 사용하지 않는다.
