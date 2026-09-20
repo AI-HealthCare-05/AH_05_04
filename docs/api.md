@@ -863,13 +863,13 @@ nullable입니다. 없는/타인 occurrence는 동일 404 MEDICATION_OCCURRENCE_
 [#556 검증 기록](validation/track-b/issue-556-lifestyle-times.md)을 따른다. 저장 자체는 처방,
 일정, occurrence, 알림 또는 Check-in을 변경하지 않고 추천·의료 규칙을 실행하지 않는다.
 
-### Track C Plan 조회·완료·취소 (#617 / PR #618 구현)
+### Track C Plan 목록·조회·완료·취소 (#867 목록 / #617 lifecycle)
 
 `GET /api/v1/support-action-plans`는 SELF 소유 Plan 목록을 최신 생성순으로 반환한다. 저장된 계획을 앱 재진입 뒤 다시 찾기 위한 읽기 전용 경로이며, 브라우저 저장소에 건강정보를 보관하지 않는다. `GET /api/v1/support-action-plans/{id}`는 SELF 소유 Plan의 저장 이력을 반환한다. `PATCH`는
 `status=COMPLETED|CANCELLED`, strict `confirmed=true`와 Idempotency-Key로 ACTIVE의 단일 종료를 기록한다.
 목록 응답은 `SupportActionPlanListResponse`, 상세 응답은 기존 `SupportActionPlanResponse`다. 목록은 plan id·support code·status·timestamp만 담고 상세 snapshot은 `{id}` 조회에서만 반환한다. 완료는 최신 Safety·Barrier를 재검증하며, 종료 상태의 새 요청은
-409 ACTION_PLAN_STATE_CONFLICT다. 상세 오류·잠금·재전송은 [Current 계약](contracts/current/track-c-plan-lifecycle-617.md)을 따른다.
-권가빈 구현·김지혜 승인 후 PR #618이 `a542bcc2`로 병합됐다. Frontend 목록 화면·메뉴 진입점과 외부 공개 승인은 별도다.
+409 ACTION_PLAN_STATE_CONFLICT다. 목록 조회의 SELF 소유권·정렬·얇은 DTO는 [목록 계약](contracts/current/track-c-plan-list-867.md)을 따르고, 상세 오류·잠금·재전송은 [lifecycle 계약](contracts/current/track-c-plan-lifecycle-617.md)을 따른다.
+목록 API는 #867/PR #873의 새 Decision·Contract Freeze로 분리한다. 단건 조회와 완료·취소 lifecycle은 권가빈 구현·김지혜 승인 후 PR #618이 `a542bcc2`로 병합된 #617 계약을 따른다. Frontend 목록 화면·메뉴 진입점과 외부 공개 승인은 별도다.
 
 ### Track C 완료 계획 Follow-up (#194 후속 / PR #631 구현)
 

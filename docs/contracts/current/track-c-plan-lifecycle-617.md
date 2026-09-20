@@ -21,14 +21,9 @@ COMPLETED 또는 CANCELLED로 단 한 번만 전환한다. 종료 상태 수정�
 ABA(종료 후 ACTIVE 복귀)가 없으므로 새 revision column 없이 잠금 후 ACTIVE 검사가 동시 수정 충돌을 검출한다.
 기존 생성 응답과 암호화된 과거 멱등 snapshot은 변경하지 않는다. DB migration은 없다.
 
-## GET /api/v1/support-action-plans
+## 관련 목록 조회 계약
 
-- operationId: `support-action-plan.list`.
-- 인증 및 Plan → Barrier → Check-in → occurrence → schedule → prescription의 SELF 소유권 확인.
-- 200 응답은 `SupportActionPlanListResponse`: `data` 배열 안에 `support_action_plan_id`, `support_code`, `status`, `created_at`, nullable `completed_at`, nullable `cancelled_at`만 담는다.
-- 정렬은 `created_at DESC, id DESC`다. 동일 시각 row가 있어도 안정적으로 재조회할 수 있다.
-- 현재 저장 상태만 반환한다. `action_config_snapshot`, `barrier_response_id`, rule/copy version은 상세 `{id}` 조회에서만 반환한다. 행 잠금·멱등 key·쓰기·활성 config 파일 로딩 없음.
-- 목록 조회는 앱 재진입 뒤 저장된 plan id를 다시 찾기 위한 읽기 전용 경로다. Frontend 목록 화면과 메뉴 진입점은 후속 PR에서 연결한다.
+저장된 ActionPlan을 앱 재진입 후 다시 찾는 목록 조회는 [Track C ActionPlan 목록 조회 v1 — #867](track-c-plan-list-867.md)이 소유한다. 이 #617 계약은 단건 조회와 완료·취소 PATCH 의미를 유지한다.
 
 ## GET /api/v1/support-action-plans/{id}
 

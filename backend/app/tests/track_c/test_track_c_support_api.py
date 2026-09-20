@@ -385,6 +385,12 @@ async def test_authentication_and_idempotency_header(case: ApiCase) -> None:
 
 def test_openapi_contains_only_scoped_routes_and_strict_confirmation() -> None:
     schema = fastapi_app.openapi()
+
+    def allows_null(property_schema: dict) -> bool:
+        return property_schema.get("type") == "null" or any(
+            option.get("type") == "null" for option in property_schema.get("anyOf", [])
+        )
+
     path = schema["paths"]["/api/v1/barrier-responses/{id}/supports"]["get"]
     assert path["operationId"] == "barrier-response.supports"
     assert not any(p["name"] == "Idempotency-Key" for p in path["parameters"])
@@ -392,6 +398,21 @@ def test_openapi_contains_only_scoped_routes_and_strict_confirmation() -> None:
     path = routes["get"]
     assert path["operationId"] == "support-action-plan.list"
     assert not any(p["name"] == "Idempotency-Key" for p in path.get("parameters", []))
+    list_response = schema["components"]["schemas"]["SupportActionPlanListResponse"]
+    assert list_response["properties"]["data"]["items"]["$ref"].endswith("/SupportActionPlanListItem")
+    list_item = schema["components"]["schemas"]["SupportActionPlanListItem"]
+    assert set(list_item["required"]) == {
+        "support_action_plan_id",
+        "support_code",
+        "status",
+        "created_at",
+        "completed_at",
+        "cancelled_at",
+    }
+    assert "action_config_snapshot" not in list_item["properties"]
+    assert "barrier_response_id" not in list_item["properties"]
+    assert allows_null(list_item["properties"]["completed_at"])
+    assert allows_null(list_item["properties"]["cancelled_at"])
     path = routes["post"]
     assert path["operationId"] == "support-action-plan.create"
     assert any(p["name"] == "Idempotency-Key" and p["required"] for p in path["parameters"])
