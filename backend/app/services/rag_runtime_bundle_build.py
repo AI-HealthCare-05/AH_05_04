@@ -27,6 +27,7 @@ from ai_worker.tasks.rag.runtime_bundle_builder import (
     RuntimeBundleBuildOutcome,
     RuntimeBundleBuildRequest,
     RuntimeBundleCanonicalConfiguration,
+    RuntimeBundleCitationApprovalPinIdentity,
     RuntimeBundleMemberPurpose,
     RuntimeBundleSourceMemberIdentity,
     canonical_runtime_bundle_manifest_hash,
@@ -35,12 +36,14 @@ from ai_worker.tasks.rag.runtime_bundle_builder import (
 from app.models.rag_runtime import RagRuntimeSourcePurpose
 from app.repositories.rag_runtime_repository import (
     RagRuntimeBundleBuildResult,
+    RagRuntimeBundleCitationApprovalCreate,
     RagRuntimeBundleSourceCreate,
     RagRuntimeExecutionManifestCreate,
     RagRuntimeReleaseBundleCreate,
     RagRuntimeRepository,
     recomputed_execution_manifest_hash,
 )
+from rag_runtime.source_use_approval import SourceUsePurpose
 
 _ARTIFACT_COLUMN_PREFIX = {
     RuntimeBundleArtifactKind.CANDIDATE_INDEX: "candidate_index",
@@ -103,6 +106,10 @@ async def execute_runtime_bundle_build(
         ),
         bundle=_bundle_create(request, configuration, bundle_manifest_hash=outcome.bundle_manifest_hash),
         bundle_sources=tuple(_source_create(member) for member in configuration.source_members),
+        citation_approval_pins=tuple(
+            _citation_approval_create(pin, bundle_manifest_hash=outcome.bundle_manifest_hash)
+            for pin in configuration.citation_approval_pins
+        ),
     )
     return RuntimeBundleBuildExecution(outcome=outcome, persisted=persisted)
 
@@ -124,6 +131,7 @@ async def load_persisted_bundle_configuration(
     if manifest is None:
         return None
     members = await repository.list_bundle_sources(bundle.id)
+    citation_approval_pins = await repository.list_bundle_citation_approval_pins(bundle.id)
 
     artifact_members: list[RuntimeBundleArtifactMemberIdentity] = []
     for prefix, kind in _ARTIFACT_KIND_BY_PREFIX.items():
@@ -163,6 +171,18 @@ async def load_persisted_bundle_configuration(
             for member in members
         ),
         artifact_members=tuple(artifact_members),
+        citation_approval_pins=tuple(
+            RuntimeBundleCitationApprovalPinIdentity(
+                source_snapshot_id=str(pin.source_snapshot_id),
+                source_use_approval_id=str(pin.source_use_approval_id),
+                source_code=pin.source_code,
+                source_version=pin.source_version,
+                approval_version=pin.approval_version,
+                environment=pin.environment,
+                purpose=SourceUsePurpose(pin.purpose),
+            )
+            for pin in citation_approval_pins
+        ),
     )
 
 
@@ -234,4 +254,22 @@ def _source_create(member: RuntimeBundleSourceMemberIdentity) -> RagRuntimeBundl
         freshness_policy_hash=member.freshness_policy_hash,
         required=member.required,
         selected_for_operation=member.selected_for_operation,
+    )
+
+
+def _citation_approval_create(
+    pin: RuntimeBundleCitationApprovalPinIdentity,
+    *,
+    bundle_manifest_hash: str,
+) -> RagRuntimeBundleCitationApprovalCreate:
+    return RagRuntimeBundleCitationApprovalCreate(
+        bundle_id=uuid4(),
+        bundle_manifest_hash=bundle_manifest_hash,
+        source_snapshot_id=UUID(pin.source_snapshot_id),
+        source_use_approval_id=UUID(pin.source_use_approval_id),
+        source_code=pin.source_code,
+        source_version=pin.source_version,
+        approval_version=pin.approval_version,
+        environment=pin.environment,
+        purpose=pin.purpose.value,
     )

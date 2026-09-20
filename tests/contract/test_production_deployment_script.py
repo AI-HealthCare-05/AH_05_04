@@ -454,6 +454,7 @@ def test_writer_credentials_are_validated_before_external_actions(tmp_path, writ
         ("CLOVA_OCR_INVOKE_URL", "http://clova.test/ocr", "HTTPS"),
         ("PUBLIC_TRACK_F_ENABLED", "True", "PUBLIC_TRACK_F_ENABLED=false"),
         ("OCR_STRUCTURE_LLM_ENABLED", "true", "OCR_STRUCTURE_LLM_ENABLED=false"),
+        ("PROTECTED_RETRIEVAL_ENABLED", "true", "PROTECTED_RETRIEVAL_ENABLED=false"),
     ],
 )
 def test_worker_preflight_blocks_before_registry_and_ssh(tmp_path, key, value, expected):
@@ -501,7 +502,7 @@ def test_worker_preflight_blocks_before_registry_and_ssh(tmp_path, key, value, e
     assert "Docker login" not in result.stdout
 
 
-def test_worker_preflight_blocks_chat_history_context_enabled_pending_approval(tmp_path):
+def test_worker_preflight_allows_chat_history_context_enabled_after_approval(tmp_path):
     settings = {
         "ENV": "production",
         "REDIS_PASSWORD": "synthetic-redis",
@@ -537,16 +538,28 @@ def test_worker_preflight_blocks_chat_history_context_enabled_pending_approval(t
     }
     env_file = tmp_path / "prod.env"
     env_file.write_text("\n".join(f'{k}="{v}"' for k, v in settings.items()))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for command in ("ssh", "scp"):
+        executable = bin_dir / command
+        executable.write_text("#!/bin/bash\nexit 0\n")
+        executable.chmod(0o700)
+    docker = bin_dir / "docker"
+    docker.write_text('#!/bin/bash\necho "FAKE_DOCKER_REACHED" >&2\nexit 97\n')
+    docker.chmod(0o700)
     result = subprocess.run(
         ["bash", str(SCRIPT_PATH)],
         cwd=PROJECT_ROOT,
-        env={"PATH": "/usr/bin:/bin", "PROD_ENV_FILE": str(env_file)},
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin", "PROD_ENV_FILE": str(env_file)},
+        input="synthetic-test-pat\n",
         capture_output=True,
         text=True,
         timeout=10,
     )
     assert result.returncode != 0
-    assert "CHAT_HISTORY_CONTEXT_ENABLED=false" in result.stdout
+    output = result.stdout + result.stderr
+    assert "CHAT_HISTORY_CONTEXT_ENABLED=false" not in output
+    assert "FAKE_DOCKER_REACHED" in output
 
 
 @pytest.mark.parametrize("worker_health_exit", [0, 42])

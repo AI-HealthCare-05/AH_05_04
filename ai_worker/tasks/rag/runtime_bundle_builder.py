@@ -40,8 +40,10 @@ from ai_worker.tasks.rag.source_ingestion.snapshot_lifecycle import (
     evaluate_snapshot_use_eligibility,
 )
 from rag_runtime.runtime_environment import RuntimeEnvironmentCode
+from rag_runtime.source_use_approval import SourceUsePurpose
 
-RUNTIME_BUNDLE_MANIFEST_PROJECTION_VERSION = "rag-runtime-bundle-manifest-v1"
+RUNTIME_BUNDLE_MANIFEST_PROJECTION_VERSION = "rag-runtime-bundle-manifest-v2"
+RUNTIME_EXECUTION_MANIFEST_PROJECTION_VERSION = "rag-runtime-bundle-manifest-v1"
 
 WORKER_COMPATIBILITY_BLOCK_CODE = "BLOCKED_BY_RUNTIME_BUNDLE_WORKER_DEPLOYMENT_DECISION"
 """Why Worker-Bundle compatibility is recorded as deferred instead of judged.
@@ -160,6 +162,7 @@ class RuntimeBundleValidationCode(StrEnum):
     ARTIFACT_CATALOG_BINDING_FORBIDDEN = "ARTIFACT_CATALOG_BINDING_FORBIDDEN"
     CATALOG_SOURCE_REF_REQUIRED = "CATALOG_SOURCE_REF_REQUIRED"
     ENVIRONMENT_CODE_NOT_CANONICAL = "ENVIRONMENT_CODE_NOT_CANONICAL"
+    CITATION_APPROVAL_PIN_INVALID = "CITATION_APPROVAL_PIN_INVALID"
 
 
 class RuntimeBundleReadinessBlocker(StrEnum):
@@ -218,6 +221,19 @@ class RuntimeBundleArtifactMemberIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeBundleCitationApprovalPinIdentity:
+    """Exact historical #807 approval pinned into Runtime Bundle content."""
+
+    source_snapshot_id: str
+    source_use_approval_id: str
+    source_code: str
+    source_version: str
+    approval_version: str
+    environment: str
+    purpose: SourceUsePurpose
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeBundleCanonicalConfiguration:
     """The complete content identified by ``bundle_manifest_hash``.
 
@@ -244,6 +260,7 @@ class RuntimeBundleCanonicalConfiguration:
     catalog_manifest_hash: str
     source_members: tuple[RuntimeBundleSourceMemberIdentity, ...]
     artifact_members: tuple[RuntimeBundleArtifactMemberIdentity, ...]
+    citation_approval_pins: tuple[RuntimeBundleCitationApprovalPinIdentity, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +398,7 @@ class RuntimeBundleBuildRequest:
     catalog: MedicationCatalogBinding
     source_members: tuple[RuntimeBundleSourceMemberInput, ...]
     artifact_members: tuple[RuntimeBundleArtifactMemberInput, ...] = ()
+    citation_approval_pins: tuple[RuntimeBundleCitationApprovalPinIdentity, ...] = ()
     governance_revision_ref: str | None = None
     created_by: str | None = None
 
@@ -463,6 +481,7 @@ def runtime_bundle_configuration_from_request(
         catalog_manifest_hash=request.catalog.catalog_manifest_hash,
         source_members=tuple(member.identity() for member in request.source_members),
         artifact_members=tuple(member.identity() for member in request.artifact_members),
+        citation_approval_pins=tuple(dict.fromkeys(request.citation_approval_pins)),
     )
 
 
@@ -474,7 +493,7 @@ def canonical_execution_manifest_hash(manifest: RuntimeExecutionManifestInput) -
     constraints holding at the same time.
     """
     payload = {
-        "projection_version": RUNTIME_BUNDLE_MANIFEST_PROJECTION_VERSION,
+        "projection_version": RUNTIME_EXECUTION_MANIFEST_PROJECTION_VERSION,
         "manifest_key": manifest.manifest_key,
         "manifest_version": manifest.manifest_version,
         "schema_version": manifest.schema_version,
@@ -524,6 +543,21 @@ def canonical_runtime_bundle_manifest_hash(configuration: RuntimeBundleCanonical
         ),
         key=_canonical_bytes,
     )
+    citation_approval_pins = sorted(
+        (
+            {
+                "source_snapshot_id": pin.source_snapshot_id,
+                "source_use_approval_id": pin.source_use_approval_id,
+                "source_code": pin.source_code,
+                "source_version": pin.source_version,
+                "approval_version": pin.approval_version,
+                "environment": pin.environment,
+                "purpose": pin.purpose.value,
+            }
+            for pin in configuration.citation_approval_pins
+        ),
+        key=_canonical_bytes,
+    )
     payload = {
         "projection_version": RUNTIME_BUNDLE_MANIFEST_PROJECTION_VERSION,
         "environment_code": configuration.environment_code,
@@ -532,6 +566,7 @@ def canonical_runtime_bundle_manifest_hash(configuration: RuntimeBundleCanonical
         "catalog_manifest_hash": configuration.catalog_manifest_hash,
         "source_members": source_members,
         "artifact_members": artifact_members,
+        "citation_approval_pins": citation_approval_pins,
     }
     return _sha256_of(payload)
 
@@ -675,6 +710,7 @@ def _validate_request(request: RuntimeBundleBuildRequest) -> tuple[RuntimeBundle
     codes.update(_validate_catalog(request.catalog))
     codes.update(_validate_source_members(request))
     codes.update(_validate_artifact_members(request))
+    codes.update(_validate_citation_approval_pins(request))
     return tuple(code for code in RuntimeBundleValidationCode if code in codes)
 
 
@@ -752,6 +788,26 @@ def _validate_artifact_members(request: RuntimeBundleBuildRequest) -> set[Runtim
         codes.update(_artifact_hash_codes(member))
         codes.update(_artifact_catalog_binding_codes(member))
     return codes
+
+
+def _validate_citation_approval_pins(request: RuntimeBundleBuildRequest) -> set[RuntimeBundleValidationCode]:
+    pins = request.citation_approval_pins
+    by_snapshot: dict[str, RuntimeBundleCitationApprovalPinIdentity] = {}
+    invalid = False
+    for pin in pins:
+        prior = by_snapshot.setdefault(pin.source_snapshot_id, pin)
+        invalid = invalid or prior != pin
+        invalid = invalid or (
+            pin.purpose is not SourceUsePurpose.PATIENT_CITATION
+            or pin.environment != request.environment_code
+            or _CANONICAL_UUID_RE.fullmatch(pin.source_snapshot_id) is None
+            or _CANONICAL_UUID_RE.fullmatch(pin.source_use_approval_id) is None
+            or any(
+                not value or value != value.strip()
+                for value in (pin.source_code, pin.source_version, pin.approval_version)
+            )
+        )
+    return {RuntimeBundleValidationCode.CITATION_APPROVAL_PIN_INVALID} if invalid else set()
 
 
 def _artifact_hash_codes(member: RuntimeBundleArtifactMemberInput) -> set[RuntimeBundleValidationCode]:
@@ -903,10 +959,31 @@ def _is_request_shaped(request: object) -> bool:
         return False
     if not _is_execution_manifest_shaped(request.execution_manifest) or not _is_catalog_shaped(request.catalog):
         return False
-    if not isinstance(request.source_members, tuple) or not isinstance(request.artifact_members, tuple):
+    if (
+        not isinstance(request.source_members, tuple)
+        or not isinstance(request.artifact_members, tuple)
+        or not isinstance(request.citation_approval_pins, tuple)
+    ):
         return False
-    return all(_is_source_member_shaped(member) for member in request.source_members) and all(
-        _is_artifact_member_shaped(member) for member in request.artifact_members
+    return (
+        all(_is_source_member_shaped(member) for member in request.source_members)
+        and all(_is_artifact_member_shaped(member) for member in request.artifact_members)
+        and all(
+            isinstance(pin, RuntimeBundleCitationApprovalPinIdentity)
+            and isinstance(pin.purpose, SourceUsePurpose)
+            and all(
+                isinstance(value, str)
+                for value in (
+                    pin.source_snapshot_id,
+                    pin.source_use_approval_id,
+                    pin.source_code,
+                    pin.source_version,
+                    pin.approval_version,
+                    pin.environment,
+                )
+            )
+            for pin in request.citation_approval_pins
+        )
     )
 
 

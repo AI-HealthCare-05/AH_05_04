@@ -23,6 +23,7 @@ from app.core.db.databases import Base
 from app.core.db.types import UUIDChar
 from app.models.rag_evaluation import EvaluationDecisionStatus
 from rag_runtime.runtime_environment import RuntimeEnvironmentCode
+from rag_runtime.source_use_approval import SourceUsePurpose
 
 
 def _enum_values(enum_cls: type[StrEnum]) -> list[str]:
@@ -184,6 +185,7 @@ class RagRuntimeReleaseBundle(Base):
 
     execution_manifest: Mapped[RagRuntimeExecutionManifest] = relationship(back_populates="bundles")
     source_snapshots: Mapped[list["RagRuntimeBundleSource"]] = relationship(back_populates="bundle")
+    citation_approval_pins: Mapped[list["RagRuntimeBundleCitationApproval"]] = relationship(back_populates="bundle")
     evaluation_approvals: Mapped[list["RagReleaseEvaluationApproval"]] = relationship(back_populates="bundle")
 
 
@@ -248,6 +250,67 @@ class RagRuntimeBundleSource(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     bundle: Mapped[RagRuntimeReleaseBundle] = relationship(back_populates="source_snapshots")
+
+
+class RagRuntimeBundleCitationApproval(Base):
+    """Immutable #807 PATIENT_CITATION approval pinned into canonical bundle content."""
+
+    __tablename__ = "rag_runtime_bundle_citation_approval"
+    __table_args__ = (
+        UniqueConstraint(
+            "bundle_id",
+            "source_snapshot_id",
+            name="uq_rag_runtime_bundle_citation_approval_snapshot",
+        ),
+        ForeignKeyConstraint(
+            ["bundle_id", "bundle_manifest_hash"],
+            ["rag_runtime_release_bundle.id", "rag_runtime_release_bundle.bundle_manifest_hash"],
+            name="fk_rag_runtime_bundle_citation_approval_bundle_manifest",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "purpose = 'PATIENT_CITATION'",
+            name="chk_rag_runtime_bundle_citation_approval_purpose",
+        ),
+        CheckConstraint(
+            f"environment IN ({_sql_in_list(RuntimeEnvironmentCode)})",
+            name="chk_rag_runtime_bundle_citation_approval_environment",
+        ),
+        CheckConstraint(
+            "length(bundle_manifest_hash) = 64",
+            name="chk_rag_runtime_bundle_citation_approval_manifest_hash",
+        ),
+        CheckConstraint(
+            "length(trim(source_code)) > 0",
+            name="chk_rag_runtime_bundle_citation_approval_source_code",
+        ),
+        CheckConstraint(
+            "length(trim(source_version)) > 0",
+            name="chk_rag_runtime_bundle_citation_approval_source_version",
+        ),
+        CheckConstraint(
+            "length(trim(approval_version)) > 0",
+            name="chk_rag_runtime_bundle_citation_approval_version",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
+    bundle_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    bundle_manifest_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_snapshot_id: Mapped[UUID] = mapped_column(
+        UUIDChar(), ForeignKey("rag_source_snapshot.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_use_approval_id: Mapped[UUID] = mapped_column(
+        UUIDChar(), ForeignKey("rag_source_use_approval.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_code: Mapped[str] = mapped_column(String(100), nullable=False)
+    source_version: Mapped[str] = mapped_column(String(200), nullable=False)
+    approval_version: Mapped[str] = mapped_column(String(120), nullable=False)
+    environment: Mapped[str] = mapped_column(String(20), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(40), nullable=False, default=SourceUsePurpose.PATIENT_CITATION.value)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    bundle: Mapped[RagRuntimeReleaseBundle] = relationship(back_populates="citation_approval_pins")
 
 
 class RagRuntimeEnvironment(Base):
@@ -434,6 +497,15 @@ class RagReleaseEvaluationApproval(Base):
 
 Index("idx_rag_runtime_bundle_status", RagRuntimeReleaseBundle.bundle_status)
 Index("idx_rag_runtime_bundle_source_snapshot", RagRuntimeBundleSource.source_snapshot_id)
+Index(
+    "idx_rag_runtime_bundle_citation_approval_bundle_manifest",
+    RagRuntimeBundleCitationApproval.bundle_id,
+    RagRuntimeBundleCitationApproval.bundle_manifest_hash,
+)
+Index(
+    "idx_rag_runtime_bundle_citation_approval_source_use_approval",
+    RagRuntimeBundleCitationApproval.source_use_approval_id,
+)
 Index("idx_rag_runtime_environment_active_bundle", RagRuntimeEnvironment.active_bundle_id)
 Index("idx_rag_runtime_transition_environment", RagRuntimeEnvironmentTransition.environment_id)
 Index("idx_rag_runtime_transition_to_bundle", RagRuntimeEnvironmentTransition.to_bundle_id)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import json
 import os
 import stat
 import sys
@@ -15,7 +16,7 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter, ValidationError
 
-from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, normalize_resource_path
+from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, normalize_resource_path, sha256_hex
 from ai_worker.tasks.evaluation.comparison import (
     LoadedRunBundle,
     build_retrieval_comparison,
@@ -31,7 +32,7 @@ from ai_worker.tasks.evaluation.config import (
     validate_loaded_bindings,
 )
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
-from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_dataset
+from ai_worker.tasks.evaluation.loaders import ValidatedDataset, load_dataset, load_json_object
 from ai_worker.tasks.evaluation.manifest import (
     RunMaterial,
     build_artifact_draft,
@@ -41,7 +42,15 @@ from ai_worker.tasks.evaluation.manifest import (
     validate_published_artifact_contracts,
 )
 from ai_worker.tasks.evaluation.privacy import validate_privacy_boundary
+from ai_worker.tasks.evaluation.projections import release_gate_json, render_release_gate
 from ai_worker.tasks.evaluation.publisher import publish_run_directory
+from ai_worker.tasks.evaluation.release_gate import build_release_gate, release_gate_exit_code
+from ai_worker.tasks.evaluation.release_gate_loader import (
+    derive_required_case_ids,
+    load_gate_evidence,
+    validate_release_dataset_authority,
+)
+from ai_worker.tasks.evaluation.release_policy import load_approved_release_policy
 from ai_worker.tasks.evaluation.reporter import render_report
 from ai_worker.tasks.evaluation.retrieval_replay import build_adapter_registry
 from ai_worker.tasks.evaluation.runner import AdapterRegistry, execute_dev_cases
@@ -54,6 +63,8 @@ from ai_worker.tasks.evaluation.schemas.common import (
     ExperimentType,
     ImmutableReference,
 )
+from ai_worker.tasks.evaluation.schemas.policy import EvaluationProfile
+from ai_worker.tasks.evaluation.schemas.policy_v1_2 import EvaluationProfileV12
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _PRODUCTION_RESULT_ROOT = _REPOSITORY_ROOT / "evals/validation-results"
@@ -104,6 +115,16 @@ def _parser() -> argparse.ArgumentParser:
     run_dev.add_argument("--baseline-run-id")
     verify_result = commands.add_parser("verify-result")
     verify_result.add_argument("--run-id", required=True)
+    gate = commands.add_parser("gate")
+    gate.add_argument("--run-id", required=True)
+    gate.add_argument("--policy", required=True)
+    gate.add_argument("--profile", required=True)
+    gate.add_argument("--comparison-policy", required=True)
+    gate.add_argument("--dataset-manifest")
+    gate.add_argument("--suite", action="append", default=[])
+    gate.add_argument("--receipt", action="append", default=[])
+    gate.add_argument("--paired-comparison-receipt-id")
+    gate.add_argument("--output-dir")
     return parser
 
 
@@ -828,6 +849,171 @@ def _run_verify_result(arguments: argparse.Namespace, *, allowed_result_root: Pa
     return 0
 
 
+def _load_profile(path: Path) -> EvaluationProfile | EvaluationProfileV12:
+    if not path.is_file():
+        raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_MISSING)
+    raw_bytes = path.read_bytes()
+    try:
+        data = json.loads(raw_bytes.decode("utf-8"))
+    except Exception:
+        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID) from None
+    if not isinstance(data, dict):
+        raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
+    model = EvaluationProfileV12 if data.get("schema_version") == "1.2.0" else EvaluationProfile
+    return load_json_object(path, model)
+
+
+def _create_staged_file(directory_fd: int, name: str, payload: bytes) -> int:
+    fd = os.open(name, _open_flags(), 0o600, dir_fd=directory_fd)
+    _write_private_descriptor(fd, payload)
+    return fd
+
+
+def _unlink_quietly(directory_fd: int, name: str) -> None:
+    try:
+        os.unlink(name, dir_fd=directory_fd)
+    except OSError:
+        pass
+
+
+def _close_quietly(fd: int | None) -> None:
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def _rollback_gate_pair(
+    directory_fd: int,
+    published_names: Sequence[str],
+    staged_names: Sequence[str],
+    error: BaseException,
+) -> NoReturn:
+    for name in published_names:
+        _unlink_quietly(directory_fd, name)
+    for name in staged_names:
+        _unlink_quietly(directory_fd, name)
+    raise _normalized_publication_error(error) from None
+
+
+def _publish_gate_pair(target_dir: Path, json_payload: bytes, md_payload: bytes) -> None:
+    """Atomically publish release-gate.json and release-gate.md as a single rollback-safe unit."""
+
+    if (target_dir / "release-gate.json").exists() or (target_dir / "release-gate.md").exists():
+        raise EvaluationValidationError(EvaluationErrorCode.RESULT_PATH_CONFLICT)
+
+    target_dir_absolute = target_dir.resolve()
+    directory_fd = _open_absolute_directory(target_dir_absolute)
+    try:
+        lock_name = f"release-gate.lock.{uuid4()}"
+        tmp_json_name = f"release-gate.json.tmp.{uuid4()}"
+        tmp_md_name = f"release-gate.md.tmp.{uuid4()}"
+
+        lock_fd: int | None = None
+        tmp_json_fd: int | None = None
+        tmp_md_fd: int | None = None
+        published_names: list[str] = []
+        try:
+            lock_fd = os.open(lock_name, _open_flags(), 0o600, dir_fd=directory_fd)
+            _write_private_descriptor(lock_fd, f"pid={os.getpid()}\n".encode("ascii"))
+
+            if _entry_exists(directory_fd, "release-gate.json") or _entry_exists(directory_fd, "release-gate.md"):
+                raise EvaluationValidationError(EvaluationErrorCode.RESULT_PATH_CONFLICT)
+
+            tmp_json_fd = _create_staged_file(directory_fd, tmp_json_name, json_payload)
+            tmp_md_fd = _create_staged_file(directory_fd, tmp_md_name, md_payload)
+
+            if _entry_exists(directory_fd, "release-gate.json") or _entry_exists(directory_fd, "release-gate.md"):
+                raise EvaluationValidationError(EvaluationErrorCode.RESULT_PATH_CONFLICT)
+
+            _atomic_link(directory_fd, tmp_json_name, "release-gate.json")
+            published_names.append("release-gate.json")
+
+            _atomic_link(directory_fd, tmp_md_name, "release-gate.md")
+            published_names.append("release-gate.md")
+
+            _unlink_quietly(directory_fd, tmp_json_name)
+            _unlink_quietly(directory_fd, tmp_md_name)
+            _fsync_directory(directory_fd)
+        except BaseException as error:
+            _rollback_gate_pair(directory_fd, published_names, (tmp_json_name, tmp_md_name), error)
+        finally:
+            for fd in (tmp_json_fd, tmp_md_fd, lock_fd):
+                _close_quietly(fd)
+            _unlink_quietly(directory_fd, lock_name)
+    finally:
+        _close_quietly(directory_fd)
+
+
+def _resolve_required_case_ids(manifest_arg: str | None, profile_path: Path) -> tuple[str, ...]:
+    if not manifest_arg:
+        return ()
+    manifest_path_abs, evals_root, _ = _manifest_location(manifest_arg)
+    dataset = load_dataset(manifest_path_abs, evals_root=evals_root)
+    validate_release_dataset_authority(dataset)
+    profile = _load_profile(profile_path)
+    return derive_required_case_ids(dataset, profile.required_partitions)
+
+
+def _run_gate(arguments: argparse.Namespace, *, allowed_result_root: Path | None) -> int:
+    try:
+        run_root = _PRODUCTION_RUN_ROOT if allowed_result_root is None else allowed_result_root
+        expected_dir = (run_root / arguments.run_id).resolve()
+        if arguments.output_dir:
+            provided_dir = Path(arguments.output_dir).resolve()
+            if provided_dir != expected_dir:
+                raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_PATH_INVALID)
+        target_dir = expected_dir
+        if not target_dir.is_dir():
+            raise EvaluationValidationError(EvaluationErrorCode.RESOURCE_MISSING)
+        if (target_dir / "release-gate.json").exists() or (target_dir / "release-gate.md").exists():
+            raise EvaluationValidationError(EvaluationErrorCode.RESULT_PATH_CONFLICT)
+
+        profile_path = Path(arguments.profile)
+        required_case_ids = _resolve_required_case_ids(arguments.dataset_manifest, profile_path)
+
+        policy = load_approved_release_policy(
+            Path(arguments.policy),
+            profile_path,
+            Path(arguments.comparison_policy),
+            paired_comparison_receipt_id=arguments.paired_comparison_receipt_id,
+            required_case_ids=required_case_ids,
+        )
+
+        dataset_manifest_path = Path(arguments.dataset_manifest) if arguments.dataset_manifest else None
+
+        suite_paths = [Path(p) for p in arguments.suite] if arguments.suite else None
+        receipt_paths = [Path(p) for p in arguments.receipt] if arguments.receipt else None
+
+        evidence = load_gate_evidence(
+            result_root=run_root,
+            run_id=arguments.run_id,
+            policy=policy,
+            suite_paths=suite_paths,
+            receipt_paths=receipt_paths,
+            dataset_manifest_path=dataset_manifest_path,
+        )
+
+        gate = build_release_gate(policy, evidence)
+        _publish_gate_pair(target_dir, release_gate_json(gate), render_release_gate(gate))
+
+        gate_payload = release_gate_json(gate)
+        digest = sha256_hex(gate_payload)
+        sys.stdout.write(f"{digest}\n")
+
+        for code in gate.blocking_reason_codes:
+            sys.stderr.write(f"{code}\n")
+
+        return release_gate_exit_code(gate)
+    except EvaluationValidationError as error:
+        _emit_error(error.code.value)
+        return 2
+    except Exception:
+        _emit_error(EvaluationErrorCode.INTERNAL_ERROR.value)
+        return 3
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -850,6 +1036,8 @@ def main(
         return _run_validate(arguments, allowed_result_root=allowed_result_root)
     if arguments.command == "verify-result":
         return _run_verify_result(arguments, allowed_result_root=allowed_result_root)
+    if arguments.command == "gate":
+        return _run_gate(arguments, allowed_result_root=allowed_result_root)
     return _run_dev(
         arguments,
         allowed_result_root=allowed_result_root,
