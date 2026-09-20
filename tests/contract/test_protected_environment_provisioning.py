@@ -111,8 +111,8 @@ def test_workflow_waits_for_exact_runner_ipv4_allowlist_before_each_ssh() -> Non
 
         assert 'RUNNER_PUBLIC_IPV4="$(curl -fsS https://api.ipify.org)"' in run_script[:first_ssh]
         assert strict_ipv4_pattern in run_script[:first_ssh]
-        assert '::notice::RUNNER_PUBLIC_IPV4=${RUNNER_PUBLIC_IPV4}' in run_script[:first_ssh]
-        assert '::notice::SG_TEMP_CIDR=${RUNNER_PUBLIC_IPV4}/32' in run_script[:first_ssh]
+        assert "::notice::RUNNER_PUBLIC_IPV4=${RUNNER_PUBLIC_IPV4}" in run_script[:first_ssh]
+        assert "::notice::SG_TEMP_CIDR=${RUNNER_PUBLIC_IPV4}/32" in run_script[:first_ssh]
         assert f"::notice::{cleanup_notice}" in run_script[:first_ssh]
         assert "sleep 300" in run_script[:first_ssh]
 
