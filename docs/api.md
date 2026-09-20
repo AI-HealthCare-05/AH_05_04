@@ -94,6 +94,10 @@ FastAPI/Starlette 처리 계층까지 도달한 `/api/v1/*` API 오류 응답은
 | Candidate | `POST` | `/api/v1/medication-candidates/confirm` | `200` |
 | Candidate | `POST` | `/api/v1/medication-candidates/reject` | `200` |
 
+현재 Guide POST/GET은 동일한 `GuideResponse.data`를 사용한다. 기존 `content`, `model_name`, `prompt_version` 필드를 유지하면서 canonical runtime release 결과가 저장된 Guide에는 `release_decision`, `release_is_current`, `fallback_code`, `fallback_text`, `citations[]`를 함께 반환한다. `citations[]`의 공개 필드는 `source_type`, `source_code`, `source_version`, `locator`, `display_order`뿐이며 내부 authorization identity와 score/rank/confidence/raw source는 노출하지 않는다. legacy Guide는 release 필드가 `null`, `citations=[]`이고 기존 `content`는 그대로 유지된다.
+
+runtime `STALE`은 prescription version currentness가 통과한 terminal 결과이므로 POST `201`/GET `200`, `content=null`, `release_is_current=false`, approved fallback, 빈 citations로 복원한다. active prescription version mismatch는 runtime STALE과 별개로 기존 `409 PRESCRIPTION_VERSION_CONFLICT`를 유지한다. 실제 canonical runtime callable 연결과 미래 `202 + JobStatusResponse` 전환은 아직 구현 범위가 아니다.
+
 `PATCH /api/v1/prescriptions/{prescription_id}`는 처방 row를 잠근 뒤 새 Version 생성과 함께 이전
 Version의 `PENDING`·`PROCESSING`·`RETRY_WAIT` Job을 `STALE`, 미발행·예약 Outbox를 `CANCELLED`,
 `RUNNING`·`READY` Candidate Search를 `INVALIDATED_INPUT_CHANGED`로 같은 transaction에서 전환한다.

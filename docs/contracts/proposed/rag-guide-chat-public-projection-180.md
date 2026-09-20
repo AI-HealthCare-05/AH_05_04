@@ -1,10 +1,10 @@
 # RAG 결과 연동 전 Guide·Chat Backend public projection 경계 (#180)
 
-**문서 성격**: Phase A 조사·연동 경계 문서
+**문서 성격**: Phase A 조사 완료 및 Guide Lane A 구현 경계 문서
 **상태**: Proposed
 **관련 이슈**: #180
 **범위**: 현재 Sync `201 Created` Guide·Chat API가 #180 최종 RAG Authorized/Release 결과를 소비할 Backend 경계 정리
-**비범위**: #180 orchestration 구현, Citation Decision 구현, Citation Authorization 판정 구현, Frontend 수정, `202 Accepted` 전환, DB migration, 새 API endpoint, 미확정 DTO·enum 추정
+**비범위**: #180 orchestration 구현, Citation Decision 구현, Citation Authorization 재판정, Frontend 수정, `202 Accepted` 전환, 새 API endpoint, Chat public DTO/persistence 확정
 
 ## 1. 목적
 
@@ -12,7 +12,7 @@
 
 이 문서는 #180 final output/public contract가 Freeze됐을 때 Backend가 어느 지점에서 그 결과를 받아 기존 Guide·Chat public response로 projection해야 하는지 미리 고정한다. 작업 목적은 구현을 앞당기는 것이 아니라, RAG 구현과 Backend API 작업이 서로의 경계를 침범하지 않도록 하는 것이다.
 
-이 문서는 실행 계약이 아니다. 새로운 public DTO, DB column, enum, endpoint를 정의하지 않는다.
+Phase A 조사 이후 Guide Lane A의 canonical carrier가 확정되어 Guide persistence와 public DTO를 구현한다. Chat은 별도 Freeze 전까지 이 구현으로 완료됐다고 보지 않는다.
 
 ## 2. 관련 권위와 소비 순서
 
@@ -81,6 +81,10 @@ Backend Guide·Chat API는 #807의 raw Source Use Approval을 직접 소비하�
 - `prompt_version`
 - `requested_at`
 - `completed_at`
+- `release_decision` (`PASS | LIMITED | REJECTED | STALE | null`)
+- `release_is_current` (`boolean | null`)
+- `fallback_code`, `fallback_text` (nullable)
+- `citations[]` (`source_type`, `source_code`, `source_version`, `locator`, `display_order`)
 
 `GET /api/v1/guides/{guide_id}`도 같은 `_to_guide_data()`를 사용한다. 따라서 Guide의 public projection seam은 `_to_guide_data()`와 `GuideRepository.mark_completed()` 주변이다.
 
@@ -195,12 +199,11 @@ Chat의 현행 projection candidate seam:
 - `GuideCitation`
 - `ChatCitation`
 
-다만 현재 completion 저장 경로는 citation을 함께 쓰지 않는다. 또한 다음 #180 public release 정보는 현재 저장·응답할 수 없다.
+legacy completion 저장 경로는 citation을 함께 쓰지 않는다. canonical carrier용 repository 경계는 release result, approved answer/fallback과 ordered verified citation을 저장하고 GET에서 같은 결과를 복원한다. 실제 runtime callable은 아직 이 경계에 연결되지 않았다.
 
-- `PASS | LIMITED | REJECTED | STALE` 계열 release decision
-- limited/fallback/rejected reason
-- public-safe citation DTO
-- source title/url/locator 규칙
+- Chat의 `PASS | LIMITED | REJECTED | STALE` public projection
+- Chat의 fallback 및 public-safe citation DTO
+- source title/URL/excerpt 규칙
 - score/rank/confidence
 - release receipt/provenance
 - malformed/unauthorized citation 제거 또는 차단 결과
@@ -208,16 +211,14 @@ Chat의 현행 projection candidate seam:
 
 `model_name`과 `prompt_version`은 현재 Provider generation provenance로 사용된다. Runtime Bundle, Citation Authorization, Release Gate provenance를 이 두 필드에 섞지 않는다.
 
-## 7. blocked contract fields
+## 7. 남은 blocked contract fields
 
-아래 항목은 #180 final public contract Freeze 전까지 이 문서나 Backend Phase A에서 임의 생성하지 않는다.
+아래 항목은 후속 contract Freeze 전까지 임의 생성하지 않는다.
 
-- Citation DTO/schema
-- fallback/limited enum
-- release status enum
-- source URL/title/locator 규칙
+- Chat Citation DTO/schema
+- Chat fallback/release DTO
+- source URL/title/excerpt 규칙
 - score/rank/confidence
-- DB column/table
 - 새 API endpoint
 - `202 Accepted` 전환 응답
 - `job_id`/`status_url`/`result_url` 연결

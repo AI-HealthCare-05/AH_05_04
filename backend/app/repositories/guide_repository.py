@@ -1,14 +1,22 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.guides import Guide, GuideGenerationStatus
+from app.models.guides import Guide, GuideCitation, GuideGenerationStatus
 from app.models.prescriptions import Prescription, PrescriptionVersion
 from app.repositories.prescription_integrity import require_verified_version
 from app.repositories.profile_ownership import owned_by_self
+from rag_runtime.guide_release_projection import (
+    GuideRuntimeApprovedAnswer,
+    GuideRuntimeReleaseProjectionCarrier,
+)
+
+
+def _render_approved_answer(answer: GuideRuntimeApprovedAnswer) -> str:
+    return "\n\n".join((*answer.claim_action_texts, answer.uncertainty_text, answer.consultation_text))
 
 
 class GuideRepository:
@@ -58,7 +66,10 @@ class GuideRepository:
     async def get_owned(self, *, guide_id: UUID, user_id: UUID) -> Guide | None:
         result = await self.session.execute(
             select(Guide)
-            .options(selectinload(Guide.prescription).selectinload(Prescription.document))
+            .options(
+                selectinload(Guide.prescription).selectinload(Prescription.document),
+                selectinload(Guide.citations),
+            )
             .where(
                 Guide.id == guide_id,
                 owned_by_self(Guide.profile_id, user_id),
@@ -71,7 +82,9 @@ class GuideRepository:
         (`AsyncJobRepository.get_interim_domain_reference`)와 달리 Outbox 30일 보존과
         무관하게 Job 90일 보존 동안 유지됩니다 — rediscovery·`GET /jobs/{job_id}`가 이 값이
         채워진 뒤에는 이 경로를 우선 사용해야 합니다(OCR의 #212와 같은 목적)."""
-        result = await self.session.execute(select(Guide).where(Guide.ai_job_id == ai_job_id))
+        result = await self.session.execute(
+            select(Guide).options(selectinload(Guide.citations)).where(Guide.ai_job_id == ai_job_id)
+        )
         return result.scalar_one_or_none()
 
     async def get_latest_for_prescription_owned(self, *, prescription_id: UUID, user_id: UUID) -> Guide | None:
@@ -83,7 +96,10 @@ class GuideRepository:
         result = await self.session.execute(
             select(Guide)
             .join(Prescription, Prescription.id == Guide.prescription_id)
-            .options(selectinload(Guide.prescription).selectinload(Prescription.document))
+            .options(
+                selectinload(Guide.prescription).selectinload(Prescription.document),
+                selectinload(Guide.citations),
+            )
             .where(
                 Guide.prescription_id == prescription_id,
                 Guide.prescription_version_id == Prescription.active_version_id,
@@ -120,6 +136,57 @@ class GuideRepository:
         guide.prompt_version = prompt_version
         guide.completed_at = completed_at
         await self.session.flush()
+        return guide
+
+    async def mark_release_completed(
+        self,
+        guide: Guide,
+        *,
+        projection: GuideRuntimeReleaseProjectionCarrier,
+        model_name: str,
+        prompt_version: str,
+        completed_at: datetime,
+    ) -> Guide:
+        guide.generation_status = GuideGenerationStatus.COMPLETED
+        guide.content = _render_approved_answer(projection.answer) if projection.answer is not None else None
+        guide.model_name = model_name
+        guide.prompt_version = prompt_version
+        guide.completed_at = completed_at
+        guide.error_code = None
+        guide.error_message = None
+        guide.release_projection_version = projection.contract_version
+        guide.release_decision = projection.release_decision.value
+        guide.release_is_current = projection.is_current
+        guide.answer_claim_action_texts = (
+            list(projection.answer.claim_action_texts) if projection.answer is not None else None
+        )
+        guide.answer_uncertainty_text = projection.answer.uncertainty_text if projection.answer is not None else None
+        guide.answer_consultation_text = projection.answer.consultation_text if projection.answer is not None else None
+        guide.fallback_code = projection.fallback.code.value if projection.fallback is not None else None
+        guide.fallback_text = projection.fallback.text if projection.fallback is not None else None
+
+        await self.session.execute(delete(GuideCitation).where(GuideCitation.guide_id == guide.id))
+        self.session.add_all(
+            [
+                GuideCitation(
+                    guide_id=guide.id,
+                    card_target_ref=citation.card_target_ref,
+                    claim_key=citation.claim_key,
+                    evidence_key=citation.evidence_key,
+                    source_type=citation.source_type.value,
+                    source_snapshot_id=citation.source_snapshot_id,
+                    source_snapshot_member_id=citation.source_snapshot_member_id,
+                    source_code=citation.source_code,
+                    source_version=citation.source_version,
+                    locator=citation.locator,
+                    content_sha256=citation.content_sha256,
+                    display_order=citation.display_order,
+                )
+                for citation in projection.citations
+            ]
+        )
+        await self.session.flush()
+        await self.session.refresh(guide, attribute_names=["citations"])
         return guide
 
     async def mark_failed(

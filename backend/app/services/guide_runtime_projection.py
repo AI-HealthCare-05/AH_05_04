@@ -25,9 +25,6 @@ class GuideRuntimeProjectionKind(StrEnum):
 
 
 class GuideRuntimePersistenceGap(StrEnum):
-    RELEASE_STATUS_NOT_PERSISTED = "RELEASE_STATUS_NOT_PERSISTED"
-    FALLBACK_NOT_PERSISTED = "FALLBACK_NOT_PERSISTED"
-    LEGACY_CITATION_TABLE_INCOMPATIBLE = "LEGACY_CITATION_TABLE_INCOMPATIBLE"
     NO_PUBLIC_CONTENT = "NO_PUBLIC_CONTENT"
 
 
@@ -58,16 +55,13 @@ def project_guide_runtime_release(
 def _project_answer(carrier: GuideRuntimeReleaseProjectionCarrier) -> GuideRuntimePublicProjectionCandidate:
     if carrier.answer is None:
         return _fail_closed()
-    gaps = [GuideRuntimePersistenceGap.RELEASE_STATUS_NOT_PERSISTED]
-    if carrier.citations:
-        gaps.append(GuideRuntimePersistenceGap.LEGACY_CITATION_TABLE_INCOMPATIBLE)
     return GuideRuntimePublicProjectionCandidate(
         kind=GuideRuntimeProjectionKind.ANSWER,
         is_current=True,
         answer=carrier.answer,
         fallback=None,
         citations=carrier.citations,
-        persistence_gaps=tuple(gaps),
+        persistence_gaps=(),
     )
 
 
@@ -88,10 +82,7 @@ def _project_fallback(carrier: GuideRuntimeReleaseProjectionCarrier) -> GuideRun
         answer=None,
         fallback=carrier.fallback,
         citations=(),
-        persistence_gaps=(
-            GuideRuntimePersistenceGap.RELEASE_STATUS_NOT_PERSISTED,
-            GuideRuntimePersistenceGap.FALLBACK_NOT_PERSISTED,
-        ),
+        persistence_gaps=(),
     )
 
 

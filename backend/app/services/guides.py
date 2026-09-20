@@ -3,8 +3,8 @@ from uuid import UUID
 
 from app.core.errors import ApiError, ErrorDetail
 from app.core.logger import default_logger
-from app.dtos.guides import CreateGuideRequest, GuideData, GuideStatus
-from app.models.guides import Guide
+from app.dtos.guides import CreateGuideRequest, GuideCitationData, GuideData, GuideStatus
+from app.models.guides import Guide, GuideCitation
 from app.models.user_consents import ConsentPurpose
 from app.models.users import User
 from app.repositories.guide_repository import GuideRepository
@@ -16,6 +16,11 @@ from app.services.guide_ai.exceptions import (
     GuideGenerationUnavailableError,
 )
 from app.services.user_consents import ConsentGateService
+from rag_runtime.guide_release_projection import (
+    GuideRuntimeCitationSourceType,
+    GuideRuntimeFallbackCode,
+    GuideRuntimeReleaseDecision,
+)
 
 # OpenAI SDK/도메인 예외 메시지를 그대로 저장하면 요청 payload(약물 정보 등)가 노출될 수 있어
 # 고정된 문구만 DB에 저장합니다.
@@ -33,8 +38,31 @@ def _to_guide_data(guide: Guide) -> GuideData:
         content=guide.content,
         model_name=guide.model_name,
         prompt_version=guide.prompt_version,
+        release_decision=(
+            GuideRuntimeReleaseDecision(guide.release_decision) if guide.release_decision is not None else None
+        ),
+        release_is_current=guide.release_is_current,
+        fallback_code=GuideRuntimeFallbackCode(guide.fallback_code) if guide.fallback_code is not None else None,
+        fallback_text=guide.fallback_text,
+        citations=[_to_public_citation(citation) for citation in guide.citations if citation.source_type is not None],
         requested_at=guide.requested_at,
         completed_at=guide.completed_at,
+    )
+
+
+def _to_public_citation(citation: GuideCitation) -> GuideCitationData:
+    source_type = citation.source_type
+    source_code = citation.source_code
+    source_version = citation.source_version
+    locator = citation.locator
+    if source_type is None or source_code is None or source_version is None or locator is None:
+        raise ValueError("incomplete runtime Guide citation")
+    return GuideCitationData(
+        source_type=GuideRuntimeCitationSourceType(source_type),
+        source_code=source_code,
+        source_version=source_version,
+        locator=locator,
+        display_order=citation.display_order,
     )
 
 
