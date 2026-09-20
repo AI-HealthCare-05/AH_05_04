@@ -13,6 +13,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -94,7 +95,47 @@ async def _revision_and_release_column() -> tuple[str, bool]:
         return revision, column_exists
 
 
-async def _seed_release_guide() -> None:
+async def _seed_release_guide(
+    *,
+    variant: str = "STALE",
+    missing_decision: bool = False,
+    generation_status: GuideGenerationStatus = GuideGenerationStatus.COMPLETED,
+    completed: bool = True,
+) -> None:
+    projection_values: dict[str, Any]
+    if variant == "LEGACY":
+        projection_values = {
+            "content": "legacy synthetic guide",
+            "release_projection_version": None,
+            "release_decision": None,
+            "release_is_current": None,
+            "fallback_code": None,
+            "fallback_text": None,
+        }
+    elif variant == "PASS":
+        projection_values = {
+            "content": "approved synthetic guide",
+            "release_projection_version": GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
+            "release_decision": "PASS",
+            "release_is_current": True,
+            "answer_claim_action_texts": ["approved action"],
+            "answer_uncertainty_text": "approved uncertainty",
+            "answer_consultation_text": "approved consultation",
+            "fallback_code": None,
+            "fallback_text": None,
+        }
+    else:
+        projection_values = {
+            "content": None,
+            "release_projection_version": GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
+            "release_decision": variant,
+            "release_is_current": variant != "STALE",
+            "fallback_code": "PRESCRIPTION_STALE" if variant == "STALE" else "NO_APPROVED_EVIDENCE",
+            "fallback_text": "synthetic fallback",
+        }
+    if missing_decision:
+        projection_values["release_decision"] = None
+
     engine = create_async_engine(config.database_url, poolclass=NullPool)
     try:
         async with AsyncSession(engine, expire_on_commit=False) as session, session.begin():
@@ -153,14 +194,9 @@ async def _seed_release_guide() -> None:
                     prescription_id=prescription.id,
                     prescription_version_id=version.id,
                     profile_id=profile.id,
-                    generation_status=GuideGenerationStatus.COMPLETED,
-                    content=None,
-                    release_projection_version=GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
-                    release_decision="STALE",
-                    release_is_current=False,
-                    fallback_code="PRESCRIPTION_STALE",
-                    fallback_text="synthetic fallback",
-                    completed_at=datetime.now(UTC),
+                    generation_status=generation_status,
+                    completed_at=datetime.now(UTC) if completed else None,
+                    **projection_values,
                 )
             )
     finally:
@@ -170,7 +206,7 @@ async def _seed_release_guide() -> None:
 def test_revision_parent_is_current_develop_head() -> None:
     migration = _load_migration()
     assert migration.revision == "2ba3431f4ef2"
-    assert migration.down_revision == "869a1b2c3d4e"
+    assert migration.down_revision == "880a1b2c3d4e"
 
 
 def test_empty_downgrade_and_reupgrade_succeed(isolated_database: None) -> None:
@@ -184,6 +220,44 @@ def test_empty_downgrade_and_reupgrade_succeed(isolated_database: None) -> None:
 
     command.upgrade(cfg, migration.revision)
     assert asyncio.run(_revision_and_release_column()) == (migration.revision, True)
+
+
+@pytest.mark.parametrize(
+    ("missing_decision", "generation_status", "completed"),
+    [
+        (True, GuideGenerationStatus.COMPLETED, True),
+        (False, GuideGenerationStatus.GENERATING, True),
+        (False, GuideGenerationStatus.COMPLETED, False),
+    ],
+)
+def test_release_projection_shape_rejects_partial_or_nonterminal_rows(
+    isolated_database: None,
+    missing_decision: bool,
+    generation_status: GuideGenerationStatus,
+    completed: bool,
+) -> None:
+    migration = _load_migration()
+    command.upgrade(_alembic_config(), migration.revision)
+
+    with pytest.raises(IntegrityError, match="chk_guide_release_projection_shape"):
+        asyncio.run(
+            _seed_release_guide(
+                missing_decision=missing_decision,
+                generation_status=generation_status,
+                completed=completed,
+            )
+        )
+
+
+@pytest.mark.parametrize("variant", ["LEGACY", "PASS", "LIMITED", "STALE"])
+def test_release_projection_shape_accepts_valid_variants(
+    isolated_database: None,
+    variant: str,
+) -> None:
+    migration = _load_migration()
+    command.upgrade(_alembic_config(), migration.revision)
+
+    asyncio.run(_seed_release_guide(variant=variant))
 
 
 def test_populated_downgrade_preserves_release_data_and_revision(isolated_database: None) -> None:

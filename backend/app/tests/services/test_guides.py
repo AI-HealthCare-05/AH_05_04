@@ -19,7 +19,7 @@ from app.repositories.guide_repository import GuideRepository
 from app.repositories.prescription_repository import PrescriptionRepository
 from app.services.guide_ai.client import ProviderGuideResponse
 from app.services.guide_ai.generator import GuideGenerator
-from app.services.guides import GuideService
+from app.services.guides import GuideService, _to_guide_data
 from app.services.user_consents import ConsentGateService
 from app.tests.conftest import test_engine
 from app.tests.fixtures.prescription_fingerprint import fingerprint_values
@@ -220,15 +220,29 @@ async def test_runtime_stale_release_is_restored_without_prescription_conflict(
         prompt_version="runtime-prompt",
         completed_at=datetime.now(UTC),
     )
+    post_result = _to_guide_data(guide)
+    await PrescriptionRepository(db_session).create_version(
+        prescription=prescription,
+        prescribed_date=date.today(),
+        confirmed_at=datetime.now(UTC),
+        medications=[{"medication_name": "새 버전 합성약", "display_order": 1}],
+    )
 
-    result = await service.get_guide_detail(user=owner, guide_id=guide.id)
+    detail = await service.get_guide_detail(user=owner, guide_id=guide.id)
+    latest = await service.get_latest_guide_for_prescription(
+        user=owner,
+        prescription_id=prescription.id,
+    )
 
-    assert result.release_decision is GuideRuntimeReleaseDecision.STALE
-    assert result.release_is_current is False
-    assert result.content is None
-    assert result.fallback_code is GuideRuntimeFallbackCode.PRESCRIPTION_STALE
-    assert result.fallback_text == "처방 정보가 변경되어 다시 확인이 필요합니다."
-    assert result.citations == []
+    assert detail.guide_id == guide.id
+    assert detail == post_result
+    assert latest == detail
+    assert detail.release_decision is GuideRuntimeReleaseDecision.STALE
+    assert detail.release_is_current is False
+    assert detail.content is None
+    assert detail.fallback_code is GuideRuntimeFallbackCode.PRESCRIPTION_STALE
+    assert detail.fallback_text == "처방 정보가 변경되어 다시 확인이 필요합니다."
+    assert detail.citations == []
 
 
 async def test_get_latest_guide_for_prescription_raises_not_found_when_no_guide_exists(

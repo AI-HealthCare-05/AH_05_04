@@ -4,7 +4,7 @@ from uuid import UUID
 from app.core.errors import ApiError, ErrorDetail
 from app.core.logger import default_logger
 from app.dtos.guides import CreateGuideRequest, GuideCitationData, GuideData, GuideStatus
-from app.models.guides import Guide, GuideCitation
+from app.models.guides import Guide, GuideCitation, GuideGenerationStatus
 from app.models.user_consents import ConsentPurpose
 from app.models.users import User
 from app.repositories.guide_repository import GuideRepository
@@ -17,6 +17,7 @@ from app.services.guide_ai.exceptions import (
 )
 from app.services.user_consents import ConsentGateService
 from rag_runtime.guide_release_projection import (
+    GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
     GuideRuntimeCitationSourceType,
     GuideRuntimeFallbackCode,
     GuideRuntimeReleaseDecision,
@@ -74,6 +75,21 @@ def _ensure_current_version(guide: Guide) -> None:
             message="처방 정보가 변경되어 이전 가이드를 현재 결과로 사용할 수 없습니다.",
             details=[ErrorDetail(field="guide_id", reason="ACTIVE_VERSION_MISMATCH")],
         )
+
+
+def _is_terminal_runtime_stale(guide: Guide) -> bool:
+    return (
+        guide.release_projection_version == GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION
+        and guide.release_decision == GuideRuntimeReleaseDecision.STALE.value
+        and guide.release_is_current is False
+        and guide.generation_status == GuideGenerationStatus.COMPLETED
+        and guide.completed_at is not None
+    )
+
+
+def _ensure_rediscoverable_version(guide: Guide) -> None:
+    if not _is_terminal_runtime_stale(guide):
+        _ensure_current_version(guide)
 
 
 class GuideService:
@@ -226,7 +242,7 @@ class GuideService:
                 message="가이드를 찾을 수 없습니다.",
                 details=[ErrorDetail(field="guide_id", reason="NOT_FOUND", rejected_value=str(guide_id))],
             )
-        _ensure_current_version(guide)
+        _ensure_rediscoverable_version(guide)
         return _to_guide_data(guide)
 
     async def get_latest_guide_for_prescription(self, *, user: User, prescription_id: UUID) -> GuideData:
@@ -245,5 +261,5 @@ class GuideService:
                 message="가이드를 찾을 수 없습니다.",
                 details=[ErrorDetail(field="prescription_id", reason="NOT_FOUND", rejected_value=str(prescription_id))],
             )
-        _ensure_current_version(guide)
+        _ensure_rediscoverable_version(guide)
         return _to_guide_data(guide)

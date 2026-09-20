@@ -1,7 +1,7 @@
 """Persist canonical Guide release projections.
 
 Revision ID: 2ba3431f4ef2
-Revises: 869a1b2c3d4e
+Revises: 880a1b2c3d4e
 """
 
 import sqlalchemy as sa
@@ -9,7 +9,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "2ba3431f4ef2"
-down_revision = "869a1b2c3d4e"
+down_revision = "880a1b2c3d4e"
 branch_labels = None
 depends_on = None
 
@@ -19,7 +19,9 @@ GUIDE_RELEASE_SHAPE = """
  AND answer_uncertainty_text IS NULL AND answer_consultation_text IS NULL
  AND fallback_code IS NULL AND fallback_text IS NULL)
 OR
-(release_projection_version IS NOT NULL AND release_is_current IS NOT NULL AND
+(release_projection_version IS NOT NULL AND release_decision IS NOT NULL
+ AND release_is_current IS NOT NULL AND generation_status = 'COMPLETED'
+ AND completed_at IS NOT NULL AND
  ((release_decision = 'PASS' AND release_is_current AND content IS NOT NULL
    AND answer_claim_action_texts IS NOT NULL
    AND jsonb_typeof(answer_claim_action_texts) = 'array'

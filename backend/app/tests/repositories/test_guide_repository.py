@@ -294,6 +294,26 @@ async def test_get_by_ai_job_id_returns_none_when_unset(db_session: AsyncSession
     assert found is None
 
 
+async def test_mark_completed_legacy_guide_keeps_empty_citations_loaded(
+    db_session: AsyncSession,
+) -> None:
+    owner = await _create_user(db_session, email=f"g-legacy-{uuid4().hex[:8]}@example.com")
+    prescription = await _create_confirmed_prescription(db_session, user=owner)
+    repository = GuideRepository(db_session)
+    guide = await repository.create(prescription=prescription)
+
+    await repository.mark_completed(
+        guide,
+        content="합성 가이드",
+        model_name="synthetic-model",
+        prompt_version="synthetic-prompt",
+        completed_at=datetime.now(UTC),
+    )
+
+    assert guide.citations == []
+    assert _to_guide_data(guide).citations == []
+
+
 async def test_mark_release_completed_round_trips_pass_projection_and_ordered_citations(
     db_session: AsyncSession,
 ) -> None:

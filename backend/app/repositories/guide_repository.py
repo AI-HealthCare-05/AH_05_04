@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -10,7 +10,9 @@ from app.models.prescriptions import Prescription, PrescriptionVersion
 from app.repositories.prescription_integrity import require_verified_version
 from app.repositories.profile_ownership import owned_by_self
 from rag_runtime.guide_release_projection import (
+    GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
     GuideRuntimeApprovedAnswer,
+    GuideRuntimeReleaseDecision,
     GuideRuntimeReleaseProjectionCarrier,
 )
 
@@ -46,6 +48,7 @@ class GuideRepository:
             prescription_version_id=prescription.active_version_id,
             profile_id=prescription.profile_id,
             generation_status=GuideGenerationStatus.GENERATING,
+            citations=[],
         )
         self.session.add(guide)
         await self.session.flush()
@@ -58,6 +61,7 @@ class GuideRepository:
             profile_id=prescription.profile_id,
             ai_job_id=ai_job_id,
             generation_status=GuideGenerationStatus.PENDING,
+            citations=[],
         )
         self.session.add(guide)
         await self.session.flush()
@@ -102,7 +106,16 @@ class GuideRepository:
             )
             .where(
                 Guide.prescription_id == prescription_id,
-                Guide.prescription_version_id == Prescription.active_version_id,
+                or_(
+                    Guide.prescription_version_id == Prescription.active_version_id,
+                    and_(
+                        Guide.release_projection_version == GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
+                        Guide.release_decision == GuideRuntimeReleaseDecision.STALE.value,
+                        Guide.release_is_current.is_(False),
+                        Guide.generation_status == GuideGenerationStatus.COMPLETED,
+                        Guide.completed_at.is_not(None),
+                    ),
+                ),
                 owned_by_self(Guide.profile_id, user_id),
             )
             .order_by(Guide.requested_at.desc(), Guide.id.desc())
