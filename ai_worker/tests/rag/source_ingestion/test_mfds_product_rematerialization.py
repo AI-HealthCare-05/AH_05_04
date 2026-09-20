@@ -196,6 +196,17 @@ def test_prepare_makes_zero_network_calls(tmp_path, monkeypatch):
     assert prepared.acquisition.result.snapshot_candidate_allowed
 
 
+def test_manifest_rejects_started_at_after_finished_at(tmp_path):
+    manifest, _, _, payload = _manifest(tmp_path)
+    payload["started_at"] = "2026-09-19T03:35:30.340915Z"
+    manifest.write_text(json.dumps(payload))
+
+    with pytest.raises(ProductRematerializationBlockedError) as caught:
+        load_product_artifact_manifest(manifest)
+
+    assert caught.value.code == BLOCKED_BY_PRODUCT_ARTIFACT
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

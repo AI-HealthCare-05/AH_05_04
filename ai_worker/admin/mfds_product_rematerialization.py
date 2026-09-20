@@ -350,14 +350,18 @@ def load_product_artifact_manifest(path: Path) -> ProductArtifactManifest:
             artifacts.append(ManifestArtifact(page, expected_key, metadata))
         if [item.page_number for item in artifacts] != list(range(1, len(artifacts) + 1)):
             raise ValueError("page sequence")
+        started_at = _parse_timestamp(payload["started_at"])
+        finished_at = _parse_timestamp(payload["finished_at"])
+        if started_at > finished_at:
+            raise ValueError("timestamp order")
         return ProductArtifactManifest(
             payload["source_version"],
             _require_sha256(payload["canonical_checksum"]),
             _require_sha256(payload["raw_manifest_checksum"]),
             _require_sha256(payload["endpoint_receipt_hash"]),
             payload["record_count"],
-            _parse_timestamp(payload["started_at"]),
-            _parse_timestamp(payload["finished_at"]),
+            started_at,
+            finished_at,
             tuple(artifacts),
         )
     except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
