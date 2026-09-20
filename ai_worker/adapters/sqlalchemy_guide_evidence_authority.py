@@ -27,6 +27,7 @@ Boundaries:
 from __future__ import annotations
 
 import logging
+import unicodedata
 from collections.abc import Callable
 from uuid import UUID
 
@@ -35,16 +36,19 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
+from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, is_valid_immutable_artifact_ref
 from ai_worker.tasks.rag.guide_evidence_authority import (
     AuthoritativeMemberDecisionObservation,
     AuthoritativeRequestGuardObservation,
     AuthoritativeSourceDecisionObservation,
     GuideEvidenceAuthorityReaderError,
+    GuideRequestAuthorityDecisionRefs,
+    GuideRequestAuthorityLookupCoordinate,
 )
-from ai_worker.tasks.rag.guide_evidence_handoff import ObservedDecisionOutcome
+from ai_worker.tasks.rag.guide_evidence_handoff import ObservedDecisionOutcome, RequestDecisionStage
 from ai_worker.tasks.rag.request_authority_artifact import (
     shared_artifact_ref,
+    shared_member_identity,
     worker_artifact_ref,
     worker_member_identity,
 )
@@ -148,6 +152,62 @@ def _source_decision_statement(request_source_decision_ref: ImmutableArtifactRef
 def _member_decision_statement(request_member_decision_ref: ImmutableArtifactRef | RequestAuthorityArtifactRef):
     shared = _shared_ref(request_member_decision_ref)
     return select(*_MEMBER_DECISION.c).select_from(_MEMBER_DECISION).where(_exact_where(_MEMBER_DECISION, shared))
+
+
+def _guard_ref_where(source, request_guard_ref: RequestAuthorityArtifactRef):
+    return and_(
+        source.c.request_guard_artifact_code == request_guard_ref.artifact_code,
+        source.c.request_guard_artifact_version == request_guard_ref.version,
+        source.c.request_guard_content_sha256 == request_guard_ref.content_sha256,
+    )
+
+
+def _nullable_exact(column_, value: str | None):
+    return column_.is_(None) if value is None else column_ == value
+
+
+def _source_coordinate_statement(
+    coordinate: GuideRequestAuthorityLookupCoordinate,
+    request_guard_ref: RequestAuthorityArtifactRef,
+):
+    return (
+        select(*_SOURCE_DECISION.c)
+        .select_from(_SOURCE_DECISION)
+        .where(
+            _guard_ref_where(_SOURCE_DECISION, request_guard_ref),
+            _SOURCE_DECISION.c.user_id == str(coordinate.user_id),
+            _SOURCE_DECISION.c.request_operation_code == coordinate.request_operation_code,
+            _SOURCE_DECISION.c.decision_stage == coordinate.decision_stage.value,
+            _SOURCE_DECISION.c.source_snapshot_id == str(coordinate.source_snapshot_id),
+            _SOURCE_DECISION.c.source_code == coordinate.source_code,
+            _SOURCE_DECISION.c.source_version == coordinate.source_version,
+        )
+    )
+
+
+def _member_coordinate_statement(
+    coordinate: GuideRequestAuthorityLookupCoordinate,
+    request_guard_ref: RequestAuthorityArtifactRef,
+):
+    identity = shared_member_identity(coordinate.member_identity)
+    persisted_kind = "ARTIFACT" if identity.member_kind.value == "ARTIFACT_MEMBER" else identity.member_kind.value
+    return (
+        select(*_MEMBER_DECISION.c)
+        .select_from(_MEMBER_DECISION)
+        .where(
+            _guard_ref_where(_MEMBER_DECISION, request_guard_ref),
+            _MEMBER_DECISION.c.user_id == str(coordinate.user_id),
+            _MEMBER_DECISION.c.request_operation_code == coordinate.request_operation_code,
+            _MEMBER_DECISION.c.decision_stage == coordinate.decision_stage.value,
+            _MEMBER_DECISION.c.source_snapshot_id == str(coordinate.source_snapshot_id),
+            _MEMBER_DECISION.c.source_snapshot_member_id == str(coordinate.source_snapshot_member_id),
+            _MEMBER_DECISION.c.member_kind == persisted_kind,
+            _nullable_exact(_MEMBER_DECISION.c.endpoint_code, identity.endpoint_code),
+            _nullable_exact(_MEMBER_DECISION.c.operation_code, identity.operation_code),
+            _nullable_exact(_MEMBER_DECISION.c.member_artifact_code, identity.artifact_code),
+            _nullable_exact(_MEMBER_DECISION.c.member_artifact_version, identity.artifact_version),
+        )
+    )
 
 
 def _shared_ref(value: ImmutableArtifactRef | RequestAuthorityArtifactRef) -> RequestAuthorityArtifactRef:
@@ -375,6 +435,54 @@ class SqlAlchemyGuideEvidenceAuthorityReader:
             kind="Member decision",
         )
 
+    async def lookup_request_decision_refs(
+        self,
+        *,
+        coordinate: GuideRequestAuthorityLookupCoordinate,
+    ) -> GuideRequestAuthorityDecisionRefs | None:
+        request_guard_ref = _validate_lookup_coordinate(coordinate)
+        try:
+            async with self._session_factory() as session, session.begin():
+                await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+                guard_rows = list((await session.execute(_guard_statement(request_guard_ref))).mappings().all())
+                source_rows = list(
+                    (await session.execute(_source_coordinate_statement(coordinate, request_guard_ref)))
+                    .mappings()
+                    .all()
+                )
+                member_rows = list(
+                    (await session.execute(_member_coordinate_statement(coordinate, request_guard_ref)))
+                    .mappings()
+                    .all()
+                )
+        except SQLAlchemyError as exc:
+            logger.error(
+                "REQUEST authority coordinate lookup failed with database exception: %s", exc.__class__.__name__
+            )
+            raise GuideEvidenceAuthorityReaderError("REQUEST authority coordinate lookup failed") from None
+
+        guard_row = _single_coordinate_row(guard_rows, kind="REQUEST guard")
+        source_row = _single_coordinate_row(source_rows, kind="Source decision")
+        member_row = _single_coordinate_row(member_rows, kind="Member decision")
+        if guard_row is None or source_row is None or member_row is None:
+            return None
+
+        try:
+            guard = _to_guard_observation(guard_row, request_guard_ref)
+            source_ref = _persisted_artifact_ref(source_row)
+            member_ref = _persisted_artifact_ref(member_row)
+            source = _to_source_observation(source_row, source_ref)
+            member = _to_member_observation(member_row, member_ref)
+            _verify_lookup_observations(coordinate, guard, source, member)
+        except _CorruptAuthorityRowError as error:
+            logger.error("REQUEST authority coordinate row is corrupt: %s", error)
+            raise GuideEvidenceAuthorityReaderError("REQUEST authority coordinate row is corrupt") from None
+
+        return GuideRequestAuthorityDecisionRefs(
+            request_source_decision_ref=worker_artifact_ref(source_ref),
+            request_member_decision_ref=worker_artifact_ref(member_ref),
+        )
+
     async def _read(self, *, requested_ref, statement_factory, projection, kind: str):
         try:
             shared = _shared_ref(requested_ref)
@@ -405,3 +513,61 @@ class SqlAlchemyGuideEvidenceAuthorityReader:
             await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
             result = await session.execute(statement)
             return list(result.mappings().all())
+
+
+def _is_nonblank_nfc(value: object) -> bool:
+    return type(value) is str and bool(value) and value == value.strip() and unicodedata.is_normalized("NFC", value)
+
+
+def _validate_lookup_coordinate(
+    coordinate: GuideRequestAuthorityLookupCoordinate,
+) -> RequestAuthorityArtifactRef:
+    if (
+        type(coordinate) is not GuideRequestAuthorityLookupCoordinate
+        or not is_valid_immutable_artifact_ref(coordinate.request_guard_ref)
+        or type(coordinate.user_id) is not UUID
+        or coordinate.decision_stage is not RequestDecisionStage.REQUEST
+        or type(coordinate.source_snapshot_id) is not UUID
+        or type(coordinate.source_snapshot_member_id) is not UUID
+        or not _is_nonblank_nfc(coordinate.request_operation_code)
+        or not _is_nonblank_nfc(coordinate.source_code)
+        or not _is_nonblank_nfc(coordinate.source_version)
+    ):
+        raise GuideEvidenceAuthorityReaderError("REQUEST authority lookup coordinate is invalid")
+    try:
+        shared_member_identity(coordinate.member_identity)
+        return shared_artifact_ref(coordinate.request_guard_ref)
+    except RequestAuthorityArtifactError:
+        raise GuideEvidenceAuthorityReaderError("REQUEST authority lookup coordinate is invalid") from None
+
+
+def _single_coordinate_row(rows: list[RowMapping], *, kind: str) -> RowMapping | None:
+    if not rows:
+        return None
+    if len(rows) > 1:
+        logger.error("%s coordinate lookup is ambiguous: %d rows", kind, len(rows))
+        raise GuideEvidenceAuthorityReaderError(f"{kind} coordinate lookup is ambiguous")
+    return rows[0]
+
+
+def _verify_lookup_observations(coordinate, guard, source, member) -> None:
+    if (
+        guard.user_id != coordinate.user_id
+        or guard.request_operation_code != coordinate.request_operation_code
+        or guard.decision_stage != coordinate.decision_stage.value
+        or source.request_guard_ref != coordinate.request_guard_ref
+        or source.user_id != coordinate.user_id
+        or source.request_operation_code != coordinate.request_operation_code
+        or source.decision_stage != coordinate.decision_stage.value
+        or source.source_snapshot_id != coordinate.source_snapshot_id
+        or source.source_code != coordinate.source_code
+        or source.source_version != coordinate.source_version
+        or member.request_guard_ref != coordinate.request_guard_ref
+        or member.user_id != coordinate.user_id
+        or member.request_operation_code != coordinate.request_operation_code
+        or member.decision_stage != coordinate.decision_stage.value
+        or member.source_snapshot_id != coordinate.source_snapshot_id
+        or member.source_snapshot_member_id != coordinate.source_snapshot_member_id
+        or member.member_identity != coordinate.member_identity
+    ):
+        raise _CorruptAuthorityRowError("persisted authority does not match the exact lookup coordinate")

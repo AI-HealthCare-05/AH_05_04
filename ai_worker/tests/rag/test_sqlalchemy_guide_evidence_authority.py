@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
@@ -13,11 +14,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ai_worker.adapters.sqlalchemy_guide_evidence_authority import (
     SqlAlchemyGuideEvidenceAuthorityReader,
     _guard_statement,
+    _member_coordinate_statement,
     _member_decision_statement,
+    _source_coordinate_statement,
     _source_decision_statement,
 )
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
-from ai_worker.tasks.rag.guide_evidence_authority import GuideEvidenceAuthorityReaderError
+from ai_worker.tasks.rag.guide_evidence_authority import (
+    GuideEvidenceAuthorityReaderError,
+    GuideRequestAuthorityLookupCoordinate,
+)
 from ai_worker.tasks.rag.guide_evidence_handoff import ObservedDecisionOutcome, RequestDecisionStage
 from ai_worker.tasks.rag.request_authority_artifact import (
     compute_request_guard_authority_ref,
@@ -168,6 +174,47 @@ def _reader(
     return SqlAlchemyGuideEvidenceAuthorityReader(lambda: session)
 
 
+def _coordinate() -> GuideRequestAuthorityLookupCoordinate:
+    return GuideRequestAuthorityLookupCoordinate(
+        request_guard_ref=GUARD_REF,
+        user_id=_USER_ID,
+        request_operation_code=_OPERATION,
+        decision_stage=RequestDecisionStage.REQUEST,
+        source_snapshot_id=_SNAPSHOT_ID,
+        source_snapshot_member_id=_MEMBER_ID,
+        source_code=_SOURCE_CODE,
+        source_version=_SOURCE_VERSION,
+        member_identity=_ENDPOINT_IDENTITY,
+    )
+
+
+def _coordinate_reader(
+    *,
+    guard_rows: list[dict[str, Any]] | None = None,
+    source_rows: list[dict[str, Any]] | None = None,
+    member_rows: list[dict[str, Any]] | None = None,
+) -> tuple[SqlAlchemyGuideEvidenceAuthorityReader, AsyncMock]:
+    session = AsyncMock(spec=AsyncSession)
+    session.__aenter__.return_value = session
+    session.begin.return_value.__aenter__.return_value = None
+
+    async def _execute(statement, *args, **kwargs):
+        sql = str(statement)
+        rows: list[dict[str, Any]] = []
+        if "FROM rag_request_guard_authority" in sql:
+            rows = list(guard_rows or [])
+        elif "FROM rag_request_source_decision" in sql:
+            rows = list(source_rows or [])
+        elif "FROM rag_request_member_decision" in sql:
+            rows = list(member_rows or [])
+        result = MagicMock()
+        result.mappings.return_value.all.return_value = rows
+        return result
+
+    session.execute.side_effect = _execute
+    return SqlAlchemyGuideEvidenceAuthorityReader(lambda: session), session
+
+
 def _dependency_error() -> OperationalError:
     return OperationalError("SELECT 1", {}, Exception("synthetic dependency failure"))
 
@@ -197,6 +244,29 @@ def test_statements_are_exact_read_only_lookups_without_fallback(statement: Any,
     assert "LIMIT" not in upper
     assert "ORDER BY" not in upper
     assert "FOR UPDATE" not in upper
+
+
+def test_coordinate_statements_bind_every_historical_request_and_selection_fact() -> None:
+    coordinate = _coordinate()
+    source_sql = str(_source_coordinate_statement(coordinate, GUARD_REF))
+    member_sql = str(_member_coordinate_statement(coordinate, GUARD_REF))
+
+    for sql in (source_sql, member_sql):
+        upper = sql.upper()
+        assert "request_guard_artifact_code = :" in sql
+        assert "request_guard_artifact_version = :" in sql
+        assert "request_guard_content_sha256 = :" in sql
+        assert "user_id = :" in sql
+        assert "request_operation_code = :" in sql
+        assert "decision_stage = :" in sql
+        assert "source_snapshot_id = :" in sql
+        assert "ORDER BY" not in upper
+        assert "LIMIT" not in upper
+        assert "CURRENT" not in upper
+    assert "source_code = :" in source_sql
+    assert "source_version = :" in source_sql
+    assert "source_snapshot_member_id = :" in member_sql
+    assert "member_kind = :" in member_sql
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +311,53 @@ async def test_exact_member_decision_read_returns_authoritative_observation() ->
     assert observation.source_snapshot_member_id == _MEMBER_ID
     assert observation.member_identity == _ENDPOINT_IDENTITY
     assert observation.actual_decision_outcome is ObservedDecisionOutcome.PASS
+
+
+async def test_exact_coordinate_lookup_returns_persisted_decision_refs_in_one_transaction() -> None:
+    reader, session = _coordinate_reader(
+        guard_rows=[_guard_row()],
+        source_rows=[_source_row()],
+        member_rows=[_member_row()],
+    )
+
+    refs = await reader.lookup_request_decision_refs(coordinate=_coordinate())
+
+    assert refs is not None
+    assert refs.request_source_decision_ref == _source_ref()
+    assert refs.request_member_decision_ref == _member_ref()
+    assert session.begin.call_count == 1
+    assert session.execute.await_count == 4
+
+
+async def test_coordinate_lookup_returns_none_when_exact_chain_is_incomplete() -> None:
+    reader, _ = _coordinate_reader(
+        guard_rows=[_guard_row()],
+        source_rows=[],
+        member_rows=[_member_row()],
+    )
+
+    assert await reader.lookup_request_decision_refs(coordinate=_coordinate()) is None
+
+
+async def test_coordinate_lookup_rejects_ambiguous_historical_decisions() -> None:
+    reader, _ = _coordinate_reader(
+        guard_rows=[_guard_row()],
+        source_rows=[_source_row(), _source_row()],
+        member_rows=[_member_row()],
+    )
+
+    with pytest.raises(GuideEvidenceAuthorityReaderError, match="ambiguous"):
+        await reader.lookup_request_decision_refs(coordinate=_coordinate())
+
+
+async def test_coordinate_lookup_rejects_invalid_request_identity() -> None:
+    reader, session = _coordinate_reader()
+    invalid = replace(_coordinate(), request_operation_code=" GUIDE_SYNC_ANSWER")
+
+    with pytest.raises(GuideEvidenceAuthorityReaderError, match="coordinate is invalid"):
+        await reader.lookup_request_decision_refs(coordinate=invalid)
+
+    session.execute.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

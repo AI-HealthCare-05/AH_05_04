@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from ai_worker.adapters.sqlalchemy_guide_evidence_authority import SqlAlchemyGuideEvidenceAuthorityReader
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
 from ai_worker.tasks.rag.guide_evidence_authority import (
+    GuideRequestAuthorityLookupCoordinate,
     SyncGuideEvidenceAuthorityDecision,
     SyncGuideEvidenceAuthorityReason,
     SyncGuideEvidenceAuthorityRequest,
@@ -258,6 +259,58 @@ async def test_reader_returns_each_persisted_observation_exactly(database) -> No
     assert member.source_snapshot_member_id == _MEMBER_ID
     assert member.member_identity == _KERNEL_ENDPOINT_IDENTITY
     assert member.actual_decision_outcome is ObservedDecisionOutcome.PASS
+
+
+async def test_exact_coordinate_lookup_restores_historical_decision_refs(database) -> None:
+    await _seed_user(database)
+    guard_ref, source_ref, member_ref = await _persist_authority(
+        database,
+        member_outcome=RequestAuthorityDecisionOutcome.PASS,
+    )
+    reader = _reader(database)
+
+    refs = await reader.lookup_request_decision_refs(
+        coordinate=GuideRequestAuthorityLookupCoordinate(
+            request_guard_ref=guard_ref,
+            user_id=_USER_ID,
+            request_operation_code=_OPERATION,
+            decision_stage=RequestDecisionStage.REQUEST,
+            source_snapshot_id=_SNAPSHOT_ID,
+            source_snapshot_member_id=_MEMBER_ID,
+            source_code=_SOURCE_CODE,
+            source_version=_SOURCE_VERSION,
+            member_identity=_KERNEL_ENDPOINT_IDENTITY,
+        )
+    )
+
+    assert refs is not None
+    assert refs.request_source_decision_ref == source_ref
+    assert refs.request_member_decision_ref == member_ref
+
+
+async def test_coordinate_lookup_does_not_fall_back_to_a_different_member(database) -> None:
+    await _seed_user(database)
+    guard_ref, _, _ = await _persist_authority(
+        database,
+        member_outcome=RequestAuthorityDecisionOutcome.PASS,
+    )
+    reader = _reader(database)
+
+    refs = await reader.lookup_request_decision_refs(
+        coordinate=GuideRequestAuthorityLookupCoordinate(
+            request_guard_ref=guard_ref,
+            user_id=_USER_ID,
+            request_operation_code=_OPERATION,
+            decision_stage=RequestDecisionStage.REQUEST,
+            source_snapshot_id=_SNAPSHOT_ID,
+            source_snapshot_member_id=uuid4(),
+            source_code=_SOURCE_CODE,
+            source_version=_SOURCE_VERSION,
+            member_identity=_KERNEL_ENDPOINT_IDENTITY,
+        )
+    )
+
+    assert refs is None
 
 
 async def test_wrong_exact_artifact_hash_reads_as_not_found(database) -> None:
