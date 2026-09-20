@@ -2,10 +2,10 @@
 
 | Item | Value |
 | --- | --- |
-| Status | Approved Target · query-text authority frozen · fingerprint implementation blocked |
+| Status | Approved Target · query-text authority frozen · fingerprint authority blocker frozen |
 | Version | `guide-medication-retrieval-query-v1` |
 | Issue | #180 B2 |
-| Result | `GUIDE_RETRIEVAL_QUERY_TEXT_AUTHORITY_READY_BUT_FINGERPRINT_BLOCKED` |
+| Result | `GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING` |
 
 ## 1. Purpose and boundary
 
@@ -71,24 +71,24 @@ The projection MUST NOT append an intent suffix.
 
 ## 4. Fingerprint and binding are distinct blocked authorities
 
-The text projection does not establish either fingerprint computation authority
-(algorithm, key, and key version) or query-binding verification authority.
-`QueryBindingVerifierPort` is a protocol used by the retrieval kernel, but
-No production implementation is present in the repository. #178 design material
-requires the caller to verify the exact query/fingerprint pair before search;
-that design does not authorize this contract to select a production HMAC key or
-key version.
+The text projection does not establish fingerprint computation authority
+(exact algorithm, key_version, secret owner/injection, and digest format) or
+query-binding verification authority. The B2-2 audit is frozen in
+`guide-retrieval-query-fingerprint-authority-v1.md`:
+`PD-315-20260908` approves only a generic versioned HMAC preimage, not an exact
+production algorithm identifier. `QueryBindingVerifierPort` remains a protocol.
+No production implementation is present.
 
-Repository uses of `sha256` / `v1` are synthetic/evaluation fixtures.
-Production code MUST NOT promote `sha256` / `v1` synthetic fixtures into
-Guide fingerprint policy. Until a production computation and verifier authority
-are approved, no B2 Python query module is implemented.
+Repository uses of `sha256` / `v1` are synthetic/evaluation fixtures, and
+`HMAC-SHA-256` / `query-hmac@1` is design-only material. Production MUST NOT promote `sha256` / `v1` synthetic fixtures.
+It MUST NOT promote either as Guide fingerprint policy. Until all approved computation and
+verifier authority exists, no B2 Python query module is implemented.
 
 ## 5. Current state and non-scope
 
 The query-text portion is frozen, but the B1 Sync carrier has not been
-implemented and the fingerprint/binding authority remains absent. This is
-therefore `GUIDE_RETRIEVAL_QUERY_TEXT_AUTHORITY_READY_BUT_FINGERPRINT_BLOCKED`,
+implemented and the fingerprint/binding authority remains absent. The exact B2
+state is `GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING`,
 not a production-ready query capability.
 
 Excluded: Backend DTO/API or ORM access, database migration, current/latest

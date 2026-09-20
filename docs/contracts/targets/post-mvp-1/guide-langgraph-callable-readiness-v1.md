@@ -101,7 +101,7 @@
 | side_effect | READ/WRITE |
 | authority_owner | AI/RAG retrieval runtime |
 | status | `MISSING_SEMANTIC_CALLABLE` |
-| reason | Production `execute_hybrid_retrieve`, the B3 exact historical REQUEST decision lookup, and the B4 projection exist, but canonical Guide binding remains blocked by `GUIDE_RUNTIME_REQUEST_CARRIER_MISSING`, `GUIDE_RETRIEVAL_QUERY_TEXT_AUTHORITY_READY_BUT_FINGERPRINT_BLOCKED`, and `GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_UNAVAILABLE`. The terminal replay result has no original search receipt or selected-hit provenance. |
+| reason | Production `execute_hybrid_retrieve`, the B3 exact historical REQUEST decision lookup, and the B4 projection exist, but canonical Guide binding remains blocked by `GUIDE_RUNTIME_REQUEST_CARRIER_MISSING`, `GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING`, and `GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_UNAVAILABLE`. The terminal replay result has no original search receipt or selected-hit provenance. |
 | required_next_action | Do not add a production callable until B1, B2 fingerprint authority, and B5 are resolved; then compose the approved B3/B4 seams without duplicating retrieval execution or persistence. |
 
 Retrieval binding re-audited at `origin/develop` `08f9b8427e109c0853d45ae94fd704fbba834575`.
