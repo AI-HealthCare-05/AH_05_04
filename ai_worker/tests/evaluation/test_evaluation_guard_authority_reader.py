@@ -292,6 +292,134 @@ async def test_read_candidate_start_persisted_bundle_artifact_corruption() -> No
 
 
 @pytest.mark.asyncio
+async def test_read_candidate_start_minimal_building_bundle() -> None:
+    # Case A: Minimal BUILDING Bundle — only CANDIDATE_INDEX is present, remaining 4 kinds absent
+    minimal_artifact_members = (
+        RuntimeBundleArtifactMemberIdentity(
+            artifact_kind=RuntimeBundleArtifactKind.CANDIDATE_INDEX,
+            artifact_ref="idx-ref-1",
+            artifact_version="1.0.0",
+            manifest_hash="4" * 64,
+        ),
+    )
+    config = RuntimeBundleCanonicalConfiguration(
+        environment_code="LOCAL",
+        execution_manifest_hash=MANIFEST_HASH,
+        catalog_version="1.0.0",
+        catalog_manifest_hash="5" * 64,
+        source_members=(SOURCE_MEMBER,),
+        artifact_members=minimal_artifact_members,
+        citation_approval_pins=(CITATION_PIN,),
+    )
+    minimal_bundle_hash = canonical_runtime_bundle_manifest_hash(config)
+    row = _base_bundle_row(
+        bundle_manifest_hash=minimal_bundle_hash,
+        rule_set_ref=None,
+        rule_set_version=None,
+        knowledge_index_ref=None,
+        knowledge_index_version=None,
+        knowledge_index_manifest_hash=None,
+        guideline_set_ref=None,
+        guideline_set_version=None,
+        safety_policy_ref=None,
+        safety_policy_version=None,
+    )
+    reader = _create_mock_reader(
+        main_row=row,
+        source_rows=[_base_source_row()],
+        pin_rows=[_base_pin_row()],
+    )
+    obs = await reader.read_candidate_start(
+        bundle_id=BUNDLE_ID,
+        bundle_manifest_hash=minimal_bundle_hash,
+    )
+    assert obs is not None
+    assert obs.bundle_manifest_hash == minimal_bundle_hash
+
+
+@pytest.mark.asyncio
+async def test_read_candidate_start_optional_artifacts_three_kinds() -> None:
+    # Case B: CANDIDATE_INDEX, KNOWLEDGE_INDEX, and RULE_SET present
+    three_artifact_members = (
+        RuntimeBundleArtifactMemberIdentity(
+            artifact_kind=RuntimeBundleArtifactKind.CANDIDATE_INDEX,
+            artifact_ref="idx-ref-1",
+            artifact_version="1.0.0",
+            manifest_hash="4" * 64,
+        ),
+        RuntimeBundleArtifactMemberIdentity(
+            artifact_kind=RuntimeBundleArtifactKind.KNOWLEDGE_INDEX,
+            artifact_ref="k-ref-1",
+            artifact_version="1.0.0",
+            manifest_hash="6" * 64,
+        ),
+        RuntimeBundleArtifactMemberIdentity(
+            artifact_kind=RuntimeBundleArtifactKind.RULE_SET,
+            artifact_ref="rule-ref-1",
+            artifact_version="1.0.0",
+            manifest_hash=None,
+        ),
+    )
+    config = RuntimeBundleCanonicalConfiguration(
+        environment_code="LOCAL",
+        execution_manifest_hash=MANIFEST_HASH,
+        catalog_version="1.0.0",
+        catalog_manifest_hash="5" * 64,
+        source_members=(SOURCE_MEMBER,),
+        artifact_members=three_artifact_members,
+        citation_approval_pins=(CITATION_PIN,),
+    )
+    three_bundle_hash = canonical_runtime_bundle_manifest_hash(config)
+    row = _base_bundle_row(
+        bundle_manifest_hash=three_bundle_hash,
+        knowledge_index_ref="k-ref-1",
+        knowledge_index_version="1.0.0",
+        knowledge_index_manifest_hash="6" * 64,
+        rule_set_ref="rule-ref-1",
+        rule_set_version="1.0.0",
+    )
+    reader = _create_mock_reader(
+        main_row=row,
+        source_rows=[_base_source_row()],
+        pin_rows=[_base_pin_row()],
+    )
+    obs = await reader.read_candidate_start(
+        bundle_id=BUNDLE_ID,
+        bundle_manifest_hash=three_bundle_hash,
+    )
+    assert obs is not None
+    assert obs.bundle_manifest_hash == three_bundle_hash
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tamper_field, tamper_value",
+    [
+        ("candidate_index_ref", "tampered-idx-ref"),
+        ("candidate_index_version", "9.9.9"),
+        ("candidate_index_manifest_hash", "e" * 64),
+        ("rule_set_ref", "tampered-rule-ref"),
+        ("rule_set_version", "2.0.0"),
+    ],
+)
+async def test_read_candidate_start_artifact_tamper_matrix(tamper_field: str, tamper_value: str) -> None:
+    # Case C: Existing artifact tamper — corrupting artifact_ref, artifact_version, or manifest_hash rejects
+    corrupted_row = _base_bundle_row(**{tamper_field: tamper_value})
+    reader = _create_mock_reader(
+        main_row=corrupted_row,
+        source_rows=[_base_source_row()],
+        pin_rows=[_base_pin_row()],
+    )
+    with pytest.raises(
+        EvaluationGuardAuthorityReadError, match="Runtime Bundle rows do not match stored bundle_manifest_hash"
+    ):
+        await reader.read_candidate_start(
+            bundle_id=BUNDLE_ID,
+            bundle_manifest_hash=BUNDLE_HASH,
+        )
+
+
+@pytest.mark.asyncio
 async def test_read_candidate_start_persisted_bundle_pin_corruption() -> None:
     # Corrupt citation approval pin source_version while stored bundle_manifest_hash is unchanged
     corrupted_pin = _base_pin_row(source_version="9999.99.99")
