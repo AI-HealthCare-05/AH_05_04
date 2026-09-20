@@ -25,6 +25,36 @@ Never place them in repository files, workflow inputs, issue comments, receipts,
 arguments, or copied terminal transcripts. Keep shell history disabled for credential-handling
 sessions and use interactive/stdin secret entry rather than command-line values.
 
+## Runtime isolation and one-time Compose synchronization
+
+Protected operations use the immutable workflow commit from `github.sha` only for the targeted
+one-shot command process. The workflow first pulls the corresponding
+`app-<github.sha>` image and fails if that exact image is unavailable. It never changes the
+shared project `.env`, `APP_VERSION`, or `AI_WORKER_VERSION`, and it never falls back to
+`latest` or the production application version.
+
+If the merged Compose definition is not yet present on the host, an approved operator performs
+this one-time YAML-only synchronization before dispatching a protected operation:
+
+1. Check out the approved merged commit locally and verify that the local
+   `infra/docker/docker-compose.prod.yml` comes from that commit.
+2. Copy only that YAML to a uniquely named remote temporary file, for example
+   `/tmp/protected-compose-<merge-sha>.yml`. Do not copy `.env`.
+3. On the host, validate the temporary file with
+   `docker compose --env-file /home/<operator>/project/.env -f /tmp/protected-compose-<merge-sha>.yml config --quiet`.
+4. If validation succeeds, copy it to
+   `/home/<operator>/project/docker-compose.yml.next` with the existing Compose file's owner
+   and mode, then atomically rename that file to
+   `/home/<operator>/project/docker-compose.yml`. Remove the temporary file.
+5. Verify the Compose file checksum against the approved local file. This synchronization is
+   complete without starting, stopping, restarting, or recreating any container.
+
+Do not use the general deployment script for this synchronization. Do not run Compose `up`,
+`down`, `restart`, or `stop`, and do not modify or replace the shared `.env`. Actual protected
+commands may target only `protected-retrieval-provision`, `protected-retrieval-backup`,
+`protected-retrieval-restore-db`, `protected-retrieval-restore`, or
+`protected-retrieval-rotate-db`; ordinary runtime services remain untouched.
+
 ## Encrypted backup
 
 1. Confirm protected Environment approval and the temporary runner `/32` SSH rule.
