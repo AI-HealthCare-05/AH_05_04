@@ -12,7 +12,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from ai_worker.tasks.rag.citation_finalizer import AuthorizedCitationSelection
-from ai_worker.tasks.rag.claim_citation_validator import LifestyleGuidelineEvidenceRef
+from ai_worker.tasks.rag.claim_citation_validator import CitationCandidate, LifestyleGuidelineEvidenceRef
 from ai_worker.tasks.rag.guide_runtime_release import (
     GuideRuntimeEvidenceStatus,
     GuideRuntimeExecutionStatus,
@@ -115,7 +115,7 @@ def _project_pass(result: GuideRuntimeReleaseResult) -> GuideRuntimeReleaseProje
     )
 
 
-def _project_citation(candidate: object, *, card_target_ref: str) -> GuideRuntimeVerifiedCitation:
+def _project_citation(candidate: CitationCandidate, *, card_target_ref: str) -> GuideRuntimeVerifiedCitation:
     """Losslessly expose fields from an already validated candidate citation."""
 
     evidence_ref = candidate.evidence_ref
