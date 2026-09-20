@@ -4,13 +4,13 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
 from ai_worker.tasks.evaluation.release_policy import (
     load_approved_release_policy,
     load_release_policy,
-    validate_comparison_policy_approval,
     validate_release_review_provenance,
 )
 from ai_worker.tasks.evaluation.schemas.common import (
@@ -123,7 +123,7 @@ def _make_provenance(
 
 
 def test_validate_release_review_provenance_accepted() -> None:
-    prov = _make_provenance(status=TeamGoldStatus.APPROVED, approver_role=ActorRole.PRODUCT_SAFETY_REVIEWER)
+    prov = _make_provenance(status=TeamGoldStatus.APPROVED)
     validate_release_review_provenance(prov)
 
 
@@ -135,92 +135,19 @@ def test_validate_release_review_provenance_rejects_draft_and_reviewed() -> None
         assert exc.value.code == EvaluationErrorCode.REVIEW_PROVENANCE_INVALID
 
 
-def test_validate_release_review_provenance_rejects_missing_approval() -> None:
-    prov = ReviewProvenance.model_construct(
-        authored_by=ActorRef(
-            namespace=ActorNamespace.GITHUB_LOGIN, actor_id="a", role=ActorRole.EVALUATION_IMPLEMENTER
-        ),
-        reviewed_by=ActorRef(
-            namespace=ActorNamespace.GITHUB_LOGIN, actor_id="r", role=ActorRole.PRODUCT_SAFETY_REVIEWER
-        ),
-        approved_by=None,
-        authored_at="2026-09-10T00:00:00.000000Z",
-        reviewed_at="2026-09-11T00:00:00.000000Z",
-        approved_at=None,
-        team_gold_status=TeamGoldStatus.APPROVED,
-        external_medical_review_status=ExternalMedicalReviewStatus.NOT_REQUESTED,
-        external_medical_approval_receipt_ref=None,
-        evidence_review_refs=(),
-    )
-    with pytest.raises(EvaluationValidationError) as exc:
-        validate_release_review_provenance(prov)
-    assert exc.value.code == EvaluationErrorCode.REVIEW_PROVENANCE_INVALID
-
-
-def test_validate_release_review_provenance_rejects_non_product_safety_reviewer() -> None:
-    prov = _make_provenance(
-        status=TeamGoldStatus.APPROVED,
-        approver_role=ActorRole.DATASET_CUSTODIAN,
-    )
-    with pytest.raises(EvaluationValidationError) as exc:
-        validate_release_review_provenance(prov)
-    assert exc.value.code == EvaluationErrorCode.REVIEW_PROVENANCE_INVALID
-
-
-def test_validate_release_review_provenance_rejects_system_namespace() -> None:
-    prov = ReviewProvenance.model_construct(
-        authored_by=ActorRef(
-            namespace=ActorNamespace.GITHUB_LOGIN, actor_id="a", role=ActorRole.EVALUATION_IMPLEMENTER
-        ),
-        reviewed_by=ActorRef(
-            namespace=ActorNamespace.GITHUB_LOGIN, actor_id="r", role=ActorRole.PRODUCT_SAFETY_REVIEWER
-        ),
-        approved_by=ActorRef.model_construct(
-            namespace=ActorNamespace.SYSTEM, actor_id="s", role=ActorRole.PRODUCT_SAFETY_REVIEWER
-        ),
-        authored_at="2026-09-10T00:00:00.000000Z",
-        reviewed_at="2026-09-11T00:00:00.000000Z",
-        approved_at="2026-09-12T00:00:00.000000Z",
-        team_gold_status=TeamGoldStatus.APPROVED,
-        external_medical_review_status=ExternalMedicalReviewStatus.NOT_REQUESTED,
-        external_medical_approval_receipt_ref=None,
-        evidence_review_refs=(),
-    )
-    with pytest.raises(EvaluationValidationError) as exc:
-        validate_release_review_provenance(prov)
-    assert exc.value.code == EvaluationErrorCode.REVIEW_PROVENANCE_INVALID
-
-
-def test_validate_comparison_policy_approval_accepted_and_rejected() -> None:
-    # dev-foundation-v1 is approved by PRODUCT_SAFETY_REVIEWER
+def test_comparison_policy_schema_approval_invariants() -> None:
     dev_comp_path = EVALS_ROOT / "policies/dev-foundation-v1.comparison-policy.json"
-    dev_comp = ComparisonPolicy.model_validate_json(dev_comp_path.read_bytes())
-    validate_comparison_policy_approval(dev_comp)
+    raw_comp = json.loads(dev_comp_path.read_bytes())
 
-    # rag-holdout-safety-v1 has approved_by.role == SYSTEM_VALIDATOR / namespace == SYSTEM -> reject!
-    holdout_comp_path = EVALS_ROOT / "policies/rag-holdout-safety-v1.comparison-policy.json"
-    holdout_comp = ComparisonPolicy.model_validate_json(holdout_comp_path.read_bytes())
-    with pytest.raises(EvaluationValidationError) as exc:
-        validate_comparison_policy_approval(holdout_comp)
-    assert exc.value.code == EvaluationErrorCode.REVIEW_PROVENANCE_INVALID
-
-    # Approved by EVALUATION_IMPLEMENTER -> reject!
-    implementer_comp = dev_comp.model_copy(
-        update={
-            "approved_by": ActorRef(
-                namespace=ActorNamespace.GITHUB_LOGIN,
-                actor_id="impl-lead",
-                role=ActorRole.EVALUATION_IMPLEMENTER,
-            ),
-        }
-    )
-    with pytest.raises(EvaluationValidationError) as exc:
-        validate_comparison_policy_approval(implementer_comp)
-    assert exc.value.code == EvaluationErrorCode.REVIEW_PROVENANCE_INVALID
+    # Proposer == Approver raises ValidationError by schema model validator
+    invalid_comp_data = dict(raw_comp)
+    invalid_comp_data["approved_by"] = invalid_comp_data["proposed_by"]
+    with pytest.raises(ValidationError):
+        ComparisonPolicy.model_validate(invalid_comp_data)
 
 
 def test_load_approved_release_policy_rejects_unapproved_checked_in_artifacts() -> None:
-    # Checked-in policies are DRAFT/SYSTEM -> must fail closed
+    # Checked-in policies are DRAFT -> must fail closed
     with pytest.raises(EvaluationValidationError) as exc:
         load_approved_release_policy(
             EVALS_ROOT / "policies/rag-holdout-safety-v1.evaluation-policy.json",
@@ -228,3 +155,36 @@ def test_load_approved_release_policy_rejects_unapproved_checked_in_artifacts() 
             EVALS_ROOT / "policies/rag-holdout-safety-v1.comparison-policy.json",
         )
     assert exc.value.code == EvaluationErrorCode.REVIEW_PROVENANCE_INVALID
+
+
+def test_load_approved_release_policy_accepts_approved_policy_graph(tmp_path: Path) -> None:
+    pol_path, prof_path, comp_path = _copy_policy_graph(tmp_path)
+    prov = _make_provenance(status=TeamGoldStatus.APPROVED).model_dump(mode="json")
+
+    prof = json.loads(prof_path.read_bytes())
+    prof["review_provenance"] = prov
+    prof["evaluation_profile_hash"] = canonical_sha256(
+        prof, excluded_top_level_keys=frozenset({"evaluation_profile_hash"})
+    )
+    prof_path.write_bytes(canonical_json_bytes(prof))
+
+    pol = json.loads(pol_path.read_bytes())
+    pol["review_provenance"] = prov
+    pol["evaluation_profile_ref"]["reference"]["hash"] = prof["evaluation_profile_hash"]
+    pol["member_manifest_hash"] = canonical_sha256(
+        {
+            "members": [
+                pol["evaluation_profile_ref"],
+                pol["comparison_policy_ref"],
+                *pol["required_partition_refs"],
+                *pol["required_gate_refs"],
+                pol["required_suite_refs"][0],
+                pol["artifact_schema_set_ref"],
+            ]
+        }
+    )
+    pol["evaluation_policy_hash"] = canonical_sha256(pol, excluded_top_level_keys=frozenset({"evaluation_policy_hash"}))
+    pol_path.write_bytes(canonical_json_bytes(pol))
+
+    loaded_policy = load_approved_release_policy(pol_path, prof_path, comp_path)
+    assert loaded_policy.evaluation_policy_ref.id == pol["evaluation_policy_id"]

@@ -11,21 +11,26 @@ import pytest
 from ai_worker.tasks.evaluation.canonical import canonical_json_bytes, canonical_sha256
 from ai_worker.tasks.evaluation.comparison import load_published_run_bundle
 from ai_worker.tasks.evaluation.errors import EvaluationErrorCode, EvaluationValidationError
+from ai_worker.tasks.evaluation.loaders import load_dataset
 from ai_worker.tasks.evaluation.manifest import build_content_manifest
 from ai_worker.tasks.evaluation.release_gate import (
     ControlSettingEvidence,
     PairedCaseEvidence,
-    ReceiptEvidence,
     build_release_gate,
     paired_case_manifest_hash,
 )
 from ai_worker.tasks.evaluation.release_gate_loader import (
+    _derive_required_case_ids_from_manifest,
+    _locate_suite_definition,
+    _require_canonical_release_guard_authority,
     _validate_release_candidate_run,
+    _validate_release_run_structure,
     derive_required_case_ids,
     load_dataset_manifest,
     load_gate_evidence,
     load_receipt_evidence,
     load_suite_definition,
+    validate_release_dataset_authority,
 )
 from ai_worker.tasks.evaluation.release_policy import (
     ReleaseGatePolicy,
@@ -34,10 +39,10 @@ from ai_worker.tasks.evaluation.release_policy import (
 from ai_worker.tasks.evaluation.schemas.artifacts import (
     RagEvaluationRun,
 )
+from ai_worker.tasks.evaluation.schemas.authoring import DatasetStatus
 from ai_worker.tasks.evaluation.schemas.common import (
     DecisionStatus,
     ExecutionStatus,
-    ExperimentType,
     ImmutableReference,
     Partition,
 )
@@ -216,7 +221,14 @@ def _make_candidate_run(**overrides: Any) -> RagEvaluationRun:
 
 def test_validate_release_candidate_run_accepted() -> None:
     run = _make_candidate_run()
+    _validate_release_run_structure(run)
     _validate_release_candidate_run(run)
+
+
+def test_require_canonical_release_guard_authority_fails_closed() -> None:
+    with pytest.raises(EvaluationValidationError) as exc:
+        _require_canonical_release_guard_authority()
+    assert exc.value.code == EvaluationErrorCode.STATE_COMBINATION_INVALID
 
 
 def test_validate_release_candidate_run_rejects_non_completed_execution() -> None:
@@ -305,30 +317,19 @@ def test_load_suite_definition_accepted_when_approved(tmp_path: Path) -> None:
     assert loaded.suite_id == "rag-retrieval-dev-suite"
 
 
-def test_load_gate_evidence_assembles_valid_evidence(tmp_path: Path) -> None:
+def test_load_gate_evidence_fails_closed_without_canonical_guard_authority(tmp_path: Path) -> None:
+    """Structurally valid candidate run bundle fails closed because #162 guard authority is unavailable."""
     run_id, policy, suite_path, dataset_path = _setup_approved_candidate_fixture(tmp_path)
 
-    evidence = load_gate_evidence(
-        result_root=tmp_path,
-        run_id=run_id,
-        policy=policy,
-        suite_paths=[suite_path],
-        dataset_manifest_path=dataset_path,
-    )
-
-    assert evidence.run_id == run_id
-    assert evidence.required_scope_manifest_hash == policy.required_scope_manifest_hash
-    assert evidence.completed_experiment_types == (ExperimentType.END_TO_END_RAG,)
-    assert evidence.completed_partitions == (Partition.DEV,)
-    assert len(evidence.metrics) > 0
-    assert len(evidence.suites) == 1
-    assert evidence.suites[0].suite.suite_id == "rag-retrieval-dev-suite"
-    assert evidence.receipts == ()
-    assert evidence.paired_case_evidence is None
-
-    gate = build_release_gate(policy, evidence)
-    assert gate.run_id == run_id
-    assert "PROFILE_NOT_RUNTIME_ELIGIBLE" in gate.blocking_reason_codes
+    with pytest.raises(EvaluationValidationError) as exc:
+        load_gate_evidence(
+            result_root=tmp_path,
+            run_id=run_id,
+            policy=policy,
+            suite_paths=[suite_path],
+            dataset_manifest_path=dataset_path,
+        )
+    assert exc.value.code == EvaluationErrorCode.STATE_COMBINATION_INVALID
 
 
 def test_load_gate_evidence_rejects_non_candidate_retrieval_run(tmp_path: Path) -> None:
@@ -356,18 +357,10 @@ def test_load_gate_evidence_rejects_non_candidate_retrieval_run(tmp_path: Path) 
     assert exc.value.code == EvaluationErrorCode.BASELINE_ARTIFACT_INVALID
 
 
-def test_load_gate_evidence_suite_implicit_discovery_eliminated(tmp_path: Path) -> None:
-    run_id, policy, _suite_path, dataset_path = _setup_approved_candidate_fixture(tmp_path)
-
-    # Missing explicit --suite path must fail closed without auto-discovery
+def test_load_gate_evidence_suite_implicit_discovery_eliminated() -> None:
+    expected_ref = ImmutableReference(id="rag-retrieval-dev-suite", version="1.0.0", hash="a" * 64)
     with pytest.raises(EvaluationValidationError) as exc_info:
-        load_gate_evidence(
-            result_root=tmp_path,
-            run_id=run_id,
-            policy=policy,
-            suite_paths=None,
-            dataset_manifest_path=dataset_path,
-        )
+        _locate_suite_definition(expected_ref, suite_paths=None)
     assert exc_info.value.code == EvaluationErrorCode.RESOURCE_MISSING
 
 
@@ -482,6 +475,7 @@ def test_load_gate_evidence_tampered_suite_results_fails_closed(tmp_path: Path) 
     assert exc_info.value.code in (
         EvaluationErrorCode.BASELINE_ARTIFACT_INVALID,
         EvaluationErrorCode.HASH_MISMATCH,
+        EvaluationErrorCode.STATE_COMBINATION_INVALID,
     )
 
 
@@ -501,25 +495,19 @@ def test_load_gate_evidence_dataset_manifest_mismatch_fails_closed(tmp_path: Pat
     assert exc_info.value.code == EvaluationErrorCode.HASH_MISMATCH
 
 
-def test_real_published_bundle_end_to_end_compatibility(tmp_path: Path) -> None:
-    """Verify that an end-to-end published candidate bundle loads seamlessly into GateEvidence."""
+def test_real_published_bundle_fails_closed_without_canonical_guard_authority(tmp_path: Path) -> None:
+    """Verify that an end-to-end published candidate bundle fails closed on load_gate_evidence."""
     run_id, policy, suite_path, dataset_path = _setup_approved_candidate_fixture(tmp_path)
 
-    evidence = load_gate_evidence(
-        result_root=tmp_path,
-        run_id=run_id,
-        policy=policy,
-        suite_paths=[suite_path],
-        dataset_manifest_path=dataset_path,
-    )
-
-    assert evidence.run_id == run_id
-    assert evidence.required_scope_manifest_hash == policy.required_scope_manifest_hash
-    assert evidence.completed_experiment_types == (ExperimentType.END_TO_END_RAG,)
-    assert evidence.completed_partitions == (Partition.DEV,)
-    assert len(evidence.metrics) > 0
-    assert len(evidence.suites) == 1
-    assert evidence.suites[0].suite.suite_id == "rag-retrieval-dev-suite"
+    with pytest.raises(EvaluationValidationError) as exc:
+        load_gate_evidence(
+            result_root=tmp_path,
+            run_id=run_id,
+            policy=policy,
+            suite_paths=[suite_path],
+            dataset_manifest_path=dataset_path,
+        )
+    assert exc.value.code == EvaluationErrorCode.STATE_COMBINATION_INVALID
 
 
 def test_all_variants_same_required_case_missing_prevents_pass() -> None:
@@ -527,7 +515,7 @@ def test_all_variants_same_required_case_missing_prevents_pass() -> None:
     from ai_worker.tests.evaluation.test_release_gate import _evidence, _paired, _policy
 
     manifest = load_dataset_manifest(DATASET_PATH)
-    authoritative_cases = derive_required_case_ids(manifest, (Partition.DEV,))
+    authoritative_cases = _derive_required_case_ids_from_manifest(manifest, (Partition.DEV,))
     assert "rag-ret-dev-001" in authoritative_cases
 
     # Incomplete paired evidence: ALL variants (baseline, candidate, final) miss rag-ret-dev-001
@@ -675,24 +663,58 @@ def test_shape_compatible_but_unregistered_release_receipt_fails_closed(tmp_path
     assert exc_info.value.code == EvaluationErrorCode.SCHEMA_INVALID
 
 
-def test_derive_required_case_ids_filters_by_required_partitions_excluding_dev() -> None:
+def test_validate_release_dataset_authority_accepts_frozen() -> None:
+    evals_root = Path("evals")
+    dataset = load_dataset(evals_root / "retrieval/manifests/rag-holdout-safety-v1.dataset.json", evals_root=evals_root)
+    assert dataset.manifest.status == DatasetStatus.FROZEN
+    validate_release_dataset_authority(dataset)
+
+
+def test_validate_release_dataset_authority_rejects_draft() -> None:
+    evals_root = Path("evals")
+    dataset = load_dataset(evals_root / "retrieval/manifests/rag-retrieval-dev-v1.dataset.json", evals_root=evals_root)
+    assert dataset.manifest.status == DatasetStatus.DRAFT
+    with pytest.raises(EvaluationValidationError) as exc:
+        validate_release_dataset_authority(dataset)
+    assert exc.value.code == EvaluationErrorCode.REVIEW_PROVENANCE_INVALID
+
+
+def test_derive_required_case_ids_accepts_frozen_and_preserves_order() -> None:
+    evals_root = Path("evals")
+    dataset = load_dataset(evals_root / "retrieval/manifests/rag-holdout-safety-v1.dataset.json", evals_root=evals_root)
+    cases = derive_required_case_ids(dataset, (Partition.HOLDOUT, Partition.SAFETY_REGRESSION))
+    assert len(cases) > 0
+    # Also verify partition filtering
+    holdout_cases = derive_required_case_ids(dataset, (Partition.HOLDOUT,))
+    assert all(c in cases for c in holdout_cases)
+
+
+def test_derive_required_case_ids_rejects_draft_dataset() -> None:
+    evals_root = Path("evals")
+    dataset = load_dataset(evals_root / "retrieval/manifests/rag-retrieval-dev-v1.dataset.json", evals_root=evals_root)
+    with pytest.raises(EvaluationValidationError) as exc:
+        derive_required_case_ids(dataset, (Partition.DEV,))
+    assert exc.value.code == EvaluationErrorCode.REVIEW_PROVENANCE_INVALID
+
+
+def test_derive_required_case_ids_from_manifest_filters_and_detects_duplicates() -> None:
     manifest = load_dataset_manifest(DATASET_PATH)
-    dev_cases = derive_required_case_ids(manifest, (Partition.DEV,))
+    dev_cases = _derive_required_case_ids_from_manifest(manifest, (Partition.DEV,))
     assert "rag-ret-dev-001" in dev_cases
 
-    holdout_safety_cases = derive_required_case_ids(manifest, (Partition.HOLDOUT, Partition.SAFETY_REGRESSION))
+    holdout_safety_cases = _derive_required_case_ids_from_manifest(
+        manifest, (Partition.HOLDOUT, Partition.SAFETY_REGRESSION)
+    )
     assert "rag-ret-dev-001" not in holdout_safety_cases
 
-
-def test_derive_required_case_ids_duplicate_case_id_fails_closed() -> None:
-    manifest = load_dataset_manifest(DATASET_PATH)
+    # Duplicate case ID check
     resource_0 = manifest.case_resources[0]
     duplicate_resource = resource_0.model_copy(update={"partition": Partition.HOLDOUT})
     duplicated_resources = list(manifest.case_resources) + [duplicate_resource]
     mock_manifest = manifest.model_copy(update={"case_resources": tuple(duplicated_resources)})
 
     with pytest.raises(EvaluationValidationError) as exc_info:
-        derive_required_case_ids(mock_manifest, (Partition.DEV, Partition.HOLDOUT))
+        _derive_required_case_ids_from_manifest(mock_manifest, (Partition.DEV, Partition.HOLDOUT))
     assert exc_info.value.code == EvaluationErrorCode.CASE_DUPLICATE
 
 
@@ -762,49 +784,12 @@ def test_multi_partition_run_fails_closed_pending_upstream_contract(tmp_path: Pa
     assert exc_info.value.code == EvaluationErrorCode.BASELINE_ARTIFACT_INVALID
 
 
-def test_load_gate_evidence_always_produces_none_paired_case_evidence(tmp_path: Path) -> None:
-    run_id, policy, suite_path, dataset_path = _setup_approved_candidate_fixture(tmp_path)
-    evidence = load_gate_evidence(
-        result_root=tmp_path,
-        run_id=run_id,
-        policy=policy,
-        suite_paths=[suite_path],
-        dataset_manifest_path=dataset_path,
-    )
-    assert evidence.paired_case_evidence is None
+def test_gate_fails_closed_when_paired_comparison_required_without_production_evidence() -> None:
+    from ai_worker.tests.evaluation.test_release_gate import _evidence, _policy
 
+    policy = _policy()
+    evidence = replace(_evidence(), paired_case_evidence=None)
 
-def test_gate_fails_closed_when_paired_comparison_required_without_production_evidence(tmp_path: Path) -> None:
-    run_id, policy, suite_path, dataset_path = _setup_approved_candidate_fixture(tmp_path)
-    evidence = load_gate_evidence(
-        result_root=tmp_path,
-        run_id=run_id,
-        policy=policy,
-        suite_paths=[suite_path],
-        dataset_manifest_path=dataset_path,
-    )
-    paired_receipt_ref = ImmutableReference(
-        id="ans-base-to-ans-final-comparison",
-        version="1.0.0",
-        hash="a" * 64,
-    )
-    strict_policy = replace(
-        policy,
-        required_receipts=(*policy.required_receipts, paired_receipt_ref),
-        paired_comparison_receipt_id="ans-base-to-ans-final-comparison",
-        required_case_ids=("rag-ret-dev-001", "rag-ret-dev-002"),
-    )
-    receipt = ReceiptEvidence(
-        reference=paired_receipt_ref,
-        execution_status=ExecutionStatus.COMPLETED,
-        decision_status=DecisionStatus.PASS,
-        artifact_ref=paired_receipt_ref,
-        is_current=True,
-    )
-    evidence_with_receipt = replace(
-        evidence,
-        receipts=(*evidence.receipts, receipt),
-    )
-    gate = build_release_gate(strict_policy, evidence_with_receipt)
+    gate = build_release_gate(policy, evidence)
     assert gate.aggregate_decision_status is not DecisionStatus.PASS
     assert "PAIRED_COMPARISON_EVIDENCE_MISSING" in gate.blocking_reason_codes

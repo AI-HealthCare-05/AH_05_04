@@ -3,7 +3,7 @@
 import json
 from collections.abc import Sequence
 from pathlib import Path
-from typing import cast
+from typing import NoReturn, cast
 
 from ai_worker.tasks.evaluation.canonical import canonical_sha256
 from ai_worker.tasks.evaluation.comparison import load_published_run_bundle
@@ -23,7 +23,7 @@ from ai_worker.tasks.evaluation.schemas.artifacts import (
     RuntimeEnvironment,
     SuiteResults,
 )
-from ai_worker.tasks.evaluation.schemas.authoring import DatasetManifest
+from ai_worker.tasks.evaluation.schemas.authoring import DatasetManifest, DatasetStatus
 from ai_worker.tasks.evaluation.schemas.authoring_v1_1 import DatasetManifestV11
 from ai_worker.tasks.evaluation.schemas.authoring_v1_2 import DatasetManifestV12
 from ai_worker.tasks.evaluation.schemas.authoring_v1_3 import DatasetManifestV13
@@ -116,24 +116,49 @@ def derive_partition_manifest_hash(manifest: AnyDatasetManifest, partition: Part
     return canonical_sha256({"partition": partition.value, "resources": resources})
 
 
-def _extract_case_ids_and_partitions(
-    manifest: AnyDatasetManifest | ValidatedDataset,
-) -> tuple[tuple[str, str], ...]:
-    if hasattr(manifest, "cases"):
-        return tuple((c.case_id, getattr(c.partition, "value", None) or str(c.partition)) for c in manifest.cases)
-    return tuple((r.case_id, getattr(r.partition, "value", None) or str(r.partition)) for r in manifest.case_resources)
+def validate_release_dataset_authority(
+    dataset: ValidatedDataset,
+) -> None:
+    """Validate that the dataset possesses approved FROZEN authority.
+
+    Reuses existing Freeze contract (PD-216 / PD-241). Only FROZEN datasets loaded
+    via load_dataset() (with complete Gold, Evidence, and Rubric approval closure)
+    are authoritative required-case sources.
+    """
+    status = getattr(dataset.manifest, "status", None)
+    if status is not DatasetStatus.FROZEN and status != "FROZEN" and getattr(status, "value", None) != "FROZEN":
+        raise EvaluationValidationError(EvaluationErrorCode.REVIEW_PROVENANCE_INVALID)
 
 
 def derive_required_case_ids(
-    manifest: AnyDatasetManifest | ValidatedDataset,
+    dataset: ValidatedDataset,
     target_partitions: Sequence[Partition],
 ) -> tuple[str, ...]:
-    """Derive required case IDs from an approved dataset manifest or validated dataset for specified partitions.
+    """Derive required case IDs from a validated dataset for specified partitions.
 
     Preserves canonical validated order and rejects duplicate case IDs with CASE_DUPLICATE.
     """
+    validate_release_dataset_authority(dataset)
+    pairs = tuple((c.case_id, getattr(c.partition, "value", None) or str(c.partition)) for c in dataset.cases)
+    all_seen: set[str] = set()
+    for case_id, _ in pairs:
+        if case_id in all_seen:
+            raise EvaluationValidationError(EvaluationErrorCode.CASE_DUPLICATE)
+        all_seen.add(case_id)
 
-    pairs = _extract_case_ids_and_partitions(manifest)
+    target_values = {p.value if hasattr(p, "value") else str(p) for p in target_partitions}
+    case_ids = [case_id for case_id, partition_val in pairs if partition_val in target_values]
+    if len(case_ids) != len(set(case_ids)):
+        raise EvaluationValidationError(EvaluationErrorCode.CASE_DUPLICATE)
+    return tuple(case_ids)
+
+
+def _derive_required_case_ids_from_manifest(
+    manifest: AnyDatasetManifest,
+    target_partitions: Sequence[Partition],
+) -> tuple[str, ...]:
+    """Test helper: derive required case IDs from a raw dataset manifest."""
+    pairs = tuple((r.case_id, getattr(r.partition, "value", None) or str(r.partition)) for r in manifest.case_resources)
     all_seen: set[str] = set()
     for case_id, _ in pairs:
         if case_id in all_seen:
@@ -183,8 +208,12 @@ def load_receipt_evidence(path: Path) -> ReceiptEvidence:
     raise EvaluationValidationError(EvaluationErrorCode.SCHEMA_INVALID)
 
 
-def _validate_release_candidate_run(run: RagEvaluationRun) -> None:
-    """Validate that run meets all minimum acceptance criteria to be a protected Release Candidate."""
+def _validate_release_run_structure(run: RagEvaluationRun) -> None:
+    """Validate structural Run prerequisites only.
+
+    This checks execution status, runtime eligibility, experiment type, and presence of
+    persisted Guard fields, but does not establish authoritative Guard binding.
+    """
 
     if run.execution_status is not ExecutionStatus.COMPLETED and run.execution_status != "COMPLETED":
         raise EvaluationValidationError(EvaluationErrorCode.BASELINE_ARTIFACT_INVALID)
@@ -216,6 +245,18 @@ def _validate_release_candidate_run(run: RagEvaluationRun) -> None:
 
     if run.candidate_guard_decision is not CandidateGuardDecision.PASS and run.candidate_guard_decision != "PASS":
         raise EvaluationValidationError(EvaluationErrorCode.BASELINE_ARTIFACT_INVALID)
+
+
+_validate_release_candidate_run = _validate_release_run_structure
+
+
+def _require_canonical_release_guard_authority() -> NoReturn:
+    """Fail closed because canonical #162 Guard authority binding is unavailable.
+
+    Persisted Guard fields inside RagEvaluationRun are unverified claims and cannot
+    establish Release Candidate authority until canonical #162 Guard artifacts are defined.
+    """
+    raise EvaluationValidationError(EvaluationErrorCode.STATE_COMBINATION_INVALID)
 
 
 def _locate_suite_definition(
@@ -313,10 +354,12 @@ def load_gate_evidence(
     if run.run_id != run_id:
         raise EvaluationValidationError(EvaluationErrorCode.BASELINE_ARTIFACT_INVALID)
 
-    _validate_release_candidate_run(run)
+    _validate_release_run_structure(run)
 
     _validate_run_policy_bindings(run, policy)
     _validate_run_dataset_and_partitions(run, dataset_manifest_path)
+
+    _require_canonical_release_guard_authority()
 
     metrics_artifact = bundle.metrics
     metrics_digest = canonical_sha256(cast(JsonValue, metrics_artifact.model_dump(mode="json")))

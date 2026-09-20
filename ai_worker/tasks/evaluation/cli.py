@@ -46,10 +46,9 @@ from ai_worker.tasks.evaluation.projections import release_gate_json, render_rel
 from ai_worker.tasks.evaluation.publisher import publish_run_directory
 from ai_worker.tasks.evaluation.release_gate import build_release_gate, release_gate_exit_code
 from ai_worker.tasks.evaluation.release_gate_loader import (
-    AnyDatasetManifest,
     derive_required_case_ids,
-    load_dataset_manifest,
     load_gate_evidence,
+    validate_release_dataset_authority,
 )
 from ai_worker.tasks.evaluation.release_policy import load_approved_release_policy
 from ai_worker.tasks.evaluation.reporter import render_report
@@ -950,16 +949,11 @@ def _publish_gate_pair(target_dir: Path, json_payload: bytes, md_payload: bytes)
 def _resolve_required_case_ids(manifest_arg: str | None, profile_path: Path) -> tuple[str, ...]:
     if not manifest_arg:
         return ()
-    manifest_path = Path(manifest_arg)
-    try:
-        manifest_path_abs, evals_root, _ = _manifest_location(str(manifest_path))
-        manifest_obj: AnyDatasetManifest | ValidatedDataset = load_dataset(manifest_path_abs, evals_root=evals_root)
-    except EvaluationValidationError:
-        raise
-    except Exception:
-        manifest_obj = load_dataset_manifest(manifest_path)
+    manifest_path_abs, evals_root, _ = _manifest_location(manifest_arg)
+    dataset = load_dataset(manifest_path_abs, evals_root=evals_root)
+    validate_release_dataset_authority(dataset)
     profile = _load_profile(profile_path)
-    return derive_required_case_ids(manifest_obj, profile.required_partitions)
+    return derive_required_case_ids(dataset, profile.required_partitions)
 
 
 def _run_gate(arguments: argparse.Namespace, *, allowed_result_root: Path | None) -> int:

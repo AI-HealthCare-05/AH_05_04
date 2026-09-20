@@ -109,33 +109,34 @@ def test_gate_cli_invalid_on_diagnostic_dev_policy(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    from ai_worker.tests.evaluation.test_release_gate import _evidence
+
     run_id, policy_path, profile_path, comparison_path, suite_path = _setup_approved_cli_fixture(tmp_path)
 
-    exit_code = main(
-        [
-            "gate",
-            "--run-id",
-            run_id,
-            "--policy",
-            str(policy_path),
-            "--profile",
-            str(profile_path),
-            "--comparison-policy",
-            str(comparison_path),
-            "--suite",
-            str(suite_path),
-            "--dataset-manifest",
-            DATASET_ARG,
-        ],
-        allowed_result_root=tmp_path,
-    )
+    with patch("ai_worker.tasks.evaluation.cli.load_gate_evidence", return_value=_evidence()):
+        exit_code = main(
+            [
+                "gate",
+                "--run-id",
+                run_id,
+                "--policy",
+                str(policy_path),
+                "--profile",
+                str(profile_path),
+                "--comparison-policy",
+                str(comparison_path),
+                "--suite",
+                str(suite_path),
+            ],
+            allowed_result_root=tmp_path,
+        )
 
     captured = capsys.readouterr()
     assert exit_code == 2
     digest = captured.out.strip()
     assert len(digest) == 64
     assert all(c in "0123456789abcdef" for c in digest)
-    assert "REQUIRED_SUITE_BINDING_MISMATCH:rag-retrieval-dev-suite" in captured.err
+    assert "REQUIRED_SUITE_MISSING:rag-retrieval-dev-suite" in captured.err
 
 
 def test_gate_cli_missing_suite_fails_closed_without_implicit_discovery(
@@ -145,22 +146,24 @@ def test_gate_cli_missing_suite_fails_closed_without_implicit_discovery(
     run_id, policy_path, profile_path, comparison_path, _suite_path = _setup_approved_cli_fixture(tmp_path)
 
     # Omitting --suite must fail closed (no directory scanning)
-    exit_code = main(
-        [
-            "gate",
-            "--run-id",
-            run_id,
-            "--policy",
-            str(policy_path),
-            "--profile",
-            str(profile_path),
-            "--comparison-policy",
-            str(comparison_path),
-            "--dataset-manifest",
-            DATASET_ARG,
-        ],
-        allowed_result_root=tmp_path,
-    )
+    with patch(
+        "ai_worker.tasks.evaluation.release_gate_loader._require_canonical_release_guard_authority",
+        lambda: None,
+    ):
+        exit_code = main(
+            [
+                "gate",
+                "--run-id",
+                run_id,
+                "--policy",
+                str(policy_path),
+                "--profile",
+                str(profile_path),
+                "--comparison-policy",
+                str(comparison_path),
+            ],
+            allowed_result_root=tmp_path,
+        )
 
     captured = capsys.readouterr()
     assert exit_code == 2
@@ -176,7 +179,10 @@ def test_gate_cli_pass_exit_code_0(
     run_id, policy_path, profile_path, comparison_path, suite_path = _setup_approved_cli_fixture(tmp_path)
     pass_gate = build_release_gate(_policy(), _evidence())
 
-    with patch("ai_worker.tasks.evaluation.cli.build_release_gate", return_value=pass_gate):
+    with (
+        patch("ai_worker.tasks.evaluation.cli.load_gate_evidence", return_value=_evidence()),
+        patch("ai_worker.tasks.evaluation.cli.build_release_gate", return_value=pass_gate),
+    ):
         exit_code = main(
             [
                 "gate",
@@ -190,8 +196,6 @@ def test_gate_cli_pass_exit_code_0(
                 str(comparison_path),
                 "--suite",
                 str(suite_path),
-                "--dataset-manifest",
-                DATASET_ARG,
             ],
             allowed_result_root=tmp_path,
         )
@@ -215,7 +219,10 @@ def test_gate_cli_fail_exit_code_1(
     failed_receipt = replace(ev.receipts[0], decision_status=DecisionStatus.FAIL)
     fail_gate = build_release_gate(_policy(), replace(ev, receipts=(failed_receipt, ev.receipts[1])))
 
-    with patch("ai_worker.tasks.evaluation.cli.build_release_gate", return_value=fail_gate):
+    with (
+        patch("ai_worker.tasks.evaluation.cli.load_gate_evidence", return_value=_evidence()),
+        patch("ai_worker.tasks.evaluation.cli.build_release_gate", return_value=fail_gate),
+    ):
         exit_code = main(
             [
                 "gate",
@@ -229,8 +236,6 @@ def test_gate_cli_fail_exit_code_1(
                 str(comparison_path),
                 "--suite",
                 str(suite_path),
-                "--dataset-manifest",
-                DATASET_ARG,
             ],
             allowed_result_root=tmp_path,
         )
@@ -257,7 +262,10 @@ def test_gate_cli_completed_fail_with_required_metric_failed_returns_1(
         }
     )
 
-    with patch("ai_worker.tasks.evaluation.cli.build_release_gate", return_value=fail_gate):
+    with (
+        patch("ai_worker.tasks.evaluation.cli.load_gate_evidence", return_value=_evidence()),
+        patch("ai_worker.tasks.evaluation.cli.build_release_gate", return_value=fail_gate),
+    ):
         exit_code = main(
             [
                 "gate",
@@ -271,8 +279,6 @@ def test_gate_cli_completed_fail_with_required_metric_failed_returns_1(
                 str(comparison_path),
                 "--suite",
                 str(suite_path),
-                "--dataset-manifest",
-                DATASET_ARG,
             ],
             allowed_result_root=tmp_path,
         )
@@ -303,8 +309,6 @@ def test_gate_cli_exit_2_on_missing_run_bundle(
             str(comparison_path),
             "--suite",
             str(suite_path),
-            "--dataset-manifest",
-            DATASET_ARG,
         ],
         allowed_result_root=tmp_path,
     )
@@ -328,29 +332,33 @@ def test_gate_cli_publishes_canonical_json_and_markdown(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    from dataclasses import replace
+
+    from ai_worker.tests.evaluation.test_release_gate import _evidence
+
     run_id, policy_path, profile_path, comparison_path, suite_path = _setup_approved_cli_fixture(tmp_path)
     output_dir = tmp_path / run_id
+    ev = replace(_evidence(), run_id=run_id)
 
-    exit_code = main(
-        [
-            "gate",
-            "--run-id",
-            run_id,
-            "--policy",
-            str(policy_path),
-            "--profile",
-            str(profile_path),
-            "--comparison-policy",
-            str(comparison_path),
-            "--suite",
-            str(suite_path),
-            "--dataset-manifest",
-            DATASET_ARG,
-            "--output-dir",
-            str(output_dir),
-        ],
-        allowed_result_root=tmp_path,
-    )
+    with patch("ai_worker.tasks.evaluation.cli.load_gate_evidence", return_value=ev):
+        exit_code = main(
+            [
+                "gate",
+                "--run-id",
+                run_id,
+                "--policy",
+                str(policy_path),
+                "--profile",
+                str(profile_path),
+                "--comparison-policy",
+                str(comparison_path),
+                "--suite",
+                str(suite_path),
+                "--output-dir",
+                str(output_dir),
+            ],
+            allowed_result_root=tmp_path,
+        )
 
     assert exit_code == 2  # INVALID because diagnostic dev suite has required=false
     json_path = output_dir / "release-gate.json"
@@ -391,8 +399,6 @@ def test_gate_cli_exit_2_on_output_root_escape(
             str(comparison_path),
             "--suite",
             str(suite_path),
-            "--dataset-manifest",
-            DATASET_ARG,
             "--output-dir",
             str(invalid_dir),
         ],
@@ -407,6 +413,7 @@ def test_gate_cli_exit_2_on_output_root_escape(
 def test_gate_cli_publication_rollback_on_partial_failure(tmp_path: Path) -> None:
     """Verify that JSON link success followed by Markdown link failure rolls back cleanly."""
     from ai_worker.tasks.evaluation import cli as cli_module
+    from ai_worker.tests.evaluation.test_release_gate import _evidence
 
     run_id, policy_path, profile_path, comparison_path, suite_path = _setup_approved_cli_fixture(tmp_path)
     target_dir = tmp_path / run_id
@@ -418,7 +425,10 @@ def test_gate_cli_publication_rollback_on_partial_failure(tmp_path: Path) -> Non
             raise OSError("Injected disk error on Markdown link")
         original_link(directory_fd, temporary_name, destination_name)
 
-    with patch("ai_worker.tasks.evaluation.cli._atomic_link", side_effect=mock_link):
+    with (
+        patch("ai_worker.tasks.evaluation.cli.load_gate_evidence", return_value=_evidence()),
+        patch("ai_worker.tasks.evaluation.cli._atomic_link", side_effect=mock_link),
+    ):
         exit_code = main(
             [
                 "gate",
@@ -432,8 +442,6 @@ def test_gate_cli_publication_rollback_on_partial_failure(tmp_path: Path) -> Non
                 str(comparison_path),
                 "--suite",
                 str(suite_path),
-                "--dataset-manifest",
-                DATASET_ARG,
             ],
             allowed_result_root=tmp_path,
         )
@@ -465,8 +473,6 @@ def test_gate_cli_exit_2_on_destination_conflict(
             str(comparison_path),
             "--suite",
             str(suite_path),
-            "--dataset-manifest",
-            DATASET_ARG,
         ],
         allowed_result_root=tmp_path,
     )
@@ -480,11 +486,16 @@ def test_gate_cli_exit_3_on_unexpected_internal_error(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    from ai_worker.tests.evaluation.test_release_gate import _evidence
+
     run_id, policy_path, profile_path, comparison_path, suite_path = _setup_approved_cli_fixture(tmp_path)
 
-    with patch(
-        "ai_worker.tasks.evaluation.cli.build_release_gate",
-        side_effect=RuntimeError("Unexpected kernel crash"),
+    with (
+        patch("ai_worker.tasks.evaluation.cli.load_gate_evidence", return_value=_evidence()),
+        patch(
+            "ai_worker.tasks.evaluation.cli.build_release_gate",
+            side_effect=RuntimeError("Unexpected kernel crash"),
+        ),
     ):
         exit_code = main(
             [
@@ -499,8 +510,6 @@ def test_gate_cli_exit_3_on_unexpected_internal_error(
                 str(comparison_path),
                 "--suite",
                 str(suite_path),
-                "--dataset-manifest",
-                DATASET_ARG,
             ],
             allowed_result_root=tmp_path,
         )
@@ -529,8 +538,6 @@ def test_gate_cli_privacy_no_sensitive_leak(
             str(comparison_path),
             "--suite",
             str(suite_path),
-            "--dataset-manifest",
-            DATASET_ARG,
         ],
         allowed_result_root=tmp_path,
     )
@@ -565,8 +572,6 @@ def test_gate_cli_rejects_paired_case_evidence_flag(
             str(comparison_path),
             "--suite",
             str(suite_path),
-            "--dataset-manifest",
-            DATASET_ARG,
             "--paired-case-evidence",
             "unsupported.json",
         ],
@@ -597,8 +602,6 @@ def test_gate_cli_rejects_unapproved_policy(
             str(comp_path),
             "--suite",
             str(suite_path),
-            "--dataset-manifest",
-            DATASET_ARG,
         ],
         allowed_result_root=tmp_path,
     )
@@ -628,11 +631,73 @@ def test_gate_cli_rejects_non_candidate_run(
             str(comparison_path),
             "--suite",
             str(suite_path),
-            "--dataset-manifest",
-            DATASET_ARG,
         ],
         allowed_result_root=tmp_path,
     )
     captured = capsys.readouterr()
     assert exit_code == 2
     assert EvaluationErrorCode.BASELINE_ARTIFACT_INVALID.value in captured.err
+
+
+def test_gate_cli_fail_closed_without_canonical_guard_authority(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Verify that an unmocked candidate run with PASS guard claims fails closed."""
+    run_id, policy_path, profile_path, comparison_path, suite_path = _setup_approved_cli_fixture(tmp_path)
+    output_dir = tmp_path / run_id
+
+    exit_code = main(
+        [
+            "gate",
+            "--run-id",
+            run_id,
+            "--policy",
+            str(policy_path),
+            "--profile",
+            str(profile_path),
+            "--comparison-policy",
+            str(comparison_path),
+            "--suite",
+            str(suite_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        allowed_result_root=tmp_path,
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert EvaluationErrorCode.STATE_COMBINATION_INVALID.value in captured.err
+    assert not (output_dir / "release-gate.json").exists()
+    assert not (output_dir / "release-gate.md").exists()
+
+
+def test_gate_cli_rejects_draft_dataset_manifest(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_id, policy_path, profile_path, comparison_path, suite_path = _setup_approved_cli_fixture(tmp_path)
+
+    exit_code = main(
+        [
+            "gate",
+            "--run-id",
+            run_id,
+            "--policy",
+            str(policy_path),
+            "--profile",
+            str(profile_path),
+            "--comparison-policy",
+            str(comparison_path),
+            "--suite",
+            str(suite_path),
+            "--dataset-manifest",
+            DATASET_ARG,
+        ],
+        allowed_result_root=tmp_path,
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert EvaluationErrorCode.REVIEW_PROVENANCE_INVALID.value in captured.err
