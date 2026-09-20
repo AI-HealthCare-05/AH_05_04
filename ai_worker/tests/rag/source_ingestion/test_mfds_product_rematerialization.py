@@ -94,20 +94,21 @@ def _manifest(tmp_path: Path, *, rows=None):
         content = json.dumps(page, ensure_ascii=False, separators=(",", ":")).encode()
         checksum = hashlib.sha256(content).hexdigest()
         object_key = f"sha256/{checksum[:2]}/{checksum}.artifact"
+        artifact_key = f"product-page-{page_number}.json"
         objects[object_key] = content
         object_path = tmp_path / "artifacts" / object_key
         object_path.parent.mkdir(parents=True, exist_ok=True)
         object_path.write_bytes(content)
         artifact = {
             "page_number": page_number,
-            "artifact_key": f"product-page-{page_number}.json",
+            "artifact_key": artifact_key,
             "object_key": object_key,
             "raw_checksum": checksum,
             "byte_size": len(content),
             "content_type": "application/json",
         }
         artifacts.append(artifact)
-        metadata.append(RawArtifactMetadata(artifact["artifact_key"], checksum, len(content), "application/json"))
+        metadata.append(RawArtifactMetadata(artifact_key, checksum, len(content), "application/json"))
     canonical = product_canonical_checksum(rows)
     receipt = _receipt(tmp_path, len(rows))
     finished = "2026-09-19T03:34:30.340915Z"
