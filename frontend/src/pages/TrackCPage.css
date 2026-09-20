@@ -38,7 +38,6 @@
 .track-c-content .track-c-status { border: 1px solid var(--ds-line); border-radius: 18px; padding: 14px; font-size: 16px; font-weight: 700; }
 .track-c-content .track-c-status--active { border-color: var(--ds-action); background: var(--ds-muted); color: var(--ds-action); }
 .track-c-page .bottom-nav { position: relative; inset: auto; flex-shrink: 0; }
-.track-c-page .bottom-nav button[aria-current='page'] { color: var(--ds-action); }
 .track-c-page .track-c-safety-actions .ds-button { min-height: 64px; border-color: var(--ds-line); font-size: 18px; }
 
 .track-c-preparing-tag {

@@ -57,6 +57,12 @@ git switch -c feature/12-prescription-upload
 - 인증·인가, 입력 검증, 에러 응답과 로그에서 API Key, token, cookie, 환자 정보, 원본 처방전과 Provider 원문 응답이 노출되지 않는지 확인합니다. 세부 기준은 `SECURITY.md`와 `docs/privacy-safety.md`를 따릅니다.
 - 중복 로직은 기존 패턴과 유틸리티를 우선해 정리하되, 단일 사용처를 위한 새 추상화는 만들지 않습니다. 불필요한 주석, 죽은 코드, 디버그 로그, 임시 코드와 사용하지 않는 import를 남기지 않습니다.
 
+### Frontend 변경 리뷰 기준
+
+- 공용 컴포넌트의 모양은 `frontend/src/design-system/` 한 곳에서만 정의합니다. 페이지 CSS는 배치(`position`, `inset`, `flex` 계열, `z-index`)만 덮어쓸 수 있고, 크기·색·여백·타이포그래피는 덮어쓰지 않습니다.
+- 화면에 따라 모양이 정말 달라야 한다면 페이지 클래스 목록이 아니라 컴포넌트의 명시적인 variant로 표현합니다. 페이지 클래스로 분기하면 화면을 추가할 때마다 목록 갱신을 잊은 화면만 다른 모양을 받습니다.
+- 하단 네비게이션은 `pnpm run verify:nav-single-source`로 이 기준을 검사합니다.
+
 새 구조가 필요하다면 구현과 리뷰 전에 Issue 또는 Pull Request에 다음 내용을 기록합니다.
 
 1. 현재 단순한 구조로 해결할 수 없는 문제

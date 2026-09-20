@@ -12,6 +12,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "verify:track-c-gate": "node scripts/verify-track-c-gate.mjs",
+    "verify:nav-single-source": "node scripts/verify-nav-single-source.mjs",
     "test": "vitest run",
     "test:e2e:requirements": "playwright test && playwright test --config playwright.email-verification.config.ts",
     "test:e2e:requirements:ui": "playwright test --ui",

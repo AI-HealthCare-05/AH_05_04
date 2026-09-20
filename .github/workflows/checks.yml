@@ -573,6 +573,11 @@ jobs:
       - name: Run Frontend tests
         run: pnpm test
 
+      # 하단 네비게이션 스타일이 다시 페이지 CSS로 흩어지면 화면마다 다른 밀도로 갈라진다.
+      # 모양 정의가 design-system 한 곳에 남아 있는지 확인한다.
+      - name: Verify bottom-nav single source
+        run: pnpm run verify:nav-single-source
+
       # PUBLIC_TRACK_C는 Production 공개 게이트이므로 route 미등록 단위 테스트만으로는
       # 부족하다. 실제 build 산출물에서 Track C chunk 부재를 확인한다.
       - name: Verify PUBLIC_TRACK_C build gate

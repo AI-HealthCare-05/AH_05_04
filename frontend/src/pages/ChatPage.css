@@ -469,42 +469,6 @@
   opacity: .55;
 }
 
-.chat-page .bottom-nav {
-  min-height: calc(64px + var(--ds-safe-bottom));
-  padding-top: 3px;
-}
-
-.chat-page .bottom-nav button {
-  min-height: 60px;
-  gap: 2px;
-  padding: 3px 2px 4px;
-  color: #526074;
-  font-size: 11px;
-  font-weight: 400;
-}
-
-.chat-page .bottom-nav__icon {
-  width: 22px;
-  height: 22px;
-  flex-basis: 22px;
-}
-
-.chat-page .bottom-nav button[aria-current='page'] {
-  color: #526b78;
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.chat-page .bottom-nav__doji {
-  width: 34px;
-  height: 34px;
-  margin-top: 0;
-  border: 0;
-  border-radius: 50%;
-  background: #edf4f7;
-  box-shadow: none;
-}
-
 .chat-page__gate {
   display: grid;
   align-content: center;

@@ -989,42 +989,40 @@
 }
 
 .bottom-nav {
-  min-height: calc(88px + var(--ds-safe-bottom));
+  min-height: calc(64px + var(--ds-safe-bottom));
   position: absolute;
   inset: auto 0 0;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  padding: 4px 0 var(--ds-safe-bottom);
-  border-top: 1px solid var(--ds-line);
+  padding: 0 0 var(--ds-safe-bottom);
+  border-top: 1px solid #cfd8dc;
   background: rgb(255 255 255 / 96%);
 }
 
+/* nav 자체의 min-height가 높이를 정한다. 버튼에 min-height를 주면 border 1px만큼
+   합이 넘쳐 화면마다 1px씩 어긋나므로, grid item의 stretch에 맡긴다. */
 .bottom-nav button {
   min-width: 0;
-  min-height: 64px;
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-end;
-  gap: 3px;
-  padding: 4px 2px 6px;
+  justify-content: center;
+  gap: 4px;
+  padding: 5px 2px 4px;
   border: 0;
   background: transparent;
-  color: #667085;
+  color: #526074;
   font-size: 12px;
   font-weight: 400;
 }
 
 .bottom-nav__icon {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
   display: grid;
   place-items: center;
-}
-
-.bottom-nav__icon {
   background: currentColor;
   -webkit-mask-position: center;
   mask-position: center;
@@ -1035,21 +1033,25 @@
 }
 
 .bottom-nav__doji {
-  width: 58px;
-  height: 38px;
+  width: 44px;
+  height: 32px;
   position: relative;
   display: grid;
   place-items: center;
-  margin-top: -18px;
-  border: 1px solid #e5eaf1;
-  border-radius: 999px 999px 0 0;
+  margin-top: -9px;
+  border: 1px solid #cfd8dc;
+  border-radius: 999px;
   background: #fff;
   box-shadow: 0 -5px 16px rgb(23 26 33 / 7%);
 }
 
+.bottom-nav__doji .dosey-mascot--nav {
+  transform: scale(.78);
+}
+
 .bottom-nav button[aria-current='page'] {
-  color: #0066cc;
-  font-weight: 900;
+  color: #526b78;
+  font-weight: 700;
 }
 
 .bottom-nav button[aria-current='page']::before {
@@ -1079,43 +1081,6 @@
 /* 아이콘도 함께 흐리게 해 활성 탭과 혼동되지 않게 합니다. */
 .bottom-nav button:disabled .bottom-nav__icon {
   opacity: 0.6;
-}
-
-:is(.mvp-home-page, .mvp-menu-page, .guide-page, .chat-page) .bottom-nav {
-  min-height: calc(64px + var(--ds-safe-bottom));
-  padding: 0 0 var(--ds-safe-bottom);
-  border-top-color: #cfd8dc;
-}
-
-:is(.mvp-home-page, .mvp-menu-page, .guide-page, .chat-page) .bottom-nav button {
-  justify-content: center;
-  gap: 4px;
-  padding: 5px 2px 4px;
-  color: #526074;
-  font-weight: 400;
-}
-
-:is(.mvp-home-page, .mvp-menu-page, .guide-page, .chat-page) .bottom-nav__icon {
-  width: 22px;
-  height: 22px;
-  flex-basis: 22px;
-}
-
-:is(.mvp-home-page, .mvp-menu-page, .guide-page, .chat-page) .bottom-nav__doji {
-  width: 44px;
-  height: 32px;
-  margin-top: -9px;
-  border-color: #cfd8dc;
-  border-radius: 999px;
-}
-
-:is(.mvp-home-page, .mvp-menu-page, .guide-page, .chat-page) .bottom-nav__doji .dosey-mascot--nav {
-  transform: scale(.78);
-}
-
-:is(.mvp-home-page, .mvp-menu-page, .guide-page, .chat-page) .bottom-nav button[aria-current='page'] {
-  color: #526b78;
-  font-weight: 700;
 }
 
 .compact-two-column {
