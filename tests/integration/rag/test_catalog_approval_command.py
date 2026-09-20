@@ -42,7 +42,11 @@ from ai_worker.tasks.rag.catalog.approval import approval_binding_from_manifest
 from ai_worker.tasks.rag.catalog.build import CatalogProductInput, build_catalog_members
 from ai_worker.tasks.rag.catalog.export import create_catalog_export
 from ai_worker.tasks.rag.catalog.mfds_product_source import ProductSourceBindingError, read_product_input
-from ai_worker.tasks.rag.catalog.types import CandidateCatalogSourceRef, CatalogVerificationStatus
+from ai_worker.tasks.rag.catalog.types import (
+    CandidateCatalogSourceRef,
+    CandidateRecordStatus,
+    CatalogVerificationStatus,
+)
 from app.models import (
     CatalogApprovalAudit,
     CatalogApprovalPermission,
@@ -305,6 +309,7 @@ async def test_catalog_writer_reconciled_policy_reads_product_source_and_revalid
         canonical_code="200000001",
         product_name="합성 타이레놀정500밀리그람",
         manufacturer_name="(주)한국얀센",
+        product_status=CandidateRecordStatus.ACTIVE,
     )
     draft = create_catalog_export(
         catalog_version="catalog-writer-acl-v1",
