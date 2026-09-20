@@ -3,14 +3,15 @@
 | 항목 | 값 |
 | --- | --- |
 | Decision ID | `PD-162-20260920` |
-| 상태 | Proposed · Freeze Choices Resolved · Review Required · Issue #162 |
+| 상태 | Approved · Phase A1 Contract Freeze Accepted — PR #868 |
 | 제안·구현 | 정현우 (`@ceohwj`) — AI/RAG |
-| 단일 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — PM / Product Acceptance / Evaluation & Safety |
+| 단일 책임 리뷰 | 권가빈 (`@hazelnutflavoured`) — PM / Product Acceptance / Evaluation & Safety (APPROVED 2026-09-20T04:11:20Z) |
+| 승인 근거 | PR #868 책임 리뷰 `APPROVED` (`@hazelnutflavoured`) · Merge commit `896ef7c5` |
 | 교차 리뷰 (FYI) | 송은영 (`@phina-io`) — Backend·Data·Security / DB schema · migration · Repository 쓰기 경계<br>김지혜 (`@Jye-rookie`) — Source·Snapshot·Catalog 경계 / Worker |
 | 추적 Issue | [#162](https://github.com/AI-HealthCare-05/AH_05_04/issues/162) |
 | 조사 기준 | `origin/develop` @ `b3a92f32f0cfd6420d55de0ccf0b3c86216feb74` (PR #849 merge commit `f02f8f06`) |
 | 상위·관련 결정 | [`PD-125-20260831`](./2026-08-31-rag-p0-contract-freeze.md), [`PD-216-20260902`](./2026-09-02-rag-evaluation-schema-set-1-1-freeze.md), [`PD-241-20260903`](./2026-09-03-rag-evaluation-schema-set-1-2-freeze.md), [`PD-799-20260918`](./2026-09-18-citation-authorization-production-authority-boundary.md), [`PD-833-20260919`](./2026-09-13-rag-answer-quality-metrics.md) |
-| 관련 Issue / PR | #162, #163 (PR #849), #806 (PR #828), #853 (PR #857) |
+| 관련 Issue / PR | #162, #163 (PR #849), #806 (PR #828), #853 (PR #857), PR #868 |
 
 ---
 
