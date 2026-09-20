@@ -1211,7 +1211,7 @@ async def _grant_historical_test_permissions(admin, environment):
             (RUNTIME_MUTABLE_TABLES, "SELECT, INSERT, UPDATE, DELETE"),
             (RUNTIME_APPEND_ONLY_TABLES | CATALOG_TABLES, "SELECT, INSERT"),
         ):
-            for table in tables - {
+            for table in (tables & present) - {
                 "ai_job_intake_context",
                 "ai_job_execution_context",
                 "ai_job_execution_identification",
