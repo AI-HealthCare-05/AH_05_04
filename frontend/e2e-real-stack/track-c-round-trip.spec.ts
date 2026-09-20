@@ -18,6 +18,16 @@ test('[REAL-STACK][Track C #139] create, reload, complete and cancel plans throu
   expect(occurrences).toHaveLength(2)
   await page.addInitScript(value => localStorage.setItem('access_token', value), token)
 
+  let planCreateCount = 0
+  page.on('request', request => {
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname === '/api/v1/support-action-plans'
+    ) {
+      planCreateCount += 1
+    }
+  })
+
   for (const index of [0, 1, 2]) {
     const occurrence = occurrences[index % occurrences.length]
     const freshDay = await request.get(`${api}/api/v1/medication-occurrences?date=${date}`, { headers })
@@ -53,6 +63,8 @@ test('[REAL-STACK][Track C #139] create, reload, complete and cancel plans throu
 
     await expect(page.getByRole('heading', { name: '실천 계획을 확인해 주세요' })).toBeVisible()
 
+    expect(planCreateCount).toBe(index)
+
     const creation = page.waitForResponse(
       response =>
         response.request().method() === 'POST' &&
@@ -61,6 +73,7 @@ test('[REAL-STACK][Track C #139] create, reload, complete and cancel plans throu
     await page.getByRole('button', { name: '이 계획을 저장하고 시작하기' }).click()
     const createdResponse = await creation
     expect(createdResponse.status()).toBe(200)
+    expect(planCreateCount).toBe(index + 1)
     const created = (await createdResponse.json()).data
     await expect(page.getByRole('heading', { name: '실천 계획 목록' })).toBeVisible()
     const activePlanButton = page
