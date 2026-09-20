@@ -271,6 +271,76 @@ class VersionedEvidenceRetrievalConfiguration:
         return self.artifact_ref.content_sha256 == self.compute_canonical_hash()
 
 
+def project_versioned_evidence_retrieval_configuration(
+    value: VersionedEvidenceRetrievalConfiguration,
+) -> dict[str, JsonValue]:
+    """Project the approved retrieval configuration for immutable persistence."""
+
+    if type(value) is not VersionedEvidenceRetrievalConfiguration or not value.is_hash_valid():
+        raise ValueError("retrieval configuration must be canonical and hash-valid")
+
+    def artifact_ref_projection(ref: ImmutableArtifactRef) -> dict[str, JsonValue]:
+        return {
+            "artifact_code": ref.artifact_code,
+            "content_sha256": ref.content_sha256,
+            "version": ref.version,
+        }
+
+    lexical = value.lexical_config
+    lexical_projection: dict[str, JsonValue] = {
+        "artifact_ref": artifact_ref_projection(lexical.artifact_ref),
+        "exact_limit": lexical.exact_limit,
+        "exact_strategy": lexical.exact_strategy,
+        "fts_limit": lexical.fts_limit,
+        "fts_query_constructor": lexical.fts_query_constructor,
+        "fts_regconfig": lexical.fts_regconfig,
+        "fts_score_function": lexical.fts_score_function,
+        "fts_vector_expression": lexical.fts_vector_expression,
+        "query_normalization": lexical.query_normalization,
+        "trigram_limit": lexical.trigram_limit,
+        "trigram_match_operator": lexical.trigram_match_operator,
+        "trigram_score_function": lexical.trigram_score_function,
+        "trigram_threshold": lexical.trigram_threshold,
+    }
+    dense_projection: dict[str, JsonValue] | None = None
+    if value.dense_config is not None:
+        dense = value.dense_config
+        dense_projection = {
+            "artifact_ref": artifact_ref_projection(dense.artifact_ref),
+            "cutoff_policy": dense.cutoff_policy,
+            "dense_limit": dense.dense_limit,
+            "distance_metric": dense.distance_metric,
+            "minimum_similarity": dense.minimum_similarity,
+        }
+    return {
+        "algorithm_id": value.algorithm_id,
+        "artifact_ref": artifact_ref_projection(value.artifact_ref),
+        "dense_config": dense_projection,
+        "dense_limit": value.dense_limit,
+        "exact_limit": value.exact_limit,
+        "execution_mode": value.execution_mode.value,
+        "expected_query_embedding_adapter_ref": (
+            artifact_ref_projection(value.expected_query_embedding_adapter_ref)
+            if value.expected_query_embedding_adapter_ref is not None
+            else None
+        ),
+        "fts_limit": value.fts_limit,
+        "future_reranker_input_limit": value.future_reranker_input_limit,
+        "hybrid_limit": value.hybrid_limit,
+        "lexical_config": lexical_projection,
+        "lexical_limit": value.lexical_limit,
+        "observed_score_projection": value.observed_score_projection,
+        "observed_score_quantum": value.observed_score_quantum,
+        "observed_score_rounding": value.observed_score_rounding,
+        "rrf_k": value.rrf_k,
+        "stable_coordinate_fields": list(value.stable_coordinate_fields),
+        "tie_break": value.tie_break,
+        "transaction_access": value.transaction_access,
+        "transaction_isolation": value.transaction_isolation,
+        "trigram_limit": value.trigram_limit,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class EvidenceSearchExecutionBinding:
     filter_snapshot_ref: ImmutableArtifactRef

@@ -5,7 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.rag_runtime import RagRuntimeSourcePurpose
 from app.repositories.rag_runtime_repository import RagRuntimeRepository
+from app.services.guide_retrieval_binding import load_verified_guide_retrieval_binding_manifest
 from app.services.rag_runtime_bundle_build import verify_persisted_bundle_manifest_hash
+from rag_runtime.guide_retrieval_binding import GuideRetrievalBindingManifest
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +64,7 @@ class GuideRuntimeRequestCarrier:
     governance_revision_ref: str | None
     identifications: tuple[GuideRuntimeRequestIdentification, ...]
     bundle_sources: tuple[GuideRuntimeRequestBundleSource, ...]
+    retrieval_binding: GuideRetrievalBindingManifest
 
 
 async def load_verified_guide_runtime_request_carrier(
@@ -71,6 +74,11 @@ async def load_verified_guide_runtime_request_carrier(
     repository = RagRuntimeRepository(session)
     execution_context = await repository.get_execution_context_by_job(ai_job_id)
     if execution_context is None or execution_context.guide_id is None or execution_context.chat_message_id is not None:
+        return None
+    if (
+        execution_context.guide_retrieval_binding_manifest_id is None
+        or execution_context.guide_retrieval_binding_manifest_hash is None
+    ):
         return None
 
     bundle_id = execution_context.runtime_release_bundle_id
@@ -82,6 +90,20 @@ async def load_verified_guide_runtime_request_carrier(
         bundle is None
         or bundle.bundle_manifest_hash != execution_context.runtime_release_bundle_manifest_hash
         or bundle.execution_manifest_id != execution_context.runtime_execution_manifest_id
+    ):
+        return None
+
+    retrieval_binding = await load_verified_guide_retrieval_binding_manifest(
+        session,
+        execution_context.guide_retrieval_binding_manifest_id,
+        execution_context.guide_retrieval_binding_manifest_hash,
+    )
+    if (
+        retrieval_binding is None
+        or retrieval_binding.runtime_release_bundle_id != bundle.id
+        or retrieval_binding.runtime_release_bundle_manifest_hash != bundle.bundle_manifest_hash
+        or retrieval_binding.runtime_execution_manifest_id != execution_context.runtime_execution_manifest_id
+        or retrieval_binding.runtime_execution_manifest_hash != execution_context.runtime_execution_manifest_hash
     ):
         return None
 
@@ -140,4 +162,5 @@ async def load_verified_guide_runtime_request_carrier(
             )
             for source in bundle_sources
         ),
+        retrieval_binding=retrieval_binding,
     )

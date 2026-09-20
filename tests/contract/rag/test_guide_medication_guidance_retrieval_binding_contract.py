@@ -7,7 +7,7 @@ BINDING_PATH = Path("docs/contracts/targets/post-mvp-1/guide-medication-guidance
 READINESS_PATH = Path("docs/contracts/targets/post-mvp-1/guide-langgraph-callable-readiness-v1.md")
 
 BINDING_STATES = {
-    "GUIDE_RUNTIME_REQUEST_CARRIER_MISSING",
+    "GUIDE_RUNTIME_REQUEST_CARRIER_READY",
     "GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_READY",
     "GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_READY",
     "GUIDE_RETRIEVAL_OUTCOME_BINDING_READY",
@@ -53,14 +53,38 @@ def _entry_status(node_id: str) -> str:
     return match.group("status")
 
 
-def test_binding_freeze_documents_exact_blockers_and_existing_kernels() -> None:
+def test_binding_freeze_documents_ready_seams_and_existing_kernels() -> None:
     text = BINDING_PATH.read_text(encoding="utf-8")
 
-    documented_codes = set(re.findall(r"^### B[1-5] — `([A-Z_]+)`$", text, flags=re.MULTILINE))
+    documented_codes = set(re.findall(r"^### B[1-5] — `([A-Z0-9_]+)`$", text, flags=re.MULTILINE))
     assert documented_codes == BINDING_STATES
     assert all(component in text for component in AVAILABLE_COMPONENTS)
     assert "retrieval engine is missing" not in text.lower()
     assert "hybrid retrieval is not implemented" not in text.lower()
+
+
+def test_b1_freeze_documents_exact_persistence_and_fail_closed_readback() -> None:
+    text = BINDING_PATH.read_text(encoding="utf-8")
+    normalized_text = " ".join(text.split())
+
+    required_anchors = (
+        "GuideRetrievalBindingManifest",
+        "GuideRuntimeRequestCarrier.retrieval_binding",
+        "rag_knowledge_index.id",
+        "VersionedEvidenceRetrievalConfiguration",
+        "UUID-byte-sorted Source Snapshot/Member pairs",
+        "fails closed on any mismatch",
+        "without a binding pin remain unreadable",
+        "without using a completed",
+        "source_scope_manifest_hash",
+    )
+    for anchor in required_anchors:
+        assert anchor in normalized_text
+
+    assert "GuideRuntimeRequestCarrier.bundle_sources" in text
+    assert "GuideRuntimeRequestCarrier.identifications" in text
+    assert "A verified Sync runtime request carrier foundation exists (#902)." in text
+    assert "The five B1 exact retrieval authorities are frozen, persisted, integrity-bound, and exact-readable." in text
 
 
 def test_binding_freeze_forbids_speculative_recovery_paths() -> None:
@@ -84,9 +108,10 @@ def test_readiness_keeps_retrieval_missing_and_other_nodes_stable() -> None:
 
     assert _entry_status("retrieve_medication_guidance") == "MISSING_SEMANTIC_CALLABLE"
     assert "execute_hybrid_retrieve" in retrieval_entry
-    assert "GUIDE_RUNTIME_REQUEST_CARRIER_MISSING" in retrieval_entry
-    assert "B2 production fingerprint/binding provider" in retrieval_entry
-    assert "B5 exact terminal replay readback exist" in retrieval_entry
+    assert "B1_BLOCKED_BY_EXACT_RETRIEVAL_AUTHORITY_PERSISTENCE_MISSING" not in retrieval_entry
+    assert "GUIDE_RUNTIME_REQUEST_CARRIER_MISSING" not in retrieval_entry
+    assert "verified B1/B2/B3/B4/B5 seams exist" in retrieval_entry
+    assert "GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING" not in retrieval_entry
     assert "GUIDE_RETRIEVAL_TERMINAL_REPLAY_PAYLOAD_UNAVAILABLE" not in retrieval_entry
     for node_id, expected_status in CANONICAL_STATUS_BY_OTHER_NODE.items():
         assert _entry_status(node_id) == expected_status
