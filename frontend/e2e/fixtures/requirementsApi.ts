@@ -230,6 +230,15 @@ export async function installRequirementsApi(
         },
       })
     }
+    if (key === 'GET /api/v1/medication-occurrences') {
+      return json(route, {
+        data: {
+          schedule_status: 'NO_ACTIVE_PRESCRIPTION',
+          schedule_items: [],
+          occurrences: [],
+        },
+      })
+    }
     if (key === 'GET /api/v1/users/me') {
       return json(route, {
         id: ids.user,

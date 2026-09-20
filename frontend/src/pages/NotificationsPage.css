@@ -113,3 +113,37 @@
   .mvp-notifications__item-button { padding-inline: 12px; }
 }
 .mvp-notifications__push-status { margin: 0; padding: 12px 14px; border-radius: 14px; background: #f5f9ff; color: #334155; font-size: 14px; line-height: 1.5; }
+
+/* Figma 1541:79 · Notification empty state */
+.mvp-notifications__state--empty {
+  min-height: 210px;
+  display: grid;
+  grid-template-rows: 40px 28px 48px;
+  justify-items: center;
+  align-content: start;
+  gap: 8px;
+  padding: 39px 18px;
+  text-align: center;
+}
+
+.mvp-notifications__empty-icon {
+  width: 40px;
+  height: 40px;
+  display: block;
+}
+
+.mvp-notifications__state--empty h3 {
+  margin: 0;
+  color: #1f2633;
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 700;
+}
+
+.mvp-notifications__state--empty p {
+  width: 100%;
+  margin: 0;
+  color: #78909c;
+  font-size: 15px;
+  line-height: 24px;
+}
