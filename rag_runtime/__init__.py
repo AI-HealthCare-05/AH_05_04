@@ -1,5 +1,16 @@
 """Backend와 AI Worker가 공유하는 RAG 실행 구현입니다."""
 
+from rag_runtime.guide_release_projection import (
+    GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
+    GuideRuntimeApprovedAnswer,
+    GuideRuntimeApprovedFallback,
+    GuideRuntimeFallbackCode,
+    GuideRuntimeReleaseDecision,
+    GuideRuntimeReleaseProjectionCarrier,
+    GuideRuntimeReleaseProjectionOutcome,
+    GuideRuntimeReleaseProjectionUnavailable,
+    GuideRuntimeVerifiedCitation,
+)
 from rag_runtime.identification_preflight import (
     MANIFEST_PROJECTION_VERSION,
     IdentificationSnapshotRef,
@@ -24,6 +35,15 @@ from rag_runtime.identification_preflight import (
 
 __all__ = [
     "MANIFEST_PROJECTION_VERSION",
+    "GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION",
+    "GuideRuntimeApprovedAnswer",
+    "GuideRuntimeApprovedFallback",
+    "GuideRuntimeFallbackCode",
+    "GuideRuntimeReleaseDecision",
+    "GuideRuntimeReleaseProjectionCarrier",
+    "GuideRuntimeReleaseProjectionOutcome",
+    "GuideRuntimeReleaseProjectionUnavailable",
+    "GuideRuntimeVerifiedCitation",
     "IdentificationSnapshotRef",
     "MedicationIdentificationPreflightOutcome",
     "MedicationIdentificationPreflightRequest",
