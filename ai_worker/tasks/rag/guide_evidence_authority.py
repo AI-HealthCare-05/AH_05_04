@@ -157,6 +157,8 @@ class GuideRequestAuthorityLookupCoordinate:
     source_snapshot_member_id: UUID
     source_code: str
     source_version: str
+    expected_source_decision_outcome: ObservedDecisionOutcome
+    expected_member_decision_outcome: ObservedDecisionOutcome
     member_identity: SourceMemberIdentity
 
 

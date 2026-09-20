@@ -26,6 +26,8 @@ The lookup requires all of the following pinned facts:
 - `source_snapshot_member_id`
 - `source_code`
 - `source_version`
+- `expected_source_decision_outcome`
+- `expected_member_decision_outcome`
 - the complete `SourceMemberIdentity`
 
 `SourceMemberIdentity` includes its exact member kind and either the persisted
@@ -38,7 +40,10 @@ matching.
 The guard, Source Decision, and Member Decision rows are read in one
 `REPEATABLE READ, READ ONLY` transaction. The lookup uses equality predicates
 only and contains no `CURRENT`, latest/newest selection, ordering, limit, or
-fallback lookup.
+fallback lookup. The expected Source and Member outcomes are independent,
+required equality predicates because each outcome participates in its Decision
+artifact's canonical identity. For the Guide retrieval PASS path, both expected
+outcomes are explicitly `PASS`.
 
 Before returning references, the existing canonical REQUEST authority identity
 functions recompute and verify every persisted artifact identity. The returned

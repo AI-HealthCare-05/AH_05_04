@@ -108,8 +108,9 @@ async def _persist_authority(
     engine,
     *,
     member_outcome: RequestAuthorityDecisionOutcome,
+    source_outcome: RequestAuthorityDecisionOutcome = RequestAuthorityDecisionOutcome.PASS,
 ) -> tuple[ImmutableArtifactRef, ImmutableArtifactRef, ImmutableArtifactRef]:
-    """#713 writer로 Guard -> Source PASS -> Member 한 체인을 실제로 남기고 commit한다."""
+    """#713 writer로 outcome이 명시된 Guard -> Source -> Member 체인을 남긴다."""
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions() as session:
         repository = RagRequestAuthorityRepository(session)
@@ -129,7 +130,7 @@ async def _persist_authority(
                 source_snapshot_id=_SNAPSHOT_ID,
                 source_code=_SOURCE_CODE,
                 source_version=_SOURCE_VERSION,
-                actual_decision_outcome=RequestAuthorityDecisionOutcome.PASS,
+                actual_decision_outcome=source_outcome,
             )
         )
         member_ref = await repository.record_request_member_decision(
@@ -279,6 +280,8 @@ async def test_exact_coordinate_lookup_restores_historical_decision_refs(databas
             source_snapshot_member_id=_MEMBER_ID,
             source_code=_SOURCE_CODE,
             source_version=_SOURCE_VERSION,
+            expected_source_decision_outcome=ObservedDecisionOutcome.PASS,
+            expected_member_decision_outcome=ObservedDecisionOutcome.PASS,
             member_identity=_KERNEL_ENDPOINT_IDENTITY,
         )
     )
@@ -286,6 +289,42 @@ async def test_exact_coordinate_lookup_restores_historical_decision_refs(databas
     assert refs is not None
     assert refs.request_source_decision_ref == source_ref
     assert refs.request_member_decision_ref == member_ref
+
+
+async def test_exact_coordinate_lookup_selects_pass_when_pass_and_fail_history_coexist(database) -> None:
+    await _seed_user(database)
+    guard_ref, pass_source_ref, pass_member_ref = await _persist_authority(
+        database,
+        source_outcome=RequestAuthorityDecisionOutcome.PASS,
+        member_outcome=RequestAuthorityDecisionOutcome.PASS,
+    )
+    _, fail_source_ref, fail_member_ref = await _persist_authority(
+        database,
+        source_outcome=RequestAuthorityDecisionOutcome.FAIL,
+        member_outcome=RequestAuthorityDecisionOutcome.FAIL,
+    )
+    assert pass_source_ref != fail_source_ref
+    assert pass_member_ref != fail_member_ref
+
+    refs = await _reader(database).lookup_request_decision_refs(
+        coordinate=GuideRequestAuthorityLookupCoordinate(
+            request_guard_ref=guard_ref,
+            user_id=_USER_ID,
+            request_operation_code=_OPERATION,
+            decision_stage=RequestDecisionStage.REQUEST,
+            source_snapshot_id=_SNAPSHOT_ID,
+            source_snapshot_member_id=_MEMBER_ID,
+            source_code=_SOURCE_CODE,
+            source_version=_SOURCE_VERSION,
+            expected_source_decision_outcome=ObservedDecisionOutcome.PASS,
+            expected_member_decision_outcome=ObservedDecisionOutcome.PASS,
+            member_identity=_KERNEL_ENDPOINT_IDENTITY,
+        )
+    )
+
+    assert refs is not None
+    assert refs.request_source_decision_ref == pass_source_ref
+    assert refs.request_member_decision_ref == pass_member_ref
 
 
 async def test_coordinate_lookup_does_not_fall_back_to_a_different_member(database) -> None:
@@ -306,6 +345,8 @@ async def test_coordinate_lookup_does_not_fall_back_to_a_different_member(databa
             source_snapshot_member_id=uuid4(),
             source_code=_SOURCE_CODE,
             source_version=_SOURCE_VERSION,
+            expected_source_decision_outcome=ObservedDecisionOutcome.PASS,
+            expected_member_decision_outcome=ObservedDecisionOutcome.PASS,
             member_identity=_KERNEL_ENDPOINT_IDENTITY,
         )
     )

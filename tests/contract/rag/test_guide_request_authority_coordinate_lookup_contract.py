@@ -16,6 +16,8 @@ def test_contract_freezes_the_complete_exact_historical_coordinate() -> None:
         "source_snapshot_member_id",
         "source_code",
         "source_version",
+        "expected_source_decision_outcome",
+        "expected_member_decision_outcome",
         "SourceMemberIdentity",
         "request_source_decision_ref",
         "request_member_decision_ref",

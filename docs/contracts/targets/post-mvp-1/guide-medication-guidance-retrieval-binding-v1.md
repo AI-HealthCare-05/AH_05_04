@@ -91,6 +91,7 @@ does not change #697 to accommodate a broader authority set.
 | selected `source_snapshot_member_id` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `ProductionSearchHit.provenance`; no replay aggregate | First execution only | Replay readback | #178 retrieval persistence/readback | Restore selected-hit provenance in order |
 | `source_code` / `source_version` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `ProductionSearchHit.provenance`; no replay aggregate | First execution only | Replay readback | #178 retrieval persistence/readback | Restore selected-hit provenance in order |
 | `member_identity` | #672 authority selection | Pinned first-run selection or B5 replay coordinate | `GuideRequestAuthorityLookupCoordinate` | Lookup ready when supplied | Selected-hit producer/B5 replay | REQUEST authority / Backend persistence | Pass the complete pinned identity unchanged |
+| expected Source/Member Decision outcomes | #713 canonical Decision identities | Pinned first-run selection or B5 replay coordinate | `GuideRequestAuthorityLookupCoordinate` | Lookup ready when supplied | Selected-hit producer/B5 replay | REQUEST authority / Backend persistence | Pass both expected outcomes explicitly; Guide retrieval requires `PASS` / `PASS` |
 | `request_source_decision_ref` | #672 authority selection | REQUEST authority persistence | `lookup_request_decision_refs()` exact historical read | Yes when exact chain exists | None in B3 | REQUEST authority / Backend persistence | Consume the persisted ref without derivation |
 | `request_member_decision_ref` | #672 authority selection | REQUEST authority persistence | `lookup_request_decision_refs()` exact historical read | Yes when exact chain exists | None in B3 | REQUEST authority / Backend persistence | Consume the persisted ref without derivation |
 | `ProductionSearchReceipt` | #697 and #760 | First execution #178 retrieval | #180 B4 approved narrow projection from `HybridRetrieveOutcome.search_receipt` | First execution only | Replay readback | AI/RAG; #178 retrieval persistence/readback | B5 must restore it for replay |
@@ -131,8 +132,9 @@ fingerprint algorithm, key/version, and query-binding verifier.
 
 `GuideRequestAuthorityLookupCoordinate` binds the original request guard,
 owner, operation, REQUEST stage, selected Source/Snapshot/Member coordinates,
-and complete member identity. The read-only
-`lookup_request_decision_refs()` adapter resolves that exact historical chain
+complete member identity, and the independently expected Source and Member
+Decision outcomes. The Guide retrieval path supplies `PASS` for both. The
+read-only `lookup_request_decision_refs()` adapter resolves that exact historical chain
 to the persisted immutable `request_source_decision_ref` and
 `request_member_decision_ref` in one repeatable-read transaction.
 

@@ -184,6 +184,8 @@ def _coordinate() -> GuideRequestAuthorityLookupCoordinate:
         source_snapshot_member_id=_MEMBER_ID,
         source_code=_SOURCE_CODE,
         source_version=_SOURCE_VERSION,
+        expected_source_decision_outcome=ObservedDecisionOutcome.PASS,
+        expected_member_decision_outcome=ObservedDecisionOutcome.PASS,
         member_identity=_ENDPOINT_IDENTITY,
     )
 
@@ -266,6 +268,7 @@ def test_coordinate_statements_bind_every_historical_request_and_selection_fact(
         assert "ORDER BY" not in upper
         assert "LIMIT" not in upper
         assert "CURRENT" not in upper
+        assert "actual_decision_outcome = :" in sql
     assert "source_code = :" in source_sql
     assert "source_version = :" in source_sql
     assert "source_snapshot_member_id = :" in member_sql
@@ -350,6 +353,23 @@ async def test_coordinate_lookup_rejects_ambiguous_historical_decisions() -> Non
     )
 
     with pytest.raises(GuideEvidenceAuthorityReaderError, match="ambiguous"):
+        await reader.lookup_request_decision_refs(coordinate=_coordinate())
+
+
+async def test_coordinate_lookup_rejects_outcome_that_does_not_match_the_coordinate() -> None:
+    fail_source_ref = _source_ref(ObservedDecisionOutcome.FAIL)
+    reader, _ = _coordinate_reader(
+        guard_rows=[_guard_row()],
+        source_rows=[
+            _source_row(
+                artifact_content_sha256=fail_source_ref.content_sha256,
+                actual_decision_outcome="FAIL",
+            )
+        ],
+        member_rows=[_member_row()],
+    )
+
+    with pytest.raises(GuideEvidenceAuthorityReaderError, match="coordinate row is corrupt"):
         await reader.lookup_request_decision_refs(coordinate=_coordinate())
 
 

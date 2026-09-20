@@ -183,6 +183,7 @@ def _source_coordinate_statement(
             _SOURCE_DECISION.c.source_snapshot_id == str(coordinate.source_snapshot_id),
             _SOURCE_DECISION.c.source_code == coordinate.source_code,
             _SOURCE_DECISION.c.source_version == coordinate.source_version,
+            _SOURCE_DECISION.c.actual_decision_outcome == coordinate.expected_source_decision_outcome.value,
         )
     )
 
@@ -209,6 +210,7 @@ def _member_coordinate_statement(
             _nullable_exact(_MEMBER_DECISION.c.operation_code, identity.operation_code),
             _nullable_exact(_MEMBER_DECISION.c.member_artifact_code, identity.artifact_code),
             _nullable_exact(_MEMBER_DECISION.c.member_artifact_version, identity.artifact_version),
+            _MEMBER_DECISION.c.actual_decision_outcome == coordinate.expected_member_decision_outcome.value,
         )
     )
 
@@ -535,6 +537,8 @@ def _validate_lookup_coordinate(
         or not _is_nonblank_nfc(coordinate.request_operation_code)
         or not _is_nonblank_nfc(coordinate.source_code)
         or not _is_nonblank_nfc(coordinate.source_version)
+        or type(coordinate.expected_source_decision_outcome) is not ObservedDecisionOutcome
+        or type(coordinate.expected_member_decision_outcome) is not ObservedDecisionOutcome
     ):
         raise GuideEvidenceAuthorityReaderError("REQUEST authority lookup coordinate is invalid")
     try:
@@ -570,6 +574,7 @@ def _verify_lookup_observations(
         or source.source_snapshot_id != coordinate.source_snapshot_id
         or source.source_code != coordinate.source_code
         or source.source_version != coordinate.source_version
+        or source.actual_decision_outcome is not coordinate.expected_source_decision_outcome
         or member.request_guard_ref != coordinate.request_guard_ref
         or member.user_id != coordinate.user_id
         or member.request_operation_code != coordinate.request_operation_code
@@ -577,5 +582,6 @@ def _verify_lookup_observations(
         or member.source_snapshot_id != coordinate.source_snapshot_id
         or member.source_snapshot_member_id != coordinate.source_snapshot_member_id
         or member.member_identity != coordinate.member_identity
+        or member.actual_decision_outcome is not coordinate.expected_member_decision_outcome
     ):
         raise _CorruptAuthorityRowError("persisted authority does not match the exact lookup coordinate")
