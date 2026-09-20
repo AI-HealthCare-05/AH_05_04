@@ -21,8 +21,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from infra.python.protected_retrieval_role_policy import (
+    apply_protected_backup_role_policy,
     apply_protected_retrieval_role_policy,
     quoted_identifier,
+    validate_protected_backup_connection,
     validate_protected_control_connection,
     validate_protected_data_connection,
 )
@@ -134,6 +136,8 @@ async def provision_protected_database_roles(
     data_password: str,
     control_login: str,
     control_password: str,
+    backup_login: str,
+    backup_password: str,
 ) -> None:
     """Create operational logins and configure exact column-level role policies."""
     # 1. Verify existence of NOLOGIN roles created by migration bootstrap
@@ -148,6 +152,25 @@ async def provision_protected_database_roles(
     # 2. Provision operational logins
     await _verify_login_role_attributes(admin_connection, data_login, data_password)
     await _verify_login_role_attributes(admin_connection, control_login, control_password)
+    await _verify_login_role_attributes(admin_connection, backup_login, backup_password)
+    backup_unsafe = await admin_connection.scalar(
+        text(
+            "SELECT EXISTS ("
+            "SELECT 1 FROM pg_auth_members membership "
+            "JOIN pg_roles member ON member.oid = membership.member "
+            "WHERE member.rolname = :backup_login"
+            ") OR EXISTS ("
+            "SELECT 1 FROM pg_roles role WHERE role.rolname = :backup_login AND ("
+            "EXISTS (SELECT 1 FROM pg_class WHERE relowner = role.oid) OR "
+            "EXISTS (SELECT 1 FROM pg_namespace WHERE nspowner = role.oid) OR "
+            "EXISTS (SELECT 1 FROM pg_database WHERE datdba = role.oid)"
+            ")"
+            ")"
+        ),
+        {"backup_login": backup_login},
+    )
+    if backup_unsafe:
+        raise ValueError("Protected backup login must have no memberships or ownership")
 
     # 3. Clean and assign strictly isolated memberships
     quoted_access = quoted_identifier(access_role)
@@ -171,6 +194,12 @@ async def provision_protected_database_roles(
         data_access=access_role,
         control=control_role,
     )
+    await apply_protected_backup_role_policy(
+        admin_connection,
+        schema=schema,
+        owner=owner_role,
+        backup_login=backup_login,
+    )
 
 
 async def verify_protected_connections(
@@ -185,6 +214,8 @@ async def verify_protected_connections(
     data_password: str,
     control_login: str,
     control_password: str,
+    backup_login: str,
+    backup_password: str,
 ) -> None:
     """Validate that limited logins can connect and satisfy exact policy boundaries."""
     data_url = (
@@ -217,6 +248,16 @@ async def verify_protected_connections(
             )
     finally:
         await control_engine.dispose()
+
+    backup_url = (
+        f"postgresql+asyncpg://{quote_plus(backup_login)}:{quote_plus(backup_password)}@{db_host}:{db_port}/{db_name}"
+    )
+    backup_engine = create_async_engine(backup_url)
+    try:
+        async with backup_engine.connect() as conn:
+            await validate_protected_backup_connection(conn, schema=schema)
+    finally:
+        await backup_engine.dispose()
 
 
 def parse_args() -> argparse.Namespace:
@@ -255,8 +296,12 @@ async def async_main(args: argparse.Namespace) -> int:
         os.getenv("PROTECTED_DB_CONTROL_USER", "").strip(), "PROTECTED_DB_CONTROL_USER"
     )
     control_password = os.getenv("PROTECTED_DB_CONTROL_PASSWORD", "").strip()
+    backup_login = validate_safe_identifier(
+        os.getenv("PROTECTED_DB_BACKUP_USER", "").strip(), "PROTECTED_DB_BACKUP_USER"
+    )
+    backup_password = os.getenv("PROTECTED_DB_BACKUP_PASSWORD", "").strip()
 
-    if not db_name or not data_password or not control_password:
+    if not db_name or not data_password or not control_password or not backup_password:
         sys.stderr.write("Missing required DB connection or password environment variables\n")
         return 1
 
@@ -265,6 +310,12 @@ async def async_main(args: argparse.Namespace) -> int:
         os.getenv("DB_MIGRATION_USER", "").strip(),
         os.getenv("DB_APP_USER", "").strip(),
         os.getenv("SOURCE_WRITER_USER", "").strip(),
+        os.getenv("SOURCE_MANAGEMENT_USER", "").strip(),
+        os.getenv("CATALOG_WRITER_USER", "").strip(),
+        os.getenv("CATALOG_APPROVAL_USER", "").strip(),
+        os.getenv("KNOWLEDGE_INDEX_BUILDER_USER", "").strip(),
+        os.getenv("CANDIDATE_INDEX_BUILDER_USER", "").strip(),
+        os.getenv("ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE", "").strip(),
     ]
     validate_distinct_roles(
         owner_role,
@@ -272,6 +323,7 @@ async def async_main(args: argparse.Namespace) -> int:
         control_role,
         data_login,
         control_login,
+        backup_login,
         *other_roles,
     )
 
@@ -312,6 +364,8 @@ async def async_main(args: argparse.Namespace) -> int:
                     data_password=data_password,
                     control_login=control_login,
                     control_password=control_password,
+                    backup_login=backup_login,
+                    backup_password=backup_password,
                 )
         finally:
             await admin_engine.dispose()
@@ -328,6 +382,8 @@ async def async_main(args: argparse.Namespace) -> int:
         data_password=data_password,
         control_login=control_login,
         control_password=control_password,
+        backup_login=backup_login,
+        backup_password=backup_password,
     )
 
     sys.stdout.write("PROTECTED_DATABASE_PROVISIONING_VERIFIED: PASS\n")
@@ -335,8 +391,12 @@ async def async_main(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
-    args = parse_args()
-    exit_code = asyncio.run(async_main(args))
+    try:
+        args = parse_args()
+        exit_code = asyncio.run(async_main(args))
+    except Exception:
+        sys.stderr.write("PROTECTED_DATABASE_PROVISIONING_FAILED\n")
+        exit_code = 1
     sys.exit(exit_code)
 
 

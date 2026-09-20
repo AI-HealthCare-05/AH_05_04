@@ -10,6 +10,18 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 
+PROTECTED_BACKUP_RELATIONS = (
+    "protected_identity",
+    "protected_dataset",
+    "protected_artifact",
+    "approval_evidence",
+    "authorization_grant",
+    "operation_capability",
+    "audit_entry",
+    "audit_head",
+    "alembic_version",
+)
+
 _SELECT_COLUMNS: Mapping[str, Mapping[str, Sequence[str]]] = {
     "data": {
         "protected_identity": (
@@ -272,6 +284,126 @@ async def apply_protected_retrieval_role_policy(
     for role, plane in ((data_access, "data"), (control, "control")):
         await _revoke_existing(connection, schema=schema, role=role, owner=owner)
         await _grant_plane(connection, schema=schema, role=role, plane=plane)
+
+
+async def apply_protected_backup_role_policy(
+    connection: AsyncConnection, *, schema: str, owner: str, backup_login: str
+) -> None:
+    """Replace the backup login grants with exact, direct read-only access."""
+
+    for identifier in (schema, owner, backup_login):
+        quoted_identifier(identifier)
+    await _revoke_existing(connection, schema=schema, role=backup_login, owner=owner)
+    schema_sql = quoted_identifier(schema)
+    login_sql = quoted_identifier(backup_login)
+    for relation in PROTECTED_BACKUP_RELATIONS:
+        target = f"{schema_sql}.{quoted_identifier(relation)}"
+        await connection.execute(text(f"GRANT SELECT ON TABLE {target} TO {login_sql}"))
+
+
+async def validate_protected_backup_connection(connection: AsyncConnection, *, schema: str) -> None:
+    """Fail closed unless the current login is an unprivileged exact-scope reader."""
+
+    quoted_identifier(schema)
+    unsafe = await connection.scalar(
+        text(
+            "SELECT role.rolsuper OR role.rolcreatedb OR role.rolcreaterole OR role.rolreplication "
+            "OR role.rolbypassrls OR NOT role.rolcanlogin "
+            "OR EXISTS (SELECT 1 FROM pg_class WHERE relowner = role.oid) "
+            "OR EXISTS (SELECT 1 FROM pg_namespace WHERE nspowner = role.oid) "
+            "OR EXISTS (SELECT 1 FROM pg_database WHERE datdba = role.oid) "
+            "FROM pg_roles role WHERE role.rolname = current_user"
+        )
+    )
+    memberships = tuple(
+        await connection.scalars(
+            text(
+                "SELECT parent.rolname FROM pg_auth_members membership "
+                "JOIN pg_roles parent ON parent.oid = membership.roleid "
+                "JOIN pg_roles member ON member.oid = membership.member "
+                "WHERE member.rolname = current_user"
+            )
+        )
+    )
+    schema_ok = await connection.scalar(
+        text(
+            "SELECT has_schema_privilege(current_user, :schema, 'USAGE') "
+            "AND NOT has_schema_privilege(current_user, :schema, 'CREATE')"
+        ),
+        {"schema": schema},
+    )
+    domain_ok = await connection.scalar(
+        text("SELECT has_type_privilege(current_user, :domain, 'USAGE')"),
+        {"domain": f"{schema}.sha256_hex"},
+    )
+    if unsafe or memberships or not schema_ok or not domain_ok:
+        raise ValueError("protected backup identity boundary is unsafe")
+
+    outside_scope_access = await connection.scalar(
+        text(
+            "SELECT EXISTS ("
+            "SELECT 1 FROM pg_class class "
+            "JOIN pg_namespace namespace ON namespace.oid = class.relnamespace "
+            "WHERE namespace.nspname <> :schema "
+            "AND namespace.nspname NOT IN ('pg_catalog', 'information_schema') "
+            "AND namespace.nspname NOT LIKE 'pg_toast%' "
+            "AND class.relkind IN ('r', 'p', 'v', 'm', 'f') "
+            "AND (has_table_privilege(current_user, class.oid, 'SELECT') "
+            "OR has_table_privilege(current_user, class.oid, 'INSERT') "
+            "OR has_table_privilege(current_user, class.oid, 'UPDATE') "
+            "OR has_table_privilege(current_user, class.oid, 'DELETE') "
+            "OR has_table_privilege(current_user, class.oid, 'TRUNCATE') "
+            "OR has_table_privilege(current_user, class.oid, 'TRIGGER') "
+            "OR has_table_privilege(current_user, class.oid, 'REFERENCES'))"
+            ") OR EXISTS ("
+            "SELECT 1 FROM pg_class class "
+            "JOIN pg_namespace namespace ON namespace.oid = class.relnamespace "
+            "WHERE namespace.nspname <> :schema "
+            "AND namespace.nspname NOT IN ('pg_catalog', 'information_schema') "
+            "AND namespace.nspname NOT LIKE 'pg_toast%' "
+            "AND class.relkind = 'S' "
+            "AND (has_sequence_privilege(current_user, class.oid, 'SELECT') "
+            "OR has_sequence_privilege(current_user, class.oid, 'UPDATE') "
+            "OR has_sequence_privilege(current_user, class.oid, 'USAGE'))"
+            ") OR EXISTS ("
+            "SELECT 1 FROM pg_namespace namespace "
+            "WHERE namespace.nspname <> :schema "
+            "AND namespace.nspname NOT IN ('pg_catalog', 'information_schema') "
+            "AND namespace.nspname NOT LIKE 'pg_toast%' "
+            "AND has_schema_privilege(current_user, namespace.oid, 'CREATE')"
+            ")"
+        ),
+        {"schema": schema},
+    )
+    if outside_scope_access:
+        raise ValueError("protected backup identity has privileges outside the exact scope")
+
+    actual_relations = set(
+        await connection.scalars(
+            text(
+                "SELECT class.relname FROM pg_class class "
+                "JOIN pg_namespace namespace ON namespace.oid = class.relnamespace "
+                "WHERE namespace.nspname = :schema "
+                "AND class.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', 'c')"
+            ),
+            {"schema": schema},
+        )
+    )
+    if actual_relations != set(PROTECTED_BACKUP_RELATIONS):
+        raise ValueError("protected backup scope does not match")
+    for relation_name in PROTECTED_BACKUP_RELATIONS:
+        relation = f"{schema}.{relation_name}"
+        if not await connection.scalar(
+            text("SELECT has_table_privilege(current_user, :relation, 'SELECT')"),
+            {"relation": relation},
+        ):
+            raise ValueError("protected backup SELECT grant does not match")
+        for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "TRIGGER", "REFERENCES"):
+            if await connection.scalar(
+                text("SELECT has_table_privilege(current_user, :relation, :privilege)"),
+                {"relation": relation, "privilege": privilege},
+            ):
+                raise ValueError("protected backup identity has write privilege")
 
 
 async def _validate_connection(
