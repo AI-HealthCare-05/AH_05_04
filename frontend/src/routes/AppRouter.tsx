@@ -170,6 +170,7 @@ export function AppRoutes({
       <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
       {enableTrackC && TrackCPage && <>
         <Route path="/track-c/occurrences/:occurrenceId" element={<ProtectedRoute><Suspense fallback={<div role="status">불러오는 중입니다.</div>}><TrackCPage /></Suspense></ProtectedRoute>} />
+        <Route path="/track-c/plans" element={<ProtectedRoute><Suspense fallback={<div role="status">불러오는 중입니다.</div>}><TrackCPage /></Suspense></ProtectedRoute>} />
         <Route path="/track-c/plans/:planId" element={<ProtectedRoute><Suspense fallback={<div role="status">불러오는 중입니다.</div>}><TrackCPage /></Suspense></ProtectedRoute>} />
       </>}
       <Route path="/schedule" element={<ProtectedRoute><SchedulePage /></ProtectedRoute>} />
