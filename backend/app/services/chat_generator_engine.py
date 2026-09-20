@@ -1,5 +1,6 @@
 from pydantic import ValidationError
 
+from app.core.closed_demo_retrieval import ClosedDemoRetrievalExecutionError, ClosedDemoRetrievalService
 from app.services.chat_ai import (
     ChatEngine,
     ChatGenerationFailedError,
@@ -17,16 +18,24 @@ from app.services.chat_ai.exceptions import (
     ChatGenerationUnavailableError,
 )
 from app.services.chat_ai.generator import ChatGenerator
-from app.services.chat_ai.schemas import ChatGenerationInput
+from app.services.chat_ai.schemas import ChatEvidenceItem, ChatGenerationInput
 from app.services.chat_ai.schemas import ChatHistoryItem as GenerationHistoryItem
 from app.services.chat_ai.schemas import ChatMedicationInput as GenerationMedicationInput
 
 
 class ChatGeneratorEngine(ChatEngine):
-    def __init__(self, *, provider: ChatProvider, model: str, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        *,
+        provider: ChatProvider,
+        model: str,
+        timeout_seconds: float,
+        closed_demo_retriever: ClosedDemoRetrievalService | None = None,
+    ) -> None:
         self._provider = provider
         self._model = model
         self._timeout_seconds = timeout_seconds
+        self._closed_demo_retriever = closed_demo_retriever
 
     async def reply(self, chat_input: ChatReplyInput) -> ChatReplyOutput:
         mapped_error: Exception | None = None
@@ -41,12 +50,28 @@ class ChatGeneratorEngine(ChatEngine):
                 history=[self._to_generation_history(pair) for pair in chat_input.history],
                 medications=[self._to_generation_medication(medication) for medication in chat_input.medications],
             )
+            if self._closed_demo_retriever is not None:
+                evidence = await self._closed_demo_retriever.retrieve(generation_input.question)
+                generation_input = generation_input.model_copy(
+                    update={
+                        "evidence": [
+                            ChatEvidenceItem(
+                                display_order=item.display_order,
+                                source_code=item.source_code,
+                                source_version=item.source_version,
+                                locator=item.locator,
+                                content=item.content.reveal(),
+                            )
+                            for item in evidence
+                        ]
+                    }
+                )
             result = await generator.generate(generation_input)
         except ChatGenerationTimeoutError:
             mapped_error = ChatTimeoutError("챗봇 응답 대기 시간이 초과됐습니다.")
         except ChatGenerationUnavailableError:
             mapped_error = ChatServiceUnavailableError("챗봇 LLM 호출에 실패했습니다.")
-        except (ChatGenerationError, ValidationError):
+        except (ChatGenerationError, ClosedDemoRetrievalExecutionError, ValidationError):
             mapped_error = ChatGenerationFailedError("챗봇 응답 생성 처리 중 오류가 발생했습니다.")
 
         if mapped_error is not None:

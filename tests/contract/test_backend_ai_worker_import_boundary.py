@@ -48,6 +48,25 @@ BACKEND_ALLOWED_AI_WORKER_MODULES = frozenset(
 )
 ALLOWED_AI_WORKER_MODULES = BACKEND_ALLOWED_AI_WORKER_MODULES
 
+# CLOSED_DEMO #180 Decision: one exact composition file may consume the
+# pre-existing retrieval components needed for the sealed 17-product demo.
+# This is deliberately an equality-checked exception, not a global expansion.
+CLOSED_DEMO_BACKEND_AI_WORKER_MODULES: dict[str, frozenset[str]] = {
+    "backend/app/core/closed_demo_retrieval.py": frozenset(
+        {
+            "ai_worker.adapters.openai_text_embedding",
+            "ai_worker.adapters.postgresql_evidence_eligibility",
+            "ai_worker.adapters.postgresql_evidence_search",
+            "ai_worker.adapters.sqlalchemy_knowledge_chunk_content",
+            "ai_worker.tasks.rag.closed_demo_retrieval_binding",
+            "ai_worker.tasks.rag.evidence_retrieval",
+            "ai_worker.tasks.rag.evidence_search",
+            "ai_worker.tasks.rag.production_evidence_gate",
+            "ai_worker.tasks.rag.retrieval_runtime",
+        }
+    )
+}
+
 # app-${APP_VERSION} 이미지에 COPY되는 production script별 허용 목록.
 # 명시되지 않은 스크립트의 기본 허용값은 frozenset() (import 금지)입니다.
 APP_IMAGE_SCRIPT_ALLOWED_AI_WORKER_MODULES: dict[str, frozenset[str]] = {
@@ -124,7 +143,12 @@ def _imported_ai_worker_modules(path: Path) -> set[str]:
 def test_backend_production_code_imports_only_allowed_ai_worker_modules() -> None:
     violations: dict[str, set[str]] = {}
     for path in _production_python_files():
-        disallowed = _imported_ai_worker_modules(path) - BACKEND_ALLOWED_AI_WORKER_MODULES
+        relative_path = str(path.relative_to(PROJECT_ROOT))
+        actual = _imported_ai_worker_modules(path)
+        if relative_path in CLOSED_DEMO_BACKEND_AI_WORKER_MODULES:
+            assert actual == CLOSED_DEMO_BACKEND_AI_WORKER_MODULES[relative_path]
+            continue
+        disallowed = actual - BACKEND_ALLOWED_AI_WORKER_MODULES
         if disallowed:
             violations[str(path.relative_to(PROJECT_ROOT))] = disallowed
 

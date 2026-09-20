@@ -260,6 +260,10 @@ class Config(BaseSettings):
     OPENAI_MODEL: str = "gpt-4o"
     OPENAI_TIMEOUT_SECONDS: float = 20.0
     CHAT_HISTORY_CONTEXT_ENABLED: bool = False
+    CHAT_CLOSED_DEMO_RAG_ENABLED: bool = False
+    SOURCE591_STAGING_DB_HOST: str = ""
+    SOURCE591_STAGING_DB_PORT: int = 5432
+    SOURCE591_CONSUMER_PASSWORD: SecretStr | None = None
     RELEASE_VALIDATION_ALLOWED: bool = False
 
     TRACK_C_SAFETY_DEMO_ENABLED: bool = False

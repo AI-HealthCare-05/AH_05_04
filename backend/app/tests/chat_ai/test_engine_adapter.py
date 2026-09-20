@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.core.closed_demo_retrieval import ClosedDemoRetrievalExecutionError
 from app.services.chat_ai import (
     ChatGenerationFailedError,
     ChatHistoryPair,
@@ -20,6 +21,32 @@ from app.services.chat_ai.exceptions import (
 )
 from app.services.chat_ai.schemas import ProviderChatResponse
 from app.services.chat_generator_engine import ChatGeneratorEngine
+
+
+class StubClosedDemoEvidence:
+    def __init__(self) -> None:
+        self.display_order = 1
+        self.source_code = "mfds"
+        self.source_version = "v1"
+        self.locator = "synthetic-locator"
+
+        class _Content:
+            @staticmethod
+            def reveal() -> str:
+                return "검증된 합성 MFDS 근거"
+
+        self.content = _Content()
+
+
+class StubClosedDemoRetriever:
+    async def retrieve(self, question: str) -> tuple[StubClosedDemoEvidence, ...]:
+        assert question == "이 약을 먹으면 졸릴 수 있나요?"
+        return (StubClosedDemoEvidence(),)
+
+
+class RejectingClosedDemoRetriever:
+    async def retrieve(self, question: str) -> tuple[object, ...]:
+        raise ClosedDemoRetrievalExecutionError("fail closed")
 
 
 class StubProvider:
@@ -107,6 +134,46 @@ async def test_reply_maps_history_without_backend_identifiers() -> None:
     assert payload["history"] == [{"question": "과거 질문", "answer": "과거 답변"}]
     assert "prescription_id" not in payload
     assert result.prompt_version == "chat-prompt-v6"
+
+
+async def test_reply_sends_only_hydrated_closed_demo_evidence_with_new_prompt_version() -> None:
+    provider = StubProvider()
+    engine = ChatGeneratorEngine(
+        provider=provider,
+        model="model-requested",
+        timeout_seconds=1,
+        closed_demo_retriever=StubClosedDemoRetriever(),  # type: ignore[arg-type]
+    )
+
+    result = await engine.reply(_reply_input())
+
+    payload = json.loads(str(provider.calls[0]["input_json"]))
+    assert payload["evidence"] == [
+        {
+            "display_order": 1,
+            "source_code": "mfds",
+            "source_version": "v1",
+            "locator": "synthetic-locator",
+            "content": "검증된 합성 MFDS 근거",
+        }
+    ]
+    assert result.prompt_version == "chat-prompt-v7-closed-demo-evidence"
+    assert "CLOSED_DEMO 검증 근거" in str(provider.calls[0]["instructions"])
+
+
+async def test_reply_does_not_call_provider_when_closed_demo_retrieval_fails() -> None:
+    provider = StubProvider()
+    engine = ChatGeneratorEngine(
+        provider=provider,
+        model="model-requested",
+        timeout_seconds=1,
+        closed_demo_retriever=RejectingClosedDemoRetriever(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ChatGenerationFailedError):
+        await engine.reply(_reply_input())
+
+    assert provider.calls == []
 
 
 @pytest.mark.parametrize(

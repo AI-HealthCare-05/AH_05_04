@@ -6,6 +6,11 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
+from app.core.closed_demo_retrieval import (
+    ClosedDemoRetrievalDatabaseConfig,
+    ClosedDemoRetrievalService,
+    build_closed_demo_retrieval_service,
+)
 from app.core.config import Env
 from app.core.db.databases import AccountWithdrawalCleanupSessionFactory, get_db_session
 from app.core.provider_observability import (
@@ -558,6 +563,38 @@ def get_chat_repository(
     return ChatRepository(session)
 
 
+def get_closed_demo_retrieval_service(
+    client: Annotated[
+        AsyncOpenAI,
+        Depends(get_openai_client),
+    ],
+    fingerprint_producer: Annotated[
+        GuideQueryFingerprintProducer,
+        Depends(get_guide_query_fingerprint_producer),
+    ],
+    binding_verifier: Annotated[
+        ProductionQueryBindingVerifier,
+        Depends(get_guide_query_binding_verifier),
+    ],
+) -> ClosedDemoRetrievalService | None:
+    """Keep Sync Chat on its existing path unless the explicit CLOSED_DEMO gate is on."""
+    if not config.CHAT_CLOSED_DEMO_RAG_ENABLED:
+        return None
+    password = config.SOURCE591_CONSUMER_PASSWORD
+    return build_closed_demo_retrieval_service(
+        database_config=ClosedDemoRetrievalDatabaseConfig(
+            host=config.SOURCE591_STAGING_DB_HOST,
+            port=config.SOURCE591_STAGING_DB_PORT,
+            database="source591_staging",
+            username="source591_consumer",
+            password=password.get_secret_value() if password is not None else "",
+        ),
+        openai_client=client,
+        fingerprint_producer=fingerprint_producer,
+        binding_verifier=binding_verifier,
+    )
+
+
 def get_chat_engine(
     client: Annotated[
         AsyncOpenAI,
@@ -566,6 +603,10 @@ def get_chat_engine(
     context: Annotated[
         ProviderCallContext,
         Depends(get_provider_call_context),
+    ],
+    closed_demo_retriever: Annotated[
+        ClosedDemoRetrievalService | None,
+        Depends(get_closed_demo_retrieval_service),
     ],
 ) -> ChatEngine:
     return ChatGeneratorEngine(
@@ -580,6 +621,7 @@ def get_chat_engine(
         ),
         model=config.OPENAI_MODEL,
         timeout_seconds=config.OPENAI_TIMEOUT_SECONDS,
+        closed_demo_retriever=closed_demo_retriever,
     )
 
 
