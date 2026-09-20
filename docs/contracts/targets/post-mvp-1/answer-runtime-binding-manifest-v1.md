@@ -7,9 +7,9 @@
 | Decision | [`PD-159-20260913`](../../../governance/decisions/2026-09-13-rag-answer-quality-metrics.md) |
 | 추적 Issue | [#159](https://github.com/AI-HealthCare-05/AH_05_04/issues/159) |
 | 구현 담당 | 정현우 (`@ceohwj`, AI/RAG Implementation Owner) |
-| 책임 리뷰 | 김지혜 (`@Jye-rookie`, Worker / Track A·C·E) — `Review Required` |
+| 책임 리뷰 | 송은영 (`@phina-io`, Backend / Data & Security) — `Review Required` |
 | 수용 증거 (Acceptance) | 권가빈 (`@hazelnutflavoured`, PM / Track F Acceptance) |
-| 기술 통제 (Backend/DB) | 송은영 (`@phina-io`, Backend / Data & Security) |
+| 전문 증거 (Evaluation/Worker) | 김지혜 (`@Jye-rookie`, Worker / Track A·C·E) |
 | 이전 Phase B 승인 | [PR #833 comment `5740823309`](https://github.com/AI-HealthCare-05/AH_05_04/pull/833#issuecomment-5740823309) · Final HEAD `ef8a78c8f6ad1c037d203d1b376d899e0dbffbcd` · Merge commit `5128cfdee8d9791a76fe6331cea2314420184cc9` |
 | 상류 권위 | RFC 8785 (JCS Canonical JSON), PR #808 (`AnswerComparisonRunInput` Seam), PR #828 / #806 (`RequestGuardRuntimeBindingObservation`) |
 | 연결 이슈 | #159, #808, #828 / #806, #180, #807, #799 |
@@ -389,7 +389,7 @@ Phase B contract approval에 따라 다음 범위의 Python 구현과 회귀 검
 ## 9. Phase C-1 Answer Runtime Authority Carrier 및 Materialization Coordinate 검토 (Proposed / Review Required)
 
 ### 1) 목적 및 감사 원칙
-본 절은 PR #851(Phase B)에서 승인·구현된 10개 Canonical Recipe 및 Manifest 검증/사영 커널을 바탕으로, `ANS-BASE` / `ANS-RAG` / `ANS-FINAL` 실제 3-variant 실행 시 각 recipe의 입력 source object가 어떤 authoritative coordinate로 결속되는지 최신 `develop`(`8f29710547c8a405736d4a50dcac41bc10a90ed3`)을 전수 감사하여 그 경계를 제안(Proposed / Review Required)한다. 책임 리뷰어(`@Jye-rookie`)의 정식 승인 전까지 본 절의 설계는 Frozen 또는 Approved로 확정되지 않는다.
+본 절은 PR #851(Phase B)에서 승인·구현된 10개 Canonical Recipe 및 Manifest 검증/사영 커널을 바탕으로, `ANS-BASE` / `ANS-RAG` / `ANS-FINAL` 실제 3-variant 실행 시 각 recipe의 입력 source object가 어떤 authoritative coordinate로 결속되는지 최신 `develop`(`8f29710547c8a405736d4a50dcac41bc10a90ed3`)을 전수 감사하여 그 경계를 제안(Proposed / Review Required)한다. 책임 리뷰어(`@phina-io`)의 정식 승인 전까지 본 절의 설계는 Frozen 또는 Approved로 확정되지 않는다.
 
 - **핵심 분리 원칙**:
   $$\text{Source Object Exists} \neq \text{Run-bound Authoritative Carrier Exists}$$
@@ -437,7 +437,7 @@ Phase B contract approval에 따라 다음 범위의 Python 구현과 회귀 검
 A. **Manifest 생성 시점 (Lifecycle Point — Proposed)**:
    - 제안 시점: **`ALL_CASES_COMPLETED_PRE_SEAL` (Proposed / Review Required)**
    - 모든 필수 Case 실행이 완료되고, 케이스별 실제 관측치 수집 및 Controlled-Variable 불변성 검증이 통과한 직후, `RagEvaluationRun` 봉인(`result_content_manifest_hash` 계산) 직전에 `AnswerRuntimeAuthorityBindingManifest` 생성을 제안한다.
-   - 단, 본 생성 시점은 `@Jye-rookie` 승인 전까지 확정(Frozen/Approved)이 아닌 제안(Proposed) 상태다. 실행 전 생성(Pre-execution)은 실제 호출 관측이 불가능하므로 금지한다.
+   - 단, 본 생성 시점은 `@phina-io` 승인 전까지 확정(Frozen/Approved)이 아닌 제안(Proposed) 상태다. 실행 전 생성(Pre-execution)은 실제 호출 관측이 불가능하므로 금지한다.
 B. **각 Source Object 출처**:
    - `INPUT_CONTEXT`: `LoadedRunBundle.cases` (`case_id`, `input_sha256`)
    - `SEED`: `ResolvedDevExecution.request.seed`
@@ -460,7 +460,7 @@ D. **Case-level Value의 Run-level Controlled Binding 증명 (Case Aggregation R
    - 모든 필수 Case에서 관측된 controlled value가 단일 동일 값이어야 한다 (`len({value(c)}) == 1`).
    - 단 하나의 Case라도 드리프트/불일치 발생 시 즉시 `fail-closed` (`EvaluationValidationError(STATE_COMBINATION_INVALID)`).
    - 필수 Case 중 관측치 누락 발생 시 즉시 `fail-closed`.
-   - **계약 공백(Contract Gap) 명시**: 현재 `develop`에는 위 집계 및 드리프트 검증 커널이 정본 코드로 부재하므로 계약 공백으로 기록하며, `@Jye-rookie` 승인 전까지 단일 케이스 값을 전체 Run 값으로 임의 과승격하지 않는다.
+   - **계약 공백(Contract Gap) 명시**: 현재 `develop`에는 위 집계 및 드리프트 검증 커널이 정본 코드로 부재하므로 계약 공백으로 기록하며, `@phina-io` 승인 전까지 단일 케이스 값을 전체 Run 값으로 임의 과승격하지 않는다.
 E. **Missing/Mismatch 다단계 Fail-Closed 경계**:
    - Stage 1 (Preflight): Variant config 파라미터 유효성 검증 실패 시 실행 전 차단.
    - Stage 2 (Post-Case Assembly): Case aggregation 불일치/누락 시 manifest 생성 거부 및 Run `INVALID`.

@@ -356,9 +356,9 @@ $$\text{source object exists} \neq \text{ANS-BASE / ANS-RAG / ANS-FINAL 실행�
 ### 1. 목적 및 원칙 (Purpose & Principles)
 - **책임자 및 검토 체계**:
   - 구현 책임자: 정현우 (`@junghyunwoo`)
-  - 책임 리뷰어: 김지혜 (`@Jye-rookie`) — **Review Required** (승인 전 Frozen/Approved 사용 불가)
+  - 책임 리뷰어: 송은영 (`@phina-io`) — **Review Required** (승인 전 Frozen/Approved 사용 불가)
   - 인수 근거 제공: 권가빈 (`@hazelnutflavoured`)
-  - 백엔드/DB 전문가 근거 제공: 송은영 (`@phina-io`)
+  - 평가/Worker 전문 근거 제공: 김지혜 (`@Jye-rookie`)
 - **감사 및 설계 원칙**:
   1. PR #851(Phase B)에서 구현된 10개 Canonical Recipe 및 Manifest 검증/사영 커널을 그대로 재사용한다.
   2. Source Object 실재와 Run-bound Authoritative Carrier를 엄격히 분리한다.
@@ -378,7 +378,7 @@ $$\text{source object exists} \neq \text{ANS-BASE / ANS-RAG / ANS-FINAL 실행�
 - **Lifecycle Point**:
   - **`ALL_CASES_COMPLETED_PRE_SEAL` (Proposed / Review Required)**
   - 모든 필수 Case 실행 완료 및 Controlled-Variable 불변성 검증 통과 후, `RagEvaluationRun` 봉인(`result_content_manifest_hash` 계산) 직전에 `AnswerRuntimeAuthorityBindingManifest` 생성을 제안한다.
-  - 책임 리뷰어(`@Jye-rookie`)의 정식 승인 전까지는 확정(Frozen/Approved)이 아닌 제안(Proposed) 상태로 유지한다.
+  - 책임 리뷰어(`@phina-io`)의 정식 승인 전까지는 확정(Frozen/Approved)이 아닌 제안(Proposed) 상태로 유지한다.
 - **Case Aggregation Rule (Proposed / Review Required)**:
   - Controlled-Variable Invariant: 모든 필수 Case에서 관측된 controlled value가 단일 동일 값이어야 한다 ($\forall c \in \text{CompletedRequiredCases}, \, \text{value}(c) == \text{value}_0$).
   - 케이스별 값 불일치(Drift) 또는 누락 발생 시 즉시 `fail-closed` (`EvaluationValidationError(STATE_COMBINATION_INVALID)`).
