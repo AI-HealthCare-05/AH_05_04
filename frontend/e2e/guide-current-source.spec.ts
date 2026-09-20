@@ -52,10 +52,24 @@ test.beforeEach(async ({ page }) => {
         data: {
           guide_id: guideId,
           prescription_id: prescriptionId,
+          prescription_version_id: '66666666-6666-4666-8666-666666666666',
           generation_status: 'COMPLETED',
           content: guideContent,
           model_name: 'synthetic-guide-model',
           prompt_version: 'synthetic-guide-v1',
+          release_decision: 'PASS',
+          release_is_current: true,
+          fallback_code: null,
+          fallback_text: null,
+          citations: [
+            {
+              source_type: 'LIFESTYLE_GUIDELINE',
+              source_code: 'SYNTHETIC-GUIDELINE',
+              source_version: '2026.1',
+              locator: 'section-2',
+              display_order: 1,
+            },
+          ],
           requested_at: '2026-09-16T00:00:00Z',
           completed_at: '2026-09-16T00:00:03Z',
         },
@@ -82,6 +96,8 @@ test('GUIDE-02A/02B가 320/390/412px에서 overflow와 Bottom Navigation 겹침 
       await expect(toggle).toHaveAttribute('aria-expanded', 'true')
       await expect(page.getByRole('heading', { name: '임신·수유 중 안내' })).toBeVisible()
       await expect(page.getByText('현재 제공된 안내가 없어요.')).toHaveCount(3)
+      await expect(page.getByRole('heading', { name: '안내 근거' })).toBeVisible()
+      await expect(page.getByText('SYNTHETIC-GUIDELINE')).toBeVisible()
 
       const content = page.locator('.guide-page__content')
       expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0)
@@ -97,6 +113,39 @@ test('GUIDE-02A/02B가 320/390/412px에서 overflow와 Bottom Navigation 겹침 
       expect((navigationBox?.y ?? 0) - ((chatBox?.y ?? 0) + (chatBox?.height ?? 0))).toBeGreaterThanOrEqual(12)
     })
   }
+})
+
+test('runtime STALE은 빈 Guide가 아닌 승인된 fallback으로 표시한다', async ({ page }) => {
+  await page.route(`**/api/v1/guides/${guideId}`, async (route) => {
+    await route.fulfill({
+      json: {
+        data: {
+          guide_id: guideId,
+          prescription_id: prescriptionId,
+          prescription_version_id: '66666666-6666-4666-8666-666666666666',
+          generation_status: 'COMPLETED',
+          content: null,
+          model_name: 'synthetic-guide-model',
+          prompt_version: 'synthetic-guide-v1',
+          release_decision: 'STALE',
+          release_is_current: false,
+          fallback_code: 'PRESCRIPTION_STALE',
+          fallback_text: '처방 정보가 변경되어 최신 안내를 다시 확인해야 해요.',
+          citations: [],
+          requested_at: '2026-09-16T00:00:00Z',
+          completed_at: '2026-09-16T00:00:03Z',
+        },
+      },
+    })
+  })
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto(`/guides/${guideId}`)
+
+  await expect(page.getByRole('heading', { name: '처방 정보가 변경되었어요' })).toBeVisible()
+  await expect(page.getByText('처방 정보가 변경되어 최신 안내를 다시 확인해야 해요.')).toBeVisible()
+  await expect(page.getByText('가이드 내용이 아직 없어요')).toHaveCount(0)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0)
 })
 
 test('약 카드는 keyboard Enter/Space로 펼치고 접으며 의료 섹션 순서를 유지한다', async ({ page }) => {
@@ -145,6 +194,11 @@ test('실패 가이드 재시도는 POST 후 새 가이드 상세를 표시한�
         content: completed ? guideContent : null,
         model_name: 'synthetic-guide-model',
         prompt_version: 'synthetic-guide-v1',
+        release_decision: null,
+        release_is_current: null,
+        fallback_code: null,
+        fallback_text: null,
+        citations: [],
         requested_at: '2026-09-16T00:00:00Z',
         completed_at: '2026-09-16T00:00:03Z',
       } },

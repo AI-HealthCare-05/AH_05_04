@@ -435,6 +435,75 @@
   font-size: 11px;
 }
 
+.guide-page__citations {
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid var(--ds-line);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.guide-page__citations h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.guide-page__citations ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.guide-page__citations li {
+  min-width: 0;
+  padding-left: 4px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.guide-page__citations strong,
+.guide-page__citations span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.guide-page__citations span {
+  color: var(--ds-text-muted);
+}
+
+.guide-page__release-fallback {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  margin-top: 24px;
+  padding: 20px;
+  border: 1px solid #f0d77a;
+  border-radius: 16px;
+  background: #fff9e8;
+}
+
+.guide-page__release-fallback .dosey-mascot {
+  width: 64px;
+  height: 64px;
+}
+
+.guide-page__release-fallback h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.4;
+}
+
+.guide-page__release-fallback p {
+  margin: 8px 0 0;
+  color: var(--ds-text-muted);
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
 .guide-page__schedule-button {
   margin-top: 12px;
 }
