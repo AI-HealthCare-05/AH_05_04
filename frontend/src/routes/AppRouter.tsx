@@ -21,6 +21,7 @@ import NotificationsPage from '../pages/NotificationsPage'
 import UnconfirmedCheckinsPage from '../pages/UnconfirmedCheckinsPage'
 import ReportPage from '../pages/ReportPage'
 import NotificationSettingsPage from '../pages/NotificationSettingsPage'
+import { useViewportHeight } from '../hooks/useViewportHeight'
 
 const DevPreviewPage = import.meta.env.DEV
   ? lazy(() => import('../dev-preview/DevPreviewPage'))
@@ -191,6 +192,9 @@ export function AppRoutes({
 }
 
 function AppRouter() {
+  // Android keyboard close 후 남는 하단 공백을 막기 위해 앱 전체에서 1회만 동기화한다.
+  useViewportHeight()
+
   return (
     <BrowserRouter>
       <AppRoutes />

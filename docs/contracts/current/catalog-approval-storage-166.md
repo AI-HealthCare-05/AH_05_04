@@ -157,8 +157,21 @@ Permission current state 변경, approval 발급·철회와 대응 audit INSERT�
 
 구현된 one-shot 명령은 `grant-permission`, `revoke-permission`, `issue-product-catalog`, `revoke-source`, `revoke-catalog`다. 구현 계약 확정은 실제 운영 승인을 발급했다는 뜻이 아니다.
 
+### #862 Production execution boundary
+
+- Bootstrap: `configure-app-role.sql`이 optional dedicated Catalog Approval login을 준비한다.
+- Provision: `provision_database_roles`가 기존 Catalog Approval least-privilege ACL을 적용한다.
+- Execution: `catalog-approval-admin` profile의 `catalog-approval` one-shot만 approval credential을 받는다.
+- Artifact: 승인된 Product Source artifact writer view를 `/artifacts`에 read-only로 mount하고 `LocalPrivateSourceArtifactReader`로 읽는다. Catalog Writer도 같은 authority를 read-only로 소비한다.
+- Ordinary services: FastAPI, AI Worker, Catalog Writer, Candidate Index Builder와 role provisioner는 Catalog Approval password를 받지 않는다.
+
+Production에서 확인된 writer view 전체에는 486개 artifact object가 있다. 이 root 전체 개수는 해당 Product ingestion run의 430개 persisted `RAW_RESPONSE`와 같은 수치가 아니며 서로 바꾸어 해석하지 않는다. 실제 host locator는 private deployment configuration에만 둔다.
+
 - actual approval issuance: **NOT RUN**
+- actual `grant-permission`: **NOT RUN**
+- actual `issue-product-catalog`: **NOT RUN**
 - actual Catalog materialization: **NOT RUN**
+- actual Candidate Index: **NOT RUN**
 - `PUBLIC_TRACK_F`: unchanged
 - `EXT-SOURCE-001`: not completed
 - `LIST_PATIENT_MEDICATION_GUIDES` blocker: unresolved

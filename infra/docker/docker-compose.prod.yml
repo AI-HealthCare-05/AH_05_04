@@ -62,6 +62,8 @@ services:
       ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD: ${ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD:-}
       CATALOG_WRITER_USER: ${CATALOG_WRITER_USER:-}
       CATALOG_WRITER_PASSWORD: ${CATALOG_WRITER_PASSWORD:-}
+      CATALOG_APPROVAL_USER: ${CATALOG_APPROVAL_USER:-}
+      CATALOG_APPROVAL_PASSWORD: ${CATALOG_APPROVAL_PASSWORD:-}
       CANDIDATE_INDEX_BUILDER_USER: ${CANDIDATE_INDEX_BUILDER_USER:-}
       CANDIDATE_INDEX_BUILDER_PASSWORD: ${CANDIDATE_INDEX_BUILDER_PASSWORD:-}
     networks:
@@ -160,6 +162,7 @@ services:
       SOURCE_WRITER_USER: ${SOURCE_WRITER_USER}
       SOURCE_MANAGEMENT_USER: ${SOURCE_MANAGEMENT_USER:-}
       CATALOG_WRITER_USER: ${CATALOG_WRITER_USER:-}
+      CATALOG_APPROVAL_USER: ${CATALOG_APPROVAL_USER:-}
       KNOWLEDGE_INDEX_BUILDER_USER: ${KNOWLEDGE_INDEX_BUILDER_USER:-}
       ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE: ${ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE:-}
       CANDIDATE_INDEX_BUILDER_USER: ${CANDIDATE_INDEX_BUILDER_USER:-}
@@ -545,6 +548,37 @@ services:
       CATALOG_WRITER_NAME: ${DB_NAME}
       CATALOG_WRITER_USER: ${CATALOG_WRITER_USER:-}
       CATALOG_WRITER_PASSWORD: ${CATALOG_WRITER_PASSWORD:-}
+      CATALOG_SOURCE_ARTIFACT_READER_ROOT: /artifacts
+    volumes:
+      - type: bind
+        source: ${CATALOG_SOURCE_ARTIFACT_HOST_ROOT:-/dev/null}
+        target: /artifacts
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - ws
+
+  # Catalog 승인 발급·철회 전용 one-shot. 일반 배포에서는 시작하지 않습니다.
+  catalog-approval:
+    profiles: ["catalog-approval-admin"]
+    image: ${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}
+    restart: "no"
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "ai_worker.admin.catalog_approval"]
+    environment:
+      CATALOG_APPROVAL_HOST: postgres
+      CATALOG_APPROVAL_PORT: "5432"
+      CATALOG_APPROVAL_NAME: ${DB_NAME}
+      CATALOG_APPROVAL_USER: ${CATALOG_APPROVAL_USER:-}
+      CATALOG_APPROVAL_PASSWORD: ${CATALOG_APPROVAL_PASSWORD:-}
+      CATALOG_SOURCE_ARTIFACT_READER_ROOT: /artifacts
+    volumes:
+      - type: bind
+        source: ${CATALOG_SOURCE_ARTIFACT_HOST_ROOT:-/dev/null}
+        target: /artifacts
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - ws
 

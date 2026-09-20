@@ -95,6 +95,31 @@ def test_workflow_ssh_host_identity_verification() -> None:
         )
 
 
+def test_workflow_waits_for_exact_runner_ipv4_allowlist_before_each_ssh() -> None:
+    wf_path = REPO_ROOT / ".github/workflows/protected_retrieval_runner.yml"
+    data = yaml.safe_load(wf_path.read_text(encoding="utf-8"))
+
+    strict_ipv4_pattern = (
+        r"^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}"
+        r"(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$"
+    )
+    cleanup_notice = "Provision/preflight 종료 후 임시 TCP/22 /32 rule을 즉시 제거"
+
+    for job_name in ("provision", "preflight"):
+        run_script = data["jobs"][job_name]["steps"][1]["run"]
+        first_ssh = run_script.index('\n$SSH_CMD "')
+
+        assert 'RUNNER_PUBLIC_IPV4="$(curl -fsS https://api.ipify.org)"' in run_script[:first_ssh]
+        assert strict_ipv4_pattern in run_script[:first_ssh]
+        assert "::notice::RUNNER_PUBLIC_IPV4=${RUNNER_PUBLIC_IPV4}" in run_script[:first_ssh]
+        assert "::notice::SG_TEMP_CIDR=${RUNNER_PUBLIC_IPV4}/32" in run_script[:first_ssh]
+        assert f"::notice::{cleanup_notice}" in run_script[:first_ssh]
+        assert "sleep 300" in run_script[:first_ssh]
+
+        assert "0.0.0.0/0" not in run_script
+        assert "aws ec2 authorize-security-group-ingress" not in run_script
+
+
 def test_checks_yml_has_no_protected_secret_references() -> None:
     checks_path = REPO_ROOT / ".github/workflows/checks.yml"
     assert checks_path.is_file()

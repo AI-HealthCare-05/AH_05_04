@@ -32,6 +32,9 @@ done
 # 파일의 선언 누락을 가리지 않도록 source 전에 비운다.
 unset ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE
 unset ACCOUNT_WITHDRAWAL_CLEANUP_DB_PASSWORD
+unset CATALOG_APPROVAL_USER
+unset CATALOG_APPROVAL_PASSWORD
+unset CATALOG_SOURCE_ARTIFACT_HOST_ROOT
 unset VITE_PUBLIC_TRACK_C
 unset VITE_SIGNUP_TERMS_APPROVED
 set -a
@@ -161,6 +164,56 @@ if [ "$SOURCE_WRITER_USER" = "$DB_ADMIN_USER" ] ||
   [ "$SOURCE_WRITER_USER" = "$DB_APP_USER" ]; then
   echo "SOURCE_WRITER_USER는 Admin, Migration, Runtime과 다른 이름이어야 합니다."
   exit 1
+fi
+
+# ---------- Catalog Approval optional one-shot 검증 ----------
+# 실행 셸의 상속값이 .prod.env 누락을 가리지 않게 위에서 비운 뒤 pair semantics를 검증한다.
+if [ -n "${CATALOG_APPROVAL_USER:-}" ] || [ -n "${CATALOG_APPROVAL_PASSWORD:-}" ]; then
+  if [ -z "${CATALOG_APPROVAL_USER:-}" ] || [ -z "${CATALOG_APPROVAL_PASSWORD:-}" ]; then
+    echo "CATALOG_APPROVAL_USER와 CATALOG_APPROVAL_PASSWORD는 함께 설정하거나 함께 비워야 합니다."
+    exit 1
+  fi
+  for variable_name in CATALOG_APPROVAL_USER CATALOG_APPROVAL_PASSWORD; do
+    case "${!variable_name}" in
+      replace-with* | replace_with*)
+        echo "Catalog Approval 환경변수의 placeholder를 교체해야 합니다: $variable_name"
+        exit 1
+        ;;
+    esac
+  done
+fi
+
+if [ -n "${CATALOG_SOURCE_ARTIFACT_HOST_ROOT:-}" ]; then
+  case "$CATALOG_SOURCE_ARTIFACT_HOST_ROOT" in
+    /*) ;;
+    *)
+      echo "CATALOG_SOURCE_ARTIFACT_HOST_ROOT는 절대 경로여야 합니다."
+      exit 1
+      ;;
+  esac
+  case "$CATALOG_SOURCE_ARTIFACT_HOST_ROOT" in
+    *replace-with* | *replace_with*)
+      echo "CATALOG_SOURCE_ARTIFACT_HOST_ROOT의 placeholder를 교체해야 합니다."
+      exit 1
+      ;;
+  esac
+fi
+
+if { [ -n "${CATALOG_APPROVAL_USER:-}" ] || [ -n "${CATALOG_WRITER_USER:-}" ]; } &&
+  [ -z "${CATALOG_SOURCE_ARTIFACT_HOST_ROOT:-}" ]; then
+  echo "Catalog Approval/Writer one-shot에는 CATALOG_SOURCE_ARTIFACT_HOST_ROOT가 필요합니다."
+  exit 1
+fi
+
+if [ -n "${CATALOG_APPROVAL_USER:-}" ]; then
+  for role_variable in DB_ADMIN_USER DB_MIGRATION_USER DB_APP_USER SOURCE_WRITER_USER SOURCE_MANAGEMENT_USER \
+    CATALOG_WRITER_USER KNOWLEDGE_INDEX_BUILDER_USER ACCOUNT_WITHDRAWAL_CLEANUP_DB_ROLE \
+    CANDIDATE_INDEX_BUILDER_USER; do
+    if [ -n "${!role_variable:-}" ] && [ "$CATALOG_APPROVAL_USER" = "${!role_variable}" ]; then
+      echo "CATALOG_APPROVAL_USER는 기존 DB 책임 role과 다른 이름이어야 합니다."
+      exit 1
+    fi
+  done
 fi
 
 # ---------- 기간 한정 Production 데모 설정 검증 ----------
@@ -663,6 +716,21 @@ docker compose up \
   postgres \
   redis
 
+# #434: notification-scheduler는 notifications profile의 opt-in 서비스다.
+# 일반 배포가 이를 자동 활성화해서도 안 되고, migration 때문에 멈춘 뒤 그대로
+# 방치해서도 안 되므로, 정지 전에 현재 기동 상태를 기록해 배포 성공 후 복원한다.
+if ! services_running_before_deploy="$(docker compose ps --services --status running)"; then
+  echo "Could not confirm service running state before deployment."
+  exit 1
+fi
+
+notification_scheduler_was_running=false
+if printf '%s\n' "$services_running_before_deploy" | grep -qx 'notification-scheduler'; then
+  notification_scheduler_was_running=true
+fi
+
+echo "notification-scheduler running before deployment: $notification_scheduler_was_running"
+
 echo "Stopping application services before schema migration"
 
 # Schema migration 전에 기존 애플리케이션을 먼저 멈춰 구버전 코드가 변경 중인
@@ -670,12 +738,13 @@ echo "Stopping application services before schema migration"
 docker compose --profile notifications stop -t 15 notification-scheduler
 docker compose stop -t 15 checkin-deadline-scheduler
 
-docker compose --profile source-admin --profile catalog-admin --profile candidate-index-admin stop \
+docker compose --profile source-admin --profile catalog-admin --profile candidate-index-admin --profile catalog-approval-admin stop \
   -t 90 \
   fastapi \
   ai-worker \
   source-writer \
   catalog-writer \
+  catalog-approval \
   candidate-index-builder
 
 if ! running_application_services="$(docker compose ps --services --status running)"; then
@@ -684,7 +753,7 @@ if ! running_application_services="$(docker compose ps --services --status runni
   exit 1
 fi
 
-if printf '%s\n' "$running_application_services" | grep -Eq '^(fastapi|ai-worker|source-writer|catalog-writer|candidate-index-builder|notification-scheduler|checkin-deadline-scheduler)$'; then
+if printf '%s\n' "$running_application_services" | grep -Eq '^(fastapi|ai-worker|source-writer|catalog-writer|catalog-approval|candidate-index-builder|notification-scheduler|checkin-deadline-scheduler)$'; then
   echo "Application services are still running after stop request."
   docker compose ps fastapi ai-worker
   exit 1
@@ -830,6 +899,37 @@ if [ "$checkin_deadline_scheduler_deployed" = true ]; then
     docker compose ps -a checkin-deadline-scheduler
     exit 1
   fi
+fi
+
+# #434: 배포 전에 running이던 경우에만 원래 상태로 되돌린다. 정지 상태였다면 그대로 둔다.
+# "일반 배포가 알림을 자동 활성화하지 않는다"는 운영 계약(docs/deployment.md)을 지키면서,
+# migration 때문에 멈춘 서비스가 방치되는 경우만 막는다. Production 최초 활성화는
+# 여전히 #230 승인 후 운영자가 별도로 수행한다.
+if [ "$notification_scheduler_was_running" = true ]; then
+  echo "Restoring notification-scheduler to its pre-deployment running state"
+
+  # 이 시점에는 migration·DB head·역할 권한 검증이 모두 끝났다. 단순 상태 복구이므로
+  # 운영 Runbook의 수동 재생성과 동일하게 --no-deps로 의존성 해석을 다시 열지 않는다.
+  docker compose --profile notifications up \
+    -d \
+    --no-deps \
+    --pull always \
+    --wait \
+    notification-scheduler
+
+  if ! running_services_after_restore="$(docker compose ps --services --status running)"; then
+    echo "Could not confirm notification-scheduler running state after deployment."
+    docker compose ps -a notification-scheduler || true
+    exit 1
+  fi
+
+  if ! printf '%s\n' "$running_services_after_restore" | grep -qx 'notification-scheduler'; then
+    echo "notification-scheduler was running before deployment but is stopped now."
+    docker compose ps -a notification-scheduler
+    exit 1
+  fi
+else
+  echo "notification-scheduler stays stopped; it was not running before deployment."
 fi
 
 # 사용 중인 rollback image는 남기고 dangling image만 정리합니다.

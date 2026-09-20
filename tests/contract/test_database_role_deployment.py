@@ -118,6 +118,102 @@ def test_credentials_and_admin_process_are_separated() -> None:
     assert not any("KNOWLEDGE_INDEX_BUILDER" in key for key in worker["environment"])
 
 
+def test_catalog_approval_production_surface_is_isolated_and_read_only() -> None:
+    services = yaml.safe_load((ROOT / "infra/docker/docker-compose.prod.yml").read_text())["services"]
+    env_example = (ROOT / "envs/example.prod.env").read_text()
+
+    for declaration in (
+        "CATALOG_APPROVAL_USER=",
+        "CATALOG_APPROVAL_PASSWORD=",
+        "CATALOG_SOURCE_ARTIFACT_HOST_ROOT=",
+    ):
+        assert declaration in env_example
+
+    postgres = services["postgres"]["environment"]
+    assert postgres["CATALOG_APPROVAL_USER"] == "${CATALOG_APPROVAL_USER:-}"
+    assert postgres["CATALOG_APPROVAL_PASSWORD"] == "${CATALOG_APPROVAL_PASSWORD:-}"
+
+    provisioner = services["provision-db-roles"]["environment"]
+    assert provisioner["CATALOG_APPROVAL_USER"] == "${CATALOG_APPROVAL_USER:-}"
+    assert "CATALOG_APPROVAL_PASSWORD" not in provisioner
+
+    approval = services["catalog-approval"]
+    assert approval["profiles"] == ["catalog-approval-admin"]
+    assert approval["image"] == "${DOCKER_USER}/${DOCKER_REPOSITORY}:ai-${AI_WORKER_VERSION}"
+    assert approval["restart"] == "no"
+    assert approval["entrypoint"] == [
+        "uv",
+        "run",
+        "--no-sync",
+        "python",
+        "-m",
+        "ai_worker.admin.catalog_approval",
+    ]
+    assert approval["networks"] == ["ws"]
+    assert approval["environment"] == {
+        "CATALOG_APPROVAL_HOST": "postgres",
+        "CATALOG_APPROVAL_PORT": "5432",
+        "CATALOG_APPROVAL_NAME": "${DB_NAME}",
+        "CATALOG_APPROVAL_USER": "${CATALOG_APPROVAL_USER:-}",
+        "CATALOG_APPROVAL_PASSWORD": "${CATALOG_APPROVAL_PASSWORD:-}",
+        "CATALOG_SOURCE_ARTIFACT_READER_ROOT": "/artifacts",
+    }
+
+    catalog_writer = services["catalog-writer"]
+    assert catalog_writer["environment"]["CATALOG_SOURCE_ARTIFACT_READER_ROOT"] == "/artifacts"
+    for service in (approval, catalog_writer):
+        assert service["volumes"] == [
+            {
+                "type": "bind",
+                "source": "${CATALOG_SOURCE_ARTIFACT_HOST_ROOT:-/dev/null}",
+                "target": "/artifacts",
+                "read_only": True,
+                "bind": {"create_host_path": False},
+            }
+        ]
+
+    for name in ("fastapi", "ai-worker", "catalog-writer", "candidate-index-builder", "provision-db-roles"):
+        assert "CATALOG_APPROVAL_PASSWORD" not in services[name]["environment"]
+
+    forbidden_approval_keys = {
+        "DB_PASSWORD",
+        "DB_APP_PASSWORD",
+        "DB_ADMIN_PASSWORD",
+        "DB_MIGRATION_PASSWORD",
+        "SOURCE_WRITER_PASSWORD",
+        "SOURCE_MANAGEMENT_PASSWORD",
+        "CATALOG_WRITER_PASSWORD",
+        "CANDIDATE_INDEX_BUILDER_PASSWORD",
+        "KNOWLEDGE_INDEX_BUILDER_PASSWORD",
+        "OPENAI_API_KEY",
+        "CLOVA_OCR_SECRET",
+    }
+    assert forbidden_approval_keys.isdisjoint(approval["environment"])
+
+    bootstrap_sql = (ROOT / "infra/docker/postgres/configure-app-role.sql").read_text()
+    assert "\\getenv catalog_approval_user CATALOG_APPROVAL_USER" in bootstrap_sql
+    assert "\\getenv catalog_approval_password CATALOG_APPROVAL_PASSWORD" in bootstrap_sql
+    assert "(length(:'catalog_approval_user')=0) = (length(:'catalog_approval_password')=0)" in bootstrap_sql
+    assert "catalog_approval_user" in bootstrap_sql[bootstrap_sql.index("count(DISTINCT name)") :]
+
+    deployment = (ROOT / "scripts/deployment.sh").read_text()
+    assert deployment.index("unset CATALOG_APPROVAL_USER") < deployment.index('source "$PROD_ENV_FILE"')
+    assert deployment.index("unset CATALOG_APPROVAL_PASSWORD") < deployment.index('source "$PROD_ENV_FILE"')
+    assert 'if [ -n "${CATALOG_APPROVAL_USER:-}" ] || [ -n "${CATALOG_APPROVAL_PASSWORD:-}" ]; then' in deployment
+    assert 'if [ -z "${CATALOG_APPROVAL_USER:-}" ] || [ -z "${CATALOG_APPROVAL_PASSWORD:-}" ]; then' in deployment
+    assert "Catalog Approval 환경변수의 placeholder를 교체해야 합니다" in deployment
+    assert "CATALOG_APPROVAL_USER는 기존 DB 책임 role과 다른 이름이어야 합니다" in deployment
+    assert "Catalog Approval/Writer one-shot에는 CATALOG_SOURCE_ARTIFACT_HOST_ROOT가 필요합니다" in deployment
+    assert "--profile catalog-approval-admin stop" in deployment
+    assert "catalog-approval" in deployment[deployment.index("Stopping application services") :]
+    startup = (
+        deployment.index('echo "Starting application services"')
+        if 'echo "Starting application services"' in deployment
+        else deployment.index("docker compose up", deployment.index("Applying explicit Runtime"))
+    )
+    assert "catalog-approval" not in deployment[startup:]
+
+
 def test_account_deletion_request_runtime_role_updates_only_lifecycle_columns() -> None:
     from infra.python.provision_database_roles import (
         ACCOUNT_WITHDRAWAL_CLEANUP_DELETE_TABLES,
@@ -409,7 +505,8 @@ def test_catalog_approval_role_policy_is_explicit_and_least_privilege() -> None:
 def test_deployment_stops_writers_and_provisions_before_starting_api() -> None:
     script = (ROOT / "scripts/deployment.sh").read_text()
     stop = script.index(
-        "docker compose --profile source-admin --profile catalog-admin --profile candidate-index-admin stop"
+        "docker compose --profile source-admin --profile catalog-admin --profile candidate-index-admin "
+        "--profile catalog-approval-admin stop"
     )
     bootstrap = script.index("-f /docker-entrypoint-initdb.d/configure-app-role.sql")
     migration = script.index('migration_exit_code="$(docker wait migrate)"')
