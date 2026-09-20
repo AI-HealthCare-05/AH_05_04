@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -21,6 +23,106 @@ from infra.python.provision_protected_retrieval import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class _RoleLookupResult:
+    def __init__(self, row: dict[str, object] | None) -> None:
+        self._row = row
+
+    def mappings(self) -> _RoleLookupResult:
+        return self
+
+    def first(self) -> dict[str, object] | None:
+        return self._row
+
+
+class _ProvisioningConnection:
+    def __init__(
+        self,
+        *,
+        backup_row: dict[str, object] | None,
+        backup_unsafe: bool,
+        backup_outside_scope: bool = False,
+    ) -> None:
+        self.backup_row = backup_row
+        self.backup_unsafe = backup_unsafe
+        self.backup_outside_scope = backup_outside_scope
+        self.events: list[str] = []
+
+    async def scalar(self, statement: object, parameters: dict[str, object]) -> object:
+        query = str(statement)
+        if "NOT rolcanlogin" in query:
+            return 1
+        if "has_table_privilege" in query:
+            self.events.append("validate_backup_privileges")
+            return self.backup_outside_scope
+        if "pg_auth_members" in query:
+            self.events.append("validate_backup_safety")
+            return self.backup_unsafe
+        raise AssertionError(f"Unexpected scalar query: {query}")
+
+    async def execute(self, statement: object, parameters: dict[str, object]) -> _RoleLookupResult:
+        del statement
+        role_name = str(parameters["name"])
+        self.events.append(f"lookup:{role_name}")
+        if role_name == "backup_login":
+            return _RoleLookupResult(self.backup_row)
+        return _RoleLookupResult(None)
+
+    async def exec_driver_sql(self, statement: str) -> None:
+        self.events.append(statement)
+
+
+def _safe_login_row(role_name: str) -> dict[str, object]:
+    return {
+        "rolname": role_name,
+        "rolcanlogin": True,
+        "rolsuper": False,
+        "rolcreatedb": False,
+        "rolcreaterole": False,
+        "rolreplication": False,
+        "rolbypassrls": False,
+        "rolinherit": True,
+    }
+
+
+async def _noop_role_policy(*args: Any, **kwargs: Any) -> None:
+    del args, kwargs
+
+
+def _disable_role_policy_mutations(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        provision_protected_retrieval,
+        "apply_protected_retrieval_role_policy",
+        _noop_role_policy,
+    )
+    monkeypatch.setattr(
+        provision_protected_retrieval,
+        "apply_protected_backup_role_policy",
+        _noop_role_policy,
+    )
+
+
+async def _provision_with_connection(
+    connection: _ProvisioningConnection,
+    *,
+    backup_login: str = "backup_login",
+    admin_login: str = "admin_login",
+) -> None:
+    await provision_protected_retrieval.provision_protected_database_roles(
+        admin_connection=connection,  # type: ignore[arg-type]
+        admin_login=admin_login,
+        schema="protected_eval",
+        owner_role="protected_owner",
+        access_role="protected_access",
+        control_role="protected_control",
+        data_login="data_login",
+        data_password="data_password",
+        control_login="control_login",
+        control_password="control_password",
+        backup_login=backup_login,
+        backup_password="backup_password",
+    )
 
 
 def test_workflow_trigger_and_environment_boundary() -> None:
@@ -287,6 +389,71 @@ def test_backup_restore_rotation_workflow_and_compose_contract() -> None:
         assert all(not key.startswith("PROTECTED_BACKUP_") for key in services[name].get("environment", {}))
 
 
+def test_protected_operations_cannot_mutate_general_runtime_services() -> None:
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github/workflows/protected_retrieval_runner.yml").read_text(encoding="utf-8")
+    )
+    protected_jobs = {
+        "provision": "protected-retrieval-provision",
+        "backup": "protected-retrieval-backup",
+        "restore-verify": "protected-retrieval-restore",
+        "rotate-db": "protected-retrieval-rotate-db",
+    }
+    general_services = (
+        "fastapi",
+        "ai-worker",
+        "nginx",
+        "postgres",
+        "checkin-deadline-scheduler",
+    )
+
+    for job_name, protected_service in protected_jobs.items():
+        run_script = workflow["jobs"][job_name]["steps"][1]["run"]
+        normalized = " ".join(run_script.replace("\\\n", " ").split())
+
+        assert "scripts/deployment.sh" not in run_script
+        assert not re.search(r"docker compose\b[^\n]*(?:down|restart|stop)\b", normalized)
+        for service in general_services:
+            assert not re.search(
+                rf"docker compose\b[^\n]*\b(?:up|run)\b[^\n]*\b{re.escape(service)}\b",
+                normalized,
+            )
+
+        assert f"run --rm --no-deps {protected_service}" in normalized
+
+    restore_script = workflow["jobs"]["restore-verify"]["steps"][1]["run"]
+    assert "up -d --wait protected-retrieval-restore-db" in " ".join(restore_script.split())
+
+
+def test_protected_operations_pin_exact_sha_without_mutating_shared_versions() -> None:
+    workflow_path = REPO_ROOT / ".github/workflows/protected_retrieval_runner.yml"
+    content = workflow_path.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(content)
+    protected_jobs = {
+        "provision": "protected-retrieval-provision",
+        "backup": "protected-retrieval-backup",
+        "restore-verify": "protected-retrieval-restore",
+        "rotate-db": "protected-retrieval-rotate-db",
+    }
+
+    assert "AI_WORKER_VERSION" not in content
+    assert ":latest" not in content
+    assert not re.search(r"(?:sed|perl|python)[^\n]*APP_VERSION[^\n]*project/\.env", content)
+    assert not re.search(r"project/\.env\s*(?:>|>>)", content)
+
+    for job_name, protected_service in protected_jobs.items():
+        execute_step = workflow["jobs"][job_name]["steps"][1]
+        run_script = execute_step["run"]
+        normalized = " ".join(run_script.replace("\\\n", " ").split())
+
+        assert execute_step["env"]["PROTECTED_APP_VERSION"] == "${{ github.sha }}"
+        assert f"pull --policy always {protected_service}" in normalized
+        assert normalized.index(f"pull --policy always {protected_service}") < normalized.index(
+            f"run --rm --no-deps {protected_service}"
+        )
+        assert normalized.count("APP_VERSION=${PROTECTED_APP_VERSION} docker compose") >= 2
+
+
 def test_provisioning_script_prohibits_direct_data_mutation() -> None:
     prov_path = REPO_ROOT / "infra/python/provision_protected_retrieval.py"
     assert prov_path.is_file()
@@ -307,6 +474,101 @@ def test_provisioning_role_distinctness() -> None:
     # Identifiers must be safe
     with pytest.raises(ValueError, match="must be a safe PostgreSQL identifier"):
         validate_safe_identifier("bad;role", "ROLE")
+
+
+async def test_existing_unsafe_backup_login_is_rejected_before_password_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _ProvisioningConnection(
+        backup_row=_safe_login_row("backup_login"),
+        backup_unsafe=True,
+    )
+    _disable_role_policy_mutations(monkeypatch)
+
+    with pytest.raises(ValueError, match="must have no memberships or ownership"):
+        await _provision_with_connection(connection)
+
+    assert not any(event.startswith('ALTER ROLE "backup_login"') for event in connection.events)
+
+
+async def test_existing_safe_backup_login_is_validated_before_password_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _ProvisioningConnection(
+        backup_row=_safe_login_row("backup_login"),
+        backup_unsafe=False,
+    )
+    _disable_role_policy_mutations(monkeypatch)
+
+    await _provision_with_connection(connection)
+
+    validation_index = connection.events.index("validate_backup_safety")
+    mutation_index = next(
+        index for index, event in enumerate(connection.events) if event.startswith('ALTER ROLE "backup_login"')
+    )
+    assert validation_index < mutation_index
+
+
+async def test_new_backup_login_uses_normal_create_path_without_existing_role_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _ProvisioningConnection(backup_row=None, backup_unsafe=False)
+    _disable_role_policy_mutations(monkeypatch)
+
+    await _provision_with_connection(connection)
+
+    backup_lookup_index = connection.events.index("lookup:backup_login")
+    create_index = next(
+        index for index, event in enumerate(connection.events) if event.startswith('CREATE ROLE "backup_login"')
+    )
+    assert backup_lookup_index < create_index
+    assert "validate_backup_safety" not in connection.events[:backup_lookup_index]
+
+
+async def test_existing_backup_login_with_outside_scope_privilege_is_rejected_before_password_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _ProvisioningConnection(
+        backup_row=_safe_login_row("backup_login"),
+        backup_unsafe=False,
+        backup_outside_scope=True,
+    )
+    _disable_role_policy_mutations(monkeypatch)
+
+    with pytest.raises(ValueError, match="privileges outside the exact scope"):
+        await _provision_with_connection(connection)
+
+    assert "validate_backup_privileges" in connection.events
+    assert not any(event.startswith('ALTER ROLE "backup_login"') for event in connection.events)
+
+
+@pytest.mark.parametrize(
+    "backup_login",
+    ["protected_owner", "protected_access", "protected_control", "data_login", "control_login"],
+)
+async def test_backup_login_collision_with_protected_identity_is_rejected_before_mutation(
+    backup_login: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _ProvisioningConnection(backup_row=None, backup_unsafe=False)
+    _disable_role_policy_mutations(monkeypatch)
+
+    with pytest.raises(ValueError, match="strictly distinct"):
+        await _provision_with_connection(connection, backup_login=backup_login)
+
+    assert not any("PASSWORD" in event for event in connection.events)
+
+
+async def test_backup_login_collision_with_admin_is_rejected_before_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _ProvisioningConnection(backup_row=None, backup_unsafe=False)
+    _disable_role_policy_mutations(monkeypatch)
+
+    with pytest.raises(ValueError, match="strictly distinct"):
+        await _provision_with_connection(connection, backup_login="admin_login")
+
+    assert not any("PASSWORD" in event for event in connection.events)
 
 
 def test_provisioning_cli_redacts_database_exceptions(

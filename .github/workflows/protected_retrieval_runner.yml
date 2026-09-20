@@ -69,6 +69,7 @@ jobs:
           PROTECTED_DB_CONTROL_PASSWORD: ${{ secrets.PROTECTED_DB_CONTROL_PASSWORD }}
           PROTECTED_DB_BACKUP_USER: ${{ secrets.PROTECTED_DB_BACKUP_USER }}
           PROTECTED_DB_BACKUP_PASSWORD: ${{ secrets.PROTECTED_DB_BACKUP_PASSWORD }}
+          PROTECTED_APP_VERSION: ${{ github.sha }}
         run: |
           set -euo pipefail
 
@@ -118,7 +119,12 @@ jobs:
           PROTECTED_DB_BACKUP_PASSWORD=${PROTECTED_DB_BACKUP_PASSWORD}
           EOF
 
-          $SSH_CMD "docker compose -f /home/${EC2_USER:-ubuntu}/project/docker-compose.yml \
+          $SSH_CMD "APP_VERSION=${PROTECTED_APP_VERSION} docker compose -f /home/${EC2_USER:-ubuntu}/project/docker-compose.yml \
+            --env-file /home/${EC2_USER:-ubuntu}/project/.env \
+            --env-file $REMOTE_ENV \
+            --profile protected-retrieval-admin \
+            pull --policy always protected-retrieval-provision && \
+            APP_VERSION=${PROTECTED_APP_VERSION} docker compose -f /home/${EC2_USER:-ubuntu}/project/docker-compose.yml \
             --env-file /home/${EC2_USER:-ubuntu}/project/.env \
             --env-file $REMOTE_ENV \
             --profile protected-retrieval-admin \
@@ -226,6 +232,7 @@ jobs:
           PROTECTED_BACKUP_ACL_POLICY_ID: ${{ secrets.PROTECTED_BACKUP_ACL_POLICY_ID }}
           BACKUP_REASON: ${{ github.event.inputs.backup_reason }}
           SCOPE_REF: ${{ github.event.inputs.scope_ref }}
+          PROTECTED_APP_VERSION: ${{ github.sha }}
         run: |
           set -euo pipefail
           umask 077
@@ -254,7 +261,7 @@ jobs:
           PROTECTED_BACKUP_ACL_POLICY_ID=${PROTECTED_BACKUP_ACL_POLICY_ID}
           EOF
           $SSH_CMD "ROOT=\$(sed -n 's/^PROTECTED_BACKUP_HOST_ROOT=//p' $REMOTE_ENV); test -n \"\$ROOT\" && test -d \"\$ROOT\" && test ! -L \"\$ROOT\" && [ \"\$(stat -c '%a' -- \"\$ROOT\" 2>/dev/null)\" = 700 ]"
-          $SSH_CMD "docker compose -f /home/${EC2_USER:-ubuntu}/project/docker-compose.yml --env-file /home/${EC2_USER:-ubuntu}/project/.env --env-file $REMOTE_ENV --profile protected-backup run --rm --no-deps protected-retrieval-backup backup --reason '$BACKUP_REASON' --scope-ref '$SCOPE_REF'"
+          $SSH_CMD "APP_VERSION=${PROTECTED_APP_VERSION} docker compose -f /home/${EC2_USER:-ubuntu}/project/docker-compose.yml --env-file /home/${EC2_USER:-ubuntu}/project/.env --env-file $REMOTE_ENV --profile protected-backup pull --policy always protected-retrieval-backup && APP_VERSION=${PROTECTED_APP_VERSION} docker compose -f /home/${EC2_USER:-ubuntu}/project/docker-compose.yml --env-file /home/${EC2_USER:-ubuntu}/project/.env --env-file $REMOTE_ENV --profile protected-backup run --rm --no-deps protected-retrieval-backup backup --reason '$BACKUP_REASON' --scope-ref '$SCOPE_REF'"
 
   restore-verify:
     name: "Protected Retrieval Isolated Restore Verification"
@@ -275,6 +282,7 @@ jobs:
           PROTECTED_BACKUP_ENCRYPTION_KEY: ${{ secrets.PROTECTED_BACKUP_ENCRYPTION_KEY }}
           PROTECTED_BACKUP_ENCRYPTION_KEY_VERSION: ${{ secrets.PROTECTED_BACKUP_ENCRYPTION_KEY_VERSION }}
           BACKUP_ID: ${{ github.event.inputs.backup_id }}
+          PROTECTED_APP_VERSION: ${{ github.sha }}
         run: |
           set -euo pipefail
           umask 077
@@ -306,7 +314,7 @@ jobs:
           PROTECTED_RESTORE_DB_PASSWORD=${RESTORE_PASSWORD}
           EOF
           $SSH_CMD "ROOT=\$(sed -n 's/^PROTECTED_BACKUP_HOST_ROOT=//p' $REMOTE_ENV); test -n \"\$ROOT\" && test -d \"\$ROOT\" && test ! -L \"\$ROOT\" && [ \"\$(stat -c '%a' -- \"\$ROOT\" 2>/dev/null)\" = 700 ]"
-          $SSH_CMD "cd /home/${EC2_USER:-ubuntu}/project && docker compose -f docker-compose.yml --env-file .env --env-file $REMOTE_ENV --profile protected-restore up -d --wait protected-retrieval-restore-db && docker compose -f docker-compose.yml --env-file .env --env-file $REMOTE_ENV --profile protected-restore run --rm --no-deps protected-retrieval-restore restore-verify --backup-id '$BACKUP_ID' > $RECEIPT_FILE && docker compose -f docker-compose.yml --env-file .env --env-file $REMOTE_ENV --profile protected-restore rm -sf protected-retrieval-restore-db && cat $RECEIPT_FILE && rm -f $RECEIPT_FILE"
+          $SSH_CMD "cd /home/${EC2_USER:-ubuntu}/project && APP_VERSION=${PROTECTED_APP_VERSION} docker compose -f docker-compose.yml --env-file .env --env-file $REMOTE_ENV --profile protected-restore pull --policy always protected-retrieval-restore && APP_VERSION=${PROTECTED_APP_VERSION} docker compose -f docker-compose.yml --env-file .env --env-file $REMOTE_ENV --profile protected-restore up -d --wait protected-retrieval-restore-db && APP_VERSION=${PROTECTED_APP_VERSION} docker compose -f docker-compose.yml --env-file .env --env-file $REMOTE_ENV --profile protected-restore run --rm --no-deps protected-retrieval-restore restore-verify --backup-id '$BACKUP_ID' > $RECEIPT_FILE && APP_VERSION=${PROTECTED_APP_VERSION} docker compose -f docker-compose.yml --env-file .env --env-file $REMOTE_ENV --profile protected-restore rm -sf protected-retrieval-restore-db && cat $RECEIPT_FILE && rm -f $RECEIPT_FILE"
 
   rotate-db:
     name: "Protected Retrieval DB Credential Rotation"
@@ -333,6 +341,7 @@ jobs:
           PROTECTED_DB_CONTROL_USER: ${{ secrets.PROTECTED_DB_CONTROL_USER }}
           PROTECTED_DB_CONTROL_PASSWORD: ${{ secrets.PROTECTED_DB_CONTROL_PASSWORD }}
           PROTECTED_DB_CONTROL_PASSWORD_NEXT: ${{ secrets.PROTECTED_DB_CONTROL_PASSWORD_NEXT }}
+          PROTECTED_APP_VERSION: ${{ github.sha }}
         run: |
           set -euo pipefail
           umask 077
@@ -363,5 +372,5 @@ jobs:
           PROTECTED_DB_CONTROL_PASSWORD=${PROTECTED_DB_CONTROL_PASSWORD}
           PROTECTED_DB_CONTROL_PASSWORD_NEXT=${PROTECTED_DB_CONTROL_PASSWORD_NEXT}
           EOF
-          $SSH_CMD "docker compose -f /home/${EC2_USER:-ubuntu}/project/docker-compose.yml --env-file /home/${EC2_USER:-ubuntu}/project/.env --env-file $REMOTE_ENV --profile protected-rotation run --rm --no-deps protected-retrieval-rotate-db"
+          $SSH_CMD "APP_VERSION=${PROTECTED_APP_VERSION} docker compose -f /home/${EC2_USER:-ubuntu}/project/docker-compose.yml --env-file /home/${EC2_USER:-ubuntu}/project/.env --env-file $REMOTE_ENV --profile protected-rotation pull --policy always protected-retrieval-rotate-db && APP_VERSION=${PROTECTED_APP_VERSION} docker compose -f /home/${EC2_USER:-ubuntu}/project/docker-compose.yml --env-file /home/${EC2_USER:-ubuntu}/project/.env --env-file $REMOTE_ENV --profile protected-rotation run --rm --no-deps protected-retrieval-rotate-db"
           echo "::notice::PASS 후 canonical secrets promotion은 runbook 절차로 별도 수행하십시오."
