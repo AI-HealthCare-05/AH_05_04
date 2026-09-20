@@ -65,6 +65,32 @@ class AnswerVariantId(StrEnum):
     ANS_FINAL = "ANS-FINAL"
 
 
+_ANSWER_RUNTIME_DELTA_AXES = frozenset(
+    {
+        "RETRIEVAL_PIPELINE",
+        "SOURCE_INDEX",
+        "RUNTIME_BUNDLE",
+        "RETRIEVED_EVIDENCE",
+        "FINAL_VALIDATOR",
+        "CITATION_GATE",
+        "SAFETY_GATE",
+        "RELEASE_GATE",
+    }
+)
+
+
+def answer_runtime_not_applied_binding_hash(axis: str) -> str:
+    if axis not in _ANSWER_RUNTIME_DELTA_AXES:
+        raise ValueError(f"unsupported answer runtime delta axis: {axis}")
+    return canonical_sha256(
+        {
+            "axis": axis,
+            "binding_state": "NOT_APPLIED",
+            "projection_version": "answer-authority-binding-v1",
+        }
+    )
+
+
 class AnswerClaimCorrectnessLabel(StrEnum):
     CORRECT = "CORRECT"
     INCORRECT = "INCORRECT"
@@ -97,6 +123,124 @@ AnswerRelevanceLabelValue = Annotated[
 ]
 
 PartitionValue = Annotated[Partition, BeforeValidator(lambda value: _enum_from_wire(Partition, value))]
+
+
+class AnswerRuntimeBindingSupplementalControls(StrictContractModel):
+    input_context_hash: Sha256Hex
+    prompt_structure_hash: Sha256Hex
+    parser_hash: Sha256Hex
+    seed_hash: Sha256Hex
+    sampling_parameters_hash: Sha256Hex
+    token_limit_hash: Sha256Hex
+    timeout_hash: Sha256Hex
+
+
+class AnswerRuntimeBindingDeltaBindings(StrictContractModel):
+    retrieval_pipeline_hash: Sha256Hex | None
+    source_index_hash: Sha256Hex | None
+    runtime_bundle_hash: Sha256Hex | None
+    retrieved_evidence_hash: Sha256Hex | None
+    final_validator_hash: Sha256Hex | None
+    citation_gate_hash: Sha256Hex | None
+    safety_gate_hash: Sha256Hex | None
+    release_gate_hash: Sha256Hex | None
+
+
+def _retrieval_delta_bindings(
+    delta: AnswerRuntimeBindingDeltaBindings,
+) -> tuple[tuple[str | None, str], ...]:
+    return (
+        (delta.retrieval_pipeline_hash, "RETRIEVAL_PIPELINE"),
+        (delta.source_index_hash, "SOURCE_INDEX"),
+        (delta.runtime_bundle_hash, "RUNTIME_BUNDLE"),
+    )
+
+
+def _finalization_delta_bindings(
+    delta: AnswerRuntimeBindingDeltaBindings,
+) -> tuple[tuple[str | None, str], ...]:
+    return (
+        (delta.final_validator_hash, "FINAL_VALIDATOR"),
+        (delta.citation_gate_hash, "CITATION_GATE"),
+        (delta.safety_gate_hash, "SAFETY_GATE"),
+        (delta.release_gate_hash, "RELEASE_GATE"),
+    )
+
+
+def _validate_base_delta_bindings(delta: AnswerRuntimeBindingDeltaBindings) -> None:
+    bindings = (
+        *_retrieval_delta_bindings(delta),
+        (delta.retrieved_evidence_hash, "RETRIEVED_EVIDENCE"),
+        *_finalization_delta_bindings(delta),
+    )
+    if any(value != answer_runtime_not_applied_binding_hash(axis) for value, axis in bindings):
+        raise ValueError("ANS-BASE delta bindings must be exact NOT_APPLIED hashes")
+
+
+def _validate_applied_retrieval_bindings(
+    delta: AnswerRuntimeBindingDeltaBindings,
+    variant_id: AnswerVariantId,
+) -> None:
+    if any(
+        value is None or value == answer_runtime_not_applied_binding_hash(axis)
+        for value, axis in _retrieval_delta_bindings(delta)
+    ):
+        raise ValueError(f"{variant_id.value} retrieval delta bindings must be actual hashes")
+    if delta.retrieved_evidence_hash is not None:
+        raise ValueError(f"{variant_id.value} retrieved_evidence_hash must remain unavailable")
+
+
+def _validate_rag_delta_bindings(delta: AnswerRuntimeBindingDeltaBindings) -> None:
+    _validate_applied_retrieval_bindings(delta, AnswerVariantId.ANS_RAG)
+    if any(
+        value != answer_runtime_not_applied_binding_hash(axis) for value, axis in _finalization_delta_bindings(delta)
+    ):
+        raise ValueError("ANS-RAG finalization delta bindings must be exact NOT_APPLIED hashes")
+
+
+def _validate_final_delta_bindings(delta: AnswerRuntimeBindingDeltaBindings) -> None:
+    _validate_applied_retrieval_bindings(delta, AnswerVariantId.ANS_FINAL)
+    if any(value is not None for value, _ in _finalization_delta_bindings(delta)):
+        raise ValueError("ANS-FINAL finalization delta bindings must remain unavailable")
+
+
+def _validate_variant_delta_bindings(
+    variant_id: AnswerVariantId,
+    delta: AnswerRuntimeBindingDeltaBindings,
+) -> None:
+    if variant_id is AnswerVariantId.ANS_BASE:
+        _validate_base_delta_bindings(delta)
+        return
+    if variant_id is AnswerVariantId.ANS_RAG:
+        _validate_rag_delta_bindings(delta)
+        return
+    if variant_id is AnswerVariantId.ANS_FINAL:
+        _validate_final_delta_bindings(delta)
+        return
+    raise ValueError(f"unsupported answer variant: {variant_id}")
+
+
+class AnswerRuntimeAuthorityBindingManifest(StrictContractModel):
+    schema_id: Literal["rag-eval.answer-runtime-binding-manifest"] = "rag-eval.answer-runtime-binding-manifest"
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    experiment_id: StableId
+    run_id: CanonicalUuid
+    variant_id: AnswerVariantIdValue
+    supplemental_controls: AnswerRuntimeBindingSupplementalControls
+    delta_bindings: AnswerRuntimeBindingDeltaBindings
+    manifest_sha256: Sha256Hex
+
+    @model_validator(mode="after")
+    def validate_manifest(self) -> AnswerRuntimeAuthorityBindingManifest:
+        _validate_variant_delta_bindings(self.variant_id, self.delta_bindings)
+        payload = self.model_dump(mode="json")
+        if self.manifest_sha256 != canonical_sha256(
+            payload,
+            excluded_top_level_keys=frozenset({"manifest_sha256"}),
+        ):
+            raise ValueError("manifest_sha256 mismatch")
+        return self
+
 
 ANS_BASE_TO_ANS_RAG_DELTA_KEYS: tuple[str, ...] = (
     "RETRIEVAL_PIPELINE",
@@ -323,6 +467,9 @@ ANSWER_HUMAN_JUDGMENT_APPROVAL_ADAPTER: TypeAdapter[AnswerHumanJudgmentApproval]
 ANSWER_COMPARISON_SET_MANIFEST_ADAPTER: TypeAdapter[AnswerComparisonSetManifest] = TypeAdapter(
     AnswerComparisonSetManifest
 )
+ANSWER_RUNTIME_AUTHORITY_BINDING_MANIFEST_ADAPTER: TypeAdapter[AnswerRuntimeAuthorityBindingManifest] = TypeAdapter(
+    AnswerRuntimeAuthorityBindingManifest
+)
 
 
 def _parse_hashed_model[T: BaseModel](raw_bytes: bytes, model: type[T], hash_field: str) -> T:
@@ -361,3 +508,7 @@ def parse_answer_human_judgment_approval_bytes(raw_bytes: bytes) -> AnswerHumanJ
 
 def parse_answer_comparison_set_manifest_bytes(raw_bytes: bytes) -> AnswerComparisonSetManifest:
     return _parse_hashed_model(raw_bytes, AnswerComparisonSetManifest, "manifest_sha256")
+
+
+def parse_answer_runtime_binding_manifest_bytes(raw_bytes: bytes) -> AnswerRuntimeAuthorityBindingManifest:
+    return _parse_hashed_model(raw_bytes, AnswerRuntimeAuthorityBindingManifest, "manifest_sha256")
