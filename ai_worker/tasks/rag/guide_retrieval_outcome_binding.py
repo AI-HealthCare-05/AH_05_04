@@ -58,6 +58,7 @@ def _is_complete_production_gate(value: object) -> bool:
         and value.status is EvidenceGateStatus.SUCCEEDED
         and value.reason is EvidenceGateReason.ELIGIBLE
         and type(value.selected_hits) is tuple
+        and bool(value.selected_hits)
         and all(type(hit) is ProductionSearchHit for hit in value.selected_hits)
     )
 

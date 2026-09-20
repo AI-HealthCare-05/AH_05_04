@@ -205,6 +205,18 @@ def test_non_tuple_gate_selection_is_malformed_and_blocks() -> None:
     assert outcome.retrieval_outcome is None
 
 
+def test_empty_success_gate_blocks_before_it_can_reach_697_composition() -> None:
+    empty_success = EvidenceGateSuccess(selected_hits=())
+
+    outcome = project_hybrid_retrieval_for_guide_composition(
+        replace(_outcome(), gate_outcome=empty_success),
+    )
+
+    assert outcome.decision is GuideRetrievalOutcomeBindingDecision.BLOCKED
+    assert outcome.reason is GuideRetrievalOutcomeBindingReason.EVIDENCE_GATE_INVALID
+    assert outcome.retrieval_outcome is None
+
+
 def test_ready_projection_remains_compatible_with_unchanged_697_composition() -> None:
     hit = _hit()
     projected = project_hybrid_retrieval_for_guide_composition(_outcome(hit=hit))

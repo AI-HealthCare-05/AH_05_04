@@ -31,6 +31,7 @@ def test_outcome_binding_contract_forbids_recovery_or_new_retrieval_meaning() ->
         "MUST NOT rank, filter, or alter selected hits",
         "B5 owns historical payload recovery",
         "#697 remains unchanged",
+        "non-empty selected_hits",
     )
     for anchor in required_anchors:
         assert anchor in text

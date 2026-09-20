@@ -24,10 +24,13 @@ The input is READY only when all conditions hold:
   `retrieval_execution_status=SUCCEEDED`;
 - `gate_outcome` is an exact production `EvidenceGateSuccess` with
   `status=SUCCEEDED`, `reason=ELIGIBLE`, and exact
-  `ProductionSearchHit` members.
+  `ProductionSearchHit` members in non-empty selected_hits.
 
 Any foreign or malformed input, non-succeeded outcome, missing/invalid receipt,
-or malformed gate is BLOCKED with one typed reason and no partial projection.
+an empty success gate, or malformed gate is BLOCKED with one typed reason and
+no partial projection. Production `evaluate_evidence_gate()` emits
+`NO_RESULT/INSUFFICIENT` for zero eligible hits, so an empty success gate is
+not a complete first-run production observation.
 
 ## 3. Exact field projection
 
