@@ -24,6 +24,7 @@ from ai_worker.tasks.rag.citation_authorization import (
 )
 from ai_worker.tasks.rag.citation_authorization_authority import (
     CitationAuthorityAggregate,
+    CitationAuthorityIssueReason,
     CitationAuthorizationAuthorityError,
     CitationMemberEligibilityObservation,
     CitationSourceEligibilityObservation,
@@ -149,9 +150,12 @@ _SELECTION = table(
     *_columns(
         "id",
         "receipt_id",
+        "request_sha256",
         "selection_order",
         "source_decision_id",
+        "source_decision_content_sha256",
         "member_decision_id",
+        "member_decision_content_sha256",
         "source_code",
         "source_version",
         "member_kind",
@@ -362,9 +366,12 @@ class SqlAlchemyCitationAuthorizationAuthorityStore:
                     insert(_SELECTION).values(
                         id=str(uuid4()),
                         receipt_id=str(receipt_id),
+                        request_sha256=receipt.request_sha256,
                         selection_order=order,
                         source_decision_id=str(source_ids[selection.source_decision_ref.content_sha256]),
+                        source_decision_content_sha256=selection.source_decision_ref.content_sha256,
                         member_decision_id=str(member_ids[selection.member_decision_ref.content_sha256]),
+                        member_decision_content_sha256=selection.member_decision_ref.content_sha256,
                         source_code=selection.selection.source_code,
                         source_version=selection.selection.source_version,
                         member_kind=selection.selection.member_kind.value,
@@ -420,21 +427,32 @@ class SqlAlchemyCitationAuthorizationAuthorityStore:
             source_pairs = {str(row["artifact_content_sha256"]): (row, _source_projection(row)) for row in source_rows}
             member_pairs = {str(row["artifact_content_sha256"]): (row, _member_projection(row)) for row in member_rows}
             for persisted, source_projection in source_pairs.values():
+                observed = compute_citation_source_decision_ref(source_projection)
                 if (
-                    compute_citation_source_decision_ref(source_projection).content_sha256
-                    != persisted["artifact_content_sha256"]
-                ):
-                    raise CitationAuthorizationAuthorityError("source decision artifact mismatch")
+                    persisted["artifact_code"],
+                    persisted["artifact_version"],
+                    persisted["artifact_content_sha256"],
+                ) != (observed.artifact_code, observed.version, observed.content_sha256):
+                    _raise_persisted_corruption()
             for persisted, member_projection in member_pairs.values():
+                observed = compute_citation_member_decision_ref(member_projection)
                 if (
-                    compute_citation_member_decision_ref(member_projection).content_sha256
-                    != persisted["artifact_content_sha256"]
-                ):
-                    raise CitationAuthorizationAuthorityError("member decision artifact mismatch")
+                    persisted["artifact_code"],
+                    persisted["artifact_version"],
+                    persisted["artifact_content_sha256"],
+                ) != (observed.artifact_code, observed.version, observed.content_sha256):
+                    _raise_persisted_corruption()
+            for selection_row, source_row, member_row in zip(rows, source_rows, member_rows, strict=True):
+                _validate_persisted_binding(receipt_row, selection_row, source_row, member_row)
             receipt = _receipt(receipt_row, rows, source_rows, member_rows)
             receipt_projection = _receipt_projection(receipt)
-            if compute_citation_receipt_ref(receipt_projection).content_sha256 != receipt.receipt_ref.content_sha256:
-                raise CitationAuthorizationAuthorityError("receipt artifact mismatch")
+            observed = compute_citation_receipt_ref(receipt_projection)
+            if (receipt.receipt_ref.artifact_code, receipt.receipt_ref.version, receipt.receipt_ref.content_sha256) != (
+                observed.artifact_code,
+                observed.version,
+                observed.content_sha256,
+            ):
+                _raise_persisted_corruption()
             return CitationAuthorityAggregate(
                 tuple(pair[1] for pair in source_pairs.values()),
                 tuple(pair[1] for pair in member_pairs.values()),
@@ -454,6 +472,61 @@ class SqlAlchemyCitationAuthorizationAuthorityStore:
 
 def _uuid(value: object) -> UUID | None:
     return None if value is None else UUID(str(value))
+
+
+def _binding_value(value: object) -> str | None:
+    return None if value is None else str(value)
+
+
+def _raise_persisted_corruption() -> None:
+    raise CitationAuthorizationAuthorityError(CitationAuthorityIssueReason.EXISTING_RECEIPT_CORRUPT)
+
+
+def _validate_persisted_binding(
+    receipt: Mapping[Any, Any],
+    selection: Mapping[Any, Any],
+    source: Mapping[Any, Any],
+    member: Mapping[Any, Any],
+) -> None:
+    pairs = (
+        (selection["receipt_id"], receipt["id"]),
+        (selection["request_sha256"], receipt["request_sha256"]),
+        (source["request_sha256"], receipt["request_sha256"]),
+        (member["request_sha256"], receipt["request_sha256"]),
+        (selection["source_decision_id"], source["id"]),
+        (selection["source_decision_content_sha256"], source["artifact_content_sha256"]),
+        (selection["member_decision_id"], member["id"]),
+        (selection["member_decision_content_sha256"], member["artifact_content_sha256"]),
+        (member["source_decision_id"], source["id"]),
+        (member["source_decision_content_sha256"], source["artifact_content_sha256"]),
+        (source["origin_guard_artifact_code"], receipt["origin_guard_artifact_code"]),
+        (source["origin_guard_artifact_version"], receipt["origin_guard_artifact_version"]),
+        (source["origin_guard_content_sha256"], receipt["origin_guard_content_sha256"]),
+        (source["environment"], receipt["environment"]),
+        (source["bundle_id"], receipt["bundle_id"]),
+        (source["bundle_manifest_hash"], receipt["bundle_manifest_hash"]),
+        (source["scope_manifest_hash"], receipt["scope_manifest_hash"]),
+        (member["source_snapshot_id"], source["source_snapshot_id"]),
+        (member["source_code"], source["source_code"]),
+        (member["source_version"], source["source_version"]),
+        (member["evaluation_time"], source["evaluation_time"]),
+        (selection["source_code"], source["source_code"]),
+        (selection["source_version"], source["source_version"]),
+        (selection["purpose"], source["purpose"]),
+        (selection["source_decision"], source["actual_decision_outcome"]),
+        (selection["source_code"], member["source_code"]),
+        (selection["source_version"], member["source_version"]),
+        (selection["member_kind"], member["member_kind"]),
+        (selection["endpoint_code"], member["endpoint_code"]),
+        (selection["operation_code"], member["operation_code"]),
+        (selection["artifact_member_code"], member["artifact_member_code"]),
+        (selection["artifact_member_version"], member["artifact_member_version"]),
+        (selection["member_decision"], member["actual_decision_outcome"]),
+    )
+    if any(_binding_value(left) != _binding_value(right) for left, right in pairs):
+        _raise_persisted_corruption()
+    if source["actual_decision_outcome"] == "FAIL" and member["actual_decision_outcome"] != "FAIL":
+        _raise_persisted_corruption()
 
 
 def _source_values(value: CitationSourceDecisionProjection) -> dict[str, object]:

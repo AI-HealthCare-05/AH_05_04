@@ -30,6 +30,7 @@ class RagCitationAuthorizationSourceDecision(Base):
         UniqueConstraint(
             "artifact_code", "artifact_version", "artifact_content_sha256", name="uq_rag_citation_auth_source_artifact"
         ),
+        UniqueConstraint("id", "request_sha256", "artifact_content_sha256", name="uq_rag_cit_auth_source_binding"),
         ForeignKeyConstraint(
             ["bundle_id", "bundle_manifest_hash"],
             ["rag_runtime_release_bundle.id", "rag_runtime_release_bundle.bundle_manifest_hash"],
@@ -91,6 +92,23 @@ class RagCitationAuthorizationMemberDecision(Base):
         UniqueConstraint(
             "artifact_code", "artifact_version", "artifact_content_sha256", name="uq_rag_citation_auth_member_artifact"
         ),
+        UniqueConstraint(
+            "id",
+            "request_sha256",
+            "artifact_content_sha256",
+            "source_decision_id",
+            name="uq_rag_cit_auth_member_binding",
+        ),
+        ForeignKeyConstraint(
+            ["source_decision_id", "request_sha256", "source_decision_content_sha256"],
+            [
+                "rag_citation_authorization_source_decision.id",
+                "rag_citation_authorization_source_decision.request_sha256",
+                "rag_citation_authorization_source_decision.artifact_content_sha256",
+            ],
+            name="fk_rag_cit_auth_member_source_binding",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "artifact_code = 'citation_authorization_member_decision'", name="chk_rag_citation_auth_member_code"
         ),
@@ -100,9 +118,7 @@ class RagCitationAuthorizationMemberDecision(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
-    source_decision_id: Mapped[UUID] = mapped_column(
-        UUIDChar(), ForeignKey("rag_citation_authorization_source_decision.id", ondelete="RESTRICT"), nullable=False
-    )
+    source_decision_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
     artifact_code: Mapped[str] = mapped_column(String(100), nullable=False)
     artifact_version: Mapped[str] = mapped_column(String(50), nullable=False)
     artifact_content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -141,6 +157,7 @@ class RagCitationAuthorizationReceipt(Base):
     __tablename__ = "rag_citation_authorization_receipt"
     __table_args__ = (
         UniqueConstraint("request_sha256", name="uq_rag_citation_auth_receipt_request"),
+        UniqueConstraint("id", "request_sha256", name="uq_rag_cit_auth_receipt_binding"),
         UniqueConstraint(
             "artifact_code", "artifact_version", "artifact_content_sha256", name="uq_rag_citation_auth_receipt_artifact"
         ),
@@ -173,22 +190,49 @@ class RagCitationAuthorizationReceiptSelection(Base):
     __tablename__ = "rag_citation_authorization_receipt_selection"
     __table_args__ = (
         UniqueConstraint("receipt_id", "selection_order", name="uq_rag_citation_auth_receipt_selection_order"),
+        ForeignKeyConstraint(
+            ["receipt_id", "request_sha256"],
+            ["rag_citation_authorization_receipt.id", "rag_citation_authorization_receipt.request_sha256"],
+            name="fk_rag_cit_auth_selection_receipt_binding",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["source_decision_id", "request_sha256", "source_decision_content_sha256"],
+            [
+                "rag_citation_authorization_source_decision.id",
+                "rag_citation_authorization_source_decision.request_sha256",
+                "rag_citation_authorization_source_decision.artifact_content_sha256",
+            ],
+            name="fk_rag_cit_auth_selection_source_binding",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["member_decision_id", "request_sha256", "member_decision_content_sha256", "source_decision_id"],
+            [
+                "rag_citation_authorization_member_decision.id",
+                "rag_citation_authorization_member_decision.request_sha256",
+                "rag_citation_authorization_member_decision.artifact_content_sha256",
+                "rag_citation_authorization_member_decision.source_decision_id",
+            ],
+            name="fk_rag_cit_auth_selection_member_binding",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint("selection_order >= 0", name="chk_rag_citation_auth_selection_order"),
+        CheckConstraint("request_sha256" + _SHA_CHECK, name="chk_rag_cit_auth_selection_request_hash"),
+        CheckConstraint("source_decision_content_sha256" + _SHA_CHECK, name="chk_rag_cit_auth_selection_source_hash"),
+        CheckConstraint("member_decision_content_sha256" + _SHA_CHECK, name="chk_rag_cit_auth_selection_member_hash"),
         CheckConstraint("selected_for_operation", name="chk_rag_citation_auth_selection_selected"),
         CheckConstraint("purpose = 'PATIENT_CITATION'", name="chk_rag_citation_auth_selection_purpose"),
     )
 
     id: Mapped[UUID] = mapped_column(UUIDChar(), primary_key=True, default=uuid4)
-    receipt_id: Mapped[UUID] = mapped_column(
-        UUIDChar(), ForeignKey("rag_citation_authorization_receipt.id", ondelete="RESTRICT"), nullable=False
-    )
+    receipt_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    request_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     selection_order: Mapped[int] = mapped_column(Integer, nullable=False)
-    source_decision_id: Mapped[UUID] = mapped_column(
-        UUIDChar(), ForeignKey("rag_citation_authorization_source_decision.id", ondelete="RESTRICT"), nullable=False
-    )
-    member_decision_id: Mapped[UUID] = mapped_column(
-        UUIDChar(), ForeignKey("rag_citation_authorization_member_decision.id", ondelete="RESTRICT"), nullable=False
-    )
+    source_decision_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    source_decision_content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    member_decision_id: Mapped[UUID] = mapped_column(UUIDChar(), nullable=False)
+    member_decision_content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     source_code: Mapped[str] = mapped_column(String(100), nullable=False)
     source_version: Mapped[str] = mapped_column(String(200), nullable=False)
     member_kind: Mapped[str] = mapped_column(String(30), nullable=False)

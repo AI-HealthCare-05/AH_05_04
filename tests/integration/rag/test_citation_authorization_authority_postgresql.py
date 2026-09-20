@@ -10,13 +10,18 @@ import pytest
 import pytest_asyncio
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import func, select, text
+from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from ai_worker.adapters.sqlalchemy_citation_authorization_authority import (
     SqlAlchemyCitationAuthorizationAuthorityStore,
     SqlAlchemyCitationEligibilityReader,
+    _member_projection,
+    _receipt,
+    _receipt_projection,
+    _source_projection,
 )
 from ai_worker.tasks.rag.citation_authorization import (
     AuthorizationReason,
@@ -25,6 +30,7 @@ from ai_worker.tasks.rag.citation_authorization import (
 )
 from ai_worker.tasks.rag.citation_authorization_authority import (
     CitationAuthorityAggregate,
+    CitationAuthorityIssueReason,
     CitationAuthorizationAuthorityError,
 )
 from ai_worker.tests.rag.test_citation_authorization_authority_issuer import (
@@ -67,6 +73,11 @@ from app.models.rag_source import (
 )
 from app.models.rag_source_use_approval import RagSourceUseApproval
 from app.models.users import User
+from rag_runtime.citation_authorization_authority import (
+    compute_citation_member_decision_ref,
+    compute_citation_receipt_ref,
+    compute_citation_source_decision_ref,
+)
 from rag_runtime.request_authority import compute_request_guard_authority_ref
 from rag_runtime.request_guard_runtime_binding import compute_request_guard_runtime_binding_ref
 from rag_runtime.runtime_environment import RuntimeEnvironmentCode
@@ -326,6 +337,209 @@ async def test_complete_aggregate_roundtrip_and_historical_replay(database: Asyn
             eligibility_reader=SqlAlchemyCitationEligibilityReader(session),
         )
         assert outcome.receipt == aggregate.receipt
+
+
+async def _rehash_persisted_aggregate(session: AsyncSession, request_sha256: str) -> None:
+    receipt_row = (
+        (
+            await session.execute(
+                select(RagCitationAuthorizationReceipt.__table__).where(
+                    RagCitationAuthorizationReceipt.request_sha256 == request_sha256
+                )
+            )
+        )
+        .mappings()
+        .one()
+    )
+    selection_rows = list(
+        (
+            await session.execute(
+                select(RagCitationAuthorizationReceiptSelection.__table__)
+                .where(RagCitationAuthorizationReceiptSelection.receipt_id == receipt_row["id"])
+                .order_by(RagCitationAuthorizationReceiptSelection.selection_order)
+            )
+        )
+        .mappings()
+        .all()
+    )
+    source_rows = []
+    member_rows = []
+    for selection_row in selection_rows:
+        source_row = dict(
+            (
+                await session.execute(
+                    select(RagCitationAuthorizationSourceDecision.__table__).where(
+                        RagCitationAuthorizationSourceDecision.id == selection_row["source_decision_id"]
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+        source_ref = compute_citation_source_decision_ref(_source_projection(source_row))
+        source_row["artifact_content_sha256"] = source_ref.content_sha256
+        await session.execute(
+            update(RagCitationAuthorizationSourceDecision)
+            .where(RagCitationAuthorizationSourceDecision.id == source_row["id"])
+            .values(artifact_content_sha256=source_ref.content_sha256)
+        )
+        source_rows.append(source_row)
+
+        member_row = dict(
+            (
+                await session.execute(
+                    select(RagCitationAuthorizationMemberDecision.__table__).where(
+                        RagCitationAuthorizationMemberDecision.id == selection_row["member_decision_id"]
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+        member_ref = compute_citation_member_decision_ref(_member_projection(member_row))
+        member_row["artifact_content_sha256"] = member_ref.content_sha256
+        await session.execute(
+            update(RagCitationAuthorizationMemberDecision)
+            .where(RagCitationAuthorizationMemberDecision.id == member_row["id"])
+            .values(artifact_content_sha256=member_ref.content_sha256)
+        )
+        member_rows.append(member_row)
+
+    receipt = _receipt(receipt_row, selection_rows, source_rows, member_rows)
+    receipt_ref = compute_citation_receipt_ref(_receipt_projection(receipt))
+    await session.execute(
+        update(RagCitationAuthorizationReceipt)
+        .where(RagCitationAuthorizationReceipt.id == receipt_row["id"])
+        .values(artifact_content_sha256=receipt_ref.content_sha256)
+    )
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    (
+        "cross_request",
+        "member_other_source",
+        "decision_outcome_mismatch",
+        "selection_copy_mismatch",
+    ),
+)
+async def test_historical_replay_rejects_semantically_unbound_aggregate(database: AsyncEngine, corruption: str) -> None:
+    aggregate = await _aggregate()
+    request_sha256 = aggregate.receipt.request_sha256
+    sessions = async_sessionmaker(database, expire_on_commit=False)
+    async with sessions.begin() as session:
+        await _seed_dependencies(session)
+        store = SqlAlchemyCitationAuthorizationAuthorityStore(session)
+        await store.append(aggregate)
+
+        receipt_id = await session.scalar(
+            select(RagCitationAuthorizationReceipt.id).where(
+                RagCitationAuthorizationReceipt.request_sha256 == request_sha256
+            )
+        )
+        selection = (
+            (
+                await session.execute(
+                    select(RagCitationAuthorizationReceiptSelection.__table__).where(
+                        RagCitationAuthorizationReceiptSelection.receipt_id == receipt_id
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+        await session.execute(text("SET LOCAL session_replication_role = replica"))
+        if corruption == "cross_request":
+            await session.execute(
+                update(RagCitationAuthorizationSourceDecision)
+                .where(RagCitationAuthorizationSourceDecision.id == selection["source_decision_id"])
+                .values(request_sha256="f" * 64)
+            )
+            source_row = (
+                (
+                    await session.execute(
+                        select(RagCitationAuthorizationSourceDecision.__table__).where(
+                            RagCitationAuthorizationSourceDecision.id == selection["source_decision_id"]
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            source_ref = compute_citation_source_decision_ref(_source_projection(source_row))
+            await session.execute(
+                update(RagCitationAuthorizationMemberDecision)
+                .where(RagCitationAuthorizationMemberDecision.id == selection["member_decision_id"])
+                .values(source_decision_content_sha256=source_ref.content_sha256)
+            )
+        elif corruption == "member_other_source":
+            source_row = dict(
+                (
+                    await session.execute(
+                        select(RagCitationAuthorizationSourceDecision.__table__).where(
+                            RagCitationAuthorizationSourceDecision.id == selection["source_decision_id"]
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            source_row["id"] = uuid4()
+            source_row["approval_version"] = "approval-v2"
+            source_row["artifact_content_sha256"] = compute_citation_source_decision_ref(
+                _source_projection(source_row)
+            ).content_sha256
+            await session.execute(insert(RagCitationAuthorizationSourceDecision).values(**source_row))
+            await session.execute(
+                update(RagCitationAuthorizationMemberDecision)
+                .where(RagCitationAuthorizationMemberDecision.id == selection["member_decision_id"])
+                .values(source_decision_id=source_row["id"])
+            )
+        elif corruption == "decision_outcome_mismatch":
+            await session.execute(
+                update(RagCitationAuthorizationReceiptSelection)
+                .where(RagCitationAuthorizationReceiptSelection.id == selection["id"])
+                .values(member_decision="FAIL")
+            )
+        else:
+            await session.execute(
+                update(RagCitationAuthorizationReceiptSelection)
+                .where(RagCitationAuthorizationReceiptSelection.id == selection["id"])
+                .values(source_version="tampered-version")
+            )
+        await _rehash_persisted_aggregate(session, request_sha256)
+        await session.execute(text("SET LOCAL session_replication_role = origin"))
+
+        with pytest.raises(CitationAuthorizationAuthorityError) as error:
+            await issue(
+                selection=_endpoint_selection(),
+                guard=_guard_observation(),
+                store=store,
+                eligibility_reader=SqlAlchemyCitationEligibilityReader(session),
+            )
+        assert error.value.args == (CitationAuthorityIssueReason.EXISTING_RECEIPT_CORRUPT,)
+
+
+@pytest.mark.parametrize("corruption", ("member_source_ref", "selection_request"))
+async def test_composite_foreign_keys_reject_cross_row_binding_corruption(
+    database: AsyncEngine, corruption: str
+) -> None:
+    aggregate = await _aggregate()
+    sessions = async_sessionmaker(database, expire_on_commit=False)
+    async with sessions() as session:
+        await _seed_dependencies(session)
+        await SqlAlchemyCitationAuthorizationAuthorityStore(session).append(aggregate)
+        await session.commit()
+
+        with pytest.raises(DBAPIError) as error:
+            if corruption == "member_source_ref":
+                await session.execute(
+                    update(RagCitationAuthorizationMemberDecision).values(source_decision_content_sha256="f" * 64)
+                )
+            else:
+                await session.execute(update(RagCitationAuthorizationReceiptSelection).values(request_sha256="f" * 64))
+        assert error.value.orig.sqlstate == "23503"
+        await session.rollback()
 
 
 async def test_caller_rollback_removes_all_four_authority_tables(database: AsyncEngine) -> None:

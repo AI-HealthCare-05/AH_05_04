@@ -57,6 +57,7 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "artifact_code", "artifact_version", "artifact_content_sha256", name="uq_rag_citation_auth_source_artifact"
         ),
+        sa.UniqueConstraint("id", "request_sha256", "artifact_content_sha256", name="uq_rag_cit_auth_source_binding"),
         sa.ForeignKeyConstraint(
             ["request_guard_decision_id"],
             ["rag_request_guard_runtime_binding.request_guard_decision_id"],
@@ -118,7 +119,19 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "artifact_code", "artifact_version", "artifact_content_sha256", name="uq_rag_citation_auth_member_artifact"
         ),
-        sa.ForeignKeyConstraint(["source_decision_id"], [f"{SOURCE}.id"], ondelete="RESTRICT"),
+        sa.UniqueConstraint(
+            "id",
+            "request_sha256",
+            "artifact_content_sha256",
+            "source_decision_id",
+            name="uq_rag_cit_auth_member_binding",
+        ),
+        sa.ForeignKeyConstraint(
+            ["source_decision_id", "request_sha256", "source_decision_content_sha256"],
+            [f"{SOURCE}.id", f"{SOURCE}.request_sha256", f"{SOURCE}.artifact_content_sha256"],
+            name="fk_rag_cit_auth_member_source_binding",
+            ondelete="RESTRICT",
+        ),
         sa.ForeignKeyConstraint(["source_snapshot_member_id"], ["rag_source_snapshot_member.id"], ondelete="RESTRICT"),
         sa.CheckConstraint(
             "artifact_code = 'citation_authorization_member_decision'", name="chk_rag_citation_auth_member_code"
@@ -150,6 +163,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id", name="pk_rag_citation_authorization_receipt"),
         sa.UniqueConstraint("request_sha256", name="uq_rag_citation_auth_receipt_request"),
+        sa.UniqueConstraint("id", "request_sha256", name="uq_rag_cit_auth_receipt_binding"),
         sa.UniqueConstraint(
             "artifact_code", "artifact_version", "artifact_content_sha256", name="uq_rag_citation_auth_receipt_artifact"
         ),
@@ -164,9 +178,12 @@ def upgrade() -> None:
         SELECTION,
         sa.Column("id", sa.CHAR(36), nullable=False),
         sa.Column("receipt_id", sa.CHAR(36), nullable=False),
+        sa.Column("request_sha256", sa.String(64), nullable=False),
         sa.Column("selection_order", sa.Integer(), nullable=False),
         sa.Column("source_decision_id", sa.CHAR(36), nullable=False),
+        sa.Column("source_decision_content_sha256", sa.String(64), nullable=False),
         sa.Column("member_decision_id", sa.CHAR(36), nullable=False),
+        sa.Column("member_decision_content_sha256", sa.String(64), nullable=False),
         sa.Column("source_code", sa.String(100), nullable=False),
         sa.Column("source_version", sa.String(200), nullable=False),
         sa.Column("member_kind", sa.String(30), nullable=False),
@@ -181,10 +198,37 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id", name="pk_rag_citation_authorization_receipt_selection"),
         sa.UniqueConstraint("receipt_id", "selection_order", name="uq_rag_citation_auth_receipt_selection_order"),
-        sa.ForeignKeyConstraint(["receipt_id"], [f"{RECEIPT}.id"], ondelete="RESTRICT"),
-        sa.ForeignKeyConstraint(["source_decision_id"], [f"{SOURCE}.id"], ondelete="RESTRICT"),
-        sa.ForeignKeyConstraint(["member_decision_id"], [f"{MEMBER}.id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(
+            ["receipt_id", "request_sha256"],
+            [f"{RECEIPT}.id", f"{RECEIPT}.request_sha256"],
+            name="fk_rag_cit_auth_selection_receipt_binding",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["source_decision_id", "request_sha256", "source_decision_content_sha256"],
+            [f"{SOURCE}.id", f"{SOURCE}.request_sha256", f"{SOURCE}.artifact_content_sha256"],
+            name="fk_rag_cit_auth_selection_source_binding",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["member_decision_id", "request_sha256", "member_decision_content_sha256", "source_decision_id"],
+            [
+                f"{MEMBER}.id",
+                f"{MEMBER}.request_sha256",
+                f"{MEMBER}.artifact_content_sha256",
+                f"{MEMBER}.source_decision_id",
+            ],
+            name="fk_rag_cit_auth_selection_member_binding",
+            ondelete="RESTRICT",
+        ),
         sa.CheckConstraint("selection_order >= 0", name="chk_rag_citation_auth_selection_order"),
+        sa.CheckConstraint("request_sha256 ~ '^[0-9a-f]{64}$'", name="chk_rag_cit_auth_selection_request_hash"),
+        sa.CheckConstraint(
+            "source_decision_content_sha256 ~ '^[0-9a-f]{64}$'", name="chk_rag_cit_auth_selection_source_hash"
+        ),
+        sa.CheckConstraint(
+            "member_decision_content_sha256 ~ '^[0-9a-f]{64}$'", name="chk_rag_cit_auth_selection_member_hash"
+        ),
         sa.CheckConstraint("selected_for_operation", name="chk_rag_citation_auth_selection_selected"),
         sa.CheckConstraint("purpose = 'PATIENT_CITATION'", name="chk_rag_citation_auth_selection_purpose"),
     )

@@ -32,16 +32,19 @@ The append-only aggregate consists of:
 - `rag_citation_authorization_receipt`
 - `rag_citation_authorization_receipt_selection`
 
-`request_sha256` is unique on Receipt. Selection order is unique within Receipt. Member Decision
-references its Source Decision, and each Receipt Selection references its Receipt, Source Decision,
-and Member Decision. The SQLAlchemy Core store uses the caller-owned transaction and never commits.
+`request_sha256` is unique on Receipt. Selection order is unique within Receipt. Composite
+FK/UNIQUE bindings couple Member Decision to the exact Source Decision `(id, request_sha256,
+artifact_content_sha256)` and each Receipt Selection to the exact Receipt, Source Decision, and
+Member Decision request/ref coordinates. The SQLAlchemy Core store uses the caller-owned transaction
+and never commits.
 
 ## Exact read and idempotency
 
 The first persistence action is an exact Receipt lookup by `request_sha256`. A complete aggregate is
-reconstructed, every artifact ref is recomputed, and the pure Receipt is returned without reevaluating
-current Source state. Partial or incompatible persisted content is corruption and fails closed. No
-latest/current/newest/version-max selector exists.
+reconstructed, every artifact ref is recomputed, and Receipt/Selection/Source/Member request, FK, ref,
+outcome, and copied selection facts are checked for exact equality before the pure Receipt is returned
+without reevaluating current Source state. Partial or incompatible persisted content is
+`EXISTING_RECEIPT_CORRUPT` and fails closed. No latest/current/newest/version-max selector exists.
 
 ## Non-scope
 

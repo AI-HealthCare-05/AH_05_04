@@ -1041,7 +1041,9 @@ Migration `869a1b2c3d4e` adds four append-only tables. Source Decision preserves
 request, #853/#807 approval identity, explicit evaluation time, and observed Source/Snapshot state.
 Member Decision references Source Decision and preserves the exact selected member identity plus
 observed Endpoint/Operation or Artifact binding state. Receipt is unique by `request_sha256`; Receipt
-Selection preserves the pure request manifest order and references all three authority rows.
+Selection preserves the pure request manifest order. Composite FK/UNIQUE constraints bind every
+Selection to the same request and exact Receipt/Source/Member content hashes, while exact-read also
+fail-closes on request, ref, outcome, or copied selection-field disagreement.
 
 The Worker SQLAlchemy Core store owns INSERT/exact SELECT only and never commits. Runtime ACL is
 `SELECT, INSERT`; `UPDATE`, `DELETE`, and `TRUNCATE` remain denied. Any historical row blocks
