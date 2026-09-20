@@ -60,7 +60,8 @@ Repository PR 병합 후 실제 환경 프로비저닝을 위해 다음 6개 조
     - 프로비저닝 전용: `DB_ADMIN_USER`, `DB_ADMIN_PASSWORD`
     - 보호 DB 스키마/역할: `PROTECTED_DB_SCHEMA`, `PROTECTED_DB_OWNER_ROLE`, `PROTECTED_DB_ACCESS_ROLE`, `PROTECTED_DB_CONTROL_ROLE`
     - 보호 로그인: `PROTECTED_DB_USER`, `PROTECTED_DB_PASSWORD`, `PROTECTED_DB_CONTROL_USER`, `PROTECTED_DB_CONTROL_PASSWORD`
-    - 승인 소스: `PROTECTED_APPROVAL_REPOSITORY`, `PROTECTED_APPROVAL_BRANCH`, `PROTECTED_APPROVAL_GITHUB_TOKEN` (Read-only token)
+    - 승인 소스: `PROTECTED_APPROVAL_REPOSITORY`, `PROTECTED_APPROVAL_BRANCH`
+    - `PROTECTED_APPROVAL_GITHUB_TOKEN`은 장기 Environment PAT가 아니라 workflow의 `contents: read`, `pull-requests: read`만 명시한 job-scoped read-only `${{ github.token }}`을 주입한다. 명시하지 않은 권한은 `none`으로 유지하며, env var 이름은 유지하되 Environment Secret 등록 대상에서는 제외한다.
 
 ### BLOCKED_EXTERNAL_ACTION 4: 최신 이미지 EC2 배포
 - **담당자**: 배포 담당자

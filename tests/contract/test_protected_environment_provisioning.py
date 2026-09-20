@@ -54,6 +54,24 @@ def test_workflow_trigger_and_environment_boundary() -> None:
     assert jobs["preflight"].get("environment") == "protected-retrieval"
 
 
+def test_workflow_preflight_uses_read_only_job_scoped_github_token() -> None:
+    wf_path = REPO_ROOT / ".github/workflows/protected_retrieval_runner.yml"
+    content = wf_path.read_text(encoding="utf-8")
+    data = yaml.safe_load(content)
+
+    assert data.get("permissions") == {
+        "contents": "read",
+        "pull-requests": "read",
+    }
+
+    preflight_steps = data["jobs"]["preflight"]["steps"]
+    preflight_env = next(
+        step["env"] for step in preflight_steps if step.get("name") == "Execute remote preflight check"
+    )
+    assert preflight_env["PROTECTED_APPROVAL_GITHUB_TOKEN"] == "${{ github.token }}"
+    assert "secrets.PROTECTED_APPROVAL_GITHUB_TOKEN" not in content
+
+
 def test_workflow_ssh_host_identity_verification() -> None:
     wf_path = REPO_ROOT / ".github/workflows/protected_retrieval_runner.yml"
     assert wf_path.is_file(), "protected_retrieval_runner.yml must exist"
