@@ -114,6 +114,12 @@ def test_credentials_and_admin_process_are_separated() -> None:
     assert "COPY ./scripts/__init__.py ./scripts/__init__.py" in dockerfile
     assert "COPY ./scripts/candidate_index_builder.py ./scripts/candidate_index_builder.py" in dockerfile
 
+    worker_dockerfile = (ROOT / "ai_worker/Dockerfile").read_text()
+    assert (
+        "COPY ./infra/python/catalog_approval_role_policy.py "
+        "./infra/python/catalog_approval_role_policy.py"
+    ) in worker_dockerfile
+
     worker = services["ai-worker"]
     assert not any("KNOWLEDGE_INDEX_BUILDER" in key for key in worker["environment"])
 
