@@ -55,7 +55,7 @@ RUNTIME_APPEND_ONLY_TABLES = frozenset(
     # #712: selected hit 단위 Assessment·Eligibility authority. Issuer의 발급과 후속 Reader의
     # 조회만 필요하고 발급 뒤에는 고쳐 쓰지 않으므로 append-only 권한(SELECT, INSERT)을 그대로 쓴다.
     "rag_evidence_authority".split()
-)
+) | frozenset({"rag_runtime_bundle_citation_approval"})
 RUNTIME_CHECKIN_LOCK_TABLES = frozenset({"safety_assessment", "barrier_response"})
 
 # Track C 안전 확인·장벽 응답·실천 계획은 revision 단위 append 뒤 고쳐 쓰지 않습니다.

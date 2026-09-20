@@ -34,6 +34,7 @@ _REQUEST_GUARD_RUNTIME_BINDING_WRITERS = frozenset(
 )
 _EVIDENCE_AUTHORITY_WRITERS = frozenset({"backend/app/repositories/rag_evidence_authority_repository.py"})
 _SOURCE_USE_APPROVAL_WRITERS = frozenset({"backend/app/repositories/rag_source_use_approval_repository.py"})
+_RUNTIME_BUNDLE_CITATION_APPROVAL_WRITERS = frozenset({"backend/app/repositories/rag_runtime_repository.py"})
 
 APPROVED_WRITERS: dict[str, frozenset[str]] = {
     "source_management_permission": frozenset({"backend/app/admin/source_management_permissions.py"}),
@@ -82,6 +83,7 @@ APPROVED_WRITERS: dict[str, frozenset[str]] = {
     "rag_citation": frozenset({"backend/app/repositories/rag_evidence_citation_repository.py"}),
     # #807 Source Use Approval은 별도 authority 이력이며, 발행/철회 경계를 한 저장소로 제한한다.
     "rag_source_use_approval": _SOURCE_USE_APPROVAL_WRITERS,
+    "rag_runtime_bundle_citation_approval": _RUNTIME_BUNDLE_CITATION_APPROVAL_WRITERS,
 }
 
 MODEL_TABLES = {
@@ -125,6 +127,7 @@ MODEL_TABLES = {
     "RagEvidenceGuideline": "rag_evidence_guideline",
     "RagCitation": "rag_citation",
     "RagSourceUseApproval": "rag_source_use_approval",
+    "RagRuntimeBundleCitationApproval": "rag_runtime_bundle_citation_approval",
 }
 
 _RAW_DML = re.compile(
