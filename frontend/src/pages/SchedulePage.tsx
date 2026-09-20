@@ -44,7 +44,6 @@ import {
   type Medication,
   type PrescriptionResponse,
 } from '../api/prescriptions'
-import { ScheduleRecommendation } from './ScheduleRecommendation'
 import bellIcon from '../assets/icon-bell-notification.svg'
 import { Button, Card, MobileShell } from '../design-system/components'
 import { clearAuthenticatedSession } from '../features/auth/authSession'
@@ -624,19 +623,6 @@ function ScheduleEditor({
                   <span className="schedule-editor__success-badge">저장 완료</span>
                 )}
               </div>
-              {import.meta.env.DEV && item.schedule_id === null && (
-                <ScheduleRecommendation
-                  key={`${id}-${item.revision ?? 0}`}
-                  load={services.getScheduleRecommendation}
-                  medicationId={id} medicationName={medication.medication_name}
-                  timingText={medication.timing_text} disabled={isSaving || isReloading}
-                  onApply={(times, recommendationContext) => changeScheduleInput(id, (current) => ({ ...current, times, recommendationContext }))}
-                  onInvalidate={() => changeScheduleInput(id, (current) => current.recommendationContext
-                    ? { ...current, times: current.times.map(() => ''), recommendationContext: undefined }
-                    : current)}
-                  onManual={() => changeScheduleInput(id, (current) => ({ ...current, recommendationContext: undefined }))}
-                />
-              )}
               <div className="schedule-editor__fields" data-medication-id={id}>
                 <label>
                   <span>시작일</span>
@@ -877,6 +863,15 @@ export function SchedulePage({
   const [reloadVersion, setReloadVersion] = useState(0)
   const [isEditingSchedule, setIsEditingSchedule] = useState(false)
   const [editingMedicationId, setEditingMedicationId] = useState<string | null>(null)
+  const [currentTime, setCurrentTime] = useState(() => Date.now())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCurrentTime(Date.now())
+    }, 30_000)
+
+    return () => window.clearInterval(timer)
+  }, [])
   const editorReloadCompletionRef = useRef<((succeeded: boolean) => void) | null>(null)
 
   const reload = useCallback(async () => {
@@ -1033,7 +1028,11 @@ export function SchedulePage({
               </header>
               <p className="schedule-editor__notice">
                 <span aria-hidden="true">ⓘ</span>
-                <strong>{import.meta.env.DEV ? '명확한 처방과 입력한 식사 종료 시각이 있을 때만 후보를 계산해요.' : 'Dosey는 복용 시간을 추정하거나 추천하지 않아요.'}<br />정확한 시간을 직접 확인해 주세요.</strong>
+                <strong>
+                  Dosey는 복용 시간을 추정하거나 추천하지 않아요.
+                  <br />
+                  정확한 시간을 직접 확인해 주세요.
+                </strong>
               </p>
               <ScheduleEditor
                 items={editorItems}
@@ -1069,15 +1068,9 @@ export function SchedulePage({
       <NavigationShell>
         <main className="app-scroll schedule-page__content">
           <header className="schedule-page__intro">
-            <label htmlFor="schedule-date" className="schedule-page__date-label">
-              <span>{formatLocalDate(selectedDate)}</span>
-            </label>
-            <input
-              id="schedule-date"
-              type="date"
-              value={selectedDate}
-              onChange={(event) => setSearchParams(supportMedicationId ? { date: event.target.value, support_medication: supportMedicationId } : { date: event.target.value })}
-            />
+            <p className="schedule-page__date-label">
+              {formatLocalDate(selectedDate)}
+            </p>
             <h1>복약 일정</h1>
           </header>
 
@@ -1152,9 +1145,14 @@ export function SchedulePage({
               ) : currentOccurrences.map((occurrence) => {
                 const medication = medications[occurrence.occurrence_id]
                 const route = `/schedule/occurrences/${occurrence.occurrence_id}?date=${encodeURIComponent(occurrence.scheduled_local_date)}`
+                const isActionablePending =
+                  occurrence.status !== 'CANCELLED' &&
+                  !occurrence.checkin &&
+                  currentTime >= Date.parse(occurrence.scheduled_at)
+
                 return (
                   <article
-                    className="schedule-occurrence-card"
+                    className={`schedule-occurrence-card${isActionablePending ? ' schedule-occurrence-card--actionable' : ''}`}
                     key={occurrence.occurrence_id}
                   >
                     <span className="schedule-occurrence-card__period-label">
@@ -1163,21 +1161,25 @@ export function SchedulePage({
                     <strong className="schedule-occurrence-card__time">
                       {formatKstTime(occurrence.scheduled_at)}
                     </strong>
-                    <span className={`schedule-occurrence-card__state schedule-occurrence-card__state--${occurrence.checkin?.status?.toLowerCase() ?? occurrence.status.toLowerCase()}`}>
-                      {occurrenceStateLabel(occurrence)}
-                    </span>
+                    {(occurrence.checkin ||
+                      currentTime < Date.parse(occurrence.scheduled_at)) && (
+                      <span className={`schedule-occurrence-card__state schedule-occurrence-card__state--${occurrence.checkin?.status?.toLowerCase() ?? occurrence.status.toLowerCase()}`}>
+                        {occurrenceStateLabel(occurrence)}
+                      </span>
+                    )}
                     <span className="schedule-occurrence-card__medication">
                       {medication ? medicationDescription(medication) : '약 정보를 확인할 수 없어요'}
                     </span>
-                    {occurrence.status !== 'CANCELLED' && (
-                      <Button
-                        fullWidth
-                        className="schedule-occurrence-card__action"
-                        onClick={() => navigate(route)}
-                      >
-                        {occurrence.checkin ? '복약 기록 수정하기' : '복용 여부 기록하기'}
-                      </Button>
-                    )}
+                    {occurrence.status !== 'CANCELLED' &&
+                      (occurrence.checkin || isActionablePending) && (
+                        <Button
+                          fullWidth
+                          className="schedule-occurrence-card__action"
+                          onClick={() => navigate(route)}
+                        >
+                          {occurrence.checkin ? '복약 기록 수정하기' : '복용 여부 기록하기'}
+                        </Button>
+                      )}
                   </article>
                 )
               })}

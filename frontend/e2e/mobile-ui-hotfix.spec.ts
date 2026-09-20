@@ -84,6 +84,8 @@ test('320/390/412px에서 전체 대상 화면은 가로 overflow와 Bottom Navi
 })
 
 test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한다', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-09-16T05:00:00Z')) // KST 14:00
+
   const occurrenceIds = [
     '77777777-7777-4777-8777-777777777771',
     '77777777-7777-4777-8777-777777777772',
@@ -206,7 +208,8 @@ test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한�
     await page.setViewportSize({ width, height: 844 })
     await page.goto('/schedule?date=2026-09-16')
     await expect(page.getByRole('heading', { name: '오늘의 복약' })).toBeVisible()
-    await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(3)
+    await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(2)
+    await expect(page.getByText('복용 예정')).toHaveCount(1)
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0)
     const content = page.locator('.schedule-page .app-scroll')
     expect(await content.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0)
@@ -227,7 +230,8 @@ test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한�
     await expect(page.getByRole('heading', { name: stateCopy[status] })).toBeVisible()
     if (status === 'PARTIAL' || status === 'INACTIVE') {
       await expect(page.getByRole('heading', { name: '오늘의 복약' })).toBeVisible()
-      await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(3)
+      await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(2)
+      await expect(page.getByText('복용 예정')).toHaveCount(1)
     } else {
       await expect(page.getByRole('heading', { name: '오늘의 복약' })).toHaveCount(0)
     }
@@ -277,7 +281,8 @@ test('Schedule CURRENT Source 상태와 320/390/412px 레이아웃을 유지한�
       await page.keyboard.press('Enter')
       await expect.poll(() => scheduleMutations.length).toBe(index + 1)
       await expect(page.getByRole('heading', { name: '오늘의 복약' })).toBeVisible()
-      await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(3)
+      await expect(page.getByRole('button', { name: '복용 여부 기록하기' })).toHaveCount(2)
+      await expect(page.getByText('복용 예정')).toHaveCount(1)
       await expect(page.getByRole('heading', { name: '복용할 날짜와 시간을 확인해 주세요' })).toHaveCount(0)
     })
   }
