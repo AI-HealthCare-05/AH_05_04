@@ -146,24 +146,20 @@ def test_gate_cli_missing_suite_fails_closed_without_implicit_discovery(
     run_id, policy_path, profile_path, comparison_path, _suite_path = _setup_approved_cli_fixture(tmp_path)
 
     # Omitting --suite must fail closed (no directory scanning)
-    with patch(
-        "ai_worker.tasks.evaluation.release_gate_loader._require_canonical_release_guard_authority",
-        lambda: None,
-    ):
-        exit_code = main(
-            [
-                "gate",
-                "--run-id",
-                run_id,
-                "--policy",
-                str(policy_path),
-                "--profile",
-                str(profile_path),
-                "--comparison-policy",
-                str(comparison_path),
-            ],
-            allowed_result_root=tmp_path,
-        )
+    exit_code = main(
+        [
+            "gate",
+            "--run-id",
+            run_id,
+            "--policy",
+            str(policy_path),
+            "--profile",
+            str(profile_path),
+            "--comparison-policy",
+            str(comparison_path),
+        ],
+        allowed_result_root=tmp_path,
+    )
 
     captured = capsys.readouterr()
     assert exit_code == 2

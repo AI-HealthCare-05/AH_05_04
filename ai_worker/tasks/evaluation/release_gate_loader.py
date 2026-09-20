@@ -359,8 +359,6 @@ def load_gate_evidence(
     _validate_run_policy_bindings(run, policy)
     _validate_run_dataset_and_partitions(run, dataset_manifest_path)
 
-    _require_canonical_release_guard_authority()
-
     metrics_artifact = bundle.metrics
     metrics_digest = canonical_sha256(cast(JsonValue, metrics_artifact.model_dump(mode="json")))
     metric_evidences = tuple(
@@ -387,6 +385,8 @@ def load_gate_evidence(
     )
 
     receipt_evidences = tuple(load_receipt_evidence(p) for p in (receipt_paths or ()))
+
+    _require_canonical_release_guard_authority()
 
     return GateEvidence(
         run_id=run_id,

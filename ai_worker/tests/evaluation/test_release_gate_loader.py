@@ -37,14 +37,21 @@ from ai_worker.tasks.evaluation.release_policy import (
     load_approved_release_policy,
 )
 from ai_worker.tasks.evaluation.schemas.artifacts import (
+    CandidateGuardDecision,
     RagEvaluationRun,
+    RuntimeEnvironment,
 )
 from ai_worker.tasks.evaluation.schemas.authoring import DatasetStatus
 from ai_worker.tasks.evaluation.schemas.common import (
+    ActorNamespace,
+    ActorRef,
+    ActorRole,
     DecisionStatus,
     ExecutionStatus,
+    ExperimentType,
     ImmutableReference,
     Partition,
+    TaskType,
 )
 from ai_worker.tests.evaluation.test_cli import _run_retrieval_cli
 
@@ -195,28 +202,61 @@ def _setup_retrieval_run(tmp_path: Path) -> tuple[str, Path, Path, Path]:
     return run_id, policy_path, profile_path, comparison_path
 
 
-def _make_candidate_run(**overrides: Any) -> RagEvaluationRun:
-    base = json.loads(Path("evals/results/0602452b-8fd8-41e2-87b8-48609a3242ce/run.json").read_bytes())
-    base.update(
-        {
-            "experiment_type": "END_TO_END_RAG",
-            "task_types": ["END_TO_END_RAG"],
-            "runtime_eligible": True,
-            "environment": "LOCAL",
-            "execution_status": "COMPLETED",
-            "decision_status": "PASS",
-            "blocking_execution_statuses": [],
-            "completed_at": "2026-09-16T14:47:00.000000Z",
-            "result_content_manifest_hash": "f" * 64,
-            "candidate_bundle_id": "candidate-bundle-001",
-            "candidate_bundle_manifest_hash": "a" * 64,
-            "candidate_guard_decision_id": "guard-decision-001",
-            "candidate_guard_decision": "PASS",
-            "required_case_guard_coverage_manifest_hash": "b" * 64,
-        }
+def _base_candidate_run() -> RagEvaluationRun:
+    return RagEvaluationRun(
+        schema_id="rag-eval.run",
+        schema_version="1.0.0",
+        run_id="0602452b-8fd8-41e2-87b8-48609a3242ce",
+        experiment_id="rag-natural-language-retrieval-dev",
+        variant_id="RET-L",
+        experiment_type=ExperimentType.END_TO_END_RAG,
+        task_types=(TaskType.END_TO_END_RAG,),
+        evaluation_profile_ref=ImmutableReference(id="profile-1", version="1.0.0", hash="1" * 64),
+        comparison_policy_ref=ImmutableReference(id="comp-1", version="1.0.0", hash="2" * 64),
+        evaluation_policy_ref=ImmutableReference(id="policy-1", version="1.0.0", hash="3" * 64),
+        artifact_schema_set_ref=ImmutableReference(id="schema-set-1", version="1.5.0", hash="4" * 64),
+        dataset_code="rag-natural-language-retrieval-dev",
+        dataset_version="1.0.0",
+        dataset_manifest_sha256="5" * 64,
+        resource_set_hash="6" * 64,
+        evidence_mapping_manifest_sha256="7" * 64,
+        critical_claim_rubric_ref=ImmutableReference(id="rubric-1", version="1.0.0", hash="8" * 64),
+        fixture_git_commit_sha="a" * 40,
+        protected_artifact_receipt_ref=ImmutableReference(id="receipt-1", version="1.0.0", hash="9" * 64),
+        resolved_evaluation_config_hash="a" * 64,
+        upstream_contract_manifest_hash="b" * 64,
+        retrieval_variant_manifest_hash=None,
+        answer_variant_manifest_hash=None,
+        model_config_hash="c" * 64,
+        prompt_version="actual-retrieval-v1",
+        evaluated_partitions=(Partition.DEV,),
+        partition_manifest_hash="d" * 64,
+        environment=RuntimeEnvironment.LOCAL,
+        runtime_eligible=True,
+        execution_status=ExecutionStatus.COMPLETED,
+        decision_status=DecisionStatus.PASS,
+        blocking_execution_statuses=(),
+        started_at="2026-09-16T14:46:29.000000Z",
+        completed_at="2026-09-16T14:47:00.000000Z",
+        result_content_manifest_hash="f" * 64,
+        candidate_bundle_id="candidate-bundle-001",
+        candidate_bundle_manifest_hash="a" * 64,
+        candidate_guard_decision_id="guard-decision-001",
+        candidate_guard_decision=CandidateGuardDecision.PASS,
+        required_case_guard_coverage_manifest_hash="b" * 64,
+        executed_by=ActorRef(
+            namespace=ActorNamespace.GITHUB_LOGIN,
+            actor_id="ceohwj",
+            role=ActorRole.EVALUATION_IMPLEMENTER,
+        ),
     )
-    base.update(overrides)
-    return RagEvaluationRun.model_construct(**base)
+
+
+def _make_candidate_run(**overrides: Any) -> RagEvaluationRun:
+    base = _base_candidate_run()
+    if not overrides:
+        return base
+    return base.model_copy(update=overrides)
 
 
 def test_validate_release_candidate_run_accepted() -> None:
