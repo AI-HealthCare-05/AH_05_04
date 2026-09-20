@@ -44,6 +44,8 @@ test('[REAL-STACK][Track C #139] create, reload, complete and cancel plans throu
     const createdResponse = await creation
     expect(createdResponse.status()).toBe(200)
     const created = (await createdResponse.json()).data
+    await expect(page.getByRole('heading', { name: '실천 계획 목록' })).toBeVisible()
+    await page.getByRole('button', { name: index === 1 ? /일상·이동 중 복약 계획 확인/ : /복약 일정과 알림 확인/ }).click()
     await expect(page.getByText('진행 중', { exact: true })).toBeVisible()
     await page.reload()
     await expect(page.getByText('진행 중', { exact: true })).toBeVisible()

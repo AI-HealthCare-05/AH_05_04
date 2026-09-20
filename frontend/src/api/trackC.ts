@@ -80,6 +80,7 @@ export type Plan = {
   completed_at: string | null
   cancelled_at: string | null
 }
+export type PlanListItem = Pick<Plan, 'support_action_plan_id' | 'support_code' | 'status' | 'created_at' | 'completed_at' | 'cancelled_at'>
 export type SafetyRequest = {
   medication_checkin_id: string
   checkin_revision: number
@@ -121,6 +122,7 @@ export const getOffers = async (id: string, situation?: TravelSituation, subreas
   return (await apiRequest<{ data: Offer }>(`/api/v1/barrier-responses/${encodeURIComponent(id)}/supports${query}`, { cache: 'no-store' })).data
 }
 export const createPlan = (body: CreatePlanRequest, key: string) => write<Plan>('/api/v1/support-action-plans', 'POST', body, key)
+export const listPlans = async () => (await apiRequest<{ data: PlanListItem[] }>('/api/v1/support-action-plans', { cache: 'no-store' })).data
 export const getPlan = async (id: string) => (await apiRequest<{ data: Plan }>(`/api/v1/support-action-plans/${encodeURIComponent(id)}`, { cache: 'no-store' })).data
 export const patchPlan = (id: string, body: PatchPlanRequest, key: string) => write<Plan>(`/api/v1/support-action-plans/${encodeURIComponent(id)}`, 'PATCH', body, key)
 
