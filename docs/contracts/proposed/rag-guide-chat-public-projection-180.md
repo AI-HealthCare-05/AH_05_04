@@ -1,16 +1,16 @@
 # RAG 결과 연동 전 Guide·Chat Backend public projection 경계 (#180)
 
-**문서 성격**: Phase A 조사 완료 및 Guide Lane A 구현 경계 문서
+**문서 성격**: Guide Lane A public projection 구현 및 Chat 후속 경계 문서
 **상태**: Proposed
 **관련 이슈**: #180
-**범위**: 현재 Sync `201 Created` Guide·Chat API가 #180 최종 RAG Authorized/Release 결과를 소비할 Backend 경계 정리
-**비범위**: #180 orchestration 구현, Citation Decision 구현, Citation Authorization 재판정, Frontend 수정, `202 Accepted` 전환, 새 API endpoint, Chat public DTO/persistence 확정
+**범위**: 현재 Sync `201 Created` Guide API의 release/citation persistence·public projection과 Chat 후속 경계 정리
+**비범위**: #180 orchestration 구현, Citation Decision 구현, Citation Authorization 재판정, `202 Accepted` 전환, 새 API endpoint, Chat public DTO/persistence 확정
 
 ## 1. 목적
 
 #180 RAG orchestration은 Guide·Chat의 최종 RAG 결과, Citation, Safety, Release 판단을 만들 예정이지만, 현재 Backend public API는 여전히 동기 `201 Created` 계약으로 동작한다.
 
-이 문서는 #180 final output/public contract가 Freeze됐을 때 Backend가 어느 지점에서 그 결과를 받아 기존 Guide·Chat public response로 projection해야 하는지 미리 고정한다. 작업 목적은 구현을 앞당기는 것이 아니라, RAG 구현과 Backend API 작업이 서로의 경계를 침범하지 않도록 하는 것이다.
+이 문서는 #180 final output을 Backend가 어느 지점에서 받아 기존 Guide·Chat public response로 projection해야 하는지 고정한다. Guide는 canonical carrier를 저장·재조회하는 public 계약까지 구현됐고, Chat은 별도 Freeze 전까지 경계만 유지한다. 작업 목적은 RAG 구현과 Backend API 작업이 서로의 권위를 침범하지 않도록 하는 것이다.
 
 Phase A 조사 이후 Guide Lane A의 canonical carrier가 확정되어 Guide persistence와 public DTO를 구현한다. Chat은 별도 Freeze 전까지 이 구현으로 완료됐다고 보지 않는다.
 
@@ -258,7 +258,7 @@ ownership, current version, consent 실패 시 Provider/LLM/RAG 호출은 없어
 
 ## 9. Phase B가 받을 최소 output 후보
 
-아래는 Backend가 필요로 할 가능성이 높은 입력 후보이며, 이 문서에서 schema로 확정하지 않는다.
+Guide public v1은 `release_decision`, `release_is_current`, nullable fallback과 ordered public-safe citation으로 확정됐다. 아래 후보 중 Guide public v1에 포함되지 않은 값과 Chat 값은 별도 Freeze 전까지 schema로 확정하지 않는다.
 
 - public answer text 또는 no-public-answer/fallback content
 - final release decision
@@ -269,13 +269,13 @@ ownership, current version, consent 실패 시 Provider/LLM/RAG 호출은 없어
 - stale/context mismatch indicator
 - unauthorized/malformed citation 처리 결과
 
-후속 contract Freeze 시 위 값이 public DTO에 노출되는 값인지, 내부 persistence만 필요한 값인지, 저장하지 않고 즉시 projection만 할 값인지 구분해야 한다.
+Guide는 내부 answer·citation 좌표와 public DTO 필드를 구분해 저장한다. Chat 후속 contract Freeze에서는 위 값이 public DTO, 내부 persistence, 즉시 projection 중 어디에 속하는지 별도로 결정해야 한다.
 
 ## 10. Backend projection helper boundary
 
 #906이 제공하는 `rag_runtime.guide_release_projection.GuideRuntimeReleaseProjectionOutcome`을 소비하는
 Backend `project_guide_runtime_release()` helper를 둔다.
-이 helper는 Sync `201 Created` public DTO를 확장하지 않고, #180 public schema Freeze 전까지 service/application 계층에서 사용할 내부 projection candidate만 만든다.
+이 helper는 service/application 계층에서 사용할 내부 projection candidate를 만들고, repository가 그 candidate를 Guide release/citation persistence에 원자적으로 저장한다. public DTO 직렬화는 `_to_guide_data()`가 담당한다.
 Backend는 `GuideRuntimeReleaseResult` 또는 다른 `ai_worker` object를 직접 받지 않으며, Worker 내부 구조를
 `getattr()` 등으로 해석하지 않는다. #180 canonical adapter가 만든 shared carrier 또는 typed unavailable만 소비한다.
 
@@ -284,32 +284,27 @@ helper가 하는 일:
 - `PASS`의 `GuideRuntimeApprovedAnswer`와 ordered `GuideRuntimeVerifiedCitation`을 손실 없이 내부 후보로 보존한다.
 - `LIMITED`, `REJECTED`, `STALE`의 `GuideRuntimeApprovedFallback` code/text만 내부 후보로 보존한다.
 - `GuideRuntimeReleaseProjectionUnavailable`은 answer, fallback, citation이 없는 fail-closed 후보로 변환한다.
-- 기존 `GuideCitation` 테이블이 runtime citation 좌표를 손실 없이 저장할 수 없다는 gap을 분리한다.
+- ordered verified citation의 내부 좌표를 보존해 persistence 경계로 전달한다.
 
 helper가 하지 않는 일:
 
 - Card, `AuthorizedCitationSelection`, receipt 또는 Worker 내부 object 해석
 - citation authorization·exact binding 재판정, identity key 축약·재구성, citation deduplicate·reorder
 - approved answer 재조합 또는 fallback code/text 정규화
-- `GuideResponse` DTO/OpenAPI 확장
 - `GuideService.create_guide()`의 runtime callable wiring
-- `GuideRepository.mark_completed()` 저장 계약 변경
-- `GuideCitation` 또는 새 runtime release persistence migration
-- public `PASS | LIMITED | REJECTED | STALE` enum 확정
-- source URL/title/excerpt/locator public 규칙 확정
+- public DTO 직렬화 또는 DB row 직접 작성
+- source URL/title/excerpt 추가 생성
 - 내부 execution/evidence/reason/authorization receipt/score/rank/confidence/raw source 노출
 
 answer와 citation은 하나의 shared PASS carrier에서만 오며, Backend가 answer를 얻기 위해 Card를 별도로 읽는 경로를
 두지 않는다. citation의 Card/authorization 결속은 canonical Worker adapter 이전 단계에서 완료되며 Backend helper는
 그 결정을 반복하지 않는다.
 
-현재 `GuideCitation`은 `knowledge_chunk_id`, `claim_text`, `cited_text` 중심의 legacy citation table이다.
-#893 runtime citation은 `source_snapshot_id`, `source_snapshot_member_id`, `source_code`, `source_version`, `locator`, `content_sha256` 좌표를 가진다.
-따라서 현 상태에서는 runtime citation을 기존 `GuideCitation`에 손실 없이 저장할 수 없으며, Guide GET 재조회에서 동일 Citation/Fallback 의미를 복원하려면 별도 persistence 계약 또는 migration이 필요하다.
+`GuideCitation`은 legacy citation과 runtime citation을 서로 배타적인 shape로 저장한다. Runtime row는 `source_snapshot_id`, `source_snapshot_member_id`, `source_code`, `source_version`, `locator`, `content_sha256` 및 내부 exact-binding 좌표를 보존한다. public 응답은 `source_type`, `source_code`, `source_version`, `locator`, `display_order`만 노출한다. Guide release row와 ordered citation은 같은 저장 경계에서 기록되며 POST와 GET/rediscovery가 같은 Citation/Fallback 의미를 복원한다.
 
 ## 11. target test locations
 
-Phase B에서 contract가 확정되면 다음 위치에 테스트를 추가한다.
+Guide public projection은 다음 위치에서 계약과 회귀를 검증한다. Chat은 contract Freeze 후 아래 Chat 위치에 테스트를 추가한다.
 
 Guide service seam:
 
@@ -351,20 +346,20 @@ Chat concurrency/stale regression:
 
 ## 12. 완료 기준
 
-이 Phase A 문서가 완료됐다는 것은 다음을 의미한다.
+현재 Guide Lane A 구현이 완료됐다는 것은 다음을 의미한다.
 
-- 현재 Guide·Chat Sync `201 Created` 흐름을 파일/심볼 단위로 확인했다.
-- #180 final result를 소비할 Backend service seam을 정했다.
-- public DTO projection seam을 정했다.
-- 아직 만들면 안 되는 DTO/enum/DB/API 항목을 blocked contract fields로 분리했다.
-- 후속 Phase B 테스트 위치를 정했다.
+- Guide Sync `201 Created`와 GET/rediscovery 계약을 유지한다.
+- canonical Guide release carrier를 Backend service seam에서만 소비한다.
+- Guide release/fallback과 ordered citation을 저장하고 같은 public 결과로 복원한다.
+- legacy Guide row는 nullable release fields와 빈 citation으로 호환한다.
+- Guide Frontend는 public 필드만 소비하고 malformed 조합을 fail-closed한다.
+- Chat의 미확정 DTO/persistence와 runtime callable wiring을 후속 범위로 분리한다.
 
-이 Phase A 문서가 완료됐다는 것은 다음을 의미하지 않는다.
+현재 완료 상태는 다음을 의미하지 않는다.
 
 - #180 orchestration 구현 완료
 - RAG production 연결 완료
 - Citation Authorization 구현 완료
-- public citation DTO 확정
 - `202 Accepted` 전환
-- Frontend 반영
+- Chat public citation/fallback DTO 또는 Frontend 반영
 - Production 공개 승인

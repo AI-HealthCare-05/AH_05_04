@@ -22,6 +22,7 @@ import {
   createGuide,
   getGuide,
   getGuideForPrescription,
+  type GuideCitation,
   type GuideResponse,
 } from '../src/api/guides'
 import {
@@ -96,12 +97,67 @@ function completedGuideResponse(
     data: {
       guide_id: guideId,
       prescription_id: `prescription-${guideId}`,
+      prescription_version_id: `prescription-version-${guideId}`,
       generation_status: 'COMPLETED',
       content,
       model_name: 'guide-model',
       prompt_version: 'guide-prompt-v1',
+      release_decision: null,
+      release_is_current: null,
+      fallback_code: null,
+      fallback_text: null,
+      citations: [],
       requested_at: '2026-08-22T00:00:00Z',
       completed_at: '2026-08-22T00:00:03Z',
+    },
+  }
+}
+
+function legacyGuideReleaseFields() {
+  return {
+    prescription_version_id: 'prescription-version-1',
+    release_decision: null,
+    release_is_current: null,
+    fallback_code: null,
+    fallback_text: null,
+    citations: [],
+  } as const
+}
+
+function runtimePassGuideResponse(): GuideResponse {
+  return {
+    data: {
+      ...completedGuideResponse('guide-runtime-pass', structuredGuideContent()).data,
+      release_decision: 'PASS',
+      release_is_current: true,
+      citations: [
+        {
+          source_type: 'LIFESTYLE_GUIDELINE',
+          source_code: 'SYNTHETIC-GUIDELINE',
+          source_version: '2026.1',
+          locator: 'section-2',
+          display_order: 1,
+          source_snapshot_id: 'internal-snapshot-id',
+          confidence: 0.99,
+        } as unknown as GuideCitation,
+      ],
+    },
+  }
+}
+
+function runtimeFallbackGuideResponse(
+  decision: 'LIMITED' | 'REJECTED' | 'STALE',
+): GuideResponse {
+  return {
+    data: {
+      ...completedGuideResponse(`guide-${decision.toLowerCase()}`, null).data,
+      release_decision: decision,
+      release_is_current: decision !== 'STALE',
+      fallback_code:
+        decision === 'STALE'
+          ? 'PRESCRIPTION_STALE'
+          : 'NO_APPROVED_EVIDENCE',
+      fallback_text: `${decision} 승인 fallback 안내`,
     },
   }
 }
@@ -162,6 +218,126 @@ afterEach(() => {
 })
 
 describe('GuidePage', () => {
+  it('PASS 응답의 승인된 citation 공개 필드만 순서대로 표시한다', async () => {
+    vi.mocked(getGuide).mockResolvedValue(runtimePassGuideResponse())
+
+    renderPage('/guides/guide-runtime-pass')
+
+    expect(
+      await screen.findByRole('heading', { name: '확인된 약 목록 · 1개' }),
+    ).toBeTruthy()
+    const citations = screen.getByRole('heading', { name: '안내 근거' })
+      .closest('aside')
+    expect(citations).not.toBeNull()
+    expect(within(citations!).getByText('SYNTHETIC-GUIDELINE')).toBeTruthy()
+    expect(within(citations!).getByText('2026.1')).toBeTruthy()
+    expect(within(citations!).getByText('section-2')).toBeTruthy()
+    expect(citations!.textContent).not.toContain('source_snapshot_id')
+    expect(citations!.textContent).not.toContain('internal-snapshot-id')
+    expect(citations!.textContent).not.toContain('confidence')
+    expect(citations!.textContent).not.toContain('0.99')
+  })
+
+  it.each([
+    ['LIMITED', '일부 안내만 제공할 수 있어요'],
+    ['REJECTED', '안전한 안내를 제공할 수 없어요'],
+    ['STALE', '처방 정보가 변경되었어요'],
+  ] as const)('%s 승인 fallback을 빈 Guide로 오인하지 않는다', async (decision, title) => {
+    vi.mocked(getGuide).mockResolvedValue(runtimeFallbackGuideResponse(decision))
+
+    renderPage(`/guides/guide-${decision.toLowerCase()}`)
+
+    expect(await screen.findByRole('heading', { name: title })).toBeTruthy()
+    expect(screen.getByText(`${decision} 승인 fallback 안내`)).toBeTruthy()
+    expect(screen.queryByText('가이드 내용이 아직 없어요')).toBeNull()
+    expect(screen.queryByRole('button', { name: '다시 불러오기' })).toBeNull()
+  })
+
+  it('알 수 없는 release decision은 content를 표시하지 않고 fail-closed한다', async () => {
+    const response = runtimePassGuideResponse()
+    vi.mocked(getGuide).mockResolvedValue({
+      data: {
+        ...response.data,
+        release_decision: 'UNKNOWN_RELEASE_DECISION',
+      },
+    } as unknown as GuideResponse)
+
+    renderPage('/guides/guide-runtime-pass')
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '가이드를 안전하게 표시할 수 없어요',
+      }),
+    ).toBeTruthy()
+    expect(screen.queryByText('SYNTHETIC-GUIDELINE')).toBeNull()
+    expect(screen.queryByRole('heading', { name: '확인된 약 목록 · 1개' })).toBeNull()
+  })
+
+  it('순서가 뒤집힌 citation payload는 부분 표시하지 않고 fail-closed한다', async () => {
+    const response = runtimePassGuideResponse()
+    vi.mocked(getGuide).mockResolvedValue({
+      data: {
+        ...response.data,
+        citations: [
+          { ...response.data.citations[0], display_order: 2 },
+          {
+            ...response.data.citations[0],
+            source_code: 'SECOND-GUIDELINE',
+            display_order: 1,
+          },
+        ],
+      },
+    })
+
+    renderPage('/guides/guide-runtime-pass')
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '가이드를 안전하게 표시할 수 없어요',
+      }),
+    ).toBeTruthy()
+    expect(screen.queryByText('SYNTHETIC-GUIDELINE')).toBeNull()
+    expect(screen.queryByText('SECOND-GUIDELINE')).toBeNull()
+  })
+
+  it('객체가 아닌 citation payload도 렌더 예외 없이 fail-closed한다', async () => {
+    const response = runtimePassGuideResponse()
+    vi.mocked(getGuide).mockResolvedValue({
+      data: {
+        ...response.data,
+        citations: [null],
+      },
+    } as unknown as GuideResponse)
+
+    renderPage('/guides/guide-runtime-pass')
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '가이드를 안전하게 표시할 수 없어요',
+      }),
+    ).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '안내 근거' })).toBeNull()
+  })
+
+  it('승인 목록에 없는 fallback code는 안내로 노출하지 않고 fail-closed한다', async () => {
+    const response = runtimeFallbackGuideResponse('LIMITED')
+    vi.mocked(getGuide).mockResolvedValue({
+      data: {
+        ...response.data,
+        fallback_code: 'UNAPPROVED_FALLBACK',
+      },
+    } as unknown as GuideResponse)
+
+    renderPage('/guides/guide-limited')
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '가이드를 안전하게 표시할 수 없어요',
+      }),
+    ).toBeTruthy()
+    expect(screen.queryByText('LIMITED 승인 fallback 안내')).toBeNull()
+  })
+
   it('완료 Guide의 복용 일정 CTA는 mutation 없이 기존 route로 한 번 이동한다', async () => {
     const navigation = vi.fn<NavigateFunction>()
     vi.mocked(getGuide).mockResolvedValue(
@@ -438,6 +614,7 @@ describe('GuidePage', () => {
       data: {
         guide_id: 'guide-1',
         prescription_id: 'prescription-1',
+        ...legacyGuideReleaseFields(),
         generation_status: 'COMPLETED',
         content: '처방약 1\n- 하루 3회 복용하세요.\n\n일반 안전 안내',
         model_name: 'guide-model',
@@ -536,6 +713,7 @@ describe('GuidePage', () => {
       data: {
         guide_id: 'guide-1',
         prescription_id: 'prescription-1',
+        ...legacyGuideReleaseFields(),
         generation_status: 'COMPLETED',
         content,
         model_name: null,
@@ -691,6 +869,7 @@ describe('GuidePage', () => {
       data: {
         guide_id: 'guide-1',
         prescription_id: 'prescription-1',
+        ...legacyGuideReleaseFields(),
         generation_status: 'GENERATING',
         content: null,
         model_name: null,
@@ -714,6 +893,7 @@ describe('GuidePage', () => {
       data: {
         guide_id: 'guide-1',
         prescription_id: 'prescription-1',
+        ...legacyGuideReleaseFields(),
         generation_status: 'FAILED',
         content: null,
         model_name: 'guide-model',
