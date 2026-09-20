@@ -52,6 +52,7 @@ from ai_worker.tasks.rag.request_authority_artifact import (
     worker_artifact_ref,
     worker_member_identity,
 )
+from ai_worker.tasks.rag.source_member_identity import persisted_member_kind_value
 from rag_runtime.request_authority import (
     RequestAuthorityArtifactError,
     RequestAuthorityArtifactRef,
@@ -190,7 +191,7 @@ def _member_coordinate_statement(
     request_guard_ref: RequestAuthorityArtifactRef,
 ):
     identity = shared_member_identity(coordinate.member_identity)
-    persisted_kind = "ARTIFACT" if identity.member_kind.value == "ARTIFACT_MEMBER" else identity.member_kind.value
+    persisted_kind = persisted_member_kind_value(coordinate.member_identity.member_kind)
     return (
         select(*_MEMBER_DECISION.c)
         .select_from(_MEMBER_DECISION)
@@ -550,7 +551,12 @@ def _single_coordinate_row(rows: list[RowMapping], *, kind: str) -> RowMapping |
     return rows[0]
 
 
-def _verify_lookup_observations(coordinate, guard, source, member) -> None:
+def _verify_lookup_observations(
+    coordinate: GuideRequestAuthorityLookupCoordinate,
+    guard: AuthoritativeRequestGuardObservation,
+    source: AuthoritativeSourceDecisionObservation,
+    member: AuthoritativeMemberDecisionObservation,
+) -> None:
     if (
         guard.user_id != coordinate.user_id
         or guard.request_operation_code != coordinate.request_operation_code

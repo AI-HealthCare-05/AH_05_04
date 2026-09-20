@@ -193,6 +193,7 @@ def _coordinate_reader(
     guard_rows: list[dict[str, Any]] | None = None,
     source_rows: list[dict[str, Any]] | None = None,
     member_rows: list[dict[str, Any]] | None = None,
+    error: BaseException | None = None,
 ) -> tuple[SqlAlchemyGuideEvidenceAuthorityReader, AsyncMock]:
     session = AsyncMock(spec=AsyncSession)
     session.__aenter__.return_value = session
@@ -200,6 +201,8 @@ def _coordinate_reader(
 
     async def _execute(statement, *args, **kwargs):
         sql = str(statement)
+        if error is not None and "SET TRANSACTION" not in sql:
+            raise error
         rows: list[dict[str, Any]] = []
         if "FROM rag_request_guard_authority" in sql:
             rows = list(guard_rows or [])
@@ -358,6 +361,48 @@ async def test_coordinate_lookup_rejects_invalid_request_identity() -> None:
         await reader.lookup_request_decision_refs(coordinate=invalid)
 
     session.execute.assert_not_awaited()
+
+
+async def test_coordinate_lookup_supports_exact_artifact_member_identity() -> None:
+    member_ref = _member_ref(_ARTIFACT_IDENTITY)
+    artifact_member_row = _member_row(
+        artifact_content_sha256=member_ref.content_sha256,
+        member_kind="ARTIFACT",
+        endpoint_code=None,
+        operation_code=None,
+        member_artifact_code="mfds_label_bundle",
+        member_artifact_version="2026.09",
+    )
+    reader, _ = _coordinate_reader(
+        guard_rows=[_guard_row()],
+        source_rows=[_source_row()],
+        member_rows=[artifact_member_row],
+    )
+
+    refs = await reader.lookup_request_decision_refs(
+        coordinate=replace(_coordinate(), member_identity=_ARTIFACT_IDENTITY)
+    )
+
+    assert refs is not None
+    assert refs.request_member_decision_ref == member_ref
+
+
+async def test_coordinate_lookup_dependency_failure_becomes_reader_error() -> None:
+    reader, _ = _coordinate_reader(error=_dependency_error())
+
+    with pytest.raises(GuideEvidenceAuthorityReaderError, match="coordinate lookup failed"):
+        await reader.lookup_request_decision_refs(coordinate=_coordinate())
+
+
+async def test_coordinate_lookup_rejects_noncanonical_persisted_identity() -> None:
+    reader, _ = _coordinate_reader(
+        guard_rows=[_guard_row()],
+        source_rows=[_source_row(source_version="2026.09.02")],
+        member_rows=[_member_row()],
+    )
+
+    with pytest.raises(GuideEvidenceAuthorityReaderError, match="coordinate row is corrupt"):
+        await reader.lookup_request_decision_refs(coordinate=_coordinate())
 
 
 # ---------------------------------------------------------------------------

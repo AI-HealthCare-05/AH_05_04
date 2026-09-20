@@ -90,9 +90,9 @@ does not change #697 to accommodate a broader authority set.
 | selected `source_snapshot_id` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `ProductionSearchHit.provenance`; no replay aggregate | First execution only | Replay readback | #178 retrieval persistence/readback | Restore selected-hit provenance in order |
 | selected `source_snapshot_member_id` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `ProductionSearchHit.provenance`; no replay aggregate | First execution only | Replay readback | #178 retrieval persistence/readback | Restore selected-hit provenance in order |
 | `source_code` / `source_version` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `ProductionSearchHit.provenance`; no replay aggregate | First execution only | Replay readback | #178 retrieval persistence/readback | Restore selected-hit provenance in order |
-| `member_identity` | #672 authority selection | No selected-hit producer | None | No | REQUEST authority lookup coordinate | REQUEST authority / Backend persistence | Freeze selected member to identity lookup |
-| `request_source_decision_ref` | #672 authority selection | REQUEST authority persistence | Exact-ref reader only; no selected-member lookup coordinate | No | REQUEST authority lookup coordinate | REQUEST authority / Backend persistence | Freeze exact immutable ref lookup |
-| `request_member_decision_ref` | #672 authority selection | REQUEST authority persistence | Exact-ref reader only; no selected-member lookup coordinate | No | REQUEST authority lookup coordinate | REQUEST authority / Backend persistence | Freeze exact immutable ref lookup |
+| `member_identity` | #672 authority selection | Pinned first-run selection or B5 replay coordinate | `GuideRequestAuthorityLookupCoordinate` | Lookup ready when supplied | Selected-hit producer/B5 replay | REQUEST authority / Backend persistence | Pass the complete pinned identity unchanged |
+| `request_source_decision_ref` | #672 authority selection | REQUEST authority persistence | `lookup_request_decision_refs()` exact historical read | Yes when exact chain exists | None in B3 | REQUEST authority / Backend persistence | Consume the persisted ref without derivation |
+| `request_member_decision_ref` | #672 authority selection | REQUEST authority persistence | `lookup_request_decision_refs()` exact historical read | Yes when exact chain exists | None in B3 | REQUEST authority / Backend persistence | Consume the persisted ref without derivation |
 | `ProductionSearchReceipt` | #697 and #760 | First execution #178 retrieval | #180 B4 approved narrow projection from `HybridRetrieveOutcome.search_receipt` | First execution only | Replay readback | AI/RAG; #178 retrieval persistence/readback | B5 must restore it for replay |
 | `PersistedRetrievalRunReceipt` | #760 | #178 retrieval-run persistence | `HybridRetrieveOutcome.persisted_receipt` | Yes | None by itself | #178 retrieval persistence/readback | Preserve with the future aggregate |
 | ordered selected hits / provenance | #697, #711, #760 | First execution `EvidenceGateSuccess.selected_hits` | In-memory result only; no terminal aggregate readback | First execution only | Terminal replay payload | #178 retrieval persistence/readback | Restore full immutable ordered selection |
@@ -127,18 +127,20 @@ Owner: AI/RAG.
 Minimum follow-up: provide the B1 carrier and approve/implement the production
 fingerprint algorithm, key/version, and query-binding verifier.
 
-### B3 — `GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_COORDINATE_MISSING`
+### B3 — `GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_READY`
 
-`assemble_sync_guide_evidence_authority()` requires selected Source/Member
-coordinates, `member_identity`, and exact immutable
-`request_source_decision_ref` and `request_member_decision_ref`. A selected hit
-can carry Source/Member coordinates, but no canonical lookup coordinate binds
-those values to the immutable REQUEST decision references.
+`GuideRequestAuthorityLookupCoordinate` binds the original request guard,
+owner, operation, REQUEST stage, selected Source/Snapshot/Member coordinates,
+and complete member identity. The read-only
+`lookup_request_decision_refs()` adapter resolves that exact historical chain
+to the persisted immutable `request_source_decision_ref` and
+`request_member_decision_ref` in one repeatable-read transaction.
 
 Owner: REQUEST authority / Backend persistence boundary.
 
-Minimum follow-up: freeze and provide the exact selected Source/Member
-coordinate to immutable request Source/Member Decision reference lookup.
+No B3 lookup follow-up is required. The caller must still receive the selected
+coordinate from the first-run result or B5 replay payload; this lookup does not
+reconstruct a missing selection.
 
 ### B4 — `GUIDE_RETRIEVAL_OUTCOME_BINDING_READY`
 
@@ -196,7 +198,7 @@ of the following are true:
 
 - [ ] A canonical Sync runtime request carrier exists.
 - [ ] A production Guide medication fingerprint and binding verifier exists.
-- [ ] Exact selected Source/Member to immutable REQUEST Decision reference lookup exists.
+- [x] Exact selected Source/Member to immutable REQUEST Decision reference lookup exists.
 - [x] A `HybridRetrieveOutcome` downstream binding contract is approved.
 - [ ] Terminal replay restores the complete canonical retrieval result without re-search.
 
