@@ -6,7 +6,10 @@ import {
   createGuide,
   getGuide,
   getGuideForPrescription,
+  type GuideCitation,
   type GuideData,
+  type GuideFallbackCode,
+  type GuideReleaseDecision,
 } from '../api/guides'
 import { getLatestPrescription } from '../api/prescriptions'
 import {
@@ -75,6 +78,149 @@ function isNotFound(error: unknown) {
     error instanceof ApiError &&
     error.status === 404 &&
     !hasChatGuideErrorPresentation(error)
+  )
+}
+
+const GUIDE_RELEASE_DECISIONS: ReadonlySet<string> = new Set([
+  'PASS',
+  'LIMITED',
+  'REJECTED',
+  'STALE',
+])
+
+const GUIDE_FALLBACK_CODES: ReadonlySet<string> = new Set([
+  'NO_APPROVED_EVIDENCE',
+  'CONFLICTING_EVIDENCE',
+  'PROVIDER_TIMEOUT',
+  'DEPENDENCY_UNAVAILABLE',
+  'VALIDATION_FAILED',
+  'PRESCRIPTION_STALE',
+  'EXECUTION_CONTEXT_STALE',
+  'UNSUPPORTED_REQUEST',
+])
+
+const GUIDE_FALLBACK_TITLES: Record<
+  Exclude<GuideReleaseDecision, 'PASS'>,
+  string
+> = {
+  LIMITED: '일부 안내만 제공할 수 있어요',
+  REJECTED: '안전한 안내를 제공할 수 없어요',
+  STALE: '처방 정보가 변경되었어요',
+}
+
+type GuideReleasePresentation =
+  | { kind: 'LEGACY' }
+  | { kind: 'PASS'; citations: GuideCitation[] }
+  | {
+      kind: 'FALLBACK'
+      decision: Exclude<GuideReleaseDecision, 'PASS'>
+      text: string
+    }
+  | { kind: 'INVALID' }
+
+function isNonBlankText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function isGuideReleaseDecision(value: unknown): value is GuideReleaseDecision {
+  return typeof value === 'string' && GUIDE_RELEASE_DECISIONS.has(value)
+}
+
+function isGuideFallbackCode(value: unknown): value is GuideFallbackCode {
+  return typeof value === 'string' && GUIDE_FALLBACK_CODES.has(value)
+}
+
+function hasValidCitationShape(value: unknown): value is GuideCitation {
+  if (typeof value !== 'object' || value === null) return false
+  const citation = value as Partial<GuideCitation>
+  const displayOrder = citation.display_order
+  return (
+    citation.source_type === 'LIFESTYLE_GUIDELINE' &&
+    isNonBlankText(citation.source_code) &&
+    isNonBlankText(citation.source_version) &&
+    isNonBlankText(citation.locator) &&
+    typeof displayOrder === 'number' &&
+    Number.isInteger(displayOrder) &&
+    displayOrder > 0
+  )
+}
+
+function hasOrderedCitations(citations: unknown[]): citations is GuideCitation[] {
+  let previousDisplayOrder = 0
+  for (const citation of citations) {
+    if (
+      !hasValidCitationShape(citation) ||
+      citation.display_order <= previousDisplayOrder
+    ) {
+      return false
+    }
+    previousDisplayOrder = citation.display_order
+  }
+  return true
+}
+
+function getGuideReleasePresentation(
+  guide: GuideData,
+): GuideReleasePresentation {
+  const citations: unknown = guide.citations
+  if (!Array.isArray(citations)) return { kind: 'INVALID' }
+
+  const decision: unknown = guide.release_decision
+  if (decision === null) {
+    return guide.release_is_current === null &&
+      guide.fallback_code === null &&
+      guide.fallback_text === null &&
+      citations.length === 0
+      ? { kind: 'LEGACY' }
+      : { kind: 'INVALID' }
+  }
+
+  if (!isGuideReleaseDecision(decision)) {
+    return { kind: 'INVALID' }
+  }
+
+  if (decision === 'PASS') {
+    return guide.release_is_current === true &&
+      isNonBlankText(guide.content) &&
+      guide.fallback_code === null &&
+      guide.fallback_text === null &&
+      citations.length > 0 &&
+      hasOrderedCitations(citations)
+      ? { kind: 'PASS', citations }
+      : { kind: 'INVALID' }
+  }
+
+  const fallbackCode: unknown = guide.fallback_code
+  const isExpectedCurrentness = decision === 'STALE'
+    ? guide.release_is_current === false
+    : guide.release_is_current === true
+  return guide.content === null &&
+    isExpectedCurrentness &&
+    isGuideFallbackCode(fallbackCode) &&
+    isNonBlankText(guide.fallback_text) &&
+    citations.length === 0
+    ? {
+        kind: 'FALLBACK',
+        decision,
+        text: guide.fallback_text,
+      }
+    : { kind: 'INVALID' }
+}
+
+function GuideCitations({ citations }: { citations: GuideCitation[] }) {
+  return (
+    <aside className="guide-page__citations" aria-labelledby="guide-citations-heading">
+      <h2 id="guide-citations-heading">안내 근거</h2>
+      <ol>
+        {citations.map((citation) => (
+          <li key={`${citation.display_order}:${citation.source_code}:${citation.source_version}:${citation.locator}`}>
+            <strong>{citation.source_code}</strong>
+            <span>{citation.source_version}</span>
+            <span>{citation.locator}</span>
+          </li>
+        ))}
+      </ol>
+    </aside>
   )
 }
 
@@ -545,8 +691,13 @@ function GuidePage({
   }
 
   const completedAt = formatCompletedAt(currentGuide?.completed_at ?? null)
+  const releasePresentation = currentGuide
+    ? getGuideReleasePresentation(currentGuide)
+    : null
   const hasCompletedContent =
     currentGuide?.generation_status === 'COMPLETED' &&
+    (releasePresentation?.kind === 'LEGACY' ||
+      releasePresentation?.kind === 'PASS') &&
     Boolean(currentGuide.content?.trim())
   const structuredGuide = currentGuide?.content
     ? parseGuideContent(currentGuide.content)
@@ -618,6 +769,7 @@ function GuidePage({
               {(currentErrorPresentation?.helper || currentMessage) && (
                 <p>{currentErrorPresentation?.helper ?? currentMessage}</p>
               )}
+
               <Button
                 fullWidth
                 onClick={() => {
@@ -633,6 +785,37 @@ function GuidePage({
                   : currentErrorPresentation?.action === 'RETRY'
                     ? '다시 시도'
                     : '다시 불러오기'}
+              </Button>
+            </section>
+          )}
+
+          {!currentIsLoading &&
+            !currentMessage &&
+            !currentErrorPresentation &&
+            currentGuide?.generation_status === 'COMPLETED' &&
+            releasePresentation?.kind === 'FALLBACK' && (
+            <section className="guide-page__release-fallback" role="status" aria-live="polite">
+              <DoseyMascot variant="chat" />
+              <div>
+                <h2>{GUIDE_FALLBACK_TITLES[releasePresentation.decision]}</h2>
+                <p>{releasePresentation.text}</p>
+              </div>
+            </section>
+          )}
+
+          {!currentIsLoading &&
+            !currentMessage &&
+            !currentErrorPresentation &&
+            currentGuide?.generation_status === 'COMPLETED' &&
+            releasePresentation?.kind === 'INVALID' && (
+            <section className="guide-page__status" role="alert">
+              <div className="guide-page__status-visual guide-page__status-visual--failed">
+                <DoseyMascot variant="chat" />
+              </div>
+              <h2>가이드를 안전하게 표시할 수 없어요</h2>
+              <p>최신 가이드 정보를 다시 불러와 주세요.</p>
+              <Button fullWidth onClick={() => void loadGuide()}>
+                다시 불러오기
               </Button>
             </section>
           )}
@@ -659,6 +842,10 @@ function GuidePage({
                     </div>
                   </details>
                 </Card>
+              )}
+
+              {releasePresentation?.kind === 'PASS' && (
+                <GuideCitations citations={releasePresentation.citations} />
               )}
 
               {import.meta.env.DEV && <ResponseFeedback key={currentGuide.guide_id} target={{ guideId: currentGuide.guide_id }} />}
@@ -693,6 +880,8 @@ function GuidePage({
             !currentMessage &&
             !currentErrorPresentation &&
             currentGuide &&
+            releasePresentation?.kind !== 'FALLBACK' &&
+            releasePresentation?.kind !== 'INVALID' &&
             !hasCompletedContent && (
             <section
               className="guide-page__status"
