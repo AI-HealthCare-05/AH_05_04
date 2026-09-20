@@ -86,7 +86,7 @@ does not change #697 to accommodate a broader authority set.
 | source manifest hash | `HybridRetrieveRequest` | Pinned source/runtime configuration | No Guide retrieval carrier | No | Sync request carrier | Backend Sync runtime boundary | Include the exact stored hash |
 | medication identity/context | Guide query projection | Backend execution identification persistence | Backend membership read; no worker-facing projection | No | Guide medication carrier | Backend Sync runtime boundary | Project verified, pinned medication context |
 | `normalized_query` | `EvidenceSearchRequest` | #180 B2 pinned snapshot projection | B1 carrier still absent | Text policy frozen | Fingerprint and B1 carrier | AI/RAG / Backend Sync | Do not implement before production fingerprint authority exists |
-| `query_fingerprint` | `EvidenceSearchRequest` | No approved production producer | None | No | Fingerprint algorithm/key/verifier | AI/RAG | Keep B2 partial and fail closed |
+| `query_fingerprint` | `EvidenceSearchRequest` | No approved production producer | None | No | Exact algorithm/key/version/secret/verifier authority | AI/RAG | Keep B2 fail closed at its audited algorithm-authority blocker |
 | selected `source_snapshot_id` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `ProductionSearchHit.provenance`; no replay aggregate | First execution only | Replay readback | #178 retrieval persistence/readback | Restore selected-hit provenance in order |
 | selected `source_snapshot_member_id` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `ProductionSearchHit.provenance`; no replay aggregate | First execution only | Replay readback | #178 retrieval persistence/readback | Restore selected-hit provenance in order |
 | `source_code` / `source_version` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `ProductionSearchHit.provenance`; no replay aggregate | First execution only | Replay readback | #178 retrieval persistence/readback | Restore selected-hit provenance in order |
@@ -116,17 +116,21 @@ Minimum follow-up: provide one canonical read projection from pinned execution
 context, bundle, and identification; the Guide retrieval seam must consume that
 carrier rather than caller-supplied raw values.
 
-### B2 — `GUIDE_RETRIEVAL_QUERY_TEXT_AUTHORITY_READY_BUT_FINGERPRINT_BLOCKED`
+### B2 — `GUIDE_RETRIEVAL_QUERY_FINGERPRINT_AUTHORITY_BLOCKED_BY_ALGORITHM_AUTHORITY_MISSING`
 
 The exact pinned snapshot to `SensitiveText normalized_query` rule is frozen
-in `guide-medication-retrieval-query-authority-v1.md`. It remains unusable for
-production because no B1 carrier, production fingerprint authority, or
-`QueryBindingVerifierPort` implementation exists.
+in `guide-medication-retrieval-query-authority-v1.md`. The B2-2 audit in
+`guide-retrieval-query-fingerprint-authority-v1.md` found no exact approved
+production algorithm identifier. Key/version/secret ownership, Worker key
+injection, production `QueryBindingVerifierPort`, and verifier artifact
+identity are also absent. The generic approved HMAC direction and design-only
+examples are insufficient.
 
 Owner: AI/RAG.
 
-Minimum follow-up: provide the B1 carrier and approve/implement the production
-fingerprint algorithm, key/version, and query-binding verifier.
+Minimum follow-up: provide the B1 carrier and approve/implement the exact
+production algorithm, key/version, secret owner/injection, verifier artifact
+identity, and query-binding verifier.
 
 ### B3 — `GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_READY`
 
