@@ -5,6 +5,7 @@ from app.core.errors import ApiError, ErrorDetail
 from app.core.logger import default_logger
 from app.dtos.guides import CreateGuideRequest, GuideCitationData, GuideData, GuideStatus
 from app.models.guides import Guide, GuideCitation, GuideGenerationStatus
+from app.models.prescriptions import PrescriptionVersion
 from app.models.user_consents import ConsentPurpose
 from app.models.users import User
 from app.repositories.guide_repository import GuideRepository
@@ -92,6 +93,23 @@ def _ensure_rediscoverable_version(guide: Guide) -> None:
         _ensure_current_version(guide)
 
 
+def _to_generation_input(version: PrescriptionVersion) -> GuideGenerationInput:
+    return GuideGenerationInput(
+        medications=[
+            MedicationInput(
+                medication_name=medication.medication_name,
+                strength_text=medication.strength_text,
+                dose_value=medication.dose_value,
+                dose_unit=medication.dose_unit,
+                frequency_per_day=medication.frequency_per_day,
+                timing_text=medication.timing_text,
+                duration_days=medication.duration_days,
+            )
+            for medication in version.medications
+        ]
+    )
+
+
 class GuideService:
     def __init__(
         self,
@@ -145,21 +163,7 @@ class GuideService:
 
         failure_error: ApiError
         try:
-            generation_input = GuideGenerationInput(
-                medications=[
-                    MedicationInput(
-                        medication_name=medication.medication_name,
-                        strength_text=medication.strength_text,
-                        dose_value=medication.dose_value,
-                        dose_unit=medication.dose_unit,
-                        frequency_per_day=medication.frequency_per_day,
-                        timing_text=medication.timing_text,
-                        duration_days=medication.duration_days,
-                    )
-                    for medication in version.medications
-                ]
-            )
-            result = await self._generator.generate(generation_input)
+            result = await self._generator.generate(_to_generation_input(version))
         except GuideGenerationTimeoutError:
             await self._repo.mark_failed(
                 guide,
