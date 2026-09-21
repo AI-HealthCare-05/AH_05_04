@@ -15,7 +15,10 @@ generator, citation authority, or release projection.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import cast
 from unicodedata import normalize
 from uuid import UUID
 
@@ -65,8 +68,22 @@ from ai_worker.tasks.rag.knowledge_chunk_content_hydration import (
     hydrate_guide_retrieval_content,
 )
 from rag_runtime.guide_release_projection import GuideRuntimeReleaseProjectionOutcome
+from rag_runtime.guide_runtime_execution import (
+    GuideRuntimeExecutionFailure,
+    GuideRuntimeExecutionRequest,
+    GuideRuntimeExecutionResult,
+    GuideRuntimeExecutorFactoryPort,
+    GuideRuntimeExecutorPort,
+    GuideRuntimeProviderProvenance,
+)
 
-__all__ = ["execute_canonical_guide_runtime", "execute_guide_runtime_release"]
+__all__ = [
+    "GuideRuntimeExecutor",
+    "GuideRuntimeExecutorDependencies",
+    "create_guide_runtime_executor_factory",
+    "execute_canonical_guide_runtime",
+    "execute_guide_runtime_release",
+]
 
 
 async def execute_guide_runtime_release(
@@ -98,15 +115,108 @@ async def execute_guide_runtime_release(
     return project_guide_runtime_release(release_result)
 
 
-def _unavailable() -> GuideRuntimeReleaseProjectionOutcome:
+_terminal_failure: ContextVar[GuideRuntimeExecutionFailure | None] = ContextVar(
+    "guide_runtime_terminal_failure", default=None
+)
+
+
+def _unavailable(
+    failure: GuideRuntimeExecutionFailure = GuideRuntimeExecutionFailure.RELEASE_UNAVAILABLE,
+) -> GuideRuntimeReleaseProjectionOutcome:
     """Return the existing content-free release boundary for an upstream stop."""
     from rag_runtime.guide_release_projection import GuideRuntimeReleaseProjectionUnavailable
 
+    _terminal_failure.set(failure)
     return GuideRuntimeReleaseProjectionUnavailable()
 
 
 def _is_utc(value: object) -> bool:
     return isinstance(value, datetime) and value.tzinfo is not None and value.utcoffset() == timedelta(0)
+
+
+@dataclass(frozen=True, slots=True)
+class GuideRuntimeExecutorDependencies:
+    """Worker-only assembly inputs; never part of the Backend callable."""
+
+    guide_preflight_request: GuideRuntimePreflightRequest
+    retrieval_dependencies: GuideMedicationGuidanceRetrievalDependencies
+    medication_identity_resolver: MedicationIdentityRefResolverPort
+    content_reader: KnowledgeChunkContentReaderPort
+    evidence_authority_reader: AssessmentEligibilityAuthorityReaderPort
+    generator: RuntimeGuidelineGeneratorPort
+    decision_verifier: Rag15ApprovalDecisionVerifierPort
+    guard_reader: RequestGuardRuntimeBindingReaderPort
+    request_authority_reader: RequestCitationAuthorityReaderPort
+    pin_reader: RuntimeBundleCitationApprovalReaderPort
+    approval_reader: SourceUseApprovalExactReaderPort
+    eligibility_reader: CitationEligibilityReaderPort
+    store: CitationAuthorityStorePort
+
+
+class GuideRuntimeExecutor(GuideRuntimeExecutorPort):
+    """Backend-visible executor whose dependencies remain inside Worker composition."""
+
+    def __init__(self, dependencies: GuideRuntimeExecutorDependencies) -> None:
+        self._dependencies = dependencies
+
+    async def execute(self, request: GuideRuntimeExecutionRequest) -> GuideRuntimeExecutionResult:
+        if type(request) is not GuideRuntimeExecutionRequest or not _is_utc(request.evaluation_time):
+            return GuideRuntimeExecutionResult(None, GuideRuntimeExecutionFailure.INVALID_REQUEST, None)
+        token = _terminal_failure.set(None)
+        try:
+            projection = await execute_canonical_guide_runtime(
+                request.runtime_request,  # type: ignore[arg-type]
+                guide_preflight_request=self._dependencies.guide_preflight_request,
+                evaluation_time=cast(datetime, request.evaluation_time),
+                retrieval_dependencies=self._dependencies.retrieval_dependencies,
+                medication_identity_resolver=self._dependencies.medication_identity_resolver,
+                content_reader=self._dependencies.content_reader,
+                evidence_authority_reader=self._dependencies.evidence_authority_reader,
+                generator=self._dependencies.generator,
+                decision_verifier=self._dependencies.decision_verifier,
+                guard_reader=self._dependencies.guard_reader,
+                request_authority_reader=self._dependencies.request_authority_reader,
+                pin_reader=self._dependencies.pin_reader,
+                approval_reader=self._dependencies.approval_reader,
+                eligibility_reader=self._dependencies.eligibility_reader,
+                store=self._dependencies.store,
+            )
+            failure = _terminal_failure.get()
+        finally:
+            _terminal_failure.reset(token)
+        from rag_runtime.guide_release_projection import GuideRuntimeReleaseProjectionUnavailable
+
+        if type(projection) is GuideRuntimeReleaseProjectionUnavailable:
+            return GuideRuntimeExecutionResult(
+                None, failure or GuideRuntimeExecutionFailure.RELEASE_UNAVAILABLE, self._provider_provenance()
+            )
+        provenance = self._provider_provenance()
+        return GuideRuntimeExecutionResult(projection, None, provenance)
+
+    def _provider_provenance(self) -> GuideRuntimeProviderProvenance | None:
+        provenance = self._dependencies.generator.provenance
+        model_name = getattr(self._dependencies.generator, "last_response_model_name", None)
+        if type(model_name) is not str or not model_name.strip():
+            return None
+        return GuideRuntimeProviderProvenance(
+            model_name=model_name,
+            prompt_version=provenance.prompt_ref.version,
+        )
+
+
+class _GuideRuntimeExecutorFactory(GuideRuntimeExecutorFactoryPort):
+    def __init__(self, dependencies: GuideRuntimeExecutorDependencies) -> None:
+        self._dependencies = dependencies
+
+    def create(self) -> GuideRuntimeExecutorPort:
+        return GuideRuntimeExecutor(self._dependencies)
+
+
+def create_guide_runtime_executor_factory(
+    dependencies: GuideRuntimeExecutorDependencies,
+) -> GuideRuntimeExecutorFactoryPort:
+    """Worker composition root; Backend receives only the shared factory Protocol."""
+    return _GuideRuntimeExecutorFactory(dependencies)
 
 
 def _medication_identities(
@@ -178,19 +288,19 @@ async def execute_canonical_guide_runtime(  # noqa: C901 - ordered fail-closed c
     created here.
     """
     if not _is_utc(evaluation_time):
-        return _unavailable()
+        return _unavailable(GuideRuntimeExecutionFailure.INVALID_REQUEST)
 
     retrieval_outcome = await retrieve_medication_guidance(
         GuideMedicationGuidanceRetrievalRequest(runtime_request=runtime_request),
         dependencies=retrieval_dependencies,
     )
     if retrieval_outcome.decision is not GuideMedicationGuidanceRetrievalDecision.READY:
-        return _unavailable()
+        return _unavailable(GuideRuntimeExecutionFailure.RETRIEVAL_NOT_READY)
 
     resolutions = await medication_identity_resolver.resolve_ordered(identifications=runtime_request.identifications)
     medication_identities = _medication_identities(runtime_request, resolutions)
     if medication_identities is None or len(medication_identities) != len(retrieval_outcome.medications):
-        return _unavailable()
+        return _unavailable(GuideRuntimeExecutionFailure.IDENTITY_UNRESOLVED)
 
     aggregate_entries: list[GuideAggregateEvidenceEntry] = []
     for medication, medication_identity in zip(retrieval_outcome.medications, medication_identities, strict=True):
@@ -199,12 +309,12 @@ async def execute_canonical_guide_runtime(  # noqa: C901 - ordered fail-closed c
             reader=content_reader,
         )
         if hydration_outcome.decision is not GuideContentHydrationDecision.HYDRATED:
-            return _unavailable()
+            return _unavailable(GuideRuntimeExecutionFailure.CONTENT_UNAVAILABLE)
 
         persisted_receipt = medication.hybrid_outcome.persisted_receipt
         retrieval_receipt = medication.composition.retrieval_receipt
         if persisted_receipt is None or retrieval_receipt is None:
-            return _unavailable()
+            return _unavailable(GuideRuntimeExecutionFailure.CONTENT_UNAVAILABLE)
         authorities = []
         for hydrated_selection in hydration_outcome.selections:
             authority = await evidence_authority_reader.read_by_selection(
@@ -212,7 +322,7 @@ async def execute_canonical_guide_runtime(  # noqa: C901 - ordered fail-closed c
                 knowledge_chunk_id=hydrated_selection.selection.hit.provenance.knowledge_chunk_id,
             )
             if authority is None:
-                return _unavailable()
+                return _unavailable(GuideRuntimeExecutionFailure.EVIDENCE_UNAVAILABLE)
             authorities.append(authority)
 
         handoff_outcome = assemble_authoritative_guide_evidence_handoff(
@@ -229,7 +339,7 @@ async def execute_canonical_guide_runtime(  # noqa: C901 - ordered fail-closed c
             or handoff_outcome.build_outcome is None
             or handoff_outcome.build_outcome.handoff is None
         ):
-            return _unavailable()
+            return _unavailable(GuideRuntimeExecutionFailure.HANDOFF_REJECTED)
         aggregate_entries.append(
             GuideAggregateEvidenceEntry(
                 medication_identity=medication_identity,
@@ -243,7 +353,7 @@ async def execute_canonical_guide_runtime(  # noqa: C901 - ordered fail-closed c
         aggregate_outcome.decision is not GuideAggregateEvidenceAssemblyDecision.ASSEMBLED
         or aggregate_outcome.aggregate is None
     ):
-        return _unavailable()
+        return _unavailable(GuideRuntimeExecutionFailure.AGGREGATE_REJECTED)
 
     return await execute_guide_runtime_release(
         GuideCitationRuntimeOrchestrationRequest(
