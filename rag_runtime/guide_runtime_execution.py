@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
-from rag_runtime.guide_release_projection import GuideRuntimeReleaseProjectionOutcome
+from rag_runtime.guide_release_projection import GuideRuntimeReleaseProjectionCarrier, GuideRuntimeReleaseProjectionOutcome
 from rag_runtime.guide_retrieval_binding import GuideRetrievalBindingManifest
 from rag_runtime.request_guard_runtime_binding import RequestGuardRuntimeBindingRef
 
@@ -99,8 +99,10 @@ class GuideRuntimeExecutionResult:
 
     @classmethod
     def succeeded(
-        cls, projection: GuideRuntimeReleaseProjectionOutcome, provenance: GuideRuntimeProviderProvenance
+        cls, projection: GuideRuntimeReleaseProjectionCarrier, provenance: GuideRuntimeProviderProvenance
     ) -> GuideRuntimeExecutionResult:
+        if type(projection) is not GuideRuntimeReleaseProjectionCarrier:
+            raise ValueError("success requires an available release projection")
         return cls(projection, None, provenance)
 
     @classmethod
