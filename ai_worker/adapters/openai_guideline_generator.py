@@ -8,6 +8,7 @@ dual timeout, max_retries=0 enforcement, and standard provider_runtime observabi
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 from typing import Any
 
 from openai import (
@@ -30,6 +31,7 @@ from ai_worker.tasks.rag.guideline_generator import (
     GuidelineGeneratorPort,
 )
 from ai_worker.tasks.rag.guideline_generator_prompt import (
+    GUIDELINE_GENERATOR_PROMPT_VERSION,
     GUIDELINE_GENERATOR_SYSTEM_INSTRUCTIONS,
     GuidelineStructuredSelection,
     build_candidate_provenance,
@@ -90,6 +92,10 @@ class OpenAIGuidelineGeneratorAdapter(GuidelineGeneratorPort):
 
         # Self-compute candidate provenance bound to runtime execution artifacts
         self._provenance = build_candidate_provenance(model=self._model)
+        self._last_response_model_name: ContextVar[str | None] = ContextVar(
+            "openai_guideline_response_model_name", default=None
+        )
+        self._applied_prompt_version = GUIDELINE_GENERATOR_PROMPT_VERSION
 
         descriptor = ProviderCallDescriptor(
             provider=Provider.OPENAI,
@@ -106,6 +112,15 @@ class OpenAIGuidelineGeneratorAdapter(GuidelineGeneratorPort):
     @property
     def provenance(self) -> GuidelineGenerationProvenance:
         return self._provenance
+
+    @property
+    def last_response_model_name(self) -> str | None:
+        """Actual provider response model for this async execution context."""
+        return self._last_response_model_name.get()
+
+    @property
+    def applied_prompt_version(self) -> str:
+        return self._applied_prompt_version
 
     @staticmethod
     def _is_valid_evidence_precondition(request: GuidelineGenerationRequest) -> bool:
@@ -240,6 +255,7 @@ class OpenAIGuidelineGeneratorAdapter(GuidelineGeneratorPort):
 
     async def generate(self, request: GuidelineGenerationRequest) -> GuidelineGenerationResult:
         """Generates a GuidelineCardDraft by selecting claims from provided evidence."""
+        self._last_response_model_name.set(None)
         # 1. Defensive production evidence precondition boundary: fail closed before Provider call
         if not self._is_valid_evidence_precondition(request):
             return GuidelineGenerationFailure.VALIDATION_FAILED
@@ -254,6 +270,10 @@ class OpenAIGuidelineGeneratorAdapter(GuidelineGeneratorPort):
         response, failure = await self._invoke_provider_raw(input_json, span)
         if failure is not None:
             return failure
+        response_model_name = getattr(response, "model", None) or self._model
+        self._last_response_model_name.set(
+            response_model_name if isinstance(response_model_name, str) and response_model_name.strip() else None
+        )
 
         # 5. Check refusal, safety filter, and completion status
         status_failure = self._validate_response_status(response, span)
@@ -290,7 +310,7 @@ class OpenAIGuidelineGeneratorAdapter(GuidelineGeneratorPort):
             return GuidelineGenerationFailure.VALIDATION_FAILED
 
         # 8. Provider call succeeded: emit provider model evidence on span
-        model_name = getattr(response, "model", None) or self._model
+        model_name = response_model_name
         self._observer.succeeded(span, response=response, model_name=model_name)
         return draft
 

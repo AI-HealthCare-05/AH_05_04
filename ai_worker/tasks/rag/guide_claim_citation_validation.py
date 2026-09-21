@@ -89,6 +89,7 @@ from ai_worker.tasks.rag.claim_citation_validator import (
     validate_claim_citations,
 )
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
+from ai_worker.tasks.rag.guide_aggregate_evidence import GuideAggregateEvidence
 from ai_worker.tasks.rag.guide_evidence_handoff import (
     VerifiedGuideEvidenceHandoff,
     VerifiedGuideEvidenceSelection,
@@ -407,7 +408,7 @@ def _generated_card(outcome: GuideGenerationCardOutcome) -> GuidelineCard | None
     return card
 
 
-def _handoff_of(outcome: GuideGenerationCardOutcome) -> VerifiedGuideEvidenceHandoff | None:
+def _handoffs_of(outcome: GuideGenerationCardOutcome) -> tuple[VerifiedGuideEvidenceHandoff, ...] | None:
     """The #760 authoritative handoff the Card was ultimately generated from.
 
     This is the only place `SourceExecutionProvenance` can come from: the #774
@@ -415,24 +416,40 @@ def _handoff_of(outcome: GuideGenerationCardOutcome) -> VerifiedGuideEvidenceHan
     operation / artifact member coordinates and both request Decision refs as
     audit-only, so the Card cannot carry them and this module must not forge them.
     """
-    ready_inputs = outcome.upstream_outcome.ready_inputs
-    if ready_inputs is None:
+    aggregate = outcome.aggregate
+    if aggregate is not None:
+        if type(aggregate) is not GuideAggregateEvidence or not aggregate.entries:
+            return None
+        handoffs = tuple(entry.handoff for entry in aggregate.entries)
+        if not all(
+            type(handoff) is VerifiedGuideEvidenceHandoff and type(handoff.selections) is tuple for handoff in handoffs
+        ):
+            return None
+        return handoffs
+    upstream_outcome = outcome.upstream_outcome
+    if upstream_outcome is None or upstream_outcome.ready_inputs is None:
         return None
-    handoff = ready_inputs.evidence_handoff
+    handoff = upstream_outcome.ready_inputs.evidence_handoff
     if type(handoff) is not VerifiedGuideEvidenceHandoff or type(handoff.selections) is not tuple:
         return None
-    return handoff
+    return (handoff,)
 
 
-def _selections_by_key(
-    handoff: VerifiedGuideEvidenceHandoff,
-) -> dict[str, VerifiedGuideEvidenceSelection] | None:
-    indexed: dict[str, VerifiedGuideEvidenceSelection] = {}
-    for selection in handoff.selections:
-        if type(selection) is not VerifiedGuideEvidenceSelection or selection.evidence_key in indexed:
-            return None
-        indexed[selection.evidence_key] = selection
-    return indexed or None
+def _selections_by_anchor(
+    handoffs: tuple[VerifiedGuideEvidenceHandoff, ...],
+) -> dict[tuple[object, str], tuple[VerifiedGuideEvidenceSelection, ...]] | None:
+    indexed: dict[tuple[object, str], list[VerifiedGuideEvidenceSelection]] = {}
+    for handoff in handoffs:
+        seen_anchors: set[tuple[object, str]] = set()
+        for selection in handoff.selections:
+            if type(selection) is not VerifiedGuideEvidenceSelection:
+                return None
+            anchor = (selection.source_snapshot_id, selection.evidence_key)
+            if anchor in seen_anchors:
+                return None
+            seen_anchors.add(anchor)
+            indexed.setdefault(anchor, []).append(selection)
+    return {anchor: tuple(selections) for anchor, selections in indexed.items()} or None
 
 
 def _citation_matches_selection(
@@ -503,7 +520,7 @@ def _evidence_ref(
 
 def _project_candidate_set(
     card: GuidelineCard,
-    selections_by_key: dict[str, VerifiedGuideEvidenceSelection],
+    selections_by_anchor: dict[tuple[object, str], tuple[VerifiedGuideEvidenceSelection, ...]],
 ) -> ClaimCitationCandidateSet | None:
     """Project one GENERATED Card into a candidate set, or fail closed.
 
@@ -516,18 +533,24 @@ def _project_candidate_set(
     for claim_index, claim in enumerate(card.claims, start=1):
         if type(claim) is not GuidelineClaim or type(claim.citations) is not tuple or not claim.citations:
             return None
-        seen_keys: set[str] = set()
+        seen_anchors: set[tuple[object, str]] = set()
         for citation in claim.citations:
             if (
                 type(citation) is not GuidelineCitation
                 or citation.source_type is not GuidelineCitationSourceType.LIFESTYLE_GUIDELINE
-                or citation.evidence_key in seen_keys
+                or (citation.source_snapshot_id, citation.evidence_key) in seen_anchors
             ):
                 return None
-            seen_keys.add(citation.evidence_key)
-            selection = selections_by_key.get(citation.evidence_key)
-            if selection is None or not _citation_matches_selection(citation, selection):
+            anchor = (citation.source_snapshot_id, citation.evidence_key)
+            seen_anchors.add(anchor)
+            matching = tuple(
+                selection
+                for selection in selections_by_anchor.get(anchor, ())
+                if _citation_matches_selection(citation, selection)
+            )
+            if len(matching) != 1:
                 return None
+            selection = matching[0]
             citations.append(
                 CitationCandidate(
                     citation_key=f"{claim.claim_key}:{citation.evidence_key}",
@@ -626,15 +649,15 @@ def run_guide_claim_citation_validation(
     card = _generated_card(guide_outcome)
     if card is None:
         return _stopped(GuideClaimCitationStage.CARD_NOT_ELIGIBLE, guide_outcome=guide_outcome)
-    handoff = _handoff_of(guide_outcome)
-    if handoff is None:
+    handoffs = _handoffs_of(guide_outcome)
+    if handoffs is None:
         return _stopped(GuideClaimCitationStage.CARD_NOT_ELIGIBLE, guide_outcome=guide_outcome)
 
     # Phase 2 — Card <-> authoritative handoff projection, exact match or fail closed.
-    selections_by_key = _selections_by_key(handoff)
-    if selections_by_key is None:
+    selections_by_anchor = _selections_by_anchor(handoffs)
+    if selections_by_anchor is None:
         return _stopped(GuideClaimCitationStage.CARD_PROJECTION, guide_outcome=guide_outcome)
-    candidate_set = _project_candidate_set(card, selections_by_key)
+    candidate_set = _project_candidate_set(card, selections_by_anchor)
     if candidate_set is None:
         return _stopped(GuideClaimCitationStage.CARD_PROJECTION, guide_outcome=guide_outcome)
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from typing import cast
 
 from ai_worker.tasks.rag.citation_authorization import (
     AuthorizationBuildDecision,
@@ -34,7 +35,9 @@ from ai_worker.tasks.rag.guide_generation_card_orchestration import (
     GuideGenerationCardDecision,
     GuideGenerationCardOrchestrationRequest,
     GuideGenerationCardOutcome,
+    GuideVerifiedAggregateGenerationRequest,
     orchestrate_guide_generation_card,
+    orchestrate_guide_generation_card_from_verified_aggregate,
 )
 from ai_worker.tasks.rag.guide_runtime_preflight import RuntimeGuidelineGeneratorPort
 from ai_worker.tasks.rag.guideline_approval_pack import Rag15ApprovalDecisionVerifierPort
@@ -70,7 +73,7 @@ class GuideCitationRuntimeStage(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class GuideCitationRuntimeOrchestrationRequest:
-    generation_request: GuideGenerationCardOrchestrationRequest
+    generation_request: GuideGenerationCardOrchestrationRequest | GuideVerifiedAggregateGenerationRequest
     request_guard_runtime_binding_ref: RequestGuardRuntimeBindingRef
     evaluation_time: datetime
 
@@ -124,11 +127,18 @@ async def orchestrate_guide_citation_runtime(
 ) -> GuideCitationRuntimeOrchestrationOutcome:
     """Sequence existing Guide, Citation authority, and finalization boundaries."""
 
-    generation_outcome = await orchestrate_guide_generation_card(
-        request.generation_request,
-        generator=generator,
-        decision_verifier=decision_verifier,
-    )
+    if type(request.generation_request) is GuideVerifiedAggregateGenerationRequest:
+        generation_outcome = await orchestrate_guide_generation_card_from_verified_aggregate(
+            request.generation_request,
+            generator=generator,
+            decision_verifier=decision_verifier,
+        )
+    else:
+        generation_outcome = await orchestrate_guide_generation_card(
+            cast(GuideGenerationCardOrchestrationRequest, request.generation_request),
+            generator=generator,
+            decision_verifier=decision_verifier,
+        )
     if generation_outcome.decision is GuideGenerationCardDecision.STOPPED:
         return _stopped(
             GuideCitationRuntimeStage.GENERATION_CARD,

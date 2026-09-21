@@ -2,13 +2,25 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import cast
+from uuid import UUID
 
 import pytest
 
+from ai_worker.tasks.rag.authoritative_guide_evidence_handoff import (
+    AuthoritativeGuideEvidenceAssemblyDecision,
+    AuthoritativeGuideEvidenceAssemblyOutcome,
+)
 from ai_worker.tasks.rag.citation_authorization import CitationAuthorizationBuildOutcome, CitationAuthorizationRequest
 from ai_worker.tasks.rag.citation_authorization_authority import CitationAuthorityIssueOutcome
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, SensitiveText
+from ai_worker.tasks.rag.guide_aggregate_evidence import (
+    GuideAggregateEvidenceAssemblyDecision,
+    GuideAggregateEvidenceAssemblyOutcome,
+)
 from ai_worker.tasks.rag.guide_citation_runtime_orchestration import (
     GuideCitationRuntimeDecision,
     GuideCitationRuntimeOrchestrationOutcome,
@@ -16,10 +28,20 @@ from ai_worker.tasks.rag.guide_citation_runtime_orchestration import (
     GuideCitationRuntimeStage,
 )
 from ai_worker.tasks.rag.guide_claim_citation_validation import GuideClaimCitationValidationOutcome
+from ai_worker.tasks.rag.guide_evidence_handoff import (
+    GuideEvidenceHandoffBuildDecision,
+    GuideEvidenceHandoffBuildOutcome,
+)
 from ai_worker.tasks.rag.guide_generation_card_orchestration import (
     GuideGenerationCardDecision,
     GuideGenerationCardOutcome,
 )
+from ai_worker.tasks.rag.guide_medication_guidance_retrieval import (
+    GuideMedicationGuidanceRetrievalDecision,
+    GuideMedicationGuidanceRetrievalOutcome,
+    MedicationGuidanceRetrieval,
+)
+from ai_worker.tasks.rag.guide_medication_identity_resolution import MedicationIdentityRefResolution
 from ai_worker.tasks.rag.guide_orchestration import GuideOrchestrationOutcome
 from ai_worker.tasks.rag.guideline_card import (
     GuidelineCard,
@@ -27,7 +49,12 @@ from ai_worker.tasks.rag.guideline_card import (
     GuidelineCardReason,
     GuidelineCardStatus,
     GuidelineFallbackCode,
+    MedicationIdentityRef,
     VerifiedGuidelineFallback,
+)
+from ai_worker.tasks.rag.knowledge_chunk_content_hydration import (
+    GuideContentHydrationDecision,
+    GuideContentHydrationOutcome,
 )
 from ai_worker.tests.rag.test_guide_release_projection import _authorized_selection, _card
 from rag_runtime.guide_release_projection import (
@@ -256,3 +283,194 @@ def test_canonical_composition_does_not_reinterpret_early_runtime_stop(
 
     assert calls == ["#890", "#893", "#906"]
     assert isinstance(projection, GuideRuntimeReleaseProjectionUnavailable)
+
+
+@dataclass(frozen=True)
+class _CarrierIdentification:
+    medication_identification_id: UUID
+    prescription_version_medication_id: UUID
+    medication_name_snapshot: str = "synthetic"
+    strength_text_snapshot: str | None = None
+
+
+@dataclass(frozen=True)
+class _RuntimeCarrier:
+    prescription_version_id: UUID
+    request_guard_runtime_binding_ref: object
+    identifications: tuple[_CarrierIdentification, ...]
+
+
+class _DeterministicIdentityResolver:
+    def __init__(self, resolutions: tuple[MedicationIdentityRefResolution, ...]) -> None:
+        self.resolutions = resolutions
+        self.calls = 0
+
+    async def resolve_ordered(self, *, identifications: tuple[object, ...]):
+        self.calls += 1
+        return self.resolutions
+
+
+class _AuthorityReader:
+    async def read_by_selection(self, *, retrieval_run_id: UUID, knowledge_chunk_id: UUID):
+        return object()
+
+
+def _canonical_root_fixture(count: int):
+    prescription_id = UUID("c0000000-0000-4000-8000-000000000001")
+    identifications = tuple(
+        _CarrierIdentification(
+            UUID(f"c0000000-0000-4000-8000-000000000{index:03d}"),
+            UUID(f"d0000000-0000-4000-8000-000000000{index:03d}"),
+        )
+        for index in range(1, count + 1)
+    )
+    carrier = _RuntimeCarrier(prescription_id, object(), identifications)
+    resolver = _DeterministicIdentityResolver(
+        tuple(
+            MedicationIdentityRefResolution(
+                identification.medication_identification_id,
+                identification.prescription_version_medication_id,
+                MedicationIdentityRef(
+                    str(identification.prescription_version_medication_id), "MFDS_ITEM_SEQ", f"ITEM-{index}"
+                ),
+            )
+            for index, identification in enumerate(identifications, start=1)
+        )
+    )
+    medications = tuple(
+        MedicationGuidanceRetrieval(
+            identification.prescription_version_medication_id,
+            SimpleNamespace(
+                persisted_receipt=SimpleNamespace(run_id=UUID(f"e0000000-0000-4000-8000-000000000{index:03d}"))
+            ),  # type: ignore[arg-type]
+            SimpleNamespace(selections=(object(),), retrieval_receipt=object()),  # type: ignore[arg-type]
+        )
+        for index, identification in enumerate(identifications, start=1)
+    )
+    return carrier, resolver, medications
+
+
+@pytest.mark.parametrize("count", (1, 2))
+def test_final_canonical_root_sequences_existing_boundaries_once_per_medication(
+    monkeypatch: pytest.MonkeyPatch, count: int
+) -> None:
+    composition = _composition_module()
+    carrier, resolver, medications = _canonical_root_fixture(count)
+    calls: list[str] = []
+    handoffs = tuple(object() for _ in medications)
+    release_projection = GuideRuntimeReleaseProjectionUnavailable()
+
+    async def retrieve(request, *, dependencies):
+        calls.append("#919")
+        assert request.runtime_request is carrier
+        return GuideMedicationGuidanceRetrievalOutcome(
+            GuideMedicationGuidanceRetrievalDecision.READY, None, medications
+        )
+
+    async def hydrate(selections, *, reader):
+        calls.append("#711")
+        return GuideContentHydrationOutcome(
+            GuideContentHydrationDecision.HYDRATED,
+            (),
+            (
+                SimpleNamespace(
+                    selection=SimpleNamespace(
+                        hit=SimpleNamespace(
+                            provenance=SimpleNamespace(knowledge_chunk_id=UUID("f0000000-0000-4000-8000-000000000001"))
+                        )
+                    ),
+                ),
+            ),
+        )
+
+    def handoff(request):
+        calls.append("#760")
+        return AuthoritativeGuideEvidenceAssemblyOutcome(
+            AuthoritativeGuideEvidenceAssemblyDecision.BUILT,
+            (),
+            GuideEvidenceHandoffBuildOutcome(
+                GuideEvidenceHandoffBuildDecision.BUILT,
+                (),
+                SimpleNamespace(handoff=handoffs[len([call for call in calls if call == "#760"]) - 1]),
+            ),
+        )
+
+    def aggregate(entries):
+        calls.append("aggregate")
+        assert tuple(entry.medication_identity for entry in entries) == tuple(
+            item.medication_identity for item in resolver.resolutions
+        )
+        return GuideAggregateEvidenceAssemblyOutcome(
+            GuideAggregateEvidenceAssemblyDecision.ASSEMBLED, cast(object, object())
+        )
+
+    async def release(request, **dependencies):
+        calls.append("#918")
+        assert request.generation_request.aggregate is not None
+        return release_projection
+
+    monkeypatch.setattr(composition, "retrieve_medication_guidance", retrieve)
+    monkeypatch.setattr(composition, "hydrate_guide_retrieval_content", hydrate)
+    monkeypatch.setattr(composition, "assemble_authoritative_guide_evidence_handoff", handoff)
+    monkeypatch.setattr(composition, "assemble_guide_aggregate_evidence", aggregate)
+    monkeypatch.setattr(composition, "execute_guide_runtime_release", release)
+
+    result = asyncio.run(
+        composition.execute_canonical_guide_runtime(
+            carrier,
+            guide_preflight_request=cast(object, object()),
+            evaluation_time=datetime(2026, 9, 21, tzinfo=UTC),
+            retrieval_dependencies=cast(object, object()),
+            medication_identity_resolver=resolver,
+            content_reader=cast(object, object()),
+            evidence_authority_reader=_AuthorityReader(),
+            generator=cast(object, object()),
+            decision_verifier=cast(object, object()),
+            guard_reader=cast(object, object()),
+            request_authority_reader=cast(object, object()),
+            pin_reader=cast(object, object()),
+            approval_reader=cast(object, object()),
+            eligibility_reader=cast(object, object()),
+            store=cast(object, object()),
+        )
+    )
+
+    assert result is release_projection
+    assert resolver.calls == 1
+    assert calls == ["#919", *("#711", "#760") * count, "aggregate", "#918"]
+
+
+def test_final_canonical_root_stops_after_blocked_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
+    composition = _composition_module()
+    carrier, resolver, _ = _canonical_root_fixture(1)
+    calls: list[str] = []
+
+    async def retrieve(request, *, dependencies):
+        calls.append("#919")
+        return GuideMedicationGuidanceRetrievalOutcome(GuideMedicationGuidanceRetrievalDecision.BLOCKED, object())
+
+    monkeypatch.setattr(composition, "retrieve_medication_guidance", retrieve)
+
+    result = asyncio.run(
+        composition.execute_canonical_guide_runtime(
+            carrier,
+            guide_preflight_request=cast(object, object()),
+            evaluation_time=datetime(2026, 9, 21, tzinfo=UTC),
+            retrieval_dependencies=cast(object, object()),
+            medication_identity_resolver=resolver,
+            content_reader=cast(object, object()),
+            evidence_authority_reader=cast(object, object()),
+            generator=cast(object, object()),
+            decision_verifier=cast(object, object()),
+            guard_reader=cast(object, object()),
+            request_authority_reader=cast(object, object()),
+            pin_reader=cast(object, object()),
+            approval_reader=cast(object, object()),
+            eligibility_reader=cast(object, object()),
+            store=cast(object, object()),
+        )
+    )
+
+    assert isinstance(result, GuideRuntimeReleaseProjectionUnavailable)
+    assert resolver.calls == 0
+    assert calls == ["#919"]

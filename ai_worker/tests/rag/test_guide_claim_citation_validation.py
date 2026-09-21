@@ -10,6 +10,7 @@ rather than an arbitrary one, that receipts count claims and not citations, and 
 the run reaches `ValidatedCitationSelection` through the existing kernel.
 """
 
+# mypy: disable-error-code="type-var,union-attr"
 from __future__ import annotations
 
 import ast

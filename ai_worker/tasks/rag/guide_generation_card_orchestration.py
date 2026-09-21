@@ -60,8 +60,13 @@ citations were authorized, a release was approved, or a Card was persisted.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 
+from ai_worker.tasks.rag.guide_aggregate_evidence import (
+    GuideAggregateEvidence,
+    project_guideline_evidence_from_aggregate,
+)
 from ai_worker.tasks.rag.guide_orchestration import (
     GuideOrchestrationDecision,
     GuideOrchestrationOutcome,
@@ -69,7 +74,14 @@ from ai_worker.tasks.rag.guide_orchestration import (
     orchestrate_guide_preflight_handoff,
 )
 from ai_worker.tasks.rag.guide_personalized_composition import compose_personalized_guide
-from ai_worker.tasks.rag.guide_runtime_preflight import RuntimeGuidelineGeneratorPort
+from ai_worker.tasks.rag.guide_runtime_preflight import (
+    GuideRuntimePreflightDecision,
+    GuideRuntimePreflightOutcome,
+    GuideRuntimePreflightRequest,
+    ReadyGuideRuntimeContext,
+    RuntimeGuidelineGeneratorPort,
+    preflight_guide_runtime,
+)
 from ai_worker.tasks.rag.guideline_approval_pack import Rag15ApprovalDecisionVerifierPort
 from ai_worker.tasks.rag.guideline_card import (
     GuidelineCardDraft,
@@ -88,7 +100,10 @@ from ai_worker.tasks.rag.guideline_generator import (
     GuidelineGenerationRequest,
     GuidelineGenerationResult,
 )
-from ai_worker.tasks.rag.guideline_production_evidence import project_guideline_evidence_from_handoff
+from ai_worker.tasks.rag.guideline_production_evidence import (
+    ProductionGuidelineEvidenceSet,
+    project_guideline_evidence_from_handoff,
+)
 
 __all__ = [
     "GuideGenerationCardDecision",
@@ -140,6 +155,21 @@ class GuideGenerationCardOrchestrationRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class GuideVerifiedAggregateGenerationRequest:
+    """The P0-C-only entry after #760 child handoffs were aggregated.
+
+    The aggregate is not caller-provided citation evidence: it is the exact
+    generation input bound into the resulting ``GuideGenerationCardOutcome`` for
+    the downstream validator to read.  No single child is selected or synthesized.
+    """
+
+    preflight_request: GuideRuntimePreflightRequest
+    aggregate: GuideAggregateEvidence
+    medication_identities: tuple[MedicationIdentityRef, ...]
+    evaluation_time: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class GuideGenerationCardOutcome:
     """Every stage's own result, unchanged.
 
@@ -151,18 +181,20 @@ class GuideGenerationCardOutcome:
 
     decision: GuideGenerationCardDecision
     stopped_stage: GuideGenerationCardStage | None
-    upstream_outcome: GuideOrchestrationOutcome
+    upstream_outcome: GuideOrchestrationOutcome | None
     generation_result: GuidelineGenerationResult | None
     authority_outcome: RequestScopedGuidelineAuthorityOutcome | None
     card_outcome: GuidelineCardOutcome | None
+    aggregate: GuideAggregateEvidence | None = None
 
 
 def _stopped(
     stage: GuideGenerationCardStage,
     *,
-    upstream_outcome: GuideOrchestrationOutcome,
+    upstream_outcome: GuideOrchestrationOutcome | None,
     generation_result: GuidelineGenerationResult | None = None,
     authority_outcome: RequestScopedGuidelineAuthorityOutcome | None = None,
+    aggregate: GuideAggregateEvidence | None = None,
 ) -> GuideGenerationCardOutcome:
     return GuideGenerationCardOutcome(
         decision=GuideGenerationCardDecision.STOPPED,
@@ -171,6 +203,96 @@ def _stopped(
         generation_result=generation_result,
         authority_outcome=authority_outcome,
         card_outcome=None,
+        aggregate=aggregate,
+    )
+
+
+async def _generate_and_finalize(
+    *,
+    evidence: ProductionGuidelineEvidenceSet | GuideAggregateEvidence,
+    preflight_request: GuideRuntimePreflightRequest,
+    preflight_outcome: GuideRuntimePreflightOutcome,
+    runtime_context: ReadyGuideRuntimeContext,
+    medication_identities: tuple[MedicationIdentityRef, ...],
+    evaluation_time: datetime,
+    upstream_outcome: GuideOrchestrationOutcome | None,
+    aggregate: GuideAggregateEvidence | None,
+    generator: RuntimeGuidelineGeneratorPort,
+) -> GuideGenerationCardOutcome:
+    """Shared existing generator/binding/finalizer path for one or many runs."""
+    generation_result = await compose_personalized_guide(
+        GuidelineGenerationRequest(
+            medication_identities=medication_identities,
+            evidence=evidence,
+            policy=preflight_request.policy,
+        ),
+        generator=generator,
+    )
+
+    authority_outcome: RequestScopedGuidelineAuthorityOutcome | None = None
+    if type(generation_result) is GuidelineCardDraft:
+        authority_outcome = build_request_scoped_guideline_authority(
+            preflight_outcome,
+            evidence=evidence,
+            medication_identities=medication_identities,
+            draft=generation_result,
+        )
+        authority = authority_outcome.authority
+        if authority is None:
+            return _stopped(
+                GuideGenerationCardStage.DYNAMIC_BINDING_AUTHORITY,
+                upstream_outcome=upstream_outcome,
+                generation_result=generation_result,
+                authority_outcome=authority_outcome,
+                aggregate=aggregate,
+            )
+        draft: GuidelineCardDraft | None = generation_result
+        generation_failure: GuidelineGenerationFailure | None = None
+        approval_verifier = authority.approval_verifier
+        approved_evidence_bindings = authority.bindings
+    elif type(generation_result) is GuidelineGenerationFailure:
+        static_verifier = build_request_scoped_guideline_static_approval_verifier(preflight_outcome)
+        if static_verifier is None:
+            return _stopped(
+                GuideGenerationCardStage.GENERATION,
+                upstream_outcome=upstream_outcome,
+                generation_result=generation_result,
+                aggregate=aggregate,
+            )
+        draft = None
+        generation_failure = generation_result
+        approval_verifier = static_verifier
+        approved_evidence_bindings = ()
+    else:
+        return _stopped(
+            GuideGenerationCardStage.GENERATION,
+            upstream_outcome=upstream_outcome,
+            generation_result=generation_result,
+            aggregate=aggregate,
+        )
+
+    card_outcome = finalize_guideline_card(
+        GuidelineCardRequest(
+            medication_identities=medication_identities,
+            evidence=evidence,
+            draft=draft,
+            generation_failure=generation_failure,
+            policy=preflight_request.policy,
+            provenance=runtime_context.generation_provenance,
+            approved_fallbacks=preflight_request.fallbacks,
+            evaluated_at=evaluation_time,
+            approved_evidence_bindings=approved_evidence_bindings,
+        ),
+        approval_verifier=approval_verifier,
+    )
+    return GuideGenerationCardOutcome(
+        decision=GuideGenerationCardDecision.COMPLETED,
+        stopped_stage=None,
+        upstream_outcome=upstream_outcome,
+        generation_result=generation_result,
+        authority_outcome=authority_outcome,
+        card_outcome=card_outcome,
+        aggregate=aggregate,
     )
 
 
@@ -204,82 +326,49 @@ async def orchestrate_guide_generation_card(
     # Phase 2 — #774 production evidence projection. The only evidence input.
     production_evidence = project_guideline_evidence_from_handoff(ready_inputs.evidence_handoff)
 
-    # Phase 3 — Generator, exactly once
     preflight_request = request.upstream_request.preflight_request
-    generation_result = await compose_personalized_guide(
-        GuidelineGenerationRequest(
-            medication_identities=request.medication_identities,
-            evidence=production_evidence,
-            policy=preflight_request.policy,
-        ),
+    return await _generate_and_finalize(
+        evidence=production_evidence,
+        preflight_request=preflight_request,
+        preflight_outcome=preflight_outcome,
+        runtime_context=ready_inputs.runtime_context,
+        medication_identities=request.medication_identities,
+        evaluation_time=production_evidence.evaluated_at,
+        upstream_outcome=upstream_outcome,
+        aggregate=None,
         generator=generator,
     )
 
-    # Phase 4 — approval authority for whatever the Generator actually returned
-    authority_outcome: RequestScopedGuidelineAuthorityOutcome | None = None
-    if type(generation_result) is GuidelineCardDraft:
-        authority_outcome = build_request_scoped_guideline_authority(
-            preflight_outcome,
-            evidence=production_evidence,
-            medication_identities=request.medication_identities,
-            draft=generation_result,
-        )
-        authority = authority_outcome.authority
-        if authority is None:
-            # Fail closed. The finalizer is not called and no fallback is invented;
-            # an unbindable draft is not an answer this slice may downgrade.
-            return _stopped(
-                GuideGenerationCardStage.DYNAMIC_BINDING_AUTHORITY,
-                upstream_outcome=upstream_outcome,
-                generation_result=generation_result,
-                authority_outcome=authority_outcome,
-            )
-        draft: GuidelineCardDraft | None = generation_result
-        generation_failure: GuidelineGenerationFailure | None = None
-        approval_verifier = authority.approval_verifier
-        approved_evidence_bindings = authority.bindings
-    elif type(generation_result) is GuidelineGenerationFailure:
-        # No draft exists, so nothing is derived and no dynamic binding is created.
-        static_verifier = build_request_scoped_guideline_static_approval_verifier(preflight_outcome)
-        if static_verifier is None:
-            return _stopped(
-                GuideGenerationCardStage.GENERATION,
-                upstream_outcome=upstream_outcome,
-                generation_result=generation_result,
-            )
-        draft = None
-        generation_failure = generation_result
-        approval_verifier = static_verifier
-        approved_evidence_bindings = ()
-    else:
-        # The port promises `GuidelineCardDraft | GuidelineGenerationFailure`. Anything
-        # else is not reinterpreted into a failure reason the Generator never gave.
-        return _stopped(
-            GuideGenerationCardStage.GENERATION,
-            upstream_outcome=upstream_outcome,
-            generation_result=generation_result,
-        )
 
-    # Phase 5 — Guideline Card finalization (#179). Terminal point of this slice.
-    card_outcome = finalize_guideline_card(
-        GuidelineCardRequest(
-            medication_identities=request.medication_identities,
-            evidence=production_evidence,
-            draft=draft,
-            generation_failure=generation_failure,
-            policy=preflight_request.policy,
-            provenance=ready_inputs.runtime_context.generation_provenance,
-            approved_fallbacks=preflight_request.fallbacks,
-            evaluated_at=production_evidence.evaluated_at,
-            approved_evidence_bindings=approved_evidence_bindings,
-        ),
-        approval_verifier=approval_verifier,
+async def orchestrate_guide_generation_card_from_verified_aggregate(
+    request: GuideVerifiedAggregateGenerationRequest,
+    *,
+    generator: RuntimeGuidelineGeneratorPort,
+    decision_verifier: Rag15ApprovalDecisionVerifierPort,
+) -> GuideGenerationCardOutcome:
+    """Reuse the #787 generator/card path after P0-C's verified aggregate boundary."""
+    if type(request) is not GuideVerifiedAggregateGenerationRequest:
+        return _stopped(GuideGenerationCardStage.UPSTREAM, upstream_outcome=None)
+    try:
+        evidence = project_guideline_evidence_from_aggregate(request.aggregate)
+    except ValueError:
+        return _stopped(GuideGenerationCardStage.UPSTREAM, upstream_outcome=None)
+    preflight_outcome = preflight_guide_runtime(
+        request.preflight_request,
+        generator=generator,
+        decision_verifier=decision_verifier,
     )
-    return GuideGenerationCardOutcome(
-        decision=GuideGenerationCardDecision.COMPLETED,
-        stopped_stage=None,
-        upstream_outcome=upstream_outcome,
-        generation_result=generation_result,
-        authority_outcome=authority_outcome,
-        card_outcome=card_outcome,
+    runtime_context = preflight_outcome.ready_context
+    if preflight_outcome.decision is not GuideRuntimePreflightDecision.READY or runtime_context is None:
+        return _stopped(GuideGenerationCardStage.UPSTREAM, upstream_outcome=None, aggregate=request.aggregate)
+    return await _generate_and_finalize(
+        evidence=evidence,
+        preflight_request=request.preflight_request,
+        preflight_outcome=preflight_outcome,
+        runtime_context=runtime_context,
+        medication_identities=request.medication_identities,
+        evaluation_time=request.evaluation_time,
+        upstream_outcome=None,
+        aggregate=request.aggregate,
+        generator=generator,
     )
