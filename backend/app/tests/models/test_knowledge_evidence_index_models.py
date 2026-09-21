@@ -117,7 +117,8 @@ def test_index_and_member_columns_and_constraints_are_exact() -> None:
     snapshot_key_constraint = next(
         constraint
         for constraint in member.constraints
-        if constraint.name == "uq_rag_knowledge_index_member_snapshot_evidence_key"
+        if isinstance(constraint, UniqueConstraint)
+        and constraint.name == "uq_rag_knowledge_index_member_snapshot_evidence_key"
     )
     assert tuple(column.name for column in snapshot_key_constraint.columns) == (
         "knowledge_index_id",

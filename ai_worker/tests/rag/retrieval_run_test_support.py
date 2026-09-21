@@ -40,6 +40,7 @@ def make_terminal_replay_payload(
                 index_version="1.0",
                 index_configuration_hash="a" * 64,
                 knowledge_chunk_id=hit.knowledge_chunk_id,
+                evidence_key="test:replay-evidence-key",
                 source_snapshot_id=uuid4(),
                 source_snapshot_member_id=uuid4(),
                 source_code="SRC",

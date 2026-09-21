@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
+from sqlalchemy import PickleType, create_engine, literal, select
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_worker.adapters.sqlalchemy_knowledge_evidence_index import (
@@ -64,6 +66,12 @@ def _session() -> AsyncMock:
     session.__aenter__.return_value = session
     session.begin.return_value.__aenter__.return_value = None
     return session
+
+
+def _row_mapping(values: dict[str, object]) -> RowMapping:
+    statement = select(*(literal(value, type_=PickleType()).label(key) for key, value in values.items()))
+    with create_engine("sqlite://").connect() as connection:
+        return connection.execute(statement).mappings().one()
 
 
 def test_source_binding_query_locks_full_chain_and_never_uses_candidate_index() -> None:
@@ -130,34 +138,38 @@ def test_persisted_member_round_trip_preserves_authoritative_evidence_key() -> N
     receipt = create_knowledge_index_receipt(build)
     identity = build.members[0].identity
     rebuilt = _request_from_persisted(
-        {
-            "index_code": build.index_code,
-            "index_version": build.index_version,
-            "embedding_model_ref": build.embedding_model_ref,
-            "embedding_model_version": build.embedding_model_version,
-            "embedding_dimension": build.embedding_dimension,
-            "distance_metric": build.distance_metric.value,
-            "corpus_manifest_hash": receipt.corpus_manifest_hash,
-            "embedding_manifest_hash": receipt.embedding_manifest_hash,
-            "index_configuration_hash": receipt.index_configuration_hash,
-            "member_count": 1,
-        },
-        [
+        _row_mapping(
             {
-                "knowledge_chunk_id": str(identity.knowledge_chunk_id),
-                "evidence_key": identity.evidence_key,
-                "source_snapshot_id": str(identity.source_snapshot_id),
-                "source_snapshot_member_id": str(identity.source_snapshot_member_id),
-                "source_code": identity.source_code,
-                "source_version": identity.source_version,
-                "canonical_checksum": identity.canonical_checksum,
-                "external_document_id": identity.external_document_id,
-                "chunk_index": identity.chunk_index,
-                "content_hash": identity.content_hash,
-                "locator": identity.locator,
-                "chunk_text": build.members[0].content_text.reveal(),
-                "embedding": build.members[0].embedding,
+                "index_code": build.index_code,
+                "index_version": build.index_version,
+                "embedding_model_ref": build.embedding_model_ref,
+                "embedding_model_version": build.embedding_model_version,
+                "embedding_dimension": build.embedding_dimension,
+                "distance_metric": build.distance_metric.value,
+                "corpus_manifest_hash": receipt.corpus_manifest_hash,
+                "embedding_manifest_hash": receipt.embedding_manifest_hash,
+                "index_configuration_hash": receipt.index_configuration_hash,
+                "member_count": 1,
             }
+        ),
+        [
+            _row_mapping(
+                {
+                    "knowledge_chunk_id": str(identity.knowledge_chunk_id),
+                    "evidence_key": identity.evidence_key,
+                    "source_snapshot_id": str(identity.source_snapshot_id),
+                    "source_snapshot_member_id": str(identity.source_snapshot_member_id),
+                    "source_code": identity.source_code,
+                    "source_version": identity.source_version,
+                    "canonical_checksum": identity.canonical_checksum,
+                    "external_document_id": identity.external_document_id,
+                    "chunk_index": identity.chunk_index,
+                    "content_hash": identity.content_hash,
+                    "locator": identity.locator,
+                    "chunk_text": build.members[0].content_text.reveal(),
+                    "embedding": build.members[0].embedding,
+                }
+            )
         ],
     )
 
