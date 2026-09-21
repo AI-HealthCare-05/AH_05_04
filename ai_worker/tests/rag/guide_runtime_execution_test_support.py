@@ -1,6 +1,6 @@
 """Reusable deterministic shared-contract fakes for Backend/Worker Guide tests."""
 
-from rag_runtime.guide_release_projection import GuideRuntimeReleaseProjectionOutcome
+from rag_runtime.guide_release_projection import GuideRuntimeReleaseProjectionCarrier
 from rag_runtime.guide_runtime_execution import (
     GuideRuntimeExecutionFailure,
     GuideRuntimeExecutionRequest,
@@ -29,7 +29,7 @@ class DeterministicGuideRuntimeExecutorFactory(GuideRuntimeExecutorFactoryPort):
         return self.executor
 
     @classmethod
-    def pass_result(cls, projection: GuideRuntimeReleaseProjectionOutcome):
+    def pass_result(cls, projection: GuideRuntimeReleaseProjectionCarrier):
         return cls(
             GuideRuntimeExecutionResult.succeeded(
                 projection, GuideRuntimeProviderProvenance("fake-model", "fake-prompt")
