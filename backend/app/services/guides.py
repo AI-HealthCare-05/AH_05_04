@@ -5,6 +5,7 @@ from app.core.errors import ApiError, ErrorDetail
 from app.core.logger import default_logger
 from app.dtos.guides import CreateGuideRequest, GuideCitationData, GuideData, GuideStatus
 from app.models.guides import Guide, GuideCitation, GuideGenerationStatus
+from app.models.prescriptions import PrescriptionVersion
 from app.models.user_consents import ConsentPurpose
 from app.models.users import User
 from app.repositories.guide_repository import GuideRepository
@@ -15,6 +16,12 @@ from app.services.guide_ai.exceptions import (
     GuideGenerationTimeoutError,
     GuideGenerationUnavailableError,
 )
+from app.services.guide_runtime_execution import GuideRuntimeExecutionUnavailableError
+from app.services.guide_sync_runtime_execution import (
+    GuideSyncRuntimeExecution,
+    GuideSyncRuntimeVersionConflictError,
+)
+from app.services.guide_sync_runtime_lifecycle import GuideSyncRuntimePreparationError
 from app.services.user_consents import ConsentGateService
 from rag_runtime.guide_release_projection import (
     GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
@@ -28,6 +35,7 @@ from rag_runtime.guide_release_projection import (
 _TIMEOUT_ERROR_MESSAGE = "OpenAI 호출이 제한 시간 내에 완료되지 않았습니다."
 _UNAVAILABLE_ERROR_MESSAGE = "OpenAI 서비스 호출에 실패했습니다."
 _GENERATION_FAILED_ERROR_MESSAGE = "가이드 생성 처리 중 오류가 발생했습니다."
+_RUNTIME_UNAVAILABLE_ERROR_MESSAGE = "검증된 가이드 생성 결과를 준비하지 못했습니다."
 
 
 def _to_guide_data(guide: Guide) -> GuideData:
@@ -92,16 +100,35 @@ def _ensure_rediscoverable_version(guide: Guide) -> None:
         _ensure_current_version(guide)
 
 
+def _to_generation_input(version: PrescriptionVersion) -> GuideGenerationInput:
+    return GuideGenerationInput(
+        medications=[
+            MedicationInput(
+                medication_name=medication.medication_name,
+                strength_text=medication.strength_text,
+                dose_value=medication.dose_value,
+                dose_unit=medication.dose_unit,
+                frequency_per_day=medication.frequency_per_day,
+                timing_text=medication.timing_text,
+                duration_days=medication.duration_days,
+            )
+            for medication in version.medications
+        ]
+    )
+
+
 class GuideService:
     def __init__(
         self,
         repository: GuideRepository,
         generator: GuideGenerator,
         consent_gate: ConsentGateService,
+        runtime_execution: GuideSyncRuntimeExecution | None = None,
     ) -> None:
         self._repo = repository
         self._generator = generator
         self._consent_gate = consent_gate
+        self._runtime_execution = runtime_execution
 
     async def create_guide(
         self,
@@ -143,23 +170,16 @@ class GuideService:
         verify_loaded_version(version, version.medications)
         guide = await self._repo.create(prescription=prescription)
 
+        if self._runtime_execution is not None:
+            return await self._create_runtime_guide(
+                user=user,
+                guide=guide,
+                runtime_execution=self._runtime_execution,
+            )
+
         failure_error: ApiError
         try:
-            generation_input = GuideGenerationInput(
-                medications=[
-                    MedicationInput(
-                        medication_name=medication.medication_name,
-                        strength_text=medication.strength_text,
-                        dose_value=medication.dose_value,
-                        dose_unit=medication.dose_unit,
-                        frequency_per_day=medication.frequency_per_day,
-                        timing_text=medication.timing_text,
-                        duration_days=medication.duration_days,
-                    )
-                    for medication in version.medications
-                ]
-            )
-            result = await self._generator.generate(generation_input)
+            result = await self._generator.generate(_to_generation_input(version))
         except GuideGenerationTimeoutError:
             await self._repo.mark_failed(
                 guide,
@@ -230,6 +250,62 @@ class GuideService:
             return _to_guide_data(guide)
 
         # except handler 밖에서 raise해야 비식별 API 오류가 원본 예외를 __context__로 보유하지 않습니다.
+        raise failure_error
+
+    async def _create_runtime_guide(
+        self,
+        *,
+        user: User,
+        guide: Guide,
+        runtime_execution: GuideSyncRuntimeExecution,
+    ) -> GuideData:
+        failure_error: ApiError
+        try:
+            completed = await runtime_execution.execute(user=user, guide=guide)
+        except GuideSyncRuntimeVersionConflictError:
+            await self._repo.mark_failed(
+                guide,
+                error_code="PRESCRIPTION_VERSION_STALE",
+                error_message="처방 정보가 변경되어 생성 결과를 현재 결과로 사용할 수 없습니다.",
+                completed_at=datetime.now(UTC),
+            )
+            failure_error = ApiError(
+                status_code=409,
+                code="PRESCRIPTION_VERSION_CONFLICT",
+                message="처방 정보가 변경되었습니다. 최신 처방으로 다시 생성해 주세요.",
+                details=[ErrorDetail(field="prescription_id", reason="ACTIVE_VERSION_MISMATCH")],
+            )
+        except (GuideSyncRuntimePreparationError, GuideRuntimeExecutionUnavailableError) as error:
+            default_logger.warning("guide_runtime_unavailable error_type=%s", type(error).__name__)
+            await self._repo.mark_failed(
+                guide,
+                error_code="GUIDE_RUNTIME_UNAVAILABLE",
+                error_message=_RUNTIME_UNAVAILABLE_ERROR_MESSAGE,
+                completed_at=datetime.now(UTC),
+            )
+            failure_error = ApiError(
+                status_code=503,
+                code="SERVICE_UNAVAILABLE",
+                message="현재 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+                details=[ErrorDetail(field="guide", reason="GUIDE_RUNTIME_UNAVAILABLE")],
+            )
+        except Exception as error:
+            default_logger.warning("guide_runtime_failed error_type=%s", type(error).__name__)
+            await self._repo.mark_failed(
+                guide,
+                error_code="GENERATION_REQUEST_FAILED",
+                error_message=_GENERATION_FAILED_ERROR_MESSAGE,
+                completed_at=datetime.now(UTC),
+            )
+            failure_error = ApiError(
+                status_code=500,
+                code="GUIDE_GENERATION_FAILED",
+                message="복약 가이드 생성에 실패했습니다. 다시 시도해 주세요.",
+                details=[ErrorDetail(field="guide", reason="GENERATION_REQUEST_FAILED")],
+            )
+        else:
+            return _to_guide_data(completed)
+
         raise failure_error
 
     async def get_guide_detail(self, *, user: User, guide_id: UUID) -> GuideData:

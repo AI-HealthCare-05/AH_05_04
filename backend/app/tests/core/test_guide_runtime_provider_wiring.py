@@ -1,10 +1,12 @@
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from fastapi import FastAPI
 
 from app import main
 from app.dependencies import services
+from app.services.guide_sync_runtime_execution import GuideSyncRuntimeAuthorityProvider
 from rag_runtime.guide_runtime_execution import GuideRuntimeExecutorFactoryPort, GuideRuntimeExecutorPort
 
 
@@ -18,7 +20,12 @@ def test_lifespan_initializer_constructs_and_reuses_one_process_scoped_factory(
 ) -> None:
     app = FastAPI()
     opaque_dependencies = object()
-    app.state.guide_runtime_provider_dependencies = opaque_dependencies
+    authority_provider = cast(GuideSyncRuntimeAuthorityProvider, object())
+    main.configure_guide_runtime(
+        app,
+        provider_dependencies=opaque_dependencies,
+        authority_provider=authority_provider,
+    )
     app.state.openai_client = object()
     factory = _Factory()
     calls: list[tuple[object, object, str, float]] = []
@@ -42,7 +49,17 @@ def test_lifespan_initializer_constructs_and_reuses_one_process_scoped_factory(
 
     assert services.get_guide_runtime_executor_factory(request) is factory  # type: ignore[arg-type]
     assert services.get_guide_runtime_executor_factory(request) is factory  # type: ignore[arg-type]
+    assert services.get_guide_sync_runtime_authority_provider(request) is authority_provider  # type: ignore[arg-type]
     assert calls == [(opaque_dependencies, app.state.openai_client, "gpt-4o", 20.0)]
+
+
+def test_lifespan_initializer_rejects_partial_external_composition() -> None:
+    app = FastAPI()
+    app.state.guide_runtime_provider_dependencies = object()
+    app.state.openai_client = object()
+
+    with pytest.raises(RuntimeError, match="Guide runtime bootstrap is incomplete"):
+        main.initialize_guide_runtime_executor_factory(app)
 
 
 def test_backend_provider_fails_closed_when_factory_was_not_initialized() -> None:

@@ -587,6 +587,25 @@ class RagRuntimeRepository:
             select(GuideRetrievalBindingManifest).where(GuideRetrievalBindingManifest.id == manifest_id)
         )
 
+    async def list_guide_retrieval_binding_manifests_for_runtime(
+        self,
+        *,
+        runtime_release_bundle_id: UUID,
+        runtime_release_bundle_manifest_hash: str,
+        runtime_execution_manifest_id: UUID,
+        runtime_execution_manifest_hash: str,
+    ) -> list[GuideRetrievalBindingManifest]:
+        result = await self.session.scalars(
+            select(GuideRetrievalBindingManifest).where(
+                GuideRetrievalBindingManifest.runtime_release_bundle_id == runtime_release_bundle_id,
+                GuideRetrievalBindingManifest.runtime_release_bundle_manifest_hash
+                == runtime_release_bundle_manifest_hash,
+                GuideRetrievalBindingManifest.runtime_execution_manifest_id == runtime_execution_manifest_id,
+                GuideRetrievalBindingManifest.runtime_execution_manifest_hash == runtime_execution_manifest_hash,
+            )
+        )
+        return list(result.all())
+
     async def create_execution_manifest(
         self,
         payload: RagRuntimeExecutionManifestCreate,
@@ -830,6 +849,21 @@ class RagRuntimeRepository:
     async def get_environment_by_code(self, environment_code: str) -> RagRuntimeEnvironment | None:
         result = await self.session.execute(
             select(RagRuntimeEnvironment).where(RagRuntimeEnvironment.environment_code == environment_code)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_environment_by_id(self, environment_id: UUID) -> RagRuntimeEnvironment | None:
+        result = await self.session.execute(
+            select(RagRuntimeEnvironment).where(RagRuntimeEnvironment.id == environment_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def lock_environment_by_id(self, environment_id: UUID) -> RagRuntimeEnvironment | None:
+        result = await self.session.execute(
+            select(RagRuntimeEnvironment)
+            .where(RagRuntimeEnvironment.id == environment_id)
+            .with_for_update(of=RagRuntimeEnvironment)
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
