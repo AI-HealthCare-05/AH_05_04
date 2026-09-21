@@ -7,6 +7,7 @@ It forbids fuzzy mapping, guessing, or substring matches.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import unicodedata
@@ -14,8 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ai_worker.tasks.evaluation.canonical import canonical_sha256
-from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
+from rag_runtime.query_binding import ImmutableArtifactRef
 
 GUIDE_CLOSED_DEMO_PRODUCT_MAP_RESOURCE = (
     Path(__file__).resolve().parent / "resources" / "guide-closed-demo-17p-product-map-v1.json"
@@ -27,32 +27,40 @@ _ENVIRONMENT = "CLOSED_DEMO"
 _PRODUCT_COUNT = 17
 
 
-class GuideClosedDemoProductMapError(ValueError):
-    """The sealed product map artifact is missing, invalid, or hash mismatch."""
+class GuideClosedDemoProductMapError(RuntimeError):
+    """The sealed 17-product mapping artifact is invalid or unreadable."""
 
 
 @dataclass(frozen=True, slots=True)
 class GuideClosedDemoProductMap:
+    """Read-only container for the sealed 17-product mappings."""
+
     artifact_ref: ImmutableArtifactRef
     product_count: int
     exact_mapping: dict[tuple[str, str | None], str]
 
-    def resolve(self, medication_name: str, strength_text: str | None = None) -> str | None:
-        """Resolve normalized medication name and strength to a deterministic MFDS_ITEM_SEQ."""
-        norm_name = _normalize_text(medication_name)
-        norm_strength = _normalize_text(strength_text) if strength_text is not None else None
+    def resolve(
+        self,
+        medication_name: str,
+        strength: str | None = None,
+    ) -> str | None:
+        """Resolve a normalized (name, strength) pair to an official MFDS_ITEM_SEQ.
 
-        # Try exact tuple match first
-        match = self.exact_mapping.get((norm_name, norm_strength))
-        if match is not None:
-            return match
+        Returns the 9-digit item_seq if matched exactly, or None if not present in the sealed map.
+        """
+        normalized_name = _normalize_text(medication_name)
+        normalized_strength = _normalize_text(strength) if strength is not None else None
 
-        # If strength was provided but didn't match directly, check if name already encodes
-        # product without separate strength in the catalog
-        if norm_strength is not None:
-            match_no_strength = self.exact_mapping.get((norm_name, None))
-            if match_no_strength is not None:
-                return match_no_strength
+        # Try (name, strength) exact match
+        key = (normalized_name, normalized_strength)
+        if key in self.exact_mapping:
+            return self.exact_mapping[key]
+
+        # If strength was provided, also try (name, None) fallback only if unambiguous in map
+        if normalized_strength is not None:
+            name_only_key = (normalized_name, None)
+            if name_only_key in self.exact_mapping:
+                return self.exact_mapping[name_only_key]
 
         return None
 
@@ -62,6 +70,22 @@ def _normalize_text(value: str | None) -> str:
         return ""
     normalized = unicodedata.normalize("NFC", value).strip()
     return re.sub(r"\s+", " ", normalized)
+
+
+def _canonical_json_sha256(
+    value: dict[str, Any],
+    *,
+    excluded_top_level_keys: frozenset[str] = frozenset(),
+) -> str:
+    if excluded_top_level_keys and isinstance(value, dict):
+        value = {key: item for key, item in value.items() if key not in excluded_top_level_keys}
+    canonical_bytes = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical_bytes).hexdigest()
 
 
 def _verify_manifest_envelope(manifest: dict[str, Any]) -> ImmutableArtifactRef:
@@ -82,7 +106,7 @@ def _verify_manifest_envelope(manifest: dict[str, Any]) -> ImmutableArtifactRef:
     if content_sha256 != _APPROVED_PRODUCT_MAP_SHA256:
         raise GuideClosedDemoProductMapError("Approved product map SHA256 does not match sealed constant")
 
-    calculated_sha256 = canonical_sha256(
+    calculated_sha256 = _canonical_json_sha256(
         manifest,
         excluded_top_level_keys=frozenset({"artifact_ref"}),
     )

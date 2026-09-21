@@ -1,10 +1,6 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from ai_worker.tasks.rag.guide_closed_demo_product_map import (
-    GuideClosedDemoProductMap,
-    load_guide_closed_demo_product_map,
-)
 from app.core import config
 from app.core.config import is_guide_closed_demo_active
 from app.core.errors import ApiError, ErrorDetail
@@ -33,6 +29,10 @@ from app.services.guide_sync_runtime_execution import (
 )
 from app.services.guide_sync_runtime_lifecycle import GuideSyncRuntimePreparationError
 from app.services.user_consents import ConsentGateService
+from rag_runtime.guide_closed_demo_product_map import (
+    GuideClosedDemoProductMap,
+    load_guide_closed_demo_product_map,
+)
 from rag_runtime.guide_release_projection import (
     GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
     GuideRuntimeCitationSourceType,

@@ -5,14 +5,14 @@ from typing import cast
 
 import pytest
 
-from ai_worker.tasks.rag.guide_closed_demo_product_map import (
-    load_guide_closed_demo_product_map,
-)
 from app.models.prescriptions import PrescriptionVersionMedication
 from app.models.rag_candidate import MedicationIdentificationStatus
 from app.services.guide_ai.closed_demo_generator import (
     GuideClosedDemoProductIdentityError,
     resolve_medication_item_seq,
+)
+from rag_runtime.guide_closed_demo_product_map import (
+    load_guide_closed_demo_product_map,
 )
 
 

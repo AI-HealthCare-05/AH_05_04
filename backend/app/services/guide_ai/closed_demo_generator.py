@@ -27,9 +27,6 @@ from openai import (
 )
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ai_worker.tasks.rag.guide_closed_demo_product_map import (
-    GuideClosedDemoProductMap,
-)
 from app.core.guide_closed_demo_retrieval import (
     GuideClosedDemoEvidence,
     GuideClosedDemoRetrievalService,
@@ -66,6 +63,9 @@ from app.services.guide_ai.validators import (
     RULE_PRESCRIPTION_MISMATCH,
     RULE_UNSAFE_MARKUP,
     _contains_control_character,
+)
+from rag_runtime.guide_closed_demo_product_map import (
+    GuideClosedDemoProductMap,
 )
 
 

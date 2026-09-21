@@ -172,10 +172,10 @@ async def test_exact_product_filtering_drops_cross_drug_evidence() -> None:
 
     with (
         patch(
-            "app.core.guide_closed_demo_retrieval.execute_production_retrieval",
+            "app.core.closed_demo_retrieval.execute_production_retrieval",
             new=AsyncMock(return_value=mock_outcome),
         ),
-        patch("app.core.guide_closed_demo_retrieval.EvidenceGateSuccess", new=type(mock_gate_outcome)),
+        patch("app.core.closed_demo_retrieval.EvidenceGateSuccess", new=type(mock_gate_outcome)),
     ):
         results = await service.retrieve_exact_evidence(
             query_text="노바스크정 5mg",
@@ -224,10 +224,10 @@ async def test_exact_product_filtering_fails_closed_on_zero_exact_hits() -> None
 
     with (
         patch(
-            "app.core.guide_closed_demo_retrieval.execute_production_retrieval",
+            "app.core.closed_demo_retrieval.execute_production_retrieval",
             new=AsyncMock(return_value=mock_outcome),
         ),
-        patch("app.core.guide_closed_demo_retrieval.EvidenceGateSuccess", new=type(mock_gate_outcome)),
+        patch("app.core.closed_demo_retrieval.EvidenceGateSuccess", new=type(mock_gate_outcome)),
     ):
         with pytest.raises(GuideClosedDemoEvidenceFilteringError, match="Zero exact product evidence"):
             await service.retrieve_exact_evidence(
