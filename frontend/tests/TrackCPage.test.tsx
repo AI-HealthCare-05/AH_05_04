@@ -1,7 +1,7 @@
 import supportFixture from '../../tests/fixtures/post_mvp_1/track_c/support-plan-v1.json'
 import React, { StrictMode } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import TrackCPage, { type TrackCServices } from '../src/pages/TrackCPage'
 import { ApiError } from '../src/api/client'
@@ -19,12 +19,13 @@ const blockedByStatus = (status: number) => (status === 409 ? BLOCKED.STALE_STAT
 const activeCopyVersion = supportFixture.single_offer.data.supports[0].copy_version
 const occurrenceId = '11111111-1111-4111-8111-111111111111'
 const planId = '22222222-2222-4222-8222-222222222222'
+const medicationId = '33333333-3333-4333-8333-333333333333'
 const checkin = { checkin_id: 'checkin', occurrence_id: occurrenceId, status: 'NOT_TAKEN', revision: 3, taken_at: null, corrected: false }
 const safety = { assessment_id: 'safety', medication_checkin_id: 'checkin', checkin_revision: 3, response_level: 'ROUTINE', safety_disposition: 'NORMAL', revision: 1 }
 const barrier = { ...safety, barrier_response_id: 'barrier', safety_assessment_id: 'safety', response_status: 'ANSWERED', barrier_code: 'FORGOT', subreason_code: null }
 const support = {
   support_code: 'REMINDER_SETUP', rule_version: 'rule-v1', copy_version: 'copy-v1', priority: 1, rationale_code: 'FORGOT',
-  action_config: { schema_version: 'track-c-handler-config-v1', rationale_code: 'FORGOT', parameters: { destination: 'MEDICATION_SCHEDULE_SETUP', prescription_version_medication_id: 'medication' } },
+  action_config: { schema_version: 'track-c-handler-config-v1', rationale_code: 'FORGOT', parameters: { destination: 'MEDICATION_SCHEDULE_SETUP', prescription_version_medication_id: medicationId } },
   support_copy: { title: '서버에서 받은 제안', body: '서버의 승인된 설명', confirmation_prompt: '이 제안을 계획으로 저장할까요?', primary_label: '계획 저장', secondary_label: '나중에' },
   questions: [],
 }
@@ -46,15 +47,20 @@ function show(service: TrackCServices, entry = `/track-c/occurrences/${occurrenc
     <Route path="/track-c/occurrences/:occurrenceId" element={<TrackCPage service={service} />} />
     <Route path="/track-c/plans" element={<TrackCPage service={service} />} />
     <Route path="/track-c/plans/:planId" element={<TrackCPage service={service} />} />
+    <Route path="/schedule" element={<ScheduleDestination />} />
     <Route path="/login" element={<p>로그인 화면</p>} />
   </Routes></MemoryRouter></StrictMode>)
+}
+function ScheduleDestination() {
+  const location = useLocation()
+  return <p>복약 일정 화면: {location.search}</p>
 }
 async function enterBarrier() { fireEvent.click(await screen.findByRole('button', { name: '증상은 없어요' })); await screen.findByRole('radio', { name: '깜빡했어요' }) }
 async function enterOffer() { await enterBarrier(); fireEvent.click(screen.getByRole('radio', { name: '깜빡했어요' })); fireEvent.click(screen.getByRole('button', { name: '선택한 어려움으로 도움 찾기' })); fireEvent.click(await screen.findByRole('button', { name: '세부 이유 없이 도움 보기' })); await screen.findByText('서버에서 받은 제안') }
 afterEach(cleanup)
 
 describe('Track C API flow', () => {
-  it('requires adoption and moves to the saved plan list after creation replay', async () => {
+  it('requires adoption and moves a saved reminder plan to its medication schedule', async () => {
     const svc = services(); show(svc); await enterOffer()
     expect(svc.createPlan).not.toHaveBeenCalled()
 
@@ -70,11 +76,29 @@ describe('Track C API flow', () => {
     expect(svc.createPlan).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: '이 계획을 저장하고 시작하기' }))
-    await screen.findByRole('heading', { name: '실천 계획 목록' })
-    expect(screen.getByRole('button', { name: /복약 일정과 알림 확인/ })).toBeTruthy()
+    await screen.findByText(`복약 일정 화면: ?support_medication=${medicationId}`)
     expect(svc.createPlan).toHaveBeenCalledWith({ barrier_response_id: 'barrier', support_code: 'REMINDER_SETUP', rule_version: 'rule-v1', copy_version: 'copy-v1', confirmed: true, selected_question_ids: [] }, expect.any(String))
-    expect(svc.listPlans).toHaveBeenCalled()
+    expect(svc.createPlan).toHaveBeenCalledTimes(1)
+    expect(svc.listPlans).not.toHaveBeenCalled()
     expect(svc.patchPlan).not.toHaveBeenCalled()
+  })
+  it.each([undefined, '', 'not-a-medication-id', 42])('falls back to saved plans for an invalid reminder medication id: %s', async medication => {
+    const svc = services({ createPlan: vi.fn().mockResolvedValue({
+      ...plan,
+      action_config_snapshot: { ...plan.action_config_snapshot, parameters: {
+        destination: 'MEDICATION_SCHEDULE_SETUP',
+        ...(medication === undefined ? {} : { prescription_version_medication_id: medication }),
+      } },
+    }) })
+    show(svc); await enterOffer()
+    fireEvent.click(screen.getByRole('button', { name: '이 도움 확인하기' }))
+    fireEvent.click(await screen.findByRole('button', { name: '선택 내용 확인하기' }))
+    fireEvent.click(await screen.findByRole('button', { name: '이대로 사용하기' }))
+    await screen.findByRole('heading', { name: '실천 계획을 확인해 주세요' })
+    expect(svc.createPlan).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '이 계획을 저장하고 시작하기' }))
+    await screen.findByRole('heading', { name: '실천 계획 목록' })
+    expect(svc.createPlan).toHaveBeenCalledTimes(1)
   })
   it('renders saved plans and opens the existing detail route', async () => {
     const svc = services()
@@ -112,6 +136,7 @@ describe('Track C API flow', () => {
         supports: [instructionSupport],
         reason_code: null,
       }),
+      createPlan: vi.fn().mockResolvedValue({ ...plan, support_code: 'INSTRUCTION_REVIEW' }),
     })
     show(svc); await enterBarrier()
     fireEvent.click(screen.getByRole('radio', { name: '복용 방법이 헷갈렸어요' }))
@@ -122,7 +147,7 @@ describe('Track C API flow', () => {
     await screen.findByRole('heading', { name: '도움 내용을 설정해 주세요' })
 
     const timingQuestion = await screen.findByRole('checkbox', { name: '이 약은 언제 복용해야 하나요?' })
-    const doseQuestion = screen.getByRole('checkbox', { name: '한 번에 얼마나 복용해야 하나요?' })
+    screen.getByRole('checkbox', { name: '한 번에 얼마나 복용해야 하나요?' })
     expect(
       (screen.getByRole('button', { name: '선택 내용 확인하기' }) as HTMLButtonElement).disabled,
     ).toBe(true)
@@ -207,7 +232,7 @@ describe('Track C API flow', () => {
     expect(svc.createPlan).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: '이 계획을 저장하고 시작하기' }))
-    await screen.findByRole('heading', { name: '실천 계획 목록' })
+    await screen.findByText(`복약 일정 화면: ?support_medication=${medicationId}`)
     expect(svc.createPlan).toHaveBeenCalledTimes(1)
     expect(svc.createPlan).toHaveBeenCalledWith(
       expect.objectContaining({ support_code: 'REMINDER_SETUP', confirmed: true }),
@@ -329,7 +354,11 @@ it.each([
 ])('routes %s through server offers and explicit adoption', async (label, situation, code) => {
   const travelBarrier = { ...barrier, barrier_code: 'SCHEDULE_OR_TRAVEL' }
   const answered = { ...travelBarrier, subreason_code: situation, revision: 2 }
-  const svc = services({ putBarrier: vi.fn().mockResolvedValueOnce(travelBarrier).mockResolvedValue(answered), getOffers: vi.fn().mockResolvedValue({ ...travelBarrier, supports: [{ ...support, support_code: code }], reason_code: null }) })
+  const svc = services({
+    putBarrier: vi.fn().mockResolvedValueOnce(travelBarrier).mockResolvedValue(answered),
+    getOffers: vi.fn().mockResolvedValue({ ...travelBarrier, supports: [{ ...support, support_code: code }], reason_code: null }),
+    createPlan: vi.fn().mockResolvedValue({ ...plan, support_code: code }),
+  })
   show(svc); await enterBarrier()
   fireEvent.click(screen.getByRole('radio', { name: '일정이나 외출 때문에 어려웠어요' }))
   fireEvent.click(screen.getByRole('button', { name: '선택한 어려움으로 도움 찾기' }))
@@ -354,7 +383,12 @@ it.each([
   expect(svc.createPlan).not.toHaveBeenCalled()
 
   fireEvent.click(screen.getByRole('button', { name: '이 계획을 저장하고 시작하기' }))
-  await screen.findByText('진행 중')
+  if (code === 'REMINDER_SETUP') {
+    await screen.findByText(`복약 일정 화면: ?support_medication=${medicationId}`)
+  } else {
+    await screen.findByRole('heading', { name: '실천 계획 목록' })
+  }
+  expect(svc.createPlan).toHaveBeenCalledTimes(1)
   expect(svc.createPlan).toHaveBeenCalledWith(expect.objectContaining({ travel_situation: situation, support_code: code }), expect.any(String))
   expect(svc.patchPlan).not.toHaveBeenCalled()
 })

@@ -75,6 +75,16 @@ test('[REAL-STACK][Track C #139] create, reload, complete and cancel plans throu
     expect(createdResponse.status()).toBe(200)
     expect(planCreateCount).toBe(index + 1)
     const created = (await createdResponse.json()).data
+    if (created.support_code === 'REMINDER_SETUP') {
+      const medicationId = created.action_config_snapshot.parameters.prescription_version_medication_id
+      expect(typeof medicationId).toBe('string')
+      expect(medicationId).toBeTruthy()
+      await expect.poll(() => new URL(page.url()).pathname).toBe('/schedule')
+      await expect.poll(() => new URL(page.url()).searchParams.get('support_medication')).toBe(medicationId)
+      await page.goto('/track-c/plans')
+    } else {
+      await expect(page).toHaveURL(/\/track-c\/plans$/)
+    }
     await expect(page.getByRole('heading', { name: '실천 계획 목록' })).toBeVisible()
     const activePlanButton = page
       .locator('.track-c-plan-item')
