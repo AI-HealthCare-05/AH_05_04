@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-import unicodedata
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from typing import Any
@@ -52,18 +51,8 @@ from app.services.guide_ai.exceptions import (
 )
 from app.services.guide_ai.schemas import GuideGenerationInput, GuideGenerationResult, MedicationInput
 from app.services.guide_ai.validators import (
-    _CHANGE_TERM,
-    _DIRECTIVE,
-    _HTML_TAG,
-    _MARKDOWN_LINK,
-    _SAFE_NEGATION,
-    _SENTENCE_SPLIT,
-    _URL,
-    _ZERO_WIDTH_OR_BIDI,
-    RULE_CHANGE_DIRECTIVE,
     RULE_PRESCRIPTION_MISMATCH,
-    RULE_UNSAFE_MARKUP,
-    _contains_control_character,
+    _validate_text,
 )
 from rag_runtime.guide_closed_demo_product_map import (
     GuideClosedDemoProductMap,
@@ -153,22 +142,6 @@ def _format_decimal(value: Decimal) -> str:
     return formatted
 
 
-def _validate_closed_demo_text(text: str) -> None:
-    normalized = unicodedata.normalize("NFC", text)
-    if (
-        _ZERO_WIDTH_OR_BIDI.search(normalized)
-        or _HTML_TAG.search(normalized)
-        or _MARKDOWN_LINK.search(normalized)
-        or _URL.search(normalized)
-        or _contains_control_character(normalized)
-    ):
-        raise GuideGenerationSafetyError(RULE_UNSAFE_MARKUP)
-
-    for sentence in filter(None, _SENTENCE_SPLIT.split(normalized)):
-        if _CHANGE_TERM.search(sentence) and (_DIRECTIVE.search(sentence) or not _SAFE_NEGATION.search(sentence)):
-            raise GuideGenerationSafetyError(RULE_CHANGE_DIRECTIVE)
-
-
 def validate_closed_demo_draft(
     draft: ClosedDemoGuideDraft,
     *,
@@ -203,12 +176,12 @@ def validate_closed_demo_draft(
                     raise GuideGenerationSafetyError(RULE_EVIDENCE_BINDING_REQUIRED)
                 if not set(field.evidence_slots).issubset(valid_slots):
                     raise GuideGenerationSafetyError(RULE_EVIDENCE_SLOT_MISMATCH)
-                _validate_closed_demo_text(cleaned)
+                _validate_text(cleaned)
             else:
                 if field.evidence_slots:
                     raise GuideGenerationSafetyError(RULE_EVIDENCE_SLOT_MISMATCH)
 
-    _validate_closed_demo_text(draft.general_notice)
+    _validate_text(draft.general_notice)
 
 
 def _render_medication_section(
@@ -424,26 +397,17 @@ class GuideClosedDemoGenerator:
     @staticmethod
     def _build_provider_input(
         guide_input: GuideGenerationInput,
-        evidences_by_index: dict[int, tuple[GuideClosedDemoEvidence, ...]],
+        evidences_by_index: Mapping[int, Sequence[GuideClosedDemoEvidence]],
     ) -> str:
         medications_data = []
-        for index, med in enumerate(guide_input.medications):
+        for index in range(len(guide_input.medications)):
             med_evidences = evidences_by_index.get(index, ())
             medications_data.append(
                 {
                     "source_index": index,
-                    "medication_name": med.medication_name,
-                    "strength_text": med.strength_text,
-                    "dose_value": str(med.dose_value) if med.dose_value is not None else None,
-                    "dose_unit": med.dose_unit,
-                    "frequency_per_day": med.frequency_per_day,
-                    "timing_text": med.timing_text,
-                    "duration_days": med.duration_days,
                     "evidence": [
                         {
                             "slot": ev.slot,
-                            "external_document_id": ev.external_document_id,
-                            "locator": ev.locator,
                             "content": ev.content.reveal(),
                         }
                         for ev in med_evidences

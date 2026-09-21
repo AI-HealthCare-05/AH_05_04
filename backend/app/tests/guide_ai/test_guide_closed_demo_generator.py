@@ -20,6 +20,8 @@ from app.services.guide_ai.exceptions import GuideGenerationSafetyError
 from app.services.guide_ai.schemas import GuideGenerationInput, MedicationInput
 from app.services.guide_ai.validators import (
     RULE_CHANGE_DIRECTIVE,
+    RULE_MEDICAL_CLAIM,
+    RULE_NUMERIC_IN_AI_TEXT,
     RULE_PRESCRIPTION_MISMATCH,
     RULE_UNSAFE_MARKUP,
 )
@@ -191,7 +193,7 @@ async def test_generator_generate_full_cycle() -> None:
                 pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
             )
         ],
-        general_notice="복약 일정을 꾸준히 유지해 주세요.",
+        general_notice="처방된 복약 방법을 성실히 지켜 복용해 주세요.",
     )
 
     mock_parsed = MagicMock(
@@ -228,4 +230,123 @@ async def test_generator_generate_full_cycle() -> None:
     assert result.model_name == "gpt-4o"
     assert "복용 시 주의해야 할 점: 정해진 시간에 복용하세요." in result.content
     assert "나타날 수 있는 불편감: 가벼운 두통이 발생할 수 있습니다." in result.content
-    assert "공통 안내: 복약 일정을 꾸준히 유지해 주세요." in result.content
+    assert "공통 안내: 처방된 복약 방법을 성실히 지켜 복용해 주세요." in result.content
+
+
+ALL_GUIDANCE_FIELDS = [
+    "medication_caution",
+    "food_and_drink",
+    "alcohol_and_smoking",
+    "possible_discomfort",
+    "seek_medical_care",
+    "pregnancy_and_breastfeeding",
+]
+
+
+@pytest.mark.parametrize("field_name", ALL_GUIDANCE_FIELDS)
+def test_validate_closed_demo_draft_rejects_numeric_in_ai_text(field_name: str) -> None:
+    evidences = {0: (_make_evidence(1),)}
+    field_kwargs = {name: ClosedDemoGuidanceField(text=None, evidence_slots=[]) for name in ALL_GUIDANCE_FIELDS}
+    field_kwargs[field_name] = ClosedDemoGuidanceField(
+        text="하루에 5mg 이상 드시지 마세요.",
+        evidence_slots=[1],
+    )
+    medication = ClosedDemoMedicationGuidance(source_index=0, **field_kwargs)
+    draft = ClosedDemoGuideDraft(
+        medications=[medication],
+        general_notice="공통 안내 문장입니다.",
+    )
+
+    with pytest.raises(GuideGenerationSafetyError) as exc_info:
+        validate_closed_demo_draft(draft, expected_count=1, evidences_by_index=evidences)
+    assert exc_info.value.rule_id == RULE_NUMERIC_IN_AI_TEXT
+
+
+@pytest.mark.parametrize("field_name", ALL_GUIDANCE_FIELDS)
+def test_validate_closed_demo_draft_rejects_medical_claim(field_name: str) -> None:
+    evidences = {0: (_make_evidence(1),)}
+    field_kwargs = {name: ClosedDemoGuidanceField(text=None, evidence_slots=[]) for name in ALL_GUIDANCE_FIELDS}
+    field_kwargs[field_name] = ClosedDemoGuidanceField(
+        text="이 약은 혈압을 낮춥니다.",
+        evidence_slots=[1],
+    )
+    medication = ClosedDemoMedicationGuidance(source_index=0, **field_kwargs)
+    draft = ClosedDemoGuideDraft(
+        medications=[medication],
+        general_notice="공통 안내 문장입니다.",
+    )
+
+    with pytest.raises(GuideGenerationSafetyError) as exc_info:
+        validate_closed_demo_draft(draft, expected_count=1, evidences_by_index=evidences)
+    assert exc_info.value.rule_id == RULE_MEDICAL_CLAIM
+
+
+def test_validate_closed_demo_draft_rejects_numeric_in_general_notice() -> None:
+    evidences = {0: (_make_evidence(1),)}
+    draft = ClosedDemoGuideDraft(
+        medications=[
+            ClosedDemoMedicationGuidance(
+                source_index=0,
+                medication_caution=ClosedDemoGuidanceField(text="정해진 시간에 복용하세요.", evidence_slots=[1]),
+                food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                seek_medical_care=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+            )
+        ],
+        general_notice="하루 1회 1정 복용하세요.",
+    )
+    with pytest.raises(GuideGenerationSafetyError) as exc_info:
+        validate_closed_demo_draft(draft, expected_count=1, evidences_by_index=evidences)
+    assert exc_info.value.rule_id == RULE_NUMERIC_IN_AI_TEXT
+
+
+def test_build_provider_input_minimizes_payload() -> None:
+    import json
+
+    guide_input = GuideGenerationInput(
+        medications=[
+            MedicationInput(
+                medication_name="노바스크정",
+                strength_text="5mg",
+                dose_value=Decimal("1"),
+                dose_unit="정",
+                frequency_per_day=1,
+                timing_text="아침 식후",
+                duration_days=30,
+            )
+        ]
+    )
+    evidences = {0: (_make_evidence(1),)}
+    raw_payload = GuideClosedDemoGenerator._build_provider_input(guide_input, evidences)
+    data = json.loads(raw_payload)
+
+    assert "medications" in data
+    assert len(data["medications"]) == 1
+    med_payload = data["medications"][0]
+
+    assert set(med_payload.keys()) == {"source_index", "evidence"}
+    assert med_payload["source_index"] == 0
+    assert len(med_payload["evidence"]) == 1
+    ev_item = med_payload["evidence"][0]
+    assert set(ev_item.keys()) == {"slot", "content"}
+    assert ev_item["slot"] == 1
+    assert ev_item["content"] == "safe text"
+
+    for forbidden in (
+        "medication_name",
+        "strength_text",
+        "dose_value",
+        "dose_unit",
+        "frequency_per_day",
+        "timing_text",
+        "duration_days",
+        "source_code",
+        "source_version",
+        "locator",
+        "external_document_id",
+    ):
+        assert forbidden not in med_payload
+        assert forbidden not in ev_item
+        assert forbidden not in raw_payload
