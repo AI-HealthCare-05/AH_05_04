@@ -8,6 +8,7 @@ that a generation failure reaches the existing finalizer mapping without a synth
 draft, and that an unbindable draft fails closed short of the finalizer.
 """
 
+# mypy: disable-error-code="union-attr"
 from __future__ import annotations
 
 import ast

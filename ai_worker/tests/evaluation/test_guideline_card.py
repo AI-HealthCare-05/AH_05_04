@@ -1,3 +1,4 @@
+# mypy: disable-error-code="arg-type,union-attr"
 from __future__ import annotations
 
 import hashlib
