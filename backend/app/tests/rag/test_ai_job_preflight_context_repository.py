@@ -51,6 +51,7 @@ from app.models.rag_candidate import (
     MedicationIdentificationSource,
     MedicationIdentificationStatus,
 )
+from app.models.rag_request_authority import RagRequestGuardAuthority
 from app.models.rag_runtime import (
     GuideRetrievalBindingManifest,
     RagRuntimeBundleCitationApproval,
@@ -73,6 +74,7 @@ from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.guide_repository import GuideRepository
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.repositories.rag_request_guard_runtime_binding_repository import RagRequestGuardRuntimeBindingRepository
 from app.repositories.rag_runtime_repository import (
     AiJobExecutionContextCreate,
     AiJobExecutionIdentificationCreate,
@@ -105,12 +107,71 @@ from app.services.medication_identification import MedicationIdentificationServi
 from app.services.rag_preflight import RagPreflightService
 from app.services.rag_runtime_bundle_build import execute_runtime_bundle_build
 from rag_runtime.guide_retrieval_binding import GuideRetrievalMemberBinding
+from rag_runtime.request_authority import (
+    RequestAuthorityDecisionOutcome,
+    RequestAuthorityDecisionStage,
+    compute_request_guard_authority_ref,
+)
+from rag_runtime.request_guard_runtime_binding import (
+    RequestGuardRuntimeBindingObservation,
+    RequestGuardRuntimeBindingRef,
+    canonical_scope_manifest_hash,
+)
 from rag_runtime.runtime_environment import RuntimeEnvironmentCode
 from rag_runtime.source_use_approval import SourceUsePurpose
 
 
 def _hash(char: str) -> str:
     return char * 64
+
+
+async def _record_guide_request_guard_runtime_binding(
+    session: AsyncSession,
+    *,
+    user: User,
+    bundle: RagRuntimeReleaseBundle,
+) -> RequestGuardRuntimeBindingRef:
+    legacy_ref = compute_request_guard_authority_ref(
+        user_id=user.id,
+        request_operation_code="GUIDE_SYNC_ANSWER",
+        decision_stage=RequestAuthorityDecisionStage.REQUEST,
+    )
+    existing_legacy = await session.scalar(
+        select(RagRequestGuardAuthority).where(
+            RagRequestGuardAuthority.artifact_code == legacy_ref.artifact_code,
+            RagRequestGuardAuthority.artifact_version == legacy_ref.version,
+            RagRequestGuardAuthority.artifact_content_sha256 == legacy_ref.content_sha256,
+        )
+    )
+    if existing_legacy is None:
+        session.add(
+            RagRequestGuardAuthority(
+                id=uuid4(),
+                artifact_code=legacy_ref.artifact_code,
+                artifact_version=legacy_ref.version,
+                artifact_content_sha256=legacy_ref.content_sha256,
+                user_id=user.id,
+                request_operation_code="GUIDE_SYNC_ANSWER",
+                decision_stage=RequestAuthorityDecisionStage.REQUEST.value,
+            )
+        )
+        await session.flush()
+    scopes = ("GUIDE",)
+    return await RagRequestGuardRuntimeBindingRepository(session).record(
+        RequestGuardRuntimeBindingObservation(
+            request_guard_decision_id=uuid4(),
+            actual_decision_outcome=RequestAuthorityDecisionOutcome.PASS,
+            user_id=user.id,
+            request_operation_code="GUIDE_SYNC_ANSWER",
+            decision_stage=RequestAuthorityDecisionStage.REQUEST,
+            environment=RuntimeEnvironmentCode(bundle.environment_code),
+            bundle_id=bundle.id,
+            bundle_manifest_hash=bundle.bundle_manifest_hash,
+            request_scope_codes=scopes,
+            scope_manifest_hash=canonical_scope_manifest_hash(scopes),
+            legacy_request_authority_ref=legacy_ref,
+        )
+    )
 
 
 def _artifact_ref(code: str, version: str, content_sha256: str) -> ImmutableArtifactRef:
@@ -640,6 +701,11 @@ async def _create_guide_carrier_fixture(session: AsyncSession) -> _GuideCarrierF
     )
     session.add(job)
     await session.flush()
+    request_guard_runtime_binding_ref = await _record_guide_request_guard_runtime_binding(
+        session,
+        user=user,
+        bundle=bundle,
+    )
     repository = RagRuntimeRepository(session)
     execution_context = await repository.create_execution_context(
         AiJobExecutionContextCreate(
@@ -653,6 +719,9 @@ async def _create_guide_carrier_fixture(session: AsyncSession) -> _GuideCarrierF
             runtime_execution_manifest_id=manifest.id,
             runtime_execution_manifest_hash=manifest.manifest_hash,
             runtime_guard_decision_ref="guard:guide-runtime-pass",
+            request_guard_runtime_binding_artifact_code=request_guard_runtime_binding_ref.artifact_code,
+            request_guard_runtime_binding_artifact_version=request_guard_runtime_binding_ref.version,
+            request_guard_runtime_binding_content_sha256=request_guard_runtime_binding_ref.content_sha256,
             guide_retrieval_binding_manifest_id=retrieval_binding_manifest.id,
             guide_retrieval_binding_manifest_hash=retrieval_binding_manifest.manifest_hash,
             patient_context_digest=_hash("6"),
@@ -710,6 +779,11 @@ async def test_guide_job_intake_pins_binding_for_verified_request_carrier(db_ses
         runtime_repository=RagRuntimeRepository(db_session),
         job_intake_service=JobIntakeService(AsyncJobRepository(db_session)),
     )
+    request_guard_runtime_binding_ref = await _record_guide_request_guard_runtime_binding(
+        db_session,
+        user=user,
+        bundle=bundle,
+    )
     intake = await adapter.accept_guide_job(
         user=user,
         prescription_id=prescription.id,
@@ -725,6 +799,7 @@ async def test_guide_job_intake_pins_binding_for_verified_request_carrier(db_ses
             guide_retrieval_binding_manifest_id=retrieval_binding.id,
             guide_retrieval_binding_manifest_hash=retrieval_binding.manifest_hash,
             runtime_guard_decision_ref="guard:guide-runtime-pass",
+            request_guard_runtime_binding_ref=request_guard_runtime_binding_ref,
             patient_context_digest=_hash("6"),
             source_scope_manifest_hash=_hash("7"),
         ),
@@ -736,6 +811,9 @@ async def test_guide_job_intake_pins_binding_for_verified_request_carrier(db_ses
     assert carrier.job_id == intake.job.id
     assert carrier.guide_id == intake.guide.id
     assert carrier.retrieval_binding.manifest_hash == retrieval_binding.manifest_hash
+    assert len(carrier.identifications) == 1
+    assert carrier.identifications[0].medication_name_snapshot == "합성 식별약"
+    assert carrier.identifications[0].strength_text_snapshot is None
 
 
 async def persist_and_verify_chat_context(db_session: AsyncSession) -> None:
@@ -832,6 +910,22 @@ async def test_verified_guide_runtime_request_carrier_reads_exact_pinned_runtime
     assert {source.source_snapshot_id for source in carrier.bundle_sources} == {
         source.source_snapshot_id for source in fixture.bundle_sources
     }
+
+
+async def test_verified_guide_runtime_request_carrier_rejects_legacy_guide_context_without_typed_request_pin(
+    db_session: AsyncSession,
+) -> None:
+    fixture = await _create_guide_carrier_fixture(db_session)
+    execution_context = await RagRuntimeRepository(db_session).get_execution_context_by_job(fixture.job.id)
+    assert execution_context is not None
+    execution_context.request_guard_runtime_binding_artifact_code = None
+    execution_context.request_guard_runtime_binding_artifact_version = None
+    execution_context.request_guard_runtime_binding_content_sha256 = None
+    await db_session.flush()
+
+    carrier = await load_verified_guide_runtime_request_carrier(db_session, fixture.job.id)
+
+    assert carrier is None
 
 
 async def test_verified_guide_runtime_request_carrier_rejects_bundle_source_drift(

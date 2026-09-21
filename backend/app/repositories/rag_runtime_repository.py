@@ -2,7 +2,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_worker.tasks.rag.runtime_bundle_builder import (
@@ -19,7 +19,7 @@ from ai_worker.tasks.rag.runtime_bundle_builder import (
     canonical_runtime_bundle_manifest_hash,
 )
 from app.models.prescriptions import PrescriptionVersionMedication
-from app.models.rag_candidate import MedicationIdentification, MedicationIdentificationStatus
+from app.models.rag_candidate import MedicationCandidateSearch, MedicationIdentification, MedicationIdentificationStatus
 from app.models.rag_evaluation import EvaluationDecisionStatus
 from app.models.rag_runtime import (
     AiJobExecutionContext,
@@ -80,6 +80,9 @@ class AiJobExecutionContextCreate:
     source_scope_manifest_hash: str | None = None
     guide_retrieval_binding_manifest_id: UUID | None = None
     guide_retrieval_binding_manifest_hash: str | None = None
+    request_guard_runtime_binding_artifact_code: str | None = None
+    request_guard_runtime_binding_artifact_version: str | None = None
+    request_guard_runtime_binding_content_sha256: str | None = None
     context_schema_version: str = "ai-job-execution-context@1"
 
 
@@ -88,6 +91,14 @@ class AiJobExecutionIdentificationCreate:
     execution_context_id: UUID
     medication_identification_id: UUID
     prescription_version_medication_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class AiJobExecutionIdentificationQuerySnapshot:
+    medication_identification_id: UUID
+    prescription_version_medication_id: UUID
+    medication_name_snapshot: str
+    strength_text_snapshot: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -526,6 +537,38 @@ class RagRuntimeRepository:
             .order_by(AiJobExecutionIdentification.created_at, AiJobExecutionIdentification.id)
         )
         return list(result.scalars().all())
+
+    async def list_execution_identification_query_snapshots(
+        self,
+        execution_context_id: UUID,
+    ) -> list[AiJobExecutionIdentificationQuerySnapshot]:
+        """Read the exact candidate-search snapshots pinned by an execution identification."""
+        result = await self.session.execute(
+            select(AiJobExecutionIdentification, MedicationCandidateSearch)
+            .join(
+                MedicationIdentification,
+                and_(
+                    MedicationIdentification.id == AiJobExecutionIdentification.medication_identification_id,
+                    MedicationIdentification.prescription_version_medication_id
+                    == AiJobExecutionIdentification.prescription_version_medication_id,
+                    MedicationIdentification.status == MedicationIdentificationStatus.MATCHED,
+                ),
+            )
+            .join(
+                MedicationCandidateSearch, MedicationCandidateSearch.id == MedicationIdentification.candidate_search_id
+            )
+            .where(AiJobExecutionIdentification.execution_context_id == execution_context_id)
+            .order_by(AiJobExecutionIdentification.created_at, AiJobExecutionIdentification.id)
+        )
+        return [
+            AiJobExecutionIdentificationQuerySnapshot(
+                medication_identification_id=identification.medication_identification_id,
+                prescription_version_medication_id=identification.prescription_version_medication_id,
+                medication_name_snapshot=candidate_search.medication_name_snapshot,
+                strength_text_snapshot=candidate_search.strength_text_snapshot,
+            )
+            for identification, candidate_search in result.all()
+        ]
 
     async def create_guide_retrieval_binding_manifest(
         self,

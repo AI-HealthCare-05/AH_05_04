@@ -190,6 +190,68 @@ def _coordinate() -> GuideRequestAuthorityLookupCoordinate:
     )
 
 
+@pytest.mark.asyncio
+async def test_selected_member_resolver_restores_persisted_identity_without_caller_supplied_identity() -> None:
+    reader, _ = _coordinate_reader(
+        guard_rows=[_guard_row()],
+        source_rows=[_source_row()],
+        member_rows=[_member_row()],
+    )
+
+    resolved = await reader.resolve_selected_member(
+        request_guard_ref=GUARD_REF,
+        user_id=_USER_ID,
+        request_operation_code=_OPERATION,
+        source_snapshot_id=_SNAPSHOT_ID,
+        source_snapshot_member_id=_MEMBER_ID,
+        expected_decision_outcome=ObservedDecisionOutcome.PASS,
+    )
+
+    assert resolved is not None
+    assert resolved.member_identity == _ENDPOINT_IDENTITY
+    assert resolved.request_source_decision_ref == _source_ref()
+    assert resolved.request_member_decision_ref == _member_ref()
+
+
+@pytest.mark.asyncio
+async def test_selected_member_resolver_fails_closed_when_historical_member_is_absent() -> None:
+    reader, _ = _coordinate_reader(
+        guard_rows=[_guard_row()],
+        source_rows=[_source_row()],
+        member_rows=[],
+    )
+
+    resolved = await reader.resolve_selected_member(
+        request_guard_ref=GUARD_REF,
+        user_id=_USER_ID,
+        request_operation_code=_OPERATION,
+        source_snapshot_id=_SNAPSHOT_ID,
+        source_snapshot_member_id=_MEMBER_ID,
+        expected_decision_outcome=ObservedDecisionOutcome.PASS,
+    )
+
+    assert resolved is None
+
+
+@pytest.mark.asyncio
+async def test_selected_member_resolver_rejects_ambiguous_historical_member_rows() -> None:
+    reader, _ = _coordinate_reader(
+        guard_rows=[_guard_row()],
+        source_rows=[_source_row()],
+        member_rows=[_member_row(), _member_row()],
+    )
+
+    with pytest.raises(GuideEvidenceAuthorityReaderError, match="Member decision coordinate lookup is ambiguous"):
+        await reader.resolve_selected_member(
+            request_guard_ref=GUARD_REF,
+            user_id=_USER_ID,
+            request_operation_code=_OPERATION,
+            source_snapshot_id=_SNAPSHOT_ID,
+            source_snapshot_member_id=_MEMBER_ID,
+            expected_decision_outcome=ObservedDecisionOutcome.PASS,
+        )
+
+
 def _coordinate_reader(
     *,
     guard_rows: list[dict[str, Any]] | None = None,

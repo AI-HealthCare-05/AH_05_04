@@ -24,6 +24,7 @@ from app.models.rag_candidate import (
     MedicationIdentificationSource,
     MedicationIdentificationStatus,
 )
+from app.models.rag_request_authority import RagRequestGuardAuthority
 from app.models.rag_runtime import (
     AiJobExecutionContext,
     AiJobExecutionIdentification,
@@ -36,6 +37,7 @@ from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.guide_repository import GuideRepository
 from app.repositories.medication_candidate_repository import MedicationCandidateRepository
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.repositories.rag_request_guard_runtime_binding_repository import RagRequestGuardRuntimeBindingRepository
 from app.repositories.rag_runtime_repository import (
     RagRuntimeEnvironmentCreate,
     RagRuntimeExecutionManifestCreate,
@@ -52,6 +54,17 @@ from app.services.guide_intake import (
 from app.services.job_intake import IdempotencyKeyConflictError, JobIntakeService
 from app.services.medication_identification import MedicationIdentificationService
 from app.services.rag_preflight import RagPreflightService
+from rag_runtime.request_authority import (
+    RequestAuthorityDecisionOutcome,
+    RequestAuthorityDecisionStage,
+    compute_request_guard_authority_ref,
+)
+from rag_runtime.request_guard_runtime_binding import (
+    RequestGuardRuntimeBindingObservation,
+    RequestGuardRuntimeBindingRef,
+    canonical_scope_manifest_hash,
+)
+from rag_runtime.runtime_environment import RuntimeEnvironmentCode
 
 
 def _hash(char: str) -> str:
@@ -178,6 +191,8 @@ async def _create_matched_prescription(
 
 async def _create_runtime_context(
     session: AsyncSession,
+    *,
+    user: User,
     environment_code: str = "LOCAL",
 ) -> GuideRuntimeContextSnapshot:
     repository = RagRuntimeRepository(session)
@@ -250,6 +265,13 @@ async def _create_runtime_context(
     )
     session.add(retrieval_binding)
     await session.flush()
+    request_guard_runtime_binding_ref = await _record_request_guard_runtime_binding(
+        session,
+        user=user,
+        bundle_id=bundle.id,
+        bundle_manifest_hash=bundle.bundle_manifest_hash,
+        environment_code=environment_code,
+    )
     return GuideRuntimeContextSnapshot(
         runtime_environment_id=environment.id,
         runtime_environment_revision=environment.environment_revision,
@@ -260,8 +282,60 @@ async def _create_runtime_context(
         guide_retrieval_binding_manifest_id=retrieval_binding.id,
         guide_retrieval_binding_manifest_hash=retrieval_binding.manifest_hash,
         runtime_guard_decision_ref="guard:guide-full-request",
+        request_guard_runtime_binding_ref=request_guard_runtime_binding_ref,
         patient_context_digest=suffix.ljust(64, "5"),
         source_scope_manifest_hash=suffix.ljust(64, "6"),
+    )
+
+
+async def _record_request_guard_runtime_binding(
+    session: AsyncSession,
+    *,
+    user: User,
+    bundle_id,
+    bundle_manifest_hash: str,
+    environment_code: str,
+) -> RequestGuardRuntimeBindingRef:
+    legacy_ref = compute_request_guard_authority_ref(
+        user_id=user.id,
+        request_operation_code="GUIDE_SYNC_ANSWER",
+        decision_stage=RequestAuthorityDecisionStage.REQUEST,
+    )
+    existing_legacy = await session.scalar(
+        select(RagRequestGuardAuthority).where(
+            RagRequestGuardAuthority.artifact_code == legacy_ref.artifact_code,
+            RagRequestGuardAuthority.artifact_version == legacy_ref.version,
+            RagRequestGuardAuthority.artifact_content_sha256 == legacy_ref.content_sha256,
+        )
+    )
+    if existing_legacy is None:
+        session.add(
+            RagRequestGuardAuthority(
+                id=uuid4(),
+                artifact_code=legacy_ref.artifact_code,
+                artifact_version=legacy_ref.version,
+                artifact_content_sha256=legacy_ref.content_sha256,
+                user_id=user.id,
+                request_operation_code="GUIDE_SYNC_ANSWER",
+                decision_stage=RequestAuthorityDecisionStage.REQUEST.value,
+            )
+        )
+        await session.flush()
+    scopes = ("GUIDE",)
+    return await RagRequestGuardRuntimeBindingRepository(session).record(
+        RequestGuardRuntimeBindingObservation(
+            request_guard_decision_id=uuid4(),
+            actual_decision_outcome=RequestAuthorityDecisionOutcome.PASS,
+            user_id=user.id,
+            request_operation_code="GUIDE_SYNC_ANSWER",
+            decision_stage=RequestAuthorityDecisionStage.REQUEST,
+            environment=RuntimeEnvironmentCode(environment_code),
+            bundle_id=bundle_id,
+            bundle_manifest_hash=bundle_manifest_hash,
+            request_scope_codes=scopes,
+            scope_manifest_hash=canonical_scope_manifest_hash(scopes),
+            legacy_request_authority_ref=legacy_ref,
+        )
     )
 
 
@@ -285,7 +359,7 @@ async def test_accept_guide_job_creates_job_guide_context_identifications_and_ou
     prescription = await _create_prescription(db_session, user=user)
     medications = await _active_medications(db_session, prescription)
     identifications = [await _create_identification(db_session, medication=medication) for medication in medications]
-    runtime_context = await _create_runtime_context(db_session)
+    runtime_context = await _create_runtime_context(db_session, user=user)
 
     result = await _adapter(db_session).accept_guide_job(
         user=user,
@@ -319,6 +393,18 @@ async def test_accept_guide_job_creates_job_guide_context_identifications_and_ou
     assert context.guide_retrieval_binding_manifest_id == runtime_context.guide_retrieval_binding_manifest_id
     assert context.guide_retrieval_binding_manifest_hash == runtime_context.guide_retrieval_binding_manifest_hash
     assert context.runtime_guard_decision_ref == "guard:guide-full-request"
+    assert (
+        context.request_guard_runtime_binding_artifact_code
+        == runtime_context.request_guard_runtime_binding_ref.artifact_code
+    )
+    assert (
+        context.request_guard_runtime_binding_artifact_version
+        == runtime_context.request_guard_runtime_binding_ref.version
+    )
+    assert (
+        context.request_guard_runtime_binding_content_sha256
+        == runtime_context.request_guard_runtime_binding_ref.content_sha256
+    )
 
     pinned = await db_session.execute(
         select(AiJobExecutionIdentification).where(AiJobExecutionIdentification.execution_context_id == context.id)
@@ -333,7 +419,7 @@ async def test_accept_guide_job_reuses_same_idempotency_key_without_duplicate_ro
 ) -> None:
     user = await _create_user(db_session, email=f"gint-dupe-{uuid4().hex[:8]}@test.local")
     prescription = await _create_matched_prescription(db_session, user=user)
-    runtime_context = await _create_runtime_context(db_session)
+    runtime_context = await _create_runtime_context(db_session, user=user)
 
     first = await _adapter(db_session).accept_guide_job(
         user=user,
@@ -343,7 +429,7 @@ async def test_accept_guide_job_reuses_same_idempotency_key_without_duplicate_ro
         runtime_context=runtime_context,
     )
 
-    changed_runtime_context = await _create_runtime_context(db_session, environment_code="TEST")
+    changed_runtime_context = await _create_runtime_context(db_session, user=user, environment_code="TEST")
 
     second = await _adapter(db_session).accept_guide_job(
         user=user,
@@ -389,7 +475,7 @@ async def test_accept_guide_job_rolls_back_when_preflight_fails(
 ) -> None:
     user = await _create_user(db_session, email=f"gint-fail-{uuid4().hex[:8]}@test.local")
     prescription = await _create_prescription(db_session, user=user)
-    runtime_context = await _create_runtime_context(db_session)
+    runtime_context = await _create_runtime_context(db_session, user=user)
 
     with pytest.raises(ApiError) as exc_info:
         await _adapter(db_session).accept_guide_job(
@@ -415,7 +501,7 @@ async def test_accept_guide_job_rejects_idempotency_conflict_without_duplicate_r
 ) -> None:
     user = await _create_user(db_session, email=f"gint-conflict-{uuid4().hex[:8]}@test.local")
     prescription = await _create_matched_prescription(db_session, user=user)
-    runtime_context = await _create_runtime_context(db_session)
+    runtime_context = await _create_runtime_context(db_session, user=user)
 
     first = await _adapter(db_session).accept_guide_job(
         user=user,
@@ -451,7 +537,7 @@ async def test_accept_guide_job_hides_other_users_prescription_without_side_effe
     owner = await _create_user(db_session, email=f"gint-owner-{uuid4().hex[:8]}@test.local")
     intruder = await _create_user(db_session, email=f"gint-intruder-{uuid4().hex[:8]}@test.local")
     prescription = await _create_matched_prescription(db_session, user=owner)
-    runtime_context = await _create_runtime_context(db_session)
+    runtime_context = await _create_runtime_context(db_session, user=owner)
 
     with pytest.raises(ApiError) as exc_info:
         await _adapter(db_session).accept_guide_job(
@@ -477,7 +563,7 @@ async def test_accept_guide_job_rolls_back_when_runtime_snapshot_mismatches(
 ) -> None:
     user = await _create_user(db_session, email=f"gint-runtime-{uuid4().hex[:8]}@test.local")
     prescription = await _create_matched_prescription(db_session, user=user)
-    runtime_context = await _create_runtime_context(db_session)
+    runtime_context = await _create_runtime_context(db_session, user=user)
     mismatched_context = replace(runtime_context, runtime_release_bundle_manifest_hash="8" * 64)
 
     with pytest.raises(GuideRuntimeContextBindingError):
@@ -497,12 +583,43 @@ async def test_accept_guide_job_rolls_back_when_runtime_snapshot_mismatches(
     assert await _count(db_session, IdempotencyRecord) == 0
 
 
+async def test_accept_guide_job_rejects_typed_request_guard_runtime_binding_for_a_different_user(
+    db_session: AsyncSession,
+) -> None:
+    user = await _create_user(db_session, email=f"gint-guard-owner-{uuid4().hex[:8]}@test.local")
+    other_user = await _create_user(db_session, email=f"gint-guard-other-{uuid4().hex[:8]}@test.local")
+    prescription = await _create_matched_prescription(db_session, user=user)
+    runtime_context = await _create_runtime_context(db_session, user=user)
+    bundle = await RagRuntimeRepository(db_session).get_release_bundle_by_id(runtime_context.runtime_release_bundle_id)
+    assert bundle is not None
+    foreign_ref = await _record_request_guard_runtime_binding(
+        db_session,
+        user=other_user,
+        bundle_id=bundle.id,
+        bundle_manifest_hash=bundle.bundle_manifest_hash,
+        environment_code=bundle.environment_code,
+    )
+
+    with pytest.raises(GuideRuntimeContextBindingError, match="request guard runtime binding"):
+        await _adapter(db_session).accept_guide_job(
+            user=user,
+            prescription_id=prescription.id,
+            idempotency_key="guide-intake-key-000000000008",
+            trace_id="0" * 32,
+            runtime_context=replace(runtime_context, request_guard_runtime_binding_ref=foreign_ref),
+        )
+
+    assert await _count(db_session, AiJob) == 0
+    assert await _count(db_session, Guide) == 0
+    assert await _count(db_session, AiJobExecutionContext) == 0
+
+
 async def test_accept_guide_job_outbox_reference_contains_no_sensitive_payload(
     db_session: AsyncSession,
 ) -> None:
     user = await _create_user(db_session, email=f"gint-outbox-{uuid4().hex[:8]}@test.local")
     prescription = await _create_matched_prescription(db_session, user=user)
-    runtime_context = await _create_runtime_context(db_session)
+    runtime_context = await _create_runtime_context(db_session, user=user)
 
     result = await _adapter(db_session).accept_guide_job(
         user=user,

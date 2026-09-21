@@ -8,12 +8,15 @@ from app.repositories.rag_runtime_repository import RagRuntimeRepository
 from app.services.guide_retrieval_binding import load_verified_guide_retrieval_binding_manifest
 from app.services.rag_runtime_bundle_build import verify_persisted_bundle_manifest_hash
 from rag_runtime.guide_retrieval_binding import GuideRetrievalBindingManifest
+from rag_runtime.request_guard_runtime_binding import RequestGuardRuntimeBindingRef
 
 
 @dataclass(frozen=True, slots=True)
 class GuideRuntimeRequestIdentification:
     medication_identification_id: UUID
     prescription_version_medication_id: UUID
+    medication_name_snapshot: str
+    strength_text_snapshot: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +45,7 @@ class GuideRuntimeRequestCarrier:
     runtime_execution_manifest_id: UUID
     runtime_execution_manifest_hash: str
     runtime_guard_decision_ref: str
+    request_guard_runtime_binding_ref: RequestGuardRuntimeBindingRef
     patient_context_digest: str | None
     source_scope_manifest_hash: str | None
     bundle_key: str
@@ -80,6 +84,20 @@ async def load_verified_guide_runtime_request_carrier(
         or execution_context.guide_retrieval_binding_manifest_hash is None
     ):
         return None
+    request_guard_runtime_binding_artifact_code = execution_context.request_guard_runtime_binding_artifact_code
+    request_guard_runtime_binding_artifact_version = execution_context.request_guard_runtime_binding_artifact_version
+    request_guard_runtime_binding_content_sha256 = execution_context.request_guard_runtime_binding_content_sha256
+    if (
+        request_guard_runtime_binding_artifact_code is None
+        or request_guard_runtime_binding_artifact_version is None
+        or request_guard_runtime_binding_content_sha256 is None
+    ):
+        return None
+    request_guard_runtime_binding_ref = RequestGuardRuntimeBindingRef(
+        artifact_code=request_guard_runtime_binding_artifact_code,
+        version=request_guard_runtime_binding_artifact_version,
+        content_sha256=request_guard_runtime_binding_content_sha256,
+    )
 
     bundle_id = execution_context.runtime_release_bundle_id
     if not await verify_persisted_bundle_manifest_hash(session, bundle_id):
@@ -107,7 +125,7 @@ async def load_verified_guide_runtime_request_carrier(
     ):
         return None
 
-    identifications = await repository.list_execution_identifications(execution_context.id)
+    identifications = await repository.list_execution_identification_query_snapshots(execution_context.id)
     bundle_sources = await repository.list_bundle_sources(bundle.id)
     return GuideRuntimeRequestCarrier(
         job_id=execution_context.ai_job_id,
@@ -121,6 +139,7 @@ async def load_verified_guide_runtime_request_carrier(
         runtime_execution_manifest_id=execution_context.runtime_execution_manifest_id,
         runtime_execution_manifest_hash=execution_context.runtime_execution_manifest_hash,
         runtime_guard_decision_ref=execution_context.runtime_guard_decision_ref,
+        request_guard_runtime_binding_ref=request_guard_runtime_binding_ref,
         patient_context_digest=execution_context.patient_context_digest,
         source_scope_manifest_hash=execution_context.source_scope_manifest_hash,
         bundle_key=bundle.bundle_key,
@@ -145,6 +164,8 @@ async def load_verified_guide_runtime_request_carrier(
             GuideRuntimeRequestIdentification(
                 medication_identification_id=identification.medication_identification_id,
                 prescription_version_medication_id=identification.prescription_version_medication_id,
+                medication_name_snapshot=identification.medication_name_snapshot,
+                strength_text_snapshot=identification.strength_text_snapshot,
             )
             for identification in identifications
         ),

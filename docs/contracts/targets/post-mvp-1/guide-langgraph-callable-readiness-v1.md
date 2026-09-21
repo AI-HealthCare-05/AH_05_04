@@ -92,14 +92,14 @@
 | field | value |
 | --- | --- |
 | contract_semantics | Guide의 pinned medication context로 authoritative retrieval/Evidence selection과 P0 request/source/evidence conflict authority를 실행한다. |
-| actual_symbol | `nearest: ai_worker.tasks.rag.guide_retrieval_outcome_binding:project_hybrid_retrieval_for_guide_composition`; B3 lookup: `SqlAlchemyGuideEvidenceAuthorityReader.lookup_request_decision_refs` |
-| input_type | verified B1 Sync runtime request carrier, B2 production query fingerprint/binding provider, exact REQUEST decision lookup, and terminal replay aggregate are available |
-| output_type | canonical Guide retrieval outcome is absent |
+| actual_symbol | `ai_worker.tasks.rag.guide_medication_guidance_retrieval:retrieve_medication_guidance`; B3 resolver: `SqlAlchemyGuideEvidenceAuthorityReader.resolve_selected_member` |
+| input_type | verified B1 Sync runtime request carrier, B2 production query fingerprint/binding provider, #806 exact REQUEST guard pin, historical selected-member resolver, and terminal replay aggregate |
+| output_type | `GuideMedicationGuidanceRetrievalOutcome` carrying #697 authenticated retrieval selections per pinned medication |
 | side_effect | READ/WRITE |
 | authority_owner | AI/RAG retrieval runtime |
-| status | `MISSING_SEMANTIC_CALLABLE` |
-| reason | Production `execute_hybrid_retrieve` and the verified B1/B2/B3/B4/B5 seams exist, but no single callable yet composes them into the canonical Guide retrieval outcome. |
-| required_next_action | Compose the verified B1/B2/B3/B4/B5 seams without duplicating retrieval execution, persistence, query authority, or replay semantics. |
+| status | `EXACT_CALLABLE` |
+| reason | The verified B1/B2/B3/B4/B5 seams exist; the callable consumes them with per-medication `execute_hybrid_retrieve`, #806 origin, historical persisted member identity, #672 assembly, and #697 join without duplicating those semantics. |
+| required_next_action | Future Thin LangGraph wiring may consume this result only after its other blocked nodes are available. |
 
 Retrieval binding re-audited at `origin/develop` `e03ae267` plus the B1 branch implementation.
 

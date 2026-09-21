@@ -726,6 +726,20 @@ class AiJobExecutionContext(Base):
             name="fk_ai_job_execution_context_guide_retrieval_binding",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            [
+                "request_guard_runtime_binding_artifact_code",
+                "request_guard_runtime_binding_artifact_version",
+                "request_guard_runtime_binding_content_sha256",
+            ],
+            [
+                "rag_request_guard_runtime_binding.artifact_code",
+                "rag_request_guard_runtime_binding.artifact_version",
+                "rag_request_guard_runtime_binding.artifact_content_sha256",
+            ],
+            name="fk_ai_job_execution_context_request_guard_runtime_binding",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "(guide_id IS NOT NULL AND chat_message_id IS NULL) OR (guide_id IS NULL AND chat_message_id IS NOT NULL)",
             name="chk_ai_job_execution_context_one_domain",
@@ -741,6 +755,15 @@ class AiJobExecutionContext(Base):
         CheckConstraint(
             "guide_retrieval_binding_manifest_id IS NULL OR guide_id IS NOT NULL",
             name="chk_ai_job_execution_context_guide_retrieval_binding_domain",
+        ),
+        CheckConstraint(
+            "(request_guard_runtime_binding_artifact_code IS NULL "
+            "AND request_guard_runtime_binding_artifact_version IS NULL "
+            "AND request_guard_runtime_binding_content_sha256 IS NULL) "
+            "OR (request_guard_runtime_binding_artifact_code IS NOT NULL "
+            "AND request_guard_runtime_binding_artifact_version IS NOT NULL "
+            "AND request_guard_runtime_binding_content_sha256 IS NOT NULL)",
+            name="chk_ai_job_exec_ctx_request_guard_pin_all_or_none",
         ),
         CheckConstraint("runtime_environment_revision >= 1", name="chk_ai_job_execution_context_revision_positive"),
         CheckConstraint(
@@ -820,6 +843,9 @@ class AiJobExecutionContext(Base):
     runtime_guard_decision_ref: Mapped[str] = mapped_column(String(255), nullable=False)
     guide_retrieval_binding_manifest_id: Mapped[UUID | None] = mapped_column(UUIDChar(), nullable=True)
     guide_retrieval_binding_manifest_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    request_guard_runtime_binding_artifact_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    request_guard_runtime_binding_artifact_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    request_guard_runtime_binding_content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     patient_context_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_scope_manifest_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     context_schema_version: Mapped[str] = mapped_column(
