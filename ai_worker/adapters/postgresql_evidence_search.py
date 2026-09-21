@@ -169,6 +169,7 @@ _INDEX_MEMBER = table(
     column("id", String(36)),
     column("knowledge_index_id", String(36)),
     column("knowledge_chunk_id", String(36)),
+    column("evidence_key", String(300)),
     column("source_snapshot_id", String(36)),
     column("source_snapshot_member_id", String(36)),
     column("source_code", String(100)),
@@ -191,6 +192,7 @@ class _InternalProvenance:
     index_version: str
     index_configuration_hash: str
     knowledge_chunk_id: UUID
+    evidence_key: str
     source_snapshot_id: UUID
     source_snapshot_member_id: UUID
     source_code: str
@@ -235,6 +237,12 @@ class _IndexMetadata:
     embedding_model_version: str
 
 
+def _required_persisted_evidence_key(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("persisted evidence_key is missing")
+    return value
+
+
 def _to_production_provenance(p: _InternalProvenance) -> ProductionEvidenceProvenance:
     return ProductionEvidenceProvenance(
         knowledge_index_id=p.knowledge_index_id,
@@ -242,6 +250,7 @@ def _to_production_provenance(p: _InternalProvenance) -> ProductionEvidenceProve
         index_version=p.index_version,
         index_configuration_hash=p.index_configuration_hash,
         knowledge_chunk_id=p.knowledge_chunk_id,
+        evidence_key=p.evidence_key,
         source_snapshot_id=p.source_snapshot_id,
         source_snapshot_member_id=p.source_snapshot_member_id,
         source_code=p.source_code,
@@ -759,6 +768,7 @@ class PostgresqlEvidenceSearchAdapter:
             select(
                 _INDEX_MEMBER.c.knowledge_index_id,
                 _INDEX_MEMBER.c.knowledge_chunk_id,
+                _INDEX_MEMBER.c.evidence_key,
                 _INDEX_MEMBER.c.source_snapshot_id,
                 _INDEX_MEMBER.c.source_snapshot_member_id,
                 _INDEX_MEMBER.c.source_code,
@@ -913,6 +923,7 @@ class PostgresqlEvidenceSearchAdapter:
                     index_version=index_meta.index_version,
                     index_configuration_hash=index_meta.index_configuration_hash,
                     knowledge_chunk_id=UUID(str(row["knowledge_chunk_id"])),
+                    evidence_key=_required_persisted_evidence_key(row["evidence_key"]),
                     source_snapshot_id=UUID(str(row["source_snapshot_id"])),
                     source_snapshot_member_id=UUID(str(row["source_snapshot_member_id"])),
                     source_code=str(row["source_code"]),
@@ -991,12 +1002,18 @@ class PostgresqlEvidenceSearchAdapter:
                 if computed_hash != str(row["content_hash"]):
                     return EvidenceSearchFailure(EvidenceSearchFailureReason.SEARCH_RESULT_INVALID)
 
+                try:
+                    evidence_key = _required_persisted_evidence_key(row["evidence_key"])
+                except ValueError:
+                    return EvidenceSearchFailure(EvidenceSearchFailureReason.SEARCH_RESULT_INVALID)
+
                 provenance_map[key] = _InternalProvenance(
                     knowledge_index_id=UUID(str(row["knowledge_index_id"])),
                     index_code=index_meta.index_code,
                     index_version=index_meta.index_version,
                     index_configuration_hash=index_meta.index_configuration_hash,
                     knowledge_chunk_id=UUID(str(row["knowledge_chunk_id"])),
+                    evidence_key=evidence_key,
                     source_snapshot_id=UUID(str(row["source_snapshot_id"])),
                     source_snapshot_member_id=UUID(str(row["source_snapshot_member_id"])),
                     source_code=str(row["source_code"]),

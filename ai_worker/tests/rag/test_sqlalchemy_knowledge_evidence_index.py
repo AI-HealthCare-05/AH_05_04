@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ai_worker.adapters.sqlalchemy_knowledge_evidence_index import (
     SqlAlchemyKnowledgeEvidenceIndexRepository,
     _artifact_origin_lock_statement,
+    _request_from_persisted,
     _source_binding_statement,
 )
 from ai_worker.tasks.rag.knowledge_evidence_index import (
@@ -30,6 +31,7 @@ def member() -> KnowledgeIndexMemberDraft:
     return KnowledgeIndexMemberDraft(
         identity=KnowledgeChunkIdentity(
             knowledge_chunk_id=UUID("00000000-0000-4000-8000-000000000001"),
+            evidence_key="mfds:synthetic:document-1:0",
             source_snapshot_id=UUID("00000000-0000-4000-8000-000000000002"),
             source_snapshot_member_id=UUID("00000000-0000-4000-8000-000000000003"),
             source_code="MFDS",
@@ -114,7 +116,53 @@ async def test_new_index_is_inserted_atomically_and_recomputed_before_commit() -
     assert sql[0].startswith("SELECT pg_advisory_xact_lock")
     assert any(statement.startswith("INSERT INTO rag_knowledge_index") for statement in sql)
     assert any(statement.startswith("INSERT INTO rag_knowledge_index_member") for statement in sql)
+    member_insert = next(
+        call
+        for call in session.execute.await_args_list
+        if str(call.args[0]).startswith("INSERT INTO rag_knowledge_index_member")
+    )
+    assert member_insert.args[1][0]["evidence_key"] == "mfds:synthetic:document-1:0"
     session.commit.assert_not_awaited()
+
+
+def test_persisted_member_round_trip_preserves_authoritative_evidence_key() -> None:
+    build = request()
+    receipt = create_knowledge_index_receipt(build)
+    identity = build.members[0].identity
+    rebuilt = _request_from_persisted(
+        {
+            "index_code": build.index_code,
+            "index_version": build.index_version,
+            "embedding_model_ref": build.embedding_model_ref,
+            "embedding_model_version": build.embedding_model_version,
+            "embedding_dimension": build.embedding_dimension,
+            "distance_metric": build.distance_metric.value,
+            "corpus_manifest_hash": receipt.corpus_manifest_hash,
+            "embedding_manifest_hash": receipt.embedding_manifest_hash,
+            "index_configuration_hash": receipt.index_configuration_hash,
+            "member_count": 1,
+        },
+        [
+            {
+                "knowledge_chunk_id": str(identity.knowledge_chunk_id),
+                "evidence_key": identity.evidence_key,
+                "source_snapshot_id": str(identity.source_snapshot_id),
+                "source_snapshot_member_id": str(identity.source_snapshot_member_id),
+                "source_code": identity.source_code,
+                "source_version": identity.source_version,
+                "canonical_checksum": identity.canonical_checksum,
+                "external_document_id": identity.external_document_id,
+                "chunk_index": identity.chunk_index,
+                "content_hash": identity.content_hash,
+                "locator": identity.locator,
+                "chunk_text": build.members[0].content_text.reveal(),
+                "embedding": build.members[0].embedding,
+            }
+        ],
+    )
+
+    assert rebuilt == build
+    assert rebuilt.members[0].identity.evidence_key == "mfds:synthetic:document-1:0"
 
 
 async def test_exact_existing_version_is_idempotent() -> None:

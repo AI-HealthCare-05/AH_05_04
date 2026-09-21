@@ -34,6 +34,7 @@ def _row(**overrides: Any) -> dict[str, Any]:
         "index_configuration_hash": "4" * 64,
         "knowledge_index_id": str(_INDEX_ID),
         "knowledge_chunk_id": str(_CHUNK_ID),
+        "evidence_key": "synthetic-guide-evidence-1",
         "source_snapshot_id": str(_SNAPSHOT_ID),
         "source_snapshot_member_id": str(_MEMBER_ID),
         "source_code": "MFDS_LABEL",
@@ -113,6 +114,7 @@ async def test_read_content_rebuilds_production_provenance_from_persisted_row() 
     provenance = observation.provenance
     assert provenance.knowledge_index_id == _INDEX_ID
     assert provenance.knowledge_chunk_id == _CHUNK_ID
+    assert provenance.evidence_key == "synthetic-guide-evidence-1"
     assert provenance.index_code == "GUIDELINE_INDEX"
     assert provenance.index_version == "v1"
     assert provenance.index_configuration_hash == "4" * 64
@@ -162,6 +164,14 @@ async def test_database_exception_is_converted_to_typed_reader_error(caplog) -> 
 
 async def test_malformed_persisted_row_fails_closed_as_reader_error() -> None:
     reader, _ = _reader([_row(chunk_index=None)])
+
+    with pytest.raises(KnowledgeChunkContentReaderError):
+        await reader.read_content(knowledge_index_id=_INDEX_ID, knowledge_chunk_id=_CHUNK_ID)
+
+
+@pytest.mark.parametrize("evidence_key", [" ", None])
+async def test_missing_or_blank_persisted_evidence_key_fails_closed_as_reader_error(evidence_key: object) -> None:
+    reader, _ = _reader([_row(evidence_key=evidence_key)])
 
     with pytest.raises(KnowledgeChunkContentReaderError):
         await reader.read_content(knowledge_index_id=_INDEX_ID, knowledge_chunk_id=_CHUNK_ID)

@@ -491,6 +491,7 @@ async def bootstrap_ret_h_smoke_stage2_knowledge_index(
             KnowledgeIndexMemberDraft(
                 identity=KnowledgeChunkIdentity(
                     knowledge_chunk_id=chunk_id,
+                    evidence_key=fixture.records[0].evidence_ref_id,
                     source_snapshot_id=stage1_snapshot_id,
                     source_snapshot_member_id=member_id,
                     source_code=fixture.source_code,

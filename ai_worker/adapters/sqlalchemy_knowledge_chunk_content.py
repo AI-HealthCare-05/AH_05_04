@@ -62,6 +62,7 @@ _INDEX_MEMBER = table(
     "rag_knowledge_index_member",
     column("knowledge_index_id", String(36)),
     column("knowledge_chunk_id", String(36)),
+    column("evidence_key", String(300)),
     column("source_snapshot_id", String(36)),
     column("source_snapshot_member_id", String(36)),
     column("source_code", String(100)),
@@ -90,6 +91,12 @@ _SNAPSHOT_MEMBER = table(
 )
 
 
+def _required_persisted_evidence_key(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("persisted evidence_key is missing")
+    return value
+
+
 def _content_statement(knowledge_index_id: UUID, knowledge_chunk_id: UUID):
     """Select the membership row for the exact lookup identity, without a row limit."""
     return (
@@ -99,6 +106,7 @@ def _content_statement(knowledge_index_id: UUID, knowledge_chunk_id: UUID):
             _INDEX.c.index_configuration_hash,
             _INDEX_MEMBER.c.knowledge_index_id,
             _INDEX_MEMBER.c.knowledge_chunk_id,
+            _INDEX_MEMBER.c.evidence_key,
             _INDEX_MEMBER.c.source_snapshot_id,
             _INDEX_MEMBER.c.source_snapshot_member_id,
             _INDEX_MEMBER.c.source_code,
@@ -134,6 +142,7 @@ def _to_observation(row: RowMapping) -> KnowledgeChunkContentObservation:
         index_version=str(row["index_version"]),
         index_configuration_hash=str(row["index_configuration_hash"]),
         knowledge_chunk_id=UUID(str(row["knowledge_chunk_id"])),
+        evidence_key=_required_persisted_evidence_key(row["evidence_key"]),
         source_snapshot_id=UUID(str(row["source_snapshot_id"])),
         source_snapshot_member_id=UUID(str(row["source_snapshot_member_id"])),
         source_code=str(row["source_code"]),

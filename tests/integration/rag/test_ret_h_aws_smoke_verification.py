@@ -398,16 +398,18 @@ async def _seed_index(engine, *, index_code: str, chunk_text: str) -> tuple[UUID
         await conn.execute(
             text(
                 "INSERT INTO rag_knowledge_index_member (id, knowledge_index_id, knowledge_chunk_id, "
+                "evidence_key, "
                 "source_snapshot_id, source_snapshot_member_id, source_code, source_version, "
                 "canonical_checksum, external_document_id, chunk_index, content_hash, member_order, embedding, "
                 "embedding_sha256) "
-                "VALUES (:id, :idx, :chunk, :snap, :snapm, 'SYNTHETIC_DEV', '1.0', :h, 'doc-1', 0, :h, 1, "
+                "VALUES (:id, :idx, :chunk, :evidence_key, :snap, :snapm, 'SYNTHETIC_DEV', '1.0', :h, 'doc-1', 0, :h, 1, "
                 ":vec, :h)"
             ),
             {
                 "id": str(uuid4()),
                 "idx": str(index_id),
                 "chunk": str(chunk_id),
+                "evidence_key": "synthetic-ret-h-aws-evidence-1",
                 "snap": str(snapshot_id),
                 "snapm": str(snapshot_member_id),
                 "h": digest,

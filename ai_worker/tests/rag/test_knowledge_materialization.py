@@ -574,6 +574,7 @@ def test_draft_provides_all_non_db_index_identity_fields() -> None:
     # Verify that with a dummy chunk_id, KnowledgeChunkIdentity can be built and is valid
     identity = KnowledgeChunkIdentity(
         knowledge_chunk_id=uuid4(),
+        evidence_key="synthetic-materialization-evidence-1",
         source_snapshot_id=doc.snapshot_id,
         source_snapshot_member_id=draft.source_snapshot_member_id,
         source_code=doc.source_code,

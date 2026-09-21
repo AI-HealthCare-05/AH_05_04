@@ -27,6 +27,13 @@ from ai_worker.tasks.rag.knowledge_evidence_index import (
 
 SessionFactory = Callable[[], AsyncSession]
 
+
+def _required_persisted_evidence_key(value: object) -> str:
+    if not isinstance(value, str):
+        raise KnowledgeEvidenceIndexValidationError(KnowledgeEvidenceIndexFailureReason.SOURCE_BINDING_INVALID)
+    return value
+
+
 _SOURCE = table(
     "rag_source",
     column("id", String(36)),
@@ -117,6 +124,7 @@ _INDEX_MEMBER = table(
     column("id", String(36)),
     column("knowledge_index_id", String(36)),
     column("knowledge_chunk_id", String(36)),
+    column("evidence_key", String(300)),
     column("source_snapshot_id", String(36)),
     column("source_snapshot_member_id", String(36)),
     column("source_code", String(100)),
@@ -189,6 +197,7 @@ class SqlAlchemyKnowledgeEvidenceIndexRepository:
                         "id": str(uuid4()),
                         "knowledge_index_id": str(index_id),
                         "knowledge_chunk_id": str(member.identity.knowledge_chunk_id),
+                        "evidence_key": member.identity.evidence_key,
                         "source_snapshot_id": str(member.identity.source_snapshot_id),
                         "source_snapshot_member_id": str(member.identity.source_snapshot_member_id),
                         "source_code": member.identity.source_code,
@@ -361,6 +370,7 @@ def _request_from_persisted(index_row: RowMapping, rows: Sequence[RowMapping]) -
         KnowledgeIndexMemberDraft(
             identity=KnowledgeChunkIdentity(
                 knowledge_chunk_id=UUID(str(row["knowledge_chunk_id"])),
+                evidence_key=_required_persisted_evidence_key(row["evidence_key"]),
                 source_snapshot_id=UUID(str(row["source_snapshot_id"])),
                 source_snapshot_member_id=UUID(str(row["source_snapshot_member_id"])),
                 source_code=str(row["source_code"]),

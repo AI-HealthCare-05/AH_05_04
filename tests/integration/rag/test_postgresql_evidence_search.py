@@ -240,6 +240,7 @@ async def _seed_test_data(engine) -> tuple[UUID, UUID, UUID]:
         KnowledgeIndexMemberDraft(
             identity=KnowledgeChunkIdentity(
                 knowledge_chunk_id=_CHUNK_EXACT_ID,
+                evidence_key="synthetic-search-evidence-exact",
                 source_snapshot_id=_SNAPSHOT_ID,
                 source_snapshot_member_id=member_id,
                 source_code="MFDS",
@@ -256,6 +257,7 @@ async def _seed_test_data(engine) -> tuple[UUID, UUID, UUID]:
         KnowledgeIndexMemberDraft(
             identity=KnowledgeChunkIdentity(
                 knowledge_chunk_id=_CHUNK_TYPO_ID,
+                evidence_key="synthetic-search-evidence-typo",
                 source_snapshot_id=_SNAPSHOT_ID,
                 source_snapshot_member_id=member_id,
                 source_code="MFDS",
@@ -272,6 +274,7 @@ async def _seed_test_data(engine) -> tuple[UUID, UUID, UUID]:
         KnowledgeIndexMemberDraft(
             identity=KnowledgeChunkIdentity(
                 knowledge_chunk_id=_CHUNK_FTS_ID,
+                evidence_key="synthetic-search-evidence-fts",
                 source_snapshot_id=_SNAPSHOT_ID,
                 source_snapshot_member_id=member_id,
                 source_code="MFDS",

@@ -23,9 +23,10 @@ Scope & Authority Boundaries:
   순서는 matching에 쓰지 않으며, 출력 순서는 언제나 `hydrated_selections` 순서입니다.
   chunk identity가 index key이므로 authority의 chunk 불일치는 언제나 set 사실
   (AUTHORITY_SET_MISMATCH)이고, 나머지 결속 필드 불일치만 AUTHORITY_BINDING_MISMATCH입니다.
-- Evidence Key Boundary: evidence key 생성 정책은 이 seam이 소유하지 않습니다. caller가
-  `knowledge_chunk_id -> evidence_key` mapping을 제공하고, 여기서는 set exact equality와
-  값 중복 없음만 확인합니다. rank/chunk id/uuid/hash 기반 생성을 하지 않습니다.
+- Evidence Key Boundary: evidence key 생성 정책은 이 seam이 소유하지 않습니다. hydrated
+  production provenance가 같은 index-member row에서 읽은 opaque `evidence_key`를 그대로
+  소비하고 `(source_snapshot_id, evidence_key)` anchor가 한 chunk에만 결속되는지만 확인합니다.
+  rank/chunk id/uuid/hash 기반 생성을 하지 않습니다.
 - Caller-Supplied Clock: `evaluated_at`은 caller가 명시적으로 전달하는 handoff evaluation
   timestamp입니다. 내부에서 `datetime.now()`나 DB clock을 쓰지 않고, timezone-aware UTC가
   아니면 fail closed합니다.
@@ -45,7 +46,6 @@ Scope & Authority Boundaries:
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -97,7 +97,6 @@ class AuthoritativeGuideEvidenceHandoffAssemblyRequest:
     retrieval_receipt: ProductionSearchReceipt
     hydrated_selections: tuple[HydratedGuideRetrievalSelection, ...]
     authorities: tuple[PersistedEvidenceAuthority, ...]
-    evidence_keys_by_chunk: Mapping[UUID, str]
     evaluated_at: datetime
 
 
@@ -146,7 +145,6 @@ def _request_shape_is_valid(request: AuthoritativeGuideEvidenceHandoffAssemblyRe
         or not request.hydrated_selections
         or type(request.authorities) is not tuple
         or not request.authorities
-        or not isinstance(request.evidence_keys_by_chunk, Mapping)
         or not _is_utc_datetime(request.evaluated_at)
     ):
         return False
@@ -245,16 +243,11 @@ def _check_authority_binding(
 def _check_evidence_key_set(
     request: AuthoritativeGuideEvidenceHandoffAssemblyRequest,
 ) -> AuthoritativeGuideEvidenceAssemblyReason | None:
-    """caller mapping이 hydrated chunk 집합과 정확히 일치하는지만 확인한다."""
-    keys = request.evidence_keys_by_chunk
-    hydrated_chunk_ids = {
-        hydrated.selection.hit.provenance.knowledge_chunk_id for hydrated in request.hydrated_selections
-    }
-    if set(keys) != hydrated_chunk_ids:
-        return AuthoritativeGuideEvidenceAssemblyReason.EVIDENCE_KEY_SET_MISMATCH
-
-    values = [keys[chunk_id] for chunk_id in hydrated_chunk_ids]
-    for value in values:
+    """Persisted snapshot/key anchor가 selection 안에서 한 chunk만 가리키는지 확인한다."""
+    chunks_by_anchor: dict[tuple[UUID, str], UUID] = {}
+    for hydrated in request.hydrated_selections:
+        provenance = hydrated.selection.hit.provenance
+        value = provenance.evidence_key
         if (
             not isinstance(value, str)
             or not value
@@ -262,8 +255,10 @@ def _check_evidence_key_set(
             or not unicodedata.is_normalized("NFC", value)
         ):
             return AuthoritativeGuideEvidenceAssemblyReason.EVIDENCE_KEY_SET_MISMATCH
-    if len(set(values)) != len(values):
-        return AuthoritativeGuideEvidenceAssemblyReason.EVIDENCE_KEY_SET_MISMATCH
+        anchor = (provenance.source_snapshot_id, value)
+        existing_chunk = chunks_by_anchor.setdefault(anchor, provenance.knowledge_chunk_id)
+        if existing_chunk != provenance.knowledge_chunk_id:
+            return AuthoritativeGuideEvidenceAssemblyReason.EVIDENCE_KEY_SET_MISMATCH
 
     return None
 
@@ -280,7 +275,7 @@ def assemble_authoritative_guide_evidence_handoff(
     - Phase 3: chunk 단위 authority 집합 cardinality (AUTHORITY_SET_MISMATCH)
     - Phase 4: selection별 run/snapshot/member/source/content exact binding
       (AUTHORITY_BINDING_MISMATCH)
-    - Phase 5: caller evidence key 집합 exact equality (EVIDENCE_KEY_SET_MISMATCH)
+    - Phase 5: persisted member evidence key 유효성·유일성 (EVIDENCE_KEY_SET_MISMATCH)
     - Phase 6: 기존 `build_guide_evidence_handoff()` 위임 (HANDOFF_REJECTED)
 
     Phase 6에서 거부되면 원본 `GuideEvidenceHandoffBuildOutcome`을 그대로 실어 보내므로
@@ -319,7 +314,7 @@ def assemble_authoritative_guide_evidence_handoff(
             return _rejected(binding_error)
 
     # --------------------------------------------------------------------------
-    # Phase 5: Caller Evidence Key Set
+    # Phase 5: Persisted Member Evidence Keys
     # --------------------------------------------------------------------------
     key_error = _check_evidence_key_set(request)
     if key_error is not None:
@@ -367,7 +362,7 @@ def _build_selection_request(
     return GuideEvidenceSelectionRequest(
         hit=hydrated.selection.hit,
         binding=hydrated.selection.binding,
-        evidence_key=request.evidence_keys_by_chunk[chunk_id],
+        evidence_key=hydrated.selection.hit.provenance.evidence_key,
         content_text=hydrated.content_text,
         retrieval_receipt_ref=request.retrieval_receipt.artifact_ref,
         eligibility_receipt_ref=_worker_artifact_ref(authority.eligibility_receipt_ref),

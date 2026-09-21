@@ -79,6 +79,7 @@ class SensitiveEvidenceText:
 @dataclass(frozen=True, slots=True)
 class KnowledgeChunkIdentity:
     knowledge_chunk_id: UUID
+    evidence_key: str
     source_snapshot_id: UUID
     source_snapshot_member_id: UUID
     source_code: str
@@ -95,6 +96,7 @@ class KnowledgeChunkIdentity:
                 _bounded_nfc(self.source_code, 100),
                 _bounded_nfc(self.source_version, 200),
                 _bounded_nfc(self.external_document_id, 300),
+                _bounded_nfc(self.evidence_key, 300),
                 _bounded_locator(self.locator, 500),
             )
         ):
@@ -149,14 +151,20 @@ class KnowledgeIndexBuildRequest:
 
         coordinates: set[tuple[str, str, str, int]] = set()
         chunk_ids: set[UUID] = set()
+        evidence_anchors: set[tuple[UUID, str]] = set()
         for member in self.members:
             if len(member.embedding) != self.embedding_dimension:
                 raise KnowledgeEvidenceIndexValidationError(KnowledgeEvidenceIndexFailureReason.EMBEDDING_INVALID)
             coordinate = member.identity.stable_coordinate
-            if coordinate in coordinates or member.identity.knowledge_chunk_id in chunk_ids:
+            if (
+                coordinate in coordinates
+                or member.identity.knowledge_chunk_id in chunk_ids
+                or (member.identity.source_snapshot_id, member.identity.evidence_key) in evidence_anchors
+            ):
                 raise KnowledgeEvidenceIndexValidationError(KnowledgeEvidenceIndexFailureReason.REQUEST_INVALID)
             coordinates.add(coordinate)
             chunk_ids.add(member.identity.knowledge_chunk_id)
+            evidence_anchors.add((member.identity.source_snapshot_id, member.identity.evidence_key))
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +223,7 @@ def canonical_corpus_manifest_hash(members: tuple[KnowledgeChunkIdentity, ...]) 
             "external_document_id": item.external_document_id,
             "chunk_index": item.chunk_index,
             "content_hash": item.content_hash,
+            "evidence_key": item.evidence_key,
         }
         for item in sorted(members, key=_stable_coordinate_sort_key)
     ]

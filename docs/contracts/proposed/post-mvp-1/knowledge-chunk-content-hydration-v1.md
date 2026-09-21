@@ -79,7 +79,7 @@ Observed `ProductionEvidenceProvenance`의 각 필드 출처는 #178 production 
 
 | 필드 | 출처 |
 | --- | --- |
-| `knowledge_index_id`, `knowledge_chunk_id`, `source_snapshot_id`, `source_snapshot_member_id`, `source_code`, `source_version`, `canonical_checksum`, `external_document_id`, `chunk_index`, `content_hash` | `rag_knowledge_index_member` |
+| `knowledge_index_id`, `knowledge_chunk_id`, `evidence_key`, `source_snapshot_id`, `source_snapshot_member_id`, `source_code`, `source_version`, `canonical_checksum`, `external_document_id`, `chunk_index`, `content_hash` | `rag_knowledge_index_member` |
 | `index_code`, `index_version`, `index_configuration_hash` | `rag_knowledge_index` |
 | `locator` | `rag_source_snapshot_member` |
 | `canonicalization_spec_version` | `knowledge_document` |
@@ -95,7 +95,7 @@ Observed `ProductionEvidenceProvenance`의 각 필드 출처는 #178 production 
 observation.provenance == selection.hit.provenance
 ```
 
-전체 값 동등 비교만 사용하며 부분 필드 비교를 새로 정의하지 않는다. 이 비교 하나로 Index identity, Chunk identity, Source Snapshot/Member identity, source code·version, canonical checksum, external document, chunk index, locator, content hash, canonicalization spec version, normalization version이 모두 결속된다.
+전체 값 동등 비교만 사용하며 부분 필드 비교를 새로 정의하지 않는다. 이 비교 하나로 Index identity, Chunk identity, opaque `evidence_key`, Source Snapshot/Member identity, source code·version, canonical checksum, external document, chunk index, locator, content hash, canonicalization spec version, normalization version이 모두 결속된다.
 
 어느 한 필드라도 다르면 단일 reason `PROVENANCE_MISMATCH`로 닫는다. `NORMALIZATION_VERSION_MISMATCH`, `SOURCE_VERSION_MISMATCH`, `LOCATOR_MISMATCH` 같은 세분화 enum을 만들지 않는다.
 

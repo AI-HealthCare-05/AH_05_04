@@ -51,6 +51,7 @@ def _make_dummy_hit(rank: int, external_id: str, snapshot_id: UUID, member_id: U
         index_version="1.0",
         index_configuration_hash="d" * 64,
         knowledge_chunk_id=chunk_id,
+        evidence_key=f"synthetic-evidence-{rank}",
         source_snapshot_id=snapshot_id,
         source_snapshot_member_id=member_id,
         source_code=coord.source_code,

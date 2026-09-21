@@ -64,6 +64,7 @@ def _make_hit(
         index_version="v1",
         index_configuration_hash="4" * 64,
         knowledge_chunk_id=uuid4(),
+        evidence_key=f"synthetic-evidence-{rank}",
         source_snapshot_id=snapshot_id,
         source_snapshot_member_id=member_id,
         source_code=source_code,

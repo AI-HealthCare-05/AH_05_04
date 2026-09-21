@@ -270,6 +270,63 @@ def test_rejected_handoff_stops_upstream_without_calling_the_generator() -> None
     assert generator.generate_calls == 0
 
 
+def test_ambiguous_persisted_evidence_key_stops_before_generator() -> None:
+    preflight_request, verifier = approved_preflight_request()
+    generator = DraftFromEvidenceGenerator()
+    handoff_request = _valid_request()
+    first_key = handoff_request.hydrated_selections[0].selection.hit.provenance.evidence_key
+    second = handoff_request.hydrated_selections[1]
+    duplicated = replace(
+        second,
+        selection=replace(
+            second.selection,
+            hit=replace(
+                second.selection.hit,
+                provenance=replace(second.selection.hit.provenance, evidence_key=first_key),
+            ),
+        ),
+    )
+    request = GuideGenerationCardOrchestrationRequest(
+        upstream_request=GuideOrchestrationRequest(
+            preflight_request=preflight_request,
+            handoff_request=replace(
+                handoff_request,
+                hydrated_selections=(handoff_request.hydrated_selections[0], duplicated),
+            ),
+        ),
+        medication_identities=(MEDICATION,),
+    )
+
+    outcome = run(request, generator=generator, decision_verifier=verifier)
+
+    assert outcome.decision is GuideGenerationCardDecision.STOPPED
+    assert outcome.upstream_outcome.stopped_stage is GuideOrchestrationStage.AUTHORITATIVE_EVIDENCE_HANDOFF
+    assert generator.generate_calls == 0
+
+
+def test_persisted_member_identity_mismatch_stops_before_generator() -> None:
+    preflight_request, verifier = approved_preflight_request()
+    generator = DraftFromEvidenceGenerator()
+    handoff_request = _valid_request()
+    drifted_authority = replace(handoff_request.authorities[0], content_sha256="e" * 64)
+    request = GuideGenerationCardOrchestrationRequest(
+        upstream_request=GuideOrchestrationRequest(
+            preflight_request=preflight_request,
+            handoff_request=replace(
+                handoff_request,
+                authorities=(drifted_authority, handoff_request.authorities[1]),
+            ),
+        ),
+        medication_identities=(MEDICATION,),
+    )
+
+    outcome = run(request, generator=generator, decision_verifier=verifier)
+
+    assert outcome.decision is GuideGenerationCardDecision.STOPPED
+    assert outcome.upstream_outcome.stopped_stage is GuideOrchestrationStage.AUTHORITATIVE_EVIDENCE_HANDOFF
+    assert generator.generate_calls == 0
+
+
 def test_foreign_upstream_request_stops_at_slice_1_request_guard() -> None:
     generator = DraftFromEvidenceGenerator()
     _, verifier = approved_preflight_request()

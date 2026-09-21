@@ -48,6 +48,7 @@ def _hit() -> ProductionSearchHit:
         index_version="1.0.0",
         index_configuration_hash="a" * 64,
         knowledge_chunk_id=CHUNK_ID,
+        evidence_key="synthetic-ret-h-smoke-evidence",
         source_snapshot_id=uuid.uuid4(),
         source_snapshot_member_id=uuid.uuid4(),
         source_code="SYNTHETIC_DEV",

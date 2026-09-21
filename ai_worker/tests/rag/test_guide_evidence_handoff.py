@@ -164,6 +164,7 @@ def _make_search_hit(
         index_version="v1",
         index_configuration_hash="4" * 64,
         knowledge_chunk_id=cid,
+        evidence_key=f"synthetic-evidence-{rank}",
         source_snapshot_id=sid,
         source_snapshot_member_id=mid,
         source_code=source_code,

@@ -247,6 +247,7 @@ async def _seed(engine) -> tuple[UUID, UUID, str]:
         KnowledgeIndexMemberDraft(
             identity=KnowledgeChunkIdentity(
                 knowledge_chunk_id=chunk_id,
+                evidence_key=f"synthetic-hydration-evidence-{index + 1}",
                 source_snapshot_id=_SNAPSHOT_ID,
                 source_snapshot_member_id=member_id,
                 source_code="MFDS",
@@ -302,6 +303,7 @@ def _selection(
         index_version=_INDEX_VERSION,
         index_configuration_hash=index_hash,
         knowledge_chunk_id=chunk_id,
+        evidence_key=f"synthetic-hydration-evidence-{chunk_index + 1}",
         source_snapshot_id=_SNAPSHOT_ID,
         source_snapshot_member_id=member_id,
         source_code="MFDS",
@@ -486,11 +488,11 @@ async def test_lookup_identity_cannot_become_ambiguous_in_storage(database) -> N
             await connection.execute(
                 text(
                     "INSERT INTO rag_knowledge_index_member "
-                    "(id, knowledge_index_id, knowledge_chunk_id, source_snapshot_id, "
+                    "(id, knowledge_index_id, knowledge_chunk_id, evidence_key, source_snapshot_id, "
                     "source_snapshot_member_id, source_code, source_version, canonical_checksum, "
                     "external_document_id, chunk_index, content_hash, embedding, embedding_sha256, "
                     "member_order) "
-                    "SELECT :new_id, knowledge_index_id, knowledge_chunk_id, source_snapshot_id, "
+                    "SELECT :new_id, knowledge_index_id, knowledge_chunk_id, evidence_key, source_snapshot_id, "
                     "source_snapshot_member_id, source_code, source_version, canonical_checksum, "
                     "external_document_id, chunk_index, content_hash, embedding, embedding_sha256, 99 "
                     "FROM rag_knowledge_index_member "

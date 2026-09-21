@@ -366,6 +366,7 @@ class ProductionEvidenceProvenance:
     index_version: str
     index_configuration_hash: str
     knowledge_chunk_id: uuid.UUID
+    evidence_key: str
     source_snapshot_id: uuid.UUID
     source_snapshot_member_id: uuid.UUID
     source_code: str
@@ -377,6 +378,16 @@ class ProductionEvidenceProvenance:
     content_hash: str
     canonicalization_spec_version: str
     normalization_version: str
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.evidence_key, str)
+            or not self.evidence_key
+            or self.evidence_key != self.evidence_key.strip()
+            or len(self.evidence_key) > 300
+            or unicodedata.normalize("NFC", self.evidence_key) != self.evidence_key
+        ):
+            raise ValueError("SEARCH_RESULT_INVALID: evidence_key must be nonblank NFC")
 
 
 class ProductionSearchMethod(StrEnum):

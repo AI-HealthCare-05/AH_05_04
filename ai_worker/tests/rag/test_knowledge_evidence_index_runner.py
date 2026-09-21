@@ -99,6 +99,7 @@ def _make_novasc_chunks(
         chunks.append(
             AuthoritativeDiscoveredChunk(
                 knowledge_chunk_id=ids[section],
+                evidence_key=f"synthetic-novasc-evidence-{section}",
                 section=section,
                 source_snapshot_id=snapshot_id,
                 source_snapshot_member_id=uuid4(),
