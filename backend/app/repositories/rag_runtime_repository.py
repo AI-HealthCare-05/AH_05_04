@@ -858,6 +858,15 @@ class RagRuntimeRepository:
         )
         return result.scalar_one_or_none()
 
+    async def lock_environment_by_id(self, environment_id: UUID) -> RagRuntimeEnvironment | None:
+        result = await self.session.execute(
+            select(RagRuntimeEnvironment)
+            .where(RagRuntimeEnvironment.id == environment_id)
+            .with_for_update(of=RagRuntimeEnvironment)
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
     async def transition_environment(
         self,
         payload: RagRuntimeEnvironmentTransitionCreate,

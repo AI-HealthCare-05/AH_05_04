@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Annotated, TypedDict
+from typing import Annotated, TypedDict, cast
 
 from fastapi import Depends, Request
 from openai import AsyncOpenAI
@@ -36,6 +36,7 @@ from app.repositories.notification_repository import NotificationRepository
 from app.repositories.ocr_repository import OcrRepository
 from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.prescription_repository import PrescriptionRepository
+from app.repositories.rag_runtime_repository import RagRuntimeRepository
 from app.repositories.refresh_session_repository import RefreshSessionRepository
 from app.repositories.track_c_storage_repository import TrackCStorageRepository
 from app.repositories.user_consent_repository import UserConsentRepository
@@ -56,6 +57,11 @@ from app.services.email_delivery import EmailSender, NoopEmailSender, SmtpEmailS
 from app.services.guide_ai import GuideGenerator
 from app.services.guide_ai import OpenAIResponsesClient as GuideOpenAIResponsesClient
 from app.services.guide_ai.prompt import PROMPT_VERSION as GUIDE_PROMPT_VERSION
+from app.services.guide_sync_runtime_execution import (
+    GuideSyncRuntimeAuthorityProvider,
+    GuideSyncRuntimeExecution,
+)
+from app.services.guide_sync_runtime_lifecycle import GuideSyncRuntimeLifecycleProducer
 from app.services.guides import GuideService
 from app.services.idempotency import SnapshotCipher, SyncMutationIdempotencyService, get_default_snapshot_cipher
 from app.services.job_intake import JobIntakeService
@@ -81,6 +87,7 @@ from app.services.ocr_ai import (
 from app.services.ocr_ai.prompt import PROMPT_VERSION as OCR_STRUCTURE_PROMPT_VERSION
 from app.services.ocr_engine import OcrEngine
 from app.services.prescriptions import PrescriptionService
+from app.services.rag_preflight import RagPreflightService
 from app.services.track_c_api import TrackCApiService
 from app.services.track_c_demo_safety import InternalDemoSafetyPolicy
 from app.services.track_c_flow import ContractFoundationSafetyPolicy, SafetyPolicy, TrackCFlowService
@@ -104,6 +111,7 @@ from rag_runtime.guide_query_binding import (
     build_guide_query_fingerprint_producer,
     build_production_query_binding_verifier,
 )
+from rag_runtime.guide_runtime_execution import GuideRuntimeExecutorFactoryPort
 
 
 def get_ocr_consent_service(
@@ -601,6 +609,35 @@ def get_guide_generator(
     )
 
 
+def get_guide_sync_runtime_execution(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    repository: Annotated[GuideRepository, Depends(get_guide_repository)],
+    identification_service: Annotated[
+        MedicationIdentificationService,
+        Depends(get_medication_identification_service),
+    ],
+) -> GuideSyncRuntimeExecution | None:
+    factory = getattr(request.app.state, "guide_runtime_executor_factory", None)
+    authority_provider = getattr(request.app.state, "guide_sync_runtime_authority_provider", None)
+    if factory is None and authority_provider is None:
+        return None
+    if factory is None or authority_provider is None:
+        raise RuntimeError("Guide Sync runtime dependencies are incomplete")
+
+    runtime_repository = RagRuntimeRepository(session)
+    return GuideSyncRuntimeExecution(
+        repository=repository,
+        lifecycle=GuideSyncRuntimeLifecycleProducer(
+            job_repository=AsyncJobRepository(session),
+            runtime_repository=runtime_repository,
+            preflight_service=RagPreflightService(identification_service),
+        ),
+        executor_factory=cast(GuideRuntimeExecutorFactoryPort, factory),
+        authority_provider=cast(GuideSyncRuntimeAuthorityProvider, authority_provider),
+    )
+
+
 def get_guide_service(
     repository: Annotated[
         GuideRepository,
@@ -614,8 +651,12 @@ def get_guide_service(
         ConsentGateService,
         Depends(get_consent_gate_service),
     ],
+    runtime_execution: Annotated[
+        GuideSyncRuntimeExecution | None,
+        Depends(get_guide_sync_runtime_execution),
+    ],
 ) -> GuideService:
-    return GuideService(repository, generator, consent_gate)
+    return GuideService(repository, generator, consent_gate, runtime_execution)
 
 
 def get_chat_repository(
