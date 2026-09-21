@@ -14,8 +14,34 @@
 Safety Result v2 축으로 결정적으로 사영한다. DB, 네트워크, clock, Backend import 및 I/O가 없는 순수 kernel이다.
 Evaluation artifact 승인용 `ai_worker.tasks.evaluation.release_gate`를 Runtime Release Gate로 재사용하지 않는다.
 
-입력은 `GuideCitationRuntimeOrchestrationOutcome` 하나다. caller가 `PASS`, fallback code, evidence status,
-Citation 또는 생성 내용을 별도로 주장할 수 없다.
+## Canonical runtime release composition
+
+`ai_worker.tasks.rag.guide_runtime_composition.execute_guide_runtime_release()`는 기존
+`GuideCitationRuntimeOrchestrationRequest`와 #890의 기존 port를 그대로 소비하는 AI Worker runtime
+boundary다. 이 callable은 다음 단계만 정확히 한 번씩 순서대로 호출하고, 중간 outcome을 재해석하지 않는다.
+
+```text
+orchestrate_guide_citation_runtime() (#890)
+        ↓
+finalize_guide_runtime_release() (#893)
+        ↓
+project_guide_runtime_release() (#906)
+        ↓
+GuideRuntimeReleaseProjectionOutcome
+```
+
+따라서 public runtime output은 `rag_runtime.guide_release_projection`의 existing shared carrier 또는
+unavailable outcome으로 끝난다. 이 composition은 release policy, fallback vocabulary, citation validation,
+Citation Authorization을 새로 만들거나 재실행하지 않으며 Backend DTO·repository·session을 import하거나 DB
+write/persistence를 수행하지 않는다.
+
+이 callable의 존재는 retrieval, Freshness, Patient Context safety filter, Backend persistence, Frontend,
+LangGraph, `PUBLIC_TRACK_F`의 readiness를 의미하지 않는다.
+
+`finalize_guide_runtime_release()` (#893)의 입력은 `GuideCitationRuntimeOrchestrationOutcome` 하나다. caller가
+`PASS`, fallback code, evidence status, Citation 또는 생성 내용을 별도로 주장할 수 없다. 위 composition
+callable은 그 runtime outcome을 직접 받지 않고 `GuideCitationRuntimeOrchestrationRequest`와 기존 port로 #890을
+실행해 outcome을 만든다.
 
 ## 사영
 
