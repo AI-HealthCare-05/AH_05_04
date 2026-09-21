@@ -18,7 +18,6 @@ from __future__ import annotations
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import cast
 from unicodedata import normalize
 from uuid import UUID
 
@@ -75,6 +74,9 @@ from rag_runtime.guide_runtime_execution import (
     GuideRuntimeExecutorFactoryPort,
     GuideRuntimeExecutorPort,
     GuideRuntimeProviderProvenance,
+)
+from rag_runtime.guide_runtime_execution import (
+    GuideRuntimeRequestCarrierPort as SharedGuideRuntimeRequestCarrierPort,
 )
 
 __all__ = [
@@ -165,9 +167,9 @@ class GuideRuntimeExecutor(GuideRuntimeExecutorPort):
         token = _terminal_failure.set(None)
         try:
             projection = await execute_canonical_guide_runtime(
-                request.runtime_request,  # type: ignore[arg-type]
+                request.runtime_request,
                 guide_preflight_request=self._dependencies.guide_preflight_request,
-                evaluation_time=cast(datetime, request.evaluation_time),
+                evaluation_time=request.evaluation_time,
                 retrieval_dependencies=self._dependencies.retrieval_dependencies,
                 medication_identity_resolver=self._dependencies.medication_identity_resolver,
                 content_reader=self._dependencies.content_reader,
@@ -194,13 +196,18 @@ class GuideRuntimeExecutor(GuideRuntimeExecutorPort):
         return GuideRuntimeExecutionResult(projection, None, provenance)
 
     def _provider_provenance(self) -> GuideRuntimeProviderProvenance | None:
-        provenance = self._dependencies.generator.provenance
         model_name = getattr(self._dependencies.generator, "last_response_model_name", None)
-        if type(model_name) is not str or not model_name.strip():
+        prompt_version = getattr(self._dependencies.generator, "applied_prompt_version", None)
+        if (
+            type(model_name) is not str
+            or not model_name.strip()
+            or type(prompt_version) is not str
+            or not prompt_version.strip()
+        ):
             return None
         return GuideRuntimeProviderProvenance(
             model_name=model_name,
-            prompt_version=provenance.prompt_ref.version,
+            prompt_version=prompt_version,
         )
 
 
@@ -264,7 +271,7 @@ def _medication_identities(
 
 
 async def execute_canonical_guide_runtime(  # noqa: C901 - ordered fail-closed composition
-    runtime_request: GuideRuntimeRequestCarrierPort,
+    runtime_request: SharedGuideRuntimeRequestCarrierPort,
     *,
     guide_preflight_request: GuideRuntimePreflightRequest,
     evaluation_time: datetime,

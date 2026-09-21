@@ -31,6 +31,7 @@ from ai_worker.tasks.rag.guideline_generator import (
     GuidelineGeneratorPort,
 )
 from ai_worker.tasks.rag.guideline_generator_prompt import (
+    GUIDELINE_GENERATOR_PROMPT_VERSION,
     GUIDELINE_GENERATOR_SYSTEM_INSTRUCTIONS,
     GuidelineStructuredSelection,
     build_candidate_provenance,
@@ -94,6 +95,7 @@ class OpenAIGuidelineGeneratorAdapter(GuidelineGeneratorPort):
         self._last_response_model_name: ContextVar[str | None] = ContextVar(
             "openai_guideline_response_model_name", default=None
         )
+        self._applied_prompt_version = GUIDELINE_GENERATOR_PROMPT_VERSION
 
         descriptor = ProviderCallDescriptor(
             provider=Provider.OPENAI,
@@ -115,6 +117,10 @@ class OpenAIGuidelineGeneratorAdapter(GuidelineGeneratorPort):
     def last_response_model_name(self) -> str | None:
         """Actual provider response model for this async execution context."""
         return self._last_response_model_name.get()
+
+    @property
+    def applied_prompt_version(self) -> str:
+        return self._applied_prompt_version
 
     @staticmethod
     def _is_valid_evidence_precondition(request: GuidelineGenerationRequest) -> bool:
