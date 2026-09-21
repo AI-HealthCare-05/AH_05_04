@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import unicodedata
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from typing import Any
@@ -52,6 +53,7 @@ from app.services.guide_ai.exceptions import (
 from app.services.guide_ai.schemas import GuideGenerationInput, GuideGenerationResult, MedicationInput
 from app.services.guide_ai.validators import (
     RULE_PRESCRIPTION_MISMATCH,
+    RULE_UNAPPROVED_GENERAL_NOTICE,
     _validate_text,
 )
 from rag_runtime.guide_closed_demo_product_map import (
@@ -89,7 +91,8 @@ def resolve_medication_item_seq(
     )
 
 
-CLOSED_DEMO_GUIDE_PROMPT_VERSION = "guide-closed-demo-rag-v1"
+CLOSED_DEMO_GUIDE_PROMPT_VERSION = "guide-closed-demo-rag-v2"
+CLOSED_DEMO_GENERAL_NOTICE = "처방에 안내된 복용 계획을 확인하고 지켜 주세요."
 INCOMPLETE_DOSE_NOTICE = "용량 정보는 처방전 또는 의료진 안내를 확인해 주세요."
 SAFETY_NOTICE = "임의로 복용을 중단하거나 변경하지 말고 의료진 또는 약사와 상담해 주세요."
 MAX_CONTENT_LENGTH = 10_000
@@ -97,7 +100,7 @@ MAX_CONTENT_LENGTH = 10_000
 RULE_EVIDENCE_SLOT_MISMATCH = "EVIDENCE_SLOT_MISMATCH"
 RULE_EVIDENCE_BINDING_REQUIRED = "EVIDENCE_BINDING_REQUIRED"
 
-GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS = """\
+GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS = f"""\
 당신은 대한민국 전문 복약 안내 AI입니다.
 반드시 제공된 각 의약품의 식약처(MFDS) 공식 허가사항 근거(evidence)에 명시된 내용만을 바탕으로 환자용 복약 가이드를 작성하십시오.
 
@@ -105,10 +108,14 @@ GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS = """\
 1. 각 약물별 6개 필드(medication_caution, food_and_drink, alcohol_and_smoking, possible_discomfort, seek_medical_care, pregnancy_and_breastfeeding)를 작성하십시오.
 2. 제공된 근거(evidence)에 해당 내용이 명시되어 있는 경우에만 간결하고 명확한 한국어 안내 문장을 text에 작성하고, 참고한 근거의 slot 번호를 evidence_slots에 정수 리스트로 기록하십시오.
 3. 제공된 근거에 해당 내용이 없거나 부족한 경우 절대로 추측하여 작성하지 말고 반드시 text를 null로, evidence_slots를 빈 리스트([])로 두십시오.
-4. 의사의 처방을 임의로 중단하거나 변경하도록 지시하지 마십시오(복용 중단, 끊기, 용량 증감, 복용 횟수 변경, 임의 복용 시점 추가 절대 금지).
-5. 질병 진단, 치료 결과 확언, 응급 여부 판단을 내리지 마십시오.
-6. 해외 의료기관, 해외 전화번호, URL 링크, HTML 태그, 마크다운 링크를 포함하지 마십시오.
-7. general_notice에는 처방된 복약 시간과 일정을 준수하라는 취지의 공통 복약 안내 1문장을 작성하십시오.
+4. AI가 생성하는 text에는 처방 수치/단위를 절대 포함하지 마십시오. mg, g, mL, 정, 캡슐, 회, 번, 일, 주, 개월 및 숫자+단위 표현을 쓰지 마십시오. 처방 용량/횟수/기간은 서버가 로컬에서 별도로 렌더링하므로 AI가 반복하지 않습니다.
+5. 다음 단어를 생성 text에서 사용하지 마십시오: 효능, 치료, 예방, 부작용, 상호작용.
+6. 다음 처방 변경 표현을 생성 text에서 사용하지 마십시오: 중단, 끊기/끊어, 증량, 감량, 늘리기, 줄이기, 횟수 변경, 용량 변경, 복용 변경.
+7. MFDS evidence 자체에 위 표현이나 처방 변경 지시가 있어도 환자에게 그대로 복제하거나 변형하여 지시하지 마십시오. 안전하게 표현할 수 없으면 해당 field는 text=null, evidence_slots=[] 로 반환하십시오.
+8. 증상 정보는 근거가 있을 때만 "...이 나타날 수 있습니다" 같은 중립적 표현만 사용하십시오. 낫다/완화/개선/유발/조절/관리 등의 치료·효과 주장으로 확장하지 마십시오. 질병 진단, 치료 결과 확언, 응급 여부 판단을 내리지 마십시오.
+9. general_notice는 정확히 다음 한 문장만 사용: "{CLOSED_DEMO_GENERAL_NOTICE}"
+10. evidence 내용을 그대로 복사하지 말고 위 안전 규칙을 통과하는 범위에서만 최소한으로 환자용 문장으로 변환하십시오. 변환 불가능하면 null 처리하십시오.
+11. 해외 의료기관, 해외 전화번호, URL 링크, HTML 태그, 마크다운 링크를 포함하지 마십시오.
 """
 
 
@@ -142,6 +149,20 @@ def _format_decimal(value: Decimal) -> str:
     return formatted
 
 
+def _validate_guidance_field(field: ClosedDemoGuidanceField, valid_slots: set[int]) -> None:
+    if field.text is not None:
+        cleaned = field.text.strip()
+        if not cleaned:
+            raise GuideGenerationSafetyError(RULE_EVIDENCE_BINDING_REQUIRED)
+        if not field.evidence_slots:
+            raise GuideGenerationSafetyError(RULE_EVIDENCE_BINDING_REQUIRED)
+        if not set(field.evidence_slots).issubset(valid_slots):
+            raise GuideGenerationSafetyError(RULE_EVIDENCE_SLOT_MISMATCH)
+        _validate_text(cleaned)
+    elif field.evidence_slots:
+        raise GuideGenerationSafetyError(RULE_EVIDENCE_SLOT_MISMATCH)
+
+
 def validate_closed_demo_draft(
     draft: ClosedDemoGuideDraft,
     *,
@@ -168,20 +189,11 @@ def validate_closed_demo_draft(
             med.pregnancy_and_breastfeeding,
         )
         for field in fields:
-            if field.text is not None:
-                cleaned = field.text.strip()
-                if not cleaned:
-                    raise GuideGenerationSafetyError(RULE_EVIDENCE_BINDING_REQUIRED)
-                if not field.evidence_slots:
-                    raise GuideGenerationSafetyError(RULE_EVIDENCE_BINDING_REQUIRED)
-                if not set(field.evidence_slots).issubset(valid_slots):
-                    raise GuideGenerationSafetyError(RULE_EVIDENCE_SLOT_MISMATCH)
-                _validate_text(cleaned)
-            else:
-                if field.evidence_slots:
-                    raise GuideGenerationSafetyError(RULE_EVIDENCE_SLOT_MISMATCH)
+            _validate_guidance_field(field, valid_slots)
 
     _validate_text(draft.general_notice)
+    if unicodedata.normalize("NFC", draft.general_notice).strip() != CLOSED_DEMO_GENERAL_NOTICE:
+        raise GuideGenerationSafetyError(RULE_UNAPPROVED_GENERAL_NOTICE)
 
 
 def _render_medication_section(

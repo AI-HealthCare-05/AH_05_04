@@ -200,7 +200,7 @@ async def test_closed_demo_route_wiring_and_rediscovery(monkeypatch: pytest.Monk
             assert created.status_code == 201
             created_data = created.json()["data"]
 
-            assert created_data["prompt_version"] == "guide-closed-demo-rag-v1"
+            assert created_data["prompt_version"] == CLOSED_DEMO_GUIDE_PROMPT_VERSION
             assert created_data["release_decision"] is None
             assert created_data["citations"] == []
             assert "복용 시 주의해야 할 점" in created_data["content"]
