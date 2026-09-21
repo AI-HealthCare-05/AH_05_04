@@ -67,6 +67,13 @@ CLOSED_DEMO_BACKEND_AI_WORKER_MODULES: dict[str, frozenset[str]] = {
     )
 }
 
+# Guide runtime provider seam: the FastAPI composition root may import exactly
+# one Worker-owned public construction module. No Worker adapter or task internals
+# are visible to Backend services or routes.
+GUIDE_RUNTIME_PROVIDER_BACKEND_AI_WORKER_MODULES: dict[str, frozenset[str]] = {
+    "backend/app/main.py": frozenset({"ai_worker.tasks.rag.guide_runtime_provider"})
+}
+
 # app-${APP_VERSION} 이미지에 COPY되는 production script별 허용 목록.
 # 명시되지 않은 스크립트의 기본 허용값은 frozenset() (import 금지)입니다.
 APP_IMAGE_SCRIPT_ALLOWED_AI_WORKER_MODULES: dict[str, frozenset[str]] = {
@@ -145,6 +152,9 @@ def test_backend_production_code_imports_only_allowed_ai_worker_modules() -> Non
     for path in _production_python_files():
         relative_path = str(path.relative_to(PROJECT_ROOT))
         actual = _imported_ai_worker_modules(path)
+        if relative_path in GUIDE_RUNTIME_PROVIDER_BACKEND_AI_WORKER_MODULES:
+            assert actual == GUIDE_RUNTIME_PROVIDER_BACKEND_AI_WORKER_MODULES[relative_path]
+            continue
         if relative_path in CLOSED_DEMO_BACKEND_AI_WORKER_MODULES:
             assert actual == CLOSED_DEMO_BACKEND_AI_WORKER_MODULES[relative_path]
             continue
