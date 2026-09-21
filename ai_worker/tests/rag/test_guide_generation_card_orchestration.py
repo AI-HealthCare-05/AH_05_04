@@ -116,6 +116,7 @@ class DraftFromEvidenceGenerator(RecordingGenerator):
         self._scope = scope
 
     async def generate(self, request: GuidelineGenerationRequest):
+        assert isinstance(request.evidence, ProductionGuidelineEvidenceSet)
         self._result = draft_citing(request.evidence, scope=self._scope)
         return await super().generate(request)
 
@@ -314,6 +315,7 @@ def test_ready_run_consumes_the_774_projection_as_the_generation_evidence() -> N
     # coordinates that actually bind a citation rather than with `==` on the whole set.
     expected = expected_production_evidence()
     actual = generator.requests[0].evidence
+    assert isinstance(actual, ProductionGuidelineEvidenceSet)
     assert actual.evaluated_at == expected.evaluated_at
     assert actual.handoff_sha256 == expected.handoff_sha256
     assert [(item.evidence_key, item.locator, item.content_sha256) for item in actual.selections] == [

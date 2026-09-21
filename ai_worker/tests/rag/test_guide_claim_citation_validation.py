@@ -83,6 +83,7 @@ class MultiCitationGenerator(RecordingGenerator):
         self._reverse = reverse
 
     async def generate(self, request: GuidelineGenerationRequest):
+        assert isinstance(request.evidence, ProductionGuidelineEvidenceSet)
         self._result = _multi_citation_draft(request.evidence, reverse=self._reverse)
         return await super().generate(request)
 
@@ -94,6 +95,7 @@ class TwoClaimGenerator(RecordingGenerator):
         super().__init__(None)
 
     async def generate(self, request: GuidelineGenerationRequest):
+        assert isinstance(request.evidence, ProductionGuidelineEvidenceSet)
         selections = request.evidence.selections
         self._result = create_canonical_card_draft(
             (

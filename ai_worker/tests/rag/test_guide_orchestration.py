@@ -45,7 +45,10 @@ from ai_worker.tasks.rag.guide_runtime_preflight import (
 from ai_worker.tasks.rag.guideline_approval_pack import build_rag15_pending_approval_pack
 from ai_worker.tasks.rag.guideline_card import MedicationIdentityRef
 from ai_worker.tasks.rag.guideline_generator import GuidelineGenerationRequest
-from ai_worker.tasks.rag.guideline_production_evidence import project_guideline_evidence_from_handoff
+from ai_worker.tasks.rag.guideline_production_evidence import (
+    ProductionGuidelineEvidenceSet,
+    project_guideline_evidence_from_handoff,
+)
 
 # #760/#729가 이미 확정한 production chain fixture를 그대로 재사용한다. 같은 합성
 # 체인을 여기서 다시 만들면 두 벌의 fixture가 서로 어긋날 수 있다.
@@ -364,6 +367,7 @@ def test_ready_inputs_compose_a_production_guideline_generation_request() -> Non
         policy=preflight_request.policy,
     )
 
+    assert isinstance(generation_request.evidence, ProductionGuidelineEvidenceSet)
     assert generation_request.evidence.selections
     assert len(generation_request.evidence.selections) == len(outcome.ready_inputs.evidence_handoff.selections)
     assert generation_request.evidence.evaluated_at == outcome.ready_inputs.evidence_handoff.evaluated_at

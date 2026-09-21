@@ -115,12 +115,12 @@ def build_guideline_generation_input_projection(
             }
         )
 
-    if type(request.evidence) is GuideAggregateEvidence:
+    if isinstance(request.evidence, GuideAggregateEvidence):
         # Child run order is canonical caller input order. Do not cross-run rank or
         # deduplicate; each child handoff remains visible as a separate membership.
         sorted_selections = tuple(iter_guide_aggregate_selections(request.evidence))
     else:
-        sorted_selections = sorted(request.evidence.selections, key=_canonical_evidence_order)
+        sorted_selections = tuple(sorted(request.evidence.selections, key=_canonical_evidence_order))
     slot_to_evidence: dict[str, ProductionGuidelineEvidence] = {}
     evidence_payload = []
     for idx, sel in enumerate(sorted_selections):
