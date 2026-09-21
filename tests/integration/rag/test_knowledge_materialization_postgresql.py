@@ -576,6 +576,7 @@ async def test_d2_cross_flow_materialization_and_index_mutual_exclusion(database
 
     identity = KnowledgeChunkIdentity(
         knowledge_chunk_id=first_chunk_receipt.knowledge_chunk_id,
+        evidence_key="synthetic-materialization-evidence-cross",
         source_snapshot_id=snapshot_id,
         source_snapshot_member_id=first_doc.member_id,
         source_code=first_doc.source_code,
@@ -935,6 +936,7 @@ async def test_materialized_chunks_compatible_with_knowledge_evidence_index(data
     index_repo = SqlAlchemyKnowledgeEvidenceIndexRepository(factory)
     identity = KnowledgeChunkIdentity(
         knowledge_chunk_id=chunk_receipt.knowledge_chunk_id,
+        evidence_key="synthetic-materialization-evidence-1",
         source_snapshot_id=req.snapshot_id,
         source_snapshot_member_id=doc_receipt.source_snapshot_member_id,
         source_code=res.receipt.source_code,

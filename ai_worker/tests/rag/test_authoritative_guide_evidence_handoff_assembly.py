@@ -102,6 +102,7 @@ def _make_hit(
         index_version="1.0",
         index_configuration_hash="4" * 64,
         knowledge_chunk_id=chunk_id,
+        evidence_key=f"evidence:{chunk_index + 1}",
         source_snapshot_id=_SNAPSHOT_ID,
         source_snapshot_member_id=_MEMBER_ID,
         source_code=_SOURCE_CODE,
@@ -292,13 +293,11 @@ def _valid_request(*, selection_count: int = 2) -> AuthoritativeGuideEvidenceHan
     search_receipt = _search_receipt(tuple(hits))
     hydrated = tuple(_hydrated(hit, text) for hit, text in zip(hits, texts, strict=True))
     authorities = tuple(_authority(hit) for hit in hits)
-    evidence_keys = {hit.provenance.knowledge_chunk_id: f"evidence:{index}" for index, hit in enumerate(hits, start=1)}
     return AuthoritativeGuideEvidenceHandoffAssemblyRequest(
         persisted_retrieval_receipt=_persisted_receipt(search_receipt, selected_count=len(hits)),
         retrieval_receipt=search_receipt,
         hydrated_selections=hydrated,
         authorities=authorities,
-        evidence_keys_by_chunk=evidence_keys,
         evaluated_at=_HANDOFF_EVALUATED_AT,
     )
 
@@ -654,42 +653,16 @@ def test_authority_content_hash_mismatch_is_binding_mismatch() -> None:
 # ==============================================================================
 
 
-def test_missing_evidence_key_is_key_set_mismatch() -> None:
-    request = _valid_request()
-    keys = dict(request.evidence_keys_by_chunk)
-    del keys[_CHUNK_ID_2]
-    _assert_rejected(
-        replace(request, evidence_keys_by_chunk=keys),
-        AuthoritativeGuideEvidenceAssemblyReason.EVIDENCE_KEY_SET_MISMATCH,
-    )
-
-
-def test_extra_evidence_key_is_key_set_mismatch() -> None:
-    request = _valid_request()
-    keys = dict(request.evidence_keys_by_chunk)
-    keys[UUID("76000000-0000-4000-8000-0000000000fe")] = "evidence:3"
-    _assert_rejected(
-        replace(request, evidence_keys_by_chunk=keys),
-        AuthoritativeGuideEvidenceAssemblyReason.EVIDENCE_KEY_SET_MISMATCH,
-    )
-
-
 def test_duplicate_evidence_key_value_is_key_set_mismatch() -> None:
     request = _valid_request()
-    keys = dict(request.evidence_keys_by_chunk)
-    keys[_CHUNK_ID_2] = keys[_CHUNK_ID_1]
+    first_key = request.hydrated_selections[0].selection.hit.provenance.evidence_key
+    second = request.hydrated_selections[1]
+    provenance = replace(second.selection.hit.provenance, evidence_key=first_key)
+    hit = replace(second.selection.hit, provenance=provenance)
+    selection = replace(second.selection, hit=hit)
+    duplicated = replace(second, selection=selection)
     _assert_rejected(
-        replace(request, evidence_keys_by_chunk=keys),
-        AuthoritativeGuideEvidenceAssemblyReason.EVIDENCE_KEY_SET_MISMATCH,
-    )
-
-
-def test_blank_evidence_key_is_key_set_mismatch() -> None:
-    request = _valid_request()
-    keys = dict(request.evidence_keys_by_chunk)
-    keys[_CHUNK_ID_1] = "  "
-    _assert_rejected(
-        replace(request, evidence_keys_by_chunk=keys),
+        replace(request, hydrated_selections=(request.hydrated_selections[0], duplicated)),
         AuthoritativeGuideEvidenceAssemblyReason.EVIDENCE_KEY_SET_MISMATCH,
     )
 

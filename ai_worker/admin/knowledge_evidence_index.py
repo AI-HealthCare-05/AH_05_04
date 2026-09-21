@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -128,6 +129,7 @@ _INDEX_MEMBER = table(
     column("id", String(36)),
     column("knowledge_index_id", String(36)),
     column("knowledge_chunk_id", String(36)),
+    column("evidence_key", String(300)),
     column("source_snapshot_id", String(36)),
     column("source_snapshot_member_id", String(36)),
     column("source_code", String(100)),
@@ -279,6 +281,7 @@ class KnowledgeEvidenceIndexRunnerConfig:
 @dataclass(frozen=True, slots=True)
 class AuthoritativeDiscoveredChunk:
     knowledge_chunk_id: UUID
+    evidence_key: str
     section: str
     source_snapshot_id: UUID
     source_snapshot_member_id: UUID
@@ -291,6 +294,21 @@ class AuthoritativeDiscoveredChunk:
     locator: str = field(repr=False)
     chunk_text: str = field(repr=False)
     normalization_version: str
+
+
+def _valid_evidence_key(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value == value.strip()
+        and len(value) <= 300
+        and unicodedata.normalize("NFC", value) == value
+    )
+
+
+def _valid_discovered_evidence_keys(chunks: tuple[AuthoritativeDiscoveredChunk, ...]) -> bool:
+    anchors = [(chunk.source_snapshot_id, chunk.evidence_key) for chunk in chunks]
+    return all(_valid_evidence_key(evidence_key) for _, evidence_key in anchors) and len(set(anchors)) == len(anchors)
 
 
 # --------------------------------------------------------------------------------------
@@ -332,6 +350,7 @@ async def preflight_authoritative_corpus(  # noqa: C901
     snapshot_id: UUID,
     expected_item_seq: str,
     expected_canonical_checksum: str,
+    evidence_keys_by_chunk: Mapping[UUID, str],
     expected_source_version: str | None = None,
 ) -> tuple[AuthoritativeDiscoveredChunk, ...]:
     """Authoritatively queries and verifies Snapshot to KnowledgeChunk binding before embedding."""
@@ -436,9 +455,14 @@ async def preflight_authoritative_corpus(  # noqa: C901
             raise KnowledgeEvidenceIndexRunnerError(KnowledgeEvidenceIndexRunnerFailureReason.CONTENT_HASH_MISMATCH)
 
         chunk_id = UUID(str(row["chunk_id"]))
+        evidence_key = evidence_keys_by_chunk.get(chunk_id)
+        if not _valid_evidence_key(evidence_key):
+            raise KnowledgeEvidenceIndexRunnerError(KnowledgeEvidenceIndexRunnerFailureReason.SOURCE_BINDING_INVALID)
+        assert isinstance(evidence_key, str)
 
         seen_sections[section] = AuthoritativeDiscoveredChunk(
             knowledge_chunk_id=chunk_id,
+            evidence_key=evidence_key,
             section=section,
             source_snapshot_id=UUID(str(row["snapshot_id"])),
             source_snapshot_member_id=UUID(str(row["member_id"])),
@@ -455,6 +479,8 @@ async def preflight_authoritative_corpus(  # noqa: C901
 
     if set(seen_sections.keys()) != set(SECTION_ORDER):
         raise KnowledgeEvidenceIndexRunnerError(KnowledgeEvidenceIndexRunnerFailureReason.REQUEST_INVALID)
+    if set(evidence_keys_by_chunk) != {chunk.knowledge_chunk_id for chunk in seen_sections.values()}:
+        raise KnowledgeEvidenceIndexRunnerError(KnowledgeEvidenceIndexRunnerFailureReason.SOURCE_BINDING_INVALID)
 
     return tuple(seen_sections[sec] for sec in SECTION_ORDER)
 
@@ -526,7 +552,8 @@ async def check_and_revalidate_existing_index(  # noqa: C901
             if member_row is None:
                 raise KnowledgeEvidenceIndexRunnerError(KnowledgeEvidenceIndexRunnerFailureReason.VERSION_CONFLICT)
             if (
-                UUID(str(member_row["source_snapshot_id"])) != chunk.source_snapshot_id
+                str(member_row["evidence_key"]) != chunk.evidence_key
+                or UUID(str(member_row["source_snapshot_id"])) != chunk.source_snapshot_id
                 or UUID(str(member_row["source_snapshot_member_id"])) != chunk.source_snapshot_member_id
                 or str(member_row["source_code"]) != chunk.source_code
                 or str(member_row["source_version"]) != chunk.source_version
@@ -551,6 +578,7 @@ async def check_and_revalidate_existing_index(  # noqa: C901
             KnowledgeIndexMemberDraft(
                 identity=KnowledgeChunkIdentity(
                     knowledge_chunk_id=chunk.knowledge_chunk_id,
+                    evidence_key=chunk.evidence_key,
                     source_snapshot_id=chunk.source_snapshot_id,
                     source_snapshot_member_id=chunk.source_snapshot_member_id,
                     source_code=chunk.source_code,
@@ -639,6 +667,7 @@ async def execute_knowledge_evidence_index_build(  # noqa: C901
     snapshot_id: UUID,
     expected_item_seq: str,
     expected_canonical_checksum: str,
+    evidence_keys_by_chunk: Mapping[UUID, str] | None = None,
     expected_source_version: str | None = None,
     expected_embedding_adapter_ref: ImmutableArtifactRef | None = None,
     verify_replay: bool = False,
@@ -686,7 +715,13 @@ async def execute_knowledge_evidence_index_build(  # noqa: C901
                     raise KnowledgeEvidenceIndexRunnerError(
                         KnowledgeEvidenceIndexRunnerFailureReason.CONTENT_HASH_MISMATCH
                     )
+            if not _valid_discovered_evidence_keys(discovered_chunks):
+                raise KnowledgeEvidenceIndexRunnerError(
+                    KnowledgeEvidenceIndexRunnerFailureReason.SOURCE_BINDING_INVALID
+                )
         else:
+            if evidence_keys_by_chunk is None:
+                raise KnowledgeEvidenceIndexRunnerError(KnowledgeEvidenceIndexRunnerFailureReason.REQUEST_INVALID)
             assert session_factory is not None
             async with session_factory() as session:
                 await validate_builder_session(session, config.builder_user)
@@ -695,6 +730,7 @@ async def execute_knowledge_evidence_index_build(  # noqa: C901
                     snapshot_id=snapshot_id,
                     expected_item_seq=expected_item_seq,
                     expected_canonical_checksum=expected_canonical_checksum,
+                    evidence_keys_by_chunk=evidence_keys_by_chunk,
                     expected_source_version=expected_source_version,
                 )
 
@@ -775,6 +811,7 @@ async def execute_knowledge_evidence_index_build(  # noqa: C901
 
             identity = KnowledgeChunkIdentity(
                 knowledge_chunk_id=chunk.knowledge_chunk_id,
+                evidence_key=chunk.evidence_key,
                 source_snapshot_id=chunk.source_snapshot_id,
                 source_snapshot_member_id=chunk.source_snapshot_member_id,
                 source_code=chunk.source_code,
@@ -869,6 +906,17 @@ async def execute_knowledge_evidence_index_build(  # noqa: C901
 # --------------------------------------------------------------------------------------
 
 
+def _parse_evidence_key_binding(value: str) -> tuple[UUID, str]:
+    chunk_id_value, separator, evidence_key = value.partition("=")
+    try:
+        chunk_id = UUID(chunk_id_value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("evidence key binding must start with a chunk UUID") from exc
+    if separator != "=" or not _valid_evidence_key(evidence_key):
+        raise argparse.ArgumentTypeError("evidence key binding must be CHUNK_UUID=NONBLANK_NFC_KEY")
+    return chunk_id, evidence_key
+
+
 def parse_args(args: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build immutable Knowledge Evidence Index for verified MFDS Source Snapshot"
@@ -890,6 +938,13 @@ def parse_args(args: Sequence[str] | None = None) -> argparse.Namespace:
         help="Expected authoritative source version string",
     )
     parser.add_argument(
+        "--evidence-key-binding",
+        action="append",
+        required=True,
+        type=_parse_evidence_key_binding,
+        help="Opaque authoritative binding in CHUNK_UUID=EVIDENCE_KEY form; repeat once per chunk",
+    )
+    parser.add_argument(
         "--verify-replay",
         action="store_true",
         default=False,
@@ -901,6 +956,9 @@ def parse_args(args: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
+        evidence_keys_by_chunk = dict(args.evidence_key_binding)
+        if len(evidence_keys_by_chunk) != len(args.evidence_key_binding):
+            raise KnowledgeEvidenceIndexRunnerError(KnowledgeEvidenceIndexRunnerFailureReason.REQUEST_INVALID)
         config = KnowledgeEvidenceIndexRunnerConfig.from_environment(os.environ)
         summary = asyncio.run(
             execute_knowledge_evidence_index_build(
@@ -908,6 +966,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 snapshot_id=args.snapshot_id,
                 expected_item_seq=args.expected_item_seq,
                 expected_canonical_checksum=args.expected_canonical_checksum,
+                evidence_keys_by_chunk=evidence_keys_by_chunk,
                 expected_source_version=args.expected_source_version,
                 expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
                 verify_replay=args.verify_replay,

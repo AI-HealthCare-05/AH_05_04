@@ -167,6 +167,12 @@ class RagKnowledgeIndexMember(Base):
         UniqueConstraint("knowledge_index_id", "knowledge_chunk_id", name="uq_rag_knowledge_index_member_chunk"),
         UniqueConstraint(
             "knowledge_index_id",
+            "source_snapshot_id",
+            "evidence_key",
+            name="uq_rag_knowledge_index_member_snapshot_evidence_key",
+        ),
+        UniqueConstraint(
+            "knowledge_index_id",
             "source_code",
             "source_version",
             "external_document_id",
@@ -175,6 +181,14 @@ class RagKnowledgeIndexMember(Base):
         ),
         CheckConstraint("chunk_index >= 0", name="chk_rag_knowledge_index_member_chunk_index"),
         CheckConstraint("member_order > 0", name="chk_rag_knowledge_index_member_order"),
+        CheckConstraint(
+            "evidence_key IS NULL OR length(trim(evidence_key)) > 0",
+            name="chk_rag_knowledge_index_member_evidence_key_nonblank",
+        ),
+        CheckConstraint(
+            "evidence_key IS NULL OR evidence_key = normalize(evidence_key, NFC)",
+            name="chk_rag_knowledge_index_member_evidence_key_nfc",
+        ),
         CheckConstraint("canonical_checksum ~ '^[0-9a-f]{64}$'", name="chk_rag_knowledge_index_member_checksum"),
         CheckConstraint("content_hash ~ '^[0-9a-f]{64}$'", name="chk_rag_knowledge_index_member_content_hash"),
         CheckConstraint("embedding_sha256 ~ '^[0-9a-f]{64}$'", name="chk_rag_knowledge_index_member_embedding_hash"),
@@ -190,6 +204,7 @@ class RagKnowledgeIndexMember(Base):
     knowledge_chunk_id: Mapped[UUID] = mapped_column(
         UUIDChar(), ForeignKey("knowledge_chunk.id", ondelete="RESTRICT"), nullable=False
     )
+    evidence_key: Mapped[str | None] = mapped_column(String(300), nullable=True)
     source_snapshot_id: Mapped[UUID] = mapped_column(
         UUIDChar(), ForeignKey("rag_source_snapshot.id", ondelete="RESTRICT"), nullable=False
     )

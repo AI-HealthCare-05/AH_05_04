@@ -242,6 +242,7 @@ async def _seed_data(engine) -> tuple[UUID, UUID]:
     member_draft = KnowledgeIndexMemberDraft(
         identity=KnowledgeChunkIdentity(
             knowledge_chunk_id=_CHUNK_ID,
+            evidence_key="synthetic-actual-retrieval-evidence-1",
             source_snapshot_id=_SNAPSHOT_ID,
             source_snapshot_member_id=member_id,
             source_code="MFDS_SYNTHETIC",

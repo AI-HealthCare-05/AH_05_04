@@ -83,7 +83,6 @@ class AuthoritativeGuideEvidenceHandoffAssemblyRequest:
     retrieval_receipt: ProductionSearchReceipt
     hydrated_selections: tuple[HydratedGuideRetrievalSelection, ...]
     authorities: tuple[PersistedEvidenceAuthority, ...]
-    evidence_keys_by_chunk: Mapping[UUID, str]
     evaluated_at: datetime
 ```
 
@@ -150,17 +149,16 @@ chunk identity는 Phase 3의 index key로 이미 동일하므로 여기서 다�
 
 ### 4.5 Phase 5 — Evidence key 집합 (`EVIDENCE_KEY_SET_MISMATCH`)
 
-본 Issue는 새 evidence-key 생성 정책을 정의하지 않는다. `evidence:{rank}`, `evidence:{chunk_id}`, uuid/hash 기반 생성 모두 금지한다. caller가 `knowledge_chunk_id → evidence_key` mapping을 제공하고, Assembly는 집합 동등성만 확인한다.
+본 Issue는 새 evidence-key 생성 정책을 정의하지 않는다. `evidence:{rank}`, `evidence:{chunk_id}`, uuid/hash 기반 생성 모두 금지한다. Assembly는 `HydratedGuideRetrievalSelection.hit.provenance.evidence_key`를 그대로 소비한다. 이 값은 production search와 #711 hydration이 동일한 `rag_knowledge_index_member` row에서 읽은 persisted binding이다.
 
 ```text
-모든 hydrated chunk에 key 정확히 1개
-missing key 없음
-extra key 없음
-duplicate evidence_key value 없음
+모든 hydrated chunk provenance에 key 정확히 1개
+서로 다른 chunk 사이 duplicate evidence_key value 없음
 비어 있거나 공백으로 둘러싸였거나 NFC 정규형이 아닌 key 없음
 ```
 
-출력 순서는 mapping 순서가 아니라 `hydrated_selections` 순서를 따른다.
+출력 순서는 `hydrated_selections` 순서를 따른다. 별도 caller mapping은 받지 않으므로 persisted binding과
+다른 key를 #760 입력에서 덮어쓸 수 없다.
 
 ### 4.6 Phase 6 — 기존 Handoff Builder 위임 (`HANDOFF_REJECTED`)
 
@@ -170,7 +168,7 @@ Assembly는 selection마다 상류가 확정한 값을 그대로 옮긴다.
 GuideEvidenceSelectionRequest(
     hit=hydrated.selection.hit,
     binding=hydrated.selection.binding,
-    evidence_key=request.evidence_keys_by_chunk[chunk_id],
+    evidence_key=hydrated.selection.hit.provenance.evidence_key,
     content_text=hydrated.content_text,
     retrieval_receipt_ref=request.retrieval_receipt.artifact_ref,
     eligibility_receipt_ref=authority.eligibility_receipt_ref,

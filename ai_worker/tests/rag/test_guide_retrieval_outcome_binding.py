@@ -91,6 +91,7 @@ def _hit() -> ProductionSearchHit:
         index_version="v1",
         index_configuration_hash="4" * 64,
         knowledge_chunk_id=uuid4(),
+        evidence_key="synthetic-guide-evidence-1",
         source_snapshot_id=source_snapshot_id,
         source_snapshot_member_id=source_snapshot_member_id,
         source_code=coordinate.source_code,

@@ -212,6 +212,7 @@ def _build_request(member_id: UUID, *, version: str, embedding: tuple[float, ...
             KnowledgeIndexMemberDraft(
                 identity=KnowledgeChunkIdentity(
                     knowledge_chunk_id=_CHUNK_ID,
+                    evidence_key="synthetic-index-evidence-1",
                     source_snapshot_id=_SNAPSHOT_ID,
                     source_snapshot_member_id=member_id,
                     source_code="MFDS",
@@ -283,6 +284,17 @@ async def test_real_postgresql_index_is_atomic_reproducible_and_non_leaking(data
     assert _TEXT_SENTINEL not in repr(first)
     assert _TEXT_SENTINEL not in repr(exc_info.value)
 
+    with pytest.raises(DBAPIError) as nfc_error:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("UPDATE rag_knowledge_index_member SET evidence_key = :key WHERE knowledge_index_id = :id"),
+                {
+                    "key": "e\u0301vidence",
+                    "id": str(await connection.scalar(select(_INDEX.c.id).where(_INDEX.c.index_version == "v1"))),
+                },
+            )
+    assert getattr(nfc_error.value.orig, "sqlstate", None) == "23514"
+
     async with engine.begin() as connection:
         await connection.execute(
             text("UPDATE rag_knowledge_index_member SET embedding = '[1,0,0]' WHERE knowledge_index_id = :id"),
@@ -326,6 +338,7 @@ async def test_dedicated_builder_and_runtime_roles_enforce_the_index_boundary(da
             (builder_engine, "UPDATE rag_source SET lifecycle_status='REVOKED'"),
             (builder_engine, "DELETE FROM knowledge_chunk"),
             (builder_engine, "TRUNCATE rag_knowledge_index_member"),
+            (builder_engine, "UPDATE rag_knowledge_index_member SET evidence_key='changed'"),
             (builder_engine, "INSERT INTO rag_source DEFAULT VALUES"),
             (runtime_engine, "INSERT INTO rag_knowledge_index DEFAULT VALUES"),
             (runtime_engine, "UPDATE knowledge_document SET title='changed'"),
@@ -429,6 +442,7 @@ NOVASC_CHUNK_IDS = {
     "UD": UUID("a627c04a-8cc9-4b0a-b1f5-89e4fc2f165f"),
     "NB": UUID("f2ecb1c6-c02b-4486-8b76-da0bfd088d89"),
 }
+NOVASC_EVIDENCE_KEYS = {chunk_id: f"novasc-{section.lower()}" for section, chunk_id in NOVASC_CHUNK_IDS.items()}
 
 
 async def _seed_novasc_source_hierarchy(engine) -> None:
@@ -636,6 +650,7 @@ async def test_admin_runner_novasc_postgresql_integration(database) -> None:
             snapshot_id=NOVASC_SNAPSHOT_ID,
             expected_item_seq=NOVASC_ITEM_SEQ,
             expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+            evidence_keys_by_chunk=NOVASC_EVIDENCE_KEYS,
             expected_source_version=NOVASC_SOURCE_VERSION,
             expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
             verify_replay=True,
@@ -667,6 +682,7 @@ async def test_admin_runner_novasc_postgresql_integration(database) -> None:
             snapshot_id=NOVASC_SNAPSHOT_ID,
             expected_item_seq=NOVASC_ITEM_SEQ,
             expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+            evidence_keys_by_chunk=NOVASC_EVIDENCE_KEYS,
             expected_source_version=NOVASC_SOURCE_VERSION,
             verify_replay=False,
             embedding_port_override=port,
@@ -739,6 +755,7 @@ async def test_novasc_runner_document_member_hash_mismatch_fails_closed(database
                 snapshot_id=NOVASC_SNAPSHOT_ID,
                 expected_item_seq=NOVASC_ITEM_SEQ,
                 expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+                evidence_keys_by_chunk=NOVASC_EVIDENCE_KEYS,
                 expected_source_version=NOVASC_SOURCE_VERSION,
                 expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
                 verify_replay=False,
@@ -804,6 +821,7 @@ async def test_novasc_runner_chunk_content_hash_mismatch_fails_closed(database) 
                 snapshot_id=NOVASC_SNAPSHOT_ID,
                 expected_item_seq=NOVASC_ITEM_SEQ,
                 expected_canonical_checksum=NOVASC_CANONICAL_CHECKSUM,
+                evidence_keys_by_chunk=NOVASC_EVIDENCE_KEYS,
                 expected_source_version=NOVASC_SOURCE_VERSION,
                 expected_embedding_adapter_ref=OPENAI_TEXT_EMBEDDING_ADAPTER_REF,
                 verify_replay=False,

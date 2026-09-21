@@ -23,6 +23,22 @@ def test_knowledge_evidence_index_downgrade_refuses_populated_state() -> None:
     assert "would lose Knowledge Evidence Index data" in source
 
 
+def test_knowledge_index_member_evidence_key_revision_preserves_legacy_rows_fail_closed() -> None:
+    revision = importlib.import_module("backend.alembic.versions.923a1b2c3d4e_knowledge_index_member_evidence_key")
+    source = inspect.getsource(revision)
+    upgrade_source = inspect.getsource(revision.upgrade)
+
+    assert revision.down_revision == "180a1b2c3d4e"
+    assert 'sa.Column("evidence_key", sa.String(length=300), nullable=True)' in source
+    assert "uq_rag_knowledge_index_member_snapshot_evidence_key" in source
+    assert '"knowledge_index_id", "source_snapshot_id", "evidence_key"' in source
+    assert "chk_rag_knowledge_index_member_evidence_key_nonblank" in source
+    assert "chk_rag_knowledge_index_member_evidence_key_nfc" in source
+    assert "evidence_key = normalize(evidence_key, NFC)" in source
+    assert "SELECT EXISTS" not in upgrade_source
+    assert "downgrade would lose authoritative evidence_key bindings" in source
+
+
 def test_retrieval_run_revision_contract() -> None:
     revision = importlib.import_module("backend.alembic.versions.178c2d3e4f50_create_retrieval_run_tables")
     source = inspect.getsource(revision)

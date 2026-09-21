@@ -252,16 +252,17 @@ async def _seed_two_selected_chunks(engine) -> dict[str, UUID]:
             await connection.execute(
                 text(
                     "INSERT INTO rag_knowledge_index_member "
-                    "(id, knowledge_index_id, knowledge_chunk_id, source_snapshot_id, source_snapshot_member_id, "
+                    "(id, knowledge_index_id, knowledge_chunk_id, evidence_key, source_snapshot_id, source_snapshot_member_id, "
                     "source_code, source_version, canonical_checksum, external_document_id, chunk_index, "
                     "content_hash, embedding, embedding_sha256, member_order) "
-                    "VALUES (:id, :index_id, :chunk_id, :snapshot_id, :member_id, :source_code, :source_version, "
+                    "VALUES (:id, :index_id, :chunk_id, :evidence_key, :snapshot_id, :member_id, :source_code, :source_version, "
                     ":canonical, :external_id, :chunk_index, :h, '[1,0]', :embedding_sha256, :member_order)"
                 ),
                 {
                     "id": str(uuid4()),
                     "index_id": str(ids["index"]),
                     "chunk_id": str(ids[f"chunk_{chunk_index}"]),
+                    "evidence_key": f"synthetic-a760-evidence-{chunk_index + 1}",
                     "snapshot_id": str(ids["snapshot"]),
                     "member_id": str(ids["member"]),
                     "source_code": _SOURCE_CODE,
@@ -390,6 +391,7 @@ def _hydrated_selections(ids: dict[str, UUID]) -> tuple[HydratedGuideRetrievalSe
             index_version="1.0",
             index_configuration_hash="a" * 64,
             knowledge_chunk_id=ids[f"chunk_{chunk_index}"],
+            evidence_key=f"synthetic-a760-evidence-{chunk_index + 1}",
             source_snapshot_id=ids["snapshot"],
             source_snapshot_member_id=ids["member"],
             source_code=_SOURCE_CODE,
@@ -485,10 +487,6 @@ def _assembly_request(
         retrieval_receipt=search_receipt,
         hydrated_selections=hydrated,
         authorities=authorities,
-        evidence_keys_by_chunk={
-            hydrated_selection.selection.hit.provenance.knowledge_chunk_id: f"evidence:{index}"
-            for index, hydrated_selection in enumerate(hydrated, start=1)
-        },
         evaluated_at=_HANDOFF_EVALUATED_AT,
     )
 
@@ -606,7 +604,6 @@ async def test_handoff_evaluated_at_outside_the_persisted_validity_window_is_rej
             retrieval_receipt=request.retrieval_receipt,
             hydrated_selections=request.hydrated_selections,
             authorities=request.authorities,
-            evidence_keys_by_chunk=request.evidence_keys_by_chunk,
             evaluated_at=expired_at,
         )
     )

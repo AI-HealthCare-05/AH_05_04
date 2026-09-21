@@ -56,6 +56,7 @@ def _make_provenance(
         index_version="v1",
         index_configuration_hash="4" * 64,
         knowledge_chunk_id=chunk_id,
+        evidence_key=f"synthetic-evidence-{chunk_index}",
         source_snapshot_id=_SNAPSHOT_ID,
         source_snapshot_member_id=_MEMBER_ID,
         source_code="MFDS_LABEL",

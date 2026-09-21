@@ -88,6 +88,7 @@ def test_index_and_member_columns_and_constraints_are_exact() -> None:
         "id",
         "knowledge_index_id",
         "knowledge_chunk_id",
+        "evidence_key",
         "source_snapshot_id",
         "source_snapshot_member_id",
         "source_code",
@@ -102,6 +103,7 @@ def test_index_and_member_columns_and_constraints_are_exact() -> None:
         "created_at",
     }
     assert str(member.c.embedding.type.compile(dialect=postgresql.dialect())) == "VECTOR"
+    assert member.c.evidence_key.nullable
     assert {metric.value for metric in RagKnowledgeDistanceMetric} == {"COSINE"}
     assert {
         "uq_rag_knowledge_index_version",
@@ -109,5 +111,20 @@ def test_index_and_member_columns_and_constraints_are_exact() -> None:
     assert {
         "uq_rag_knowledge_index_member_order",
         "uq_rag_knowledge_index_member_chunk",
+        "uq_rag_knowledge_index_member_snapshot_evidence_key",
         "uq_rag_knowledge_index_member_coordinate",
     }.issubset(constraint.name for constraint in member.constraints if isinstance(constraint, UniqueConstraint))
+    snapshot_key_constraint = next(
+        constraint
+        for constraint in member.constraints
+        if isinstance(constraint, UniqueConstraint)
+        and constraint.name == "uq_rag_knowledge_index_member_snapshot_evidence_key"
+    )
+    assert tuple(column.name for column in snapshot_key_constraint.columns) == (
+        "knowledge_index_id",
+        "source_snapshot_id",
+        "evidence_key",
+    )
+    assert "chk_rag_knowledge_index_member_evidence_key_nfc" in {
+        constraint.name for constraint in member.constraints if isinstance(constraint, CheckConstraint)
+    }

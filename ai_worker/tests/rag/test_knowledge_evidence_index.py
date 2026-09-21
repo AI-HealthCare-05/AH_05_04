@@ -28,6 +28,7 @@ def member_draft(
     return KnowledgeIndexMemberDraft(
         identity=KnowledgeChunkIdentity(
             knowledge_chunk_id=UUID("00000000-0000-4000-8000-000000000001"),
+            evidence_key="mfds:synthetic:doc-1:0",
             source_snapshot_id=UUID("00000000-0000-4000-8000-000000000002"),
             source_snapshot_member_id=UUID("00000000-0000-4000-8000-000000000003"),
             source_code="MFDS",
@@ -59,7 +60,7 @@ def test_corpus_manifest_has_hand_checked_golden_hash() -> None:
     member = replace(member_draft().identity, content_hash="1" * 64)
 
     assert canonical_corpus_manifest_hash((member,)) == (
-        "886fce89b003343646fb319118c75f89bbcf66f4771cbd283c777a44d421a806"
+        "8596ddc1889970e92ae422def831d02b02930c7e6afc7079e7c1088bf6988b58"
     )
 
 
@@ -74,6 +75,14 @@ def test_locator_allows_internal_spaces_used_by_source_member_contract() -> None
     member = member_draft(locator="$.records[0] item")
 
     assert member.identity.locator == "$.records[0] item"
+
+
+@pytest.mark.parametrize("evidence_key", ["", " ", "e\u0301vidence"])
+def test_member_rejects_nonblank_or_non_nfc_evidence_key(evidence_key: str) -> None:
+    with pytest.raises(KnowledgeEvidenceIndexValidationError) as exc_info:
+        replace(member_draft().identity, evidence_key=evidence_key)
+
+    assert exc_info.value.reason is KnowledgeEvidenceIndexFailureReason.SOURCE_BINDING_INVALID
 
 
 def test_embedding_hash_has_hand_checked_golden_hash() -> None:
@@ -126,6 +135,41 @@ def test_member_rejects_content_hash_mismatch() -> None:
         replace(member, identity=replace(member.identity, content_hash="f" * 64))
 
     assert exc_info.value.reason is KnowledgeEvidenceIndexFailureReason.CONTENT_HASH_MISMATCH
+
+
+def test_index_request_rejects_one_evidence_key_bound_to_two_chunks() -> None:
+    first = member_draft()
+    second = replace(
+        first,
+        identity=replace(
+            first.identity,
+            knowledge_chunk_id=UUID("00000000-0000-4000-8000-000000000099"),
+            external_document_id="doc-2",
+        ),
+    )
+
+    with pytest.raises(KnowledgeEvidenceIndexValidationError) as exc_info:
+        build_request(first, second)
+
+    assert exc_info.value.reason is KnowledgeEvidenceIndexFailureReason.REQUEST_INVALID
+
+
+def test_index_request_allows_same_evidence_key_from_distinct_snapshots() -> None:
+    first = member_draft()
+    second = replace(
+        first,
+        identity=replace(
+            first.identity,
+            knowledge_chunk_id=UUID("00000000-0000-4000-8000-000000000099"),
+            source_snapshot_id=UUID("00000000-0000-4000-8000-000000000098"),
+            source_snapshot_member_id=UUID("00000000-0000-4000-8000-000000000097"),
+            external_document_id="doc-2",
+        ),
+    )
+
+    request = build_request(first, second)
+
+    assert request.members == (first, second)
 
 
 class CapturingRepository:

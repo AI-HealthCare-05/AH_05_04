@@ -240,6 +240,7 @@ async def _seed_selection(
             id=uuid4(),
             knowledge_index_id=index.id,
             knowledge_chunk_id=chunk.id,
+            evidence_key="synthetic-evidence-1",
             source_snapshot_id=snapshot_id,
             source_snapshot_member_id=snapshot_member_id,
             source_code=source_code,

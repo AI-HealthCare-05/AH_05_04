@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import inspect
+from dataclasses import replace
 from typing import Any
 from unittest.mock import MagicMock
+from uuid import UUID
+
+import pytest
 
 from ai_worker.adapters.postgresql_evidence_search import (
     POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_ARTIFACT_CODE,
@@ -14,6 +18,9 @@ from ai_worker.adapters.postgresql_evidence_search import (
     POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_REF,
     POSTGRESQL_EVIDENCE_SEARCH_ADAPTER_VERSION,
     PostgresqlEvidenceSearchAdapter,
+    _InternalProvenance,
+    _required_persisted_evidence_key,
+    _to_production_provenance,
 )
 from ai_worker.tasks.evaluation.canonical import canonical_sha256
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, QueryFingerprint
@@ -24,6 +31,38 @@ from ai_worker.tasks.rag.retrieval_runtime import (
 )
 
 EXPECTED_CANDIDATE_HASH = "77945a6a1a72eba682a13a85b895fd289ab7bce5b63498f4727621180fbad073"
+
+
+def test_production_search_projection_preserves_authoritative_evidence_key() -> None:
+    provenance = _InternalProvenance(
+        knowledge_index_id=UUID("00000000-0000-4000-8000-000000000001"),
+        index_code="knowledge-evidence",
+        index_version="v1",
+        index_configuration_hash="a" * 64,
+        knowledge_chunk_id=UUID("00000000-0000-4000-8000-000000000002"),
+        evidence_key="mfds:synthetic:document-1:0",
+        source_snapshot_id=UUID("00000000-0000-4000-8000-000000000003"),
+        source_snapshot_member_id=UUID("00000000-0000-4000-8000-000000000004"),
+        source_code="MFDS",
+        source_version="external:v1",
+        canonical_checksum="b" * 64,
+        external_document_id="document-1",
+        chunk_index=0,
+        locator="$.records[0]",
+        content_hash="c" * 64,
+        canonicalization_spec_version="v1",
+        normalization_version="v1",
+        chunk_text="synthetic evidence",
+    )
+
+    assert _to_production_provenance(provenance).evidence_key == "mfds:synthetic:document-1:0"
+
+    for malformed in ("", " ", "e\u0301vidence"):
+        with pytest.raises(ValueError, match="SEARCH_RESULT_INVALID"):
+            _to_production_provenance(replace(provenance, evidence_key=malformed))
+
+    with pytest.raises(ValueError, match="missing"):
+        _required_persisted_evidence_key(None)
 
 
 def test_postgresql_evidence_search_adapter_canonical_projection_and_candidate_hash() -> None:

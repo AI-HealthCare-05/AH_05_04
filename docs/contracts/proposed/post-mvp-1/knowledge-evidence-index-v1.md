@@ -27,11 +27,12 @@ Index는 별도 데이터 도메인이며 이 계약의 입력이나 저장소�
 | `embedding_model_version` | string | NFC, 비어 있지 않음, 최대 80자, 공백·제어문자 없음 |
 | `embedding_dimension` | integer | 1 이상 2000 이하 |
 | `distance_metric` | enum | `COSINE`만 허용 |
-| `members` | non-empty tuple | 동일 stable coordinate 또는 Chunk UUID 중복 금지 |
+| `members` | non-empty tuple | 동일 stable coordinate, Chunk UUID 또는 동일 `(source_snapshot_id, evidence_key)` 중복 금지 |
 
 각 member는 다음을 포함한다.
 
 - `knowledge_chunk_id`, `source_snapshot_id`, `source_snapshot_member_id`: UUID
+- `evidence_key`: 외부 authoritative caller가 제공한 opaque 식별자. 비어 있지 않은 NFC 문자열, 최대 300자
 - `source_code`, `source_version`, `external_document_id`: 비어 있지 않은 NFC 식별자
 - `canonical_checksum`, `content_hash`: 64자리 lowercase hexadecimal SHA-256
 - `chunk_index`: 0 이상의 정수
@@ -67,6 +68,7 @@ bytes에 SHA-256을 적용한다. locator, UUID, Source Snapshot checksum, raw t
 {
   "chunk_index": 0,
   "content_hash": "<64-lower-hex>",
+  "evidence_key": "<opaque-authoritative-key>",
   "external_document_id": "<id>",
   "source_code": "<code>",
   "source_version": "<version>"
@@ -106,7 +108,16 @@ projection version은 `knowledge-evidence-index-configuration@1`이다. model re
 - `KNOWLEDGE_EVIDENCE_V1` document/chunk는 Source Snapshot member, external document ID, canonicalization
   version, content hash와 normalization version이 모두 있어야 한다.
 - `rag_knowledge_index`는 완성된 불변 index receipt이며, `rag_knowledge_index_member`가 Chunk와 vector를
-  결속한다. draft 또는 부분 index row는 공개하지 않는다.
+  결속한다. 같은 row의 `evidence_key`가 정확한 `(knowledge_index_id, knowledge_chunk_id)` binding을 소유한다.
+  새로 materialize한 row의 `evidence_key`는 non-null/nonblank이고, 같은 index 안에서
+  `(source_snapshot_id, evidence_key)`는 unique다. citation 정본 anchor의 scope를 넓히지 않으며, 서로 다른
+  snapshot의 같은 opaque key는 별도 binding이다. draft 또는 부분 index row는 공개하지 않는다.
+- builder는 `CHUNK_UUID=EVIDENCE_KEY` binding을 명시 입력으로 받아 exact chunk set과 snapshot/key anchor uniqueness를
+  검증한다. chunk UUID, rank, hash 또는 Source coordinate에서 key를 생성하거나 보정하지 않는다.
+- 기존 member row에 authoritative key가 없는 상태는 migration에서 추론·backfill하지 않는다. populated upgrade는
+  legacy row를 nullable binding으로 보존하되 runtime reader가 그 row를 fail closed한다. authoritative rebuild가
+  non-null binding을 적재한 뒤 zero-null을 확인하기 전에는 legacy row를 공개하지 않는다. binding을 잃는 populated
+  downgrade는 fail closed한다.
 - 한 transaction 안에서 parent chain을 재검증하고 index와 모든 member를 기록한 뒤 persisted receipt를
   재계산한다. 실패하면 전체 rollback한다.
 - 동일 `index_code + index_version` 재요청은 모든 configuration과 세 hash가 같은 경우에만 idempotent다.

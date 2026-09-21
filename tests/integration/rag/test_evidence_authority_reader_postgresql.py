@@ -196,16 +196,17 @@ async def _seed_selected_hit(engine) -> dict[str, UUID]:
         await connection.execute(
             text(
                 "INSERT INTO rag_knowledge_index_member "
-                "(id, knowledge_index_id, knowledge_chunk_id, source_snapshot_id, source_snapshot_member_id, "
+                "(id, knowledge_index_id, knowledge_chunk_id, evidence_key, source_snapshot_id, source_snapshot_member_id, "
                 "source_code, source_version, canonical_checksum, external_document_id, chunk_index, "
                 "content_hash, embedding, embedding_sha256, member_order) "
-                "VALUES (:id, :index_id, :chunk_id, :snapshot_id, :member_id, :source_code, :source_version, "
+                "VALUES (:id, :index_id, :chunk_id, :evidence_key, :snapshot_id, :member_id, :source_code, :source_version, "
                 ":canonical, :external_id, 0, :h, '[1,0]', :embedding_sha256, 1)"
             ),
             {
                 "id": str(ids["index_member"]),
                 "index_id": str(ids["index"]),
                 "chunk_id": str(ids["chunk"]),
+                "evidence_key": "synthetic-r746-evidence-1",
                 "snapshot_id": str(ids["snapshot"]),
                 "member_id": str(ids["member"]),
                 "source_code": _SOURCE_CODE,

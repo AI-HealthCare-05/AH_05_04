@@ -111,6 +111,7 @@ def selection_manifest_projection(selected_hits: Sequence[ProductionSearchHit]) 
             "index_code": h.provenance.index_code,
             "index_configuration_hash": h.provenance.index_configuration_hash,
             "index_version": h.provenance.index_version,
+            "evidence_key": h.provenance.evidence_key,
             "knowledge_chunk_id": str(h.provenance.knowledge_chunk_id),
             "knowledge_index_id": str(h.provenance.knowledge_index_id),
             "locator": h.provenance.locator,
@@ -283,6 +284,7 @@ def _selected_hit_replay_projection(hit: ProductionSearchHit) -> dict[str, Any]:
             "index_code": provenance.index_code,
             "index_configuration_hash": provenance.index_configuration_hash,
             "index_version": provenance.index_version,
+            "evidence_key": provenance.evidence_key,
             "knowledge_chunk_id": str(provenance.knowledge_chunk_id),
             "knowledge_index_id": str(provenance.knowledge_index_id),
             "locator": provenance.locator,
@@ -410,6 +412,7 @@ def _restore_selected_hit(value: object) -> ProductionSearchHit:
                 provenance.get("index_configuration_hash"), "index_configuration_hash"
             ),
             knowledge_chunk_id=_strict_uuid(provenance.get("knowledge_chunk_id"), "knowledge_chunk_id"),
+            evidence_key=_strict_string(provenance.get("evidence_key"), "evidence_key"),
             source_snapshot_id=_strict_uuid(provenance.get("source_snapshot_id"), "source_snapshot_id"),
             source_snapshot_member_id=_strict_uuid(
                 provenance.get("source_snapshot_member_id"), "source_snapshot_member_id"

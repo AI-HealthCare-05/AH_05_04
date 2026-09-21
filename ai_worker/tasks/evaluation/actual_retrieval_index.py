@@ -108,6 +108,15 @@ ACTUAL_RETRIEVAL_ADAPTER_REF = ImmutableArtifactRef(
 )
 
 
+def _required_persisted_evidence_key(value: object) -> str:
+    if not isinstance(value, str):
+        raise EvaluationValidationError(
+            EvaluationErrorCode.REPOSITORY_STATE_INVALID,
+            "Index member has no authoritative evidence_key",
+        )
+    return value
+
+
 class DeterministicFakeEmbeddingAdapter(TextEmbeddingPort):
     """Offline deterministic 1536-dimensional embedding adapter for test/dev."""
 
@@ -387,7 +396,8 @@ async def bootstrap_dev_knowledge_index(  # noqa: C901
                     await session.execute(
                         text(
                             "SELECT "
-                            "m.knowledge_chunk_id, m.source_snapshot_id, m.source_snapshot_member_id, "
+                            "m.knowledge_chunk_id, m.evidence_key, m.source_snapshot_id, "
+                            "m.source_snapshot_member_id, "
                             "m.source_code, m.source_version, m.canonical_checksum, m.external_document_id, "
                             "m.chunk_index, m.content_hash, m.embedding, m.embedding_sha256, m.member_order, "
                             "sm.locator, sm.content_sha256 AS snapshot_member_content_sha256, "
@@ -450,6 +460,7 @@ async def bootstrap_dev_knowledge_index(  # noqa: C901
             KnowledgeIndexMemberDraft(
                 identity=KnowledgeChunkIdentity(
                     knowledge_chunk_id=UUID(str(r["knowledge_chunk_id"])),
+                    evidence_key=_required_persisted_evidence_key(r["evidence_key"]),
                     source_snapshot_id=UUID(str(r["source_snapshot_id"])),
                     source_snapshot_member_id=UUID(str(r["source_snapshot_member_id"])),
                     source_code=str(r["source_code"]),
@@ -774,6 +785,7 @@ async def bootstrap_dev_knowledge_index(  # noqa: C901
             KnowledgeIndexMemberDraft(
                 identity=KnowledgeChunkIdentity(
                     knowledge_chunk_id=chunk_id,
+                    evidence_key=evidence_ref,
                     source_snapshot_id=snapshot_id,
                     source_snapshot_member_id=member_id,
                     source_code=SYNTHETIC_SOURCE_CODE,

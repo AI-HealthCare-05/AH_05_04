@@ -709,6 +709,7 @@ async def test_index_repository_participates_in_snapshot_advisory_lock() -> None
     member = KnowledgeIndexMemberDraft(
         identity=KnowledgeChunkIdentity(
             knowledge_chunk_id=UUID("00000000-0000-4000-8000-000000000001"),
+            evidence_key="synthetic-materialization-evidence-1",
             source_snapshot_id=snap_id,
             source_snapshot_member_id=UUID("00000000-0000-4000-8000-000000000003"),
             source_code="MFDS",
