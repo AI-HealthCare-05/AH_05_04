@@ -205,6 +205,7 @@ class GuidelineCitationDraft:
     source_version: str
     locator: str
     content_sha256: str
+    retrieval_receipt_ref: ImmutableArtifactRef | None = None
 
 
 @dataclass(frozen=True, slots=True)

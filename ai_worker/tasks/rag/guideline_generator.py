@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from ai_worker.tasks.rag.guide_aggregate_evidence import GuideAggregateEvidence
 from ai_worker.tasks.rag.guideline_card import (
     GuidelineCardDraft,
     GuidelineGenerationFailure,
@@ -25,7 +26,7 @@ class GuidelineGenerationRequest:
     """
 
     medication_identities: tuple[MedicationIdentityRef, ...]
-    evidence: ProductionGuidelineEvidenceSet
+    evidence: ProductionGuidelineEvidenceSet | GuideAggregateEvidence
     policy: VersionedGuidelinePolicy
 
 
