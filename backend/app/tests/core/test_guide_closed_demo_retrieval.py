@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import FastAPI
 
+from ai_worker.tasks.rag.closed_demo_retrieval_binding import load_closed_demo_retrieval_binding
 from ai_worker.tasks.rag.evidence_retrieval import SensitiveText
 from ai_worker.tasks.rag.retrieval_runtime import RetrievalExecutionStatus
 from app import main
@@ -18,6 +19,7 @@ from app.core.closed_demo_retrieval import (
 from app.core.guide_closed_demo_retrieval import (
     GuideClosedDemoEvidence,
     GuideClosedDemoEvidenceFilteringError,
+    GuideClosedDemoRetrievalExecutionError,
     GuideClosedDemoRetrievalService,
 )
 from app.dependencies import services
@@ -153,11 +155,12 @@ async def test_exact_product_filtering_drops_cross_drug_evidence() -> None:
         gate_outcome=mock_gate_outcome,
     )
 
+    binding = load_closed_demo_retrieval_binding()
     service = object.__new__(GuideClosedDemoRetrievalService)
     service._dependencies = cast(
         ClosedDemoRetrievalDependencies,
         SimpleNamespace(
-            binding=SimpleNamespace(execution_binding=SimpleNamespace()),
+            binding=binding,
             search_adapter=object(),
             eligibility_verifier=object(),
         ),
@@ -223,11 +226,12 @@ async def test_exact_product_filtering_fails_closed_on_zero_exact_hits() -> None
         gate_outcome=mock_gate_outcome,
     )
 
+    binding = load_closed_demo_retrieval_binding()
     service = object.__new__(GuideClosedDemoRetrievalService)
     service._dependencies = cast(
         ClosedDemoRetrievalDependencies,
         SimpleNamespace(
-            binding=SimpleNamespace(execution_binding=SimpleNamespace()),
+            binding=binding,
             search_adapter=object(),
             eligibility_verifier=object(),
         ),
@@ -248,3 +252,114 @@ async def test_exact_product_filtering_fails_closed_on_zero_exact_hits() -> None
                 query_text="노바스크정 5mg",
                 expected_item_seq="200610660",
             )
+
+
+@pytest.mark.asyncio
+async def test_retrieve_exact_evidence_narrows_execution_binding_to_single_product() -> None:
+    """Verifies that retrieval narrows 17p binding to 1 snapshot + 3 members and product filter ref."""
+    key_dep = GuideQueryHmacKeyDependency(
+        "guide-query-hmac-key@1", ApprovedGuideQueryHmacKey(b"test-key-32-bytes-long-secret-val")
+    )
+    producer = build_guide_query_fingerprint_producer(key_dep)
+    verifier = build_production_query_binding_verifier(key_dep)
+    binding = load_closed_demo_retrieval_binding()
+    scope = binding.scope_for_item_seq("200610660")
+
+    hit_novasc = SimpleNamespace(
+        provenance=SimpleNamespace(
+            external_document_id="mfds-label:200610660:item1",
+            source_code="MFDS_LABEL",
+            source_version="1.0",
+            locator="dosage",
+            content_hash="hash1",
+        )
+    )
+    mock_gate_outcome = SimpleNamespace(selected_hits=(hit_novasc,))
+    mock_outcome = SimpleNamespace(
+        status=RetrievalExecutionStatus.SUCCEEDED,
+        gate_outcome=mock_gate_outcome,
+    )
+
+    service = object.__new__(GuideClosedDemoRetrievalService)
+    service._dependencies = cast(
+        ClosedDemoRetrievalDependencies,
+        SimpleNamespace(
+            binding=binding,
+            search_adapter=object(),
+            eligibility_verifier=object(),
+        ),
+    )
+    service._text_embedding_adapter = cast(Any, object())
+    service._fingerprint_producer = producer
+    service._binding_verifier = verifier
+
+    async def fake_hydrate(hits: tuple[Any, ...]) -> tuple[GuideClosedDemoEvidence, ...]:
+        return tuple(
+            GuideClosedDemoEvidence(
+                slot=i,
+                external_document_id=h.provenance.external_document_id,
+                source_code=h.provenance.source_code,
+                source_version=h.provenance.source_version,
+                locator=h.provenance.locator,
+                content=SensitiveText("safe text"),
+            )
+            for i, h in enumerate(hits, start=1)
+        )
+
+    cast(Any, service)._hydrate_selected_hits = fake_hydrate
+
+    mock_execute = AsyncMock(return_value=mock_outcome)
+
+    with (
+        patch("app.core.closed_demo_retrieval.execute_production_retrieval", new=mock_execute),
+        patch("app.core.closed_demo_retrieval.EvidenceGateSuccess", new=type(mock_gate_outcome)),
+    ):
+        results = await service.retrieve_exact_evidence(
+            query_text="노바스크정 5mg",
+            expected_item_seq="200610660",
+        )
+
+    assert len(results) == 1
+    mock_execute.assert_awaited_once()
+    called_request = mock_execute.call_args[0][0]
+    exec_binding = called_request.search_request.execution_binding
+
+    # 1. Narrowed to exactly 1 snapshot + 3 members
+    assert exec_binding.allowed_source_snapshot_ids == (scope.source_snapshot_id,)
+    assert len(exec_binding.allowed_source_snapshot_member_ids) == 3
+    assert set(exec_binding.allowed_source_snapshot_member_ids) == set(scope.source_snapshot_member_ids)
+
+    # 2. Reused coordinates
+    assert exec_binding.knowledge_index_id == binding.execution_binding.knowledge_index_id
+    assert exec_binding.evidence_index_ref == binding.execution_binding.evidence_index_ref
+    assert exec_binding.retrieval_config == binding.execution_binding.retrieval_config
+
+    # 3. Product-specific filter_snapshot_ref (must NOT be the global 17p filter ref!)
+    assert exec_binding.filter_snapshot_ref != binding.execution_binding.filter_snapshot_ref
+    assert exec_binding.filter_snapshot_ref.content_sha256 == "ae99f921b04bd940957fa1475a0f7b1234088f5b61f972918f3440a4129d1356"
+
+
+@pytest.mark.asyncio
+async def test_retrieve_exact_evidence_fails_closed_on_unapproved_item_seq() -> None:
+    """Catches retrieval attempting to execute for an unapproved item_seq."""
+    binding = load_closed_demo_retrieval_binding()
+    service = object.__new__(GuideClosedDemoRetrievalService)
+    service._dependencies = cast(
+        ClosedDemoRetrievalDependencies,
+        SimpleNamespace(
+            binding=binding,
+            search_adapter=object(),
+            eligibility_verifier=object(),
+        ),
+    )
+    mock_execute = AsyncMock()
+
+    with patch("app.core.closed_demo_retrieval.execute_production_retrieval", new=mock_execute):
+        with pytest.raises(GuideClosedDemoRetrievalExecutionError, match="Product scope unavailable"):
+            await service.retrieve_exact_evidence(
+                query_text="미등록 약품",
+                expected_item_seq="999999999",
+            )
+
+    # Retrieval execution must never be triggered
+    mock_execute.assert_not_awaited()

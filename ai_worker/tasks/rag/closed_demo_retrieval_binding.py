@@ -29,13 +29,16 @@ CLOSED_DEMO_BINDING_RESOURCE = (
     Path(__file__).resolve().parent / "resources" / "sync-chat-closed-demo-17p-binding-v1.json"
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-_PROJECTION_VERSION = "sync-chat-closed-demo-17p-binding@1"
+_PROJECTION_VERSION = "sync-chat-closed-demo-17p-binding@2"
 _ENVIRONMENT = "CLOSED_DEMO"
 _ACCESS_MODE = "READ_ONLY"
 _DATABASE = "source591_staging"
 _SNAPSHOT_COUNT = 17
 _MEMBER_COUNT = 51
-_APPROVED_BINDING_SHA256 = "96f14993377cc2416c42ff12219d77eb189adb8f6d6c6003e9f56c312f1d7886"
+_PRODUCT_COUNT = 17
+_PRODUCT_MEMBER_COUNT = 3
+_ITEM_SEQ_RE = re.compile(r"^[0-9]{9}$")
+_APPROVED_BINDING_SHA256 = "ce14b2b314dd3ddd8e32e816559792711b3200fe1eb64b7c2d0c84916d31a0c4"
 
 
 class ClosedDemoRetrievalBindingError(ValueError):
@@ -49,12 +52,28 @@ class ClosedDemoSnapshotMemberPair:
 
 
 @dataclass(frozen=True, slots=True)
+class ClosedDemoProductScope:
+    item_seq: str
+    source_snapshot_id: UUID
+    source_snapshot_member_ids: tuple[UUID, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ClosedDemoRetrievalBinding:
     artifact_ref: ImmutableArtifactRef
     database: str
     access_mode: str
     snapshot_member_pairs: tuple[ClosedDemoSnapshotMemberPair, ...]
     execution_binding: EvidenceSearchExecutionBinding
+    product_scopes: tuple[ClosedDemoProductScope, ...] = ()
+
+    def scope_for_item_seq(self, item_seq: str) -> ClosedDemoProductScope:
+        if not isinstance(item_seq, str) or not _ITEM_SEQ_RE.fullmatch(item_seq):
+            _fail(f"item_seq {item_seq!r} is invalid")
+        for scope in self.product_scopes:
+            if scope.item_seq == item_seq:
+                return scope
+        _fail(f"no product scope for item_seq {item_seq}")
 
 
 def _fail(message: str) -> None:
@@ -107,6 +126,118 @@ def _snapshot_member_pairs(raw: Any) -> tuple[ClosedDemoSnapshotMemberPair, ...]
     if len({pair.source_snapshot_member_id for pair in pairs}) != _MEMBER_COUNT:
         _fail("snapshot_member_pairs contains duplicate members")
     return tuple(pairs)
+
+
+def _parse_product_member_ids(
+    raw_members: Any,
+    snapshot_id: UUID,
+    item_seq: str,
+    allowed_members: set[UUID],
+    allowed_pairs: set[tuple[UUID, UUID]],
+) -> tuple[UUID, ...]:
+    if not isinstance(raw_members, list) or len(raw_members) != _PRODUCT_MEMBER_COUNT:
+        _fail(
+            f"product_scopes[{item_seq!r}].source_snapshot_member_ids must contain exactly {_PRODUCT_MEMBER_COUNT} members"
+        )
+    try:
+        product_member_ids = tuple(UUID(m) for m in raw_members)
+    except (TypeError, ValueError) as exc:
+        raise ClosedDemoRetrievalBindingError(
+            f"product_scopes[{item_seq!r}] contains an invalid member UUID"
+        ) from exc
+
+    if len(set(product_member_ids)) != _PRODUCT_MEMBER_COUNT:
+        _fail(f"product_scopes[{item_seq!r}] contains duplicate member UUIDs")
+
+    for m_id in product_member_ids:
+        if m_id not in allowed_members:
+            _fail(f"product_scopes[{item_seq!r}] member {m_id} is outside allowed members")
+        if (snapshot_id, m_id) not in allowed_pairs:
+            _fail(f"product_scopes[{item_seq!r}] snapshot/member pair is not in snapshot_member_pairs")
+
+    return product_member_ids
+
+
+def _parse_product_scope_entry(
+    item_seq: str,
+    entry: Any,
+    allowed_snapshots: set[UUID],
+    allowed_members: set[UUID],
+    allowed_pairs: set[tuple[UUID, UUID]],
+) -> ClosedDemoProductScope:
+    if not isinstance(item_seq, str) or not _ITEM_SEQ_RE.fullmatch(item_seq):
+        _fail(f"product_scopes contains an invalid item_seq: {item_seq!r}")
+    if not isinstance(entry, dict):
+        _fail(f"product_scopes[{item_seq!r}] must be an object")
+
+    try:
+        snapshot_id = UUID(entry["source_snapshot_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ClosedDemoRetrievalBindingError(
+            f"product_scopes[{item_seq!r}].source_snapshot_id is invalid"
+        ) from exc
+
+    if snapshot_id not in allowed_snapshots:
+        _fail(f"product_scopes[{item_seq!r}] source_snapshot_id is outside allowed snapshots")
+
+    product_member_ids = _parse_product_member_ids(
+        raw_members=entry.get("source_snapshot_member_ids"),
+        snapshot_id=snapshot_id,
+        item_seq=item_seq,
+        allowed_members=allowed_members,
+        allowed_pairs=allowed_pairs,
+    )
+
+    return ClosedDemoProductScope(
+        item_seq=item_seq,
+        source_snapshot_id=snapshot_id,
+        source_snapshot_member_ids=product_member_ids,
+    )
+
+
+def _product_scopes(
+    raw: Any,
+    pairs: tuple[ClosedDemoSnapshotMemberPair, ...],
+    snapshot_ids: tuple[UUID, ...],
+    member_ids: tuple[UUID, ...],
+) -> tuple[ClosedDemoProductScope, ...]:
+    if not isinstance(raw, dict) or len(raw) != _PRODUCT_COUNT:
+        _fail(f"product_scopes must contain exactly {_PRODUCT_COUNT} products")
+
+    allowed_pairs = {(p.source_snapshot_id, p.source_snapshot_member_id) for p in pairs}
+    allowed_snapshots = set(snapshot_ids)
+    allowed_members = set(member_ids)
+
+    scopes: list[ClosedDemoProductScope] = []
+    seen_snapshots: set[UUID] = set()
+    seen_members: set[UUID] = set()
+
+    for item_seq, entry in raw.items():
+        scope = _parse_product_scope_entry(
+            item_seq=item_seq,
+            entry=entry,
+            allowed_snapshots=allowed_snapshots,
+            allowed_members=allowed_members,
+            allowed_pairs=allowed_pairs,
+        )
+        if scope.source_snapshot_id in seen_snapshots:
+            _fail(f"snapshot {scope.source_snapshot_id} is assigned to multiple product scopes")
+        seen_snapshots.add(scope.source_snapshot_id)
+
+        for m_id in scope.source_snapshot_member_ids:
+            if m_id in seen_members:
+                _fail(f"member {m_id} is assigned to multiple product scopes")
+            seen_members.add(m_id)
+
+        scopes.append(scope)
+
+    if seen_snapshots != allowed_snapshots:
+        _fail("product_scopes snapshots do not exactly cover allowed snapshots")
+    if seen_members != allowed_members:
+        _fail("product_scopes members do not exactly cover allowed members")
+
+    return tuple(sorted(scopes, key=lambda s: s.item_seq))
+
 
 
 def _retrieval_config(
@@ -189,6 +320,12 @@ def load_closed_demo_retrieval_binding(path: Path | str | None = None) -> Closed
         _fail("snapshot_member_pairs do not exactly cover the allowed snapshots")
     if {pair.source_snapshot_member_id for pair in pairs} != set(member_ids):
         _fail("snapshot_member_pairs do not exactly cover the allowed members")
+    product_scopes = _product_scopes(
+        manifest.get("product_scopes"),
+        pairs=pairs,
+        snapshot_ids=snapshot_ids,
+        member_ids=member_ids,
+    )
 
     return ClosedDemoRetrievalBinding(
         artifact_ref=artifact_ref,
@@ -208,4 +345,13 @@ def load_closed_demo_retrieval_binding(path: Path | str | None = None) -> Closed
                 embedding_ref=embedding_ref,
             ),
         ),
+        product_scopes=product_scopes,
     )
+
+
+def scope_for_item_seq(
+    item_seq: str,
+    binding: ClosedDemoRetrievalBinding | None = None,
+) -> ClosedDemoProductScope:
+    target = binding if binding is not None else load_closed_demo_retrieval_binding()
+    return target.scope_for_item_seq(item_seq)
