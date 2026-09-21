@@ -33,13 +33,14 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Protocol, Self
+from typing import Protocol, Self, cast
 from uuid import UUID
 
 from ai_worker.tasks.rag.evidence_retrieval import (
     ImmutableArtifactRef,
     SensitiveText,
 )
+from ai_worker.tasks.rag.guide_aggregate_evidence import GuideAggregateEvidence
 from ai_worker.tasks.rag.guideline_production_evidence import (
     ProductionGuidelineEvidence,
     ProductionGuidelineEvidenceSet,
@@ -445,7 +446,7 @@ class GuidelineCard:
 @dataclass(frozen=True, slots=True)
 class GuidelineCardRequest:
     medication_identities: tuple[MedicationIdentityRef, ...]
-    evidence: ProductionGuidelineEvidenceSet
+    evidence: ProductionGuidelineEvidenceSet | GuideAggregateEvidence
     draft: GuidelineCardDraft | None
     generation_failure: GuidelineGenerationFailure | None
     policy: VersionedGuidelinePolicy
@@ -529,11 +530,16 @@ def _finalize_guideline_card_snapshot(
     if request.draft is None or not _is_valid_draft_shape(request.draft, request.policy):
         return _validation_fallback(context)
 
-    evidence_by_key = {item.evidence_key: item for item in request.evidence.selections}
-    bindings = _validated_evidence_bindings(request.approved_evidence_bindings, evidence_by_key)
-    if bindings is None:
-        return _validation_fallback(context)
-    claims = _bind_claims(request, evidence_by_key, bindings, context.verifier_refs)
+    if type(request.evidence) is ProductionGuidelineEvidenceSet:
+        evidence_by_key = {item.evidence_key: item for item in request.evidence.selections}
+        bindings = _validated_evidence_bindings(request.approved_evidence_bindings, evidence_by_key)
+        claims = None if bindings is None else _bind_claims(request, evidence_by_key, bindings, context.verifier_refs)
+    else:
+        aggregate = cast(GuideAggregateEvidence, request.evidence)
+        bindings = _validated_aggregate_evidence_bindings(request.approved_evidence_bindings, aggregate)
+        claims = (
+            None if bindings is None else _bind_aggregate_claims(request, aggregate, bindings, context.verifier_refs)
+        )
     if claims is None:
         return _validation_fallback(context)
     return GuidelineCardOutcome(
@@ -679,8 +685,123 @@ def _bind_citation(
     )
 
 
+def _aggregate_selection_candidates(
+    aggregate: GuideAggregateEvidence,
+    medication_identity: MedicationIdentityRef,
+    draft: GuidelineCitationDraft,
+) -> tuple[ProductionGuidelineEvidence, ...]:
+    """Find a child selection only by the frozen aggregate identity coordinates."""
+    return tuple(
+        selection
+        for entry in aggregate.entries
+        if entry.medication_identity == medication_identity
+        for selection in entry.evidence.selections
+        if selection.source_snapshot_id == draft.source_snapshot_id
+        and selection.evidence_key == draft.evidence_key
+        and selection.retrieval_receipt_ref == draft.retrieval_receipt_ref
+    )
+
+
+def _validated_aggregate_evidence_bindings(
+    value: object,
+    aggregate: GuideAggregateEvidence,
+) -> dict[tuple[str, MedicationIdentityRef, GuidelineScope], ApprovedGuidelineEvidenceBinding] | None:
+    if type(value) is not tuple or not value:
+        return None
+    validated: dict[tuple[str, MedicationIdentityRef, GuidelineScope], ApprovedGuidelineEvidenceBinding] = {}
+    for item in value:
+        if not _is_valid_evidence_binding(item):
+            return None
+        candidates = tuple(
+            selection
+            for entry in aggregate.entries
+            if entry.medication_identity == item.medication_identity
+            for selection in entry.evidence.selections
+            if selection.evidence_key == item.evidence_key
+            and selection.assessment_artifact_ref == item.assessment_artifact_ref
+            and compute_production_guideline_evidence_selection_hash(selection) == item.selection_projection_sha256
+        )
+        key = (item.evidence_key, item.medication_identity, item.scope)
+        if len(candidates) != 1 or key in validated:
+            return None
+        validated[key] = item
+    return validated
+
+
+def _bind_aggregate_claims(
+    request: GuidelineCardRequest,
+    aggregate: GuideAggregateEvidence,
+    bindings: dict[tuple[str, MedicationIdentityRef, GuidelineScope], ApprovedGuidelineEvidenceBinding],
+    verifier_refs: dict[ImmutableArtifactRef, ImmutableArtifactRef],
+) -> tuple[GuidelineClaim, ...] | None:
+    assert request.draft is not None
+    medication_identities = set(request.medication_identities)
+    claims: list[GuidelineClaim] = []
+    for draft_claim in request.draft.claims:
+        if draft_claim.medication_identity not in medication_identities:
+            return None
+        citations = tuple(
+            _bind_aggregate_citation(item, draft_claim, aggregate, bindings, verifier_refs)
+            for item in draft_claim.citations
+        )
+        if any(item is None for item in citations):
+            return None
+        claims.append(
+            GuidelineClaim(
+                draft_claim.claim_key,
+                _copy_medication_identity(draft_claim.medication_identity),
+                draft_claim.scope,
+                draft_claim.action_class,
+                SensitiveText(draft_claim.action_text.reveal()),
+                tuple(item for item in citations if item is not None),
+            )
+        )
+    return tuple(claims)
+
+
+def _bind_aggregate_citation(
+    draft: GuidelineCitationDraft,
+    claim: GuidelineClaimDraft,
+    aggregate: GuideAggregateEvidence,
+    bindings: dict[tuple[str, MedicationIdentityRef, GuidelineScope], ApprovedGuidelineEvidenceBinding],
+    verifier_refs: dict[ImmutableArtifactRef, ImmutableArtifactRef],
+) -> GuidelineCitation | None:
+    candidates = _aggregate_selection_candidates(aggregate, claim.medication_identity, draft)
+    binding = bindings.get((draft.evidence_key, claim.medication_identity, claim.scope))
+    if len(candidates) != 1 or binding is None:
+        return None
+    evidence = candidates[0]
+    if (
+        hashlib.sha256(claim.action_text.reveal().encode()).hexdigest() != binding.action_text_sha256
+        or claim.action_class is not binding.action_class
+        or compute_production_guideline_evidence_selection_hash(evidence) != binding.selection_projection_sha256
+        or draft.source_snapshot_member_id != evidence.source_snapshot_member_id
+        or draft.source_code != evidence.source_code
+        or draft.source_version != evidence.source_version
+        or draft.locator != evidence.locator
+        or draft.content_sha256 != evidence.content_sha256
+    ):
+        return None
+    return GuidelineCitation(
+        GuidelineCitationSourceType.LIFESTYLE_GUIDELINE,
+        evidence.evidence_key,
+        evidence.source_snapshot_id,
+        evidence.source_snapshot_member_id,
+        evidence.source_code,
+        evidence.source_version,
+        evidence.locator,
+        evidence.content_sha256,
+        _copy_artifact_ref(evidence.assessment_artifact_ref),
+        _copy_artifact_ref(evidence.eligibility_receipt_ref),
+        _copy_artifact_ref(evidence.retrieval_receipt_ref),
+        _copy_artifact_ref(evidence.verifier_artifact_ref),
+        _copy_artifact_ref(binding.artifact_ref),
+        _copy_artifact_ref(verifier_refs[binding.artifact_ref]),
+    )
+
+
 def _is_bindable_production_evidence(
-    evidence: ProductionGuidelineEvidenceSet,
+    evidence: ProductionGuidelineEvidenceSet | GuideAggregateEvidence,
     evaluated_at: datetime,
 ) -> bool:
     """Validate the structural shape of the production evidence handed to this kernel.
@@ -698,6 +819,10 @@ def _is_bindable_production_evidence(
     insufficient, conflicted and stale evidence outcomes were RAG-14 Gate states, and
     in the production path an unusable handoff never reaches this kernel at all.
     """
+    if type(evidence) is GuideAggregateEvidence:
+        return bool(evidence.entries) and all(
+            _is_bindable_production_evidence(entry.evidence, evaluated_at) for entry in evidence.entries
+        )
     if (
         type(evidence) is not ProductionGuidelineEvidenceSet
         or not _is_utc_datetime(evidence.evaluated_at)
@@ -822,7 +947,7 @@ def _is_valid_request_shell(request: object) -> bool:
     return (
         type(request) is GuidelineCardRequest
         and _is_valid_medications(request.medication_identities)
-        and type(request.evidence) is ProductionGuidelineEvidenceSet
+        and type(request.evidence) in (ProductionGuidelineEvidenceSet, GuideAggregateEvidence)
         and (request.draft is None or type(request.draft) is GuidelineCardDraft)
         and (request.generation_failure is None or type(request.generation_failure) is GuidelineGenerationFailure)
         and _is_valid_policy(request.policy)

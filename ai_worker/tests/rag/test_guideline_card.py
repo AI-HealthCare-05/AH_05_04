@@ -1,3 +1,5 @@
+# mypy: disable-error-code="arg-type, type-var, union-attr"
+
 from __future__ import annotations
 
 import hashlib
@@ -8,6 +10,7 @@ from ai_worker.tasks.rag.evidence_retrieval import (
     ImmutableArtifactRef,
     SensitiveText,
 )
+from ai_worker.tasks.rag.guide_aggregate_evidence import GuideAggregateEvidence, GuideAggregateEvidenceRun
 from ai_worker.tasks.rag.guideline_card import (
     ApprovedGuidelineEvidenceBinding,
     ApprovedGuidelineFallback,
@@ -178,6 +181,100 @@ def valid_request() -> GuidelineCardRequest:
         evaluated_at=EVALUATED_AT,
         approved_evidence_bindings=(binding,),
     )
+
+
+def test_aggregate_evidence_binds_two_medications_with_the_same_evidence_key_by_snapshot_and_receipt() -> None:
+    first_request = valid_request()
+    first = production_selection()
+    second_identity = MedicationIdentityRef(
+        prescription_version_medication_id="22222222-2222-4222-8222-222222222222",
+        code_system="MFDS_ITEM_SEQ",
+        canonical_code="SYNTHETIC-ITEM-002",
+    )
+    second = replace(
+        first,
+        source_snapshot_id=handoff_fixture.uuid_of("8"),
+        source_snapshot_member_id=handoff_fixture.uuid_of("9"),
+        retrieval_receipt_ref=artifact("retrieval-receipt-second", "b" * 64),
+    )
+    second_binding = ApprovedGuidelineEvidenceBinding.create(
+        "guideline-evidence-binding",
+        "guideline-evidence-binding@synthetic-2",
+        medication_identity=second_identity,
+        scope=GuidelineScope.FOOD_CAUTION,
+        action_class=GuidelineActionClass.FOOD_AVOIDANCE,
+        evidence_key=second.evidence_key,
+        assessment_artifact_ref=second.assessment_artifact_ref,
+        selection_projection_sha256=compute_production_guideline_evidence_selection_hash(second),
+        action_text_sha256=hashlib.sha256(FOOD_AVOIDANCE_TEXT.encode()).hexdigest(),
+    )
+    second_citation = replace(citation_draft_for(second), retrieval_receipt_ref=second.retrieval_receipt_ref)
+    second_claim = GuidelineClaimDraft(
+        claim_key="claim-food-2",
+        medication_identity=second_identity,
+        scope=GuidelineScope.FOOD_CAUTION,
+        action_class=GuidelineActionClass.FOOD_AVOIDANCE,
+        action_text=SensitiveText(FOOD_AVOIDANCE_TEXT),
+        citations=(second_citation,),
+    )
+    first_evidence = production_evidence_set(first)
+    second_evidence = production_evidence_set(second)
+    aggregate = GuideAggregateEvidence(
+        (
+            GuideAggregateEvidenceRun(
+                first_request.medication_identities[0], handoff_fixture.uuid_of("a"), object(), first_evidence
+            ),  # type: ignore[arg-type]
+            GuideAggregateEvidenceRun(second_identity, handoff_fixture.uuid_of("b"), object(), second_evidence),  # type: ignore[arg-type]
+        )
+    )
+    first_claim = first_request.draft.claims[0]
+    first_claim = replace(
+        first_claim,
+        citations=(replace(first_claim.citations[0], retrieval_receipt_ref=first.retrieval_receipt_ref),),
+    )
+    outcome = finalize_guideline_card(
+        replace(
+            first_request,
+            medication_identities=(first_request.medication_identities[0], second_identity),
+            evidence=aggregate,
+            draft=replace(first_request.draft, claims=(first_claim, second_claim)),
+            approved_evidence_bindings=(first_request.approved_evidence_bindings[0], second_binding),
+        )
+    )
+
+    assert outcome.status is GuidelineCardStatus.GENERATED
+    assert outcome.card is not None
+    assert tuple(citation.source_snapshot_id for claim in outcome.card.claims for citation in claim.citations) == (
+        first.source_snapshot_id,
+        second.source_snapshot_id,
+    )
+
+
+def test_aggregate_evidence_rejects_ambiguous_child_selection() -> None:
+    request = valid_request()
+    selection = production_selection()
+    evidence = production_evidence_set(selection)
+    aggregate = GuideAggregateEvidence(
+        (
+            GuideAggregateEvidenceRun(
+                request.medication_identities[0], handoff_fixture.uuid_of("a"), object(), evidence
+            ),  # type: ignore[arg-type]
+            GuideAggregateEvidenceRun(
+                request.medication_identities[0], handoff_fixture.uuid_of("b"), object(), evidence
+            ),  # type: ignore[arg-type]
+        )
+    )
+    citation = replace(request.draft.claims[0].citations[0], retrieval_receipt_ref=selection.retrieval_receipt_ref)
+
+    outcome = finalize_guideline_card(
+        replace(
+            request,
+            evidence=aggregate,
+            draft=replace(request.draft, claims=(replace(request.draft.claims[0], citations=(citation,)),)),
+        )
+    )
+
+    assert outcome.status is GuidelineCardStatus.VALIDATION_REJECTED
 
 
 def request_with_approved_action(text: str) -> GuidelineCardRequest:
