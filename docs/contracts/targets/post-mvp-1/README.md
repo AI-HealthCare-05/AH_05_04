@@ -15,6 +15,7 @@
 - [Safety Result 계약 v1](./safety-result-v1.md) — Approved v4 이력과 Track C 공통 Safety 기준
 - [RAG Source 수집·활성화 계약 v1](./rag-source-ingestion-v1.md) — MFDS 제품 `mfds-product-approval@1` canonicalization과 `ProductIngestionResult` 경계 구현 중(#165)
 - [RAG Runtime 계약 v1](./rag-runtime-v1.md) — Runtime Bundle Manifest Hash·저장 정합은 `PD-175-20260910`(Approved)
+- [Sync Chat CLOSED_DEMO Retrieval Delta v1 (#180)](./sync-chat-closed-demo-rag-v1.md) — sealed 17p read-only composition exception; Chat-only query authority와 v7 evidence payload를 정의하며 Current v6/public Track F는 변경하지 않음
 - [Guideline Card typed port 계약 v1](./guideline-card-v1.md) — RAG-14 Evidence Gate·PD-362 Source eligibility와 RAG-16 사이의 Request·Outcome·승인 verifier·fallback 의미를 고정 · RAG-15 persistence-free kernel 구현 검토 중(#179, PR #414), Current 아님
 - [RAG Evaluation·Release Gate 계약 v1](./rag-evaluation-v1.md): Schema Set 1.3 Candidate · Review Required · 책임 리뷰어 PR review event 대기
 - [RAG Answer Quality Metric·Variant 계약 v1](./rag-answer-quality-metrics-v1.md) — PR #475 책임 리뷰 승인 · Approved Target · Partially implemented · `REQUIRED_CLAIM_RECALL`·`COMPLETENESS` DEV kernel·manifest routing 구현, human judgment·3-pair comparison·실제 Variant 실행 미구현

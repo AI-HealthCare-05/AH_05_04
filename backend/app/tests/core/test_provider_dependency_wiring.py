@@ -6,6 +6,7 @@ import pytest
 from openai import AsyncOpenAI
 from pydantic import SecretStr
 
+from app.core.closed_demo_retrieval import ClosedDemoRetrievalService
 from app.core.config import Env
 from app.core.provider_observability import ProviderCallContext
 from app.dependencies import services
@@ -13,6 +14,10 @@ from app.services.chat_ai import ChatEngine, ChatProvider
 from app.services.guide_ai import GuideGenerator, GuideProvider
 from app.services.ocr_ai import OcrStructureProvider, OcrStructurer
 from app.services.ocr_engine import OcrEngine
+from rag_runtime.closed_demo_chat_query_binding import (
+    ClosedDemoChatQueryVerificationSuccess,
+    ClosedDemoChatQueryVerifier,
+)
 from rag_runtime.guide_query_binding import (
     GuideQueryFingerprintDependencyError,
     ProductionQueryBindingVerifier,
@@ -95,6 +100,30 @@ def test_guide_query_hmac_dependency_rejects_blank_secret_without_echoing_it(
     assert secret not in str(raised.value)
 
 
+def test_closed_demo_chat_query_hmac_dependencies_use_the_separate_chat_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "synthetic-closed-demo-chat-query-hmac-key"
+    monkeypatch.setattr(services.config, "CHAT_CLOSED_DEMO_QUERY_HMAC_KEY", SecretStr(secret))
+    monkeypatch.setattr(
+        services.config,
+        "CHAT_CLOSED_DEMO_QUERY_HMAC_KEY_VERSION",
+        "closed-demo-chat-query-hmac-key@1",
+    )
+
+    dependency = services.get_closed_demo_chat_query_hmac_key_dependency()
+    producer = services.get_closed_demo_chat_query_fingerprint_producer(dependency)
+    verifier = services.get_closed_demo_chat_query_binding_verifier(dependency)
+    fingerprint = producer.produce(SensitiveText("복약 후 졸릴 수 있나요?"))
+
+    result = verifier.verify(SensitiveText("복약 후 졸릴 수 있나요?"), fingerprint)
+
+    assert isinstance(result, ClosedDemoChatQueryVerificationSuccess)
+    assert isinstance(verifier, ClosedDemoChatQueryVerifier)
+    assert fingerprint.key_version == "closed-demo-chat-query-hmac-key@1"
+    assert secret not in repr(dependency)
+
+
 def test_ocr_dependencies_inject_distinct_clova_and_openai_descriptors(monkeypatch: pytest.MonkeyPatch) -> None:
     context = _context()
     client = cast(AsyncOpenAI, object())
@@ -159,3 +188,29 @@ def test_guide_and_chat_dependencies_inject_operation_descriptors(monkeypatch: p
     assert captured["chat_provider"]["context"] is context
     assert captured["chat_provider"]["descriptor"].operation == "CHAT_GENERATION"
     assert captured["chat_provider"]["descriptor"].prompt_version == "chat-prompt-v6"
+
+
+def test_closed_demo_chat_dependency_records_the_v7_prompt_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    context = _context()
+    client = cast(AsyncOpenAI, object())
+    retriever = cast(ClosedDemoRetrievalService, object())
+    provider = cast(ChatProvider, object())
+    engine = cast(ChatEngine, object())
+    captured: dict[str, Any] = {}
+
+    def construct_chat_provider(received_client: AsyncOpenAI, **kwargs: Any) -> ChatProvider:
+        captured["client"] = received_client
+        captured["descriptor"] = kwargs["descriptor"]
+        return provider
+
+    def construct_chat_engine(**kwargs: Any) -> ChatEngine:
+        captured["retriever"] = kwargs["closed_demo_retriever"]
+        return engine
+
+    monkeypatch.setattr(services, "ChatOpenAIResponsesClient", construct_chat_provider)
+    monkeypatch.setattr(services, "ChatGeneratorEngine", construct_chat_engine)
+
+    assert services.get_chat_engine(client, context, retriever) is engine
+    assert captured["client"] is client
+    assert captured["retriever"] is retriever
+    assert captured["descriptor"].prompt_version == "chat-prompt-v7-closed-demo-evidence"

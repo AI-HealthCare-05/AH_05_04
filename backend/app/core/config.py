@@ -28,6 +28,7 @@ _IDEMPOTENCY_HMAC_KEY_PLACEHOLDERS = frozenset(
 # example 파일들의 placeholder 명명 규칙("-at-least-32-characters")과 맞춘 최소 길이입니다.
 _IDEMPOTENCY_HMAC_KEY_MIN_LENGTH = 32
 _GUIDE_QUERY_HMAC_KEY_VERSION_RE = re.compile(r"^guide-query-hmac-key@[1-9][0-9]*$")
+_CLOSED_DEMO_CHAT_QUERY_HMAC_KEY_VERSION_RE = re.compile(r"^closed-demo-chat-query-hmac-key@[1-9][0-9]*$")
 
 # SYNC_MUTATION response_body_snapshot 암호화 키(Fernet, 32byte urlsafe-base64)의 local
 # 기본값입니다. 전부 0바이트로 만든 값이라 눈에 띄게 가짜지만 Fernet이 요구하는 형식은
@@ -178,6 +179,12 @@ class Config(BaseSettings):
     GUIDE_QUERY_HMAC_KEY: SecretStr | None = None
     GUIDE_QUERY_HMAC_KEY_VERSION: str = "guide-query-hmac-key@1"
 
+    # CLOSED_DEMO Chat has a separate query authority.  It must never share
+    # the Guide key namespace or authenticate a free-form Chat question as a
+    # Guide medication retrieval query.
+    CHAT_CLOSED_DEMO_QUERY_HMAC_KEY: SecretStr | None = None
+    CHAT_CLOSED_DEMO_QUERY_HMAC_KEY_VERSION: str = "closed-demo-chat-query-hmac-key@1"
+
     # idempotency-v1.md: SYNC_MUTATION의 response_body_snapshot은 암호화한 BYTEA로 저장합니다.
     # 알고리즘·키 관리 방식은 #311 담당 리뷰어의 암호화 envelope 검토 대상이라, 아래 값은
     # "일단 동작하는 기본값"(Fernet)입니다 — 검토 결과에 따라 값을 교체하면 되도록 별도 필드로
@@ -239,6 +246,16 @@ class Config(BaseSettings):
             raise ValueError("GUIDE_QUERY_HMAC_KEY_VERSION must use guide-query-hmac-key@<positive-integer>")
         return normalized
 
+    @field_validator("CHAT_CLOSED_DEMO_QUERY_HMAC_KEY_VERSION", mode="after")
+    @classmethod
+    def _validate_closed_demo_chat_query_hmac_key_version(cls, value: str) -> str:
+        normalized = value.strip()
+        if _CLOSED_DEMO_CHAT_QUERY_HMAC_KEY_VERSION_RE.fullmatch(normalized) is None:
+            raise ValueError(
+                "CHAT_CLOSED_DEMO_QUERY_HMAC_KEY_VERSION must use closed-demo-chat-query-hmac-key@<positive-integer>"
+            )
+        return normalized
+
     @field_validator("IDEMPOTENCY_HMAC_RETIRED_KEYS", mode="before")
     @classmethod
     def _normalize_idempotency_hmac_retired_keys(cls, value: object) -> object:
@@ -260,6 +277,10 @@ class Config(BaseSettings):
     OPENAI_MODEL: str = "gpt-4o"
     OPENAI_TIMEOUT_SECONDS: float = 20.0
     CHAT_HISTORY_CONTEXT_ENABLED: bool = False
+    CHAT_CLOSED_DEMO_RAG_ENABLED: bool = False
+    SOURCE591_STAGING_DB_HOST: str = ""
+    SOURCE591_STAGING_DB_PORT: int = 5432
+    SOURCE591_CONSUMER_PASSWORD: SecretStr | None = None
     RELEASE_VALIDATION_ALLOWED: bool = False
 
     TRACK_C_SAFETY_DEMO_ENABLED: bool = False
@@ -294,6 +315,17 @@ class Config(BaseSettings):
     # 실제 사용자 트래픽에 Candidate 조회·확정·거절 API를 공개하지 않습니다. 명시적으로 활성화하지
     # 않은 환경에서는 GET/confirm/reject가 503으로 fail-closed됩니다.
     PUBLIC_TRACK_F_ENABLED: bool = False
+
+    @model_validator(mode="after")
+    def validate_closed_demo_chat_rag_scope(self) -> "Config":
+        """Keep the closed-demo composition out of shared and public runtime."""
+        if not self.CHAT_CLOSED_DEMO_RAG_ENABLED:
+            return self
+        if self.ENV is not Env.LOCAL:
+            raise ValueError("CHAT_CLOSED_DEMO_RAG_ENABLED is allowed only in local environment")
+        if self.PUBLIC_TRACK_F_ENABLED:
+            raise ValueError("CHAT_CLOSED_DEMO_RAG_ENABLED requires PUBLIC_TRACK_F_ENABLED=false")
+        return self
 
     # EXT-PRIV-001 삭제·보존 정책 승인 전 실제 사용자에게 회원탈퇴 요청 접수 API를 공개하지 않습니다.
     # 명시적으로 활성화하지 않은 환경에서는 요청 접수 전 503으로 fail-closed됩니다.

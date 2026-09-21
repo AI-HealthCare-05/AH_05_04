@@ -96,6 +96,45 @@ def test_guide_query_hmac_config_uses_the_frozen_initial_version_and_secret_carr
     assert "synthetic-guide-query-hmac-key" not in repr(config.GUIDE_QUERY_HMAC_KEY)
 
 
+def test_closed_demo_chat_query_hmac_config_uses_an_independent_namespace_and_secret_carrier() -> None:
+    config = Config.model_validate(
+        {
+            **BASE_CONFIG,
+            "CHAT_CLOSED_DEMO_QUERY_HMAC_KEY": "synthetic-closed-demo-chat-query-hmac-key",
+        }
+    )
+
+    assert config.CHAT_CLOSED_DEMO_QUERY_HMAC_KEY_VERSION == "closed-demo-chat-query-hmac-key@1"
+    assert config.CHAT_CLOSED_DEMO_QUERY_HMAC_KEY is not None
+    assert config.CHAT_CLOSED_DEMO_QUERY_HMAC_KEY.get_secret_value() == "synthetic-closed-demo-chat-query-hmac-key"
+    assert "synthetic-closed-demo-chat-query-hmac-key" not in repr(config.CHAT_CLOSED_DEMO_QUERY_HMAC_KEY)
+
+
+@pytest.mark.parametrize("environment", (Env.STAGING, Env.PRODUCTION))
+def test_closed_demo_rag_config_rejects_nonlocal_environment(environment: Env) -> None:
+    with pytest.raises(ValidationError, match="CHAT_CLOSED_DEMO_RAG_ENABLED is allowed only in local environment"):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "ENV": environment,
+                "CHAT_CLOSED_DEMO_RAG_ENABLED": True,
+                "IDEMPOTENCY_HMAC_KEY": "a-real-idempotency-hmac-secret-value",
+                "IDEMPOTENCY_SNAPSHOT_ENCRYPTION_KEY": REAL_SNAPSHOT_ENCRYPTION_KEY,
+            }
+        )
+
+
+def test_closed_demo_rag_config_rejects_a_public_track_instance() -> None:
+    with pytest.raises(ValidationError, match="CHAT_CLOSED_DEMO_RAG_ENABLED requires PUBLIC_TRACK_F_ENABLED=false"):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "CHAT_CLOSED_DEMO_RAG_ENABLED": True,
+                "PUBLIC_TRACK_F_ENABLED": True,
+            }
+        )
+
+
 @pytest.mark.parametrize("version", ("", "guide-query-hmac-key@0", "guide-query-hmac-key@01", "query-hmac@1"))
 def test_guide_query_hmac_config_rejects_noncanonical_key_versions(version: str) -> None:
     with pytest.raises(ValidationError):
