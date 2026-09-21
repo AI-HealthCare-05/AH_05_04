@@ -7,7 +7,11 @@ from uuid import UUID
 
 from app.models.async_jobs import AiJob, AiJobType
 from app.models.guides import Guide
-from app.models.rag_runtime import RagRuntimeEnvironmentStatus
+from app.models.rag_runtime import (
+    RagRuntimeEnvironment,
+    RagRuntimeEnvironmentStatus,
+    RagRuntimeReleaseBundle,
+)
 from app.models.users import User
 from app.repositories.async_job_repository import AsyncJobRepository
 from app.repositories.rag_request_guard_runtime_binding_repository import (
@@ -29,7 +33,10 @@ from rag_runtime.request_authority import (
     RequestAuthorityDecisionOutcome,
     RequestAuthorityDecisionStage,
 )
-from rag_runtime.request_guard_runtime_binding import RequestGuardRuntimeBindingRef
+from rag_runtime.request_guard_runtime_binding import (
+    RequestGuardRuntimeBindingObservation,
+    RequestGuardRuntimeBindingRef,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,24 +124,12 @@ class GuideSyncRuntimeLifecycleProducer:
         guard = await RagRequestGuardRuntimeBindingRepository(self._runtime_repository.session).get_exact(
             authority.request_guard_runtime_binding_ref
         )
-        if guard is None or (
-            guard.actual_decision_outcome,
-            guard.decision_stage,
-            guard.user_id,
-            guard.request_operation_code,
-            guard.environment.value,
-            guard.bundle_id,
-            guard.bundle_manifest_hash,
-        ) != (
-            RequestAuthorityDecisionOutcome.PASS,
-            RequestAuthorityDecisionStage.REQUEST,
-            user.id,
-            "GUIDE_SYNC_ANSWER",
-            environment.environment_code,
-            bundle.id,
-            bundle.bundle_manifest_hash,
-        ):
-            raise GuideSyncRuntimePreparationError("Request Guard authority does not match the Sync Guide request")
+        guard = self._require_request_guard(
+            guard=guard,
+            user=user,
+            environment=environment,
+            bundle=bundle,
+        )
 
         preflight = await self._preflight_service.ensure_all_active_medications_matched(
             prescription_id=guide.prescription_id,
@@ -188,3 +183,35 @@ class GuideSyncRuntimeLifecycleProducer:
                 raise GuideSyncRuntimePreparationError("persisted Sync runtime carrier failed exact readback")
 
         return GuideSyncRuntimePreparation(job=job, carrier=carrier)
+
+    @staticmethod
+    def _require_request_guard(
+        *,
+        guard: RequestGuardRuntimeBindingObservation | None,
+        user: User,
+        environment: RagRuntimeEnvironment,
+        bundle: RagRuntimeReleaseBundle,
+    ) -> RequestGuardRuntimeBindingObservation:
+        if guard is None:
+            raise GuideSyncRuntimePreparationError("Request Guard authority does not match the Sync Guide request")
+        actual = (
+            guard.actual_decision_outcome,
+            guard.decision_stage,
+            guard.user_id,
+            guard.request_operation_code,
+            guard.environment.value,
+            guard.bundle_id,
+            guard.bundle_manifest_hash,
+        )
+        expected = (
+            RequestAuthorityDecisionOutcome.PASS,
+            RequestAuthorityDecisionStage.REQUEST,
+            user.id,
+            "GUIDE_SYNC_ANSWER",
+            environment.environment_code,
+            bundle.id,
+            bundle.bundle_manifest_hash,
+        )
+        if actual != expected:
+            raise GuideSyncRuntimePreparationError("Request Guard authority does not match the Sync Guide request")
+        return guard
