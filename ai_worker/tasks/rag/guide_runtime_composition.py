@@ -75,9 +75,6 @@ from rag_runtime.guide_runtime_execution import (
     GuideRuntimeExecutorPort,
     GuideRuntimeProviderProvenance,
 )
-from rag_runtime.guide_runtime_execution import (
-    GuideRuntimeRequestCarrierPort as SharedGuideRuntimeRequestCarrierPort,
-)
 
 __all__ = [
     "GuideRuntimeExecutor",
@@ -163,7 +160,7 @@ class GuideRuntimeExecutor(GuideRuntimeExecutorPort):
 
     async def execute(self, request: GuideRuntimeExecutionRequest) -> GuideRuntimeExecutionResult:
         if type(request) is not GuideRuntimeExecutionRequest or not _is_utc(request.evaluation_time):
-            return GuideRuntimeExecutionResult(None, GuideRuntimeExecutionFailure.INVALID_REQUEST, None)
+            return GuideRuntimeExecutionResult.failed(GuideRuntimeExecutionFailure.INVALID_REQUEST)
         token = _terminal_failure.set(None)
         try:
             projection = await execute_canonical_guide_runtime(
@@ -189,11 +186,11 @@ class GuideRuntimeExecutor(GuideRuntimeExecutorPort):
         from rag_runtime.guide_release_projection import GuideRuntimeReleaseProjectionUnavailable
 
         if type(projection) is GuideRuntimeReleaseProjectionUnavailable:
-            return GuideRuntimeExecutionResult(
-                None, failure or GuideRuntimeExecutionFailure.RELEASE_UNAVAILABLE, self._provider_provenance()
-            )
+            return GuideRuntimeExecutionResult.failed(failure or GuideRuntimeExecutionFailure.RELEASE_UNAVAILABLE)
         provenance = self._provider_provenance()
-        return GuideRuntimeExecutionResult(projection, None, provenance)
+        if provenance is None:
+            return GuideRuntimeExecutionResult.failed(GuideRuntimeExecutionFailure.PROVIDER_PROVENANCE_UNAVAILABLE)
+        return GuideRuntimeExecutionResult.succeeded(projection, provenance)
 
     def _provider_provenance(self) -> GuideRuntimeProviderProvenance | None:
         model_name = getattr(self._dependencies.generator, "last_response_model_name", None)

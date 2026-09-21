@@ -7,6 +7,7 @@ from rag_runtime.guide_runtime_execution import (
     GuideRuntimeExecutionResult,
     GuideRuntimeExecutorFactoryPort,
     GuideRuntimeExecutorPort,
+    GuideRuntimeProviderProvenance,
 )
 
 
@@ -29,8 +30,12 @@ class DeterministicGuideRuntimeExecutorFactory(GuideRuntimeExecutorFactoryPort):
 
     @classmethod
     def pass_result(cls, projection: GuideRuntimeReleaseProjectionOutcome):
-        return cls(GuideRuntimeExecutionResult(projection, None, None))
+        return cls(
+            GuideRuntimeExecutionResult.succeeded(
+                projection, GuideRuntimeProviderProvenance("fake-model", "fake-prompt")
+            )
+        )
 
     @classmethod
     def typed_failure(cls, failure: GuideRuntimeExecutionFailure):
-        return cls(GuideRuntimeExecutionResult(None, failure, None))
+        return cls(GuideRuntimeExecutionResult.failed(failure))

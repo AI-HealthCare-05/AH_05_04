@@ -12,6 +12,8 @@ from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
+from rag_runtime.guide_runtime_execution import GuideRuntimeRequestIdentificationPort as SharedGuideRuntimeRequestIdentificationPort
+
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, SensitiveText
 from ai_worker.tasks.rag.evidence_search import (
     EvidenceSearchExecutionBinding,
@@ -104,7 +106,7 @@ class GuideRuntimeRequestCarrierPort(Protocol):
     runtime_execution_manifest_hash: str
     runtime_guard_decision_ref: str
     request_guard_runtime_binding_ref: RequestGuardRuntimeBindingRef
-    identifications: tuple[GuideRuntimeRequestIdentificationPort, ...]
+    identifications: tuple[SharedGuideRuntimeRequestIdentificationPort, ...]
     bundle_sources: tuple[GuideRuntimeRequestBundleSourcePort, ...]
     retrieval_binding: GuideRetrievalBindingManifest
 

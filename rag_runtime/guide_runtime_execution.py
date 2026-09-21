@@ -36,6 +36,7 @@ class GuideRuntimeExecutionFailure(StrEnum):
     HANDOFF_REJECTED = "HANDOFF_REJECTED"
     AGGREGATE_REJECTED = "AGGREGATE_REJECTED"
     RELEASE_UNAVAILABLE = "RELEASE_UNAVAILABLE"
+    PROVIDER_PROVENANCE_UNAVAILABLE = "PROVIDER_PROVENANCE_UNAVAILABLE"
 
 
 class GuideRuntimeRequestIdentificationPort(Protocol):
@@ -88,6 +89,23 @@ class GuideRuntimeExecutionResult:
     projection: GuideRuntimeReleaseProjectionOutcome | None
     failure: GuideRuntimeExecutionFailure | None
     provider_provenance: GuideRuntimeProviderProvenance | None
+
+    def __post_init__(self) -> None:
+        success = self.projection is not None
+        if success == (self.failure is not None):
+            raise ValueError("execution result must be exactly one of success or failure")
+        if success != (self.provider_provenance is not None):
+            raise ValueError("only success may carry non-null provider provenance")
+
+    @classmethod
+    def succeeded(
+        cls, projection: GuideRuntimeReleaseProjectionOutcome, provenance: GuideRuntimeProviderProvenance
+    ) -> GuideRuntimeExecutionResult:
+        return cls(projection, None, provenance)
+
+    @classmethod
+    def failed(cls, failure: GuideRuntimeExecutionFailure) -> GuideRuntimeExecutionResult:
+        return cls(None, failure, None)
 
 
 class GuideRuntimeExecutorPort(Protocol):
