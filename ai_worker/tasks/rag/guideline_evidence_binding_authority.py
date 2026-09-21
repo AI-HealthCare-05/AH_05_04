@@ -61,6 +61,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef, SensitiveText
+from ai_worker.tasks.rag.guide_aggregate_evidence import GuideAggregateEvidence
 from ai_worker.tasks.rag.guide_evidence_handoff import canonical_jcs_sha256
 from ai_worker.tasks.rag.guide_runtime_preflight import (
     GuideRuntimePreflightDecision,
@@ -197,14 +198,41 @@ def _failed(reason: GuidelineAuthorityFailureReason) -> GuidelineEvidenceBinding
     return GuidelineEvidenceBindingDerivationOutcome(bindings=None, reason=reason)
 
 
-def _evidence_by_key(
+def _evidence_for_claim(
+    evidence: object,
+    medication: MedicationIdentityRef,
+    citation: GuidelineCitationDraft,
+) -> ProductionGuidelineEvidence | None:
+    """Resolve a citation only through existing persisted coordinates.
+
+    A single-run input retains its legacy global selection scope. An aggregate input
+    narrows the lookup to the claim's child medication/run membership. Receipt is
+    already a persisted child identity, never a newly minted citation namespace.
+    """
+    if type(evidence) is GuideAggregateEvidence:
+        candidates = tuple(
+            selection
+            for entry in evidence.entries
+            if entry.medication_identity == medication
+            for selection in entry.evidence.selections
+        )
+    else:
+        return None
+    matches = [
+        item
+        for item in candidates
+        if type(item) is ProductionGuidelineEvidence
+        and item.evidence_key == citation.evidence_key
+        and _citation_matches_evidence(citation, item)
+        and (citation.retrieval_receipt_ref is None or citation.retrieval_receipt_ref == item.retrieval_receipt_ref)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _single_run_evidence_by_key(
     evidence: object,
 ) -> dict[str, ProductionGuidelineEvidence] | None:
-    """Index the production selections by `evidence_key`, rejecting a malformed set.
-
-    Only the structural shape this seam consumes is checked. The full production
-    evidence validation stays with the finalizer, which runs it again.
-    """
+    """Keep the established single-run validation and failure meanings intact."""
     if type(evidence) is not ProductionGuidelineEvidenceSet:
         return None
     if type(evidence.selections) is not tuple or not evidence.selections:
@@ -215,6 +243,25 @@ def _evidence_by_key(
             return None
         indexed[item.evidence_key] = item
     return indexed
+
+
+def _resolve_citation_selection(
+    evidence: ProductionGuidelineEvidenceSet | GuideAggregateEvidence,
+    single_run_index: dict[str, ProductionGuidelineEvidence],
+    medication: MedicationIdentityRef,
+    citation: GuidelineCitationDraft,
+) -> tuple[ProductionGuidelineEvidence | None, GuidelineAuthorityFailureReason | None]:
+    if type(evidence) is ProductionGuidelineEvidenceSet:
+        selection = single_run_index.get(citation.evidence_key)
+        if selection is None:
+            return None, GuidelineAuthorityFailureReason.EVIDENCE_NOT_FOUND
+        if not _citation_matches_evidence(citation, selection):
+            return None, GuidelineAuthorityFailureReason.CITATION_MISMATCH
+        return selection, None
+    selection = _evidence_for_claim(evidence, medication, citation)
+    if selection is None:
+        return None, GuidelineAuthorityFailureReason.EVIDENCE_NOT_FOUND
+    return selection, None
 
 
 def _pinned_medications(value: object) -> frozenset[MedicationIdentityRef] | None:
@@ -263,7 +310,8 @@ def _citation_matches_evidence(
     assessment validity that #760 already decided.
     """
     return (
-        citation.source_snapshot_id == evidence.source_snapshot_id
+        citation.evidence_key == evidence.evidence_key
+        and citation.source_snapshot_id == evidence.source_snapshot_id
         and citation.source_snapshot_member_id == evidence.source_snapshot_member_id
         and citation.source_code == evidence.source_code
         and citation.source_version == evidence.source_version
@@ -274,7 +322,7 @@ def _citation_matches_evidence(
 
 def derive_guideline_evidence_bindings(
     *,
-    evidence: ProductionGuidelineEvidenceSet,
+    evidence: ProductionGuidelineEvidenceSet | GuideAggregateEvidence,
     medication_identities: tuple[MedicationIdentityRef, ...],
     draft: GuidelineCardDraft,
 ) -> GuidelineEvidenceBindingDerivationOutcome:
@@ -289,9 +337,9 @@ def derive_guideline_evidence_bindings(
     the whole draft. A repeat is a malformed draft and fails the entire derivation; it
     is never deduplicated, repaired or normalized.
     """
-    indexed = _evidence_by_key(evidence)
     pinned = _pinned_medications(medication_identities)
-    if indexed is None or pinned is None:
+    single_run_index = _single_run_evidence_by_key(evidence) if type(evidence) is ProductionGuidelineEvidenceSet else {}
+    if pinned is None or single_run_index is None:
         return _failed(GuidelineAuthorityFailureReason.REQUEST_INVALID)
     if not _is_derivable_draft(draft):
         return _failed(GuidelineAuthorityFailureReason.DRAFT_INVALID)
@@ -303,11 +351,14 @@ def derive_guideline_evidence_bindings(
             return _failed(GuidelineAuthorityFailureReason.MEDICATION_NOT_PINNED)
         action_text_sha256 = hashlib.sha256(claim.action_text.reveal().encode("utf-8")).hexdigest()
         for citation in claim.citations:
-            selection = indexed.get(citation.evidence_key)
+            selection, reason = _resolve_citation_selection(
+                evidence,
+                single_run_index,
+                claim.medication_identity,
+                citation,
+            )
             if selection is None:
-                return _failed(GuidelineAuthorityFailureReason.EVIDENCE_NOT_FOUND)
-            if not _citation_matches_evidence(citation, selection):
-                return _failed(GuidelineAuthorityFailureReason.CITATION_MISMATCH)
+                return _failed(reason or GuidelineAuthorityFailureReason.EVIDENCE_NOT_FOUND)
             identity = (citation.evidence_key, claim.medication_identity, claim.scope)
             if identity in seen:
                 return _failed(GuidelineAuthorityFailureReason.DUPLICATE_BINDING)
@@ -396,7 +447,7 @@ class _RequestScopedGuidelineApprovalVerifier(_FrozenApprovalRefVerifier):
         self,
         *,
         ready_context: ReadyGuideRuntimeContext,
-        evidence: ProductionGuidelineEvidenceSet,
+        evidence: ProductionGuidelineEvidenceSet | GuideAggregateEvidence,
         medication_identities: tuple[MedicationIdentityRef, ...],
         draft: GuidelineCardDraft,
     ) -> None:
@@ -478,7 +529,7 @@ def _ready_context_of(preflight_outcome: object) -> ReadyGuideRuntimeContext | N
 def build_request_scoped_guideline_authority(
     preflight_outcome: GuideRuntimePreflightOutcome,
     *,
-    evidence: ProductionGuidelineEvidenceSet,
+    evidence: ProductionGuidelineEvidenceSet | GuideAggregateEvidence,
     medication_identities: tuple[MedicationIdentityRef, ...],
     draft: GuidelineCardDraft,
 ) -> RequestScopedGuidelineAuthorityOutcome:

@@ -331,10 +331,12 @@ async def test_production_evidence_precondition_empty_selections_or_medications_
         context=make_context(),
     )
     base_req = make_valid_request()
+    base_evidence = base_req.evidence
+    assert isinstance(base_evidence, ProductionGuidelineEvidenceSet)
 
     req_empty_sels = GuidelineGenerationRequest(
         medication_identities=base_req.medication_identities,
-        evidence=replace(base_req.evidence, selections=()),
+        evidence=replace(base_evidence, selections=()),
         policy=base_req.policy,
     )
     assert await adapter.generate(req_empty_sels) is GuidelineGenerationFailure.VALIDATION_FAILED
@@ -560,6 +562,7 @@ async def test_privacy_and_logging_no_leakage() -> None:
     )
 
     req = make_valid_request()
+    assert isinstance(req.evidence, ProductionGuidelineEvidenceSet)
     await adapter.generate(req)
 
     all_logs = " ".join(capturing_logger.records)

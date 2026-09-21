@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ai_worker.tasks.rag import guideline_card
 from ai_worker.tasks.rag.evidence_retrieval import ImmutableArtifactRef
+from ai_worker.tasks.rag.guide_aggregate_evidence import GuideAggregateEvidence, iter_guide_aggregate_selections
 from ai_worker.tasks.rag.guideline_card import (
     GuidelineCardDraft,
     GuidelineCitationDraft,
@@ -114,7 +115,12 @@ def build_guideline_generation_input_projection(
             }
         )
 
-    sorted_selections = sorted(request.evidence.selections, key=_canonical_evidence_order)
+    if isinstance(request.evidence, GuideAggregateEvidence):
+        # Child run order is canonical caller input order. Do not cross-run rank or
+        # deduplicate; each child handoff remains visible as a separate membership.
+        sorted_selections = tuple(iter_guide_aggregate_selections(request.evidence))
+    else:
+        sorted_selections = tuple(sorted(request.evidence.selections, key=_canonical_evidence_order))
     slot_to_evidence: dict[str, ProductionGuidelineEvidence] = {}
     evidence_payload = []
     for idx, sel in enumerate(sorted_selections):
@@ -206,7 +212,14 @@ def parse_guideline_structured_output(
         med = slot_to_medication[med_slot]
 
         # Deduplicate selections by authoritative evidence_key and sort canonically
-        unique_selections = {slot_to_evidence[slot].evidence_key: slot_to_evidence[slot] for slot in ev_slots}
+        unique_selections = {
+            (
+                slot_to_evidence[slot].source_snapshot_id,
+                slot_to_evidence[slot].evidence_key,
+                slot_to_evidence[slot].retrieval_receipt_ref,
+            ): slot_to_evidence[slot]
+            for slot in ev_slots
+        }
         sorted_selections = sorted(unique_selections.values(), key=_canonical_evidence_order)
 
         citation_drafts = tuple(
@@ -218,6 +231,7 @@ def parse_guideline_structured_output(
                 source_version=s.source_version,
                 locator=s.locator,
                 content_sha256=s.content_sha256,
+                retrieval_receipt_ref=s.retrieval_receipt_ref,
             )
             for s in sorted_selections
         )

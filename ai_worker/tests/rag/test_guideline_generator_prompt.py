@@ -545,6 +545,7 @@ def test_finalizer_compatibility_regression() -> None:
         action_text_sha256=hashlib.sha256(FOOD_AVOIDANCE_TEXT.encode()).hexdigest(),
     )
 
+    assert isinstance(request.evidence, ProductionGuidelineEvidenceSet)
     card_request = GuidelineCardRequest(
         medication_identities=(med,),
         evidence=request.evidence,

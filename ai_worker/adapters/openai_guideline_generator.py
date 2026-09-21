@@ -19,6 +19,7 @@ from openai import (
 )
 from pydantic import ValidationError
 
+from ai_worker.tasks.rag.guide_aggregate_evidence import GuideAggregateEvidence
 from ai_worker.tasks.rag.guideline_card import (
     GuidelineGenerationFailure,
     GuidelineGenerationProvenance,
@@ -117,8 +118,10 @@ class OpenAIGuidelineGeneratorAdapter(GuidelineGeneratorPort):
         """
         evidence = request.evidence
         return (
-            type(evidence) is ProductionGuidelineEvidenceSet
-            and bool(evidence.selections)
+            (
+                (type(evidence) is ProductionGuidelineEvidenceSet and bool(evidence.selections))
+                or (type(evidence) is GuideAggregateEvidence and bool(evidence.entries))
+            )
             and bool(request.medication_identities)
             and request.policy.maximum_claims >= 1
         )
