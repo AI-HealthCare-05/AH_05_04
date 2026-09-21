@@ -7,6 +7,7 @@ from app.models.guides import Guide
 from app.models.prescriptions import Prescription
 from app.models.users import User
 from app.repositories.guide_repository import GuideRepository
+from app.repositories.rag_request_guard_runtime_binding_repository import RagRequestGuardRuntimeBindingRepository
 from app.repositories.rag_runtime_repository import (
     AiJobExecutionContextCreate,
     AiJobExecutionIdentificationCreate,
@@ -14,6 +15,8 @@ from app.repositories.rag_runtime_repository import (
 )
 from app.services.job_intake import DomainReference, JobIntakeService
 from app.services.rag_preflight import RagPreflightService
+from rag_runtime.request_authority import RequestAuthorityDecisionOutcome, RequestAuthorityDecisionStage
+from rag_runtime.request_guard_runtime_binding import RequestGuardRuntimeBindingRef
 
 GUIDE_JOB_INTAKE_OPERATION_ID = "guide.create_job"
 GUIDE_JOB_INTAKE_METHOD = "POST"
@@ -31,6 +34,7 @@ class GuideRuntimeContextSnapshot:
     guide_retrieval_binding_manifest_id: UUID
     guide_retrieval_binding_manifest_hash: str
     runtime_guard_decision_ref: str
+    request_guard_runtime_binding_ref: RequestGuardRuntimeBindingRef
     patient_context_digest: str | None = None
     source_scope_manifest_hash: str | None = None
 
@@ -144,6 +148,7 @@ class GuideJobIntakeTransactionAdapter:
         runtime_context: GuideRuntimeContextSnapshot,
     ) -> DomainReference:
         await self._require_frozen_retrieval_binding(runtime_context)
+        await self._require_verified_request_guard_runtime_binding(user=user, runtime_context=runtime_context)
         preflight = await self._preflight_service.ensure_all_active_medications_matched(
             prescription_id=prescription.id,
             user_id=user.id,
@@ -167,6 +172,9 @@ class GuideJobIntakeTransactionAdapter:
                 guide_retrieval_binding_manifest_id=runtime_context.guide_retrieval_binding_manifest_id,
                 guide_retrieval_binding_manifest_hash=runtime_context.guide_retrieval_binding_manifest_hash,
                 runtime_guard_decision_ref=runtime_context.runtime_guard_decision_ref,
+                request_guard_runtime_binding_artifact_code=runtime_context.request_guard_runtime_binding_ref.artifact_code,
+                request_guard_runtime_binding_artifact_version=runtime_context.request_guard_runtime_binding_ref.version,
+                request_guard_runtime_binding_content_sha256=runtime_context.request_guard_runtime_binding_ref.content_sha256,
                 patient_context_digest=runtime_context.patient_context_digest,
                 source_scope_manifest_hash=runtime_context.source_scope_manifest_hash,
             )
@@ -199,6 +207,32 @@ class GuideJobIntakeTransactionAdapter:
             runtime_context.runtime_execution_manifest_hash,
         ):
             raise GuideRuntimeContextBindingError("frozen Guide retrieval binding does not match runtime context")
+
+    async def _require_verified_request_guard_runtime_binding(
+        self,
+        *,
+        user: User,
+        runtime_context: GuideRuntimeContextSnapshot,
+    ) -> None:
+        binding = await RagRequestGuardRuntimeBindingRepository(self._runtime_repository.session).get_exact(
+            runtime_context.request_guard_runtime_binding_ref
+        )
+        if binding is None or (
+            binding.actual_decision_outcome,
+            binding.decision_stage,
+            binding.user_id,
+            binding.request_operation_code,
+            binding.bundle_id,
+            binding.bundle_manifest_hash,
+        ) != (
+            RequestAuthorityDecisionOutcome.PASS,
+            RequestAuthorityDecisionStage.REQUEST,
+            user.id,
+            "GUIDE_SYNC_ANSWER",
+            runtime_context.runtime_release_bundle_id,
+            runtime_context.runtime_release_bundle_manifest_hash,
+        ):
+            raise GuideRuntimeContextBindingError("request guard runtime binding does not match Guide runtime context")
 
     @staticmethod
     def _request_fingerprint(

@@ -2,19 +2,20 @@
 
 | Item | Value |
 | --- | --- |
-| Status | B1/B2/B3/B4/B5 authority seams ready · #180 |
+| Status | Canonical callable implemented target · #180 |
 | Re-audited base | `origin/develop` `e03ae267` + B1 branch implementation |
 | Canonical node | `retrieve_medication_guidance` in `rag-runtime-v1.md` Guide Graph |
-| Result | `THIN_LANGGRAPH_BLOCKED_BY_CANONICAL_CALLABLE_GAPS` |
+| Result | `GUIDE_MEDICATION_GUIDANCE_RETRIEVAL_CALLABLE_READY` |
 
 ## 1. Purpose
 
-This document freezes the exact prerequisites that prevent a production
-`retrieve_medication_guidance` callable. Production retrieval and the B1-B5
-authority seams exist; final callable composition remains incomplete.
+This document freezes the exact authority inputs consumed by the production
+`retrieve_medication_guidance` callable. The callable composes the existing
+B1/B2/B4/B5 seams with the selected-member historical REQUEST resolver and
+stops at #697 authenticated selections.
 
-This is a target blocker artifact. It neither implements the canonical node nor
-promotes any behavior to the current runtime contract.
+This remains a target contract: it records the internal callable boundary and
+does not promote public runtime behavior or activation.
 
 ## 2. Available production components
 
@@ -89,10 +90,10 @@ does not change #697 to accommodate a broader authority set.
 | selected `source_snapshot_id` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `PersistedTerminalReplayPayload.ordered_selected_hits[].provenance` | Yes, exact historical readback | None in B5 | #178 retrieval persistence/readback | Consume the restored coordinate unchanged |
 | selected `source_snapshot_member_id` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `PersistedTerminalReplayPayload.ordered_selected_hits[].provenance` | Yes, exact historical readback | None in B5 | #178 retrieval persistence/readback | Consume the restored coordinate unchanged |
 | `source_code` / `source_version` | #697/#672 authority scope | First execution `EvidenceGateSuccess.selected_hits` | `PersistedTerminalReplayPayload.ordered_selected_hits[].provenance` | Yes, exact historical readback | None in B5 | #178 retrieval persistence/readback | Consume the restored coordinate unchanged |
-| `member_identity` | #672 authority selection | Pinned first-run selection or B5 replay coordinate | `GuideRequestAuthorityLookupCoordinate` | Lookup ready when supplied | Selected-hit producer/B5 replay | REQUEST authority / Backend persistence | Pass the complete pinned identity unchanged |
-| expected Source/Member Decision outcomes | #713 canonical Decision identities | Pinned first-run selection or B5 replay coordinate | `GuideRequestAuthorityLookupCoordinate` | Lookup ready when supplied | Selected-hit producer/B5 replay | REQUEST authority / Backend persistence | Pass both expected outcomes explicitly; Guide retrieval requires `PASS` / `PASS` |
-| `request_source_decision_ref` | #672 authority selection | REQUEST authority persistence | `lookup_request_decision_refs()` exact historical read | Yes when exact chain exists | None in B3 | REQUEST authority / Backend persistence | Consume the persisted ref without derivation |
-| `request_member_decision_ref` | #672 authority selection | REQUEST authority persistence | `lookup_request_decision_refs()` exact historical read | Yes when exact chain exists | None in B3 | REQUEST authority / Backend persistence | Consume the persisted ref without derivation |
+| `member_identity` | #672 authority selection | historical `rag_request_member_decision` row | `resolve_selected_member()` exact read | Yes, persisted losslessly | None | REQUEST authority / Backend persistence | Restore, never accept caller identity |
+| expected Source/Member Decision outcomes | #713 canonical Decision identities | canonical callable fixed `PASS` requirement | `resolve_selected_member()` exact read | Yes | None | REQUEST authority / Backend persistence | Query only exact `PASS` historical decisions |
+| `request_source_decision_ref` | #672 authority selection | historical REQUEST authority persistence | `resolve_selected_member()` exact read | Yes when exact chain exists | None | REQUEST authority / Backend persistence | Consume the persisted ref without derivation |
+| `request_member_decision_ref` | #672 authority selection | historical REQUEST authority persistence | `resolve_selected_member()` exact read | Yes when exact chain exists | None | REQUEST authority / Backend persistence | Consume the persisted ref without derivation |
 | `ProductionSearchReceipt` | #697 and #760 | First execution #178 retrieval | `PersistedTerminalReplayPayload.search_receipt` exact readback; #180 B4 projection consumes the restored typed receipt | Yes | None in B5 | AI/RAG; #178 retrieval persistence/readback | Preserve the canonical artifact identity and receipt projection |
 | `PersistedRetrievalRunReceipt` | #760 | #178 retrieval-run persistence | `HybridRetrieveOutcome.persisted_receipt` | Yes | None by itself | #178 retrieval persistence/readback | Preserve with the future aggregate |
 | ordered selected hits / provenance | #697, #711, #760 | First execution `EvidenceGateSuccess.selected_hits` | `PersistedTerminalReplayPayload.ordered_selected_hits` with canonical payload/hash verification | Yes | None in B5 | #178 retrieval persistence/readback | Consume without re-search, re-ranking, or current Source reconstruction |
@@ -157,18 +158,21 @@ producer and matching verifier without receiving raw key material.
 
 ### B3 — `GUIDE_RETRIEVAL_REQUEST_AUTHORITY_LOOKUP_READY`
 
-`GuideRequestAuthorityLookupCoordinate` binds the original request guard,
-owner, operation, REQUEST stage, selected Source/Snapshot/Member coordinates,
-complete member identity, and the independently expected Source and Member
-Decision outcomes. The Guide retrieval path supplies `PASS` for both. The
-read-only `lookup_request_decision_refs()` adapter resolves that exact historical chain
-to the persisted immutable `request_source_decision_ref` and
-`request_member_decision_ref` in one repeatable-read transaction.
+`SqlAlchemyGuideEvidenceAuthorityReader.resolve_selected_member()` binds the
+original request guard, owner, operation, fixed `REQUEST` stage, selected
+snapshot/member coordinates, and expected `PASS` outcome. It reads exactly one
+historical `rag_request_member_decision` row and restores the lossless persisted
+five-field `SourceMemberIdentity`, together with persisted Source/Member Decision
+references. It never accepts caller-supplied identity, uses no current/latest
+fallback, returns `None` for a missing exact chain, and raises on ambiguity.
+The pre-existing `lookup_request_decision_refs()` remains available for callers
+that already possess a complete caller-supplied member identity; the canonical
+callable uses the narrower persisted-identity resolver instead.
 
 Owner: REQUEST authority / Backend persistence boundary.
 
-No B3 lookup follow-up is required. The caller must still receive the selected
-coordinate from the first-run result or B5 replay payload; this lookup does not
+No B3 lookup follow-up is required. The callable receives selected coordinates
+only from the first-run result or B5 replay payload; this resolver does not
 reconstruct a missing selection.
 
 ### B4 — `GUIDE_RETRIEVAL_OUTCOME_BINDING_READY`
@@ -235,8 +239,9 @@ of the following are true:
 - [x] A `HybridRetrieveOutcome` downstream binding contract is approved.
 - [x] Terminal replay restores the complete canonical retrieval result without re-search.
 
-The five authority seams are READY. Final callable assembly remains owned by the
-AI/RAG runtime work and is not implemented by this Backend persistence slice.
+The five authority seams and canonical callable are READY. LangGraph wiring,
+final handoff construction, public activation, and actual source591 smoke stay
+outside this target boundary.
 
 ## 9. Non-scope
 

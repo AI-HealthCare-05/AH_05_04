@@ -44,6 +44,7 @@ from ai_worker.tasks.rag.guide_evidence_authority import (
     GuideEvidenceAuthorityReaderError,
     GuideRequestAuthorityDecisionRefs,
     GuideRequestAuthorityLookupCoordinate,
+    GuideRequestAuthoritySelectedMember,
 )
 from ai_worker.tasks.rag.guide_evidence_handoff import ObservedDecisionOutcome, RequestDecisionStage
 from ai_worker.tasks.rag.request_authority_artifact import (
@@ -211,6 +212,54 @@ def _member_coordinate_statement(
             _nullable_exact(_MEMBER_DECISION.c.member_artifact_code, identity.artifact_code),
             _nullable_exact(_MEMBER_DECISION.c.member_artifact_version, identity.artifact_version),
             _MEMBER_DECISION.c.actual_decision_outcome == coordinate.expected_member_decision_outcome.value,
+        )
+    )
+
+
+def _selected_source_statement(
+    *,
+    request_guard_ref: ImmutableArtifactRef | RequestAuthorityArtifactRef,
+    user_id: UUID,
+    request_operation_code: str,
+    source_snapshot_id: UUID,
+    expected_decision_outcome: ObservedDecisionOutcome,
+):
+    shared_request_guard_ref = _shared_ref(request_guard_ref)
+    return (
+        select(*_SOURCE_DECISION.c)
+        .select_from(_SOURCE_DECISION)
+        .where(
+            _guard_ref_where(_SOURCE_DECISION, shared_request_guard_ref),
+            _SOURCE_DECISION.c.user_id == str(user_id),
+            _SOURCE_DECISION.c.request_operation_code == request_operation_code,
+            _SOURCE_DECISION.c.decision_stage == RequestDecisionStage.REQUEST.value,
+            _SOURCE_DECISION.c.source_snapshot_id == str(source_snapshot_id),
+            _SOURCE_DECISION.c.actual_decision_outcome == expected_decision_outcome.value,
+        )
+    )
+
+
+def _selected_member_statement(
+    *,
+    request_guard_ref: ImmutableArtifactRef | RequestAuthorityArtifactRef,
+    user_id: UUID,
+    request_operation_code: str,
+    source_snapshot_id: UUID,
+    source_snapshot_member_id: UUID,
+    expected_decision_outcome: ObservedDecisionOutcome,
+):
+    shared_request_guard_ref = _shared_ref(request_guard_ref)
+    return (
+        select(*_MEMBER_DECISION.c)
+        .select_from(_MEMBER_DECISION)
+        .where(
+            _guard_ref_where(_MEMBER_DECISION, shared_request_guard_ref),
+            _MEMBER_DECISION.c.user_id == str(user_id),
+            _MEMBER_DECISION.c.request_operation_code == request_operation_code,
+            _MEMBER_DECISION.c.decision_stage == RequestDecisionStage.REQUEST.value,
+            _MEMBER_DECISION.c.source_snapshot_id == str(source_snapshot_id),
+            _MEMBER_DECISION.c.source_snapshot_member_id == str(source_snapshot_member_id),
+            _MEMBER_DECISION.c.actual_decision_outcome == expected_decision_outcome.value,
         )
     )
 
@@ -488,6 +537,103 @@ class SqlAlchemyGuideEvidenceAuthorityReader:
             request_member_decision_ref=worker_artifact_ref(member_ref),
         )
 
+    async def resolve_selected_member(
+        self,
+        *,
+        request_guard_ref: ImmutableArtifactRef,
+        user_id: UUID,
+        request_operation_code: str,
+        source_snapshot_id: UUID,
+        source_snapshot_member_id: UUID,
+        expected_decision_outcome: ObservedDecisionOutcome,
+    ) -> GuideRequestAuthoritySelectedMember | None:
+        shared_guard_ref = _validate_selected_member_request(
+            request_guard_ref=request_guard_ref,
+            user_id=user_id,
+            request_operation_code=request_operation_code,
+            source_snapshot_id=source_snapshot_id,
+            source_snapshot_member_id=source_snapshot_member_id,
+            expected_decision_outcome=expected_decision_outcome,
+        )
+        try:
+            async with self._session_factory() as session, session.begin():
+                await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+                guard_rows = list((await session.execute(_guard_statement(shared_guard_ref))).mappings().all())
+                source_rows = list(
+                    (
+                        await session.execute(
+                            _selected_source_statement(
+                                request_guard_ref=shared_guard_ref,
+                                user_id=user_id,
+                                request_operation_code=request_operation_code,
+                                source_snapshot_id=source_snapshot_id,
+                                expected_decision_outcome=expected_decision_outcome,
+                            )
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+                member_rows = list(
+                    (
+                        await session.execute(
+                            _selected_member_statement(
+                                request_guard_ref=shared_guard_ref,
+                                user_id=user_id,
+                                request_operation_code=request_operation_code,
+                                source_snapshot_id=source_snapshot_id,
+                                source_snapshot_member_id=source_snapshot_member_id,
+                                expected_decision_outcome=expected_decision_outcome,
+                            )
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+        except SQLAlchemyError as exc:
+            logger.error("selected REQUEST member lookup failed with database exception: %s", exc.__class__.__name__)
+            raise GuideEvidenceAuthorityReaderError("selected REQUEST member lookup failed") from None
+
+        guard_row = _single_coordinate_row(guard_rows, kind="REQUEST guard")
+        source_row = _single_coordinate_row(source_rows, kind="Source decision")
+        member_row = _single_coordinate_row(member_rows, kind="Member decision")
+        if guard_row is None or source_row is None or member_row is None:
+            return None
+
+        try:
+            guard = _to_guard_observation(guard_row, shared_guard_ref)
+            source_ref = _persisted_artifact_ref(source_row)
+            member_ref = _persisted_artifact_ref(member_row)
+            source = _to_source_observation(source_row, source_ref)
+            member = _to_member_observation(member_row, member_ref)
+            _verify_selected_member_observations(
+                request_guard_ref=request_guard_ref,
+                user_id=user_id,
+                request_operation_code=request_operation_code,
+                source_snapshot_id=source_snapshot_id,
+                source_snapshot_member_id=source_snapshot_member_id,
+                expected_decision_outcome=expected_decision_outcome,
+                guard=guard,
+                source=source,
+                member=member,
+            )
+        except _CorruptAuthorityRowError as error:
+            logger.error("selected REQUEST member row is corrupt: %s", error)
+            raise GuideEvidenceAuthorityReaderError("selected REQUEST member row is corrupt") from None
+
+        return GuideRequestAuthoritySelectedMember(
+            request_guard_ref=request_guard_ref,
+            user_id=user_id,
+            request_operation_code=request_operation_code,
+            source_snapshot_id=source_snapshot_id,
+            source_snapshot_member_id=source_snapshot_member_id,
+            source_code=source.source_code,
+            source_version=source.source_version,
+            member_identity=member.member_identity,
+            request_source_decision_ref=worker_artifact_ref(source_ref),
+            request_member_decision_ref=worker_artifact_ref(member_ref),
+        )
+
     async def _read(self, *, requested_ref, statement_factory, projection, kind: str):
         try:
             shared = _shared_ref(requested_ref)
@@ -548,6 +694,30 @@ def _validate_lookup_coordinate(
         raise GuideEvidenceAuthorityReaderError("REQUEST authority lookup coordinate is invalid") from None
 
 
+def _validate_selected_member_request(
+    *,
+    request_guard_ref: ImmutableArtifactRef,
+    user_id: UUID,
+    request_operation_code: str,
+    source_snapshot_id: UUID,
+    source_snapshot_member_id: UUID,
+    expected_decision_outcome: ObservedDecisionOutcome,
+) -> RequestAuthorityArtifactRef:
+    if (
+        not is_valid_immutable_artifact_ref(request_guard_ref)
+        or type(user_id) is not UUID
+        or not _is_nonblank_nfc(request_operation_code)
+        or type(source_snapshot_id) is not UUID
+        or type(source_snapshot_member_id) is not UUID
+        or type(expected_decision_outcome) is not ObservedDecisionOutcome
+    ):
+        raise GuideEvidenceAuthorityReaderError("selected REQUEST member lookup coordinate is invalid")
+    try:
+        return shared_artifact_ref(request_guard_ref)
+    except RequestAuthorityArtifactError:
+        raise GuideEvidenceAuthorityReaderError("selected REQUEST member lookup coordinate is invalid") from None
+
+
 def _single_coordinate_row(rows: list[RowMapping], *, kind: str) -> RowMapping | None:
     if not rows:
         return None
@@ -585,3 +755,36 @@ def _verify_lookup_observations(
         or member.actual_decision_outcome is not coordinate.expected_member_decision_outcome
     ):
         raise _CorruptAuthorityRowError("persisted authority does not match the exact lookup coordinate")
+
+
+def _verify_selected_member_observations(
+    *,
+    request_guard_ref: ImmutableArtifactRef,
+    user_id: UUID,
+    request_operation_code: str,
+    source_snapshot_id: UUID,
+    source_snapshot_member_id: UUID,
+    expected_decision_outcome: ObservedDecisionOutcome,
+    guard: AuthoritativeRequestGuardObservation,
+    source: AuthoritativeSourceDecisionObservation,
+    member: AuthoritativeMemberDecisionObservation,
+) -> None:
+    if (
+        guard.user_id != user_id
+        or guard.request_operation_code != request_operation_code
+        or guard.decision_stage != RequestDecisionStage.REQUEST.value
+        or source.request_guard_ref != request_guard_ref
+        or source.user_id != user_id
+        or source.request_operation_code != request_operation_code
+        or source.decision_stage != RequestDecisionStage.REQUEST.value
+        or source.source_snapshot_id != source_snapshot_id
+        or source.actual_decision_outcome is not expected_decision_outcome
+        or member.request_guard_ref != request_guard_ref
+        or member.user_id != user_id
+        or member.request_operation_code != request_operation_code
+        or member.decision_stage != RequestDecisionStage.REQUEST.value
+        or member.source_snapshot_id != source_snapshot_id
+        or member.source_snapshot_member_id != source_snapshot_member_id
+        or member.actual_decision_outcome is not expected_decision_outcome
+    ):
+        raise _CorruptAuthorityRowError("persisted authority does not match the exact selected member coordinate")

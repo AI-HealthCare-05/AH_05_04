@@ -106,7 +106,7 @@ def test_binding_freeze_forbids_speculative_recovery_paths() -> None:
 def test_readiness_keeps_retrieval_missing_and_other_nodes_stable() -> None:
     retrieval_entry = _readiness_entry("retrieve_medication_guidance")
 
-    assert _entry_status("retrieve_medication_guidance") == "MISSING_SEMANTIC_CALLABLE"
+    assert _entry_status("retrieve_medication_guidance") == "EXACT_CALLABLE"
     assert "execute_hybrid_retrieve" in retrieval_entry
     assert "B1_BLOCKED_BY_EXACT_RETRIEVAL_AUTHORITY_PERSISTENCE_MISSING" not in retrieval_entry
     assert "GUIDE_RUNTIME_REQUEST_CARRIER_MISSING" not in retrieval_entry

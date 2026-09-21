@@ -53,6 +53,8 @@ __all__ = [
     "GuideRequestAuthorityDecisionRefs",
     "GuideRequestAuthorityLookupCoordinate",
     "GuideRequestAuthorityLookupPort",
+    "GuideRequestAuthoritySelectedMember",
+    "GuideSelectedMemberAuthorityResolverPort",
     "SyncGuideEvidenceAuthorityDecision",
     "SyncGuideEvidenceAuthorityOutcome",
     "SyncGuideEvidenceAuthorityReason",
@@ -174,6 +176,35 @@ class GuideRequestAuthorityLookupPort(Protocol):
         *,
         coordinate: GuideRequestAuthorityLookupCoordinate,
     ) -> GuideRequestAuthorityDecisionRefs | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class GuideRequestAuthoritySelectedMember:
+    """Historical REQUEST-selected member restored without caller identity input."""
+
+    request_guard_ref: ImmutableArtifactRef
+    user_id: UUID
+    request_operation_code: str
+    source_snapshot_id: UUID
+    source_snapshot_member_id: UUID
+    source_code: str
+    source_version: str
+    member_identity: SourceMemberIdentity
+    request_source_decision_ref: ImmutableArtifactRef
+    request_member_decision_ref: ImmutableArtifactRef
+
+
+class GuideSelectedMemberAuthorityResolverPort(Protocol):
+    async def resolve_selected_member(
+        self,
+        *,
+        request_guard_ref: ImmutableArtifactRef,
+        user_id: UUID,
+        request_operation_code: str,
+        source_snapshot_id: UUID,
+        source_snapshot_member_id: UUID,
+        expected_decision_outcome: ObservedDecisionOutcome,
+    ) -> GuideRequestAuthoritySelectedMember | None: ...
 
 
 @dataclass(frozen=True, slots=True)
