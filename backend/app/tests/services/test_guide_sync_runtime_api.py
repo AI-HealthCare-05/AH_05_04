@@ -1,4 +1,3 @@
-from datetime import UTC, datetime
 from typing import cast
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -7,27 +6,30 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.security import get_request_user
-from app.dependencies.services import get_guide_service
+from app.dependencies.services import (
+    get_consent_gate_service,
+    get_guide_generator,
+    get_guide_sync_runtime_lifecycle,
+)
 from app.main import fastapi_app
 from app.models.async_jobs import AiJobType
 from app.models.guides import Guide
+from app.models.rag_source import RagSourceSnapshot, RagSourceSnapshotMember
 from app.models.users import User
 from app.repositories.async_job_repository import AsyncJobRepository
-from app.repositories.guide_repository import GuideRepository
 from app.services.guide_ai.generator import GuideGenerator
 from app.services.guide_runtime_request import GuideRuntimeRequestCarrier
-from app.services.guide_sync_runtime_execution import GuideSyncRuntimeExecution
 from app.services.guide_sync_runtime_lifecycle import (
     GuideSyncRuntimeAuthority,
     GuideSyncRuntimeLifecycleProducer,
     GuideSyncRuntimePreparation,
 )
-from app.services.guides import GuideService
 from app.services.user_consents import ConsentGateService
+from app.tests.repositories.test_guide_repository import _create_source_snapshot_members
 from app.tests.services.test_guides import (
-    _UnusedGuideProvider,
     _create_confirmed_prescription,
     _create_user,
+    _UnusedGuideProvider,
 )
 from rag_runtime.guide_release_projection import (
     GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
@@ -92,7 +94,11 @@ class _Lifecycle:
         )
 
 
-def _projection() -> GuideRuntimeReleaseProjectionCarrier:
+def _projection(
+    *,
+    snapshot: RagSourceSnapshot,
+    member: RagSourceSnapshotMember,
+) -> GuideRuntimeReleaseProjectionCarrier:
     return GuideRuntimeReleaseProjectionCarrier(
         contract_version=GUIDE_RUNTIME_RELEASE_PROJECTION_CARRIER_VERSION,
         release_decision=GuideRuntimeReleaseDecision.PASS,
@@ -109,12 +115,12 @@ def _projection() -> GuideRuntimeReleaseProjectionCarrier:
                 claim_key="claim-1",
                 evidence_key="evidence-1",
                 source_type=GuideRuntimeCitationSourceType.LIFESTYLE_GUIDELINE,
-                source_snapshot_id=uuid4(),
-                source_snapshot_member_id=uuid4(),
+                source_snapshot_id=snapshot.id,
+                source_snapshot_member_id=member.id,
                 source_code="MFDS_PRODUCT_LABEL",
-                source_version="closed-demo-v1",
-                locator="section-1",
-                content_sha256="e" * 64,
+                source_version=snapshot.source_version,
+                locator=member.locator,
+                content_sha256=member.content_sha256,
                 display_order=1,
             ),
         ),
@@ -122,10 +128,13 @@ def _projection() -> GuideRuntimeReleaseProjectionCarrier:
 
 
 class _Executor(GuideRuntimeExecutorPort):
+    def __init__(self, projection: GuideRuntimeReleaseProjectionCarrier) -> None:
+        self._projection = projection
+
     async def execute(self, request: GuideRuntimeExecutionRequest) -> GuideRuntimeExecutionResult:
         _ = request
         return GuideRuntimeExecutionResult.succeeded(
-            _projection(),
+            self._projection,
             GuideRuntimeProviderProvenance(
                 model_name="closed-demo-model",
                 prompt_version="closed-demo-guide-prompt-v1",
@@ -134,8 +143,11 @@ class _Executor(GuideRuntimeExecutorPort):
 
 
 class _Factory(GuideRuntimeExecutorFactoryPort):
+    def __init__(self, projection: GuideRuntimeReleaseProjectionCarrier) -> None:
+        self._projection = projection
+
     def create(self) -> GuideRuntimeExecutorPort:
-        return _Executor()
+        return _Executor(self._projection)
 
 
 async def test_post_guide_runtime_result_is_persisted_and_rediscovered(
@@ -143,29 +155,30 @@ async def test_post_guide_runtime_result_is_persisted_and_rediscovered(
 ) -> None:
     user = await _create_user(db_session, email="guide-sync-runtime-api@example.com")
     prescription = await _create_confirmed_prescription(db_session, user=user)
-    repository = GuideRepository(db_session)
-    runtime_execution = GuideSyncRuntimeExecution(
-        repository=repository,
-        lifecycle=cast(GuideSyncRuntimeLifecycleProducer, _Lifecycle(db_session)),
-        executor_factory=_Factory(),
-        authority_provider=_AuthorityProvider(),
-    )
+    snapshot, members = await _create_source_snapshot_members(db_session)
+    lifecycle = cast(GuideSyncRuntimeLifecycleProducer, _Lifecycle(db_session))
+    factory = _Factory(_projection(snapshot=snapshot, member=members[0]))
+    consent_gate = AsyncMock(spec=ConsentGateService)
     generator = GuideGenerator(provider=_UnusedGuideProvider(), model="legacy-model", timeout_seconds=1.0)
-    service = GuideService(
-        repository,
-        generator,
-        AsyncMock(spec=ConsentGateService),
-        runtime_execution,
-    )
 
     async def override_user() -> User:
         return user
 
-    def override_service() -> GuideService:
-        return service
+    def override_lifecycle() -> GuideSyncRuntimeLifecycleProducer:
+        return lifecycle
 
+    def override_consent_gate() -> ConsentGateService:
+        return consent_gate
+
+    def override_generator() -> GuideGenerator:
+        return generator
+
+    fastapi_app.state.guide_runtime_executor_factory = factory
+    fastapi_app.state.guide_sync_runtime_authority_provider = _AuthorityProvider()
     fastapi_app.dependency_overrides[get_request_user] = override_user
-    fastapi_app.dependency_overrides[get_guide_service] = override_service
+    fastapi_app.dependency_overrides[get_guide_sync_runtime_lifecycle] = override_lifecycle
+    fastapi_app.dependency_overrides[get_consent_gate_service] = override_consent_gate
+    fastapi_app.dependency_overrides[get_guide_generator] = override_generator
     try:
         async with AsyncClient(transport=ASGITransport(app=fastapi_app), base_url="http://test") as client:
             created = await client.post(
@@ -178,7 +191,11 @@ async def test_post_guide_runtime_result_is_persisted_and_rediscovered(
             assert rediscovered.status_code == 200
     finally:
         fastapi_app.dependency_overrides.pop(get_request_user, None)
-        fastapi_app.dependency_overrides.pop(get_guide_service, None)
+        fastapi_app.dependency_overrides.pop(get_guide_sync_runtime_lifecycle, None)
+        fastapi_app.dependency_overrides.pop(get_consent_gate_service, None)
+        fastapi_app.dependency_overrides.pop(get_guide_generator, None)
+        del fastapi_app.state.guide_runtime_executor_factory
+        del fastapi_app.state.guide_sync_runtime_authority_provider
 
     rediscovered_data = rediscovered.json()["data"]
     assert created_data == rediscovered_data
@@ -190,8 +207,8 @@ async def test_post_guide_runtime_result_is_persisted_and_rediscovered(
         {
             "source_type": "LIFESTYLE_GUIDELINE",
             "source_code": "MFDS_PRODUCT_LABEL",
-            "source_version": "closed-demo-v1",
-            "locator": "section-1",
+            "source_version": snapshot.source_version,
+            "locator": members[0].locator,
             "display_order": 1,
         }
     ]

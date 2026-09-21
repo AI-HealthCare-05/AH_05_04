@@ -140,6 +140,13 @@ def get_guide_runtime_executor_factory(request: Request) -> GuideRuntimeExecutor
     return factory
 
 
+def get_guide_sync_runtime_authority_provider(request: Request) -> GuideSyncRuntimeAuthorityProvider:
+    provider = getattr(request.app.state, "guide_sync_runtime_authority_provider", None)
+    if provider is None:
+        raise RuntimeError("Guide Sync runtime authority provider is not initialized")
+    return cast(GuideSyncRuntimeAuthorityProvider, provider)
+
+
 def get_provider_call_context(request: Request) -> ProviderCallContext:
     return request.state.provider_call_context
 
@@ -616,32 +623,41 @@ def get_guide_generator(
     )
 
 
-def get_guide_sync_runtime_execution(
-    request: Request,
+def get_guide_sync_runtime_lifecycle(
     session: Annotated[AsyncSession, Depends(get_db_session)],
-    repository: Annotated[GuideRepository, Depends(get_guide_repository)],
     identification_service: Annotated[
         MedicationIdentificationService,
         Depends(get_medication_identification_service),
     ],
-) -> GuideSyncRuntimeExecution | None:
-    factory = getattr(request.app.state, "guide_runtime_executor_factory", None)
-    authority_provider = getattr(request.app.state, "guide_sync_runtime_authority_provider", None)
-    if factory is None and authority_provider is None:
-        return None
-    if factory is None or authority_provider is None:
-        raise RuntimeError("Guide Sync runtime dependencies are incomplete")
-
+) -> GuideSyncRuntimeLifecycleProducer:
     runtime_repository = RagRuntimeRepository(session)
+    return GuideSyncRuntimeLifecycleProducer(
+        job_repository=AsyncJobRepository(session),
+        runtime_repository=runtime_repository,
+        preflight_service=RagPreflightService(identification_service),
+    )
+
+
+def get_guide_sync_runtime_execution(
+    repository: Annotated[GuideRepository, Depends(get_guide_repository)],
+    lifecycle: Annotated[
+        GuideSyncRuntimeLifecycleProducer,
+        Depends(get_guide_sync_runtime_lifecycle),
+    ],
+    factory: Annotated[
+        GuideRuntimeExecutorFactoryPort,
+        Depends(get_guide_runtime_executor_factory),
+    ],
+    authority_provider: Annotated[
+        GuideSyncRuntimeAuthorityProvider,
+        Depends(get_guide_sync_runtime_authority_provider),
+    ],
+) -> GuideSyncRuntimeExecution:
     return GuideSyncRuntimeExecution(
         repository=repository,
-        lifecycle=GuideSyncRuntimeLifecycleProducer(
-            job_repository=AsyncJobRepository(session),
-            runtime_repository=runtime_repository,
-            preflight_service=RagPreflightService(identification_service),
-        ),
-        executor_factory=cast(GuideRuntimeExecutorFactoryPort, factory),
-        authority_provider=cast(GuideSyncRuntimeAuthorityProvider, authority_provider),
+        lifecycle=lifecycle,
+        executor_factory=factory,
+        authority_provider=authority_provider,
     )
 
 
@@ -659,7 +675,7 @@ def get_guide_service(
         Depends(get_consent_gate_service),
     ],
     runtime_execution: Annotated[
-        GuideSyncRuntimeExecution | None,
+        GuideSyncRuntimeExecution,
         Depends(get_guide_sync_runtime_execution),
     ],
 ) -> GuideService:
