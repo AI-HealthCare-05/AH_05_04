@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import { installRequirementsApi, syntheticToken } from './fixtures/requirementsApi'
 const occurrence = '11111111-1111-4111-8111-111111111111'
 const planId = '22222222-2222-4222-8222-222222222222'
+const medicationId = '33333333-3333-4333-8333-333333333333'
 
 // Choosing a subreason appends the next Barrier revision, so the stub echoes it back
 // exactly as the server does. A missing echo is treated as a stale flow by the client.
@@ -17,7 +18,7 @@ for (const width of [320, 390, 412]) {
     const writes: { path: string; body: Record<string, unknown>; key: string | undefined }[] = []
     const safety = { assessment_id: 'safety', medication_checkin_id: 'checkin', checkin_revision: 2, response_level: 'ROUTINE', safety_disposition: 'NORMAL', revision: 1 }
     const barrier = { ...safety, barrier_response_id: 'barrier', safety_assessment_id: 'safety', response_status: 'ANSWERED', barrier_code: 'FORGOT' }
-    const config = { schema_version: 'track-c-handler-config-v1', rationale_code: 'FORGOT', parameters: { destination: 'MEDICATION_SCHEDULE_SETUP', prescription_version_medication_id: 'medication' } }
+    const config = { schema_version: 'track-c-handler-config-v1', rationale_code: 'FORGOT', parameters: { destination: 'MEDICATION_SCHEDULE_SETUP', prescription_version_medication_id: medicationId } }
     const plan = { support_action_plan_id: planId, barrier_response_id: 'barrier', support_code: 'REMINDER_SETUP', rule_version: 'rule1', copy_version: 'copy1', action_config_snapshot: config, status: 'ACTIVE', created_at: '2026-09-16T00:00:00Z', completed_at: null, cancelled_at: null }
     await page.route('**/api/v1/**', async route => {
       const request = route.request(); const path = new URL(request.url()).pathname
@@ -66,6 +67,10 @@ for (const width of [320, 390, 412]) {
     expect(writes.filter(w => w.path.endsWith('support-action-plans'))).toHaveLength(0)
 
     await page.getByRole('button', { name: '이 계획을 저장하고 시작하기' }).click()
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/schedule')
+    await expect.poll(() => new URL(page.url()).searchParams.get('support_medication')).toBe(medicationId)
+    expect(writes.filter(w => w.path.endsWith('support-action-plans'))).toHaveLength(1)
+    await page.goto('/track-c/plans')
     await expect(page.getByRole('heading', { name: '실천 계획 목록' })).toBeVisible()
     await page.getByRole('button', { name: /복약 일정과 알림 확인/ }).click()
     await expect(page.getByText('진행 중', { exact: true })).toBeVisible()
@@ -98,7 +103,7 @@ for (const [situation, label, supportCode] of [
     await page.addInitScript(token => localStorage.setItem('access_token', token), syntheticToken)
     const safety = { assessment_id: 'safety', medication_checkin_id: 'checkin', checkin_revision: 2, response_level: 'ROUTINE', safety_disposition: 'NORMAL', revision: 1 }
     const barrier = { ...safety, barrier_response_id: 'barrier', safety_assessment_id: 'safety', response_status: 'ANSWERED', barrier_code: 'SCHEDULE_OR_TRAVEL' }
-    const config = { schema_version: 'track-c-handler-config-v1', rationale_code: 'SYNTHETIC', parameters: supportCode === 'REMINDER_SETUP' ? { destination: 'MEDICATION_SCHEDULE_SETUP', prescription_version_medication_id: 'medication' } : { content_key: 'ROUTINE_OR_TRAVEL_PLAN' } }
+    const config = { schema_version: 'track-c-handler-config-v1', rationale_code: 'SYNTHETIC', parameters: supportCode === 'REMINDER_SETUP' ? { destination: 'MEDICATION_SCHEDULE_SETUP', prescription_version_medication_id: medicationId } : { content_key: 'ROUTINE_OR_TRAVEL_PLAN' } }
     const copy = { title: supportCode === 'REMINDER_SETUP' ? '현재 복약 일정 확인' : '다음 외출 전 약 챙기기', body: '사용자가 선택한 상황에 맞는 합성 테스트 안내입니다.', confirmation_prompt: '이 계획을 선택할까요?', primary_label: '계획 만들기', secondary_label: '나중에' }
     const plan = { support_action_plan_id: planId, barrier_response_id: 'barrier', support_code: supportCode, rule_version: 'track-c-support-rule-2026-09-16.1', copy_version: 'track-c-support-copy-ko-2026-09-16.1', action_config_snapshot: config, status: 'ACTIVE', created_at: '2026-09-16T00:00:00Z', completed_at: null, cancelled_at: null }
     const creates: Record<string, unknown>[] = []
@@ -143,12 +148,19 @@ for (const [situation, label, supportCode] of [
     expect(creates).toHaveLength(0)
 
     await page.getByRole('button', { name: '이 계획을 저장하고 시작하기' }).click()
+    if (supportCode === 'REMINDER_SETUP') {
+      await expect.poll(() => new URL(page.url()).pathname).toBe('/schedule')
+      await expect.poll(() => new URL(page.url()).searchParams.get('support_medication')).toBe(medicationId)
+      await page.goto('/track-c/plans')
+    } else {
+      await expect(page).toHaveURL(/\/track-c\/plans$/)
+    }
     await expect(page.getByRole('heading', { name: '실천 계획 목록' })).toBeVisible()
     await page.getByRole('button', { name: supportCode === 'REMINDER_SETUP' ? /복약 일정과 알림 확인/ : /일상·이동 중 복약 계획 확인/ }).click()
     await expect(page.getByText('진행 중', { exact: true })).toBeVisible()
     expect(creates).toHaveLength(1); expect(creates[0].travel_situation).toBe(situation)
     await page.reload(); await expect(page.getByText('진행 중', { exact: true })).toBeVisible()
-    if (supportCode === 'REMINDER_SETUP') await expect(page.getByRole('link', { name: '일정 확인·설정 (새 탭)' })).toHaveAttribute('href', '/schedule?support_medication=medication')
+    if (supportCode === 'REMINDER_SETUP') await expect(page.getByRole('link', { name: '일정 확인·설정 (새 탭)' })).toHaveAttribute('href', `/schedule?support_medication=${medicationId}`)
     await page.getByRole('button', { name: '완료 확인하기' }).click()
     await expect(page.getByRole('button', { name: '완료로 저장' })).toBeDisabled()
     await page.getByRole('checkbox').check(); await page.getByRole('button', { name: '완료로 저장' }).click()

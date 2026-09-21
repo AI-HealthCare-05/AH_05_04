@@ -251,9 +251,17 @@ function TrackCFlow({ service }: { service: TrackCServices }) {
     const item = offer?.supports.find(candidate => candidate.support_code === selectedSupport)
     if (!barrier || !item || !confirmed) return
     const body: api.CreatePlanRequest = { barrier_response_id: barrier.barrier_response_id, support_code: item.support_code, rule_version: item.rule_version, copy_version: item.copy_version, confirmed: true, selected_question_ids: selectedQuestions, ...(subreason ? { subreason_code: subreason } : {}), ...(travelSituation ? { travel_situation: travelSituation } : {}) }
-    await service.createPlan(body, key('create-plan', barrier.barrier_response_id, body))
-    if (alive.current) navigate('/track-c/plans', { replace: true })
-    // Destination always GETs the saved plan list; creation replay is only a saved snapshot.
+    const created = await service.createPlan(body, key('create-plan', barrier.barrier_response_id, body))
+    if (!alive.current) return
+    if (created.support_code === 'REMINDER_SETUP' &&
+      'prescription_version_medication_id' in created.action_config_snapshot.parameters) {
+      const medicationId = created.action_config_snapshot.parameters.prescription_version_medication_id
+      if (typeof medicationId === 'string' && uuid.test(medicationId)) {
+        navigate(`/schedule?support_medication=${encodeURIComponent(medicationId)}`, { replace: true })
+        return
+      }
+    }
+    navigate('/track-c/plans', { replace: true })
   }
 
   async function changePlan() {
