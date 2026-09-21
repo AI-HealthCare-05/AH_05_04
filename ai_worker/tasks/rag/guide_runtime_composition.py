@@ -271,7 +271,7 @@ def _medication_identities(
 
 
 async def execute_canonical_guide_runtime(  # noqa: C901 - ordered fail-closed composition
-    runtime_request: SharedGuideRuntimeRequestCarrierPort,
+    runtime_request: GuideRuntimeRequestCarrierPort,
     *,
     guide_preflight_request: GuideRuntimePreflightRequest,
     evaluation_time: datetime,
