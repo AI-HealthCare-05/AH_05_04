@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import re
@@ -341,6 +342,52 @@ class Config(BaseSettings):
             raise ValueError("CHAT_CLOSED_DEMO_RAG_ENABLED requires PUBLIC_TRACK_F_ENABLED=false")
         return self
 
+    GUIDE_CLOSED_DEMO_RAG_ENABLED: bool = False
+    GUIDE_CLOSED_DEMO_RAG_USER_IDS: str | frozenset[uuid.UUID] = frozenset()
+    GUIDE_CLOSED_DEMO_RAG_STARTS_AT: datetime | None = None
+    GUIDE_CLOSED_DEMO_RAG_EXPIRES_AT: datetime | None = None
+
+    @field_validator("GUIDE_CLOSED_DEMO_RAG_USER_IDS", mode="after")
+    @classmethod
+    def parse_guide_closed_demo_user_ids(cls, value: object) -> frozenset[uuid.UUID]:
+        if value is None or value == "":
+            return frozenset()
+        if isinstance(value, str):
+            trimmed = value.strip()
+            if not trimmed:
+                return frozenset()
+            if trimmed.startswith("[") and trimmed.endswith("]"):
+                try:
+                    raw_items = json.loads(trimmed)
+                    if isinstance(raw_items, list):
+                        return frozenset(uuid.UUID(str(item).strip()) for item in raw_items if str(item).strip())
+                except Exception as exc:
+                    raise ValueError(f"Invalid GUIDE_CLOSED_DEMO_RAG_USER_IDS JSON list: {exc}") from exc
+            parts = [p.strip() for p in trimmed.split(",") if p.strip()]
+            return frozenset(uuid.UUID(p) for p in parts)
+        if isinstance(value, (set, frozenset, list, tuple)):
+            return frozenset(uuid.UUID(str(item)) if not isinstance(item, uuid.UUID) else item for item in value)
+        raise ValueError("Invalid format for GUIDE_CLOSED_DEMO_RAG_USER_IDS")
+
+    @model_validator(mode="after")
+    def validate_guide_closed_demo_rag_scope(self) -> "Config":
+        """Keep Guide closed-demo composition strictly within time-limited and allowlisted bounds."""
+        if not self.GUIDE_CLOSED_DEMO_RAG_ENABLED:
+            return self
+        if self.PUBLIC_TRACK_F_ENABLED:
+            raise ValueError("GUIDE_CLOSED_DEMO_RAG_ENABLED requires PUBLIC_TRACK_F_ENABLED=false")
+        if self.GUIDE_RUNTIME_ENABLED:
+            raise ValueError("GUIDE_CLOSED_DEMO_RAG_ENABLED requires GUIDE_RUNTIME_ENABLED=false")
+        start = self.GUIDE_CLOSED_DEMO_RAG_STARTS_AT
+        end = self.GUIDE_CLOSED_DEMO_RAG_EXPIRES_AT
+        if start is None or end is None or start.utcoffset() is None or end.utcoffset() is None:
+            raise ValueError("Guide closed demo requires timezone-aware start and expiry")
+        if not timedelta(0) < end - start <= timedelta(days=7):
+            raise ValueError("Guide closed demo window must be positive and at most seven days")
+        if not self.GUIDE_CLOSED_DEMO_RAG_USER_IDS:
+            raise ValueError("Guide closed demo requires an explicit allowlist")
+        return self
+
     # EXT-PRIV-001 삭제·보존 정책 승인 전 실제 사용자에게 회원탈퇴 요청 접수 API를 공개하지 않습니다.
     # 명시적으로 활성화하지 않은 환경에서는 요청 접수 전 503으로 fail-closed됩니다.
     ACCOUNT_WITHDRAWAL_REQUEST_ENABLED: bool = False
@@ -573,3 +620,24 @@ class Config(BaseSettings):
             )
 
         return self
+
+
+def is_guide_closed_demo_active(
+    app_config: Config,
+    user_id: uuid.UUID,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Return whether the request qualifies for the internal CLOSED_DEMO Guide RAG path."""
+    if not app_config.GUIDE_CLOSED_DEMO_RAG_ENABLED:
+        return False
+    if app_config.PUBLIC_TRACK_F_ENABLED or app_config.GUIDE_RUNTIME_ENABLED:
+        return False
+    if user_id not in app_config.GUIDE_CLOSED_DEMO_RAG_USER_IDS:
+        return False
+    start = app_config.GUIDE_CLOSED_DEMO_RAG_STARTS_AT
+    end = app_config.GUIDE_CLOSED_DEMO_RAG_EXPIRES_AT
+    if start is None or end is None or start.utcoffset() is None or end.utcoffset() is None:
+        return False
+    current_time = now if now is not None else datetime.now(UTC)
+    return start <= current_time < end
