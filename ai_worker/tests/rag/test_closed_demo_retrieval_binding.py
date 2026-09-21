@@ -17,8 +17,8 @@ def test_frozen_manifest_loads_to_the_exact_17_product_execution_binding() -> No
     """Catches a loader that substitutes any coordinate or configuration reference."""
     binding = load_closed_demo_retrieval_binding()
 
-    assert binding.artifact_ref.content_sha256 == "e6daec73462a4b58612518d7bc8ba0cd2d514c0ca3ed676f65b5bc37e1cc952b"
-    assert str(binding.execution_binding.knowledge_index_id) == "4b8fd0f5-21de-45d9-a3aa-5475ff82b094"
+    assert binding.artifact_ref.content_sha256 == "96f14993377cc2416c42ff12219d77eb189adb8f6d6c6003e9f56c312f1d7886"
+    assert str(binding.execution_binding.knowledge_index_id) == "09a57aca-3511-42f4-a611-2470fff131eb"
     assert len(binding.execution_binding.allowed_source_snapshot_ids) == 17
     assert len(binding.execution_binding.allowed_source_snapshot_member_ids) == 51
     assert binding.execution_binding.retrieval_config.is_hash_valid()
