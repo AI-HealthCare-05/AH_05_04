@@ -188,7 +188,7 @@ class GuideRuntimeExecutor(GuideRuntimeExecutorPort):
             _terminal_failure.reset(token)
         from rag_runtime.guide_release_projection import GuideRuntimeReleaseProjectionUnavailable
 
-        if type(projection) is GuideRuntimeReleaseProjectionUnavailable:
+        if isinstance(projection, GuideRuntimeReleaseProjectionUnavailable):
             return GuideRuntimeExecutionResult.failed(failure or GuideRuntimeExecutionFailure.RELEASE_UNAVAILABLE)
         provenance = self._provider_provenance()
         if provenance is None:

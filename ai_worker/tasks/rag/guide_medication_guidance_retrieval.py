@@ -60,6 +60,9 @@ from rag_runtime.guide_retrieval_binding import (
     validate_retrieval_configuration_projection,
 )
 from rag_runtime.guide_runtime_execution import (
+    GuideRuntimeRequestBundleSourcePort as SharedGuideRuntimeRequestBundleSourcePort,
+)
+from rag_runtime.guide_runtime_execution import (
     GuideRuntimeRequestIdentificationPort as SharedGuideRuntimeRequestIdentificationPort,
 )
 from rag_runtime.request_authority import RequestAuthorityDecisionOutcome, RequestAuthorityDecisionStage
@@ -87,29 +90,60 @@ class RequestGuardRuntimeBindingReaderPort(Protocol):
 
 
 class GuideRuntimeRequestIdentificationPort(Protocol):
-    prescription_version_medication_id: UUID
-    medication_name_snapshot: str
-    strength_text_snapshot: str | None
+    @property
+    def prescription_version_medication_id(self) -> UUID: ...
+
+    @property
+    def medication_name_snapshot(self) -> str: ...
+
+    @property
+    def strength_text_snapshot(self) -> str | None: ...
 
 
 class GuideRuntimeRequestBundleSourcePort(Protocol):
-    source_snapshot_id: UUID
-    selected_for_operation: bool
+    @property
+    def source_snapshot_id(self) -> UUID: ...
+
+    @property
+    def selected_for_operation(self) -> bool: ...
 
 
 class GuideRuntimeRequestCarrierPort(Protocol):
-    job_id: UUID
-    execution_context_id: UUID
-    prescription_version_id: UUID
-    runtime_release_bundle_id: UUID
-    runtime_release_bundle_manifest_hash: str
-    runtime_execution_manifest_id: UUID
-    runtime_execution_manifest_hash: str
-    runtime_guard_decision_ref: str
-    request_guard_runtime_binding_ref: RequestGuardRuntimeBindingRef
-    identifications: tuple[SharedGuideRuntimeRequestIdentificationPort, ...]
-    bundle_sources: tuple[GuideRuntimeRequestBundleSourcePort, ...]
-    retrieval_binding: GuideRetrievalBindingManifest
+    @property
+    def job_id(self) -> UUID: ...
+
+    @property
+    def execution_context_id(self) -> UUID: ...
+
+    @property
+    def prescription_version_id(self) -> UUID: ...
+
+    @property
+    def runtime_release_bundle_id(self) -> UUID: ...
+
+    @property
+    def runtime_release_bundle_manifest_hash(self) -> str: ...
+
+    @property
+    def runtime_execution_manifest_id(self) -> UUID: ...
+
+    @property
+    def runtime_execution_manifest_hash(self) -> str: ...
+
+    @property
+    def runtime_guard_decision_ref(self) -> str: ...
+
+    @property
+    def request_guard_runtime_binding_ref(self) -> RequestGuardRuntimeBindingRef: ...
+
+    @property
+    def identifications(self) -> tuple[SharedGuideRuntimeRequestIdentificationPort, ...]: ...
+
+    @property
+    def bundle_sources(self) -> tuple[SharedGuideRuntimeRequestBundleSourcePort, ...]: ...
+
+    @property
+    def retrieval_binding(self) -> GuideRetrievalBindingManifest: ...
 
 
 class GuideMedicationGuidanceRetrievalDecision(StrEnum):
