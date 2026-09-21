@@ -37,7 +37,7 @@
 
 ---
 
-## 3. 외부 Provider 전송 페이로드 최소화 규격
+## 3. Generation Provider 전송 페이로드
 
 OpenAI LLM(`responses.parse`)으로 전송되는 페이로드는 처방전 본문 및 환자 맥락을 일체 포함하지 않으며, 검색된 식약처 공식 허가 근거(evidence)와 약물 식별 인덱스(`source_index`)로만 구성된다.
 
@@ -62,6 +62,7 @@ OpenAI LLM(`responses.parse`)으로 전송되는 페이로드는 처방전 본�
 - 처방전 원본 상세: `medication_name`, `strength_text`, `dose_value`, `dose_unit`, `frequency_per_day`, `timing_text`, `duration_days`
 - 문서 식별 메타데이터: `source_code`, `source_version`, `locator`, `external_document_id`
 - 환자/처방전 식별 정보: `user_id`, `prescription_id`, 복용자명, 날짜 등
+- 단, Embedding Provider 경계는 PD-927-20260921 §3.1을 따르며 약명·함량이 전송된다.
 
 ---
 

@@ -58,7 +58,7 @@ CLOSED_DEMO RAG 경로는 다음 전제 조건을 **모두 충족하는 경우�
 ### 3.2. Generation Provider 경계 (구조화 가이드 생성)
 
 OpenAI `responses.parse` API 호출 시 전송되는 페이로드는 극단적으로 최소화된다:
-- **전송 제거 대상 (Stipped Fields)**:
+- **전송 제거 대상 (Stripped Fields)**:
   - `medication_name`, `strength_text` (약품명/함량)
   - `dose_value`, `dose_unit` (1회 투약량 및 단위)
   - `frequency_per_day`, `timing_text`, `duration_days` (1일 투약 횟수, 복용 시점, 총 투약 일수)
