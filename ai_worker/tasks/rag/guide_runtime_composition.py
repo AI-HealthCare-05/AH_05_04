@@ -1,16 +1,19 @@
-"""Canonical Backend-facing Guide runtime assembly.
+"""Worker-internal Guide runtime assembly.
 
 This module has two composition seams:
 
 * ``execute_guide_runtime_release`` retains the existing citation-runtime -> release
   projection seam (#918).
-* ``execute_canonical_guide_runtime`` is the one Backend-callable assembly from the
+* ``execute_canonical_guide_runtime`` is the Worker-internal assembly from the
   verified Guide request carrier through per-medication retrieval, hydration,
   authoritative handoff, aggregate evidence, the existing citation runtime, and
   that #918 seam.
 
 Neither seam reimplements an upstream decision, receipt, handoff, policy, ranking,
 generator, citation authority, or release projection.
+
+Backend enters only through ``GuideRuntimeExecutorPort`` from the shared
+``rag_runtime.guide_runtime_execution`` contract and its Worker-provided factory.
 """
 
 from __future__ import annotations
