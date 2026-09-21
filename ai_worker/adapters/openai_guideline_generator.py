@@ -7,8 +7,8 @@ dual timeout, max_retries=0 enforcement, and standard provider_runtime observabi
 
 from __future__ import annotations
 
-from contextvars import ContextVar
 import asyncio
+from contextvars import ContextVar
 from typing import Any
 
 from openai import (
