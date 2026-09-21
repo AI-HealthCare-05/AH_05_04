@@ -16,7 +16,11 @@ from app.core.db.databases import close_database
 from app.core.errors import ApiError, ErrorDetail, register_exception_handlers
 from app.core.no_store_middleware import NoStoreMiddleware
 from app.core.validation_trace_middleware import RequestTraceMiddleware, ValidationTraceMiddleware
-from app.dependencies.services import build_configured_closed_demo_retrieval_service, get_email_sender
+from app.dependencies.services import (
+    build_configured_closed_demo_retrieval_service,
+    build_configured_guide_closed_demo_retrieval_service,
+    get_email_sender,
+)
 from app.services.guide_sync_runtime_execution import GuideSyncRuntimeAuthorityProvider
 
 
@@ -112,12 +116,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.openai_client = AsyncOpenAI(api_key=config.OPENAI_API_KEY, max_retries=0)
     initialize_guide_runtime_executor_factory(app)
     closed_demo_retrieval_service = None
+    guide_closed_demo_retrieval_service = None
     try:
         if config.CHAT_CLOSED_DEMO_RAG_ENABLED:
             closed_demo_retrieval_service = build_configured_closed_demo_retrieval_service(app.state.openai_client)
             app.state.closed_demo_retrieval_service = closed_demo_retrieval_service
+        if config.GUIDE_CLOSED_DEMO_RAG_ENABLED:
+            guide_closed_demo_retrieval_service = build_configured_guide_closed_demo_retrieval_service(
+                app.state.openai_client
+            )
+            app.state.guide_closed_demo_retrieval_service = guide_closed_demo_retrieval_service
         yield
     finally:
+        if guide_closed_demo_retrieval_service is not None:
+            await guide_closed_demo_retrieval_service.aclose()
         if closed_demo_retrieval_service is not None:
             await closed_demo_retrieval_service.aclose()
         await app.state.openai_client.close()

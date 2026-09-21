@@ -13,6 +13,10 @@ from app.core.closed_demo_retrieval import (
 )
 from app.core.config import Env
 from app.core.db.databases import AccountWithdrawalCleanupSessionFactory, get_db_session
+from app.core.guide_closed_demo_retrieval import (
+    GuideClosedDemoRetrievalService,
+    build_guide_closed_demo_retrieval_service,
+)
 from app.core.provider_observability import (
     Provider,
     ProviderCallContext,
@@ -56,6 +60,10 @@ from app.services.clova_ocr_engine import ClovaOcrEngine
 from app.services.email_delivery import EmailSender, NoopEmailSender, SmtpEmailSender, SmtpEmailSenderConfig
 from app.services.guide_ai import GuideGenerator
 from app.services.guide_ai import OpenAIResponsesClient as GuideOpenAIResponsesClient
+from app.services.guide_ai.closed_demo_generator import (
+    CLOSED_DEMO_GUIDE_PROMPT_VERSION,
+    GuideClosedDemoGenerator,
+)
 from app.services.guide_ai.prompt import PROMPT_VERSION as GUIDE_PROMPT_VERSION
 from app.services.guide_sync_runtime_execution import (
     GuideSyncRuntimeAuthorityProvider,
@@ -661,6 +669,66 @@ def get_guide_sync_runtime_execution(
     )
 
 
+def build_configured_guide_closed_demo_retrieval_service(client: AsyncOpenAI) -> GuideClosedDemoRetrievalService:
+    """Build the one lifespan-owned Guide CLOSED_DEMO retrieval composition."""
+    password = config.SOURCE591_CONSUMER_PASSWORD
+    query_key_dependency = get_guide_query_hmac_key_dependency()
+    return build_guide_closed_demo_retrieval_service(
+        database_config=ClosedDemoRetrievalDatabaseConfig(
+            host=config.SOURCE591_STAGING_DB_HOST,
+            port=config.SOURCE591_STAGING_DB_PORT,
+            database="source591_staging",
+            username="source591_consumer",
+            password=password.get_secret_value() if password is not None else "",
+        ),
+        openai_client=client,
+        fingerprint_producer=get_guide_query_fingerprint_producer(query_key_dependency),
+        binding_verifier=get_guide_query_binding_verifier(query_key_dependency),
+    )
+
+
+def get_guide_closed_demo_retrieval_service(request: Request) -> GuideClosedDemoRetrievalService | None:
+    """Return the lifespan-owned Guide CLOSED_DEMO retriever without opening a new pool."""
+    if not config.GUIDE_CLOSED_DEMO_RAG_ENABLED:
+        return None
+    retriever = getattr(request.app.state, "guide_closed_demo_retrieval_service", None)
+    if retriever is None:
+        raise RuntimeError("Guide CLOSED_DEMO retrieval service was not initialized at startup")
+    return retriever
+
+
+def get_guide_closed_demo_generator(
+    client: Annotated[
+        AsyncOpenAI,
+        Depends(get_openai_client),
+    ],
+    context: Annotated[
+        ProviderCallContext,
+        Depends(get_provider_call_context),
+    ],
+    closed_demo_retriever: Annotated[
+        GuideClosedDemoRetrievalService | None,
+        Depends(get_guide_closed_demo_retrieval_service),
+    ] = None,
+) -> GuideClosedDemoGenerator | None:
+    if not config.GUIDE_CLOSED_DEMO_RAG_ENABLED or closed_demo_retriever is None:
+        return None
+    obs_kwargs = _provider_observability_kwargs(
+        context,
+        provider=Provider.OPENAI,
+        operation=ProviderOperation.GUIDE_GENERATION,
+        prompt_version=CLOSED_DEMO_GUIDE_PROMPT_VERSION,
+    )
+    return GuideClosedDemoGenerator(
+        client=client,
+        model=config.OPENAI_MODEL,
+        timeout_seconds=config.OPENAI_TIMEOUT_SECONDS,
+        retriever=closed_demo_retriever,
+        context=obs_kwargs["context"],
+        descriptor=obs_kwargs["descriptor"],
+    )
+
+
 def get_guide_service(
     repository: Annotated[
         GuideRepository,
@@ -678,8 +746,18 @@ def get_guide_service(
         GuideSyncRuntimeExecution | None,
         Depends(get_guide_sync_runtime_execution),
     ],
+    closed_demo_generator: Annotated[
+        GuideClosedDemoGenerator | None,
+        Depends(get_guide_closed_demo_generator),
+    ] = None,
 ) -> GuideService:
-    return GuideService(repository, generator, consent_gate, runtime_execution)
+    return GuideService(
+        repository,
+        generator,
+        consent_gate,
+        runtime_execution,
+        closed_demo_generator=closed_demo_generator,
+    )
 
 
 def get_chat_repository(

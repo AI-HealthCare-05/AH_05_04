@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.guides import Guide, GuideCitation, GuideGenerationStatus
-from app.models.prescriptions import Prescription, PrescriptionVersion
+from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.repositories.prescription_integrity import require_verified_version
 from app.repositories.profile_ownership import owned_by_self
 from rag_runtime.guide_release_projection import (
@@ -30,7 +30,9 @@ class GuideRepository:
             select(Prescription)
             .options(
                 selectinload(Prescription.document),
-                selectinload(Prescription.active_version).selectinload(PrescriptionVersion.medications),
+                selectinload(Prescription.active_version)
+                .selectinload(PrescriptionVersion.medications)
+                .selectinload(PrescriptionVersionMedication.identifications),
             )
             .where(
                 Prescription.id == prescription_id,

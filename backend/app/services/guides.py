@@ -1,6 +1,12 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from ai_worker.tasks.rag.guide_closed_demo_product_map import (
+    GuideClosedDemoProductMap,
+    load_guide_closed_demo_product_map,
+)
+from app.core import config
+from app.core.config import is_guide_closed_demo_active
 from app.core.errors import ApiError, ErrorDetail
 from app.core.logger import default_logger
 from app.dtos.guides import CreateGuideRequest, GuideCitationData, GuideData, GuideStatus
@@ -10,7 +16,11 @@ from app.models.user_consents import ConsentPurpose
 from app.models.users import User
 from app.repositories.guide_repository import GuideRepository
 from app.repositories.prescription_integrity import verify_loaded_version
-from app.services.guide_ai import GuideGenerationInput, GuideGenerator, MedicationInput
+from app.services.guide_ai import GuideGenerationInput, GuideGenerationResult, GuideGenerator, MedicationInput
+from app.services.guide_ai.closed_demo_generator import (
+    GuideClosedDemoGenerator,
+    resolve_medication_item_seq,
+)
 from app.services.guide_ai.exceptions import (
     GuideGenerationSafetyError,
     GuideGenerationTimeoutError,
@@ -124,11 +134,39 @@ class GuideService:
         generator: GuideGenerator,
         consent_gate: ConsentGateService,
         runtime_execution: GuideSyncRuntimeExecution | None = None,
+        closed_demo_generator: GuideClosedDemoGenerator | None = None,
+        closed_demo_product_map: GuideClosedDemoProductMap | None = None,
     ) -> None:
         self._repo = repository
         self._generator = generator
         self._consent_gate = consent_gate
         self._runtime_execution = runtime_execution
+        self._closed_demo_generator = closed_demo_generator
+        self._closed_demo_product_map = closed_demo_product_map
+
+    @property
+    def product_map(self) -> GuideClosedDemoProductMap:
+        if self._closed_demo_product_map is None:
+            self._closed_demo_product_map = load_guide_closed_demo_product_map()
+        return self._closed_demo_product_map
+
+    async def _generate_guide_result(
+        self,
+        *,
+        version: PrescriptionVersion,
+        is_closed_demo: bool,
+    ) -> GuideGenerationResult:
+        if is_closed_demo:
+            assert self._closed_demo_generator is not None
+            item_seqs = {
+                index: resolve_medication_item_seq(medication, self.product_map)
+                for index, medication in enumerate(version.medications)
+            }
+            return await self._closed_demo_generator.generate(
+                _to_generation_input(version),
+                medication_item_seqs=item_seqs,
+            )
+        return await self._generator.generate(_to_generation_input(version))
 
     async def create_guide(
         self,
@@ -177,9 +215,11 @@ class GuideService:
                 runtime_execution=self._runtime_execution,
             )
 
+        is_closed_demo = is_guide_closed_demo_active(config, user.id) and self._closed_demo_generator is not None
+
         failure_error: ApiError
         try:
-            result = await self._generator.generate(_to_generation_input(version))
+            result = await self._generate_guide_result(version=version, is_closed_demo=is_closed_demo)
         except GuideGenerationTimeoutError:
             await self._repo.mark_failed(
                 guide,

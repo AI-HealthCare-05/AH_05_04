@@ -1,0 +1,1727 @@
+{
+  "projection_version": "guide-closed-demo-17p-product-map@1",
+  "environment": "CLOSED_DEMO",
+  "product_count": 17,
+  "artifact_ref": {
+    "artifact_code": "guide-closed-demo-17p-product-map",
+    "version": "1.0.0",
+    "content_sha256": "5f1e26adb671faac2f8143a34eb3a743d1b2ad8fc7bcaf63da9146eeea9acb3e"
+  },
+  "products": [
+    {
+      "item_seq": "196000008",
+      "official_name": "다이크로짇정(히드로클로로티아지드)",
+      "canonical_strength": "25mg",
+      "exact_matches": [
+        {
+          "medication_name": "다이크로짇",
+          "strength": null
+        },
+        {
+          "medication_name": "다이크로짇",
+          "strength": "25mg"
+        },
+        {
+          "medication_name": "다이크로짇",
+          "strength": "25밀리그람"
+        },
+        {
+          "medication_name": "다이크로짇",
+          "strength": "25밀리그램"
+        },
+        {
+          "medication_name": "다이크로짇정",
+          "strength": null
+        },
+        {
+          "medication_name": "다이크로짇정",
+          "strength": "25mg"
+        },
+        {
+          "medication_name": "다이크로짇정",
+          "strength": "25밀리그람"
+        },
+        {
+          "medication_name": "다이크로짇정",
+          "strength": "25밀리그램"
+        },
+        {
+          "medication_name": "다이크로짇정 25mg",
+          "strength": null
+        },
+        {
+          "medication_name": "다이크로짇정 25mg",
+          "strength": "25mg"
+        },
+        {
+          "medication_name": "다이크로짇정 25mg",
+          "strength": "25밀리그람"
+        },
+        {
+          "medication_name": "다이크로짇정 25mg",
+          "strength": "25밀리그램"
+        },
+        {
+          "medication_name": "다이크로짇정 25밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "다이크로짇정 25밀리그램",
+          "strength": "25mg"
+        },
+        {
+          "medication_name": "다이크로짇정 25밀리그램",
+          "strength": "25밀리그람"
+        },
+        {
+          "medication_name": "다이크로짇정 25밀리그램",
+          "strength": "25밀리그램"
+        },
+        {
+          "medication_name": "다이크로짇정25mg",
+          "strength": null
+        },
+        {
+          "medication_name": "다이크로짇정25mg",
+          "strength": "25mg"
+        },
+        {
+          "medication_name": "다이크로짇정25mg",
+          "strength": "25밀리그람"
+        },
+        {
+          "medication_name": "다이크로짇정25mg",
+          "strength": "25밀리그램"
+        },
+        {
+          "medication_name": "다이크로짇정25밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "다이크로짇정25밀리그램",
+          "strength": "25mg"
+        },
+        {
+          "medication_name": "다이크로짇정25밀리그램",
+          "strength": "25밀리그람"
+        },
+        {
+          "medication_name": "다이크로짇정25밀리그램",
+          "strength": "25밀리그램"
+        }
+      ]
+    },
+    {
+      "item_seq": "198500321",
+      "official_name": "다이아벡스정500밀리그램(메트포르민염산염)",
+      "canonical_strength": "500mg",
+      "exact_matches": [
+        {
+          "medication_name": "다이아벡스",
+          "strength": null
+        },
+        {
+          "medication_name": "다이아벡스",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "다이아벡스",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "다이아벡스",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "다이아벡스정",
+          "strength": null
+        },
+        {
+          "medication_name": "다이아벡스정",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "다이아벡스정",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "다이아벡스정",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "다이아벡스정 500mg",
+          "strength": null
+        },
+        {
+          "medication_name": "다이아벡스정 500mg",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "다이아벡스정 500mg",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "다이아벡스정 500mg",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "다이아벡스정 500밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "다이아벡스정 500밀리그램",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "다이아벡스정 500밀리그램",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "다이아벡스정 500밀리그램",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "다이아벡스정500mg",
+          "strength": null
+        },
+        {
+          "medication_name": "다이아벡스정500mg",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "다이아벡스정500mg",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "다이아벡스정500mg",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "다이아벡스정500밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "다이아벡스정500밀리그램",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "다이아벡스정500밀리그램",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "다이아벡스정500밀리그램",
+          "strength": "500밀리그램"
+        }
+      ]
+    },
+    {
+      "item_seq": "198900672",
+      "official_name": "판콜에스내복액",
+      "canonical_strength": "30mL",
+      "exact_matches": [
+        {
+          "medication_name": "판콜에스",
+          "strength": null
+        },
+        {
+          "medication_name": "판콜에스",
+          "strength": "30mL"
+        },
+        {
+          "medication_name": "판콜에스",
+          "strength": "30ml"
+        },
+        {
+          "medication_name": "판콜에스 내복액",
+          "strength": null
+        },
+        {
+          "medication_name": "판콜에스 내복액",
+          "strength": "30mL"
+        },
+        {
+          "medication_name": "판콜에스 내복액",
+          "strength": "30ml"
+        },
+        {
+          "medication_name": "판콜에스내복액",
+          "strength": null
+        },
+        {
+          "medication_name": "판콜에스내복액",
+          "strength": "30mL"
+        },
+        {
+          "medication_name": "판콜에스내복액",
+          "strength": "30ml"
+        }
+      ]
+    },
+    {
+      "item_seq": "199400883",
+      "official_name": "겔포스엠현탁액",
+      "canonical_strength": "100g",
+      "exact_matches": [
+        {
+          "medication_name": "겔포스엠",
+          "strength": null
+        },
+        {
+          "medication_name": "겔포스엠",
+          "strength": "100g"
+        },
+        {
+          "medication_name": "겔포스엠 현탁액",
+          "strength": null
+        },
+        {
+          "medication_name": "겔포스엠 현탁액",
+          "strength": "100g"
+        },
+        {
+          "medication_name": "겔포스엠현탁액",
+          "strength": null
+        },
+        {
+          "medication_name": "겔포스엠현탁액",
+          "strength": "100g"
+        }
+      ]
+    },
+    {
+      "item_seq": "199600864",
+      "official_name": "아마릴정2밀리그람(글리메피리드)",
+      "canonical_strength": "2mg",
+      "exact_matches": [
+        {
+          "medication_name": "아마릴",
+          "strength": null
+        },
+        {
+          "medication_name": "아마릴",
+          "strength": "2mg"
+        },
+        {
+          "medication_name": "아마릴",
+          "strength": "2밀리그람"
+        },
+        {
+          "medication_name": "아마릴",
+          "strength": "2밀리그램"
+        },
+        {
+          "medication_name": "아마릴정",
+          "strength": null
+        },
+        {
+          "medication_name": "아마릴정",
+          "strength": "2mg"
+        },
+        {
+          "medication_name": "아마릴정",
+          "strength": "2밀리그람"
+        },
+        {
+          "medication_name": "아마릴정",
+          "strength": "2밀리그램"
+        },
+        {
+          "medication_name": "아마릴정 2mg",
+          "strength": null
+        },
+        {
+          "medication_name": "아마릴정 2mg",
+          "strength": "2mg"
+        },
+        {
+          "medication_name": "아마릴정 2mg",
+          "strength": "2밀리그람"
+        },
+        {
+          "medication_name": "아마릴정 2mg",
+          "strength": "2밀리그램"
+        },
+        {
+          "medication_name": "아마릴정 2밀리그람",
+          "strength": null
+        },
+        {
+          "medication_name": "아마릴정 2밀리그람",
+          "strength": "2mg"
+        },
+        {
+          "medication_name": "아마릴정 2밀리그람",
+          "strength": "2밀리그람"
+        },
+        {
+          "medication_name": "아마릴정 2밀리그람",
+          "strength": "2밀리그램"
+        },
+        {
+          "medication_name": "아마릴정 2밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "아마릴정 2밀리그램",
+          "strength": "2mg"
+        },
+        {
+          "medication_name": "아마릴정 2밀리그램",
+          "strength": "2밀리그람"
+        },
+        {
+          "medication_name": "아마릴정 2밀리그램",
+          "strength": "2밀리그램"
+        },
+        {
+          "medication_name": "아마릴정2mg",
+          "strength": null
+        },
+        {
+          "medication_name": "아마릴정2mg",
+          "strength": "2mg"
+        },
+        {
+          "medication_name": "아마릴정2mg",
+          "strength": "2밀리그람"
+        },
+        {
+          "medication_name": "아마릴정2mg",
+          "strength": "2밀리그램"
+        },
+        {
+          "medication_name": "아마릴정2밀리그람",
+          "strength": null
+        },
+        {
+          "medication_name": "아마릴정2밀리그람",
+          "strength": "2mg"
+        },
+        {
+          "medication_name": "아마릴정2밀리그람",
+          "strength": "2밀리그람"
+        },
+        {
+          "medication_name": "아마릴정2밀리그람",
+          "strength": "2밀리그램"
+        },
+        {
+          "medication_name": "아마릴정2밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "아마릴정2밀리그램",
+          "strength": "2mg"
+        },
+        {
+          "medication_name": "아마릴정2밀리그램",
+          "strength": "2밀리그람"
+        },
+        {
+          "medication_name": "아마릴정2밀리그램",
+          "strength": "2밀리그램"
+        }
+      ]
+    },
+    {
+      "item_seq": "200400463",
+      "official_name": "이지엔6애니연질캡슐(이부프로펜)",
+      "canonical_strength": "200mg",
+      "exact_matches": [
+        {
+          "medication_name": "이지엔6 애니",
+          "strength": null
+        },
+        {
+          "medication_name": "이지엔6 애니",
+          "strength": "200mg"
+        },
+        {
+          "medication_name": "이지엔6 애니",
+          "strength": "200밀리그람"
+        },
+        {
+          "medication_name": "이지엔6 애니",
+          "strength": "200밀리그램"
+        },
+        {
+          "medication_name": "이지엔6애니",
+          "strength": null
+        },
+        {
+          "medication_name": "이지엔6애니",
+          "strength": "200mg"
+        },
+        {
+          "medication_name": "이지엔6애니",
+          "strength": "200밀리그람"
+        },
+        {
+          "medication_name": "이지엔6애니",
+          "strength": "200밀리그램"
+        },
+        {
+          "medication_name": "이지엔6애니연질캡슐",
+          "strength": null
+        },
+        {
+          "medication_name": "이지엔6애니연질캡슐",
+          "strength": "200mg"
+        },
+        {
+          "medication_name": "이지엔6애니연질캡슐",
+          "strength": "200밀리그람"
+        },
+        {
+          "medication_name": "이지엔6애니연질캡슐",
+          "strength": "200밀리그램"
+        },
+        {
+          "medication_name": "이지엔6애니연질캡슐 200mg",
+          "strength": null
+        },
+        {
+          "medication_name": "이지엔6애니연질캡슐 200mg",
+          "strength": "200mg"
+        },
+        {
+          "medication_name": "이지엔6애니연질캡슐 200mg",
+          "strength": "200밀리그람"
+        },
+        {
+          "medication_name": "이지엔6애니연질캡슐 200mg",
+          "strength": "200밀리그램"
+        },
+        {
+          "medication_name": "이지엔6애니연질캡슐200mg",
+          "strength": null
+        },
+        {
+          "medication_name": "이지엔6애니연질캡슐200mg",
+          "strength": "200mg"
+        },
+        {
+          "medication_name": "이지엔6애니연질캡슐200mg",
+          "strength": "200밀리그람"
+        },
+        {
+          "medication_name": "이지엔6애니연질캡슐200mg",
+          "strength": "200밀리그램"
+        }
+      ]
+    },
+    {
+      "item_seq": "200410090",
+      "official_name": "리피토정10밀리그램(아토르바스타틴칼슘삼수화물)",
+      "canonical_strength": "10mg",
+      "exact_matches": [
+        {
+          "medication_name": "리피토",
+          "strength": null
+        },
+        {
+          "medication_name": "리피토",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "리피토",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "리피토",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "리피토정",
+          "strength": null
+        },
+        {
+          "medication_name": "리피토정",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "리피토정",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "리피토정",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "리피토정 10mg",
+          "strength": null
+        },
+        {
+          "medication_name": "리피토정 10mg",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "리피토정 10mg",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "리피토정 10mg",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "리피토정 10밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "리피토정 10밀리그램",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "리피토정 10밀리그램",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "리피토정 10밀리그램",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "리피토정10mg",
+          "strength": null
+        },
+        {
+          "medication_name": "리피토정10mg",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "리피토정10mg",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "리피토정10mg",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "리피토정10밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "리피토정10밀리그램",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "리피토정10밀리그램",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "리피토정10밀리그램",
+          "strength": "10밀리그램"
+        }
+      ]
+    },
+    {
+      "item_seq": "200410337",
+      "official_name": "이지트롤정(에제티미브)",
+      "canonical_strength": "10mg",
+      "exact_matches": [
+        {
+          "medication_name": "이지트롤",
+          "strength": null
+        },
+        {
+          "medication_name": "이지트롤",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "이지트롤",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "이지트롤",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "이지트롤정",
+          "strength": null
+        },
+        {
+          "medication_name": "이지트롤정",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "이지트롤정",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "이지트롤정",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "이지트롤정 10mg",
+          "strength": null
+        },
+        {
+          "medication_name": "이지트롤정 10mg",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "이지트롤정 10mg",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "이지트롤정 10mg",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "이지트롤정 10밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "이지트롤정 10밀리그램",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "이지트롤정 10밀리그램",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "이지트롤정 10밀리그램",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "이지트롤정10mg",
+          "strength": null
+        },
+        {
+          "medication_name": "이지트롤정10mg",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "이지트롤정10mg",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "이지트롤정10mg",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "이지트롤정10밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "이지트롤정10밀리그램",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "이지트롤정10밀리그램",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "이지트롤정10밀리그램",
+          "strength": "10밀리그램"
+        }
+      ]
+    },
+    {
+      "item_seq": "200511256",
+      "official_name": "크레스토정5밀리그램(로수바스타틴칼슘)",
+      "canonical_strength": "5mg",
+      "exact_matches": [
+        {
+          "medication_name": "크레스토",
+          "strength": null
+        },
+        {
+          "medication_name": "크레스토",
+          "strength": "5mg"
+        },
+        {
+          "medication_name": "크레스토",
+          "strength": "5밀리그람"
+        },
+        {
+          "medication_name": "크레스토",
+          "strength": "5밀리그램"
+        },
+        {
+          "medication_name": "크레스토정",
+          "strength": null
+        },
+        {
+          "medication_name": "크레스토정",
+          "strength": "5mg"
+        },
+        {
+          "medication_name": "크레스토정",
+          "strength": "5밀리그람"
+        },
+        {
+          "medication_name": "크레스토정",
+          "strength": "5밀리그램"
+        },
+        {
+          "medication_name": "크레스토정 5mg",
+          "strength": null
+        },
+        {
+          "medication_name": "크레스토정 5mg",
+          "strength": "5mg"
+        },
+        {
+          "medication_name": "크레스토정 5mg",
+          "strength": "5밀리그람"
+        },
+        {
+          "medication_name": "크레스토정 5mg",
+          "strength": "5밀리그램"
+        },
+        {
+          "medication_name": "크레스토정 5밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "크레스토정 5밀리그램",
+          "strength": "5mg"
+        },
+        {
+          "medication_name": "크레스토정 5밀리그램",
+          "strength": "5밀리그람"
+        },
+        {
+          "medication_name": "크레스토정 5밀리그램",
+          "strength": "5밀리그램"
+        },
+        {
+          "medication_name": "크레스토정5mg",
+          "strength": null
+        },
+        {
+          "medication_name": "크레스토정5mg",
+          "strength": "5mg"
+        },
+        {
+          "medication_name": "크레스토정5mg",
+          "strength": "5밀리그람"
+        },
+        {
+          "medication_name": "크레스토정5mg",
+          "strength": "5밀리그램"
+        },
+        {
+          "medication_name": "크레스토정5밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "크레스토정5밀리그램",
+          "strength": "5mg"
+        },
+        {
+          "medication_name": "크레스토정5밀리그램",
+          "strength": "5밀리그람"
+        },
+        {
+          "medication_name": "크레스토정5밀리그램",
+          "strength": "5밀리그램"
+        }
+      ]
+    },
+    {
+      "item_seq": "200511904",
+      "official_name": "다이아벡스엑스알서방정500밀리그램(메트포르민염산염)",
+      "canonical_strength": "500mg",
+      "exact_matches": [
+        {
+          "medication_name": "다이아벡스XR",
+          "strength": null
+        },
+        {
+          "medication_name": "다이아벡스XR",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "다이아벡스XR",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "다이아벡스XR",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "다이아벡스XR서방정",
+          "strength": null
+        },
+        {
+          "medication_name": "다이아벡스XR서방정",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "다이아벡스XR서방정",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "다이아벡스XR서방정",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정",
+          "strength": null
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정 500mg",
+          "strength": null
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정 500mg",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정 500mg",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정 500mg",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정 500밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정 500밀리그램",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정 500밀리그램",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정 500밀리그램",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정500mg",
+          "strength": null
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정500mg",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정500mg",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정500mg",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정500밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정500밀리그램",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정500밀리그램",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "다이아벡스엑스알서방정500밀리그램",
+          "strength": "500밀리그램"
+        }
+      ]
+    },
+    {
+      "item_seq": "200610660",
+      "official_name": "노바스크정5mg",
+      "canonical_strength": "5mg",
+      "exact_matches": [
+        {
+          "medication_name": "노바스크",
+          "strength": null
+        },
+        {
+          "medication_name": "노바스크",
+          "strength": "5mg"
+        },
+        {
+          "medication_name": "노바스크",
+          "strength": "5밀리그람"
+        },
+        {
+          "medication_name": "노바스크",
+          "strength": "5밀리그램"
+        },
+        {
+          "medication_name": "노바스크정",
+          "strength": null
+        },
+        {
+          "medication_name": "노바스크정",
+          "strength": "5mg"
+        },
+        {
+          "medication_name": "노바스크정",
+          "strength": "5밀리그람"
+        },
+        {
+          "medication_name": "노바스크정",
+          "strength": "5밀리그램"
+        },
+        {
+          "medication_name": "노바스크정 5mg",
+          "strength": null
+        },
+        {
+          "medication_name": "노바스크정 5mg",
+          "strength": "5mg"
+        },
+        {
+          "medication_name": "노바스크정 5mg",
+          "strength": "5밀리그람"
+        },
+        {
+          "medication_name": "노바스크정 5mg",
+          "strength": "5밀리그램"
+        },
+        {
+          "medication_name": "노바스크정 5밀리그람",
+          "strength": null
+        },
+        {
+          "medication_name": "노바스크정 5밀리그람",
+          "strength": "5mg"
+        },
+        {
+          "medication_name": "노바스크정 5밀리그람",
+          "strength": "5밀리그람"
+        },
+        {
+          "medication_name": "노바스크정 5밀리그람",
+          "strength": "5밀리그램"
+        },
+        {
+          "medication_name": "노바스크정 5밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "노바스크정 5밀리그램",
+          "strength": "5mg"
+        },
+        {
+          "medication_name": "노바스크정 5밀리그램",
+          "strength": "5밀리그람"
+        },
+        {
+          "medication_name": "노바스크정 5밀리그램",
+          "strength": "5밀리그램"
+        },
+        {
+          "medication_name": "노바스크정5mg",
+          "strength": null
+        },
+        {
+          "medication_name": "노바스크정5mg",
+          "strength": "5mg"
+        },
+        {
+          "medication_name": "노바스크정5mg",
+          "strength": "5밀리그람"
+        },
+        {
+          "medication_name": "노바스크정5mg",
+          "strength": "5밀리그램"
+        },
+        {
+          "medication_name": "노바스크정5밀리그람",
+          "strength": null
+        },
+        {
+          "medication_name": "노바스크정5밀리그람",
+          "strength": "5mg"
+        },
+        {
+          "medication_name": "노바스크정5밀리그람",
+          "strength": "5밀리그람"
+        },
+        {
+          "medication_name": "노바스크정5밀리그람",
+          "strength": "5밀리그램"
+        },
+        {
+          "medication_name": "노바스크정5밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "노바스크정5밀리그램",
+          "strength": "5mg"
+        },
+        {
+          "medication_name": "노바스크정5밀리그램",
+          "strength": "5밀리그람"
+        },
+        {
+          "medication_name": "노바스크정5밀리그램",
+          "strength": "5밀리그램"
+        }
+      ]
+    },
+    {
+      "item_seq": "200610765",
+      "official_name": "지르텍정(세티리진염산염)",
+      "canonical_strength": "10mg",
+      "exact_matches": [
+        {
+          "medication_name": "지르텍",
+          "strength": null
+        },
+        {
+          "medication_name": "지르텍",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "지르텍",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "지르텍",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "지르텍정",
+          "strength": null
+        },
+        {
+          "medication_name": "지르텍정",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "지르텍정",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "지르텍정",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "지르텍정 10mg",
+          "strength": null
+        },
+        {
+          "medication_name": "지르텍정 10mg",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "지르텍정 10mg",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "지르텍정 10mg",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "지르텍정 10밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "지르텍정 10밀리그램",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "지르텍정 10밀리그램",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "지르텍정 10밀리그램",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "지르텍정10mg",
+          "strength": null
+        },
+        {
+          "medication_name": "지르텍정10mg",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "지르텍정10mg",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "지르텍정10mg",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "지르텍정10밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "지르텍정10밀리그램",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "지르텍정10밀리그램",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "지르텍정10밀리그램",
+          "strength": "10밀리그램"
+        }
+      ]
+    },
+    {
+      "item_seq": "200703804",
+      "official_name": "엑스포지정 5/80밀리그램(암로디핀베실산염, 발사르탄)",
+      "canonical_strength": "5/80mg",
+      "exact_matches": [
+        {
+          "medication_name": "엑스포지",
+          "strength": null
+        },
+        {
+          "medication_name": "엑스포지",
+          "strength": "5/80"
+        },
+        {
+          "medication_name": "엑스포지",
+          "strength": "5/80mg"
+        },
+        {
+          "medication_name": "엑스포지",
+          "strength": "5/80밀리그램"
+        },
+        {
+          "medication_name": "엑스포지정",
+          "strength": null
+        },
+        {
+          "medication_name": "엑스포지정",
+          "strength": "5/80"
+        },
+        {
+          "medication_name": "엑스포지정",
+          "strength": "5/80mg"
+        },
+        {
+          "medication_name": "엑스포지정",
+          "strength": "5/80밀리그램"
+        },
+        {
+          "medication_name": "엑스포지정 5/80mg",
+          "strength": null
+        },
+        {
+          "medication_name": "엑스포지정 5/80mg",
+          "strength": "5/80"
+        },
+        {
+          "medication_name": "엑스포지정 5/80mg",
+          "strength": "5/80mg"
+        },
+        {
+          "medication_name": "엑스포지정 5/80mg",
+          "strength": "5/80밀리그램"
+        },
+        {
+          "medication_name": "엑스포지정 5/80밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "엑스포지정 5/80밀리그램",
+          "strength": "5/80"
+        },
+        {
+          "medication_name": "엑스포지정 5/80밀리그램",
+          "strength": "5/80mg"
+        },
+        {
+          "medication_name": "엑스포지정 5/80밀리그램",
+          "strength": "5/80밀리그램"
+        },
+        {
+          "medication_name": "엑스포지정5/80mg",
+          "strength": null
+        },
+        {
+          "medication_name": "엑스포지정5/80mg",
+          "strength": "5/80"
+        },
+        {
+          "medication_name": "엑스포지정5/80mg",
+          "strength": "5/80mg"
+        },
+        {
+          "medication_name": "엑스포지정5/80mg",
+          "strength": "5/80밀리그램"
+        },
+        {
+          "medication_name": "엑스포지정5/80밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "엑스포지정5/80밀리그램",
+          "strength": "5/80"
+        },
+        {
+          "medication_name": "엑스포지정5/80밀리그램",
+          "strength": "5/80mg"
+        },
+        {
+          "medication_name": "엑스포지정5/80밀리그램",
+          "strength": "5/80밀리그램"
+        }
+      ]
+    },
+    {
+      "item_seq": "200710759",
+      "official_name": "자누비아정100밀리그램(시타글립틴인산염수화물)",
+      "canonical_strength": "100mg",
+      "exact_matches": [
+        {
+          "medication_name": "자누비아",
+          "strength": null
+        },
+        {
+          "medication_name": "자누비아",
+          "strength": "100mg"
+        },
+        {
+          "medication_name": "자누비아",
+          "strength": "100밀리그람"
+        },
+        {
+          "medication_name": "자누비아",
+          "strength": "100밀리그램"
+        },
+        {
+          "medication_name": "자누비아정",
+          "strength": null
+        },
+        {
+          "medication_name": "자누비아정",
+          "strength": "100mg"
+        },
+        {
+          "medication_name": "자누비아정",
+          "strength": "100밀리그람"
+        },
+        {
+          "medication_name": "자누비아정",
+          "strength": "100밀리그램"
+        },
+        {
+          "medication_name": "자누비아정 100mg",
+          "strength": null
+        },
+        {
+          "medication_name": "자누비아정 100mg",
+          "strength": "100mg"
+        },
+        {
+          "medication_name": "자누비아정 100mg",
+          "strength": "100밀리그람"
+        },
+        {
+          "medication_name": "자누비아정 100mg",
+          "strength": "100밀리그램"
+        },
+        {
+          "medication_name": "자누비아정 100밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "자누비아정 100밀리그램",
+          "strength": "100mg"
+        },
+        {
+          "medication_name": "자누비아정 100밀리그램",
+          "strength": "100밀리그람"
+        },
+        {
+          "medication_name": "자누비아정 100밀리그램",
+          "strength": "100밀리그램"
+        },
+        {
+          "medication_name": "자누비아정100mg",
+          "strength": null
+        },
+        {
+          "medication_name": "자누비아정100mg",
+          "strength": "100mg"
+        },
+        {
+          "medication_name": "자누비아정100mg",
+          "strength": "100밀리그람"
+        },
+        {
+          "medication_name": "자누비아정100mg",
+          "strength": "100밀리그램"
+        },
+        {
+          "medication_name": "자누비아정100밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "자누비아정100밀리그램",
+          "strength": "100mg"
+        },
+        {
+          "medication_name": "자누비아정100밀리그램",
+          "strength": "100밀리그람"
+        },
+        {
+          "medication_name": "자누비아정100밀리그램",
+          "strength": "100밀리그램"
+        }
+      ]
+    },
+    {
+      "item_seq": "200811814",
+      "official_name": "코자정(로사르탄칼륨)",
+      "canonical_strength": "50mg",
+      "exact_matches": [
+        {
+          "medication_name": "코자",
+          "strength": null
+        },
+        {
+          "medication_name": "코자",
+          "strength": "50mg"
+        },
+        {
+          "medication_name": "코자",
+          "strength": "50밀리그람"
+        },
+        {
+          "medication_name": "코자",
+          "strength": "50밀리그램"
+        },
+        {
+          "medication_name": "코자정",
+          "strength": null
+        },
+        {
+          "medication_name": "코자정",
+          "strength": "50mg"
+        },
+        {
+          "medication_name": "코자정",
+          "strength": "50밀리그람"
+        },
+        {
+          "medication_name": "코자정",
+          "strength": "50밀리그램"
+        },
+        {
+          "medication_name": "코자정 50mg",
+          "strength": null
+        },
+        {
+          "medication_name": "코자정 50mg",
+          "strength": "50mg"
+        },
+        {
+          "medication_name": "코자정 50mg",
+          "strength": "50밀리그람"
+        },
+        {
+          "medication_name": "코자정 50mg",
+          "strength": "50밀리그램"
+        },
+        {
+          "medication_name": "코자정 50밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "코자정 50밀리그램",
+          "strength": "50mg"
+        },
+        {
+          "medication_name": "코자정 50밀리그램",
+          "strength": "50밀리그람"
+        },
+        {
+          "medication_name": "코자정 50밀리그램",
+          "strength": "50밀리그램"
+        },
+        {
+          "medication_name": "코자정50mg",
+          "strength": null
+        },
+        {
+          "medication_name": "코자정50mg",
+          "strength": "50mg"
+        },
+        {
+          "medication_name": "코자정50mg",
+          "strength": "50밀리그람"
+        },
+        {
+          "medication_name": "코자정50mg",
+          "strength": "50밀리그램"
+        },
+        {
+          "medication_name": "코자정50밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "코자정50밀리그램",
+          "strength": "50mg"
+        },
+        {
+          "medication_name": "코자정50밀리그램",
+          "strength": "50밀리그람"
+        },
+        {
+          "medication_name": "코자정50밀리그램",
+          "strength": "50밀리그램"
+        }
+      ]
+    },
+    {
+      "item_seq": "201403744",
+      "official_name": "자디앙정10밀리그램(엠파글리플로진)",
+      "canonical_strength": "10mg",
+      "exact_matches": [
+        {
+          "medication_name": "자디앙",
+          "strength": null
+        },
+        {
+          "medication_name": "자디앙",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "자디앙",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "자디앙",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "자디앙정",
+          "strength": null
+        },
+        {
+          "medication_name": "자디앙정",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "자디앙정",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "자디앙정",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "자디앙정 10mg",
+          "strength": null
+        },
+        {
+          "medication_name": "자디앙정 10mg",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "자디앙정 10mg",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "자디앙정 10mg",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "자디앙정 10밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "자디앙정 10밀리그램",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "자디앙정 10밀리그램",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "자디앙정 10밀리그램",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "자디앙정10mg",
+          "strength": null
+        },
+        {
+          "medication_name": "자디앙정10mg",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "자디앙정10mg",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "자디앙정10mg",
+          "strength": "10밀리그램"
+        },
+        {
+          "medication_name": "자디앙정10밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "자디앙정10밀리그램",
+          "strength": "10mg"
+        },
+        {
+          "medication_name": "자디앙정10밀리그램",
+          "strength": "10밀리그람"
+        },
+        {
+          "medication_name": "자디앙정10밀리그램",
+          "strength": "10밀리그램"
+        }
+      ]
+    },
+    {
+      "item_seq": "202106092",
+      "official_name": "타이레놀정500밀리그람(아세트아미노펜)",
+      "canonical_strength": "500mg",
+      "exact_matches": [
+        {
+          "medication_name": "타이레놀",
+          "strength": null
+        },
+        {
+          "medication_name": "타이레놀",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "타이레놀",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "타이레놀",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "타이레놀정",
+          "strength": null
+        },
+        {
+          "medication_name": "타이레놀정",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "타이레놀정",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "타이레놀정",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "타이레놀정 500mg",
+          "strength": null
+        },
+        {
+          "medication_name": "타이레놀정 500mg",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "타이레놀정 500mg",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "타이레놀정 500mg",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "타이레놀정 500밀리그람",
+          "strength": null
+        },
+        {
+          "medication_name": "타이레놀정 500밀리그람",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "타이레놀정 500밀리그람",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "타이레놀정 500밀리그람",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "타이레놀정 500밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "타이레놀정 500밀리그램",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "타이레놀정 500밀리그램",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "타이레놀정 500밀리그램",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "타이레놀정500mg",
+          "strength": null
+        },
+        {
+          "medication_name": "타이레놀정500mg",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "타이레놀정500mg",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "타이레놀정500mg",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "타이레놀정500밀리그람",
+          "strength": null
+        },
+        {
+          "medication_name": "타이레놀정500밀리그람",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "타이레놀정500밀리그람",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "타이레놀정500밀리그람",
+          "strength": "500밀리그램"
+        },
+        {
+          "medication_name": "타이레놀정500밀리그램",
+          "strength": null
+        },
+        {
+          "medication_name": "타이레놀정500밀리그램",
+          "strength": "500mg"
+        },
+        {
+          "medication_name": "타이레놀정500밀리그램",
+          "strength": "500밀리그람"
+        },
+        {
+          "medication_name": "타이레놀정500밀리그램",
+          "strength": "500밀리그램"
+        }
+      ]
+    }
+  ]
+}
