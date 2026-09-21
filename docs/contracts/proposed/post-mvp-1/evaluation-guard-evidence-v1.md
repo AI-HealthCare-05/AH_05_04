@@ -2,12 +2,11 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 상태 | Approved Contract Freeze (Phase A1 PR #868 / Phase A2 Core PR #883) · Phase A3 Proposal Merged (PR #895) · Phase A3.5 Freshness·Scope Policy Authority Freeze Proposed · Authority Resolution Required |
+| 상태 | Approved Contract Freeze (Phase A1 PR #868 / Phase A2 Core PR #883) · Phase A3 Candidate Source Governance Authority Freeze Proposed · Authority Resolution Required |
 | 추적 Issue | [#162](https://github.com/AI-HealthCare-05/AH_05_04/issues/162) |
-| 선행·관련 | [`PD-162-20260920`](../../../governance/decisions/2026-09-20-canonical-evaluation-guard-evidence.md), PR #849 ([#163](../../targets/post-mvp-1/rag-evaluation-v1.md)), [#806](./request-guard-runtime-binding-v1.md), PR #883, PR #895 |
+| 선행·관련 | [`PD-162-20260920`](../../../governance/decisions/2026-09-20-canonical-evaluation-guard-evidence.md), PR #849 ([#163](../../targets/post-mvp-1/rag-evaluation-v1.md)), [#806](./request-guard-runtime-binding-v1.md), PR #883 |
 | 구현 owner | `@ceohwj` (정현우) — AI/RAG |
-| required reviewer | `@phina-io` (송은영) — Backend·Data·Security / DB schema · migration · Repository 쓰기 경계 (Phase A3.5 Authority Formal Resolution) |
-| 선행 승인 | `@hazelnutflavoured` (권가빈) — PM / Product Acceptance / Evaluation & Safety (Phase A1 PR #868 / Phase A3 PR #895) |
+| required reviewer | `@hazelnutflavoured` (권가빈) — PM / Product Acceptance / Evaluation & Safety |
 
 ---
 
@@ -479,7 +478,7 @@ canonical Guard evidence 검증을 통과한 후, 대상 `RagEvaluationRun`과�
 
 ---
 
-## 9. Candidate Source Governance 권위 전제조건 (Phase A3.5 Proposed · Authority Resolution Required)
+## 9. Candidate Source Governance 권위 전제조건 (Phase A3 Proposed · Authority Resolution Required)
 
 PR #883에서 Candidate Guard 와이어 스키마(`evaluation-candidate-guard-v1`, `evaluation-request-guard-v1`, `evaluation-guard-coverage-v1`)와 순수 검증 로직이 동결되었으나, Candidate 번들의 소스 구성원에 대한 Source Governance 판정(`EvaluationCandidateGuardEvaluator.evaluate_candidate_start`)을 통과하기 위해서는 다음 3개 시맨틱 권위가 사전에 확정되어야 한다.
 
@@ -497,186 +496,31 @@ Candidate Source Governance는 다음 기존 정본 권위를 그대로 재사�
 - **Snapshot 적격성 커널**: `evaluate_snapshot_use_eligibility` PASS
 - **Source Use Approval 유효성**: `SqlAlchemySourceUseApprovalReader.read_usable_exact()` PASS (`valid_from <= evaluation_time < expires_at`, `revoked_at is None`)
 
-### 9.2 Purpose Mapping Authority (Q1 RESOLVED)
-Backend/Data 책임자 송은영(@phina-io)님의 공식 확정(Formal Resolution)에 따라 `rag_runtime_bundle_source.source_purpose`와 `SqlAlchemySourceUseApprovalReader`의 `SourceUsePurpose` 간의 정본 매핑이 다음과 같이 결정되었다:
-
-| RuntimeBundleMemberPurpose | SourceUsePurpose | Cardinality | 확정 상태 |
-| --- | --- | --- | --- |
-| `CATALOG` | `PRODUCT_IDENTIFICATION` | 1:1 | RESOLVED |
-| `KNOWLEDGE` | `RETRIEVAL` | 1:1 | RESOLVED |
-| `CANDIDATE_INDEX_INPUT` | `PRODUCT_IDENTIFICATION` | 1:1 | RESOLVED |
-| `RULE` | `RULE_DERIVATION` | 1:1 | RESOLVED |
-| `GUIDELINE` | `BLOCKED_BY_UNMODELED_PURPOSE` | N/A | RESOLVED (차단) |
-| `SAFETY_POLICY` | `SAFETY_ROUTING` | 1:1 | RESOLVED |
-
-- **`PATIENT_CITATION` 경계**: 런타임 번들 소스 멤버 매핑에서 제외되며, Citation approval pin 및 환자 라이브 쿼리 인용 승인(`SourceUseApproval` identity) 전용으로 한정된다.
-- **Fail-Closed**: 번들에 `source_purpose == GUIDELINE` 멤버가 존재할 경우 `CANDIDATE_SOURCE_PURPOSE_MAPPING_BLOCKED`로 판정되어 `EVALUATION_CANDIDATE / PASS`가 발행되지 않는다.
-- 본 매핑은 확정되었으므로 재논의를 금지한다 (`PURPOSE_MAPPING_AUTHORITY_RESOLVED`).
+### 9.2 Purpose Mapping Authority (Q1 Proposed · Resolution Required)
+- `rag_runtime_bundle_source`의 `source_purpose` (`RuntimeBundleMemberPurpose` 6종: `CATALOG`, `KNOWLEDGE`, `CANDIDATE_INDEX_INPUT`, `RULE`, `GUIDELINE`, `SAFETY_POLICY`)을 `SqlAlchemySourceUseApprovalReader`의 `SourceUsePurpose` 5종(`PRODUCT_IDENTIFICATION`, `SAFETY_ROUTING`, `RULE_DERIVATION`, `RETRIEVAL`, `PATIENT_CITATION`)으로 변환하는 정본 매핑은 도메인 소유자(@hazelnutflavoured, @Jye-rookie, @phina-io)의 승인으로만 확정된다.
+- 임의 추정 매핑, 엔지니어링 임시 매핑, 암묵적 fallback 매핑은 엄격히 금지된다.
+- 매핑 미확정 시 `CANDIDATE_SOURCE_PURPOSE_MAPPING_BLOCKED` 상태를 유지하며 `EVALUATION_CANDIDATE / PASS`는 발행되지 않는다.
+- 번들 멤버 1개당 소스 사용 승인 목적의 요구 차원(단일 1:1 vs 복수 1:N) 역시 도메인 승인으로 동결된다.
 
 ### 9.3 Freshness Authority (Q2 Proposed · Resolution Required)
-- **Identity source**: `rag_runtime_bundle_source.freshness_policy_hash` (64-char SHA-256 hex string).
-- **Policy content source**: 현재 develop에는 승인된 정책 내용 및 evaluator가 부재함 (`CANDIDATE_SOURCE_FRESHNESS_AUTHORITY_BLOCKED`).
-- **엄격 금지 원칙**:
-  - `verification_status == CURRENT` 판정을 Freshness 통과로 간주하는 것 금지.
-  - 번들 빌드 시점의 Freshness 판정 재사용 금지 (반드시 `evaluation_time` 기준 current-state 재검증).
-  - 기본값 `freshness_eligible = True` 허용 금지.
-  - 기존 24h Evidence Assessment Validity Policy TTL 복사 금지.
-- **Proposed Canonical Shape** (`evaluation-source-freshness-policy-v1`):
-  ```json
-  {
-    "projection_version": "evaluation-source-freshness-policy-v1",
-    "policy_code": "<approved-code>",
-    "policy_version": "1",
-    "freshness_anchor": "<approved-anchor>",
-    "max_age_seconds": "<approved-positive-int>"
-  }
-  ```
-- **Freshness Clock Anchor 후보 Physical Ownership 감사**:
-  - `collected_at` (`rag_source_snapshot.collected_at`): NOT NULL, 스냅샷 적재 시 기록, DB 트리거로 완전 불변(Immutable). 데이터 원천 수집 시각. Evaluation Anchor 적합성 **높음**.
-  - `verified_at` (`rag_source_snapshot.verified_at`): Nullable (`PENDING` 시 NULL), 검증 완료 시 기록, DB 함수로 설정 후 불변. 플랫폼 검증 통과 시각. Evaluation Anchor 적합성 **중간**.
-  - `effective_at` (`rag_source_snapshot.effective_at`): Nullable (`CURRENT` 전이 시 필수), `CURRENT` 승격 시 기록, 재전이 시 갱신 가능. `CURRENT` 선택 시각. Evaluation Anchor 적합성 **낮음/주의**.
-  - 위 감사 결과를 바탕으로 `@phina-io`에게 단일 anchor 선택을 요청한다.
-- **Max Age Rule**: `max_age_seconds: OWNER_RESOLUTION_REQUIRED`. 임의 TTL 추정 금지.
-- **Pure Evaluator**: `0 <= (evaluation_time - anchor_time).total_seconds() <= max_age_seconds`.
-- **Canonical Hash**: `freshness_policy_hash = canonical_sha256(evaluation-source-freshness-policy-v1 projection)`.
-- **Fail-Closed**: 정책 결측, 해시 불일치, anchor 결측/무효, evaluation_time 무효, 만료 시 즉시 `freshness_eligible = False`.
+- `rag_runtime_bundle_source.freshness_policy_hash`는 정책 식별자(SHA-256)만 보존한다.
+- `verification_status == CURRENT` 판정을 Freshness 통과로 간주하는 것, 정책 해시의 존재만으로 통과시키는 것, 번들 빌드 시점의 Freshness 판정을 재사용하는 것은 모두 엄격히 금지된다.
+- Candidate 평가는 반드시 평가 시점(`evaluation_time`) 기준의 current-state 재검증이어야 하며, 승인된 정책 원천 및 평가기를 통해서만 `freshness_eligible: bool`을 판정한다.
+- 평가기 미확정 시 `CANDIDATE_SOURCE_FRESHNESS_AUTHORITY_BLOCKED` 상태를 유지하며 `EVALUATION_CANDIDATE / PASS`는 발행되지 않는다.
 
 ### 9.4 Scope Authority (Q3 Proposed · Resolution Required)
-- **Identity source**: `rag_runtime_bundle_source.scope_policy_hash` (64-char SHA-256 hex string).
-- **Policy content source**: 현재 develop에는 승인된 정책 내용 및 evaluator가 부재함 (`CANDIDATE_SOURCE_SCOPE_AUTHORITY_BLOCKED`).
-- **Operation**: `EVALUATION_CANDIDATE` 단일 오퍼레이션으로 한정.
-- **엄격 금지 원칙**:
-  - #806 `request_scope_codes` 재사용 금지.
-  - 기본값 `scope_allowed = True` 금지.
-  - Q1 Purpose Mapping과 Scope Policy를 합치거나 혼동하는 것 금지.
-- **정본 Scope 경계 유지 및 Proposed Canonical Shape**:
-  - 정본 경계: `(scope_policy_hash, EVALUATION_CANDIDATE, member_context) -> ALLOWED | BLOCKED`.
-  - `member_context`를 선제 축소하지 않으며, 최소 semantic dimension이 `RuntimeBundleMemberPurpose`만으로 충분한지를 `@phina-io`에게 최종 확인받는다.
-  - Proposed canonical shape (`evaluation-source-scope-policy-v1`):
-    ```json
-    {
-      "projection_version": "evaluation-source-scope-policy-v1",
-      "policy_code": "<approved-code>",
-      "policy_version": "1",
-      "operation": "EVALUATION_CANDIDATE",
-      "allowed_bundle_member_purposes": [
-        "<approved-purpose>"
-      ]
-    }
-    ```
-- **Allowed Matrix (승인 대기)**:
-  - `CATALOG`: ALLOWED | BLOCKED (Resolution Required)
-  - `KNOWLEDGE`: ALLOWED | BLOCKED (Resolution Required)
-  - `CANDIDATE_INDEX_INPUT`: ALLOWED | BLOCKED (Resolution Required)
-  - `RULE`: ALLOWED | BLOCKED (Resolution Required)
-  - `GUIDELINE`: ALLOWED | BLOCKED (Resolution Required; Scope가 ALLOWED여도 Q1에 의해 Candidate PASS 불가)
-  - `SAFETY_POLICY`: ALLOWED | BLOCKED (Resolution Required)
-- **Canonical Hash**: `scope_policy_hash = canonical_sha256(evaluation-source-scope-policy-v1 projection)`.
-- **Fail-Closed**: 알 수 없는 해시, 해시 불일치, 목적 미허용 시 즉시 `BLOCKED`.
+- `rag_runtime_bundle_source.scope_policy_hash`는 스코프 정책 식별자만 보존한다.
+- #806의 per-request `request_scope_codes`를 Evaluation Candidate 스코프로 자동 매핑하는 것은 엄격히 금지된다.
+- 승인된 스코프 정책 원천과 `(scope_policy_hash, EVALUATION_CANDIDATE, member) -> scope_allowed: bool` 평가기를 통해서만 스코프 적격성을 판정한다.
+- 평가기 미확정 시 `CANDIDATE_SOURCE_SCOPE_AUTHORITY_BLOCKED` 상태를 유지하며 `EVALUATION_CANDIDATE / PASS`는 발행되지 않는다.
 
-### 9.5 Policy Content Source & Exact Lookup Contract (No New DB Priority)
-- 새 정책 DB 테이블이나 마이그레이션을 신설하지 않고, **code-owned immutable content-addressed policy registry**를 우선 제안한다.
-- Exact hash lookup: `resolve_freshness_policy(hash)`, `resolve_scope_policy(hash)` 단일 규격만 허용.
-- `latest`, `current`, `default`, `fallback`, `closest version`은 엄격히 금지된다.
-- 알 수 없는 해시는 즉시 `BLOCKED`되며, 동일 해시에 내용이 다른 경우 `Configuration Integrity Error`로 fail-closed 중단된다.
-- 본 PR은 문서 전용이므로 Python 구현 코드를 포함하지 않는다.
+### 9.5 Candidate Source Governance 판정 방정식 및 전수 결속
+`Candidate Source Governance PASS`는 번들에 핀된 모든 소스 멤버가 10개 조건(핀 일치, Source ACTIVE, Endpoint 적격, Operation 적격, Snapshot CURRENT, Provenance 유효, 발행 승인 유효, Freshness 적격, Scope 허용, Source Use Approval 유효)을 전수(exact-set) 만족하고, 멤버 누락이나 초과가 없을 때만 성립한다.
 
-### 9.6 Candidate Source Governance 판정 방정식 및 전수 결속
-`Candidate Source Governance PASS`는 번들에 핀된 모든 소스 멤버가 다음 조건을 전수(exact-set) 만족하고 멤버 누락이나 초과가 없을 때만 성립한다:
-1. Bundle Pin Exact-Match (`source_snapshot_id`, `source_version`, `canonical_checksum`)
-2. Source ACTIVE (`rag_source.lifecycle_status == ACTIVE`)
-3. Endpoint VERIFIED / ENABLED / APPROVED
-4. Operation ENABLED / APPROVED
-5. Snapshot CURRENT (`rag_source_snapshot.verification_status == CURRENT`)
-6. Snapshot Provenance Valid (`SnapshotProvenanceReceipt.validate_provenance() == PASS`)
-7. Publication Approval Valid (`publication_verification_id is not None`)
-8. Freshness Policy PASS:
-   - `resolve_freshness_policy(pin.freshness_policy_hash) IS NOT NULL`
-   - `canonical_sha256(policy) == pin.freshness_policy_hash`
-   - `approved freshness evaluator(snapshot, pin.freshness_policy_hash, evaluation_time) == TRUE`
-9. Scope Policy PASS:
-   - `resolve_scope_policy(pin.scope_policy_hash) IS NOT NULL`
-   - `canonical_sha256(policy) == pin.scope_policy_hash`
-   - `approved scope evaluator(pin.scope_policy_hash, EVALUATION_CANDIDATE, member_context) == ALLOWED`
-10. Usable Source Use Approval Exact Match:
-    - `SqlAlchemySourceUseApprovalReader.read_usable_exact(...) is not None`
-    - `valid_from <= evaluation_time < expires_at`, `revoked_at is None`
-    - `purpose == approved_purpose_mapping(pin.source_purpose)`
-
-### 9.7 Fail-Closed 결측 권위 시맨틱 (Fail-Closed Semantics)
+### 9.6 Fail-Closed 결측 권위 시맨틱 (Fail-Closed Semantics)
 - 권위 부재, 매핑 모호, 정책 부재, 정책 만료/위반, 승인 만료/철회, 환경 불일치 등 단 하나의 결함이라도 발생하면 Evaluator는 `EVALUATION_CANDIDATE / PASS`를 발행하지 않는다.
 - 이 경우 `candidate_guard_decision = null`, `candidate_guard_ref = null`로 유지되며, `#163` Release Gate loader는 영구 차단(`ACTUAL_RELEASE_GATE_AUTHORIZATION_BLOCKED`)된다.
-- 어떠한 synthetic/default PASS도 허용되지 않는다.
 
-### 9.8 Guard Wire Schema 불변 원칙
-- 본 권위 동결(Phase A3.5)은 Wire Schema(`evaluation-candidate-guard-v1`, `evaluation-request-guard-v1`, `evaluation-guard-coverage-v1`)의 필드, 타입, 사영 순서, 해시 레시피를 일체 변경하지 않는다.
+### 9.7 Guard Wire Schema 불변 원칙
+- 본 권위 동결(Phase A3)은 Wire Schema(`evaluation-candidate-guard-v1`, `evaluation-request-guard-v1`, `evaluation-guard-coverage-v1`)의 필드, 타입, 사영 순서, 해시 레시피를 일체 변경하지 않는다.
 - 스키마 확장은 불필요하며, 기존에 확정된 순수 사영 및 Envelope 구조를 완전히 보존한다.
-
-### 9.9 Phase A4 구현 진입 조건 (Entry Criteria for Implementation)
-본 제안에 대해 다음 사항이 모두 만족되어 정본 문서가 머지될 때까지 **Python 구현 코드 작성을 엄격히 금지**한다:
-1. `Q1 exact purpose mapping documented` (RESOLVED by @phina-io)
-2. `Q2 freshness content source approved` (@phina-io)
-3. `Q2 freshness anchor approved` (@phina-io)
-4. `Q2 max_age approved` (@phina-io)
-5. `Q2 canonical hash recipe approved` (@phina-io)
-6. `Q3 scope content source approved` (@phina-io)
-7. `Q3 EVALUATION_CANDIDATE allowed matrix approved` (@phina-io)
-8. `Q3 member_context semantic dimension confirmed` (@phina-io)
-9. `Q3 canonical hash recipe approved` (@phina-io)
-10. `formal approval: @phina-io`
-11. `docs PR: MERGED`
-
----
-
-### 9.10 송은영(@phina-io) 공식 승인 요청 템플릿
-
-```text
-Q2 Freshness Final Resolution
-
-Policy content source:
-code-owned immutable content-addressed registry
-| OTHER: ______
-
-freshness_anchor:
-COLLECTED_AT
-| VERIFIED_AT
-| EFFECTIVE_AT
-| OTHER: ______
-
-max_age_seconds:
-________
-
-hash:
-canonical_sha256(evaluation-source-freshness-policy-v1 projection)
-
-unknown/mismatch:
-BLOCKED
-```
-
-```text
-Q3 Scope Final Resolution
-
-Policy content source:
-code-owned immutable content-addressed registry
-| OTHER: ______
-
-Operation:
-EVALUATION_CANDIDATE
-
-member_context dimension:
-RuntimeBundleMemberPurpose only is sufficient: YES | NO (if NO, specify additional required fields: ______)
-
-Allowed RuntimeBundleMemberPurpose:
-- CATALOG: ALLOWED | BLOCKED
-- KNOWLEDGE: ALLOWED | BLOCKED
-- CANDIDATE_INDEX_INPUT: ALLOWED | BLOCKED
-- RULE: ALLOWED | BLOCKED
-- GUIDELINE: ALLOWED | BLOCKED
-- SAFETY_POLICY: ALLOWED | BLOCKED
-
-hash:
-canonical_sha256(evaluation-source-scope-policy-v1 projection)
-
-unknown/mismatch:
-BLOCKED
-```
