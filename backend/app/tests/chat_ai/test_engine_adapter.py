@@ -24,24 +24,26 @@ from app.services.chat_generator_engine import ChatGeneratorEngine
 
 
 class StubClosedDemoEvidence:
-    def __init__(self) -> None:
+    def __init__(self, content: str = "검증된 합성 MFDS 근거") -> None:
         self.display_order = 1
         self.source_code = "mfds"
         self.source_version = "v1"
         self.locator = "synthetic-locator"
 
         class _Content:
-            @staticmethod
-            def reveal() -> str:
-                return "검증된 합성 MFDS 근거"
+            def reveal(self) -> str:
+                return content
 
         self.content = _Content()
 
 
 class StubClosedDemoRetriever:
+    def __init__(self, content: str = "검증된 합성 MFDS 근거") -> None:
+        self._content = content
+
     async def retrieve(self, question: str) -> tuple[StubClosedDemoEvidence, ...]:
         assert question == "이 약을 먹으면 졸릴 수 있나요?"
-        return (StubClosedDemoEvidence(),)
+        return (StubClosedDemoEvidence(self._content),)
 
 
 class RejectingClosedDemoRetriever:
@@ -159,6 +161,40 @@ async def test_reply_sends_only_hydrated_closed_demo_evidence_with_new_prompt_ve
     ]
     assert result.prompt_version == "chat-prompt-v7-closed-demo-evidence"
     assert "CLOSED_DEMO 검증 근거" in str(provider.calls[0]["instructions"])
+
+
+async def test_reply_forwards_large_hydrated_closed_demo_evidence_without_truncation() -> None:
+    large_content = "가" * 44_286
+    provider = StubProvider()
+    engine = ChatGeneratorEngine(
+        provider=provider,
+        model="model-requested",
+        timeout_seconds=1,
+        closed_demo_retriever=StubClosedDemoRetriever(large_content),  # type: ignore[arg-type]
+    )
+
+    result = await engine.reply(_reply_input())
+
+    assert len(provider.calls) == 1
+    payload = json.loads(str(provider.calls[0]["input_json"]))
+    assert payload["evidence"] == [
+        {
+            "display_order": 1,
+            "source_code": "mfds",
+            "source_version": "v1",
+            "locator": "synthetic-locator",
+            "content": large_content,
+        }
+    ]
+    assert set(payload["evidence"][0]) == {
+        "display_order",
+        "source_code",
+        "source_version",
+        "locator",
+        "content",
+    }
+    assert len(payload["evidence"][0]["content"]) == 44_286
+    assert result.prompt_version == "chat-prompt-v7-closed-demo-evidence"
 
 
 async def test_reply_does_not_call_provider_when_closed_demo_retrieval_fails() -> None:

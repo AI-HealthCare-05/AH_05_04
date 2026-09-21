@@ -116,7 +116,7 @@ class ChatEvidenceItem(_StrictModel):
     source_code: str = Field(min_length=1, max_length=100)
     source_version: str = Field(min_length=1, max_length=200)
     locator: str = Field(min_length=1, max_length=500)
-    content: str = Field(min_length=1, max_length=20_000)
+    content: str = Field(min_length=1)
 
 
 class ChatGenerationInput(_StrictModel):
