@@ -14,6 +14,7 @@ import asyncio
 import json
 import math
 import unicodedata
+from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from typing import Any
 
@@ -172,7 +173,7 @@ def validate_closed_demo_draft(
     draft: ClosedDemoGuideDraft,
     *,
     expected_count: int,
-    evidences_by_index: dict[int, tuple[GuideClosedDemoEvidence, ...]],
+    evidences_by_index: Mapping[int, Sequence[GuideClosedDemoEvidence]],
 ) -> None:
     """Validate structured output: slot binding coherence and safety rules."""
     if len(draft.medications) != expected_count:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -146,16 +146,19 @@ async def test_exact_product_filtering_drops_cross_drug_evidence() -> None:
     )
 
     service = object.__new__(GuideClosedDemoRetrievalService)
-    service._dependencies = SimpleNamespace(
-        binding=SimpleNamespace(execution_binding=SimpleNamespace()),
-        search_adapter=object(),
-        eligibility_verifier=object(),
+    service._dependencies = cast(
+        ClosedDemoRetrievalDependencies,
+        SimpleNamespace(
+            binding=SimpleNamespace(execution_binding=SimpleNamespace()),
+            search_adapter=object(),
+            eligibility_verifier=object(),
+        ),
     )
-    service._text_embedding_adapter = object()
+    service._text_embedding_adapter = cast(Any, object())
     service._fingerprint_producer = producer
     service._binding_verifier = verifier
 
-    async def fake_hydrate(hits: tuple[object, ...]) -> tuple[GuideClosedDemoEvidence, ...]:
+    async def fake_hydrate(hits: tuple[Any, ...]) -> tuple[GuideClosedDemoEvidence, ...]:
         return tuple(
             GuideClosedDemoEvidence(
                 slot=i,
@@ -168,7 +171,7 @@ async def test_exact_product_filtering_drops_cross_drug_evidence() -> None:
             for i, h in enumerate(hits, start=1)
         )
 
-    service._hydrate_selected_hits = fake_hydrate
+    cast(Any, service)._hydrate_selected_hits = fake_hydrate
 
     with (
         patch(
@@ -213,12 +216,15 @@ async def test_exact_product_filtering_fails_closed_on_zero_exact_hits() -> None
     )
 
     service = object.__new__(GuideClosedDemoRetrievalService)
-    service._dependencies = SimpleNamespace(
-        binding=SimpleNamespace(execution_binding=SimpleNamespace()),
-        search_adapter=object(),
-        eligibility_verifier=object(),
+    service._dependencies = cast(
+        ClosedDemoRetrievalDependencies,
+        SimpleNamespace(
+            binding=SimpleNamespace(execution_binding=SimpleNamespace()),
+            search_adapter=object(),
+            eligibility_verifier=object(),
+        ),
     )
-    service._text_embedding_adapter = object()
+    service._text_embedding_adapter = cast(Any, object())
     service._fingerprint_producer = producer
     service._binding_verifier = verifier
 
