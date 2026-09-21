@@ -639,25 +639,25 @@ def get_guide_sync_runtime_lifecycle(
 
 
 def get_guide_sync_runtime_execution(
+    request: Request,
     repository: Annotated[GuideRepository, Depends(get_guide_repository)],
     lifecycle: Annotated[
         GuideSyncRuntimeLifecycleProducer,
         Depends(get_guide_sync_runtime_lifecycle),
     ],
-    factory: Annotated[
-        GuideRuntimeExecutorFactoryPort,
-        Depends(get_guide_runtime_executor_factory),
-    ],
-    authority_provider: Annotated[
-        GuideSyncRuntimeAuthorityProvider,
-        Depends(get_guide_sync_runtime_authority_provider),
-    ],
-) -> GuideSyncRuntimeExecution:
+) -> GuideSyncRuntimeExecution | None:
+    factory_state = getattr(request.app.state, "guide_runtime_executor_factory", None)
+    authority_state = getattr(request.app.state, "guide_sync_runtime_authority_provider", None)
+    if factory_state is None and authority_state is None:
+        return None
+    if factory_state is None or authority_state is None:
+        raise RuntimeError("Guide Sync runtime dependencies are incomplete")
+
     return GuideSyncRuntimeExecution(
         repository=repository,
         lifecycle=lifecycle,
-        executor_factory=factory,
-        authority_provider=authority_provider,
+        executor_factory=get_guide_runtime_executor_factory(request),
+        authority_provider=get_guide_sync_runtime_authority_provider(request),
     )
 
 
@@ -675,7 +675,7 @@ def get_guide_service(
         Depends(get_consent_gate_service),
     ],
     runtime_execution: Annotated[
-        GuideSyncRuntimeExecution,
+        GuideSyncRuntimeExecution | None,
         Depends(get_guide_sync_runtime_execution),
     ],
 ) -> GuideService:

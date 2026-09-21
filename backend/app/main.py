@@ -14,6 +14,26 @@ from app.core.errors import ApiError, ErrorDetail, register_exception_handlers
 from app.core.no_store_middleware import NoStoreMiddleware
 from app.core.validation_trace_middleware import RequestTraceMiddleware, ValidationTraceMiddleware
 from app.dependencies.services import build_configured_closed_demo_retrieval_service, get_email_sender
+from app.services.guide_sync_runtime_execution import GuideSyncRuntimeAuthorityProvider
+
+
+def configure_guide_runtime(
+    app: FastAPI,
+    *,
+    provider_dependencies: object,
+    authority_provider: GuideSyncRuntimeAuthorityProvider,
+) -> None:
+    """Atomically register the external composition required by Guide Sync runtime."""
+
+    state_keys = (
+        "guide_runtime_provider_dependencies",
+        "guide_sync_runtime_authority_provider",
+        "guide_runtime_executor_factory",
+    )
+    if any(hasattr(app.state, key) for key in state_keys):
+        raise RuntimeError("Guide runtime bootstrap is already configured")
+    app.state.guide_runtime_provider_dependencies = provider_dependencies
+    app.state.guide_sync_runtime_authority_provider = authority_provider
 
 
 def initialize_guide_runtime_executor_factory(app: FastAPI) -> None:
@@ -23,8 +43,12 @@ def initialize_guide_runtime_executor_factory(app: FastAPI) -> None:
     composition before lifespan starts. Public Backend services never inspect it.
     """
 
-    if not hasattr(app.state, "guide_runtime_provider_dependencies"):
+    has_dependencies = hasattr(app.state, "guide_runtime_provider_dependencies")
+    has_authority = hasattr(app.state, "guide_sync_runtime_authority_provider")
+    if not has_dependencies and not has_authority:
         return
+    if not has_dependencies or not has_authority:
+        raise RuntimeError("Guide runtime bootstrap is incomplete")
     if hasattr(app.state, "guide_runtime_executor_factory"):
         raise RuntimeError("Guide runtime executor factory is already initialized")
     app.state.guide_runtime_executor_factory = build_production_guide_runtime_executor_factory(

@@ -1,10 +1,13 @@
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import main as main_module
 from app.dependencies.security import get_request_user
 from app.dependencies.services import (
     get_consent_gate_service,
@@ -152,14 +155,27 @@ class _Factory(GuideRuntimeExecutorFactoryPort):
 
 async def test_post_guide_runtime_result_is_persisted_and_rediscovered(
     db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user = await _create_user(db_session, email="guide-sync-runtime-api@example.com")
     prescription = await _create_confirmed_prescription(db_session, user=user)
     snapshot, members = await _create_source_snapshot_members(db_session)
     lifecycle = cast(GuideSyncRuntimeLifecycleProducer, _Lifecycle(db_session))
     factory = _Factory(_projection(snapshot=snapshot, member=members[0]))
+    authority_provider = _AuthorityProvider()
+    provider_dependencies = object()
     consent_gate = AsyncMock(spec=ConsentGateService)
     generator = GuideGenerator(provider=_UnusedGuideProvider(), model="legacy-model", timeout_seconds=1.0)
+    openai_client = SimpleNamespace(close=AsyncMock())
+
+    monkeypatch.setattr(main_module, "get_email_sender", lambda: object())
+    monkeypatch.setattr(main_module, "AsyncOpenAI", lambda **_kwargs: openai_client)
+    monkeypatch.setattr(main_module, "close_database", AsyncMock())
+    monkeypatch.setattr(
+        main_module,
+        "build_production_guide_runtime_executor_factory",
+        lambda dependencies, **_kwargs: factory if dependencies is provider_dependencies else None,
+    )
 
     async def override_user() -> User:
         return user
@@ -173,29 +189,39 @@ async def test_post_guide_runtime_result_is_persisted_and_rediscovered(
     def override_generator() -> GuideGenerator:
         return generator
 
-    fastapi_app.state.guide_runtime_executor_factory = factory
-    fastapi_app.state.guide_sync_runtime_authority_provider = _AuthorityProvider()
+    main_module.configure_guide_runtime(
+        fastapi_app,
+        provider_dependencies=provider_dependencies,
+        authority_provider=authority_provider,
+    )
     fastapi_app.dependency_overrides[get_request_user] = override_user
     fastapi_app.dependency_overrides[get_guide_sync_runtime_lifecycle] = override_lifecycle
     fastapi_app.dependency_overrides[get_consent_gate_service] = override_consent_gate
     fastapi_app.dependency_overrides[get_guide_generator] = override_generator
     try:
-        async with AsyncClient(transport=ASGITransport(app=fastapi_app), base_url="http://test") as client:
-            created = await client.post(
-                "/api/v1/guides",
-                json={"prescription_id": str(prescription.id)},
-            )
-            assert created.status_code == 201
-            created_data = created.json()["data"]
-            rediscovered = await client.get(f"/api/v1/guides/{created_data['guide_id']}")
-            assert rediscovered.status_code == 200
+        async with main_module.lifespan(fastapi_app):
+            async with AsyncClient(transport=ASGITransport(app=fastapi_app), base_url="http://test") as client:
+                created = await client.post(
+                    "/api/v1/guides",
+                    json={"prescription_id": str(prescription.id)},
+                )
+                assert created.status_code == 201
+                created_data = created.json()["data"]
+                rediscovered = await client.get(f"/api/v1/guides/{created_data['guide_id']}")
+                assert rediscovered.status_code == 200
     finally:
         fastapi_app.dependency_overrides.pop(get_request_user, None)
         fastapi_app.dependency_overrides.pop(get_guide_sync_runtime_lifecycle, None)
         fastapi_app.dependency_overrides.pop(get_consent_gate_service, None)
         fastapi_app.dependency_overrides.pop(get_guide_generator, None)
-        del fastapi_app.state.guide_runtime_executor_factory
-        del fastapi_app.state.guide_sync_runtime_authority_provider
+        for state_key in (
+            "guide_runtime_provider_dependencies",
+            "guide_sync_runtime_authority_provider",
+            "guide_runtime_executor_factory",
+            "openai_client",
+        ):
+            if hasattr(fastapi_app.state, state_key):
+                delattr(fastapi_app.state, state_key)
 
     rediscovered_data = rediscovered.json()["data"]
     assert created_data == rediscovered_data
