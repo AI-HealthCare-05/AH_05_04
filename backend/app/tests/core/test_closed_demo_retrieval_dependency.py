@@ -70,14 +70,14 @@ async def test_lifespan_owns_one_closed_demo_retriever_and_closes_it(
     close_database = AsyncMock()
     app = FastAPI()
 
+    def build_retriever(client: object) -> SimpleNamespace:
+        build_calls.append(client)
+        return retriever
+
     monkeypatch.setattr(main.config, "CHAT_CLOSED_DEMO_RAG_ENABLED", True)
     monkeypatch.setattr(main, "get_email_sender", lambda: None)
     monkeypatch.setattr(main, "AsyncOpenAI", lambda **_kwargs: openai_client)
-    monkeypatch.setattr(
-        main,
-        "build_configured_closed_demo_retrieval_service",
-        lambda client: build_calls.append(client) or retriever,
-    )
+    monkeypatch.setattr(main, "build_configured_closed_demo_retrieval_service", build_retriever)
     monkeypatch.setattr(main, "close_database", close_database)
 
     async with main.lifespan(app):
