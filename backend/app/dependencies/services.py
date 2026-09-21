@@ -627,24 +627,10 @@ def get_chat_repository(
     return ChatRepository(session)
 
 
-def get_closed_demo_retrieval_service(
-    client: Annotated[
-        AsyncOpenAI,
-        Depends(get_openai_client),
-    ],
-    fingerprint_producer: Annotated[
-        ClosedDemoChatQueryFingerprintProducer,
-        Depends(get_closed_demo_chat_query_fingerprint_producer),
-    ],
-    binding_verifier: Annotated[
-        ClosedDemoChatQueryVerifier,
-        Depends(get_closed_demo_chat_query_binding_verifier),
-    ],
-) -> ClosedDemoRetrievalService | None:
-    """Keep Sync Chat on its existing path unless the explicit CLOSED_DEMO gate is on."""
-    if not config.CHAT_CLOSED_DEMO_RAG_ENABLED:
-        return None
+def build_configured_closed_demo_retrieval_service(client: AsyncOpenAI) -> ClosedDemoRetrievalService:
+    """Build the one lifespan-owned CLOSED_DEMO retrieval composition."""
     password = config.SOURCE591_CONSUMER_PASSWORD
+    query_key_dependency = get_closed_demo_chat_query_hmac_key_dependency()
     return build_closed_demo_retrieval_service(
         database_config=ClosedDemoRetrievalDatabaseConfig(
             host=config.SOURCE591_STAGING_DB_HOST,
@@ -654,9 +640,19 @@ def get_closed_demo_retrieval_service(
             password=password.get_secret_value() if password is not None else "",
         ),
         openai_client=client,
-        fingerprint_producer=fingerprint_producer,
-        binding_verifier=binding_verifier,
+        fingerprint_producer=get_closed_demo_chat_query_fingerprint_producer(query_key_dependency),
+        binding_verifier=get_closed_demo_chat_query_binding_verifier(query_key_dependency),
     )
+
+
+def get_closed_demo_retrieval_service(request: Request) -> ClosedDemoRetrievalService | None:
+    """Return the lifespan-owned CLOSED_DEMO retriever without opening a new pool."""
+    if not config.CHAT_CLOSED_DEMO_RAG_ENABLED:
+        return None
+    retriever = getattr(request.app.state, "closed_demo_retrieval_service", None)
+    if retriever is None:
+        raise RuntimeError("CLOSED_DEMO retrieval service was not initialized at startup")
+    return retriever
 
 
 def get_chat_engine(

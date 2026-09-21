@@ -122,6 +122,10 @@ class ClosedDemoRetrievalService:
         self._binding_verifier = binding_verifier
         self._content_reader = SqlAlchemyKnowledgeChunkContentReader(dependencies.session_factory)
 
+    async def aclose(self) -> None:
+        """Release the lifespan-owned source591 connection pool."""
+        await self._dependencies.engine.dispose()
+
     async def retrieve(self, question: str) -> tuple[ClosedDemoEvidence, ...]:
         """Retrieve all-or-nothing evidence for an already validated Chat question."""
         # ``SensitiveText`` and ``QueryFingerprint`` are neutral shared value
