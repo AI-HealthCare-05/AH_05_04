@@ -104,6 +104,7 @@ from rag_runtime.guide_query_binding import (
     build_guide_query_fingerprint_producer,
     build_production_query_binding_verifier,
 )
+from rag_runtime.guide_runtime_execution import GuideRuntimeExecutorFactoryPort
 
 
 def get_ocr_consent_service(
@@ -123,6 +124,13 @@ def get_consent_gate_service(
 
 def get_openai_client(request: Request) -> AsyncOpenAI:
     return request.app.state.openai_client
+
+
+def get_guide_runtime_executor_factory(request: Request) -> GuideRuntimeExecutorFactoryPort:
+    factory = getattr(request.app.state, "guide_runtime_executor_factory", None)
+    if factory is None:
+        raise RuntimeError("Guide runtime executor factory is not initialized")
+    return factory
 
 
 def get_provider_call_context(request: Request) -> ProviderCallContext:
