@@ -111,10 +111,19 @@ class ChatHistoryItem(_StrictModel):
         return normalize_chat_answer(value)
 
 
+class ChatEvidenceItem(_StrictModel):
+    display_order: int = Field(ge=1)
+    source_code: str = Field(min_length=1, max_length=100)
+    source_version: str = Field(min_length=1, max_length=200)
+    locator: str = Field(min_length=1, max_length=500)
+    content: str = Field(min_length=1, max_length=20_000)
+
+
 class ChatGenerationInput(_StrictModel):
     question: str = Field(max_length=2000)
     history: list[ChatHistoryItem] = Field(default_factory=list, max_length=3)
     medications: list[ChatMedicationInput] = Field(min_length=1, max_length=30)
+    evidence: list[ChatEvidenceItem] = Field(default_factory=list, max_length=5)
 
     @field_validator("question", mode="before")
     @classmethod
@@ -145,6 +154,7 @@ class ChatPromptPayload(_StrictModel):
     question: str
     history: list[ChatHistoryItem]
     medications: list[ChatMedicationPromptItem]
+    evidence: list[ChatEvidenceItem] | None = None
 
 
 class ProviderChatResponse(_StrictGeneratedModel):

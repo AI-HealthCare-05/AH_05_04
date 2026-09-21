@@ -6,6 +6,11 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
+from app.core.closed_demo_retrieval import (
+    ClosedDemoRetrievalDatabaseConfig,
+    ClosedDemoRetrievalService,
+    build_closed_demo_retrieval_service,
+)
 from app.core.config import Env
 from app.core.db.databases import AccountWithdrawalCleanupSessionFactory, get_db_session
 from app.core.provider_observability import (
@@ -39,7 +44,12 @@ from app.services.auth import AuthService
 from app.services.chat import ChatService
 from app.services.chat_ai import ChatEngine
 from app.services.chat_ai import OpenAIResponsesClient as ChatOpenAIResponsesClient
-from app.services.chat_ai.prompt import PROMPT_VERSION as CHAT_PROMPT_VERSION
+from app.services.chat_ai.prompt import (
+    CLOSED_DEMO_EVIDENCE_PROMPT_VERSION,
+)
+from app.services.chat_ai.prompt import (
+    PROMPT_VERSION as CHAT_PROMPT_VERSION,
+)
 from app.services.chat_generator_engine import ChatGeneratorEngine
 from app.services.clova_ocr_engine import ClovaOcrEngine
 from app.services.email_delivery import EmailSender, NoopEmailSender, SmtpEmailSender, SmtpEmailSenderConfig
@@ -78,6 +88,14 @@ from app.services.track_c_revision_invalidation import TrackCCheckinRevisionInva
 from app.services.track_c_support import TrackCSupportService
 from app.services.user_consents import ConsentGateService, OcrConsentService
 from app.services.users import UserConsentService, UserManageService
+from rag_runtime.closed_demo_chat_query_binding import (
+    ApprovedClosedDemoChatQueryHmacKey,
+    ClosedDemoChatQueryBindingDependencyError,
+    ClosedDemoChatQueryFingerprintProducer,
+    ClosedDemoChatQueryVerifier,
+    build_closed_demo_chat_query_fingerprint_producer,
+    build_closed_demo_chat_query_verifier,
+)
 from rag_runtime.guide_query_binding import (
     ApprovedGuideQueryHmacKey,
     GuideQueryFingerprintDependencyError,
@@ -507,6 +525,57 @@ def get_guide_query_binding_verifier(
     return build_production_query_binding_verifier(key_dependency)
 
 
+@dataclass(frozen=True, slots=True)
+class ClosedDemoChatQueryHmacKeyDependency:
+    """Composition-root carrier for the CLOSED_DEMO Chat HMAC authority only."""
+
+    key_version: str
+    _key: ApprovedClosedDemoChatQueryHmacKey | None
+
+    def active_key_version(self) -> str:
+        return self.key_version
+
+    def key_for_version(self, key_version: str) -> ApprovedClosedDemoChatQueryHmacKey | None:
+        if key_version != self.key_version:
+            return None
+        if self._key is None:
+            raise ClosedDemoChatQueryBindingDependencyError()
+        return self._key
+
+
+def get_closed_demo_chat_query_hmac_key_dependency() -> ClosedDemoChatQueryHmacKeyDependency:
+    """Translate Config into the independent CLOSED_DEMO Chat key authority."""
+
+    secret = config.CHAT_CLOSED_DEMO_QUERY_HMAC_KEY
+    key: ApprovedClosedDemoChatQueryHmacKey | None = None
+    if secret is not None:
+        try:
+            material = secret.get_secret_value()
+            if material.strip():
+                key = ApprovedClosedDemoChatQueryHmacKey(material.encode())
+        except Exception:
+            key = None
+    return ClosedDemoChatQueryHmacKeyDependency(config.CHAT_CLOSED_DEMO_QUERY_HMAC_KEY_VERSION, key)
+
+
+def get_closed_demo_chat_query_fingerprint_producer(
+    key_dependency: Annotated[
+        ClosedDemoChatQueryHmacKeyDependency,
+        Depends(get_closed_demo_chat_query_hmac_key_dependency),
+    ],
+) -> ClosedDemoChatQueryFingerprintProducer:
+    return build_closed_demo_chat_query_fingerprint_producer(key_dependency)
+
+
+def get_closed_demo_chat_query_binding_verifier(
+    key_dependency: Annotated[
+        ClosedDemoChatQueryHmacKeyDependency,
+        Depends(get_closed_demo_chat_query_hmac_key_dependency),
+    ],
+) -> ClosedDemoChatQueryVerifier:
+    return build_closed_demo_chat_query_verifier(key_dependency)
+
+
 def get_guide_generator(
     client: Annotated[
         AsyncOpenAI,
@@ -558,6 +627,34 @@ def get_chat_repository(
     return ChatRepository(session)
 
 
+def build_configured_closed_demo_retrieval_service(client: AsyncOpenAI) -> ClosedDemoRetrievalService:
+    """Build the one lifespan-owned CLOSED_DEMO retrieval composition."""
+    password = config.SOURCE591_CONSUMER_PASSWORD
+    query_key_dependency = get_closed_demo_chat_query_hmac_key_dependency()
+    return build_closed_demo_retrieval_service(
+        database_config=ClosedDemoRetrievalDatabaseConfig(
+            host=config.SOURCE591_STAGING_DB_HOST,
+            port=config.SOURCE591_STAGING_DB_PORT,
+            database="source591_staging",
+            username="source591_consumer",
+            password=password.get_secret_value() if password is not None else "",
+        ),
+        openai_client=client,
+        fingerprint_producer=get_closed_demo_chat_query_fingerprint_producer(query_key_dependency),
+        binding_verifier=get_closed_demo_chat_query_binding_verifier(query_key_dependency),
+    )
+
+
+def get_closed_demo_retrieval_service(request: Request) -> ClosedDemoRetrievalService | None:
+    """Return the lifespan-owned CLOSED_DEMO retriever without opening a new pool."""
+    if not config.CHAT_CLOSED_DEMO_RAG_ENABLED:
+        return None
+    retriever = getattr(request.app.state, "closed_demo_retrieval_service", None)
+    if retriever is None:
+        raise RuntimeError("CLOSED_DEMO retrieval service was not initialized at startup")
+    return retriever
+
+
 def get_chat_engine(
     client: Annotated[
         AsyncOpenAI,
@@ -567,19 +664,32 @@ def get_chat_engine(
         ProviderCallContext,
         Depends(get_provider_call_context),
     ],
+    closed_demo_retriever: Annotated[
+        ClosedDemoRetrievalService | None,
+        Depends(get_closed_demo_retrieval_service),
+    ] = None,
 ) -> ChatEngine:
-    return ChatGeneratorEngine(
-        provider=ChatOpenAIResponsesClient(
-            client,
-            **_provider_observability_kwargs(
-                context,
-                provider=Provider.OPENAI,
-                operation=ProviderOperation.CHAT_GENERATION,
-                prompt_version=CHAT_PROMPT_VERSION,
-            ),
+    prompt_version = CLOSED_DEMO_EVIDENCE_PROMPT_VERSION if closed_demo_retriever is not None else CHAT_PROMPT_VERSION
+    provider = ChatOpenAIResponsesClient(
+        client,
+        **_provider_observability_kwargs(
+            context,
+            provider=Provider.OPENAI,
+            operation=ProviderOperation.CHAT_GENERATION,
+            prompt_version=prompt_version,
         ),
+    )
+    if closed_demo_retriever is None:
+        return ChatGeneratorEngine(
+            provider=provider,
+            model=config.OPENAI_MODEL,
+            timeout_seconds=config.OPENAI_TIMEOUT_SECONDS,
+        )
+    return ChatGeneratorEngine(
+        provider=provider,
         model=config.OPENAI_MODEL,
         timeout_seconds=config.OPENAI_TIMEOUT_SECONDS,
+        closed_demo_retriever=closed_demo_retriever,
     )
 
 

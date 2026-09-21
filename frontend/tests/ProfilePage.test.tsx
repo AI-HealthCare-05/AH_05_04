@@ -1036,7 +1036,7 @@ describe('#691 기본정보 선택 입력', () => {
       await screen.findByText('이미 등록된 휴대폰 번호예요. 다른 번호를 입력해 주세요.'),
     ).toBeTruthy()
     expect(screen.getByLabelText('휴대폰 번호')).toHaveProperty('value', '01099998888')
-    expect(document.activeElement).toBe(screen.getByLabelText('휴대폰 번호'))
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('휴대폰 번호')))
   })
 
   it('휴대폰 번호 422 는 raw message 대신 안내 문구로 표시한다', async () => {

@@ -7,8 +7,14 @@ from app.services.chat_ai.exceptions import (
     ChatGenerationInvalidResponseError,
     ChatGenerationTimeoutError,
 )
-from app.services.chat_ai.prompt import CHAT_SYSTEM_INSTRUCTIONS, PROMPT_VERSION
+from app.services.chat_ai.prompt import (
+    CHAT_SYSTEM_INSTRUCTIONS,
+    CLOSED_DEMO_EVIDENCE_PROMPT_VERSION,
+    CLOSED_DEMO_EVIDENCE_SYSTEM_INSTRUCTIONS,
+    PROMPT_VERSION,
+)
 from app.services.chat_ai.schemas import (
+    ChatEvidenceItem,
     ChatGenerationInput,
     ChatGenerationResult,
     ChatMedicationPromptItem,
@@ -29,11 +35,14 @@ class ChatGenerator:
 
     async def generate(self, chat_input: ChatGenerationInput) -> ChatGenerationResult:
         input_json = self._build_provider_input(chat_input)
+        evidence_enabled = bool(chat_input.evidence)
         try:
             async with asyncio.timeout(self._timeout_seconds):
                 provider_response = await self._provider.generate(
                     model=self._model,
-                    instructions=CHAT_SYSTEM_INSTRUCTIONS,
+                    instructions=(
+                        CLOSED_DEMO_EVIDENCE_SYSTEM_INSTRUCTIONS if evidence_enabled else CHAT_SYSTEM_INSTRUCTIONS
+                    ),
                     input_json=input_json,
                     max_output_tokens=MAX_OUTPUT_TOKENS,
                 )
@@ -52,7 +61,7 @@ class ChatGenerator:
         return ChatGenerationResult(
             content=content,
             model_name=model_name,
-            prompt_version=PROMPT_VERSION,
+            prompt_version=CLOSED_DEMO_EVIDENCE_PROMPT_VERSION if evidence_enabled else PROMPT_VERSION,
         )
 
     @staticmethod
@@ -75,5 +84,18 @@ class ChatGenerator:
             question=chat_input.question,
             history=chat_input.history,
             medications=medication_items,
+            evidence=(
+                [
+                    ChatEvidenceItem(
+                        display_order=evidence.display_order,
+                        source_code=evidence.source_code,
+                        source_version=evidence.source_version,
+                        locator=evidence.locator,
+                        content=evidence.content,
+                    )
+                    for evidence in chat_input.evidence
+                ]
+                or None
+            ),
         )
         return payload.model_dump_json(exclude_none=True)

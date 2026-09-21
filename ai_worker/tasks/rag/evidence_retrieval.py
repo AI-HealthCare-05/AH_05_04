@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-from rag_runtime.guide_query_binding import (
+from rag_runtime.query_binding import (
     ImmutableArtifactRef,
     QueryBindingFailureReason,
     QueryBindingVerificationFailure,
