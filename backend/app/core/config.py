@@ -276,12 +276,26 @@ class Config(BaseSettings):
     OPENAI_API_KEY: str = "sk-not-configured"
     OPENAI_MODEL: str = "gpt-4o"
     OPENAI_TIMEOUT_SECONDS: float = 20.0
+    GUIDE_RUNTIME_ENABLED: bool = False
+    GUIDE_RUNTIME_BOOTSTRAP_FACTORY: str = ""
     CHAT_HISTORY_CONTEXT_ENABLED: bool = False
     CHAT_CLOSED_DEMO_RAG_ENABLED: bool = False
     SOURCE591_STAGING_DB_HOST: str = ""
     SOURCE591_STAGING_DB_PORT: int = 5432
     SOURCE591_CONSUMER_PASSWORD: SecretStr | None = None
     RELEASE_VALIDATION_ALLOWED: bool = False
+
+    @model_validator(mode="after")
+    def validate_guide_runtime_bootstrap(self) -> "Config":
+        if not self.GUIDE_RUNTIME_ENABLED:
+            return self
+        path = self.GUIDE_RUNTIME_BOOTSTRAP_FACTORY.strip()
+        if path.count(":") != 1 or any(not part.strip() for part in path.split(":")):
+            raise ValueError(
+                "GUIDE_RUNTIME_BOOTSTRAP_FACTORY must be module.path:factory when GUIDE_RUNTIME_ENABLED=true"
+            )
+        self.GUIDE_RUNTIME_BOOTSTRAP_FACTORY = path
+        return self
 
     TRACK_C_SAFETY_DEMO_ENABLED: bool = False
     TRACK_C_SAFETY_DEMO_STARTS_AT: datetime | None = None

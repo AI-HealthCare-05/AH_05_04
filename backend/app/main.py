@@ -1,5 +1,8 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from importlib import import_module
+from typing import Protocol, cast
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +18,27 @@ from app.core.no_store_middleware import NoStoreMiddleware
 from app.core.validation_trace_middleware import RequestTraceMiddleware, ValidationTraceMiddleware
 from app.dependencies.services import build_configured_closed_demo_retrieval_service, get_email_sender
 from app.services.guide_sync_runtime_execution import GuideSyncRuntimeAuthorityProvider
+
+
+@dataclass(frozen=True, slots=True)
+class GuideRuntimeBootstrap:
+    provider_dependencies: object
+    authority_provider: GuideSyncRuntimeAuthorityProvider
+
+
+class GuideRuntimeBootstrapFactory(Protocol):
+    def __call__(self) -> GuideRuntimeBootstrap: ...
+
+
+def _load_guide_runtime_bootstrap_factory(path: str) -> GuideRuntimeBootstrapFactory:
+    try:
+        module_name, symbol_name = path.split(":", maxsplit=1)
+        factory = getattr(import_module(module_name), symbol_name)
+    except (AttributeError, ImportError, ValueError) as error:
+        raise RuntimeError("Guide runtime bootstrap factory cannot be loaded") from error
+    if not callable(factory):
+        raise RuntimeError("Guide runtime bootstrap factory is not callable")
+    return cast(GuideRuntimeBootstrapFactory, factory)
 
 
 def configure_guide_runtime(
@@ -34,6 +58,22 @@ def configure_guide_runtime(
         raise RuntimeError("Guide runtime bootstrap is already configured")
     app.state.guide_runtime_provider_dependencies = provider_dependencies
     app.state.guide_sync_runtime_authority_provider = authority_provider
+
+
+def configure_guide_runtime_from_settings(app: FastAPI) -> None:
+    """Run the configured production composition root before lifespan initialization."""
+
+    if not config.GUIDE_RUNTIME_ENABLED:
+        return
+    factory = _load_guide_runtime_bootstrap_factory(config.GUIDE_RUNTIME_BOOTSTRAP_FACTORY)
+    bootstrap = factory()
+    if type(bootstrap) is not GuideRuntimeBootstrap:
+        raise RuntimeError("Guide runtime bootstrap factory returned an invalid contract")
+    configure_guide_runtime(
+        app,
+        provider_dependencies=bootstrap.provider_dependencies,
+        authority_provider=bootstrap.authority_provider,
+    )
 
 
 def initialize_guide_runtime_executor_factory(app: FastAPI) -> None:
@@ -64,6 +104,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # FastAPI가 실제 이메일 발송 경계를 소비하므로, non-local noop이나 잘못된 SMTP 설정은
     # 첫 이메일 요청까지 미루지 않고 앱 시작 시점에 드러냅니다.
     get_email_sender()
+
+    configure_guide_runtime_from_settings(app)
 
     # guide_ai·chat_ai 연동에서 공용으로 사용할 AsyncOpenAI 클라이언트를 조립합니다.
     # 재시도는 asyncio.timeout으로 감싼 우리 쪽 타임아웃/에러 매핑이 전담하도록 SDK 자동 재시도를 끕니다.

@@ -96,6 +96,25 @@ def test_guide_query_hmac_config_uses_the_frozen_initial_version_and_secret_carr
     assert "synthetic-guide-query-hmac-key" not in repr(config.GUIDE_QUERY_HMAC_KEY)
 
 
+def test_guide_runtime_is_disabled_by_default() -> None:
+    config = Config.model_validate(BASE_CONFIG)
+
+    assert config.GUIDE_RUNTIME_ENABLED is False
+    assert config.GUIDE_RUNTIME_BOOTSTRAP_FACTORY == ""
+
+
+@pytest.mark.parametrize("factory_path", ("", "missing-separator", "module:", ":factory"))
+def test_enabled_guide_runtime_requires_a_bootstrap_factory(factory_path: str) -> None:
+    with pytest.raises(ValidationError, match="GUIDE_RUNTIME_BOOTSTRAP_FACTORY"):
+        Config.model_validate(
+            {
+                **BASE_CONFIG,
+                "GUIDE_RUNTIME_ENABLED": True,
+                "GUIDE_RUNTIME_BOOTSTRAP_FACTORY": factory_path,
+            }
+        )
+
+
 def test_closed_demo_chat_query_hmac_config_uses_an_independent_namespace_and_secret_carrier() -> None:
     config = Config.model_validate(
         {

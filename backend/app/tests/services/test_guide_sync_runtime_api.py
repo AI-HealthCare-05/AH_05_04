@@ -51,6 +51,14 @@ from rag_runtime.guide_runtime_execution import (
 )
 from rag_runtime.request_guard_runtime_binding import RequestGuardRuntimeBindingRef
 
+_runtime_bootstrap: main_module.GuideRuntimeBootstrap | None = None
+
+
+def build_test_guide_runtime_bootstrap() -> main_module.GuideRuntimeBootstrap:
+    if _runtime_bootstrap is None:
+        raise RuntimeError("test Guide runtime bootstrap is not prepared")
+    return _runtime_bootstrap
+
 
 class _AuthorityProvider:
     async def resolve(self, *, user: User, guide: Guide) -> GuideSyncRuntimeAuthority:
@@ -157,6 +165,7 @@ async def test_post_guide_runtime_result_is_persisted_and_rediscovered(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    global _runtime_bootstrap
     user = await _create_user(db_session, email="guide-sync-runtime-api@example.com")
     prescription = await _create_confirmed_prescription(db_session, user=user)
     snapshot, members = await _create_source_snapshot_members(db_session)
@@ -189,10 +198,15 @@ async def test_post_guide_runtime_result_is_persisted_and_rediscovered(
     def override_generator() -> GuideGenerator:
         return generator
 
-    main_module.configure_guide_runtime(
-        fastapi_app,
+    _runtime_bootstrap = main_module.GuideRuntimeBootstrap(
         provider_dependencies=provider_dependencies,
         authority_provider=authority_provider,
+    )
+    monkeypatch.setattr(main_module.config, "GUIDE_RUNTIME_ENABLED", True)
+    monkeypatch.setattr(
+        main_module.config,
+        "GUIDE_RUNTIME_BOOTSTRAP_FACTORY",
+        f"{__name__}:build_test_guide_runtime_bootstrap",
     )
     fastapi_app.dependency_overrides[get_request_user] = override_user
     fastapi_app.dependency_overrides[get_guide_sync_runtime_lifecycle] = override_lifecycle
@@ -210,6 +224,7 @@ async def test_post_guide_runtime_result_is_persisted_and_rediscovered(
                 rediscovered = await client.get(f"/api/v1/guides/{created_data['guide_id']}")
                 assert rediscovered.status_code == 200
     finally:
+        _runtime_bootstrap = None
         fastapi_app.dependency_overrides.pop(get_request_user, None)
         fastapi_app.dependency_overrides.pop(get_guide_sync_runtime_lifecycle, None)
         fastapi_app.dependency_overrides.pop(get_consent_gate_service, None)
