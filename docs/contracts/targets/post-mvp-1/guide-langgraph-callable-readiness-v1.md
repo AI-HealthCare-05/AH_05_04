@@ -92,13 +92,13 @@
 | field | value |
 | --- | --- |
 | contract_semantics | Guide의 pinned medication context로 authoritative retrieval/Evidence selection과 P0 request/source/evidence conflict authority를 실행한다. |
-| actual_symbol | `ai_worker.tasks.rag.guide_medication_guidance_retrieval:retrieve_medication_guidance`; B3 resolver: `SqlAlchemyGuideEvidenceAuthorityReader.resolve_selected_member` |
+| actual_symbol | `ai_worker.tasks.rag.guide_medication_guidance_retrieval:retrieve_medication_guidance` |
 | input_type | verified B1 Sync runtime request carrier, B2 production query fingerprint/binding provider, #806 exact REQUEST guard pin, historical selected-member resolver, and terminal replay aggregate |
 | output_type | `GuideMedicationGuidanceRetrievalOutcome` carrying #697 authenticated retrieval selections per pinned medication |
 | side_effect | READ/WRITE |
 | authority_owner | AI/RAG retrieval runtime |
 | status | `EXACT_CALLABLE` |
-| reason | The verified B1/B2/B3/B4/B5 seams exist; the callable consumes them with per-medication `execute_hybrid_retrieve`, #806 origin, historical persisted member identity, #672 assembly, and #697 join without duplicating those semantics. |
+| reason | The verified B1/B2/B3/B4/B5 seams exist; the callable uses B3 `SqlAlchemyGuideEvidenceAuthorityReader.resolve_selected_member` with per-medication `execute_hybrid_retrieve`, #806 origin, historical persisted member identity, #672 assembly, and #697 join without duplicating those semantics. |
 | required_next_action | Future Thin LangGraph wiring may consume this result only after its other blocked nodes are available. |
 
 Retrieval binding re-audited at `origin/develop` `e03ae267` plus the B1 branch implementation.
