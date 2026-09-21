@@ -57,6 +57,14 @@ def test_guide_closed_demo_dependency_returns_the_lifespan_owned_service(
     assert services.get_guide_closed_demo_retrieval_service(request) is retriever  # type: ignore[arg-type]
 
 
+def test_guide_closed_demo_generator_dependency_guards_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(services.config, "GUIDE_CLOSED_DEMO_RAG_ENABLED", False)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+    assert services.get_guide_closed_demo_generator(request) is None  # type: ignore[arg-type]
+
+
 @pytest.mark.asyncio
 async def test_guide_closed_demo_service_closes_its_source591_engine() -> None:
     engine = SimpleNamespace(dispose=AsyncMock())

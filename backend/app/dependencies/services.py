@@ -698,20 +698,18 @@ def get_guide_closed_demo_retrieval_service(request: Request) -> GuideClosedDemo
 
 
 def get_guide_closed_demo_generator(
-    client: Annotated[
-        AsyncOpenAI,
-        Depends(get_openai_client),
-    ],
-    context: Annotated[
-        ProviderCallContext,
-        Depends(get_provider_call_context),
-    ],
-    closed_demo_retriever: Annotated[
-        GuideClosedDemoRetrievalService | None,
-        Depends(get_guide_closed_demo_retrieval_service),
-    ] = None,
+    request: Request,
 ) -> GuideClosedDemoGenerator | None:
-    if not config.GUIDE_CLOSED_DEMO_RAG_ENABLED or closed_demo_retriever is None:
+    if not config.GUIDE_CLOSED_DEMO_RAG_ENABLED:
+        return None
+    retriever = getattr(request.app.state, "guide_closed_demo_retrieval_service", None)
+    if retriever is None:
+        return None
+    openai_client = getattr(request.app.state, "openai_client", None)
+    if openai_client is None:
+        return None
+    context = getattr(request.state, "provider_call_context", None)
+    if context is None:
         return None
     obs_kwargs = _provider_observability_kwargs(
         context,
@@ -720,10 +718,10 @@ def get_guide_closed_demo_generator(
         prompt_version=CLOSED_DEMO_GUIDE_PROMPT_VERSION,
     )
     return GuideClosedDemoGenerator(
-        client=client,
+        client=openai_client,
         model=config.OPENAI_MODEL,
         timeout_seconds=config.OPENAI_TIMEOUT_SECONDS,
-        retriever=closed_demo_retriever,
+        retriever=retriever,
         context=obs_kwargs["context"],
         descriptor=obs_kwargs["descriptor"],
     )
