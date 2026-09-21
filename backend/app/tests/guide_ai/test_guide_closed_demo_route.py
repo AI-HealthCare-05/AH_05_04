@@ -17,7 +17,7 @@ from app.dependencies.services import (
     get_guide_repository,
     get_openai_client,
 )
-from app.main import fastapi_app
+from app.main import app, fastapi_app
 from app.models.guides import Guide, GuideGenerationStatus
 from app.models.prescriptions import Prescription, PrescriptionVersion, PrescriptionVersionMedication
 from app.models.rag_candidate import (
@@ -192,7 +192,7 @@ async def test_closed_demo_route_wiring_and_rediscovery(monkeypatch: pytest.Monk
     fastapi_app.dependency_overrides[get_openai_client] = lambda: AsyncMock()
 
     try:
-        async with AsyncClient(transport=ASGITransport(app=fastapi_app), base_url="http://test") as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             created = await client.post(
                 "/api/v1/guides",
                 json={"prescription_id": str(prescription.id)},
@@ -213,6 +213,53 @@ async def test_closed_demo_route_wiring_and_rediscovery(monkeypatch: pytest.Monk
             assert rediscovered_data == created_data
             assert rediscovered_data["content"] == created_data["content"]
             assert "복용 시 주의해야 할 점" in rediscovered_data["content"]
+    finally:
+        fastapi_app.dependency_overrides.pop(get_request_user, None)
+        fastapi_app.dependency_overrides.pop(get_consent_gate_service, None)
+        fastapi_app.dependency_overrides.pop(get_guide_repository, None)
+        fastapi_app.dependency_overrides.pop(get_guide_generator, None)
+        fastapi_app.dependency_overrides.pop(get_guide_closed_demo_generator, None)
+        fastapi_app.dependency_overrides.pop(get_openai_client, None)
+
+
+@pytest.mark.asyncio
+async def test_closed_demo_route_returns_503_when_generator_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route-level ASGI test verifying allowlisted demo user gets 503 when demo generator dependency is None."""
+    user_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    user = User(id=user_id, email="closed-demo@example.com", hashed_password="secret")
+    prescription = _prescription(user_id)
+    repo = _InMemoryGuideRepository(prescription)
+
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_ENABLED", True)
+    monkeypatch.setattr(app_config, "PUBLIC_TRACK_F_ENABLED", False)
+    monkeypatch.setattr(app_config, "GUIDE_RUNTIME_ENABLED", False)
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_USER_IDS", frozenset({user_id}))
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_STARTS_AT", now - timedelta(hours=1))
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_EXPIRES_AT", now + timedelta(days=2))
+
+    consent_gate = AsyncMock(spec=ConsentGateService)
+    legacy_generator = AsyncMock()
+
+    fastapi_app.dependency_overrides[get_request_user] = lambda: user
+    fastapi_app.dependency_overrides[get_consent_gate_service] = lambda: consent_gate
+    fastapi_app.dependency_overrides[get_guide_repository] = lambda: repo
+    fastapi_app.dependency_overrides[get_guide_generator] = lambda: legacy_generator
+    fastapi_app.dependency_overrides[get_guide_closed_demo_generator] = lambda: None
+    fastapi_app.dependency_overrides[get_openai_client] = lambda: AsyncMock()
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/guides",
+                json={"prescription_id": str(prescription.id)},
+            )
+            assert response.status_code == 503
+            body = response.json()
+            assert body["code"] == "SERVICE_UNAVAILABLE"
+            # Verify no guide was created in repository
+            assert len(repo._guides) == 0
+            legacy_generator.generate.assert_not_awaited()
     finally:
         fastapi_app.dependency_overrides.pop(get_request_user, None)
         fastapi_app.dependency_overrides.pop(get_consent_gate_service, None)

@@ -369,3 +369,105 @@ async def test_closed_demo_fails_closed_on_unmatched_strength_rejection(monkeypa
     # Retrieval and OpenAI calls are ZERO!
     closed_demo_generator.generate.assert_not_awaited()
     legacy_generator.generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_closed_demo_fails_closed_with_503_when_generator_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Allowlisted demo user with missing closed_demo_generator -> 503 before DB guide row creation."""
+    user_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    user = _user(user_id)
+    prescription = _prescription(user_id)
+
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_ENABLED", True)
+    monkeypatch.setattr(app_config, "PUBLIC_TRACK_F_ENABLED", False)
+    monkeypatch.setattr(app_config, "GUIDE_RUNTIME_ENABLED", False)
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_USER_IDS", frozenset({user_id}))
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_STARTS_AT", now - timedelta(hours=1))
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_EXPIRES_AT", now + timedelta(days=2))
+
+    repo = AsyncMock(spec=GuideRepository)
+    repo.get_prescription_owned.return_value = prescription
+
+    legacy_generator = AsyncMock(spec=GuideGenerator)
+    consent_gate = AsyncMock(spec=ConsentGateService)
+
+    # Note: closed_demo_generator is None!
+    service = GuideService(
+        repository=cast(GuideRepository, repo),
+        generator=cast(GuideGenerator, legacy_generator),
+        consent_gate=cast(ConsentGateService, consent_gate),
+        closed_demo_generator=None,
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        await service.create_guide(user=user, request=CreateGuideRequest(prescription_id=prescription.id))
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.code == "SERVICE_UNAVAILABLE"
+    # repo.create must NOT have been called (no Guide row in DB)
+    repo.create.assert_not_awaited()
+    # legacy generator must NOT have been called (0 calls)
+    legacy_generator.generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_non_demo_user_routes_to_legacy_generator_when_demo_generator_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-allowlisted user continues to use legacy generator even when demo generator is None."""
+    demo_user_id = uuid.uuid4()
+    non_demo_user_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    user = _user(non_demo_user_id)
+    prescription = _prescription(non_demo_user_id)
+
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_ENABLED", True)
+    monkeypatch.setattr(app_config, "PUBLIC_TRACK_F_ENABLED", False)
+    monkeypatch.setattr(app_config, "GUIDE_RUNTIME_ENABLED", False)
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_USER_IDS", frozenset({demo_user_id}))
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_STARTS_AT", now - timedelta(hours=1))
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_EXPIRES_AT", now + timedelta(days=2))
+
+    guide_obj = _guide(prescription.id, prescription.active_version_id)
+    repo = AsyncMock(spec=GuideRepository)
+    repo.get_prescription_owned.return_value = prescription
+    repo.create.return_value = guide_obj
+    repo.lock_if_current_version.return_value = True
+
+    async def fake_mark_completed(
+        g: Guide, *, content: str, model_name: str, prompt_version: str, completed_at: datetime
+    ) -> Guide:
+        g.generation_status = GuideGenerationStatus.COMPLETED
+        g.content = content
+        g.model_name = model_name
+        g.prompt_version = prompt_version
+        g.completed_at = completed_at
+        return g
+
+    repo.mark_completed.side_effect = fake_mark_completed
+
+    legacy_result = GuideGenerationResult(
+        content="레거시 가이드 내용",
+        model_name="gpt-4o",
+        prompt_version="guide-prompt-v3",
+    )
+    legacy_generator = AsyncMock(spec=GuideGenerator)
+    legacy_generator.generate.return_value = legacy_result
+    consent_gate = AsyncMock(spec=ConsentGateService)
+
+    service = GuideService(
+        repository=cast(GuideRepository, repo),
+        generator=cast(GuideGenerator, legacy_generator),
+        consent_gate=cast(ConsentGateService, consent_gate),
+        closed_demo_generator=None,
+    )
+
+    result = await service.create_guide(user=user, request=CreateGuideRequest(prescription_id=prescription.id))
+
+    # repo.create was called
+    repo.create.assert_awaited_once()
+    # legacy generator was called once
+    legacy_generator.generate.assert_awaited_once()
+    assert result.content == "레거시 가이드 내용"
+    assert result.prompt_version == "guide-prompt-v3"

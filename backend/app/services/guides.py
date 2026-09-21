@@ -206,6 +206,16 @@ class GuideService:
             )
 
         verify_loaded_version(version, version.medications)
+
+        closed_demo_requested = is_guide_closed_demo_active(config, user.id)
+        if closed_demo_requested and self._closed_demo_generator is None:
+            raise ApiError(
+                status_code=503,
+                code="SERVICE_UNAVAILABLE",
+                message="복약 가이드 데모 서비스를 현재 사용할 수 없습니다.",
+                details=[ErrorDetail(field="closed_demo_generator", reason="SERVICE_UNAVAILABLE")],
+            )
+
         guide = await self._repo.create(prescription=prescription)
 
         if self._runtime_execution is not None:
@@ -215,11 +225,9 @@ class GuideService:
                 runtime_execution=self._runtime_execution,
             )
 
-        is_closed_demo = is_guide_closed_demo_active(config, user.id) and self._closed_demo_generator is not None
-
         failure_error: ApiError
         try:
-            result = await self._generate_guide_result(version=version, is_closed_demo=is_closed_demo)
+            result = await self._generate_guide_result(version=version, is_closed_demo=closed_demo_requested)
         except GuideGenerationTimeoutError:
             await self._repo.mark_failed(
                 guide,

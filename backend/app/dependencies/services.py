@@ -691,10 +691,7 @@ def get_guide_closed_demo_retrieval_service(request: Request) -> GuideClosedDemo
     """Return the lifespan-owned Guide CLOSED_DEMO retriever without opening a new pool."""
     if not config.GUIDE_CLOSED_DEMO_RAG_ENABLED:
         return None
-    retriever = getattr(request.app.state, "guide_closed_demo_retrieval_service", None)
-    if retriever is None:
-        raise RuntimeError("Guide CLOSED_DEMO retrieval service was not initialized at startup")
-    return retriever
+    return getattr(request.app.state, "guide_closed_demo_retrieval_service", None)
 
 
 def get_guide_closed_demo_generator(
@@ -702,7 +699,7 @@ def get_guide_closed_demo_generator(
 ) -> GuideClosedDemoGenerator | None:
     if not config.GUIDE_CLOSED_DEMO_RAG_ENABLED:
         return None
-    retriever = getattr(request.app.state, "guide_closed_demo_retrieval_service", None)
+    retriever = get_guide_closed_demo_retrieval_service(request)
     if retriever is None:
         return None
     openai_client = getattr(request.app.state, "openai_client", None)
