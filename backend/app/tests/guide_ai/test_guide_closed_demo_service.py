@@ -75,10 +75,13 @@ def _medication(
 
 
 def _prescription(
-    user_id: uuid.UUID, med_name: str = "노바스크정", ident_code: str | None = "200610660"
+    user_id: uuid.UUID,
+    med_name: str = "노바스크정",
+    strength: str = "5mg",
+    ident_code: str | None = "200610660",
 ) -> Prescription:
     prescription_id = uuid.uuid4()
-    med = _medication(med_name, ident_code=ident_code)
+    med = _medication(med_name, strength=strength, ident_code=ident_code)
     version_id = uuid.uuid4()
     med.prescription_version_id = version_id
     prescribed_date = datetime.now(UTC).date()
@@ -323,3 +326,46 @@ async def test_closed_demo_maps_timeout_to_504(monkeypatch: pytest.MonkeyPatch) 
     assert exc_info.value.status_code == 504
     assert exc_info.value.code == "GATEWAY_TIMEOUT"
     repo.mark_failed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_closed_demo_fails_closed_on_unmatched_strength_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """노바스크정 + 10mg -> None -> GuideClosedDemoProductIdentityError -> OpenAI / retrieval calls == 0."""
+    user_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    user = _user(user_id)
+    # Prescription with '노바스크정' but strength '10mg' (not in sealed 17-product map, which only has 5mg)
+    prescription = _prescription(user_id, med_name="노바스크정", strength="10mg", ident_code=None)
+
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_ENABLED", True)
+    monkeypatch.setattr(app_config, "PUBLIC_TRACK_F_ENABLED", False)
+    monkeypatch.setattr(app_config, "GUIDE_RUNTIME_ENABLED", False)
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_USER_IDS", frozenset({user_id}))
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_STARTS_AT", now - timedelta(hours=1))
+    monkeypatch.setattr(app_config, "GUIDE_CLOSED_DEMO_RAG_EXPIRES_AT", now + timedelta(days=2))
+
+    guide_obj = _guide(prescription.id, prescription.active_version_id)
+    repo = AsyncMock(spec=GuideRepository)
+    repo.get_prescription_owned.return_value = prescription
+    repo.create.return_value = guide_obj
+
+    legacy_generator = AsyncMock(spec=GuideGenerator)
+    closed_demo_generator = AsyncMock(spec=GuideClosedDemoGenerator)
+    consent_gate = AsyncMock(spec=ConsentGateService)
+
+    service = GuideService(
+        repository=cast(GuideRepository, repo),
+        generator=cast(GuideGenerator, legacy_generator),
+        consent_gate=cast(ConsentGateService, consent_gate),
+        closed_demo_generator=cast(GuideClosedDemoGenerator, closed_demo_generator),
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        await service.create_guide(user=user, request=CreateGuideRequest(prescription_id=prescription.id))
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.code == "GUIDE_GENERATION_FAILED"
+    repo.mark_failed.assert_awaited_once()
+    # Retrieval and OpenAI calls are ZERO!
+    closed_demo_generator.generate.assert_not_awaited()
+    legacy_generator.generate.assert_not_awaited()

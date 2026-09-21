@@ -51,18 +51,8 @@ class GuideClosedDemoProductMap:
         normalized_name = _normalize_text(medication_name)
         normalized_strength = _normalize_text(strength) if strength is not None else None
 
-        # Try (name, strength) exact match
         key = (normalized_name, normalized_strength)
-        if key in self.exact_mapping:
-            return self.exact_mapping[key]
-
-        # If strength was provided, also try (name, None) fallback only if unambiguous in map
-        if normalized_strength is not None:
-            name_only_key = (normalized_name, None)
-            if name_only_key in self.exact_mapping:
-                return self.exact_mapping[name_only_key]
-
-        return None
+        return self.exact_mapping.get(key)
 
 
 def _normalize_text(value: str | None) -> str:

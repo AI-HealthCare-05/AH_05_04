@@ -81,3 +81,27 @@ def test_resolve_medication_item_seq_precedence_3rd_fails_closed() -> None:
 
     with pytest.raises(GuideClosedDemoProductIdentityError, match="Unable to resolve exact MFDS product identity"):
         resolve_medication_item_seq(cast(PrescriptionVersionMedication, med), product_map)
+
+
+def test_resolve_medication_strength_exact_matching_and_rejection() -> None:
+    """Exact strength matching: 노바스크정 5mg matches, but 노바스크정 10mg strictly fails closed."""
+    product_map = load_guide_closed_demo_product_map()
+
+    # 노바스크정 + 5mg -> 200610660
+    assert product_map.resolve("노바스크정", "5mg") == "200610660"
+    med_5mg = SimpleNamespace(
+        medication_name="노바스크정",
+        strength_text="5mg",
+        identifications=[],
+    )
+    assert resolve_medication_item_seq(cast(PrescriptionVersionMedication, med_5mg), product_map) == "200610660"
+
+    # 노바스크정 + 10mg -> None (sealed map에는 노바스크정 5mg만 존재, 10mg는 None)
+    assert product_map.resolve("노바스크정", "10mg") is None
+    med_10mg = SimpleNamespace(
+        medication_name="노바스크정",
+        strength_text="10mg",
+        identifications=[],
+    )
+    with pytest.raises(GuideClosedDemoProductIdentityError, match="Unable to resolve exact MFDS product identity"):
+        resolve_medication_item_seq(cast(PrescriptionVersionMedication, med_10mg), product_map)
