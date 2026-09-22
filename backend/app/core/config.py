@@ -343,6 +343,7 @@ class Config(BaseSettings):
         return self
 
     GUIDE_CLOSED_DEMO_RAG_ENABLED: bool = False
+    GUIDE_CLOSED_DEMO_RAG_ALLOW_AUTHENTICATED_USERS: bool = False
     GUIDE_CLOSED_DEMO_RAG_USER_IDS: str | frozenset[uuid.UUID] = frozenset()
     GUIDE_CLOSED_DEMO_RAG_STARTS_AT: datetime | None = None
     GUIDE_CLOSED_DEMO_RAG_EXPIRES_AT: datetime | None = None
@@ -384,7 +385,7 @@ class Config(BaseSettings):
             raise ValueError("Guide closed demo requires timezone-aware start and expiry")
         if not timedelta(0) < end - start <= timedelta(days=7):
             raise ValueError("Guide closed demo window must be positive and at most seven days")
-        if not self.GUIDE_CLOSED_DEMO_RAG_USER_IDS:
+        if not self.GUIDE_CLOSED_DEMO_RAG_ALLOW_AUTHENTICATED_USERS and not self.GUIDE_CLOSED_DEMO_RAG_USER_IDS:
             raise ValueError("Guide closed demo requires an explicit allowlist")
         return self
 
@@ -633,7 +634,11 @@ def is_guide_closed_demo_active(
         return False
     if app_config.PUBLIC_TRACK_F_ENABLED or app_config.GUIDE_RUNTIME_ENABLED:
         return False
-    if user_id not in app_config.GUIDE_CLOSED_DEMO_RAG_USER_IDS:
+    user_allowed = (
+        app_config.GUIDE_CLOSED_DEMO_RAG_ALLOW_AUTHENTICATED_USERS
+        or user_id in app_config.GUIDE_CLOSED_DEMO_RAG_USER_IDS
+    )
+    if not user_allowed:
         return False
     start = app_config.GUIDE_CLOSED_DEMO_RAG_STARTS_AT
     end = app_config.GUIDE_CLOSED_DEMO_RAG_EXPIRES_AT
