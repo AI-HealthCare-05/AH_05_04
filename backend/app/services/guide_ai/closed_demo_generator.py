@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
+import time
 import unicodedata
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
@@ -52,8 +54,12 @@ from app.services.guide_ai.exceptions import (
 )
 from app.services.guide_ai.schemas import GuideGenerationInput, GuideGenerationResult, MedicationInput
 from app.services.guide_ai.validators import (
+    RULE_CHANGE_DIRECTIVE,
+    RULE_MEDICAL_CLAIM,
+    RULE_NUMERIC_IN_AI_TEXT,
     RULE_PRESCRIPTION_MISMATCH,
     RULE_UNAPPROVED_GENERAL_NOTICE,
+    RULE_UNSAFE_MARKUP,
     _validate_text,
 )
 from rag_runtime.guide_closed_demo_product_map import (
@@ -91,14 +97,30 @@ def resolve_medication_item_seq(
     )
 
 
-CLOSED_DEMO_GUIDE_PROMPT_VERSION = "guide-closed-demo-rag-v2"
+CLOSED_DEMO_GUIDE_PROMPT_VERSION = "guide-closed-demo-rag-v3"
 CLOSED_DEMO_GENERAL_NOTICE = "처방에 안내된 복용 계획을 확인하고 지켜 주세요."
 INCOMPLETE_DOSE_NOTICE = "용량 정보는 처방전 또는 의료진 안내를 확인해 주세요."
 SAFETY_NOTICE = "임의로 복용을 중단하거나 변경하지 말고 의료진 또는 약사와 상담해 주세요."
 MAX_CONTENT_LENGTH = 10_000
+DEFAULT_GENERATION_BUDGET_SECONDS = 55.0
 
 RULE_EVIDENCE_SLOT_MISMATCH = "EVIDENCE_SLOT_MISMATCH"
 RULE_EVIDENCE_BINDING_REQUIRED = "EVIDENCE_BINDING_REQUIRED"
+
+RETRYABLE_SAFETY_RULES: frozenset[str] = frozenset(
+    {
+        RULE_CHANGE_DIRECTIVE,
+        RULE_MEDICAL_CLAIM,
+        RULE_NUMERIC_IN_AI_TEXT,
+        RULE_UNSAFE_MARKUP,
+        RULE_EVIDENCE_SLOT_MISMATCH,
+        RULE_EVIDENCE_BINDING_REQUIRED,
+        RULE_PRESCRIPTION_MISMATCH,
+        RULE_UNAPPROVED_GENERAL_NOTICE,
+    }
+)
+
+logger = logging.getLogger(__name__)
 
 GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS = f"""\
 당신은 대한민국 전문 복약 안내 AI입니다.
@@ -116,6 +138,15 @@ GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS = f"""\
 9. general_notice는 정확히 다음 한 문장만 사용: "{CLOSED_DEMO_GENERAL_NOTICE}"
 10. evidence 내용을 그대로 복사하지 말고 위 안전 규칙을 통과하는 범위에서만 최소한으로 환자용 문장으로 변환하십시오. 변환 불가능하면 null 처리하십시오.
 11. 해외 의료기관, 해외 전화번호, URL 링크, HTML 태그, 마크다운 링크를 포함하지 마십시오.
+"""
+
+GUIDE_CLOSED_DEMO_RETRY_INSTRUCTIONS = f"""\
+[재시도 필수 준수 사항]
+이전 출력이 local safety/structure validation을 통과하지 못했습니다. 아래 규칙을 반드시 준수하여 다시 생성하십시오:
+1. medications는 입력 source_index와 정확히 동일한 개수/순서/값으로 반환하십시오. source_index 추가/누락/중복 금지.
+2. 금지 표현을 안전하게 바꿀 수 없으면 해당 field는 반드시 text=null, evidence_slots=[]로 반환하십시오.
+3. general_notice는 정확히 다음 한 문장만 사용하십시오: "{CLOSED_DEMO_GENERAL_NOTICE}"
+4. 처방 변경 표현(중단, 끊기/끊어, 증량, 감량, 늘리기, 줄이기, 횟수 변경, 용량 변경, 복용 변경 등), 의료 주장(효능, 치료, 예방, 부작용, 상호작용 등), 처방 수치/단위(숫자 및 mg, g, mL, 정, 캡슐, 회, 번, 일, 주, 개월 등) 생성 금지.\
 """
 
 
@@ -268,12 +299,20 @@ class GuideClosedDemoGenerator:
         descriptor: ProviderCallDescriptor | None = None,
         call_logger: ProviderCallLogger = provider_call_logger,
         observability_disabled: bool = False,
+        generation_budget_seconds: float = DEFAULT_GENERATION_BUDGET_SECONDS,
     ) -> None:
-        if not model.strip() or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        if (
+            not model.strip()
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+            or not math.isfinite(generation_budget_seconds)
+            or generation_budget_seconds <= 0
+        ):
             raise GuideGenerationConfigurationError("Guide generation configuration is invalid")
         self._client = client
         self._model = model
         self._timeout_seconds = timeout_seconds
+        self._generation_budget_seconds = generation_budget_seconds
         self._retriever = retriever
         if context is None and descriptor is None:
             observability_disabled = True
@@ -307,12 +346,16 @@ class GuideClosedDemoGenerator:
         span: Any,
         input_payload: str,
         medication_count: int,
+        *,
+        instructions: str = GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS,
+        timeout_seconds: float | None = None,
     ) -> Any:
+        timeout = timeout_seconds if timeout_seconds is not None else self._timeout_seconds
         try:
-            async with asyncio.timeout(self._timeout_seconds):
+            async with asyncio.timeout(timeout):
                 return await self._client.responses.parse(
                     model=self._model,
-                    instructions=GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS,
+                    instructions=instructions,
                     input=[{"role": "user", "content": input_payload}],
                     text_format=ClosedDemoGuideDraft,
                     max_output_tokens=600 + 400 * medication_count,
@@ -366,32 +409,89 @@ class GuideClosedDemoGenerator:
         medication_item_seqs: dict[int, str],
     ) -> GuideGenerationResult:
         """Retrieve exact-product evidence for each medication and generate structured guide."""
-        # 1. Retrieve exact product evidence for each medication
+        # 1. Retrieve exact product evidence for each medication (exactly once)
         evidences_by_index = await self._retrieve_all_evidences(guide_input, medication_item_seqs)
 
-        # 2. Build provider input payload
+        # 2. Build provider input payload (reused across all attempts)
         input_payload = self._build_provider_input(guide_input, evidences_by_index)
 
-        # 3. Call OpenAI responses.parse with ClosedDemoGuideDraft structured output
-        span = self._observer.start(requested_model=self._model)
-        response = await self._call_provider_parse(span, input_payload, len(guide_input.medications))
-        draft = self._extract_draft(response)
-        model_name = getattr(response, "model", self._model)
+        generation_start = time.monotonic()
+        max_attempts = 2
+        last_error: GuideGenerationSafetyError | None = None
 
-        # 4. Validate evidence binding and safety rules
-        validate_closed_demo_draft(
-            draft,
-            expected_count=len(guide_input.medications),
-            evidences_by_index=evidences_by_index,
-        )
+        for attempt in range(1, max_attempts + 1):
+            elapsed = time.monotonic() - generation_start
+            remaining_budget = self._generation_budget_seconds - elapsed
+            if remaining_budget <= 0:
+                if last_error is not None:
+                    raise last_error
+                raise GuideGenerationTimeoutError("Guide generation budget exhausted")
 
-        # 5. Render plaintext guide envelope for Frontend
-        content = render_closed_demo_plaintext_guide(guide_input, draft)
-        return GuideGenerationResult(
-            content=content,
-            model_name=model_name,
-            prompt_version=CLOSED_DEMO_GUIDE_PROMPT_VERSION,
-        )
+            attempt_timeout = min(self._timeout_seconds, remaining_budget)
+            if attempt_timeout <= 0:
+                if last_error is not None:
+                    raise last_error
+                raise GuideGenerationTimeoutError("Guide generation budget exhausted")
+
+            instructions = (
+                GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS
+                if attempt == 1
+                else f"{GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS}\n\n{GUIDE_CLOSED_DEMO_RETRY_INSTRUCTIONS}"
+            )
+
+            logger.info(
+                "guide_closed_demo_generation_attempt attempt=%d max_attempts=%d timeout=%.1f",
+                attempt,
+                max_attempts,
+                attempt_timeout,
+            )
+
+            span = self._observer.start(requested_model=self._model)
+            response = await self._call_provider_parse(
+                span,
+                input_payload,
+                len(guide_input.medications),
+                instructions=instructions,
+                timeout_seconds=attempt_timeout,
+            )
+            draft = self._extract_draft(response)
+            model_name = getattr(response, "model", self._model)
+            self._observer.succeeded(span, response=response, model_name=model_name)
+
+            try:
+                validate_closed_demo_draft(
+                    draft,
+                    expected_count=len(guide_input.medications),
+                    evidences_by_index=evidences_by_index,
+                )
+            except GuideGenerationSafetyError as exc:
+                if exc.rule_id in RETRYABLE_SAFETY_RULES and attempt < max_attempts:
+                    last_error = exc
+                    logger.warning(
+                        "guide_closed_demo_validation_failed attempt=%d rule_id=%s action=retry",
+                        attempt,
+                        exc.rule_id,
+                    )
+                    continue
+                logger.warning(
+                    "guide_closed_demo_validation_failed attempt=%d rule_id=%s action=fail_closed",
+                    attempt,
+                    exc.rule_id,
+                )
+                raise
+
+            # Validation succeeded
+            logger.info("guide_closed_demo_generation_succeeded attempt=%d", attempt)
+            content = render_closed_demo_plaintext_guide(guide_input, draft)
+            return GuideGenerationResult(
+                content=content,
+                model_name=model_name,
+                prompt_version=CLOSED_DEMO_GUIDE_PROMPT_VERSION,
+            )
+
+        if last_error is not None:
+            raise last_error
+        raise GuideGenerationInvalidResponseError("Guide generation failed after all attempts")
 
     @staticmethod
     def _extract_draft(response: Any) -> ClosedDemoGuideDraft:

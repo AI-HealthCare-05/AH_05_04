@@ -1,16 +1,20 @@
-from __future__ import annotations
-
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from openai import APIConnectionError, APITimeoutError
 
 from ai_worker.tasks.rag.evidence_retrieval import SensitiveText
 from app.core.guide_closed_demo_retrieval import GuideClosedDemoEvidence
 from app.services.guide_ai.closed_demo_generator import (
     CLOSED_DEMO_GENERAL_NOTICE,
     CLOSED_DEMO_GUIDE_PROMPT_VERSION,
+    DEFAULT_GENERATION_BUDGET_SECONDS,
+    GUIDE_CLOSED_DEMO_RETRY_INSTRUCTIONS,
     GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS,
+    RETRYABLE_SAFETY_RULES,
+    RULE_EVIDENCE_BINDING_REQUIRED,
+    RULE_EVIDENCE_SLOT_MISMATCH,
     ClosedDemoGuidanceField,
     ClosedDemoGuideDraft,
     ClosedDemoMedicationGuidance,
@@ -18,7 +22,13 @@ from app.services.guide_ai.closed_demo_generator import (
     render_closed_demo_plaintext_guide,
     validate_closed_demo_draft,
 )
-from app.services.guide_ai.exceptions import GuideGenerationSafetyError
+from app.services.guide_ai.exceptions import (
+    GuideGenerationConfigurationError,
+    GuideGenerationInvalidResponseError,
+    GuideGenerationSafetyError,
+    GuideGenerationTimeoutError,
+    GuideGenerationUnavailableError,
+)
 from app.services.guide_ai.schemas import GuideGenerationInput, MedicationInput
 from app.services.guide_ai.validators import (
     RULE_CHANGE_DIRECTIVE,
@@ -235,6 +245,8 @@ async def test_generator_generate_full_cycle() -> None:
     assert "복용 시 주의해야 할 점: 정해진 시간에 복용하세요." in result.content
     assert "나타날 수 있는 불편감: 가벼운 두통이 발생할 수 있습니다." in result.content
     assert f"공통 안내: {CLOSED_DEMO_GENERAL_NOTICE}" in result.content
+    assert mock_client.responses.parse.call_count == 1
+    assert mock_retriever.retrieve_exact_evidence.call_count == 1
 
 
 ALL_GUIDANCE_FIELDS = [
@@ -357,8 +369,8 @@ def test_build_provider_input_minimizes_payload() -> None:
 
 
 def test_closed_demo_prompt_contains_safety_rules_and_null_fallback() -> None:
-    """Regression test verifying GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS v2 prompt alignment."""
-    assert CLOSED_DEMO_GUIDE_PROMPT_VERSION == "guide-closed-demo-rag-v2"
+    """Regression test verifying GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS v3 prompt alignment."""
+    assert CLOSED_DEMO_GUIDE_PROMPT_VERSION == "guide-closed-demo-rag-v3"
     prompt = GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS
 
     # 1. No prescription numbers or units in AI text
@@ -425,3 +437,641 @@ def test_validate_closed_demo_draft_rejects_unapproved_general_notice() -> None:
     with pytest.raises(GuideGenerationSafetyError) as exc_info:
         validate_closed_demo_draft(draft, expected_count=1, evidences_by_index=evidences)
     assert exc_info.value.rule_id == RULE_UNAPPROVED_GENERAL_NOTICE
+
+
+def _make_valid_draft(source_index: int = 0) -> ClosedDemoGuideDraft:
+    return ClosedDemoGuideDraft(
+        medications=[
+            ClosedDemoMedicationGuidance(
+                source_index=source_index,
+                medication_caution=ClosedDemoGuidanceField(text="정해진 시간에 복용하세요.", evidence_slots=[1]),
+                food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                possible_discomfort=ClosedDemoGuidanceField(
+                    text="가벼운 두통이 발생할 수 있습니다.", evidence_slots=[2]
+                ),
+                seek_medical_care=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+            )
+        ],
+        general_notice=CLOSED_DEMO_GENERAL_NOTICE,
+    )
+
+
+def _make_mock_response(draft: ClosedDemoGuideDraft, model: str = "gpt-4o") -> MagicMock:
+    return MagicMock(
+        output=[MagicMock(content=[MagicMock(parsed=draft)])],
+        model=model,
+    )
+
+
+def _make_single_med_input() -> GuideGenerationInput:
+    return GuideGenerationInput(
+        medications=[
+            MedicationInput(
+                medication_name="노바스크정",
+                strength_text="5mg",
+                dose_value=Decimal("1"),
+                dose_unit="정",
+                frequency_per_day=1,
+                timing_text="아침 식후",
+                duration_days=14,
+            )
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_generator_first_attempt_pass_calls_provider_once() -> None:
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve_exact_evidence = AsyncMock(return_value=(_make_evidence(1), _make_evidence(2)))
+    mock_client = MagicMock()
+    mock_client.responses.parse = AsyncMock(return_value=_make_mock_response(_make_valid_draft()))
+
+    generator = GuideClosedDemoGenerator(
+        client=mock_client,
+        model="gpt-4o",
+        timeout_seconds=20.0,
+        retriever=mock_retriever,
+    )
+
+    result = await generator.generate(_make_single_med_input(), medication_item_seqs={0: "200610660"})
+
+    assert result.prompt_version == CLOSED_DEMO_GUIDE_PROMPT_VERSION
+    assert mock_client.responses.parse.call_count == 1
+    assert mock_retriever.retrieve_exact_evidence.call_count == 1
+
+    call_kwargs = mock_client.responses.parse.call_args.kwargs
+    assert call_kwargs["instructions"] == GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS
+
+
+@pytest.mark.asyncio
+async def test_generator_first_attempt_rx_change_directive_second_pass() -> None:
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve_exact_evidence = AsyncMock(return_value=(_make_evidence(1), _make_evidence(2)))
+
+    invalid_draft = ClosedDemoGuideDraft(
+        medications=[
+            ClosedDemoMedicationGuidance(
+                source_index=0,
+                medication_caution=ClosedDemoGuidanceField(text="증상이 나아지면 복용을 중단하세요.", evidence_slots=[1]),
+                food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                seek_medical_care=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+            )
+        ],
+        general_notice=CLOSED_DEMO_GENERAL_NOTICE,
+    )
+    valid_draft = _make_valid_draft()
+
+    mock_client = MagicMock()
+    mock_client.responses.parse = AsyncMock(
+        side_effect=[
+            _make_mock_response(invalid_draft),
+            _make_mock_response(valid_draft),
+        ]
+    )
+
+    generator = GuideClosedDemoGenerator(
+        client=mock_client,
+        model="gpt-4o",
+        timeout_seconds=20.0,
+        retriever=mock_retriever,
+    )
+
+    result = await generator.generate(_make_single_med_input(), medication_item_seqs={0: "200610660"})
+
+    assert result.prompt_version == CLOSED_DEMO_GUIDE_PROMPT_VERSION
+    assert "정해진 시간에 복용하세요." in result.content
+    assert mock_client.responses.parse.call_count == 2
+    assert mock_retriever.retrieve_exact_evidence.call_count == 1
+
+    calls = mock_client.responses.parse.call_args_list
+    assert calls[0].kwargs["instructions"] == GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS
+    assert calls[1].kwargs["instructions"] == f"{GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS}\n\n{GUIDE_CLOSED_DEMO_RETRY_INSTRUCTIONS}"
+    assert calls[0].kwargs["input"] == calls[1].kwargs["input"]
+
+
+@pytest.mark.asyncio
+async def test_generator_first_attempt_prescription_mismatch_second_pass() -> None:
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve_exact_evidence = AsyncMock(return_value=(_make_evidence(1), _make_evidence(2)))
+
+    mismatched_draft = ClosedDemoGuideDraft(
+        medications=[],
+        general_notice=CLOSED_DEMO_GENERAL_NOTICE,
+    )
+    valid_draft = _make_valid_draft()
+
+    mock_client = MagicMock()
+    mock_client.responses.parse = AsyncMock(
+        side_effect=[
+            _make_mock_response(mismatched_draft),
+            _make_mock_response(valid_draft),
+        ]
+    )
+
+    generator = GuideClosedDemoGenerator(
+        client=mock_client,
+        model="gpt-4o",
+        timeout_seconds=20.0,
+        retriever=mock_retriever,
+    )
+
+    result = await generator.generate(_make_single_med_input(), medication_item_seqs={0: "200610660"})
+
+    assert result.prompt_version == CLOSED_DEMO_GUIDE_PROMPT_VERSION
+    assert mock_client.responses.parse.call_count == 2
+    assert mock_retriever.retrieve_exact_evidence.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_generator_both_attempts_fail_fails_closed() -> None:
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve_exact_evidence = AsyncMock(return_value=(_make_evidence(1), _make_evidence(2)))
+
+    invalid_draft = ClosedDemoGuideDraft(
+        medications=[
+            ClosedDemoMedicationGuidance(
+                source_index=0,
+                medication_caution=ClosedDemoGuidanceField(text="증상이 나아지면 복용을 중단하세요.", evidence_slots=[1]),
+                food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                seek_medical_care=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+            )
+        ],
+        general_notice=CLOSED_DEMO_GENERAL_NOTICE,
+    )
+
+    mock_client = MagicMock()
+    mock_client.responses.parse = AsyncMock(
+        side_effect=[
+            _make_mock_response(invalid_draft),
+            _make_mock_response(invalid_draft),
+        ]
+    )
+
+    generator = GuideClosedDemoGenerator(
+        client=mock_client,
+        model="gpt-4o",
+        timeout_seconds=20.0,
+        retriever=mock_retriever,
+    )
+
+    with pytest.raises(GuideGenerationSafetyError) as exc_info:
+        await generator.generate(_make_single_med_input(), medication_item_seqs={0: "200610660"})
+
+    assert exc_info.value.rule_id == RULE_CHANGE_DIRECTIVE
+    assert mock_client.responses.parse.call_count == 2
+    assert mock_retriever.retrieve_exact_evidence.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_generator_retrieval_called_exactly_once_with_multiple_medications() -> None:
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve_exact_evidence = AsyncMock(return_value=(_make_evidence(1),))
+
+    guide_input = GuideGenerationInput(
+        medications=[
+            MedicationInput(
+                medication_name="노바스크정",
+                strength_text="5mg",
+                dose_value=Decimal("1"),
+                dose_unit="정",
+                frequency_per_day=1,
+                timing_text="아침 식후",
+                duration_days=14,
+            ),
+            MedicationInput(
+                medication_name="다이아벡스정",
+                strength_text="500mg",
+                dose_value=Decimal("1"),
+                dose_unit="정",
+                frequency_per_day=2,
+                timing_text="아침/저녁 식후",
+                duration_days=14,
+            ),
+        ]
+    )
+
+    attempt1_draft = ClosedDemoGuideDraft(
+        medications=[
+            ClosedDemoMedicationGuidance(
+                source_index=0,
+                medication_caution=ClosedDemoGuidanceField(text="정해진 시간에 복용하세요.", evidence_slots=[1]),
+                food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                seek_medical_care=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+            )
+        ],
+        general_notice=CLOSED_DEMO_GENERAL_NOTICE,
+    )
+    attempt2_draft = ClosedDemoGuideDraft(
+        medications=[
+            ClosedDemoMedicationGuidance(
+                source_index=0,
+                medication_caution=ClosedDemoGuidanceField(text="정해진 시간에 복용하세요.", evidence_slots=[1]),
+                food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                seek_medical_care=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+            ),
+            ClosedDemoMedicationGuidance(
+                source_index=1,
+                medication_caution=ClosedDemoGuidanceField(text="정해진 시간에 복용하세요.", evidence_slots=[1]),
+                food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                seek_medical_care=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+            ),
+        ],
+        general_notice=CLOSED_DEMO_GENERAL_NOTICE,
+    )
+
+    mock_client = MagicMock()
+    mock_client.responses.parse = AsyncMock(
+        side_effect=[
+            _make_mock_response(attempt1_draft),
+            _make_mock_response(attempt2_draft),
+        ]
+    )
+
+    generator = GuideClosedDemoGenerator(
+        client=mock_client,
+        model="gpt-4o",
+        timeout_seconds=20.0,
+        retriever=mock_retriever,
+    )
+
+    result = await generator.generate(guide_input, medication_item_seqs={0: "200610660", 1: "198700010"})
+
+    assert result.prompt_version == CLOSED_DEMO_GUIDE_PROMPT_VERSION
+    assert mock_client.responses.parse.call_count == 2
+    assert mock_retriever.retrieve_exact_evidence.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_generator_timeout_does_not_retry() -> None:
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve_exact_evidence = AsyncMock(return_value=(_make_evidence(1),))
+
+    mock_client = MagicMock()
+    mock_client.responses.parse = AsyncMock(side_effect=APITimeoutError("timeout"))
+
+    generator = GuideClosedDemoGenerator(
+        client=mock_client,
+        model="gpt-4o",
+        timeout_seconds=20.0,
+        retriever=mock_retriever,
+    )
+
+    with pytest.raises(GuideGenerationTimeoutError):
+        await generator.generate(_make_single_med_input(), medication_item_seqs={0: "200610660"})
+
+    assert mock_client.responses.parse.call_count == 1
+    assert mock_retriever.retrieve_exact_evidence.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_generator_unavailable_does_not_retry() -> None:
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve_exact_evidence = AsyncMock(return_value=(_make_evidence(1),))
+
+    mock_client = MagicMock()
+    mock_client.responses.parse = AsyncMock(side_effect=APIConnectionError(request=MagicMock()))
+
+    generator = GuideClosedDemoGenerator(
+        client=mock_client,
+        model="gpt-4o",
+        timeout_seconds=20.0,
+        retriever=mock_retriever,
+    )
+
+    with pytest.raises(GuideGenerationUnavailableError):
+        await generator.generate(_make_single_med_input(), medication_item_seqs={0: "200610660"})
+
+    assert mock_client.responses.parse.call_count == 1
+    assert mock_retriever.retrieve_exact_evidence.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_generator_budget_exhausted_prevents_retry() -> None:
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve_exact_evidence = AsyncMock(return_value=(_make_evidence(1),))
+
+    invalid_draft = ClosedDemoGuideDraft(
+        medications=[
+            ClosedDemoMedicationGuidance(
+                source_index=0,
+                medication_caution=ClosedDemoGuidanceField(text="증상이 나아지면 복용을 중단하세요.", evidence_slots=[1]),
+                food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                seek_medical_care=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+            )
+        ],
+        general_notice=CLOSED_DEMO_GENERAL_NOTICE,
+    )
+
+    current_time = 100.0
+
+    def _fake_monotonic() -> float:
+        return current_time
+
+    async def _parse_and_advance(*args: object, **kwargs: object) -> MagicMock:
+        nonlocal current_time
+        current_time += 60.0  # Advance past the 55s budget
+        return _make_mock_response(invalid_draft)
+
+    mock_client = MagicMock()
+    mock_client.responses.parse = AsyncMock(side_effect=_parse_and_advance)
+
+    generator = GuideClosedDemoGenerator(
+        client=mock_client,
+        model="gpt-4o",
+        timeout_seconds=20.0,
+        retriever=mock_retriever,
+        generation_budget_seconds=55.0,
+    )
+
+    with patch(
+        "app.services.guide_ai.closed_demo_generator.time.monotonic",
+        side_effect=_fake_monotonic,
+    ):
+        with pytest.raises(GuideGenerationSafetyError) as exc_info:
+            await generator.generate(_make_single_med_input(), medication_item_seqs={0: "200610660"})
+
+    assert exc_info.value.rule_id == RULE_CHANGE_DIRECTIVE
+    assert mock_client.responses.parse.call_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("rule_id", "invalid_draft"),
+    [
+        (
+            RULE_CHANGE_DIRECTIVE,
+            ClosedDemoGuideDraft(
+                medications=[
+                    ClosedDemoMedicationGuidance(
+                        source_index=0,
+                        medication_caution=ClosedDemoGuidanceField(text="임의로 복용을 중단하세요.", evidence_slots=[1]),
+                        food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        seek_medical_care=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                    )
+                ],
+                general_notice=CLOSED_DEMO_GENERAL_NOTICE,
+            ),
+        ),
+        (
+            RULE_MEDICAL_CLAIM,
+            ClosedDemoGuideDraft(
+                medications=[
+                    ClosedDemoMedicationGuidance(
+                        source_index=0,
+                        medication_caution=ClosedDemoGuidanceField(text="고혈압 치료에 효능이 있습니다.", evidence_slots=[1]),
+                        food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        seek_medical_care=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                    )
+                ],
+                general_notice=CLOSED_DEMO_GENERAL_NOTICE,
+            ),
+        ),
+        (
+            RULE_NUMERIC_IN_AI_TEXT,
+            ClosedDemoGuideDraft(
+                medications=[
+                    ClosedDemoMedicationGuidance(
+                        source_index=0,
+                        medication_caution=ClosedDemoGuidanceField(text="매일 1회 복용하십시오.", evidence_slots=[1]),
+                        food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        seek_medical_care=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                    )
+                ],
+                general_notice=CLOSED_DEMO_GENERAL_NOTICE,
+            ),
+        ),
+        (
+            RULE_UNSAFE_MARKUP,
+            ClosedDemoGuideDraft(
+                medications=[
+                    ClosedDemoMedicationGuidance(
+                        source_index=0,
+                        medication_caution=ClosedDemoGuidanceField(
+                            text="자세한 내용은 [링크](http://example.com) 확인", evidence_slots=[1]
+                        ),
+                        food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        seek_medical_care=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                    )
+                ],
+                general_notice=CLOSED_DEMO_GENERAL_NOTICE,
+            ),
+        ),
+        (
+            RULE_EVIDENCE_SLOT_MISMATCH,
+            ClosedDemoGuideDraft(
+                medications=[
+                    ClosedDemoMedicationGuidance(
+                        source_index=0,
+                        medication_caution=ClosedDemoGuidanceField(text="정해진 시간에 복용하세요.", evidence_slots=[99]),
+                        food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        seek_medical_care=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                    )
+                ],
+                general_notice=CLOSED_DEMO_GENERAL_NOTICE,
+            ),
+        ),
+        (
+            RULE_EVIDENCE_BINDING_REQUIRED,
+            ClosedDemoGuideDraft(
+                medications=[
+                    ClosedDemoMedicationGuidance(
+                        source_index=0,
+                        medication_caution=ClosedDemoGuidanceField(text="정해진 시간에 복용하세요.", evidence_slots=[]),
+                        food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        seek_medical_care=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                    )
+                ],
+                general_notice=CLOSED_DEMO_GENERAL_NOTICE,
+            ),
+        ),
+        (
+            RULE_PRESCRIPTION_MISMATCH,
+            ClosedDemoGuideDraft(
+                medications=[],
+                general_notice=CLOSED_DEMO_GENERAL_NOTICE,
+            ),
+        ),
+        (
+            RULE_UNAPPROVED_GENERAL_NOTICE,
+            ClosedDemoGuideDraft(
+                medications=[
+                    ClosedDemoMedicationGuidance(
+                        source_index=0,
+                        medication_caution=ClosedDemoGuidanceField(text="정해진 시간에 복용하세요.", evidence_slots=[1]),
+                        food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        seek_medical_care=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                        pregnancy_and_breastfeeding=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
+                    )
+                ],
+                general_notice="임의의 공통 안내 문구입니다.",
+            ),
+        ),
+    ],
+)
+async def test_generator_all_retryable_safety_rules_retry_and_recover(
+    rule_id: str,
+    invalid_draft: ClosedDemoGuideDraft,
+) -> None:
+    assert rule_id in RETRYABLE_SAFETY_RULES
+
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve_exact_evidence = AsyncMock(return_value=(_make_evidence(1), _make_evidence(2)))
+    valid_draft = _make_valid_draft()
+
+    mock_client = MagicMock()
+    mock_client.responses.parse = AsyncMock(
+        side_effect=[
+            _make_mock_response(invalid_draft),
+            _make_mock_response(valid_draft),
+        ]
+    )
+
+    generator = GuideClosedDemoGenerator(
+        client=mock_client,
+        model="gpt-4o",
+        timeout_seconds=20.0,
+        retriever=mock_retriever,
+    )
+
+    result = await generator.generate(_make_single_med_input(), medication_item_seqs={0: "200610660"})
+    assert result.prompt_version == CLOSED_DEMO_GUIDE_PROMPT_VERSION
+    assert mock_client.responses.parse.call_count == 2
+    assert mock_retriever.retrieve_exact_evidence.call_count == 1
+
+
+def test_closed_demo_retry_instructions_contain_all_required_constraints() -> None:
+    retry_prompt = GUIDE_CLOSED_DEMO_RETRY_INSTRUCTIONS
+
+    # 1. Previous output failed validation
+    assert "이전 출력이 local safety/structure validation을 통과하지 못했습니다" in retry_prompt
+
+    # 2. medications count, order, value matching source_index
+    assert "medications는 입력 source_index와 정확히 동일한 개수/순서/값으로 반환" in retry_prompt
+
+    # 3. No adding/dropping/duplicating source_index
+    assert "source_index 추가/누락/중복 금지" in retry_prompt
+
+    # 4. Prohibited expressions fallback to text=null, evidence_slots=[]
+    assert "text=null, evidence_slots=[]" in retry_prompt
+
+    # 5. Exact general_notice
+    assert CLOSED_DEMO_GENERAL_NOTICE in retry_prompt
+
+    # 6. Forbid prescription change, medical claims, numeric units
+    assert "처방 변경 표현" in retry_prompt
+    assert "의료 주장" in retry_prompt
+    assert "처방 수치/단위" in retry_prompt
+
+
+def test_generator_configuration_validation() -> None:
+    mock_client = MagicMock()
+    mock_retriever = MagicMock()
+
+    with pytest.raises(GuideGenerationConfigurationError):
+        GuideClosedDemoGenerator(
+            client=mock_client,
+            model="",
+            timeout_seconds=20.0,
+            retriever=mock_retriever,
+        )
+
+    with pytest.raises(GuideGenerationConfigurationError):
+        GuideClosedDemoGenerator(
+            client=mock_client,
+            model="gpt-4o",
+            timeout_seconds=0,
+            retriever=mock_retriever,
+        )
+
+    with pytest.raises(GuideGenerationConfigurationError):
+        GuideClosedDemoGenerator(
+            client=mock_client,
+            model="gpt-4o",
+            timeout_seconds=20.0,
+            retriever=mock_retriever,
+            generation_budget_seconds=-1.0,
+        )
+
+    # Valid configuration succeeds with default and custom budgets
+    gen_default = GuideClosedDemoGenerator(
+        client=mock_client,
+        model="gpt-4o",
+        timeout_seconds=20.0,
+        retriever=mock_retriever,
+    )
+    assert gen_default._generation_budget_seconds == DEFAULT_GENERATION_BUDGET_SECONDS
+    assert DEFAULT_GENERATION_BUDGET_SECONDS == 55.0
+
+    gen_custom = GuideClosedDemoGenerator(
+        client=mock_client,
+        model="gpt-4o",
+        timeout_seconds=20.0,
+        retriever=mock_retriever,
+        generation_budget_seconds=50.0,
+    )
+    assert gen_custom._generation_budget_seconds == 50.0
+    assert gen_custom._timeout_seconds == 20.0
+
+
+@pytest.mark.asyncio
+async def test_generator_invalid_response_does_not_retry() -> None:
+    mock_retriever = MagicMock()
+    mock_retriever.retrieve_exact_evidence = AsyncMock(return_value=(_make_evidence(1),))
+
+    # Empty output triggers GuideGenerationInvalidResponseError
+    mock_parsed = MagicMock(output=[])
+    mock_client = MagicMock()
+    mock_client.responses.parse = AsyncMock(return_value=mock_parsed)
+
+    generator = GuideClosedDemoGenerator(
+        client=mock_client,
+        model="gpt-4o",
+        timeout_seconds=20.0,
+        retriever=mock_retriever,
+    )
+
+    with pytest.raises(GuideGenerationInvalidResponseError):
+        await generator.generate(_make_single_med_input(), medication_item_seqs={0: "200610660"})
+
+    assert mock_client.responses.parse.call_count == 1
+    assert mock_retriever.retrieve_exact_evidence.call_count == 1
