@@ -336,7 +336,10 @@ async def test_retrieve_exact_evidence_narrows_execution_binding_to_single_produ
 
     # 3. Product-specific filter_snapshot_ref (must NOT be the global 17p filter ref!)
     assert exec_binding.filter_snapshot_ref != binding.execution_binding.filter_snapshot_ref
-    assert exec_binding.filter_snapshot_ref.content_sha256 == "ae99f921b04bd940957fa1475a0f7b1234088f5b61f972918f3440a4129d1356"
+    assert (
+        exec_binding.filter_snapshot_ref.content_sha256
+        == "ae99f921b04bd940957fa1475a0f7b1234088f5b61f972918f3440a4129d1356"
+    )
 
 
 @pytest.mark.asyncio

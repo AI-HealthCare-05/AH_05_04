@@ -10,7 +10,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 from uuid import UUID
 
 from ai_worker.adapters.openai_text_embedding import OPENAI_TEXT_EMBEDDING_ADAPTER_REF
@@ -76,7 +76,7 @@ class ClosedDemoRetrievalBinding:
         _fail(f"no product scope for item_seq {item_seq}")
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     raise ClosedDemoRetrievalBindingError(message)
 
 
@@ -142,9 +142,7 @@ def _parse_product_member_ids(
     try:
         product_member_ids = tuple(UUID(m) for m in raw_members)
     except (TypeError, ValueError) as exc:
-        raise ClosedDemoRetrievalBindingError(
-            f"product_scopes[{item_seq!r}] contains an invalid member UUID"
-        ) from exc
+        raise ClosedDemoRetrievalBindingError(f"product_scopes[{item_seq!r}] contains an invalid member UUID") from exc
 
     if len(set(product_member_ids)) != _PRODUCT_MEMBER_COUNT:
         _fail(f"product_scopes[{item_seq!r}] contains duplicate member UUIDs")
@@ -173,9 +171,7 @@ def _parse_product_scope_entry(
     try:
         snapshot_id = UUID(entry["source_snapshot_id"])
     except (KeyError, TypeError, ValueError) as exc:
-        raise ClosedDemoRetrievalBindingError(
-            f"product_scopes[{item_seq!r}].source_snapshot_id is invalid"
-        ) from exc
+        raise ClosedDemoRetrievalBindingError(f"product_scopes[{item_seq!r}].source_snapshot_id is invalid") from exc
 
     if snapshot_id not in allowed_snapshots:
         _fail(f"product_scopes[{item_seq!r}] source_snapshot_id is outside allowed snapshots")
@@ -237,7 +233,6 @@ def _product_scopes(
         _fail("product_scopes members do not exactly cover allowed members")
 
     return tuple(sorted(scopes, key=lambda s: s.item_seq))
-
 
 
 def _retrieval_config(

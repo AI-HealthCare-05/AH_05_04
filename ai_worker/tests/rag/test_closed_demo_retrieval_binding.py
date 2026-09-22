@@ -36,10 +36,7 @@ def test_product_scopes_cover_exact_17_products_and_51_members() -> None:
     assert len(binding.product_scopes) == 17
     seen_snapshots = set()
     seen_members = set()
-    allowed_pairs = {
-        (p.source_snapshot_id, p.source_snapshot_member_id)
-        for p in binding.snapshot_member_pairs
-    }
+    allowed_pairs = {(p.source_snapshot_id, p.source_snapshot_member_id) for p in binding.snapshot_member_pairs}
 
     for scope in binding.product_scopes:
         assert isinstance(scope, ClosedDemoProductScope)
@@ -115,9 +112,9 @@ def test_tampered_product_scope_invalid_member_count_fails_closed(tmp_path: Path
     """Catches a product scope with 2 members instead of 3."""
     manifest = json.loads(CLOSED_DEMO_BINDING_RESOURCE.read_text(encoding="utf-8"))
     first_key = next(iter(manifest["product_scopes"]))
-    manifest["product_scopes"][first_key]["source_snapshot_member_ids"] = (
-        manifest["product_scopes"][first_key]["source_snapshot_member_ids"][:2]
-    )
+    manifest["product_scopes"][first_key]["source_snapshot_member_ids"] = manifest["product_scopes"][first_key][
+        "source_snapshot_member_ids"
+    ][:2]
     manifest["artifact_ref"]["content_sha256"] = canonical_sha256(
         manifest,
         excluded_top_level_keys=frozenset({"artifact_ref"}),

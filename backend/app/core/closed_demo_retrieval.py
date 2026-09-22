@@ -346,9 +346,7 @@ class GuideClosedDemoRetrievalService:
             ) from exc
 
         if scope is None:
-            raise GuideClosedDemoRetrievalExecutionError(
-                f"Product scope missing for item_seq {expected_item_seq}"
-            )
+            raise GuideClosedDemoRetrievalExecutionError(f"Product scope missing for item_seq {expected_item_seq}")
 
         sorted_member_ids = sorted(
             scope.source_snapshot_member_ids,
