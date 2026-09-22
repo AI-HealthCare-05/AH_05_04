@@ -514,7 +514,9 @@ async def test_generator_first_attempt_rx_change_directive_second_pass() -> None
         medications=[
             ClosedDemoMedicationGuidance(
                 source_index=0,
-                medication_caution=ClosedDemoGuidanceField(text="증상이 나아지면 복용을 중단하세요.", evidence_slots=[1]),
+                medication_caution=ClosedDemoGuidanceField(
+                    text="증상이 나아지면 복용을 중단하세요.", evidence_slots=[1]
+                ),
                 food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
                 alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
                 possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
@@ -550,7 +552,10 @@ async def test_generator_first_attempt_rx_change_directive_second_pass() -> None
 
     calls = mock_client.responses.parse.call_args_list
     assert calls[0].kwargs["instructions"] == GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS
-    assert calls[1].kwargs["instructions"] == f"{GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS}\n\n{GUIDE_CLOSED_DEMO_RETRY_INSTRUCTIONS}"
+    assert (
+        calls[1].kwargs["instructions"]
+        == f"{GUIDE_CLOSED_DEMO_SYSTEM_INSTRUCTIONS}\n\n{GUIDE_CLOSED_DEMO_RETRY_INSTRUCTIONS}"
+    )
     assert calls[0].kwargs["input"] == calls[1].kwargs["input"]
 
 
@@ -596,7 +601,9 @@ async def test_generator_both_attempts_fail_fails_closed() -> None:
         medications=[
             ClosedDemoMedicationGuidance(
                 source_index=0,
-                medication_caution=ClosedDemoGuidanceField(text="증상이 나아지면 복용을 중단하세요.", evidence_slots=[1]),
+                medication_caution=ClosedDemoGuidanceField(
+                    text="증상이 나아지면 복용을 중단하세요.", evidence_slots=[1]
+                ),
                 food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
                 alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
                 possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
@@ -724,7 +731,7 @@ async def test_generator_timeout_does_not_retry() -> None:
     mock_retriever.retrieve_exact_evidence = AsyncMock(return_value=(_make_evidence(1),))
 
     mock_client = MagicMock()
-    mock_client.responses.parse = AsyncMock(side_effect=APITimeoutError("timeout"))
+    mock_client.responses.parse = AsyncMock(side_effect=APITimeoutError(request=MagicMock()))
 
     generator = GuideClosedDemoGenerator(
         client=mock_client,
@@ -771,7 +778,9 @@ async def test_generator_budget_exhausted_prevents_retry() -> None:
         medications=[
             ClosedDemoMedicationGuidance(
                 source_index=0,
-                medication_caution=ClosedDemoGuidanceField(text="증상이 나아지면 복용을 중단하세요.", evidence_slots=[1]),
+                medication_caution=ClosedDemoGuidanceField(
+                    text="증상이 나아지면 복용을 중단하세요.", evidence_slots=[1]
+                ),
                 food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
                 alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
                 possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
@@ -824,7 +833,9 @@ async def test_generator_budget_exhausted_prevents_retry() -> None:
                 medications=[
                     ClosedDemoMedicationGuidance(
                         source_index=0,
-                        medication_caution=ClosedDemoGuidanceField(text="임의로 복용을 중단하세요.", evidence_slots=[1]),
+                        medication_caution=ClosedDemoGuidanceField(
+                            text="임의로 복용을 중단하세요.", evidence_slots=[1]
+                        ),
                         food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
                         alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
                         possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
@@ -841,7 +852,9 @@ async def test_generator_budget_exhausted_prevents_retry() -> None:
                 medications=[
                     ClosedDemoMedicationGuidance(
                         source_index=0,
-                        medication_caution=ClosedDemoGuidanceField(text="고혈압 치료에 효능이 있습니다.", evidence_slots=[1]),
+                        medication_caution=ClosedDemoGuidanceField(
+                            text="고혈압 치료에 효능이 있습니다.", evidence_slots=[1]
+                        ),
                         food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
                         alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
                         possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
@@ -894,7 +907,9 @@ async def test_generator_budget_exhausted_prevents_retry() -> None:
                 medications=[
                     ClosedDemoMedicationGuidance(
                         source_index=0,
-                        medication_caution=ClosedDemoGuidanceField(text="정해진 시간에 복용하세요.", evidence_slots=[99]),
+                        medication_caution=ClosedDemoGuidanceField(
+                            text="정해진 시간에 복용하세요.", evidence_slots=[99]
+                        ),
                         food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
                         alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
                         possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
@@ -935,7 +950,9 @@ async def test_generator_budget_exhausted_prevents_retry() -> None:
                 medications=[
                     ClosedDemoMedicationGuidance(
                         source_index=0,
-                        medication_caution=ClosedDemoGuidanceField(text="정해진 시간에 복용하세요.", evidence_slots=[1]),
+                        medication_caution=ClosedDemoGuidanceField(
+                            text="정해진 시간에 복용하세요.", evidence_slots=[1]
+                        ),
                         food_and_drink=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
                         alcohol_and_smoking=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
                         possible_discomfort=ClosedDemoGuidanceField(text=None, evidence_slots=[]),
