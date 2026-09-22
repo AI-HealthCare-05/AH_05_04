@@ -14,7 +14,7 @@
 
 본 계약은 승인 전 내부 폐쇄형 시연(INTERNAL CLOSED_DEMO)에 한정하여 한시적으로 동작하는 Guide CLOSED_DEMO RAG 파이프라인의 데이터 교환 규격, 외부 Provider 최소화 페이로드 구조, 의료 안전 검증 요건, 그리고 장애 차단(Fail-closed) 동작을 정의한다.
 
-정규 Track F 및 RAG-15 정식 공개 게이트 통과 전까지 프로덕션 일반 사용자에게는 절대 노출되지 않으며, 사전에 지정된 내부 시연용 사용자 ID 및 유효 기간 내에서만 격리 실행된다.
+정규 Track F 및 RAG-15 정식 공개 게이트 통과 전까지 프로덕션 일반 사용자에게는 절대 노출되지 않으며, 사전에 지정된 내부 시연용 사용자 ID(또는 한시적 평가 모드 `GUIDE_CLOSED_DEMO_RAG_ALLOW_AUTHENTICATED_USERS=true` 활성화 시 인증된 로그인 사용자 전체) 및 유효 기간 내에서만 격리 실행된다.
 
 ---
 
@@ -25,14 +25,15 @@
 1. `GUIDE_CLOSED_DEMO_RAG_ENABLED = true`
 2. `PUBLIC_TRACK_F_ENABLED = false`
 3. `GUIDE_RUNTIME_ENABLED = false`
-4. `user_id in GUIDE_CLOSED_DEMO_RAG_USER_IDS`
+4. `user_id in GUIDE_CLOSED_DEMO_RAG_USER_IDS` 또는 `GUIDE_CLOSED_DEMO_RAG_ALLOW_AUTHENTICATED_USERS = true` (Time-boxed Authenticated Evaluation Mode)
+   - 비인증(anonymous/public) 요청은 일체 허용하지 않으며, 오직 인증된 로그인 세션(`User.id`)에만 한정
 5. `GUIDE_CLOSED_DEMO_RAG_STARTS_AT <= now < GUIDE_CLOSED_DEMO_RAG_EXPIRES_AT` (최대 7일 이내)
 
 ### 2.1. 장애 시 Fail-closed 차단 규칙 (503 SERVICE_UNAVAILABLE)
 - `is_guide_closed_demo_active`가 참이나 데모 의존성(`GuideClosedDemoGenerator` 또는 `GuideClosedDemoRetrievalService`)이 초기화되지 않은 경우:
   - **DB에 Guide 레코드를 생성하기 전에 즉시 503 `SERVICE_UNAVAILABLE` 오류를 반환한다.**
   - 일반 사용자를 위한 레거시 생성기(`GuideGenerator`)로의 Silent Fallback/Fail-open을 절대 허용하지 않는다.
-- 비시연 사용자(`is_guide_closed_demo_active = false`):
+- 비시연/비대상 사용자(`is_guide_closed_demo_active = false`):
   - 기존 레거시 생성기(`GuideGenerator`) 경로를 그대로 정상 경유한다.
 
 ---

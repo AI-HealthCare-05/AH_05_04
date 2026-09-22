@@ -33,8 +33,9 @@ CLOSED_DEMO RAG 경로는 다음 전제 조건을 **모두 충족하는 경우�
 1. **글로벌 공개 플래그 비활성화**:
    - `PUBLIC_TRACK_F_ENABLED = false`
    - `GUIDE_RUNTIME_ENABLED = false`
-2. **명시적 사용자 허용 목록(Allowlist)**:
-   - `GUIDE_CLOSED_DEMO_RAG_USER_IDS`에 명시된 내부 시연용 `user_id`만 접근 허용
+2. **명시적 사용자 허용 목록(Allowlist) 또는 인증된 평가 모드**:
+   - `GUIDE_CLOSED_DEMO_RAG_USER_IDS`에 명시된 내부 시연용 `user_id` 접근 허용, 또는 외부 평가 기간 동안 `GUIDE_CLOSED_DEMO_RAG_ALLOW_AUTHENTICATED_USERS = true` 설정 시 모든 인증된 로그인 사용자로 범위 확장 (Time-boxed Authenticated Evaluation Mode)
+   - 이는 정규 Track F의 정식 승인 또는 공개 출시가 아니며, 비인증(anonymous/public) 요청은 절대 허용하지 않음
    - 비허용 사용자, 미로그인 요청, 또는 플래그 비활성화 시 일반 레거시 생성기(`GuideGenerator`) 경로 유지
 3. **최대 7일 유효 기간(Strict Expiry Window)**:
    - `GUIDE_CLOSED_DEMO_RAG_STARTS_AT` ~ `GUIDE_CLOSED_DEMO_RAG_EXPIRES_AT` (최대 7일 이내의 half-open `[start, end)` 구간)

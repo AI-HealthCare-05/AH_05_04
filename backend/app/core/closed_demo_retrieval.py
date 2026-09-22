@@ -19,10 +19,19 @@ from ai_worker.adapters.postgresql_evidence_search import (
 from ai_worker.adapters.sqlalchemy_knowledge_chunk_content import SqlAlchemyKnowledgeChunkContentReader
 from ai_worker.tasks.rag.closed_demo_retrieval_binding import (
     ClosedDemoRetrievalBinding,
+    ClosedDemoRetrievalBindingError,
     load_closed_demo_retrieval_binding,
 )
-from ai_worker.tasks.rag.evidence_retrieval import QueryFingerprint, SensitiveText
-from ai_worker.tasks.rag.evidence_search import EvidenceSearchRequest, ProductionSearchHit
+from ai_worker.tasks.rag.evidence_retrieval import (
+    ImmutableArtifactRef,
+    QueryFingerprint,
+    SensitiveText,
+)
+from ai_worker.tasks.rag.evidence_search import (
+    EvidenceSearchExecutionBinding,
+    EvidenceSearchRequest,
+    ProductionSearchHit,
+)
 from ai_worker.tasks.rag.production_evidence_gate import EvidenceGateSuccess
 from ai_worker.tasks.rag.retrieval_runtime import (
     ProductionRetrievalRequest,
@@ -39,6 +48,12 @@ from rag_runtime.guide_query_binding import (
     GuideQueryFingerprintDependencyError,
     GuideQueryFingerprintProducer,
     ProductionQueryBindingVerifier,
+)
+from rag_runtime.guide_retrieval_binding import (
+    GuideRetrievalArtifactRef,
+    GuideRetrievalBindingValidationError,
+    GuideRetrievalMemberBinding,
+    compute_filter_snapshot_ref,
 )
 from rag_runtime.query_binding import QueryBindingVerificationSuccess
 
@@ -323,6 +338,57 @@ class GuideClosedDemoRetrievalService:
         expected_item_seq: str,
     ) -> tuple[GuideClosedDemoEvidence, ...]:
         """Retrieve and hydrate exact-product evidence for a medication item_seq."""
+        try:
+            scope = self._dependencies.binding.scope_for_item_seq(expected_item_seq)
+        except (ClosedDemoRetrievalBindingError, AttributeError, KeyError) as exc:
+            raise GuideClosedDemoRetrievalExecutionError(
+                f"Product scope unavailable for item_seq {expected_item_seq}"
+            ) from exc
+
+        if scope is None:
+            raise GuideClosedDemoRetrievalExecutionError(f"Product scope missing for item_seq {expected_item_seq}")
+
+        sorted_member_ids = sorted(
+            scope.source_snapshot_member_ids,
+            key=lambda mid: (scope.source_snapshot_id.bytes, mid.bytes),
+        )
+        member_bindings = tuple(
+            GuideRetrievalMemberBinding(
+                source_snapshot_id=scope.source_snapshot_id,
+                source_snapshot_member_id=mid,
+            )
+            for mid in sorted_member_ids
+        )
+
+        sealed_exec = self._dependencies.binding.execution_binding
+        try:
+            guide_filter_ref = compute_filter_snapshot_ref(
+                knowledge_index_id=sealed_exec.knowledge_index_id,
+                evidence_index_ref=GuideRetrievalArtifactRef(
+                    artifact_code=sealed_exec.evidence_index_ref.artifact_code,
+                    version=sealed_exec.evidence_index_ref.version,
+                    content_sha256=sealed_exec.evidence_index_ref.content_sha256,
+                ),
+                member_bindings=member_bindings,
+            )
+        except GuideRetrievalBindingValidationError as exc:
+            raise GuideClosedDemoRetrievalExecutionError(
+                f"Failed to compute canonical filter_snapshot_ref for item_seq {expected_item_seq}"
+            ) from exc
+
+        scoped_execution_binding = EvidenceSearchExecutionBinding(
+            filter_snapshot_ref=ImmutableArtifactRef(
+                artifact_code=guide_filter_ref.artifact_code,
+                version=guide_filter_ref.version,
+                content_sha256=guide_filter_ref.content_sha256,
+            ),
+            evidence_index_ref=sealed_exec.evidence_index_ref,
+            knowledge_index_id=sealed_exec.knowledge_index_id,
+            allowed_source_snapshot_ids=(scope.source_snapshot_id,),
+            allowed_source_snapshot_member_ids=tuple(mb.source_snapshot_member_id for mb in member_bindings),
+            retrieval_config=sealed_exec.retrieval_config,
+        )
+
         query = SensitiveText(query_text)
         try:
             fingerprint = self._fingerprint_producer.produce(query)
@@ -342,7 +408,7 @@ class GuideClosedDemoRetrievalService:
                         key_version=fingerprint.key_version,
                         digest=fingerprint.digest,
                     ),
-                    execution_binding=self._dependencies.binding.execution_binding,
+                    execution_binding=scoped_execution_binding,
                     query_embedding_receipt=None,
                 )
             ),
